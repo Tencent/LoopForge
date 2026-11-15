@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -32,6 +33,37 @@ func cvEFinishQueuedTask(t *testing.T, e *Engine, status, result, errText string
 		"status": status, "payload": payload, "updated_at": task.UpdatedAt,
 	}).Error; err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestRunnerDispatchReturnsModelError(t *testing.T) {
+	for _, class := range []string{"rate_limited", "future_class", ""} {
+		t.Run(class, func(t *testing.T) {
+			e, _ := cvEEngine(t)
+			cvERunner(t, e, "runner-terminal", domain.RunnerStatusOnline, "terminal", "codex")
+			e.SetRunnerDispatchNotify(func(string) {
+				cvEFinishQueuedTask(t, e, domain.RunnerTaskFailed, "", "exit status 1", nil)
+				task := e.repo.RunnerTasks()[0]
+				task.ModelErrorClass = class
+				task.ModelRetryAfterSeconds = 42
+				if err := e.repo.PutRunnerTask(task); err != nil {
+					t.Fatal(err)
+				}
+			})
+			sb := &runEnvironment{sandbox: &cvESandbox{id: "sb", workspace: t.TempDir()}}
+			run := cvERunnerRun("dispatch-model-error", "runner-terminal")
+			_, err := e.dispatchRunnerTask(context.Background(), "runner-terminal", run, domain.WorkflowNode{ID: "node", Type: "agent"}, sb, sb.Workspace(), domain.ExecutorDefinition{Kind: "codex"}, domain.AgentDefinition{}, domain.AgentAssetBundle{}, "prompt", "inv", runtime.InvocationOptions{}, nil)
+			var modelErr *runtime.ModelError
+			if errors.As(err, &modelErr) != (class == "rate_limited") {
+				t.Fatalf("class %q: %v", class, err)
+			}
+			if modelErr != nil && modelErr.RetryAfter != 42*time.Second {
+				t.Fatalf("retry after = %s", modelErr.RetryAfter)
+			}
+			if err == nil || !strings.Contains(err.Error(), "exit status 1") {
+				t.Fatalf("lost original error: %v", err)
+			}
+		})
 	}
 }
 

@@ -240,15 +240,15 @@ func TestObservationQueuesRunStateAndFlushLoopBranches(t *testing.T) {
 func TestNodeOutcomeDecisionAndTransitionBranches(t *testing.T) {
 	run := domain.Run{Generation: 2}
 	nodeRun := &domain.NodeRun{Status: "running", Attempt: 3}
-	if shouldCommitNodeOutcome(run, nodeRun, 1, 3, true) || shouldCommitNodeOutcome(run, nil, 2, 3, true) {
+	if shouldCommitNodeOutcome(run, nodeRun, 1, 3, true, 0) || shouldCommitNodeOutcome(run, nil, 2, 3, true, 0) {
 		t.Fatal("stale outcome accepted")
 	}
 	nodeRun.Status = "succeeded"
-	if shouldCommitNodeOutcome(run, nodeRun, 2, 3, true) {
+	if shouldCommitNodeOutcome(run, nodeRun, 2, 3, true, 0) {
 		t.Fatal("completed outcome accepted")
 	}
 	nodeRun.Status = "running"
-	if !shouldCommitNodeOutcome(run, nodeRun, 2, 9, true) || shouldCommitNodeOutcome(run, nodeRun, 2, 2, false) || !shouldCommitNodeOutcome(run, nodeRun, 2, 3, false) {
+	if !shouldCommitNodeOutcome(run, nodeRun, 2, 9, true, 0) || shouldCommitNodeOutcome(run, nodeRun, 2, 2, false, 0) || !shouldCommitNodeOutcome(run, nodeRun, 2, 3, false, 0) {
 		t.Fatal("attempt outcome fencing")
 	}
 	if shouldRetryFailedAttempt(domain.WorkflowNode{MaxAttempts: 3}, 1, ErrWorkspaceControlConfiguration) {
@@ -329,7 +329,7 @@ func TestNodeOutcomeDecisionAndTransitionBranches(t *testing.T) {
 	if err := st.PutRun(interrupted); err != nil {
 		t.Fatal(err)
 	}
-	e.requeueInterruptedNode(interrupted.ID, "node", 2, 0)
+	e.requeueInterruptedNode(interrupted.ID, "node", 2, 0, 0)
 	interruptedGot, _ := st.RunState(interrupted.ID)
 	if interruptedGot.Nodes["node"].Status != "pending" {
 		t.Fatalf("interrupted node=%+v", interruptedGot.Nodes["node"])

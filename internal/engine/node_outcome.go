@@ -6,6 +6,7 @@ import (
 	"agentflow/internal/runtime"
 	"errors"
 	"fmt"
+	"math/rand/v2"
 	"strings"
 	"time"
 )
@@ -19,14 +20,6 @@ func (e *Engine) waitApproval(runID string, node domain.WorkflowNode, msg string
 	})
 }
 
-func (e *Engine) nodeFailed(runID string, node domain.WorkflowNode, err error, allowReject bool) {
-	r, ok := e.repo.RunState(runID)
-	if !ok || r.Nodes[node.ID] == nil {
-		return
-	}
-	e.nodeFailedAt(runID, node, r.Nodes[node.ID].Attempt, r.Generation, err, allowReject)
-}
-
 // shouldCommitNodeOutcome is the exclusive-execute write fence for one node.
 // Generation mismatch means another instance took the lease. Either outcome
 // needs the node still in flight: with parallel branches a rework or retry can
@@ -34,11 +27,16 @@ func (e *Engine) nodeFailed(runID string, node domain.WorkflowNode, err error, a
 // overwrite the reset nor let it be scheduled twice. A successful outcome may
 // still land after retries bumped Attempt, so a live agent that passed gates
 // is not dropped for an attempt mismatch. Failures stay attempt-scoped.
-func shouldCommitNodeOutcome(r domain.Run, nr *domain.NodeRun, generation, attempt int, success bool) bool {
+// When model recovery is enabled, both outcomes also require the same execution
+// sequence because a model retry can reuse an attempt.
+func shouldCommitNodeOutcome(r domain.Run, nr *domain.NodeRun, generation, attempt int, success bool, sequence int) bool {
 	if r.Generation != generation || nr == nil {
 		return false
 	}
 	if nr.Status != "running" && nr.Status != "pending_input" {
+		return false
+	}
+	if nr.ModelRetry != nil && nr.ExecutionSequence != sequence {
 		return false
 	}
 	if success {
@@ -47,16 +45,77 @@ func shouldCommitNodeOutcome(r domain.Run, nr *domain.NodeRun, generation, attem
 	return nr.Attempt == attempt
 }
 
-func (e *Engine) nodeFailedAt(runID string, node domain.WorkflowNode, attempt, generation int, err error, allowReject bool) {
+func (e *Engine) nodeFailedAt(runID string, node domain.WorkflowNode, attempt, generation int, err error, allowReject bool, sequence int) {
 	shouldReject := false
 	configurationFailure := errors.Is(err, ErrWorkspaceControlConfiguration)
 	e.updateRun(runID, func(r *domain.Run) {
 		nr := r.Nodes[node.ID]
-		if !shouldCommitNodeOutcome(*r, nr, generation, attempt, false) {
+		if !shouldCommitNodeOutcome(*r, nr, generation, attempt, false, sequence) {
 			return
 		}
 		nr.Error = err.Error()
 		nr.FinishedAt = time.Now().UTC()
+		var modelErr *runtime.ModelError
+		if errors.As(err, &modelErr) {
+			nr.ModelErrorClass = string(modelErr.Class)
+			e.eventWithAttributes(r, node.ID, "model.error", "模型服务错误："+string(modelErr.Class), map[string]any{"class": string(modelErr.Class), "model": nr.ActiveModel})
+			if nr.ModelRetry != nil {
+				switch modelErr.Class {
+				case runtime.ModelErrorRateLimited, runtime.ModelErrorOverloaded, runtime.ModelErrorTimeout:
+					initial, maximum, maxRetries := modelRetrySettings(nr)
+					if nr.TransientRetries < maxRetries {
+						nr.TransientRetries++
+						nr.ModelTransientErrors++
+						if nr.ModelTransientErrors >= 2 {
+							e.advanceFallbackModel(r, node.ID, nr, modelErr.Class)
+						}
+						base := modelRetryBase(initial, maximum, nr.TransientRetries)
+						delay := base - base/4 + time.Duration(rand.Int64N(int64(base/4)+1))
+						if retryAfter := min(modelErr.RetryAfter, maximum); retryAfter > delay {
+							delay = retryAfter
+						}
+						nr.NextRetryAt = time.Now().UTC().Add(delay)
+						nr.Status = "waiting_retry"
+						nr.RetrySameAttempt = true
+						nr.Activity = fmt.Sprintf("模型服务暂时不可用，%s 后重试（%d/%d）", delay.Round(time.Second), nr.TransientRetries, maxRetries)
+						if nr.SessionID != "" {
+							nr.ResumeSessionID = nr.SessionID
+						}
+						e.eventWithAttributes(r, node.ID, "model.retry_waiting", fmt.Sprintf("%s；将在 %s 后重试", modelErr.Class, delay.Round(time.Second)), map[string]any{"class": string(modelErr.Class), "retry": nr.TransientRetries, "delayMs": delay.Milliseconds(), "nextRetryAt": nr.NextRetryAt})
+						return
+					}
+					// Exhaustion must not fall through to the ordinary attempt budget.
+					nr.Status = "failed"
+					e.event(r, node.ID, "node.failed", "模型服务瞬时重试次数已用尽："+err.Error())
+					return
+				case runtime.ModelErrorContextOverflow:
+					if e.advanceFallbackModel(r, node.ID, nr, modelErr.Class) {
+						nr.Status = "pending"
+						nr.RetrySameAttempt = true
+						return
+					}
+					nr.Status = "failed"
+					e.event(r, node.ID, "node.failed", "模型上下文超长且没有可用备选模型："+err.Error())
+					return
+				case runtime.ModelErrorBadRequest:
+					nr.Status = "failed"
+					e.event(r, node.ID, "node.failed", err.Error())
+					return
+				case runtime.ModelErrorAuth, runtime.ModelErrorQuotaExhausted:
+					nr.Status = "waiting_approval"
+					nr.WaitReason = "model_credentials"
+					nr.Activity = "模型凭据无效，请更新凭据后重新执行"
+					if modelErr.Class == runtime.ModelErrorQuotaExhausted {
+						nr.Activity = "模型额度已耗尽，请补充额度后重新执行"
+					}
+					if nr.SessionID != "" {
+						nr.ResumeSessionID = nr.SessionID
+					}
+					e.event(r, node.ID, "gate.waiting", nr.Activity+"："+string(modelErr.Class))
+					return
+				}
+			}
+		}
 		reworkBudget := node.RejectTo != "" && r.Nodes[node.RejectTo] != nil && r.Nodes[node.RejectTo].ReworkCount >= max(1, node.MaxReworks)
 		if shouldRetryFailedAttempt(node, nr.Attempt, err) && !gateReworkReject(allowReject, nr) {
 			// The retry gets a clean workspace, so carry the concrete failure into
@@ -248,10 +307,10 @@ func (e *Engine) parkForResumeAt(runID string, generation int, message string) {
 	}
 }
 
-func (e *Engine) requeueInterruptedNode(runID, nodeID string, attempt, generation int) {
+func (e *Engine) requeueInterruptedNode(runID, nodeID string, attempt, generation, sequence int) {
 	e.updateRun(runID, func(r *domain.Run) {
 		nr := r.Nodes[nodeID]
-		if !shouldCommitNodeOutcome(*r, nr, generation, attempt, false) {
+		if !shouldCommitNodeOutcome(*r, nr, generation, attempt, false, sequence) {
 			return
 		}
 		if nr.Status != "running" && nr.Status != "pending_input" {
@@ -376,11 +435,11 @@ func (e *Engine) finishAt(id string, generation int, status, msg string) {
 	}
 }
 
-// hasActiveNode reports whether any node is still executing or waiting on a
-// person, which makes a late failure settlement stale.
+// hasActiveNode reports whether any node is still executing, waiting for a
+// person, or waiting to retry, which makes a late failure settlement stale.
 func hasActiveNode(r domain.Run) bool {
 	for _, nr := range r.Nodes {
-		if nr != nil && (nr.Status == "running" || nr.Status == "waiting_approval" || nr.Status == "pending_input") {
+		if nr != nil && (nr.Status == "running" || nr.Status == "waiting_approval" || nr.Status == "waiting_retry" || nr.Status == "pending_input") {
 			return true
 		}
 	}
@@ -393,7 +452,7 @@ func hasActiveNode(r domain.Run) bool {
 // 最终报 "retry node not found"。
 func (e *Engine) cancelRunningNodes(r *domain.Run) {
 	for nodeID, nr := range r.Nodes {
-		if nr == nil || nr.Status != "running" {
+		if nr == nil || (nr.Status != "running" && nr.Status != "waiting_retry") {
 			continue
 		}
 		nr.Status = "cancelled"

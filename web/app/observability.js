@@ -1330,6 +1330,7 @@ function obsUsageDetailGroups(view){
   const nodeTable={title:'节点质量明细',sub:'按失败节点数排序；重试率 = 重试节点 ÷ 节点执行次数',headers:['节点','执行','成功','失败','返工','重试率','均执行耗时','Tokens','工具调用'],rows:[...nodeStats].sort((x,y)=>(y.failedNodes||0)-(x.failedNodes||0)).map(n=>obsRow([escapeHTML(n.name||n.key),String(n.runs),String(n.succeeded||0),String(n.failedNodes||0),String(n.reworkNodes||0),n.retryRate!=null?percent(n.retryRate):'—',n.averageExecutionDurationMs?duration(n.averageExecutionDurationMs):'—',formatTokens(n.tokens),String(n.toolCalls||0)]))};
   const slowTable={title:'慢节点',sub:'按平均执行耗时排序',headers:['节点','执行','均耗时','P95','成功率','Tokens'],rows:[...nodeStats].filter(n=>n.averageExecutionDurationMs>0).sort((x,y)=>y.averageExecutionDurationMs-x.averageExecutionDurationMs).slice(0,10).map(n=>obsRow([escapeHTML(n.name||n.key),String(n.runs),duration(n.averageExecutionDurationMs),n.p95ExecutionDurationMs?duration(n.p95ExecutionDurationMs):'—',percent(n.successRate),formatTokens(n.tokens)]))};
   const failReasonTable={title:'失败原因',sub:'节点错误归一化后的高频原因',headers:['节点','错误','次数'],rows:(a.failures||[]).map(f=>obsRow([escapeHTML(f.nodeId||'—'),`<span title="${escapeHTML(f.code||'')}">${escapeHTML((f.code||'').slice(0,80))}</span>`,String(f.count)])),empty:'没有失败记录'};
+  const modelErrorTable={title:'模型服务错误',sub:'按错误类别统计错误与自动重试次数',headers:['类别','错误次数','重试'],rows:(a.modelErrors||[]).map(x=>obsRow([escapeHTML(x.class||'未知'),String(x.failures||0),String(x.retries||0)])),empty:'没有模型服务错误'};
   const failRunTable={title:'最近失败',headers:['最近失败','状态','错误','时间'],rows:traces.filter(t=>t.status==='failed').slice(0,20).map(t=>obsRow([escapeHTML(obsTraceLabel(t)),`<span class="status ${escapeHTML(t.status||'')}">${runStatus(t.status)}</span>`,t.errorMessage?`<span class="obs-trace-error" title="${escapeHTML(t.errorMessage)}">${escapeHTML(t.errorMessage.slice(0,80))}</span>`:'—',relativeTime(t.createdAt)],t.origin==='external'?'':`data-open-run="${escapeHTML(t.runId||'')}"`,'run-row')),empty:'没有失败运行'};
   const cross=obsCrossProjectTable();
   return [
@@ -1346,7 +1347,7 @@ function obsUsageDetailGroups(view){
     ]},
     {group:'质量',items:[
       {key:'nodes',title:'节点',sub:'节点质量与慢节点',tables:[nodeTable,slowTable],count:nodeStats.length},
-      {key:'fails',title:'失败',sub:'失败原因与最近失败的运行',tables:[failReasonTable,failRunTable],count:(a.failures||[]).length},
+      {key:'fails',title:'失败',sub:'失败原因与最近失败的运行',tables:[modelErrorTable,failReasonTable,failRunTable],count:(a.failures||[]).length},
       {key:'versions',title:'SOP 版本',sub:'版本对比与编排画像',tables:profileRows.length?[versionTable,profileTable]:[versionTable],count:(a.workflowVersions||[]).length},
     ]},
     cross?{group:'人与项目',items:[cross]}:null,

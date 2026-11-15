@@ -104,6 +104,7 @@ func (d *Daemon) executeSandboxProcess(ctx context.Context, task domain.RunnerTa
 			} else {
 				result.status = domain.RunnerTaskSuccess
 			}
+			result = batcher.withModelFailure(result)
 			return result
 		case <-flushTicker.C:
 			batcher.flush(ctx)
@@ -256,11 +257,32 @@ func (b *eventBatcher) taskResult(rawFallback string) string {
 
 // execResult is the outcome reported to the control plane.
 type execResult struct {
-	status   string
-	exitCode int
-	result   string
-	errMsg   string
-	outputs  *domain.RunnerTaskOutputs
+	status                 string
+	exitCode               int
+	result                 string
+	errMsg                 string
+	modelErrorClass        string
+	modelRetryAfterSeconds int64
+	outputs                *domain.RunnerTaskOutputs
+}
+
+// A recognized terminal protocol failure overrides exit 0. Unknown protocol
+// failures retain legacy behavior until their semantics can be established.
+func (b *eventBatcher) withModelFailure(result execResult) execResult {
+	if b.observer == nil {
+		return result
+	}
+	class := b.observer.ModelFailureClass()
+	if class == "" {
+		return result
+	}
+	result.status = domain.RunnerTaskFailed
+	result.modelErrorClass = string(class)
+	result.modelRetryAfterSeconds = int64(b.observer.ModelRetryAfter() / time.Second)
+	if result.errMsg == "" {
+		result.errMsg = "executor reported a model error: " + string(class)
+	}
+	return result
 }
 
 // executeProcess spawns the Agent CLI in its own process group so a cancel
@@ -378,6 +400,7 @@ func (d *Daemon) executeProcess(ctx context.Context, task domain.RunnerTask, arg
 			} else {
 				result.status = domain.RunnerTaskSuccess
 			}
+			result = batcher.withModelFailure(result)
 			return result
 		case <-flushTicker.C:
 			batcher.flush(ctx)

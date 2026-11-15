@@ -512,7 +512,7 @@ func (e *Engine) settleOrphan(runID, reason string) {
 	e.updateRun(runID, func(r *domain.Run) {
 		now := time.Now().UTC()
 		for _, nr := range r.Nodes {
-			if nr.Status == "running" || nr.Status == "pending_input" || (status == "cancelled" && nr.Status == "waiting_approval") {
+			if nr.Status == "running" || nr.Status == "pending_input" || (status == "cancelled" && (nr.Status == "waiting_approval" || nr.Status == "waiting_retry")) {
 				if status == "cancelled" {
 					nr.Status, nr.Error, nr.FinishedAt = "cancelled", "", now
 					nr.Activity = "已由用户取消"

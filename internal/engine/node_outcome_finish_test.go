@@ -8,7 +8,7 @@ import (
 )
 
 func TestHasActiveNode(t *testing.T) {
-	for _, active := range []string{"running", "waiting_approval", "pending_input"} {
+	for _, active := range []string{"running", "waiting_approval", "waiting_retry", "pending_input"} {
 		run := domain.Run{Nodes: map[string]*domain.NodeRun{
 			"done": {NodeID: "done", Status: "succeeded"},
 			"live": {NodeID: "live", Status: active},
@@ -31,7 +31,7 @@ func TestHasActiveNode(t *testing.T) {
 	}
 }
 
-func TestCancelRunningNodesConvergesOnlyRunningNodes(t *testing.T) {
+func TestCancelRunningNodesConvergesExecutingAndRetryingNodes(t *testing.T) {
 	finished := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
 	run := &domain.Run{ID: "run-cancel", Nodes: map[string]*domain.NodeRun{
 		"nil":     nil,
@@ -39,6 +39,7 @@ func TestCancelRunningNodesConvergesOnlyRunningNodes(t *testing.T) {
 		"kept":    {NodeID: "kept", Status: "running", FinishedAt: finished, Activity: "执行测试"},
 		"failed":  {NodeID: "failed", Status: "failed"},
 		"waiting": {NodeID: "waiting", Status: "waiting_approval"},
+		"retry":   {NodeID: "retry", Status: "waiting_retry"},
 	}}
 	(&Engine{}).cancelRunningNodes(run)
 
@@ -53,6 +54,9 @@ func TestCancelRunningNodesConvergesOnlyRunningNodes(t *testing.T) {
 	if run.Nodes["failed"].Status != "failed" || run.Nodes["waiting"].Status != "waiting_approval" {
 		t.Fatalf("non-running nodes changed: failed=%q waiting=%q", run.Nodes["failed"].Status, run.Nodes["waiting"].Status)
 	}
+	if retry := run.Nodes["retry"]; retry.Status != "cancelled" || retry.FinishedAt.IsZero() {
+		t.Fatalf("retrying node = %+v", retry)
+	}
 	cancelledEvents := map[string]bool{}
 	for _, event := range run.Events {
 		if event.Type != "node.cancelled" || event.RunID != run.ID || event.Message != "运行终止，节点由执行中收敛为已取消" {
@@ -60,7 +64,7 @@ func TestCancelRunningNodesConvergesOnlyRunningNodes(t *testing.T) {
 		}
 		cancelledEvents[event.NodeID] = true
 	}
-	if len(run.Events) != 2 || !cancelledEvents["blank"] || !cancelledEvents["kept"] {
-		t.Fatalf("events = %+v, want node.cancelled for blank and kept", run.Events)
+	if len(run.Events) != 3 || !cancelledEvents["blank"] || !cancelledEvents["kept"] || !cancelledEvents["retry"] {
+		t.Fatalf("events = %+v, want node.cancelled for blank, kept and retry", run.Events)
 	}
 }

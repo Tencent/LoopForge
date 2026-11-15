@@ -122,6 +122,26 @@ func (e *Engine) ResumeInterruptedRuns() []string {
 		if listed.IsWorkspace() || listed.HistoricalGroup() {
 			continue
 		}
+		// A human gate can coexist with a delayed branch. Reattach only when
+		// the delayed branch is due; otherwise leave the gate actionable.
+		if listed.Status == "waiting" && !listed.CancelRequested && !listed.PauseRequested && modelRetryDue(listed, time.Now().UTC()) {
+			current, ok := e.repo.RunState(listed.ID)
+			if !ok || current.Status != "waiting" || current.CancelRequested || current.PauseRequested || !modelRetryDue(current, time.Now().UTC()) || e.workspaceBlocked(current) {
+				continue
+			}
+			acquired, err := e.acquireLease(current)
+			if err != nil {
+				continue
+			}
+			e.updateRun(current.ID, func(run *domain.Run) {
+				if run.Status == "waiting" && !run.PauseRequested && !run.CancelRequested && modelRetryDue(*run, time.Now().UTC()) {
+					run.Status = "running"
+				}
+			})
+			e.resume(acquired.ID)
+			resumed = append(resumed, acquired.ID)
+			continue
+		}
 		// Approval and operator-paused Runs normally have no scheduler. A cancel
 		// request that raced with the last worker write must therefore be claimed
 		// and settled by the recovery loop instead of waiting forever.
