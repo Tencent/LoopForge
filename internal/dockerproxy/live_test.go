@@ -153,6 +153,14 @@ func TestLiveDockerCLI(t *testing.T) {
 	out, err = via("create", "-v", other+":/x", tag, "/hello")
 	refused("mounting another workspace's volume", out, err)
 
+	// Objects named like collection routes stay reachable only by their owner.
+	routeNamed := must(docker(upstream, nil, "volume", "create", "--label", Label+"=other-"+id, "create"))
+	t.Cleanup(func() { _, _ = docker(upstream, nil, "volume", "rm", "-f", routeNamed) })
+	out, err = via("volume", "inspect", "create")
+	refused("inspecting another workspace's volume named create", out, err)
+	out, err = via("volume", "rm", "-f", "create")
+	refused("removing another workspace's volume named create", out, err)
+
 	out, err = via("load", "-i", "/dev/null")
 	refused("docker load", out, err)
 	// Daemons started with --bridge=none cannot create bridge networks.

@@ -29,6 +29,7 @@ type fakeDaemon struct {
 	execs    map[string]string            // exec id -> container id
 	api      string                       // ApiVersion reported by /version
 	options  map[string]map[string]string // "volumes/x" -> driver options
+	ids      map[string]string            // "containers/x" -> full ID
 }
 
 func (d *fakeDaemon) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -73,14 +74,14 @@ func (d *fakeDaemon) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		case parts[0] == "containers" && len(parts) == 3 && parts[2] == "json":
 			if labels, ok := d.labels[key]; ok {
-				_ = json.NewEncoder(w).Encode(map[string]any{"Config": map[string]any{"Labels": labels}})
+				_ = json.NewEncoder(w).Encode(map[string]any{"Id": d.ids[key], "Config": map[string]any{"Labels": labels}})
 				return
 			}
 			http.NotFound(w, r)
 			return
 		case (parts[0] == "volumes" || parts[0] == "networks") && len(parts) == 2:
 			if labels, ok := d.labels[key]; ok {
-				_ = json.NewEncoder(w).Encode(map[string]any{"Labels": labels, "Options": d.options[key]})
+				_ = json.NewEncoder(w).Encode(map[string]any{"Id": d.ids[key], "Labels": labels, "Options": d.options[key]})
 				return
 			}
 			http.NotFound(w, r)
@@ -697,6 +698,78 @@ func TestSecondPassBypassesAreRefused(t *testing.T) {
 	} {
 		if code, out := h.raw(t, c.method, c.path, c.contentType, c.body); code != 200 {
 			t.Errorf("%s: want 200, got %d %s", name, code, out)
+		}
+	}
+}
+
+// Third review pass: collection words, encoded paths, name resolution.
+func TestObjectsNamedLikeRoutesAndEncodedPaths(t *testing.T) {
+	h := start(t)
+	h.daemon.mu.Lock()
+	for _, key := range []string{"containers/json", "containers/prune", "volumes/create", "volumes/prune", "networks/create", "networks/prune", "images/json"} {
+		h.daemon.labels[key] = map[string]string{Label: "ws2"}
+	}
+	h.daemon.ids = map[string]string{"containers/mine": "0123abcdef", "networks/mynet": "n456"}
+	h.daemon.mu.Unlock()
+	for _, c := range [][2]string{
+		{"DELETE", "/containers/json?force=1"},
+		{"DELETE", "/containers/prune?force=1"},
+		{"GET", "/volumes/create"},
+		{"DELETE", "/volumes/create?force=1"},
+		{"DELETE", "/volumes/prune"},
+		{"GET", "/networks/create"},
+		{"DELETE", "/networks/prune"},
+		{"DELETE", "/images/json"},
+		{"GET", "/containers/mine%2F..%2Ftheirs/json"},
+		{"POST", "/containers/mine%2f..%2ftheirs/start"},
+	} {
+		before := h.daemon.count()
+		if code, out := h.do(t, c[0], c[1], nil); code != http.StatusForbidden {
+			t.Errorf("%s %s: want 403, got %d %s", c[0], c[1], code, out)
+		}
+		if h.daemon.count() != before {
+			t.Errorf("%s %s reached the daemon", c[0], c[1])
+		}
+	}
+	// The daemon gets the full ID that was checked, not the name again.
+	if code, out := h.do(t, "POST", "/containers/mine/start", nil); code != 200 {
+		t.Fatalf("start own container: %d %s", code, out)
+	}
+	if got := h.daemon.last(t).Path; got != "/containers/0123abcdef/start" {
+		t.Errorf("forwarded path = %q", got)
+	}
+	if code, out := h.do(t, "POST", "/networks/mynet/connect", map[string]any{"Container": "mine"}); code != 200 {
+		t.Fatalf("connect: %d %s", code, out)
+	}
+	if got := h.daemon.last(t); got.Path != "/networks/n456/connect" || got.Body["Container"] != "0123abcdef" {
+		t.Errorf("connect forwarded as %s %v", got.Path, got.Body)
+	}
+	if code, out := h.do(t, "POST", "/containers/create", map[string]any{"Image": "alpine", "HostConfig": map[string]any{"PidMode": "container:mine"}, "NetworkingConfig": map[string]any{"EndpointsConfig": map[string]any{"mynet": map[string]any{}}}}); code != 200 {
+		t.Fatalf("create: %d %s", code, out)
+	}
+	body := h.daemon.last(t).Body
+	if mode := body["HostConfig"].(map[string]any)["PidMode"]; mode != "container:0123abcdef" {
+		t.Errorf("PidMode forwarded as %v", mode)
+	}
+	if id := body["NetworkingConfig"].(map[string]any)["EndpointsConfig"].(map[string]any)["mynet"].(map[string]any)["NetworkID"]; id != "n456" {
+		t.Errorf("endpoint must pin the checked network, got %v", id)
+	}
+	// Collection routes still work with their own methods.
+	for _, c := range [][2]string{{"GET", "/containers/json"}, {"POST", "/volumes/create"}, {"POST", "/networks/prune"}, {"GET", "/images/json"}} {
+		var payload any
+		if c[0] == "POST" && strings.HasSuffix(c[1], "create") {
+			payload = map[string]any{"Name": "v"}
+		}
+		if code, out := h.do(t, c[0], c[1], payload); code != 200 {
+			t.Errorf("%s %s: %d %s", c[0], c[1], code, out)
+		}
+	}
+	for name, c := range map[string][3]string{
+		"commit relabel":       {"POST", "/commit?container=mine&changes=" + url.QueryEscape("LABEL loopforge.workspace=ws2"), ""},
+		"update cgroup parent": {"POST", "/containers/mine/update", `{"CgroupParent":"/"}`},
+	} {
+		if code, out := h.raw(t, c[0], c[1], "application/json", c[2]); code != http.StatusForbidden {
+			t.Errorf("%s: want 403, got %d %s", name, code, out)
 		}
 	}
 }

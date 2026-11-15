@@ -154,12 +154,16 @@ var versionPrefix = regexp.MustCompile(`^/v[0-9]+(\.[0-9]+)*(/.*)$`)
 
 // route is the API path without its version prefix, split into segments.
 func route(raw string) (string, []string) {
-	clean := path.Clean("/" + raw)
-	if m := versionPrefix.FindStringSubmatch(clean); m != nil {
-		clean = m[2]
-	}
-	parts := strings.Split(strings.Trim(clean, "/"), "/")
+	_, clean, parts := splitRoute(raw)
 	return clean, parts
+}
+
+func splitRoute(raw string) (version, clean string, parts []string) {
+	clean = path.Clean("/" + raw)
+	if m := versionPrefix.FindStringSubmatch(clean); m != nil {
+		version, clean = strings.TrimSuffix(clean, m[2]), m[2]
+	}
+	return version, clean, strings.Split(strings.Trim(clean, "/"), "/")
 }
 
 func (p *Proxy) serve(w http.ResponseWriter, r *http.Request) {
@@ -179,9 +183,21 @@ func (p *Proxy) serve(w http.ResponseWriter, r *http.Request) {
 	p.reverse.ServeHTTP(w, r)
 }
 
-// authorize checks r and rewrites it in place (labels, filters, paths).
+// authorize checks r and rewrites it in place (labels, filters, paths). The
+// daemon receives exactly the path that was checked: cleaned, decoded
+// (no %2F or ".." left for its router to interpret differently), with
+// object names replaced by the full IDs the checks resolved.
 func (p *Proxy) authorize(r *http.Request) error {
-	clean, parts := route(r.URL.Path)
+	version, clean, parts := splitRoute(r.URL.Path)
+	if err := p.authorizeRoute(r, clean, parts); err != nil {
+		return err
+	}
+	r.URL.Path = version + "/" + strings.Join(parts, "/")
+	r.URL.RawPath = ""
+	return nil
+}
+
+func (p *Proxy) authorizeRoute(r *http.Request, clean string, parts []string) error {
 	method := r.Method
 	read := method == http.MethodGet || method == http.MethodHead
 	// The daemon reads parameters with r.FormValue, where a form-encoded body
@@ -256,8 +272,14 @@ func (p *Proxy) authorize(r *http.Request) error {
 	case "commit":
 		if method == http.MethodPost {
 			q := r.URL.Query()
-			if err := p.owned(r.Context(), "containers", q.Get("container")); err != nil {
+			id, err := p.ownedID(r.Context(), "containers", q.Get("container"))
+			if err != nil {
 				return err
+			}
+			q.Set("container", id)
+			r.URL.RawQuery = q.Encode()
+			if changes := strings.ToLower(strings.Join(q["changes"], "\n")); strings.Contains(changes, Label) {
+				return forbidden("commit 的 --change 不能改写 " + Label + " 标签")
 			}
 			if repo := q.Get("repo"); repo != "" {
 				if err := p.mayWriteTag(r.Context(), imageRef(repo, q.Get("tag"))); err != nil {
@@ -323,7 +345,7 @@ func (p *Proxy) authorizeImage(r *http.Request, parts []string) error {
 		return forbidden("不能清理宿主机上的全部镜像，请按名字删除本工作区构建的镜像")
 	case len(parts) == 2 && parts[1] == "load":
 		return forbidden("不支持 docker load（会覆盖其他工作区在用的镜像名），请用 docker build 或 docker pull")
-	case len(parts) == 2 && parts[1] == "create":
+	case len(parts) == 2 && parts[1] == "create" && r.Method == http.MethodPost:
 		// The daemon pulls whenever fromImage is set and imports otherwise.
 		if from := q.Get("fromImage"); from != "" {
 			return p.mayPull(ctx, pullRef(from, q.Get("tag")))
@@ -332,7 +354,7 @@ func (p *Proxy) authorizeImage(r *http.Request, parts []string) error {
 			return p.mayWriteTag(ctx, imageRef(repo, q.Get("tag")))
 		}
 		return nil
-	case len(parts) == 2 && (parts[1] == "json" || parts[1] == "search" || parts[1] == "get"):
+	case len(parts) == 2 && (parts[1] == "json" || parts[1] == "search" || parts[1] == "get") && r.Method == http.MethodGet:
 		return nil
 	case len(parts) >= 2 && r.Method == http.MethodDelete:
 		return p.ownedImage(ctx, strings.Join(parts[1:], "/"), "删除")
@@ -417,17 +439,19 @@ func escapeImageRef(ref string) string {
 
 func (p *Proxy) authorizeContainer(r *http.Request, parts []string) error {
 	method := r.Method
+	// Collection words are only collection routes with their own method; a
+	// container may be named "json" or "prune" and is then reached below.
 	switch {
-	case len(parts) == 2 && parts[1] == "json":
+	case len(parts) == 2 && parts[1] == "json" && method == http.MethodGet:
 		p.scopeList(r)
 		return nil
 	case len(parts) == 2 && parts[1] == "create" && method == http.MethodPost:
 		return p.rewriteJSON(r, p.checkContainerCreate)
-	case len(parts) == 2 && parts[1] == "prune":
+	case len(parts) == 2 && parts[1] == "prune" && method == http.MethodPost:
 		p.scopeList(r)
 		return nil
 	case len(parts) >= 2:
-		if err := p.owned(r.Context(), "containers", parts[1]); err != nil {
+		if err := p.ownPathObject(r, "containers", parts); err != nil {
 			return err
 		}
 		if len(parts) == 3 && parts[2] == "exec" && method == http.MethodPost {
@@ -440,6 +464,9 @@ func (p *Proxy) authorizeContainer(r *http.Request, parts []string) error {
 		}
 		if len(parts) == 3 && parts[2] == "update" {
 			return p.rewriteJSON(r, func(body map[string]any) error {
+				if nonEmpty(body["CgroupParent"]) {
+					return forbidden("不能指定 --cgroup-parent")
+				}
 				return checkResources(body)
 			})
 		}
@@ -453,7 +480,7 @@ func (p *Proxy) authorizeNetwork(r *http.Request, parts []string) error {
 	case len(parts) == 1 && r.Method == http.MethodGet:
 		p.scopeList(r)
 		return nil
-	case len(parts) == 2 && parts[1] == "create":
+	case len(parts) == 2 && parts[1] == "create" && r.Method == http.MethodPost:
 		return p.rewriteJSON(r, func(body map[string]any) error {
 			if driver, _ := body["Driver"].(string); driver != "" && driver != "bridge" {
 				return forbidden("只能创建 bridge 网络（--driver " + driver + "）")
@@ -477,11 +504,11 @@ func (p *Proxy) authorizeNetwork(r *http.Request, parts []string) error {
 			setLabel(body, "Labels", p.cfg.Workspace)
 			return nil
 		})
-	case len(parts) == 2 && parts[1] == "prune":
+	case len(parts) == 2 && parts[1] == "prune" && r.Method == http.MethodPost:
 		p.scopeList(r)
 		return nil
 	case len(parts) >= 2:
-		if err := p.owned(r.Context(), "networks", parts[1]); err != nil {
+		if err := p.ownPathObject(r, "networks", parts); err != nil {
 			return err
 		}
 		if len(parts) == 3 && (parts[2] == "connect" || parts[2] == "disconnect") {
@@ -490,8 +517,12 @@ func (p *Proxy) authorizeNetwork(r *http.Request, parts []string) error {
 				if err := p.checkEndpointNetwork(endpoint); err != nil {
 					return err
 				}
-				id, _ := body["Container"].(string)
-				return p.owned(r.Context(), "containers", id)
+				ref, _ := body["Container"].(string)
+				id, err := p.ownedID(r.Context(), "containers", ref)
+				if err == nil {
+					body["Container"] = id
+				}
+				return err
 			})
 		}
 		return nil
@@ -504,7 +535,7 @@ func (p *Proxy) authorizeVolume(r *http.Request, parts []string) error {
 	case len(parts) == 1 && r.Method == http.MethodGet:
 		p.scopeList(r)
 		return nil
-	case len(parts) == 2 && parts[1] == "create":
+	case len(parts) == 2 && parts[1] == "create" && r.Method == http.MethodPost:
 		return p.rewriteJSON(r, func(body map[string]any) error {
 			if driver, _ := body["Driver"].(string); driver != "" && driver != "local" {
 				return forbidden("只支持 local 卷")
@@ -518,11 +549,11 @@ func (p *Proxy) authorizeVolume(r *http.Request, parts []string) error {
 			setLabel(body, "Labels", p.cfg.Workspace)
 			return nil
 		})
-	case len(parts) == 2 && parts[1] == "prune":
+	case len(parts) == 2 && parts[1] == "prune" && r.Method == http.MethodPost:
 		p.scopeList(r)
 		return nil
 	case len(parts) >= 2:
-		return p.owned(r.Context(), "volumes", parts[1])
+		return p.ownPathObject(r, "volumes", parts)
 	}
 	return forbidden("不支持的卷操作")
 }
@@ -659,8 +690,16 @@ func (p *Proxy) checkContainerCreate(body map[string]any) error {
 			if name == "host" {
 				return forbidden("不能使用宿主网络（--network host）")
 			}
-			if err := p.owned(context.Background(), "networks", name); err != nil {
+			id, err := p.ownedID(context.Background(), "networks", name)
+			if err != nil {
 				return err
+			}
+			// The daemon prefers an endpoint's NetworkID over its name: pin
+			// the network that was checked.
+			if endpoint, _ := endpoints[name].(map[string]any); endpoint != nil && id != name {
+				if given, _ := endpoint["NetworkID"].(string); given == "" {
+					endpoint["NetworkID"] = id
+				}
 			}
 		}
 		for _, item := range endpoints {
@@ -719,11 +758,13 @@ func (p *Proxy) checkContainerCreate(body map[string]any) error {
 		case mode == "host":
 			return forbidden("不能使用宿主命名空间（" + key + "=host）")
 		case strings.HasPrefix(mode, "container:"):
-			if err := p.owned(context.Background(), "containers", strings.TrimPrefix(mode, "container:")); err != nil {
+			id, err := p.ownedID(context.Background(), "containers", strings.TrimPrefix(mode, "container:"))
+			if err != nil {
 				return err
 			}
+			host[key] = "container:" + id
 		case key == "NetworkMode" && mode != "" && mode != "default" && mode != "bridge" && mode != "none":
-			if err := p.owned(context.Background(), "networks", mode); err != nil {
+			if _, err := p.ownedID(context.Background(), "networks", mode); err != nil {
 				return err
 			}
 		}
@@ -1010,7 +1051,7 @@ func resolveExisting(p string) string {
 // ensureVolume allows a named volume this workspace owns, creating it with
 // the workspace label when it does not exist yet.
 func (p *Proxy) ensureVolume(name string) error {
-	labels, found, err := p.labels(context.Background(), "volumes", name)
+	labels, _, found, err := p.labels(context.Background(), "volumes", name)
 	if err != nil {
 		return err
 	}
@@ -1035,21 +1076,44 @@ func (p *Proxy) ensureVolume(name string) error {
 
 // owned refuses objects without this workspace's label.
 func (p *Proxy) owned(ctx context.Context, kind, id string) error {
-	id = strings.TrimSpace(id)
-	if id == "" {
-		return forbidden("缺少对象 id")
+	_, err := p.ownedID(ctx, kind, id)
+	return err
+}
+
+// ownedID checks that ref names an object of this workspace and returns its
+// full ID (volumes: name). Passing the ID on instead of the name closes the
+// gap between this check and the daemon resolving the name again (a name
+// that is also another object's ID prefix, or an object swapped meanwhile).
+func (p *Proxy) ownedID(ctx context.Context, kind, ref string) (string, error) {
+	ref = strings.TrimSpace(ref)
+	if ref == "" {
+		return "", forbidden("缺少对象 id")
 	}
-	labels, found, err := p.labels(ctx, kind, id)
+	labels, id, found, err := p.labels(ctx, kind, ref)
 	if err != nil {
-		return err
+		return "", err
 	}
 	if !found {
 		// Let the daemon answer "no such object" itself.
-		return nil
+		return ref, nil
 	}
 	if labels[Label] != p.cfg.Workspace {
-		return forbidden(fmt.Sprintf("%s 不属于本工作区，只能操作本工作区创建的对象", id))
+		return "", forbidden(fmt.Sprintf("%s 不属于本工作区，只能操作本工作区创建的对象", ref))
 	}
+	if id == "" {
+		id = ref
+	}
+	return id, nil
+}
+
+// ownPathObject checks the object named in /<kind>/<ref>/... and puts its
+// full ID into the forwarded path.
+func (p *Proxy) ownPathObject(r *http.Request, kind string, parts []string) error {
+	id, err := p.ownedID(r.Context(), kind, parts[1])
+	if err != nil {
+		return err
+	}
+	parts[1] = id
 	return nil
 }
 
@@ -1062,19 +1126,24 @@ func (p *Proxy) ownedExec(ctx context.Context, id string) error {
 	return p.owned(ctx, "containers", exec.ContainerID)
 }
 
-func (p *Proxy) labels(ctx context.Context, kind, id string) (map[string]string, bool, error) {
+func (p *Proxy) labels(ctx context.Context, kind, ref string) (map[string]string, string, bool, error) {
 	var obj struct {
+		ID     string `json:"Id"`
+		Name   string
 		Labels map[string]string
 		Config struct{ Labels map[string]string }
 	}
-	found, err := p.inspect(ctx, "/"+kind+"/"+url.PathEscape(id)+map[string]string{"containers": "/json"}[kind], &obj)
+	found, err := p.inspect(ctx, "/"+kind+"/"+url.PathEscape(ref)+map[string]string{"containers": "/json"}[kind], &obj)
 	if err != nil || !found {
-		return nil, found, err
+		return nil, "", found, err
 	}
-	if kind == "containers" {
-		return obj.Config.Labels, true, nil
+	switch kind {
+	case "containers":
+		return obj.Config.Labels, obj.ID, true, nil
+	case "volumes":
+		return obj.Labels, obj.Name, true, nil
 	}
-	return obj.Labels, true, nil
+	return obj.Labels, obj.ID, true, nil
 }
 
 func (p *Proxy) inspect(ctx context.Context, apiPath string, out any) (bool, error) {
