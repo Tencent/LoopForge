@@ -26,6 +26,9 @@ func (e *Engine) AlignBaselineForUser(repository domain.RepositoryContext, userI
 }
 
 func (e *Engine) alignBaseline(repository domain.RepositoryContext, gitToken string, userID int64) error {
+	if domain.IsForgeRepositoryProvider(repository.Provider) {
+		return e.alignForgeBaseline(repository, userID)
+	}
 	if !ShouldAlignIntegrate(repository) {
 		return nil
 	}

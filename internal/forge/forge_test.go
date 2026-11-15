@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"agentflow/internal/domain"
@@ -135,6 +136,54 @@ func TestForgeSubmitAndMergeSameRepositoryHead(t *testing.T) {
 				}
 			} else if err != nil || gotMerge.Delivery(ref).State != "merged" {
 				t.Fatalf("merge = %+v, %v", gotMerge, err)
+			}
+		})
+	}
+}
+
+func TestForgeBranchContainsChecksCommitAncestry(t *testing.T) {
+	const (
+		head     = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+		advanced = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+		prefix   = "/code/api/v1/repos/acme/app"
+		branch   = "agentflow/integration"
+	)
+	for _, tc := range []struct {
+		name, tip, response string
+		contains, wantErr   bool
+	}{
+		{name: "identical", tip: head, contains: true},
+		{name: "ancestor", tip: advanced, response: `{"total_commits":0}`, contains: true},
+		{name: "not integrated", tip: advanced, response: `{"total_commits":1}`},
+		{name: "unconfirmed", tip: advanced, response: `{}`, wantErr: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var compared atomic.Bool
+			instance := useTestForge(t, func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case prefix:
+					_, _ = w.Write([]byte(`{"id":31,"full_name":"acme/app"}`))
+				case prefix + "/branches/" + branch:
+					_ = json.NewEncoder(w).Encode(map[string]any{"name": branch, "commit": map[string]string{"id": tc.tip}})
+				case prefix + "/compare/" + advanced + "..." + head:
+					compared.Store(true)
+					if r.URL.Query().Get("files") != "false" || r.URL.Query().Get("verification") != "false" {
+						t.Errorf("unexpected comparison options: %s", r.URL.RawQuery)
+					}
+					_, _ = w.Write([]byte(tc.response))
+				default:
+					t.Errorf("unexpected call: %s %s", r.Method, r.URL.Path)
+					w.WriteHeader(http.StatusNotFound)
+				}
+			})
+			ref, _ := domain.ParseForgeRepositoryURL(instance + "/acme/app")
+			client, err := OpenRepository(t.Context(), ref, "test-credential")
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, err := client.BranchContains(t.Context(), branch, head)
+			if got != tc.contains || (err != nil) != tc.wantErr || compared.Load() != (tc.tip != head) {
+				t.Fatalf("contains=%v compared=%v err=%v", got, compared.Load(), err)
 			}
 		})
 	}

@@ -12,6 +12,50 @@ import (
 	"agentflow/internal/forge"
 )
 
+// Forgejo's baseline update is a PR just like the scheduled delivery. It runs
+// before dispatch and must respect protection even when Git could push directly.
+func (e *Engine) alignForgeBaseline(rc domain.RepositoryContext, userID int64) error {
+	target := domain.NormalizeIntegrateBranch(rc.IntegrateBranch)
+	if target == "" {
+		return nil
+	}
+	ref, err := forge.RunRepository(rc)
+	if err != nil {
+		return err
+	}
+	unlock, err := lockIntegration(e.repo, rc.RepositoryID)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancel()
+	client, err := forge.OpenRepository(ctx, ref, e.repo.ForgeToken(userID, ref.Instance))
+	if err != nil {
+		return err
+	}
+	source := client.DefaultBranch()
+	if source == "" || domain.IsMainlineBranch(target, source) {
+		return errors.New("Forgejo 定时 SOP 只能合入非默认的集成分支")
+	}
+	if !domain.SameGitBranch(rc.DefaultBranch, source) {
+		return errors.New("仓库配置的默认分支与 Forgejo 不一致，请先更新仓库绑定")
+	}
+	head, err := client.BranchHead(ctx, source)
+	if err != nil {
+		return err
+	}
+	current, err := client.BranchContains(ctx, target, head)
+	if err != nil || current {
+		return err
+	}
+	_, err = client.SubmitAndMergePull(ctx, source, target, head,
+		fmt.Sprintf("LoopForge: 对齐 %s → %s", source, target),
+		"定时 SOP 派发前，将默认分支的提交同步到集成分支。")
+	return err
+}
+
 func (e *Engine) mergeForgeIntegration(ctx context.Context, run domain.Run, rc domain.RepositoryContext, ref domain.ForgeRepository, head string) (domain.DeliveryMR, error) {
 	ctx, cancel := context.WithTimeout(ctx, 45*time.Second)
 	defer cancel()
@@ -24,15 +68,12 @@ func (e *Engine) mergeForgeIntegration(ctx context.Context, run domain.Run, rc d
 	if client.DefaultBranch() == "" || domain.IsMainlineBranch(target, client.DefaultBranch()) {
 		return domain.DeliveryMR{}, errors.New("Forgejo 定时 SOP 只能合入非默认的集成分支")
 	}
-	current, err := client.BranchAt(ctx, target, head)
+	current, err := client.BranchContains(ctx, target, head)
 	if err != nil || current {
 		return domain.DeliveryMR{}, err
 	}
-	pr, err := client.SubmitPull(ctx, work, target, head, integrateMRTitle(run, rc, work, target), integrateMRDescription(run, work, target), false)
-	if err != nil {
-		return domain.DeliveryMR{}, err
-	}
-	pull, err := client.MergePull(ctx, pr.Pull, work, target, head)
+	pull, err := client.SubmitAndMergePull(ctx, work, target, head,
+		integrateMRTitle(run, rc, work, target), integrateMRDescription(run, work, target))
 	if err != nil {
 		return domain.DeliveryMR{}, err
 	}

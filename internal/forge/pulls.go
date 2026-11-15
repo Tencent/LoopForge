@@ -148,25 +148,45 @@ type Submission struct {
 
 var gitObjectID = regexp.MustCompile(`^(?:[a-f0-9]{40}|[a-f0-9]{64})$`)
 
-// BranchAt reports whether a branch already points to the pushed commit.
-// This covers an empty delivery or a retry after the work was integrated.
-func (c *RepositoryClient) BranchAt(ctx context.Context, branch, head string) (bool, error) {
+func (c *RepositoryClient) BranchHead(ctx context.Context, branch string) (string, error) {
 	var result struct {
 		Name   string `json:"name"`
 		Commit struct {
 			ID string `json:"id"`
 		} `json:"commit"`
 	}
-	if branch == "" || !gitObjectID.MatchString(head) {
-		return false, errors.New("Forgejo 需要目标分支和已推送的提交 SHA")
+	if branch == "" {
+		return "", errors.New("Forgejo 需要分支名")
 	}
 	if _, err := c.request(ctx, http.MethodGet, "/branches/"+url.PathEscape(branch), nil, &result); err != nil {
-		return false, err
+		return "", err
 	}
 	if result.Name != branch || !gitObjectID.MatchString(result.Commit.ID) {
-		return false, errors.New("Forgejo 未确认目标分支的提交")
+		return "", errors.New("Forgejo 未确认分支的提交")
 	}
-	return result.Commit.ID == head, nil
+	return result.Commit.ID, nil
+}
+
+// BranchContains compares immutable commits. A source with no commits ahead
+// of the target is already integrated, even if the target has advanced.
+func (c *RepositoryClient) BranchContains(ctx context.Context, branch, head string) (bool, error) {
+	if !gitObjectID.MatchString(head) {
+		return false, errors.New("Forgejo 需要有效的源提交 SHA")
+	}
+	target, err := c.BranchHead(ctx, branch)
+	if err != nil || target == head {
+		return target == head, err
+	}
+	var comparison struct {
+		TotalCommits *int `json:"total_commits"`
+	}
+	if _, err := c.request(ctx, http.MethodGet, "/compare/"+target+"..."+head+"?files=false&verification=false", nil, &comparison); err != nil {
+		return false, err
+	}
+	if comparison.TotalCommits == nil || *comparison.TotalCommits < 0 {
+		return false, errors.New("Forgejo 未确认源提交与目标分支的比较结果")
+	}
+	return *comparison.TotalCommits == 0, nil
 }
 
 // SubmitPull creates or reuses a same-repository PR whose source is exactly
@@ -246,6 +266,20 @@ func (c *RepositoryClient) MergePull(ctx context.Context, p Pull, source, target
 	}
 	if !merged.Merged || !c.matches(merged, source, target) {
 		return Pull{}, fmt.Errorf("Forgejo 未确认 PR #%d 已合并", p.Number)
+	}
+	return merged, nil
+}
+
+// SubmitAndMergePull leaves an opened PR available for review when Forgejo
+// refuses the merge. Include its link so the caller can resolve the blocker.
+func (c *RepositoryClient) SubmitAndMergePull(ctx context.Context, source, target, head, title, body string) (Pull, error) {
+	pr, err := c.SubmitPull(ctx, source, target, head, title, body, false)
+	if err != nil {
+		return Pull{}, err
+	}
+	merged, err := c.MergePull(ctx, pr.Pull, source, target, head)
+	if err != nil {
+		return Pull{}, fmt.Errorf("Forgejo PR %s 合并失败：%w", c.ref.PullURL(pr.Pull.Number), err)
 	}
 	return merged, nil
 }
