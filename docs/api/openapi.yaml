@@ -4362,6 +4362,7 @@ components:
         deptName: {type: string}
         avatarUrl: {type: string}
         gitTokenConfigured: {type: boolean, readOnly: true}
+        cnbTokenConfigured: {type: boolean, readOnly: true}
         codeBuddyApiKeyConfigured: {type: boolean, readOnly: true}
         codexApiKeyConfigured: {type: boolean, readOnly: true}
         codexBaseUrl: {type: string}
