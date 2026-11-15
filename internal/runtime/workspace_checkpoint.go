@@ -117,8 +117,8 @@ func CreateWorkspaceCheckpointTo(root string, destination io.Writer) error {
 		if err = writer.WriteHeader(header); err != nil {
 			return err
 		}
-		if filepath.Base(path) == ".git" && info.Mode().IsRegular() {
-			return fmt.Errorf("external Git worktree metadata cannot be checkpointed: %s", path)
+		if err := checkpointGitMetadata(path, info); err != nil {
+			return err
 		}
 		if info.Mode().IsRegular() {
 			return copyCheckpointFile(base, writer, path, header.Size)
@@ -137,6 +137,24 @@ func CreateWorkspaceCheckpointTo(root string, destination io.Writer) error {
 		return closeZip
 	}
 	return nil
+}
+
+// checkpointGitMetadata rejects Git metadata that can depend on objects outside
+// the archive. Do not resolve or read the referenced paths: they may be outside
+// the workspace and must not leak into checkpoint diagnostics.
+func checkpointGitMetadata(path string, info fs.FileInfo) error {
+	if filepath.Base(path) == ".git" && info.Mode().IsRegular() {
+		return fmt.Errorf("external Git worktree metadata cannot be checkpointed: %s; use a standalone checkout with its own .git directory before retrying", path)
+	}
+	if !strings.HasSuffix("/"+filepath.ToSlash(path), "/.git/objects/info/alternates") {
+		return nil
+	}
+	// Even relative alternates can escape the archive or become invalid when
+	// restored. Empty regular files do not borrow an object database.
+	if info.Mode().IsRegular() && info.Size() == 0 {
+		return nil
+	}
+	return fmt.Errorf("Git alternate object stores cannot be checkpointed: %s; materialize borrowed objects in a standalone checkout without alternates before retrying", path)
 }
 
 // checkpointEntryHeader builds the tar header for one workspace entry: symlink
