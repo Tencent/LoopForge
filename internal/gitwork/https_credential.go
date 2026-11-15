@@ -84,6 +84,9 @@ func IsManagedRemote(remote string) bool {
 	return err == nil && strings.EqualFold(u.Hostname(), managedHost())
 }
 
+// MentionsManagedHost reports whether text names a managed host.
+func MentionsManagedHost(text string) bool { return strings.Contains(text, managedHost()) }
+
 // ManagedHostPromptGlob matches a git credential prompt for a managed host.
 func ManagedHostPromptGlob() string { return "*" + managedHost() + "*" }
 

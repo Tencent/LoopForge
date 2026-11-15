@@ -87,7 +87,7 @@ const ctx = {
 ctx.document={activeElement:null,contains:()=>false,addEventListener(){},body:{dataset:{},classList:{add(){},remove(){}},appendChild(el){dom["#"+el.id]=el}},createElement:()=>host()};
 dom["#projectSwitcher"]={value:"",dispatchEvent(e){switcherEvents.push({type:e.type,value:this.value})}};
 vm.createContext(ctx);
-for (const name of ["parseGongfengRepoURL","repoDisplayPath","repoProviderLabel"]) vm.runInContext(extract(fs.readFileSync(issuesPath,"utf8"),name),ctx);
+for (const name of ["parseGongfengRepoURL","parseCNBRepoURL","repoDisplayPath","repoProviderLabel"]) vm.runInContext(extract(fs.readFileSync(issuesPath,"utf8"),name),ctx);
 vm.runInContext(fs.readFileSync(projectsPath,"utf8"),ctx);
 vm.runInContext(fs.readFileSync(drawerPath,"utf8"),ctx);
 vm.runInContext(fs.readFileSync(wizardPath,"utf8"),ctx);
@@ -176,7 +176,7 @@ function assertFooterLayout(step){
   W().repo.url="https://bitbucket.org/foo/bar";
   assert.equal(await ctx.projectWizardAddRepo(),false);
   assert.equal(requests.length,0);
-  assert.match(html(),/请输入 GitHub 链接或有效的 Git SSH 地址/);
+  assert.match(html(),/请输入 GitHub、CNB（cnb.cool）链接或有效的 Git SSH 地址/);
   Object.assign(W().repo,{url:"https://github.com/example/web-console",branch:"",integrate:"agentflow/integration"});
   assert.equal(await ctx.projectWizardAddRepo(),true);
   assert.equal(requests[0].url,"/api/repositories");assert.equal(requests[0].method,"POST");
@@ -194,6 +194,23 @@ function assertFooterLayout(step){
   W().repo.url="git@git.example.com:example/api-service.git";
   await ctx.projectWizardAddRepo();
   assert.equal(requests.length,1,"second repository does not touch the default");
+  assert.equal(W().repo.branch,"","a blank form pre-fills no branch");
+  W().repo.url="https://cnb.cool/org/team/repo/-/tree/main";
+  assert.match(ctx.projectWizardRepoHint(W().repo.url),/cnb\.cool\/org\/team\/repo/);
+  assert.equal(await ctx.projectWizardAddRepo(),true);
+  assert.equal(requests[1].body.provider,"cnb");
+  assert.equal(requests[1].body.gongfengProjectId,"cnb:org/team/repo");
+  assert.equal(requests[1].body.webUrl,"https://cnb.cool/org/team/repo");
+  assert.equal(requests[1].body.cloneUrl,"https://cnb.cool/org/team/repo.git");
+  assert.equal(requests[1].body.defaultBranch,"","a CNB repository without a branch lets the server read its default branch");
+  // Keep the fixture's repository ids stable for the steps below.
+  ctx.state.data.repositories.splice(ctx.state.data.repositories.findIndex(r=>r.gongfengProjectId==="cnb:org/team/repo"),1);
+  requests.length=0;
+  for(const bad of ["https://cnb.cool/org","https://user:pw@cnb.cool/org/repo","http://cnb.cool/org/repo"]){
+    W().repo.url=bad;
+    assert.equal(await ctx.projectWizardAddRepo(),false,bad);
+  }
+  assert.equal(requests.length,0);
   W().repo.url="https://git.example.com/example/api-service";
   assert.equal(await ctx.projectWizardAddRepo(),false,"duplicate repository");
   W().repo.url="";

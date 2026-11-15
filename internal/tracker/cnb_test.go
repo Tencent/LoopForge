@@ -53,7 +53,7 @@ func newCNBFixture(t *testing.T, withToken bool, api func(w http.ResponseWriter,
 	}
 	if withToken {
 		u, _ := st.UserByLoginName("cnb-owner")
-		if err := st.SetCNBToken(u.ID, cnbOwnerToken); err != nil {
+		if _, err := st.UpdateUserCredentials(u.ID, repo.UserCredentialUpdate{CNBToken: cnbOwnerToken}); err != nil {
 			t.Fatal(err)
 		}
 	}

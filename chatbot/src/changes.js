@@ -252,13 +252,18 @@ export function branchCompareUrl(repository) {
     return same
       ? `https://github.com/${github}/tree/${refPath(work)}`
       : `https://github.com/${github}/compare/${refPath(base)}...${refPath(work)}`;
+  const cnb = cnbRepoPath(repository?.cloneUrl);
+  if (cnb)
+    return same
+      ? `https://cnb.cool/${cnb}/-/tree/${refPath(work)}`
+      : `https://cnb.cool/${cnb}/-/compare/${refPath(base)}...${refPath(work)}`;
   const path = gongfengProjectPath(repository?.cloneUrl);
   if (!path) return "";
   if (same) return `https://git.example.com/${path}/-/tree/${refPath(work)}`;
   return `https://git.example.com/${path}/-/compare/${refPath(base)}...${refPath(work)}`;
 }
 
-// Only github.com and the legacy git.example.com remotes get a link: the
+// Only github.com, cnb.cool and the legacy git.example.com remotes get a link: the
 // token rules in the platform are scoped to those hosts, and other hosts may
 // not render the same URL shape.
 export function githubRepoPath(remote) {
@@ -267,6 +272,16 @@ export function githubRepoPath(remote) {
     /^(?:git@|ssh:\/\/git@)github\.com[:/]([^/]+\/[^/]+?)(?:\.git)?\/?$/.exec(raw) ||
     /^https:\/\/github\.com\/([^/]+\/[^/]+?)(?:\.git)?\/?$/.exec(raw);
   return match ? match[1] : "";
+}
+
+// cnb.cool group paths have two or more segments.
+export function cnbRepoPath(remote) {
+  const raw = String(remote || "").trim();
+  const match =
+    /^git@cnb\.cool:(.+)$/.exec(raw) || /^https:\/\/cnb\.cool\/(.+)$/.exec(raw);
+  if (!match) return "";
+  const path = match[1].replace(/\.git$/, "").replace(/^\/+|\/+$/g, "");
+  return /^[A-Za-z0-9_.-]+(\/[A-Za-z0-9_.-]+)+$/.test(path) && !path.split("/").includes("-") ? path : "";
 }
 
 export function gongfengProjectPath(remote) {

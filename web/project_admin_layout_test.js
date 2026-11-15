@@ -68,7 +68,7 @@ const ctx = {
 };
 ctx.document={activeElement:null,contains:()=>false};
 vm.createContext(ctx);
-for (const name of ["parseGongfengRepoURL","repoDisplayPath","repoProviderLabel"]) vm.runInContext(extract(fs.readFileSync(issuesPath,"utf8"),name),ctx);
+for (const name of ["parseGongfengRepoURL","parseCNBRepoURL","repoDisplayPath","repoProviderLabel"]) vm.runInContext(extract(fs.readFileSync(issuesPath,"utf8"),name),ctx);
 vm.runInContext(fs.readFileSync(projectsPath,"utf8"),ctx);
 vm.runInContext(fs.readFileSync(drawerPath,"utf8"),ctx);
 vm.runInContext("projectAdminFail=(form,name,message)=>{globalThis.__fail={name,message};return false}",ctx);
@@ -150,7 +150,7 @@ assert.match(list,/pa-rc-add/);
 const empty=ctx.projectRepoListHTML([],"");
 assert.match(empty,/还没有绑定代码仓库/);
 assert.equal((empty.match(/<li>/g)||[]).length,3);
-assert.match(empty,/粘贴 GitHub 链接或 Git SSH 地址[^]*确认分支[^]*保存即生效/);
+assert.match(empty,/粘贴 GitHub、CNB 链接或 Git SSH 地址[^]*确认分支[^]*保存即生效/);
 assert.match(empty,/添加第一个仓库/);
 
 // Detail panels.
@@ -260,6 +260,11 @@ assert.equal(ctx.projectDraftDirty({...draft,tapdClear:true},base),true);
   assert.equal(ctx.state.projectDraft.description,"未保存说明");
   assert.ok(ctx.state.data.repositories.some(r=>r.id==="r9"));
   assert.equal(dom["#repoDrawer"].classList.contains("open"),false,"drawer closes after saving");
+
+  // A CNB repository added with the branch field untouched leaves the default branch to the server.
+  vm.runInContext('Object.assign(repoDrawerState,{projectId:"web-console",repoId:""})',ctx);
+  const cnbPayload=ctx.repoDrawerPayload({elements:{repoUrl:el({value:"https://cnb.cool/org/team/repo"}),name:el({value:""}),defaultBranch:el({value:""}),integrateBranch:el({value:""}),localPath:el({value:""}),webUrl:el({value:""})}},ctx.parseGongfengRepoURL("https://cnb.cool/org/team/repo"));
+  assert.equal(cnbPayload.provider,"cnb");assert.equal(cnbPayload.defaultBranch,"");
 
   // Focus returns into the detail form after the drawer closes; the repo cards must still be rebuilt.
   requests.length=0;dom["#repoDrawer"].classList.add("open");

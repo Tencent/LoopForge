@@ -9,13 +9,14 @@ import (
 	"time"
 
 	"agentflow/internal/cnb"
-	"agentflow/internal/domain"
 
 	"github.com/gin-gonic/gin"
 )
 
-// cnbHandlers manages the current user's personal CNB (cnb.cool) access token.
-// The token needs repo-code:rw and repo-pr:rw and is only sent to the CNB API.
+// cnbHandlers verifies the current user's personal CNB (cnb.cool) access token.
+// It is saved and cleared with the other personal credentials
+// (PUT /api/users/:id/credentials: cnbToken, cnbTokenClear). The token needs
+// repo-code:rw and repo-pr:rw and is only sent to the CNB API.
 type cnbHandlers struct {
 	*deps
 }
@@ -43,43 +44,6 @@ func (h *cnbHandlers) ownUserID(c *gin.Context) (int64, bool) {
 		return 0, false
 	}
 	return id, true
-}
-
-// 路由: g.PUT("/api/users/:id/cnb-token", api.cnb.saveToken)
-func (h *cnbHandlers) saveToken(c *gin.Context) {
-	id, ok := h.ownUserID(c)
-	if !ok {
-		return
-	}
-	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 4<<10)
-	var input struct {
-		Token string `json:"token"`
-	}
-	if !decode(c, &input) {
-		return
-	}
-	token := strings.TrimSpace(input.Token)
-	if token == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "请粘贴 CNB 访问令牌"})
-		return
-	}
-	h.storeToken(c, id, token)
-}
-
-// 路由: g.DELETE("/api/users/:id/cnb-token", api.cnb.clearToken)
-func (h *cnbHandlers) clearToken(c *gin.Context) {
-	if id, ok := h.ownUserID(c); ok {
-		h.storeToken(c, id, "")
-	}
-}
-
-func (h *cnbHandlers) storeToken(c *gin.Context, id int64, token string) {
-	if err := h.repo.SetCNBToken(id, token); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-	user, _ := h.repo.User(id)
-	c.JSON(http.StatusOK, domain.PublicUser(user))
 }
 
 // 路由: g.GET/POST("/api/users/:id/cnb-token/verify", api.cnb.verifyToken)

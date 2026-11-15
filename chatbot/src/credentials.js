@@ -6,6 +6,7 @@ export const CREDENTIALS = {
   codexApiKey: "Codex API Key",
   claudeCodeApiKey: "Claude Code API Key",
   gitToken: "GitHub Git Token",
+  cnbToken: "CNB 访问令牌",
   gitSshKey: "Git SSH 密钥",
 };
 
@@ -93,6 +94,15 @@ export const CREDENTIAL_GUIDES = {
       "回到这里重试",
     ],
   },
+  cnbToken: {
+    url: "https://cnb.cool/profile/token",
+    link: "打开 CNB 创建访问令牌",
+    steps: [
+      "在 CNB「个人设置 → 访问令牌」新建令牌，授予 repo-code:rw 与 repo-pr:rw 权限并复制",
+      "到「个人配置 → CNB 访问令牌」粘贴，保存前会自动校验",
+      "回到这里点「重试节点」",
+    ],
+  },
   gitToken: {
     url: "/#/settings",
     link: "连接 GitHub",
@@ -148,6 +158,7 @@ const RULES = [
     "gitSshKey",
     /Git SSH (?:密钥|私钥)/i,
   ],
+  ["cnbToken", /CNB[^。\n]{0,12}(?:访问)?令牌/i],
   [
     "gitToken",
     /Git Token|工蜂[^。\n]{0,12}令牌|could not read Username|Authentication failed|HTTP Basic: Access denied|terminal prompts disabled|requested URL returned error: 40[13]/i,

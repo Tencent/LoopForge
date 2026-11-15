@@ -83,6 +83,9 @@ test("credential errors from the platform link to the right setting", () => {
       "claudeCodeApiKey",
       true,
     ],
+    ["CNB 访问令牌无效或已过期（HTTP 401）：请到「个人配置」重新生成并保存", "cnbToken", false],
+    ["你还没有配置 CNB 访问令牌，无法推送和发起 PR", "cnbToken", false],
+    ["需求责任人未配置 CNB 访问令牌，请让该账号到「个人配置」填写", "cnbToken", true],
     [
       "git clone https://github.com/a/b.git: exit status 128 (fatal: could not read Username for 'https://github.com': terminal prompts disabled)",
       "gitToken",

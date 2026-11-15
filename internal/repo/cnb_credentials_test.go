@@ -19,7 +19,7 @@ func TestCNBTokenStoreRoundTrip(t *testing.T) {
 	if got := s.GitHTTPSCredentials(1); len(got) != 0 {
 		t.Fatalf("a user without a token has credentials: %+v", got)
 	}
-	if err := s.SetCNBToken(1, " "+token+" "); err != nil {
+	if _, err := s.UpdateUserCredentials(1, UserCredentialUpdate{CNBToken: " " + token + " "}); err != nil {
 		t.Fatal(err)
 	}
 	got := s.GitHTTPSCredentials(1)
@@ -45,7 +45,7 @@ func TestCNBTokenStoreRoundTrip(t *testing.T) {
 	if got := s.GitHTTPSCredentials(1); len(got) != 1 {
 		t.Fatalf("token lost after unrelated writes: %+v", got)
 	}
-	if err := s.SetCNBToken(1, ""); err != nil {
+	if _, err := s.UpdateUserCredentials(1, UserCredentialUpdate{CNBTokenClear: true}); err != nil {
 		t.Fatal(err)
 	}
 	if got := s.GitHTTPSCredentials(1); len(got) != 0 {

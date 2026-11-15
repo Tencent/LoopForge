@@ -23,7 +23,7 @@ func claimCNBTask(t *testing.T, version string) (domain.RunnerTask, *httpRespons
 		t.Fatal(err)
 	}
 	actor, _ = f.s.UserByLoginName(actor.LoginName)
-	if err := f.s.SetCNBToken(actor.ID, testCNBToken); err != nil {
+	if err := setCNBToken(f.s, actor.ID, testCNBToken); err != nil {
 		t.Fatal(err)
 	}
 	runnerID, session := registerTestRunner(t, f.h)

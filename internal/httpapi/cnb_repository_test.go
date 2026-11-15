@@ -35,7 +35,7 @@ func TestBindCNBRepositoryProbesDefaultBranchWithTheBindersToken(t *testing.T) {
 		t.Fatalf("binding without a CNB token must fail clearly (HTTP %d): %s", noToken.Code, noToken.Body.String())
 	}
 
-	if err := f.s.SetCNBToken(f.user.ID, testCNBToken); err != nil {
+	if err := setCNBToken(f.s, f.user.ID, testCNBToken); err != nil {
 		t.Fatal(err)
 	}
 	resp := cvBRequest(t, f, http.MethodPost, "/api/repositories", map[string]any{"id": "cnb-repo", "projectId": "cnb-proj", "repoUrl": "https://cnb.cool/org/team/repo/-/tree/main"}, true)
@@ -59,7 +59,7 @@ func TestBindCNBRepositoryReportsProbeFailureAndHonoursExplicitBranch(t *testing
 	if err := f.s.PutProject(domain.Project{ID: "cnb-proj", Key: "CNBP", Name: "CNB", OwnerID: f.user.ID}); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.s.SetCNBToken(f.user.ID, testCNBToken); err != nil {
+	if err := setCNBToken(f.s, f.user.ID, testCNBToken); err != nil {
 		t.Fatal(err)
 	}
 	calls := 0

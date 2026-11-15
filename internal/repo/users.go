@@ -252,6 +252,8 @@ func userHasConfig(user domain.User) bool {
 type UserCredentialUpdate struct {
 	GitToken                     string             `json:"gitToken"`
 	GitTokenClear                bool               `json:"gitTokenClear"`
+	CNBToken                     string             `json:"cnbToken"`
+	CNBTokenClear                bool               `json:"cnbTokenClear"`
 	CodeBuddyAPIKey              string             `json:"codeBuddyApiKey"`
 	CodeBuddyAPIKeyClear         bool               `json:"codeBuddyApiKeyClear"`
 	CodeBuddyInternetEnvironment *string            `json:"codeBuddyInternetEnvironment"`
@@ -318,6 +320,11 @@ func (r *UsersRepo) updateUserCredentials(id int64, update UserCredentialUpdate)
 		// refresh token in place would overwrite the paste on the next use.
 		user.GongfengRefreshToken = ""
 		user.GongfengTokenExpiresAt = time.Time{}
+	}
+	if update.CNBTokenClear {
+		user.CNBToken = ""
+	} else if value := strings.TrimSpace(update.CNBToken); value != "" {
+		user.CNBToken = value
 	}
 	if update.CodeBuddyAPIKeyClear {
 		user.CodeBuddyAPIKey = ""
