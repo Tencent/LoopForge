@@ -258,7 +258,7 @@ func dockerImageNeedsBuild(ctx context.Context, snap *domain.RunnerSandboxSpec) 
 	if snap == nil || snap.Dockerfile == nil || strings.TrimSpace(snap.Dockerfile.Content) == "" {
 		return true
 	}
-	return !runtime.DockerImageCached(ctx, *snap.Dockerfile)
+	return runtime.DockerImageNeedsBuild(ctx, *snap.Dockerfile)
 }
 
 func formatElapsedCN(d time.Duration) string {
