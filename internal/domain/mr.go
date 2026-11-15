@@ -13,6 +13,8 @@ import (
 // project below before treating any link in free text as delivery evidence.
 var hostedReviewURL = regexp.MustCompile(`https?://([^/\s"'<>#]+)/([^\s"'<>#]+)/(pull|merge_requests)/(\d+)`)
 
+var cnbPullURL = regexp.MustCompile(`https?://cnb\.cool/([A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)+?)/-/pulls/(\d+)`)
+
 var githubPRLink = regexp.MustCompile(`^https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/pull/\d+/?$`)
 
 // IsGitHubPRURL reports whether text is exactly one GitHub pull request link.
@@ -122,6 +124,19 @@ func ParseGongfengMR(text string) (project string, iid int, url string, ok bool)
 func ParseGongfengMRs(text string) []GongfengMRRef {
 	var out []GongfengMRRef
 	seen := map[string]struct{}{}
+	for _, match := range cnbPullURL.FindAllStringSubmatch(text, -1) {
+		project := "cnb:" + match[1]
+		iid, _ := strconv.Atoi(match[2])
+		if iid <= 0 {
+			continue
+		}
+		key := gongfengMRKey(project, iid)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, GongfengMRRef{Project: project, IID: iid, URL: GongfengMRURL(project, iid)})
+	}
 	for _, match := range hostedReviewURL.FindAllStringSubmatch(text, -1) {
 		host, path, kind := match[1], match[2], match[3]
 		var project string

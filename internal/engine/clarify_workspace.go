@@ -50,6 +50,10 @@ func PrepareClarifyWorkspaceAtBranch(ctx context.Context, cacheDir string, repo 
 
 	if repo.Provider == domain.RepositoryProviderSSH {
 		ctx = gitwork.WithSSHRemote(ctx, cloneURL)
+	} else if repo.Provider == domain.RepositoryProviderCNB && strings.TrimSpace(credentials.GitHTTPCredentials["cnb.cool"].Token) == "" {
+		if info, err := os.Stat(cloneURL); err != nil || !info.IsDir() {
+			return "", fmt.Errorf("需求责任人未配置 CNB 访问令牌，请让该账号到「个人配置」填写 CNB 令牌（权限 repo-code:rw 与 repo-pr:rw）。新建需求分析拉代码用的是责任人凭证，不是当前点击的人")
+		}
 	}
 	ctx = withRunGitCredentials(ctx, credentials)
 	ctx = gitwork.WithHTTPRemote(ctx, cloneURL)

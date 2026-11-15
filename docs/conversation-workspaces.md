@@ -19,6 +19,7 @@
 工作区模式下的 CLI 进程（`runtime.BindGitWorkspace`）在每轮启动时按本轮发言人注入：
 
 - HTTPS：个人配置的 Git Token。`GIT_ASKPASS` 指向工作区 `.agentflow/runtime/git-askpass-hosts`，脚本本身不含令牌，从提示里解析出 URL 主机，只在它恰好是 `https://github.com` 时以 `x-access-token` 应答；`github.com.example`、`github.com@example`、`http://` 等其他地址都拿不到凭据。带 `oauth2:`/`private:` 前缀的令牌不是 GitHub 令牌，不会注入。`GIT_TERMINAL_PROMPT=0`，不会卡在交互输入上。
+- cnb.cool：个人配置的 CNB 令牌，只在请求 cnb.cool 时由 git 的 cnb.cool 专用 helper 应答，GitHub 令牌不会发给 cnb.cool，CNB 令牌也不会发给其他主机。对话区只负责推送分支，CNB 的 PR 需要用户自己在 cnb.cool 上开。
 - `GH_TOKEN`：同一个令牌，供 `gh` 或 `curl` 调 GitHub API。平台进程自身的 `GH_TOKEN`/`GITHUB_TOKEN` 不会透传进沙箱。
 - SSH 克隆使用按 `host:port` 绑定的个人密钥。同一主机和端口的仓库共用该密钥。执行进程在内存中持有私钥，并通过临时 ssh-agent 签名。沙箱只接收 agent socket、公钥与 SSH 配置。平台内置 `github.com:22` 与 `ssh.github.com:443` 的主机公钥，其他主机由平台管理员在「平台管理 → Git SSH 主机信任」核验并登记。部署文件 `AGENTFLOW_GIT_SSH_KNOWN_HOSTS` 的条目与页面记录合并生效。Runner 0.11.1 及以上会在启动工作区会话时收到匹配的条目。同一主机和端口优先使用平台下发的受信公钥。平台仅下发吊销记录或没有匹配条目时，Runner 使用本地配置的受信公钥。两处的 `@revoked` 条目都生效。
 - 提交身份：`GIT_CONFIG_SYSTEM` 设为发言人的登录名，邮箱 `<login>@users.noreply.loopforge.invalid`；Agent 可以用 `git config --global/--local` 覆盖。

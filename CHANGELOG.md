@@ -2,6 +2,10 @@
 
 Platform releases use `vX.Y.Z` tags and publish `ghcr.io/tencent/loopforge`. LoopForge Local packages use `local-vX.Y.Z` tags and are published by manually running the `release-local` workflow.
 
+## Unreleased
+
+- CNB (cnb.cool) repositories can be bound to a project, with Git access, delivery pull requests and merge-status sync. Each user saves a personal CNB access token (`repo-code:rw`, `repo-pr:rw`) in 个人配置; git carries a cnb.cool-scoped credential helper, so the GitHub token is never offered to cnb.cool and the CNB token never leaves it. A conversation workspace pushes with the requester's CNB token; the pull request is opened by the user on cnb.cool. Upgrade execution machines to Runner 0.12.4 or later: the platform refuses to dispatch a CNB repository to an older one. `migrations/047_cnb_credentials.sql` is optional and can be re-run; startup AutoMigrate adds the `user_configs.cnb_token` column.
+
 ## 0.4.3 — LOOP orchestration, execution machines and asset evolution
 
 ### Platform

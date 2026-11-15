@@ -8,6 +8,36 @@ import (
 
 var githubRepositoryPath = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`)
 
+var cnbPathSegment = regexp.MustCompile(`^[A-Za-z0-9_.-]+$`)
+
+// parseCNBRepositoryURL accepts https://cnb.cool/<group>/<repo> with any
+// number of group levels, optionally followed by .git or a /-/ sub page, and
+// the cnb:<slug> shorthand stored as the project identity.
+func parseCNBRepositoryURL(s string) (GongfengRepoInfo, bool) {
+	if slug, ok := strings.CutPrefix(s, "cnb:"); ok {
+		s = "https://cnb.cool/" + slug
+	} else if strings.HasPrefix(s, "cnb.cool/") {
+		s = "https://" + s
+	}
+	u, err := url.Parse(s)
+	if err != nil || u.Host != "cnb.cool" || u.User != nil || u.Scheme != "https" {
+		return GongfengRepoInfo{}, false
+	}
+	path, _, _ := strings.Cut(strings.Trim(u.Path, "/"), "/-/")
+	path = strings.TrimSuffix(strings.TrimSuffix(path, "/-"), ".git")
+	segments := strings.Split(path, "/")
+	if len(segments) < 2 {
+		return GongfengRepoInfo{}, false
+	}
+	for _, segment := range segments {
+		if !cnbPathSegment.MatchString(segment) || segment == "." || segment == ".." {
+			return GongfengRepoInfo{}, false
+		}
+	}
+	web := "https://cnb.cool/" + path
+	return GongfengRepoInfo{Project: "cnb:" + path, Name: segments[len(segments)-1], WebURL: web, CloneURL: web + ".git"}, true
+}
+
 // ParseRepositoryURL adds public hosting without changing the upstream adapter.
 // The prefixed remote identity prevents collisions with enterprise project IDs.
 func ParseRepositoryURL(raw string) (GongfengRepoInfo, bool) {
@@ -25,6 +55,9 @@ func ParseRepositoryURL(raw string) (GongfengRepoInfo, bool) {
 	}
 	if strings.HasPrefix(s, "github.com/") {
 		s = "https://" + s
+	}
+	if info, ok := parseCNBRepositoryURL(s); ok {
+		return info, true
 	}
 	u, err := url.Parse(s)
 	if err == nil && u.Host == "github.com" && u.User == nil && (u.Scheme == "https" || u.Scheme == "http") {

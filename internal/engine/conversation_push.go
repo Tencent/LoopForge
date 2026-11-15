@@ -32,10 +32,14 @@ func (e *Engine) PushConversationWorkspace(ctx context.Context, runID string, re
 	if WorkspaceRunID(run) != run.ID {
 		return nil, fmt.Errorf("子 LOOP 共享父任务工作区，请从父任务提交")
 	}
+	httpCreds := e.repo.GitHTTPCredentialSecrets(ctx, requesterID)
 	var repositories []domain.RepositoryContext
 	for _, rc := range run.RepositoryContexts() {
 		if rc.ReadOnly || strings.TrimSpace(rc.CloneURL) == "" || strings.TrimSpace(rc.WorkBranch) == "" {
 			continue
+		}
+		if rc.Provider == domain.RepositoryProviderCNB && strings.TrimSpace(httpCreds["cnb.cool"].Token) == "" {
+			return nil, fmt.Errorf("%s: 未配置 CNB 访问令牌，无法推送工作分支。请到「个人配置」填写 CNB 令牌（权限 repo-code:rw 与 repo-pr:rw），打开 https://cnb.cool/profile/token 生成", rc.Name)
 		}
 		repositories = append(repositories, rc)
 	}
@@ -56,7 +60,7 @@ func (e *Engine) PushConversationWorkspace(ctx context.Context, runID string, re
 	sharedTarget = strings.TrimSpace(sharedTarget)
 	ctx, cancel := context.WithTimeout(ctx, conversationPushTimeout)
 	defer cancel()
-	ctx = withGitIdentity(withRunGitCredentials(ctx, runtime.RunCredentials{GitHTTPCredentials: e.repo.GitHTTPCredentialSecrets(ctx, requesterID)}), gitUserName, gitUserEmail)
+	ctx = withGitIdentity(withRunGitCredentials(ctx, runtime.RunCredentials{GitHTTPCredentials: httpCreds}), gitUserName, gitUserEmail)
 	ctx = gitwork.WithSSHKeys(e.withSSHKnownHosts(ctx), sshKeys)
 	if runnerID := e.defaultExecutionRunner(run); runnerID != "" {
 		return e.pushConversationOnRunner(ctx, runnerID, run, repositories, requesterID, gitUserName, gitUserEmail, message, sharedTarget)

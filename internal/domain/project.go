@@ -117,6 +117,10 @@ func GitOnlyRepositoryProvider(provider string) bool {
 	return provider == RepositoryProviderSSH || provider == RepositoryProviderHTTPS || provider == RepositoryProviderHTTP
 }
 
+// RepositoryProviderCNB is a repository on cnb.cool. It authenticates with the
+// user's CNB token only, never with the global Git token.
+const RepositoryProviderCNB = "cnb"
+
 type Repository struct {
 	ID                         string    `json:"id"`
 	ProjectID                  string    `json:"projectId"`

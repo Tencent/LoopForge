@@ -167,25 +167,11 @@ Runner conversation workspace preparation follows the conversation request's lif
 
 A clone that is stopped this way is not retried, since a retry would wait on the same network. When the execution host reaches GitHub or Debian mirrors slowly, point git at a proxy (`git config --global http.proxy`) and use a nearby package mirror in the Dockerfile rather than raising these limits.
 
-### Self-hosted Git repositories over HTTPS
-
-In **Platform administration → Git Host Trust**, add an HTTPS host, including its port if it differs from 443. Resolve the hostname or enter approved IP addresses manually, then review and confirm the list. For an IPv4 server, enter its hostname in the host field and include its IPv4 addresses in the authorization. For a direct IPv6 connection, enter `fd00::2` for port 443 or `[fd00::2]:8443` for a custom port. The authorization covers that IP, and the Git server's TLS certificate must include the IP in its subject alternative names. A clone URL uses the bracketed form, for example `https://[fd00::2]:8443/team/repo.git`.
-
-Signed-in users see the instance's hostname or IPv6 address and Git provider in **Personal settings → Git access tokens**. They can select the instance and enter their own token. The approved IP address lists appear in platform administration. When GitLab returns a merge request link with a different host or port, LoopForge tracks the MR using the authorized endpoint that it queried.
-
-The platform checks the approved addresses before dialing for token verification, pull or merge request discovery, and status synchronization. HTTPS connections use the platform's normal TLS trust chain. For each registered hostname and port, the platform dials only the addresses in that authorization. `AGENTFLOW_GIT_EGRESS_ALLOW_CIDRS` applies only to hosts without an HTTPS authorization.
-
-When migrating a host from deployment CIDRs, include every IP the platform should be able to reach in the authorization. To rotate an address, edit the saved list and review the added and removed addresses before confirming.
-
-### Git repositories over HTTP
-
-In **Platform administration → Git Host Trust**, enter an HTTP instance address and select **Authorize**. This accepts hostnames and literal IP addresses, such as `http://git.example.org:8080`, `http://10.0.0.5:8080` or `http://[fd00::2]:8080`. HTTP sends credentials in cleartext.
-
-Under **Personal settings → Git access tokens**, select the authorized HTTP instance and enter your token and the server's Git authentication username if required. Add the repository using its `http://` clone URL. For a host that also has a managed provider, paste the `git clone http://host/team/repo.git` command to explicitly choose HTTP. **Check repository access** runs `git ls-remote` against a repository at that exact endpoint. A successful check confirms read access. A push also requires a server that accepts pushes and credentials with write access.
-
-HTTP and HTTPS have separate authorizations and personal credentials. Git resolves hostnames using the execution environment. Platform-managed Git disables redirects for authorized HTTP credentials. HTTP repositories on an execution machine require Runner 0.12.4 or later. The Git transport supports generic repositories. PR and MR APIs depend on the hosting provider.
-
 If a Docker image lacks Git, the LOOP can install it and use the same host-scoped credential helper in that script. The installed Git uses its own HTTP redirect settings.
+
+### CNB repositories (cnb.cool)
+
+Bind a CNB repository with its web or clone address, for example `https://cnb.cool/group/subgroup/repo`; any number of group levels is accepted. Each user saves a personal CNB access token under **Personal settings** (generate it at `https://cnb.cool/profile/token` with `repo-code:rw` and `repo-pr:rw`). The token is sent only to `cnb.cool` and `api.cnb.cool`: git commands carry a cnb.cool-scoped credential helper that answers with the token, or refuses when none is configured, so the global Git token is never offered to CNB. LOOP checkouts and pushes use the run's responsible user, a conversation workspace uses the requesting user's CNB token for git access to cnb.cool (the agent opens the pull request itself; the platform does not create it), and delivery pull requests and background merge status use the project owner. `migrations/047_cnb_credentials.sql` is optional and can be re-run: startup AutoMigrate already adds the `user_configs.cnb_token` column.
 
 ### Git repositories over SSH
 
@@ -279,7 +265,7 @@ For an external MySQL deployment, review that migration and check column existen
 | Already applied by the installer and `./start.sh pull` | `001_run_obs_generated_columns.sql`, `migrations/seed/*.sql`, `033_generic_sop_mr_node.sql`, `038_generic_sop_host_credentials.sql` | Nothing; the script above covers it |
 | Applied before startup by `./start.sh pull` for an existing Compose database | `041_native_sandbox_inline_assets.sql` | See [Migrating existing sandboxes to inline assets](#migrating-existing-sandboxes-to-inline-assets) |
 | Required manual upgrade migrations | `009_bot_interactions_utf8mb4.sql`, `036_git_http_credentials.sql` | Follow each migration's timing and prerequisites. [Migrating existing GitHub credentials](#migrating-existing-github-credentials) |
-| Optional backfills and rewrites of existing rows | `016_public_optional_repositories.sql`, `021_assistant_session_sources.sql` | Run them if the installation needs the converted rows |
+| Optional backfills and rewrites of existing rows | `016_public_optional_repositories.sql`, `021_assistant_session_sources.sql`, `047_cnb_credentials.sql` | Run them if the installation needs the converted rows (`047_cnb_credentials.sql` is optional; AutoMigrate adds `user_configs.cnb_token` at startup) |
 
 Compose runs `migrations/042_run_artifacts_content_mediumtext.sql` before the
 platform starts, including during `./start.sh pull`. The native development

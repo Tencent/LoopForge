@@ -20,6 +20,7 @@ import (
 type Service struct {
 	githubAPIBase         string // Tests inject an HTTP server; production uses api.github.com.
 	gitHostAPIBase        string // Tests inject an HTTP server for every Git HTTP credential host.
+	cnbAPIBase            string // Tests inject an HTTP server; production uses api.cnb.cool.
 	cfg                   *syncConfigHolder
 	gongfeng              *MCPClient
 	tapd                  *MCPClient
