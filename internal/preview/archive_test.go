@@ -4,10 +4,13 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"syscall"
 	"testing"
 	"testing/iotest"
 
@@ -46,13 +49,19 @@ func TestArchiveDirRejectsSymlinkAndMissingIndex(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dist, "index.html"), []byte("<html></html>"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Symlink(outside, filepath.Join(dist, "link.js")); err != nil {
-		t.Fatal(err)
-	}
-	buf.Reset()
-	if _, err := ArchiveDir(workspace, "dist", "index.html", Limits{MaxFiles: 10, MaxCompressed: 1 << 20, MaxExpanded: 1 << 20}, &buf); err == nil {
-		t.Fatal("expected symlink rejection")
-	}
+	t.Run("symlink", func(t *testing.T) {
+		if err := os.Symlink(outside, filepath.Join(dist, "link.js")); err != nil {
+			// Windows may disable symlink creation for unprivileged processes.
+			if runtime.GOOS == "windows" && errors.Is(err, syscall.Errno(1314)) { // ERROR_PRIVILEGE_NOT_HELD
+				t.Skip("symlink creation requires Developer Mode or elevated privileges")
+			}
+			t.Fatal(err)
+		}
+		buf.Reset()
+		if _, err := ArchiveDir(workspace, "dist", "index.html", Limits{MaxFiles: 10, MaxCompressed: 1 << 20, MaxExpanded: 1 << 20}, &buf); err == nil {
+			t.Fatal("expected symlink rejection")
+		}
+	})
 }
 
 func TestArchiveDirIsDeterministicAndRoundTrips(t *testing.T) {
