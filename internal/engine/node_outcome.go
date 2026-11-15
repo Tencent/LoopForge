@@ -27,6 +27,8 @@ func (e *Engine) waitApproval(runID string, node domain.WorkflowNode, msg string
 // overwrite the reset nor let it be scheduled twice. A successful outcome may
 // still land after retries bumped Attempt, so a live agent that passed gates
 // is not dropped for an attempt mismatch. Failures stay attempt-scoped.
+// When model recovery is enabled, both outcomes also require the same execution
+// sequence because a model retry can reuse an attempt.
 func shouldCommitNodeOutcome(r domain.Run, nr *domain.NodeRun, generation, attempt int, success bool, sequence int) bool {
 	if r.Generation != generation || nr == nil {
 		return false
@@ -34,7 +36,7 @@ func shouldCommitNodeOutcome(r domain.Run, nr *domain.NodeRun, generation, attem
 	if nr.Status != "running" && nr.Status != "pending_input" {
 		return false
 	}
-	if nr.ExecutionSequence != sequence {
+	if nr.ModelRetry != nil && nr.ExecutionSequence != sequence {
 		return false
 	}
 	if success {
@@ -56,8 +58,7 @@ func (e *Engine) nodeFailedAt(runID string, node domain.WorkflowNode, attempt, g
 		var modelErr *runtime.ModelError
 		if errors.As(err, &modelErr) {
 			nr.ModelErrorClass = string(modelErr.Class)
-			e.event(r, node.ID, "model.error", "模型服务错误："+string(modelErr.Class))
-			r.Events[len(r.Events)-1].Attributes = map[string]any{"class": string(modelErr.Class), "model": nr.ActiveModel}
+			e.eventWithAttributes(r, node.ID, "model.error", "模型服务错误："+string(modelErr.Class), map[string]any{"class": string(modelErr.Class), "model": nr.ActiveModel})
 			if nr.ModelRetry != nil {
 				switch modelErr.Class {
 				case runtime.ModelErrorRateLimited, runtime.ModelErrorOverloaded, runtime.ModelErrorTimeout:
@@ -80,8 +81,7 @@ func (e *Engine) nodeFailedAt(runID string, node domain.WorkflowNode, attempt, g
 						if nr.SessionID != "" {
 							nr.ResumeSessionID = nr.SessionID
 						}
-						e.event(r, node.ID, "model.retry_waiting", fmt.Sprintf("%s；将在 %s 后重试", modelErr.Class, delay.Round(time.Second)))
-						r.Events[len(r.Events)-1].Attributes = map[string]any{"class": string(modelErr.Class), "retry": nr.TransientRetries, "delayMs": delay.Milliseconds(), "nextRetryAt": nr.NextRetryAt}
+						e.eventWithAttributes(r, node.ID, "model.retry_waiting", fmt.Sprintf("%s；将在 %s 后重试", modelErr.Class, delay.Round(time.Second)), map[string]any{"class": string(modelErr.Class), "retry": nr.TransientRetries, "delayMs": delay.Milliseconds(), "nextRetryAt": nr.NextRetryAt})
 						return
 					}
 					// Exhaustion must not fall through to the ordinary attempt budget.

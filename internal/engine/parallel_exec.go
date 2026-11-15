@@ -106,9 +106,10 @@ func (e *Engine) registerNodeExecution(runID, nodeID string, attempt, sequence i
 }
 
 // nodeExecutionLive reports whether the persisted node still belongs to the
-// execution that started it: same attempt and still in flight.
+// execution that started it: same attempt and still in flight. Model recovery
+// also requires the same sequence because retries can reuse an attempt.
 func nodeExecutionLive(nr *domain.NodeRun, attempt, sequence int) bool {
-	return nr != nil && nr.Attempt == attempt && nr.ExecutionSequence == sequence && (nr.Status == "running" || nr.Status == "pending_input")
+	return nr != nil && nr.Attempt == attempt && (nr.ModelRetry == nil || nr.ExecutionSequence == sequence) && (nr.Status == "running" || nr.Status == "pending_input")
 }
 
 // reconcileNodeExecutions cancels executions whose node was reset or

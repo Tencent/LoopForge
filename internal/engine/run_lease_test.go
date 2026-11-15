@@ -676,6 +676,17 @@ func TestShouldCommitNodeOutcome(t *testing.T) {
 	if shouldCommitNodeOutcome(r, running, 1, 1, false, 0) {
 		t.Fatal("stale attempt must not fail")
 	}
+	running.ExecutionSequence = 2
+	if !shouldCommitNodeOutcome(r, running, 1, 1, true, 1) || !nodeExecutionLive(running, 8, 1) {
+		t.Fatal("unconfigured node should retain the original attempt behavior")
+	}
+	running.ModelRetry = &domain.ModelRetryPolicy{}
+	if shouldCommitNodeOutcome(r, running, 1, 1, true, 1) || shouldCommitNodeOutcome(r, running, 1, 8, false, 1) || nodeExecutionLive(running, 8, 1) {
+		t.Fatal("model retry must reject an older execution sequence")
+	}
+	if !shouldCommitNodeOutcome(r, running, 1, 8, true, 2) || !nodeExecutionLive(running, 8, 2) {
+		t.Fatal("matching model recovery execution should remain live")
+	}
 	succeeded := &domain.NodeRun{Status: "succeeded", Attempt: 1}
 	if shouldCommitNodeOutcome(r, succeeded, 1, 8, false, 0) {
 		t.Fatal("failed must not overwrite succeeded")

@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"time"
@@ -103,8 +104,7 @@ func (e *Engine) advanceFallbackModel(r *domain.Run, nodeID string, nr *domain.N
 		nr.ResumeSessionID = ""
 		nr.SessionID = ""
 		nr.Activity = "切换备选模型，使用已有工作区重新执行"
-		e.event(r, nodeID, "model.fallback", fmt.Sprintf("模型 %s → %s（%s）；使用新会话", previous, next, reason))
-		r.Events[len(r.Events)-1].Attributes = map[string]any{"class": string(reason), "fromModel": previous, "toModel": next}
+		e.eventWithAttributes(r, nodeID, "model.fallback", fmt.Sprintf("模型 %s → %s（%s）；使用新会话", previous, next, reason), map[string]any{"class": string(reason), "fromModel": previous, "toModel": next})
 		return true
 	}
 	return false
@@ -127,6 +127,25 @@ func nextModelRetryAt(r domain.Run) time.Time {
 		}
 	}
 	return next
+}
+
+// waitForModelRetry sleeps until the next deadline, a scheduler wakeup, or cancellation.
+// A zero deadline waits for a wakeup or cancellation without spinning.
+func waitForModelRetry(ctx context.Context, wake <-chan struct{}, next time.Time) {
+	if next.IsZero() {
+		select {
+		case <-ctx.Done():
+		case <-wake:
+		}
+		return
+	}
+	timer := time.NewTimer(time.Until(next))
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+	case <-wake:
+	case <-timer.C:
+	}
 }
 
 func modelRetryDue(r domain.Run, now time.Time) bool {

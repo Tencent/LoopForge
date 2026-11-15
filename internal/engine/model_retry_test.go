@@ -119,7 +119,7 @@ func TestModelRetryCapsServerDelay(t *testing.T) {
 func TestModelRetryRejectsStaleSuccessAndInterruption(t *testing.T) {
 	e, store := newRecoveryEngine(t)
 	node := domain.WorkflowNode{ID: "n"}
-	run := domain.Run{ID: "stale-success", Status: "running", Generation: 1, Nodes: map[string]*domain.NodeRun{"n": {NodeID: "n", Status: "running", Attempt: 1, ExecutionSequence: 2}}}
+	run := domain.Run{ID: "stale-success", Status: "running", Generation: 1, Nodes: map[string]*domain.NodeRun{"n": {NodeID: "n", Status: "running", Attempt: 1, ExecutionSequence: 2, ModelRetry: &domain.ModelRetryPolicy{}}}}
 	if err := store.PutRun(run); err != nil {
 		t.Fatal(err)
 	}
@@ -396,5 +396,34 @@ func TestNextModelRetryAtUsesEarliestDeadline(t *testing.T) {
 	}}
 	if got := nextModelRetryAt(run); !got.Equal(now.Add(time.Second)) {
 		t.Fatalf("next retry = %s", got)
+	}
+}
+
+func TestWaitForModelRetryRespondsToWakeAndCancellation(t *testing.T) {
+	for _, action := range []string{"wake", "cancel"} {
+		t.Run(action, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			wake, done := make(chan struct{}, 1), make(chan struct{})
+			go func() {
+				waitForModelRetry(ctx, wake, time.Time{})
+				close(done)
+			}()
+			select {
+			case <-done:
+				t.Fatal("zero deadline returned without a wakeup")
+			default:
+			}
+			if action == "wake" {
+				wake <- struct{}{}
+			} else {
+				cancel()
+			}
+			select {
+			case <-done:
+			case <-time.After(time.Second):
+				t.Fatal("wait did not respond")
+			}
+		})
 	}
 }
