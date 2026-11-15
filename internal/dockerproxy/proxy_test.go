@@ -129,6 +129,7 @@ func (d *fakeDaemon) count() int {
 }
 
 type harness struct {
+	upstream  string
 	daemon    *fakeDaemon
 	client    *http.Client
 	workspace string
@@ -191,7 +192,7 @@ func startAPI(t *testing.T, api string) *harness {
 		var d net.Dialer
 		return d.DialContext(ctx, "unix", proxy.Socket())
 	}}}
-	return &harness{daemon: daemon, client: client, workspace: workspace, root: root}
+	return &harness{upstream: upstream, daemon: daemon, client: client, workspace: workspace, root: root}
 }
 
 func (h *harness) do(t *testing.T, method, path string, body any) (int, string) {
@@ -326,7 +327,6 @@ func TestOnlyOwnObjectsAreReachable(t *testing.T) {
 		{"POST", "/build?networkmode=host"},
 		{"POST", "/build?networkmode=container:theirs"},
 		{"POST", "/build?cgroupparent=/"},
-		{"POST", "/grpc"},
 	}
 	for _, c := range denied {
 		before := h.daemon.count()

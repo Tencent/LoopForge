@@ -176,3 +176,56 @@ func TestLiveDockerCLI(t *testing.T) {
 		}
 	}
 }
+
+// TestLiveBuildx runs docker buildx (BuildKit over /grpc) through the proxy.
+// Opt in with DOCKERPROXY_LIVE_UPSTREAM; needs the docker-buildx plugin.
+func TestLiveBuildx(t *testing.T) {
+	upstream := os.Getenv("DOCKERPROXY_LIVE_UPSTREAM")
+	if upstream == "" {
+		t.Skip("set DOCKERPROXY_LIVE_UPSTREAM to a docker daemon socket")
+	}
+	if err := exec.Command("docker", "buildx", "version").Run(); err != nil {
+		t.Skip("docker buildx not installed")
+	}
+	dir, err := os.MkdirTemp("/tmp", "dpbx")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	workspace := filepath.Join(dir, "ws")
+	if err := os.MkdirAll(workspace, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, "Dockerfile"), []byte("FROM scratch\nCOPY hello /hello\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, "hello"), []byte("hi"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	id := "bx" + filepath.Base(dir)
+	proxy, err := Start(Config{Upstream: upstream, Socket: filepath.Join(dir, "d.sock"), Workspace: id, BindRoots: []string{workspace}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = proxy.Close() })
+	build := func(args ...string) (string, error) {
+		cmd := exec.Command("docker", append([]string{"buildx", "build", "--progress", "plain"}, append(args, workspace)...)...)
+		cmd.Env = append(os.Environ(), "DOCKER_HOST=unix://"+proxy.Socket(), "BUILDX_BUILDER=", "DOCKER_CONFIG="+dir)
+		out, err := cmd.CombinedOutput()
+		return string(out), err
+	}
+	out, err := build("-t", "lf-buildx-probe:"+id, "--load")
+	t.Logf("plain build: err=%v\n%s", err, out)
+	if strings.Contains(out, "LoopForge") {
+		t.Errorf("an ordinary buildx build must pass the proxy:\n%s", out)
+	}
+	for name, args := range map[string][]string{
+		"network host": {"--network", "host"},
+		"entitlement":  {"--allow", "network.host"},
+	} {
+		out, err := build(args...)
+		if err == nil || !strings.Contains(out, "LoopForge") {
+			t.Errorf("%s should be refused by the proxy: %v\n%s", name, err, out)
+		}
+	}
+}

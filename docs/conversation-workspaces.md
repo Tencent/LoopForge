@@ -49,7 +49,7 @@
 - 拒绝逃逸：`--privileged`、`--cap-add`、设备与 GPU、`--security-opt`（`no-new-privileges` 除外）、宿主 PID/IPC/UTS/userns/cgroupns/网络命名空间、自定义 runtime、`--cgroup-parent`、host/macvlan/ipvlan 网络、带 driver 选项的卷、`--network host` 构建；swarm、插件、`system df` 等接口不开放。
 - 挂载：bind 源只能在工作区（`<会话根>/ws`，代理换成守护进程看到的宿主路径）或会话 HOME 之内，路径先解析软链（包括尚不存在的子目录所在的父目录）再判定。工作区根和 HOME 根本身是挂载点，Agent 换不掉，照常 bind；根下面的路径在 Docker 26+（API 1.45）改写成一个绑定到该根的本地卷（`lf-bind-<工作区>-<根哈希>`，代理创建并打标签，该前缀留给平台）的 `Subpath` 挂载——守护进程打开卷子路径时不会跟随软链跳出卷，检查之后再把目录换成软链也无法把挂载导到工作区外。bind 的传播（`shared` 等）与 SELinux 选项被丢弃，其他未知选项拒绝；缺失的源目录照旧先创建。更早的守护进程没有 subpath，退回到交付解析后的真实路径（检查后换软链的竞态仍在）。删除这个卷只卸载绑定，不会删除工作区里的文件。命名卷属于别的工作区就拒绝，不存在时由代理带标签创建。
 - 生命周期：CLI 进程退出时代理关闭，本工作区仍在运行的容器被 `docker stop`（不删除，下轮可以 `docker start`）。工作区被永久删除时（删除运行、删除对话、孤儿目录回收），先按标签删除它的全部容器（含匿名卷）、网络和命名卷；目录早已被回收的工作区按同一路径算出标签，照样清理。带快照的空闲回收（之后可能在原路径恢复）只删容器和网络，命名卷保留到永久删除，恢复后数据还在。`/tmp/lf-docker-*` 目录里记有所属会话根，会话根不存在时在下一次启动工作区 CLI 时清掉。
-- 构建：buildx 直连 BuildKit 的 `/grpc` 通道无法逐项检查，代理拒绝；工作区环境设 `DOCKER_BUILDKIT=0`，`docker build`/`docker compose build` 走经典 `/build`，其网络模式、`-t` 覆盖与标签都受检查。拉取的公共镜像由平台的镜像回收处理。
+- 构建：经典 `/build` 检查查询参数（网络模式、`--cgroup-parent`、`-t` 覆盖）并注入工作区标签。buildx（`docker build` 的默认实现）走 `/grpc`：代理在两侧都终止 h2c，逐个读 gRPC 调用。`Control.Solve` 按同样规则检查——拒绝任何 entitlement（`--allow network.host`、`security.insecure` 等）、`force-network-mode=host`、`cgroup-parent`，`moby`/`image`/`docker` 导出的镜像名只能写到本工作区的或新的名字——并追加 `label:loopforge.workspace` 前端参数（Dockerfile 前端据此给镜像打标签，追加在最后，请求里的同名参数无效）。其余 Control 调用与 LLB bridge 原样转发，构建缓存清理（`Prune`）、改写构建历史（`UpdateBuildHistory`）和未知服务拒绝。拉取的公共镜像由平台的镜像回收处理。
 
 `PUT /api/assistant/sessions/{id}/sandbox` 接受 `{ "sandboxProfileId": "id 或空字符串" }`，具备项目访问权限的会话参与者均可调用；生成期间和任务会话拒绝变更。已有工作区不受影响，新选择只用于之后新开的工作区。普通会话创建时也可以提交 `sandboxProfileId`，后续普通会话保存不能覆盖已保存的选择或伪造工作区绑定。
 
@@ -80,6 +80,10 @@
 - 原生对话前端 178 项测试通过；后端 HTTP、Engine、Runner、Repo、MCP 与 Web/OpenAPI 契约回归通过。
 - 独立 Docker MySQL 验证了会话环境与生成启动的并发事务、SOP 配额，以及迁移脚本的作用范围与幂等性。
 - 真实 CodeBuddy 对话分别选择项目默认和会话覆盖 Docker 环境，命令读取到 `business-default` 与 `conversation-override`，文件写入与验证命令均返回 0。新增沙箱入口也已通过实际界面创建验证。
+- 工作区沙箱与 Docker 代理的实机用例默认跳过，在能创建沙箱的执行机器上手动打开：
+  - `LOOPFORGE_LIVE_BWRAP=1 go test ./internal/runtime -run TestLiveBwrapConversationWorkspace`：真实 bwrap 下 `<root>/ws` 可写且落到工作区、home 可写、守卫文件与根目录只读、宿主 Docker socket 被遮住、代理 socket 可见。
+  - `LOOPFORGE_LIVE_DOCKER=1 go test ./internal/runtime -run TestLiveDockerDriverConversationWorkspace`：Docker 驱动下同样的布局检查，并在容器里经代理 `_ping`、确认特权容器被拒（需要能拉 alpine）。
+  - `DOCKERPROXY_LIVE_UPSTREAM=/var/run/docker.sock go test ./internal/dockerproxy -run TestLive`：真实 docker CLI 与 buildx 经代理的放行、拒绝、subpath 挂载与删除清理。
 - 全量测试尚有独立于本次修改的既有问题：MySQL 分析统计覆盖用例在未修改的 master 同样失败；macOS 的 Linux 专用 seatbelt 断言及缺少 flock/Unix socket 路径限制影响全量执行。CMD 与 deploy 用例已另在 Linux Docker 中通过；运行时整包的 Docker 回收/发现测试失败也已在未修改的 master 复现。
 
 ### 会话与协作 Token 统计

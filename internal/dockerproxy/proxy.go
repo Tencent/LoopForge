@@ -171,6 +171,10 @@ func (p *Proxy) serve(w http.ResponseWriter, r *http.Request) {
 		deny(w, http.StatusBadGateway, err.Error())
 		return
 	}
+	if _, parts := route(r.URL.Path); parts[0] == "grpc" {
+		p.serveGRPC(w, r)
+		return
+	}
 	p.reverse.ServeHTTP(w, r)
 }
 
@@ -193,10 +197,8 @@ func (p *Proxy) authorize(r *http.Request) error {
 		// File sync for a /build the proxy has already checked.
 		return nil
 	case "grpc":
-		// buildx drives BuildKit over this raw gRPC channel; image names,
-		// labels and network modes inside it cannot be checked. Workspaces
-		// build through /build instead (DOCKER_BUILDKIT=0 in their env).
-		return forbidden("buildx/BuildKit 直连通道不开放，请用 docker build（经典构建，平台已设置 DOCKER_BUILDKIT=0）")
+		// Upgraded and checked call by call in serveGRPC.
+		return nil
 	case "build":
 		if len(parts) == 1 && method == http.MethodPost {
 			q := r.URL.Query()
