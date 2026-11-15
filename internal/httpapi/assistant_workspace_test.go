@@ -124,7 +124,8 @@ func TestMainBotAttachesWorkspaceFilesToReply(t *testing.T) {
 	if _, err := attach(s, "demo.html"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := attach(s, "docs/notes.md"); err != nil {
+	// The workspace is also mounted at its host path.
+	if _, err := attach(s, filepath.Join(workspace, "docs", "notes.md")); err != nil {
 		t.Fatal(err)
 	}
 	participant := &AgentToolSession{Mode: AgentToolAssistant, RuntimeMode: domain.AssistantModeWorkspace, RunID: r.ID, ProjectID: r.ExecutionContext.ProjectID, UserID: peer.ID, User: peer}

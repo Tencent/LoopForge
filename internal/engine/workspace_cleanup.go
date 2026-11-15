@@ -225,12 +225,7 @@ func (e *Engine) cleanupWorkspace(run domain.Run, now time.Time) {
 		}
 		return
 	}
-	release := e.releaseRunEnvironment
-	if checkpointClaimed {
-		// Restorable from its checkpoint: keep the workspace's Docker volumes.
-		release = func(id string, _ bool) error { return e.reclaimRunEnvironment(id) }
-	}
-	if err := release(run.ID, true); err != nil {
+	if err := e.releaseRunEnvironment(run.ID, true); err != nil {
 		reset(err)
 		return
 	}

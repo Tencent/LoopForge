@@ -213,8 +213,8 @@ func (s *dockerSandbox) currentAgentMasks() ([]string, error) {
 			return nil, err
 		}
 		hide = append(hide, filepath.ToSlash(filepath.Join("/workspace", rel)))
-		if root := s.requirements.ConversationRoot; root != "" {
-			hide = append(hide, filepath.ToSlash(filepath.Join(root, "ws", rel)))
+		for _, alias := range s.conversationAliases() {
+			hide = append(hide, filepath.ToSlash(filepath.Join(alias, rel)))
 		}
 	}
 	return hide, nil
@@ -242,9 +242,11 @@ func (s *dockerSandbox) refreshAgentMasks(ctx context.Context) error {
 	return nil
 }
 
+// conversationAliases are where a conversation workspace container mounts the
+// workspace besides /workspace: the CLI's cwd and the workspace's host path.
 func (s *dockerSandbox) conversationAliases() []string {
 	if s.requirements.ConversationRoot == "" {
 		return nil
 	}
-	return []string{filepath.ToSlash(filepath.Join(s.requirements.ConversationRoot, "ws"))}
+	return []string{filepath.ToSlash(filepath.Join(s.requirements.ConversationRoot, "ws")), filepath.ToSlash(filepath.Clean(s.workspace))}
 }

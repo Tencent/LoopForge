@@ -136,7 +136,6 @@ type conversationProcess struct {
 	wake       chan struct{}
 	lastPoll   time.Time
 	closeRelay func()
-	stopDocker func()
 	finished   chan struct{}
 	root       string
 	bytes      int
@@ -422,9 +421,6 @@ func (p *ConversationProcessPool) start(ctx context.Context, root, workspace str
 		if proc.closeRelay != nil {
 			proc.closeRelay()
 		}
-		if proc.stopDocker != nil {
-			proc.stopDocker()
-		}
 		if release != nil {
 			release()
 		}
@@ -522,14 +518,25 @@ func (p *ConversationProcessPool) start(ctx context.Context, root, workspace str
 		env[key] = conversationRemap(value, req.SourceRoot, root)
 	}
 	if spec != nil {
-		// Docker through the workspace's filtering proxy, never the daemon.
-		dockerHost, stopDocker, err := startConversationDocker(root, workspace)
-		if err != nil {
-			return ConversationProcessResult{}, fmt.Errorf("启动工作区 Docker 代理：%w", err)
-		}
-		if dockerHost != "" {
-			proc.stopDocker = stopDocker
-			env["DOCKER_HOST"] = dockerHost
+		if socket := workspaceDockerSocket(); socket != "" {
+			if spec.Profile.Driver == domain.SandboxDriverDocker {
+				socket = conversationDockerSocketTarget
+			}
+			env["DOCKER_HOST"] = "unix://" + socket
+			bin, err := writeConversationDockerShim(root)
+			if err != nil {
+				return ConversationProcessResult{}, err
+			}
+			env[conversationBinEnv] = bin
+			env[workspaceAliasEnv] = filepath.Join(root, "ws")
+			env[workspaceHostEnv] = workspace
+			if spec.Profile.Driver == domain.SandboxDriverBwrap {
+				path := os.Getenv("PATH")
+				if value := spec.Profile.Environment["PATH"]; value != "" {
+					path = value
+				}
+				env["PATH"] = bin + string(os.PathListSeparator) + path
+			}
 		}
 	}
 	command = WithCommandEnvironment(command, env)

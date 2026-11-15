@@ -54,13 +54,10 @@ func mainBotWorkspaceTools(s *AgentToolSession) []agentToolDescriptor {
 	}
 	// Files, patches and commands use the CLI's native tools inside the
 	// workspace; git, pushes and PRs use the agent's own git with the
-	// requester's credentials. Only the mode switch and delivery records stay;
-	// files reach the user through workbench_publish_artifact's path.
-	out := []agentToolDescriptor{workspaceOpenDescriptor()}
-	if s.RunID == "" {
-		out = append(out, deliveryRegisterDescriptor())
-	}
-	return out
+	// requester's credentials, and PRs are registered when the turn ends. Only
+	// the mode switch stays; files reach the user through
+	// workbench_publish_artifact's path.
+	return []agentToolDescriptor{workspaceOpenDescriptor()}
 }
 
 func (h *agentToolGateway) callMainBotWorkspace(ctx context.Context, s *AgentToolSession, name string, args map[string]any) (result string, resultErr error) {
@@ -82,9 +79,6 @@ func (h *agentToolGateway) callMainBotWorkspace(ctx context.Context, s *AgentToo
 			return "", fmt.Errorf("子 Agent 运行期间不能打开或切换工作区：子 Agent 只在当前工作区里工作。需要别的工作区时在汇报里说明，由 Main Bot 在子 Agent 结束后打开")
 		}
 		return h.openConversationWorkspace(ctx, s, args)
-	}
-	if name == workbenchDeliveryRegister {
-		return h.registerConversationDelivery(ctx, s, args)
 	}
 	releaseTurn := s.workspaceTurn.lockOperation()
 	defer releaseTurn()
@@ -241,6 +235,11 @@ func (h *agentToolGateway) attachWorkspaceFile(ctx context.Context, s *AgentTool
 	runID := mainBotWorkspaceRun(ctx)
 	if runID == "" {
 		runID = s.workspaceRun()
+	}
+	// The run workspace is also mounted at its host path, where absolute
+	// paths end in .../<run id>/<relative path>.
+	if marker := "/" + runID + "/"; runID != "" && pathpkg.IsAbs(rel) && strings.Contains(rel, marker) {
+		rel = rel[strings.LastIndex(rel, marker)+len(marker):]
 	}
 	result, err := (mcpserver.LocalInvoker{Handler: h.api}).Invoke(ctx, application.Operation{Method: "GET", Path: "/api/runs/{id}/workspace/file"}, mcpserver.ToolInput{Path: map[string]string{"id": runID}, Query: map[string]string{"path": rel}})
 	if err != nil {

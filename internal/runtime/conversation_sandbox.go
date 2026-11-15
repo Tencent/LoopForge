@@ -40,12 +40,11 @@ func ConfigureConversationSandbox(ctx context.Context, sandbox Sandbox, root str
 	return s.Recreate(ctx)
 }
 
-// configureProcessConversationSandbox binds the native HOME and cwd into a
-// bwrap workspace. The host filesystem stays read-only apart from the run
-// workspace and the conversation HOME; the host network stays reachable, the
-// host Docker sockets are masked and containers go through the workspace's
-// filtering proxy. seatbelt cannot remap <root>/ws onto the run workspace and
-// is refused.
+// configureProcessConversationSandbox binds the native HOME into a bwrap
+// workspace. The host filesystem stays read-only apart from the run workspace
+// and the conversation HOME; the host network and the host Docker daemon stay
+// reachable (the daemon socket is masked when workspace Docker is off).
+// seatbelt is not supported for conversation workspaces.
 func configureProcessConversationSandbox(s *processSandbox, root string) error {
 	if s.driver != "bwrap" {
 		return fmt.Errorf("macOS 原生沙箱（seatbelt）暂不支持对话工作区，请选择 Docker 沙箱或在 Linux 执行机器上使用 native")

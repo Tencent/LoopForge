@@ -245,7 +245,7 @@ func (e *Engine) HandleWorkspaceCheckpoint(w http.ResponseWriter, r *http.Reques
 				http.Error(w, "workspace cleanup not reserved", 409)
 				return
 			}
-			if err := e.reclaimRunEnvironment(run.ID); err != nil {
+			if err := e.releaseRunEnvironment(run.ID, true); err != nil {
 				result.Error = err.Error()
 			} else {
 				result.Payload = json.RawMessage(`{"reclaimed":true}`)

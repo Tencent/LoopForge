@@ -2,12 +2,20 @@ package httpapi
 
 import (
 	"context"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"agentflow/internal/domain"
+	"agentflow/internal/engine"
 	"agentflow/internal/repo"
+	"agentflow/internal/runtime"
 )
 
 func conversationIssueFixture(t *testing.T) (*agentToolGateway, *AgentToolSession, *repo.Store) {
@@ -249,24 +257,77 @@ func TestConversationFirstTurnLinksRequirementAfterSave(t *testing.T) {
 	}
 }
 
-// workbench_delivery_register records GitHub pull requests only.
-func TestRegisterConversationDeliveryAcceptsGitHubPullRequests(t *testing.T) {
-	h, s, st := conversationIssueFixture(t)
+// After a turn, the GitHub PRs the speaker opened from the conversation
+// workspace are registered: authored by the speaker's token after the
+// workspace was created, with a local branch at their head commit.
+func TestTurnEndRegistersWorkspacePullRequests(t *testing.T) {
+	gateway, s, st := conversationIssueFixture(t)
+	en := engine.New(st, runtime.NewManager(t.TempDir()))
+	gateway.deps.engine = en
+	if err := st.DB.Table("runs").Where("id = ?", "ws-1").Update("created_at", time.Now().Add(-time.Hour)).Error; err != nil {
+		t.Fatal(err)
+	}
+	checkout := filepath.Join(en.RunWorkspace("ws-1"), "web")
+	git := func(args ...string) string {
+		t.Helper()
+		out, err := exec.Command("git", append([]string{"-C", checkout, "-c", "user.name=t", "-c", "user.email=t@t"}, args...)...).CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v %s", args, err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	if err := os.MkdirAll(checkout, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	git("init", "-q")
+	git("commit", "-q", "--allow-empty", "-m", "fix")
+	git("remote", "add", "origin", "https://github.com/acme/web.git")
+	head := git("rev-parse", "HEAD")
+
+	soon, old := time.Now().Add(time.Minute).UTC().Format(time.RFC3339), time.Now().Add(-48*time.Hour).UTC().Format(time.RFC3339)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer gh-token" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		switch r.URL.Path {
+		case "/user":
+			fmt.Fprint(w, `{"login":"alice-gh"}`)
+		case "/repos/acme/web/pulls":
+			fmt.Fprintf(w, `[
+				{"number":9,"html_url":"https://github.com/acme/web/pull/9","title":"修复登录页文案","body":"按钮文案","state":"open","created_at":%[1]q,"user":{"login":"alice-gh"},"head":{"sha":%[2]q},"base":{"ref":"main"}},
+				{"number":8,"html_url":"https://github.com/acme/web/pull/8","title":"别的对话","state":"open","created_at":%[1]q,"user":{"login":"alice-gh"},"head":{"sha":"0000000000000000000000000000000000000000"},"base":{"ref":"main"}},
+				{"number":7,"html_url":"https://github.com/acme/web/pull/7","title":"别人的","state":"open","created_at":%[1]q,"user":{"login":"bob"},"head":{"sha":%[2]q},"base":{"ref":"main"}},
+				{"number":5,"html_url":"https://github.com/acme/web/pull/5","title":"开区前","state":"open","created_at":%[3]q,"user":{"login":"alice-gh"},"head":{"sha":%[2]q},"base":{"ref":"main"}}
+			]`, soon, head, old)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	base := githubAPIBase
+	githubAPIBase = srv.URL
+	t.Cleanup(func() { githubAPIBase = base })
+
+	h := &assistantHandlers{deps: gateway.deps}
+	if note := h.registerTurnDeliveries(context.Background(), s); note != "" {
+		t.Fatalf("a turn without a workspace registered %q", note)
+	}
 	s.workspaceRunID = "ws-1"
-	_, err := h.registerConversationDelivery(context.Background(), s, map[string]any{"title": "修复登录页文案", "urls": []any{"https://git.example.com/team/web/merge_requests/7"}})
-	if err == nil || !strings.Contains(err.Error(), "不是 GitHub PR") {
-		t.Fatalf("a non-GitHub link must be refused: %v", err)
+	if note := h.registerTurnDeliveries(context.Background(), s); note != "" {
+		t.Fatalf("a speaker without a Git token registered %q", note)
 	}
-	if conv, _ := st.AssistantSession(s.UserID, "chat-1"); conv.IssueID != "" {
-		t.Fatalf("a refused delivery must not create a requirement: %q", conv.IssueID)
+	s.User.GitToken = "gh-token"
+	note := h.registerTurnDeliveries(context.Background(), s)
+	if !strings.Contains(note, "PR #9") || strings.Contains(note, "#8") || strings.Contains(note, "#7") || strings.Contains(note, "#5") || !strings.Contains(note, "新建需求") {
+		t.Fatalf("note = %q", note)
 	}
-	out, err := h.registerConversationDelivery(context.Background(), s, map[string]any{"title": "修复登录页文案", "urls": []any{"https://github.com/acme/web/pull/9"}})
-	if err != nil || !strings.Contains(out, `"registered":1`) {
-		t.Fatalf("register = %s, %v", out, err)
+	stored, _ := st.RunState("ws-1")
+	issue, _ := st.Issue(stored.ExecutionContext.IssueID)
+	if mrs := issue.DeliveryMRList(); issue.Title != "修复登录页文案" || len(mrs) != 1 || mrs[0].URL != "https://github.com/acme/web/pull/9" || mrs[0].TargetBranch != "main" || issue.Status != "in_review" {
+		t.Fatalf("issue = %+v delivery = %+v", issue, mrs)
 	}
-	conv, _ := st.AssistantSession(s.UserID, "chat-1")
-	issue, _ := st.Issue(conv.IssueID)
-	if mrs := issue.DeliveryMRList(); len(mrs) != 1 || mrs[0].URL != "https://github.com/acme/web/pull/9" || issue.Status != "in_review" {
-		t.Fatalf("delivery MRs = %+v status=%s", mrs, issue.Status)
+	if again := h.registerTurnDeliveries(context.Background(), s); again != "" {
+		t.Fatalf("a registered PR was registered again: %q", again)
 	}
 }

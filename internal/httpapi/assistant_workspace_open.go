@@ -20,7 +20,7 @@ const workspaceOpenSchema = `{"type":"object","properties":{"sandboxProfileId":{
 func workspaceOpenDescriptor() agentToolDescriptor {
 	return agentToolDescriptor{
 		Name:        "workbench_workspace_open",
-		Description: "进入工作区模式：在指定的运行环境（沙箱配置）里打开本对话的工作区，之后用 CLI 原生的文件、补丁和命令工具工作。需要看代码、改代码、跑命令、构建、访问 GitHub（查 PR、开 PR、合并、评论等）时调用。工作区是空目录，不预先检出任何仓库：自己 git clone 需要的仓库，自己建分支、提交、推送、开 PR、合并；平台已按本轮发言人的个人凭证配置好 Git（github.com 的 HTTPS 用 Git Token，SSH 用个人 SSH 密钥），GH_TOKEN 也已设置，环境里没有 gh 时可以自己安装或用 curl 调 API。不要打印、回显或写入任何令牌。一个对话同一时间只有一个工作区：不传 sandboxProfileId 或传的与当前工作区相同时继续用当前工作区，传了不同的环境就切换过去：本对话之前在那个环境用过的工作区接着用（文件和已克隆的仓库都在），没用过就新开一个空工作区；切走的工作区解绑，空闲时保存快照后回收。返回 handoff=true 时只回复一句「好的。」结束本阶段，平台会在工作区里续接同一原生会话。开好 PR 后调用 workbench_delivery_register 登记，让需求列表跟踪合入。子 Agent 不能调用本工具。",
+		Description: "进入工作区模式：在指定的运行环境（沙箱配置）里打开本对话的工作区，之后用 CLI 原生的文件、补丁和命令工具工作。需要看代码、改代码、跑命令、构建、访问 GitHub（查 PR、开 PR、合并、评论等）时调用。工作区是空目录，不预先检出任何仓库：自己 git clone 需要的仓库，自己建分支、提交、推送、开 PR、合并；平台已按本轮发言人的个人凭证配置好 Git（github.com 的 HTTPS 用 Git Token，SSH 用个人 SSH 密钥），GH_TOKEN 也已设置，环境里没有 gh 时可以自己安装或用 curl 调 API。不要打印、回显或写入任何令牌。一个对话同一时间只有一个工作区：不传 sandboxProfileId 或传的与当前工作区相同时继续用当前工作区，传了不同的环境就切换过去：本对话之前在那个环境用过的工作区接着用（文件和已克隆的仓库都在），没用过就新开一个空工作区；切走的工作区解绑，空闲时保存快照后回收。返回 handoff=true 时只回复一句「好的。」结束本阶段，平台会在工作区里续接同一原生会话。开好的 PR 由平台在本轮结束时自动登记到需求并跟踪合入。子 Agent 不能调用本工具。",
 		InputSchema: json.RawMessage(workspaceOpenSchema),
 		Kind:        "workspace",
 	}

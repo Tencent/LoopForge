@@ -80,6 +80,9 @@ func (r *AssistantRepo) CreateNativeApproval(owner int64, session, phase string,
 			return nil // A transport retry is still the same invocation.
 		}
 		item.Decision = "pending"
+		if item.CreatedAt.IsZero() {
+			item.CreatedAt = time.Now().UTC()
+		}
 		payload.NativeApprovals = append(payload.NativeApprovals, assistantNativeApprovalState{AssistantNativeApproval: item, Phase: phase, InputDigest: inputDigest})
 		return nil
 	})

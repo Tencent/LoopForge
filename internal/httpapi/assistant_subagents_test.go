@@ -305,7 +305,7 @@ func TestRoleAgentFileExplainsChatWork(t *testing.T) {
 		t.Fatal("chat notes must come before the role prompt")
 	}
 	workspace := conversationRoleAgentFile(roleSubagent{Role: domain.AgentDefinition{ID: "fe", Name: "前端", Prompt: "检查文件"}}, true)
-	if !strings.Contains(workspace, "同一 Docker 工作区，使用原生文件和命令工具") || strings.Contains(workspace, "当前是平台模式") || !strings.Contains(workspace, "  - mcp__agentflow_session__workbench_platform_mode\n") {
+	if !strings.Contains(workspace, "同一工作区，沙箱内的文件和命令直接执行") || strings.Contains(workspace, "当前是平台模式") || !strings.Contains(workspace, "  - mcp__agentflow_session__workbench_platform_mode\n") {
 		t.Fatalf("workspace subagent lacks current native tool rules:\n%s", workspace)
 	}
 }

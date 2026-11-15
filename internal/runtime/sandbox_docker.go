@@ -173,6 +173,7 @@ func (s *dockerSandbox) execOnce(ctx context.Context, command CommandSpec, sink 
 	argv := dockerWorkspaceExecArgv(command.Argv)
 	if command.WorkingDir != "" {
 		argv = append([]string{"sh", "-lc", dockerMCPCallLaunch + `PATH=/opt/loopforge/conversation-cli/bin:/opt/loopforge/conversation-cli/.local/bin:$PATH; export PATH
+if [ -n "${` + conversationBinEnv + `:-}" ]; then PATH=$` + conversationBinEnv + `:$PATH; export PATH; fi
 cd "$1" && shift && exec "$@"`, "conversation", command.WorkingDir}, dropShellLoginFlag(command.Argv)...)
 	}
 	processFile := ""
@@ -378,6 +379,30 @@ func isDockerCwdUnsafe(out string, err error) bool {
 	}
 	msg := strings.ToLower(out + "\n" + err.Error())
 	return strings.Contains(msg, "outside of container mount") || strings.Contains(msg, "container breakout") || strings.Contains(msg, "oci runtime exec failed") || strings.Contains(msg, "exit status 126")
+}
+
+// conversationLayoutCurrent reports whether an existing conversation
+// workspace container has the current mounts. One created with another
+// layout (workspace not at its host path, daemon socket added or removed
+// since) is recreated; the workspace files live on the bind.
+func (s *dockerSandbox) conversationLayoutCurrent(ctx context.Context, name string) bool {
+	if s.requirements.ConversationRoot == "" {
+		return true
+	}
+	out, err := exec.CommandContext(ctx, "docker", "inspect", "-f", `{{range .Mounts}}{{.Destination}}{{"\n"}}{{end}}`, name).Output()
+	if err != nil {
+		return false
+	}
+	mounted := map[string]bool{}
+	for _, line := range strings.Split(string(out), "\n") {
+		mounted[strings.TrimSpace(line)] = true
+	}
+	for _, alias := range s.conversationAliases() {
+		if !mounted[alias] {
+			return false
+		}
+	}
+	return mounted[conversationDockerSocketTarget] == (workspaceDockerSocket() != "")
 }
 
 func dockerWorkspaceBindSource(ctx context.Context, name string) (string, error) {
@@ -654,7 +679,10 @@ func (s *dockerSandbox) ensureStarted(ctx context.Context) error {
 	name, workspace, p := s.name, s.workspace, s.profile
 	if err := exec.CommandContext(ctx, "docker", "inspect", name).Run(); err == nil {
 		source, sourceErr := dockerWorkspaceBindSource(ctx, name)
-		if dockerContainerReusable(source, sourceErr, workspace) {
+		reusable := dockerContainerReusable(source, sourceErr, workspace)
+		if reusable && !s.conversationLayoutCurrent(ctx, name) {
+			_ = exec.CommandContext(ctx, "docker", "rm", "-f", name).Run()
+		} else if reusable {
 			if startErr := exec.CommandContext(ctx, "docker", "start", name).Run(); startErr != nil {
 				_ = exec.CommandContext(ctx, "docker", "rm", "-f", name).Run()
 			} else if readyErr := waitDockerWorkspaceReady(ctx, name); readyErr != nil {
@@ -700,24 +728,23 @@ func (s *dockerSandbox) ensureStarted(ctx context.Context) error {
 		if network != "" {
 			args = append(args, "--network", network)
 		}
-		args = append(args, "--add-host", "host.docker.internal:host-gateway", "-v", root+":"+root+":ro", "-v", filepath.Join(root, "home")+":"+filepath.Join(root, "home"), "-v", workspace+":"+filepath.Join(root, "ws"))
+		// The CLI's cwd <root>/ws is the workspace in every mode. The
+		// workspace also appears at its host path, which the docker shim
+		// hands to the host daemon in place of <root>/ws.
+		args = append(args, "--add-host", "host.docker.internal:host-gateway", "-v", root+":"+root+":ro", "-v", filepath.Join(root, "home")+":"+filepath.Join(root, "home"), "-v", workspace+":"+filepath.Join(root, "ws"), "-v", workspace+":"+workspace)
 		guards, err := conversationGuardMounts(root)
 		if err != nil {
 			return err
 		}
 		args = append(args, guards...)
-		// The workspace's Docker proxy socket (DOCKER_HOST) appears here.
-		dockerDir, err := ensureConversationDockerDir(root)
-		if err != nil {
-			return err
+		if socket := workspaceDockerSocket(); socket != "" {
+			args = append(args, "-v", workspaceDockerSocketSource(socket)+":"+conversationDockerSocketTarget)
+			if group := workspaceDockerSocketGroup(socket); group != "" {
+				args = append(args, "--group-add", group)
+			}
 		}
-		args = append(args, "-v", dockerDir+":"+dockerDir)
 	}
-	var aliases []string
-	if root := s.requirements.ConversationRoot; root != "" {
-		aliases = append(aliases, filepath.Join(root, "ws"))
-	}
-	maskArgs, err := dockerAgentConfigMasks(workspace, aliases...)
+	maskArgs, err := dockerAgentConfigMasks(workspace, s.conversationAliases()...)
 	if err != nil {
 		return err
 	}

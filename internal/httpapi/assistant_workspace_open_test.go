@@ -49,7 +49,7 @@ func TestConversationWorkspaceToolsForAllProjectParticipants(t *testing.T) {
 		return strings.Join(out, ",")
 	}
 	s := &AgentToolSession{Mode: AgentToolAssistant, ProjectID: "p", UserID: 1, ChatSessionID: "chat", ChatOwnerID: 1}
-	if got := names(s); got != "workbench_workspace_open,workbench_delivery_register" {
+	if got := names(s); got != "workbench_workspace_open" {
 		t.Fatalf("ordinary project chat tools = %s", got)
 	}
 	peer := &AgentToolSession{Mode: s.Mode, ProjectID: s.ProjectID, UserID: s.UserID, ChatSessionID: s.ChatSessionID, ChatOwnerID: 2}

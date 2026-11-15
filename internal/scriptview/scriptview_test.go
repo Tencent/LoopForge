@@ -98,13 +98,15 @@ func TestRunDispatchFailsClosedOnInvalidMode(t *testing.T) {
 }
 
 func TestConfigOnlyAcceptsExplicitWorkspaceAliases(t *testing.T) {
-	config, err := parseConfig(`{"refresh":true,"aliases":["/native/conversation/ws"],"hide":["/native/conversation/ws/repo/AGENTS.md"]}`)
-	if err != nil || len(config.Hide) != 1 {
+	config, err := parseConfig(`{"refresh":true,"aliases":["/native/conversation/ws","/data/sandboxes/run-1"],"hide":["/native/conversation/ws/repo/AGENTS.md","/data/sandboxes/run-1/repo/AGENTS.md"]}`)
+	if err != nil || len(config.Hide) != 2 {
 		t.Fatal(config, err)
 	}
 	for _, raw := range []string{
-		`{"refresh":true,"hide":["/native/conversation/ws/repo/AGENTS.md"]}`,
+		`{"refresh":true,"hide":["/data/sandboxes/run-1/repo/AGENTS.md"]}`,
 		`{"refresh":true,"aliases":["/etc"],"hide":["/etc/AGENTS.md"]}`,
+		`{"refresh":true,"aliases":["/"],"hide":["/AGENTS.md"]}`,
+		`{"refresh":true,"aliases":["/data/../etc/x"],"hide":["/etc/x/AGENTS.md"]}`,
 		`{"refresh":true,"aliases":["/native/ws"],"hide":["/native/ws/.git/AGENTS.md"]}`,
 	} {
 		if _, err := parseConfig(raw); err == nil {

@@ -38,20 +38,18 @@
 
 ## Native 沙箱
 
-会话工作区可以使用 native 沙箱（Linux 上解析为 bwrap）。bwrap 工作区与 Docker 布局一致：CLI 的 HOME 是 `<会话根>/home`、cwd 是 `<会话根>/ws`（映射到运行工作区），审批钩子文件只读挂载；宿主文件系统其余部分只读，网络与宿主相同。宿主的 Docker/containerd/podman socket 用 `/dev/null` 遮住，Docker 只能经下面的工作区代理使用。CLI 使用执行机器自己安装的版本。macOS seatbelt 无法把 `<会话根>/ws` 重映射到运行工作区，暂不支持对话工作区，会返回明确错误。bwrap 需要创建 user/pid 命名空间并挂载 `/proc`，平台运行在默认权限的容器里（Compose 部署）时做不到：平台镜像不带 bwrap，即使装上，不开特权容器也建不了命名空间。Compose 部署请用 Docker 沙箱；要用 native 沙箱，在原生安装的平台或执行机器（Runner）上运行。
+会话工作区可以使用 native 沙箱（Linux 上解析为 bwrap）。bwrap 工作区与 Docker 布局一致：CLI 的 HOME 是 `<会话根>/home`，cwd 是 `<会话根>/ws`（挂的是运行工作区，工作区同时也挂在它在宿主上的路径），审批钩子文件只读挂载；宿主文件系统其余部分只读，网络与宿主相同。CLI 使用执行机器自己安装的版本。macOS seatbelt 暂不支持对话工作区，会返回明确错误。bwrap 需要创建 user/pid 命名空间并挂载 `/proc`，平台运行在默认权限的容器里（Compose 部署）时做不到：平台镜像不带 bwrap，即使装上，不开特权容器也建不了命名空间。Compose 部署请用 Docker 沙箱；要用 native 沙箱，在原生安装的平台或执行机器（Runner）上运行。
+
+两种模式的 CLI 都在 `<会话根>/ws` 运行（工作区模式下这里挂的是运行工作区），按 cwd 存放原生会话的 CLI（如 Claude Code、CodeBuddy）进出工作区、换环境都能续接。原生日志确实不可用时，平台在当前阶段用完整对话上下文新建原生会话继续（`cli.resume_fallback`），每个阶段最多一次，并告诉新会话当前所处的模式。
 
 ## 工作区里的 Docker
 
-执行机器有 Docker 守护进程时（`DOCKER_HOST` 指向的 unix socket，默认 `/var/run/docker.sock`），工作区模式的 CLI 启动时平台在 `/tmp/lf-docker/<会话根哈希>/docker.sock` 起一个过滤代理（`internal/dockerproxy`），并把 `DOCKER_HOST` 设成它。unix socket 路径不能超过约 108 字节，会话根太长，所以用这个短目录（`/tmp/lf-docker` 与子目录都是 0700 且必须属于平台用户，别人预先建的目录或软链会被拒绝；socket 0600，只有平台用户可连）；Docker 与 bwrap 工作区都把它挂在同一路径，两种环境里 `docker build/run/compose` 都能直接用（容器里要自备 docker CLI）。目录在会话期间保留，Docker 工作区容器的挂载才能看到每次重建的 socket。Docker 工作区是宿主守护进程创建的兄弟容器，挂载由宿主解析，所以容器化部署的平台必须把宿主的 `/tmp/lf-docker` 按同一路径挂进来（`compose.yaml` 已配置）；它要在守护进程所在机器的本地文件系统上，macOS 共享目录之类放不了 unix socket，不能挪到数据目录。`AGENTFLOW_WORKSPACE_DOCKER=off` 关闭。
+工作区直接使用执行机器的 Docker 守护进程，与在这台机器上开发的人一样：`DOCKER_HOST` 指向宿主 socket（默认 `/var/run/docker.sock`；Docker 工作区里挂在 `/var/run/docker.sock`），`docker build/run/compose` 直接可用（Docker 工作区的镜像要自带 docker CLI）。工作区创建的容器、镜像、网络和卷都是普通 Docker 对象，平台不打标签、不限制、不随工作区回收；之后任何会话的工作区都能列出、复用或清理它们。
 
-- 隔离：工作区创建的容器、网络、卷都打上 `loopforge.workspace=<工作区路径哈希>` 标签；列表、事件、prune 强制加这个标签过滤；对容器、exec、网络、卷的任何操作先查标签，不是本工作区的一律 403。`json`、`create`、`prune` 等集合路由只在各自的方法上算集合（`GET /containers/json`、`POST /volumes/create`……），叫这些名字的对象照常查归属。检查通过后转发给守护进程的是检查时解析出的完整 ID（路径里的对象、`commit` 的容器、`network connect` 的容器、`container:` 模式；端点固定 `NetworkID`），名字不会被守护进程再解析一次（名字恰好是别的对象 ID 前缀、检查后对象被替换都不再生效）。路径先解码、清理后再检查，转发的就是检查过的路径，`%2F..%2F` 之类不会被守护进程的路由按另一种方式理解。
-- 镜像：镜像在守护进程上全局共享。任何镜像都能拉取、查看、推送（拉取会换掉同名本地镜像，所以其他工作区构建的镜像名不能拉取覆盖）；`docker build` 与 `docker commit` 产出的镜像由代理打上工作区标签，只有这些镜像能被本工作区删除，或被重新打标签覆盖名字（`build -t`、`tag`、`commit`、`import` 写到别人的或公共镜像的名字一律拒绝，防止篡改其他工作区在用的 `alpine:3` 之类）。`docker load` 无法事先知道会覆盖哪些名字，不开放；`image prune`/`builder prune` 不开放。
-- 拒绝逃逸：`--privileged`、`--cap-add`、设备与 GPU、`--security-opt`（`no-new-privileges` 除外）、宿主 PID/IPC/UTS/userns/cgroupns/网络命名空间、自定义 runtime、`--cgroup-parent`、带 driver 选项的卷、`--network host` 构建；`--link` 只能连本工作区的容器（link 会把对方的环境变量注入新容器）。网络只能建 bridge，不能带 `--opt`（可指定或复用宿主网卡名）、自定义子网/网关/IPAM（可遮住宿主路由，如 `169.254.169.254`）或 `--config-from`，地址由 Docker 默认池分配。swarm、插件、`system df` 等接口不开放。
-- 请求形态：守护进程按字段名大小写不敏感地解析 JSON（含 Unicode 折叠，`K` 等同 `k`），代理在检查前把所有它会读的字段改成标准写法，两个只差大小写的键直接拒绝，`{"hostconfig":{"privileged":true}}` 这类写法与标准写法受同样的检查（字段表由测试对照代码保持完整）。POST 的参数从 `r.FormValue` 读，表单请求体会盖过代理检查过的查询串，所以表单体（`x-www-form-urlencoded`、`multipart/form-data`，按前缀匹配，参数写坏的也算）一律拒绝，Docker 客户端从不发送。守护进程仍接受写在创建请求顶层的旧式 HostConfig 字段（`{"Privileged":true}` 不放进 `HostConfig`），所以创建容器的顶层只允许 `container.Config` 的字段加 `HostConfig`、`NetworkingConfig`。`images/create` 按守护进程的顺序判断（有 `fromImage` 就是拉取）；经典 `/build` 的 `outputs` 里的镜像名与 `-t` 同样检查；端点配置里显式的 `NetworkID`（守护进程优先用它而不是网络名）也必须是本工作区的网络。
-- 挂载：bind 源只能在工作区（`<会话根>/ws`，代理换成守护进程看到的宿主路径）或会话 HOME 之内，路径先解析软链（包括尚不存在的子目录所在的父目录）再判定。工作区根和 HOME 根本身是挂载点，Agent 换不掉，照常 bind；根下面的路径在 Docker 26+（API 1.45）改写成一个绑定到该根的本地卷（`lf-bind-<工作区>-<根哈希>`，代理创建并打标签，该前缀留给平台）的 `Subpath` 挂载——守护进程打开卷子路径时不会跟随软链跳出卷，检查之后再把目录换成软链也无法把挂载导到工作区外。bind 的传播（`shared` 等，`--mount` 的 `BindOptions.Propagation` 同样）与 SELinux 选项被丢弃，其他未知选项拒绝；缺失的源目录照旧先创建。更早的守护进程没有 subpath，退回到交付解析后的真实路径（检查后换软链的竞态仍在）；查不到守护进程版本时拒绝根下面的 bind 并在下次重试，不会退回普通 bind。删除这个卷只卸载绑定，不会删除工作区里的文件。命名卷属于别的工作区就拒绝，不存在时由代理带标签创建。
-- 生命周期：CLI 进程退出时代理关闭，本工作区仍在运行的容器被 `docker stop`（不删除，下轮可以 `docker start`）。工作区被永久删除时（删除运行、删除对话、孤儿目录回收），先按标签删除它的全部容器（含匿名卷）、网络和命名卷；目录早已被回收的工作区按同一路径算出标签，照样清理。带快照的空闲回收（之后可能在原路径恢复）只删容器和网络，命名卷保留到永久删除，恢复后数据还在。`/tmp/lf-docker/*` 目录里记有所属会话根，会话根不存在时在下一次启动工作区 CLI 时清掉。
-- 构建：经典 `/build` 检查查询参数（网络模式、`--cgroup-parent`、`-t` 覆盖）并注入工作区标签。buildx（`docker build` 的默认实现）走 `/grpc`：代理在两侧都终止 h2c，逐个读 gRPC 调用。`Control.Solve` 按同样规则检查——拒绝任何 entitlement（`--allow network.host`、`security.insecure` 等）、`force-network-mode=host`、`cgroup-parent`，`moby`/`image`/`docker` 导出的镜像名只能写到本工作区的或新的名字——并追加 `label:loopforge.workspace` 前端参数（Dockerfile 前端据此给镜像打标签，追加在最后，请求里的同名参数无效）。`docker commit --change` 不能写工作区标签，`container update` 不能改 `--cgroup-parent`。构建历史（`ListenBuildHistory`）只能按构建 ref 跟踪自己的构建（ref 随机，不带 ref 会列出整台守护进程的构建，拒绝）；其余 Control 调用与 LLB bridge 原样转发，构建缓存清理与用量（`Prune`、`DiskUsage`，相当于 `system df`）、改写构建历史（`UpdateBuildHistory`）和未知服务拒绝。拉取的公共镜像由平台的镜像回收处理。
-- 代理管不到的（部署时处理）：构建里的 `ADD <URL>`、git 上下文、`/build?remote=` 由守护进程/BuildKit 在宿主网络命名空间里下载，能访问宿主回环地址和云元数据（`169.254.169.254`），下载内容进入 Agent 可读的镜像——Docker 驱动的工作区本来碰不到这些地址，执行机器应在防火墙上禁止 dockerd 访问元数据地址和只在回环上监听的敏感服务（bwrap 工作区与宿主共享网络，本来就能访问）。BuildKit 的 `RUN --mount=type=cache` 缓存按 id（默认是目标路径）在整台守护进程共享，一个工作区能往另一个工作区的构建缓存里写东西；需要严格隔离时给每个工作区单独的 BuildKit/守护进程（如 rootless Docker 每会话一个），代理无法在共享守护进程上分开。
+- 路径：CLI 的 cwd `<会话根>/ws` 在宿主上是平台模式的目录，宿主守护进程看不到其中挂的工作区。所以运行工作区在 Docker 与 bwrap 环境里还挂在它在宿主上的绝对路径，PATH 最前面放一个只读的 `docker` 包装脚本（`<会话根>/workspace-bin/docker`）：它把参数里以 `<会话根>/ws` 开头的路径（如 `-v "$PWD:/src"`、`--mount src=…`）换成宿主路径，并在对应的宿主路径目录下执行真正的 docker，compose 里的相对路径因此也指向工作区本身。CLI 的命令工具用登录 shell 起环境，系统 profile（如 Debian 的 `/etc/profile`）会重置 PATH，所以平台还在会话 HOME 的 `~/.profile`（以及已存在的 `~/.bash_profile`、`~/.bash_login`、`~/.zprofile`）追加一行，把包装脚本目录放回 PATH 最前面；平台模式下没有对应环境变量，这一行不生效。这只是便利，不是隔离边界：绕过包装脚本直接调用 Docker API 的程序（如 Docker SDK）需要自己使用宿主路径，环境变量 `AGENTFLOW_WORKSPACE_HOST` 给出这个路径。容器化部署的平台按同样原则把数据目录挂在相同绝对路径（`compose.yaml` 已配置）。
+- socket 来源：Docker 工作区容器的 socket 由宿主守护进程挂载，容器化的平台用 `AGENTFLOW_DOCKER_SOCKET_HOST` 告诉它宿主上的路径（`compose.yaml` 设为 `LOOPFORGE_DOCKER_SOCKET`）；原生安装两者相同。服务以非 root 用户运行时，Docker 工作区额外加入 socket 的属组。
+- 权限：能访问 Docker socket 就相当于守护进程所在机器的 root。任何能在对话里打开工作区的成员（以及被仓库内容诱导的 Agent）都能借此读取平台容器、数据库和其他成员的凭据，只把账号开给可信的人。`AGENTFLOW_WORKSPACE_DOCKER=off` 关闭：Docker 工作区不再挂 socket，bwrap 工作区用 `/dev/null` 遮住宿主的 Docker/containerd/podman socket（按解析后的真实路径，`/var/run` 是指向 `/run` 的软链时也生效）。
+- 升级：按旧布局（工作区只挂在 `<会话根>/ws`，或 socket 挂载与当前开关不一致）创建的 Docker 工作区容器在下次启动时重建，工作区文件在 bind 上不受影响。
 
 `PUT /api/assistant/sessions/{id}/sandbox` 接受 `{ "sandboxProfileId": "id 或空字符串" }`，具备项目访问权限的会话参与者均可调用；生成期间和任务会话拒绝变更。已有工作区不受影响，新选择只用于之后新开的工作区。普通会话创建时也可以提交 `sandboxProfileId`，后续普通会话保存不能覆盖已保存的选择或伪造工作区绑定。
 
@@ -65,7 +63,7 @@
 
 要交给用户的文件（HTML demo、报告、JSON/CSV 等文本文件）用 `workbench_publish_artifact { path }` 发布：附在本轮回复里，HTML 在产物栏可交互预览。空间会话里不带 `path` 时照旧把 `body`/`imageBase64`/`url` 发布到空间侧边栏。原来的 `workbench_workspace_attach` 已并入这个工具，只在角色交付物收集里作为内部调用保留。
 
-对话里直接改代码也要落到需求上。Agent 开好 GitHub PR 后调用 `workbench_delivery_register { urls, title, description }` 登记（`urls` 只接受 `https://github.com/<owner>/<repo>/pull/<n>`）：工作区仍未关联需求时，优先复用会话已关联的未完成需求，否则以 `title`/`description` 创建。新建需求为本地 `requirement`、`in_progress`、`automationState=ignored`（不会被自动派发 SOP），负责人为当前用户，记录来源会话、工作区仓库和创建操作，并同时关联工作区与会话。已关联需求的工作区不再改关联；SOP 运行的需求只在派发时确定。
+对话里直接改代码也要落到需求上。Agent 不需要调用登记工具：每轮回复保存前，平台列出工作区里两层目录内的 git 检出（远程执行机器上由 Runner 扫描，旧版 Runner 不支持时跳过），对其中指向 github.com 的远程仓库，用本轮发言人的 Git Token 查最近创建的 PR，满足以下全部条件的才登记：作者是该 Token 的用户、创建时间晚于工作区创建、头提交是工作区某个本地分支的当前提交、未关闭（或已合入），且还没有任何需求跟踪它。这样同一用户在别的会话或浏览器里开的 PR 不会被误登记；Agent 推送后又在本地追加了未推送的提交时，本轮不登记，下次推送后再登记。登记成功时回复末尾附一句登记结果。工作区仍未关联需求时，优先复用会话已关联的未完成需求，否则以第一个 PR 的标题和描述创建；借用已结束 SOP 工作区时登记到该 SOP 的需求。新建需求为本地 `requirement`、`in_progress`、`automationState=ignored`（不会被自动派发 SOP），负责人为当前用户，记录来源会话、工作区仓库和创建操作，并同时关联工作区与会话。已关联需求的工作区不再改关联；SOP 运行的需求只在派发时确定。
 
 登记的 PR（记为 `github:owner/repo`）写入该需求的交付 MR 并登记合入跟踪，链接能对上项目登记的仓库时同时记录仓库，需求转为 `in_review`；PR 合入默认分支后由轮询把需求标为完成。每轮对话的模型用量按回复模型定价累加到当前对话工作区。
 
@@ -82,10 +80,9 @@
 - 原生对话前端 178 项测试通过；后端 HTTP、Engine、Runner、Repo、MCP 与 Web/OpenAPI 契约回归通过。
 - 独立 Docker MySQL 验证了会话环境与生成启动的并发事务、SOP 配额，以及迁移脚本的作用范围与幂等性。
 - 真实 CodeBuddy 对话分别选择项目默认和会话覆盖 Docker 环境，命令读取到 `business-default` 与 `conversation-override`，文件写入与验证命令均返回 0。新增沙箱入口也已通过实际界面创建验证。
-- 工作区沙箱与 Docker 代理的实机用例默认跳过，在能创建沙箱的执行机器上手动打开：
-  - `LOOPFORGE_LIVE_BWRAP=1 go test ./internal/runtime -run TestLiveBwrapConversationWorkspace`：真实 bwrap 下 `<root>/ws` 可写且落到工作区、home 可写、守卫文件与根目录只读、宿主 Docker socket 被遮住、代理 socket 可见。
-  - `LOOPFORGE_LIVE_DOCKER=1 go test ./internal/runtime -run TestLiveDockerDriverConversationWorkspace`：Docker 驱动下同样的布局检查，并在容器里经代理 `_ping`、确认特权容器被拒（需要能拉 alpine）。
-  - `DOCKERPROXY_LIVE_UPSTREAM=/var/run/docker.sock go test ./internal/dockerproxy -run TestLive`：真实 docker CLI 与 buildx 经代理的放行、拒绝、subpath 挂载与删除清理。
+- 工作区沙箱的实机用例默认跳过，在能创建沙箱的执行机器上手动打开：
+  - `LOOPFORGE_LIVE_BWRAP=1 go test ./internal/runtime -run TestLiveBwrapConversationWorkspace`：真实 bwrap 下 cwd `<会话根>/ws` 是运行工作区且可写、宿主路径可见同一份文件、home 可写、守卫文件与根目录只读、宿主 Docker socket 可见。
+  - `LOOPFORGE_LIVE_DOCKER=1 go test ./internal/runtime -run TestLiveDockerDriverConversationWorkspace`：Docker 驱动下同样的布局检查，并在容器里从 `<会话根>/ws` 经 docker 包装脚本 `docker run -v "$PWD:/m"` 读回工作区文件（需要能拉 alpine）。
 - 全量测试尚有独立于本次修改的既有问题：MySQL 分析统计覆盖用例在未修改的 master 同样失败；macOS 的 Linux 专用 seatbelt 断言及缺少 flock/Unix socket 路径限制影响全量执行。CMD 与 deploy 用例已另在 Linux Docker 中通过；运行时整包的 Docker 回收/发现测试失败也已在未修改的 master 复现。
 
 ### 会话与协作 Token 统计

@@ -28,7 +28,7 @@ func sopStopped(run domain.Run) bool {
 func borrowedSOPNotice(run domain.Run) string {
 	switch {
 	case domain.TerminalRunStatus(run.Status):
-		return fmt.Sprintf("SOP 运行 %s 已结束（%s）：可以直接改文件、跑命令，已回收的工作区会先恢复快照；改完自己 git push 并开 PR/MR，再调用 workbench_delivery_register 登记。", run.ID, run.Status)
+		return fmt.Sprintf("SOP 运行 %s 已结束（%s）：可以直接改文件、跑命令，已回收的工作区会先恢复快照；改完自己 git push 并开 PR，平台在本轮结束时把它登记到该 SOP 的需求。", run.ID, run.Status)
 	case sopStopped(run):
 		return fmt.Sprintf("SOP 运行 %s 已暂停：可以直接改文件、跑命令。改完调用 runs_resume 让 SOP 带着改动继续并由它交付，或 runs_cancel 取消后自己提交。", run.ID)
 	case run.CancelRequested:

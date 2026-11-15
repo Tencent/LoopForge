@@ -13,9 +13,9 @@ import (
 )
 
 // TestLiveDockerDriverConversationWorkspace starts a real Docker-driver
-// sandbox with a conversation workspace and checks the layout and the
-// workspace Docker proxy from inside. Opt in with LOOPFORGE_LIVE_DOCKER=1 on
-// a machine whose daemon can run containers and pull alpine.
+// sandbox with a conversation workspace and checks the layout and the host
+// Docker daemon from inside. Opt in with LOOPFORGE_LIVE_DOCKER=1 on a machine
+// whose daemon can run containers and pull alpine.
 func TestLiveDockerDriverConversationWorkspace(t *testing.T) {
 	if os.Getenv("LOOPFORGE_LIVE_DOCKER") == "" {
 		t.Skip("set LOOPFORGE_LIVE_DOCKER=1 to run against the real Docker daemon")
@@ -35,40 +35,39 @@ func TestLiveDockerDriverConversationWorkspace(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	dockerHost, stop, err := startConversationDocker(root, workspace)
-	if err != nil || dockerHost == "" {
-		t.Fatalf("docker proxy: %q %v", dockerHost, err)
-	}
-	t.Cleanup(func() { stop(); _ = os.RemoveAll(conversationDockerDir(root)) })
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 	id := "live-" + filepath.Base(base)
-	sandbox, err := createDocker(ctx, id, workspace, domain.SandboxProfile{Driver: "docker"}, SandboxRequirements{ConversationRoot: root}, domain.DockerfileDefinition{Content: "FROM alpine:3\nRUN apk add --no-cache curl\n"})
+	sandbox, err := createDocker(ctx, id, workspace, domain.SandboxProfile{Driver: "docker"}, SandboxRequirements{ConversationRoot: root}, domain.DockerfileDefinition{Content: "FROM alpine:3\nRUN apk add --no-cache docker-cli\n"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = sandbox.Close(context.Background()) })
+	bin, err := writeConversationDockerShim(root)
+	if err != nil {
+		t.Fatal(err)
+	}
 	guard := filepath.Join(root, conversationGuardFiles[0])
-	proxySocket := strings.TrimPrefix(dockerHost, "unix://")
 	script := strings.Join([]string{
 		"set -u",
+		"PATH=" + bin + ":$PATH",
 		"cd " + filepath.Join(root, "ws"),
 		"echo hi > from-sandbox || echo FAIL-ws-write",
+		"[ -f " + filepath.Join(workspace, "from-sandbox") + " ] || echo FAIL-host-path",
 		"touch " + filepath.Join(root, "home", "note") + " || echo FAIL-home-write",
 		"( echo x > " + guard + " ) 2>/dev/null && echo FAIL-guard-writable",
-		"[ -S /var/run/docker.sock ] && echo FAIL-host-docker-visible",
-		"[ -S " + proxySocket + " ] || echo FAIL-proxy-missing",
-		// The proxy answers and refuses a privileged container.
-		"curl -sf --unix-socket " + proxySocket + " http://docker/_ping >/dev/null || echo FAIL-proxy-ping",
-		"curl -s --unix-socket " + proxySocket + ` -H 'Content-Type: application/json' -d '{"Image":"alpine:3","HostConfig":{"Privileged":true}}' http://docker/containers/create | grep -q LoopForge || echo FAIL-privileged-allowed`,
+		"( echo x > " + filepath.Join(bin, "docker") + " ) 2>/dev/null && echo FAIL-shim-writable",
+		// The shim hands the host daemon the workspace's host path for $PWD.
+		`[ "$(docker run --rm -v "$PWD:/m" alpine:3 cat /m/from-sandbox)" = hi ] || echo FAIL-docker-bind`,
 		"echo DONE",
 	}, "\n")
-	out, err := sandbox.Exec(ctx, CommandSpec{Argv: []string{"sh", "-c", script}}, nil)
+	command := WithCommandEnvironment(CommandSpec{Argv: []string{"sh", "-c", script}}, map[string]string{"DOCKER_HOST": "unix://" + conversationDockerSocketTarget, workspaceAliasEnv: filepath.Join(root, "ws"), workspaceHostEnv: workspace})
+	out, err := sandbox.Exec(ctx, command, nil)
 	if err != nil || !strings.Contains(out, "DONE") || strings.Contains(out, "FAIL") {
 		t.Fatalf("inside the Docker sandbox: %v\n%s", err, out)
 	}
 	if data, err := os.ReadFile(filepath.Join(workspace, "from-sandbox")); err != nil || string(data) != "hi\n" {
-		t.Fatalf("<root>/ws must be the run workspace: %q %v", data, err)
+		t.Fatalf("the workspace must be the run workspace: %q %v", data, err)
 	}
 }

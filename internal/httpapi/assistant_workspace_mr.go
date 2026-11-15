@@ -3,27 +3,33 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"log"
+	"net/http"
+	"net/url"
+	"slices"
 	"strings"
+	"time"
 
 	"agentflow/internal/domain"
+	"agentflow/internal/gitwork"
 )
 
 // The agent delivers a conversation workspace with its own git: it pushes and
-// opens the GitHub PR itself using the requester's Git credentials. Platform
+// opens the GitHub PR itself using the speaker's Git credentials. Platform
 // bookkeeping (requirement link, merge tracking, requirement status) only
-// needs the resulting links, which workbench_delivery_register records.
-const workbenchDeliveryRegister = "workbench_delivery_register"
+// needs the resulting PRs, which registerTurnDeliveries finds after each turn.
 
-func deliveryRegisterDescriptor() agentToolDescriptor {
-	return agentToolDescriptor{
-		Name:        workbenchDeliveryRegister,
-		Description: "登记本对话交付的 GitHub PR。你在工作区里用 git push 并开好 PR 后调用一次，平台把它关联到需求、标记需求为待合入，并在合入后自动完成需求。urls 填 PR 链接（https://github.com/<owner>/<repo>/pull/<n>）；title/description 用于本对话还没有关联需求时新建需求。只读排查、没有开 PR 时不要调用。",
-		InputSchema: json.RawMessage(`{"type":"object","properties":{"urls":{"type":"array","minItems":1,"maxItems":20,"items":{"type":"string","maxLength":500}},"title":{"type":"string","minLength":1,"maxLength":200,"description":"需求标题，一句话写清交付了什么"},"description":{"type":"string","maxLength":20000}},"required":["urls","title"],"additionalProperties":false}`),
-		Kind:        "workspace",
-	}
-}
+// githubAPIBase is api.github.com; tests point it at a fake server.
+var githubAPIBase = "https://api.github.com"
+
+const (
+	turnDeliveryTimeout  = 20 * time.Second
+	turnDeliveryRepoMax  = 10
+	turnDeliveryPullsMax = 30
+)
 
 type deliveredMR struct {
 	Repository   string
@@ -41,62 +47,197 @@ func projectRepositories(all []domain.Repository, projectID string) []domain.Rep
 	return out
 }
 
-func (h *agentToolGateway) registerConversationDelivery(ctx context.Context, s *AgentToolSession, args map[string]any) (string, error) {
-	if s.RunID != "" {
-		return "", fmt.Errorf("任务会话由 SOP 交付节点登记交付")
+type workspacePull struct {
+	Number    int        `json:"number"`
+	URL       string     `json:"html_url"`
+	Title     string     `json:"title"`
+	Body      string     `json:"body"`
+	State     string     `json:"state"`
+	MergedAt  *time.Time `json:"merged_at"`
+	CreatedAt time.Time  `json:"created_at"`
+	User      struct {
+		Login string `json:"login"`
+	} `json:"user"`
+	Head struct {
+		SHA string `json:"sha"`
+	} `json:"head"`
+	Base struct {
+		Ref string `json:"ref"`
+	} `json:"base"`
+}
+
+// registerTurnDeliveries runs when a turn ends. GitHub PRs the speaker opened
+// from the conversation workspace are registered as the requirement's
+// delivery (the conversation's open requirement, or a new one titled after
+// the first PR), so MR polling completes the requirement once they merge. A
+// PR counts when the speaker's token authored it after the workspace was
+// created, a local branch in the workspace points at its head commit, and no
+// requirement tracks it yet; PRs opened elsewhere are left alone. It returns
+// a note for the reply, empty when nothing was registered.
+func (h *assistantHandlers) registerTurnDeliveries(ctx context.Context, s *AgentToolSession) string {
+	if s == nil || s.RunID != "" || h.engine == nil || strings.TrimSpace(s.User.GitToken) == "" {
+		return ""
 	}
-	runID := s.workspaceRun()
+	runID := s.conversationWorkspace()
 	run, ok := h.repo.RunState(runID)
-	if !ok || run.ExecutionContext.ProjectID != s.ProjectID || !run.IsWorkspace() {
-		return "", fmt.Errorf("本对话还没有工作区：先用 workbench_workspace_open 打开工作区并开好 PR/MR")
+	if runID == "" || !ok || run.ExecutionContext.ProjectID != s.ProjectID || (!run.IsWorkspace() && run.ExecutionContext.IssueID == "") {
+		return ""
 	}
-	title, _ := args["title"].(string)
-	title = strings.TrimSpace(title)
-	if title == "" || len([]rune(title)) > 200 {
-		return "", fmt.Errorf("title is required and must be at most 200 characters")
-	}
-	description, _ := args["description"].(string)
-	if len([]rune(description)) > 20000 {
-		return "", fmt.Errorf("description must be at most 20000 characters")
-	}
-	raw, _ := args["urls"].([]any)
-	mrs := []deliveredMR{}
-	invalid := []string{}
-	for _, item := range raw {
-		text, _ := item.(string)
-		text = strings.TrimSpace(text)
-		if text == "" {
-			continue
-		}
-		if !domain.IsGitHubPRURL(text) {
-			invalid = append(invalid, text)
-			continue
-		}
-		mrs = append(mrs, deliveredMR{URL: text})
-	}
-	if len(invalid) > 0 {
-		return "", fmt.Errorf("这些链接不是 GitHub PR（https://github.com/<owner>/<repo>/pull/<n>）：%s", strings.Join(invalid, "、"))
-	}
-	if len(mrs) == 0 {
-		return "", fmt.Errorf("urls 至少填一个 PR 链接")
-	}
-	issue, created, err := h.linkConversationRequirement(s, run, conversationRequirement{Title: title, Description: strings.TrimSpace(description)}, true)
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), turnDeliveryTimeout)
+	defer cancel()
+	checkouts, err := h.workspaceCheckouts(ctx, run)
 	if err != nil {
-		return "", err
+		log.Printf("scan conversation workspace %s checkouts: %v", run.ID, err)
+		return ""
 	}
-	if err := h.recordConversationMRs(issue.ID, mrs, projectRepositories(h.repo.Repositories(), s.ProjectID)); err != nil {
-		log.Printf("record conversation workspace %s delivery: %v", run.ID, err)
-		return "", fmt.Errorf("登记交付失败：%v", err)
-	}
-	out := map[string]any{"registered": len(mrs)}
-	if issue.ID != "" {
-		out["issueId"], out["issueTitle"] = issue.ID, issue.Title
-		note := fmt.Sprintf("已登记到需求 %s「%s」，PR 合入后需求自动完成。", issue.ID, truncateRunes(issue.Title, 60))
-		if created {
-			note = fmt.Sprintf("已新建项目需求 %s「%s」并登记这些 PR，合入后自动完成；告诉用户可以在需求列表查看。", issue.ID, truncateRunes(issue.Title, 60))
+	heads := map[string]bool{}
+	projects := []string{}
+	for _, checkout := range checkouts {
+		for _, head := range checkout.Heads {
+			heads[head] = true
 		}
-		out["note"] = note
+		for _, remote := range checkout.Remotes {
+			info, ok := domain.ParseRepositoryURL(withoutURLUserinfo(remote))
+			if ok && strings.HasPrefix(info.Project, "github:") && !slices.Contains(projects, info.Project) && len(projects) < turnDeliveryRepoMax {
+				projects = append(projects, info.Project)
+			}
+		}
 	}
-	body, _ := json.Marshal(out)
-	return redactAgentToolResult(string(body), s.User), nil
+	if len(heads) == 0 || len(projects) == 0 {
+		return ""
+	}
+	pulls, err := workspacePulls(ctx, s.User.GitToken, projects, heads, run.CreatedAt)
+	if err != nil {
+		log.Printf("find conversation workspace %s pull requests: %v", run.ID, err)
+		return ""
+	}
+	keys := []domain.MRDeliveryKey{}
+	for _, p := range pulls {
+		if project, iid, _, ok := domain.ParseGongfengMR(p.URL); ok {
+			keys = append(keys, domain.MRDeliveryKey{Project: project, IID: iid})
+		}
+	}
+	tracked := h.repo.MRDeliveryStatesMap(keys)
+	fresh := []workspacePull{}
+	for _, p := range pulls {
+		project, iid, _, ok := domain.ParseGongfengMR(p.URL)
+		if !ok || strings.TrimSpace(tracked[domain.MRDeliveryKey{Project: project, IID: iid}].IssueID) != "" {
+			continue
+		}
+		fresh = append(fresh, p)
+	}
+	if len(fresh) == 0 {
+		return ""
+	}
+	gateway := &agentToolGateway{deps: h.deps}
+	issue, created, err := gateway.linkConversationRequirement(s, run, conversationRequirement{Title: strings.TrimSpace(fresh[0].Title), Description: strings.TrimSpace(fresh[0].Body)}, true)
+	if err != nil || issue.ID == "" {
+		log.Printf("link conversation workspace %s requirement for its pull requests: %v", run.ID, err)
+		return ""
+	}
+	mrs := make([]deliveredMR, 0, len(fresh))
+	links := make([]string, 0, len(fresh))
+	for _, p := range fresh {
+		mrs = append(mrs, deliveredMR{URL: p.URL, TargetBranch: p.Base.Ref})
+		links = append(links, fmt.Sprintf("[PR #%d](%s)", p.Number, p.URL))
+	}
+	if err := gateway.recordConversationMRs(issue.ID, mrs, projectRepositories(h.repo.Repositories(), s.ProjectID)); err != nil {
+		log.Printf("record conversation workspace %s delivery: %v", run.ID, err)
+		return ""
+	}
+	if created {
+		return fmt.Sprintf("已新建需求 %s「%s」并登记 %s，合入后需求自动完成。", issue.ID, truncateRunes(issue.Title, 60), strings.Join(links, "、"))
+	}
+	return fmt.Sprintf("已把 %s 登记到需求 %s「%s」，合入后需求自动完成。", strings.Join(links, "、"), issue.ID, truncateRunes(issue.Title, 60))
+}
+
+// workspaceCheckouts lists the git checkouts in a run workspace, on the
+// execution machine that holds it.
+func (h *assistantHandlers) workspaceCheckouts(ctx context.Context, run domain.Run) ([]gitwork.Checkout, error) {
+	if runnerID := h.engine.RunExecutionRunner(run); runnerID != "" {
+		if h.runnerControls == nil {
+			return nil, errors.New("remote workspace channel is not configured")
+		}
+		response, err := h.runnerControls.requestWorkspace(ctx, runnerID, domain.RunnerWorkspaceRequest{
+			RunID: runnerWorkspaceRunID(run), RunStatus: run.Status, WorkspaceLayout: run.ExecutionContext.RunnerWorkspaceLayout,
+			Operation: domain.RunnerWorkspaceOperationCheckouts,
+		})
+		if err != nil {
+			return nil, err
+		}
+		if response.Error != "" {
+			return nil, errors.New(response.Error)
+		}
+		var payload struct {
+			Checkouts []gitwork.Checkout `json:"checkouts"`
+		}
+		err = json.Unmarshal(response.Payload, &payload)
+		return payload.Checkouts, err
+	}
+	root, reason := h.engine.LocalRunWorkspace(run)
+	if reason != "" {
+		return nil, errors.New(reason)
+	}
+	return gitwork.Checkouts(ctx, root), nil
+}
+
+// workspacePulls returns the open or merged PRs in projects that the token's
+// user created since the given time and whose head commit is in heads.
+func workspacePulls(ctx context.Context, token string, projects []string, heads map[string]bool, since time.Time) ([]workspacePull, error) {
+	var user struct {
+		Login string `json:"login"`
+	}
+	if err := githubGet(ctx, token, "/user", &user); err != nil {
+		return nil, err
+	}
+	if user.Login == "" {
+		return nil, errors.New("GitHub did not return the token's user")
+	}
+	out := []workspacePull{}
+	for _, project := range projects {
+		var list []workspacePull
+		path := "/repos/" + strings.TrimPrefix(project, "github:") + fmt.Sprintf("/pulls?state=all&sort=created&direction=desc&per_page=%d", turnDeliveryPullsMax)
+		if err := githubGet(ctx, token, path, &list); err != nil {
+			log.Printf("list pull requests of %s: %v", project, err)
+			continue
+		}
+		for _, p := range list {
+			if p.CreatedAt.Before(since) {
+				break
+			}
+			if !strings.EqualFold(p.User.Login, user.Login) || !heads[p.Head.SHA] || (p.State == "closed" && p.MergedAt == nil) || !domain.IsGitHubPRURL(p.URL) {
+				continue
+			}
+			out = append(out, p)
+		}
+	}
+	return out, nil
+}
+
+func githubGet(ctx context.Context, token, path string, out any) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, githubAPIBase+path, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(token))
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("GitHub request failed")
+	}
+	defer res.Body.Close()
+	if res.StatusCode < 200 || res.StatusCode >= 300 {
+		return fmt.Errorf("GitHub returned HTTP %d", res.StatusCode)
+	}
+	return json.NewDecoder(io.LimitReader(res.Body, 8<<20)).Decode(out)
+}
+
+func withoutURLUserinfo(raw string) string {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || u.User == nil {
+		return raw
+	}
+	u.User = nil
+	return u.String()
 }
