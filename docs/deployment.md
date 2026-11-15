@@ -117,7 +117,7 @@ Forgejo uses Git SSH for checkout, fetch and push, and the Forgejo API v1 for pu
 
 A conversation pushes with the requesting user's SSH key and opens or updates a same-repository PR with their token. If PR submission fails, the result still includes the pushed branch and SHA. A scheduled SOP with an integration branch uses the responsible user's credentials to open and merge a PR into that branch, subject to Forgejo's branch protections. The default branch remains a human merge target. LoopForge refreshes PR state with the delivery user's saved token. Replacing a token in Personal settings also updates subsequent refreshes. Issue import and automatic tracking of promotion from the integration branch to the default branch are outside this integration.
 
-The server adds the token table and delivery actor column through its existing incremental schema setup. Deployments that apply schema SQL manually can use [032_forge_credentials.sql](../migrations/032_forge_credentials.sql) and [033_forge_delivery_actor.sql](../migrations/033_forge_delivery_actor.sql). The runner protocol is unchanged.
+The server adds the token table and delivery actor column through its existing incremental schema setup. Deployments that apply schema SQL manually can use [033_forge_credentials.sql](../migrations/033_forge_credentials.sql) and [034_forge_delivery_actor.sql](../migrations/034_forge_delivery_actor.sql). The runner protocol is unchanged.
 
 ## Accounts
 
