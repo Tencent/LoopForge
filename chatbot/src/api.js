@@ -153,6 +153,7 @@ export function collectArtifacts(session) {
     const reviewLinks = [
       [/https:\/\/github\.com\/([A-Za-z0-9._-]+\/[A-Za-z0-9._-]+)\/pull\/(\d+)/g, "#", "PR"],
       [/https?:\/\/[A-Za-z0-9.-]+(?::\d+)?\/([A-Za-z0-9._\-\/]+?)(?:\/-)?\/merge_requests\/(\d+)/g, "!", "MR"],
+      [/https:\/\/cnb\.cool\/([A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)+?)\/-\/pulls\/(\d+)/g, "#", "PR"],
     ];
     for (const [pattern, marker, label] of reviewLinks)
       for (const match of (reply.message || "").matchAll(pattern)) {

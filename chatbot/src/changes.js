@@ -254,6 +254,11 @@ export function branchCompareUrl(repository) {
     return same
       ? `https://github.com/${github}/tree/${refPath(work)}`
       : `https://github.com/${github}/compare/${refPath(base)}...${refPath(work)}`;
+  const cnb = cnbRepoPath(repository?.cloneUrl);
+  if (cnb)
+    return same
+      ? `https://cnb.cool/${cnb}/-/tree/${refPath(work)}`
+      : `https://cnb.cool/${cnb}/-/compare/${refPath(base)}...${refPath(work)}`;
   const address = repository?.webUrl || repository?.cloneUrl;
   let host = "";
   if (repository?.provider === "gongfeng") {
@@ -265,13 +270,22 @@ export function branchCompareUrl(repository) {
   if (same) return `${managed.webUrl}/-/tree/${refPath(work)}`;
   return `${managed.webUrl}/-/compare/${refPath(base)}...${refPath(work)}`;
 }
-
 export function githubRepoPath(remote) {
   const raw = String(remote || "").trim();
   const match =
     /^(?:git@|ssh:\/\/git@)github\.com[:/]([^/]+\/[^/]+?)(?:\.git)?\/?$/.exec(raw) ||
     /^https:\/\/github\.com\/([^/]+\/[^/]+?)(?:\.git)?\/?$/.exec(raw);
   return match ? match[1] : "";
+}
+
+// cnb.cool group paths have two or more segments.
+export function cnbRepoPath(remote) {
+  const raw = String(remote || "").trim();
+  const match =
+    /^git@cnb\.cool:(.+)$/.exec(raw) || /^https:\/\/cnb\.cool\/(.+)$/.exec(raw);
+  if (!match) return "";
+  const path = match[1].replace(/\.git$/, "").replace(/^\/+|\/+$/g, "");
+  return /^[A-Za-z0-9_.-]+(\/[A-Za-z0-9_.-]+)+$/.test(path) && !path.split("/").includes("-") ? path : "";
 }
 
 export function gongfengProjectPath(remote) {

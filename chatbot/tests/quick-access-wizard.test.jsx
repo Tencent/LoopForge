@@ -102,6 +102,31 @@ describe("QuickAccessWizard", () => {
     expect(parseGongfengRepo("git clone https://github.com/acme/widgets.git")?.name).toBe("widgets");
     expect(parseGongfengRepo("https://token@github.com/acme/widgets")).toBeNull();
     expect(parseGongfengRepo("https://github.com/acme")).toBeNull();
+    // cnb.cool keeps every group level, drops sub pages and never takes userinfo.
+    expect(parseGongfengRepo("https://cnb.cool/org/team/sub/repo.git")).toEqual({
+      project: "cnb:org/team/sub/repo",
+      provider: "cnb",
+      name: "repo",
+      webUrl: "https://cnb.cool/org/team/sub/repo",
+      cloneUrl: "https://cnb.cool/org/team/sub/repo.git",
+    });
+    for (const address of [
+      "https://cnb.cool/org/repo/-/tree/main",
+      "https://cnb.cool/org/repo/-/pulls/12",
+      "cnb.cool/org/repo",
+      "cnb:org/repo",
+      "git clone https://cnb.cool/org/repo.git",
+    ])
+      expect(parseGongfengRepo(address)).toMatchObject({ provider: "cnb", project: "cnb:org/repo", name: "repo" });
+    for (const address of [
+      "https://cnb.cool/org",
+      "https://cnb.cool/org/../repo",
+      "https://token@cnb.cool/org/repo",
+      "http://cnb.cool/org/repo",
+      "https://cnb.cool.example.com/org/repo",
+    ])
+      expect(parseGongfengRepo(address)?.provider).not.toBe("cnb");
+    expect(parseGongfengRepo("git@cnb.cool:org/repo.git")?.provider).toBe("ssh");
     expect(parseGongfengRepo("git@git.example.com:team/repo.git")?.provider).toBe("ssh");
     expect(parseGongfengRepo("https://git.example.com/team/repo/-/tree/main")?.name).toBe("repo");
     expect(parseGongfengRepo("https://example.com/team/repo")).toMatchObject({provider:"https",cloneUrl:"https://example.com/team/repo"});

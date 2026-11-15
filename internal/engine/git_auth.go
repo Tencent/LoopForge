@@ -121,7 +121,7 @@ func resolveGitHubToken(s *repo.Store, userID int64) string {
 
 var (
 	gitCommandFailure = regexp.MustCompile(`(?i)repository checkout|git (clone|fetch|pull|push|ls-remote)`)
-	gitAuthFailure    = regexp.MustCompile(`(?i)could not read Username|Authentication failed|HTTP Basic: Access denied|requested URL returned error: 40[13]|Invalid username or password`)
+	gitAuthFailure    = regexp.MustCompile(`(?i)could not read Username|Authentication failed|HTTP Basic: Access denied|requested URL returned error: 40[13]|Invalid username or password|told us to quit`)
 )
 
 const gitTokenFixHint = "请责任人到「个人配置 → Git 访问令牌」为仓库的协议、主机和端口配置令牌，并填写该平台要求的用户名、确认仓库权限，然后重试本节点"
@@ -136,6 +136,13 @@ func explainGitAuthFailure(err error, tokenConfigured bool) error {
 	msg := err.Error()
 	if strings.Contains(msg, "Git Token") || !gitCommandFailure.MatchString(msg) || !gitAuthFailure.MatchString(msg) {
 		return err
+	}
+	if strings.Contains(msg, "told us to quit") {
+		// Only the scoped CNB helper quits: the user has no CNB token.
+		return fmt.Errorf("运行责任人未配置 CNB 访问令牌，无法拉取仓库。请到「个人配置」填写 CNB 访问令牌（权限 repo-code:rw 与 repo-pr:rw）。原始错误：%w", err)
+	}
+	if gitwork.MentionsManagedHost(msg) {
+		return fmt.Errorf("运行责任人的 CNB 访问令牌无效、已过期或权限不足，无法拉取仓库。请到「个人配置」重新填写（权限 repo-code:rw 与 repo-pr:rw），并确认责任人对该仓库有权限。原始错误：%w", err)
 	}
 	if !tokenConfigured {
 		return fmt.Errorf("运行责任人未配置 Git Token，无法拉取仓库。%s。原始错误：%w", gitTokenFixHint, err)

@@ -1283,6 +1283,8 @@ paths:
               properties:
                 assistantDefaults:
                   $ref: "#/components/schemas/AssistantDefaults"
+                cnbToken: {type: string, writeOnly: true, description: "Personal CNB (cnb.cool) access token with repo-code:rw and repo-pr:rw. Blank preserves the stored token."}
+                cnbTokenClear: {type: boolean}
                 codeBuddyApiKey: {type: string, writeOnly: true}
                 codeBuddyApiKeyClear: {type: boolean}
                 codeBuddyBaseUrl: {type: string, description: "HTTP(S) CodeBuddy gateway base URL. Omitted preserves the value; empty uses the official endpoint for the selected edition."}

@@ -62,6 +62,12 @@ const CREDENTIAL_KINDS=[
     guide:[['打开 GitHub「Settings → Developer settings → Personal access tokens」','https://github.com/settings/tokens','前往 GitHub 申请个人访问令牌'],['新建令牌，为目标仓库授予 <code>Contents</code> 和 <code>Pull requests</code> 的读写权限'],['复制令牌粘贴到下方，保存前会自动校验权限']],
     placeholder:'请输入个人访问令牌（PAT）',hint:'保存前会先校验令牌有效性与权限',
     impact:'依赖私有仓库的 LOOP 将无法克隆或推送仓库。'},
+  {key:'cnbToken',group:'platform',name:'CNB',short:'CNB 访问令牌',icon:'key',
+    use:'克隆 cnb.cool 仓库、推送工作分支、创建并合并 PR',
+    description:'用于克隆 cnb.cool 上的私有仓库、推送工作分支、发起并合并 PR。令牌只发送给 cnb.cool，不会与 GitHub 令牌混用。',
+    guide:[['打开 CNB「个人设置 → 访问令牌」','https://cnb.cool/profile/token','前往 CNB 申请访问令牌'],['新建令牌，授予 <code>repo-code:rw</code> 与 <code>repo-pr:rw</code> 权限'],['复制令牌粘贴到下方，保存前会自动校验']],
+    placeholder:'请输入 CNB 访问令牌',hint:'保存前会先校验令牌有效性',
+    impact:'依赖 cnb.cool 仓库的 LOOP 与对话提交将无法拉取、推送或发起 PR。'},
   {key:'gitSshKey',group:'platform',name:'Git SSH',short:'Git SSH 密钥',icon:'key',
     use:'SSH 密钥用于克隆和推送；创建 PR/MR 需要访问令牌',dialog:()=>openGitSSHKeys(),action:'管理密钥'},
   {key:'gitHttpCredentials',group:'platform',name:'Git HTTPS',short:'Git 访问令牌',icon:'lock',
@@ -1122,6 +1128,13 @@ async function verifyAndSaveGitToken(token){
   state.gitTokenVerify={userId:user.id,result,checkedAt:Date.now()};
   return {saved:true,result,user:saved};
 }
+// CNB 令牌与 Git 令牌一样先校验再保存；校验未通过时什么都不写入。
+async function verifyAndSaveCNBToken(token){
+  const result=await api(`/api/users/${state.currentUser.id}/cnb-token/verify`,{method:'POST',body:JSON.stringify({token}),silent:true});
+  if(!result?.valid)return {saved:false,result};
+  await saveCredential('cnbToken',{secret:token});
+  return {saved:true,result};
+}
 async function refreshGitTokenStatus(options={}){
   const user=state.currentUser;if(!user||user.isGuest)return null;
   // The previous answer stays alongside busy so the detail keeps its scopes while re-checking.
@@ -1158,8 +1171,14 @@ async function submitCredentialEditor(row,button){
   if(baseError){setCredentialHint(form,'baseUrl',baseError,'err');baseUrl.focus();return}
   const catalog=form.querySelector('[data-credential-catalog]'),models=credentialCatalogPayload(catalog);
   if(!validateCredentialCatalog(catalog,models))return;
-  setCredentialButtonBusy(button,key==='gitToken'?'校验中':'保存中');
+  setCredentialButtonBusy(button,key==='gitToken'||key==='cnbToken'?'校验中':'保存中');
   try{
+    if(key==='cnbToken'){
+      const outcome=await verifyAndSaveCNBToken(secret);
+      if(!outcome.saved){setCredentialButtonBusy(button,'');toast(`${outcome.result?.error||'CNB 令牌校验未通过'}（未保存）`,'err');return}
+      credentialSaved(key,'CNB 令牌校验通过，已保存');
+      return;
+    }
     if(key==='gitToken'){
       const outcome=await verifyAndSaveGitToken(secret);
       if(!outcome.saved){
@@ -1565,10 +1584,13 @@ async function advanceCredentialWizard(){
     if(kind.key==='gitToken'){
       const outcome=await verifyAndSaveGitToken(secret);
       if(!outcome.saved){wizard.error=`${gitTokenFailure(outcome.result)||'Git Token 校验未通过'}（未保存）`;return}
+    }else if(kind.key==='cnbToken'){
+      const outcome=await verifyAndSaveCNBToken(secret);
+      if(!outcome.saved){wizard.error=`${outcome.result?.error||'CNB 令牌校验未通过'}（未保存）`;return}
     }else await saveCredential(kind.key,{secret,extra:wizard.extra,baseUrl:wizard.baseUrl,protocol:wizard.protocol});
     wizard.done=true;wizard.secret='';
     if(kind.group==='platform')renderCredentialGitGroup();else renderCredentialPanel();
-    toast(kind.key==='gitToken'?'Git Token 校验通过，已保存':`${kind.name} 配置已保存`,'ok');
+    toast(kind.key==='gitToken'?'Git Token 校验通过，已保存':kind.key==='cnbToken'?'CNB 令牌校验通过，已保存':`${kind.name} 配置已保存`,'ok');
   }catch(err){wizard.error=err.message}
   finally{
     if(credentialWizard===wizard){

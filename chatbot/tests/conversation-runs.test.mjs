@@ -1,6 +1,6 @@
 import { test } from "vitest";
 import assert from "node:assert/strict";
-import { branchCompareUrl, githubRepoPath, gongfengProjectPath } from "../src/changes.js";
+import { branchCompareUrl, cnbRepoPath, githubRepoPath, gongfengProjectPath } from "../src/changes.js";
 import { isConversationWorkspaceRun } from "../src/runs.js";
 
 // 自由协作 runs and chat workspaces are not LOOPs; listing them showed
@@ -33,6 +33,26 @@ test("branchCompareUrl points at the work branch on GitHub", () => {
   assert.equal(githubRepoPath("https://github.com/o/r"), "o/r");
   assert.equal(githubRepoPath("https://github.com/o/r/tree/main"), "");
   assert.equal(githubRepoPath("https://gitlab.com/o/r.git"), "");
+});
+
+test("branchCompareUrl points at the work branch on cnb.cool with any group depth", () => {
+  const repository = {
+    cloneUrl: "https://cnb.cool/org/team/repo.git",
+    baseBranch: "main",
+    workBranch: "feature/fix-1",
+  };
+  assert.equal(
+    branchCompareUrl(repository),
+    "https://cnb.cool/org/team/repo/-/compare/main...feature/fix-1",
+  );
+  assert.equal(
+    branchCompareUrl({ ...repository, cloneUrl: "git@cnb.cool:org/team/repo.git", baseBranch: "" }),
+    "https://cnb.cool/org/team/repo/-/tree/feature/fix-1",
+  );
+  assert.equal(cnbRepoPath("https://cnb.cool/org/repo"), "org/repo");
+  assert.equal(cnbRepoPath("https://cnb.cool/org"), "");
+  assert.equal(cnbRepoPath("https://cnb.cool/org/repo/-/tree/main"), "");
+  assert.equal(cnbRepoPath("https://evil.example/cnb.cool/org/repo"), "");
 });
 
 test("branchCompareUrl points at the work branch on a legacy host", () => {

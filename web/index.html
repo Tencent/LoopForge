@@ -1038,8 +1038,8 @@
           <div data-github-repositories></div>
           <label class="pa-field"><span class="pa-field-l">Git 仓库地址</span>
             <input class="pa-input mono" name="repoUrl" spellcheck="false" placeholder="https://github.com/owner/repo">
-            <span class="pa-fmt"><code>https://github.com/owner/repo</code><code>git@gitlab.com:group/repo.git</code><code>git clone http://git.example.org/team/repo.git</code></span>
-            <span class="pa-field-e" id="repoDrawerUrlError" hidden>请输入有效的 Git HTTP(S) 地址或 Git SSH 克隆地址。</span>
+            <span class="pa-fmt"><code>https://github.com/owner/repo</code><code>https://cnb.cool/group/repo</code><code>git@gitlab.com:group/repo.git</code><code>git clone http://git.example.org/team/repo.git</code></span>
+            <span class="pa-field-e" id="repoDrawerUrlError" hidden>请输入有效的 GitHub、CNB（cnb.cool）、Git HTTP(S) 地址或 Git SSH 克隆地址。</span>
           </label>
           <div class="pa-detect" id="repoDrawerDetect" hidden><span class="pa-detect-ok"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12 5 5 9-10"/></svg></span><div class="pa-detect-m"><b id="repoDrawerDetectName"></b><code id="repoDrawerDetectPath"></code></div><button type="button" class="button ghost small" id="repoDrawerRename">改名</button></div>
           <label class="pa-field" id="repoDrawerNameField" hidden><span class="pa-field-l">仓库名称</span><input class="pa-input mono" name="name" placeholder="留空则自动取项目路径末段"></label>
@@ -1051,7 +1051,7 @@
         <div class="pa-fs">
           <h5>分支</h5>
           <div class="pa-g2">
-            <label class="pa-field"><span class="pa-field-l">主分支</span><input class="pa-input mono" name="defaultBranch" placeholder="main"></label>
+            <label class="pa-field"><span class="pa-field-l">主分支</span><input class="pa-input mono" name="defaultBranch" placeholder="留空使用默认分支"></label>
             <label class="pa-field"><span class="pa-field-l">集成分支 <i>可选</i></span><input class="pa-input mono" name="integrateBranch" placeholder="agentflow/integration"></label>
           </div>
           <p class="pa-fs-hint">集成分支用于检查多个 LOOP 执行后工作分支之间是否存在合并冲突；留空则跳过（部分仓库不允许创建 agentflow/ 分支）。</p>

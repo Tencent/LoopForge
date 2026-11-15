@@ -101,7 +101,7 @@ function openRepoDrawer(repoId=''){
   f.elements.repoUrl.value=repoAddress;
   f.elements.webUrl.value=repo?.provider==='ssh'?repo.webUrl||'':'';
   f.elements.name.value=repo?.name||'';
-  f.elements.defaultBranch.value=repo?.defaultBranch||'main';
+  f.elements.defaultBranch.value=repo?.defaultBranch||'';
   f.elements.integrateBranch.value=repo?.integrateBranch||'';
   fillRepoBranchNaming(f,repo?.workBranchNaming);
   f.elements.localPath.value=repo?.localPath||'';
@@ -131,7 +131,7 @@ function closeRepoDrawer(opt){
 }
 function repoDrawerPayload(f,info){
   const existing=(state.data.repositories||[]).find(r=>r.id===repoDrawerState.repoId)||{};
-  const payload={...existing,id:existing.id||undefined,projectId:repoDrawerState.projectId,provider:info.provider||'gongfeng',name:f.elements.name.value.trim()||info.name,gongfengProjectId:info.project,webUrl:info.webUrl,cloneUrl:info.cloneUrl,defaultBranch:f.elements.defaultBranch.value.trim()||'main',integrateBranch:f.elements.integrateBranch.value.trim(),localPath:f.elements.localPath.value.trim(),repoUrl:f.elements.repoUrl.value.trim()};
+  const payload={...existing,id:existing.id||undefined,projectId:repoDrawerState.projectId,provider:info.provider||'gongfeng',name:f.elements.name.value.trim()||info.name,gongfengProjectId:info.project,webUrl:info.webUrl,cloneUrl:info.cloneUrl,defaultBranch:f.elements.defaultBranch.value.trim()||(info.provider==='cnb'?'':'main'),integrateBranch:f.elements.integrateBranch.value.trim(),localPath:f.elements.localPath.value.trim(),repoUrl:f.elements.repoUrl.value.trim()};
   payload.workBranchNaming=repoBranchNamingPayload(f);
   if(['ssh','http','https'].includes(info.provider)){payload.gongfengProjectId='';payload.webUrl=f.elements.webUrl.value.trim()}
   delete payload.gitToken;if(!payload.id)delete payload.id;

@@ -527,6 +527,13 @@ function BusyLabel({ busy, busyLabel, children }) {
   );
 }
 
+// A CNB repository left on the preselected "main" is bound without a branch so
+// the server reads the real default branch with the user's CNB token.
+function bindDefaultBranch(repo, branch) {
+  const value = branch.trim() || "main";
+  return repo.provider === "cnb" && value === "main" ? "" : value;
+}
+
 function parseGitHubRepo(raw) {
   let value = String(raw || "")
     .trim()
@@ -562,6 +569,44 @@ function parseGitHubRepo(raw) {
   };
 }
 
+// cnb.cool paths have two or more segments; /-/ starts a sub page. Mirrors
+// parseCNBRepositoryURL in internal/domain/public_repository.go.
+function parseCNBRepo(raw) {
+  let value = String(raw || "")
+    .trim()
+    .replace(/^['"]+|['"]+$/g, "")
+    .replace(/^git\s+clone\s+/i, "")
+    .replace(/^cnb:/i, "https://cnb.cool/");
+  if (/^cnb\.cool\//i.test(value)) value = `https://${value}`;
+  let url;
+  try {
+    url = new URL(value);
+  } catch {
+    return null;
+  }
+  if (url.hostname !== "cnb.cool" || url.username || url.password || url.protocol !== "https:")
+    return null;
+  const path = url.pathname
+    .replace(/^\/+|\/+$/g, "")
+    .split("/-/")[0]
+    .replace(/\/-$/, "")
+    .replace(/\.git$/i, "");
+  const segments = path.split("/");
+  if (
+    segments.length < 2 ||
+    !segments.every((seg) => /^[A-Za-z0-9_.-]+$/.test(seg) && seg !== "." && seg !== "..")
+  )
+    return null;
+  const webUrl = `https://cnb.cool/${path}`;
+  return {
+    project: `cnb:${path}`,
+    provider: "cnb",
+    name: segments[segments.length - 1],
+    webUrl,
+    cloneUrl: `${webUrl}.git`,
+  };
+}
+
 // An ordinary managed link keeps its provider identity. Clone commands can
 // explicitly choose plaintext transport.
 export function parseGongfengRepo(raw, host = "") {
@@ -569,6 +614,7 @@ export function parseGongfengRepo(raw, host = "") {
     return globalThis.LoopForgeGitHTTPRepository(raw);
   }
   return globalThis.LoopForgeGitSSH(raw) ||
+    parseCNBRepo(raw) ||
     globalThis.LoopForgeGongfengRepository(raw, host) ||
     parseGitHubRepo(raw) ||
     globalThis.LoopForgeGitHTTPRepository(raw);
@@ -1087,8 +1133,9 @@ export default function QuickAccessWizard({
   const activeStep = STEPS[activeStepIndex] || STEPS[0];
   const wizardStepCount = STEPS.length - 1;
   const gitHubReady = Boolean(storedUser?.gitHubCredentialConfigured);
+  const cnbReady = Boolean(storedUser?.cnbTokenConfigured);
   const gongfengReady = Boolean(storedUser?.gitTokenOAuth);
-  const hasGit = gitHubReady || gongfengReady || Boolean(storedUser?.gitSshKeyConfigured) || gitHttpHosts.length > 0;
+  const hasGit = gitHubReady || cnbReady || gongfengReady || Boolean(storedUser?.gitSshKeyConfigured) || gitHttpHosts.length > 0;
   const sshKeysLoaded = sshCredentials.userId === user?.id && sshCredentials.keys !== null;
   const hasSSHKey = (remote) => sshKeysLoaded && !sshCredentials.error && sshCredentials.keys.some(
     (key) => globalThis.LoopForgeGitSSHHost(key.host) === remote?.host,
@@ -1097,6 +1144,7 @@ export default function QuickAccessWizard({
     if (repo?.provider === "ssh") return { label: "Git SSH", ready: hasSSHKey(repo) };
     if (["http", "https"].includes(repo?.provider)) return { label: `Git ${repo.provider.toUpperCase()}`, ready: gitHttpHosts.includes(repo.host) };
     if (repo?.provider === "github") return { label: "GitHub", ready: gitHubReady };
+    if (repo?.provider === "cnb") return { label: "CNB", ready: cnbReady };
     if (repo?.provider === "gongfeng") return { label: "工蜂", ready: gongfengReady };
     return { label: "Git", ready: hasGit };
   };
@@ -1193,7 +1241,7 @@ export default function QuickAccessWizard({
       }
       if (bindRepoNow && repoUrl.trim() && !parsedRepo) {
         setError(
-          "请输入 Git HTTP(S) 仓库链接或 Git SSH 克隆地址。",
+          "请输入 GitHub、CNB、Git HTTP(S) 链接或 Git SSH 克隆地址。",
         );
         return;
       }
@@ -1266,7 +1314,7 @@ export default function QuickAccessWizard({
               gongfengProjectId: parsedRepo.project,
               webUrl: parsedRepo.webUrl || existingRepo.webUrl,
               cloneUrl: parsedRepo.cloneUrl,
-              defaultBranch: repoBranch.trim() || "main",
+              defaultBranch: bindDefaultBranch(parsedRepo, repoBranch),
               repoUrl: repoUrl.trim(),
             },
             "PUT",
@@ -1279,7 +1327,7 @@ export default function QuickAccessWizard({
             gongfengProjectId: parsedRepo.project,
             webUrl: parsedRepo.webUrl,
             cloneUrl: parsedRepo.cloneUrl,
-            defaultBranch: repoBranch.trim() || "main",
+            defaultBranch: bindDefaultBranch(parsedRepo, repoBranch),
             repoUrl: repoUrl.trim(),
           });
         }
@@ -1691,6 +1739,7 @@ export default function QuickAccessWizard({
                             {gitHubReady ? "管理 GitHub 授权" : "连接 GitHub"}
                           </button>
                           <p className="qa-hint">在个人配置中完成授权，返回后继续。</p>
+                          <p className="qa-hint">cnb.cool 仓库：<button type="button" className="qa-link-btn" disabled={verifyingGit} onClick={() => openCredentialSettings("cnbToken")}>{cnbReady ? "管理 CNB 访问令牌" : "配置 CNB 访问令牌"}</button></p>
                           <p className="qa-hint">GitLab 等 SSH 仓库：<button type="button" className="qa-link-btn" disabled={verifyingGit} onClick={() => openCredentialSettings("gitSshKey")}>{storedUser?.gitSshKeyConfigured ? "管理 Git SSH 密钥" : "配置 Git SSH 密钥"}</button></p>
                           <p className="qa-hint">GitLab、GitHub Enterprise 等 HTTPS 主机：<button type="button" className="qa-link-btn" disabled={verifyingGit} onClick={() => openCredentialSettings("gitHttpCredentials")}>{storedUser?.gitHttpCredentialsConfigured ? "管理 Git 访问令牌" : "配置 Git 访问令牌"}</button></p>
                           <details>
@@ -1794,7 +1843,7 @@ export default function QuickAccessWizard({
                                     </span>
                                     <strong>{repo.name}</strong>
                                     <code>
-                                      {repo.provider === "github" && repo.webUrl
+                                      {(repo.provider === "github" || repo.provider === "cnb") && repo.webUrl
                                         ? repo.webUrl.replace(
                                             /^https?:\/\//,
                                             "",
@@ -1940,7 +1989,7 @@ export default function QuickAccessWizard({
                                     {projectMode === "existing" &&
                                     projectRepos.length
                                       ? "新增仓库地址（可选）"
-                                      : "Git HTTP(S) 链接或 Git SSH 地址"}
+                                      : "GitHub / CNB / HTTP(S) 链接或 Git SSH 地址"}
                                   </span>
                                   <input
                                     className="qa-input qa-mono"
@@ -1987,9 +2036,17 @@ export default function QuickAccessWizard({
                                 </p>
                               ) : (
                                 <p key="help" className="qa-hint">
-                                  支持 Git HTTP(S) 链接或 Git SSH 地址，例如 <code>git@gitlab.com:group/repo.git</code>。
+                                  支持 GitHub、CNB、Git HTTP(S) 链接或 Git SSH 地址，例如 <code>https://cnb.cool/group/repo</code>、<code>git@gitlab.com:group/repo.git</code>。
                                 </p>
                               )}
+                              {selectedRepo?.provider === "cnb" && !cnbReady ? (
+                                <p className="qa-hint is-error" role="alert">
+                                  CNB 仓库使用个人 CNB 访问令牌，请先到「个人配置」填写（权限 repo-code:rw 与 repo-pr:rw）。
+                                  <button type="button" className="qa-link-btn" onClick={() => openCredentialSettings("cnbToken")}>
+                                    配置 CNB 令牌
+                                  </button>
+                                </p>
+                              ) : null}
                               {selectedRepo?.provider === "ssh" && sshKeysLoaded && !repoAccess.ready ? (
                                 <p className="qa-hint is-error" role="alert">
                                   {sshCredentials.error ? "无法读取 SSH 密钥配置，请稍后重试。" : `尚未配置 ${selectedRepo.host} 的 SSH 密钥，可返回上一步添加，也可稍后在个人配置中添加。`}

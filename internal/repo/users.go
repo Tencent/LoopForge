@@ -265,6 +265,8 @@ func userHasConfig(user domain.User) bool {
 
 type UserCredentialUpdate struct {
 	AssistantDefaults            *domain.AssistantDefaults `json:"assistantDefaults"`
+	CNBToken                     string                    `json:"cnbToken"`
+	CNBTokenClear                bool                      `json:"cnbTokenClear"`
 	CodeBuddyAPIKey              string                    `json:"codeBuddyApiKey"`
 	CodeBuddyAPIKeyClear         bool                      `json:"codeBuddyApiKeyClear"`
 	CodeBuddyBaseURL             *string                   `json:"codeBuddyBaseUrl"`
@@ -325,6 +327,11 @@ func (r *UsersRepo) updateUserCredentials(id int64, update UserCredentialUpdate)
 	previousDefaults := user.AssistantDefaults
 	if user.AssistantDefaults.Executor == "" {
 		user.AssistantDefaults.Executor = firstAssistantExecutor(user)
+	}
+	if update.CNBTokenClear {
+		user.CNBToken = ""
+	} else if value := strings.TrimSpace(update.CNBToken); value != "" {
+		user.CNBToken = value
 	}
 	if update.CodeBuddyAPIKeyClear {
 		user.CodeBuddyAPIKey = ""

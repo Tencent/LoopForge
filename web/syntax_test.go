@@ -502,7 +502,7 @@ const count = (html, needle) => html.split(needle).length - 1;
 
 // Groups list credentials in a fixed order.
 assert.deepEqual(cred.CREDENTIAL_GROUPS.map(g => g.id), ['platform', 'model']);
-assert.deepEqual(cred.CREDENTIAL_KINDS.filter(k => k.group === 'platform').map(k => k.key), ['gitToken', 'gitSshKey', 'gitHttpCredentials']);
+assert.deepEqual(cred.CREDENTIAL_KINDS.filter(k => k.group === 'platform').map(k => k.key), ['gitToken', 'cnbToken', 'gitSshKey', 'gitHttpCredentials']);
 assert.deepEqual(cred.CREDENTIAL_KINDS.filter(k => k.group === 'model').map(k => k.key), ['codeBuddyApiKey', 'codexApiKey', 'claudeCodeApiKey', 'agentCli.opencode', 'agentCli.cursor', 'agentCli.agy', 'agentCli.kimi', 'agentCli.pi', 'agentCli.dsh', 'agentCli.zcode']);
 
 // Existing credentials are rows. The add controls own the available types.
@@ -522,6 +522,9 @@ assert.ok(credentialRowHTML(cred.kind('gitToken'), user).includes('git-token-ver
 
 // Each kind saves and deletes only its own fields.
 assert.deepEqual(credentialSavePayload(cred.kind('gitToken'), {secret: ' ghp_1 '}), {gitToken: 'ghp_1'});
+assert.deepEqual(credentialSavePayload(cred.kind('cnbToken'), {secret: ' cnb_1 '}), {cnbToken: 'cnb_1'});
+assert.deepEqual(credentialClearPayload(cred.kind('cnbToken')), {cnbTokenClear: true});
+assert.equal(cred.kind('cnbToken').icon, 'key', 'no third-party logo for CNB');
 const sshRow = credentialRowHTML(cred.kind('gitSshKey'), {...user, gitSshKeyConfigured: true});
 assert.match(sshRow, /aria-haspopup="dialog">管理密钥/);
 assert.ok(!sshRow.includes('credential-editor-form'));

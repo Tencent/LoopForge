@@ -312,8 +312,6 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	// 工蜂 Git Token 校验：只允许当前登录用户校验自己的令牌。
 	g.GET("/api/users/:id/git-token/verify", api.users.verifyGitToken)
 	g.POST("/api/users/:id/git-token/verify", api.users.verifyGitToken)
-	g.PUT("/api/users/:id/cnb-token", api.cnb.saveToken)
-	g.DELETE("/api/users/:id/cnb-token", api.cnb.clearToken)
 	g.GET("/api/users/:id/cnb-token/verify", api.cnb.verifyToken)
 	g.POST("/api/users/:id/cnb-token/verify", api.cnb.verifyToken)
 	g.GET("/api/users/:id/git-ssh-keys", api.users.gitSSHKeys)

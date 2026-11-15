@@ -30,3 +30,14 @@ func TestExplainGitAuthFailure(t *testing.T) {
 		}
 	}
 }
+
+func TestExplainGitAuthFailureNamesTheCNBToken(t *testing.T) {
+	quit := errors.New(`repository checkout: git clone https://cnb.cool/org/repo.git: exit status 128: fatal: credential helper '!f() { printf 'quit=1\n'; }; f' told us to quit`)
+	if got := explainGitAuthFailure(quit, true); !strings.Contains(got.Error(), "未配置 CNB 访问令牌") || !errors.Is(got, quit) {
+		t.Fatalf("a missing CNB token must be named, with the raw error kept: %v", got)
+	}
+	rejected := errors.New("repository checkout: git clone https://cnb.cool/org/repo.git: exit status 128: remote: Authentication failed for 'https://cnb.cool/org/repo.git/'")
+	if got := explainGitAuthFailure(rejected, false); !strings.Contains(got.Error(), "CNB 访问令牌无效") || strings.Contains(got.Error(), "GitHub") {
+		t.Fatalf("a rejected CNB token must not blame the GitHub token: %v", got)
+	}
+}

@@ -27,7 +27,7 @@ let projectWizard=null;
 function projectWizardStepIndex(step){return projectWizardSteps().findIndex(s=>s.id===step)}
 function projectWizardProject(){const id=projectWizard?.projectId;return id?(state.data.projects||[]).find(p=>p.id===id)||null:null}
 function projectWizardRepos(){const id=projectWizard?.projectId;return id?(state.data.repositories||[]).filter(r=>r.projectId===id):[]}
-function blankProjectWizardRepo(){return {url:'',branch:'main',integrate:''}}
+function blankProjectWizardRepo(){return {url:'',branch:'',integrate:''}}
 
 function openProjectWizard(){
   if(projectWizard){focusProjectWizard();return}
@@ -101,10 +101,10 @@ async function projectWizardCreate(){
 async function projectWizardAddRepo(){
   const w=projectWizard,project=projectWizardProject();if(!w||w.saving||!project)return false;
   const url=String(w.repo.url||'').trim(),info=parseGongfengRepoURL(url);
-  if(!info)return projectWizardFail(url?'请输入有效的 Git HTTP(S) 链接或 Git SSH 地址。':'请先粘贴 Git 仓库地址','repoUrl');
+  if(!info)return projectWizardFail(url?'请输入 GitHub、CNB（cnb.cool）或有效的 Git HTTP(S) / Git SSH 地址。':'请先粘贴 Git 仓库地址','repoUrl');
   const transportOnly=['ssh','http','https'].includes(info.provider);
   if(projectWizardRepos().some(r=>transportOnly?r.cloneUrl===info.cloneUrl:r.gongfengProjectId===info.project))return projectWizardFail(`仓库 ${info.project} 已经绑定到这个项目`,'repoUrl');
-  const payload={projectId:project.id,provider:info.provider||'gongfeng',name:info.name,gongfengProjectId:transportOnly?'':info.project,webUrl:info.webUrl,cloneUrl:info.cloneUrl,defaultBranch:String(w.repo.branch||'').trim()||'main',integrateBranch:String(w.repo.integrate||'').trim(),localPath:'',repoUrl:url};
+  const payload={projectId:project.id,provider:info.provider||'gongfeng',name:info.name,gongfengProjectId:transportOnly?'':info.project,webUrl:info.webUrl,cloneUrl:info.cloneUrl,defaultBranch:String(w.repo.branch||'').trim()||(info.provider==='cnb'?'':'main'),integrateBranch:String(w.repo.integrate||'').trim(),localPath:'',repoUrl:url};
   const makeDefault=projectNeedsDefaultRepository(project);
   let defaultError='';
   const repo=await projectWizardRequest(async()=>{
@@ -261,9 +261,9 @@ function projectWizardBasicHTML(w){
 }
 function projectWizardRepoHint(url){
   const raw=String(url||'').trim(),info=raw?parseGongfengRepoURL(raw):null;
-  if(!raw)return '例如 https://github.com/owner/repo 或 git clone http://git.example.org/team/repo.git';
+  if(!raw)return '例如 https://github.com/owner/repo、https://cnb.cool/group/repo 或 git clone http://git.example.org/team/repo.git';
   if(info?.provider==='ssh')return `识别为 Git SSH · <b>${escapeHTML(info.name)}</b>。请平台管理员在「平台管理 → Git 主机信任」登记主机公钥，并在个人配置中添加 Git SSH 密钥。`;
-  return info?`识别为 <b>${escapeHTML(info.name)}</b> · ${escapeHTML(repoDisplayPath(info,info.project))}`:'请输入 Git HTTP(S) 链接或 Git SSH 地址';
+  return info?`识别为 <b>${escapeHTML(info.name)}</b> · ${escapeHTML(repoDisplayPath(info,info.project))}${info.provider==='cnb'?'。需要在个人配置中填写 CNB 访问令牌；主分支留空时自动读取默认分支。':''}`:'请输入 GitHub、CNB、Git HTTP(S) 链接或 Git SSH 地址';
 }
 function projectWizardReposHTML(w){
   const project=projectWizardProject()||{},repos=projectWizardRepos();
@@ -271,7 +271,7 @@ function projectWizardReposHTML(w){
   const body=(list?`<div class="pw-repo-list">${list}</div>`:'')
     +'<div data-github-repositories></div>'
     +pwField('Git 仓库地址',`<input class="pw-input pw-mono" id="pwRepoUrl" name="repoUrl" value="${escapeHTML(w.repo.url)}" placeholder="https://github.com/owner/repo" spellcheck="false" autocomplete="off">`,{for:'pwRepoUrl',hint:projectWizardRepoHint(w.repo.url),hintAttrs:' data-pw-repo-hint'})
-    +`<div class="pw-row2">${pwField('主分支',`<input class="pw-input pw-mono" id="pwRepoBranch" name="repoBranch" value="${escapeHTML(w.repo.branch)}" placeholder="main" spellcheck="false">`,{for:'pwRepoBranch'})}${pwField('集成分支',`<input class="pw-input pw-mono" id="pwRepoIntegrate" name="repoIntegrate" value="${escapeHTML(w.repo.integrate)}" placeholder="可选" spellcheck="false">`,{for:'pwRepoIntegrate'})}</div>`
+    +`<div class="pw-row2">${pwField('主分支',`<input class="pw-input pw-mono" id="pwRepoBranch" name="repoBranch" value="${escapeHTML(w.repo.branch)}" placeholder="main（CNB 可留空自动读取）" spellcheck="false">`,{for:'pwRepoBranch'})}${pwField('集成分支',`<input class="pw-input pw-mono" id="pwRepoIntegrate" name="repoIntegrate" value="${escapeHTML(w.repo.integrate)}" placeholder="可选" spellcheck="false">`,{for:'pwRepoIntegrate'})}</div>`
     +`<div><button type="button" class="pw-btn pw-btn-outline pw-btn-sm" data-pw-action="add-repo"${w.saving?' disabled':''}>＋ 添加仓库</button></div>`;
   return projectWizardHeadHTML(w,'代码仓库','Agent 执行 LOOP 时会克隆这些仓库并在工作分支上提交。第一个仓库会自动设为默认。')
     +`<div class="pw-pane"><p class="pw-note is-ok">✓ 项目「${escapeHTML(project.name||'')}」已创建。仓库添加后立即生效，也可以先跳过。</p>${pwCard('绑定代码仓库','粘贴仓库地址，自动识别名称',pwPill(repos.length?`已绑定 ${repos.length} 个`:'未绑定',repos.length?'ok':''),body)}</div>`;
