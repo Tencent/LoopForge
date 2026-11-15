@@ -80,6 +80,13 @@ test("activity summaries replace internal tool names with readable subjects whil
   };
   assert.equal(activityFace(delivery).done, "已登记交付");
   assert.equal(activityTarget(delivery), "修复登录按钮文案");
+  const publish = {
+    kind: "tool",
+    tool: "mcp__agentflow_session__workbench_publish_artifact",
+    detail: '{"path":"reports/demo.html"}',
+  };
+  assert.equal(activityFace(publish).done, "已发布产物");
+  assert.equal(activityTarget(publish), "reports/demo.html");
   const read = {
     kind: "tool",
     tool: "Read",

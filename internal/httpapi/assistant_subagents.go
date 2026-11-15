@@ -293,7 +293,7 @@ func (h *assistantHandlers) collectRoleDeliverables(ctx context.Context, s *Agen
 			continue
 		}
 		id := fmt.Sprintf("deliverable-%s-%d", dispatchID, i)
-		_, err := gateway.callMainBotWorkspace(ctx, s, "workbench_workspace_attach", map[string]any{"path": rel})
+		_, err := gateway.callMainBotWorkspace(ctx, s, workspaceAttachInternal, map[string]any{"path": rel})
 		if err != nil && !contract.Required {
 			continue
 		}

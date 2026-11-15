@@ -496,6 +496,14 @@ func bwrapArgsCommand(workspace string, requirements SandboxRequirements, maskAg
 		for _, file := range files {
 			args = append(args, "--ro-bind", file, file)
 		}
+		// Docker goes through the workspace's filtering proxy (DOCKER_HOST);
+		// the host daemon sockets would hand out the whole machine.
+		for _, socket := range hostDockerSockets() {
+			args = append(args, "--ro-bind", "/dev/null", socket)
+		}
+		if dir := conversationDockerDir(conversation); dirExists(dir) {
+			args = append(args, "--bind", dir, dir)
+		}
 	}
 	if requirements.BunFS && ensureBunFSMountPoint() {
 		args = append(args, "--tmpfs", bunFSMountPoint)
@@ -693,4 +701,9 @@ func dockerAgentStateMountRequirements(requirements SandboxRequirements) ([]stri
 		}
 	}
 	return args, nil
+}
+
+func dirExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
 }

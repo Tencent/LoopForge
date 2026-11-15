@@ -136,6 +136,7 @@ type conversationProcess struct {
 	wake       chan struct{}
 	lastPoll   time.Time
 	closeRelay func()
+	stopDocker func()
 	finished   chan struct{}
 	root       string
 	bytes      int
@@ -421,6 +422,9 @@ func (p *ConversationProcessPool) start(ctx context.Context, root, workspace str
 		if proc.closeRelay != nil {
 			proc.closeRelay()
 		}
+		if proc.stopDocker != nil {
+			proc.stopDocker()
+		}
 		if release != nil {
 			release()
 		}
@@ -516,6 +520,17 @@ func (p *ConversationProcessPool) start(ctx context.Context, root, workspace str
 	env := map[string]string{}
 	for key, value := range req.Command.Environment {
 		env[key] = conversationRemap(value, req.SourceRoot, root)
+	}
+	if spec != nil {
+		// Docker through the workspace's filtering proxy, never the daemon.
+		dockerHost, stopDocker, err := startConversationDocker(root, workspace)
+		if err != nil {
+			return ConversationProcessResult{}, fmt.Errorf("启动工作区 Docker 代理：%w", err)
+		}
+		if dockerHost != "" {
+			proc.stopDocker = stopDocker
+			env["DOCKER_HOST"] = dockerHost
+		}
 	}
 	command = WithCommandEnvironment(command, env)
 	command = command.WithPrivateHomeDir(filepath.Join(root, "home"))

@@ -706,6 +706,12 @@ func (s *dockerSandbox) ensureStarted(ctx context.Context) error {
 			return err
 		}
 		args = append(args, guards...)
+		// The workspace's Docker proxy socket (DOCKER_HOST) appears here.
+		dockerDir, err := ensureConversationDockerDir(root)
+		if err != nil {
+			return err
+		}
+		args = append(args, "-v", dockerDir+":"+dockerDir)
 	}
 	var aliases []string
 	if root := s.requirements.ConversationRoot; root != "" {

@@ -268,7 +268,7 @@ func (h *agentToolGateway) callTool(ctx context.Context, session *AgentToolSessi
 		return map[string]any{"content": []map[string]any{{"type": "text", "text": string(body)}}}, nil
 	}
 	if name == "workbench_publish_artifact" {
-		return h.publishWorkbenchArtifact(session, params.Arguments)
+		return h.publishArtifact(ctx, session, params.Arguments)
 	}
 	catalog := h.buildCatalog(ctx, session)
 	tool, ok := lookupAgentTool(catalog, name)

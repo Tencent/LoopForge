@@ -38,7 +38,17 @@
 
 ## Native 沙箱
 
-会话工作区可以使用 native 沙箱（Linux 上解析为 bwrap）。bwrap 工作区与 Docker 布局一致：CLI 的 HOME 是 `<会话根>/home`、cwd 是 `<会话根>/ws`（映射到运行工作区），审批钩子文件只读挂载；宿主文件系统其余部分只读，网络与宿主相同。宿主的 Docker socket 在只读根里可见，因此 Agent 能直接 `docker build/run`；这等同于把执行机器的 Docker 权限交给 Agent，只应在可信的执行机器上使用（后续计划加 Docker socket 代理做权限收敛）。CLI 使用执行机器自己安装的版本。macOS seatbelt 无法把 `<会话根>/ws` 重映射到运行工作区，暂不支持对话工作区，会返回明确错误。Docker 沙箱工作区内不提供 Docker socket。
+会话工作区可以使用 native 沙箱（Linux 上解析为 bwrap）。bwrap 工作区与 Docker 布局一致：CLI 的 HOME 是 `<会话根>/home`、cwd 是 `<会话根>/ws`（映射到运行工作区），审批钩子文件只读挂载；宿主文件系统其余部分只读，网络与宿主相同。宿主的 Docker/containerd/podman socket 用 `/dev/null` 遮住，Docker 只能经下面的工作区代理使用。CLI 使用执行机器自己安装的版本。macOS seatbelt 无法把 `<会话根>/ws` 重映射到运行工作区，暂不支持对话工作区，会返回明确错误。
+
+## 工作区里的 Docker
+
+执行机器有 Docker 守护进程时（`DOCKER_HOST` 指向的 unix socket，默认 `/var/run/docker.sock`），工作区模式的 CLI 启动时平台在 `/tmp/lf-docker-<会话根哈希>/docker.sock` 起一个过滤代理（`internal/dockerproxy`），并把 `DOCKER_HOST` 设成它。unix socket 路径不能超过约 108 字节，会话根太长，所以用这个短目录（0700，socket 0600，只有平台用户可连）；Docker 与 bwrap 工作区都把它挂在同一路径，两种环境里 `docker build/run/compose` 都能直接用（容器里要自备 docker CLI）。目录在会话期间保留，Docker 工作区容器的挂载才能看到每次重建的 socket。`AGENTFLOW_WORKSPACE_DOCKER=off` 关闭。
+
+- 隔离：工作区创建的容器、网络、卷都打上 `loopforge.workspace=<工作区路径哈希>` 标签；列表、事件、prune 强制加这个标签过滤；对容器、exec、网络、卷的任何操作先查标签，不是本工作区的一律 403。镜像是守护进程全局的，允许拉取、构建、打标签、推送和按名删除，但不能 `image prune`/`builder prune`。
+- 拒绝逃逸：`--privileged`、`--cap-add`、设备与 GPU、`--security-opt`（`no-new-privileges` 除外）、宿主 PID/IPC/UTS/userns/cgroupns/网络命名空间、自定义 runtime、`--cgroup-parent`、host/macvlan/ipvlan 网络、带 driver 选项的卷、`--network host` 构建；swarm、插件、`system df` 等接口不开放。
+- 挂载：bind 源只能在工作区（`<会话根>/ws`，代理换成守护进程看到的宿主路径）或会话 HOME 之内，路径先解析软链（包括尚不存在的子目录所在的父目录）再判定；命名卷属于别的工作区就拒绝，不存在时由代理带标签创建。
+- 生命周期：CLI 进程退出时代理关闭，本工作区仍在运行的容器被 `docker stop`（不删除，下轮可以 `docker start`）。
+- 已知边界：检查与守护进程执行之间存在 TOCTOU（检查后把目录换成软链）；BuildKit 的 `/grpc` 通道不解析，构建内的网络模式只拦截经典 `/build` 参数；同一执行机器上的镜像缓存在工作区之间共享。
 
 `PUT /api/assistant/sessions/{id}/sandbox` 接受 `{ "sandboxProfileId": "id 或空字符串" }`，具备项目访问权限的会话参与者均可调用；生成期间和任务会话拒绝变更。已有工作区不受影响，新选择只用于之后新开的工作区。普通会话创建时也可以提交 `sandboxProfileId`，后续普通会话保存不能覆盖已保存的选择或伪造工作区绑定。
 
@@ -49,6 +59,8 @@
 部署时先停旧 API/Worker，手动执行 `migrations/020_conversation_workspaces.sql`，然后启动新版 API/Worker/Runner。不删除历史数据，也无需为项目配置对话环境。生产启动不执行数据迁移或 seed。
 
 ## 需求关联与统计
+
+要交给用户的文件（HTML demo、报告、JSON/CSV 等文本文件）用 `workbench_publish_artifact { path }` 发布：附在本轮回复里，HTML 在产物栏可交互预览。空间会话里不带 `path` 时照旧把 `body`/`imageBase64`/`url` 发布到空间侧边栏。原来的 `workbench_workspace_attach` 已并入这个工具，只在角色交付物收集里作为内部调用保留。
 
 对话里直接改代码也要落到需求上。Agent 开好 PR/MR 后调用 `workbench_delivery_register { urls, title, description }` 登记：工作区仍未关联需求时，优先复用会话已关联的未完成需求，否则以 `title`/`description` 创建。新建需求为本地 `requirement`、`in_progress`、`automationState=ignored`（不会被自动派发 SOP），负责人为当前用户，记录来源会话、工作区仓库和创建操作，并同时关联工作区与会话。已关联需求的工作区不再改关联；SOP 运行的需求只在派发时确定。
 

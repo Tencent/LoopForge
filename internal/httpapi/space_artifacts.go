@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -333,5 +334,52 @@ func (h *agentToolGateway) publishWorkbenchArtifact(session *AgentToolSession, r
 	_ = h.repo.PutRoom(room)
 	preview := "/api/spaces/" + room.ID + "/artifacts/" + saved.ID + "/raw"
 	text := fmt.Sprintf("已发布到当前会话，用户可以在侧边栏打开。\n标题：%s\n类型：%s\n预览：%s\n回复里只提标题，不要再给本机路径。", saved.Title, saved.Kind, preview)
+	return mcpToolTextResult(text, false), nil
+}
+
+// workspaceAttachInternal attaches a workspace file to the reply. It is not a
+// catalog tool: agents reach it through workbench_publish_artifact's path.
+const workspaceAttachInternal = "workbench_workspace_attach"
+
+// publishArtifactDescriptor is the one way to hand the user a deliverable. In
+// a workspace, path attaches a workspace file to the reply; in a space
+// session, content (body, imageBase64, url) is published to the sidebar.
+func publishArtifactDescriptor(s *AgentToolSession, workspace bool) agentToolDescriptor {
+	space := strings.TrimSpace(s.SpaceID) != ""
+	props := map[string]any{"title": map[string]any{"type": "string"}}
+	var parts []string
+	if workspace {
+		props["path"] = map[string]any{"type": "string", "description": "工作区里的文本文件，相对工作区根目录"}
+		parts = append(parts, "传 path 把工作区里的文本文件（HTML demo、Markdown/文本报告、JSON、CSV 等，单个不超过 1MB）附在本轮回复里：HTML 在产物栏以沙箱方式可交互预览，其他文件可查看和下载。每轮最多 4 个；同名文件以最新内容为准，改完文件后重新发布即可。工作区地址只在工作区存活时能在侧栏「浏览器」页签打开，要让用户留存的文件就用它发布")
+	}
+	if space {
+		props["kind"] = map[string]any{"type": "string", "enum": []string{"doc", "prototype", "api", "diff", "report", "ppt", "browser", "file"}}
+		props["format"] = map[string]any{"type": "string", "enum": []string{"markdown", "html", "json", "text", "png", "jpeg", "gif", "webp"}}
+		for _, key := range []string{"body", "url", "summary", "imageBase64"} {
+			props[key] = map[string]any{"type": "string"}
+		}
+		parts = append(parts, "不传 path 时把页面、PPT、图片或文档内容发布到当前会话侧边栏，用户看不到服务器磁盘路径：prototype+html 是可交互页面；ppt+markdown 用 --- 分页；图片传 imageBase64；browser 传 https url")
+	}
+	schema, _ := json.Marshal(map[string]any{"type": "object", "properties": props, "additionalProperties": false})
+	return agentToolDescriptor{Name: "workbench_publish_artifact", Description: "把产物交给用户。" + strings.Join(parts, "。") + "。", InputSchema: schema, Kind: "workbench"}
+}
+
+// publishArtifact routes workbench_publish_artifact: a path attaches a
+// workspace file, anything else publishes content to the space sidebar.
+func (h *agentToolGateway) publishArtifact(ctx context.Context, session *AgentToolSession, raw json.RawMessage) (map[string]any, error) {
+	var args struct {
+		Path string `json:"path"`
+	}
+	_ = json.Unmarshal(raw, &args)
+	if strings.TrimSpace(args.Path) == "" {
+		return h.publishWorkbenchArtifact(session, raw)
+	}
+	if session == nil || session.RuntimeMode != domain.AssistantModeWorkspace || session.workspaceRun() == "" {
+		return mcpToolTextResult("path 只能在已打开的工作区里使用；先用 workbench_workspace_open 打开工作区", true), nil
+	}
+	text, err := h.callMainBotWorkspace(ctx, session, workspaceAttachInternal, map[string]any{"path": args.Path})
+	if err != nil {
+		return mcpToolTextResult(err.Error(), true), nil
+	}
 	return mcpToolTextResult(text, false), nil
 }

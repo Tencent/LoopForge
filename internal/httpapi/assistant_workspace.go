@@ -54,14 +54,9 @@ func mainBotWorkspaceTools(s *AgentToolSession) []agentToolDescriptor {
 	}
 	// Files, patches and commands use the CLI's native tools inside the
 	// workspace; git, pushes and PRs use the agent's own git with the
-	// requester's credentials. Only the mode switch and delivery records stay.
-	descriptors := []struct{ name, description, schema string }{
-		{"attach", "把工作区里的文本文件（HTML demo、Markdown/文本报告、JSON、CSV 等，单个不超过 1MB）附在本轮回复里交给用户。工作区地址只在工作区存活时能在侧栏「浏览器」页签打开，要让用户留存或下载文件就用它：HTML 在产物栏以沙箱方式可交互预览，其他文件可查看和下载。每轮最多 4 个；同名文件再次附加时以最新内容为准，所以改完文件后重新附加即可。", `{"type":"object","properties":{"path":{"type":"string"}},"required":["path"],"additionalProperties":false}`},
-	}
+	// requester's credentials. Only the mode switch and delivery records stay;
+	// files reach the user through workbench_publish_artifact's path.
 	out := []agentToolDescriptor{workspaceOpenDescriptor()}
-	for _, d := range descriptors {
-		out = append(out, agentToolDescriptor{Name: "workbench_workspace_" + d.name, Description: d.description, InputSchema: json.RawMessage(d.schema), Kind: "workspace"})
-	}
 	if s.RunID == "" {
 		out = append(out, deliveryRegisterDescriptor())
 	}
@@ -72,7 +67,7 @@ func (h *agentToolGateway) callMainBotWorkspace(ctx context.Context, s *AgentToo
 	if len(mainBotWorkspaceTools(s)) == 0 {
 		return "", errAgentToolForbidden
 	}
-	if s.ExecMode.ReviewWrites && name != "workbench_workspace_tree" && name != "workbench_workspace_attach" && name != "workbench_workspace_open" && name != "workbench_platform_mode" && name != workbenchDeliveryRegister {
+	if s.ExecMode.ReviewWrites && name != "workbench_workspace_tree" && name != workspaceAttachInternal && name != "workbench_workspace_open" && name != "workbench_platform_mode" && name != workbenchDeliveryRegister {
 		// Commands are always reviewed: arbitrary shell text can mutate state.
 		ctx = withAssistantApprovalReviewer(ctx, s.approvalReviewer)
 		review := reviewAssistantAction(ctx, name, "当前项目工作区操作，文件写入、命令执行或提交 MR 会产生副作用", map[string]any{"runId": s.workspaceRun(), "arguments": args})
@@ -153,7 +148,8 @@ func (h *agentToolGateway) callMainBotWorkspace(ctx context.Context, s *AgentToo
 		// snapshot and starts the sandbox before the CLI hands over.
 		path, _ := args["path"].(string)
 		return h.invokeMainBotWorkspace(ctx, s, "GET", "tree", nil, map[string]string{"path": path})
-	case "workbench_workspace_attach":
+	case workspaceAttachInternal:
+		// Internal: workbench_publish_artifact with a path, and role deliverables.
 		return h.attachWorkspaceFile(ctx, s, args)
 	}
 	return "", errAgentToolUnknown
@@ -248,7 +244,7 @@ func (h *agentToolGateway) attachWorkspaceFile(ctx context.Context, s *AgentTool
 	name := pathpkg.Base(strings.ReplaceAll(rel, "\\", "/"))
 	mimeType := workspaceAttachmentTypes[strings.ToLower(pathpkg.Ext(name))]
 	if mimeType == "" {
-		return "", fmt.Errorf("只能附加文本文件（html、md、txt、log、csv、yaml、json、xml）；要给用户看页面效果，用 workbench_browser_screenshot 截图")
+		return "", fmt.Errorf("path 只能是文本文件（html、md、txt、log、csv、yaml、json、xml）；要给用户看页面效果，用 workbench_browser_screenshot 截图")
 	}
 	runID := mainBotWorkspaceRun(ctx)
 	if runID == "" {

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -48,7 +49,7 @@ func TestConversationWorkspaceToolsForAllProjectParticipants(t *testing.T) {
 		return strings.Join(out, ",")
 	}
 	s := &AgentToolSession{Mode: AgentToolAssistant, ProjectID: "p", UserID: 1, ChatSessionID: "chat", ChatOwnerID: 1}
-	if got := names(s); got != "workbench_workspace_open,workbench_workspace_attach,workbench_delivery_register" {
+	if got := names(s); got != "workbench_workspace_open,workbench_delivery_register" {
 		t.Fatalf("ordinary project chat tools = %s", got)
 	}
 	peer := &AgentToolSession{Mode: s.Mode, ProjectID: s.ProjectID, UserID: s.UserID, ChatSessionID: s.ChatSessionID, ChatOwnerID: 2}
@@ -66,7 +67,7 @@ func TestConversationWorkspaceToolsForAllProjectParticipants(t *testing.T) {
 		}
 	}
 	task := &AgentToolSession{Mode: AgentToolAssistant, ProjectID: "p", UserID: 1, RunID: "run"}
-	if got := names(task); got != "workbench_workspace_open,workbench_workspace_attach" {
+	if got := names(task); got != "workbench_workspace_open" {
 		t.Fatalf("task conversation tools = %s", got)
 	}
 }
@@ -119,8 +120,8 @@ func TestConversationWorkspaceOpensBindsAndIsReused(t *testing.T) {
 	gateway.api = New(h.repo, en, tracker.NewService(), "", "")
 	s := &AgentToolSession{Mode: AgentToolAssistant, ProjectID: "workbench", UserID: owner.ID, User: owner, ChatSessionID: "chat-1", ChatOwnerID: owner.ID}
 
-	if _, err := gateway.callMainBotWorkspace(context.Background(), s, "workbench_workspace_attach", map[string]any{"path": "README.md"}); err == nil || !strings.Contains(err.Error(), "workbench_workspace_open") {
-		t.Fatalf("attach before open must point to workbench_workspace_open: %v", err)
+	if result, _ := gateway.publishArtifact(context.Background(), s, json.RawMessage(`{"path":"README.md"}`)); result["isError"] != true || !strings.Contains(fmt.Sprint(result["content"]), "workbench_workspace_open") {
+		t.Fatalf("publishing a path before open must point to workbench_workspace_open: %v", result)
 	}
 	if hints := gateway.workspaceOpenDescriptorFor(s).Description; !strings.Contains(hints, "- web") || !strings.Contains(hints, "- api") {
 		t.Fatalf("open description must list the project's repositories to clone: %s", hints)

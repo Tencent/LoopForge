@@ -455,6 +455,8 @@ export function activityFace(step) {
     return { kind: "workflow", busy: "正在打开工作区", done: "已打开工作区" };
   if (/workbench_delivery_register/.test(name))
     return { kind: "workflow", busy: "正在登记交付", done: "已登记交付" };
+  if (/workbench_publish_artifact/.test(name))
+    return { kind: "tool", busy: "正在发布产物", done: "已发布产物" };
   if (/todo/.test(name))
     return { kind: "plan", busy: "正在更新计划", done: "已更新计划" };
   if (/^(task|agent)$/.test(name)) {

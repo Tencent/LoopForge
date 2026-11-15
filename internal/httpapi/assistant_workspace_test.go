@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -97,9 +98,19 @@ func TestMainBotAttachesWorkspaceFilesToReply(t *testing.T) {
 	h.api = New(a.repo, en, tracker.NewService(), "", "")
 	user := owner
 	user.GitToken = "gt-secret-attach-value"
-	s := &AgentToolSession{Mode: AgentToolAssistant, RunID: r.ID, ProjectID: r.ExecutionContext.ProjectID, UserID: owner.ID, User: user}
+	s := &AgentToolSession{Mode: AgentToolAssistant, RuntimeMode: domain.AssistantModeWorkspace, RunID: r.ID, ProjectID: r.ExecutionContext.ProjectID, UserID: owner.ID, User: user}
+	// Files reach the user through workbench_publish_artifact's path.
 	attach := func(s *AgentToolSession, path string) (string, error) {
-		return h.callMainBotWorkspace(context.Background(), s, "workbench_workspace_attach", map[string]any{"path": path})
+		raw, _ := json.Marshal(map[string]any{"path": path})
+		result, err := h.publishArtifact(context.Background(), s, raw)
+		if err != nil {
+			return "", err
+		}
+		text := result["content"].([]map[string]any)[0]["text"].(string)
+		if result["isError"] == true {
+			return "", errors.New(text)
+		}
+		return text, nil
 	}
 	if raw, err := attach(s, "/workspace/demo.html"); err != nil || !strings.Contains(raw, `"attached":"demo.html"`) {
 		t.Fatalf("attach demo raw=%s err=%v", raw, err)
@@ -116,7 +127,7 @@ func TestMainBotAttachesWorkspaceFilesToReply(t *testing.T) {
 	if _, err := attach(s, "docs/notes.md"); err != nil {
 		t.Fatal(err)
 	}
-	participant := &AgentToolSession{Mode: AgentToolAssistant, RunID: r.ID, ProjectID: r.ExecutionContext.ProjectID, UserID: peer.ID, User: peer}
+	participant := &AgentToolSession{Mode: AgentToolAssistant, RuntimeMode: domain.AssistantModeWorkspace, RunID: r.ID, ProjectID: r.ExecutionContext.ProjectID, UserID: peer.ID, User: peer}
 	if _, err := attach(participant, "docs/notes.md"); err != nil || len(participant.takeReplyFiles()) != 1 {
 		t.Fatalf("project participant could not attach a shared workspace file: %v", err)
 	}
