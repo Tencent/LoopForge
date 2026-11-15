@@ -13,6 +13,7 @@ import (
 	"agentflow/internal/domain"
 	"agentflow/internal/observability"
 
+	mysqldriver "github.com/go-sql-driver/mysql"
 	"gorm.io/gorm"
 )
 
@@ -1629,6 +1630,10 @@ func (r *RunsRepo) QueryRunTelemetry(runID, nodeID, adapter string, after, befor
 		adapterFilter := adapterSQLFilter(adapter)
 		raws, hasMore, err := r.queryJSONSeqPage("run_telemetry", runID, nodeWhere, nodeArgs, adapterFilter, after, before, afterSet, beforeSet, limit)
 		if err != nil {
+			var mysqlErr *mysqldriver.MySQLError
+			if errors.As(err, &mysqlErr) && mysqlErr.Number == 1054 && strings.Contains(mysqlErr.Message, "'adapter'") {
+				return TelemetryPage{}, fmt.Errorf("run_telemetry.adapter is missing. Ask the database operator to check existing columns and apply only missing statements from migrations/001_run_obs_generated_columns.sql: %w", err)
+			}
 			return TelemetryPage{}, err
 		}
 		out := make([]domain.TelemetryEvent, 0, len(raws))
