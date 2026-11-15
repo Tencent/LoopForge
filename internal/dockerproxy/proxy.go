@@ -289,6 +289,9 @@ func (p *Proxy) authorizeImage(r *http.Request, parts []string) error {
 		if q.Get("fromSrc") != "" && q.Get("repo") != "" {
 			return p.mayWriteTag(ctx, imageRef(q.Get("repo"), q.Get("tag")))
 		}
+		if from := q.Get("fromImage"); from != "" && q.Get("fromSrc") == "" {
+			return p.mayPull(ctx, pullRef(from, q.Get("tag")))
+		}
 		return nil
 	case len(parts) == 2 && (parts[1] == "json" || parts[1] == "search" || parts[1] == "get"):
 		return nil
@@ -317,6 +320,38 @@ func (p *Proxy) mayWriteTag(ctx context.Context, ref string) error {
 		return nil
 	}
 	return p.ownedImage(ctx, ref, "覆盖镜像名")
+}
+
+// mayPull lets a pull refresh a public name or this workspace's own image,
+// but not replace an image another workspace built under the same name
+// (pulling "myapp:dev" from a registry would swap it under that workspace).
+func (p *Proxy) mayPull(ctx context.Context, ref string) error {
+	var image struct {
+		Config struct{ Labels map[string]string }
+	}
+	found, err := p.inspect(ctx, "/images/"+escapeImageRef(ref)+"/json", &image)
+	if err != nil || !found {
+		return err
+	}
+	if owner := image.Config.Labels[Label]; owner != "" && owner != p.cfg.Workspace {
+		return forbidden("镜像 " + ref + " 是其他工作区构建的，拉取会把它换掉；换一个镜像名")
+	}
+	return nil
+}
+
+// pullRef is the local name a pull writes: fromImage with the tag (or
+// digest) parameter, defaulting to latest.
+func pullRef(from, tag string) string {
+	switch {
+	case strings.HasPrefix(tag, "sha256:"):
+		return from + "@" + tag
+	case tag != "":
+		return from + ":" + tag
+	}
+	if i := strings.LastIndex(from, "/"); strings.Contains(from[i+1:], ":") || strings.Contains(from, "@") {
+		return from
+	}
+	return from + ":latest"
 }
 
 func (p *Proxy) ownedImage(ctx context.Context, ref, action string) error {

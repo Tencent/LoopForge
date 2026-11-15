@@ -639,3 +639,30 @@ func TestUnknownDaemonVersionRefusesSubdirBinds(t *testing.T) {
 		t.Errorf("want one subpath mount, got %v", mounts)
 	}
 }
+
+func TestPullCannotReplaceAnotherWorkspacesImage(t *testing.T) {
+	h := start(t)
+	for path, want := range map[string]int{
+		"/images/create?fromImage=team/other&tag=1": http.StatusForbidden,
+		"/images/create?fromImage=team/other:1":     http.StatusForbidden,
+		"/images/create?fromImage=alpine&tag=3":     200,
+		"/images/create?fromImage=myapp&tag=dev":    200,
+		"/images/create?fromImage=brand/new":        200,
+	} {
+		if code, out := h.do(t, "POST", path, nil); code != want {
+			t.Errorf("%s: want %d, got %d %s", path, want, code, out)
+		}
+	}
+	for in, want := range map[[2]string]string{
+		{"alpine", ""}:             "alpine:latest",
+		{"alpine:3", ""}:           "alpine:3",
+		{"localhost:5000/x", ""}:   "localhost:5000/x:latest",
+		{"x", "sha256:abc"}:        "x@sha256:abc",
+		{"x@sha256:abc", ""}:       "x@sha256:abc",
+		{"registry.io/x/y", "2.0"}: "registry.io/x/y:2.0",
+	} {
+		if got := pullRef(in[0], in[1]); got != want {
+			t.Errorf("pullRef(%q, %q) = %q, want %q", in[0], in[1], got, want)
+		}
+	}
+}
