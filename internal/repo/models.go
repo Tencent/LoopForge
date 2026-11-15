@@ -465,6 +465,7 @@ type mrDeliveryStateRow struct {
 	State        string     `gorm:"column:state;index:idx_mr_delivery_refresh;size:32"`
 	TargetBranch string     `gorm:"column:target_branch;size:255"`
 	IssueID      string     `gorm:"column:issue_id;index:idx_mr_delivery_issue;size:64"`
+	ForgeUserID  int64      `gorm:"column:forge_user_id;not null;default:0"`
 	MergedAt     *time.Time `gorm:"column:merged_at;index:idx_mr_delivery_merged_at"`
 	CheckedAt    *time.Time `gorm:"column:checked_at"`
 	Created      *time.Time `gorm:"column:created_at"`

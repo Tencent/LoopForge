@@ -36,7 +36,7 @@ func (e *Engine) PushConversationWorkspace(ctx context.Context, runID string, re
 		if rc.ReadOnly || strings.TrimSpace(rc.CloneURL) == "" || strings.TrimSpace(rc.WorkBranch) == "" {
 			continue
 		}
-		if rc.Provider != domain.RepositoryProviderSSH && strings.TrimSpace(gitToken) == "" {
+		if !domain.RepositoryUsesSSH(rc.Provider) && strings.TrimSpace(gitToken) == "" {
 			return nil, fmt.Errorf("%s: 未配置 Git Token，无法推送工作分支。%s", rc.Name, gitTokenFixHint)
 		}
 		repositories = append(repositories, rc)
@@ -46,7 +46,7 @@ func (e *Engine) PushConversationWorkspace(ctx context.Context, runID string, re
 	}
 	sshKeys := e.repo.GitSSHKeysForRemotes(requesterID, sshRepositoryURLs(repositories))
 	for _, rc := range repositories {
-		if rc.Provider == domain.RepositoryProviderSSH && sshKeys[rc.CloneURL] == "" {
+		if domain.RepositoryUsesSSH(rc.Provider) && sshKeys[rc.CloneURL] == "" {
 			return nil, fmt.Errorf("%s: %w", rc.Name, gitwork.ErrSSHKeyRequired)
 		}
 	}

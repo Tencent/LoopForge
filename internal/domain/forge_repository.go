@@ -110,6 +110,10 @@ func ParseForgeProject(project string) (ForgeRepository, bool) {
 	return r, ok && r.Project() == project
 }
 
+func HasForgeProjectPrefix(project string) bool {
+	return strings.HasPrefix(project, forgeProjectPrefix)
+}
+
 // ParseForgePullURL parses an exact, credential-free web URL. Free-text
 // artifact discovery does not infer a forge or an API destination from a link.
 func ParseForgePullURL(raw string) (ForgeRepository, int, bool) {

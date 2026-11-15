@@ -30,7 +30,7 @@ func (e *Engine) alignBaseline(repository domain.RepositoryContext, gitToken str
 		return nil
 	}
 	runner, ok := e.alignRunner(repository)
-	ssh := repository.Provider == domain.RepositoryProviderSSH
+	ssh := domain.RepositoryUsesSSH(repository.Provider)
 	if ssh {
 		gitToken = ""
 	}

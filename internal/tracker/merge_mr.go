@@ -29,6 +29,9 @@ func (s *Service) EnsureAndMergeBranchMR(project, sourceBranch, targetBranch, ti
 	if strings.HasPrefix(project, "github:") {
 		return s.githubMergeBranch(project, sourceBranch, targetBranch, title, description)
 	}
+	if domain.HasForgeProjectPrefix(project) {
+		return "", errors.New("Forgejo 合并需要当前运行的仓库、责任人和提交 SHA")
+	}
 	project = strings.TrimSpace(project)
 	src := strings.TrimSpace(sourceBranch)
 	tgt := strings.TrimSpace(targetBranch)
@@ -139,6 +142,9 @@ type gongfengListedMR struct {
 func (s *Service) FindBranchMR(project, sourceBranch string) (domain.DeliveryMR, bool, error) {
 	if strings.HasPrefix(project, "github:") {
 		return s.githubFindBranch(project, sourceBranch)
+	}
+	if domain.HasForgeProjectPrefix(project) {
+		return domain.DeliveryMR{}, false, errors.New("Forgejo PR 查询需要当前运行的仓库和责任人")
 	}
 	project = strings.TrimSpace(project)
 	src := strings.TrimSpace(sourceBranch)

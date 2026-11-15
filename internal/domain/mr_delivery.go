@@ -12,6 +12,7 @@ type MRDeliveryState struct {
 	State        string `json:"state"` // Gongfeng raw: merged, opened, closed, reopened, unknown
 	TargetBranch string `json:"targetBranch,omitempty"`
 	IssueID      string `json:"issueId,omitempty"`
+	ForgeUserID  int64  `json:"-"`
 	// MergedAt is Gongfeng's merged_at/resolved_at, never the poll/update time.
 	MergedAt  time.Time `json:"mergedAt,omitempty"`
 	CheckedAt time.Time `json:"checkedAt,omitempty"`

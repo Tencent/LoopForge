@@ -145,14 +145,14 @@ func conversationRequirementIssue(s *AgentToolSession, run domain.Run, conv doma
 // recordConversationMRs registers the MRs a conversation workspace submitted
 // as the requirement's delivery MRs. MR polling then marks the requirement
 // delivered once they merge, and analytics counts them like SOP deliveries.
-func (h *agentToolGateway) recordConversationMRs(issueID string, results []workspaceMRResult, repos []domain.RepositoryContext) error {
+func (h *agentToolGateway) recordConversationMRs(issueID string, results []workspaceMRResult, repos []domain.RepositoryContext, userID int64) error {
 	if strings.TrimSpace(issueID) == "" {
 		return nil
 	}
 	mrs := []domain.DeliveryMR{}
 	direct := 0
 	for _, r := range results {
-		project, iid, _, ok := domain.ParseGongfengMR(r.MRURL)
+		project, iid, _, ok := domain.ParseDeliveryMRURL(r.MRURL)
 		if r.MRURL == "" || !ok {
 			if r.Direct {
 				// A direct push to a shared branch delivers work without an MR, so
@@ -161,13 +161,23 @@ func (h *agentToolGateway) recordConversationMRs(issueID string, results []works
 			}
 			continue
 		}
-		mr := domain.DeliveryMR{Repository: r.Repository, Project: project, IID: iid, URL: r.MRURL, State: "opened", TargetBranch: r.TargetBranch}
+		mr := domain.DeliveryMR{RepositoryID: r.repositoryID, Repository: r.Repository, Project: project, IID: iid, URL: r.MRURL, State: "opened", TargetBranch: r.TargetBranch}
+		var bound domain.RepositoryContext
 		for _, rc := range repos {
-			if rc.Name == r.Repository {
+			if (r.repositoryID != "" && rc.RepositoryID == r.repositoryID) || (r.repositoryID == "" && rc.Name == r.Repository) {
+				bound = rc
 				mr.RepositoryID = rc.RepositoryID
+				break
 			}
 		}
-		if err := h.repo.EnsureMRDeliveryState(project, iid, r.MRURL, issueID); err != nil {
+		if ref, isForge := domain.ParseForgeProject(project); isForge {
+			if !domain.IsForgeRepositoryProvider(bound.Provider) || bound.GongfengProjectID != project || userID <= 0 {
+				continue
+			}
+			if err := h.repo.EnsureForgeDeliveryState(ref, iid, issueID, userID); err != nil {
+				return err
+			}
+		} else if err := h.repo.EnsureMRDeliveryState(project, iid, r.MRURL, issueID); err != nil {
 			return err
 		}
 		mrs = append(mrs, mr)

@@ -107,9 +107,9 @@ func (c *RepositoryClient) FindPull(ctx context.Context, source, target string, 
 	}
 	seen := 0
 	for page := 1; page <= 50; page++ {
-		q := url.Values{"state": {state}, "limit": {strconv.Itoa(limit)}, "page": {strconv.Itoa(page)}}
+		q := url.Values{"state": {state}, "head": {source}, "limit": {strconv.Itoa(limit)}, "page": {strconv.Itoa(page)}}
 		if target != "" {
-			q.Set("base_branch", target)
+			q.Set("base", target)
 		}
 		var pulls []Pull
 		header, err := c.request(ctx, http.MethodGet, "/pulls?"+q.Encode(), nil, &pulls)

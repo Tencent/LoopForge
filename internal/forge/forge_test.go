@@ -36,8 +36,7 @@ func useTestForge(t *testing.T, handler http.HandlerFunc) string {
 	server := httptest.NewTLSServer(handler)
 	t.Cleanup(server.Close)
 	old := apiClient
-	apiClient = server.Client()
-	apiClient.CheckRedirect = old.CheckRedirect
+	apiClient = newAPIClient(server.Client().Transport)
 	t.Cleanup(func() { apiClient = old })
 	t.Setenv(InstancesEnv, server.URL+"/code")
 	return server.URL + "/code"
@@ -62,7 +61,7 @@ func TestForgeSubmitAndMergeSameRepositoryHead(t *testing.T) {
 				case "GET " + prefix:
 					_, _ = w.Write([]byte(`{"id":31,"full_name":"Acme/App"}`))
 				case "GET " + prefix + "/pulls":
-					if r.URL.Query().Get("state") != "open" || r.URL.Query().Get("base_branch") != "main" {
+					if r.URL.Query().Get("state") != "open" || r.URL.Query().Get("head") != "feature/fix" || r.URL.Query().Get("base") != "main" {
 						t.Errorf("unexpected search: %s", r.URL.RawQuery)
 					}
 					fork, historical := pull, pull

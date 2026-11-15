@@ -30,6 +30,15 @@ func ParseGongfengMR(text string) (project string, iid int, url string, ok bool)
 	return refs[0].Project, refs[0].IID, refs[0].URL, true
 }
 
+// ParseDeliveryMRURL also reads Forgejo URLs recorded by the delivery flow.
+// Leave free-text artifact parsing to the known legacy host parsers.
+func ParseDeliveryMRURL(raw string) (project string, number int, canonical string, ok bool) {
+	if r, n, isForge := ParseForgePullURL(raw); isForge {
+		return r.Project(), n, r.PullURL(n), true
+	}
+	return ParseGongfengMR(raw)
+}
+
 // ParseGongfengMRs extracts unique Gongfeng merge request URLs in appearance order.
 func ParseGongfengMRs(text string) []GongfengMRRef {
 	for _, match := range githubPRURL.FindAllStringSubmatch(text, -1) {
@@ -201,7 +210,7 @@ func gongfengMRKey(project string, iid int) string {
 // over the stored project/iid, and the trimmed URL is the last resort.
 func analyticsMRKey(mr DeliveryMR) string {
 	project, iid := mr.Project, mr.IID
-	if p, n, _, ok := ParseGongfengMR(mr.URL); ok {
+	if p, n, _, ok := ParseDeliveryMRURL(mr.URL); ok {
 		project, iid = p, n
 	}
 	if project != "" && iid > 0 {
@@ -272,8 +281,8 @@ func SameGitBranch(a, b string) bool {
 // SameGongfengMR reports whether two free-text URLs refer to the same
 // Gongfeng merge request (project + IID), ignoring /- vs non-/- URL forms.
 func SameGongfengMR(a, b string) bool {
-	pa, ia, _, oka := ParseGongfengMR(a)
-	pb, ib, _, okb := ParseGongfengMR(b)
+	pa, ia, _, oka := ParseDeliveryMRURL(a)
+	pb, ib, _, okb := ParseDeliveryMRURL(b)
 	if !oka || !okb {
 		left, right := strings.TrimSpace(a), strings.TrimSpace(b)
 		return left != "" && strings.EqualFold(left, right)

@@ -104,10 +104,10 @@ func TestConversationRequirementCreatedAndLinked(t *testing.T) {
 		{Repository: "web", MRURL: "https://git.example.com/team/web/merge_requests/7", TargetBranch: "master"},
 		{Repository: "api", Error: "push failed"},
 	}
-	if err := h.recordConversationMRs(issue.ID, results, run.RepositoryContexts()); err != nil {
+	if err := h.recordConversationMRs(issue.ID, results, run.RepositoryContexts(), 0); err != nil {
 		t.Fatal(err)
 	}
-	if err := h.recordConversationMRs(issue.ID, results, run.RepositoryContexts()); err != nil {
+	if err := h.recordConversationMRs(issue.ID, results, run.RepositoryContexts(), 0); err != nil {
 		t.Fatal(err)
 	}
 	stored, _ := st.Issue(issue.ID)
@@ -126,7 +126,7 @@ func TestConversationRequirementCreatedAndLinked(t *testing.T) {
 	if done, _ := st.Issue(issue.ID); done.Status != "done" || done.DeliveryState != "merged" {
 		t.Fatalf("merged MR must deliver the requirement: status=%s delivery=%s", done.Status, done.DeliveryState)
 	}
-	if err := h.recordConversationMRs("", results, nil); err != nil {
+	if err := h.recordConversationMRs("", results, nil, 0); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -141,7 +141,7 @@ func TestConversationRequirementRecordsGitHubPullRequest(t *testing.T) {
 		t.Fatal(err)
 	}
 	results := []workspaceMRResult{{Repository: "web", MRURL: "https://github.com/acme/web/pull/9", TargetBranch: "main"}}
-	if err := h.recordConversationMRs(issue.ID, results, run.RepositoryContexts()); err != nil {
+	if err := h.recordConversationMRs(issue.ID, results, run.RepositoryContexts(), 0); err != nil {
 		t.Fatal(err)
 	}
 	stored, _ := st.Issue(issue.ID)

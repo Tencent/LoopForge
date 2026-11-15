@@ -51,3 +51,16 @@ func BindRepository(webURL, cloneURL string) (domain.ForgeRepository, gitwork.SS
 	}
 	return r, remote, nil
 }
+
+// RunRepository checks all fields of a saved run binding before selecting
+// credentials for its hosting API.
+func RunRepository(rc domain.RepositoryContext) (domain.ForgeRepository, error) {
+	r, _, err := BindRepository(rc.WebURL, rc.CloneURL)
+	if err != nil {
+		return r, err
+	}
+	if !domain.IsForgeRepositoryProvider(rc.Provider) || rc.GongfengProjectID != r.Project() {
+		return r, errors.New("Forgejo 仓库绑定与工作区不匹配")
+	}
+	return r, nil
+}

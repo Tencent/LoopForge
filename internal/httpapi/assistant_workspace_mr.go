@@ -11,7 +11,6 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
-	"slices"
 	"strings"
 	"time"
 
@@ -21,7 +20,7 @@ import (
 
 // workbench_workspace_submit_mr delivers a conversation workspace without
 // an SOP delivery node: it commits and pushes the work branch, then opens a
-// GitHub pull request (or a merge request on the optional legacy Gongfeng
+// pull request on GitHub or Forgejo (or an MR on the optional legacy Gongfeng
 // host). SSH repositories use the requesting user's Git SSH key and return
 // the branch and commit without calling a hosting API.
 // SOP runs keep delivering through nodes.
@@ -40,6 +39,7 @@ var (
 )
 
 type workspaceMRResult struct {
+	repositoryID  string
 	Repository    string `json:"repository"`
 	SourceBranch  string `json:"sourceBranch"`
 	TargetBranch  string `json:"targetBranch"`
@@ -62,7 +62,7 @@ type workspaceMRResult struct {
 func workspaceSubmitMRDescriptor() agentToolDescriptor {
 	return agentToolDescriptor{
 		Name:        "workbench_workspace_submit_mr",
-		Description: "提交并推送当前工作区的工作分支。GitHub / 工蜂使用请求人的 Git Token 发起或更新 PR/MR，返回 mrUrl；Git SSH 仓库使用请求人的 SSH 密钥推送，返回 sourceBranch 和 commit。调用前先跑通相关测试。title 写改动标题；description 用 Markdown 概括整个交付的改动和验证结果。targetBranch 默认是工作分支的起点 baseBranch；不同则会给出 warning。只读仓库不会提交，手工切换到其它分支时会拒绝提交。默认 mode=mr；用户明确要合并到 preview/test 等已有共享分支时传 mode=direct 和 targetBranch，直接推送合并结果（目标不能是基线分支）。",
+		Description: "提交并推送当前工作区的工作分支。GitHub / 工蜂使用请求人的 Git Token 发起或更新 PR/MR；Forgejo 使用请求人的 SSH 密钥推送并用 Forgejo 令牌发起或更新 PR；普通 Git SSH 仓库返回 sourceBranch 和 commit。调用前先跑通相关测试。title 写改动标题；description 用 Markdown 概括整个交付的改动和验证结果。targetBranch 默认是工作分支的起点 baseBranch；不同则会给出 warning。只读仓库不会提交，手工切换到其它分支时会拒绝提交。默认 mode=mr；用户明确要合并到 preview/test 等已有共享分支时传 mode=direct 和 targetBranch，直接推送合并结果（目标不能是基线分支）。",
 		InputSchema: json.RawMessage(`{"type":"object","properties":{"title":{"type":"string","minLength":1,"maxLength":200},"description":{"type":"string","maxLength":20000},"targetBranch":{"type":"string","maxLength":200,"description":"PR/MR 的目标分支，默认是工作区打开时的 baseBranch；与起点不同时结果带 warning。mode=direct 时必填，写要直推的共享分支"},"mode":{"type":"string","enum":["mr","direct"],"description":"mr（默认）推工作分支并发起或更新 PR/MR；direct 把工作分支 merge --no-ff 进 targetBranch 后直推，不发 MR"}},"required":["title"],"additionalProperties":false}`),
 		Kind:        "workspace",
 	}
@@ -116,7 +116,7 @@ func (h *agentToolGateway) workspaceSubmitMR(ctx context.Context, s *AgentToolSe
 			if rc.ReadOnly {
 				continue
 			}
-			if base := repositoryBaseBranchName(rc); target == base || target == "master" || target == "main" {
+			if base := repositoryBaseBranchName(rc); target == base || domain.IsMainlineBranch(target, rc.DefaultBranch) || target == "master" || target == "main" {
 				return "", fmt.Errorf("不能直推基线分支 %s；preview/test 这类共享分支才可以直推，基线请走 PR/MR", target)
 			}
 		}
@@ -127,9 +127,6 @@ func (h *agentToolGateway) workspaceSubmitMR(ctx context.Context, s *AgentToolSe
 	}
 	gitToken := strings.TrimSpace(h.repo.GitCredential(ctx, s.User.ID))
 	_, apiToken := gitwork.SplitToken(gitToken)
-	if apiToken == "" && !slices.ContainsFunc(run.RepositoryContexts(), func(rc domain.RepositoryContext) bool { return rc.Provider == domain.RepositoryProviderSSH }) {
-		return "", fmt.Errorf("你还没有配置 Git Token，无法推送和发起 PR。请到「个人配置 → 个人凭证」配置：打开 https://github.com/settings/tokens 新建令牌，为目标仓库授予 Contents 和 Pull requests 的读写权限，复制后粘贴并点校验")
-	}
 	if h.engine == nil {
 		return "", fmt.Errorf("执行引擎不可用")
 	}
@@ -177,7 +174,7 @@ func (h *agentToolGateway) workspaceSubmitMR(ctx context.Context, s *AgentToolSe
 			continue
 		}
 		base := repositoryBaseBranchName(rc)
-		result := workspaceMRResult{Repository: rc.Name, SourceBranch: rc.WorkBranch, TargetBranch: target, BaseBranch: base, Commit: head.Head, Pushed: true}
+		result := workspaceMRResult{repositoryID: rc.RepositoryID, Repository: rc.Name, SourceBranch: rc.WorkBranch, TargetBranch: target, BaseBranch: base, Commit: head.Head, Pushed: true}
 		if result.TargetBranch == "" {
 			result.TargetBranch = base
 		}
@@ -195,6 +192,11 @@ func (h *agentToolGateway) workspaceSubmitMR(ctx context.Context, s *AgentToolSe
 		}
 		if rc.Provider == domain.RepositoryProviderSSH {
 			result.PushOnly, result.RepositoryURL = true, rc.WebURL
+			results = append(results, result)
+			continue
+		}
+		if domain.IsForgeRepositoryProvider(rc.Provider) {
+			h.submitWorkspaceForgePull(ctx, s.User.ID, rc, &result, title, body)
 			results = append(results, result)
 			continue
 		}
@@ -271,7 +273,7 @@ func (h *agentToolGateway) workspaceSubmitMR(ctx context.Context, s *AgentToolSe
 	if run.IsWorkspace() {
 		issue, created, err := h.linkConversationRequirement(s, run, conversationRequirement{Title: title, Description: strings.TrimSpace(description)}, true)
 		if err == nil {
-			err = h.recordConversationMRs(issue.ID, results, run.RepositoryContexts())
+			err = h.recordConversationMRs(issue.ID, results, run.RepositoryContexts(), s.User.ID)
 		}
 		if err != nil {
 			log.Printf("record conversation workspace %s delivery: %v", run.ID, err)
@@ -282,6 +284,13 @@ func (h *agentToolGateway) workspaceSubmitMR(ctx context.Context, s *AgentToolSe
 				done := "MR 合并后需求自动完成"
 				if direct {
 					done = "直推没有 PR/MR，需求需要你确认后手动完成"
+				} else {
+					for _, result := range results {
+						if result.MRURL == "" {
+							done = "还有分支需要手动发起 PR/MR 或确认交付"
+							break
+						}
+					}
 				}
 				out["note"] = note + fmt.Sprintf("这次改动已登记为项目需求 %s「%s」，%s；告诉用户可以在需求列表查看。", issue.ID, truncateRunes(issue.Title, 60), done)
 			}
@@ -302,7 +311,7 @@ var githubRepoPathPattern = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+
 // githubRepoPath returns "owner/name" for github.com repositories and "" for
 // anything else, so the token is only ever sent to GitHub.
 func githubRepoPath(rc domain.RepositoryContext) string {
-	if rc.Provider == domain.RepositoryProviderSSH {
+	if domain.RepositoryUsesSSH(rc.Provider) {
 		return ""
 	}
 	path, ok := strings.CutPrefix(strings.TrimSpace(rc.GongfengProjectID), "github:")
@@ -316,7 +325,7 @@ func githubRepoPath(rc domain.RepositoryContext) string {
 }
 
 func hostedRepoPath(rc domain.RepositoryContext, host string, valid *regexp.Regexp) string {
-	if rc.Provider == domain.RepositoryProviderSSH {
+	if domain.RepositoryUsesSSH(rc.Provider) {
 		return ""
 	}
 	for _, raw := range []string{rc.CloneURL, rc.WebURL} {

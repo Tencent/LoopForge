@@ -29,7 +29,7 @@ func withGitToken(ctx context.Context, token string) context.Context {
 func gitTokenFrom(ctx context.Context) string { return gitwork.TokenFrom(ctx) }
 
 func withRepositoryGit(ctx context.Context, repository domain.RepositoryContext) context.Context {
-	if repository.Provider == domain.RepositoryProviderSSH {
+	if domain.RepositoryUsesSSH(repository.Provider) {
 		return gitwork.WithSSHRemote(ctx, repository.CloneURL)
 	}
 	return ctx
@@ -38,7 +38,7 @@ func withRepositoryGit(ctx context.Context, repository domain.RepositoryContext)
 func sshRepositoryURLs(repositories []domain.RepositoryContext) []string {
 	var urls []string
 	for _, repository := range repositories {
-		if repository.Provider == domain.RepositoryProviderSSH {
+		if domain.RepositoryUsesSSH(repository.Provider) {
 			urls = append(urls, repository.CloneURL)
 		}
 	}

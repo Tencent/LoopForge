@@ -20,6 +20,7 @@ type DeliveryMR struct {
 	// GongfengState is the raw Gongfeng state from a live lookup; empty when
 	// the MR was only recovered from artifact text.
 	GongfengState string `json:"-"`
+	ForgeUserID   int64  `json:"-"`
 }
 
 // GongfengMRURL is the canonical web URL of a Gongfeng merge request.
@@ -30,6 +31,9 @@ func GongfengMRURL(project string, iid int) string {
 	}
 	if strings.HasPrefix(project, "github:") {
 		return fmt.Sprintf("https://github.com/%s/pull/%d", strings.TrimPrefix(project, "github:"), iid)
+	}
+	if r, ok := ParseForgeProject(project); ok {
+		return r.PullURL(iid)
 	}
 	return fmt.Sprintf("https://git.example.com/%s/-/merge_requests/%d", project, iid)
 }
@@ -92,7 +96,7 @@ func (i Issue) DeliveryMRList() []DeliveryMR {
 		return nil
 	}
 	mr := DeliveryMR{URL: url, State: strings.TrimSpace(i.DeliveryMRState)}
-	if project, iid, _, ok := ParseGongfengMR(url); ok {
+	if project, iid, _, ok := ParseDeliveryMRURL(url); ok {
 		mr.Project, mr.IID = project, iid
 	}
 	return []DeliveryMR{mr}
@@ -150,7 +154,7 @@ func (i *Issue) SetDeliveryMRState(url, state string) bool {
 	list := i.DeliveryMRList()
 	if len(list) == 0 {
 		mr := DeliveryMR{URL: url, State: state}
-		if project, iid, _, ok := ParseGongfengMR(url); ok {
+		if project, iid, _, ok := ParseDeliveryMRURL(url); ok {
 			mr.Project, mr.IID = project, iid
 		}
 		i.SetDeliveryMRs([]DeliveryMR{mr})

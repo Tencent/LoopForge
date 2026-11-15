@@ -17,16 +17,22 @@ import (
 
 // A Forge request never goes through an HTTP proxy or follows a redirect.
 // TLS verifies the explicitly trusted instance before any PAT is sent.
-var apiClient = &http.Client{
-	Timeout: 15 * time.Second,
-	Transport: &http.Transport{
-		DialContext:         (&net.Dialer{Timeout: 5 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
-		ForceAttemptHTTP2:   true,
-		MaxIdleConns:        20,
-		IdleConnTimeout:     60 * time.Second,
-		TLSHandshakeTimeout: 5 * time.Second,
-	},
-	CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+var apiTransport = &http.Transport{
+	DialContext:         (&net.Dialer{Timeout: 5 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
+	ForceAttemptHTTP2:   true,
+	MaxIdleConns:        20,
+	IdleConnTimeout:     60 * time.Second,
+	TLSHandshakeTimeout: 5 * time.Second,
+}
+
+var apiClient = newAPIClient(apiTransport)
+
+func newAPIClient(transport http.RoundTripper) *http.Client {
+	return &http.Client{
+		Timeout:       15 * time.Second,
+		Transport:     transport,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
 }
 
 var ErrTokenRequired = errors.New("请在「个人配置 → Forgejo」配置该实例的访问令牌")
