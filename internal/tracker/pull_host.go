@@ -10,7 +10,7 @@ import (
 )
 
 // pullHost is the pull-request API of a public Git host addressed by a
-// prefixed project ("github:owner/name"). The delivery flow (find, create,
+// prefixed project ("github:owner/name", "cnb:group/name"). The delivery flow (find, create,
 // merge, refresh) lives once in this file; a host only maps its own API to
 // these primitives. Gongfeng goes through its MCP gateway instead.
 type pullHost interface {
@@ -43,7 +43,7 @@ func (p hostedPull) delivery(project string) domain.DeliveryMR {
 // isPullHostProject reports whether project is served by a pullHost rather
 // than the Gongfeng gateway.
 func isPullHostProject(project string) bool {
-	return strings.HasPrefix(project, "github:")
+	return strings.HasPrefix(project, "github:") || strings.HasPrefix(project, "cnb:")
 }
 
 // pullHostFor returns the host serving project; ok is false for Gongfeng.
@@ -54,6 +54,13 @@ func (s *Service) pullHostFor(project string) (host pullHost, ok bool, err error
 			return nil, true, err
 		}
 		return g, true, nil
+	}
+	if strings.HasPrefix(project, "cnb:") {
+		h, err := s.cnbHost(project)
+		if err != nil {
+			return nil, true, err
+		}
+		return h, true, nil
 	}
 	return nil, false, nil
 }

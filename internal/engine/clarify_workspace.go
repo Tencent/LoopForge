@@ -49,7 +49,11 @@ func PrepareClarifyWorkspaceAtBranch(ctx context.Context, cacheDir string, repo 
 
 	if repo.Provider == domain.RepositoryProviderSSH {
 		ctx = gitwork.WithSSHRemote(ctx, cloneURL)
-	} else if strings.TrimSpace(token) == "" {
+	} else if repo.Provider == domain.RepositoryProviderCNB && len(gitwork.HTTPSCredentialsFrom(ctx)) == 0 {
+		if info, err := os.Stat(cloneURL); err != nil || !info.IsDir() {
+			return "", fmt.Errorf("需求责任人未配置 CNB 访问令牌，请让该账号到「个人配置」填写 CNB 令牌（权限 repo-code:rw 与 repo-pr:rw）。新建需求分析拉代码用的是责任人凭证，不是当前点击的人")
+		}
+	} else if repo.Provider != domain.RepositoryProviderCNB && strings.TrimSpace(token) == "" {
 		// A readable local repository needs no remote credentials.
 		if info, err := os.Stat(cloneURL); err != nil || !info.IsDir() {
 			return "", fmt.Errorf("需求责任人未配置 Git Token（未指定责任人时用项目 Owner），请让该账号到「个人配置 → 个人凭证」填写。新建需求分析拉代码用的是责任人凭证，不是当前点击的人")
