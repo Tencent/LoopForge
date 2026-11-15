@@ -115,6 +115,19 @@ interactive PTY requires a Unix execution machine.
 For native execution, select a sandbox with the `local` driver. Optional Linux
 containers require Docker Desktop in Linux-container mode and images with the
 workflow's tools. The installer includes a Linux Gate companion for these tasks.
+For personal Git SSH, follow the [host trust and key setup](deployment.md#git-repositories-over-ssh).
+Create a dedicated `known_hosts` file containing verified, exact host entries
+for the Runner account. Set its absolute Windows path before starting the Runner,
+and persist the setting for future starts:
+
+```powershell
+$knownHosts = Join-Path $env:USERPROFILE '.ssh\loopforge_known_hosts'
+$env:AGENTFLOW_GIT_SSH_KNOWN_HOSTS = $knownHosts
+[Environment]::SetEnvironmentVariable('AGENTFLOW_GIT_SSH_KNOWN_HOSTS', $knownHosts, 'User')
+```
+
+Restart an already running Runner after changing this setting.
+
 Personal Git SSH keys follow the task's selected authentication mode for both
 host-side checkout and delivery and Git commands inside Linux containers.
 Container images need Python 3 at `/usr/bin/python3` or `/usr/local/bin/python3`
