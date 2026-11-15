@@ -86,6 +86,7 @@ func (h *agentToolGateway) workspaceSubmitMR(ctx context.Context, s *AgentToolSe
 			return "", fmt.Errorf("只有对话工作区或已结束的 SOP 工作区可以直接提交 MR；SOP 运行请由交付节点提交，要自己提交先调用 workbench_workspace_sop takeover 接管")
 		}
 	}
+	repos := run.RepositoryContexts()
 	title, _ := args["title"].(string)
 	title = strings.TrimSpace(title)
 	if title == "" || len([]rune(title)) > 200 {
@@ -113,7 +114,7 @@ func (h *agentToolGateway) workspaceSubmitMR(ctx context.Context, s *AgentToolSe
 		if target == "" {
 			return "", fmt.Errorf("mode=direct 时 targetBranch 必填：写要直推的共享分支，例如 preview")
 		}
-		for _, rc := range run.RepositoryContexts() {
+		for _, rc := range repos {
 			if rc.ReadOnly {
 				continue
 			}
@@ -128,7 +129,7 @@ func (h *agentToolGateway) workspaceSubmitMR(ctx context.Context, s *AgentToolSe
 	}
 	gitToken := strings.TrimSpace(h.repo.GitCredential(ctx, s.User.ID))
 	_, apiToken := gitwork.SplitToken(gitToken)
-	if apiToken == "" && !slices.ContainsFunc(run.RepositoryContexts(), func(rc domain.RepositoryContext) bool {
+	if apiToken == "" && !slices.ContainsFunc(repos, func(rc domain.RepositoryContext) bool {
 		return domain.RepositoryUsesSSH(rc.Provider)
 	}) {
 		return "", fmt.Errorf("你还没有配置 Git Token，无法推送和发起 PR。请到「个人配置 → 个人凭证」配置：打开 https://github.com/settings/tokens 新建令牌，为目标仓库授予 Contents 和 Pull requests 的读写权限，复制后粘贴并点校验")
@@ -147,7 +148,7 @@ func (h *agentToolGateway) workspaceSubmitMR(ctx context.Context, s *AgentToolSe
 	}
 	readOnly := []string{}
 	deliverable := 0
-	for _, rc := range run.RepositoryContexts() {
+	for _, rc := range repos {
 		if rc.ReadOnly {
 			readOnly = append(readOnly, rc.Name)
 		} else if strings.TrimSpace(rc.WorkBranch) != "" {
@@ -157,7 +158,7 @@ func (h *agentToolGateway) workspaceSubmitMR(ctx context.Context, s *AgentToolSe
 	if deliverable == 0 && len(readOnly) > 0 {
 		return "", fmt.Errorf("这个工作区的仓库都是只读检出（%s），没有工作分支可以提交；要提交改动，用 workbench_workspace_open new 新开一个工作区（branchMode=create 或 continue）后把改动带过去", strings.Join(readOnly, "、"))
 	}
-	if len(run.RepositoryContexts()) == 0 {
+	if len(repos) == 0 {
 		return "", fmt.Errorf("这个工作区没有检出代码仓库，没有可提交的内容")
 	}
 	heads, err := h.engine.PushConversationWorkspace(ctx, run.ID, s.User.ID, gitToken, login, email, title, directTarget)
@@ -168,13 +169,16 @@ func (h *agentToolGateway) workspaceSubmitMR(ctx context.Context, s *AgentToolSe
 	for _, head := range heads {
 		pushed[head.RepositoryID+"\x00"+head.WorkBranch] = head
 	}
+	if !direct && len(heads) > 0 {
+		repos = h.workspacePullRepositories(run.ExecutionContext.ProjectID, repos)
+	}
 	body := strings.TrimSpace(description)
 	if body != "" {
 		body += "\n\n"
 	}
 	body += fmt.Sprintf("---\n由 LoopForge 对话直接改代码提交 · 任务 `%s` · 发起人 %s", run.ID, login)
 	results := []workspaceMRResult{}
-	for _, rc := range run.RepositoryContexts() {
+	for _, rc := range repos {
 		head, ok := pushed[rc.RepositoryID+"\x00"+rc.WorkBranch]
 		if !ok {
 			continue
@@ -279,7 +283,7 @@ func (h *agentToolGateway) workspaceSubmitMR(ctx context.Context, s *AgentToolSe
 	if run.IsWorkspace() {
 		issue, created, err := h.linkConversationRequirement(s, run, conversationRequirement{Title: title, Description: strings.TrimSpace(description)}, true)
 		if err == nil {
-			err = h.recordConversationMRs(issue.ID, results, run.RepositoryContexts(), s.User.ID)
+			err = h.recordConversationMRs(issue.ID, results, repos, s.User.ID)
 		}
 		if err != nil {
 			log.Printf("record conversation workspace %s delivery: %v", run.ID, err)
