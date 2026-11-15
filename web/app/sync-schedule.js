@@ -112,42 +112,28 @@ function setClarifyModel(id){
 }
 function clarifyModelPickerHTML(disabled){
   const id=escapeHTML(selectedClarifyModel());
-  return `<div class="clarify-model-field" data-clarify-model><input type="hidden" data-clarify-model-value value="${id}"><button type="button" class="ai-model-toggle" data-model-toggle aria-haspopup="listbox" aria-expanded="false"${disabled?' disabled':''}><span class="ai-model-icon" data-family="glm">智</span><span data-model-label>选择模型</span><span class="ai-model-caret" aria-hidden="true"></span></button><div class="ai-model-menu" hidden role="listbox"></div></div>`;
+  return `<div class="clarify-model-field" data-clarify-model><input type="hidden" data-clarify-model-value value="${id}"><button type="button" class="ai-model-toggle" data-model-toggle aria-label="选择模型" aria-haspopup="menu" aria-expanded="false"${disabled?' disabled':''}><span class="ai-model-icon"></span><span data-model-label>选择模型</span><span class="ai-model-caret" aria-hidden="true"></span></button></div>`;
 }
+// The clarification picker uses the shared menu of the chat composer
+// (AgentFlowAssistantModels.bindPicker): search, brand icons and the
+// "family · credits" line. Clarification runs on CodeBuddy only.
 function bindClarifyModelPicker(host){
   if(!host)return;
-  const api=window.AgentFlowAssistantModels,toggle=host.querySelector('[data-model-toggle]'),menu=host.querySelector('.ai-model-menu');
-  if(!api||!toggle||!menu)return;
-  const paint=()=>{const keep=selectedClarifyModel();const hidden=host.querySelector('[data-clarify-model-value]');if(hidden)hidden.value=keep;api.paint(toggle,keep)};
-  api.load?.().then(paint).catch(paint);
-  if(!bindClarifyModelPicker.docBound){
-    bindClarifyModelPicker.docBound=true;
-    document.addEventListener('click',e=>{
-      $$('[data-clarify-model]').forEach(el=>{
-        if(el.contains(e.target))return;
-        const m=el.querySelector('.ai-model-menu'),t=el.querySelector('[data-model-toggle]');
-        if(m)m.hidden=true;
-        if(t)t.setAttribute('aria-expanded','false');
-      });
-    });
-  }
-  if(host.dataset.bound)return;
+  const api=window.AgentFlowAssistantModels,toggle=host.querySelector('[data-model-toggle]');
+  if(!api?.bindPicker||!toggle)return;
+  // Binding an already bound toggle only replaces its options.
+  const picker=api.bindPicker(toggle,{
+    label:'模型',
+    searchPlaceholder:'搜索模型',
+    emptyText:'没有匹配的模型',
+    items:()=>api.codeBuddyModels(),
+    value:selectedClarifyModel,
+    onPick:id=>{setClarifyModel(id);api.paint(toggle,id)},
+  });
   host.dataset.bound='1';
-  toggle.onclick=e=>{
-    e.stopPropagation();
-    if(toggle.disabled)return;
-    const open=menu.hidden;
-    menu.hidden=!open;
-    toggle.setAttribute('aria-expanded',open?'true':'false');
-    if(open){
-      api.renderCodeBuddyList(menu, selectedClarifyModel(), id=>{
-        setClarifyModel(id);
-        api.paint(toggle, id);
-        menu.hidden=true;
-        toggle.setAttribute('aria-expanded','false');
-      });
-    }
-  };
+  const paint=()=>{const keep=selectedClarifyModel();const hidden=host.querySelector('[data-clarify-model-value]');if(hidden)hidden.value=keep;api.paint(toggle,keep);picker.refresh()};
+  paint();
+  api.load?.().then(paint).catch(paint);
 }
 // The AI 定时任务 model picker: a CLI select narrows the model list to that
 // CLI, like the chat composer's CLI switch. The menu is fixed-positioned so the

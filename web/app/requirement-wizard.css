@@ -23,9 +23,9 @@
   color: var(--hui-text);
   font: 13px/1.5 var(--hui-sans);
 }
-/* 弹出层（仓库、模型）需要越过滚动容器 */
-#requirementModal .req-wizard:has(.req-ghost-sel.is-open, .ai-model-menu:not([hidden])),
-#requirementModal .req-wizard:has(.req-ghost-sel.is-open, .ai-model-menu:not([hidden])) .req-wizard-body { overflow: visible; }
+/* 仓库弹出层需要越过滚动容器；模型菜单挂在 <body> 上，不受裁剪 */
+#requirementModal .req-wizard:has(.req-ghost-sel.is-open),
+#requirementModal .req-wizard:has(.req-ghost-sel.is-open) .req-wizard-body { overflow: visible; }
 
 /* ---------- 头部 + Sliding Tabs 步骤条 ---------- */
 #requirementModal .req-wizard-head {
@@ -246,14 +246,6 @@
   box-shadow: none !important;
 }
 #requirementModal .req-composer-toolbar .clarify-model-field:hover { border: 0 !important; background: transparent !important; }
-#requirementModal .req-composer-toolbar .clarify-model-field .ai-model-menu {
-  top: calc(100% + 6px) !important;
-  bottom: auto !important;
-  min-width: 300px !important;
-  border-color: var(--hui-border) !important;
-  background: var(--hui-surface) !important;
-  box-shadow: var(--hui-popover-shadow) !important;
-}
 #requirementModal .req-popover {
   position: absolute;
   z-index: 30;

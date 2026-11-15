@@ -92,6 +92,8 @@
 - 浮层根据可用空间向上或向下展开，限制在可视视口内；手机键盘改变 `visualViewport` 时重新定位。
 - Escape 关闭并返回触发器，Tab 接回输入区的正常顺序；点击外部关闭时不抢焦点。
 - 权限选择保留原有确认模式和选值，视觉调整不改变执行权限或审批语义。
+- 原生页面（`web/`）选 CLI、模型和思考强度时，与工作台使用同一套菜单：`AgentFlowAssistantModels.bindPicker`（`web/app/assistant-models.js`，样式 `.lf-picker-*` 在 `web/assistant-models.css`）照搬 `ModelPicker` 的规格。菜单挂到 `<body>`，宽 240px（随触发器最宽 360px）、圆角 12px、最大高 420px，与触发器间隔 6px；有搜索框、品牌图标、「系列 · 倍率」副标题和固定勾选位，键盘、Escape、Tab 和外部点击的处理也相同。Escape 只关闭菜单，不会关掉外层弹窗。品牌推断与 `modelProviderFor` 规则一致，先看系列，再看 ID 和名称；未知品牌显示 Harness `brain` 图标，不再显示字母色块。CLI 按 `engineBrand` 显示对应图标。触发器的下拉箭头统一为 chevron，展开时旋转。菜单与 `HuiPopover` 互斥，同一时刻只开一个浮层。
+- 已接入：角色定义的 CLI、模型和思考强度；新建需求和需求详情「澄清」里的澄清模型。角色定义的 CLI 不再是原生下拉：隐藏的 `select[name="executorId"]`（`data-native`）只负责取值、历史执行器选项和 `change` 事件，表单读写方式不变。CLI 菜单不超过 5 项时不显示搜索框，思考强度菜单不显示搜索框。定时任务、Bot、运行评估和 SOP 编排助手仍用旧的内联菜单，后续迁移到 `bindPicker`。
 - SOP「AI 编排助手」在输入区下提供 CLI 与模型选择，复用 `/api/assistant/models` 的个人模型目录，拆成「CLI」「模型」两个按钮，模型列表只显示所选 CLI 的模型，两处都支持搜索。选择独立记忆；同 CLI 切模型保留会话，跨 CLI 开启新对话，画布保留。生成期间禁用选择器，审批仍为每次确认，只生成草稿。面板使用固定标题栏、独立滚动消息区和底部输入框，推荐场景、发送按钮和消息状态完整应用 Harness 样式；窄屏下限制在画布宽度内。
 
 模型品牌 SVG 来自 Grasp 的品牌资源集合。具体来源及许可见 `chatbot/src/assets/provider-logos/README.md`、`SOURCE.md` 和相邻许可文件。
@@ -383,7 +385,7 @@ AI 助手页（`#assistantView`，路由 `#/assistant`）在设置导航「管�
 | 尺寸 | 编辑态随屏幕缩放：宽取视口 72%（不小于 880px、不大于 1320px），高取视口 84%（不小于 640px、不大于 1000px），且始终不超过视口的 94% / 92%；切换标签页时弹窗不变高也不移位；正文超出时在 `.as-main` 内滚动，任务页的 prompt 输入框撑满剩余高度；≤720px 全屏 |
 | 顶部 | 标题 + 一行弱化元信息「CLI · 模型（未选时标「默认」）· 版本 · 版本历史」，由 `renderAgentSummary()` 写入 `#agentRuntimeMeta`；不放状态胶囊 |
 | 标签 | 身份 / 任务 / 产物与门禁 / 技能与工具，计数为 0 时隐藏 |
-| 身份 | 名称与只读标识同一行（新建时标识在名称下方，可「修改」）；职责为单行输入、最多 160 字并显示计数；CLI、模型、思考强度归在「运行方式」下，三个触发器同为 36px、细边框、chevron。模型下拉首项是「默认 · CLI 默认模型」，不显示「选择模型」占位。模型与思考强度菜单在滚动的正文里展开，打开时按触发器上下剩余空间选方向，最大高度不超过该空间；菜单打开时不显示触发器的提示气泡，标签未被截断时也不挂提示 |
+| 身份 | 名称与只读标识同一行（新建时标识在名称下方，可「修改」）；职责为单行输入、最多 160 字并显示计数；CLI、模型、思考强度归在「运行方式」下，三个触发器同为 36px、细边框、chevron，CLI 与模型前显示品牌图标。模型下拉首项是「默认 · CLI 默认模型」，不显示「选择模型」占位。三个菜单都使用与工作台相同的共享菜单（见「模型与权限选择」），挂在 `<body>` 上，不受滚动正文裁剪，按视口上下剩余空间选方向；CLI 选项副标题显示可用模型数。菜单打开时不显示触发器的提示气泡，标签未被截断时也不挂提示 |
 | 任务 | 只有一个角色 prompt 输入框；运行时变量按钮做成贴在输入框顶部的工具条，点击插入到光标处；框下一行弱化小字列出运行时自动附上的内容（角色名、产物数、门禁数、重试轮数），随其他标签页的修改实时更新 |
 | 开关 | 共享、自动重试、人工介入、平台 MCP、知识库都用 `.as-switch-row`：左侧标题 + 说明，右侧 `role="switch"` 开关；不用带边框的勾选卡片 |
 | 说明文字 | 各标签页不放开头说明句，说明写在字段或分区标题的弱化副文字里 |
@@ -453,6 +455,7 @@ AI 助手页（`#assistantView`，路由 `#/assistant`）在设置导航「管�
 | `HomeLogo.jsx`、`HomeWelcome.jsx`、`home-*.css` | 透明品牌标记、标题扫光与副标题 |
 | `HarnessIcon.jsx`、`harness-icons.css` | React 图标定义和内部动效 |
 | `ModelPicker.jsx`、`ModelProviderIcon.jsx` | 模型菜单、品牌标识和内部光效 |
+| `web/app/assistant-models.js`、`web/assistant-models.css` | 原生页面的模型目录、品牌推断（`brandOf` / `engineBrand`）和共享 CLI / 模型菜单（`bindPicker`） |
 | `MentionPicker.jsx`、`mention-context.css` | `@` 引用搜索、选择和展开收起 |
 | `ArtifactPanel.jsx`、`useArtifactPanelLayout.js`、`artifact-*.css` | 产物列表、预览和响应式抽屉 |
 | `usePanelPresence.js` | 双向动效的挂载、退出和快速反向控制 |
