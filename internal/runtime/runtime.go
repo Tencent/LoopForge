@@ -27,7 +27,7 @@ const (
 	BindAgentCLI CredentialBinding = "agent-cli"
 	// BindGitWorkspace gives a conversation workspace CLI the requester's Git
 	// credentials for any repository it clones itself: HTTPS asks a helper that
-	// answers only GitHub and Gongfeng, GH_TOKEN serves gh and API calls, and
+	// answers only github.com, GH_TOKEN serves gh and API calls, and
 	// SSH uses the requester's keys per configured host without exposing them.
 	BindGitWorkspace CredentialBinding = "git-workspace"
 )

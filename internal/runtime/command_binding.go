@@ -1,7 +1,6 @@
 package runtime
 
 import (
-	"agentflow/internal/domain"
 	"agentflow/internal/observability"
 	"fmt"
 	"net/url"
@@ -328,8 +327,8 @@ func bindGitEnvironment(sandbox Sandbox, workspace string, environment map[strin
 
 // bindWorkspaceGitEnvironment configures git for an agent that clones and
 // pushes on its own. Unlike bindGitEnvironment it rewrites no remote: the
-// helper answers HTTPS prompts for GitHub and Gongfeng only, so the token is
-// never sent to another host the agent happens to contact.
+// helper answers HTTPS prompts for github.com only, so the token is never sent
+// to another host the agent happens to contact.
 func bindWorkspaceGitEnvironment(sandbox Sandbox, workspace string, environment map[string]string, credentials RunCredentials) error {
 	environment["GIT_TERMINAL_PROMPT"] = "0"
 	if _, err := EnsureControlDirectory(workspace, "runtime"); err != nil {
@@ -352,18 +351,12 @@ func bindWorkspaceGitEnvironment(sandbox Sandbox, workspace string, environment 
 	if token == "" {
 		return nil
 	}
-	user := "x-access-token"
-	gongfengOAuth := false
-	if lower := strings.ToLower(token); strings.HasPrefix(lower, "oauth2:") {
-		user, token, gongfengOAuth = "oauth2", strings.TrimSpace(token[len("oauth2:"):]), true
-	} else if strings.HasPrefix(lower, "private:") {
-		user, token = "private", strings.TrimSpace(token[len("private:"):])
-	}
-	if token == "" {
+	// oauth2: / private: mark a non-GitHub grant; it is never offered.
+	if lower := strings.ToLower(token); strings.HasPrefix(lower, "oauth2:") || strings.HasPrefix(lower, "private:") {
 		return nil
 	}
 	askpassHost := filepath.Join(workspace, ".agentflow", "runtime", "git-askpass-hosts")
-	if err := writeManagedFile(workspace, askpassHost, []byte(workspaceGitAskPassScript(domain.GongfengRepoHost)), 0o700); err != nil {
+	if err := writeManagedFile(workspace, askpassHost, []byte(workspaceGitAskPassScript), 0o700); err != nil {
 		return fmt.Errorf("write git askpass: %w", err)
 	}
 	askpass := askpassHost
@@ -371,13 +364,9 @@ func bindWorkspaceGitEnvironment(sandbox Sandbox, workspace string, environment 
 		askpass = filepath.ToSlash(filepath.Join("/workspace", ".agentflow", "runtime", "git-askpass-hosts"))
 	}
 	environment["AGENTFLOW_GIT_TOKEN"] = token
-	environment["AGENTFLOW_GIT_USER"] = user
+	environment["AGENTFLOW_GIT_USER"] = "x-access-token"
 	environment["GIT_ASKPASS"] = askpass
-	if !gongfengOAuth {
-		// A Gongfeng OAuth grant is useless to GitHub; anything else is the
-		// user's GitHub token (or a Gongfeng private token, which gh ignores).
-		environment["GH_TOKEN"] = token
-	}
+	environment["GH_TOKEN"] = token
 	return nil
 }
 
@@ -398,20 +387,26 @@ func workspaceGitIdentity(name, email string) string {
 	return b.String()
 }
 
-// workspaceGitAskPassScript answers git's HTTPS prompts for github.com and
-// the Gongfeng host only; other hosts get no credential.
-func workspaceGitAskPassScript(gongfengHost string) string {
-	return `#!/bin/sh
-case "$1" in
-  *"://github.com"*|*"@github.com"*|*"://` + gongfengHost + `"*|*"@` + gongfengHost + `"*) ;;
+// workspaceGitAskPassScript answers git's HTTPS prompts ("Password for
+// 'https://user@host/path': ") for exactly https://github.com; any other host,
+// including look-alikes such as github.com.example or github.com@example,
+// gets no credential.
+const workspaceGitAskPassScript = `#!/bin/sh
+url=${1#*\'}
+url=${url%\'*}
+case "$url" in
+  https://*) ;;
   *) exit 1 ;;
 esac
+host=${url#https://}
+host=${host%%/*}
+host=${host##*@}
+[ "$host" = github.com ] || exit 1
 case "$1" in
   *[Uu]sername*) printf '%s\n' "${AGENTFLOW_GIT_USER:-x-access-token}" ;;
   *) printf '%s\n' "${AGENTFLOW_GIT_TOKEN-}" ;;
 esac
 `
-}
 
 const gitAskPassScript = `#!/bin/sh
 case "$1" in

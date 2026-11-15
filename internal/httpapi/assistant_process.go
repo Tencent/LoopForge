@@ -435,7 +435,7 @@ func waitConversationProcessStop(ctx context.Context, id string, call func(conte
 }
 
 // bindWorkspaceGit gives the workspace CLI this turn's requester's Git
-// credentials, so the agent clones, pushes and calls GitHub/Gongfeng itself.
+// credentials, so the agent clones, pushes and calls GitHub itself.
 // Each turn starts its CLI again, so a shared conversation always runs with
 // the identity of whoever sent the current message, and a cleared token stops
 // working from the next turn on.

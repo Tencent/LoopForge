@@ -69,6 +69,17 @@ func TestConversationDockerProxiesTheHostDaemon(t *testing.T) {
 
 func TestBwrapConversationHidesHostDockerSocket(t *testing.T) {
 	daemon := fakeDockerDaemon(t)
+	// Reached through a symlinked parent, like /var/run -> /run in Debian
+	// images: bwrap cannot mount over such a path, so the real one is masked.
+	alias := filepath.Join(t.TempDir(), "run")
+	if err := os.Symlink(filepath.Dir(daemon), alias); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("DOCKER_HOST", "unix://"+filepath.Join(alias, "docker.sock"))
+	real, err := filepath.EvalSymlinks(daemon)
+	if err != nil {
+		t.Fatal(err)
+	}
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, "home"), 0o700); err != nil {
 		t.Fatal(err)
@@ -84,11 +95,14 @@ func TestBwrapConversationHidesHostDockerSocket(t *testing.T) {
 	}
 	masked, bound := false, false
 	for i := 0; i+2 < len(args); i++ {
-		masked = masked || args[i] == "--ro-bind" && args[i+1] == "/dev/null" && args[i+2] == daemon
+		masked = masked || args[i] == "--ro-bind" && args[i+1] == "/dev/null" && args[i+2] == real
 		bound = bound || args[i] == "--bind" && args[i+1] == dockerDir && args[i+2] == dockerDir
+		if args[i+1] == "/dev/null" && strings.HasPrefix(args[i+2], alias) {
+			t.Fatalf("mask targets the symlinked path %s: %v", args[i+2], args)
+		}
 	}
 	if !masked || !bound {
-		t.Fatalf("host socket %s masked=%t, proxy dir %s bound=%t: %v", daemon, masked, dockerDir, bound, args)
+		t.Fatalf("host socket %s masked=%t, proxy dir %s bound=%t: %v", real, masked, dockerDir, bound, args)
 	}
 }
 
@@ -157,6 +171,25 @@ func TestDestroyRunRemovesWorkspaceDockerObjects(t *testing.T) {
 		if !strings.Contains(destroyed, want) {
 			t.Errorf("missing %q in daemon calls:\n%s", want, destroyed)
 		}
+	}
+}
+
+// /tmp is shared: a socket directory another user prepared is never used.
+func TestEnsurePrivateDirRefusesSymlinks(t *testing.T) {
+	base := t.TempDir()
+	dir := filepath.Join(base, "docker")
+	if err := ensurePrivateDir(dir); err != nil {
+		t.Fatal(err)
+	}
+	if info, err := os.Lstat(dir); err != nil || info.Mode().Perm() != 0o700 {
+		t.Fatalf("dir must be private: %v %v", info, err)
+	}
+	link := filepath.Join(base, "link")
+	if err := os.Symlink(t.TempDir(), link); err != nil {
+		t.Fatal(err)
+	}
+	if err := ensurePrivateDir(link); err == nil {
+		t.Fatal("a symlinked socket directory must be refused")
 	}
 }
 

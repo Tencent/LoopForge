@@ -67,14 +67,6 @@ func (h *agentToolGateway) callMainBotWorkspace(ctx context.Context, s *AgentToo
 	if len(mainBotWorkspaceTools(s)) == 0 {
 		return "", errAgentToolForbidden
 	}
-	if s.ExecMode.ReviewWrites && name != "workbench_workspace_tree" && name != workspaceAttachInternal && name != "workbench_workspace_open" && name != "workbench_platform_mode" && name != workbenchDeliveryRegister {
-		// Commands are always reviewed: arbitrary shell text can mutate state.
-		ctx = withAssistantApprovalReviewer(ctx, s.approvalReviewer)
-		review := reviewAssistantAction(ctx, name, "当前项目工作区操作，文件写入、命令执行或提交 MR 会产生副作用", map[string]any{"runId": s.workspaceRun(), "arguments": args})
-		if !review.allows() {
-			return "", assistantReviewRefusal(name, review)
-		}
-	}
 	if name == "workbench_platform_mode" {
 		s.requestMode(domain.AssistantModePlatform)
 		raw, _ := json.Marshal(map[string]any{"mode": "platform", "handoff": true, "notice": "工作区保留，准备切回平台模式。" + assistantHandoffNotice})

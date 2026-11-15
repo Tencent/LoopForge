@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
@@ -245,5 +246,27 @@ func TestConversationFirstTurnLinksRequirementAfterSave(t *testing.T) {
 	attributeConversationUsage(h.deps, s, "glm-5", nil)
 	if conv, _ := st.AssistantSession(s.UserID, "chat-1"); conv.IssueID != "" {
 		t.Fatalf("cross-project link: %q", conv.IssueID)
+	}
+}
+
+// workbench_delivery_register records GitHub pull requests only.
+func TestRegisterConversationDeliveryAcceptsGitHubPullRequests(t *testing.T) {
+	h, s, st := conversationIssueFixture(t)
+	s.workspaceRunID = "ws-1"
+	_, err := h.registerConversationDelivery(context.Background(), s, map[string]any{"title": "修复登录页文案", "urls": []any{"https://git.example.com/team/web/merge_requests/7"}})
+	if err == nil || !strings.Contains(err.Error(), "不是 GitHub PR") {
+		t.Fatalf("a non-GitHub link must be refused: %v", err)
+	}
+	if conv, _ := st.AssistantSession(s.UserID, "chat-1"); conv.IssueID != "" {
+		t.Fatalf("a refused delivery must not create a requirement: %q", conv.IssueID)
+	}
+	out, err := h.registerConversationDelivery(context.Background(), s, map[string]any{"title": "修复登录页文案", "urls": []any{"https://github.com/acme/web/pull/9"}})
+	if err != nil || !strings.Contains(out, `"registered":1`) {
+		t.Fatalf("register = %s, %v", out, err)
+	}
+	conv, _ := st.AssistantSession(s.UserID, "chat-1")
+	issue, _ := st.Issue(conv.IssueID)
+	if mrs := issue.DeliveryMRList(); len(mrs) != 1 || mrs[0].URL != "https://github.com/acme/web/pull/9" || issue.Status != "in_review" {
+		t.Fatalf("delivery MRs = %+v status=%s", mrs, issue.Status)
 	}
 }

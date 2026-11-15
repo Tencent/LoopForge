@@ -11,15 +11,15 @@ import (
 )
 
 // The agent delivers a conversation workspace with its own git: it pushes and
-// opens the PR/MR itself using the requester's Git credentials. Platform
-// bookkeeping (requirement link, MR merge tracking, requirement status) only
+// opens the GitHub PR itself using the requester's Git credentials. Platform
+// bookkeeping (requirement link, merge tracking, requirement status) only
 // needs the resulting links, which workbench_delivery_register records.
 const workbenchDeliveryRegister = "workbench_delivery_register"
 
 func deliveryRegisterDescriptor() agentToolDescriptor {
 	return agentToolDescriptor{
 		Name:        workbenchDeliveryRegister,
-		Description: "登记本对话交付的 PR/MR。你在工作区里用 git push 并开好 PR/MR 后调用一次，平台把它关联到需求、标记需求为待合入，并在合入后自动完成需求。urls 填 PR/MR 链接（GitHub https://github.com/<owner>/<repo>/pull/<n> 或工蜂 merge_requests 链接）；title/description 用于本对话还没有关联需求时新建需求。只读排查、没有开 PR/MR 时不要调用。",
+		Description: "登记本对话交付的 GitHub PR。你在工作区里用 git push 并开好 PR 后调用一次，平台把它关联到需求、标记需求为待合入，并在合入后自动完成需求。urls 填 PR 链接（https://github.com/<owner>/<repo>/pull/<n>）；title/description 用于本对话还没有关联需求时新建需求。只读排查、没有开 PR 时不要调用。",
 		InputSchema: json.RawMessage(`{"type":"object","properties":{"urls":{"type":"array","minItems":1,"maxItems":20,"items":{"type":"string","maxLength":500}},"title":{"type":"string","minLength":1,"maxLength":200,"description":"需求标题，一句话写清交付了什么"},"description":{"type":"string","maxLength":20000}},"required":["urls","title"],"additionalProperties":false}`),
 		Kind:        "workspace",
 	}
@@ -68,17 +68,17 @@ func (h *agentToolGateway) registerConversationDelivery(ctx context.Context, s *
 		if text == "" {
 			continue
 		}
-		if _, _, _, ok := domain.ParseGongfengMR(text); !ok {
+		if !domain.IsGitHubPRURL(text) {
 			invalid = append(invalid, text)
 			continue
 		}
 		mrs = append(mrs, deliveredMR{URL: text})
 	}
 	if len(invalid) > 0 {
-		return "", fmt.Errorf("这些链接不是 GitHub PR 或工蜂 MR：%s", strings.Join(invalid, "、"))
+		return "", fmt.Errorf("这些链接不是 GitHub PR（https://github.com/<owner>/<repo>/pull/<n>）：%s", strings.Join(invalid, "、"))
 	}
 	if len(mrs) == 0 {
-		return "", fmt.Errorf("urls 至少填一个 PR/MR 链接")
+		return "", fmt.Errorf("urls 至少填一个 PR 链接")
 	}
 	issue, created, err := h.linkConversationRequirement(s, run, conversationRequirement{Title: title, Description: strings.TrimSpace(description)}, true)
 	if err != nil {
@@ -91,9 +91,9 @@ func (h *agentToolGateway) registerConversationDelivery(ctx context.Context, s *
 	out := map[string]any{"registered": len(mrs)}
 	if issue.ID != "" {
 		out["issueId"], out["issueTitle"] = issue.ID, issue.Title
-		note := fmt.Sprintf("已登记到需求 %s「%s」，PR/MR 合入后需求自动完成。", issue.ID, truncateRunes(issue.Title, 60))
+		note := fmt.Sprintf("已登记到需求 %s「%s」，PR 合入后需求自动完成。", issue.ID, truncateRunes(issue.Title, 60))
 		if created {
-			note = fmt.Sprintf("已新建项目需求 %s「%s」并登记这些 PR/MR，合入后自动完成；告诉用户可以在需求列表查看。", issue.ID, truncateRunes(issue.Title, 60))
+			note = fmt.Sprintf("已新建项目需求 %s「%s」并登记这些 PR，合入后自动完成；告诉用户可以在需求列表查看。", issue.ID, truncateRunes(issue.Title, 60))
 		}
 		out["note"] = note
 	}

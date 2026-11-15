@@ -2,7 +2,7 @@
 
 发送首条消息、实际开始生成时固定执行机器，之后不能修改。发送前选择机器只保存在本地草稿，不创建空会话；机器列表刷新保留草稿选择，个人默认机器未加载时不能首发。历史上因选择机器产生的空草稿可以重新选择，也不常驻会话侧栏。未记录执行机器的存量会话归属云端，不使用用户后来修改的默认机器。新会话选择远程 Runner 后，平台模式、工作区模式、标题生成和独立审批模型都由该 Runner 执行；机器不可用时返回错误，等待原机器恢复。
 
-平台模式保留平台管理工具，并限制原生写入和命令。用 `workbench_workspace_open` 选一个运行环境（Docker 或 Linux native/bwrap 沙箱）打开工作区后，当前 CLI 阶段退出并保存原生日志；平台轮换工具令牌，在同一机器、同一原生会话中重新启动 CLI，启用原生文件、补丁与命令工具。Docker 工作区里 CLI 复用工作区现有容器，浏览器与准备脚本使用相同环境；native 工作区用执行机器上已安装的 CLI，在 bwrap 里以同样的 HOME/cwd 布局运行。macOS seatbelt 暂不支持对话工作区。工作区模式的 CLI 按本轮发言人注入 Git Token（限 GitHub 与工蜂主机的 askpass）、`GH_TOKEN` 与按主机绑定的 SSH 密钥，git 克隆、提交、推送和开 PR/MR 都由 Agent 自己完成，详见 conversation-workspaces.md 的「Git 凭据」。
+平台模式保留平台管理工具，并限制原生写入和命令。用 `workbench_workspace_open` 选一个运行环境（Docker 或 Linux native/bwrap 沙箱）打开工作区后，当前 CLI 阶段退出并保存原生日志；平台轮换工具令牌，在同一机器、同一原生会话中重新启动 CLI，启用原生文件、补丁与命令工具。Docker 工作区里 CLI 复用工作区现有容器，浏览器与准备脚本使用相同环境；native 工作区用执行机器上已安装的 CLI，在 bwrap 里以同样的 HOME/cwd 布局运行。macOS seatbelt 暂不支持对话工作区。工作区模式的 CLI 按本轮发言人注入 Git Token（只对 github.com 应答的 askpass）、`GH_TOKEN` 与按主机绑定的 SSH 密钥，git 克隆、提交、推送和开 PR 都由 Agent 自己完成，详见 conversation-workspaces.md 的「Git 凭据」。
 
 工作区只提供模式切换、交付、产物、浏览器及任务明确选择的 MCP 集成。平台管理和旧的文件操作工具既不出现在目录中，也不能通过直接调用执行。模式切换令牌在旧进程退出后更新，旧令牌失效；交接期间拒绝继续调用工具。切回平台模式保留工作区和原生会话，关闭文件侧栏只改变界面。
 

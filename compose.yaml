@@ -55,6 +55,10 @@ services:
       # directory keeps the same absolute path inside the container.
       - ${LOOPFORGE_DATA_DIR}:${LOOPFORGE_DATA_DIR}
       - ${LOOPFORGE_DOCKER_SOCKET:-/var/run/docker.sock}:/var/run/docker.sock
+      # Conversation workspaces reach Docker through a per-workspace proxy
+      # socket under this directory; sibling workspace containers bind it on
+      # the host, so it is shared at the same path.
+      - /tmp/lf-docker:/tmp/lf-docker
     depends_on:
       mysql:
         condition: service_healthy

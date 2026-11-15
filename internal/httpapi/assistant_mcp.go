@@ -11,7 +11,6 @@ import (
 
 	"agentflow/internal/application"
 	"agentflow/internal/domain"
-	"agentflow/internal/gitwork"
 	"agentflow/internal/mcpclient"
 	"agentflow/internal/mcpserver"
 	"agentflow/internal/runtime"
@@ -394,10 +393,7 @@ func bindAssistantMCP(server domain.MCPServerDefinition, user domain.User) (doma
 }
 
 func redactAssistantSecrets(text string, user domain.User) string {
-	// A workspace CLI receives the Git token without its oauth2:/private:
-	// prefix, so the bare value is redacted as well.
-	_, bareGitToken := gitwork.SplitToken(user.GitToken)
-	for _, secret := range []string{user.CodeBuddyAPIKey, user.CodexAPIKey, user.ClaudeCodeAPIKey, user.GitToken, bareGitToken} {
+	for _, secret := range []string{user.CodeBuddyAPIKey, user.CodexAPIKey, user.ClaudeCodeAPIKey, user.GitToken} {
 		secret = strings.TrimSpace(secret)
 		if secret != "" {
 			text = strings.ReplaceAll(text, secret, "[redacted]")
