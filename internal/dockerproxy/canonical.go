@@ -75,16 +75,21 @@ func canonicalize(v any, freeForm bool) error {
 		seen := make(map[string]string, len(t))
 		for key := range t {
 			folded := foldKey(key)
-			if other, dup := seen[folded]; dup {
+			// Free-form maps (labels, options) are decoded with exact keys.
+			if other, dup := seen[folded]; dup && !freeForm {
 				return forbidden("请求体里 " + other + " 与 " + key + " 只差大小写，无法判断守护进程会用哪个")
 			}
 			seen[folded] = key
 		}
-		for folded, key := range seen {
+		keys := make([]string, 0, len(t))
+		for key := range t {
+			keys = append(keys, key)
+		}
+		for _, key := range keys {
 			value := t[key]
 			name := key
 			if !freeForm {
-				if canonical, ok := checkedFields[folded]; ok && canonical != key {
+				if canonical, ok := checkedFields[foldKey(key)]; ok && canonical != key {
 					delete(t, key)
 					t[canonical] = value
 					name = canonical

@@ -35,3 +35,15 @@ func TestFoldKeyMatchesJSONFolding(t *testing.T) {
 		t.Error("different names must not fold together")
 	}
 }
+
+func TestFreeFormKeysKeepTheirCase(t *testing.T) {
+	body := map[string]any{"labels": map[string]any{"App": "a", "app": "b"}, "hostconfig": map[string]any{"privileged": true}}
+	if err := canonicalizeKeys(body); err != nil {
+		t.Fatal(err)
+	}
+	labels, _ := body["Labels"].(map[string]any)
+	host, _ := body["HostConfig"].(map[string]any)
+	if labels["App"] != "a" || labels["app"] != "b" || host["Privileged"] != true {
+		t.Errorf("labels are exact-keyed, API fields canonical: %v", body)
+	}
+}
