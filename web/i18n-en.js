@@ -142,6 +142,18 @@ Object.assign(window.LF_I18N_EN,{
 Object.assign(window.LF_I18N_EN,{"平台目录":"Platform catalog","通用模板按名称绑定这些 MCP，添加到本项目后即可使用。":"Generic templates bind these MCPs by name. Add one to this project to use it.","已添加到当前项目":"Added to this project","添加中…":"Adding…"});
 Object.assign(window.LF_I18N_EN,{
   "Git SSH 密钥":"Git SSH keys",
+  "Forgejo 访问令牌":"Forgejo access tokens",
+  "按实例管理用于 PR 交付的个人令牌":"Manage personal tokens for PR delivery by instance",
+  "管理令牌":"Manage tokens",
+  "Forgejo 实例":"Forgejo instance",
+  "请管理员先启用至少一个 Forgejo 实例。":"Ask your administrator to enable a Forgejo instance first.",
+  "令牌已保存。":"Token saved.",
+  "托管方式":"Repository hosting",
+  "仓库托管方式":"Repository hosting",
+  "GitHub 或 Git SSH":"GitHub or Git SSH",
+  "Forgejo 仓库网页地址":"Forgejo repository web address",
+  "请输入同一个 Forgejo 仓库的 SSH 克隆地址和 HTTPS 网页地址。":"Enter the SSH clone address and HTTPS web address for the same Forgejo repository.",
+  "Forgejo 使用个人 SSH 密钥检出和推送。要自动创建 PR，请在个人配置中添加此实例的 Forgejo 令牌。":"Forgejo uses your SSH key for checkout and push. To create pull requests automatically, add a token for this instance in Personal settings.",
   "按 SSH 主机管理个人密钥，仓库自动匹配":"Manage personal keys by SSH host; repositories match automatically",
   "管理密钥":"Manage keys",
   "每个 SSH 主机配置一把个人密钥，同一主机的仓库自动共用。":"Configure one personal key per SSH host. Repositories on the same host share it automatically.",

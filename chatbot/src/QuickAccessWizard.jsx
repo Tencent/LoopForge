@@ -804,6 +804,8 @@ export default function QuickAccessWizard({
   const [idTouched, setIdTouched] = useState(false);
   const [keyTouched, setKeyTouched] = useState(false);
   const [repoUrl, setRepoUrl] = useState("");
+  const [repoProvider, setRepoProvider] = useState("");
+  const [repoWebUrl, setRepoWebUrl] = useState("");
   const [repoBranch, setRepoBranch] = useState("main");
   const [bindRepoNow, setBindRepoNow] = useState(true);
   const [makeDefaultRepo, setMakeDefaultRepo] = useState(true);
@@ -934,7 +936,9 @@ export default function QuickAccessWizard({
     [availableWorkflows, selectedWorkflowId],
   );
 
-  const parsedRepo = useMemo(() => parseGongfengRepo(repoUrl), [repoUrl]);
+  const parsedRepo = useMemo(() => repoProvider === "forgejo"
+    ? globalThis.LoopForgeForgejoRepository(repoUrl, repoWebUrl)
+    : parseGongfengRepo(repoUrl), [repoProvider, repoUrl, repoWebUrl]);
 
   // Reopening during the exit transition reverses it onto the same content.
   useEffect(() => {
@@ -948,6 +952,8 @@ export default function QuickAccessWizard({
     setCodeBuddyApiKey("");
     setCodeBuddyEnvChoice(null);
     setGitVerify(null);
+    setRepoProvider("");
+    setRepoWebUrl("");
     setCompletedSummary(null);
     setBindRepoNow(true);
     setPreviewTab("stages");
@@ -1191,7 +1197,7 @@ export default function QuickAccessWizard({
     (key) => globalThis.LoopForgeGitSSHHost(key.host) === remote?.host,
   );
   const sshReady = hasSSHKey(selectedSSHRepo);
-  const sshRepository = (parsedRepo || defaultRepo)?.provider === "ssh";
+  const sshRepository = ["ssh", "forgejo"].includes((parsedRepo || defaultRepo)?.provider);
   const codeBuddyReady = Boolean(
     storedUser?.codeBuddyApiKeyConfigured || codeBuddyApiKey.trim(),
   );
@@ -1318,9 +1324,11 @@ export default function QuickAccessWizard({
         );
         return;
       }
-      if (bindRepoNow && repoUrl.trim() && !parsedRepo) {
+      if (bindRepoNow && (repoUrl.trim() || (repoProvider === "forgejo" && repoWebUrl.trim())) && !parsedRepo) {
         setError(
-          "请输入 GitHub 仓库链接或 Git SSH 克隆地址。CNB 只支持 HTTPS + 访问令牌。",
+          repoProvider === "forgejo"
+            ? "请输入同一个 Forgejo 仓库的 SSH 克隆地址和 HTTPS 网页地址。"
+            : "请输入 GitHub 仓库链接或 Git SSH 克隆地址。CNB 只支持 HTTPS + 访问令牌。",
         );
         return;
       }
@@ -1509,7 +1517,7 @@ export default function QuickAccessWizard({
         repository: boundRepo,
         workflow: provisionedWorkflow || activeWorkflow,
         rolesCount: roles.length,
-        gitReady: Boolean(boundRepo?.provider === "ssh" ? hasSSHKey(parseGongfengRepo(boundRepo.cloneUrl)) : latestUser?.gitTokenConfigured),
+        gitReady: Boolean(["ssh", "forgejo"].includes(boundRepo?.provider) ? hasSSHKey(parseGongfengRepo(boundRepo.cloneUrl)) : latestUser?.gitTokenConfigured),
         codeBuddyReady: Boolean(
           latestUser?.codeBuddyApiKeyConfigured ||
             storedUser?.codeBuddyApiKeyConfigured,
@@ -1684,7 +1692,7 @@ export default function QuickAccessWizard({
                             size={14}
                           />
                           <span>
-                            {completedSummary?.repository?.provider === "ssh" ? "Git SSH 访问：" : "GitHub 访问："}
+                            {["ssh", "forgejo"].includes(completedSummary?.repository?.provider) ? "Git SSH 访问：" : "GitHub 访问："}
                             {completedSummary?.gitReady
                               ? "已就绪"
                               : "未配置，克隆/推送私有仓库前可在个人配置补齐"}
@@ -2088,8 +2096,8 @@ export default function QuickAccessWizard({
                           <div>
                             <strong>
                               {projectMode === "existing" && projectRepos.length
-                                ? "为该项目添加 GitHub 仓库"
-                                : "绑定默认 GitHub 仓库"}
+                                ? "为该项目添加代码仓库"
+                                : "绑定默认代码仓库"}
                             </strong>
                             <span
                               key={String(bindRepoNow)}
@@ -2151,10 +2159,19 @@ export default function QuickAccessWizard({
                                   </div>
                                 </div>
                               ) : null}
-                              <div className="qa-repo-grid">
+                            <div className="qa-field">
+                              <span className="qa-label">托管方式</span>
+                              <HarnessSelect
+                                value={repoProvider}
+                                options={[{value:"",label:"GitHub 或 Git SSH"},{value:"forgejo",label:"Forgejo"}]}
+                                onChange={(event) => setRepoProvider(event.target.value)}
+                                ariaLabel="仓库托管方式"
+                              />
+                            </div>
+                            <div className="qa-repo-grid">
                                 <label className="qa-field">
                                   <span className="qa-label">
-                                    {projectMode === "existing" &&
+                                    {repoProvider === "forgejo" ? "SSH 克隆地址" : projectMode === "existing" &&
                                     projectRepos.length
                                       ? "新增仓库地址（可选）"
                                       : "GitHub 链接或 Git SSH 地址"}
@@ -2163,7 +2180,7 @@ export default function QuickAccessWizard({
                                     className="qa-input qa-mono"
                                     value={repoUrl}
                                     onChange={(e) => setRepoUrl(e.target.value)}
-                                    placeholder="https://github.com/owner/repo"
+                                    placeholder={repoProvider === "forgejo" ? "git@forge.example.org:team/repo.git" : "https://github.com/owner/repo"}
                                   />
                                 </label>
                                 <div className="qa-field">
@@ -2179,6 +2196,12 @@ export default function QuickAccessWizard({
                                   />
                                 </div>
                               </div>
+                              {repoProvider === "forgejo" && (
+                                <label className="qa-field">
+                                  <span className="qa-label">Forgejo 仓库网页地址</span>
+                                  <input className="qa-input qa-mono" value={repoWebUrl} onChange={(e) => setRepoWebUrl(e.target.value)} placeholder="https://forge.example.org/team/repo" />
+                                </label>
+                              )}
                               {projectMode === "existing" &&
                               projectRepos.length &&
                               parsedRepo ? (
@@ -2204,14 +2227,22 @@ export default function QuickAccessWizard({
                                 </p>
                               ) : (
                                 <p key="help" className="qa-hint">
-                                  支持 GitHub 链接或 Git SSH 地址，例如 <code>git@gitlab.com:group/repo.git</code>。
+                                  {repoProvider === "forgejo"
+                                    ? "请填写同一个 Forgejo 仓库的 SSH 和 HTTPS 地址。"
+                                    : <>支持 GitHub 链接或 Git SSH 地址，例如 <code>git@gitlab.com:group/repo.git</code>。</>}
                                 </p>
                               )}
-                              {selectedSSHRepo?.provider === "ssh" && sshKeysLoaded && !sshReady ? (
+                              {sshRepository && selectedSSHRepo && sshKeysLoaded && !sshReady ? (
                                 <p className="qa-hint is-error" role="alert">
                                   {sshCredentials.error ? "无法读取 SSH 密钥配置，请稍后重试。" : `尚未配置 ${selectedSSHRepo.host} 的 SSH 密钥，可稍后在「个人配置 → Git SSH 密钥」添加。`}
                                 </p>
                               ) : null}
+                              {(parsedRepo || defaultRepo)?.provider === "forgejo" && (
+                                <p className="qa-hint">
+                                  要自动创建 PR，请在个人配置中添加此实例的{" "}
+                                  <button type="button" className="qa-link-btn" onClick={() => openCredentialSettings("forgeToken")}>Forgejo 令牌</button>。
+                                </p>
+                              )}
                             </div>
                           </div>
                         </div>

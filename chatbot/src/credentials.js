@@ -7,6 +7,7 @@ export const CREDENTIALS = {
   claudeCodeApiKey: "Claude Code API Key",
   gitToken: "GitHub Git Token",
   gitSshKey: "Git SSH 密钥",
+  forgeToken: "Forgejo 访问令牌",
 };
 
 // A CodeBuddy key only works on the edition that issued it, and the CLI
@@ -93,6 +94,12 @@ export const CREDENTIAL_GUIDES = {
       "回到这里重试",
     ],
   },
+  forgeToken: {
+    steps: [
+      "在 Forgejo「设置 → 应用」为当前实例生成有 read:user 和 write:repository 权限的访问令牌",
+      "到 LoopForge「个人配置 → Forgejo」为该实例保存令牌，然后重试",
+    ],
+  },
   gitToken: {
     url: "/#/settings",
     link: "连接 GitHub",
@@ -148,6 +155,7 @@ const RULES = [
     "gitSshKey",
     /Git SSH (?:密钥|私钥)/i,
   ],
+  ["forgeToken", /Forgejo[^。\n]*(?:令牌|HTTP 40[13])/i],
   [
     "gitToken",
     /Git Token|工蜂[^。\n]{0,12}令牌|could not read Username|Authentication failed|HTTP Basic: Access denied|terminal prompts disabled|requested URL returned error: 40[13]/i,

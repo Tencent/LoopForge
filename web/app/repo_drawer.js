@@ -6,18 +6,35 @@ function setRepoDrawerSwitch(on){const sw=$('#repoDrawerDefault');if(!sw)return;
 function repoDrawerError(show){
   const f=$('#repoDrawerForm');if(!f)return;
   f.elements.repoUrl.classList.toggle('bad',!!show);
-  $('#repoDrawerUrlError').hidden=!show;
+  const error=$('#repoDrawerUrlError');
+  if(show)error.textContent=f.elements.provider?.value==='forgejo'
+    ?'请输入同一个 Forgejo 仓库的 SSH 克隆地址和 HTTPS 网页地址。'
+    :'请输入有效的 GitHub 链接或 Git SSH 克隆地址。CNB 只支持 HTTPS + 访问令牌。';
+  error.hidden=!show;
+}
+function repoDrawerInfo(form){
+  const {provider,repoUrl,webUrl}=form.elements;
+  if(provider?.value==='forgejo')return globalThis.LoopForgeForgejoRepository(repoUrl.value,webUrl.value);
+  return parseGongfengRepoURL(repoUrl.value);
 }
 function syncRepoDrawerDetect(){
   const f=$('#repoDrawerForm');if(!f)return;
-  const info=parseGongfengRepoURL(f.elements.repoUrl.value),box=$('#repoDrawerDetect');
-  $('#repoDrawerSSH').hidden=info?.provider!=='ssh';
-  renderGitSSHMissingHint($('#repoDrawerSSHMissing'),info);
+  const forgejo=f.elements.provider?.value==='forgejo';
+  const info=repoDrawerInfo(f),box=$('#repoDrawerDetect');
+  f.querySelector('[data-github-repositories]').hidden=forgejo;
+  f.querySelector('[data-repo-address-label]').textContent=forgejo?'SSH 克隆地址':'GitHub 链接或 Git SSH 地址';
+  f.querySelector('.pa-fmt').hidden=forgejo;
+  f.elements.repoUrl.placeholder=forgejo?'git@forge.example.org:team/repo.git':'https://github.com/owner/repo';
+  $('#repoDrawerSSH').hidden=!forgejo&&info?.provider!=='ssh';
+  $('#repoDrawerForgejoHint').hidden=!forgejo;
+  $('#repoDrawerSSH [data-optional-web-url]').hidden=forgejo;
+  f.elements.webUrl.placeholder=forgejo?'https://forge.example.org/team/repo':'https://gitlab.com/group/repo';
+  renderGitSSHMissingHint($('#repoDrawerSSHMissing'),forgejo?globalThis.LoopForgeGitSSH(f.elements.repoUrl.value):info);
   if(!info){box.hidden=true;return}
   repoDrawerError(false);
   if(!repoDrawerState.nameTouched)f.elements.name.value=info.name;
   $('#repoDrawerDetectName').textContent=f.elements.name.value.trim()||info.name;
-  $('#repoDrawerDetectPath').textContent=info.project;
+  $('#repoDrawerDetectPath').textContent=forgejo?repoDisplayPath(info):info.project;
   box.hidden=false;
 }
 function openRepoDrawer(repoId=''){
@@ -28,12 +45,14 @@ function openRepoDrawer(repoId=''){
   if(repoId&&!repo)return toast('仓库不存在或已被删除','err');
   const f=$('#repoDrawerForm');if(!f)return;
   const hasDefault=!projectNeedsDefaultRepository(project);
-  const repoAddress=repo?.provider==='ssh'?repo.cloneUrl:repo?.webUrl||repo?.cloneUrl||repo?.gongfengProjectId||'';
-  const parsedName=parseGongfengRepoURL(repoAddress)?.name||'';
+  const forgejo=repo?.provider==='forgejo',usesSSH=forgejo||repo?.provider==='ssh';
+  const repoAddress=usesSSH?repo.cloneUrl:repo?.webUrl||repo?.cloneUrl||repo?.gongfengProjectId||'';
+  const parsedName=(forgejo?globalThis.LoopForgeForgejoRepository(repoAddress,repo.webUrl):parseGongfengRepoURL(repoAddress))?.name||'';
   Object.assign(repoDrawerState,{projectId,repoId:repo?.id||'',nameTouched:!!repo&&!!repo.name&&repo.name!==parsedName,saving:false,returnFocus:document.activeElement});
   f.elements.id.value=repo?.id||'';
+  f.elements.provider.value=forgejo?'forgejo':'';
   f.elements.repoUrl.value=repoAddress;
-  f.elements.webUrl.value=repo?.provider==='ssh'?repo.webUrl||'':'';
+  f.elements.webUrl.value=usesSSH?repo.webUrl||'':'';
   f.elements.name.value=repo?.name||'';
   f.elements.defaultBranch.value=repo?.defaultBranch||'main';
   f.elements.integrateBranch.value=repo?.integrateBranch||'';
@@ -49,6 +68,7 @@ function openRepoDrawer(repoId=''){
   drawer.inert=false;drawer.setAttribute('aria-hidden','false');
   drawer.classList.add('open');$('#repoDrawerScrim').classList.add('open');
   if(typeof mountGitHubRepoPicker==='function')mountGitHubRepoPicker(drawer.querySelector('[data-github-repositories]'),repository=>{
+    f.elements.provider.value='';
     f.elements.repoUrl.value=repository.html_url;
     f.elements.defaultBranch.value=repository.default_branch||'main';
     syncRepoDrawerDetect();
@@ -83,7 +103,7 @@ async function saveProjectDefaultRepository(project,repoId){
 async function saveRepoDrawer(e){
   e.preventDefault();
   if(repoDrawerState.saving)return;
-  const f=e.currentTarget,info=parseGongfengRepoURL(f.elements.repoUrl.value);
+  const f=e.currentTarget,info=repoDrawerInfo(f);
   if(!info){repoDrawerError(true);f.elements.repoUrl.focus();return}
   const projectId=repoDrawerState.projectId,project=(state.data.projects||[]).find(p=>p.id===projectId);
   if(!project)return toast('请先保存项目','warn');
@@ -110,6 +130,8 @@ async function saveRepoDrawer(e){
 function bindRepoDrawer(){
   const f=$('#repoDrawerForm');if(!f||f.dataset.bound)return;f.dataset.bound='true';
   f.onsubmit=saveRepoDrawer;
+  f.elements.provider.addEventListener('change',syncRepoDrawerDetect);
+  f.elements.webUrl.addEventListener('input',syncRepoDrawerDetect);
   f.elements.repoUrl.addEventListener('input',syncRepoDrawerDetect);
   f.elements.name.addEventListener('input',()=>{repoDrawerState.nameTouched=!!f.elements.name.value.trim();syncRepoDrawerDetect()});
   $('#repoDrawerRename').onclick=()=>{repoDrawerState.nameTouched=true;$('#repoDrawerNameField').hidden=false;f.elements.name.focus();f.elements.name.select()};
