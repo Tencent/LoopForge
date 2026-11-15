@@ -94,12 +94,28 @@ func TestSolveChecksMatchClassicBuild(t *testing.T) {
 	if _, err := p.checkSolve(context.Background(), solveMessage(nil, nil, map[string]string{"type": "local", "dest": "out"})); err != nil {
 		t.Errorf("local exporter writes to the client, not the daemon: %v", err)
 	}
-	for _, method := range []string{"/moby.buildkit.v1.Control/Prune", "/moby.buildkit.v1.Control/UpdateBuildHistory", "/containerd.services.content.v1.Content/Delete"} {
+	for _, method := range []string{"/moby.buildkit.v1.Control/Prune", "/moby.buildkit.v1.Control/UpdateBuildHistory", "/moby.buildkit.v1.Control/DiskUsage", "/containerd.services.content.v1.Content/Delete"} {
 		if grpcMethodAllowed(method) {
 			t.Errorf("%s must be refused", method)
 		}
 	}
 	if !grpcMethodAllowed(grpcSolve) || !grpcMethodAllowed("/moby.buildkit.v1.frontend.LLBBridge/Solve") {
 		t.Error("build calls must be relayed")
+	}
+}
+
+func TestBuildHistoryOnlyByRef(t *testing.T) {
+	all := protowire.AppendTag(nil, 1, protowire.VarintType)
+	all = protowire.AppendVarint(all, 1) // ActiveOnly, no ref
+	if _, err := checkHistory(context.Background(), all); err == nil {
+		t.Error("listing every build on the daemon must be refused")
+	}
+	if _, err := checkHistory(context.Background(), nil); err == nil {
+		t.Error("an empty request lists every build and must be refused")
+	}
+	own := protowire.AppendTag(all, historyRef, protowire.BytesType)
+	own = protowire.AppendString(own, "k3qz0ref")
+	if out, err := checkHistory(context.Background(), own); err != nil || string(out) != string(own) {
+		t.Errorf("following one's own build by ref must pass unchanged: %v", err)
 	}
 }

@@ -23,9 +23,13 @@ import (
 // call. Control.Solve is the one call that decides what a build may do and
 // where its image goes; it is checked and labelled like a classic /build.
 // Everything else is relayed as is, except calls that act on the whole
-// daemon (cache prune, other builds' history) and unknown services.
+// daemon (cache prune and usage, the history of every build) and unknown
+// services.
 
-const grpcSolve = "/moby.buildkit.v1.Control/Solve"
+const (
+	grpcSolve   = "/moby.buildkit.v1.Control/Solve"
+	grpcHistory = "/moby.buildkit.v1.Control/ListenBuildHistory"
+)
 
 var grpcAllowed = map[string]bool{
 	"/moby.buildkit.v1.Control/Solve":              true,
@@ -33,7 +37,6 @@ var grpcAllowed = map[string]bool{
 	"/moby.buildkit.v1.Control/Session":            true,
 	"/moby.buildkit.v1.Control/ListWorkers":        true,
 	"/moby.buildkit.v1.Control/Info":               true,
-	"/moby.buildkit.v1.Control/DiskUsage":          true,
 	"/moby.buildkit.v1.Control/ListenBuildHistory": true,
 	"/grpc.health.v1.Health/Check":                 true,
 }
@@ -120,13 +123,13 @@ func (p *Proxy) relayGRPC(w http.ResponseWriter, r *http.Request, cc *http2.Clie
 		return
 	}
 	body := io.Reader(r.Body)
-	if method == grpcSolve {
+	if check := p.grpcCheck(method); check != nil {
 		message, err := readGRPCMessage(r.Body)
 		if err != nil {
 			grpcDeny(w, "无法解析构建请求："+err.Error())
 			return
 		}
-		checked, err := p.checkSolve(r.Context(), message)
+		checked, err := check(r.Context(), message)
 		if err != nil {
 			grpcDeny(w, err.Error())
 			return
@@ -171,6 +174,51 @@ func (p *Proxy) relayGRPC(w http.ResponseWriter, r *http.Request, cc *http2.Clie
 			w.Header().Add(http.TrailerPrefix+k, value)
 		}
 	}
+}
+
+// grpcCheck returns the request check for calls whose single request
+// message decides what they reach.
+func (p *Proxy) grpcCheck(method string) func(context.Context, []byte) ([]byte, error) {
+	switch method {
+	case grpcSolve:
+		return p.checkSolve
+	case grpcHistory:
+		return checkHistory
+	}
+	return nil
+}
+
+// ListenBuildHistoryRequest field numbers.
+const historyRef = 2
+
+// checkHistory lets a build follow its own record (buildx asks by ref) but
+// not list every build on the daemon: refs are random, so knowing one means
+// the build is yours.
+func checkHistory(_ context.Context, message []byte) ([]byte, error) {
+	for b := message; len(b) > 0; {
+		num, typ, n := protowire.ConsumeTag(b)
+		if n < 0 {
+			return nil, protowire.ParseError(n)
+		}
+		b = b[n:]
+		if num == historyRef && typ == protowire.BytesType {
+			value, m := protowire.ConsumeBytes(b)
+			if m < 0 {
+				return nil, protowire.ParseError(m)
+			}
+			if len(value) > 0 {
+				return message, nil
+			}
+			b = b[m:]
+			continue
+		}
+		m := protowire.ConsumeFieldValue(num, typ, b)
+		if m < 0 {
+			return nil, protowire.ParseError(m)
+		}
+		b = b[m:]
+	}
+	return nil, forbidden("工作区只能按构建 ref 查看自己的构建记录")
 }
 
 // grpcDeny answers a call with PERMISSION_DENIED (trailers-only response).
