@@ -111,9 +111,10 @@ func VerifyToken(ctx context.Context, instance, token string) error {
 }
 
 type RepositoryClient struct {
-	ref   domain.ForgeRepository
-	token string
-	id    int64
+	ref           domain.ForgeRepository
+	token         string
+	id            int64
+	defaultBranch string
 }
 
 func OpenRepository(ctx context.Context, ref domain.ForgeRepository, token string) (*RepositoryClient, error) {
@@ -122,8 +123,9 @@ func OpenRepository(ctx context.Context, ref domain.ForgeRepository, token strin
 	}
 	client := &RepositoryClient{ref: ref, token: token}
 	var info struct {
-		ID       int64  `json:"id"`
-		FullName string `json:"full_name"`
+		ID            int64  `json:"id"`
+		FullName      string `json:"full_name"`
+		DefaultBranch string `json:"default_branch"`
 	}
 	if _, err := client.request(ctx, http.MethodGet, "", nil, &info); err != nil {
 		return nil, err
@@ -132,8 +134,11 @@ func OpenRepository(ctx context.Context, ref domain.ForgeRepository, token strin
 		return nil, errors.New("Forgejo 未确认仓库身份")
 	}
 	client.id = info.ID
+	client.defaultBranch = info.DefaultBranch
 	return client, nil
 }
+
+func (c *RepositoryClient) DefaultBranch() string { return c.defaultBranch }
 
 func (c *RepositoryClient) request(ctx context.Context, method, suffix string, input, output any) (http.Header, error) {
 	return request(ctx, c.ref.Instance, c.token, method, "/repos/"+c.ref.Path()+suffix, input, output)

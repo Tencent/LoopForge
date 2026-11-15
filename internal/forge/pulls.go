@@ -148,6 +148,27 @@ type Submission struct {
 
 var gitObjectID = regexp.MustCompile(`^(?:[a-f0-9]{40}|[a-f0-9]{64})$`)
 
+// BranchAt reports whether a branch already points to the pushed commit.
+// This covers an empty delivery or a retry after the work was integrated.
+func (c *RepositoryClient) BranchAt(ctx context.Context, branch, head string) (bool, error) {
+	var result struct {
+		Name   string `json:"name"`
+		Commit struct {
+			ID string `json:"id"`
+		} `json:"commit"`
+	}
+	if branch == "" || !gitObjectID.MatchString(head) {
+		return false, errors.New("Forgejo 需要目标分支和已推送的提交 SHA")
+	}
+	if _, err := c.request(ctx, http.MethodGet, "/branches/"+url.PathEscape(branch), nil, &result); err != nil {
+		return false, err
+	}
+	if result.Name != branch || !gitObjectID.MatchString(result.Commit.ID) {
+		return false, errors.New("Forgejo 未确认目标分支的提交")
+	}
+	return result.Commit.ID == head, nil
+}
+
 // SubmitPull creates or reuses a same-repository PR whose source is exactly
 // the pushed commit. A request from a fork with the same branch is ineligible.
 func (c *RepositoryClient) SubmitPull(ctx context.Context, source, target, head, title, body string, update bool) (Submission, error) {
@@ -203,6 +224,13 @@ func (c *RepositoryClient) SubmitPull(ctx context.Context, source, target, head,
 func (c *RepositoryClient) MergePull(ctx context.Context, p Pull, source, target, head string) (Pull, error) {
 	if !c.matches(p, source, target) || p.state() != "opened" || !gitObjectID.MatchString(head) || p.Head.Commit != head {
 		return Pull{}, errors.New("Forgejo PR 与本次推送的提交不符，无法合并")
+	}
+	live, err := c.GetPull(ctx, p.Number)
+	if err != nil {
+		return Pull{}, err
+	}
+	if !c.matches(live, source, target) || live.state() != "opened" || live.Head.Commit != head {
+		return Pull{}, errors.New("Forgejo PR 的目标分支或源提交已变更，请重新检查")
 	}
 	input := struct {
 		Do               string `json:"do"`

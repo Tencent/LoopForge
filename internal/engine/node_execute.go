@@ -127,7 +127,7 @@ func (e *Engine) execute(ctx context.Context, runID string) {
 		}
 		if len(ready) == 0 {
 			if allSucceeded(wf, r) {
-				rework, err := e.integrateScheduledRun(runID)
+				rework, deliveries, err := e.integrateScheduledRun(runID)
 				if err != nil {
 					e.finishAt(runID, generation, "failed", "合入 integration 失败："+err.Error())
 					return
@@ -135,7 +135,7 @@ func (e *Engine) execute(ctx context.Context, runID string) {
 				if rework {
 					continue
 				}
-				e.finishAt(runID, generation, "succeeded", "流水线执行完成")
+				e.finishAt(runID, generation, "succeeded", "流水线执行完成", deliveries...)
 				return
 			}
 			if hasWaiting(wf, r) {

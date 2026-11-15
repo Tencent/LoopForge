@@ -19,7 +19,7 @@ const integrationTaskNode = "_integrate"
 // execution machine holding the run's checkout and waits for it. With
 // pushIntegrate the runner also pushes the merged result to the integration
 // branch. It returns the conflicted files, if any.
-func (e *Engine) integrateOnRunner(ctx context.Context, runner domain.Runner, run domain.Run, rc domain.RepositoryContext, pushIntegrate bool) ([]string, error) {
+func (e *Engine) integrateOnRunner(ctx context.Context, runner domain.Runner, run domain.Run, rc domain.RepositoryContext, pushIntegrate bool) (conflicts []string, head string, err error) {
 	invocation := &domain.RunnerInvocation{RunID: run.ID, NodeID: integrationTaskNode}
 	identity := gitIdentityFrom(ctx)
 	bindRunnerRepositories(invocation, run, gitTokenFrom(ctx), identity.name, identity.email)
@@ -32,7 +32,7 @@ func (e *Engine) integrateOnRunner(ctx context.Context, runner domain.Runner, ru
 		}
 	}
 	if target == nil {
-		return nil, fmt.Errorf("仓库 %s 不在运行 %s 的仓库列表中", rc.Name, run.ID)
+		return nil, "", fmt.Errorf("仓库 %s 不在运行 %s 的仓库列表中", rc.Name, run.ID)
 	}
 	target.IntegrateBranch = strings.TrimSpace(rc.IntegrateBranch)
 	target.PushIntegrate = pushIntegrate
@@ -55,36 +55,38 @@ func (e *Engine) integrateOnRunner(ctx context.Context, runner domain.Runner, ru
 		Invocation:       invocation,
 	}
 	if err := e.repo.PutRunnerTask(task); err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	e.notifyRunnerDispatch("terminal")
 	final, err := e.awaitRunnerTask(ctx, task.ID, nil)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	switch final.Status {
 	case domain.RunnerTaskSuccess:
 	case domain.RunnerTaskCanceled:
-		return nil, errors.New("integrate canceled")
+		return nil, "", errors.New("integrate canceled")
 	default:
 		msg := strings.TrimSpace(final.Error)
 		if msg == "" {
 			msg = "integrate failed on runner"
 		}
-		return nil, errors.New(msg)
+		return nil, "", errors.New(msg)
 	}
 	var results []domain.RunnerIntegrationResult
 	if strings.TrimSpace(final.Result) != "" {
 		if err := json.Unmarshal([]byte(final.Result), &results); err != nil {
-			return nil, fmt.Errorf("decode integrate result: %w", err)
+			return nil, "", fmt.Errorf("decode integrate result: %w", err)
 		}
 	}
-	var conflicts []string
 	for _, result := range results {
 		conflicts = append(conflicts, result.Conflicts...)
 		if result.Head != "" {
+			if result.RepositoryID == rc.RepositoryID && result.WorkBranch == rc.WorkBranch && result.IntegrateBranch == rc.IntegrateBranch {
+				head = result.Head
+			}
 			e.observe(run.ID, "", domain.TelemetryEvent{Category: "sandbox", Name: "work_branch.integrated", Phase: "finish", Message: fmt.Sprintf("%s @ %s ← %s → %s", result.Name, result.WorkBranch, result.IntegrateBranch, result.Head), Attributes: map[string]any{"repositoryId": result.RepositoryID, "workBranch": result.WorkBranch, "integrateBranch": result.IntegrateBranch, "commit": result.Head, "pushedIntegrate": result.PushedIntegrate, "runnerId": runner.ID}})
 		}
 	}
-	return conflicts, nil
+	return conflicts, head, nil
 }
