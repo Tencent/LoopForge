@@ -43,7 +43,14 @@ func assistantModelEngine(id string) (engine, model string) {
 	id = strings.TrimSpace(id)
 	for _, engine := range assistantCLIEngines() {
 		if rest, ok := strings.CutPrefix(id, engine+":"); ok {
-			return engine, strings.TrimSpace(rest)
+			model = strings.TrimSpace(rest)
+			// "default" is the CLI's own model default, not an ID. CodeBuddy
+			// uses it as a real placeholder; prefixed CLIs must receive an
+			// empty model so they do not write "default" into their config.
+			if model == assistantDefaultModel {
+				model = ""
+			}
+			return engine, model
 		}
 	}
 	return assistantEngineCodeBuddy, id

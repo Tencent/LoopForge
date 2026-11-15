@@ -55,3 +55,15 @@ func TestCodeBuddyModelDiscoveryPerEnvironment(t *testing.T) {
 		t.Fatalf("international catalog: %+v", intl)
 	}
 }
+
+func TestAssistantModelEngineTreatsCLIDefaultAsUnset(t *testing.T) {
+	for _, engine := range []string{"dsh", "codex", "claude-code", "opencode"} {
+		gotEngine, gotModel := assistantModelEngine(engine + ":default")
+		if gotEngine != engine || gotModel != "" {
+			t.Fatalf("%s:default parsed as %q/%q", engine, gotEngine, gotModel)
+		}
+	}
+	if engine, model := assistantModelEngine("default"); engine != assistantEngineCodeBuddy || model != assistantDefaultModel {
+		t.Fatalf("CodeBuddy default parsed as %q/%q", engine, model)
+	}
+}
