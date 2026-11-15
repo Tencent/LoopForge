@@ -210,6 +210,16 @@ func EnsureToolchainCLI(dir, binary string) error {
 	if fileIsExecutable(launcher) {
 		return nil
 	}
+	if err := installToolchainPackage(dir, binary, pkg); err != nil {
+		return err
+	}
+	return linkToolchainLaunchers(dir, pkg)
+}
+
+// installToolchainPackage copies npm package pkg from the platform image into
+// the toolchain at dir through a stage directory, replacing any earlier copy.
+// binary only names the CLI in the copy error.
+func installToolchainPackage(dir, binary, pkg string) error {
 	modules := filepath.Join(dir, "lib", "node_modules")
 	dest := filepath.Join(modules, filepath.FromSlash(pkg))
 	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
@@ -229,9 +239,13 @@ func EnsureToolchainCLI(dir, binary string) error {
 	if err := os.RemoveAll(dest); err != nil {
 		return err
 	}
-	if err := os.Rename(filepath.Join(stage, filepath.Base(dest)), dest); err != nil {
-		return err
-	}
+	return os.Rename(filepath.Join(stage, filepath.Base(dest)), dest)
+}
+
+// linkToolchainLaunchers links, under dir/bin, every launcher in the platform
+// image bin that points into package pkg, replacing whatever was there.
+func linkToolchainLaunchers(dir, pkg string) error {
+	prefixBin := filepath.Join(toolchainNodePrefix, "bin")
 	entries, err := os.ReadDir(prefixBin)
 	if err != nil {
 		return err

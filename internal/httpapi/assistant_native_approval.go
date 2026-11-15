@@ -42,7 +42,7 @@ func (h *assistantHandlers) nativeApprovals(c *gin.Context) {
 		return
 	}
 	if item.GenerationID != "" {
-		g, ok := h.repo.AssistantGeneration(owner, c.Param("id"))
+		g, ok := h.readGeneration(owner, c.Param("id"))
 		if !ok || g.ID != item.GenerationID || g.Status != "running" || g.CancelRequested {
 			c.JSON(409, gin.H{"error": "本轮已结束，审批已失效"})
 			return
@@ -154,7 +154,7 @@ func (h *agentToolGateway) nativeToolTurnActive(ctx context.Context, s *AgentToo
 	if h.repo == nil {
 		return false
 	}
-	current, ok := h.repo.AssistantGeneration(s.ChatOwnerID, s.ChatSessionID)
+	current, ok := readAssistantGeneration(h.repo, s.ChatOwnerID, s.ChatSessionID)
 	return ok && current.ID == generation && current.Status == "running" && !current.CancelRequested
 }
 

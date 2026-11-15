@@ -70,6 +70,16 @@ func workspaceRepositoryDetails(run domain.Run) []workspaceRepositoryDetail {
 	return details
 }
 
+// workspaceUnavailablePayload builds the shared 「工作区不可用」 view: the panel
+// renders a read-only notice with the reason instead of a change list, so the
+// fields stay in one place instead of being copied per call site.
+func workspaceUnavailablePayload(run domain.Run, reason string) gin.H {
+	return gin.H{
+		"available": false, "readOnly": true, "reason": reason,
+		"runStatus": run.Status, "repositoryDetails": workspaceRepositoryDetails(run),
+	}
+}
+
 // cloneURLWithoutCredentials keeps only what the panel needs to build a 工蜂
 // link: a remote configured as https://user:token@host/... must not hand the
 // token to the browser.
@@ -131,7 +141,7 @@ func (h *runsHandlers) runWorkspace(c *gin.Context) {
 	if !run.WorkspaceCleanedAt.IsZero() {
 		reason := "工作区已回收；有保存的快照时可按需恢复，空闲 1 小时后再次回收"
 		if c.FullPath() == "/api/runs/:id/workspace" {
-			payload := gin.H{"available": false, "readOnly": true, "reason": reason, "runStatus": run.Status, "repositoryDetails": workspaceRepositoryDetails(run)}
+			payload := workspaceUnavailablePayload(run, reason)
 			h.workspaceLifecycleInfo(c, run, payload)
 			c.JSON(http.StatusOK, payload)
 			return
@@ -143,7 +153,7 @@ func (h *runsHandlers) runWorkspace(c *gin.Context) {
 		if _, exists := h.repo.Runner(runnerID); !exists {
 			reason := "执行机器 Daemon 已卸载，工作区已随之删除；重新连接执行机器也无法恢复此工作区"
 			if c.FullPath() == "/api/runs/:id/workspace" {
-				payload := gin.H{"available": false, "readOnly": true, "reason": reason, "runStatus": run.Status, "repositoryDetails": workspaceRepositoryDetails(run)}
+				payload := workspaceUnavailablePayload(run, reason)
 				h.workspaceLifecycleInfo(c, run, payload)
 				c.JSON(http.StatusOK, payload)
 				return
@@ -162,7 +172,7 @@ func (h *runsHandlers) runWorkspace(c *gin.Context) {
 	}
 	if reason != "" {
 		if c.FullPath() == "/api/runs/:id/workspace" {
-			payload := gin.H{"available": false, "readOnly": true, "reason": reason, "runStatus": run.Status, "repositoryDetails": workspaceRepositoryDetails(run)}
+			payload := workspaceUnavailablePayload(run, reason)
 			h.workspaceLifecycleInfo(c, run, payload)
 			c.JSON(http.StatusOK, payload)
 			return
@@ -311,7 +321,7 @@ func (h *runsHandlers) proxyRunnerWorkspace(c *gin.Context, run domain.Run, runn
 			reason = "远程工作区读取超时"
 		}
 		if operation == domain.RunnerWorkspaceOperationInfo {
-			payload := gin.H{"available": false, "readOnly": true, "reason": reason, "runStatus": run.Status, "repositoryDetails": workspaceRepositoryDetails(run)}
+			payload := workspaceUnavailablePayload(run, reason)
 			h.workspaceLifecycleInfo(c, run, payload)
 			c.JSON(http.StatusOK, payload)
 			return
@@ -325,7 +335,7 @@ func (h *runsHandlers) proxyRunnerWorkspace(c *gin.Context, run domain.Run, runn
 			status = http.StatusBadRequest
 		}
 		if operation == domain.RunnerWorkspaceOperationInfo && status == http.StatusNotFound {
-			c.JSON(http.StatusOK, gin.H{"available": false, "readOnly": true, "reason": response.Error, "runStatus": run.Status, "repositoryDetails": workspaceRepositoryDetails(run)})
+			c.JSON(http.StatusOK, workspaceUnavailablePayload(run, response.Error))
 			return
 		}
 		c.JSON(status, map[string]string{"error": response.Error})
@@ -519,6 +529,14 @@ func readWorkspaceTree(root, raw string) ([]workspaceEntry, bool, error) {
 		entries = append(entries, workspaceEntry{Path: rel, Name: d.Name(), Type: kind, Size: info.Size(), Modified: info.ModTime()})
 		return nil
 	})
+	entries = pruneEmptyWorkspaceDirs(entries)
+	sort.Slice(entries, func(i, j int) bool { return entries[i].Path < entries[j].Path })
+	return entries, truncated, err
+}
+
+// pruneEmptyWorkspaceDirs drops directory entries that have no visible file
+// beneath them, filtering entries in place and keeping the original order.
+func pruneEmptyWorkspaceDirs(entries []workspaceEntry) []workspaceEntry {
 	visibleParents := map[string]bool{}
 	for _, entry := range entries {
 		if entry.Type != "file" {
@@ -535,9 +553,7 @@ func readWorkspaceTree(root, raw string) ([]workspaceEntry, bool, error) {
 		}
 		visible = append(visible, entry)
 	}
-	entries = visible
-	sort.Slice(entries, func(i, j int) bool { return entries[i].Path < entries[j].Path })
-	return entries, truncated, err
+	return visible
 }
 
 func readWorkspaceFile(root, raw string) (string, int64, error) {

@@ -2,6 +2,8 @@ package engine
 
 import (
 	"context"
+	"crypto/sha256"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -10,6 +12,8 @@ import (
 )
 
 const maxSOPNesting = 6
+
+var errSOPArtifactWrite = errors.New("保存子 SOP 产物失败")
 
 func (e *Engine) executeSOPNode(ctx context.Context, runID string, wf domain.WorkflowDefinition, node domain.WorkflowNode, attempt, generation int) {
 	fail := func(err error) {
@@ -118,14 +122,14 @@ func (e *Engine) executeSOPNode(ctx context.Context, runID string, wf domain.Wor
 		fail(err)
 		return
 	}
-	e.updateRun(runID, func(r *domain.Run) {
+	applied := false
+	err = e.updateRunErr(runID, func(r *domain.Run) {
 		nr := r.Nodes[node.ID]
 		if !shouldCommitNodeOutcome(*r, nr, generation, attempt, true) {
 			return
 		}
-		if nr != nil {
-			nr.ChildRunID = finished.ID
-		}
+		applied = true
+		nr.ChildRunID = finished.ID
 		r.Artifacts = append(r.Artifacts, imported...)
 		nr.Output = fmt.Sprintf("子 SOP %s 已完成，交接 %d 个产物", childID, len(imported))
 		nr.Error = ""
@@ -133,6 +137,15 @@ func (e *Engine) executeSOPNode(ctx context.Context, runID string, wf domain.Wor
 		nr.FinishedAt = time.Now().UTC()
 		e.event(r, node.ID, "node.succeeded", node.Name+" 已完成")
 	})
+	if !applied {
+		return
+	}
+	if err != nil {
+		if ctx.Err() == nil {
+			e.nodeFailedAt(runID, node, attempt, generation, fmt.Errorf("%w：%w", errSOPArtifactWrite, err), false)
+		}
+		return
+	}
 	for _, artifact := range imported {
 		e.observe(runID, node.ID, domain.TelemetryEvent{
 			Category: "artifact", Name: "artifact.published", Phase: "finish",
@@ -275,7 +288,10 @@ func importChildArtifacts(parentID string, node domain.WorkflowNode, attempt int
 	for _, name := range order {
 		art := latest[name]
 		have[name] = true
-		art.ID = fmt.Sprintf("art-%s-%s-%d", parentID, name, now.UnixNano())
+		// Keep the key stable for this handoff and within run_artifacts.id's 64 characters.
+		key := fmt.Sprintf("%q/%q/%d/%q/%q", parentID, node.ID, attempt, child.ID, name)
+		sum := sha256.Sum256([]byte(key))
+		art.ID = fmt.Sprintf("art-%x", sum[:20])
 		art.RunID = parentID
 		art.NodeID = node.ID
 		art.Attempt = attempt

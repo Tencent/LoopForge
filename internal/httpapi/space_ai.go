@@ -224,7 +224,7 @@ func (h *spacesHandlers) reconcileAI(room domain.ChatRoom, messages []domain.Cha
 		if m.Kind != domain.ChatKindAI || m.AIStatus != domain.AIStatusRunning {
 			continue
 		}
-		g, ok := h.repo.AssistantGeneration(m.AIRequesterID, m.AISessionID)
+		g, ok := readAssistantGeneration(h.repo, m.AIRequesterID, m.AISessionID)
 		switch {
 		case !ok && time.Since(m.CreatedAt) > time.Minute:
 			m.AIStatus, m.AIError = domain.AIStatusFailed, "没有找到这次 AI 回复的记录"

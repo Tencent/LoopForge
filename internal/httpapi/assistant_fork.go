@@ -48,7 +48,7 @@ func (h *assistantHandlers) forkSession(c *gin.Context) {
 		return
 	}
 	// Recover stale jobs before the transactional active-generation check.
-	if job, ok := h.repo.AssistantGeneration(owner, source.ID); ok && job.Status == "running" {
+	if job, ok := h.readGeneration(owner, source.ID); ok && job.Status == "running" {
 		c.JSON(409, gin.H{"error": "请先停止原会话的生成，再创建分支"})
 		return
 	}

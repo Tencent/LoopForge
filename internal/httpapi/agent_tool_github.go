@@ -502,6 +502,30 @@ type githubPullOut struct {
 	Updated string `json:"updatedAt"`
 }
 
+type githubPullItem struct {
+	Number  int64  `json:"number"`
+	Title   string `json:"title"`
+	State   string `json:"state"`
+	Draft   bool   `json:"draft"`
+	HTMLURL string `json:"html_url"`
+	User    struct {
+		Login string `json:"login"`
+	} `json:"user"`
+	Head struct {
+		Ref string `json:"ref"`
+	} `json:"head"`
+	Base struct {
+		Ref string `json:"ref"`
+	} `json:"base"`
+	CreatedAt string `json:"created_at"`
+	UpdatedAt string `json:"updated_at"`
+}
+
+// out 把 /pulls 返回的一项转成工具输出的 githubPullOut。
+func (it githubPullItem) out() githubPullOut {
+	return githubPullOut{Number: it.Number, Title: it.Title, State: it.State, Draft: it.Draft, URL: it.HTMLURL, Author: it.User.Login, Head: it.Head.Ref, Base: it.Base.Ref, Created: it.CreatedAt, Updated: it.UpdatedAt}
+}
+
 // githubPullsList 列 PR。不按作者过滤时多取一条即可判断 hasMore；按作者
 // 过滤发生在取回之后（/pulls 不支持 author 参数），像 issues_list 一样按满页
 // 翻页，最多 githubIssuesMaxPages 页。
@@ -532,24 +556,7 @@ func githubPullsList(ctx context.Context, token, path string, args map[string]an
 		if resp.StatusCode != http.StatusOK {
 			return "", githubToolError("读取 PR 列表", "Pull requests 读取", resp.StatusCode, raw)
 		}
-		var items []struct {
-			Number  int64  `json:"number"`
-			Title   string `json:"title"`
-			State   string `json:"state"`
-			Draft   bool   `json:"draft"`
-			HTMLURL string `json:"html_url"`
-			User    struct {
-				Login string `json:"login"`
-			} `json:"user"`
-			Head struct {
-				Ref string `json:"ref"`
-			} `json:"head"`
-			Base struct {
-				Ref string `json:"ref"`
-			} `json:"base"`
-			CreatedAt string `json:"created_at"`
-			UpdatedAt string `json:"updated_at"`
-		}
+		var items []githubPullItem
 		if json.Unmarshal(raw, &items) != nil {
 			return "", fmt.Errorf("GitHub 返回的 PR 列表无法解析")
 		}
@@ -561,7 +568,7 @@ func githubPullsList(ctx context.Context, token, path string, args map[string]an
 				hasMore = true
 				break
 			}
-			out = append(out, githubPullOut{Number: it.Number, Title: it.Title, State: it.State, Draft: it.Draft, URL: it.HTMLURL, Author: it.User.Login, Head: it.Head.Ref, Base: it.Base.Ref, Created: it.CreatedAt, Updated: it.UpdatedAt})
+			out = append(out, it.out())
 		}
 		if hasMore || len(items) < perPage {
 			break
