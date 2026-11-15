@@ -1,7 +1,9 @@
 package engine
 
 import (
+	"fmt"
 	"log"
+	"sort"
 	"strings"
 	"time"
 
@@ -12,6 +14,128 @@ import (
 // Evolution replay runs execute a historical input with candidate asset
 // bodies injected. The catalog is never touched: overrides live on the replay
 // row and apply only while this run (and its child SOPs) resolves assets.
+
+// StartEvolutionReplay replays source's workflow from the nodes the candidate
+// shapes. Every node that is neither a start node nor downstream of one, and
+// that succeeded in the source run, is seeded as succeeded with the source
+// outputs and artifacts; the engine mounts and restores those artifacts as
+// usual, so the start nodes see the same inputs the source run produced and
+// upstream randomness, human gates and tokens are not replayed. It returns the
+// reused node ids (empty for a full replay).
+func (e *Engine) StartEvolutionReplay(source domain.Run, repositories []domain.RepositoryContext, exec domain.TelemetryContext, startNodes map[string]bool) (domain.Run, []string, error) {
+	wf, ok := e.repo.Workflow(source.WorkflowID)
+	if !ok {
+		return domain.Run{}, nil, fmt.Errorf("workflow not found")
+	}
+	reuse := replayReusableNodes(wf, source, startNodes, len(repositories) > 0)
+	var seed func(*domain.Run)
+	if len(reuse) > 0 {
+		seed = func(r *domain.Run) {
+			if names := seedReplayFromSource(r, source, reuse); len(names) > 0 {
+				e.event(r, "", "evolution.replay.reused", "进化回放沿用原运行 "+source.ID+" 中「"+strings.Join(names, "、")+"」的产出，从受影响的节点开始执行")
+			}
+		}
+	}
+	run, err := e.startWorkflowDefinitionSeeded(wf, source.Input, repositories, exec, false, seed)
+	if err != nil {
+		return domain.Run{}, nil, err
+	}
+	return run, sortedKeys(reuse), nil
+}
+
+// replayReusableNodes picks the nodes a replay may take from the source run.
+// It returns nil (full replay) when no start node is in the workflow, or when
+// a skipped node changed repository code: a fresh checkout would not have
+// those changes and the start node would review or build on a different tree.
+func replayReusableNodes(wf domain.WorkflowDefinition, source domain.Run, startNodes map[string]bool, hasRepositories bool) map[string]bool {
+	affected := map[string]bool{}
+	for _, node := range wf.Nodes {
+		if startNodes[node.ID] {
+			affected[node.ID] = true
+			for id := range descendants(wf, node.ID) {
+				affected[id] = true
+			}
+		}
+	}
+	if len(affected) == 0 {
+		return nil
+	}
+	reuse := map[string]bool{}
+	for _, node := range wf.Nodes {
+		if affected[node.ID] {
+			continue
+		}
+		if src := source.Nodes[node.ID]; src != nil && src.Status == "succeeded" {
+			reuse[node.ID] = true
+		}
+	}
+	if len(reuse) == 0 {
+		return nil
+	}
+	if hasRepositories {
+		for _, a := range source.Artifacts {
+			if reuse[a.NodeID] && a.Name == "repository-patch" && strings.TrimSpace(a.Content) != "" {
+				return nil
+			}
+		}
+	}
+	return reuse
+}
+
+// seedReplayFromSource marks reused nodes succeeded with the source outputs
+// and copies their artifacts; it returns the reused node names in order.
+func seedReplayFromSource(r *domain.Run, source domain.Run, reuse map[string]bool) []string {
+	now := time.Now().UTC()
+	names := []string{}
+	for _, node := range r.WorkflowSnapshot.Nodes {
+		src := source.Nodes[node.ID]
+		if !reuse[node.ID] || src == nil || r.Nodes[node.ID] == nil {
+			continue
+		}
+		seeded := &domain.NodeRun{
+			NodeID: node.ID, Status: "succeeded", Attempt: max(src.Attempt, 1),
+			Output: src.Output, Provider: src.Provider, Model: src.Model,
+			Activity:  "沿用原运行 " + source.ID + " 的产出",
+			StartedAt: now, FinishedAt: now,
+		}
+		if src.GateResult != nil {
+			gate := *src.GateResult
+			seeded.GateResult = &gate
+		}
+		r.Nodes[node.ID] = seeded
+		names = append(names, firstNonEmptyString(node.Name, node.ID))
+	}
+	for _, a := range source.Artifacts {
+		if !reuse[a.NodeID] || r.Nodes[a.NodeID] == nil || r.Nodes[a.NodeID].Status != "succeeded" {
+			continue
+		}
+		cloned := newArtifact(r.ID, a.NodeID, max(a.Attempt, 1), a.Name, a.Path, a.MediaType, []byte(a.Content))
+		cloned.RepositoryDir = a.RepositoryDir
+		r.Artifacts = append(r.Artifacts, cloned)
+	}
+	if strings.TrimSpace(r.HumanContext) == "" {
+		r.HumanContext = source.HumanContext
+	}
+	return names
+}
+
+func sortedKeys(set map[string]bool) []string {
+	out := make([]string, 0, len(set))
+	for id := range set {
+		out = append(out, id)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func firstNonEmptyString(values ...string) string {
+	for _, v := range values {
+		if strings.TrimSpace(v) != "" {
+			return v
+		}
+	}
+	return ""
+}
 
 func replayOverrides(st *repo.Store, run domain.Run) (domain.EvoAssetOverride, bool) {
 	if st == nil || st.EvolutionRepo == nil || !run.ExecutionContext.IsEvolutionReplay() {
@@ -90,6 +214,9 @@ func (e *Engine) recordRunAssetPins(run domain.Run) {
 	}
 	for _, node := range wf.Nodes {
 		if strings.TrimSpace(node.AgentID) == "" || node.Type == "script" || node.Type == "command" || node.Type == "approval" || node.Type == "sop" {
+			continue
+		}
+		if nr := run.Nodes[node.ID]; run.ExecutionContext.IsEvolutionReplay() && nr != nil && nr.Status == "succeeded" {
 			continue
 		}
 		agent, ok := workflowAgent(e.repo, wf, node.AgentID)

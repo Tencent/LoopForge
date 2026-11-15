@@ -199,7 +199,9 @@ function evoOpenFinding(id){
 
 function evoReplayRow(r){
   const [group,groupHint]=EVO_GROUPS[r.group]||[r.group,''];
-  const main=kbText(`<span title="${escapeHTML(groupHint)}">${escapeHTML(group)}</span> · 原运行 ${evoRunLink(r.sourceRunId)}${r.runId?` → 回放 ${evoRunLink(r.runId)}`:''}`,`${escapeHTML(evoScoreLabel(r.sourceScore))} → ${escapeHTML(r.status==='running'||!r.outcome?'回放中':evoScoreLabel(r.score))}${r.error?` · ${escapeHTML(r.error)}`:''}`);
+  const reused=(r.reusedNodes||[]).length;
+  const reuseNote=reused?` · <span title="${escapeHTML(r.reusedNodes.join('、'))}">沿用原运行 ${reused} 个上游节点</span>`:'';
+  const main=kbText(`<span title="${escapeHTML(groupHint)}">${escapeHTML(group)}</span> · 原运行 ${evoRunLink(r.sourceRunId)}${r.runId?` → 回放 ${evoRunLink(r.runId)}`:''}`,`${escapeHTML(evoScoreLabel(r.sourceScore))} → ${escapeHTML(r.status==='running'||!r.outcome?'回放中':evoScoreLabel(r.score))}${reuseNote}${r.error?` · ${escapeHTML(r.error)}`:''}`);
   return kbRow(main,r.outcome?evoStatusBadge(EVO_OUTCOMES,r.outcome):kbBadge('进行中','warn'));
 }
 

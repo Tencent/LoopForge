@@ -154,9 +154,12 @@ type EvoReplay struct {
 	Outcome      string           `json:"outcome,omitempty"`
 	Error        string           `json:"error,omitempty"`
 	Overrides    EvoAssetOverride `json:"overrides"`
-	StartedAt    time.Time        `json:"startedAt,omitempty"`
-	FinishedAt   time.Time        `json:"finishedAt,omitempty"`
-	WaitingSince time.Time        `json:"waitingSince,omitempty"`
+	// ReusedNodes are source-run nodes the replay took over instead of
+	// re-executing; empty means the whole SOP was replayed.
+	ReusedNodes  []string  `json:"reusedNodes,omitempty"`
+	StartedAt    time.Time `json:"startedAt,omitempty"`
+	FinishedAt   time.Time `json:"finishedAt,omitempty"`
+	WaitingSince time.Time `json:"waitingSince,omitempty"`
 }
 
 // EvoAssetOverride replaces asset bodies inside one replay run only.

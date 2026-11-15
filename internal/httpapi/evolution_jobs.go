@@ -211,7 +211,7 @@ func (h *evolutionHandlers) runProposalJob(p domain.EvoProposal, finding domain.
 		overrides.RuleContents = map[string]string{asset.ID: candidate.Content}
 	}
 	for _, plan := range plans {
-		h.startReplay(p, plan, overrides, user)
+		h.startReplay(p, plan, asset, overrides, user)
 	}
 	h.sweepProposal(p, time.Now().UTC())
 }
@@ -328,7 +328,7 @@ func (h *evolutionHandlers) experienceLines(p domain.EvoProposal) []string {
 	return lines
 }
 
-func (h *evolutionHandlers) startReplay(p domain.EvoProposal, plan evolution.SamplePlan, overrides domain.EvoAssetOverride, user domain.User) {
+func (h *evolutionHandlers) startReplay(p domain.EvoProposal, plan evolution.SamplePlan, asset evoAsset, overrides domain.EvoAssetOverride, user domain.User) {
 	source := plan.Run
 	now := time.Now().UTC()
 	replay := domain.EvoReplay{
@@ -346,7 +346,7 @@ func (h *evolutionHandlers) startReplay(p domain.EvoProposal, plan evolution.Sam
 		Purpose:           domain.RunPurposeEvolutionReplay,
 		EvolutionReplayID: replay.ID,
 	}
-	run, err := h.engine.StartWithRepositoriesContext(source.WorkflowID, source.Input, evolution.ReplayRepositories(source, replay.ID), exec)
+	run, reused, err := h.engine.StartEvolutionReplay(source, evolution.ReplayRepositories(source, replay.ID), exec, h.assetNodeIDs(source, asset))
 	if err != nil {
 		replay.Status = "error"
 		replay.Outcome = domain.EvoOutcomeBlocked
@@ -355,6 +355,7 @@ func (h *evolutionHandlers) startReplay(p domain.EvoProposal, plan evolution.Sam
 	} else {
 		replay.RunID = run.ID
 		replay.Status = firstNonEmpty(run.Status, "running")
+		replay.ReusedNodes = reused
 	}
 	if err := h.repo.PutEvoReplay(replay); err != nil {
 		log.Printf("evolution replay %s persist: %v", replay.ID, err)

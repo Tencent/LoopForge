@@ -65,6 +65,12 @@ func (e *Engine) startWorkflow(workflowID, input string, repositories []domain.R
 // startWorkflowDefinition also accepts a run-only conversation workspace definition.
 // It never writes a template to the catalog.
 func (e *Engine) startWorkflowDefinition(wf domain.WorkflowDefinition, input string, repositories []domain.RepositoryContext, executionContext domain.TelemetryContext, workspace bool) (domain.Run, error) {
+	return e.startWorkflowDefinitionSeeded(wf, input, repositories, executionContext, workspace, nil)
+}
+
+// startWorkflowDefinitionSeeded lets seed adjust the new run (node states,
+// artifacts) after every node is initialized and before it is persisted.
+func (e *Engine) startWorkflowDefinitionSeeded(wf domain.WorkflowDefinition, input string, repositories []domain.RepositoryContext, executionContext domain.TelemetryContext, workspace bool, seed func(*domain.Run)) (domain.Run, error) {
 	workflowID := wf.ID
 	repositories = normalizeRepositories(repositories)
 	domain.AssignRepositoryDirs(repositories)
@@ -178,6 +184,9 @@ func (e *Engine) startWorkflowDefinition(wf domain.WorkflowDefinition, input str
 		e.event(&r, "", "workspace.created", "对话工作区已创建")
 	} else {
 		e.event(&r, "", "run.started", "流水线开始执行")
+	}
+	if seed != nil {
+		seed(&r)
 	}
 	if executeRuns && !workspace {
 		if strings.TrimSpace(instanceID) == "" || ttl <= 0 {
