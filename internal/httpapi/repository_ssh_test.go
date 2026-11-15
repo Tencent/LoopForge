@@ -391,6 +391,12 @@ func serveSSHGit(raw net.Conn, config *ssh.ServerConfig, bare string, expected m
 				exitCode = 1
 			}
 			_, _ = channel.SendRequest("exit-status", false, ssh.Marshal(struct{ Code uint32 }{exitCode}))
+			// Close like sshd: EOF and close the channel, then let the client
+			// hang up. Dropping the TCP connection right away races the
+			// client's own channel close ("send disconnect: Broken pipe").
+			_ = channel.CloseWrite()
+			_ = channel.Close()
+			_ = conn.Wait()
 			return
 		}
 	}
