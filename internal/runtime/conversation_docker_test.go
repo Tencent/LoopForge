@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -88,5 +89,83 @@ func TestBwrapConversationHidesHostDockerSocket(t *testing.T) {
 	}
 	if !masked || !bound {
 		t.Fatalf("host socket %s masked=%t, proxy dir %s bound=%t: %v", daemon, masked, dockerDir, bound, args)
+	}
+}
+
+func TestDestroyRunRemovesWorkspaceDockerObjects(t *testing.T) {
+	dir, err := os.MkdirTemp("/tmp", "dockerd")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	socket := filepath.Join(dir, "docker.sock")
+	listener, err := net.Listen("unix", socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var mu sync.Mutex
+	var calls []string
+	server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		calls = append(calls, r.Method+" "+r.URL.Path+"?"+r.URL.RawQuery)
+		mu.Unlock()
+		switch {
+		case r.Method == "GET" && strings.HasSuffix(r.URL.Path, "/containers/json"):
+			_, _ = w.Write([]byte(`[{"Id":"c1"}]`))
+		case r.Method == "GET" && strings.HasSuffix(r.URL.Path, "/networks"):
+			_, _ = w.Write([]byte(`[{"Id":"n1"}]`))
+		case r.Method == "GET" && strings.HasSuffix(r.URL.Path, "/volumes"):
+			_, _ = w.Write([]byte(`{"Volumes":[{"Name":"v1"}]}`))
+		default:
+			w.WriteHeader(http.StatusNoContent)
+		}
+	})}
+	go func() { _ = server.Serve(listener) }()
+	t.Cleanup(func() { _ = server.Close() })
+	t.Setenv("DOCKER_HOST", "unix://"+socket)
+
+	m := NewManager(t.TempDir())
+	workspace := m.RunWorkspace("run-docker")
+	if err := os.MkdirAll(workspace, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	label := WorkspaceDockerLabel(workspace)
+	if err := m.DestroyRun("run-docker"); err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	joined := strings.Join(calls, "\n")
+	for _, want := range []string{"DELETE /containers/c1?force=1&v=1", "DELETE /networks/n1", "DELETE /volumes/v1?force=1", "loopforge.workspace%3D" + label} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("missing %q in daemon calls:\n%s", want, joined)
+		}
+	}
+}
+
+func TestReapConversationDockerDirsOfDeletedConversations(t *testing.T) {
+	live := t.TempDir()
+	gone := filepath.Join(t.TempDir(), "conversation")
+	if err := os.MkdirAll(gone, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	liveDir, err := ensureConversationDockerDir(live)
+	if err != nil {
+		t.Fatal(err)
+	}
+	goneDir, err := ensureConversationDockerDir(gone)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(liveDir); _ = os.RemoveAll(goneDir) })
+	if err := os.RemoveAll(gone); err != nil {
+		t.Fatal(err)
+	}
+	reapConversationDockerDirs()
+	if _, err := os.Stat(goneDir); !os.IsNotExist(err) {
+		t.Fatalf("socket dir of a deleted conversation should be reaped: %v", err)
+	}
+	if _, err := os.Stat(liveDir); err != nil {
+		t.Fatalf("live conversation's socket dir must stay: %v", err)
 	}
 }

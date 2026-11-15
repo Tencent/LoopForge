@@ -300,6 +300,9 @@ func (m *Manager) removeMatching(match func(name string) bool) (int, error) {
 		if m.workspaceInUse(name) {
 			continue
 		}
+		// Containers, networks and volumes the workspace created through its
+		// Docker proxy go with it (the label is derived from this path).
+		cleanupWorkspaceDocker(dir)
 		if err := os.RemoveAll(dir); err != nil {
 			if first == nil {
 				first = err

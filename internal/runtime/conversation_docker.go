@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -27,6 +28,10 @@ func conversationDockerSocket(root string) string {
 	return filepath.Join(conversationDockerDir(root), "docker.sock")
 }
 
+// conversationDockerOwner records which conversation root a socket directory
+// belongs to, so directories of deleted conversations can be reaped.
+const conversationDockerOwner = "owner"
+
 // ensureConversationDockerDir creates the socket directory, private to the
 // platform user (bwrap and Docker workspaces run as that user).
 func ensureConversationDockerDir(root string) (string, error) {
@@ -37,7 +42,61 @@ func ensureConversationDockerDir(root string) (string, error) {
 	if info, err := os.Lstat(dir); err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
 		return "", fmt.Errorf("工作区 Docker 目录 %s 不可用", dir)
 	}
-	return dir, os.Chmod(dir, 0o700)
+	if err := os.Chmod(dir, 0o700); err != nil {
+		return "", err
+	}
+	return dir, os.WriteFile(filepath.Join(dir, conversationDockerOwner), []byte(root), 0o600)
+}
+
+// reapConversationDockerDirs removes socket directories whose conversation
+// root is gone (deleted conversations), wherever the root was deleted.
+func reapConversationDockerDirs() {
+	dirs, _ := filepath.Glob("/tmp/lf-docker-*")
+	for _, dir := range dirs {
+		owner, err := os.ReadFile(filepath.Join(dir, conversationDockerOwner))
+		if err != nil || !filepath.IsAbs(string(owner)) || conversationDockerDir(string(owner)) != dir {
+			continue
+		}
+		if _, err := os.Stat(string(owner)); os.IsNotExist(err) {
+			_ = os.RemoveAll(dir)
+		}
+	}
+}
+
+// WorkspaceDockerLabel is the loopforge.workspace label value of the Docker
+// objects a workspace creates: a hash of its resolved host path.
+func WorkspaceDockerLabel(workspace string) string {
+	if resolved := resolvedPath(workspace); resolved != "" {
+		workspace = resolved
+	}
+	sum := sha256.Sum256([]byte(workspace))
+	return hex.EncodeToString(sum[:8])
+}
+
+// cleanupWorkspaceDocker removes the containers, networks and volumes a
+// workspace created through its proxy. Call it before deleting the workspace
+// directory (the label is derived from its resolved path).
+func cleanupWorkspaceDocker(workspace string) {
+	if dockerWorkspaceDisabled() {
+		return
+	}
+	upstream := dockerproxy.DefaultUpstream()
+	if info, err := os.Stat(upstream); err != nil || info.Mode()&os.ModeSocket == 0 {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	if err := dockerproxy.Cleanup(ctx, upstream, WorkspaceDockerLabel(workspace)); err != nil {
+		log.Printf("clean workspace docker objects %s: %v", workspace, err)
+	}
+}
+
+func dockerWorkspaceDisabled() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("AGENTFLOW_WORKSPACE_DOCKER"))) {
+	case "0", "off", "false", "no":
+		return true
+	}
+	return false
 }
 
 // hostDockerSockets are daemon sockets a native workspace must not reach
@@ -74,10 +133,10 @@ func resolvedPath(p string) string {
 // value and a stop function, or "" when Docker is unavailable or disabled
 // (AGENTFLOW_WORKSPACE_DOCKER=off).
 func startConversationDocker(root, workspace string) (string, func(), error) {
-	switch strings.ToLower(strings.TrimSpace(os.Getenv("AGENTFLOW_WORKSPACE_DOCKER"))) {
-	case "0", "off", "false", "no":
+	if dockerWorkspaceDisabled() {
 		return "", nil, nil
 	}
+	reapConversationDockerDirs()
 	upstream := dockerproxy.DefaultUpstream()
 	if info, err := os.Stat(upstream); err != nil || info.Mode()&os.ModeSocket == 0 {
 		return "", nil, nil
@@ -89,12 +148,11 @@ func startConversationDocker(root, workspace string) (string, func(), error) {
 	if resolved := resolvedPath(workspace); resolved != "" {
 		hostWorkspace = resolved
 	}
-	sum := sha256.Sum256([]byte(hostWorkspace))
 	home := filepath.Join(root, "home")
 	proxy, err := dockerproxy.Start(dockerproxy.Config{
 		Upstream:  upstream,
 		Socket:    conversationDockerSocket(root),
-		Workspace: hex.EncodeToString(sum[:8]),
+		Workspace: WorkspaceDockerLabel(hostWorkspace),
 		Paths:     []dockerproxy.PathMapping{{From: filepath.Join(root, "ws"), To: hostWorkspace}},
 		BindRoots: []string{hostWorkspace, home},
 	})

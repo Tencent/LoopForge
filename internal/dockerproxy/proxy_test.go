@@ -45,6 +45,15 @@ func (d *fakeDaemon) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	parts := strings.Split(strings.Trim(path, "/"), "/")
+	if r.Method == http.MethodGet && parts[0] == "images" && len(parts) >= 3 && parts[len(parts)-1] == "json" {
+		ref := strings.Join(parts[1:len(parts)-1], "/")
+		if labels, ok := d.labels["images/"+ref]; ok {
+			_ = json.NewEncoder(w).Encode(map[string]any{"Config": map[string]any{"Labels": labels}})
+			return
+		}
+		http.NotFound(w, r)
+		return
+	}
 	if r.Method == http.MethodGet && len(parts) >= 2 {
 		key := parts[0] + "/" + parts[1]
 		switch {
@@ -119,13 +128,17 @@ func start(t *testing.T) *harness {
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(dir) })
 	daemon := &fakeDaemon{labels: map[string]map[string]string{
-		"containers/mine":   {Label: "ws1"},
-		"containers/theirs": {Label: "ws2"},
-		"containers/bare":   {},
-		"networks/mynet":    {Label: "ws1"},
-		"networks/othernet": {Label: "ws2"},
-		"volumes/myvol":     {Label: "ws1"},
-		"volumes/othervol":  {Label: "ws2"},
+		"containers/mine":            {Label: "ws1"},
+		"containers/theirs":          {Label: "ws2"},
+		"containers/bare":            {},
+		"networks/mynet":             {Label: "ws1"},
+		"networks/othernet":          {Label: "ws2"},
+		"volumes/myvol":              {Label: "ws1"},
+		"volumes/othervol":           {Label: "ws2"},
+		"images/myapp:dev":           {Label: "ws1"},
+		"images/team/other:1":        {Label: "ws2"},
+		"images/alpine:3":            {},
+		"images/registry.io/x/y:2.0": {},
 	}, execs: map[string]string{"e-mine": "mine", "e-theirs": "theirs"}}
 	upstream := filepath.Join(dir, "daemon.sock")
 	listener, err := net.Listen("unix", upstream)
@@ -269,7 +282,7 @@ func TestOnlyOwnObjectsAreReachable(t *testing.T) {
 		{"DELETE", "/volumes/myvol"},
 		{"DELETE", "/networks/mynet"},
 		{"POST", "/commit?container=mine&repo=x"},
-		{"GET", "/images/alpine/json"},
+		{"GET", "/images/alpine:3/json"},
 		{"POST", "/images/create?fromImage=alpine&tag=3"},
 		{"GET", "/_ping"},
 		{"GET", "/version"},
@@ -377,5 +390,50 @@ func TestAttachUpgradeStreams(t *testing.T) {
 	n, _ = io.ReadAtLeast(conn, buf, 4)
 	if string(buf[:n]) != "PING" {
 		t.Fatalf("stream not relayed: %q", buf[:n])
+	}
+}
+
+func TestImagesAreSharedButOnlyOwnOnesChange(t *testing.T) {
+	h := start(t)
+	allowed := [][2]string{
+		{"DELETE", "/images/myapp:dev"},
+		{"POST", "/images/myapp:dev/tag?repo=myapp&tag=v2"},
+		{"POST", "/images/alpine:3/tag?repo=mine&tag=1"},
+		{"POST", "/images/create?fromImage=alpine&tag=3"},
+		{"GET", "/images/team/other:1/json"},
+		{"POST", "/commit?container=mine&repo=fresh&tag=1"},
+		{"POST", "/build?t=myapp:dev&t=new:1"},
+	}
+	for _, c := range allowed {
+		if code, out := h.do(t, c[0], c[1], nil); code != 200 {
+			t.Errorf("%s %s: want 200, got %d %s", c[0], c[1], code, out)
+		}
+	}
+	denied := [][2]string{
+		{"DELETE", "/images/alpine:3"},
+		{"DELETE", "/images/team/other:1"},
+		{"DELETE", "/images/registry.io/x/y:2.0"},
+		{"POST", "/images/myapp:dev/tag?repo=alpine&tag=3"},
+		{"POST", "/build?t=team/other:1"},
+		{"POST", "/commit?container=mine&repo=alpine&tag=3"},
+		{"POST", "/images/create?fromSrc=-&repo=alpine&tag=3"},
+		{"POST", "/images/load"},
+	}
+	for _, c := range denied {
+		before := h.daemon.count()
+		if code, out := h.do(t, c[0], c[1], nil); code != http.StatusForbidden {
+			t.Errorf("%s %s: want 403, got %d %s", c[0], c[1], code, out)
+		}
+		if h.daemon.count() != before {
+			t.Errorf("%s %s reached the daemon", c[0], c[1])
+		}
+	}
+	h.do(t, "POST", "/build?t=new:1&labels=%7B%22app%22%3A%22x%22%7D", nil)
+	if q := h.daemon.last(t).Query; !strings.Contains(q, "loopforge.workspace") || !strings.Contains(q, "app") {
+		t.Errorf("build labels not injected: %s", q)
+	}
+	h.do(t, "POST", "/commit?container=mine&repo=fresh", map[string]any{"Labels": map[string]any{"k": "v"}})
+	if labels := h.daemon.last(t).Body["Labels"].(map[string]any); labels[Label] != "ws1" || labels["k"] != "v" {
+		t.Errorf("commit labels: %v", labels)
 	}
 }

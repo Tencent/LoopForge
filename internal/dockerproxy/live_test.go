@@ -3,6 +3,7 @@ package dockerproxy
 import (
 	"archive/tar"
 	"bytes"
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -138,6 +139,22 @@ func TestLiveDockerCLI(t *testing.T) {
 	out, err = via("create", "-v", other+":/x", tag, "/hello")
 	refused("mounting another workspace's volume", out, err)
 
+	out, err = via("load", "-i", "/dev/null")
+	refused("docker load", out, err)
+	// Daemons started with --bridge=none cannot create bridge networks.
+	_, netErr := via("network", "create", "--driver", "bridge", "--internal", id+"-net")
+	t.Cleanup(func() { _, _ = docker(upstream, nil, "network", "rm", id+"-net") })
+
+	// Deleting the workspace removes everything it created, nothing else.
+	if err := Cleanup(context.Background(), upstream, id); err != nil {
+		t.Fatalf("cleanup: %v", err)
+	}
+	if out := must(docker(upstream, nil, "volume", "ls", "-q")); strings.Contains(out, id+"-v") || strings.Contains(out, id+"-cache") || !strings.Contains(out, id+"-other") {
+		t.Errorf("after cleanup volumes = %q", out)
+	}
+	if out := must(docker(upstream, nil, "network", "ls", "--format", "{{.Name}}")); netErr == nil && strings.Contains(out, id+"-net") {
+		t.Errorf("after cleanup networks = %q", out)
+	}
 	if haveImage {
 		must(via("rm", mine))
 		if _, err := docker(upstream, nil, "inspect", foreign); err != nil {

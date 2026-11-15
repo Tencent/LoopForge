@@ -198,6 +198,21 @@ func (p *Proxy) authorize(r *http.Request) error {
 			if q.Get("cgroupparent") != "" {
 				return forbidden("构建不能指定 --cgroup-parent")
 			}
+			for _, ref := range q["t"] {
+				if err := p.mayWriteTag(r.Context(), ref); err != nil {
+					return err
+				}
+			}
+			// Built images carry the workspace label, which is what lets the
+			// workspace delete or retag them later.
+			labels := map[string]string{}
+			if raw := q.Get("labels"); raw != "" {
+				_ = json.Unmarshal([]byte(raw), &labels)
+			}
+			labels[Label] = p.cfg.Workspace
+			encoded, _ := json.Marshal(labels)
+			q.Set("labels", string(encoded))
+			r.URL.RawQuery = q.Encode()
 			return nil
 		}
 		return forbidden("不支持 " + clean)
@@ -217,7 +232,19 @@ func (p *Proxy) authorize(r *http.Request) error {
 		}
 	case "commit":
 		if method == http.MethodPost {
-			return p.owned(r.Context(), "containers", r.URL.Query().Get("container"))
+			q := r.URL.Query()
+			if err := p.owned(r.Context(), "containers", q.Get("container")); err != nil {
+				return err
+			}
+			if repo := q.Get("repo"); repo != "" {
+				if err := p.mayWriteTag(r.Context(), imageRef(repo, q.Get("tag"))); err != nil {
+					return err
+				}
+			}
+			return p.rewriteJSON(r, func(body map[string]any) error {
+				setLabel(body, "Labels", p.cfg.Workspace)
+				return nil
+			})
 		}
 	case "networks":
 		return p.authorizeNetwork(r, parts)
@@ -227,17 +254,72 @@ func (p *Proxy) authorize(r *http.Request) error {
 	return forbidden(fmt.Sprintf("工作区不能调用 %s %s（只开放本工作区的容器、网络、卷，以及镜像拉取和构建）", method, clean))
 }
 
+// Images are shared by every workspace on the daemon. A workspace may pull
+// and read any image, but may only delete or overwrite the name of an image
+// it built or committed itself (labelled), so it cannot break or poison
+// another workspace's images. Pulling a public tag again is always allowed.
 func (p *Proxy) authorizeImage(r *http.Request, parts []string) error {
+	ctx := r.Context()
+	q := r.URL.Query()
 	switch {
 	case len(parts) == 2 && parts[1] == "prune":
-		return forbidden("不能清理宿主机上的全部镜像，请按名字删除自己构建或拉取的镜像")
-	case len(parts) == 2 && (parts[1] == "create" || parts[1] == "load" || parts[1] == "json" || parts[1] == "search" || parts[1] == "get"):
+		return forbidden("不能清理宿主机上的全部镜像，请按名字删除本工作区构建的镜像")
+	case len(parts) == 2 && parts[1] == "load":
+		return forbidden("不支持 docker load（会覆盖其他工作区在用的镜像名），请用 docker build 或 docker pull")
+	case len(parts) == 2 && parts[1] == "create":
+		if q.Get("fromSrc") != "" && q.Get("repo") != "" {
+			return p.mayWriteTag(ctx, imageRef(q.Get("repo"), q.Get("tag")))
+		}
 		return nil
+	case len(parts) == 2 && (parts[1] == "json" || parts[1] == "search" || parts[1] == "get"):
+		return nil
+	case len(parts) >= 2 && r.Method == http.MethodDelete:
+		return p.ownedImage(ctx, strings.Join(parts[1:], "/"), "删除")
+	case len(parts) >= 3 && parts[len(parts)-1] == "tag" && r.Method == http.MethodPost:
+		return p.mayWriteTag(ctx, imageRef(q.Get("repo"), q.Get("tag")))
 	case len(parts) >= 2:
-		// inspect, history, tag, push, delete of a named image.
+		// inspect, history, push of a named image.
 		return nil
 	}
 	return forbidden("不支持的镜像操作")
+}
+
+func imageRef(repo, tag string) string {
+	if tag == "" {
+		return repo
+	}
+	return repo + ":" + tag
+}
+
+// mayWriteTag allows naming an image ref unless the name already belongs to
+// an image this workspace did not build.
+func (p *Proxy) mayWriteTag(ctx context.Context, ref string) error {
+	if strings.TrimSpace(ref) == "" {
+		return nil
+	}
+	return p.ownedImage(ctx, ref, "覆盖镜像名")
+}
+
+func (p *Proxy) ownedImage(ctx context.Context, ref, action string) error {
+	var image struct {
+		Config struct{ Labels map[string]string }
+	}
+	found, err := p.inspect(ctx, "/images/"+escapeImageRef(ref)+"/json", &image)
+	if err != nil || !found {
+		return err
+	}
+	if image.Config.Labels[Label] != p.cfg.Workspace {
+		return forbidden(fmt.Sprintf("镜像 %s 不是本工作区构建的，不能%s（拉取的公共镜像由平台回收，换一个镜像名即可）", ref, action))
+	}
+	return nil
+}
+
+func escapeImageRef(ref string) string {
+	parts := strings.Split(ref, "/")
+	for i, part := range parts {
+		parts[i] = url.PathEscape(part)
+	}
+	return strings.Join(parts, "/")
 }
 
 func (p *Proxy) authorizeContainer(r *http.Request, parts []string) error {
@@ -583,10 +665,13 @@ func (p *Proxy) hostPath(source string) (string, error) {
 		if err != nil {
 			return "", forbidden("工作区目录不可用：" + root)
 		}
-		if !within(resolveExisting(clean), realRoot) {
+		resolved := resolveExisting(clean)
+		if !within(resolved, realRoot) {
 			return "", forbidden("挂载路径经软链指到了工作区之外：" + source)
 		}
-		return clean, nil
+		// Hand the daemon the resolved path, so a symlink present at check
+		// time cannot redirect the mount (a swap after the check still can).
+		return resolved, nil
 	}
 	return "", forbidden("只能把工作区里的目录挂进容器，" + source + " 不在工作区内")
 }
@@ -734,6 +819,70 @@ func (p *Proxy) StopContainers(ctx context.Context) error {
 			continue
 		}
 		resp.Body.Close()
+	}
+	return first
+}
+
+// Cleanup removes every container (with its anonymous volumes), network and
+// volume labelled for workspace on the daemon at upstream. It runs when the
+// workspace directory itself is deleted, so nothing the workspace started
+// outlives it.
+func Cleanup(ctx context.Context, upstream, workspace string) error {
+	if strings.TrimSpace(workspace) == "" {
+		return fmt.Errorf("docker cleanup needs a workspace id")
+	}
+	client := &http.Client{Transport: &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+		var d net.Dialer
+		return d.DialContext(ctx, "unix", upstream)
+	}}}
+	filters, _ := json.Marshal(map[string]any{"label": map[string]bool{Label + "=" + workspace: true}})
+	query := "filters=" + url.QueryEscape(string(filters))
+	call := func(method, apiPath string, out any) error {
+		req, err := http.NewRequestWithContext(ctx, method, "http://docker"+apiPath, nil)
+		if err != nil {
+			return err
+		}
+		resp, err := client.Do(req)
+		if err != nil {
+			return err
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode == http.StatusNotFound {
+			return nil
+		}
+		if resp.StatusCode/100 != 2 {
+			data, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+			return fmt.Errorf("%s %s: HTTP %d %s", method, apiPath, resp.StatusCode, strings.TrimSpace(string(data)))
+		}
+		if out != nil {
+			return json.NewDecoder(resp.Body).Decode(out)
+		}
+		return nil
+	}
+	var first error
+	keep := func(err error) {
+		if err != nil && first == nil {
+			first = err
+		}
+	}
+	var containers []struct {
+		ID string `json:"Id"`
+	}
+	keep(call(http.MethodGet, "/containers/json?all=1&"+query, &containers))
+	for _, c := range containers {
+		keep(call(http.MethodDelete, "/containers/"+url.PathEscape(c.ID)+"?force=1&v=1", nil))
+	}
+	var networks []struct {
+		ID string `json:"Id"`
+	}
+	keep(call(http.MethodGet, "/networks?"+query, &networks))
+	for _, n := range networks {
+		keep(call(http.MethodDelete, "/networks/"+url.PathEscape(n.ID), nil))
+	}
+	var volumes struct{ Volumes []struct{ Name string } }
+	keep(call(http.MethodGet, "/volumes?"+query, &volumes))
+	for _, v := range volumes.Volumes {
+		keep(call(http.MethodDelete, "/volumes/"+url.PathEscape(v.Name)+"?force=1", nil))
 	}
 	return first
 }

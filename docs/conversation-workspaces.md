@@ -44,11 +44,12 @@
 
 执行机器有 Docker 守护进程时（`DOCKER_HOST` 指向的 unix socket，默认 `/var/run/docker.sock`），工作区模式的 CLI 启动时平台在 `/tmp/lf-docker-<会话根哈希>/docker.sock` 起一个过滤代理（`internal/dockerproxy`），并把 `DOCKER_HOST` 设成它。unix socket 路径不能超过约 108 字节，会话根太长，所以用这个短目录（0700，socket 0600，只有平台用户可连）；Docker 与 bwrap 工作区都把它挂在同一路径，两种环境里 `docker build/run/compose` 都能直接用（容器里要自备 docker CLI）。目录在会话期间保留，Docker 工作区容器的挂载才能看到每次重建的 socket。`AGENTFLOW_WORKSPACE_DOCKER=off` 关闭。
 
-- 隔离：工作区创建的容器、网络、卷都打上 `loopforge.workspace=<工作区路径哈希>` 标签；列表、事件、prune 强制加这个标签过滤；对容器、exec、网络、卷的任何操作先查标签，不是本工作区的一律 403。镜像是守护进程全局的，允许拉取、构建、打标签、推送和按名删除，但不能 `image prune`/`builder prune`。
+- 隔离：工作区创建的容器、网络、卷都打上 `loopforge.workspace=<工作区路径哈希>` 标签；列表、事件、prune 强制加这个标签过滤；对容器、exec、网络、卷的任何操作先查标签，不是本工作区的一律 403。
+- 镜像：镜像在守护进程上全局共享。任何镜像都能拉取、查看、推送；`docker build` 与 `docker commit` 产出的镜像由代理打上工作区标签，只有这些镜像能被本工作区删除，或被重新打标签覆盖名字（`build -t`、`tag`、`commit`、`import` 写到别人的或公共镜像的名字一律拒绝，防止篡改其他工作区在用的 `alpine:3` 之类）。`docker load` 无法事先知道会覆盖哪些名字，不开放；`image prune`/`builder prune` 不开放。
 - 拒绝逃逸：`--privileged`、`--cap-add`、设备与 GPU、`--security-opt`（`no-new-privileges` 除外）、宿主 PID/IPC/UTS/userns/cgroupns/网络命名空间、自定义 runtime、`--cgroup-parent`、host/macvlan/ipvlan 网络、带 driver 选项的卷、`--network host` 构建；swarm、插件、`system df` 等接口不开放。
-- 挂载：bind 源只能在工作区（`<会话根>/ws`，代理换成守护进程看到的宿主路径）或会话 HOME 之内，路径先解析软链（包括尚不存在的子目录所在的父目录）再判定；命名卷属于别的工作区就拒绝，不存在时由代理带标签创建。
-- 生命周期：CLI 进程退出时代理关闭，本工作区仍在运行的容器被 `docker stop`（不删除，下轮可以 `docker start`）。
-- 已知边界：检查与守护进程执行之间存在 TOCTOU（检查后把目录换成软链）；BuildKit 的 `/grpc` 通道不解析，构建内的网络模式只拦截经典 `/build` 参数；同一执行机器上的镜像缓存在工作区之间共享。
+- 挂载：bind 源只能在工作区（`<会话根>/ws`，代理换成守护进程看到的宿主路径）或会话 HOME 之内，路径先解析软链（包括尚不存在的子目录所在的父目录）再判定，交给守护进程的是解析后的真实路径；命名卷属于别的工作区就拒绝，不存在时由代理带标签创建。
+- 生命周期：CLI 进程退出时代理关闭，本工作区仍在运行的容器被 `docker stop`（不删除，下轮可以 `docker start`）。工作区目录被删除时（删除运行、删除对话、空闲回收，统一走 `Manager.removeMatching`），先按标签删除它的全部容器（含匿名卷）、网络和命名卷——Docker 卷不进工作区快照，回收后再恢复的工作区需要重建它们。`/tmp/lf-docker-*` 目录里记有所属会话根，会话根不存在时在下一次启动工作区 CLI 时清掉。
+- 已知边界：检查与守护进程执行之间仍有 TOCTOU（检查后把路径中的某一级换成软链）；buildx 走的 BuildKit `/grpc` 通道不解析：经典 `docker build`（`/build`）的网络模式、`-t` 覆盖与标签都受检查，buildx 构建则既不打工作区标签、也拦不住覆盖已有镜像名；拉取的公共镜像由平台的镜像回收处理。
 
 `PUT /api/assistant/sessions/{id}/sandbox` 接受 `{ "sandboxProfileId": "id 或空字符串" }`，具备项目访问权限的会话参与者均可调用；生成期间和任务会话拒绝变更。已有工作区不受影响，新选择只用于之后新开的工作区。普通会话创建时也可以提交 `sandboxProfileId`，后续普通会话保存不能覆盖已保存的选择或伪造工作区绑定。
 
