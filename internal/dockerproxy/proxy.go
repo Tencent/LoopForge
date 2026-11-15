@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime"
 	"net"
 	"net/http"
 	"net/http/httputil"
@@ -59,8 +60,9 @@ type Proxy struct {
 	reverse  *httputil.ReverseProxy
 	once     sync.Once
 
-	versionOnce sync.Once
-	subpaths    bool
+	versionMu    sync.Mutex
+	versionKnown bool
+	subpaths     bool
 }
 
 // DefaultUpstream is the daemon socket named by DOCKER_HOST, else the
@@ -183,6 +185,11 @@ func (p *Proxy) authorize(r *http.Request) error {
 	clean, parts := route(r.URL.Path)
 	method := r.Method
 	read := method == http.MethodGet || method == http.MethodHead
+	// The daemon reads parameters with r.FormValue, where a form-encoded body
+	// overrides the query the proxy checked. Docker clients never send one.
+	if media, _, err := mime.ParseMediaType(r.Header.Get("Content-Type")); err == nil && (media == "application/x-www-form-urlencoded" || media == "multipart/form-data") {
+		return forbidden("请求体不能是表单（" + media + "），参数请放在查询串里")
+	}
 	switch parts[0] {
 	case "_ping", "version":
 		return nil
@@ -374,8 +381,24 @@ func (p *Proxy) authorizeNetwork(r *http.Request, parts []string) error {
 		return nil
 	case len(parts) == 2 && parts[1] == "create":
 		return p.rewriteJSON(r, func(body map[string]any) error {
-			if driver, _ := body["Driver"].(string); driver == "host" || driver == "macvlan" || driver == "ipvlan" {
-				return forbidden("不能创建 " + driver + " 网络")
+			if driver, _ := body["Driver"].(string); driver != "" && driver != "bridge" {
+				return forbidden("只能创建 bridge 网络（--driver " + driver + "）")
+			}
+			// Driver options can name or reuse host interfaces; custom subnets
+			// can shadow host routes (169.254.169.254, the host's LAN).
+			if nonEmpty(body["Options"]) {
+				return forbidden("网络不能带 driver 选项（--opt）")
+			}
+			if ipam, _ := body["IPAM"].(map[string]any); ipam != nil {
+				if driver, _ := ipam["Driver"].(string); driver != "" && driver != "default" {
+					return forbidden("网络只能用默认 IPAM")
+				}
+				if nonEmpty(ipam["Options"]) || nonEmpty(ipam["Config"]) {
+					return forbidden("网络不能自定义子网、网关或 IPAM 选项，由 Docker 从默认地址池分配")
+				}
+			}
+			if nonEmpty(body["ConfigFrom"]) || truthy(body["ConfigOnly"]) {
+				return forbidden("不支持 --config-from / --config-only 网络")
 			}
 			setLabel(body, "Labels", p.cfg.Workspace)
 			return nil
@@ -468,6 +491,9 @@ func (p *Proxy) rewriteJSON(r *http.Request, check func(map[string]any) error) e
 			}
 		}
 	}
+	if err := canonicalizeKeys(body); err != nil {
+		return err
+	}
 	if err := check(body); err != nil {
 		return err
 	}
@@ -533,10 +559,19 @@ func (p *Proxy) checkContainerCreate(body map[string]any) error {
 				return err
 			}
 		}
+		for _, item := range endpoints {
+			endpoint, _ := item.(map[string]any)
+			if err := p.checkLinks(endpoint["Links"]); err != nil {
+				return err
+			}
+		}
 	}
 	host, _ := body["HostConfig"].(map[string]any)
 	if host == nil {
 		return nil
+	}
+	if err := p.checkLinks(host["Links"]); err != nil {
+		return err
 	}
 	if truthy(host["Privileged"]) {
 		return forbidden("不能使用 --privileged")
@@ -623,6 +658,20 @@ func (p *Proxy) checkContainerCreate(body map[string]any) error {
 	return nil
 }
 
+// checkLinks lets legacy links ("name:alias") reach only this workspace's
+// containers: a link injects the target's environment into the new one.
+func (p *Proxy) checkLinks(v any) error {
+	links, _ := v.([]any)
+	for _, item := range links {
+		link, _ := item.(string)
+		name, _, _ := strings.Cut(link, ":")
+		if err := p.owned(context.Background(), "containers", strings.TrimPrefix(name, "/")); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // checkBind validates "source:target[:options]"; an absolute source is a host
 // path, anything else a named volume.
 // A path below a workspace root comes back as a volume-subpath mount that
@@ -643,7 +692,7 @@ func (p *Proxy) checkBind(spec string) (string, map[string]any, error) {
 	readOnly := false
 	for _, opt := range strings.Split(options, ",") {
 		switch opt {
-		case "ro":
+		case "ro", "readonly":
 			readOnly = true
 		case "", "rw", "z", "Z", "nocopy", "consistent", "cached", "delegated",
 			"private", "rprivate", "shared", "rshared", "slave", "rslave":
@@ -661,7 +710,11 @@ func (p *Proxy) checkBind(spec string) (string, map[string]any, error) {
 	if err != nil || mount != nil {
 		return "", mount, err
 	}
-	return resolved + ":" + rest, nil, nil
+	kept := resolved + ":" + target
+	if readOnly {
+		kept += ":ro"
+	}
+	return kept, nil, nil
 }
 
 func (p *Proxy) checkMount(mount map[string]any) error {
@@ -689,6 +742,9 @@ func (p *Proxy) checkMount(mount map[string]any) error {
 			return nil
 		}
 		mount["Source"] = resolved
+		if opts, _ := mount["BindOptions"].(map[string]any); opts != nil {
+			delete(opts, "Propagation") // default rprivate: nothing propagates back
+		}
 	case "volume":
 		if opts, _ := mount["VolumeOptions"].(map[string]any); opts != nil {
 			if driver, _ := opts["DriverConfig"].(map[string]any); nonEmpty(driver) {
@@ -746,8 +802,11 @@ const bindVolumePrefix = "lf-bind-"
 // volume subpaths without following symlinks out of the volume. Daemons
 // before API 1.45 (Docker 26) have no subpaths and keep the checked bind.
 func (p *Proxy) subpathMount(resolved, root, target string, readOnly bool) (map[string]any, error) {
-	if resolved == root || !p.supportsSubpath() {
+	if resolved == root {
 		return nil, nil
+	}
+	if supported, err := p.supportsSubpath(); err != nil || !supported {
+		return nil, err
 	}
 	rel, err := filepath.Rel(root, resolved)
 	if err != nil || rel == "." || strings.HasPrefix(rel, "..") {
@@ -797,20 +856,27 @@ func (p *Proxy) ensureBindVolume(name, root string) error {
 }
 
 // supportsSubpath reports whether the daemon speaks API 1.45 or later.
-func (p *Proxy) supportsSubpath() bool {
-	p.versionOnce.Do(func() {
-		var version struct {
-			APIVersion string `json:"ApiVersion"`
-		}
-		if found, err := p.inspect(context.Background(), "/version", &version); err != nil || !found {
-			return
-		}
-		var major, minor int
-		if _, err := fmt.Sscanf(version.APIVersion, "%d.%d", &major, &minor); err == nil {
-			p.subpaths = major > 1 || major == 1 && minor >= 45
-		}
-	})
-	return p.subpaths
+func (p *Proxy) supportsSubpath() (bool, error) {
+	p.versionMu.Lock()
+	defer p.versionMu.Unlock()
+	if p.versionKnown {
+		return p.subpaths, nil
+	}
+	var version struct {
+		APIVersion string `json:"ApiVersion"`
+	}
+	// An unknown version refuses the bind (retried next time) rather than
+	// falling back to a plain bind for the proxy's lifetime.
+	if found, err := p.inspect(context.Background(), "/version", &version); err != nil || !found {
+		return false, fmt.Errorf("无法确认 Docker 版本，稍后重试：%v", err)
+	}
+	var major, minor int
+	if _, err := fmt.Sscanf(version.APIVersion, "%d.%d", &major, &minor); err != nil {
+		return false, fmt.Errorf("无法识别 Docker API 版本 %q", version.APIVersion)
+	}
+	p.subpaths = major > 1 || major == 1 && minor >= 45
+	p.versionKnown = true
+	return p.subpaths, nil
 }
 
 func within(p, root string) bool {

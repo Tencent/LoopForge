@@ -136,7 +136,7 @@ type harness struct {
 	root      string
 }
 
-func start(t *testing.T) *harness { return startAPI(t, "") }
+func start(t *testing.T) *harness { return startAPI(t, "1.44") }
 
 func startAPI(t *testing.T, api string) *harness {
 	t.Helper()
@@ -503,5 +503,139 @@ func TestBindsBelowWorkspaceRootBecomeVolumeSubpaths(t *testing.T) {
 	}
 	if code, _ := h.do(t, "POST", "/containers/create", map[string]any{"Image": "alpine", "HostConfig": map[string]any{"Binds": []any{ws + "/x:/x:bogus"}}}); code != http.StatusForbidden {
 		t.Errorf("unknown bind option must be refused, got %d", code)
+	}
+}
+
+func (h *harness) raw(t *testing.T, method, path, contentType, body string) (int, string) {
+	t.Helper()
+	req, _ := http.NewRequest(method, "http://docker/v1.45"+path, strings.NewReader(body))
+	req.Header.Set("Content-Type", contentType)
+	resp, err := h.client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	data, _ := io.ReadAll(resp.Body)
+	return resp.StatusCode, string(data)
+}
+
+// The daemon matches JSON field names case-insensitively; the checks must
+// see what the daemon will see.
+func TestFieldNameCaseCannotHideFields(t *testing.T) {
+	h := start(t)
+	refused := map[string]string{
+		"lowercase hostconfig":  `/containers/create|{"Image":"alpine","hostconfig":{"privileged":true,"binds":["/:/host"]}}`,
+		"lowercase mount type":  `/containers/create|{"Image":"alpine","HostConfig":{"Mounts":[{"type":"bind","source":"/","target":"/h"}]}}`,
+		"kelvin sign":           `/containers/create|{"Image":"alpine","HostConfig":{"Lin\u212as":["theirs:x"]}}`,
+		"case duplicate":        `/containers/create|{"Image":"alpine","HostConfig":{"CapAdd":[],"capadd":["SYS_ADMIN"]}}`,
+		"duplicate hostconfig":  `/containers/create|{"Image":"alpine","HostConfig":{},"Hostconfig":{"Privileged":true}}`,
+		"duplicate labels":      `/containers/create|{"Image":"alpine","Labels":{},"labels":{"loopforge.workspace":"ws2"}}`,
+		"volume driveropts":     `/volumes/create|{"name":"x","driveropts":{"type":"none","o":"bind","device":"/"}}`,
+		"reserved volume name":  `/volumes/create|{"name":"lf-bind-ws1-000000"}`,
+		"privileged exec":       `/containers/mine/exec|{"Cmd":["sh"],"privileged":true}`,
+		"connect other":         `/networks/mynet/connect|{"Container":"mine","container":"theirs"}`,
+		"lowercase connect":     `/networks/mynet/connect|{"container":"theirs"}`,
+		"lowercase net options": `/networks/create|{"name":"n","options":{"com.docker.network.bridge.name":"eth0"}}`,
+	}
+	for name, c := range refused {
+		path, body, _ := strings.Cut(c, "|")
+		before := h.daemon.count()
+		code, out := h.raw(t, "POST", path, "application/json", body)
+		if code != http.StatusForbidden || !strings.Contains(out, "LoopForge") {
+			t.Errorf("%s: want 403, got %d %s", name, code, out)
+		}
+		if h.daemon.count() != before {
+			t.Errorf("%s: request reached the daemon", name)
+		}
+	}
+	// Renamed to the canonical field, the label the proxy sets is the one sent.
+	code, out := h.raw(t, "POST", "/volumes/create", "application/json", `{"name":"fine","labels":{"loopforge.workspace":"ws2"}}`)
+	if code != 200 {
+		t.Fatalf("lowercase but harmless volume create: %d %s", code, out)
+	}
+	got := h.daemon.last(t).Body
+	if labels, _ := got["Labels"].(map[string]any); labels[Label] != "ws1" || got["labels"] != nil {
+		t.Errorf("labels must be canonical and pinned: %v", got)
+	}
+}
+
+// For POSTs the daemon prefers form-body values over the query the proxy
+// checked.
+func TestFormBodiesAreRefused(t *testing.T) {
+	h := start(t)
+	for _, c := range [][3]string{
+		{"/images/myapp:dev/tag", "application/x-www-form-urlencoded", "repo=alpine&tag=3"},
+		{"/build", "application/x-www-form-urlencoded; charset=utf-8", "networkmode=host"},
+		{"/images/create", "multipart/form-data; boundary=x", "--x--"},
+	} {
+		before := h.daemon.count()
+		if code, out := h.raw(t, "POST", c[0], c[1], c[2]); code != http.StatusForbidden {
+			t.Errorf("%s with %s: want 403, got %d %s", c[0], c[1], code, out)
+		}
+		if h.daemon.count() != before {
+			t.Errorf("%s: request reached the daemon", c[0])
+		}
+	}
+}
+
+func TestLinksNetworksAndPropagation(t *testing.T) {
+	h := start(t)
+	for name, body := range map[string]map[string]any{
+		"link to other":     {"Image": "alpine", "HostConfig": map[string]any{"Links": []any{"/theirs:x"}}},
+		"endpoint link":     {"Image": "alpine", "NetworkingConfig": map[string]any{"EndpointsConfig": map[string]any{"bridge": map[string]any{"Links": []any{"theirs:x"}}}}},
+		"net driver plugin": {"Name": "n", "Driver": "weave"},
+		"net bridge name":   {"Name": "n", "Options": map[string]any{"com.docker.network.bridge.name": "eth0"}},
+		"net subnet":        {"Name": "n", "IPAM": map[string]any{"Config": []any{map[string]any{"Subnet": "169.254.169.0/24"}}}},
+		"net ipam driver":   {"Name": "n", "IPAM": map[string]any{"Driver": "custom"}},
+		"net config-from":   {"Name": "n", "ConfigFrom": map[string]any{"Network": "admin-macvlan"}},
+	} {
+		path := "/containers/create"
+		if strings.HasPrefix(name, "net ") {
+			path = "/networks/create"
+		}
+		if code, out := h.do(t, "POST", path, body); code != http.StatusForbidden {
+			t.Errorf("%s: want 403, got %d %s", name, code, out)
+		}
+	}
+	if code, out := h.do(t, "POST", "/containers/create", map[string]any{"Image": "alpine", "HostConfig": map[string]any{"Links": []any{"mine:db"}}}); code != 200 {
+		t.Errorf("linking an own container: %d %s", code, out)
+	}
+	if code, out := h.do(t, "POST", "/networks/create", map[string]any{"Name": "n", "Driver": "bridge", "Internal": true, "IPAM": map[string]any{"Driver": "default", "Config": []any{}}}); code != 200 {
+		t.Errorf("plain bridge network as the CLI sends it: %d %s", code, out)
+	}
+	// A bind of the workspace root itself stays a bind; propagation is dropped.
+	ws := filepath.Join(h.root, "ws")
+	code, out := h.do(t, "POST", "/containers/create", map[string]any{"Image": "alpine", "HostConfig": map[string]any{
+		"Binds":  []any{ws + ":/w:rshared,ro"},
+		"Mounts": []any{map[string]any{"Type": "bind", "Source": ws, "Target": "/m", "BindOptions": map[string]any{"Propagation": "rshared", "NonRecursive": true}}},
+	}})
+	if code != 200 {
+		t.Fatalf("root bind: %d %s", code, out)
+	}
+	host := h.daemon.last(t).Body["HostConfig"].(map[string]any)
+	if binds := host["Binds"].([]any); len(binds) != 1 || strings.Contains(binds[0].(string), "shared") || !strings.HasSuffix(binds[0].(string), ":/w:ro") {
+		t.Errorf("root bind options: %v", binds)
+	}
+	opts := host["Mounts"].([]any)[0].(map[string]any)["BindOptions"].(map[string]any)
+	if _, ok := opts["Propagation"]; ok || opts["NonRecursive"] != true {
+		t.Errorf("mount propagation must be dropped, other options kept: %v", opts)
+	}
+}
+
+func TestUnknownDaemonVersionRefusesSubdirBinds(t *testing.T) {
+	h := startAPI(t, "")
+	code, out := h.do(t, "POST", "/containers/create", map[string]any{"Image": "alpine", "HostConfig": map[string]any{"Binds": []any{filepath.Join(h.root, "ws", "src") + ":/src"}}})
+	if code == 200 {
+		t.Fatalf("a subdirectory bind must not fall back to a plain bind while the version is unknown: %s", out)
+	}
+	h.daemon.mu.Lock()
+	h.daemon.api = "1.45"
+	h.daemon.mu.Unlock()
+	code, out = h.do(t, "POST", "/containers/create", map[string]any{"Image": "alpine", "HostConfig": map[string]any{"Binds": []any{filepath.Join(h.root, "ws", "src") + ":/src"}}})
+	if code != 200 || !strings.Contains(out, "") {
+		t.Fatalf("after the daemon answers, the bind becomes a subpath mount: %d %s", code, out)
+	}
+	if mounts, _ := h.daemon.last(t).Body["HostConfig"].(map[string]any)["Mounts"].([]any); len(mounts) != 1 {
+		t.Errorf("want one subpath mount, got %v", mounts)
 	}
 }
