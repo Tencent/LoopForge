@@ -10,6 +10,7 @@ import (
 
 	"agentflow/internal/domain"
 	"agentflow/internal/gitwork"
+	"agentflow/internal/runtime"
 )
 
 const (
@@ -58,8 +59,7 @@ func (e *Engine) PushConversationWorkspace(ctx context.Context, runID string, re
 	sharedTarget = strings.TrimSpace(sharedTarget)
 	ctx, cancel := context.WithTimeout(ctx, conversationPushTimeout)
 	defer cancel()
-	ctx = withGitIdentity(withGitToken(ctx, gitToken), gitUserName, gitUserEmail)
-	ctx = gitwork.WithSSHKeys(ctx, sshKeys)
+	ctx = withGitIdentity(withRunGitCredentials(ctx, runtime.RunCredentials{GitToken: gitToken, GitSSHKeys: sshKeys, GitHTTPS: e.repo.GitHTTPSCredentials(requesterID)}), gitUserName, gitUserEmail)
 	if runnerID := e.defaultExecutionRunner(run); runnerID != "" {
 		return e.pushConversationOnRunner(ctx, runnerID, run, repositories, requesterID, gitToken, gitUserName, gitUserEmail, message, sharedTarget)
 	}
@@ -148,6 +148,11 @@ func (e *Engine) pushConversationOnRunner(ctx context.Context, runnerID string, 
 		invocation.GitSSHUserID = requesterID
 	} else {
 		invocation.GitSSHUserID = 0
+	}
+	if len(invocation.GitHTTPSRemotes()) > 0 {
+		invocation.GitHTTPSUserID = requesterID
+	} else {
+		invocation.GitHTTPSUserID = 0
 	}
 	task := domain.RunnerTask{
 		ID:                fmt.Sprintf("rt-%d-%s-push", time.Now().UnixNano(), safeRunnerPath(run.ID)),

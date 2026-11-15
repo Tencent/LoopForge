@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"agentflow/internal/gitwork"
 	"agentflow/internal/observability"
 	"fmt"
 	"net/url"
@@ -95,7 +96,7 @@ func bindCommand(sandbox Sandbox, workspace string, command CommandSpec, credent
 			}
 			bound.environment["CODEBUDDY_INTERNET_ENVIRONMENT"] = strings.TrimSpace(credentials.CodeBuddy.InternetEnvironment)
 		case BindGit:
-			if err := bindGitEnvironment(sandbox, workspace, bound.environment, credentials.GitToken); err != nil {
+			if err := bindGitEnvironment(sandbox, workspace, bound.environment, credentials.GitToken, credentials.GitHTTPS); err != nil {
 				return CommandSpec{}, err
 			}
 		case BindGitWorkspace:
@@ -275,16 +276,27 @@ func privateHomePaths(sandbox Sandbox, workspace string, command CommandSpec) (h
 
 // GitEnvironment is the git environment a child process needs to reach
 // private remotes with token without the token touching any git config.
-func GitEnvironment(sandbox Sandbox, workspace, token string) (map[string]string, error) {
+func GitEnvironment(sandbox Sandbox, workspace, token string, https []gitwork.HTTPSCredential) (map[string]string, error) {
 	environment := map[string]string{}
-	if err := bindGitEnvironment(sandbox, workspace, environment, token); err != nil {
+	if err := bindGitEnvironment(sandbox, workspace, environment, token, https); err != nil {
 		return nil, err
 	}
 	return environment, nil
 }
 
-func bindGitEnvironment(sandbox Sandbox, workspace string, environment map[string]string, token string) error {
+// bindGitEnvironment binds the global token and, on top of it, the scoped
+// credentials of managed hosts. The managed block is bound even without a
+// global token so a managed host never falls back to an inherited helper.
+func bindGitEnvironment(sandbox Sandbox, workspace string, environment map[string]string, token string, https []gitwork.HTTPSCredential) error {
 	environment["GIT_TERMINAL_PROMPT"] = "0"
+	if err := bindGlobalGitToken(sandbox, workspace, environment, token); err != nil {
+		return err
+	}
+	gitwork.BindManagedHosts(environment, https)
+	return nil
+}
+
+func bindGlobalGitToken(sandbox Sandbox, workspace string, environment map[string]string, token string) error {
 	token = strings.TrimSpace(token)
 	if token == "" {
 		return nil
@@ -331,6 +343,7 @@ func bindGitEnvironment(sandbox Sandbox, workspace string, environment map[strin
 // to another host the agent happens to contact.
 func bindWorkspaceGitEnvironment(sandbox Sandbox, workspace string, environment map[string]string, credentials RunCredentials) error {
 	environment["GIT_TERMINAL_PROMPT"] = "0"
+	gitwork.BindManagedHosts(environment, credentials.GitHTTPS)
 	if _, err := EnsureControlDirectory(workspace, "runtime"); err != nil {
 		return fmt.Errorf("create git runtime dir: %w", err)
 	}
@@ -408,8 +421,11 @@ case "$1" in
 esac
 `
 
-const gitAskPassScript = `#!/bin/sh
+// The managed-host case is a backstop: the scoped helper answers first and
+// quits, so askpass is only reached if that config were lost.
+var gitAskPassScript = `#!/bin/sh
 case "$1" in
+  ` + gitwork.ManagedHostPromptGlob() + `) exit 1 ;;
   *[Uu]sername*) printf '%s\n' "${AGENTFLOW_GIT_USER:-private}" ;;
   *) printf '%s\n' "${AGENTFLOW_GIT_TOKEN-}" ;;
 esac

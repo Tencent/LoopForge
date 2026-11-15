@@ -458,6 +458,7 @@ func (h *assistantHandlers) bindWorkspaceGit(ctx context.Context, s *AgentToolSe
 	}
 	credentials.GitToken = strings.TrimSpace(h.repo.GitCredential(ctx, s.User.ID))
 	credentials.GitSSHHostKeys = h.repo.GitSSHKeysByHost(s.User.ID)
+	credentials.GitHTTPS = h.repo.GitHTTPSCredentials(s.User.ID)
 	if user, ok := h.repo.User(s.User.ID); ok {
 		if login := strings.TrimSpace(user.LoginName); login != "" {
 			credentials.GitUserName = login

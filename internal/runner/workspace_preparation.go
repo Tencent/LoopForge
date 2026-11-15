@@ -164,6 +164,7 @@ func (d *Daemon) workspaceExecutionSandbox(ctx context.Context, sb runtime.Sandb
 	if inv != nil {
 		credentials.GitToken = invocationGitToken(inv)
 		credentials.GitSSHKeys = inv.GitSSHKeys
+		credentials.GitHTTPS = invocationHTTPSCredentials(inv)
 		credentials.GitUserName = inv.GitUserName
 		credentials.GitUserEmail = inv.GitUserEmail
 		servers := inv.MCPCallServers

@@ -148,6 +148,7 @@ func (e *Engine) preparedWorkspaceRequest(run domain.Run, request domain.RunnerW
 	invocation := &domain.RunnerInvocation{}
 	bindRunnerRepositories(invocation, run, credentials.GitToken, credentials.GitUserName, credentials.GitUserEmail)
 	invocation.GitSSHUserID = 0
+	invocation.GitHTTPSUserID = 0
 	assets := e.resolveScriptMCPAssets(run.ExecutionContext.ProjectID, run.ExecutionContext.ResponsibleUserID)
 	invocation.Assets = assets
 	invocation.MCPCallServers = assets.MCPServers
@@ -155,6 +156,9 @@ func (e *Engine) preparedWorkspaceRequest(run domain.Run, request domain.RunnerW
 	// Status and terminal I/O don't need keys. A separate platform instance
 	// can also resolve its own credentials from the shared store.
 	request.TerminalGitSSHKeys = nil
+	if runnerID != "" && len(invocation.GitHTTPSRemotes()) > 0 && request.Operation == domain.RunnerWorkspaceOperationPrepare {
+		invocation.GitHTTPSCredentials = runtime.GitHTTPSToWire(credentials.GitHTTPS)
+	}
 	terminalOpen := request.Operation == domain.RunnerWorkspaceOperationTerminal && request.Terminal != nil && request.Terminal.Operation == "open"
 	sshRemotes := invocation.GitSSHRemotes()
 	if runnerID != "" && len(sshRemotes) > 0 {

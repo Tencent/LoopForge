@@ -11,6 +11,7 @@ import (
 	"agentflow/internal/domain"
 	"agentflow/internal/gitwork"
 	"agentflow/internal/repo"
+	"agentflow/internal/runtime"
 )
 
 const gitTokenEnv = gitwork.TokenEnv
@@ -27,6 +28,14 @@ func withGitToken(ctx context.Context, token string) context.Context {
 }
 
 func gitTokenFrom(ctx context.Context) string { return gitwork.TokenFrom(ctx) }
+
+// withRunGitCredentials attaches every Git credential of a run: the global
+// token, SSH keys and the host-scoped HTTPS credentials.
+func withRunGitCredentials(ctx context.Context, credentials runtime.RunCredentials) context.Context {
+	ctx = withGitToken(ctx, credentials.GitToken)
+	ctx = gitwork.WithSSHKeys(ctx, credentials.GitSSHKeys)
+	return gitwork.WithHTTPSCredentials(ctx, credentials.GitHTTPS)
+}
 
 func withRepositoryGit(ctx context.Context, repository domain.RepositoryContext) context.Context {
 	if repository.Provider == domain.RepositoryProviderSSH {
