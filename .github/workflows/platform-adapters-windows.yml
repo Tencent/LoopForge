@@ -78,3 +78,56 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           go vet -p=2 @httpFiles
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+  runtime:
+    name: Windows runtime contracts
+    runs-on: windows-latest
+    timeout-minutes: 20
+    env:
+      CGO_ENABLED: '0'
+      GOMAXPROCS: '2'
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-python@v5.6.0
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version: '22'
+      - name: Expose the native Git for Windows shell
+        run: |
+          $gitRoot = Split-Path (Split-Path (Get-Command git.exe).Source -Parent) -Parent
+          Join-Path $gitRoot 'bin' | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+          Join-Path $gitRoot 'usr/bin' | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+      # Runner test fixtures import the platform HTTP package, which embeds
+      # these generated public assets. This builds that dependency only.
+      - name: Build assets embedded by Runner test dependencies
+        run: |
+          npm --prefix chatbot ci --include=dev --no-audit --no-fund
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npm --prefix chatbot run build
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Build the Windows Runner and Gate helper
+        run: |
+          $binaryRoot = Join-Path $env:RUNNER_TEMP 'loopforge-runtime-windows'
+          New-Item -ItemType Directory -Force $binaryRoot | Out-Null
+          go build -p=2 -o (Join-Path $binaryRoot 'agentflow-runner.exe') ./cmd/agentflow-runner
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          go build -p=2 -o (Join-Path $binaryRoot 'agentflow-gate-mcp.exe') ./cmd/agentflow-gate-mcp
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Verify Windows runtime, native shells and Git SSH contracts
+        run: |
+          go test -p=2 ./cmd/agentflow-runner -count=1 -timeout=120s -v
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          go test -p=2 ./internal/runtime ./internal/runner ./internal/gitwork -run 'TestWindows|TestSSHAgentFactory|TestBrowserDockerEntrypointUsesLinuxLineEndings|TestWorkspaceLock|TestWorkspaceEnvironmentIdentity|TestFilesystemEnvironmentIdentity|TestReapOrphanHostBrowsers' -count=1 -timeout=300s -v
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Vet Windows runtime and Runner packages
+        run: |
+          go vet -p=2 ./internal/runtime ./internal/runner ./internal/gitwork ./cmd/agentflow-runner
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
