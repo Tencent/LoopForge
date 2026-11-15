@@ -53,14 +53,26 @@ func parseSSHIdentity(value string) (any, ssh.Signer, error) {
 	return nil, nil, errors.New("Git SSH 私钥格式无效，请粘贴完整的 OpenSSH 或 PEM 私钥")
 }
 
+// builtinKnownHosts pins GitHub's published SSH host keys (api.github.com/meta,
+// fingerprints SHA256:+DiY3wvvV6TuJJhbpZisF/zLDA0zPMSvHdkr4UvCOqU ed25519,
+// p2QAMXNIC1TJYWeIOttrVc98/R1BUFWu3/LiyKgUfQM ecdsa, uNiVztksCsDhcc0u9e8BujQXVUpKZIDTMczCvj3tD2s rsa),
+// for github.com:22 and the ssh.github.com:443 fallback. Other hosts, such as
+// a Gongfeng instance, still need AGENTFLOW_GIT_SSH_KNOWN_HOSTS; entries there
+// (including @revoked) are read alongside these.
+const builtinKnownHosts = `github.com,[ssh.github.com]:443 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl
+github.com,[ssh.github.com]:443 ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBEmKSENjQEezOmxkZMy7opKgwFB9nkt5YRrYMjNuG5N87uRgg6CLrbo5wAdT/y6v0mKV0U2w0WZ2YB/++Tpockg=
+github.com,[ssh.github.com]:443 ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQCj7ndNxQowgcQnjshcLrqPEiiphnt+VTTvDP6mHBL9j1aNUkY4Ue1gvwnGLVlOhGeYrnZaMgRK6+PKCUXaDbC7qtbW8gIkhL7aGCsOr/C56SJMy/BCZfxd1nWzAOxSDPgVsmerOBYfNqltV9/hWCqBywINIR+5dIg6JTJ72pcEpEjcYgXkE2YEFXV1JHnsKgbLWNlhScqb2UmyRkQyytRLtL+38TGxkxCflmO+5Z8CSSNY7GidjMIZ7Q4zMjA2n1nGrlTDkzwDCsw+wqFPGQA179cnfGWOWRVruj16z6XyvxvjJwbz0wQZ75XK5tKSb7FNyeIEs4TT4jk+S4dhPeAUC5y+bDYirYgM4GC7uEnztnZyaVWQ7B381AK4Qdrwt51ZqExKbQpTUNn+EjqoTwvqNj4kqx5QUCI0ThS/YkOxJCXmPUWZbhjpCg56i+2aB6CmK2JGhn57K5mj0MNdBXA4/WnwH6XoPWJzK5Nyu2zB3nAZp+S5hpQs+p1vN1/wsjk=
+`
+
 func sshHostKeys(remotes []SSHRemote) ([]byte, error) {
-	path := strings.TrimSpace(os.Getenv(SSHKnownHostsEnv))
-	if path == "" {
-		return nil, fmt.Errorf("Git SSH 尚未启用，请管理员配置 %s", SSHKnownHostsEnv)
-	}
-	content, err := os.ReadFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("无法读取 %s 指定的主机密钥文件", SSHKnownHostsEnv)
+	content := []byte(builtinKnownHosts)
+	if path := strings.TrimSpace(os.Getenv(SSHKnownHostsEnv)); path != "" {
+		configured, err := os.ReadFile(path)
+		if err != nil {
+			return nil, fmt.Errorf("无法读取 %s 指定的主机密钥文件", SSHKnownHostsEnv)
+		}
+		// Configured entries come first so an @revoked line still applies.
+		content = append(append(configured, '\n'), content...)
 	}
 	allowed := make(map[string]bool, len(remotes))
 	for _, remote := range remotes {
@@ -88,7 +100,7 @@ func sshHostKeys(remotes []SSHRemote) ([]byte, error) {
 	}
 	for _, remote := range remotes {
 		if endpoint := knownhosts.Normalize(net.JoinHostPort(remote.Host, remote.Port)); !allowed[endpoint] {
-			return nil, fmt.Errorf("SSH 主机 %s 未获信任，请管理员在 %s 中添加并核对该主机和端口的公钥", endpoint, SSHKnownHostsEnv)
+			return nil, fmt.Errorf("SSH 主机 %s 未获信任：平台只内置了 github.com 的公钥，其他主机请管理员在 %s 中添加并核对该主机和端口的公钥", endpoint, SSHKnownHostsEnv)
 		}
 	}
 	return pinned.Bytes(), nil

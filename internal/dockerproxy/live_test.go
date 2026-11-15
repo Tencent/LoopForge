@@ -89,13 +89,27 @@ func TestLiveDockerCLI(t *testing.T) {
 	if haveImage {
 		mine = must(via("create", "--name", id+"-a", "-v", filepath.Join(root, "ws", "src")+":/src:ro", "-v", id+"-cache:/cache", tag, "/hello"))
 		t.Cleanup(func() { _, _ = docker(upstream, nil, "rm", "-f", mine) })
-		if got := must(docker(upstream, nil, "inspect", "-f", `{{index .Config.Labels "loopforge.workspace"}} {{join .HostConfig.Binds ","}}`, mine)); got != id+" "+filepath.Join(workspace, "src")+":/src:ro,"+id+"-cache:/cache" {
-			t.Errorf("label/binds as seen by the daemon: %s", got)
+		if got := must(docker(upstream, nil, "inspect", "-f", `{{index .Config.Labels "loopforge.workspace"}} {{json .HostConfig.Mounts}}`, mine)); !strings.HasPrefix(got, id+" ") || !strings.Contains(got, `"Subpath":"src"`) {
+			t.Errorf("label/subpath mount as seen by the daemon: %s", got)
 		}
 		foreign = must(docker(upstream, nil, "create", "--name", id+"-foreign", tag, "/hello"))
 		t.Cleanup(func() { _, _ = docker(upstream, nil, "rm", "-f", foreign) })
 	}
 	t.Cleanup(func() { _, _ = docker(upstream, nil, "volume", "rm", "-f", id+"-cache", id+"-v") })
+	// Docker 26+: the workspace subdirectory is mounted as a subpath of a
+	// volume bound to the workspace root (no symlink race).
+	bindVolumes := must(docker(upstream, nil, "volume", "ls", "-q", "--filter", "label=loopforge.workspace="+id))
+	var bindVolume string
+	for _, name := range strings.Fields(bindVolumes) {
+		if strings.HasPrefix(name, "lf-bind-"+id+"-") {
+			bindVolume = name
+		}
+	}
+	if bindVolume == "" {
+		t.Errorf("no root-backed bind volume among %q", bindVolumes)
+	} else if got := must(docker(upstream, nil, "volume", "inspect", "-f", `{{.Options.o}} {{.Options.device}}`, bindVolume)); got != "bind "+workspace {
+		t.Errorf("bind volume options = %q", got)
+	}
 	if got := must(docker(upstream, nil, "volume", "inspect", "-f", `{{index .Labels "loopforge.workspace"}}`, id+"-cache")); got != id {
 		t.Errorf("named volume created without the workspace label: %q", got)
 	}
@@ -146,7 +160,7 @@ func TestLiveDockerCLI(t *testing.T) {
 	t.Cleanup(func() { _, _ = docker(upstream, nil, "network", "rm", id+"-net") })
 
 	// Deleting the workspace removes everything it created, nothing else.
-	if err := Cleanup(context.Background(), upstream, id); err != nil {
+	if err := Cleanup(context.Background(), upstream, id, true); err != nil {
 		t.Fatalf("cleanup: %v", err)
 	}
 	if out := must(docker(upstream, nil, "volume", "ls", "-q")); strings.Contains(out, id+"-v") || strings.Contains(out, id+"-cache") || !strings.Contains(out, id+"-other") {

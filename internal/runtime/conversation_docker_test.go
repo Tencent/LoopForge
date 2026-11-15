@@ -130,15 +130,32 @@ func TestDestroyRunRemovesWorkspaceDockerObjects(t *testing.T) {
 		t.Fatal(err)
 	}
 	label := WorkspaceDockerLabel(workspace)
+	drain := func() string {
+		mu.Lock()
+		defer mu.Unlock()
+		joined := strings.Join(calls, "\n")
+		calls = nil
+		return joined
+	}
+	// A checkpoint reclaim may be restored at the same path: volumes stay.
+	if err := m.ReclaimRun("run-docker"); err != nil {
+		t.Fatal(err)
+	}
+	reclaimed := drain()
+	if !strings.Contains(reclaimed, "DELETE /containers/c1?force=1&v=1") || !strings.Contains(reclaimed, "DELETE /networks/n1") || strings.Contains(reclaimed, "/volumes") {
+		t.Errorf("reclaim must drop containers and networks but keep volumes:\n%s", reclaimed)
+	}
+	if _, err := os.Stat(workspace); !os.IsNotExist(err) {
+		t.Fatalf("reclaim should remove the directory: %v", err)
+	}
+	// Deleting the run later still finds the objects by the same label.
 	if err := m.DestroyRun("run-docker"); err != nil {
 		t.Fatal(err)
 	}
-	mu.Lock()
-	defer mu.Unlock()
-	joined := strings.Join(calls, "\n")
+	destroyed := drain()
 	for _, want := range []string{"DELETE /containers/c1?force=1&v=1", "DELETE /networks/n1", "DELETE /volumes/v1?force=1", "loopforge.workspace%3D" + label} {
-		if !strings.Contains(joined, want) {
-			t.Errorf("missing %q in daemon calls:\n%s", want, joined)
+		if !strings.Contains(destroyed, want) {
+			t.Errorf("missing %q in daemon calls:\n%s", want, destroyed)
 		}
 	}
 }

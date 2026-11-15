@@ -9,6 +9,8 @@ package dockerproxy
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -56,6 +58,9 @@ type Proxy struct {
 	client   *http.Client
 	reverse  *httputil.ReverseProxy
 	once     sync.Once
+
+	versionOnce sync.Once
+	subpaths    bool
 }
 
 // DefaultUpstream is the daemon socket named by DOCKER_HOST, else the
@@ -184,9 +189,14 @@ func (p *Proxy) authorize(r *http.Request) error {
 	case "events":
 		p.scopeList(r)
 		return nil
-	case "session", "grpc":
-		// BuildKit's session and gRPC channels for docker build.
+	case "session":
+		// File sync for a /build the proxy has already checked.
 		return nil
+	case "grpc":
+		// buildx drives BuildKit over this raw gRPC channel; image names,
+		// labels and network modes inside it cannot be checked. Workspaces
+		// build through /build instead (DOCKER_BUILDKIT=0 in their env).
+		return forbidden("buildx/BuildKit 直连通道不开放，请用 docker build（经典构建，平台已设置 DOCKER_BUILDKIT=0）")
 	case "build":
 		if len(parts) == 1 && method == http.MethodPost {
 			q := r.URL.Query()
@@ -399,6 +409,9 @@ func (p *Proxy) authorizeVolume(r *http.Request, parts []string) error {
 			if opts, _ := body["DriverOpts"].(map[string]any); len(opts) > 0 {
 				return forbidden("卷不能带 driver 选项（可能把宿主目录挂进来）")
 			}
+			if name, _ := body["Name"].(string); strings.HasPrefix(name, bindVolumePrefix) {
+				return forbidden(bindVolumePrefix + " 开头的卷名留给平台使用")
+			}
 			setLabel(body, "Labels", p.cfg.Workspace)
 			return nil
 		})
@@ -579,44 +592,74 @@ func (p *Proxy) checkContainerCreate(body map[string]any) error {
 			}
 		}
 	}
+	mounts, _ := host["Mounts"].([]any)
+	for _, item := range mounts {
+		mount, _ := item.(map[string]any)
+		if err := p.checkMount(mount); err != nil {
+			return err
+		}
+	}
 	if binds, _ := host["Binds"].([]any); len(binds) > 0 {
 		out := make([]any, 0, len(binds))
 		for _, item := range binds {
 			spec, _ := item.(string)
-			rewritten, err := p.checkBind(spec)
+			rewritten, mount, err := p.checkBind(spec)
 			if err != nil {
 				return err
+			}
+			if mount != nil {
+				mounts = append(mounts, mount)
+				continue
 			}
 			out = append(out, rewritten)
 		}
 		host["Binds"] = out
 	}
-	if mounts, _ := host["Mounts"].([]any); len(mounts) > 0 {
-		for _, item := range mounts {
-			mount, _ := item.(map[string]any)
-			if err := p.checkMount(mount); err != nil {
-				return err
-			}
-		}
+	if len(mounts) > 0 {
+		host["Mounts"] = mounts
 	}
 	return nil
 }
 
 // checkBind validates "source:target[:options]"; an absolute source is a host
 // path, anything else a named volume.
-func (p *Proxy) checkBind(spec string) (string, error) {
+// A path below a workspace root comes back as a volume-subpath mount that
+// replaces the bind (see subpathMount).
+func (p *Proxy) checkBind(spec string) (string, map[string]any, error) {
 	source, rest, ok := strings.Cut(spec, ":")
 	if !ok {
-		return spec, nil // anonymous volume
+		return spec, nil, nil // anonymous volume
 	}
-	if strings.HasPrefix(source, "/") {
-		mapped, err := p.hostPath(source)
-		if err != nil {
-			return "", err
+	if !strings.HasPrefix(source, "/") {
+		return spec, nil, p.ensureVolume(source)
+	}
+	resolved, root, err := p.hostPath(source)
+	if err != nil {
+		return "", nil, err
+	}
+	target, options, _ := strings.Cut(rest, ":")
+	readOnly := false
+	for _, opt := range strings.Split(options, ",") {
+		switch opt {
+		case "ro":
+			readOnly = true
+		case "", "rw", "z", "Z", "nocopy", "consistent", "cached", "delegated",
+			"private", "rprivate", "shared", "rshared", "slave", "rslave":
+			// Propagation and SELinux relabelling are dropped: a workspace
+			// mount must not propagate mounts back to the host.
+		default:
+			return "", nil, forbidden("不支持的挂载选项 " + opt)
 		}
-		return mapped + ":" + rest, nil
 	}
-	return spec, p.ensureVolume(source)
+	// Plain binds create a missing source directory; keep that behaviour.
+	if _, statErr := os.Stat(resolved); os.IsNotExist(statErr) {
+		_ = os.MkdirAll(resolved, 0o755)
+	}
+	mount, err := p.subpathMount(resolved, root, target, readOnly)
+	if err != nil || mount != nil {
+		return "", mount, err
+	}
+	return resolved + ":" + rest, nil, nil
 }
 
 func (p *Proxy) checkMount(mount map[string]any) error {
@@ -624,11 +667,26 @@ func (p *Proxy) checkMount(mount map[string]any) error {
 	source, _ := mount["Source"].(string)
 	switch kind {
 	case "bind":
-		mapped, err := p.hostPath(source)
+		resolved, root, err := p.hostPath(source)
 		if err != nil {
 			return err
 		}
-		mount["Source"] = mapped
+		target, _ := mount["Target"].(string)
+		readOnly, _ := mount["ReadOnly"].(bool)
+		converted, err := p.subpathMount(resolved, root, target, readOnly)
+		if err != nil {
+			return err
+		}
+		if converted != nil {
+			for k := range mount {
+				delete(mount, k)
+			}
+			for k, v := range converted {
+				mount[k] = v
+			}
+			return nil
+		}
+		mount["Source"] = resolved
 	case "volume":
 		if opts, _ := mount["VolumeOptions"].(map[string]any); opts != nil {
 			if driver, _ := opts["DriverConfig"].(map[string]any); nonEmpty(driver) {
@@ -646,8 +704,9 @@ func (p *Proxy) checkMount(mount map[string]any) error {
 }
 
 // hostPath maps a bind source the workspace sees onto the daemon path and
-// keeps it inside the workspace.
-func (p *Proxy) hostPath(source string) (string, error) {
+// keeps it inside the workspace. It returns the resolved path and the
+// resolved root it lies in.
+func (p *Proxy) hostPath(source string) (string, string, error) {
 	clean := path.Clean(source)
 	for _, m := range p.cfg.Paths {
 		from := path.Clean(m.From)
@@ -663,17 +722,93 @@ func (p *Proxy) hostPath(source string) (string, error) {
 		}
 		realRoot, err := filepath.EvalSymlinks(root)
 		if err != nil {
-			return "", forbidden("工作区目录不可用：" + root)
+			return "", "", forbidden("工作区目录不可用：" + root)
 		}
 		resolved := resolveExisting(clean)
 		if !within(resolved, realRoot) {
-			return "", forbidden("挂载路径经软链指到了工作区之外：" + source)
+			return "", "", forbidden("挂载路径经软链指到了工作区之外：" + source)
 		}
-		// Hand the daemon the resolved path, so a symlink present at check
-		// time cannot redirect the mount (a swap after the check still can).
-		return resolved, nil
+		return resolved, realRoot, nil
 	}
-	return "", forbidden("只能把工作区里的目录挂进容器，" + source + " 不在工作区内")
+	return "", "", forbidden("只能把工作区里的目录挂进容器，" + source + " 不在工作区内")
+}
+
+// bindVolumePrefix names the proxy's own volumes backed by a workspace root.
+const bindVolumePrefix = "lf-bind-"
+
+// subpathMount closes the race between checking a bind source and the daemon
+// mounting it: the agent owns everything below a workspace root and could
+// swap a checked directory for a symlink in between. The root itself is a
+// mount point the agent cannot replace, so it stays a bind. A path below it
+// becomes a subpath of a local volume bound to the root; the daemon opens
+// volume subpaths without following symlinks out of the volume. Daemons
+// before API 1.45 (Docker 26) have no subpaths and keep the checked bind.
+func (p *Proxy) subpathMount(resolved, root, target string, readOnly bool) (map[string]any, error) {
+	if resolved == root || !p.supportsSubpath() {
+		return nil, nil
+	}
+	rel, err := filepath.Rel(root, resolved)
+	if err != nil || rel == "." || strings.HasPrefix(rel, "..") {
+		return nil, forbidden("挂载路径不在工作区内：" + resolved)
+	}
+	sum := sha256.Sum256([]byte(root))
+	name := bindVolumePrefix + p.cfg.Workspace + "-" + hex.EncodeToString(sum[:6])
+	if err := p.ensureBindVolume(name, root); err != nil {
+		return nil, err
+	}
+	return map[string]any{
+		"Type": "volume", "Source": name, "Target": target, "ReadOnly": readOnly,
+		"VolumeOptions": map[string]any{"NoCopy": true, "Subpath": filepath.ToSlash(rel)},
+	}, nil
+}
+
+func (p *Proxy) ensureBindVolume(name, root string) error {
+	var volume struct {
+		Labels  map[string]string
+		Options map[string]string
+	}
+	found, err := p.inspect(context.Background(), "/volumes/"+url.PathEscape(name), &volume)
+	if err != nil {
+		return err
+	}
+	if found {
+		if volume.Labels[Label] != p.cfg.Workspace || volume.Options["device"] != root || volume.Options["o"] != "bind" {
+			return forbidden("卷 " + name + " 被占用，删除后重试")
+		}
+		return nil
+	}
+	body, _ := json.Marshal(map[string]any{
+		"Name": name, "Driver": "local",
+		"DriverOpts": map[string]string{"type": "none", "o": "bind", "device": root},
+		"Labels":     map[string]string{Label: p.cfg.Workspace},
+	})
+	resp, err := p.client.Post("http://docker/volumes/create", "application/json", bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode/100 != 2 {
+		data, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return fmt.Errorf("创建工作区卷 %s 失败：%s", name, strings.TrimSpace(string(data)))
+	}
+	return nil
+}
+
+// supportsSubpath reports whether the daemon speaks API 1.45 or later.
+func (p *Proxy) supportsSubpath() bool {
+	p.versionOnce.Do(func() {
+		var version struct {
+			APIVersion string `json:"ApiVersion"`
+		}
+		if found, err := p.inspect(context.Background(), "/version", &version); err != nil || !found {
+			return
+		}
+		var major, minor int
+		if _, err := fmt.Sscanf(version.APIVersion, "%d.%d", &major, &minor); err == nil {
+			p.subpaths = major > 1 || major == 1 && minor >= 45
+		}
+	})
+	return p.subpaths
 }
 
 func within(p, root string) bool {
@@ -823,11 +958,11 @@ func (p *Proxy) StopContainers(ctx context.Context) error {
 	return first
 }
 
-// Cleanup removes every container (with its anonymous volumes), network and
-// volume labelled for workspace on the daemon at upstream. It runs when the
-// workspace directory itself is deleted, so nothing the workspace started
-// outlives it.
-func Cleanup(ctx context.Context, upstream, workspace string) error {
+// Cleanup removes every container (with its anonymous volumes) and network
+// labelled for workspace on the daemon at upstream, and with volumes its
+// named volumes too. It runs when the workspace directory itself is deleted,
+// so nothing the workspace started outlives it.
+func Cleanup(ctx context.Context, upstream, workspace string, volumes bool) error {
 	if strings.TrimSpace(workspace) == "" {
 		return fmt.Errorf("docker cleanup needs a workspace id")
 	}
@@ -879,9 +1014,12 @@ func Cleanup(ctx context.Context, upstream, workspace string) error {
 	for _, n := range networks {
 		keep(call(http.MethodDelete, "/networks/"+url.PathEscape(n.ID), nil))
 	}
-	var volumes struct{ Volumes []struct{ Name string } }
-	keep(call(http.MethodGet, "/volumes?"+query, &volumes))
-	for _, v := range volumes.Volumes {
+	if !volumes {
+		return first
+	}
+	var list struct{ Volumes []struct{ Name string } }
+	keep(call(http.MethodGet, "/volumes?"+query, &list))
+	for _, v := range list.Volumes {
 		keep(call(http.MethodDelete, "/volumes/"+url.PathEscape(v.Name)+"?force=1", nil))
 	}
 	return first

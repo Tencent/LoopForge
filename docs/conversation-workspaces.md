@@ -14,7 +14,7 @@
 
 - HTTPS：个人配置的 Git Token。`GIT_ASKPASS` 指向工作区 `.agentflow/runtime/git-askpass-hosts`，脚本本身不含令牌，只对 `github.com` 和工蜂主机应答，其他主机拿不到凭据；`oauth2:`/`private:` 前缀决定用户名，默认 `x-access-token`。`GIT_TERMINAL_PROMPT=0`，不会卡在交互输入上。
 - `GH_TOKEN`：同一个令牌（工蜂 `oauth2:` 授权除外），供 `gh` 或 `curl` 调 GitHub API。平台进程自身的 `GH_TOKEN`/`GITHUB_TOKEN` 不会透传进沙箱。
-- SSH：个人 SSH 密钥按 `host:port` 绑定（不再按项目登记的仓库地址），任何克隆地址只要主机端口匹配就能用。私钥只在平台进程内存中的临时 ssh-agent 里，沙箱只看到 agent socket、公钥与 ssh config；主机公钥仍必须由管理员通过 `AGENTFLOW_GIT_SSH_KNOWN_HOSTS` 固定，未固定时 SSH 操作报错说明原因。
+- SSH：个人 SSH 密钥按 `host:port` 绑定（不再按项目登记的仓库地址），任何克隆地址只要主机端口匹配就能用。私钥只在平台进程内存中的临时 ssh-agent 里，沙箱只看到 agent socket、公钥与 ssh config；主机公钥必须固定：平台内置 GitHub 公布的 `github.com:22` 与 `ssh.github.com:443` 公钥（来自 api.github.com/meta），其他主机（如工蜂）由管理员通过 `AGENTFLOW_GIT_SSH_KNOWN_HOSTS` 固定，两者合并生效（文件里的 `@revoked` 同样作用于内置公钥）；未固定的主机报错说明原因。
 - 提交身份：`GIT_CONFIG_SYSTEM` 设为发言人的登录名，邮箱 `<login>@users.noreply.loopforge.invalid`；Agent 可以用 `git config --global/--local` 覆盖。
 
 工具结果和回复都会对发言人的令牌（含去掉前缀后的裸令牌）做脱敏；提示词要求 Agent 不打印、不回显、不写入令牌。
@@ -47,9 +47,9 @@
 - 隔离：工作区创建的容器、网络、卷都打上 `loopforge.workspace=<工作区路径哈希>` 标签；列表、事件、prune 强制加这个标签过滤；对容器、exec、网络、卷的任何操作先查标签，不是本工作区的一律 403。
 - 镜像：镜像在守护进程上全局共享。任何镜像都能拉取、查看、推送；`docker build` 与 `docker commit` 产出的镜像由代理打上工作区标签，只有这些镜像能被本工作区删除，或被重新打标签覆盖名字（`build -t`、`tag`、`commit`、`import` 写到别人的或公共镜像的名字一律拒绝，防止篡改其他工作区在用的 `alpine:3` 之类）。`docker load` 无法事先知道会覆盖哪些名字，不开放；`image prune`/`builder prune` 不开放。
 - 拒绝逃逸：`--privileged`、`--cap-add`、设备与 GPU、`--security-opt`（`no-new-privileges` 除外）、宿主 PID/IPC/UTS/userns/cgroupns/网络命名空间、自定义 runtime、`--cgroup-parent`、host/macvlan/ipvlan 网络、带 driver 选项的卷、`--network host` 构建；swarm、插件、`system df` 等接口不开放。
-- 挂载：bind 源只能在工作区（`<会话根>/ws`，代理换成守护进程看到的宿主路径）或会话 HOME 之内，路径先解析软链（包括尚不存在的子目录所在的父目录）再判定，交给守护进程的是解析后的真实路径；命名卷属于别的工作区就拒绝，不存在时由代理带标签创建。
-- 生命周期：CLI 进程退出时代理关闭，本工作区仍在运行的容器被 `docker stop`（不删除，下轮可以 `docker start`）。工作区目录被删除时（删除运行、删除对话、空闲回收，统一走 `Manager.removeMatching`），先按标签删除它的全部容器（含匿名卷）、网络和命名卷——Docker 卷不进工作区快照，回收后再恢复的工作区需要重建它们。`/tmp/lf-docker-*` 目录里记有所属会话根，会话根不存在时在下一次启动工作区 CLI 时清掉。
-- 已知边界：检查与守护进程执行之间仍有 TOCTOU（检查后把路径中的某一级换成软链）；buildx 走的 BuildKit `/grpc` 通道不解析：经典 `docker build`（`/build`）的网络模式、`-t` 覆盖与标签都受检查，buildx 构建则既不打工作区标签、也拦不住覆盖已有镜像名；拉取的公共镜像由平台的镜像回收处理。
+- 挂载：bind 源只能在工作区（`<会话根>/ws`，代理换成守护进程看到的宿主路径）或会话 HOME 之内，路径先解析软链（包括尚不存在的子目录所在的父目录）再判定。工作区根和 HOME 根本身是挂载点，Agent 换不掉，照常 bind；根下面的路径在 Docker 26+（API 1.45）改写成一个绑定到该根的本地卷（`lf-bind-<工作区>-<根哈希>`，代理创建并打标签，该前缀留给平台）的 `Subpath` 挂载——守护进程打开卷子路径时不会跟随软链跳出卷，检查之后再把目录换成软链也无法把挂载导到工作区外。bind 的传播（`shared` 等）与 SELinux 选项被丢弃，其他未知选项拒绝；缺失的源目录照旧先创建。更早的守护进程没有 subpath，退回到交付解析后的真实路径（检查后换软链的竞态仍在）。删除这个卷只卸载绑定，不会删除工作区里的文件。命名卷属于别的工作区就拒绝，不存在时由代理带标签创建。
+- 生命周期：CLI 进程退出时代理关闭，本工作区仍在运行的容器被 `docker stop`（不删除，下轮可以 `docker start`）。工作区被永久删除时（删除运行、删除对话、孤儿目录回收），先按标签删除它的全部容器（含匿名卷）、网络和命名卷；目录早已被回收的工作区按同一路径算出标签，照样清理。带快照的空闲回收（之后可能在原路径恢复）只删容器和网络，命名卷保留到永久删除，恢复后数据还在。`/tmp/lf-docker-*` 目录里记有所属会话根，会话根不存在时在下一次启动工作区 CLI 时清掉。
+- 构建：buildx 直连 BuildKit 的 `/grpc` 通道无法逐项检查，代理拒绝；工作区环境设 `DOCKER_BUILDKIT=0`，`docker build`/`docker compose build` 走经典 `/build`，其网络模式、`-t` 覆盖与标签都受检查。拉取的公共镜像由平台的镜像回收处理。
 
 `PUT /api/assistant/sessions/{id}/sandbox` 接受 `{ "sandboxProfileId": "id 或空字符串" }`，具备项目访问权限的会话参与者均可调用；生成期间和任务会话拒绝变更。已有工作区不受影响，新选择只用于之后新开的工作区。普通会话创建时也可以提交 `sandboxProfileId`，后续普通会话保存不能覆盖已保存的选择或伪造工作区绑定。
 

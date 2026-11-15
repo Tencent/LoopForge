@@ -26,10 +26,16 @@ type fakeDaemon struct {
 	requests []seen
 	labels   map[string]map[string]string // "containers/x" -> labels
 	execs    map[string]string            // exec id -> container id
+	api      string                       // ApiVersion reported by /version
+	options  map[string]map[string]string // "volumes/x" -> driver options
 }
 
 func (d *fakeDaemon) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	path, _ := route(r.URL.Path)
+	if r.Method == http.MethodGet && path == "/version" {
+		_ = json.NewEncoder(w).Encode(map[string]any{"ApiVersion": d.api})
+		return
+	}
 	if strings.HasSuffix(path, "/attach") && r.Header.Get("Upgrade") == "tcp" {
 		conn, rw, err := http.NewResponseController(w).Hijack()
 		if err != nil {
@@ -73,7 +79,7 @@ func (d *fakeDaemon) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		case (parts[0] == "volumes" || parts[0] == "networks") && len(parts) == 2:
 			if labels, ok := d.labels[key]; ok {
-				_ = json.NewEncoder(w).Encode(map[string]any{"Labels": labels})
+				_ = json.NewEncoder(w).Encode(map[string]any{"Labels": labels, "Options": d.options[key]})
 				return
 			}
 			http.NotFound(w, r)
@@ -92,6 +98,15 @@ func (d *fakeDaemon) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			labels[k] = v.(string)
 		}
 		d.labels["volumes/"+name] = labels
+		if opts, ok := body["DriverOpts"].(map[string]any); ok {
+			if d.options == nil {
+				d.options = map[string]map[string]string{}
+			}
+			d.options["volumes/"+name] = map[string]string{}
+			for k, v := range opts {
+				d.options["volumes/"+name][k] = v.(string)
+			}
+		}
 	}
 	d.mu.Unlock()
 	_, _ = w.Write([]byte(`{}`))
@@ -120,7 +135,9 @@ type harness struct {
 	root      string
 }
 
-func start(t *testing.T) *harness {
+func start(t *testing.T) *harness { return startAPI(t, "") }
+
+func startAPI(t *testing.T, api string) *harness {
 	t.Helper()
 	dir, err := os.MkdirTemp("/tmp", "dproxy")
 	if err != nil {
@@ -139,7 +156,7 @@ func start(t *testing.T) *harness {
 		"images/team/other:1":        {Label: "ws2"},
 		"images/alpine:3":            {},
 		"images/registry.io/x/y:2.0": {},
-	}, execs: map[string]string{"e-mine": "mine", "e-theirs": "theirs"}}
+	}, execs: map[string]string{"e-mine": "mine", "e-theirs": "theirs"}, api: api}
 	upstream := filepath.Join(dir, "daemon.sock")
 	listener, err := net.Listen("unix", upstream)
 	if err != nil {
@@ -309,6 +326,7 @@ func TestOnlyOwnObjectsAreReachable(t *testing.T) {
 		{"POST", "/build?networkmode=host"},
 		{"POST", "/build?networkmode=container:theirs"},
 		{"POST", "/build?cgroupparent=/"},
+		{"POST", "/grpc"},
 	}
 	for _, c := range denied {
 		before := h.daemon.count()
@@ -435,5 +453,55 @@ func TestImagesAreSharedButOnlyOwnOnesChange(t *testing.T) {
 	h.do(t, "POST", "/commit?container=mine&repo=fresh", map[string]any{"Labels": map[string]any{"k": "v"}})
 	if labels := h.daemon.last(t).Body["Labels"].(map[string]any); labels[Label] != "ws1" || labels["k"] != "v" {
 		t.Errorf("commit labels: %v", labels)
+	}
+}
+
+// On Docker 26+ a bind below the workspace root becomes a subpath of a volume
+// bound to the root, so swapping a checked directory for a symlink before the
+// container starts cannot redirect the mount.
+func TestBindsBelowWorkspaceRootBecomeVolumeSubpaths(t *testing.T) {
+	h := startAPI(t, "1.45")
+	ws := filepath.Join(h.root, "ws")
+	code, out := h.do(t, "POST", "/containers/create", map[string]any{
+		"Image": "alpine",
+		"HostConfig": map[string]any{
+			"Binds":  []any{ws + "/src/app:/app:ro,rshared", ws + ":/all", "cache:/cache"},
+			"Mounts": []any{map[string]any{"Type": "bind", "Source": ws + "/data", "Target": "/data", "BindOptions": map[string]any{"Propagation": "rshared"}}},
+		},
+	})
+	if code != 200 {
+		t.Fatalf("create: %d %s", code, out)
+	}
+	host := h.daemon.last(t).Body["HostConfig"].(map[string]any)
+	binds := host["Binds"].([]any)
+	if len(binds) != 2 || binds[0] != h.workspace+":/all" || binds[1] != "cache:/cache" {
+		t.Fatalf("only the root and named volumes stay binds: %v", binds)
+	}
+	mounts, _ := json.Marshal(host["Mounts"])
+	for _, want := range []string{`"Subpath":"data"`, `"Subpath":"src/app"`, `"Type":"volume"`, `"ReadOnly":true`} {
+		if !strings.Contains(string(mounts), want) {
+			t.Errorf("mounts missing %s: %s", want, mounts)
+		}
+	}
+	if strings.Contains(string(mounts), "rshared") || strings.Contains(string(mounts), "BindOptions") {
+		t.Errorf("bind propagation must be dropped: %s", mounts)
+	}
+	if _, err := os.Stat(filepath.Join(h.workspace, "src", "app")); err != nil {
+		t.Errorf("missing bind source should be created like a plain bind: %v", err)
+	}
+	var volume string
+	for key, opts := range h.daemon.options {
+		if strings.HasPrefix(key, "volumes/lf-bind-ws1-") && opts["device"] == h.workspace && opts["o"] == "bind" {
+			volume = key
+		}
+	}
+	if volume == "" || h.daemon.labels[volume][Label] != "ws1" {
+		t.Fatalf("root-backed volume not created with the workspace label: %v", h.daemon.options)
+	}
+	if code, _ := h.do(t, "POST", "/volumes/create", map[string]any{"Name": "lf-bind-ws1-x"}); code != http.StatusForbidden {
+		t.Errorf("platform volume prefix must be reserved, got %d", code)
+	}
+	if code, _ := h.do(t, "POST", "/containers/create", map[string]any{"Image": "alpine", "HostConfig": map[string]any{"Binds": []any{ws + "/x:/x:bogus"}}}); code != http.StatusForbidden {
+		t.Errorf("unknown bind option must be refused, got %d", code)
 	}
 }

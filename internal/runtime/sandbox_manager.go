@@ -111,8 +111,20 @@ func (m *Manager) open(ctx context.Context, id, dir string, profile domain.Sandb
 
 // DestroyRun deletes the host workspace for a finished SOP run: the persistent
 // git checkout and any per-node directories. Artifacts must already be in the
-// store before calling this.
+// store before calling this. Everything the workspace created through its
+// Docker proxy goes too, even when the directory was reclaimed earlier.
 func (m *Manager) DestroyRun(runID string) error {
+	return m.destroyRun(runID, true)
+}
+
+// ReclaimRun frees a checkpointed workspace that may be restored at the same
+// path later: like DestroyRun, but the workspace's Docker volumes stay (they
+// are not part of the checkpoint) until the run is destroyed for good.
+func (m *Manager) ReclaimRun(runID string) error {
+	return m.destroyRun(runID, false)
+}
+
+func (m *Manager) destroyRun(runID string, volumes bool) error {
 	if m == nil || strings.TrimSpace(m.root) == "" {
 		return nil
 	}
@@ -124,9 +136,10 @@ func (m *Manager) DestroyRun(runID string) error {
 	// that no longer exists. Docker reports such a container as active, so no
 	// prune can reclaim its writable layer afterwards.
 	removeDockerSandbox(context.Background(), dockerContainerName(id), tempDockerImageName(id))
+	cleanupWorkspaceDocker(filepath.Join(m.root, id), volumes)
 	_, err := m.removeMatching(func(name string) bool {
 		return name == id || strings.HasPrefix(name, id+"-") || name == "persist-"+id || strings.HasPrefix(name, "persist-"+id+"-")
-	})
+	}, volumes)
 	return err
 }
 
@@ -265,10 +278,12 @@ func (m *Manager) ReclaimExcept(liveRunIDs []string) (int, error) {
 			}
 		}
 		return true
-	})
+	}, true)
 }
 
-func (m *Manager) removeMatching(match func(name string) bool) (int, error) {
+// removeMatching deletes matching workspace directories together with the
+// Docker objects their workspace created (volumes only when asked).
+func (m *Manager) removeMatching(match func(name string) bool, volumes bool) (int, error) {
 	root, err := filepath.Abs(m.root)
 	if err != nil {
 		return 0, err
@@ -302,7 +317,7 @@ func (m *Manager) removeMatching(match func(name string) bool) (int, error) {
 		}
 		// Containers, networks and volumes the workspace created through its
 		// Docker proxy go with it (the label is derived from this path).
-		cleanupWorkspaceDocker(dir)
+		cleanupWorkspaceDocker(dir, volumes)
 		if err := os.RemoveAll(dir); err != nil {
 			if first == nil {
 				first = err

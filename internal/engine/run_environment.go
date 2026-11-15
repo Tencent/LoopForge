@@ -305,6 +305,16 @@ func (e *Engine) rebindWorkspaceHere(run domain.Run, lost bool) error {
 }
 
 func (e *Engine) releaseRunEnvironment(runID string, destroy bool) error {
+	return e.releaseRunEnvironmentFor(runID, destroy, false)
+}
+
+// reclaimRunEnvironment frees a checkpointed workspace that can be restored
+// later; its Docker volumes are kept until the run is deleted.
+func (e *Engine) reclaimRunEnvironment(runID string) error {
+	return e.releaseRunEnvironmentFor(runID, true, true)
+}
+
+func (e *Engine) releaseRunEnvironmentFor(runID string, destroy, restorable bool) error {
 	e.runEnvMu.Lock()
 	env := e.runEnvs[runID]
 	delete(e.runEnvs, runID)
@@ -318,7 +328,11 @@ func (e *Engine) releaseRunEnvironment(runID string, destroy bool) error {
 		closeErr = env.Close(context.Background())
 	}
 	if destroy {
-		if err := e.sandboxes.DestroyRun(runID); err != nil {
+		destroyRun := e.sandboxes.DestroyRun
+		if restorable {
+			destroyRun = e.sandboxes.ReclaimRun
+		}
+		if err := destroyRun(runID); err != nil {
 			if closeErr != nil {
 				return fmt.Errorf("close run sandbox: %v; destroy workspace: %w", closeErr, err)
 			}

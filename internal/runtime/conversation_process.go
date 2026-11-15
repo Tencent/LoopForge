@@ -530,6 +530,9 @@ func (p *ConversationProcessPool) start(ctx context.Context, root, workspace str
 		if dockerHost != "" {
 			proc.stopDocker = stopDocker
 			env["DOCKER_HOST"] = dockerHost
+			// buildx's gRPC channel is closed by the proxy; build through
+			// the checked /build endpoint.
+			env["DOCKER_BUILDKIT"] = "0"
 		}
 	}
 	command = WithCommandEnvironment(command, env)

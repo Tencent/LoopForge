@@ -64,19 +64,32 @@ func reapConversationDockerDirs() {
 }
 
 // WorkspaceDockerLabel is the loopforge.workspace label value of the Docker
-// objects a workspace creates: a hash of its resolved host path.
+// objects a workspace creates: a hash of its resolved host path. A workspace
+// whose directory is already gone resolves through its parent, so cleanup
+// after a reclaim still finds its objects.
 func WorkspaceDockerLabel(workspace string) string {
-	if resolved := resolvedPath(workspace); resolved != "" {
-		workspace = resolved
-	}
-	sum := sha256.Sum256([]byte(workspace))
+	sum := sha256.Sum256([]byte(resolveExistingPath(workspace)))
 	return hex.EncodeToString(sum[:8])
 }
 
-// cleanupWorkspaceDocker removes the containers, networks and volumes a
-// workspace created through its proxy. Call it before deleting the workspace
-// directory (the label is derived from its resolved path).
-func cleanupWorkspaceDocker(workspace string) {
+func resolveExistingPath(p string) string {
+	rest := ""
+	for cur := filepath.Clean(p); ; {
+		if resolved, err := filepath.EvalSymlinks(cur); err == nil {
+			return filepath.Join(resolved, rest)
+		}
+		parent := filepath.Dir(cur)
+		if parent == cur {
+			return p
+		}
+		rest = filepath.Join(filepath.Base(cur), rest)
+		cur = parent
+	}
+}
+
+// cleanupWorkspaceDocker removes the containers and networks (and, with
+// volumes, the volumes) a workspace created through its proxy.
+func cleanupWorkspaceDocker(workspace string, volumes bool) {
 	if dockerWorkspaceDisabled() {
 		return
 	}
@@ -86,7 +99,7 @@ func cleanupWorkspaceDocker(workspace string) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
-	if err := dockerproxy.Cleanup(ctx, upstream, WorkspaceDockerLabel(workspace)); err != nil {
+	if err := dockerproxy.Cleanup(ctx, upstream, WorkspaceDockerLabel(workspace), volumes); err != nil {
 		log.Printf("clean workspace docker objects %s: %v", workspace, err)
 	}
 }
@@ -144,10 +157,7 @@ func startConversationDocker(root, workspace string) (string, func(), error) {
 	if _, err := ensureConversationDockerDir(root); err != nil {
 		return "", nil, err
 	}
-	hostWorkspace := workspace
-	if resolved := resolvedPath(workspace); resolved != "" {
-		hostWorkspace = resolved
-	}
+	hostWorkspace := resolveExistingPath(workspace)
 	home := filepath.Join(root, "home")
 	proxy, err := dockerproxy.Start(dockerproxy.Config{
 		Upstream:  upstream,

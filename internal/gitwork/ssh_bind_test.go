@@ -3,6 +3,9 @@ package gitwork
 import (
 	"crypto/sha256"
 	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -83,5 +86,27 @@ func TestStartSSHHostsBindsByEndpoint(t *testing.T) {
 	}
 	if got := (sshBinding{alias: "lf-x"}).matchHost(); got != "lf-x" {
 		t.Fatalf("remote-bound match = %q", got)
+	}
+}
+
+func TestBuiltinKnownHostsTrustGitHubOnly(t *testing.T) {
+	t.Setenv(SSHKnownHostsEnv, "")
+	pinned, err := sshHostKeys([]SSHRemote{{Host: "github.com", Port: "22"}, {Host: "ssh.github.com", Port: "443"}})
+	if err != nil {
+		t.Fatalf("github.com should be trusted without configuration: %v", err)
+	}
+	if got := string(pinned); !strings.Contains(got, "github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl") || !strings.Contains(got, "[ssh.github.com]:443 ssh-rsa") {
+		t.Fatalf("pinned keys = %s", got)
+	}
+	if _, err := sshHostKeys([]SSHRemote{{Host: "git.example.org", Port: "22"}}); err == nil || !strings.Contains(err.Error(), SSHKnownHostsEnv) {
+		t.Fatalf("other hosts still need configured keys: %v", err)
+	}
+	file := filepath.Join(t.TempDir(), "known_hosts")
+	if err := os.WriteFile(file, []byte("git.example.org ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(SSHKnownHostsEnv, file)
+	if _, err := sshHostKeys([]SSHRemote{{Host: "git.example.org", Port: "22"}, {Host: "github.com", Port: "22"}}); err != nil {
+		t.Fatalf("configured and built-in keys combine: %v", err)
 	}
 }
