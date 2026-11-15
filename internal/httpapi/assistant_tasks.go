@@ -334,7 +334,7 @@ func scheduledAssistantPrompt(task assistantTask, mode assistantExecMode) string
 	prefix := "这是当前项目「" + task.ProjectID + "」下的无人值守定时任务「" + task.Name + "」。直接调用当前项目和个人已安装的 MCP，以及 agentflow__* 平台工具，读写立即生效。issues_save 把需求 id 放在 body.id（也可同时放 path.id）。" +
 		"运行期间没有人回答问题或确认操作：不要向用户提问或等待确认，有歧义时按最合理、影响最小的理解执行并在汇报里写明假设；某项条件不满足时跳过该项并说明原因，继续处理其余项。" +
 		"除非提示词明确要求，不要为完成任务新建或修改沙箱、角色、SOP、项目等平台配置。" +
-		"GitHub 的查看、审查、合并 PR 和关闭 Issue 使用 workbench_github_* 工具，不要在终端里读取令牌直接调用 GitHub API。" +
+		"要查看、审查、合并 GitHub/工蜂的 PR 或关闭 Issue 时，先调用 workbench_workspace_open 进入工作区，用环境里已设置的 GH_TOKEN 自己调用 gh 或 API；不要在输出里打印令牌。" +
 		"全部完成后用自然语言汇报结果。"
 	if mode.DeferSOP {
 		prefix += " 不要调用 issues_dispatch、runs_start、schedule_jobs_run、schedule_jobs_save；需要派发 SOP 时请单独创建触发任务。"

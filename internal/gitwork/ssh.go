@@ -99,6 +99,9 @@ type sshBinding struct {
 	remote SSHRemote
 	alias  string
 	key    string
+	// match is the host name ssh is invoked with; the repository alias for a
+	// URL binding, the real host for a host binding.
+	match string
 }
 
 // bindSSHRemotes appends one Git URL rewrite per repository to environment in
@@ -148,6 +151,40 @@ func StartSSH(environment map[string]string, keys map[string]string, root, clien
 	if err != nil {
 		return nil, err
 	}
+	return startSSHSession(environment, bindings, remotes, root, clientRoot)
+}
+
+// StartSSHHosts gives every SSH remote on the given hosts the matching key,
+// without knowing the repositories in advance: an agent that clones
+// git@github.com:org/repo.git itself gets the requester's github.com key.
+// keys maps "host:port" endpoints (as stored per user) to private keys.
+func StartSSHHosts(environment map[string]string, keys map[string]string, root, clientRoot string) (func(), error) {
+	endpoints := make([]string, 0, len(keys))
+	for endpoint, key := range keys {
+		if strings.TrimSpace(key) != "" {
+			endpoints = append(endpoints, endpoint)
+		}
+	}
+	if len(endpoints) == 0 {
+		return func() {}, nil
+	}
+	sort.Strings(endpoints)
+	var bindings []sshBinding
+	var remotes []SSHRemote
+	for _, endpoint := range endpoints {
+		host, port, err := net.SplitHostPort(endpoint)
+		if err != nil {
+			return nil, fmt.Errorf("invalid Git SSH host %q", endpoint)
+		}
+		remote := SSHRemote{Host: strings.ToLower(host), Port: port}
+		sum := sha256.Sum256([]byte(remote.Endpoint()))
+		bindings = append(bindings, sshBinding{remote: remote, alias: fmt.Sprintf("lf-%x", sum[:16]), key: keys[endpoint], match: remote.Host})
+		remotes = append(remotes, remote)
+	}
+	return startSSHSession(environment, bindings, remotes, root, clientRoot)
+}
+
+func startSSHSession(environment map[string]string, bindings []sshBinding, remotes []SSHRemote, root, clientRoot string) (func(), error) {
 	environment["GIT_SSH_VARIANT"] = "ssh"
 	if len(bindings) == 0 {
 		// Keep terminals usable for editing without using a host identity.
@@ -178,7 +215,7 @@ func StartSSH(environment map[string]string, keys map[string]string, root, clien
 		// Only the numeric port is expanded by Match exec. The host key is
 		// checked against the real endpoint, including a custom port.
 		fmt.Fprintf(&config, "Match originalhost %s exec \"test %%p = %s\"\n  HostName %s\n  HostKeyAlias %s\n  ProxyCommand none\n  IdentityAgent ./agent\n  IdentityFile ./%s.pub\n  UserKnownHostsFile ./known_hosts\n",
-			item.alias, r.Port, r.Host, knownhosts.Normalize(r.Endpoint()), item.alias)
+			item.matchHost(), r.Port, r.Host, knownhosts.Normalize(r.Endpoint()), item.alias)
 	}
 	config.WriteString(`Host *
   ProxyCommand /bin/false
@@ -225,6 +262,13 @@ func StartSSH(environment map[string]string, keys map[string]string, root, clien
 		stop()
 		_ = os.RemoveAll(dir)
 	}), nil
+}
+
+func (b sshBinding) matchHost() string {
+	if b.match != "" {
+		return b.match
+	}
+	return b.alias
 }
 
 func shellQuote(value string) string { return "'" + strings.ReplaceAll(value, "'", `'\''`) + "'" }

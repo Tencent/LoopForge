@@ -65,3 +65,23 @@ func TestStartSSHWithoutAssignedKeyOnlyRewritesURLs(t *testing.T) {
 		t.Fatal("expected failing GIT_SSH_COMMAND without assigned key")
 	}
 }
+
+// A workspace CLI clones whatever URL it likes, so personal keys are bound
+// by host:port instead of by registered remote.
+func TestStartSSHHostsBindsByEndpoint(t *testing.T) {
+	env := map[string]string{}
+	stop, err := StartSSHHosts(env, map[string]string{"git.example.org:22": "", "other.example.org:2222": " "}, t.TempDir(), "")
+	if err != nil || len(env) != 0 {
+		t.Fatalf("keys without content must bind nothing: env=%v err=%v", env, err)
+	}
+	stop()
+	if _, err := StartSSHHosts(map[string]string{}, map[string]string{"git.example.org": "KEY"}, t.TempDir(), ""); err == nil {
+		t.Fatal("an endpoint without a port was accepted")
+	}
+	if got := (sshBinding{alias: "lf-x", match: "git.example.org"}).matchHost(); got != "git.example.org" {
+		t.Fatalf("host-bound match = %q", got)
+	}
+	if got := (sshBinding{alias: "lf-x"}).matchHost(); got != "lf-x" {
+		t.Fatalf("remote-bound match = %q", got)
+	}
+}

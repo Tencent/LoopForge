@@ -1,7 +1,6 @@
 package httpapi
 
 import (
-	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -40,35 +39,6 @@ func conversationIssueFixture(t *testing.T) (*agentToolGateway, *AgentToolSessio
 	return &agentToolGateway{deps: &deps{repo: st}}, s, st
 }
 
-func TestParseConversationRequirement(t *testing.T) {
-	if req, err := parseConversationRequirement(map[string]any{}); err != nil || req.Title != "" {
-		t.Fatalf("absent requirement = %+v %v", req, err)
-	}
-	if req, err := parseConversationRequirement(map[string]any{"requirement": map[string]any{"title": "  修复登录 ", "description": " 背景 "}}); err != nil || req.Title != "修复登录" || req.Description != "背景" {
-		t.Fatalf("requirement = %+v %v", req, err)
-	}
-	for name, raw := range map[string]any{
-		"not object": "修复",
-		"no title":   map[string]any{"description": "x"},
-		"long title": map[string]any{"title": strings.Repeat("长", 201)},
-		"long body":  map[string]any{"title": "t", "description": strings.Repeat("x", 20001)},
-	} {
-		if _, err := parseConversationRequirement(map[string]any{"requirement": raw}); err == nil {
-			t.Fatalf("%s must be rejected", name)
-		}
-	}
-	if choice, err := parseWorkspaceOpenChoice(map[string]any{"goal": "g", "requirement": map[string]any{"title": "需求"}}); err != nil || choice.Requirement.Title != "需求" {
-		t.Fatalf("open choice = %+v %v", choice, err)
-	}
-	if _, err := parseWorkspaceOpenChoice(map[string]any{"goal": "g", "requirement": map[string]any{}}); err == nil {
-		t.Fatal("open must reject a requirement without title")
-	}
-	var schema map[string]any
-	if err := json.Unmarshal(workspaceOpenDescriptor().InputSchema, &schema); err != nil || !strings.Contains(string(workspaceOpenDescriptor().InputSchema), `"requirement"`) {
-		t.Fatalf("open schema must offer requirement: %v", err)
-	}
-}
-
 // A conversation that changes code identifies its requirement: it lands in
 // the requirement list, is linked to the conversation and the workspace, and
 // the MRs it submits become the requirement's delivery MRs.
@@ -100,14 +70,15 @@ func TestConversationRequirementCreatedAndLinked(t *testing.T) {
 		t.Fatalf("relink = %+v %v %v", again, created, err)
 	}
 
-	results := []workspaceMRResult{
-		{Repository: "web", MRURL: "https://git.example.com/team/web/merge_requests/7", TargetBranch: "master"},
-		{Repository: "api", Error: "push failed"},
+	repos := []domain.Repository{{ID: "repo-web", Name: "web", ProjectID: "p", CloneURL: "https://git.example.com/team/web.git"}}
+	results := []deliveredMR{
+		{URL: "https://git.example.com/team/web/merge_requests/7", TargetBranch: "master"},
+		{URL: "not a merge request"},
 	}
-	if err := h.recordConversationMRs(issue.ID, results, run.RepositoryContexts()); err != nil {
+	if err := h.recordConversationMRs(issue.ID, results, repos); err != nil {
 		t.Fatal(err)
 	}
-	if err := h.recordConversationMRs(issue.ID, results, run.RepositoryContexts()); err != nil {
+	if err := h.recordConversationMRs(issue.ID, results, repos); err != nil {
 		t.Fatal(err)
 	}
 	stored, _ := st.Issue(issue.ID)
@@ -126,7 +97,7 @@ func TestConversationRequirementCreatedAndLinked(t *testing.T) {
 	if done, _ := st.Issue(issue.ID); done.Status != "done" || done.DeliveryState != "merged" {
 		t.Fatalf("merged MR must deliver the requirement: status=%s delivery=%s", done.Status, done.DeliveryState)
 	}
-	if err := h.recordConversationMRs("", results, nil); err != nil {
+	if err := h.recordConversationMRs("", results, repos); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -140,8 +111,9 @@ func TestConversationRequirementRecordsGitHubPullRequest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	results := []workspaceMRResult{{Repository: "web", MRURL: "https://github.com/acme/web/pull/9", TargetBranch: "main"}}
-	if err := h.recordConversationMRs(issue.ID, results, run.RepositoryContexts()); err != nil {
+	results := []deliveredMR{{URL: "https://github.com/acme/web/pull/9", TargetBranch: "main"}}
+	repos := []domain.Repository{{ID: "repo-web", Name: "web", ProjectID: "p", CloneURL: "git@github.com:acme/web.git"}}
+	if err := h.recordConversationMRs(issue.ID, results, repos); err != nil {
 		t.Fatal(err)
 	}
 	stored, _ := st.Issue(issue.ID)

@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 
 	"agentflow/internal/domain"
 )
@@ -156,6 +157,8 @@ func controlledBaseEnvironment(base []string) []string {
 		"CLAUDE_CODE_USE_BEDROCK=", "CLAUDE_CODE_USE_VERTEX=", "CLAUDE_CODE_USE_FOUNDRY=",
 		"CODEBUDDY_INTERNET_ENVIRONMENT=",
 		"AGENTFLOW_GIT_TOKEN=",
+		"GH_TOKEN=",
+		"GITHUB_TOKEN=",
 		"AGENTFLOW_MCP_CONFIG=",
 		"AGENTFLOW_BIN=",
 		"GIT_CONFIG_COUNT=",
@@ -248,6 +251,9 @@ func (s *processSandbox) command(ctx context.Context, command CommandSpec, base 
 			return nil, err
 		}
 		args = bwrapPrivateBinds(args, command.privateBinds)
+		if command.WorkingDir != "" {
+			args = bwrapChdir(args, command.WorkingDir)
+		}
 		args = append(args, command.Argv...)
 		cmd = exec.CommandContext(ctx, s.binary, args...)
 	default:
@@ -255,6 +261,24 @@ func (s *processSandbox) command(ctx context.Context, command CommandSpec, base 
 	}
 	cmd.Dir = s.workspace
 	cmd.Env = appendEnvironment(base, s.profile.Environment, command.environment)
+	cmd.Stdin = command.Stdin
+	if command.WorkingDir != "" {
+		cmd.Env = upsertEnv(cmd.Env, "PWD", command.WorkingDir)
+		if s.driver != "bwrap" {
+			cmd.Dir = command.WorkingDir
+		}
+	}
+	if command.OwnProcessGroup {
+		// A conversation CLI is stopped with its whole process group; bwrap's
+		// own PID namespace then takes every descendant down with it.
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+		cmd.Cancel = func() error {
+			if cmd.Process == nil {
+				return nil
+			}
+			return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		}
+	}
 	switch s.driver {
 	case "seatbelt":
 		cmd.Env = upsertEnv(cmd.Env, "TMPDIR", preferredSeatbeltTemp())
@@ -430,6 +454,18 @@ func bwrapPrivateBinds(args, binds []string) []string {
 	return append(out, "--")
 }
 
+// bwrapChdir points the sandboxed process at dir instead of the workspace.
+func bwrapChdir(args []string, dir string) []string {
+	out := append([]string{}, args...)
+	for i := 0; i+1 < len(out); i++ {
+		if out[i] == "--chdir" {
+			out[i+1] = dir
+			return out
+		}
+	}
+	return out
+}
+
 func bwrapArgsCommand(workspace string, requirements SandboxRequirements, maskAgentConfig bool) ([]string, error) {
 	root, err := filepath.Abs(workspace)
 	if err != nil {
@@ -444,6 +480,22 @@ func bwrapArgsCommand(workspace string, requirements SandboxRequirements, maskAg
 		"--tmpfs", "/tmp",
 		"--proc", "/proc",
 		"--dev-bind", "/dev", "/dev",
+	}
+	if conversation := requirements.ConversationRoot; conversation != "" {
+		// Same layout as the Docker workspace: the native CLI keeps its HOME
+		// and cwd (<root>/ws, here the run workspace) across both modes.
+		args = append(args, "--bind", filepath.Join(conversation, "home"), filepath.Join(conversation, "home"), "--bind", root, filepath.Join(conversation, "ws"))
+		// The approval hooks stay read-only, as in the Docker workspace.
+		parents, files, err := conversationGuardPaths(conversation)
+		if err != nil {
+			return nil, err
+		}
+		for _, dir := range parents {
+			args = append(args, "--bind", dir, dir)
+		}
+		for _, file := range files {
+			args = append(args, "--ro-bind", file, file)
+		}
 	}
 	if requirements.BunFS && ensureBunFSMountPoint() {
 		args = append(args, "--tmpfs", bunFSMountPoint)

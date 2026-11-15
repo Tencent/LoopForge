@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	goruntime "runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -472,9 +473,18 @@ func (p *ConversationProcessPool) start(ctx context.Context, root, workspace str
 		}
 	}
 	if spec != nil {
-		if spec.Profile.Driver != "docker" {
-			return ConversationProcessResult{}, fmt.Errorf("对话工作区仅支持 Docker")
+		profile := spec.Profile
+		if profile.Driver == domain.SandboxDriverNative {
+			if profile.Driver, err = domain.ResolveSandboxDriver(profile.Driver, goruntime.GOOS); err != nil {
+				return ConversationProcessResult{}, err
+			}
 		}
+		if profile.Driver != domain.SandboxDriverDocker && profile.Driver != domain.SandboxDriverBwrap {
+			return ConversationProcessResult{}, fmt.Errorf("对话工作区只支持 Docker 或 native（Linux bwrap）沙箱")
+		}
+		resolved := *spec
+		resolved.Profile = profile
+		spec = &resolved
 		if len(factories) > 0 && factories[0] != nil {
 			sb, release, err = factories[0](procCtx, root)
 		} else {
@@ -516,7 +526,7 @@ func (p *ConversationProcessPool) start(ctx context.Context, root, workspace str
 		command.Argv[0] = conversationBinary(command.Provider)
 	}
 	if forward != nil && req.Token != "" {
-		url, closeRelay, err := startConversationRelay(procCtx, req.Token, forward, spec != nil)
+		url, closeRelay, err := startConversationRelay(procCtx, req.Token, forward, spec != nil && spec.Profile.Driver == domain.SandboxDriverDocker)
 		if err != nil {
 			return ConversationProcessResult{}, err
 		}

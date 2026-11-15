@@ -52,7 +52,7 @@ func TestWorkspaceCatalogAndCallRejectPlatformCapabilities(t *testing.T) {
 	g := &agentToolGateway{deps: h.deps}
 	list := g.handleRPC(withAgentToolToken(context.Background(), s.Token), s, agentToolRPCRequest{ID: 1, Method: "tools/list"})
 	data, _ := json.Marshal(list)
-	for _, name := range []string{"agents_save", "workflows_save", "submit_assistant_reply", "workbench_workspace_write", "workbench_workspace_command", "workbench_workspace_open"} {
+	for _, name := range []string{"agents_save", "workflows_save", "submit_assistant_reply", "workbench_workspace_write", "workbench_workspace_command", "workbench_workspace_open", "workbench_workspace_tree", "workbench_workspace_submit_mr", "workbench_github_pr_create", "workbench_attachment_read"} {
 		if strings.Contains(string(data), `"name":"`+name+`"`) {
 			t.Fatalf("workspace leaked %s", name)
 		}
@@ -63,7 +63,7 @@ func TestWorkspaceCatalogAndCallRejectPlatformCapabilities(t *testing.T) {
 			t.Fatalf("legacy tool callable: %s", raw)
 		}
 	}
-	for _, name := range []string{"workbench_platform_mode", "workbench_workspace_submit_mr"} {
+	for _, name := range []string{"workbench_platform_mode", "workbench_delivery_register", "workbench_workspace_attach"} {
 		if !strings.Contains(string(data), `"name":"`+name+`"`) {
 			t.Fatalf("missing integration: %s", name)
 		}

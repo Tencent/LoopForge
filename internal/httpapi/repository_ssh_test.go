@@ -126,25 +126,27 @@ func TestSSHRepositoryCheckoutAndDelivery(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(checkout, "app.txt"), []byte("ssh delivery\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	h := &agentToolGateway{deps: &deps{repo: f.s, engine: f.e}}
-	session := &AgentToolSession{RunID: run.ID, ProjectID: "platform", UserID: f.user.ID, User: f.user, Mode: AgentToolAssistant}
-	raw, err := h.workspaceSubmitMR(ctx, session, map[string]any{"title": "SSH delivery"})
-	if err != nil {
-		t.Fatal(err)
+	// A conversation workspace CLI delivers with its own git: the personal key
+	// is offered by host, whatever remote URL the agent cloned.
+	workspaceCreds := runtime.RunCredentials{GitUserName: "alice", GitUserEmail: "alice@example.invalid", GitSSHHostKeys: map[string]string{net.JoinHostPort(endpoint.Host, endpoint.Port): privateKey}}
+	workspaceGit := func(args ...string) (string, error) {
+		return runtime.ExecuteLocalCommand(ctx, root, runtime.CommandSpec{
+			Argv: append([]string{"git", "-C", "app"}, args...), CredentialBindings: []runtime.CredentialBinding{runtime.BindGitWorkspace},
+		}, workspaceCreds, nil)
 	}
-	var output struct{ Results []workspaceMRResult }
-	if err := json.Unmarshal([]byte(raw), &output); err != nil || len(output.Results) != 1 {
-		t.Fatalf("invalid delivery result: %s", raw)
+	for _, args := range [][]string{{"checkout", "-b", "agent/ssh-push"}, {"add", "app.txt"}, {"commit", "-m", "ssh delivery"}, {"push", "origin", "agent/ssh-push"}} {
+		if out, err := workspaceGit(args...); err != nil {
+			t.Fatalf("workspace git %v: %v (%s)", args, err, out)
+		}
 	}
-	result := output.Results[0]
-	if !result.Pushed || !result.PushOnly || result.MRURL != "" || result.RepositoryURL != repository.WebURL || result.Commit != sshTestGit(t, bare, "rev-parse", "refs/heads/feature/ssh-test") {
-		t.Fatalf("SSH delivery = %+v", result)
+	if pushed, local := sshTestGit(t, bare, "rev-parse", "refs/heads/agent/ssh-push"), sshTestGit(t, checkout, "rev-parse", "HEAD"); pushed != local {
+		t.Fatalf("pushed %s, local %s", pushed, local)
 	}
 	if resp := cvBRequest(t, f, http.MethodDelete, keyURL+"/"+keys[0].ID, nil, true); resp.Code != http.StatusOK || f.s.GitSSHKeysForRemotes(f.user.ID, []string{remote})[remote] != "" {
 		t.Fatalf("remove key: HTTP %d", resp.Code)
 	}
-	if _, err := h.workspaceSubmitMR(ctx, session, map[string]any{"title": "No key"}); err == nil || !strings.Contains(err.Error(), "未配置 Git SSH 密钥") {
-		t.Fatalf("missing SSH key must explain the fix: %v", err)
+	if keys := f.s.GitSSHKeysByHost(f.user.ID); len(keys) != 0 {
+		t.Fatalf("removed key still offered to workspaces: %v", keys)
 	}
 }
 

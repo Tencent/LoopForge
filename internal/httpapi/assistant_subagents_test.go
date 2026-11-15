@@ -296,7 +296,7 @@ func TestStreamFilterKeepsCompletedAgentCall(t *testing.T) {
 // the code is and that the task outranks the role's SOP-node conventions.
 func TestRoleAgentFileExplainsChatWork(t *testing.T) {
 	file := roleAgentFile(roleSubagent{Role: domain.AgentDefinition{ID: "fe", Name: "前端", Prompt: "产出 brief.md 到 {{output}}"}})
-	for _, want := range []string{"以 Main Bot 交给你的任务为准", "当前是平台模式", "先打开 Docker 工作区并交接模式", "产出 brief.md 到 （运行时提供）"} {
+	for _, want := range []string{"以 Main Bot 交给你的任务为准", "当前是平台模式", "先打开工作区并交接模式", "产出 brief.md 到 （运行时提供）"} {
 		if !strings.Contains(file, want) {
 			t.Fatalf("role file lacks %q:\n%s", want, file)
 		}
@@ -362,7 +362,7 @@ func TestWorkspaceStaysWhileADispatchRuns(t *testing.T) {
 	gateway := &agentToolGateway{deps: h.deps}
 	s := &AgentToolSession{Mode: AgentToolAssistant, ProjectID: "workbench", UserID: owner.ID, User: owner, ChatSessionID: "chat-1", ChatOwnerID: owner.ID}
 	open := func() error {
-		_, err := gateway.callMainBotWorkspace(context.Background(), s, "workbench_workspace_open", map[string]any{"new": true})
+		_, err := gateway.callMainBotWorkspace(context.Background(), s, "workbench_workspace_open", map[string]any{"sandboxProfileId": "generic-docker"})
 		return err
 	}
 	for _, line := range []string{
@@ -407,10 +407,10 @@ func TestRoleDeliverablesAreCollectedWhenTheDispatchEnds(t *testing.T) {
 	gateway := &agentToolGateway{deps: h.deps}
 	gateway.api = New(h.repo, en, tracker.NewService(), "", "")
 	s := &AgentToolSession{Mode: AgentToolAssistant, ProjectID: "workbench", UserID: owner.ID, User: owner, ChatSessionID: "chat-d", ChatOwnerID: owner.ID}
-	if _, err := gateway.callMainBotWorkspace(context.Background(), s, "workbench_workspace_open", map[string]any{"goal": "归档"}); err != nil {
+	if _, err := gateway.callMainBotWorkspace(context.Background(), s, "workbench_workspace_open", map[string]any{}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := gateway.callMainBotWorkspace(context.Background(), s, "workbench_workspace_write", map[string]any{"path": "archive.md", "content": "# 归档\n", "expectedSha256": "missing"}); err != nil {
+	if err := workspaceTestEdit(context.Background(), gateway, s, "archive.md", "# 归档\n"); err != nil {
 		t.Fatal(err)
 	}
 	for i := 0; i < agentReplyFileLimit; i++ {

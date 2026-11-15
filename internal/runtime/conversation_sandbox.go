@@ -17,16 +17,19 @@ import (
 // this, and reruns preparation afterwards because a mount change recreates the
 // container. Browser and delivery operations subsequently use this same sandbox.
 func ConfigureConversationSandbox(ctx context.Context, sandbox Sandbox, root string) error {
-	s, ok := unwrapSandbox(sandbox).(*dockerSandbox)
-	if !ok {
-		return fmt.Errorf("对话工作区仅支持 Docker")
-	}
 	root, err := filepath.Abs(root)
 	if err != nil {
 		return err
 	}
 	if err = os.MkdirAll(filepath.Join(root, "ws"), 0700); err != nil {
 		return err
+	}
+	if p, ok := unwrapSandbox(sandbox).(*processSandbox); ok {
+		return configureProcessConversationSandbox(p, root)
+	}
+	s, ok := unwrapSandbox(sandbox).(*dockerSandbox)
+	if !ok {
+		return fmt.Errorf("对话工作区只支持 Docker 或 native（Linux bwrap）沙箱")
 	}
 	s.execGate.Lock()
 	defer s.execGate.Unlock()
@@ -35,6 +38,22 @@ func ConfigureConversationSandbox(ctx context.Context, sandbox Sandbox, root str
 	}
 	s.requirements.ConversationRoot = root
 	return s.Recreate(ctx)
+}
+
+// configureProcessConversationSandbox binds the native HOME and cwd into a
+// bwrap workspace. The host filesystem stays read-only apart from the run
+// workspace and the conversation HOME; the host network and the Docker
+// daemon socket stay reachable, so the agent can build and run containers.
+// seatbelt cannot remap <root>/ws onto the run workspace and is refused.
+func configureProcessConversationSandbox(s *processSandbox, root string) error {
+	if s.driver != "bwrap" {
+		return fmt.Errorf("macOS 原生沙箱（seatbelt）暂不支持对话工作区，请选择 Docker 沙箱或在 Linux 执行机器上使用 native")
+	}
+	if err := os.MkdirAll(filepath.Join(root, "home"), 0700); err != nil {
+		return err
+	}
+	s.requirements.ConversationRoot = root
+	return nil
 }
 
 // Keep security configuration mounted at fixed paths. Anchoring every parent
@@ -48,46 +67,64 @@ var conversationGuardFiles = []string{
 }
 
 func conversationGuardMounts(root string) ([]string, error) {
-	parents := map[string]bool{}
-	for _, rel := range conversationGuardFiles {
-		file := filepath.Join(root, filepath.FromSlash(rel))
-		for parent := filepath.Dir(file); parent != filepath.Join(root, "home"); parent = filepath.Dir(parent) {
-			parents[parent] = true
-		}
-		if err := os.MkdirAll(filepath.Dir(file), 0700); err != nil {
-			return nil, err
-		}
-		if _, err := os.Stat(file); os.IsNotExist(err) {
-			if err = os.WriteFile(file, []byte("{}"), 0600); err != nil {
-				return nil, err
-			}
-		} else if err != nil {
-			return nil, err
-		}
+	parents, files, err := conversationGuardPaths(root)
+	if err != nil {
+		return nil, err
 	}
-	ordered := make([]string, 0, len(parents))
-	for parent := range parents {
-		ordered = append(ordered, parent)
-	}
-	sort.Strings(ordered)
 	var mounts []string
-	for _, parent := range ordered {
+	for _, parent := range parents {
 		mounts = append(mounts, "-v", parent+":"+parent)
 	}
-	for _, rel := range conversationGuardFiles {
-		file := filepath.Join(root, filepath.FromSlash(rel))
+	for _, file := range files {
 		mounts = append(mounts, "-v", file+":"+file+":ro")
 	}
 	return mounts, nil
+}
+
+// conversationGuardPaths creates the guarded files under root and returns the
+// parent directories to anchor and the files to mount read-only.
+func conversationGuardPaths(root string) (parents, files []string, err error) {
+	anchors := map[string]bool{}
+	for _, rel := range conversationGuardFiles {
+		file := filepath.Join(root, filepath.FromSlash(rel))
+		for parent := filepath.Dir(file); parent != filepath.Join(root, "home"); parent = filepath.Dir(parent) {
+			anchors[parent] = true
+		}
+		if err := os.MkdirAll(filepath.Dir(file), 0700); err != nil {
+			return nil, nil, err
+		}
+		if _, err := os.Stat(file); os.IsNotExist(err) {
+			if err = os.WriteFile(file, []byte("{}"), 0600); err != nil {
+				return nil, nil, err
+			}
+		} else if err != nil {
+			return nil, nil, err
+		}
+		files = append(files, file)
+	}
+	for parent := range anchors {
+		parents = append(parents, parent)
+	}
+	sort.Strings(parents)
+	return parents, files, nil
 }
 
 // Reuse an image's CLI when available. Generic workspace images predate native
 // conversations, so provision the selected official CLI into this container on
 // first use. The native HOME remains separate from installer state.
 func ensureConversationCLI(ctx context.Context, sandbox Sandbox, provider, home string) (string, error) {
+	if _, native := unwrapSandbox(sandbox).(*processSandbox); native {
+		// A native workspace runs the execution machine's own CLI, as the
+		// platform mode of the same conversation does.
+		binary, err := exec.LookPath(conversationBinary(provider))
+		if err != nil {
+			return "", fmt.Errorf("执行机器未安装 CLI %s：%w", provider, err)
+		}
+		return binary, nil
+	}
 	s, ok := unwrapSandbox(sandbox).(*dockerSandbox)
 	if !ok {
-		return "", fmt.Errorf("对话工作区仅支持 Docker")
+		return "", fmt.Errorf("对话工作区只支持 Docker 或 native（Linux bwrap）沙箱")
 	}
 	binary := conversationBinary(provider)
 	setup, err := conversationCLISetup(provider, binary)

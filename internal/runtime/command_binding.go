@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"agentflow/internal/domain"
 	"agentflow/internal/observability"
 	"fmt"
 	"net/url"
@@ -43,6 +44,8 @@ func bindCommand(sandbox Sandbox, workspace string, command CommandSpec, credent
 	bound.environment["CODEBUDDY_API_KEY"] = ""
 	bound.environment["CODEBUDDY_INTERNET_ENVIRONMENT"] = ""
 	bound.environment["AGENTFLOW_GIT_TOKEN"] = ""
+	bound.environment["GH_TOKEN"] = ""
+	bound.environment["GITHUB_TOKEN"] = ""
 	for _, key := range []string{"OPENAI_API_KEY", "CODEX_API_KEY", "OPENAI_BASE_URL", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL", "CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY"} {
 		bound.environment[key] = ""
 	}
@@ -94,6 +97,10 @@ func bindCommand(sandbox Sandbox, workspace string, command CommandSpec, credent
 			bound.environment["CODEBUDDY_INTERNET_ENVIRONMENT"] = strings.TrimSpace(credentials.CodeBuddy.InternetEnvironment)
 		case BindGit:
 			if err := bindGitEnvironment(sandbox, workspace, bound.environment, credentials.GitToken); err != nil {
+				return CommandSpec{}, err
+			}
+		case BindGitWorkspace:
+			if err := bindWorkspaceGitEnvironment(sandbox, workspace, bound.environment, credentials); err != nil {
 				return CommandSpec{}, err
 			}
 		case BindMCP:
@@ -317,6 +324,93 @@ func bindGitEnvironment(sandbox Sandbox, workspace string, environment map[strin
 	environment["GIT_ASKPASS"] = askpass
 	environment["SSH_ASKPASS"] = askpass
 	return nil
+}
+
+// bindWorkspaceGitEnvironment configures git for an agent that clones and
+// pushes on its own. Unlike bindGitEnvironment it rewrites no remote: the
+// helper answers HTTPS prompts for GitHub and Gongfeng only, so the token is
+// never sent to another host the agent happens to contact.
+func bindWorkspaceGitEnvironment(sandbox Sandbox, workspace string, environment map[string]string, credentials RunCredentials) error {
+	environment["GIT_TERMINAL_PROMPT"] = "0"
+	if _, err := EnsureControlDirectory(workspace, "runtime"); err != nil {
+		return fmt.Errorf("create git runtime dir: %w", err)
+	}
+	// The requester's identity is the lowest-precedence (system) default, so
+	// the agent can still set its own with git config --global or --local.
+	if identity := workspaceGitIdentity(credentials.GitUserName, credentials.GitUserEmail); identity != "" {
+		systemHost := filepath.Join(workspace, ".agentflow", "runtime", "gitconfig-system")
+		if err := writeManagedFile(workspace, systemHost, []byte(identity), 0o600); err != nil {
+			return fmt.Errorf("write git identity: %w", err)
+		}
+		system := systemHost
+		if sandboxDriver(sandbox) == "docker" {
+			system = filepath.ToSlash(filepath.Join("/workspace", ".agentflow", "runtime", "gitconfig-system"))
+		}
+		environment["GIT_CONFIG_SYSTEM"] = system
+	}
+	token := strings.TrimSpace(credentials.GitToken)
+	if token == "" {
+		return nil
+	}
+	user := "x-access-token"
+	gongfengOAuth := false
+	if lower := strings.ToLower(token); strings.HasPrefix(lower, "oauth2:") {
+		user, token, gongfengOAuth = "oauth2", strings.TrimSpace(token[len("oauth2:"):]), true
+	} else if strings.HasPrefix(lower, "private:") {
+		user, token = "private", strings.TrimSpace(token[len("private:"):])
+	}
+	if token == "" {
+		return nil
+	}
+	askpassHost := filepath.Join(workspace, ".agentflow", "runtime", "git-askpass-hosts")
+	if err := writeManagedFile(workspace, askpassHost, []byte(workspaceGitAskPassScript(domain.GongfengRepoHost)), 0o700); err != nil {
+		return fmt.Errorf("write git askpass: %w", err)
+	}
+	askpass := askpassHost
+	if sandboxDriver(sandbox) == "docker" {
+		askpass = filepath.ToSlash(filepath.Join("/workspace", ".agentflow", "runtime", "git-askpass-hosts"))
+	}
+	environment["AGENTFLOW_GIT_TOKEN"] = token
+	environment["AGENTFLOW_GIT_USER"] = user
+	environment["GIT_ASKPASS"] = askpass
+	if !gongfengOAuth {
+		// A Gongfeng OAuth grant is useless to GitHub; anything else is the
+		// user's GitHub token (or a Gongfeng private token, which gh ignores).
+		environment["GH_TOKEN"] = token
+	}
+	return nil
+}
+
+func workspaceGitIdentity(name, email string) string {
+	clean := strings.NewReplacer("\n", " ", "\r", " ", "\"", "", "\\", "")
+	name, email = strings.TrimSpace(clean.Replace(name)), strings.TrimSpace(clean.Replace(email))
+	if name == "" && email == "" {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("[user]\n")
+	if name != "" {
+		fmt.Fprintf(&b, "\tname = \"%s\"\n", name)
+	}
+	if email != "" {
+		fmt.Fprintf(&b, "\temail = \"%s\"\n", email)
+	}
+	return b.String()
+}
+
+// workspaceGitAskPassScript answers git's HTTPS prompts for github.com and
+// the Gongfeng host only; other hosts get no credential.
+func workspaceGitAskPassScript(gongfengHost string) string {
+	return `#!/bin/sh
+case "$1" in
+  *"://github.com"*|*"@github.com"*|*"://` + gongfengHost + `"*|*"@` + gongfengHost + `"*) ;;
+  *) exit 1 ;;
+esac
+case "$1" in
+  *[Uu]sername*) printf '%s\n' "${AGENTFLOW_GIT_USER:-x-access-token}" ;;
+  *) printf '%s\n' "${AGENTFLOW_GIT_TOKEN-}" ;;
+esac
+`
 }
 
 const gitAskPassScript = `#!/bin/sh
