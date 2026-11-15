@@ -1,3 +1,5 @@
+//go:build !windows
+
 package runtime
 
 import (
@@ -36,11 +38,6 @@ type workspaceTerminal struct {
 	done    chan struct{}
 	release func()
 	once    sync.Once
-}
-type TerminalResult struct {
-	ID     string `json:"id"`
-	Data   []byte `json:"data,omitempty"`
-	Exited bool   `json:"exited"`
 }
 
 // Handle is the legacy local-only terminal entry point. Production callers

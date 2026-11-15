@@ -35,7 +35,11 @@ func materializeGateMCP(workspace, configRoot, binaryRel, resultPath, driver str
 	if err != nil {
 		return domain.MCPServerDefinition{}, fmt.Errorf("read gate MCP binary: %w", err)
 	}
-	binaryPath := filepath.Join(configRoot, "gate-mcp")
+	suffix := gateMCPExecutableSuffix(targetOS)
+	binaryPath := filepath.Join(configRoot, "gate-mcp"+suffix)
+	if suffix != "" {
+		binaryRel += suffix
+	}
 	if err := writeManagedFile(workspace, binaryPath, raw, 0o700); err != nil {
 		return domain.MCPServerDefinition{}, err
 	}
@@ -55,7 +59,7 @@ func materializeGateMCP(workspace, configRoot, binaryRel, resultPath, driver str
 // cache the small helper on demand. A sidecar next to the current executable
 // is also accepted so installed runner machines need no Go toolchain.
 func resolveGateMCPBinary(targetOS, targetArch string) (string, error) {
-	if targetOS != "darwin" && targetOS != "linux" {
+	if targetOS != "darwin" && targetOS != "linux" && targetOS != "windows" {
 		return "", fmt.Errorf("unsupported gate MCP operating system %q", targetOS)
 	}
 	if targetArch != "amd64" && targetArch != "arm64" {
@@ -63,19 +67,28 @@ func resolveGateMCPBinary(targetOS, targetArch string) (string, error) {
 	}
 	if pattern := strings.TrimSpace(os.Getenv("AGENTFLOW_GATE_MCP_BINARY")); pattern != "" {
 		path := expandPlatformPath(pattern, targetOS, targetArch)
-		if validExecutableFile(path) {
+		if usableGateMCPBinary(path, targetOS) {
 			return path, nil
+		}
+		// A Windows install may configure its native helper as a literal path.
+		// Docker must use the separately distributed Linux helper in that bundle.
+		if goruntime.GOOS == "windows" && targetOS != "windows" {
+			sibling := filepath.Join(filepath.Dir(path), fmt.Sprintf("agentflow-gate-mcp-%s-%s", targetOS, targetArch))
+			if usableGateMCPBinary(sibling, targetOS) {
+				return sibling, nil
+			}
 		}
 		return "", fmt.Errorf("gate MCP binary %s/%s is not deployed at %s", targetOS, targetArch, path)
 	}
 	if executable, err := os.Executable(); err == nil {
 		dir := filepath.Dir(executable)
+		suffix := gateMCPExecutableSuffix(targetOS)
 		for _, name := range []string{
-			fmt.Sprintf("agentflow-gate-mcp-%s-%s", targetOS, targetArch),
-			"agentflow-gate-mcp",
+			fmt.Sprintf("agentflow-gate-mcp-%s-%s%s", targetOS, targetArch, suffix),
+			"agentflow-gate-mcp" + suffix,
 		} {
 			path := filepath.Join(dir, name)
-			if validExecutableFile(path) && (name != "agentflow-gate-mcp" || targetOS == goruntime.GOOS && targetArch == goruntime.GOARCH) {
+			if usableGateMCPBinary(path, targetOS) && (name != "agentflow-gate-mcp"+suffix || targetOS == goruntime.GOOS && targetArch == goruntime.GOARCH) {
 				return path, nil
 			}
 		}
@@ -86,7 +99,7 @@ func resolveGateMCPBinary(targetOS, targetArch string) (string, error) {
 	}
 	gateMCPBuildMu.Lock()
 	defer gateMCPBuildMu.Unlock()
-	cache := filepath.Join(os.TempDir(), fmt.Sprintf("agentflow-gate-mcp-%s-%s", targetOS, targetArch))
+	cache := filepath.Join(os.TempDir(), fmt.Sprintf("agentflow-gate-mcp-%s-%s%s", targetOS, targetArch, gateMCPExecutableSuffix(targetOS)))
 	if !buildArtifactFresh(cache, root) {
 		build := exec.Command("go", "build", "-o", cache, "./cmd/agentflow-gate-mcp")
 		build.Dir = root
@@ -99,6 +112,13 @@ func resolveGateMCPBinary(targetOS, targetArch string) (string, error) {
 	return cache, nil
 }
 
+func gateMCPExecutableSuffix(targetOS string) string {
+	if targetOS == "windows" {
+		return ".exe"
+	}
+	return ""
+}
+
 func expandPlatformPath(pattern, targetOS, targetArch string) string {
 	return strings.ReplaceAll(strings.ReplaceAll(pattern, "{os}", targetOS), "{arch}", targetArch)
 }
@@ -106,6 +126,26 @@ func expandPlatformPath(pattern, targetOS, targetArch string) string {
 func validExecutableFile(path string) bool {
 	info, err := os.Stat(path)
 	return err == nil && !info.IsDir() && info.Size() > 0
+}
+
+func usableGateMCPBinary(path, targetOS string) bool {
+	if !validExecutableFile(path) {
+		return false
+	}
+	if goruntime.GOOS != "windows" || targetOS == "windows" {
+		return true
+	}
+	if strings.EqualFold(filepath.Ext(path), ".exe") {
+		return false
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer file.Close()
+	var magic [2]byte
+	_, err = file.Read(magic[:])
+	return err == nil && string(magic[:]) != "MZ"
 }
 
 func gateMCPSourceRoot() string {

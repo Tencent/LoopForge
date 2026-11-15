@@ -37,10 +37,10 @@ func (codeBuddyProvider) Materialize(ctx *providerMaterializeContext) error {
 	if err := mergeHookSettings(ctx.Workspace, settingsPath, ctx.Compiled.Hooks); err != nil {
 		return err
 	}
-	if err := replaceRelativeSymlink(filepath.Join(ctx.AgentRoot, "hooks"), filepath.Join("..", "hooks", "codebuddy")); err != nil {
+	if err := materializeManagedBinding(ctx.Workspace, filepath.Join(ctx.AgentRoot, "hooks"), filepath.Join("..", "hooks", "codebuddy")); err != nil {
 		return err
 	}
-	if err := replaceRelativeSymlink(filepath.Join(ctx.AgentRoot, "codebuddy-settings.json"), filepath.Join("..", "config", ctx.AgentID, "codebuddy-settings.json")); err != nil {
+	if err := materializeManagedBinding(ctx.Workspace, filepath.Join(ctx.AgentRoot, "codebuddy-settings.json"), filepath.Join("..", "config", ctx.AgentID, "codebuddy-settings.json")); err != nil {
 		return err
 	}
 	ctx.Compiled.Args = append(ctx.Compiled.Args,

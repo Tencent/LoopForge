@@ -75,7 +75,7 @@ type InvocationOptions struct {
 // features, but cannot supply arbitrary environment variables.
 type CommandSpec struct {
 	// WorkingDir and OwnProcessGroup are used by durable conversation processes.
-	// The cwd is mounted at the same absolute path in host and Docker modes.
+	// Docker translates host conversation paths to its mounted execution root.
 	WorkingDir         string
 	OwnProcessGroup    bool
 	Argv               []string

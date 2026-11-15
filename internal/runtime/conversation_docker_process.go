@@ -4,8 +4,38 @@ func dockerConversationProcessArgv(file string, argv []string) []string {
 	return withToolchainPath(append([]string{"python3", "-c", dockerConversationProcessSupervisor, file}, argv...))
 }
 
+func dockerConversationLeasedProcessArgv(file, lease string, argv []string) []string {
+	return dockerWindowsPythonArgv(append([]string{dockerConversationProcessSupervisor, file, "--owner-lease", lease}, argv...))
+}
+
+func dockerConversationLeasedStopArgv(file string) []string {
+	return dockerWindowsPythonArgv([]string{dockerConversationProcessStop, file})
+}
+
 func dockerConversationStopArgv(file string) []string {
 	return withToolchainPath([]string{"python3", "-c", dockerConversationProcessStop, file})
+}
+
+const dockerWindowsPythonRequired = "Windows Docker execution requires Python 3 in the container image at /usr/bin/python3 or /usr/local/bin/python3; install python3 and retry."
+
+// Supervisors run in the canonical capability-restricted container. Scripts
+// reach this only after scriptview drops its bootstrap capabilities. Isolated
+// Python and absolute image interpreters reject workspace module/PATH shims.
+func dockerWindowsPythonArgv(arguments []string) []string {
+	launch := `for python in /usr/bin/python3 /usr/local/bin/python3; do
+  if [ -x "$python" ]; then exec "$python" -I -c "$@"; fi
+done
+printf '%s\n' '` + dockerWindowsPythonRequired + `' >&2
+exit 127`
+	return append([]string{"/bin/sh", "-c", launch, "loopforge-process-supervisor"}, arguments...)
+}
+
+func dockerScriptProcessArgv(file, lease string, argv []string) []string {
+	return dockerWindowsPythonArgv(append([]string{dockerConversationProcessSupervisor, file, "--retain-successful-background-services", "--owner-lease", lease}, argv...))
+}
+
+func dockerScriptStopArgv(file string) []string {
+	return dockerWindowsPythonArgv([]string{dockerConversationProcessStop, file})
 }
 
 // A CLI may create new sessions for its native shell tools. Killing only its
@@ -14,6 +44,10 @@ func dockerConversationStopArgv(file string) []string {
 // workspace container. It preserves stdin and waits for cleanup before exit.
 const dockerConversationProcessSupervisor = `import ctypes,json,os,signal,subprocess,sys,time
 path=sys.argv[1]
+keep_success=len(sys.argv)>2 and sys.argv[2]=='--retain-successful-background-services'
+argv=sys.argv[3:] if keep_success else sys.argv[2:]
+owner_lease=argv[1] if len(argv)>1 and argv[0]=='--owner-lease' else ''
+if owner_lease: argv=argv[2:]
 stopped=path+'.stop'
 cancelled=False
 def cancel(signum,frame):
@@ -32,6 +66,15 @@ me=os.getpid()
 identity=stat(me)
 if identity is None or ctypes.CDLL(None,use_errno=True).prctl(36,1,0,0,0)!=0:
     sys.exit('native CLI requires Linux child subreaper support')
+
+def lease_alive():
+    if not owner_lease: return True
+    try:
+        with open(owner_lease) as f: lease=int(f.read().strip())
+        with open('/proc/uptime') as f: now=int(f.read().split('.')[0])
+        return 0<=now-lease<=6
+    except (OSError,ValueError):
+        return False
 def state(status):
     temp=path+'.tmp'
     fd=os.open(temp,os.O_WRONLY|os.O_CREAT|os.O_TRUNC|os.O_NOFOLLOW,0o600)
@@ -90,12 +133,20 @@ try:
     state('running')
     # The stop marker also fences cancellation before docker exec reaches
     # this wrapper. A late launch cannot begin a new CLI after stop returned.
+    if not lease_alive(): cancelled=True
     if not cancelled and not os.path.exists(stopped):
-        child=subprocess.Popen(sys.argv[2:],start_new_session=True)
+        child=subprocess.Popen(argv,start_new_session=True)
         while child.poll() is None and not cancelled and not os.path.exists(stopped):
+            if not lease_alive(): cancelled=True; break
             time.sleep(0.05)
 finally:
-    code=cleanup(child)
+    # Trusted scripts intentionally keep successful background services warm.
+    # Cancellation and every failure still revoke the complete owned tree.
+    if not lease_alive(): cancelled=True
+    if keep_success and child is not None and child.poll()==0 and not cancelled and not os.path.exists(stopped):
+        code=0
+    else:
+        code=cleanup(child)
     state('done')
 sys.exit(143 if cancelled or os.path.exists(stopped) else (code if code>=0 else 128-code))
 `
