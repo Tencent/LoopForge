@@ -33,6 +33,10 @@ For a complete clean container installation, run `bash scripts/test-container.sh
 
 Non-authentication journeys share one real password session per worker in memory to respect the production login rate limit. Password-form and credential regressions remain separate; cookies are not written to reports.
 
+`forgejo.spec.mjs` checks repository binding and token management against an enabled Forgejo instance. Set `LOOPFORGE_TEST_FORGEJO_WEB_URL`, `LOOPFORGE_TEST_FORGEJO_SSH_URL` and `LOOPFORGE_TEST_FORGEJO_TOKEN_FILE` for a disposable repository. Use a test account without a saved token for that instance. The test deletes the binding and token from LoopForge afterwards. It does not push to Forgejo.
+
+With those variables and `LOOPFORGE_TEST_FORGEJO_KEY_FILE`, `AGENTFLOW_GIT_SSH_KNOWN_HOSTS` and `AGENTFLOW_FORGE_INSTANCES` set, run `go test ./internal/engine -run '^TestForgejoScheduledIntegrationLive$' -count=1` to exercise scheduled delivery against a disposable Forgejo repository. It pushes and merges a test branch into the existing `agentflow/integration` branch and checks that `main` did not move.
+
 
 `executors.spec.mjs` checks independent CodeBuddy/Codex/Claude selection, provider-specific models, custom model IDs, credential-field navigation, missing-key API denial, choice persistence and per-role SOP readiness. It also keeps model/approval menus inside a short desktop window and a narrow mobile viewport after dismissing onboarding. It uses only inert credentials for UI checks; no paid Codex or Claude call is implied.
 

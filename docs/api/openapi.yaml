@@ -4250,6 +4250,7 @@ components:
         deptName: {type: string}
         avatarUrl: {type: string}
         gitTokenConfigured: {type: boolean, readOnly: true}
+        forgeTokenConfigured: {type: boolean, readOnly: true}
         codeBuddyApiKeyConfigured: {type: boolean, readOnly: true}
         codexApiKeyConfigured: {type: boolean, readOnly: true}
         codexBaseUrl: {type: string}
@@ -4276,7 +4277,7 @@ components:
         gongfengProjectId: {type: string, description: Legacy wire field for repository identity; GitHub uses github:owner/repo. Prefer repoUrl.}
         defaultBranch: {type: string}
         integrateBranch: {type: string}
-        provider: {type: string, description: GitHub is inferred from repoUrl; legacy provider values remain compatible, example: github}
+        provider: {type: string, description: "GitHub is inferred from repoUrl. For forgejo, supply the repository's SSH clone and HTTPS web addresses.", example: github}
         pipelineProjectId: {type: integer}
         pipelineDefId: {type: integer}
     Repository:
@@ -4289,7 +4290,7 @@ components:
           type: string
         provider:
           type: string
-          description: GitHub for public repositories; inferred from the repository URL
+          description: Hosting provider, including github, forgejo and ssh
           example: github
         name:
           type: string
