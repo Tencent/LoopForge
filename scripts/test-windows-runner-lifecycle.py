@@ -619,15 +619,38 @@ console.error("EXPECTED_NATIVE_FAILURE"); process.exit(7);
         # Windows PowerShell can let detached children inherit extra handles.
         # A regular log file avoids waiting for pipe EOF until the Runner stops.
         log_path = self.root / "installer-command.log"
-        with log_path.open("wb") as log:
-            process_environment = self.isolated_environment()
-            process_environment.update(environment or {})
-            result = subprocess.run([
-                powershell, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
-                "-File", str(Path(__file__).resolve().parents[1] / "deploy/bind-cli.ps1"),
-                "-InstallDirectory", str(install), *arguments,
-            ], env=process_environment, cwd=self.root, stdin=subprocess.DEVNULL,
-                stdout=log, stderr=subprocess.STDOUT, timeout=60)
+        timed_out = False
+        try:
+            with log_path.open("wb") as log:
+                process_environment = self.isolated_environment()
+                process_environment.update(environment or {})
+                # Allow the installer's 120-second readiness deadline plus
+                # artifact validation and process startup on a loaded host.
+                result = subprocess.run([
+                    powershell, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
+                    "-File", str(Path(__file__).resolve().parents[1] / "deploy/bind-cli.ps1"),
+                    "-InstallDirectory", str(install), *arguments,
+                ], env=process_environment, cwd=self.root, stdin=subprocess.DEVNULL,
+                    stdout=log, stderr=subprocess.STDOUT, timeout=180)
+        except subprocess.TimeoutExpired:
+            timed_out = True
+        if timed_out:
+            try:
+                partial_output = log_path.read_text(errors="replace")
+            except OSError as error:
+                partial_output = "Cannot read installer-command.log: " + str(error)
+            try:
+                diagnostics = self.diagnostics()
+            except OSError as error:
+                diagnostics = "Cannot read Runner diagnostics: " + str(error)
+            message = ("Installer command exceeded the 180-second harness budget.\n"
+                       "Partial installer-command.log:\n" + partial_output
+                       + "\nRunner diagnostics:\n" + diagnostics)
+            for secret in (BIND_CODE, SESSION, CREDENTIAL_CANARY):
+                message = message.replace(secret, "<redacted fixture credential>")
+            # Fail outside the exception handler so TimeoutExpired's argv
+            # (which contains the binding code) is not chained into the log.
+            self.fail(message)
         output = log_path.read_text(errors="replace")
         if success:
             self.assertEqual(result.returncode, 0, output + self.diagnostics())
