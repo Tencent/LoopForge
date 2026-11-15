@@ -104,7 +104,11 @@ func ParseCandidate(raw string) (Candidate, error) {
 	}
 	var c Candidate
 	if err := json.Unmarshal([]byte(body), &c); err != nil {
-		return Candidate{}, fmt.Errorf("改进器返回的 JSON 无法解析：%w", err)
+		// Models often put literal newlines or tabs inside the long
+		// "content" string; escape them and try once more.
+		if retryErr := json.Unmarshal([]byte(escapeRawControlInStrings(body)), &c); retryErr != nil {
+			return Candidate{}, fmt.Errorf("改进器返回的 JSON 无法解析：%w", err)
+		}
 	}
 	c.Title = strings.TrimSpace(c.Title)
 	c.Rationale = strings.TrimSpace(c.Rationale)
@@ -116,6 +120,45 @@ func ParseCandidate(raw string) (Candidate, error) {
 		c.Title = "改进正文"
 	}
 	return c, nil
+}
+
+// escapeRawControlInStrings escapes control characters that appear inside
+// JSON string literals, leaving structure and existing escapes untouched.
+func escapeRawControlInStrings(body string) string {
+	var b strings.Builder
+	b.Grow(len(body) + 16)
+	inString, escaped := false, false
+	for _, r := range body {
+		if !inString {
+			if r == '"' {
+				inString = true
+			}
+			b.WriteRune(r)
+			continue
+		}
+		switch {
+		case escaped:
+			escaped = false
+			b.WriteRune(r)
+		case r == '\\':
+			escaped = true
+			b.WriteRune(r)
+		case r == '"':
+			inString = false
+			b.WriteRune(r)
+		case r == '\n':
+			b.WriteString(`\n`)
+		case r == '\r':
+			b.WriteString(`\r`)
+		case r == '\t':
+			b.WriteString(`\t`)
+		case r < 0x20:
+			fmt.Fprintf(&b, `\u%04x`, r)
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }
 
 var placeholderPattern = regexp.MustCompile(`\{\{[a-zA-Z_]+\}\}`)

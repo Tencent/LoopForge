@@ -267,6 +267,10 @@ func TestParseCandidate(t *testing.T) {
 	if c, err := ParseCandidate(`{"content":"x"}`); err != nil || c.Title != "改进正文" {
 		t.Fatalf("default title: %+v %v", c, err)
 	}
+	raw := "{\"title\":\"补充 e2e\",\"rationale\":\"第一行\n第二行\",\"content\":\"工作领域：评审。\n\t- 必须检查 \\\"端到端\\\" 用例\r\n- 缺失即 REJECT\"}"
+	if c, err := ParseCandidate(raw); err != nil || c.Content != "工作领域：评审。\n\t- 必须检查 \"端到端\" 用例\r\n- 缺失即 REJECT" || c.Rationale != "第一行\n第二行" {
+		t.Fatalf("raw newlines inside strings should be tolerated: %+v %v", c, err)
+	}
 	for _, raw := range []string{"", "no json", `{"title":"t","content":"  "}`, `{"title":`} {
 		if _, err := ParseCandidate(raw); err == nil {
 			t.Fatalf("expected error for %q", raw)

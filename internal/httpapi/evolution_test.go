@@ -281,3 +281,90 @@ func TestEvolutionPolicyFeedbackAndSamples(t *testing.T) {
 	}
 	requestJSON[map[string]any](t, env.router, http.MethodGet, "/api/evolution/overview", nil, http.StatusBadRequest)
 }
+
+func (env *evoTestEnv) seedReplay(t *testing.T, proposalID, sourceID string, replayRun domain.Run) {
+	t.Helper()
+	replayRun.ExecutionContext = domain.TelemetryContext{ProjectID: "evo-p", Purpose: domain.RunPurposeEvolutionReplay, EvolutionReplayID: "evr-" + replayRun.ID}
+	if replayRun.CreatedAt.IsZero() {
+		replayRun.CreatedAt, replayRun.UpdatedAt = time.Now().UTC(), time.Now().UTC()
+	}
+	if err := env.store.PutRun(replayRun); err != nil {
+		t.Fatal(err)
+	}
+	if err := env.store.PutEvoReplay(domain.EvoReplay{
+		ID: "evr-" + replayRun.ID, ProposalID: proposalID, ProjectID: "evo-p", Group: domain.EvoGroupDiagnosis,
+		SourceRunID: sourceID, SourceStatus: "succeeded", SourceScore: 2, RunID: replayRun.ID, Status: replayRun.Status, StartedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func (env *evoTestEnv) seedValidatingProposal(t *testing.T, id string) {
+	t.Helper()
+	if err := env.store.PutEvoProposal(domain.EvoProposal{
+		ID: id, ProjectID: "evo-p", AssetKind: domain.EvoAssetAgent, AssetID: env.agent.ID, AssetName: env.agent.Name,
+		Status: domain.EvoProposalValidating, CandidateContent: env.agent.Prompt + "\n补充 e2e 检查", BaseHash: domain.ContentHash(env.agent.Prompt),
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestEvolutionFeedbackReplayDeliberateRejectIsNotRegression(t *testing.T) {
+	env := newEvoTestEnv(t)
+	env.seedRun(t, "evo-fb-src", "succeeded", "succeeded", "")
+	env.seedValidatingProposal(t, "evp-fb")
+	now := time.Now().UTC()
+	env.seedReplay(t, "evp-fb", "evo-fb-src", domain.Run{
+		ID: "evo-fb-replay", WorkflowID: env.wf.ID, Status: "failed", WorkflowSnapshot: env.wf,
+		Nodes: map[string]*domain.NodeRun{"code": {NodeID: "code", Status: "failed", FinishedAt: now,
+			Error:      "agent submitted terminal failure: 缺少端到端验收用例",
+			GateResult: &domain.GateResult{Decision: "fail", Reason: "缺少端到端验收用例"}}},
+	})
+	p := env.h.sweepProposal(domain.EvoProposal{ID: "evp-fb"}, now)
+	if len(p.Replays) != 1 || p.Replays[0].Outcome != domain.EvoOutcomeSame || !strings.Contains(p.Replays[0].Error, "阻断结论") {
+		t.Fatalf("deliberate reject on a feedback sample should not regress: %+v", p.Replays)
+	}
+	if p.Status != domain.EvoProposalPending || !p.Summary.Passed {
+		t.Fatalf("proposal should await review: status=%s summary=%+v", p.Status, p.Summary)
+	}
+
+	env.seedValidatingProposal(t, "evp-crash")
+	env.seedReplay(t, "evp-crash", "evo-fb-src", domain.Run{
+		ID: "evo-crash-replay", WorkflowID: env.wf.ID, Status: "failed", WorkflowSnapshot: env.wf,
+		Nodes: map[string]*domain.NodeRun{"code": {NodeID: "code", Status: "failed", Error: "executor reported an error", FinishedAt: now}},
+	})
+	p = env.h.sweepProposal(domain.EvoProposal{ID: "evp-crash"}, now)
+	if p.Replays[0].Outcome != domain.EvoOutcomeRegressed || p.Status != domain.EvoProposalFailed {
+		t.Fatalf("an executor error is still a regression: status=%s replays=%+v", p.Status, p.Replays)
+	}
+}
+
+func TestEvolutionReplayAutoApprovesGatesTheSourcePassed(t *testing.T) {
+	env := newEvoTestEnv(t)
+	wf := env.wf
+	wf.Nodes = append([]domain.WorkflowNode{{ID: "accept", Name: "验收", Type: "approval"}}, wf.Nodes...)
+	now := time.Now().UTC()
+	source := domain.Run{ID: "evo-gate-src", WorkflowID: wf.ID, Status: "succeeded", WorkflowSnapshot: wf, ExecutionContext: domain.TelemetryContext{ProjectID: "evo-p"},
+		Nodes:     map[string]*domain.NodeRun{"accept": {NodeID: "accept", Status: "succeeded"}, "code": {NodeID: "code", Status: "succeeded"}},
+		CreatedAt: now, UpdatedAt: now}
+	if err := env.store.PutRun(source); err != nil {
+		t.Fatal(err)
+	}
+
+	env.seedValidatingProposal(t, "evp-own-gate")
+	env.seedReplay(t, "evp-own-gate", source.ID, domain.Run{ID: "evo-own-gate", WorkflowID: wf.ID, Status: "waiting", WorkflowSnapshot: wf,
+		Nodes: map[string]*domain.NodeRun{"accept": {NodeID: "accept", Status: "pending"}, "code": {NodeID: "code", Status: "waiting_approval"}}})
+	p := env.h.sweepProposal(domain.EvoProposal{ID: "evp-own-gate"}, now)
+	if run, _ := env.store.RunState("evo-own-gate"); run.Nodes["code"].Status != "waiting_approval" || p.Replays[0].WaitingSince.IsZero() {
+		t.Fatalf("a gate raised by the improved node must stay open: node=%s replay=%+v", run.Nodes["code"].Status, p.Replays[0])
+	}
+
+	env.seedValidatingProposal(t, "evp-approval")
+	env.seedReplay(t, "evp-approval", source.ID, domain.Run{ID: "evo-approval", WorkflowID: wf.ID, Status: "waiting", WorkflowSnapshot: wf,
+		Nodes: map[string]*domain.NodeRun{"accept": {NodeID: "accept", Status: "waiting_approval"}, "code": {NodeID: "code", Status: "succeeded"}}})
+	p = env.h.sweepProposal(domain.EvoProposal{ID: "evp-approval"}, now)
+	run, _ := env.store.RunState("evo-approval")
+	if run.Nodes["accept"].Status != "succeeded" || p.Replays[0].Status == "waiting" || !p.Replays[0].WaitingSince.IsZero() {
+		t.Fatalf("an approval the source passed should be auto-approved: node=%s replay=%+v", run.Nodes["accept"].Status, p.Replays[0])
+	}
+}

@@ -263,22 +263,8 @@ func (h *evolutionHandlers) planReplays(p domain.EvoProposal, finding domain.Evo
 }
 
 func (h *evolutionHandlers) runUsesAsset(run domain.Run, asset evoAsset) bool {
-	for _, node := range run.WorkflowSnapshot.Nodes {
-		if node.AgentID == "" || node.Type == "script" || node.Type == "command" || node.Type == "approval" || node.Type == "sop" {
-			continue
-		}
-		if asset.Kind == domain.EvoAssetAgent && node.AgentID == asset.ID {
-			return true
-		}
-		if asset.Kind == domain.EvoAssetRule {
-			if agent, ok := h.repo.Agent(node.AgentID); ok {
-				for _, id := range agent.Rules {
-					if id == asset.ID {
-						return true
-					}
-				}
-			}
-		}
+	if len(h.assetNodeIDs(run, asset)) > 0 {
+		return true
 	}
 	if asset.Kind == domain.EvoAssetRule && asset.rule.Global {
 		for _, id := range asset.rule.WorkflowIDs {
@@ -288,6 +274,42 @@ func (h *evolutionHandlers) runUsesAsset(run domain.Run, asset evoAsset) bool {
 		}
 	}
 	return false
+}
+
+// assetNodeIDs lists the agent nodes of a run whose behavior the asset
+// shapes: nodes running the role, or nodes whose role carries the rule.
+func (h *evolutionHandlers) assetNodeIDs(run domain.Run, asset evoAsset) map[string]bool {
+	out := map[string]bool{}
+	for _, node := range run.WorkflowSnapshot.Nodes {
+		if node.AgentID == "" || node.Type == "script" || node.Type == "command" || node.Type == "approval" || node.Type == "sop" {
+			continue
+		}
+		if asset.Kind == domain.EvoAssetAgent && node.AgentID == asset.ID {
+			out[node.ID] = true
+		}
+		if asset.Kind == domain.EvoAssetRule {
+			if agent, ok := h.repo.Agent(node.AgentID); ok {
+				for _, id := range agent.Rules {
+					if id == asset.ID {
+						out[node.ID] = true
+					}
+				}
+			}
+		}
+	}
+	if asset.Kind == domain.EvoAssetRule && asset.rule.Global && len(out) == 0 {
+		for _, id := range asset.rule.WorkflowIDs {
+			if strings.TrimSpace(id) != run.WorkflowID {
+				continue
+			}
+			for _, node := range run.WorkflowSnapshot.Nodes {
+				if node.AgentID != "" && node.Type != "approval" && node.Type != "script" && node.Type != "command" && node.Type != "sop" {
+					out[node.ID] = true
+				}
+			}
+		}
+	}
+	return out
 }
 
 // experienceLines are released proposals of the same kind in the project:
@@ -368,6 +390,76 @@ func blockReplay(r *domain.EvoReplay, now time.Time, msg string) {
 	r.FinishedAt = now
 }
 
+// evoFeedbackSampleGroup: a diagnosis/holdout sample whose source run had
+// succeeded, i.e. it is in the finding only because of feedback or evals.
+func evoFeedbackSampleGroup(r domain.EvoReplay) bool {
+	return (r.Group == domain.EvoGroupDiagnosis || r.Group == domain.EvoGroupHoldout) && r.SourceScore == 2
+}
+
+func evoSnapshotNode(run domain.Run, id string) (domain.WorkflowNode, bool) {
+	for _, node := range run.WorkflowSnapshot.Nodes {
+		if node.ID == id {
+			return node, true
+		}
+	}
+	return domain.WorkflowNode{}, false
+}
+
+// deliberateAssetVerdict finds a node shaped by the asset that ended the run
+// by its own terminal decision (submit_gate_result fail / rework), as
+// opposed to crashing or erroring.
+func (h *evolutionHandlers) deliberateAssetVerdict(run domain.Run, asset evoAsset) (string, string) {
+	for id := range h.assetNodeIDs(run, asset) {
+		nr := run.Nodes[id]
+		if nr == nil || nr.Status != "failed" || nr.GateResult == nil {
+			continue
+		}
+		if d := nr.GateResult.Decision; d != "fail" && d != "rework" {
+			continue
+		}
+		name := id
+		if node, ok := evoSnapshotNode(run, id); ok && strings.TrimSpace(node.Name) != "" {
+			name = node.Name
+		}
+		return name, firstNonEmpty(nr.GateResult.Reason, nr.GateResult.Summary)
+	}
+	return "", ""
+}
+
+// autoApproveReplayGates lets a replay pass human gates the source run had
+// already passed: approval nodes and upstream agents that now ask for a
+// confirmation. Replays never deliver or write externally, and the gate is
+// only answered when the source run continued past the same node. A gate
+// raised by a node the asset shapes stays open: that is the candidate's own
+// behavior and the wait grace turns it into a blocked sample.
+func (h *evolutionHandlers) autoApproveReplayGates(r *domain.EvoReplay, run domain.Run, asset evoAsset) bool {
+	source, ok := h.repo.RunState(r.SourceRunID)
+	if !ok {
+		return false
+	}
+	shaped := h.assetNodeIDs(run, asset)
+	approved := false
+	for id, nr := range run.Nodes {
+		if nr == nil || nr.Status != "waiting_approval" {
+			continue
+		}
+		node, found := evoSnapshotNode(run, id)
+		if !found || (shaped[id] && node.Type != "approval") {
+			continue
+		}
+		if src := source.Nodes[id]; src == nil || src.Status != "succeeded" {
+			continue
+		}
+		note := "进化回放自动确认：原运行在此节点已继续执行。请沿用需求中的信息和常规默认做法继续，不要再等待人工补充。"
+		if err := h.engine.Approve(run.ID, id, note); err != nil {
+			log.Printf("evolution replay %s auto-approve %s: %v", r.ID, id, err)
+			continue
+		}
+		approved = true
+	}
+	return approved
+}
+
 // sweepProposal advances replays from their run states and settles the
 // proposal once every replay has an outcome: passed → pending (awaiting a
 // human), otherwise failed with the verdict.
@@ -380,6 +472,7 @@ func (h *evolutionHandlers) sweepProposal(p domain.EvoProposal, now time.Time) d
 	}
 	timeout := evoDurationEnv("AGENTFLOW_EVOLUTION_REPLAY_TIMEOUT", evoDefaultReplayTimeout)
 	grace := evoDurationEnv("AGENTFLOW_EVOLUTION_WAIT_GRACE", evoDefaultWaitGrace)
+	asset, assetOK := h.loadAsset(p.AssetKind, p.AssetID)
 	replays := h.repo.EvoReplays(p.ID)
 	for i := range replays {
 		r := &replays[i]
@@ -404,12 +497,27 @@ func (h *evolutionHandlers) sweepProposal(p domain.EvoProposal, now time.Time) d
 				r.FinishedAt = now
 				if run.Status == "cancelled" {
 					blockReplay(r, now, firstNonEmpty(r.Error, "回放运行被取消"))
-				} else {
-					r.Outcome = evolution.Outcome(r.SourceScore, score)
+					break
+				}
+				r.Outcome = evolution.Outcome(r.SourceScore, score)
+				if assetOK && r.Outcome == domain.EvoOutcomeRegressed && evoFeedbackSampleGroup(*r) {
+					if node, verdict := h.deliberateAssetVerdict(run, asset); node != "" {
+						// The improved node itself decided to stop the run
+						// (e.g. a reviewer now REJECTs). For a sample raised by
+						// feedback that is the behavior change under test, not
+						// a defect; a human judges it from the replay output.
+						r.Outcome = domain.EvoOutcomeSame
+						r.Error = "「" + node + "」按新正文给出阻断结论，请查看回放产出是否符合反馈：" + domain.TrimEvoText(verdict, 160)
+					}
 				}
 				break
 			}
 			if evolution.ReplayWaiting(run) {
+				if assetOK && h.autoApproveReplayGates(r, run, asset) {
+					r.Status = "running"
+					r.WaitingSince = time.Time{}
+					break
+				}
 				r.Status = "waiting"
 				if r.WaitingSince.IsZero() {
 					r.WaitingSince = now
