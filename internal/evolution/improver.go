@@ -70,7 +70,7 @@ func BuildImproverPrompt(kind, name, content string, finding domain.EvoFinding, 
 		label = "规则正文"
 	}
 	var b strings.Builder
-	b.WriteString("你是 LoopForge 平台的资产改进器。你要改进一份" + label + "，让它在下面这些失败样本上表现更好，同时不破坏原本做得好的场景。\n")
+	b.WriteString("你是 LoopForge 平台的资产改进器。你要改进一份" + label + "，让它在下面这些失败或被用户反馈的样本上表现更好，同时不破坏原本做得好的场景。\n")
 	b.WriteString("工作方法：\n")
 	b.WriteString("1. 先在心里列出两种改法：A 最小不变量修补（只补缺失的约束/步骤/检查），B 领域视角重写（重新组织该领域的关键做法）。\n")
 	b.WriteString("2. 输出时只给 A 为主、必要时吸收 B 中关键点的合成版本，尽量少改；保留原有结构、标题、占位符（如 {{input}}、{{repository}}）和所有未出问题的要求。\n")

@@ -57,11 +57,37 @@ func Outcome(sourceScore, replayScore int) string {
 	}
 }
 
+// FeedbackSample reports whether a cleanly succeeded run carries a user
+// feedback or low eval signal in the finding. Its status cannot show a fix,
+// but its input is exactly what the improver has to address.
+func FeedbackSample(run domain.Run, finding domain.EvoFinding) bool {
+	if RunScore(run) != 2 {
+		return false
+	}
+	for _, sig := range finding.Signals {
+		if sig.RunID == run.ID && (sig.Kind == SignalUserFeedback || sig.Kind == SignalEvalLow) {
+			return true
+		}
+	}
+	return false
+}
+
 // Summarize tallies replays and decides whether the candidate passes:
 // every replay finished, at least one more fixed than regressed, at least
 // one fix, and no more than one regression.
+//
+// When every diagnosis/holdout sample already succeeded (a finding raised
+// only by user feedback or low eval scores), run status cannot prove a fix.
+// The candidate then passes when nothing regressed, and the verdict asks the
+// reviewer to compare replay outputs before releasing.
 func Summarize(replays []domain.EvoReplay) domain.EvoReplaySummary {
 	s := domain.EvoReplaySummary{Total: len(replays)}
+	fixable := 0
+	for _, r := range replays {
+		if (r.Group == domain.EvoGroupDiagnosis || r.Group == domain.EvoGroupHoldout) && r.SourceScore < 2 {
+			fixable++
+		}
+	}
 	for _, r := range replays {
 		if r.Outcome == "" {
 			continue
@@ -90,6 +116,11 @@ func Summarize(replays []domain.EvoReplay) domain.EvoReplaySummary {
 	switch {
 	case judged == 0:
 		s.Verdict = "全部回放被人工节点或异常阻塞，无法判定"
+	case fixable == 0 && s.Regressed == 0:
+		s.Passed = true
+		s.Verdict = fmt.Sprintf("通过（反馈类问题）：%d 个回放均未退化；运行状态无法证明反馈已解决，请对比回放产出后再发布", judged)
+	case fixable == 0:
+		s.Verdict = fmt.Sprintf("未通过：反馈类问题的回放出现 %d 个退化", s.Regressed)
 	case s.Fixed >= 1 && s.Regressed <= 1 && s.Fixed > s.Regressed:
 		s.Passed = true
 		s.Verdict = fmt.Sprintf("通过：修好 %d，回归 %d，持平 %d", s.Fixed, s.Regressed, s.Unchanged)

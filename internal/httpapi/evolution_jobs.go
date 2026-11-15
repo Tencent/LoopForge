@@ -170,7 +170,7 @@ func (h *evolutionHandlers) runProposalJob(p domain.EvoProposal, finding domain.
 		}
 	}
 	if len(evidence) == 0 {
-		h.failProposal(p, "没有可回放的失败样本（样本运行可能已删除或不属于可回放的 SOP）")
+		h.failProposal(p, "没有可回放的样本（样本运行可能已删除、仍在运行，或不属于可回放的 SOP）")
 		return
 	}
 	system, prompt := evolution.BuildImproverPrompt(asset.Kind, asset.Name, asset.Content, finding, evidence, h.experienceLines(p))
@@ -228,7 +228,7 @@ func (h *evolutionHandlers) planReplays(p domain.EvoProposal, finding domain.Evo
 		if !ok || run.ExecutionContext.IsEvolutionReplay() {
 			continue
 		}
-		if score := evolution.RunScore(run); score == 0 || score == 1 {
+		if score := evolution.RunScore(run); score == 0 || score == 1 || evolution.FeedbackSample(run, finding) {
 			failing = append(failing, run)
 		}
 	}

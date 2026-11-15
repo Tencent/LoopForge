@@ -143,9 +143,41 @@ func TestRunScoreAndOutcome(t *testing.T) {
 func replays(outcomes ...string) []domain.EvoReplay {
 	out := make([]domain.EvoReplay, len(outcomes))
 	for i, o := range outcomes {
-		out[i] = domain.EvoReplay{Outcome: o}
+		out[i] = domain.EvoReplay{Group: domain.EvoGroupDiagnosis, Outcome: o}
 	}
 	return out
+}
+
+func TestSummarizeFeedbackOnlyFinding(t *testing.T) {
+	clean := func(group, outcome string) domain.EvoReplay {
+		return domain.EvoReplay{Group: group, SourceScore: 2, Outcome: outcome}
+	}
+	s := Summarize([]domain.EvoReplay{clean(domain.EvoGroupDiagnosis, domain.EvoOutcomeSame), clean(domain.EvoGroupRegression, domain.EvoOutcomeSame)})
+	if !s.Passed || !strings.Contains(s.Verdict, "反馈类问题") || !strings.Contains(s.Verdict, "对比回放产出") {
+		t.Fatalf("feedback-only finding without regressions should pass with a review hint: %+v", s)
+	}
+	s = Summarize([]domain.EvoReplay{clean(domain.EvoGroupDiagnosis, domain.EvoOutcomeRegressed), clean(domain.EvoGroupRegression, domain.EvoOutcomeSame)})
+	if s.Passed || !strings.Contains(s.Verdict, "1 个退化") {
+		t.Fatalf("feedback-only regression must fail: %+v", s)
+	}
+	s = Summarize([]domain.EvoReplay{{Group: domain.EvoGroupDiagnosis, SourceScore: 0, Outcome: domain.EvoOutcomeSame}, clean(domain.EvoGroupDiagnosis, domain.EvoOutcomeSame)})
+	if s.Passed {
+		t.Fatalf("a real failing sample still has to be fixed: %+v", s)
+	}
+}
+
+func TestFeedbackSample(t *testing.T) {
+	ok := domain.Run{ID: "r1", Status: "succeeded"}
+	finding := domain.EvoFinding{Signals: []domain.EvoSignal{{RunID: "r1", Kind: SignalUserFeedback}, {RunID: "r2", Kind: SignalNodeFailed}}}
+	if !FeedbackSample(ok, finding) {
+		t.Fatal("clean run with user feedback is a sample")
+	}
+	if FeedbackSample(domain.Run{ID: "r3", Status: "succeeded"}, finding) {
+		t.Fatal("run without feedback is not a feedback sample")
+	}
+	if FeedbackSample(domain.Run{ID: "r1", Status: "running"}, finding) {
+		t.Fatal("non-terminal run is not a sample")
+	}
 }
 
 func TestSummarizeVerdict(t *testing.T) {
