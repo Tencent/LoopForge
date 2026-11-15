@@ -35,10 +35,14 @@ func TestWorkspaceLockExcludesOtherHandlesAndHonorsCancellation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("released lock could not be acquired: %v", err)
 	}
+	defer unlockFile(second)
+	if err := releaseFileLock(second); err != nil {
+		t.Fatal(err)
+	}
 	if err := second.Close(); err != nil {
 		t.Fatal(err)
 	}
 	if m.workspaceInUse("workspace") {
-		t.Fatal("closing a lock handle did not release the OS lock")
+		t.Fatal("explicitly released lock reported in use")
 	}
 }

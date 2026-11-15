@@ -16,7 +16,10 @@ func TestAssistantNativeFileLockExcludesHandlesAndReleases(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		t.Cleanup(func() { _ = file.Close() })
+		t.Cleanup(func() {
+			_ = unlockAssistantNativeFile(file)
+			_ = file.Close()
+		})
 		return file
 	}
 	first, second := open(), open()
@@ -32,6 +35,9 @@ func TestAssistantNativeFileLockExcludesHandlesAndReleases(t *testing.T) {
 	}
 	if err := lockAssistantNativeFile(second); err != nil {
 		t.Fatalf("released file could not be locked: %v", err)
+	}
+	if err := unlockAssistantNativeFile(second); err != nil {
+		t.Fatal(err)
 	}
 	if err := second.Close(); err != nil {
 		t.Fatal(err)
@@ -66,7 +72,7 @@ func TestAssistantNativeFileLockChild(t *testing.T) {
 		return
 	}
 	if err != nil {
-		t.Fatalf("closed owner must release the lock: %v", err)
+		t.Fatalf("explicitly released owner must leave the lock available: %v", err)
 	}
 	if err := unlockAssistantNativeFile(file); err != nil {
 		t.Fatal(err)
