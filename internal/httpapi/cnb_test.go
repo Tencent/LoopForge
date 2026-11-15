@@ -1,0 +1,103 @@
+package httpapi
+
+import (
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+
+	"agentflow/internal/domain"
+
+	"github.com/gin-gonic/gin"
+)
+
+func TestCNBTokenSaveClearAndPublicUserNeverLeaks(t *testing.T) {
+	f := cvBNewHTTPFixture(t)
+	url := fmt.Sprintf("/api/users/%d/cnb-token", f.user.ID)
+
+	if resp := cvBRequest(t, f, http.MethodPut, url, map[string]string{"token": testCNBToken}, false); resp.Code != http.StatusForbidden {
+		t.Fatalf("unauthenticated save: HTTP %d", resp.Code)
+	}
+	if resp := cvBRequest(t, f, http.MethodPut, fmt.Sprintf("/api/users/%d/cnb-token", f.user.ID+1), map[string]string{"token": testCNBToken}, true); resp.Code != http.StatusForbidden {
+		t.Fatalf("saving another user's token: HTTP %d", resp.Code)
+	}
+	if resp := cvBRequest(t, f, http.MethodPut, url, map[string]string{"token": "  "}, true); resp.Code != http.StatusBadRequest {
+		t.Fatalf("empty token: HTTP %d", resp.Code)
+	}
+
+	resp := cvBRequest(t, f, http.MethodPut, url, map[string]string{"token": " " + testCNBToken + " "}, true)
+	var saved domain.User
+	if resp.Code != http.StatusOK || json.Unmarshal(resp.Body.Bytes(), &saved) != nil || !saved.CNBTokenConfigured || strings.Contains(resp.Body.String(), testCNBToken) {
+		t.Fatalf("save response must report configured and hide the token (HTTP %d): %s", resp.Code, resp.Body.String())
+	}
+	if got := f.s.GitHTTPSCredentials(f.user.ID); len(got) != 1 || got[0].Token != testCNBToken {
+		t.Fatalf("stored credentials = %+v", got)
+	}
+	if list := cvBRequest(t, f, http.MethodGet, "/api/users", nil, true); strings.Contains(list.Body.String(), testCNBToken) {
+		t.Fatal("user directory leaks the CNB token")
+	}
+
+	resp = cvBRequest(t, f, http.MethodDelete, url, nil, true)
+	if resp.Code != http.StatusOK || strings.Contains(resp.Body.String(), `"cnbTokenConfigured":true`) || len(f.s.GitHTTPSCredentials(f.user.ID)) != 0 {
+		t.Fatalf("clear failed (HTTP %d): %s", resp.Code, resp.Body.String())
+	}
+}
+
+func TestCNBTokenVerifyMapsStatusToResult(t *testing.T) {
+	f := cvBNewHTTPFixture(t)
+	status, body := http.StatusOK, `{"username":"alice"}`
+	var sawAuth string
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sawAuth = r.Header.Get("Authorization")
+		w.WriteHeader(status)
+		_, _ = w.Write([]byte(body))
+	}))
+	t.Cleanup(api.Close)
+	previous := cnbAPIBase
+	cnbAPIBase = api.URL
+	t.Cleanup(func() { cnbAPIBase = previous })
+	h := &cnbHandlers{deps: &deps{repo: f.s}}
+	router := gin.New()
+	router.GET("/api/users/:id/cnb-token/verify", h.verifyToken)
+	router.POST("/api/users/:id/cnb-token/verify", h.verifyToken)
+	verify := func(method string, input any) gitTokenVerifyResult {
+		t.Helper()
+		var raw []byte
+		if input != nil {
+			raw, _ = json.Marshal(input)
+		}
+		req := authedRequest(t, httptest.NewRequest(method, fmt.Sprintf("/api/users/%d/cnb-token/verify", f.user.ID), strings.NewReader(string(raw))), f.user)
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		var result gitTokenVerifyResult
+		if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &result) != nil {
+			t.Fatalf("HTTP %d: %s", rec.Code, rec.Body.String())
+		}
+		return result
+	}
+
+	if got := verify(http.MethodGet, nil); got.Valid || got.Error == "" {
+		t.Fatalf("no saved token must be reported, got %+v", got)
+	}
+	if got := verify(http.MethodPost, map[string]string{"token": testCNBToken}); !got.Valid || got.Login != "alice" || sawAuth != "Bearer "+testCNBToken {
+		t.Fatalf("200: %+v auth=%q", got, sawAuth)
+	}
+	status, body = http.StatusForbidden, `{"errcode":1,"errmsg":"forbidden"}`
+	if got := verify(http.MethodPost, map[string]string{"token": testCNBToken}); !got.Valid || got.Login != "" {
+		t.Fatalf("403 means a valid token without /user access: %+v", got)
+	}
+	status = http.StatusUnauthorized
+	if got := verify(http.MethodPost, map[string]string{"token": testCNBToken}); got.Valid || got.Error == "" {
+		t.Fatalf("401 means an invalid token: %+v", got)
+	}
+	if err := f.s.SetCNBToken(f.user.ID, testCNBToken); err != nil {
+		t.Fatal(err)
+	}
+	status = http.StatusOK
+	if got := verify(http.MethodGet, nil); !got.Valid {
+		t.Fatalf("saved token should verify: %+v", got)
+	}
+}

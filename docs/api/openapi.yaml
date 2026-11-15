@@ -5495,6 +5495,7 @@ components:
         deptName: {type: string}
         avatarUrl: {type: string}
         gitHubCredentialConfigured: {type: boolean, readOnly: true}
+        cnbTokenConfigured: {type: boolean, readOnly: true}
         codeBuddyApiKeyConfigured: {type: boolean, readOnly: true}
         codeBuddyBaseUrl: {type: string}
         codexApiKeyConfigured: {type: boolean, readOnly: true}
