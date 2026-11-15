@@ -1162,7 +1162,7 @@ func TestRunnerAdditionalSuccessAndDecodePaths(t *testing.T) {
 	reregister := requestWithHeaders(t, f.h, http.MethodPost, "/runners/register", map[string]any{
 		"runnerId": runnerID, "name": "updated", "maxConcurrency": 0,
 		"runtimes": []domain.RunnerRuntime{{Provider: "codebuddy", Status: domain.RuntimeStatusOnline}},
-	}, map[string]string{"X-Bootstrap-Token": "boot-secret"})
+	}, map[string]string{"X-Bootstrap-Token": issueRunnerBindCodeForTest(t, f.h, f.user.LoginName)})
 	if reregister.Code != http.StatusOK {
 		t.Fatalf("reregister = %d: %s", reregister.Code, reregister.Body.String())
 	}

@@ -23,7 +23,8 @@ func TestBinaryDownloadPlatform(t *testing.T) {
 		{name: "defaults", query: "", wantOS: "darwin", wantArch: "amd64", wantOK: true},
 		{name: "normalized", query: "?os=%20Linux%20&arch=ARM64", wantOS: "linux", wantArch: "arm64", wantOK: true},
 		{name: "invalid chars fall back to defaults", query: "?os=lin-ux&arch=amd_64", wantOS: "darwin", wantArch: "amd64", wantOK: true},
-		{name: "unsupported os", query: "?os=windows&arch=amd64", wantErr: `unsupported os "windows" (darwin, linux)`},
+		{name: "windows", query: "?os=windows&arch=amd64", wantOS: "windows", wantArch: "amd64", wantOK: true},
+		{name: "unsupported os", query: "?os=freebsd&arch=amd64", wantErr: `unsupported os "freebsd" (darwin, linux, windows)`},
 		{name: "unsupported arch", query: "?os=linux&arch=386", wantErr: `unsupported arch "386" (amd64, arm64)`},
 	}
 	for _, tc := range cases {
@@ -56,7 +57,7 @@ func TestBinaryDownloadPlatform(t *testing.T) {
 // before touching any prebuilt artifact or source build.
 func TestBinaryDownloadHandlersRejectUnsupportedPlatform(t *testing.T) {
 	dir := t.TempDir()
-	for _, name := range []string{"agentflow-runner-windows-amd64", "agentflow-gate-mcp-linux-386"} {
+	for _, name := range []string{"agentflow-runner-freebsd-amd64", "agentflow-gate-mcp-linux-386"} {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte("bin"), 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -67,7 +68,7 @@ func TestBinaryDownloadHandlersRejectUnsupportedPlatform(t *testing.T) {
 	g.GET("/runner", serveRunnerBinary)
 	g.GET("/gate", serveGateMCPBinary)
 	for _, tc := range []struct{ path, wantErr string }{
-		{"/runner?os=windows&arch=amd64", `unsupported os "windows" (darwin, linux)`},
+		{"/runner?os=freebsd&arch=amd64", `unsupported os "freebsd" (darwin, linux, windows)`},
 		{"/gate?os=linux&arch=386", `unsupported arch "386" (amd64, arm64)`},
 	} {
 		rec := httptest.NewRecorder()

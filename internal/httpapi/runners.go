@@ -629,8 +629,8 @@ func (h *runnersHandlers) runnerRegister(c *gin.Context) {
 	if input.MaxConcurrency > 32 {
 		input.MaxConcurrency = 32
 	}
-	// A re-registration with a known runner id rotates the session token and
-	// re-binds ownership to the token used for this registration.
+	// Re-registration rotates a known machine's session for the same owner.
+	// A new bind code must not transfer another user's machine or a shared pool.
 	now := time.Now().UTC()
 	runner := domain.Runner{
 		Name:           strings.TrimSpace(input.Name),
@@ -645,6 +645,10 @@ func (h *runnersHandlers) runnerRegister(c *gin.Context) {
 		LastSeenAt:     &now,
 	}
 	if existing, ok := h.repo.Runner(strings.TrimSpace(input.RunnerID)); ok {
+		if existing.OwnerUserID != owner {
+			c.JSON(http.StatusForbidden, map[string]string{"error": "execution machine owner does not match the registration credential"})
+			return
+		}
 		runner.ID = existing.ID
 		runner.CreatedAt = existing.CreatedAt
 		runner.Runtimes = normalizeRunnerRuntimes(input.Runtimes, existing.Runtimes)
