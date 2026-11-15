@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -663,6 +664,39 @@ func TestPullCannotReplaceAnotherWorkspacesImage(t *testing.T) {
 	} {
 		if got := pullRef(in[0], in[1]); got != want {
 			t.Errorf("pullRef(%q, %q) = %q, want %q", in[0], in[1], got, want)
+		}
+	}
+}
+
+// Second review pass: shapes the daemon accepts that skipped the checks.
+func TestSecondPassBypassesAreRefused(t *testing.T) {
+	h := start(t)
+	type req struct{ method, path, contentType, body string }
+	for name, c := range map[string]req{
+		"top-level host fields":   {"POST", "/containers/create", "application/json", `{"Image":"alpine","Privileged":true,"PidMode":"host","Binds":["/:/host"]}`},
+		"top-level volume driver": {"POST", "/containers/create", "application/json", `{"Image":"alpine","HostConfig":{},"volumedriver":"sshfs"}`},
+		"malformed form type":     {"POST", "/containers/prune", "application/x-www-form-urlencoded; =", `filters=%7B%7D`},
+		"form type with spaces":   {"POST", "/images/myapp:dev/tag", " Application/X-WWW-Form-Urlencoded", `repo=alpine&tag=3`},
+		"pull with fromSrc":       {"POST", "/images/create?fromImage=team/other&tag=1&fromSrc=x", "", ""},
+		"build outputs name":      {"POST", `/build?version=2&outputs=` + url.QueryEscape(`[{"type":"moby","Attrs":{"name":"team/other:1"}}]`), "", ""},
+		"endpoint network id":     {"POST", "/containers/create", "application/json", `{"Image":"alpine","NetworkingConfig":{"EndpointsConfig":{"mynet":{"NetworkID":"othernet"}}}}`},
+		"connect network id":      {"POST", "/networks/mynet/connect", "application/json", `{"Container":"mine","EndpointConfig":{"networkid":"othernet"}}`},
+	} {
+		before := h.daemon.count()
+		if code, out := h.raw(t, c.method, c.path, c.contentType, c.body); code != http.StatusForbidden || !strings.Contains(out, "LoopForge") {
+			t.Errorf("%s: want 403, got %d %s", name, code, out)
+		}
+		if h.daemon.count() != before {
+			t.Errorf("%s: request reached the daemon", name)
+		}
+	}
+	for name, c := range map[string]req{
+		"create as the CLI sends it": {"POST", "/containers/create", "application/json", `{"Hostname":"","User":"","Tty":false,"Env":null,"Cmd":["sh"],"Image":"alpine","Volumes":{},"Entrypoint":null,"OnBuild":null,"Labels":{},"HostConfig":{"Binds":null},"NetworkingConfig":{"EndpointsConfig":{"mynet":{"NetworkID":"mynet"}}}}`},
+		"own build output":           {"POST", `/build?version=2&outputs=` + url.QueryEscape(`[{"Type":"moby","Attrs":{"name":"myapp:dev"}}]`), "", ""},
+		"local build output":         {"POST", `/build?version=2&outputs=` + url.QueryEscape(`[{"Type":"local","Attrs":{"dest":"out"}}]`), "", ""},
+	} {
+		if code, out := h.raw(t, c.method, c.path, c.contentType, c.body); code != 200 {
+			t.Errorf("%s: want 200, got %d %s", name, code, out)
 		}
 	}
 }

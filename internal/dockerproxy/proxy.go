@@ -15,7 +15,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"mime"
 	"net"
 	"net/http"
 	"net/http/httputil"
@@ -187,8 +186,10 @@ func (p *Proxy) authorize(r *http.Request) error {
 	read := method == http.MethodGet || method == http.MethodHead
 	// The daemon reads parameters with r.FormValue, where a form-encoded body
 	// overrides the query the proxy checked. Docker clients never send one.
-	if media, _, err := mime.ParseMediaType(r.Header.Get("Content-Type")); err == nil && (media == "application/x-www-form-urlencoded" || media == "multipart/form-data") {
-		return forbidden("请求体不能是表单（" + media + "），参数请放在查询串里")
+	// Go's ParseForm keys off the media type even when the parameters are
+	// malformed, so match the prefix rather than a clean parse.
+	if media := strings.ToLower(strings.TrimSpace(r.Header.Get("Content-Type"))); strings.HasPrefix(media, "application/x-www-form-urlencoded") || strings.HasPrefix(media, "multipart/form-data") {
+		return forbidden("请求体不能是表单，参数请放在查询串里")
 	}
 	switch parts[0] {
 	case "_ping", "version":
@@ -221,6 +222,9 @@ func (p *Proxy) authorize(r *http.Request) error {
 				if err := p.mayWriteTag(r.Context(), ref); err != nil {
 					return err
 				}
+			}
+			if err := p.checkBuildOutputs(r.Context(), q.Get("outputs")); err != nil {
+				return err
 			}
 			// Built images carry the workspace label, which is what lets the
 			// workspace delete or retag them later.
@@ -273,6 +277,40 @@ func (p *Proxy) authorize(r *http.Request) error {
 	return forbidden(fmt.Sprintf("工作区不能调用 %s %s（只开放本工作区的容器、网络、卷，以及镜像拉取和构建）", method, clean))
 }
 
+// checkBuildOutputs applies the -t rule to image names given through
+// BuildKit outputs ([{"Type":"moby","Attrs":{"name":"x:1"}}]) on /build.
+func (p *Proxy) checkBuildOutputs(ctx context.Context, raw string) error {
+	if strings.TrimSpace(raw) == "" {
+		return nil
+	}
+	var outputs []map[string]any
+	if err := json.Unmarshal([]byte(raw), &outputs); err != nil {
+		return forbidden("无法解析构建 outputs")
+	}
+	for _, output := range outputs {
+		var kind string
+		var attrs map[string]any
+		for key, value := range output {
+			switch foldKey(key) {
+			case foldKey("Type"):
+				kind, _ = value.(string)
+			case foldKey("Attrs"):
+				attrs, _ = value.(map[string]any)
+			}
+		}
+		switch kind {
+		case "moby", "image", "docker", "":
+			name, _ := attrs["name"].(string)
+			for _, ref := range strings.Split(name, ",") {
+				if err := p.mayWriteTag(ctx, strings.TrimSpace(ref)); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	return nil
+}
+
 // Images are shared by every workspace on the daemon. A workspace may pull
 // and read any image, but may only delete or overwrite the name of an image
 // it built or committed itself (labelled), so it cannot break or poison
@@ -286,11 +324,12 @@ func (p *Proxy) authorizeImage(r *http.Request, parts []string) error {
 	case len(parts) == 2 && parts[1] == "load":
 		return forbidden("不支持 docker load（会覆盖其他工作区在用的镜像名），请用 docker build 或 docker pull")
 	case len(parts) == 2 && parts[1] == "create":
-		if q.Get("fromSrc") != "" && q.Get("repo") != "" {
-			return p.mayWriteTag(ctx, imageRef(q.Get("repo"), q.Get("tag")))
-		}
-		if from := q.Get("fromImage"); from != "" && q.Get("fromSrc") == "" {
+		// The daemon pulls whenever fromImage is set and imports otherwise.
+		if from := q.Get("fromImage"); from != "" {
 			return p.mayPull(ctx, pullRef(from, q.Get("tag")))
+		}
+		if repo := q.Get("repo"); repo != "" {
+			return p.mayWriteTag(ctx, imageRef(repo, q.Get("tag")))
 		}
 		return nil
 	case len(parts) == 2 && (parts[1] == "json" || parts[1] == "search" || parts[1] == "get"):
@@ -447,6 +486,10 @@ func (p *Proxy) authorizeNetwork(r *http.Request, parts []string) error {
 		}
 		if len(parts) == 3 && (parts[2] == "connect" || parts[2] == "disconnect") {
 			return p.rewriteJSON(r, func(body map[string]any) error {
+				endpoint, _ := body["EndpointConfig"].(map[string]any)
+				if err := p.checkEndpointNetwork(endpoint); err != nil {
+					return err
+				}
 				id, _ := body["Container"].(string)
 				return p.owned(r.Context(), "containers", id)
 			})
@@ -579,7 +622,33 @@ func checkResources(host map[string]any) error {
 	return nil
 }
 
+// containerConfigFields are the top-level fields of a create body:
+// container.Config plus HostConfig and NetworkingConfig. The daemon still
+// accepts the deprecated HostConfig fields at the top level
+// (runconfig.ContainerConfigWrapper), which would skip every host check.
+var containerConfigFields = indexFields(
+	"Hostname", "Domainname", "User", "AttachStdin", "AttachStdout", "AttachStderr",
+	"ExposedPorts", "Tty", "OpenStdin", "StdinOnce", "Env", "Cmd", "Healthcheck",
+	"ArgsEscaped", "Image", "Volumes", "WorkingDir", "Entrypoint", "NetworkDisabled",
+	"MacAddress", "OnBuild", "Labels", "StopSignal", "StopTimeout", "Shell",
+	"HostConfig", "NetworkingConfig",
+)
+
+// checkEndpointNetwork keeps an endpoint's explicit NetworkID (which the
+// daemon prefers over the network name) to this workspace's networks.
+func (p *Proxy) checkEndpointNetwork(endpoint map[string]any) error {
+	if id, _ := endpoint["NetworkID"].(string); id != "" {
+		return p.owned(context.Background(), "networks", id)
+	}
+	return nil
+}
+
 func (p *Proxy) checkContainerCreate(body map[string]any) error {
+	for key := range body {
+		if _, ok := containerConfigFields[foldKey(key)]; !ok {
+			return forbidden("创建容器的请求体不支持顶层字段 " + key + "（宿主相关设置请放在 HostConfig 里）")
+		}
+	}
 	setLabel(body, "Labels", p.cfg.Workspace)
 	if networking, _ := body["NetworkingConfig"].(map[string]any); networking != nil {
 		endpoints, _ := networking["EndpointsConfig"].(map[string]any)
@@ -596,6 +665,9 @@ func (p *Proxy) checkContainerCreate(body map[string]any) error {
 		}
 		for _, item := range endpoints {
 			endpoint, _ := item.(map[string]any)
+			if err := p.checkEndpointNetwork(endpoint); err != nil {
+				return err
+			}
 			if err := p.checkLinks(endpoint["Links"]); err != nil {
 				return err
 			}

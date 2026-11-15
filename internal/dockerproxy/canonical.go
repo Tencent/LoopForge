@@ -28,7 +28,7 @@ var checkedFields = indexFields(
 	"VolumeOptions", "DriverConfig", "NoCopy", "Subpath",
 	// networks and volumes
 	"Name", "Driver", "DriverOpts", "Options", "IPAM", "Config", "ConfigFrom",
-	"ConfigOnly", "Container",
+	"ConfigOnly", "Container", "EndpointConfig", "NetworkID",
 )
 
 // freeFormFields hold maps keyed by user data (label names, paths, network
