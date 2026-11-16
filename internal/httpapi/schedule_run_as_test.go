@@ -138,3 +138,82 @@ func TestScheduleJobRunsWithTheSaversKey(t *testing.T) {
 		t.Fatalf("demoted member = %v", err)
 	}
 }
+
+// A job saved before the binding tries every candidate's own key before the
+// shared key, so a job whose recorded owner still has a key keeps running on
+// it after the project changes owner.
+func TestScheduleJobLegacyOwnerKeyBeforeSharedKey(t *testing.T) {
+	h, _ := workbenchFixture(t)
+	st := h.repo
+	for _, u := range []domain.User{{LoginName: "legacy-new-owner"}, {LoginName: "legacy-old-owner", CodeBuddyAPIKey: "old-owner-key"}} {
+		if err := st.PutUser(u); err != nil {
+			t.Fatal(err)
+		}
+	}
+	newOwner, _ := st.UserByLoginName("legacy-new-owner")
+	oldOwner, _ := st.UserByLoginName("legacy-old-owner")
+	if err := st.PutProject(domain.Project{ID: "legacy-proj", Name: "Legacy", OwnerID: newOwner.ID}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetPlatformCodeBuddyKey(repo.PlatformCodeBuddyKeyUpdate{APIKey: "platform-secret", InternetEnvironment: "ioa", Models: []string{"glm-5.1"}}, 0); err != nil {
+		t.Fatal(err)
+	}
+	job := domain.ScheduleJob{ID: "legacy-job", ProjectID: "legacy-proj", SkipDispatch: true, AssistantPrompt: "p", AssistantModel: "deepseek-v4.1-flash", OwnerUserID: oldOwner.ID}
+	a := &assistantHandlers{deps: &deps{repo: st}}
+	user, shared, err := a.scheduleJobAssistantUser(job, job.AssistantModel)
+	if err != nil || user.ID != oldOwner.ID || user.CodeBuddyAPIKey != "old-owner-key" || shared != nil {
+		t.Fatalf("legacy run = %d %q %v %v", user.ID, user.CodeBuddyAPIKey, shared, err)
+	}
+	// With no personal key anywhere, the shared key still runs it.
+	job.OwnerUserID = newOwner.ID
+	if user, shared, err = a.scheduleJobAssistantUser(job, job.AssistantModel); err != nil || user.ID != newOwner.ID || user.CodeBuddyAPIKey != "platform-secret" || len(shared) != 1 {
+		t.Fatalf("legacy shared fallback = %d %q %v %v", user.ID, user.CodeBuddyAPIKey, shared, err)
+	}
+}
+
+// Any writer may stop a job without a key of their own: a save that only
+// disables it keeps what it runs and who runs it. Changing what it runs, or
+// enabling it again, still needs the saver's key.
+func TestScheduleJobMemberWithoutKeyCanStopIt(t *testing.T) {
+	t.Setenv("AGENTFLOW_AUTH_REQUIRED", "true")
+	t.Setenv("AGENTFLOW_SESSION_SECRET", "schedule-stop-test-secret")
+	h, _ := workbenchFixture(t)
+	st := h.repo
+	for _, u := range []domain.User{{LoginName: "stop-owner", CodeBuddyAPIKey: "owner-key"}, {LoginName: "stop-nokey"}} {
+		if err := st.PutUser(u); err != nil {
+			t.Fatal(err)
+		}
+	}
+	owner, _ := st.UserByLoginName("stop-owner")
+	nokey, _ := st.UserByLoginName("stop-nokey")
+	if err := st.PutProject(domain.Project{ID: "stop-proj", Name: "Stop", OwnerID: owner.ID, Members: []domain.ProjectMember{{UserID: nokey.ID, Role: "member"}}}); err != nil {
+		t.Fatal(err)
+	}
+	server := New(st, engine.New(st, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "")
+	job := map[string]any{"id": "stop-job", "projectId": "stop-proj", "name": "巡检", "skipDispatch": true, "assistantPrompt": "p", "intervalSec": 3600, "enabled": true}
+	saved := requestJSONAuthed[domain.ScheduleJob](t, server, owner, http.MethodPut, "/api/schedule-jobs", job, http.StatusOK)
+	if saved.RunAsUserID != owner.ID || !saved.Enabled {
+		t.Fatalf("owner save = %+v", saved)
+	}
+	body := func(extra map[string]any) map[string]any {
+		out := map[string]any{}
+		for k, v := range job {
+			out[k] = v
+		}
+		out["assistantModel"] = saved.AssistantModel
+		for k, v := range extra {
+			out[k] = v
+		}
+		return out
+	}
+	if code := scheduleAuthzStatus(t, server, nokey, http.MethodPut, "/api/schedule-jobs", body(map[string]any{"enabled": false, "assistantPrompt": "changed"})); code != http.StatusBadRequest {
+		t.Fatalf("stopping while changing the prompt without a key = %d", code)
+	}
+	stopped := requestJSONAuthed[domain.ScheduleJob](t, server, nokey, http.MethodPut, "/api/schedule-jobs", body(map[string]any{"enabled": false, "name": "巡检（停用）"}), http.StatusOK)
+	if stopped.Enabled || stopped.RunAsUserID != owner.ID || stopped.RunAsName != "stop-owner" || stopped.AssistantPrompt != "p" {
+		t.Fatalf("stop without a key = %+v", stopped)
+	}
+	if code := scheduleAuthzStatus(t, server, nokey, http.MethodPut, "/api/schedule-jobs", body(map[string]any{"enabled": true})); code != http.StatusBadRequest {
+		t.Fatalf("enabling without a key = %d", code)
+	}
+}
