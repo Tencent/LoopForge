@@ -211,8 +211,12 @@ func (h *assistantHandlers) assistantRunDetail(run domain.Run) assistantRunView 
 		UpdatedAt:        run.UpdatedAt,
 		Note:             "已省略 workflowSnapshot 等大字段。problems 列出失败 / 等待人工确认的节点与原因；credential 表示需要运行责任人本人配置的个人凭证及步骤。节点执行日志用 runs_logs_list，遥测用 runs_telemetry_list。",
 	}
-	for _, rc := range run.RepositoryContexts() {
-		view.Repositories = append(view.Repositories, assistantRunRepository{Name: rc.Name, CloneURL: rc.CloneURL, BaseBranch: repositoryBaseBranchName(rc), WorkBranch: rc.WorkBranch})
+	for _, raw := range run.RepositoryContexts() {
+		// Run snapshots may contain legacy URLs with embedded credentials.
+		// Keep the clone URL needed for display, but never hand the secret to
+		// the model-facing diagnostic view.
+		rc := domain.PublicRepositoryContext(raw)
+		view.Repositories = append(view.Repositories, assistantRunRepository{Name: repositoryHintText(rc.Name, 120), CloneURL: rc.CloneURL, BaseBranch: repositoryBaseBranchName(rc), WorkBranch: rc.WorkBranch})
 	}
 	problems := map[string]bool{}
 	for _, item := range assistantRunProblems(run, owner, assistantRunErrorLimit) {

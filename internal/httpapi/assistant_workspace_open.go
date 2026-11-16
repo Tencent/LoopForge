@@ -56,21 +56,40 @@ func (h *agentToolGateway) workspaceOpenDescriptorFor(s *AgentToolSession) agent
 
 func projectRepositoryHints(all []domain.Repository, projectID string) string {
 	var b strings.Builder
-	for _, r := range all {
-		if r.ProjectID != projectID {
+	for _, raw := range all {
+		if raw.ProjectID != projectID {
 			continue
 		}
-		fmt.Fprintf(&b, "\n- %s", r.Name)
+		// Repository records are tenant data. Strip credentials from legacy
+		// rows and keep control characters out of the tool description, where
+		// the model would otherwise treat them as instructions.
+		r := domain.PublicRepository(raw)
+		fmt.Fprintf(&b, "\n- %s", repositoryHintText(r.Name, 120))
 		if clone := strings.TrimSpace(r.CloneURL); clone != "" {
 			fmt.Fprintf(&b, "：%s", clone)
 		} else if web := strings.TrimSpace(r.WebURL); web != "" {
 			fmt.Fprintf(&b, "：%s", web)
 		}
 		if branch := strings.TrimSpace(r.DefaultBranch); branch != "" {
-			fmt.Fprintf(&b, "（主分支 %s）", branch)
+			fmt.Fprintf(&b, "（主分支 %s）", repositoryHintText(branch, 80))
 		}
 	}
 	return b.String()
+}
+
+// repositoryHintText keeps untrusted catalog text on one line before it is
+// embedded in a model-facing tool description.
+func repositoryHintText(text string, limit int) string {
+	var b strings.Builder
+	for _, r := range text {
+		switch {
+		case r == '\n' || r == '\r' || r == '\t', r < 0x20, r == 0x7f:
+			b.WriteByte(' ')
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return truncateRunes(strings.TrimSpace(b.String()), limit)
 }
 
 // usableConversationWorkspace reports whether a bound workspace can still be
