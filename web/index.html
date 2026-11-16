@@ -1176,7 +1176,15 @@
                   <div class="ai-model-menu" hidden role="listbox" aria-label="模型"></div>
                 </div>
               </div>
-              <p class="schedule-field-hint" id="scheduleModelHint">与 AI 助手相同的 CLI 与模型，到点用项目 Owner 在所选 CLI 上配置的 Key 执行。</p>
+              <p class="schedule-field-hint" id="scheduleModelHint">与 AI 助手相同的 CLI 与模型，到点用执行身份在所选 CLI 上配置的 Key 执行。</p>
+            </div>
+            <div data-schedule-kind="assistant" hidden>
+              <label for="scheduleRunAs">执行身份</label>
+              <select id="scheduleRunAs" class="select" name="runAs">
+                <option value="owner">项目 Owner 的 Key</option>
+                <option value="self">我的 Key</option>
+              </select>
+              <p class="schedule-field-hint" id="scheduleRunAsHint">选「我的 Key」后，到点以你的身份和 Key 执行；其他成员再次保存时会改回所选项。</p>
             </div>
             <div data-schedule-kind="assistant" data-schedule-prompt hidden>
               <label>提示词</label>

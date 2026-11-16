@@ -125,6 +125,9 @@ func (h *scheduleHandlers) scheduleJobs(c *gin.Context) {
 		} else if job.SharedTaskID == "" {
 			job.OwnerUserID = existingJob.OwnerUserID
 		}
+		if !h.bindScheduleRunAs(c, &job, existingJob) {
+			return
+		}
 		if job.ID == "" {
 			job.ID = "job-" + time.Now().UTC().Format("20060102150405.000000000")
 		} else if existing, ok := h.repo.ScheduleJob(job.ID); ok {
@@ -198,6 +201,50 @@ func (h *scheduleHandlers) scheduleJobs(c *gin.Context) {
 		stored, _ := h.repo.ScheduleJob(job.ID)
 		c.JSON(200, stored)
 	}
+}
+
+// bindScheduleRunAs decides whose keys run an AI job. Only the saving user can
+// bind a job to their own keys, and a job bound to someone keeps that binding
+// only through that user's own saves, so no other writer can run prompts with
+// another member's keys.
+func (h *scheduleHandlers) bindScheduleRunAs(c *gin.Context, job *domain.ScheduleJob, prior domain.ScheduleJob) bool {
+	mode := strings.TrimSpace(job.RunAs)
+	job.RunAs, job.RunAsUserID, job.RunAsName = "", 0, ""
+	if mode != "" && mode != "self" && mode != "owner" {
+		c.JSON(400, gin.H{"error": "执行身份只能是项目 Owner 或你自己"})
+		return false
+	}
+	if !job.SkipDispatch || mode == "owner" {
+		return true
+	}
+	var self domain.User
+	current, ok := h.requestUser(c.Request, true)
+	if ok && current != nil && current.ID > 0 {
+		self, ok = h.repo.User(current.ID)
+	} else {
+		ok = false
+	}
+	if mode == "" {
+		if !ok || prior.RunAsUserID == 0 || prior.RunAsUserID != self.ID {
+			return true
+		}
+	} else {
+		if !ok {
+			c.JSON(400, gin.H{"error": "请先登录，再让定时任务使用你的 Key"})
+			return false
+		}
+		engine, _ := assistantModelEngine(job.AssistantModel)
+		if key, _ := assistantEngineCredential(self, engine); key == "" {
+			c.JSON(400, gin.H{"error": fmt.Sprintf("你还没有配置 %s API Key：请先在个人配置中填写，再让定时任务使用你的 Key", assistantEngineLabel(engine))})
+			return false
+		}
+	}
+	job.RunAsUserID, job.RunAsName = self.ID, scheduleUserName(self)
+	return true
+}
+
+func scheduleUserName(user domain.User) string {
+	return firstNonEmpty(strings.TrimSpace(user.LoginName), strings.TrimSpace(user.ChineseName), fmt.Sprintf("用户 %d", user.ID))
 }
 
 // 路由: g.DELETE("/api/schedule-jobs/:id", h.scheduleJob)

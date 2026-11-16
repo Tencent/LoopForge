@@ -275,11 +275,23 @@ function syncScheduleJobKind(){
   f.elements.name.required=kind==='assistant';
   const assistant=kind==='assistant';
   $('#scheduleModalTitle').textContent=assistant?'AI 定时任务':'触发配置';
-  $('#scheduleModalHint').textContent=assistant?'按计划用项目 Owner 在所选 CLI 上的 Key 执行提示词，使用与主页 AI 对话相同的完全权限，可调用 SOP、平台工具、工作区及浏览器。':'按计划扫描本项目选定状态、尚未跑过 SOP 的需求，通过基线门禁后派发 SOP。基线冲突会先由对齐 Agent 解决并合入，期间暂停派发。';
+  $('#scheduleModalHint').textContent=assistant?'按计划用所选执行身份（默认项目 Owner）在所选 CLI 上的 Key 执行提示词，使用与主页 AI 对话相同的完全权限，可调用 SOP、平台工具、工作区及浏览器。':'按计划扫描本项目选定状态、尚未跑过 SOP 的需求，通过基线门禁后派发 SOP。基线冲突会先由对齐 Agent 解决并合入，期间暂停派发。';
   $('#scheduleModal').querySelector('.schedule-head').hidden=assistant;
   $('#scheduleJobList').hidden=assistant||!projectTriggerJob();
   f.querySelector('[type="submit"]').textContent=assistant?'保存 AI 定时任务':'保存触发配置';
   if(assistant)paintScheduleModel(f.elements.assistantModel.value);
+}
+// The server binds "self" to whoever saves; a job bound to another member
+// falls back to the project owner unless they pick their own key.
+function fillScheduleRunAs(f,job){
+  const select=f.elements.runAs;if(!select)return;
+  const me=Number(state.currentUser&&!state.currentUser.isGuest?state.currentUser.id:0);
+  const bound=Number(job.runAsUserId)||0;
+  select.value=bound&&bound===me?'self':'owner';
+  const hint=$('#scheduleRunAsHint');
+  if(hint)hint.textContent=bound&&bound!==me
+    ?`当前使用 ${job.runAsName||'其他成员'} 的 Key。你保存后会改为所选执行身份，只有 ${job.runAsName||'该成员'} 本人保存才会保留。`
+    :'选「我的 Key」后，到点以你的身份和 Key 执行；其他成员再次保存时会改回所选项。';
 }
 function fillScheduleJobForm(job={}){
  resetSharedScheduleVersionEditor(job);
@@ -299,6 +311,7 @@ function fillScheduleJobForm(job={}){
   f.elements.jobKind.value=job.id?scheduleJobKind(job):scheduleEditorKind;
   f.elements.assistantPrompt.value=job.assistantPrompt||'';
   f.elements.assistantModel.value=job.assistantModel||scheduleModelAPI()?.DEFAULT||'default';
+  fillScheduleRunAs(f,job);
   f.elements.useIssueWorkflow.checked=job.id?!!job.useIssueWorkflow:true;
   f.elements.maxDispatch.value=job.maxDispatch||'';
   f.elements.enabled.checked=job.id?!!job.enabled:true;
@@ -432,7 +445,7 @@ function renderScheduleJobs(){
   const disabled='本实例不执行定时任务；任务可在主实例自动运行。';
   $('#scheduleRuntimeHint').textContent=canRun?'每个项目使用一份触发配置，修改后保存即可生效。立即运行在服务端执行，关闭页面不会中断。':disabled;
   const triggerHint=$('#aiScheduleTriggerHint');if(triggerHint)triggerHint.textContent=canRun?'按计划扫描本项目选定状态、尚未跑过 SOP 的需求，通过基线门禁后派发 SOP。每个项目使用一份触发配置。':disabled;
-  $('#aiScheduleRuntimeHint').textContent=!state.projectFilter?'请先在顶栏选择项目，再管理 AI 定时任务。':canRun?'使用项目 Owner 在所选 CLI 上的 Key，以完全权限执行，与主页 AI 对话相同。可调用 SOP、工作区及浏览器工具；关闭页面不会中断执行。':disabled;
+  $('#aiScheduleRuntimeHint').textContent=!state.projectFilter?'请先在顶栏选择项目，再管理 AI 定时任务。':canRun?'默认使用项目 Owner 在所选 CLI 上的 Key，也可在任务里改用你自己的 Key；以完全权限执行，与主页 AI 对话相同。可调用 SOP、工作区及浏览器工具；关闭页面不会中断执行。':disabled;
   $('#aiScheduleProjectName').textContent=currentProject()?.name||'当前项目';
   $('#aiScheduleCount').textContent=`${assistant.length} 个任务`;
   $('#newAISchedule').disabled=!state.projectFilter;
@@ -463,7 +476,7 @@ function renderScheduleJobList(list,jobs,kind,canRun){
     const status=statusText?`，${escapeHTML(statusText)}`:'';
     const runDisabled=running||!canRun;
     const runTitle=running?'任务正在服务端运行，关闭页面不会中断':(canRun?'':'本实例未启用 scheduler');
-    return `<div class="schedule-job-item${running?' is-running':''}"><div class="schedule-job-row"><button type="button" class="schedule-job-main" data-edit-schedule="${escapeHTML(j.id)}" title="${assistant?'编辑 AI 定时任务':'编辑触发配置'}"><b><span class="schedule-kind-tag ${assistant?'is-assistant':'is-dispatch'}">${kind}</span>${escapeHTML(j.name)}</b>${sharedScheduleRowInfo(j)}<span>${escapeHTML(scheduleJobTimingLabel(j))} · ${j.enabled?'已启用':'已停用'}${assistant?'':` · 单次最多 ${escapeHTML(j.maxDispatch||10)} 个需求`}${running?' · 正在运行':''}</span><small class="${running?'schedule-run-live':''}">${(j.lastRunAt&&!String(j.lastRunAt).startsWith('0001-'))||running?`最近：${new Date(j.lastRunAt||Date.now()).toLocaleString()}${extra}${status}`:'尚未运行'}</small></button>${sharedScheduleRowAction(j)}${scheduleJobTraceActionsHTML(j)}<button type="button" class="button ghost small" data-edit-schedule="${escapeHTML(j.id)}">编辑</button><button type="button" class="button ghost small" data-run-schedule="${escapeHTML(j.id)}" ${runDisabled?'disabled':''} ${runTitle?`title="${escapeHTML(runTitle)}"`:''}>${running?'运行中…':'立即运行'}</button><button type="button" class="button ghost small danger" data-delete-schedule="${escapeHTML(j.id)}">删除</button></div>${assistant?'':scheduleBlockerHTML(j)}</div>`;
+    return `<div class="schedule-job-item${running?' is-running':''}"><div class="schedule-job-row"><button type="button" class="schedule-job-main" data-edit-schedule="${escapeHTML(j.id)}" title="${assistant?'编辑 AI 定时任务':'编辑触发配置'}"><b><span class="schedule-kind-tag ${assistant?'is-assistant':'is-dispatch'}">${kind}</span>${escapeHTML(j.name)}</b>${sharedScheduleRowInfo(j)}<span>${escapeHTML(scheduleJobTimingLabel(j))} · ${j.enabled?'已启用':'已停用'}${assistant?` · ${escapeHTML(j.runAsUserId?`使用 ${j.runAsName||'成员'} 的 Key`:'使用项目 Owner 的 Key')}`:` · 单次最多 ${escapeHTML(j.maxDispatch||10)} 个需求`}${running?' · 正在运行':''}</span><small class="${running?'schedule-run-live':''}">${(j.lastRunAt&&!String(j.lastRunAt).startsWith('0001-'))||running?`最近：${new Date(j.lastRunAt||Date.now()).toLocaleString()}${extra}${status}`:'尚未运行'}</small></button>${sharedScheduleRowAction(j)}${scheduleJobTraceActionsHTML(j)}<button type="button" class="button ghost small" data-edit-schedule="${escapeHTML(j.id)}">编辑</button><button type="button" class="button ghost small" data-run-schedule="${escapeHTML(j.id)}" ${runDisabled?'disabled':''} ${runTitle?`title="${escapeHTML(runTitle)}"`:''}>${running?'运行中…':'立即运行'}</button><button type="button" class="button ghost small danger" data-delete-schedule="${escapeHTML(j.id)}">删除</button></div>${assistant?'':scheduleBlockerHTML(j)}</div>`;
   }).join('')||'<div class="sync-empty">当前项目还没有 AI 定时任务，点击右上角「新建 AI 定时任务」。</div>';
   list.querySelectorAll('[data-edit-schedule]').forEach(b=>b.onclick=()=>{
     const job=(state.data.scheduleJobs||[]).find(j=>j.id===b.dataset.editSchedule);
@@ -498,6 +511,7 @@ async function saveScheduleJob(e){
     cron:cron?f.elements.cron.value.trim():'',
     assistantPrompt:assistant?f.elements.assistantPrompt.value.trim():'',
     assistantModel:assistant?f.elements.assistantModel.value.trim():'',
+    runAs:assistant&&f.elements.runAs?f.elements.runAs.value:'',
     enabled:f.elements.enabled.checked
   };
   if(assistant&&typeof sharedScheduleFormPayload==='function')Object.assign(payload,sharedScheduleFormPayload(f));

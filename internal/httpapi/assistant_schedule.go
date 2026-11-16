@@ -86,11 +86,16 @@ func (h *assistantHandlers) runScheduleJobPrompt(job domain.ScheduleJob) (messag
 	return firstNonEmpty(task.NotificationResult, task.LastMessage), task.SessionID, nil
 }
 
-// scheduleJobAssistantUser picks whose keys run the job: the project owner,
-// else (for a non-shared job) its owner. The model's CLI decides which key
-// they need. A scheduled run does not borrow the platform shared CodeBuddy key.
+// scheduleJobAssistantUser picks whose keys run the job: the member the job
+// is bound to, else the project owner, else (for a non-shared job) its owner.
+// A bound job never falls back to someone else's keys. The model's CLI decides
+// which key they need. A scheduled run does not borrow the platform shared
+// CodeBuddy key.
 func (h *assistantHandlers) scheduleJobAssistantUser(job domain.ScheduleJob, model string) (domain.User, error) {
 	engine, _ := assistantModelEngine(model)
+	if job.RunAsUserID > 0 {
+		return h.scheduleJobRunAsUser(job, engine)
+	}
 	try := func(id int64) (domain.User, bool) {
 		if id == 0 || h.repo == nil {
 			return domain.User{}, false
@@ -109,5 +114,45 @@ func (h *assistantHandlers) scheduleJobAssistantUser(job domain.ScheduleJob, mod
 			return user, nil
 		}
 	}
-	return domain.User{}, fmt.Errorf("执行提示词需要项目 Owner 的 %s API Key：请在该账号的个人配置中配置", assistantEngineLabel(engine))
+	return domain.User{}, fmt.Errorf("执行提示词需要项目 Owner 的 %s API Key：请在该账号的个人配置中配置，或编辑任务把执行身份改为你自己的 Key", assistantEngineLabel(engine))
+}
+
+// scheduleJobRunAsUser runs a bound job as that member while they can still
+// write to the project.
+func (h *assistantHandlers) scheduleJobRunAsUser(job domain.ScheduleJob, engine string) (domain.User, error) {
+	name := firstNonEmpty(job.RunAsName, fmt.Sprintf("用户 %d", job.RunAsUserID))
+	user, ok := h.repo.User(job.RunAsUserID)
+	if !ok {
+		return domain.User{}, fmt.Errorf("任务绑定的执行账号 %s 已不存在：请编辑任务重新选择执行身份", name)
+	}
+	if !scheduleProjectWriter(h.repo, job.ProjectID, user) {
+		return domain.User{}, fmt.Errorf("%s 已不是该项目的可写成员，不能再用其 Key 执行：请编辑任务重新选择执行身份", name)
+	}
+	if key, _ := assistantEngineCredential(user, engine); key == "" {
+		return domain.User{}, fmt.Errorf("执行提示词需要 %s 的 %s API Key：请在该账号的个人配置中配置", name, assistantEngineLabel(engine))
+	}
+	return user, nil
+}
+
+// scheduleProjectWriter mirrors scheduleProjectAllowed for a stored user.
+func scheduleProjectWriter(r interface {
+	Project(string) (domain.Project, bool)
+	IsPlatformAdmin(string) bool
+}, projectID string, user domain.User) bool {
+	if r.IsPlatformAdmin(user.LoginName) {
+		return true
+	}
+	project, ok := r.Project(projectID)
+	if !ok {
+		return false
+	}
+	if project.OwnerID == user.ID {
+		return true
+	}
+	for _, member := range project.Members {
+		if member.UserID == user.ID && !strings.EqualFold(member.Role, "viewer") {
+			return true
+		}
+	}
+	return false
 }

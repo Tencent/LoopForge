@@ -83,6 +83,36 @@ test('schedule form switches job kind and timing and sends validated assistant a
   assert.match(app.document.querySelector('#scheduleJobList').textContent, /每小时/);
 });
 
+test('an AI job can run with the saving user\'s own key', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  app.router.post('/api/schedule-jobs', call => ({ ...call.body, id: 'new-ai', runAs: undefined, runAsUserId: call.body.runAs === 'self' ? 7 : 0, runAsName: call.body.runAs === 'self' ? 'alice' : '' }));
+  app.evaluate(`(() => {
+    state.currentUser={id:7,loginName:'alice',isGuest:false};
+    state.projectFilter='project-1';
+    state.data.scheduleJobs=[];
+    fillScheduleJobForm({});
+    const f=$('#scheduleJobForm');
+    f.elements.jobKind.value='assistant';syncScheduleJobKind();
+  })()`);
+  const form = app.document.querySelector('#scheduleJobForm');
+  assert.equal(form.elements.runAs.value, 'owner', 'new jobs default to the project owner');
+  form.elements.name.value = 'Mine';
+  form.elements.assistantPrompt.value = 'check';
+  form.elements.runAs.value = 'self';
+  form.dispatchEvent(new app.window.Event('submit', { bubbles: true, cancelable: true }));
+  await settle(4);
+  const call = app.router.calls.find(c => c.method === 'POST' && c.path === '/api/schedule-jobs');
+  assert.equal(call.body.runAs, 'self');
+  assert.match(app.document.querySelector('#aiScheduleJobList').textContent, /使用 alice 的 Key/);
+
+  app.evaluate(`fillScheduleJobForm(state.data.scheduleJobs[0])`);
+  assert.equal(form.elements.runAs.value, 'self', 'the bound user sees their own key selected');
+  app.evaluate(`state.currentUser={id:8,loginName:'bob',isGuest:false};fillScheduleJobForm(state.data.scheduleJobs[0])`);
+  assert.equal(form.elements.runAs.value, 'owner', 'another member does not inherit the binding');
+  assert.match(app.document.querySelector('#scheduleRunAsHint').textContent, /当前使用 alice 的 Key/);
+});
+
 test('running a schedule job updates the UI immediately and persists the server outcome', async (t) => {
   const app = await loadApp();
   t.after(app.close);
