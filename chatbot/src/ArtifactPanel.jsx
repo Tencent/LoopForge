@@ -586,7 +586,7 @@ export default function ArtifactPanel({
         ) : null}
         {view === "changes" ? (
           <div className="artifact-panel-content">
-            <ChangesPanel changes={workspaceChanges} />
+            <ChangesPanel key={workspaceRunId} changes={workspaceChanges} />
           </div>
         ) : null}
         {coding ? (
