@@ -16,19 +16,21 @@ import (
 // Client is a minimal Streamable HTTP MCP client that sends JSON-RPC 2.0
 // tool-call requests to an MCP gateway and parses the response.
 type Client struct {
-	url    string
-	hdrs   map[string]string
-	http   *http.Client
-	mu     sync.Mutex
-	nextID int64
-	init   bool
+	url      string
+	hdrs     map[string]string
+	http     *http.Client
+	mu       sync.Mutex
+	nextID   int64
+	init     bool
+	initGate chan struct{}
 }
 
 func New(url string, headers map[string]string) *Client {
 	return &Client{
-		url:  strings.TrimRight(url, "/"),
-		hdrs: headers,
-		http: &http.Client{Timeout: 60 * time.Second},
+		url:      strings.TrimRight(url, "/"),
+		hdrs:     headers,
+		http:     &http.Client{Timeout: 60 * time.Second},
+		initGate: make(chan struct{}, 1),
 	}
 }
 
@@ -102,7 +104,10 @@ func (c *Client) CallTool(name string, args map[string]any) (string, error) {
 
 // CallToolContext is CallTool with a caller-supplied deadline/cancellation.
 func (c *Client) CallToolContext(ctx context.Context, name string, args map[string]any) (string, error) {
-	if err := c.ensureInit(); err != nil {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := c.ensureInit(ctx); err != nil {
 		return "", fmt.Errorf("mcp init: %w", err)
 	}
 	c.mu.Lock()
@@ -206,7 +211,10 @@ func (c *Client) ListTools() ([]Tool, error) {
 
 // ListToolsContext is ListTools with a caller-supplied deadline/cancellation.
 func (c *Client) ListToolsContext(ctx context.Context) ([]Tool, error) {
-	if err := c.ensureInit(); err != nil {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := c.ensureInit(ctx); err != nil {
 		return nil, fmt.Errorf("mcp init: %w", err)
 	}
 	c.mu.Lock()
@@ -264,14 +272,23 @@ func (c *Client) ListToolsContext(ctx context.Context) ([]Tool, error) {
 	return result.Tools, nil
 }
 
-func (c *Client) ensureInit() error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+func (c *Client) ensureInit(ctx context.Context) error {
+	select {
+	case c.initGate <- struct{}{}:
+		defer func() { <-c.initGate }()
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if c.init {
 		return nil
 	}
+	c.mu.Lock()
 	c.nextID++
 	id := c.nextID
+	c.mu.Unlock()
 
 	req := rpcRequest{
 		JSONRPC: "2.0",
@@ -287,7 +304,7 @@ func (c *Client) ensureInit() error {
 		},
 	}
 	body, _ := json.Marshal(req)
-	httpReq, err := http.NewRequest("POST", c.url, bytes.NewReader(body))
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", c.url, bytes.NewReader(body))
 	if err != nil {
 		return err
 	}
@@ -298,12 +315,18 @@ func (c *Client) ensureInit() error {
 	}
 	resp, err := c.http.Do(httpReq)
 	if err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 		c.init = true
 		return nil
 	}
 	defer resp.Body.Close()
 	raw, err := c.readResponse(resp)
 	if err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 		c.init = true
 		return nil
 	}
@@ -312,14 +335,16 @@ func (c *Client) ensureInit() error {
 		// Non-fatal: continue even if init fails.
 	}
 
+	c.mu.Lock()
 	c.nextID++
+	c.mu.Unlock()
 	notifReq := rpcRequest{
 		JSONRPC: "2.0",
 		ID:      0,
 		Method:  "notifications/initialized",
 	}
 	notifBody, _ := json.Marshal(notifReq)
-	notifHTTP, _ := http.NewRequest("POST", c.url, bytes.NewReader(notifBody))
+	notifHTTP, _ := http.NewRequestWithContext(ctx, "POST", c.url, bytes.NewReader(notifBody))
 	notifHTTP.Header.Set("Content-Type", "application/json")
 	notifHTTP.Header.Set("Accept", "application/json, text/event-stream")
 	for k, v := range c.hdrs {
@@ -328,6 +353,9 @@ func (c *Client) ensureInit() error {
 	notifResp, err := c.http.Do(notifHTTP)
 	if err == nil {
 		notifResp.Body.Close()
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	c.init = true
 	return nil
