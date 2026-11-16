@@ -20,7 +20,7 @@ const (
 	BindCodeBuddy  CredentialBinding = "codebuddy"
 	BindCodex      CredentialBinding = "codex"
 	BindClaudeCode CredentialBinding = "claude-code"
-	BindDeepSeek   CredentialBinding = "deepseek"
+	BindDeepSeek   CredentialBinding = domain.ExecutorKindDeepSeek
 	BindGit        CredentialBinding = "git"
 	BindMCP        CredentialBinding = "mcp"
 	// BindAgentCLI injects the responsible user's key for the command's agent
@@ -124,7 +124,7 @@ func (c CommandSpec) WithPrivateHomeDir(dir string) CommandSpec {
 	env["HOME"] = dir
 	env["TMPDIR"] = filepath.Join(dir, "tmp")
 	_ = os.MkdirAll(env["TMPDIR"], 0o700)
-	if c.Provider == "codex" || c.Provider == "deepseek" {
+	if domain.BinaryProvider(c.Provider) == "codex" {
 		env["CODEX_HOME"] = filepath.Join(dir, ".codex")
 		_ = os.MkdirAll(env["CODEX_HOME"], 0o700)
 	}

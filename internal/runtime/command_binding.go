@@ -75,7 +75,7 @@ func bindCommand(sandbox Sandbox, workspace string, command CommandSpec, credent
 			bound.environment["HOME"] = hostHome
 			bound.environment["TMPDIR"] = hostTmp
 		}
-		if command.Provider == "codex" || command.Provider == "deepseek" || command.Provider == "claude-code" {
+		if binaryProvider := domain.BinaryProvider(command.Provider); binaryProvider == "codex" || binaryProvider == "claude-code" {
 			dir, key := ".codex", "CODEX_HOME"
 			if command.Provider == "claude-code" {
 				dir, key = ".claude", "CLAUDE_CONFIG_DIR"
@@ -110,19 +110,18 @@ func bindCommand(sandbox Sandbox, workspace string, command CommandSpec, credent
 			}
 			bound.Argv = BindMCPCallArgv(sandbox, bound.Argv)
 		case BindCodex, BindDeepSeek:
-			credential, label, defaultURL := credentials.Codex, "Codex", "https://api.openai.com/v1"
+			credential, label := credentials.Codex, "Codex"
 			if binding == BindDeepSeek {
-				credential, label, defaultURL = credentials.AgentCLI["deepseek"], "DeepSeek", domain.DeepSeekDefaultBaseURL
+				credential, label = credentials.AgentCLI[domain.ExecutorKindDeepSeek], "DeepSeek"
+				if strings.TrimSpace(credential.BaseURL) == "" {
+					credential.BaseURL = domain.DeepSeekDefaultBaseURL
+				}
 			}
 			bound.environment["CODEX_API_KEY"] = strings.TrimSpace(credential.APIKey)
 			if bound.environment["CODEX_API_KEY"] == "" {
 				return CommandSpec{}, fmt.Errorf("需求责任人未配置 %s API Key，请在个人配置中配置", label)
 			}
-			baseURL := strings.TrimSpace(credential.BaseURL)
-			if baseURL == "" {
-				baseURL = defaultURL
-			}
-			argv, err := CodexUserProviderArgv(bound.Argv, baseURL)
+			argv, err := CodexUserProviderArgv(bound.Argv, credential.BaseURL)
 			if err != nil {
 				return CommandSpec{}, err
 			}

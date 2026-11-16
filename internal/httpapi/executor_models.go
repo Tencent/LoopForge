@@ -67,7 +67,7 @@ func executorModelCatalogs() map[string]executorModelCatalog {
 		codebuddyModels = append(codebuddyModels, executorModelInfo{ID: model.ID, Name: model.Name, Credits: model.Credits})
 	}
 	return map[string]executorModelCatalog{
-		"deepseek": {
+		domain.ExecutorKindDeepSeek: {
 			Default:     domain.DeepSeekDefaultModel,
 			CustomModel: true,
 			Models:      []executorModelInfo{{ID: domain.DeepSeekDefaultModel, Name: "DeepSeek Flash"}, {ID: "deepseek-v4-pro", Name: "DeepSeek V4 Pro"}},

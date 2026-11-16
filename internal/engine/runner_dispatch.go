@@ -208,7 +208,7 @@ func (e *Engine) dispatchRunnerTask(ctx context.Context, runnerID string, run do
 			}
 			invocation.CodexAPIKey = credentials.Codex.APIKey
 			invocation.CodexBaseURL = credentials.Codex.BaseURL
-		case "deepseek":
+		case domain.ExecutorKindDeepSeek:
 			// DeepSeek always uses the responsible user's credentials, even when Codex uses local login.
 			cred := credentials.AgentCLI[ex.Kind]
 			if strings.TrimSpace(cred.APIKey) == "" {
@@ -871,7 +871,7 @@ func (e *Engine) requireRunnerProvider(runnerID, provider string) error {
 	if runner.Status != domain.RunnerStatusOnline {
 		return fmt.Errorf("执行器 %s（%s）当前离线，无法路由 %s 任务", runnerID, runner.Name, provider)
 	}
-	if provider == "deepseek" && !runner.SupportsProvider(provider) {
+	if provider == domain.ExecutorKindDeepSeek && !runner.SupportsProvider(provider) {
 		return fmt.Errorf("执行器 %s（%s）不支持 DeepSeek：请更新 Runner 并启用 Codex CLI", runnerID, runner.Name)
 	}
 	if !runner.SupportsProvider(provider) {

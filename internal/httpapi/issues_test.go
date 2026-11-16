@@ -545,7 +545,7 @@ func TestAssetAPIAcceptsSandboxEnvironmentButExecutorsAreReadOnly(t *testing.T) 
 		}
 		if ex := executors[i]; ex.ID == "deepseek" {
 			foundDeepSeek = true
-			if ex.Binary != "codex" || ex.Model != domain.DeepSeekDefaultModel {
+			if ex.Name != "DeepSeek (via Codex)" || ex.Binary != "codex" || ex.Model != domain.DeepSeekDefaultModel {
 				t.Fatalf("DeepSeek executor = %+v", ex)
 			}
 		}

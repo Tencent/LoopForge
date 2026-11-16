@@ -367,7 +367,7 @@ func (d *Daemon) availableProviders() []string {
 		if rt.Status != domain.RuntimeStatusDisabled {
 			providers = append(providers, rt.Provider)
 			if rt.Provider == "codex" && slices.Contains(rt.Capabilities, domain.RunnerCapabilityDeepSeek) {
-				providers = append(providers, "deepseek")
+				providers = append(providers, domain.ExecutorKindDeepSeek)
 			}
 		}
 	}
@@ -1048,8 +1048,8 @@ func bindSandboxPrivateHome(workspace, driver, provider string, env map[string]s
 		env["HOME"] = home
 		env["TMPDIR"] = tmp
 	}
-	switch provider {
-	case "codex", "deepseek":
+	switch domain.BinaryProvider(provider) {
+	case "codex":
 		if err := os.MkdirAll(filepath.Join(home, ".codex"), 0o700); err != nil {
 			return nil, err
 		}
@@ -1085,9 +1085,12 @@ func bindInvocationCredentials(inv *domain.RunnerInvocation, bindings []runtime.
 			if !personal && binding != runtime.BindDeepSeek {
 				continue
 			}
-			key, baseURL, label, defaultURL := inv.CodexAPIKey, inv.CodexBaseURL, "Codex", "https://api.openai.com/v1"
+			key, baseURL, label := inv.CodexAPIKey, inv.CodexBaseURL, "Codex"
 			if binding == runtime.BindDeepSeek {
-				key, baseURL, label, defaultURL = inv.AgentCLIAPIKey, inv.AgentCLIBaseURL, "DeepSeek", domain.DeepSeekDefaultBaseURL
+				key, baseURL, label = inv.AgentCLIAPIKey, inv.AgentCLIBaseURL, "DeepSeek"
+				if strings.TrimSpace(baseURL) == "" {
+					baseURL = domain.DeepSeekDefaultBaseURL
+				}
 			}
 			key = strings.TrimSpace(key)
 			if key == "" {
@@ -1098,10 +1101,6 @@ func bindInvocationCredentials(inv *domain.RunnerInvocation, bindings []runtime.
 				for _, name := range []string{"ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN", "DEEPSEEK_API_KEY", "CODEBUDDY_API_KEY", "OPENAI_API_KEY"} {
 					env[name] = ""
 				}
-			}
-			baseURL = strings.TrimSpace(baseURL)
-			if baseURL == "" {
-				baseURL = defaultURL
 			}
 			withProvider, err := runtime.CodexUserProviderArgv(argv, baseURL)
 			if err != nil {

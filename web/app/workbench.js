@@ -75,7 +75,7 @@ const CREDENTIAL_KINDS=[
   {key:'agentCli.deepseek',agentCli:'deepseek',group:'model',name:'DeepSeek',short:'DeepSeek API Key',logo:'deepseek',
     use:'通过 Codex CLI 运行的 DeepSeek SOP 节点',
     description:'SOP 角色可通过 Codex CLI 和 Responses API 运行 DeepSeek 模型。保存模型目录后，可在角色设置中选择这些模型。',
-    guide:[['在 DeepSeek 控制台创建 API Key'],['留空 Base URL 使用官方服务，或填写支持 Responses API 的网关地址'],['在 SOP 角色设置中选择 DeepSeek 执行器']],
+    guide:[['在 DeepSeek 控制台创建 API Key'],['留空 Base URL 使用官方服务，或填写支持 Responses API 的网关地址'],['在 SOP 角色设置中选择 DeepSeek (via Codex) 执行器']],
     placeholder:'请输入 DeepSeek API Key',
     extra:{name:'agentCli.deepseek.baseUrl',label:'Base URL',placeholder:'https://api.deepseek.com',url:true},
     models:{name:'agentCli.deepseek.models',engine:'deepseek'},

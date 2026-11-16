@@ -144,11 +144,11 @@ func (baseProvider) StartObservation(context.Context, compiledConfig, EventSink)
 func (baseProvider) SystemHooks() []domain.AgentHook { return nil }
 
 var providers = map[string]Provider{
-	"claude-code": claudeProvider{},
-	"deepseek":    deepSeekProvider{},
-	"codebuddy":   codeBuddyProvider{},
-	"codex":       codexProvider{},
-	"mock":        mockProvider{},
+	"claude-code":               claudeProvider{},
+	domain.ExecutorKindDeepSeek: deepSeekProvider{},
+	"codebuddy":                 codeBuddyProvider{},
+	"codex":                     codexProvider{},
+	"mock":                      mockProvider{},
 }
 
 func init() {

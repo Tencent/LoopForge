@@ -27,7 +27,9 @@ test('DeepSeek has an independent settings row and saves its key and endpoint', 
   assert.equal(app.evaluate(`credentialHint('需求责任人未配置 DeepSeek Harness API Key').field`), 'agentCli.dsh');
   const clear = app.evaluate(`credentialClearPayload(credentialKind('agentCli.deepseek'))`);
   assert.deepEqual(JSON.parse(JSON.stringify(clear)).agentCliCredentials.deepseek, { apiKeyClear: true, baseUrl: '', protocol: '', models: [] });
-  assert.match(app.evaluate(`state.data.executors.push({id:'deepseek',name:'DeepSeek'});executorOptions('deepseek')`), /data-meta="via Codex"/);
+  const options = app.evaluate(`state.data.executors.push({id:'deepseek',name:'DeepSeek (via Codex)'},{id:'dsh',name:'DeepSeek Harness'});executorOptions('deepseek')`);
+  assert.match(options, /<option value="deepseek" selected>DeepSeek \(via Codex\)<\/option>/);
+  assert.match(options, /<option value="dsh"[^>]*>DeepSeek Harness<\/option>/);
 });
 
 test('SOP role model picker uses the personal DeepSeek catalog', async (t) => {

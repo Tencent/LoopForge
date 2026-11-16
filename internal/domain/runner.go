@@ -269,10 +269,8 @@ func (r Runner) SupportsProvider(provider string) bool {
 	if provider == "" {
 		return false
 	}
-	deepseek := strings.EqualFold(provider, "deepseek")
-	if deepseek {
-		provider = "codex"
-	}
+	deepseek := strings.EqualFold(provider, ExecutorKindDeepSeek)
+	provider = BinaryProvider(provider)
 	for _, rt := range r.Runtimes {
 		if strings.EqualFold(rt.Provider, provider) && rt.Status != RuntimeStatusDisabled {
 			if !deepseek || slices.Contains(rt.Capabilities, RunnerCapabilityDeepSeek) {
@@ -288,7 +286,7 @@ func (r Runner) SupportsProvider(provider string) bool {
 // they always use the responsible user's personal credential. Codex and
 // Claude Code default to local login.
 func (r Runner) RuntimeAuthMode(provider string) string {
-	if IsAgentCLIKind(provider) || strings.EqualFold(strings.TrimSpace(provider), "deepseek") {
+	if IsAgentCLIKind(provider) || strings.EqualFold(strings.TrimSpace(provider), ExecutorKindDeepSeek) {
 		return RuntimeAuthPersonal
 	}
 	provider = strings.TrimSpace(provider)
@@ -320,7 +318,7 @@ const (
 )
 
 // RunnerCapabilityDeepSeek marks a Codex runtime whose daemon can run DeepSeek tasks.
-const RunnerCapabilityDeepSeek = "deepseek"
+const RunnerCapabilityDeepSeek = ExecutorKindDeepSeek
 
 func (rt RunnerRuntime) SupportsCLIUpdate() bool {
 	for _, capability := range rt.Capabilities {

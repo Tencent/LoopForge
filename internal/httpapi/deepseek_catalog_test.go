@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -44,7 +45,7 @@ func TestDeepSeekPersonalModelCatalog(t *testing.T) {
 		t.Fatalf("save model catalog: status %d, response %s", rec.Code, rec.Body.String())
 	}
 	config := saved.AgentCLICredentials["deepseek"]
-	if !config.APIKeyConfigured || strings.Contains(rec.Body.String(), key) || !slices.Equal(config.Models, []domain.CLIModel{personal}) {
+	if !config.APIKeyConfigured || strings.Contains(rec.Body.String(), key) || !reflect.DeepEqual(config.Models, []domain.CLIModel{personal}) {
 		t.Fatal("personal model catalog must survive the save and the key must be redacted")
 	}
 	for _, engine := range assistantEngineOptions(saved, false) {
@@ -62,7 +63,7 @@ func TestDeepSeekPersonalModelCatalog(t *testing.T) {
 		return []assistantDiscoveredModel{{ID: personal.ID, Name: personal.Name}}, nil
 	}
 	remote := probe()
-	if remote.Source != "remote" || !slices.Equal(remote.Models, []domain.CLIModel{personal}) {
+	if remote.Source != "remote" || !reflect.DeepEqual(remote.Models, []domain.CLIModel{personal}) {
 		t.Fatalf("gateway model catalog = %+v", remote)
 	}
 }

@@ -50,7 +50,7 @@ Object.assign(window.LF_I18N_EN,{
 "SOP 角色可通过 Codex CLI 和 Responses API 运行 DeepSeek 模型。保存模型目录后，可在角色设置中选择这些模型。":"SOP roles run DeepSeek models through Codex CLI and the Responses API. Save a model catalog to choose from it in role settings.",
 "在 DeepSeek 控制台创建 API Key":"Create an API key in the DeepSeek console",
 "留空 Base URL 使用官方服务，或填写支持 Responses API 的网关地址":"Leave Base URL blank for the official service, or enter a gateway that supports the Responses API",
-"在 SOP 角色设置中选择 DeepSeek 执行器":"Select the DeepSeek executor in the SOP role settings",
+"在 SOP 角色设置中选择 DeepSeek (via Codex) 执行器":"Select the DeepSeek (via Codex) executor in the SOP role settings",
 "请输入 DeepSeek API Key":"Enter a DeepSeek API key",
 "DeepSeek SOP 节点将无法执行，Base URL 与模型目录一并清空。":"DeepSeek SOP steps will require a new key. The Base URL and model catalog are cleared as well.",
 "使用 DeepSeek 内置模型":"Use built-in DeepSeek models",
