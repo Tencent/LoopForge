@@ -78,10 +78,10 @@ func (f *assistantStreamFilter) acceptTool(ev assistantStreamEvent) bool {
 		}
 		// The CLI announces a call with empty input and repeats it once
 		// the input is complete. Keep the repeat only when it adds
-		// something: the detail, or an Agent call's type and task.
-		seen := ev.Detail + "\x00" + ev.Subagent + "\x00" + ev.Input + "\x00" + ev.AgentID
+		// something: the detail, or an Agent call's type, task and model.
+		seen := ev.Detail + "\x00" + ev.Subagent + "\x00" + ev.Input + "\x00" + ev.AgentID + "\x00" + ev.Model
 		if previous, ok := f.seenTools[ev.ID]; ok {
-			if seen == previous || (ev.Detail == "" && ev.Subagent == "" && ev.Input == "") {
+			if seen == previous || (ev.Detail == "" && ev.Subagent == "" && ev.Input == "" && ev.Model == "") {
 				return false
 			}
 		}
@@ -293,10 +293,12 @@ func assistantToolStreamEvent(id, name string, input json.RawMessage) (assistant
 			SubagentType string `json:"subagent_type"`
 			Prompt       string `json:"prompt"`
 			Resume       string `json:"resume"`
+			Model        string `json:"model"`
 		}
 		_ = json.Unmarshal(input, &dispatch)
 		event.Subagent = strings.TrimSpace(dispatch.SubagentType)
 		event.Input = truncateRunes(strings.TrimSpace(dispatch.Prompt), 8000)
+		event.Model = assistantDispatchModel(dispatch.Model)
 		// A resumed dispatch names its agent up front, so the panel can put
 		// it on that agent's row while it runs.
 		if m := assistantAgentIDRe.FindStringSubmatch("Agent ID: " + strings.TrimSpace(dispatch.Resume)); m != nil {
@@ -307,6 +309,17 @@ func assistantToolStreamEvent(id, name string, input json.RawMessage) (assistant
 }
 
 var assistantAgentIDRe = regexp.MustCompile(`Agent ID:\s*(agent-[A-Za-z0-9-]+)`)
+
+// assistantDispatchModel is the model an Agent call names for its subagent.
+// No model, or one that only says to inherit, leaves it to the reply's own.
+func assistantDispatchModel(model string) string {
+	model = strings.TrimSpace(model)
+	switch strings.ToLower(model) {
+	case "", "default", "inherit":
+		return ""
+	}
+	return truncateRunes(model, 128)
+}
 
 // assistantResultText reads a tool result, which is either a string or a list
 // of text blocks.

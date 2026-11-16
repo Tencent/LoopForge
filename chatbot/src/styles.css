@@ -1263,6 +1263,12 @@ small {
 .node-conversation-view .node-message:first-child {
   margin-top: 20px;
 }
+/* The model a subagent dispatch ran on, under the task it was given. */
+.subagent-session .subagent-model {
+  margin: 6px 0 0;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
 .composer-toolbar {
   display: flex;
   align-items: center;
