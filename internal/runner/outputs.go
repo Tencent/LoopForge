@@ -2,7 +2,6 @@ package runner
 
 import (
 	"fmt"
-	"io/fs"
 	"os"
 	"path"
 	"path/filepath"
@@ -172,7 +171,7 @@ func recoverOutputFiles(workspace string, outputs []string) []string {
 		if _, err := os.Lstat(dest); err == nil {
 			continue
 		}
-		src := findNamedFile(workspace, path.Base(rel), 4)
+		src := runtime.FindUniqueOutputFile(workspace, path.Base(rel), 4)
 		if src == "" || src == dest {
 			continue
 		}
@@ -191,33 +190,4 @@ func recoverOutputFiles(workspace string, outputs []string) []string {
 		recovered = append(recovered, rel+" ← "+filepath.ToSlash(from))
 	}
 	return recovered
-}
-
-func findNamedFile(root, name string, maxDepth int) string {
-	var found string
-	_ = filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
-		if err != nil || found != "" {
-			return err
-		}
-		if d.IsDir() {
-			if p == root {
-				return nil
-			}
-			switch d.Name() {
-			case ".git", "node_modules", ".agentflow":
-				return filepath.SkipDir
-			}
-			rel, relErr := filepath.Rel(root, p)
-			if relErr == nil && strings.Count(rel, string(os.PathSeparator))+1 >= maxDepth {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if d.Name() == name && d.Type().IsRegular() {
-			found = p
-			return filepath.SkipAll
-		}
-		return nil
-	})
-	return found
 }
