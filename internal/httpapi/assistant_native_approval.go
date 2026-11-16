@@ -1,15 +1,18 @@
 package httpapi
 
 import (
-	"agentflow/internal/domain"
 	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"github.com/gin-gonic/gin"
+	"slices"
 	"strings"
 	"time"
+
+	"agentflow/internal/domain"
+
+	"github.com/gin-gonic/gin"
 )
 
 func (h *assistantHandlers) nativeApprovals(c *gin.Context) {
@@ -26,6 +29,7 @@ func (h *assistantHandlers) nativeApprovals(c *gin.Context) {
 	if c.Request.Method == "GET" {
 		stored, _ := h.repo.User(user.ID)
 		items := h.repo.PendingNativeApprovals(owner, c.Param("id"))
+		items = slices.DeleteFunc(items, func(item domain.AssistantNativeApproval) bool { return item.ActorID != user.ID })
 		for i := range items {
 			items[i].Input = redactNativeApprovalInput(items[i].Input, stored)
 		}
@@ -85,7 +89,13 @@ func redactJSONStrings(value any, user domain.User) any {
 		}
 	case map[string]any:
 		for key := range v {
-			v[key] = redactJSONStrings(v[key], user)
+			switch strings.ToLower(key) {
+			case "authorization", "headers", "cookie", "password", "passwd", "token", "access_token", "accesstoken", "refresh_token", "refreshtoken",
+				"api_key", "apikey", "secret", "client_secret", "clientsecret", "private_key", "privatekey", "credentials":
+				v[key] = "[redacted]"
+			default:
+				v[key] = redactJSONStrings(v[key], user)
+			}
 		}
 	}
 	return value
@@ -280,8 +290,12 @@ func (h *agentToolGateway) nativeGatewayTool(ctx context.Context, s *AgentToolSe
 	}
 }
 
+func (s *AgentToolSession) nativeToolPhaseActive(ctx context.Context) bool {
+	return ctx.Err() == nil && !s.nativePhaseClosed.Load() && !s.closed.Load() && !s.expired(time.Now()) && s.requestedMode() == ""
+}
+
 func (h *agentToolGateway) nativeToolTurnActive(ctx context.Context, s *AgentToolSession) bool {
-	if ctx.Err() != nil || s.nativePhaseClosed.Load() || s.closed.Load() || s.ctx != nil && s.ctx.Err() != nil || s.requestedMode() != "" {
+	if !s.nativeToolPhaseActive(ctx) {
 		return false
 	}
 	if s.ctx == nil {

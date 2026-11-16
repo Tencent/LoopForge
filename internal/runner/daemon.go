@@ -31,6 +31,7 @@ type Daemon struct {
 	conversationMu        sync.Mutex
 	conversationForward   runtime.ConversationToolForward
 	conversationReplies   map[string]chan domain.RunnerToolResponse
+	conversationToolSeq   atomic.Uint64
 	cfg                   Config
 	client                *Client
 	executor              *runtime.ExecutorRunner

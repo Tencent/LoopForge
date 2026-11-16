@@ -78,8 +78,9 @@ type RunnerWorkspaceRequest struct {
 // RunnerToolRequest is forwarded over the same instance-owned control socket
 // as the conversation process, avoiding loopback and load-balancer affinity.
 type RunnerToolRequest struct {
-	Token string          `json:"token"`
-	Body  json.RawMessage `json:"body"`
+	SupportsCancel bool            `json:"supportsCancel,omitempty"`
+	Token          string          `json:"token"`
+	Body           json.RawMessage `json:"body"`
 }
 type RunnerToolResponse struct {
 	Body  json.RawMessage `json:"body,omitempty"`

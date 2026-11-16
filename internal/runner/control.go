@@ -91,7 +91,11 @@ func (d *Daemon) readControls(ctx context.Context, conn *websocket.Conn) error {
 		writeMu.Lock()
 		defer writeMu.Unlock()
 		_ = conn.SetWriteDeadline(time.Now().Add(controlWriteTimeout))
-		return conn.WriteJSON(message)
+		err := conn.WriteJSON(message)
+		if err != nil {
+			cancel()
+		}
+		return err
 	}
 	d.conversationMu.Lock()
 	if d.conversationReplies == nil {
@@ -252,13 +256,16 @@ func (d *Daemon) activeTaskIDs() []string {
 // when either the caller (callCtx) or the control connection (connCtx) ends.
 // readControls must have initialised d.conversationReplies.
 func (d *Daemon) forwardConversationTool(connCtx, callCtx context.Context, write func(controlMessage) error, token string, body json.RawMessage) (json.RawMessage, error) {
-	id := fmt.Sprintf("tool-%d", time.Now().UnixNano())
+	if err := callCtx.Err(); err != nil {
+		return nil, err
+	}
+	id := fmt.Sprintf("tool-%d", d.conversationToolSeq.Add(1))
 	reply := make(chan domain.RunnerToolResponse, 1)
 	d.conversationMu.Lock()
 	d.conversationReplies[id] = reply
 	d.conversationMu.Unlock()
 	defer func() { d.conversationMu.Lock(); delete(d.conversationReplies, id); d.conversationMu.Unlock() }()
-	err := write(controlMessage{Type: "agent_tool.request", RequestID: id, ToolRequest: &domain.RunnerToolRequest{Token: token, Body: body}})
+	err := write(controlMessage{Type: "agent_tool.request", RequestID: id, ToolRequest: &domain.RunnerToolRequest{Token: token, Body: body, SupportsCancel: true}})
 	if err != nil {
 		return nil, err
 	}
@@ -269,6 +276,9 @@ func (d *Daemon) forwardConversationTool(connCtx, callCtx context.Context, write
 		}
 		return response.Body, nil
 	case <-callCtx.Done():
+		if connCtx.Err() == nil {
+			_ = write(controlMessage{Type: "agent_tool.cancel", RequestID: id})
+		}
 		return nil, callCtx.Err()
 	case <-connCtx.Done():
 		return nil, connCtx.Err()
