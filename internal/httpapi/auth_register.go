@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"agentflow/internal/auth"
 	"agentflow/internal/domain"
 	"agentflow/internal/repo"
 	"errors"
@@ -33,7 +34,13 @@ func signupEnabled() bool {
 
 func (h *authHandlers) authSetup(c *gin.Context) {
 	needsSetup := h.repo != nil && h.repo.LocalAccountCount() == 0
-	c.JSON(http.StatusOK, gin.H{"needsSetup": needsSetup, "signupEnabled": needsSetup || signupEnabled()})
+	state := gin.H{"needsSetup": needsSetup, "signupEnabled": needsSetup || signupEnabled()}
+	if h.oidcAvailable(c.Request) {
+		oidcResponseHeaders(c)
+		query := url.Values{"return_url": {h.oidcReturnPath(c.Request)}}
+		state["oidcLoginUrl"] = auth.OIDCStartPath + "?" + query.Encode()
+	}
+	c.JSON(http.StatusOK, state)
 }
 
 const welcomeProjectID = "welcome"

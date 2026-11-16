@@ -123,6 +123,10 @@ func NewWithNotificationsAndBackground(ctx context.Context, s *repo.Store, e *en
 
 func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Service, basicUser, basicPass string, notifications *notification.Service, bg *Background, startBackground func(*assistantHandlers, *runsHandlers)) *gin.Engine {
 	d := &deps{repo: s, engine: e, sync: syncSvc, authClient: auth.NewClientFromEnv(), passwordAttempts: newPasswordLimiter()}
+	oidc, err := auth.NewOIDCClientFromEnv()
+	if err != nil {
+		log.Printf("[auth] enterprise login disabled: %v", err)
+	}
 	if trustGatewayIdentityHeaders() && strings.TrimSpace(os.Getenv("AGENTFLOW_IDENTITY_HEADER_SECRET")) == "" {
 		log.Printf("warning: AGENTFLOW_TRUST_IDENTITY_HEADERS is on without AGENTFLOW_IDENTITY_HEADER_SECRET; any loopback caller without forwarding headers, including a proxy that passes client headers through, can sign in as any user")
 	}
@@ -150,7 +154,7 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	api := &Server{
 		deps:            d,
 		notifications:   &notificationHandlers{deps: d, service: notifications},
-		auth:            &authHandlers{deps: d},
+		auth:            &authHandlers{deps: d, oidc: oidc},
 		github:          newGitHubHandlers(d),
 		users:           &usersHandlers{deps: d},
 		catalog:         &catalogHandlers{deps: d},
@@ -236,6 +240,8 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.GET("/api/auth/current", api.auth.authCurrent)
 	g.POST("/api/auth/password", api.auth.authPassword)
 	g.GET("/api/auth/setup", api.auth.authSetup)
+	g.GET(auth.OIDCStartPath, api.auth.oidcStart)
+	g.GET(auth.OIDCCallbackPath, api.auth.oidcCallback)
 	g.POST("/api/auth/register", api.auth.authRegister)
 	g.GET("/api/auth/local", api.auth.authLocal)
 	g.POST("/api/auth/local", api.auth.authLocal)

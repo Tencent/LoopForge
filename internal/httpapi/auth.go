@@ -34,6 +34,7 @@ func authSessionExpired(user *auth.User) bool {
 
 type authHandlers struct {
 	*deps
+	oidc *auth.OIDCClient
 }
 
 func trustGatewayIdentityHeaders() bool {
@@ -273,6 +274,9 @@ func (h *authHandlers) authCurrent(c *gin.Context) {
 	// 3. 兜底为访客身份，附带登录跳转链接 loginUrl
 	returnURL := h.getReturnURL(r)
 	loginURL := h.getAuthClient().LoginURL(returnURL)
+	if loginURL == "/login.html" && h.oidcAvailable(r) {
+		loginURL = oidcLoginPage(h.oidcReturnPath(r), "")
+	}
 	c.JSON(http.StatusOK, map[string]any{
 		"user":         auth.FallbackGuestUser(),
 		"loginUrl":     loginURL,

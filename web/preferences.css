@@ -18,7 +18,9 @@ html[data-lang="en"] .topbar-project-label { white-space:nowrap }
 .login-preferences { display:flex;align-items:center;gap:18px;border-top:1px solid var(--line);padding-top:20px;font-size:13px }
 .login-preferences button { border:0;background:none;color:var(--muted);cursor:pointer;padding:0 }
 .login-preferences a { margin-left:auto;color:var(--blue);text-decoration:none }
-#loginError { color:var(--red);min-height:18px;font-size:13px }
+#loginError, #oidcError { color:var(--red);font-size:13px }
+#loginError { min-height:18px }
+#oidcLogin { display:flex;justify-content:center;text-decoration:none }
 .login-card [hidden] { display:none!important }
 .login-card .login-setup { padding:10px 12px;border-radius:10px;background:color-mix(in srgb,var(--blue) 10%,transparent);color:var(--text);font-size:13px }
 .login-card .login-rule { margin:-12px 0 0;font-size:12px;color:var(--muted) }

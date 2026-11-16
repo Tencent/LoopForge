@@ -125,6 +125,23 @@ unset account_password
 
 Use `-admin` only when granting platform administration. Running the command again rotates that account's password. Password hashes use bcrypt. Browser sessions use signed HttpOnly, SameSite cookies and expire after seven days. No named person receives an implicit administrator role; additional administrators can be managed through the existing platform administration UI.
 
+### Enterprise sign-in with OpenID Connect
+
+1. Register a confidential OIDC Web application for this LoopForge instance and assign it to the pilot users. Register the exact HTTPS callback, for example `https://loopforge.example.com/api/auth/oidc/callback`. The provider must support discovery, the authorization code flow and PKCE S256.
+2. Set `AGENTFLOW_OIDC_ISSUER`, `AGENTFLOW_OIDC_CLIENT_ID`, `AGENTFLOW_OIDC_CLIENT_SECRET`, and `AGENTFLOW_OIDC_REDIRECT_URL` on the API process. The token endpoint uses `client_secret_basic` by default. Set `AGENTFLOW_OIDC_TOKEN_AUTH_METHOD=client_secret_post` if required by the provider. Preserve the public Host at the reverse proxy and set `AGENTFLOW_SECURE_COOKIES=true` when TLS terminates there. Keep callback query parameters out of reverse-proxy access logs.
+3. Apply `migrations/033_oidc_login.sql` if managing the schema manually. Create or identify the pilot's existing LoopForge account. Use the exact issuer and subject issued **for this OIDC client** to bind the account. The DBA can run the following example with approved values.
+
+   ```sql
+   INSERT INTO oidc_identities (issuer, subject, user_id)
+   SELECT 'https://idp.example.com', 'pilot-subject', id
+   FROM users WHERE login_name = 'pilot-user';
+   ```
+
+   Check that one row was inserted. The identity inherits the linked account's existing platform role and project permissions. A new OIDC identity needs an explicit link before it can sign in.
+4. Open the public login page, choose **Enterprise sign-in**, and verify that the pilot sees their existing account. Verify that a valid identity without a link is rejected.
+
+Removing a link blocks new enterprise logins for that identity. Existing LoopForge browser sessions keep their regular expiration. Keep the pilot scope aligned with the instance-wide read access described above.
+
 ## Workers and runners
 
 The upstream process roles remain `-role api`, `-role worker` and `-role all`. API and worker instances must share the MySQL database and configuration appropriate to their deployment. Set `AGENTFLOW_CONTROL_TOKEN`, `AGENTFLOW_CONTROL_URL` and `AGENTFLOW_WORKER_URL` when separating control and execution. Set `AGENTFLOW_PLATFORM_MCP_URL` to the actual platform URL reachable from execution containers.

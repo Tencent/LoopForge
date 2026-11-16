@@ -8,6 +8,17 @@ document.getElementById('loginTheme').onclick = () => {
 const $ = id => document.getElementById(id);
 const t = window.lfT || ((zh) => zh);
 let mode = 'login', signup = false;
+const query = new URLSearchParams(location.search);
+const oidcErrors = new Map([
+  ['invalid', t('企业登录未完成或已过期，请重新登录。', 'Enterprise sign-in did not complete or has expired. Try again.')],
+  ['unlinked', t('此企业账号尚未关联，请联系管理员。', 'This enterprise identity is not linked. Contact your administrator.')],
+  ['unavailable', t('企业登录暂时不可用，请稍后重试。', 'Enterprise sign-in is temporarily unavailable. Try again later.')],
+]);
+const oidcError = oidcErrors.get(query.get('oidc_error'));
+if (oidcError) {
+  $('oidcError').textContent = oidcError;
+  $('oidcError').hidden = false;
+}
 
 function render() {
   const creating = mode !== 'login';
@@ -27,8 +38,16 @@ function render() {
 
 $('switchMode').onclick = () => { mode = mode === 'login' ? 'register' : 'login'; render(); };
 
-fetch('/api/auth/setup').then(r => r.ok ? r.json() : {}).then(state => {
+const setupURL = query.has('return_url')
+  ? '/api/auth/setup?return_url=' + encodeURIComponent(query.get('return_url'))
+  : '/api/auth/setup';
+fetch(setupURL).then(r => r.ok ? r.json() : {}).then(state => {
   signup = !!state.signupEnabled;
+  if (state.oidcLoginUrl) {
+    $('oidcLogin').href = state.oidcLoginUrl;
+    $('oidcLogin').textContent = t('企业登录', 'Enterprise sign-in');
+    $('oidcLogin').hidden = false;
+  }
   if (state.needsSetup) mode = 'setup';
   else if (location.hash === '#register' && signup) mode = 'register';
   render();

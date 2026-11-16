@@ -906,7 +906,10 @@ async function boot(){
       return;
     }
   }
-  if(isGuest&&state.authRequired){location.replace('/login.html');return}
+  if(isGuest&&state.authRequired){
+    location.replace(state.loginUrl.startsWith('/login.html?') ? state.loginUrl : '/login.html');
+    return;
+  }
   renderUserBadge();
 
   const view=restoredView();
