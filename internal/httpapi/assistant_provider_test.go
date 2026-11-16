@@ -342,6 +342,8 @@ func TestAssistantCodexAppServerDisablesNativeTools(t *testing.T) {
 }
 
 func TestAssistantUsesBoundRunnerLoginWithoutPersonalKey(t *testing.T) {
+	// Keep reply-asset discovery inside the test's temporary directory.
+	t.Setenv("TMPDIR", t.TempDir())
 	h, user := workbenchFixture(t)
 	runner := domain.Runner{
 		ID: "local-login", OwnerUserID: user.ID, Status: domain.RunnerStatusOnline,
