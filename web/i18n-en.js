@@ -444,3 +444,206 @@ Object.assign(window.LF_I18N_EN,{
   "不支持的文件类型：":"Unsupported file type: ",
   "当前浏览器不支持拖放，请点击选择":"This browser doesn't support drag and drop. Click to choose."
 });
+
+Object.assign(window.LF_I18N_EN,{
+  "已提 MR 但还没合入的 MR 数（按 MR 计，点击只看涉及的需求）":"Number of PRs opened but not yet merged (counted by PR; click to see only the requirements involved)",
+  "搜索中文名 / 英文名":"Search by name / username",
+  "未绑定代码仓库":"No repository linked",
+  "打开项目":"Open project",
+  "项目是需求、仓库与团队的统一边界，先创建第一个项目。":"A project is the shared boundary for requirements, repositories, and the team. Create your first project.",
+  "没有匹配的项目":"No matching projects",
+  "换个关键词试试，或者新建一个项目。":"Try another keyword, or create a new project.",
+  "清除筛选":"Clear filters",
+  "标识用于接口与链接，创建后不可修改；Key 是需求编号前缀与头像文字，最多 6 位。":"The ID is used in the API and in links and can't be changed after creation. The Key is the prefix of requirement numbers and the avatar text, up to 6 characters.",
+  "根据项目名称自动生成，一般无需修改。":"Generated from the project name; usually no need to change it.",
+  "标识用于接口与链接，创建后不可修改。":"The ID is used in the API and in links and can't be changed after creation.",
+  "自定义颜色":"Custom color",
+  "自定义品牌色":"Custom brand color",
+  "编辑仓库":"Edit repository"
+});
+
+Object.assign(window.LF_I18N_EN,{
+  "绑定后，Agent 执行 SOP 时会自动克隆仓库并在工作分支上提交。第一个仓库会自动设为默认。":"Once linked, the Agent clones the repository and commits on a working branch when it runs an SOP. The first repository becomes the default automatically.",
+  "确认分支":"Confirm branch",
+  "保存即生效":"Takes effect when saved",
+  "＋ 添加第一个仓库":"+ Add the first repository",
+  "保存项目后，在「代码仓库」中添加。":"After saving the project, add repositories under “Repos”.",
+  "只能从「代码仓库」中已绑定的仓库里选。":"You can only choose from repositories already linked under “Repos”.",
+  "还没有仓库，可在「代码仓库」中添加。":"No repositories yet. Add one under “Repos”.",
+  "项目身份":"Project identity",
+  "项目在工作台、需求和通知里的显示方式。":"How the project appears in the workspace, requirements, and notifications.",
+  "项目在工作台、需求和通知里的显示方式":"How the project appears in the workspace, requirements, and notifications",
+  "默认设置":"Defaults",
+  "新建需求时自动带上的流程与仓库。":"The SOP and repository applied automatically to new requirements.",
+  "新建需求时自动带上的流程":"The SOP applied automatically to new requirements",
+  "Owner 是项目的默认责任人，接收需要介入的通知。":"The Owner is the project's default responsible person and receives notifications that need action.",
+  "其他成员无需设置角色，可查看和推进项目内所有需求。":"Other members need no role. They can view and advance every requirement in the project.",
+  "TAPD 需求池":"TAPD requirement pool",
+  "配置后可在需求页从 TAPD 导入需求，澄清结论会回写到 TAPD 单。":"Once set, you can import requirements from TAPD on the Requirements page, and clarification conclusions are written back to the TAPD item.",
+  "危险操作":"Danger zone",
+  "Agent 执行 SOP 时会克隆这些仓库。仓库保存后立即生效，无需点「保存项目设置」。":"Agents clone these repositories when they run an SOP. Repositories take effect as soon as they are saved; you don't need to click “Save project settings”.",
+  "保存项目后可用":"Available after the project is saved",
+  "新项目尚未保存":"New project not saved yet",
+  "输入名称后生成":"Generated after you enter a name",
+  "项目不存在或无权访问，已返回项目列表":"The project does not exist or you do not have access. Returned to the project list.",
+  "项目不存在或无权访问":"The project does not exist or you do not have access"
+});
+
+Object.assign(window.LF_I18N_EN,{
+  "放弃未保存的修改？":"Discard unsaved changes?",
+  "有未保存的修改，离开后这些修改会丢失。":" has unsaved changes. They will be lost if you leave.",
+  "继续编辑":"Keep editing",
+  "已放弃未保存的修改":"Unsaved changes discarded",
+  "删除项目":"Delete project",
+  "项目从列表中移除，需求、运行记录和设置保留，平台管理员可以恢复。有未结束的运行或启用中的定时任务时不能删除。":"The project is removed from the list. Requirements, runs, and settings are kept, and a platform admin can restore it. You can't delete a project that has unfinished runs or enabled scheduled jobs.",
+  "确定删除项目「":"Delete project \"",
+  "吗？\n\n项目会从列表中移除，需求、运行记录和设置保留，可以恢复；标识":"?\n\nThe project is removed from the list. Requirements, runs, and settings are kept and can be restored. The ID",
+  "仍被占用。":"stays reserved.",
+  "已删除项目「":"Deleted project \"",
+  "吗？已在执行中的 SOP 不受影响，该操作不可恢复。":"? SOPs already running are not affected. This cannot be undone.",
+  "已删除仓库「":"Deleted repository \"",
+  "项目名称不能为空":"Project name is required",
+  "项目标识不能为空":"Project ID is required",
+  "项目 Key 不能为空":"Project Key is required",
+  "已被占用，请换一个":" is already taken. Choose another.",
+  "请选择有效的默认 SOP":"Choose a valid default SOP",
+  "项目已创建，下一步绑定代码仓库":"Project created. Next, link a repository.",
+  "项目设置已保存":"Project settings saved"
+});
+
+Object.assign(window.LF_I18N_EN,{
+  "名称与默认 SOP":"Name & default SOP",
+  "绑定 GitHub 仓库":"Link a GitHub repository",
+  "Owner 与协作成员":"Owner & collaborators",
+  "TAPD 集成":"TAPD integration",
+  "开始使用新项目":"Start using the new project",
+  "新项目还没有创建，关闭后填写的内容会丢失。":"The project has not been created yet. What you entered is lost if you close this.",
+  "项目已创建并保留，但本步骤未保存的修改会丢失。":"The project is created and kept, but unsaved changes in this step are lost.",
+  "无法根据名称生成可用的项目标识，请换个名称重试":"Couldn't generate a usable project ID from the name. Try another name.",
+  "创建失败，可修改项目名称后重试：":"Creation failed. Change the project name and try again: ",
+  "项目已创建":"Project created",
+  "请输入 GitHub 链接或有效的 Git SSH 地址。CNB 只支持 HTTPS + 访问令牌。":"Enter a GitHub link or a valid Git SSH address. CNB supports HTTPS + an access token only.",
+  "请先粘贴 GitHub 链接或 Git SSH 地址":"Paste a GitHub link or Git SSH address first",
+  "请输入 GitHub 链接或 Git SSH 地址":"Enter a GitHub link or Git SSH address",
+  "已经绑定到这个项目":"Already linked to this project",
+  "仓库已保存，设为默认失败：":"Repository saved, but setting it as the default failed: ",
+  "仓库已保存，并设为默认仓库":"Repository saved and set as the default",
+  "移除仓库":"Remove repository",
+  "确定移除仓库「":"Remove repository \"",
+  "吗？":"?",
+  "已移除仓库「":"Removed repository \"",
+  "跳过会放弃本步骤未保存的修改。":"Skipping discards unsaved changes in this step.",
+  "返回上一步会放弃本步骤未保存的修改。":"Going back discards unsaved changes in this step.",
+  "只需名称即可创建，再按步骤绑定仓库、邀请成员。":"A name is all you need to create a project. Then link repositories and invite members step by step.",
+  "所有配置之后都能在项目设置里修改。":"Everything can be changed later in project settings.",
+  "已填写":"Filled in",
+  "例如 Web Console":"e.g. Web Console",
+  "可选，这个项目负责什么？Agent 会把它作为上下文。":"Optional. What is this project for? The Agent uses it as context.",
+  "项目的默认责任人，创建后可在项目成员中调整。":"The project's default responsible person. You can change it under project members after creation.",
+  "已预选":"Preselected",
+  "只需填写项目名称即可创建，其余都有默认值。":"Only the project name is needed to create it. Everything else has a default.",
+  "例如 https://github.com/owner/repo 或 git@gitlab.com:group/repo.git":"e.g. https://github.com/owner/repo or git@gitlab.com:group/repo.git"
+});
+
+Object.assign(window.LF_I18N_EN,{
+  "识别为 Git SSH ·":"Detected Git SSH ·",
+  "。请管理员信任该主机，并在个人配置中添加 Git SSH 密钥。":". Ask an admin to trust this host, and add a Git SSH key in Personal settings.",
+  "识别为":"Detected",
+  "Agent 执行 SOP 时会克隆这些仓库并在工作分支上提交。第一个仓库会自动设为默认。":"The Agent clones these repositories and commits on a working branch when it runs an SOP. The first repository becomes the default automatically.",
+  "仓库添加后立即生效，也可以先跳过。":"Repositories take effect as soon as they are added, or you can skip this for now.",
+  "Owner 是项目的默认责任人；成员无需设置角色，可查看和推进项目内所有需求。":"The Owner is the project's default responsible person. Members need no role and can view and advance every requirement in the project.",
+  "可选。配置后可在需求页从 TAPD 导入需求，澄清结论会回写到 TAPD 单。":"Optional. Once set, you can import requirements from TAPD on the Requirements page, and clarification conclusions are written back to the TAPD item.",
+  "未配置，可稍后在项目设置补充":"Not set. You can add it later in project settings.",
+  "仅 Owner，可稍后邀请成员":"Owner only. You can invite members later.",
+  "默认 SOP 已就绪，现在就可以开始第一条需求。跳过的配置随时可以在项目设置里补充。":"The default SOP is ready, so you can start your first requirement now. Anything you skipped can be added in project settings at any time.",
+  "已生效配置":"Settings in effect",
+  "开始第一条需求":"Start the first requirement",
+  "切换到该项目，去需求列表新建或导入需求":"Switch to this project and create or import a requirement from the requirements list",
+  "进入项目设置":"Open project settings",
+  "修改基本信息，补充仓库、成员和 TAPD":"Edit basic details and add repositories, members, and TAPD",
+  "跳过此步":"Skip this step",
+  "创建并继续":"Create and continue"
+});
+
+Object.assign(window.LF_I18N_EN,{
+  "在 GitHub 确认授权后，即可选择你的仓库。无需复制令牌。":"After you approve access on GitHub, you can choose your repositories. No token to copy.",
+  "连接 GitHub":"Connect GitHub",
+  "正在检查授权服务…":"Checking the authorization service…",
+  "授权仅用于当前账号，可随时撤销。":"Authorization applies to this account only and can be revoked at any time.",
+  "此实例已停用 GitHub 授权，可使用「访问令牌」连接仓库。":"GitHub authorization is turned off on this instance. Connect repositories with an “access token” instead.",
+  "暂时无法检查授权服务，请稍后重试。":"Can't check the authorization service right now. Try again later.",
+  "重新检查":"Check again",
+  "授权已过期，请重新连接":"Authorization expired. Connect again.",
+  "已连接 GitHub ·":"Connected to GitHub ·",
+  "GitHub 授权已保存 ·":"GitHub authorization saved ·",
+  "正在获取 GitHub 授权码…":"Getting a GitHub authorization code…",
+  "复制授权码，然后在 GitHub 确认：":"Copy the authorization code, then approve it on GitHub:",
+  "复制授权码":"Copy code",
+  "已选中，按 Ctrl/⌘+C 复制":"Selected. Press Ctrl/⌘+C to copy.",
+  "复制并前往 GitHub 授权":"Copy and go to GitHub to authorize",
+  "选择我的 GitHub 仓库":"Choose from my GitHub repositories",
+  "我的 GitHub 仓库":"My GitHub repositories",
+  "搜索已加载的仓库":"Search loaded repositories",
+  "仓库名 / 组织名":"Repository / organization name",
+  "请选择仓库":"Choose a repository",
+  "未找到仓库，可手动填写地址；组织仓库可能需要管理员批准授权。":"No repository found. Enter the address manually; organization repositories may need an admin to approve the authorization.",
+  "加载更多仓库":"Load more repositories",
+  "· 私有":"· private",
+  "的 SSH 密钥，可稍后在「个人配置 → Git SSH 密钥」添加。":"SSH key. Add one later under “Personal settings → Git SSH keys”.",
+  "正在删除…":"Deleting…",
+  "仓库不存在或已被删除":"The repository does not exist or was deleted",
+  "编辑代码仓库":"Edit repository"
+});
+
+Object.assign(window.LF_I18N_EN,{
+  "，已将「":", set \"",
+  "设为默认仓库":" as the default repository",
+  "，设置新的默认仓库失败：":". Setting a new default repository failed: ",
+  "项目「":"Project \"",
+  "已创建":" created",
+  "个，默认":"linked, default",
+  "位（含 Owner）":"members (including the Owner)"
+});
+
+Object.assign(window.LF_I18N_EN,{
+  "已绑定仓库，未设默认":"Repositories linked, no default set",
+  "暂无项目说明":"No project description",
+  "恢复自动":"Reset to automatic",
+  "未配置集成分支":"No integration branch set",
+  "显示在项目列表与工作台顶部。":"Shown in the project list and at the top of the workspace.",
+  "标识与 Key":"ID & Key",
+  "可选，简要说明项目范围，Agent 会把它作为上下文。":"Optional. Briefly describe the project scope. The Agent uses it as context.",
+  "这个项目负责什么？":"What is this project for?",
+  "项目的默认责任人，创建后可在「项目成员」中调整。":"The project's default responsible person. You can change it under “Project members” after creation.",
+  "用于新需求的默认流程；已关联 SOP 的需求保留原绑定。":"The default SOP for new requirements. Requirements already linked to an SOP keep their binding.",
+  "还没有其他成员":"No other members yet",
+  "TAPD 项目 URL 中 /tapd_fe/ 后的数字。":"The number after /tapd_fe/ in the TAPD project URL.",
+  "例如 20375341":"e.g. 20375341",
+  "可选，只导入该迭代内的需求。":"Optional. Imports only requirements from this iteration.",
+  "留空导入全部":"Leave empty to import all",
+  "清除已保存的 TAPD 配置":"Clear saved TAPD settings",
+  "保存项目设置时同时清空 Workspace 与 Iteration，已导入的需求不受影响。":"Saving the project settings also clears the Workspace and Iteration. Requirements already imported are not affected.",
+  "当前工作台项目":"Current workspace project",
+  "填写项目名称并创建，之后即可绑定代码仓库、邀请成员。":"Enter a project name and create it. Then you can link repositories and invite members.",
+  "位成员":"members",
+  "个推进中":"in progress",
+  "这是当前的默认仓库，删除后默认仓库将变为「暂未绑定」。":"This is the current default repository. After deleting it, the default repository becomes “Not linked”.",
+  "已失效：":"No longer valid: ",
+  "（请重新选择）":" (choose again)"
+});
+
+Object.assign(window.LF_I18N_EN,{
+  "这是当前的默认仓库，移除后会把剩余的第一个仓库设为默认。":"This is the current default repository. After removing it, the first remaining repository becomes the default.",
+  "· 可在项目设置补充":"· can be added in project settings",
+  "已跳过":"Skipped",
+  "绑定代码仓库":"Link a repository",
+  "粘贴仓库地址，自动识别名称":"Paste a repository address; the name is detected automatically",
+  "已绑定":"Linked",
+  "负责人与成员":"Owner & members",
+  "保存后成员即可在工作台切换到该项目":"Once saved, members can switch to this project in the workspace",
+  "Workspace ID 是 TAPD 项目 URL 中 /tapd_fe/ 后的数字":"The Workspace ID is the number after /tapd_fe/ in the TAPD project URL"
+});
+
+Object.assign(window.LF_I18N_EN,{
+  "项目标识「":"Project ID \""
+});
