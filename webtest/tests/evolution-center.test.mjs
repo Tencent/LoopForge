@@ -21,7 +21,9 @@ const detail = {
   replays: [
     { id: 'evr-1', group: 'diagnosis', sourceRunId: 'run-1', sourceScore: 0, runId: 'run-r1', status: 'succeeded', score: 2, outcome: 'fixed' },
     { id: 'evr-2', group: 'regression', sourceRunId: 'run-2', sourceScore: 2, runId: 'run-r2', status: 'succeeded', score: 2, outcome: 'unchanged' },
+    { id: 'evr-3', group: 'diagnosis', sourceRunId: 'run-3', sourceScore: 2, runId: 'run-r3', status: 'failed', score: 0, outcome: 'changed', reusedNodes: ['clarify', 'design'], error: '「独立评审」按新正文给出阻断结论：缺少 e2e 用例' },
   ],
+  summary: { ...summary, total: 3, unchanged: 1, changed: 1 },
 };
 const overview = {
   projectId: 'project-1', findings: [finding], validating: [validating], pending: [pending],
@@ -75,6 +77,8 @@ test('evolution center renders board, proposal drawer, versions, policies and sa
   assert.ok($('#kbDrawer').classList.contains('evo-wide'));
   assert.match(drawer.textContent, /失败都缺少自测/);
   assert.match(drawer.textContent, /诊断样本/);
+  assert.match(drawer.textContent, /一次成功 → 给出阻断结论 · 沿用原运行 2 个上游节点/);
+  assert.match(drawer.querySelector('.evo-stats').textContent, /结论改变1/);
   assert.ok(drawer.querySelector('.evo-diff-line.add'), 'candidate lines are highlighted');
   assert.ok(!drawer.innerHTML.includes('<b>Run unit tests</b>'), 'candidate text is escaped');
   $('[data-evo-approve="evp-1"]').click();

@@ -30,7 +30,7 @@
 .evo-chips { display: flex; flex-wrap: wrap; gap: 6px 12px; padding: 8px 0; }
 .evo-verdict { margin-top: 16px; color: var(--hui-text); }
 .evo-rationale { margin: 4px 0 0; color: var(--hui-secondary); font-size: 13px; white-space: pre-wrap; overflow-wrap: anywhere; }
-.evo-stats { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; margin: 6px 0 4px; }
+.evo-stats { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 8px; margin: 6px 0 4px; }
 .evo-stats > div { padding: 8px 10px; border: 1px solid var(--hui-border-soft); border-radius: 8px; background: var(--hui-canvas); }
 .evo-stats span { display: block; color: var(--hui-tertiary); font-size: 12px; }
 .evo-stats b { font-size: 18px; font-weight: 600; font-variant-numeric: tabular-nums; }
@@ -59,7 +59,7 @@
 }
 @media (max-width: 720px) {
   .evo-board { grid-template-columns: minmax(0, 1fr); }
-  .evo-stats { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .evo-stats { grid-auto-flow: row; grid-template-columns: repeat(3, minmax(0, 1fr)); }
   #evolutionView .evo-asset-row { flex-wrap: wrap; }
 }
 @media (prefers-reduced-motion: reduce) {

@@ -65,6 +65,10 @@ const (
 	EvoOutcomeRegressed = "regressed"
 	EvoOutcomeSame      = "unchanged"
 	EvoOutcomeBlocked   = "blocked"
+	// EvoOutcomeChanged: a feedback sample whose improved node now reaches a
+	// different, deliberate verdict (e.g. a reviewer REJECTs). Run status
+	// cannot tell whether that matches the feedback; a human reads the output.
+	EvoOutcomeChanged = "changed"
 )
 
 // Asset version sources.
@@ -179,6 +183,7 @@ type EvoReplaySummary struct {
 	Fixed     int    `json:"fixed"`
 	Regressed int    `json:"regressed"`
 	Unchanged int    `json:"unchanged"`
+	Changed   int    `json:"changed"`
 	Blocked   int    `json:"blocked"`
 	Passed    bool   `json:"passed"`
 	Verdict   string `json:"verdict,omitempty"`

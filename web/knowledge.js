@@ -35,7 +35,7 @@ function kbRow(main,side='',opt={}){
 function kbPanel(head,body,opt={}){return `<section class="kb-panel"${opt.label?` aria-label="${escapeHTML(opt.label)}"`:''}${opt.attrs?` ${opt.attrs}`:''}><div class="kb-panel-head${opt.headCls?` ${opt.headCls}`:''}">${head}</div>${body}</section>`}
 function kbPanelTitle(title,meta=''){return `<h3>${title}</h3>${meta?`<span class="kb-panel-meta">${meta}</span>`:''}`}
 // tone 取 ok|warn|err，空值为中性灰。
-const KB_BADGE_TONES={ok:'success',warn:'warn',err:'error'};
+const KB_BADGE_TONES={ok:'success',warn:'warn',err:'error',info:'info'};
 function kbBadge(label,tone='',title=''){return `<span class="hui-badge" data-size="sm" data-tone="${KB_BADGE_TONES[tone]||'neutral'}"${title?` title="${escapeHTML(title)}"`:''}><span class="hui-badge-label">${label}</span></span>`}
 function kbText(title,desc=''){return `<div class="kb-row-title">${title}</div>${desc?`<div class="kb-row-desc">${desc}</div>`:''}`}
 function kbValue(html,cls='',title=''){return `<span class="kb-row-value${cls?` ${cls}`:''}"${title?` title="${escapeHTML(title)}"`:''}>${html}</span>`}

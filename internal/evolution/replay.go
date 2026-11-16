@@ -100,6 +100,8 @@ func Summarize(replays []domain.EvoReplay) domain.EvoReplaySummary {
 			s.Regressed++
 		case domain.EvoOutcomeBlocked:
 			s.Blocked++
+		case domain.EvoOutcomeChanged:
+			s.Changed++
 		default:
 			s.Unchanged++
 		}
@@ -113,19 +115,23 @@ func Summarize(replays []domain.EvoReplay) domain.EvoReplaySummary {
 		return s
 	}
 	judged := s.Total - s.Blocked
+	same := s.Unchanged + s.Changed
 	switch {
 	case judged == 0:
 		s.Verdict = "全部回放被人工节点或异常阻塞，无法判定"
+	case fixable == 0 && s.Regressed == 0 && s.Changed > 0:
+		s.Passed = true
+		s.Verdict = fmt.Sprintf("通过（反馈类问题）：%d 个回放按新正文改变了结论，%d 个结论不变，均未退化；请查看回放产出确认是否符合反馈后再发布", s.Changed, s.Unchanged)
 	case fixable == 0 && s.Regressed == 0:
 		s.Passed = true
-		s.Verdict = fmt.Sprintf("通过（反馈类问题）：%d 个回放均未退化；运行状态无法证明反馈已解决，请对比回放产出后再发布", judged)
+		s.Verdict = fmt.Sprintf("通过（反馈类问题）：%d 个回放均未退化，但结论也没有变化；请对比回放产出确认反馈已解决后再发布", judged)
 	case fixable == 0:
 		s.Verdict = fmt.Sprintf("未通过：反馈类问题的回放出现 %d 个退化", s.Regressed)
 	case s.Fixed >= 1 && s.Regressed <= 1 && s.Fixed > s.Regressed:
 		s.Passed = true
-		s.Verdict = fmt.Sprintf("通过：修好 %d，回归 %d，持平 %d", s.Fixed, s.Regressed, s.Unchanged)
+		s.Verdict = fmt.Sprintf("通过：修好 %d，回归 %d，持平 %d", s.Fixed, s.Regressed, same)
 	case s.Fixed == 0:
-		s.Verdict = fmt.Sprintf("未通过：没有修好任何失败样本（回归 %d，持平 %d）", s.Regressed, s.Unchanged)
+		s.Verdict = fmt.Sprintf("未通过：没有修好任何失败样本（回归 %d，持平 %d）", s.Regressed, same)
 	default:
 		s.Verdict = fmt.Sprintf("未通过：修好 %d，回归 %d", s.Fixed, s.Regressed)
 	}

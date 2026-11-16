@@ -406,25 +406,44 @@ func evoSnapshotNode(run domain.Run, id string) (domain.WorkflowNode, bool) {
 	return domain.WorkflowNode{}, false
 }
 
-// deliberateAssetVerdict finds a node shaped by the asset that ended the run
-// by its own terminal decision (submit_gate_result fail / rework), as
-// opposed to crashing or erroring.
+func evoNodeName(run domain.Run, id string) string {
+	if node, ok := evoSnapshotNode(run, id); ok && strings.TrimSpace(node.Name) != "" {
+		return node.Name
+	}
+	return id
+}
+
+// deliberateAssetVerdict finds a node shaped by the asset that stopped the
+// run by its own decision (submit_gate_result fail / rework), as opposed to
+// crashing or erroring: either the node failed on it, or it is parked on a
+// human gate because its rework budget ran out.
 func (h *evolutionHandlers) deliberateAssetVerdict(run domain.Run, asset evoAsset) (string, string) {
 	for id := range h.assetNodeIDs(run, asset) {
 		nr := run.Nodes[id]
-		if nr == nil || nr.Status != "failed" || nr.GateResult == nil {
+		if nr == nil || (nr.Status != "failed" && nr.Status != "waiting_approval") || nr.GateResult == nil {
 			continue
 		}
 		if d := nr.GateResult.Decision; d != "fail" && d != "rework" {
 			continue
 		}
-		name := id
-		if node, ok := evoSnapshotNode(run, id); ok && strings.TrimSpace(node.Name) != "" {
-			name = node.Name
-		}
-		return name, firstNonEmpty(nr.GateResult.Reason, nr.GateResult.Summary)
+		return evoNodeName(run, id), firstNonEmpty(nr.GateResult.Reason, nr.GateResult.Summary)
 	}
 	return "", ""
+}
+
+// assetRework describes a rework a node shaped by the asset sent upstream,
+// e.g. a reviewer that now rejects design.md once before passing it.
+func (h *evolutionHandlers) assetRework(run domain.Run, asset evoAsset) string {
+	for id := range h.assetNodeIDs(run, asset) {
+		node, ok := evoSnapshotNode(run, id)
+		if !ok || node.RejectTo == "" {
+			continue
+		}
+		if target := run.Nodes[node.RejectTo]; target != nil && target.ReworkCount > 0 {
+			return fmt.Sprintf("「%s」按新正文打回「%s」返工 %d 次后通过", evoNodeName(run, id), evoNodeName(run, node.RejectTo), target.ReworkCount)
+		}
+	}
+	return ""
 }
 
 // autoApproveReplayGates lets a replay pass human gates the source run had
@@ -502,18 +521,36 @@ func (h *evolutionHandlers) sweepProposal(p domain.EvoProposal, now time.Time) d
 				}
 				r.Outcome = evolution.Outcome(r.SourceScore, score)
 				if assetOK && r.Outcome == domain.EvoOutcomeRegressed && evoFeedbackSampleGroup(*r) {
+					// The improved node itself changed the run's course (a
+					// reviewer now REJECTs, or sends work back before passing
+					// it). For a sample raised by feedback that is the behavior
+					// change under test, not a defect; a human judges it from
+					// the replay output.
 					if node, verdict := h.deliberateAssetVerdict(run, asset); node != "" {
-						// The improved node itself decided to stop the run
-						// (e.g. a reviewer now REJECTs). For a sample raised by
-						// feedback that is the behavior change under test, not
-						// a defect; a human judges it from the replay output.
-						r.Outcome = domain.EvoOutcomeSame
-						r.Error = "「" + node + "」按新正文给出阻断结论，请查看回放产出是否符合反馈：" + domain.TrimEvoText(verdict, 160)
+						r.Outcome = domain.EvoOutcomeChanged
+						r.Error = "「" + node + "」按新正文给出阻断结论：" + domain.TrimEvoText(verdict, 160)
+					} else if note := h.assetRework(run, asset); note != "" && run.Status == "succeeded" {
+						r.Outcome = domain.EvoOutcomeChanged
+						r.Error = note
 					}
 				}
 				break
 			}
 			if evolution.ReplayWaiting(run) {
+				if assetOK && evoFeedbackSampleGroup(*r) {
+					if node, verdict := h.deliberateAssetVerdict(run, asset); node != "" {
+						// Rework budget spent and the improved node still
+						// rejects: its verdict is final for this replay.
+						_ = h.engine.Cancel(run.ID)
+						r.Status = "cancelled"
+						r.Score = 0
+						r.FinishedAt = now
+						r.WaitingSince = time.Time{}
+						r.Outcome = domain.EvoOutcomeChanged
+						r.Error = "「" + node + "」按新正文返工后仍给出阻断结论：" + domain.TrimEvoText(verdict, 160)
+						break
+					}
+				}
 				if assetOK && h.autoApproveReplayGates(r, run, asset) {
 					r.Status = "running"
 					r.WaitingSince = time.Time{}

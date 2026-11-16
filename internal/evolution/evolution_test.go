@@ -153,8 +153,12 @@ func TestSummarizeFeedbackOnlyFinding(t *testing.T) {
 		return domain.EvoReplay{Group: group, SourceScore: 2, Outcome: outcome}
 	}
 	s := Summarize([]domain.EvoReplay{clean(domain.EvoGroupDiagnosis, domain.EvoOutcomeSame), clean(domain.EvoGroupRegression, domain.EvoOutcomeSame)})
-	if !s.Passed || !strings.Contains(s.Verdict, "反馈类问题") || !strings.Contains(s.Verdict, "对比回放产出") {
+	if !s.Passed || !strings.Contains(s.Verdict, "反馈类问题") || !strings.Contains(s.Verdict, "结论也没有变化") {
 		t.Fatalf("feedback-only finding without regressions should pass with a review hint: %+v", s)
+	}
+	s = Summarize([]domain.EvoReplay{clean(domain.EvoGroupDiagnosis, domain.EvoOutcomeChanged), clean(domain.EvoGroupRegression, domain.EvoOutcomeSame)})
+	if !s.Passed || s.Changed != 1 || s.Unchanged != 1 || !strings.Contains(s.Verdict, "1 个回放按新正文改变了结论") {
+		t.Fatalf("a changed verdict on a feedback sample should pass and be reported: %+v", s)
 	}
 	s = Summarize([]domain.EvoReplay{clean(domain.EvoGroupDiagnosis, domain.EvoOutcomeRegressed), clean(domain.EvoGroupRegression, domain.EvoOutcomeSame)})
 	if s.Passed || !strings.Contains(s.Verdict, "1 个退化") {

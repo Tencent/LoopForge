@@ -6,7 +6,7 @@ const evo={tab:'board',projectId:null,overview:null,samples:null,error:'',seq:0,
 const EVO_LEVELS=[[0,'L0 关闭','不诊断、不生成提案'],[1,'L1 只报告','只诊断出问题，不生成候选'],[2,'L2 提案回放','生成候选并回放验证，人工确认后发布']];
 const EVO_PROPOSAL_STATUS={drafting:['生成中','warn'],validating:['回放中','warn'],pending:['待确认','ok'],released:['已发布','ok'],rejected:['已驳回',''],failed:['未通过','err'],rolled_back:['已回滚','']};
 const EVO_GROUPS={diagnosis:['诊断样本','改进器看过的失败运行'],holdout:['留出样本','改进器没看过的失败运行'],regression:['回归样本','近期一次成功的运行'],pinned:['钉选样本','人工钉住的运行']};
-const EVO_OUTCOMES={fixed:['修好','ok'],regressed:['退化','err'],unchanged:['无变化',''],blocked:['阻塞','warn']};
+const EVO_OUTCOMES={fixed:['修好','ok'],regressed:['退化','err'],unchanged:['无变化',''],changed:['结论改变','info'],blocked:['阻塞','warn']};
 const EVO_SEVERITY={high:['高','err'],medium:['中','warn'],low:['低','']};
 const EVO_SIGNALS={node_failed:'节点失败',rework:'打回返工',eval_low:'评测低分',user_feedback:'用户反馈'};
 const EVO_SOURCES={baseline:'基线',manual:'手动修改',evolution:'进化发布',rollback:'回滚'};
@@ -201,7 +201,8 @@ function evoReplayRow(r){
   const [group,groupHint]=EVO_GROUPS[r.group]||[r.group,''];
   const reused=(r.reusedNodes||[]).length;
   const reuseNote=reused?` · <span title="${escapeHTML(r.reusedNodes.join('、'))}">沿用原运行 ${reused} 个上游节点</span>`:'';
-  const main=kbText(`<span title="${escapeHTML(groupHint)}">${escapeHTML(group)}</span> · 原运行 ${evoRunLink(r.sourceRunId)}${r.runId?` → 回放 ${evoRunLink(r.runId)}`:''}`,`${escapeHTML(evoScoreLabel(r.sourceScore))} → ${escapeHTML(r.status==='running'||!r.outcome?'回放中':evoScoreLabel(r.score))}${reuseNote}${r.error?` · ${escapeHTML(r.error)}`:''}`);
+  const after=r.status==='running'||!r.outcome?'回放中':r.outcome==='changed'&&!(r.score>0)?'给出阻断结论':evoScoreLabel(r.score);
+  const main=kbText(`<span title="${escapeHTML(groupHint)}">${escapeHTML(group)}</span> · 原运行 ${evoRunLink(r.sourceRunId)}${r.runId?` → 回放 ${evoRunLink(r.runId)}`:''}`,`${escapeHTML(evoScoreLabel(r.sourceScore))} → ${escapeHTML(after)}${reuseNote}${r.error?` · ${escapeHTML(r.error)}`:''}`);
   return kbRow(main,r.outcome?evoStatusBadge(EVO_OUTCOMES,r.outcome):kbBadge('进行中','warn'));
 }
 
@@ -212,7 +213,8 @@ async function evoOpenProposal(id){
     if(!evoDrawerLive(seq))return;
     const s=p.summary||{};
     const verdict=s.verdict||p.error||'';
-    const stats=`<div class="evo-stats">${[['修好',s.fixed,'ok'],['退化',s.regressed,'err'],['无变化',s.unchanged,''],['阻塞',s.blocked,'warn']].map(([l,v,t])=>`<div><span>${l}</span><b class="${t?`kb-${t}`:''}">${v||0}</b></div>`).join('')}<div><span>完成</span><b>${s.finished||0}/${s.total||0}</b></div></div>`;
+    const cards=[['修好',s.fixed,'ok'],['退化',s.regressed,'err'],['无变化',s.unchanged,''],...(s.changed?[['结论改变',s.changed,'info']]:[]),['阻塞',s.blocked,'warn']];
+    const stats=`<div class="evo-stats">${cards.map(([l,v,t])=>`<div><span>${l}</span><b class="${t?`kb-${t}`:''}">${v||0}</b></div>`).join('')}<div><span>完成</span><b>${s.finished||0}/${s.total||0}</b></div></div>`;
     const replays=(p.replays||[]).map(evoReplayRow).join('');
     const diff=p.candidateContent?evoDiffHTML(p.baseContent,p.candidateContent):'<div class="kb-line-note">改进器还没有给出候选正文</div>';
     const body=`${verdict?`<div class="${p.status==='failed'?'kb-alert':'kb-note evo-verdict'}">${escapeHTML(verdict)}</div>`:''}${p.rationale?`${kbCaption('改进理由')}<p class="evo-rationale">${escapeHTML(p.rationale)}</p>`:''}${kbCaption('回放结果')}${stats}${replays||'<div class="kb-line-note">还没有回放</div>'}${kbCaption('正文差异（当前 → 候选）')}${diff}${p.decisionNote?`${kbCaption('处理备注')}<p class="evo-rationale">${escapeHTML(p.decisionNote)}</p>`:''}`;

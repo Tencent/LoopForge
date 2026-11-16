@@ -321,10 +321,10 @@ func TestEvolutionFeedbackReplayDeliberateRejectIsNotRegression(t *testing.T) {
 			GateResult: &domain.GateResult{Decision: "fail", Reason: "缺少端到端验收用例"}}},
 	})
 	p := env.h.sweepProposal(domain.EvoProposal{ID: "evp-fb"}, now)
-	if len(p.Replays) != 1 || p.Replays[0].Outcome != domain.EvoOutcomeSame || !strings.Contains(p.Replays[0].Error, "阻断结论") {
+	if len(p.Replays) != 1 || p.Replays[0].Outcome != domain.EvoOutcomeChanged || !strings.Contains(p.Replays[0].Error, "阻断结论") {
 		t.Fatalf("deliberate reject on a feedback sample should not regress: %+v", p.Replays)
 	}
-	if p.Status != domain.EvoProposalPending || !p.Summary.Passed {
+	if p.Status != domain.EvoProposalPending || !p.Summary.Passed || p.Summary.Changed != 1 || !strings.Contains(p.Summary.Verdict, "改变了结论") {
 		t.Fatalf("proposal should await review: status=%s summary=%+v", p.Status, p.Summary)
 	}
 
@@ -336,6 +336,36 @@ func TestEvolutionFeedbackReplayDeliberateRejectIsNotRegression(t *testing.T) {
 	p = env.h.sweepProposal(domain.EvoProposal{ID: "evp-crash"}, now)
 	if p.Replays[0].Outcome != domain.EvoOutcomeRegressed || p.Status != domain.EvoProposalFailed {
 		t.Fatalf("an executor error is still a regression: status=%s replays=%+v", p.Status, p.Replays)
+	}
+}
+
+func TestEvolutionFeedbackReplayReworkIsAChangedVerdict(t *testing.T) {
+	env := newEvoTestEnv(t)
+	env.seedRun(t, "evo-rw-src", "succeeded", "succeeded", "")
+	wf := env.wf
+	wf.Nodes = append([]domain.WorkflowNode{{ID: "design", Name: "方案设计", Type: "agent"}}, wf.Nodes...)
+	for i := range wf.Nodes {
+		if wf.Nodes[i].ID == "code" {
+			wf.Nodes[i].Name, wf.Nodes[i].RejectTo, wf.Nodes[i].MaxReworks = "独立评审", "design", 1
+		}
+	}
+	now := time.Now().UTC()
+
+	env.seedValidatingProposal(t, "evp-rw")
+	env.seedReplay(t, "evp-rw", "evo-rw-src", domain.Run{ID: "evo-rw-replay", WorkflowID: wf.ID, Status: "succeeded", WorkflowSnapshot: wf,
+		Nodes: map[string]*domain.NodeRun{"design": {NodeID: "design", Status: "succeeded", ReworkCount: 1}, "code": {NodeID: "code", Status: "succeeded"}}})
+	p := env.h.sweepProposal(domain.EvoProposal{ID: "evp-rw"}, now)
+	if p.Replays[0].Outcome != domain.EvoOutcomeChanged || !strings.Contains(p.Replays[0].Error, "打回「方案设计」返工 1 次后通过") || !p.Summary.Passed {
+		t.Fatalf("a rework sent by the improved node is the change under test: %+v summary=%+v", p.Replays, p.Summary)
+	}
+
+	env.seedValidatingProposal(t, "evp-budget")
+	env.seedReplay(t, "evp-budget", "evo-rw-src", domain.Run{ID: "evo-budget-replay", WorkflowID: wf.ID, Status: "waiting", WorkflowSnapshot: wf,
+		Nodes: map[string]*domain.NodeRun{"design": {NodeID: "design", Status: "succeeded", ReworkCount: 1},
+			"code": {NodeID: "code", Status: "waiting_approval", GateResult: &domain.GateResult{Decision: "rework", Reason: "仍缺少 e2e 用例"}}}})
+	p = env.h.sweepProposal(domain.EvoProposal{ID: "evp-budget"}, now)
+	if p.Replays[0].Outcome != domain.EvoOutcomeChanged || !strings.Contains(p.Replays[0].Error, "返工后仍给出阻断结论") || p.Status != domain.EvoProposalPending {
+		t.Fatalf("a spent rework budget with a standing reject should settle as changed: status=%s %+v", p.Status, p.Replays)
 	}
 }
 

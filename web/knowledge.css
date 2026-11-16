@@ -123,6 +123,7 @@ html[data-theme="dark"] :is(#knowledgeView, #evolutionView, #kbDrawer, #kbScrim)
 .kb-ok { color: var(--hui-success); }
 .kb-warn { color: var(--hui-warn); }
 .kb-err { color: var(--hui-error); }
+.kb-info { color: var(--hui-info); }
 :is(#knowledgeView, #evolutionView, #kbDrawer) .mono { font-family: var(--mono); font-size: 12.5px; }
 
 /* 面板底部操作区 */
