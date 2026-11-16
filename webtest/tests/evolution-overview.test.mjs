@@ -27,11 +27,13 @@ test('evolution overview paginates, filters dates, selects per page and snoozes 
   const change = el => el.dispatchEvent(new app.window.Event('change', { bubbles: true }));
   await app.evaluate(`state.projectFilter='project-1';switchView('evolution');renderEvolutionView()`);
   await settle(4);
-  assert.equal($$('.evo-metric').length, 4);
-  assert.match($('#evoMetrics').textContent, /待处理问题12/);
+  assert.equal($$('.evo-metric').length, 0);
+  assert.match($('#evoMetrics').textContent, /1 项修改需要你处理/);
+  assert.match($('#evoTab-issues').textContent, /发现的问题12/);
   assert.equal($$('[data-evo-finding]').length, 10);
-  assert.match($('.evo-overview-trend svg').getAttribute('aria-label'), /1 次运行/);
-  assert.ok(!$('.evo-overview-trend svg').getAttribute('aria-label').includes('12 次运行'), 'same run is deduplicated across clusters');
+  const trend = await app.evaluate('evoOverviewTrend(evoIssueRows())');
+  assert.equal(trend.recorded, true);
+  assert.equal(trend.points.reduce((sum, p) => sum + p.value, 0), 1, 'same run is deduplicated across clusters');
   const all = $('[data-evo-select-page]'); all.checked = true; change(all);
   assert.equal($$('[data-evo-select]:checked').length, 10);
   assert.equal($('#evoFindingModal'), null, 'selecting must not open the record modal');
@@ -65,7 +67,9 @@ test('evolution overview paginates, filters dates, selects per page and snoozes 
   assert.equal($('#evoTab-proposals').getAttribute('aria-selected'), 'true');
   assert.equal(app.document.activeElement, $('#evoTab-proposals'));
   assert.equal($('#evoPane').getAttribute('aria-labelledby'), 'evoTab-proposals');
-  $('[data-evo-metric-status="open"]').click();
+  $('[data-evo-change-decisions]').click();
+  assert.equal($('[data-evo-change-status]').value, 'decide');
+  $('#evoTab-issues').click();
   assert.equal($('#evoTab-issues').getAttribute('aria-selected'), 'true');
 });
 
@@ -76,8 +80,11 @@ test('refresh does not diagnose and repeated diagnosis is guarded; legacy trend 
   const $ = s => app.document.querySelector(s);
   await app.evaluate(`state.projectFilter='project-1';switchView('evolution');renderEvolutionView()`);
   await settle(4);
+  assert.equal($('.evo-overview-trend'), null, 'statistics stay out of the main page');
+  $('[data-evo-tab="assets"]').click();
   assert.match($('.evo-overview-trend').textContent, /暂无趋势数据/);
   assert.equal($('.evo-overview-trend > svg'), null);
+  $('[data-evo-tab="issues"]').click();
   $('#evoRefresh').click(); await settle(4);
   assert.equal(app.router.calls.filter(c => c.method === 'POST' && c.path.endsWith('/diagnose')).length, 0);
   let resolve;

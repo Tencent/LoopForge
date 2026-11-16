@@ -28,7 +28,7 @@ const watching = {
 const snoozed = { ...watching, id: 'evf-4', assetId: 'agent-3', assetName: 'Planner', snoozedUntil: '2999-01-01T00:00:00Z' };
 const summary = { total: 3, finished: 3, fixed: 2, regressed: 0, unchanged: 1, blocked: 0, passed: true, verdict: '通过：修好 2 个，退化 0 个，无变化 1 个' };
 const pending = {
-  id: 'evp-1', projectId: 'project-1', findingId: 'evf-1', assetKind: 'agent', assetId: 'agent-1', assetName: 'Developer',
+  id: 'evp-1', projectId: 'project-1', findingId: 'evf-5', assetKind: 'agent', assetId: 'agent-1', assetName: 'Developer',
   title: '补充自测要求', status: 'pending', summary, baseHash: 'h', createdAt: now, updatedAt: now,
 };
 const validating = { ...pending, id: 'evp-2', title: '规则补充', status: 'validating', summary: { total: 4, finished: 1, passed: false, verdict: '回放进行中 1/4' } };
@@ -87,10 +87,11 @@ test('evolution center renders issue list, record modal, proposals, versions, po
   await app.evaluate(`state.projectFilter='project-1';switchView('evolution');renderEvolutionView()`);
   await settle(4);
   const body = () => $('#evolutionBody').textContent;
-  assert.equal(app.document.querySelectorAll('#evoMetrics .evo-metric').length, 4);
-  assert.match($('#evoMetrics').textContent, /待处理提案1/);
-  assert.match($('#evoMetrics').textContent, /待处理问题2/);
-  assert.match($('#evoMetrics').textContent, /暂无趋势数据/);
+  assert.equal(app.document.querySelectorAll('#evoMetrics .evo-metric').length, 0);
+  assert.match($('#evoMetrics').textContent, /1 项修改需要你处理/);
+  assert.match($('#evoTab-issues').textContent, /发现的问题2/);
+  assert.equal(app.document.querySelectorAll('#evolutionBody [role="tab"]').length, 2);
+  assert.match(body(), /发生了什么问题.*涉及哪个对象.*准备怎么改/s);
   const fixRow = $('[data-evo-finding="evf-1"]');
   assert.ok(fixRow.classList.contains('v-fix'));
   assert.match(fixRow.textContent, /编译失败 第 # 行/);
@@ -143,16 +144,20 @@ test('evolution center renders issue list, record modal, proposals, versions, po
   $('[data-evo-propose="evf-1"]').click();
   await settle(6);
   assert.deepEqual(call('POST', '/api/evolution/proposals').body, { projectId: 'project-1', findingId: 'evf-1' });
-  app.evaluate(`evoDrawerClose()`);
+  app.evaluate(`evoCloseFinding();evoDrawerClose()`);
 
   $('[data-evo-tab="proposals"]').click();
   assert.match(body(), /补充自测要求/);
-  assert.match(body(), /回放 1\/4/);
-  const pgroups = [...app.document.querySelectorAll('#evoPane .evo-group')].map((g) => g.querySelector('h3').textContent);
-  assert.deepEqual(pgroups, ['等你决策', '进行中', '最近结束']);
-  assert.equal($('[data-evo-proposal="evp-0"]'), null, 'recent proposals are collapsed');
+  assert.match(body(), /历史运行 1\/4/);
+  assert.equal(app.document.querySelectorAll('#evoChangeList .evo-change-row').length, 3);
+  assert.ok($('#evoChangeList [data-evo-proposal="evp-0"]'), 'published modifications are visible without expanding a group');
 
   $('[data-evo-proposal="evp-1"]').click();
+  await settle(4);
+  assert.match($('#evoFindingModal').textContent, /出了什么问题.*准备改哪个东西.*这样改有用吗/s);
+  assert.ok($('#evoFindingModal .evo-diff-line.add'));
+  assert.ok(!$('#evoFindingModal').innerHTML.includes('<b>Run unit tests</b>'));
+  $('[data-evo-process="evp-1"]').click();
   await settle(4);
   const drawer = $('#kbDrawerBody');
   assert.ok($('#kbDrawer').classList.contains('evo-wide'));
@@ -174,13 +179,13 @@ test('evolution center renders issue list, record modal, proposals, versions, po
   await settle(6);
   assert.deepEqual(call('POST', '/api/evolution/proposals/evp-1/approve').body, { note: '看过了', force: false });
 
-  app.evaluate(`evoDrawerClose()`);
+  app.evaluate(`evoCloseFinding();evoDrawerClose()`);
   $('#evoDiagnose').click();
   await settle(6);
   assert.ok(call('POST', '/api/evolution/diagnose'));
 
   $('[data-evo-tab="assets"]').click();
-  assert.match($('#evolutionBody').textContent, /资产健康度/);
+  assert.match($('#evolutionBody').textContent, /角色与规则的进化方式/);
   assert.match($('#evolutionBody').textContent, /60%/);
   $('[data-evo-level="1"][data-id="agent-1"]').click();
   await settle(6);
@@ -201,7 +206,7 @@ test('evolution center renders issue list, record modal, proposals, versions, po
   const rollback = app.router.calls.find((c) => c.method === 'POST' && c.path === '/api/evolution/assets/agent/agent-1/rollback');
   assert.deepEqual(rollback.body, { version: 1, note: '' });
 
-  app.evaluate(`evoDrawerClose()`);
+  app.evaluate(`evoCloseFinding();evoDrawerClose()`);
   $('[data-evo-tab="samples"]').click();
   assert.match($('#evolutionBody').textContent, /典型成功/);
   $('[data-evo-unpin="run-9"]').click();

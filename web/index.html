@@ -24,7 +24,7 @@
   <link rel="stylesheet" href="/assistant-models.css">
   <link rel="stylesheet" href="/bots.css">
   <link rel="stylesheet" href="/knowledge.css?v=20261113evo1">
-  <link rel="stylesheet" href="/evolution.css?v=20261116evo3">
+  <link rel="stylesheet" href="/evolution.css?v=20261116evo4">
   <link rel="stylesheet" href="/app/frame.css">
   <link rel="stylesheet" href="/chat-codex.css?v=20261031drawer">
   <link rel="stylesheet" href="/app/harness-icons.css">
@@ -707,10 +707,10 @@
       <div class="kb-page evo-page">
         <header class="kb-head">
           <span class="evo-page-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="m12 3 2.4 6.6L21 12l-6.6 2.4L12 21l-2.4-6.6L3 12l6.6-2.4z"/></svg></span>
-          <div class="kb-head-main"><h1>进化中心</h1><p class="kb-head-desc">平台把失败、打回、低分评测和反馈归因到角色与规则，生成候选正文并回放验证，人工确认后发布。</p></div>
-          <div class="evo-head-actions"><button id="evoRefresh" class="kb-btn evo-icon-button" type="button" aria-label="刷新进化中心" title="刷新进化中心"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5"/><path d="M6 7a7 7 0 0 1 12 0l2 5M4 12l2 5a7 7 0 0 0 12 0"/></svg></button><button id="evoDiagnose" class="kb-btn primary" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="m7 4 14 8-14 8z"/></svg>重新诊断</button></div>
+          <div class="kb-head-main"><h1>进化中心</h1><p class="kb-head-desc">找到反复出错的原因，看清每一次修改。</p></div>
+          <div class="evo-head-actions"><button type="button" class="kb-btn quiet" data-evo-tab="assets">进化设置</button><button id="evoRefresh" class="kb-btn evo-icon-button" type="button" aria-label="刷新进化中心" title="刷新进化中心"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5"/><path d="M6 7a7 7 0 0 1 12 0l2 5M4 12l2 5a7 7 0 0 0 12 0"/></svg></button><button id="evoDiagnose" class="kb-btn primary" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M8 3H3v5M16 3h5v5M3 16v5h5M21 16v5h-5M7 12h10"/></svg>检查最近运行</button></div>
         </header>
-        <section id="evoMetrics" class="kb-metrics" aria-label="概览"></section>
+        <section id="evoMetrics" class="evo-attention-host" aria-label="待处理修改"></section>
         <div id="evolutionBody"></div>
       </div>
     </section>
@@ -1358,7 +1358,7 @@
   <script src="/app/sliding-tabs.js?v=20261031req1"></script>
   <script src="/app/page-feedback.js"></script>
   <script src="/knowledge.js?v=20261113evo1"></script>
-  <script src="/evolution.js?v=20261116evo3"></script>
+  <script src="/evolution.js?v=20261116evo4"></script>
   <script src="/app/start.js"></script>
   </div>
   </div>
