@@ -21,6 +21,8 @@ func TestBindGitWorkspaceScopesTokenToGitHub(t *testing.T) {
 		`printf 'gh=%s\n' "$GH_TOKEN"`,
 		`printf 'github=%s\n' "$("$GIT_ASKPASS" "Password for 'https://x-access-token@github.com': ")"`,
 		`printf 'path=%s\n' "$("$GIT_ASKPASS" "Password for 'https://x-access-token@github.com/octo/widgets.git': ")"`,
+		`printf 'port=%s\n' "$("$GIT_ASKPASS" "Password for 'https://x-access-token@github.com:443/octo/widgets.git': ")"`,
+		`"$GIT_ASKPASS" "Password for 'https://x-access-token@github.com:444/octo/widgets.git': "; printf 'badport=%s\n' "$?"`,
 		`printf 'user=%s\n' "$("$GIT_ASKPASS" "Username for 'https://github.com': ")"`,
 		`"$GIT_ASKPASS" "Password for 'https://evil.example.org': "; printf 'evil=%s\n' "$?"`,
 		`"$GIT_ASKPASS" "Password for 'https://x-access-token@github.com.evil.example': "; printf 'suffix=%s\n' "$?"`,
@@ -39,12 +41,12 @@ func TestBindGitWorkspaceScopesTokenToGitHub(t *testing.T) {
 		return out
 	}
 	out := run(RunCredentials{GitToken: "ghp_workspace", GitUserName: "alice", GitUserEmail: "alice@example.invalid"})
-	for _, want := range []string{"gh=ghp_workspace", "github=ghp_workspace", "path=ghp_workspace", "user=x-access-token", "evil=1", "suffix=1", "userinfo=1", "inpath=1", "plain=1", "prompt=0", "alice"} {
+	for _, want := range []string{"gh=ghp_workspace", "github=ghp_workspace", "path=ghp_workspace", "port=ghp_workspace", "user=x-access-token", "badport=1", "evil=1", "suffix=1", "userinfo=1", "inpath=1", "plain=1", "prompt=0", "alice"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("output lacks %q:\n%s", want, out)
 		}
 	}
-	if strings.Count(out, "ghp_workspace") != 3 {
+	if strings.Count(out, "ghp_workspace") != 4 {
 		t.Fatalf("the token reached a host other than github.com:\n%s", out)
 	}
 	if strings.Contains(out, "host-token-must-not-leak") {
