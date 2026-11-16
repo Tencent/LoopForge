@@ -18,8 +18,16 @@ import (
 
 func TestPersonalConversationRunsInItsOwnRootWithProjectSkills(t *testing.T) {
 	h, u := workbenchFixture(t)
-	if err := h.repo.PutSkill(domain.SkillDefinition{ID: "notes", Name: "notes", ProjectID: "workbench", Content: "记录要点"}); err != nil {
+	if err := h.repo.PutProject(domain.Project{ID: "other", Name: "Other", OwnerID: u.ID}); err != nil {
 		t.Fatal(err)
+	}
+	for _, skill := range []domain.SkillDefinition{
+		{ID: "notes", Name: "notes", ProjectID: "workbench", Content: "记录要点"},
+		{ID: "shared-notes", Name: "shared-notes", ProjectID: "other", Shared: true, Content: "共享要点"},
+	} {
+		if err := h.repo.PutSkill(skill); err != nil {
+			t.Fatal(err)
+		}
 	}
 	root := t.TempDir()
 	bin := filepath.Join(root, "codebuddy")
@@ -53,8 +61,11 @@ printf '%s\n' '{"type":"result","result":"好"}'
 	if other == home || strings.HasPrefix(other, assistantCLIHome(u.ID)) {
 		t.Fatalf("conversations share a CLI home: %s", other)
 	}
-	if entries, _ := os.ReadDir(filepath.Join(other, ".codebuddy", "skills")); len(entries) != 0 {
-		t.Fatal("a conversation without a project received project skills")
+	if _, err := os.Stat(filepath.Join(other, ".codebuddy", "skills", "notes", "SKILL.md")); !os.IsNotExist(err) {
+		t.Fatal("a conversation without a project received a project skill", err)
+	}
+	if _, err := os.Stat(filepath.Join(other, ".codebuddy", "skills", "shared-notes", "SKILL.md")); err != nil {
+		t.Fatal("a conversation without a project did not receive the shared skill", err)
 	}
 	if assistantConversationRoot(u.ID, "same") == assistantConversationRoot(u.ID+1, "same") {
 		t.Fatal("a reused session ID reaches another user's root")
@@ -174,13 +185,18 @@ func TestSkillMentionsAreScopedHintedAndWrittenToHome(t *testing.T) {
 		t.Fatalf("skill hint missing: %s", req.contextText)
 	}
 	root := t.TempDir()
-	if err := h.writeConversationAssets(root, req); err != nil {
+	// Sharing installs the skill on a project turn that never mentions it.
+	plain := assistantRequest{ProjectID: "workbench", Messages: []assistantMessage{{Role: "user", Content: "写一下"}}}
+	if err := h.writeConversationAssets(root, plain); err != nil {
 		t.Fatal(err)
 	}
 	for _, name := range []string{"lint", "shareddoc"} {
 		if _, err := os.Stat(filepath.Join(root, "home", ".codebuddy", "skills", name, "SKILL.md")); err != nil {
 			t.Fatalf("skill %s not written: %v", name, err)
 		}
+	}
+	if _, err := os.Stat(filepath.Join(root, "home", ".codebuddy", "skills", "deploy", "SKILL.md")); !os.IsNotExist(err) {
+		t.Fatalf("another project's private skill was installed: %v", err)
 	}
 	req.Messages[0].References = []domain.AssistantReference{{Type: "skill", ID: "deploy"}}
 	if err := h.prepareWorkbenchContext(c, &req, u); err != errForeignReference {

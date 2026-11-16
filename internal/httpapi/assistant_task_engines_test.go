@@ -108,12 +108,22 @@ func TestScheduleJobAssistantUserNeedsModelCLIKey(t *testing.T) {
 	}
 }
 
-// A scheduled run sees the project's skills in its CLI home, as a chat turn
-// does, so the CLI's skill tool can load them.
+// A scheduled run sees the project's skills and every shared skill in its CLI
+// home, as a chat turn does, so the CLI's skill tool can load them. Another
+// project's private skill stays out.
 func TestScheduledTaskWritesProjectSkills(t *testing.T) {
 	h, user := workbenchFixture(t)
-	if err := h.repo.PutSkill(domain.SkillDefinition{ID: "repo-reader", Name: "repo-reader", ProjectID: "workbench", Description: "读取仓库", Content: "# repo-reader\n读取仓库内容"}); err != nil {
+	if err := h.repo.PutProject(domain.Project{ID: "other", Name: "Other"}); err != nil {
 		t.Fatal(err)
+	}
+	for _, skill := range []domain.SkillDefinition{
+		{ID: "repo-reader", Name: "repo-reader", ProjectID: "workbench", Description: "读取仓库", Content: "# repo-reader\n读取仓库内容"},
+		{ID: "golang-defect-scanner", Name: "golang静态扫描", ProjectID: "other", Shared: true, Content: "# scan\n扫描"},
+		{ID: "private-scanner", Name: "私有扫描", ProjectID: "other", Content: "# private\n不可见"},
+	} {
+		if err := h.repo.PutSkill(skill); err != nil {
+			t.Fatal(err)
+		}
 	}
 	bin := filepath.Join(t.TempDir(), "codebuddy")
 	script := `#!/bin/sh
@@ -128,8 +138,8 @@ printf '{"type":"result","result":"skills: %s"}\n' "$skills"
 	if err := h.executeAssistantTask(context.Background(), user, &task); err != nil {
 		t.Fatalf("run = %v %+v", err, task)
 	}
-	if !strings.Contains(task.LastMessage, "repo-reader") {
-		t.Fatalf("CLI home lacks the project skill: %q", task.LastMessage)
+	if !strings.Contains(task.LastMessage, "repo-reader") || !strings.Contains(task.LastMessage, "golang-defect-scanner") || strings.Contains(task.LastMessage, "private-scanner") {
+		t.Fatalf("CLI home skills = %q", task.LastMessage)
 	}
 }
 

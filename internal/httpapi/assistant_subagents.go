@@ -177,11 +177,12 @@ func subagentRolePrompt(prompt string) string {
 var rolePromptPlaceholder = regexp.MustCompile(`\{\{[^{}]+\}\}`)
 
 // writeConversationAssets rewrites the conversation's CLI home each turn:
-// .codebuddy/skills holds the project's skills plus those of its roles and
-// the mentioned ones, and
-// .codebuddy/agents holds one subagent per role, so Main Bot and its
-// subagents use them natively. A conversation without a project and without
-// mentioned shared roles gets empty directories.
+// skills holds the project's own skills and every shared skill, plus those of
+// its roles and the mentioned ones, and agents holds one subagent per role,
+// so Main Bot and its subagents use them natively. Shared skills are installed
+// on every turn, including a conversation without a project; mentioning one
+// only adds the hint to call it. A turn with no project, no shared skills and
+// no mentioned roles gets empty directories.
 func (h *assistantHandlers) writeConversationAssets(root string, req assistantRequest) error {
 	if err := runtime.ValidateConversationRoot(root); err != nil {
 		return err
@@ -202,17 +203,17 @@ func (h *assistantHandlers) writeConversationAssets(root string, req assistantRe
 			files[skill.ID] = contents
 		}
 	}
-	if project := strings.TrimSpace(req.ProjectID); project != "" {
-		for _, skill := range h.repo.Skills() {
-			if skill.ProjectID != project {
-				continue
-			}
-			var contents map[string][]byte
-			if len(skill.FileRefs) > 0 {
-				contents = h.repo.SkillFileContents(skill.ID)
-			}
-			add(skill, contents)
+	project := strings.TrimSpace(req.ProjectID)
+	for _, skill := range h.repo.Skills() {
+		owned := project != "" && skill.ProjectID == project
+		if !owned && !skill.Shared {
+			continue
 		}
+		var contents map[string][]byte
+		if len(skill.FileRefs) > 0 {
+			contents = h.repo.SkillFileContents(skill.ID)
+		}
+		add(skill, contents)
 	}
 	for _, role := range req.roles {
 		for _, skill := range role.Skills {
