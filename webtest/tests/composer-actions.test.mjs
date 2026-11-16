@@ -12,6 +12,7 @@ test('draft restore brings back the description, repositories, branch and target
   assert.ok($('#requirementModal').classList.contains('open'));
   assert.equal($('#chatInput').value, 'Restored text');
   assert.equal($('#reqBaseBranch').value, 'feature/keep');
+  assert.equal($('#reqWorkflow').value, 'flow-1', 'an SOP picked before is kept');
   assert.equal($('#reqCreate').disabled, false);
   const saved = app.evaluate(`JSON.parse(sessionStorage.getItem('agentflow.requirementComposer'))`);
   assert.equal(saved.input, 'Restored text');
@@ -46,8 +47,9 @@ test('repository controls stay in sync and Escape closes the popover before the 
   app.evaluate(`state.data.repositories=[];renderReqContext();renderReqFooter()`);
   assert.equal($('#reqRepoChip').hidden, true);
   app.evaluate(`state.data.workflows=[];fillReqWorkflow();$('#chatInput').value='x';renderReqFooter()`);
-  assert.equal($('#reqCreateChat').disabled, true, 'without a runnable SOP neither button creates');
-  assert.match($('#reqComposerHint').textContent, /还没有可运行的 SOP/);
+  assert.equal($('#reqCreate').disabled, false, 'a requirement does not need an SOP to be created');
+  assert.equal($('#reqCreateChat').disabled, false);
+  assert.deepEqual([...$('#reqWorkflow').options].map((o) => o.textContent), ['稍后选择']);
   app.document.dispatchEvent(new app.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
   await settle(2);
   assert.equal($('#requirementModal').classList.contains('open'), false);

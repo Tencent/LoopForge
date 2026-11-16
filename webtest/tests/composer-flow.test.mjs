@@ -34,6 +34,8 @@ test('the composer gates on the description and creates an undispatched issue wi
   assert.equal($('#reqCreateChat').disabled, false);
   assert.equal($('#reqCharCount').textContent, '27 字');
   assert.match($('#reqComposerHint').textContent, /去对话里把需求聊清楚/);
+  assert.equal($('#reqWorkflow').value, '', 'the SOP is picked later by default');
+  assert.equal($('#reqWorkflow').options[0].textContent, '稍后选择');
 
   app.router.post('/api/issues', (call) => ({ status: 200, body: { id: 'issue-direct', ...call.body } }));
   $('#reqCreate').click();
@@ -42,7 +44,7 @@ test('the composer gates on the description and creates an undispatched issue wi
   assert.equal(create.body.title, 'Ship audit log');
   assert.equal(create.body.description, 'Ship audit log\nKeep 90 days');
   assert.deepEqual(create.body.repositoryIds, ['repo-1']);
-  assert.equal(create.body.workflowId, 'flow-1');
+  assert.equal(create.body.workflowId, '');
   assert.equal(create.body.clarification, undefined);
   assert.ok(!app.router.calls.some((c) => c.path.endsWith('/dispatch')));
   assert.ok(!app.router.calls.some((c) => c.path.includes('chat-clarify')));

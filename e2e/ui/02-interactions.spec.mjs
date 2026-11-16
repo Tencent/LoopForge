@@ -71,7 +71,6 @@ test('requirement composer: create, find and dispatch a requirement from its dra
 test('requirement composer: create and clarify opens the chat with the requirement @-mentioned', async ({ page }) => {
   const errors = watchErrors(page);
   const title = `E2E UI 对话澄清 ${cfg.runTag}-${Date.now() % 100000}`;
-  await createWorkflow('ui-requirement-chat', [script('only', 'echo UI_REQUIREMENT_CHAT')]);
   await openView(page, 'issues');
   await page.locator('#newIssue').click();
   await page.locator('#chatInput').fill(`${title}\n\n自动化 UI 测试创建，会被关闭。`);

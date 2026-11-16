@@ -53,15 +53,16 @@ function fillReqWorkflow(preferred){
   const select=$('#reqWorkflow');
   if(!select)return;
   const opts=runnableWorkflowOptions();
+  // The SOP is optional: a requirement is usually clarified first, and the
+  // SOP is picked when it is triggered from the detail page.
   const preferredId=String(preferred||select.value||'').trim();
-  const fallback=defaultSOPForIssue({projectId:state.projectFilter,kind:'requirement'});
-  const selected=opts.some(w=>w.id===preferredId)?preferredId:(opts.some(w=>w.id===fallback)?fallback:(opts[0]?.id||''));
-  select.innerHTML=opts.map(w=>`<option value="${escapeHTML(w.id)}" ${w.id===selected?'selected':''}>${escapeHTML(w.name)}</option>`).join('')||'<option value="">暂无可选 SOP</option>';
-  if(selected)select.value=selected;
+  const selected=opts.some(w=>w.id===preferredId)?preferredId:'';
+  select.innerHTML=`<option value="" ${selected?'':'selected'}>稍后选择</option>`+opts.map(w=>`<option value="${escapeHTML(w.id)}" ${w.id===selected?'selected':''}>${escapeHTML(w.name)}</option>`).join('');
+  select.value=selected;
   window.enhanceSelect?.(select)?.refresh?.();
 }
 function selectedReqWorkflowId(){
-  return $('#reqWorkflow')?.value.trim()||defaultSOPForIssue({projectId:state.projectFilter,kind:'requirement'});
+  return $('#reqWorkflow')?.value.trim()||'';
 }
 function selectedReqPlaybookId(){
   const wf=$('#reqWorkflow')?.value.trim()||'';
@@ -153,13 +154,11 @@ function renderReqContext(){
   fillReqWorkflow();
 }
 function reqFooterNote(){
-  if(!($('#reqWorkflow')?.value||'').trim())return '当前项目还没有可运行的 SOP，先到流程设计里配置';
   return '建单后可在详情里触发 SOP，或去对话里把需求聊清楚';
 }
 function renderReqFooter(){
   const creating=!!state.reqCreating;
-  const workflow=($('#reqWorkflow')?.value||'').trim(),hasDesc=!!reqDescription();
-  const reason=!hasDesc?'先写一句需求':(!workflow?'当前项目还没有可运行的 SOP，先到流程设计里配置':'');
+  const reason=reqDescription()?'':'先写一句需求';
   const create=$('#reqCreate'),chat=$('#reqCreateChat');
   if(create){
     create.disabled=creating||!!reason;
@@ -365,7 +364,6 @@ async function createIssueFromChat(target,mode){
   if(target==='tapd'&&!projectTAPDReady())return toast('当前项目未配置 TAPD');
   if(state.reqCreating)return toast('正在建单，请勿重复点击');
   const workflowId=selectedReqWorkflowId();
-  if(!workflowId)return toast('当前项目还没有可跑的流程，先到流程设计里配 SOP');
   state.reqCreating=toChat?'chat':'issue';
   renderReqFooter();
   const project=currentProject();
