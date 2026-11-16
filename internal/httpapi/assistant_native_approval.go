@@ -169,15 +169,28 @@ func (h *agentToolGateway) approveNativeTool(ctx context.Context, s *AgentToolSe
 		return nativeToolApprovalResult{Allow: true}
 	}
 	if s.ExecMode.ReviewWrites {
-		reviewCtx, cancelReview := context.WithTimeout(ctx, 15*time.Second)
-		args := map[string]any{"tool": action.Name, "input": action.Input, "runId": s.workspaceRun()}
-		review := reviewAssistantAction(withAssistantApprovalReviewer(reviewCtx, s.approvalReviewer), "native_"+action.Name, "工作区命令（"+label+"），会写入沙箱外的系统", args)
-		cancelReview()
-		if review.allows() {
+		// Assisted mode decides with the reviewer alone: allow or deny, never
+		// a card for the speaker. The review outlives one hook request (20s),
+		// so it runs in the background and the hook polls for the verdict.
+		if action.ID == "" {
+			return deny("缺少审批调用标识")
+		}
+		review, done, ok := s.nativeReview(ctx, nativeReviewPoll, id, nativeApprovalPhase(string(action.Input)), func(reviewCtx context.Context) assistantApprovalReview {
+			args := map[string]any{"tool": action.Name, "input": action.Input, "runId": s.workspaceRun()}
+			return reviewAssistantAction(withAssistantApprovalReviewer(reviewCtx, s.approvalReviewer), "native_"+action.Name, "工作区命令（"+label+"），会写入沙箱外的系统", args)
+		})
+		switch {
+		case !ok:
+			return deny("审批调用标识已被其他操作使用")
+		case !done:
+			return nativeToolApprovalResult{Pending: true}
+		case review.allows():
 			if !h.nativeToolTurnActive(ctx, s) {
 				return deny("本轮已结束，审批已失效")
 			}
 			return nativeToolApprovalResult{Allow: true, Reason: review.Rationale}
+		default:
+			return deny(nativeReviewRefusal(review))
 		}
 	}
 	// Ask the speaker; the hook polls until they decide or the turn ends.
@@ -197,6 +210,28 @@ func (h *agentToolGateway) approveNativeTool(ctx context.Context, s *AgentToolSe
 	}
 	return nativeToolApprovalResult{Pending: true}
 }
+
+// nativeReviewRefusal tells the agent why assisted mode declined a command.
+// The reviewer's own texts for an unavailable review still mention a manual
+// confirmation used by platform drafts; native commands have none.
+func nativeReviewRefusal(review assistantApprovalReview) string {
+	if review.Outcome != "allow" && review.Outcome != "deny" {
+		return "帮我批准：自动审查暂不可用，已拒绝本次外部写入，操作未执行；告诉用户需要执行什么，不要换一种方式重试"
+	}
+	reason := strings.TrimSpace(review.Rationale)
+	if reason == "" {
+		reason = "审查未通过"
+	}
+	return "帮我批准：审查拒绝了本次外部写入（" + reason + "），操作未执行；不要换一种方式重试，先告诉用户原因"
+}
+
+// nativeReviewBudget bounds one background review. The reviewer stops at 60
+// seconds itself; the margin only covers starting its CLI.
+const nativeReviewBudget = 90 * time.Second
+
+// nativeReviewPoll is how long one hook request waits for the verdict before
+// answering pending, below the hook's 20-second request timeout.
+const nativeReviewPoll = 10 * time.Second
 
 // nativeApprovalWait bounds how long a command waits for the speaker. It
 // stays below Kimi's 600-second hook cap, past which Kimi runs the tool.
