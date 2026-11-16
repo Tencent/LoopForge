@@ -243,15 +243,20 @@ func assistantEngineMissingKey(engine string) string {
 	return fmt.Sprintf("请先在个人配置中配置 %s API Key 后再使用 %s 模型", assistantEngineLabel(engine), assistantEngineLabel(engine))
 }
 
-// assistantTurnUser resolves the identity and model of one chat turn. Codex
-// and Claude Code models need the caller's own key for that CLI and are never
-// sponsored; CodeBuddy models keep the sponsor fallback. The returned user
-// still carries a lent CodeBuddy key when there is one, so approval reviews
-// keep working on Codex / Claude Code turns.
-func (h *assistantHandlers) assistantTurnUser(stored domain.User, model string) (domain.User, string, string) {
-	engine, _ := assistantModelEngine(model)
+// assistantTurnUser checks personal credentials or the chosen runner login.
+// Non-CodeBuddy turns can still borrow a CodeBuddy key for approval reviews.
+func (h *assistantHandlers) assistantTurnUser(stored domain.User, model string, runnerLogin bool) (domain.User, string, string) {
+	engine, id := assistantModelEngine(model)
 	if engine != assistantEngineCodeBuddy {
-		if key, _ := assistantEngineCredential(stored, engine); key == "" {
+		if runnerLogin {
+			if id == "" {
+				id = "default"
+			}
+			if !assistantValidEngineModel(id) {
+				return stored, "", "模型 ID 无效"
+			}
+			model = engine + ":" + id
+		} else if key, _ := assistantEngineCredential(stored, engine); key == "" {
 			return stored, "", assistantEngineMissingKey(engine)
 		}
 		user, _, _ := h.assistantChatUser(stored)
@@ -301,38 +306,35 @@ func assistantScheduledModel(id string, catalog assistantModelCatalog) string {
 	return assistantAllowedModel(id, catalog)
 }
 
-// assistantEngineModels lists the models a configured CLI offers in chat.
-// A personal catalog wins on the official endpoint and behind a Base URL.
-// An empty catalog asks the Base URL for its published models, then falls
-// back to the built-in executor catalog. Gemini publishes no OpenAI-style
-// list, so an empty catalog there uses the built-in models directly.
+// assistantDiscoveredModelsFor resolves the model list shared by the chat
+// composer and role editor. A saved catalog takes precedence over discovery.
+func assistantDiscoveredModelsFor(ctx context.Context, user domain.User, engine string) []assistantDiscoveredModel {
+	key, baseURL := assistantEngineCredential(user, engine)
+	protocol := assistantEngineProtocol(user, engine)
+	var listed []assistantDiscoveredModel
+	for _, model := range assistantEngineCustomModels(user, engine) {
+		if assistantValidEngineModel(model.ID) {
+			listed = append(listed, assistantDiscoveredModel{ID: model.ID, Name: model.Name, Efforts: model.Efforts, DefaultEffort: model.DefaultEffort})
+		}
+	}
+	if len(listed) == 0 && key != "" && baseURL != "" && protocol != runtime.AgentCLIProtocolGemini {
+		listed = cachedAssistantEngineDiscovery(ctx, assistantEngineAnthropicModels(engine, protocol), key, baseURL)
+	}
+	if engine == runtime.AgentCLICursor && key != "" {
+		if fresh := cachedCursorModels(key); len(fresh) > 0 {
+			listed = fresh
+		}
+	}
+	return listed
+}
+
 func assistantEngineModels(ctx context.Context, user domain.User) []assistantModel {
 	var out []assistantModel
 	for _, engine := range assistantCLIEngines() {
-		key, baseURL := assistantEngineCredential(user, engine)
-		if key == "" {
+		if key, _ := assistantEngineCredential(user, engine); key == "" {
 			continue
 		}
-		protocol := assistantEngineProtocol(user, engine)
-		if protocol == runtime.AgentCLIProtocolGemini {
-			baseURL = ""
-		}
-		var listed []assistantDiscoveredModel
-		for _, model := range assistantEngineCustomModels(user, engine) {
-			if assistantValidEngineModel(model.ID) {
-				listed = append(listed, assistantDiscoveredModel{ID: model.ID, Name: model.Name, Efforts: model.Efforts, DefaultEffort: model.DefaultEffort})
-			}
-		}
-		if len(listed) == 0 && baseURL != "" {
-			listed = cachedAssistantEngineDiscovery(ctx, assistantEngineAnthropicModels(engine, protocol), key, baseURL)
-		}
-		// Cursor's list comes from the CLI; the saved one (the last list
-		// saveCursorCatalog kept) answers until a fresh one is cached.
-		if engine == runtime.AgentCLICursor {
-			if fresh := cachedCursorModels(key); len(fresh) > 0 {
-				listed = fresh
-			}
-		}
+		listed := assistantDiscoveredModelsFor(ctx, user, engine)
 		if len(listed) == 0 {
 			listed = assistantEngineBuiltinModels(engine)
 		}

@@ -131,11 +131,15 @@ func detectRuntimes(ctx context.Context, extraBinaries map[string]string, invent
 		if version == "" && len(spec.VersionFlags) > 0 {
 			continue
 		}
+		capabilities := []string{"non_interactive"}
+		if managed {
+			capabilities = append(capabilities, domain.RuntimeCapabilityManagedUpdate)
+		}
 		out = append(out, domain.RunnerRuntime{
 			Provider:     spec.Kind,
 			BinaryPath:   path,
 			Version:      version,
-			Capabilities: []string{"non_interactive"},
+			Capabilities: capabilities,
 			Status:       domain.RuntimeStatusOnline,
 		})
 	}

@@ -81,6 +81,20 @@ const RunnerVersionConversationWorkspace = "0.8.0"
 // queued CLI or block a following turn behind a previous background save.
 const RunnerVersionConversationCLI = "0.10.1"
 
+// RunnerVersionRuntimeTest supports isolated CLI tests and local login in chat.
+const RunnerVersionRuntimeTest = "0.10.2"
+
+// RunnerVersionMaintenance accepts authenticated update requests from the machine card.
+const RunnerVersionMaintenance = "0.10.3"
+
+func (r Runner) SupportsMaintenance() bool {
+	return versionAtLeast(r.RunnerVersion, RunnerVersionMaintenance)
+}
+
+func (r Runner) SupportsRuntimeTest() bool {
+	return versionAtLeast(r.RunnerVersion, RunnerVersionRuntimeTest)
+}
+
 func (r Runner) SupportsConversationCLI() bool {
 	return versionAtLeast(r.RunnerVersion, RunnerVersionConversationCLI)
 }
@@ -295,11 +309,12 @@ func (r Runner) RuntimeAuthMode(provider string) string {
 }
 
 const (
-	RuntimeStatusOnline   = "online"
-	RuntimeStatusOffline  = "offline"
-	RuntimeStatusDisabled = "disabled"
-	RuntimeAuthLocal      = "local"
-	RuntimeAuthPersonal   = "personal"
+	RuntimeStatusOnline            = "online"
+	RuntimeStatusOffline           = "offline"
+	RuntimeStatusDisabled          = "disabled"
+	RuntimeAuthLocal               = "local"
+	RuntimeAuthPersonal            = "personal"
+	RuntimeCapabilityManagedUpdate = "managed_update"
 )
 
 // RunnerRuntime is one discovered Agent CLI on the runner machine. Credentials

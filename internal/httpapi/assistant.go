@@ -110,14 +110,6 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 	}
 	req.Executor = assistantExecutor(req.Executor)
 	req.Model = assistantRequestModel(req.Executor, req.Model)
-	user, model, refusal := h.assistantTurnUser(stored, req.Model)
-	if refusal != "" {
-		c.JSON(400, gin.H{"error": refusal})
-		return
-	}
-	req.Model = model
-	cliEngine, _ := assistantModelEngine(req.Model)
-	req.Executor = cliEngine
 	if len(req.Messages) == 0 {
 		c.JSON(400, gin.H{"error": "请提供对话消息"})
 		return
@@ -138,17 +130,50 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 			return
 		}
 	}
-	ownerID, shared, scopeErr := h.conversationScope(c, req.SessionID, req.RunID, req.ProjectID, user.ID)
+	ownerID, shared, scopeErr := h.conversationScope(c, req.SessionID, req.RunID, req.ProjectID, stored.ID)
 	if scopeErr != nil {
 		c.JSON(403, gin.H{"error": scopeErr.Error()})
 		return
 	}
+	req.SessionID = strings.TrimSpace(req.SessionID)
+	if req.SessionID == "" {
+		req.SessionID = newAssistantSessionID()
+	}
+	if _, loaded := h.active.LoadOrStore(fmt.Sprintf("%d/%s", ownerID, req.SessionID), true); loaded {
+		c.JSON(429, gin.H{"error": "已有对话正在生成，请稍后重试"})
+		return
+	}
+	defer h.active.Delete(fmt.Sprintf("%d/%s", ownerID, req.SessionID))
+	old, exists := h.repo.AssistantSession(ownerID, req.SessionID)
+	if exists {
+		target := old.Execution()
+		if req.ExecutionTarget != nil && *req.ExecutionTarget != target {
+			c.JSON(409, gin.H{"error": "会话执行机器已固定，不能更换；请新建对话"})
+			return
+		}
+		req.ExecutionTarget = &target
+	} else {
+		target, err := h.newExecutionTarget(stored.ID, req.ProjectID, req.ExecutionTarget)
+		if err != nil {
+			c.JSON(400, gin.H{"error": err.Error()})
+			return
+		}
+		req.ExecutionTarget = target
+	}
+	cliEngine, _ := assistantModelEngine(req.Model)
+	runnerLogin := h.assistantUsesRunnerLogin(stored.ID, req.ExecutionTarget, cliEngine)
+	user, model, refusal := h.assistantTurnUser(stored, req.Model, runnerLogin)
+	if refusal != "" {
+		c.JSON(400, gin.H{"error": refusal})
+		return
+	}
+	req.Model = model
 	if err := h.validateAssistantTriggerHistory(ownerID, req); err != nil {
 		c.JSON(400, gin.H{"error": err.Error()})
 		return
 	}
 	if shared {
-		if old, ok := h.repo.AssistantSession(ownerID, req.SessionID); ok {
+		if exists {
 			if !sharedTranscriptPrefix(old.Messages, req.Messages) {
 				c.JSON(409, gin.H{"error": "共享会话已更新，请重新打开后发送"})
 				return
@@ -170,7 +195,6 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 	} else {
 		// Generations stamp their question before this point; a direct chat
 		// call stamps it here so personal messages also carry a send time.
-		old, _ := h.repo.AssistantSession(ownerID, req.SessionID)
 		for i := len(old.Messages); i < len(req.Messages); i++ {
 			if req.Messages[i].Role == "user" && req.Messages[i].CreatedAt.IsZero() {
 				req.Messages[i].CreatedAt = time.Now().UTC()
@@ -186,24 +210,18 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 	if catalogEngine == assistantEngineCodeBuddy {
 		catalog = h.chatCatalog(c.Request.Context(), user)
 	}
-	req.Model = assistantAllowedUserModel(req.Model, catalog, user)
+	if !runnerLogin {
+		req.Model = assistantAllowedUserModel(req.Model, catalog, user)
+	}
 	cliEngine, _ = assistantModelEngine(req.Model)
 	req.Executor = cliEngine
 	if err := validateAssistantEffort(user, req.Model, req.Effort); err != nil {
 		c.JSON(400, gin.H{"error": err.Error()})
 		return
 	}
-	legacyExecutor := ""
-	if old, ok := h.repo.AssistantSession(ownerID, req.SessionID); ok {
-		legacyExecutor = old.Executor
-	}
-	if refusal := assistantEngineSwitchRefusal(assistantConversationEngine(req.Messages, legacyExecutor), req.Model); refusal != "" {
+	if refusal := assistantEngineSwitchRefusal(assistantConversationEngine(req.Messages, old.Executor), req.Model); refusal != "" {
 		c.JSON(409, gin.H{"error": refusal})
 		return
-	}
-	req.SessionID = strings.TrimSpace(req.SessionID)
-	if req.SessionID == "" {
-		req.SessionID = newAssistantSessionID()
 	}
 	sink, _ := c.Request.Context().Value(assistantGenerationSinkKey{}).(func(string, any))
 	if sink == nil {
@@ -216,31 +234,13 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 	approvalMode := assistantRequestApprovalMode(req)
 	req.ApprovalMode = approvalMode
 	logAgentToolEvent("assistant-chat", "mode="+approvalMode, "raw="+strings.TrimSpace(req.ApprovalMode), "sid="+req.SessionID)
-	if _, loaded := h.active.LoadOrStore(fmt.Sprintf("%d/%s", ownerID, req.SessionID), true); loaded {
-		c.JSON(429, gin.H{"error": "已有对话正在生成，请稍后重试"})
-		return
-	}
-	defer h.active.Delete(fmt.Sprintf("%d/%s", ownerID, req.SessionID))
-	savedConversation, exists := h.repo.AssistantSession(ownerID, req.SessionID)
-	if exists {
-		target := savedConversation.Execution()
-		if req.ExecutionTarget != nil && *req.ExecutionTarget != target {
-			c.JSON(409, gin.H{"error": "会话执行机器已固定，不能更换；请新建对话"})
-			return
-		}
-		req.ExecutionTarget = &target
-	} else {
-		target, err := h.newExecutionTarget(user.ID, req.ProjectID, req.ExecutionTarget)
-		if err != nil {
-			c.JSON(400, gin.H{"error": err.Error()})
-			return
-		}
-		savedConversation = assistantConversation{ID: req.SessionID, ProjectID: req.ProjectID, RunID: req.RunID, Model: req.Model, Effort: req.Effort, ExecutionTarget: target, Messages: req.Messages}
-		if err = h.repo.PutAssistantSession(ownerID, savedConversation); err != nil {
+	savedConversation := old
+	if !exists {
+		savedConversation = assistantConversation{ID: req.SessionID, ProjectID: req.ProjectID, RunID: req.RunID, Model: req.Model, Effort: req.Effort, ExecutionTarget: req.ExecutionTarget, Messages: req.Messages}
+		if err := h.repo.PutAssistantSession(ownerID, savedConversation); err != nil {
 			c.JSON(409, gin.H{"error": err.Error()})
 			return
 		}
-		req.ExecutionTarget = target
 	}
 	req.workspaceMode = savedConversation.Mode() == domain.AssistantModeWorkspace
 	sourceRoot := h.resolvedSourceRoot()
@@ -292,6 +292,7 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 		sess.ChatOwnerID = ownerID
 		sess.turnMessages = append([]assistantMessage(nil), req.Messages...)
 		sess.ExecutionRunnerID = savedConversation.Execution().RunnerID
+		sess.runnerLogin = runnerLogin
 		sess.RuntimeMode = savedConversation.Mode()
 		sess.SelectedMCPIDs = map[string]bool{}
 		for _, id := range req.MCPServerIDs {
@@ -498,7 +499,7 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 					prompt = assistantPlatformExecutionReminder + "\n" + prompt
 				}
 				prompt += conversationAttachmentNote(cliRoot, req)
-				cliReq := assistantCLIRequest{Executor: req.Executor, Prompt: prompt, Model: req.Model, Effort: req.Effort, SessionID: cliSessionID, Resume: resume, UserID: u.ID, Native: true, MCPConfig: mcp, Settings: settings, SystemPrompt: system, SessionRoot: cliRoot, OnUsage: turnUsage.add, Workspace: req.workspaceMode, RemoteBinary: req.workspaceMode || toolSession.ExecutionRunnerID != "", Execute: h.conversationExecutor(toolSession, cliRoot)}
+				cliReq := assistantCLIRequest{Executor: req.Executor, Prompt: prompt, Model: req.Model, Effort: req.Effort, SessionID: cliSessionID, Resume: resume, UserID: u.ID, Native: true, MCPConfig: mcp, Settings: settings, SystemPrompt: system, SessionRoot: cliRoot, RunnerLogin: runnerLogin, OnUsage: turnUsage.add, Workspace: req.workspaceMode, RemoteBinary: req.workspaceMode || toolSession.ExecutionRunnerID != "", Execute: h.conversationExecutor(toolSession, cliRoot)}
 				persistAttempt := func(unstarted bool) error {
 					if nativeSession != nil {
 						nativeSession.checkpoint.Unstarted = unstarted
@@ -1385,7 +1386,7 @@ func stripAssistantSecretValue(value any) {
 type assistantCLIRequest struct {
 	Workspace                                      bool
 	Execute                                        func(context.Context, string, runtime.CommandSpec, runtime.RunCredentials, runtime.EventSink) (string, error)
-	RemoteBinary                                   bool
+	RemoteBinary, RunnerLogin                      bool
 	Prompt, Model, Effort, SessionID, SystemPrompt string
 	Executor                                       string
 	SessionRoot                                    string
@@ -1402,13 +1403,17 @@ type assistantCLIRequest struct {
 
 func runAssistantCLI(ctx context.Context, req assistantCLIRequest, user domain.User, onEvent func(assistantStreamEvent)) (output string, returnedSessionID string, returnedErr error) {
 	req.Model = assistantRequestModel(req.Executor, req.Model)
+	engine, engineModel := assistantModelEngine(req.Model)
 	if req.Execute == nil {
-		if execute := helperCLIExecution(ctx, req.SessionRoot); execute != nil {
+		if execute, runnerLogin := helperCLIExecution(ctx, req.SessionRoot, user.ID, engine); execute != nil {
 			req.Execute = execute
 			req.RemoteBinary = true
+			req.RunnerLogin = runnerLogin
 		}
 	}
-	engine, engineModel := assistantModelEngine(req.Model)
+	if engineModel == "default" && (engine == assistantEngineCodex || engine == assistantEngineClaude) {
+		engineModel = ""
+	}
 	attempt := assistantDiagnosticsFrom(ctx).begin(engine, engineModel, req.Resume, user)
 	defer func() { attempt.finish(returnedErr) }()
 	if engine != assistantEngineCodeBuddy && (req.ReportOnly || (!req.Native && !req.ReviewOnly)) {
@@ -1467,10 +1472,14 @@ func runAssistantCLI(ctx context.Context, req assistantCLIRequest, user domain.U
 	engineOpts := assistantEngineInvocationOpts{Bin: bin, Root: root, Config: config, Prompt: req.Prompt, Model: engineModel, Effort: req.Effort, SessionID: sessionID, Resume: req.Resume, SystemPrompt: req.SystemPrompt, ReviewOnly: req.ReviewOnly, Workspace: req.Workspace}
 	switch engine {
 	case assistantEngineClaude:
-		engineOpts.User = runtime.ProviderCredential{APIKey: user.ClaudeCodeAPIKey, BaseURL: user.ClaudeCodeBaseURL}
+		if !req.RunnerLogin {
+			engineOpts.User = runtime.ProviderCredential{APIKey: user.ClaudeCodeAPIKey, BaseURL: user.ClaudeCodeBaseURL}
+		}
 		inv, err = prepareAssistantClaudeInvocation(engineOpts)
 	case assistantEngineCodex:
-		engineOpts.User = runtime.ProviderCredential{APIKey: user.CodexAPIKey, BaseURL: user.CodexBaseURL}
+		if !req.RunnerLogin {
+			engineOpts.User = runtime.ProviderCredential{APIKey: user.CodexAPIKey, BaseURL: user.CodexBaseURL}
+		}
 		inv, err = prepareAssistantCodexInvocation(engineOpts)
 	default:
 		if runtime.IsAgentCLI(engine) {
@@ -1591,6 +1600,9 @@ func runAssistantCLI(ctx context.Context, req assistantCLIRequest, user domain.U
 	}
 	if engine != assistantEngineCodeBuddy && ctx.Err() == nil && strings.TrimSpace(final) == "" &&
 		(credentialRejected || (streamError != nil && assistantAuthFailureText(streamError.Error()))) {
+		if req.RunnerLogin {
+			return "", sessionID, assistantRunnerLoginError(engine)
+		}
 		return "", sessionID, assistantCredentialError{engine: engine}
 	}
 	if credentialRejected && strings.TrimSpace(final) == "" && err == nil && ctx.Err() == nil {
@@ -1602,6 +1614,12 @@ func runAssistantCLI(ctx context.Context, req assistantCLIRequest, user domain.U
 		err = streamError
 	}
 	out, err := decodeAssistantCLIResult(final, resultError, err, stderrTail)
+	if err != nil && req.RunnerLogin && ctx.Err() == nil && !errors.Is(err, runtime.ErrConversationNotStarted) {
+		text := strings.ToLower(err.Error())
+		if assistantAuthFailureText(text) || strings.Contains(text, "not logged in") || strings.Contains(text, "login expired") || strings.Contains(text, "please run /login") {
+			return "", sessionID, assistantRunnerLoginError(engine)
+		}
+	}
 	if err != nil {
 		diagnosticID := ""
 		if attempt != nil {

@@ -752,7 +752,7 @@
         <ol class="runner-steps">
           <li><span class="runner-step-no">1</span><div><b>安装 CLI</b><small>claude / codex 等</small></div></li>
           <li><span class="runner-step-no">2</span><div><b>执行接入命令</b><small>绑定码 10 分钟有效</small></div></li>
-          <li><span class="runner-step-no">3</span><div><b>选择认证来源</b><small>本机登录或个人凭证</small></div></li>
+          <li><span class="runner-step-no">3</span><div><b>选择认证来源</b><small>账号登录或 API Key</small></div></li>
         </ol>
         <div class="runner-command-box">
           <pre id="bindCliCommand" class="mono">(curl -fsSL --connect-timeout 5 <span id="bindHttpsOrigin">https://</span>/runners/install.sh || curl -fsSL <span id="bindHttpOrigin">http://</span>/runners/install.sh) | bash -s -- --server <span id="bindServerHost"></span> --token <span id="bindToken">生成中…</span> --service</pre>
@@ -771,7 +771,6 @@
       </div>
 
       <div class="runner-list-heading"><h2>我的机器</h2><span class="runner-count" id="runnerCount">0</span><p class="runner-pool-status" id="runnerPoolStatus" aria-live="polite"></p></div>
-      <aside id="runnerCLIUpdateNotice" class="runner-cli-update-notice" aria-labelledby="runnerCLIUpdateNoticeTitle"><b id="runnerCLIUpdateNoticeTitle">Agent CLI 需自行升级：</b>平台不会代为升级，版本过旧或无模型权限会导致任务失败。</aside>
       <div id="runnersList" class="runner-grid"></div>
     </section>
 

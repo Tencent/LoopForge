@@ -46,6 +46,10 @@ type Daemon struct {
 	wsOnline             atomic.Bool
 	updateMu             sync.RWMutex
 	updateReady          atomic.Bool
+	updateDownloadMu     sync.Mutex
+	cancelClaimLoop      context.CancelFunc
+	heartbeatWake        chan struct{}
+	maintenance          runnerMaintenanceState
 	runSandboxMu         sync.Mutex
 	runSandboxes         map[string]*runSandbox
 	managedTasks         map[string]*managedTask
@@ -129,7 +133,8 @@ func New(cfg Config) (*Daemon, error) {
 		host, _ := os.Hostname()
 		cfg.Name = host
 	}
-	return &Daemon{cfg: cfg, client: NewClient(cfg.ServerURL), executor: runtime.NewExecutorRunner(), controls: map[string]chan string{}, pendingControls: map[string]string{}}, nil
+	return &Daemon{cfg: cfg, client: NewClient(cfg.ServerURL), executor: runtime.NewExecutorRunner(),
+		controls: map[string]chan string{}, pendingControls: map[string]string{}, heartbeatWake: make(chan struct{}, 1)}, nil
 }
 
 func trimTrailingSlash(s string) string {
@@ -148,16 +153,23 @@ func (d *Daemon) Run(ctx context.Context) error {
 		return err
 	}
 	d.refreshRuntimes(ctx)
+	claimCtx, cancelClaim := context.WithCancel(ctx)
+	defer cancelClaim()
+	d.cancelClaimLoop = cancelClaim
 	go d.rescanLoop(ctx)
 	heartbeatDone := make(chan struct{})
 	go func() { defer close(heartbeatDone); d.heartbeatLoop(ctx) }()
 	controlDone := make(chan struct{})
 	go func() { defer close(controlDone); d.controlLoop(ctx) }()
-	err := d.claimLoop(ctx)
+	err := d.claimLoop(claimCtx)
+	if d.updateReady.Load() {
+		err = ErrUpdateReady
+	}
 	// Workspace preparation runs on the control connection. Cancel and join it
 	// before closing shared sandboxes, including on an automatic-update exit.
 	stop()
 	<-controlDone
+	d.maintenance.jobs.Wait()
 	<-heartbeatDone
 	closeCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	d.closeAllRunSandboxes(closeCtx)
@@ -406,6 +418,7 @@ func (d *Daemon) heartbeatLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+		case <-d.heartbeatWake:
 		}
 	}
 }
@@ -1382,7 +1395,7 @@ func (d *Daemon) defaultWorkspace(taskID string) string {
 }
 
 // runnerVersion is reported at registration; it matches the module build.
-var runnerVersion = "0.10.1"
+var runnerVersion = domain.RunnerVersionMaintenance
 
 // Version returns the runner build version reported at registration.
 func Version() string { return runnerVersion }

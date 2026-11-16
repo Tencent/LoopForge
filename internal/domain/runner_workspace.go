@@ -31,14 +31,16 @@ const (
 	RunnerWorkspaceOperationCommit            = "commit"
 	RunnerWorkspaceOperationBrowser           = "browser"
 	RunnerWorkspaceOperationCheckouts         = "checkouts"
+	RunnerWorkspaceOperationMaintenance       = "maintenance"
 )
 
 // RunnerWorkspaceRequest is a bounded workspace request sent over the
 // runner's outbound control socket. Responses are transient and are never
 // persisted in runner_tasks or the run record.
 type RunnerWorkspaceRequest struct {
-	Conversation json.RawMessage `json:"conversation,omitempty"`
-	RunKind      string          `json:"runKind,omitempty"`
+	Maintenance  *RunnerMaintenanceRequest `json:"maintenance,omitempty"`
+	Conversation json.RawMessage           `json:"conversation,omitempty"`
+	RunKind      string                    `json:"runKind,omitempty"`
 	// ConcurrentEdit marks a person editing from the IDE: the runner writes and
 	// opens terminals beside running tasks instead of waiting for their fence.
 	ConcurrentEdit     bool                         `json:"concurrentEdit,omitempty"`
@@ -73,6 +75,20 @@ type RunnerWorkspaceRequest struct {
 	Query           string              `json:"query,omitempty"`
 	Ref             string              `json:"ref,omitempty"`
 	Repositories    []RepositoryContext `json:"repositories,omitempty"`
+}
+
+type RunnerMaintenanceRequest struct {
+	Provider   string `json:"provider,omitempty"` // Empty selects the Runner binary.
+	Apply      bool   `json:"apply,omitempty"`
+	StatusOnly bool   `json:"statusOnly,omitempty"`
+}
+
+type RunnerMaintenanceResult struct {
+	Status    string `json:"status"`
+	Current   string `json:"current,omitempty"`
+	Version   string `json:"version,omitempty"`
+	Message   string `json:"message,omitempty"`
+	CanUpdate bool   `json:"canUpdate,omitempty"`
 }
 
 // RunnerToolRequest is forwarded over the same instance-owned control socket

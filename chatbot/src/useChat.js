@@ -510,6 +510,12 @@ export function useChat() {
         );
     return () => window.removeEventListener("message", listener);
   }, [ready]);
+  const personalMachineId = executionLocked(session)
+    ? (session.executionTarget?.pool === "runner" ? session.executionTarget.runnerId : "")
+    : executionMachines.defaultRunnerId;
+  const personalMachine = executionMachines.machines.find(
+    (machine) => machine.id === personalMachineId && machine.ownerUserId === user?.id,
+  );
   const codeBuddy = executor === "codebuddy";
   const listedForEngine = engineModels(models, executor);
   const executorModels = listedForEngine.length || codeBuddy
@@ -1233,7 +1239,11 @@ export function useChat() {
     selectSandbox,
     models: executorModels,
     executor,
-    executors: EXECUTORS,
+    executors: EXECUTORS.map((item) => {
+      if (!personalMachine || (item.id !== "codex" && item.id !== "claude-code")) return item;
+      const runtime = personalMachine.runtimes?.find((runtime) => runtime.provider === item.id);
+      return runtime?.authMode === "personal" ? item : { ...item, detail: "使用执行机器上的本机登录态。" };
+    }),
     setExecutor: chooseExecutor,
     sessions,
     session,

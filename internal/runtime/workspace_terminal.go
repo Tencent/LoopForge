@@ -283,6 +283,12 @@ func (p *TerminalPool) CloseScope(scope string) {
 	}
 }
 
+func (p *TerminalPool) Active() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return len(p.sessions) != 0
+}
+
 func (p *TerminalPool) HasScope(scope string) bool {
 	p.mu.Lock()
 	defer p.mu.Unlock()

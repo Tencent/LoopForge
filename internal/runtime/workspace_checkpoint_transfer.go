@@ -49,6 +49,12 @@ func WorkspaceCheckpointStatus(root string) domain.RunnerWorkspaceResponse {
 	return domain.RunnerWorkspaceResponse{Status: 200, Payload: json.RawMessage(`{"exists":true}`)}
 }
 
+func (p *CheckpointTransfers) Active() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return len(p.items) != 0 || p.pending != 0
+}
+
 func (p *CheckpointTransfers) Sweep(now time.Time) {
 	p.mu.Lock()
 	defer p.mu.Unlock()

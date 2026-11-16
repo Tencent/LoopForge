@@ -115,6 +115,11 @@ func (d *Daemon) handleRunnerWorkspaceBrowser(ctx context.Context, request domai
 }
 
 func (d *Daemon) readRunnerWorkspace(ctx context.Context, request domain.RunnerWorkspaceRequest) domain.RunnerWorkspaceResponse {
+	d.updateMu.RLock()
+	defer d.updateMu.RUnlock()
+	if d.updateReady.Load() {
+		return domain.RunnerWorkspaceResponse{Status: http.StatusConflict, Error: "Runner 即将重启，请稍后重试"}
+	}
 	if request.Operation == "conversation_process" {
 		return d.conversationProcess(ctx, request)
 	}

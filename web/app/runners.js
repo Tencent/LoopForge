@@ -2,6 +2,10 @@ function openRunModal(workflowId){const select=$('#runWorkflowChoice'),workflows
 
 // ---------- 执行机器（bind-cli，个人维度） ----------
 let runnerRefreshTimer=null;
+const runnerRuntimeTests=new Set();
+const runnerAuthChanges=new Map();
+const runnerMaintenancePending=new Set();
+let runnerRuntimeMenu=null,runnerRuntimeTrigger=null;
 async function refreshRunners(silent){
   try{
     await ensureRunnerBindCode(silent);
@@ -47,15 +51,15 @@ async function saveRunnerRunLimit(runnerId,raw){
     toast(value>0?`已设置：最多同时运行 ${value} 条`:'已设为不限','ok');renderRunnersView();
   }catch(err){toast(err.message);refreshRunners(true)}
 }
-function runnerStatusLabel(status){
-  switch(status){
-    case 'online':return '<span class="runner-status online"><i></i>在线</span>';
-    case 'offline':return '<span class="runner-status offline"><i></i>离线</span>';
-    default:return `<span class="runner-status"><i></i>${escapeHTML(status||'unknown')}</span>`;
-  }
+function runnerStatusLabel(status,lastSeen){
+  const label=status==='online'?'在线':status==='offline'?'离线':(status||'未知');
+  const style=status==='online'?' online':status==='offline'?' offline':'';
+  return `<span class="runner-status${style}" title="${escapeHTML(runnerLastSeen(lastSeen))}"><i></i>${escapeHTML(label)}</span>`;
 }
 const runnerCLILabels={'claude-code':'Claude Code','codex':'Codex','codebuddy':'CodeBuddy',opencode:'OpenCode',cursor:'Cursor CLI',agy:'Antigravity',kimi:'Kimi Code',pi:'Pi',dsh:'DeepSeek Harness',zcode:'ZCode'};
-const runnerCLIGlyphs={'claude-code':'C','codex':'X','codebuddy':'B',opencode:'O',cursor:'Cu',agy:'A',kimi:'K',pi:'P',dsh:'D',zcode:'Z'};
+const runnerCLIIcons={'claude-code':'claude',codex:'codex',codebuddy:'codebuddy',opencode:'opencode',cursor:'cursor',agy:'gemini',kimi:'kimi',pi:'pi',dsh:'deepseek',zcode:'glm'};
+const runnerAuthLabel={local:'账号登录',personal:'API Key'};
+const runnerAuthDescription={local:'沿用这台机器上运行 Runner 的系统账号已登录的 CLI。共享对话中，只有机器所有者发言时会使用此登录。',personal:'读取「个人配置」中保存的 API Key。对话使用当前发言人的 Key，SOP 使用运行责任人的 Key。'};
 const runnerOSLabels={darwin:'macOS',linux:'Linux',windows:'Windows'};
 function runnerPersonalCredentialConfigured(provider){
   const user=userById(state.currentUser?.id)||{};
@@ -64,15 +68,35 @@ function runnerPersonalCredentialConfigured(provider){
   if(provider==='codebuddy')return !!user.codeBuddyApiKeyConfigured;
   return !!user.agentCliCredentials?.[provider]?.apiKeyConfigured;
 }
-// CodeBuddy on a runner always uses the personal API Key, so the card shows
-// the same network environment as 个人配置 → CodeBuddy. An iOA key used with
-// the wrong environment fails with 401 on the machine.
-function runnerCodeBuddyAuthHTML(credentialReady){
-  if(!credentialReady)return '<span class="runner-auth-fixed missing" title="到个人配置补充 CodeBuddy API Key 并选择网络环境">个人凭证（未配置）</span>';
-  const user=userById(state.currentUser?.id)||{};
-  const raw=String(user.codeBuddyInternetEnvironment||'').trim(),env=codeBuddyEnvironment(raw);
-  if(!env)return `<span class="runner-auth-fixed missing" title="网络环境「${escapeHTML(raw)}」无法识别，CodeBuddy 会按国际站连接。到个人配置重新选择网络环境">个人凭证 · 网络环境无法识别</span>`;
-  return `<span class="runner-auth-fixed" title="CodeBuddy 使用个人配置中保存的 API Key，网络环境：${escapeHTML(env.label)}">个人凭证 · ${escapeHTML(env.label)}</span>`;
+function runnerRuntimeAuthMode(runtime){
+  return (runtime.provider==='codex'||runtime.provider==='claude-code')?(runtime.authMode||'local'):'personal';
+}
+function runnerAuthHTML(runtime,key,busy,shared){
+  const canSwitch=!shared&&(runtime.provider==='codex'||runtime.provider==='claude-code');
+  const mode=runnerAuthChanges.get(key)||runnerRuntimeAuthMode(runtime);
+  const missing=mode==='personal'&&!runnerPersonalCredentialConfigured(runtime.provider);
+  const title=missing?' title="请在个人配置中填写 API Key"':'';
+  if(canSwitch)return `<select class="runner-auth-select${missing?' missing':''}" data-runner-auth="${escapeHTML(key)}" aria-label="${runnerCLILabels[runtime.provider]} 认证方式"${title} ${busy?'disabled':''}>
+    <option value="local" ${mode==='local'?'selected':''}>${runnerAuthLabel.local}</option>
+    <option value="personal" ${mode==='personal'?'selected':''}>${runnerAuthLabel.personal}</option>
+  </select>`;
+  return `<span class="runner-auth-fixed${missing?' missing':''}"${title}>${runnerAuthLabel[mode]}</span>`;
+}
+function runnerRuntimeHTML(runner,runtime,shared){
+  const provider=runtime.provider,label=runnerCLILabels[provider];
+  const key=`${runner.id}|${provider}`,safeKey=escapeHTML(key);
+  const testing=runnerRuntimeTests.has(key),updating=runnerMaintenancePending.has(key);
+  const busy=testing||updating||runnerAuthChanges.has(key);
+  const disabled=runtime.status==='disabled';
+  return `<div class="runner-runtime-row ${disabled?'off':''}">
+    <label class="runner-runtime-label">
+      <input type="checkbox" data-runner-cli="${safeKey}" ${disabled?'':'checked'} ${shared?'disabled':''} aria-label="启用 ${label}">
+      <span class="runner-runtime-icon ${provider}" aria-hidden="true"><img src="/images/credentials/${runnerCLIIcons[provider]}.svg" alt=""></span>
+      <span class="runner-runtime-name"><b>${label}</b><small title="${escapeHTML(runtime.binaryPath||'')}">${escapeHTML(runtime.version||runtime.binaryPath||'已发现')}</small></span>
+    </label>
+    ${runnerAuthHTML(runtime,key,busy,shared)}
+    ${shared?'':`<button class="runner-more" type="button" data-runner-runtime-menu="${safeKey}" aria-label="${label} 更多操作" aria-haspopup="menu" aria-expanded="false" aria-busy="${testing||updating}">${huiIcon(testing||updating?'arc-spinner':'more-horizontal')}</button>`}
+  </div>`;
 }
 function runnerLastSeen(value){
   if(!value)return '尚无心跳';
@@ -80,10 +104,6 @@ function runnerLastSeen(value){
   if(seconds<60)return `${seconds} 秒前`;
   if(seconds<3600)return `${Math.floor(seconds/60)} 分钟前`;
   return new Date(value).toLocaleString();
-}
-function runnerLastSeenHTML(value){
-  if(!value)return runnerLastSeen(value);
-  return `<span title="${escapeHTML(new Date(value).toLocaleString())}">${escapeHTML(runnerLastSeen(value))}</span>`;
 }
 function runnerCopyCommand(btn,text,message){
   const done=()=>{
@@ -134,37 +154,31 @@ function renderRunnersView(){
     }
     poolStatus.textContent=text;poolStatus.classList.toggle('warn',warn);
   }
+  const focusedMenu=document.activeElement?.dataset.runnerRuntimeMenu;
+  const focusedUpdate=document.activeElement?.dataset.runnerCheckUpdate;
+  closeRunnerRuntimeMenu();
   list.innerHTML=runners.map(r=>{
     const isDefault=r.id===defaultId;
     const discoveredCLIs=(r.runtimes||[]).filter(rt=>runnerCLILabels[rt.provider]);
-    const cliRows=discoveredCLIs.map(rt=>{
-      const authMode=rt.authMode||(rt.provider==='codebuddy'?'personal':'local');
-      const credentialReady=runnerPersonalCredentialConfigured(rt.provider);
-      const personalLabel=credentialReady?'个人凭证':'个人凭证（未配置）';
-      const credentialMissing=authMode==='personal'&&!credentialReady;
-      const authControl=rt.provider==='codebuddy'
-        ?runnerCodeBuddyAuthHTML(credentialReady)
-        :`<select class="runner-auth-select ${credentialMissing?'missing':''}" data-runner-auth="${escapeHTML(r.id)}|${escapeHTML(rt.provider)}" aria-label="${runnerCLILabels[rt.provider]} 认证来源"${credentialMissing?` title="到个人配置补充 ${runnerCLILabels[rt.provider]} API Key"`:''}>
-            <option value="local" ${authMode==='local'?'selected':''}>本机登录</option>
-            <option value="personal" ${authMode==='personal'?'selected':''}>${personalLabel}</option>
-          </select>`;
-      return `
-      <label class="runner-runtime-row ${rt.status==='disabled'?'off':''}">
-        <input type="checkbox" data-runner-cli="${escapeHTML(r.id)}|${escapeHTML(rt.provider)}" ${rt.status!=='disabled'?'checked':''}>
-        <span class="runner-runtime-icon ${escapeHTML(rt.provider)}" aria-hidden="true">${runnerCLIGlyphs[rt.provider]||'?'}</span>
-        <span class="runner-runtime-name"><b>${runnerCLILabels[rt.provider]}</b><small title="${escapeHTML(rt.binaryPath||'')}">${escapeHTML(rt.version||rt.binaryPath||'已发现')}</small></span>
-        ${authControl}
-      </label>`}).join('');
-    const cliSection=cliRows||'<div class="runner-runtime-empty">未发现支持的 Agent CLI</div>';
     const shared=!(Number(r.ownerUserId)>0);
+    const cliRows=discoveredCLIs.map(rt=>runnerRuntimeHTML(r,rt,shared)).join('');
+    const cliSection=cliRows||'<div class="runner-runtime-empty">未发现支持的 Agent CLI</div>';
     const osLabel=runnerOSLabels[r.os]||r.os||'?';
     const defaultBlocker=isDefault?'':runnerDefaultBlocker(r);
+    const checking=runnerMaintenancePending.has(r.id);
     return `<article class="runner-card panel ${isDefault?'is-default':''}">
       <div class="runner-card-head">
-        <div class="runner-card-title"><div class="runner-card-name"><b title="${escapeHTML(r.id)}">${escapeHTML(r.name||r.id)}</b>${isDefault?'<span class="runner-tag default">默认</span>':''}${shared?'<span class="runner-tag">共享</span>':''}</div><small>${escapeHTML(osLabel)} · ${escapeHTML(r.arch||'?')} · Runner ${escapeHTML(r.runnerVersion||'未知')} · ${runnerLastSeenHTML(r.lastSeenAt)}</small></div>
-        ${runnerStatusLabel(r.status)}
+        <span class="runner-machine-icon" aria-hidden="true">${huiIcon('monitor')}</span>
+        <div class="runner-card-title">
+          <div class="runner-card-name"><b title="${escapeHTML(r.name||r.id)}">${escapeHTML(r.name||r.id)}</b>${isDefault?'<span class="runner-tag default">默认</span>':''}${shared?'<span class="runner-tag">共享</span>':''}</div>
+          <small>${escapeHTML(osLabel)} · ${escapeHTML(r.arch||'?')} · Runner ${escapeHTML(r.runnerVersion||'未知')}</small>
+        </div>
+        <div class="runner-head-actions">${runnerStatusLabel(r.status,r.lastSeenAt)}${shared?'':`<button class="button ghost runner-check-update" type="button" data-runner-check-update="${escapeHTML(r.id)}" ${r.status!=='online'?'disabled':checking?'aria-disabled="true"':''}>${huiIcon(checking?'arc-spinner':'refresh')}${checking?'处理中…':'检查更新'}</button>`}</div>
       </div>
-      <div class="runner-runtime-list">${cliSection}</div>
+      <div class="runner-runtime-list">
+        ${cliRows?`<div class="runner-runtime-heading"><span>CLI</span><button class="runner-auth-help" type="button" data-runner-auth-help aria-label="模型认证说明" aria-haspopup="dialog">模型认证 ${huiIcon('info')}</button></div>`:''}
+        ${cliSection}
+      </div>
       <div class="runner-card-action">
         ${runnerRunLimitHTML(r)}
         <span class="runner-card-spacer"></span>
@@ -192,7 +206,23 @@ function renderRunnersView(){
     const [runnerId,provider]=select.dataset.runnerAuth.split('|');
     setRunnerRuntimeAuth(runnerId,provider,select.value);
   });
-  if(!runnerRefreshTimer)runnerRefreshTimer=setInterval(()=>{if(!document.hidden&&activeViewName()==='runners'&&!document.activeElement?.matches?.('[data-runner-run-limit]'))refreshRunners(true)},15000);
+  list.querySelectorAll('[data-runner-auth-help]').forEach(btn=>btn.onclick=()=>afAlert({
+    title:'模型认证方式',
+    message:`${runnerAuthLabel.local}\n${runnerAuthDescription.local}\n\n${runnerAuthLabel.personal}\n${runnerAuthDescription.personal}`
+  }));
+  list.querySelectorAll('[data-runner-runtime-menu]').forEach(btn=>{
+    btn.onclick=()=>showRunnerRuntimeMenu(btn);
+    btn.onkeydown=e=>{if(e.key==='ArrowDown'||e.key==='ArrowUp'){e.preventDefault();showRunnerRuntimeMenu(btn,e.key==='ArrowUp')}};
+    if(btn.dataset.runnerRuntimeMenu===focusedMenu)btn.focus({preventScroll:true});
+  });
+  list.querySelectorAll('[data-runner-check-update]').forEach(btn=>{
+    btn.onclick=()=>checkRunnerUpdate(btn.dataset.runnerCheckUpdate);
+    if(!btn.disabled&&btn.dataset.runnerCheckUpdate===focusedUpdate)btn.focus({preventScroll:true});
+  });
+  window.AgentFlowHarnessIcons?.hydrate?.(list);
+  if(!runnerRefreshTimer)runnerRefreshTimer=setInterval(()=>{
+    if(!document.hidden&&activeViewName()==='runners'&&!runnerRuntimeTrigger&&!document.activeElement?.matches?.('[data-runner-run-limit],[data-runner-auth]'))refreshRunners(true);
+  },15000);
 }
 async function removeRunner(runnerId){
   const runner=(state.runners||[]).find(r=>r.id===runnerId);
@@ -234,9 +264,187 @@ async function runnerRuntimeRequest(runnerId,provider,status){
   }catch(err){toast(err.message);refreshRunners(true)}
 }
 async function setRunnerRuntimeAuth(runnerId,provider,authMode){
+  const key=`${runnerId}|${provider}`;
+  runnerAuthChanges.set(key,authMode);
+  renderRunnersView();
   try{
     await api('/api/runners/runtimes',{method:'PUT',body:JSON.stringify({runnerId,provider,authMode})});
     const ready=runnerPersonalCredentialConfigured(provider);
-    toast(authMode==='personal'?(ready?'将使用个人配置中的 API 凭证':'已切换；请先到个人配置补充该 CLI 的 API Key'):'将使用执行机器上的 CLI 登录态',ready||authMode!=='personal'?'ok':undefined);refreshRunners(true);
-  }catch(err){toast(err.message);refreshRunners(true)}
+    toast(authMode==='personal'?(ready?'将使用「个人配置」中的 API Key':'已切换，请先到「个人配置」补充该 CLI 的 API Key'):'将使用这台机器上已登录的 CLI 账号',ready||authMode!=='personal'?'ok':undefined);
+  }catch(err){toast(err.message,'err')}
+  finally{
+    await refreshRunners(true);
+    runnerAuthChanges.delete(key);
+    renderRunnersView();
+  }
+}
+async function testRunnerRuntime(runnerId,provider){
+  const key=`${runnerId}|${provider}`;
+  if(runnerRuntimeTests.has(key)||runnerAuthChanges.has(key))return;
+  runnerRuntimeTests.add(key);
+  renderRunnersView();
+  try{
+    await api('/api/runners/runtimes/test',{method:'POST',silent:true,body:JSON.stringify({runnerId,provider})});
+    toast(`${runnerCLILabels[provider]} 测试通过`,'ok');
+  }catch(err){toast(`${runnerCLILabels[provider]}：${err.message}`,'err',5000)}
+  finally{
+    runnerRuntimeTests.delete(key);
+    renderRunnersView();
+  }
+}
+
+function closeRunnerRuntimeMenu(restoreFocus=false){
+  if(!runnerRuntimeTrigger)return;
+  const trigger=runnerRuntimeTrigger;
+  runnerRuntimeTrigger=null;
+  runnerRuntimeMenu.hidden=true;
+  trigger.setAttribute('aria-expanded','false');
+  window.HuiPopover?.release(closeRunnerRuntimeMenu);
+  if(restoreFocus&&trigger.isConnected)trigger.focus({preventScroll:true});
+}
+function showRunnerRuntimeMenu(trigger,last=false){
+  if(runnerRuntimeTrigger===trigger)return closeRunnerRuntimeMenu(true);
+  closeRunnerRuntimeMenu();
+  const [id,provider]=trigger.dataset.runnerRuntimeMenu.split('|'),key=trigger.dataset.runnerRuntimeMenu;
+  const runner=(state.runners||[]).find(item=>item.id===id);
+  const runtime=runner?.runtimes?.find(item=>item.provider===provider);
+  if(!runtime)return;
+  if(!runnerRuntimeMenu){
+    runnerRuntimeMenu=document.createElement('div');
+    runnerRuntimeMenu.className='issue-action-popover runner-runtime-menu';
+    runnerRuntimeMenu.setAttribute('role','menu');
+    document.body.appendChild(runnerRuntimeMenu);
+  }
+  const menu=runnerRuntimeMenu;
+  const testBusy=runnerRuntimeTests.has(key),updateBusy=runnerMaintenancePending.has(key);
+  const actions=[
+    {label:testBusy?'测试中…':'测试',icon:'flask',disabled:testBusy||runnerAuthChanges.has(key)||runner.status!=='online'||runtime.status==='disabled',run:()=>testRunnerRuntime(id,provider)},
+    {label:updateBusy?'更新中…':'更新',icon:'download',disabled:updateBusy||runner.status!=='online',run:()=>updateRunnerCLI(runner,runtime)},
+    {label:'模型列表',icon:'layers',disabled:runnerAuthChanges.has(key),run:()=>showRunnerModels(runtime)}
+  ];
+  menu.innerHTML=actions.map((action,index)=>`<button type="button" role="menuitem" tabindex="-1" class="issue-popover-item" data-action="${index}" ${action.disabled?'disabled':''}>${huiIcon(action.icon)}${action.label}</button>`).join('');
+  menu.setAttribute('aria-label',`${runnerCLILabels[provider]} 更多操作`);
+  menu.hidden=false;
+  runnerRuntimeTrigger=trigger;
+  trigger.setAttribute('aria-expanded','true');
+  const enabled=[...menu.querySelectorAll('button:not(:disabled)')];
+  menu.onclick=e=>{
+    const item=e.target.closest('[data-action]');
+    if(!item||item.disabled)return;
+    closeRunnerRuntimeMenu(true);
+    actions[Number(item.dataset.action)].run();
+  };
+  menu.onkeydown=e=>{
+    const at=enabled.indexOf(document.activeElement),step=e.key==='ArrowUp'?-1:1;
+    if(e.key==='Escape'){e.preventDefault();e.stopPropagation();closeRunnerRuntimeMenu(true)}
+    else if(e.key==='Tab'){closeRunnerRuntimeMenu(true)}
+    else if(e.key==='ArrowDown'||e.key==='ArrowUp'){
+      e.preventDefault();enabled[(at+step+enabled.length)%enabled.length]?.focus();
+    }else if(e.key==='Home'||e.key==='End'){
+      e.preventDefault();enabled[e.key==='Home'?0:enabled.length-1]?.focus();
+    }
+  };
+  window.HuiPopover?.claim(closeRunnerRuntimeMenu,target=>menu.contains(target)||trigger.contains(target));
+  window.HuiPopover?.place(trigger,menu,{width:166,align:'end'});
+  window.AgentFlowHarnessIcons?.hydrate?.(menu);
+  (last?enabled.at(-1):enabled[0])?.focus({preventScroll:true});
+}
+function showRunnerModels(runtime){
+  const local=runnerRuntimeAuthMode(runtime)==='local';
+  const provider=runtime.provider,id=provider==='claude-code'?'claude':provider;
+  return afOpenDialog(modal=>{
+    $('#confirmTitle').textContent=`${runnerCLILabels[provider]} 模型列表`;
+    const message=$('#confirmMessage'),ok=$('#confirmOkBtn');
+    message.textContent='正在加载模型目录…';
+    const panel=document.createElement('div');
+    panel.className='runner-model-list';
+    panel.hidden=true;
+    panel.tabIndex=0;
+    panel.setAttribute('aria-label','模型列表');
+    modal.querySelector('.confirm-modal-footer').before(panel);
+    ok.textContent='关闭';ok.className='button primary';
+    $('#confirmCancelBtn').hidden=true;
+    setConfirmIcon('info','layers');
+    api(local?'/api/executor-models?builtin=1':'/api/executor-models',{silent:true}).then(catalogs=>{
+      if(!panel.isConnected)return;
+      const catalog=catalogs[id],models=catalog?.models||[];
+      message.textContent=models.length?(catalog.source==='personal'?'个人配置的模型目录':local?'CLI 内置模型目录':'CLI 模型目录'):'暂无可显示的模型';
+      if(!models.length)return;
+      panel.innerHTML=`<ul>${models.map(model=>{
+        const id=escapeHTML(model.id),name=escapeHTML(model.name||model.id);
+        return `<li><b>${name}</b>${id!==name?`<small>${id}</small>`:''}</li>`;
+      }).join('')}</ul>`;
+      panel.hidden=false;
+    }).catch(err=>{if(panel.isConnected)message.textContent=err.message});
+    return {focus:ok,value:()=>panel.remove()};
+  });
+}
+function runnerMaintenancePath(id,provider,status=false){
+  const params=new URLSearchParams();
+  if(provider)params.set('provider',provider);
+  if(status)params.set('status','1');
+  return `/api/runners/${encodeURIComponent(id)}/maintenance${params.size?'?'+params.toString():''}`;
+}
+async function checkRunnerUpdate(id){
+  if(runnerMaintenancePending.has(id))return;
+  runnerMaintenancePending.add(id);
+  renderRunnersView();
+  try{
+    const result=await api(runnerMaintenancePath(id),{silent:true});
+    if(result.status==='updating'||result.status==='restarting'){
+      await followRunnerUpdate(id);
+    }else if(result.status==='available'&&result.canUpdate){
+      const confirmed=await afConfirm({title:'Runner 有可用更新',message:`当前版本 ${result.current||'未知'}。更新会重启空闲的 Runner。`,confirmText:'立即更新',info:true});
+      if(confirmed){
+        await api(runnerMaintenancePath(id),{method:'POST',silent:true});
+        await followRunnerUpdate(id);
+      }
+    }else if(result.status==='current'){
+      toast(`Runner ${result.current||''} 已是平台当前版本`.replace('  ',' '),'ok');
+    }else{
+      toast(result.message||'暂时无法检查更新','err',5000);
+    }
+  }catch(err){toast(err.message,'err',5000)}
+  finally{
+    runnerMaintenancePending.delete(id);
+    renderRunnersView();
+  }
+}
+async function updateRunnerCLI(runner,runtime){
+  const id=runner.id,provider=runtime.provider,label=runnerCLILabels[provider],key=`${id}|${provider}`;
+  if(!runtime.capabilities?.includes('managed_update')){
+    await afAlert({title:`更新 ${label}`,message:'请在这台执行机器上使用原来的安装方式更新。更新后刷新机器列表即可看到版本。'});
+    return;
+  }
+  if(runnerMaintenancePending.has(key))return;
+  runnerMaintenancePending.add(key);
+  renderRunnersView();
+  try{
+    await api(runnerMaintenancePath(id,provider),{method:'POST',silent:true});
+    await followRunnerUpdate(id,provider);
+  }catch(err){toast(err.message,'err',5000)}
+  finally{
+    runnerMaintenancePending.delete(key);
+    renderRunnersView();
+  }
+}
+async function followRunnerUpdate(id,provider){
+  const label=provider?runnerCLILabels[provider]:'Runner';
+  const deadline=Date.now()+(provider?45:8)*60000;
+  while(Date.now()<deadline){
+    await new Promise(resolve=>setTimeout(resolve,3000));
+    const result=await api(runnerMaintenancePath(id,provider,true),{silent:true}).catch(()=>null);
+    if(!result||result.status==='updating'||result.status==='restarting')continue;
+    if(result.status==='current'||result.status==='updated'){
+      const version=result.version||result.current;
+      toast(`${label}${version?' '+version:''} 已就绪`,'ok');
+      await refreshRunners(true);
+    }else if(result.status==='ready'){
+      toast(`${label} 更新状态已中断，请刷新确认版本`,'err',5000);
+    }else{
+      toast(result.message||`${label} 还有可用更新，请再次检查`,result.status==='failed'?'err':'info',5000);
+    }
+    return;
+  }
+  toast(`等待 ${label} 更新超时，请稍后检查版本`,'err',5000);
 }

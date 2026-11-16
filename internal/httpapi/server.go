@@ -287,6 +287,7 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	api.botIdentities = &botIdentityHandlers{deps: d, publicURL: api.notifications.service.PublicURL}
 	asst := &assistantHandlers{deps: d, runnerControls: runnerControls, sourceRoot: assistantSourceRoot(), notifications: api.notifications, identities: api.botIdentities}
 	api.runs.assistant = asst
+	api.runners.assistant = asst
 	api.schedule.assistant = asst
 	api.notifications.service.GenerateReport = asst.generateSOPReport
 	if api.notifications.service.Interactions != nil {
@@ -587,6 +588,8 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.PUT("/api/runners/default", api.runners.runnerDefaultSet)
 	g.DELETE("/api/runners/:id", api.runners.runnerRemove)
 	g.PUT("/api/runners/:id/run-limit", api.runners.runnerRunLimitSet)
+	g.GET("/api/runners/:id/maintenance", api.runners.runnerMaintenance)
+	g.POST("/api/runners/:id/maintenance", api.runners.runnerMaintenance)
 	g.POST("/api/runners/heartbeat", api.runners.runnerHeartbeat)
 	g.GET("/api/runners/tasks", api.runners.runnerTasksCollection)
 	g.POST("/api/runners/tasks", api.runners.runnerTasksCollection)
@@ -601,6 +604,7 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.GET("/api/runners/tasks/:id/control", api.runners.runnerTaskControl)
 	g.PUT("/api/runners/runtimes", api.runners.runnerRuntimeStatus)
 	g.POST("/api/runners/runtimes", api.runners.runnerRuntimeStatus)
+	g.POST("/api/runners/runtimes/test", api.runners.runnerRuntimeTest)
 
 	// Machine plane: this prefix is safe to exempt from gateway interactive
 	// login. Public install assets are read-only; daemon APIs authenticate with

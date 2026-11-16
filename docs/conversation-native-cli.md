@@ -22,6 +22,10 @@ ZCode 恢复时通过官方会话协议应用当前选择的模型，再启动�
 
 Runner 需要 0.10.1 或以上版本，该版本支持取消后台导出并释放工作区锁。Docker 镜像优先使用已安装的 CLI；支持官方安装器的 CLI 缺失时自动安装。ZCode 没有独立 npm 包，须在执行机器及工作区镜像内预装官方 CLI 并加入 PATH，缺失时明确报错。原生工具调用围栏与进程生命周期管理依赖 Python3。每个 Docker 会话阶段使用独立的 Linux 子进程收养进程，结束或取消时回收其全部后代，包含另建进程组的原生命令；不影响容器里的其他命令。平台会在启动前检查依赖，固定安装步骤以容器 root 用户在 `/` 中运行，实际 CLI 保留工作区的容器用户；无法准备时中止，不降级绕过调用围栏。建议在受控工作区镜像中预安装 CLI 和依赖。
 
+个人执行机器可为 Codex 和 Claude Code 选择「账号登录」。Runner 0.10.2 起，对话按所绑定机器的认证设置启动 CLI。在运行 Runner 的系统账户下登录后，Codex 读取 `CODEX_HOME` 下的 `auth.json`，Claude Code 读取 `CLAUDE_CONFIG_DIR` 下的 `.credentials.json` 或 Runner 环境中的 `CLAUDE_CODE_OAUTH_TOKEN`。登录状态仅在该执行机器上使用。仍需直接通过 CLI 管理登录和续期。仅存于系统钥匙串的登录需要改用 CLI 支持的文件式登录或 API Key。设置页在 CLI 行的「更多」菜单提供「测试」，按当前认证方式在该机器上发送一次短模型请求。
+
+Runner 0.10.3 起，机器卡片可检查并手动安装平台提供的 Runner 构建。更新在机器空闲时应用。CLI 菜单可更新已纳入平台托管的安装，自行安装的 CLI 继续通过原安装方式升级。模型列表按当前认证方式显示个人配置的目录或 CLI 内置目录。
+
 原生会话的工具回调在执行机器上中继。宿主进程使用 Docker host gateway；通过 docker.sock 管理工作区的容器进程自动识别自身容器网络，工作区加入相同网络并访问该地址。自定义路由可通过 `AGENTFLOW_CONVERSATION_RELAY_HOST` 和 `AGENTFLOW_CONVERSATION_DOCKER_NETWORK` 显式指定工作区能访问的执行进程地址与 Docker 网络。会话目录会以相同路径挂进工作区，而 docker.sock 背后的 Docker 守护进程按自己所在主机解析挂载源，因此容器内的平台进程须把 `AGENTFLOW_CONVERSATION_DIR` 设在与宿主机同路径挂载的目录中；`compose.yaml` 将其设为 `${LOOPFORGE_DATA_DIR}/conversations`。Runner 不读该变量，原生会话目录固定在其工作区根目录的 `.conversations` 下，容器内运行 Runner 时须同路径挂载该工作区目录。未设置时会话目录位于 `AGENTFLOW_ASSISTANT_SESSION_DIR` 下，该目录在命名卷里时打开工作区会报 `mkdirat ... read-only file system`。附件等按用户保存的助手数据仍在 `AGENTFLOW_ASSISTANT_SESSION_DIR`，不挂进工作区。Docker 工作区直接在主容器中运行 SOP 脚本和 CLI。历史容器存在指令遮蔽挂载时，工作区下次取得执行权后会重建容器并保留工作区文件。标记为重建时运行的准备脚本随后在新容器补跑。
 
 模式交接时，交接工具要求模型只回复一句「好的。」再结束旧阶段，交接之后的展示由平台隐藏；不要求“不输出任何内容”，否则模型可能只产出推理、没有正文的回合，该回合写入原生日志后，续接时会被模型服务拒绝（如 `the conversation must end with a user message`）。交接工具成功后，旧阶段即使未输出 `type=result` 或异常退出，也继续完成交接。续接原生会话时，如果原生日志缺失，或模型服务在本阶段产生任何输出或工具调用之前就拒绝了续接（400/422、会话结构无效、无结果退出），平台用完整对话上下文新建一次原生会话重试；已有输出或工具调用的中断，以及鉴权、限流、额度、网络、执行机器不可用等原因，仍续接原会话或直接报错，不重复执行副作用。
