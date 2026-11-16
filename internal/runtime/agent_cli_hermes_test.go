@@ -53,7 +53,7 @@ func TestHermesCredentialWritesRouteAndUsageFlag(t *testing.T) {
 	if env["HERMES_HOME"] != "/w/home/.hermes" {
 		t.Fatalf("HERMES_HOME: %q", env["HERMES_HOME"])
 	}
-	usage := "/w/home/.hermes/agentflow-usage.json"
+	usage := "/w/home/agentflow-usage.json"
 	// --usage-file must precede the prompt so the CLI still parses it.
 	if i := slices.Index(bound, "--usage-file"); i < 0 || bound[i+1] != usage {
 		t.Fatalf("usage flag: %q", bound)
@@ -90,6 +90,38 @@ func TestHermesCredentialRequiresBaseURLAndModel(t *testing.T) {
 	if _, _, err := ApplyAgentCLICredential(AgentCLIHermes, ProviderCredential{}, AgentCLIOptions{Model: "m"}, HostAgentCLIHome(t.TempDir()), "/h", nil); err == nil || !strings.Contains(err.Error(), "Hermes API Key") {
 		t.Fatalf("missing key: %v", err)
 	}
+}
+
+func TestHermesCredentialUsesSharedInstallHome(t *testing.T) {
+	// Hermes only starts in a home with a committed dependency environment, so
+	// AGENTFLOW_HERMES_HOME points at the install home and owns config.yaml.
+	shared := t.TempDir()
+	t.Setenv("AGENTFLOW_HERMES_HOME", shared)
+	_, env, err := ApplyAgentCLICredential(AgentCLIHermes,
+		ProviderCredential{APIKey: "sk-shared", BaseURL: "https://gw.example/v1", Protocol: AgentCLIProtocolChat},
+		AgentCLIOptions{Model: "glm-5.3-flash"}, HostAgentCLIHome(t.TempDir()), "/w/home", nil)
+	if err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	if env["HERMES_HOME"] != filepath.ToSlash(shared) {
+		t.Fatalf("HERMES_HOME: %q", env["HERMES_HOME"])
+	}
+	raw, err := os.ReadFile(filepath.Join(shared, "config.yaml"))
+	if err != nil || !strings.Contains(string(raw), `api_key: "sk-shared"`) {
+		t.Fatalf("shared config: %v (%d bytes)", err, len(raw))
+	}
+	if mode := statMode(t, filepath.Join(shared, "config.yaml")); mode != 0o600 {
+		t.Fatalf("config mode: %o", mode)
+	}
+}
+
+func statMode(t *testing.T, path string) os.FileMode {
+	t.Helper()
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	return info.Mode().Perm()
 }
 
 func TestHermesTranslatorForwardsPlainText(t *testing.T) {
