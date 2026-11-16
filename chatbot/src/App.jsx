@@ -1647,6 +1647,7 @@ export default function App() {
                         </div>
                         <div className="message-actions">
                           <MessageTime messages={messages} index={index} />
+                          {diagnosticId ? <CopyButton value={diagnosticId} label="复制诊断编号" /> : null}
                           <CopyButton
                             value={copiedReply(
                               message,
@@ -1655,7 +1656,6 @@ export default function App() {
                             )}
                             label="复制回复"
                           />
-                          {diagnosticId ? <CopyButton value={diagnosticId} label="复制诊断编号" /> : null}
                           <MessageInfo message={message} />
                           {!chat.local && !chat.readOnly && message.generationId && !message.failure ? <GenerationDiagnostics sessionId={chat.session.id} generationId={message.generationId} compact /> : null}
                         </div>
