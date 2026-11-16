@@ -9,6 +9,27 @@ import (
 	"agentflow/internal/domain"
 )
 
+func TestScrubRunnerTaskCredentialsClearsGitLabFields(t *testing.T) {
+	task := &domain.RunnerTask{Invocation: &domain.RunnerInvocation{
+		GitLabUserID: 42,
+		GitLabURL:    "https://gitlab.example.test",
+		GitLabToken:  "glpat-fixture-secret",
+		Repositories: []domain.RunnerRepository{{
+			CloneURL: "https://gitlab.example.test/team/app.git",
+			GitToken: "fixture-git-token",
+		}},
+	}}
+
+	scrubRunnerTaskCredentials(task)
+
+	if task.Invocation.GitLabUserID != 0 || task.Invocation.GitLabURL != "" || task.Invocation.GitLabToken != "" {
+		t.Fatalf("GitLab credentials survived scrubbing: %+v", task.Invocation)
+	}
+	if task.Invocation.Repositories[0].GitToken != "" {
+		t.Fatalf("repository Git token survived scrubbing: %+v", task.Invocation.Repositories[0])
+	}
+}
+
 // The runner task payload carries provider credentials only while the task is
 // actionable. Every terminal-state transition must scrub them from durable
 // storage — including repositories[*].gitToken, which lives inside a JSON

@@ -305,13 +305,13 @@ func IsSafeGongfengProjectID(s string) bool {
 	return true
 }
 
-// IsZero reports whether the context carries no usable repository at all.
 // UsesGitTransportOnly reports whether managed delivery pushes a branch
 // without requiring the GitHub or Gongfeng hosting APIs.
 func (rc RepositoryContext) UsesGitTransportOnly() bool {
 	return rc.Provider == RepositoryProviderSSH || rc.Provider == RepositoryProviderGitLab
 }
 
+// IsZero reports whether the context carries no usable repository at all.
 func (rc RepositoryContext) IsZero() bool {
 	return strings.TrimSpace(rc.RepositoryID) == "" &&
 		strings.TrimSpace(rc.CloneURL) == "" &&

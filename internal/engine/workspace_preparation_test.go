@@ -307,6 +307,8 @@ func TestPreparedWorkspaceRequestScopesGitLabPAT(t *testing.T) {
 		{name: "terminal open", request: domain.RunnerWorkspaceRequest{Operation: domain.RunnerWorkspaceOperationTerminal, Terminal: &domain.WorkspaceTerminalRequest{Operation: "open"}}, wantPAT: true},
 		{name: "terminal close", request: domain.RunnerWorkspaceRequest{Operation: domain.RunnerWorkspaceOperationTerminal, Terminal: &domain.WorkspaceTerminalRequest{Operation: "close"}}},
 		{name: "status", request: domain.RunnerWorkspaceRequest{Operation: domain.RunnerWorkspaceOperationPreparationStatus}},
+		{name: "checkpoint read", request: domain.RunnerWorkspaceRequest{Operation: domain.RunnerWorkspaceOperationCheckpointRead}},
+		{name: "file read", request: domain.RunnerWorkspaceRequest{Operation: domain.RunnerWorkspaceOperationFile}},
 		{name: "info", request: domain.RunnerWorkspaceRequest{Operation: domain.RunnerWorkspaceOperationInfo}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

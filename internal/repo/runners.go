@@ -691,6 +691,7 @@ func scrubRunnerTaskCredentials(task *domain.RunnerTask) {
 	task.Invocation.GitSSHUserID = 0
 	task.Invocation.GitSSHKeys = nil
 	task.Invocation.GitLabUserID = 0
+	task.Invocation.GitLabURL, task.Invocation.GitLabToken = "", ""
 	if task.Invocation.Repository != nil {
 		task.Invocation.Repository.GitToken = ""
 	}
