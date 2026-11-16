@@ -141,7 +141,9 @@ func FinishMergeAfterExcludedConflicts(ctx context.Context, w, msg string) ([]st
 
 // UnmergedFiles lists the paths git still reports as conflicted.
 func UnmergedFiles(ctx context.Context, w string) []string {
-	out, err := command(ctx, w, "", nil, []string{"diff", "--name-only", "--diff-filter=U", "-z"}).Output()
+	cmd := command(ctx, w, "", nil, []string{"diff", "--name-only", "--diff-filter=U", "-z"})
+	cmd.Dir = w
+	out, err := cmd.Output()
 	if err != nil || len(out) == 0 {
 		return nil
 	}
