@@ -35,74 +35,81 @@ func (f *assistantStreamFilter) accept(ev assistantStreamEvent) bool {
 		f.lastStatus = ev.Text
 		return true
 	case "answer":
-		if ev.Text == "" {
-			return false
-		}
-		if ev.Full {
-			// 增量已经流过同样的文本时丢弃整段重复块。
-			if f.answer != "" && strings.Contains(f.answer, strings.TrimSpace(ev.Text)) {
-				return false
-			}
-			f.answer += ev.Text
-			return true
-		}
-		f.answer += ev.Text
-		return true
+		return appendStreamText(&f.answer, ev)
 	case "tool":
 		f.inReply = false
-		if assistantProtocolTool(ev.Tool) {
-			return false
-		}
-		if ev.ID != "" {
-			if f.seenTools == nil {
-				f.seenTools = map[string]string{}
-			}
-			// The CLI announces a call with empty input and repeats it once
-			// the input is complete. Keep the repeat only when it adds
-			// something: the detail, or an Agent call's type and task.
-			seen := ev.Detail + "\x00" + ev.Subagent + "\x00" + ev.Input + "\x00" + ev.AgentID
-			if previous, ok := f.seenTools[ev.ID]; ok {
-				if seen == previous || (ev.Detail == "" && ev.Subagent == "" && ev.Input == "") {
-					return false
-				}
-			}
-			f.seenTools[ev.ID] = seen
-			f.lastTool, f.lastDetail = ev.Tool, ev.Detail
-			return true
-		}
-		if ev.Tool == "" {
-			return false
-		}
-		if ev.Tool == f.lastTool && ev.Detail == f.lastDetail {
-			return false
-		}
-		f.lastTool, f.lastDetail = ev.Tool, ev.Detail
-		return true
+		return f.acceptTool(ev)
 	case "thinkingStart":
 		f.inReply = false
 		return true
 	case "toolDone":
 		return ev.ID != ""
 	case "thinking":
-		if ev.Text == "" {
-			return false
-		}
-		if ev.Full {
-			if f.thinking != "" && strings.Contains(f.thinking, strings.TrimSpace(ev.Text)) {
-				return false
-			}
-			f.thinking += ev.Text
-			return true
-		}
-		f.thinking += ev.Text
-		return true
+		return appendStreamText(&f.thinking, ev)
 	default:
 		return ev.Text != "" || ev.Tool != ""
 	}
 }
 
+// appendStreamText accumulates an answer or thinking event into acc and
+// reports whether the event should be forwarded. Empty text is dropped, and a
+// Full block whose text the deltas already streamed is dropped as a repeat.
+func appendStreamText(acc *string, ev assistantStreamEvent) bool {
+	if ev.Text == "" {
+		return false
+	}
+	// 增量已经流过同样的文本时丢弃整段重复块。
+	if ev.Full && *acc != "" && strings.Contains(*acc, strings.TrimSpace(ev.Text)) {
+		return false
+	}
+	*acc += ev.Text
+	return true
+}
+
+// acceptTool dedupes tool announcements. Protocol tools are hidden; calls with
+// an ID are deduped per ID, and calls without one against the previous tool.
+func (f *assistantStreamFilter) acceptTool(ev assistantStreamEvent) bool {
+	if assistantProtocolTool(ev.Tool) {
+		return false
+	}
+	if ev.ID != "" {
+		if f.seenTools == nil {
+			f.seenTools = map[string]string{}
+		}
+		// The CLI announces a call with empty input and repeats it once
+		// the input is complete. Keep the repeat only when it adds
+		// something: the detail, or an Agent call's type and task.
+		seen := ev.Detail + "\x00" + ev.Subagent + "\x00" + ev.Input + "\x00" + ev.AgentID
+		if previous, ok := f.seenTools[ev.ID]; ok {
+			if seen == previous || (ev.Detail == "" && ev.Subagent == "" && ev.Input == "") {
+				return false
+			}
+		}
+		f.seenTools[ev.ID] = seen
+		f.lastTool, f.lastDetail = ev.Tool, ev.Detail
+		return true
+	}
+	if ev.Tool == "" {
+		return false
+	}
+	if ev.Tool == f.lastTool && ev.Detail == f.lastDetail {
+		return false
+	}
+	f.lastTool, f.lastDetail = ev.Tool, ev.Detail
+	return true
+}
+
+// assistantSessionToolPrefix namespaces the platform's own session MCP tools.
+const assistantSessionToolPrefix = "mcp__agentflow_session__"
+
+// assistantSessionToolName returns name without surrounding space and the
+// session MCP prefix, so session tools compare by their bare tool name.
+func assistantSessionToolName(name string) string {
+	return strings.TrimPrefix(strings.TrimSpace(name), assistantSessionToolPrefix)
+}
+
 func assistantProtocolTool(name string) bool {
-	switch strings.TrimPrefix(strings.TrimSpace(name), "mcp__agentflow_session__") {
+	switch assistantSessionToolName(name) {
 	case "submit_assistant_reply", "submit_clarification":
 		return true
 	default:
@@ -203,7 +210,7 @@ func assistantLineEvents(line string) []assistantStreamEvent {
 		if evt.Event.Type == "content_block_start" {
 			switch evt.Event.ContentBlock.Type {
 			case "tool_use":
-				if strings.TrimPrefix(strings.TrimSpace(evt.Event.ContentBlock.Name), "mcp__agentflow_session__") == "submit_assistant_reply" {
+				if assistantSessionToolName(evt.Event.ContentBlock.Name) == "submit_assistant_reply" {
 					if subAgent {
 						return nil
 					}
@@ -268,7 +275,7 @@ func assistantCLINoticeText(text string) bool {
 }
 
 func assistantToolStreamEvent(id, name string, input json.RawMessage) (assistantStreamEvent, bool) {
-	name = strings.TrimPrefix(strings.TrimSpace(name), "mcp__agentflow_session__")
+	name = assistantSessionToolName(name)
 	if name == "" || assistantProtocolTool(name) {
 		return assistantStreamEvent{}, false
 	}
@@ -331,8 +338,46 @@ func assistantAgentReport(text string) string {
 	return strings.TrimSpace(assistantAgentTrailerRe.ReplaceAllString(text, ""))
 }
 
+// assistantWrappedToolParams returns the inner tool input carried by a
+// DeferExecuteTool/MCP wrapper: a string "params" is used verbatim, any other
+// value is re-encoded, and a missing "params" falls back to the wrapper input.
+func assistantWrappedToolParams(input json.RawMessage, m map[string]any) json.RawMessage {
+	nested, ok := m["params"]
+	if !ok {
+		return input
+	}
+	if text, ok := nested.(string); ok {
+		return json.RawMessage(text)
+	}
+	if raw, err := json.Marshal(nested); err == nil {
+		return raw
+	}
+	return input
+}
+
+// assistantToolSearchNames joins the non-blank entries of the first
+// non-empty "tool_names"/"queries" list of a ToolSearch input.
+func assistantToolSearchNames(m map[string]any) string {
+	for _, key := range []string{"tool_names", "queries"} {
+		values, ok := m[key].([]any)
+		if !ok {
+			continue
+		}
+		var names []string
+		for _, value := range values {
+			if text, ok := value.(string); ok && strings.TrimSpace(text) != "" {
+				names = append(names, strings.TrimSpace(text))
+			}
+		}
+		if len(names) > 0 {
+			return strings.Join(names, ", ")
+		}
+	}
+	return ""
+}
+
 func assistantToolDisplay(name string, input json.RawMessage) (string, string) {
-	name = strings.TrimPrefix(strings.TrimSpace(name), "mcp__agentflow_session__")
+	name = assistantSessionToolName(name)
 	var m map[string]any
 	if len(input) > 0 {
 		_ = json.Unmarshal(input, &m)
@@ -356,38 +401,20 @@ func assistantToolDisplay(name string, input json.RawMessage) (string, string) {
 		}
 		return "发布产物", ""
 	case "DeferExecuteTool", "MCP":
-		inner := strings.TrimPrefix(str("toolName", "tool", "tool_name", "name", "mcp_tool"), "mcp__agentflow_session__")
+		inner := assistantSessionToolName(str("toolName", "tool", "tool_name", "name", "mcp_tool"))
 		if inner == "" || inner == name {
 			// CodeBuddy streams an empty wrapper input first. Wait for the
 			// complete snapshot instead of consuming its tool ID with an
 			// opaque DeferExecuteTool label that the filter would keep forever.
 			return "", ""
 		}
-		params := input
-		if nested, ok := m["params"]; ok {
-			if text, ok := nested.(string); ok {
-				params = json.RawMessage(text)
-			} else if raw, err := json.Marshal(nested); err == nil {
-				params = raw
-			}
-		}
-		return assistantToolDisplay(inner, params)
+		return assistantToolDisplay(inner, assistantWrappedToolParams(input, m))
 	case "ToolSearch":
 		if detail := str("query", "q", "search", "pattern"); detail != "" {
 			return name, detail
 		}
-		for _, key := range []string{"tool_names", "queries"} {
-			if values, ok := m[key].([]any); ok {
-				var names []string
-				for _, value := range values {
-					if text, ok := value.(string); ok && strings.TrimSpace(text) != "" {
-						names = append(names, strings.TrimSpace(text))
-					}
-				}
-				if len(names) > 0 {
-					return name, truncateRunes(strings.Join(names, ", "), 160)
-				}
-			}
+		if names := assistantToolSearchNames(m); names != "" {
+			return name, truncateRunes(names, 160)
 		}
 	}
 	if strings.Contains(strings.ToLower(name), "command") || strings.EqualFold(name, "bash") || strings.EqualFold(name, "shell") || strings.EqualFold(name, "exec") {

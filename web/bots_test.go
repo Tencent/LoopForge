@@ -163,8 +163,8 @@ assert.match(fs.readFileSync('app/bots.js','utf8'),/<label class="bot-check"><in
 assert.match(fs.readFileSync('app/hui-controls.css','utf8'),/input\[type="checkbox"\]:is\(\[role="switch"\], \.hui-switch\)[^{]*\{[^}]*width: 34px;[^}]*height: 20px;/,'switches are 34x20');
 assert.doesNotMatch(css,/:hover\{[^}]*transform:translate/,'hover never moves elements');
 const html=fs.readFileSync('index.html','utf8'),view=html.slice(html.indexOf('<section id="botsView"'),html.indexOf('</section>',html.indexOf('<section id="botsView"')));
-assert.match(view,/<div class="page-heading bot-heading">/);assert.match(view,/<h1>Bot 管理<\/h1>/);
-assert.match(view,/<button id="botNew" class="button primary" type="button">[\s\S]*添加 Bot<\/button>/);
+assert.match(view,/<div class="page-heading bot-heading">/);assert.match(view,/<h1>通道管理<\/h1>/);
+assert.match(view,/<button id="botNew" class="button primary" type="button">[\s\S]*添加通道<\/button>/);
 assert.doesNotMatch(view,/eyebrow|page-header|loadBots\(\)/,'no eyebrow and no heading refresh button');
 assert.doesNotMatch(css,/\.bot-tabs[^{]*\{[^}]*max-width:520px/,'bot tabs shrink to content');
 assert.ok(css.includes('#botsContent .bot-tabs.sliding-tabs[data-sliding-tabs]{display:inline-flex!important;width:auto;max-width:100%!important;align-self:flex-start'),'bot tabs are an inline segmented control');

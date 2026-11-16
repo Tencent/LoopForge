@@ -133,11 +133,11 @@ func (e *Engine) startWorkflowDefinitionSeeded(wf domain.WorkflowDefinition, inp
 		firstRepository = repositories[0]
 	}
 	executionContext.RunID, executionContext.TraceID, executionContext.WorkflowID, executionContext.WorkflowVersion = id, id, workflowID, wf.Version
-	if executionContext.ParentRunID == "" {
+	if executionContext.ParentRunID == "" && !executionContext.ExecutionPinned {
 		executionContext.ExecutionRunnerID = e.repo.DefaultRunner(executionContext.ResponsibleUserID)
 		executionContext.WorkspaceRunID = ""
 	}
-	if executionContext.ExecutionRunnerID == "" {
+	if executionContext.ExecutionRunnerID == "" && !executionContext.ExecutionPinned {
 		if runner, ok := e.cloudPoolRunner(executionContext.ProjectID); ok {
 			executionContext.ExecutionRunnerID = runner.ID
 			executionContext.ExecutionPool = domain.ExecutionModeCloud

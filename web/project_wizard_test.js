@@ -176,7 +176,7 @@ function assertFooterLayout(step){
   W().repo.url="https://bitbucket.org/foo/bar";
   assert.equal(await ctx.projectWizardAddRepo(),false);
   assert.equal(requests.length,0);
-  assert.match(html(),/无法识别为 GitHub 仓库地址/);
+  assert.match(html(),/请输入 GitHub 链接或有效的 Git SSH 地址/);
   Object.assign(W().repo,{url:"https://github.com/example/web-console",branch:"",integrate:"agentflow/integration"});
   assert.equal(await ctx.projectWizardAddRepo(),true);
   assert.equal(requests[0].url,"/api/repositories");assert.equal(requests[0].method,"POST");

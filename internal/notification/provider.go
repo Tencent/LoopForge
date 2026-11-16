@@ -103,12 +103,7 @@ func (p *CLIProvider) call(ctx context.Context, botID, secret string, args ...st
 			return nil, err
 		}
 		cmd := exec.CommandContext(ctx, p.Binary, args...)
-		for _, name := range []string{"PATH", "HOME", "TMPDIR", "LANG", "LC_ALL", "HTTPS_PROXY", "HTTP_PROXY", "NO_PROXY", "SSL_CERT_FILE", "SSL_CERT_DIR"} {
-			if value, ok := os.LookupEnv(name); ok {
-				cmd.Env = append(cmd.Env, name+"="+value)
-			}
-		}
-		cmd.Env = append(cmd.Env, "WECOM_CLI_ACCESS_TOKEN="+token, "WECOM_CLI_CONFIG_DIR="+dir)
+		cmd.Env = wecomCLIEnv(token, dir)
 		var out boundedBuffer
 		cmd.Stdout = &out
 		cmd.Stderr = io.Discard
@@ -119,23 +114,15 @@ func (p *CLIProvider) call(ctx context.Context, botID, secret string, args ...st
 		if errors.Is(err, exec.ErrNotFound) {
 			return nil, errors.New("通知服务未安装 wecom-cli，请联系管理员")
 		}
-		var result struct {
-			Code  int `json:"errcode"`
-			Error *struct {
-				Code int `json:"code"`
-			} `json:"error"`
+		code, parseErr := wecomResultCode(out.Bytes())
+		if parseErr != nil {
+			return nil, parseErr
 		}
-		if json.Unmarshal(out.Bytes(), &result) != nil {
-			return nil, errors.New("企业微信 CLI 响应格式异常")
-		}
-		if result.Error != nil {
-			result.Code = result.Error.Code
-		}
-		if result.Code == 853004 && attempt == 0 {
+		if code == 853004 && attempt == 0 {
 			continue
 		}
-		if result.Code != 0 {
-			return nil, failure(result.Code)
+		if code != 0 {
+			return nil, failure(code)
 		}
 		if err != nil {
 			return nil, errors.New("企业微信 CLI 调用失败")
@@ -143,6 +130,36 @@ func (p *CLIProvider) call(ctx context.Context, botID, secret string, args ...st
 		return append(json.RawMessage(nil), out.Bytes()...), nil
 	}
 	return nil, failure(853004)
+}
+
+// wecomCLIEnv builds the isolated wecom-cli environment: only a whitelist of
+// host variables is inherited, plus the per-call access token and config dir.
+func wecomCLIEnv(token, dir string) []string {
+	var env []string
+	for _, name := range []string{"PATH", "HOME", "TMPDIR", "LANG", "LC_ALL", "HTTPS_PROXY", "HTTP_PROXY", "NO_PROXY", "SSL_CERT_FILE", "SSL_CERT_DIR"} {
+		if value, ok := os.LookupEnv(name); ok {
+			env = append(env, name+"="+value)
+		}
+	}
+	return append(env, "WECOM_CLI_ACCESS_TOKEN="+token, "WECOM_CLI_CONFIG_DIR="+dir)
+}
+
+// wecomResultCode extracts the WeCom error code from wecom-cli output; a
+// nested error.code takes precedence over the top-level errcode.
+func wecomResultCode(raw []byte) (int, error) {
+	var result struct {
+		Code  int `json:"errcode"`
+		Error *struct {
+			Code int `json:"code"`
+		} `json:"error"`
+	}
+	if json.Unmarshal(raw, &result) != nil {
+		return 0, errors.New("企业微信 CLI 响应格式异常")
+	}
+	if result.Error != nil {
+		return result.Error.Code, nil
+	}
+	return result.Code, nil
 }
 
 type boundedBuffer struct{ bytes.Buffer }

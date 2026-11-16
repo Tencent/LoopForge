@@ -23,6 +23,7 @@
     ['.mcp-scope-switch', '.active'],
     ['.asset-pane-tabs', '.active'],
     ['.mcp-view-tabs', '.active'],
+    ['.asset-type-tabs', '.active'],
     ['.obs-grain-switch', '.active'],
     ['.obs-metric-switch', '.active'],
     ['.obs-seg', '.active'],

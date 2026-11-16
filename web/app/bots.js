@@ -9,7 +9,7 @@ function bindBotModelPicker(host){
  toggle.onclick=event=>{
   event.stopPropagation();if(toggle.disabled||toggle.closest('fieldset')?.disabled)return;
   const open=menu.hidden;closeBotModelPicker();if(!open)return;
-  models.renderList(menu,value.value,id=>{value.value=id;models.paint(toggle,id);captureBotDraft(host);closeBotModelPicker()});
+  models.renderCodeBuddyList(menu,value.value,id=>{value.value=id;models.paint(toggle,id);captureBotDraft(host);closeBotModelPicker()});
   const rect=toggle.getBoundingClientRect(),width=Math.min(Math.max(rect.width,320),window.innerWidth-24),height=Math.min(320,window.innerHeight-24),below=window.innerHeight-rect.bottom-12,above=rect.top-12;
   menu.style.width=width+'px';menu.style.left=Math.max(12,Math.min(rect.left,window.innerWidth-width-12))+'px';
   const down=below>=Math.min(height,above);const available=down?below:above;
@@ -61,7 +61,7 @@ function botBusyLabel(action,icon,label,busyLabel){return botUI.busy&&botUI.busy
 function botTabsHTML(tab,count){
  const n=Number(count)||0,on=tab==='records'?'records':'list';
  const item=(id,label,extra='')=>`<button type="button" role="tab" aria-selected="${on===id}" class="${on===id?'active':''}" data-bot-tab="${id}" ${botUI.busy&&tab!==id?'aria-disabled="true"':''}><span>${label}</span>${extra}</button>`;
- return `<div class="bot-tabs" role="tablist" aria-label="Bot 管理">${item('list','机器人',n?`<span class="bot-tab-count sliding-tab-count" data-bot-count>${n}</span>`:'')}${item('records','记录')}</div>`;
+ return `<div class="bot-tabs" role="tablist" aria-label="通道管理">${item('list','机器人',n?`<span class="bot-tab-count sliding-tab-count" data-bot-count>${n}</span>`:'')}${item('records','记录')}</div>`;
 }
 function botCrumbHTML(bot){
  const stored=botStoredBot(bot),manage=!!bot.id&&canManageBot(bot),current=bot.id?escapeHTML(stored?.name||bot.name||'未命名 Bot'):'新建 Bot';

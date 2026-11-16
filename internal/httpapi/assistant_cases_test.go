@@ -44,10 +44,14 @@ func TestAssistantTaskValidationPersistenceAndDue(t *testing.T) {
 	if err != nil || got.ID == "" || got.LastStatus != "idle" || got.CreatedAt.IsZero() {
 		t.Fatalf("normalize new = %+v, %v", got, err)
 	}
+	longPrompt := strings.Repeat("p", 8000)
+	long, err := normalizeAssistantTask(assistantTask{Name: "n", Prompt: longPrompt, ProjectID: "p", IntervalSec: 60}, assistantTask{})
+	if err != nil || long.Prompt != longPrompt {
+		t.Fatalf("long prompt rejected: %+v %v", long, err)
+	}
 	for _, tc := range []assistantTask{
 		{Prompt: "p", ProjectID: "p", IntervalSec: 60},
 		{Name: strings.Repeat("名", 81), Prompt: "p", ProjectID: "p", IntervalSec: 60},
-		{Name: "n", Prompt: strings.Repeat("p", 4001), ProjectID: "p", IntervalSec: 60},
 		{Name: "n", Prompt: "p", ProjectID: "p", IntervalSec: 59},
 		{Name: "n", Prompt: "p", ProjectID: "p", IntervalSec: assistantTaskMaxInterval + 1},
 		{Name: "n", Prompt: "p", ProjectID: "p", Cron: "bad cron"},
@@ -172,11 +176,17 @@ func TestAssistantTaskHandlersAndExecution(t *testing.T) {
 	if task.LastStatus != "ok" || strings.Contains(task.LastMessage, "secret") || task.SessionID == "" {
 		t.Fatalf("executed task = %+v", task)
 	}
-	h.active.Store(user.ID, true)
+	h.active.Store(assistantTaskActiveKey(task.ID, user.ID), true)
 	if err := h.executeAssistantTask(context.Background(), user, &task); !errors.Is(err, errAssistantBusy) {
 		t.Fatalf("busy error = %v", err)
 	}
-	h.active.Delete(user.ID)
+	// Another task of the same owner is not blocked by this one.
+	other := assistantTask{ID: "job-other", Name: "other", ProjectID: task.ProjectID, Prompt: "other"}
+	h.generate = func(context.Context, string, domain.User) (string, error) { return "完成", nil }
+	if err := h.executeAssistantTask(context.Background(), user, &other); err != nil {
+		t.Fatalf("other task blocked by a running one: %v", err)
+	}
+	h.active.Delete(assistantTaskActiveKey(task.ID, user.ID))
 	h.generate = func(context.Context, string, domain.User) (string, error) { return "", errors.New("upstream") }
 	if err := h.executeAssistantTask(context.Background(), user, &task); err == nil || task.LastStatus != "error" {
 		t.Fatalf("generation failure = %v %+v", err, task)

@@ -96,9 +96,16 @@ type githubPull struct {
 	} `json:"base"`
 }
 
+// merged reports whether GitHub considers the pull request merged; either
+// flag is enough because list responses may omit "merged".
+func (p githubPull) merged() bool { return p.Merged || p.MergedAt != nil }
+
+// ref is the "#N" reference returned to delivery callers.
+func (p githubPull) ref() string { return "#" + strconv.Itoa(p.Number) }
+
 func (p githubPull) delivery(project string) domain.DeliveryMR {
 	state := "opened"
-	if p.Merged || p.MergedAt != nil {
+	if p.merged() {
 		state = "merged"
 	} else if p.State == "closed" {
 		state = "closed"
@@ -158,8 +165,8 @@ func (s *Service) githubMergeBranch(project, branch, target, title, description 
 	if err != nil {
 		return "", err
 	}
-	if found && (p.Merged || p.MergedAt != nil) {
-		return "#" + strconv.Itoa(p.Number), nil
+	if found && p.merged() {
+		return p.ref(), nil
 	}
 	if !found || p.State == "closed" {
 		if target == "" {
@@ -181,7 +188,7 @@ func (s *Service) githubMergeBranch(project, branch, target, title, description 
 	if !result.Merged {
 		return "", fmt.Errorf("GitHub did not merge pull request #%d", p.Number)
 	}
-	return "#" + strconv.Itoa(p.Number), nil
+	return p.ref(), nil
 }
 
 func (s *Service) pullGitHubIssues(store IssueStoreAdapter, repo domain.Repository) (int, error) {

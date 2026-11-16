@@ -18,7 +18,7 @@ const workspaceOpenSchema = `{"type":"object","properties":{"goal":{"type":"stri
 func workspaceOpenDescriptor() agentToolDescriptor {
 	return agentToolDescriptor{
 		Name:        "workbench_workspace_open",
-		Description: "打开或切换本对话绑定的工作区。用户要看代码、改代码（改文案、修小 bug、补测试等）或跑命令时调用，之后用 workbench_workspace_tree/read/write/command 操作并验证，用户要提交时调用 workbench_workspace_submit_mr（只为有改动的仓库发起 MR）。不走 SOP，不需要用户另开会话。一个对话同一时间只绑定一个工作区，用哪个由你按用户当前实际要处理的需求决定（@ 只是线索）：issueId、workspaceRunId、new 最多传一个；都不传时继续用当前绑定的工作区，还没有就新开。issueId 切到该需求最近一次 SOP 运行的工作区（已回收的会恢复快照），SOP 执行中可用 workbench_workspace_sop 暂停、继续或接管；workspaceRunId 切回本对话之前开过的工作区；new 新开一个对话工作区，按 sandboxProfileId 和 repositories 检出、每个仓库各建新工作分支，环境和仓库创建后不再变化。没跑过 SOP 的新需求，当前工作区的仓库和环境合适就沿用，不合适就新开。切换后旧工作区解绑，空闲时保存快照并回收，切回时恢复。用户要改代码交付新需求时传 requirement，让需求进入需求列表和数据统计。新开时的分支语义由 branchMode 决定：auto（默认，不传 branch）由平台自动命名并从起点新建；continue 继续 branch 或 repositoryBranches（按仓库名或 id）指定的已有远端分支，分支必须已存在；create 按指定名字新建分支，远端同名分支已存在、或本对话之前的工作区建过同名分支时报错，不会静默继续或覆盖；readonly 只读检出指定分支（可以是 preview 这类共享分支），用来跑测试、复现问题，不会提交。多仓库可以在 repositoryBranches 里用对象给每个仓库单独指定 branchMode 和 baseBranch，比如一个仓库 continue 别人的分支评审、另一个仓库 create 新分支。baseBranch 是工作分支的起点，也是 MR 的默认目标：MR 要打向 release 这类非主分支时，开工作区就要把 baseBranch 设成它。省略 branchMode 但传了 branch 时按 continue 处理。分支选择只在开新工作区时生效，工作分支不能是主分支、集成分支或 baseBranch。不要在终端里 git checkout/switch 切换工作分支：submit_mr 只提交工作区记录的工作分支，检出的不是它时会拒绝提交；要换分支就 new 新开一个工作区。只想跑命令或开浏览器、不需要代码时传 repositories: [] 开空工作区。子 Agent 不能调用本工具：子 Agent 运行期间打开或切换工作区会被拒绝；子 Agent 共享 Main Bot 已打开的这个工作区，直接用 workbench_workspace_tree/read/write/command。",
+		Description: "打开或切换本对话绑定的工作区。用户要看代码、改代码（改文案、修小 bug、补测试等）或跑命令时调用。普通工作区或已停止的 SOP 返回 handoff=true，自动切换到工作区模式并续接同一原生会话，使用 CLI 原生文件、补丁与命令工具操作并验证；执行中的 SOP 返回 handoff=false，只读查看，暂停或接管完成后才交接。用户要提交时调用 workbench_workspace_submit_mr（只为有改动的仓库发起 MR）。不走 SOP，不需要用户另开会话。一个对话同一时间只绑定一个工作区，用哪个由你按用户当前实际要处理的需求决定（@ 只是线索）：issueId、workspaceRunId、new 最多传一个；都不传时继续用当前绑定的工作区，还没有就新开。issueId 切到该需求最近一次 SOP 运行的工作区（已回收的会恢复快照），SOP 执行中可用 workbench_workspace_sop 暂停、继续或接管；workspaceRunId 切回本对话之前开过的工作区；new 新开一个对话工作区，按 sandboxProfileId 和 repositories 检出、每个仓库各建新工作分支，环境和仓库创建后不再变化。没跑过 SOP 的新需求，当前工作区的仓库和环境合适就沿用，不合适就新开。切换后旧工作区解绑，空闲时保存快照并回收，切回时恢复。用户要改代码交付新需求时传 requirement，让需求进入需求列表和数据统计。新开时的分支语义由 branchMode 决定：auto（默认，不传 branch）由平台自动命名并从起点新建；continue 继续 branch 或 repositoryBranches（按仓库名或 id）指定的已有远端分支，分支必须已存在；create 按指定名字新建分支，远端同名分支已存在、或本对话之前的工作区建过同名分支时报错，不会静默继续或覆盖；readonly 只读检出指定分支（可以是 preview 这类共享分支），用来跑测试、复现问题，不会提交。多仓库可以在 repositoryBranches 里用对象给每个仓库单独指定 branchMode 和 baseBranch，比如一个仓库 continue 别人的分支评审、另一个仓库 create 新分支。baseBranch 是工作分支的起点，也是 MR 的默认目标：MR 要打向 release 这类非主分支时，开工作区就要把 baseBranch 设成它。省略 branchMode 但传了 branch 时按 continue 处理。分支选择只在开新工作区时生效，工作分支不能是主分支、集成分支或 baseBranch。不要在终端里 git checkout/switch 切换工作分支：submit_mr 只提交工作区记录的工作分支，检出的不是它时会拒绝提交；要换分支就 new 新开一个工作区。只想跑命令或开浏览器、不需要代码时传 repositories: [] 开空工作区。子 Agent 不能调用本工具：子 Agent 运行期间打开或切换工作区会被拒绝；子 Agent 共享 Main Bot 已打开的这个工作区，使用当前模式提供的文件与命令工具。",
 		InputSchema: json.RawMessage(workspaceOpenSchema),
 		Kind:        "workspace",
 	}
@@ -348,9 +348,9 @@ func (h *agentToolGateway) openConversationWorkspace(ctx context.Context, s *Age
 	if len(readOnly) > 0 {
 		fmt.Fprintf(&notice, "只读检出的仓库：%s，可以读、构建、跑测试，submit_mr 不会提交它们的改动。", strings.Join(readOnly, "、"))
 	}
-	if run.IsWorkspace() {
-		notice.WriteString("改完先用 workbench_workspace_command 跑相关测试；用户要求提交时调用 workbench_workspace_submit_mr（默认开 MR，目标是 repositories[].baseBranch；用户要把改动合并进 preview/test 这类共享分支并直接推送、不要 MR 时传 mode=direct + targetBranch）。不要在终端里 git push，也不要 git checkout/switch 切换工作分支：submit_mr 只提交 repositories[].workBranch，检出的不是它时会拒绝提交。")
-	} else {
+	if run.IsWorkspace() && len(run.RepositoryContexts()) > 0 {
+		notice.WriteString("交接后使用 CLI 原生命令工具跑相关测试；用户要求提交时调用 workbench_workspace_submit_mr（默认开 MR，目标是 repositories[].baseBranch；用户要把改动合并进 preview/test 这类共享分支并直接推送、不要 MR 时传 mode=direct + targetBranch）。不要在终端里 git push，也不要 git checkout/switch 切换工作分支：submit_mr 只提交 repositories[].workBranch，检出的不是它时会拒绝提交。")
+	} else if !run.IsWorkspace() {
 		notice.WriteString(borrowedSOPNotice(run))
 	}
 	if !bound.Created {
@@ -397,6 +397,20 @@ func (h *agentToolGateway) openConversationWorkspace(ctx context.Context, s *Age
 		return "", fmt.Errorf("工作区已绑定（%s），但准备代码时失败：%v", run.ID, err)
 	}
 	out["files"] = json.RawMessage(truncateJSONForTool(tree, 6000))
+	out["notice"] = notice.String()
+	if run.IsWorkspace() || sopStopped(run) {
+		s.requestMode(domain.AssistantModeWorkspace)
+		out["handoff"] = true
+		notice.WriteString("工作区已准备。" + assistantHandoffNotice)
+	} else {
+		out["handoff"] = false
+		// A running SOP owns its environment. Keep the read-only platform
+		// view until pause/takeover has stopped it, then hand off the CLI.
+		if s.RuntimeMode == domain.AssistantModeWorkspace {
+			s.requestMode(domain.AssistantModePlatform)
+		}
+		notice.WriteString("当前保留平台只读查看；暂停或接管完成后进入原生工作区模式。")
+	}
 	out["notice"] = notice.String()
 	raw, _ := json.Marshal(out)
 	return string(raw), nil
@@ -509,6 +523,12 @@ func (h *agentToolGateway) bindConversationWorkspace(ctx context.Context, s *Age
 		}
 		binding.Run, binding.Created, binding.Branches = run, true, branches
 	}
+	if binding.Run.ExecutionContext.ExecutionRunnerID != conv.Execution().RunnerID {
+		return binding, fmt.Errorf("工作区与会话绑定的执行机器不同，请在相应机器新建对话")
+	}
+	if binding.Run.WorkflowSnapshot.SandboxSnapshot != nil && binding.Run.WorkflowSnapshot.SandboxSnapshot.Profile.Driver != "docker" {
+		return binding, fmt.Errorf("对话工作区仅支持 Docker")
+	}
 	if !binding.Created && choice.branchSelected() {
 		// A selected branch belongs to the checkout this call creates: a reused
 		// workspace keeps the branch it was opened on.
@@ -571,7 +591,7 @@ func (h *agentToolGateway) startConversationWorkspace(s *AgentToolSession, proje
 	if h.engine == nil {
 		return domain.Run{}, nil, fmt.Errorf("执行引擎不可用")
 	}
-	run, err := h.engine.StartConversationWorkspace("对话改代码："+truncateRunes(choice.Goal, 200), repositories, domain.TelemetryContext{ProjectID: project.ID, ResponsibleUserID: s.UserID}, sandbox.ID)
+	run, err := h.engine.StartConversationWorkspace("对话改代码："+truncateRunes(choice.Goal, 200), repositories, domain.TelemetryContext{ProjectID: project.ID, ResponsibleUserID: s.UserID, ExecutionPinned: true, ExecutionMode: conv.Execution().Pool, ExecutionRunnerID: conv.Execution().RunnerID}, sandbox.ID)
 	return run, branches, err
 }
 

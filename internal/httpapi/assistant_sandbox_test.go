@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -435,6 +436,12 @@ func TestMainBotPausesAndTakesOverIssueSOP(t *testing.T) {
 	calls := []string{}
 	h.deps.api = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls = append(calls, r.Method+" "+r.URL.Path)
+		if strings.HasSuffix(r.URL.Path, "/pause") {
+			run, _ := h.repo.RunState("borrowed-sop")
+			run.Status = "waiting"
+			_ = h.repo.PutRun(run)
+			_, _ = h.repo.RequestRunPause(run.ID)
+		}
 		if strings.HasSuffix(r.URL.Path, "/cancel") {
 			run, _ := h.repo.RunState("borrowed-sop")
 			run.Status = "cancelled"
@@ -457,11 +464,11 @@ func TestMainBotPausesAndTakesOverIssueSOP(t *testing.T) {
 	if _, err := gateway.callMainBotWorkspace(ctx, s, "workbench_workspace_sop", map[string]any{"action": "resume"}); err == nil {
 		t.Fatal("resumed an SOP that was not paused")
 	}
-	if _, err := gateway.callMainBotWorkspace(ctx, s, "workbench_workspace_sop", map[string]any{"action": "pause"}); err != nil {
-		t.Fatal(err)
+	if out, err := gateway.callMainBotWorkspace(ctx, s, "workbench_workspace_sop", map[string]any{"action": "pause"}); err != nil || !strings.Contains(out, `"handoff":true`) || !strings.Contains(out, assistantHandoffNotice) || s.requestedMode() != domain.AssistantModeWorkspace {
+		t.Fatalf("pause must hand off after the SOP stops: %s %v", out, err)
 	}
 	out, err := gateway.callMainBotWorkspace(ctx, s, "workbench_workspace_sop", map[string]any{"action": "takeover"})
-	if err != nil || !strings.Contains(out, "已结束") {
+	if err != nil || !strings.Contains(out, "已结束") || !strings.Contains(out, `"handoff":true`) || !strings.Contains(out, assistantHandoffNotice) {
 		t.Fatalf("takeover = %s %v", out, err)
 	}
 	if want := []string{"POST /api/runs/borrowed-sop/pause", "POST /api/runs/borrowed-sop/cancel"}; strings.Join(calls, ",") != strings.Join(want, ",") {
@@ -472,5 +479,64 @@ func TestMainBotPausesAndTakesOverIssueSOP(t *testing.T) {
 	}
 	if _, err := gateway.workspaceSubmitMR(ctx, s, map[string]any{"title": "fix"}); err == nil || !strings.Contains(err.Error(), "Git Token") {
 		t.Fatalf("taken-over workspace should reach delivery: %v", err)
+	}
+}
+
+func TestOpeningSOPWorkspaceOnlyHandsOffWhenStopped(t *testing.T) {
+	for _, stopped := range []bool{false, true} {
+		t.Run(fmt.Sprint(stopped), func(t *testing.T) {
+			h, _, s := chatSandboxFixture(t)
+			h.engine = nil // Exercise the binding/response, without materializing files.
+			h.deps.api = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				_, _ = w.Write([]byte(`{"items":[]}`))
+			})
+			run := domain.Run{ID: "sop-handoff", Status: "running", ExecutionContext: domain.TelemetryContext{ProjectID: s.ProjectID}}
+			if stopped {
+				run.Status, run.PauseRequested = "waiting", true
+			}
+			if err := h.repo.PutRun(run); err != nil {
+				t.Fatal(err)
+			}
+			if stopped {
+				if _, err := h.repo.RequestRunPause(run.ID); err != nil {
+					t.Fatal(err)
+				}
+			}
+			s.workspaceRunID = run.ID
+			g := agentToolGateway{deps: h.deps}
+			out, err := g.openConversationWorkspace(context.Background(), s, map[string]any{"goal": "查看当前 SOP"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var result struct{ Handoff bool }
+			if err := json.Unmarshal([]byte(out), &result); err != nil || result.Handoff != stopped {
+				t.Fatalf("SOP handoff = %s %v", out, err)
+			}
+			if (s.requestedMode() == domain.AssistantModeWorkspace) != stopped || strings.Contains(out, assistantHandoffNotice) != stopped {
+				t.Fatalf("SOP handoff notice and pending mode disagree: %s", out)
+			}
+		})
+	}
+}
+
+func TestWorkspaceSOPResumeHandsOffBeforeResuming(t *testing.T) {
+	h, _, s := chatSandboxFixture(t)
+	called := false
+	h.deps.api = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		_, _ = w.Write([]byte(`{}`))
+	})
+	run := domain.Run{ID: "resume-after-exit", Status: "waiting", PauseRequested: true, ExecutionContext: domain.TelemetryContext{ProjectID: s.ProjectID}}
+	if err := h.repo.PutRun(run); err != nil {
+		t.Fatal(err)
+	}
+	s.RuntimeMode, s.workspaceRunID = domain.AssistantModeWorkspace, run.ID
+	g := agentToolGateway{deps: h.deps}
+	out, err := g.controlConversationSOP(context.Background(), s, map[string]any{"action": "resume", "context": "已修改"})
+	if err != nil || called || !strings.Contains(out, `"handoff":true`) || !strings.Contains(out, assistantHandoffNotice) || s.requestedMode() != domain.AssistantModePlatform || s.modeAction == nil {
+		t.Fatalf("SOP resumed before CLI exit or omitted handoff: %s %v", out, err)
+	}
+	if err := s.modeAction(context.Background()); err != nil || !called {
+		t.Fatalf("deferred SOP resume failed: %v", err)
 	}
 }

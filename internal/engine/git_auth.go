@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strings"
 
+	"agentflow/internal/domain"
 	"agentflow/internal/gitwork"
 	"agentflow/internal/repo"
 )
@@ -26,6 +27,30 @@ func withGitToken(ctx context.Context, token string) context.Context {
 }
 
 func gitTokenFrom(ctx context.Context) string { return gitwork.TokenFrom(ctx) }
+
+func withRepositoryGit(ctx context.Context, repository domain.RepositoryContext) context.Context {
+	if repository.Provider == domain.RepositoryProviderSSH {
+		return gitwork.WithSSHRemote(ctx, repository.CloneURL)
+	}
+	return ctx
+}
+
+func sshRepositoryURLs(repositories []domain.RepositoryContext) []string {
+	var urls []string
+	for _, repository := range repositories {
+		if repository.Provider == domain.RepositoryProviderSSH {
+			urls = append(urls, repository.CloneURL)
+		}
+	}
+	return urls
+}
+
+func cloneRemoteForGit(ctx context.Context, remote string) string {
+	if gitwork.UsesSSH(ctx) {
+		return remote
+	}
+	return gitwork.RewriteRemoteForToken(remote, gitTokenFrom(ctx))
+}
 
 func withGitIdentity(ctx context.Context, name, email string) context.Context {
 	identity := gitIdentity{name: strings.TrimSpace(name), email: strings.TrimSpace(email)}

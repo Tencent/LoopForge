@@ -139,12 +139,8 @@ func DetectFrontendProject(root string) (bool, string) {
 		if rel == "." {
 			return nil
 		}
-		name := d.Name()
 		if d.IsDir() {
-			if previewDetectSkipDirs[strings.ToLower(name)] {
-				return fs.SkipDir
-			}
-			if strings.Count(filepath.ToSlash(rel), "/") >= maxPreviewDetectDepth {
+			if previewDetectSkipDir(d.Name(), rel) {
 				return fs.SkipDir
 			}
 			return nil
@@ -153,18 +149,9 @@ func DetectFrontendProject(root string) (bool, string) {
 		if files > maxPreviewDetectFiles {
 			return fs.SkipAll
 		}
-		lower := strings.ToLower(name)
-		if frontendIndexNames[lower] || frontendConfigFiles[lower] {
+		if hit, why := frontendFileEvidence(path, rel, d.Name()); hit {
 			found = true
-			evidence = filepath.ToSlash(rel)
-			return fs.SkipAll
-		}
-		if lower != "package.json" {
-			return nil
-		}
-		if hit, why := packageJSONFrontend(path); hit {
-			found = true
-			evidence = filepath.ToSlash(rel) + " (" + why + ")"
+			evidence = why
 			return fs.SkipAll
 		}
 		return nil
@@ -173,6 +160,34 @@ func DetectFrontendProject(root string) (bool, string) {
 		return true, evidence
 	}
 	return false, "未发现 Vite/webpack/Next 配置、前端依赖或 index.html"
+}
+
+// previewDetectSkipDir reports whether the directory at rel (relative to the
+// workspace root) should be pruned: well-known dependency/cache/VCS folders,
+// or anything at or beyond maxPreviewDetectDepth.
+func previewDetectSkipDir(name, rel string) bool {
+	if previewDetectSkipDirs[strings.ToLower(name)] {
+		return true
+	}
+	return strings.Count(filepath.ToSlash(rel), "/") >= maxPreviewDetectDepth
+}
+
+// frontendFileEvidence reports whether the file at path (rel relative to the
+// workspace root) marks the workspace as frontend, and the evidence string:
+// an index page or bundler config yields its slash path; a package.json with
+// frontend dependencies or scripts yields "<rel> (<reason>)".
+func frontendFileEvidence(path, rel, name string) (bool, string) {
+	lower := strings.ToLower(name)
+	if frontendIndexNames[lower] || frontendConfigFiles[lower] {
+		return true, filepath.ToSlash(rel)
+	}
+	if lower != "package.json" {
+		return false, ""
+	}
+	if hit, why := packageJSONFrontend(path); hit {
+		return true, filepath.ToSlash(rel) + " (" + why + ")"
+	}
+	return false, ""
 }
 
 func packageJSONFrontend(path string) (bool, string) {

@@ -67,40 +67,11 @@ func parseGongfengMRDetails(raw string, wantIID int) (state, targetBranch string
 		}
 		return "", "", time.Time{}
 	}
-	var wrapped struct {
-		Data  json.RawMessage    `json:"data"`
-		Items []gongfengListedMR `json:"items"`
-	}
-	if json.Unmarshal([]byte(raw), &wrapped) == nil {
-		var list []gongfengListedMR
-		if json.Unmarshal(wrapped.Data, &list) == nil {
-			if parsed, target, at := try(list); parsed != "" {
-				return parsed, target, at
-			}
-		}
-		var one gongfengListedMR
-		if json.Unmarshal(wrapped.Data, &one) == nil {
-			if parsed, target, at := try([]gongfengListedMR{one}); parsed != "" {
-				return parsed, target, at
-			}
-		}
-		if parsed, target, at := try(wrapped.Items); parsed != "" {
-			return parsed, target, at
-		}
-	}
-	var list []gongfengListedMR
-	if json.Unmarshal([]byte(raw), &list) == nil {
-		if parsed, target, at := try(list); parsed != "" {
-			return parsed, target, at
-		}
-	}
-	var one gongfengListedMR
-	if json.Unmarshal([]byte(raw), &one) == nil {
-		if parsed, target, at := try([]gongfengListedMR{one}); parsed != "" {
-			return parsed, target, at
-		}
-	}
-	return "", "", time.Time{}
+	visitGongfengMRPayload(raw, func(items []gongfengListedMR) bool {
+		state, targetBranch, mergedAt = try(items)
+		return state != ""
+	})
+	return state, targetBranch, mergedAt
 }
 
 func parseGongfengSourceCommit(raw string, wantIID int) string {

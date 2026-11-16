@@ -49,7 +49,7 @@ test('approval helpers explain gates, failures, pauses, and contextual payloads'
   assert.equal(JSON.stringify(result.pausedNodes), JSON.stringify(['review']));
 });
 
-test('approval list renders assigned waiting run and approve sends context', async (t) => {
+test('approval list sends context and removes the approved run after refreshing', async (t) => {
   const app = await loadApp();
   t.after(app.close);
   const run = {
@@ -63,6 +63,9 @@ test('approval list renders assigned waiting run and approve sends context', asy
   };
   app.router.get('/api/runs/approval-run', run);
   app.router.post('/api/runs/approval-run/approve', { ok: true });
+  app.router.get('/api/runs', [{ ...run, status: 'running' }]);
+  app.router.get('/api/tasks', []);
+  app.router.get('/api/issues', []);
   app.router.post('/api/runs/approval-run/retry', { ...run, status: 'running' });
   app.router.post('/api/runs/approval-run/resume', { ...run, status: 'running' });
   app.router.post('/api/runs/approval-run/pause', { ok: true });
@@ -81,6 +84,8 @@ test('approval list renders assigned waiting run and approve sends context', asy
   const call = app.router.calls.find(c => c.path === '/api/runs/approval-run/approve');
   assert.equal(call.method, 'POST');
   assert.equal(call.body.context, '验收通过，保留截图');
+  assert.equal(app.document.querySelector('#approvalList .ap-card'), null);
+  assert.match(app.document.querySelector('#approvalList').textContent, /没有需要你拍板的需求/);
 
   app.evaluate(`
     state.data.runs=[${JSON.stringify(run)}];

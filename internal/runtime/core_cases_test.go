@@ -125,7 +125,7 @@ func TestBrowserViewOperationsWithFakeCDP(t *testing.T) {
 	if err := view.pageCall(ctx, "Page.reload", nil); err != nil {
 		t.Fatal(err)
 	}
-	if got := view.screencastParams(); got["maxWidth"] != 1600 {
+	if got := view.screencastParams(); got["maxWidth"] != 2560 {
 		t.Fatalf("params=%v", got)
 	}
 	view.frameWidth = 100

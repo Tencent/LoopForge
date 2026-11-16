@@ -40,6 +40,29 @@ func TestScheduleJobTriggerIssueStatuses(t *testing.T) {
 	}
 }
 
+func TestScheduleJobMatchesIssueStatusNormalizesInput(t *testing.T) {
+	custom := ScheduleJob{WorkflowID: "wf", IssueStatuses: []string{" Backlog ", "IN_REVIEW"}}
+	cases := map[string]bool{
+		"backlog":      true,
+		"  BACKLOG\t":  true,
+		"":             true, // empty status is treated as backlog
+		"   ":          true,
+		"In_Review":    true,
+		"todo":         false,
+		"done":         false,
+		"in_progress ": false,
+	}
+	for status, want := range cases {
+		if got := custom.MatchesIssueStatus(status); got != want {
+			t.Errorf("MatchesIssueStatus(%q) = %v, want %v", status, got, want)
+		}
+	}
+	noBacklog := ScheduleJob{WorkflowID: "wf", IssueStatuses: []string{"todo"}}
+	if noBacklog.MatchesIssueStatus("") {
+		t.Error("empty status must only match jobs that scan backlog")
+	}
+}
+
 func TestNormalizeScheduleSource(t *testing.T) {
 	for _, raw := range []string{"", " all ", "BOTH"} {
 		got, err := NormalizeScheduleSource(raw)

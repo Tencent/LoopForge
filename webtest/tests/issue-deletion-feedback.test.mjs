@@ -2,12 +2,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { loadApp, settle } from '../lib/load-app.mjs';
 
-const reason = '已有成功执行记录，当前不支持删除';
+const reason = '仍有未结束的运行，请先处理或停止后再删除';
 const blockedIssue = {
   id: 'delete-feedback', projectId: 'project-1', title: '国际站套餐支持升级',
   status: 'closed', closeSource: 'manual', source: 'local', priority: 'medium',
-  deletionAllowed: false, closureAllowed: true,
-  deletionBlock: { code: 'succeeded', reason, runId: 'old-success' },
+  deletionAllowed: false, closureAllowed: false,
+  deletionBlock: { code: 'active', reason, runId: 'active-run' },
 };
 
 function showMenu(app, issue) {
@@ -21,7 +21,7 @@ function showMenu(app, issue) {
   return app.document.querySelector('#issueActionPopover');
 }
 
-test('closed issue keeps a disabled delete entry, visible reason, and the exact historical run link', async t => {
+test('closed issue with active work shows the reason and links to the active run', async t => {
   const app = await loadApp();
   t.after(app.close);
   app.evaluate(`openRunFromId=(id,opts)=>window.deletionDestination={id,opts}`);
@@ -37,24 +37,26 @@ test('closed issue keeps a disabled delete entry, visible reason, and the exact 
   assert.equal(app.document.activeElement, menu.querySelector('[data-issue-deletion-context]'));
   menu.querySelector('[data-issue-deletion-context]').click();
   assert.deepEqual(structuredClone(app.evaluate('window.deletionDestination')), {
-    id: 'old-success', opts: { forceRuns: true },
+    id: 'active-run', opts: { forceRuns: true },
   });
   assert.equal(menu.hidden, true);
   assert.equal(app.router.calls.some(c => c.method === 'DELETE'), false);
 });
 
-test('allowed, live clarification, completed, and unknown deletion states have honest feedback', async t => {
+test('ordinary, forced, clarifying, and unknown deletion states are shown in the menu', async t => {
   const app = await loadApp();
   t.after(app.close);
   let menu = showMenu(app, { ...blockedIssue, deletionAllowed: true, deletionBlock: undefined });
   assert.equal(menu.querySelector('[data-action="delete"]').disabled, false);
+  assert.equal(menu.querySelector('[data-action="delete"]').textContent, '删除需求');
   assert.equal(menu.querySelector('.issue-delete-reason'), null);
   menu = showMenu(app, { ...blockedIssue, deletionAllowed: true, clarification: { status: 'analyzing' } });
   assert.equal(menu.querySelector('[data-action="delete"]').disabled, true);
   assert.match(menu.querySelector('.issue-delete-reason').textContent, /正在澄清/);
   assert.match(menu.querySelector('[data-issue-deletion-context]').textContent, /查看澄清/);
-  menu = showMenu(app, { ...blockedIssue, status: 'done', deletionBlock: {code: 'completed', reason: '需求已完成，当前不支持删除'} });
-  assert.match(menu.textContent, /需求已完成/);
+  menu = showMenu(app, { ...blockedIssue, status: 'done', deletionAllowed: true, deletionRequiresForce: true, deletionBlock: undefined });
+  assert.equal(menu.querySelector('[data-action="delete"]').textContent, '强制删除');
+  assert.equal(menu.querySelector('[data-action="delete"]').disabled, false);
   menu = showMenu(app, { ...blockedIssue, deletionAllowed: undefined, deletionBlock: undefined });
   assert.match(menu.querySelector('.issue-delete-reason').textContent, /刷新后重试/);
   assert.doesNotMatch(menu.querySelector('.issue-delete-reason').textContent, /成功/);
@@ -63,11 +65,12 @@ test('allowed, live clarification, completed, and unknown deletion states have h
 test('drawer uses fresh server restrictions and displays the task that prevents deletion', async t => {
   const app = await loadApp();
   t.after(app.close);
-  const issue = { ...blockedIssue, deletionBlock: { code: 'succeeded', reason, taskId: 'historical-task' } };
+  const taskReason = '仍有未结束的任务，请先处理或停止后再删除';
+  const issue = { ...blockedIssue, deletionBlock: { code: 'active', reason: taskReason, taskId: 'queued-task' } };
   app.router.get('/api/issues/delete-feedback', { issue, comments: [] });
   app.router.get('/api/issues/delete-feedback/requirement', {});
-  app.router.get('/api/tasks/historical-task', {
-    id: 'historical-task', issueId: issue.id, status: 'completed', createdAt: '2026-01-01T00:00:00Z',
+  app.router.get('/api/tasks/queued-task', {
+    id: 'queued-task', issueId: issue.id, status: 'queued', createdAt: '2026-01-01T00:00:00Z',
   });
   app.evaluate(`state.data.issues=[${JSON.stringify({ ...issue, deletionAllowed: true, deletionBlock: undefined })}];state.data.tasks=[];state.data.runs=[]`);
   await app.evaluate(`openIssueDetail('delete-feedback','overview')`);
@@ -75,21 +78,35 @@ test('drawer uses fresh server restrictions and displays the task that prevents 
   assert.equal(app.evaluate('state.data.issues[0].deletionAllowed'), false);
   const drawer = app.document.querySelector('#issueDetailBody');
   assert.equal(drawer.querySelector('[data-delete-issue]').disabled, true);
-  assert.equal(drawer.querySelector('.issue-delete-reason').textContent, reason);
+  assert.equal(drawer.querySelector('.issue-delete-reason').textContent, taskReason);
   drawer.querySelector('[data-issue-deletion-context]').click();
   await settle(4);
   assert.equal(app.evaluate('state.issueDetailTab'), 'activity');
   assert.match(drawer.textContent, /阻止删除的任务/);
-  assert.match(drawer.textContent, /historical-task/);
-  assert.match(drawer.textContent, /已完成/);
+  assert.match(drawer.textContent, /queued-task/);
+  assert.match(drawer.textContent, /排队中/);
   await app.evaluate(`deleteIssueById('delete-feedback')`);
   assert.equal(app.router.calls.some(c => c.method === 'DELETE'), false);
 
-  app.router.get('/api/issues/delete-feedback', { issue: { ...issue, deletionAllowed: true, deletionBlock: undefined }, comments: [] });
+  app.router.get('/api/issues/delete-feedback', { issue: { ...issue, deletionAllowed: true, deletionRequiresForce: true, deletionBlock: undefined }, comments: [] });
   await app.evaluate(`openIssueDetail('delete-feedback','overview')`);
   assert.equal(app.evaluate('state.issueDetailData.issue.deletionAllowed'), true);
-  assert.equal(drawer.querySelector('[data-delete-issue]').disabled, false);
+  const force = drawer.querySelector('[data-delete-issue]');
+  assert.equal(force.disabled, false);
+  assert.equal(force.textContent, '强制删除');
   assert.equal(drawer.querySelector('.issue-delete-reason'), null);
+  force.click();
+  assert.equal(app.document.querySelector('#confirmTitle').textContent, '强制删除需求');
+  assert.match(app.document.querySelector('#confirmMessage').textContent, /日志、产物和执行工作区.*无法恢复/);
+  assert.doesNotMatch(app.document.querySelector('#confirmMessage').textContent, /TAPD|工蜂/);
+  app.document.querySelector('#confirmCancelBtn').click();
+  await settle(4);
+  assert.equal(app.router.calls.some(c => c.method === 'DELETE'), false);
+
+  force.click();
+  app.document.querySelector('#confirmOkBtn').click();
+  await settle(4);
+  assert.equal(app.router.calls.find(c => c.method === 'DELETE')?.search, '?force=true');
 });
 
 test('bulk selection explains protected rows and escapes server-provided reasons', async t => {

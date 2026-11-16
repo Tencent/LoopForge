@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 	"time"
 
 	"gorm.io/gorm"
@@ -29,6 +30,11 @@ type WorkspaceCheckpoint struct {
 	LeaseHandoffID string     `gorm:"size:64" json:"-"`
 	LeaseToken     string     `gorm:"size:64" json:"-"`
 	LeaseUntil     *time.Time `json:"-"`
+	// LeaseRenewedAt is when the lease was last taken or renewed, on the
+	// database clock on MySQL (see leaseRenewalClock). LeaseUntil is written
+	// by the holder's own clock, so it cannot tell another replica how long
+	// ago the holder renewed.
+	LeaseRenewedAt *time.Time `json:"-"`
 	RestoreStatus  string     `gorm:"size:32" json:"-"`
 	RestoreStarted *time.Time `json:"-"`
 	RestoreError   string     `gorm:"type:text" json:"-"`
@@ -47,6 +53,11 @@ func (c WorkspaceCheckpoint) Released() bool {
 var ErrWorkspaceInUse = errors.New("工作区正在使用或保存，请稍后重试")
 var ErrWorkspaceCheckpointBackoff = errors.New("workspace checkpoint save is backing off")
 
+const workspaceBackgroundSavePrefix = "save:"
+
+// workspaceUseTerm is how long a workspace lease lasts from its last renewal.
+const workspaceUseTerm = 15 * time.Minute
+
 func (r *RunsRepo) WorkspaceCheckpoint(runID string) (WorkspaceCheckpoint, bool) {
 	var item WorkspaceCheckpoint
 	err := r.DB.Omit("archive").Where("run_id = ?", runID).Take(&item).Error
@@ -61,12 +72,47 @@ func (r *RunsRepo) WorkspaceCheckpointArchive(runID string) ([]byte, error) {
 	return io.ReadAll(source)
 }
 func (r *RunsRepo) BeginWorkspaceUse(runID string, now time.Time) (string, error) {
-	return r.beginWorkspaceLease(runID, now, true, false)
+	token, _, err := r.BeginWorkspaceUsePreemptingSave(runID, now)
+	return token, err
+}
+
+// Foreground use can replace a background archive lease. Execution, restore
+// and maintenance/delete leases remain exclusive. The old save must still
+// publish and finish by token CAS, so it cannot affect the new use.
+func (r *RunsRepo) BeginWorkspaceUsePreemptingSave(runID string, now time.Time) (string, string, error) {
+	var previous string
+	token, err := r.beginWorkspaceLease(runID, now, true, false, &previous)
+	return token, previous, err
+}
+
+// HandoffWorkspaceUseToSave makes the archive interruptible without an unlocked
+// gap. SaveRetryAt also lets maintenance recover a crashed background save.
+func (r *RunsRepo) HandoffWorkspaceUseToSave(runID, token string, now time.Time) (string, error) {
+	if token == "" || strings.HasPrefix(token, workspaceBackgroundSavePrefix) {
+		return "", ErrWorkspaceInUse
+	}
+	saveToken := workspaceBackgroundSavePrefix + token
+	err := r.DB.Transaction(func(tx *gorm.DB) error {
+		if _, err := r.takeRunForUpdate(tx, runID); err != nil {
+			return err
+		}
+		result := tx.Model(&WorkspaceCheckpoint{}).Where("run_id = ? AND lease_token = ? AND lease_until > ?", runID, token, now).Updates(map[string]any{
+			"lease_token": saveToken, "lease_handoff_id": "", "last_used_at": now, "save_retry_at": now,
+		})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			return ErrWorkspaceInUse
+		}
+		return nil
+	})
+	return saveToken, err
 }
 func (r *RunsRepo) BeginWorkspaceCheckpointSave(runID string, now time.Time) (string, error) {
 	return r.beginWorkspaceLease(runID, now, false, false)
 }
-func (r *RunsRepo) beginWorkspaceLease(runID string, now time.Time, touch, restoring bool) (string, error) {
+func (r *RunsRepo) beginWorkspaceLease(runID string, now time.Time, touch, restoring bool, preempted ...*string) (string, error) {
 	raw := make([]byte, 24)
 	if _, err := rand.Read(raw); err != nil {
 		return "", err
@@ -90,7 +136,7 @@ func (r *RunsRepo) beginWorkspaceLease(runID string, now time.Time, touch, resto
 		if !touch && checkpoint.SaveRetryAt != nil && now.Before(*checkpoint.SaveRetryAt) {
 			return ErrWorkspaceCheckpointBackoff
 		}
-		until := now.Add(15 * time.Minute)
+		until := now.Add(workspaceUseTerm)
 		lastUsed := now
 		if !touch && run.Updated != nil {
 			lastUsed = *run.Updated
@@ -99,7 +145,7 @@ func (r *RunsRepo) beginWorkspaceLease(runID string, now time.Time, touch, resto
 		if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&row).Error; err != nil {
 			return err
 		}
-		values := map[string]any{"lease_token": token, "lease_until": until, "lease_handoff_id": ""}
+		values := map[string]any{"lease_token": token, "lease_until": until, "lease_renewed_at": r.leaseRenewalClock(now), "lease_handoff_id": ""}
 		if touch {
 			values["last_used_at"] = now
 		}
@@ -111,7 +157,20 @@ func (r *RunsRepo) beginWorkspaceLease(runID string, now time.Time, touch, resto
 			// then tell a stale outcome from a restore still in progress.
 			values["restore_status"], values["restore_error"] = "failed", WorkspaceRestoreInterrupted
 		}
-		result := tx.Model(&WorkspaceCheckpoint{}).Where("run_id = ? AND (lease_until IS NULL OR lease_until < ?)", runID, now).Updates(values)
+		query := tx.Model(&WorkspaceCheckpoint{}).Where("run_id = ?", runID)
+		if touch && !restoring {
+			var current WorkspaceCheckpoint
+			if err := tx.Omit("archive").Where("run_id = ?", runID).Take(&current).Error; err != nil {
+				return err
+			}
+			if strings.HasPrefix(current.LeaseToken, workspaceBackgroundSavePrefix) && len(preempted) > 0 {
+				*preempted[0] = current.LeaseToken
+			}
+			query = query.Where("lease_until IS NULL OR lease_until < ? OR lease_token LIKE ?", now, workspaceBackgroundSavePrefix+"%")
+		} else {
+			query = query.Where("lease_until IS NULL OR lease_until < ?", now)
+		}
+		result := query.Updates(values)
 		if result.Error != nil {
 			return result.Error
 		}
@@ -136,8 +195,8 @@ func (r *RunsRepo) RenewWorkspaceUse(runID, token string, now time.Time) error {
 		}
 		// The row is locked through the run and was just read with this token;
 		// an unchanged lease_until (same-millisecond renewal) is still a renewal.
-		until := now.Add(15 * time.Minute)
-		return tx.Model(&WorkspaceCheckpoint{}).Where("run_id = ? AND lease_token = ?", runID, token).Update("lease_until", until).Error
+		until := now.Add(workspaceUseTerm)
+		return tx.Model(&WorkspaceCheckpoint{}).Where("run_id = ? AND lease_token = ?", runID, token).Updates(map[string]any{"lease_until": until, "lease_renewed_at": r.leaseRenewalClock(now)}).Error
 	})
 }
 
@@ -302,6 +361,59 @@ func holdsWorkspaceLease(tx *gorm.DB, runID, token string) error {
 		return ErrWorkspaceInUse
 	}
 	return nil
+}
+
+// ReleaseAbandonedWorkspaceUse drops the foreground lease a reaped turn held.
+// A dead API process cannot finish the lease it held in memory, and the next
+// turn would fail for the rest of the 15 minute term.
+//
+// Two fences keep a live owner's lease in place. The token must be the one the
+// reaped turn recorded, so a lease another turn took after the reap never
+// matches. Its last renewal must also be older than the heartbeat timeout:
+// every holder renews well within it (generations every 500ms, workspace turns
+// every 30s), so a lease still being renewed by a process on any replica is
+// kept. A background save token never matches a foreground token.
+//
+// The renewal age is measured on the clock that stamped lease_renewed_at (the
+// database's on MySQL), so a holder whose clock runs behind the reader's does
+// not look silent. A lease taken before that column existed has no stamp and
+// falls back to its lease_until.
+func (r *RunsRepo) ReleaseAbandonedWorkspaceUse(runID, token string, now time.Time) (bool, error) {
+	runID, token = strings.TrimSpace(runID), strings.TrimSpace(token)
+	if runID == "" || token == "" || strings.HasPrefix(token, workspaceBackgroundSavePrefix) {
+		return false, nil
+	}
+	released := false
+	err := r.DB.Transaction(func(tx *gorm.DB) error {
+		if _, err := r.takeRunForUpdate(tx, runID); err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return nil
+			}
+			return err
+		}
+		silent := tx.Where("lease_renewed_at IS NULL AND lease_until <= ?", now.Add(workspaceUseTerm-assistantHeartbeatTimeout))
+		if r.isMySQL() {
+			silent = silent.Or("lease_renewed_at <= UTC_TIMESTAMP(3) - INTERVAL ? MICROSECOND", assistantHeartbeatTimeout.Microseconds())
+		} else {
+			silent = silent.Or("lease_renewed_at <= ?", now.Add(-assistantHeartbeatTimeout))
+		}
+		result := tx.Model(&WorkspaceCheckpoint{}).
+			Where("run_id = ? AND lease_token = ? AND lease_until > ?", runID, token, now).
+			Where(silent).
+			Updates(map[string]any{"lease_token": "", "lease_until": nil, "lease_handoff_id": ""})
+		released = result.RowsAffected == 1
+		return result.Error
+	})
+	return released, err
+}
+
+// leaseRenewalClock stamps lease_renewed_at: the database's commit-time clock
+// on MySQL, shared by every replica, and the caller's clock elsewhere.
+func (r *RunsRepo) leaseRenewalClock(now time.Time) any {
+	if r.isMySQL() {
+		return clause.Expr{SQL: "UTC_TIMESTAMP(3)"}
+	}
+	return now
 }
 
 // ReleaseWorkspace marks a workspace no conversation is bound to any more, so

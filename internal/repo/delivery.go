@@ -206,30 +206,10 @@ func (r *DeliveryRepo) markIssueDelivered(issueID string, mrs []domain.DeliveryM
 	if !ok {
 		return nil
 	}
-	// A manually closed issue is an explicit terminal state. Background MR
-	// polling and stale SOP callbacks must not change it.
-	if issue.ManuallyClosed() {
-		return nil
-	}
 	if deliveredAt.IsZero() {
 		deliveredAt = time.Now().UTC()
 	}
-	// A human reopen must stay open until a new SOP succeeds. MR poll / reconcile
-	// uses "now" as checkedAt and would otherwise immediately lock the item again.
-	if strings.EqualFold(issue.DeliveryState, "reopened") && !fromSOP {
-		return nil
-	}
-	// Poll / reconcile may see leftover MRs from earlier SOP runs. Those rows
-	// stay in mr_delivery_states for analytics, but must not replace the
-	// work item's delivery MRs.
-	if !fromSOP {
-		for _, mr := range mrs {
-			if len(issue.DeliveryMRList()) > 0 && !issue.HasDeliveryMR(mr.URL) {
-				return nil
-			}
-		}
-	}
-	if issue.DeliveryState == "merged" && !deliveredAt.After(issue.DeliveryUpdatedAt) {
+	if issueDeliverySkipped(issue, mrs, deliveredAt, fromSOP) {
 		return nil
 	}
 	issue.DeliveryState = "merged"
@@ -258,6 +238,32 @@ func (r *DeliveryRepo) markIssueDelivered(issueID string, mrs []domain.DeliveryM
 	}
 	issue.AutomationState = "ignored"
 	return r.issues.PutIssue(issue)
+}
+
+// issueDeliverySkipped reports whether a delivery signal must leave the work
+// item untouched. deliveredAt must already be resolved (non-zero).
+func issueDeliverySkipped(issue domain.Issue, mrs []domain.DeliveryMR, deliveredAt time.Time, fromSOP bool) bool {
+	// A manually closed issue is an explicit terminal state. Background MR
+	// polling and stale SOP callbacks must not change it.
+	if issue.ManuallyClosed() {
+		return true
+	}
+	// A human reopen must stay open until a new SOP succeeds. MR poll / reconcile
+	// uses "now" as checkedAt and would otherwise immediately lock the item again.
+	if strings.EqualFold(issue.DeliveryState, "reopened") && !fromSOP {
+		return true
+	}
+	// Poll / reconcile may see leftover MRs from earlier SOP runs. Those rows
+	// stay in mr_delivery_states for analytics, but must not replace the
+	// work item's delivery MRs.
+	if !fromSOP {
+		for _, mr := range mrs {
+			if len(issue.DeliveryMRList()) > 0 && !issue.HasDeliveryMR(mr.URL) {
+				return true
+			}
+		}
+	}
+	return issue.DeliveryState == "merged" && !deliveredAt.After(issue.DeliveryUpdatedAt)
 }
 
 func (r *DeliveryRepo) ReopenDeliveredIssue(issueID string) (domain.Issue, error) {
@@ -715,11 +721,6 @@ func (r *DeliveryRepo) ListMRDeliveryStates() ([]domain.MRDeliveryState, error) 
 
 // DiscoverMRDeliveryStatesFromArtifacts registers MR links found in run artifacts.
 func (r *DeliveryRepo) DiscoverMRDeliveryStatesFromArtifacts() error {
-	type artifactHit struct {
-		runID  string
-		name   string
-		nodeID string
-	}
 	var rows []struct {
 		ExecutionContext string `gorm:"column:execution_context"`
 		Name             string `gorm:"column:name"`
@@ -848,13 +849,7 @@ func requirementPhaseMeasurements(run domain.Run, fallback domain.WorkflowDefini
 		if definition.Type == "sop" {
 			continue
 		}
-		stage, source := strings.TrimSpace(definition.MetricStage), "explicit"
-		if !frozenDefinition {
-			source = "inferred"
-		}
-		if stage == "" {
-			stage, source = inferLegacyMetricStage(nodeID, definition.Name, lane), "inferred"
-		}
+		stage, source := nodeMetricStage(nodeID, definition, lane, frozenDefinition)
 		if stage == "clarification" && (result.clarificationStart.IsZero() || nodeRun.StartedAt.Before(result.clarificationStart)) {
 			result.clarificationStart, result.clarificationStartSource = nodeRun.StartedAt, source
 		}
@@ -895,6 +890,20 @@ func requirementPhaseMeasurements(run domain.Run, fallback domain.WorkflowDefini
 		return result.evidence[i].NodeID < result.evidence[j].NodeID
 	})
 	return result
+}
+
+// nodeMetricStage resolves which requirement phase a node counts toward and
+// where that answer came from. An explicit MetricStage is "explicit" only when
+// it was read from the Run's frozen workflow snapshot; a blank one falls back
+// to inferring the stage from the node ID, name and lane.
+func nodeMetricStage(nodeID string, definition domain.WorkflowNode, lane string, frozenDefinition bool) (stage, source string) {
+	if stage = strings.TrimSpace(definition.MetricStage); stage == "" {
+		return inferLegacyMetricStage(nodeID, definition.Name, lane), "inferred"
+	}
+	if !frozenDefinition {
+		return stage, "inferred"
+	}
+	return stage, "explicit"
 }
 
 func inferLegacyMetricStage(nodeID, name, lane string) string {
@@ -1233,6 +1242,26 @@ func (r *DeliveryRepo) buildDeliveries(filter domain.AnalyticsFilter, now time.T
 	return out
 }
 
+// overlayIssueMRState merges the state the work item itself recorded for
+// the MR at url into the looked-up state: an empty/unknown lookup falls back
+// to the recorded state, otherwise the recorded state may only upgrade it
+// (see domain.EffectiveAnalyticsMRState).
+func overlayIssueMRState(state, url string, own []domain.DeliveryMR) string {
+	for _, mr := range own {
+		if !domain.SameGongfengMR(mr.URL, url) {
+			continue
+		}
+		if state == "" || state == "unknown" {
+			if mr.State != "" {
+				return mr.State
+			}
+			return state
+		}
+		return domain.EffectiveAnalyticsMRState(state, mr.State)
+	}
+	return state
+}
+
 func (r *DeliveryRepo) applyMRDeliveryStates(items []domain.AnalyticsDelivery, mrsByIssue map[string][]mrRef, issues map[string]domain.Issue) {
 	if len(items) == 0 {
 		return
@@ -1293,6 +1322,7 @@ func (r *DeliveryRepo) applyMRDeliveryStates(items []domain.AnalyticsDelivery, m
 				preferProject, preferIID = p, iid
 			}
 		}
+		own := issues[items[i].IssueID].DeliveryMRList()
 		var best *mrRef
 		bestState := ""
 		items[i].MRs = nil
@@ -1307,18 +1337,7 @@ func (r *DeliveryRepo) applyMRDeliveryStates(items []domain.AnalyticsDelivery, m
 			if ok {
 				mr.State = classify(st)
 			}
-			for _, own := range issues[items[i].IssueID].DeliveryMRList() {
-				if domain.SameGongfengMR(own.URL, mr.URL) {
-					if mr.State == "" || mr.State == "unknown" {
-						if own.State != "" {
-							mr.State = own.State
-						}
-					} else {
-						mr.State = domain.EffectiveAnalyticsMRState(mr.State, own.State)
-					}
-					break
-				}
-			}
+			mr.State = overlayIssueMRState(mr.State, mr.URL, own)
 			key := domain.MRDeliveryKey{Project: strings.ToLower(ref.project), IID: ref.iid}
 			if !seen[key] {
 				items[i].MRs = append(items[i].MRs, mr)

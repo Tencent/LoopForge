@@ -272,3 +272,77 @@ func TestWorkspacePreparationTrustedRequestCarriesWorkspaceKind(t *testing.T) {
 		t.Fatal("group mode lost during filtered plan projection", request)
 	}
 }
+
+// While agents or a terminal hold the workspace, an IDE request reuses the
+// environment they already run in, reports a trivial plan as ready, and only
+// refuses when real preparation would have to run underneath them.
+func TestEnsureWorkspaceReadyWhileWorkspaceBusy(t *testing.T) {
+	t.Parallel()
+	t.Run("reuses prepared environment", func(t *testing.T) {
+		e, id := checkpointFixture(t)
+		completedPreparationRun(t, e, id)
+		if state, err := e.EnsureWorkspaceReady(context.Background(), id); err != nil || state.Status != "ready" {
+			t.Fatal(state, err)
+		}
+		e.WorkspaceActive = func(domain.Run) bool { return true }
+		state, err := e.EnsureWorkspaceReady(context.Background(), id)
+		if err != nil || state.Status != "ready" {
+			t.Fatalf("busy prepared workspace = %+v, %v", state, err)
+		}
+		raw, _ := os.ReadFile(filepath.Join(e.RunWorkspace(id), ".agentflow", "env-count"))
+		if string(raw) != "run\n" {
+			t.Fatalf("busy workspace replayed preparation: %q", raw)
+		}
+	})
+	t.Run("trivial plan is ready", func(t *testing.T) {
+		e, id := checkpointFixture(t)
+		run := completedPreparationRun(t, e, id)
+		for i := range run.WorkflowSnapshot.Nodes {
+			run.WorkflowSnapshot.Nodes[i].RunOnWorkspaceRebuild = false
+		}
+		if err := e.repo.PutRun(run); err != nil {
+			t.Fatal(err)
+		}
+		e.WorkspaceActive = func(domain.Run) bool { return true }
+		state, err := e.EnsureWorkspaceReady(context.Background(), id)
+		if err != nil || state.Status != "ready" || len(state.Steps) != 0 {
+			t.Fatalf("busy trivial workspace = %+v, %v", state, err)
+		}
+		if _, err := os.Stat(filepath.Join(e.RunWorkspace(id), ".agentflow", "env-count")); !os.IsNotExist(err) {
+			t.Fatal("trivial plan ran a script")
+		}
+	})
+	t.Run("unprepared plan is refused", func(t *testing.T) {
+		e, id := checkpointFixture(t)
+		completedPreparationRun(t, e, id)
+		e.WorkspaceActive = func(domain.Run) bool { return true }
+		state, err := e.EnsureWorkspaceReady(context.Background(), id)
+		if err == nil || state.Status != "unprepared" || !strings.Contains(err.Error(), "成员或终端正在使用工作区") {
+			t.Fatalf("busy unprepared workspace = %+v, %v", state, err)
+		}
+	})
+}
+
+// A run with nothing to replay never writes a ready preparation status; the
+// IDE terminal must still open in the environment agents are using.
+func TestWorkspaceTerminalOpensForTrivialPlanWhileBusy(t *testing.T) {
+	t.Parallel()
+	e, id := checkpointFixture(t)
+	run := completedPreparationRun(t, e, id)
+	for i := range run.WorkflowSnapshot.Nodes {
+		run.WorkflowSnapshot.Nodes[i].RunOnWorkspaceRebuild = false
+	}
+	if err := e.repo.PutRun(run); err != nil {
+		t.Fatal(err)
+	}
+	e.WorkspaceActive = func(domain.Run) bool { return true }
+	var pool runtime.TerminalPool
+	opened, err := e.HandleWorkspaceTerminal(context.Background(), id, &pool, "trivial:1", domain.WorkspaceTerminalRequest{Operation: "open"}, 0)
+	if err != nil || opened.ID == "" {
+		t.Fatalf("trivial busy terminal = %+v, %v", opened, err)
+	}
+	defer pool.CloseScope("trivial:1")
+	if state := runtime.ReadWorkspacePreparationStatus(e.RunWorkspace(id), ""); state.Status == "ready" {
+		t.Fatalf("precondition: trivial plan wrote a ready status %+v", state)
+	}
+}

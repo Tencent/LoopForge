@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 type ExecutorRunner struct{}
@@ -257,12 +259,30 @@ func appendTaskPromptToSystemFile(workspace, agentRel, prompt string) error {
 
 const maxExecutorOutputBytes = 32 << 10
 
+// clipOnRuneBoundary cuts s to at most n bytes without splitting a UTF-8
+// sequence. It backs off at most utf8.UTFMax-1 bytes, so malformed input
+// cannot shrink the result to nothing.
+func clipOnRuneBoundary(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	end := n
+	for i := 0; i < utf8.UTFMax-1 && end > 0 && !utf8.RuneStart(s[end]); i++ {
+		end--
+	}
+	if !utf8.RuneStart(s[end]) {
+		// Not valid UTF-8 here anyway; keep the byte cut.
+		end = n
+	}
+	return s[:end]
+}
+
 func clipExecutorOutput(s string) string {
 	s = strings.TrimSpace(s)
 	if len(s) <= maxExecutorOutputBytes {
 		return s
 	}
-	return s[:maxExecutorOutputBytes] + fmt.Sprintf("\n… [output truncated, %d bytes]", len(s))
+	return clipOnRuneBoundary(s, maxExecutorOutputBytes) + fmt.Sprintf("\n… [output truncated, %d bytes]", len(s))
 }
 
 var ErrMaxTurns = errors.New("executor reached max turns")
@@ -295,15 +315,12 @@ func executorReportedError(adapterResult, raw string) error {
 }
 
 func hasArg(values []string, wanted string) bool {
-	for _, value := range values {
-		if value == wanted {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(values, wanted)
 }
 
-func dropArgWithValue(values []string, flag string) []string {
+// dropArgWithValue removes every occurrence of the given flags together with
+// their value, accepting both the "--flag value" and "--flag=value" forms.
+func dropArgWithValue(values []string, flags ...string) []string {
 	out := make([]string, 0, len(values))
 	skip := false
 	for _, value := range values {
@@ -311,11 +328,11 @@ func dropArgWithValue(values []string, flag string) []string {
 			skip = false
 			continue
 		}
-		if value == flag {
+		if slices.Contains(flags, value) {
 			skip = true
 			continue
 		}
-		if strings.HasPrefix(value, flag+"=") {
+		if slices.ContainsFunc(flags, func(flag string) bool { return strings.HasPrefix(value, flag+"=") }) {
 			continue
 		}
 		out = append(out, value)

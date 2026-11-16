@@ -150,7 +150,7 @@ assert.match(list,/pa-rc-add/);
 const empty=ctx.projectRepoListHTML([],"");
 assert.match(empty,/还没有绑定代码仓库/);
 assert.equal((empty.match(/<li>/g)||[]).length,3);
-assert.match(empty,/粘贴 GitHub 仓库地址[^]*确认分支[^]*保存即生效/);
+assert.match(empty,/粘贴 GitHub 链接或 Git SSH 地址[^]*确认分支[^]*保存即生效/);
 assert.match(empty,/添加第一个仓库/);
 
 // Detail panels.

@@ -164,6 +164,9 @@ func preparationFingerprint(node domain.WorkflowNode, repositories []domain.Repo
 }
 func preparationQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", "'\"'\"'") + "'" }
 
+// preparationOutputLimit bounds the script output kept in a preparation step.
+const preparationOutputLimit = 32 << 10
+
 var preparationANSI = regexp.MustCompile(`\x1b\[[0-?]*[ -/]*[@-~]`)
 var preparationSecretKey = regexp.MustCompile(`(?i)(api[_-]?key|token|secret|password|passwd|authorization|credential)`)
 var preparationSecretAssignment = regexp.MustCompile(`(?i)(\b[\w.-]*(?:api[_-]?key|token|secret|password|passwd|authorization)[\w.-]*["']?\s*[=:]\s*)(?:"[^"]*"|'[^']*'|(?:Bearer\s+)?[^\s,;]+)`)
@@ -233,13 +236,23 @@ func preparationFailureDetail(output string) string {
 	output = strings.Join(lines, "\n")
 	const limit = 2 << 10
 	if len(output) > limit {
-		start := len(output) - limit + len("…\n")
-		for start < len(output) && !utf8.RuneStart(output[start]) {
-			start++
-		}
-		output = "…\n" + output[start:]
+		output = "…\n" + tailAtRuneBoundary(output, limit-len("…\n"))
 	}
 	return output
+}
+
+// tailAtRuneBoundary returns at most the last limit bytes of s. When the cut
+// falls inside a multi-byte UTF-8 sequence it moves forward to the next rune
+// start, so the result never begins with a partial character.
+func tailAtRuneBoundary(s string, limit int) string {
+	if len(s) <= limit {
+		return s
+	}
+	start := len(s) - limit
+	for start < len(s) && !utf8.RuneStart(s[start]) {
+		start++
+	}
+	return s[start:]
 }
 
 func preparationCommand(node domain.WorkflowNode, repo *domain.RepositoryContext) string {
@@ -339,14 +352,7 @@ func EnsureWorkspacePreparation(ctx context.Context, sb Sandbox, wf domain.Workf
 		var output string
 		execute := func(repo *domain.RepositoryContext) error {
 			raw, execErr := sb.Exec(ctx, CommandSpec{Argv: []string{"sh", "-lc", preparationCommand(node, repo)}, Provider: "script", CredentialBindings: []CredentialBinding{BindGit, BindMCP}}, nil)
-			output += redactPreparationOutput(sb, raw)
-			if len(output) > 32<<10 {
-				start := len(output) - (32 << 10)
-				for start < len(output) && !utf8.RuneStart(output[start]) {
-					start++
-				}
-				output = output[start:]
-			}
+			output = tailAtRuneBoundary(output+redactPreparationOutput(sb, raw), preparationOutputLimit)
 			return execErr
 		}
 		if node.ExecutionScope == domain.ExecutionScopeRepositories {
@@ -413,8 +419,8 @@ func RecordWorkspacePreparation(ctx context.Context, sb Sandbox, wf domain.Workf
 	if state.Environment != epoch {
 		state = WorkspacePreparationStatus{Steps: []WorkspacePreparationStep{}, Environment: epoch}
 	}
-	if len(output) > 32<<10 {
-		output = output[:32<<10]
+	if len(output) > preparationOutputLimit {
+		output = output[:preparationOutputLimit]
 	}
 	step := WorkspacePreparationStep{NodeID: nodeID, Name: selected.Name, Status: "ready", Output: output, Fingerprint: preparationFingerprint(*selected, repositories, wf.SandboxSnapshot), FinishedAt: time.Now().UTC()}
 	replaced := false
@@ -437,6 +443,14 @@ func RecordWorkspacePreparation(ctx context.Context, sb Sandbox, wf domain.Workf
 		return state, err
 	}
 	return state, nil
+}
+
+// WorkspacePreparationTrivial reports a recipe with nothing to prepare. A live
+// environment serves it as is, even if no run ever stamped it ready: SOP
+// nodes skip preparation entirely when their workflow has no such steps.
+func WorkspacePreparationTrivial(wf domain.WorkflowDefinition) bool {
+	nodes, err := preparationNodes(WorkspacePreparationWorkflow(wf))
+	return err == nil && len(nodes) == 0
 }
 
 func WorkspacePreparationReusable(state WorkspacePreparationStatus, wf domain.WorkflowDefinition, repositories []domain.RepositoryContext, epoch string) bool {

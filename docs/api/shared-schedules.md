@@ -9,7 +9,7 @@
 - 升级沿用保存接口，显式修改 `sharedTaskVersion`。参数按新版定义重新校验；没有隐式升级。运行中的任务仍使用启动时的版本，之后运行使用保存后的版本。
 - 新订阅读取、保存、运行和删除按目标项目权限校验；执行使用目标项目 Owner 的凭据。发布者不能通过共享定义取得订阅项目写权限。
 
-参数结构：`{name,label,type,required,default}`，type 为 string/integer/number/boolean；值均为字符串。提示词使用 `{{params.days}}`。最多 20 个参数，名称唯一；未定义、未知、缺失必填或类型错误返回 400。默认值只用于未提交的字段；显式空值不能绕过必填校验。替换后提示词最多 4000 字节，替换单次完成，参数中的模板表达式保持原文。
+参数结构：`{name,label,type,required,default}`，type 为 string/integer/number/boolean；值均为字符串。提示词使用 `{{params.days}}`。最多 20 个参数，名称唯一；未定义、未知、缺失必填或类型错误返回 400。默认值只用于未提交的字段；显式空值不能绕过必填校验。提示词本身不限长度，替换单次完成，参数中的模板表达式保持原文。
 
 ```json
 {"name":"需求停滞巡检","prompt":"检查超过 {{params.days}} 天未更新的需求，汇总实际结果。","parameters":[{"name":"days","label":"停滞天数","type":"integer","required":true,"default":"3"}],"baseVersion":0,"changeNote":"首次发布"}

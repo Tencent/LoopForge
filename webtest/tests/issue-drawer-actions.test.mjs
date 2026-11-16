@@ -73,6 +73,67 @@ test('drawer clarification, activity, delivery, and operation helpers render mea
   assert.equal(result.badTime, '—');
 });
 
+test('acceptance gates follow the SOP edges, so a node inserted by a SOP update shows where it runs', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  const result = structuredClone(app.evaluate(`(() => {
+    // SOP v2 inserted "preview" between "test" and "accept"; the editor appended
+    // it to the nodes array, and refresh-sop keeps that array order.
+    const wf={id:'flow-1',
+      nodes:[{id:'design',name:'方案设计',type:'agent'},{id:'test',name:'测试验证',type:'agent'},
+        {id:'accept',name:'人工验收',type:'approval'},{id:'summary',name:'交付汇总',type:'agent'},
+        {id:'preview',name:'构建静态站点',type:'agent'}],
+      edges:[{source:'design',target:'test'},{source:'test',target:'preview'},
+        {source:'preview',target:'accept'},{source:'accept',target:'summary'}]};
+    const run={id:'run-v2',status:'waiting',workflowId:'flow-1',workflowSnapshot:wf,
+      nodes:{design:{status:'succeeded'},test:{status:'succeeded'},preview:{status:'succeeded'},
+        accept:{status:'waiting_approval'},summary:{status:'pending'}}};
+    const issue={...state.data.issues[0],source:'manual'};
+    const html=acceptancePane(issue,{issue,run,task:null,requirement:null});
+    const names=html.split('<span class="node-name">').slice(1).map(part=>part.split('<')[0]);
+    const cyclic={...wf,edges:[...wf.edges,{source:'summary',target:'design'}]};
+    return {names,
+      unordered:nodesInExecutionOrder({nodes:wf.nodes}).map(n=>n.id),
+      cyclic:nodesInExecutionOrder(cyclic).map(n=>n.id)};
+  })()`));
+  assert.deepEqual(result.names, ['方案设计','测试验证','构建静态站点','人工验收','交付汇总']);
+  assert.deepEqual(result.unordered, ['design','test','accept','summary','preview']);
+  assert.equal(result.cyclic.length, 5);
+  assert.deepEqual([...result.cyclic].sort(), ['accept','design','preview','summary','test']);
+});
+
+test('acceptance gate ordering ignores self-loops and edges to deleted nodes, and keeps degenerate SOPs as stored', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  const result = structuredClone(app.evaluate(`(() => {
+    const ids=wf=>nodesInExecutionOrder(wf).map(n=>n.id);
+    const nodes=[{id:'c'},{id:'a'},{id:'b'}];
+    return {
+      // A self-loop and an edge from/to a node removed in a later SOP version
+      // must not block the real order a -> b -> c.
+      dangling:ids({nodes,edges:[{source:'a',target:'b'},{source:'b',target:'c'},
+        {source:'a',target:'a'},{source:'gone',target:'a'},{source:'a',target:'gone'}]}),
+      // Only ignorable edges: stable array order.
+      onlyIgnored:ids({nodes,edges:[{source:'b',target:'b'},{source:'gone',target:'c'}]}),
+      // Diamond: ties are broken by array order.
+      diamond:ids({nodes:[{id:'end'},{id:'right'},{id:'left'},{id:'start'}],
+        edges:[{source:'start',target:'left'},{source:'start',target:'right'},
+          {source:'left',target:'end'},{source:'right',target:'end'}]}),
+      single:ids({nodes:[{id:'only'}],edges:[{source:'x',target:'only'}]}),
+      missingID:ids({nodes:[{id:'b'},{name:'no id'},{id:'a'}],edges:[{source:'a',target:'b'}]}).map(id=>id??null),
+      empty:ids(undefined),
+      noNodes:ids({edges:[{source:'a',target:'b'}]}),
+    };
+  })()`));
+  assert.deepEqual(result.dangling, ['a', 'b', 'c']);
+  assert.deepEqual(result.onlyIgnored, ['c', 'a', 'b']);
+  assert.deepEqual(result.diamond, ['start', 'right', 'left', 'end']);
+  assert.deepEqual(result.single, ['only']);
+  assert.deepEqual(result.missingID, ['b', null, 'a']);
+  assert.deepEqual(result.empty, []);
+  assert.deepEqual(result.noNodes, []);
+});
+
 test('drawer actions write back clarification and resync TAPD with API payloads', async (t) => {
   const app = await loadApp();
   t.after(app.close);

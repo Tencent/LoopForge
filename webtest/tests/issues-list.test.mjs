@@ -35,9 +35,11 @@ test('issue list helpers filter, format, parse repositories, and persist edits',
       parseGongfengRepoURL('https://git.example.com/team/service/-/merge_requests/9'),
       parseGongfengRepoURL('team/sub/repo'),
       parseGongfengRepoURL('https://evil.example/team/repo'),
-      parseGongfengRepoURL('../secret')
+      parseGongfengRepoURL('../secret'),
+      parseGongfengRepoURL('git@github.com:octo/widgets.git'),
+      parseGongfengRepoURL('ssh://git@github.com/octo/widgets.git')
     ];
-    const fill={name:''};const filled=fillRepositoryFromLink('ssh://git@git.example.com/team/api.git',fill);
+    const fill={name:''};const filled=fillRepositoryFromLink('ssh://git@gitlab.example.org:2222/team/api.git',fill);
     const title=issueTitleMarkup('[Bug] 【前端】 broken <button>');
     const keys=[issueKeyColumnWidth([{id:'x',projectId:'project-1',number:1}]),
       issueKeyColumnWidth([{source:'tapd',externalRef:{externalId:'1234567890'}}])];
@@ -59,10 +61,16 @@ test('issue list helpers filter, format, parse repositories, and persist edits',
   assert.equal(result.parsed[2].name, 'repo');
   assert.equal(result.parsed[3], null);
   assert.equal(result.parsed[4], null);
+  // GitHub SSH-style addresses stay GitHub repositories, as on the server.
+  for (const github of result.parsed.slice(5)) {
+    assert.equal(github.provider, 'github');
+    assert.equal(github.project, 'github:octo/widgets');
+    assert.equal(github.cloneUrl, 'https://github.com/octo/widgets.git');
+  }
   assert.equal(result.filled, true);
   assert.deepEqual(result.fill, {
-    name: 'api', gongfengProjectId: 'team/api', webUrl: 'https://git.example.com/team/api',
-    cloneUrl: 'git@git.example.com:team/api.git'
+    name: 'api', gongfengProjectId: '', webUrl: '',
+    cloneUrl: 'ssh://git@gitlab.example.org:2222/team/api.git'
   });
   assert.match(result.title, /tone-danger/);
   assert.match(result.title, /tone-cyan/);

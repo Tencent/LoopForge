@@ -274,3 +274,15 @@ func TestCheckoutRepositoryRejectsCommandRunningCloneURLs(t *testing.T) {
 		}
 	}
 }
+
+func TestCloneFailureNeverEchoesCloneURLCredentials(t *testing.T) {
+	// Port 1 on loopback refuses at once; git echoes the URL in its error.
+	cloneURL := "http://user:s3cret-token@127.0.0.1:1/acme/app.git"
+	err := cloneRepository(context.Background(), t.TempDir(), &domain.RunnerRepository{CloneURL: cloneURL, Ref: "master"})
+	if err == nil {
+		t.Fatal("clone of an unreachable remote succeeded")
+	}
+	if strings.Contains(err.Error(), "s3cret-token") || !strings.Contains(err.Error(), "127.0.0.1:1/acme/app.git") {
+		t.Fatalf("clone error leaks or hides the remote: %v", err)
+	}
+}

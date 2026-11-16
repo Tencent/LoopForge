@@ -1,0 +1,55 @@
+package httpapi
+
+import (
+	"agentflow/internal/domain"
+	"bytes"
+	"net/http"
+	"testing"
+)
+
+func TestWorkspaceEditAllowedCoversProjectRoles(t *testing.T) {
+	h, owner := workbenchFixture(t)
+	users := map[string]domain.User{"owner": owner}
+	for _, name := range []string{"editor", "viewer", "outsider", "admin"} {
+		if err := h.repo.PutUser(domain.User{LoginName: "ws-" + name}); err != nil {
+			t.Fatal(err)
+		}
+		users[name], _ = h.repo.UserByLoginName("ws-" + name)
+	}
+	if _, err := h.repo.GrantPlatformAdmin(users["admin"].LoginName); err != nil {
+		t.Fatal(err)
+	}
+	project, _ := h.repo.Project("workbench")
+	project.Members = []domain.ProjectMember{{UserID: users["editor"].ID, Role: "member"}, {UserID: users["viewer"].ID, Role: "Viewer"}}
+	if err := h.repo.PutProject(project); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.repo.PutProject(domain.Project{ID: "unowned", Name: "Unowned"}); err != nil {
+		t.Fatal(err)
+	}
+	runs := &runsHandlers{deps: h.deps}
+	runIn := func(projectID string) domain.Run {
+		return domain.Run{ID: "run-" + projectID, ExecutionContext: domain.TelemetryContext{ProjectID: projectID}}
+	}
+	cases := []struct {
+		name, user, project string
+		want                bool
+	}{
+		{"owner", "owner", "workbench", true},
+		{"editor member", "editor", "workbench", true},
+		{"viewer member is case-insensitive", "viewer", "workbench", false},
+		{"outsider", "outsider", "workbench", false},
+		{"platform admin", "admin", "workbench", true},
+		{"unowned project without members", "outsider", "unowned", true},
+		{"missing project", "outsider", "missing", false},
+		{"platform admin on missing project", "admin", "missing", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c, _ := workbenchContext(users[tc.user], http.MethodGet, "/", bytes.NewBuffer(nil))
+			if got := runs.workspaceEditAllowed(c.Request, runIn(tc.project), users[tc.user].ID); got != tc.want {
+				t.Fatalf("workspaceEditAllowed = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}

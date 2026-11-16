@@ -105,7 +105,7 @@ func (h *assistantHandlers) scheduleAssistantTitle(ctx context.Context, ownerID 
 			title, err = summarizeAssistantTitle(runCtx, user, model, prompt, shared)
 		}
 		if err != nil || strings.TrimSpace(title) == "" {
-			log.Printf("assistant title summary skipped session=%s: %v", sessionID, redactAssistantSecrets(fmt.Sprint(err), user))
+			log.Printf("assistant title summary skipped session=%s: %s", sessionID, sanitizeAssistantDiagnostic(fmt.Sprint(err), user, 4096))
 			return
 		}
 		if err := h.repo.SetAssistantSessionGeneratedTitle(ownerID, sessionID, title); err != nil {
@@ -120,7 +120,7 @@ func (h *assistantHandlers) scheduleAssistantTitle(ctx context.Context, ownerID 
 // effort; the gateway behind a Base URL may serve nothing else.
 func assistantTitleModel(ctx context.Context, user domain.User, model string, shared []string) (string, string) {
 	if engine, _ := assistantModelEngine(model); engine != assistantEngineCodeBuddy {
-		if efforts := assistantModelEfforts(model); len(efforts) > 0 {
+		if efforts := assistantModelEfforts(user, model); len(efforts) > 0 {
 			return model, efforts[0]
 		}
 		return model, ""

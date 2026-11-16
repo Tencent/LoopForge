@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -28,12 +29,7 @@ const (
 var ReadOnlyTools = []string{ToolSearch, ToolFetch, ToolListSources, ToolGetSource}
 
 func IsReadOnlyTool(name string) bool {
-	for _, tool := range ReadOnlyTools {
-		if tool == name {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(ReadOnlyTools, name)
 }
 
 var ErrNotConfigured = errors.New("知识库未接入：请在「知识库 → 接入配置」填写地址和 Token 并启用")
@@ -213,13 +209,7 @@ func SourceAllowed(allowed []string, source string) bool {
 	if len(allowed) == 0 {
 		return true
 	}
-	source = strings.TrimSpace(source)
-	for _, s := range allowed {
-		if s == source {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(allowed, strings.TrimSpace(source))
 }
 
 func cleanList(in []string) []string {

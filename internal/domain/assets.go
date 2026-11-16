@@ -291,42 +291,66 @@ func ValidateMCPServer(v MCPServerDefinition) error {
 	if strings.TrimSpace(v.ID) == "" || strings.TrimSpace(v.Name) == "" {
 		return fmt.Errorf("MCP 需要 id 和 name")
 	}
+	if err := validateMCPTransport(v); err != nil {
+		return err
+	}
+	if v.TimeoutSec < 0 || v.TimeoutSec > 600 {
+		return fmt.Errorf("timeoutSec 需在 0–600 之间")
+	}
+	if err := validateMCPScope(v); err != nil {
+		return err
+	}
+	return validateMCPAuth(v)
+}
+
+// validateMCPTransport checks the launch settings required by v.Transport.
+func validateMCPTransport(v MCPServerDefinition) error {
 	switch strings.TrimSpace(v.Transport) {
 	case "http":
 		if !strings.HasPrefix(v.URL, "http://") && !strings.HasPrefix(v.URL, "https://") {
 			return fmt.Errorf("HTTP MCP 需要有效的 url")
 		}
+		return nil
 	case "stdio", "":
-		if strings.TrimSpace(v.Command) == "" {
-			return fmt.Errorf("stdio MCP 需要 command")
-		}
-		if strings.ContainsRune(v.InstallScript, '\x00') {
-			return fmt.Errorf("MCP 安装脚本不能包含 NUL")
-		}
-		if cwd := strings.TrimSpace(v.WorkingDirectory); cwd != "" {
-			if err := ValidateRelativeFilePath(cwd); err != nil {
-				return fmt.Errorf("workingDirectory: %w", err)
-			}
-		}
-		for _, entry := range v.PathEntries {
-			if err := ValidateRelativeFilePath(entry); err != nil {
-				return fmt.Errorf("pathEntries: %w", err)
-			}
-		}
-		for _, ref := range v.FileRefs {
-			if err := ValidateRelativeFilePath(ref.Path); err != nil {
-				return err
-			}
-			if ref.Size < 0 || ref.Size > MCPFileMaxBytes {
-				return fmt.Errorf("MCP file %s exceeds the 1MB limit", ref.Path)
-			}
-		}
+		return validateMCPStdio(v)
 	default:
 		return fmt.Errorf("transport 只能是 stdio 或 http")
 	}
-	if v.TimeoutSec < 0 || v.TimeoutSec > 600 {
-		return fmt.Errorf("timeoutSec 需在 0–600 之间")
+}
+
+// validateMCPStdio checks the command, install script and workspace-relative
+// paths of a stdio MCP server.
+func validateMCPStdio(v MCPServerDefinition) error {
+	if strings.TrimSpace(v.Command) == "" {
+		return fmt.Errorf("stdio MCP 需要 command")
 	}
+	if strings.ContainsRune(v.InstallScript, '\x00') {
+		return fmt.Errorf("MCP 安装脚本不能包含 NUL")
+	}
+	if cwd := strings.TrimSpace(v.WorkingDirectory); cwd != "" {
+		if err := ValidateRelativeFilePath(cwd); err != nil {
+			return fmt.Errorf("workingDirectory: %w", err)
+		}
+	}
+	for _, entry := range v.PathEntries {
+		if err := ValidateRelativeFilePath(entry); err != nil {
+			return fmt.Errorf("pathEntries: %w", err)
+		}
+	}
+	for _, ref := range v.FileRefs {
+		if err := ValidateRelativeFilePath(ref.Path); err != nil {
+			return err
+		}
+		if ref.Size < 0 || ref.Size > MCPFileMaxBytes {
+			return fmt.Errorf("MCP file %s exceeds the 1MB limit", ref.Path)
+		}
+	}
+	return nil
+}
+
+// validateMCPScope checks that project and personal servers carry exactly the
+// owner fields their scope allows.
+func validateMCPScope(v MCPServerDefinition) error {
 	switch strings.TrimSpace(v.Scope) {
 	case "":
 	case "project":
@@ -349,6 +373,12 @@ func ValidateMCPServer(v MCPServerDefinition) error {
 	default:
 		return fmt.Errorf("scope 只能为空、project 或 personal")
 	}
+	return nil
+}
+
+// validateMCPAuth checks v.AuthType and keeps GitHub token auth on HTTP
+// servers without a stored Authorization header.
+func validateMCPAuth(v MCPServerDefinition) error {
 	switch strings.TrimSpace(v.AuthType) {
 	case "", "github-token":
 	default:

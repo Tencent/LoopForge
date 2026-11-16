@@ -148,7 +148,7 @@ func (d *Daemon) handleRunnerWorkspaceTerminal(ctx context.Context, root, scope 
 		gate.RLock()
 		release = onceRelease(releaseSandbox, gate.RUnlock)
 	}
-	result, err := d.workspaceTerminals.HandleSandbox(ctx, execution, scope, *request.Terminal, release)
+	result, err := d.workspaceTerminals.HandleSandboxWithGitSSH(ctx, execution, scope, *request.Terminal, release, request.TerminalGitSSHKeys)
 	if err != nil {
 		release()
 	}
@@ -163,6 +163,7 @@ func (d *Daemon) workspaceExecutionSandbox(ctx context.Context, sb runtime.Sandb
 	inv := request.PreparationInvocation
 	if inv != nil {
 		credentials.GitToken = invocationGitToken(inv)
+		credentials.GitSSHKeys = inv.GitSSHKeys
 		credentials.GitUserName = inv.GitUserName
 		credentials.GitUserEmail = inv.GitUserEmail
 		servers := inv.MCPCallServers
@@ -210,6 +211,9 @@ func (d *Daemon) runnerWorkspacePreparationStatus(ctx context.Context, root stri
 		state.Error = "上次工作区准备已中断，请重新准备"
 	}
 	if state.Status != "ready" {
+		if state.Status != "preparing" && request.Workflow != nil && runtime.WorkspacePreparationTrivial(*request.Workflow) {
+			return runtime.WorkspacePreparationStatus{Status: "ready", Steps: []runtime.WorkspacePreparationStep{}}
+		}
 		return state
 	}
 	epoch, err := runtime.ReadSandboxEnvironmentIdentity(ctx, sb)
@@ -235,7 +239,7 @@ func (d *Daemon) openBusyGroupTerminal(ctx context.Context, root, scope string, 
 	release := onceRelease(releaseSandbox, gate.RUnlock)
 	state := runtime.ReadWorkspacePreparationStatus(root, sb.ID())
 	epoch, err := runtime.ReadSandboxEnvironmentIdentity(ctx, sb)
-	if err != nil || !runtime.WorkspacePreparationReusable(state, *request.Workflow, request.Repositories, epoch) {
+	if !runtime.WorkspacePreparationTrivial(*request.Workflow) && (err != nil || !runtime.WorkspacePreparationReusable(state, *request.Workflow, request.Repositories, epoch)) {
 		release()
 		return runtime.TerminalResult{}, fmt.Errorf("workspace environment changed; wait until active execution finishes before preparing")
 	}
@@ -245,7 +249,7 @@ func (d *Daemon) openBusyGroupTerminal(ctx context.Context, root, scope string, 
 		credentials.GitUserName = inv.GitUserName
 		credentials.GitUserEmail = inv.GitUserEmail
 	}
-	result, err := d.workspaceTerminals.HandleSandbox(ctx, runtime.WithSandboxCredentials(sb, credentials), scope, *request.Terminal, release)
+	result, err := d.workspaceTerminals.HandleSandboxWithGitSSH(ctx, runtime.WithSandboxCredentials(sb, credentials), scope, *request.Terminal, release, request.TerminalGitSSHKeys)
 	if err != nil {
 		release()
 	}

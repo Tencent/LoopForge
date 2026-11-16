@@ -14,10 +14,12 @@ export default mergeConfig(
       coverage: {
         provider: "v8",
         include: ["src/**/*.{js,jsx}"],
-        all: true,
         reporter: ["text-summary", "text", "json-summary", "json"],
         reportsDirectory: "coverage",
-        thresholds: { lines: 85 },
+        // Vitest 4 remaps V8 coverage with an AST-aware mapper. The same
+        // suite reports 81.86% lines here versus 87.39% under Vitest 3's
+        // older, inflated mapping. Keep the gate at the new baseline.
+        thresholds: { lines: 81 },
       },
     },
   }),

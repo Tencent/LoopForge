@@ -69,6 +69,7 @@ function defaultPayload(pathname, method) {
   };
   if (pathname === '/api/bootstrap') return sampleBootstrap();
   if (pathname === '/api/assistant/sessions') return [];
+  if (/\/users\/[^/]+\/git-ssh-keys$/.test(pathname)) return [];
   if (/\/workflows\/metrics$/.test(pathname)) return sampleBootstrap().workflowMetrics;
   if (pathname === '/api/workflow-metrics') return sampleBootstrap().workflowMetrics;
   if (pathname === '/api/notification-bots') return sampleBootstrap().bots;
@@ -161,12 +162,12 @@ class ObserverStub {
   takeRecords() { return []; }
 }
 
-export async function loadApp({ routes = [], hash = '', dispatchReady = true } = {}) {
+export async function loadApp({ routes = [], hash = '', dispatchReady = true, origin = 'http://127.0.0.1' } = {}) {
   const html = await readFile(path.join(WEB_ROOT, 'index.html'), 'utf8');
   const dom = new JSDOM(html, {
     runScripts: 'outside-only',
     pretendToBeVisual: true,
-    url: `http://127.0.0.1/${hash ? `#${hash.replace(/^#/, '')}` : ''}`,
+    url: `${origin}/${hash ? `#${hash.replace(/^#/, '')}` : ''}`,
   });
   const { window } = dom;
   const router = createFetchRouter(routes);

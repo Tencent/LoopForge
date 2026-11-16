@@ -18,8 +18,6 @@ import (
 	"agentflow/internal/engine"
 	"agentflow/internal/runtime"
 	"agentflow/internal/tracker"
-
-	"github.com/gin-gonic/gin"
 )
 
 func TestScheduledAssistantCanDispatchSOP(t *testing.T) {
@@ -76,7 +74,6 @@ func TestScheduledAssistantNativeGatewayKeepsWorkspaceAndTerminalReply(t *testin
 	if err := h.repo.PutIssue(domain.Issue{ID: "native-scheduled-issue", ProjectID: "workbench", Title: "Original", Status: "todo"}); err != nil {
 		t.Fatal(err)
 	}
-	gateway := &agentToolGateway{deps: h.deps}
 	sessionIDs := make(chan string, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		token := strings.Split(strings.TrimPrefix(r.URL.Path, "/internal/agent-tools/"), "/")[0]
@@ -98,10 +95,8 @@ func TestScheduledAssistantNativeGatewayKeepsWorkspaceAndTerminalReply(t *testin
 		if err := session.attachReplyFile("report.md", "text/markdown", []byte("# Scheduled report")); err != nil {
 			t.Error(err)
 		}
-		c, _ := gin.CreateTestContext(w)
-		c.Request = r
-		c.Params = gin.Params{{Key: "token", Value: token}}
-		gateway.ServeHTTP(c)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{}`))
 	}))
 	defer server.Close()
 	previous := config.Current()
@@ -116,6 +111,10 @@ import json, sys, urllib.request
 args = sys.argv[1:]
 config = json.load(open(args[args.index('--mcp-config') + 1]))
 url = config['mcpServers']['agentflow_session']['url']
+# Observe the prepared session explicitly; CLI tools themselves now pass
+# through the execution machine's local relay rather than this fixture.
+token = url.split('/internal/agent-tools/')[1].split('/')[0]
+urllib.request.urlopen(` + "'" + server.URL + `' + '/internal/agent-tools/' + token + '/mcp', timeout=5).read()
 payload = {'jsonrpc':'2.0','id':1,'method':'tools/call','params':{'name':'submit_assistant_reply','arguments':{'message':'已完成定时巡检并生成报告。','drafts':[{'tool':'issues_save','body':{'id':'native-scheduled-issue','projectId':'workbench','title':'Scheduled update'}}]}}}
 req = urllib.request.Request(url, json.dumps(payload).encode(), {'Content-Type':'application/json'})
 try:
@@ -130,13 +129,20 @@ raise SystemExit(1)
 	}
 	t.Setenv("AGENTFLOW_CODEBUDDY_BIN", bin)
 	task := assistantTask{ID: "native-scheduled", Name: "Native schedule", ProjectID: "workbench", Prompt: "巡检并生成报告"}
-	if err := h.executeAssistantTask(context.Background(), user, &task); err != nil {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	if err := h.executeAssistantTask(ctx, user, &task); err != nil {
 		t.Fatal(err)
 	}
 	if task.LastStatus != "ok" || !strings.Contains(task.LastMessage, "已完成定时巡检") {
 		t.Fatalf("terminal reply was lost: %+v", task)
 	}
-	sessionID := <-sessionIDs
+	var sessionID string
+	select {
+	case sessionID = <-sessionIDs:
+	case <-time.After(time.Second):
+		t.Fatal("fake CLI did not reach the prepared native session")
+	}
 	issue, _ := h.repo.Issue("native-scheduled-issue")
 	if issue.Title != "Scheduled update" {
 		t.Fatalf("terminal draft was not executed with full access: %+v", issue)

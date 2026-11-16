@@ -63,6 +63,9 @@ type ProjectMember struct {
 	Role   string `json:"role"` // maintainer, member, viewer
 }
 
+// RepositoryProviderSSH uses Git transport only; it has no hosting API adapter.
+const RepositoryProviderSSH = "ssh"
+
 type Repository struct {
 	ID                 string    `json:"id"`
 	ProjectID          string    `json:"projectId"`
@@ -88,7 +91,18 @@ type Repository struct {
 func PublicRepository(r Repository) Repository {
 	r.GitTokenConfigured = false
 	r.GitToken = ""
+	// Rows saved before credentials were rejected may still embed them.
+	r.CloneURL = StripURLCredentials(r.CloneURL)
+	r.WebURL = StripURLCredentials(r.WebURL)
 	return r
+}
+
+// PublicRepositoryContext drops URL credentials from a run or task snapshot
+// shown to readers; the stored snapshot keeps them so legacy clones work.
+func PublicRepositoryContext(rc RepositoryContext) RepositoryContext {
+	rc.CloneURL = StripURLCredentials(rc.CloneURL)
+	rc.WebURL = StripURLCredentials(rc.WebURL)
+	return rc
 }
 
 func PublicRepositories(items []Repository) []Repository {

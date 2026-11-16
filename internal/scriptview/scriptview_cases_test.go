@@ -131,6 +131,15 @@ func TestRemoveMasksRejectsWritableSources(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(rootDir) })
+	// Construct the writable source this case rejects independently of other
+	// tests, which may remove their instruction fixtures during cleanup.
+	source := "/workspace/.agentflow/isolation/empty-file"
+	if err := os.MkdirAll(filepath.Dir(source), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(source, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
 	err := removeMasks([]string{filepath.Join(rootDir, "AGENTS.md")})
 	if err == nil || !strings.Contains(err.Error(), "not read-only") {
 		t.Fatalf("removeMasks error = %v", err)

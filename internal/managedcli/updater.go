@@ -115,34 +115,16 @@ func (m *Manager) updateLocked(ctx context.Context, state *State, report *Report
 		candidate, err := m.candidate(ctx, provider)
 		if err == nil {
 			result.To = candidate.Version
-			switch {
-			case candidate.Version == result.From:
-				result.Status = "unchanged"
-			case result.From != "" && compareVersions(candidate.Version, result.From) < 0:
-				result.Status, result.Message = "skipped", "automatic downgrade refused"
-			case state.Rejected[provider] == candidate.Version:
-				result.Status, result.Message = "skipped", "this release was rolled back; waiting for a newer release"
-			case m.Now().Before(candidate.Published.Add(observationWindow)):
-				result.Status, result.Message = "skipped", "release is still in the observation window"
-			}
+			result.Status, result.Message = m.releaseGate(state, provider, result.From, candidate)
 		}
 		if err == nil && result.Status == "" {
 			if !toolsReady {
 				err = m.prepareTools(ctx)
 				toolsReady = err == nil
 			}
-			installed := state.Candidates[provider]
-			if err == nil && (installed.Version != candidate.Version || installed.Integrity != candidate.Dist.Integrity || validateInventory(m.Root, Inventory{provider: installed}) != nil) {
-				installed, err = m.install(ctx, provider, candidate)
-				if err == nil {
-					// Cache before smoke validation: a failed probe must not cause
-					// another download. No active inventory changes here.
-					state.Candidates[provider] = installed
-					err = m.save(*state)
-				}
-			}
+			var installed Installation
 			if err == nil {
-				err = m.validate(ctx, provider, installed)
+				installed, err = m.stageCandidate(ctx, state, provider, candidate)
 			}
 			if err == nil {
 				candidates[provider] = installed
@@ -179,6 +161,44 @@ func (m *Manager) updateLocked(ctx context.Context, state *State, report *Report
 		failures = append(failures, err)
 	}
 	return errors.Join(failures...)
+}
+
+// releaseGate reports why a resolved release must not be staged for provider.
+// An empty status means the release is eligible for installation.
+func (m *Manager) releaseGate(state *State, provider, from string, candidate release) (status, message string) {
+	switch {
+	case candidate.Version == from:
+		return "unchanged", ""
+	case from != "" && compareVersions(candidate.Version, from) < 0:
+		return "skipped", "automatic downgrade refused"
+	case state.Rejected[provider] == candidate.Version:
+		return "skipped", "this release was rolled back; waiting for a newer release"
+	case m.Now().Before(candidate.Published.Add(observationWindow)):
+		return "skipped", "release is still in the observation window"
+	}
+	return "", ""
+}
+
+// stageCandidate reuses the cached candidate installation when it still matches
+// the release, otherwise installs it, then smoke-validates the result.
+func (m *Manager) stageCandidate(ctx context.Context, state *State, provider string, candidate release) (Installation, error) {
+	installed := state.Candidates[provider]
+	if installed.Version != candidate.Version || installed.Integrity != candidate.Dist.Integrity || validateInventory(m.Root, Inventory{provider: installed}) != nil {
+		var err error
+		if installed, err = m.install(ctx, provider, candidate); err != nil {
+			return Installation{}, err
+		}
+		// Cache before smoke validation: a failed probe must not cause
+		// another download. No active inventory changes here.
+		state.Candidates[provider] = installed
+		if err := m.save(*state); err != nil {
+			return Installation{}, err
+		}
+	}
+	if err := m.validate(ctx, provider, installed); err != nil {
+		return Installation{}, err
+	}
+	return installed, nil
 }
 
 func (m *Manager) rollbackLocked(ctx context.Context, provider string, state *State, report *Report) error {

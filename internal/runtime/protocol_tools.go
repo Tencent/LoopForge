@@ -250,7 +250,9 @@ func clipToolMsg(s string) string {
 	if len(s) <= n {
 		return s
 	}
-	return s[:n] + "…"
+	// A byte cut can split a multi-byte character (a Chinese label such as
+	// "失败" is 3 bytes a rune) and leave invalid UTF-8.
+	return clipOnRuneBoundary(s, n) + "…"
 }
 
 func firstNonEmpty(values ...string) string {

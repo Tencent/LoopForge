@@ -74,7 +74,7 @@ test('project identity, filtering, payload validation, and project form behavior
   assert.equal(app.evaluate(`state.data.projects[0].description`), 'Updated project scope');
 });
 
-test('repository drawer detects Gongfeng URLs and persists a default repository', async (t) => {
+test('repository drawer detects Git SSH URLs and persists a default repository', async (t) => {
   const app = await loadApp();
   t.after(app.close);
   app.router.post('/api/repositories', (call) => ({ ...call.body, id: 'repo-new' }));
@@ -89,16 +89,25 @@ test('repository drawer detects Gongfeng URLs and persists a default repository'
     openRepoDrawer('');
   `);
   const form = app.document.querySelector('#repoDrawerForm');
-  form.elements.repoUrl.value = 'git@git.example.com:platform/payments.git';
+  form.elements.repoUrl.value = 'git@gitlab.example.org:platform/payments.git';
   form.elements.repoUrl.dispatchEvent(new app.window.Event('input', { bubbles: true }));
+  await settle(6);
+  assert.equal(app.document.querySelector('#repoDrawerSSHMissing').hidden, false);
+  assert.match(app.document.querySelector('#repoDrawerSSHMissing').textContent, /可稍后/);
+  assert.equal(app.document.querySelector('#repoDrawerSave').disabled, false, 'a missing key is advisory and does not block saving');
   assert.equal(app.document.querySelector('#repoDrawerDetect').hidden, false);
   assert.equal(form.elements.name.value, 'payments');
+  assert.equal(app.document.querySelector('#repoDrawerSSH').hidden, false);
+  form.elements.webUrl.value = 'https://gitlab.example.org/platform/payments';
   form.elements.defaultBranch.value = 'main';
   form.elements.integrateBranch.value = 'release';
   form.dispatchEvent(new app.window.Event('submit', { bubbles: true, cancelable: true }));
   await settle(8);
   const create = app.router.calls.find(c => c.method === 'POST' && c.path === '/api/repositories');
-  assert.equal(create.body.gongfengProjectId, 'platform/payments');
+  assert.equal(create.body.provider, 'ssh');
+  assert.equal(create.body.gongfengProjectId, '');
+  assert.equal(create.body.cloneUrl, 'git@gitlab.example.org:platform/payments.git');
+  assert.equal(create.body.webUrl, 'https://gitlab.example.org/platform/payments');
   assert.equal(create.body.defaultBranch, 'main');
   assert.equal(app.evaluate(`state.data.repositories[0].id`), 'repo-new');
   assert.equal(app.evaluate(`state.data.projects[0].defaultRepositoryId`), 'repo-new');

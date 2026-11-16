@@ -3,6 +3,7 @@ package runtime
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -41,8 +42,11 @@ func TestWorkspaceEditCreateRequiresMissingVersion(t *testing.T) {
 	if _, err = WriteWorkspaceFile(root, "new.txt", "overwrite", "missing"); err == nil {
 		t.Fatal("new file overwrote existing file")
 	}
-	if _, err = WriteWorkspaceFile(root, "absent.txt", "new", ""); err == nil {
-		t.Fatal("creation without missing version")
+	if _, err = WriteWorkspaceFile(root, "absent.txt", "new", ""); err == nil || !strings.Contains(err.Error(), `"missing"`) {
+		t.Fatalf("creation without missing version: %v", err)
+	}
+	if _, err = WriteWorkspaceFile(root, "absent/new.txt", "new", "missing"); err == nil || !strings.Contains(err.Error(), "mkdir -p") {
+		t.Fatalf("creation under a missing directory: %v", err)
 	}
 	os.Symlink(t.TempDir(), filepath.Join(root, "link"))
 	if _, err = WriteWorkspaceFile(root, "link/escape.txt", "new", "missing"); err == nil {

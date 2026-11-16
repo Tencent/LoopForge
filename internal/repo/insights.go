@@ -1,13 +1,12 @@
 package repo
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"time"
 
 	"agentflow/internal/domain"
+
 	"gorm.io/gorm"
 )
 
@@ -40,10 +39,6 @@ type insightExecutionRow struct {
 }
 
 func (insightExecutionRow) TableName() string { return "insight_executions" }
-func insightHash(value string) string {
-	sum := sha256.Sum256([]byte(value))
-	return hex.EncodeToString(sum[:])
-}
 
 func (r *InsightsRepo) CreateInsightSource(source domain.InsightSource, tokenHash string) error {
 	return r.DB.Create(&insightSourceRow{ID: source.ID, ProjectID: source.ProjectID, TokenHash: tokenHash, Payload: jsonBytes(source), ExpiresAt: source.ExpiresAt}).Error
@@ -94,7 +89,7 @@ func (r *InsightsRepo) IngestInsightExecution(source domain.InsightSource, execu
 	if err != nil {
 		return false, err
 	}
-	row := insightExecutionRow{ID: insightHash(source.ID + "\x00" + execution.ID), ExecutionKey: insightHash(source.ID + "\x00" + execution.ExternalExecutionID), SourceID: source.ID, ProjectID: source.ProjectID, UserID: source.UserMappings[execution.ExternalUserID], Payload: payload, ContentHash: insightHash(string(payload)), FinishedAt: execution.FinishedAt, ReceivedAt: time.Now().UTC()}
+	row := insightExecutionRow{ID: hexSHA256(source.ID + "\x00" + execution.ID), ExecutionKey: hexSHA256(source.ID + "\x00" + execution.ExternalExecutionID), SourceID: source.ID, ProjectID: source.ProjectID, UserID: source.UserMappings[execution.ExternalUserID], Payload: payload, ContentHash: hexSHA256(string(payload)), FinishedAt: execution.FinishedAt, ReceivedAt: time.Now().UTC()}
 	// Serialize against revocation across instances. SQLite test DB has one connection.
 	duplicate := false
 	err = r.DB.Transaction(func(tx *gorm.DB) error {

@@ -163,6 +163,10 @@ func controlledBaseEnvironment(base []string) []string {
 		"GIT_CONFIG_VALUE_",
 		"GIT_ASKPASS=",
 		"SSH_ASKPASS=",
+		"SSH_AUTH_SOCK=",
+		"GIT_SSH=",
+		"GIT_SSH_COMMAND=",
+		"GIT_SSH_VARIANT=",
 	}
 	filtered := make([]string, 0, len(base))
 	for _, entry := range base {
@@ -197,25 +201,24 @@ func (s *processSandbox) Close(context.Context) error {
 }
 
 func createSeatbelt(id, workspace string, profile domain.SandboxProfile, requirements SandboxRequirements) (Sandbox, error) {
-	if goruntime.GOOS != "darwin" {
-		return nil, fmt.Errorf("seatbelt sandbox requires macOS")
-	}
-	binary, err := exec.LookPath("sandbox-exec")
-	if err != nil {
-		return nil, fmt.Errorf("seatbelt sandbox unavailable: %w", err)
-	}
-	return &processSandbox{id: id, workspace: workspace, driver: "seatbelt", profile: profile, requirements: requirements, binary: binary}, nil
+	return createProcessSandbox("seatbelt", "darwin", "macOS", "sandbox-exec", id, workspace, profile, requirements)
 }
 
 func createBwrap(id, workspace string, profile domain.SandboxProfile, requirements SandboxRequirements) (Sandbox, error) {
-	if goruntime.GOOS != "linux" {
-		return nil, fmt.Errorf("bwrap sandbox requires Linux")
+	return createProcessSandbox("bwrap", "linux", "Linux", "bwrap", id, workspace, profile, requirements)
+}
+
+// createProcessSandbox builds a processSandbox for driver once the host runs
+// requiredOS (named osName in errors) and binaryName is on PATH.
+func createProcessSandbox(driver, requiredOS, osName, binaryName, id, workspace string, profile domain.SandboxProfile, requirements SandboxRequirements) (Sandbox, error) {
+	if goruntime.GOOS != requiredOS {
+		return nil, fmt.Errorf("%s sandbox requires %s", driver, osName)
 	}
-	binary, err := exec.LookPath("bwrap")
+	binary, err := exec.LookPath(binaryName)
 	if err != nil {
-		return nil, fmt.Errorf("bwrap sandbox unavailable: %w", err)
+		return nil, fmt.Errorf("%s sandbox unavailable: %w", driver, err)
 	}
-	return &processSandbox{id: id, workspace: workspace, driver: "bwrap", profile: profile, requirements: requirements, binary: binary}, nil
+	return &processSandbox{id: id, workspace: workspace, driver: driver, profile: profile, requirements: requirements, binary: binary}, nil
 }
 
 func (s *processSandbox) Exec(ctx context.Context, command CommandSpec, sink EventSink) (string, error) {
@@ -244,6 +247,7 @@ func (s *processSandbox) command(ctx context.Context, command CommandSpec, base 
 		if err != nil {
 			return nil, err
 		}
+		args = bwrapPrivateBinds(args, command.privateBinds)
 		args = append(args, command.Argv...)
 		cmd = exec.CommandContext(ctx, s.binary, args...)
 	default:
@@ -412,6 +416,20 @@ func bwrapArgsRequirements(workspace string, requirements SandboxRequirements) (
 	return bwrapArgsCommand(workspace, requirements, true)
 }
 
+// bwrapPrivateBinds adds per-process binds before the "--" that ends the
+// bwrap options. They come after --tmpfs /tmp, so a directory under the host
+// /tmp is visible to this process only.
+func bwrapPrivateBinds(args, binds []string) []string {
+	if len(binds) == 0 || len(args) == 0 || args[len(args)-1] != "--" {
+		return args
+	}
+	out := append([]string{}, args[:len(args)-1]...)
+	for _, dir := range binds {
+		out = append(out, "--bind", dir, dir)
+	}
+	return append(out, "--")
+}
+
 func bwrapArgsCommand(workspace string, requirements SandboxRequirements, maskAgentConfig bool) ([]string, error) {
 	root, err := filepath.Abs(workspace)
 	if err != nil {
@@ -516,34 +534,40 @@ func dockerIsolationMaskRoot(workspace string) string {
 	return filepath.Join(filepath.Dir(workspace), ".isolation-masks", filepath.Base(workspace))
 }
 
-func dockerAgentConfigMasks(workspace string) ([]string, error) {
-	// Docker Desktop cannot create missing nested mount targets on a VirtioFS share.
+// ensureDockerMaskTargets creates the in-workspace mount targets for the
+// isolation mask sources: Docker Desktop cannot create missing nested mount
+// targets on a VirtioFS share.
+func ensureDockerMaskTargets(workspace string) error {
 	if _, err := EnsureControlDirectory(workspace, "isolation", "empty-dir"); err != nil {
-		return nil, err
+		return err
 	}
 	target := filepath.Join(workspace, ".agentflow", "isolation", "empty-file")
 	root, rel, err := openWorkspacePath(workspace, target)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	defer root.Close()
 	file, err := root.OpenFile(rel, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if err == nil {
-		if err := file.Close(); err != nil {
-			return nil, err
-		}
-	} else if os.IsExist(err) {
-		info, err := root.Lstat(rel)
-		if err != nil {
-			return nil, err
-		}
-		if !info.Mode().IsRegular() {
-			return nil, fmt.Errorf("sandbox mask target is not a regular file: %s", target)
-		}
-	} else {
+		return file.Close()
+	}
+	if !os.IsExist(err) {
+		return err
+	}
+	info, err := root.Lstat(rel)
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("sandbox mask target is not a regular file: %s", target)
+	}
+	return nil
+}
+
+func dockerAgentConfigMasks(workspace string, aliases ...string) ([]string, error) {
+	if err := ensureDockerMaskTargets(workspace); err != nil {
 		return nil, err
 	}
-
 	emptyDir, emptyFile, err := isolationMaskSourcesAt(dockerIsolationMaskRoot(workspace))
 	if err != nil {
 		return nil, err
@@ -572,6 +596,9 @@ func dockerAgentConfigMasks(workspace string) ([]string, error) {
 		}
 		containerTarget := filepath.ToSlash(filepath.Join("/workspace", rel))
 		args = append(args, "--mount", "type=bind,src="+source+",dst="+containerTarget+",readonly")
+		for _, alias := range aliases {
+			args = append(args, "--mount", "type=bind,src="+source+",dst="+filepath.ToSlash(filepath.Join(alias, rel))+",readonly")
+		}
 	}
 	return args, nil
 }

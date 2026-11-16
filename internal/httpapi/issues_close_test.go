@@ -238,7 +238,7 @@ func TestDeleteIssueSeesRunThatWasJustCancelled(t *testing.T) {
 	if err := st.PutRun(domain.Run{ID: "delete-after-cancel-run", Status: "cancelled"}); err != nil {
 		t.Fatal(err)
 	}
-	req := httptest.NewRequest(http.MethodDelete, "/api/issues/delete-after-cancel", nil)
+	req := httptest.NewRequest(http.MethodDelete, "/api/issues/delete-after-cancel?force=true", nil)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusNoContent {

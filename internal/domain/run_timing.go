@@ -41,10 +41,6 @@ var runIntervalClosers = map[string]bool{
 
 var runTerminalEvents = map[string]bool{"run.failed": true, "run.cancelled": true, "run.succeeded": true}
 
-func runTerminal(status string) bool {
-	return status == "succeeded" || status == "failed" || status == "cancelled"
-}
-
 // ComputeRunTiming derives timing from the run event log. Node rows only keep
 // the latest attempt, and approval waits leave FinishedAt at the decision
 // time, so the event log is the only source that covers every attempt. Runs
@@ -67,15 +63,16 @@ func RunExecutionIntervals(run Run, events []RunEvent, now time.Time) ([]RunExec
 	return intervals, known
 }
 
+type timingInterval struct{ start, end time.Time }
+
 func computeRunTiming(run Run, events []RunEvent, now time.Time) (RunTiming, []RunExecutionInterval, bool) {
-	type interval struct{ start, end time.Time }
-	var intervals []interval
+	var intervals []timingInterval
 	open := map[string]time.Time{}
 	var lastEvent, terminalAt time.Time
 	started := false
 	closeNode := func(nodeID string, at time.Time) {
 		if start, ok := open[nodeID]; ok {
-			intervals = append(intervals, interval{start, at})
+			intervals = append(intervals, timingInterval{start, at})
 			delete(open, nodeID)
 		}
 	}
@@ -107,19 +104,7 @@ func computeRunTiming(run Run, events []RunEvent, now time.Time) (RunTiming, []R
 	}
 
 	out := RunTiming{AsOf: now}
-	end := now
-	if runTerminal(run.Status) {
-		end = terminalAt
-		if end.IsZero() {
-			end = lastEvent
-		}
-		if end.IsZero() {
-			end = run.UpdatedAt
-		}
-		if end.IsZero() {
-			end = now
-		}
-	}
+	end := runTimingEnd(run, terminalAt, lastEvent, now)
 	if !started {
 		intervals = intervals[:0]
 		open = map[string]time.Time{}
@@ -129,7 +114,7 @@ func computeRunTiming(run Run, events []RunEvent, now time.Time) (RunTiming, []R
 			}
 			switch {
 			case !node.FinishedAt.IsZero():
-				intervals = append(intervals, interval{node.StartedAt, node.FinishedAt})
+				intervals = append(intervals, timingInterval{node.StartedAt, node.FinishedAt})
 			case node.Status == "running":
 				open[nodeID] = node.StartedAt
 			}
@@ -142,15 +127,47 @@ func computeRunTiming(run Run, events []RunEvent, now time.Time) (RunTiming, []R
 	}
 	for _, start := range open {
 		if openEnd.After(start) {
-			intervals = append(intervals, interval{start, openEnd})
+			intervals = append(intervals, timingInterval{start, openEnd})
 		}
 	}
 
-	var clipped []interval
+	merged, total, known := mergeExecutionIntervals(intervals, run.CreatedAt, end)
+	out.ExecutionMs = total.Milliseconds()
+	if !run.CreatedAt.IsZero() && end.After(run.CreatedAt) {
+		out.WallMs = end.Sub(run.CreatedAt).Milliseconds()
+	}
+	if out.WallMs < out.ExecutionMs {
+		out.WallMs = out.ExecutionMs
+	}
+	out.WaitingMs = out.WallMs - out.ExecutionMs
+	return out, merged, known
+}
+
+// runTimingEnd picks the instant a run's timing stops: now while the run is
+// open, otherwise the terminal run event, falling back to the last event, the
+// run's UpdatedAt, and finally now.
+func runTimingEnd(run Run, terminalAt, lastEvent, now time.Time) time.Time {
+	if !TerminalRunStatus(run.Status) {
+		return now
+	}
+	for _, at := range []time.Time{terminalAt, lastEvent, run.UpdatedAt} {
+		if !at.IsZero() {
+			return at
+		}
+	}
+	return now
+}
+
+// mergeExecutionIntervals clips intervals to [createdAt, end], unions the
+// overlapping ones, and returns the merged spans with their total duration.
+// known reports whether any interval was a valid observation, so an observed
+// zero can be told apart from missing timing evidence.
+func mergeExecutionIntervals(intervals []timingInterval, createdAt, end time.Time) ([]RunExecutionInterval, time.Duration, bool) {
+	var clipped []timingInterval
 	known := false
 	for _, iv := range intervals {
-		if !run.CreatedAt.IsZero() && iv.start.Before(run.CreatedAt) {
-			iv.start = run.CreatedAt
+		if !createdAt.IsZero() && iv.start.Before(createdAt) {
+			iv.start = createdAt
 		}
 		if iv.end.After(end) {
 			iv.end = end
@@ -177,13 +194,5 @@ func computeRunTiming(run Run, events []RunEvent, now time.Time) (RunTiming, []R
 		total += cur.end.Sub(cur.start)
 		merged = append(merged, RunExecutionInterval{StartedAt: cur.start, FinishedAt: cur.end})
 	}
-	out.ExecutionMs = total.Milliseconds()
-	if !run.CreatedAt.IsZero() && end.After(run.CreatedAt) {
-		out.WallMs = end.Sub(run.CreatedAt).Milliseconds()
-	}
-	if out.WallMs < out.ExecutionMs {
-		out.WallMs = out.ExecutionMs
-	}
-	out.WaitingMs = out.WallMs - out.ExecutionMs
-	return out, merged, known
+	return merged, total, known
 }

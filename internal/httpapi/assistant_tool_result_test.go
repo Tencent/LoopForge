@@ -303,7 +303,7 @@ func TestAssistantPlatformFieldsAndModelCatalog(t *testing.T) {
 func TestAssistantPromptExplainsLargeResultsWithoutRestrictingSubAgents(t *testing.T) {
 	for _, mode := range []string{AssistantApprovalConfirm, AssistantApprovalAssisted, AssistantApprovalAuto} {
 		prompt := assistantSystemPromptForMode(mode)
-		for _, want := range []string{"workbench_workspace_command", "fields=id,name,model", "ids（逗号分隔的 id）", "executor_models_list"} {
+		for _, want := range []string{"CLI 原生命令工具", "fields=id,name,model", "ids（逗号分隔的 id）", "executor_models_list"} {
 			if !strings.Contains(prompt, want) {
 				t.Fatalf("mode %s prompt lacks %q", mode, want)
 			}

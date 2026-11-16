@@ -8,5 +8,6 @@ services:
       context: .
       args:
         LOOPFORGE_BUILD_JOBS: ${LOOPFORGE_BUILD_JOBS:-}
+        LOOPFORGE_COMMIT: ${LOOPFORGE_COMMIT:-}
     environment:
       AGENTFLOW_ISOLATED_IMAGE: loopforge-platform:local

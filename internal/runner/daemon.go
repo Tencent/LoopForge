@@ -11,7 +11,7 @@ import (
 	"path"
 	"path/filepath"
 	goruntime "runtime"
-	"strconv"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -27,9 +27,13 @@ import (
 // only makes outbound connections: HTTPS for durable task data and one WSS
 // control channel for low-latency server push (cli-connect.md).
 type Daemon struct {
-	cfg      Config
-	client   *Client
-	executor *runtime.ExecutorRunner
+	conversationProcesses runtime.ConversationProcessPool
+	conversationMu        sync.Mutex
+	conversationForward   runtime.ConversationToolForward
+	conversationReplies   map[string]chan domain.RunnerToolResponse
+	cfg                   Config
+	client                *Client
+	executor              *runtime.ExecutorRunner
 
 	mu                   sync.Mutex
 	state                daemonState
@@ -753,6 +757,11 @@ func (d *Daemon) executeTerminal(ctx context.Context, task domain.RunnerTask) ex
 		if err != nil {
 			return execResult{status: domain.RunnerTaskFailed, errMsg: fmt.Sprintf("prepare git credentials: %v", err)}
 		}
+		cleanup, err := runtime.BindGitSSH(sandbox, workspace, gitEnv, task.Invocation.GitSSHKeys)
+		if err != nil {
+			return execResult{status: domain.RunnerTaskFailed, errMsg: fmt.Sprintf("prepare git credentials: %v", err)}
+		}
+		defer cleanup()
 		command = runtime.WithCommandEnvironment(command, gitEnv)
 	}
 	var result execResult
@@ -809,7 +818,10 @@ func (d *Daemon) executeInvocation(ctx context.Context, task domain.RunnerTask) 
 		}
 		defer release()
 	}
-	boundAssets, _, err := runtime.PrepareMCPServers(inv.Assets, d.mcpTarget(true, invocationGitToken(inv)))
+	target := d.mcpTarget(true, invocationGitToken(inv))
+	sshRepoCount := len(inv.GitSSHRemotes())
+	target.SSHRepositoriesOnly = sshRepoCount > 0 && sshRepoCount == max(len(inv.Repositories), 1)
+	boundAssets, _, err := runtime.PrepareMCPServers(inv.Assets, target)
 	if err != nil {
 		return execResult{status: domain.RunnerTaskFailed, errMsg: fmt.Sprintf("bind MCP credentials: %v", err)}, nil
 	}
@@ -850,7 +862,7 @@ func (d *Daemon) executeInvocation(ctx context.Context, task domain.RunnerTask) 
 		return execResult{status: domain.RunnerTaskFailed, errMsg: err.Error()}, nil
 	}
 	if runtime.IsAgentCLI(prepared.Command.Provider) {
-		cred := runtime.ProviderCredential{APIKey: inv.AgentCLIAPIKey, BaseURL: inv.AgentCLIBaseURL, Protocol: inv.AgentCLIProtocol}
+		cred := runtime.ProviderCredential{APIKey: inv.AgentCLIAPIKey, BaseURL: inv.AgentCLIBaseURL, Protocol: inv.AgentCLIProtocol, Models: inv.AgentCLIModels}
 		var agentEnv map[string]string
 		argv, agentEnv, err = runtime.BindAgentCLICommand(sandbox, workspace, prepared.Command, cred, argv)
 		if err != nil {
@@ -875,16 +887,21 @@ func (d *Daemon) executeInvocation(ctx context.Context, task domain.RunnerTask) 
 	for key, value := range credentialEnv {
 		commandEnv[key] = value
 	}
-	if hasCredentialBinding(prepared.Command.CredentialBindings, runtime.BindGit) {
+	if slices.Contains(prepared.Command.CredentialBindings, runtime.BindGit) {
 		gitEnv, gitErr := runtime.GitEnvironment(sandbox, workspace, invocationGitToken(inv))
 		if gitErr != nil {
 			return execResult{status: domain.RunnerTaskFailed, errMsg: fmt.Sprintf("prepare git credentials: %v", gitErr)}, nil
 		}
+		cleanup, gitErr := runtime.BindGitSSH(sandbox, workspace, gitEnv, inv.GitSSHKeys)
+		if gitErr != nil {
+			return execResult{status: domain.RunnerTaskFailed, errMsg: fmt.Sprintf("prepare git credentials: %v", gitErr)}, nil
+		}
+		defer cleanup()
 		for key, value := range gitEnv {
 			commandEnv[key] = value
 		}
 	}
-	if hasCredentialBinding(prepared.Command.CredentialBindings, runtime.BindMCP) {
+	if slices.Contains(prepared.Command.CredentialBindings, runtime.BindMCP) {
 		servers := inv.MCPCallServers
 		if len(servers) == 0 {
 			servers = boundAssets.MCPServers
@@ -952,14 +969,23 @@ func collectRunnerInvocationArtifacts(workspace string, inv *domain.RunnerInvoca
 	return artifacts
 }
 
+// invocationRepositories returns the repositories an invocation carries:
+// Repositories when set, otherwise the persisted legacy single Repository.
+func invocationRepositories(inv *domain.RunnerInvocation) []domain.RunnerRepository {
+	if inv == nil {
+		return nil
+	}
+	if len(inv.Repositories) == 0 && inv.Repository != nil {
+		return []domain.RunnerRepository{*inv.Repository}
+	}
+	return inv.Repositories
+}
+
 func invocationRepositoryContexts(inv *domain.RunnerInvocation) []domain.RepositoryContext {
 	if inv == nil {
 		return nil
 	}
-	repositories := inv.Repositories
-	if len(repositories) == 0 && inv.Repository != nil {
-		repositories = []domain.RunnerRepository{*inv.Repository}
-	}
+	repositories := invocationRepositories(inv)
 	out := make([]domain.RepositoryContext, 0, len(repositories))
 	for _, repository := range repositories {
 		out = append(out, domain.RepositoryContext{
@@ -1031,24 +1057,11 @@ func bindInvocationCredentials(inv *domain.RunnerInvocation, bindings []runtime.
 				return nil, nil, errors.New("Codex 个人 API Key 未配置")
 			}
 			env["CODEX_API_KEY"] = key
-			baseURL := strings.TrimSpace(inv.CodexBaseURL)
-			if baseURL == "" {
-				baseURL = "https://api.openai.com/v1"
+			withProvider, err := runtime.CodexUserProviderArgv(argv, inv.CodexBaseURL)
+			if err != nil {
+				return nil, nil, err
 			}
-			if len(argv) < 2 {
-				return nil, nil, errors.New("invalid Codex invocation")
-			}
-			config := []string{
-				"-c", `model_provider="agentflow_user"`,
-				"-c", `model_providers.agentflow_user.name="User API"`,
-				"-c", "model_providers.agentflow_user.base_url=" + strconv.Quote(baseURL),
-				"-c", `model_providers.agentflow_user.env_key="CODEX_API_KEY"`,
-				"-c", `model_providers.agentflow_user.wire_api="responses"`,
-				"-c", "model_providers.agentflow_user.requires_openai_auth=false",
-			}
-			args := append([]string{}, argv[:len(argv)-1]...)
-			args = append(args, config...)
-			argv = append(args, argv[len(argv)-1])
+			argv = withProvider
 		case runtime.BindClaudeCode:
 			if !personal {
 				continue
@@ -1087,15 +1100,6 @@ func invocationGitToken(inv *domain.RunnerInvocation) string {
 	return ""
 }
 
-func hasCredentialBinding(bindings []runtime.CredentialBinding, want runtime.CredentialBinding) bool {
-	for _, binding := range bindings {
-		if binding == want {
-			return true
-		}
-	}
-	return false
-}
-
 // checkoutInvocationRepositories checks out every repository the invocation
 // carries: each into its Dir under the task workspace. Empty Dir is only
 // kept for persisted legacy invocations that already checked out at the
@@ -1105,13 +1109,8 @@ func checkoutInvocationRepositories(ctx context.Context, workspace string, inv *
 	if inv == nil {
 		return nil
 	}
-	repos := inv.Repositories
-	if len(repos) == 0 && inv.Repository != nil {
-		if strings.TrimSpace(inv.Repository.CloneURL) == "" {
-			return nil
-		}
-		repos = []domain.RunnerRepository{*inv.Repository}
-	}
+	ctx = gitwork.WithSSHKeys(ctx, inv.GitSSHKeys)
+	repos := invocationRepositories(inv)
 	for i := range repos {
 		repo := repos[i]
 		if strings.TrimSpace(repo.CloneURL) == "" {
@@ -1189,6 +1188,9 @@ func cloneRepository(ctx context.Context, workspace string, repo *domain.RunnerR
 	if repo.RequireExistingWorkBranch && strings.TrimSpace(repo.WorkBranch) == "" {
 		return fmt.Errorf("继续已有分支时必须指定工作分支")
 	}
+	if info, err := os.Stat(workspace); err != nil || !info.IsDir() {
+		return fmt.Errorf("clone workspace is not a directory: %s", workspace)
+	}
 	url := strings.TrimSpace(repo.CloneURL)
 	if err := gitwork.ValidateRemoteURL(url, true); err != nil {
 		return fmt.Errorf("git clone: %w", err)
@@ -1196,7 +1198,7 @@ func cloneRepository(ctx context.Context, workspace string, repo *domain.RunnerR
 	// `-c` auth is scoped to this command, so origin stays the clean URL and
 	// the token never lands in .git/config. --progress: without a terminal git
 	// prints nothing until it finishes, so a slow clone looked hung.
-	args := append(gitwork.AuthConfigArgs(repo.GitToken), "clone", "--progress")
+	args := []string{"clone", "--progress"}
 	if ref := strings.TrimSpace(repo.Ref); ref != "" {
 		args = append(args, "--branch", ref)
 	}
@@ -1204,14 +1206,9 @@ func cloneRepository(ctx context.Context, workspace string, repo *domain.RunnerR
 	watch := runnerCloneWatch(repo)
 	// The platform cannot see this host's output yet; the operator can.
 	ctx = procwatch.WithObserver(ctx, func(event procwatch.Event) { log.Printf("runner checkout: %s", event.Message) })
-	tail, err := procwatch.Run(ctx, func(ctx context.Context) *exec.Cmd {
-		cmd := exec.CommandContext(ctx, "git", args...)
-		cmd.Dir = workspace
-		cmd.Env = gitwork.Env(repo.GitToken)
-		return cmd
-	}, watch)
+	tail, err := gitwork.Watch(repositoryGitContext(ctx, *repo), workspace, watch, args...)
 	if err != nil {
-		return fmt.Errorf("git clone %s: %w (%s)", repo.CloneURL, err, cloneOutput([]byte(tail), repo.GitToken))
+		return fmt.Errorf("git clone %s: %w (%s)", domain.StripURLCredentials(repo.CloneURL), err, cloneOutput([]byte(tail), repo.GitToken))
 	}
 	// The branch steps below keep the bound they always had.
 	cloneCtx := ctx
@@ -1239,6 +1236,13 @@ func cloneRepository(ctx context.Context, workspace string, repo *domain.RunnerR
 	return nil
 }
 
+func repositoryGitContext(ctx context.Context, repo domain.RunnerRepository) context.Context {
+	if repo.UseSSH {
+		return gitwork.WithSSHRemote(ctx, repo.CloneURL)
+	}
+	return gitwork.WithToken(ctx, repo.GitToken)
+}
+
 // checkoutExistingRepositoryBranch validates the remote head even when the
 // run reuses a checkout. A normal tracking checkout may create a local ref;
 // it never invents a remote branch or resets existing local work.
@@ -1247,7 +1251,7 @@ func checkoutExistingRepositoryBranch(ctx context.Context, workspace string, rep
 	if branch == "" {
 		return fmt.Errorf("继续已有分支时必须指定工作分支")
 	}
-	repoCtx := gitwork.WithToken(ctx, repo.GitToken)
+	repoCtx := repositoryGitContext(ctx, *repo)
 	trackingRef := "refs/remotes/origin/" + branch
 	if _, err := gitwork.C(repoCtx, workspace, "fetch", "--no-tags", "origin", "+refs/heads/"+branch+":"+trackingRef); err != nil {
 		return fmt.Errorf("无法读取已有远端分支 %s，请确认分支存在且有访问权限: %w", branch, err)
@@ -1276,7 +1280,7 @@ func createNewRepositoryBranch(ctx context.Context, workspace string, repo *doma
 	if branch == "" {
 		return fmt.Errorf("新建分支时必须指定工作分支")
 	}
-	repoCtx := gitwork.WithToken(ctx, repo.GitToken)
+	repoCtx := repositoryGitContext(ctx, *repo)
 	out, err := gitwork.C(repoCtx, workspace, "ls-remote", "--heads", "origin", "refs/heads/"+branch)
 	if err != nil {
 		return fmt.Errorf("无法确认远端分支 %s 是否存在: %w", branch, err)
@@ -1300,7 +1304,7 @@ func checkoutCreatedRepositoryBranch(ctx context.Context, workspace string, repo
 	if branch == "" {
 		return fmt.Errorf("新建分支时必须指定工作分支")
 	}
-	repoCtx := gitwork.WithToken(ctx, repo.GitToken)
+	repoCtx := repositoryGitContext(ctx, *repo)
 	if current, _ := gitwork.C(repoCtx, workspace, "branch", "--show-current"); strings.TrimSpace(current) == branch {
 		return nil
 	}
@@ -1381,7 +1385,7 @@ func (d *Daemon) defaultWorkspace(taskID string) string {
 }
 
 // runnerVersion is reported at registration; it matches the module build.
-var runnerVersion = "0.9.2"
+var runnerVersion = "0.10.1"
 
 // Version returns the runner build version reported at registration.
 func Version() string { return runnerVersion }

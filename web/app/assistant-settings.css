@@ -1,0 +1,22 @@
+/* AI 助手设置页（#assistantView）：两张面板，主动派发开关 + 自定义规则。 */
+#assistantView .asst-form fieldset { margin: 0; padding: 0; border: 0; min-width: 0; display: grid; gap: 16px; }
+#assistantView .asst-panel { padding: 20px 22px; border: 1px solid var(--hui-border); border-radius: 14px; background: var(--hui-surface); box-shadow: var(--hui-panel-shadow); }
+#assistantView .asst-panel-head h2 { margin: 0; color: var(--hui-text); font: 600 15px/1.4 var(--hui-sans); }
+#assistantView .asst-panel-head p { margin: 4px 0 0; color: var(--hui-secondary); font-size: 13px; line-height: 1.6; }
+#assistantView .asst-rows { margin-top: 12px; }
+#assistantView .asst-switch-row { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 14px 0; border-top: 1px solid var(--hui-border-soft); cursor: pointer; }
+#assistantView .asst-switch-row:first-child { border-top: 0; }
+#assistantView .asst-switch-row > input { flex: none; }
+#assistantView .asst-switch-row b { display: block; color: var(--hui-text); font-size: 13px; font-weight: 500; }
+#assistantView .asst-switch-row small { display: block; margin-top: 3px; color: var(--hui-tertiary); font-size: 12px; line-height: 1.6; }
+#assistantView .asst-rules-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+#assistantView .asst-rules { display: block; box-sizing: border-box; width: 100%; min-height: 160px; margin-top: 14px; padding: 10px 12px; resize: vertical; font: 13px/1.6 var(--hui-sans); }
+#assistantView .asst-rules-foot { display: flex; justify-content: flex-end; margin-top: 6px; }
+#assistantView .asst-count { color: var(--hui-tertiary); font-size: 12px; font-variant-numeric: tabular-nums; }
+#assistantView .asst-actions { display: flex; justify-content: flex-end; }
+#assistantView .asst-empty { display: flex; align-items: center; justify-content: space-between; gap: 12px; color: var(--hui-secondary); font-size: 13px; }
+#assistantView .asst-empty p { margin: 0; }
+@media (max-width: 640px) {
+  #assistantView .asst-panel { padding: 16px; }
+  #assistantView .asst-switch-row { gap: 16px; }
+}

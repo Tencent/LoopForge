@@ -32,9 +32,14 @@ func prepareAssistantCodexInvocation(o assistantEngineInvocationOpts) (assistant
 	}
 	argv := []string{o.Bin, "app-server", "-c", `web_search="disabled"`}
 	for _, feature := range codexAssistantDisabledFeatures {
+		if o.Workspace && (feature == "shell_tool" || feature == "unified_exec" || feature == "apply_patch_freeform" || feature == "view_image") {
+			continue
+		}
 		argv = append(argv, "-c", "features."+feature+"=false")
 	}
-	argv = append(argv, codexAssistantGuardArgs(guard)...)
+	if !o.Workspace {
+		argv = append(argv, codexAssistantGuardArgs(guard)...)
+	}
 	argv = append(argv, codexAssistantMCPArgs(servers)...)
 	if effort := strings.TrimSpace(o.Effort); effort != "" {
 		argv = append(argv, "-c", "model_reasoning_effort="+strconv.Quote(effort))
@@ -55,7 +60,7 @@ func prepareAssistantCodexInvocation(o assistantEngineInvocationOpts) (assistant
 		finish: func(ok bool) {
 			server.closeInput()
 			_ = stdin.Close()
-			if ok && server.threadID != "" && codexConfigKeyRe.MatchString(server.threadID) {
+			if server.threadID != "" && codexConfigKeyRe.MatchString(server.threadID) {
 				_ = writeCodexThread(o.Root, o.SessionID, server.threadID)
 			}
 		},
@@ -108,6 +113,7 @@ type codexAppItem struct {
 	Error     json.RawMessage `json:"error"`
 	Command   string          `json:"command"`
 	Query     string          `json:"query"`
+	Changes   json.RawMessage `json:"changes"`
 	ExitCode  *int            `json:"exitCode"`
 }
 
@@ -180,7 +186,13 @@ func (s *codexAppServer) response(message codexRPCMessage) []string {
 			return s.fail("Codex app-server 初始化失败：" + failure)
 		}
 		s.write(map[string]any{"method": "initialized", "params": map[string]any{}})
-		params := map[string]any{"model": s.opts.Model, "developerInstructions": s.opts.SystemPrompt, "sandbox": "read-only", "approvalPolicy": "never"}
+		// App-server builds each thread's hook trust from its own config.
+		// Both the platform guard and workspace approval hook are generated
+		// and reviewed by the platform.
+		params := map[string]any{"model": s.opts.Model, "developerInstructions": s.opts.SystemPrompt, "sandbox": "read-only", "approvalPolicy": "never", "cwd": filepath.Join(s.opts.Root, "ws"), "config": map[string]any{"bypass_hook_trust": true}}
+		if s.opts.Workspace {
+			params["sandbox"] = "danger-full-access"
+		}
 		if s.resume != "" {
 			params["threadId"] = s.resume
 			s.request("thread/resume", params)
@@ -202,6 +214,11 @@ func (s *codexAppServer) response(message codexRPCMessage) []string {
 		}
 		_ = json.Unmarshal(message.Result, &result)
 		s.threadID = strings.TrimSpace(result.Thread.ID)
+		if codexConfigKeyRe.MatchString(s.threadID) {
+			if err := writeCodexThread(s.opts.Root, s.opts.SessionID, s.threadID); err != nil {
+				return s.fail("无法保存 Codex 原生会话引用")
+			}
+		}
 		s.request("turn/start", map[string]any{"threadId": s.threadID, "input": []map[string]any{{"type": "text", "text": s.opts.Prompt, "text_elements": []any{}}}})
 		return []string{codexLine(map[string]any{"type": "system", "subtype": "init", "session_id": s.threadID})}
 	case "turn/start":
@@ -333,6 +350,8 @@ func (s *codexAppServer) item(item codexAppItem, completed bool) []string {
 		}
 	case "commandExecution":
 		name, input = "Bash", map[string]string{"command": item.Command}
+	case "fileChange":
+		name, input = "apply_patch", map[string]any{"changes": item.Changes}
 	case "webSearch":
 		name, input = "WebSearch", map[string]string{"query": item.Query}
 	default:

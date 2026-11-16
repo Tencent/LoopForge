@@ -85,7 +85,7 @@ async function main() {
 
   for (const name of ['showRunDetail','selectRun']) {
     const streams=[],context={state:{data:{runs:[]}},$:()=>({hidden:false,classList:{add:()=>{}},dataset:{}}),document:{querySelector:()=>({setAttribute:()=>{}})},stopQueuedRunRefresh:()=>{},stopLiveRun:()=>{},stopPreviewPoll:()=>{},syncRunHash:()=>{},api:async()=>({id:'r',status:'queued'}),shouldPatchRunLive:()=>false,renderRunDetail:()=>{},renderRuns:()=>{},startLiveRun:id=>streams.push(id),toast:()=>{}};
-    load(context,[name]);context[name]('r');await flush();assert.deepEqual(streams,['r'],name);
+    load(context,['loadRunMachineMetadata',name]);context[name]('r');await flush();assert.deepEqual(streams,['r'],name);
   }
   const liveState={selectedRun:'r',data:{runs:[]}},intervals=new Map();let timer=0,status='queued',applied=[];
   const polling={state:liveState,api:async()=>({id:'r',status}),setInterval:fn=>{intervals.set(++timer,fn);return timer},clearInterval:id=>intervals.delete(id),patchCachedRun:()=>{},applyRunPayload:r=>applied.push(r.status),refreshRunPagesDelta:async()=>{},renderRuns:()=>{},renderIssueDetailTab:()=>{}};

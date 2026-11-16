@@ -259,18 +259,36 @@ func injectBaseTag(html, prefix string) string {
 		href += "/"
 	}
 	tag := `<base href="` + href + `">`
+	if out, ok := insertAfterHeadOpen(html, tag); ok {
+		return out
+	}
+	return tag + html
+}
+
+// insertAfterHeadOpen places tag right after the first <head> or <head ...>
+// opening tag (case-insensitive). It reports false when there is none.
+func insertAfterHeadOpen(html, tag string) (string, bool) {
 	lower := strings.ToLower(html)
 	if i := strings.Index(lower, "<head>"); i >= 0 {
 		at := i + len("<head>")
-		return html[:at] + tag + html[at:]
+		return html[:at] + tag + html[at:], true
 	}
 	if i := strings.Index(lower, "<head "); i >= 0 {
 		if end := strings.Index(html[i:], ">"); end >= 0 {
 			at := i + end + 1
-			return html[:at] + tag + html[at:]
+			return html[:at] + tag + html[at:], true
 		}
 	}
-	return tag + html
+	return html, false
+}
+
+// insertBeforeHeadClose places tag right before the first </head>
+// (case-insensitive). It reports false when there is none.
+func insertBeforeHeadClose(html, tag string) (string, bool) {
+	if i := strings.Index(strings.ToLower(html), "</head>"); i >= 0 {
+		return html[:i] + tag + html[i:], true
+	}
+	return html, false
 }
 
 // A page's own <meta name="referrer"> overrides the response header, and
@@ -284,9 +302,8 @@ func injectPreviewViewport(html string) string {
 	if strings.Contains(html, `data-af-preview-viewport`) {
 		return html
 	}
-	lower := strings.ToLower(html)
-	if i := strings.Index(lower, "</head>"); i >= 0 {
-		return html[:i] + tag + html[i:]
+	if out, ok := insertBeforeHeadClose(html, tag); ok {
+		return out
 	}
 	return tag + html
 }
@@ -314,16 +331,8 @@ func injectPreviewBackend(html, prefix, backend string) string {
 	// sent to the configured backend origin with path/query unchanged.
 	intercept := strings.Replace(previewBackendInterceptJS, "__AF_PREFIX__", string(prefixJSON), 1)
 	tag := `<script data-af-preview-backend>window.__AGENTFLOW_PREVIEW_BACKEND__=` + string(raw) + `;` + intercept + `</script>`
-	lower := strings.ToLower(html)
-	if i := strings.Index(lower, "<head>"); i >= 0 {
-		at := i + len("<head>")
-		return html[:at] + tag + html[at:]
-	}
-	if i := strings.Index(lower, "<head "); i >= 0 {
-		if end := strings.Index(html[i:], ">"); end >= 0 {
-			at := i + end + 1
-			return html[:at] + tag + html[at:]
-		}
+	if out, ok := insertAfterHeadOpen(html, tag); ok {
+		return out
 	}
 	return tag + html
 }
@@ -345,9 +354,8 @@ func injectPreviewHistory(html, prefix string, routed bool) string {
 	// any <base> has resolved against the real preview URL.
 	shim := strings.NewReplacer("__AF_PREFIX__", string(prefixJSON), "__AF_ROUTED__", strconv.FormatBool(routed)).Replace(previewHistoryShimJS)
 	tag := `<script data-af-preview-history>` + shim + `</script>`
-	lower := strings.ToLower(html)
-	if i := strings.Index(lower, "</head>"); i >= 0 {
-		return html[:i] + tag + html[i:]
+	if out, ok := insertBeforeHeadClose(html, tag); ok {
+		return out
 	}
 	return tag + html
 }

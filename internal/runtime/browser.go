@@ -63,6 +63,8 @@ type browserEndpoint struct {
 	Kind      string
 	Container string
 	WebSocket string
+	// Workspace is the host directory a local browser serves file:// from.
+	Workspace string
 }
 
 func (e browserEndpoint) dial(ctx context.Context) (cdpTransport, error) {
@@ -128,6 +130,18 @@ func browserUsageHint(servers []domain.MCPServerDefinition) string {
 		}
 	}
 	return ""
+}
+
+// BrowserDeviceScale is the device scale factor run browsers render at
+// (AGENTFLOW_BROWSER_SCALE, 1 to 3, default 2). The task panel shows their
+// screencast on high-DPI screens, where 1x frames are upscaled and blurred;
+// screencast frames follow the browser's real scale, not an emulated one.
+func BrowserDeviceScale() string {
+	raw := strings.TrimSpace(os.Getenv("AGENTFLOW_BROWSER_SCALE"))
+	if value, err := strconv.ParseFloat(raw, 64); err == nil && value >= 1 && value <= 3 {
+		return strconv.FormatFloat(value, 'f', -1, 64)
+	}
+	return "2"
 }
 
 func dockerBrowserContainerName(base string) string { return base + "-browser" }
@@ -234,7 +248,7 @@ func (s *dockerSandbox) ensureBrowser(ctx context.Context, runID string, sink Ev
 			"--label", browserRunLabel + "=" + runID, "--label", browserOwnerLabel + "=" + s.name,
 			"--network", "container:" + s.name, "--cap-drop=ALL", "--security-opt", "no-new-privileges",
 			"--shm-size", "512m", "-v", s.workspace + ":/workspace", "-w", "/workspace",
-			"-e", "AGENTFLOW_BROWSER_OUTPUT=/workspace/.agentflow/browser", image}
+			"-e", "AGENTFLOW_BROWSER_OUTPUT=/workspace/.agentflow/browser", "-e", "AGENTFLOW_BROWSER_SCALE=" + BrowserDeviceScale(), image}
 		if out, err := exec.CommandContext(ctx, "docker", args...).CombinedOutput(); err != nil {
 			return domain.MCPServerDefinition{}, fmt.Errorf("启动浏览器容器失败: %w: %s", err, tailOutput(out))
 		}
@@ -323,7 +337,7 @@ func ensureHostBrowser(ctx context.Context, workspace, runID string) (domain.MCP
 		_ = os.Remove(filepath.Join(profile, "DevToolsActivePort"))
 		args := []string{"--headless=new", "--remote-debugging-address=127.0.0.1", "--remote-debugging-port=0",
 			"--user-data-dir=" + profile, "--no-first-run", "--no-default-browser-check", "--disable-background-networking",
-			"--window-size=1280,800", "--lang=zh-CN"}
+			"--window-size=1280,800", "--lang=zh-CN", "--force-device-scale-factor=" + BrowserDeviceScale()}
 		if goruntime.GOOS == "linux" && os.Geteuid() == 0 {
 			args = append(args, "--no-sandbox", "--disable-dev-shm-usage")
 		}
@@ -508,7 +522,7 @@ func lookupBrowserEndpoint(ctx context.Context, runID string) (browserEndpoint, 
 	if raw, err := os.ReadFile(filepath.Join(hostBrowserDir(runID), "endpoint.json")); err == nil {
 		var record hostBrowserRecord
 		if json.Unmarshal(raw, &record) == nil && record.PID > 0 && syscall.Kill(record.PID, 0) == nil && hostDevToolsAlive(ctx, record.Port) {
-			return browserEndpoint{Kind: "local", WebSocket: record.WebSocket}, true
+			return browserEndpoint{Kind: "local", WebSocket: record.WebSocket, Workspace: record.Workspace}, true
 		}
 	}
 	if !dockerAvailable() {

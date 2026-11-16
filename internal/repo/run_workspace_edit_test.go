@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-func TestWorkspaceEditorRequiresPausedRun(t *testing.T) {
+func TestWorkspaceEditorEditsWithoutPausing(t *testing.T) {
 	st, err := OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -36,11 +36,16 @@ func TestWorkspaceEditorRequiresPausedRun(t *testing.T) {
 	if err = st.PutRun(loaded); err != nil {
 		t.Fatal(err)
 	}
-	if err = st.AcquireWorkspaceEditor(run.ID, 10); err == nil {
-		t.Fatal("running run acquired edit")
+	// Like an AI IDE, people edit beside running agents.
+	if err = st.AcquireWorkspaceEditor(run.ID, 10); err != nil {
+		t.Fatalf("running run refused edit: %v", err)
 	}
-	if err = st.WithWorkspaceEditor(run.ID, 10, func(domain.Run) error { return nil }); err == nil {
-		t.Fatal("running run allowed write")
+	if err = st.WithWorkspaceEditor(run.ID, 10, func(domain.Run) error { return nil }); err != nil {
+		t.Fatalf("running run refused write: %v", err)
+	}
+	// Main Bot still needs a borrowed SOP stopped first.
+	if err = st.WithMainBotWorkspace(run.ID, 10, func(domain.Run) error { return nil }); err == nil {
+		t.Fatal("Main Bot wrote into a running SOP")
 	}
 }
 

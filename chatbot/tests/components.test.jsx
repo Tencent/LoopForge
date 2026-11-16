@@ -531,6 +531,122 @@ describe("content and panels", () => {
     expect(screen.getByText("导入前请检查")).toBeInTheDocument();
   });
 
+  test("an SOP proposal is declined or muted from its card", async () => {
+    const user = userEvent.setup();
+    const decide = vi.fn(async () => ({}));
+    const artifact = (draft) => ({
+      id: "sop2",
+      messageIndex: 3,
+      draftIndex: 0,
+      name: "积分排行榜",
+      kind: "operation",
+      draft: {
+        tool: "issues_save",
+        body: { projectId: "p1", title: "积分排行榜", kind: "requirement", workflowId: "delivery" },
+        proposal: { reason: "后续可以走 SOP 完整交付", timing: "end" },
+        ...draft,
+      },
+    });
+    const context = { projectId: "p1", projects: chat.projects, references: [] };
+    const { rerender } = render(
+      <DraftCard artifact={artifact({})} onApply={vi.fn()} onDecide={decide} onPreview={vi.fn()} context={context} />,
+    );
+    expect(screen.getByText(/可选的后续工作：后续可以走 SOP/)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "不需要" }));
+    expect(decide).toHaveBeenLastCalledWith(3, 0, "declined");
+    await user.click(screen.getByRole("button", { name: "本会话不再建议" }));
+    expect(decide).toHaveBeenLastCalledWith(3, 0, "muted");
+
+    rerender(
+      <DraftCard
+        artifact={artifact({ proposal: { reason: "整件需求走 SOP", timing: "start" } })}
+        onApply={vi.fn()}
+        onDecide={decide}
+        onPreview={vi.fn()}
+        context={context}
+      />,
+    );
+    expect(screen.getByRole("button", { name: "让 AI 助手自己做" })).toBeInTheDocument();
+    expect(screen.queryByRole("timer")).not.toBeInTheDocument();
+
+    const expiresAt = new Date(Date.now() + 125_000).toISOString();
+    rerender(
+      <DraftCard
+        artifact={artifact({ proposal: { reason: "整件需求走 SOP", timing: "start", expiresAt } })}
+        onApply={vi.fn()}
+        onDecide={decide}
+        onPreview={vi.fn()}
+        context={context}
+      />,
+    );
+    expect(screen.getByRole("timer")).toHaveTextContent(/^2:0[45] 后未确认，AI 助手将直接执行$/);
+
+    rerender(
+      <DraftCard
+        artifact={artifact({
+          proposal: { reason: "整件需求走 SOP", timing: "start", expiresAt: new Date(Date.now() - 1000).toISOString() },
+        })}
+        onApply={vi.fn()}
+        onDecide={decide}
+        onPreview={vi.fn()}
+        context={context}
+      />,
+    );
+    expect(screen.getByRole("timer")).toHaveTextContent("已超时，AI 助手即将直接执行");
+
+    rerender(
+      <DraftCard
+        artifact={artifact({ proposal: { reason: "整件需求走 SOP", timing: "start", expiresAt }, decision: "expired" })}
+        onApply={vi.fn()}
+        onDecide={decide}
+        onPreview={vi.fn()}
+        context={context}
+      />,
+    );
+    expect(screen.getByRole("button", { name: "已超时，AI 助手直接执行" })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "建需求并走 SOP" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("timer")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "让 AI 助手自己做" })).not.toBeInTheDocument();
+
+    rerender(
+      <DraftCard artifact={artifact({ decision: "declined" })} onApply={vi.fn()} onDecide={decide} onPreview={vi.fn()} context={context} />,
+    );
+    expect(screen.getByText(/未采纳/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "建需求并走 SOP" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "本会话不再建议" })).not.toBeInTheDocument();
+  });
+
+  test("an SOP proposal card names the SOP route", async () => {
+    const user = userEvent.setup();
+    const apply = vi.fn(async () => ({}));
+    const decide = vi.fn(async () => ({}));
+    render(
+      <DraftCard
+        artifact={{
+          id: "sop1",
+          messageIndex: 1,
+          draftIndex: 0,
+          name: "积分排行榜",
+          kind: "operation",
+          draft: {
+            tool: "issues_save",
+            body: { projectId: "p1", title: "积分排行榜", kind: "requirement", workflowId: "delivery" },
+            proposal: { reason: "新功能，SOP 用途对得上", timing: "start" },
+          },
+        }}
+        onApply={apply}
+        onDecide={decide}
+        onPreview={vi.fn()}
+        context={{ projectId: "p1", projects: [{ id: "p1", name: "项目一" }], references: [] }}
+      />,
+    );
+    expect(screen.getByText(/建议整件事走 SOP：新功能/)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "建需求并走 SOP" }));
+    expect(apply).toHaveBeenCalledWith(1, 0, expect.anything());
+    await user.click(screen.getByRole("button", { name: "让 AI 助手自己做" }));
+    expect(decide).toHaveBeenLastCalledWith(1, 0, "declined");
+  });
+
   test("opens SOP node conversation and its artifacts", async () => {
     const user = userEvent.setup();
     render(<SopRunPanel runs={[run]} onClose={vi.fn()} />);

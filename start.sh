@@ -12,9 +12,12 @@
 #   ./start.sh pull       refresh images and recreate changed containers
 #   ./start.sh dev        build this checkout (compose.dev.yaml) and start it
 #   ./start.sh release    switch a source-built installation back to GHCR
+#   MIRROR=ghcr.nju.edu.cn ./start.sh
+#                         pull ghcr.io images from that host and tag them back
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
 source scripts/docker-access.sh
+source scripts/ghcr-mirror.sh
 
 compose() {
   [[ -f .env ]] || docker_access_fail 'Not installed yet. Run ./start.sh first.'
@@ -36,8 +39,20 @@ PY
     COMPOSE_FILE=compose.yaml bash scripts/install.sh
     ;;
   pull)
-    compose pull --ignore-buildable --policy always
+    # An empty MIRROR keeps the original refresh. A registry host pulls the pinned
+    # ghcr.io tag from that host and tags it back before MySQL is refreshed.
+    if [[ -n "${MIRROR:-}" ]]; then
+      [[ -f .env ]] || docker_access_fail 'Not installed yet. Run ./start.sh first.'
+      select_docker_access || docker_access_fail 'Docker is not running, or this user cannot access it.'
+    fi
+    if mirror_published_ghcr always; then
+      compose pull --policy always mysql
+    else
+      compose pull --ignore-buildable --policy always
+    fi
     compose up -d --no-build --wait --wait-timeout 180
+    # A newer image may read generated columns the old volume never got.
+    bash scripts/install-schema-extensions.sh
     ;;
   logs) compose logs -f "${@:-platform}" ;;
   stop) compose stop ;;

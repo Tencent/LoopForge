@@ -154,38 +154,46 @@ func codexConfigArgs(instructions string, skillPaths []string, servers []domain.
 		args = append(args, "-c", "skills.config=["+strings.Join(entries, ", ")+"]")
 	}
 	for _, m := range servers {
-		prefix := "mcp_servers." + safeID(m.ID) + "."
-		if m.Transport == "http" {
-			args = append(args, "-c", prefix+"url="+strconv.Quote(m.URL))
-		} else {
-			args = append(args, "-c", prefix+"command="+strconv.Quote(m.Command))
-			if cwd := MCPRuntimeWorkingDirectory(m); cwd != "" {
-				args = append(args, "-c", prefix+"cwd="+strconv.Quote(cwd))
-			}
-			if len(m.Args) > 0 {
-				parts := make([]string, len(m.Args))
-				for i, value := range m.Args {
-					parts[i] = strconv.Quote(value)
-				}
-				args = append(args, "-c", prefix+"args=["+strings.Join(parts, ",")+"]")
-			}
-			env := resolveMap(m.Environment)
-			if len(env) > 0 {
-				keys := make([]string, 0, len(env))
-				for key := range env {
-					keys = append(keys, key)
-				}
-				sort.Strings(keys)
-				pairs := make([]string, 0, len(keys))
-				for _, key := range keys {
-					pairs = append(pairs, fmt.Sprintf("%s = %s", key, strconv.Quote(env[key])))
-				}
-				args = append(args, "-c", prefix+"env={ "+strings.Join(pairs, ", ")+" }")
-			}
+		args = append(args, codexMCPServerArgs(m)...)
+	}
+	return args
+}
+
+// codexMCPServerArgs renders one MCP server as Codex `-c mcp_servers.<id>.*`
+// overrides; env keys are sorted so the argv is deterministic.
+func codexMCPServerArgs(m domain.MCPServerDefinition) []string {
+	var args []string
+	prefix := "mcp_servers." + safeID(m.ID) + "."
+	if m.Transport == "http" {
+		args = append(args, "-c", prefix+"url="+strconv.Quote(m.URL))
+	} else {
+		args = append(args, "-c", prefix+"command="+strconv.Quote(m.Command))
+		if cwd := MCPRuntimeWorkingDirectory(m); cwd != "" {
+			args = append(args, "-c", prefix+"cwd="+strconv.Quote(cwd))
 		}
-		if m.TimeoutSec > 0 {
-			args = append(args, "-c", fmt.Sprintf("%stool_timeout_sec=%d.0", prefix, m.TimeoutSec))
+		if len(m.Args) > 0 {
+			parts := make([]string, len(m.Args))
+			for i, value := range m.Args {
+				parts[i] = strconv.Quote(value)
+			}
+			args = append(args, "-c", prefix+"args=["+strings.Join(parts, ",")+"]")
 		}
+		env := resolveMap(m.Environment)
+		if len(env) > 0 {
+			keys := make([]string, 0, len(env))
+			for key := range env {
+				keys = append(keys, key)
+			}
+			sort.Strings(keys)
+			pairs := make([]string, 0, len(keys))
+			for _, key := range keys {
+				pairs = append(pairs, fmt.Sprintf("%s = %s", key, strconv.Quote(env[key])))
+			}
+			args = append(args, "-c", prefix+"env={ "+strings.Join(pairs, ", ")+" }")
+		}
+	}
+	if m.TimeoutSec > 0 {
+		args = append(args, "-c", fmt.Sprintf("%stool_timeout_sec=%d.0", prefix, m.TimeoutSec))
 	}
 	return args
 }

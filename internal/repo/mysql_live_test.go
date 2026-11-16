@@ -2,6 +2,7 @@ package repo
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -172,6 +173,8 @@ func TestMySQLRunnerTaskCompletionScrubsCredentials(t *testing.T) {
 			CodexAPIKey:      "codex-secret",
 			CodexBaseURL:     "https://gateway.example/v1",
 			Repository:       &domain.RunnerRepository{CloneURL: "https://example.com/repo.git", GitToken: "git-secret"},
+			GitSSHUserID:     42,
+			GitSSHKeys:       map[string]string{"git@gitlab.example.org:team/app.git": "ssh-key-must-not-be-queued"},
 		},
 	}
 	if err := s.PutRunnerTask(task); err != nil {
@@ -184,6 +187,9 @@ func TestMySQLRunnerTaskCompletionScrubsCredentials(t *testing.T) {
 	if claimed.Sandbox == nil || claimed.Sandbox.Profile.Driver != "docker" {
 		t.Fatalf("claimed task lost runner sandbox: %+v", claimed.Sandbox)
 	}
+	if claimed.Invocation == nil || len(claimed.Invocation.GitSSHKeys) != 0 || claimed.Invocation.GitSSHUserID != 42 {
+		t.Fatal("queue must retain the SSH credential reference only")
+	}
 	if err := s.CompleteRunnerTask(claimed.ID, runnerID, domain.RunnerTaskSuccess, nil, "done", "", nil, nil, time.Now().UTC()); err != nil {
 		t.Fatal(err)
 	}
@@ -191,7 +197,77 @@ func TestMySQLRunnerTaskCompletionScrubsCredentials(t *testing.T) {
 	if err := s.DB.Raw(`SELECT payload FROM runner_tasks WHERE id=?`, taskID).Scan(&payload).Error; err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(payload, "codex-secret") || strings.Contains(payload, "git-secret") || strings.Contains(payload, "gateway.example") {
+	if strings.Contains(payload, "codex-secret") || strings.Contains(payload, "git-secret") || strings.Contains(payload, "gateway.example") || strings.Contains(payload, "gitSsh") {
 		t.Fatalf("completed task retained credential material: %s", payload)
+	}
+}
+
+func TestMySQLGitSSHCredentialLifecycle(t *testing.T) {
+	dsn := os.Getenv("AGENTFLOW_TEST_MYSQL_DSN")
+	if dsn == "" {
+		t.Skip("AGENTFLOW_TEST_MYSQL_DSN is not set")
+	}
+	s, err := Open(dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	login := fmt.Sprintf("git-ssh-%d", time.Now().UnixNano())
+	if err := s.PutUser(domain.User{LoginName: login}); err != nil {
+		t.Fatal(err)
+	}
+	user, ok := s.UserByLoginName(login)
+	if !ok {
+		t.Fatal("test user not found")
+	}
+	defer func() {
+		_ = s.DB.Exec(`DELETE FROM user_git_ssh_keys WHERE user_id=?`, user.ID).Error
+		_ = s.DB.Exec(`DELETE FROM user_configs WHERE user_id=?`, user.ID).Error
+		_ = s.DB.Exec(`DELETE FROM users WHERE id=?`, user.ID).Error
+	}()
+	if _, err := s.UpdateUserCredentials(user.ID, UserCredentialUpdate{GitToken: "test-only token"}); err != nil {
+		t.Fatal(err)
+	}
+	const first = "git@gitlab.example.org:team/app.git"
+	const sameHost = "git@gitlab.example.org:other/repo.git"
+	const second = "ssh://git@git.example.org:2222/team/app.git"
+	const missing = "git@git.example.org:team/app.git"
+	if err := s.SaveGitSSHKey(user.ID, "", "gitlab.example.org", "GitLab", "test-only first key"); err != nil {
+		t.Fatal(err)
+	}
+	if stored, ok := s.User(user.ID); !ok || !stored.GitSSHKeyConfigured {
+		t.Fatal("stored SSH host key is missing its configured flag")
+	}
+	if err := s.SaveGitSSHKey(user.ID, "", "GITLAB.EXAMPLE.ORG:22", "Duplicate", "test-only duplicate key"); !errors.Is(err, ErrGitSSHKeyExists) {
+		t.Fatalf("duplicate host: %v", err)
+	}
+	if err := s.SaveGitSSHKey(user.ID, "", "git.example.org:2222", "Other host", "test-only second key"); err != nil {
+		t.Fatal(err)
+	}
+	keys, err := s.GitSSHKeyDescriptions(user.ID)
+	if err != nil || len(keys) != 2 || keys[0].Host != "gitlab.example.org:22" || keys[1].Host != "git.example.org:2222" {
+		t.Fatalf("list SSH host key metadata: %+v (%v)", keys, err)
+	}
+	if err := s.SaveGitSSHKey(user.ID, keys[0].ID, keys[0].Host, "GitLab", ""); err != nil {
+		t.Fatalf("unchanged key update: %v", err)
+	}
+	selected := s.GitSSHKeysForRemotes(user.ID, []string{first, sameHost, second, missing})
+	if selected[first] != "test-only first key" || selected[sameHost] != selected[first] || selected[second] != "test-only second key" || selected[missing] != "" {
+		t.Fatal("host matching, shared key or port isolation failed")
+	}
+	if err := s.SaveGitSSHKey(user.ID, keys[0].ID, keys[0].Host, "New name", "rotated key"); err != nil {
+		t.Fatal(err)
+	}
+	selected = s.GitSSHKeysForRemotes(user.ID, []string{first, second})
+	if selected[first] != "rotated key" || selected[second] != "test-only second key" {
+		t.Fatal("rotation changed a different host's key")
+	}
+	for _, key := range keys {
+		if err := s.DeleteGitSSHKey(user.ID, key.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if user, _ := s.User(user.ID); user.GitSSHKeyConfigured || user.GitToken != "test-only token" {
+		t.Fatal("deleting SSH keys changed the token or left the configured flag set")
 	}
 }

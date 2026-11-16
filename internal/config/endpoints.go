@@ -47,29 +47,36 @@ func LoadEndpoints(role, addrFlag string) (Endpoints, error) {
 		Role:              role,
 		PlatformMCPToken:  env("AGENTFLOW_PLATFORM_MCP_TOKEN"),
 		ControlToken:      env("AGENTFLOW_CONTROL_TOKEN"),
-		WorkerFallbackURL: trimURL(env("AGENTFLOW_WORKER_URL")),
+		WorkerFallbackURL: envURL("AGENTFLOW_WORKER_URL"),
 	}
-	httpPort := env("AGENTFLOW_HTTP_PORT")
-	if httpPort == "" {
-		httpPort = defaultAPIPort
+	httpPort, err := httpPortFromEnv()
+	if err != nil {
+		return Endpoints{}, err
 	}
-	if n, err := strconv.Atoi(httpPort); err != nil || n < 1 || n > 65535 {
-		return Endpoints{}, fmt.Errorf("invalid AGENTFLOW_HTTP_PORT %q", httpPort)
-	}
-	configuredAPI := trimURL(env("AGENTFLOW_API_URL"))
+	configuredAPI := envURL("AGENTFLOW_API_URL")
 	if role == "worker" {
 		ep.ListenAddr = firstNonEmpty(addrFlag, defaultWorkerAddr)
-		ep.ControlURL = firstNonEmpty(trimURL(env("AGENTFLOW_CONTROL_URL")), LoopbackURL(ep.ListenAddr))
+		ep.ControlURL = firstNonEmpty(envURL("AGENTFLOW_CONTROL_URL"), LoopbackURL(ep.ListenAddr))
 		ep.APIBase = firstNonEmpty(configuredAPI, "http://127.0.0.1:"+httpPort)
-		ep.PlatformBase = firstNonEmpty(trimURL(env("AGENTFLOW_PLATFORM_MCP_URL")), configuredAPI)
+		ep.PlatformBase = firstNonEmpty(envURL("AGENTFLOW_PLATFORM_MCP_URL"), configuredAPI)
 	} else {
 		ep.ListenAddr = firstNonEmpty(addrFlag, ":"+httpPort)
 		ep.APIBase = firstNonEmpty(configuredAPI, LoopbackURL(ep.ListenAddr))
-		ep.PlatformBase = firstNonEmpty(trimURL(env("AGENTFLOW_PLATFORM_MCP_URL")), ep.APIBase)
+		ep.PlatformBase = firstNonEmpty(envURL("AGENTFLOW_PLATFORM_MCP_URL"), ep.APIBase)
 	}
-	ep.AgentToolGateway = firstNonEmpty(trimURL(env("AGENTFLOW_AGENT_TOOL_GATEWAY_URL")), ep.APIBase)
+	ep.AgentToolGateway = firstNonEmpty(envURL("AGENTFLOW_AGENT_TOOL_GATEWAY_URL"), ep.APIBase)
 	ep.CollectorBase = firstNonEmpty(ep.PlatformBase, ep.APIBase)
 	return ep, nil
+}
+
+// httpPortFromEnv returns AGENTFLOW_HTTP_PORT, defaulting to defaultAPIPort,
+// and rejects values that are not a TCP port number.
+func httpPortFromEnv() (string, error) {
+	port := firstNonEmpty(env("AGENTFLOW_HTTP_PORT"), defaultAPIPort)
+	if n, err := strconv.Atoi(port); err != nil || n < 1 || n > 65535 {
+		return "", fmt.Errorf("invalid AGENTFLOW_HTTP_PORT %q", port)
+	}
+	return port, nil
 }
 
 // WithPrivateAgentToolGateway points native agent-tool callbacks at base, the
@@ -136,6 +143,9 @@ func Current() Endpoints {
 func env(key string) string { return strings.TrimSpace(os.Getenv(key)) }
 
 func trimURL(u string) string { return strings.TrimRight(strings.TrimSpace(u), "/") }
+
+// envURL reads key as a base URL: trimmed, without trailing slashes.
+func envURL(key string) string { return trimURL(env(key)) }
 
 func firstNonEmpty(values ...string) string {
 	for _, v := range values {

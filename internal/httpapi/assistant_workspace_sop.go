@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"agentflow/internal/application"
 	"agentflow/internal/domain"
@@ -88,6 +89,27 @@ func (h *agentToolGateway) controlConversationSOP(ctx context.Context, s *AgentT
 		return "", fmt.Errorf("action 只能是 pause、resume 或 takeover")
 	}
 	if endpoint != "" {
+		if action == "resume" && s.RuntimeMode == domain.AssistantModeWorkspace {
+			// Resume the SOP only after this CLI and its descendants exit.
+			// This prevents the scheduler taking the workspace mid-tool.
+			s.mu.Lock()
+			s.modeAction = func(actionCtx context.Context) error {
+				actionCtx = s.workspaceTurn.withLease(actionCtx, run.ID)
+				actionCtx = context.WithValue(actionCtx, requestUserContextKey{}, domainUserToAuth(s.User))
+				result, err := (mcpserver.LocalInvoker{Handler: h.api}).Invoke(actionCtx, application.Operation{Method: "POST", Path: "/api/runs/{id}/resume"}, mcpserver.ToolInput{Path: map[string]string{"id": run.ID}, Body: body})
+				if err != nil {
+					return err
+				}
+				if result.Status < 200 || result.Status >= 300 {
+					return fmt.Errorf("SOP 继续失败：%s", redactAgentToolResult(string(result.Body), s.User))
+				}
+				return nil
+			}
+			s.pendingMode = domain.AssistantModePlatform
+			s.mu.Unlock()
+			raw, _ := json.Marshal(map[string]any{"handoff": true, "notice": "平台将在当前 CLI 退出后继续 SOP，并切回平台模式。" + assistantHandoffNotice})
+			return string(raw), nil
+		}
 		ctx = context.WithValue(ctx, requestUserContextKey{}, domainUserToAuth(s.User))
 		result, err := (mcpserver.LocalInvoker{Handler: h.api}).Invoke(ctx, application.Operation{Method: "POST", Path: "/api/runs/{id}/" + endpoint}, mcpserver.ToolInput{Path: map[string]string{"id": run.ID}, Body: body})
 		if err != nil {
@@ -100,6 +122,33 @@ func (h *agentToolGateway) controlConversationSOP(ctx context.Context, s *AgentT
 			run = current
 		}
 	}
-	raw, _ := json.Marshal(map[string]any{"sopRunId": run.ID, "sopStatus": run.Status, "pauseRequested": run.PauseRequested, "cancelRequested": run.CancelRequested, "notice": borrowedSOPNotice(run)})
+	if action != "resume" {
+		deadline := time.NewTimer(30 * time.Second)
+		defer deadline.Stop()
+		tick := time.NewTicker(200 * time.Millisecond)
+		defer tick.Stop()
+	wait:
+		for !sopStopped(run) {
+			select {
+			case <-ctx.Done():
+				return "", ctx.Err()
+			case <-deadline.C:
+				break wait
+			case <-tick.C:
+			}
+			if current, ok := h.repo.RunState(run.ID); ok {
+				run = current
+			}
+		}
+		if sopStopped(run) {
+			s.requestMode(domain.AssistantModeWorkspace)
+		}
+	}
+	handoff := s.requestedMode() != ""
+	notice := borrowedSOPNotice(run)
+	if handoff {
+		notice += assistantHandoffNotice
+	}
+	raw, _ := json.Marshal(map[string]any{"sopRunId": run.ID, "sopStatus": run.Status, "pauseRequested": run.PauseRequested, "cancelRequested": run.CancelRequested, "handoff": handoff, "notice": notice})
 	return string(raw), nil
 }

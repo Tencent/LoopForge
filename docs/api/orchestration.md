@@ -22,7 +22,7 @@
 }
 ```
 
-节点类型为 `agent|script|approval`。脚本节点通过 `scriptLanguage`（`shell|python`）和 `script` 配置；Agent 节点只引用角色定义，任务说明写在角色的 `prompt`（一段自由文本）上；运行时引擎用角色名称、产物契约、门禁和重试策略把它包成节点任务书。节点可配置制品契约、失败/重试策略和画布位置。角色的 CLI 仅可选择 CodeBuddy、Codex 或 Claude Code。旧的 `command` 节点在保存时会迁移为 shell 脚本节点。
+节点类型为 `agent|script|approval`。脚本节点通过 `scriptLanguage`（`shell|python`）和 `script` 配置；Agent 节点只引用角色定义，任务说明写在角色的 `prompt`（一段自由文本）上；运行时引擎用角色名称、产物契约、门禁和重试策略把它包成节点任务书。节点可配置制品契约、失败/重试策略和画布位置。角色的 CLI 与 `GET /api/executors` 的内置目录一致。旧的 `command` 节点在保存时会迁移为 shell 脚本节点。
 
 ### `GET /api/workflows`
 

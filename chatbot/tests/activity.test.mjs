@@ -6,6 +6,7 @@ import {
   savedActivity,
   activityFace,
   activityForReply,
+  generationStored,
   activityTarget,
   thoughtLine,
   hasTextSegments,
@@ -311,4 +312,18 @@ test("tool rounds fold into one summary and only the trailing round stays active
     activityGroupSummary(many),
     "已运行命令、读取文件、搜索代码等",
   );
+});
+
+test("quick retries with matching timestamps keep generation identities separate", () => {
+  const message = {
+    role: "assistant", generationId: "failed-turn",
+    startedAt: "2026-11-13T10:00:00Z", content: '{"message":"ok"}',
+  };
+  const generation = {
+    id: "retry-turn", status: "completed",
+    startedAt: message.startedAt, reply: { message: "ok" },
+  };
+  assert.equal(generationStored([message], generation), false);
+  assert.deepEqual(activityForReply(message, generation, [{ kind: "tool", id: "new-tool" }]), []);
+  assert.equal(generationStored([{ ...message, generationId: generation.id }], generation), true);
 });

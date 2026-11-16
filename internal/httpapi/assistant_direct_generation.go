@@ -10,12 +10,18 @@ import (
 // Synchronous shared chat must occupy the same durable slot as /generations.
 // Otherwise a second process can save a pending turn while the first CLI writes
 // the shared transcript. A local file lock additionally fences stale writers.
-func (h *assistantHandlers) claimDirectSharedGeneration(ctx context.Context, req assistantRequest, ownerID int64, actor domain.User, cancel context.CancelFunc) (domain.AssistantGeneration, func(bool), error) {
+//
+// The caller must defer the returned finish right after a successful claim (as
+// chat does): it is the only place the turn leaves assistantDirectGenerations,
+// and a deferred call also runs when the handler panics.
+func (h *assistantHandlers) claimDirectSharedGeneration(ctx context.Context, req assistantRequest, ownerID int64, actor domain.User, cancel context.CancelFunc) (domain.AssistantGeneration, *assistantDiagnosticsCollector, func(bool), error) {
 	g := domain.AssistantGeneration{ID: newAssistantSessionID(), SessionID: req.SessionID, UserID: ownerID, ActorID: actor.ID, ActorName: actor.LoginName, ProjectID: req.ProjectID, Status: "running", StartedAt: time.Now().UTC()}
 	pending := assistantConversation{ID: req.SessionID, Shared: true, ProjectID: req.ProjectID, Model: req.Model, Effort: req.Effort, RunID: req.RunID, Messages: req.Messages}
 	if err := h.repo.BeginAssistantGeneration(g, pending); err != nil {
-		return g, nil, err
+		return g, nil, nil, err
 	}
+	diagnostics := newAssistantDiagnosticsCollector(g)
+	assistantDirectGenerations.Store(g.ID, struct{}{})
 	untrack := inflightTasks.Add()
 	stop, done := make(chan struct{}), make(chan struct{})
 	go func() {
@@ -29,31 +35,50 @@ func (h *assistantHandlers) claimDirectSharedGeneration(ctx context.Context, req
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				current, ok := h.repo.AssistantGeneration(ownerID, req.SessionID)
-				if !ok || current.ID != g.ID || current.Status != "running" || current.CancelRequested {
+				current, ok := h.repo.PeekAssistantGeneration(ownerID, req.SessionID)
+				if !ok || current.ID != g.ID {
+					diagnostics.terminate("GENERATION_SUPERSEDED", "当前生成记录已被替换或移除", actor)
 					cancel()
 					return
 				}
-				if err := h.repo.CheckpointAssistantGeneration(g); err != nil {
+				if current.Status != "running" {
+					diagnostics.terminate("GENERATION_STATUS_CHANGED", "生成状态已变更为 "+current.Status, actor)
+					cancel()
+					return
+				}
+				if current.CancelRequested {
+					diagnostics.terminate("USER_CANCELLED", "用户主动停止了本轮生成", actor)
+					cancel()
+					return
+				}
+				if err := h.checkpointRunningGeneration(g, diagnostics); err != nil {
+					diagnostics.terminate("CHECKPOINT_FAILED", "保存生成检查点失败："+err.Error(), actor)
 					cancel()
 					return
 				}
 			}
 		}
 	}()
-	return g, func(completed bool) {
+	return g, diagnostics, func(completed bool) {
 		defer untrack()
+		defer assistantDirectGenerations.Delete(g.ID)
 		close(stop)
 		<-done
 		g.Status = "failed"
 		if completed {
 			g.Status = "completed"
 		} else {
-			current, ok := h.repo.AssistantGeneration(ownerID, req.SessionID)
+			current, ok := h.repo.PeekAssistantGeneration(ownerID, req.SessionID)
 			if ctx.Err() != nil || ok && current.ID == g.ID && current.CancelRequested {
 				g.Status = "cancelled"
 			}
 		}
-		_ = h.repo.CheckpointAssistantGeneration(g)
+		if g.Status == "failed" {
+			g.Failure = diagnostics.snapshot(g).Failure
+			if g.Failure != nil {
+				g.Error = g.Failure.Message
+			}
+		}
+		_ = h.repo.CheckpointAssistantGeneration(g, diagnostics.snapshot(g))
 	}, nil
 }

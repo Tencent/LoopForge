@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"agentflow/internal/domain"
 )
@@ -84,6 +85,8 @@ type fakeCDPTransport struct {
 	replies chan []byte
 	closed  chan struct{}
 	once    sync.Once
+	// results answers methods with a canned result instead of {}.
+	results map[string]string
 }
 
 func newFakeCDPTransport() *fakeCDPTransport {
@@ -107,7 +110,11 @@ func (f *fakeCDPTransport) write(body []byte) error {
 	f.mu.Lock()
 	f.sent = append(f.sent, msg)
 	f.mu.Unlock()
-	reply, _ := json.Marshal(cdpMessage{ID: msg.ID, Result: json.RawMessage(`{}`)})
+	result := `{}`
+	if r := f.results[msg.Method]; r != "" {
+		result = r
+	}
+	reply, _ := json.Marshal(cdpMessage{ID: msg.ID, Result: json.RawMessage(result)})
 	f.replies <- reply
 	return nil
 }
@@ -134,20 +141,28 @@ func TestBrowserViewInputMapsToCDP(t *testing.T) {
 	}
 	transport.mu.Lock()
 	defer transport.mu.Unlock()
-	if len(transport.sent) != 5 {
-		t.Fatalf("sent %d messages: %+v", len(transport.sent), transport.sent)
+	// The wheel also switches the screencast to light frames; only input
+	// events are checked here.
+	var sent []cdpMessage
+	for _, msg := range transport.sent {
+		if strings.HasPrefix(msg.Method, "Input.") {
+			sent = append(sent, msg)
+		}
+	}
+	if len(sent) != 5 {
+		t.Fatalf("sent %d input messages: %+v", len(sent), transport.sent)
 	}
 	params := func(i int) map[string]any {
 		var out map[string]any
-		_ = json.Unmarshal(transport.sent[i].Params, &out)
+		_ = json.Unmarshal(sent[i].Params, &out)
 		return out
 	}
-	for _, msg := range transport.sent {
+	for _, msg := range sent {
 		if msg.SessionID != "page-1" {
 			t.Fatalf("input must target the attached page session: %+v", msg)
 		}
 	}
-	if p := params(0); transport.sent[0].Method != "Input.dispatchMouseEvent" || p["type"] != "mousePressed" || p["x"] != 500.0 || p["y"] != 125.0 {
+	if p := params(0); sent[0].Method != "Input.dispatchMouseEvent" || p["type"] != "mousePressed" || p["x"] != 500.0 || p["y"] != 125.0 {
 		t.Fatalf("mouse: %s %v", transport.sent[0].Method, p)
 	}
 	if p := params(1); p["type"] != "mouseWheel" || p["x"] != 1000.0 || p["y"] != 0.0 || p["deltaY"] != 120.0 {
@@ -159,7 +174,139 @@ func TestBrowserViewInputMapsToCDP(t *testing.T) {
 	if p := params(3); p["type"] != "rawKeyDown" || p["text"] != nil {
 		t.Fatalf("control key: %v", p)
 	}
-	if p := params(4); transport.sent[4].Method != "Input.insertText" || p["text"] != "你好" {
-		t.Fatalf("text: %s %v", transport.sent[4].Method, p)
+	if p := params(4); sent[4].Method != "Input.insertText" || p["text"] != "你好" {
+		t.Fatalf("text: %s %v", sent[4].Method, p)
+	}
+}
+
+func TestBrowserViewReportsScrollAndContentSize(t *testing.T) {
+	transport := newFakeCDPTransport()
+	transport.results = map[string]string{"Page.getLayoutMetrics": `{"cssContentSize":{"width":1000,"height":3200}}`}
+	view := &browserView{targets: map[string]*browserTarget{}, changed: make(chan struct{}), session: "page-1", active: "t1"}
+	view.client = newCDPClient(transport, view.onEvent)
+	defer view.client.close()
+	frame, _ := json.Marshal(map[string]any{"data": "AAAA", "sessionId": 7, "metadata": map[string]any{"deviceWidth": 1000, "deviceHeight": 800, "scrollOffsetX": 0, "scrollOffsetY": 640}})
+	view.onEvent(cdpMessage{Method: "Page.screencastFrame", SessionID: "page-1", Params: frame})
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		state := view.state(0)
+		if state.ContentHeight == 3200 {
+			if state.ScrollY != 640 || state.Height != 800 || state.ContentWidth != 1000 {
+				t.Fatalf("state %+v", state)
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("content size never arrived: %+v", state)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	// A second frame within the refresh interval does not read metrics again.
+	view.onEvent(cdpMessage{Method: "Page.screencastFrame", SessionID: "page-1", Params: frame})
+	time.Sleep(50 * time.Millisecond)
+	transport.mu.Lock()
+	defer transport.mu.Unlock()
+	reads := 0
+	for _, msg := range transport.sent {
+		if msg.Method == "Page.getLayoutMetrics" {
+			reads++
+		}
+	}
+	if reads != 1 {
+		t.Fatalf("layout metric reads: %d", reads)
+	}
+}
+
+func TestBrowserDeviceScale(t *testing.T) {
+	for raw, want := range map[string]string{"": "2", "1.5": "1.5", "3": "3", "0.5": "2", "x": "2", "4": "2"} {
+		t.Setenv("AGENTFLOW_BROWSER_SCALE", raw)
+		if got := BrowserDeviceScale(); got != want {
+			t.Fatalf("%q: %s", raw, got)
+		}
+	}
+}
+
+func TestAgentScreenshotsStayInCSSPixels(t *testing.T) {
+	transport := newFakeCDPTransport()
+	transport.results = map[string]string{
+		"Page.getLayoutMetrics":  `{"cssVisualViewport":{"pageX":0,"pageY":300,"clientWidth":1280,"clientHeight":800}}`,
+		"Runtime.evaluate":       `{"result":{"value":2}}`,
+		"Page.captureScreenshot": `{"data":"AAAA"}`,
+	}
+	view := &browserView{targets: map[string]*browserTarget{}, changed: make(chan struct{}), session: "page-1", active: "t1"}
+	view.client = newCDPClient(transport, view.onEvent)
+	defer view.client.close()
+	if data, err := view.screenshot(context.Background()); err != nil || data != "AAAA" {
+		t.Fatalf("data=%q err=%v", data, err)
+	}
+	transport.mu.Lock()
+	defer transport.mu.Unlock()
+	last := transport.sent[len(transport.sent)-1]
+	var params struct {
+		Clip map[string]float64 `json:"clip"`
+	}
+	_ = json.Unmarshal(last.Params, &params)
+	if last.Method != "Page.captureScreenshot" || params.Clip["scale"] != 0.5 || params.Clip["y"] != 300 || params.Clip["width"] != 1280 {
+		t.Fatalf("%s %s", last.Method, last.Params)
+	}
+}
+
+func TestBrowserViewCapturesLighterFramesWhileScrolling(t *testing.T) {
+	settle := browserMotionSettle
+	browserMotionSettle = 60 * time.Millisecond
+	defer func() { browserMotionSettle = settle }()
+	transport := newFakeCDPTransport()
+	view := &browserView{targets: map[string]*browserTarget{}, changed: make(chan struct{}), session: "page-1", active: "t1", width: 1000, height: 500, frameWidth: 1600}
+	view.client = newCDPClient(transport, view.onEvent)
+	defer view.client.close()
+	starts := func() []map[string]any {
+		transport.mu.Lock()
+		defer transport.mu.Unlock()
+		var out []map[string]any
+		for _, msg := range transport.sent {
+			if msg.Method == "Page.startScreencast" {
+				var p map[string]any
+				_ = json.Unmarshal(msg.Params, &p)
+				out = append(out, p)
+			}
+		}
+		return out
+	}
+	wheel := []domain.BrowserInputEvent{{Type: "wheel", X: 0.5, Y: 0.5, DeltaY: 100}}
+	ctx := context.Background()
+
+	// Hovering and clicking keep sharp frames.
+	if err := view.input(ctx, []domain.BrowserInputEvent{{Type: "mouse", Action: "move", X: 0.5, Y: 0.5}, {Type: "mouse", Action: "down", X: 0.5, Y: 0.5, Buttons: 1}}); err != nil {
+		t.Fatal(err)
+	}
+	if got := starts(); len(got) != 0 {
+		t.Fatalf("hover restarted the screencast: %v", got)
+	}
+	// A scroll switches to light frames once, however many follow.
+	for range 3 {
+		if err := view.input(ctx, wheel); err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	got := starts()
+	if len(got) != 1 || got[0]["maxWidth"] != 800.0 || got[0]["quality"] != 60.0 {
+		t.Fatalf("scroll frames: %v", got)
+	}
+	// Quiet input returns to sharp frames at the panel width.
+	deadline := time.Now().Add(2 * time.Second)
+	for len(starts()) < 2 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	got = starts()
+	if len(got) != 2 || got[1]["maxWidth"] != 1600.0 || got[1]["quality"] != 80.0 {
+		t.Fatalf("settled frames: %v", got)
+	}
+	// Dragging counts as motion too.
+	if err := view.input(ctx, []domain.BrowserInputEvent{{Type: "mouse", Action: "move", X: 0.4, Y: 0.5, Buttons: 1}}); err != nil {
+		t.Fatal(err)
+	}
+	if got := starts(); len(got) != 3 || got[2]["quality"] != 60.0 {
+		t.Fatalf("drag frames: %v", got)
 	}
 }

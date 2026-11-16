@@ -1,4 +1,9 @@
+# Only HEAD and refs enter the context so a plain `docker build` can stamp the
+# commit without a --build-arg. The build stage still excludes .git.
 .git
+!.git/HEAD
+!.git/refs
+!.git/packed-refs
 .env*
 .local
 upstream.json

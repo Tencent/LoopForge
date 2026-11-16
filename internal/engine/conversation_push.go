@@ -21,9 +21,9 @@ const (
 // pushes the work branch of every bound repository that differs from its base,
 // so a conversation can open an MR without an SOP delivery node. Unchanged
 // repositories are left out of the returned heads. Callers
-// hold the conversation workspace lease and pass the requesting user's own
-// token: the push is attributed to whoever asked for it.
-func (e *Engine) PushConversationWorkspace(ctx context.Context, runID, gitToken, gitUserName, gitUserEmail, message, sharedTarget string) ([]domain.RunnerWorkBranchHead, error) {
+// hold the conversation workspace lease and supply the requesting user's Git
+// identity, so the push is attributed to whoever asked for it.
+func (e *Engine) PushConversationWorkspace(ctx context.Context, runID string, requesterID int64, gitToken, gitUserName, gitUserEmail, message, sharedTarget string) ([]domain.RunnerWorkBranchHead, error) {
 	run, ok := e.repo.RunState(runID)
 	if !ok {
 		return nil, fmt.Errorf("运行不存在")
@@ -31,17 +31,24 @@ func (e *Engine) PushConversationWorkspace(ctx context.Context, runID, gitToken,
 	if WorkspaceRunID(run) != run.ID {
 		return nil, fmt.Errorf("子 SOP 共享父任务工作区，请从父任务提交")
 	}
-	if strings.TrimSpace(gitToken) == "" {
-		return nil, fmt.Errorf("未配置 Git Token，无法推送工作分支。%s", gitTokenFixHint)
-	}
 	var repositories []domain.RepositoryContext
 	for _, rc := range run.RepositoryContexts() {
-		if strings.TrimSpace(rc.CloneURL) != "" && strings.TrimSpace(rc.WorkBranch) != "" {
-			repositories = append(repositories, rc)
+		if rc.ReadOnly || strings.TrimSpace(rc.CloneURL) == "" || strings.TrimSpace(rc.WorkBranch) == "" {
+			continue
 		}
+		if rc.Provider != domain.RepositoryProviderSSH && strings.TrimSpace(gitToken) == "" {
+			return nil, fmt.Errorf("%s: 未配置 Git Token，无法推送工作分支。%s", rc.Name, gitTokenFixHint)
+		}
+		repositories = append(repositories, rc)
 	}
 	if len(repositories) == 0 {
 		return nil, fmt.Errorf("当前任务没有绑定可推送的代码仓库")
+	}
+	sshKeys := e.repo.GitSSHKeysForRemotes(requesterID, sshRepositoryURLs(repositories))
+	for _, rc := range repositories {
+		if rc.Provider == domain.RepositoryProviderSSH && sshKeys[rc.CloneURL] == "" {
+			return nil, fmt.Errorf("%s: %w", rc.Name, gitwork.ErrSSHKeyRequired)
+		}
 	}
 	message = strings.TrimSpace(message)
 	if message == "" {
@@ -52,8 +59,9 @@ func (e *Engine) PushConversationWorkspace(ctx context.Context, runID, gitToken,
 	ctx, cancel := context.WithTimeout(ctx, conversationPushTimeout)
 	defer cancel()
 	ctx = withGitIdentity(withGitToken(ctx, gitToken), gitUserName, gitUserEmail)
+	ctx = gitwork.WithSSHKeys(ctx, sshKeys)
 	if runnerID := e.defaultExecutionRunner(run); runnerID != "" {
-		return e.pushConversationOnRunner(ctx, runnerID, run, repositories, gitToken, gitUserName, gitUserEmail, message, sharedTarget)
+		return e.pushConversationOnRunner(ctx, runnerID, run, repositories, requesterID, gitToken, gitUserName, gitUserEmail, message, sharedTarget)
 	}
 	root, reason := e.LocalRunWorkspace(run)
 	if reason != "" {
@@ -61,6 +69,7 @@ func (e *Engine) PushConversationWorkspace(ctx context.Context, runID, gitToken,
 	}
 	heads := []domain.RunnerWorkBranchHead{}
 	for _, rc := range repositories {
+		ctx := withRepositoryGit(ctx, rc)
 		dir := repositoryWorkspacePath(root, rc)
 		if !gitwork.HasWork(ctx, dir, repositoryBaseBranch(rc)) {
 			continue
@@ -105,13 +114,16 @@ func (e *Engine) PushConversationWorkspace(ctx context.Context, runID, gitToken,
 	return heads, nil
 }
 
-func (e *Engine) pushConversationOnRunner(ctx context.Context, runnerID string, run domain.Run, repositories []domain.RepositoryContext, gitToken, gitUserName, gitUserEmail, message, sharedTarget string) ([]domain.RunnerWorkBranchHead, error) {
+func (e *Engine) pushConversationOnRunner(ctx context.Context, runnerID string, run domain.Run, repositories []domain.RepositoryContext, requesterID int64, gitToken, gitUserName, gitUserEmail, message, sharedTarget string) ([]domain.RunnerWorkBranchHead, error) {
 	if run.ExecutionContext.RunnerWorkspaceLayout != domain.RunnerWorkspaceLayoutShared {
 		return nil, fmt.Errorf("该任务的执行机器工作区不是共享布局，暂不支持直接提交 MR")
 	}
 	runner, ok := e.repo.Runner(runnerID)
 	if !ok {
 		return nil, fmt.Errorf("执行机器 %s 不存在", runnerID)
+	}
+	if err := e.requireWorkBranchCapabilities(runnerID, repositories); err != nil {
+		return nil, err
 	}
 	if sharedTarget != "" && !runner.SupportsSharedPush() {
 		return nil, fmt.Errorf("执行机器 %s 的 runner 版本是 %s，还不支持直推共享分支（需要 %s 及以上）；请先升级 runner，或改用 MR 提交", runnerID, strings.TrimSpace(runner.RunnerVersion), domain.RunnerVersionSharedPush)
@@ -132,6 +144,11 @@ func (e *Engine) pushConversationOnRunner(ctx context.Context, runnerID string, 
 		}
 	}
 	invocation.Repositories = kept
+	if len(invocation.GitSSHRemotes()) > 0 {
+		invocation.GitSSHUserID = requesterID
+	} else {
+		invocation.GitSSHUserID = 0
+	}
 	task := domain.RunnerTask{
 		ID:                fmt.Sprintf("rt-%d-%s-push", time.Now().UnixNano(), safeRunnerPath(run.ID)),
 		RunnerID:          runnerID,

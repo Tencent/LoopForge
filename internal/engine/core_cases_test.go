@@ -69,9 +69,6 @@ func TestWorkflowGraphValidationAndTraversal(t *testing.T) {
 	if !hasFailed(valid, run) {
 		t.Fatal("failure not found")
 	}
-	if max(2, 1) != 2 || max(1, 2) != 2 {
-		t.Fatal("max")
-	}
 
 	cases := []domain.WorkflowDefinition{
 		{ID: "x", Nodes: valid.Nodes},

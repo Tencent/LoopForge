@@ -11,6 +11,8 @@ function repoDrawerError(show){
 function syncRepoDrawerDetect(){
   const f=$('#repoDrawerForm');if(!f)return;
   const info=parseGongfengRepoURL(f.elements.repoUrl.value),box=$('#repoDrawerDetect');
+  $('#repoDrawerSSH').hidden=info?.provider!=='ssh';
+  renderGitSSHMissingHint($('#repoDrawerSSHMissing'),info);
   if(!info){box.hidden=true;return}
   repoDrawerError(false);
   if(!repoDrawerState.nameTouched)f.elements.name.value=info.name;
@@ -26,10 +28,12 @@ function openRepoDrawer(repoId=''){
   if(repoId&&!repo)return toast('仓库不存在或已被删除','err');
   const f=$('#repoDrawerForm');if(!f)return;
   const hasDefault=!projectNeedsDefaultRepository(project);
-  const parsedName=parseGongfengRepoURL(repo?.webUrl||repo?.cloneUrl||repo?.gongfengProjectId||'')?.name||'';
+  const repoAddress=repo?.provider==='ssh'?repo.cloneUrl:repo?.webUrl||repo?.cloneUrl||repo?.gongfengProjectId||'';
+  const parsedName=parseGongfengRepoURL(repoAddress)?.name||'';
   Object.assign(repoDrawerState,{projectId,repoId:repo?.id||'',nameTouched:!!repo&&!!repo.name&&repo.name!==parsedName,saving:false,returnFocus:document.activeElement});
   f.elements.id.value=repo?.id||'';
-  f.elements.repoUrl.value=repo?(repo.webUrl||repo.cloneUrl||repo.gongfengProjectId||''):'';
+  f.elements.repoUrl.value=repoAddress;
+  f.elements.webUrl.value=repo?.provider==='ssh'?repo.webUrl||'':'';
   f.elements.name.value=repo?.name||'';
   f.elements.defaultBranch.value=repo?.defaultBranch||'main';
   f.elements.integrateBranch.value=repo?.integrateBranch||'';
@@ -39,6 +43,7 @@ function openRepoDrawer(repoId=''){
   $('#repoDrawerTitle').textContent=repo?'编辑代码仓库':'添加代码仓库';
   $('#repoDrawerSave').disabled=false;
   setRepoDrawerSwitch(repo?project.defaultRepositoryId===repo.id:!hasDefault);
+  gitSSHKeyCache=null;
   repoDrawerError(false);syncRepoDrawerDetect();
   const drawer=$('#repoDrawer');
   drawer.inert=false;drawer.setAttribute('aria-hidden','false');
@@ -60,6 +65,7 @@ function closeRepoDrawer(opt){
 function repoDrawerPayload(f,info){
   const existing=(state.data.repositories||[]).find(r=>r.id===repoDrawerState.repoId)||{};
   const payload={...existing,id:existing.id||undefined,projectId:repoDrawerState.projectId,provider:info.provider||'gongfeng',name:f.elements.name.value.trim()||info.name,gongfengProjectId:info.project,webUrl:info.webUrl,cloneUrl:info.cloneUrl,defaultBranch:f.elements.defaultBranch.value.trim()||'main',integrateBranch:f.elements.integrateBranch.value.trim(),localPath:f.elements.localPath.value.trim(),repoUrl:f.elements.repoUrl.value.trim()};
+  if(info.provider==='ssh'){payload.gongfengProjectId='';payload.webUrl=f.elements.webUrl.value.trim()}
   delete payload.gitToken;if(!payload.id)delete payload.id;
   return payload;
 }
@@ -111,7 +117,7 @@ function bindRepoDrawer(){
   $$('[data-repo-drawer-close]').forEach(b=>b.onclick=closeRepoDrawer);
   $('#repoDrawerScrim').onclick=closeRepoDrawer;
   document.addEventListener('keydown',e=>{
-    if(e.key!=='Escape'||!repoDrawerOpen()||$('#confirmModal')?.classList.contains('open'))return;
+    if(e.key!=='Escape'||!repoDrawerOpen()||$('#gitSSHKeyDialog')?.open||$('#confirmModal')?.classList.contains('open'))return;
     e.preventDefault();e.stopImmediatePropagation();closeRepoDrawer();
   },true);
 }

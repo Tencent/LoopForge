@@ -47,9 +47,10 @@ func PrepareClarifyWorkspaceAtBranch(ctx context.Context, cacheDir string, repo 
 		baseBranch = "master"
 	}
 
-	if strings.TrimSpace(token) == "" {
-		// A readable local repository needs no remote credentials. HTTP/SSH
-		// sources still require the responsible user's configured Git token.
+	if repo.Provider == domain.RepositoryProviderSSH {
+		ctx = gitwork.WithSSHRemote(ctx, cloneURL)
+	} else if strings.TrimSpace(token) == "" {
+		// A readable local repository needs no remote credentials.
 		if info, err := os.Stat(cloneURL); err != nil || !info.IsDir() {
 			return "", fmt.Errorf("需求责任人未配置 Git Token（未指定责任人时用项目 Owner），请让该账号到「个人配置 → 个人凭证」填写。新建需求分析拉代码用的是责任人凭证，不是当前点击的人")
 		}
@@ -74,7 +75,7 @@ func PrepareClarifyWorkspaceAtBranch(ctx context.Context, cacheDir string, repo 
 	args := []string{
 		"clone", "--no-hardlinks", "--single-branch", "--depth", "1",
 		"--branch", baseBranch,
-		"--", gitwork.RewriteRemoteForToken(cloneURL, token), cacheDir,
+		"--", cloneRemoteForGit(ctx, cloneURL), cacheDir,
 	}
 	if _, err := runGit(ctx, cacheDir, args...); err != nil {
 		_ = os.RemoveAll(cacheDir)

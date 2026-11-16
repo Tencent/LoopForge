@@ -213,9 +213,6 @@ func TestRunnerCredentialArtifactAndRepositoryHelpers(t *testing.T) {
 			t.Fatalf("binding=%v err=%v wantErr=%v", tc.binding, err, tc.wantErr)
 		}
 	}
-	if !hasCredentialBinding([]flowruntime.CredentialBinding{flowruntime.BindGit}, flowruntime.BindGit) || hasCredentialBinding(nil, flowruntime.BindGit) {
-		t.Fatal("binding lookup")
-	}
 }
 
 func TestWorkspacePayloadMarshalFailure(t *testing.T) {

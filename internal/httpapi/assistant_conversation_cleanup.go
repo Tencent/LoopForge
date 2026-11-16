@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"agentflow/internal/domain"
+	"agentflow/internal/repo"
 )
 
 // deleteConversation deletes a conversation together with what it left
@@ -98,7 +99,7 @@ func (h *assistantHandlers) deleteConversationIssue(issue domain.Issue) {
 		}
 		return
 	}
-	runIDs, err := h.repo.IssueDeletionRuns(issue.ID)
+	runIDs, err := h.repo.IssueDeletionRuns(issue.ID, repo.IssueDeleteUnsuccessful)
 	if err != nil {
 		log.Printf("keep requirement %s of a deleted conversation: %v", issue.ID, err)
 		return

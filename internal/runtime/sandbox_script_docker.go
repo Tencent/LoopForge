@@ -125,7 +125,7 @@ func (s *dockerSandbox) execScript(ctx context.Context, command CommandSpec, sin
 	if err != nil {
 		return "", err
 	}
-	view := scriptview.Config{Masks: masks, Argv: dockerWorkspaceExecArgv(command.Argv)}
+	view := scriptview.Config{Masks: masks, Aliases: s.conversationAliases(), Argv: dockerWorkspaceExecArgv(command.Argv)}
 	config, err := json.Marshal(view)
 	if err != nil {
 		return "", err
@@ -161,7 +161,7 @@ func (s *dockerSandbox) scriptMasks(ctx context.Context) ([]string, error) {
 		if m.RW || (m.Source != dir && m.Source != file) {
 			continue
 		}
-		if scriptview.ValidMask(m.Destination) {
+		if scriptview.ValidMask(m.Destination, s.conversationAliases()...) {
 			masks = append(masks, m.Destination)
 		}
 	}
@@ -213,6 +213,9 @@ func (s *dockerSandbox) currentAgentMasks() ([]string, error) {
 			return nil, err
 		}
 		hide = append(hide, filepath.ToSlash(filepath.Join("/workspace", rel)))
+		if root := s.requirements.ConversationRoot; root != "" {
+			hide = append(hide, filepath.ToSlash(filepath.Join(root, "ws", rel)))
+		}
 	}
 	return hide, nil
 }
@@ -228,7 +231,7 @@ func (s *dockerSandbox) refreshAgentMasks(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	config, err := json.Marshal(scriptview.Config{Refresh: true, Hide: hide})
+	config, err := json.Marshal(scriptview.Config{Refresh: true, Hide: hide, Aliases: s.conversationAliases()})
 	if err != nil {
 		return err
 	}
@@ -237,4 +240,11 @@ func (s *dockerSandbox) refreshAgentMasks(ctx context.Context) error {
 		return fmt.Errorf("refresh agent instruction isolation: %w: %s", err, strings.TrimSpace(string(out)))
 	}
 	return nil
+}
+
+func (s *dockerSandbox) conversationAliases() []string {
+	if s.requirements.ConversationRoot == "" {
+		return nil
+	}
+	return []string{filepath.ToSlash(filepath.Join(s.requirements.ConversationRoot, "ws"))}
 }

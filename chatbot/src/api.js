@@ -390,8 +390,31 @@ export function restoreStream(snapshot) {
 // Keep the confirmation acknowledgement visible without presenting an internal
 // model-resume instruction as something the user typed. Validate the preceding
 // saved receipt; ordinary user text must never be hidden by a prefix match.
+// Mirrors assistantProposalDeclinedText and assistantProposalExpiredText.
+const PROPOSAL_DECLINED = "不走 SOP，这件事由你直接完成。";
+const PROPOSAL_EXPIRED = "SOP 建议超时未确认，这件事由你直接完成。";
+// The card already says it timed out, so the turn that hands the work back
+// is not shown.
+export function isProposalTimeout(message, previous) {
+  return (
+    message?.role === "user" &&
+    message.trigger === "proposal_timeout" &&
+    message.content === PROPOSAL_EXPIRED &&
+    previous?.role === "assistant" &&
+    (parseReply(previous).drafts || []).some(
+      (d) => d.proposal && d.decision === "expired",
+    )
+  );
+}
+
 export function confirmationCaption(message, previous) {
   if (message?.role !== "user" || previous?.role !== "assistant") return "";
+  if (message.content === PROPOSAL_DECLINED)
+    return (parseReply(previous).drafts || []).some(
+      (d) => d.proposal && ["declined", "muted"].includes(d.decision),
+    )
+      ? "不走 SOP，让 AI 助手自己做"
+      : "";
   const match =
     /^已确认并执行 ([a-z_]+)。请核对这条草稿的保存回执，继续完成原始请求；不要重复刚才的写入，下一项需要确认时提交草稿，全部完成时总结实际结果。$/.exec(
       message.content || "",

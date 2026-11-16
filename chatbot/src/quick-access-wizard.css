@@ -1018,6 +1018,10 @@
   color: var(--qa-warn-text);
 }
 
+.qa-hint.is-error {
+  color: var(--qa-err-text);
+}
+
 .qa-repo-permission {
   margin-bottom: 12px;
   padding: 10px 12px;

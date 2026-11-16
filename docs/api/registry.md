@@ -173,7 +173,7 @@ curl -u "$AGENTFLOW_USER:$AGENTFLOW_PASS" -X POST \
 
 ### `GET /api/executors`
 
-返回只读的三个内置 CLI：CodeBuddy、Codex、Claude Code。CLI 不允许通过 API 新增或修改；模型在 Agent 中设置，API Key/Base URL 使用需求责任人（未指定时为项目 Owner）的个人配置。
+返回只读的内置 CLI 目录（CodeBuddy、Codex、Claude Code，以及 OpenCode、Cursor CLI、Antigravity、Kimi Code、Pi、DeepSeek Harness、ZCode）。CLI 不允许通过 API 新增或修改；模型在 Agent 中设置，API Key/Base URL 使用需求责任人（未指定时为项目 Owner）的个人配置。
 
 ## Dockerfile、Environment 与 Sandbox Profile
 

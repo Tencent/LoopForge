@@ -19,14 +19,46 @@ func TestAssistantScheduledModelKeepsCLIModels(t *testing.T) {
 		"codex:gpt-6-sol":    "codex:gpt-6-sol",
 		" claude-code:opus ": "claude-code:opus",
 		catalog.Default:      catalog.Default,
-		"glm-5.3-ioa":        catalog.Default,
-		"unknown-model":      catalog.Default,
+		"glm-5.3-ioa":        "glm-5.3-ioa",
+		" unknown-model ":    "unknown-model",
+		"bad model":          catalog.Default,
 		"codex:bad model":    catalog.Default,
 		"":                   catalog.Default,
 	} {
 		if got := assistantScheduledModel(in, catalog); got != want {
 			t.Errorf("assistantScheduledModel(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+// The CodeBuddy model list is empty after a restart: a scheduled run refreshes
+// it with the owner's key and never swaps an unavailable model for the default.
+func TestScheduledRunModelRefreshesAndNeverFallsBack(t *testing.T) {
+	old := discoverCLIModels
+	discoverCLIModels = func(_ context.Context, environment, apiKey string) []string {
+		if environment == "internal" && apiKey == "owner-key" {
+			return []string{"deepseek-v4.1-flash"}
+		}
+		return nil
+	}
+	cliModelMu.Lock()
+	cliModelCache = map[string]cliModelEntry{}
+	cliModelMu.Unlock()
+	t.Cleanup(func() {
+		discoverCLIModels = old
+		cliModelMu.Lock()
+		cliModelCache = map[string]cliModelEntry{}
+		cliModelMu.Unlock()
+	})
+	owner := domain.User{CodeBuddyAPIKey: "owner-key", CodeBuddyInternetEnvironment: "internal"}
+	if got, err := scheduledRunModel(context.Background(), "deepseek-v4.1-flash", owner); err != nil || got != "deepseek-v4.1-flash" {
+		t.Fatalf("model = %q, %v", got, err)
+	}
+	if got, err := scheduledRunModel(context.Background(), "", owner); err != nil || got != assistantFixedCatalog().Default {
+		t.Fatalf("empty model = %q, %v", got, err)
+	}
+	if got, err := scheduledRunModel(context.Background(), "gone-model", owner); err == nil || !strings.Contains(err.Error(), "gone-model") {
+		t.Fatalf("unavailable model = %q, %v", got, err)
 	}
 }
 

@@ -76,40 +76,24 @@ func (h *assistantHandlers) listSessions(c *gin.Context) {
 			allowedProjects[id] = workbenchProjectAllowsUser(project, current.ID, platformAdmin)
 		}
 	}
-	seen := map[string]bool{}
-	out := make([]assistantConversation, 0, len(items))
-	for _, item := range append(append(items, shared...), projectChats...) {
-		if seen[item.ID] {
-			continue
-		}
-		seen[item.ID] = true
-		if item.Shared {
-			// As in conversationScope, only valid shared records use project
-			// authorization; other owned rows retain the private-session fallback.
-			if sharedIDs[item.ID] && (item.ProjectID == "" || runProjects[item.RunID] != item.ProjectID || !allowedProjects[item.ProjectID]) {
-				continue
-			}
-		} else if item.RunID != "" {
-			if sharedIDs[repo.RunAssistantSessionID(item.RunID)] {
-				continue
-			}
-		} else if item.UserID != current.ID && !allowedProjects[item.ProjectID] {
-			// Other members' project conversations require current membership.
-			continue
-		}
-		item.GenerationStatus = "idle"
-		item.GenerationID = ""
-		item.Unread = false
-		out = append(out, item)
-	}
+	out := visibleAssistantConversations(append(append(items, shared...), projectChats...), current.ID, sharedIDs, runProjects, allowedProjects)
 	ids := make([]string, 0, len(out))
 	for _, item := range out {
 		ids = append(ids, item.ID)
 	}
 	statuses := h.repo.AssistantGenerationStatuses(current.ID, ids)
 	for i := range out {
+		out[i].GenerationStatus = "idle"
+		out[i].GenerationID = ""
+		out[i].Unread = false
 		if state, ok := statuses[out[i].ID]; ok {
 			out[i].GenerationStatus = state.Status
+			// The list only projects a late heartbeat as interrupted; the row
+			// still says running. A turn this process is executing is running.
+			// A row actually written as interrupted is reported as stored.
+			if state.Stale && generationExecutingHere(state.ID) {
+				out[i].GenerationStatus = "running"
+			}
 			out[i].GenerationID = state.ID
 			// A reply that completed while the reader was elsewhere stays
 			// unread until they open the conversation (Codex's blue dot).
@@ -134,6 +118,37 @@ func (h *assistantHandlers) listSessions(c *gin.Context) {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].UpdatedAt.After(out[j].UpdatedAt) })
 	c.JSON(200, decorateRunSessions(h.repo, out))
+}
+
+// visibleAssistantConversations deduplicates candidates by ID (keeping the
+// first occurrence) and drops the ones userID may not see in the session list.
+// sharedIDs holds the IDs of cross-user shared records, runProjects maps a run
+// to its owning project and allowedProjects records project access.
+func visibleAssistantConversations(candidates []assistantConversation, userID int64, sharedIDs map[string]bool, runProjects map[string]string, allowedProjects map[string]bool) []assistantConversation {
+	seen := map[string]bool{}
+	out := make([]assistantConversation, 0, len(candidates))
+	for _, item := range candidates {
+		if seen[item.ID] {
+			continue
+		}
+		seen[item.ID] = true
+		if item.Shared {
+			// As in conversationScope, only valid shared records use project
+			// authorization; other owned rows retain the private-session fallback.
+			if sharedIDs[item.ID] && (item.ProjectID == "" || runProjects[item.RunID] != item.ProjectID || !allowedProjects[item.ProjectID]) {
+				continue
+			}
+		} else if item.RunID != "" {
+			if sharedIDs[repo.RunAssistantSessionID(item.RunID)] {
+				continue
+			}
+		} else if item.UserID != userID && !allowedProjects[item.ProjectID] {
+			// Other members' project conversations require current membership.
+			continue
+		}
+		out = append(out, item)
+	}
+	return out
 }
 
 func (h *assistantHandlers) archiveSession(c *gin.Context) {
@@ -253,7 +268,7 @@ func (h *assistantHandlers) session(c *gin.Context) {
 			return
 		}
 		if !item.Shared && !readOnly {
-			if job, ok := h.repo.AssistantGeneration(ownerID, id); !ok || job.Status != "running" {
+			if job, ok := h.readGeneration(ownerID, id); !ok || job.Status != "running" {
 				if materializeWorkspaceImages(ownerID, &item) {
 					if err := saveAssistantConversation(h.repo, ownerID, item); err == nil {
 						if stored, err := loadAssistantConversation(h.repo, ownerID, id); err == nil {
@@ -270,7 +285,7 @@ func (h *assistantHandlers) session(c *gin.Context) {
 		}
 		c.JSON(200, decorateRunSessionView(h.repo, item))
 	case "PUT":
-		if job, ok := h.repo.AssistantGeneration(ownerID, id); ok && job.Status == "running" {
+		if job, ok := h.readGeneration(ownerID, id); ok && job.Status == "running" {
 			c.JSON(409, gin.H{"error": "生成期间不能改写会话"})
 			return
 		}
@@ -279,10 +294,26 @@ func (h *assistantHandlers) session(c *gin.Context) {
 			assistantConversation
 			Effort *string `json:"effort"`
 		}
-		if !decode(c, &body) {
+		if !decodeLimit(c, &body, assistantRequestBodyLimit) {
 			return
 		}
 		conv := body.assistantConversation
+		conv.RuntimeMode = existing.Mode()
+		conv.ExecutionTargetLocked = existing.ExecutionLocked()
+		if existing.ID != "" && existing.ExecutionLocked() {
+			if conv.ExecutionTarget != nil && *conv.ExecutionTarget != existing.Execution() {
+				c.JSON(409, gin.H{"error": repo.ErrAssistantExecutionLocked.Error()})
+				return
+			}
+			conv.ExecutionTarget = existing.ExecutionTarget
+		} else {
+			var targetErr error
+			conv.ExecutionTarget, targetErr = h.newExecutionTarget(current.ID, conv.ProjectID, draftExecutionTarget(existing, conv.ExecutionTarget))
+			if targetErr != nil {
+				c.JSON(400, gin.H{"error": targetErr.Error()})
+				return
+			}
+		}
 		// Origin markers are server-owned: a transcript update cannot relabel a
 		// scheduled conversation as chat (or the other way around).
 		conv.Source = existing.Source
@@ -370,7 +401,8 @@ func (h *assistantHandlers) session(c *gin.Context) {
 		if conv.Model == "" {
 			conv.Model = existing.Model
 		}
-		if err := validateAssistantEffort(conv.Model, conv.Effort); err != nil {
+		editor, _ := h.repo.User(current.ID)
+		if err := validateAssistantEffort(editor, conv.Model, conv.Effort); err != nil {
 			c.JSON(400, gin.H{"error": err.Error()})
 			return
 		}
@@ -381,6 +413,10 @@ func (h *assistantHandlers) session(c *gin.Context) {
 			saveErr = saveAssistantConversation(h.repo, ownerID, conv)
 		}
 		if saveErr != nil {
+			if errors.Is(saveErr, repo.ErrAssistantExecutionLocked) {
+				c.JSON(409, gin.H{"error": saveErr.Error()})
+				return
+			}
 			c.JSON(500, gin.H{"error": "保存对话失败"})
 			return
 		}
@@ -398,7 +434,7 @@ func (h *assistantHandlers) session(c *gin.Context) {
 				return
 			}
 		}
-		if job, ok := h.repo.AssistantGeneration(ownerID, id); ok && job.Status == "running" {
+		if job, ok := h.readGeneration(ownerID, id); ok && job.Status == "running" {
 			c.JSON(409, gin.H{"error": "请先停止生成后删除会话"})
 			return
 		}
@@ -427,12 +463,22 @@ func assistantSessionRoot(userID int64) string {
 	return filepath.Join(assistantSessionBase(), strconv.FormatInt(userID, 10))
 }
 
+// assistantConversationBase holds the native conversation roots. They are
+// bind-mounted into Docker workspaces, so a platform that reaches the daemon
+// through docker.sock must keep them at a path the daemon's host has too.
+func assistantConversationBase() string {
+	if override := strings.TrimSpace(os.Getenv("AGENTFLOW_CONVERSATION_DIR")); override != "" {
+		return override
+	}
+	return assistantSessionBase()
+}
+
 // assistantConversationRoot is the CLI root (home and ws) of one personal
 // conversation. It is keyed by owner and session, so a reused session ID can
 // never reach another user's native state.
 func assistantConversationRoot(userID int64, sessionID string) string {
 	sum := sha256.Sum256([]byte(strconv.FormatInt(userID, 10) + "/" + sessionID))
-	return filepath.Join(assistantSessionBase(), "conversations", hex.EncodeToString(sum[:]))
+	return filepath.Join(assistantConversationBase(), "conversations", hex.EncodeToString(sum[:]))
 }
 
 func assistantCLIHome(userID int64) string {
@@ -516,6 +562,9 @@ func deleteAssistantConversation(st *repo.Store, userID int64, id string) error 
 	if err != nil {
 		return os.ErrNotExist
 	}
+	// Session ids are unique across owners, so once the owner's row is gone no
+	// participant can open the shared root again.
+	_ = os.RemoveAll(assistantSharedSessionRoot(id))
 	return nil
 }
 

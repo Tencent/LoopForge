@@ -170,15 +170,26 @@ test('AI schedule navigation separates existing tasks and preserves editor kind 
     { id: 'ai-other', projectId: 'other-project', name: 'Other AI job', skipDispatch: true, assistantPrompt: 'Other project', intervalSec: 3600 }
   ];
   app.router.get('/api/schedule-jobs', tasks);
-  app.document.querySelector('.rail-btn[data-view="aiSchedules"]').click();
+  assert.equal(app.document.querySelector('.rail-btn[data-view="aiSchedules"]'), null, '定时任务 lives in the settings sidebar, not the rail');
+  app.document.querySelector('#configurationNav .nav[data-view="aiSchedules"]').click();
   await settle(4);
   assert.equal(app.evaluate('state.currentView'), 'aiSchedules');
   assert.equal(app.window.location.hash, '#/aiSchedules');
-  assert.equal(app.document.body.classList.contains('no-sidebar'), true);
-  assert.equal(app.document.body.classList.contains('management-mode'), false);
+  assert.equal(app.document.body.classList.contains('no-sidebar'), false);
+  assert.equal(app.document.body.classList.contains('management-mode'), true);
   assert.match(app.document.querySelector('#aiScheduleJobList').textContent, /Existing AI job/);
   assert.doesNotMatch(app.document.querySelector('#aiScheduleJobList').textContent, /Existing trigger|Other AI job/);
   assert.equal(app.document.querySelector('#scheduleJobCount').textContent, '已启用');
+  assert.equal(app.document.querySelector('#issueHeadingMenu #newScheduleJob'), null, 'SOP 触发 moved out of the issue list menu');
+  app.document.querySelector('#aiScheduleTriggerTab').click();
+  await settle(2);
+  assert.equal(app.document.querySelector('#aiScheduleTriggerPanel').hidden, false);
+  assert.equal(app.document.querySelector('#aiScheduleProjectPanel').hidden, true);
+  assert.match(app.document.querySelector('#aiScheduleTriggerList').textContent, /已启用/);
+  assert.ok(app.document.querySelector('#aiScheduleTriggerList [data-run-schedule="trigger-old"]'));
+  assert.equal(app.document.querySelector('#aiScheduleTriggerList [data-run-schedule="ai-old"]'), null);
+  app.document.querySelector('#aiScheduleProjectTab').click();
+  await settle(2);
 
   app.document.querySelector('#aiScheduleJobList [data-edit-schedule="ai-old"]').focus();
   app.document.querySelector('#aiScheduleJobList [data-edit-schedule="ai-old"]').click();

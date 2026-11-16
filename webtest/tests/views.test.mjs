@@ -11,8 +11,7 @@ test('boots with platform-shaped data and renders every routed view', async (t) 
   const views = [
     'collaboration', 'issues', 'runs', 'approvals', 'sops', 'flow', 'agents', 'mcp',
     'rules', 'skills', 'dockerfiles', 'environments', 'sandboxes', 'observability',
-    'projects', 'businessDomains', 'platform', 'runners', 'settings', 'guide',
-    'knowledge', 'bots', 'metrics', 'deployments',
+    'projects', 'platform', 'runners', 'settings', 'guide', 'bots', 'aiSchedules',
   ];
   for (const view of views) {
     app.evaluate(`switchView(${JSON.stringify(view)})`);
@@ -20,10 +19,11 @@ test('boots with platform-shaped data and renders every routed view', async (t) 
   }
   assert.ok(app.router.calls.some((call) => call.path === '/api/bootstrap'));
   assert.ok(app.document.querySelectorAll('.view').length > 10);
-  assert.equal(app.document.querySelector('#pageTitle').textContent, 'AI 工作台', 'the internal deployment dashboard stays hidden');
-  app.evaluate(`switchView('metrics')`);
-  await settle(2);
-  assert.equal(app.document.querySelector('#pageTitle').textContent, '研发效能');
+  assert.equal(app.document.querySelector('#pageTitle').textContent, '定时任务');
+  for (const removed of ['knowledge', 'metrics', 'businessDomains', 'businessDomainManagement']) {
+    assert.equal(app.document.querySelector(`#${removed}View`), null, `${removed} was retired`);
+    assert.equal(app.document.querySelector(`[data-view="${removed}"]`), null, `${removed} has no nav entry`);
+  }
 });
 
 test('hash routing opens run, flow, project, agent, and asset details', async (t) => {

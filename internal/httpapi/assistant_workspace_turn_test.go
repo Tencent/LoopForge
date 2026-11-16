@@ -1,6 +1,8 @@
 package httpapi
 
 import (
+	"github.com/gin-gonic/gin"
+
 	"bytes"
 	"context"
 	"encoding/json"
@@ -35,6 +37,12 @@ func (e *workspaceTurnEngine) MaterializeConversationWorkspace(context.Context, 
 	e.prepare++
 	return nil
 }
+func (e *workspaceTurnEngine) EnsureConversationWorkspace(_ context.Context, id, token string) error {
+	if token != "token-"+id {
+		return errors.New("wrong workspace restore lease")
+	}
+	return nil
+}
 func (e *workspaceTurnEngine) RenewConversationWorkspaceUse(string, string) error {
 	e.renewals++
 	return e.renewErr
@@ -48,6 +56,16 @@ func (e *workspaceTurnEngine) EndConversationWorkspaceUse(ctx context.Context, i
 	}
 	e.ended = append(e.ended, id)
 	return e.saveErr
+}
+
+func (e *workspaceTurnEngine) EndConversationWorkspaceUseAsync(ctx context.Context, id, token string) (<-chan error, error) {
+	if err := e.EndConversationWorkspaceUse(context.WithoutCancel(ctx), id, token); err != nil {
+		return nil, err
+	}
+	done := make(chan error, 1)
+	done <- nil
+	close(done)
+	return done, nil
 }
 
 func TestAssistantWorkspaceTurnReusesAndRenewsLease(t *testing.T) {
@@ -205,7 +223,7 @@ func workspaceTurnFixture(t *testing.T) (*assistantHandlers, domain.User, *Agent
 			t.Fatal(err)
 		}
 	}
-	if err := st.PutAssistantSession(user.ID, domain.AssistantSession{ID: id, ProjectID: id, WorkspaceRunID: ids[0], OwnWorkspaceRunIDs: ids}); err != nil {
+	if err := st.PutAssistantSession(user.ID, domain.AssistantSession{ID: id, ProjectID: id, TitleEdited: true, WorkspaceRunID: ids[0], OwnWorkspaceRunIDs: ids}); err != nil {
 		t.Fatal(err)
 	}
 	for _, rid := range []string{ids[1], ids[0]} {
@@ -214,7 +232,25 @@ func workspaceTurnFixture(t *testing.T) (*assistantHandlers, domain.User, *Agent
 		}
 	}
 	s := &AgentToolSession{Mode: AgentToolAssistant, ProjectID: id, UserID: user.ID, User: user, ChatSessionID: id, ChatOwnerID: user.ID, workspaceRunID: ids[0], workspaceTurn: newAssistantWorkspaceTurn(en, nil)}
-	t.Cleanup(func() { _ = s.workspaceTurn.close(context.Background()) })
+	t.Cleanup(func() {
+		_ = s.workspaceTurn.close(context.Background())
+		// Wait only for this fixture's saves. Global inflightTasks also contains
+		// unrelated title summaries, which can legitimately take much longer.
+		deadline := time.Now().Add(5 * time.Second)
+		for _, runID := range ids {
+			for {
+				meta, ok := st.WorkspaceCheckpoint(runID)
+				if !ok || meta.LeaseToken == "" {
+					break
+				}
+				if time.Now().After(deadline) {
+					t.Error("background save did not finish", runID)
+					return
+				}
+				time.Sleep(10 * time.Millisecond)
+			}
+		}
+	})
 	gateway := &agentToolGateway{deps: h.deps}
 	gateway.api = New(st, en, tracker.NewService(), "", "")
 	return h, user, s, gateway, ids
@@ -222,6 +258,17 @@ func workspaceTurnFixture(t *testing.T) (*assistantHandlers, domain.User, *Agent
 
 func workspaceTurnCheckpointText(t *testing.T, h *assistantHandlers, id string) string {
 	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		meta, exists := h.repo.WorkspaceCheckpoint(id)
+		if exists && meta.LeaseToken == "" && meta.SavedAt != nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("background checkpoint did not finish", id)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 	archive, err := h.repo.WorkspaceCheckpointArchive(id)
 	if err != nil {
 		t.Fatal(err)
@@ -378,16 +425,24 @@ type workspaceTurnCheckpointBarrier struct {
 	err     error
 }
 
-func (e *workspaceTurnCheckpointBarrier) EndConversationWorkspaceUse(ctx context.Context, id, token string) error {
-	if e.entered != nil {
-		close(e.entered)
-		select {
-		case <-e.release:
-		case <-ctx.Done():
-			return ctx.Err()
-		}
+func (e *workspaceTurnCheckpointBarrier) EndConversationWorkspaceUseAsync(ctx context.Context, id, token string) (<-chan error, error) {
+	if e.entered == nil {
+		// Simulate an immediate handoff failure; an actual background failure is
+		// reported only in workspace metadata, never in a completed generation.
+		return nil, errors.Join(e.assistantWorkspaceLeaseEngine.EndConversationWorkspaceUse(context.WithoutCancel(ctx), id, token), e.err)
 	}
-	return errors.Join(e.assistantWorkspaceLeaseEngine.EndConversationWorkspaceUse(ctx, id, token), e.err)
+	result, err := e.assistantWorkspaceLeaseEngine.EndConversationWorkspaceUseAsync(ctx, id, token)
+	if err != nil {
+		return nil, err
+	}
+	done := make(chan error, 1)
+	go func() {
+		defer close(done)
+		close(e.entered)
+		<-e.release
+		done <- errors.Join(<-result, e.err)
+	}()
+	return done, nil
 }
 
 // A workspace that cannot be saved (too large, or slower than the save
@@ -499,7 +554,7 @@ func TestAssistantWorkspaceTurnClosedRefusesSwitch(t *testing.T) {
 	}
 }
 
-func TestAssistantWorkspaceTurnGenerationWaitsForCheckpoint(t *testing.T) {
+func TestAssistantWorkspaceTurnGenerationDoesNotWaitForCheckpoint(t *testing.T) {
 	h, user, fixtureSession, gateway, ids := workspaceTurnFixture(t)
 	barrier := &workspaceTurnCheckpointBarrier{assistantWorkspaceLeaseEngine: h.engine, entered: make(chan struct{}), release: make(chan struct{}), err: errors.New("test checkpoint warning")}
 	var release sync.Once
@@ -534,32 +589,146 @@ func TestAssistantWorkspaceTurnGenerationWaitsForCheckpoint(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("turn never reached its final checkpoint")
 	}
-	g, _ := h.repo.AssistantGeneration(user.ID, fixtureSession.ChatSessionID)
-	meta, _ := h.repo.WorkspaceCheckpoint(ids[0])
-	if g.Status != "running" || meta.LeaseToken == "" {
-		t.Fatal("generation completed or released the workspace before its checkpoint")
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
-	defer cancel()
-	if err := inflightTasks.Wait(ctx); !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("deployment drain did not wait for the checkpoint: %v", err)
-	}
-	unblock()
-	deadline := time.Now().Add(10 * time.Second)
+	deadline := time.Now().Add(time.Second)
+	var g domain.AssistantGeneration
 	for {
 		g, _ = h.repo.AssistantGeneration(user.ID, fixtureSession.ChatSessionID)
 		if g.Status != "running" {
 			break
 		}
 		if time.Now().After(deadline) {
-			t.Fatal("checkpoint did not finish")
+			t.Fatal("generation waited for background save")
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	if g.Status != "completed" || !strings.Contains(g.WorkspaceWarning, "test checkpoint warning") {
-		t.Fatalf("final checkpoint warning was not reported: status=%s warning=%s", g.Status, g.WorkspaceWarning)
+	if g.Status != "completed" || g.WorkspaceWarning != "" {
+		t.Fatalf("outcome: %+v", g)
 	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+	if err := inflightTasks.Wait(ctx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("deployment drain did not retain the background save: %v", err)
+	}
+	unblock()
+
 	if got := workspaceTurnCheckpointText(t, h, ids[0]); got != "latest edit" {
 		t.Fatalf("checkpoint lost edits: %q", got)
+	}
+}
+
+func TestAssistantCancelledGenerationDoesNotWaitForCheckpoint(t *testing.T) {
+	h, user, fixtureSession, gateway, ids := workspaceTurnFixture(t)
+	barrier := &workspaceTurnCheckpointBarrier{assistantWorkspaceLeaseEngine: h.engine, entered: make(chan struct{}), release: make(chan struct{})}
+	var release sync.Once
+	unblock := func() { release.Do(func() { close(barrier.release) }) }
+	defer unblock()
+	edited := make(chan struct{})
+	h.generate = func(ctx context.Context, _ string, _ domain.User) (string, error) {
+		agentToolSessions.mu.Lock()
+		var session *AgentToolSession
+		for _, candidate := range agentToolSessions.sessions {
+			if candidate.ChatSessionID == fixtureSession.ChatSessionID {
+				session = candidate
+			}
+		}
+		agentToolSessions.mu.Unlock()
+		if session == nil || session.workspaceTurn == nil {
+			return "", errors.New("missing workspace turn")
+		}
+		session.workspaceTurn.mu.Lock()
+		session.workspaceTurn.engine = barrier
+		session.workspaceTurn.mu.Unlock()
+		if _, err := gateway.callMainBotWorkspace(ctx, session, "workbench_workspace_write", map[string]any{"path": "note.txt", "content": "edit before stop", "expectedSha256": runtime.WorkspaceContentSHA("before")}); err != nil {
+			return "", err
+		}
+		close(edited)
+		<-ctx.Done()
+		return "", ctx.Err()
+	}
+	body, _ := json.Marshal(assistantRequest{SessionID: fixtureSession.ChatSessionID, ProjectID: fixtureSession.ProjectID, Messages: []assistantMessage{{Role: "user", Content: "edit then wait"}}})
+	c, rec := workbenchContext(user, "POST", "/api/assistant/generations", bytes.NewBuffer(body))
+	h.startGeneration(c)
+	if rec.Code != 202 {
+		t.Fatalf("start: %d %s", rec.Code, rec.Body)
+	}
+	select {
+	case <-edited:
+	case <-time.After(5 * time.Second):
+		t.Fatal("edit did not start")
+	}
+	g, _ := h.repo.AssistantGeneration(user.ID, fixtureSession.ChatSessionID)
+	began := time.Now()
+	c, rec = workbenchContext(user, "POST", "/api/assistant/sessions/"+g.SessionID+"/generation/cancel?generationId="+g.ID, bytes.NewBufferString(`{}`))
+	c.Params = append(c.Params, gin.Param{Key: "id", Value: g.SessionID})
+	h.generation(c)
+	if rec.Code != 200 {
+		t.Fatalf("cancel: %d %s", rec.Code, rec.Body)
+	}
+	select {
+	case <-barrier.entered:
+	case <-time.After(time.Second):
+		t.Fatal("stop did not hand off checkpoint")
+	}
+	for {
+		g, _ = h.repo.AssistantGeneration(user.ID, g.SessionID)
+		if g.Status != "running" {
+			break
+		}
+		if time.Since(began) > time.Second {
+			t.Fatal("stop waited for background checkpoint")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if g.Status != "cancelled" || g.WorkspaceWarning != "" {
+		t.Fatalf("stop outcome: %+v", g)
+	}
+	run, _ := h.repo.RunState(ids[0])
+	root, _ := h.engine.LocalRunWorkspace(run)
+	content, err := os.ReadFile(filepath.Join(root, "note.txt"))
+	if err != nil || string(content) != "edit before stop" {
+		t.Fatalf("stop lost edits: %q %v", content, err)
+	}
+	token, err := h.engine.BeginConversationWorkspaceUse(ids[0])
+	if err != nil {
+		t.Fatal("next turn cannot acquire workspace", err)
+	}
+	if err = h.engine.EndConversationWorkspaceUse(context.Background(), ids[0], token); err != nil {
+		t.Fatal(err)
+	}
+	unblock()
+}
+
+func TestAssistantWorkspaceTurnRestoresIdleWorkspaceBeforeNativeExecution(t *testing.T) {
+	h, _, session, _, ids := workspaceTurnFixture(t)
+	id := ids[0]
+	token, err := h.engine.BeginConversationWorkspaceUse(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = h.engine.EnsureConversationWorkspace(context.Background(), id, token); err != nil {
+		t.Fatal(err)
+	}
+	if err = h.engine.EndConversationWorkspaceUse(context.Background(), id, token); err != nil {
+		t.Fatal(err)
+	}
+	root := h.engine.RunWorkspace(id)
+	// Simulate the idle sweep retaining its snapshot while reclaiming the files.
+	if err = h.repo.DB.Table("runs").Where("id = ?", id).Update("workspace_cleaned_at", time.Now().UTC()).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err = os.RemoveAll(root); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = session.workspaceTurn.lease(context.Background(), id); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(filepath.Join(root, "note.txt"))
+	if err != nil || string(got) != "before" {
+		t.Fatalf("native CLI would see an empty recreated workspace: %q %v", got, err)
+	}
+	run, _ := h.repo.RunState(id)
+	meta, _ := h.repo.WorkspaceCheckpoint(id)
+	if !run.WorkspaceCleanedAt.IsZero() || !meta.FollowUp {
+		t.Fatal("restored workspace stayed marked reclaimed")
 	}
 }

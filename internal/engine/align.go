@@ -113,6 +113,10 @@ func ShouldAlignIntegrate(r domain.RepositoryContext) bool {
 // returned as AlignConflictError (with extracted conflict hunks); the remote
 // integrate branch is left unchanged.
 func AlignIntegrateBaseline(repository domain.RepositoryContext, gitToken string, locks IntegrationLocker) error {
+	return alignIntegrateBaseline(context.Background(), repository, gitToken, locks)
+}
+
+func alignIntegrateBaseline(ctx context.Context, repository domain.RepositoryContext, gitToken string, locks IntegrationLocker) error {
 	if !ShouldAlignIntegrate(repository) {
 		return nil
 	}
@@ -128,7 +132,7 @@ func AlignIntegrateBaseline(repository domain.RepositoryContext, gitToken string
 	work.WorkBranch = ""
 	work.IntegrateBranch = domain.NormalizeIntegrateBranch(repository.IntegrateBranch)
 	work.BaseBranch = work.IntegrateBranch
-	ctx := withGitToken(context.Background(), gitToken)
+	ctx = withRepositoryGit(withGitToken(ctx, gitToken), work)
 	if err := prepareRepository(ctx, dir, work); err != nil {
 		return err
 	}

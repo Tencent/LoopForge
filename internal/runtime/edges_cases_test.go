@@ -113,3 +113,12 @@ func TestSandboxIsolationEnvironmentConcreteTypes(t *testing.T) {
 		t.Fatalf("long safe id length=%d", len(got))
 	}
 }
+
+func TestWorkspacePreparationTrivial(t *testing.T) {
+	if !WorkspacePreparationTrivial(domain.WorkflowDefinition{Nodes: []domain.WorkflowNode{{ID: "agent", Type: "agent"}}}) {
+		t.Fatal("workflow without preparation steps must be trivial")
+	}
+	if WorkspacePreparationTrivial(domain.WorkflowDefinition{Nodes: []domain.WorkflowNode{{ID: "setup", Type: "script", RunOnWorkspaceRebuild: true}}}) {
+		t.Fatal("workflow with a preparation step is not trivial")
+	}
+}

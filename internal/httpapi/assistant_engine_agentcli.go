@@ -32,7 +32,7 @@ func prepareAssistantAgentCLIInvocation(kind string, o assistantEngineInvocation
 		}
 		entries[id] = entry
 	}
-	if err := runtime.WriteAgentCLIMCPConfig(kind, filepath.Join(o.Root, "home"), entries, runtime.AgentCLIMCPOptions{ReadOnly: true}); err != nil {
+	if err := runtime.WriteAgentCLIMCPConfig(kind, runtime.AgentCLIHome{Base: o.Root, Rel: "home"}, entries, runtime.AgentCLIMCPOptions{ReadOnly: !o.Workspace}); err != nil {
 		return assistantCLIInvocation{}, err
 	}
 	resume := ""
@@ -46,15 +46,17 @@ func prepareAssistantAgentCLIInvocation(kind string, o assistantEngineInvocation
 		return assistantCLIInvocation{}, err
 	}
 	agentFile := ""
-	if kind == runtime.AgentCLIKimi && resume == "" {
+	if kind == runtime.AgentCLIKimi {
 		agentFile = filepath.Join(o.Root, "kimi-agent.md")
-		if err := runtime.WriteKimiChatAgent(agentFile, o.SystemPrompt); err != nil {
+		// Kimi binds an agent at session creation. Keep its native tools stable
+		// across resumes; the per-invocation PreToolUse hook gates each mode.
+		if err := runtime.WriteKimiConversationAgent(agentFile, o.SystemPrompt, false); err != nil {
 			return assistantCLIInvocation{}, err
 		}
 	}
 	command := runtime.AgentCLICommand(kind, runtime.AgentCLICommandOptions{
 		Binary: o.Bin, Model: o.Model, Effort: o.Effort, Resume: resume, Prompt: o.Prompt,
-		SystemPrompt: o.SystemPrompt, SystemPromptFile: systemFile, Chat: true, AgentFile: agentFile,
+		SystemPrompt: o.SystemPrompt, SystemPromptFile: systemFile, Chat: true, Workspace: o.Workspace, AgentFile: agentFile,
 	})
 	command.CredentialBindings = []runtime.CredentialBinding{runtime.BindAgentCLI}
 	translate := runtime.NewAgentCLITranslator(kind)
@@ -67,11 +69,14 @@ func prepareAssistantAgentCLIInvocation(kind string, o assistantEngineInvocation
 			out := translate(line)
 			for i, translated := range out {
 				out[i] = assistantAgentCLILine(kind, translated, &native)
+				if agentCLISessionValid(native) {
+					_ = writeAgentCLISession(o.Root, kind, o.SessionID, native)
+				}
 			}
 			return out
 		},
 		finish: func(ok bool) {
-			if ok && agentCLISessionValid(native) {
+			if agentCLISessionValid(native) {
 				_ = writeAgentCLISession(o.Root, kind, o.SessionID, native)
 			}
 		},

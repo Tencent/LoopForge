@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"agentflow/internal/domain"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -60,7 +61,7 @@ func mainBotWorkspaceTools(s *AgentToolSession) []agentToolDescriptor {
 	descriptors := []struct{ name, description, schema string }{
 		{"tree", "列出当前工作区的文件（任务会话是任务工作区；普通对话是用 workbench_workspace_open 打开的临时工作区）。路径相对工作区，不是控制平面目录。", `{"type":"object","properties":{"path":{"type":"string"}},"additionalProperties":false}`},
 		{"read", "读取当前工作区文件，返回 content 与 sha256；修改前先读取。", `{"type":"object","properties":{"path":{"type":"string"}},"required":["path"],"additionalProperties":false}`},
-		{"write", "直接保存当前工作区文件。expectedSha256 必须为读取时的 sha256；新文件传 missing。若文件已变更，重新读取并对齐，不能盲目覆盖。SOP 正在执行时需先暂停；临时工作区允许直接写入。", `{"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"},"expectedSha256":{"type":"string"}},"required":["path","content","expectedSha256"],"additionalProperties":false}`},
+		{"write", "直接保存当前工作区文件。expectedSha256 必须为读取时的 sha256；新建文件传字符串 \"missing\"（不是空串，也不是空内容的 sha256），且父目录必须已存在。若文件已变更，重新读取并对齐，不能盲目覆盖。SOP 正在执行时需先暂停；临时工作区允许直接写入。", `{"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"},"expectedSha256":{"type":"string","description":"workbench_workspace_read 返回的 sha256；新建文件传 \"missing\""}},"required":["path","content","expectedSha256"],"additionalProperties":false}`},
 		{"command", "在当前工作区运行 shell 命令并返回 output、exitCode，用于小改动与验证。最长 120 秒；SOP 正在执行时需先暂停。", `{"type":"object","properties":{"command":{"type":"string"},"timeoutSeconds":{"type":"integer","minimum":1,"maximum":120}},"required":["command"],"additionalProperties":false}`},
 		{"attach", "把工作区里的文本文件（HTML demo、Markdown/文本报告、JSON、CSV 等，单个不超过 1MB）附在本轮回复里交给用户。工作区地址只在工作区存活时能在侧栏「浏览器」页签打开，要让用户留存或下载文件就用它：HTML 在产物栏以沙箱方式可交互预览，其他文件可查看和下载。每轮最多 4 个；同名文件再次附加时以最新内容为准，所以改完文件后重新附加即可。", `{"type":"object","properties":{"path":{"type":"string"}},"required":["path"],"additionalProperties":false}`},
 	}
@@ -78,7 +79,10 @@ func (h *agentToolGateway) callMainBotWorkspace(ctx context.Context, s *AgentToo
 	if len(mainBotWorkspaceTools(s)) == 0 {
 		return "", errAgentToolForbidden
 	}
-	if s.ExecMode.ReviewWrites && name != "workbench_workspace_tree" && name != "workbench_workspace_read" && name != "workbench_workspace_attach" {
+	if name == "workbench_workspace_submit_mr" && !s.ExecMode.AutoWrite {
+		return "", fmt.Errorf("提交 MR 或推送分支需要外部写入授权，请切换到「帮我批准」或「完全权限」后继续")
+	}
+	if s.ExecMode.ReviewWrites && name != "workbench_workspace_tree" && name != "workbench_workspace_read" && name != "workbench_workspace_attach" && name != "workbench_workspace_open" && name != "workbench_platform_mode" {
 		// Commands are always reviewed: arbitrary shell text can mutate state.
 		ctx = withAssistantApprovalReviewer(ctx, s.approvalReviewer)
 		review := reviewAssistantAction(ctx, name, "当前项目工作区操作，文件写入、命令执行或提交 MR 会产生副作用", map[string]any{"runId": s.workspaceRun(), "arguments": args})
@@ -86,7 +90,15 @@ func (h *agentToolGateway) callMainBotWorkspace(ctx context.Context, s *AgentToo
 			return "", assistantReviewRefusal(name, review)
 		}
 	}
+	if name == "workbench_platform_mode" {
+		s.requestMode(domain.AssistantModePlatform)
+		raw, _ := json.Marshal(map[string]any{"mode": "platform", "handoff": true, "notice": "工作区保留，准备切回平台模式。" + assistantHandoffNotice})
+		return string(raw), nil
+	}
 	if name == "workbench_workspace_open" {
+		if s.RuntimeMode == domain.AssistantModeWorkspace {
+			return "", fmt.Errorf("切换工作区前先调用 workbench_platform_mode，等待原生进程退出后再打开工作区")
+		}
 		// Only Main Bot picks the workspace. A subagent calls through the same
 		// gateway, so while any dispatch runs the binding stays as it is.
 		if s.dispatchRunning() {
@@ -216,9 +228,9 @@ func (h *agentToolGateway) mainBotWorkspaceLease(ctx context.Context, s *AgentTo
 			return ctx, nil, release, err
 		}
 		release = func() {
-			saveCtx, stop := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
-			defer stop()
-			_ = h.engine.EndConversationWorkspaceUse(saveCtx, runID, token)
+			if result, err := h.engine.EndConversationWorkspaceUseAsync(ctx, runID, token); err == nil {
+				trackAssistantWorkspaceSave(runID, result)
+			}
 		}
 	}
 	restored, err := h.engine.PrepareConversationWorkspace(ctx, runID, token)
@@ -233,7 +245,11 @@ func (h *agentToolGateway) invokeMainBotWorkspace(ctx context.Context, s *AgentT
 	if runID == "" {
 		runID = s.workspaceRun()
 	}
-	result, err := (mcpserver.LocalInvoker{Handler: h.api}).Invoke(ctx, application.Operation{Method: method, Path: "/api/runs/{id}/workspace/" + endpoint}, mcpserver.ToolInput{Path: map[string]string{"id": runID}, Query: query, Body: body})
+	path := "/api/runs/{id}/workspace"
+	if endpoint != "" {
+		path += "/" + endpoint
+	}
+	result, err := (mcpserver.LocalInvoker{Handler: h.api}).Invoke(ctx, application.Operation{Method: method, Path: path}, mcpserver.ToolInput{Path: map[string]string{"id": runID}, Query: query, Body: body})
 	if err != nil {
 		return "", err
 	}
@@ -432,15 +448,8 @@ func (h *agentToolGateway) mainBotWorkspaceCommand(ctx context.Context, s *Agent
 			return "", err
 		}
 	}
-	// Treat the requested command as a single shell argument, preserving quotes,
-	// substitutions and newlines without letting it alter our status wrapper.
-	quoted := "'" + strings.ReplaceAll(command, "'", "'\"'\"'") + "'"
-	// One input line: the shell reads it whole before running anything, so
-	// line-editor output (e.g. bash 5 bracketed-paste toggles around every
-	// read) lands before the begin line and none follows the exit line.
 	begin := "__main_bot_begin_" + token
-	input := "printf '\\n%s\\n' '" + begin + "'; /bin/sh -c " + quoted + "; printf '\\n" + marker + "%s\\n' \"$?\"; exit\n"
-	if _, err = terminal(ctx, "input", opened.ID, input); err != nil {
+	if _, err = terminal(ctx, "input", opened.ID, workspaceCommandInput(command, begin, marker)); err != nil {
 		return "", err
 	}
 	for {
@@ -463,6 +472,19 @@ func (h *agentToolGateway) mainBotWorkspaceCommand(ctx context.Context, s *Agent
 			return string(raw), nil
 		}
 	}
+}
+
+// workspaceCommandInput wraps a command for the workspace terminal. The
+// command is one shell argument, preserving quotes, substitutions and
+// newlines without letting it alter the status wrapper. It is all one input
+// line: the shell reads it whole before running anything, so line-editor
+// output (e.g. bash 5 bracketed-paste toggles around every read) lands before
+// the begin line and none follows the exit line. Nobody types into this
+// terminal, so pagers are disabled and stdin is empty: `git log` or a prompt
+// would otherwise wait for a key until the timeout.
+func workspaceCommandInput(command, begin, marker string) string {
+	quoted := "'" + strings.ReplaceAll(command, "'", "'\"'\"'") + "'"
+	return "printf '\\n%s\\n' '" + begin + "'; export PAGER=cat GIT_PAGER=cat MANPAGER=cat SYSTEMD_PAGER=; /bin/sh -c " + quoted + " </dev/null; printf '\\n" + marker + "%s\\n' \"$?\"; exit\n"
 }
 
 // workspaceCommandTimeout tells the model what the stopped command printed and

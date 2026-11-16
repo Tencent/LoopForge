@@ -20,6 +20,14 @@ func TestMainBotWorkspaceWritesAndCommandsUseTaskFiles(t *testing.T) {
 	a, owner, _, _, _ := sharedWorkbenchFixture(t)
 	root := t.TempDir()
 	en := engine.New(a.repo, runtime.NewManager(root))
+	waitSaves := func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := inflightTasks.Wait(ctx); err != nil {
+			t.Fatal("background saves did not finish", err)
+		}
+	}
+	t.Cleanup(waitSaves)
 	r, _ := a.repo.RunState("shared-run")
 	r.Status = "running"
 	r.PauseRequested = false
@@ -137,6 +145,7 @@ func TestMainBotWorkspaceWritesAndCommandsUseTaskFiles(t *testing.T) {
 	if _, err = call("write", map[string]any{"path": "note.txt", "content": "finished SOP edit", "expectedSha256": runtime.WorkspaceContentSHA("after")}); err != nil {
 		t.Fatal(err)
 	}
+	waitSaves()
 	if _, err = a.repo.WorkspaceCheckpointArchive(r.ID); err != nil {
 		t.Fatal("Main Bot did not persist edits", err)
 	}

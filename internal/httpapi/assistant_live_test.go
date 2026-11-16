@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -139,5 +140,56 @@ func TestAssistantProgressReplyContinuesAndHasBoundedFailure(t *testing.T) {
 	}
 	if assistantProgressOnly("稍等", []assistantMessage{{Role: "user", Content: "只回复：稍等"}}) {
 		t.Fatal("literal response retried")
+	}
+}
+
+func TestPersistedGenerationStreamPublishesCancelWithoutNewTokens(t *testing.T) {
+	var cancelled, finished atomic.Bool
+	g := domain.AssistantGeneration{ID: "remote-cancel-only", Status: "running"}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c, _ := gin.CreateTestContext(w)
+		c.Request = r
+		serveAssistantGenerationStream(c, g, func() (domain.AssistantGeneration, bool) {
+			current := g
+			current.CancelRequested = cancelled.Load()
+			if finished.Load() {
+				current.Status = "cancelled"
+			}
+			return current, true
+		})
+	}))
+	defer server.Close()
+	client := server.Client()
+	client.Timeout = 3 * time.Second
+	response, err := client.Get(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	scanner := bufio.NewScanner(response.Body)
+	read := func() domain.AssistantGeneration {
+		t.Helper()
+		for scanner.Scan() {
+			if strings.HasPrefix(scanner.Text(), "data: ") {
+				var current domain.AssistantGeneration
+				if err := json.Unmarshal([]byte(strings.TrimPrefix(scanner.Text(), "data: ")), &current); err != nil {
+					t.Fatal(err)
+				}
+				return current
+			}
+		}
+		t.Fatal("missing state-only SSE update", scanner.Err())
+		return domain.AssistantGeneration{}
+	}
+	if read().CancelRequested {
+		t.Fatal("initial state unexpectedly stopping")
+	}
+	cancelled.Store(true)
+	if current := read(); !current.CancelRequested || current.Status != "running" {
+		t.Fatalf("missing stopping state: %+v", current)
+	}
+	finished.Store(true)
+	if read().Status != "cancelled" {
+		t.Fatal("missing actual stopped state")
 	}
 }

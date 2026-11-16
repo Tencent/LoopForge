@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -126,10 +127,10 @@ func applyNativeToolSafety(argv []string, mode AgentToolMode) []string {
 	// --tools is a built-in allowlist. CodeBuddy also applies it to MCP tools,
 	// so listing Read/Grep/Glob or mcp__* globs hides submit_* and TAPD/工蜂.
 	argv = dropNativeArg(argv, "--tools")
-	if !argvHasFlag(argv, "--disallowedTools") {
+	if !slices.Contains(argv, "--disallowedTools") {
 		argv = appendNativeArgs(argv, "--disallowedTools", nativeDisallowedTools)
 	}
-	if !argvHasFlag(argv, "--strict-mcp-config") {
+	if !slices.Contains(argv, "--strict-mcp-config") {
 		argv = appendNativeArgs(argv, "--strict-mcp-config")
 	}
 	return argv
@@ -189,15 +190,6 @@ func replaceArgValue(argv []string, flag, value string) []string {
 		out = appendNativeArgs(out, flag, value)
 	}
 	return out
-}
-
-func argvHasFlag(argv []string, flag string) bool {
-	for _, arg := range argv {
-		if arg == flag {
-			return true
-		}
-	}
-	return false
 }
 
 func argvFlagValue(argv []string, flag string) (string, bool) {

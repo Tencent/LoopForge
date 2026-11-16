@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -23,14 +24,17 @@ type userWithConfig struct {
 	DeptName                     string     `gorm:"column:dept_name"`
 	PlatformRole                 string     `gorm:"column:platform_role"`
 	GitToken                     *string    `gorm:"column:git_token"`
+	GitSSHKeyConfigured          bool       `gorm:"column:git_ssh_key_configured"`
 	GongfengRefreshToken         *string    `gorm:"column:gongfeng_refresh_token"`
 	GongfengTokenExpiresAt       *time.Time `gorm:"column:gongfeng_token_expires_at"`
 	CodeBuddyAPIKey              *string    `gorm:"column:codebuddy_api_key"`
 	CodeBuddyInternetEnvironment string     `gorm:"column:codebuddy_internet_environment"`
 	CodexAPIKey                  *string    `gorm:"column:codex_api_key"`
 	CodexBaseURL                 *string    `gorm:"column:codex_base_url"`
+	CodexModels                  *string    `gorm:"column:codex_models"`
 	ClaudeCodeAPIKey             *string    `gorm:"column:claude_code_api_key"`
 	ClaudeCodeBaseURL            *string    `gorm:"column:claude_code_base_url"`
+	ClaudeCodeModels             *string    `gorm:"column:claude_code_models"`
 	AgentCLICredentials          *string    `gorm:"column:agent_cli_credentials"`
 	Created                      *time.Time `gorm:"column:created_at"`
 	Updated                      *time.Time `gorm:"column:updated_at"`
@@ -38,8 +42,9 @@ type userWithConfig struct {
 
 const userSelectColumns = `u.id, u.staff_id, u.login_name, u.chinese_name, u.dept_id, u.dept_name,
 	COALESCE(u.platform_role, '') AS platform_role,
-	c.git_token, c.gongfeng_refresh_token, c.gongfeng_token_expires_at, c.codebuddy_api_key, COALESCE(c.codebuddy_internet_environment, '') AS codebuddy_internet_environment,
-	c.codex_api_key, c.codex_base_url, c.claude_code_api_key, c.claude_code_base_url,
+	c.git_token, EXISTS (SELECT 1 FROM user_git_ssh_keys k WHERE k.user_id = u.id) AS git_ssh_key_configured,
+	c.gongfeng_refresh_token, c.gongfeng_token_expires_at, c.codebuddy_api_key, COALESCE(c.codebuddy_internet_environment, '') AS codebuddy_internet_environment,
+	c.codex_api_key, c.codex_base_url, c.codex_models, c.claude_code_api_key, c.claude_code_base_url, c.claude_code_models,
 	c.agent_cli_credentials,
 	u.created_at, u.updated_at`
 
@@ -48,6 +53,7 @@ func (r userWithConfig) toDomain() domain.User {
 		ID: r.ID, StaffID: r.StaffID, LoginName: r.LoginName, ChineseName: r.ChineseName,
 		DeptID: r.DeptID, DeptName: r.DeptName, PlatformRole: r.PlatformRole,
 		CodeBuddyInternetEnvironment: r.CodeBuddyInternetEnvironment,
+		GitSSHKeyConfigured:          r.GitSSHKeyConfigured,
 	}
 	if r.GitToken != nil {
 		u.GitToken = *r.GitToken
@@ -67,12 +73,14 @@ func (r userWithConfig) toDomain() domain.User {
 	if r.CodexBaseURL != nil {
 		u.CodexBaseURL = *r.CodexBaseURL
 	}
+	u.CodexModels = decodeCLIModels(r.CodexModels)
 	if r.ClaudeCodeAPIKey != nil {
 		u.ClaudeCodeAPIKey = *r.ClaudeCodeAPIKey
 	}
 	if r.ClaudeCodeBaseURL != nil {
 		u.ClaudeCodeBaseURL = *r.ClaudeCodeBaseURL
 	}
+	u.ClaudeCodeModels = decodeCLIModels(r.ClaudeCodeModels)
 	if r.AgentCLICredentials != nil {
 		_ = json.Unmarshal([]byte(*r.AgentCLICredentials), &u.AgentCLICredentials)
 	}
@@ -148,8 +156,8 @@ func (r *UsersRepo) PutUser(v domain.User) error {
 		v.GitToken = old.GitToken
 		v.GongfengRefreshToken = old.GongfengRefreshToken
 		v.GongfengTokenExpiresAt = old.GongfengTokenExpiresAt
-		v.CodexAPIKey, v.CodexBaseURL = old.CodexAPIKey, old.CodexBaseURL
-		v.ClaudeCodeAPIKey, v.ClaudeCodeBaseURL = old.ClaudeCodeAPIKey, old.ClaudeCodeBaseURL
+		v.CodexAPIKey, v.CodexBaseURL, v.CodexModels = old.CodexAPIKey, old.CodexBaseURL, old.CodexModels
+		v.ClaudeCodeAPIKey, v.ClaudeCodeBaseURL, v.ClaudeCodeModels = old.ClaudeCodeAPIKey, old.ClaudeCodeBaseURL, old.ClaudeCodeModels
 		v.CodeBuddyAPIKey = old.CodeBuddyAPIKey
 		v.CodeBuddyInternetEnvironment = old.CodeBuddyInternetEnvironment
 		v.AgentCLICredentials = old.AgentCLICredentials
@@ -222,23 +230,27 @@ func userHasConfig(user domain.User) bool {
 		user.CodeBuddyInternetEnvironment != "" ||
 		user.CodexAPIKey != "" ||
 		user.CodexBaseURL != "" ||
+		len(user.CodexModels) > 0 ||
 		user.ClaudeCodeAPIKey != "" ||
 		user.ClaudeCodeBaseURL != "" ||
+		len(user.ClaudeCodeModels) > 0 ||
 		len(user.AgentCLICredentials) > 0
 }
 
 type UserCredentialUpdate struct {
-	GitToken                     string  `json:"gitToken"`
-	GitTokenClear                bool    `json:"gitTokenClear"`
-	CodeBuddyAPIKey              string  `json:"codeBuddyApiKey"`
-	CodeBuddyAPIKeyClear         bool    `json:"codeBuddyApiKeyClear"`
-	CodeBuddyInternetEnvironment *string `json:"codeBuddyInternetEnvironment"`
-	CodexAPIKey                  string  `json:"codexApiKey"`
-	CodexAPIKeyClear             bool    `json:"codexApiKeyClear"`
-	CodexBaseURL                 *string `json:"codexBaseUrl"`
-	ClaudeCodeAPIKey             string  `json:"claudeCodeApiKey"`
-	ClaudeCodeAPIKeyClear        bool    `json:"claudeCodeApiKeyClear"`
-	ClaudeCodeBaseURL            *string `json:"claudeCodeBaseUrl"`
+	GitToken                     string             `json:"gitToken"`
+	GitTokenClear                bool               `json:"gitTokenClear"`
+	CodeBuddyAPIKey              string             `json:"codeBuddyApiKey"`
+	CodeBuddyAPIKeyClear         bool               `json:"codeBuddyApiKeyClear"`
+	CodeBuddyInternetEnvironment *string            `json:"codeBuddyInternetEnvironment"`
+	CodexAPIKey                  string             `json:"codexApiKey"`
+	CodexAPIKeyClear             bool               `json:"codexApiKeyClear"`
+	CodexBaseURL                 *string            `json:"codexBaseUrl"`
+	CodexModels                  *[]domain.CLIModel `json:"codexModels"`
+	ClaudeCodeAPIKey             string             `json:"claudeCodeApiKey"`
+	ClaudeCodeAPIKeyClear        bool               `json:"claudeCodeApiKeyClear"`
+	ClaudeCodeBaseURL            *string            `json:"claudeCodeBaseUrl"`
+	ClaudeCodeModels             *[]domain.CLIModel `json:"claudeCodeModels"`
 	// AgentCLICredentials updates the agent CLIs by kind; absent fields keep
 	// the stored value. CodeBuddy, Codex and Claude Code stay on their own columns.
 	AgentCLICredentials map[string]AgentCLICredentialUpdate `json:"agentCliCredentials"`
@@ -292,6 +304,20 @@ func (r *UsersRepo) UpdateUserCredentials(id int64, update UserCredentialUpdate)
 	if update.ClaudeCodeBaseURL != nil {
 		user.ClaudeCodeBaseURL = strings.TrimSpace(*update.ClaudeCodeBaseURL)
 	}
+	if update.CodexModels != nil {
+		models, err := normalizeCLIModels(*update.CodexModels)
+		if err != nil {
+			return domain.User{}, err
+		}
+		user.CodexModels = models
+	}
+	if update.ClaudeCodeModels != nil {
+		models, err := normalizeCLIModels(*update.ClaudeCodeModels)
+		if err != nil {
+			return domain.User{}, err
+		}
+		user.ClaudeCodeModels = models
+	}
 	if err := applyAgentCLICredentialUpdates(&user, update.AgentCLICredentials); err != nil {
 		return domain.User{}, err
 	}
@@ -320,17 +346,18 @@ func (r *UsersRepo) SaveGongfengOAuth(id int64, accessToken, refreshToken string
 }
 
 func (r *UsersRepo) writeUserConfig(v domain.User) error {
-	return upsert(r.DB, "user_configs", map[string]any{
+	values := map[string]any{
 		"user_id":                v.ID,
 		"git_token":              nullableString(v.GitToken),
 		"gongfeng_refresh_token": nullableString(v.GongfengRefreshToken), "gongfeng_token_expires_at": timePtr(v.GongfengTokenExpiresAt),
 		"codebuddy_api_key":              nullableString(v.CodeBuddyAPIKey),
 		"codebuddy_internet_environment": v.CodeBuddyInternetEnvironment,
-		"codex_api_key":                  nullableString(v.CodexAPIKey), "codex_base_url": nullableString(v.CodexBaseURL),
-		"claude_code_api_key": nullableString(v.ClaudeCodeAPIKey), "claude_code_base_url": nullableString(v.ClaudeCodeBaseURL),
+		"codex_api_key":                  nullableString(v.CodexAPIKey), "codex_base_url": nullableString(v.CodexBaseURL), "codex_models": encodeCLIModels(v.CodexModels),
+		"claude_code_api_key": nullableString(v.ClaudeCodeAPIKey), "claude_code_base_url": nullableString(v.ClaudeCodeBaseURL), "claude_code_models": encodeCLIModels(v.ClaudeCodeModels),
 		"agent_cli_credentials": encodeAgentCLICredentials(v.AgentCLICredentials),
 		"created_at":            timePtr(v.CreatedAt), "updated_at": timePtr(v.UpdatedAt),
-	})
+	}
+	return upsert(r.DB, "user_configs", values)
 }
 
 func nullableString(v string) any {
@@ -354,10 +381,16 @@ func applyAgentCLICredentialUpdates(user *domain.User, updates map[string]AgentC
 			return fmt.Errorf("不支持的 CLI：%s", kind)
 		}
 		cred := merged[kind]
+		previousKey := cred.APIKey
 		if update.APIKeyClear {
 			cred.APIKey = ""
 		} else if value := strings.TrimSpace(update.APIKey); value != "" {
 			cred.APIKey = value
+		}
+		// Cursor's catalog is the list the key's plan offered (saved by the
+		// chat model list); another key starts from that key's own list.
+		if kind == "cursor" && cred.APIKey != previousKey && update.Models == nil {
+			cred.Models = nil
 		}
 		if update.BaseURL != nil {
 			cred.BaseURL = strings.TrimSpace(*update.BaseURL)
@@ -406,6 +439,28 @@ const (
 	maxCLIModelNameRune = 64
 )
 
+func decodeCLIModels(raw *string) []domain.CLIModel {
+	if raw == nil || strings.TrimSpace(*raw) == "" {
+		return nil
+	}
+	var models []domain.CLIModel
+	if json.Unmarshal([]byte(*raw), &models) != nil {
+		return nil
+	}
+	return models
+}
+
+func encodeCLIModels(models []domain.CLIModel) any {
+	if len(models) == 0 {
+		return nil
+	}
+	raw, err := json.Marshal(models)
+	if err != nil {
+		return nil
+	}
+	return string(raw)
+}
+
 func normalizeCLIModels(models []domain.CLIModel) ([]domain.CLIModel, error) {
 	if len(models) > maxCLIModels {
 		return nil, fmt.Errorf("模型目录最多 %d 个", maxCLIModels)
@@ -414,16 +469,8 @@ func normalizeCLIModels(models []domain.CLIModel) ([]domain.CLIModel, error) {
 	seen := map[string]bool{}
 	for _, model := range models {
 		id, name := strings.TrimSpace(model.ID), strings.TrimSpace(model.Name)
-		if id == "" {
-			return nil, errors.New("模型 ID 不能为空")
-		}
-		if len(id) > maxCLIModelIDLen {
-			return nil, fmt.Errorf("模型 ID 长度不能超过 %d 个字符", maxCLIModelIDLen)
-		}
-		for _, r := range id {
-			if r <= ' ' || r == 0x7f || r == '"' || r == '\'' || r == '`' || r == '\\' {
-				return nil, fmt.Errorf("模型 ID %q 不能包含空格、引号、反斜杠或控制字符", id)
-			}
+		if err := validCLIModelID(id); err != nil {
+			return nil, err
 		}
 		if seen[id] {
 			return nil, fmt.Errorf("模型 ID %s 重复", id)
@@ -440,7 +487,52 @@ func normalizeCLIModels(models []domain.CLIModel) ([]domain.CLIModel, error) {
 		if name == id {
 			name = ""
 		}
-		out = append(out, domain.CLIModel{ID: id, Name: name})
+		efforts, defaultEffort, err := normalizeCLIModelEfforts(model.Efforts, model.DefaultEffort)
+		if err != nil {
+			return nil, fmt.Errorf("模型 %s：%w", id, err)
+		}
+		out = append(out, domain.CLIModel{ID: id, Name: name, Efforts: efforts, DefaultEffort: defaultEffort})
 	}
 	return out, nil
+}
+
+func validCLIModelID(id string) error {
+	if id == "" {
+		return errors.New("模型 ID 不能为空")
+	}
+	if len(id) > maxCLIModelIDLen {
+		return fmt.Errorf("模型 ID 长度不能超过 %d 个字符", maxCLIModelIDLen)
+	}
+	for _, r := range id {
+		if r <= ' ' || r == 0x7f || r == '"' || r == '\'' || r == '`' || r == '\\' {
+			return fmt.Errorf("模型 ID %q 不能包含空格、引号、反斜杠或控制字符", id)
+		}
+	}
+	return nil
+}
+
+// normalizeCLIModelEfforts checks the effort→model ID mapping of a Cursor
+// model family: efforts are Cursor's levels and every target is a valid
+// model ID. A default outside the mapping is dropped.
+func normalizeCLIModelEfforts(efforts map[string]string, defaultEffort string) (map[string]string, string, error) {
+	if len(efforts) == 0 {
+		return nil, "", nil
+	}
+	levels := domain.ExecutorEffortLevels["cursor"]
+	out := make(map[string]string, len(efforts))
+	for effort, raw := range efforts {
+		effort, raw = strings.TrimSpace(effort), strings.TrimSpace(raw)
+		if !slices.Contains(levels, effort) {
+			return nil, "", fmt.Errorf("不支持思考强度 %q", effort)
+		}
+		if err := validCLIModelID(raw); err != nil {
+			return nil, "", err
+		}
+		out[effort] = raw
+	}
+	defaultEffort = strings.TrimSpace(defaultEffort)
+	if _, ok := out[defaultEffort]; !ok {
+		defaultEffort = ""
+	}
+	return out, defaultEffort, nil
 }

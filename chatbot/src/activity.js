@@ -402,6 +402,8 @@ export function generationStored(messages, generation) {
   if (!Number.isFinite(start)) return false;
   return (messages || []).some((message) => {
     if (message.role !== "assistant") return false;
+    if (message.generationId && generation?.id)
+      return message.generationId === generation.id;
     const at = Date.parse(message.startedAt || "");
     return Number.isFinite(at) && Math.abs(at - start) < 5000;
   });
@@ -413,6 +415,7 @@ export const savedActivity = (message) =>
   );
 export function activityForReply(message, generation, liveSteps = []) {
   if (message.activity?.length) return savedActivity(message);
+  if (message.generationId && message.generationId !== generation?.id) return [];
   // The old implementation retained only the most recent generation. Recover
   // that visible stream only when its text AND start time match this exact reply.
   const start = Date.parse(message.startedAt),

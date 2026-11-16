@@ -18,7 +18,7 @@ const ctx = {
   api:async(url,init)=>{const body=JSON.parse(init.body);requests.push({url,body});return body;},
 };
 vm.createContext(ctx);
-for(const name of ["projectDefaultSOPField","applyProjectDefaultSOP","buildProjectPayload","validateProjectPayload","storeSavedProject","saveProjectBusinessDomain","saveProjectAdmin"]){
+for(const name of ["projectDefaultSOPField","applyProjectDefaultSOP","buildProjectPayload","validateProjectPayload","storeSavedProject","saveProjectAdmin"]){
   const start=source.search(new RegExp("^(?:async )?function "+name+"\\(","m"));
   assert.ok(start>=0,name);
   const rest=source.slice(start),next=/\n(?:async )?function \w+\(/.exec(rest);

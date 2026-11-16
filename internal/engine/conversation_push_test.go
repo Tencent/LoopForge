@@ -58,10 +58,10 @@ func TestPushConversationWorkspaceCommitsAndPushesWorkBranch(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := e.PushConversationWorkspace(context.Background(), run.ID, "", "alice", "alice@example.com", "msg", ""); err == nil || !strings.Contains(err.Error(), "Git Token") {
+	if _, err := e.PushConversationWorkspace(context.Background(), run.ID, 0, "", "alice", "alice@example.com", "msg", ""); err == nil || !strings.Contains(err.Error(), "Git Token") {
 		t.Fatalf("missing token must explain the fix: %v", err)
 	}
-	heads, err := e.PushConversationWorkspace(context.Background(), run.ID, "token", "alice", "alice@example.com", "fix: 改文案", "")
+	heads, err := e.PushConversationWorkspace(context.Background(), run.ID, 0, "token", "alice", "alice@example.com", "fix: 改文案", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,7 +74,7 @@ func TestPushConversationWorkspaceCommitsAndPushesWorkBranch(t *testing.T) {
 	if msg := testGit(t, remote, "log", "-1", "--format=%s|%an", "feature/direct"); msg != "fix: 改文案|alice" {
 		t.Fatalf("commit = %q", msg)
 	}
-	again, err := e.PushConversationWorkspace(context.Background(), run.ID, "token", "alice", "alice@example.com", "noop", "")
+	again, err := e.PushConversationWorkspace(context.Background(), run.ID, 0, "token", "alice", "alice@example.com", "noop", "")
 	if err != nil || len(again) != 1 || again[0].Head != heads[0].Head {
 		t.Fatalf("re-push without changes must report the same head: %+v %v", again, err)
 	}
@@ -86,7 +86,7 @@ func TestPushConversationWorkspaceCommitsAndPushesWorkBranch(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(checkout, "app.txt"), []byte("shared\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	direct, err := e.PushConversationWorkspace(context.Background(), run.ID, "token", "alice", "alice@example.com", "feat: 直推 preview", "preview")
+	direct, err := e.PushConversationWorkspace(context.Background(), run.ID, 0, "token", "alice", "alice@example.com", "feat: 直推 preview", "preview")
 	if err != nil {
 		t.Fatal(err)
 	}

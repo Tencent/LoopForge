@@ -96,3 +96,19 @@ func TestRunDispatchFailsClosedOnInvalidMode(t *testing.T) {
 		}
 	}
 }
+
+func TestConfigOnlyAcceptsExplicitWorkspaceAliases(t *testing.T) {
+	config, err := parseConfig(`{"refresh":true,"aliases":["/native/conversation/ws"],"hide":["/native/conversation/ws/repo/AGENTS.md"]}`)
+	if err != nil || len(config.Hide) != 1 {
+		t.Fatal(config, err)
+	}
+	for _, raw := range []string{
+		`{"refresh":true,"hide":["/native/conversation/ws/repo/AGENTS.md"]}`,
+		`{"refresh":true,"aliases":["/etc"],"hide":["/etc/AGENTS.md"]}`,
+		`{"refresh":true,"aliases":["/native/ws"],"hide":["/native/ws/.git/AGENTS.md"]}`,
+	} {
+		if _, err := parseConfig(raw); err == nil {
+			t.Fatal("unsafe alias accepted", raw)
+		}
+	}
+}

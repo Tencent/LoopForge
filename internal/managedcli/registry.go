@@ -32,57 +32,15 @@ type packageMetadata struct {
 
 func (m *Manager) candidate(ctx context.Context, provider string) (release, error) {
 	spec := providerSpecs[provider]
-	endpoint := npmRegistry + "/" + url.PathEscape(spec.Package)
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	metadata, err := m.fetchPackageMetadata(ctx, spec.Package)
 	if err != nil {
 		return release{}, err
-	}
-	// The full metadata includes publish times; abbreviated install metadata
-	// does not, and would silently defeat the observation window.
-	request.Header.Set("Accept", "application/json")
-	response, err := m.Client.Do(request)
-	if err != nil {
-		return release{}, fmt.Errorf("fetch package metadata: %w", err)
-	}
-	defer response.Body.Close()
-	if response.StatusCode != http.StatusOK {
-		return release{}, fmt.Errorf("package metadata HTTP %d", response.StatusCode)
-	}
-	const limit = 64 << 20
-	data, err := io.ReadAll(io.LimitReader(response.Body, limit+1))
-	if err != nil {
-		return release{}, err
-	}
-	if len(data) > limit {
-		return release{}, errors.New("package metadata exceeds size limit")
-	}
-	var metadata packageMetadata
-	if err := json.Unmarshal(data, &metadata); err != nil {
-		return release{}, fmt.Errorf("invalid package metadata: %w", err)
 	}
 	version := metadata.Tags["latest"]
 	if metadata.Name != spec.Package || !releaseVersion.MatchString(version) {
 		return release{}, errors.New("registry did not provide the expected package and a stable release version")
 	}
-	// Fast-moving CLIs may publish several times a day. Merely rejecting
-	// an immature latest tag would then postpone updates forever. Select
-	// the newest mature stable release, bounded by the official latest
-	// tag so versions published only to another channel cannot leak in.
-	upper, mature := version, ""
-	cutoff := m.Now().Add(-observationWindow)
-	for v, entry := range metadata.Versions {
-		if !releaseVersion.MatchString(v) || compareVersions(v, upper) > 0 || entry.Deprecated != "" {
-			continue
-		}
-		var published time.Time
-		if err := json.Unmarshal(metadata.Times[v], &published); err != nil || published.IsZero() || published.After(cutoff) {
-			continue
-		}
-		if mature == "" || compareVersions(v, mature) > 0 {
-			mature = v
-		}
-	}
-	if mature != "" {
+	if mature := matureVersion(metadata, version, m.Now().Add(-observationWindow)); mature != "" {
 		version = mature
 	}
 	candidate, ok := metadata.Versions[version]
@@ -99,6 +57,65 @@ func (m *Manager) candidate(ctx context.Context, provider string) (release, erro
 		return release{}, errors.New("candidate release has no valid publication time")
 	}
 	return candidate, nil
+}
+
+// fetchPackageMetadata downloads and decodes the full npm registry document
+// for pkg.
+func (m *Manager) fetchPackageMetadata(ctx context.Context, pkg string) (packageMetadata, error) {
+	endpoint := npmRegistry + "/" + url.PathEscape(pkg)
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return packageMetadata{}, err
+	}
+	// The full metadata includes publish times; abbreviated install metadata
+	// does not, and would silently defeat the observation window.
+	request.Header.Set("Accept", "application/json")
+	response, err := m.Client.Do(request)
+	if err != nil {
+		return packageMetadata{}, fmt.Errorf("fetch package metadata: %w", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return packageMetadata{}, fmt.Errorf("package metadata HTTP %d", response.StatusCode)
+	}
+	const limit = 64 << 20
+	data, err := io.ReadAll(io.LimitReader(response.Body, limit+1))
+	if err != nil {
+		return packageMetadata{}, err
+	}
+	if len(data) > limit {
+		return packageMetadata{}, errors.New("package metadata exceeds size limit")
+	}
+	var metadata packageMetadata
+	if err := json.Unmarshal(data, &metadata); err != nil {
+		return packageMetadata{}, fmt.Errorf("invalid package metadata: %w", err)
+	}
+	return metadata, nil
+}
+
+// matureVersion returns the newest stable, non-deprecated release no newer
+// than upper that was published before cutoff, or "" when none qualifies.
+//
+// Fast-moving CLIs may publish several times a day. Merely rejecting an
+// immature latest tag would then postpone updates forever. Selecting the
+// newest mature stable release, bounded by the official latest tag, keeps
+// updates flowing while versions published only to another channel cannot
+// leak in.
+func matureVersion(metadata packageMetadata, upper string, cutoff time.Time) string {
+	mature := ""
+	for v, entry := range metadata.Versions {
+		if !releaseVersion.MatchString(v) || compareVersions(v, upper) > 0 || entry.Deprecated != "" {
+			continue
+		}
+		var published time.Time
+		if err := json.Unmarshal(metadata.Times[v], &published); err != nil || published.IsZero() || published.After(cutoff) {
+			continue
+		}
+		if mature == "" || compareVersions(v, mature) > 0 {
+			mature = v
+		}
+	}
+	return mature
 }
 
 func validIntegrity(value string) bool {

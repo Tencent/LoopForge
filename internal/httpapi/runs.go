@@ -9,6 +9,7 @@ import (
 
 	"agentflow/internal/domain"
 	"agentflow/internal/engine"
+	"agentflow/internal/gitwork"
 	"agentflow/internal/observability"
 	"agentflow/internal/runtime"
 
@@ -131,19 +132,14 @@ func (h *runsHandlers) runs(c *gin.Context) {
 				c.JSON(http.StatusConflict, map[string]string{"error": "项目默认代码仓库无效，请重新绑定", "code": "repository_required"})
 				return
 			}
-			repositories = []domain.RepositoryContext{{
-				RepositoryID: repoDef.ID, Provider: repoDef.Provider, Name: repoDef.Name,
-				GongfengProjectID: repoDef.GongfengProjectID, WebURL: repoDef.WebURL, CloneURL: repoDef.CloneURL,
-				BaseBranch: repoDef.DefaultBranch, DefaultBranch: repoDef.DefaultBranch, LocalPath: repoDef.LocalPath,
-				PipelineProjectID: repoDef.PipelineProjectID, PipelineDefID: repoDef.PipelineDefID, PipelineURLPattern: repoDef.PipelineURLPattern,
-			}}
+			repositories = []domain.RepositoryContext{repositoryRunContext(repoDef)}
 		}
 		v, err := h.engine.StartWithRepositoriesContext(req.WorkflowID, req.Input, repositories, domain.TelemetryContext{ProjectID: req.ProjectID, ResponsibleUserID: responsibleUserID})
 		if err != nil {
 			respond(c, err)
 			return
 		}
-		c.JSON(201, v)
+		c.JSON(201, publicRun(v, false))
 		return
 	}
 }
@@ -347,6 +343,14 @@ func publicRun(run domain.Run, summary bool) domain.Run {
 	for i := range run.Artifacts {
 		run.Artifacts[i].Content = ""
 	}
+	// Runs keep the stored clone URL so a repository saved with credentials
+	// before they were rejected still clones; readers never see them.
+	run.Repository = domain.PublicRepositoryContext(run.Repository)
+	run.Repositories = append([]domain.RepositoryContext(nil), run.Repositories...)
+	for i := range run.Repositories {
+		run.Repositories[i] = domain.PublicRepositoryContext(run.Repositories[i])
+	}
+	run.Input = gitwork.Redact(run.Input)
 	newNodes := make(map[string]*domain.NodeRun, len(run.Nodes))
 	for k, n := range run.Nodes {
 		if n == nil {

@@ -45,6 +45,8 @@ var (
 )
 
 type runnerControlMessage struct {
+	ToolRequest       *domain.RunnerToolRequest       `json:"toolRequest,omitempty"`
+	ToolResponse      *domain.RunnerToolResponse      `json:"toolResponse,omitempty"`
 	Type              string                          `json:"type"`
 	TaskID            string                          `json:"taskId,omitempty"`
 	DesiredState      string                          `json:"desiredState,omitempty"`
@@ -232,6 +234,17 @@ func (h *runnerControlHub) send(ctx context.Context, conn *runnerControlConn, re
 	case <-conn.done:
 		return domain.RunnerWorkspaceResponse{}, true, errRunnerWorkspaceUnavailable
 	case <-ctx.Done():
+		// Chunked exports hold the runner's workspace fence. End the remote
+		// request too; cancelling only our waiter would strand the next turn.
+		if domain.IsWorkspaceCheckpointTransferOperation(request.Operation) || request.Operation == domain.RunnerWorkspaceOperationCheckpoint {
+			timer := time.NewTimer(time.Second)
+			select {
+			case conn.send <- runnerControlMessage{Type: "workspace.cancel", RequestID: requestID}:
+			case <-conn.done:
+			case <-timer.C:
+			}
+			timer.Stop()
+		}
 		return domain.RunnerWorkspaceResponse{}, true, ctx.Err()
 	}
 }
@@ -501,6 +514,30 @@ func (h *runnersHandlers) runnerControlConnect(c *gin.Context) {
 			return
 		}
 		_ = ws.SetReadDeadline(time.Now().Add(runnerWSReadTimeout))
+		if input.Type == "agent_tool.request" && input.ToolRequest != nil {
+			go func(input runnerControlMessage) {
+				result := domain.RunnerToolResponse{}
+				session, ok := agentToolSessions.get(input.ToolRequest.Token)
+				if !ok || session.ExecutionRunnerID != runner.ID {
+					result.Error = "invalid conversation gateway"
+				} else {
+					var request agentToolRPCRequest
+					if err := json.Unmarshal(input.ToolRequest.Body, &request); err != nil {
+						result.Error = "invalid tool request"
+					} else {
+						response := (&agentToolGateway{deps: h.deps}).handleRPC(withAgentToolToken(c.Request.Context(), input.ToolRequest.Token), session, request)
+						if response != nil {
+							result.Body, _ = json.Marshal(response)
+						}
+					}
+				}
+				select {
+				case conn.send <- runnerControlMessage{Type: "agent_tool.response", RequestID: input.RequestID, ToolResponse: &result}:
+				case <-conn.done:
+				}
+			}(input)
+			continue
+		}
 		if input.Type == "workspace.response" && input.WorkspaceResponse != nil {
 			h.runnerControls.resolveWorkspace(input.RequestID, *input.WorkspaceResponse)
 			continue

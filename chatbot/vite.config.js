@@ -10,6 +10,12 @@ export default defineConfig({
     proxy: {
       "/api": api,
       "/mcp": api,
+      // Workspace IDE tab embeds the platform's vscode-web workbench.
+      "/vscode.html": api,
+      "/vscode.js": api,
+      "/vscode.css": api,
+      "/vscode-web": api,
+      "/extensions": api,
     },
   },
 });

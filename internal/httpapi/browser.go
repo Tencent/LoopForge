@@ -66,6 +66,10 @@ func (h *browserHandlers) browser(c *gin.Context) {
 // executor is reported as an unavailable state rather than an error.
 func (h *browserHandlers) dispatch(ctx context.Context, run domain.Run, req domain.BrowserRequest) (json.RawMessage, string) {
 	timeout := 15 * time.Second
+	if req.Operation == "http" || req.Operation == "file" {
+		// A dev server compiles a route on its first request.
+		timeout = devServerTimeout
+	}
 	if req.Ensure {
 		// The first browser of a host may still need its sidecar image built.
 		timeout = 4 * time.Minute

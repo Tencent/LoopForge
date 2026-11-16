@@ -31,7 +31,7 @@ func TestMainBotGitHubToolsOnlyForAssistantWithProject(t *testing.T) {
 		}
 	}
 	tools := mainBotGitHubTools(&AgentToolSession{Mode: AgentToolAssistant, ProjectID: "p"})
-	want := map[string]bool{mainBotGitHubIssuesList: true, mainBotGitHubPullsList: true, mainBotGitHubPRStatus: true, mainBotGitHubCommentAdd: true, mainBotGitHubLabelsAdd: true}
+	want := map[string]bool{mainBotGitHubIssuesList: true, mainBotGitHubIssueGet: true, mainBotGitHubPullsList: true, mainBotGitHubPRStatus: true, mainBotGitHubPRFiles: true, mainBotGitHubCommentAdd: true, mainBotGitHubLabelsAdd: true, mainBotGitHubPRReview: true, mainBotGitHubPRMerge: true, mainBotGitHubIssueClose: true, mainBotGitHubIssueCreate: true, mainBotGitHubPRClose: true}
 	if len(tools) != len(want) {
 		t.Fatalf("tools = %v", tools)
 	}

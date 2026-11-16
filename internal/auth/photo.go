@@ -30,22 +30,13 @@ func NormalizePhotoSpec(spec int) int {
 	switch {
 	case spec <= 0:
 		return 100
-	case spec <= 48:
+	case spec <= 74:
 		return 48
-	case spec <= 100:
-		if spec <= 74 {
-			return 48
-		}
+	case spec <= 125:
 		return 100
-	case spec <= 150:
-		if spec <= 125 {
-			return 100
-		}
+	case spec <= 300:
 		return 150
 	default:
-		if spec <= 300 {
-			return 150
-		}
 		return 500
 	}
 }
@@ -202,15 +193,10 @@ func (c *Client) FetchPhoto(ctx context.Context, rawUsername string, rawSpec int
 	}
 	reqURL := fmt.Sprintf("%s%s/%d/%s.png", c.cfg.AuthHost, photoPath, spec, url.PathEscape(username))
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
+	req, err := c.newSignedGet(ctx, reqURL, "image/png,image/*;q=0.8,*/*;q=0.5")
 	if err != nil {
 		return nil, "", fmt.Errorf("create photo request failed: %w", err)
 	}
-
-	for k, v := range c.GenerateRIOHeaders() {
-		req.Header.Set(k, v)
-	}
-	req.Header.Set("Accept", "image/png,image/*;q=0.8,*/*;q=0.5")
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
