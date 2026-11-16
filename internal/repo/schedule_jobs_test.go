@@ -1,6 +1,7 @@
 package repo
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"testing"
@@ -25,20 +26,31 @@ func TestDisableScheduleJobKeepsEditsSavedMeanwhile(t *testing.T) {
 	if err := st.PutScheduleJob(edited); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.DisableScheduleJob(job.ID); err != nil {
+	var checked domain.ScheduleJob
+	if _, err := st.DisableScheduleJob(job.ID, func(current domain.ScheduleJob) bool { checked = current; return false }); !errors.Is(err, ErrScheduleJobChanged) {
+		t.Fatalf("rejected disable err = %v", err)
+	}
+	if checked.AssistantPrompt != "p2" {
+		t.Fatalf("check saw %+v, want the row as stored now", checked)
+	}
+	if got, _ := st.ScheduleJob(job.ID); !got.Enabled {
+		t.Fatal("rejected disable still turned the job off")
+	}
+	returned, err := st.DisableScheduleJob(job.ID, func(domain.ScheduleJob) bool { return true })
+	if err != nil {
 		t.Fatal(err)
 	}
 	got, _ := st.ScheduleJob(job.ID)
-	if got.Enabled || got.Name != "巡检 v2" || got.AssistantPrompt != "p2" || got.RunAsUserID != 2 {
-		t.Fatalf("disable = %+v", got)
+	if got.Enabled || got.Name != "巡检 v2" || got.AssistantPrompt != "p2" || got.RunAsUserID != 2 || returned.Enabled || returned.Name != "巡检 v2" {
+		t.Fatalf("disable = %+v returned %+v", got, returned)
 	}
 	for _, listed := range st.ScheduleJobs() {
 		if listed.ID == job.ID && listed.Enabled {
 			t.Fatal("listed job still enabled")
 		}
 	}
-	if err := st.DisableScheduleJob("missing"); err == nil {
-		t.Fatal("disabling a missing job succeeded")
+	if _, err := st.DisableScheduleJob("missing", func(domain.ScheduleJob) bool { return true }); !errors.Is(err, ErrScheduleJobChanged) {
+		t.Fatalf("disabling a missing job err = %v", err)
 	}
 }
 

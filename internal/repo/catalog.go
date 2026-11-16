@@ -688,26 +688,38 @@ func (r *CatalogRepo) PutScheduleJob(v domain.ScheduleJob) error {
 	})
 }
 
-// DisableScheduleJob turns the job off and leaves the rest of the stored row,
-// including edits saved since the caller read it, untouched.
-func (r *CatalogRepo) DisableScheduleJob(id string) error {
-	return r.DB.Transaction(func(tx *gorm.DB) error {
+// ErrScheduleJobChanged reports that the stored job no longer matches what
+// the caller checked, e.g. it was edited or moved to another project.
+var ErrScheduleJobChanged = errors.New("任务已被其他人修改或移动，请刷新后重试")
+
+// DisableScheduleJob turns the job off only if unchanged accepts the row as
+// it is stored now, checked under the row lock, and returns the stored job.
+// Nothing else in the row is touched.
+func (r *CatalogRepo) DisableScheduleJob(id string, unchanged func(current domain.ScheduleJob) bool) (domain.ScheduleJob, error) {
+	var current domain.ScheduleJob
+	err := r.DB.Transaction(func(tx *gorm.DB) error {
 		var row scheduleJobRow
 		err := r.locking(tx).Where("id = ?", id).First(&row).Error
 		if err == gorm.ErrRecordNotFound {
-			return fmt.Errorf("schedule job not found")
+			return ErrScheduleJobChanged
 		}
 		if err != nil {
 			return err
 		}
-		var current domain.ScheduleJob
 		if err := json.Unmarshal(row.Payload, &current); err != nil {
 			return err
+		}
+		if !unchanged(current) {
+			return ErrScheduleJobChanged
 		}
 		current.Enabled = false
 		current.UpdatedAt = time.Now().UTC()
 		return tx.Model(&row).Updates(map[string]any{"enabled": 0, "payload": mustJSON(current), "updated_at": timePtr(current.UpdatedAt)}).Error
 	})
+	if err != nil {
+		return domain.ScheduleJob{}, err
+	}
+	return current, nil
 }
 
 func (r *CatalogRepo) DeleteScheduleJob(id string) error {

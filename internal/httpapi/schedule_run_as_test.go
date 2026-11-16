@@ -226,3 +226,30 @@ func TestScheduleJobMemberWithoutKeyCanStopIt(t *testing.T) {
 		t.Fatalf("enabling without a key = %d", code)
 	}
 }
+
+func TestScheduleStopAllowedChecksTheStoredJob(t *testing.T) {
+	prior := domain.ScheduleJob{ID: "j", ProjectID: "a", SkipDispatch: true, AssistantPrompt: "p", AssistantModel: "m", Name: "巡检", Enabled: true}
+	request := prior
+	request.Enabled = false
+	edit := func(f func(*domain.ScheduleJob)) domain.ScheduleJob {
+		current := prior
+		f(&current)
+		return current
+	}
+	for name, tc := range map[string]struct {
+		current domain.ScheduleJob
+		want    bool
+	}{
+		"unchanged":           {prior, true},
+		"renamed meanwhile":   {edit(func(j *domain.ScheduleJob) { j.Name = "巡检 v2" }), true},
+		"moved meanwhile":     {edit(func(j *domain.ScheduleJob) { j.ProjectID = "b" }), false},
+		"prompt edited":       {edit(func(j *domain.ScheduleJob) { j.AssistantPrompt = "p2" }), false},
+		"model edited":        {edit(func(j *domain.ScheduleJob) { j.AssistantModel = "m2" }), false},
+		"turned into trigger": {edit(func(j *domain.ScheduleJob) { j.SkipDispatch = false }), false},
+		"parameters edited":   {edit(func(j *domain.ScheduleJob) { j.ParameterValues = map[string]string{"k": "v"} }), false},
+	} {
+		if got := scheduleStopAllowed(prior, request, tc.current); got != tc.want {
+			t.Errorf("%s: scheduleStopAllowed = %v, want %v", name, got, tc.want)
+		}
+	}
+}

@@ -200,10 +200,11 @@ func (h *scheduleHandlers) scheduleJobs(c *gin.Context) {
 // with neither the save is refused, since the job could not run. Without a
 // signed-in user the job stays on the project owner's keys. A saver without
 // a usable key may still stop the job when nothing it runs changes; only
-// enabled is then turned off in the current row and the response is written
-// here, since the name and notifications also go into the prompt, a stopped
-// job can be run by hand, and another save may have landed meanwhile. A false
-// return means the response has been written.
+// enabled is then turned off, since the name and notifications also go into
+// the prompt and a stopped job can be run by hand. That is checked again
+// under the row lock against the stored job, which another save may have
+// edited or moved meanwhile; then the save gets 409. A false return means the
+// response has been written.
 func (h *scheduleHandlers) bindScheduleRunAs(c *gin.Context, job *domain.ScheduleJob, prior domain.ScheduleJob, requestedModel string) bool {
 	job.RunAsUserID, job.RunAsName = 0, ""
 	if !job.SkipDispatch {
@@ -222,11 +223,17 @@ func (h *scheduleHandlers) bindScheduleRunAs(c *gin.Context, job *domain.Schedul
 		if job.Enabled || !scheduleRunConfigUnchanged(prior, *job) {
 			return false
 		}
-		if err := h.repo.DisableScheduleJob(prior.ID); err != nil {
+		stored, err := h.repo.DisableScheduleJob(prior.ID, func(current domain.ScheduleJob) bool {
+			return scheduleStopAllowed(prior, *job, current)
+		})
+		if errors.Is(err, repo.ErrScheduleJobChanged) {
+			c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+			return true
+		}
+		if err != nil {
 			respond(c, err)
 			return true
 		}
-		stored, _ := h.repo.ScheduleJob(prior.ID)
 		c.JSON(200, stored)
 		return true
 	}
@@ -251,6 +258,14 @@ func (h *scheduleHandlers) bindScheduleRunAs(c *gin.Context, job *domain.Schedul
 	}
 	job.RunAsUserID, job.RunAsName = self.ID, scheduleUserName(self)
 	return true
+}
+
+// scheduleStopAllowed reports whether a keyless stop request, authorized
+// against prior, may still turn off current, the job as stored under the lock:
+// it must be in the project write access was checked for and run exactly what
+// the request was checked against.
+func scheduleStopAllowed(prior, request, current domain.ScheduleJob) bool {
+	return current.ProjectID == prior.ProjectID && scheduleRunConfigUnchanged(current, request)
 }
 
 // scheduleRunConfigUnchanged reports whether job still runs exactly what the
