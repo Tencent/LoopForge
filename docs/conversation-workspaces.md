@@ -1,8 +1,10 @@
 # 对话工作区与项目沙箱
 
-普通对话中的 Main Bot 保持本地对话进程，需要看代码、改代码、跑命令、构建或访问 GitHub 时才调用 `workbench_workspace_open` 进入工作区模式。工作区是一个**运行环境**，不是一次检出：`workbench_workspace_open` 只接收 `sandboxProfileId`（其他参数一律报错），工具描述列出本项目和共享的可用沙箱（Docker，或执行机器的 native 轻量沙箱）以及项目登记的仓库地址供 clone 参考。不选环境时沿用当前工作区，还没有工作区时用会话设置或平台 `generic-docker`；任何情况下都不使用无隔离的宿主机（`local`）。所选环境不可用（被删除、`local`、跨项目私有、Dockerfile 缺失）时返回可操作错误，由 Main Bot 改选，不会被静默替换。
+普通对话中的 Main Bot 保持本地对话进程，需要看代码、改代码、跑命令、构建或访问 GitHub 时才调用 `workbench_workspace_open` 进入工作区模式。工作区是一个**运行环境**，不是一次检出：`workbench_workspace_open` 接收可选的 `sandboxProfileId` 与 `workspaceRunId`（其他参数一律报错），工具描述列出本项目和共享的可用沙箱（Docker，或执行机器的 native 轻量沙箱）以及项目登记的仓库地址供 clone 参考。不选环境时沿用当前工作区，还没有工作区时用会话设置或平台 `generic-docker`；任何情况下都不使用无隔离的宿主机（`local`）。所选环境不可用（被删除、`local`、跨项目私有、Dockerfile 缺失）时返回可操作错误，由 Main Bot 改选，不会被静默替换。
 
-工作区新开时是空目录，平台不预先检出任何仓库、不建分支。交接给 CLI 后，Agent 用自己的 git `clone`、`checkout`、建分支、`commit`、`push`，需要时 `merge`，并自己开 PR（`gh` 或 `curl` 调 API；镜像里没有 `gh` 时由 Agent 自行安装，或在沙箱配置里预装）。推送到主分支、强推、合并 PR 只在用户明确要求时做。
+传入 `workspaceRunId`（同项目的 SOP 运行 ID，或本对话之前开启过的可用工作区 ID；子 SOP 会自动定位到父工作区）时，要求目标工作区与当前对话在同一执行机器上（不在同一机器时如实报错并说明双方所在机器），直接将本对话绑定到该原工作区；已回收的快照会先原地恢复，且修改结果直接保留在原 SOP 工作区中，之后可直接在 SOP 上 `Retry` 重跑后续节点或 `runs_resume` 继续流程，删除普通对话也不会删除借用的 SOP 工作区。
+
+工作区默认新开时是空目录，平台不预先检出任何仓库、不建分支。交接给 CLI 后，Agent 用自己的 git `clone`、`checkout`、建分支、`commit`、`push`，需要时 `merge`，并自己开 PR（`gh` 或 `curl` 调 API；镜像里没有 `gh` 时由 Agent 自行安装，或在沙箱配置里预装）。推送到主分支、强推、合并 PR 只在用户明确要求时做。
 
 用户可在「高级设置 → 显示运行环境选择」中为会话指定环境。会话 `sandboxProfileId` 非空时，它优先于 Main Bot 的选择，工具描述也会告诉 Main Bot 不要再选。
 
