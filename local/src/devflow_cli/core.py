@@ -6,7 +6,7 @@ import stat
 import subprocess
 import sys
 import tempfile
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Dict, List, Optional, Tuple
 
 from . import __version__
@@ -74,6 +74,17 @@ def asset_root() -> Path:
     raise DevFlowError("找不到 DevFlow 安装资产；请从源码目录运行或重新安装 loopforge CLI 包")
 
 
+def is_safe_state_path(value: object) -> bool:
+    # Install state can be moved between Windows and POSIX projects.
+    if not isinstance(value, str) or not value or "\0" in value:
+        return False
+    for parser in (PurePosixPath, PureWindowsPath):
+        parsed = parser(value)
+        if parsed.anchor or not parsed.parts or ".." in parsed.parts:
+            return False
+    return True
+
+
 def load_state(project: Path) -> dict:
     path = project / STATE_PATH
     if not path.is_file():
@@ -82,8 +93,19 @@ def load_state(project: Path) -> dict:
         data = json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc:
         raise DevFlowError(f"安装状态损坏: {path}: {exc}") from exc
-    if data.get("version") != STATE_VERSION or not isinstance(data.get("installations"), dict):
+    if (
+        not isinstance(data, dict)
+        or data.get("version") != STATE_VERSION
+        or not isinstance(data.get("installations"), dict)
+    ):
         raise DevFlowError(f"不支持的安装状态版本: {path}")
+    for item in data["installations"].values():
+        if not isinstance(item, dict) or not isinstance(item.get("files"), list):
+            raise DevFlowError(f"安装状态损坏: {path}")
+        for record in item["files"]:
+            relative = record.get("path") if isinstance(record, dict) else None
+            if not is_safe_state_path(relative):
+                raise DevFlowError(f"安装状态包含非法路径: {path}: {relative!r}")
     return data
 
 

@@ -1,3 +1,5 @@
+import hashlib
+import json
 import os
 import stat
 import subprocess
@@ -82,6 +84,32 @@ class InstallerTests(unittest.TestCase):
             self.assertFalse(link.is_symlink())
             self.assertEqual("external content\n", external_skill.read_text(encoding="utf-8"))
             self.assertNotEqual("external content\n", (link / "SKILL.md").read_text(encoding="utf-8"))
+
+    def test_state_rejects_paths_that_are_not_inside_the_project(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            project = self.project(temporary)
+            apply_install(project, "claude", "classic")
+            state_path = project / ".devflow/install-state.json"
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            victim = project.parent / "keep.txt"
+            content = b"keep me\n"
+            victim.write_bytes(content)
+
+            for unsafe in ("../keep.txt", r"..\keep.txt", str(victim),
+                           r"C:keep.txt", r"C:\keep.txt", r"\keep.txt", ".", ""):
+                with self.subTest(path=unsafe):
+                    state["installations"]["classic:claude"]["files"] = [{
+                        "path": unsafe,
+                        "sha256": hashlib.sha256(content).hexdigest(),
+                    }]
+                    state_path.write_text(json.dumps(state), encoding="utf-8")
+                    with self.assertRaisesRegex(DevFlowError, "安装状态包含非法路径"):
+                        apply_install(project, "claude", "classic", update_only=True, force=True)
+                    with self.assertRaisesRegex(DevFlowError, "安装状态包含非法路径"):
+                        uninstall(project, "claude")
+                    with self.assertRaisesRegex(DevFlowError, "安装状态包含非法路径"):
+                        status_rows(project)
+                    self.assertEqual(content, victim.read_bytes())
 
     def test_update_rejects_modified_managed_file(self):
         with tempfile.TemporaryDirectory() as temporary:
