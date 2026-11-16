@@ -692,7 +692,12 @@ func (r *CatalogRepo) DeleteScheduleJob(id string) error {
 	if _, ok := r.ScheduleJob(id); !ok {
 		return fmt.Errorf("schedule job not found")
 	}
-	return r.DB.Table("schedule_jobs").Where("id = ?", id).Delete(nil).Error
+	return r.DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Table("schedule_job_executions").Where("job_id = ?", id).Delete(nil).Error; err != nil {
+			return err
+		}
+		return tx.Table("schedule_jobs").Where("id = ?", id).Delete(nil).Error
+	})
 }
 
 // ---------- Definition revisions ----------

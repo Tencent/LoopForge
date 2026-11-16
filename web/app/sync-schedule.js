@@ -371,6 +371,7 @@ async function refreshAISchedules(){
     state.data.scheduleJobs=jobs||[];
     await refreshSharedScheduleCatalog().catch(()=>{});
     renderScheduleJobs();
+    refreshScheduleExecutions().catch(()=>{});
   }catch(err){
     $('#aiScheduleRuntimeHint').textContent=`读取 AI 定时任务失败：${err.message}`;
     toast(err.message,'err');
@@ -452,7 +453,7 @@ function renderScheduleJobList(list,jobs,kind,canRun){
   const focusId=list.contains(focused)&&focusAction?focused.dataset[focusAction]:null;
   if(kind==='dispatch'){
     const job=jobs[0];
-    list.innerHTML=job?`<div class="schedule-config-runtime"><div><b>${job.enabled?'已启用':'未启用'} · ${escapeHTML(scheduleJobTimingLabel(job))}</b><span>${escapeHTML(scheduleSourceLabel(job))} · ${scheduleIssueStatusValues(job).map(issueStatusLabel).join('、')}</span><small>${knownTime(job.lastRunAt)?`最近：${knownTime(job.lastRunAt).toLocaleString()} · 候选 ${job.lastPulled||0}，启动 ${job.lastDispatched||0}`:'尚未运行'}${scheduleJobStatusText(job)?` · ${escapeHTML(scheduleJobStatusText(job))}`:''}</small></div><button type="button" class="button ghost small" data-run-schedule="${escapeHTML(job.id)}" ${scheduleJobRunning(job)||!canRun?'disabled':''}>${scheduleJobRunning(job)?'运行中…':'立即运行'}</button></div>${scheduleBlockerHTML(job)}`:'';
+    list.innerHTML=job?`<div class="schedule-config-runtime"><div><b>${job.enabled?'已启用':'未启用'} · ${escapeHTML(scheduleJobTimingLabel(job))}</b><span>${escapeHTML(scheduleSourceLabel(job))} · ${scheduleIssueStatusValues(job).map(issueStatusLabel).join('、')}</span><small>${knownTime(job.lastRunAt)?`最近：${knownTime(job.lastRunAt).toLocaleString()} · 候选 ${job.lastPulled||0}，启动 ${job.lastDispatched||0}`:'尚未运行'}${scheduleJobStatusText(job)?` · ${escapeHTML(scheduleJobStatusText(job))}`:''}</small></div>${scheduleJobTraceActionsHTML(job)}<button type="button" class="button ghost small" data-run-schedule="${escapeHTML(job.id)}" ${scheduleJobRunning(job)||!canRun?'disabled':''}>${scheduleJobRunning(job)?'运行中…':'立即运行'}</button></div>${scheduleBlockerHTML(job)}`:'';
   }else list.innerHTML=jobs.map(j=>{
     const assistant=!!j.skipDispatch;
     const kind=assistant?'AI':'触发';
@@ -462,7 +463,7 @@ function renderScheduleJobList(list,jobs,kind,canRun){
     const status=statusText?`，${escapeHTML(statusText)}`:'';
     const runDisabled=running||!canRun;
     const runTitle=running?'任务正在服务端运行，关闭页面不会中断':(canRun?'':'本实例未启用 scheduler');
-    return `<div class="schedule-job-item${running?' is-running':''}"><div class="schedule-job-row"><button type="button" class="schedule-job-main" data-edit-schedule="${escapeHTML(j.id)}" title="${assistant?'编辑 AI 定时任务':'编辑触发配置'}"><b><span class="schedule-kind-tag ${assistant?'is-assistant':'is-dispatch'}">${kind}</span>${escapeHTML(j.name)}</b>${sharedScheduleRowInfo(j)}<span>${escapeHTML(scheduleJobTimingLabel(j))} · ${j.enabled?'已启用':'已停用'}${assistant?'':` · 单次最多 ${escapeHTML(j.maxDispatch||10)} 个需求`}${running?' · 正在运行':''}</span><small class="${running?'schedule-run-live':''}">${(j.lastRunAt&&!String(j.lastRunAt).startsWith('0001-'))||running?`最近：${new Date(j.lastRunAt||Date.now()).toLocaleString()}${extra}${status}`:'尚未运行'}</small></button>${sharedScheduleRowAction(j)}<button type="button" class="button ghost small" data-edit-schedule="${escapeHTML(j.id)}">编辑</button><button type="button" class="button ghost small" data-run-schedule="${escapeHTML(j.id)}" ${runDisabled?'disabled':''} ${runTitle?`title="${escapeHTML(runTitle)}"`:''}>${running?'运行中…':'立即运行'}</button><button type="button" class="button ghost small danger" data-delete-schedule="${escapeHTML(j.id)}">删除</button></div>${assistant?'':scheduleBlockerHTML(j)}</div>`;
+    return `<div class="schedule-job-item${running?' is-running':''}"><div class="schedule-job-row"><button type="button" class="schedule-job-main" data-edit-schedule="${escapeHTML(j.id)}" title="${assistant?'编辑 AI 定时任务':'编辑触发配置'}"><b><span class="schedule-kind-tag ${assistant?'is-assistant':'is-dispatch'}">${kind}</span>${escapeHTML(j.name)}</b>${sharedScheduleRowInfo(j)}<span>${escapeHTML(scheduleJobTimingLabel(j))} · ${j.enabled?'已启用':'已停用'}${assistant?'':` · 单次最多 ${escapeHTML(j.maxDispatch||10)} 个需求`}${running?' · 正在运行':''}</span><small class="${running?'schedule-run-live':''}">${(j.lastRunAt&&!String(j.lastRunAt).startsWith('0001-'))||running?`最近：${new Date(j.lastRunAt||Date.now()).toLocaleString()}${extra}${status}`:'尚未运行'}</small></button>${sharedScheduleRowAction(j)}${scheduleJobTraceActionsHTML(j)}<button type="button" class="button ghost small" data-edit-schedule="${escapeHTML(j.id)}">编辑</button><button type="button" class="button ghost small" data-run-schedule="${escapeHTML(j.id)}" ${runDisabled?'disabled':''} ${runTitle?`title="${escapeHTML(runTitle)}"`:''}>${running?'运行中…':'立即运行'}</button><button type="button" class="button ghost small danger" data-delete-schedule="${escapeHTML(j.id)}">删除</button></div>${assistant?'':scheduleBlockerHTML(j)}</div>`;
   }).join('')||'<div class="sync-empty">当前项目还没有 AI 定时任务，点击右上角「新建 AI 定时任务」。</div>';
   list.querySelectorAll('[data-edit-schedule]').forEach(b=>b.onclick=()=>{
     const job=(state.data.scheduleJobs||[]).find(j=>j.id===b.dataset.editSchedule);
@@ -471,6 +472,7 @@ function renderScheduleJobList(list,jobs,kind,canRun){
     else fillScheduleJobForm(job);
   });
   bindSharedScheduleRowActions(list);
+  bindScheduleJobTraceActions(list);
   list.querySelectorAll('[data-run-schedule]').forEach(b=>b.onclick=()=>runScheduleJob(b.dataset.runSchedule));
   list.querySelectorAll('[data-delete-schedule]').forEach(b=>b.onclick=()=>deleteScheduleJob(b.dataset.deleteSchedule));
   list.querySelectorAll('[data-open-align-run]').forEach(b=>b.onclick=()=>openRunFromId(b.dataset.openAlignRun,{forceRuns:true}));
@@ -543,7 +545,7 @@ function noteScheduleJobOutcomes(prev, next){
       finished=true;
     }
   }
-  if(finished)refreshIssues();
+  if(finished){refreshIssues();refreshScheduleExecutions().catch(()=>{})}
 }
 let scheduleJobPollTimer=null;
 function scheduleJobPollSignature(jobs, projectId){
@@ -590,6 +592,7 @@ async function runScheduleJob(id){
     if(at>=0)state.data.scheduleJobs[at]=saved;else (state.data.scheduleJobs||[]).push(saved);
     renderScheduleJobs();
     startScheduleJobPoll();
+    refreshScheduleExecutions().catch(()=>{});
   }catch(err){
     toast(err.message,'err');
     await refreshSyncStatus();

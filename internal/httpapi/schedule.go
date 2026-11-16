@@ -166,6 +166,19 @@ func (h *scheduleHandlers) scheduleJobs(c *gin.Context) {
 		job.LastPulled = prior.LastPulled
 		job.LastDispatched = prior.LastDispatched
 		job.LastAssistantMessage = prior.LastAssistantMessage
+		job.LastTraceID = prior.LastTraceID
+		job.LastSessionID = prior.LastSessionID
+		// The pinned conversation is chosen by the first fixed-mode run, never
+		// by a save; leaving fixed mode unpins it, so re-enabling starts fresh.
+		job.FixedSessionID = ""
+		if job.SkipDispatch && strings.TrimSpace(job.SessionMode) == domain.ScheduleSessionFixed {
+			job.SessionMode = domain.ScheduleSessionFixed
+			if prior.UsesFixedSession() && prior.ProjectID == job.ProjectID {
+				job.FixedSessionID = prior.FixedSessionID
+			}
+		} else {
+			job.SessionMode = ""
+		}
 		job.NotificationSnapshot = prior.NotificationSnapshot
 		job.NotificationResult = prior.NotificationResult
 		var saveErr error
@@ -237,8 +250,15 @@ func (h *scheduleHandlers) scheduleJobRun(c *gin.Context) {
 }
 
 func (h *scheduleHandlers) dispatchScheduled(job domain.ScheduleJob, issue domain.Issue, triggerOrigin string) error {
-	_, err := dispatchIssue(h.deps, dispatchRequest{IssueID: issue.ID, WorkflowID: job.ResolveWorkflow(issue), ScheduleJobID: job.ID, TriggerOrigin: triggerOrigin})
+	_, err := h.dispatchScheduledRun(job, issue, triggerOrigin)
 	return err
+}
+
+// dispatchScheduledRun is dispatchScheduled reporting the started run ID for
+// the execution record.
+func (h *scheduleHandlers) dispatchScheduledRun(job domain.ScheduleJob, issue domain.Issue, triggerOrigin string) (string, error) {
+	task, err := dispatchIssue(h.deps, dispatchRequest{IssueID: issue.ID, WorkflowID: job.ResolveWorkflow(issue), ScheduleJobID: job.ID, TriggerOrigin: triggerOrigin})
+	return task.RunID, err
 }
 
 func (h *scheduleHandlers) guardScheduledBaseline(job domain.ScheduleJob, issues []domain.Issue) (map[string]domain.ScheduleJobBlocker, error) {

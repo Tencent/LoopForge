@@ -377,4 +377,17 @@ curl -u "$AGENTFLOW_USER:$AGENTFLOW_PASS" -X POST \
   "$AGENTFLOW_URL/api/schedule-jobs/job-1/run"
 ```
 
+### `GET /api/schedule-job-executions`
+
+返回执行记录 `ScheduleJobExecution[]`，按开始时间倒序。每次运行（定时触发或手动运行）对应一条记录，包含 `status`（running / success / failed / waiting）、`error`、`durationMs`、候选与派发数、AI 回复摘要，以及派发出的 `runs[]`（`issueId`、`runId`）。每个 job 保留最近 200 条，删除 job 时一并删除。
+
+每次执行认领时生成 32 位十六进制 `traceId`，同时写入 job 的 `lastTraceId` 和这次执行的所有调度日志（`schedule job <id> trace=<traceId>: …`），可以按它在服务端日志里检索失败原因。平台工具 `schedule_job_executions_list`（`/mcp` 与 Studio 助手均可用）对应这个接口，把复制的 Trace ID 贴给助手时，助手会按 `query.traceId` 查询这次执行。服务重启时，重启前仍为 running 的执行记为 failed（「上次运行中断（服务重启）」）。
+
+查询参数：`projectId`、`jobId`、`status`、`traceId`、`limit`（默认 100，最大 500）。只返回调用方可读的 job 的记录；`jobId` 指向无权读取的 job 时返回 `403`。
+
+```bash
+curl -u "$AGENTFLOW_USER:$AGENTFLOW_PASS" \
+  "$AGENTFLOW_URL/api/schedule-job-executions?projectId=platform&status=failed"
+```
+
 定时派发会冻结集成分支上下文，并避免同一需求重复执行。需求是否澄清过不影响派发。Worker signals、实例 lease 和沙箱回收属于内部机制，不是调度公共 API。

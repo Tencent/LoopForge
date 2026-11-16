@@ -23,6 +23,12 @@ var errNotDue = errors.New("schedule job is not due")
 
 type Dispatcher func(domain.ScheduleJob, domain.Issue, string) error
 
+// RunDispatcher is a Dispatcher that also reports the started run ID, so the
+// execution record can link to the run.
+type RunDispatcher func(domain.ScheduleJob, domain.Issue, string) (runID string, err error)
+
+const interruptedReason = "上次运行中断（服务重启）"
+
 // BaselineGuard inspects eligible issues before dispatch. blocked[repoID]
 // carries the structured blocker (repository, conflict files, alignment run)
 // that skips every issue bound to that repository.
@@ -32,15 +38,22 @@ type BaselineGuard func(job domain.ScheduleJob, issues []domain.Issue) (blocked 
 // TAPD/Gongfeng pull stays on the project sync job.
 type AssistantPrep func(job domain.ScheduleJob) (message string, err error)
 
+// AssistantSessionPrep is an AssistantPrep that also reports the Studio
+// conversation the prompt ran in (empty when none was opened).
+type AssistantSessionPrep func(job domain.ScheduleJob) (message, sessionID string, err error)
+
 type Service struct {
 	repo           *repo.Store
 	sync           *tracker.Service
 	dispatch       Dispatcher
+	runDispatch    RunDispatcher
 	guard          BaselineGuard
 	assistant      AssistantPrep
+	assistantRun   AssistantSessionPrep
 	mu             sync.Mutex
 	stopCh         chan struct{}
 	stopped        bool
+	startedAt      time.Time
 	running        map[string]bool
 	lastFinishedAt map[string]time.Time
 	// dispatchMu serializes issue scanning and SOP dispatch across jobs so two
@@ -59,6 +72,17 @@ func (s *Service) SetBaselineGuard(g BaselineGuard) {
 func (s *Service) SetAssistantPrep(fn AssistantPrep) {
 	s.assistant = fn
 }
+
+// SetAssistantSessionPrep replaces the AssistantPrep with one that reports
+// the conversation, so executions link to it and fixed jobs stay pinned.
+func (s *Service) SetAssistantSessionPrep(fn AssistantSessionPrep) {
+	s.assistantRun = fn
+}
+
+// SetRunDispatcher replaces the Dispatcher with one that reports run IDs.
+func (s *Service) SetRunDispatcher(d RunDispatcher) {
+	s.runDispatch = d
+}
 func (s *Service) Start() {
 	s.StartAfter(nil)
 }
@@ -73,6 +97,7 @@ func (s *Service) StartAfter(recoveryGate <-chan struct{}) {
 		return
 	}
 	s.stopCh = make(chan struct{})
+	s.startedAt = time.Now().UTC()
 	stop := s.stopCh
 	s.mu.Unlock()
 	if recoveryGate == nil {
@@ -117,8 +142,20 @@ func (s *Service) recoverInterruptedJobs() {
 			continue
 		}
 		job.LastStatus = "failed"
-		job.LastError = "上次运行中断（服务重启）"
+		job.LastError = interruptedReason
+		log.Printf("schedule job %s trace=%s: %s", job.ID, job.LastTraceID, interruptedReason)
 		s.saveResult(job)
+	}
+	// Executions started before this process cannot still be running here;
+	// executions this process already started are left alone.
+	s.mu.Lock()
+	cutoff := s.startedAt
+	s.mu.Unlock()
+	if cutoff.IsZero() {
+		cutoff = time.Now().UTC()
+	}
+	if err := s.repo.FailRunningScheduleJobExecutions(cutoff, interruptedReason); err != nil {
+		log.Printf("schedule executions recover: %v", err)
 	}
 }
 func (s *Service) runDueJobs() {
@@ -185,7 +222,7 @@ func (s *Service) executeAsync(job domain.ScheduleJob, triggerOrigin string) {
 	go func() {
 		defer s.release(job.ID)
 		if _, execErr := s.execute(job, triggerOrigin); execErr != nil {
-			log.Printf("schedule job %s: %v", job.ID, execErr)
+			log.Printf("schedule job %s trace=%s: %v", job.ID, job.LastTraceID, execErr)
 		}
 	}()
 }
@@ -233,6 +270,8 @@ func (s *Service) claimJob(id string, dueAt time.Time) (domain.ScheduleJob, erro
 	job.LastPulled = 0
 	job.LastAssistantMessage = ""
 	job.NotificationResult = ""
+	job.LastSessionID = ""
+	job.LastTraceID = domain.NewTraceID()
 	return s.saveResult(job), nil
 }
 
@@ -243,9 +282,25 @@ func (s *Service) release(id string) {
 	s.mu.Unlock()
 }
 
+// execute runs a claimed job and records it as one ScheduleJobExecution.
 func (s *Service) execute(job domain.ScheduleJob, triggerOrigin string) (domain.ScheduleJob, error) {
-	if s.assistant != nil && (strings.TrimSpace(job.AssistantPrompt) != "" || job.SharedTaskID != "") {
-		msg, prepErr := s.assistant(job)
+	exec := s.beginExecution(job, triggerOrigin)
+	return s.executeJob(job, triggerOrigin, exec)
+}
+
+func (s *Service) executeJob(job domain.ScheduleJob, triggerOrigin string, exec *domain.ScheduleJobExecution) (domain.ScheduleJob, error) {
+	// finish records the outcome computed here: saveResult may return a newer
+	// stored state when the job was edited or re-run meanwhile.
+	finish := func(result domain.ScheduleJob, err error) (domain.ScheduleJob, error) {
+		s.finishExecution(exec, result)
+		return s.saveResult(result), err
+	}
+	if (s.assistant != nil || s.assistantRun != nil) && (strings.TrimSpace(job.AssistantPrompt) != "" || job.SharedTaskID != "") {
+		msg, sessionID, prepErr := s.runAssistant(job)
+		job.LastSessionID = sessionID
+		if sessionID != "" && job.UsesFixedSession() {
+			job.FixedSessionID = sessionID
+		}
 		job.NotificationResult = domain.NotificationText(msg, 18000)
 		_, plain, _ := domain.ParseNotificationResult(msg)
 		job.LastAssistantMessage = domain.NotificationText(plain, 1200)
@@ -254,8 +309,7 @@ func (s *Service) execute(job domain.ScheduleJob, triggerOrigin string) (domain.
 			job.LastError = prepErr.Error()
 			job.LastPulled = 0
 			job.Blockers = nil
-			job = s.saveResult(job)
-			return job, prepErr
+			return finish(job, prepErr)
 		}
 	}
 	if !job.DispatchesSOP() {
@@ -264,8 +318,7 @@ func (s *Service) execute(job domain.ScheduleJob, triggerOrigin string) (domain.
 		job.LastStatus = "success"
 		job.LastError = ""
 		job.Blockers = nil
-		job = s.saveResult(job)
-		return job, nil
+		return finish(job, nil)
 	}
 	s.dispatchMu.Lock()
 	defer s.dispatchMu.Unlock()
@@ -281,8 +334,7 @@ func (s *Service) execute(job domain.ScheduleJob, triggerOrigin string) (domain.
 			job.LastError = guardErr.Error()
 			job.LastDispatched = 0
 			job.Blockers = nil
-			job = s.saveResult(job)
-			return job, guardErr
+			return finish(job, guardErr)
 		}
 	}
 	dispatched := 0
@@ -294,7 +346,8 @@ func (s *Service) execute(job domain.ScheduleJob, triggerOrigin string) (domain.
 		if issueBlocked(s.repo, issue, blocked) {
 			continue
 		}
-		if err := s.dispatch(job, issue, triggerOrigin); err != nil {
+		runID, err := s.dispatchIssue(job, issue, triggerOrigin)
+		if err != nil {
 			if strings.Contains(err.Error(), "已经跑过") || strings.Contains(err.Error(), "澄清未达标") {
 				continue
 			}
@@ -302,8 +355,10 @@ func (s *Service) execute(job domain.ScheduleJob, triggerOrigin string) (domain.
 			job.LastError = err.Error()
 			job.LastDispatched = dispatched
 			job.Blockers = nil
-			job = s.saveResult(job)
-			return job, err
+			return finish(job, err)
+		}
+		if exec != nil {
+			exec.Runs = append(exec.Runs, domain.ScheduleJobExecutionRun{IssueID: issue.ID, IssueTitle: issue.Title, RunID: runID})
 		}
 		dispatched++
 	}
@@ -312,14 +367,78 @@ func (s *Service) execute(job domain.ScheduleJob, triggerOrigin string) (domain.
 		job.LastStatus = "waiting"
 		job.LastError = joinBlockReasons(blocked)
 		job.Blockers = mergeBlockers(job.Blockers, blocked, time.Now().UTC())
-		job = s.saveResult(job)
-		return job, nil
+		return finish(job, nil)
 	}
 	job.LastStatus = "success"
 	job.LastError = ""
 	job.Blockers = nil
-	job = s.saveResult(job)
-	return job, nil
+	return finish(job, nil)
+}
+
+func (s *Service) runAssistant(job domain.ScheduleJob) (string, string, error) {
+	if s.assistantRun != nil {
+		return s.assistantRun(job)
+	}
+	msg, err := s.assistant(job)
+	return msg, "", err
+}
+
+func (s *Service) dispatchIssue(job domain.ScheduleJob, issue domain.Issue, triggerOrigin string) (string, error) {
+	if s.runDispatch != nil {
+		return s.runDispatch(job, issue, triggerOrigin)
+	}
+	if s.dispatch == nil {
+		return "", fmt.Errorf("schedule dispatcher is not configured")
+	}
+	return "", s.dispatch(job, issue, triggerOrigin)
+}
+
+// beginExecution records the claimed job as a running execution. The trace
+// comes from the claim; a job executed without one gets a fresh trace.
+func (s *Service) beginExecution(job domain.ScheduleJob, triggerOrigin string) *domain.ScheduleJobExecution {
+	traceID := job.LastTraceID
+	if traceID == "" {
+		traceID = domain.NewTraceID()
+	}
+	started := job.LastRunAt
+	if started.IsZero() {
+		started = time.Now().UTC()
+	}
+	exec := &domain.ScheduleJobExecution{
+		ID:            domain.ScheduleJobExecutionID(traceID),
+		JobID:         job.ID,
+		JobName:       job.Name,
+		JobKind:       domain.ScheduleJobKind(job),
+		ProjectID:     job.ProjectID,
+		TraceID:       traceID,
+		TriggerOrigin: triggerOrigin,
+		Status:        "running",
+		StartedAt:     started,
+	}
+	if err := s.repo.PutScheduleJobExecution(*exec); err != nil {
+		log.Printf("schedule job %s trace=%s: record execution: %v", job.ID, traceID, err)
+	}
+	return exec
+}
+
+func (s *Service) finishExecution(exec *domain.ScheduleJobExecution, result domain.ScheduleJob) {
+	if exec == nil {
+		return
+	}
+	finished := time.Now().UTC()
+	exec.Status = result.LastStatus
+	exec.Error = result.LastError
+	exec.Pulled = result.LastPulled
+	exec.Dispatched = result.LastDispatched
+	exec.AssistantMessage = result.LastAssistantMessage
+	exec.SessionID = result.LastSessionID
+	exec.FinishedAt = &finished
+	if !exec.StartedAt.IsZero() {
+		exec.DurationMs = finished.Sub(exec.StartedAt).Milliseconds()
+	}
+	if err := s.repo.PutScheduleJobExecution(*exec); err != nil {
+		log.Printf("schedule job %s trace=%s: record execution: %v", exec.JobID, exec.TraceID, err)
+	}
 }
 
 // eligibleIssues keeps the matched issues the job may dispatch: a workflow
@@ -420,10 +539,14 @@ func (s *Service) matchingIssues(job domain.ScheduleJob) []domain.Issue {
 	return out
 }
 func (s *Service) saveResult(result domain.ScheduleJob) domain.ScheduleJob {
+	var err error
 	if result.LastStatus == "running" {
-		_ = s.repo.PutScheduleJob(result)
+		err = s.repo.PutScheduleJob(result)
 	} else {
-		_ = s.repo.SaveScheduleJobResult(result)
+		err = s.repo.SaveScheduleJobResult(result)
+	}
+	if err != nil {
+		log.Printf("schedule job %s trace=%s: save %s result: %v", result.ID, result.LastTraceID, result.LastStatus, err)
 	}
 	stored, ok := s.repo.ScheduleJob(result.ID)
 	if ok {

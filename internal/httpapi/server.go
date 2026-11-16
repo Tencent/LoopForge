@@ -186,6 +186,7 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	e.SetRunnerControlNotify(api.runners.runnerControls.sendControl)
 	sched := schedule.New(s, syncSvc, api.schedule.dispatchScheduled)
 	sched.SetBaselineGuard(api.schedule.guardScheduledBaseline)
+	sched.SetRunDispatcher(api.schedule.dispatchScheduledRun)
 	// deps 由所有领域共享，schedule 服务就绪后回填一次即全局可见。
 	d.schedule = sched
 	if schedulerEnabled() {
@@ -576,6 +577,7 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	// http.NotFound（404 text），由 handler 内方法分派实现。
 	g.Any("/api/schedule-jobs/:id", api.schedule.scheduleJob)
 	g.POST("/api/schedule-jobs/:id/run", api.schedule.scheduleJobRun)
+	g.GET("/api/schedule-job-executions", api.schedule.scheduleJobExecutions)
 
 	// --- runner management plane ---
 	g.GET("/api/runners", api.runners.runners)
@@ -639,6 +641,7 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	d.api = g
 	if d.schedule != nil {
 		d.schedule.SetAssistantPrep(asst.prepareScheduleJob)
+		d.schedule.SetAssistantSessionPrep(asst.runScheduleJobPrompt)
 	}
 	static, _ := fs.Sub(webassets.Files, ".")
 	g.NoRoute(func(c *gin.Context) {

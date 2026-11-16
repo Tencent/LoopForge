@@ -33,6 +33,11 @@ func (r *CatalogRepo) SaveScheduleJobResult(result domain.ScheduleJob) error {
 		current.LastAssistantMessage = result.LastAssistantMessage
 		current.NotificationResult = result.NotificationResult
 		current.Blockers = result.Blockers
+		current.LastSessionID = result.LastSessionID
+		// A config save meanwhile may have left fixed mode; do not re-pin.
+		if result.FixedSessionID != "" && current.UsesFixedSession() {
+			current.FixedSessionID = result.FixedSessionID
+		}
 		current.UpdatedAt = time.Now().UTC()
 		if err := tx.Model(&row).Updates(map[string]any{"payload": mustJSON(current), "updated_at": timePtr(current.UpdatedAt)}).Error; err != nil {
 			return err

@@ -74,6 +74,12 @@ func (h *assistantHandlers) pruneScheduledAssistantSessions(now time.Time) int {
 		groups[key] = append(groups[key], item)
 	}
 	removed := 0
+	pinned := map[string]bool{}
+	for _, job := range h.repo.ScheduleJobs() {
+		if job.UsesFixedSession() && job.FixedSessionID != "" {
+			pinned[job.FixedSessionID] = true
+		}
+	}
 	for _, group := range groups {
 		sort.Slice(group, func(i, j int) bool { return group[i].UpdatedAt.After(group[j].UpdatedAt) })
 		// Tracked tasks keep their latest result even when it is older than the
@@ -84,7 +90,7 @@ func (h *assistantHandlers) pruneScheduledAssistantSessions(now time.Time) int {
 			if tracked && i == 0 {
 				continue
 			}
-			if item.Archived {
+			if item.Archived || pinned[item.ID] {
 				continue
 			}
 			if item.UpdatedAt.IsZero() || now.Sub(item.UpdatedAt) < scheduledSessionRetention {

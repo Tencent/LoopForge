@@ -142,6 +142,7 @@ curl -H "Authorization: Bearer $AGENTFLOW_TOKEN" "$AGENTFLOW_URL/api/health"
 | `GET`, `POST`, `PUT` | `/api/schedule-jobs` |
 | `DELETE` | `/api/schedule-jobs/{id}` |
 | `POST` | `/api/schedule-jobs/{id}/run` |
+| `GET` | `/api/schedule-job-executions` |
 
 ### 同步
 

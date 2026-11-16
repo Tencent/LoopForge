@@ -1,0 +1,119 @@
+package httpapi
+
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"path/filepath"
+	"slices"
+	"testing"
+	"time"
+
+	"agentflow/internal/domain"
+	"agentflow/internal/engine"
+	"agentflow/internal/repo"
+	"agentflow/internal/runtime"
+	"agentflow/internal/tracker"
+)
+
+// A Trace ID pasted into a Studio chat resolves through the read-only
+// platform tool, scoped to the conversation's project.
+func TestAssistantLooksUpScheduleExecutionByTrace(t *testing.T) {
+	st, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(st.Close)
+	user, ok := st.UserByLoginName("demo-owner")
+	if !ok {
+		t.Fatal("seed user")
+	}
+	for _, p := range []string{"proj-trace", "proj-other"} {
+		if err := st.PutProject(domain.Project{ID: p, Name: p, OwnerID: user.ID}); err != nil {
+			t.Fatal(err)
+		}
+		if err := st.PutScheduleJob(domain.ScheduleJob{ID: p + "-job", ProjectID: p, Name: "巡检", SkipDispatch: true, AssistantPrompt: "p", IntervalSec: 3600, OwnerUserID: user.ID}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	const trace = "8a2f553171ae877bf374a6b79fd6d890"
+	for _, e := range []domain.ScheduleJobExecution{
+		{JobID: "proj-trace-job", JobName: "巡检", ProjectID: "proj-trace", TraceID: trace, Status: "failed", Error: "CodeBuddy key expired", StartedAt: time.Now().UTC()},
+		{JobID: "proj-trace-job", ProjectID: "proj-trace", TraceID: "other-trace", Status: "success", StartedAt: time.Now().UTC()},
+	} {
+		if err := st.PutScheduleJobExecution(e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if !slices.Contains(agentflowAssistantReadToolNames(), "schedule_job_executions_list") {
+		t.Fatal("execution lookup is not offered to the assistant")
+	}
+	api := New(st, engine.New(st, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "")
+	h := &assistantHandlers{deps: &deps{repo: st}, api: api}
+	lookup := func(projectID string) []domain.ScheduleJobExecution {
+		t.Helper()
+		text, err := h.callAssistantPlatform(context.Background(), user, projectID, assistantMCPCall{Server: "agentflow", Tool: "schedule_job_executions_list", Arguments: map[string]any{"query": map[string]any{"traceId": trace}}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var got []domain.ScheduleJobExecution
+		if err := json.Unmarshal([]byte(text), &got); err != nil {
+			t.Fatalf("decode %s: %v", text, err)
+		}
+		return got
+	}
+	if got := lookup("proj-trace"); len(got) != 1 || got[0].Error != "CodeBuddy key expired" || got[0].TraceID != trace {
+		t.Fatalf("lookup in owning project = %+v", got)
+	}
+	if got := lookup("proj-other"); len(got) != 0 {
+		t.Fatalf("lookup leaked across projects: %+v", got)
+	}
+}
+
+// Execution history exposes prompts' outcomes and errors; it follows the
+// same read access as the schedule job itself.
+func TestScheduleJobExecutionsFollowJobAccess(t *testing.T) {
+	t.Setenv("AGENTFLOW_AUTH_REQUIRED", "true")
+	t.Setenv("AGENTFLOW_SESSION_SECRET", "schedule-exec-test-secret")
+	h, _ := workbenchFixture(t)
+	st := h.repo
+	for _, login := range []string{"exec-owner", "exec-viewer", "exec-outsider"} {
+		if err := st.PutUser(domain.User{LoginName: login, CodeBuddyAPIKey: "key-" + login}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	owner, _ := st.UserByLoginName("exec-owner")
+	viewer, _ := st.UserByLoginName("exec-viewer")
+	outsider, _ := st.UserByLoginName("exec-outsider")
+	if err := st.PutProject(domain.Project{ID: "exec-proj", Name: "Exec", OwnerID: owner.ID, Members: []domain.ProjectMember{{UserID: viewer.ID, Role: "viewer"}}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.PutScheduleJob(domain.ScheduleJob{ID: "exec-job", ProjectID: "exec-proj", Name: "巡检", SkipDispatch: true, AssistantPrompt: "p", IntervalSec: 3600, OwnerUserID: owner.ID}); err != nil {
+		t.Fatal(err)
+	}
+	started := time.Now().UTC().Add(-time.Minute)
+	for _, e := range []domain.ScheduleJobExecution{
+		{JobID: "exec-job", ProjectID: "exec-proj", TraceID: "t-ok", Status: "success", StartedAt: started},
+		{JobID: "exec-job", ProjectID: "exec-proj", TraceID: "t-bad", Status: "failed", Error: "boom", StartedAt: started.Add(time.Second)},
+	} {
+		if err := st.PutScheduleJobExecution(e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	server := New(st, engine.New(st, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "")
+
+	all := requestJSONAuthed[[]domain.ScheduleJobExecution](t, server, viewer, http.MethodGet, "/api/schedule-job-executions?projectId=exec-proj", nil, http.StatusOK)
+	if len(all) != 2 || all[0].TraceID != "t-bad" {
+		t.Fatalf("viewer executions = %+v", all)
+	}
+	failed := requestJSONAuthed[[]domain.ScheduleJobExecution](t, server, owner, http.MethodGet, "/api/schedule-job-executions?jobId=exec-job&status=failed", nil, http.StatusOK)
+	if len(failed) != 1 || failed[0].Error != "boom" {
+		t.Fatalf("failed executions = %+v", failed)
+	}
+	if hidden := requestJSONAuthed[[]domain.ScheduleJobExecution](t, server, outsider, http.MethodGet, "/api/schedule-job-executions?traceId=t-bad", nil, http.StatusOK); len(hidden) != 0 {
+		t.Fatalf("outsider read executions: %+v", hidden)
+	}
+	if code := scheduleAuthzStatus(t, server, outsider, http.MethodGet, "/api/schedule-job-executions?jobId=exec-job", nil); code != http.StatusForbidden {
+		t.Fatalf("outsider job filter status = %d", code)
+	}
+}

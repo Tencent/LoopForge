@@ -244,6 +244,7 @@
           <button id="aiScheduleProjectTab" class="active" type="button" role="tab" aria-selected="true" aria-controls="aiScheduleProjectPanel" data-ai-schedule-tab="project">提示词任务<span id="aiScheduleProjectCount" class="mcp-tab-count">0</span></button>
           <button id="aiScheduleTriggerTab" type="button" role="tab" aria-selected="false" aria-controls="aiScheduleTriggerPanel" data-ai-schedule-tab="trigger">SOP 触发<span id="scheduleJobCount" class="schedule-job-count">未配置</span></button>
           <button id="aiScheduleMarketTab" type="button" role="tab" aria-selected="false" aria-controls="aiScheduleMarketPanel" data-ai-schedule-tab="market">共享任务市场<span id="sharedScheduleMarketCount" class="mcp-tab-count">0</span></button>
+          <button id="aiScheduleExecTab" type="button" role="tab" aria-selected="false" aria-controls="aiScheduleExecPanel" data-ai-schedule-tab="executions">执行记录<span id="aiScheduleExecCount" class="mcp-tab-count" hidden></span></button>
         </div>
         <label id="sharedScheduleSearchField" class="mcp-search" hidden><svg class="agent-icon harness-icon" data-icon="search" width="14" height="14" aria-hidden="true" focusable="false"></svg><input id="sharedScheduleSearch" type="search" aria-label="搜索共享任务" placeholder="搜索名称、用途或来源项目"></label>
       </div>
@@ -261,6 +262,18 @@
         <p id="sharedScheduleMarketHint" class="mcp-scope-hint"></p>
         <div id="sharedScheduleMarketStatus" role="status"></div>
         <div id="sharedScheduleLibrary" class="mcp-market-grid" aria-live="polite"></div>
+      </section>
+      <section id="aiScheduleExecPanel" class="ai-schedule-panel sched-exec-panel" role="tabpanel" aria-labelledby="aiScheduleExecTab" hidden>
+        <div class="ai-schedule-panel-head sched-exec-head">
+          <b>执行记录</b>
+          <div class="sched-exec-filters">
+            <select id="scheduleExecJob" class="select" aria-label="按任务筛选"><option value="">全部任务</option></select>
+            <select id="scheduleExecStatus" class="select" aria-label="按状态筛选"><option value="">全部状态</option><option value="failed">失败</option><option value="success">成功</option><option value="running">进行中</option><option value="waiting">待对齐基线</option></select>
+          </div>
+        </div>
+        <div id="scheduleExecMetrics" class="sched-exec-metrics"></div>
+        <div id="scheduleExecList" class="sched-exec-list" aria-live="polite"></div>
+        <p id="scheduleExecFootnote" class="sched-exec-footnote"></p>
       </section>
     </section>
 
@@ -1310,6 +1323,7 @@
   <script src="/app/issue-bulk-delete.js"></script>
   <script src="/app/sync-schedule.js"></script>
   <script src="/app/shared-schedules.js"></script>
+  <script src="/app/schedule-executions.js"></script>
   <script src="/app/notification-editor.js"></script>
   <script src="/app/bots.js"></script>
   <script src="/app/assistant-settings.js"></script>

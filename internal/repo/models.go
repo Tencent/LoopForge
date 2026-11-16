@@ -237,6 +237,21 @@ type scheduleJobRow struct {
 
 func (scheduleJobRow) TableName() string { return "schedule_jobs" }
 
+// scheduleJobExecutionRow is one schedule job execution; the indexed columns
+// mirror the payload for filtering.
+type scheduleJobExecutionRow struct {
+	ID        string     `gorm:"column:id;primaryKey;size:80"`
+	JobID     string     `gorm:"column:job_id;size:64;index:idx_schedule_job_executions_job"`
+	ProjectID string     `gorm:"column:project_id;size:64;index:idx_schedule_job_executions_project"`
+	TraceID   string     `gorm:"column:trace_id;size:64;index:idx_schedule_job_executions_trace"`
+	Status    string     `gorm:"column:status;size:32"`
+	Payload   []byte     `gorm:"column:payload;type:json"`
+	Started   *time.Time `gorm:"column:started_at;index:idx_schedule_job_executions_started"`
+	Updated   *time.Time `gorm:"column:updated_at"`
+}
+
+func (scheduleJobExecutionRow) TableName() string { return "schedule_job_executions" }
+
 type sharedScheduleVersionRow struct {
 	ID           string     `gorm:"column:id;primaryKey;size:64"`
 	SharedTaskID string     `gorm:"column:shared_task_id;size:64;uniqueIndex:idx_shared_schedule_version"`
@@ -704,7 +719,7 @@ func allModels() []any {
 		projectRow{}, projectMemberRow{}, repositoryRow{}, businessDomainRow{}, businessDomainAssignmentRow{},
 		agentRow{}, ruleRow{}, skillRow{}, skillFileRow{}, mcpServerRow{}, mcpFileRow{}, executorRow{},
 		dockerfileRow{}, environmentRow{}, sandboxRow{},
-		workflowRow{}, syncConfigRow{}, scheduleJobRow{}, sharedScheduleVersionRow{},
+		workflowRow{}, syncConfigRow{}, scheduleJobRow{}, scheduleJobExecutionRow{}, sharedScheduleVersionRow{},
 		issueRow{}, issueCommentRow{}, taskRow{},
 		runAdmissionLockRow{}, runRow{}, runNodeRow{}, runEventRow{}, runTelemetryRow{}, runLogRow{}, runArtifactRow{}, runEvalRow{},
 		runPreviewRow{}, previewSessionRow{}, previewBlobRow{}, WorkspaceCheckpoint{}, workspaceCheckpointChunk{},

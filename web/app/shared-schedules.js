@@ -26,21 +26,24 @@ async function refreshSharedScheduleCatalog(){
   }catch(err){if(request===sharedScheduleCatalogRequest)sharedScheduleCatalogError=err.message;throw err}
   finally{if(request===sharedScheduleCatalogRequest){sharedScheduleCatalogLoading=false;renderAISchedulePanels()}}
 }
-const aiScheduleTabs=['project','trigger','market'];
+const aiScheduleTabs=['project','trigger','market','executions'];
 async function selectAIScheduleTab(tab){
   aiScheduleTab=aiScheduleTabs.includes(tab)?tab:'project';
   renderAISchedulePanels();
   if(aiScheduleTab==='market')try{await refreshSharedScheduleCatalog()}catch{}
+  if(aiScheduleTab==='executions')await refreshScheduleExecutions();
 }
 function renderAISchedulePanels(){
   const market=aiScheduleTab==='market';
   $$('[data-ai-schedule-tab]').forEach(b=>{const active=b.dataset.aiScheduleTab===aiScheduleTab;b.classList.toggle('active',active);b.setAttribute('aria-selected',String(active))});
   $('#aiScheduleProjectPanel').hidden=aiScheduleTab!=='project';$('#aiScheduleMarketPanel').hidden=!market;
   const trigger=$('#aiScheduleTriggerPanel');if(trigger)trigger.hidden=aiScheduleTab!=='trigger';
+  const execPanel=$('#aiScheduleExecPanel');if(execPanel)execPanel.hidden=aiScheduleTab!=='executions';
   $('#sharedScheduleSearchField').hidden=!market;
   $('#aiScheduleProjectCount').textContent=scheduleJobsInView(state.data.scheduleJobs,state.projectFilter).filter(j=>j.skipDispatch&&state.projectFilter).length;
   $('#sharedScheduleMarketCount').textContent=sharedScheduleCatalog.length;
   if(market)renderSharedScheduleMarket();
+  if(typeof renderScheduleExecutions==='function')renderScheduleExecutions();
 }
 function renderSharedScheduleMarket(){
   const host=$('#sharedScheduleLibrary'),projectId=state.projectFilter;

@@ -3294,6 +3294,31 @@ paths:
           $ref: "#/components/responses/NotFound"
         "409":
           $ref: "#/components/responses/Conflict"
+  /api/schedule-job-executions:
+    get:
+      tags: [Scheduling]
+      operationId: listScheduleJobExecutions
+      description: |
+        Execution history of the schedule jobs the caller may read, newest first.
+      parameters:
+        - { name: projectId, in: query, schema: { type: string } }
+        - { name: jobId, in: query, schema: { type: string } }
+        - { name: status, in: query, schema: { type: string, enum: [running, success, failed, waiting] } }
+        - { name: traceId, in: query, schema: { type: string } }
+        - { name: limit, in: query, schema: { type: integer, default: 100, maximum: 500 } }
+      responses:
+        "200":
+          description: Executions
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ScheduleJobExecution"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: jobId belongs to a project the caller cannot read
   /api/page-feedback:
     post:
       tags: [Feedback]
@@ -5264,6 +5289,10 @@ components:
         lastAssistantMessage:
           type: string
           readOnly: true
+        lastTraceId:
+          type: string
+          description: Trace ID of the latest execution; matches ScheduleJobExecution.traceId and the scheduler log lines.
+          readOnly: true
         createdAt:
           type: string
           format: date-time
@@ -5272,6 +5301,57 @@ components:
           type: string
           format: date-time
           readOnly: true
+    ScheduleJobExecution:
+      type: object
+      description: One execution of a schedule job. Each job keeps its latest 200 executions.
+      properties:
+        id:
+          type: string
+        jobId:
+          type: string
+        jobName:
+          type: string
+        jobKind:
+          type: string
+          enum: [assistant, trigger]
+        projectId:
+          type: string
+        traceId:
+          type: string
+          description: 32-hex trace ID, also written to every scheduler log line of this execution.
+        triggerOrigin:
+          type: string
+          enum: [timer, manual_run]
+        status:
+          type: string
+          enum: [running, success, failed, waiting]
+        error:
+          type: string
+        pulled:
+          type: integer
+        dispatched:
+          type: integer
+        assistantMessage:
+          type: string
+        runs:
+          type: array
+          items:
+            type: object
+            properties:
+              issueId:
+                type: string
+              issueTitle:
+                type: string
+              runId:
+                type: string
+        startedAt:
+          type: string
+          format: date-time
+        finishedAt:
+          type: string
+          format: date-time
+        durationMs:
+          type: integer
     WorkflowMetrics:
       type: object
       additionalProperties: true

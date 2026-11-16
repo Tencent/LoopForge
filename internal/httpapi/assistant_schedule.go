@@ -9,27 +9,56 @@ import (
 	"agentflow/internal/domain"
 )
 
+// scheduledSessionPolicy carries how a schedule job's AI run uses Studio
+// conversations; legacy assistant tasks run without one.
+type scheduledSessionPolicy struct {
+	// Continue is the pinned conversation to append this run to; when it is
+	// gone or belongs elsewhere, the run opens a new one.
+	Continue string
+	// KeepHistory keeps the conversations of earlier runs so each execution
+	// record can open its own; the session janitor trims them later.
+	KeepHistory bool
+}
+
+type scheduledSessionPolicyKey struct{}
+
+func withScheduledSessionPolicy(ctx context.Context, p scheduledSessionPolicy) context.Context {
+	return context.WithValue(ctx, scheduledSessionPolicyKey{}, p)
+}
+
+func scheduledSessionPolicyFrom(ctx context.Context) scheduledSessionPolicy {
+	p, _ := ctx.Value(scheduledSessionPolicyKey{}).(scheduledSessionPolicy)
+	return p
+}
+
 func (h *assistantHandlers) prepareScheduleJob(job domain.ScheduleJob) (string, error) {
+	msg, _, err := h.runScheduleJobPrompt(job)
+	return msg, err
+}
+
+// runScheduleJobPrompt runs an AI job's prompt as a Studio conversation turn:
+// a new conversation per execution by default, or the job's pinned one.
+func (h *assistantHandlers) runScheduleJobPrompt(job domain.ScheduleJob) (message, sessionID string, err error) {
 	if h == nil || h.repo == nil {
-		return "", fmt.Errorf("未连接数据源")
+		return "", "", fmt.Errorf("未连接数据源")
 	}
 	prompt := strings.TrimSpace(job.AssistantPrompt)
 	if job.SharedTaskID != "" {
-		version, err := h.repo.SharedScheduleVersion(job.SharedTaskID, job.SharedTaskVersion)
-		if err != nil {
-			return "", fmt.Errorf("读取订阅版本失败：%w", err)
+		version, verr := h.repo.SharedScheduleVersion(job.SharedTaskID, job.SharedTaskVersion)
+		if verr != nil {
+			return "", "", fmt.Errorf("读取订阅版本失败：%w", verr)
 		}
 		prompt, _, err = version.Render(job.ParameterValues)
 		if err != nil {
-			return "", err
+			return "", "", err
 		}
 	}
 	if prompt == "" {
-		return "", nil
+		return "", "", nil
 	}
 	user, err := h.scheduleJobAssistantUser(job, job.AssistantModel)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	task := assistantTask{
 		Name:          job.Name,
@@ -40,16 +69,21 @@ func (h *assistantHandlers) prepareScheduleJob(job domain.ScheduleJob) (string, 
 	}
 	ctx := withAssistantExecMode(context.Background(), assistantExecModeForApproval(AssistantApprovalAuto))
 	ctx = withAssistantSessionOrigin(ctx, domain.AssistantSourceScheduled, job.ID)
+	policy := scheduledSessionPolicy{KeepHistory: true}
+	if job.UsesFixedSession() {
+		policy.Continue = strings.TrimSpace(job.FixedSessionID)
+	}
+	ctx = withScheduledSessionPolicy(ctx, policy)
 	if err := h.executeAssistantTask(ctx, user, &task); err != nil {
 		if msg := strings.TrimSpace(task.LastError); msg != "" {
-			return task.LastMessage, fmt.Errorf("%s", msg)
+			return task.LastMessage, task.SessionID, fmt.Errorf("%s", msg)
 		}
 		if errors.Is(err, context.Canceled) {
-			return task.LastMessage, fmt.Errorf("生成已停止")
+			return task.LastMessage, task.SessionID, fmt.Errorf("生成已停止")
 		}
-		return task.LastMessage, err
+		return task.LastMessage, task.SessionID, err
 	}
-	return firstNonEmpty(task.NotificationResult, task.LastMessage), nil
+	return firstNonEmpty(task.NotificationResult, task.LastMessage), task.SessionID, nil
 }
 
 // scheduleJobAssistantUser picks whose keys run the job: the project owner,

@@ -241,21 +241,38 @@ func (h *assistantHandlers) executeAssistantTask(ctx context.Context, user domai
 		return fail(err.Error())
 	}
 	cliEngine, _ := assistantModelEngine(model)
+	policy := scheduledSessionPolicyFrom(ctx)
 	prevSession := strings.TrimSpace(task.SessionID)
 	sessionID := newAssistantSessionID()
 	now := time.Now().UTC()
+	prompt := assistantMessage{Role: "user", Content: scheduledAssistantPrompt(*task, mode), AuthorID: user.ID, AuthorName: user.LoginName, CreatedAt: now}
+	pending := assistantConversation{ID: sessionID, Title: "定时 · " + task.Name, ProjectID: task.ProjectID, Model: model, Executor: cliEngine, Source: origin.Source, TaskID: origin.TaskID, Messages: []assistantMessage{prompt}}
+	// A pinned conversation continues as long as it is still this job's
+	// conversation in this project; otherwise the run opens a new one, which
+	// becomes the pinned conversation.
+	if id := policy.Continue; id != "" {
+		if prev, ok := h.repo.AssistantSession(user.ID, id); ok && prev.Source == origin.Source && prev.TaskID == origin.TaskID && prev.ProjectID == task.ProjectID {
+			pending = prev
+			pending.Model, pending.Executor = model, cliEngine
+			pending.Messages = append(append([]assistantMessage{}, prev.Messages...), prompt)
+			sessionID = prev.ID
+		}
+	}
 	req := assistantRequest{
 		ApprovalMode: AssistantApprovalAuto,
 		ProjectID:    task.ProjectID,
 		SessionID:    sessionID,
 		Model:        model,
 		Executor:     cliEngine,
-		Messages:     []assistantMessage{{Role: "user", Content: scheduledAssistantPrompt(*task, mode), AuthorID: user.ID, AuthorName: user.LoginName, CreatedAt: now}},
+		Messages:     pending.Messages,
 	}
 	g := domain.AssistantGeneration{StartedAt: now, ActorID: user.ID, ActorName: user.LoginName, ID: newAssistantSessionID(), SessionID: sessionID, UserID: user.ID, ProjectID: task.ProjectID, Status: "running", Events: []domain.AssistantGenerationEvent{}, MessageCount: len(req.Messages)}
-	pending := assistantConversation{ID: sessionID, Title: "定时 · " + task.Name, ProjectID: task.ProjectID, Model: model, Executor: cliEngine, Source: origin.Source, TaskID: origin.TaskID, Messages: req.Messages}
 	if err := h.repo.BeginAssistantGeneration(g, pending); err != nil {
-		_ = fail("无法创建定时任务会话")
+		if policy.Continue == sessionID {
+			_ = fail("固定会话正在使用中或已更新：" + err.Error())
+		} else {
+			_ = fail("无法创建定时任务会话")
+		}
 		return err
 	}
 	task.SessionID = sessionID
@@ -264,6 +281,11 @@ func (h *assistantHandlers) executeAssistantTask(ctx context.Context, user domai
 	// Like a chat turn, a scheduled run has no time limit: it ends when the
 	// CLI finishes or someone stops it from the conversation page.
 	h.executeGeneration(ctx, req, g, domainUserToAuth(user))
+	if policy.KeepHistory {
+		// Schedule jobs keep every run's conversation for their execution
+		// records; the session janitor trims old ones.
+		prevSession, origin.TaskID = "", ""
+	}
 	return h.readScheduledTurn(user, task, g, len(req.Messages), prevSession, origin.TaskID)
 }
 
