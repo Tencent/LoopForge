@@ -290,7 +290,7 @@
 #aiSchedulesView .sched-exec-page { display:grid;place-items:center;min-width:30px;height:30px;padding:0 6px;border:1px solid transparent;border-radius:7px;background:transparent;color:var(--hui-text);font:400 13px/1 var(--hui-sans);font-variant-numeric:tabular-nums;cursor:pointer; }
 #aiSchedulesView .sched-exec-page[data-exec-page]:is(:first-child, :last-child) { border-color:var(--hui-border); }
 #aiSchedulesView .sched-exec-page:not(:disabled):is(:hover, :focus-visible) { background:var(--hui-canvas);outline:0; }
-#aiSchedulesView .sched-exec-page.is-current { background:var(--hui-accent);border-color:var(--hui-accent);color:#fff; }
+#aiSchedulesView .sched-exec-page.is-current { background:var(--hui-accent);border-color:var(--hui-accent);color:var(--hui-on-accent); }
 #aiSchedulesView .sched-exec-page.is-current:is(:hover, :focus-visible) { background:var(--hui-accent); }
 #aiSchedulesView .sched-exec-page:disabled { color:var(--hui-muted);cursor:not-allowed; }
 #aiSchedulesView .sched-exec-page-gap { min-width:20px;text-align:center;color:var(--hui-muted); }

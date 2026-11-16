@@ -590,11 +590,6 @@ function renderScheduleJobList(list,jobs,kind,canRun){
   if(focusId){const next=[...list.querySelectorAll('[data-edit-schedule],[data-run-schedule],[data-delete-schedule],[data-schedule-menu],[data-toggle-schedule]')].find(el=>el.dataset[focusAction]===focusId&&!el.closest('.schedule-row-menu'));next?.focus()}
 
 }
-// Saving an AI job keeps whatever the row switch last set; new jobs start enabled.
-function scheduleSavedEnabled(id){
-  const job=id?(state.data.scheduleJobs||[]).find(j=>j.id===id):null;
-  return job?!!job.enabled:true;
-}
 async function saveScheduleJob(e){
   e.preventDefault();
   const f=e.currentTarget,cron=f.elements.scheduleMode.value==='cron',assistant=f.elements.jobKind.value==='assistant';
@@ -635,6 +630,11 @@ async function saveScheduleJob(e){
     toast(assistant?'AI 定时任务已保存':'触发配置已保存');
   }catch(err){toast(err.message,'err')}
   finally{if(button&&version===scheduleModalVersion){button.disabled=false;button.textContent=label}}
+}
+// Saving an AI job keeps whatever the row switch last set; new jobs start enabled.
+function scheduleSavedEnabled(id){
+  const job=id?(state.data.scheduleJobs||[]).find(j=>j.id===id):null;
+  return job?!!job.enabled:true;
 }
 function scheduleJobOutcomeToast(job){
   if(!job)return;
