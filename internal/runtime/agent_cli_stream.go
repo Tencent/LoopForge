@@ -176,6 +176,33 @@ func NewAgentCLITranslator(kind string) func(string) []string {
 		translate = (&dshStream{}).translate
 	case AgentCLIZCode:
 		translate = (&zcodeStream{}).translate
+	case AgentCLIQoder:
+		// Qoder's stream uses the same system/assistant/user/result envelope.
+		return func(line string) []string {
+			var event map[string]any
+			if json.Unmarshal([]byte(line), &event) != nil {
+				return nil
+			}
+			if stringValue(event["type"]) == "result" && strings.HasPrefix(stringValue(event["subtype"]), "error") {
+				event["is_error"] = true
+				if stringValue(event["result"]) == "" {
+					var messages []string
+					for _, item := range sliceValue(event["errors"]) {
+						if message := stringValue(item); message != "" {
+							messages = append(messages, message)
+						}
+					}
+					event["result"] = strings.Join(messages, "\n")
+				}
+				data, _ := json.Marshal(event)
+				return []string{string(data)}
+			}
+			switch stringValue(event["type"]) {
+			case "system", "assistant", "user", "stream_event", "result":
+				return []string{line}
+			}
+			return nil
+		}
 	default:
 		return nil
 	}

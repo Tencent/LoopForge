@@ -37,6 +37,8 @@ test('token management renders client specs, revealed prompts, and credential hi
   assert.match(app.evaluate(`accessMcpAgentPrompt(accessMcpClientSpec('cursor','http://x','abc'),'http://x','abc')`), /禁止使用 fetch/);
   assert.equal(app.evaluate(`credentialHint('工蜂 Authentication failed，需由责任人处理').field`), 'gitToken');
   assert.match(app.evaluate(`credentialActionHTML('CodeBuddy API Key 被拒绝')`), /codeBuddyApiKey/);
+  assert.equal(app.evaluate(`credentialHint('需求责任人未配置 Qoder CLI API Key').field`), 'agentCli.qoder');
+  assert.equal(app.evaluate(`credentialHint('需求责任人未配置 Qoder CLI 个人访问令牌').label`), 'Qoder CLI 个人访问令牌（PAT）');
 
   body.querySelector('[data-revealed-client="codex"]').click();
   assert.equal(app.evaluate(`state.accessClient`), 'codex');

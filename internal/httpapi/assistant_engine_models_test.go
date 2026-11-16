@@ -37,6 +37,10 @@ func TestAssistantEngineModelsKeepPersonalCatalogOnOfficialKey(t *testing.T) {
 	if len(discovered) != 0 {
 		t.Fatalf("official endpoint discovered models: %v", discovered)
 	}
+	qoder := domain.User{AgentCLICredentials: map[string]domain.AgentCLICredential{runtime.AgentCLIQoder: {APIKey: "qoder-pat"}}}
+	if got := ids(qoder); !slices.Equal(got, []string{"qoder:auto", "qoder:ultimate", "qoder:performance", "qoder:efficient"}) {
+		t.Fatalf("Qoder catalog: %v", got)
+	}
 
 	gemini := domain.User{AgentCLICredentials: map[string]domain.AgentCLICredential{
 		runtime.AgentCLIAntigravity: {APIKey: "gemini-key", BaseURL: "https://generativelanguage.googleapis.com", Protocol: domain.AgentCLIProtocolGemini, Models: []domain.CLIModel{{ID: "gemini-custom"}}},

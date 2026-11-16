@@ -76,6 +76,22 @@ func TestConversationSupportsEveryRegisteredCLI(t *testing.T) {
 	}
 }
 
+func TestQoderConversationDisablesNativeToolsAndPinsInstall(t *testing.T) {
+	command := CommandSpec{Argv: []string{"qodercli", "--tools", "Bash", "-p", "task"}, Provider: AgentCLIQoder}
+	command, err := InstallConversationApproval(t.TempDir(), AgentCLIQoder, command)
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(command.Argv, "|")
+	if strings.Count(joined, "--tools") != 1 || !strings.Contains(joined, "--tools||-p|task") {
+		t.Fatalf("native tools must remain disabled: %q", command.Argv)
+	}
+	setup, err := conversationCLISetup(AgentCLIQoder, "qodercli")
+	if err != nil || !strings.Contains(setup, "@qoder-ai/qodercli@1.1.88") {
+		t.Fatalf("Qoder setup must install the pinned CLI: %s: %v", setup, err)
+	}
+}
+
 func TestZCodeConversationSetupRequiresOfficialPreinstallation(t *testing.T) {
 	setup, err := conversationCLISetup(AgentCLIZCode, conversationBinary(AgentCLIZCode))
 	if err != nil || strings.Contains(setup, "npm install") || !strings.Contains(setup, "预装官方 ZCode CLI") {

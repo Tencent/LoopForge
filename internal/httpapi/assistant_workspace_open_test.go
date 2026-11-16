@@ -73,6 +73,39 @@ func TestConversationWorkspaceToolsForAllProjectParticipants(t *testing.T) {
 	}
 }
 
+func TestQoderWorkspaceOpenRejectsHandoffBeforeBinding(t *testing.T) {
+	h, s, store := conversationIssueFixture(t)
+	s.Executor = runtime.AgentCLIQoder
+	before := len(store.Runs())
+	result, err := h.openConversationWorkspace(context.Background(), s, map[string]any{"goal": "修改代码"})
+	if err == nil || !strings.Contains(err.Error(), "Qoder 暂不支持") || !strings.Contains(err.Error(), "切换执行器或使用 SOP") {
+		t.Fatalf("expected a clear Qoder restriction, got %q: %v", result, err)
+	}
+	if s.requestedMode() != "" || s.conversationWorkspace() != "" || len(store.Runs()) != before {
+		t.Fatal("rejected handoff must not bind a workspace or create a run")
+	}
+}
+
+func TestQoderRejectsExistingWorkspaceConversation(t *testing.T) {
+	h, actor := workbenchFixture(t)
+	if _, err := h.repo.UpdateUserCredentials(actor.ID, repo.UserCredentialUpdate{AgentCLICredentials: map[string]repo.AgentCLICredentialUpdate{"qoder": {APIKey: "test-pat"}}}); err != nil {
+		t.Fatal(err)
+	}
+	const sessionID = "qoder-existing-workspace"
+	if err := h.repo.PutAssistantSession(actor.ID, domain.AssistantSession{ID: sessionID, RunID: "existing-run"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.repo.SetAssistantRuntimeMode(actor.ID, sessionID, "", domain.AssistantModeWorkspace); err != nil {
+		t.Fatal(err)
+	}
+	body, _ := json.Marshal(assistantRequest{SessionID: sessionID, Executor: "qoder", Model: "qoder/auto", Messages: []assistantMessage{{Role: "user", Content: "修改代码"}}})
+	c, response := workbenchContext(actor, "POST", "/api/assistant/chat", bytes.NewBuffer(body))
+	h.chat(c)
+	if response.Code != 400 || !strings.Contains(response.Body.String(), "Qoder 暂不支持") {
+		t.Fatalf("existing workspace must be rejected: %d %s", response.Code, response.Body.String())
+	}
+}
+
 func gitRepo(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()

@@ -5,6 +5,7 @@ export const CREDENTIALS = {
   codeBuddyApiKey: "CodeBuddy API Key",
   codexApiKey: "Codex API Key",
   claudeCodeApiKey: "Claude Code API Key",
+  "agentCli.qoder": "Qoder CLI 个人访问令牌（PAT）",
   gitToken: "GitHub Git Token",
   gitSshKey: "Git SSH 密钥",
 };
@@ -124,6 +125,11 @@ export const CREDENTIAL_GUIDES = {
       "回到这里点「重试节点」",
     ],
   },
+  "agentCli.qoder": {
+    url: "https://qoder.com/account/integrations",
+    link: "打开 Qoder 创建令牌",
+    steps: ["在 Qoder 账号中创建个人访问令牌（PAT）", "到「个人配置 → Qoder CLI」保存令牌", "回到这里点「重试节点」"],
+  },
 };
 
 // credentialGuide points the CodeBuddy link at the key page of the edition
@@ -138,6 +144,7 @@ export function credentialGuide(field, owner) {
 }
 
 const RULES = [
+  ["agentCli.qoder", /Qoder CLI[^。\n]{0,20}(API Key|凭据|个人访问令牌|PAT)|QODER_PERSONAL_ACCESS_TOKEN[^\n]*rejected/i],
   ["codexApiKey", /Codex[^。\n]{0,16}API Key/i],
   ["claudeCodeApiKey", /Claude Code[^。\n]{0,16}API Key/i],
   [

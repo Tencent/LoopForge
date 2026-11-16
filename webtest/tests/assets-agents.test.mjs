@@ -93,3 +93,15 @@ test('agent catalog search, presets, validation, persistence, clone, and delete 
   await app.evaluate(`deleteAgent('agent-copy')`);
   assert.equal(app.evaluate(`state.data.agents.some(a=>a.id==='agent-copy')`), false);
 });
+
+test('Qoder can be selected and saved on a role', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  app.evaluate(`state.data.executors=[{id:'codebuddy',name:'CodeBuddy'},{id:'qoder',name:'Qoder CLI'}];switchView('agents');renderAgents();openAgentWizard();applyAgentPreset('developer')`);
+  const form = app.document.querySelector('#agentForm');
+  assert.ok([...form.elements.executorId.options].some(option => option.value === 'qoder' && !option.disabled));
+  form.elements.executorId.value = 'qoder';
+  app.router.put('/api/agents', call => ({ status: 200, body: call.body }));
+  await app.evaluate(`persistAgent($('#agentForm'))`);
+  assert.equal(app.router.calls.find(call => call.path === '/api/agents' && call.method === 'PUT').body.executorId, 'qoder');
+});

@@ -81,7 +81,7 @@ func TestProviderCredentialBindingIsolation(t *testing.T) {
 			t.Fatal("plain command received provider credentials")
 		}
 	}
-	redacted := compactCommand([]string{"docker", "exec", "-e", "CODEX_API_KEY=codex-user-secret", "-e", "ANTHROPIC_API_KEY=claude-user-secret"})
+	redacted := compactCommand([]string{"docker", "exec", "-e", "CODEX_API_KEY=codex-user-secret", "-e", "ANTHROPIC_API_KEY=claude-user-secret", "-e", "QODER_PERSONAL_ACCESS_TOKEN=qoder-user-secret"})
 	if strings.Contains(redacted, "user-secret") {
 		t.Fatal("process telemetry leaked provider credentials")
 	}

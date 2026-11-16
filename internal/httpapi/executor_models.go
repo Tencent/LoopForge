@@ -146,6 +146,7 @@ func executorModelCatalogs() map[string]executorModelCatalog {
 				{ID: "glm-5.3-flash", Name: "GLM-5.3 Flash"},
 			},
 		},
+		"qoder": {Models: []executorModelInfo{{ID: "auto", Name: "Auto"}, {ID: "ultimate", Name: "Ultimate"}, {ID: "performance", Name: "Performance"}, {ID: "efficient", Name: "Efficient"}}, Efforts: effortOptions(domain.ExecutorEffortLevels["qoder"])},
 	}
 }
 

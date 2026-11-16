@@ -30,7 +30,7 @@ export function engineMissingKeyMessage(engine) {
 }
 
 // CLIs a session Executor can name when the reply was saved before model prefixes.
-const legacyEngines = new Set(["codex", "claude-code", "opencode", "cursor", "agy", "kimi", "pi", "dsh", "zcode"]);
+const legacyEngines = new Set(["codex", "claude-code", "opencode", "cursor", "agy", "kimi", "pi", "dsh", "zcode", "qoder"]);
 
 function modelHasEnginePrefix(id) {
   const prefix = /^([a-z][a-z0-9-]*):./.exec(id || "")?.[1];
