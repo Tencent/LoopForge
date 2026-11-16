@@ -1,5 +1,6 @@
 import { test } from "vitest";
 import assert from "node:assert/strict";
+import { replyEngine } from "../src/engines.js";
 import {
   NOT_REPORTED,
   formatTokens,
@@ -23,7 +24,7 @@ test("new replies show model, elapsed time and token totals", () => {
       cacheWriteTokens: 0,
       totalTokens: 497,
     },
-  });
+  }, "CodeBuddy");
   assert.deepEqual(
     info.rows.map((r) => [r.label, r.value]),
     [
@@ -80,7 +81,7 @@ test("short replies and malformed values stay readable", () => {
     messageInfo()
       .rows.map((r) => r.value)
       .slice(1, 3),
-    ["主 Bot", "CodeBuddy"],
+    ["主 Bot", NOT_REPORTED],
   );
 });
 
@@ -106,4 +107,14 @@ test("time labels add the date only when it is not today", () => {
   assert.equal(messageTimeLabel(new Date(2026, 9, 31, 23, 59), now), "10-31 23:59");
   assert.equal(messageTimeLabel(new Date(2025, 11, 1, 8, 0), now), "2025-12-01 08:00");
   assert.equal(messageTimeLabel(null, now), "");
+});
+
+test("reply tools follow the recorded CLI and preserve legacy executor fallback", () => {
+  assert.equal(replyEngine("codex:gpt-6", [], "codebuddy"), "codex");
+  assert.equal(replyEngine("claude-code:opus", [], "codex"), "claude-code");
+  assert.equal(replyEngine("old-model", [], "claude"), "claude-code");
+  assert.equal(replyEngine("codebuddy-model"), "codebuddy");
+  assert.equal(replyEngine(undefined, [], "codex"), "");
+  assert.equal(row(messageInfo({ model: "codex:gpt-6" }, "Codex"), "tool").value, "Codex");
+  assert.equal(row(messageInfo({ model: "codex:gpt-6" }), "tool").value, NOT_REPORTED);
 });

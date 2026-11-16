@@ -59,7 +59,7 @@ const tokenParts = [
 ];
 
 /** Card fields for one saved assistant reply; missing data reads 「未上报」. */
-export function messageInfo(message = {}) {
+export function messageInfo(message = {}, tool = "") {
   const seconds = elapsedSeconds(message.startedAt, message.createdAt);
   const model = String(message.model || "").trim();
   const rows = [
@@ -73,7 +73,7 @@ export function messageInfo(message = {}) {
       label: "Agent",
       value: String(message.speakerName || "").trim() || "主 Bot",
     },
-    { key: "tool", label: "编码工具", value: "CodeBuddy" },
+    { key: "tool", label: "编码工具", value: tool || NOT_REPORTED },
     { key: "model", label: "模型", value: model || NOT_REPORTED },
     {
       key: "elapsed",

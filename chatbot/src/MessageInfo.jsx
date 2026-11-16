@@ -8,6 +8,7 @@ import React, {
 import { createPortal } from "react-dom";
 import HarnessIcon from "./HarnessIcon";
 import { messageInfo } from "./message-info.js";
+import { replyEngine } from "./engines.js";
 import "./message-info.css";
 
 const CLOSE_DELAY = 120;
@@ -32,8 +33,19 @@ function placeCard(trigger, card) {
   card.dataset.placement = up ? "top" : "bottom";
 }
 
-function InfoCard({ id, message, cardRef, onPointerEnter, onPointerLeave }) {
-  const info = messageInfo(message);
+function InfoCard({
+  id,
+  message,
+  models,
+  executors,
+  legacyExecutor,
+  cardRef,
+  onPointerEnter,
+  onPointerLeave,
+}) {
+  const engine = replyEngine(message.model, models, legacyExecutor);
+  const tool = executors.find((item) => item.id === engine)?.label;
+  const info = messageInfo(message, tool);
   return (
     <section
       ref={cardRef}
@@ -79,7 +91,7 @@ function InfoCard({ id, message, cardRef, onPointerEnter, onPointerLeave }) {
   );
 }
 
-export default function MessageInfo({ message }) {
+export default function MessageInfo({ message, models, executors = [], legacyExecutor }) {
   const [open, setOpen] = useState(false);
   const [pinned, setPinned] = useState(false);
   const trigger = useRef(null);
@@ -177,6 +189,9 @@ export default function MessageInfo({ message }) {
             <InfoCard
               id={id.current}
               message={message}
+              models={models}
+              executors={executors}
+              legacyExecutor={legacyExecutor}
               cardRef={card}
               onPointerEnter={cancelClose}
               onPointerLeave={leave}

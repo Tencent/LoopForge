@@ -42,6 +42,13 @@ function legacyEngine(id) {
   return legacyEngines.has(id) ? id : "";
 }
 
+/** Resolve the CLI for a particular reply, including older unprefixed models. */
+export function replyEngine(model, models = [], legacyExecutor = "") {
+  if (!model) return "";
+  if (modelHasEnginePrefix(model)) return engineOfModel(model, models);
+  return legacyEngine(legacyExecutor) || engineOfModel(model, models);
+}
+
 /**
  * The CLI that wrote a conversation's latest own reply, "" before the first.
  * Mirrors assistantConversationEngine: a conversation stays on that CLI,
@@ -52,10 +59,7 @@ export function conversationEngine(messages, models = [], legacyExecutor = "") {
   for (let i = (messages?.length || 0) - 1; i >= 0; i--) {
     const m = messages[i];
     if (m?.role !== "assistant" || m.speakerAgentId || !m.model) continue;
-    if (modelHasEnginePrefix(m.model)) return engineOfModel(m.model, models);
-    const legacy = legacyEngine(legacyExecutor);
-    if (legacy) return legacy;
-    return engineOfModel(m.model, models);
+    return replyEngine(m.model, models, legacyExecutor);
   }
   return "";
 }

@@ -1651,7 +1651,12 @@ export default function App() {
                             )}
                             label="复制回复"
                           />
-                          <MessageInfo message={message} />
+                          <MessageInfo
+                            message={message}
+                            models={chat.models}
+                            executors={chat.executors}
+                            legacyExecutor={chat.session?.executor}
+                          />
                           {!chat.local && !chat.readOnly && message.generationId && !message.failure ? <GenerationDiagnostics sessionId={chat.session.id} generationId={message.generationId} compact /> : null}
                         </div>
                       </>
