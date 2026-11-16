@@ -23,7 +23,7 @@ func TestBwrapBunFSMountPoint(t *testing.T) {
 
 	// Missing but creatable: created once, then mounted.
 	created := stubBunFSMountPoint(t, filepath.Join(t.TempDir(), "$bunfs"))
-	args, err := bwrapArgsRequirements(workspace, claude)
+	args, err := bwrapArgsCommand(workspace, claude)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -37,7 +37,7 @@ func TestBwrapBunFSMountPoint(t *testing.T) {
 	// Cannot be created (parent missing / read-only root): skip the mount
 	// instead of failing the whole sandbox.
 	missing := stubBunFSMountPoint(t, filepath.Join(t.TempDir(), "absent", "$bunfs"))
-	args, err = bwrapArgsRequirements(workspace, claude)
+	args, err = bwrapArgsCommand(workspace, claude)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -47,7 +47,7 @@ func TestBwrapBunFSMountPoint(t *testing.T) {
 
 	// CLIs without BunFS never touch it.
 	untouched := stubBunFSMountPoint(t, filepath.Join(t.TempDir(), "$bunfs"))
-	if _, err := bwrapArgsRequirements(workspace, ProviderRequirements("codex")); err != nil {
+	if _, err := bwrapArgsCommand(workspace, ProviderRequirements("codex")); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(untouched); !os.IsNotExist(err) {

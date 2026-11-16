@@ -14,106 +14,6 @@ import (
 	"agentflow/internal/domain"
 )
 
-// projectAgentPaths are deliberately absent from the executor's filesystem
-// view. AgentFlow definitions are the only source of instructions, skills and
-// CLI configuration for unattended runs.
-var rootProjectAgentPaths = []string{
-	"AGENTS.md",
-	"AGENTS.override.md",
-	"CLAUDE.md",
-	"CLAUDE.local.md",
-	"CODEBUDDY.md",
-	".agents",
-	".codex",
-	".claude",
-	".codebuddy",
-	".mcp.json",
-}
-
-var projectAgentDirNames = map[string]bool{
-	".agents": true, ".codex": true, ".claude": true, ".codebuddy": true,
-}
-
-var projectAgentFileNames = map[string]bool{
-	"AGENTS.md": true, "AGENTS.override.md": true,
-	"CLAUDE.md": true, "CLAUDE.local.md": true,
-	"CODEBUDDY.md": true, ".mcp.json": true,
-}
-
-func discoverProjectAgentPaths(workspace string) ([]string, error) {
-	seen := map[string]bool{}
-	for _, rel := range rootProjectAgentPaths {
-		seen[filepath.Clean(rel)] = true
-	}
-	err := filepath.WalkDir(workspace, func(path string, entry os.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		rel, err := filepath.Rel(workspace, path)
-		if err != nil || rel == "." {
-			return err
-		}
-		name := entry.Name()
-		if projectAgentDirNames[name] {
-			seen[rel] = true
-			if entry.IsDir() {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if entry.IsDir() {
-			if name == ".git" || name == ".agentflow" || name == "node_modules" {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if projectAgentFileNames[name] {
-			seen[rel] = true
-		}
-		return nil
-	})
-	if err != nil {
-		return nil, err
-	}
-	out := make([]string, 0, len(seen))
-	for rel := range seen {
-		out = append(out, rel)
-	}
-	sort.Strings(out)
-	return out, nil
-}
-
-func validateAgentConfigTarget(workspace, rel string) (os.FileInfo, error) {
-	target := filepath.Join(workspace, rel)
-	info, err := os.Lstat(target)
-	if err != nil {
-		return nil, err
-	}
-	if info.Mode()&os.ModeSymlink == 0 {
-		return info, nil
-	}
-	if projectAgentDirNames[filepath.Base(rel)] {
-		return nil, fmt.Errorf("refusing symlinked Agent CLI directory: %s", target)
-	}
-	resolved, err := filepath.EvalSymlinks(target)
-	if err != nil {
-		return nil, err
-	}
-	root, err := filepath.Abs(workspace)
-	if err != nil {
-		return nil, err
-	}
-	resolved, err = filepath.Abs(resolved)
-	if err != nil {
-		return nil, err
-	}
-	inside, err := filepath.Rel(root, resolved)
-	if err != nil || inside == ".." || strings.HasPrefix(inside, ".."+string(os.PathSeparator)) || !projectAgentFileNames[filepath.Base(resolved)] {
-		return nil, fmt.Errorf("refusing Agent CLI configuration symlink outside the known project configuration set: %s", target)
-	}
-	return os.Stat(target)
-}
-
 func appendEnvironment(base []string, overlays ...map[string]string) []string {
 	values := map[string]string{}
 	order := make([]string, 0, len(base))
@@ -236,14 +136,14 @@ func (s *processSandbox) command(ctx context.Context, command CommandSpec, base 
 	var cmd *exec.Cmd
 	switch s.driver {
 	case "seatbelt":
-		profile, err := seatbeltProfileCommand(s.workspace, s.requirements, !trustedScriptCommand(command))
+		profile, err := seatbeltProfileCommand(s.workspace, s.requirements)
 		if err != nil {
 			return nil, err
 		}
 		args := append([]string{"-p", profile}, command.Argv...)
 		cmd = exec.CommandContext(ctx, s.binary, args...)
 	case "bwrap":
-		args, err := bwrapArgsCommand(s.workspace, s.requirements, !trustedScriptCommand(command))
+		args, err := bwrapArgsCommand(s.workspace, s.requirements)
 		if err != nil {
 			return nil, err
 		}
@@ -340,11 +240,7 @@ func agentStateDirectories(requirements SandboxRequirements) ([]resolvedCLIState
 	return result, nil
 }
 
-func seatbeltProfileRequirements(workspace string, requirements SandboxRequirements) (string, error) {
-	return seatbeltProfileCommand(workspace, requirements, true)
-}
-
-func seatbeltProfileCommand(workspace string, requirements SandboxRequirements, maskAgentConfig bool) (string, error) {
+func seatbeltProfileCommand(workspace string, requirements SandboxRequirements) (string, error) {
 	root, err := filepath.Abs(workspace)
 	if err != nil {
 		return "", err
@@ -367,28 +263,6 @@ func seatbeltProfileCommand(workspace string, requirements SandboxRequirements, 
 		fmt.Fprintf(&b, "(allow file-write* (subpath %s))\n", strconv.Quote(state.path))
 	}
 	b.WriteString("(allow file-write* (literal \"/dev/null\"))\n")
-	if !maskAgentConfig {
-		return b.String(), nil
-	}
-	maskedPaths, err := discoverProjectAgentPaths(root)
-	if err != nil {
-		return "", err
-	}
-	for _, rel := range maskedPaths {
-		path := filepath.Join(root, rel)
-		if _, err := os.Lstat(path); err == nil {
-			if _, err := validateAgentConfigTarget(root, rel); err != nil {
-				return "", err
-			}
-		} else if !os.IsNotExist(err) {
-			return "", err
-		}
-		if projectAgentDirNames[filepath.Base(rel)] {
-			fmt.Fprintf(&b, "(deny file-read* (subpath %s))\n", strconv.Quote(path))
-		} else {
-			fmt.Fprintf(&b, "(deny file-read* (literal %s))\n", strconv.Quote(path))
-		}
-	}
 	return b.String(), nil
 }
 
@@ -412,10 +286,6 @@ func ensureBunFSMountPoint() bool {
 	return true
 }
 
-func bwrapArgsRequirements(workspace string, requirements SandboxRequirements) ([]string, error) {
-	return bwrapArgsCommand(workspace, requirements, true)
-}
-
 // bwrapPrivateBinds adds per-process binds before the "--" that ends the
 // bwrap options. They come after --tmpfs /tmp, so a directory under the host
 // /tmp is visible to this process only.
@@ -430,7 +300,7 @@ func bwrapPrivateBinds(args, binds []string) []string {
 	return append(out, "--")
 }
 
-func bwrapArgsCommand(workspace string, requirements SandboxRequirements, maskAgentConfig bool) ([]string, error) {
+func bwrapArgsCommand(workspace string, requirements SandboxRequirements) ([]string, error) {
 	root, err := filepath.Abs(workspace)
 	if err != nil {
 		return nil, err
@@ -459,147 +329,7 @@ func bwrapArgsCommand(workspace string, requirements SandboxRequirements, maskAg
 			return nil, statErr
 		}
 	}
-	if maskAgentConfig {
-		maskArgs, err := bwrapAgentConfigMasks(root)
-		if err != nil {
-			return nil, err
-		}
-		args = append(args, maskArgs...)
-	}
 	args = append(args, "--")
-	return args, nil
-}
-
-func isolationMaskSources(workspace string) (emptyDir, emptyFile string, err error) {
-	return isolationMaskSourcesAt(filepath.Join(workspace, ".agentflow", "isolation"))
-}
-
-func isolationMaskSourcesAt(root string) (emptyDir, emptyFile string, err error) {
-	if err = os.MkdirAll(filepath.Dir(root), 0o700); err != nil {
-		return "", "", err
-	}
-	if err = ensureDirectoryNoSymlink(root, 0o700); err != nil {
-		return "", "", err
-	}
-	emptyDir = filepath.Join(root, "empty-dir")
-	emptyFile = filepath.Join(root, "empty-file")
-	if err = ensureDirectoryNoSymlink(emptyDir, 0o700); err != nil {
-		return "", "", err
-	}
-	if info, statErr := os.Lstat(emptyFile); statErr == nil && (info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular()) {
-		return "", "", fmt.Errorf("sandbox mask path is not a regular file: %s", emptyFile)
-	} else if statErr != nil && !os.IsNotExist(statErr) {
-		return "", "", statErr
-	}
-	file, openErr := os.OpenFile(emptyFile, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
-	if openErr != nil {
-		return "", "", openErr
-	}
-	if err = file.Close(); err != nil {
-		return "", "", err
-	}
-	return emptyDir, emptyFile, nil
-}
-
-func bwrapAgentConfigMasks(workspace string) ([]string, error) {
-	emptyDir, emptyFile, err := isolationMaskSources(workspace)
-	if err != nil {
-		return nil, err
-	}
-	args := []string{"--ro-bind", emptyDir, emptyDir, "--ro-bind", emptyFile, emptyFile}
-	maskedPaths, err := discoverProjectAgentPaths(workspace)
-	if err != nil {
-		return nil, err
-	}
-	for _, rel := range maskedPaths {
-		target := filepath.Join(workspace, rel)
-		info, statErr := validateAgentConfigTarget(workspace, rel)
-		if os.IsNotExist(statErr) {
-			continue
-		}
-		if statErr != nil {
-			return nil, statErr
-		}
-		source := emptyFile
-		if info.IsDir() {
-			source = emptyDir
-		}
-		args = append(args, "--ro-bind", source, target)
-	}
-	return args, nil
-}
-
-func dockerIsolationMaskRoot(workspace string) string {
-	workspace = filepath.Clean(workspace)
-	return filepath.Join(filepath.Dir(workspace), ".isolation-masks", filepath.Base(workspace))
-}
-
-// ensureDockerMaskTargets creates the in-workspace mount targets for the
-// isolation mask sources: Docker Desktop cannot create missing nested mount
-// targets on a VirtioFS share.
-func ensureDockerMaskTargets(workspace string) error {
-	if _, err := EnsureControlDirectory(workspace, "isolation", "empty-dir"); err != nil {
-		return err
-	}
-	target := filepath.Join(workspace, ".agentflow", "isolation", "empty-file")
-	root, rel, err := openWorkspacePath(workspace, target)
-	if err != nil {
-		return err
-	}
-	defer root.Close()
-	file, err := root.OpenFile(rel, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
-	if err == nil {
-		return file.Close()
-	}
-	if !os.IsExist(err) {
-		return err
-	}
-	info, err := root.Lstat(rel)
-	if err != nil {
-		return err
-	}
-	if !info.Mode().IsRegular() {
-		return fmt.Errorf("sandbox mask target is not a regular file: %s", target)
-	}
-	return nil
-}
-
-func dockerAgentConfigMasks(workspace string, aliases ...string) ([]string, error) {
-	if err := ensureDockerMaskTargets(workspace); err != nil {
-		return nil, err
-	}
-	emptyDir, emptyFile, err := isolationMaskSourcesAt(dockerIsolationMaskRoot(workspace))
-	if err != nil {
-		return nil, err
-	}
-	emptyDirTarget := filepath.ToSlash(filepath.Join("/workspace", ".agentflow", "isolation", "empty-dir"))
-	emptyFileTarget := filepath.ToSlash(filepath.Join("/workspace", ".agentflow", "isolation", "empty-file"))
-	args := []string{
-		"--mount", "type=bind,src=" + emptyDir + ",dst=" + emptyDirTarget + ",readonly",
-		"--mount", "type=bind,src=" + emptyFile + ",dst=" + emptyFileTarget + ",readonly",
-	}
-	maskedPaths, err := discoverProjectAgentPaths(workspace)
-	if err != nil {
-		return nil, err
-	}
-	for _, rel := range maskedPaths {
-		info, statErr := validateAgentConfigTarget(workspace, rel)
-		if os.IsNotExist(statErr) {
-			continue
-		}
-		if statErr != nil {
-			return nil, statErr
-		}
-		source := emptyFile
-		if info.IsDir() {
-			source = emptyDir
-		}
-		containerTarget := filepath.ToSlash(filepath.Join("/workspace", rel))
-		args = append(args, "--mount", "type=bind,src="+source+",dst="+containerTarget+",readonly")
-		for _, alias := range aliases {
-			args = append(args, "--mount", "type=bind,src="+source+",dst="+filepath.ToSlash(filepath.Join(alias, rel))+",readonly")
-		}
-	}
 	return args, nil
 }
 

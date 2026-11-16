@@ -187,14 +187,12 @@ func TestWorkspaceTerminalDockerRealPTY(t *testing.T) {
 		t.Fatal(workspaceErr)
 	}
 	defer os.RemoveAll(workspace)
-	defer os.RemoveAll(dockerIsolationMaskRoot(workspace))
 	name := fmt.Sprintf("agentflow-terminal-qa-%d", time.Now().UnixNano())
 	create := exec.CommandContext(ctx, "docker", "run", "--pull=never", "--rm", "-d", "--name", name, "-v", workspace+":/workspace", "alpine:3.20", "sh", "-c", "sleep 60")
 	if output, err := create.CombinedOutput(); err != nil {
 		t.Fatalf("create isolated container: %s %v", output, err)
 	}
 	defer exec.Command("docker", "rm", "-f", name).Run()
-	defer exec.Command("docker", "rm", "-f", dockerScriptContainerName(name)).Run()
 	sb := &dockerSandbox{id: name, name: name, workspace: workspace, started: true}
 	if output, err := sb.Exec(ctx, CommandSpec{Argv: []string{"sh", "-c", "printf sandbox-only > /tmp/terminal-env-marker"}}, nil); err != nil {
 		t.Fatalf("SOP command: %s %v", output, err)
