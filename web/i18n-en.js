@@ -647,3 +647,84 @@ Object.assign(window.LF_I18N_EN,{
 Object.assign(window.LF_I18N_EN,{
   "项目标识「":"Project ID \""
 });
+
+Object.assign(window.LF_I18N_EN,{
+  "已进入项目排队，获得名额后自动启动":"Queued in the project. Starts automatically when a slot frees up.",
+  "获得项目名额后自动启动":"Starts automatically when the project has a free slot",
+  "排队中，获得项目名额后自动启动":"Queued. Starts automatically when the project has a free slot.",
+  "暂无进行中的运行":"No runs in progress",
+  "已回收":"Reclaimed",
+  "工作区在线":"Workspace online",
+  "待指令":"Waiting for instructions",
+  "查看详情":"View details",
+  "换个关键词，或到需求列表查看对应需求的执行结果。":"Try another keyword, or check the matching requirement's results in the requirements list.",
+  "对话工作区":"Chat workspace",
+  "工作区是本次运行存放代码和生成文件的目录。恢复会从保存的快照还原文件，并在 IDE 中打开。":"The workspace is the directory that holds this run's code and generated files. Restoring brings the files back from the saved snapshot and opens them in the IDE.",
+  "下载静态文件":"Download static files",
+  "下载完整静态站点 ZIP 包":"Download the full static site as a ZIP",
+  "正在打包…":"Packing…",
+  "下载失败，请刷新页面后重试":"Download failed. Refresh the page and try again.",
+  "已开始下载静态文件":"Static files download started",
+  "设置后端地址失败":"Couldn't set the backend address"
+});
+
+Object.assign(window.LF_I18N_EN,{
+  "交付状态":"Delivery status",
+  "用户已验收 · 交付闭环":"Accepted by the user · delivery closed",
+  "节点已结束 · 执行进度不代表测试通过":"Step finished · progress does not mean the tests passed",
+  "协作模式":"Collaboration mode",
+  "历史协作记录":"Past collaboration record",
+  "SOP 主干已冷冻 ·":"SOP frozen ·",
+  "步可展开 · 群内任务":"steps to expand · room jobs:",
+  "冷冻 SOP v":"Frozen SOP v",
+  "取消排队":"Cancel queued run",
+  "已取消排队":"Queued run cancelled",
+  "确定取消排队？此运行将不会启动，之后可删除记录。":"Cancel this queued run? It will not start, and you can delete the record afterwards.",
+  "每个项目最多同时占用 10 条顶层 SOP，子 SOP 共享父级名额；未获准入和成功运行不占名额；一旦获准入即占用，失败、待确认、暂停及获准入后取消仍占用名额。可取消排队后删除记录。":"Each project can hold at most 10 top-level SOPs at once. Sub-SOPs share their parent's slot. Runs not yet admitted and successful runs do not hold a slot. Once admitted, a run holds a slot, and failed, waiting, paused, or cancelled-after-admission runs keep it. You can cancel a queued run and then delete its record.",
+  "个人机器":"Personal machine",
+  "· 不受项目 10 条 SOP 限额":"· not subject to the project's 10-SOP limit",
+  "个人机器 · 不受项目 10 条 SOP 限额":"Personal machine · not subject to the project's 10-SOP limit"
+});
+
+Object.assign(window.LF_I18N_EN,{
+  "项目共享执行机器":"Project-shared runner",
+  "个人机器 · 最多同时运行":"Personal machine · runs at most",
+  "条 SOP（不受项目 10 条限额）":"SOPs at once (not subject to the project's 10-SOP limit)",
+  "个人机器 · 不限同时运行数（不受项目 10 条限额）":"Personal machine · unlimited concurrent runs (not subject to the project's 10-SOP limit)",
+  "按顶层 SOP 计数，超出排队；失败、暂停、待确认也占用名额。留空表示不限，不受项目 10 条限额约束。":"Counted by top-level SOP; runs over the limit are queued. Failed, paused, and waiting runs also hold a slot. Leave empty for no limit; the project's 10-SOP limit does not apply.",
+  "最多同时运行":"Max concurrent",
+  "最多同时运行条数":"max concurrent runs",
+  "条":"runs",
+  "不限":"No limit",
+  "请输入 1-100 的整数，留空表示不限":"Enter a whole number from 1 to 100, or leave empty for no limit",
+  "已设置：最多同时运行":"Limit saved. Max concurrent runs:",
+  "已设为不限":"Set to unlimited",
+  "到个人配置补充 CodeBuddy API Key 并选择网络环境":"Add a CodeBuddy API key in Personal settings and choose a network environment",
+  "网络环境「":"Network environment \"",
+  "无法识别，CodeBuddy 会按国际站连接。到个人配置重新选择网络环境":" isn't recognized, so CodeBuddy connects to the international site. Choose the network environment again in Personal settings.",
+  "个人凭证 · 网络环境无法识别":"Personal credentials · network environment not recognized",
+  "秒前":"s ago",
+  "已复制，10 分钟内有效":"Copied. Valid for 10 minutes",
+  "已复制卸载命令":"Uninstall command copied"
+});
+
+Object.assign(window.LF_I18N_EN,{
+  "默认机器已离线，新任务会失败。请启动它或切回云端":"The default machine is offline, so new jobs will fail. Start it or switch back to the cloud.",
+  "云端执行 ·":"Runs in the cloud ·",
+  "台在线":"online",
+  "云端暂无在线机器，新任务最多等待 10 分钟":"No cloud machine is online. New jobs wait up to 10 minutes.",
+  "在平台云端执行":"Runs on the platform cloud",
+  "还没有机器":"No machines yet",
+  "执行上方命令后自动出现":"It appears automatically after you run the command above",
+  "执行机器版本":"Runner version",
+  "过低，需升级至":"is too old. Upgrade to",
+  "及以上":"or later"
+});
+
+Object.assign(window.LF_I18N_EN,{
+  "已冷冻 SOP 快照":"Frozen SOP snapshot",
+  "历史协作 ·":"Past collaboration ·",
+  "个节点可展开审计":"steps can be expanded for audit",
+  "本机最多":"machine limit:",
+  "设为默认":"Set as default"
+});

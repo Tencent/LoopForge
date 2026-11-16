@@ -134,3 +134,45 @@ test('English mode translates the new-project wizard, the project settings and t
     ['尚未配置 gitlab.com 的 SSH 密钥，可稍后在「个人配置 → Git SSH 密钥」添加。', 'Not configured gitlab.com SSH key. Add one later under “Personal settings → Git SSH keys”.'],
   ]);
 });
+
+test('English mode translates run rows and details, the queue messages and the runner list', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  const base = JSON.parse(JSON.stringify(app.evaluate('state.data.runs[0]')));
+  const runs = [
+    { ...base, id: 'run-queued', status: 'queued' },
+    { ...base, id: 'run-chat', kind: 'workspace', status: 'running' },
+    { ...base, id: 'run-failed', status: 'failed' },
+    { ...base, id: 'run-done', status: 'succeeded' },
+  ];
+  const runners = [
+    { id: 'runner-1', name: 'My laptop', status: 'online', ownerUserId: 1, runLimit: 5, runnerVersion: '0.1.0', providers: ['codebuddy'], lastSeenAt: new Date().toISOString() },
+    { id: 'runner-2', name: 'Shared box', status: 'offline', ownerUserId: 0, runnerVersion: '0.1.0' },
+  ];
+  app.evaluate(`state.data.runs=${JSON.stringify(runs)}`);
+  app.evaluate("switchView('runs')");
+  await settle(6);
+  const pages = [app.document.querySelector('#runsView').innerHTML];
+  for (const run of runs) {
+    app.evaluate(`state.selectedRun=${JSON.stringify(run.id)};renderRunDetail(state.data.runs.find(r=>r.id===${JSON.stringify(run.id)}))`);
+    pages.push(app.document.querySelector('#runsView').innerHTML);
+  }
+  app.evaluate("switchView('runners')");
+  await settle(6);
+  app.evaluate(`state.runners=${JSON.stringify(runners)};state.runnerPool={configured:true,online:2};renderRunnersView()`);
+  assert.match(app.document.querySelector('#runnersView').textContent, /My laptop/);
+  pages.push(app.document.querySelector('#runnersView').innerHTML);
+  assert.deepEqual(await leftoverIn(...pages), []);
+  await assertTranslated([
+    ['个人机器 · 最多同时运行 5 条 SOP（不受项目 10 条限额）', "Personal machine · runs at most 5 SOPs at once (not subject to the project's 10-SOP limit)"],
+    ['个人机器 my-laptop · 不受项目 10 条 SOP 限额，本机最多 5 条', "Personal machine my-laptop · not subject to the project's 10-SOP limit, machine limit: 5"],
+    ['已设置：最多同时运行 5 条', 'Limit saved. Max concurrent runs: 5'],
+    ['云端执行 · 2 台在线', 'Runs in the cloud · 2 online'],
+    ['在 my-laptop 上执行', 'Runs on my-laptop'],
+    ['执行机器版本 0.3.1 过低，需升级至 0.4.0 及以上', 'Runner version 0.3.1 is too old. Upgrade to 0.4.0 or later'],
+    ['SOP 主干已冷冻 · 5 步可展开 · 群内任务 2 个', 'SOP frozen · 5 steps to expand · room jobs: 2'],
+    ['12 秒前', '12 s ago'],
+    ['网络环境「foo」无法识别，CodeBuddy 会按国际站连接。到个人配置重新选择网络环境',
+      'Network environment "foo" isn\'t recognized, so CodeBuddy connects to the international site. Choose the network environment again in Personal settings.'],
+  ]);
+});
