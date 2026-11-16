@@ -4,6 +4,7 @@ import {
   NOT_REPORTED,
   formatTokens,
   fullTime,
+  messageDiagnosticId,
   messageInfo,
   messageSentAt,
   messageTimeLabel,
@@ -106,4 +107,28 @@ test("time labels add the date only when it is not today", () => {
   assert.equal(messageTimeLabel(new Date(2026, 9, 31, 23, 59), now), "10-31 23:59");
   assert.equal(messageTimeLabel(new Date(2025, 11, 1, 8, 0), now), "2025-12-01 08:00");
   assert.equal(messageTimeLabel(null, now), "");
+});
+
+test("the accepted generation ID is available on its own user message while it runs", () => {
+  const messages = [
+    { role: "user", content: "first question" },
+    { role: "assistant", generationId: "first-turn" },
+    { role: "user", content: "next question" },
+  ];
+  const generation = { id: "next-turn", sessionId: "chat", messageCount: 3 };
+
+  assert.equal(messageDiagnosticId(messages, 0, generation, "chat"), "first-turn");
+  assert.equal(messageDiagnosticId(messages, 1, generation, "chat"), "first-turn");
+  assert.equal(messageDiagnosticId(messages, 2, generation, "chat"), "next-turn");
+  assert.equal(messageDiagnosticId(messages, 2, generation, "other-chat"), "");
+});
+
+test("only an adjacent saved reply can identify a user message without a live generation", () => {
+  const messages = [
+    { role: "user", content: "cancelled question" },
+    { role: "user", content: "new question" },
+    { role: "assistant", generationId: "new-turn" },
+  ];
+  assert.equal(messageDiagnosticId(messages, 0), "");
+  assert.equal(messageDiagnosticId(messages, 1), "new-turn");
 });

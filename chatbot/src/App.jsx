@@ -11,7 +11,7 @@ import { AgentBrowserLinks } from "./agent-browser-links.js";
 import ActivityTrace, { ReplyTimeline } from "./ActivityTrace";
 import MessageInfo from "./MessageInfo";
 import GenerationDiagnostics from "./GenerationDiagnostics";
-import { fullTime, messageSentAt, messageTimeLabel } from "./message-info.js";
+import { fullTime, messageDiagnosticId, messageSentAt, messageTimeLabel } from "./message-info.js";
 import {
   activityForReply,
   finalReply,
@@ -1498,8 +1498,11 @@ export default function App() {
               {!chat.session && !chat.error ? (
                 <div className="loading-session">正在恢复对话…</div>
               ) : null}
-              {messages.map((message, index) =>
-                isProposalTimeout(message, messages[index - 1]) ? null : confirmationCaption(message, messages[index - 1]) ? (
+              {messages.map((message, index) => {
+                const diagnosticId = chat.local || chat.readOnly
+                  ? ""
+                  : messageDiagnosticId(messages, index, chat.generation, chat.session?.id);
+                return isProposalTimeout(message, messages[index - 1]) ? null : confirmationCaption(message, messages[index - 1]) ? (
                   <div
                     key={index}
                     className="confirmation-note"
@@ -1604,6 +1607,7 @@ export default function App() {
                               value={message.content}
                               label="复制消息"
                             />
+                            {diagnosticId ? <CopyButton value={diagnosticId} label="复制诊断编号" /> : null}
                           </div>
                         </>
                     </div>
@@ -1651,14 +1655,15 @@ export default function App() {
                             )}
                             label="复制回复"
                           />
+                          {diagnosticId ? <CopyButton value={diagnosticId} label="复制诊断编号" /> : null}
                           <MessageInfo message={message} />
                           {!chat.local && !chat.readOnly && message.generationId && !message.failure ? <GenerationDiagnostics sessionId={chat.session.id} generationId={message.generationId} compact /> : null}
                         </div>
                       </>
                     ) : null}
                   </article>
-                ),
-              )}
+                );
+              })}
               {/* The live reply belongs right under its question. Alerts stay
                   last, so a finished reply does not jump above them. */}
               {chat.busy ? (

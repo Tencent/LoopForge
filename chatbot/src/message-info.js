@@ -32,6 +32,19 @@ export function messageSentAt(messages, index) {
   return reply?.role === "assistant" ? validDate(reply.startedAt) : null;
 }
 
+// The current generation answers the user message at its recorded transcript
+// length. A saved assistant reply carries the ID for earlier turns.
+export function messageDiagnosticId(messages, index, generation, sessionId) {
+  const message = messages[index];
+  if (!message) return "";
+  if (message.role === "assistant") return message.generationId || "";
+  if (message.role !== "user") return "";
+  if (generation?.sessionId === sessionId && generation?.messageCount === index + 1)
+    return generation.id || "";
+  const reply = messages[index + 1];
+  return reply?.role === "assistant" ? reply.generationId || "" : "";
+}
+
 /** Short label: 14:05 today, 10-31 14:05 this year, 2025-12-01 14:05 before. */
 export function messageTimeLabel(date, now = new Date()) {
   if (!date) return "";

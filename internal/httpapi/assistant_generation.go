@@ -198,7 +198,7 @@ func (h *assistantHandlers) startGeneration(c *gin.Context) {
 		defer done()
 		h.executeGeneration(parent, req, g, current)
 	}()
-	c.JSON(http.StatusAccepted, gin.H{"id": g.ID, "sessionId": g.SessionID, "status": g.Status, "executionTarget": req.ExecutionTarget})
+	c.JSON(http.StatusAccepted, gin.H{"id": g.ID, "sessionId": g.SessionID, "status": g.Status, "messageCount": g.MessageCount, "executionTarget": req.ExecutionTarget})
 }
 func (h *assistantHandlers) generation(c *gin.Context) {
 	user, ok := h.requestUser(c.Request, true)
