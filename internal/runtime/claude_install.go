@@ -8,15 +8,12 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"sync"
 )
 
 // ClaudeCodeVersion is installed from npm on first use. Published platform
 // images do not redistribute Claude Code, so each installation downloads it
 // from Anthropic's registry package itself.
 const ClaudeCodeVersion = "2.1.300"
-
-var claudeInstallMu sync.Mutex
 
 // RuntimeCLIDir is the shared directory (AGENTFLOW_RUNTIME_CLI_DIR) holding
 // on-demand CLI installations. It must resolve to the same absolute path for
@@ -56,14 +53,22 @@ func EnsureClaudeCode(ctx context.Context) (string, error) {
 	if fileIsExecutable(binary) {
 		return binary, nil
 	}
-	claudeInstallMu.Lock()
-	defer claudeInstallMu.Unlock()
-	if fileIsExecutable(binary) {
-		return binary, nil
-	}
 	parent := filepath.Join(root, "claude-code")
 	if err := os.MkdirAll(parent, 0o755); err != nil {
 		return "", fmt.Errorf("prepare Claude Code directory: %w", err)
+	}
+	// The cache can be shared with other platform processes on this host.
+	lock, err := os.OpenFile(filepath.Join(parent, ".install.lock"), os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return "", fmt.Errorf("open Claude Code install lock: %w", err)
+	}
+	if err := flockExclusive(ctx, lock); err != nil {
+		_ = lock.Close()
+		return "", fmt.Errorf("wait for Claude Code install lock: %w", err)
+	}
+	defer func() { _ = unlockFile(lock) }()
+	if fileIsExecutable(binary) {
+		return binary, nil
 	}
 	stage, err := os.MkdirTemp(parent, ".install-")
 	if err != nil {
@@ -84,10 +89,39 @@ func EnsureClaudeCode(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("installed Claude Code does not run on this platform: %w: %s", err, tailOutput(out))
 	}
 	target := filepath.Join(parent, ClaudeCodeVersion)
-	if err := os.Rename(stage, target); err != nil && !fileIsExecutable(binary) {
-		return "", fmt.Errorf("activate Claude Code install: %w", err)
+	if !fileIsExecutable(binary) {
+		if err := activateClaudeCodeStage(stage, target); err != nil {
+			return "", fmt.Errorf("activate Claude Code install: %w", err)
+		}
 	}
 	return binary, nil
+}
+
+func activateClaudeCodeStage(stage, target string) error {
+	info, err := os.Lstat(target)
+	if os.IsNotExist(err) {
+		return os.Rename(stage, target)
+	}
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() {
+		return errors.New("Claude Code cache path is not a directory")
+	}
+	// Move the incomplete version only after the staged CLI has passed the
+	// executable check. Retain it until the new tree has been activated.
+	previous := stage + ".previous"
+	if err := os.Rename(target, previous); err != nil {
+		return err
+	}
+	if err := os.Rename(stage, target); err != nil {
+		if restoreErr := os.Rename(previous, target); restoreErr != nil {
+			return errors.Join(err, fmt.Errorf("restore previous Claude Code cache: %w", restoreErr))
+		}
+		return err
+	}
+	_ = os.RemoveAll(previous)
+	return nil
 }
 
 func fileIsExecutable(path string) bool {
