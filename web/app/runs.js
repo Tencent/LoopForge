@@ -278,7 +278,6 @@ function showRunDetail(id){
     if(state.selectedRun!==id)return;
     state.activeRun=r;
     if(shouldPatchRunLive(r))patchRunLive(r);else renderRunDetail(r);
-    if(r.workspaceCleanedAt&&!String(r.workspaceCleanedAt).startsWith('0001-'))observeRunWorkspaceRestore(id);
     if(['queued','running','waiting'].includes(r.status))startLiveRun(r.id);else stopLiveRun();
   }).catch(e=>toast(e.message,'err'));
 }
@@ -929,6 +928,7 @@ function renderWorkspacePane(run){
   const host=$('#runDetail');
   if(!run||host?.dataset.runId!==run.id)return;
   syncRunWorkspaceRestoreButton(run,host);
+  paintRunActivationProgress(run.id);
   const pane=host.querySelector('[data-run-pane="workspace"]');
   if(!pane)return;
   const existingFrame=pane.querySelector('iframe[data-vscode-frame]');
@@ -1165,6 +1165,7 @@ function bindRunDetailTabs(run,host){
     state.runDetailTab=tab;
     host.querySelectorAll('[data-run-tab]').forEach(button=>button.classList.toggle('active',button.dataset.runTab===tab));
     host.querySelectorAll('[data-run-pane]').forEach(pane=>pane.hidden=pane.dataset.runPane!==tab);
+    paintRunActivationProgress(run.id);
     if(tab==='preview')return loadRunPreview(run.id);
     stopPreviewPoll();
     if(tab==='workspace')return loadRunWorkspace(run.id,{restore:true});
