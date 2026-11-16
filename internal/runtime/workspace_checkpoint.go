@@ -106,6 +106,9 @@ func CreateWorkspaceCheckpointTo(root string, destination io.Writer) error {
 		if err != nil {
 			return err
 		}
+		if err := checkpointGitMetadata(path, info); err != nil {
+			return err
+		}
 		header, err := checkpointEntryHeader(base, path, info)
 		if err != nil {
 			return err
@@ -115,9 +118,6 @@ func CreateWorkspaceCheckpointTo(root string, destination io.Writer) error {
 			return fmt.Errorf("workspace checkpoint exceeds expanded size limit")
 		}
 		if err = writer.WriteHeader(header); err != nil {
-			return err
-		}
-		if err := checkpointGitMetadata(path, info); err != nil {
 			return err
 		}
 		if info.Mode().IsRegular() {
@@ -146,7 +146,11 @@ func checkpointGitMetadata(path string, info fs.FileInfo) error {
 	if filepath.Base(path) == ".git" && info.Mode().IsRegular() {
 		return fmt.Errorf("external Git worktree metadata cannot be checkpointed: %s; use a standalone checkout with its own .git directory before retrying", path)
 	}
-	if !strings.HasSuffix("/"+filepath.ToSlash(path), "/.git/objects/info/alternates") {
+	// Submodule object stores live below .git/modules, with an additional
+	// modules directory for each level of nesting.
+	p := "/" + filepath.ToSlash(path)
+	if !strings.Contains(p, "/.git/") ||
+		(!strings.HasSuffix(p, "/objects/info/alternates") && !strings.HasSuffix(p, "/objects/info/http-alternates")) {
 		return nil
 	}
 	// Even relative alternates can escape the archive or become invalid when

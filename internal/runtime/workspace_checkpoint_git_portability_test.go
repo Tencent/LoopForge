@@ -20,6 +20,13 @@ func TestWorkspaceCheckpointGitMetadataDiagnostics(t *testing.T) {
 		{"linked worktree", "repo/.git", "gitdir: /outside/private-metadata\n", "use a standalone checkout"},
 		{"borrowed objects", "repo/.git/objects/info/alternates", "/outside/private-objects\n", "materialize borrowed objects"},
 		{"relative alternates", ".git/objects/info/alternates", "../../../outside/objects\n", "materialize borrowed objects"},
+		{"submodule alternates", "repo/.git/modules/sub/objects/info/alternates", "/outside/private-objects\n", "materialize borrowed objects"},
+		{"nested submodule alternates", "repo/.git/modules/sub/modules/nested/objects/info/alternates", "/outside/private-objects\n", "materialize borrowed objects"},
+		{"HTTP alternates", ".git/objects/info/http-alternates", "https://example.invalid/private-objects\n", "materialize borrowed objects"},
+		{"submodule HTTP alternates", ".git/modules/sub/objects/info/http-alternates", "https://example.invalid/private-objects\n", "materialize borrowed objects"},
+		{"empty submodule alternates", ".git/modules/sub/objects/info/alternates", "", ""},
+		{"empty HTTP alternates", ".git/objects/info/http-alternates", "", ""},
+		{"lookalike Git directory", "repo/project.git/objects/info/alternates", "ordinary content\n", ""},
 		{"empty alternates", ".git/objects/info/alternates", "", ""},
 		{"ordinary file", "objects/info/alternates", "ordinary content\n", ""},
 	} {
