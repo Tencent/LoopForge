@@ -94,8 +94,8 @@ func TestPublicCodeSOPsOpenMRBeforeDeliver(t *testing.T) {
 				continue
 			}
 			found = true
-			if len(agent.Verification) != 1 || agent.Verification[0].Mode != "command" || agent.Verification[0].ExecutionScope != "run" || len(agent.Verification[0].Commands) != 1 {
-				t.Errorf("%s: mr role needs one run-scoped command gate, got %+v", id, agent.Verification)
+			if len(agent.Verification) != 2 || agent.Verification[0].Mode != "command" || agent.Verification[0].ExecutionScope != "run" || len(agent.Verification[0].Commands) != 1 || agent.Verification[1].Mode != domain.VerificationModeMR || len(agent.Verification[1].Commands) != 0 {
+				t.Errorf("%s: mr role needs a run-scoped push gate followed by an MR gate, got %+v", id, agent.Verification)
 			}
 			if !agent.Loop.Enabled || agent.Loop.OnExhausted != "human" {
 				t.Errorf("%s: mr role must hand an unresolved push to a person, got %+v", id, agent.Loop)
