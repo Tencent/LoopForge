@@ -165,6 +165,47 @@ describe("App", () => {
     history.replaceState({}, "", "/");
   });
 
+  test("a requirement handed over by the workbench opens @-mentioned in a new conversation", async () => {
+    const previous = { ...chat };
+    const originalFetch = globalThis.fetch;
+    const issues = {
+      i1: { id: "i1", title: "个人主页徽章", projectId: "p1" },
+      i2: { id: "i2", title: "导出报表", projectId: "p1" },
+    };
+    globalThis.fetch = vi.fn(async (path) => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ issue: issues[decodeURIComponent(String(path).split("/").pop())] }),
+    }));
+    Object.assign(chat, { projectId: "p1", startProjectDraft: vi.fn() });
+    history.replaceState({}, "", "/?projectId=p1&mentionIssue=i1");
+    let view;
+    try {
+      view = render(<App />);
+      const box = screen.getByRole("textbox");
+      await waitFor(() => expect(box.value).toBe("@个人主页徽章 "));
+      expect(screen.getByLabelText("移除引用 个人主页徽章")).toBeInTheDocument();
+      expect(globalThis.fetch).toHaveBeenCalledWith("/api/issues/i1", expect.anything());
+      expect(new URLSearchParams(location.search).has("mentionIssue")).toBe(false);
+
+      window.dispatchEvent(new MessageEvent("message", {
+        data: { type: "agentflow-chat-mention-issue", issueId: "i2", projectId: "p1" },
+        origin: location.origin,
+        source: window.parent,
+      }));
+      expect(chat.startProjectDraft).toHaveBeenCalledWith("p1");
+      await waitFor(() => expect(box.value).toBe("@导出报表 "));
+      expect(screen.queryByLabelText("移除引用 个人主页徽章")).not.toBeInTheDocument();
+      expect(screen.getByLabelText("移除引用 导出报表")).toBeInTheDocument();
+    } finally {
+      view?.unmount();
+      globalThis.fetch = originalFetch;
+      Object.assign(chat, previous);
+      delete chat.startProjectDraft;
+      localStorage.clear();
+    }
+  });
+
   test("renders the ready empty state and opens primary controls", async () => {
     const user = userEvent.setup();
     render(<App />);

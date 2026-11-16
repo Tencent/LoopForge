@@ -36,7 +36,7 @@
   <link rel="stylesheet" href="/app/assistant-settings.css">
   <link rel="stylesheet" href="/preferences.css">
   <link rel="stylesheet" href="/app/issues-list.css">
-  <link rel="stylesheet" href="/app/requirement-wizard.css?v=20261031req1">
+  <link rel="stylesheet" href="/app/requirement-wizard.css?v=20261116chat">
   <link rel="stylesheet" href="/app/assets-harness.css">
   <link rel="stylesheet" href="/app/sops-harness.css">
   <link rel="stylesheet" href="/app/sop-catalog.css">
@@ -905,21 +905,16 @@
     <div class="modal-card req-composer req-wizard" role="dialog" aria-modal="true" aria-labelledby="reqWizardTitle">
       <header class="req-wizard-head">
         <h2 id="reqWizardTitle">新建需求</h2>
-        <div id="reqSteps" class="req-steps" role="tablist" aria-label="创建步骤">
-          <button type="button" role="tab" data-req-step="1" aria-selected="true"><span class="req-step-n">1</span>描述<span class="req-step-more">需求</span></button>
-          <button type="button" role="tab" data-req-step="2" aria-selected="false" disabled><span class="req-step-n">2</span>澄清<span id="reqStepSkipTag" class="req-step-skip"></span></button>
-          <button type="button" role="tab" data-req-step="3" aria-selected="false" disabled><span class="req-step-n">3</span>确认<span class="req-step-more">创建</span></button>
-        </div>
         <button type="button" class="hui-icon-btn requirement-close" aria-label="关闭"><svg class="agent-icon harness-icon" data-icon="close" width="16" height="16" aria-hidden="true"></svg></button>
       </header>
       <div class="req-wizard-body">
-        <section id="reqStepDescribe" class="req-pane" data-req-pane="1" aria-label="描述需求">
+        <section id="reqStepDescribe" class="req-pane" aria-label="描述需求">
           <div class="req-chat-composer">
             <textarea id="chatInput" aria-label="需求描述" placeholder="要做什么？例如：个人主页增加徽章，需要兼容现有成就体系。" rows="6"></textarea>
             <div class="req-composer-toolbar">
               <div id="reqRepoChip" class="req-ghost-sel">
                 <button type="button" id="reqRepoChipToggle" class="req-ghost-trigger" aria-haspopup="dialog" aria-expanded="false" aria-controls="reqRepoPopover"><svg class="agent-icon harness-icon" data-icon="folder" width="13" height="13" aria-hidden="true"></svg><span id="reqRepoChipLabel" class="req-ghost-value"></span><svg class="agent-icon harness-icon req-chev" data-icon="chevron-down" width="13" height="13" aria-hidden="true"></svg></button>
-                <div id="reqRepoPopover" class="req-popover" role="dialog" aria-label="分析仓库与分支" hidden>
+                <div id="reqRepoPopover" class="req-popover" role="dialog" aria-label="代码仓库与分支" hidden>
                   <div id="reqRepoFields" class="req-repo-fields">
                     <div class="req-field req-field-repo">
                       <div class="req-f-label"><svg class="agent-icon harness-icon" data-icon="folder" width="13" height="13" aria-hidden="true"></svg>代码仓库</div>
@@ -933,39 +928,11 @@
                   </div>
                 </div>
               </div>
-              <div class="clarify-model-field" id="reqClarifyModelPicker" data-clarify-model>
-                <input type="hidden" data-clarify-model-value value="glm-5.3-flash-ioa">
-                <button type="button" class="ai-model-toggle" data-model-toggle aria-haspopup="listbox" aria-expanded="false">
-                  <span class="ai-model-icon" data-family="glm">智</span>
-                  <span data-model-label>GLM-5.3-Flash</span>
-                  <span class="ai-model-caret" aria-hidden="true"></span>
-                </button>
-                <div class="ai-model-menu" hidden role="listbox"></div>
-              </div>
               <span class="req-toolbar-sp"></span>
               <span id="reqCharCount" class="req-count"></span>
             </div>
           </div>
-        </section>
-        <section id="reqStepClarify" class="req-pane" data-req-pane="2" aria-label="澄清" hidden>
-          <div id="reqAnswerHistory" class="req-history"></div>
-          <div id="reqThinking" class="req-thinking" hidden>
-            <div class="req-thinking-line"><span class="req-thinking-lamp" aria-hidden="true"><i></i><i></i></span><span id="reqThinkingLabel" class="req-thinking-label">分析师正在读代码</span></div>
-            <button type="button" id="reqTraceToggle" class="req-fold" aria-expanded="false" aria-controls="reqThinkingStream" hidden><svg class="agent-icon harness-icon req-chev" data-icon="chevron-down" width="13" height="13" aria-hidden="true"></svg><span id="reqTraceLabel">已用 0 个工具</span></button>
-            <div id="reqThinkingStream" class="req-trace" hidden></div>
-          </div>
-          <div id="reqClarifyPanel" class="req-clarify-panel" hidden></div>
-        </section>
-        <section id="reqStepConfirm" class="req-pane" data-req-pane="3" aria-label="确认并创建" hidden>
-          <div id="reqRepoChangedAlert" class="req-warn-bar" role="status" hidden>
-            <svg class="agent-icon harness-icon" data-icon="warning" width="16" height="16" aria-hidden="true"></svg>
-            <div class="req-warn-text"><span id="reqRepoChangedText"></span><br><small>仓库或分支已改动，结论仍保留；如需按新仓库重新分析，点「重新澄清」。</small></div>
-            <button type="button" id="reqReclarify" class="button small"><svg class="agent-icon harness-icon" data-icon="refresh" width="13" height="13" aria-hidden="true"></svg>重新澄清</button>
-          </div>
           <div class="req-form">
-            <div class="req-field req-wide"><label class="req-f-label" for="reqTitle">标题</label><input id="reqTitle" class="input" autocomplete="off" placeholder="一句话说明这个需求"></div>
-            <div class="req-field req-wide"><div id="reqSummaryLabel" class="req-f-label">需求结论</div><div id="reqSummary" class="req-summary-box"></div></div>
-            <div id="reqConfirmRepoSlot" class="req-repo-slot"></div>
             <div class="req-field req-wide"><label class="req-f-label" for="reqWorkflow"><svg class="agent-icon harness-icon" data-icon="workflow" width="13" height="13" aria-hidden="true"></svg>SOP 流程</label><select id="reqWorkflow" class="select"></select></div>
             <div class="req-field req-wide">
               <div class="req-f-label" id="reqTargetLabel">建到哪里</div>
@@ -974,18 +941,13 @@
                 <button type="button" class="req-choice" role="radio" aria-checked="false" data-req-target="tapd"><span class="req-choice-ind" aria-hidden="true"></span><span class="req-choice-body"><b>TAPD 需求</b><span id="reqTargetTAPDHint">先在平台建单，再同步到 TAPD</span></span></button>
               </div>
             </div>
-            <div id="reqOutcome" class="req-outcome req-wide"></div>
           </div>
         </section>
       </div>
       <footer id="reqFooter" class="req-wizard-foot">
-        <button id="reqBack" type="button" class="button quiet" hidden><svg class="agent-icon harness-icon" data-icon="chevron-left" width="13" height="13" aria-hidden="true"></svg>上一步</button>
         <span id="reqComposerHint" class="req-foot-note" aria-live="polite"></span>
-        <button id="chatStop" type="button" class="button" hidden>停止</button>
-        <button id="reqSkip" type="button" class="button quiet" title="先写一句需求">跳过澄清</button>
-        <button id="reqNext" type="button" class="button primary" title="先写一句需求">开始澄清<svg class="agent-icon harness-icon" data-icon="chevron-right" width="13" height="13" aria-hidden="true"></svg></button>
-        <button id="reqGoCreate" type="button" class="button" hidden>直接去创建</button>
-        <button id="reqCreate" type="button" class="button primary" hidden>创建需求</button>
+        <button id="reqCreate" type="button" class="button" title="先写一句需求">创建需求</button>
+        <button id="reqCreateChat" type="button" class="button primary" title="先写一句需求"><svg class="agent-icon harness-icon" data-icon="chat" width="13" height="13" aria-hidden="true"></svg>创建并去对话澄清</button>
       </footer>
     </div>
   </div>
