@@ -61,25 +61,7 @@ func BuildFacts(run domain.Run, catalog domain.RunEvalCatalog) domain.RunEvalFac
 		case "verification":
 			verification[ev.NodeID]++
 		case "tool":
-			name := ev.Name
-			if ev.Tool != nil && ev.Tool.Name != "" {
-				name = ev.Tool.Name
-			}
-			if name == "" {
-				name = "tool"
-			}
-			key := ev.NodeID + "\x00" + name
-			item := toolCounts[key]
-			if item == nil {
-				item = &domain.RunEvalToolRepeat{NodeID: ev.NodeID, Tool: name}
-				toolCounts[key] = item
-			}
-			if ev.Phase == "" || ev.Phase == "start" || ev.Phase == "finish" {
-				item.Count++
-			}
-			if ev.Error != nil || ev.Phase == "error" || ev.Level == "error" {
-				item.Failed++
-			}
+			bumpToolRepeat(toolCounts, ev)
 		case "error":
 			text := ev.Message
 			if ev.Error != nil && ev.Error.Message != "" {
@@ -210,6 +192,31 @@ func bumpError(bag map[string]*domain.RunEvalErrorFact, nodeID, text string) {
 		bag[key] = item
 	}
 	item.Count++
+}
+
+// bumpToolRepeat accumulates one tool telemetry event into bag, keyed by node
+// and tool name. Count grows on phase-less, start and finish events; Failed
+// grows on any error signal.
+func bumpToolRepeat(bag map[string]*domain.RunEvalToolRepeat, ev domain.TelemetryEvent) {
+	name := ev.Name
+	if ev.Tool != nil && ev.Tool.Name != "" {
+		name = ev.Tool.Name
+	}
+	if name == "" {
+		name = "tool"
+	}
+	key := ev.NodeID + "\x00" + name
+	item := bag[key]
+	if item == nil {
+		item = &domain.RunEvalToolRepeat{NodeID: ev.NodeID, Tool: name}
+		bag[key] = item
+	}
+	if ev.Phase == "" || ev.Phase == "start" || ev.Phase == "finish" {
+		item.Count++
+	}
+	if ev.Error != nil || ev.Phase == "error" || ev.Level == "error" {
+		item.Failed++
+	}
 }
 
 func rankedTools(bag map[string]*domain.RunEvalToolRepeat) []domain.RunEvalToolRepeat {

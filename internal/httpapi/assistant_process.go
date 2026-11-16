@@ -15,6 +15,8 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 	"sync"
 	"time"
 )
@@ -91,8 +93,8 @@ func (h *assistantHandlers) conversationExecutor(s *AgentToolSession, root strin
 			if err != nil {
 				return "", err
 			}
-			if request.Sandbox == nil || request.Sandbox.Profile.Driver != "docker" {
-				return "", fmt.Errorf("对话工作区仅支持 Docker")
+			if request.Sandbox == nil || !domain.ConversationSandboxDriver(request.Sandbox.Profile.Driver) {
+				return "", fmt.Errorf("对话工作区只支持 Docker 或 native 沙箱")
 			}
 			if s.ExecutionRunnerID == "" {
 				var reason string
@@ -206,6 +208,9 @@ func (h *assistantHandlers) conversationExecutor(s *AgentToolSession, root strin
 			}
 		}
 		command = runtime.WithCommandEnvironment(command, map[string]string{"AGENTFLOW_NATIVE_APPROVAL_URL": agentToolMCPURL(s.Token)})
+		if s.RuntimeMode == domain.AssistantModeWorkspace {
+			command, credentials = h.bindWorkspaceGit(ctx, s, command, credentials)
+		}
 		wire := runtime.ConversationCommandFor(command, credentials)
 		if s.ExecutionRunnerID != "" {
 			wire.Argv[0] = assistantEngineBinary(command.Provider)
@@ -427,4 +432,27 @@ func waitConversationProcessStop(ctx context.Context, id string, call func(conte
 		notify(false)
 	}
 	return nil
+}
+
+// bindWorkspaceGit gives the workspace CLI this turn's requester's Git
+// credentials, so the agent clones, pushes and calls GitHub itself.
+// Each turn starts its CLI again, so a shared conversation always runs with
+// the identity of whoever sent the current message, and a cleared token stops
+// working from the next turn on.
+func (h *assistantHandlers) bindWorkspaceGit(ctx context.Context, s *AgentToolSession, command runtime.CommandSpec, credentials runtime.RunCredentials) (runtime.CommandSpec, runtime.RunCredentials) {
+	if s.User.ID <= 0 || h.repo == nil {
+		return command, credentials
+	}
+	credentials.GitToken = strings.TrimSpace(h.repo.GitCredential(ctx, s.User.ID))
+	credentials.GitSSHHostKeys = h.repo.GitSSHKeysByHost(s.User.ID)
+	if user, ok := h.repo.User(s.User.ID); ok {
+		if login := strings.TrimSpace(user.LoginName); login != "" {
+			credentials.GitUserName = login
+			credentials.GitUserEmail = login + "@users.noreply.loopforge.invalid"
+		}
+	}
+	if !slices.Contains(command.CredentialBindings, runtime.BindGitWorkspace) {
+		command.CredentialBindings = append(append([]runtime.CredentialBinding(nil), command.CredentialBindings...), runtime.BindGitWorkspace)
+	}
+	return command, credentials
 }

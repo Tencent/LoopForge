@@ -477,38 +477,7 @@ func (s *Service) pullGongfengIssues(client *MCPClient, store IssueStoreAdapter,
 	count := 0
 	for _, gi := range issues {
 		existing, found := findGongfengIssue(store, repo, gi)
-		issueID := fmt.Sprintf("gf-%s-%d", repo.ID, gi.IID)
-		if found {
-			issueID = existing.ID
-		}
-		issue := domain.Issue{
-			ID:           issueID,
-			ProjectID:    repo.ProjectID,
-			RepositoryID: repo.ID,
-			Kind:         "issue",
-			Title:        gi.Title,
-			Description:  gi.Description,
-			Priority:     gongfengPriority(gi.Priority),
-			Status:       gongfengStateToStatus(gi.State),
-			CloseSource:  closeSourceForStatus(gongfengStateToStatus(gi.State)),
-			Source:       "gongfeng",
-			ExternalRef: &domain.ExternalRef{
-				Source:        "gongfeng",
-				ExternalID:    fmt.Sprintf("%d", gi.ID),
-				ExternalIID:   gi.IID,
-				ExternalURL:   strings.TrimSuffix(repo.WebURL, "/") + fmt.Sprintf("/issues/%d", gi.IID),
-				ExternalState: gi.State,
-				ExternalType:  "issue",
-				SyncedAt:      time.Now().UTC(),
-			},
-		}
-		if found {
-			applyExistingIssue(&issue, existing)
-		} else {
-			issue.Number = gi.IID
-			issue.CreatedAt = parseTime(gi.CreatedAt)
-		}
-		issue.UpdatedAt = time.Now().UTC()
+		issue := gongfengSyncedIssue(repo, gi, existing, found)
 		if err := store.PutSyncedIssue(issue); err != nil {
 			log.Printf("sync gongfeng issue %d: %v", gi.IID, err)
 			continue
@@ -524,6 +493,46 @@ func (s *Service) pullGongfengIssues(client *MCPClient, store IssueStoreAdapter,
 		StartedAt: started, FinishedAt: time.Now().UTC(),
 	})
 	return count, nil
+}
+
+// gongfengSyncedIssue maps one Gongfeng issue onto the local work item that
+// a pull stores. When the work item already exists, platform-owned fields
+// (ID, status, number, assignment, ...) are kept via applyExistingIssue.
+func gongfengSyncedIssue(repo domain.Repository, gi gongfengIssue, existing domain.Issue, found bool) domain.Issue {
+	issueID := fmt.Sprintf("gf-%s-%d", repo.ID, gi.IID)
+	if found {
+		issueID = existing.ID
+	}
+	status := gongfengStateToStatus(gi.State)
+	issue := domain.Issue{
+		ID:           issueID,
+		ProjectID:    repo.ProjectID,
+		RepositoryID: repo.ID,
+		Kind:         "issue",
+		Title:        gi.Title,
+		Description:  gi.Description,
+		Priority:     gongfengPriority(gi.Priority),
+		Status:       status,
+		CloseSource:  closeSourceForStatus(status),
+		Source:       "gongfeng",
+		ExternalRef: &domain.ExternalRef{
+			Source:        "gongfeng",
+			ExternalID:    fmt.Sprintf("%d", gi.ID),
+			ExternalIID:   gi.IID,
+			ExternalURL:   strings.TrimSuffix(repo.WebURL, "/") + fmt.Sprintf("/issues/%d", gi.IID),
+			ExternalState: gi.State,
+			ExternalType:  "issue",
+			SyncedAt:      time.Now().UTC(),
+		},
+	}
+	if found {
+		applyExistingIssue(&issue, existing)
+	} else {
+		issue.Number = gi.IID
+		issue.CreatedAt = parseTime(gi.CreatedAt)
+	}
+	issue.UpdatedAt = time.Now().UTC()
+	return issue
 }
 
 func parseGongfengIssues(raw string) ([]gongfengIssue, error) {
@@ -575,14 +584,9 @@ func (s *Service) CreateGongfengIssue(store IssueStoreAdapter, issue domain.Issu
 		return issue, err
 	}
 
-	var gi gongfengIssue
-	if err := json.Unmarshal([]byte(raw), &gi); err != nil {
-		var arr []gongfengIssue
-		if err2 := json.Unmarshal([]byte(raw), &arr); err2 == nil && len(arr) > 0 {
-			gi = arr[0]
-		} else {
-			return issue, fmt.Errorf("decode created issue: %w", err)
-		}
+	gi, err := decodeCreatedRecord[gongfengIssue](raw)
+	if err != nil {
+		return issue, fmt.Errorf("decode created issue: %w", err)
 	}
 
 	issue.Source = "gongfeng"
@@ -1329,14 +1333,9 @@ func (s *Service) CreateTAPDStory(store IssueStoreAdapter, issue domain.Issue) (
 		return issue, err
 	}
 
-	var st tapdStory
-	if err := json.Unmarshal([]byte(raw), &st); err != nil {
-		var arr []tapdStory
-		if err2 := json.Unmarshal([]byte(raw), &arr); err2 == nil && len(arr) > 0 {
-			st = arr[0]
-		} else if extracted := extractTAPDStory(raw); extracted.ID != "" {
-			st = extracted
-		} else {
+	st, err := decodeCreatedRecord[tapdStory](raw)
+	if err != nil {
+		if st = extractTAPDStory(raw); st.ID == "" {
 			return issue, fmt.Errorf("decode created story: %w", err)
 		}
 	}
@@ -1540,6 +1539,24 @@ func collectTAPDStories(value any) []tapdStory {
 	}
 	walk(value)
 	return out
+}
+
+// decodeCreatedRecord decodes the payload a tracker MCP create tool returns:
+// a single object, or an array whose first element is the created record.
+// When neither shape fits it returns the zero value and the error from
+// decoding the payload as a single object.
+func decodeCreatedRecord[T any](raw string) (T, error) {
+	var record T
+	err := json.Unmarshal([]byte(raw), &record)
+	if err == nil {
+		return record, nil
+	}
+	var records []T
+	if json.Unmarshal([]byte(raw), &records) == nil && len(records) > 0 {
+		return records[0], nil
+	}
+	var zero T
+	return zero, err
 }
 
 func extractTAPDStory(raw string) tapdStory {

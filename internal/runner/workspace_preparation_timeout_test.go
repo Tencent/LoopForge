@@ -11,7 +11,6 @@ import (
 
 	"agentflow/internal/domain"
 	"agentflow/internal/runtime"
-	"agentflow/internal/scriptview"
 	"agentflow/internal/workspaceprep"
 )
 
@@ -27,7 +26,7 @@ func TestRunnerWorkspacePreparationDockerPhaseTimeouts(t *testing.T) {
 			d, req, root := runnerPreparationFixture(t)
 			req.Sandbox.Profile.Driver = "docker"
 			req.Sandbox.Dockerfile = &domain.DockerfileDefinition{ID: "cold-build", Content: "FROM scratch\n"}
-			state := installPreparationDocker(t)
+			state := installPreparationDocker(t, root)
 			defer d.closeAllRunSandboxes(context.Background())
 			t.Setenv("AGENTFLOW_WORKSPACE_BUILD_TIMEOUT", tt.buildTimeout)
 			t.Setenv("AGENTFLOW_WORKSPACE_PREPARE_TIMEOUT", "1s")
@@ -104,16 +103,11 @@ func TestRunnerWorkspacePreparationDockerPhaseTimeouts(t *testing.T) {
 // Exercise the real lazy Docker sandbox through a controlled CLI, without a
 // daemon or network. The build and initialization delays cross separate phase
 // deadlines; the call log also detects duplicate builds or script replay.
-func installPreparationDocker(t *testing.T) string {
+func installPreparationDocker(t *testing.T, workspace string) string {
 	t.Helper()
 	state := t.TempDir()
-	helper := filepath.Join(state, "gate-mcp")
-	if err := os.WriteFile(helper, []byte("#!/bin/sh\nexit 0\n"), 0700); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("AGENTFLOW_GATE_MCP_BINARY", helper)
 	t.Setenv("PREPARATION_TEST_STATE", state)
-	t.Setenv("PREPARATION_TEST_SCRIPT_VERSION", scriptview.Version)
+	t.Setenv("PREPARATION_TEST_WORKSPACE", workspace)
 	installFakeDocker(t, `#!/bin/sh
 set -eu
 state="$PREPARATION_TEST_STATE"
@@ -131,30 +125,21 @@ build)
   sleep "$PREPARATION_TEST_BUILD_DELAY"
   touch "$state/built"
   echo 'build finished' >> "$state/calls" ;;
-create)
-  for arg do
-    case "$arg" in
-    agentflow.script-view-owner=*) printf '%s' "${arg#*=}" > "$state/owner" ;;
-    esac
-  done
-  echo container ;;
+create) touch "$state/created"; echo container ;;
 inspect)
   case "$*" in
-  *'{{json .}}'*) echo '{"Id":"base","Image":"image","State":{"Running":true,"StartedAt":"epoch"}}' ;;
-  *agentflow.script-view-owner*)
-    if test -f "$state/owner"; then
-      printf 'true|'; cat "$state/owner"
+  *'{{.State.Running}}|{{.Id}}|{{.State.StartedAt}}'*) echo 'true|container|epoch' ;;
+  *'{{json .Mounts}}'*)
+    if test -f "$state/created"; then
+      printf '[{"Destination":"/workspace","Source":"%s"}]\n' "$PREPARATION_TEST_WORKSPACE"
     else
       echo 'Error: No such container' >&2; exit 1
     fi ;;
-  *'{{.State.Running}}|{{.Id}}|{{.State.StartedAt}}'*) echo 'true|container|epoch' ;;
-  *'{{json .Mounts}}'*) echo '[]' ;;
   *) echo 'Error: No such container' >&2; exit 1 ;;
   esac ;;
 exec)
   case "$*" in
-  *--workspace-script-view-version*) echo "$PREPARATION_TEST_SCRIPT_VERSION" ;;
-  *--workspace-script-view*)
+  *preparation-count*)
     echo 'prepare started' >> "$state/calls"
     sleep "$PREPARATION_TEST_SCRIPT_DELAY"
     echo 'prepare finished' >> "$state/calls" ;;

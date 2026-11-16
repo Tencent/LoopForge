@@ -17,18 +17,6 @@ import (
 // IssueAnalyticsViews loads the columns analytics needs without hydrating the
 // full issue payload (clarification, comments, and delivery lock blobs).
 func (r *IssuesRepo) IssueAnalyticsViews() []domain.Issue {
-	urlExpr := "json_extract(payload, '$.externalRef.externalUrl')"
-	tapdIDExpr := "json_extract(payload, '$.tapdId')"
-	clarificationStartExpr := "json_extract(payload, '$.clarification.startedAt')"
-	deliveryExpr := "json_extract(payload, '$.deliveryState')"
-	deliveryMRExpr := "json_extract(payload, '$.deliveryMrUrl')"
-	if r.isMySQL() {
-		urlExpr = "JSON_UNQUOTE(JSON_EXTRACT(payload, '$.externalRef.externalUrl'))"
-		tapdIDExpr = "JSON_UNQUOTE(JSON_EXTRACT(payload, '$.tapdId'))"
-		clarificationStartExpr = "JSON_UNQUOTE(JSON_EXTRACT(payload, '$.clarification.startedAt'))"
-		deliveryExpr = "JSON_UNQUOTE(JSON_EXTRACT(payload, '$.deliveryState'))"
-		deliveryMRExpr = "JSON_UNQUOTE(JSON_EXTRACT(payload, '$.deliveryMrUrl'))"
-	}
 	type liteRow struct {
 		ID                     string    `gorm:"column:id"`
 		ProjectID              string    `gorm:"column:project_id"`
@@ -49,11 +37,11 @@ func (r *IssuesRepo) IssueAnalyticsViews() []domain.Issue {
 	var rows []liteRow
 	if err := r.DB.Table("issues").Select(
 		"id", "project_id", "title", "status", "kind", "source", "workflow_id", "assignee_user_id", "external_id", "created_at",
-		urlExpr+" AS external_url",
-		tapdIDExpr+" AS tapd_id",
-		clarificationStartExpr+" AS clarification_started_at",
-		deliveryExpr+" AS delivery_state",
-		deliveryMRExpr+" AS delivery_mr_url",
+		r.sqlPayloadJSONText("externalRef.externalUrl")+" AS external_url",
+		r.sqlPayloadJSONText("tapdId")+" AS tapd_id",
+		r.sqlPayloadJSONText("clarification.startedAt")+" AS clarification_started_at",
+		r.sqlPayloadJSONText("deliveryState")+" AS delivery_state",
+		r.sqlPayloadJSONText("deliveryMrUrl")+" AS delivery_mr_url",
 	).Find(&rows).Error; err != nil {
 		return []domain.Issue{}
 	}

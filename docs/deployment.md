@@ -15,6 +15,8 @@ npm install --global @openai/codex@0.162.1 @anthropic-ai/claude-code@2.1.300
 
 Ensure the service can find `codebuddy` and Node.js on its PATH, or set `AGENTFLOW_CODEBUDDY_BIN` to the installed executable. Configure the model key and its network environment in personal settings. The no-key script demo does not need the CLI. The production Docker image includes CodeBuddy, Codex and DeepSeek Harness (`dsh`). Claude Code and the other agent CLIs are not bundled. When a conversation fails because one is missing, the error says it is not installed and offers an install button. That downloads the pinned `@anthropic-ai/claude-code` release, or the public package for OpenCode, Kimi Code and Pi, into `$LOOPFORGE_DATA_DIR/cli`; an installation outside the image gets the pinned `@deepseek-ai/dsh` release the same way. Cursor CLI and Antigravity use their providers' installers and land in the service user's `~/.local/bin`. Closing or reloading the browser does not stop an install that has already started, and the button stays on “自动安装” until it finishes. A finished install replaces the earlier generation failure with a prompt to send the message again. The next message reuses the installation. An SOP sandbox of the published image that selects Claude Code, OpenCode, Kimi Code or Pi installs the same package on first use and shares it with conversations. Cursor CLI and Antigravity are not installed into SOP sandboxes. Connected runners keep their own CLI requirements.
 
+A conversation workspace on a custom Dockerfile without Node.js, npm or Python 3 uses the platform's own copies. On first use the platform copies its Node.js, npm and a relocatable Python into `$LOOPFORGE_DATA_DIR/cli/toolchain/<build>/`, plus each bundled CLI (CodeBuddy, Codex, DeepSeek Harness) the first time a sandbox needs it, and mounts the directory read-only at the end of the sandbox `PATH`. Tools the image ships take precedence. Only glibc images of the platform's architecture use it; Alpine (musl) images need their own Node.js, npm and Python 3. A new platform build creates a new directory and leaves the previous ones in place: after an upgrade, delete the other `cli/toolchain/<build>/` directories (about 200 MB each plus the CLIs copied into them).
+
 Stop the foreground service with Ctrl-C. Start it again with the same command. MySQL data stays in its Compose volume. `docker compose stop mysql` stops the database without deleting it.
 
 Use `AGENTFLOW_MYSQL_DSN` for your own MySQL deployment. A fresh account command or server connection creates missing schema objects. Apply existing-installation data migrations individually after reviewing their prerequisites; do not blindly replay all historical migrations against a new database.
@@ -37,6 +39,15 @@ The installer checks Docker, Compose, Python 3 and curl. It offers to install mi
 Run it as the installation owner, including an ordinary Linux user. If that user cannot access Docker directly, the installer validates sudo and uses `sudo -n docker` consistently for Compose, schema installation and seeds. Before each operation it checks whether sudo credentials expired during a long build, prompting again in a terminal or failing with instructions in unattended mode. It does not require adding the user to the Docker group or logging out. For unattended installations run `sudo -v` first; `LOOPFORGE_YES=1` accepts installation prompts but does not bypass operating-system permissions. Without sudo or Docker access it fails immediately with instructions. Rootless Docker uses its active context's Unix socket; remote Docker contexts need a separately configured deployment because sandbox workspaces are local bind mounts.
 
 `compose.yaml` is the published-image stack and never builds: `./start.sh`, `scripts/install.sh` and a plain `docker compose --profile platform up` all pull the GHCR release pinned there (currently `ghcr.io/tencent/loopforge:0.3.8`). The pin matches the checkout's migrations and seeds, so check out a release tag when you install. Set `LOOPFORGE_IMAGE` (for example to an `@sha256:` digest) only to override it; a value saved in `.env` takes precedence over later pin changes.
+
+To upgrade, update the checkout first, then refresh the containers:
+
+```bash
+git fetch --tags && git checkout vX.Y.Z
+./start.sh pull
+```
+
+The new `compose.yaml` brings the image pin and any new platform settings together, and `./start.sh pull` recreates the platform container when either changes. A source build from `./start.sh dev` is not rebuilt by `./start.sh pull`; run `./start.sh dev` again after updating the checkout. Running `./start.sh pull` alone keeps the pinned version. With `LOOPFORGE_IMAGE` saved in `.env`, change it to the checked-out release as well; a newer image with an older `compose.yaml` can miss settings that release needs.
 
 Where `ghcr.io` downloads stall, set `MIRROR` to the registry host that replaces `ghcr.io`. `./start.sh` and `./start.sh pull` pull that reference and tag it back to the name in `compose.yaml`. Setting `MIRROR` trusts that host, because the result is tagged with the official name. The GitHub Release records the image digest; `docker image inspect --format '{{index .RepoDigests 0}}' ghcr.io/tencent/loopforge:<pin>` should show the same digest after `@`. The pull policy stays `missing` on install, so a local image is kept; `./start.sh pull` refreshes it from the same host. Leaving `MIRROR` unset preserves the direct `ghcr.io` pull. [ghcr.nju.edu.cn](https://doc.nju.edu.cn/books/e1654/page/ghcr) is one compatible host. Docker's `registry-mirrors` setting, including `https://docker.nju.edu.cn`, only applies to Docker Hub and cannot be used as `MIRROR`. A `LOOPFORGE_IMAGE` value that is not a `ghcr.io` name:tag is left unchanged.
 
@@ -66,9 +77,9 @@ The platform exposes a built-in default sandbox (`local`) even when the catalog 
 
 For native services running as an ordinary host user, default/root Docker images run with that service user's UID/GID so private workspaces remain accessible without relaxing their permissions or adding capabilities. Images that explicitly select a non-root user retain that identity; operators must arrange compatible bind-mount ownership for those images.
 
-The Compose deployment mounts the host Docker socket into the platform container so built-in AI SOPs run out of the box. `AGENTFLOW_ISOLATED_IMAGE` points to the installed platform image: default sandboxes start separate sibling containers from that same image, with no second CLI download or image build. They do not mount the Docker socket. Custom Dockerfiles still build and cache their own images. The run workspace is mounted at `/workspace` on the Compose network. Because bind mounts are resolved by the host Docker daemon, `LOOPFORGE_DATA_DIR` (written to `.env` by `scripts/configure.sh`, default `./.data`) is mounted into the platform container at the same absolute path; workspaces and CLI state live under it.
+The Compose deployment mounts the host Docker socket into the platform container so built-in AI SOPs run out of the box. `AGENTFLOW_ISOLATED_IMAGE` points to the installed platform image: default sandboxes start separate sibling containers from that same image, with no second CLI download or image build. They do not mount the Docker socket. Custom Dockerfiles still build and cache their own images. The run workspace is mounted at `/workspace` on the Compose network. Because bind mounts are resolved by the host Docker daemon, `LOOPFORGE_DATA_DIR` (written to `.env` by `scripts/configure.sh`, default `./.data`) is mounted into the platform container at the same absolute path; workspaces and CLI state live under it. Native conversation workspaces bind-mount their conversation roots the same way, so `compose.yaml` sets `AGENTFLOW_CONVERSATION_DIR` to `${LOOPFORGE_DATA_DIR}/conversations`. Conversation workspaces in a Compose deployment use Docker sandboxes: the native (bwrap) sandbox needs user and PID namespaces, which the unprivileged platform container cannot create, and the image does not ship bubblewrap. Use a native installation or a connected execution machine for native sandboxes. Attachments and other per-user assistant state stay in `AGENTFLOW_ASSISTANT_SESSION_DIR` (`/data/assistant` in the `platform-data` volume), which is never mounted into a workspace. A platform container whose `AGENTFLOW_CONVERSATION_DIR` is unset keeps conversation roots there too, and opening a conversation workspace then fails with `mkdirat ... read-only file system`.
 
-Access to the Docker socket is equivalent to root on the host. Two safeguards follow from that: the platform runs every task in a sandbox container, including SOPs configured for the `local` driver (`AGENTFLOW_LOCAL_SANDBOX=docker`), and only platform administrators can point a repository at a host source path. Even so, anyone who can run SOPs can execute code in containers on this host, so only give accounts to people you trust and do not expose the service to untrusted networks. To run without the socket, remove the `docker.sock` volume and the `AGENTFLOW_LOCAL_SANDBOX` setting from `compose.yaml`, then connect a separate Docker-capable worker or execution machine for AI SOPs; the script-only welcome SOP then runs inside the platform container.
+Access to the Docker socket is equivalent to root on the host. Two safeguards follow from that: the platform runs every task in a sandbox container, including SOPs configured for the `local` driver (`AGENTFLOW_LOCAL_SANDBOX=docker`), and only platform administrators can point a repository at a host source path. Even so, anyone who can run SOPs can execute code in containers on this host, so only give accounts to people you trust and do not expose the service to untrusted networks. Agent CLIs also apply a bound repository's own configuration as their native rules define, including unattended SOP runs: `AGENTS.md`/`CLAUDE.md` instructions, `.codebuddy/`, `.claude/settings.json` (hooks and environment) and `.mcp.json` can start commands or MCP servers inside the sandbox. Bind only repositories whose contents you trust. To run without the socket, remove the `docker.sock` volume and the `AGENTFLOW_LOCAL_SANDBOX` setting from `compose.yaml`, then connect a separate Docker-capable worker or execution machine for AI SOPs; the script-only welcome SOP then runs inside the platform container.
 
 ### Slow networks: clone and image build limits
 
@@ -87,8 +98,8 @@ A clone that is stopped this way is not retried, since a retry would wait on the
 
 Use Git SSH for GitLab.com, self-managed GitLab, Gitea, Gogs, GitHub, and other Git hosts that offer this transport. In **Project settings → Code repositories** or **Quick access**, enter the clone address, such as `git@gitlab.com:group/repo.git` or `ssh://git@git.example.org:2222/group/repo.git`, and select the existing default branch. GitHub HTTPS continues to use GitHub authorization or a PAT.
 
-1. The deployment administrator creates a dedicated OpenSSH `known_hosts` file. Verify the host keys against the provider's published fingerprints or with the server administrator before adding them. Use exact hostnames or IP addresses, with `[host]:port` for a nondefault port. Wildcards and hashed entries do not grant access. For a trusted team deployment, add internal hosts explicitly to this same file.
-2. Set `AGENTFLOW_GIT_SSH_KNOWN_HOSTS` to the file's absolute path on the platform, workers and execution machines. For Compose, put it under the existing `LOOPFORGE_DATA_DIR` bind mount and set the absolute path in `.env`. Install Git and the OpenSSH client on execution machines and in custom sandbox images. Upgrade execution machines to Runner **0.9.3** or later. Docker sandbox commands need the sandbox and execution process to share the Linux kernel for the signing agent socket. With a Docker VM separate from a native runner, use managed checkout and delivery, or use a native sandbox for interactive Git commands.
+1. GitHub (`github.com:22` and `ssh.github.com:443`) works without configuration: LoopForge pins the host keys GitHub publishes at `api.github.com/meta`. For any other host, the deployment administrator creates a dedicated OpenSSH `known_hosts` file; its entries, including `@revoked`, are combined with the built-in GitHub keys. Verify the host keys against the provider's published fingerprints or with the server administrator before adding them. Use exact hostnames or IP addresses, with `[host]:port` for a nondefault port. Wildcards and hashed entries do not grant access. For a trusted team deployment, add internal hosts explicitly to this same file.
+2. For hosts other than GitHub, set `AGENTFLOW_GIT_SSH_KNOWN_HOSTS` to the file's absolute path on the platform, workers and execution machines. For Compose, put it under the existing `LOOPFORGE_DATA_DIR` bind mount and set the absolute path in `.env`. Install Git and the OpenSSH client on execution machines and in custom sandbox images. Upgrade execution machines to Runner **0.9.3** or later. Docker sandbox commands need the sandbox and execution process to share the Linux kernel for the signing agent socket. With a Docker VM separate from a native runner, use managed checkout and delivery, or use a native sandbox for interactive Git commands.
 3. Generate dedicated SSH keys with no passphrase for unattended execution. Add each public key to your hosting account and grant access to the repositories it needs. Grant write access if the run must push. Under **Personal settings → Git SSH keys**, add one private key per SSH host, such as `gitlab.com` or `git.example.org:2222`. An omitted port means 22. Edit that host's entry to replace its key.
 
 Repositories automatically use the current user's key for their SSH host and port; repositories on the same host and port share that key. The repository form only shows a red warning when that host has no personal key. This reminder does not block saving the repository or completing setup; credentials and host trust can be configured before the first Git operation. There is no repository-specific or default fallback key. Checkout and SOP execution use the responsible user's keys. Conversation submission and the workspace terminal use the requesting user's keys. The temporary signing agent closes when the command or terminal ends. A terminal's agent never lives in the shared workspace: with the `bwrap` driver it sits in a private directory bound only into that terminal, and with the `local` driver (no isolation) it stays outside the workspace in a 0700 directory. Docker and seatbelt workspaces share one filesystem view among all their processes, so their terminals get no personal SSH key; push from there with the platform's submit action. `git@github.com:` and `ssh://git@github.com/` addresses are saved as GitHub repositories (HTTPS + token, automatic pull requests) unless `provider` is explicitly `ssh`. To rotate a key, replace it in settings and revoke the old public key at the host.
@@ -126,9 +137,11 @@ Configure provider credentials in the platform UI, not the host's global CLI con
 
 ## Slow workspace opening and restricted networks
 
-Opening a chat workspace reports sandbox/image preparation, repository cloning,
-branch checkout and initialization in the chat. Git transfer output includes its
-reported bytes and speed. The same bounded, redacted output is retained in the
+Opening a chat workspace reports sandbox/image preparation and initialization
+in the chat. New conversation workspaces start empty: the agent manages Git
+through its native CLI after opening. Legacy workspaces with platform-managed
+repositories also report cloning and branch checkout, including Git's reported
+bytes and speed. The same bounded, redacted preparation output is retained in the
 run events and logs; preparation failures also appear in `runs_get.problems`,
 including workspaces with no SOP nodes. The run stays `waiting` because it is an
 idle workspace, while its latest `workspace.opening.*` event records readiness
@@ -140,28 +153,29 @@ local API/worker or the connected runner), then restart that process:
 | Variable | Default | Scope |
 | --- | --- | --- |
 | `AGENTFLOW_WORKSPACE_BUILD_TIMEOUT` | `15m` | Sandbox acquisition, including image build |
-| `AGENTFLOW_WORKSPACE_CLONE_TIMEOUT` | `10m` | Each repository clone, including reference-cache fallback |
-| `AGENTFLOW_WORKSPACE_BRANCH_TIMEOUT` | `2m` | Each repository's branch preparation |
+| `AGENTFLOW_WORKSPACE_CLONE_TIMEOUT` | `10m` | Each platform-managed workspace clone, including reference-cache fallback |
+| `AGENTFLOW_WORKSPACE_BRANCH_TIMEOUT` | `2m` | Each platform-managed workspace repository's branch preparation |
 | `AGENTFLOW_WORKSPACE_PREPARE_TIMEOUT` | `5m` | Runner workspace initialization scripts |
 
 These phase deadlines apply in addition to the command limits above: the first
 deadline or stall window reached stops the command. Setting a command limit to
-`0` does not disable the opening phase deadline. For example, to allow a runner
-clone up to 20 minutes, set both `AGENTFLOW_WORKSPACE_CLONE_TIMEOUT=20m` and
+`0` does not disable the opening phase deadline. For example, to allow a runner's
+platform-managed workspace clone up to 20 minutes, set both `AGENTFLOW_WORKSPACE_CLONE_TIMEOUT=20m` and
 `AGENTFLOW_GIT_CLONE_TIMEOUT=20m` on that runner. Ordinary task checkouts retain
 the configurable `AGENTFLOW_GIT_CLONE_TIMEOUT` limit (10 minutes by default).
+These Git limits do not apply to commands the agent runs through its native CLI.
 Invalid or nonpositive workspace phase values use the default. Canceling the opening request also
 cancels its runner request and active Git/build command. Upgrade both platform
 and runner to receive live runner progress and cancellation; older runners
 still return their final result and retain their previous preparation timeout.
 
-A failed open retains its workspace binding and completed checkouts. Retry the
-current workspace without `new=true`; this avoids creating a second run and
-recloning repositories that already completed. A missing requested base branch
-still abandons a newly created workspace so its branch configuration can be
-corrected. Git cannot resume an interrupted pack download: an empty incomplete
-clone is retried, but local files, refs and indexes are preserved. For local
-execution, an administrator-configured repository `localPath` alongside
+A failed open retains its workspace binding and existing files. Retry with
+`workbench_workspace_open` and no arguments to reuse the current environment
+and run. Choosing another sandbox profile switches environments instead.
+
+For platform-managed checkouts, Git cannot resume an interrupted pack download:
+an empty incomplete clone is retried, but local files, refs and indexes are
+preserved. For local execution, an administrator-configured repository `localPath` alongside
 `cloneUrl` supplies the existing `--reference --dissociate` cache. It must be
 readable on the execution host. Docker reuses completed image layers. This does
 not introduce a shared cache across users' credentials.
@@ -182,8 +196,10 @@ For restricted networks:
 
 An existing workspace freezes its Dockerfile content and additional files.
 Opening it after the project Dockerfile changes shows a warning; retrying does
-not replace that environment. Save or push work first, then explicitly open a
-new workspace to use the updated Dockerfile or mirror configuration.
+not replace that environment. Save or push work first, then start a new
+conversation with the updated sandbox profile to use its new Dockerfile or
+mirror configuration. Reopening the same environment in the existing
+conversation reuses its frozen workspace.
 
 ## Observability schema
 
@@ -197,7 +213,7 @@ For an external MySQL deployment, review that migration and check column existen
 
 | Kind | Example | What an operator does |
 | --- | --- | --- |
-| Already applied by the installer and `./start.sh pull` | `001_run_obs_generated_columns.sql`, `migrations/seed/*.sql` | Nothing; the script above covers it |
+| Already applied by the installer and `./start.sh pull` | `001_run_obs_generated_columns.sql`, `migrations/seed/*.sql`, `031_generic_backend_openssh.sql` | Nothing; the script above covers it |
 | Must run once when upgrading | `009_bot_interactions_utf8mb4.sql` (`CONVERT TO` an existing table), new tables and columns added by hand | Run it on the database after reviewing prerequisites |
 | Backfills and one-time rewrites of existing rows | `016_public_optional_repositories.sql`, `021_assistant_session_sources.sql` | Run it if the history matters; skipping it changes no schema but leaves old rows unconverted |
 

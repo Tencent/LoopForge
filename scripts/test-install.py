@@ -35,7 +35,8 @@ class InstallerTests(unittest.TestCase):
         for name in ('install.sh', 'configure.sh', 'docker-access.sh', 'ghcr-mirror.sh', 'install-address.py', 'install-compose.py', 'install-observability-schema.sh', 'install-schema-extensions.sh'):
             shutil.copyfile(ROOT / 'scripts' / name, self.root / 'scripts' / name)
         shutil.copyfile(ROOT / 'start.sh', self.root / 'start.sh')
-        (self.root / 'migrations/001_run_obs_generated_columns.sql').write_text((ROOT / 'migrations/001_run_obs_generated_columns.sql').read_text())
+        for name in ('001_run_obs_generated_columns.sql', '031_generic_backend_openssh.sql'):
+            (self.root / 'migrations' / name).write_text((ROOT / 'migrations' / name).read_text())
         (self.root / 'migrations/seed/001_test.sql').write_text('INSERT IGNORE INTO agents (id) VALUES (1);\n')
         (self.root / 'mock').mkdir()
         self.executable('docker', '''#!/usr/bin/env bash

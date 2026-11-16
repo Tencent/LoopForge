@@ -53,5 +53,5 @@ func (e *Engine) WorkspaceDockerfileWarning(run domain.Run) string {
 	if !ok || current.Content == frozen.Content && maps.Equal(current.Files, frozen.Files) {
 		return ""
 	}
-	return "项目 Dockerfile 已更新；当前工作区仍使用创建时的版本。要应用新配置，请先保存改动，再新开工作区。"
+	return "项目 Dockerfile 已更新；当前工作区仍使用创建时的版本。要应用新配置，请先保存改动，再新建对话打开工作区。"
 }

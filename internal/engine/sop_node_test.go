@@ -20,24 +20,78 @@ func TestSOPNodeRunsChildAndHandsOffArtifacts(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
+	run := startSOPArtifactHandoff(t, s)
+	waitFor(t, s, run.ID, "succeeded")
+	finished, _ := s.Run(run.ID)
+	if finished.Nodes["prd-sop"].Status != "succeeded" || strings.TrimSpace(finished.Nodes["prd-sop"].ChildRunID) == "" {
+		t.Fatalf("sop node=%#v", finished.Nodes["prd-sop"])
+	}
+	if finished.Nodes["use"].Status != "succeeded" {
+		t.Fatalf("downstream node=%#v", finished.Nodes["use"])
+	}
+	for _, art := range finished.Artifacts {
+		if art.NodeID == "prd-sop" && art.Name == "test-branch-merge" && strings.Contains(art.Content, "ready") {
+			if len(art.ID) > 64 {
+				t.Fatalf("imported artifact ID exceeds run_artifacts.id width: %q", art.ID)
+			}
+			return
+		}
+	}
+	t.Fatalf("parent did not inherit child artifact: %+v", finished.Artifacts)
+}
+
+func TestSOPNodeArtifactWriteFailureKeepsSuccessfulChild(t *testing.T) {
+	t.Parallel()
+	s, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if err := s.DB.Exec("CREATE TRIGGER reject_import BEFORE INSERT ON run_artifacts " +
+		"WHEN NEW.node_id = 'prd-sop' BEGIN SELECT RAISE(ABORT, 'artifact write rejected'); END").Error; err != nil {
+		t.Fatal(err)
+	}
+	run := startSOPArtifactHandoff(t, s)
+	finished := waitRun(t, s, run.ID, 5*time.Second, func(r domain.Run) bool { return r.Status == "failed" })
+	node := finished.Nodes["prd-sop"]
+	if node.Status != "failed" || node.Attempt != 1 || !strings.Contains(node.Error, "artifact write rejected") {
+		t.Fatalf("sop node did not report the first attempt's write error: %#v", node)
+	}
+	child, ok := s.RunState(node.ChildRunID)
+	if !ok || child.Status != "succeeded" || childRunsOf(s, run.ID) != 1 {
+		t.Fatalf("parent did not retain its only successful child: %q (%s)", node.ChildRunID, child.Status)
+	}
+	page, err := s.QueryRunTelemetry(run.ID, "prd-sop", "", 0, 0, false, false, 200)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, event := range page.Events {
+		if event.Name == "artifact.published" {
+			t.Fatalf("rolled back artifact was reported as published: %+v", event)
+		}
+	}
+}
+
+func startSOPArtifactHandoff(t *testing.T, s *repo.Store) domain.Run {
+	t.Helper()
 	child := domain.WorkflowDefinition{
 		ID: "child-prd", Name: "Child PRD", SandboxProfileID: "local",
 		Nodes: []domain.WorkflowNode{{
 			ID: "write", Name: "Write", Type: "script", ScriptLanguage: "shell",
 			Script: "printf '# PRD\\nready\\n' > prd.md", MaxAttempts: 1,
-			ArtifactOutputs: []domain.ArtifactContract{{Name: "prd", Path: "prd.md", Required: true}},
+			ArtifactOutputs: []domain.ArtifactContract{{Name: "test-branch-merge", Path: "prd.md", Required: true}},
 		}},
 	}
 	parent := domain.WorkflowDefinition{
 		ID: "req-flow", Name: "Requirement flow", SandboxProfileID: "local",
 		Nodes: []domain.WorkflowNode{
 			{
-				ID: "prd-sop", Name: "产品 SOP", Type: "sop", SOPWorkflowID: child.ID, MaxAttempts: 1,
-				ArtifactOutputs: []domain.ArtifactContract{{Name: "prd", Path: "prd.md", Required: true}},
+				ID: "prd-sop", Name: "产品 SOP", Type: "sop", SOPWorkflowID: child.ID, MaxAttempts: 2,
+				ArtifactOutputs: []domain.ArtifactContract{{Name: "test-branch-merge", Path: "prd.md", Required: true}},
 			},
 			{
 				ID: "use", Name: "Use", Type: "script", ScriptLanguage: "shell",
-				Script: "test -f .agentflow/inputs/prd-sop/prd.md", MaxAttempts: 1,
+				Script: "test -f .agentflow/inputs/prd-sop/test-branch-merge.md", MaxAttempts: 1,
 			},
 		},
 		Edges: []domain.WorkflowEdge{{ID: "e1", Source: "prd-sop", Target: "use", When: "success"}},
@@ -53,23 +107,7 @@ func TestSOPNodeRunsChildAndHandsOffArtifacts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	waitFor(t, s, run.ID, "succeeded")
-	finished, _ := s.Run(run.ID)
-	if finished.Nodes["prd-sop"].Status != "succeeded" || strings.TrimSpace(finished.Nodes["prd-sop"].ChildRunID) == "" {
-		t.Fatalf("sop node=%#v", finished.Nodes["prd-sop"])
-	}
-	if finished.Nodes["use"].Status != "succeeded" {
-		t.Fatalf("downstream node=%#v", finished.Nodes["use"])
-	}
-	found := false
-	for _, art := range finished.Artifacts {
-		if art.NodeID == "prd-sop" && art.Name == "prd" && strings.Contains(art.Content, "ready") {
-			found = true
-		}
-	}
-	if !found {
-		t.Fatalf("parent did not inherit child artifact: %+v", finished.Artifacts)
-	}
+	return run
 }
 
 // 子 SOP 成功不能把整条需求标成已交付；父流程失败时需求仍要能重试。

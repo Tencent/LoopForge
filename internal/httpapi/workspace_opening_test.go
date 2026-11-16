@@ -131,6 +131,9 @@ func TestWorkspaceOpeningFailureKeepsBindingAndRetryUsesSameRun(t *testing.T) {
 	var ids []string
 	fakeRunnerConnection(t, hub, "cloud-runner", func(request domain.RunnerWorkspaceRequest) domain.RunnerWorkspaceResponse {
 		if request.Operation == domain.RunnerWorkspaceOperationPrepare {
+			if len(request.Repositories) != 0 || request.PreparationInvocation != nil && len(request.PreparationInvocation.Repositories) != 0 {
+				return domain.RunnerWorkspaceResponse{Status: 400, Error: "new conversation workspace must not check out project repositories"}
+			}
 			attempts++
 			ids = append(ids, request.RunID)
 			if attempts == 1 {
@@ -140,7 +143,7 @@ func TestWorkspaceOpeningFailureKeepsBindingAndRetryUsesSameRun(t *testing.T) {
 		return domain.RunnerWorkspaceResponse{Payload: []byte(`{"entries":[],"status":"ready"}`)}
 	})
 	s := &AgentToolSession{Mode: AgentToolAssistant, ProjectID: "workbench", UserID: owner.ID, User: owner, ChatSessionID: "chat-retry", ChatOwnerID: owner.ID}
-	if _, err := gateway.callMainBotWorkspace(context.Background(), s, "workbench_workspace_open", map[string]any{"goal": "修复 README"}); err == nil || !strings.Contains(err.Error(), "已保留绑定") || !strings.Contains(err.Error(), "apt mirror unreachable") {
+	if _, err := gateway.callMainBotWorkspace(context.Background(), s, "workbench_workspace_open", map[string]any{}); err == nil || !strings.Contains(err.Error(), "已保留绑定") || !strings.Contains(err.Error(), "apt mirror unreachable") {
 		t.Fatalf("failure not actionable: %v", err)
 	}
 	first := s.workspaceRunID
@@ -151,11 +154,15 @@ func TestWorkspaceOpeningFailureKeepsBindingAndRetryUsesSameRun(t *testing.T) {
 	if run.Status != "waiting" || run.LatestWorkspaceOpening() == nil || run.LatestWorkspaceOpening().State != "failed" {
 		t.Fatalf("failure not retained: %+v", run)
 	}
-	if _, err := gateway.callMainBotWorkspace(context.Background(), s, "workbench_workspace_open", map[string]any{"goal": "重试当前工作区"}); err != nil {
+	if _, err := gateway.callMainBotWorkspace(context.Background(), s, "workbench_workspace_open", map[string]any{}); err != nil {
 		t.Fatal(err)
 	}
 	if len(ids) != 2 || ids[0] != first || ids[1] != first || s.workspaceRunID != first {
 		t.Fatalf("retry allocated another run: %v, %s", ids, s.workspaceRunID)
+	}
+	run, _ = h.repo.RunState(first)
+	if opening := run.LatestWorkspaceOpening(); opening == nil || opening.State != "ready" {
+		t.Fatalf("successful retry did not clear opening failure: %+v", opening)
 	}
 }
 

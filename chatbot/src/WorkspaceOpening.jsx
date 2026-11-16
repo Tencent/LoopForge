@@ -106,7 +106,7 @@ export default function WorkspaceOpening({
           {failed ? current.message : current.output}
         </pre>
       ) : null}
-      {failed ? <p>已保留当前工作区和完成的检出，修复原因后可重试。</p> : null}
+      {failed ? <p>已保留当前工作区和已有文件，修复原因后可重试。</p> : null}
       {failed && !readOnly ? (
         <button
           className="run-alert-btn primary"

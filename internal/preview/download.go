@@ -105,15 +105,12 @@ func writeDownloadZIP(ctx context.Context, src io.Reader, entryFile string, limi
 		if err != nil {
 			return err
 		}
-		if hdr.Typeflag == tar.TypeDir {
-			continue
-		}
-		if (hdr.Typeflag != tar.TypeReg && hdr.Typeflag != tar.TypeRegA) || hdr.Linkname != "" {
-			return ErrUnsupportedEntry
-		}
-		name, err := SanitizeArchiveMember(hdr.Name)
+		name, skip, err := downloadEntryName(hdr)
 		if err != nil {
 			return err
+		}
+		if skip {
+			continue
 		}
 		if seen[name] {
 			return fmt.Errorf("duplicate preview file %q", name)
@@ -123,18 +120,8 @@ func writeDownloadZIP(ctx context.Context, src io.Reader, entryFile string, limi
 		}
 		seen[name] = true
 		expanded += hdr.Size
-		zh := &zip.FileHeader{Name: name, Method: zip.Deflate, Modified: hdr.ModTime}
-		zh.SetMode(0o644)
-		member, err := zw.CreateHeader(zh)
-		if err != nil {
+		if err := copyDownloadMember(ctx, zw, tr, name, hdr); err != nil {
 			return err
-		}
-		n, err := io.Copy(member, &downloadReader{ctx, tr})
-		if err != nil {
-			return err
-		}
-		if n != hdr.Size {
-			return fmt.Errorf("preview file %q size mismatch", name)
 		}
 	}
 	if !seen[entryFile] {
@@ -144,6 +131,44 @@ func writeDownloadZIP(ctx context.Context, src io.Reader, entryFile string, limi
 		return err
 	}
 	return zw.Close()
+}
+
+// downloadEntryName validates one tar header for the download ZIP. Directories
+// are reported as skip; anything other than a plain regular file (including
+// regular entries carrying a link name) is rejected with ErrUnsupportedEntry.
+// For accepted files it returns the sanitized member name.
+func downloadEntryName(hdr *tar.Header) (name string, skip bool, err error) {
+	if hdr.Typeflag == tar.TypeDir {
+		return "", true, nil
+	}
+	if (hdr.Typeflag != tar.TypeReg && hdr.Typeflag != tar.TypeRegA) || hdr.Linkname != "" {
+		return "", false, ErrUnsupportedEntry
+	}
+	name, err = SanitizeArchiveMember(hdr.Name)
+	if err != nil {
+		return "", false, err
+	}
+	return name, false, nil
+}
+
+// copyDownloadMember writes one deflated 0644 ZIP member named name, keeping
+// the tar modification time, and copies src into it while honoring ctx. The
+// copied byte count must match hdr.Size.
+func copyDownloadMember(ctx context.Context, zw *zip.Writer, src io.Reader, name string, hdr *tar.Header) error {
+	zh := &zip.FileHeader{Name: name, Method: zip.Deflate, Modified: hdr.ModTime}
+	zh.SetMode(0o644)
+	member, err := zw.CreateHeader(zh)
+	if err != nil {
+		return err
+	}
+	n, err := io.Copy(member, &downloadReader{ctx, src})
+	if err != nil {
+		return err
+	}
+	if n != hdr.Size {
+		return fmt.Errorf("preview file %q size mismatch", name)
+	}
+	return nil
 }
 
 type downloadReader struct {

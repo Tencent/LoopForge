@@ -7,6 +7,7 @@ import React, {
   useState,
 } from "react";
 import { useChat } from "./useChat";
+import NativeApprovalPanel from "./NativeApprovalPanel";
 import { AgentBrowserLinks } from "./agent-browser-links.js";
 import ActivityTrace, { ReplyTimeline } from "./ActivityTrace";
 import MessageInfo from "./MessageInfo";
@@ -76,7 +77,7 @@ import HomeWelcome from "./HomeWelcome";
 import ModelPicker from "./ModelPicker";
 import ModelProviderIcon, { hasProviderLogo } from "./ModelProviderIcon";
 import PermissionPicker from "./PermissionPicker";
-import { engineBrand } from "./engines.js";
+import { conversationEngine, engineBrand } from "./engines.js";
 import { effortOptions } from "./effort.js";
 import QuickAccessWizard from "./QuickAccessWizard";
 import HarnessSelect from "./HarnessSelect";
@@ -453,6 +454,15 @@ export default function App() {
   const selectedModel = chat.models.find((m) => m.id === chat.model);
   const modelLabel =
     selectedModel?.name?.replace(/^Claude-/, "").replace(/^GPT-/, "") || "模型";
+  // The CLI switch is only for a conversation that has not started. A reply
+  // in flight, or one already saved, keeps that CLI; another CLI needs a new chat.
+  const lockedExecutorId = chat.session
+    ? conversationEngine(chat.session.messages, chat.models, chat.session.executor) ||
+      (chat.busy ? chat.executor : "")
+    : "";
+  const pinnedExecutor = lockedExecutorId
+    ? (chat.executors || []).find((item) => item.id === lockedExecutorId)
+    : undefined;
   const projectOptions = projectPickerOptions(
     chat.projects,
     chat.user,
@@ -1175,6 +1185,18 @@ export default function App() {
                   <HarnessIcon name="edit" size={13} />
                 </IconButton>
               ) : null}
+              {pinnedExecutor ? (
+                <span
+                  className="conversation-engine"
+                  title={`本对话使用 ${pinnedExecutor.label}，对话开始后不能切换 CLI；换 CLI 请新建对话`}
+                >
+                  <ModelProviderIcon
+                    brand={engineBrand(pinnedExecutor.id)}
+                    size={12}
+                  />
+                  {pinnedExecutor.label}
+                </span>
+              ) : null}
               {chat.local ? <span className="preview-badge">示例</span> : null}
             </>
           ) : null}
@@ -1660,6 +1682,10 @@ export default function App() {
                   readOnly={chat.readOnly}
                 />
               ) : null}
+              <NativeApprovalPanel chat={chat} onChange={() => {
+                if (follow.current && scroll.current)
+                  scroll.current.scrollTop = scroll.current.scrollHeight;
+              }} />
               {!chat.local && !chat.busy && chat.generation?.failure && !messages.some((m) => m.generationId === chat.generation.id && m.failure) ? <GenerationDiagnostics sessionId={chat.session?.id} generationId={chat.generation.id} failure={chat.generation.failure} onCLIInstall={chat.adoptCLIInstall} readOnly={chat.readOnly} /> : null}
               {!chat.local && !chat.readOnly && !chat.busy && chat.generation?.id && chat.generation.status === "cancelled" && !chat.generation.failure && !messages.some((m) => m.generationId === chat.generation.id) ? <GenerationDiagnostics sessionId={chat.session?.id} generationId={chat.generation.id} compact /> : null}
               <WorkspaceOpening
@@ -1669,7 +1695,7 @@ export default function App() {
                 readOnly={chat.readOnly}
                 onProgress={followWorkspaceProgress}
                 onRetry={(runId) => {
-                  setText(`重试打开当前工作区 ${runId}，复用已经完成的检出，不要新建工作区。`);
+                  setText(`重试打开当前工作区 ${runId}，沿用当前运行环境并保留已有文件。`);
                   document.querySelector('textarea[aria-label="消息"]')?.focus();
                 }}
               />
@@ -2048,25 +2074,27 @@ export default function App() {
                         e.target.value = "";
                       }}
                     />
-                    <PermissionPicker
-                      label="CLI"
-                      options={chat.executors.map((executor) => {
-                        const brand = engineBrand(executor.id);
-                        return {
-                          ...executor,
-                          glyph: hasProviderLogo(brand)
-                            ? <ModelProviderIcon brand={brand} size={16} />
-                            : null,
-                        };
-                      })}
-                      value={chat.executor}
-                      onSelect={(id) => {
-                        chat.setExecutor(id);
-                        input.current?.focus();
-                      }}
-                      open={menu?.type === "executor"}
-                      onOpenChange={(open) => setMenu(open ? { type: "executor" } : null)}
-                    />
+                    {chat.executors.length > 1 && !pinnedExecutor ? (
+                      <PermissionPicker
+                        label="CLI"
+                        options={chat.executors.map((executor) => {
+                          const brand = engineBrand(executor.id);
+                          return {
+                            ...executor,
+                            glyph: hasProviderLogo(brand)
+                              ? <ModelProviderIcon brand={brand} size={16} />
+                              : null,
+                          };
+                        })}
+                        value={chat.executor}
+                        onSelect={(id) => {
+                          chat.setExecutor(id);
+                          input.current?.focus();
+                        }}
+                        open={menu?.type === "executor"}
+                        onOpenChange={(open) => setMenu(open ? { type: "executor" } : null)}
+                      />
+                    ) : null}
                     <ModelPicker
                       models={chat.models}
                       value={chat.model}
