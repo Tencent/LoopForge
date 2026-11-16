@@ -13,6 +13,10 @@ test('draft restore brings back the description, repositories, branch and target
   assert.equal($('#chatInput').value, 'Restored text');
   assert.equal($('#reqBaseBranch').value, 'feature/keep');
   assert.equal($('#reqWorkflow').value, 'flow-1', 'an SOP picked before is kept');
+  app.evaluate(`setReqDelivery('none')`);
+  assert.equal(app.evaluate(`JSON.parse(sessionStorage.getItem('agentflow.requirementComposer')).delivery`), 'none');
+  app.evaluate(`state.reqDelivery='sop';applyRequirementComposerDraft(JSON.parse(sessionStorage.getItem('agentflow.requirementComposer')))`);
+  assert.equal($('[data-req-delivery="none"]').getAttribute('aria-checked'), 'true', 'the no-SOP choice is restored');
   assert.equal($('#reqCreate').disabled, false);
   const saved = app.evaluate(`JSON.parse(sessionStorage.getItem('agentflow.requirementComposer'))`);
   assert.equal(saved.input, 'Restored text');
@@ -49,7 +53,13 @@ test('repository controls stay in sync and Escape closes the popover before the 
   app.evaluate(`state.data.workflows=[];fillReqWorkflow();$('#chatInput').value='x';renderReqFooter()`);
   assert.equal($('#reqCreate').disabled, false, 'a requirement does not need an SOP to be created');
   assert.equal($('#reqCreateChat').disabled, false);
-  assert.deepEqual([...$('#reqWorkflow').options].map((o) => o.textContent), ['稍后选择']);
+  app.evaluate(`state.reqDelivery='sop';renderReqDelivery()`);
+  assert.equal($('[data-req-delivery="sop"]').disabled, true, 'SOP delivery needs a runnable SOP');
+  assert.equal($('[data-req-delivery="none"]').getAttribute('aria-checked'), 'true');
+  assert.equal($('#reqDeliverySOPHint').textContent, '当前项目还没有可运行的 SOP');
+  assert.equal(app.evaluate(`selectedReqWorkflowId()`), '');
+  app.evaluate(`setReqDelivery('sop')`);
+  assert.equal(app.evaluate(`reqUsesSOP()`), false);
   app.document.dispatchEvent(new app.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
   await settle(2);
   assert.equal($('#requirementModal').classList.contains('open'), false);

@@ -1234,6 +1234,7 @@ function bind(){
   $('#reqCreateChat').onclick=()=>createIssueFromChat(undefined,'chat');
   $('#reqRepoChipToggle').onclick=e=>{e.stopPropagation();toggleReqRepoPopover()};
   $$('#reqTarget [data-req-target]').forEach(b=>b.onclick=()=>setReqTarget(b.dataset.reqTarget));
+  $$('#reqDelivery [data-req-delivery]').forEach(b=>b.onclick=()=>setReqDelivery(b.dataset.reqDelivery));
   document.addEventListener('pointerdown',e=>{
     const pop=$('#reqRepoPopover');
     if(pop&&!pop.hidden&&!e.target.closest?.('#reqRepoChip, .hui-select-panel'))toggleReqRepoPopover(false);

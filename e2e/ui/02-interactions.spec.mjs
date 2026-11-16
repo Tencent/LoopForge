@@ -74,6 +74,8 @@ test('requirement composer: create and clarify opens the chat with the requireme
   await openView(page, 'issues');
   await page.locator('#newIssue').click();
   await page.locator('#chatInput').fill(`${title}\n\n自动化 UI 测试创建，会被关闭。`);
+  await page.locator('[data-req-delivery="none"]').click();
+  await expect(page.locator('#reqWorkflowField')).toBeHidden();
   const [created] = await Promise.all([
     page.waitForResponse(r => new URL(r.url()).pathname === '/api/issues' && r.request().method() === 'POST'),
     page.locator('#reqCreateChat').click(),
@@ -82,6 +84,9 @@ test('requirement composer: create and clarify opens the chat with the requireme
   const issue = await created.json();
   track(`issue ${issue.id}`, () => post(`/api/issues/${issue.id}/close`, {}, { expect: [200, 404, 409] }));
   expect(issue.title).toBe(title);
+  expect(issue.sopMode).toBe('none');
+  expect(issue.workflowId || '').toBe('');
+  expect(issue.automationState).toBe('ignored');
   await expect(page.locator('#requirementModal')).not.toHaveClass(/open/);
   await expect(page).toHaveURL(/#\/collaboration/);
   const chat = page.frameLocator('#chatNextFrame');

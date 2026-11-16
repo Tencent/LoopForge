@@ -51,6 +51,14 @@ func dispatchIssue(d *deps, req dispatchRequest) (domain.Task, error) {
 		}
 	}
 	scheduled := strings.TrimSpace(req.ScheduleJobID) != ""
+	if issue.WithoutSOP() {
+		if scheduled {
+			return domain.Task{}, HTTPError{http.StatusConflict, "该需求不使用 SOP"}
+		}
+		if strings.TrimSpace(req.WorkflowID) == "" {
+			return domain.Task{}, HTTPError{http.StatusBadRequest, "该需求不使用 SOP，请先选择要运行的 SOP"}
+		}
+	}
 	project, _ := d.repo.Project(issue.ProjectID)
 	workflowID := strings.TrimSpace(req.WorkflowID)
 	if workflowID == "" {
@@ -196,6 +204,9 @@ func dispatchIssue(d *deps, req dispatchRequest) (domain.Task, error) {
 	}
 	issue.LatestTaskID = stored.ID
 	issue.Status = "in_progress"
+	if issue.WithoutSOP() {
+		issue.SOPMode, issue.WorkflowID, issue.AutomationState = domain.IssueSOPUse, workflowID, "eligible"
+	}
 	if err := d.repo.PutIssue(issue); err != nil {
 		task.Status = "failed"
 		_ = d.repo.PutTask(task)

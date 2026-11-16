@@ -49,9 +49,9 @@ const ctx = {
   currentProject: () => ({id: "p", defaultRepositoryId: "r1"}),
   escapeHTML: s => String(s).replace(/[&<>"]/g, c => ({"&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;"}[c])),
   requirementComposerOpen: () => true, requirementComposerBusy: () => false, requirementComposerDirty: () => true,
-  selectedReqWorkflowId: () => elements["#reqWorkflow"].value, selectedReqPlaybookId: () => "",
+  selectedReqWorkflowId: () => elements["#reqWorkflow"].value, selectedReqPlaybookId: () => "", reqUsesSOP: () => true,
   sessionStorage: {getItem: key => storage.get(key), setItem: (key, value) => storage.set(key, value), removeItem: key => storage.delete(key)},
-  renderReqFooter: () => {}, updateReqCharCount: () => {}, renderReqTarget: () => {}, resetRequirementComposer: () => {},
+  renderReqFooter: () => {}, updateReqCharCount: () => {}, renderReqTarget: () => {}, renderReqDelivery: () => {}, resetRequirementComposer: () => {},
   fillReqWorkflow: value => {elements["#reqWorkflow"].value = value || "sop"},
   renderReqContext: () => {
     elements["#reqRepository"].dataset.ids = '["r1","r2"]';

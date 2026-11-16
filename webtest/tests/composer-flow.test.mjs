@@ -34,8 +34,10 @@ test('the composer gates on the description and creates an undispatched issue wi
   assert.equal($('#reqCreateChat').disabled, false);
   assert.equal($('#reqCharCount').textContent, '27 字');
   assert.match($('#reqComposerHint').textContent, /去对话里把需求聊清楚/);
-  assert.equal($('#reqWorkflow').value, '', 'the SOP is picked later by default');
-  assert.equal($('#reqWorkflow').options[0].textContent, '稍后选择');
+  assert.equal($('[data-req-delivery="sop"]').getAttribute('aria-checked'), 'true', 'SOP delivery is the default');
+  assert.equal($('#reqWorkflowField').hidden, false);
+  const workflowId = $('#reqWorkflow').value;
+  assert.ok(workflowId, 'the project SOP is preselected');
 
   app.router.post('/api/issues', (call) => ({ status: 200, body: { id: 'issue-direct', ...call.body } }));
   $('#reqCreate').click();
@@ -44,7 +46,8 @@ test('the composer gates on the description and creates an undispatched issue wi
   assert.equal(create.body.title, 'Ship audit log');
   assert.equal(create.body.description, 'Ship audit log\nKeep 90 days');
   assert.deepEqual(create.body.repositoryIds, ['repo-1']);
-  assert.equal(create.body.workflowId, '');
+  assert.equal(create.body.workflowId, workflowId);
+  assert.equal(create.body.sopMode, '');
   assert.equal(create.body.clarification, undefined);
   assert.ok(!app.router.calls.some((c) => c.path.endsWith('/dispatch')));
   assert.ok(!app.router.calls.some((c) => c.path.includes('chat-clarify')));
@@ -59,11 +62,18 @@ test('创建并去对话澄清 creates the issue and opens a new chat with the r
   const $ = (s) => app.document.querySelector(s);
   app.evaluate(`openRequirementWizard()`);
   describe(app, 'Add CSV export');
+  $('[data-req-delivery="none"]').click();
+  assert.equal($('[data-req-delivery="none"]').getAttribute('aria-checked'), 'true');
+  assert.equal($('#reqWorkflowField').hidden, true, 'the SOP picker hides when no SOP is used');
+  assert.match($('#reqComposerHint').textContent, /定时任务也不会自动认领/);
   app.router.post('/api/issues', (call) => ({ status: 200, body: { id: 'issue-chat', ...call.body } }));
   $('#reqCreateChat').click();
   await settle(4);
   const create = app.router.calls.find((c) => c.path === '/api/issues');
   assert.equal(create.body.title, 'Add CSV export');
+  assert.equal(create.body.sopMode, 'none');
+  assert.equal(create.body.workflowId, '');
+  assert.equal(create.body.playbookId, '');
   assert.ok(!app.router.calls.some((c) => c.path.endsWith('/dispatch')), 'the chat handoff does not start an SOP');
   assert.equal($('#requirementModal').classList.contains('open'), false);
   assert.match($('#toastContainer').textContent, /在对话里继续澄清/);

@@ -53,19 +53,48 @@ function fillReqWorkflow(preferred){
   const select=$('#reqWorkflow');
   if(!select)return;
   const opts=runnableWorkflowOptions();
-  // The SOP is optional: a requirement is usually clarified first, and the
-  // SOP is picked when it is triggered from the detail page.
   const preferredId=String(preferred||select.value||'').trim();
-  const selected=opts.some(w=>w.id===preferredId)?preferredId:'';
-  select.innerHTML=`<option value="" ${selected?'':'selected'}>稍后选择</option>`+opts.map(w=>`<option value="${escapeHTML(w.id)}" ${w.id===selected?'selected':''}>${escapeHTML(w.name)}</option>`).join('');
-  select.value=selected;
+  const fallback=defaultSOPForIssue({projectId:state.projectFilter,kind:'requirement'});
+  const selected=opts.some(w=>w.id===preferredId)?preferredId:(opts.some(w=>w.id===fallback)?fallback:(opts[0]?.id||''));
+  select.innerHTML=opts.map(w=>`<option value="${escapeHTML(w.id)}" ${w.id===selected?'selected':''}>${escapeHTML(w.name)}</option>`).join('')||'<option value="">暂无可选 SOP</option>';
+  if(selected)select.value=selected;
   window.enhanceSelect?.(select)?.refresh?.();
 }
+function reqUsesSOP(){
+  return state.reqDelivery!=='none'&&runnableWorkflowOptions().length>0;
+}
+function renderReqDelivery(){
+  const hasSOP=runnableWorkflowOptions().length>0;
+  const delivery=reqUsesSOP()?'sop':'none';
+  $$('#reqDelivery [data-req-delivery]').forEach(btn=>{
+    const on=btn.dataset.reqDelivery===delivery;
+    btn.classList.toggle('is-on',on);
+    btn.setAttribute('aria-checked',String(on));
+    const ind=btn.querySelector('.req-choice-ind');
+    if(ind)ind.innerHTML=on?reqIcon('check',11):'';
+    if(btn.dataset.reqDelivery==='sop'){
+      btn.disabled=!hasSOP;
+      btn.classList.toggle('is-unavailable',!hasSOP);
+    }
+  });
+  const hint=$('#reqDeliverySOPHint');
+  if(hint)hint.textContent=hasSOP?'按选定的 SOP 流程跑，可手动或定时触发':'当前项目还没有可运行的 SOP';
+  const field=$('#reqWorkflowField');
+  if(field)field.hidden=delivery!=='sop';
+  hydrateReqIcons($('#reqDelivery'));
+}
+function setReqDelivery(delivery){
+  if(delivery==='sop'&&!runnableWorkflowOptions().length)return;
+  state.reqDelivery=delivery==='none'?'none':'sop';
+  renderReqDelivery();
+  renderReqFooter();
+  persistRequirementComposer();
+}
 function selectedReqWorkflowId(){
-  return $('#reqWorkflow')?.value.trim()||'';
+  return reqUsesSOP()?($('#reqWorkflow')?.value.trim()||''):'';
 }
 function selectedReqPlaybookId(){
-  const wf=$('#reqWorkflow')?.value.trim()||'';
+  const wf=selectedReqWorkflowId();
   const books=projectPlaybooks(currentProject());
   const hit=books.find(b=>(b.bindings||[]).some(x=>x.workflowId===wf));
   return hit?.id||'';
@@ -152,9 +181,10 @@ function renderReqContext(){
   }
   renderReqRepoChip();
   fillReqWorkflow();
+  renderReqDelivery();
 }
 function reqFooterNote(){
-  return '建单后可在详情里触发 SOP，或去对话里把需求聊清楚';
+  return reqUsesSOP()?'建单后可在详情里触发 SOP，也可以先去对话里把需求聊清楚':'不绑定 SOP，定时任务也不会自动认领；以后想跑 SOP 可在详情里选择';
 }
 function renderReqFooter(){
   const creating=!!state.reqCreating;
@@ -236,6 +266,7 @@ function persistRequirementComposer(){
     projectId:currentProject()?.id||'',
     input:$('#chatInput')?.value||'',
     target:state.reqTarget||'local',
+    delivery:reqUsesSOP()?'sop':'none',
     repoIds:selectedReqRepositoryIds(),
     baseBranch:selectedReqBaseBranch(),
     workflowId:selectedReqWorkflowId(),
@@ -247,7 +278,7 @@ function clearRequirementComposer(){
   try{sessionStorage.removeItem('agentflow.requirementComposer')}catch{}
 }
 function resetRequirementComposer(){
-  Object.assign(state,{reqCreating:'',reqTarget:'local'});
+  Object.assign(state,{reqCreating:'',reqTarget:'local',reqDelivery:'sop'});
   ['#reqBaseBranch','#chatInput'].forEach(id=>{const el=$(id);if(el)el.value=''});
   renderReqContext();
   renderReqTarget();
@@ -262,11 +293,13 @@ function readRequirementComposerDraft(){
 }
 function applyRequirementComposerDraft(raw){
   state.reqTarget=raw.target==='tapd'?'tapd':'local';
+  state.reqDelivery=raw.delivery==='none'?'none':'sop';
   renderReqContext();
   if(Array.isArray(raw.repoIds))setReqRepositoryIds(raw.repoIds);
   const baseBranch=$('#reqBaseBranch');if(baseBranch)baseBranch.value=baseBranch.disabled?'':(raw.baseBranch||'');
   renderReqRepoChip();
   fillReqWorkflow(raw.workflowId||raw.playbookId);
+  renderReqDelivery();
   const input=$('#chatInput');if(input)input.value=raw.input||'';
   renderReqTarget();
   updateReqCharCount();
@@ -363,7 +396,9 @@ async function createIssueFromChat(target,mode){
   if(!draft.description){$('#chatInput')?.focus();return toast('先写一句需求')}
   if(target==='tapd'&&!projectTAPDReady())return toast('当前项目未配置 TAPD');
   if(state.reqCreating)return toast('正在建单，请勿重复点击');
+  const useSOP=reqUsesSOP();
   const workflowId=selectedReqWorkflowId();
+  if(useSOP&&!workflowId)return toast('请选择 SOP，或改为不使用 SOP');
   state.reqCreating=toChat?'chat':'issue';
   renderReqFooter();
   const project=currentProject();
@@ -372,6 +407,7 @@ async function createIssueFromChat(target,mode){
       projectId:project?.id,
       status:'backlog',
       kind:'requirement',
+      sopMode:useSOP?'':'none',
       workflowId,
       playbookId:selectedReqPlaybookId(),
       repositoryId:selectedReqRepositoryId(),
@@ -394,7 +430,7 @@ async function createIssueFromChat(target,mode){
     renderIssues();
     if(syncError)toast('已在平台建单，TAPD 同步失败：'+syncError,'err');
     else if(target==='tapd')toast(`已创建需求并同步 TAPD ${issue.externalRef?.externalId||''}`,'ok');
-    else toast(toChat?'已创建需求，在对话里继续澄清':'已在平台创建需求，可在详情里触发 SOP','ok');
+    else toast(toChat?'已创建需求，在对话里继续澄清':(useSOP?'已在平台创建需求，可在详情里触发 SOP':'已创建需求（不使用 SOP）'),'ok');
     if(toChat)openIssueInChat(issue);
     else openIssueDetail(issue.id);
   }catch(err){toast(err.message,'err')}

@@ -12,7 +12,7 @@
   <link rel="stylesheet" href="/app/hui-controls.css">
   <link rel="stylesheet" href="/styles.css?v=20261031v1">
   <link rel="stylesheet" href="/assets.css?v=20260823v1">
-  <link rel="stylesheet" href="/platform.css?v=20261031req1">
+  <link rel="stylesheet" href="/platform.css?v=20261116nosop">
   <link rel="stylesheet" href="/observability.css?v=20261031metrics2">
   <link rel="stylesheet" href="/artifacts.css?v=20260914r3">
   <link rel="stylesheet" href="/sops.css?v=20261030cards1">
@@ -36,7 +36,7 @@
   <link rel="stylesheet" href="/app/assistant-settings.css">
   <link rel="stylesheet" href="/preferences.css">
   <link rel="stylesheet" href="/app/issues-list.css">
-  <link rel="stylesheet" href="/app/requirement-wizard.css?v=20261116chat">
+  <link rel="stylesheet" href="/app/requirement-wizard.css?v=20261116nosop">
   <link rel="stylesheet" href="/app/assets-harness.css">
   <link rel="stylesheet" href="/app/sops-harness.css">
   <link rel="stylesheet" href="/app/sop-catalog.css">
@@ -933,7 +933,14 @@
             </div>
           </div>
           <div class="req-form">
-            <div class="req-field req-wide"><label class="req-f-label" for="reqWorkflow"><svg class="agent-icon harness-icon" data-icon="workflow" width="13" height="13" aria-hidden="true"></svg>SOP 流程</label><select id="reqWorkflow" class="select"></select></div>
+            <div class="req-field req-wide">
+              <div class="req-f-label" id="reqDeliveryLabel">交付方式</div>
+              <div id="reqDelivery" class="req-dest" role="radiogroup" aria-labelledby="reqDeliveryLabel">
+                <button type="button" class="req-choice" role="radio" aria-checked="true" data-req-delivery="sop"><span class="req-choice-ind" aria-hidden="true"></span><span class="req-choice-body"><b>按 SOP 交付</b><span id="reqDeliverySOPHint">按选定的 SOP 流程跑，可手动或定时触发</span></span></button>
+                <button type="button" class="req-choice" role="radio" aria-checked="false" data-req-delivery="none"><span class="req-choice-ind" aria-hidden="true"></span><span class="req-choice-body"><b>不使用 SOP</b><span>只建单，在对话里澄清、直接改代码</span></span></button>
+              </div>
+            </div>
+            <div id="reqWorkflowField" class="req-field req-wide"><label class="req-f-label" for="reqWorkflow"><svg class="agent-icon harness-icon" data-icon="workflow" width="13" height="13" aria-hidden="true"></svg>SOP 流程</label><select id="reqWorkflow" class="select"></select></div>
             <div class="req-field req-wide">
               <div class="req-f-label" id="reqTargetLabel">建到哪里</div>
               <div id="reqTarget" class="req-dest" role="radiogroup" aria-labelledby="reqTargetLabel">
