@@ -472,6 +472,18 @@ export function useChat() {
     [generation?.status, newChat, refreshSessions, syncProject],
   );
   selectRef.current = selectProject;
+  // Starts a new conversation in a project without binding or leaving the
+  // conversation that is open now (selectProject would bind a personal one).
+  const startProjectDraft = useCallback(
+    (id) => {
+      newChat();
+      if (id === projectRef.current) return;
+      setSandboxProfileId("");
+      setProjectId(id);
+      syncProject(id);
+    },
+    [newChat, syncProject],
+  );
   // The page's project switcher defaults to the first project, which a new
   // user usually has not joined. Start their new chats as personal chats
   // instead of failing on the first message. The parent page keeps its
@@ -1268,6 +1280,7 @@ export function useChat() {
     open,
     newChat,
     selectProject,
+    startProjectDraft,
     send,
     stop,
     rename,

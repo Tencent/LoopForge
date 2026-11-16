@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"maps"
 	"net/http"
 	"strings"
 	"time"
@@ -112,6 +113,7 @@ func (h *scheduleHandlers) scheduleJobs(c *gin.Context) {
 		} else if job.IntervalSec < 30 {
 			job.IntervalSec = 300
 		}
+		requestedModel := job.AssistantModel
 		if job.SkipDispatch {
 			job.AssistantModel = assistantScheduledModel(job.AssistantModel, loadAssistantModels(c.Request.Context(), ""))
 		}
@@ -124,6 +126,9 @@ func (h *scheduleHandlers) scheduleJobs(c *gin.Context) {
 			job.OwnerUserID = project.OwnerID
 		} else if job.SharedTaskID == "" {
 			job.OwnerUserID = existingJob.OwnerUserID
+		}
+		if !h.bindScheduleRunAs(c, &job, existingJob, requestedModel) {
+			return
 		}
 		if job.ID == "" {
 			job.ID = "job-" + time.Now().UTC().Format("20060102150405.000000000")
@@ -185,6 +190,115 @@ func (h *scheduleHandlers) scheduleJobs(c *gin.Context) {
 		stored, _ := h.repo.ScheduleJob(job.ID)
 		c.JSON(200, stored)
 	}
+}
+
+// bindScheduleRunAs binds an AI job to the user who saves it: the creator, and
+// later whoever edits it, so nobody can make a prompt run with another
+// member's keys. The binding is never taken from the request. The saver's own
+// key for the job's CLI is used, else the platform's shared CodeBuddy key
+// (limited to the models it allows, its default when requestedModel is empty);
+// with neither the save is refused, since the job could not run. Without a
+// signed-in user the job stays on the project owner's keys. A saver without
+// a usable key may still stop the job when nothing it runs changes; only
+// enabled is then turned off, since the name and notifications also go into
+// the prompt and a stopped job can be run by hand. That is checked again
+// under the row lock against the stored job, which another save may have
+// edited or moved meanwhile; then the save gets 409. A false return means the
+// response has been written.
+func (h *scheduleHandlers) bindScheduleRunAs(c *gin.Context, job *domain.ScheduleJob, prior domain.ScheduleJob, requestedModel string) bool {
+	job.RunAsUserID, job.RunAsName = 0, ""
+	if !job.SkipDispatch {
+		return true
+	}
+	current, ok := h.requestUser(c.Request, true)
+	if !ok || current == nil || current.ID <= 0 {
+		return true
+	}
+	self, ok := h.repo.User(current.ID)
+	if !ok {
+		return true
+	}
+	engine, _ := assistantModelEngine(job.AssistantModel)
+	stopOnly := func() bool {
+		if job.Enabled || !scheduleRunConfigUnchanged(prior, *job) {
+			return false
+		}
+		stored, err := h.repo.DisableScheduleJob(prior.ID, func(current domain.ScheduleJob) bool {
+			return scheduleStopAllowed(prior, *job, current)
+		})
+		if errors.Is(err, repo.ErrScheduleJobChanged) {
+			c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+			return true
+		}
+		if err != nil {
+			respond(c, err)
+			return true
+		}
+		c.JSON(200, stored)
+		return true
+	}
+	_, shared, ok := scheduleKeyUser(h.repo, self, engine)
+	if !ok {
+		if stopOnly() {
+			return false
+		}
+		c.JSON(400, gin.H{"error": scheduleMissingKeyError(engine)})
+		return false
+	}
+	if shared != nil {
+		model, allowed := assistantSponsoredModelFor(shared, scheduleSharedRequestedModel(requestedModel))
+		if !allowed {
+			if stopOnly() {
+				return false
+			}
+			c.JSON(400, gin.H{"error": "你还没有配置个人 CodeBuddy API Key，定时任务会使用平台共享 Key，只能选平台管理员允许的模型（" + strings.Join(shared, "、") + "）；要用其他模型，请先在个人配置中填写自己的 Key"})
+			return false
+		}
+		job.AssistantModel = model
+	}
+	job.RunAsUserID, job.RunAsName = self.ID, scheduleUserName(self)
+	return true
+}
+
+// scheduleStopAllowed reports whether a keyless stop request, authorized
+// against prior, may still turn off current, the job as stored under the lock:
+// it must be in the project write access was checked for and run exactly what
+// the request was checked against.
+func scheduleStopAllowed(prior, request, current domain.ScheduleJob) bool {
+	return current.ProjectID == prior.ProjectID && scheduleRunConfigUnchanged(current, request)
+}
+
+// scheduleRunConfigUnchanged reports whether job still runs exactly what the
+// stored prior runs. A run can be started by hand while a job is stopped, so
+// the binding may only be kept when nothing that is executed changed.
+func scheduleRunConfigUnchanged(prior, job domain.ScheduleJob) bool {
+	return prior.ID != "" && prior.ID == job.ID && prior.SkipDispatch &&
+		prior.ProjectID == job.ProjectID &&
+		prior.AssistantPrompt == job.AssistantPrompt &&
+		prior.AssistantModel == job.AssistantModel &&
+		prior.SharedTaskID == job.SharedTaskID &&
+		prior.SharedTaskVersion == job.SharedTaskVersion &&
+		maps.Equal(prior.ParameterValues, job.ParameterValues)
+}
+
+// scheduleSharedRequestedModel treats the CLI-default placeholder as "no
+// model chosen", which the shared key resolves to its own default.
+func scheduleSharedRequestedModel(model string) string {
+	if model = strings.TrimSpace(model); model == assistantDefaultModel {
+		return ""
+	}
+	return model
+}
+
+func scheduleMissingKeyError(engine string) string {
+	if engine != assistantEngineCodeBuddy {
+		return fmt.Sprintf("你还没有配置 %s API Key，平台共享 Key 只支持 CodeBuddy 模型：请先在个人配置中填写，或改选 CodeBuddy 模型", assistantEngineLabel(engine))
+	}
+	return "你还没有配置 CodeBuddy API Key，平台也没有配置共享 Key，定时任务无法执行：请先在个人配置中填写自己的 Key，或联系平台管理员配置共享 Key"
+}
+
+func scheduleUserName(user domain.User) string {
+	return firstNonEmpty(strings.TrimSpace(user.LoginName), strings.TrimSpace(user.ChineseName), fmt.Sprintf("用户 %d", user.ID))
 }
 
 // 路由: g.DELETE("/api/schedule-jobs/:id", h.scheduleJob)
