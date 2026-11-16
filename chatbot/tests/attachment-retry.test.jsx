@@ -53,4 +53,17 @@ describe("message image attachments", () => {
     fireEvent.load(screen.getByAltText("shot.png"));
     expect(screen.queryByText("图片加载失败")).toBeNull();
   });
+
+  test("renders no filename caption bar under the image", () => {
+    const { container } = render(
+      <Attachment attachment={image} sessionId="s1" onOpen={vi.fn()} />,
+    );
+    expect(container.querySelector(".image-caption")).toBeNull();
+    // The image itself stays accessible; double-click still opens the viewer.
+    expect(screen.getByAltText("shot.png")).toBeInTheDocument();
+    fireEvent.doubleClick(screen.getByAltText("shot.png"));
+    expect(
+      screen.getByRole("dialog", { name: "查看大图 shot.png" }),
+    ).toBeInTheDocument();
+  });
 });
