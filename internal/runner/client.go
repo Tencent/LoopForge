@@ -283,7 +283,39 @@ func (c *Client) OpenControl(ctx context.Context) (*websocket.Conn, error) {
 }
 
 func (c *Client) SendEvents(ctx context.Context, taskID string, events []domain.RunnerTaskEvent) error {
-	return c.do(ctx, http.MethodPost, "/runners/tasks/"+taskID+"/events", map[string]any{"events": events}, nil)
+	const envelopeBytes = len(`{"events":[]}`)
+	path := "/runners/tasks/" + taskID + "/events"
+	batch := make([]json.RawMessage, 0, min(len(events), domain.RunnerTaskEventBatchLimit))
+	used := envelopeBytes
+	flush := func() error {
+		err := c.do(ctx, http.MethodPost, path, map[string]any{"events": batch}, nil)
+		batch = batch[:0]
+		used = envelopeBytes
+		return err
+	}
+	for _, event := range events {
+		raw, err := json.Marshal(event)
+		if err != nil {
+			return err
+		}
+		// Include space for a separator, using the encoded size so
+		// control characters and HTML escaping can't exceed the budget.
+		size := len(raw) + 1
+		if envelopeBytes+size > domain.RunnerTaskEventBodyLimit {
+			return fmt.Errorf("runner event %d exceeds the upload size limit", event.Seq)
+		}
+		if len(batch) == domain.RunnerTaskEventBatchLimit || used+size > domain.RunnerTaskEventBodyLimit {
+			if err := flush(); err != nil {
+				return err
+			}
+		}
+		batch = append(batch, raw)
+		used += size
+	}
+	if len(batch) == 0 {
+		return nil
+	}
+	return flush()
 }
 
 type CompleteRequest struct {
