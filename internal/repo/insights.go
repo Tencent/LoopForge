@@ -41,7 +41,7 @@ type insightExecutionRow struct {
 func (insightExecutionRow) TableName() string { return "insight_executions" }
 
 func (r *InsightsRepo) CreateInsightSource(source domain.InsightSource, tokenHash string) error {
-	return r.DB.Create(&insightSourceRow{ID: source.ID, ProjectID: source.ProjectID, TokenHash: tokenHash, Payload: jsonBytes(source), ExpiresAt: source.ExpiresAt}).Error
+	return r.DB.Create(&insightSourceRow{ID: source.ID, ProjectID: source.ProjectID, TokenHash: tokenHash, Payload: jsonBytes(source), ExpiresAt: source.ExpiresAt.UTC()}).Error
 }
 func (r *InsightsRepo) InsightSource(id string) (domain.InsightSource, error) {
 	var row insightSourceRow
@@ -73,7 +73,7 @@ func (r *InsightsRepo) InsightSources(projectID string) ([]domain.InsightSource,
 }
 func (r *InsightsRepo) ActiveInsightSource(tokenHash string, now time.Time) (domain.InsightSource, error) {
 	var row insightSourceRow
-	if err := r.DB.Where("token_hash = ? AND revoked_at IS NULL AND expires_at > ?", tokenHash, now).First(&row).Error; err != nil {
+	if err := r.DB.Where("token_hash = ? AND revoked_at IS NULL AND expires_at > ?", tokenHash, now.UTC()).First(&row).Error; err != nil {
 		return domain.InsightSource{}, err
 	}
 	return decodeInsightSource(row)
