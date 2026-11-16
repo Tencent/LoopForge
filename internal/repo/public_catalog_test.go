@@ -115,7 +115,7 @@ func TestPublicCodeSOPsOpenMRBeforeDeliver(t *testing.T) {
 	}
 }
 
-func TestPublicMRGateBlocksOnlyUnpushedCheckouts(t *testing.T) {
+func TestPublicMRGateRequiresTheRunWorkBranchPushed(t *testing.T) {
 	var gate string
 	for _, agent := range publicCatalogTemplates(t)[GenericBackendDeliveryWorkflowID].Agents {
 		if agent.ID == GenericBackendDeliveryWorkflowID+"-mr" {
@@ -142,10 +142,12 @@ func TestPublicMRGateBlocksOnlyUnpushedCheckouts(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	passes := func(workspace string) bool {
+	workspace := t.TempDir()
+	passes := func(manifest ...string) bool {
 		t.Helper()
 		cmd := exec.Command("sh", "-lc", gate)
 		cmd.Dir = workspace
+		cmd.Env = append(os.Environ(), "AGENTFLOW_WORK_BRANCHES="+strings.Join(manifest, "\n"))
 		return cmd.Run() == nil
 	}
 	root := t.TempDir()
@@ -157,41 +159,68 @@ func TestPublicMRGateBlocksOnlyUnpushedCheckouts(t *testing.T) {
 	git(seed, "add", ".")
 	git(seed, "commit", "-qm", "init")
 	git(seed, "push", "-q", "origin", "HEAD:main")
+	write(filepath.Join(seed, "r.txt"), "release\n")
+	git(seed, "add", ".")
+	git(seed, "commit", "-qm", "release")
+	git(seed, "push", "-q", "origin", "HEAD:release")
 
-	workspace := filepath.Join(root, "run")
 	write(filepath.Join(workspace, "requirement.md"), "doc\n")
-	if !passes(workspace) {
+	if !passes() {
 		t.Fatal("a run without repositories must pass")
 	}
 	repo := filepath.Join(workspace, "app")
 	git(workspace, "clone", "-q", remote, repo)
 	git(repo, "checkout", "-qb", "work")
+	app := "app\twork\tmain"
 	write(filepath.Join(repo, ".agentflow", "state"), "x\n")
 	write(filepath.Join(repo, "node_modules", "dep.js"), "x\n")
-	if !passes(workspace) {
-		t.Fatal("a clean checkout must pass; .agentflow and node_modules are ignored")
+	if !passes(app) {
+		t.Fatal("a repository the run left unchanged must pass; .agentflow and node_modules are ignored")
 	}
 	write(filepath.Join(repo, "a.txt"), "changed\n")
 	write(filepath.Join(repo, "new.txt"), "new\n")
-	if passes(workspace) {
+	if passes(app) {
 		t.Fatal("modified and untracked files must block")
 	}
 	git(repo, "add", "a.txt", "new.txt")
 	git(repo, "commit", "-qm", "change")
-	if passes(workspace) {
+	if passes(app) {
 		t.Fatal("an unpushed commit must block")
 	}
+	git(repo, "push", "-q", "origin", "HEAD:other")
+	if passes(app) {
+		t.Fatal("HEAD pushed to another branch must block while the work branch is not pushed")
+	}
 	git(repo, "push", "-q", "-u", "origin", "work")
-	if !passes(workspace) {
+	if !passes(app) {
 		t.Fatal("a pushed work branch must pass")
 	}
-	local := filepath.Join(workspace, "scratch")
-	if err := os.MkdirAll(local, 0o755); err != nil {
-		t.Fatal(err)
+	write(filepath.Join(repo, "later.txt"), "later\n")
+	git(repo, "add", ".")
+	git(repo, "commit", "-qm", "later")
+	if passes(app) {
+		t.Fatal("a commit after the push must block")
 	}
-	git(local, "init", "-q")
-	write(filepath.Join(local, "b.txt"), "b\n")
-	if !passes(workspace) {
-		t.Fatal("a local repository without a remote has nowhere to push and must not block")
+	git(repo, "push", "-q", "origin", "work")
+	git(repo, "checkout", "-q", "-b", "elsewhere", "origin/main")
+	if passes(app) {
+		t.Fatal("a checkout moved off the work branch that holds the commits must block")
+	}
+	git(repo, "checkout", "-q", "work")
+	if !passes(app) {
+		t.Fatal("back on the pushed work branch must pass")
+	}
+	if passes("app\twork\tmissing") {
+		t.Fatal("a target branch missing from origin must block")
+	}
+
+	release := filepath.Join(workspace, "svc")
+	git(workspace, "clone", "-q", "-b", "release", remote, release)
+	git(release, "checkout", "-qb", "fix")
+	if !passes(app, "svc\tfix\trelease") {
+		t.Fatal("a work branch with nothing beyond its frozen release target must pass")
+	}
+	if passes(app, "svc\tfix\tmain") {
+		t.Fatal("measured against main the release commit is unpushed work and must block")
 	}
 }
