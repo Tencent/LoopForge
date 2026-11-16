@@ -269,7 +269,6 @@
             <h2 class="sched-exec-card-title">执行概览<span id="scheduleExecOverviewScope" class="muted">（最近 7 天）</span><span class="sched-exec-th-hint" title="按开始时间统计最近 7×24 小时的执行，与之前 7×24 小时对比"><svg class="agent-icon harness-icon" data-icon="info" width="13" height="13" aria-hidden="true" focusable="false"></svg></span></h2>
             <div id="scheduleExecMetrics" class="sched-exec-metrics"></div>
           </div>
-          <figure id="scheduleExecTrend" class="sched-exec-trend"></figure>
         </div>
         <div class="sched-exec-filters" role="search" aria-label="筛选执行记录">
           <label class="sched-exec-search"><svg class="agent-icon harness-icon" data-icon="search" width="15" height="15" aria-hidden="true" focusable="false"></svg><input id="scheduleExecSearch" type="search" autocomplete="off" aria-label="搜索执行记录" placeholder="搜索任务名称 / Trace ID / 关键词"></label>
@@ -1186,15 +1185,7 @@
                   <div class="ai-model-menu" hidden role="listbox" aria-label="模型"></div>
                 </div>
               </div>
-              <p class="schedule-field-hint" id="scheduleModelHint">与 AI 助手相同的 CLI 与模型，到点用执行身份在所选 CLI 上配置的 Key 执行。</p>
-            </div>
-            <div data-schedule-kind="assistant" hidden>
-              <label for="scheduleRunAs">执行身份</label>
-              <select id="scheduleRunAs" class="select" name="runAs">
-                <option value="owner">项目 Owner 的 Key</option>
-                <option value="self">我的 Key</option>
-              </select>
-              <p class="schedule-field-hint" id="scheduleRunAsHint">选「我的 Key」后，到点以你的身份和 Key 执行；其他成员再次保存时会改回所选项。</p>
+              <p class="schedule-field-hint" id="scheduleModelHint">与 AI 助手相同的 CLI 与模型，到点用保存人在所选 CLI 上配置的 Key 执行；没有个人 CodeBuddy Key 时使用平台共享 Key。</p>
             </div>
             <div data-schedule-kind="assistant" hidden>
               <label for="scheduleSessionMode">会话</label>

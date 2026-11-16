@@ -178,26 +178,7 @@ test('the overview compares the last 7 days with the week before and the table f
   assert.match(metric('error').textContent, /失败次数\s*2\s*较上周 −50%/);
   assert.equal(metric('error').querySelector('.sched-exec-delta').dataset.good, 'true', 'fewer failures read as good');
   assert.match(metric('info').textContent, /平均耗时\s*1 分 0 秒\s*较上周 −50%/);
-  // The trend plots the daily success rate and its range is chosen on the chart.
-  const trend = doc.querySelector('#scheduleExecTrend');
-  const chart = () => trend.querySelector('svg');
-  assert.match(trend.textContent, /成功率趋势\s*区间成功率 83%/);
-  assert.match(chart().getAttribute('aria-label'), /^最近 7 天成功率 83%：/);
-  assert.equal(trend.querySelectorAll('.sched-exec-trend-labels span').length, 7);
-  assert.ok(trend.querySelectorAll('.sched-exec-trend-dot').length > 0);
-  assert.ok(trend.querySelector('.sched-exec-trend-dot.is-failed'), 'a day with failures is marked');
-  assert.equal(trend.querySelector('[data-exec-trend-days="7"]').getAttribute('aria-pressed'), 'true');
-  trend.querySelector('[data-exec-trend-days="14"]').click();
-  assert.match(chart().getAttribute('aria-label'), /^最近 14 天成功率 70%：/);
-  assert.equal(trend.querySelectorAll('.sched-exec-trend-labels span').length, 7, '14 days label every other day');
-  assert.equal(doc.activeElement, trend.querySelector('[data-exec-trend-days="14"]'));
-  trend.querySelector('[data-exec-trend-days="30"]').click();
-  assert.match(chart().getAttribute('aria-label'), /^最近 30 天成功率 76%：/);
-  assert.equal(trend.querySelectorAll('.sched-exec-trend-labels span').length, 6);
-  assert.ok(trend.querySelector('.sched-exec-trend-gap'), 'days without executions are bridged with a dashed line');
-  assert.equal(trend.querySelector('[data-exec-trend-days="30"]').getAttribute('aria-pressed'), 'true');
-  assert.match(metric('accent').textContent, /执行次数\s*12/, 'the overview stays on the last 7 days');
-  assert.equal(app.evaluate('scheduleExecTrend([],7).every(d=>d.rate===null)'), true);
+  assert.equal(doc.querySelector('#scheduleExecTrend'), null, 'the overview has no trend chart');
 
   // 25 records, 10 per page.
   const rows = () => doc.querySelectorAll('#scheduleExecList .sched-exec-row');

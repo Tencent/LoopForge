@@ -227,8 +227,9 @@ func (h *assistantHandlers) executeAssistantTask(ctx context.Context, user domai
 		return errors.New(msg)
 	}
 
-	// The task's model picks the CLI; a scheduled run needs the runner's own
-	// key for it (no sponsor), checked before a conversation is opened.
+	// The task's model picks the CLI; a scheduled run needs a key for it (the
+	// runner's own, or the shared CodeBuddy key already substituted by
+	// scheduleKeyUser), checked before a conversation is opened.
 	engine, _ := assistantModelEngine(task.Model)
 	if key, _ := assistantEngineCredential(user, engine); key == "" {
 		if engine != assistantEngineCodeBuddy {

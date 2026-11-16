@@ -5296,17 +5296,12 @@ components:
         ownerUserId:
           type: integer
           format: int64
-          description: Project owner whose CodeBuddy key runs assistantPrompt unless runAsUserId is set
-        runAs:
-          type: string
-          enum: [owner, self]
-          writeOnly: true
-          description: AI jobs only. "self" runs the job with the saving user's keys (the user must already have the key for the model's CLI); "owner" uses the project owner's. Omitted keeps the current binding only when the saver is the bound user. Never stored.
+          description: Project owner, whose keys run assistantPrompt for a job without runAsUserId (saved before the binding, or without a signed-in user)
         runAsUserId:
           type: integer
           format: int64
           readOnly: true
-          description: Member whose keys run the AI job; 0 means the project owner. Set only through runAs=self by that member. A bound job fails rather than fall back to another key when that member is gone, can no longer write to the project, or has no key.
+          description: User whose keys run the AI job, set by the server to whoever last saved it (never taken from the request). Their own key for the model's CLI is used, else the platform's shared CodeBuddy key limited to the models it allows; a save with neither is rejected with 400. 0 means the project owner. A bound job fails rather than fall back to another account when that user is gone or can no longer write to the project.
         runAsName:
           type: string
           readOnly: true

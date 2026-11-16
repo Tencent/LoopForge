@@ -203,10 +203,12 @@ test('an AI job can keep running in one conversation', async (t) => {
   assert.equal(call.body.sessionMode, 'fixed');
 });
 
-test('an AI job can run with the saving user\'s own key', async (t) => {
+test('an AI job runs with the saver\'s key without asking whose key to use', async (t) => {
   const app = await loadApp();
   t.after(app.close);
-  app.router.post('/api/schedule-jobs', call => ({ ...call.body, id: 'new-ai', runAs: undefined, runAsUserId: call.body.runAs === 'self' ? 7 : 0, runAsName: call.body.runAs === 'self' ? 'alice' : '' }));
+  const missing = '你还没有配置 CodeBuddy API Key，平台也没有配置共享 Key，定时任务无法执行';
+  let reject = true;
+  app.router.post('/api/schedule-jobs', call => reject ? { status: 400, body: { error: missing } } : ({ ...call.body, id: 'new-ai', runAsUserId: 7, runAsName: 'alice' }));
   app.evaluate(`(() => {
     state.currentUser={id:7,loginName:'alice',isGuest:false};
     state.projectFilter='project-1';
@@ -216,21 +218,26 @@ test('an AI job can run with the saving user\'s own key', async (t) => {
     f.elements.jobKind.value='assistant';syncScheduleJobKind();
   })()`);
   const form = app.document.querySelector('#scheduleJobForm');
-  assert.equal(form.elements.runAs.value, 'owner', 'new jobs default to the project owner');
+  assert.equal(form.elements.runAs, undefined, 'there is no run-as picker');
+  assert.equal(app.document.querySelector('#scheduleRunAsHint'), null);
+  assert.match(app.document.querySelector('#scheduleModalHint').textContent, /保存人的 Key/);
+  assert.match(app.document.querySelector('#scheduleModalHint').textContent, /平台共享 Key/);
   form.elements.name.value = 'Mine';
   form.elements.assistantPrompt.value = 'check';
-  form.elements.runAs.value = 'self';
   form.dispatchEvent(new app.window.Event('submit', { bubbles: true, cancelable: true }));
   await settle(4);
-  const call = app.router.calls.find(c => c.method === 'POST' && c.path === '/api/schedule-jobs');
-  assert.equal(call.body.runAs, 'self');
-  assert.match(app.document.querySelector('#aiScheduleJobList').textContent, /使用 alice 的 Key/);
+  const messages = [...app.document.querySelectorAll('.toast-item-msg')].map(x => x.textContent).join('|');
+  assert.match(messages, /平台也没有配置共享 Key/, 'a saver with no key and no shared key is told why');
+  assert.equal(app.evaluate(`state.data.scheduleJobs.length`), 0);
 
-  app.evaluate(`fillScheduleJobForm(state.data.scheduleJobs[0])`);
-  assert.equal(form.elements.runAs.value, 'self', 'the bound user sees their own key selected');
-  app.evaluate(`state.currentUser={id:8,loginName:'bob',isGuest:false};fillScheduleJobForm(state.data.scheduleJobs[0])`);
-  assert.equal(form.elements.runAs.value, 'owner', 'another member does not inherit the binding');
-  assert.match(app.document.querySelector('#scheduleRunAsHint').textContent, /当前使用 alice 的 Key/);
+  reject = false;
+  form.dispatchEvent(new app.window.Event('submit', { bubbles: true, cancelable: true }));
+  await settle(4);
+  const call = app.router.calls.filter(c => c.method === 'POST' && c.path === '/api/schedule-jobs').at(-1);
+  assert.ok(!('runAs' in call.body), 'the binding is decided by the server');
+  const row = app.document.querySelector('#aiScheduleJobList').textContent;
+  assert.match(row, /Mine/);
+  assert.doesNotMatch(row, /的 Key/, 'the row no longer says whose key runs the job');
 });
 
 test('running a schedule job updates the UI immediately and persists the server outcome', async (t) => {

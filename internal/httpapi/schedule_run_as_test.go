@@ -8,12 +8,14 @@ import (
 
 	"agentflow/internal/domain"
 	"agentflow/internal/engine"
+	"agentflow/internal/repo"
 	"agentflow/internal/runtime"
 	"agentflow/internal/tracker"
 )
 
-// A project writer can run an AI job with their own key instead of the
-// project owner's; the binding is server-managed and only its user keeps it.
+// An AI job runs with the keys of whoever saved it; the binding is
+// server-managed and a writer who edits the job takes it over, so nobody runs
+// a prompt with another member's keys.
 func TestScheduleJobRunsWithTheSaversKey(t *testing.T) {
 	t.Setenv("AGENTFLOW_AUTH_REQUIRED", "true")
 	t.Setenv("AGENTFLOW_SESSION_SECRET", "schedule-run-as-test-secret")
@@ -41,9 +43,9 @@ func TestScheduleJobRunsWithTheSaversKey(t *testing.T) {
 	}
 	server := New(st, engine.New(st, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "")
 	job := map[string]any{"id": "runas-job", "projectId": "runas-proj", "name": "巡检", "skipDispatch": true, "assistantPrompt": "p", "intervalSec": 3600}
-	put := func(who domain.User, runAs string, extra map[string]any) domain.ScheduleJob {
+	put := func(who domain.User, extra map[string]any) domain.ScheduleJob {
 		t.Helper()
-		body := map[string]any{"runAs": runAs}
+		body := map[string]any{}
 		for k, v := range job {
 			body[k] = v
 		}
@@ -53,46 +55,78 @@ func TestScheduleJobRunsWithTheSaversKey(t *testing.T) {
 		return requestJSONAuthed[domain.ScheduleJob](t, server, who, http.MethodPut, "/api/schedule-jobs", body, http.StatusOK)
 	}
 
-	// The owner has no key, so by default the job cannot run.
-	saved := put(member, "", map[string]any{"runAsUserId": other.ID, "runAsName": "forged"})
-	if saved.RunAsUserID != 0 || saved.RunAsName != "" {
-		t.Fatalf("forged binding stored: %d %q", saved.RunAsUserID, saved.RunAsName)
+	// With no key of their own and no shared key, the saver is told why the
+	// job cannot be saved instead of creating one that only fails.
+	if code := scheduleAuthzStatus(t, server, nokey, http.MethodPut, "/api/schedule-jobs", job); code != http.StatusBadRequest {
+		t.Fatalf("saving without a key = %d", code)
+	}
+	if msg := scheduleMissingKeyError(assistantEngineCodeBuddy); !strings.Contains(msg, "共享 Key") {
+		t.Fatalf("missing key reminder = %q", msg)
+	}
+
+	// The creator's keys run the job; a forged binding is ignored.
+	saved := put(member, map[string]any{"runAsUserId": other.ID, "runAsName": "forged"})
+	if saved.RunAsUserID != member.ID || saved.RunAsName != "runas-member" {
+		t.Fatalf("creator binding = %d %q", saved.RunAsUserID, saved.RunAsName)
 	}
 	a := &assistantHandlers{deps: &deps{repo: st}}
-	if _, err := a.scheduleJobAssistantUser(saved, saved.AssistantModel); err == nil || !strings.Contains(err.Error(), "你自己的 Key") {
+	user, shared, err := a.scheduleJobAssistantUser(saved, saved.AssistantModel)
+	if err != nil || user.ID != member.ID || user.CodeBuddyAPIKey != "member-key" || shared != nil {
+		t.Fatalf("run as = %d %q %v %v", user.ID, user.CodeBuddyAPIKey, shared, err)
+	}
+	if saved = put(member, nil); saved.RunAsUserID != member.ID {
+		t.Fatalf("creator's own save dropped the binding: %d", saved.RunAsUserID)
+	}
+	// Another writer's edit runs with their own key, never the creator's.
+	if saved = put(other, nil); saved.RunAsUserID != other.ID {
+		t.Fatalf("another writer's edit kept the creator's key: %d", saved.RunAsUserID)
+	}
+
+	// A job saved before the binding runs with the project owner's keys.
+	legacy := saved
+	legacy.RunAsUserID, legacy.RunAsName = 0, ""
+	if _, _, err := a.scheduleJobAssistantUser(legacy, legacy.AssistantModel); err == nil || !strings.Contains(err.Error(), "编辑并保存一次任务") {
 		t.Fatalf("owner without key = %v", err)
 	}
 
-	if code := scheduleAuthzStatus(t, server, nokey, http.MethodPut, "/api/schedule-jobs", map[string]any{"id": "runas-job", "projectId": "runas-proj", "name": "巡检", "skipDispatch": true, "assistantPrompt": "p", "intervalSec": 3600, "runAs": "self"}); code != http.StatusBadRequest {
-		t.Fatalf("binding to a user without a key = %d", code)
+	// Once the platform has a shared key, a saver without their own key falls
+	// back to it, limited to the models it allows.
+	if err := st.SetPlatformCodeBuddyKey(repo.PlatformCodeBuddyKeyUpdate{APIKey: "platform-secret", InternetEnvironment: "ioa", Models: []string{"glm-5.1", "kimi-k2.6"}}, 0); err != nil {
+		t.Fatal(err)
 	}
-
-	saved = put(member, "self", nil)
-	if saved.RunAsUserID != member.ID || saved.RunAsName != "runas-member" || saved.RunAs != "" {
-		t.Fatalf("self binding = %d %q %q", saved.RunAsUserID, saved.RunAsName, saved.RunAs)
+	if code := scheduleAuthzStatus(t, server, nokey, http.MethodPut, "/api/schedule-jobs", map[string]any{"id": "runas-job", "projectId": "runas-proj", "name": "巡检", "skipDispatch": true, "assistantPrompt": "p", "intervalSec": 3600, "assistantModel": "deepseek-v4.1-flash"}); code != http.StatusBadRequest {
+		t.Fatalf("shared key with a model it does not allow = %d", code)
 	}
-	user, err := a.scheduleJobAssistantUser(saved, saved.AssistantModel)
-	if err != nil || user.ID != member.ID {
-		t.Fatalf("run as = %d %v", user.ID, err)
+	if code := scheduleAuthzStatus(t, server, nokey, http.MethodPut, "/api/schedule-jobs", map[string]any{"id": "runas-job", "projectId": "runas-proj", "name": "巡检", "skipDispatch": true, "assistantPrompt": "p", "intervalSec": 3600, "assistantModel": "codex:gpt-6-sol"}); code != http.StatusBadRequest {
+		t.Fatalf("shared key for a Codex model = %d", code)
 	}
-	if saved = put(member, "", nil); saved.RunAsUserID != member.ID {
-		t.Fatalf("bound user's own save dropped the binding: %d", saved.RunAsUserID)
+	saved = put(nokey, nil)
+	if saved.RunAsUserID != nokey.ID || saved.AssistantModel != "glm-5.1" {
+		t.Fatalf("shared key binding = %d model %q", saved.RunAsUserID, saved.AssistantModel)
 	}
-	// Another writer's save never keeps (or takes) someone else's key.
-	if saved = put(other, "", nil); saved.RunAsUserID != 0 {
-		t.Fatalf("another writer kept the member's binding: %d", saved.RunAsUserID)
+	if saved = put(nokey, map[string]any{"assistantModel": "default"}); saved.AssistantModel != "glm-5.1" {
+		t.Fatalf("CLI default on the shared key = %q", saved.AssistantModel)
 	}
-	saved = put(member, "self", nil)
-	if saved = put(member, "owner", nil); saved.RunAsUserID != 0 {
-		t.Fatalf("owner mode kept the binding: %d", saved.RunAsUserID)
+	if saved = put(nokey, map[string]any{"assistantModel": "kimi-k2.6"}); saved.AssistantModel != "kimi-k2.6" {
+		t.Fatalf("allowed shared model = %q", saved.AssistantModel)
 	}
-	if code := scheduleAuthzStatus(t, server, member, http.MethodPut, "/api/schedule-jobs", map[string]any{"id": "runas-job", "projectId": "runas-proj", "name": "巡检", "skipDispatch": true, "assistantPrompt": "p", "intervalSec": 3600, "runAs": "someone"}); code != http.StatusBadRequest {
-		t.Fatalf("unknown run-as mode = %d", code)
+	user, shared, err = a.scheduleJobAssistantUser(saved, saved.AssistantModel)
+	if err != nil || user.ID != nokey.ID || user.CodeBuddyAPIKey != "platform-secret" || user.CodeBuddyInternetEnvironment != "ioa" || len(shared) != 2 {
+		t.Fatalf("shared run = %d %q %q %v %v", user.ID, user.CodeBuddyAPIKey, user.CodeBuddyInternetEnvironment, shared, err)
+	}
+	// A run on the shared key never switches to a model it does not allow.
+	stale := saved
+	stale.AssistantModel = "deepseek-v4.1-flash"
+	if _, _, err := a.runScheduleJobPrompt(stale); err == nil || !strings.Contains(err.Error(), "平台共享 Key") {
+		t.Fatalf("shared run with a disallowed model = %v", err)
+	}
+	if _, _, err := a.scheduleJobAssistantUser(saved, "codex:gpt-6-sol"); err == nil || !strings.Contains(err.Error(), "Codex") {
+		t.Fatalf("shared key is not lent to Codex: %v", err)
 	}
 
 	// A bound member who can no longer write stops the job instead of
 	// falling back to anyone else's key.
-	saved = put(member, "self", nil)
+	saved = put(member, nil)
 	if err := st.PutUser(domain.User{LoginName: "runas-owner", CodeBuddyAPIKey: "owner-key"}); err != nil {
 		t.Fatal(err)
 	}
@@ -100,7 +134,7 @@ func TestScheduleJobRunsWithTheSaversKey(t *testing.T) {
 	if err := st.PutProject(project); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := a.scheduleJobAssistantUser(saved, saved.AssistantModel); err == nil || !strings.Contains(err.Error(), "runas-member 已不是该项目的可写成员") {
+	if _, _, err := a.scheduleJobAssistantUser(saved, saved.AssistantModel); err == nil || !strings.Contains(err.Error(), "runas-member 已不是该项目的可写成员") {
 		t.Fatalf("demoted member = %v", err)
 	}
 }
