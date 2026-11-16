@@ -8,6 +8,11 @@ from contextlib import redirect_stdout
 from io import StringIO
 from pathlib import Path
 
+try:
+    import tomllib
+except ImportError:  # Python 3.8–3.10 have no standard-library TOML parser.
+    tomllib = None
+
 from devflow_cli.cli import main
 from devflow_cli.core import DevFlowError, apply_install, doctor, status_rows, uninstall
 from devflow_cli.editions import DEFAULT_EDITION, EDITION_SPECS, HOSTS, source_for
@@ -49,6 +54,25 @@ class InstallerTests(unittest.TestCase):
                     row = status_rows(project, host)[0]
                     self.assertEqual(0, row["changed"])
                     self.assertEqual(0, row["missing"])
+
+    @unittest.skipIf(tomllib is None, "requires Python 3.11+ to parse role TOML")
+    def test_classic_codex_installs_valid_custom_roles(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            project = self.project(temporary)
+            apply_install(project, "codex", "classic")
+
+            roles = sorted((project / ".codex/agents").glob("devflow-*.toml"))
+            self.assertEqual(7, len(roles))
+            for role in roles:
+                with self.subTest(role=role.name):
+                    with role.open("rb") as config:
+                        metadata = tomllib.load(config)
+                    self.assertEqual(role.stem, metadata["name"])
+                    self.assertTrue(metadata["description"].strip())
+                    role_doc = role.with_name(role.stem[len("devflow-"):] + ".md")
+                    self.assertTrue(role_doc.is_file())
+                    self.assertIn(role_doc.relative_to(project).as_posix(),
+                                  metadata["developer_instructions"])
 
     def test_untracked_user_file_conflict_is_atomic(self):
         with tempfile.TemporaryDirectory() as temporary:

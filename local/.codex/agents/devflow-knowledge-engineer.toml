@@ -1,4 +1,4 @@
 name = "devflow-knowledge-engineer"
 description = "DevFlow knowledge engineer：沉淀可复用知识和决策。"
-instructions = ".codex/agents/knowledge-engineer.md"
+developer_instructions = "Read `.codex/agents/knowledge-engineer.md` from the project root and follow its DevFlow role instructions for the assigned task."
 

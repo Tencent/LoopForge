@@ -1,4 +1,4 @@
 name = "devflow-code-reviewer"
 description = "DevFlow code reviewer：审查实现、越界变更和验收条件。"
-instructions = ".codex/agents/code-reviewer.md"
+developer_instructions = "Read `.codex/agents/code-reviewer.md` from the project root and follow its DevFlow role instructions for the assigned task."
 

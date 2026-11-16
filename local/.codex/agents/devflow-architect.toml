@@ -1,4 +1,4 @@
 name = "devflow-architect"
 description = "DevFlow architect：产出技术方案和执行计划。"
-instructions = ".codex/agents/architect.md"
+developer_instructions = "Read `.codex/agents/architect.md` from the project root and follow its DevFlow role instructions for the assigned task."
 

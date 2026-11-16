@@ -1,4 +1,4 @@
 name = "devflow-test-engineer"
 description = "DevFlow test engineer：补充并运行验证，产出测试报告。"
-instructions = ".codex/agents/test-engineer.md"
+developer_instructions = "Read `.codex/agents/test-engineer.md` from the project root and follow its DevFlow role instructions for the assigned task."
 
