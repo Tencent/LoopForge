@@ -100,11 +100,13 @@ In **Personal settings → Personal credentials → GitLab**, enter your GitLab 
 
 In **Project settings → Code repositories → Add repository**, choose **From GitLab** to search and bind repositories using your GitLab permissions. LoopForge checks out the repositories selected for the requirement with the assigned account's PAT. A conversation submission uses the requester's PAT to push the work branch.
 
-For an existing database, `migrations/033_gitlab_credentials.sql` contains the additive schema changes. Apply it before starting the updated platform if you manage schema changes manually.
+For an existing database, `migrations/034_gitlab_credentials.sql` contains the additive schema changes. Apply it before starting the updated platform if you manage schema changes manually.
 
 The platform and execution machines must reach the instance and trust its TLS certificate. Managed checkout uses Git **2.37** or later. For remote execution, install or update the Runner from this LoopForge deployment. It sends `supportsGitLabPAT: true` on registration, heartbeat, and task claims. Omitting the field means no GitLab PAT support, regardless of the upstream version. Update the platform before replacing existing runners. For a private-network GitLab instance, the deployment administrator must list its exact hostname in `AGENTFLOW_GITLAB_PRIVATE_HOSTS` on the platform and machines performing managed Git operations. Multiple hostnames can be separated by commas.
 
 The Runner keeps a GitLab PAT only in memory for the checkout or push request, attaches it to the git child environment, and never writes it to workspace files or forwarded task output. Workspace requests for status, reads, and terminal close do not carry the PAT; only preparation and terminal open receive it.
+
+The platform stores the PAT in `user_configs.gitlab_token`, alongside the existing personal Git token. User API responses never return it; they only report `gitLabTokenConfigured`. Protect database backups and read access to `user_configs` as you would for the other personal credentials stored there.
 
 ### Git repositories over SSH
 
