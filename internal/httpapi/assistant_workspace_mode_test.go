@@ -244,7 +244,7 @@ func TestWorkspaceExternalWritesFollowApprovalMode(t *testing.T) {
 }
 
 func TestNativeApprovalCardInputStaysValidJSONWhenRedacted(t *testing.T) {
-	command := `curl -sS -X POST -H "Authorization: token ghp_secretvalue" -H 'Accept: application/vnd.github+json' -d '{"head":"fix","base":"main"}' https://api.github.com/repos/a/b/pulls`
+	command := `curl -sS -X POST -H "Authorization: token $GH_TOKEN" -H 'Accept: application/vnd.github+json' -d '{"head":"fix","base":"main"}' https://api.github.com/repos/a/b/pulls`
 	raw, _ := json.Marshal(map[string]any{"command": command, "timeout": 120000})
 	if json.Valid([]byte(redactAgentToolResult(string(raw), domain.User{}))) {
 		t.Fatal("fixture no longer breaks text redaction; keep it representative")
@@ -257,7 +257,7 @@ func TestNativeApprovalCardInputStaysValidJSONWhenRedacted(t *testing.T) {
 	if err := json.Unmarshal(got, &input); err != nil {
 		t.Fatalf("card input must stay JSON: %v %s", err, got)
 	}
-	if strings.Contains(input.Command, "ghp_secretvalue") || !strings.Contains(input.Command, `"Authorization: [redacted]"`) || !strings.Contains(input.Command, "api.github.com/repos/a/b/pulls") || input.Timeout != "120000" {
+	if strings.Contains(input.Command, "$GH_TOKEN") || !strings.Contains(input.Command, `"Authorization: [redacted]"`) || !strings.Contains(input.Command, "api.github.com/repos/a/b/pulls") || input.Timeout != "120000" {
 		t.Fatalf("redacted input = %s", got)
 	}
 	if got := redactNativeApprovalInput(json.RawMessage(`{"command":`), domain.User{}); string(got) != `"[redacted]"` {
