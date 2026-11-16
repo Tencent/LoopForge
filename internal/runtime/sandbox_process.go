@@ -2,6 +2,9 @@ package runtime
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -287,7 +290,72 @@ func (s *processSandbox) command(ctx context.Context, command CommandSpec, base 
 			cmd.Env = upsertEnv(cmd.Env, key, "/tmp")
 		}
 	}
+	if host := processDockerHost(cmd.Env); host != "" {
+		cmd.Env = upsertEnv(cmd.Env, "DOCKER_HOST", host)
+	}
 	return cmd, nil
+}
+
+func lookupEnvSlice(env []string, key string) string {
+	prefix := key + "="
+	for _, entry := range env {
+		if strings.HasPrefix(entry, prefix) {
+			return entry[len(prefix):]
+		}
+	}
+	return ""
+}
+
+// processDockerHost resolves the host Docker context's socket endpoint when the
+// sandbox redirects HOME away from ~/.docker and neither DOCKER_HOST nor
+// DOCKER_CONFIG was explicitly supplied. Only the endpoint URL is forwarded so
+// registry credentials in config.json remain untouched.
+func processDockerHost(env []string) string {
+	if strings.TrimSpace(lookupEnvSlice(env, "DOCKER_HOST")) != "" || strings.TrimSpace(lookupEnvSlice(env, "DOCKER_CONFIG")) != "" {
+		return ""
+	}
+	hostHome, err := os.UserHomeDir()
+	if err != nil || strings.TrimSpace(hostHome) == "" {
+		return ""
+	}
+	if childHome := strings.TrimSpace(lookupEnvSlice(env, "HOME")); childHome == "" || childHome == hostHome {
+		return ""
+	}
+	dockerDir := filepath.Join(hostHome, ".docker")
+	contextName := strings.TrimSpace(lookupEnvSlice(env, "DOCKER_CONTEXT"))
+	if contextName == "" {
+		raw, err := os.ReadFile(filepath.Join(dockerDir, "config.json"))
+		if err != nil {
+			return ""
+		}
+		var cfg struct {
+			CurrentContext string `json:"currentContext"`
+		}
+		if json.Unmarshal(raw, &cfg) != nil {
+			return ""
+		}
+		contextName = strings.TrimSpace(cfg.CurrentContext)
+	}
+	if contextName == "" || contextName == "default" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(contextName))
+	metaPath := filepath.Join(dockerDir, "contexts", "meta", hex.EncodeToString(sum[:]), "meta.json")
+	raw, err := os.ReadFile(metaPath)
+	if err != nil {
+		return ""
+	}
+	var meta struct {
+		Endpoints struct {
+			Docker struct {
+				Host string `json:"Host"`
+			} `json:"docker"`
+		} `json:"Endpoints"`
+	}
+	if json.Unmarshal(raw, &meta) != nil {
+		return ""
+	}
+	return strings.TrimSpace(meta.Endpoints.Docker.Host)
 }
 
 func seatbeltWritableTemps() []string {

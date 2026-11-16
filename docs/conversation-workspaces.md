@@ -41,7 +41,7 @@
 会话工作区可以使用 native 沙箱（Linux 上解析为 bwrap，macOS 上解析为 seatbelt）：
 
 - **Linux (`bwrap`)**：与 Docker 布局一致：CLI 的 HOME 是 `<会话根>/home`，cwd 是 `<会话根>/ws`（挂的是运行工作区），审批钩子文件只读挂载；宿主文件系统其余部分只读，网络与宿主的 Docker 守护进程保持可达（可以在工作区里构建镜像、启动容器）。CLI 使用执行机器自己安装的版本。bwrap 需要创建 user/pid 命名空间并挂载 `/proc`，平台运行在默认权限的容器里（Compose 部署）时做不到：平台镜像不带 bwrap，即使装上，不开特权容器也建不了命名空间。Compose 部署请用 Docker 沙箱；要用 Linux native 沙箱，在原生安装的平台或执行机器（Runner）上运行。
-- **macOS (`seatbelt`)**：macOS 没有每进程挂载命名空间，`seatbelt` 沙箱保留 HOME 为 `<会话根>/home`，工作区模式下 cwd 直接指向运行工作区目录（不重映射到 `<会话根>/ws`）。`seatbelt` 策略放开运行工作区、临时目录与 `<会话根>/home` 写入，并在最后追加审批钩子及其父目录的 `file-write*` 拒绝规则以防止篡改或改名替换；宿主其余路径保持只读，回环端口（工具中继、本机浏览器 CDP）与本机网络/Docker 保持可达。CLI 使用执行机器自己安装的版本。
+- **macOS (`seatbelt`)**：macOS 没有每进程挂载命名空间，`seatbelt` 沙箱保留 HOME 为 `<会话根>/home`，工作区模式下 cwd 直接指向运行工作区目录（不重映射到 `<会话根>/ws`）。`seatbelt` 策略放开运行工作区、临时目录与 `<会话根>/home` 写入，并在最后追加审批钩子及其父目录的 `file-write*` 拒绝规则以防止篡改或改名替换；宿主其余路径保持只读，回环端口（工具中继、本机浏览器 CDP）与本机网络/Docker 保持可达；未显式设置 `DOCKER_HOST` / `DOCKER_CONFIG` 时自动解析宿主当前 Docker context 端点注入 `DOCKER_HOST`，以便在隔离 HOME 下使用 Colima、OrbStack 或 Docker Desktop 等守护进程。CLI 使用执行机器自己安装的版本。
 
 Docker 与 bwrap 下两种模式的 CLI 都在 `<会话根>/ws` 运行（工作区模式下这里挂的是运行工作区），按 cwd 存放原生会话的 CLI（如 Claude Code、CodeBuddy）进出工作区、换环境都能续接。seatbelt 下由于平台模式与工作区模式的 cwd 不同，或任一环境原生日志确实不可用时，平台在当前阶段用完整对话上下文新建原生会话继续（`cli.resume_fallback`），每个阶段最多一次，并告诉新会话当前所处的模式。
 
