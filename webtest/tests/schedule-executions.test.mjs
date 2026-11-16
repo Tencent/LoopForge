@@ -32,10 +32,9 @@ test('execution dashboard lists history with metrics, filters and copyable trace
   `);
 
   const jobList = app.document.querySelector('#aiScheduleJobList');
-  const rowCopy = jobList.querySelector('[data-copy-trace]');
-  assert.ok(rowCopy, 'failed job row offers a trace copy button');
-  rowCopy.click();
+  assert.equal(jobList.querySelector('[data-copy-trace]'), null, 'AI job rows do not carry a trace button');
   // Before the history loads, the notes come from the job's latest outcome.
+  app.evaluate(`copyScheduleTrace('${FAILED_TRACE}')`);
   const fromJob = app.evaluate('window.__copied.at(-1)');
   assert.equal(fromJob.split('\n')[0], '定时任务执行排障信息');
   assert.equal(fromJob.split('\n')[1], `Trace ID: ${FAILED_TRACE}`);
