@@ -52,6 +52,15 @@ func (c *Client) sessionToken() string {
 
 // ---------- request plumbing ----------
 
+type runnerResponseError struct {
+	statusCode int
+	message    string
+}
+
+func (e runnerResponseError) Error() string {
+	return e.message
+}
+
 func (c *Client) do(ctx context.Context, method, path string, body any, out any) error {
 	var reader io.Reader
 	if body != nil {
@@ -90,7 +99,10 @@ func (c *Client) do(ctx context.Context, method, path string, body any, out any)
 		if resp.StatusCode == http.StatusConflict && json.Unmarshal(payload, &detail) == nil && detail.Error == ErrTaskLeaseLost.Error() {
 			return ErrTaskLeaseLost
 		}
-		return fmt.Errorf("%s %s: %s", method, path, strings.TrimSpace(string(payload)))
+		return runnerResponseError{
+			statusCode: resp.StatusCode,
+			message:    fmt.Sprintf("%s %s: %s", method, path, strings.TrimSpace(string(payload))),
+		}
 	}
 	if out != nil && len(payload) > 0 {
 		if err := json.Unmarshal(payload, out); err != nil {
@@ -296,7 +308,22 @@ type CompleteRequest struct {
 }
 
 func (c *Client) Complete(ctx context.Context, taskID string, req CompleteRequest) error {
-	return c.do(ctx, http.MethodPost, "/runners/tasks/"+taskID+"/complete", req, nil)
+	for attempt := 1; ; attempt++ {
+		err := c.do(ctx, http.MethodPost, "/runners/tasks/"+taskID+"/complete", req, nil)
+		var transport *url.Error
+		var response runnerResponseError
+		retryable := errors.As(err, &transport) || (errors.As(err, &response) && response.statusCode >= 500)
+		if !retryable || attempt == 3 {
+			return err
+		}
+		// Retry the report, not the work. If the server already committed
+		// the result, it rejects the retry because the lease is gone.
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(time.Duration(attempt) * 200 * time.Millisecond):
+		}
+	}
 }
 
 func (c *Client) UploadPreview(ctx context.Context, previewID, token string, body io.Reader) error {
