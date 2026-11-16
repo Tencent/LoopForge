@@ -91,7 +91,14 @@ def save_state(project: Path, state: dict) -> None:
     path = project / STATE_PATH
     path.parent.mkdir(parents=True, exist_ok=True)
     state["installer_version"] = __version__
-    path.write_text(json.dumps(state, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    payload = json.dumps(state, ensure_ascii=False, indent=2) + "\n"
+    descriptor, temporary = tempfile.mkstemp(prefix=".install-state-", dir=path.parent)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            handle.write(payload)
+        os.replace(temporary, path)
+    finally:
+        Path(temporary).unlink(missing_ok=True)
 
 
 def snapshot(root: Path) -> Dict[str, Tuple[bytes, int]]:

@@ -7,9 +7,10 @@ import unittest
 from contextlib import redirect_stdout
 from io import StringIO
 from pathlib import Path
+from unittest.mock import patch
 
 from devflow_cli.cli import main
-from devflow_cli.core import DevFlowError, apply_install, doctor, status_rows, uninstall
+from devflow_cli.core import DevFlowError, apply_install, doctor, load_state, save_state, status_rows, uninstall
 from devflow_cli.editions import DEFAULT_EDITION, EDITION_SPECS, HOSTS, source_for
 
 
@@ -314,6 +315,23 @@ class InstallerTests(unittest.TestCase):
                 hook = project / relative
                 self.assertTrue(hook.is_file(), relative)
                 self.assertTrue(hook.stat().st_mode & stat.S_IXUSR, relative)
+
+    def test_failed_state_replace_preserves_previous_records(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            project = self.project(temporary)
+            apply_install(project, "codex", "classic")
+            path = project / ".devflow/install-state.json"
+            original = path.read_bytes()
+
+            state = load_state(project)
+            state["installations"] = {}
+            with patch("devflow_cli.core.os.replace", side_effect=OSError("cannot replace")):
+                with self.assertRaisesRegex(OSError, "cannot replace"):
+                    save_state(project, state)
+
+            self.assertEqual(original, path.read_bytes())
+            self.assertEqual([path], list(path.parent.iterdir()))
+            self.assertIn("classic:codex", load_state(project)["installations"])
 
     def test_update_restores_missing_executable_bit_on_hook(self):
         with tempfile.TemporaryDirectory() as temporary:
