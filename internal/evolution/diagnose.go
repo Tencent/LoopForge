@@ -38,16 +38,42 @@ type DiagnoseInput struct {
 	Rule func(id string) (domain.RuleDefinition, bool)
 	// Level returns the asset's autonomy level.
 	Level func(kind, id string) int
+	// WindowDays is the diagnosis window; it scales weekly impact.
+	WindowDays int
+	// Pins returns the asset bodies a run started with. Runs whose pin does
+	// not match an asset's live body ran an older version and are left out
+	// of that asset's diagnosis. Nil keeps every run.
+	Pins func(runID string) []domain.RunAssetPin
 }
 
 type assetBucket struct {
 	ref       domain.EvoAssetRef
 	name      string
+	hash      string
 	signals   []domain.EvoSignal
 	runs      map[string]int // run ID -> worst signal weight
 	workflows map[string]bool
 	failures  int
 	reworks   int
+	// triage tallies
+	exposed  map[string]time.Time // runs on the current version -> run time
+	problems map[string]float64   // run ID -> problem weight (max over signals)
+	kinds    map[string]map[string]bool
+	stale    map[string]bool
+}
+
+func (b *assetBucket) stats(now time.Time, days int) triageStats {
+	s := triageStats{runs: len(b.exposed), stale: len(b.stale), windowDays: days, kinds: map[string]int{}}
+	for id, at := range b.exposed {
+		w := decayWeight(now, at)
+		s.n += w
+		s.k += w * b.problems[id]
+		s.problem += b.problems[id]
+	}
+	for kind, runs := range b.kinds {
+		s.kinds[kind] = len(runs)
+	}
+	return s
 }
 
 func signalWeight(kind string) int {
@@ -69,25 +95,68 @@ func Diagnose(in DiagnoseInput) []domain.EvoFinding {
 	}
 	buckets := map[string]*assetBucket{}
 	order := []string{}
-	add := func(ref domain.EvoAssetRef, name, workflowID string, sig domain.EvoSignal) {
+	pinCache := map[string]map[string]string{}
+	pinnedHash := func(runID, key string) (string, bool) {
+		if in.Pins == nil {
+			return "", false
+		}
+		m, ok := pinCache[runID]
+		if !ok {
+			m = map[string]string{}
+			for _, pin := range in.Pins(runID) {
+				m[pin.AssetKind+":"+pin.AssetID] = pin.Hash
+			}
+			pinCache[runID] = m
+		}
+		h, ok := m[key]
+		return h, ok
+	}
+	// expose marks that a run used an asset and returns its bucket, or nil
+	// when the asset is disabled or the run used an older body.
+	expose := func(ref domain.EvoAssetRef, name, content string, run domain.Run) *assetBucket {
 		if ref.ID == "" {
-			return
+			return nil
 		}
 		if in.Level != nil && in.Level(ref.Kind, ref.ID) <= domain.EvoLevelOff {
-			return
+			return nil
 		}
 		key := ref.Key()
 		b := buckets[key]
 		if b == nil {
-			b = &assetBucket{ref: ref, name: name, runs: map[string]int{}, workflows: map[string]bool{}}
+			b = &assetBucket{ref: ref, name: name, hash: domain.ContentHash(content), runs: map[string]int{}, workflows: map[string]bool{},
+				exposed: map[string]time.Time{}, problems: map[string]float64{}, kinds: map[string]map[string]bool{}, stale: map[string]bool{}}
 			buckets[key] = b
 			order = append(order, key)
+		}
+		if h, ok := pinnedHash(run.ID, key); ok && h != b.hash {
+			b.stale[run.ID] = true
+			return nil
+		}
+		if _, ok := b.exposed[run.ID]; !ok {
+			at := run.UpdatedAt
+			if at.IsZero() {
+				at = in.Now
+			}
+			b.exposed[run.ID] = at
+		}
+		return b
+	}
+	add := func(b *assetBucket, workflowID string, sig domain.EvoSignal) {
+		if b == nil {
+			return
 		}
 		sig.ProjectID = in.ProjectID
 		b.signals = append(b.signals, sig)
 		if w := signalWeight(sig.Kind); w > b.runs[sig.RunID] {
 			b.runs[sig.RunID] = w
 		}
+		if w := problemWeight(sig.Kind); w > b.problems[sig.RunID] {
+			b.problems[sig.RunID] = w
+		}
+		if b.kinds[sig.Kind] == nil {
+			b.kinds[sig.Kind] = map[string]bool{}
+		}
+		b.kinds[sig.Kind][sig.RunID] = true
 		if workflowID != "" {
 			b.workflows[workflowID] = true
 		}
@@ -97,6 +166,12 @@ func Diagnose(in DiagnoseInput) []domain.EvoFinding {
 		case SignalRework:
 			b.reworks++
 		}
+	}
+	exposeAgent := func(agent domain.AgentDefinition, run domain.Run) *assetBucket {
+		return expose(domain.EvoAssetRef{Kind: domain.EvoAssetAgent, ID: agent.ID}, agent.Name, domain.EvoAgentContent(agent), run)
+	}
+	exposeRule := func(rule domain.RuleDefinition, run domain.Run) *assetBucket {
+		return expose(domain.EvoAssetRef{Kind: domain.EvoAssetRule, ID: rule.ID}, rule.Name, domain.EvoRuleContent(rule), run)
 	}
 	runByID := map[string]domain.Run{}
 	for _, run := range in.Runs {
@@ -111,19 +186,26 @@ func Diagnose(in DiagnoseInput) []domain.EvoFinding {
 				continue
 			}
 			nr := run.Nodes[node.ID]
-			if nr == nil {
+			if nr == nil || nr.Status == "pending" {
 				continue
 			}
 			agent, ok := resolveAgent(in, wf, node.AgentID)
 			if !ok {
 				continue
 			}
-			ref := domain.EvoAssetRef{Kind: domain.EvoAssetAgent, ID: agent.ID}
+			if in.Rule != nil {
+				for _, ruleID := range agent.Rules {
+					if rule, found := in.Rule(ruleID); found {
+						exposeRule(rule, run)
+					}
+				}
+			}
+			b := exposeAgent(agent, run)
 			if nr.Status == "failed" {
-				add(ref, agent.Name, run.WorkflowID, domain.EvoSignal{RunID: run.ID, NodeID: node.ID, Kind: SignalNodeFailed, Detail: domain.TrimEvoText(firstText(nr.Error, nr.Activity), 400), CreatedAt: at})
+				add(b, run.WorkflowID, domain.EvoSignal{RunID: run.ID, NodeID: node.ID, Kind: SignalNodeFailed, Detail: domain.TrimEvoText(firstText(nr.Error, nr.Activity), 400), CreatedAt: at})
 			}
 			if nr.ReworkCount > 0 {
-				add(ref, agent.Name, run.WorkflowID, domain.EvoSignal{RunID: run.ID, NodeID: node.ID, Kind: SignalRework, Detail: domain.TrimEvoText(firstText(nr.Feedback, fmt.Sprintf("被打回 %d 次", nr.ReworkCount)), 400), CreatedAt: at})
+				add(b, run.WorkflowID, domain.EvoSignal{RunID: run.ID, NodeID: node.ID, Kind: SignalRework, Detail: domain.TrimEvoText(firstText(nr.Feedback, fmt.Sprintf("被打回 %d 次", nr.ReworkCount)), 400), CreatedAt: at})
 			}
 		}
 		if eval, ok := in.Evals[run.ID]; ok && eval.Status == domain.RunEvalSucceeded && !eval.Passed {
@@ -134,13 +216,13 @@ func Diagnose(in DiagnoseInput) []domain.EvoFinding {
 				detail := domain.TrimEvoText(finding.Message, 400)
 				if finding.RuleID != "" && in.Rule != nil {
 					if rule, found := in.Rule(finding.RuleID); found {
-						add(domain.EvoAssetRef{Kind: domain.EvoAssetRule, ID: rule.ID}, rule.Name, run.WorkflowID, domain.EvoSignal{RunID: run.ID, NodeID: finding.NodeID, Kind: SignalEvalLow, Detail: detail, CreatedAt: eval.FinishedAt})
+						add(exposeRule(rule, run), run.WorkflowID, domain.EvoSignal{RunID: run.ID, NodeID: finding.NodeID, Kind: SignalEvalLow, Detail: detail, CreatedAt: eval.FinishedAt})
 						continue
 					}
 				}
 				if node, found := nodeByID(wf, finding.NodeID); found && agentNode(node) {
 					if agent, ok := resolveAgent(in, wf, node.AgentID); ok {
-						add(domain.EvoAssetRef{Kind: domain.EvoAssetAgent, ID: agent.ID}, agent.Name, run.WorkflowID, domain.EvoSignal{RunID: run.ID, NodeID: node.ID, Kind: SignalEvalLow, Detail: detail, CreatedAt: eval.FinishedAt})
+						add(exposeAgent(agent, run), run.WorkflowID, domain.EvoSignal{RunID: run.ID, NodeID: node.ID, Kind: SignalEvalLow, Detail: detail, CreatedAt: eval.FinishedAt})
 					}
 				}
 			}
@@ -164,33 +246,59 @@ func Diagnose(in DiagnoseInput) []domain.EvoFinding {
 			sig.Kind = SignalUserFeedback
 			sig.NodeID = node.ID
 			sig.Detail = domain.TrimEvoText(fb.Detail, 400)
-			add(domain.EvoAssetRef{Kind: domain.EvoAssetAgent, ID: agent.ID}, agent.Name, run.WorkflowID, sig)
+			add(exposeAgent(agent, run), run.WorkflowID, sig)
 		}
 	}
+	var totalN, totalK float64
+	for _, key := range order {
+		s := buckets[key].stats(in.Now, in.WindowDays)
+		totalN += s.n
+		totalK += s.k
+	}
+	baseline := TriageBaseline(totalN, totalK)
 	out := make([]domain.EvoFinding, 0, len(buckets))
 	for _, key := range order {
 		b := buckets[key]
 		if b.failures == 0 && len(b.signals) < 2 {
 			continue
 		}
-		out = append(out, b.finding(in))
+		out = append(out, b.finding(in, baseline))
 	}
 	sort.SliceStable(out, func(i, j int) bool {
-		return severityRank(out[i].Severity) > severityRank(out[j].Severity) ||
-			(severityRank(out[i].Severity) == severityRank(out[j].Severity) && len(out[i].Signals) > len(out[j].Signals))
+		vi, vj := verdictRank(out[i].Triage.Verdict), verdictRank(out[j].Triage.Verdict)
+		if vi != vj {
+			return vi > vj
+		}
+		if out[i].Triage.Score != out[j].Triage.Score {
+			return out[i].Triage.Score > out[j].Triage.Score
+		}
+		if out[i].Triage.ProbWorse != out[j].Triage.ProbWorse {
+			return out[i].Triage.ProbWorse > out[j].Triage.ProbWorse
+		}
+		return len(out[i].Signals) > len(out[j].Signals)
 	})
 	return out
 }
 
-func (b *assetBucket) finding(in DiagnoseInput) domain.EvoFinding {
+func (b *assetBucket) finding(in DiagnoseInput, baseline float64) domain.EvoFinding {
 	runIDs := make([]string, 0, len(b.runs))
 	for id := range b.runs {
 		runIDs = append(runIDs, id)
 	}
 	latest := map[string]time.Time{}
+	var first, last time.Time
 	for _, sig := range b.signals {
 		if sig.CreatedAt.After(latest[sig.RunID]) {
 			latest[sig.RunID] = sig.CreatedAt
+		}
+		if sig.CreatedAt.IsZero() {
+			continue
+		}
+		if first.IsZero() || sig.CreatedAt.Before(first) {
+			first = sig.CreatedAt
+		}
+		if sig.CreatedAt.After(last) {
+			last = sig.CreatedAt
 		}
 	}
 	sort.Slice(runIDs, func(i, j int) bool {
@@ -199,19 +307,7 @@ func (b *assetBucket) finding(in DiagnoseInput) domain.EvoFinding {
 		}
 		return latest[runIDs[i]].After(latest[runIDs[j]])
 	})
-	failedRuns := 0
-	for _, w := range b.runs {
-		if w >= 3 {
-			failedRuns++
-		}
-	}
-	severity := "low"
-	switch {
-	case failedRuns >= 3 || len(b.signals) >= 6:
-		severity = "high"
-	case failedRuns >= 1 || len(runIDs) >= 2:
-		severity = "medium"
-	}
+	triage := evalTriage(b.stats(in.Now, in.WindowDays), baseline)
 	kindLabel := "角色"
 	if b.ref.Kind == domain.EvoAssetRule {
 		kindLabel = "规则"
@@ -233,10 +329,15 @@ func (b *assetBucket) finding(in DiagnoseInput) domain.EvoFinding {
 		workflows = append(workflows, id)
 	}
 	sort.Strings(workflows)
+	clusters := buildClusters(b.signals, in.Now, in.WindowDays)
 	signals := append([]domain.EvoSignal(nil), b.signals...)
 	sort.SliceStable(signals, func(i, j int) bool { return signalWeight(signals[i].Kind) > signalWeight(signals[j].Kind) })
 	if len(signals) > 30 {
 		signals = signals[:30]
+	}
+	runAt := map[string]time.Time{}
+	for id, at := range b.exposed {
+		runAt[id] = at
 	}
 	return domain.EvoFinding{
 		ProjectID:    in.ProjectID,
@@ -246,10 +347,15 @@ func (b *assetBucket) finding(in DiagnoseInput) domain.EvoFinding {
 		WorkflowIDs:  workflows,
 		Title:        title,
 		Summary:      summarizeDetails(signals, 3),
-		Severity:     severity,
+		Severity:     verdictSeverity(triage.Verdict),
 		Signals:      signals,
 		SampleRunIDs: runIDs,
 		Status:       domain.EvoFindingOpen,
+		Triage:       &triage,
+		Clusters:     clusters,
+		Trend:        buildTrend(in.Now, in.WindowDays, b.problems, runAt),
+		FirstSeenAt:  first,
+		LastSeenAt:   last,
 	}
 }
 
@@ -268,16 +374,6 @@ func summarizeDetails(signals []domain.EvoSignal, n int) string {
 		}
 	}
 	return strings.Join(lines, "\n")
-}
-
-func severityRank(s string) int {
-	switch s {
-	case "high":
-		return 3
-	case "medium":
-		return 2
-	}
-	return 1
 }
 
 func agentNode(node domain.WorkflowNode) bool {

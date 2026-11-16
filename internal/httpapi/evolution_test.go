@@ -122,6 +122,61 @@ func (env *evoTestEnv) waitProposal(t *testing.T, id string, want ...string) dom
 	return p
 }
 
+func TestEvolutionDiagnoseMergesSnoozesAndArchives(t *testing.T) {
+	env := newEvoTestEnv(t)
+	env.seedRun(t, "evo-m-1", "failed", "failed", "编译失败")
+	env.seedRun(t, "evo-m-2", "failed", "failed", "编译失败")
+	type diagResp struct {
+		Findings []domain.EvoFinding `json:"findings"`
+		Archived int                 `json:"archived"`
+	}
+	diagnose := func() diagResp {
+		return requestJSON[diagResp](t, env.router, http.MethodPost, "/api/evolution/diagnose", map[string]any{"projectId": "evo-p"}, http.StatusOK)
+	}
+	first := diagnose()
+	if len(first.Findings) != 1 || first.Findings[0].Triage == nil || first.Findings[0].Triage.Runs != 2 {
+		t.Fatalf("diagnose with triage = %+v", first)
+	}
+	f := first.Findings[0]
+
+	snoozed := requestJSON[domain.EvoFinding](t, env.router, http.MethodPost, "/api/evolution/findings/"+f.ID+"/snooze", map[string]any{"days": 7}, http.StatusOK)
+	if !snoozed.SnoozedUntil.After(time.Now().AddDate(0, 0, 6)) {
+		t.Fatalf("snooze until = %v", snoozed.SnoozedUntil)
+	}
+	again := diagnose()
+	if len(again.Findings) != 1 || again.Findings[0].ID != f.ID || again.Findings[0].SnoozedUntil.IsZero() {
+		t.Fatalf("re-diagnosis must update the same finding and keep the snooze: %+v", again.Findings)
+	}
+
+	proposed, _ := env.store.EvoFinding(f.ID)
+	proposed.Status, proposed.ProposalID = domain.EvoFindingProposed, "evp-x"
+	if err := env.store.PutEvoFinding(proposed); err != nil {
+		t.Fatal(err)
+	}
+	ghost := domain.EvoFinding{ID: "evf-ghost", ProjectID: "evo-p", AssetKind: domain.EvoAssetRule, AssetID: "gone", Status: domain.EvoFindingOpen, Title: "旧问题"}
+	if err := env.store.PutEvoFinding(ghost); err != nil {
+		t.Fatal(err)
+	}
+	third := diagnose()
+	if len(third.Findings) != 1 || third.Findings[0].ID != f.ID || third.Findings[0].Status != domain.EvoFindingProposed || third.Findings[0].ProposalID != "evp-x" {
+		t.Fatalf("a proposed finding must not be duplicated: %+v", third.Findings)
+	}
+	if open := env.store.EvoFindings("evo-p", domain.EvoFindingOpen); len(open) != 0 {
+		t.Fatalf("no open duplicates expected, got %+v", open)
+	}
+	if g, _ := env.store.EvoFinding("evf-ghost"); g.Status != domain.EvoFindingResolved || g.CloseNote == "" || third.Archived != 1 {
+		t.Fatalf("finding without new signals should be archived: %+v archived=%d", g, third.Archived)
+	}
+
+	ghost.ID, ghost.Status = "evf-ghost-2", domain.EvoFindingOpen
+	_ = env.store.PutEvoFinding(ghost)
+	dismissed := requestJSON[domain.EvoFinding](t, env.router, http.MethodPost, "/api/evolution/findings/evf-ghost-2/dismiss", map[string]any{"reason": "外部依赖故障"}, http.StatusOK)
+	if dismissed.Status != domain.EvoFindingDismissed || dismissed.CloseNote != "外部依赖故障" {
+		t.Fatalf("dismiss reason = %+v", dismissed)
+	}
+	requestJSON[map[string]any](t, env.router, http.MethodPost, "/api/evolution/findings/evf-ghost-2/snooze", map[string]any{"days": 3}, http.StatusConflict)
+}
+
 func TestEvolutionProposalReplayReleaseRollback(t *testing.T) {
 	env := newEvoTestEnv(t)
 	env.seedRun(t, "evo-src-fail-1", "failed", "failed", "单元测试失败：缺少边界校验")

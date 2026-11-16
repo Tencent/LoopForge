@@ -40,6 +40,7 @@ const (
 	evoMaxDiagnoseRuns   = 120
 	evoHealthTTL         = 10 * time.Minute
 	evoMaxConcurrentJobs = 2
+	evoMaxSnoozeDays     = 30
 )
 
 func newEvolutionHandlers(d *deps) *evolutionHandlers {
@@ -50,7 +51,9 @@ func registerEvolutionRoutes(g *gin.Engine, h *evolutionHandlers) {
 	g.GET("/api/evolution/overview", h.overview)
 	g.POST("/api/evolution/diagnose", h.diagnose)
 	g.GET("/api/evolution/findings", h.findings)
+	g.GET("/api/evolution/findings/:id/runs", h.findingRuns)
 	g.POST("/api/evolution/findings/:id/dismiss", h.dismissFinding)
+	g.POST("/api/evolution/findings/:id/snooze", h.snoozeFinding)
 	g.GET("/api/evolution/proposals", h.proposals)
 	g.POST("/api/evolution/proposals", h.createProposal)
 	g.GET("/api/evolution/proposals/:id", h.proposal)
@@ -243,6 +246,12 @@ func (h *evolutionHandlers) findings(c *gin.Context) {
 }
 
 func (h *evolutionHandlers) dismissFinding(c *gin.Context) {
+	var req struct {
+		Reason string `json:"reason"`
+	}
+	if !decodeOptional(c, &req) {
+		return
+	}
 	finding, ok := h.repo.EvoFinding(c.Param("id"))
 	if !ok {
 		c.JSON(http.StatusNotFound, gin.H{"error": "问题不存在"})
@@ -252,6 +261,39 @@ func (h *evolutionHandlers) dismissFinding(c *gin.Context) {
 		return
 	}
 	finding.Status = domain.EvoFindingDismissed
+	finding.CloseNote = domain.TrimEvoText(req.Reason, 500)
+	if err := h.repo.PutEvoFinding(finding); err != nil {
+		respond(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, finding)
+}
+
+// snoozeFinding keeps an open finding out of the active queue for a few
+// days; days 0 wakes it up. New signals still update its statistics.
+func (h *evolutionHandlers) snoozeFinding(c *gin.Context) {
+	var req struct {
+		Days int `json:"days"`
+	}
+	if !decodeOptional(c, &req) {
+		return
+	}
+	finding, ok := h.repo.EvoFinding(c.Param("id"))
+	if !ok {
+		c.JSON(http.StatusNotFound, gin.H{"error": "问题不存在"})
+		return
+	}
+	if !h.requireProjectWriter(c, finding.ProjectID) {
+		return
+	}
+	if finding.Status != domain.EvoFindingOpen {
+		c.JSON(http.StatusConflict, gin.H{"error": "只有待处理的问题可以暂缓"})
+		return
+	}
+	finding.SnoozedUntil = time.Time{}
+	if req.Days > 0 {
+		finding.SnoozedUntil = time.Now().UTC().AddDate(0, 0, min(req.Days, evoMaxSnoozeDays))
+	}
 	if err := h.repo.PutEvoFinding(finding); err != nil {
 		respond(c, err)
 		return
@@ -315,25 +357,12 @@ func (h *evolutionHandlers) diagnose(c *gin.Context) {
 	}
 	days := evoWindowDays(strconv.Itoa(req.Days))
 	runs := h.loadWindowRuns(req.ProjectID, days, evoMaxDiagnoseRuns)
-	evals := map[string]domain.RunEvalRecord{}
-	for _, run := range runs {
-		if rec, ok := h.repo.LatestRunEval(run.ID); ok && rec.Status == domain.RunEvalSucceeded {
-			evals[run.ID] = rec
-		}
-	}
-	found := evolution.Diagnose(evolution.DiagnoseInput{
-		ProjectID: req.ProjectID,
-		Runs:      runs,
-		Evals:     evals,
-		Feedback:  h.repo.EvoSignals(req.ProjectID, time.Now().UTC().AddDate(0, 0, -days)),
-		Agent:     h.evolvableAgent,
-		Rule:      h.repo.Rule,
-		Level:     h.repo.EvoLevel,
-	})
+	found := evolution.Diagnose(h.diagnoseInput(req.ProjectID, days, runs, h.repo.EvoLevel))
 	saved := make([]domain.EvoFinding, 0, len(found))
+	keep := map[string]bool{}
 	for _, f := range found {
-		if existing, ok := h.repo.OpenEvoFindingForAsset(req.ProjectID, f.AssetKind, f.AssetID); ok {
-			f.ID, f.CreatedAt = existing.ID, existing.CreatedAt
+		if existing, ok := h.repo.ActiveEvoFindingForAsset(req.ProjectID, f.AssetKind, f.AssetID); ok {
+			f = mergeEvoFinding(f, existing)
 		} else {
 			f.ID = "evf-" + randomID()
 		}
@@ -344,10 +373,61 @@ func (h *evolutionHandlers) diagnose(c *gin.Context) {
 			respond(c, err)
 			return
 		}
+		keep[f.ID] = true
 		saved = append(saved, f)
 	}
+	archived := 0
+	if len(runs) > 0 {
+		for _, f := range h.repo.EvoFindings(req.ProjectID, domain.EvoFindingOpen) {
+			if keep[f.ID] {
+				continue
+			}
+			f.Status = domain.EvoFindingResolved
+			f.CloseNote = "近 " + strconv.Itoa(days) + " 天当前版本没有再出现问题，自动归档"
+			if h.repo.PutEvoFinding(f) == nil {
+				archived++
+			}
+		}
+	}
 	h.storeHealth(req.ProjectID, days, computeEvoHealth(runs, h.evolvableAgent, h.repo.Rule, h.repo.EvoLevel, h.latestVersion))
-	c.JSON(http.StatusOK, gin.H{"findings": saved, "runs": len(runs), "windowDays": days})
+	c.JSON(http.StatusOK, gin.H{"findings": saved, "runs": len(runs), "windowDays": days, "archived": archived})
+}
+
+// diagnoseInput loads evals, feedback and version pins for a diagnosis.
+func (h *evolutionHandlers) diagnoseInput(projectID string, days int, runs []domain.Run, level func(kind, id string) int) evolution.DiagnoseInput {
+	evals := map[string]domain.RunEvalRecord{}
+	for _, run := range runs {
+		if rec, ok := h.repo.LatestRunEval(run.ID); ok && rec.Status == domain.RunEvalSucceeded {
+			evals[run.ID] = rec
+		}
+	}
+	return evolution.DiagnoseInput{
+		ProjectID:  projectID,
+		Runs:       runs,
+		Evals:      evals,
+		Feedback:   h.repo.EvoSignals(projectID, time.Now().UTC().AddDate(0, 0, -days)),
+		Agent:      h.evolvableAgent,
+		Rule:       h.repo.Rule,
+		Level:      level,
+		WindowDays: days,
+		Pins:       h.repo.RunAssetPins,
+	}
+}
+
+// mergeEvoFinding refreshes a tracked finding with a new diagnosis: same
+// ID, first sighting and snooze; a finding already in a proposal stays so.
+func mergeEvoFinding(f, existing domain.EvoFinding) domain.EvoFinding {
+	f.ID, f.CreatedAt = existing.ID, existing.CreatedAt
+	if existing.Status == domain.EvoFindingProposed {
+		f.Status, f.ProposalID = existing.Status, existing.ProposalID
+	}
+	if !existing.FirstSeenAt.IsZero() && (f.FirstSeenAt.IsZero() || existing.FirstSeenAt.Before(f.FirstSeenAt)) {
+		f.FirstSeenAt = existing.FirstSeenAt
+	}
+	if existing.SnoozedUntil.After(time.Now()) {
+		f.SnoozedUntil = existing.SnoozedUntil
+	}
+	return f
 }
 
 func (h *evolutionHandlers) latestVersion(kind, id string) int {

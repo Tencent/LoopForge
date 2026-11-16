@@ -224,8 +224,18 @@ func (r *EvolutionRepo) EvoFindings(projectID string, statuses ...string) []doma
 
 // OpenEvoFindingForAsset returns the open finding already tracking an asset.
 func (r *EvolutionRepo) OpenEvoFindingForAsset(projectID, kind, id string) (domain.EvoFinding, bool) {
+	return r.evoFindingForAsset(projectID, kind, id, domain.EvoFindingOpen)
+}
+
+// ActiveEvoFindingForAsset returns the open or proposed finding tracking an
+// asset, so re-diagnosis updates it instead of opening a duplicate.
+func (r *EvolutionRepo) ActiveEvoFindingForAsset(projectID, kind, id string) (domain.EvoFinding, bool) {
+	return r.evoFindingForAsset(projectID, kind, id, domain.EvoFindingOpen, domain.EvoFindingProposed)
+}
+
+func (r *EvolutionRepo) evoFindingForAsset(projectID, kind, id string, statuses ...string) (domain.EvoFinding, bool) {
 	var row evoFindingRow
-	err := r.DB.Where("project_id = ? AND asset_kind = ? AND asset_id = ? AND status = ?", projectID, kind, id, domain.EvoFindingOpen).
+	err := r.DB.Where("project_id = ? AND asset_kind = ? AND asset_id = ? AND status IN ?", projectID, kind, id, statuses).
 		Order("updated_at DESC").Limit(1).Take(&row).Error
 	if err != nil {
 		return domain.EvoFinding{}, false

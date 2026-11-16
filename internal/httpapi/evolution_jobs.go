@@ -93,23 +93,12 @@ func (h *evolutionHandlers) findingForAsset(projectID string, asset evoAsset) (d
 	}
 	days := evoDefaultWindowDays
 	runs := h.loadWindowRuns(projectID, days, evoMaxDiagnoseRuns)
-	evals := map[string]domain.RunEvalRecord{}
-	for _, run := range runs {
-		if rec, ok := h.repo.LatestRunEval(run.ID); ok && rec.Status == domain.RunEvalSucceeded {
-			evals[run.ID] = rec
+	found := evolution.Diagnose(h.diagnoseInput(projectID, days, runs, func(kind, id string) int {
+		if kind == asset.Kind && id == asset.ID {
+			return domain.EvoLevelPropose
 		}
-	}
-	found := evolution.Diagnose(evolution.DiagnoseInput{
-		ProjectID: projectID, Runs: runs, Evals: evals,
-		Feedback: h.repo.EvoSignals(projectID, time.Now().UTC().AddDate(0, 0, -days)),
-		Agent:    h.evolvableAgent, Rule: h.repo.Rule,
-		Level: func(kind, id string) int {
-			if kind == asset.Kind && id == asset.ID {
-				return domain.EvoLevelPropose
-			}
-			return domain.EvoLevelOff
-		},
-	})
+		return h.repo.EvoLevel(kind, id)
+	}))
 	for _, f := range found {
 		if f.AssetKind == asset.Kind && f.AssetID == asset.ID {
 			f.ID = "evf-" + randomID()

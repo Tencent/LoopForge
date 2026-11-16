@@ -1,14 +1,203 @@
 /* 进化中心：kb-* 面板、行、徽标、抽屉来自 knowledge.css 与 app/harness-ui.css（已登记 #evolutionView）。
- * 这里只补四列看板、卡片、回放统计、正文 diff 与宽抽屉。 */
+ * 这里只补问题队列（分组、区间条、趋势）、提案列表卡片、回放统计、正文 diff 与宽抽屉。 */
 #evolutionView .kb-head { align-items: center; }
 .evo-head-actions { display: flex; flex: none; gap: 8px; }
 
-/* 看板 */
-.evo-board { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; align-items: start; }
-.evo-col { display: flex; flex-direction: column; min-height: 160px; }
-#evolutionView .evo-col .kb-panel-head { flex-wrap: nowrap; }
-.evo-col-meta { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-#evolutionView .evo-col .kb-empty { padding: 36px 16px; }
+/* 待决策横幅 */
+.evo-banner { display: flex; width: 100%; align-items: center; gap: 10px; margin: 0 0 12px; padding: 10px 14px; border: 1px solid color-mix(in srgb, var(--hui-warn) 35%, transparent); border-radius: 10px; background: color-mix(in srgb, var(--hui-warn) 8%, var(--hui-surface)); color: var(--hui-text); font: inherit; font-size: 13px; text-align: left; cursor: pointer; transition: border-color 150ms ease; }
+.evo-banner:hover { border-color: var(--hui-warn); }
+.evo-banner:focus-visible { outline: 2px solid var(--kb-focus, var(--hui-accent)); outline-offset: 2px; }
+.evo-banner > span:nth-child(2) { flex: 1; min-width: 0; }
+.evo-banner > b { flex: none; color: var(--hui-warn); font-weight: 600; }
+.evo-banner-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--hui-warn); animation: evo-blink 1.4s ease-in-out infinite; }
+
+/* 筛选条 */
+.evo-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 0 0 12px; }
+.evo-toolbar .kb-seg { flex: none; }
+#evolutionView .evo-search { flex: 1 1 240px; height: 36px; }
+
+/* 分组面板：标题即折叠按钮 */
+#evolutionView .evo-group { margin-bottom: 12px; }
+.evo-group-head { display: flex; width: 100%; align-items: center; gap: 8px; padding: 12px 16px; border: 0; background: none; color: var(--hui-text); font: inherit; text-align: left; cursor: pointer; }
+.evo-group-head:focus-visible { outline: 2px solid var(--kb-focus, var(--hui-accent)); outline-offset: -2px; border-radius: 14px; }
+.evo-group-head h3 { margin: 0; font-size: 14px; font-weight: 600; }
+.evo-group-hint { flex: 1; min-width: 0; overflow: hidden; color: var(--hui-tertiary); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.evo-group-caret { flex: none; width: 0; height: 0; border-top: 4px solid transparent; border-bottom: 4px solid transparent; border-left: 6px solid var(--hui-tertiary); transition: transform 150ms ease; }
+.evo-group-head[aria-expanded="true"] .evo-group-caret { transform: rotate(90deg); }
+.evo-group.g-fix .evo-group-head h3 { color: var(--hui-error); }
+.evo-group-body { border-top: 1px solid var(--hui-border-soft); }
+
+#evolutionView .evo-page { padding-top: 24px; }
+#evolutionView .kb-head { gap: 14px; margin-bottom: 20px; }
+#evolutionView .kb-head-main { flex: 1; }
+.evo-page-icon { display: grid; place-items: center; flex: none; width: 44px; height: 44px; color: var(--hui-accent); background: linear-gradient(145deg, var(--hui-accent-soft), var(--hui-surface)); border-radius: 12px; }
+.evo-page-icon svg { width: 27px; height: 27px; }
+.evo-icon { width: 18px; height: 18px; flex: none; vertical-align: middle; }
+.evo-head-actions .kb-btn { display: inline-flex; align-items: center; gap: 7px; }
+.evo-head-actions svg { width: 16px; height: 16px; }
+.evo-head-actions .evo-icon-button { width: 34px; padding: 0; justify-content: center; }
+#evoMetrics.evo-summary { display: grid; grid-template-columns: minmax(0, 2.2fr) minmax(260px, 1fr); gap: 16px; margin: 0 0 20px; }
+.evo-metric-group { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); align-items: center; padding: 16px 0; background: var(--hui-surface); border: 1px solid var(--hui-border-soft); border-radius: 14px; box-shadow: 0 4px 18px color-mix(in srgb, var(--hui-accent) 3%, transparent); }
+.evo-metric { display: flex; gap: 10px; min-width: 0; height: 100%; padding: 0 16px; border: 0; border-right: 1px solid var(--hui-border-soft); background: none; color: var(--hui-text); font: inherit; text-align: left; cursor: pointer; }
+.evo-metric:last-child { border-right: 0; }
+.evo-metric:hover strong { color: var(--hui-accent); }
+.evo-metric-icon { display: grid; place-items: center; flex: none; width: 36px; height: 36px; border-radius: 11px; background: var(--hui-accent-soft); color: var(--hui-accent); }
+.evo-metric-icon .evo-icon { width: 21px; height: 21px; }
+.evo-metric-icon.proposal { color: var(--hui-warn); background: color-mix(in srgb, var(--hui-warn) 8%, var(--hui-surface)); }
+.evo-metric-icon.check { color: var(--hui-success); background: color-mix(in srgb, var(--hui-success) 8%, var(--hui-surface)); }
+.evo-metric-body { display: flex; flex-direction: column; min-width: 0; gap: 3px; font-size: 12px; }
+.evo-metric-body strong { font-size: 25px; line-height: 1.2; letter-spacing: -.6px; font-variant-numeric: tabular-nums; }
+.evo-metric-body small { margin-top: 7px; color: var(--hui-muted); font-size: 11px; line-height: 1.5; }
+.evo-overview-trend { padding: 12px 16px; min-width: 0; border: 1px solid var(--hui-border-soft); border-radius: 14px; background: var(--hui-surface); }
+.evo-overview-trend h3 { margin: 0; font-size: 13px; font-weight: 600; }
+.evo-overview-trend h3 span { color: var(--hui-muted); font-weight: 400; }
+.evo-overview-trend > svg { display: block; width: 100%; height: 62px; color: var(--hui-accent); }
+.evo-overview-trend circle { fill: var(--hui-surface); stroke: currentColor; stroke-width: 1.5; }
+.evo-trend-dates { display: flex; justify-content: space-between; color: var(--hui-muted); font-size: 10px; }
+.evo-trend-empty { display: grid; place-items: center; height: 62px; color: var(--hui-muted); font-size: 12px; }
+#evolutionBody { border: 1px solid var(--hui-border-soft); border-radius: 14px; background: var(--hui-surface); box-shadow: 0 5px 22px color-mix(in srgb, var(--hui-accent) 4%, transparent); }
+#evolutionView .evo-tabs { display: flex; margin: 0; padding: 0 18px; gap: 26px; border-bottom: 1px solid var(--hui-border-soft); }
+#evolutionView .evo-tabs button { position: relative; display: inline-flex; align-items: center; gap: 9px; height: 49px; padding: 0 4px; border: 0; background: none; color: var(--hui-muted); font: inherit; font-size: 13px; cursor: pointer; }
+#evolutionView .evo-tabs button.active { color: var(--hui-accent); font-weight: 600; }
+#evolutionView .evo-tabs button.active::after { content: ''; position: absolute; height: 2px; bottom: -1px; right: 0; left: 0; background: var(--hui-accent); }
+#evolutionView .evo-tabs button:focus-visible { outline: 2px solid var(--hui-accent); outline-offset: -2px; border-radius: 5px; }
+#evolutionView .evo-tabs .kb-count { margin: 0; }
+#evolutionView .evo-issues { overflow: visible; border: 0; box-shadow: none; margin: 0; border-radius: 0 0 14px 14px; }
+.evo-status-tabs { display: flex; flex-wrap: wrap; gap: 8px; padding: 18px 18px 4px; }
+.evo-status-tabs button { display: inline-flex; align-items: center; gap: 5px; padding: 3px 11px; border: 1px solid var(--hui-border-soft); border-radius: 18px; background: none; color: var(--hui-muted); font: inherit; font-size: 12px; cursor: pointer; }
+.evo-status-tabs button.active { border-color: transparent; color: var(--hui-accent); background: var(--hui-accent-soft); font-weight: 600; }
+#evolutionView .evo-status-tabs .kb-count { margin: 0; }
+.evo-issues .evo-toolbar { margin: 0; padding: 14px 18px 10px; }
+.evo-select { display: flex; align-items: center; min-width: 0; position: relative; color: var(--hui-secondary); }
+.evo-select > svg { position: absolute; left: 12px; pointer-events: none; width: 16px; height: 16px; z-index: 1; }
+#evolutionView .evo-select select { width: auto; min-width: 134px; height: 36px; padding: 0 30px 0 36px; font-size: 12px; border: 1px solid var(--hui-border-strong); border-radius: 9px; background-color: var(--hui-surface); box-shadow: 0 2px 5px color-mix(in srgb, var(--hui-text) 3%, transparent); }
+#evoIssueList { padding: 0 18px; }
+.evo-issue-columns { display: grid; grid-template-columns: 20px minmax(0, 1fr) 90px 80px 100px 140px; align-items: center; gap: 12px; padding: 8px 0; color: var(--hui-secondary); font-size: 11px; border-bottom: 1px solid var(--hui-border-soft); background: linear-gradient(90deg, var(--hui-canvas), var(--hui-surface)); }
+.evo-issue-columns span:nth-child(n+3) { text-align: center; }
+.evo-issue-row { display: grid; grid-template-columns: 20px minmax(0, 1fr) 140px; align-items: center; gap: 12px; border-bottom: 1px solid var(--hui-border-soft); }
+.evo-issue-row:hover, .evo-issue-row.selected { background: color-mix(in srgb, var(--hui-accent-soft) 50%, var(--hui-surface)); }
+#evolutionView .evo-issue { display: grid; grid-template-columns: minmax(0, 1fr) 90px 80px 100px; align-items: center; gap: 12px; width: 100%; margin: 12px 0; padding: 0 0 0 16px; min-height: 80px; border: 0; border-left: 2px solid var(--hui-border); border-radius: 0; background: none; color: var(--hui-text); font: inherit; text-align: left; cursor: pointer; }
+#evolutionView .evo-issue.v-fix { border-left-color: var(--hui-error); }
+#evolutionView .evo-issue.v-watch { border-left-color: var(--hui-warn); }
+#evolutionView :is(.evo-issue, .evo-status-tabs button, .evo-metric, .evo-row-primary, .evo-row-menu summary, .evo-list-footer button):focus-visible { outline: 2px solid var(--hui-accent); outline-offset: 2px; }
+#evolutionView input[type="checkbox"] { width: 15px; height: 15px; margin: 0; accent-color: var(--hui-accent); cursor: pointer; }
+.evo-issue-main { min-width: 0; }
+.evo-issue-title { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; min-width: 0; }
+.evo-issue-title > b { color: var(--hui-text); font-size: 13px; line-height: 1.6; font-weight: 600; overflow-wrap: anywhere; }
+.evo-issue-desc { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 6px; color: var(--hui-muted); font-size: 11px; overflow-wrap: anywhere; }
+.evo-asset-chip { display: inline-flex; align-items: center; gap: 5px; padding: 2px 7px; border-radius: 5px; background: var(--hui-soft); color: var(--hui-secondary); }
+.evo-asset-chip .evo-icon { width: 12px; height: 12px; }
+.evo-issue-stat { display: flex; min-width: 0; flex-direction: column; align-items: center; gap: 5px; text-align: center; font-variant-numeric: tabular-nums; font-size: 12px; }
+.evo-issue-stat > b { color: var(--hui-text); font-size: 14px; font-weight: 600; }
+.evo-issue-stat > small { color: var(--hui-muted); font-size: 11px; }
+.evo-issue-trend svg { max-width: 100%; }
+#evolutionView .evo-issue .evo-spark rect.on { fill: var(--hui-accent); }
+.evo-row-actions { display: flex; align-items: center; justify-content: center; gap: 10px; }
+.evo-row-primary { display: inline-flex; align-items: center; justify-content: center; gap: 5px; padding: 4px 8px; border: 1px solid var(--hui-accent); border-radius: 7px; background: transparent; color: var(--hui-accent); font: inherit; font-size: 11px; white-space: nowrap; cursor: pointer; }
+.evo-row-primary:hover { background: var(--hui-accent-soft); }
+.evo-row-primary .evo-icon { width: 12px; height: 12px; }
+.evo-row-menu { position: relative; }
+.evo-row-menu summary { list-style: none; padding: 2px 5px; border-radius: 5px; color: var(--hui-secondary); font-weight: 700; cursor: pointer; }
+.evo-row-menu summary::-webkit-details-marker { display: none; }
+.evo-row-menu[open] summary { background: var(--hui-accent-soft); }
+.evo-row-menu-items { position: absolute; top: 100%; right: 0; z-index: 10; display: flex; flex-direction: column; width: 155px; padding: 5px; border: 1px solid var(--hui-border); border-radius: 8px; background: var(--hui-surface); box-shadow: var(--hui-popover-shadow); }
+.evo-row-menu-items button { border: 0; border-radius: 5px; padding: 9px 10px; background: none; color: var(--hui-text); text-align: left; font: inherit; font-size: 12px; cursor: pointer; }
+.evo-row-menu-items button:hover { background: var(--hui-soft); }
+.evo-list-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 0; color: var(--hui-secondary); font-size: 12px; }
+.evo-list-footer nav { display: flex; align-items: center; gap: 8px; }
+.evo-list-footer button { min-width: 29px; height: 29px; padding: 0 8px; border: 1px solid var(--hui-border); border-radius: 7px; background: var(--hui-surface); color: var(--hui-secondary); font: inherit; cursor: pointer; }
+.evo-list-footer button[aria-current="page"] { background: var(--hui-accent); border-color: var(--hui-accent); color: var(--hui-on-accent); box-shadow: 0 2px 6px var(--hui-accent-soft); }
+.evo-list-footer button:disabled, .evo-row-primary:disabled { opacity: .4; cursor: not-allowed; }
+.evo-batch { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; padding: 8px 10px; background: var(--hui-accent-soft); color: var(--hui-accent); border-radius: 7px; font-size: 12px; }
+.evo-list-note { padding: 0 18px 14px; color: var(--hui-muted); font-size: 11px; }
+#evoPane > .evo-group, #evoPane > .evo-assets, #evoPane > .evo-samples { margin: 16px; }
+
+#evoFindingModal { z-index: 150; padding: 20px; background: var(--hui-scrim); backdrop-filter: blur(3px); color: var(--hui-text); font: 14px/1.5 var(--hui-sans); }
+.evo-finding-dialog { display: flex; flex-direction: column; width: min(1120px, 96vw); max-height: 90vh; max-height: 90dvh; min-width: 0; overflow: hidden; border: 1px solid var(--hui-border); border-radius: 16px; background: var(--hui-surface); box-shadow: var(--hui-popover-shadow); }
+.evo-finding-head { position: relative; flex: none; padding: 20px 24px 14px; border-bottom: 1px solid var(--hui-border); }
+.evo-finding-head h2 { margin: 8px 36px 6px 0; font-size: 19px; overflow-wrap: anywhere; }
+.evo-finding-head p { margin: 0; color: var(--hui-muted); font-size: 13px; overflow-wrap: anywhere; }
+.evo-finding-head > small { display: block; margin-top: 8px; color: var(--hui-muted); font-size: 12px; }
+.evo-finding-close { position: absolute; top: 14px; right: 16px; width: 32px; height: 32px; border: 0; border-radius: 6px; background: none; color: var(--hui-muted); font-size: 24px; cursor: pointer; }
+.evo-finding-close:hover { background: var(--hui-soft); }
+.evo-finding-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 14px; }
+.evo-finding-actions > :last-child { margin-left: auto; }
+#evoFindingModal .kb-btn { padding: 6px 12px; border: 1px solid var(--hui-border-strong); border-radius: 8px; background: var(--hui-surface); color: var(--hui-text); font: inherit; font-size: 13px; cursor: pointer; }
+#evoFindingModal .kb-btn.primary { border-color: var(--hui-accent); background: var(--hui-accent); color: var(--hui-on-accent); }
+#evoFindingModal .kb-btn.quiet { border-color: transparent; color: var(--hui-muted); }
+#evoFindingModal .kb-btn:disabled { opacity: .5; cursor: not-allowed; }
+#evoFindingModal :focus-visible { outline: 2px solid var(--hui-accent); outline-offset: 2px; }
+.evo-finding-scroll { min-height: 0; overflow: auto; overscroll-behavior: contain; }
+.evo-finding-stats { display: flex; flex-wrap: wrap; align-items: baseline; gap: 16px 24px; padding: 14px 24px; border-bottom: 1px solid var(--hui-border-soft); }
+.evo-finding-stats > div b { display: block; font-size: 18px; font-variant-numeric: tabular-nums; }
+.evo-finding-stats small { color: var(--hui-muted); font-size: 12px; }
+.evo-finding-stats .evo-how { flex: 1 1 240px; margin: 0; }
+.evo-records-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 24px 8px; }
+.evo-records-head h3 { margin: 0; font-size: 14px; font-weight: 600; }
+.evo-records-head select { max-width: 150px; padding: 4px 8px; border: 1px solid var(--hui-border); border-radius: 6px; background: var(--hui-surface); color: var(--hui-text); font: inherit; font-size: 12px; }
+.evo-record-table { overflow-x: auto; }
+.evo-record-table table { width: 100%; min-width: 700px; table-layout: fixed; border-collapse: collapse; font-size: 13px; }
+.evo-record-table th, .evo-record-table td { padding: 10px 16px; border-bottom: 1px solid var(--hui-border-soft); text-align: left; vertical-align: top; overflow-wrap: anywhere; }
+.evo-record-table th { color: var(--hui-muted); font-size: 12px; font-weight: 500; }
+.evo-record-table th:first-child { width: 12%; }
+.evo-record-table th:nth-child(2) { width: 19%; }
+.evo-record-table th:nth-child(3) { width: 23%; }
+.evo-record-table th:nth-child(4) { width: 13%; }
+.evo-record-table td small { display: block; color: var(--hui-muted); margin-top: 4px; font-size: 12px; }
+.evo-record-table tbody tr:hover { background: var(--hui-soft); }
+.evo-record-note, .evo-record-caption { padding: 8px 24px; color: var(--hui-muted); font-size: 12px; text-align: left; }
+.evo-record-pages { display: flex; align-items: center; justify-content: flex-end; gap: 12px; padding: 12px 24px; color: var(--hui-muted); font-size: 12px; }
+
+/* 后验区间条：浅色条是 90% 区间，圆点是估计值，竖线是项目平均 */
+.evo-ci { position: relative; height: 14px; }
+.evo-ci::before { content: ""; position: absolute; top: 6px; right: 0; left: 0; height: 2px; border-radius: 1px; background: var(--hui-border-soft); }
+.evo-ci-range { position: absolute; top: 3px; height: 8px; border-radius: 4px; background: color-mix(in srgb, var(--hui-warn) 30%, transparent); }
+.evo-ci-dot { position: absolute; top: 2px; width: 10px; height: 10px; margin-left: -5px; border: 2px solid var(--hui-surface); border-radius: 50%; background: var(--hui-warn); box-sizing: border-box; }
+.evo-ci-base { position: absolute; top: -1px; width: 2px; height: 16px; margin-left: -1px; border-radius: 1px; background: var(--hui-text); opacity: .55; }
+.evo-ci.v-fix .evo-ci-range { background: color-mix(in srgb, var(--hui-error) 26%, transparent); }
+.evo-ci.v-fix .evo-ci-dot { background: var(--hui-error); }
+.evo-ci.v-noise .evo-ci-range { background: color-mix(in srgb, var(--hui-text) 12%, transparent); }
+.evo-ci.v-noise .evo-ci-dot { background: var(--hui-tertiary); }
+.evo-ci.big { height: 24px; margin: 10px 0 18px; }
+.evo-ci.big::before { top: 11px; }
+.evo-ci.big .evo-ci-range { top: 6px; height: 12px; border-radius: 6px; }
+.evo-ci.big .evo-ci-dot { top: 5px; width: 14px; height: 14px; margin-left: -7px; }
+.evo-ci.big .evo-ci-base { top: 0; height: 24px; }
+.evo-ci-tick { position: absolute; top: 26px; color: var(--hui-tertiary); font-size: 11px; transform: translateX(-50%); }
+.evo-ci-tick.start { transform: none; }
+.evo-ci-tick.end { transform: translateX(-100%); }
+.evo-ci-legend { display: flex; flex-wrap: wrap; gap: 6px 16px; color: var(--hui-tertiary); font-size: 12px; }
+.evo-ci-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.evo-ci-legend i { display: inline-block; }
+.evo-ci-legend i.dot { width: 10px; height: 10px; border-radius: 50%; background: var(--hui-warn); }
+.evo-ci-legend i.range { width: 18px; height: 8px; border-radius: 4px; background: color-mix(in srgb, var(--hui-warn) 30%, transparent); }
+.evo-ci-legend i.base { width: 2px; height: 14px; background: var(--hui-text); opacity: .55; }
+
+/* 趋势 */
+.evo-spark { display: block; overflow: visible; }
+.evo-spark rect { fill: var(--hui-border-soft); }
+.evo-spark rect.on { fill: var(--hui-warn); }
+.evo-issue.v-fix .evo-spark rect.on { fill: var(--hui-error); }
+.evo-issue.v-noise .evo-spark rect.on { fill: var(--hui-tertiary); }
+.evo-trend-big { display: flex; align-items: flex-end; gap: 8px; padding: 4px 0 8px; color: var(--hui-tertiary); font-size: 11.5px; }
+.evo-trend-big .evo-spark rect.on { fill: var(--hui-accent); }
+
+/* 抽屉：判定说明、问题构成、信号明细 */
+.evo-how { margin: 12px 0 4px; color: var(--hui-secondary); font-size: 12.5px; line-height: 1.65; }
+.evo-how > summary { color: var(--hui-accent); cursor: pointer; }
+.evo-how > p { margin: 6px 0 0; }
+.evo-kinds { display: grid; gap: 6px; padding: 4px 0 8px; }
+.evo-kind { display: grid; grid-template-columns: 72px minmax(0, 1fr) 32px; align-items: center; gap: 10px; font-size: 12.5px; }
+.evo-kind > span { color: var(--hui-secondary); }
+.evo-kind > i { height: 8px; overflow: hidden; border-radius: 4px; background: var(--hui-border-soft); }
+.evo-kind > i > em { display: block; height: 100%; border-radius: 4px; background: var(--hui-warn); }
+.evo-kind > b { color: var(--hui-text); text-align: right; font-variant-numeric: tabular-nums; }
+.evo-signals > summary { list-style: none; cursor: pointer; }
+.evo-signals > summary::-webkit-details-marker { display: none; }
+.evo-signals > summary .kb-cap::after { content: " ▸"; }
+.evo-signals[open] > summary .kb-cap::after { content: " ▾"; }
+
+/* 提案卡片（列表） */
 #evolutionView .evo-card { align-items: flex-start; padding: 12px 16px; }
 .evo-card .kb-row-title { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 .evo-card-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; margin-top: 8px; color: var(--hui-tertiary); font-size: 12px; }
@@ -182,14 +371,43 @@ a.evo-pill:hover { border-color: var(--hui-accent); }
 /* 运行详情：回放标记 */
 .run-meta-chip.evo-replay-chip { border-color: color-mix(in srgb, var(--hui-accent) 30%, transparent); color: var(--hui-accent); }
 
-@media (max-width: 1440px) {
-  .evo-board { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+@media (max-width: 1200px) {
+  #evoMetrics.evo-summary { grid-template-columns: minmax(0, 1fr); }
+  .evo-overview-trend { display: grid; grid-template-columns: 140px minmax(0, 1fr); align-items: center; }
+  .evo-trend-dates { grid-column: 2; }
 }
 @media (max-width: 1080px) {
-  .evo-board { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  #evolutionView .evo-issue { grid-template-columns: minmax(0, 1fr) 70px 90px; }
+  .evo-issue-columns { grid-template-columns: 20px minmax(0, 1fr) 70px 90px 120px; }
+  .evo-issue-row { grid-template-columns: 20px minmax(0, 1fr) 120px; }
+  .evo-issue-trend, .evo-column-trend { display: none; }
 }
 @media (max-width: 720px) {
-  .evo-board { grid-template-columns: minmax(0, 1fr); }
+  #evolutionView .kb-head { flex-wrap: wrap; align-items: flex-start; }
+  #evolutionView .kb-head-main { flex: 1; min-width: 190px; }
+  .evo-head-actions { margin-left: auto; }
+  .evo-metric-group { grid-template-columns: repeat(2, minmax(0, 1fr)); row-gap: 18px; }
+  .evo-metric:nth-child(2) { border-right: 0; }
+  .evo-overview-trend { display: block; }
+  #evolutionView .evo-tabs { gap: 8px; padding: 0 10px; flex-wrap: wrap; }
+  #evolutionView .evo-tabs button { gap: 4px; font-size: 12px; }
+  #evolutionView .evo-tabs .evo-icon { width: 14px; height: 14px; }
+  .evo-select { flex: 1; }
+  #evolutionView .evo-select select { width: 100%; }
+  #evolutionView .evo-issue { grid-template-columns: minmax(0, 1fr) 50px; gap: 8px; padding-left: 10px; }
+  .evo-issue-columns { grid-template-columns: 18px minmax(0, 1fr) 50px 28px; gap: 8px; }
+  .evo-issue-row { grid-template-columns: 18px minmax(0, 1fr) 28px; gap: 8px; }
+  .evo-issue-time, .evo-column-time, .evo-row-primary { display: none; }
+  .evo-issue-title > b { font-size: 12px; }
+  #evoIssueList { padding: 0 10px; }
+  .evo-row-actions { gap: 0; }
+  #evoFindingModal { padding: 8px; }
+  .evo-finding-dialog { width: 100%; max-height: 95dvh; }
+  .evo-finding-head { padding: 14px 16px; }
+  .evo-finding-head h2 { font-size: 16px; }
+  .evo-finding-stats { padding: 12px 16px; }
+  .evo-finding-actions > :last-child { margin-left: 0; }
+  .evo-group-hint { display: none; }
   .evo-arm { grid-template-columns: minmax(72px, 1.2fr) repeat(5, minmax(0, 1fr)); gap: 4px; padding-inline: 8px; font-size: 12px; }
   .evo-step-note { display: none; }
   .evo-step-name { font-size: 11.5px; white-space: normal; text-align: center; }
@@ -199,7 +417,8 @@ a.evo-pill:hover { border-color: var(--hui-accent); }
   #evolutionView .evo-asset-row { flex-wrap: wrap; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .evo-progress > i, .evo-asset-main, .evo-pill { transition: none; }
+  .evo-progress > i, .evo-asset-main, .evo-pill, .evo-banner, .evo-group-caret { transition: none; }
+  .evo-banner-dot { animation: none; }
   .evo-step-dot, .evo-replay, .evo-node, .evo-stage-panel.is-in { animation: none; opacity: 1; transform: none; }
   .evo-node.is-reused { opacity: .7; }
   .evo-step.is-reached + .evo-step.is-reached::after { animation: none; transform: scaleX(1); }

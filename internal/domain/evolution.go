@@ -141,13 +141,84 @@ type EvoFinding struct {
 	WorkflowIDs  []string    `json:"workflowIds,omitempty"`
 	Title        string      `json:"title"`
 	Summary      string      `json:"summary,omitempty"`
-	Severity     string      `json:"severity"` // high, medium, low
+	Severity     string      `json:"severity"` // high, medium, low (mirrors Triage.Verdict)
 	Signals      []EvoSignal `json:"signals,omitempty"`
 	SampleRunIDs []string    `json:"sampleRunIds,omitempty"`
 	Status       string      `json:"status"`
 	ProposalID   string      `json:"proposalId,omitempty"`
-	CreatedAt    time.Time   `json:"createdAt"`
-	UpdatedAt    time.Time   `json:"updatedAt"`
+	// Triage is the Bayesian "worth fixing" judgement of the asset.
+	Triage *EvoTriage `json:"triage,omitempty"`
+	// Clusters group the signals by kind and normalised detail.
+	Clusters []EvoSignalCluster `json:"clusters,omitempty"`
+	// Trend is the daily problem-run count over the window, oldest first.
+	Trend        []float64 `json:"trend,omitempty"`
+	FirstSeenAt  time.Time `json:"firstSeenAt,omitempty"`
+	LastSeenAt   time.Time `json:"lastSeenAt,omitempty"`
+	SnoozedUntil time.Time `json:"snoozedUntil,omitempty"`
+	// CloseNote says why the finding left the queue (dismiss reason or
+	// automatic archive).
+	CloseNote string    `json:"closeNote,omitempty"`
+	CreatedAt time.Time `json:"createdAt"`
+	UpdatedAt time.Time `json:"updatedAt"`
+}
+
+// Triage verdicts.
+const (
+	EvoVerdictFix   = "fix"   // very probably worse than the project baseline and costly
+	EvoVerdictWatch = "watch" // evidence not yet conclusive, or impact small
+	EvoVerdictNoise = "noise" // close to the baseline; likely incidental
+)
+
+// EvoTriage is the Beta-Binomial posterior of an asset's problem rate on its
+// current version, compared with the project baseline (empirical Bayes).
+type EvoTriage struct {
+	Verdict string `json:"verdict"`
+	Reason  string `json:"reason"`
+	// Runs are window runs that used the asset's current version; StaleRuns
+	// used an older body and are left out.
+	Runs      int `json:"runs"`
+	StaleRuns int `json:"staleRuns,omitempty"`
+	// ProblemRuns counts runs with a problem (rework weighs half).
+	ProblemRuns float64 `json:"problemRuns"`
+	// Kinds counts problem runs per signal kind.
+	Kinds        map[string]int `json:"kinds,omitempty"`
+	BaselineRate float64        `json:"baselineRate"`
+	Rate         float64        `json:"rate"` // posterior mean
+	RateLow      float64        `json:"rateLow"`
+	RateHigh     float64        `json:"rateHigh"` // 90% credible interval
+	// ProbWorse is P(rate > baseline) under the posterior.
+	ProbWorse float64 `json:"probWorse"`
+	// WeeklyExcess is the expected extra problem runs per week over the
+	// baseline: what fixing the asset would save.
+	WeeklyRuns   float64 `json:"weeklyRuns"`
+	WeeklyExcess float64 `json:"weeklyExcess"`
+	// RunsToDecide estimates how many more runs (at the current rate) it
+	// takes for ProbWorse to reach the fix threshold; 0 when it never will.
+	RunsToDecide int     `json:"runsToDecide,omitempty"`
+	Score        float64 `json:"score"` // ProbWorse * WeeklyExcess, for ranking
+}
+
+// EvoSignalCluster is a group of similar signals of one asset.
+type EvoSignalCluster struct {
+	ID          string                 `json:"id,omitempty"`
+	Kind        string                 `json:"kind"`
+	NodeID      string                 `json:"nodeId,omitempty"`
+	Label       string                 `json:"label"`
+	Count       int                    `json:"count"`
+	Runs        int                    `json:"runs"`
+	RunID       string                 `json:"runId,omitempty"` // latest example
+	FirstSeenAt time.Time              `json:"firstSeenAt,omitempty"`
+	LastSeenAt  time.Time              `json:"lastSeenAt,omitempty"`
+	Trend       []float64              `json:"trend,omitempty"`
+	Occurrences []EvoClusterOccurrence `json:"occurrences,omitempty"`
+}
+
+// EvoClusterOccurrence preserves one example per run before Signals is capped.
+type EvoClusterOccurrence struct {
+	RunID     string    `json:"runId"`
+	Detail    string    `json:"detail"`
+	Count     int       `json:"count"`
+	CreatedAt time.Time `json:"createdAt"`
 }
 
 // EvoReplay is one historical run replayed with a candidate.
