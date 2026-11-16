@@ -17,12 +17,13 @@ var ExecutorEffortLevels = map[string][]string{
 	"cursor":      {"none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"},
 	"agy":         {"low", "medium", "high", "xhigh", "max"},
 	"pi":          {"minimal", "low", "medium", "high", "xhigh", "max"},
+	"hermes":      {"low", "medium", "high", "xhigh", "max"},
 }
 
 // AgentCLIExecutorKinds are the agent CLIs beyond CodeBuddy / Codex / Claude
 // Code. Their model and MCP configuration lives in a private HOME, so they
 // only run with the responsible user's personal credentials.
-var AgentCLIExecutorKinds = []string{"opencode", "cursor", "agy", "kimi", "pi", "dsh", "zcode"}
+var AgentCLIExecutorKinds = []string{"opencode", "cursor", "agy", "kimi", "pi", "dsh", "zcode", "hermes"}
 
 func IsAgentCLIKind(kind string) bool {
 	kind = strings.TrimSpace(kind)

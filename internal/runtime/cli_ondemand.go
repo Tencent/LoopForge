@@ -18,6 +18,8 @@ import (
 const (
 	cursorInstallScript = "curl -fsSL --proto '=https' --tlsv1.2 https://cursor.com/install | bash"
 	agyInstallScript    = "curl -fsSL --proto '=https' --tlsv1.2 https://antigravity.google/cli/install.sh | bash"
+	// Hermes Agent ships its own installer; there is no npm package.
+	hermesInstallScript = "curl -fsSL --proto '=https' --tlsv1.2 https://hermes-agent.nousresearch.com/install.sh | bash"
 )
 
 // DeepSeekHarnessVersion is the dsh release the Dockerfile bundles and an
@@ -50,6 +52,7 @@ func onDemandCLICatalog() map[string]onDemandCLI {
 		"kimi":        {Engine: "kimi", Binary: "kimi", Package: "@moonshot-ai/kimi-code"},
 		"pi":          {Engine: "pi", Binary: "pi", Package: "@earendil-works/pi-coding-agent"},
 		"dsh":         {Engine: "dsh", Binary: "dsh", Package: "@deepseek-ai/dsh@" + DeepSeekHarnessVersion, RelaxEngines: true, Bundled: true},
+		"hermes":      {Engine: "hermes", Binary: "hermes", Script: hermesInstallScript},
 	}
 }
 

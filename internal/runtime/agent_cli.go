@@ -26,6 +26,7 @@ const (
 	AgentCLIPi          = "pi"
 	AgentCLIDeepSeek    = "dsh"
 	AgentCLIZCode       = "zcode"
+	AgentCLIHermes      = "hermes"
 )
 
 // AgentCLIKinds is the display order of the agent CLIs.
@@ -53,7 +54,7 @@ func AgentCLIProtocol(kind, protocol string) string {
 // Antigravity only reaches an OpenAI-compatible gateway through one.
 func AgentCLINeedsBaseURL(kind, protocol string) bool {
 	switch kind {
-	case AgentCLIOpenCode, AgentCLIPi:
+	case AgentCLIOpenCode, AgentCLIPi, AgentCLIHermes:
 		return true
 	case AgentCLIAntigravity:
 		return AgentCLIProtocol(kind, protocol) == AgentCLIProtocolChat
@@ -103,6 +104,8 @@ var agentCLIHostEnv = append([]string{
 	"KIMI_MODEL_NAME", "KIMI_MODEL_API_KEY", "KIMI_MODEL_BASE_URL", "KIMI_MODEL_PROVIDER_TYPE",
 	"OPENCODE_CONFIG", "OPENCODE_CONFIG_CONTENT", "OPENCODE_CONFIG_DIR", "PI_CODING_AGENT_DIR",
 	"ZCODE_DATA_BASE_DIR", zcodePersonalFileEnv,
+	"HERMES_HOME", "HERMES_PROFILE", "OPENAI_API_KEY", "OPENAI_BASE_URL", "OPENAI_MODEL",
+	"ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL", "NOUS_API_KEY",
 }, zcodeHostEnv...)
 
 // agentCLIConfigPaths are the HOME-relative files an agent CLI reads its MCP
@@ -132,6 +135,12 @@ var dshServerNameRe = regexp.MustCompile(`[^A-Za-z0-9_-]`)
 func WriteAgentCLIMCPConfig(kind string, home AgentCLIHome, entries map[string]any, options AgentCLIMCPOptions) error {
 	rel, ok := agentCLIMCPPaths[kind]
 	if !ok {
+		if kind == AgentCLIHermes {
+			// Hermes reads mcp_servers from the same ~/.hermes/config.yaml the
+			// credential writer owns, so its MCP bridge lands with the tier-2
+			// work. Returning nil keeps SOPs without MCP servers working.
+			return nil
+		}
 		return fmt.Errorf("unknown agent CLI %q", kind)
 	}
 	ids := make([]string, 0, len(entries))
@@ -472,6 +481,8 @@ func ApplyAgentCLICredential(kind string, cred ProviderCredential, options Agent
 		return applyDeepSeekCredential(home, homeEnv, key, baseURL, protocol, model, argv)
 	case AgentCLIZCode:
 		return applyZCodeCredential(home, homeEnv, key, baseURL, protocol, model, argv)
+	case AgentCLIHermes:
+		return applyHermesCredential(home, homeEnv, key, baseURL, protocol, model, options.Effort, argv)
 	default:
 		return nil, nil, fmt.Errorf("unknown agent CLI %q", kind)
 	}
@@ -571,6 +582,8 @@ func AgentCLILabel(kind string) string {
 		return "DeepSeek Harness"
 	case AgentCLIZCode:
 		return "ZCode"
+	case AgentCLIHermes:
+		return "Hermes"
 	}
 	return kind
 }

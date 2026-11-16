@@ -233,6 +233,9 @@ func conversationCLISetup(provider, binary string) (string, error) {
 			installer = "curl -fsSL https://cursor.com/install | HOME=/opt/loopforge/conversation-cli bash >&2"
 		case AgentCLIAntigravity:
 			installer = "curl -fsSL https://antigravity.google/cli/install.sh | HOME=/opt/loopforge/conversation-cli bash >&2"
+		case AgentCLIHermes:
+			// Hermes Agent ships its own installer; it has no npm package.
+			installer = "curl -fsSL https://hermes-agent.nousresearch.com/install.sh | HOME=/opt/loopforge/conversation-cli bash >&2"
 		default:
 			return "", fmt.Errorf("不支持的会话CLI %s", provider)
 		}

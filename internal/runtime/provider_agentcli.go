@@ -213,6 +213,20 @@ func AgentCLICommand(kind string, o AgentCLICommandOptions) CommandSpec {
 			argv = append(argv, "--session-id", resume)
 		}
 		argv = append(append(argv, extra...), prompt)
+	case AgentCLIHermes:
+		// Hermes resolves its route from ~/.hermes/config.yaml, so only the run
+		// shape lives on the command line: -z in one-shot mode, --resume to
+		// continue a session, and --yolo for SOP turns that must not block on
+		// an approval prompt no one can answer.
+		argv = []string{binary}
+		if resume != "" {
+			argv = append(argv, "--resume", resume)
+		}
+		if !o.Chat {
+			argv = append(argv, "--yolo")
+		}
+		argv = append(argv, extra...)
+		argv = append(argv, "-z", prompt)
 	case AgentCLIZCode:
 		disallowed := zcodeSOPDisallowedTools
 		if readOnly {

@@ -146,6 +146,13 @@ func executorModelCatalogs() map[string]executorModelCatalog {
 				{ID: "glm-5.3-flash", Name: "GLM-5.3 Flash"},
 			},
 		},
+		"hermes": {
+			CustomModel: true,
+			Models: []executorModelInfo{
+				{ID: "deepseek-v4.1-flash-1017", Name: "DeepSeek V4.1 Flash"},
+				{ID: "glm-5.3-flash", Name: "GLM-5.3 Flash"},
+			},
+		},
 	}
 }
 

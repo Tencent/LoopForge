@@ -117,6 +117,12 @@ func InstallConversationApproval(root, provider string, command CommandSpec) (Co
 			return command, err
 		}
 		command.Argv = append(append(append([]string{}, command.Argv[:3]...), "--patch", patchFile), command.Argv[3:]...)
+	case AgentCLIHermes:
+		// Hermes one-shot turns (-z) auto-bypass approval prompts, so there is
+		// no native hook to install yet; the chat policy is enforced by the
+		// MCP gateway and the toolset the platform passes. Tier 2 adds the
+		// hook once Hermes exposes a structured approval event.
+		return command, nil
 	default:
 		return command, fmt.Errorf("CLI %s 缺少原生审批适配", provider)
 	}

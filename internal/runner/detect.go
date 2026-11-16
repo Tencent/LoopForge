@@ -45,6 +45,9 @@ var defaultProviders = []providerSpec{
 	{Kind: "kimi", Binary: "kimi"},
 	{Kind: "pi", Binary: "pi"},
 	{Kind: "dsh", Binary: "dsh"},
+	// Hermes Agent answers --version and runs its one-shot turns with -z; the
+	// flag set below is what the platform's provider spec passes it.
+	{Kind: "hermes", Binary: "hermes", VersionFlags: []string{"--version"}},
 	// The official ZCode has no npm package and its --help omits
 	// --output-format, so compatibility is probed with the flags we pass.
 	{Kind: "zcode", Binary: "zcode", VersionFlags: []string{"--output-format", "stream-json", "--mode", "yolo"}},

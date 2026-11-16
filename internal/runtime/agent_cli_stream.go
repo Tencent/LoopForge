@@ -160,6 +160,25 @@ func (s *ClaudeStream) Finished() bool { return s.done }
 // NewAgentCLITranslator returns the translator from an agent CLI's native
 // headless output (one JSON object per line) to ClaudeStream lines.
 func NewAgentCLITranslator(kind string) func(string) []string {
+	stream := &ClaudeStream{}
+	if kind == AgentCLIHermes {
+		// Hermes prints its answer as plain text, so every non-empty stdout
+		// line is a text block. JSON lines it may print (usage, session id)
+		// still decode through the shared path.
+		return func(line string) []string {
+			line = strings.TrimSpace(line)
+			if line == "" {
+				return nil
+			}
+			if line[0] == '{' {
+				var raw map[string]any
+				if json.Unmarshal([]byte(line), &raw) == nil {
+					return stream.Text(jsonText(raw["text"]))
+				}
+			}
+			return stream.Text(line)
+		}
+	}
 	var translate func(*ClaudeStream, map[string]any) []string
 	switch kind {
 	case AgentCLIOpenCode:
@@ -179,7 +198,6 @@ func NewAgentCLITranslator(kind string) func(string) []string {
 	default:
 		return nil
 	}
-	stream := &ClaudeStream{}
 	return func(line string) []string {
 		line = strings.TrimSpace(line)
 		if line == "" || line[0] != '{' {
