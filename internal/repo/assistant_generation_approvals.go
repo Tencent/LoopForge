@@ -40,8 +40,10 @@ func generationPayload(row assistantGenerationRow) assistantGenerationPayload {
 	return payload
 }
 
-func nativeApprovalGenerationActive(row assistantGenerationRow) bool {
-	return row.Status == "running" && !row.CancelRequested && time.Since(row.UpdatedAt) <= 45*time.Second
+// nativeApprovalGenerationActive measures the heartbeat on the same clock that
+// stamped it (see heartbeatNow).
+func (r *AssistantRepo) nativeApprovalGenerationActive(db *gorm.DB, row assistantGenerationRow) bool {
+	return row.Status == "running" && !row.CancelRequested && !r.heartbeatLate(db, row.UpdatedAt)
 }
 
 func (r *AssistantRepo) updateNativeApprovals(owner int64, session, generation string, requireLive bool, update func(*assistantGenerationPayload) error) error {
@@ -50,7 +52,7 @@ func (r *AssistantRepo) updateNativeApprovals(owner int64, session, generation s
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("session_id = ? AND user_id = ? AND generation_id = ?", session, owner, generation).Take(&row).Error; err != nil {
 			return fmt.Errorf("本轮已结束，审批已失效")
 		}
-		if requireLive && !nativeApprovalGenerationActive(row) {
+		if requireLive && !r.nativeApprovalGenerationActive(tx, row) {
 			return fmt.Errorf("本轮已结束，审批已失效")
 		}
 		payload := generationPayload(row)
@@ -90,7 +92,7 @@ func (r *AssistantRepo) CreateNativeApproval(owner int64, session, phase string,
 
 func (r *AssistantRepo) NativeApproval(owner int64, session, id string) (domain.AssistantNativeApproval, bool) {
 	var row assistantGenerationRow
-	if err := r.DB.Where("session_id = ? AND user_id = ?", session, owner).Take(&row).Error; err != nil || !nativeApprovalGenerationActive(row) {
+	if err := r.DB.Where("session_id = ? AND user_id = ?", session, owner).Take(&row).Error; err != nil || !r.nativeApprovalGenerationActive(r.DB, row) {
 		return domain.AssistantNativeApproval{}, false
 	}
 	for _, item := range generationPayload(row).NativeApprovals {
@@ -104,7 +106,7 @@ func (r *AssistantRepo) NativeApproval(owner int64, session, id string) (domain.
 func (r *AssistantRepo) PendingNativeApprovals(owner int64, session string) []domain.AssistantNativeApproval {
 	out := []domain.AssistantNativeApproval{}
 	var row assistantGenerationRow
-	if err := r.DB.Where("session_id = ? AND user_id = ?", session, owner).Take(&row).Error; err != nil || !nativeApprovalGenerationActive(row) {
+	if err := r.DB.Where("session_id = ? AND user_id = ?", session, owner).Take(&row).Error; err != nil || !r.nativeApprovalGenerationActive(r.DB, row) {
 		return out
 	}
 	for _, item := range generationPayload(row).NativeApprovals {
