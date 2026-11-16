@@ -348,7 +348,7 @@ AI 定时任务没有单独的时长上限：这一轮和普通对话一样，�
 
 ### `POST|PUT /api/schedule-jobs`
 
-新建或按 `id` 更新，两种方法语义相同。`name` 必填。调度为 `intervalSec`（常用间隔）或 5 段 `cron`（东八区）。`skipDispatch` 为 true 时是 AI 定时任务，必须有 `assistantPrompt`，保存时清空 SOP 字段；否则是触发任务，必须有 `workflowId`，保存时清空提示词。可选 `useIssueWorkflow`。`assistantModel` 保存时保留已支持 CLI 的模型（`codex:…`、`claude-code:…`）；CodeBuddy 模型仍限制在助手目录内。运行前检查执行账号在该 CLI 上的 Key。保存时把项目 Owner 记为 `ownerUserId`。AI 定时任务用保存人的 Key 执行：服务端把 `runAsUserId` 设为本次保存的登录用户（请求里传的值不生效），其他成员编辑保存后改用他的 Key。保存人没有个人 CodeBuddy Key 时用平台共享 Key，`assistantModel` 必须是共享 Key 允许的模型（为空或 `default` 时取共享 Key 的默认模型）；没有可用 Key（没配个人 Key 且平台也没有共享 Key，或 Codex / Claude Code 模型缺对应 Key）时返回 `400` 并说明原因；只有停用任务、提示词和模型等执行配置都不变时例外，此时保留原执行身份，方便没有 Key 的成员停用任务。没有执行身份的旧任务先按项目 Owner、任务 Owner 的顺序找个人 Key，都没有时才用平台共享 Key。更新时若请求未带 `blockers`，保留触发任务已有的基线暂停状态。
+新建或按 `id` 更新，两种方法语义相同。`name` 必填。调度为 `intervalSec`（常用间隔）或 5 段 `cron`（东八区）。`skipDispatch` 为 true 时是 AI 定时任务，必须有 `assistantPrompt`，保存时清空 SOP 字段；否则是触发任务，必须有 `workflowId`，保存时清空提示词。可选 `useIssueWorkflow`。`assistantModel` 保存时保留已支持 CLI 的模型（`codex:…`、`claude-code:…`）；CodeBuddy 模型仍限制在助手目录内。运行前检查执行账号在该 CLI 上的 Key。保存时把项目 Owner 记为 `ownerUserId`。AI 定时任务用保存人的 Key 执行：服务端把 `runAsUserId` 设为本次保存的登录用户（请求里传的值不生效），其他成员编辑保存后改用他的 Key。保存人没有个人 CodeBuddy Key 时用平台共享 Key，`assistantModel` 必须是共享 Key 允许的模型（为空或 `default` 时取共享 Key 的默认模型）；没有可用 Key（没配个人 Key 且平台也没有共享 Key，或 Codex / Claude Code 模型缺对应 Key）时返回 `400` 并说明原因；只有停用任务、提示词和模型等执行配置都不变时例外，此时只保存 `enabled=false`，其余字段（包括名称、通知和调度）保持库中的值，并保留原执行身份，方便没有 Key 的成员停用任务。没有执行身份的旧任务先按项目 Owner、任务 Owner 的顺序找个人 Key，都没有时才用平台共享 Key。更新时若请求未带 `blockers`，保留触发任务已有的基线暂停状态。
 
 `id` 为空时生成；`projectId` 默认 `platform`；`intervalSec<30` 时重置为 `300`。更新若不提供 `lastRunAt` 会保留已有最近运行字段。成功 `200` 返回 job；校验/存储错误 `400`。
 

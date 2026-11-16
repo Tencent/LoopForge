@@ -199,8 +199,9 @@ func (h *scheduleHandlers) scheduleJobs(c *gin.Context) {
 // (limited to the models it allows, its default when requestedModel is empty);
 // with neither the save is refused, since the job could not run. Without a
 // signed-in user the job stays on the project owner's keys. A saver without
-// a usable key may still stop the job when nothing it runs changes; it then
-// keeps its binding, so any writer can turn it off.
+// a usable key may still stop the job when nothing it runs changes; only
+// enabled is then saved and the stored job is kept as is, since the name and
+// notifications also go into the prompt and a stopped job can be run by hand.
 func (h *scheduleHandlers) bindScheduleRunAs(c *gin.Context, job *domain.ScheduleJob, prior domain.ScheduleJob, requestedModel string) bool {
 	job.RunAsUserID, job.RunAsName = 0, ""
 	if !job.SkipDispatch {
@@ -219,7 +220,8 @@ func (h *scheduleHandlers) bindScheduleRunAs(c *gin.Context, job *domain.Schedul
 		if job.Enabled || !scheduleRunConfigUnchanged(prior, *job) {
 			return false
 		}
-		job.RunAsUserID, job.RunAsName = prior.RunAsUserID, prior.RunAsName
+		*job = prior
+		job.Enabled = false
 		return true
 	}
 	_, shared, ok := scheduleKeyUser(h.repo, self, engine)
