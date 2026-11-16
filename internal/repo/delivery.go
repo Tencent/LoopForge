@@ -212,7 +212,14 @@ func (r *DeliveryRepo) markIssueDelivered(issueID string, mrs []domain.DeliveryM
 	if issueDeliverySkipped(issue, mrs, deliveredAt, fromSOP) {
 		return nil
 	}
-	issue.DeliveryState = "merged"
+	// "merged" means the change is on the target branch. A run can succeed
+	// without delivering any MR (delivery scope forbids pushing, or the work
+	// only produced reports), and the poll path can arrive without a URL.
+	// Without an MR to point at, claiming a merge would show up as a delivered
+	// work item in analytics and would lock the item against follow-up runs.
+	if len(mrs) > 0 || len(issue.DeliveryMRList()) > 0 {
+		issue.DeliveryState = "merged"
+	}
 	if len(mrs) > 0 && (fromSOP || len(issue.DeliveryMRList()) == 0) {
 		list := make([]domain.DeliveryMR, 0, len(mrs))
 		for _, mr := range mrs {
