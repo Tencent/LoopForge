@@ -42,8 +42,6 @@ services:
       AGENTFLOW_PLATFORM_MCP_URL: ${AGENTFLOW_PLATFORM_MCP_URL:-http://platform:8080}
       AGENTFLOW_DOCKER_NETWORK: ${COMPOSE_PROJECT_NAME:-loopforge}_default
       AGENTFLOW_LOCAL_SANDBOX: docker
-      # Conversation workspace containers bind the daemon socket from the host.
-      AGENTFLOW_DOCKER_SOCKET_HOST: ${LOOPFORGE_DOCKER_SOCKET:-/var/run/docker.sock}
       AGENTFLOW_ISOLATED_IMAGE: ${LOOPFORGE_IMAGE:-ghcr.io/tencent/loopforge:0.3.8}
       HOME: ${LOOPFORGE_DATA_DIR:?Run scripts/configure.sh first}/home
       AGENTFLOW_RUNNER_BINARY: /app/bin/agentflow-runner-{os}-{arch}

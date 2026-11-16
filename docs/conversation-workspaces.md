@@ -38,18 +38,9 @@
 
 ## Native 沙箱
 
-会话工作区可以使用 native 沙箱（Linux 上解析为 bwrap）。bwrap 工作区与 Docker 布局一致：CLI 的 HOME 是 `<会话根>/home`，cwd 是 `<会话根>/ws`（挂的是运行工作区，工作区同时也挂在它在宿主上的路径），审批钩子文件只读挂载；宿主文件系统其余部分只读，网络与宿主相同。CLI 使用执行机器自己安装的版本。macOS seatbelt 暂不支持对话工作区，会返回明确错误。bwrap 需要创建 user/pid 命名空间并挂载 `/proc`，平台运行在默认权限的容器里（Compose 部署）时做不到：平台镜像不带 bwrap，即使装上，不开特权容器也建不了命名空间。Compose 部署请用 Docker 沙箱；要用 native 沙箱，在原生安装的平台或执行机器（Runner）上运行。
+会话工作区可以使用 native 沙箱（Linux 上解析为 bwrap）。bwrap 工作区与 Docker 布局一致：CLI 的 HOME 是 `<会话根>/home`，cwd 是 `<会话根>/ws`（挂的是运行工作区），审批钩子文件只读挂载；宿主文件系统其余部分只读，网络与宿主的 Docker 守护进程保持可达（可以在工作区里构建镜像、启动容器）。CLI 使用执行机器自己安装的版本。macOS seatbelt 暂不支持对话工作区，会返回明确错误。bwrap 需要创建 user/pid 命名空间并挂载 `/proc`，平台运行在默认权限的容器里（Compose 部署）时做不到：平台镜像不带 bwrap，即使装上，不开特权容器也建不了命名空间。Compose 部署请用 Docker 沙箱；要用 native 沙箱，在原生安装的平台或执行机器（Runner）上运行。
 
 两种模式的 CLI 都在 `<会话根>/ws` 运行（工作区模式下这里挂的是运行工作区），按 cwd 存放原生会话的 CLI（如 Claude Code、CodeBuddy）进出工作区、换环境都能续接。原生日志确实不可用时，平台在当前阶段用完整对话上下文新建原生会话继续（`cli.resume_fallback`），每个阶段最多一次，并告诉新会话当前所处的模式。
-
-## 工作区里的 Docker
-
-工作区直接使用执行机器的 Docker 守护进程，与在这台机器上开发的人一样：`DOCKER_HOST` 指向宿主 socket（默认 `/var/run/docker.sock`；Docker 工作区里挂在 `/var/run/docker.sock`），`docker build/run/compose` 直接可用（Docker 工作区的镜像要自带 docker CLI）。工作区创建的容器、镜像、网络和卷都是普通 Docker 对象，平台不打标签、不限制、不随工作区回收；之后任何会话的工作区都能列出、复用或清理它们。
-
-- 路径：CLI 的 cwd `<会话根>/ws` 在宿主上是平台模式的目录，宿主守护进程看不到其中挂的工作区。所以运行工作区在 Docker 与 bwrap 环境里还挂在它在宿主上的绝对路径，PATH 最前面放一个只读的 `docker` 包装脚本（`<会话根>/workspace-bin/docker`）：它把参数里以 `<会话根>/ws` 开头的路径（如 `-v "$PWD:/src"`、`--mount src=…`）换成宿主路径，并在对应的宿主路径目录下执行真正的 docker，compose 里的相对路径因此也指向工作区本身。CLI 的命令工具用登录 shell 起环境，系统 profile（如 Debian 的 `/etc/profile`）会重置 PATH，所以平台还在会话 HOME 的 `~/.profile`（以及已存在的 `~/.bash_profile`、`~/.bash_login`、`~/.zprofile`）追加一行，把包装脚本目录放回 PATH 最前面；平台模式下没有对应环境变量，这一行不生效。这只是便利，不是隔离边界：绕过包装脚本直接调用 Docker API 的程序（如 Docker SDK）需要自己使用宿主路径，环境变量 `AGENTFLOW_WORKSPACE_HOST` 给出这个路径。容器化部署的平台按同样原则把数据目录挂在相同绝对路径（`compose.yaml` 已配置）。
-- socket 来源：Docker 工作区容器的 socket 由宿主守护进程挂载，容器化的平台用 `AGENTFLOW_DOCKER_SOCKET_HOST` 告诉它宿主上的路径（`compose.yaml` 设为 `LOOPFORGE_DOCKER_SOCKET`）；原生安装两者相同。服务以非 root 用户运行时，Docker 工作区额外加入 socket 的属组。
-- 权限：能访问 Docker socket 就相当于守护进程所在机器的 root。任何能在对话里打开工作区的成员（以及被仓库内容诱导的 Agent）都能借此读取平台容器、数据库和其他成员的凭据，只把账号开给可信的人。`AGENTFLOW_WORKSPACE_DOCKER=off` 关闭：Docker 工作区不再挂 socket，bwrap 工作区用 `/dev/null` 遮住宿主的 Docker/containerd/podman socket（按解析后的真实路径，`/var/run` 是指向 `/run` 的软链时也生效）。
-- 升级：按旧布局（工作区只挂在 `<会话根>/ws`，或 socket 挂载与当前开关不一致）创建的 Docker 工作区容器在下次启动时重建，工作区文件在 bind 上不受影响。
 
 `PUT /api/assistant/sessions/{id}/sandbox` 接受 `{ "sandboxProfileId": "id 或空字符串" }`，具备项目访问权限的会话参与者均可调用；生成期间和任务会话拒绝变更。已有工作区不受影响，新选择只用于之后新开的工作区。普通会话创建时也可以提交 `sandboxProfileId`，后续普通会话保存不能覆盖已保存的选择或伪造工作区绑定。
 
@@ -80,9 +71,6 @@
 - 原生对话前端 178 项测试通过；后端 HTTP、Engine、Runner、Repo、MCP 与 Web/OpenAPI 契约回归通过。
 - 独立 Docker MySQL 验证了会话环境与生成启动的并发事务、SOP 配额，以及迁移脚本的作用范围与幂等性。
 - 真实 CodeBuddy 对话分别选择项目默认和会话覆盖 Docker 环境，命令读取到 `business-default` 与 `conversation-override`，文件写入与验证命令均返回 0。新增沙箱入口也已通过实际界面创建验证。
-- 工作区沙箱的实机用例默认跳过，在能创建沙箱的执行机器上手动打开：
-  - `LOOPFORGE_LIVE_BWRAP=1 go test ./internal/runtime -run TestLiveBwrapConversationWorkspace`：真实 bwrap 下 cwd `<会话根>/ws` 是运行工作区且可写、宿主路径可见同一份文件、home 可写、守卫文件与根目录只读、宿主 Docker socket 可见。
-  - `LOOPFORGE_LIVE_DOCKER=1 go test ./internal/runtime -run TestLiveDockerDriverConversationWorkspace`：Docker 驱动下同样的布局检查，并在容器里从 `<会话根>/ws` 经 docker 包装脚本 `docker run -v "$PWD:/m"` 读回工作区文件（需要能拉 alpine）。
 - 全量测试尚有独立于本次修改的既有问题：MySQL 分析统计覆盖用例在未修改的 master 同样失败；macOS 的 Linux 专用 seatbelt 断言及缺少 flock/Unix socket 路径限制影响全量执行。CMD 与 deploy 用例已另在 Linux Docker 中通过；运行时整包的 Docker 回收/发现测试失败也已在未修改的 master 复现。
 
 ### 会话与协作 Token 统计

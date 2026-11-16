@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"agentflow/internal/domain"
-	"agentflow/internal/scriptview"
 )
 
 func TestDockerConversationProcessPreservesInteractiveInput(t *testing.T) {
@@ -168,17 +167,6 @@ func TestDockerMasksAndManagerPaths(t *testing.T) {
 	if err != nil || !cvRContains(hide, "/workspace/CLAUDE.md") {
 		t.Fatalf("hide=%v err=%v", hide, err)
 	}
-	root := t.TempDir()
-	conversation := &dockerSandbox{name: "box", workspace: workspace, requirements: SandboxRequirements{ConversationRoot: root}}
-	hide, err = conversation.currentAgentMasks()
-	for _, mask := range []string{filepath.ToSlash(filepath.Join(root, "ws", "CLAUDE.md")), filepath.ToSlash(filepath.Join(workspace, "CLAUDE.md"))} {
-		if err != nil || !cvRContains(hide, mask) {
-			t.Fatalf("conversation hide=%v err=%v, want %s", hide, err, mask)
-		}
-		if !scriptview.ValidMask(mask, conversation.conversationAliases()...) {
-			t.Fatalf("mask %s rejected for aliases %v", mask, conversation.conversationAliases())
-		}
-	}
 	masks, err := sb.scriptMasks(context.Background())
 	if err != nil || !cvRContains(masks, "/workspace/CLAUDE.md") {
 		t.Fatalf("masks=%v err=%v", masks, err)
@@ -288,7 +276,7 @@ if [ "${1-}" = inspect ] && [ "${2-}" = --format ]; then
   esac
 fi
 case " $* " in
-  *" --workspace-script-view-version "*) echo agentflow-script-view-v4; exit 0 ;;
+  *" --workspace-script-view-version "*) echo agentflow-script-view-v3; exit 0 ;;
 esac
 case "$*" in
   "image inspect --format {{.Architecture}} "*) echo amd64; exit 0 ;;

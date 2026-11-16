@@ -517,28 +517,6 @@ func (p *ConversationProcessPool) start(ctx context.Context, root, workspace str
 	for key, value := range req.Command.Environment {
 		env[key] = conversationRemap(value, req.SourceRoot, root)
 	}
-	if spec != nil {
-		if socket := workspaceDockerSocket(); socket != "" {
-			if spec.Profile.Driver == domain.SandboxDriverDocker {
-				socket = conversationDockerSocketTarget
-			}
-			env["DOCKER_HOST"] = "unix://" + socket
-			bin, err := writeConversationDockerShim(root)
-			if err != nil {
-				return ConversationProcessResult{}, err
-			}
-			env[conversationBinEnv] = bin
-			env[workspaceAliasEnv] = filepath.Join(root, "ws")
-			env[workspaceHostEnv] = workspace
-			if spec.Profile.Driver == domain.SandboxDriverBwrap {
-				path := os.Getenv("PATH")
-				if value := spec.Profile.Environment["PATH"]; value != "" {
-					path = value
-				}
-				env["PATH"] = bin + string(os.PathListSeparator) + path
-			}
-		}
-	}
 	command = WithCommandEnvironment(command, env)
 	command = command.WithPrivateHomeDir(filepath.Join(root, "home"))
 	command.AgentCLI.SystemPromptFile = conversationRemap(command.AgentCLI.SystemPromptFile, req.SourceRoot, root)

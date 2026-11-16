@@ -2,7 +2,7 @@
 
 发送首条消息、实际开始生成时固定执行机器，之后不能修改。发送前选择机器只保存在本地草稿，不创建空会话；机器列表刷新保留草稿选择，个人默认机器未加载时不能首发。历史上因选择机器产生的空草稿可以重新选择，也不常驻会话侧栏。未记录执行机器的存量会话归属云端，不使用用户后来修改的默认机器。新会话选择远程 Runner 后，平台模式、工作区模式、标题生成和独立审批模型都由该 Runner 执行；机器不可用时返回错误，等待原机器恢复。
 
-平台模式保留平台管理工具，并限制原生写入和命令。用 `workbench_workspace_open` 选一个运行环境（Docker 或 Linux native/bwrap 沙箱）打开工作区后，当前 CLI 阶段退出并保存原生日志；平台轮换工具令牌，在同一机器上续接原生会话重新启动 CLI，启用原生文件、补丁与命令工具。两种模式的 cwd 都是 `<会话根>/ws`（工作区模式下它挂的就是运行工作区），按 cwd 归档会话的 CLI（Claude Code、CodeBuddy 等）跨模式、换运行环境都能续接；工作区另外挂在它在宿主上的真实路径，供宿主 Docker 守护进程使用（见 conversation-workspaces.md）。续接仍然失败时（原生日志丢失或被服务商拒绝），每个阶段可以用完整对话上下文新建一次原生会话，模式切换后的新会话会被告知已处于哪个模式，不会为重做切换再切一次。Docker 工作区里 CLI 复用工作区现有容器，浏览器与准备脚本使用相同环境；native 工作区用执行机器上已安装的 CLI，在 bwrap 里以同样的 HOME/cwd 布局运行。macOS seatbelt 暂不支持对话工作区。工作区模式的 CLI 按本轮发言人注入 Git Token（只对 github.com 应答的 askpass）、`GH_TOKEN` 与按主机绑定的 SSH 密钥，git 克隆、提交、推送和开 PR 都由 Agent 自己完成，详见 conversation-workspaces.md 的「Git 凭据」。
+平台模式保留平台管理工具，并限制原生写入和命令。用 `workbench_workspace_open` 选一个运行环境（Docker 或 Linux native/bwrap 沙箱）打开工作区后，当前 CLI 阶段退出并保存原生日志；平台轮换工具令牌，在同一机器上续接原生会话重新启动 CLI，启用原生文件、补丁与命令工具。两种模式的 cwd 都是 `<会话根>/ws`（工作区模式下它挂的就是运行工作区），按 cwd 归档会话的 CLI（Claude Code、CodeBuddy 等）跨模式、换运行环境都能续接。续接仍然失败时（原生日志丢失或被服务商拒绝），每个阶段可以用完整对话上下文新建一次原生会话，模式切换后的新会话会被告知已处于哪个模式，不会为重做切换再切一次。Docker 工作区里 CLI 复用工作区现有容器，浏览器与准备脚本使用相同环境；native 工作区用执行机器上已安装的 CLI，在 bwrap 里以同样的 HOME/cwd 布局运行。macOS seatbelt 暂不支持对话工作区。工作区模式的 CLI 按本轮发言人注入 Git Token（只对 github.com 应答的 askpass）、`GH_TOKEN` 与按主机绑定的 SSH 密钥，git 克隆、提交、推送和开 PR 都由 Agent 自己完成，详见 conversation-workspaces.md 的「Git 凭据」。
 
 工作区只提供模式切换、产物、浏览器及任务明确选择的 MCP 集成；开出的 GitHub PR 由平台在每轮结束时自动登记，不需要工具。平台管理和旧的文件操作工具既不出现在目录中，也不能通过直接调用执行。模式切换令牌在旧进程退出后更新，旧令牌失效；交接期间拒绝继续调用工具。切回平台模式保留工作区和原生会话，关闭文件侧栏只改变界面。
 
@@ -12,7 +12,7 @@
 
 ZCode 恢复时通过官方会话协议应用当前选择的模型，再启动原生 prompt 命令；保留同一 session 和历史，不直接改写 CLI 数据库。协议不兼容或模型不可用时中止，保留日志供重试。
 
-工作区是独立沙箱，沙箱内的原生文件、补丁和命令（编辑、构建、测试、本机 Docker 等）在三种审批模式下都直接执行，不做人工确认或独立模型审查。越过沙箱、写入外部系统的命令才按审批模式处理：`git push`；`gh pr|issue|release|repo|… create/merge/close/comment/edit/review/delete…`；`gh api` 带写方法或 `-f/-F/--input`；`curl` 带 `-X POST/PUT/PATCH/DELETE`、`-d/--data*`、`-F/--form`、`-T`、`--json`，`wget --post-*`；`npm/pnpm/yarn/bun/poetry/cargo publish`、`twine upload`、`gem push`；`docker/podman push`；`kubectl apply/delete/…`、`helm install/upgrade/…`、`terraform apply/destroy`。识别看工具输入里的 `command/cmd/args/script` 等字段，与 CLI 的工具名无关。这是防误操作的护栏，不是安全边界：脚本自己联网写入不会被识别。
+工作区是独立沙箱，沙箱内的原生文件、补丁和命令（编辑、构建、测试等）在三种审批模式下都直接执行，不做人工确认或独立模型审查。越过沙箱、写入外部系统的命令才按审批模式处理：`git push`；`gh pr|issue|release|repo|… create/merge/close/comment/edit/review/delete…`；`gh api` 带写方法或 `-f/-F/--input`；`curl` 带 `-X POST/PUT/PATCH/DELETE`、`-d/--data*`、`-F/--form`、`-T`、`--json`，`wget --post-*`；`npm/pnpm/yarn/bun/poetry/cargo publish`、`twine upload`、`gem push`；`docker/podman push`；`kubectl apply/delete/…`、`helm install/upgrade/…`、`terraform apply/destroy`。识别看工具输入里的 `command/cmd/args/script` 等字段，与 CLI 的工具名无关。这是防误操作的护栏，不是安全边界：脚本自己联网写入不会被识别。
 
 - 完全权限：直接执行。
 - 帮我批准：先由独立审查模型按本次命令和对话授权判断，通过即执行（审查超过 15 秒视为未通过）；未通过时转为人工批准。

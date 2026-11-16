@@ -22,7 +22,7 @@ import (
 const (
 	Argument      = "--workspace-script-view"
 	ProbeArgument = "--workspace-script-view-version"
-	Version       = "agentflow-script-view-v4"
+	Version       = "agentflow-script-view-v3"
 )
 
 type Config struct {
@@ -70,11 +70,8 @@ func parseConfig(raw string) (Config, error) {
 	if err := validateConfigMode(config); err != nil {
 		return config, err
 	}
-	// Aliases are the conversation cwd (<root>/ws) and the run workspace's
-	// host path, where a conversation workspace container also mounts it; a
-	// top-level directory never is.
 	for _, alias := range config.Aliases {
-		if !strings.HasPrefix(alias, "/") || path.Clean(alias) != alias || strings.Count(alias, "/") < 2 || strings.ContainsAny(alias, "\x00\n\r") {
+		if !strings.HasPrefix(alias, "/") || path.Clean(alias) != alias || !strings.HasSuffix(alias, "/ws") || strings.ContainsAny(alias, "\x00\n\r") {
 			return config, fmt.Errorf("invalid workspace alias %q", alias)
 		}
 	}

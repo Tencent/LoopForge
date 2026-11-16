@@ -483,9 +483,7 @@ func bwrapArgsCommand(workspace string, requirements SandboxRequirements, maskAg
 	}
 	if conversation := requirements.ConversationRoot; conversation != "" {
 		// Same layout as the Docker workspace: the native CLI keeps its HOME
-		// and cwd (<root>/ws, here the run workspace) across both modes; the
-		// workspace also stays at its host path (bound above) for the host
-		// Docker daemon.
+		// and cwd (<root>/ws, here the run workspace) across both modes.
 		args = append(args, "--bind", filepath.Join(conversation, "home"), filepath.Join(conversation, "home"), "--bind", root, filepath.Join(conversation, "ws"))
 		// The approval hooks stay read-only, as in the Docker workspace.
 		parents, files, err := conversationGuardPaths(conversation)
@@ -497,11 +495,6 @@ func bwrapArgsCommand(workspace string, requirements SandboxRequirements, maskAg
 		}
 		for _, file := range files {
 			args = append(args, "--ro-bind", file, file)
-		}
-		if workspaceDockerSocket() == "" {
-			for _, socket := range hostDockerSockets() {
-				args = append(args, "--ro-bind", "/dev/null", socket)
-			}
 		}
 	}
 	if requirements.BunFS && ensureBunFSMountPoint() {

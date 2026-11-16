@@ -236,11 +236,6 @@ func (h *agentToolGateway) attachWorkspaceFile(ctx context.Context, s *AgentTool
 	if runID == "" {
 		runID = s.workspaceRun()
 	}
-	// The run workspace is also mounted at its host path, where absolute
-	// paths end in .../<run id>/<relative path>.
-	if marker := "/" + runID + "/"; runID != "" && pathpkg.IsAbs(rel) && strings.Contains(rel, marker) {
-		rel = rel[strings.LastIndex(rel, marker)+len(marker):]
-	}
 	result, err := (mcpserver.LocalInvoker{Handler: h.api}).Invoke(ctx, application.Operation{Method: "GET", Path: "/api/runs/{id}/workspace/file"}, mcpserver.ToolInput{Path: map[string]string{"id": runID}, Query: map[string]string{"path": rel}})
 	if err != nil {
 		return "", err
