@@ -176,13 +176,20 @@ func subagentRolePrompt(prompt string) string {
 
 var rolePromptPlaceholder = regexp.MustCompile(`\{\{[^{}]+\}\}`)
 
+// maxAutoSharedSkills bounds how many shared skills of other projects a turn
+// installs without being mentioned or bound to a role, so the per-turn file
+// writes and the CLI's skill list stay bounded however many skills are shared.
+// Beyond it the shared skills are taken in id order and the rest are logged.
+const maxAutoSharedSkills = 50
+
 // writeConversationAssets rewrites the conversation's CLI home each turn:
-// skills holds the project's own skills and every shared skill, plus those of
+// skills holds the project's own skills and the shared skills, plus those of
 // its roles and the mentioned ones, and agents holds one subagent per role,
 // so Main Bot and its subagents use them natively. Shared skills are installed
-// on every turn, including a conversation without a project; mentioning one
-// only adds the hint to call it. A turn with no project, no shared skills and
-// no mentioned roles gets empty directories.
+// on every turn, including a conversation without a project, up to
+// maxAutoSharedSkills; a mentioned or role-bound skill is always installed. A
+// turn with no project, no shared skills and no mentioned roles gets empty
+// directories.
 func (h *assistantHandlers) writeConversationAssets(root string, req assistantRequest) error {
 	if err := runtime.ValidateConversationRoot(root); err != nil {
 		return err
@@ -204,16 +211,29 @@ func (h *assistantHandlers) writeConversationAssets(root string, req assistantRe
 		}
 	}
 	project := strings.TrimSpace(req.ProjectID)
-	for _, skill := range h.repo.Skills() {
-		owned := project != "" && skill.ProjectID == project
-		if !owned && !skill.Shared {
-			continue
-		}
+	load := func(skill domain.SkillDefinition) {
 		var contents map[string][]byte
 		if len(skill.FileRefs) > 0 {
 			contents = h.repo.SkillFileContents(skill.ID)
 		}
 		add(skill, contents)
+	}
+	var shared []domain.SkillDefinition
+	for _, skill := range h.repo.Skills() {
+		switch {
+		case project != "" && skill.ProjectID == project:
+			load(skill)
+		case skill.Shared:
+			shared = append(shared, skill)
+		}
+	}
+	sort.Slice(shared, func(i, j int) bool { return shared[i].ID < shared[j].ID })
+	if len(shared) > maxAutoSharedSkills {
+		log.Printf("assistant skills session=%s project=%s: %d shared skills, installing the first %d by id; mention or bind the rest to a role to use them", req.SessionID, project, len(shared), maxAutoSharedSkills)
+		shared = shared[:maxAutoSharedSkills]
+	}
+	for _, skill := range shared {
+		load(skill)
 	}
 	for _, role := range req.roles {
 		for _, skill := range role.Skills {
@@ -221,11 +241,7 @@ func (h *assistantHandlers) writeConversationAssets(root string, req assistantRe
 		}
 	}
 	for _, skill := range req.skills {
-		var contents map[string][]byte
-		if len(skill.FileRefs) > 0 {
-			contents = h.repo.SkillFileContents(skill.ID)
-		}
-		add(skill, contents)
+		load(skill)
 	}
 	engine, _ := assistantModelEngine(req.Model)
 	home := filepath.Join(root, "home", assistantEngineConfigDir(engine))

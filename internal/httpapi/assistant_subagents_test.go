@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 
@@ -262,6 +263,63 @@ func TestEverySharedSkillIsInstalledWithItsFiles(t *testing.T) {
 		data, err := os.ReadFile(filepath.Join(dir, "ops-runbook", "assets", "check.bin"))
 		if err != nil || !bytes.Equal(data, asset) {
 			t.Fatalf("project %q shared skill file = %v %v", project, data, err)
+		}
+	}
+}
+
+func TestSharedSkillsAreCappedInIDOrder(t *testing.T) {
+	h, u := workbenchFixture(t)
+	if err := h.repo.PutProject(domain.Project{ID: "docs", Name: "docs", OwnerID: u.ID}); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.repo.PutSkill(domain.SkillDefinition{ID: "own", Name: "own", ProjectID: "workbench", Content: "own"}); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < maxAutoSharedSkills+5; i++ {
+		id := fmt.Sprintf("zz-shared-%03d", i)
+		if err := h.repo.PutSkill(domain.SkillDefinition{ID: id, Name: id, ProjectID: "docs", Shared: true, Content: id}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var shared []string
+	for _, skill := range h.repo.Skills() {
+		if skill.Shared && skill.ProjectID != "workbench" {
+			shared = append(shared, skill.ID)
+		}
+	}
+	sort.Strings(shared)
+	if len(shared) <= maxAutoSharedSkills {
+		t.Fatalf("fixture has %d shared skills, want more than %d", len(shared), maxAutoSharedSkills)
+	}
+	last, _ := h.repo.Skill(shared[len(shared)-1])
+	for _, tc := range []struct {
+		project   string
+		mentioned []domain.SkillDefinition
+	}{
+		{project: "workbench"},
+		{project: ""},
+		{project: "workbench", mentioned: []domain.SkillDefinition{last}},
+	} {
+		root := t.TempDir()
+		if err := h.writeConversationAssets(root, assistantRequest{ProjectID: tc.project, skills: tc.mentioned}); err != nil {
+			t.Fatal(err)
+		}
+		entries, err := os.ReadDir(filepath.Join(root, "home", ".codebuddy", "skills"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := map[string]bool{}
+		for _, entry := range entries {
+			got[entry.Name()] = true
+		}
+		if got["own"] != (tc.project == "workbench") {
+			t.Fatalf("project %q own skill installed=%v", tc.project, got["own"])
+		}
+		for i, id := range shared {
+			want := i < maxAutoSharedSkills || (len(tc.mentioned) > 0 && id == last.ID)
+			if got[id] != want {
+				t.Fatalf("project %q mentioned=%d shared skill %s (#%d) installed=%v, want %v", tc.project, len(tc.mentioned), id, i, got[id], want)
+			}
 		}
 	}
 }
