@@ -873,3 +873,49 @@ func TestStartAfterDefersInterruptedJobRecoveryUntilGateCloses(t *testing.T) {
 	svc.Stop()
 	svc.Stop()
 }
+
+func TestRunNowDoesNotExecuteWhenClaimWriteFails(t *testing.T) {
+	st, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(st.Close)
+
+	job := domain.ScheduleJob{
+		ID: "claim-retry", Name: "Assistant schedule", SkipDispatch: true,
+		AssistantPrompt: "review pending work",
+	}
+	if err := st.PutScheduleJob(job); err != nil {
+		t.Fatal(err)
+	}
+	db := st.CatalogRepo.DB
+	if err := db.Exec(`
+		CREATE TRIGGER reject_schedule_claim BEFORE UPDATE ON schedule_jobs
+		WHEN OLD.id = 'claim-retry'
+		BEGIN
+			SELECT RAISE(ABORT, 'claim write failed');
+		END`).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	executions := 0
+	svc := New(st, tracker.NewService(), nil)
+	svc.SetAssistantPrep(func(domain.ScheduleJob) (string, error) {
+		executions++
+		return "finished", nil
+	})
+	if _, err := svc.RunNow(job.ID); err == nil || !strings.Contains(err.Error(), "claim write failed") {
+		t.Errorf("RunNow error = %v, want claim write failure", err)
+	}
+	if executions != 0 {
+		t.Fatalf("assistant executed %d times without a persisted claim", executions)
+	}
+
+	if err := db.Exec("DROP TRIGGER reject_schedule_claim").Error; err != nil {
+		t.Fatal(err)
+	}
+	result, err := svc.RunNow(job.ID)
+	if err != nil || executions != 1 || result.LastStatus != "success" {
+		t.Fatalf("retry executions = %d, status = %q, error = %v", executions, result.LastStatus, err)
+	}
+}
