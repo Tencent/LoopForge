@@ -883,7 +883,7 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 				}
 				if strings.EqualFold(gate.Mode, domain.VerificationModeMR) {
 					live, _ := e.repo.RunState(runID)
-					mrErr := e.verifyRunMRs(live, func(rc domain.RepositoryContext) (pushedWork, error) {
+					mrErr := e.verifyRunMRs(live, gitTok, func(rc domain.RepositoryContext) (pushedWork, error) {
 						target := executionTarget{Scope: domain.ExecutionScopeRepositories, Repository: &rc}
 						out, execErr := gateExec(mrPendingCommand, target, executionTargetSink(func(event domain.TelemetryEvent) {
 							event.Category = "verification"

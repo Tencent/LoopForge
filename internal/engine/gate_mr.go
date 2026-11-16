@@ -34,7 +34,10 @@ type pushedWork struct {
 // an open MR whose head is the tip (or whose host reports no head), or a
 // merged MR whose head is the tip. An earlier MR merged before this run's
 // pushes does not count.
-func (e *Engine) verifyRunMRs(run domain.Run, pending func(domain.RepositoryContext) (pushedWork, error)) error {
+//
+// The lookup runs in the run's execution context: its project and gitToken,
+// the credential the run pushed with.
+func (e *Engine) verifyRunMRs(run domain.Run, gitToken string, pending func(domain.RepositoryContext) (pushedWork, error)) error {
 	var problems []string
 	unverifiable := false
 	for _, rc := range run.RepositoryContexts() {
@@ -61,7 +64,7 @@ func (e *Engine) verifyRunMRs(run domain.Run, pending func(domain.RepositoryCont
 			unverifiable = true
 			continue
 		}
-		mrs, err := e.FindBranchMRsInto(project, work, base)
+		mrs, err := e.FindBranchMRsInto(domain.BranchMRQuery{ProjectID: run.ExecutionContext.ProjectID, RemoteProject: project, SourceBranch: work, TargetBranch: base, GitToken: gitToken})
 		if err != nil {
 			problems = append(problems, fmt.Sprintf("%s：查询 %s → %s 的 MR 失败：%v", label, work, base, err))
 			unverifiable = true

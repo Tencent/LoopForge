@@ -47,6 +47,36 @@ func (s *Service) githubClient(project string) (*githubClient, error) {
 	return &githubClient{base: base, path: path, token: token, http: &http.Client{Timeout: 30 * time.Second, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}}, nil
 }
 
+// githubClientForRun authenticates as the run did: its push token when set,
+// else the Owner of the run's project when that project binds the repository.
+func (s *Service) githubClientForRun(project, localProjectID, gitToken string) (*githubClient, error) {
+	g, err := s.githubClient(project)
+	if err != nil {
+		return nil, err
+	}
+	if token := strings.TrimSpace(gitToken); token != "" {
+		g.token = token
+		return g, nil
+	}
+	local := strings.TrimSpace(localProjectID)
+	if s.projectAuth == nil || local == "" {
+		return g, nil
+	}
+	for _, repo := range s.projectAuth.Repositories() {
+		if repo.Provider != "github" || repo.GongfengProjectID != project || repo.ProjectID != local {
+			continue
+		}
+		g.token = ""
+		if p, found := s.projectAuth.Project(local); found {
+			if u, exists := s.projectAuth.User(p.OwnerID); exists {
+				g.token = u.GitToken
+			}
+		}
+		break
+	}
+	return g, nil
+}
+
 func (g *githubClient) request(method, suffix string, input, output any) error {
 	var body io.Reader
 	if input != nil {

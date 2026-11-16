@@ -177,14 +177,21 @@ func (s *Service) FindBranchMR(project, sourceBranch string) (domain.DeliveryMR,
 	}, true, nil
 }
 
-// FindBranchMRsInto lists every MR from sourceBranch into targetBranch with
-// the head commit the host reports. Unlike FindBranchMR it never answers with
-// an MR into another branch, and it keeps all of them so a caller can tell an
-// earlier merged MR from one that carries the current branch tip.
-func (s *Service) FindBranchMRsInto(project, sourceBranch, targetBranch string) ([]domain.DeliveryMR, error) {
-	src, target := strings.TrimSpace(sourceBranch), strings.TrimSpace(targetBranch)
+// FindBranchMRsInto lists every MR from the query's source branch into its
+// target branch with the head commit the host reports. Unlike FindBranchMR it
+// never answers with an MR into another branch, and it keeps all of them so a
+// caller can tell an earlier merged MR from one that carries the current tip.
+// It reads with the run's credentials: GitHub uses the token the run pushed
+// with, else the Owner of the run's project; Gongfeng uses the MCP binding of
+// the run's project.
+func (s *Service) FindBranchMRsInto(q domain.BranchMRQuery) ([]domain.DeliveryMR, error) {
+	project := strings.TrimSpace(q.RemoteProject)
+	src, target := strings.TrimSpace(q.SourceBranch), strings.TrimSpace(q.TargetBranch)
+	if project == "" || src == "" || target == "" {
+		return nil, nil
+	}
 	if strings.HasPrefix(project, "github:") {
-		g, err := s.githubClient(project)
+		g, err := s.githubClientForRun(project, q.ProjectID, q.GitToken)
 		if err != nil {
 			return nil, err
 		}
@@ -194,11 +201,13 @@ func (s *Service) FindBranchMRsInto(project, sourceBranch, targetBranch string) 
 		}
 		return githubPullsInto(pulls, project, src, target), nil
 	}
-	project = strings.TrimSpace(project)
-	if project == "" || src == "" || target == "" {
-		return nil, nil
+	var client *MCPClient
+	var err error
+	if local := strings.TrimSpace(q.ProjectID); local != "" {
+		client, _, err = s.trackerClientForProject("gongfeng", local)
+	} else {
+		client, _, err = s.gongfengClientForRemoteProject(project)
 	}
-	client, _, err := s.gongfengClientForRemoteProject(project)
 	if err != nil {
 		return nil, err
 	}

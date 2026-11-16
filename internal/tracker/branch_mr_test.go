@@ -1,6 +1,13 @@
 package tracker
 
-import "testing"
+import (
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+
+	"agentflow/internal/domain"
+)
 
 func TestPickBranchMR(t *testing.T) {
 	raw := `{"data":[
@@ -47,5 +54,39 @@ func TestBranchMRsIntoKeepOnlyTheTargetAndCarryHeads(t *testing.T) {
 	prs := githubPullsInto(pulls, "github:o/r", "feat", "main")
 	if len(prs) != 2 || prs[0].State != "closed" || prs[0].HeadSHA != "old" || prs[1].State != "opened" || prs[1].HeadSHA != "tip" || prs[1].TargetBranch != "main" {
 		t.Fatalf("github pulls into main = %+v", prs)
+	}
+}
+
+func TestFindBranchMRsIntoReadsWithTheRunCredentials(t *testing.T) {
+	var auth []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		auth = append(auth, r.Header.Get("Authorization"))
+		if r.URL.Path != "/repos/o/r/pulls" || r.URL.Query().Get("base") != "main" || r.URL.Query().Get("head") != "o:feat" {
+			t.Errorf("unexpected request %s", r.URL)
+		}
+		_, _ = w.Write([]byte(`[{"number":4,"state":"open","head":{"ref":"feat","sha":"tip"},"base":{"ref":"main"}},{"number":3,"state":"closed","merged_at":"2026-11-01T00:00:00Z","head":{"ref":"feat","sha":"old"},"base":{"ref":"main"}}]`))
+	}))
+	defer srv.Close()
+	s := NewService()
+	s.githubAPIBase = srv.URL
+	s.projectAuth = projectAuthFixture{
+		projects: map[string]domain.Project{"first": {ID: "first", OwnerID: 1}, "run": {ID: "run", OwnerID: 2}},
+		users:    map[int64]domain.User{1: {ID: 1, GitToken: "first-owner"}, 2: {ID: 2, GitToken: "run-owner"}},
+		repos: []domain.Repository{
+			{ID: "a", ProjectID: "first", Provider: "github", GongfengProjectID: "github:o/r"},
+			{ID: "b", ProjectID: "run", Provider: "github", GongfengProjectID: "github:o/r"},
+		},
+	}
+	q := domain.BranchMRQuery{ProjectID: "run", RemoteProject: "github:o/r", SourceBranch: "feat", TargetBranch: "main", GitToken: "pushed-with"}
+	mrs, err := s.FindBranchMRsInto(q)
+	if err != nil || len(mrs) != 2 || mrs[0].State != "opened" || mrs[0].HeadSHA != "tip" || mrs[1].State != "merged" || mrs[1].HeadSHA != "old" {
+		t.Fatalf("mrs = %+v %v", mrs, err)
+	}
+	q.GitToken = ""
+	if _, err := s.FindBranchMRsInto(q); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(auth, ",") != "Bearer pushed-with,Bearer run-owner" {
+		t.Fatalf("the run's push token comes first, then the Owner of the run's project, got %v", auth)
 	}
 }

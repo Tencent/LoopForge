@@ -15,7 +15,7 @@ import (
 
 func TestVerifyRunMRsRequiresAnMRCarryingThePushedTip(t *testing.T) {
 	t.Parallel()
-	run := domain.Run{Repositories: []domain.RepositoryContext{
+	run := domain.Run{ExecutionContext: domain.TelemetryContext{ProjectID: "proj"}, Repositories: []domain.RepositoryContext{
 		{RepositoryID: "svc", Name: "svc", GongfengProjectID: "github:o/svc", WorkspaceDir: "svc", WorkBranch: "feat", BaseBranch: "release/1.2", DefaultBranch: "main"},
 		{RepositoryID: "docs", Name: "docs", GongfengProjectID: "github:o/docs", WorkspaceDir: "docs", WorkBranch: "feat", DefaultBranch: "main"},
 		{RepositoryID: "ro", Name: "ro", GongfengProjectID: "github:o/ro", WorkspaceDir: "ro", WorkBranch: "feat", ReadOnly: true},
@@ -24,27 +24,27 @@ func TestVerifyRunMRsRequiresAnMRCarryingThePushedTip(t *testing.T) {
 	pending := func(rc domain.RepositoryContext) (pushedWork, error) { return pushed[rc.RepositoryID], nil }
 	var looked []string
 	var mrs []domain.DeliveryMR
-	e := &Engine{FindBranchMRsInto: func(project, source, target string) ([]domain.DeliveryMR, error) {
-		looked = append(looked, project+"@"+source+"->"+target)
+	e := &Engine{FindBranchMRsInto: func(q domain.BranchMRQuery) ([]domain.DeliveryMR, error) {
+		looked = append(looked, q.ProjectID+":"+q.RemoteProject+"@"+q.SourceBranch+"->"+q.TargetBranch+" as "+q.GitToken)
 		return mrs, nil
 	}}
 	fails := func(want string) {
 		t.Helper()
-		err := e.verifyRunMRs(run, pending)
+		err := e.verifyRunMRs(run, "push-token", pending)
 		if err == nil || errors.Is(err, errMRUnverifiable) || !strings.Contains(err.Error(), want) {
 			t.Fatalf("want a self-correctable failure containing %q, got %v", want, err)
 		}
 	}
 	passes := func() {
 		t.Helper()
-		if err := e.verifyRunMRs(run, pending); err != nil {
+		if err := e.verifyRunMRs(run, "push-token", pending); err != nil {
 			t.Fatal(err)
 		}
 	}
 
 	fails("svc：feat → release/1.2 在托管平台上没有 MR/PR")
-	if strings.Join(looked, ",") != "github:o/svc@feat->release/1.2" {
-		t.Fatalf("only the repository with pushed commits is looked up, into its frozen target: %v", looked)
+	if strings.Join(looked, ",") != "proj:github:o/svc@feat->release/1.2 as push-token" {
+		t.Fatalf("only the repository with pushed commits is looked up, into its frozen target, with the run's project and push token: %v", looked)
 	}
 	mrs = []domain.DeliveryMR{{URL: "pr/3", State: "merged", HeadSHA: "old"}}
 	fails("只有已合并的 MR pr/3，不包含本轮推送的 new")
@@ -62,23 +62,23 @@ func TestVerifyRunMRsRequiresAnMRCarryingThePushedTip(t *testing.T) {
 	mrs = []domain.DeliveryMR{{URL: "pr/4", State: "merged", HeadSHA: "new"}}
 	passes()
 
-	lookupDown := &Engine{FindBranchMRsInto: func(string, string, string) ([]domain.DeliveryMR, error) {
+	lookupDown := &Engine{FindBranchMRsInto: func(domain.BranchMRQuery) ([]domain.DeliveryMR, error) {
 		return nil, errors.New("401 Bad credentials")
 	}}
-	if err := lookupDown.verifyRunMRs(run, pending); !errors.Is(err, errMRUnverifiable) || !strings.Contains(err.Error(), "401 Bad credentials") {
+	if err := lookupDown.verifyRunMRs(run, "", pending); !errors.Is(err, errMRUnverifiable) || !strings.Contains(err.Error(), "401 Bad credentials") {
 		t.Fatalf("a failed lookup goes to a person: %v", err)
 	}
-	if err := (&Engine{}).verifyRunMRs(run, pending); !errors.Is(err, errMRUnverifiable) {
+	if err := (&Engine{}).verifyRunMRs(run, "", pending); !errors.Is(err, errMRUnverifiable) {
 		t.Fatalf("no MR lookup configured goes to a person: %v", err)
 	}
 	ssh := domain.Run{Repositories: []domain.RepositoryContext{{RepositoryID: "ssh", Provider: domain.RepositoryProviderSSH, WorkspaceDir: "ssh", WorkBranch: "feat", DefaultBranch: "main"}}}
-	if err := e.verifyRunMRs(ssh, func(domain.RepositoryContext) (pushedWork, error) { return pushedWork{Tip: "t", Ahead: 1}, nil }); !errors.Is(err, errMRUnverifiable) || !strings.Contains(err.Error(), "ssh：托管平台不支持自动核验 MR") {
+	if err := e.verifyRunMRs(ssh, "", func(domain.RepositoryContext) (pushedWork, error) { return pushedWork{Tip: "t", Ahead: 1}, nil }); !errors.Is(err, errMRUnverifiable) || !strings.Contains(err.Error(), "ssh：托管平台不支持自动核验 MR") {
 		t.Fatalf("a host without MR lookup goes to a person: %v", err)
 	}
-	if err := e.verifyRunMRs(run, func(domain.RepositoryContext) (pushedWork, error) { return pushedWork{}, errors.New("exit status 2") }); err == nil || errors.Is(err, errMRUnverifiable) {
+	if err := e.verifyRunMRs(run, "", func(domain.RepositoryContext) (pushedWork, error) { return pushedWork{}, errors.New("exit status 2") }); err == nil || errors.Is(err, errMRUnverifiable) {
 		t.Fatalf("an unreadable remote fails the gate: %v", err)
 	}
-	if err := e.verifyRunMRs(domain.Run{}, pending); err != nil {
+	if err := e.verifyRunMRs(domain.Run{}, "", pending); err != nil {
 		t.Fatalf("a run without repositories has no MR to verify: %v", err)
 	}
 }
@@ -136,13 +136,13 @@ func TestMRGateRejectsAnEarlierMergedMROnAReusedWorkBranch(t *testing.T) {
 		t.Fatalf("pending = %+v %v, want tip %s with 1 commit beyond main", got, err, tip)
 	}
 	mrs := []domain.DeliveryMR{{URL: "https://github.com/o/app/pull/1", State: "merged", TargetBranch: "main", HeadSHA: previous}}
-	e := &Engine{FindBranchMRsInto: func(string, string, string) ([]domain.DeliveryMR, error) { return mrs, nil }}
+	e := &Engine{FindBranchMRsInto: func(domain.BranchMRQuery) ([]domain.DeliveryMR, error) { return mrs, nil }}
 	run := domain.Run{Repositories: []domain.RepositoryContext{rc}}
-	if err := e.verifyRunMRs(run, pending); err == nil || !strings.Contains(err.Error(), "不包含本轮推送的 "+tip) {
+	if err := e.verifyRunMRs(run, "push-token", pending); err == nil || !strings.Contains(err.Error(), "不包含本轮推送的 "+tip) {
 		t.Fatalf("the previous merged MR must not cover this run's push: %v", err)
 	}
 	mrs = append(mrs, domain.DeliveryMR{URL: "https://github.com/o/app/pull/2", State: "opened", TargetBranch: "main", HeadSHA: tip})
-	if err := e.verifyRunMRs(run, pending); err != nil {
+	if err := e.verifyRunMRs(run, "push-token", pending); err != nil {
 		t.Fatalf("a new MR carrying the tip must pass: %v", err)
 	}
 }
@@ -235,7 +235,7 @@ func TestMRGateRunsInTheNodeLoop(t *testing.T) {
 		t.Fatal(err)
 	}
 	e := New(s, runtime.NewManager(filepath.Join(dir, "workspaces")))
-	e.FindBranchMRsInto = func(string, string, string) ([]domain.DeliveryMR, error) {
+	e.FindBranchMRsInto = func(domain.BranchMRQuery) ([]domain.DeliveryMR, error) {
 		t.Error("a run without repositories must not look up MRs")
 		return nil, nil
 	}

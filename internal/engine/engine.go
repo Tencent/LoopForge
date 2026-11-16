@@ -59,7 +59,7 @@ type Engine struct {
 
 	// FindBranchMRsInto lists the MRs from a work branch into one target
 	// branch with their head commits, for mode=mr gates. Nil cannot verify.
-	FindBranchMRsInto func(projectID, sourceBranch, targetBranch string) ([]domain.DeliveryMR, error)
+	FindBranchMRsInto func(domain.BranchMRQuery) ([]domain.DeliveryMR, error)
 
 	// runnerDispatchNotify wakes long-polling CLI runners when the engine
 	// queues a runner task. Wired via SetRunnerDispatchNotify (httpapi.New);

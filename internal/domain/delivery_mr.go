@@ -25,6 +25,17 @@ type DeliveryMR struct {
 	HeadSHA string `json:"-"`
 }
 
+// BranchMRQuery asks the host for the MRs from one work branch into one target
+// branch, in a run's execution context: ProjectID is the run's project and
+// GitToken the credential the run pushed with.
+type BranchMRQuery struct {
+	ProjectID     string
+	RemoteProject string
+	SourceBranch  string
+	TargetBranch  string
+	GitToken      string
+}
+
 // GongfengMRURL is the canonical web URL of a Gongfeng merge request.
 func GongfengMRURL(project string, iid int) string {
 	project = strings.Trim(strings.TrimSpace(project), "/")
