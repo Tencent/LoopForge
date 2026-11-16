@@ -206,6 +206,51 @@ describe("App", () => {
     }
   });
 
+  test("a requirement handoff keeps the project's unsent new-conversation draft", async () => {
+    const previous = { ...chat };
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ issue: { id: "i3", title: "订单导出", projectId: "p1" } }),
+    }));
+    Object.assign(chat, { projectId: "p1", startProjectDraft: vi.fn() });
+    const owner = chat.user?.id || "guest";
+    const projectDraftKey = `agentflow.native-chat.draft.${owner}.new:p1`;
+    const projectDraft = JSON.stringify({
+      text: "写了一半的问题",
+      attachments: [{ id: "att-1", name: "spec.pdf", type: "application/pdf", size: 12 }],
+      references: [],
+    });
+    localStorage.setItem(projectDraftKey, projectDraft);
+    history.replaceState({}, "", "/?projectId=p1&mentionIssue=i3");
+    let view;
+    try {
+      view = render(<App />);
+      const box = screen.getByRole("textbox");
+      await waitFor(() => expect(box.value).toBe("@订单导出 "));
+      expect(screen.queryByText("spec.pdf")).not.toBeInTheDocument();
+      expect(localStorage.getItem(projectDraftKey)).toBe(projectDraft);
+      const issueDraft = JSON.parse(localStorage.getItem(`agentflow.native-chat.draft.${owner}.issue:i3`));
+      expect(issueDraft.references).toEqual([{ type: "issue", id: "i3", name: "订单导出", projectId: "p1" }]);
+
+      fireEvent.change(box, { target: { value: "@订单导出 先聊范围" } });
+      window.dispatchEvent(new MessageEvent("message", {
+        data: { type: "agentflow-chat-mention-issue", issueId: "i3", projectId: "p1" },
+        origin: location.origin,
+        source: window.parent,
+      }));
+      await waitFor(() => expect(globalThis.fetch).toHaveBeenCalledTimes(2));
+      expect(box.value).toBe("@订单导出 先聊范围");
+    } finally {
+      view?.unmount();
+      globalThis.fetch = originalFetch;
+      Object.assign(chat, previous);
+      delete chat.startProjectDraft;
+      localStorage.clear();
+    }
+  });
+
   test("renders the ready empty state and opens primary controls", async () => {
     const user = userEvent.setup();
     render(<App />);

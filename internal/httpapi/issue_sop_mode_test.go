@@ -52,6 +52,13 @@ func TestRequirementWithoutSOP(t *testing.T) {
 		t.Fatalf("scheduled SOPs must not claim a no-SOP requirement: %v", err)
 	}
 	requestJSON[map[string]any](t, h, http.MethodPost, "/api/issues/"+created.ID+"/dispatch", map[string]any{}, http.StatusBadRequest)
+	if _, err := dispatchIssue(d, dispatchRequest{IssueID: created.ID, WorkflowID: "sop-mode-missing"}); err == nil {
+		t.Fatal("a missing SOP started")
+	}
+	failed, _ := st.Issue(created.ID)
+	if failed.SOPMode != domain.IssueSOPNone || failed.WorkflowID != "" || failed.AutomationState != "ignored" {
+		t.Fatalf("a failed start must keep the no-SOP choice: %+v", failed)
+	}
 
 	task := requestJSON[domain.Task](t, h, http.MethodPost, "/api/issues/"+created.ID+"/dispatch", map[string]any{"workflowId": "sop-mode-flow"}, http.StatusCreated)
 	t.Cleanup(func() { _ = e.Cancel(task.RunID) })

@@ -337,6 +337,7 @@ export default function App() {
     [imagePreview, setImagePreview] = useState(null),
     [references, setReferences] = useState([]),
     [issueMention, setIssueMention] = useState(readIssueMention),
+    [issueDraft, setIssueDraft] = useState(readIssueMention),
     [mention, setMention] = useState(null),
     [repositorySelections, setRepositorySelections] = useState({}),
     [uploading, setUploading] = useState(false),
@@ -355,6 +356,7 @@ export default function App() {
     try { localStorage.setItem(environmentVisibilityKey, JSON.stringify(next)); } catch {}
   }
   function startNewChat() {
+    setIssueDraft(null);
     chat.newChat();
   }
   const input = useRef(),
@@ -370,7 +372,13 @@ export default function App() {
     previousArtifacts = useRef({ id: null, ids: new Set(), baselined: false }),
     dialogInput = useRef(),
     composerPreviews = useRef(new Map());
-  const draftKey = `agentflow.native-chat.draft.${chat.user?.id || "guest"}.${chat.activeId || "new:" + chat.projectId}`;
+  // A requirement handed over by the workbench drafts in its own slot so the
+  // project's unsent new-conversation draft and attachments stay untouched.
+  const newDraftSlot = issueDraft && issueDraft.projectId === chat.projectId ? "issue:" + issueDraft.issueId : "new:" + chat.projectId;
+  const draftKey = `agentflow.native-chat.draft.${chat.user?.id || "guest"}.${chat.activeId || newDraftSlot}`;
+  useEffect(() => {
+    if (chat.activeId) setIssueDraft(null);
+  }, [chat.activeId]);
   useEffect(() => setMention(null), [draftKey]);
   // The open conversation's reply is reported read; the history list dots
   // the replies the server still counts as unread.
@@ -575,6 +583,7 @@ export default function App() {
       const projectId = String(event.data.projectId || "");
       if (!issueId || !projectId) return;
       chat.startProjectDraft(projectId);
+      setIssueDraft({ issueId, projectId });
       setIssueMention({ issueId, projectId });
     };
     window.addEventListener("message", listener);
@@ -593,6 +602,7 @@ export default function App() {
       .then((data) => {
         if (!current) return;
         const issue = data.issue || data;
+        if ((readJSON(draftKey, {}).references || []).some((r) => r.type === "issue" && r.id === issue.id)) return;
         const ref = {
           type: "issue",
           id: issue.id,

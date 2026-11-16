@@ -204,9 +204,6 @@ func dispatchIssue(d *deps, req dispatchRequest) (domain.Task, error) {
 	}
 	issue.LatestTaskID = stored.ID
 	issue.Status = "in_progress"
-	if issue.WithoutSOP() {
-		issue.SOPMode, issue.WorkflowID, issue.AutomationState = domain.IssueSOPUse, workflowID, "eligible"
-	}
 	if err := d.repo.PutIssue(issue); err != nil {
 		task.Status = "failed"
 		_ = d.repo.PutTask(task)
@@ -224,6 +221,9 @@ func dispatchIssue(d *deps, req dispatchRequest) (domain.Task, error) {
 	// Bind only after the run actually starts. A second lane keeps the SOP
 	// that already ran; a stored list of several SOPs is left unchanged.
 	// A failed start returns above and does not reach this write.
+	if issue.WithoutSOP() {
+		issue.SOPMode, issue.AutomationState = domain.IssueSOPUse, "eligible"
+	}
 	alreadyStarted := strings.TrimSpace(issue.WorkflowID) != "" && issue.WorkflowID != workflowID && d.repo.IssueHasTaskForWorkflow(issue.ID, issue.WorkflowID)
 	if len(issue.SOPBindings) > 1 {
 		if strings.TrimSpace(issue.WorkflowID) == "" {
