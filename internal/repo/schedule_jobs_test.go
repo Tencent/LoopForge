@@ -9,6 +9,39 @@ import (
 	"agentflow/internal/domain"
 )
 
+func TestDisableScheduleJobKeepsEditsSavedMeanwhile(t *testing.T) {
+	st, err := OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(st.Close)
+	job := domain.ScheduleJob{ID: "disable-race", Name: "巡检", ProjectID: "platform", SkipDispatch: true, AssistantPrompt: "p", IntervalSec: 3600, Enabled: true, RunAsUserID: 1}
+	if err := st.PutScheduleJob(job); err != nil {
+		t.Fatal(err)
+	}
+	// An edit lands after the stop request read the job.
+	edited := job
+	edited.Name, edited.AssistantPrompt, edited.RunAsUserID = "巡检 v2", "p2", 2
+	if err := st.PutScheduleJob(edited); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.DisableScheduleJob(job.ID); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := st.ScheduleJob(job.ID)
+	if got.Enabled || got.Name != "巡检 v2" || got.AssistantPrompt != "p2" || got.RunAsUserID != 2 {
+		t.Fatalf("disable = %+v", got)
+	}
+	for _, listed := range st.ScheduleJobs() {
+		if listed.ID == job.ID && listed.Enabled {
+			t.Fatal("listed job still enabled")
+		}
+	}
+	if err := st.DisableScheduleJob("missing"); err == nil {
+		t.Fatal("disabling a missing job succeeded")
+	}
+}
+
 func TestScheduleJobDispatchLimitPersistence(t *testing.T) {
 	for _, backend := range []string{"sqlite", "mysql"} {
 		t.Run(backend, func(t *testing.T) {

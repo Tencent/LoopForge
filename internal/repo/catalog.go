@@ -688,6 +688,28 @@ func (r *CatalogRepo) PutScheduleJob(v domain.ScheduleJob) error {
 	})
 }
 
+// DisableScheduleJob turns the job off and leaves the rest of the stored row,
+// including edits saved since the caller read it, untouched.
+func (r *CatalogRepo) DisableScheduleJob(id string) error {
+	return r.DB.Transaction(func(tx *gorm.DB) error {
+		var row scheduleJobRow
+		err := r.locking(tx).Where("id = ?", id).First(&row).Error
+		if err == gorm.ErrRecordNotFound {
+			return fmt.Errorf("schedule job not found")
+		}
+		if err != nil {
+			return err
+		}
+		var current domain.ScheduleJob
+		if err := json.Unmarshal(row.Payload, &current); err != nil {
+			return err
+		}
+		current.Enabled = false
+		current.UpdatedAt = time.Now().UTC()
+		return tx.Model(&row).Updates(map[string]any{"enabled": 0, "payload": mustJSON(current), "updated_at": timePtr(current.UpdatedAt)}).Error
+	})
+}
+
 func (r *CatalogRepo) DeleteScheduleJob(id string) error {
 	if _, ok := r.ScheduleJob(id); !ok {
 		return fmt.Errorf("schedule job not found")

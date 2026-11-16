@@ -200,8 +200,10 @@ func (h *scheduleHandlers) scheduleJobs(c *gin.Context) {
 // with neither the save is refused, since the job could not run. Without a
 // signed-in user the job stays on the project owner's keys. A saver without
 // a usable key may still stop the job when nothing it runs changes; only
-// enabled is then saved and the stored job is kept as is, since the name and
-// notifications also go into the prompt and a stopped job can be run by hand.
+// enabled is then turned off in the current row and the response is written
+// here, since the name and notifications also go into the prompt, a stopped
+// job can be run by hand, and another save may have landed meanwhile. A false
+// return means the response has been written.
 func (h *scheduleHandlers) bindScheduleRunAs(c *gin.Context, job *domain.ScheduleJob, prior domain.ScheduleJob, requestedModel string) bool {
 	job.RunAsUserID, job.RunAsName = 0, ""
 	if !job.SkipDispatch {
@@ -216,18 +218,22 @@ func (h *scheduleHandlers) bindScheduleRunAs(c *gin.Context, job *domain.Schedul
 		return true
 	}
 	engine, _ := assistantModelEngine(job.AssistantModel)
-	keepWhenStopping := func() bool {
+	stopOnly := func() bool {
 		if job.Enabled || !scheduleRunConfigUnchanged(prior, *job) {
 			return false
 		}
-		*job = prior
-		job.Enabled = false
+		if err := h.repo.DisableScheduleJob(prior.ID); err != nil {
+			respond(c, err)
+			return true
+		}
+		stored, _ := h.repo.ScheduleJob(prior.ID)
+		c.JSON(200, stored)
 		return true
 	}
 	_, shared, ok := scheduleKeyUser(h.repo, self, engine)
 	if !ok {
-		if keepWhenStopping() {
-			return true
+		if stopOnly() {
+			return false
 		}
 		c.JSON(400, gin.H{"error": scheduleMissingKeyError(engine)})
 		return false
@@ -235,8 +241,8 @@ func (h *scheduleHandlers) bindScheduleRunAs(c *gin.Context, job *domain.Schedul
 	if shared != nil {
 		model, allowed := assistantSponsoredModelFor(shared, scheduleSharedRequestedModel(requestedModel))
 		if !allowed {
-			if keepWhenStopping() {
-				return true
+			if stopOnly() {
+				return false
 			}
 			c.JSON(400, gin.H{"error": "你还没有配置个人 CodeBuddy API Key，定时任务会使用平台共享 Key，只能选平台管理员允许的模型（" + strings.Join(shared, "、") + "）；要用其他模型，请先在个人配置中填写自己的 Key"})
 			return false
