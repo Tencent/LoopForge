@@ -185,9 +185,25 @@ func nearestPatchBaseline(workspace, recorded string) string {
 	if !bestOK {
 		bestCount = int(^uint(0) >> 1)
 	}
-	refs, err := exec.Command("git", "-C", workspace, "for-each-ref", "--format=%(objectname) %(refname:short)", "refs/remotes/origin").Output()
+	refArgs := []string{"-C", workspace, "for-each-ref"}
+	if !bestOK {
+		refArgs = append(refArgs, "--merged="+head)
+	}
+	refArgs = append(refArgs, "--format=%(objectname) %(refname:short)", "refs/remotes/origin")
+	refs, err := exec.Command("git", refArgs...).Output()
 	if err != nil {
 		return best
+	}
+	var ahead map[string]struct{}
+	if bestOK {
+		out, err := exec.Command("git", "-C", workspace, "rev-list", best+".."+head).Output()
+		if err != nil {
+			return best
+		}
+		ahead = make(map[string]struct{})
+		for _, sha := range strings.Fields(string(out)) {
+			ahead[sha] = struct{}{}
+		}
 	}
 	for _, line := range strings.Split(string(refs), "\n") {
 		sha, name, ok := strings.Cut(strings.TrimSpace(line), " ")
@@ -197,8 +213,10 @@ func nearestPatchBaseline(workspace, recorded string) string {
 		if strings.EqualFold(name, "origin/HEAD") {
 			continue
 		}
-		if exec.Command("git", "-C", workspace, "merge-base", "--is-ancestor", sha, head).Run() != nil {
-			continue
+		if bestOK {
+			if _, ok := ahead[sha]; !ok {
+				continue
+			}
 		}
 		n, ok := revListCount(workspace, sha, head)
 		if !ok {
