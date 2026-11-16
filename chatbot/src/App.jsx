@@ -149,14 +149,6 @@ function useTitleReveal(sessionId, title, revealId) {
 
 const homeStarters = [
   {
-    id: "welcome-demo",
-    icon: "workflow",
-    tone: "green",
-    title: "一键体验",
-    description: "无需 API Key 或 GitHub，运行真实脚本，体验人工审批和产物交付。",
-    steps: ["运行脚本", "人工审批", "查看产物"],
-  },
-  {
     id: "quick-access",
     icon: "sparkles",
     tone: "blue",
@@ -492,14 +484,6 @@ export default function App() {
     });
   }
   function handleStarter(starter) {
-    if (starter.id === "welcome-demo") {
-      if (window.parent !== window) {
-        window.parent.postMessage({ type: "agentflow-welcome-demo" }, location.origin);
-      } else {
-        location.href = "/#/sops";
-      }
-      return;
-    }
     if (starter.id === "quick-access") {
       setQuickAccessOpen(true);
       return;
