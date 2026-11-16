@@ -1,4 +1,4 @@
-// AI 定时任务「执行记录」看板：最近 7 天概览与趋势、组合筛选、可展开的分页表格。
+// AI 定时任务「执行记录」看板：最近 7 天概览、可选 7/14/30 天的成功率趋势、组合筛选、可展开的分页表格。
 // 每次执行一条记录，失败可直接复制 Trace ID 去日志里检索。
 let scheduleExecutions=[];
 let scheduleExecProject=null;
@@ -11,6 +11,8 @@ let scheduleExecRangeFilter='';
 let scheduleExecQuery='';
 let scheduleExecPage=1;
 let scheduleExecPageSize=10;
+let scheduleExecTrendDays=7;
+const SCHEDULE_EXEC_TREND_SPANS=[7,14,30];
 const scheduleExecExpanded=new Set();
 const SCHEDULE_EXEC_DAY=86400000;
 const SCHEDULE_EXEC_PAGE_SIZES=[10,20,50];
@@ -63,12 +65,15 @@ function scheduleExecWeeks(list,now=scheduleExecNow()){
   const inRange=(from,to)=>list.filter(e=>{const t=scheduleExecStartMs(e);return t>=from&&t<to});
   return {current:scheduleExecSummary(inRange(now-7*SCHEDULE_EXEC_DAY,now+60000)),previous:scheduleExecSummary(inRange(now-14*SCHEDULE_EXEC_DAY,now-7*SCHEDULE_EXEC_DAY))};
 }
-function scheduleExecTrend(list,now=scheduleExecNow()){
+// Daily success rate over the last `days` calendar days (today included). A
+// day's rate counts finished executions only, like the overview; a day with
+// none has rate null.
+function scheduleExecTrend(list,days=7,now=scheduleExecNow()){
   const today=scheduleExecDayStart(now);
-  return Array.from({length:7},(_,i)=>{
-    const from=today-(6-i)*SCHEDULE_EXEC_DAY,to=from+SCHEDULE_EXEC_DAY,d=new Date(from);
-    const day=list.filter(e=>{const t=scheduleExecStartMs(e);return t>=from&&t<to});
-    return {label:`${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`,count:day.length,failed:day.filter(e=>e.status==='failed').length};
+  return Array.from({length:days},(_,i)=>{
+    const from=today-(days-1-i)*SCHEDULE_EXEC_DAY,to=from+SCHEDULE_EXEC_DAY,d=new Date(from);
+    const s=scheduleExecSummary(list.filter(e=>{const t=scheduleExecStartMs(e);return t>=from&&t<to}));
+    return {label:`${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`,from,count:s.total,success:s.success,failed:s.failed,finished:s.total-s.running,rate:s.rate};
   });
 }
 function scheduleExecSearchText(e){
@@ -123,19 +128,31 @@ function scheduleExecMetricsHTML(list){
     +cell('info','priority-bolt','平均耗时',c.avgMs?scheduleExecDurationLabel(c.avgMs):'—',c.avgMs&&p.avgMs?scheduleExecDeltaHTML(Math.round(c.avgMs),Math.round(p.avgMs),{lowerIsBetter:true}):'<small class="sched-exec-delta" data-trend="flat">已结束的执行</small>');
 }
 function scheduleExecTrendHTML(list){
-  const days=scheduleExecTrend(list);
-  const W=260,H=76,P=8,max=Math.max(1,...days.map(d=>d.count));
-  const pts=days.map((d,i)=>[P+i*(W-2*P)/(days.length-1),P+(1-d.count/max)*(H-2*P)]);
-  const line=pts.map(([x,y],i)=>{
-    if(!i)return `M${x.toFixed(1)} ${y.toFixed(1)}`;
-    const [px,py]=pts[i-1],mx=((px+x)/2).toFixed(1);
-    return `C${mx} ${py.toFixed(1)} ${mx} ${y.toFixed(1)} ${x.toFixed(1)} ${y.toFixed(1)}`;
-  }).join(' ');
-  const area=`${line} L${pts.at(-1)[0].toFixed(1)} ${H} L${pts[0][0].toFixed(1)} ${H} Z`;
-  const total=days.reduce((s,d)=>s+d.count,0);
-  const summary=`最近 7 天共执行 ${total} 次：${days.map(d=>`${d.label} ${d.count} 次`).join('，')}`;
-  const dots=pts.map(([x,y],i)=>`<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${i===pts.length-1?3.5:2.5}" class="${days[i].failed?'is-failed':''}${i===pts.length-1?' is-today':''}"><title>${days[i].label}：${days[i].count} 次${days[i].failed?`，失败 ${days[i].failed} 次`:''}</title></circle>`).join('');
-  return `<figcaption>执行次数趋势</figcaption><svg class="sched-exec-trend-chart" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="${escapeHTML(summary)}"><defs><linearGradient id="schedExecTrendFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0" style="stop-color:var(--hui-accent);stop-opacity:.22"/><stop offset="1" style="stop-color:var(--hui-accent);stop-opacity:0"/></linearGradient></defs><path class="sched-exec-trend-area" d="${area}" fill="url(#schedExecTrendFill)"/><path class="sched-exec-trend-line" d="${line}"/>${dots}</svg><div class="sched-exec-trend-labels" aria-hidden="true">${days.map(d=>`<span>${d.label}</span>`).join('')}</div>`;
+  const span=scheduleExecTrendDays,days=scheduleExecTrend(list,span);
+  const W=260,H=76,P=6;
+  const x=i=>P+i*(W-2*P)/Math.max(1,days.length-1),y=rate=>P+(1-rate/100)*(H-2*P);
+  const known=days.map((d,i)=>d.rate===null?null:{i,x:x(i),y:y(d.rate)}).filter(Boolean);
+  const curve=(a,b)=>{const mx=((a.x+b.x)/2).toFixed(1);return `C${mx} ${a.y.toFixed(1)} ${mx} ${b.y.toFixed(1)} ${b.x.toFixed(1)} ${b.y.toFixed(1)}`};
+  // Adjacent days join with a solid curve; a run of days without executions is bridged with a dashed one.
+  let solid='',gaps='',solidEnd=-1;
+  const at=p=>`${p.x.toFixed(1)} ${p.y.toFixed(1)}`;
+  known.forEach((p,k)=>{
+    const prev=known[k-1];if(!prev)return;
+    if(p.i-prev.i===1){solid+=`${solidEnd===prev.i?'':`M${at(prev)} `}${curve(prev,p)} `;solidEnd=p.i}
+    else gaps+=`M${at(prev)} ${curve(prev,p)} `;
+  });
+  solid=solid.trim();
+  const area=known.length>1?`M${known[0].x.toFixed(1)} ${H} ${known.map((p,k)=>k?curve(known[k-1],p):`L${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(' ')} L${known.at(-1).x.toFixed(1)} ${H} Z`:'';
+  const overall=scheduleExecSummary(list.filter(e=>scheduleExecStartMs(e)>=days[0].from));
+  const tip=d=>d.rate===null?`${d.label}：无已结束的执行`:`${d.label}：成功率 ${d.rate}%（成功 ${d.success} / 已结束 ${d.finished}${d.failed?`，失败 ${d.failed}`:''}）`;
+  const summary=`最近 ${span} 天成功率${overall.rate===null?'无数据':` ${overall.rate}%`}：${days.map(d=>d.rate===null?`${d.label} 无执行`:`${d.label} ${d.rate}%`).join('，')}`;
+  const pct=v=>`${(v*100).toFixed(2)}%`;
+  const dots=known.map(p=>{const d=days[p.i];return `<span class="sched-exec-trend-dot${d.failed?' is-failed':''}${p.i===days.length-1?' is-today':''}" style="left:${pct(p.x/W)};top:${pct(p.y/H)}" title="${escapeHTML(tip(d))}"></span>`}).join('');
+  const step=span<=7?1:span<=14?2:5;
+  const labels=days.map((d,i)=>(i%step===0||i===days.length-1)&&!(i!==days.length-1&&days.length-1-i<step)?`<span style="left:${pct(x(i)/W)}">${d.label}</span>`:'').join('');
+  const loaded=scheduleExecutions.length>=500&&scheduleExecutions.every(e=>scheduleExecStartMs(e)>days[0].from);
+  const choices=SCHEDULE_EXEC_TREND_SPANS.map(n=>`<button type="button" data-exec-trend-days="${n}" aria-pressed="${n===span}"${n===span?' class="is-active"':''}>${n} 天</button>`).join('');
+  return `<figcaption><span class="sched-exec-trend-title">成功率趋势<small>${overall.rate===null?'暂无已结束的执行':`区间成功率 ${overall.rate}%`}</small></span><span class="sched-exec-trend-range" role="group" aria-label="趋势时间范围">${choices}</span></figcaption><div class="sched-exec-trend-plot"><div class="sched-exec-trend-y" aria-hidden="true"><span>100%</span><span>50%</span><span>0%</span></div><div class="sched-exec-trend-canvas"><svg class="sched-exec-trend-chart" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="${escapeHTML(summary)}"><defs><linearGradient id="schedExecTrendFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0" style="stop-color:var(--hui-success);stop-opacity:.2"/><stop offset="1" style="stop-color:var(--hui-success);stop-opacity:0"/></linearGradient></defs>${[0,50,100].map(v=>`<line class="sched-exec-trend-grid" x1="0" x2="${W}" y1="${y(v).toFixed(1)}" y2="${y(v).toFixed(1)}"/>`).join('')}${area?`<path class="sched-exec-trend-area" d="${area}" fill="url(#schedExecTrendFill)"/>`:''}${gaps?`<path class="sched-exec-trend-gap" d="${gaps.trim()}"/>`:''}${solid?`<path class="sched-exec-trend-line" d="${solid}"/>`:''}</svg>${dots}${known.length?'':'<p class="sched-exec-trend-empty">这段时间没有已结束的执行</p>'}</div></div><div class="sched-exec-trend-labels" aria-hidden="true">${labels}</div>${loaded?'<p class="sched-exec-trend-note">只统计已加载的最近 500 条执行</p>':''}`;
 }
 // Same link shape as issueConversationURL: the Studio frame opens chatSession.
 function scheduleExecConversationURL(e){
@@ -234,7 +251,15 @@ function renderScheduleExecutions(){
   const jobName=scheduleExecJobFilter?options.find(([id])=>id===scheduleExecJobFilter)?.[1]:'';
   const scope=$('#scheduleExecOverviewScope');if(scope)scope.textContent=jobName?`（最近 7 天 · ${jobName}）`:'（最近 7 天）';
   $('#scheduleExecMetrics').innerHTML=scheduleExecMetricsHTML(scoped);
-  const trend=$('#scheduleExecTrend');if(trend)trend.innerHTML=scheduleExecTrendHTML(scoped);
+  const trend=$('#scheduleExecTrend');
+  if(trend){
+    trend.innerHTML=scheduleExecTrendHTML(scoped);
+    trend.querySelectorAll('[data-exec-trend-days]').forEach(b=>b.onclick=()=>{
+      scheduleExecTrendDays=Number(b.dataset.execTrendDays)||7;
+      renderScheduleExecutions();
+      $('#scheduleExecTrend')?.querySelector(`[data-exec-trend-days="${scheduleExecTrendDays}"]`)?.focus();
+    });
+  }
   const list=$('#scheduleExecList');
   const focused=document.activeElement;
   const focusKey=list.contains(focused)?['copyTrace','execToggle','execPage','scheduleMenu','openExecFirstRun'].find(k=>focused.dataset?.[k]!==undefined&&!focused.closest('.schedule-row-menu')):'';
