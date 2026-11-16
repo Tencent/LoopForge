@@ -35,19 +35,24 @@ func TestOTLPProtobufAndMalformedFields(t *testing.T) {
 	status := append(cvSProtoBytes(2, []byte("bad")), cvSProtoVarint(3, 2)...)
 	span := cvSProtoBytes(1, []byte{1, 2})
 	span = append(span, cvSProtoBytes(2, []byte{3, 4})...)
-	span = append(span, cvSProtoBytes(3, []byte{5})...)
+	span = append(span, cvSProtoBytes(3, []byte("vendor=sample"))...)
+	span = append(span, cvSProtoBytes(4, []byte{5, 6, 7, 8, 9, 10, 11, 12})...)
 	span = append(span, cvSProtoBytes(5, []byte("operation"))...)
 	span = append(span, cvSProtoFixed64(7, 1_000_000_000)...)
 	span = append(span, cvSProtoFixed64(8, 2_000_000_000)...)
 	span = append(span, cvSProtoBytes(9, cvSProtoBytes(1, []byte("empty-value")))...)
 	span = append(span, cvSProtoBytes(15, status)...)
-	scope := cvSProtoBytes(2, span)
+	root := append(cvSProtoBytes(3, []byte("vendor=sample")), cvSProtoBytes(5, []byte("root"))...)
+	scope := append(cvSProtoBytes(2, span), cvSProtoBytes(2, root)...)
 	rs := append(cvSProtoBytes(1, resource), cvSProtoBytes(2, scope)...)
 	body := cvSProtoBytes(1, rs)
 
 	events := ParseOTLPTraces(body)
-	if len(events) != 1 || events[0].RunID != "run-pb" || events[0].Level != "error" {
+	if len(events) != 2 || events[0].RunID != "run-pb" || events[0].Level != "error" {
 		t.Fatalf("protobuf event = %#v", events)
+	}
+	if events[0].ParentID != "05060708090a0b0c" || events[1].ParentID != "" {
+		t.Fatalf("child parent ID = %q, root parent ID = %q", events[0].ParentID, events[1].ParentID)
 	}
 	for _, malformed := range [][]byte{{0x80}, {0x09, 1}, {0x12, 5, 1}, {0x1b}, {0x2d, 1}} {
 		if events := ParseOTLPTraces(malformed); len(events) != 0 {
