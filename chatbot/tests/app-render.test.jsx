@@ -251,6 +251,45 @@ describe("App", () => {
     }
   });
 
+  test("leaving a requirement handoff before its details load cancels the mention", async () => {
+    const previous = { ...chat };
+    const originalFetch = globalThis.fetch;
+    let resolveIssue;
+    globalThis.fetch = vi.fn(() => new Promise((resolve) => {
+      resolveIssue = () => resolve({
+        ok: true,
+        status: 200,
+        json: async () => ({ issue: { id: "i4", title: "慢需求", projectId: "p1" } }),
+      });
+    }));
+    Object.assign(chat, { projectId: "p1", startProjectDraft: vi.fn() });
+    const owner = chat.user?.id || "guest";
+    const projectDraftKey = `agentflow.native-chat.draft.${owner}.new:p1`;
+    const projectDraft = JSON.stringify({ text: "原来的草稿", attachments: [], references: [] });
+    localStorage.setItem(projectDraftKey, projectDraft);
+    history.replaceState({}, "", "/?projectId=p1&mentionIssue=i4");
+    let view;
+    try {
+      view = render(<App />);
+      await waitFor(() => expect(globalThis.fetch).toHaveBeenCalledTimes(1));
+      fireEvent.keyDown(window, { key: "O", ctrlKey: true, shiftKey: true });
+      expect(chat.newChat).toHaveBeenCalled();
+      const box = screen.getByRole("textbox");
+      await waitFor(() => expect(box.value).toBe("原来的草稿"));
+      resolveIssue();
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(box.value).toBe("原来的草稿");
+      expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+      expect(localStorage.getItem(projectDraftKey)).toBe(projectDraft);
+    } finally {
+      view?.unmount();
+      globalThis.fetch = originalFetch;
+      Object.assign(chat, previous);
+      delete chat.startProjectDraft;
+      localStorage.clear();
+    }
+  });
+
   test("renders the ready empty state and opens primary controls", async () => {
     const user = userEvent.setup();
     render(<App />);

@@ -357,6 +357,7 @@ export default function App() {
   }
   function startNewChat() {
     setIssueDraft(null);
+    setIssueMention(null);
     chat.newChat();
   }
   const input = useRef(),
@@ -377,7 +378,9 @@ export default function App() {
   const newDraftSlot = issueDraft && issueDraft.projectId === chat.projectId ? "issue:" + issueDraft.issueId : "new:" + chat.projectId;
   const draftKey = `agentflow.native-chat.draft.${chat.user?.id || "guest"}.${chat.activeId || newDraftSlot}`;
   useEffect(() => {
-    if (chat.activeId) setIssueDraft(null);
+    if (!chat.activeId) return;
+    setIssueDraft(null);
+    setIssueMention(null);
   }, [chat.activeId]);
   useEffect(() => setMention(null), [draftKey]);
   // The open conversation's reply is reported read; the history list dots
@@ -595,6 +598,7 @@ export default function App() {
       !chat.user ||
       chat.activeId ||
       chat.projectId !== issueMention.projectId ||
+      newDraftSlot !== "issue:" + issueMention.issueId ||
       draftReady.current !== draftKey
     ) return;
     let current = true;
@@ -629,7 +633,7 @@ export default function App() {
     return () => {
       current = false;
     };
-  }, [issueMention, chat.user, chat.activeId, chat.projectId, draftKey]);
+  }, [issueMention, chat.user, chat.activeId, chat.projectId, newDraftSlot, draftKey]);
   useEffect(() => {
     let previous = previousArtifacts.current;
     if (previous.id !== chat.activeId) {
