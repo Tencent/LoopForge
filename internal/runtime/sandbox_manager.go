@@ -9,6 +9,7 @@ import (
 	goruntime "runtime"
 	"strings"
 	"sync"
+	"time"
 )
 
 type Manager struct {
@@ -400,8 +401,23 @@ func (s *managedSandbox) SetCredentials(credentials RunCredentials) {
 func (s *managedSandbox) Exec(ctx context.Context, command CommandSpec, sink EventSink) (string, error) {
 	select {
 	case s.slots <- struct{}{}:
-	case <-ctx.Done():
-		return "", ctx.Err()
+	default:
+		// Every slot is busy, so this command waits here. Say so: otherwise
+		// the run stays "running" while no command is executing and looks hung.
+		if sink != nil {
+			sink(domain.TelemetryEvent{
+				Category:  "sandbox",
+				Name:      "sandbox.slot_wait",
+				Timestamp: time.Now().UTC(),
+				Phase:     "start",
+				Message:   "等待执行槽位：本 worker 的并发沙箱已满，命令在排队",
+			})
+		}
+		select {
+		case s.slots <- struct{}{}:
+		case <-ctx.Done():
+			return "", ctx.Err()
+		}
 	}
 	defer func() { <-s.slots }()
 	s.credentialsMu.RLock()
