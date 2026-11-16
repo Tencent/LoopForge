@@ -112,3 +112,30 @@ func TestWorkspaceGitFailureAndNoRepositoryDiff(t *testing.T) {
 		t.Fatal("canceled diff accepted")
 	}
 }
+
+func TestRunnerCombinedWorkspaceDiffQualifiesRepositoryPaths(t *testing.T) {
+	root := t.TempDir()
+	const name = "repository"
+	dir := filepath.Join(root, name)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "README.md")
+	if err := os.WriteFile(path, []byte("original\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cvRGit(t, dir, "init", "-q")
+	cvRGit(t, dir, "config", "user.name", "Runner fixture")
+	cvRGit(t, dir, "config", "user.email", "runner@example.test")
+	cvRGit(t, dir, "add", "README.md")
+	cvRGit(t, dir, "commit", "-qm", "initial")
+	if err := os.WriteFile(path, []byte("changed\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	repositories := []domain.RepositoryContext{{WorkspaceDir: name}}
+	diff, truncated, err := runnerReadWorkspaceDiff(context.Background(), root, repositories, "")
+	if err != nil || truncated ||
+		!strings.Contains(diff, "diff --git a/repository/README.md b/repository/README.md") {
+		t.Fatalf("combined runner diff: truncated=%t, err=%v, diff=%s", truncated, err, diff)
+	}
+}

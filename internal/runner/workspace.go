@@ -718,7 +718,14 @@ func runnerReadWorkspaceDiff(ctx context.Context, root string, repositories []do
 		}
 		// Browsing must never take .git/index.lock: a concurrent preparation
 		// or commit would otherwise fail with "index.lock: File exists".
-		args := []string{"--no-optional-locks", "-C", repository.path, "diff", "--no-ext-diff", "--no-color", "HEAD", "--"}
+		args := []string{"--no-optional-locks", "-C", repository.path, "diff", "--no-ext-diff", "--no-color"}
+		// Combined patches use the same workspace paths as the status list,
+		// so two repositories can change a file with the same relative name.
+		if raw == "" && repository.label != "" {
+			prefix := strings.TrimSuffix(repository.label, "/") + "/"
+			args = append(args, "--src-prefix=a/"+prefix, "--dst-prefix=b/"+prefix)
+		}
+		args = append(args, "HEAD", "--")
 		if rel != "" {
 			args = append(args, filepath.FromSlash(rel))
 		}

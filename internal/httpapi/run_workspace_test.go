@@ -164,6 +164,43 @@ func TestRunWorkspaceBrowseIsReadOnlyAndHidesSensitiveFiles(t *testing.T) {
 	}
 }
 
+func TestCombinedWorkspaceDiffIdentifiesFilesAcrossRepositories(t *testing.T) {
+	root := t.TempDir()
+	run := domain.Run{Repositories: []domain.RepositoryContext{
+		{WorkspaceDir: "frontend"},
+		{WorkspaceDir: "backend"},
+	}}
+	for _, repository := range run.Repositories {
+		dir := filepath.Join(root, repository.WorkspaceDir)
+		path := filepath.Join(dir, "README.md")
+		mustWriteWorkspaceFile(t, path, "original\n")
+		mustRunWorkspaceGit(t, dir, "init")
+		mustRunWorkspaceGit(t, dir, "config", "user.email", "test@example.com")
+		mustRunWorkspaceGit(t, dir, "config", "user.name", "Test")
+		mustRunWorkspaceGit(t, dir, "add", "README.md")
+		mustRunWorkspaceGit(t, dir, "commit", "-m", "initial")
+		mustWriteWorkspaceFile(t, path, "edited "+repository.WorkspaceDir+"\n")
+	}
+
+	diff, truncated, err := readWorkspaceDiff(context.Background(), root, run, "")
+	if err != nil || truncated {
+		t.Fatalf("read combined workspace diff: truncated=%t, err=%v", truncated, err)
+	}
+	for _, repository := range run.Repositories {
+		name := repository.WorkspaceDir
+		want := "diff --git a/" + name + "/README.md b/" + name + "/README.md"
+		if !strings.Contains(diff, want) {
+			t.Fatalf("combined diff missing %q:\n%s", want, diff)
+		}
+	}
+
+	single, _, err := readWorkspaceDiff(context.Background(), root, run, "backend/README.md")
+	if err != nil || !strings.Contains(single, "diff --git a/README.md b/README.md") ||
+		!strings.Contains(single, "+edited backend") || strings.Contains(single, "edited frontend") {
+		t.Fatalf("expected repository-relative single-file diff, err=%v:\n%s", err, single)
+	}
+}
+
 func TestRunWorkspaceReportsCleanedWorkspace(t *testing.T) {
 	store, err := repo.OpenTest()
 	if err != nil {

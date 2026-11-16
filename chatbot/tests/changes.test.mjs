@@ -150,3 +150,23 @@ test("addedFileDiff renders untracked content as additions", () => {
   );
   assert.equal(addedFileDiff("empty.md", "").hunks.length, 0);
 });
+
+test("qualified workspace paths associate identical file names with their own repository patches", () => {
+  const names = ["frontend", "backend"];
+  const patch = parseUnifiedDiff(names.map((repo) => [
+    `diff --git a/${repo}/README.md b/${repo}/README.md`,
+    "@@ -1 +1 @@",
+    "-old",
+    `+${repo} change`,
+  ].join("\n")).join("\n"));
+  const files = mergeChanges(names.map((repo) => ({
+    path: `${repo}/README.md`,
+    repository: repo,
+    worktree: "M",
+  })), patch);
+
+  assert.equal(files.length, 2);
+  for (const file of files) {
+    assert.equal(file.patch.hunks[0].lines[1].text, `${file.repository} change`);
+  }
+});
