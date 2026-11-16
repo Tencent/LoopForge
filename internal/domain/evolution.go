@@ -23,11 +23,15 @@ const (
 	EvoAssetRule  = "rule"
 )
 
-// Autonomy levels. P1 supports L0–L2; L3+ (auto canary) is reserved.
+// Autonomy levels.
 const (
 	EvoLevelOff     = 0 // no diagnosis for this asset
 	EvoLevelReport  = 1 // report findings only
-	EvoLevelPropose = 2 // propose + replay, human confirms release
+	EvoLevelPropose = 2 // propose + replay; humans start trials, release and roll back
+	// EvoLevelAuto: a passed replay starts a trial by itself, a trial that is
+	// not worse than the live body is released, and a release that turns out
+	// worse is rolled back. Humans can still step in at any point.
+	EvoLevelAuto = 3
 )
 
 const EvoDefaultLevel = EvoLevelPropose
@@ -45,6 +49,9 @@ const (
 	EvoProposalDrafting   = "drafting"
 	EvoProposalValidating = "validating"
 	EvoProposalPending    = "pending"
+	// EvoProposalCanary: a share of new runs uses the candidate while the
+	// rest keep the live body; the two arms are compared before release.
+	EvoProposalCanary     = "canary"
 	EvoProposalReleased   = "released"
 	EvoProposalRejected   = "rejected"
 	EvoProposalFailed     = "failed"
@@ -205,12 +212,15 @@ type EvoProposal struct {
 	Status           string           `json:"status"`
 	Model            string           `json:"model,omitempty"`
 	Replays          []EvoReplay      `json:"replays,omitempty"`
+	ExpectedReplays  int              `json:"expectedReplays,omitempty"`
 	Summary          EvoReplaySummary `json:"summary"`
 	Error            string           `json:"error,omitempty"`
 	CreatedBy        int64            `json:"createdBy,omitempty"`
 	DecidedBy        int64            `json:"decidedBy,omitempty"`
 	DecisionNote     string           `json:"decisionNote,omitempty"`
 	ReleasedVersion  int              `json:"releasedVersion,omitempty"`
+	Canary           *EvoCanary       `json:"canary,omitempty"`
+	Watch            *EvoWatch        `json:"watch,omitempty"`
 	CreatedAt        time.Time        `json:"createdAt"`
 	UpdatedAt        time.Time        `json:"updatedAt"`
 	DecidedAt        time.Time        `json:"decidedAt,omitempty"`
@@ -218,13 +228,96 @@ type EvoProposal struct {
 
 func (p EvoProposal) Asset() EvoAssetRef { return EvoAssetRef{Kind: p.AssetKind, ID: p.AssetID} }
 
-// Open reports whether the proposal still waits for validation or a decision.
+// EvoOpenProposalStatuses hold the asset: one open proposal per asset.
+var EvoOpenProposalStatuses = []string{EvoProposalDrafting, EvoProposalValidating, EvoProposalPending, EvoProposalCanary}
+
+// Open reports whether the proposal still waits for validation, a trial or
+// a decision.
 func (p EvoProposal) Open() bool {
-	switch p.Status {
-	case EvoProposalDrafting, EvoProposalValidating, EvoProposalPending:
-		return true
+	for _, status := range EvoOpenProposalStatuses {
+		if p.Status == status {
+			return true
+		}
 	}
 	return false
+}
+
+// TrialActive reports whether new runs are still split onto the candidate.
+func (p EvoProposal) TrialActive() bool {
+	return p.Status == EvoProposalCanary && p.Canary != nil && (p.Canary.Status == EvoCanaryRunning || p.Canary.Status == EvoCanaryPassed)
+}
+
+// EvoArmStats tallies how the nodes an asset shapes ended in a set of runs:
+// clean (succeeded without rework), reworked (succeeded after being sent
+// back) or failed.
+type EvoArmStats struct {
+	Runs     int     `json:"runs"`
+	Clean    int     `json:"clean"`
+	Reworked int     `json:"reworked"`
+	Failed   int     `json:"failed"`
+	Rate     float64 `json:"rate"` // clean / runs
+}
+
+// Trial (canary) status.
+const (
+	EvoCanaryRunning  = "running"  // collecting runs
+	EvoCanaryPassed   = "passed"   // not worse than the live body; awaiting release (L2)
+	EvoCanaryFailed   = "failed"   // worse than the live body; stopped
+	EvoCanaryAborted  = "aborted"  // stopped by a human or an external edit
+	EvoCanaryPromoted = "promoted" // released to every run
+)
+
+// EvoCanary is a small-traffic trial of a candidate on new business runs.
+// Percent of new runs that use the asset take the candidate (canary arm);
+// the rest keep the live body (control arm).
+type EvoCanary struct {
+	Percent   int         `json:"percent"`
+	MinRuns   int         `json:"minRuns"`
+	Status    string      `json:"status"`
+	Auto      bool        `json:"auto,omitempty"`
+	StartedBy int64       `json:"startedBy,omitempty"`
+	StartedAt time.Time   `json:"startedAt"`
+	CheckedAt time.Time   `json:"checkedAt,omitempty"`
+	EndedAt   time.Time   `json:"endedAt,omitempty"`
+	Canary    EvoArmStats `json:"canary"`
+	Control   EvoArmStats `json:"control"`
+	// ProbWorse is the posterior probability that the candidate's clean
+	// rate is below the live body's (Beta-Binomial, uniform prior).
+	ProbWorse float64 `json:"probWorse"`
+	Verdict   string  `json:"verdict,omitempty"`
+}
+
+// Post-release watch status.
+const (
+	EvoWatchWatching   = "watching"
+	EvoWatchHealthy    = "healthy"
+	EvoWatchDegraded   = "degraded"
+	EvoWatchRolledBack = "rolled_back"
+	EvoWatchEnded      = "ended"
+)
+
+// EvoWatch follows a released version on real runs and compares it with
+// the version it replaced.
+type EvoWatch struct {
+	Version       int         `json:"version"`
+	Hash          string      `json:"hash"`
+	PrevVersion   int         `json:"prevVersion"`
+	PrevHash      string      `json:"prevHash"`
+	MinRuns       int         `json:"minRuns"`
+	Status        string      `json:"status"`
+	StartedAt     time.Time   `json:"startedAt"`
+	CheckedAt     time.Time   `json:"checkedAt,omitempty"`
+	EndedAt       time.Time   `json:"endedAt,omitempty"`
+	BaselineReady bool        `json:"baselineReady,omitempty"`
+	Baseline      EvoArmStats `json:"baseline"`
+	Current       EvoArmStats `json:"current"`
+	ProbWorse     float64     `json:"probWorse"`
+	Verdict       string      `json:"verdict,omitempty"`
+}
+
+// Active reports whether the watch still follows new runs.
+func (w *EvoWatch) Active() bool {
+	return w != nil && (w.Status == EvoWatchWatching || w.Status == EvoWatchDegraded)
 }
 
 // AssetVersion is one immutable body of an evolvable asset.
@@ -279,10 +372,13 @@ type EvoAssetHealth struct {
 
 // EvoOverview is the 进化中心 dashboard payload.
 type EvoOverview struct {
-	ProjectID   string           `json:"projectId"`
-	Findings    []EvoFinding     `json:"findings"`
-	Validating  []EvoProposal    `json:"validating"`
-	Pending     []EvoProposal    `json:"pending"`
+	ProjectID  string        `json:"projectId"`
+	Findings   []EvoFinding  `json:"findings"`
+	Validating []EvoProposal `json:"validating"`
+	Pending    []EvoProposal `json:"pending"`
+	// Trial lists proposals in a canary trial and released ones whose
+	// post-release watch is still running or flagged a degradation.
+	Trial       []EvoProposal    `json:"trial"`
 	Recent      []EvoProposal    `json:"recent"`
 	Health      []EvoAssetHealth `json:"health"`
 	Policies    []EvoPolicy      `json:"policies"`
@@ -290,13 +386,13 @@ type EvoOverview struct {
 	GeneratedAt time.Time        `json:"generatedAt"`
 }
 
-// NormalizeEvoLevel clamps unknown levels into the supported P1 range.
+// NormalizeEvoLevel clamps unknown levels into the supported range.
 func NormalizeEvoLevel(level int) int {
 	if level < EvoLevelOff {
 		return EvoLevelOff
 	}
-	if level > EvoLevelPropose {
-		return EvoLevelPropose
+	if level > EvoLevelAuto {
+		return EvoLevelAuto
 	}
 	return level
 }

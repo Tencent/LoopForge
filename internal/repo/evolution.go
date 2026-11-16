@@ -303,17 +303,53 @@ func (r *EvolutionRepo) EvoProposals(projectID string, limit int, statuses ...st
 	return out
 }
 
-// OpenEvoProposalForAsset returns a drafting/validating/pending proposal of
-// the asset. Only one open proposal per asset is allowed.
+// OpenEvoProposalForAsset returns a drafting/validating/pending/canary
+// proposal of the asset. Only one open proposal per asset is allowed.
 func (r *EvolutionRepo) OpenEvoProposalForAsset(kind, id string) (domain.EvoProposal, bool) {
 	var row evoProposalRow
-	err := r.DB.Where("asset_kind = ? AND asset_id = ? AND status IN ?", kind, id,
-		[]string{domain.EvoProposalDrafting, domain.EvoProposalValidating, domain.EvoProposalPending}).
+	err := r.DB.Where("asset_kind = ? AND asset_id = ? AND status IN ?", kind, id, domain.EvoOpenProposalStatuses).
 		Order("updated_at DESC").Limit(1).Take(&row).Error
 	if err != nil {
 		return domain.EvoProposal{}, false
 	}
 	return r.evoProposalFromRow(row, false)
+}
+
+// ActiveEvoCanaries lists proposals whose trial still splits new runs. Run
+// start calls it, so replays are not loaded.
+func (r *EvolutionRepo) ActiveEvoCanaries() []domain.EvoProposal {
+	var rows []evoProposalRow
+	if err := r.DB.Where("status = ?", domain.EvoProposalCanary).Order("updated_at DESC").Limit(50).Find(&rows).Error; err != nil {
+		return nil
+	}
+	out := make([]domain.EvoProposal, 0, len(rows))
+	for _, row := range rows {
+		if p, ok := r.evoProposalFromRow(row, false); ok && p.TrialActive() {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// EvoCanaryOverride is the engine's lookup for a trial run's candidate. It
+// ignores the proposal's current status: a run keeps the body it started
+// with even if the trial ends while it runs.
+func (r *EvolutionRepo) EvoCanaryOverride(id string) (domain.EvoAssetOverride, bool) {
+	var row evoProposalRow
+	if strings.TrimSpace(id) == "" || r.DB.Where("id = ?", id).Take(&row).Error != nil {
+		return domain.EvoAssetOverride{}, false
+	}
+	p, ok := r.evoProposalFromRow(row, false)
+	if !ok || p.Canary == nil || strings.TrimSpace(p.CandidateContent) == "" {
+		return domain.EvoAssetOverride{}, false
+	}
+	switch p.AssetKind {
+	case domain.EvoAssetAgent:
+		return domain.EvoAssetOverride{AgentPrompts: map[string]string{p.AssetID: p.CandidateContent}}, true
+	case domain.EvoAssetRule:
+		return domain.EvoAssetOverride{RuleContents: map[string]string{p.AssetID: p.CandidateContent}}, true
+	}
+	return domain.EvoAssetOverride{}, false
 }
 
 // ---------- replays ----------
@@ -519,6 +555,35 @@ func (r *EvolutionRepo) RunIDsPinnedTo(kind, id string, since time.Time, limit i
 		return nil
 	}
 	return ids
+}
+
+// AssetPinsBetween lists pins of an asset created in [since, until), newest
+// first. Zero bounds are open. Trials and post-release watches split the
+// runs by pin hash: the body each run actually started with.
+func (r *EvolutionRepo) AssetPinsBetween(kind, id string, since, until time.Time, limit int) []domain.RunAssetPin {
+	var rows []runAssetPinRow
+	q := r.DB.Model(&runAssetPinRow{}).Where("asset_kind = ? AND asset_id = ?", kind, id)
+	if !since.IsZero() {
+		q = q.Where("created_at >= ?", since)
+	}
+	if !until.IsZero() {
+		q = q.Where("created_at < ?", until)
+	}
+	if limit <= 0 || limit > 1000 {
+		limit = 200
+	}
+	if err := q.Order("created_at DESC").Limit(limit).Find(&rows).Error; err != nil {
+		return nil
+	}
+	out := make([]domain.RunAssetPin, 0, len(rows))
+	for _, row := range rows {
+		pin := domain.RunAssetPin{RunID: row.RunID, AssetKind: row.AssetKind, AssetID: row.AssetID, Version: row.Version, Hash: row.Hash}
+		if row.Created != nil {
+			pin.CreatedAt = *row.Created
+		}
+		out = append(out, pin)
+	}
+	return out
 }
 
 // ---------- signals & samples ----------

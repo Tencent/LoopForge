@@ -156,6 +156,10 @@ func (e *Engine) startWorkflowDefinitionSeeded(wf domain.WorkflowDefinition, inp
 		return domain.Run{}, err
 	}
 	wf.SandboxSnapshot = resolvedSandboxSnapshot(profile, resources)
+	var canaryNames []string
+	if !workspace {
+		executionContext.EvolutionCanaryIDs, canaryNames = e.assignEvolutionCanaries(id, wf, executionContext)
+	}
 	r := domain.Run{
 		ID: id, WorkflowID: workflowID, WorkflowSnapshot: wf, Status: "running", Input: input,
 		Repository: firstRepository, ExecutionContext: executionContext, Nodes: map[string]*domain.NodeRun{},
@@ -184,6 +188,9 @@ func (e *Engine) startWorkflowDefinitionSeeded(wf domain.WorkflowDefinition, inp
 		e.event(&r, "", "workspace.created", "对话工作区已创建")
 	} else {
 		e.event(&r, "", "run.started", "流水线开始执行")
+	}
+	if len(canaryNames) > 0 {
+		e.event(&r, "", "evolution.canary", "本次运行参与进化试用，使用「"+strings.Join(canaryNames, "、")+"」的候选正文")
 	}
 	if seed != nil {
 		seed(&r)

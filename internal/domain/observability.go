@@ -71,6 +71,9 @@ type TelemetryContext struct {
 	Purpose string `json:"purpose,omitempty"`
 	// EvolutionReplayID names the replay whose asset overrides this run uses.
 	EvolutionReplayID string `json:"evolutionReplayId,omitempty"`
+	// EvolutionCanaryIDs name the proposals in a trial whose candidate this
+	// business run uses instead of the live body (assigned at run start).
+	EvolutionCanaryIDs []string `json:"evolutionCanaryIds,omitempty"`
 }
 
 type MetricPoint struct {

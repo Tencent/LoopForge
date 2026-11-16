@@ -22,6 +22,10 @@ type evolutionHandlers struct {
 	jobs    chan struct{}
 	healthM sync.Mutex
 	health  map[string]evoHealthCache
+	// trial / watch sweep throttle and per-run score cache
+	trialM      sync.Mutex
+	trialAt     time.Time
+	trialScores map[string]int
 }
 
 type evoHealthCache struct {
@@ -39,7 +43,7 @@ const (
 )
 
 func newEvolutionHandlers(d *deps) *evolutionHandlers {
-	return &evolutionHandlers{deps: d, jobs: make(chan struct{}, evoMaxConcurrentJobs), health: map[string]evoHealthCache{}}
+	return &evolutionHandlers{deps: d, jobs: make(chan struct{}, evoMaxConcurrentJobs), health: map[string]evoHealthCache{}, trialScores: map[string]int{}}
 }
 
 func registerEvolutionRoutes(g *gin.Engine, h *evolutionHandlers) {
@@ -50,6 +54,7 @@ func registerEvolutionRoutes(g *gin.Engine, h *evolutionHandlers) {
 	g.GET("/api/evolution/proposals", h.proposals)
 	g.POST("/api/evolution/proposals", h.createProposal)
 	g.GET("/api/evolution/proposals/:id", h.proposal)
+	g.GET("/api/evolution/proposals/:id/replays/:rid/compare", h.replayCompare)
 	g.POST("/api/evolution/proposals/:id/approve", h.approveProposal)
 	g.POST("/api/evolution/proposals/:id/reject", h.rejectProposal)
 	g.GET("/api/evolution/policies", h.policies)
@@ -197,7 +202,22 @@ func (h *evolutionHandlers) overview(c *gin.Context) {
 	out.Findings = h.repo.EvoFindings(projectID, domain.EvoFindingOpen)
 	out.Validating = evoProposalListView(h.repo.EvoProposals(projectID, 50, domain.EvoProposalDrafting, domain.EvoProposalValidating))
 	out.Pending = evoProposalListView(h.repo.EvoProposals(projectID, 50, domain.EvoProposalPending))
-	out.Recent = evoProposalListView(h.repo.EvoProposals(projectID, 12, domain.EvoProposalReleased, domain.EvoProposalRolledBack, domain.EvoProposalRejected, domain.EvoProposalFailed))
+	trial := h.repo.EvoProposals(projectID, 50, domain.EvoProposalCanary)
+	inTrial := map[string]bool{}
+	for _, p := range h.repo.EvoProposals(projectID, 50, domain.EvoProposalReleased) {
+		if p.Watch.Active() {
+			trial = append(trial, p)
+			inTrial[p.ID] = true
+		}
+	}
+	out.Trial = evoProposalListView(trial)
+	recent := []domain.EvoProposal{}
+	for _, p := range h.repo.EvoProposals(projectID, 12+len(inTrial), domain.EvoProposalReleased, domain.EvoProposalRolledBack, domain.EvoProposalRejected, domain.EvoProposalFailed) {
+		if !inTrial[p.ID] && len(recent) < 12 {
+			recent = append(recent, p)
+		}
+	}
+	out.Recent = evoProposalListView(recent)
 	out.Policies = h.repo.EvoPolicies(projectID)
 	out.Health = h.cachedHealth(projectID, days, false)
 	for i := range out.Health {
@@ -581,10 +601,15 @@ func (h *evolutionHandlers) createProposal(c *gin.Context) {
 	c.JSON(http.StatusAccepted, p)
 }
 
+// approveProposal releases a pending proposal or promotes a trial to every
+// run. mode "canary" starts a small-traffic trial instead of releasing.
 func (h *evolutionHandlers) approveProposal(c *gin.Context) {
 	var req struct {
-		Note  string `json:"note"`
-		Force bool   `json:"force"`
+		Note    string `json:"note"`
+		Force   bool   `json:"force"`
+		Mode    string `json:"mode"`
+		Percent int    `json:"percent"`
+		MinRuns int    `json:"minRuns"`
 	}
 	if !decodeOptional(c, &req) {
 		return
@@ -602,12 +627,20 @@ func (h *evolutionHandlers) approveProposal(c *gin.Context) {
 	if !h.requireProjectWriter(c, p.ProjectID) || !h.requireAssetWriter(c, asset) {
 		return
 	}
-	released, err := h.releaseProposal(p, asset, h.currentUserID(c), strings.TrimSpace(req.Note), req.Force && (!authRequired() || h.isPlatformAdmin(c.Request)))
+	var (
+		out domain.EvoProposal
+		err error
+	)
+	if strings.TrimSpace(req.Mode) == "canary" {
+		out, err = h.startCanary(p, asset, h.currentUserID(c), req.Percent, req.MinRuns, req.Note, false)
+	} else {
+		out, err = h.releaseProposal(p, asset, h.currentUserID(c), strings.TrimSpace(req.Note), req.Force && (!authRequired() || h.isPlatformAdmin(c.Request)))
+	}
 	if err != nil {
 		respondEvoError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, evoProposalView(released, false))
+	c.JSON(http.StatusOK, evoProposalView(out, false))
 }
 
 func (h *evolutionHandlers) rejectProposal(c *gin.Context) {
@@ -634,6 +667,10 @@ func (h *evolutionHandlers) rejectProposal(c *gin.Context) {
 	p.DecidedBy = h.currentUserID(c)
 	p.DecidedAt = time.Now().UTC()
 	p.DecisionNote = strings.TrimSpace(req.Note)
+	if p.Canary != nil && p.Canary.EndedAt.IsZero() {
+		p.Canary.Status, p.Canary.EndedAt = domain.EvoCanaryAborted, p.DecidedAt
+		p.Canary.Verdict = strings.TrimSpace("人工终止试用。" + p.DecisionNote)
+	}
 	if err := h.repo.PutEvoProposal(p); err != nil {
 		respond(c, err)
 		return
@@ -759,33 +796,13 @@ func (h *evolutionHandlers) rollbackAsset(c *gin.Context) {
 		return
 	}
 	if open, exists := h.repo.OpenEvoProposalForAsset(asset.Kind, asset.ID); exists {
-		c.JSON(http.StatusConflict, gin.H{"error": "该资产有进行中的提案，请先打回再回滚", "proposalId": open.ID})
+		c.JSON(http.StatusConflict, gin.H{"error": "该资产有进行中的提案或试用，请先打回再回滚", "proposalId": open.ID})
 		return
 	}
-	userID := h.currentUserID(c)
-	if _, err := h.ensureVersioned(asset, userID); err != nil {
-		respond(c, err)
-		return
-	}
-	if err := h.writeAssetContent(asset, target.Content); err != nil {
-		respond(c, err)
-		return
-	}
-	note := strings.TrimSpace(req.Note)
-	if note == "" {
-		note = "回滚到 v" + strconv.Itoa(target.Version)
-	}
-	version, err := h.repo.AppendAssetVersion(domain.AssetVersion{AssetKind: asset.Kind, AssetID: asset.ID, Content: target.Content, Source: domain.EvoVersionRollback, Note: note, CreatedBy: userID})
+	version, err := h.rollbackTo(asset, target, h.currentUserID(c), req.Note)
 	if err != nil {
 		respond(c, err)
 		return
-	}
-	for _, p := range h.repo.EvoProposals("", 200, domain.EvoProposalReleased) {
-		if p.AssetKind == asset.Kind && p.AssetID == asset.ID && p.ReleasedVersion > target.Version {
-			p.Status = domain.EvoProposalRolledBack
-			p.DecisionNote = strings.TrimSpace(p.DecisionNote + "\n已回滚：" + note)
-			_ = h.repo.PutEvoProposal(p)
-		}
 	}
 	c.JSON(http.StatusOK, version)
 }

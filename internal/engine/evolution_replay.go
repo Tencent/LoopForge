@@ -144,9 +144,10 @@ func replayOverrides(st *repo.Store, run domain.Run) (domain.EvoAssetOverride, b
 	return st.EvoReplayOverrides(run.ExecutionContext.EvolutionReplayID)
 }
 
-// applyReplayAgent swaps in the candidate prompt for a replay run.
+// applyReplayAgent swaps in the candidate prompt for a replay run or a
+// business run in a trial's canary arm.
 func applyReplayAgent(st *repo.Store, agent domain.AgentDefinition, run domain.Run) domain.AgentDefinition {
-	ov, ok := replayOverrides(st, run)
+	ov, ok := runAssetOverrides(st, run)
 	if !ok {
 		return agent
 	}
@@ -156,21 +157,24 @@ func applyReplayAgent(st *repo.Store, agent domain.AgentDefinition, run domain.R
 	return agent
 }
 
-// applyReplayAssets swaps candidate rule bodies into the bundle and removes
-// the platform MCP so a replay cannot write issues, runs or projects.
+// applyReplayAssets swaps candidate rule bodies into the bundle. Replay runs
+// additionally lose the platform MCP so they cannot write issues, runs or
+// projects; trial runs are real business runs and keep it.
 func applyReplayAssets(st *repo.Store, bundle *domain.AgentAssetBundle, run domain.Run) {
-	if bundle == nil || !run.ExecutionContext.IsEvolutionReplay() {
+	if bundle == nil {
 		return
 	}
-	servers := bundle.MCPServers[:0]
-	for _, server := range bundle.MCPServers {
-		if server.ID == domain.PlatformMCPServerID {
-			continue
+	if run.ExecutionContext.IsEvolutionReplay() {
+		servers := bundle.MCPServers[:0]
+		for _, server := range bundle.MCPServers {
+			if server.ID == domain.PlatformMCPServerID {
+				continue
+			}
+			servers = append(servers, server)
 		}
-		servers = append(servers, server)
+		bundle.MCPServers = servers
 	}
-	bundle.MCPServers = servers
-	ov, ok := replayOverrides(st, run)
+	ov, ok := runAssetOverrides(st, run)
 	if !ok {
 		return
 	}
@@ -205,7 +209,7 @@ func (e *Engine) recordRunAssetPins(run domain.Run) {
 		pins = append(pins, pin)
 	}
 	wf := run.WorkflowSnapshot
-	ov, _ := replayOverrides(e.repo, run)
+	ov, _ := runAssetOverrides(e.repo, run)
 	ruleContent := func(rule domain.RuleDefinition) string {
 		if candidate, overridden := ov.RuleContents[rule.ID]; overridden {
 			return candidate

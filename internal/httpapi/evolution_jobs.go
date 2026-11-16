@@ -199,6 +199,7 @@ func (h *evolutionHandlers) runProposalJob(p domain.EvoProposal, finding domain.
 		p = current
 	}
 	p.Title, p.Rationale, p.CandidateContent = candidate.Title, candidate.Rationale, candidate.Content
+	p.ExpectedReplays = len(plans)
 	p.Status = domain.EvoProposalValidating
 	if err := h.repo.PutEvoProposal(p); err != nil {
 		h.failProposal(p, err.Error())
@@ -225,7 +226,7 @@ func (h *evolutionHandlers) planReplays(p domain.EvoProposal, finding domain.Evo
 			break
 		}
 		run, ok := h.repo.RunState(id)
-		if !ok || run.ExecutionContext.IsEvolutionReplay() {
+		if !ok || h.runProject(run) != p.ProjectID || run.ExecutionContext.IsEvolutionReplay() {
 			continue
 		}
 		if score := evolution.RunScore(run); score == 0 || score == 1 || evolution.FeedbackSample(run, finding) {
@@ -235,14 +236,14 @@ func (h *evolutionHandlers) planReplays(p domain.EvoProposal, finding domain.Evo
 	pinned := []domain.Run{}
 	for _, sample := range h.repo.EvoSamples(p.ProjectID) {
 		run, ok := h.repo.RunState(sample.RunID)
-		if ok && h.runUsesAsset(run, asset) && evolution.RunScore(run) == 2 {
+		if ok && h.runProject(run) == p.ProjectID && h.runUsesAsset(run, asset) && evolution.RunScore(run) == 2 {
 			pinned = append(pinned, run)
 		}
 	}
 	succeeded := []domain.Run{}
 	seen := map[string]bool{}
 	consider := func(run domain.Run) {
-		if seen[run.ID] || run.ExecutionContext.IsEvolutionReplay() || evolution.RunScore(run) != 2 || !h.runUsesAsset(run, asset) {
+		if seen[run.ID] || h.runProject(run) != p.ProjectID || run.ExecutionContext.IsEvolutionReplay() || evolution.RunScore(run) != 2 || !h.runUsesAsset(run, asset) {
 			return
 		}
 		seen[run.ID] = true
@@ -369,7 +370,9 @@ func (h *evolutionHandlers) startReplayMonitor() {
 		ticker := time.NewTicker(evoReplaySweepInterval)
 		defer ticker.Stop()
 		for range ticker.C {
-			h.sweepReplays(time.Now().UTC())
+			now := time.Now().UTC()
+			h.sweepReplays(now)
+			h.maybeSweepTrials(now)
 		}
 	}()
 }
@@ -494,6 +497,14 @@ func (h *evolutionHandlers) sweepProposal(p domain.EvoProposal, now time.Time) d
 	grace := evoDurationEnv("AGENTFLOW_EVOLUTION_WAIT_GRACE", evoDefaultWaitGrace)
 	asset, assetOK := h.loadAsset(p.AssetKind, p.AssetID)
 	replays := h.repo.EvoReplays(p.ID)
+	if len(replays) < p.ExpectedReplays {
+		if now.Sub(p.UpdatedAt) > timeout {
+			p.Status = domain.EvoProposalFailed
+			p.Error = "回放样本未全部创建，已超时停止"
+			h.failProposal(p, p.Error)
+		}
+		return p
+	}
 	for i := range replays {
 		r := &replays[i]
 		if r.Outcome != "" {
@@ -596,6 +607,14 @@ func (h *evolutionHandlers) sweepProposal(p domain.EvoProposal, now time.Time) d
 		if p.Status == domain.EvoProposalFailed {
 			h.reopenFinding(p)
 		}
+		if p.Status == domain.EvoProposalPending && assetOK && h.repo.EvoLevel(asset.Kind, asset.ID) >= domain.EvoLevelAuto {
+			if started, err := h.startCanary(p, asset, 0, 0, 0, "L3 自动开始试用", true); err == nil {
+				started.Replays = replays
+				return started
+			} else {
+				log.Printf("evolution proposal %s auto trial: %v", p.ID, err)
+			}
+		}
 	}
 	p.Replays = replays
 	return p
@@ -620,6 +639,7 @@ func (h *evolutionHandlers) cancelReplays(p domain.EvoProposal) {
 func (h *evolutionHandlers) releaseProposal(p domain.EvoProposal, asset evoAsset, userID int64, note string, force bool) (domain.EvoProposal, error) {
 	switch {
 	case p.Status == domain.EvoProposalPending:
+	case p.TrialActive():
 	case force && p.Status == domain.EvoProposalFailed && strings.TrimSpace(p.CandidateContent) != "":
 	default:
 		return p, evoConflict("提案当前状态不能发布")
@@ -630,7 +650,8 @@ func (h *evolutionHandlers) releaseProposal(p domain.EvoProposal, asset evoAsset
 	if domain.ContentHash(asset.Content) != p.BaseHash {
 		return p, evoConflict("资产在提案生成后被修改过，请打回后重新生成")
 	}
-	if _, err := h.ensureVersioned(asset, userID); err != nil {
+	previous, err := h.ensureVersioned(asset, userID)
+	if err != nil {
 		return p, err
 	}
 	if err := h.writeAssetContent(asset, p.CandidateContent); err != nil {
@@ -643,13 +664,22 @@ func (h *evolutionHandlers) releaseProposal(p domain.EvoProposal, asset evoAsset
 	if err != nil {
 		return p, err
 	}
+	now := time.Now().UTC()
+	if p.Canary != nil && p.Canary.EndedAt.IsZero() {
+		p.Canary.Status, p.Canary.EndedAt = domain.EvoCanaryPromoted, now
+	}
 	p.Status = domain.EvoProposalReleased
 	p.ReleasedVersion = version.Version
 	p.DecidedBy = userID
-	p.DecidedAt = time.Now().UTC()
+	p.DecidedAt = now
 	p.DecisionNote = note
 	if force && !p.Summary.Passed {
 		p.DecisionNote = strings.TrimSpace("平台管理员强制发布。" + note)
+	}
+	p.Watch = &domain.EvoWatch{
+		Version: version.Version, Hash: version.Hash, PrevVersion: previous.Version, PrevHash: previous.Hash,
+		MinRuns: evolution.DefaultWatchMinRuns, Status: domain.EvoWatchWatching, StartedAt: now,
+		Verdict: "观察中，需要 " + fmt.Sprint(evolution.DefaultWatchMinRuns) + " 次运行",
 	}
 	if err := h.repo.PutEvoProposal(p); err != nil {
 		return p, err

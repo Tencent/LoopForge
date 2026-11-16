@@ -4,7 +4,7 @@
 .evo-head-actions { display: flex; flex: none; gap: 8px; }
 
 /* 看板 */
-.evo-board { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; align-items: start; }
+.evo-board { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; align-items: start; }
 .evo-col { display: flex; flex-direction: column; min-height: 160px; }
 #evolutionView .evo-col .kb-panel-head { flex-wrap: nowrap; }
 .evo-col-meta { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -30,14 +30,139 @@
 .evo-chips { display: flex; flex-wrap: wrap; gap: 6px 12px; padding: 8px 0; }
 .evo-verdict { margin-top: 16px; color: var(--hui-text); }
 .evo-rationale { margin: 4px 0 0; color: var(--hui-secondary); font-size: 13px; white-space: pre-wrap; overflow-wrap: anywhere; }
-.evo-stats { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 8px; margin: 6px 0 4px; }
-.evo-stats > div { padding: 8px 10px; border: 1px solid var(--hui-border-soft); border-radius: 8px; background: var(--hui-canvas); }
-.evo-stats span { display: block; color: var(--hui-tertiary); font-size: 12px; }
-.evo-stats b { font-size: 18px; font-weight: 600; font-variant-numeric: tabular-nums; }
 .evo-hash { color: var(--hui-tertiary); }
 #kbDrawer .evo-version.is-selected { background: var(--hui-accent-soft); }
 #kbDrawer .evo-version .kb-btn[aria-pressed="true"] { border-color: var(--hui-accent); color: var(--hui-accent); }
 .evo-content { max-height: 360px; overflow: auto; }
+
+/* 流程步骤条：抽屉顶部，一步一个标签，点哪步看哪步 */
+.evo-steps { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); margin: 4px 0 0; padding: 0; list-style: none; }
+.evo-step { position: relative; min-width: 0; }
+.evo-step + .evo-step::before,
+.evo-step + .evo-step::after { content: ""; position: absolute; top: 13px; right: calc(50% + 15px); left: calc(-50% + 15px); height: 2px; border-radius: 1px; background: var(--hui-border-soft); }
+.evo-step + .evo-step::after { background: var(--hui-success); transform: scaleX(0); transform-origin: left center; }
+.evo-step.is-reached + .evo-step.is-reached::after { animation: evo-fill 420ms var(--hui-ease-flow, cubic-bezier(.16, 1, .3, 1)) forwards; animation-delay: calc(var(--i) * 110ms); }
+.evo-step > button { display: flex; width: 100%; flex-direction: column; align-items: center; gap: 4px; padding: 0 2px 10px; border: 0; background: none; color: var(--hui-tertiary); font: inherit; cursor: pointer; }
+.evo-step > button:disabled { cursor: default; }
+.evo-step > button:focus-visible { outline: 2px solid var(--kb-focus, var(--hui-accent)); outline-offset: 2px; border-radius: 8px; }
+.evo-step > button[aria-selected="true"] { box-shadow: inset 0 -2px 0 var(--hui-accent); }
+.evo-step-dot { position: relative; z-index: 1; display: grid; width: 28px; height: 28px; place-items: center; border: 2px solid var(--hui-border); border-radius: 50%; background: var(--hui-surface); color: var(--hui-tertiary); font-size: 12px; font-weight: 700; font-variant-numeric: tabular-nums; opacity: 0; transform: scale(.6); animation: evo-pop 320ms cubic-bezier(.16, 1, .3, 1) forwards; animation-delay: calc(var(--i) * 110ms); }
+.evo-step-dot svg { width: 14px; height: 14px; }
+.evo-step-name { color: var(--hui-secondary); font-size: 12.5px; font-weight: 600; white-space: nowrap; }
+.evo-step-note { max-width: 100%; overflow: hidden; color: var(--hui-tertiary); font-size: 11.5px; text-overflow: ellipsis; white-space: nowrap; }
+.evo-step > button[aria-selected="true"] .evo-step-name { color: var(--hui-text); }
+.evo-step.is-todo .evo-step-name { color: var(--hui-tertiary); font-weight: 500; }
+.evo-step.is-done .evo-step-dot { border-color: var(--hui-success); background: var(--hui-success); color: #fff; }
+.evo-step.is-active .evo-step-dot { border-color: var(--hui-accent); color: var(--hui-accent); }
+.evo-step.is-wait .evo-step-dot { border-color: var(--hui-warn); color: var(--hui-warn); }
+.evo-step.is-fail .evo-step-dot { border-color: var(--hui-error); background: var(--hui-error); color: #fff; }
+.evo-step.is-stop .evo-step-dot,
+.evo-step.is-skip .evo-step-dot { border-color: var(--hui-border-strong); background: var(--hui-canvas); color: var(--hui-secondary); }
+.evo-step.is-active .evo-step-note { color: var(--hui-accent); }
+.evo-step.is-wait .evo-step-note { color: var(--hui-warn); }
+.evo-step.is-fail .evo-step-note { color: var(--hui-error); }
+.evo-step-pulse { width: 10px; height: 10px; border-radius: 50%; background: currentColor; animation: evo-pulse 1.6s ease-out infinite; }
+
+/* 当前状态一句话 + 步骤面板 */
+.evo-now { margin: 6px 0 14px; padding: 10px 12px; border-radius: 10px; background: color-mix(in srgb, var(--hui-text) 4%, transparent); color: var(--hui-text); font-size: 13px; line-height: 1.6; }
+.evo-now.info { background: var(--hui-accent-soft); }
+.evo-now.ok { background: color-mix(in srgb, var(--hui-success) 11%, transparent); }
+.evo-now.warn { background: color-mix(in srgb, var(--hui-warn) 13%, transparent); }
+.evo-now.err { background: color-mix(in srgb, var(--hui-error) 10%, transparent); color: var(--hui-error); }
+.evo-stage-panel.is-in { animation: evo-in 260ms cubic-bezier(.16, 1, .3, 1); }
+.evo-panel-lead { margin: 0 0 10px; color: var(--hui-secondary); font-size: 13px; line-height: 1.65; }
+.evo-panel-meta { margin: 10px 0 0; color: var(--hui-tertiary); font-size: 12px; }
+.evo-change-sum { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 12px; margin-bottom: 8px; color: var(--hui-tertiary); font-size: 12px; }
+.evo-change-sum > .kb-ok, .evo-change-sum > .kb-err { font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.evo-count-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 4px; color: var(--hui-tertiary); font-size: 12px; }
+.evo-count-row > span:last-child { margin-left: auto; }
+
+/* 回放卡片：原运行 → 新正文 → 回放 */
+.evo-replay { margin-top: 10px; padding: 12px 14px; border: 1px solid var(--hui-border-soft); border-radius: 12px; background: var(--hui-surface); opacity: 0; animation: evo-in 300ms cubic-bezier(.16, 1, .3, 1) forwards; animation-delay: calc(var(--i) * 80ms); }
+.evo-replay > header { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.evo-replay > header > b { color: var(--hui-text); font-size: 13.5px; }
+.evo-replay-no { display: grid; flex: none; width: 20px; height: 20px; place-items: center; border-radius: 50%; background: var(--hui-accent-soft); color: var(--hui-accent); font-size: 11.5px; font-weight: 700; }
+.evo-replay-hint { flex: 1; min-width: 0; overflow: hidden; color: var(--hui-tertiary); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.evo-flow-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(90px, 1.1fr) minmax(0, 1fr); align-items: center; gap: 10px; margin-top: 12px; }
+.evo-pill { display: flex; flex-direction: column; gap: 1px; min-width: 0; padding: 7px 12px; border: 1px solid var(--hui-border-soft); border-radius: 10px; background: var(--hui-canvas); color: var(--hui-text); text-decoration: none; transition: border-color 150ms ease, background-color 150ms ease; }
+a.evo-pill:hover { border-color: var(--hui-accent); }
+.evo-pill small { color: var(--hui-tertiary); font-size: 11.5px; }
+.evo-pill b { overflow: hidden; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.evo-pill.ok { border-color: color-mix(in srgb, var(--hui-success) 35%, transparent); background: color-mix(in srgb, var(--hui-success) 8%, transparent); }
+.evo-pill.ok b { color: var(--hui-success); }
+.evo-pill.warn { border-color: color-mix(in srgb, var(--hui-warn) 40%, transparent); background: color-mix(in srgb, var(--hui-warn) 9%, transparent); }
+.evo-pill.warn b { color: var(--hui-warn); }
+.evo-pill.err { border-color: color-mix(in srgb, var(--hui-error) 35%, transparent); background: color-mix(in srgb, var(--hui-error) 7%, transparent); }
+.evo-pill.err b { color: var(--hui-error); }
+.evo-pill.run b { color: var(--hui-accent); }
+.evo-flow { position: relative; display: flex; flex-direction: column; align-items: center; gap: 4px; }
+.evo-flow em { color: var(--hui-accent); font-size: 11.5px; font-style: normal; font-weight: 600; white-space: nowrap; }
+.evo-flow i { position: relative; display: block; width: 100%; height: 2px; background: linear-gradient(90deg, var(--hui-accent) 50%, transparent 0) 0 0 / 10px 2px repeat-x; }
+.evo-flow i::after { content: ""; position: absolute; top: -4px; right: -1px; border: 5px solid transparent; border-right: 0; border-left: 7px solid var(--hui-accent); }
+.evo-flow.is-running i { animation: evo-dash 700ms linear infinite; }
+.evo-replay-facts { margin-top: 10px; }
+.evo-replay-facts p { display: grid; grid-template-columns: 72px minmax(0, 1fr); gap: 8px; margin: 4px 0 0; color: var(--hui-secondary); font-size: 12.5px; line-height: 1.6; overflow-wrap: anywhere; }
+.evo-replay-facts b { color: var(--hui-tertiary); font-weight: 600; }
+.evo-nodes-toggle { margin-top: 8px; }
+.evo-nodes { margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--hui-border-soft); }
+.evo-nodes-input { display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 8px; margin: 0 0 8px; color: var(--hui-secondary); font-size: 12.5px; overflow-wrap: anywhere; }
+.evo-nodes-input b { color: var(--hui-tertiary); font-weight: 600; }
+.evo-nodes-head, .evo-node { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) 16px minmax(0, 1fr); align-items: start; gap: 8px; }
+.evo-nodes-head { padding: 0 10px 4px; color: var(--hui-tertiary); font-size: 11.5px; }
+.evo-node { margin-top: 4px; padding: 7px 10px; border: 1px solid transparent; border-left: 3px solid transparent; border-radius: 8px; background: var(--hui-canvas); font-size: 12.5px; opacity: 0; animation: evo-in 260ms cubic-bezier(.16, 1, .3, 1) forwards; animation-delay: calc(var(--i) * 45ms); }
+.evo-node.is-shaped { border-left-color: var(--hui-accent); }
+.evo-node.is-changed { border-color: color-mix(in srgb, var(--hui-warn) 35%, transparent); background: color-mix(in srgb, var(--hui-warn) 6%, var(--hui-canvas)); }
+.evo-node.is-reused { opacity: .7; }
+.evo-node.is-reused { animation-name: evo-in-dim; }
+.evo-node-name { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; min-width: 0; }
+.evo-node-name b { color: var(--hui-text); font-weight: 600; overflow-wrap: anywhere; }
+.evo-node-side { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.evo-node-side small { color: var(--hui-tertiary); font-size: 11.5px; }
+.evo-node-arrow { color: var(--hui-tertiary); text-align: center; }
+.evo-node-reason { grid-column: 1 / -1; color: var(--hui-secondary); font-size: 12px; line-height: 1.55; overflow-wrap: anywhere; }
+.evo-node-reason p { margin: 2px 0 0; }
+.evo-st { font-weight: 600; color: var(--hui-secondary); }
+.evo-st.ok { color: var(--hui-success); }
+.evo-st.warn { color: var(--hui-warn); }
+.evo-st.err { color: var(--hui-error); }
+.evo-st.run { color: var(--hui-accent); }
+.evo-tag { padding: 0 6px; border-radius: 5px; background: color-mix(in srgb, var(--hui-text) 6%, transparent); color: var(--hui-secondary); font-size: 11px; line-height: 18px; white-space: nowrap; }
+.evo-tag.accent { background: var(--hui-accent-soft); color: var(--hui-accent); }
+.evo-tag.warn { background: color-mix(in srgb, var(--hui-warn) 15%, transparent); color: var(--hui-warn); }
+.evo-nodes-sum { margin: 8px 0 0; color: var(--hui-tertiary); font-size: 12px; }
+
+/* 看板卡片上的迷你流程条 */
+.evo-mini { display: flex; align-items: center; gap: 3px; margin-top: 8px; }
+.evo-mini > i { width: 14px; height: 4px; border-radius: 2px; background: var(--hui-border-soft); }
+.evo-mini > i.is-done { background: var(--hui-success); }
+.evo-mini > i.is-active { background: var(--hui-accent); animation: evo-blink 1.4s ease-in-out infinite; }
+.evo-mini > i.is-wait { background: var(--hui-warn); animation: evo-blink 1.4s ease-in-out infinite; }
+.evo-mini > i.is-fail { background: var(--hui-error); }
+.evo-mini > i.is-stop, .evo-mini > i.is-skip { background: var(--hui-border-strong); }
+.evo-mini > span { margin-left: 6px; overflow: hidden; color: var(--hui-tertiary); font-size: 11.5px; text-overflow: ellipsis; white-space: nowrap; }
+
+@keyframes evo-fill { to { transform: scaleX(1); } }
+@keyframes evo-pop { to { opacity: 1; transform: scale(1); } }
+@keyframes evo-pulse { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, currentColor 45%, transparent); } 80%, 100% { box-shadow: 0 0 0 8px transparent; } }
+@keyframes evo-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+@keyframes evo-in-dim { from { opacity: 0; transform: translateY(6px); } to { opacity: .7; transform: none; } }
+@keyframes evo-dash { to { background-position: 10px 0; } }
+@keyframes evo-blink { 50% { opacity: .35; } }
+
+/* 试用 / 发布后观察 */
+.evo-trial-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin: 6px 0; color: var(--hui-secondary); font-size: 13px; }
+.evo-trial-head b { font-variant-numeric: tabular-nums; }
+.evo-arms { overflow: hidden; border: 1px solid var(--hui-border-soft); border-radius: 10px; background: var(--hui-canvas); }
+.evo-arm { display: grid; grid-template-columns: minmax(96px, 1.4fr) repeat(5, minmax(0, 1fr)); gap: 8px; align-items: center; padding: 8px 12px; font-size: 13px; }
+.evo-arm + .evo-arm { border-top: 1px solid var(--hui-border-soft); }
+.evo-arm > span { min-width: 0; overflow: hidden; color: var(--hui-text); text-overflow: ellipsis; white-space: nowrap; }
+.evo-arm > b { font-weight: 600; text-align: right; font-variant-numeric: tabular-nums; }
+.evo-arm > b small { color: var(--hui-tertiary); font-weight: 400; }
+.evo-arm-head { padding-block: 6px; background: color-mix(in srgb, var(--hui-text) 3%, transparent); }
+.evo-arm-head > span { color: var(--hui-tertiary); font-size: 12px; }
+.evo-arm-head > span + span { text-align: right; }
+.evo-canary-form { margin-top: 8px; }
+.evo-canary-go { margin-top: 10px; }
 
 /* 正文 diff */
 .evo-diff { margin-top: 4px; overflow: hidden; border: 1px solid var(--hui-border-soft); border-radius: 10px; background: var(--hui-canvas); font: 12.5px/1.7 var(--mono); }
@@ -49,19 +174,34 @@
 .evo-diff-line.del { background: color-mix(in srgb, var(--hui-error) 9%, transparent); }
 .evo-diff-line.del > span { color: var(--hui-error); }
 .evo-diff-line.del > code { color: var(--hui-secondary); text-decoration: line-through; text-decoration-color: color-mix(in srgb, var(--hui-error) 45%, transparent); }
+.evo-diff-line.del.w > code { text-decoration: none; }
+.evo-diff-line del.evo-w { border-radius: 3px; background: color-mix(in srgb, var(--hui-error) 22%, transparent); color: var(--hui-text); text-decoration: line-through; text-decoration-color: var(--hui-error); }
+.evo-diff-line ins.evo-w { border-radius: 3px; background: color-mix(in srgb, var(--hui-success) 26%, transparent); color: var(--hui-text); text-decoration: none; }
 .evo-diff-skip { padding: 2px 12px 2px 30px; color: var(--hui-tertiary); font-size: 12px; background: color-mix(in srgb, var(--hui-text) 3%, transparent); }
 
 /* 运行详情：回放标记 */
 .run-meta-chip.evo-replay-chip { border-color: color-mix(in srgb, var(--hui-accent) 30%, transparent); color: var(--hui-accent); }
 
-@media (max-width: 1280px) {
+@media (max-width: 1440px) {
+  .evo-board { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@media (max-width: 1080px) {
   .evo-board { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 720px) {
   .evo-board { grid-template-columns: minmax(0, 1fr); }
-  .evo-stats { grid-auto-flow: row; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .evo-arm { grid-template-columns: minmax(72px, 1.2fr) repeat(5, minmax(0, 1fr)); gap: 4px; padding-inline: 8px; font-size: 12px; }
+  .evo-step-note { display: none; }
+  .evo-step-name { font-size: 11.5px; white-space: normal; text-align: center; }
+  .evo-flow-row { grid-template-columns: minmax(0, 1fr) 44px minmax(0, 1fr); }
+  .evo-flow em { display: none; }
+  .evo-nodes-head, .evo-node { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 12px minmax(0, 1fr); gap: 4px; }
   #evolutionView .evo-asset-row { flex-wrap: wrap; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .evo-progress > i, .evo-asset-main { transition: none; }
+  .evo-progress > i, .evo-asset-main, .evo-pill { transition: none; }
+  .evo-step-dot, .evo-replay, .evo-node, .evo-stage-panel.is-in { animation: none; opacity: 1; transform: none; }
+  .evo-node.is-reused { opacity: .7; }
+  .evo-step.is-reached + .evo-step.is-reached::after { animation: none; transform: scaleX(1); }
+  .evo-step-pulse, .evo-flow.is-running i, .evo-mini > i { animation: none; }
 }

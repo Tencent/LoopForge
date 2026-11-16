@@ -68,17 +68,24 @@ test('evolution center renders board, proposal drawer, versions, policies and sa
   assert.match(body, /近期 2 次节点失败/);
   assert.match(body, /补充自测要求/);
   assert.match(body, /回放 1\/4/);
-  assert.equal(app.document.querySelectorAll('.evo-col').length, 4);
+  assert.equal(app.document.querySelectorAll('.evo-col').length, 5);
+  assert.match(body, /试用与观察/);
   assert.match($('#evoMetrics').textContent, /待处理问题1/);
 
   $('[data-evo-proposal="evp-1"]').click();
   await settle(4);
   const drawer = $('#kbDrawerBody');
   assert.ok($('#kbDrawer').classList.contains('evo-wide'));
+  assert.equal(drawer.querySelectorAll('[data-evo-stage]').length, 6);
+  $('[data-evo-stage="diagnose"]').click();
   assert.match(drawer.textContent, /失败都缺少自测/);
+  $('[data-evo-stage="replay"]').click();
   assert.match(drawer.textContent, /诊断样本/);
-  assert.match(drawer.textContent, /一次成功 → 给出阻断结论 · 沿用原运行 2 个上游节点/);
-  assert.match(drawer.querySelector('.evo-stats').textContent, /结论改变1/);
+  const changedReplay = drawer.querySelectorAll('.evo-replay')[2];
+  assert.match(changedReplay.textContent, /给出阻断结论/);
+  assert.match(changedReplay.textContent, /沿用原运行的 2 个上游节点/);
+  assert.match(drawer.querySelector('.evo-count-row').textContent, /结论改变 1/);
+  $('[data-evo-stage="draft"]').click();
   assert.ok(drawer.querySelector('.evo-diff-line.add'), 'candidate lines are highlighted');
   assert.ok(!drawer.innerHTML.includes('<b>Run unit tests</b>'), 'candidate text is escaped');
   $('[data-evo-approve="evp-1"]').click();
