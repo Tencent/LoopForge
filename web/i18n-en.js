@@ -180,3 +180,267 @@ Object.assign(window.LF_I18N_EN,{
   "外部原单会保留，后续同步可能重新导入。":"The original external record is kept, and a later sync may import it again.",
   "需求已有执行记录或已完成，请确认强制删除":"This requirement has execution history or is already completed. Confirm force deletion."
 });
+
+Object.assign(window.LF_I18N_EN,{
+  "LoopForge · Agent 编排平台":"LoopForge · Agent orchestration platform",
+  "正在进入工作台…":"Opening your workspace…",
+  "LoopForge 工作台":"LoopForge workspace",
+  "日常入口":"Daily",
+  "工作总览":"Work overview",
+  "先处理失败和待确认的需求，再看进行中的和最近结果。":"Handle failed requirements and those waiting for review first, then check what is running and the latest results.",
+  "打开需求列表":"Open requirements",
+  "需要我处理":"Needs my attention",
+  "最近结果":"Recent results",
+  "外部同步与活动":"External sync & activity",
+  "需要拍板":"Needs a decision",
+  "搜索需求、运行、SOP、Agent，或输入页面名称…":"Search requirements, runs, SOPs, Agents, or type a page name…",
+  "更多":"More",
+  "平台新建":"Created in platform",
+  "批量操作":"Bulk actions"
+});
+
+Object.assign(window.LF_I18N_EN,{
+  "云端执行时，":"",
+  "每个项目最多同时运行 10 条 SOP":"When running in the cloud, each project runs at most 10 SOPs at a time",
+  "，超出的进入「排队中」，名额空出后按提交顺序自动开始。":"; extra runs wait as “Queued” and start automatically, in submission order, when a slot frees up.",
+  "失败、暂停、待确认、开始后被取消的运行仍占用名额；只有成功完成或排队时取消的不占用。":"Runs that failed, paused, are waiting for review, or were cancelled after starting still hold a slot. Only runs that finished successfully or were cancelled while queued release it.",
+  "嵌套的子 SOP 不单独计数；未归属项目的运行共用一组 10 个名额。":"Nested sub-SOPs are not counted separately. Runs without a project share one group of 10 slots.",
+  "个人执行机器不受此限制，可在「执行机器」页单独设置上限。":"Personal runners are not subject to this limit. Set their own limit on the “Runners” page.",
+  "实时更新中":"Updating live",
+  "运行指标":"Run metrics",
+  "运行列表":"Run list",
+  "按状态筛选":"Filter by status",
+  "按 SOP 筛选":"Filter by SOP"
+});
+
+Object.assign(window.LF_I18N_EN,{
+  "选择或新建 SOP":"Choose or create an SOP",
+  "运行沙箱 · 点击修改":"Run sandbox · click to change",
+  "放弃修改，恢复到上次保存":"Discard changes and restore the last saved version",
+  "所有修改已保存":"All changes saved",
+  "发布为新版本":"Publish as a new version",
+  "从模板创建":"Create from template",
+  "SOP 通知":"SOP notifications",
+  "选一个 Bot，自动接收提醒与完成汇报":"Pick a Bot to receive alerts and completion reports automatically",
+  "节点库":"Step library",
+  "搜索角色或节点":"Search roles or steps",
+  "收起节点库":"Collapse step library",
+  "控制":"Control",
+  "跑完另一条流程再继续":"Runs another SOP, then continues",
+  "构建静态站点并归档":"Builds a static site and archives it",
+  "协作":"Collaboration",
+  "停下等待人工确认":"Pauses for human approval",
+  "拖到画布放置，或点击添加":"Drag onto the canvas, or click to add",
+  "从左侧节点库拖入第一个步骤":"Drag the first step in from the step library on the left",
+  "用 AI 对话辅助编排":"Use AI chat to help design",
+  "AI 编排":"AI design",
+  "缩小":"Zoom out",
+  "重置为 100%":"Reset to 100%",
+  "放大":"Zoom in",
+  "适应视图":"Fit to view",
+  "小地图":"Minimap",
+  "步骤属性":"Step properties",
+  "您好，我是":"Hi, I'm",
+  "统计分类":"Usage categories",
+  "放大查看":"Expand view"
+});
+
+Object.assign(window.LF_I18N_EN,{
+  "项目是需求、仓库、团队和默认 SOP 的统一边界。点击项目进入详情配置。":"A project is the shared boundary for requirements, repositories, the team, and the default SOP. Click a project to open its settings.",
+  "搜索项目名称、标识、Key 或仓库":"Search by project name, ID, Key, or repository",
+  "搜索项目":"Search projects",
+  "项目筛选":"Filter projects",
+  "我参与的":"Mine",
+  "待完善":"Needs setup",
+  "面包屑":"Breadcrumb",
+  "项目配置分区":"Project settings sections",
+  "搜索名称、描述或地址":"Search by name, description, or address",
+  "搜索名称或标识…":"Search by name or ID…",
+  "搜索资产":"Search assets"
+});
+
+Object.assign(window.LF_I18N_EN,{
+  "搜索 SkillHub 技能，如 pdf、代码评审、周报…":"Search SkillHub skills, e.g. pdf, code review, weekly report…",
+  "分类":"Category",
+  "全部分类":"All categories",
+  "排序":"Sort",
+  "按下载量":"By downloads",
+  "按综合评分":"By rating",
+  "最近更新":"Recently updated",
+  "公开技能库。安装会保存所选版本的快照，可绑定角色、可共享；SkillHub 发布新版本后在此提示，手动更新。":"Public skill library. Installing saves a snapshot of the chosen version, which can be bound to roles and shared. When SkillHub publishes a new version you are notified here and update manually."
+});
+
+Object.assign(window.LF_I18N_EN,{
+  "用自己的电脑或 CVM 跑任务，未设默认时在云端执行。":"Run jobs on your own computer or a CVM. Without a default runner, jobs run in the cloud.",
+  "安装 CLI":"Install the CLI",
+  "claude / codex 等":"claude / codex, etc.",
+  "绑定码 10 分钟有效":"The binding code is valid for 10 minutes",
+  "本机登录或个人凭证":"Local login or personal credentials",
+  "仅主动连接平台，不开放本机端口":"Connects out to the platform only; no local ports are opened",
+  "Agent CLI 需自行升级：":"Upgrade Agent CLIs yourself:",
+  "平台不会代为升级，版本过旧或无模型权限会导致任务失败。":"The platform does not upgrade them for you. An outdated version or missing model access makes jobs fail."
+});
+
+Object.assign(window.LF_I18N_EN,{
+  "只需名称和模型，角色 prompt、产物与门禁、技能与工具可以创建后再补。":"Only a name and a model are needed. The role prompt, outputs & gates, and skills & tools can be added after creating it.",
+  "角色 prompt、产物与门禁、技能与工具可以创建后再补。":"The role prompt, outputs & gates, and skills & tools can be added after creating it.",
+  "新建步骤":"New step",
+  "选起点":"Pick a starting point",
+  "角色配置":"Role setup",
+  "选一个起点，名称和职责会自动填好；也可以从空白开始。":"Pick a starting point to fill in the name and responsibility, or start from blank.",
+  "请填写名称":"Enter a name",
+  "创建后不可改":"Can't be changed after creation",
+  "一句话，列表和流程卡片里展示":"One sentence, shown in lists and SOP cards",
+  "读 Issue 和源码，写出根因与修复计划，不改业务代码":"Reads the issue and source, writes the root cause and a fix plan, and leaves business code unchanged",
+  "运行方式":"How it runs",
+  "其他项目可在「共享角色」里选用":"Other projects can pick it under “Shared roles”"
+});
+
+Object.assign(window.LF_I18N_EN,{
+  "要做什么？例如：个人主页增加徽章，需要兼容现有成就体系。":"What needs doing? e.g. Add badges to the profile page, compatible with the existing achievements system.",
+  "需求描述":"Requirement description",
+  "代码仓库与分支":"Repositories & branches",
+  "继续开发分支":"Existing branch to continue",
+  "继续开发分支（可选）":"Existing branch to continue (optional)",
+  "留空从配置主分支新建工作分支":"Leave empty to create a working branch from the configured default branch",
+  "留空从配置主分支新建工作分支；填写时直接继续该已有分支，不新建。":"Leave empty to create a working branch from the configured default branch. If filled in, that existing branch is continued and no new branch is created.",
+  "建到哪里":"Create in",
+  "在本平台建单":"Create in this platform",
+  "先在平台建单，再同步到 TAPD":"Create in the platform first, then sync to TAPD",
+  "外部需求":"External requirement",
+  "支持 TAPD 需求、缺陷或任务链接，也可以粘贴「标题 + 链接」。导入时将读取 TAPD 最新标题和描述并写入当前项目。":"Supports TAPD requirement, bug, or task links, or paste “title + link”. The import reads the latest title and description from TAPD and writes them to the current project.",
+  "TAPD 链接或分享文本":"TAPD link or shared text",
+  "【工作项标题】\nhttps://tapd.example.com/tapd_fe/…/story/detail/…":"[Work item title]\nhttps://tapd.example.com/tapd_fe/…/story/detail/…",
+  "关联 TAPD ID（可选，仅统计）":"Linked TAPD ID (optional, for metrics only)",
+  "不填写也会按平台需求统计":"Counted as a platform requirement if left blank",
+  "不会自动同步或回写 TAPD；以后可以补填或清空。":"Never auto-synced or written back to TAPD. You can fill it in or clear it later.",
+  "默认全选；可调整本次需求涉及的仓库。留空时各仓库从配置主分支新建工作分支。":"All selected by default. Adjust the repositories this requirement involves. If the branch is left empty, each repository creates a working branch from its configured default branch."
+});
+
+Object.assign(window.LF_I18N_EN,{
+  "添加代码仓库":"Add repository",
+  "改名":"Rename",
+  "分支":"Branch",
+  "集成分支用于检查多个 SOP 执行后工作分支之间是否存在合并冲突；留空则跳过（部分仓库不允许创建 agentflow/ 分支）。":"The integration branch checks for merge conflicts between working branches after several SOPs run. Leave empty to skip it (some repositories do not allow creating agentflow/ branches).",
+  "设为项目默认仓库":"Set as the project's default repository",
+  "新需求默认在此仓库上执行。":"New requirements run on this repository by default.",
+  "高级设置":"Advanced settings",
+  "本机源码路径":"Local source path",
+  "仅本机 Runner 使用；沙箱执行会忽略。":"Used by local runners only; ignored by sandbox runs.",
+  "工蜂":"Gongfeng",
+  "工蜂 MCP URL（平台）":"Gongfeng MCP URL (platform)",
+  "本项目 TAPD 工作空间 ID":"This project's TAPD workspace ID",
+  "本项目 TAPD 迭代 ID":"This project's TAPD iteration ID",
+  "↗ 推送选中项至工蜂":"↗ Push selected to Gongfeng",
+  "↗ 推送选中项至 TAPD":"↗ Push selected to TAPD",
+  "选择要推送的工作项":"Choose work items to push"
+});
+
+Object.assign(window.LF_I18N_EN,{
+  "触发配置":"Trigger settings",
+  "按计划扫描本项目选定状态、尚未跑过 SOP 的需求，通过基线门禁后派发 SOP。":"On a schedule, scans this project's requirements in the selected statuses that have not run an SOP yet, and dispatches an SOP once they pass the baseline gate.",
+  "按计划扫描本项目选定状态、尚未跑过 SOP 的需求，通过基线门禁后派发 SOP。每个项目使用一份触发配置。":"On a schedule, scans this project's requirements in the selected statuses that have not run an SOP yet, and dispatches an SOP once they pass the baseline gate. Each project has one trigger configuration.",
+  "每个项目使用一份触发配置，修改后保存即可生效。":"Each project has one trigger configuration. Save your changes to apply them.",
+  "订阅版本对比":"Subscription version comparison",
+  "同步哪些来源":"Sources to sync",
+  "同步所有已配置来源":"Sync all configured sources",
+  "只同步 GitHub":"Sync GitHub only",
+  "只同步工蜂":"Sync Gongfeng only",
+  "只同步 TAPD":"Sync TAPD only",
+  "到点只启动所选来源、且还没跑过 SOP 的单。开启自动同步后，外部同步仍会按间隔把所有已配置来源拉进项目列表。":"When due, only requirements from the selected sources that have not run an SOP yet are started. With auto-sync on, external sync still pulls all configured sources into the project list at its interval.",
+  "单次最多触发需求数":"Max requirements triggered at once",
+  "可填写 1–10，留空默认 10；其余需求在后续执行时继续触发。":"Enter 1–10; empty defaults to 10. Remaining requirements are triggered on later runs.",
+  "到点以与主页 AI 对话相同的完全权限执行提示词，可按需读写平台、启动 SOP、操作工作区及浏览器。":"When due, the prompt runs with the same full permissions as AI chat on the home page. It can read and write the platform, start SOPs, and use workspaces and the browser as needed.",
+  "Bot 通知":"Bot notifications",
+  "可把执行结果、AI 摘要或自定义消息发送到项目 Bot。":"Send results, an AI summary, or a custom message to the project Bot.",
+  "保存触发配置":"Save trigger settings"
+});
+
+Object.assign(window.LF_I18N_EN,{
+  "共享任务市场":"Shared job market",
+  "搜索名称、用途或来源项目":"Search by name, purpose, or source project",
+  "搜索共享任务":"Search shared jobs",
+  "共享任务":"Shared jobs",
+  "发布共享版本":"Publish shared version",
+  "把可复用的提示词发布给其他项目。来源任务和已有订阅保持各自的执行配置。":"Publish a reusable prompt for other projects. The source job and existing subscriptions keep their own run settings.",
+  "共享名称":"Shared name",
+  "用途说明":"Purpose",
+  "提示词模板":"Prompt template",
+  "用 {{params.days}} 引用下方参数，例如“检查超过 {{params.days}} 天未更新的需求”。发布内容对平台登录用户可见。":"Reference the parameters below with {{params.days}}, e.g. “Check requirements not updated for more than {{params.days}} days”. Published content is visible to signed-in platform users.",
+  "业务参数":"Business parameters",
+  "添加参数":"Add parameter",
+  "版本说明":"Version notes",
+  "说明本次调整，供订阅项目决定是否升级":"Describe this change so subscribing projects can decide whether to upgrade",
+  "查看版本":"View versions"
+});
+
+Object.assign(window.LF_I18N_EN,{
+  "外观":"Appearance",
+  "浅色":"Light",
+  "跟随系统":"Match system",
+  "批准后才会继续跑":"Continues after approval",
+  "Agent 正在执行":"Agents are running",
+  "已经完成":"Completed",
+  "本项目已闭环":"Closed out in this project",
+  "没有需要你处理的需求":"No requirements need your attention",
+  "当前没有进行中的需求":"No requirements in progress",
+  "还没有跑完的需求":"No finished requirements yet"
+});
+
+Object.assign(window.LF_I18N_EN,{
+  "点击页面上要反馈的元素":"Click the element on the page you want to give feedback on",
+  "拖到这里隐藏":"Drag here to hide",
+  "反馈入口已隐藏，刷新页面后恢复":"The feedback button is hidden. It returns when you refresh the page.",
+  "帮助我们做得更好":"Help us do better",
+  "AI Native团队将在24小时以内快速响应":"The AI Native team will respond within 24 hours",
+  "您的不知所措也是我们的问题":"If you feel lost, that is our problem too",
+  "问题描述":"Describe the issue",
+  "图片":"Image",
+  "添加图片（可直接粘贴或拖入，最多 5 张，每张 ≤5MB）":"Add images (paste or drag them in; up to 5, each ≤5MB)",
+  "点选元素":"Pick an element",
+  "提交":"Submit",
+  "松开以添加图片":"Release to add the image",
+  "重新点选":"Pick again",
+  "清除标注":"Clear mark",
+  "已收到，谢谢你":"Received. Thank you.",
+  "最多 5 张图片":"Up to 5 images",
+  "仅支持 PNG / JPEG / GIF / WebP 图片":"Only PNG / JPEG / GIF / WebP images are supported",
+  "超过 5MB":"exceeds 5MB",
+  "已附上页面位置 ·":"Page location attached ·",
+  "地址":"Address",
+  "路由":"Route",
+  "视图":"View",
+  "工作台":"Workbench",
+  "滚动":"Scroll",
+  "视口":"Viewport",
+  "主题":"Theme",
+  "浏览器":"Browser",
+  "移除图片":"Remove image",
+  "· 工作台内":"· inside the workspace",
+  "提交中":"Submitting",
+  "登录已失效，请重新登录后提交":"Your session expired. Sign in again and resubmit.",
+  "），请稍后重试":"). Try again later.",
+  "网络异常，提交失败，请稍后重试":"Network error. Submission failed, try again later."
+});
+
+Object.assign(window.LF_I18N_EN,{
+  "创建你的账号":"Create your account",
+  "注册并进入":"Sign up and enter",
+  "保存失败，请重试":"Couldn't save. Try again.",
+  "模型列表加载失败（":"Couldn't load the model list ("
+});
+
+Object.assign(window.LF_I18N_EN,{
+  "选择日期":"Select date",
+  "上个月":"Previous month",
+  "下个月":"Next month",
+  "选择要上传的文件夹":"Select a folder to upload",
+  "拖拽文件到此处，或":"Drag files here, or",
+  "选择文件":"Select file",
+  "支持":"Supports",
+  "单个文件":"single file",
+  "文件夹请点击「选择文件夹」上传":"To upload a folder, click “Select folder”",
+  "只能选择一个文件":"Only one file can be selected",
+  "不支持的文件类型：":"Unsupported file type: ",
+  "当前浏览器不支持拖放，请点击选择":"This browser doesn't support drag and drop. Click to choose."
+});
