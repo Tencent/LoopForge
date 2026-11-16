@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"agentflow/internal/apperr"
 	"agentflow/internal/cronexpr"
 	"agentflow/internal/domain"
 	"agentflow/internal/repo"
@@ -233,7 +234,7 @@ func (s *Service) claimJob(id string, dueAt time.Time) (domain.ScheduleJob, erro
 	job.LastAssistantMessage = ""
 	job.NotificationResult = ""
 	if err := s.repo.PutScheduleJob(job); err != nil {
-		return job, fmt.Errorf("persist schedule job claim: %w", err)
+		return job, errors.Join(apperr.New(apperr.Unavailable, "暂时无法记录定时任务的运行状态，请稍后重试"), err)
 	}
 	s.running[id] = true
 	if stored, ok := s.repo.ScheduleJob(id); ok {

@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"agentflow/internal/apperr"
 	"agentflow/internal/domain"
 	"agentflow/internal/repo"
 	"agentflow/internal/tracker"
@@ -904,8 +905,12 @@ func TestRunNowDoesNotExecuteWhenClaimWriteFails(t *testing.T) {
 		executions++
 		return "finished", nil
 	})
-	if _, err := svc.RunNow(job.ID); err == nil || !strings.Contains(err.Error(), "claim write failed") {
+	_, err = svc.RunNow(job.ID)
+	if err == nil || !strings.Contains(err.Error(), "claim write failed") {
 		t.Errorf("RunNow error = %v, want claim write failure", err)
+	}
+	if appErr, ok := apperr.As(err); !ok || appErr.Kind != apperr.Unavailable || strings.Contains(appErr.Message, "claim write failed") {
+		t.Errorf("want a sanitized temporarily unavailable response, got %v", appErr)
 	}
 	if executions != 0 {
 		t.Fatalf("assistant executed %d times without a persisted claim", executions)
