@@ -45,6 +45,12 @@ func TestScheduleJobOpensNewConversationPerExecution(t *testing.T) {
 	if err != nil || second == "" || second == first {
 		t.Fatalf("second run = %q (first %q) %v", second, first, err)
 	}
+	// The scheduler learns the conversation before the prompt finishes.
+	var reported []string
+	_, third, err := h.runScheduleJobPromptReporting(job, func(id string) { reported = append(reported, id) })
+	if err != nil || len(reported) != 1 || reported[0] != third {
+		t.Fatalf("reported %v, run = %q %v", reported, third, err)
+	}
 	for _, id := range []string{first, second} {
 		s, ok := h.repo.AssistantSession(owner.ID, id)
 		if !ok || s.Source != domain.AssistantSourceScheduled || s.TaskID != job.ID || len(s.Messages) != 2 {

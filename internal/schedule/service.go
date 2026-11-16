@@ -39,8 +39,9 @@ type BaselineGuard func(job domain.ScheduleJob, issues []domain.Issue) (blocked 
 type AssistantPrep func(job domain.ScheduleJob) (message string, err error)
 
 // AssistantSessionPrep is an AssistantPrep that also reports the Studio
-// conversation the prompt ran in (empty when none was opened).
-type AssistantSessionPrep func(job domain.ScheduleJob) (message, sessionID string, err error)
+// conversation the prompt ran in (empty when none was opened). It calls
+// opened as soon as the conversation exists, before the prompt finishes.
+type AssistantSessionPrep func(job domain.ScheduleJob, opened func(sessionID string)) (message, sessionID string, err error)
 
 type Service struct {
 	repo           *repo.Store
@@ -296,7 +297,10 @@ func (s *Service) executeJob(job domain.ScheduleJob, triggerOrigin string, exec 
 		return s.saveResult(result), err
 	}
 	if (s.assistant != nil || s.assistantRun != nil) && (strings.TrimSpace(job.AssistantPrompt) != "" || job.SharedTaskID != "") {
-		msg, sessionID, prepErr := s.runAssistant(job)
+		msg, sessionID, prepErr := s.runAssistant(job, exec)
+		if sessionID == "" && exec != nil {
+			sessionID = exec.SessionID
+		}
 		job.LastSessionID = sessionID
 		if sessionID != "" && job.UsesFixedSession() {
 			job.FixedSessionID = sessionID
@@ -375,12 +379,29 @@ func (s *Service) executeJob(job domain.ScheduleJob, triggerOrigin string, exec 
 	return finish(job, nil)
 }
 
-func (s *Service) runAssistant(job domain.ScheduleJob) (string, string, error) {
+func (s *Service) runAssistant(job domain.ScheduleJob, exec *domain.ScheduleJobExecution) (string, string, error) {
 	if s.assistantRun != nil {
-		return s.assistantRun(job)
+		return s.assistantRun(job, func(sessionID string) { s.recordOpenedSession(job, exec, sessionID) })
 	}
 	msg, err := s.assistant(job)
 	return msg, "", err
+}
+
+// recordOpenedSession stores the conversation while the prompt still runs,
+// so a run cut short (a restart, a crash) keeps a link to what it did.
+func (s *Service) recordOpenedSession(job domain.ScheduleJob, exec *domain.ScheduleJobExecution, sessionID string) {
+	if sessionID == "" {
+		return
+	}
+	if exec != nil && exec.SessionID != sessionID {
+		exec.SessionID = sessionID
+		if err := s.repo.PutScheduleJobExecution(*exec); err != nil {
+			log.Printf("schedule job %s trace=%s: record session: %v", job.ID, exec.TraceID, err)
+		}
+	}
+	if err := s.repo.SaveScheduleJobRunSession(job.ID, job.LastRunAt, sessionID); err != nil {
+		log.Printf("schedule job %s trace=%s: record session: %v", job.ID, job.LastTraceID, err)
+	}
 }
 
 func (s *Service) dispatchIssue(job domain.ScheduleJob, issue domain.Issue, triggerOrigin string) (string, error) {

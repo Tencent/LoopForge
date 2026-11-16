@@ -124,6 +124,29 @@ test('an AI execution links to the conversation it ran in', async (t) => {
   assert.equal(url.hash, '#/collaboration');
   assert.equal(link.target, '_blank');
   assert.equal(rows[1].querySelector('[data-open-exec-chat]'), null, 'a run that failed before opening a conversation has nothing to open');
+  const none = rows[1].querySelector('.sched-exec-action.is-unavailable');
+  assert.match(none.textContent, /无会话/, 'the slot says why instead of vanishing');
+  assert.match(none.title, /创建会话之前/);
+  for (const row of rows) {
+    const slots = row.querySelector('.sched-exec-action-slots');
+    assert.equal(slots.children.length, 2, 'every row has the same two action slots');
+    assert.ok(slots.lastElementChild.querySelector('[data-schedule-menu]'));
+  }
+});
+
+test('an interrupted AI execution that opened a conversation still links to it', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  app.router.get(/^\/api\/schedule-job-executions\?/, () => [
+    { id: 'sjx-cut', jobId: 'job-ai', jobName: 'Daily summary', jobKind: 'assistant', projectId: 'project-1', traceId: FAILED_TRACE, status: 'failed', error: '上次运行中断（服务重启）', sessionId: 'chat-cut', startedAt: '2026-11-16T09:00:00Z', durationMs: 247000 },
+    { id: 'sjx-run', jobId: 'job-ai', jobName: 'Daily summary', jobKind: 'assistant', projectId: 'project-1', traceId: OK_TRACE, status: 'running', startedAt: '2026-11-16T10:00:00Z' },
+  ]);
+  app.evaluate(`state.projectFilter='project-1';state.data.scheduleJobs=[];renderScheduleJobs();`);
+  await app.evaluate(`selectAIScheduleTab('executions')`);
+  await settle();
+  const rows = app.document.querySelectorAll('#scheduleExecList .sched-exec-row');
+  assert.equal(new URL(rows[0].querySelector('[data-open-exec-chat]').href).searchParams.get('chatSession'), 'chat-cut');
+  assert.match(rows[1].querySelector('.is-unavailable').textContent, /准备中/);
 });
 
 test('the overview compares the last 7 days with the week before and the table filters and pages', async (t) => {

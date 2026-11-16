@@ -18,6 +18,9 @@ type scheduledSessionPolicy struct {
 	// KeepHistory keeps the conversations of earlier runs so each execution
 	// record can open its own; the session janitor trims them later.
 	KeepHistory bool
+	// Opened, when set, learns the conversation as soon as it is created,
+	// before the prompt finishes.
+	Opened func(sessionID string)
 }
 
 type scheduledSessionPolicyKey struct{}
@@ -39,6 +42,12 @@ func (h *assistantHandlers) prepareScheduleJob(job domain.ScheduleJob) (string, 
 // runScheduleJobPrompt runs an AI job's prompt as a Studio conversation turn:
 // a new conversation per execution by default, or the job's pinned one.
 func (h *assistantHandlers) runScheduleJobPrompt(job domain.ScheduleJob) (message, sessionID string, err error) {
+	return h.runScheduleJobPromptReporting(job, nil)
+}
+
+// runScheduleJobPromptReporting is runScheduleJobPrompt that also tells
+// opened about the conversation the moment it is created.
+func (h *assistantHandlers) runScheduleJobPromptReporting(job domain.ScheduleJob, opened func(sessionID string)) (message, sessionID string, err error) {
 	if h == nil || h.repo == nil {
 		return "", "", fmt.Errorf("未连接数据源")
 	}
@@ -69,7 +78,7 @@ func (h *assistantHandlers) runScheduleJobPrompt(job domain.ScheduleJob) (messag
 	}
 	ctx := withAssistantExecMode(context.Background(), assistantExecModeForApproval(AssistantApprovalAuto))
 	ctx = withAssistantSessionOrigin(ctx, domain.AssistantSourceScheduled, job.ID)
-	policy := scheduledSessionPolicy{KeepHistory: true}
+	policy := scheduledSessionPolicy{KeepHistory: true, Opened: opened}
 	if job.UsesFixedSession() {
 		policy.Continue = strings.TrimSpace(job.FixedSessionID)
 	}

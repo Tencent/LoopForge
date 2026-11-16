@@ -277,7 +277,9 @@ func (h *assistantHandlers) executeAssistantTask(ctx context.Context, user domai
 	}
 	task.SessionID = sessionID
 	task.Model = model
-
+	if policy.Opened != nil {
+		policy.Opened(sessionID)
+	}
 	// Like a chat turn, a scheduled run has no time limit: it ends when the
 	// CLI finishes or someone stops it from the conversation page.
 	h.executeGeneration(ctx, req, g, domainUserToAuth(user))
