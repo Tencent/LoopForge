@@ -469,11 +469,8 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 	ctx = withGitToken(ctx, gitTok)
 	ctx = gitwork.WithSSHKeys(ctx, gitCredentials.GitSSHKeys)
 	ctx = withGitIdentity(ctx, sb.credentialSnapshot().GitUserName, sb.credentialSnapshot().GitUserEmail)
-	// Repository checkout and Agent-configuration index isolation belong to the
-	// run environment, not to each node. The same checkout and .git/index are
-	// reused by all nodes, so repeatedly toggling skip-worktree only creates
-	// needless index.lock contention. A reconstructed runEnvironment (restart or
-	// lease takeover) starts unprepared and revalidates the persisted checkout.
+	// Share the checkout between nodes. A reconstructed run environment
+	// revalidates the persisted checkout after restart or lease takeover.
 	// A runner that integrates on its own checkout needs nothing from a
 	// control-plane clone, so none is made.
 	stagingCheckout := true
@@ -484,19 +481,8 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 		if !stagingCheckout {
 			return nil
 		}
-		repoWorkspaces := repositoryWorkspaceDirs(sb.Workspace(), current.RepositoryContexts())
-		for _, dir := range repoWorkspaces {
-			if err := runtime.RestoreProjectAgentGitIndex(ctx, dir, sb.Driver()); err != nil {
-				return fmt.Errorf("restore repository Agent configuration index: %w", err)
-			}
-		}
 		if err := prepareRepositories(ctx, sb.Workspace(), current.RepositoryContexts()); err != nil {
 			return explainGitAuthFailure(fmt.Errorf("repository checkout: %w", err), strings.TrimSpace(gitTok) != "")
-		}
-		for _, dir := range repoWorkspaces {
-			if err := runtime.ProtectProjectAgentGitIndex(ctx, dir, sb.Driver()); err != nil {
-				return fmt.Errorf("protect repository Agent configuration index: %w", err)
-			}
 		}
 		for _, rc := range current.RepositoryContexts() {
 			e.observe(runID, node.ID, domain.TelemetryEvent{Category: "sandbox", Name: "repository.checked_out", Phase: "finish", Message: rc.Name + " @ " + rc.WorkBranch, Attributes: map[string]any{"repositoryId": rc.RepositoryID, "repositoryDir": rc.WorkspaceDir, "baseBranch": rc.BaseBranch, "workBranch": rc.WorkBranch}})

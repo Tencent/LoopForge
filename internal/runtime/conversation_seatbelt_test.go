@@ -45,7 +45,7 @@ func TestConfigureProcessConversationSandboxAllowsSeatbeltAndBwrap(t *testing.T)
 func TestSeatbeltProfileConversationHomeAndGuardOrder(t *testing.T) {
 	workspace := t.TempDir()
 	root := t.TempDir()
-	profile, err := seatbeltProfileCommand(workspace, SandboxRequirements{ConversationRoot: root}, false)
+	profile, err := seatbeltProfileCommand(workspace, SandboxRequirements{ConversationRoot: root})
 	if err != nil {
 		t.Fatal(err)
 	}

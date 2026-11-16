@@ -37,8 +37,13 @@ func ConfigureConversationSandbox(ctx context.Context, sandbox Sandbox, root str
 	if s.requirements.ConversationRoot == root {
 		return nil
 	}
+	previousRoot := s.requirements.ConversationRoot
 	s.requirements.ConversationRoot = root
-	return s.Recreate(ctx)
+	if err := s.Recreate(ctx); err != nil {
+		s.requirements.ConversationRoot = previousRoot
+		return err
+	}
+	return nil
 }
 
 // configureProcessConversationSandbox enables a native process workspace

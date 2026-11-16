@@ -56,8 +56,7 @@ func (r *runEnvironment) endReportedOutputs(nodeID string) {
 	delete(r.reported, nodeID)
 }
 
-// prepareRepositoriesOnce keeps repository checkout and Agent-configuration
-// index isolation at the run-environment lifecycle rather than the node
+// prepareRepositoriesOnce keeps repository checkout at the run-environment
 // lifecycle. nodeMu serializes callers, and a reconstructed environment starts
 // with repositoriesPrepared=false so process restarts and lease takeovers
 // still revalidate the persisted workspace once before executing a node.

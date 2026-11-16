@@ -141,7 +141,20 @@ func TestReconstructedRunEnvironmentCleansStaleAgentGitIndexLock(t *testing.T) {
 	runGit("commit", "-m", "baseline")
 
 	ctx := context.Background()
-	if err := runtime.ProtectProjectAgentGitIndex(ctx, workspace, "docker"); err != nil {
+	runGit("update-index", "--skip-worktree", "AGENTS.md")
+	const legacyExcludes = `# AgentFlow managed sandbox: repository Agent configuration
+AGENTS.md
+AGENTS.override.md
+CLAUDE.md
+CLAUDE.local.md
+CODEBUDDY.md
+.mcp.json
+.agents/
+.codex/
+.claude/
+.codebuddy/
+`
+	if err := os.WriteFile(filepath.Join(workspace, ".git", "info", "exclude"), []byte(legacyExcludes), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	lockPath := filepath.Join(workspace, ".git", "index.lock")
@@ -151,17 +164,11 @@ func TestReconstructedRunEnvironmentCleansStaleAgentGitIndexLock(t *testing.T) {
 
 	// A worker restart reconstructs runEnvironment while preserving the run
 	// workspace. The first node on the new worker must revalidate checkout and
-	// isolation, remove a stale lock, then leave AGENTS.md protected again.
+	// make the existing instruction files visible to Git again.
 	reconstructed := &runEnvironment{}
 	repository := domain.RepositoryContext{RepositoryID: "repo", BaseBranch: "main", WorkBranch: "main"}
 	err := reconstructed.prepareRepositoriesOnce(func() error {
-		if err := runtime.RestoreProjectAgentGitIndex(ctx, workspace, "docker"); err != nil {
-			return err
-		}
-		if err := prepareRepository(ctx, workspace, repository); err != nil {
-			return err
-		}
-		return runtime.ProtectProjectAgentGitIndex(ctx, workspace, "docker")
+		return prepareRepositories(ctx, workspace, []domain.RepositoryContext{repository})
 	})
 	if err != nil {
 		t.Fatalf("reconstruct run environment: %v", err)
@@ -169,8 +176,8 @@ func TestReconstructedRunEnvironmentCleansStaleAgentGitIndexLock(t *testing.T) {
 	if _, err := os.Stat(lockPath); !os.IsNotExist(err) {
 		t.Fatalf("stale index lock survived reconstruction: %v", err)
 	}
-	if flag := runGit("ls-files", "-v", "--", "AGENTS.md"); !strings.HasPrefix(flag, "S ") {
-		t.Fatalf("AGENTS.md protection after reconstruction = %q", flag)
+	if flag := runGit("ls-files", "-v", "--", "AGENTS.md"); !strings.HasPrefix(flag, "H ") {
+		t.Fatalf("AGENTS.md index flag after reconstruction = %q", flag)
 	}
 }
 
