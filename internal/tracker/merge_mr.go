@@ -191,23 +191,17 @@ func (s *Service) FindBranchMRsInto(q domain.BranchMRQuery) ([]domain.DeliveryMR
 		return nil, nil
 	}
 	if strings.HasPrefix(project, "github:") {
-		g, err := s.githubClientForRun(project, q.ProjectID, q.GitToken)
+		g, identity, err := s.githubClientForRun(project, q.ProjectID, q.GitToken)
 		if err != nil {
 			return nil, err
 		}
 		pulls, err := g.listPulls(src, target)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("以%s查询 GitHub 失败：%w", identity, err)
 		}
 		return githubPullsInto(pulls, project, src, target), nil
 	}
-	var client *MCPClient
-	var err error
-	if local := strings.TrimSpace(q.ProjectID); local != "" {
-		client, _, err = s.trackerClientForProject("gongfeng", local)
-	} else {
-		client, _, err = s.gongfengClientForRemoteProject(project)
-	}
+	client, source, err := s.gongfengClientForRun(project, q)
 	if err != nil {
 		return nil, err
 	}
@@ -218,9 +212,31 @@ func (s *Service) FindBranchMRsInto(q domain.BranchMRQuery) ([]domain.DeliveryMR
 		"per_page":      20,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("search MR for %s: %w", src, err)
+		return nil, fmt.Errorf("以 %s 查询工蜂 MR %s 失败：%w", source, src, err)
 	}
 	return gongfengMRsInto(parseGongfengMRRecords(raw), project, src, target), nil
+}
+
+// gongfengClientForRun queries through the run project's Gongfeng MCP as the
+// run's responsible user; without a run project it falls back to the first
+// project that binds the repository.
+func (s *Service) gongfengClientForRun(project string, q domain.BranchMRQuery) (*MCPClient, string, error) {
+	local := strings.TrimSpace(q.ProjectID)
+	if local == "" || s.projectAuth == nil {
+		return s.gongfengClientForRemoteProject(project)
+	}
+	if q.ResponsibleUserID <= 0 {
+		return s.trackerClientForProject("gongfeng", local)
+	}
+	user, ok := s.projectAuth.User(q.ResponsibleUserID)
+	if !ok {
+		return nil, "none", fmt.Errorf("本轮责任人 %d 不存在", q.ResponsibleUserID)
+	}
+	binding, err := bindProjectUserTrackerMCP("gongfeng", s.cfg.Get(), s.projectAuth.MCPServers(), local, user, "责任人")
+	if err != nil {
+		return nil, binding.Source, err
+	}
+	return NewMCPClient(binding.URL, binding.Headers), binding.Source, nil
 }
 
 func gongfengMRsInto(items []gongfengListedMR, project, sourceBranch, targetBranch string) []domain.DeliveryMR {

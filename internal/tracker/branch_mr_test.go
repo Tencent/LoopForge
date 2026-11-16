@@ -61,6 +61,10 @@ func TestFindBranchMRsIntoReadsWithTheRunCredentials(t *testing.T) {
 	var auth []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		auth = append(auth, r.Header.Get("Authorization"))
+		if r.Header.Get("Authorization") == "Bearer revoked" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
 		if r.URL.Path != "/repos/o/r/pulls" || r.URL.Query().Get("base") != "main" || r.URL.Query().Get("head") != "o:feat" {
 			t.Errorf("unexpected request %s", r.URL)
 		}
@@ -88,5 +92,13 @@ func TestFindBranchMRsIntoReadsWithTheRunCredentials(t *testing.T) {
 	}
 	if strings.Join(auth, ",") != "Bearer pushed-with,Bearer run-owner" {
 		t.Fatalf("the run's push token comes first, then the Owner of the run's project, got %v", auth)
+	}
+	q.GitToken = "revoked"
+	if _, err := s.FindBranchMRsInto(q); err == nil || !strings.Contains(err.Error(), "本轮责任人的 Git Token") {
+		t.Fatalf("a rejected lookup names the identity it used: %v", err)
+	}
+	gf := domain.BranchMRQuery{ProjectID: "run", RemoteProject: "group/r", SourceBranch: "feat", TargetBranch: "main", ResponsibleUserID: 9}
+	if _, err := s.FindBranchMRsInto(gf); err == nil || !strings.Contains(err.Error(), "本轮责任人 9") {
+		t.Fatalf("Gongfeng lookups run as the run's responsible user: %v", err)
 	}
 }

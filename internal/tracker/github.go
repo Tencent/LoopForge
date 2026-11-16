@@ -49,18 +49,19 @@ func (s *Service) githubClient(project string) (*githubClient, error) {
 
 // githubClientForRun authenticates as the run did: its push token when set,
 // else the Owner of the run's project when that project binds the repository.
-func (s *Service) githubClientForRun(project, localProjectID, gitToken string) (*githubClient, error) {
+// It also names the identity it chose.
+func (s *Service) githubClientForRun(project, localProjectID, gitToken string) (*githubClient, string, error) {
 	g, err := s.githubClient(project)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	if token := strings.TrimSpace(gitToken); token != "" {
 		g.token = token
-		return g, nil
+		return g, "本轮责任人的 Git Token", nil
 	}
 	local := strings.TrimSpace(localProjectID)
 	if s.projectAuth == nil || local == "" {
-		return g, nil
+		return g, "首个绑定该仓库的项目 Owner 的 Git Token", nil
 	}
 	for _, repo := range s.projectAuth.Repositories() {
 		if repo.Provider != "github" || repo.GongfengProjectID != project || repo.ProjectID != local {
@@ -72,9 +73,9 @@ func (s *Service) githubClientForRun(project, localProjectID, gitToken string) (
 				g.token = u.GitToken
 			}
 		}
-		break
+		return g, "项目 " + local + " Owner 的 Git Token", nil
 	}
-	return g, nil
+	return g, "首个绑定该仓库的项目 Owner 的 Git Token", nil
 }
 
 func (g *githubClient) request(method, suffix string, input, output any) error {

@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -15,7 +16,7 @@ import (
 
 func TestVerifyRunMRsRequiresAnMRCarryingThePushedTip(t *testing.T) {
 	t.Parallel()
-	run := domain.Run{ExecutionContext: domain.TelemetryContext{ProjectID: "proj"}, Repositories: []domain.RepositoryContext{
+	run := domain.Run{ExecutionContext: domain.TelemetryContext{ProjectID: "proj", ResponsibleUserID: 7}, Repositories: []domain.RepositoryContext{
 		{RepositoryID: "svc", Name: "svc", GongfengProjectID: "github:o/svc", WorkspaceDir: "svc", WorkBranch: "feat", BaseBranch: "release/1.2", DefaultBranch: "main"},
 		{RepositoryID: "docs", Name: "docs", GongfengProjectID: "github:o/docs", WorkspaceDir: "docs", WorkBranch: "feat", DefaultBranch: "main"},
 		{RepositoryID: "ro", Name: "ro", GongfengProjectID: "github:o/ro", WorkspaceDir: "ro", WorkBranch: "feat", ReadOnly: true},
@@ -25,7 +26,7 @@ func TestVerifyRunMRsRequiresAnMRCarryingThePushedTip(t *testing.T) {
 	var looked []string
 	var mrs []domain.DeliveryMR
 	e := &Engine{FindBranchMRsInto: func(q domain.BranchMRQuery) ([]domain.DeliveryMR, error) {
-		looked = append(looked, q.ProjectID+":"+q.RemoteProject+"@"+q.SourceBranch+"->"+q.TargetBranch+" as "+q.GitToken)
+		looked = append(looked, q.ProjectID+":"+q.RemoteProject+"@"+q.SourceBranch+"->"+q.TargetBranch+" as "+q.GitToken+"/"+strconv.FormatInt(q.ResponsibleUserID, 10))
 		return mrs, nil
 	}}
 	fails := func(want string) {
@@ -43,7 +44,7 @@ func TestVerifyRunMRsRequiresAnMRCarryingThePushedTip(t *testing.T) {
 	}
 
 	fails("svc：feat → release/1.2 在托管平台上没有 MR/PR")
-	if strings.Join(looked, ",") != "proj:github:o/svc@feat->release/1.2 as push-token" {
+	if strings.Join(looked, ",") != "proj:github:o/svc@feat->release/1.2 as push-token/7" {
 		t.Fatalf("only the repository with pushed commits is looked up, into its frozen target, with the run's project and push token: %v", looked)
 	}
 	mrs = []domain.DeliveryMR{{URL: "pr/3", State: "merged", HeadSHA: "old"}}

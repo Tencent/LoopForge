@@ -34,6 +34,9 @@ type BranchMRQuery struct {
 	SourceBranch  string
 	TargetBranch  string
 	GitToken      string
+	// ResponsibleUserID is the run's responsible user, the identity GitToken
+	// belongs to.
+	ResponsibleUserID int64
 }
 
 // GongfengMRURL is the canonical web URL of a Gongfeng merge request.

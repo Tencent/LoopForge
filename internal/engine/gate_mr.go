@@ -64,7 +64,7 @@ func (e *Engine) verifyRunMRs(run domain.Run, gitToken string, pending func(doma
 			unverifiable = true
 			continue
 		}
-		mrs, err := e.FindBranchMRsInto(domain.BranchMRQuery{ProjectID: run.ExecutionContext.ProjectID, RemoteProject: project, SourceBranch: work, TargetBranch: base, GitToken: gitToken})
+		mrs, err := e.FindBranchMRsInto(domain.BranchMRQuery{ProjectID: run.ExecutionContext.ProjectID, RemoteProject: project, SourceBranch: work, TargetBranch: base, GitToken: gitToken, ResponsibleUserID: run.ExecutionContext.ResponsibleUserID})
 		if err != nil {
 			problems = append(problems, fmt.Sprintf("%s：查询 %s → %s 的 MR 失败：%v", label, work, base, err))
 			unverifiable = true
