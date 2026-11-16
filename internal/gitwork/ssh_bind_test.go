@@ -3,6 +3,9 @@ package gitwork
 import (
 	"crypto/sha256"
 	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -63,5 +66,47 @@ func TestStartSSHWithoutAssignedKeyOnlyRewritesURLs(t *testing.T) {
 	}
 	if env["GIT_SSH_COMMAND"] == "" {
 		t.Fatal("expected failing GIT_SSH_COMMAND without assigned key")
+	}
+}
+
+// A workspace CLI clones whatever URL it likes, so personal keys are bound
+// by host:port instead of by registered remote.
+func TestStartSSHHostsBindsByEndpoint(t *testing.T) {
+	env := map[string]string{}
+	stop, err := StartSSHHosts(env, map[string]string{"git.example.org:22": "", "other.example.org:2222": " "}, t.TempDir(), "")
+	if err != nil || len(env) != 0 {
+		t.Fatalf("keys without content must bind nothing: env=%v err=%v", env, err)
+	}
+	stop()
+	if _, err := StartSSHHosts(map[string]string{}, map[string]string{"git.example.org": "KEY"}, t.TempDir(), ""); err == nil {
+		t.Fatal("an endpoint without a port was accepted")
+	}
+	if got := (sshBinding{alias: "lf-x", match: "git.example.org"}).matchHost(); got != "git.example.org" {
+		t.Fatalf("host-bound match = %q", got)
+	}
+	if got := (sshBinding{alias: "lf-x"}).matchHost(); got != "lf-x" {
+		t.Fatalf("remote-bound match = %q", got)
+	}
+}
+
+func TestBuiltinKnownHostsTrustGitHubOnly(t *testing.T) {
+	t.Setenv(SSHKnownHostsEnv, "")
+	pinned, err := sshHostKeys([]SSHRemote{{Host: "github.com", Port: "22"}, {Host: "ssh.github.com", Port: "443"}})
+	if err != nil {
+		t.Fatalf("github.com should be trusted without configuration: %v", err)
+	}
+	if got := string(pinned); !strings.Contains(got, "github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl") || !strings.Contains(got, "[ssh.github.com]:443 ssh-rsa") {
+		t.Fatalf("pinned keys = %s", got)
+	}
+	if _, err := sshHostKeys([]SSHRemote{{Host: "git.example.org", Port: "22"}}); err == nil || !strings.Contains(err.Error(), SSHKnownHostsEnv) {
+		t.Fatalf("other hosts still need configured keys: %v", err)
+	}
+	file := filepath.Join(t.TempDir(), "known_hosts")
+	if err := os.WriteFile(file, []byte("git.example.org ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(SSHKnownHostsEnv, file)
+	if _, err := sshHostKeys([]SSHRemote{{Host: "git.example.org", Port: "22"}, {Host: "github.com", Port: "22"}}); err != nil {
+		t.Fatalf("configured and built-in keys combine: %v", err)
 	}
 }
