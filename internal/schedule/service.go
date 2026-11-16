@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"agentflow/internal/apperr"
 	"agentflow/internal/cronexpr"
 	"agentflow/internal/domain"
 	"agentflow/internal/repo"
@@ -225,7 +226,6 @@ func (s *Service) claimJob(id string, dueAt time.Time) (domain.ScheduleJob, erro
 			return job, errNotDue
 		}
 	}
-	s.running[id] = true
 	job.LastRunAt = time.Now().UTC()
 	job.LastStatus = "running"
 	job.LastError = ""
@@ -233,7 +233,14 @@ func (s *Service) claimJob(id string, dueAt time.Time) (domain.ScheduleJob, erro
 	job.LastPulled = 0
 	job.LastAssistantMessage = ""
 	job.NotificationResult = ""
-	return s.saveResult(job), nil
+	if err := s.repo.PutScheduleJob(job); err != nil {
+		return job, errors.Join(apperr.New(apperr.Unavailable, "暂时无法记录定时任务的运行状态，请稍后重试"), err)
+	}
+	s.running[id] = true
+	if stored, ok := s.repo.ScheduleJob(id); ok {
+		job = stored
+	}
+	return job, nil
 }
 
 func (s *Service) release(id string) {
@@ -420,11 +427,7 @@ func (s *Service) matchingIssues(job domain.ScheduleJob) []domain.Issue {
 	return out
 }
 func (s *Service) saveResult(result domain.ScheduleJob) domain.ScheduleJob {
-	if result.LastStatus == "running" {
-		_ = s.repo.PutScheduleJob(result)
-	} else {
-		_ = s.repo.SaveScheduleJobResult(result)
-	}
+	_ = s.repo.SaveScheduleJobResult(result)
 	stored, ok := s.repo.ScheduleJob(result.ID)
 	if ok {
 		return stored
