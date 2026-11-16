@@ -377,6 +377,15 @@ curl -u "$AGENTFLOW_USER:$AGENTFLOW_PASS" -X POST \
   "$AGENTFLOW_URL/api/schedule-jobs/job-1/run"
 ```
 
+### `POST /api/schedule-jobs/{id}/enabled`
+
+启用或停用 job 的定时调度，请求体 `{"enabled": true|false}`，`200` 返回更新后的 `ScheduleJob`。只改 `enabled`：提示词、执行身份（`runAsUserId`）和会话模式保持不变；正在运行的那次执行不会被中断。需要该项目的写权限（只读成员 `403`），job 不存在 `404`，缺少 `enabled` 时 `400`。
+
+```bash
+curl -u "$AGENTFLOW_USER:$AGENTFLOW_PASS" -X POST -H 'Content-Type: application/json' \
+  -d '{"enabled":false}' "$AGENTFLOW_URL/api/schedule-jobs/job-1/enabled"
+```
+
 ### `GET /api/schedule-job-executions`
 
 返回执行记录 `ScheduleJobExecution[]`，按开始时间倒序。每次运行（定时触发或手动运行）对应一条记录，包含 `status`（running / success / failed / waiting）、`error`、`durationMs`、候选与派发数、AI 回复摘要，以及派发出的 `runs[]`（`issueId`、`runId`）。每个 job 保留最近 200 条，删除 job 时一并删除。

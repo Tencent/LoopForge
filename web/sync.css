@@ -83,6 +83,7 @@
 .schedule-check{display:flex;align-items:flex-start;gap:8px;margin:0;font-size:12px;line-height:1.45;color:var(--text);font-weight:600;cursor:pointer}
 .schedule-check input{margin-top:2px}
 .schedule-check-follow{margin-top:10px}
+.schedule-check[hidden]{display:none}
 .schedule-status-grid{display:flex;flex-wrap:wrap;gap:8px 16px}
 .schedule-form-actions{display:flex;gap:12px;align-items:center;flex-wrap:wrap;flex-shrink:0;position:sticky;bottom:0;z-index:2;margin:16px -14px 0;padding:14px 14px 14px;border-top:1px solid var(--line);background:var(--panel);border-radius:0 0 8px 8px}
 .schedule-kind-tag{display:inline-flex;align-items:center;height:16px;padding:0 6px;border-radius:999px;font-size:9px;font-weight:750;letter-spacing:.02em}
@@ -149,6 +150,10 @@
 #aiSchedulesView .schedule-job-main small.schedule-run-live { color:var(--hui-info); }
 #aiSchedulesView .schedule-kind-tag { background:var(--hui-accent-soft);color:var(--hui-accent); }
 #aiSchedulesView .sync-empty { padding:48px 20px;color:var(--hui-secondary);text-align:center;font-size:13px; }
+/* AI 任务行上的启停开关 */
+#aiSchedulesView .schedule-enabled { display:inline-flex;align-items:center;gap:6px;flex:none;margin-right:4px;color:var(--hui-secondary);font-size:12px;white-space:nowrap;cursor:pointer; }
+#aiSchedulesView .schedule-enabled span { min-width:3em; }
+#aiSchedulesView .schedule-job-item.is-paused .schedule-job-main b { color:var(--hui-secondary); }
 /* AI 任务行的 ⋯ 菜单：面板与选项沿用 .hui-menu 的尺寸与阴影 */
 #aiSchedulesView .schedule-row-more { position:relative;display:inline-flex;flex:none; }
 #aiSchedulesView .schedule-row-more-btn { width:28px;padding:0;justify-content:center;color:var(--hui-muted); }

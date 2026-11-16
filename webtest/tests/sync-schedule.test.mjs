@@ -83,6 +83,56 @@ test('schedule form switches job kind and timing and sends validated assistant a
   assert.match(app.document.querySelector('#scheduleJobList').textContent, /每小时/);
 });
 
+test('an AI job is started and stopped from its row, not the editor', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  let fail = false;
+  app.router.post('/api/schedule-jobs/job-ai/enabled', call => (fail ? { status: 403, body: { error: '没有该项目的定时任务访问权限' } } : { ...app.evaluate('state.data.scheduleJobs[0]'), enabled: call.body.enabled }));
+  app.router.put('/api/schedule-jobs', call => ({ ...call.body }));
+  app.router.get('/api/schedule-jobs', () => app.evaluate('state.data.scheduleJobs'));
+  app.evaluate(`
+    state.projectFilter='project-1';
+    state.data.schedulerEnabled=true;
+    state.data.scheduleJobs=[{id:'job-ai',projectId:'project-1',name:'巡检',skipDispatch:true,assistantPrompt:'x',enabled:true,intervalSec:3600}];
+    renderScheduleJobs();
+  `);
+  const list = app.document.querySelector('#aiScheduleJobList');
+  let toggle = list.querySelector('[data-toggle-schedule="job-ai"]');
+  assert.equal(toggle.getAttribute('role'), 'switch');
+  assert.equal(toggle.checked, true);
+  assert.match(toggle.closest('label').textContent, /已启用/);
+  toggle.checked = false;
+  toggle.dispatchEvent(new app.window.Event('change', { bubbles: true }));
+  await settle(4);
+  const call = app.router.calls.find(c => c.method === 'POST' && c.path === '/api/schedule-jobs/job-ai/enabled');
+  assert.deepEqual(call.body, { enabled: false });
+  assert.equal(app.evaluate('state.data.scheduleJobs[0].enabled'), false);
+  toggle = list.querySelector('[data-toggle-schedule="job-ai"]');
+  assert.equal(toggle.checked, false);
+  assert.match(toggle.closest('label').textContent, /已停用/);
+  assert.ok(list.querySelector('.schedule-job-item.is-paused'));
+
+  // A refused toggle snaps back.
+  fail = true;
+  toggle.checked = true;
+  toggle.dispatchEvent(new app.window.Event('change', { bubbles: true }));
+  await settle(4);
+  assert.equal(list.querySelector('[data-toggle-schedule="job-ai"]').checked, false);
+
+  // The editor no longer offers the switch, and saving keeps the row's state.
+  app.evaluate(`openScheduleJobModal('assistant',state.data.scheduleJobs[0])`);
+  await settle(4);
+  const form = app.document.querySelector('#scheduleJobForm');
+  assert.equal(form.elements.enabled.closest('label').hidden, true);
+  form.elements.enabled.checked = true;
+  form.dispatchEvent(new app.window.Event('submit', { bubbles: true, cancelable: true }));
+  await settle(4);
+  const save = app.router.calls.find(c => c.method === 'PUT' && c.path === '/api/schedule-jobs');
+  assert.equal(save.body.enabled, false);
+  app.evaluate(`fillScheduleJobForm({});const f=$('#scheduleJobForm');f.elements.jobKind.value='dispatch';syncScheduleJobKind();`);
+  assert.equal(form.elements.enabled.closest('label').hidden, false, 'the trigger config keeps its switch');
+});
+
 test('AI job rows keep 立即运行 visible and move the rest into a ⋯ menu', async (t) => {
   const app = await loadApp();
   t.after(app.close);

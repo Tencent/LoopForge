@@ -688,6 +688,29 @@ func (r *CatalogRepo) PutScheduleJob(v domain.ScheduleJob) error {
 	})
 }
 
+// SetScheduleJobEnabled flips only a job's enabled flag, leaving its
+// configuration and the outcome of a run in progress untouched.
+func (r *CatalogRepo) SetScheduleJobEnabled(id string, enabled bool) (domain.ScheduleJob, error) {
+	var out domain.ScheduleJob
+	err := r.DB.Transaction(func(tx *gorm.DB) error {
+		var row scheduleJobRow
+		if err := r.locking(tx).Where("id = ?", id).First(&row).Error; err != nil {
+			return err
+		}
+		if err := json.Unmarshal(row.Payload, &out); err != nil {
+			return err
+		}
+		out.Enabled = enabled
+		out.UpdatedAt = time.Now().UTC()
+		flag := 0
+		if enabled {
+			flag = 1
+		}
+		return tx.Model(&row).Updates(map[string]any{"enabled": flag, "payload": mustJSON(out), "updated_at": timePtr(out.UpdatedAt)}).Error
+	})
+	return out, err
+}
+
 func (r *CatalogRepo) DeleteScheduleJob(id string) error {
 	if _, ok := r.ScheduleJob(id); !ok {
 		return fmt.Errorf("schedule job not found")

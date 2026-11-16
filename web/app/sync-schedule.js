@@ -279,6 +279,7 @@ function syncScheduleJobKind(){
   $('#scheduleModal').querySelector('.schedule-head').hidden=assistant;
   $('#scheduleJobList').hidden=assistant||!projectTriggerJob();
   f.querySelector('[type="submit"]').textContent=assistant?'保存 AI 定时任务':'保存触发配置';
+  const enabledField=f.elements.enabled?.closest('label');if(enabledField)enabledField.hidden=assistant;
   if(assistant)paintScheduleModel(f.elements.assistantModel.value);
 }
 // The server binds "self" to whoever saves; a job bound to another member
@@ -476,6 +477,29 @@ function renderScheduleJobs(){
   renderAISchedulePanels();
   startScheduleJobPoll();
 }
+// The schedule is started and stopped on the row, not in the editor.
+function scheduleEnabledSwitchHTML(j){
+  const on=!!j.enabled,label=on?'已启用':'已停用';
+  return `<label class="schedule-enabled" title="${on?'点击停用：不再按计划执行，正在运行的这次不受影响':'点击启用：按计划执行'}"><input type="checkbox" class="hui-switch" role="switch" data-toggle-schedule="${escapeHTML(j.id)}" aria-label="启用 ${escapeHTML(j.name)}" ${on?'checked':''}><span data-schedule-enabled-label>${label}</span></label>`;
+}
+async function toggleScheduleJobEnabled(input){
+  const id=input.dataset.toggleSchedule,enabled=input.checked;
+  const jobs=state.data.scheduleJobs||[],idx=jobs.findIndex(j=>j.id===id);
+  if(idx<0)return;
+  const before=jobs[idx].enabled;
+  input.disabled=true;
+  try{
+    const saved=await api(`/api/schedule-jobs/${encodeURIComponent(id)}/enabled`,{method:'POST',body:JSON.stringify({enabled})});
+    const at=(state.data.scheduleJobs||[]).findIndex(j=>j.id===id);
+    if(at>=0)state.data.scheduleJobs[at]=saved;
+    toast(enabled?`已启用「${saved.name||jobs[idx].name}」`:`已停用「${saved.name||jobs[idx].name}」，正在运行的这次不受影响`);
+  }catch(err){
+    const at=(state.data.scheduleJobs||[]).findIndex(j=>j.id===id);
+    if(at>=0)state.data.scheduleJobs[at]={...state.data.scheduleJobs[at],enabled:before};
+    toast(err.message,'err');
+  }
+  renderScheduleJobs();
+}
 // AI job rows keep 立即运行 on the row; the rest sits in a ⋯ menu. Items keep
 // the data-* hooks the row buttons used, so the list binds them as before.
 function scheduleRowMenuHTML(j){
@@ -528,7 +552,7 @@ function bindScheduleRowMenus(list){
 function renderScheduleJobList(list,jobs,kind,canRun){
   if(!list)return;
   const focused=document.activeElement;
-  const focusAction=['editSchedule','runSchedule','deleteSchedule','scheduleMenu'].find(key=>focused?.dataset?.[key]);
+  const focusAction=['editSchedule','runSchedule','deleteSchedule','scheduleMenu','toggleSchedule'].find(key=>focused?.dataset?.[key]);
   const focusId=list.contains(focused)&&focusAction&&!focused.closest('.schedule-row-menu')?focused.dataset[focusAction]:null;
   // A poll re-render keeps an open ⋯ menu open (and focused) on its job.
   const openMenu=list.querySelector('.schedule-row-menu:not([hidden])');
@@ -546,7 +570,7 @@ function renderScheduleJobList(list,jobs,kind,canRun){
     const runDisabled=running||!canRun;
     const runTitle=running?'任务正在服务端运行，关闭页面不会中断':(canRun?'':'本实例未启用 scheduler');
     const session=assistant&&j.sessionMode==='fixed'?' · 同一会话':'';
-    return `<div class="schedule-job-item${running?' is-running':''}"><div class="schedule-job-row"><button type="button" class="schedule-job-main" data-edit-schedule="${escapeHTML(j.id)}" title="${assistant?'编辑 AI 定时任务':'编辑触发配置'}"><b><span class="schedule-kind-tag ${assistant?'is-assistant':'is-dispatch'}">${kind}</span>${escapeHTML(j.name)}</b>${sharedScheduleRowInfo(j)}<span>${escapeHTML(scheduleJobTimingLabel(j))} · ${j.enabled?'已启用':'已停用'}${assistant?` · ${escapeHTML(j.runAsUserId?`使用 ${j.runAsName||'成员'} 的 Key`:'使用项目 Owner 的 Key')}${session}`:` · 单次最多 ${escapeHTML(j.maxDispatch||10)} 个需求`}${running?' · 正在运行':''}</span><small class="${running?'schedule-run-live':''}">${(j.lastRunAt&&!String(j.lastRunAt).startsWith('0001-'))||running?`最近：${new Date(j.lastRunAt||Date.now()).toLocaleString()}${extra}${status}`:'尚未运行'}</small></button>${sharedScheduleRowAction(j)}${scheduleJobTraceCopyHTML(j)}<button type="button" class="button ghost small" data-run-schedule="${escapeHTML(j.id)}" ${runDisabled?'disabled':''} ${runTitle?`title="${escapeHTML(runTitle)}"`:''}>${running?'运行中…':'立即运行'}</button>${scheduleRowMenuHTML(j)}</div>${assistant?'':scheduleBlockerHTML(j)}</div>`;
+    return `<div class="schedule-job-item${running?' is-running':''}${assistant&&!j.enabled?' is-paused':''}"><div class="schedule-job-row"><button type="button" class="schedule-job-main" data-edit-schedule="${escapeHTML(j.id)}" title="${assistant?'编辑 AI 定时任务':'编辑触发配置'}"><b><span class="schedule-kind-tag ${assistant?'is-assistant':'is-dispatch'}">${kind}</span>${escapeHTML(j.name)}</b>${sharedScheduleRowInfo(j)}<span>${escapeHTML(scheduleJobTimingLabel(j))}${assistant?'':` · ${j.enabled?'已启用':'已停用'}`}${assistant?` · ${escapeHTML(j.runAsUserId?`使用 ${j.runAsName||'成员'} 的 Key`:'使用项目 Owner 的 Key')}${session}`:` · 单次最多 ${escapeHTML(j.maxDispatch||10)} 个需求`}${running?' · 正在运行':''}</span><small class="${running?'schedule-run-live':''}">${(j.lastRunAt&&!String(j.lastRunAt).startsWith('0001-'))||running?`最近：${new Date(j.lastRunAt||Date.now()).toLocaleString()}${extra}${status}`:'尚未运行'}</small></button>${sharedScheduleRowAction(j)}${scheduleJobTraceCopyHTML(j)}${assistant?scheduleEnabledSwitchHTML(j):''}<button type="button" class="button ghost small" data-run-schedule="${escapeHTML(j.id)}" ${runDisabled?'disabled':''} ${runTitle?`title="${escapeHTML(runTitle)}"`:''}>${running?'运行中…':'立即运行'}</button>${scheduleRowMenuHTML(j)}</div>${assistant?'':scheduleBlockerHTML(j)}</div>`;
   }).join('')||'<div class="sync-empty">当前项目还没有 AI 定时任务，点击右上角「新建 AI 定时任务」。</div>';
   list.querySelectorAll('[data-edit-schedule]').forEach(b=>b.onclick=()=>{
     const job=(state.data.scheduleJobs||[]).find(j=>j.id===b.dataset.editSchedule);
@@ -557,13 +581,19 @@ function renderScheduleJobList(list,jobs,kind,canRun){
   bindSharedScheduleRowActions(list);
   bindScheduleJobTraceActions(list);
   list.querySelectorAll('[data-run-schedule]').forEach(b=>b.onclick=()=>runScheduleJob(b.dataset.runSchedule));
+  list.querySelectorAll('[data-toggle-schedule]').forEach(b=>b.onchange=()=>toggleScheduleJobEnabled(b));
   list.querySelectorAll('[data-delete-schedule]').forEach(b=>b.onclick=()=>deleteScheduleJob(b.dataset.deleteSchedule));
   list.querySelectorAll('[data-open-align-run]').forEach(b=>b.onclick=()=>openRunFromId(b.dataset.openAlignRun,{forceRuns:true}));
   list.querySelectorAll('[data-realign-run]').forEach(b=>b.onclick=()=>realignBaseline(b.dataset.realignRun));
   bindScheduleRowMenus(list);
   if(reopenId){const trigger=[...list.querySelectorAll('[data-schedule-menu]')].find(b=>b.dataset.scheduleMenu===reopenId);if(trigger)openScheduleRowMenu(trigger,{focus:reopenFocus})}
-  if(focusId){const next=[...list.querySelectorAll('[data-edit-schedule],[data-run-schedule],[data-delete-schedule]')].find(el=>el.dataset[focusAction]===focusId);next?.focus()}
+  if(focusId){const next=[...list.querySelectorAll('[data-edit-schedule],[data-run-schedule],[data-delete-schedule],[data-schedule-menu],[data-toggle-schedule]')].find(el=>el.dataset[focusAction]===focusId&&!el.closest('.schedule-row-menu'));next?.focus()}
 
+}
+// Saving an AI job keeps whatever the row switch last set; new jobs start enabled.
+function scheduleSavedEnabled(id){
+  const job=id?(state.data.scheduleJobs||[]).find(j=>j.id===id):null;
+  return job?!!job.enabled:true;
 }
 async function saveScheduleJob(e){
   e.preventDefault();
@@ -585,7 +615,7 @@ async function saveScheduleJob(e){
     assistantModel:assistant?f.elements.assistantModel.value.trim():'',
     runAs:assistant&&f.elements.runAs?f.elements.runAs.value:'',
     sessionMode:assistant&&f.elements.sessionMode?f.elements.sessionMode.value:'',
-    enabled:f.elements.enabled.checked
+    enabled:assistant?scheduleSavedEnabled(f.elements.id.value):f.elements.enabled.checked
   };
   if(assistant&&typeof sharedScheduleFormPayload==='function')Object.assign(payload,sharedScheduleFormPayload(f));
   if(!payload.name)return toast('请填写任务名称');

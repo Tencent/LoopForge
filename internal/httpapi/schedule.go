@@ -268,6 +268,37 @@ func (h *scheduleHandlers) scheduleJob(c *gin.Context) {
 	c.JSON(200, map[string]bool{"ok": true})
 }
 
+// scheduleJobEnabled starts or stops a job's schedule without a full save, so
+// toggling never rewrites its prompt, key binding or session. A run already
+// in progress finishes either way.
+// 路由: g.POST("/api/schedule-jobs/:id/enabled", h.scheduleJobEnabled)
+func (h *scheduleHandlers) scheduleJobEnabled(c *gin.Context) {
+	var body struct {
+		Enabled *bool `json:"enabled"`
+	}
+	if !decode(c, &body) {
+		return
+	}
+	if body.Enabled == nil {
+		c.JSON(400, gin.H{"error": "enabled is required"})
+		return
+	}
+	job, ok := h.repo.ScheduleJob(c.Param("id"))
+	if !ok {
+		c.JSON(404, gin.H{"error": "schedule job not found"})
+		return
+	}
+	if !h.requireScheduleJob(c, job, true) {
+		return
+	}
+	saved, err := h.repo.SetScheduleJobEnabled(job.ID, *body.Enabled)
+	if err != nil {
+		respond(c, err)
+		return
+	}
+	c.JSON(200, saved)
+}
+
 // scheduleJobRun starts a scheduled job on the server and returns 202 with
 // lastStatus=running. Closing the client does not cancel the run; poll GET
 // /api/schedule-jobs until lastStatus leaves running.

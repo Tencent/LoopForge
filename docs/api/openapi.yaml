@@ -3294,6 +3294,36 @@ paths:
           $ref: "#/components/responses/NotFound"
         "409":
           $ref: "#/components/responses/Conflict"
+  /api/schedule-jobs/{jobId}/enabled:
+    parameters:
+      - $ref: "#/components/parameters/JobId"
+    post:
+      tags: [Scheduling]
+      operationId: setScheduleJobEnabled
+      description: |
+        Starts or stops the job's schedule. Only `enabled` changes: the prompt,
+        key binding (runAsUserId) and session mode stay as saved, and a run in
+        progress finishes either way. Requires write access to the job's project.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [enabled]
+              properties:
+                enabled: { type: boolean }
+      responses:
+        "200":
+          $ref: "#/components/responses/ScheduleJob"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
   /api/schedule-job-executions:
     get:
       tags: [Scheduling]

@@ -577,6 +577,7 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	// http.NotFound（404 text），由 handler 内方法分派实现。
 	g.Any("/api/schedule-jobs/:id", api.schedule.scheduleJob)
 	g.POST("/api/schedule-jobs/:id/run", api.schedule.scheduleJobRun)
+	g.POST("/api/schedule-jobs/:id/enabled", api.schedule.scheduleJobEnabled)
 	g.GET("/api/schedule-job-executions", api.schedule.scheduleJobExecutions)
 
 	// --- runner management plane ---
