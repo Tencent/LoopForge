@@ -1,22 +1,24 @@
 package repo
 
 import (
+	"agentflow/internal/domain"
 	"encoding/json"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
 )
 
-// The production catalog must pass the user's task to every executable role.
-// Each public role stores that brief in prompt, including {{input}}.
-func TestPublicCatalogPassesRunInputToEveryRole(t *testing.T) {
+func publicCatalogTemplates(t *testing.T) map[string]GenericTemplate {
+	t.Helper()
 	raw, err := os.ReadFile("../../migrations/seed/001_public_catalog.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
 	pattern := regexp.MustCompile(`^INSERT IGNORE INTO generic_templates .*VALUES \('([^']*)','[^']*','(.*)',UTC_TIMESTAMP\(\)\);$`)
-	count := 0
+	templates := map[string]GenericTemplate{}
 	for _, line := range strings.Split(string(raw), "\n") {
 		match := pattern.FindStringSubmatch(line)
 		if match == nil {
@@ -27,14 +29,169 @@ func TestPublicCatalogPassesRunInputToEveryRole(t *testing.T) {
 		if err := json.Unmarshal([]byte(payload), &template); err != nil {
 			t.Fatal(err)
 		}
-		count++
+		templates[match[1]] = template
+	}
+	if len(templates) != 4 {
+		t.Fatalf("expected four public templates, got %d", len(templates))
+	}
+	return templates
+}
+
+// The production catalog must pass the user's task to every executable role.
+// Each public role stores that brief in prompt, including {{input}}.
+func TestPublicCatalogPassesRunInputToEveryRole(t *testing.T) {
+	for id, template := range publicCatalogTemplates(t) {
+		if err := domain.ValidateWorkflowPreparation(template.Workflow); err != nil {
+			t.Errorf("%s: %v", id, err)
+		}
+		if err := domain.ValidateWorkflowMetricStages(template.Workflow); err != nil {
+			t.Errorf("%s: %v", id, err)
+		}
 		for _, agent := range template.Agents {
 			if !strings.Contains(agent.Prompt, "{{input}}") {
-				t.Errorf("%s role %s drops the user's run input", match[1], agent.ID)
+				t.Errorf("%s role %s drops the user's run input", id, agent.ID)
+			}
+			if err := domain.ValidateVerificationGates(agent.Verification); err != nil {
+				t.Errorf("%s role %s: %v", id, agent.ID, err)
 			}
 		}
 	}
-	if count != 4 {
-		t.Fatalf("expected four public templates, got %d", count)
+}
+
+// A code SOP must not succeed with its changes only in the reclaimed
+// workspace: the MR node runs after acceptance and before the summary, and
+// its command gate blocks while a checkout has unpushed work.
+func TestPublicCodeSOPsOpenMRBeforeDeliver(t *testing.T) {
+	templates := publicCatalogTemplates(t)
+	for _, id := range []string{GenericBackendDeliveryWorkflowID, GenericFrontendDeliveryWorkflowID, "issue-fix-production"} {
+		template, ok := templates[id]
+		if !ok {
+			t.Fatalf("%s missing", id)
+		}
+		next := map[string][]string{}
+		for _, edge := range template.Workflow.Edges {
+			next[edge.Source] = append(next[edge.Source], edge.Target)
+		}
+		if got := strings.Join(next["accept"], ","); got != "mr" {
+			t.Errorf("%s: accept leads to %q, want mr", id, got)
+		}
+		if got := strings.Join(next["mr"], ","); got != "deliver" {
+			t.Errorf("%s: mr leads to %q, want deliver", id, got)
+		}
+		var mrAgentID string
+		for _, node := range template.Workflow.Nodes {
+			if node.ID != "mr" {
+				continue
+			}
+			mrAgentID = node.AgentID
+			if len(node.ArtifactOutputs) != 1 || node.ArtifactOutputs[0].Name != "mr-body" || node.ArtifactOutputs[0].Path != "mr-body.md" {
+				t.Errorf("%s: mr node must publish mr-body.md, got %+v", id, node.ArtifactOutputs)
+			}
+		}
+		found := false
+		for _, agent := range template.Agents {
+			if agent.ID != mrAgentID {
+				continue
+			}
+			found = true
+			if len(agent.Verification) != 1 || agent.Verification[0].Mode != "command" || agent.Verification[0].ExecutionScope != "run" || len(agent.Verification[0].Commands) != 1 {
+				t.Errorf("%s: mr role needs one run-scoped command gate, got %+v", id, agent.Verification)
+			}
+			if !agent.Loop.Enabled || agent.Loop.OnExhausted != "human" {
+				t.Errorf("%s: mr role must hand an unresolved push to a person, got %+v", id, agent.Loop)
+			}
+			if !strings.Contains(agent.Prompt, "{{existingMR}}") {
+				t.Errorf("%s: mr role drops the existing MR context", id)
+			}
+		}
+		if !found {
+			t.Errorf("%s: mr node references missing role %q", id, mrAgentID)
+		}
+	}
+	for _, node := range templates[GenericProductDeliveryWorkflowID].Workflow.Nodes {
+		if node.ID == "mr" {
+			t.Errorf("product SOP delivers documents only and must not open an MR")
+		}
+	}
+}
+
+func TestPublicMRGateBlocksOnlyUnpushedCheckouts(t *testing.T) {
+	var gate string
+	for _, agent := range publicCatalogTemplates(t)[GenericBackendDeliveryWorkflowID].Agents {
+		if agent.ID == GenericBackendDeliveryWorkflowID+"-mr" {
+			gate = agent.Verification[0].Commands[0]
+		}
+	}
+	if gate == "" {
+		t.Fatal("mr gate missing")
+	}
+	git := func(dir string, args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "init.defaultBranch=main"}, args...)...)
+		cmd.Dir = dir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	write := func(path, body string) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	passes := func(workspace string) bool {
+		t.Helper()
+		cmd := exec.Command("sh", "-lc", gate)
+		cmd.Dir = workspace
+		return cmd.Run() == nil
+	}
+	root := t.TempDir()
+	remote := filepath.Join(root, "remote.git")
+	git(root, "init", "-q", "--bare", remote)
+	seed := filepath.Join(root, "seed")
+	git(root, "clone", "-q", remote, seed)
+	write(filepath.Join(seed, "a.txt"), "a\n")
+	git(seed, "add", ".")
+	git(seed, "commit", "-qm", "init")
+	git(seed, "push", "-q", "origin", "HEAD:main")
+
+	workspace := filepath.Join(root, "run")
+	write(filepath.Join(workspace, "requirement.md"), "doc\n")
+	if !passes(workspace) {
+		t.Fatal("a run without repositories must pass")
+	}
+	repo := filepath.Join(workspace, "app")
+	git(workspace, "clone", "-q", remote, repo)
+	git(repo, "checkout", "-qb", "work")
+	write(filepath.Join(repo, ".agentflow", "state"), "x\n")
+	write(filepath.Join(repo, "node_modules", "dep.js"), "x\n")
+	if !passes(workspace) {
+		t.Fatal("a clean checkout must pass; .agentflow and node_modules are ignored")
+	}
+	write(filepath.Join(repo, "a.txt"), "changed\n")
+	write(filepath.Join(repo, "new.txt"), "new\n")
+	if passes(workspace) {
+		t.Fatal("modified and untracked files must block")
+	}
+	git(repo, "add", "a.txt", "new.txt")
+	git(repo, "commit", "-qm", "change")
+	if passes(workspace) {
+		t.Fatal("an unpushed commit must block")
+	}
+	git(repo, "push", "-q", "-u", "origin", "work")
+	if !passes(workspace) {
+		t.Fatal("a pushed work branch must pass")
+	}
+	local := filepath.Join(workspace, "scratch")
+	if err := os.MkdirAll(local, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	git(local, "init", "-q")
+	write(filepath.Join(local, "b.txt"), "b\n")
+	if !passes(workspace) {
+		t.Fatal("a local repository without a remote has nowhere to push and must not block")
 	}
 }
