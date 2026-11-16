@@ -210,21 +210,23 @@ func TestSkillMentionsAreScopedHintedAndWrittenToHome(t *testing.T) {
 	}
 }
 
-// Every shared skill on the platform reaches the CLI home with its stored
-// files, whichever project owns it, while private skills of other projects
-// stay out; a conversation without a project gets the same shared set.
-func TestEverySharedSkillIsInstalledWithItsFiles(t *testing.T) {
+// Every shared skill on the platform reaches the CLI home, whichever project
+// owns it, while private skills of other projects stay out; a conversation
+// without a project gets the same shared set. A shared skill nobody mentioned
+// brings only its SKILL.md; mentioning it installs its other files too.
+func TestEverySharedSkillIsInstalledWithItsSkillMD(t *testing.T) {
 	h, u := workbenchFixture(t)
 	for _, project := range []string{"docs", "ops"} {
 		if err := h.repo.PutProject(domain.Project{ID: project, Name: project, OwnerID: u.ID}); err != nil {
 			t.Fatal(err)
 		}
 	}
+	runbook := domain.SkillDefinition{ID: "ops-runbook", Name: "ops-runbook", ProjectID: "ops", Shared: true, Content: "runbook", Files: map[string]string{"scripts/check.sh": "echo ok"}}
 	for _, skill := range []domain.SkillDefinition{
 		{ID: "own", Name: "own", ProjectID: "workbench", Content: "own"},
 		{ID: "docs-writer", Name: "docs-writer", ProjectID: "docs", Shared: true, Content: "write"},
 		{ID: "docs-draft", Name: "docs-draft", ProjectID: "docs", Content: "draft"},
-		{ID: "ops-runbook", Name: "ops-runbook", ProjectID: "ops", Shared: true, Content: "runbook"},
+		runbook,
 		{ID: "ops-secret", Name: "ops-secret", ProjectID: "ops", Content: "secret"},
 	} {
 		if err := h.repo.PutSkill(skill); err != nil {
@@ -232,8 +234,16 @@ func TestEverySharedSkillIsInstalledWithItsFiles(t *testing.T) {
 		}
 	}
 	asset := []byte{0, 1, 2, 255}
-	if err := h.repo.PutSkillFiles("ops-runbook", []repo.SkillFileInput{{Path: "assets/check.bin", Content: asset, Mode: 0o644}}); err != nil {
+	skillMD := []byte("---\nname: ops-runbook\ndescription: run the ops checks\n---\nRun scripts/check.sh.\n")
+	if err := h.repo.PutSkillFiles("ops-runbook", []repo.SkillFileInput{
+		{Path: "SKILL.md", Content: skillMD, Mode: 0o644},
+		{Path: "assets/check.bin", Content: asset, Mode: 0o644},
+	}); err != nil {
 		t.Fatal(err)
+	}
+	stored, ok := h.repo.Skill("ops-runbook")
+	if !ok {
+		t.Fatal("ops-runbook not stored")
 	}
 	// The test store also seeds the platform's shared skills; they must be
 	// installed too, so only the skills created here are pinned.
@@ -241,27 +251,41 @@ func TestEverySharedSkillIsInstalledWithItsFiles(t *testing.T) {
 		"workbench": {"own": true, "docs-writer": true, "ops-runbook": true, "repository-navigation": true, "docs-draft": false, "ops-secret": false},
 		"":          {"own": false, "docs-writer": true, "ops-runbook": true, "repository-navigation": true, "docs-draft": false, "ops-secret": false},
 	} {
-		root := t.TempDir()
-		if err := h.writeConversationAssets(root, assistantRequest{ProjectID: project}); err != nil {
-			t.Fatal(err)
-		}
-		dir := filepath.Join(root, "home", ".codebuddy", "skills")
-		entries, err := os.ReadDir(dir)
-		if err != nil {
-			t.Fatal(err)
-		}
-		got := map[string]bool{}
-		for _, entry := range entries {
-			got[entry.Name()] = true
-		}
-		for name, installed := range want {
-			if got[name] != installed {
-				t.Fatalf("project %q skill %s installed=%v, want %v (all: %v)", project, name, got[name], installed, got)
+		for _, mentioned := range []bool{false, true} {
+			req := assistantRequest{ProjectID: project}
+			if mentioned {
+				req.skills = []domain.SkillDefinition{stored}
 			}
-		}
-		data, err := os.ReadFile(filepath.Join(dir, "ops-runbook", "assets", "check.bin"))
-		if err != nil || !bytes.Equal(data, asset) {
-			t.Fatalf("project %q shared skill file = %v %v", project, data, err)
+			root := t.TempDir()
+			if err := h.writeConversationAssets(root, req); err != nil {
+				t.Fatal(err)
+			}
+			dir := filepath.Join(root, "home", ".codebuddy", "skills")
+			entries, err := os.ReadDir(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := map[string]bool{}
+			for _, entry := range entries {
+				got[entry.Name()] = true
+			}
+			for name, installed := range want {
+				if got[name] != installed {
+					t.Fatalf("project %q skill %s installed=%v, want %v (all: %v)", project, name, got[name], installed, got)
+				}
+			}
+			if data, err := os.ReadFile(filepath.Join(dir, "ops-runbook", "SKILL.md")); err != nil || !bytes.Contains(data, []byte("Run scripts/check.sh.")) {
+				t.Fatalf("project %q mentioned=%v shared SKILL.md = %q %v", project, mentioned, data, err)
+			}
+			for path, content := range map[string][]byte{"assets/check.bin": asset, "scripts/check.sh": []byte("echo ok")} {
+				data, err := os.ReadFile(filepath.Join(dir, "ops-runbook", filepath.FromSlash(path)))
+				if mentioned && (err != nil || !bytes.Equal(data, content)) {
+					t.Fatalf("project %q mentioned shared skill file %s = %v %v", project, path, data, err)
+				}
+				if !mentioned && !os.IsNotExist(err) {
+					t.Fatalf("project %q unmentioned shared skill file %s was installed: %v", project, path, err)
+				}
+			}
 		}
 	}
 }

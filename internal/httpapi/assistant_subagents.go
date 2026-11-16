@@ -181,8 +181,10 @@ var rolePromptPlaceholder = regexp.MustCompile(`\{\{[^{}]+\}\}`)
 // its roles and the mentioned ones, and agents holds one subagent per role,
 // so Main Bot and its subagents use them natively. Every shared skill is
 // installed on every turn, including a conversation without a project, so a
-// scheduled task can call one without mentioning it. A turn with no project,
-// no shared skills and no mentioned roles gets empty directories.
+// scheduled task can call one without mentioning it; it brings only its
+// SKILL.md unless it is also the project's own, bound or mentioned. A turn
+// with no project, no shared skills and no mentioned roles gets empty
+// directories.
 func (h *assistantHandlers) writeConversationAssets(root string, req assistantRequest) error {
 	if err := runtime.ValidateConversationRoot(root); err != nil {
 		return err
@@ -220,10 +222,6 @@ func (h *assistantHandlers) writeConversationAssets(root string, req assistantRe
 			shared = append(shared, skill)
 		}
 	}
-	sort.Slice(shared, func(i, j int) bool { return shared[i].ID < shared[j].ID })
-	for _, skill := range shared {
-		load(skill)
-	}
 	for _, role := range req.roles {
 		for _, skill := range role.Skills {
 			add(skill, role.SkillFiles[skill.ID])
@@ -231,6 +229,22 @@ func (h *assistantHandlers) writeConversationAssets(root string, req assistantRe
 	}
 	for _, skill := range req.skills {
 		load(skill)
+	}
+	// A shared skill nobody bound or mentioned gets only its SKILL.md: its
+	// other files would be copied into every conversation on the platform
+	// each turn. Mentioning it or binding it to a role installs them.
+	sort.Slice(shared, func(i, j int) bool { return shared[i].ID < shared[j].ID })
+	for _, skill := range shared {
+		if seen[skill.ID] {
+			continue
+		}
+		var contents map[string][]byte
+		if data, ok := h.repo.SkillFileContent(skill.ID, "SKILL.md"); ok {
+			contents = map[string][]byte{"SKILL.md": data}
+		}
+		skill.Files = nil
+		skill.FileRefs = nil
+		add(skill, contents)
 	}
 	engine, _ := assistantModelEngine(req.Model)
 	home := filepath.Join(root, "home", assistantEngineConfigDir(engine))
