@@ -126,7 +126,8 @@ func Env(token string) []string {
 			strings.HasPrefix(kv, "GIT_ALLOW_PROTOCOL="),
 			strings.HasPrefix(kv, "GIT_PROTOCOL_FROM_USER="),
 			strings.HasPrefix(kv, gitHTTPUserEnv+"="),
-			strings.HasPrefix(kv, gitHTTPPassEnv+"="):
+			strings.HasPrefix(kv, gitHTTPPassEnv+"="),
+			strings.HasPrefix(kv, HTTPSCredentialTokenEnv+"="):
 			continue
 		}
 		env = append(env, kv)

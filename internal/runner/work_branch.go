@@ -54,6 +54,7 @@ func syncTaskWorkBranches(ctx context.Context, workspace string, inv *domain.Run
 		return heads, nil
 	}
 	ctx = gitwork.WithSSHKeys(ctx, inv.GitSSHKeys)
+	ctx = gitwork.WithHTTPSCredential(ctx, invocationGitLab(inv))
 	if strings.TrimSpace(message) == "" {
 		message = "agentflow: " + inv.NodeID + " (" + inv.RunID + ")"
 	}
@@ -64,6 +65,9 @@ func syncTaskWorkBranches(ctx context.Context, workspace string, inv *domain.Run
 		dir := workspace
 		if rel := safeRunnerRepoDir(repo.Dir); rel != "" {
 			dir = filepath.Join(workspace, rel)
+		}
+		if err := checkRepositoryGitLab(ctx, repo); err != nil {
+			return heads, fmt.Errorf("%s: %w", repo.Name, err)
 		}
 		repoCtx := repositoryGitContext(ctx, repo)
 		// A continued branch must still exist remotely even when nothing changed.

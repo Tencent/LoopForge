@@ -10,6 +10,7 @@ import (
 
 	"agentflow/internal/domain"
 	"agentflow/internal/gitwork"
+	"agentflow/internal/runtime"
 )
 
 const alignTaskTimeout = 15 * time.Minute
@@ -30,12 +31,24 @@ func (e *Engine) alignBaseline(repository domain.RepositoryContext, gitToken str
 		return nil
 	}
 	runner, ok := e.alignRunner(repository)
+	gitLab := repository.Provider == domain.RepositoryProviderGitLab
+	var credential gitwork.HTTPSCredential
+	if gitLab {
+		credential = e.repo.GitLabCredential(userID)
+		if err := credential.Check(repository.CloneURL); err != nil {
+			return err
+		}
+		gitToken = ""
+	}
 	ssh := repository.Provider == domain.RepositoryProviderSSH
 	if ssh {
 		gitToken = ""
 	}
 	if !ok {
 		ctx := context.Background()
+		if gitLab {
+			ctx = withRunGitCredentials(ctx, runtime.RunCredentials{GitLab: credential})
+		}
 		if ssh {
 			ctx = gitwork.WithSSHKeys(ctx, e.repo.GitSSHKeysForRemotes(userID, []string{repository.CloneURL}))
 		}
@@ -65,12 +78,16 @@ func (e *Engine) alignBaseline(repository domain.RepositoryContext, gitToken str
 			CloneURL:        repository.CloneURL,
 			GitToken:        gitToken,
 			UseSSH:          ssh,
+			UseGitLab:       gitLab,
 			IntegrateBranch: integrate,
 			DefaultBranch:   strings.TrimSpace(repository.DefaultBranch),
 		}}},
 	}
 	if ssh {
 		task.Invocation.GitSSHUserID = userID
+	}
+	if gitLab {
+		task.Invocation.GitLabUserID = userID
 	}
 	if err := e.repo.PutRunnerTask(task); err != nil {
 		return err

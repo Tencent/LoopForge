@@ -159,7 +159,7 @@ function projectColorHTML(color){
   return `<div class="pa-swatches">${PROJECT_SWATCHES.map(c=>`<button type="button" class="pa-sw${c===String(cur).toLowerCase()?' on':''}" data-pa-color="${c}" style="background:${c};color:${c}" aria-label="品牌色 ${c}" aria-pressed="${c===String(cur).toLowerCase()}"></button>`).join('')}<label class="pa-sw pa-sw-custom${preset?'':' on'}" title="自定义颜色" style="color:${cur}${preset?'':`;background:${cur}`}"><input type="color" data-pa-color-custom value="${cur.length===7?cur:'#536dfe'}" aria-label="自定义品牌色"></label><code class="pa-sw-hex" data-pa-color-hex>${escapeHTML(String(cur).toUpperCase())}</code><input type="hidden" name="color" value="${escapeHTML(cur)}"></div>`;
 }
 function repoCardHTML(r,isDefault){
-  const info=parseGongfengRepoURL(r.provider==='ssh'?r.cloneUrl:r.webUrl||r.cloneUrl||r.gongfengProjectId||''),path=info?.project||r.gongfengProjectId||'',web=r.provider==='ssh'?r.webUrl||'':info?.webUrl||'',name=r.name||info?.name||path||r.id;
+  const info=r.provider==='gitlab'?gitLabRepositoryInfo(r):parseGongfengRepoURL(r.provider==='ssh'?r.cloneUrl:r.webUrl||r.cloneUrl||r.gongfengProjectId||''),path=info?.project||r.gongfengProjectId||'',web=r.provider==='ssh'?r.webUrl||'':info?.webUrl||'',name=r.name||info?.name||path||r.id;
   const updated=typeof knownTime==='function'?knownTime(r.updatedAt):null;
   return `<article class="pa-rc" data-repo-card="${escapeHTML(r.id)}">
     <div class="pa-rc-top"><span class="pa-rc-ic">${paIcon('repo',15)}</span><div class="pa-rc-m"><h4 title="${escapeHTML(name)}">${escapeHTML(name)}</h4><code title="${escapeHTML(repoDisplayPath(info,path))}">${escapeHTML(repoDisplayPath(info,path))}</code></div><div class="pa-rc-acts"><button type="button" class="pa-icon-btn" data-repo-edit="${escapeHTML(r.id)}" title="编辑" aria-label="编辑仓库 ${escapeHTML(name)}">${paIcon('edit')}</button><button type="button" class="pa-icon-btn danger" data-repo-delete="${escapeHTML(r.id)}" title="删除" aria-label="删除仓库 ${escapeHTML(name)}">${paIcon('trash')}</button></div></div>
@@ -168,7 +168,7 @@ function repoCardHTML(r,isDefault){
   </article>`;
 }
 function projectRepoListHTML(repos,defaultId){
-  if(!repos.length)return projectAdminEmptyHTML('repo','还没有绑定代码仓库','绑定后，Agent 执行 SOP 时会自动克隆仓库并在工作分支上提交。第一个仓库会自动设为默认。',`<ol class="pa-steps"><li><span>1</span>粘贴 GitHub 链接或 Git SSH 地址</li><li><span>2</span>确认分支</li><li><span>3</span>保存即生效</li></ol><button type="button" class="button primary" data-repo-add>＋ 添加第一个仓库</button>`);
+  if(!repos.length)return projectAdminEmptyHTML('repo','还没有绑定代码仓库','绑定后，Agent 执行 SOP 时会自动克隆仓库并在工作分支上提交。第一个仓库会自动设为默认。',`<ol class="pa-steps"><li><span>1</span>选择 GitLab 仓库或填写 Git 地址</li><li><span>2</span>确认分支</li><li><span>3</span>保存即生效</li></ol><button type="button" class="button primary" data-repo-add>＋ 添加第一个仓库</button>`);
   return `<div class="pa-rgrid">${repos.map(r=>repoCardHTML(r,r.id===defaultId)).join('')}<button type="button" class="pa-rc-add" data-repo-add><i>${paIcon('plus',14)}</i><b>添加仓库</b></button></div>`;
 }
 function projectAdminFormHTML(d,ctx){
@@ -195,7 +195,7 @@ function projectAdminFormHTML(d,ctx){
       ${paRow('Workspace ID','TAPD 项目 URL 中 /tapd_fe/ 后的数字。',`<input class="pa-input mono" name="tapdWorkspaceId" value="${escapeHTML(d.tapdWorkspaceId||'')}" placeholder="例如 20375341" spellcheck="false">`)}
       ${paRow('Iteration ID','可选，只导入该迭代内的需求。',`<input class="pa-input mono" name="tapdIterationId" value="${escapeHTML(d.tapdIterationId||'')}" placeholder="留空导入全部" spellcheck="false">`)}
     </div>`):'')+paSection('危险操作','',`<div class="pa-rows">${projectDeleteRow(saved)}${configured?paRow(`清除已保存的 TAPD 配置${configured?' <span class="pa-chip">当前已配置</span>':''}`,'保存项目设置时同时清空 Workspace 与 Iteration，已导入的需求不受影响。',`<label class="pa-switch-wrap"><input type="checkbox" name="tapdClear" role="switch" ${d.tapdClear?'checked':''} aria-label="清除已保存的 TAPD 配置"><span class="pa-switch danger"></span></label>`,{attrs:' data-pa-row-inline'}):''}</div>`);
-  const panels={basic,repos:paSection('代码仓库','Agent 执行 SOP 时会克隆这些仓库。仓库保存后立即生效，无需点「保存项目设置」。',`<div data-pa-repo-box>${projectRepoListHTML(repos,saved?.defaultRepositoryId||'')}</div>`,repos.length?'<button type="button" class="button ghost small" data-repo-add>＋ 添加仓库</button>':''),members:memberPanel,tapd:tapdPanel};
+  const panels={basic,repos:paSection('代码仓库','绑定的仓库可在需求中选择，SOP 会检出本次选中的仓库。仓库保存后立即生效。',`<div data-pa-repo-box>${projectRepoListHTML(repos,saved?.defaultRepositoryId||'')}</div>`,repos.length?'<button type="button" class="button ghost small" data-repo-add>＋ 添加仓库</button>':''),members:memberPanel,tapd:tapdPanel};
   const tab=state.projectAdminTab||'basic';
   return PROJECT_ADMIN_TABS.map(t=>`<section class="pa-panel" data-pa-panel="${t.id}" id="paPanel-${t.id}" role="tabpanel" aria-labelledby="paTab-${t.id}"${t.id===tab?'':' hidden'}>${creating&&t.id!=='basic'?'':panels[t.id]}</section>`).join('')
     +`<div class="pa-savebar-dock"><div class="pa-savebar" data-pa-savebar inert><span class="pa-savebar-tx"><i></i><span data-pa-savebar-text>有未保存的修改</span></span><button type="button" class="button ghost" data-pa-discard>放弃修改</button><button type="submit" class="button primary" data-pa-submit>保存项目设置</button></div></div>`;

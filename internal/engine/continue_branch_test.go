@@ -146,3 +146,28 @@ func TestCreateWorkBranchRequiresCompatibleRunner(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestGitLabDispatchRequiresReportedPATSupport(t *testing.T) {
+	t.Parallel()
+	st, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(st.Close)
+	for _, runner := range []domain.Runner{
+		{ID: "upstream", RunnerVersion: "0.9.6"},
+		{ID: "gitlab", RunnerVersion: "0.9.3", SupportsGitLabPAT: true},
+	} {
+		if err := st.PutRunner(runner); err != nil {
+			t.Fatal(err)
+		}
+	}
+	e := &Engine{repo: st}
+	repositories := []domain.RepositoryContext{{Provider: domain.RepositoryProviderGitLab}}
+	if err := e.requireWorkBranchCapabilities("upstream", repositories); err == nil {
+		t.Fatal("a newer version alone must not allow GitLab dispatch")
+	}
+	if err := e.requireWorkBranchCapabilities("gitlab", repositories); err != nil {
+		t.Fatalf("runner with GitLab PAT support was rejected: %v", err)
+	}
+}

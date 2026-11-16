@@ -190,3 +190,21 @@ Object.assign(window.LF_I18N_EN,{
   "该 CLI 支持 API Key。使用服务商订阅套餐提供的 Key，执行用量会计入对应的套餐额度。请在「个人配置」中填写 API Key。":"This CLI supports API keys. With a key included in your provider's subscription, usage counts toward that plan's allowance. Enter the API key in Personal Settings."
 });
 Object.assign(window.LF_I18N_EN,{"查看其他项目共享的技能；共享技能只读，会自动装入平台上所有对话和定时任务，也可绑定到本项目角色。": "Skills shared by other projects. Shared Skills are read-only, are installed automatically into every conversation and scheduled task on the platform, and can be bound to Roles in this project.", "共享后，这个技能会自动装入平台上所有用户的对话和定时任务（包括其他项目和无项目的对话），模型可以直接调用。继续？": "Once shared, this Skill is installed automatically into every user's conversations and scheduled tasks on the platform (including other projects and conversations without a project), and the model can call it directly. Continue?", "共享这个角色会同时共享它绑定的技能：": "Sharing this Role also shares the Skills bound to it: ", "已共享，所有对话和定时任务会自动装入": "Shared. Every conversation and scheduled task will install it automatically", "其他项目可在「共享角色」里选用；绑定的本项目技能会一起共享，并自动装入所有对话": "Other projects can pick it under Shared roles; the project Skills bound to it are shared too and installed into every conversation automatically", "共享技能": "Share Skill"});
+Object.assign(window.LF_I18N_EN, {
+  "搜索并检出你有权限的仓库": "Search and check out repositories you can access",
+  "用于绑定 GitLab 仓库，以及执行任务时拉取或推送代码。": "Connect GitLab repositories and pull or push code during runs.",
+  "在你的 GitLab 实例的个人设置中创建访问令牌": "Create a personal access token in your GitLab instance settings",
+  "请输入 GitLab PAT": "Enter your GitLab PAT",
+  "保存时会校验令牌权限": "Token permissions are checked on save",
+  "GitLab 实例地址": "GitLab instance URL",
+  "必填 · HTTPS": "Required · HTTPS",
+  "保存时填写 PAT": "Enter your PAT to save",
+  "依赖此凭证的 GitLab 仓库搜索、检出和推送将无法执行。": "GitLab repository searches, checkouts, and pushes that use this credential will fail.",
+  "仓库来源": "Repository source",
+  "手动输入": "Enter manually",
+  "配置 GitLab": "Set up GitLab",
+  "搜索仓库名或分组": "Search by repository name or group",
+  "搜索已加载的仓库": "Search loaded repositories",
+  "仓库搜索结果": "Repository search results",
+  "正在搜索仓库…": "Searching repositories…"
+});

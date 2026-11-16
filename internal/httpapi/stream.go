@@ -311,6 +311,15 @@ func (h *streamHandlers) prepareClarifyRepo(ctx context.Context, repo domain.Rep
 	// repository's main branch must not reuse its previous branch's checkout.
 	cacheKey := repo.ID + "\x00" + resolvedBranch
 	ssh := repo.Provider == domain.RepositoryProviderSSH
+	gitLab := repo.Provider == domain.RepositoryProviderGitLab
+	if gitLab {
+		credential := h.repo.GitLabCredential(responsibleUserID)
+		if err := credential.Check(repo.CloneURL); err != nil {
+			return "", false, err.Error()
+		}
+		ctx = gitwork.WithHTTPSCredential(ctx, credential)
+		cacheKey += fmt.Sprintf("\x00%d\x00%s\x00%x", responsibleUserID, repo.CloneURL, sha256.Sum256([]byte(credential.Token)))
+	}
 	if ssh {
 		keys := h.repo.GitSSHKeysForRemotes(responsibleUserID, []string{repo.CloneURL})
 		key := keys[repo.CloneURL]
@@ -333,16 +342,19 @@ func (h *streamHandlers) prepareClarifyRepo(ctx context.Context, repo domain.Rep
 	hadCheckout := statDir(filepath.Join(cacheDir, ".git"))
 
 	// Reuse an existing checkout without refreshing on later turns.
-	if hadCheckout && !refresh && !ssh {
+	if hadCheckout && !refresh && !ssh && !gitLab {
 		return cacheDir, true, ""
 	}
 
-	token := engine.ResolveClarifyGitToken(h.repo, responsibleUserID)
+	token := ""
+	if !gitLab {
+		token = engine.ResolveClarifyGitToken(h.repo, responsibleUserID)
+	}
 	prepCtx, cancel := context.WithTimeout(ctx, 3*time.Minute)
 	defer cancel()
 
 	if _, err := engine.PrepareClarifyWorkspaceAtBranch(prepCtx, cacheDir, repo, baseBranch, token); err != nil {
-		if hadCheckout && baseBranch == "" && !ssh {
+		if hadCheckout && baseBranch == "" && !ssh && !gitLab {
 			// Degrade to the previous (possibly stale) checkout.
 			return cacheDir, true, ""
 		}
@@ -355,7 +367,7 @@ func (h *streamHandlers) prepareClarifyRepo(ctx context.Context, repo domain.Rep
 // Git checkouts are cloned before selecting a branch. Never switch the user's
 // original checkout to the configured main branch.
 func clarifyRepositorySource(repository domain.Repository, selectedBaseBranch string) (domain.Repository, bool) {
-	if repository.Provider == domain.RepositoryProviderSSH {
+	if repository.Provider == domain.RepositoryProviderSSH || repository.Provider == domain.RepositoryProviderGitLab {
 		return repository, false
 	}
 	localPath := strings.TrimSpace(repository.LocalPath)

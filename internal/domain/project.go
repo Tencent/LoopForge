@@ -64,13 +64,18 @@ type ProjectMember struct {
 }
 
 // RepositoryProviderSSH uses Git transport only; it has no hosting API adapter.
-const RepositoryProviderSSH = "ssh"
+const (
+	RepositoryProviderSSH    = "ssh"
+	RepositoryProviderGitLab = "gitlab"
+)
 
 type Repository struct {
 	ID                 string    `json:"id"`
 	ProjectID          string    `json:"projectId"`
 	Provider           string    `json:"provider"`
 	Name               string    `json:"name"`
+	GitLabURL          string    `json:"gitLabUrl,omitempty"`
+	GitLabProjectID    int64     `json:"gitLabProjectId,omitempty"`
 	GongfengProjectID  string    `json:"gongfengProjectId"`
 	WebURL             string    `json:"webUrl,omitempty"`
 	CloneURL           string    `json:"cloneUrl,omitempty"`
@@ -301,6 +306,12 @@ func IsSafeGongfengProjectID(s string) bool {
 }
 
 // IsZero reports whether the context carries no usable repository at all.
+// UsesGitTransportOnly reports whether managed delivery pushes a branch
+// without requiring the GitHub or Gongfeng hosting APIs.
+func (rc RepositoryContext) UsesGitTransportOnly() bool {
+	return rc.Provider == RepositoryProviderSSH || rc.Provider == RepositoryProviderGitLab
+}
+
 func (rc RepositoryContext) IsZero() bool {
 	return strings.TrimSpace(rc.RepositoryID) == "" &&
 		strings.TrimSpace(rc.CloneURL) == "" &&

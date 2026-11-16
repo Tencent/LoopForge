@@ -14,6 +14,10 @@ import (
 // Run executes git with the context token applied through AuthConfigArgs and
 // Env. Output is trimmed and redacted; on failure it is part of the error.
 func Run(ctx context.Context, workspace string, args ...string) (string, error) {
+	ctx, err := pinHTTPSGitDestination(ctx, args)
+	if err != nil {
+		return "", err
+	}
 	token := TokenFrom(ctx)
 	sshEnv, cleanup, err := sshCommandEnvironment(ctx, args)
 	if err != nil {
@@ -21,7 +25,8 @@ func Run(ctx context.Context, workspace string, args ...string) (string, error) 
 	}
 	defer cleanup()
 	out, err := command(ctx, workspace, token, sshEnv, args).CombinedOutput()
-	text := Redact(strings.TrimSpace(string(out)), token)
+	credential, _ := HTTPSCredentialFrom(ctx)
+	text := Redact(strings.TrimSpace(string(out)), token, credential.Token)
 	if err != nil {
 		if text != "" {
 			return text, fmt.Errorf("%w: %s", err, text)
@@ -42,13 +47,18 @@ const (
 // output is streamed to the context's observer, a command that stops printing
 // is killed, and the error carries only the last lines of output.
 func Watch(ctx context.Context, workspace string, opts procwatch.Options, args ...string) (string, error) {
+	ctx, err := pinHTTPSGitDestination(ctx, args)
+	if err != nil {
+		return "", err
+	}
 	token := TokenFrom(ctx)
 	sshEnv, cleanup, err := sshCommandEnvironment(ctx, args)
 	if err != nil {
 		return "", err
 	}
 	defer cleanup()
-	opts.Redact = func(line string) string { return Redact(line, token) }
+	credential, _ := HTTPSCredentialFrom(ctx)
+	opts.Redact = func(line string) string { return Redact(line, token, credential.Token) }
 	text, err := procwatch.Run(ctx, func(ctx context.Context) *exec.Cmd { return command(ctx, workspace, token, sshEnv, args) }, opts)
 	if err != nil && text != "" {
 		return text, fmt.Errorf("%w: %s", err, text)
@@ -58,12 +68,20 @@ func Watch(ctx context.Context, workspace string, opts procwatch.Options, args .
 
 func command(ctx context.Context, workspace, token string, sshEnv map[string]string, args []string) *exec.Cmd {
 	dir := CommandDir(workspace)
-	if len(sshEnv) > 0 {
+	credential, scoped := HTTPSCredentialFrom(ctx)
+	if scoped || len(sshEnv) > 0 {
 		token = ""
 	}
 	cmd := exec.CommandContext(ctx, "git", append(AuthConfigArgs(token), args...)...)
 	cmd.Dir = dir
 	cmd.Env = WithEnvValue(Env(token), "PWD", dir)
+	if scoped && len(sshEnv) == 0 {
+		settings := map[string]string{"GIT_ASKPASS": "", "SSH_ASKPASS": ""}
+		BindHTTPSCredential(settings, credential)
+		for key, value := range settings {
+			cmd.Env = WithEnvValue(cmd.Env, key, value)
+		}
+	}
 	if len(sshEnv) > 0 {
 		// Do not let URL rewrites switch a managed SSH operation to another
 		// transport. SSH itself only connects to the requested pinned host.

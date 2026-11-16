@@ -273,6 +273,65 @@ func TestWorkspacePreparationTrustedRequestCarriesWorkspaceKind(t *testing.T) {
 	}
 }
 
+func TestPreparedWorkspaceRequestScopesGitLabPAT(t *testing.T) {
+	t.Parallel()
+	const (
+		baseURL  = "https://gitlab.example.test"
+		pat      = "workspace-preparation-pat"
+		userID   = int64(42)
+		runnerID = "gitlab-runner"
+	)
+	e, id := checkpointFixture(t)
+	run := completedPreparationRun(t, e, id)
+	if err := e.repo.PutUser(domain.User{ID: userID, LoginName: "gitlab-user"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.repo.SaveGitLabToken(userID, baseURL, pat); err != nil {
+		t.Fatal(err)
+	}
+	runner := domain.Runner{ID: runnerID, Status: domain.RunnerStatusOnline, RunnerVersion: domain.RunnerVersionWorkspaceOwnerPreparation, SupportsGitLabPAT: true}
+	if err := e.repo.PutRunner(runner); err != nil {
+		t.Fatal(err)
+	}
+	run.ExecutionContext = domain.TelemetryContext{ProjectID: "platform", ExecutionMode: domain.ExecutionModeRunner, ExecutionRunnerID: runnerID, RunnerWorkspaceLayout: domain.RunnerWorkspaceLayoutShared, ResponsibleUserID: userID}
+	run.Repository = domain.RepositoryContext{RepositoryID: "gitlab", Provider: domain.RepositoryProviderGitLab, Name: "GitLab", CloneURL: baseURL + "/team/repo.git", BaseBranch: "main", WorkBranch: "work"}
+	if err := e.repo.PutRun(run); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name    string
+		request domain.RunnerWorkspaceRequest
+		wantPAT bool
+	}{
+		{name: "prepare", request: domain.RunnerWorkspaceRequest{Operation: domain.RunnerWorkspaceOperationPrepare}, wantPAT: true},
+		{name: "terminal open", request: domain.RunnerWorkspaceRequest{Operation: domain.RunnerWorkspaceOperationTerminal, Terminal: &domain.WorkspaceTerminalRequest{Operation: "open"}}, wantPAT: true},
+		{name: "terminal close", request: domain.RunnerWorkspaceRequest{Operation: domain.RunnerWorkspaceOperationTerminal, Terminal: &domain.WorkspaceTerminalRequest{Operation: "close"}}},
+		{name: "status", request: domain.RunnerWorkspaceRequest{Operation: domain.RunnerWorkspaceOperationPreparationStatus}},
+		{name: "info", request: domain.RunnerWorkspaceRequest{Operation: domain.RunnerWorkspaceOperationInfo}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			request, err := e.preparedWorkspaceRequest(run, tc.request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			invocation := request.PreparationInvocation
+			if invocation == nil {
+				t.Fatal("preparation invocation missing")
+			}
+			if tc.wantPAT {
+				if invocation.GitLabURL != baseURL || invocation.GitLabToken != pat {
+					t.Fatal("GitLab credential missing from authorized workspace request")
+				}
+			} else if invocation.GitLabURL != "" || invocation.GitLabToken != "" {
+				t.Fatalf("GitLab credential leaked into %s request", tc.name)
+			}
+			if invocation.GitLabUserID != 0 {
+				t.Fatalf("workspace request kept a user reference instead of resolving the PAT: %d", invocation.GitLabUserID)
+			}
+		})
+	}
+}
+
 // While agents or a terminal hold the workspace, an IDE request reuses the
 // environment they already run in, reports a trivial plan as ready, and only
 // refuses when real preparation would have to run underneath them.

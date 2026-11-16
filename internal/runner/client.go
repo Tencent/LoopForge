@@ -103,14 +103,15 @@ func (c *Client) do(ctx context.Context, method, path string, body any, out any)
 // ---------- endpoints ----------
 
 type RegisterRequest struct {
-	RunnerID       string                 `json:"runnerId,omitempty"`
-	Name           string                 `json:"name"`
-	OS             string                 `json:"os"`
-	Arch           string                 `json:"arch"`
-	Version        string                 `json:"version"`
-	Labels         []string               `json:"labels,omitempty"`
-	MaxConcurrency int                    `json:"maxConcurrency"`
-	Runtimes       []domain.RunnerRuntime `json:"runtimes,omitempty"`
+	RunnerID          string                 `json:"runnerId,omitempty"`
+	Name              string                 `json:"name"`
+	OS                string                 `json:"os"`
+	Arch              string                 `json:"arch"`
+	Version           string                 `json:"version"`
+	SupportsGitLabPAT bool                   `json:"supportsGitLabPAT,omitempty"`
+	Labels            []string               `json:"labels,omitempty"`
+	MaxConcurrency    int                    `json:"maxConcurrency"`
+	Runtimes          []domain.RunnerRuntime `json:"runtimes,omitempty"`
 }
 
 type RegisterResponse struct {
@@ -151,10 +152,11 @@ func (c *Client) Register(ctx context.Context, bootstrapToken string, req Regist
 }
 
 type HeartbeatRequest struct {
-	Status       string                 `json:"status"`
-	RunningTasks int                    `json:"runningTasks"`
-	Version      string                 `json:"version,omitempty"`
-	Runtimes     []domain.RunnerRuntime `json:"runtimes,omitempty"`
+	Status            string                 `json:"status"`
+	RunningTasks      int                    `json:"runningTasks"`
+	Version           string                 `json:"version,omitempty"`
+	SupportsGitLabPAT bool                   `json:"supportsGitLabPAT,omitempty"`
+	Runtimes          []domain.RunnerRuntime `json:"runtimes,omitempty"`
 }
 
 type HeartbeatResponse struct {
@@ -183,6 +185,7 @@ func (c *Client) Disconnect(ctx context.Context) error {
 
 type ClaimRequest struct {
 	AvailableRuntimes []string `json:"availableRuntimes"`
+	SupportsGitLabPAT bool     `json:"supportsGitLabPAT,omitempty"`
 	Capacity          int      `json:"capacity"`
 	Preflight         bool     `json:"preflight,omitempty"`
 	NoWait            bool     `json:"noWait,omitempty"`

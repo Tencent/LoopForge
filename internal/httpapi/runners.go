@@ -612,14 +612,15 @@ func (h *runnersHandlers) runnerRegister(c *gin.Context) {
 		return
 	}
 	var input struct {
-		RunnerID       string                 `json:"runnerId"`
-		Name           string                 `json:"name"`
-		OS             string                 `json:"os"`
-		Arch           string                 `json:"arch"`
-		Version        string                 `json:"version"`
-		Labels         []string               `json:"labels"`
-		MaxConcurrency int                    `json:"maxConcurrency"`
-		Runtimes       []domain.RunnerRuntime `json:"runtimes"`
+		RunnerID          string                 `json:"runnerId"`
+		Name              string                 `json:"name"`
+		OS                string                 `json:"os"`
+		Arch              string                 `json:"arch"`
+		Version           string                 `json:"version"`
+		SupportsGitLabPAT bool                   `json:"supportsGitLabPAT"`
+		Labels            []string               `json:"labels"`
+		MaxConcurrency    int                    `json:"maxConcurrency"`
+		Runtimes          []domain.RunnerRuntime `json:"runtimes"`
 	}
 	if !decode(c, &input) {
 		return
@@ -634,16 +635,17 @@ func (h *runnersHandlers) runnerRegister(c *gin.Context) {
 	// re-binds ownership to the token used for this registration.
 	now := time.Now().UTC()
 	runner := domain.Runner{
-		Name:           strings.TrimSpace(input.Name),
-		OS:             strings.TrimSpace(input.OS),
-		Arch:           strings.TrimSpace(input.Arch),
-		RunnerVersion:  strings.TrimSpace(input.Version),
-		Labels:         input.Labels,
-		MaxConcurrency: input.MaxConcurrency,
-		Status:         domain.RunnerStatusOnline,
-		Runtimes:       normalizeRunnerRuntimes(input.Runtimes, nil),
-		OwnerUserID:    owner,
-		LastSeenAt:     &now,
+		Name:              strings.TrimSpace(input.Name),
+		OS:                strings.TrimSpace(input.OS),
+		Arch:              strings.TrimSpace(input.Arch),
+		RunnerVersion:     strings.TrimSpace(input.Version),
+		SupportsGitLabPAT: input.SupportsGitLabPAT,
+		Labels:            input.Labels,
+		MaxConcurrency:    input.MaxConcurrency,
+		Status:            domain.RunnerStatusOnline,
+		Runtimes:          normalizeRunnerRuntimes(input.Runtimes, nil),
+		OwnerUserID:       owner,
+		LastSeenAt:        &now,
 	}
 	if existing, ok := h.repo.Runner(strings.TrimSpace(input.RunnerID)); ok {
 		runner.ID = existing.ID
@@ -708,17 +710,18 @@ func (h *runnersHandlers) runnerHeartbeat(c *gin.Context) {
 		return
 	}
 	var input struct {
-		Status       string                 `json:"status"`
-		RunningTasks int                    `json:"runningTasks"`
-		Version      string                 `json:"version"`
-		Runtimes     []domain.RunnerRuntime `json:"runtimes"`
+		Status            string                 `json:"status"`
+		RunningTasks      int                    `json:"runningTasks"`
+		Version           string                 `json:"version"`
+		SupportsGitLabPAT bool                   `json:"supportsGitLabPAT"`
+		Runtimes          []domain.RunnerRuntime `json:"runtimes"`
 	}
 	if !decode(c, &input) {
 		return
 	}
 	now := time.Now().UTC()
 	expires := now.Add(runnerSessionTTL)
-	if err := h.repo.RunnerHeartbeat(runner.ID, input.Runtimes, strings.TrimSpace(input.Version), now, expires); err != nil {
+	if err := h.repo.RunnerHeartbeat(runner.ID, input.Runtimes, strings.TrimSpace(input.Version), input.SupportsGitLabPAT, now, expires); err != nil {
 		c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
@@ -826,6 +829,7 @@ func (h *runnersHandlers) runnerTaskClaim(c *gin.Context) {
 	}
 	var input struct {
 		AvailableRuntimes []string `json:"availableRuntimes"`
+		SupportsGitLabPAT bool     `json:"supportsGitLabPAT"`
 		Capacity          int      `json:"capacity"`
 		Preflight         bool     `json:"preflight"`
 		NoWait            bool     `json:"noWait"`
@@ -842,10 +846,10 @@ func (h *runnersHandlers) runnerTaskClaim(c *gin.Context) {
 	}
 	claimOrSignal := func() (domain.RunnerTask, bool, error) {
 		if input.Preflight {
-			available, err := h.repo.RunnerTaskAvailable(runner.ID, input.AvailableRuntimes)
+			available, err := h.repo.RunnerTaskAvailable(runner.ID, input.AvailableRuntimes, input.SupportsGitLabPAT)
 			return domain.RunnerTask{}, available, err
 		}
-		return h.repo.ClaimRunnerTask(runner.ID, input.AvailableRuntimes, time.Now().UTC(), runnerTaskLeaseTTL)
+		return h.repo.ClaimRunnerTask(runner.ID, input.AvailableRuntimes, input.SupportsGitLabPAT, time.Now().UTC(), runnerTaskLeaseTTL)
 	}
 	respond := func(task domain.RunnerTask) {
 		if input.Preflight {
@@ -855,6 +859,14 @@ func (h *runnersHandlers) runnerTaskClaim(c *gin.Context) {
 		if task.Invocation != nil && task.Invocation.GitSSHUserID > 0 && runner.SupportsGitSSH() && len(task.Invocation.GitSSHRemotes()) > 0 {
 			task.Invocation.GitSSHKeys = h.repo.GitSSHKeysForRemotes(task.Invocation.GitSSHUserID, task.Invocation.GitSSHRemotes())
 			task.Invocation.GitSSHUserID = 0
+			c.Header("Cache-Control", "no-store")
+		}
+		if task.Invocation != nil && task.Invocation.GitLabUserID > 0 {
+			// The queue only leases GitLab PAT tasks to runners that report support.
+			credential := h.repo.GitLabCredential(task.Invocation.GitLabUserID)
+			task.Invocation.GitLabURL = credential.BaseURL
+			task.Invocation.GitLabToken = credential.Token
+			task.Invocation.GitLabUserID = 0
 			c.Header("Cache-Control", "no-store")
 		}
 		c.JSON(http.StatusOK, map[string]any{"task": resolveRunnerTaskSandbox(task, runner.OS)})

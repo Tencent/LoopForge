@@ -147,6 +147,51 @@ func TestRunnerIntegrateAndConversationTerminalResults(t *testing.T) {
 	}
 }
 
+func TestRunnerConversationPushBindsRequesterGitLabPATToSelectedRepositories(t *testing.T) {
+	const requesterID int64 = 42
+	gitLab := domain.RepositoryContext{RepositoryID: "gitlab", Provider: domain.RepositoryProviderGitLab, Name: "GitLab", CloneURL: "https://gitlab.example.test/team/repo.git", WorkspaceDir: "gitlab", BaseBranch: "main", WorkBranch: "work"}
+	github := domain.RepositoryContext{RepositoryID: "github", Provider: "github", Name: "GitHub", CloneURL: "https://github.example.test/team/repo.git", WorkspaceDir: "github", BaseBranch: "main", WorkBranch: "work"}
+	for _, tc := range []struct {
+		name         string
+		repositories []domain.RepositoryContext
+		selected     domain.RepositoryContext
+		wantUserID   int64
+	}{
+		{name: "selected GitLab repository", repositories: []domain.RepositoryContext{gitLab}, selected: gitLab, wantUserID: requesterID},
+		{name: "unselected GitLab repository", repositories: []domain.RepositoryContext{gitLab, github}, selected: github},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e, _ := cvEEngine(t)
+			runner := cvERunner(t, e, "runner-terminal", domain.RunnerStatusOnline, "terminal", "codex")
+			runner.SupportsGitLabPAT = true
+			if err := e.repo.PutRunner(runner); err != nil {
+				t.Fatal(err)
+			}
+			run := cvERunnerRun("terminal-gitlab-push", runner.ID)
+			run.ExecutionContext.ResponsibleUserID = 7
+			run.Repositories = tc.repositories
+			headsJSON := `[{"repositoryId":"` + tc.selected.RepositoryID + `","name":"Repo","workBranch":"work","head":"def"}]`
+			dispatched := false
+			e.SetRunnerDispatchNotify(func(string) {
+				tasks := e.repo.RunnerTasks()
+				if len(tasks) != 1 || tasks[0].Invocation == nil {
+					t.Fatal("conversation push did not enqueue an invocation")
+				}
+				invocation := tasks[0].Invocation
+				if invocation.GitLabUserID != tc.wantUserID || invocation.GitLabToken != "" || invocation.GitSSHUserID != 0 {
+					t.Fatalf("queued credential ownership = user %d, token %q, ssh user %d; want user %d", invocation.GitLabUserID, invocation.GitLabToken, invocation.GitSSHUserID, tc.wantUserID)
+				}
+				dispatched = true
+				cvEFinishQueuedTask(t, e, domain.RunnerTaskSuccess, headsJSON, "", nil)
+			})
+			heads, err := e.pushConversationOnRunner(context.Background(), runner.ID, run, []domain.RepositoryContext{tc.selected}, requesterID, "token", "User", "user@example.com", "message", "")
+			if err != nil || len(heads) != 1 || !dispatched {
+				t.Fatalf("heads=%v dispatched=%t err=%v", heads, dispatched, err)
+			}
+		})
+	}
+}
+
 func TestRunnerAlignTerminalResults(t *testing.T) {
 	repository := domain.RepositoryContext{
 		RepositoryID: "align-repo", Name: "Align Repo", CloneURL: "https://example.invalid/align.git",
