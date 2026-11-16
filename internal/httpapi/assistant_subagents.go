@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 
 	"agentflow/internal/domain"
 	"agentflow/internal/runtime"
@@ -182,6 +183,18 @@ var rolePromptPlaceholder = regexp.MustCompile(`\{\{[^{}]+\}\}`)
 // Beyond it the shared skills are taken in id order and the rest are logged.
 const maxAutoSharedSkills = 50
 
+// loggedSharedSkillOverflow holds the shared skill counts already reported as
+// over maxAutoSharedSkills, so a truncation is logged once per process for each
+// count, not on every turn; a change in the number of shared skills logs again.
+var loggedSharedSkillOverflow sync.Map
+
+// shouldLogSharedSkillOverflow reports whether this process has not yet logged
+// a truncation of total shared skills.
+func shouldLogSharedSkillOverflow(total int) bool {
+	_, logged := loggedSharedSkillOverflow.LoadOrStore(total, struct{}{})
+	return !logged
+}
+
 // writeConversationAssets rewrites the conversation's CLI home each turn:
 // skills holds the project's own skills and the shared skills, plus those of
 // its roles and the mentioned ones, and agents holds one subagent per role,
@@ -229,7 +242,9 @@ func (h *assistantHandlers) writeConversationAssets(root string, req assistantRe
 	}
 	sort.Slice(shared, func(i, j int) bool { return shared[i].ID < shared[j].ID })
 	if len(shared) > maxAutoSharedSkills {
-		log.Printf("assistant skills session=%s project=%s: %d shared skills, installing the first %d by id; mention or bind the rest to a role to use them", req.SessionID, project, len(shared), maxAutoSharedSkills)
+		if shouldLogSharedSkillOverflow(len(shared)) {
+			log.Printf("assistant skills: %d shared skills, installing the first %d by id on every turn; mention or bind the rest to a role to use them", len(shared), maxAutoSharedSkills)
+		}
 		shared = shared[:maxAutoSharedSkills]
 	}
 	for _, skill := range shared {

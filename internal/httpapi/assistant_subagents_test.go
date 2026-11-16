@@ -587,3 +587,18 @@ func TestRoleDeliverablesAreCollectedWhenTheDispatchEnds(t *testing.T) {
 		t.Fatalf("non-role dispatch collected: %+v", got)
 	}
 }
+
+func TestSharedSkillOverflowIsLoggedOncePerCount(t *testing.T) {
+	total := maxAutoSharedSkills + 1000
+	if !shouldLogSharedSkillOverflow(total) {
+		t.Fatalf("first truncation of %d shared skills was not logged", total)
+	}
+	for turn := 0; turn < 3; turn++ {
+		if shouldLogSharedSkillOverflow(total) {
+			t.Fatalf("turn %d logged the truncation of %d shared skills again", turn, total)
+		}
+	}
+	if !shouldLogSharedSkillOverflow(total + 1) {
+		t.Fatalf("a changed shared skill count %d was not logged", total+1)
+	}
+}
