@@ -168,49 +168,133 @@
 #aiSchedulesView .schedule-row-menu-sep { height:1px;margin:4px 6px;background:var(--hui-border-soft); }
 /* 执行记录看板 */
 #aiSchedulesView .mcp-tab-count.is-danger { color:var(--hui-error); font-weight:500; }
+#aiSchedulesView .sched-exec-panel { display:flex;flex-direction:column;gap:16px; }
 #aiSchedulesView .sched-exec-panel[hidden] { display:none; }
-#aiSchedulesView .sched-exec-head { padding:10px 12px 10px 16px; }
-#aiSchedulesView .sched-exec-filters { display:flex;gap:8px;align-items:center;flex-wrap:wrap; }
-#aiSchedulesView .sched-exec-filters select { height:32px;min-width:140px;max-width:220px;font-size:13px; }
-#aiSchedulesView .sched-exec-metrics { display:grid;grid-template-columns:repeat(4,minmax(0,1fr));border-bottom:1px solid var(--hui-border); }
-#aiSchedulesView .sched-exec-metric { display:flex;flex-direction:column;gap:4px;padding:14px 16px;min-width:0; }
-#aiSchedulesView .sched-exec-metric + .sched-exec-metric { border-left:1px solid var(--hui-border-soft); }
-#aiSchedulesView .sched-exec-metric span, #aiSchedulesView .sched-exec-metric small { color:var(--hui-secondary);font-size:12px; }
-#aiSchedulesView .sched-exec-metric small { color:var(--hui-muted); }
-#aiSchedulesView .sched-exec-metric b { font:600 22px/1.2 var(--hui-sans);font-variant-numeric:tabular-nums;color:var(--hui-text); }
-#aiSchedulesView .sched-exec-metric.is-danger b { color:var(--hui-error); }
-#aiSchedulesView .sched-exec-row { display:grid;grid-template-columns:112px minmax(0,1fr) 88px auto;gap:12px;align-items:start;padding:12px 16px;border-top:1px solid var(--hui-border-soft); }
-#aiSchedulesView .sched-exec-list > .sched-exec-row:first-child { border-top:0; }
-#aiSchedulesView .sched-exec-row:hover { background:color-mix(in srgb,var(--hui-text) 2.5%,transparent); }
-#aiSchedulesView .sched-exec-badge { padding-top:1px; }
-#aiSchedulesView .sched-exec-main { display:flex;flex-direction:column;gap:4px;min-width:0; }
-#aiSchedulesView .sched-exec-main > b { display:flex;align-items:center;gap:6px;font-size:14px;font-weight:500;color:var(--hui-text);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
-#aiSchedulesView .sched-exec-meta { color:var(--hui-secondary);font-size:12px; }
-#aiSchedulesView .sched-exec-error, #aiSchedulesView .sched-exec-message { margin:2px 0 0;font-size:12px;line-height:1.55;overflow-wrap:anywhere;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden; }
+#aiSchedulesView .sched-exec-card { border:1px solid var(--hui-border);border-radius:14px;background:var(--hui-surface);box-shadow:var(--hui-panel-shadow);overflow:hidden; }
+#aiSchedulesView .sched-exec-card-title { display:flex;align-items:center;gap:4px;margin:0;padding:16px 20px 12px;font:600 15px/1.3 var(--hui-sans);color:var(--hui-text); }
+#aiSchedulesView .sched-exec-card-title .muted { font-weight:400;font-size:13px;color:var(--hui-secondary); }
+#aiSchedulesView .sched-exec-th-hint { display:inline-flex;align-items:center;gap:3px;color:inherit;cursor:help; }
+#aiSchedulesView .sched-exec-th-hint > .harness-icon { color:var(--hui-muted); }
+/* 概览：4 张指标卡 + 7 日趋势 */
+#aiSchedulesView .sched-exec-overview { display:grid;grid-template-columns:minmax(0,1fr) 280px;gap:8px;align-items:stretch; }
+#aiSchedulesView .sched-exec-overview-main { min-width:0;padding-bottom:16px; }
+#aiSchedulesView .sched-exec-metrics { display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;padding:0 20px; }
+#aiSchedulesView .sched-exec-metric { display:flex;gap:12px;align-items:flex-start;min-width:0;padding:14px;border:1px solid var(--hui-border-soft);border-radius:12px;background:var(--hui-surface); }
+#aiSchedulesView .sched-exec-metric-icon { display:grid;place-items:center;flex:none;width:36px;height:36px;border-radius:10px;color:var(--tone);background:color-mix(in srgb,var(--tone) 12%,var(--hui-surface)); }
+#aiSchedulesView .sched-exec-metric[data-tone="accent"] { --tone:var(--hui-accent); }
+#aiSchedulesView .sched-exec-metric[data-tone="success"] { --tone:var(--hui-success); }
+#aiSchedulesView .sched-exec-metric[data-tone="error"] { --tone:var(--hui-error); }
+#aiSchedulesView .sched-exec-metric[data-tone="info"] { --tone:var(--hui-info); }
+#aiSchedulesView .sched-exec-metric-body { display:flex;flex-direction:column;gap:3px;min-width:0; }
+#aiSchedulesView .sched-exec-metric-body > span { color:var(--hui-secondary);font-size:12.5px; }
+#aiSchedulesView .sched-exec-metric-body > b { font:600 22px/1.2 var(--hui-sans);font-variant-numeric:tabular-nums;color:var(--hui-text);white-space:nowrap; }
+#aiSchedulesView .sched-exec-metric[data-tone="error"] .sched-exec-metric-body > b { color:var(--hui-error); }
+#aiSchedulesView .sched-exec-delta { display:inline-flex;align-items:center;gap:2px;color:var(--hui-muted);font-size:12px;white-space:nowrap; }
+#aiSchedulesView .sched-exec-delta b { font-weight:500;font-variant-numeric:tabular-nums; }
+#aiSchedulesView .sched-exec-delta[data-good="true"] :is(b, .harness-icon) { color:var(--hui-success); }
+#aiSchedulesView .sched-exec-delta[data-good="false"] :is(b, .harness-icon) { color:var(--hui-error); }
+#aiSchedulesView .sched-exec-trend { display:flex;flex-direction:column;margin:0;padding:16px 20px 14px 4px;min-width:0; }
+#aiSchedulesView .sched-exec-trend figcaption { margin-bottom:8px;font-size:13px;font-weight:500;color:var(--hui-text); }
+#aiSchedulesView .sched-exec-trend-chart { display:block;width:100%;height:76px;overflow:visible; }
+#aiSchedulesView .sched-exec-trend-line { fill:none;stroke:var(--hui-accent);stroke-width:2;stroke-linecap:round;vector-effect:non-scaling-stroke; }
+#aiSchedulesView .sched-exec-trend-chart circle { fill:var(--hui-surface);stroke:var(--hui-accent);stroke-width:1.5;vector-effect:non-scaling-stroke; }
+#aiSchedulesView .sched-exec-trend-chart circle.is-today { fill:var(--hui-accent); }
+#aiSchedulesView .sched-exec-trend-chart circle.is-failed { stroke:var(--hui-error); }
+#aiSchedulesView .sched-exec-trend-labels { display:flex;justify-content:space-between;margin-top:6px;color:var(--hui-muted);font-size:11px;font-variant-numeric:tabular-nums; }
+/* 筛选栏 */
+#aiSchedulesView .sched-exec-filters { display:flex;gap:12px;align-items:center;flex-wrap:wrap; }
+#aiSchedulesView .sched-exec-search, #aiSchedulesView .sched-exec-select { position:relative;display:flex;align-items:center; }
+#aiSchedulesView :is(.sched-exec-search, .sched-exec-select) > .harness-icon { position:absolute;left:12px;color:var(--hui-muted);pointer-events:none; }
+#aiSchedulesView .sched-exec-search { flex:1 1 280px;min-width:220px;max-width:420px; }
+#aiSchedulesView .sched-exec-search input, #aiSchedulesView .sched-exec-select select { width:100%;height:36px;box-sizing:border-box;padding:0 12px 0 36px;border:1px solid var(--hui-border);border-radius:8px;background:var(--hui-surface);color:var(--hui-text);font:400 13px/1 var(--hui-sans);transition:border-color .18s var(--hui-ease-flow),box-shadow .18s var(--hui-ease-flow); }
+#aiSchedulesView .sched-exec-select { flex:0 1 180px;min-width:140px; }
+#aiSchedulesView .sched-exec-select select { padding-right:28px;cursor:pointer; }
+#aiSchedulesView :is(.sched-exec-search input, .sched-exec-select select):focus-visible { outline:0;border-color:var(--hui-accent);box-shadow:0 0 0 3px var(--hui-focus-ring); }
+#aiSchedulesView .sched-exec-reset { margin-left:auto;color:var(--hui-accent); }
+#aiSchedulesView .sched-exec-reset:disabled { color:var(--hui-muted); }
+/* 表格 */
+#aiSchedulesView .sched-exec-list { overflow-x:auto; }
+#aiSchedulesView .sched-exec-table { width:100%;border-collapse:collapse;table-layout:fixed;font-size:13px; }
+#aiSchedulesView .sched-exec-table th { height:36px;padding:0 10px;background:var(--hui-canvas);color:var(--hui-secondary);font-weight:500;font-size:12.5px;text-align:left;white-space:nowrap; }
+#aiSchedulesView .sched-exec-table th:first-child { width:36px;padding-left:16px; }
+#aiSchedulesView .sched-exec-table th:nth-child(2) { width:104px; }
+#aiSchedulesView .sched-exec-table th:nth-child(4) { width:156px; }
+#aiSchedulesView .sched-exec-table th:nth-child(5) { width:92px; }
+#aiSchedulesView .sched-exec-table th:nth-child(6) { width:116px; }
+#aiSchedulesView .sched-exec-table th:last-child { width:132px;padding-right:16px; }
+#aiSchedulesView .sched-exec-table td { padding:12px 10px;vertical-align:middle;border-top:1px solid var(--hui-border-soft); }
+#aiSchedulesView .sched-exec-row { cursor:pointer;transition:background .15s var(--hui-ease-flow); }
+#aiSchedulesView .sched-exec-row:hover, #aiSchedulesView .sched-exec-row.is-open { background:color-mix(in srgb,var(--hui-text) 2.5%,transparent); }
+#aiSchedulesView .sched-exec-row > td:first-child { padding-left:16px; }
+#aiSchedulesView .sched-exec-row > td:last-child { padding-right:16px; }
+#aiSchedulesView .sched-exec-toggle { display:grid;place-items:center;width:24px;height:24px;padding:0;border:0;border-radius:6px;background:transparent;color:var(--hui-muted);cursor:pointer; }
+#aiSchedulesView .sched-exec-toggle > .harness-icon { transition:transform .18s var(--hui-ease-flow); }
+#aiSchedulesView .sched-exec-toggle[aria-expanded="true"] > .harness-icon { transform:rotate(90deg); }
+#aiSchedulesView .sched-exec-toggle:is(:hover, :focus-visible) { background:var(--hui-canvas);color:var(--hui-text);outline:0; }
+#aiSchedulesView .sched-exec-main { min-width:0; }
+#aiSchedulesView .sched-exec-main > b { display:flex;align-items:center;gap:6px;min-width:0;font-size:13.5px;font-weight:500;color:var(--hui-text); }
+#aiSchedulesView .sched-exec-name { min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
+#aiSchedulesView .sched-exec-error, #aiSchedulesView .sched-exec-message { margin:3px 0 0;font-size:12px;line-height:1.5;overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
 #aiSchedulesView .sched-exec-error { color:var(--hui-error); }
 #aiSchedulesView .sched-exec-error.is-warn { color:var(--hui-warn); }
-#aiSchedulesView .sched-exec-message { color:var(--hui-secondary);-webkit-line-clamp:2; }
-#aiSchedulesView .sched-exec-runs { display:flex;flex-wrap:wrap;gap:6px;margin-top:2px; }
+#aiSchedulesView .sched-exec-message { color:var(--hui-secondary); }
+#aiSchedulesView .sched-exec-time { color:var(--hui-text);font-variant-numeric:tabular-nums;white-space:nowrap; }
+#aiSchedulesView .sched-exec-trace { height:28px;padding:0 8px;border:1px solid var(--hui-border);border-radius:6px;background:var(--hui-surface);color:var(--hui-secondary);cursor:pointer; }
+#aiSchedulesView .sched-exec-trace:is(:hover, :focus-visible) { border-color:var(--hui-accent);color:var(--hui-accent);outline:0; }
+#aiSchedulesView .sched-exec-trace code { color:inherit; }
+#aiSchedulesView .sched-exec-row[data-status="failed"] .sched-exec-trace { color:var(--hui-error);border-color:color-mix(in srgb,var(--hui-error) 35%,transparent); }
+#aiSchedulesView td.sched-exec-actions { white-space:nowrap; }
+#aiSchedulesView td.sched-exec-actions > * { vertical-align:middle; }
+#aiSchedulesView .sched-exec-action { display:inline-flex;align-items:center;gap:5px;height:28px;padding:0 6px;border:0;border-radius:6px;background:transparent;color:var(--hui-text);font:400 13px/1 var(--hui-sans);text-decoration:none;white-space:nowrap;cursor:pointer; }
+#aiSchedulesView .sched-exec-action:is(:hover, :focus-visible) { background:var(--hui-canvas);color:var(--hui-accent);outline:0; }
+#aiSchedulesView .sched-exec-actions .schedule-row-more { margin-left:2px; }
+/* 展开详情 */
+#aiSchedulesView .sched-exec-detail > td { padding:0 16px 14px 62px;border-top:0;background:color-mix(in srgb,var(--hui-text) 2.5%,transparent); }
+#aiSchedulesView .sched-exec-detail-body { display:flex;flex-direction:column;gap:10px;padding:12px 14px;border:1px solid var(--hui-border-soft);border-radius:10px;background:var(--hui-surface); }
+#aiSchedulesView .sched-exec-fields { display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:8px 16px;margin:0; }
+#aiSchedulesView .sched-exec-fields dt { color:var(--hui-muted);font-size:12px; }
+#aiSchedulesView .sched-exec-fields dd { margin:2px 0 0;color:var(--hui-text);font-size:12.5px;font-variant-numeric:tabular-nums;overflow-wrap:anywhere; }
+#aiSchedulesView .sched-exec-fields code { font:12px/1.4 var(--hui-mono, ui-monospace, SFMono-Regular, Menlo, monospace); }
+#aiSchedulesView .sched-exec-detail-text > b { display:block;margin-bottom:4px;color:var(--hui-muted);font-size:12px;font-weight:400; }
+#aiSchedulesView .sched-exec-detail-text pre { max-height:220px;margin:0;overflow:auto;color:var(--hui-text);font:12.5px/1.6 var(--hui-sans);white-space:pre-wrap;overflow-wrap:anywhere; }
+#aiSchedulesView .sched-exec-detail-text.is-error pre { color:var(--hui-error); }
+#aiSchedulesView .sched-exec-runs { display:flex;flex-wrap:wrap;gap:6px; }
 #aiSchedulesView .sched-exec-run { display:inline-flex;align-items:center;gap:4px;max-width:260px;height:24px;padding:0 8px;border:1px solid var(--hui-border);border-radius:6px;background:var(--hui-surface);color:var(--hui-secondary);font-size:12px;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;transition:color .15s,border-color .15s; }
 #aiSchedulesView .sched-exec-run:hover { color:var(--hui-accent);border-color:var(--hui-accent); }
 #aiSchedulesView .sched-exec-run:focus-visible { outline:2px solid var(--hui-focus-ring);outline-offset:1px; }
-#aiSchedulesView .sched-exec-duration { padding-top:3px;color:var(--hui-secondary);font-size:12px;font-variant-numeric:tabular-nums;text-align:right; }
-#aiSchedulesView .sched-exec-actions { display:flex;justify-content:flex-end;gap:6px;flex-wrap:wrap; }
-#aiSchedulesView .sched-exec-chat { white-space:nowrap;text-decoration:none; }
+#aiSchedulesView .sched-exec-duration { color:var(--hui-text);font-variant-numeric:tabular-nums;white-space:nowrap; }
 :is(#aiSchedulesView, #scheduleModal) .sched-exec-copy { display:inline-flex;align-items:center;gap:5px;white-space:nowrap; }
 :is(#aiSchedulesView, #scheduleModal) .sched-exec-copy code { font:12px/1 var(--hui-mono, ui-monospace, SFMono-Regular, Menlo, monospace);color:var(--hui-muted); }
-#aiSchedulesView .sched-exec-row[data-status="failed"] .sched-exec-copy { color:var(--hui-error);border-color:color-mix(in srgb,var(--hui-error) 35%,transparent); }
-#aiSchedulesView .sched-exec-footnote { margin:0;padding:10px 16px;border-top:1px solid var(--hui-border-soft);color:var(--hui-muted);font-size:12px; }
+/* 分页 */
+#aiSchedulesView .sched-exec-pager { display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;padding:12px 20px;border-top:1px solid var(--hui-border-soft);font-size:13px;color:var(--hui-secondary); }
+#aiSchedulesView .sched-exec-pager[hidden] { display:none; }
+#aiSchedulesView .sched-exec-page-size { display:inline-flex;align-items:center;gap:8px; }
+#aiSchedulesView .sched-exec-page-size select { height:30px;min-width:84px;font-size:13px; }
+#aiSchedulesView .sched-exec-pages { display:flex;align-items:center;gap:4px; }
+#aiSchedulesView .sched-exec-page { display:grid;place-items:center;min-width:30px;height:30px;padding:0 6px;border:1px solid transparent;border-radius:7px;background:transparent;color:var(--hui-text);font:400 13px/1 var(--hui-sans);font-variant-numeric:tabular-nums;cursor:pointer; }
+#aiSchedulesView .sched-exec-page[data-exec-page]:is(:first-child, :last-child) { border-color:var(--hui-border); }
+#aiSchedulesView .sched-exec-page:not(:disabled):is(:hover, :focus-visible) { background:var(--hui-canvas);outline:0; }
+#aiSchedulesView .sched-exec-page.is-current { background:var(--hui-accent);border-color:var(--hui-accent);color:#fff; }
+#aiSchedulesView .sched-exec-page.is-current:is(:hover, :focus-visible) { background:var(--hui-accent); }
+#aiSchedulesView .sched-exec-page:disabled { color:var(--hui-muted);cursor:not-allowed; }
+#aiSchedulesView .sched-exec-page-gap { min-width:20px;text-align:center;color:var(--hui-muted); }
+#aiSchedulesView .sched-exec-page-total { margin:0 8px 0 12px; }
+#aiSchedulesView .sched-exec-footnote { margin:0;padding:10px 20px;border-top:1px solid var(--hui-border-soft);color:var(--hui-muted);font-size:12px; }
 #aiSchedulesView .sched-exec-footnote:empty { display:none; }
+@media(max-width:1180px) {
+  #aiSchedulesView .sched-exec-overview { grid-template-columns:minmax(0,1fr); }
+  #aiSchedulesView .sched-exec-overview-main { padding-bottom:0; }
+  #aiSchedulesView .sched-exec-trend { padding:0 20px 16px; }
+}
 @media(max-width:860px) {
   #aiSchedulesView .sched-exec-metrics { grid-template-columns:repeat(2,minmax(0,1fr)); }
-  #aiSchedulesView .sched-exec-metric:nth-child(3) { border-left:0; }
-  #aiSchedulesView .sched-exec-row { grid-template-columns:minmax(0,1fr) auto; }
-  #aiSchedulesView .sched-exec-badge { grid-column:1 / -1; }
-  #aiSchedulesView .sched-exec-duration { display:none; }
+  #aiSchedulesView .sched-exec-table :is(th, td):is(:nth-child(4), :nth-child(5), :nth-child(6)) { display:none; }
+  #aiSchedulesView .sched-exec-detail > td { padding-left:16px; }
+  #aiSchedulesView .sched-exec-search { max-width:none; }
+  #aiSchedulesView .sched-exec-reset { margin-left:0; }
 }
 @media (prefers-reduced-motion: reduce) {
-  #aiSchedulesView .sched-exec-run { transition:none; }
+  #aiSchedulesView :is(.sched-exec-run, .sched-exec-row, .sched-exec-toggle > .harness-icon, .sched-exec-search input, .sched-exec-select select) { transition:none; }
 }
 #scheduleModal { --line:var(--hui-border);--text:var(--hui-text);--muted:var(--hui-secondary);--muted-2:var(--hui-muted);--panel:var(--hui-surface);--bg-soft:var(--hui-canvas); }
 #scheduleModal .schedule-head[hidden], #scheduleModal .schedule-job-list[hidden] { display:none; }

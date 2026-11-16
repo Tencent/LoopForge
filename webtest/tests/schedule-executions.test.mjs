@@ -25,6 +25,7 @@ test('execution dashboard lists history with metrics, filters and copyable trace
       {id:'job-trigger',projectId:'project-1',name:'触发配置',workflowId:'wf',enabled:true,intervalSec:300,lastStatus:'success',lastTraceId:'${OK_TRACE}',lastRunAt:'2026-11-16T07:00:00Z'}
     ];
     window.__copied=[];window.__opened=[];
+    scheduleExecNow=()=>Date.parse('2026-11-16T12:00:00Z');
     copyText=(value)=>{window.__copied.push(value)};
     openRunFromId=(id)=>{window.__opened.push(id)};
     renderScheduleJobs();
@@ -55,8 +56,9 @@ test('execution dashboard lists history with metrics, filters and copyable trace
   // Opened from the job row: filtered to that job.
   let rows = panel.querySelectorAll('.sched-exec-row');
   assert.equal(rows.length, 1);
-  assert.match(rows[0].textContent, /失败.*Daily summary.*定时触发.*CodeBuddy key expired.*5 秒.*Trace/s);
-  assert.equal(app.document.querySelector('#aiScheduleExecCount').textContent, '1');
+  assert.match(rows[0].textContent, /失败.*Daily summary.*CodeBuddy key expired.*2026\/11\/16.*5 秒.*89abcdef/s);
+  assert.equal(app.document.querySelector('#aiScheduleExecCount').textContent, '2');
+  assert.match(app.document.querySelector('#scheduleExecOverviewScope').textContent, /最近 7 天 · Daily summary/);
 
   const jobFilter = app.document.querySelector('#scheduleExecJob');
   jobFilter.value = '';
@@ -66,11 +68,23 @@ test('execution dashboard lists history with metrics, filters and copyable trace
   const metrics = app.document.querySelector('#scheduleExecMetrics').textContent;
   assert.match(metrics, /执行次数\s*2/);
   assert.match(metrics, /成功率\s*50%/);
-  assert.match(rows[1].textContent, /候选 3 · 启动 1/);
+  assert.match(metrics, /失败次数\s*1/);
+  assert.match(rows[1].textContent, /候选 3 · 启动 1 · 登录页改版/);
   assert.match(rows[1].textContent, /1 分 30 秒/);
 
-  rows[1].querySelector('[data-open-exec-run]').click();
-  assert.equal(app.evaluate('JSON.stringify(window.__opened)'), JSON.stringify(['run-77']));
+  // Details stay collapsed until the row is expanded.
+  const detail = rows[1].nextElementSibling;
+  assert.ok(detail.classList.contains('sched-exec-detail'));
+  assert.equal(detail.hidden, true);
+  rows[1].querySelector('[data-exec-toggle]').click();
+  assert.equal(detail.hidden, false);
+  assert.equal(rows[1].querySelector('[data-exec-toggle]').getAttribute('aria-expanded'), 'true');
+  assert.match(detail.textContent, /触发方式手动运行/);
+  assert.match(detail.textContent, new RegExp(OK_TRACE));
+
+  rows[1].querySelector('[data-open-exec-first-run]').click();
+  detail.querySelector('[data-open-exec-run]').click();
+  assert.equal(app.evaluate('JSON.stringify(window.__opened)'), JSON.stringify(['run-77', 'run-77']));
   rows[1].querySelector('[data-copy-trace]').click();
   const fromExec = app.evaluate('window.__copied.at(-1)');
   assert.equal(fromExec.split('\n')[1], `Trace ID: ${OK_TRACE}`);
@@ -110,6 +124,97 @@ test('an AI execution links to the conversation it ran in', async (t) => {
   assert.equal(url.hash, '#/collaboration');
   assert.equal(link.target, '_blank');
   assert.equal(rows[1].querySelector('[data-open-exec-chat]'), null, 'a run that failed before opening a conversation has nothing to open');
+});
+
+test('the overview compares the last 7 days with the week before and the table filters and pages', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  const now = Date.parse('2026-11-16T12:00:00Z');
+  const hour = 3600000;
+  const list = [];
+  const add = (i, jobId, status, ago, durationMs) => list.push({ id: `sjx-${i}`, jobId, jobName: jobId === 'job-a' ? '巡检' : '周报', jobKind: 'assistant', projectId: 'project-1', traceId: `trace-${String(i).padStart(4, '0')}`, triggerOrigin: 'timer', status, error: status === 'failed' ? 'key missing' : '', assistantMessage: status === 'success' ? `完成 ${i}` : '', startedAt: new Date(now - ago).toISOString(), durationMs });
+  // This week: 10 ok + 2 failed, 1 minute each; last week: 4 ok + 4 failed, 2 minutes each.
+  for (let i = 0; i < 12; i++) add(i, 'job-a', i < 10 ? 'success' : 'failed', (2 + i * 9) * hour, 60000);
+  for (let i = 12; i < 20; i++) add(i, 'job-a', i < 16 ? 'success' : 'failed', (8 * 24 + (i - 12) * 6) * hour, 120000);
+  for (let i = 20; i < 25; i++) add(i, 'job-b', 'success', (20 * 24 + i) * hour, 30000);
+  app.router.get(/^\/api\/schedule-job-executions\?/, () => list);
+  app.evaluate(`
+    scheduleExecNow=()=>${now};
+    state.projectFilter='project-1';
+    state.data.scheduleJobs=[{id:'job-a',projectId:'project-1',name:'巡检',skipDispatch:true,assistantPrompt:'x',enabled:true,intervalSec:3600}];
+    renderScheduleJobs();
+  `);
+  await app.evaluate(`selectAIScheduleTab('executions')`);
+  await settle();
+  const doc = app.document;
+  const request = app.router.calls.filter((c) => c.path === '/api/schedule-job-executions').at(-1);
+  assert.match(request.search, /limit=500/);
+
+  const metric = (tone) => doc.querySelector(`#scheduleExecMetrics [data-tone="${tone}"]`);
+  assert.match(metric('accent').textContent, /执行次数\s*12\s*较上周 \+50%/);
+  assert.match(metric('success').textContent, /成功率\s*83%\s*较上周 \+33pp/);
+  assert.match(metric('error').textContent, /失败次数\s*2\s*较上周 −50%/);
+  assert.equal(metric('error').querySelector('.sched-exec-delta').dataset.good, 'true', 'fewer failures read as good');
+  assert.match(metric('info').textContent, /平均耗时\s*1 分 0 秒\s*较上周 −50%/);
+  const chart = doc.querySelector('#scheduleExecTrend svg');
+  assert.match(chart.getAttribute('aria-label'), /最近 7 天共执行 12 次/);
+  assert.equal(chart.querySelectorAll('circle').length, 7);
+  assert.equal(doc.querySelectorAll('#scheduleExecTrend .sched-exec-trend-labels span').length, 7);
+
+  // 25 records, 10 per page.
+  const rows = () => doc.querySelectorAll('#scheduleExecList .sched-exec-row');
+  assert.equal(rows().length, 10);
+  assert.match(doc.querySelector('#scheduleExecTotal').textContent, /共 25 条/);
+  const pager = doc.querySelector('#scheduleExecPager');
+  assert.match(pager.textContent, /共 3 页/);
+  pager.querySelector('[data-exec-page="3"]').click();
+  assert.equal(rows().length, 5);
+  assert.equal(doc.querySelector('#scheduleExecPager .is-current').textContent, '3');
+  assert.equal(doc.querySelector('#scheduleExecPager [aria-label="下一页"]').disabled, true);
+  const size = doc.querySelector('#scheduleExecPageSize');
+  size.value = '20';
+  size.dispatchEvent(new app.window.Event('change'));
+  assert.equal(rows().length, 20);
+  assert.match(doc.querySelector('#scheduleExecPager').textContent, /共 2 页/);
+
+  // Search covers names, trace IDs and messages; it resets to the first page.
+  const search = doc.querySelector('#scheduleExecSearch');
+  const reset = doc.querySelector('#scheduleExecReset');
+  assert.equal(reset.disabled, true);
+  search.value = 'trace-0003';
+  search.dispatchEvent(new app.window.Event('input'));
+  assert.equal(rows().length, 1);
+  assert.equal(rows()[0].dataset.execId, 'sjx-3');
+  assert.equal(reset.disabled, false);
+  search.value = '周报';
+  search.dispatchEvent(new app.window.Event('input'));
+  assert.equal(rows().length, 5);
+  search.value = '';
+  search.dispatchEvent(new app.window.Event('input'));
+
+  const range = doc.querySelector('#scheduleExecRange');
+  range.value = '7d';
+  range.dispatchEvent(new app.window.Event('change'));
+  assert.equal(rows().length, 12);
+  reset.click();
+  assert.equal(range.value, '');
+  assert.equal(rows().length, 20);
+  assert.equal(reset.disabled, true);
+
+  // The row ⋯ menu narrows the list to its job.
+  const first = rows()[0];
+  first.querySelector('[data-schedule-menu]').click();
+  const items = [...first.querySelectorAll('.schedule-row-menu [role="menuitem"]')].map(b => b.textContent.trim());
+  assert.deepEqual(items, ['复制排障信息', '只看该任务', '编辑任务']);
+  first.querySelector('[data-exec-only-job]').click();
+  assert.equal(doc.querySelector('#scheduleExecJob').value, 'job-a');
+  assert.match(doc.querySelector('#scheduleExecTotal').textContent, /共 20 条/);
+  assert.equal(rows()[0].querySelector('[data-exec-only-job]'), null, 'already filtered to this job');
+
+  // Clicking the row body expands its detail; the AI reply shows in full.
+  rows()[0].querySelector('.sched-exec-main').click();
+  assert.equal(rows()[0].nextElementSibling.hidden, false);
+  assert.match(rows()[0].nextElementSibling.textContent, /AI 回复完成 0/);
 });
 
 test('execution dashboard reports empty, error and duration states', async (t) => {
