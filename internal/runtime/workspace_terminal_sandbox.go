@@ -159,6 +159,18 @@ func SandboxEnvironmentIdentity(ctx context.Context, sandbox Sandbox) (string, e
 		if err := s.ensureStarted(ctx); err != nil {
 			return "", err
 		}
+		identity, err := ReadSandboxEnvironmentIdentity(ctx, s)
+		if err == nil || ctx.Err() != nil {
+			return identity, err
+		}
+		// The started flag is a process-local cache. A container stopped or
+		// removed outside this process (daemon restart, prune, manual cleanup)
+		// must be revalidated here, or every later preparation keeps failing.
+		// Restarting or recreating changes the identity, so preparation replays.
+		s.invalidate()
+		if err := s.ensureStarted(ctx); err != nil {
+			return "", err
+		}
 	}
 	return ReadSandboxEnvironmentIdentity(ctx, sandbox)
 }

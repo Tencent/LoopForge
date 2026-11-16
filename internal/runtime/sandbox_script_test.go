@@ -212,6 +212,27 @@ func TestDockerWorkspaceRecreatesLegacyMaskedContainer(t *testing.T) {
 	}
 }
 
+func TestDockerWorkspaceRecoversExternallyStoppedOrRemovedContainer(t *testing.T) {
+	ctx, sb := dockerScriptTestSandbox(t)
+	identity, err := SandboxEnvironmentIdentity(ctx, sb)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, remove := range [][]string{{"stop", "-t", "0", sb.name}, {"rm", "-f", sb.name}} {
+		if out, err := exec.CommandContext(ctx, "docker", remove...).CombinedOutput(); err != nil {
+			t.Fatalf("docker %s: %s %v", remove[0], out, err)
+		}
+		next, err := SandboxEnvironmentIdentity(ctx, sb)
+		if err != nil || next == identity {
+			t.Fatalf("after docker %s: identity %q (was %q) %v", remove[0], next, identity, err)
+		}
+		if out, err := sb.Exec(ctx, CommandSpec{Argv: []string{"true"}}, nil); err != nil {
+			t.Fatalf("after docker %s: exec %q %v", remove[0], out, err)
+		}
+		identity = next
+	}
+}
+
 func TestDockerWorkspaceScriptPreservesNonRootUser(t *testing.T) {
 	ctx, sb := dockerScriptTestSandbox(t)
 	if err := os.Chmod(sb.workspace, 0o777); err != nil {

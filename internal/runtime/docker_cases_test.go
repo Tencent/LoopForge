@@ -212,6 +212,78 @@ func TestDockerExecInvalidatesMissingContainer(t *testing.T) {
 	}
 }
 
+func TestSandboxEnvironmentIdentityRecoversExternallyStoppedOrRemovedContainer(t *testing.T) {
+	bin, state := t.TempDir(), t.TempDir()
+	// A stateful docker stand-in: "status" holds running/exited, "generation"
+	// counts docker create and "starts" counts docker start.
+	script := `#!/bin/sh
+state="${CVR_DOCKER_STATE}"
+status() { cat "$state/status" 2>/dev/null; }
+count() { n=$(cat "$state/$1" 2>/dev/null || echo 0); echo $((n + 1)) > "$state/$1"; }
+case "$*" in
+  "inspect --format {{.State.Running}}|{{.Id}}|{{.State.StartedAt}} box")
+    case "$(status)" in
+      running) echo "true|id-$(cat "$state/generation")|start-$(cat "$state/starts")"; exit 0 ;;
+      exited) echo "false|id-$(cat "$state/generation")|start-$(cat "$state/starts")"; exit 0 ;;
+    esac
+    echo 'Error: No such object: box' >&2; exit 1 ;;
+  "inspect --type container --format {{json .Mounts}} box")
+    [ -n "$(status)" ] || { echo 'Error: No such container: box' >&2; exit 1; }
+    printf '[{"Destination":"/workspace","Source":"%s"}]\n' "$CVR_DOCKER_WORKSPACE"; exit 0 ;;
+  "start box") [ -n "$(status)" ] || exit 1; echo running > "$state/status"; count starts; exit 0 ;;
+  "create --name box "*) echo exited > "$state/status"; count generation; exit 0 ;;
+  "rm -f box") rm -f "$state/status"; exit 0 ;;
+  "exec box "*) [ "$(status)" = running ] || { echo 'Error response from daemon: container box is not running' >&2; exit 1; }
+    case "$*" in *"cd /workspace && pwd"*) echo /workspace ;; esac; exit 0 ;;
+  "image inspect --format {{.Config.User}} "*) exit 0 ;;
+  "image inspect "*) exit 0 ;;
+esac
+exit 0
+`
+	if err := os.WriteFile(filepath.Join(bin, "docker"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	workspace := t.TempDir()
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("CVR_DOCKER_STATE", state)
+	t.Setenv("CVR_DOCKER_WORKSPACE", workspace)
+	for name, value := range map[string]string{"status": "running", "generation": "1", "starts": "1"} {
+		if err := os.WriteFile(filepath.Join(state, name), []byte(value+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ctx := context.Background()
+	sb := &dockerSandbox{id: "box", name: "box", workspace: workspace, started: true,
+		dockerfile: domain.DockerfileDefinition{Content: "FROM alpine:3.20\n"}}
+	identity, err := SandboxEnvironmentIdentity(ctx, sb)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, external := range []string{"stopped", "removed"} {
+		if external == "stopped" {
+			err = os.WriteFile(filepath.Join(state, "status"), []byte("exited\n"), 0o644)
+		} else {
+			err = os.Remove(filepath.Join(state, "status"))
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		// The first call after an external stop/removal recovers; it must not
+		// keep failing on the cached started flag.
+		next, err := SandboxEnvironmentIdentity(ctx, sb)
+		if err != nil || next == identity || !sb.started {
+			t.Fatalf("container %s: identity %q (was %q) started=%v err=%v", external, next, identity, sb.started, err)
+		}
+		if again, err := SandboxEnvironmentIdentity(ctx, sb); err != nil || again != next {
+			t.Fatalf("container %s: identity unstable %q != %q %v", external, again, next, err)
+		}
+		identity = next
+	}
+	if data, err := os.ReadFile(filepath.Join(state, "generation")); err != nil || strings.TrimSpace(string(data)) != "2" {
+		t.Fatalf("removed container was not recreated exactly once: %q %v", data, err)
+	}
+}
+
 func cvRInstallFakeDocker(t *testing.T, workspace string) {
 	t.Helper()
 	bin := t.TempDir()
