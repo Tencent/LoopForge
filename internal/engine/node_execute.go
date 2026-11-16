@@ -881,6 +881,32 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 				if strings.EqualFold(gate.Mode, "manual") || strings.EqualFold(gate.Mode, "submit") {
 					continue
 				}
+				if strings.EqualFold(gate.Mode, domain.VerificationModeMR) {
+					live, _ := e.repo.RunState(runID)
+					mrErr := e.verifyRunMRs(live, gitTok, func(rc domain.RepositoryContext) (pushedWork, error) {
+						target := executionTarget{Scope: domain.ExecutionScopeRepositories, Repository: &rc}
+						out, execErr := gateExec(mrPendingCommand, target, executionTargetSink(func(event domain.TelemetryEvent) {
+							event.Category = "verification"
+							sink(event)
+						}, target))
+						if execErr != nil {
+							return pushedWork{}, execErr
+						}
+						return parseMRPending(out)
+					})
+					if mrErr != nil {
+						e.observe(runID, node.ID, domain.TelemetryEvent{Category: "verification", Name: "gate.mr.failed", Phase: "finish", Level: "error", Message: "门禁未通过：" + gate.Name, Attributes: map[string]any{"gateId": gate.ID, "gateName": gate.Name, "iteration": iteration, "detail": mrErr.Error()}})
+						err = fmt.Errorf("verification %s: %w", gate.Name, mrErr)
+						failedAction = candidate.onFailure
+						if errors.Is(mrErr, errMRUnverifiable) {
+							failedAction = "human"
+						}
+						gateRejected = failedAction == "reject"
+						break
+					}
+					e.observe(runID, node.ID, domain.TelemetryEvent{Category: "verification", Name: "gate.mr.passed", Phase: "finish", Message: "门禁通过：" + gate.Name, Attributes: map[string]any{"gateId": gate.ID, "gateName": gate.Name, "iteration": iteration}})
+					continue
+				}
 				gateCmd := joinGateCommands(gate.Commands, effectiveNode.ArtifactOutputs)
 				if gateCmd == "" {
 					continue

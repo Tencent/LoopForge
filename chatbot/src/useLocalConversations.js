@@ -200,6 +200,10 @@ export function useLocalConversations(real) {
     } : {}),
     open,
     newChat,
+    startProjectDraft(id) {
+      selectLocal(null);
+      return real.startProjectDraft(id);
+    },
     setError(value) {
       if (selected()) setLocalError(value);
       else real.setError(value);

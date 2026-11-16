@@ -1536,7 +1536,8 @@ html[data-theme="dark"] .agent-studio-v2{box-shadow:0 18px 56px rgba(0,0,0,.42),
   flex-wrap:wrap;
 }
 #runsView .run-detail-topbar .run-header-actions .button.small,
-#runsView .run-detail-topbar .run-back-inline.button.small{
+#runsView .run-detail-topbar .run-back-inline.button.small,
+#runsView .run-status-wrap .button[data-workspace-restore]:not([hidden]){
   min-height:0;
   height:30px !important;
   padding:0 12px !important;
@@ -1558,6 +1559,7 @@ html[data-theme="dark"] .agent-studio-v2{box-shadow:0 18px 56px rgba(0,0,0,.42),
   justify-content:space-between;
   gap:24px;
 }
+#runsView .run-header-main>div:first-child{min-width:0}
 #runsView .run-header-main h2{
   font-size:22px !important;
   font-weight:750 !important;
@@ -1577,6 +1579,8 @@ html[data-theme="dark"] .agent-studio-v2{box-shadow:0 18px 56px rgba(0,0,0,.42),
   align-items:center;
   gap:10px;
 }
+#runsView .run-status-wrap .button[data-workspace-restore][hidden]{display:none}
+#runsView .run-status-wrap .button[data-workspace-restore]:hover{transform:none;box-shadow:none}
 #runsView .run-status-wrap .status{
   height:30px;
   padding:0 14px;
