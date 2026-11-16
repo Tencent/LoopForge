@@ -728,3 +728,225 @@ Object.assign(window.LF_I18N_EN,{
   "本机最多":"machine limit:",
   "设为默认":"Set as default"
 });
+
+Object.assign(window.LF_I18N_EN,{
+  "没有待处理 MR 的需求":"No requirements with pending PRs",
+  "已提 MR 但还没合入的需求会显示在这里。":"Requirements with a PR that is not merged yet appear here.",
+  "工蜂已关闭":"Closed in Gongfeng",
+  "留空从主分支":"Leave empty for the default branch",
+  "留空从各仓库配置的主分支新建":"Leave empty to branch from each repository's default branch",
+  "指定继续开发分支时请选择一个仓库；留空从各仓库配置的主分支分别新建工作分支。":"Choose one repository to continue an existing branch. If left empty, each repository creates a working branch from its own default branch.",
+  "的继续开发分支":"branch to continue",
+  "分别填写各仓库的已有功能分支，直接继续开发；留空的仓库从各自配置的主分支新建工作分支。":"Enter the existing feature branch for each repository to continue it directly. Repositories left empty create a working branch from their own default branch.",
+  "。粘贴 GitHub 链接或 Git SSH 地址；集成分支用于检查多个 SOP 执行后是否存在合并冲突，可留空。":". Paste a GitHub link or Git SSH address. The integration branch checks for merge conflicts after several SOPs run; it can be left empty.",
+  "仓库已保存；检出和推送使用 Git SSH 密钥。":"Repository saved. Checkout and push use your Git SSH key.",
+  "请粘贴 TAPD 工作项链接或分享文本":"Paste a TAPD work item link or shared text",
+  "未选择仓库":"No repository selected",
+  "只选一个仓库时可指定分支，否则从各自主分支新建":"A branch can be set only when one repository is selected; otherwise each repository branches from its default branch",
+  "未选择":"None selected",
+  "当前项目未配置 TAPD，无法同步":"TAPD is not set up for this project, so it can't be synced",
+  "当前项目未配置 TAPD":"TAPD is not set up for this project",
+  "已在 TAPD 创建需求":"Requirement created in TAPD",
+  "请选择平台或 TAPD":"Choose the platform or TAPD",
+  "已在平台建单，TAPD 同步失败：":"Created in the platform, but the TAPD sync failed: ",
+  "已创建需求并同步 TAPD":"Requirement created and synced to TAPD"
+});
+
+Object.assign(window.LF_I18N_EN,{
+  "本轮回答已提交":"This round's answers submitted",
+  "正在加载关联会话…":"Loading linked chats…",
+  "仅 TAPD 来源的需求支持重新同步":"Only requirements from TAPD can be re-synced",
+  "已从 TAPD 同步最新内容":"Synced the latest content from TAPD",
+  "同步到 TAPD":"Sync to TAPD",
+  "从 TAPD 同步":"Sync from TAPD",
+  "对话交付":"Chat delivery",
+  "对话交付 ·":"Chat delivery ·",
+  "对话已删除":"Chat deleted",
+  "创建这个需求的对话已删除":"The chat that created this requirement was deleted",
+  "打开会话 ↗":"Open chat ↗",
+  "不是你创建的对话以只读方式打开":"Chats you did not create open read-only",
+  "工作区记录已清理，没有仓库和分支信息":"The workspace record was cleaned up, so there is no repository or branch information",
+  "需求已在 LoopForge 中手动关闭，需要继续时先重新打开":"The requirement was closed manually in LoopForge. Reopen it to continue.",
+  "对话提交的 MR 已合入集成分支，尚未进默认分支":"The PR submitted from chat was merged into the integration branch, not yet the default branch",
+  "对话提交的 MR 已合入，需求已交付":"The PR submitted from chat was merged. The requirement is delivered.",
+  "对话提交的 MR 已合入默认分支":"The PR submitted from chat was merged into the default branch",
+  "需求已结束，需要继续时先重新打开":"The requirement is closed. Reopen it to continue.",
+  "对话工作区直接改代码，没有 SOP 运行":"Code is changed directly in the chat workspace; there are no SOP runs",
+  "在对话工作区里直接改代码，没有 SOP 运行":"Code is changed directly in the chat workspace; there are no SOP runs",
+  "对话工作区检出的仓库":"Repositories checked out by the chat workspace",
+  "选择 SOP":"Choose SOP",
+  "对话需求在会话里直接改代码，不产出 SOP 节点产物。":"A chat requirement changes code directly in the chat and produces no SOP step outputs.",
+  "改动见「代码交付」，过程见会话记录。":"See “Code delivery” for the changes and the chat history for the process.",
+  "验收方式":"Acceptance method",
+  "对话需求没有 SOP 验收门禁":"A chat requirement has no SOP acceptance gate",
+  "对话需求没有 SOP 任务，执行过程见会话记录":"A chat requirement has no SOP tasks; see the chat history for how it ran",
+  "正在批量删除需求，请稍候":"Deleting requirements, please wait",
+  "仅展示你有权限访问的会话。私人会话仍仅自己可见。":"Only chats you can access are shown. Private chats stay visible to their owner only.",
+  "围绕此需求新建会话":"Start a chat about this requirement",
+  "还没有可见的关联会话":"No visible linked chats yet",
+  "共享运行会话":"Shared run chat",
+  "私人会话":"Private chat",
+  "人发过言":"people have posted",
+  "加载关联会话失败：":"Couldn't load linked chats: "
+});
+
+Object.assign(window.LF_I18N_EN,{
+  "关联 MR 已合入默认分支。如需继续修改，请用重新触发再开一条 SOP。":"The linked PR was merged into the default branch. To make more changes, re-trigger to start another SOP.",
+  "关联 MR 已合入集成分支，尚未进默认分支。如需继续修改，请用重新触发再开一条 SOP。":"The linked PR was merged into the integration branch, not yet the default branch. To make more changes, re-trigger to start another SOP.",
+  "MR 没有合入就关闭了，需要继续时在对话里重新提交":"The PR was closed without being merged. Submit it again in chat to continue.",
+  "对话已提交 MR，合入默认分支后需求自动完成":"A PR was submitted from chat. The requirement completes automatically once it is merged into the default branch.",
+  "已直推 · 待验收":"Pushed directly · awaiting acceptance",
+  "待验收":"Awaiting acceptance",
+  "改动已直接推送到共享分支，没有 MR，验收后可关闭需求":"Changes were pushed straight to a shared branch with no PR. Close the requirement after acceptance.",
+  "对话开发中":"In development via chat",
+  "开发中":"In development",
+  "在对话工作区里直接改代码，提交 MR 后进入待合入":"Code is changed directly in the chat workspace; after a PR is submitted it waits to be merged",
+  "这条需求不使用 SOP":"This requirement uses no SOP",
+  "这条需求不使用 SOP，在对话里澄清和改代码":"This requirement uses no SOP. Clarify and change code in chat."
+});
+
+Object.assign(window.LF_I18N_EN,{
+  "全选当前可删除需求":"Select all deletable requirements",
+  "全选本页可删除需求":"Select all deletable requirements on this page",
+  "正在删除":"Deleting",
+  "删除所选":"Delete selected",
+  "可跨页选择；切换筛选条件会清空选择":"You can select across pages; changing filters clears the selection",
+  "清空选择":"Clear selection",
+  "请先选择可删除的需求":"Select the requirements to delete first",
+  "条已有执行记录或已完成，将强制删除。":"of them have execution history or are already completed and will be force-deleted.",
+  "批量删除需求":"Delete requirements in bulk",
+  "确定删除选中的":"Delete the selected",
+  "筛选条件已变化，请重新选择需求":"Filters changed. Select the requirements again.",
+  "条未删除，请查看失败原因":"not deleted. Check the failure reasons.",
+  "条未删除":"not deleted"
+});
+
+Object.assign(window.LF_I18N_EN,{
+  "调用工蜂接口创建 MR；未安装时复制出的 SOP 需安装后为「交付工程师」角色绑定。":"Calls the Gongfeng API to create a PR. If it is not installed, a copied SOP needs it installed and bound to the “Delivery engineer” role.",
+  "把验收结论回写 TAPD；未安装时只产出待人工粘贴的说明。":"Writes the acceptance conclusion back to TAPD. If it is not installed, only a note to paste manually is produced.",
+  "打开流程设计器：":"Open SOP designer: ",
+  "复制后归本项目所有、可自由修改，不再跟随平台更新":"A copy belongs to this project, can be edited freely, and no longer follows platform updates",
+  "在「能力资产 › MCP」添加 TAPD MCP，添加后回到通用模板查看状态":"Add the TAPD MCP under “Capability assets › MCP”, then come back to the general template to check its status",
+  "在「能力资产 › MCP」添加 Gongfeng MCP，添加后回到通用模板查看状态":"Add the Gongfeng MCP under “Capability assets › MCP”, then come back to the general template to check its status",
+  "在「个人凭证」中配置后，重新打开通用模板即可看到最新状态":"Set it up under “Personal credentials”, then reopen the general template to see the latest status",
+  "当前筛选下没有 SOP。可以切换健康状态查看全部。":"No SOPs match the current filter. Switch the health status to see them all."
+});
+
+Object.assign(window.LF_I18N_EN,{
+  "在 Cursor 设置的 MCP 列表中确认 agentflow 已连接":"Check that agentflow shows as connected in Cursor's MCP list",
+  "在 CodeBuddy 的 MCP 管理页确认 agentflow 已连接":"Check that agentflow shows as connected on CodeBuddy's MCP management page",
+  "访问密钥已创建，可直接复制完整配置提示词":"Access key created. Copy the full setup prompt now",
+  "先选择客户端；复制内容会自动带上本次访问密钥和 Endpoint，无需再次替换占位符。平台只保存哈希，关闭后无法再次查看明文。":"Pick a client first. The copied text includes this access key and the endpoint, so you don't need to replace any placeholders. The platform stores only a hash, so the plain text can't be viewed again once you close this.",
+  "还没有访问密钥，创建后即可接入 REST API 和 MCP。":"No access keys yet. Create one to connect to the REST API and MCP.",
+  "180 天":"180 days",
+  "365 天":"365 days",
+  "撤销后，正在使用这个访问密钥的 API 和 MCP 客户端会立即失效。确定撤销？":"Once revoked, API and MCP clients using this access key stop working immediately. Revoke it?",
+  "和 AI 对话，派发与跟进任务":"Chat with the AI, and dispatch and follow up on tasks",
+  "账号、模型与执行凭据":"Account, models, and execution credentials",
+  "企业微信单聊或群聊通知通道":"WeCom direct or group chat notification channels",
+  "提示词任务、SOP 触发与共享任务":"Prompt jobs, SOP triggers, and shared jobs",
+  "添加项目级或个人 MCP":"Add project-level or personal MCP servers",
+  "用自己的电脑或 CVM 跑任务":"Run jobs on your own computer or a CVM"
+});
+
+Object.assign(window.LF_I18N_EN,{
+  "没有匹配的角色。":"No matching roles.",
+  "已共享":"Shared",
+  "标识不能为空":"ID is required",
+  "标识已存在，请换一个":"This ID already exists. Choose another.",
+  "起点":"Starting point",
+  "空白":"Blank",
+  "未填写职责":"No responsibility set",
+  "正在恢复工作区，完成后继续执行，请稍候…":"Restoring the workspace. The run continues when it is done, please wait…",
+  "正在提交执行请求，请稍候…":"Submitting the run request, please wait…",
+  "正在后台恢复工作区，完成后可继续操作，请稍候…":"Restoring the workspace in the background. You can continue when it is done, please wait…",
+  "工作区恢复失败，请重试":"Couldn't restore the workspace. Try again.",
+  "工作区恢复状态已变化，请重新发起操作":"The workspace restore state changed. Start the action again.",
+  "已有执行请求正在处理，请等待完成后再操作":"A run request is already being handled. Wait for it to finish first."
+});
+
+Object.assign(window.LF_I18N_EN,{
+  "个任务":"tasks",
+  "当前项目还没有 AI 定时任务，点击右上角「新建 AI 定时任务」。":"This project has no AI scheduled tasks yet. Click “New AI scheduled task” in the top right.",
+  "当前项目还没有触发配置，点击「配置触发」设置自动派发。":"This project has no trigger settings yet. Click “Set up trigger” to set up automatic dispatch.",
+  "每个项目使用一份触发配置，修改后保存即可生效。立即运行在服务端执行，关闭页面不会中断。":"Each project has one trigger configuration. Save your changes to apply them. “Run now” runs on the server and keeps going if you close the page.",
+  "未设置沙箱":"No sandbox set",
+  "通知 Bot":"Notification Bot",
+  "不启用通知":"No notifications",
+  "Helper · 未绑定聊天":"Helper · no chat linked",
+  "选中后自动提醒失败、待人工处理，并在 SOP 完成后发送汇报。":"Once selected, it automatically alerts on failures and on items waiting for manual action, and sends a report when the SOP finishes.",
+  "· 点击删除":"· click to delete",
+  "拖到下一步":"Drag to the next step",
+  "拖到失败时要打回的步骤":"Drag to the step to send back to on failure",
+  "添加到「":"Add to \"",
+  "，不会出现在其他项目中。":". It won't appear in other projects.",
+  "点击右上角「添加 MCP」，为本项目接入工具。":"Click “Add MCP” in the top right to connect tools to this project.",
+  "未被引用":"Not referenced",
+  "未共享":"Not shared",
+  "搜索选项":"Search options",
+  "没有匹配的选项":"No matching options",
+  "推送工作分支到工蜂。":"Push work branches to Gongfeng."
+});
+
+Object.assign(window.LF_I18N_EN,{
+  "统计关联 TAPD":"Linked TAPD ID (metrics)",
+  "无 · 对话里直接改代码":"None · code is changed directly in chat",
+  "自动新建":"Created automatically",
+  "状态未知":"Status unknown",
+  "已直推":"Pushed directly",
+  "未提交":"Not submitted",
+  "未提交 MR":"PR not submitted",
+  "未提交 PR":"PR not submitted",
+  "没有工作分支记录":"No working branch recorded",
+  "直接提交在这个分支上":"Committed directly on this branch",
+  "目标分支":"Target branch",
+  "查看改动 ↗":"View changes ↗",
+  "没有关联的会话":"No linked chats",
+  "配置主分支":"Configured default branch",
+  "目标主分支":"Target default branch",
+  "待新建":"To be created",
+  "冻结目标主分支":"Frozen target default branch",
+  "在 MR 里评审，合入默认分支后需求自动完成。":"Review in the PR. The requirement completes automatically once it is merged into the default branch.",
+  "改动已直推到共享分支，确认没问题后关闭需求即完成验收。":"Changes were pushed straight to a shared branch. Close the requirement once you have confirmed they are fine; that completes acceptance.",
+  "在对话里提交 MR 后，评审合入即完成验收。":"After a PR is submitted from chat, reviewing and merging it completes acceptance.",
+  "全选本页可删除的需求":"Select all deletable requirements on this page",
+  "留空从配置主分支新建":"Leave empty to branch from the configured default branch",
+  "工作区已回收：优先恢复已有快照；没有快照时重新准备仓库和已归档的上游产物，未保存的历史文件无法恢复。":"Workspace reclaimed. An existing snapshot is restored first; without one, the repository and archived upstream outputs are prepared again, and unsaved historical files can't be recovered."
+});
+
+Object.assign(window.LF_I18N_EN,{
+  "外部同步失败":"External sync failed",
+  "按计划扫描本项目选定状态、尚未跑过 SOP 的需求，通过基线门禁后派发 SOP。基线冲突会先由对齐 Agent 解决并合入，期间暂停派发。":"On a schedule, scans this project's requirements in the selected statuses that have not run an SOP yet, and dispatches an SOP once they pass the baseline gate. Baseline conflicts are resolved and merged by the alignment Agent first, and dispatch pauses meanwhile.",
+  "读取 AI 定时任务失败：":"Couldn't load AI scheduled tasks: ",
+  "请先在顶栏选择项目，再管理 AI 定时任务。":"Choose a project in the top bar first, then manage AI scheduled tasks.",
+  "请先在顶栏选择项目，再配置 SOP 触发。":"Choose a project in the top bar first, then set up SOP triggers.",
+  "· 单次最多":"· at most",
+  "单次最多触发需求数必须为 1–10，或留空使用默认值 10":"Max requirements triggered at once must be 1–10, or left empty to use the default of 10",
+  "触发配置已保存":"Trigger settings saved",
+  "删除触发配置":"Delete trigger settings",
+  "删除AI 定时任务":"Delete AI scheduled task",
+  "确定删除这个触发配置吗？此操作不可恢复。":"Delete this trigger configuration? This cannot be undone.",
+  "确定删除这个AI 定时任务吗？此操作不可恢复。":"Delete this AI scheduled task? This cannot be undone.",
+  "AI 定时任务":"AI scheduled task",
+  "同步完成：已刷新外部工作项":"Sync complete. External work items refreshed",
+  "已在工蜂创建 Issue #":"Created Gongfeng issue #",
+  "点击右上角「添加 MCP」，":"Click “Add MCP” in the top right to ",
+  "创建个人专属配置":"create your personal configuration",
+  "为本项目接入工具":"connect tools to this project",
+  "自定义认证":"Custom authentication"
+});
+
+Object.assign(window.LF_I18N_EN,{
+  "· 共享自":"· shared from",
+  "这个项目还没有角色":"This project has no roles yet",
+  "展开节点库":"Expand step library",
+  "只读模板":"Read-only template",
+  "共享给本项目":"Shared with this project",
+  "SOP 名称已复制":"SOP name copied",
+  "未使用":"Unused"
+});
+
+Object.assign(window.LF_I18N_EN,{
+  "没有需要你拍板的需求":"No requirements are waiting for your decision",
+  "流程停在人工确认节点时会出现在这里。":"Requirements stopped at a human approval step appear here."
+});

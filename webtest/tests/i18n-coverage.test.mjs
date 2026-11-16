@@ -176,3 +176,38 @@ test('English mode translates run rows and details, the queue messages and the r
       'Network environment "foo" isn\'t recognized, so CodeBuddy connects to the international site. Choose the network environment again in Personal settings.'],
   ]);
 });
+
+test('English mode translates requirements, chat delivery, SOP triggers, access keys and the approvals page', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  const base = JSON.parse(JSON.stringify(app.evaluate('state.data.issues[0]')));
+  const issues = [
+    { ...base, id: 'issue-sop' },
+    { ...base, id: 'issue-chat', sopMode: 'none', status: 'in_review', title: 'Chat requirement' },
+  ];
+  app.evaluate(`state.data.issues=${JSON.stringify(issues)}`);
+  const pages = [];
+  for (const [view, id] of [['issues', 'issuesView'], ['aiSchedules', 'aiSchedulesView'], ['mcp', 'mcpView'], ['agents', 'agentsView'], ['approvals', 'approvalsView'], ['guide', 'guideView']]) {
+    app.evaluate(`switchView(${JSON.stringify(view)})`);
+    await settle(6);
+    pages.push(app.document.querySelector(`#${id}`).innerHTML);
+  }
+  for (const issue of issues) {
+    for (const tab of ['overview', 'conversations', 'delivery']) {
+      app.evaluate(`state.issueDetailTab=${JSON.stringify(tab)};openIssueDetail(${JSON.stringify(issue.id)})`);
+      await settle(6);
+      pages.push(app.document.querySelector('#issueDetailDrawer').innerHTML);
+    }
+  }
+  assert.deepEqual(await leftoverIn(...pages), []);
+  await assertTranslated([
+    ['确定删除选中的 3 条需求（「a」、「b」）？', 'Delete the selected 3 requirements ("a", "b")?'],
+    ['已删除 3 条，1 条未删除', 'Deleted 3, 1 not deleted'],
+    ['确定删除这个AI 定时任务吗？此操作不可恢复。', 'Delete this AI scheduled task? This cannot be undone.'],
+    ['· 单次最多 10 个需求', '· at most 10 requirements'],
+    ['同步完成：已刷新外部工作项', 'Sync complete. External work items refreshed'],
+    ['已在工蜂创建 Issue #12', 'Created Gongfeng issue #12'],
+    ['对话提交的 MR 已合入，需求已交付', 'The PR submitted from chat was merged. The requirement is delivered.'],
+    ['关联 MR 已合入默认分支。如需继续修改，请用重新触发再开一条 SOP。', 'The linked PR was merged into the default branch. To make more changes, re-trigger to start another SOP.'],
+  ]);
+});
