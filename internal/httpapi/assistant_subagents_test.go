@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"testing"
 
@@ -267,7 +266,7 @@ func TestEverySharedSkillIsInstalledWithItsFiles(t *testing.T) {
 	}
 }
 
-func TestSharedSkillsAreCappedInIDOrder(t *testing.T) {
+func TestEverySharedSkillIsInstalledHoweverManyAreShared(t *testing.T) {
 	h, u := workbenchFixture(t)
 	if err := h.repo.PutProject(domain.Project{ID: "docs", Name: "docs", OwnerID: u.ID}); err != nil {
 		t.Fatal(err)
@@ -275,7 +274,12 @@ func TestSharedSkillsAreCappedInIDOrder(t *testing.T) {
 	if err := h.repo.PutSkill(domain.SkillDefinition{ID: "own", Name: "own", ProjectID: "workbench", Content: "own"}); err != nil {
 		t.Fatal(err)
 	}
-	for i := 0; i < maxAutoSharedSkills+5; i++ {
+	if err := h.repo.PutSkill(domain.SkillDefinition{ID: "docs-private", Name: "docs-private", ProjectID: "docs", Content: "private"}); err != nil {
+		t.Fatal(err)
+	}
+	// More shared skills than the 50 an earlier revision installed, so a
+	// skill late in id order (the one a scheduled task needs) is still there.
+	for i := 0; i < 120; i++ {
 		id := fmt.Sprintf("zz-shared-%03d", i)
 		if err := h.repo.PutSkill(domain.SkillDefinition{ID: id, Name: id, ProjectID: "docs", Shared: true, Content: id}); err != nil {
 			t.Fatal(err)
@@ -287,21 +291,12 @@ func TestSharedSkillsAreCappedInIDOrder(t *testing.T) {
 			shared = append(shared, skill.ID)
 		}
 	}
-	sort.Strings(shared)
-	if len(shared) <= maxAutoSharedSkills {
-		t.Fatalf("fixture has %d shared skills, want more than %d", len(shared), maxAutoSharedSkills)
+	if len(shared) < 120 {
+		t.Fatalf("fixture has %d shared skills, want at least 120", len(shared))
 	}
-	last, _ := h.repo.Skill(shared[len(shared)-1])
-	for _, tc := range []struct {
-		project   string
-		mentioned []domain.SkillDefinition
-	}{
-		{project: "workbench"},
-		{project: ""},
-		{project: "workbench", mentioned: []domain.SkillDefinition{last}},
-	} {
+	for _, project := range []string{"workbench", ""} {
 		root := t.TempDir()
-		if err := h.writeConversationAssets(root, assistantRequest{ProjectID: tc.project, skills: tc.mentioned}); err != nil {
+		if err := h.writeConversationAssets(root, assistantRequest{ProjectID: project}); err != nil {
 			t.Fatal(err)
 		}
 		entries, err := os.ReadDir(filepath.Join(root, "home", ".codebuddy", "skills"))
@@ -312,13 +307,15 @@ func TestSharedSkillsAreCappedInIDOrder(t *testing.T) {
 		for _, entry := range entries {
 			got[entry.Name()] = true
 		}
-		if got["own"] != (tc.project == "workbench") {
-			t.Fatalf("project %q own skill installed=%v", tc.project, got["own"])
+		if got["own"] != (project == "workbench") {
+			t.Fatalf("project %q own skill installed=%v", project, got["own"])
 		}
-		for i, id := range shared {
-			want := i < maxAutoSharedSkills || (len(tc.mentioned) > 0 && id == last.ID)
-			if got[id] != want {
-				t.Fatalf("project %q mentioned=%d shared skill %s (#%d) installed=%v, want %v", tc.project, len(tc.mentioned), id, i, got[id], want)
+		if got["docs-private"] {
+			t.Fatalf("project %q installed another project's private skill", project)
+		}
+		for _, id := range shared {
+			if !got[id] {
+				t.Fatalf("project %q shared skill %s not installed (installed %d of %d)", project, id, len(got), len(shared))
 			}
 		}
 	}
@@ -585,20 +582,5 @@ func TestRoleDeliverablesAreCollectedWhenTheDispatchEnds(t *testing.T) {
 	}
 	if got := h.collectRoleDeliverables(context.Background(), s, "call-b", "general-purpose", roles); got != nil {
 		t.Fatalf("non-role dispatch collected: %+v", got)
-	}
-}
-
-func TestSharedSkillOverflowIsLoggedOncePerCount(t *testing.T) {
-	total := maxAutoSharedSkills + 1000
-	if !shouldLogSharedSkillOverflow(total) {
-		t.Fatalf("first truncation of %d shared skills was not logged", total)
-	}
-	for turn := 0; turn < 3; turn++ {
-		if shouldLogSharedSkillOverflow(total) {
-			t.Fatalf("turn %d logged the truncation of %d shared skills again", turn, total)
-		}
-	}
-	if !shouldLogSharedSkillOverflow(total + 1) {
-		t.Fatalf("a changed shared skill count %d was not logged", total+1)
 	}
 }

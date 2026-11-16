@@ -11,7 +11,6 @@ import (
 	"regexp"
 	"sort"
 	"strings"
-	"sync"
 
 	"agentflow/internal/domain"
 	"agentflow/internal/runtime"
@@ -177,32 +176,13 @@ func subagentRolePrompt(prompt string) string {
 
 var rolePromptPlaceholder = regexp.MustCompile(`\{\{[^{}]+\}\}`)
 
-// maxAutoSharedSkills bounds how many shared skills of other projects a turn
-// installs without being mentioned or bound to a role, so the per-turn file
-// writes and the CLI's skill list stay bounded however many skills are shared.
-// Beyond it the shared skills are taken in id order and the rest are logged.
-const maxAutoSharedSkills = 50
-
-// loggedSharedSkillOverflow holds the shared skill counts already reported as
-// over maxAutoSharedSkills, so a truncation is logged once per process for each
-// count, not on every turn; a change in the number of shared skills logs again.
-var loggedSharedSkillOverflow sync.Map
-
-// shouldLogSharedSkillOverflow reports whether this process has not yet logged
-// a truncation of total shared skills.
-func shouldLogSharedSkillOverflow(total int) bool {
-	_, logged := loggedSharedSkillOverflow.LoadOrStore(total, struct{}{})
-	return !logged
-}
-
 // writeConversationAssets rewrites the conversation's CLI home each turn:
 // skills holds the project's own skills and the shared skills, plus those of
 // its roles and the mentioned ones, and agents holds one subagent per role,
-// so Main Bot and its subagents use them natively. Shared skills are installed
-// on every turn, including a conversation without a project, up to
-// maxAutoSharedSkills; a mentioned or role-bound skill is always installed. A
-// turn with no project, no shared skills and no mentioned roles gets empty
-// directories.
+// so Main Bot and its subagents use them natively. Every shared skill is
+// installed on every turn, including a conversation without a project, so a
+// scheduled task can call one without mentioning it. A turn with no project,
+// no shared skills and no mentioned roles gets empty directories.
 func (h *assistantHandlers) writeConversationAssets(root string, req assistantRequest) error {
 	if err := runtime.ValidateConversationRoot(root); err != nil {
 		return err
@@ -241,12 +221,6 @@ func (h *assistantHandlers) writeConversationAssets(root string, req assistantRe
 		}
 	}
 	sort.Slice(shared, func(i, j int) bool { return shared[i].ID < shared[j].ID })
-	if len(shared) > maxAutoSharedSkills {
-		if shouldLogSharedSkillOverflow(len(shared)) {
-			log.Printf("assistant skills: %d shared skills, installing the first %d by id on every turn; mention or bind the rest to a role to use them", len(shared), maxAutoSharedSkills)
-		}
-		shared = shared[:maxAutoSharedSkills]
-	}
 	for _, skill := range shared {
 		load(skill)
 	}
