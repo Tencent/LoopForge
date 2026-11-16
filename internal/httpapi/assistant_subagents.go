@@ -112,7 +112,7 @@ var subagentBlockedTools = []string{
 const subagentChatNotes = `## 在对话里工作
 
 - 这是对话里的派发，不是 SOP 节点：以 Main Bot 交给你的任务为准。角色定义里要求的交付物文件照常写到工作区根目录下对应的路径（如 archive.md），你结束后平台会自动收集并展示给用户，不用再附加；只有 Main Bot 的任务明确说不要写文件时才不写。产物校验脚本、门禁命令和 {{…}} 输入输出是 SOP 节点才有的，对话里不适用。
-- 当前是平台模式，CLI 在会话绑定机器的缓存目录内运行，不能在这里搜索或修改项目代码。需要读写代码或跑命令时请向 Main Bot 汇报，让它先打开 Docker 工作区并交接模式，再派发编程任务。你不能打开或切换工作区（workbench_workspace_open 对你不可用），也不能切换运行模式。SOP 执行中的文件可通过已提供的工作区只读工具查看。
+- 当前是平台模式，CLI 在会话绑定机器的缓存目录内运行，不能在这里搜索或修改项目代码。需要读写代码或跑命令时请向 Main Bot 汇报，让它先打开工作区并交接模式，再派发编程任务。你不能打开或切换工作区（workbench_workspace_open 对你不可用），也不能切换运行模式。SOP 执行中的文件只能由 Main Bot 查看。
 - 写操作被拒绝、提示需要用户确认或放入 drafts 时，不要自己提交回复或草稿：在汇报里写明要做的操作和完整参数，由 Main Bot 交给用户确认。
 
 `
@@ -313,7 +313,7 @@ func (h *assistantHandlers) collectRoleDeliverables(ctx context.Context, s *Agen
 			continue
 		}
 		id := fmt.Sprintf("deliverable-%s-%d", dispatchID, i)
-		_, err := gateway.callMainBotWorkspace(ctx, s, "workbench_workspace_attach", map[string]any{"path": rel})
+		_, err := gateway.callMainBotWorkspace(ctx, s, workspaceAttachInternal, map[string]any{"path": rel})
 		if err != nil && !contract.Required {
 			continue
 		}
@@ -334,7 +334,7 @@ func conversationRoleAgentFile(role roleSubagent, workspace bool) string {
 	if !workspace {
 		return body
 	}
-	body = strings.Replace(body, subagentChatNotes, "你和 Main Bot 在同一 Docker 工作区，使用原生文件和命令工具直接执行；平台与外部操作遵守当前审批模式。不能打开或切换工作区，不能切回平台模式；需要切换时向 Main Bot 汇报。\n", 1)
+	body = strings.Replace(body, subagentChatNotes, "你和 Main Bot 在同一工作区，沙箱内的文件和命令直接执行；平台写入以及 git push、gh pr create 等写入外部系统的命令遵守当前审批模式。不能打开或切换工作区，不能切回平台模式；需要切换时向 Main Bot 汇报。\n", 1)
 	body = strings.Replace(body, "  - mcp__agentflow_session__workbench_workspace_open\n", "  - mcp__agentflow_session__workbench_workspace_open\n  - mcp__agentflow_session__workbench_platform_mode\n", 1)
 	return body
 }

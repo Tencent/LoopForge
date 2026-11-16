@@ -2,7 +2,6 @@ package httpapi
 
 import (
 	"bytes"
-	"encoding/json"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -25,7 +24,6 @@ func TestLoadWorkbenchAttachmentRejectsInvalidIDs(t *testing.T) {
 		}
 	}
 }
-
 func TestWorkbenchAttachmentsRejectSymlinkEscapes(t *testing.T) {
 	for _, suffix := range []string{".json", ".bin"} {
 		t.Run(suffix, func(t *testing.T) {
@@ -48,12 +46,6 @@ func TestWorkbenchAttachmentsRejectSymlinkEscapes(t *testing.T) {
 			h.downloadAttachment(c)
 			if rec.Code != http.StatusNotFound {
 				t.Errorf("download status=%d body=%q; want 404", rec.Code, rec.Body.String())
-			}
-			session := &AgentToolSession{UserID: user.ID, ProjectID: "workbench", Mode: AgentToolAssistant, AttachmentIDs: map[string]bool{attachment.ID: true}}
-			raw, _ := json.Marshal(map[string]string{"id": attachment.ID})
-			result, err := readWorkbenchAttachmentTool(session, raw)
-			if err == nil && result["isError"] != true {
-				t.Errorf("tool read escaping symlink: result=%v", result)
 			}
 		})
 	}

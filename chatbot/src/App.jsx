@@ -7,6 +7,7 @@ import React, {
   useState,
 } from "react";
 import { useChat } from "./useChat";
+import NativeApprovalPanel from "./NativeApprovalPanel";
 import { AgentBrowserLinks } from "./agent-browser-links.js";
 import ActivityTrace, { ReplyTimeline } from "./ActivityTrace";
 import MessageInfo from "./MessageInfo";
@@ -148,14 +149,6 @@ function useTitleReveal(sessionId, title, revealId) {
 }
 
 const homeStarters = [
-  {
-    id: "welcome-demo",
-    icon: "workflow",
-    tone: "green",
-    title: "一键体验",
-    description: "无需 API Key 或 GitHub，运行真实脚本，体验人工审批和产物交付。",
-    steps: ["运行脚本", "人工审批", "查看产物"],
-  },
   {
     id: "quick-access",
     icon: "sparkles",
@@ -492,14 +485,6 @@ export default function App() {
     });
   }
   function handleStarter(starter) {
-    if (starter.id === "welcome-demo") {
-      if (window.parent !== window) {
-        window.parent.postMessage({ type: "agentflow-welcome-demo" }, location.origin);
-      } else {
-        location.href = "/#/sops";
-      }
-      return;
-    }
     if (starter.id === "quick-access") {
       setQuickAccessOpen(true);
       return;
@@ -1676,6 +1661,10 @@ export default function App() {
                   readOnly={chat.readOnly}
                 />
               ) : null}
+              <NativeApprovalPanel chat={chat} onChange={() => {
+                if (follow.current && scroll.current)
+                  scroll.current.scrollTop = scroll.current.scrollHeight;
+              }} />
               {!chat.local && !chat.busy && chat.generation?.failure && !messages.some((m) => m.generationId === chat.generation.id && m.failure) ? <GenerationDiagnostics sessionId={chat.session?.id} generationId={chat.generation.id} failure={chat.generation.failure} onCLIInstall={chat.adoptCLIInstall} readOnly={chat.readOnly} /> : null}
               {!chat.local && !chat.readOnly && !chat.busy && chat.generation?.id && chat.generation.status === "cancelled" && !chat.generation.failure && !messages.some((m) => m.generationId === chat.generation.id) ? <GenerationDiagnostics sessionId={chat.session?.id} generationId={chat.generation.id} compact /> : null}
               <RunAlerts
