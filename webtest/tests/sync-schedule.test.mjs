@@ -200,6 +200,7 @@ test('AI schedule navigation separates existing tasks and preserves editor kind 
   assert.equal(form.elements.jobKind.value, 'assistant');
   assert.equal(app.document.querySelector('#scheduleModalTitle').textContent, 'AI 定时任务');
   assert.match(app.document.querySelector('#scheduleModalHint').textContent, /完全权限/);
+  assert.match(app.document.querySelector('#scheduleModalHint').textContent, /保存人的 Key.*平台共享 Key/);
   assert.doesNotMatch(app.document.querySelector('#aiScheduleRuntimeHint').textContent, /不直接运行|不会派发/);
   assert.equal(app.document.querySelector('#scheduleJobList').hidden, true);
   app.evaluate('resetScheduleJobForm()');
@@ -402,4 +403,5 @@ test('AI schedule model picker narrows models to the chosen CLI and keeps a save
   assert.equal(engine.selectedOptions[0].disabled, false);
   assert.equal(form.elements.assistantModel.value, 'claude-code:opus');
   assert.match(doc.querySelector('#scheduleModelHint').textContent, /所选 CLI/);
+  assert.match(doc.querySelector('#scheduleModelHint').textContent, /保存人.*平台共享 Key/);
 });
