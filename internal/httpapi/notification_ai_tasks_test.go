@@ -88,7 +88,7 @@ func TestScheduleNotificationConfigCannotForgeResult(t *testing.T) {
 	}
 	defer s.Close()
 	t.Setenv("AGENTFLOW_AUTH_REQUIRED", "true")
-	if err = s.PutUser(domain.User{LoginName: "schedule-owner"}); err != nil {
+	if err = s.PutUser(domain.User{LoginName: "schedule-owner", CodeBuddyAPIKey: "owner-key"}); err != nil {
 		t.Fatal(err)
 	}
 	owner, _ := s.UserByLoginName("schedule-owner")

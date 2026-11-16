@@ -80,12 +80,18 @@ type ScheduleJob struct {
 	// Empty means backlog + todo. AI jobs leave this unused.
 	IssueStatuses []string `json:"issueStatuses,omitempty"`
 	// MaxDispatch caps successful SOP dispatches per execution. Zero defaults to 10.
-	MaxDispatch          int                  `json:"maxDispatch,omitempty"`
-	IntervalSec          int                  `json:"intervalSec"`
-	Cron                 string               `json:"cron,omitempty"`
-	AssistantPrompt      string               `json:"assistantPrompt,omitempty"`
-	AssistantModel       string               `json:"assistantModel,omitempty"`
-	OwnerUserID          int64                `json:"ownerUserId,omitempty"`
+	MaxDispatch     int    `json:"maxDispatch,omitempty"`
+	IntervalSec     int    `json:"intervalSec"`
+	Cron            string `json:"cron,omitempty"`
+	AssistantPrompt string `json:"assistantPrompt,omitempty"`
+	AssistantModel  string `json:"assistantModel,omitempty"`
+	OwnerUserID     int64  `json:"ownerUserId,omitempty"`
+	// RunAsUserID is server-managed: the user whose keys run an AI job, set to
+	// whoever last saved it. Zero (jobs saved before the binding, or without a
+	// signed-in user) runs it with the project owner's keys. RunAsName is for
+	// display.
+	RunAsUserID          int64                `json:"runAsUserId,omitempty"`
+	RunAsName            string               `json:"runAsName,omitempty"`
 	LastRunAt            time.Time            `json:"lastRunAt,omitempty"`
 	LastStatus           string               `json:"lastStatus,omitempty"` // running, success, failed, waiting
 	LastError            string               `json:"lastError,omitempty"`

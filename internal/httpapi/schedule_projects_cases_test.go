@@ -10,6 +10,7 @@ import (
 
 func TestScheduleCRUDValidationBranches(t *testing.T) {
 	f := cvBNewHTTPFixture(t)
+	cvBGiveCodeBuddyKey(t, &f)
 	if err := f.s.PutWorkflow(domain.WorkflowDefinition{ID: "cvb-schedule-wf", Name: "Schedule", ProjectID: "platform", SandboxProfileID: "local", Version: 1}); err != nil {
 		t.Fatal(err)
 	}
