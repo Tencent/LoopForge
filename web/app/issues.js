@@ -878,13 +878,29 @@ function runNodeChoices(r){
   const seen=new Set();
   const out=[];
   const upstreamReady=id=>{
+    const node=defs.find(n=>n.id===id),incoming=(wf.edges||[]).map((edge,index)=>({...edge,index})).filter(e=>e.target===id);
+    let selected=0,skipped=0;
+    for(const edge of incoming){
+      const upstream=r.nodes?.[edge.source];
+      if(upstream?.status==='skipped'){skipped++;continue}
+      if(upstream?.status!=='succeeded')return false;
+      const source=defs.find(n=>n.id===edge.source);
+      if(edge.condition||source?.defaultTarget===id){
+        const decision=upstream.routeDecision;
+        if(!decision)return false;
+        const key=decision.edgeKeyVersion? (edge.id?'id:'+edge.id:'index:'+edge.index):String(edge.index);
+        if(!decision?.selectedEdges?.[key]){skipped++;continue}
+      }
+      selected++;
+    }
+    if(incoming.length&&(node?.joinRule==='none_failed_min_one_success'?selected===0:skipped>0))return false;
     const visited=new Set([id]);
     const queue=[id];
     while(queue.length){
       const target=queue.shift();
       for(const edge of wf.edges||[]){
         if(edge.target!==target||visited.has(edge.source))continue;
-        if(r.nodes?.[edge.source]?.status!=='succeeded')return false;
+        if(!['succeeded','skipped'].includes(r.nodes?.[edge.source]?.status))return false;
         visited.add(edge.source);
         queue.push(edge.source);
       }

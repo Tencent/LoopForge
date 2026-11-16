@@ -139,27 +139,29 @@ func (r *Run) UnmarshalJSON(raw []byte) error {
 }
 
 type NodeRun struct {
-	NodeID          string      `json:"nodeId"`
-	Status          string      `json:"status"`
-	Attempt         int         `json:"attempt"`
-	ReworkCount     int         `json:"reworkCount"`
-	SandboxID       string      `json:"sandboxId,omitempty"`
-	Output          string      `json:"output,omitempty"`
-	Error           string      `json:"error,omitempty"`
-	Provider        string      `json:"provider,omitempty"`
-	Model           string      `json:"model,omitempty"`
-	SessionID       string      `json:"sessionId,omitempty"`
-	ResumeSessionID string      `json:"resumeSessionId,omitempty"`
-	Activity        string      `json:"activity,omitempty"`
-	Feedback        string      `json:"feedback,omitempty"`
-	Usage           TokenUsage  `json:"usage"`
-	UsageSessionID  string      `json:"usageSessionId,omitempty"`
-	UsageCursor     TokenUsage  `json:"usageCursor,omitempty"`
-	ToolCalls       int         `json:"toolCalls"`
-	GateResult      *GateResult `json:"gateResult,omitempty"`
-	ChildRunID      string      `json:"childRunId,omitempty"`
-	StartedAt       time.Time   `json:"startedAt,omitzero"`
-	FinishedAt      time.Time   `json:"finishedAt,omitzero"`
+	NodeID          string         `json:"nodeId"`
+	Status          string         `json:"status"`
+	Attempt         int            `json:"attempt"`
+	ReworkCount     int            `json:"reworkCount"`
+	SandboxID       string         `json:"sandboxId,omitempty"`
+	Output          string         `json:"output,omitempty"`
+	Error           string         `json:"error,omitempty"`
+	Provider        string         `json:"provider,omitempty"`
+	Model           string         `json:"model,omitempty"`
+	SessionID       string         `json:"sessionId,omitempty"`
+	ResumeSessionID string         `json:"resumeSessionId,omitempty"`
+	Activity        string         `json:"activity,omitempty"`
+	Feedback        string         `json:"feedback,omitempty"`
+	Usage           TokenUsage     `json:"usage"`
+	UsageSessionID  string         `json:"usageSessionId,omitempty"`
+	UsageCursor     TokenUsage     `json:"usageCursor,omitempty"`
+	ToolCalls       int            `json:"toolCalls"`
+	GateResult      *GateResult    `json:"gateResult,omitempty"`
+	RouteDecision   *RouteDecision `json:"routeDecision,omitempty"`
+	SkipReason      string         `json:"skipReason,omitempty"`
+	ChildRunID      string         `json:"childRunId,omitempty"`
+	StartedAt       time.Time      `json:"startedAt,omitzero"`
+	FinishedAt      time.Time      `json:"finishedAt,omitzero"`
 }
 
 // GateResult is the structured terminal decision submitted by an Agent through
@@ -170,6 +172,32 @@ type GateResult struct {
 	ActionRequired string        `json:"actionRequired,omitempty"`
 	Summary        string        `json:"summary,omitempty"`
 	Findings       []GateFinding `json:"findings,omitempty"`
+	Route          RouteValues   `json:"route,omitempty"`
+}
+
+// RouteValues accepts either a single label or a list from an agent or script.
+type RouteValues []string
+
+func (r *RouteValues) UnmarshalJSON(raw []byte) error {
+	var single string
+	if err := json.Unmarshal(raw, &single); err == nil {
+		*r = RouteValues{single}
+		return nil
+	}
+	var values []string
+	if err := json.Unmarshal(raw, &values); err != nil {
+		return err
+	}
+	*r = values
+	return nil
+}
+
+// SelectedEdges uses prefixed edge IDs (or indexes for edges without IDs).
+// Older decisions without EdgeKeyVersion use unprefixed snapshot indexes.
+type RouteDecision struct {
+	Values         RouteValues     `json:"values,omitempty"`
+	SelectedEdges  map[string]bool `json:"selectedEdges"`
+	EdgeKeyVersion int             `json:"edgeKeyVersion,omitempty"`
 }
 
 type GateFinding struct {
@@ -241,8 +269,28 @@ type Artifact struct {
 	Size      int64  `json:"size"`
 	SHA256    string `json:"sha256"`
 	Content   string `json:"content"`
+	Stale     bool   `json:"stale,omitempty"` // derived from the current routing attempt
 	// RepositoryDir records which run repository workspace the artifact was
 	// collected from (empty = run workspace root, where SOP deliverables live).
 	RepositoryDir string    `json:"repositoryDir,omitempty"`
 	CreatedAt     time.Time `json:"createdAt"`
+}
+
+// MarkStaleArtifacts retains history while identifying outputs from inactive attempts.
+func (r *Run) MarkStaleArtifacts() {
+	conditional := false
+	for _, edge := range r.WorkflowSnapshot.Edges {
+		if edge.Condition != nil {
+			conditional = true
+			break
+		}
+	}
+	if !conditional {
+		return
+	}
+	for i := range r.Artifacts {
+		a := &r.Artifacts[i]
+		n := r.Nodes[a.NodeID]
+		a.Stale = n == nil || n.Status != "succeeded" || n.Attempt != a.Attempt
+	}
 }

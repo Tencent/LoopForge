@@ -38,8 +38,15 @@ func AttachPreviewBuild(wf WorkflowDefinition) (WorkflowDefinition, error) {
 	if !wf.Preview.Static() {
 		return StripPreviewBuild(wf), nil
 	}
-	for _, node := range wf.Nodes {
-		if IsPreviewBuildNode(node.ID) {
+	for i := range wf.Nodes {
+		if IsPreviewBuildNode(wf.Nodes[i].ID) {
+			// Older catalog definitions may already contain the preview node.
+			// Preserve an explicit rule while giving legacy nodes the same
+			// branch-aware default as newly generated ones.
+			if wf.Nodes[i].JoinRule == "" {
+				wf.Nodes = append([]WorkflowNode(nil), wf.Nodes...)
+				wf.Nodes[i].JoinRule = "none_failed_min_one_success"
+			}
 			return wf, nil
 		}
 	}
@@ -67,6 +74,7 @@ func PreviewBuildNode(wf WorkflowDefinition) WorkflowNode {
 		AgentID:         PreviewBuildAgentID,
 		ExecutorID:      PreviewBuildExecutor,
 		ExecutionScope:  ExecutionScopeRun,
+		JoinRule:        "none_failed_min_one_success",
 		ArtifactOutputs: []ArtifactContract{PreviewBuildArtifact(contract)},
 		OnFailure:       "fail",
 		RetryStrategy:   "targeted_fix",

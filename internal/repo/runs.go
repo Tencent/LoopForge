@@ -351,6 +351,7 @@ func (r *RunsRepo) RunView(id string) (domain.Run, bool) {
 	if err := r.loadArtifactMeta(&run); err != nil {
 		return domain.Run{}, false
 	}
+	run.MarkStaleArtifacts()
 	events, err := r.runTimingEvents([]string{run.ID})
 	if err != nil {
 		return domain.Run{}, false

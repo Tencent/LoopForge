@@ -69,6 +69,7 @@
 .graph-node:hover,.graph-node.selected{border-color:var(--blue);box-shadow:0 0 0 3px var(--blue-soft)}
 .graph-node.running{border-color:var(--blue)}
 .graph-node.succeeded{border-color:rgba(52,211,153,.5)}
+.graph-node.skipped{background:var(--bg-soft);color:var(--muted-2)}
 .graph-node.failed{border-color:rgba(248,113,113,.6)}
 .graph-node.waiting_approval{border-color:rgba(251,191,36,.6)}
 .graph-node.cancelled{border-color:var(--line-strong);background:var(--bg-soft)}
@@ -151,6 +152,7 @@
 .obs-table .run-row,.run-row{cursor:pointer}
 .node-artifact-list{display:grid;gap:8px}
 .node-artifact-card{display:flex;align-items:center;gap:9px;padding:9px 10px;border:1px solid var(--line);border-radius:9px;background:var(--panel);cursor:pointer;transition:border-color .14s}
+.node-artifact-card.stale{opacity:.65}
 .node-artifact-card:hover{border-color:var(--blue)}
 .node-artifact-card b{font-size:11px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .node-artifact-card span{font-size:9px;color:var(--muted-2)}

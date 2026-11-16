@@ -329,6 +329,7 @@ func runSummaries(runs []domain.Run) []domain.Run {
 }
 
 func publicRun(run domain.Run, summary bool) domain.Run {
+	run.MarkStaleArtifacts()
 	if run.ArtifactCount == 0 {
 		run.ArtifactCount = len(run.Artifacts)
 	}

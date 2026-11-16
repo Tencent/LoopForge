@@ -8,6 +8,16 @@ import (
 	"agentflow/internal/domain"
 )
 
+type graphFinishReason uint8
+
+const (
+	finishOther graphFinishReason = iota
+	finishFailedNode
+	finishAllSinksSkipped
+)
+
+const allSinksSkippedMessage = "所有终点节点均被跳过，流程无法完成"
+
 func continuingInterruptedAttempt(nr *domain.NodeRun) bool {
 	if nr == nil || nr.Attempt <= 0 || strings.TrimSpace(nr.Error) != "" {
 		return false
@@ -56,20 +66,23 @@ func resetInFlightNodesForResume(r *domain.Run, activity string) {
 // snapshot node is already finished and nothing is in flight. An empty graph
 // is not settled: ResumeInterruptedRuns uses that case to recover orphans
 // whose workflow snapshot was never frozen.
-func settleStatusForCompletedGraph(wf domain.WorkflowDefinition, r domain.Run) (status, msg string, ok bool) {
+func settleStatusForCompletedGraph(wf domain.WorkflowDefinition, r domain.Run) (status, msg string, reason graphFinishReason, ok bool) {
 	if wf.CollaborationMode == "group" || len(wf.Nodes) == 0 || r.HasActiveNode() {
-		return "", "", false
+		return "", "", finishOther, false
 	}
 	if allSucceeded(wf, r) {
-		return "succeeded", "流水线执行完成", true
+		return "succeeded", "流水线执行完成", finishOther, true
+	}
+	if allRoutingFinished(wf, r) {
+		return "failed", allSinksSkippedMessage, finishAllSinksSkipped, true
 	}
 	if hasWaiting(wf, r) {
-		return "", "", false
+		return "", "", finishOther, false
 	}
 	if hasFailed(wf, r) {
-		return "failed", pipelineFailedMessage, true
+		return "failed", pipelineFailedMessage, finishFailedNode, true
 	}
-	return "", "", false
+	return "", "", finishOther, false
 }
 
 // pipelineFailedMessage is the settle reason used when a node is still failed
@@ -97,7 +110,7 @@ func canSettleUnowned(r domain.Run, status string) bool {
 	if status == "succeeded" && scheduledIntegratePending(r) {
 		return false
 	}
-	got, _, ok := settleStatusForCompletedGraph(workflowForRun(nil, r), r)
+	got, _, _, ok := settleStatusForCompletedGraph(workflowForRun(nil, r), r)
 	return ok && got == status
 }
 
