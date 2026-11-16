@@ -17,6 +17,8 @@
 #   --download-url <URL>   从指定 URL 下载二进制（含 {os} {arch} 占位符）
 #   --source <目录>        平台未分发二进制时，从本地 AgentFlow 源码构建（需要 Go）
 #   --strict-https         禁止在 HTTPS 网络不可达时降级到 HTTP
+#   --allow-http           允许降级到明文 HTTP（内网裸 IP 安装用；平台经 HTTPS
+#                          下发本脚本时默认就是禁止降级）
 #   --service              安装常驻服务。macOS 用 launchd；Linux 有 systemd 时用用户服务，
 #                          没有用户会话时会先拉起 systemd 用户实例。没有 systemd 时改为后台运行。
 #   --no-start             只安装配置，不立即启动
@@ -42,6 +44,9 @@ INSTALL_SERVICE=0
 NO_START=0
 UNINSTALL=0
 UPGRADE=0
+# 平台从 HTTPS 请求下发本脚本时会把下面这一行改成 STRICT_HTTPS=1（见
+# deploy/deploy.go）。内网裸 IP 走 HTTP 下发时保持 0；显式开关是
+# --strict-https / --allow-http。
 STRICT_HTTPS=0
 AUTO_UPDATE=1
 
@@ -56,6 +61,7 @@ while [[ $# -gt 0 ]]; do
     --download-url) DOWNLOAD_URL="${2:-}"; shift 2 ;;
     --source) SOURCE_DIR="${2:-}"; shift 2 ;;
     --strict-https) STRICT_HTTPS=1; shift ;;
+    --allow-http) STRICT_HTTPS=0; shift ;;
     --service) INSTALL_SERVICE=1; shift ;;
     --no-start) NO_START=1; shift ;;
     --no-auto-update) AUTO_UPDATE=0; shift ;;

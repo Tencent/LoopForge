@@ -674,7 +674,7 @@ func schedulerEnabled() bool {
 // serveBindCLIScript serves the machine-facing bind-cli installer so onboarding
 // is a single copy-pasted curl command (个人 → 执行器 页面).
 func serveBindCLIScript(c *gin.Context) {
-	script := deployassets.BindCLIScript()
+	script := deployassets.BindCLIScriptFor(secureRequest(c.Request))
 	if len(script) == 0 {
 		c.Status(http.StatusNotFound)
 		return
