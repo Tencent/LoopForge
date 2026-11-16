@@ -122,12 +122,8 @@ func (p githubPull) mergedAt() time.Time {
 }
 
 func (g *githubClient) findPull(branch, target string) (githubPull, bool, error) {
-	q := url.Values{"state": {"all"}, "head": {strings.Split(g.path, "/")[0] + ":" + branch}, "per_page": {"100"}, "sort": {"updated"}, "direction": {"desc"}}
-	if target != "" {
-		q.Set("base", target)
-	}
-	var list []githubPull
-	if err := g.request("GET", "/pulls?"+q.Encode(), nil, &list); err != nil {
+	list, err := g.listPulls(branch, target)
+	if err != nil {
 		return githubPull{}, false, err
 	}
 	for _, p := range list {
@@ -136,6 +132,33 @@ func (g *githubClient) findPull(branch, target string) (githubPull, bool, error)
 		}
 	}
 	return githubPull{}, false, nil
+}
+
+// listPulls returns the pulls from branch (and into target when set), most
+// recently updated first.
+func (g *githubClient) listPulls(branch, target string) ([]githubPull, error) {
+	q := url.Values{"state": {"all"}, "head": {strings.Split(g.path, "/")[0] + ":" + branch}, "per_page": {"100"}, "sort": {"updated"}, "direction": {"desc"}}
+	if target != "" {
+		q.Set("base", target)
+	}
+	var list []githubPull
+	if err := g.request("GET", "/pulls?"+q.Encode(), nil, &list); err != nil {
+		return nil, err
+	}
+	return list, nil
+}
+
+func githubPullsInto(pulls []githubPull, project, branch, target string) []domain.DeliveryMR {
+	var out []domain.DeliveryMR
+	for _, p := range pulls {
+		if p.Head.Ref != branch || p.Base.Ref != target {
+			continue
+		}
+		mr := p.delivery(project)
+		mr.HeadSHA = strings.TrimSpace(p.Head.SHA)
+		out = append(out, mr)
+	}
+	return out
 }
 
 func (s *Service) githubFindBranch(project, branch string) (domain.DeliveryMR, bool, error) {

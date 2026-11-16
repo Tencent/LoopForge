@@ -70,10 +70,10 @@ func uniqueGateID(base string, used map[string]bool) string {
 	}
 }
 
-// VerificationModeMR gates pass only when the hosting platform has an MR from
-// the run's work branch into its target branch for every repository whose
-// pushed work branch carries new commits. The engine runs the check; the gate
-// has no commands.
+// VerificationModeMR gates pass only when, for every repository whose pushed
+// work branch carries new commits, the hosting platform has an MR from that
+// work branch into the run's target branch that carries the pushed tip. The
+// engine runs the check; the gate has no commands.
 const VerificationModeMR = "mr"
 
 // ValidateVerificationGate requires command gates to declare run or repositories.

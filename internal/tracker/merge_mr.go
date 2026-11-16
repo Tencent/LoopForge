@@ -131,6 +131,7 @@ type gongfengListedMR struct {
 	ResolvedAt   string `json:"resolved_at"`
 	UpdatedAt    string `json:"updated_at"`
 	WebURL       string `json:"web_url"`
+	SHA          string `json:"sha"`
 }
 
 // FindBranchMR returns the delivery MR whose source is sourceBranch: the
@@ -174,6 +175,63 @@ func (s *Service) FindBranchMR(project, sourceBranch string) (domain.DeliveryMR,
 		TargetBranch:  item.TargetBranch,
 		GongfengState: normalizeMRState(item.State),
 	}, true, nil
+}
+
+// FindBranchMRsInto lists every MR from sourceBranch into targetBranch with
+// the head commit the host reports. Unlike FindBranchMR it never answers with
+// an MR into another branch, and it keeps all of them so a caller can tell an
+// earlier merged MR from one that carries the current branch tip.
+func (s *Service) FindBranchMRsInto(project, sourceBranch, targetBranch string) ([]domain.DeliveryMR, error) {
+	src, target := strings.TrimSpace(sourceBranch), strings.TrimSpace(targetBranch)
+	if strings.HasPrefix(project, "github:") {
+		g, err := s.githubClient(project)
+		if err != nil {
+			return nil, err
+		}
+		pulls, err := g.listPulls(src, target)
+		if err != nil {
+			return nil, err
+		}
+		return githubPullsInto(pulls, project, src, target), nil
+	}
+	project = strings.TrimSpace(project)
+	if project == "" || src == "" || target == "" {
+		return nil, nil
+	}
+	client, _, err := s.gongfengClientForRemoteProject(project)
+	if err != nil {
+		return nil, err
+	}
+	raw, err := client.Clone(15*time.Second).CallTool("search_merge_request", map[string]any{
+		"project_id":    project,
+		"source_branch": src,
+		"target_branch": target,
+		"per_page":      20,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("search MR for %s: %w", src, err)
+	}
+	return gongfengMRsInto(parseGongfengMRRecords(raw), project, src, target), nil
+}
+
+func gongfengMRsInto(items []gongfengListedMR, project, sourceBranch, targetBranch string) []domain.DeliveryMR {
+	var out []domain.DeliveryMR
+	for _, item := range items {
+		if s := strings.TrimSpace(item.SourceBranch); s != "" && !domain.SameGitBranch(s, sourceBranch) {
+			continue
+		}
+		if !domain.SameGitBranch(item.TargetBranch, targetBranch) {
+			continue
+		}
+		url := strings.TrimSpace(item.WebURL)
+		if _, _, parsed, ok := domain.ParseGongfengMR(url); ok {
+			url = parsed
+		} else {
+			url = domain.GongfengMRURL(project, item.IID)
+		}
+		out = append(out, domain.DeliveryMR{Project: project, IID: item.IID, URL: url, TargetBranch: item.TargetBranch, GongfengState: normalizeMRState(item.State), HeadSHA: strings.TrimSpace(item.SHA)})
+	}
+	return out
 }
 
 func pickBranchMR(items []gongfengListedMR, sourceBranch string) (gongfengListedMR, bool) {

@@ -20,6 +20,9 @@ type DeliveryMR struct {
 	// GongfengState is the raw Gongfeng state from a live lookup; empty when
 	// the MR was only recovered from artifact text.
 	GongfengState string `json:"-"`
+	// HeadSHA is the source commit a live lookup reports; empty when the host
+	// response carries none.
+	HeadSHA string `json:"-"`
 }
 
 // GongfengMRURL is the canonical web URL of a Gongfeng merge request.

@@ -883,16 +883,16 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 				}
 				if strings.EqualFold(gate.Mode, domain.VerificationModeMR) {
 					live, _ := e.repo.RunState(runID)
-					mrErr := e.verifyRunMRs(live, func(rc domain.RepositoryContext) (int, error) {
+					mrErr := e.verifyRunMRs(live, func(rc domain.RepositoryContext) (pushedWork, error) {
 						target := executionTarget{Scope: domain.ExecutionScopeRepositories, Repository: &rc}
 						out, execErr := gateExec(mrPendingCommand, target, executionTargetSink(func(event domain.TelemetryEvent) {
 							event.Category = "verification"
 							sink(event)
 						}, target))
 						if execErr != nil {
-							return 0, execErr
+							return pushedWork{}, execErr
 						}
-						return parseMRPendingCount(out)
+						return parseMRPending(out)
 					})
 					if mrErr != nil {
 						e.observe(runID, node.ID, domain.TelemetryEvent{Category: "verification", Name: "gate.mr.failed", Phase: "finish", Level: "error", Message: "门禁未通过：" + gate.Name, Attributes: map[string]any{"gateId": gate.ID, "gateName": gate.Name, "iteration": iteration, "detail": mrErr.Error()}})
