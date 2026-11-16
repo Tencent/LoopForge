@@ -74,6 +74,12 @@ func (r *runEnvironment) prepareRepositoriesOnce(prepare func() error) error {
 
 func (r *runEnvironment) ID() string        { return r.sandbox.ID() }
 func (r *runEnvironment) Workspace() string { return r.sandbox.Workspace() }
+func (r *runEnvironment) Unwrap() runtime.Sandbox {
+	if r == nil {
+		return nil
+	}
+	return r.sandbox
+}
 func (r *runEnvironment) Driver() string {
 	if value, ok := r.sandbox.(interface{ Driver() string }); ok {
 		return value.Driver()

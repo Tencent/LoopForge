@@ -222,8 +222,15 @@ var workspaceAttachmentTypes = map[string]string{
 // attachment of this turn's reply: the user cannot reach the execution
 // machine, so a workspace path or localhost link opens nothing for them.
 func (h *agentToolGateway) attachWorkspaceFile(ctx context.Context, s *AgentToolSession, args map[string]any) (string, error) {
+	runID := mainBotWorkspaceRun(ctx)
+	if runID == "" {
+		runID = s.workspaceRun()
+	}
 	raw, _ := args["path"].(string)
 	rel := strings.TrimPrefix(strings.TrimPrefix(strings.TrimSpace(raw), "file://"), "/workspace/")
+	if marker := "/" + runID + "/"; runID != "" && pathpkg.IsAbs(rel) && strings.Contains(rel, marker) {
+		rel = rel[strings.LastIndex(rel, marker)+len(marker):]
+	}
 	if rel == "" {
 		return "", fmt.Errorf("path is required")
 	}
@@ -231,10 +238,6 @@ func (h *agentToolGateway) attachWorkspaceFile(ctx context.Context, s *AgentTool
 	mimeType := workspaceAttachmentTypes[strings.ToLower(pathpkg.Ext(name))]
 	if mimeType == "" {
 		return "", fmt.Errorf("path 只能是文本文件（html、md、txt、log、csv、yaml、json、xml）；要给用户看页面效果，用 workbench_browser_screenshot 截图")
-	}
-	runID := mainBotWorkspaceRun(ctx)
-	if runID == "" {
-		runID = s.workspaceRun()
 	}
 	result, err := (mcpserver.LocalInvoker{Handler: h.api}).Invoke(ctx, application.Operation{Method: "GET", Path: "/api/runs/{id}/workspace/file"}, mcpserver.ToolInput{Path: map[string]string{"id": runID}, Query: map[string]string{"path": rel}})
 	if err != nil {

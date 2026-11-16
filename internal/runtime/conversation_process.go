@@ -479,8 +479,8 @@ func (p *ConversationProcessPool) start(ctx context.Context, root, workspace str
 				return ConversationProcessResult{}, err
 			}
 		}
-		if profile.Driver != domain.SandboxDriverDocker && profile.Driver != domain.SandboxDriverBwrap {
-			return ConversationProcessResult{}, fmt.Errorf("对话工作区只支持 Docker 或 native（Linux bwrap）沙箱")
+		if profile.Driver != domain.SandboxDriverDocker && profile.Driver != domain.SandboxDriverBwrap && profile.Driver != domain.SandboxDriverSeatbelt {
+			return ConversationProcessResult{}, fmt.Errorf("对话工作区只支持 Docker 或 native 沙箱")
 		}
 		resolved := *spec
 		resolved.Profile = profile
@@ -521,6 +521,16 @@ func (p *ConversationProcessPool) start(ctx context.Context, root, workspace str
 	command = command.WithPrivateHomeDir(filepath.Join(root, "home"))
 	command.AgentCLI.SystemPromptFile = conversationRemap(command.AgentCLI.SystemPromptFile, req.SourceRoot, root)
 	command.WorkingDir = filepath.Join(root, "ws")
+	if spec != nil && spec.Profile.Driver == domain.SandboxDriverSeatbelt {
+		// macOS seatbelt has no mount namespace to map <root>/ws onto the run
+		// workspace, so point the sandboxed CLI directly at the run workspace.
+		switch {
+		case sb != nil && strings.TrimSpace(sb.Workspace()) != "":
+			command.WorkingDir = sb.Workspace()
+		case strings.TrimSpace(workspace) != "":
+			command.WorkingDir = workspace
+		}
+	}
 	command.OwnProcessGroup = true
 	if spec != nil {
 		command.Argv[0] = conversationBinary(command.Provider)
@@ -543,7 +553,7 @@ func (p *ConversationProcessPool) start(ctx context.Context, root, workspace str
 	}
 	// Some CLIs continue after a hook interpreter cannot be spawned. Both
 	// the platform guard and the native approval hook must fail closed.
-	if spec == nil && (command.Provider == AgentCLIKimi || command.Provider == "codex" || command.Provider == AgentCLICursor || command.Provider == AgentCLIAntigravity || command.Provider == AgentCLIZCode) {
+	if (spec == nil || spec.Profile.Driver != domain.SandboxDriverDocker) && (command.Provider == AgentCLIKimi || command.Provider == "codex" || command.Provider == AgentCLICursor || command.Provider == AgentCLIAntigravity || command.Provider == AgentCLIZCode) {
 		check := exec.CommandContext(procCtx, "python3", "-c", "import json,urllib.request")
 		if err = check.Run(); err != nil {
 			return ConversationProcessResult{}, fmt.Errorf("原生工具审批需要 Python3：%w", err)

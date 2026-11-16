@@ -379,7 +379,9 @@ func seatbeltProfileCommand(workspace string, requirements SandboxRequirements, 
 	// A broad write denial plus a narrower workspace allowance keeps the host
 	// immutable while retaining the normal coding-agent workflow.
 	b.WriteString("(deny file-write*)\n")
-	fmt.Fprintf(&b, "(allow file-write* (subpath %s))\n", strconv.Quote(root))
+	for _, variant := range seatbeltPathVariants(root) {
+		fmt.Fprintf(&b, "(allow file-write* (subpath %s))\n", strconv.Quote(variant))
+	}
 	for _, temp := range seatbeltWritableTemps() {
 		fmt.Fprintf(&b, "(allow file-write* (subpath %s))\n", strconv.Quote(temp))
 	}
@@ -388,9 +390,35 @@ func seatbeltProfileCommand(workspace string, requirements SandboxRequirements, 
 		return "", err
 	}
 	for _, state := range stateDirs {
-		fmt.Fprintf(&b, "(allow file-write* (subpath %s))\n", strconv.Quote(state.path))
+		for _, variant := range seatbeltPathVariants(state.path) {
+			fmt.Fprintf(&b, "(allow file-write* (subpath %s))\n", strconv.Quote(variant))
+		}
+	}
+	conversation := strings.TrimSpace(requirements.ConversationRoot)
+	if conversation != "" {
+		conversation, err = filepath.Abs(conversation)
+		if err != nil {
+			return "", err
+		}
+		for _, variant := range seatbeltPathVariants(filepath.Join(conversation, "home")) {
+			fmt.Fprintf(&b, "(allow file-write* (subpath %s))\n", strconv.Quote(variant))
+		}
 	}
 	b.WriteString("(allow file-write* (literal \"/dev/null\"))\n")
+	if conversation != "" {
+		// Seatbelt evaluates rules last-match-wins: place guard file and parent
+		// denials after all subpath allowances (including conversation home and
+		// temp directories) so approval hooks cannot be overwritten or renamed.
+		parents, files, err := conversationGuardPaths(conversation)
+		if err != nil {
+			return "", err
+		}
+		for _, guarded := range append(parents, files...) {
+			for _, variant := range seatbeltPathVariants(guarded) {
+				fmt.Fprintf(&b, "(deny file-write* (literal %s))\n", strconv.Quote(variant))
+			}
+		}
+	}
 	if !maskAgentConfig {
 		return b.String(), nil
 	}
@@ -407,13 +435,51 @@ func seatbeltProfileCommand(workspace string, requirements SandboxRequirements, 
 		} else if !os.IsNotExist(err) {
 			return "", err
 		}
-		if projectAgentDirNames[filepath.Base(rel)] {
-			fmt.Fprintf(&b, "(deny file-read* (subpath %s))\n", strconv.Quote(path))
-		} else {
-			fmt.Fprintf(&b, "(deny file-read* (literal %s))\n", strconv.Quote(path))
+		for _, variant := range seatbeltPathVariants(path) {
+			if projectAgentDirNames[filepath.Base(rel)] {
+				fmt.Fprintf(&b, "(deny file-read* (subpath %s))\n", strconv.Quote(variant))
+			} else {
+				fmt.Fprintf(&b, "(deny file-read* (literal %s))\n", strconv.Quote(variant))
+			}
 		}
 	}
 	return b.String(), nil
+}
+
+func seatbeltPathVariants(path string) []string {
+	abs, err := filepath.Abs(path)
+	if err != nil || strings.TrimSpace(abs) == "" {
+		return nil
+	}
+	variants := []string{abs}
+	if resolved := seatbeltResolvePath(abs); resolved != "" && resolved != abs {
+		variants = append(variants, resolved)
+	}
+	return variants
+}
+
+func seatbeltResolvePath(abs string) string {
+	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
+		return resolved
+	}
+	// Resolve symlinked ancestors (e.g. /var -> /private/var or /tmp -> /private/tmp)
+	// even when the target file does not yet exist.
+	cur := abs
+	var tail []string
+	for {
+		parent := filepath.Dir(cur)
+		if parent == cur {
+			return abs
+		}
+		tail = append(tail, filepath.Base(cur))
+		cur = parent
+		if resolved, err := filepath.EvalSymlinks(cur); err == nil {
+			for i := len(tail) - 1; i >= 0; i-- {
+				resolved = filepath.Join(resolved, tail[i])
+			}
+			return resolved
+		}
+	}
 }
 
 // bunFSMountPoint is the virtual root Bun-compiled CLIs (Claude Code,

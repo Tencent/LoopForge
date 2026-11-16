@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"agentflow/internal/managedcli"
 	"context"
 	"fmt"
 	"os"
@@ -29,7 +30,7 @@ func ConfigureConversationSandbox(ctx context.Context, sandbox Sandbox, root str
 	}
 	s, ok := unwrapSandbox(sandbox).(*dockerSandbox)
 	if !ok {
-		return fmt.Errorf("对话工作区只支持 Docker 或 native（Linux bwrap）沙箱")
+		return fmt.Errorf("对话工作区只支持 Docker 或 native 沙箱")
 	}
 	s.execGate.Lock()
 	defer s.execGate.Unlock()
@@ -40,14 +41,15 @@ func ConfigureConversationSandbox(ctx context.Context, sandbox Sandbox, root str
 	return s.Recreate(ctx)
 }
 
-// configureProcessConversationSandbox binds the native HOME and cwd into a
-// bwrap workspace. The host filesystem stays read-only apart from the run
-// workspace and the conversation HOME; the host network and the Docker
-// daemon socket stay reachable, so the agent can build and run containers.
-// seatbelt cannot remap <root>/ws onto the run workspace and is refused.
+// configureProcessConversationSandbox enables a native process workspace
+// (Linux bwrap or macOS seatbelt). On bwrap it binds <root>/home and maps
+// <root>/ws onto the run workspace with host paths read-only and the host
+// network/Docker socket reachable. On seatbelt macOS lacks mount namespaces, so
+// the CLI keeps cwd on the run workspace while seatbelt grants writes only to
+// the run workspace, temps, and <root>/home with approval hooks write-protected.
 func configureProcessConversationSandbox(s *processSandbox, root string) error {
-	if s.driver != "bwrap" {
-		return fmt.Errorf("macOS 原生沙箱（seatbelt）暂不支持对话工作区，请选择 Docker 沙箱或在 Linux 执行机器上使用 native")
+	if s.driver != "bwrap" && s.driver != "seatbelt" {
+		return fmt.Errorf("对话工作区只支持 Docker 或 native 沙箱")
 	}
 	if err := os.MkdirAll(filepath.Join(root, "home"), 0700); err != nil {
 		return err
@@ -112,19 +114,52 @@ func conversationGuardPaths(root string) (parents, files []string, err error) {
 // Reuse an image's CLI when available. Generic workspace images predate native
 // conversations, so provision the selected official CLI into this container on
 // first use. The native HOME remains separate from installer state.
+func resolveNativeConversationBinary(provider string) (string, error) {
+	binary := conversationBinary(provider)
+	override := "AGENTFLOW_" + strings.ToUpper(strings.ReplaceAll(provider, "-", "_")) + "_BIN"
+	if provider == "claude-code" {
+		override = "AGENTFLOW_CLAUDE_BIN"
+	}
+	if path := strings.TrimSpace(os.Getenv(override)); path != "" && fileIsExecutable(path) {
+		return path, nil
+	}
+	if root := strings.TrimSpace(os.Getenv("AGENTFLOW_MANAGED_CLI_ROOT")); root != "" {
+		if inventory, err := managedcli.ReadInventory(root); err == nil {
+			if path, ok := inventory.BinaryFor(provider); ok {
+				return path, nil
+			}
+		}
+	}
+	path, err := exec.LookPath(binary)
+	if err == nil {
+		return path, nil
+	}
+	home, _ := os.UserHomeDir()
+	if strings.TrimSpace(home) != "" {
+		if candidate := filepath.Join(home, ".local", "bin", binary); fileIsExecutable(candidate) {
+			return candidate, nil
+		}
+	}
+	for _, candidate := range []string{"/usr/local/bin/" + binary, "/usr/bin/" + binary} {
+		if fileIsExecutable(candidate) {
+			return candidate, nil
+		}
+	}
+	if onDemand, ok := OnDemandCLIPath(provider); ok {
+		return onDemand, nil
+	}
+	return "", fmt.Errorf("执行机器未安装 CLI %s：%w", provider, err)
+}
+
 func ensureConversationCLI(ctx context.Context, sandbox Sandbox, provider, home string) (string, error) {
 	if _, native := unwrapSandbox(sandbox).(*processSandbox); native {
-		// A native workspace runs the execution machine's own CLI, as the
-		// platform mode of the same conversation does.
-		binary, err := exec.LookPath(conversationBinary(provider))
-		if err != nil {
-			return "", fmt.Errorf("执行机器未安装 CLI %s：%w", provider, err)
-		}
-		return binary, nil
+		// A native workspace runs the execution machine's own CLI, matching
+		// how the platform mode resolves host binaries.
+		return resolveNativeConversationBinary(provider)
 	}
 	s, ok := unwrapSandbox(sandbox).(*dockerSandbox)
 	if !ok {
-		return "", fmt.Errorf("对话工作区只支持 Docker 或 native（Linux bwrap）沙箱")
+		return "", fmt.Errorf("对话工作区只支持 Docker 或 native 沙箱")
 	}
 	binary := conversationBinary(provider)
 	setup, err := conversationCLISetup(provider, binary)

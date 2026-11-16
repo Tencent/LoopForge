@@ -131,6 +131,9 @@ func TestMainBotAttachesWorkspaceFilesToReply(t *testing.T) {
 	if _, err := attach(participant, "docs/notes.md"); err != nil || len(participant.takeReplyFiles()) != 1 {
 		t.Fatalf("project participant could not attach a shared workspace file: %v", err)
 	}
+	if raw, err := attach(participant, filepath.Join(workspace, "docs", "notes.md")); err != nil || !strings.Contains(raw, `"attached":"notes.md"`) || len(participant.takeReplyFiles()) != 1 {
+		t.Fatalf("attach host workspace path raw=%s err=%v", raw, err)
+	}
 	files := s.takeReplyFiles()
 	if len(files) != 2 || files[0].Name != "demo.html" || files[0].MimeType != "text/html" || files[1].Name != "notes.md" || files[1].MimeType != "text/markdown" {
 		t.Fatalf("reply files=%+v", files)
