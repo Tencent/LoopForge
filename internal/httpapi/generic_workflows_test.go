@@ -758,3 +758,72 @@ func TestProductAndFrontendGenericTemplatesAreListed(t *testing.T) {
 		}
 	}
 }
+
+// A stored template can drift out of sync with its own workflow: a node may
+// reference an agent that the bundled Agents list no longer carries (this is
+// what happens when a migration rewrites the list by index and a later MR node
+// is appended only to the workflow). Cloning must still give every agent node
+// a project-owned role instead of leaving the node bound to a foreign project.
+func TestGenericTemplateCloneRemapsNodeAgentMissingFromAgentsList(t *testing.T) {
+	h, s := newGenericTemplateServer(t)
+	// First adoption creates the full role set, including the MR role. This is
+	// also the source the fallback can resolve when the template list drops it.
+	requestJSON[domain.WorkflowDefinition](t, h, http.MethodPost,
+		"/api/workflows/"+repo.GenericBackendDeliveryWorkflowID+"/clone",
+		map[string]any{"id": "alpha-backend", "name": "alpha", "projectId": "alpha"},
+		http.StatusCreated)
+	if _, ok := s.Agent(repo.GenericAgentMR); !ok {
+		t.Fatalf("first adoption must create the MR role %q", repo.GenericAgentMR)
+	}
+
+	// Simulate the drift: keep the MR node in the workflow, remove the MR role
+	// from the template's bundled Agents list, and persist that template.
+	template, ok := s.GenericTemplateByWorkflow(repo.GenericBackendDeliveryWorkflowID)
+	if !ok {
+		t.Fatal("backend template vanished")
+	}
+	kept := template.Agents[:0]
+	for _, agent := range template.Agents {
+		if agent.ID != repo.GenericAgentMR {
+			kept = append(kept, agent)
+		}
+	}
+	template.Agents = kept
+	if err := s.PutGenericTemplate(template); err != nil {
+		t.Fatal(err)
+	}
+	// Defensive: confirm the fixture really dropped the MR role from the list.
+	for _, agent := range template.Agents {
+		if agent.ID == repo.GenericAgentMR {
+			t.Fatal("fixture still carries the MR role in Agents list")
+		}
+	}
+
+	if err := s.PutProject(domain.Project{ID: "gamma", Key: "GAMMA", Name: "Gamma"}); err != nil {
+		t.Fatal(err)
+	}
+	gamma := requestJSON[domain.WorkflowDefinition](t, h, http.MethodPost,
+		"/api/workflows/"+repo.GenericBackendDeliveryWorkflowID+"/clone",
+		map[string]any{"id": "gamma-backend", "name": "gamma", "projectId": "gamma"},
+		http.StatusCreated)
+
+	var mrAgentID string
+	for _, node := range gamma.Nodes {
+		if node.ID == "mr" {
+			mrAgentID = node.AgentID
+		}
+	}
+	if mrAgentID == "" {
+		t.Fatal("gamma adoption lost the MR node")
+	}
+	if mrAgentID == repo.GenericAgentMR {
+		t.Fatalf("MR node still bound to foreign/shared role id %q", mrAgentID)
+	}
+	agent, found := s.Agent(mrAgentID)
+	if !found {
+		t.Fatalf("MR node references missing agent %q", mrAgentID)
+	}
+	if agent.ProjectID != "gamma" {
+		t.Fatalf("MR agent project = %q, want gamma", agent.ProjectID)
+	}
+}
