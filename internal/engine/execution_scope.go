@@ -12,6 +12,9 @@ import (
 type executionTarget struct {
 	Scope      string
 	Repository *domain.RepositoryContext
+	// Repositories lists every run repository for a Run-scoped target, whose
+	// command reaches them through AGENTFLOW_WORK_BRANCHES.
+	Repositories []domain.RepositoryContext
 }
 
 func executionTargetSink(sink runtime.EventSink, target executionTarget) runtime.EventSink {
@@ -40,10 +43,10 @@ func normalizeExecutionScope(scope string) string {
 
 func executionTargets(run domain.Run, scope string) ([]executionTarget, error) {
 	scope = normalizeExecutionScope(scope)
-	if scope == domain.ExecutionScopeRun {
-		return []executionTarget{{Scope: scope}}, nil
-	}
 	repositories := run.RepositoryContexts()
+	if scope == domain.ExecutionScopeRun {
+		return []executionTarget{{Scope: scope, Repositories: repositories}}, nil
+	}
 	if len(repositories) == 0 {
 		return nil, errors.New("逐仓库执行需要 Run 至少绑定一个代码仓库")
 	}
@@ -81,6 +84,8 @@ func (t executionTarget) label() string {
 // bindExecutionTarget makes script-like commands independent from the
 // physical single/multi-repository layout. Repository-scoped commands start
 // in the selected checkout; Run-scoped commands start at the workspace root.
+// Branches are the ones frozen into the run, so a gate can check what was
+// actually pushed instead of trusting whatever the checkout is on.
 func bindExecutionTarget(command string, target executionTarget) string {
 	var b strings.Builder
 	b.WriteString(`export AGENTFLOW_WORKSPACE="$PWD"`)
@@ -89,12 +94,42 @@ func bindExecutionTarget(command string, target executionTarget) string {
 		b.WriteString("\nexport AGENTFLOW_REPOSITORY_ID=" + shellSingleQuote(target.Repository.RepositoryID))
 		b.WriteString("\nexport AGENTFLOW_REPOSITORY_NAME=" + shellSingleQuote(target.Repository.Name))
 		b.WriteString("\nexport AGENTFLOW_REPOSITORY_DIR=" + shellSingleQuote(target.directory()))
+		b.WriteString("\nexport AGENTFLOW_WORK_BRANCH=" + shellSingleQuote(writableWorkBranch(*target.Repository)))
+		b.WriteString("\nexport AGENTFLOW_BASE_BRANCH=" + shellSingleQuote(repositoryBaseBranch(*target.Repository)))
 		if dir := target.directory(); dir != "" {
 			b.WriteString("\ncd -- " + shellSingleQuote(dir))
 		}
+	} else {
+		b.WriteString("\nexport AGENTFLOW_WORK_BRANCHES=" + shellSingleQuote(workBranchManifest(target.Repositories)))
 	}
 	b.WriteString("\n" + command)
 	return b.String()
+}
+
+func writableWorkBranch(repository domain.RepositoryContext) string {
+	if repository.ReadOnly {
+		return ""
+	}
+	return strings.TrimSpace(repository.WorkBranch)
+}
+
+// workBranchManifest lists one "dir<TAB>work branch<TAB>target branch" line
+// per repository the run may push. A legacy checkout at the workspace root
+// is listed as ".".
+func workBranchManifest(repositories []domain.RepositoryContext) string {
+	var lines []string
+	for _, repository := range repositories {
+		work := writableWorkBranch(repository)
+		if work == "" {
+			continue
+		}
+		dir := strings.TrimSpace(repository.WorkspaceDir)
+		if dir == "" {
+			dir = "."
+		}
+		lines = append(lines, dir+"\t"+work+"\t"+repositoryBaseBranch(repository))
+	}
+	return strings.Join(lines, "\n")
 }
 
 func executeForTargets(run domain.Run, scope string, execute func(executionTarget) (string, error)) (string, error) {

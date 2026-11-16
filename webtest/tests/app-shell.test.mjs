@@ -210,3 +210,18 @@ test('boot exchanges an authentication callback, cleans the URL, and loads the s
   assert.match(app.window.location.hash, /issues/);
   assert.equal(app.document.querySelector('#pageTitle').textContent, '需求列表');
 });
+
+test('boot selects a project the signed-in user belongs to before an unrelated first project', async (t) => {
+  const shell = sampleBootstrap();
+  shell.projects = [
+    { id: 'someone-else', name: 'Someone else', key: 'ELSE', ownerId: 1, members: [] },
+    { id: 'joined', name: 'Joined', key: 'JOIN', ownerId: 2, members: [{ userId: 7, role: 'member' }] },
+  ];
+  const app = await loadApp({ routes: [
+    { path: '/api/auth/current', body: { user: { id: 7, loginName: 'member', isGuest: false }, authRequired: false } },
+    { path: '/api/bootstrap', body: shell },
+  ] });
+  t.after(app.close);
+  await settle(6);
+  assert.equal(app.evaluate('state.projectFilter'), 'joined');
+});
