@@ -69,6 +69,14 @@ function scheduleExecMetricsHTML(list){
     +cell('失败',s.failed,s.failed?'可复制 Trace ID 排查':'近期无失败',s.failed?' is-danger':'')
     +cell('平均耗时',s.avgMs?scheduleExecDurationLabel(s.avgMs):'—','已结束的执行');
 }
+// Same link shape as issueConversationURL: the Studio frame opens chatSession.
+function scheduleExecConversationURL(e){
+  const url=new URL('/',location.origin);
+  if(e.projectId)url.searchParams.set('projectId',e.projectId);
+  url.searchParams.set('chatSession',e.sessionId);
+  url.hash='/collaboration';
+  return url.href;
+}
 function scheduleExecRowHTML(e){
   const assistant=e.jobKind==='assistant';
   const started=knownTime(e.startedAt);
@@ -80,8 +88,9 @@ function scheduleExecRowHTML(e){
   const runs=(e.runs||[]).filter(r=>r.runId);
   const runLinks=runs.length?`<div class="sched-exec-runs">${runs.map(r=>`<button type="button" class="sched-exec-run" data-open-exec-run="${escapeHTML(r.runId)}" title="打开运行 ${escapeHTML(r.runId)}"><svg class="agent-icon harness-icon" data-icon="workflow" width="12" height="12" aria-hidden="true" focusable="false"></svg>${escapeHTML(r.issueTitle||r.issueId||r.runId)}</button>`).join('')}</div>`:'';
   const stats=assistant?'':`<span class="sched-exec-stat">候选 ${Number(e.pulled)||0} · 启动 ${Number(e.dispatched)||0}</span>`;
+  const chat=assistant&&e.sessionId?`<a class="button ghost small sched-exec-chat" data-open-exec-chat="${escapeHTML(e.sessionId)}" href="${escapeHTML(scheduleExecConversationURL(e))}" target="_blank" rel="noopener" title="在新标签页打开本次执行的对话">打开会话 ↗</a>`:'';
   const trace=e.traceId?`<button type="button" class="button ghost small sched-exec-copy" data-copy-trace="${escapeHTML(e.traceId)}" aria-label="复制 Trace ID 与排障信息：${escapeHTML(e.traceId)}" title="复制 Trace ID 与排障信息（${escapeHTML(e.traceId)}），可直接发给 AI 助手排查"><svg class="agent-icon harness-icon" data-icon="copy" width="14" height="14" aria-hidden="true" focusable="false"></svg><span>Trace</span><code>${escapeHTML(scheduleExecShortTrace(e.traceId))}</code></button>`:'';
-  return `<div class="sched-exec-row" data-status="${escapeHTML(e.status||'')}" data-exec-id="${escapeHTML(e.id)}"><div class="sched-exec-badge">${scheduleExecBadgeHTML(e)}</div><div class="sched-exec-main"><b><span class="schedule-kind-tag ${assistant?'is-assistant':'is-dispatch'}">${assistant?'AI':'触发'}</span>${escapeHTML(e.jobName||e.jobId)}</b><span class="sched-exec-meta">${meta}${stats?` · ${stats}`:''}</span>${detail}${runLinks}</div><span class="sched-exec-duration">${e.status==='running'?'—':escapeHTML(scheduleExecDurationLabel(e.durationMs))}</span><div class="sched-exec-actions">${trace}</div></div>`;
+  return `<div class="sched-exec-row" data-status="${escapeHTML(e.status||'')}" data-exec-id="${escapeHTML(e.id)}"><div class="sched-exec-badge">${scheduleExecBadgeHTML(e)}</div><div class="sched-exec-main"><b><span class="schedule-kind-tag ${assistant?'is-assistant':'is-dispatch'}">${assistant?'AI':'触发'}</span>${escapeHTML(e.jobName||e.jobId)}</b><span class="sched-exec-meta">${meta}${stats?` · ${stats}`:''}</span>${detail}${runLinks}</div><span class="sched-exec-duration">${e.status==='running'?'—':escapeHTML(scheduleExecDurationLabel(e.durationMs))}</span><div class="sched-exec-actions">${chat}${trace}</div></div>`;
 }
 function scheduleExecJobOptions(){
   const jobs=new Map();

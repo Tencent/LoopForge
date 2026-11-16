@@ -90,6 +90,28 @@ test('execution dashboard lists history with metrics, filters and copyable trace
   assert.equal(rows[0].dataset.status, 'failed');
 });
 
+test('an AI execution links to the conversation it ran in', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  app.router.get(/^\/api\/schedule-job-executions\?/, () => [
+    { id: 'sjx-ok', jobId: 'job-ai', jobName: 'Daily summary', jobKind: 'assistant', projectId: 'project-1', traceId: OK_TRACE, status: 'success', assistantMessage: '巡检完成', sessionId: 'chat-run-1', startedAt: '2026-11-16T09:00:00Z', durationMs: 3000 },
+    executions()[0],
+  ]);
+  app.evaluate(`state.projectFilter='project-1';state.data.scheduleJobs=[];renderScheduleJobs();`);
+  await app.evaluate(`selectAIScheduleTab('executions')`);
+  await settle();
+  const rows = app.document.querySelectorAll('#scheduleExecList .sched-exec-row');
+  assert.equal(rows.length, 2);
+  const link = rows[0].querySelector('[data-open-exec-chat]');
+  assert.ok(link, 'execution with a conversation offers an open link');
+  const url = new URL(link.href);
+  assert.equal(url.searchParams.get('chatSession'), 'chat-run-1');
+  assert.equal(url.searchParams.get('projectId'), 'project-1');
+  assert.equal(url.hash, '#/collaboration');
+  assert.equal(link.target, '_blank');
+  assert.equal(rows[1].querySelector('[data-open-exec-chat]'), null, 'a run that failed before opening a conversation has nothing to open');
+});
+
 test('execution dashboard reports empty, error and duration states', async (t) => {
   const app = await loadApp();
   t.after(app.close);

@@ -178,7 +178,8 @@
 #aiSchedulesView .sched-exec-run:hover { color:var(--hui-accent);border-color:var(--hui-accent); }
 #aiSchedulesView .sched-exec-run:focus-visible { outline:2px solid var(--hui-focus-ring);outline-offset:1px; }
 #aiSchedulesView .sched-exec-duration { padding-top:3px;color:var(--hui-secondary);font-size:12px;font-variant-numeric:tabular-nums;text-align:right; }
-#aiSchedulesView .sched-exec-actions { display:flex;justify-content:flex-end; }
+#aiSchedulesView .sched-exec-actions { display:flex;justify-content:flex-end;gap:6px;flex-wrap:wrap; }
+#aiSchedulesView .sched-exec-chat { white-space:nowrap;text-decoration:none; }
 :is(#aiSchedulesView, #scheduleModal) .sched-exec-copy { display:inline-flex;align-items:center;gap:5px;white-space:nowrap; }
 :is(#aiSchedulesView, #scheduleModal) .sched-exec-copy code { font:12px/1 var(--hui-mono, ui-monospace, SFMono-Regular, Menlo, monospace);color:var(--hui-muted); }
 #aiSchedulesView .sched-exec-row[data-status="failed"] .sched-exec-copy { color:var(--hui-error);border-color:color-mix(in srgb,var(--hui-error) 35%,transparent); }
