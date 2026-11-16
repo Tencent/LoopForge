@@ -48,6 +48,17 @@ function observeRunWorkspaceRestore(id){
   });
 }
 
+async function waitForRunWorkspaceRestore(id, isCurrent=()=>true){
+  for(;;){
+    await new Promise(resolve=>setTimeout(resolve,1000));
+    if(!isCurrent())return;
+    const status=await api(`/api/runs/${encodeURIComponent(id)}/workspace/restore`,{silent:true});
+    if(status.status==='ready')return;
+    if(status.status==='failed')throw new Error(status.error||'工作区恢复失败，请重试');
+    if(status.status!=='restoring')throw new Error('工作区恢复状态已变化，请重新发起操作');
+  }
+}
+
 function requestRunActivation(id,action,body={}){
   const intent=JSON.stringify({action,body});
   const existing=runActivationRequests.get(id);
@@ -65,13 +76,7 @@ function requestRunActivation(id,action,body={}){
       if(result.workspaceRestore?.status!=='restoring')return result;
       pending.restoring=true;
       paintRunActivationProgress(id);
-      for(;;){
-        await new Promise(resolve=>setTimeout(resolve,1000));
-        const status=await api(`/api/runs/${encodeURIComponent(id)}/workspace/restore`,{silent:true});
-        if(status.status==='failed')throw new Error(status.error||'工作区恢复失败，请重试');
-        if(status.status==='ready')break;
-        if(status.status!=='restoring')throw new Error('工作区恢复状态已变化，请重新发起操作');
-      }
+      await waitForRunWorkspaceRestore(id);
       pending.restoring=false;
       paintRunActivationProgress(id);
     }
