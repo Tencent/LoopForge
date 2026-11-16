@@ -216,7 +216,9 @@ func (h *agentToolGateway) discardConversationWorkspace(s *AgentToolSession, bou
 			log.Printf("release unprepared conversation workspace %s: %v", bound.Run.ID, err)
 		}
 	}
+	s.workspaceMu.Lock()
 	s.workspaceRunID = bound.Previous
+	s.workspaceMu.Unlock()
 	if err := h.repo.SetAssistantSessionWorkspaceRun(s.ChatOwnerID, s.ChatSessionID, bound.Previous, false); err != nil {
 		log.Printf("rebind conversation workspace after failure session=%s run=%s: %v", s.ChatSessionID, bound.Previous, err)
 	}
