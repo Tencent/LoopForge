@@ -133,8 +133,10 @@ export function useChat() {
     dispatchingRef = useRef(false),
     steeringRef = useRef(null),
     selectRef = useRef(null),
-    defaultModel = useRef("");
+    defaultModel = useRef(""),
+    currentExecutor = useRef(executor);
   currentId.current = activeId;
+  currentExecutor.current = executor;
   sessionRef.current = session;
   projectRef.current = projectId;
   const refreshSessions = useCallback(async () => {
@@ -593,20 +595,45 @@ export function useChat() {
   );
   useEffect(() => {
     if (!ready) return;
+    let modelRequest;
     const onMessage = (e) => {
       if (
-        e.source === window.parent &&
-        e.origin === location.origin &&
-        e.data?.type === "agentflow-credentials-changed"
-      )
-        void refreshUser();
+        e.source !== window.parent ||
+        e.origin !== location.origin ||
+        e.data?.type !== "agentflow-credentials-changed"
+      ) return;
+      void refreshUser();
+      modelRequest?.abort();
+      const request = new AbortController();
+      modelRequest = request;
+      void api("/api/assistant/models", { signal: request.signal })
+        .then((catalog) => {
+          if (request.signal.aborted || !Array.isArray(catalog?.models)) return;
+          const engine = currentExecutor.current;
+          const entries = engineModels(catalog.models, engine);
+          defaultModel.current = catalog.default || "";
+          setModels(catalog.models);
+          setSponsoredModels(sponsoredModelList(catalog));
+          setProviderCatalogs({});
+          setModel((old) => {
+            if (!entries.length || entries.some((entry) => entry.id === old)) return old;
+            if (engine === "codebuddy" && entries.some((entry) => entry.id === catalog.default))
+              return catalog.default;
+            return entries[0].id;
+          });
+        })
+        .catch(() => {});
     };
     window.addEventListener("message", onMessage);
-    if (missingKey) window.addEventListener("focus", refreshUser);
     return () => {
+      modelRequest?.abort();
       window.removeEventListener("message", onMessage);
-      window.removeEventListener("focus", refreshUser);
     };
+  }, [ready, refreshUser]);
+  useEffect(() => {
+    if (!ready || !missingKey) return;
+    window.addEventListener("focus", refreshUser);
+    return () => window.removeEventListener("focus", refreshUser);
   }, [ready, missingKey, refreshUser]);
   useEffect(() => writeQueues(queues), [queues]);
   useEffect(() => {

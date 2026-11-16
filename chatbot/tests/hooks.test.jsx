@@ -98,6 +98,39 @@ describe("conversation hooks", () => {
     localStorage.removeItem("loopforge.assistant.executor");
   });
 
+  test("refreshes the active CLI model list after credentials change", async () => {
+    localStorage.removeItem("loopforge.assistant.executor");
+    const original = apiMock.getMockImplementation();
+    let catalog = [
+      { id: "m1", name: "Default model" },
+      { id: "codex:old", name: "Old Codex model", engine: "codex" },
+    ];
+    apiMock.mockImplementation((path, options) => path === "/api/assistant/models"
+      ? Promise.resolve({ default: "m1", models: catalog })
+      : original(path, options));
+    try {
+      const { result } = renderHook(() => useChat());
+      await waitFor(() => expect(result.current.ready).toBe(true));
+      act(() => result.current.setExecutor("codex"));
+      expect(result.current.model).toBe("codex:old");
+      catalog = [
+        catalog[0],
+        { id: "codex:custom", name: "My gateway model", engine: "codex" },
+      ];
+      act(() => window.dispatchEvent(new MessageEvent("message", {
+        origin: location.origin, source: window.parent,
+        data: { type: "agentflow-credentials-changed" },
+      })));
+      await waitFor(() => {
+        expect(result.current.models.map(({ id }) => id)).toEqual(["codex:custom"]);
+        expect(result.current.model).toBe("codex:custom");
+      });
+    } finally {
+      apiMock.mockImplementation(original);
+      localStorage.removeItem("loopforge.assistant.executor");
+    }
+  });
+
   test("without an own key chat is limited to the administrator's shared models", async () => {
     localStorage.removeItem("loopforge.assistant.executor");
     const original = apiMock.getMockImplementation();
