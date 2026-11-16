@@ -54,3 +54,63 @@ func TestCheckoutsFindsClonesBelowTheWorkspace(t *testing.T) {
 		t.Fatalf("src/api = %+v", c)
 	}
 }
+
+// A checkout belongs to the sandbox user; scanning it from the host must not
+// run the programs its config names, nor follow a .git file out of the
+// workspace.
+func TestCheckoutsDoesNotRunRepositoryConfiguredPrograms(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	marker := filepath.Join(outside, "ran")
+	script := filepath.Join(outside, "evil.sh")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\necho ran >> "+marker+"\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	git := func(dir string, args ...string) {
+		t.Helper()
+		if out, err := exec.Command("git", append([]string{"-C", dir, "-c", "user.name=t", "-c", "user.email=t@t"}, args...)...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v %s", args, err, out)
+		}
+	}
+	repo := filepath.Join(root, "web")
+	if err := os.MkdirAll(repo, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	git(repo, "init", "-q")
+	git(repo, "commit", "-q", "--allow-empty", "-m", "x")
+	git(repo, "remote", "add", "origin", "https://github.com/acme/web.git")
+	hooks := filepath.Join(repo, "hooks")
+	if err := os.MkdirAll(hooks, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, hook := range []string{"reference-transaction", "post-index-change", "pre-commit"} {
+		if err := os.Symlink(script, filepath.Join(hooks, hook)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for key, value := range map[string]string{"core.fsmonitor": script, "core.hooksPath": hooks, "core.pager": script, "core.askPass": script, "credential.helper": "!" + script} {
+		git(repo, "config", key, value)
+	}
+	// A .git file pointing at a repository outside the workspace is skipped.
+	elsewhere := filepath.Join(outside, "host-repo")
+	if err := os.MkdirAll(elsewhere, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	git(elsewhere, "init", "-q")
+	git(elsewhere, "commit", "-q", "--allow-empty", "-m", "host")
+	linked := filepath.Join(root, "linked")
+	if err := os.MkdirAll(linked, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(linked, ".git"), []byte("gitdir: "+filepath.Join(elsewhere, ".git")+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	got := Checkouts(context.Background(), root)
+	if len(got) != 1 || got[0].Dir != "web" || len(got[0].Remotes) != 1 || len(got[0].Heads) != 1 {
+		t.Fatalf("checkouts = %+v", got)
+	}
+	if data, err := os.ReadFile(marker); err == nil {
+		t.Fatalf("scan ran a repository-configured program: %q", data)
+	}
+}

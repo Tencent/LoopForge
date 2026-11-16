@@ -3,6 +3,7 @@ package gitwork
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -24,7 +25,8 @@ const (
 // Checkouts lists the git checkouts at most two directory levels below root
 // (root itself included). Agents clone wherever they like, so the bound
 // repository list says nothing about them. The files may belong to a sandbox
-// user, hence safe.directory.
+// user, hence safe.directory; see checkoutGit for why that stays safe on the
+// host that scans them.
 func Checkouts(ctx context.Context, root string) []Checkout {
 	dirs := []string{}
 	var walk func(dir string, depth int)
@@ -32,7 +34,9 @@ func Checkouts(ctx context.Context, root string) []Checkout {
 		if len(dirs) >= checkoutScanLimit {
 			return
 		}
-		if _, err := os.Lstat(filepath.Join(dir, ".git")); err == nil {
+		// Only a real .git directory: a .git file or symlink could point
+		// the scan at a repository outside the workspace.
+		if info, err := os.Lstat(filepath.Join(dir, ".git")); err == nil && info.IsDir() {
 			dirs = append(dirs, dir)
 			return
 		}
@@ -54,8 +58,8 @@ func Checkouts(ctx context.Context, root string) []Checkout {
 	walk(root, 0)
 	out := []Checkout{}
 	for _, dir := range dirs {
-		remotes, _ := Run(ctx, dir, "-c", "safe.directory=*", "config", "--get-regexp", `^remote\..*\.url$`)
-		heads, err := Run(ctx, dir, "-c", "safe.directory=*", "for-each-ref", "--format=%(objectname)", "refs/heads")
+		remotes, _ := checkoutGit(ctx, dir, "config", "--local", "--no-includes", "--get-regexp", `^remote\..*\.url$`)
+		heads, err := checkoutGit(ctx, dir, "for-each-ref", "--format=%(objectname)", "refs/heads")
 		if err != nil {
 			continue
 		}
@@ -69,6 +73,30 @@ func Checkouts(ctx context.Context, root string) []Checkout {
 		out = append(out, checkout)
 	}
 	return out
+}
+
+// checkoutGit reads a checkout the sandbox user controls from the platform or
+// execution-machine host. safe.directory=* alone would let that repository's
+// config run programs here, so it pins the repository to <dir>/.git, ignores
+// the system config, and disables the config keys git executes (fsmonitor,
+// hooks, pager, editor, askpass, credential helpers); config reads skip
+// includes. Only read-only plumbing is run.
+func checkoutGit(ctx context.Context, dir string, args ...string) (string, error) {
+	base := []string{
+		"--git-dir=" + filepath.Join(dir, ".git"), "--work-tree=" + dir,
+		"-c", "safe.directory=*",
+		"-c", "core.fsmonitor=",
+		"-c", "core.hooksPath=" + os.DevNull,
+		"-c", "core.pager=cat",
+		"-c", "core.editor=true",
+		"-c", "core.askPass=",
+		"-c", "credential.helper=",
+	}
+	cmd := exec.CommandContext(ctx, "git", append(base, args...)...)
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "GIT_CONFIG_NOSYSTEM=1", "GIT_TERMINAL_PROMPT=0", "GIT_OPTIONAL_LOCKS=0", "GIT_PAGER=cat", "GIT_ASKPASS=", "SSH_ASKPASS=")
+	out, err := cmd.Output()
+	return strings.TrimSpace(string(out)), err
 }
 
 func uniqueLines(text string) []string {
