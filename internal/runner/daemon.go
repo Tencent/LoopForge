@@ -717,7 +717,7 @@ func (d *Daemon) executeTerminal(ctx context.Context, task domain.RunnerTask) ex
 		return execResult{status: domain.RunnerTaskFailed, errMsg: fmt.Sprintf("workspace %s: %v", workspace, err)}
 	}
 	if task.Invocation != nil {
-		if err := checkoutInvocationRepositories(ctx, workspace, task.Invocation, runnerTaskSandboxDriver(task)); err != nil {
+		if err := checkoutInvocationRepositories(ctx, workspace, task.Invocation); err != nil {
 			return execResult{status: domain.RunnerTaskFailed, errMsg: fmt.Sprintf("repository checkout: %v", err)}
 		}
 		if err := writeRunnerHumanContext(workspace, task.Invocation.HumanContext); err != nil {
@@ -797,7 +797,7 @@ func (d *Daemon) executeInvocation(ctx context.Context, task domain.RunnerTask) 
 	if err := os.MkdirAll(workspace, 0o755); err != nil {
 		return execResult{status: domain.RunnerTaskFailed, errMsg: fmt.Sprintf("workspace %s: %v", workspace, err)}, nil
 	}
-	if err := checkoutInvocationRepositories(ctx, workspace, inv, runnerTaskSandboxDriver(task)); err != nil {
+	if err := checkoutInvocationRepositories(ctx, workspace, inv); err != nil {
 		return execResult{status: domain.RunnerTaskFailed, errMsg: fmt.Sprintf("repository checkout: %v", err)}, nil
 	}
 	if err := writeRunnerHumanContext(workspace, inv.HumanContext); err != nil {
@@ -1105,7 +1105,7 @@ func invocationGitToken(inv *domain.RunnerInvocation) string {
 // kept for persisted legacy invocations that already checked out at the
 // workspace root. Later invocations and gates reuse the existing checkout
 // (once per workspace).
-func checkoutInvocationRepositories(ctx context.Context, workspace string, inv *domain.RunnerInvocation, driver string, refreshClean ...bool) error {
+func checkoutInvocationRepositories(ctx context.Context, workspace string, inv *domain.RunnerInvocation, refreshClean ...bool) error {
 	if inv == nil {
 		return nil
 	}
@@ -1132,9 +1132,6 @@ func checkoutInvocationRepositories(ctx context.Context, workspace string, inv *
 		}
 		if err := configureRepositoryGitIdentity(ctx, target, inv.GitUserName, inv.GitUserEmail); err != nil {
 			return err
-		}
-		if err := runtime.ProtectProjectAgentGitIndex(ctx, target, driver); err != nil {
-			return fmt.Errorf("protect repository Agent configuration in %s: %w", repo.Dir, err)
 		}
 	}
 	return nil

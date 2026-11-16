@@ -99,7 +99,7 @@ func TestDockerSandboxRunsOnDemandClaudeCodeFromMountedDirectory(t *testing.T) {
 printf '%s\n' "$*" >> "$DOCKER_TEST_LOG"
 case "$*" in
   "image inspect loopforge-platform:tested") exit 0 ;;
-  "inspect "*) exit 1 ;;
+  "inspect "*) echo 'Error: No such container' >&2; exit 1 ;;
   "exec "*) echo /workspace ;;
 esac
 `})

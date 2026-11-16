@@ -32,7 +32,6 @@ func TestDockerConversationProcessPreservesInteractiveInput(t *testing.T) {
 func TestDockerSandboxLifecycleWithFakeCLI(t *testing.T) {
 	workspace := t.TempDir()
 	cvRInstallFakeDocker(t, workspace)
-	_ = os.WriteFile(filepath.Join(workspace, "AGENTS.md"), []byte("hidden"), 0o600)
 	dockerfile := domain.DockerfileDefinition{ID: "cvR", Content: "FROM scratch\n", Files: map[string]string{"asset.txt": "asset"}}
 	sbAny, err := createDocker(context.Background(), "cvR-run", workspace,
 		domain.SandboxProfile{Driver: "docker", ReadOnlyRootFS: true, Environment: map[string]string{"A": "1"}},
@@ -70,12 +69,9 @@ func TestDockerDiscoveryImagesAndBuildHelpers(t *testing.T) {
 	workspace := t.TempDir()
 	cvRInstallFakeDocker(t, workspace)
 	ctx := context.Background()
-	source, err := dockerWorkspaceBindSource(ctx, "box")
-	if err != nil || source != workspace || !dockerContainerReusable(source, nil, workspace) {
-		t.Fatalf("source=%q err=%v", source, err)
-	}
-	if dockerContainerReusable("", nil, workspace) || dockerBindMatchesWorkspace("", workspace) {
-		t.Fatal("empty bind matched")
+	info, err := inspectDockerWorkspaceMounts(ctx, "box")
+	if err != nil || info == nil || info.source != workspace || info.legacyMasks {
+		t.Fatalf("mounts=%+v err=%v", info, err)
 	}
 	found, err := dockerSandboxesUnder(ctx, filepath.Dir(workspace))
 	if err != nil || found["agentflow-cvr"] != filepath.Base(workspace) {
@@ -158,53 +154,13 @@ func TestDockerArgumentAndErrorBranches(t *testing.T) {
 	}
 }
 
-func TestDockerMasksAndManagerPaths(t *testing.T) {
+func TestDockerManagerReclaimsCachedImages(t *testing.T) {
 	workspace := t.TempDir()
 	cvRInstallFakeDocker(t, workspace)
-	_ = os.WriteFile(filepath.Join(workspace, "CLAUDE.md"), []byte("x"), 0o600)
-	sb := &dockerSandbox{name: "box", workspace: workspace}
-	hide, err := sb.currentAgentMasks()
-	if err != nil || !cvRContains(hide, "/workspace/CLAUDE.md") {
-		t.Fatalf("hide=%v err=%v", hide, err)
-	}
-	masks, err := sb.scriptMasks(context.Background())
-	if err != nil || !cvRContains(masks, "/workspace/CLAUDE.md") {
-		t.Fatalf("masks=%v err=%v", masks, err)
-	}
-	if !maskedAgentCommand(CommandSpec{Provider: "codex"}) || maskedAgentCommand(CommandSpec{Provider: "script"}) || !trustedScriptCommand(CommandSpec{Provider: "script"}) {
-		t.Fatal("command classification")
-	}
-	args := dockerScriptCreateArgs("helper", "base", workspace, "image", "owner")
-	if !cvRContains(args, "--cap-add=SYS_ADMIN") {
-		t.Fatalf("script args=%v", args)
-	}
 	m := NewManager(workspace)
 	count, err := m.ReclaimCachedDockerImages(context.Background(), nil)
 	if err != nil || count != 1 {
 		t.Fatalf("manager image reclaim=%d err=%v", count, err)
-	}
-}
-
-func TestDockerScriptContainerAndExecution(t *testing.T) {
-	workspace := t.TempDir()
-	cvRInstallFakeDocker(t, workspace)
-	gate := filepath.Join(t.TempDir(), "gate-{os}-{arch}")
-	gateLinux := strings.ReplaceAll(strings.ReplaceAll(gate, "{os}", "linux"), "{arch}", "amd64")
-	if err := os.WriteFile(gateLinux, []byte("#!/bin/sh\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("AGENTFLOW_GATE_MCP_BINARY", gate)
-	_ = os.WriteFile(filepath.Join(workspace, "AGENTS.md"), []byte("hidden"), 0o600)
-	sb := &dockerSandbox{name: "box", workspace: workspace, started: true, profile: domain.SandboxProfile{Environment: map[string]string{"A": "1"}}}
-	if err := sb.ensureScriptContainer(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	out, err := sb.execScript(context.Background(), CommandSpec{Provider: "script", Argv: []string{"sh", "-c", "echo ok"}, environment: map[string]string{"B": "2"}}, nil)
-	if err != nil || !strings.Contains(out, "/workspace") {
-		t.Fatalf("exec script=%q err=%v", out, err)
-	}
-	if err := sb.refreshAgentMasks(context.Background()); err != nil {
-		t.Fatal(err)
 	}
 }
 
@@ -215,8 +171,10 @@ func TestDockerExecRecoversFromUnsafeCWD(t *testing.T) {
 	script := `#!/bin/sh
 workspace="${CVR_DOCKER_WORKSPACE}"
 marker="${CVR_DOCKER_MARKER}"
-if [ "${1-}" = inspect ] && [ "${2-}" = -f ]; then echo "$workspace"; exit 0; fi
-if [ "${1-}" = inspect ]; then exit 0; fi
+if [ "${1-}" = inspect ]; then
+  printf '[{"Destination":"/workspace","Source":"%s"}]\n' "$workspace"
+  exit 0
+fi
 if [ "${1-}" = exec ]; then
   case "$*" in *"cd /workspace && pwd"*) echo /workspace; exit 0;; esac
   if [ ! -e "$marker" ]; then
@@ -261,25 +219,14 @@ func cvRInstallFakeDocker(t *testing.T, workspace string) {
 set -eu
 workspace="${CVR_DOCKER_WORKSPACE}"
 if [ "${1-}" = inspect ] && [ "${2-}" = -f ]; then
-  case "${3-}" in
-    "{{range"*) printf '%s\n' "$workspace" ;;
-    *) printf '/agentflow-cvr\t%s\n' "$workspace" ;;
-  esac
+  printf '/agentflow-cvr\t%s\n' "$workspace"
   exit 0
 fi
-if [ "${1-}" = inspect ] && [ "${2-}" = --format ]; then
-  case "${3-}" in
-    "{{json .}}") echo '{"Id":"base-id","Image":"base-image","State":{"Running":true,"StartedAt":"now"}}'; exit 0 ;;
-    "{{json .Mounts}}") echo '[]'; exit 0 ;;
-    "{{.State.Running}}|{{.Id}}"*) echo 'true|container-id|now'; exit 0 ;;
-    *) echo 'Error: No such container' >&2; exit 1 ;;
-  esac
-fi
-case " $* " in
-  *" --workspace-script-view-version "*) echo agentflow-script-view-v3; exit 0 ;;
-esac
 case "$*" in
-  "image inspect --format {{.Architecture}} "*) echo amd64; exit 0 ;;
+  "inspect --type container --format {{json .Mounts}} box")
+    printf '[{"Destination":"/workspace","Source":"%s"}]\n' "$workspace"; exit 0 ;;
+  "inspect --type container "*) echo 'Error: No such container' >&2; exit 1 ;;
+  "inspect --format {{.State.Running}}|{{.Id}}|{{.State.StartedAt}} "*) echo 'true|container-id|now'; exit 0 ;;
   "image inspect --format {{.Config.User}} "*) exit 0 ;;
   "image inspect "*) exit 1 ;;
   "images --format {{.Repository}} --filter reference=agentflow-img-*"*) printf 'agentflow-img-a:latest\nagentflow-img-b\nagentflow-img-a\n'; exit 0 ;;
