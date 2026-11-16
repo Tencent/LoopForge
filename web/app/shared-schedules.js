@@ -76,12 +76,19 @@ function sharedScheduleRowInfo(job){
   const v=sharedScheduleDefinition(job.sharedTaskId,job.sharedTaskVersion);
   return `<span class="shared-schedule-origin">订阅 · v${Number(job.sharedTaskVersion)}${v?` · ${escapeHTML(v.sourceProjectName||v.sourceProjectId)}`:''}</span>`;
 }
+// Only a pending update stays on the row; publishing and browsing versions
+// live in the row's ⋯ menu (sharedScheduleRowMenuItem).
 function sharedScheduleRowAction(job){
-  if(!job.skipDispatch)return '';
-  if(!job.sharedTaskId)return `<button type="button" class="button ghost small" data-publish-schedule="${escapeHTML(job.id)}">发布共享</button>`;
+  if(!job.skipDispatch||!job.sharedTaskId)return '';
   const latest=sharedScheduleCatalog.find(v=>v.id===job.sharedTaskId);
-  const newer=latest?.version>job.sharedTaskVersion;
-  return `<button type="button" class="button ${newer?'hui-btn-soft':'ghost'} small" data-shared-versions="${escapeHTML(job.id)}">${newer?`有新版 v${latest.version}`:'查看版本'}</button>`;
+  if(!(latest?.version>job.sharedTaskVersion))return '';
+  return `<button type="button" class="button hui-btn-soft small" data-shared-versions="${escapeHTML(job.id)}">有新版 v${latest.version}</button>`;
+}
+function sharedScheduleRowMenuItem(job,item){
+  if(!job.skipDispatch)return '';
+  if(!job.sharedTaskId)return item('data-publish-schedule','发布共享','layers');
+  const latest=sharedScheduleCatalog.find(v=>v.id===job.sharedTaskId);
+  return latest?.version>job.sharedTaskVersion?'':item('data-shared-versions','查看版本','layers');
 }
 function bindSharedScheduleRowActions(host){
   host.querySelectorAll('[data-publish-schedule]').forEach(b=>b.onclick=()=>openSharedSchedulePublish(b.dataset.publishSchedule));

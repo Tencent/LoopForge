@@ -293,6 +293,22 @@ function fillScheduleRunAs(f,job){
     ?`当前使用 ${job.runAsName||'其他成员'} 的 Key。你保存后会改为所选执行身份，只有 ${job.runAsName||'该成员'} 本人保存才会保留。`
     :'选「我的 Key」后，到点以你的身份和 Key 执行；其他成员再次保存时会改回所选项。';
 }
+// The pinned conversation is chosen by the server on the first fixed run.
+function fillScheduleSessionMode(f,job){
+  const select=f.elements.sessionMode;if(!select)return;
+  select.value=job.sessionMode==='fixed'?'fixed':'';
+  scheduleSessionModeHint(job);
+  select.onchange=()=>scheduleSessionModeHint(job);
+}
+function scheduleSessionModeHint(job){
+  const f=$('#scheduleJobForm'),hint=$('#scheduleSessionHint');if(!f||!hint)return;
+  const fixed=f.elements.sessionMode.value==='fixed';
+  const pinned=fixed&&job.sessionMode==='fixed'&&job.fixedSessionId&&job.projectId===state.projectFilter?job.fixedSessionId:'';
+  if(!fixed){hint.textContent='每次执行各开一个会话，可在执行记录里打开。';return}
+  hint.innerHTML=pinned
+    ?`每次执行都接着同一个会话，带上之前的上下文。<a href="${escapeHTML(scheduleExecConversationURL({projectId:job.projectId,sessionId:pinned}))}" target="_blank" rel="noopener" data-open-fixed-session>打开当前会话 ↗</a>`
+    :'每次执行都接着同一个会话，带上之前的上下文。首次执行时创建这个会话；会话被删除后会重新创建。';
+}
 function fillScheduleJobForm(job={}){
  resetSharedScheduleVersionEditor(job);
  scheduleNotificationBindings=structuredClone(job.notifications||[]);
@@ -312,6 +328,7 @@ function fillScheduleJobForm(job={}){
   f.elements.assistantPrompt.value=job.assistantPrompt||'';
   f.elements.assistantModel.value=job.assistantModel||scheduleModelAPI()?.DEFAULT||'default';
   fillScheduleRunAs(f,job);
+  fillScheduleSessionMode(f,job);
   f.elements.useIssueWorkflow.checked=job.id?!!job.useIssueWorkflow:true;
   f.elements.maxDispatch.value=job.maxDispatch||'';
   f.elements.enabled.checked=job.id?!!job.enabled:true;
@@ -459,11 +476,63 @@ function renderScheduleJobs(){
   renderAISchedulePanels();
   startScheduleJobPoll();
 }
+// AI job rows keep 立即运行 on the row; the rest sits in a ⋯ menu. Items keep
+// the data-* hooks the row buttons used, so the list binds them as before.
+function scheduleRowMenuHTML(j){
+  const id=escapeHTML(j.id);
+  const item=(attr,label,icon,cls='')=>`<button type="button" role="menuitem" tabindex="-1" class="schedule-row-menu-item${cls}" ${attr}="${id}"><svg class="agent-icon harness-icon" data-icon="${icon}" width="16" height="16" aria-hidden="true" focusable="false"></svg><span>${label}</span></button>`;
+  return `<span class="schedule-row-more"><button type="button" class="button ghost small schedule-row-more-btn" data-schedule-menu="${id}" aria-label="更多操作：${escapeHTML(j.name)}" aria-haspopup="menu" aria-expanded="false"><svg class="agent-icon harness-icon" data-icon="more-horizontal" width="16" height="16" aria-hidden="true" focusable="false"></svg></button><span class="schedule-row-menu" role="menu" data-menu-for="${id}" hidden>${item('data-edit-schedule','编辑','edit')}${item('data-schedule-history','执行记录','history')}${sharedScheduleRowMenuItem(j,item)}<span class="schedule-row-menu-sep" role="separator"></span>${item('data-delete-schedule','删除','trash',' is-danger')}</span></span>`;
+}
+function closeScheduleRowMenus({restore=false}={}){
+  document.querySelectorAll('.schedule-row-menu:not([hidden])').forEach(menu=>{
+    menu.hidden=true;
+    const trigger=menu.previousElementSibling;
+    trigger?.setAttribute('aria-expanded','false');
+    if(restore&&menu.contains(document.activeElement))trigger?.focus();
+  });
+}
+function openScheduleRowMenu(trigger,{focus=true}={}){
+  const menu=trigger?.nextElementSibling;if(!menu)return;
+  closeScheduleRowMenus();
+  menu.hidden=false;trigger.setAttribute('aria-expanded','true');
+  window.AgentFlowHarnessIcons?.hydrate(menu);
+  const r=trigger.getBoundingClientRect(),h=menu.offsetHeight,w=menu.offsetWidth;
+  let top=r.bottom+6;if(top+h>window.innerHeight-8)top=r.top-h-6;
+  menu.style.top=`${Math.max(8,top)}px`;
+  menu.style.left=`${Math.max(8,Math.min(r.right-w,window.innerWidth-w-8))}px`;
+  if(focus)menu.querySelector('[role="menuitem"]:not([disabled])')?.focus({preventScroll:true});
+}
+function bindScheduleRowMenus(list){
+  list.querySelectorAll('[data-schedule-menu]').forEach(b=>b.onclick=e=>{
+    e.stopPropagation();
+    if(b.getAttribute('aria-expanded')==='true')closeScheduleRowMenus();
+    else openScheduleRowMenu(b);
+  });
+  list.querySelectorAll('.schedule-row-menu').forEach(menu=>{
+    menu.addEventListener('click',e=>{if(e.target.closest('[role="menuitem"]'))closeScheduleRowMenus()});
+    menu.addEventListener('keydown',e=>{
+      const items=[...menu.querySelectorAll('[role="menuitem"]:not([disabled])')];
+      const i=items.indexOf(document.activeElement);
+      const next={ArrowDown:i+1,ArrowUp:i-1,Home:0,End:items.length-1}[e.key];
+      if(next===undefined||!items.length)return;
+      e.preventDefault();items[(next+items.length)%items.length].focus();
+    });
+  });
+  if(document.body.dataset.scheduleMenuBound)return;
+  document.body.dataset.scheduleMenuBound='1';
+  document.addEventListener('click',e=>{if(!e.target.closest?.('.schedule-row-more'))closeScheduleRowMenus()});
+  document.addEventListener('keydown',e=>{if(e.key==='Escape'||e.key==='Tab')closeScheduleRowMenus({restore:e.key==='Escape'})});
+  document.addEventListener('scroll',e=>{if(!e.target.closest?.('.schedule-row-menu'))closeScheduleRowMenus()},true);
+  window.addEventListener('resize',()=>closeScheduleRowMenus());
+}
 function renderScheduleJobList(list,jobs,kind,canRun){
   if(!list)return;
   const focused=document.activeElement;
-  const focusAction=['editSchedule','runSchedule','deleteSchedule'].find(key=>focused?.dataset?.[key]);
-  const focusId=list.contains(focused)&&focusAction?focused.dataset[focusAction]:null;
+  const focusAction=['editSchedule','runSchedule','deleteSchedule','scheduleMenu'].find(key=>focused?.dataset?.[key]);
+  const focusId=list.contains(focused)&&focusAction&&!focused.closest('.schedule-row-menu')?focused.dataset[focusAction]:null;
+  // A poll re-render keeps an open ⋯ menu open (and focused) on its job.
+  const openMenu=list.querySelector('.schedule-row-menu:not([hidden])');
+  const reopenId=openMenu?.dataset.menuFor||'',reopenFocus=!!openMenu?.contains(focused);
   if(kind==='dispatch'){
     const job=jobs[0];
     list.innerHTML=job?`<div class="schedule-config-runtime"><div><b>${job.enabled?'已启用':'未启用'} · ${escapeHTML(scheduleJobTimingLabel(job))}</b><span>${escapeHTML(scheduleSourceLabel(job))} · ${scheduleIssueStatusValues(job).map(issueStatusLabel).join('、')}</span><small>${knownTime(job.lastRunAt)?`最近：${knownTime(job.lastRunAt).toLocaleString()} · 候选 ${job.lastPulled||0}，启动 ${job.lastDispatched||0}`:'尚未运行'}${scheduleJobStatusText(job)?` · ${escapeHTML(scheduleJobStatusText(job))}`:''}</small></div>${scheduleJobTraceActionsHTML(job)}<button type="button" class="button ghost small" data-run-schedule="${escapeHTML(job.id)}" ${scheduleJobRunning(job)||!canRun?'disabled':''}>${scheduleJobRunning(job)?'运行中…':'立即运行'}</button></div>${scheduleBlockerHTML(job)}`:'';
@@ -476,7 +545,8 @@ function renderScheduleJobList(list,jobs,kind,canRun){
     const status=statusText?`，${escapeHTML(statusText)}`:'';
     const runDisabled=running||!canRun;
     const runTitle=running?'任务正在服务端运行，关闭页面不会中断':(canRun?'':'本实例未启用 scheduler');
-    return `<div class="schedule-job-item${running?' is-running':''}"><div class="schedule-job-row"><button type="button" class="schedule-job-main" data-edit-schedule="${escapeHTML(j.id)}" title="${assistant?'编辑 AI 定时任务':'编辑触发配置'}"><b><span class="schedule-kind-tag ${assistant?'is-assistant':'is-dispatch'}">${kind}</span>${escapeHTML(j.name)}</b>${sharedScheduleRowInfo(j)}<span>${escapeHTML(scheduleJobTimingLabel(j))} · ${j.enabled?'已启用':'已停用'}${assistant?` · ${escapeHTML(j.runAsUserId?`使用 ${j.runAsName||'成员'} 的 Key`:'使用项目 Owner 的 Key')}`:` · 单次最多 ${escapeHTML(j.maxDispatch||10)} 个需求`}${running?' · 正在运行':''}</span><small class="${running?'schedule-run-live':''}">${(j.lastRunAt&&!String(j.lastRunAt).startsWith('0001-'))||running?`最近：${new Date(j.lastRunAt||Date.now()).toLocaleString()}${extra}${status}`:'尚未运行'}</small></button>${sharedScheduleRowAction(j)}${scheduleJobTraceActionsHTML(j)}<button type="button" class="button ghost small" data-edit-schedule="${escapeHTML(j.id)}">编辑</button><button type="button" class="button ghost small" data-run-schedule="${escapeHTML(j.id)}" ${runDisabled?'disabled':''} ${runTitle?`title="${escapeHTML(runTitle)}"`:''}>${running?'运行中…':'立即运行'}</button><button type="button" class="button ghost small danger" data-delete-schedule="${escapeHTML(j.id)}">删除</button></div>${assistant?'':scheduleBlockerHTML(j)}</div>`;
+    const session=assistant&&j.sessionMode==='fixed'?' · 同一会话':'';
+    return `<div class="schedule-job-item${running?' is-running':''}"><div class="schedule-job-row"><button type="button" class="schedule-job-main" data-edit-schedule="${escapeHTML(j.id)}" title="${assistant?'编辑 AI 定时任务':'编辑触发配置'}"><b><span class="schedule-kind-tag ${assistant?'is-assistant':'is-dispatch'}">${kind}</span>${escapeHTML(j.name)}</b>${sharedScheduleRowInfo(j)}<span>${escapeHTML(scheduleJobTimingLabel(j))} · ${j.enabled?'已启用':'已停用'}${assistant?` · ${escapeHTML(j.runAsUserId?`使用 ${j.runAsName||'成员'} 的 Key`:'使用项目 Owner 的 Key')}${session}`:` · 单次最多 ${escapeHTML(j.maxDispatch||10)} 个需求`}${running?' · 正在运行':''}</span><small class="${running?'schedule-run-live':''}">${(j.lastRunAt&&!String(j.lastRunAt).startsWith('0001-'))||running?`最近：${new Date(j.lastRunAt||Date.now()).toLocaleString()}${extra}${status}`:'尚未运行'}</small></button>${sharedScheduleRowAction(j)}${scheduleJobTraceCopyHTML(j)}<button type="button" class="button ghost small" data-run-schedule="${escapeHTML(j.id)}" ${runDisabled?'disabled':''} ${runTitle?`title="${escapeHTML(runTitle)}"`:''}>${running?'运行中…':'立即运行'}</button>${scheduleRowMenuHTML(j)}</div>${assistant?'':scheduleBlockerHTML(j)}</div>`;
   }).join('')||'<div class="sync-empty">当前项目还没有 AI 定时任务，点击右上角「新建 AI 定时任务」。</div>';
   list.querySelectorAll('[data-edit-schedule]').forEach(b=>b.onclick=()=>{
     const job=(state.data.scheduleJobs||[]).find(j=>j.id===b.dataset.editSchedule);
@@ -490,6 +560,8 @@ function renderScheduleJobList(list,jobs,kind,canRun){
   list.querySelectorAll('[data-delete-schedule]').forEach(b=>b.onclick=()=>deleteScheduleJob(b.dataset.deleteSchedule));
   list.querySelectorAll('[data-open-align-run]').forEach(b=>b.onclick=()=>openRunFromId(b.dataset.openAlignRun,{forceRuns:true}));
   list.querySelectorAll('[data-realign-run]').forEach(b=>b.onclick=()=>realignBaseline(b.dataset.realignRun));
+  bindScheduleRowMenus(list);
+  if(reopenId){const trigger=[...list.querySelectorAll('[data-schedule-menu]')].find(b=>b.dataset.scheduleMenu===reopenId);if(trigger)openScheduleRowMenu(trigger,{focus:reopenFocus})}
   if(focusId){const next=[...list.querySelectorAll('[data-edit-schedule],[data-run-schedule],[data-delete-schedule]')].find(el=>el.dataset[focusAction]===focusId);next?.focus()}
 
 }
@@ -512,6 +584,7 @@ async function saveScheduleJob(e){
     assistantPrompt:assistant?f.elements.assistantPrompt.value.trim():'',
     assistantModel:assistant?f.elements.assistantModel.value.trim():'',
     runAs:assistant&&f.elements.runAs?f.elements.runAs.value:'',
+    sessionMode:assistant&&f.elements.sessionMode?f.elements.sessionMode.value:'',
     enabled:f.elements.enabled.checked
   };
   if(assistant&&typeof sharedScheduleFormPayload==='function')Object.assign(payload,sharedScheduleFormPayload(f));

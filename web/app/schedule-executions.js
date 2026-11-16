@@ -181,8 +181,11 @@ function bindScheduleTraceButtons(host){
   host?.querySelectorAll('[data-copy-trace]').forEach(b=>b.onclick=e=>{e.stopPropagation();copyScheduleTrace(b.dataset.copyTrace)});
 }
 // Job rows: a failed run gets a direct copy button; every row links to its history.
+function scheduleJobTraceCopyHTML(job){
+  return job?.lastStatus==='failed'&&job.lastTraceId?`<button type="button" class="button ghost small sched-exec-copy" data-copy-trace="${escapeHTML(job.lastTraceId)}" aria-label="复制最近一次失败的 Trace ID 与排障信息" title="复制 Trace ID 与排障信息（${escapeHTML(job.lastTraceId)}），可直接发给 AI 助手排查"><svg class="agent-icon harness-icon" data-icon="copy" width="14" height="14" aria-hidden="true" focusable="false"></svg><span>Trace</span></button>`:'';
+}
 function scheduleJobTraceActionsHTML(job){
-  const copy=job?.lastStatus==='failed'&&job.lastTraceId?`<button type="button" class="button ghost small sched-exec-copy" data-copy-trace="${escapeHTML(job.lastTraceId)}" aria-label="复制最近一次失败的 Trace ID 与排障信息" title="复制 Trace ID 与排障信息（${escapeHTML(job.lastTraceId)}），可直接发给 AI 助手排查"><svg class="agent-icon harness-icon" data-icon="copy" width="14" height="14" aria-hidden="true" focusable="false"></svg><span>Trace</span></button>`:'';
+  const copy=scheduleJobTraceCopyHTML(job);
   return `${copy}<button type="button" class="button ghost small" data-schedule-history="${escapeHTML(job.id)}">执行记录</button>`;
 }
 function bindScheduleJobTraceActions(list){

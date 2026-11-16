@@ -83,6 +83,76 @@ test('schedule form switches job kind and timing and sends validated assistant a
   assert.match(app.document.querySelector('#scheduleJobList').textContent, /每小时/);
 });
 
+test('AI job rows keep 立即运行 visible and move the rest into a ⋯ menu', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  app.evaluate(`
+    state.projectFilter='project-1';
+    state.data.schedulerEnabled=true;
+    state.data.scheduleJobs=[{id:'job-ai',projectId:'project-1',name:'巡检',skipDispatch:true,assistantPrompt:'x',enabled:true,intervalSec:3600,sessionMode:'fixed',fixedSessionId:'chat-pinned'}];
+    window.__history=[];openScheduleExecutions=(id)=>{window.__history.push(id)};
+    renderScheduleJobs();
+  `);
+  const list = app.document.querySelector('#aiScheduleJobList');
+  const row = list.querySelector('.schedule-job-row');
+  const visible = [...row.querySelectorAll(':scope > button')].map(b => b.textContent.trim());
+  assert.deepEqual(visible, [visible[0], '立即运行'], 'only the row main and 立即运行 stay as row buttons');
+  assert.match(row.textContent, /同一会话/);
+  const trigger = row.querySelector('[data-schedule-menu="job-ai"]');
+  const menu = row.querySelector('.schedule-row-menu');
+  assert.equal(menu.hidden, true);
+  trigger.click();
+  assert.equal(menu.hidden, false);
+  assert.equal(trigger.getAttribute('aria-expanded'), 'true');
+  assert.deepEqual([...menu.querySelectorAll('[role="menuitem"]')].map(b => b.textContent.trim()), ['编辑', '执行记录', '发布共享', '删除']);
+  assert.equal(app.document.activeElement, menu.querySelector('[data-edit-schedule]'));
+  menu.dispatchEvent(new app.window.KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+  assert.equal(app.document.activeElement, menu.querySelector('[data-schedule-history]'));
+
+  // A poll re-render keeps the menu open.
+  app.evaluate('renderScheduleJobs()');
+  const reopened = list.querySelector('.schedule-row-menu');
+  assert.equal(reopened.hidden, false);
+  reopened.querySelector('[data-schedule-history]').click();
+  assert.equal(app.evaluate('JSON.stringify(window.__history)'), JSON.stringify(['job-ai']));
+  assert.equal(reopened.hidden, true, 'choosing an item closes the menu');
+
+  list.querySelector('[data-schedule-menu]').click();
+  app.document.dispatchEvent(new app.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  assert.equal(list.querySelector('.schedule-row-menu').hidden, true);
+  assert.equal(app.document.activeElement, list.querySelector('[data-schedule-menu]'));
+});
+
+test('an AI job can keep running in one conversation', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  app.router.put('/api/schedule-jobs', call => ({ ...call.body }));
+  app.evaluate(`(() => {
+    state.projectFilter='project-1';
+    state.data.scheduleJobs=[];
+    fillScheduleJobForm({});
+    const f=$('#scheduleJobForm');
+    f.elements.jobKind.value='assistant';syncScheduleJobKind();
+  })()`);
+  const form = app.document.querySelector('#scheduleJobForm');
+  const hint = app.document.querySelector('#scheduleSessionHint');
+  assert.equal(form.elements.sessionMode.value, '', 'new jobs open a conversation per execution');
+  assert.match(hint.textContent, /每次执行各开一个会话/);
+  form.elements.sessionMode.value = 'fixed';
+  form.elements.sessionMode.dispatchEvent(new app.window.Event('change'));
+  assert.match(hint.textContent, /首次执行时创建/);
+
+  app.evaluate(`fillScheduleJobForm({id:'job-ai',projectId:'project-1',name:'巡检',skipDispatch:true,assistantPrompt:'x',intervalSec:3600,enabled:true,sessionMode:'fixed',fixedSessionId:'chat-pinned'})`);
+  assert.equal(form.elements.sessionMode.value, 'fixed');
+  const link = hint.querySelector('[data-open-fixed-session]');
+  assert.ok(link, 'a pinned conversation can be opened from the form');
+  assert.equal(new URL(link.href).searchParams.get('chatSession'), 'chat-pinned');
+  form.dispatchEvent(new app.window.Event('submit', { bubbles: true, cancelable: true }));
+  await settle(4);
+  const call = app.router.calls.find(c => c.method === 'PUT' && c.path === '/api/schedule-jobs');
+  assert.equal(call.body.sessionMode, 'fixed');
+});
+
 test('an AI job can run with the saving user\'s own key', async (t) => {
   const app = await loadApp();
   t.after(app.close);
