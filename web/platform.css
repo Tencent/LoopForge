@@ -2344,6 +2344,10 @@ html[data-theme="light"] body{color-scheme:light}html[data-theme="light"] .platf
 .credential-logo.is-mini{width:18px;height:18px;border:0;background:none}
 .credential-logo.is-mini img{width:16px;height:16px}
 html[data-theme="dark"] .credential-logo.monochrome img{filter:invert(1)}
+@supports (mask-image:url("")) or (-webkit-mask-image:url("")){
+  .credential-logo.monochrome.is-configured img{grid-area:1/1;visibility:hidden}
+  .credential-logo.monochrome.is-configured::before{content:"";grid-area:1/1;width:20px;height:20px;background:var(--cr-accent);-webkit-mask:var(--credential-logo-image) center/contain no-repeat;mask:var(--credential-logo-image) center/contain no-repeat}
+}
 .credential-row-main:hover .credential-logo{transform:translateY(-1px) rotate(-3deg)}
 .credential-row-who{flex:1;min-width:0}
 .credential-row-who b{display:block;overflow:hidden;color:var(--cr-text);font-size:13.5px;font-weight:500;white-space:nowrap;text-overflow:ellipsis}
