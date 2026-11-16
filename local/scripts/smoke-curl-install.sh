@@ -45,6 +45,17 @@ for _ in {1..20}; do
 done
 curl -fsS "$BASE_URL/api/repos/Tencent/LoopForge/releases?per_page=1" >/dev/null
 
+# The curl shim should expose every host supported by the bundled Portable CLI.
+for host in pi dsh hermes; do
+  project="$TMP_DIR/portable-$host-project"
+  mkdir -p "$project"
+  LOOPFORGE_ALLOW_INSECURE=1 sh "$ROOT_DIR/install.sh" "$host" \
+    --edition portable --project-root "$project" \
+    --release-base-url "$BASE_URL/downloads/Tencent/LoopForge/releases/download/${DOWNLOAD_DIR##*/}"
+  test -f "$project/.$host/skills/devflow/SKILL.md"
+  test -f "$project/.devflow/install-state.json"
+done
+
 CLASSIC_PROJECT="$TMP_DIR/classic-project"
 mkdir -p "$CLASSIC_PROJECT"
 cat "$ROOT_DIR/install.sh" | LOOPFORGE_ALLOW_INSECURE=1 \
