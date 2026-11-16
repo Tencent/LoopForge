@@ -41,10 +41,11 @@
     [/^(?:mimo|xiaomi)(?:$|[-_.\s:\d])/i, 'mimo'],
   ];
   const FALLBACK_BRANDS = new Set(['codebuddy', 'cursor', 'opencode', 'pi']);
-  // One logo per CLI, as engineBrand in chatbot/src/engines.js.
+  // One logo per CLI, as engineBrand in chatbot/src/engines.js. `deepseek` is
+  // the DeepSeek executor that runs through Codex.
   const ENGINE_BRANDS = {
     codebuddy:'codebuddy', codex:'gpt', claude:'claude', 'claude-code':'claude', opencode:'opencode',
-    cursor:'cursor', agy:'gemini', kimi:'kimi', pi:'pi', dsh:'deepseek', zcode:'glm'
+    cursor:'cursor', agy:'gemini', kimi:'kimi', pi:'pi', dsh:'deepseek', deepseek:'deepseek', zcode:'glm'
   };
   let catalog = {
     default: DEFAULT_MODEL,

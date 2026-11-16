@@ -82,6 +82,7 @@ const key = (target, name) => {
   assert.equal(api.brandOf({ id: 'mystery-1', name: 'Mystery' }), '');
   assert.equal(api.engineBrand('codex'), 'gpt');
   assert.equal(api.engineBrand('codebuddy'), 'codebuddy');
+  assert.equal(api.engineBrand('deepseek'), 'deepseek', 'the DeepSeek executor keeps its logo');
 
   // Pickers keep painting before the catalog lands, so the built-in fallback
   // must already render a usable label, and an unknown brand shows the
