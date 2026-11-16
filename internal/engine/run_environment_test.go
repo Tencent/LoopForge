@@ -180,3 +180,44 @@ CODEBUDDY.md
 		t.Fatalf("AGENTS.md index flag after reconstruction = %q", flag)
 	}
 }
+
+func TestRunEnvironmentUnwrapsForEnsureSandboxBrowser(t *testing.T) {
+	bin := t.TempDir()
+	chromium := filepath.Join(bin, "chromium")
+	script := `#!/bin/sh
+profile=
+for arg in "$@"; do
+  case "$arg" in --user-data-dir=*) profile="${arg#*=}";; esac
+done
+mkdir -p "$profile"
+printf '9223\n/devtools/browser/env\n' > "$profile/DevToolsActivePort"
+exec sleep 30
+`
+	if err := os.WriteFile(chromium, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(bin, "playwright-mcp"), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("AGENTFLOW_CHROMIUM", chromium)
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	workspace := t.TempDir()
+	sb, err := runtime.OpenRemoteSandbox(context.Background(), "env-browser", workspace, domain.SandboxProfile{Driver: domain.SandboxDriverLocal}, runtime.SandboxRequirements{}, runtime.SandboxResources{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := &runEnvironment{sandbox: sb}
+	t.Cleanup(func() {
+		_, _ = runtime.HandleBrowser(context.Background(), "run-env-browser", domain.BrowserRequest{Operation: "stop"})
+		_ = env.Close(context.Background())
+	})
+
+	mcp := runtime.EnsureSandboxBrowser(context.Background(), env, env.Workspace(), "run-env-browser", nil)
+	if mcp == nil {
+		t.Fatal("EnsureSandboxBrowser returned nil for *runEnvironment wrapping local sandbox")
+	}
+	if mcp.ID != runtime.BrowserMCPServerID {
+		t.Fatalf("EnsureSandboxBrowser ID = %q, want %q", mcp.ID, runtime.BrowserMCPServerID)
+	}
+}

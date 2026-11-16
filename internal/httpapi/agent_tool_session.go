@@ -103,7 +103,10 @@ type AgentToolSession struct {
 	// dispatches are the Agent calls still running this turn. A subagent
 	// works in the bound workspace, so it is not switched under it.
 	// The value is the subagent id once the stream reports it.
-	dispatches        map[string]string
+	dispatches map[string]string
+	// nativeReviews are the assisted-mode reviews of external writes this
+	// phase, by approval ID; hook polls read the verdict here.
+	nativeReviews     map[string]*agentNativeReview
 	nativePhaseClosed atomic.Bool
 	closed            atomic.Bool
 	committed         atomic.Bool
@@ -117,6 +120,53 @@ type agentReplyFile struct {
 	MimeType   string
 	Data       []byte
 	Screenshot bool
+}
+
+type agentNativeReview struct {
+	digest string
+	done   chan struct{}
+	result assistantApprovalReview
+}
+
+// nativeReview starts the review of one exact native invocation on the first
+// poll and waits up to wait for its verdict; done is false when the hook has
+// to poll again. ok is false when the approval ID is reused for different
+// input. The review follows the turn's context, so a stopped turn cancels it.
+func (s *AgentToolSession) nativeReview(ctx context.Context, wait time.Duration, id, digest string, review func(context.Context) assistantApprovalReview) (assistantApprovalReview, bool, bool) {
+	s.mu.Lock()
+	item, found := s.nativeReviews[id]
+	if !found {
+		if s.nativeReviews == nil {
+			s.nativeReviews = map[string]*agentNativeReview{}
+		}
+		item = &agentNativeReview{digest: digest, done: make(chan struct{})}
+		s.nativeReviews[id] = item
+	}
+	s.mu.Unlock()
+	if item.digest != digest {
+		return assistantApprovalReview{}, false, false
+	}
+	if !found {
+		parent := s.ctx
+		if parent == nil {
+			parent = context.Background()
+		}
+		go func() {
+			ctx, cancel := context.WithTimeout(parent, nativeReviewBudget)
+			defer cancel()
+			item.result = review(ctx)
+			close(item.done)
+		}()
+	}
+	timer := time.NewTimer(wait)
+	defer timer.Stop()
+	select {
+	case <-item.done:
+		return item.result, true, true
+	case <-timer.C:
+	case <-ctx.Done():
+	}
+	return assistantApprovalReview{}, false, true
 }
 
 const (

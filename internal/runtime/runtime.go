@@ -25,6 +25,11 @@ const (
 	// BindAgentCLI injects the responsible user's key for the command's agent
 	// CLI and writes that CLI's model configuration into its private HOME.
 	BindAgentCLI CredentialBinding = "agent-cli"
+	// BindGitWorkspace gives a conversation workspace CLI the requester's Git
+	// credentials for any repository it clones itself: HTTPS asks a helper that
+	// answers only github.com, GH_TOKEN serves gh and API calls, and
+	// SSH uses the requester's keys per configured host without exposing them.
+	BindGitWorkspace CredentialBinding = "git-workspace"
 )
 
 type CodeBuddyCredential struct {
@@ -40,15 +45,19 @@ type CodeBuddyCredential struct {
 // RunCredentials lives only on the in-memory run sandbox handle. It is never
 // serialized into domain objects, run-context.json, or workspace files.
 type RunCredentials struct {
-	CodeBuddy    CodeBuddyCredential
-	Codex        ProviderCredential
-	ClaudeCode   ProviderCredential
-	AgentCLI     map[string]ProviderCredential
-	GitToken     string
-	GitSSHKeys   map[string]string `json:"-"`
-	GitUserName  string
-	GitUserEmail string
-	MCPServers   []domain.MCPServerDefinition
+	CodeBuddy  CodeBuddyCredential
+	Codex      ProviderCredential
+	ClaudeCode ProviderCredential
+	AgentCLI   map[string]ProviderCredential
+	GitToken   string
+	GitSSHKeys map[string]string `json:"-"`
+	// GitSSHHostKeys maps "host:port" to the requester's private key for a
+	// conversation workspace. It travels to the execution machine on the
+	// authenticated control connection only, in the start request of the CLI.
+	GitSSHHostKeys map[string]string `json:",omitempty"`
+	GitUserName    string
+	GitUserEmail   string
+	MCPServers     []domain.MCPServerDefinition
 }
 
 type ProviderCredential struct {

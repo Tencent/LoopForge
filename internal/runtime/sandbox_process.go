@@ -2,6 +2,9 @@ package runtime
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -10,6 +13,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 
 	"agentflow/internal/domain"
 )
@@ -56,6 +60,8 @@ func controlledBaseEnvironment(base []string) []string {
 		"CLAUDE_CODE_USE_BEDROCK=", "CLAUDE_CODE_USE_VERTEX=", "CLAUDE_CODE_USE_FOUNDRY=",
 		"CODEBUDDY_INTERNET_ENVIRONMENT=",
 		"AGENTFLOW_GIT_TOKEN=",
+		"GH_TOKEN=",
+		"GITHUB_TOKEN=",
 		"AGENTFLOW_MCP_CONFIG=",
 		"AGENTFLOW_BIN=",
 		"GIT_CONFIG_COUNT=",
@@ -148,6 +154,9 @@ func (s *processSandbox) command(ctx context.Context, command CommandSpec, base 
 			return nil, err
 		}
 		args = bwrapPrivateBinds(args, command.privateBinds)
+		if command.WorkingDir != "" {
+			args = bwrapChdir(args, command.WorkingDir)
+		}
 		args = append(args, command.Argv...)
 		cmd = exec.CommandContext(ctx, s.binary, args...)
 	default:
@@ -155,6 +164,24 @@ func (s *processSandbox) command(ctx context.Context, command CommandSpec, base 
 	}
 	cmd.Dir = s.workspace
 	cmd.Env = appendEnvironment(base, s.profile.Environment, command.environment)
+	cmd.Stdin = command.Stdin
+	if command.WorkingDir != "" {
+		cmd.Env = upsertEnv(cmd.Env, "PWD", command.WorkingDir)
+		if s.driver != "bwrap" {
+			cmd.Dir = command.WorkingDir
+		}
+	}
+	if command.OwnProcessGroup {
+		// A conversation CLI is stopped with its whole process group; bwrap's
+		// own PID namespace then takes every descendant down with it.
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+		cmd.Cancel = func() error {
+			if cmd.Process == nil {
+				return nil
+			}
+			return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		}
+	}
 	switch s.driver {
 	case "seatbelt":
 		cmd.Env = upsertEnv(cmd.Env, "TMPDIR", preferredSeatbeltTemp())
@@ -163,7 +190,72 @@ func (s *processSandbox) command(ctx context.Context, command CommandSpec, base 
 			cmd.Env = upsertEnv(cmd.Env, key, "/tmp")
 		}
 	}
+	if host := processDockerHost(cmd.Env); host != "" {
+		cmd.Env = upsertEnv(cmd.Env, "DOCKER_HOST", host)
+	}
 	return cmd, nil
+}
+
+func lookupEnvSlice(env []string, key string) string {
+	prefix := key + "="
+	for _, entry := range env {
+		if strings.HasPrefix(entry, prefix) {
+			return entry[len(prefix):]
+		}
+	}
+	return ""
+}
+
+// processDockerHost resolves the host Docker context's socket endpoint when the
+// sandbox redirects HOME away from ~/.docker and neither DOCKER_HOST nor
+// DOCKER_CONFIG was explicitly supplied. Only the endpoint URL is forwarded so
+// registry credentials in config.json remain untouched.
+func processDockerHost(env []string) string {
+	if strings.TrimSpace(lookupEnvSlice(env, "DOCKER_HOST")) != "" || strings.TrimSpace(lookupEnvSlice(env, "DOCKER_CONFIG")) != "" {
+		return ""
+	}
+	hostHome, err := os.UserHomeDir()
+	if err != nil || strings.TrimSpace(hostHome) == "" {
+		return ""
+	}
+	if childHome := strings.TrimSpace(lookupEnvSlice(env, "HOME")); childHome == "" || childHome == hostHome {
+		return ""
+	}
+	dockerDir := filepath.Join(hostHome, ".docker")
+	contextName := strings.TrimSpace(lookupEnvSlice(env, "DOCKER_CONTEXT"))
+	if contextName == "" {
+		raw, err := os.ReadFile(filepath.Join(dockerDir, "config.json"))
+		if err != nil {
+			return ""
+		}
+		var cfg struct {
+			CurrentContext string `json:"currentContext"`
+		}
+		if json.Unmarshal(raw, &cfg) != nil {
+			return ""
+		}
+		contextName = strings.TrimSpace(cfg.CurrentContext)
+	}
+	if contextName == "" || contextName == "default" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(contextName))
+	metaPath := filepath.Join(dockerDir, "contexts", "meta", hex.EncodeToString(sum[:]), "meta.json")
+	raw, err := os.ReadFile(metaPath)
+	if err != nil {
+		return ""
+	}
+	var meta struct {
+		Endpoints struct {
+			Docker struct {
+				Host string `json:"Host"`
+			} `json:"docker"`
+		} `json:"Endpoints"`
+	}
+	if json.Unmarshal(raw, &meta) != nil {
+		return ""
+	}
+	return strings.TrimSpace(meta.Endpoints.Docker.Host)
 }
 
 func seatbeltWritableTemps() []string {
@@ -251,7 +343,9 @@ func seatbeltProfileCommand(workspace string, requirements SandboxRequirements) 
 	// A broad write denial plus a narrower workspace allowance keeps the host
 	// immutable while retaining the normal coding-agent workflow.
 	b.WriteString("(deny file-write*)\n")
-	fmt.Fprintf(&b, "(allow file-write* (subpath %s))\n", strconv.Quote(root))
+	for _, variant := range seatbeltPathVariants(root) {
+		fmt.Fprintf(&b, "(allow file-write* (subpath %s))\n", strconv.Quote(variant))
+	}
 	for _, temp := range seatbeltWritableTemps() {
 		fmt.Fprintf(&b, "(allow file-write* (subpath %s))\n", strconv.Quote(temp))
 	}
@@ -260,10 +354,72 @@ func seatbeltProfileCommand(workspace string, requirements SandboxRequirements) 
 		return "", err
 	}
 	for _, state := range stateDirs {
-		fmt.Fprintf(&b, "(allow file-write* (subpath %s))\n", strconv.Quote(state.path))
+		for _, variant := range seatbeltPathVariants(state.path) {
+			fmt.Fprintf(&b, "(allow file-write* (subpath %s))\n", strconv.Quote(variant))
+		}
+	}
+	conversation := strings.TrimSpace(requirements.ConversationRoot)
+	if conversation != "" {
+		conversation, err = filepath.Abs(conversation)
+		if err != nil {
+			return "", err
+		}
+		for _, variant := range seatbeltPathVariants(filepath.Join(conversation, "home")) {
+			fmt.Fprintf(&b, "(allow file-write* (subpath %s))\n", strconv.Quote(variant))
+		}
 	}
 	b.WriteString("(allow file-write* (literal \"/dev/null\"))\n")
+	if conversation != "" {
+		// Seatbelt evaluates rules last-match-wins: place guard file and parent
+		// denials after all subpath allowances (including conversation home and
+		// temp directories) so approval hooks cannot be overwritten or renamed.
+		parents, files, err := conversationGuardPaths(conversation)
+		if err != nil {
+			return "", err
+		}
+		for _, guarded := range append(parents, files...) {
+			for _, variant := range seatbeltPathVariants(guarded) {
+				fmt.Fprintf(&b, "(deny file-write* (literal %s))\n", strconv.Quote(variant))
+			}
+		}
+	}
 	return b.String(), nil
+}
+
+func seatbeltPathVariants(path string) []string {
+	abs, err := filepath.Abs(path)
+	if err != nil || strings.TrimSpace(abs) == "" {
+		return nil
+	}
+	variants := []string{abs}
+	if resolved := seatbeltResolvePath(abs); resolved != "" && resolved != abs {
+		variants = append(variants, resolved)
+	}
+	return variants
+}
+
+func seatbeltResolvePath(abs string) string {
+	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
+		return resolved
+	}
+	// Resolve symlinked ancestors (e.g. /var -> /private/var or /tmp -> /private/tmp)
+	// even when the target file does not yet exist.
+	cur := abs
+	var tail []string
+	for {
+		parent := filepath.Dir(cur)
+		if parent == cur {
+			return abs
+		}
+		tail = append(tail, filepath.Base(cur))
+		cur = parent
+		if resolved, err := filepath.EvalSymlinks(cur); err == nil {
+			for i := len(tail) - 1; i >= 0; i-- {
+				resolved = filepath.Join(resolved, tail[i])
+			}
+			return resolved
+		}
+	}
 }
 
 // bunFSMountPoint is the virtual root Bun-compiled CLIs (Claude Code,
@@ -300,6 +456,18 @@ func bwrapPrivateBinds(args, binds []string) []string {
 	return append(out, "--")
 }
 
+// bwrapChdir points the sandboxed process at dir instead of the workspace.
+func bwrapChdir(args []string, dir string) []string {
+	out := append([]string{}, args...)
+	for i := 0; i+1 < len(out); i++ {
+		if out[i] == "--chdir" {
+			out[i+1] = dir
+			return out
+		}
+	}
+	return out
+}
+
 func bwrapArgsCommand(workspace string, requirements SandboxRequirements) ([]string, error) {
 	root, err := filepath.Abs(workspace)
 	if err != nil {
@@ -314,6 +482,22 @@ func bwrapArgsCommand(workspace string, requirements SandboxRequirements) ([]str
 		"--tmpfs", "/tmp",
 		"--proc", "/proc",
 		"--dev-bind", "/dev", "/dev",
+	}
+	if conversation := requirements.ConversationRoot; conversation != "" {
+		// Same layout as the Docker workspace: the native CLI keeps its HOME
+		// and cwd (<root>/ws, here the run workspace) across both modes.
+		args = append(args, "--bind", filepath.Join(conversation, "home"), filepath.Join(conversation, "home"), "--bind", root, filepath.Join(conversation, "ws"))
+		// The approval hooks stay read-only, as in the Docker workspace.
+		parents, files, err := conversationGuardPaths(conversation)
+		if err != nil {
+			return nil, err
+		}
+		for _, dir := range parents {
+			args = append(args, "--bind", dir, dir)
+		}
+		for _, file := range files {
+			args = append(args, "--ro-bind", file, file)
+		}
 	}
 	if requirements.BunFS && ensureBunFSMountPoint() {
 		args = append(args, "--tmpfs", bunFSMountPoint)
