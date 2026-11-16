@@ -386,7 +386,7 @@ function credentialGlyph(name,size=16,cls=''){return `<svg class="agent-icon har
 function credentialSpinner(size=14){return credentialGlyph('arc-spinner',size,'credential-spin')}
 function credentialLogo(kind,cls=''){
   const tint=kind.monochrome&&!kind.icon&&cls.split(/\s+/).includes('is-configured');
-  return `<span class="credential-logo${kind.monochrome?' monochrome':''}${cls?' '+cls:''}"${tint?` style="--credential-logo-image:url('/images/credentials/${kind.logo}.svg')"`:''}>${kind.icon?credentialGlyph(kind.icon,18):`<img src="/images/credentials/${kind.logo}.svg" alt="">`}</span>`;
+  return `<span class="credential-logo${kind.monochrome?' monochrome':''}${cls?' '+cls:''}${tint?' is-tinted':''}"${tint?` style="--credential-logo-image:url('/images/credentials/${kind.logo}.svg')"`:''}>${kind.icon?credentialGlyph(kind.icon,18):`<img src="/images/credentials/${kind.logo}.svg" alt="">`}</span>`;
 }
 function hydrateCredentialIcons(root){if(root)window.AgentFlowHarnessIcons?.hydrate?.(root)}
 function credentialNextKind(user){return CREDENTIAL_RECOMMENDED.map(credentialKind).find(kind=>!credentialConfigured(kind,user))||null}
