@@ -123,6 +123,24 @@ func TestNextIsStrictlyAfterAndUTC(t *testing.T) {
 	}
 }
 
+func TestNextFindsLeapDayAcrossNonLeapYears(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		after time.Time
+		want  time.Time
+	}{
+		{"ordinary gap", shanghai(2026, 2, 28, 12, 0), shanghai(2028, 2, 29, 0, 0)},
+		{"century gap", shanghai(2096, 2, 29, 0, 0), shanghai(2104, 2, 29, 0, 0)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := Next("0 0 29 2 *", tc.after)
+			if err != nil || !got.Equal(tc.want) {
+				t.Fatalf("Next after %s = %s (%v), want %s", tc.after, got, err, tc.want)
+			}
+		})
+	}
+}
+
 func TestNextReportsImpossibleSchedules(t *testing.T) {
 	if _, err := Next("0 0 30 2 *", time.Now()); err == nil {
 		t.Fatal("Feb 30 never occurs and should report an error")

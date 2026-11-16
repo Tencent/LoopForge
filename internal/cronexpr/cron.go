@@ -115,12 +115,14 @@ func parseField(raw string, min, max int) (uint64, error) {
 
 func (c Schedule) Matches(t time.Time) bool {
 	t = t.In(Location)
-	if c.min&(1<<uint(t.Minute())) == 0 {
-		return false
-	}
-	if c.hour&(1<<uint(t.Hour())) == 0 {
-		return false
-	}
+	return c.matchesTime(t) && c.matchesDate(t)
+}
+
+func (c Schedule) matchesTime(t time.Time) bool {
+	return c.min&(1<<uint(t.Minute())) != 0 && c.hour&(1<<uint(t.Hour())) != 0
+}
+
+func (c Schedule) matchesDate(t time.Time) bool {
 	if c.month&(1<<uint(t.Month())) == 0 {
 		return false
 	}
@@ -138,11 +140,29 @@ func Next(expr string, after time.Time) (time.Time, error) {
 		return time.Time{}, err
 	}
 	cursor := after.In(Location).Truncate(time.Minute).Add(time.Minute)
-	limit := cursor.Add(366 * 24 * time.Hour)
-	for t := cursor; t.Before(limit); t = t.Add(time.Minute) {
-		if sched.Matches(t) {
+	// February 29 can recur eight years apart across a non-leap century.
+	limit := cursor.AddDate(8, 0, 0)
+	for t := cursor; !t.After(limit); {
+		if !sched.matchesDate(t) {
+			t = nextDateCheck(t)
+			continue
+		}
+		if sched.matchesTime(t) {
 			return t.UTC(), nil
 		}
+		t = t.Add(time.Minute)
 	}
-	return time.Time{}, fmt.Errorf("cron 在一年内没有下次执行时间")
+	return time.Time{}, fmt.Errorf("cron 在八年内没有下次执行时间")
+}
+
+func nextDateCheck(t time.Time) time.Time {
+	year, month, day := t.Date()
+	next := time.Date(year, month, day+1, 0, 0, 0, 0, t.Location())
+	// A zone transition can change the local calendar before the midnight
+	// calculated above. Recheck at the transition when it comes first.
+	if _, end := t.ZoneBounds(); !end.IsZero() && end.Before(next) {
+		next = end
+	}
+	minutes := next.Sub(t) / time.Minute
+	return t.Add(max(minutes, 1) * time.Minute)
 }
