@@ -5,11 +5,14 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	goruntime "runtime"
 	"strings"
+	"time"
 
 	"agentflow/internal/scriptview"
 )
@@ -97,6 +100,13 @@ func (s *dockerSandbox) ensureScriptContainer(ctx context.Context) error {
 	if out, err := exec.CommandContext(ctx, "docker", "start", name).CombinedOutput(); err != nil {
 		return fmt.Errorf("start script view: %w: %s", err, strings.TrimSpace(string(out)))
 	}
+	if goruntime.GOOS == "windows" {
+		// Docker cp preserves the host file mode. Windows has no executable bit,
+		// so enable execution on the container-owned copy before its first run.
+		if out, err := exec.CommandContext(ctx, "docker", "exec", "--user", "0:0", name, "chmod", "0755", scriptViewBinary).CombinedOutput(); err != nil {
+			return fmt.Errorf("set script view executable mode: %w: %s", err, strings.TrimSpace(string(out)))
+		}
+	}
 	probe, err := exec.CommandContext(ctx, "docker", "exec", name, scriptViewBinary, scriptview.ProbeArgument).CombinedOutput()
 	if err != nil || strings.TrimSpace(string(probe)) != scriptview.Version {
 		return fmt.Errorf("script view helper version is incompatible; deploy the matching platform helper")
@@ -117,7 +127,7 @@ func dockerScriptCreateArgs(name, base, workspace, image, owner string) []string
 	return append(args, "--entrypoint", "sh", image, "-c", "trap : TERM INT; sleep infinity & wait")
 }
 
-func (s *dockerSandbox) execScript(ctx context.Context, command CommandSpec, sink EventSink) (string, error) {
+func (s *dockerSandbox) execScript(ctx context.Context, command CommandSpec, sink EventSink) (out string, err error) {
 	if err := s.ensureScriptContainer(ctx); err != nil {
 		return "", err
 	}
@@ -125,7 +135,29 @@ func (s *dockerSandbox) execScript(ctx context.Context, command CommandSpec, sin
 	if err != nil {
 		return "", err
 	}
-	view := scriptview.Config{Masks: masks, Aliases: s.conversationAliases(), Argv: dockerWorkspaceExecArgv(command.Argv)}
+	argv := dockerWorkspaceExecArgv(command.Argv)
+	if goruntime.GOOS == "windows" {
+		lease, releaseLease, err := startDockerOwnerLease(ctx, s.name)
+		if err != nil {
+			return "", err
+		}
+		defer releaseLease()
+		identity, err := dockerProcessToken()
+		if err != nil {
+			return "", err
+		}
+		file := "/tmp/loopforge-script-process-" + identity + ".pid"
+		argv = dockerScriptProcessArgv(file, lease, argv)
+		defer func() {
+			stopCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			stop := append([]string{"exec", s.name}, dockerScriptStopArgv(file)...)
+			if stopErr := runDockerOwnerControl(stopCtx, stop...); stopErr != nil {
+				err = errors.Join(err, fmt.Errorf("stop Windows Docker script processes: %w", stopErr))
+			}
+		}()
+	}
+	view := scriptview.Config{Masks: masks, Aliases: s.conversationAliases(), Argv: argv}
 	config, err := json.Marshal(view)
 	if err != nil {
 		return "", err
@@ -135,7 +167,11 @@ func (s *dockerSandbox) execScript(ctx context.Context, command CommandSpec, sin
 		args = append(args, "-e", environment)
 	}
 	args = append(args, dockerScriptContainerName(s.name), scriptViewBinary, "--workspace-script-view", string(config))
-	return runCommand(exec.CommandContext(ctx, "docker", args...), sink)
+	out, err = runCommand(exec.CommandContext(ctx, "docker", args...), sink)
+	if err != nil && strings.Contains(out, dockerWindowsPythonRequired) {
+		err = errors.New(dockerWindowsPythonRequired)
+	}
+	return out, err
 }
 
 func (s *dockerSandbox) scriptMasks(ctx context.Context) ([]string, error) {
@@ -213,8 +249,8 @@ func (s *dockerSandbox) currentAgentMasks() ([]string, error) {
 			return nil, err
 		}
 		hide = append(hide, filepath.ToSlash(filepath.Join("/workspace", rel)))
-		if root := s.requirements.ConversationRoot; root != "" {
-			hide = append(hide, filepath.ToSlash(filepath.Join(root, "ws", rel)))
+		for _, alias := range s.conversationAliases() {
+			hide = append(hide, filepath.ToSlash(filepath.Join(alias, rel)))
 		}
 	}
 	return hide, nil
@@ -246,5 +282,5 @@ func (s *dockerSandbox) conversationAliases() []string {
 	if s.requirements.ConversationRoot == "" {
 		return nil
 	}
-	return []string{filepath.ToSlash(filepath.Join(s.requirements.ConversationRoot, "ws"))}
+	return []string{filepath.ToSlash(filepath.Join(conversationExecutionRoot(s.requirements.ConversationRoot, true), "ws"))}
 }

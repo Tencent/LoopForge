@@ -132,6 +132,9 @@ func bindCommand(sandbox Sandbox, workspace string, command CommandSpec, credent
 					return CommandSpec{}, fmt.Errorf("%s 需要独立的 HOME 目录", AgentCLILabel(command.Provider))
 				}
 				home = HostAgentCLIHome(homeEnv)
+				if docker, ok := unwrapSandbox(sandbox).(*dockerSandbox); ok {
+					homeEnv = conversationDockerValue(homeEnv, docker.requirements.ConversationRoot)
+				}
 			}
 			argv, env, err := ApplyAgentCLICredential(command.Provider, credentials.AgentCLI[command.Provider], command.AgentCLI, home, homeEnv, bound.Argv)
 			if err != nil {

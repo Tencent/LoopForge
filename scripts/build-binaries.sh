@@ -48,7 +48,9 @@ build() {
   go build "${flags[@]}" -o "$staging/" "$@" || { rm -rf "$staging"; return 1; }
   local package
   for package in "$@"; do
-    mv "$staging/${package##*/}" "$output/${package##*/}$suffix"
+    local extension=""
+    [[ ${GOOS:-} == windows ]] && extension=".exe"
+    mv "$staging/${package##*/}$extension" "$output/${package##*/}$suffix$extension"
   done
   rmdir "$staging"
 }
@@ -62,6 +64,10 @@ if [[ $mode != platform ]]; then
       printf '\nBuilding agentflow-runner and agentflow-gate-mcp (%s/%s)…\n' "$target_os" "$target_arch"
       GOOS="$target_os" GOARCH="$target_arch" build "-$target_os-$target_arch" ./cmd/agentflow-runner ./cmd/agentflow-gate-mcp
     done
+  done
+  for target_arch in amd64 arm64; do
+    printf '\nBuilding agentflow-runner and agentflow-gate-mcp (windows/%s)…\n' "$target_arch"
+    GOOS=windows GOARCH="$target_arch" build "-windows-$target_arch" ./cmd/agentflow-runner ./cmd/agentflow-gate-mcp
   done
 fi
 if [[ $mode != helpers ]]; then

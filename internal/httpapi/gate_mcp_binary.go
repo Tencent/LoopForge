@@ -24,7 +24,7 @@ func serveGateMCPBinary(c *gin.Context) {
 		return
 	}
 	if pattern := strings.TrimSpace(os.Getenv("AGENTFLOW_GATE_MCP_BINARY")); pattern != "" {
-		path := strings.ReplaceAll(strings.ReplaceAll(pattern, "{os}", targetOS), "{arch}", targetArch)
+		path := configuredBinaryPath(pattern, targetOS, targetArch)
 		info, err := os.Stat(path)
 		if err != nil || info.IsDir() || info.Size() == 0 {
 			c.JSON(http.StatusNotFound, map[string]string{"error": fmt.Sprintf("gate MCP binary %s/%s is not deployed", targetOS, targetArch)})
@@ -75,5 +75,9 @@ func serveGateMCPBinary(c *gin.Context) {
 }
 
 func serveGateMCPFile(c *gin.Context, path string) {
-	serveBinaryArtifact(c, path, "agentflow-gate-mcp")
+	name := "agentflow-gate-mcp"
+	if sanitizePlatformParam(c.Query("os")) == "windows" {
+		name += ".exe"
+	}
+	serveBinaryArtifact(c, path, name)
 }

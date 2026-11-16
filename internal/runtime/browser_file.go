@@ -116,6 +116,10 @@ func handleWorkspaceFile(ctx context.Context, runID, file string) (domain.Browse
 
 // serveWorkspaceFile is the host browser's counterpart of workspaceFileScript.
 func serveWorkspaceFile(root, file string, limit int64) ([]byte, int) {
+	nativePath, ok := hostWorkspaceFilePath(file)
+	if !ok {
+		return nil, workspaceFileOutside
+	}
 	realRoot, err := filepath.EvalSymlinks(root)
 	if err != nil {
 		return nil, workspaceFileMissing
@@ -124,7 +128,7 @@ func serveWorkspaceFile(root, file string, limit int64) ([]byte, int) {
 		rel, err := filepath.Rel(realRoot, p)
 		return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 	}
-	real, err := filepath.EvalSymlinks(filepath.FromSlash(file))
+	real, err := filepath.EvalSymlinks(nativePath)
 	if err != nil {
 		return nil, workspaceFileMissing
 	}

@@ -1,0 +1,88 @@
+name: windows
+
+on:
+  pull_request:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  runner-lifecycle:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    env:
+      CGO_ENABLED: '0'
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-python@v5.6.0
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version: '22'
+      - name: Prepare Runner integration test paths
+        shell: pwsh
+        run: |
+          $binaryRoot = Join-Path $env:RUNNER_TEMP 'loopforge-windows'
+          New-Item -ItemType Directory -Force $binaryRoot | Out-Null
+          "LOOPFORGE_TEST_RUNNER_BINARY=$(Join-Path $binaryRoot 'agentflow-runner.exe')" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "LOOPFORGE_TEST_GATE_BINARY=$(Join-Path $binaryRoot 'agentflow-gate-mcp.exe')" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "LOOPFORGE_TEST_LINUX_GATE_BINARY=$(Join-Path $binaryRoot 'agentflow-gate-mcp-linux-amd64')" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+      - name: Expose the native Git for Windows shell to integration tests
+        shell: pwsh
+        run: |
+          $gitRoot = Split-Path (Split-Path (Get-Command git.exe).Source -Parent) -Parent
+          Join-Path $gitRoot 'bin' | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+          Join-Path $gitRoot 'usr/bin' | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+      - name: Install the pinned native Codex CLI for local hook acceptance
+        shell: pwsh
+        run: |
+          $toolRoot = Join-Path $env:RUNNER_TEMP 'loopforge-native-clis'
+          npm install --prefix $toolRoot --no-save --no-package-lock --ignore-scripts --no-audit --no-fund @openai/codex@0.162.1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $binary = Join-Path $toolRoot 'node_modules/@openai/codex-win32-x64/vendor/x86_64-pc-windows-msvc/bin/codex.exe'
+          if (-not (Test-Path -LiteralPath $binary)) { throw 'The pinned native Codex executable was not installed.' }
+          "LOOPFORGE_TEST_CODEX_BINARY=$binary" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+      - name: Build the frontend embedded by HTTP integration tests
+        shell: bash
+        run: |
+          npm --prefix chatbot ci --include=dev --no-audit --no-fund
+          npm --prefix chatbot run build
+      - name: Verify Runner domain and CLI contracts
+        run: go test ./internal/domain ./cmd/agentflow-runner -count=1
+      - name: Build the native Windows Runner and Gate helper
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force (Split-Path $env:LOOPFORGE_TEST_RUNNER_BINARY) | Out-Null
+          go build -o $env:LOOPFORGE_TEST_RUNNER_BINARY ./cmd/agentflow-runner
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          go build -o $env:LOOPFORGE_TEST_GATE_BINARY ./cmd/agentflow-gate-mcp
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $env:GOOS = 'linux'
+          try {
+            go build -o $env:LOOPFORGE_TEST_LINUX_GATE_BINARY ./cmd/agentflow-gate-mcp
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          } finally { Remove-Item Env:GOOS }
+      - name: Verify Windows execution, process trees, filesystem boundaries and downloads
+        run: >-
+          go test -p=2 ./internal/processgroup ./internal/procwatch ./internal/gitwork ./internal/runtime ./internal/runner ./internal/httpapi ./internal/preview
+          -run 'TestWindows|TestSSHAgentFactory|TestBrowserDockerEntrypointUsesLinuxLineEndings|TestWorkspaceLock|TestFilesystemEnvironmentIdentity|TestAssistantNativeFileLock|TestArchiveDirRejectsHardlink|TestArchiveDirAcceptsLongWindowsPaths|TestRejectSpecialFailsClosed|TestGateMCPSubmit|TestMaterializeInvocationInjectsGateMCP|TestMaterializeGateMCPSelectsLinuxForDocker|TestReapOrphanHostBrowsers'
+          -count=1 -timeout=300s -v
+      - name: Exercise installed Windows Runner lifecycle and real tasks
+        run: python scripts/test-windows-runner-lifecycle.py -v
+      - name: Verify installer lifecycle with Windows PowerShell 5.1
+        env:
+          LOOPFORGE_TEST_POWERSHELL: powershell
+        run: python scripts/test-windows-installer.py -v
+      - name: Verify installer lifecycle with PowerShell 7
+        env:
+          LOOPFORGE_TEST_POWERSHELL: pwsh
+        run: python scripts/test-windows-installer.py -v
+      - name: Vet Windows packages
+        run: go vet ./internal/processgroup ./internal/procwatch ./internal/gitwork ./internal/runtime ./internal/runner ./internal/httpapi ./internal/preview ./cmd/agentflow-runner

@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -45,6 +46,11 @@ func requestWithHeaders(t *testing.T, h http.Handler, method, path string, body 
 }
 
 func newRunnerTestServer(t *testing.T) http.Handler {
+	_, h := newRunnerTestServerWithStore(t)
+	return h
+}
+
+func newRunnerTestServerWithStore(t *testing.T) (*repo.Store, http.Handler) {
 	t.Helper()
 	root := t.TempDir()
 	s, err := repo.OpenTest()
@@ -56,7 +62,166 @@ func newRunnerTestServer(t *testing.T) http.Handler {
 		t.Fatal(err)
 	}
 	e := engine.New(s, runtime.NewManager(filepath.Join(root, "workspaces")))
-	return New(s, e, tracker.NewService(), "", "")
+	return s, New(s, e, tracker.NewService(), "", "")
+}
+
+func issueRunnerBindCodeForTest(t *testing.T, h http.Handler, login string) string {
+	t.Helper()
+	t.Setenv("AGENTFLOW_LOCAL_LOGIN_USER", login)
+	request := httptest.NewRequest(http.MethodPost, "/api/auth/local", bytes.NewReader([]byte("{}")))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Origin", "http://example.com")
+	request.RemoteAddr = "127.0.0.1:60000"
+	recorder := httptest.NewRecorder()
+	h.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("local login for %s: %d %s", login, recorder.Code, recorder.Body.String())
+	}
+	cookie := ""
+	for _, value := range recorder.Result().Cookies() {
+		if value.Name == authCookieName {
+			cookie = value.Value
+		}
+	}
+	if cookie == "" {
+		t.Fatal("local login did not return an authentication cookie")
+	}
+	recorder = requestWithHeaders(t, h, http.MethodPost, "/api/runners/bind-codes", map[string]any{}, map[string]string{"Cookie": authCookieName + "=" + cookie})
+	var response struct {
+		Code string `json:"code"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); recorder.Code != http.StatusOK || err != nil || response.Code == "" {
+		t.Fatalf("issue bind code for %s: %d %s", login, recorder.Code, recorder.Body.String())
+	}
+	return response.Code
+}
+
+func registerRunnerWithCredentialForTest(t *testing.T, h http.Handler, credential, runnerID string) (string, string) {
+	t.Helper()
+	recorder := requestWithHeaders(t, h, http.MethodPost, "/api/runners/register", map[string]any{
+		"runnerId": runnerID, "name": "windows-rebind", "os": "windows", "arch": "amd64",
+		"version": domain.RunnerVersionDefaultSelection, "maxConcurrency": 3,
+		"runtimes": []domain.RunnerRuntime{{Provider: "codex", BinaryPath: "C:/tools/codex.exe", Status: domain.RuntimeStatusOnline}},
+	}, map[string]string{"X-Bootstrap-Token": credential})
+	var response struct {
+		RunnerID     string `json:"runnerId"`
+		SessionToken string `json:"sessionToken"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); recorder.Code != http.StatusOK || err != nil || response.RunnerID == "" || response.SessionToken == "" {
+		t.Fatalf("register machine: %d %s", recorder.Code, recorder.Body.String())
+	}
+	return response.RunnerID, response.SessionToken
+}
+
+func TestRunnerRebindRenewsSameOwnerExpiredOrRevokedSession(t *testing.T) {
+	for _, invalidation := range []string{"expired", "revoked"} {
+		t.Run(invalidation, func(t *testing.T) {
+			store, h := newRunnerTestServerWithStore(t)
+			t.Setenv("AGENTFLOW_RUNNER_BOOTSTRAP_TOKEN", "")
+			runnerID, oldSession := registerRunnerWithCredentialForTest(t, h, issueRunnerBindCodeForTest(t, h, "alice"), "")
+			if err := store.SetDefaultRunner(42, runnerID, time.Now().UTC()); err != nil {
+				t.Fatal(err)
+			}
+			if err := store.SetRunnerRunLimit(runnerID, 4); err != nil {
+				t.Fatal(err)
+			}
+			if err := store.SetRunnerRuntimeAuthMode(runnerID, "codex", domain.RuntimeAuthPersonal, time.Now().UTC()); err != nil {
+				t.Fatal(err)
+			}
+			if err := store.SetRunnerRuntimeStatus(runnerID, "codex", domain.RuntimeStatusDisabled, time.Now().UTC()); err != nil {
+				t.Fatal(err)
+			}
+			existing, ok := store.Runner(runnerID)
+			if !ok {
+				t.Fatal("registered machine missing")
+			}
+			if invalidation == "expired" {
+				expired := time.Now().UTC().Add(-time.Hour)
+				existing.SessionExpiresAt = &expired
+			} else {
+				existing.SessionTokenHash = strings.Repeat("f", 64)
+			}
+			if err := store.PutRunner(existing); err != nil {
+				t.Fatal(err)
+			}
+			oldAuth := map[string]string{"Authorization": "Bearer " + oldSession}
+			if response := requestWithHeaders(t, h, http.MethodPost, "/api/runners/heartbeat", map[string]any{}, oldAuth); response.Code != http.StatusUnauthorized {
+				t.Fatalf("invalidated session heartbeat=%d, want 401", response.Code)
+			}
+			reboundID, newSession := registerRunnerWithCredentialForTest(t, h, issueRunnerBindCodeForTest(t, h, "alice"), runnerID)
+			rebound, ok := store.Runner(runnerID)
+			if !ok || reboundID != runnerID || rebound.OwnerUserID != 42 || !rebound.CreatedAt.Equal(existing.CreatedAt) {
+				t.Fatalf("rebind changed machine identity or owner: %+v", rebound)
+			}
+			if newSession == oldSession || rebound.SessionTokenHash == existing.SessionTokenHash || rebound.SessionExpiresAt == nil || !rebound.SessionExpiresAt.After(time.Now().UTC()) {
+				t.Fatal("rebind did not rotate and renew the session")
+			}
+			if store.DefaultRunner(42) != runnerID || rebound.RunLimit != 4 || len(rebound.Runtimes) != 1 || rebound.Runtimes[0].AuthMode != domain.RuntimeAuthPersonal || rebound.Runtimes[0].Status != domain.RuntimeStatusDisabled {
+				t.Fatalf("rebind reset selections or runtime preferences: %+v", rebound)
+			}
+			if response := requestWithHeaders(t, h, http.MethodPost, "/api/runners/heartbeat", map[string]any{}, map[string]string{"Authorization": "Bearer " + newSession}); response.Code != http.StatusOK {
+				t.Fatalf("new session heartbeat: %d %s", response.Code, response.Body.String())
+			}
+			if response := requestWithHeaders(t, h, http.MethodPost, "/api/runners/heartbeat", map[string]any{}, oldAuth); response.Code != http.StatusUnauthorized {
+				t.Fatalf("old session still accepted after rebind: %d", response.Code)
+			}
+		})
+	}
+}
+
+func TestRunnerRebindRejectsDifferentOwnerWithoutMutation(t *testing.T) {
+	store, h := newRunnerTestServerWithStore(t)
+	t.Setenv("AGENTFLOW_RUNNER_BOOTSTRAP_TOKEN", "boot-secret")
+	if err := store.PutUser(domain.User{ID: 43, LoginName: "bob", ChineseName: "鲍勃"}); err != nil {
+		t.Fatal(err)
+	}
+	runnerID, session := registerRunnerWithCredentialForTest(t, h, issueRunnerBindCodeForTest(t, h, "alice"), "")
+	if err := store.SetDefaultRunner(42, runnerID, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetRunnerRuntimeAuthMode(runnerID, "codex", domain.RuntimeAuthPersonal, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetRunnerRuntimeStatus(runnerID, "codex", domain.RuntimeStatusDisabled, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	before, _ := store.Runner(runnerID)
+	for _, credential := range []string{issueRunnerBindCodeForTest(t, h, "bob"), "boot-secret"} {
+		response := requestWithHeaders(t, h, http.MethodPost, "/api/runners/register", map[string]any{
+			"runnerId": runnerID, "name": "changed-owner", "os": "linux", "maxConcurrency": 12,
+			"runtimes": []domain.RunnerRuntime{{Provider: "mock", Status: domain.RuntimeStatusOnline}},
+		}, map[string]string{"X-Bootstrap-Token": credential})
+		if response.Code != http.StatusForbidden {
+			t.Fatalf("foreign registration: %d %s", response.Code, response.Body.String())
+		}
+		after, _ := store.Runner(runnerID)
+		if !reflect.DeepEqual(after, before) || store.DefaultRunner(42) != runnerID || store.DefaultRunner(43) != "" {
+			t.Fatalf("foreign registration changed machine, session or selections: before=%+v after=%+v", before, after)
+		}
+	}
+	if response := requestWithHeaders(t, h, http.MethodPost, "/api/runners/heartbeat", map[string]any{}, map[string]string{"Authorization": "Bearer " + session}); response.Code != http.StatusOK {
+		t.Fatalf("foreign rebind invalidated owner's session: %d %s", response.Code, response.Body.String())
+	}
+}
+
+func TestRunnerRebindSharedBootstrapKeepsPoolOwnership(t *testing.T) {
+	store, h := newRunnerTestServerWithStore(t)
+	t.Setenv("AGENTFLOW_RUNNER_BOOTSTRAP_TOKEN", "boot-secret")
+	runnerID, oldSession := registerRunnerWithCredentialForTest(t, h, "boot-secret", "")
+	before, _ := store.Runner(runnerID)
+	response := requestWithHeaders(t, h, http.MethodPost, "/api/runners/register", map[string]any{"runnerId": runnerID, "name": "claim-pool"}, map[string]string{"X-Bootstrap-Token": issueRunnerBindCodeForTest(t, h, "alice")})
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("personal code claimed shared machine: %d %s", response.Code, response.Body.String())
+	}
+	after, _ := store.Runner(runnerID)
+	if !reflect.DeepEqual(before, after) {
+		t.Fatal("rejected personal registration changed shared machine")
+	}
+	reboundID, newSession := registerRunnerWithCredentialForTest(t, h, "boot-secret", runnerID)
+	rebound, _ := store.Runner(runnerID)
+	if reboundID != runnerID || rebound.OwnerUserID != 0 || newSession == oldSession || !rebound.CreatedAt.Equal(before.CreatedAt) {
+		t.Fatalf("shared bootstrap reconnect changed pool identity: %+v", rebound)
+	}
 }
 
 func registerTestRunner(t *testing.T, h http.Handler) (runnerID, session string) {
@@ -659,6 +824,7 @@ func TestRunnerTaskClaimFindsTaskInsertedByAnotherProcess(t *testing.T) {
 func TestIsRunnerAgentPath(t *testing.T) {
 	agentPaths := []string{
 		"/runners/install.sh",
+		"/runners/install.ps1",
 		"/runners/agentflow-runner",
 		"/runners/agentflow-gate-mcp",
 		"/runners/health",
@@ -722,7 +888,7 @@ func TestRunnerMachinePlaneNeedsNoUserIdentityButKeepsRunnerAuth(t *testing.T) {
 	e := engine.New(s, runtime.NewManager(filepath.Join(root, "workspaces")))
 	h := New(s, e, tracker.NewService(), "preview", "secret")
 
-	for _, path := range []string{"/runners/install.sh", "/runners/health", "/runners/agentflow-runner?os=linux&arch=amd64", "/runners/agentflow-gate-mcp?os=linux&arch=amd64"} {
+	for _, path := range []string{"/runners/install.sh", "/runners/install.ps1", "/runners/health", "/runners/agentflow-runner?os=linux&arch=amd64", "/runners/agentflow-gate-mcp?os=linux&arch=amd64"} {
 		rec := requestWithHeaders(t, h, http.MethodGet, path, nil, nil)
 		if rec.Code != http.StatusOK {
 			t.Fatalf("public machine asset %s: status=%d body=%s", path, rec.Code, rec.Body.String())

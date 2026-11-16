@@ -13,6 +13,7 @@ import (
 	"runtime"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 	"unicode/utf8"
@@ -1788,9 +1789,7 @@ func TestMaterializeProviderAssets(t *testing.T) {
 				t.Fatalf("CodeBuddy hook output is not invocation-scoped: %v", cfg.HookOutput)
 			}
 			for _, name := range []string{"hooks", "codebuddy-settings.json"} {
-				if info, err := os.Lstat(filepath.Join(agentRoot, name)); err != nil || info.Mode()&os.ModeSymlink == 0 {
-					t.Fatalf("CodeBuddy Agent binding %s is not a symlink: %v, %v", name, info, err)
-				}
+				assertAgentBinding(t, filepath.Join(agentRoot, name))
 			}
 		case "codex":
 			if containsArg(cfg.Args, "--ignore-user-config") {
@@ -1812,13 +1811,9 @@ func TestMaterializeProviderAssets(t *testing.T) {
 			}
 		}
 		for _, name := range []string{"skills", "rules", "mcp", "agent-system.md", "mcp.json"} {
-			if info, err := os.Lstat(filepath.Join(agentRoot, name)); err != nil || info.Mode()&os.ModeSymlink == 0 {
-				t.Fatalf("agent binding %s is not a symlink: %v, %v", name, info, err)
-			}
+			assertAgentBinding(t, filepath.Join(agentRoot, name))
 		}
-		if info, err := os.Lstat(filepath.Join(dir, ".agentflow", "bindings", "reviewer", "skills", "review")); err != nil || info.Mode()&os.ModeSymlink == 0 {
-			t.Fatalf("selected skill binding is not a symlink: %v, %v", info, err)
-		}
+		assertAgentBinding(t, filepath.Join(dir, ".agentflow", "bindings", "reviewer", "skills", "review"))
 		raw, _ := os.ReadFile(instruction)
 		if !strings.Contains(string(raw), "Never leak secrets") {
 			t.Fatalf("rule was not compiled for %s", kind)
@@ -1847,9 +1842,7 @@ func TestMaterializeKeepsAssetsAgentScopedAndRuntimeInvocationScoped(t *testing.
 		}
 	}
 	link := filepath.Join(dir, ".agentflow", "reviewer", "skills")
-	if info, err := os.Lstat(link); err != nil || info.Mode()&os.ModeSymlink == 0 {
-		t.Fatalf("Agent skill view is not a symlink: %v, %v", info, err)
-	}
+	assertAgentBinding(t, link)
 	if _, err := os.Stat(filepath.Join(link, "review", "SKILL.md")); err != nil {
 		t.Fatalf("Agent skill link does not resolve: %v", err)
 	}
@@ -1859,6 +1852,7 @@ func TestMaterializeRejectsRepositoryAgentflowSymlink(t *testing.T) {
 	dir := t.TempDir()
 	outside := t.TempDir()
 	if err := os.Symlink(outside, filepath.Join(dir, ".agentflow")); err != nil {
+		skipWindowsSymlinkPrivilege(t, err)
 		t.Fatal(err)
 	}
 	_, err := materialize(dir, "invoke-1", domain.ExecutorDefinition{Kind: "codex"}, domain.AgentDefinition{ID: "probe", Name: "Probe"}, domain.AgentAssetBundle{})
@@ -1905,6 +1899,7 @@ func TestMaterializeCodeBuddyDoesNotOverwriteRepositoryInstructions(t *testing.T
 		t.Fatal(err)
 	}
 	if err := os.Symlink("AGENTS.md", codebuddy); err != nil {
+		skipWindowsSymlinkPrivilege(t, err)
 		t.Fatal(err)
 	}
 	_, err := materialize(dir, "invoke-1", domain.ExecutorDefinition{Kind: "codebuddy"}, domain.AgentDefinition{ID: "fixer", Name: "Fixer", Prompt: "agent policy"}, domain.AgentAssetBundle{})
@@ -1918,6 +1913,26 @@ func TestMaterializeCodeBuddyDoesNotOverwriteRepositoryInstructions(t *testing.T
 	info, err := os.Lstat(codebuddy)
 	if err != nil || info.Mode()&os.ModeSymlink == 0 {
 		t.Fatalf("CODEBUDDY.md symlink changed: %v, %v", info, err)
+	}
+}
+
+// Windows uses ordinary snapshots so bindings work without symlink privileges.
+func assertAgentBinding(t *testing.T, path string) {
+	t.Helper()
+	info, err := os.Lstat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantSymlink := runtime.GOOS != "windows"
+	if (info.Mode()&os.ModeSymlink != 0) != wantSymlink {
+		t.Fatalf("binding %s symlink=%t, want %t", path, info.Mode()&os.ModeSymlink != 0, wantSymlink)
+	}
+}
+
+func skipWindowsSymlinkPrivilege(t *testing.T, err error) {
+	t.Helper()
+	if runtime.GOOS == "windows" && errors.Is(err, syscall.Errno(1314)) {
+		t.Skip("symlink creation requires Developer Mode or elevated privileges")
 	}
 }
 

@@ -1,7 +1,6 @@
 package runtime
 
 import (
-	"agentflow/internal/domain"
 	"bytes"
 	"errors"
 	"fmt"
@@ -10,6 +9,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"agentflow/internal/domain"
 )
 
 const processWaitDelay = time.Second
@@ -17,6 +18,7 @@ const processWaitDelay = time.Second
 var errProcessNotStarted = errors.New("process was not started")
 
 func runCommand(cmd *exec.Cmd, sink EventSink) (string, error) {
+	prepareCommandProcess(cmd)
 	var buf bytes.Buffer
 	var mu sync.Mutex
 	stdout := &processWriter{output: &buf, mu: &mu, sink: sink, name: "process.stdout", level: "info"}
@@ -32,24 +34,22 @@ func runCommand(cmd *exec.Cmd, sink EventSink) (string, error) {
 	// until process.started is delivered so the sink stays serialized and the
 	// event always precedes the first output line.
 	mu.Lock()
-	err := cmd.Start()
+	cleanup, err := startCommandProcess(cmd)
 	if err == nil && sink != nil {
 		sink(domain.TelemetryEvent{Category: "process", Name: "process.started", Timestamp: time.Now().UTC(), Phase: "start", Message: compactCommand(cmd.Args), Attributes: map[string]any{"pid": cmd.Process.Pid}})
 	}
 	mu.Unlock()
 	if err == nil {
 		err = cmd.Wait()
-	} else if sink != nil {
-		sink(domain.TelemetryEvent{Category: "process", Name: "process.start_failed", Timestamp: time.Now().UTC(), Phase: "start", Level: "error", Message: err.Error()})
-	}
-	if err != nil && cmd.Process == nil {
+		cleanup()
+	} else {
+		if sink != nil {
+			sink(domain.TelemetryEvent{Category: "process", Name: "process.start_failed", Timestamp: time.Now().UTC(), Phase: "start", Level: "error", Message: err.Error()})
+		}
 		err = fmt.Errorf("%w: %w", errProcessNotStarted, err)
 	}
-	if cmd.Process != nil && cmd.SysProcAttr != nil && cmd.SysProcAttr.Setpgid {
-		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-	}
 	outputIncomplete := errors.Is(err, exec.ErrWaitDelay)
-	if errors.Is(err, exec.ErrWaitDelay) {
+	if outputIncomplete {
 		err = nil
 	}
 	stdout.flush()

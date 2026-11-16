@@ -52,7 +52,7 @@ func materializeClaudePlugin(ctx *providerMaterializeContext) error {
 	if err := os.WriteFile(filepath.Join(manifestDir, "plugin.json"), manifest, 0o600); err != nil {
 		return err
 	}
-	return replaceRelativeSymlink(filepath.Join(ctx.AgentRoot, ".claude-plugin"), filepath.Join("..", "config", ctx.AgentID, ".claude-plugin"))
+	return materializeManagedBinding(ctx.Workspace, filepath.Join(ctx.AgentRoot, ".claude-plugin"), filepath.Join("..", "config", ctx.AgentID, ".claude-plugin"))
 }
 
 func (claudeProvider) Prepare(in providerInvocation) (CommandSpec, error) {

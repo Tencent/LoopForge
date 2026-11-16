@@ -38,7 +38,7 @@ func serveRunnerBinary(c *gin.Context) {
 	}
 
 	if pattern := strings.TrimSpace(os.Getenv("AGENTFLOW_RUNNER_BINARY")); pattern != "" {
-		path := strings.ReplaceAll(strings.ReplaceAll(pattern, "{os}", targetOS), "{arch}", targetArch)
+		path := configuredBinaryPath(pattern, targetOS, targetArch)
 		info, err := os.Stat(path)
 		if err != nil || info.IsDir() || info.Size() == 0 {
 			c.JSON(http.StatusNotFound, map[string]string{"error": fmt.Sprintf("runner binary %s/%s is not deployed", targetOS, targetArch)})
@@ -87,7 +87,23 @@ func serveRunnerBinary(c *gin.Context) {
 }
 
 func serveRunnerArtifact(c *gin.Context, path string) {
-	serveBinaryArtifact(c, path, "agentflow-runner")
+	name := "agentflow-runner"
+	if sanitizePlatformParam(c.Query("os")) == "windows" {
+		name += ".exe"
+	}
+	serveBinaryArtifact(c, path, name)
+}
+
+// configuredBinaryPath supports the extensionless deployment patterns used by
+// the Linux platform and the .exe files generated for Windows execution machines.
+func configuredBinaryPath(pattern, targetOS, targetArch string) string {
+	path := strings.ReplaceAll(strings.ReplaceAll(pattern, "{os}", targetOS), "{arch}", targetArch)
+	if targetOS == "windows" && !strings.HasSuffix(strings.ToLower(path), ".exe") {
+		if info, err := os.Stat(path); err != nil || info.IsDir() || info.Size() == 0 {
+			return path + ".exe"
+		}
+	}
+	return path
 }
 
 // binaryDownloadPlatform reads the os/arch query parameters shared by the
@@ -104,9 +120,9 @@ func binaryDownloadPlatform(c *gin.Context) (targetOS, targetArch string, ok boo
 		targetArch = "amd64"
 	}
 	switch targetOS {
-	case "darwin", "linux":
+	case "darwin", "linux", "windows":
 	default:
-		c.JSON(http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("unsupported os %q (darwin, linux)", targetOS)})
+		c.JSON(http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("unsupported os %q (darwin, linux, windows)", targetOS)})
 		return "", "", false
 	}
 	switch targetArch {

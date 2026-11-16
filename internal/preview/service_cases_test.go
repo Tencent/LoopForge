@@ -8,7 +8,9 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -516,15 +518,19 @@ func TestArchiveRejectionMatrix(t *testing.T) {
 			t.Fatalf("%s accepted", tc.name)
 		}
 	}
-	if err := os.Symlink("index.html", filepath.Join(dist, "link")); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := ArchiveDir(workspace, "dist", "index.html", limits, &bytes.Buffer{}); !errors.Is(err, ErrUnsupportedEntry) {
-		t.Fatalf("symlink = %v", err)
-	}
-	if err := os.Remove(filepath.Join(dist, "link")); err != nil {
-		t.Fatal(err)
-	}
+	t.Run("symlink", func(t *testing.T) {
+		link := filepath.Join(dist, "link")
+		if err := os.Symlink("index.html", link); err != nil {
+			if runtime.GOOS == "windows" && errors.Is(err, syscall.Errno(1314)) {
+				t.Skip("symlink creation requires Developer Mode or elevated privileges")
+			}
+			t.Fatal(err)
+		}
+		defer os.Remove(link)
+		if _, err := ArchiveDir(workspace, "dist", "index.html", limits, &bytes.Buffer{}); !errors.Is(err, ErrUnsupportedEntry) {
+			t.Fatalf("symlink = %v", err)
+		}
+	})
 	if err := os.Link(index, filepath.Join(dist, "hard")); err != nil {
 		t.Fatal(err)
 	}

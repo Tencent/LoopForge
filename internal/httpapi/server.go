@@ -606,6 +606,7 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	// login. Public install assets are read-only; daemon APIs authenticate with
 	// one-time bind codes or runner session tokens instead of a user identity.
 	g.GET("/runners/install.sh", serveBindCLIScript)
+	g.GET("/runners/install.ps1", serveBindCLIWindowsScript)
 	g.GET("/runners/agentflow-runner", serveRunnerBinary)
 	g.GET("/runners/agentflow-gate-mcp", serveGateMCPBinary)
 	g.GET("/runners/health", api.health)
