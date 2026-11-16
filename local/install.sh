@@ -134,31 +134,48 @@ if [ -z "$RELEASE_BASE_URL" ]; then
   printf '%s' "$REPOSITORY" | grep -Eq '^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$' \
     || fail "invalid GitHub repository: $REPOSITORY"
   if [ -n "$VERSION" ]; then
-    VERSION=${VERSION#v}
-    printf '%s' "$VERSION" | grep -Eq '^[A-Za-z0-9][A-Za-z0-9._-]*$' \
+    case "$VERSION" in
+      local-v*) RELEASE_TAG="$VERSION" ;;
+      *) RELEASE_TAG="v${VERSION#v}" ;;
+    esac
+    printf '%s' "$RELEASE_TAG" | grep -Eq '^(local-)?v[A-Za-z0-9][A-Za-z0-9._-]*$' \
       || fail "invalid version: $VERSION"
-    RELEASE_BASE_URL="${GITHUB_URL%/}/$REPOSITORY/releases/download/v$VERSION"
   else
     RELEASES_JSON="$TMP_DIR/releases.json"
-    download "${GITHUB_API_URL%/}/repos/$REPOSITORY/releases?per_page=1" "$RELEASES_JSON"
-    RELEASE_TAG=$(python3 - "$RELEASES_JSON" <<'PY'
+    RELEASE_TAG=""
+    PAGE=1
+    while [ -z "$RELEASE_TAG" ]; do
+      download "${GITHUB_API_URL%/}/repos/$REPOSITORY/releases?per_page=100&page=$PAGE" "$RELEASES_JSON"
+      RELEASE_TAG=$(python3 - "$RELEASES_JSON" "$ASSET_NAME" <<'PY'
 import json
 import sys
 
 with open(sys.argv[1], encoding="utf-8") as file:
     releases = json.load(file)
-if not isinstance(releases, list) or not releases:
-    raise SystemExit("no published GitHub Release was found")
-tag = releases[0].get("tag_name")
-if not isinstance(tag, str) or not tag:
-    raise SystemExit("latest GitHub Release has no tag")
-print(tag)
+if not isinstance(releases, list):
+    raise SystemExit("invalid GitHub Releases response")
+if not releases:
+    raise SystemExit("no stable GitHub Release with LoopForge workflow assets was found")
+
+archive = sys.argv[2]
+for release in releases:
+    if release.get("draft") or release.get("prerelease"):
+        continue
+    assets = {asset["name"] for asset in release.get("assets", [])}
+    if {archive, archive + ".sha256"} <= assets:
+        tag = release.get("tag_name")
+        if not isinstance(tag, str) or not tag:
+            raise SystemExit("GitHub Release with workflow assets has no tag")
+        print(tag)
+        break
 PY
-    ) || fail "could not resolve the latest GitHub Release"
-    printf '%s' "$RELEASE_TAG" | grep -Eq '^v?[A-Za-z0-9][A-Za-z0-9._-]*$' \
-      || fail "latest GitHub Release has an invalid tag: $RELEASE_TAG"
-    RELEASE_BASE_URL="${GITHUB_URL%/}/$REPOSITORY/releases/download/$RELEASE_TAG"
+      ) || fail "could not resolve a stable LoopForge workflow release"
+      PAGE=$((PAGE + 1))
+    done
+    printf '%s' "$RELEASE_TAG" | grep -Eq '^[A-Za-z0-9][A-Za-z0-9._-]*$' \
+      || fail "workflow release has an invalid tag: $RELEASE_TAG"
   fi
+  RELEASE_BASE_URL="${GITHUB_URL%/}/$REPOSITORY/releases/download/$RELEASE_TAG"
 fi
 
 case "$RELEASE_BASE_URL" in
