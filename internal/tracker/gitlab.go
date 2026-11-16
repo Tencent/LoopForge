@@ -87,7 +87,7 @@ func (g *gitlabClient) request(method, suffix string, input, output any) error {
 	}
 	r.Header.Set("Accept", "application/json")
 	r.Header.Set("Content-Type", "application/json")
-	// 自托管 GitLab 接受 PRIVATE-TOKEN（我们在 dsh-autoflow 中验证过）。
+	// 自托管 GitLab（CE/EE）以 PRIVATE-TOKEN 头认证（v4 REST 标准方式）。
 	if g.token != "" {
 		r.Header.Set("PRIVATE-TOKEN", g.token)
 	}
