@@ -152,7 +152,7 @@ func (e *Engine) StartClaimLoop(ctx context.Context) {
 }
 
 func (e *Engine) publish(runID string) {
-	current, ok := e.repo.RunState(runID)
+	current, ok := e.repo.RunStreamView(runID)
 	if !ok {
 		return
 	}
