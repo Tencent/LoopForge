@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
+	goruntime "runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -47,6 +49,44 @@ var conversationGuardFiles = []string{
 	"home/.zcode/cli/config.json",
 }
 
+// The host keeps durable conversation files. Linux containers need a POSIX
+// destination even when those files live on a Windows drive.
+func conversationExecutionRoot(root string, docker bool) string {
+	if docker && goruntime.GOOS == "windows" {
+		return "/loopforge/conversation"
+	}
+	return root
+}
+
+func conversationDockerValue(value, root string) string {
+	target := conversationExecutionRoot(root, true)
+	if target == root || root == "" {
+		return value
+	}
+	if strings.HasPrefix(value, root) {
+		return target + filepath.ToSlash(strings.TrimPrefix(value, root))
+	}
+	return strings.ReplaceAll(value, filepath.ToSlash(root), target)
+}
+
+func (s *dockerSandbox) conversationCommand(command CommandSpec) CommandSpec {
+	root := s.requirements.ConversationRoot
+	if root == "" || conversationExecutionRoot(root, true) == root {
+		return command
+	}
+	command.Argv = append([]string(nil), command.Argv...)
+	for i, arg := range command.Argv {
+		command.Argv[i] = conversationDockerValue(arg, root)
+	}
+	env := make(map[string]string, len(command.environment))
+	for key, value := range command.environment {
+		env[key] = conversationDockerValue(value, root)
+	}
+	command.environment = env
+	command.WorkingDir = conversationDockerValue(command.WorkingDir, root)
+	return command
+}
+
 func conversationGuardMounts(root string) ([]string, error) {
 	parents := map[string]bool{}
 	for _, rel := range conversationGuardFiles {
@@ -72,11 +112,11 @@ func conversationGuardMounts(root string) ([]string, error) {
 	sort.Strings(ordered)
 	var mounts []string
 	for _, parent := range ordered {
-		mounts = append(mounts, "-v", parent+":"+parent)
+		mounts = append(mounts, "-v", parent+":"+conversationDockerValue(parent, root))
 	}
 	for _, rel := range conversationGuardFiles {
 		file := filepath.Join(root, filepath.FromSlash(rel))
-		mounts = append(mounts, "-v", file+":"+file+":ro")
+		mounts = append(mounts, "-v", file+":"+path.Join(filepath.ToSlash(conversationExecutionRoot(root, true)), rel)+":ro")
 	}
 	return mounts, nil
 }

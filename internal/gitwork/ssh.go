@@ -141,6 +141,18 @@ func bindSSHRemotes(environment map[string]string, keys map[string]string) ([]ss
 // The filesystem contains a socket and public data only. clientRoot is the
 // mount path corresponding to root for a client in a container.
 func StartSSH(environment map[string]string, keys map[string]string, root, clientRoot string) (func(), error) {
+	return StartSSHWithAgentFactory(environment, keys, root, clientRoot, nil)
+}
+
+// SSHAgentFactory starts an operation-scoped agent using validated, deduplicated
+// identities in memory. It returns the socket as seen by OpenSSH and cleanup.
+// Implementations must never put identities in files, argv, environment or logs.
+type SSHAgentFactory func(directory string, identities []string) (string, func(), error)
+
+// StartSSHWithAgentFactory retains the public config and pinned-host contract
+// while allowing a container to own its own agent instead of a host socket.
+// A nil factory uses the normal Unix or Git-for-Windows transport.
+func StartSSHWithAgentFactory(environment map[string]string, keys map[string]string, root, clientRoot string, factory SSHAgentFactory) (func(), error) {
 	if len(keys) == 0 {
 		return func() {}, nil
 	}
@@ -158,7 +170,12 @@ func StartSSH(environment map[string]string, keys map[string]string, root, clien
 	if err != nil {
 		return nil, err
 	}
+	sshClient, err := sshClientCommand(clientRoot)
+	if err != nil {
+		return nil, err
+	}
 	keyring := agent.NewKeyring()
+	var identities []string
 	publicKeys := make(map[string][]byte)
 	var config strings.Builder
 	for _, item := range bindings {
@@ -174,6 +191,7 @@ func StartSSH(environment map[string]string, keys map[string]string, root, clien
 			}
 			keyFile = ssh.MarshalAuthorizedKey(signer.PublicKey())
 			publicKeys[item.key] = keyFile
+			identities = append(identities, item.key)
 		}
 		// Only the numeric port is expanded by Match exec. The host key is
 		// checked against the real endpoint, including a custom port.
@@ -210,17 +228,39 @@ func StartSSH(environment map[string]string, keys map[string]string, root, clien
 			return nil, fmt.Errorf("write Git SSH session configuration: %w", err)
 		}
 	}
-	listener, err := listenSSHAgent(dir)
-	if err != nil {
-		_ = os.RemoveAll(dir)
-		return nil, fmt.Errorf("start Git SSH agent: %w", err)
+	var stop func()
+	if factory == nil {
+		listener, err := listenSSHAgent(dir)
+		if err != nil {
+			_ = os.RemoveAll(dir)
+			return nil, fmt.Errorf("start Git SSH agent: %w", err)
+		}
+		stop = serveSSHAgent(listener, keyring)
+	} else {
+		socket, cleanup, err := factory(dir, identities)
+		if err != nil || socket == "" || strings.ContainsAny(socket, "\r\n\x00") || cleanup == nil {
+			if cleanup != nil {
+				cleanup()
+			}
+			_ = os.RemoveAll(dir)
+			if err != nil {
+				return nil, fmt.Errorf("start Git SSH agent: %w", err)
+			}
+			return nil, errors.New("Git SSH agent factory returned an invalid session")
+		}
+		stop = cleanup
+		configured := strings.ReplaceAll(config.String(), "IdentityAgent ./agent\n", "IdentityAgent "+strconv.Quote(socket)+"\n")
+		if err := os.WriteFile(filepath.Join(dir, "config"), []byte(configured), 0o600); err != nil {
+			stop()
+			_ = os.RemoveAll(dir)
+			return nil, fmt.Errorf("write Git SSH agent configuration: %w", err)
+		}
 	}
-	stop := serveSSHAgent(listener, keyring)
 	clientDir := dir
 	if clientRoot != "" {
 		clientDir = filepath.Join(clientRoot, filepath.Base(dir))
 	}
-	environment["GIT_SSH_COMMAND"] = "cd " + shellQuote(clientDir) + " && exec ssh -F ./config"
+	environment["GIT_SSH_COMMAND"] = "cd " + shellQuote(filepath.ToSlash(clientDir)) + " && exec " + sshClient + " -F ./config"
 	return sync.OnceFunc(func() {
 		stop()
 		_ = os.RemoveAll(dir)
@@ -228,24 +268,6 @@ func StartSSH(environment map[string]string, keys map[string]string, root, clien
 }
 
 func shellQuote(value string) string { return "'" + strings.ReplaceAll(value, "'", `'\''`) + "'" }
-
-func listenSSHAgent(dir string) (net.Listener, error) {
-	path := filepath.Join(dir, "agent")
-	if len(path) < 100 {
-		return net.Listen("unix", path)
-	}
-	// Unix socket addresses have a small fixed length. Bind through a short
-	// alias; the socket itself remains in the workspace's private directory.
-	alias, err := os.MkdirTemp("/tmp", "lf-ssh-")
-	if err != nil {
-		return nil, err
-	}
-	defer os.RemoveAll(alias)
-	if err := os.Symlink(dir, filepath.Join(alias, "d")); err != nil {
-		return nil, err
-	}
-	return net.Listen("unix", filepath.Join(alias, "d", "agent"))
-}
 
 func serveSSHAgent(listener net.Listener, keyring agent.Agent) func() {
 	var mu sync.Mutex

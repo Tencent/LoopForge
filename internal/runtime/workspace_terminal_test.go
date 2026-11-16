@@ -1,3 +1,5 @@
+//go:build !windows
+
 package runtime
 
 import (
@@ -8,6 +10,16 @@ import (
 	"testing"
 	"time"
 )
+
+func TestTerminalPoolScopes(t *testing.T) {
+	pool := TerminalPool{sessions: map[string]*workspaceTerminal{
+		"one": {scope: "run:1"},
+		"two": {scope: "other:1"},
+	}}
+	if !pool.HasRunScope("run") || pool.HasRunScope("missing") || !pool.HasScope("run:1") {
+		t.Fatal("terminal scope lookup")
+	}
+}
 
 func TestWorkspaceTerminalRealPTYAndScope(t *testing.T) {
 	root := t.TempDir()

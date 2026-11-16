@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	goruntime "runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -125,20 +126,21 @@ func (p *ConversationProcessPool) lockAssets(ctx context.Context, root string) (
 }
 
 type conversationProcess struct {
-	mu         sync.Mutex
-	cancel     context.CancelFunc
-	input      *os.File
-	events     []domain.TelemetryEvent
-	base       int64
-	done       bool
-	err        string
-	wake       chan struct{}
-	lastPoll   time.Time
-	closeRelay func()
-	finished   chan struct{}
-	root       string
-	bytes      int
-	notStarted bool
+	mu            sync.Mutex
+	cancel        context.CancelFunc
+	input         *os.File
+	events        []domain.TelemetryEvent
+	base          int64
+	done          bool
+	err           string
+	wake          chan struct{}
+	lastPoll      time.Time
+	closeRelay    func()
+	finished      chan struct{}
+	root          string
+	executionRoot string
+	bytes         int
+	notStarted    bool
 }
 
 // Handle owns the stable native HOME on the executing machine. Only generated
@@ -207,7 +209,7 @@ func (p *ConversationProcessPool) Handle(ctx context.Context, root, workspace st
 			}
 			data := file.Data
 			if file.Rewrite && req.SourceRoot != "" {
-				data = []byte(strings.ReplaceAll(string(data), req.SourceRoot, root))
+				data = []byte(conversationRemap(string(data), req.SourceRoot, conversationExecutionRoot(root, sandbox != nil)))
 			}
 			if err := os.WriteFile(target, data, os.FileMode(file.Mode)&0777); err != nil {
 				return ConversationProcessResult{}, err
@@ -258,7 +260,11 @@ func (p *ConversationProcessPool) Handle(ctx context.Context, root, workspace st
 		if req.EOF {
 			err = input.Close()
 		} else {
-			_, err = io.WriteString(input, conversationRemap(req.Data, req.SourceRoot, root))
+			targetRoot := proc.executionRoot
+			if targetRoot == "" {
+				targetRoot = root
+			}
+			_, err = io.WriteString(input, conversationRemap(req.Data, req.SourceRoot, targetRoot))
 		}
 		return ConversationProcessResult{}, err
 	case "stop":
@@ -368,6 +374,7 @@ func (p *ConversationProcessPool) reapProcessAfter(id string, proc *conversation
 }
 
 func (p *ConversationProcessPool) start(ctx context.Context, root, workspace string, spec *domain.RunnerSandboxSpec, req ConversationProcessRequest, forward ConversationToolForward, factories ...ConversationSandboxFactory) (result ConversationProcessResult, err error) {
+	executionRoot := conversationExecutionRoot(root, spec != nil)
 	if req.Command == nil || len(req.Command.Argv) == 0 {
 		return ConversationProcessResult{}, fmt.Errorf("missing conversation command")
 	}
@@ -533,9 +540,14 @@ func (p *ConversationProcessPool) start(ctx context.Context, root, workspace str
 	}
 	// Some CLIs continue after a hook interpreter cannot be spawned. Both
 	// the platform guard and the native approval hook must fail closed.
+	if spec == nil {
+		command, err = adaptPlatformConversationApproval(root, command)
+		if err != nil {
+			return ConversationProcessResult{}, err
+		}
+	}
 	if spec == nil && (command.Provider == AgentCLIKimi || command.Provider == "codex" || command.Provider == AgentCLICursor || command.Provider == AgentCLIAntigravity || command.Provider == AgentCLIZCode) {
-		check := exec.CommandContext(procCtx, "python3", "-c", "import json,urllib.request")
-		if err = check.Run(); err != nil {
+		if err = checkConversationApprovalRuntime(procCtx); err != nil {
 			return ConversationProcessResult{}, fmt.Errorf("原生工具审批需要 Python3：%w", err)
 		}
 	}
@@ -543,20 +555,26 @@ func (p *ConversationProcessPool) start(ctx context.Context, root, workspace str
 	// mode too. Refresh them on every start so returning from a workspace never
 	// runs a stale hook (Pi's codemode wrapper must reach its concrete tools).
 	if spec != nil || command.Provider == AgentCLIKimi || command.Provider == AgentCLIPi || command.Provider == AgentCLIOpenCode || command.Provider == AgentCLICursor || command.Provider == AgentCLIAntigravity || command.Provider == AgentCLIZCode {
-		command, err = InstallConversationApproval(root, command.Provider, command)
+		command, err = installConversationApproval(root, filepath.ToSlash(executionRoot), command.Provider, command)
 		if err != nil {
 			return ConversationProcessResult{}, err
 		}
 	}
 	if spec != nil {
-		binary, err := ensureConversationCLI(procCtx, sb, command.Provider, filepath.Join(root, "home"))
+		binary, err := ensureConversationCLI(procCtx, sb, command.Provider, filepath.ToSlash(filepath.Join(executionRoot, "home")))
 		if err != nil {
 			return ConversationProcessResult{}, err
 		}
 		command.Argv[0] = binary
 	}
 	if sb == nil {
-		binary, lookupErr := exec.LookPath(command.Argv[0])
+		var binary string
+		var lookupErr error
+		if goruntime.GOOS == "windows" && (command.Argv[0] == "sh" || command.Argv[0] == "bash") {
+			binary, lookupErr = findWindowsHostShell(command.Argv[0])
+		} else {
+			binary, lookupErr = exec.LookPath(command.Argv[0])
+		}
 		if lookupErr != nil {
 			return ConversationProcessResult{}, fmt.Errorf("执行机器未安装 CLI %s：%w", command.Provider, lookupErr)
 		}
@@ -578,6 +596,7 @@ func (p *ConversationProcessPool) start(ctx context.Context, root, workspace str
 		command.Argv = conversationZCodeResumeArgv(root, nativeArgv, command.Argv)
 	}
 	command.bindingsPrepared = true
+	proc.executionRoot = executionRoot
 	if req.Command.Interactive {
 		input, writer, err := os.Pipe()
 		if err != nil {
@@ -783,6 +802,11 @@ func replaceConversationGateway(root, source, target string) error {
 func conversationRemap(value, source, target string) string {
 	if source == "" {
 		return value
+	}
+	if goruntime.GOOS == "windows" {
+		// Serialized JSON/TOML frames must not receive unescaped backslashes.
+		// Windows APIs and native CLIs accept drive paths using forward slashes.
+		target = filepath.ToSlash(target)
 	}
 	return strings.ReplaceAll(value, source, target)
 }

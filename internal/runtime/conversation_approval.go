@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	posixpath "path"
 	"path/filepath"
 	"strconv"
 )
@@ -21,11 +22,31 @@ const conversationApprovalRetrySeconds = "120"
 // scripts contain no credentials; their private gateway capability is supplied
 // in the process environment and forwarded through the runner's control link.
 func InstallConversationApproval(root, provider string, command CommandSpec) (CommandSpec, error) {
+	return installConversationApproval(root, filepath.ToSlash(root), provider, command)
+}
+
+func installConversationApproval(root, executionRoot, provider string, command CommandSpec) (CommandSpec, error) {
 	hook := filepath.Join(root, "native-approval.py")
 	if err := os.WriteFile(hook, []byte(conversationApprovalPython), 0600); err != nil {
 		return command, err
 	}
-	launch := "python3 " + shellSingleQuote(hook)
+	launch := ""
+	switch provider {
+	case "codebuddy", "claude-code", "codex", AgentCLIZCode, AgentCLIKimi, AgentCLICursor, AgentCLIAntigravity:
+		var arguments []string
+		if provider == "codex" {
+			arguments = []string{"codex"}
+		} else if provider == AgentCLICursor {
+			arguments = []string{"cursor"}
+		} else if provider == AgentCLIAntigravity {
+			arguments = []string{"agy"}
+		}
+		var err error
+		launch, err = conversationApprovalLaunch(executionRoot, arguments...)
+		if err != nil {
+			return command, err
+		}
+	}
 	hooks := map[string]any{"PreToolUse": []any{map[string]any{"matcher": ".*", "hooks": []any{map[string]any{"type": "command", "command": launch, "timeout": conversationApprovalHookWatchdog, "onFailure": "block"}}}}}
 	home := AgentCLIHome{Base: root, Rel: "home"}
 	switch provider {
@@ -36,7 +57,7 @@ func InstallConversationApproval(root, provider string, command CommandSpec) (Co
 		if err := os.WriteFile(path, data, 0600); err != nil {
 			return command, err
 		}
-		command.Argv = conversationReplaceFlag(command.Argv, "--settings", path)
+		command.Argv = conversationReplaceFlag(command.Argv, "--settings", posixpath.Join(executionRoot, "native-settings.json"))
 	case AgentCLIZCode:
 		if err := os.WriteFile(filepath.Join(root, "zcode-resume-model.py"), conversationZCodeResumeScript(), 0600); err != nil {
 			return command, err
@@ -79,7 +100,7 @@ func InstallConversationApproval(root, provider string, command CommandSpec) (Co
 	case AgentCLIKimi:
 		// Kimi blocks only on exit code 2 and allows any other exit,
 		// including an interpreter that is missing or crashed.
-		command.AgentCLI.ApprovalCommand = launch + " || exit 2"
+		command.AgentCLI.ApprovalCommand = conversationApprovalFailureGuard(executionRoot, launch)
 	case AgentCLIPi:
 		if err := writeAgentCLIFile(home, ".pi/agent/extensions/loopforge-approval.ts", []byte(conversationPiApproval)); err != nil {
 			return command, err
@@ -90,12 +111,12 @@ func InstallConversationApproval(root, provider string, command CommandSpec) (Co
 		}
 	case AgentCLICursor:
 		// Cursor's preToolUse hook covers native reads, edits and shell alike.
-		data, _ := json.Marshal(map[string]any{"version": 1, "hooks": map[string]any{"preToolUse": []any{map[string]any{"command": launch + " cursor", "timeout": conversationApprovalHookWatchdog, "failClosed": true}}}})
+		data, _ := json.Marshal(map[string]any{"version": 1, "hooks": map[string]any{"preToolUse": []any{map[string]any{"command": launch, "timeout": conversationApprovalHookWatchdog, "failClosed": true}}}})
 		if err := writeAgentCLIFile(home, ".cursor/hooks.json", data); err != nil {
 			return command, err
 		}
 	case AgentCLIAntigravity:
-		agyHooks := map[string]any{"loopforge-approval": map[string]any{"PreToolUse": []any{map[string]any{"matcher": ".*", "hooks": []any{map[string]any{"type": "command", "command": launch + " agy", "timeout": conversationApprovalHookWatchdog}}}}}}
+		agyHooks := map[string]any{"loopforge-approval": map[string]any{"PreToolUse": []any{map[string]any{"matcher": ".*", "hooks": []any{map[string]any{"type": "command", "command": launch, "timeout": conversationApprovalHookWatchdog}}}}}}
 		data, _ := json.Marshal(agyHooks)
 		if err := writeAgentCLIFile(home, ".gemini/config/hooks.json", data); err != nil {
 			return command, err
@@ -106,7 +127,7 @@ func InstallConversationApproval(root, provider string, command CommandSpec) (Co
 		if err := os.WriteFile(path, []byte(conversationDSHApproval), 0600); err != nil {
 			return command, err
 		}
-		patch, _ := json.Marshal([]any{map[string]any{"insert": []any{map[string]any{"id": "loopforge-native-approval", "name": path}}}})
+		patch, _ := json.Marshal([]any{map[string]any{"insert": []any{map[string]any{"id": "loopforge-native-approval", "name": posixpath.Join(executionRoot, "dsh-approval.mjs")}}}})
 		patchFile := filepath.Join(root, "dsh-approval.json")
 		if err := os.WriteFile(patchFile, patch, 0600); err != nil {
 			return command, err
@@ -126,6 +147,14 @@ func conversationReplaceFlag(argv []string, name, value string) []string {
 		}
 	}
 	return append(argv[:1], append([]string{name, value}, argv[1:]...)...)
+}
+
+func posixConversationApprovalLaunch(executionRoot string, arguments ...string) string {
+	launch := "python3 " + shellSingleQuote(posixpath.Join(executionRoot, "native-approval.py"))
+	for _, argument := range arguments {
+		launch += " " + argument // fixed provider selectors: cursor or agy
+	}
+	return launch
 }
 
 const conversationApprovalPython = `import json,os,sys,time,uuid,urllib.request,urllib.error
@@ -171,9 +200,11 @@ if len(sys.argv)>1 and sys.argv[1]=="agy":
     print(json.dumps({"decision":"allow" if allowed else "deny","reason":reason}))
 elif len(sys.argv)>1 and sys.argv[1]=="cursor":
     print(json.dumps({"permission":"allow" if allowed else "deny","user_message":reason,"agent_message":reason}))
+elif len(sys.argv)>1 and sys.argv[1]=="codex" and allowed:
+    print("{}")
 else:
     print(json.dumps({"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"allow" if allowed else "deny","permissionDecisionReason":reason}}))
-if not allowed:
+if not allowed and not (len(sys.argv)>1 and sys.argv[1]=="codex"):
     print(reason,file=sys.stderr)
     sys.exit(2)
 `

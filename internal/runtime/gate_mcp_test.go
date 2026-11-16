@@ -76,8 +76,13 @@ func TestMaterializeInvocationInjectsGateMCP(t *testing.T) {
 			t.Fatalf("mcp config missing %q:\n%s", want, text)
 		}
 	}
-	if info, err := os.Stat(filepath.Join(workspace, ".agentflow", "config", "reviewer", "gate-mcp")); err != nil || info.Mode().Perm()&0o111 == 0 {
+	binary := filepath.Join(workspace, ".agentflow", "config", "reviewer", "gate-mcp"+gateMCPExecutableSuffix(goruntime.GOOS))
+	info, err := os.Stat(binary)
+	if err != nil {
 		t.Fatal(err)
+	}
+	if info.Size() == 0 || (goruntime.GOOS != "windows" && info.Mode().Perm()&0o111 == 0) {
+		t.Fatalf("invalid gate helper %s (size=%d, mode=%v)", binary, info.Size(), info.Mode())
 	}
 }
 

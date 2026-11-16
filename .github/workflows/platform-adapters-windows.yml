@@ -1,0 +1,133 @@
+name: platform-adapters-windows
+
+on:
+  pull_request:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  adapters:
+    name: Windows platform adapter contracts
+    runs-on: windows-latest
+    timeout-minutes: 15
+    env:
+      CGO_ENABLED: '0'
+      GOMAXPROCS: '2'
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - name: Run native process-tree and preview adapter tests
+        run: |
+          go test -p=2 ./internal/processgroup ./internal/procwatch ./internal/preview -run 'TestWindows|TestArchiveDirRejectsHardlink|TestArchiveDirAcceptsLongWindowsPaths|TestRejectSpecialFailsClosed' -count=1 -timeout=120s -v
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          go vet -p=2 ./internal/processgroup ./internal/procwatch ./internal/preview
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      # The remaining runtime/HTTP callers are ported in the dependent runtime
+      # PR. Test their adapters now without pretending those whole packages or
+      # Runner/Gate already build on Windows in this foundation-only change.
+      # Production adapter/helper files and their checked-in tests are copied
+      # unchanged. Only caller type/data declarations are supplied below; no
+      # locking, filesystem or Git-index behavior is replaced by a test double.
+      - name: Prepare isolated runtime and HTTP adapter test packages
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $utf8 = New-Object Text.UTF8Encoding($false)
+          $testRoot = Join-Path $env:RUNNER_TEMP ('loopforge-platform-adapters-' + [Guid]::NewGuid().ToString('N'))
+          $runtimeRoot = Join-Path $testRoot 'runtime'
+          $httpRoot = Join-Path $testRoot 'httpapi'
+          $null = New-Item -ItemType Directory -Force -Path $runtimeRoot, $httpRoot
+          foreach ($name in @('identifier.go', 'managed_files.go', 'workspace_lock.go', 'workspace_lock_windows.go', 'workspace_lock_test.go', 'git_isolation.go', 'git_index_lock_windows.go', 'git_index_lock_windows_test.go')) {
+            Copy-Item -LiteralPath (Join-Path 'internal/runtime' $name) -Destination (Join-Path $runtimeRoot $name)
+          }
+          # These maps are caller data needed to compile git_isolation.go.
+          # Keep their actual source declarations rather than duplicating them.
+          $processSource = [IO.File]::ReadAllText((Join-Path $env:GITHUB_WORKSPACE 'internal/runtime/sandbox_process.go'))
+          $maps = [regex]::Matches($processSource, '(?ms)^var projectAgent(?:Dir|File)Names = map\[string\]bool\{.*?^\}')
+          if ($maps.Count -ne 2) { throw 'Expected both project Agent path-map declarations.' }
+          $runtimeCaller = @('package runtime', '', 'type Manager struct { root string }', '', $maps[0].Value, '', $maps[1].Value) -join "`n"
+          [IO.File]::WriteAllText((Join-Path $runtimeRoot 'caller_types.go'), $runtimeCaller, $utf8)
+          foreach ($name in @('assistant_native_lock_windows.go', 'assistant_native_lock_test.go')) {
+            Copy-Item -LiteralPath (Join-Path 'internal/httpapi' $name) -Destination (Join-Path $httpRoot $name)
+          }
+          $sessionSource = [IO.File]::ReadAllText((Join-Path $env:GITHUB_WORKSPACE 'internal/httpapi/assistant_native_session.go'))
+          $busy = [regex]::Match($sessionSource, '(?m)^\s*errAssistantNativeBusy\s*=\s*(errors\.New\("[^"\r\n]*"\))\s*$')
+          if (-not $busy.Success) { throw 'Expected the production native-session busy sentinel.' }
+          $httpCaller = @('package httpapi', '', 'import "errors"', '', ('var errAssistantNativeBusy = ' + $busy.Groups[1].Value)) -join "`n"
+          [IO.File]::WriteAllText((Join-Path $httpRoot 'caller_types.go'), $httpCaller, $utf8)
+          "LOOPFORGE_ADAPTER_TEST_ROOT=$testRoot" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+      - name: Run native LockFileEx and conservative Git-index ownership tests
+        run: |
+          # Named-file tests use this checkout's go.mod and dependencies, while
+          # excluding unrelated callers awaiting their Windows port in #882.
+          $runtimeFiles = @(Get-ChildItem -LiteralPath (Join-Path $env:LOOPFORGE_ADAPTER_TEST_ROOT 'runtime') -Filter '*.go' | ForEach-Object { $_.FullName })
+          go test -p=2 -count=1 -timeout=120s -v @runtimeFiles
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          go vet -p=2 @runtimeFiles
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $httpFiles = @(Get-ChildItem -LiteralPath (Join-Path $env:LOOPFORGE_ADAPTER_TEST_ROOT 'httpapi') -Filter '*.go' | ForEach-Object { $_.FullName })
+          go test -p=2 -count=1 -timeout=120s -v @httpFiles
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          go vet -p=2 @httpFiles
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+  runtime:
+    name: Windows runtime contracts
+    runs-on: windows-latest
+    timeout-minutes: 20
+    env:
+      CGO_ENABLED: '0'
+      GOMAXPROCS: '2'
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-python@v5.6.0
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version: '22'
+      - name: Expose the native Git for Windows shell
+        run: |
+          $gitRoot = Split-Path (Split-Path (Get-Command git.exe).Source -Parent) -Parent
+          Join-Path $gitRoot 'bin' | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+          Join-Path $gitRoot 'usr/bin' | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+      # Runner test fixtures import the platform HTTP package, which embeds
+      # these generated public assets. This builds that dependency only.
+      - name: Build assets embedded by Runner test dependencies
+        run: |
+          npm --prefix chatbot ci --include=dev --no-audit --no-fund
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npm --prefix chatbot run build
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Build the Windows Runner and Gate helper
+        run: |
+          $binaryRoot = Join-Path $env:RUNNER_TEMP 'loopforge-runtime-windows'
+          New-Item -ItemType Directory -Force $binaryRoot | Out-Null
+          go build -p=2 -o (Join-Path $binaryRoot 'agentflow-runner.exe') ./cmd/agentflow-runner
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          go build -p=2 -o (Join-Path $binaryRoot 'agentflow-gate-mcp.exe') ./cmd/agentflow-gate-mcp
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Verify Windows runtime, native shells and Git SSH contracts
+        run: |
+          go test -p=2 ./cmd/agentflow-runner -count=1 -timeout=120s -v
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          go test -p=2 ./internal/runtime ./internal/runner ./internal/gitwork -run 'TestWindows|TestSSHAgentFactory|TestBrowserDockerEntrypointUsesLinuxLineEndings|TestWorkspaceLock|TestWorkspaceEnvironmentIdentity|TestFilesystemEnvironmentIdentity|TestReapOrphanHostBrowsers' -count=1 -timeout=300s -v
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Vet Windows runtime and Runner packages
+        run: |
+          go vet -p=2 ./internal/runtime ./internal/runner ./internal/gitwork ./cmd/agentflow-runner
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

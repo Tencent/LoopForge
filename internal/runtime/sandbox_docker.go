@@ -11,7 +11,9 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
+	goruntime "runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -145,6 +147,7 @@ func (s *dockerSandbox) Exec(ctx context.Context, command CommandSpec, sink Even
 }
 
 func (s *dockerSandbox) execOnce(ctx context.Context, command CommandSpec, sink EventSink) (out string, err error) {
+	command = s.conversationCommand(command)
 	if trustedScriptCommand(command) {
 		return s.execScript(ctx, command, sink)
 	}
@@ -176,14 +179,40 @@ func (s *dockerSandbox) execOnce(ctx context.Context, command CommandSpec, sink 
 cd "$1" && shift && exec "$@"`, "conversation", command.WorkingDir}, dropShellLoginFlag(command.Argv)...)
 	}
 	processFile := ""
-	if command.OwnProcessGroup {
-		processFile = filepath.Join(s.requirements.ConversationRoot, "home", "tmp", fmt.Sprintf("process-%d.pid", time.Now().UnixNano()))
-		argv = dockerConversationProcessArgv(processFile, argv)
+	if command.OwnProcessGroup || goruntime.GOOS == "windows" {
+		processFile = path.Join(filepath.ToSlash(conversationExecutionRoot(s.requirements.ConversationRoot, true)), "home", "tmp", fmt.Sprintf("process-%d.pid", time.Now().UnixNano()))
+		if goruntime.GOOS == "windows" {
+			if s.requirements.ConversationRoot == "" {
+				identity, identityErr := dockerProcessToken()
+				if identityErr != nil {
+					return "", identityErr
+				}
+				processFile = "/tmp/loopforge-agent-process-" + identity + ".pid"
+			}
+			lease, releaseLease, leaseErr := startDockerOwnerLease(ctx, s.name)
+			if leaseErr != nil {
+				return "", leaseErr
+			}
+			defer releaseLease()
+			argv = dockerConversationLeasedProcessArgv(processFile, lease, argv)
+		} else {
+			argv = dockerConversationProcessArgv(processFile, argv)
+		}
 		defer func() {
 			stopCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
-			stopArgs := append(append(append([]string{"exec"}, toolchain...), s.name), dockerConversationStopArgv(processFile)...)
-			if stopErr := exec.CommandContext(stopCtx, "docker", stopArgs...).Run(); stopErr != nil {
+			stopArgv := dockerConversationStopArgv(processFile)
+			if goruntime.GOOS == "windows" {
+				stopArgv = dockerConversationLeasedStopArgv(processFile)
+			}
+			stopArgs := append(append(append([]string{"exec"}, toolchain...), s.name), stopArgv...)
+			var stopErr error
+			if goruntime.GOOS == "windows" {
+				stopErr = runDockerOwnerControl(stopCtx, stopArgs...)
+			} else {
+				stopErr = exec.CommandContext(stopCtx, "docker", stopArgs...).Run()
+			}
+			if stopErr != nil {
 				err = errors.Join(err, fmt.Errorf("停止 CLI 子进程失败: %w", stopErr))
 			}
 		}()
@@ -191,7 +220,11 @@ cd "$1" && shift && exec "$@"`, "conversation", command.WorkingDir}, dropShellLo
 	args = append(args, argv...)
 	cmd := exec.CommandContext(ctx, "docker", args...)
 	cmd.Stdin = command.Stdin
-	return runCommand(cmd, sink)
+	out, err = runCommand(cmd, sink)
+	if goruntime.GOOS == "windows" && err != nil && strings.Contains(out, dockerWindowsPythonRequired) {
+		err = errors.New(dockerWindowsPythonRequired)
+	}
+	return out, err
 }
 
 // dockerWorkspaceExecArgv runs argv inside /workspace without docker exec -w.
@@ -679,7 +712,7 @@ func (s *dockerSandbox) ensureStarted(ctx context.Context) error {
 	// Native installs own private (0700) workspaces as the service user.
 	// A root image without DAC capabilities cannot access another UID's bind.
 	// Run default/root images as that user; retain explicit non-root image users.
-	if os.Geteuid() != 0 {
+	if os.Geteuid() > 0 {
 		configured, err := exec.CommandContext(ctx, "docker", "image", "inspect", "--format", "{{.Config.User}}", image).CombinedOutput()
 		if err != nil {
 			return fmt.Errorf("inspect sandbox image user: %w: %s", err, strings.TrimSpace(string(configured)))
@@ -693,6 +726,7 @@ func (s *dockerSandbox) ensureStarted(ctx context.Context) error {
 		args = append(args, "--network", network)
 	}
 	if root := s.requirements.ConversationRoot; root != "" {
+		executionRoot := filepath.ToSlash(conversationExecutionRoot(root, true))
 		_, network, err := conversationDockerAccess(ctx)
 		if err != nil {
 			return err
@@ -700,7 +734,7 @@ func (s *dockerSandbox) ensureStarted(ctx context.Context) error {
 		if network != "" {
 			args = append(args, "--network", network)
 		}
-		args = append(args, "--add-host", "host.docker.internal:host-gateway", "-v", root+":"+root+":ro", "-v", filepath.Join(root, "home")+":"+filepath.Join(root, "home"), "-v", workspace+":"+filepath.Join(root, "ws"))
+		args = append(args, "--add-host", "host.docker.internal:host-gateway", "-v", root+":"+executionRoot+":ro", "-v", filepath.Join(root, "home")+":"+path.Join(executionRoot, "home"), "-v", workspace+":"+path.Join(executionRoot, "ws"))
 		guards, err := conversationGuardMounts(root)
 		if err != nil {
 			return err
@@ -709,7 +743,7 @@ func (s *dockerSandbox) ensureStarted(ctx context.Context) error {
 	}
 	var aliases []string
 	if root := s.requirements.ConversationRoot; root != "" {
-		aliases = append(aliases, filepath.Join(root, "ws"))
+		aliases = append(aliases, path.Join(filepath.ToSlash(conversationExecutionRoot(root, true)), "ws"))
 	}
 	maskArgs, err := dockerAgentConfigMasks(workspace, aliases...)
 	if err != nil {

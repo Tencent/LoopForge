@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	goruntime "runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -235,20 +236,23 @@ func TestPrepareInvocationWorkspaceAndResolveCommandEdges(t *testing.T) {
 	if err := writeInputFile(workspace, domain.RunnerInputFile{Path: ".agentflow/inputs/x"}); err == nil {
 		t.Fatal("directory input accepted")
 	}
-	if got := resolveCommandPath(nil); got != nil {
-		t.Fatalf("nil argv=%v", got)
+	if got, err := resolveCommandPath(nil); err != nil || got != nil {
+		t.Fatalf("nil argv=%v err=%v", got, err)
+	}
+	if goruntime.GOOS == "windows" {
+		return // Windows command resolution has a native executable fixture.
 	}
 	absolute := []string{"/bin/sh", "-c", "true"}
-	if got := resolveCommandPath(absolute); got[0] != "/bin/sh" {
-		t.Fatalf("absolute=%v", got)
+	if got, err := resolveCommandPath(absolute); err != nil || got[0] != "/bin/sh" {
+		t.Fatalf("absolute=%v err=%v", got, err)
 	}
-	got := resolveCommandPath([]string{"sh", "-c", "true"})
-	if !filepath.IsAbs(got[0]) {
-		t.Fatalf("unresolved=%v", got)
+	got, err := resolveCommandPath([]string{"sh", "-c", "true"})
+	if err != nil || !filepath.IsAbs(got[0]) {
+		t.Fatalf("unresolved=%v err=%v", got, err)
 	}
-	missing := resolveCommandPath([]string{"cvR-no-such-command"})
-	if missing[0] != "cvR-no-such-command" {
-		t.Fatalf("missing=%v", missing)
+	missing, err := resolveCommandPath([]string{"cvR-no-such-command"})
+	if err != nil || missing[0] != "cvR-no-such-command" {
+		t.Fatalf("missing=%v err=%v", missing, err)
 	}
 }
 
