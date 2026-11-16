@@ -326,6 +326,23 @@ class InstallerTests(unittest.TestCase):
             self.assertGreater(unchanged, 0)
             self.assertTrue(hook.stat().st_mode & stat.S_IXUSR)
 
+    def test_classic_codex_agent_roles_follow_the_codex_schema(self):
+        # Codex reads custom roles from `.codex/agents/*.toml` and requires
+        # `name`, `description` and an inline `developer_instructions` string.
+        # A path-valued `instructions` field is ignored, so every shipped role
+        # would load as malformed.
+        agents = ROOT / ".codex" / "agents"
+        for path in sorted(agents.glob("*.toml")):
+            text = path.read_text(encoding="utf-8")
+            self.assertIn(
+                "developer_instructions", text,
+                f"{path.name} must declare developer_instructions",
+            )
+            self.assertNotIn(
+                "instructions = ", text,
+                f"{path.name} must not use the path-valued instructions field",
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

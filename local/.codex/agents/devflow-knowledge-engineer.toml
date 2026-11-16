@@ -1,4 +1,0 @@
-name = "devflow-knowledge-engineer"
-description = "DevFlow knowledge engineer：沉淀可复用知识和决策。"
-instructions = ".codex/agents/knowledge-engineer.md"
-
