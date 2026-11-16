@@ -195,8 +195,20 @@ func TestSkillMentionsAreScopedHintedAndWrittenToHome(t *testing.T) {
 
 func TestSubagentStreamEventsCarryTheirDispatch(t *testing.T) {
 	dispatch := assistantStreamEvents(`{"type":"assistant","message":{"content":[{"type":"tool_use","id":"call-1","name":"Agent","input":{"subagent_type":"role-qa","description":"补单测","prompt":"x"}}]}}`)
-	if len(dispatch) != 1 || dispatch[0].Subagent != "role-qa" || dispatch[0].Parent != "" || dispatch[0].Input != "x" {
+	if len(dispatch) != 1 || dispatch[0].Subagent != "role-qa" || dispatch[0].Parent != "" || dispatch[0].Input != "x" || dispatch[0].Model != "" {
 		t.Fatalf("dispatch=%+v", dispatch)
+	}
+	// A dispatch that names a model keeps it; one that only inherits does not.
+	for input, want := range map[string]string{
+		`"model":"claude-sonnet-4-5"`: "claude-sonnet-4-5",
+		`"model":" lite "`:            "lite",
+		`"model":"default"`:           "",
+		`"model":"inherit"`:           "",
+	} {
+		got := assistantStreamEvents(`{"type":"assistant","message":{"content":[{"type":"tool_use","id":"call-m","name":"Agent","input":{"subagent_type":"Explore","prompt":"x",` + input + `}}]}}`)
+		if len(got) != 1 || got[0].Model != want {
+			t.Fatalf("%s: dispatch=%+v, want model %q", input, got, want)
+		}
 	}
 	if got := labelRoleSubagent(dispatch[0], []roleSubagent{{Role: domain.AgentDefinition{ID: "qa", Name: "测试工程师"}}}); got.Role != "测试工程师" {
 		t.Fatalf("role label=%q", got.Role)

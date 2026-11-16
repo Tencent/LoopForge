@@ -56,6 +56,8 @@ func TestAssistantStreamFilterAcceptToolDedupes(t *testing.T) {
 		{"identical repeat", assistantStreamEvent{Tool: "Bash", ID: "t1", Detail: "ls"}, false},
 		{"repeat with empty detail and input", assistantStreamEvent{Tool: "Bash", ID: "t1", AgentID: "a1"}, false},
 		{"agent call adds task", assistantStreamEvent{Tool: "Agent", ID: "t2", Subagent: "Explore", Input: "find x"}, true},
+		{"agent call adds model", assistantStreamEvent{Tool: "Agent", ID: "t2", Subagent: "Explore", Input: "find x", Model: "lite"}, true},
+		{"agent call repeats model", assistantStreamEvent{Tool: "Agent", ID: "t2", Subagent: "Explore", Input: "find x", Model: "lite"}, false},
 		{"no id empty tool", assistantStreamEvent{}, false},
 		{"no id same as last", assistantStreamEvent{Tool: "Agent", Detail: ""}, false},
 		{"no id new detail", assistantStreamEvent{Tool: "Agent", Detail: "y"}, true},

@@ -82,6 +82,57 @@ describe("dispatched subagents", () => {
     await userEvent.click(screen.getByRole("button", { name: /测试报告/ }));
     expect(setSelected).toHaveBeenLastCalledWith(report);
   });
+
+  test("a subagent runs on the model its dispatch named, else on its reply's", () => {
+    const dispatch = (id, extra = {}) => ({ kind: "tool", id, tool: "Agent", detail: id, subagent: "role-qa", ...extra, at });
+    const steps = mergeActivity([], events(dispatch("c0"), dispatch("c0", { model: "lite" })));
+    expect(steps[0].model).toBe("lite");
+    const agents = collectSubagents(
+      [
+        { role: "assistant", model: "claude-opus-4-5", activity: [dispatch("c1"), { kind: "toolDone", id: "c1", agentId: "agent-aaa", at }] },
+        { role: "assistant", model: "claude-opus-4-5", activity: [dispatch("c2", { model: "claude-haiku-4-5", agentId: "agent-aaa" }), { kind: "toolDone", id: "c2", agentId: "agent-aaa", at }] },
+        { role: "assistant", activity: [dispatch("c3"), { kind: "toolDone", id: "c3", agentId: "agent-ccc", at }] },
+      ],
+      [dispatch("c4")],
+      "gpt-5",
+    );
+    expect(agents.map((agent) => [agent.key, agent.model, agent.models])).toEqual([
+      ["agent-aaa", "claude-haiku-4-5", { c1: "claude-opus-4-5", c2: "claude-haiku-4-5" }],
+      // A reply saved without a model reports none.
+      ["agent-ccc", "", {}],
+      // A live dispatch runs on the model the running reply was sent with.
+      ["c4", "gpt-5", { c4: "gpt-5" }],
+    ]);
+  });
+
+  test("the 子 Agent card and its session show the model it ran on", async () => {
+    const messages = [
+      { role: "user", content: "补单测" },
+      {
+        role: "assistant",
+        model: "claude-opus-4-5",
+        activity: [
+          { kind: "tool", id: "c1", tool: "Agent", detail: "补单测", input: "给 a.go 补单测", role: "测试工程师", at },
+          { kind: "toolDone", id: "c1", agentId: "agent-aaa", output: "用例都通过了", at },
+        ],
+      },
+    ];
+    const chat = { session: { id: "s1", projectId: "p1", messages }, projectId: "p1", projects: [] };
+    let selected = null;
+    const setSelected = vi.fn((value) => (selected = value));
+    const panel = () => (
+      <div className="chat-shell">
+        <ArtifactPanel artifacts={[]} runs={[]} selected={selected} setSelected={setSelected} chat={chat} onClose={vi.fn()} open />
+      </div>
+    );
+    const view = render(panel());
+    const card = screen.getByRole("button", { name: /测试工程师/ });
+    expect(card.textContent).toContain("已完成 · 模型 claude-opus-4-5");
+    await userEvent.click(card);
+    view.rerender(panel());
+    expect(screen.getByLabelText("运行模型").textContent).toBe("模型 · claude-opus-4-5");
+    expect(screen.getByText("已完成 · claude-opus-4-5")).toBeTruthy();
+  });
 });
 
 describe("role deliverables", () => {
