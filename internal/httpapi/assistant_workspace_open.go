@@ -183,7 +183,9 @@ func (h *agentToolGateway) openConversationWorkspace(ctx context.Context, s *Age
 			h.discardConversationWorkspace(s, bound)
 			return "", fmt.Errorf("工作区准备失败（已放弃这个工作区）：%v", err)
 		}
-		if bound.Previous != bound.Run.ID {
+		// Reusing the bound workspace switched nothing, so there is no binding
+		// to restore: keep it for the next attempt.
+		if !bound.Reused && bound.Previous != bound.Run.ID {
 			h.restoreConversationWorkspaceBinding(s, bound.Previous)
 			return "", fmt.Errorf("打开工作区 %s 失败（已恢复原绑定）：%v", run.ID, err)
 		}
@@ -235,6 +237,16 @@ func (h *agentToolGateway) resolveWorkspaceRunTarget(conv domain.AssistantSessio
 		return domain.Run{}, fmt.Errorf("工作区 %s 属于其他对话的私有工作区，不能直接共用；如需基于其中的代码继续开发，请进入本对话工作区后自行 git clone 并 checkout 对应分支", run.ID)
 	}
 	return run, nil
+}
+
+// workspaceExecutionRunner is the execution machine holding run's workspace.
+// A legacy run (no frozen execution mode) ran on its owner's default runner,
+// which the raw ExecutionRunnerID field does not record.
+func (h *agentToolGateway) workspaceExecutionRunner(run domain.Run) string {
+	if strings.TrimSpace(run.ExecutionContext.ExecutionMode) == "" && h.engine != nil {
+		return h.engine.RunExecutionRunner(run)
+	}
+	return strings.TrimSpace(run.ExecutionContext.ExecutionRunnerID)
 }
 
 func (h *agentToolGateway) executionMachineLabel(runnerID string) string {
@@ -353,8 +365,15 @@ func (h *agentToolGateway) bindConversationWorkspace(ctx context.Context, s *Age
 			binding.Run, binding.Created = run, true
 		}
 	}
-	if binding.Run.ExecutionContext.ExecutionRunnerID != conv.Execution().RunnerID {
-		srcMachine := h.executionMachineLabel(binding.Run.ExecutionContext.ExecutionRunnerID)
+	// An SOP workspace belongs to the run, so working in it needs the same
+	// write access as the run's workspace edits, terminal, resume and retry.
+	// This also covers a viewer speaking in a shared conversation that another
+	// member bound to an SOP.
+	if !binding.Run.IsWorkspace() && !h.speakerProjectWriter(s.ProjectID, s.User, s.UserID) {
+		return binding, fmt.Errorf("只读成员不能接入或进入 SOP 运行 %s 的工作区：工作区写入需要项目成员、项目 Owner 或平台管理员权限", binding.Run.ID)
+	}
+	if runRunner := h.workspaceExecutionRunner(binding.Run); runRunner != conv.Execution().RunnerID {
+		srcMachine := h.executionMachineLabel(runRunner)
 		convMachine := h.executionMachineLabel(conv.Execution().RunnerID)
 		return binding, fmt.Errorf("工作区 %s 位于%s，与当前对话绑定的%s不在同一执行机器上；如需直接操作该工作区，请在「%s」下新建对话后再接入", binding.Run.ID, srcMachine, convMachine, srcMachine)
 	}

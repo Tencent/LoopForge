@@ -243,6 +243,11 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 		req.ExecutionTarget = target
 	}
 	req.workspaceMode = savedConversation.Mode() == domain.AssistantModeWorkspace
+	if req.workspaceMode && req.RunID == "" && h.sopWorkspaceReadOnly(c, savedConversation, req.ProjectID, user.ID) {
+		// Another member left this shared conversation working in an SOP
+		// workspace; a read-only speaker continues in platform mode.
+		req.workspaceMode = false
+	}
 	sourceRoot := h.resolvedSourceRoot()
 	fullPrompt := h.turnPrompt(req, sourceRoot, false)
 	turn := fullPrompt
@@ -293,6 +298,9 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 		sess.turnMessages = append([]assistantMessage(nil), req.Messages...)
 		sess.ExecutionRunnerID = savedConversation.Execution().RunnerID
 		sess.RuntimeMode = savedConversation.Mode()
+		if sess.RuntimeMode == domain.AssistantModeWorkspace && !req.workspaceMode {
+			sess.RuntimeMode = domain.AssistantModePlatform
+		}
 		sess.SelectedMCPIDs = map[string]bool{}
 		for _, id := range req.MCPServerIDs {
 			sess.SelectedMCPIDs[id] = true
