@@ -563,7 +563,16 @@ func TestAgentAPIOnlyAcceptsBuiltInCLIs(t *testing.T) {
 		t.Fatalf("unknown CLI error = %q", rejected["error"])
 	}
 	for _, executor := range repo.BuiltInExecutors() {
-		created := requestJSON[domain.AgentDefinition](t, h, http.MethodPut, "/api/agents", map[string]any{"id": "agent-" + executor.ID, "name": executor.Name, "projectId": "platform", "executorId": executor.ID}, http.StatusOK)
+		input := map[string]any{"id": "agent-" + executor.ID, "name": executor.Name, "projectId": "platform", "executorId": executor.ID}
+		switch executor.ID {
+		case "pi", "opencode", "kimi":
+			rejected := requestJSON[map[string]string](t, h, http.MethodPut, "/api/agents", input, http.StatusBadRequest)
+			if !strings.Contains(rejected["error"], "需要指定模型") {
+				t.Fatalf("%s missing model error = %q", executor.ID, rejected["error"])
+			}
+			input["model"] = "test-model"
+		}
+		created := requestJSON[domain.AgentDefinition](t, h, http.MethodPut, "/api/agents", input, http.StatusOK)
 		if created.ExecutorID != executor.ID {
 			t.Fatalf("agent CLI = %q, want %q", created.ExecutorID, executor.ID)
 		}
