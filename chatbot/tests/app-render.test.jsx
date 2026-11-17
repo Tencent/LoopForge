@@ -255,8 +255,12 @@ describe("App", () => {
       await waitFor(() => expect(box.value).toBe("@订单导出 "));
       expect(screen.queryByText("spec.pdf")).not.toBeInTheDocument();
       expect(localStorage.getItem(projectDraftKey)).toBe(projectDraft);
-      const issueDraft = JSON.parse(localStorage.getItem(`agentflow.native-chat.draft.${owner}.issue:i3`));
-      expect(issueDraft.references).toEqual([{ type: "issue", id: "i3", name: "订单导出", projectId: "p1" }]);
+      // The draft is saved by an effect that runs after the mention renders;
+      // on a slow runner the box can already show it while storage does not.
+      await waitFor(() => {
+        const issueDraft = JSON.parse(localStorage.getItem(`agentflow.native-chat.draft.${owner}.issue:i3`));
+        expect(issueDraft.references).toEqual([{ type: "issue", id: "i3", name: "订单导出", projectId: "p1" }]);
+      });
 
       fireEvent.change(box, { target: { value: "@订单导出 先聊范围" } });
       window.dispatchEvent(new MessageEvent("message", {
