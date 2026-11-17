@@ -78,6 +78,8 @@ func executorModelCatalogs() map[string]executorModelCatalog {
 			Models: []executorModelInfo{
 				{ID: "gpt-6.1-sol", Name: "GPT-6.1 Sol"},
 				{ID: "gpt-6.1-terra", Name: "GPT-6.1 Terra"},
+				{ID: "gpt-6.2-sol", Name: "GPT-6.2 Sol"},
+				{ID: "gpt-6.2-astra", Name: "GPT-6.2 Astra"},
 				{ID: "gpt-6-astra", Name: "GPT-6 Astra"},
 				{ID: "gpt-6-sol", Name: "GPT-6 Sol"},
 				{ID: "gpt-6-luna", Name: "GPT-6 Luna"},

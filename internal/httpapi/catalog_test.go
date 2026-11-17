@@ -61,6 +61,15 @@ func TestExecutorModelsCatalogListsPerCLI(t *testing.T) {
 	if len(codex.Models) < 2 || codex.Models[0].ID != "gpt-6.1-sol" || codex.Models[1].ID != "gpt-6.1-terra" || codex.Models[1].Name != "GPT-6.1 Terra" {
 		t.Fatalf("codex catalog = %+v", codex.Models)
 	}
+	codexNames := make(map[string]string, len(codex.Models))
+	for _, model := range codex.Models {
+		codexNames[model.ID] = model.Name
+	}
+	for id, name := range map[string]string{"gpt-6.2-sol": "GPT-6.2 Sol", "gpt-6.2-astra": "GPT-6.2 Astra"} {
+		if got := codexNames[id]; got != name {
+			t.Errorf("Codex model %s has name %q, want %q", id, got, name)
+		}
+	}
 	claude := catalogs["claude"]
 	haiku := -1
 	for i, model := range claude.Models {
