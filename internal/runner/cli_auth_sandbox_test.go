@@ -64,20 +64,7 @@ func runnerSandboxAuthFixtures(t *testing.T, driver string) (string, domain.Dock
 		}
 		// Local Docker VMs such as Colima share the checkout but may not share
 		// the OS temporary directory. Create bind sources in the shared root.
-		shared := os.Getenv("AGENTFLOW_DOCKER_TEST_ROOT")
-		if shared == "" {
-			shared = "."
-		}
-		shared, err := filepath.Abs(shared)
-		if err != nil {
-			t.Fatal(err)
-		}
-		temp, err := os.MkdirTemp(shared, ".runner-cli-auth-")
-		if err != nil {
-			t.Fatal(err)
-		}
-		t.Cleanup(func() { _ = os.RemoveAll(temp) })
-		t.Setenv("TMPDIR", temp)
+		useTempDirOutsideTmp(t, os.Getenv("AGENTFLOW_DOCKER_TEST_ROOT"))
 	} else {
 		switch goruntime.GOOS {
 		case "darwin":
@@ -88,6 +75,12 @@ func runnerSandboxAuthFixtures(t *testing.T, driver string) (string, domain.Dock
 			if out, err := exec.Command("bwrap", "--ro-bind", "/", "/", "--", "/bin/true").CombinedOutput(); err != nil {
 				t.Skipf("bwrap is unavailable: %v %s", err, out)
 			}
+			// bwrap mounts a private tmpfs over /tmp after binding the
+			// workspace, so fixture CLIs and run workspaces under the default
+			// t.TempDir() would vanish inside the sandbox. A runner keeps its
+			// workspaces under ~/.agentflow-runner; keep the fixtures out of
+			// /tmp the same way.
+			useTempDirOutsideTmp(t, "")
 		default:
 			t.Skip("the native sandbox requires macOS or Linux")
 		}
@@ -283,4 +276,23 @@ func TestRunnerSOPCLIAuthentication(t *testing.T) {
 			}
 		})
 	}
+}
+
+// useTempDirOutsideTmp points t.TempDir() at a fresh directory under root (the
+// package directory when empty) for the rest of the test.
+func useTempDirOutsideTmp(t *testing.T, root string) {
+	t.Helper()
+	if root == "" {
+		root = "."
+	}
+	root, err := filepath.Abs(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	temp, err := os.MkdirTemp(root, ".runner-cli-auth-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(temp) })
+	t.Setenv("TMPDIR", temp)
 }
