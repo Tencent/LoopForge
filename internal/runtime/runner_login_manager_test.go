@@ -439,6 +439,54 @@ func TestRunnerLoginDoesNotAdoptAnotherAccount(t *testing.T) {
 	}
 }
 
+func TestRunnerLoginSourceAliasChanges(t *testing.T) {
+	for _, scenario := range []string{"logout", "retarget", "logout-during-exchange", "retarget-during-exchange"} {
+		t.Run(scenario, func(t *testing.T) {
+			target, original, renewed := managedLoginFixture(t, "codex")
+			config := t.TempDir()
+			login, _ := runnerLoginSpec("codex")
+			alias := filepath.Join(config, login.file)
+			if err := os.Symlink(target.path, alias); err != nil {
+				t.Fatal(err)
+			}
+			source := fileRunnerLoginSource(login, config)
+			change := func() {
+				if err := os.Remove(alias); err != nil {
+					t.Fatal(err)
+				}
+				if strings.HasPrefix(scenario, "retarget") {
+					other, _, _ := managedLoginFixture(t, "codex")
+					if err := os.Symlink(other.path, alias); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+			manager := &runnerLoginManager{stateDir: t.TempDir(), refresh: func(context.Context, string, []byte) ([]byte, error) {
+				if !strings.HasSuffix(scenario, "during-exchange") {
+					t.Error("detached source refreshed")
+					return nil, errors.New("unexpected")
+				}
+				change()
+				return renewed, nil
+			}}
+			stale, err := manager.current(context.Background(), source)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.HasSuffix(scenario, "during-exchange") {
+				change()
+			}
+			if _, err := manager.renew(context.Background(), source, stale); err == nil {
+				t.Fatal("continued using a detached login target")
+			}
+			got, err := os.ReadFile(target.path)
+			if err != nil || !bytes.Equal(got, original) {
+				t.Fatal("detached host source changed")
+			}
+		})
+	}
+}
+
 func TestManagedClaudeBridge(t *testing.T) {
 	source, _, renewed := managedLoginFixture(t, "claude-code")
 	manager := &runnerLoginManager{stateDir: t.TempDir(), refresh: func(context.Context, string, []byte) ([]byte, error) { return renewed, nil }}

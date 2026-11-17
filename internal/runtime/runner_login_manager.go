@@ -22,6 +22,7 @@ import (
 // A source is owned by the Runner. Sandbox credential files are never sources.
 type runnerLoginSource struct {
 	provider, path string
+	origin         string
 	identity       func([]byte) string
 }
 
@@ -53,6 +54,13 @@ func loginDigest(raw []byte) string {
 
 func fileRunnerLoginSource(login conversationLoginSpec, configDir string) runnerLoginSource {
 	path := filepath.Join(configDir, login.file)
+	if absolute, err := filepath.Abs(path); err == nil {
+		path = absolute
+	}
+	origin := path
+	if parent, err := filepath.EvalSymlinks(filepath.Dir(path)); err == nil {
+		path = filepath.Join(parent, filepath.Base(path))
+	}
 	if resolved, err := filepath.EvalSymlinks(path); err == nil {
 		path = resolved
 	}
@@ -60,7 +68,7 @@ func fileRunnerLoginSource(login conversationLoginSpec, configDir string) runner
 	if login.binding == BindClaudeCode {
 		provider = "claude-code"
 	}
-	source := runnerLoginSource{provider: provider, path: path}
+	source := runnerLoginSource{provider: provider, path: path, origin: origin}
 	source.identity = func(raw []byte) string {
 		if provider == "codex" {
 			var doc struct {
@@ -174,6 +182,15 @@ func parseRunnerOAuth(provider string, raw []byte) (runnerLoginSnapshot, error) 
 }
 
 func (source runnerLoginSource) read() (runnerLoginSnapshot, error) {
+	if source.origin != "" {
+		resolved, err := filepath.EvalSymlinks(source.origin)
+		if err != nil {
+			return runnerLoginSnapshot{}, err
+		}
+		if resolved != source.path {
+			return runnerLoginSnapshot{}, errors.New("Runner login source changed; restart this task")
+		}
+	}
 	raw, err := readRunnerLoginFile(filepath.Dir(source.path), filepath.Base(source.path))
 	if err != nil {
 		return runnerLoginSnapshot{}, err
@@ -436,6 +453,9 @@ func (m *runnerLoginManager) renew(ctx context.Context, source runnerLoginSource
 		}
 		if current.identity != "" && source.identity(canonical) != current.identity {
 			return runnerLoginSnapshot{}, errors.New("refreshed Runner login belongs to another account")
+		}
+		if _, err := source.read(); err != nil {
+			return runnerLoginSnapshot{}, errors.New("Runner login source changed during refresh; response retained privately")
 		}
 		if err := replaceRunnerLoginFile(filepath.Dir(source.path), filepath.Base(source.path), current.raw, canonical); err != nil {
 			return runnerLoginSnapshot{}, errors.New("refreshed Runner login is pending recovery")

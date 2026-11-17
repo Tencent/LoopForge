@@ -65,6 +65,9 @@ func newRunnerLoginLease(ctx context.Context, manager *runnerLoginManager, sourc
 		return nil, err
 	}
 	lease.protected = []string{source.path, filepath.Dir(statePath)}
+	if source.origin != "" && source.origin != source.path {
+		lease.protected = append(lease.protected, source.origin)
+	}
 	if source.provider == "codex" {
 		address, host := "127.0.0.1:0", "127.0.0.1"
 		if docker {
