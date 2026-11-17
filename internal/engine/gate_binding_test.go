@@ -107,6 +107,54 @@ func TestGateBindingRejectsMissingArtifact(t *testing.T) {
 	}
 }
 
+func TestGateBindingRejectsHalfBinding(t *testing.T) {
+	e, _ := cvEEngine(t)
+	e.executeRuns = false
+	run := gateBindingRun("gate-binding-half")
+	cvEPutRun(t, e, run)
+
+	for _, expected := range []NodeExpectation{
+		{NodeID: "gate", Status: "waiting_approval", Attempt: 1, ArtifactSHA256: "aaaa"},
+		{NodeID: "gate", Status: "waiting_approval", Attempt: 1, ArtifactName: "verify"},
+	} {
+		if err := e.Approve(run.ID, "gate", "", expected); err == nil {
+			t.Fatalf("half-filled binding %+v was accepted", expected)
+		}
+	}
+	got, _ := e.repo.RunState(run.ID)
+	if got.Nodes["gate"].Status != "waiting_approval" {
+		t.Fatalf("gate status = %q, want waiting_approval", got.Nodes["gate"].Status)
+	}
+}
+
+func TestGateBindingBindsToNewestArtifactAttempt(t *testing.T) {
+	e, _ := cvEEngine(t)
+	e.executeRuns = false
+	run := gateBindingRun("gate-binding-newest")
+	older := time.Now().UTC().Add(-time.Minute)
+	run.Artifacts = []domain.Artifact{
+		// Attempt numbers are per node, so the older artifact can carry the higher
+		// attempt: recency must come from creation time.
+		{ID: "old", RunID: run.ID, NodeID: "verify", Attempt: 5, Name: "verify", Path: "verify.json", SHA256: "aaaa", CreatedAt: older},
+		{ID: "new", RunID: run.ID, NodeID: "verify", Attempt: 1, Name: "verify", Path: "verify.json", SHA256: "cccc", CreatedAt: time.Now().UTC()},
+	}
+	cvEPutRun(t, e, run)
+
+	err := e.Approve(run.ID, "gate", "", NodeExpectation{
+		NodeID: "gate", Status: "waiting_approval", Attempt: 1,
+		ArtifactName: "verify", ArtifactSHA256: "aaaa",
+	})
+	if err == nil || !strings.Contains(err.Error(), "cccc") {
+		t.Fatalf("approval must bind to the newest artifact, got %v", err)
+	}
+	if err := e.Approve(run.ID, "gate", "", NodeExpectation{
+		NodeID: "gate", Status: "waiting_approval", Attempt: 1,
+		ArtifactName: "verify", ArtifactSHA256: "cccc",
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestGateBindingWithoutExpectedKeepsLegacyBehavior(t *testing.T) {
 	e, _ := cvEEngine(t)
 	e.executeRuns = false

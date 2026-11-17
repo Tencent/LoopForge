@@ -114,6 +114,41 @@ func TestNodeRequiresVerdictMustMatch(t *testing.T) {
 	}
 }
 
+func TestNodeRequiresRejectsMalformedVerdictDocument(t *testing.T) {
+	t.Parallel()
+	s, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	wf := domain.WorkflowDefinition{
+		ID: "requires-verdict-broken", Name: "requires-verdict-broken", SandboxProfileID: "local",
+		Nodes: []domain.WorkflowNode{
+			{ID: "produce", Name: "Produce", Type: "script", ScriptLanguage: "shell",
+				Script: "printf 'not json' > verify.json", MaxAttempts: 1,
+				ArtifactOutputs: []domain.ArtifactContract{{Name: "verify", Path: "verify.json", MediaType: "application/json", Required: true}}},
+			{ID: "consume", Name: "Consume", Type: "script", ScriptLanguage: "shell",
+				Script: "printf ran > ran.txt", MaxAttempts: 1,
+				Requires: []string{"verdict:PASS@d1"}},
+		},
+		Edges: []domain.WorkflowEdge{{ID: "produce-consume", Source: "produce", Target: "consume", When: "success"}},
+	}
+	if err := s.PutWorkflow(wf); err != nil {
+		t.Fatal(err)
+	}
+	e := New(s, runtime.NewManagerWithLimit(t.TempDir(), 1))
+	run, err := e.Start(wf.ID, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, s, run.ID, "failed")
+	finished, _ := s.Run(run.ID)
+	consume := finished.Nodes["consume"]
+	if consume == nil || consume.Status != "failed" || !strings.Contains(consume.Error, "不是合法 JSON") {
+		t.Fatalf("consume = %+v, want failed naming malformed JSON", consume)
+	}
+}
+
 func TestWorkflowValidationRejectsMalformedRequires(t *testing.T) {
 	for _, requirement := range []string{"verify@abc", "artifact:verify", "verdict:PASS", "artifact:@abc"} {
 		wf := requiresWorkflow("requires-invalid-"+strings.NewReplacer(":", "-", "@", "-").Replace(requirement), requirement)

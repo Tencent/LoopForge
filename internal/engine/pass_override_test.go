@@ -75,6 +75,27 @@ func TestPassOverridePassesVerificationNodeAndRecordsActor(t *testing.T) {
 	}
 }
 
+func TestPassRejectsVerificationNodeParkedByPause(t *testing.T) {
+	e, _ := cvEEngine(t)
+	e.executeRuns = false
+	run := verificationPassRun("pass-override-paused")
+	run.Status = "waiting"
+	run.PauseRequested = true
+	run.Nodes["verify"].Status = "waiting_approval"
+	cvEPutRun(t, e, run)
+
+	if err := e.Pass(run.ID, "verify", ""); err == nil {
+		t.Fatal("paused verification node was passed without an override")
+	}
+	got, _ := e.repo.RunState(run.ID)
+	if got.Nodes["verify"].Status != "waiting_approval" {
+		t.Fatalf("verify status = %q, want waiting_approval", got.Nodes["verify"].Status)
+	}
+	if !hasRunEvent(got, "node.pass_rejected") {
+		t.Fatalf("node.pass_rejected audit event missing: %+v", got.Events)
+	}
+}
+
 func TestPassKeepsWorkingForNonVerificationScriptNode(t *testing.T) {
 	e, _ := cvEEngine(t)
 	e.executeRuns = false

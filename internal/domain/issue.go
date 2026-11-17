@@ -384,8 +384,10 @@ type HumanDecision struct {
 	NodeID   string                   `json:"nodeId"`
 	Reason   string                   `json:"reason,omitempty"`
 	Context  string                   `json:"context,omitempty"`
-	// Override lets /pass through a node marked verification:true. The request
-	// is still audited with its operator; without it the pass is refused.
+	// Override lets /pass through a node marked verificationStep:true. The
+	// request is still audited with its operator; without it the pass is
+	// refused. The field is shared with approve/retry/resume bodies, which
+	// ignore it.
 	Override bool `json:"override,omitempty"`
 }
 
