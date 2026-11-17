@@ -196,7 +196,7 @@ Object.assign(window.LF_I18N_EN,{
   "例如 公司 GitLab":"For example, Company GitLab",
   "用户名":"Username",
   "git 认证使用的用户名，留空时为 x-access-token。":"Username git authenticates with; x-access-token when blank.",
-  "访问令牌":"Access token",
+  "个人访问令牌":"Personal access token",
   "粘贴个人访问令牌":"Paste a personal access token",
   "留空保留现有令牌":"Leave blank to keep the current token",
   "保存后不再显示；编辑时留空保留现有令牌。":"Not shown again after saving; leave blank when editing to keep the current token.",
