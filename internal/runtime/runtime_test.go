@@ -1376,7 +1376,7 @@ func TestReclaimExceptSkipsLockedWorkspace(t *testing.T) {
 	}
 }
 
-func TestDestroyRunSkipsLockedWorkspace(t *testing.T) {
+func TestDestroyRunReportsLockedWorkspace(t *testing.T) {
 	root := t.TempDir()
 	m := NewManager(root)
 	profile := domain.SandboxProfile{ID: "local", Driver: "local"}
@@ -1388,8 +1388,8 @@ func TestDestroyRunSkipsLockedWorkspace(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(path, "repo.txt"), []byte("clone"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := m.DestroyRun("run-abc"); err != nil {
-		t.Fatal(err)
+	if err := m.DestroyRun("run-abc"); !errors.Is(err, ErrSandboxInUse) {
+		t.Fatalf("destroy locked workspace: %v", err)
 	}
 	if _, err := os.Stat(path); err != nil {
 		t.Fatalf("in-use workspace was destroyed: %v", err)

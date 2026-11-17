@@ -121,7 +121,7 @@ func TestControlLoopReceivesSignalsAndWorkspaceRequests(t *testing.T) {
 		if conn.ReadJSON(&hello) != nil {
 			return
 		}
-		_ = conn.WriteJSON(controlMessage{Type: "task.control", TaskID: "task", DesiredState: domain.RunnerTaskDesiredCancel})
+		_ = conn.WriteJSON(controlMessage{Type: "task.control", TaskID: "task", Attempt: 1, DesiredState: domain.RunnerTaskDesiredCancel})
 		_ = conn.WriteJSON(controlMessage{
 			Type: "workspace.request", RequestID: "req",
 			WorkspaceRequest: &domain.RunnerWorkspaceRequest{RunID: "../bad", Operation: domain.RunnerWorkspaceOperationInfo},
@@ -135,10 +135,10 @@ func TestControlLoopReceivesSignalsAndWorkspaceRequests(t *testing.T) {
 	d := &Daemon{
 		cfg:             Config{DefaultWorkspaceRoot: t.TempDir()},
 		client:          NewClient(server.URL),
-		controls:        map[string]chan string{},
-		pendingControls: map[string]string{},
+		controls:        map[taskControlID]chan string{},
+		pendingControls: map[taskControlID]string{},
 	}
-	control := d.registerTaskControl("task")
+	control := d.registerTaskControl("task", 1)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() { d.controlLoop(ctx); close(done) }()
@@ -164,7 +164,7 @@ func TestControlLoopReceivesSignalsAndWorkspaceRequests(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("control loop did not stop")
 	}
-	d.unregisterTaskControl("task")
+	d.unregisterTaskControl("task", 1)
 }
 
 func TestRunnerCredentialArtifactAndRepositoryHelpers(t *testing.T) {

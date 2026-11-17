@@ -41,8 +41,8 @@ type Daemon struct {
 	running              int32
 	registerMu           sync.Mutex
 	controlMu            sync.RWMutex
-	controls             map[string]chan string
-	pendingControls      map[string]string
+	controls             map[taskControlID]chan string
+	pendingControls      map[taskControlID]string
 	wsOnline             atomic.Bool
 	updateMu             sync.RWMutex
 	updateReady          atomic.Bool
@@ -77,6 +77,10 @@ type Config struct {
 	// ManagedCLIRoot explicitly opts platform runners into managed CLI coordination.
 	// Empty leaves ordinary user runners unchanged; it is never inferred from PATH.
 	ManagedCLIRoot string
+	// EnvironmentManagerURL enables the independent sandbox manager lease
+	// protocol. Empty keeps single-machine deployments fully local.
+	EnvironmentManagerURL   string
+	EnvironmentManagerToken string
 }
 
 type daemonState struct {
@@ -94,6 +98,9 @@ func DefaultStatePath() (string, error) {
 }
 
 func New(cfg Config) (*Daemon, error) {
+	if strings.TrimSpace(cfg.EnvironmentManagerURL) != "" && strings.TrimSpace(cfg.EnvironmentManagerToken) == "" {
+		return nil, errors.New("environment manager token is required when independent manager is enabled")
+	}
 	cfg.ManagedCLIRoot = strings.TrimSpace(cfg.ManagedCLIRoot)
 	cfg.ServerURL = trimTrailingSlash(cfg.ServerURL)
 	if cfg.ServerURL == "" {
@@ -129,7 +136,7 @@ func New(cfg Config) (*Daemon, error) {
 		host, _ := os.Hostname()
 		cfg.Name = host
 	}
-	return &Daemon{cfg: cfg, client: NewClient(cfg.ServerURL), executor: runtime.NewExecutorRunner(), controls: map[string]chan string{}, pendingControls: map[string]string{}}, nil
+	return &Daemon{cfg: cfg, client: NewClient(cfg.ServerURL), executor: runtime.NewExecutorRunner(), controls: map[taskControlID]chan string{}, pendingControls: map[taskControlID]string{}}, nil
 }
 
 func trimTrailingSlash(s string) string {
@@ -517,24 +524,54 @@ func (d *Daemon) executeTask(ctx context.Context, task domain.RunnerTask) {
 	// locks, cloning repositories, creating sandboxes and collecting outputs too.
 	ctx, stopLease := d.keepTaskLease(ctx, task, leaseRenewInterval)
 	defer stopLease()
+	var environmentLeaseErr error
+	var taskEnvironmentLease *environmentLease
+	taskOwnsEnvironmentLease := false
+	if strings.TrimSpace(d.cfg.EnvironmentManagerURL) != "" {
+		taskEnvironmentLease, taskOwnsEnvironmentLease, environmentLeaseErr = d.acquireTaskEnvironmentLease(ctx, task)
+		if environmentLeaseErr == nil && taskEnvironmentLease != nil {
+			leaseCtx, cancelLease := context.WithCancel(ctx)
+			ctx = withEnvironmentLease(leaseCtx, taskEnvironmentLease)
+			defer func() {
+				cancelLease()
+				if taskOwnsEnvironmentLease {
+					taskEnvironmentLease.release()
+				}
+			}()
+			go func() {
+				select {
+				case <-taskEnvironmentLease.done:
+					cancelLease()
+				case <-leaseCtx.Done():
+				}
+			}()
+		}
+	}
 	// The read fence ends before the completion report: once the control plane
 	// sees this task terminal (and lets a paused run continue), a follow-up
 	// preparation or snapshot must not still find the gate held.
 	releaseGate := func() {}
 	if task.RunID != "" {
 		gate := d.workspaceGate(d.taskGateKey(task))
-		gate.RLock()
-		releaseGate = onceRelease(gate.RUnlock)
+		if task.Action == domain.RunnerTaskActionCleanupRun {
+			gate.Lock()
+			releaseGate = onceRelease(gate.Unlock)
+		} else {
+			gate.RLock()
+			releaseGate = onceRelease(gate.RUnlock)
+		}
 	}
 	defer releaseGate()
-	d.registerTaskControl(task.ID)
-	defer d.unregisterTaskControl(task.ID)
+	d.registerTaskControl(task.ID, task.Attempt)
+	defer d.unregisterTaskControl(task.ID, task.Attempt)
 	log.Printf("task %s claimed (provider=%s attempt=%d)", task.ID, task.Provider, task.Attempt)
 
 	var result execResult
 	var artifacts map[string]string
 	managed := d.managedTaskState(task.ID)
 	switch {
+	case environmentLeaseErr != nil:
+		result = execResult{status: domain.RunnerTaskFailed, errMsg: fmt.Sprintf("acquire execution environment lease: %v", environmentLeaseErr)}
 	case managed != nil && managed.err != nil:
 		result = execResult{status: domain.RunnerTaskFailed, errMsg: fmt.Sprintf("pin managed CLI inventory: %v", managed.err)}
 	case task.Action == domain.RunnerTaskActionCleanupRun:
@@ -579,7 +616,7 @@ func (d *Daemon) executeTask(ctx context.Context, task domain.RunnerTask) {
 	}
 
 	releaseGate()
-	completeCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	completeCtx, cancel := context.WithTimeout(context.WithValue(context.Background(), taskAttemptContextKey{}, task.Attempt), 30*time.Second)
 	defer cancel()
 	req := CompleteRequest{Status: result.status, Result: result.result, Error: result.errMsg, Artifacts: artifacts, Outputs: result.outputs}
 	if result.status == domain.RunnerTaskFailed || result.status == domain.RunnerTaskSuccess {
@@ -593,6 +630,9 @@ func (d *Daemon) executeTask(ctx context.Context, task domain.RunnerTask) {
 }
 
 func (d *Daemon) executeRunCleanup(ctx context.Context, task domain.RunnerTask) execResult {
+	if err := ctx.Err(); err != nil {
+		return execResult{status: domain.RunnerTaskCanceled, errMsg: err.Error()}
+	}
 	if err := d.client.StartTask(ctx, task.ID); err != nil {
 		return execResult{status: domain.RunnerTaskFailed, errMsg: fmt.Sprintf("start cleanup: %v", err)}
 	}
@@ -614,6 +654,9 @@ func (d *Daemon) executeRunCleanup(ctx context.Context, task domain.RunnerTask) 
 		if err := cleanupDockerWorkspace(ctx, target); err != nil {
 			return execResult{status: domain.RunnerTaskFailed, errMsg: fmt.Sprintf("cleanup docker sandbox: %v", err)}
 		}
+	}
+	if err := ctx.Err(); err != nil {
+		return execResult{status: domain.RunnerTaskCanceled, errMsg: err.Error()}
 	}
 	if err := os.RemoveAll(target); err != nil {
 		return execResult{status: domain.RunnerTaskFailed, errMsg: fmt.Sprintf("remove runner workspace: %v", err)}

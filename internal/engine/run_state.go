@@ -48,6 +48,12 @@ func (e *Engine) updateRunAtErr(id string, allowExpiredLease bool, mutate func(*
 		return true, nil
 	}
 	for _, item := range pending {
+		if item.generation > 0 {
+			node := r.Nodes[item.nodeID]
+			if r.Generation != item.generation || !e.ownsRun(r) || node == nil || node.Attempt != item.attempt {
+				continue
+			}
+		}
 		e.applyObservation(&r, item.nodeID, item.event)
 	}
 	if mutate != nil {

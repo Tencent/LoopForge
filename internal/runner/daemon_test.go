@@ -795,6 +795,9 @@ func TestWorkflowAgentNodeDispatchesToRunner(t *testing.T) {
 	if tasks[0].RunID != run.ID || tasks[0].NodeID != "work" || tasks[0].Status != domain.RunnerTaskSuccess {
 		t.Fatalf("unexpected runner task: %+v", tasks[0])
 	}
+	if tasks[0].RunGeneration == 0 || tasks[0].RunGeneration != final.Generation {
+		t.Fatalf("runner task generation = %d, run generation = %d", tasks[0].RunGeneration, final.Generation)
+	}
 	// The dispatch is visible in the run timeline.
 	foundDispatch := false
 	for _, ev := range final.Telemetry {

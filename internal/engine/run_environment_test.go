@@ -7,6 +7,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -14,6 +16,82 @@ import (
 	"agentflow/internal/repo"
 	"agentflow/internal/runtime"
 )
+
+func TestEnvironmentRegistryReusesHandleAndRejectsFailedBind(t *testing.T) {
+	registry := newEnvironmentRegistry()
+	var created atomic.Int32
+	create := func() (runtime.Sandbox, error) {
+		created.Add(1)
+		return &recordingSandbox{}, nil
+	}
+	var wg sync.WaitGroup
+	results := make(chan *runEnvironment, 8)
+	for i := 0; i < cap(results); i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			env, _, err := registry.acquire("run", runtime.RunCredentials{}, create, nil)
+			if err != nil {
+				t.Errorf("acquire: %v", err)
+			}
+			results <- env
+		}()
+	}
+	wg.Wait()
+	close(results)
+	var first *runEnvironment
+	for env := range results {
+		if first == nil {
+			first = env
+		} else if env != first {
+			t.Fatal("concurrent callers received different handles")
+		}
+	}
+	if created.Load() != 1 {
+		t.Fatalf("created %d sandboxes", created.Load())
+	}
+	sandbox := &recordingSandbox{}
+	_, _, err := registry.acquire("failed-bind", runtime.RunCredentials{}, func() (runtime.Sandbox, error) { return sandbox, nil }, func() (bool, error) { return false, errors.New("lost lease") })
+	if err == nil || !sandbox.closed || registry.lookup("failed-bind") != nil {
+		t.Fatalf("failed bind published or leaked its handle: %v", err)
+	}
+	_, _, err = registry.acquire("run", runtime.RunCredentials{}, create, func() (bool, error) { return false, errors.New("lost lease") })
+	if err == nil || created.Load() != 1 || registry.lookup("run") != first {
+		t.Fatalf("cached handle bypassed failed lease validation: %v", err)
+	}
+}
+
+func TestEnvironmentRegistryDoesNotBlockDifferentRuns(t *testing.T) {
+	registry := newEnvironmentRegistry()
+	started, release, done := make(chan struct{}), make(chan struct{}), make(chan error, 1)
+	go func() {
+		_, _, err := registry.acquire("slow", runtime.RunCredentials{}, func() (runtime.Sandbox, error) {
+			close(started)
+			<-release
+			return &recordingSandbox{}, nil
+		}, nil)
+		done <- err
+	}()
+	<-started
+	other := make(chan error, 1)
+	go func() {
+		_, _, err := registry.acquire("other", runtime.RunCredentials{}, func() (runtime.Sandbox, error) { return &recordingSandbox{}, nil }, nil)
+		other <- err
+	}()
+	select {
+	case err := <-other:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		close(release)
+		t.Fatal("unrelated run blocked by sandbox creation")
+	}
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}
 
 func TestAcquireRunEnvironmentRefreshesGitTokenWithoutReplacingWorkspace(t *testing.T) {
 	t.Parallel()

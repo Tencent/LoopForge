@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"agentflow/internal/domain"
+	"agentflow/internal/executionenv"
 	"agentflow/internal/procwatch"
 	"agentflow/internal/repo"
 	"agentflow/internal/runtime"
@@ -35,28 +36,19 @@ func (e *Engine) acquireConversationEnvironment(ctx context.Context, run domain.
 	if e.foreignWorkspaceBind(run) || e.defaultExecutionRunner(run) != "" {
 		return nil, fmt.Errorf("工作区属于其他执行实例")
 	}
-	e.runEnvMu.Lock()
-	defer e.runEnvMu.Unlock()
-	if env := e.runEnvs[run.ID]; env != nil {
-		env.setCredentials(e.resolveRunCredentials(run))
-		return env, nil
-	}
-	profile, resources, err := e.workspaceSandboxProfile(run)
-	if err != nil {
-		return nil, err
-	}
-	requirements, err := workspaceConversationRequirements(e.repo, run.WorkflowSnapshot)
-	if err != nil {
-		return nil, err
-	}
 	credentials := e.resolveRunCredentials(run)
-	sb, err := e.sandboxes.AcquireRunIn(ctx, run.ID, workspaceRunID(run), profile, requirements, credentials, resources)
-	if err != nil {
-		return nil, err
-	}
-	env := &runEnvironment{sandbox: sb, credentials: credentials}
-	e.runEnvs[run.ID] = env
-	return env, nil
+	env, _, err := e.environments.acquire(run.ID, credentials, func() (runtime.Sandbox, error) {
+		profile, resources, err := e.workspaceSandboxProfile(run)
+		if err != nil {
+			return nil, err
+		}
+		requirements, err := workspaceConversationRequirements(e.repo, run.WorkflowSnapshot)
+		if err != nil {
+			return nil, err
+		}
+		return e.executionBackend.Acquire(ctx, executionenv.AcquireRequest{Identity: executionenv.Identity{EnvironmentID: run.ID, WorkspaceID: workspaceRunID(run), Generation: run.Generation}, Profile: profile, Requirements: requirements, Credentials: credentials, Resources: resources})
+	}, nil)
+	return env, err
 }
 
 func (e *Engine) preparationSink(runID string) runtime.EventSink {
@@ -218,18 +210,14 @@ func (e *Engine) WorkspacePreparationStatus(ctx context.Context, id string) (run
 	if reason != "" {
 		return runtime.WorkspacePreparationStatus{Status: "unprepared", Steps: []runtime.WorkspacePreparationStep{}}, nil
 	}
-	e.runEnvMu.Lock()
-	scopeEnv := e.runEnvs[id]
-	e.runEnvMu.Unlock()
+	scopeEnv := e.environments.lookup(id)
 	if scopeEnv == nil {
 		return runtime.WorkspacePreparationStatus{Status: "unprepared", Error: "执行环境尚未检查；文件仍可浏览", Steps: []runtime.WorkspacePreparationStep{}}, nil
 	}
 	state := runtime.ReadWorkspacePreparationStatus(root, scopeEnv.ID())
 	if state.Status == "preparing" {
-		e.runEnvMu.Lock()
-		env := e.runEnvs[id]
+		env := e.environments.lookup(id)
 		active := env != nil && env.preparing.Load()
-		e.runEnvMu.Unlock()
 		if !active {
 			state.Status = "unprepared"
 			state.Error = "上次工作区准备已中断，请重新准备"
@@ -237,9 +225,7 @@ func (e *Engine) WorkspacePreparationStatus(ctx context.Context, id string) (run
 	}
 
 	if state.Status == "ready" {
-		e.runEnvMu.Lock()
-		env := e.runEnvs[id]
-		e.runEnvMu.Unlock()
+		env := e.environments.lookup(id)
 		reason := ""
 		if env == nil {
 			reason = "执行环境尚未检查；文件仍可浏览"
@@ -352,9 +338,7 @@ func (e *Engine) HandlePreparedWorkspaceTerminal(ctx context.Context, run domain
 	if req.Operation != "open" {
 		return pool.HandleSandbox(ctx, nil, scope, req, nil)
 	}
-	e.runEnvMu.Lock()
-	env := e.runEnvs[id]
-	e.runEnvMu.Unlock()
+	env := e.environments.lookup(id)
 	if env == nil {
 		return runtime.TerminalResult{}, fmt.Errorf("工作区环境尚未准备，请重新打开终端")
 	}

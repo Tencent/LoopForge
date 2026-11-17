@@ -453,11 +453,29 @@ func (r *RunsRepo) SupersededIssueRunIDs(issueID, keepRunID string) []string {
 }
 
 func (r *RunsRepo) LiveSandboxRunIDs() []string {
-	var ids []string
-	if err := r.DB.Model(&runRow{}).Select("id").Where("workspace_cleaned_at IS NULL").Pluck("id", &ids).Error; err != nil {
-		return nil
-	}
+	ids, _ := r.LiveSandboxRunIDsChecked()
 	return ids
+}
+
+// LiveSandboxRunIDsChecked lets destructive maintenance fail closed when the
+// database cannot provide the list of workspaces still in use.
+func (r *RunsRepo) LiveSandboxRunIDsChecked() ([]string, error) {
+	var rows []struct {
+		ID    string
+		Owner *string
+	}
+	query := r.DB.Model(&runRow{}).Select("id, " + r.sqlExecutionContextJSONText("workspaceRunId") + " AS owner").Where("workspace_cleaned_at IS NULL")
+	if err := query.Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+	ids := make([]string, 0, len(rows))
+	for _, row := range rows {
+		ids = append(ids, row.ID)
+		if row.Owner != nil && strings.TrimSpace(*row.Owner) != "" && *row.Owner != row.ID {
+			ids = append(ids, *row.Owner)
+		}
+	}
+	return ids, nil
 }
 
 // LiveSandboxDockerfiles returns the Dockerfiles frozen into runs that still
@@ -533,17 +551,59 @@ func (r *RunsRepo) RunsAwaitingBuiltPreview() []string {
 // reusing a directory while a local deletion or durable Runner cleanup is in
 // flight.
 func (r *RunsRepo) ClaimRunWorkspaceCleanup(runID string, now time.Time) (bool, error) {
-	result := r.DB.Model(&runRow{}).
-		Where("id = ? AND status IN ? AND workspace_cleaned_at IS NULL AND (workspace_cleanup_not_before IS NULL OR workspace_cleanup_not_before <= ?)",
-			runID, []string{"succeeded", "cancelled"}, now).
-		Updates(map[string]any{"workspace_cleaned_at": now, "sandbox_id": ""})
-	return result.RowsAffected == 1, result.Error
+	claimed := false
+	err := r.DB.Transaction(func(tx *gorm.DB) error {
+		if _, err := r.takeRunForUpdate(tx, runID); err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return nil
+			}
+			return err
+		}
+		inUse, err := r.sharedWorkspaceInUse(tx, runID)
+		if err != nil || inUse {
+			return err
+		}
+		result := tx.Model(&runRow{}).
+			Where("id = ? AND status IN ? AND workspace_cleaned_at IS NULL AND (workspace_cleanup_not_before IS NULL OR workspace_cleanup_not_before <= ?)",
+				runID, []string{"succeeded", "cancelled"}, now).
+			Updates(map[string]any{"workspace_cleaned_at": now, "sandbox_id": ""})
+		claimed = result.RowsAffected == 1
+		return result.Error
+	})
+	return claimed, err
+}
+
+// The workspace owner row must be locked before calling this function. Child
+// writes take that same lock before their own row, serializing admission and
+// retries with all workspace deletion claims. Failed children retain the
+// workspace for retry; succeeded and cancelled children no longer need it.
+func (r *RunsRepo) sharedWorkspaceInUse(tx *gorm.DB, ownerID string) (bool, error) {
+	var children []runRow
+	q := tx.Select("id").Where(r.sqlExecutionContextJSONText("workspaceRunId")+" = ? AND id <> ? AND workspace_cleaned_at IS NULL AND status NOT IN ?", ownerID, ownerID, []string{"succeeded", "cancelled"})
+	// This is the transaction's first consistent read and follows the owner
+	// lock, so it includes every child writer that previously held that lock.
+	// Locking a JSON predicate without an index would lock unrelated runs too.
+	err := q.Find(&children).Error
+	return len(children) != 0, err
 }
 
 // ResetRunWorkspaceCleanup makes a claimed workspace eligible for a later
 // sweep when cleanup could not be safely scheduled or completed.
 func (r *RunsRepo) ResetRunWorkspaceCleanup(runID string) error {
 	return r.DB.Model(&runRow{}).Where("id = ?", runID).Update("workspace_cleaned_at", nil).Error
+}
+
+// ResetRunWorkspaceCleanupForLease clears a legacy cleanup mark only while
+// the caller still owns an unexpired execution lease.
+func (r *RunsRepo) ResetRunWorkspaceCleanupForLease(runID, instanceID string, generation int) error {
+	result := r.DB.Model(&runRow{}).Where("id = ? AND owner_instance_id = ? AND execution_generation = ? AND lease_until > ?", runID, instanceID, generation, time.Now().UTC()).Update("workspace_cleaned_at", nil)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected != 1 {
+		return ErrRunLeaseLost
+	}
+	return nil
 }
 
 func (r *RunsRepo) loadRunNodes(run *domain.Run) error {
@@ -903,6 +963,20 @@ func (r *RunsRepo) PutRun(v domain.Run) error {
 	return r.writeRun(v)
 }
 
+// PutChildRun checks the parent node's lease and attempt atomically with the
+// child insert, so an obsolete worker cannot launch a new nested SOP.
+func (r *RunsRepo) PutChildRun(v domain.Run, parentID, nodeID, instanceID string, generation, attempt int) error {
+	v.UpdatedAt = time.Now().UTC()
+	v.Revision++
+	guard := &childRunGuard{parentID: parentID, nodeID: nodeID, instanceID: instanceID, generation: generation, attempt: attempt}
+	return r.writeRunGuarded(v, guard)
+}
+
+type childRunGuard struct {
+	parentID, nodeID, instanceID string
+	generation, attempt          int
+}
+
 // writeRun persists the run header plus whatever telemetry/logs/events arrived
 // since the last write. A run is the one entity written on a hot path, so the
 // header and its append-only children go in a single transaction.
@@ -912,9 +986,13 @@ func (r *RunsRepo) PutRun(v domain.Run) error {
 // run) is rolled back and retried with its bucket locked first, so a bucket
 // lock is never awaited while a run row is held.
 func (r *RunsRepo) writeRun(run domain.Run, expectedRevision ...int) error {
+	return r.writeRunGuarded(run, nil, expectedRevision...)
+}
+
+func (r *RunsRepo) writeRunGuarded(run domain.Run, guard *childRunGuard, expectedRevision ...int) error {
 	lockKey := ""
 	for attempt := 0; ; attempt++ {
-		err := r.writeRunOnce(run, lockKey, expectedRevision...)
+		err := r.writeRunOnce(run, lockKey, guard, expectedRevision...)
 		var need *admissionLockRequired
 		if errors.As(err, &need) && attempt < 3 {
 			lockKey = need.key
@@ -924,15 +1002,59 @@ func (r *RunsRepo) writeRun(run domain.Run, expectedRevision ...int) error {
 	}
 }
 
-func (r *RunsRepo) writeRunOnce(run domain.Run, lockKey string, expectedRevision ...int) error {
+func (r *RunsRepo) writeRunOnce(run domain.Run, lockKey string, guard *childRunGuard, expectedRevision ...int) error {
 	var opts []*sql.TxOptions
 	if lockKey != "" {
 		opts = r.admissionTxOptions()
 	}
 	return r.DB.Transaction(func(tx *gorm.DB) error {
+		var guardedNode *domain.NodeRun
 		if lockKey != "" {
 			if err := lockAdmissionGate(r.deps, tx, lockKey); err != nil {
 				return err
+			}
+		}
+		ownerID := strings.TrimSpace(run.ExecutionContext.WorkspaceRunID)
+		if ownerID != "" && ownerID != run.ID {
+			owner, err := r.takeRunForUpdate(tx, ownerID)
+			if err != nil {
+				return err
+			}
+			if owner.WorkspaceCleaned != nil && run.Status != "succeeded" && run.Status != "cancelled" {
+				return ErrWorkspaceInUse
+			}
+		}
+		if guard != nil {
+			if run.ExecutionContext.ParentRunID != guard.parentID || run.ExecutionContext.ParentNodeID != guard.nodeID {
+				return ErrRunLeaseLost
+			}
+			parent, err := r.takeRunForUpdate(tx, guard.parentID)
+			if err != nil {
+				return err
+			}
+			if parent.Status != "running" || parent.CancelRequested || parent.PauseRequested || parent.OwnerInstanceID != guard.instanceID || parent.Generation != guard.generation || parent.LeaseUntil == nil || !parent.LeaseUntil.After(time.Now().UTC()) {
+				return ErrRunLeaseLost
+			}
+			var node runNodeRow
+			if err := r.locking(tx.Where("run_id = ? AND node_id = ?", guard.parentID, guard.nodeID)).Take(&node).Error; err != nil {
+				return err
+			}
+			if node.Status != "running" || node.Attempt != guard.attempt {
+				return ErrRunLeaseLost
+			}
+			guardedNode = &domain.NodeRun{}
+			if err := json.Unmarshal(node.Payload, guardedNode); err != nil {
+				return err
+			}
+			if guardedNode.ChildRunID != "" {
+				var existing runRow
+				err := tx.Select("id", "workflow_id").Where("id = ?", guardedNode.ChildRunID).Take(&existing).Error
+				if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+					return err
+				}
+				if err == nil && existing.WorkflowID == run.WorkflowID {
+					return ErrRunDecisionStale
+				}
 			}
 		}
 		current, err := r.takeRunForUpdate(tx, run.ID)
@@ -1063,6 +1185,15 @@ func (r *RunsRepo) writeRunOnce(run domain.Run, lockKey string, expectedRevision
 				return err
 			}
 		}
+		if guardedNode != nil {
+			guardedNode.ChildRunID = run.ID
+			if err := tx.Model(&runNodeRow{}).Where("run_id = ? AND node_id = ?", guard.parentID, guard.nodeID).Update("payload", mustJSON(guardedNode)).Error; err != nil {
+				return err
+			}
+			if err := tx.Model(&runRow{}).Where("id = ?", guard.parentID).UpdateColumn("revision", gorm.Expr("revision + 1")).Error; err != nil {
+				return err
+			}
+		}
 		return nil
 	}, opts...)
 }
@@ -1125,7 +1256,7 @@ func (r *RunsRepo) TryAcquireRunLease(runID, instanceID string, generation int, 
 			if generation != current.Generation {
 				return ErrRunLeaseLost
 			}
-			if current.Status != "running" {
+			if current.Status != "running" || current.LeaseUntil == nil || !current.LeaseUntil.After(now) {
 				newGeneration++
 			}
 		} else if current.Generation == 0 {
@@ -1140,9 +1271,13 @@ func (r *RunsRepo) TryAcquireRunLease(runID, instanceID string, generation int, 
 }
 
 func (r *RunsRepo) RenewRunLease(runID, instanceID string, generation int, ttl time.Duration) error {
+	if strings.TrimSpace(instanceID) == "" || ttl <= 0 {
+		return ErrRunLeaseLost
+	}
+	now := time.Now().UTC()
 	res := r.DB.Model(&runRow{}).
-		Where("id = ? AND owner_instance_id = ? AND execution_generation = ?", runID, instanceID, generation).
-		Update("lease_until", time.Now().UTC().Add(ttl))
+		Where("id = ? AND owner_instance_id = ? AND execution_generation = ? AND lease_until > ?", runID, instanceID, generation, now).
+		Update("lease_until", now.Add(ttl))
 	if res.Error != nil {
 		return res.Error
 	}
@@ -1175,7 +1310,7 @@ func (r *RunsRepo) BindRunWorkspace(runID, instanceID string, generation int, ho
 			}
 			return err
 		}
-		if current.OwnerInstanceID != instanceID || current.Generation != generation {
+		if current.OwnerInstanceID != instanceID || current.Generation != generation || current.LeaseUntil == nil || !current.LeaseUntil.After(time.Now().UTC()) {
 			return ErrRunLeaseLost
 		}
 		if strings.TrimSpace(current.WorkspaceRoot) != "" {
@@ -1205,7 +1340,7 @@ func (r *RunsRepo) RebindRunWorkspace(runID, instanceID string, generation int, 
 			}
 			return err
 		}
-		if current.OwnerInstanceID != instanceID || current.Generation != generation {
+		if current.OwnerInstanceID != instanceID || current.Generation != generation || current.LeaseUntil == nil || !current.LeaseUntil.After(time.Now().UTC()) {
 			return ErrRunLeaseLost
 		}
 		return tx.Model(&runRow{}).Where("id = ?", runID).Updates(map[string]any{

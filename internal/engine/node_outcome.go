@@ -321,16 +321,20 @@ func (e *Engine) finishAt(id string, generation int, status, msg string) {
 	if e.stalePipelineFailure(id, status, msg) {
 		return
 	}
-	e.stopRunScheduler(id)
 	ignored := false
 	var delivered *domain.Run
 	var deliveredAt time.Time
 	if !e.updateRunSettling(id, func(r *domain.Run) {
 		unowned := (r.OwnerInstanceID != "" || r.Generation > 0) && !e.ownsRun(*r)
-		if (r.Generation != generation || unowned) && !canSettleUnowned(*r, status) {
+		// A completed graph may be settled after its owner disappears, but an
+		// old scheduler must never settle a newer generation's graph.
+		if r.Generation != generation || (unowned && !canSettleUnowned(*r, status)) {
 			ignored = true
 			return
 		}
+		// A forced finish must interrupt active nodes before their scheduler
+		// can settle the run. Never do this for a stale generation.
+		e.stopRunScheduler(id)
 		if domain.TerminalRunStatus(r.Status) {
 			ignored = true
 			return

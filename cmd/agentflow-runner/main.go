@@ -39,17 +39,19 @@ func main() {
 	loadDotEnv()
 
 	cfg := runner.Config{
-		ServerURL:              firstNonEmpty(*server, os.Getenv("AGENTFLOW_SERVER_URL")),
-		BootstrapToken:         firstNonEmpty(*token, os.Getenv("AGENTFLOW_RUNNER_BOOTSTRAP_TOKEN")),
-		StatePath:              firstNonEmpty(*statePath, os.Getenv("AGENTFLOW_RUNNER_STATE_PATH")),
-		Name:                   firstNonEmpty(*name, os.Getenv("AGENTFLOW_RUNNER_NAME")),
-		DefaultWorkspaceRoot:   firstNonEmpty(*workspace, os.Getenv("AGENTFLOW_RUNNER_WORKSPACE")),
-		MaxConcurrency:         *concurrency,
-		HeartbeatInterval:      *heartbeat,
-		LongPollTimeout:        *longPoll,
-		DisableAutoUpdate:      !*autoUpdate,
-		ManagedCLIRoot:         strings.TrimSpace(os.Getenv("AGENTFLOW_MANAGED_CLI_ROOT")),
-		DisableRunSandboxReuse: !*reuseSandbox,
+		ServerURL:               firstNonEmpty(*server, os.Getenv("AGENTFLOW_SERVER_URL")),
+		BootstrapToken:          firstNonEmpty(*token, os.Getenv("AGENTFLOW_RUNNER_BOOTSTRAP_TOKEN")),
+		StatePath:               firstNonEmpty(*statePath, os.Getenv("AGENTFLOW_RUNNER_STATE_PATH")),
+		Name:                    firstNonEmpty(*name, os.Getenv("AGENTFLOW_RUNNER_NAME")),
+		DefaultWorkspaceRoot:    firstNonEmpty(*workspace, os.Getenv("AGENTFLOW_RUNNER_WORKSPACE")),
+		MaxConcurrency:          *concurrency,
+		HeartbeatInterval:       *heartbeat,
+		LongPollTimeout:         *longPoll,
+		DisableAutoUpdate:       !*autoUpdate,
+		ManagedCLIRoot:          strings.TrimSpace(os.Getenv("AGENTFLOW_MANAGED_CLI_ROOT")),
+		EnvironmentManagerURL:   firstNonEmpty(os.Getenv("AGENTFLOW_SANDBOX_MANAGER_URL")),
+		EnvironmentManagerToken: strings.TrimSpace(os.Getenv("AGENTFLOW_SANDBOX_MANAGER_TOKEN")),
+		DisableRunSandboxReuse:  !*reuseSandbox,
 	}
 	cfg.MaxConcurrency = concurrencyFromEnv(cfg.MaxConcurrency)
 	cfg.Labels = parseLabels(*labels)

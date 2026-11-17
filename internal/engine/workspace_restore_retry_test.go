@@ -45,7 +45,7 @@ func remoteWorkspaceRestoreFixture(t *testing.T, backend string) (*Engine, *Engi
 		}
 	})
 	worker := New(store, runtime.NewManager(t.TempDir()))
-	worker.ConfigureExecution("restore-worker-"+id, "restore-worker-"+id, time.Minute, false)
+	worker.ConfigureExecution("restore-worker-"+id, "restore-worker-"+id, time.Minute, true)
 	worker.controlToken = "restore-retry-control"
 	t.Cleanup(worker.checkpointTransfers.Close)
 	workflow := domain.WorkflowDefinition{ID: id, SandboxProfileID: "local", Nodes: []domain.WorkflowNode{
@@ -78,6 +78,7 @@ func remoteWorkspaceRestoreFixture(t *testing.T, backend string) (*Engine, *Engi
 	if run.WorkspaceCleanedAt.IsZero() {
 		t.Fatal("fixture workspace was not reclaimed")
 	}
+	worker.ConfigureExecution("restore-worker-"+id, "restore-worker-"+id, time.Minute, false)
 	run.Status = "failed"
 	run.Nodes["close"].Status = "failed"
 	if err := store.PutRun(run); err != nil {

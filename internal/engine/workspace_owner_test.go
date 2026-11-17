@@ -107,8 +107,22 @@ func TestRetryOnDeadBoundHostIsTakenOverByLiveWorker(t *testing.T) {
 	api := leaseEngine(t, s, "api")
 	api.ConfigureExecution("api", "api-host", 30*time.Second, false)
 	workerA := leaseEngine(t, s, "worker-a")
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := workerA.Drain(ctx); err != nil {
+			t.Errorf("drain worker-a: %v", err)
+		}
+	})
 	workerA.ConfigureExecution("worker-a", "worker-a-host", 30*time.Second, true)
 	workerB := leaseEngine(t, s, "worker-b")
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := workerB.Drain(ctx); err != nil {
+			t.Errorf("drain worker-b: %v", err)
+		}
+	})
 	workerB.ConfigureExecution("worker-b", "worker-b-host", 30*time.Second, true)
 	heartbeatHost(t, s, "worker-b", "worker-b-host")
 

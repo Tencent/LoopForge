@@ -240,3 +240,41 @@ func TestWaitingRunCanBeExplicitlyPaused(t *testing.T) {
 		t.Fatal("pause changed pending approval", paused.Status, err)
 	}
 }
+
+func TestExpiredRunLeaseCannotRenewOrBindAndSameOwnerGetsNewGeneration(t *testing.T) {
+	s, err := OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(s.Close)
+	run := putLeaseTestRun(t, s, "expired-same-owner")
+	if err := s.TryAcquireRunLease(run.ID, "worker", 0, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	owned, _ := s.RunState(run.ID)
+	if err := s.DB.Model(&runRow{}).Where("id = ?", run.ID).Update("lease_until", time.Now().UTC().Add(-time.Second)).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RenewRunLease(run.ID, "worker", owned.Generation, time.Minute); !errors.Is(err, ErrRunLeaseLost) {
+		t.Fatalf("expired lease renewed: %v", err)
+	}
+	if _, err := s.BindRunWorkspace(run.ID, "worker", owned.Generation, "host", "/workspace"); !errors.Is(err, ErrRunLeaseLost) {
+		t.Fatalf("expired lease bound a workspace: %v", err)
+	}
+	if err := s.RebindRunWorkspace(run.ID, "worker", owned.Generation, "host", "/workspace"); !errors.Is(err, ErrRunLeaseLost) {
+		t.Fatalf("expired lease rebound a workspace: %v", err)
+	}
+	if err := s.ResetRunWorkspaceCleanupForLease(run.ID, "worker", owned.Generation); !errors.Is(err, ErrRunLeaseLost) {
+		t.Fatalf("expired lease cleared workspace cleanup: %v", err)
+	}
+	if err := s.TryAcquireRunLease(run.ID, "worker", owned.Generation, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	reacquired, _ := s.RunState(run.ID)
+	if reacquired.Generation != owned.Generation+1 {
+		t.Fatalf("generation = %d, want %d", reacquired.Generation, owned.Generation+1)
+	}
+	if err := s.RenewRunLease(run.ID, "worker", owned.Generation, time.Minute); !errors.Is(err, ErrRunLeaseLost) {
+		t.Fatalf("old generation renewed after reacquisition: %v", err)
+	}
+}

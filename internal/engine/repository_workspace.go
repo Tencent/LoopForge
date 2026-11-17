@@ -57,11 +57,15 @@ func repositoryWorkspaceDirs(workspace string, repositories []domain.RepositoryC
 // prepareRepositories checks out every run repository into its WorkspaceDir
 // (a first-level sub-directory of the run workspace).
 func prepareRepositories(ctx context.Context, workspace string, repositories []domain.RepositoryContext) error {
+	return prepareRepositoriesWithLiveCheck(ctx, workspace, repositories, liveDockerSandbox)
+}
+
+func prepareRepositoriesWithLiveCheck(ctx context.Context, workspace string, repositories []domain.RepositoryContext, liveCheck func(string) bool) error {
 	if len(repositories) == 0 {
 		return nil
 	}
 	for _, rc := range repositories {
-		if err := prepareRepository(ctx, repositoryWorkspacePath(workspace, rc), rc); err != nil {
+		if err := prepareRepositoryWithLiveCheck(ctx, repositoryWorkspacePath(workspace, rc), rc, liveCheck); err != nil {
 			return fmt.Errorf("repository %s: %w", rc.Name, err)
 		}
 	}
@@ -92,6 +96,10 @@ func existingDevelopmentBranch(repository domain.RepositoryContext) bool {
 }
 
 func prepareRepository(ctx context.Context, workspace string, repository domain.RepositoryContext) error {
+	return prepareRepositoryWithLiveCheck(ctx, workspace, repository, liveDockerSandbox)
+}
+
+func prepareRepositoryWithLiveCheck(ctx context.Context, workspace string, repository domain.RepositoryContext, liveCheck func(string) bool) error {
 	if repository.RepositoryID == "" {
 		return nil
 	}
@@ -169,7 +177,7 @@ func prepareRepository(ctx context.Context, workspace string, repository domain.
 	// Docker bind-mounts this directory. Replacing it (RemoveAll + MkdirAll)
 	// changes the inode; runc then rejects `docker exec -w /workspace`.
 	reset := resetCloneDestination
-	if liveDockerSandbox(workspace) {
+	if liveCheck != nil && liveCheck(workspace) {
 		reset = func(string) error { return nil }
 	}
 	if err := reset(workspace); err != nil {

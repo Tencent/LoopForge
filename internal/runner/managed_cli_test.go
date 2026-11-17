@@ -32,6 +32,9 @@ func managedTestDaemon(t *testing.T, root string, tasks []domain.RunnerTask, sta
 		}
 		if code := status[action]; code != 0 {
 			w.WriteHeader(code)
+			if code == http.StatusConflict {
+				_, _ = w.Write([]byte(`{"error":"task lease lost"}`))
+			}
 			return
 		}
 		switch action {

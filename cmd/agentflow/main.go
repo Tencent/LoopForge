@@ -136,7 +136,6 @@ func main() {
 	}
 	log.Printf("storage driver=%v database=%v role=%s", s.StorageInfo()["driver"], s.StorageInfo()["database"], role)
 	e := engine.New(s, runtime.NewManagerWithLimit(root, *workerConcurrency))
-	runtime.PrebuildIsolatedImage()
 	host, _ := os.Hostname()
 	instanceID := strings.TrimSpace(os.Getenv("AGENTFLOW_INSTANCE_ID"))
 	if instanceID == "" {
@@ -161,6 +160,9 @@ func main() {
 		}
 	}
 	e.ConfigureExecution(instanceID, host, leaseTTL, executeRuns)
+	if executeRuns {
+		runtime.PrebuildIsolatedImage()
+	}
 	e.ConfigureCloudRunnerPool(engine.CloudRunnerPool{
 		Label:    os.Getenv("AGENTFLOW_CLOUD_RUNNER_LABEL"),
 		Projects: engine.ParseCloudRunnerProjects(os.Getenv("AGENTFLOW_CLOUD_RUNNER_PROJECTS")),
