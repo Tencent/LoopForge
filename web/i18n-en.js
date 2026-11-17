@@ -100,7 +100,12 @@ Object.assign(window.LF_I18N_EN,{
 "仅生成草稿 · 切换 CLI 开启新对话，保留画布":"Draft only · switching CLI starts a new chat and keeps the canvas",
 "暂无模型":"No models yet",
 "SSH 密钥用于克隆和推送；创建 PR/MR 需要访问令牌":"SSH keys clone and push repositories; an access token is required to create PRs/MRs",
-"粘贴 Git HTTPS 链接或 Git SSH 地址":"Paste a Git HTTPS URL or Git SSH address"
+"粘贴 Git HTTPS 链接或 Git SSH 地址":"Paste a Git HTTPS URL or Git SSH address",
+"已配置 Git 访问令牌":"Git access token configured",
+"使用仓库进行需求分析、访问私有代码或提交 PR 前，请先配置 Git 访问令牌。SOP 使用需求责任人的 Token，未指定时使用项目 Owner 的 Token。":"Configure a Git access token before analyzing a repository, accessing private code or submitting a PR. SOPs use the assignee's token, or the project owner's token when no assignee is set.",
+"请确认 Token 已获得目标仓库的访问和写入权限。SOP 使用需求责任人的 Token，未指定时使用项目 Owner 的 Token。":"Confirm the token can read and write the target repository. SOPs use the assignee's token, or the project owner's token when no assignee is set.",
+"Git 认证用户名":"Git authentication username",
+"按托管平台要求填写；这是 HTTPS 认证用户名，不是提交作者名，通常无法从 Token 推导。":"Use the username required by your hosting provider. This is the HTTPS authentication username, separate from the commit author, and usually cannot be inferred from the token."
 });
 Object.assign(window.LF_I18N_EN,{
 "查看澄清":"View clarification",
