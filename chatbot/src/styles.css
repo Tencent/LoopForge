@@ -1001,31 +1001,10 @@ small {
   outline: 2px solid #7795c4;
   outline-offset: 2px;
 }
-.image-zoom[data-disabled],
-.image-zoom[data-disabled]:hover {
-  cursor: default;
-  opacity: 0.4;
-  background: none;
-  color: inherit;
-}
 @media (prefers-reduced-motion: reduce) {
   .message-image-retry {
     transition: none;
   }
-}
-.image-caption {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 9px 10px;
-  font-size: 10px;
-  color: var(--muted);
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-.image-caption svg:last-child {
-  margin-left: auto;
 }
 .attachment-chip {
   display: flex;
@@ -1262,6 +1241,12 @@ small {
 }
 .node-conversation-view .node-message:first-child {
   margin-top: 20px;
+}
+/* The model a subagent dispatch ran on, under the task it was given. */
+.subagent-session .subagent-model {
+  margin: 6px 0 0;
+  font-size: 12px;
+  overflow-wrap: anywhere;
 }
 .composer-toolbar {
   display: flex;
@@ -3950,22 +3935,6 @@ a.draft-title {
 .markdown img,
 .node-artifact-open img {
   cursor: zoom-in;
-}
-.image-caption-name {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.image-zoom {
-  display: inline-flex;
-  margin-left: auto;
-  padding: 2px;
-  border-radius: 6px;
-  cursor: zoom-in;
-}
-.image-zoom:hover {
-  background: var(--hover, rgba(0, 0, 0, 0.06));
-  color: var(--text);
 }
 .image-lightbox {
   position: fixed;

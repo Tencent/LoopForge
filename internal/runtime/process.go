@@ -43,6 +43,11 @@ func runCommand(cmd *exec.Cmd, sink EventSink) (string, error) {
 		sink(domain.TelemetryEvent{Category: "process", Name: "process.start_failed", Timestamp: time.Now().UTC(), Phase: "start", Level: "error", Message: err.Error()})
 	}
 	if err != nil && cmd.Process == nil {
+		if errors.Is(err, syscall.E2BIG) {
+			// Retrying with the same input fails again; name the limit so the
+			// diagnostic points at the oversized argument, not the CLI.
+			err = fmt.Errorf("%w (a single argument exceeds the ~128KiB kernel limit; pass long prompts on stdin or in a file)", err)
+		}
 		err = fmt.Errorf("%w: %w", errProcessNotStarted, err)
 	}
 	if cmd.Process != nil && cmd.SysProcAttr != nil && cmd.SysProcAttr.Setpgid {
