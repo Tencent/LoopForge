@@ -80,6 +80,7 @@ type AgentToolSession struct {
 	workspaceMu      sync.Mutex
 	workspaceTurn    *assistantWorkspaceTurn
 	SpaceID          string
+	Surface          string // entry of the turn; see sopDesigner
 	ControlScope     assistantControlScope
 	ExpiresAt        time.Time
 	MCPServers       []domain.MCPServerDefinition
@@ -538,4 +539,10 @@ func (s *AgentToolSession) diagnostics() *assistantDiagnosticsCollector {
 		return nil
 	}
 	return assistantDiagnosticsFrom(s.ctx)
+}
+
+// sopDesigner reports a SOP designer turn: read-only platform tools plus one
+// workflows_save draft, no workspace, browser or external MCP.
+func (s *AgentToolSession) sopDesigner() bool {
+	return s != nil && s.Surface == assistantSurfaceSOPDesigner
 }

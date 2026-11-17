@@ -33,6 +33,10 @@ func (h *assistantHandlers) startGeneration(c *gin.Context) {
 	if !decodeLimit(c, &req, assistantRequestBodyLimit) {
 		return
 	}
+	if err := normalizeAssistantSurface(&req); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
 	req.Model = assistantRequestModel(req.Executor, req.Model)
 	user, model, refusal := h.assistantTurnUser(stored, req.Model)
 	if refusal != "" {
@@ -62,6 +66,10 @@ func (h *assistantHandlers) startGeneration(c *gin.Context) {
 	ownerID, shared, err := h.conversationScope(c, req.SessionID, req.RunID, req.ProjectID, user.ID)
 	if err != nil {
 		c.JSON(403, gin.H{"error": err.Error()})
+		return
+	}
+	if err := h.bindSOPDesignerTranscript(ownerID, &req); err != nil {
+		c.JSON(409, gin.H{"error": err.Error()})
 		return
 	}
 	if err := h.validateAssistantTriggerHistory(ownerID, req); err != nil {
@@ -157,6 +165,9 @@ func (h *assistantHandlers) startGeneration(c *gin.Context) {
 	}
 	g := domain.AssistantGeneration{StartedAt: time.Now().UTC(), ActorID: user.ID, ActorName: user.LoginName, ID: newAssistantSessionID(), SessionID: req.SessionID, UserID: ownerID, ProjectID: req.ProjectID, Status: "running", Events: []domain.AssistantGenerationEvent{}, MessageCount: len(req.Messages)}
 	pending := assistantConversation{ExecutionTarget: req.ExecutionTarget, ID: req.SessionID, Shared: old.Shared, ProjectID: req.ProjectID, IssueID: old.IssueID, Model: req.Model, Effort: req.Effort, Executor: req.Executor, RunID: req.RunID, Messages: req.Messages, TitleEdited: old.TitleEdited, TitleGenerated: old.TitleGenerated}
+	if req.sopDesigner() {
+		pending.Source, pending.WorkflowID = domain.AssistantSourceSOPDesigner, req.WorkflowID
+	}
 	if old.TitleEdited || old.TitleGenerated {
 		pending.Title = old.Title
 	} else {

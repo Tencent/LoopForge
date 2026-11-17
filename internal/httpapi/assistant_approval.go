@@ -174,6 +174,11 @@ func (h *assistantHandlers) workflowDraftNodeWarnings(d assistantDraft) []string
 				warns = append(warns, fmt.Sprintf("节点 %s 是 agent 节点但未绑定角色（缺少 agentId），保存后该节点无法执行", name))
 				continue
 			}
+			// The static-site build node binds a platform role that has no
+			// catalog row; the engine injects it when preview is enabled.
+			if domain.IsPreviewBuildNode(node.ID) && domain.IsPreviewBuildAgent(node.AgentID) {
+				continue
+			}
 			if _, ok := h.repo.Agent(strings.TrimSpace(node.AgentID)); !ok {
 				warns = append(warns, fmt.Sprintf("节点 %s 绑定的角色 %s 不存在，请先创建该角色或改用现有角色", name, node.AgentID))
 			}
@@ -224,7 +229,7 @@ func (h *assistantHandlers) assistantDraftWarnings(d assistantDraft) []string {
 		return nil
 	}
 	if tool := strings.TrimSpace(d.Tool); tool == "workflows_save" {
-		if warns := h.workflowDraftNodeWarnings(d); len(warns) > 0 {
+		if warns := append(h.workflowDraftNodeWarnings(d), workflowDraftGraphWarnings(d.Body)...); len(warns) > 0 {
 			return warns
 		}
 	}

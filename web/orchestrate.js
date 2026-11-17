@@ -688,12 +688,6 @@ async function completeAIBuild(build, finalRaw) {
   return true;
 }
 
-function aiRolesHint() {
-  const agents = catalogAgents().slice(0, 40);
-  if (!agents.length) return '当前项目还没有角色，请只用 approval（人工确认）和 script 节点。';
-  return '当前项目可用角色（agentId：名称）：\n' + agents.map(a => '- ' + a.id + '：' + a.name + (a.description ? '（' + String(a.description).slice(0, 40) + '）' : '')).join('\n');
-}
-
 function aiClone(value) {
   return value == null ? value : JSON.parse(JSON.stringify(value));
 }
@@ -811,25 +805,6 @@ function mergeAIEdit(base, incoming, goal, referenced) {
   shell.description = incoming?.description ?? shell.description;
   if (incoming?.preview) shell.preview = incoming.preview;
   return ensurePreviewCarried(shell, [base, ...(referenced || [])], goal);
-}
-
-function aiOrchestratePrompt(goal, canvas, referenced) {
-  const editing = !!(canvas && (canvas.nodes || []).length);
-  const lines = [
-    editing
-      ? '在当前画布上的这份 SOP 上按要求修改，重新提交完整的 workflows_save 草稿。这是增量修改：用户没点名的节点、连线、id 和脚本都保持原样，不要另起一条流程。'
-      : '请在当前项目搭建一条新的 SOP。',
-    '只提交一个 workflows_save 草稿，不要发布，也不要调用其它写入工具。',
-    'drafts[0].body 必须是 JSON 对象（不要序列化成字符串），字段按 name、description、nodes、edges 的顺序输出；已有节点沿用原来的 id，只有新增节点才用新 id。',
-    'agent 节点的 agentId 只能从下面的已有角色里选；没有合适角色时改用 approval（人工确认）或 script 节点。',
-    '平台节点「构建静态站点」不在角色列表里：id 固定为 af-preview-build，agentId 为 af-preview-builder。复制或修改已有 SOP 时必须保留它、它的连线和 preview 字段，除非用户明确要求去掉前端预览。',
-    'edges 用 {"source","target","when":"success"} 按成功路径连线，可以并行分支再汇合。',
-    aiRolesHint()
-  ];
-  if (editing) lines.push('当前画布上的 SOP：\n' + JSON.stringify(compactWorkflowForAI(canvas)));
-  (referenced || []).forEach(wf => lines.push('用户点名要参考的已有 SOP「' + wf.name + '」：\n' + JSON.stringify(compactWorkflowForAI(wf))));
-  lines.push('目标：' + goal);
-  return lines.join('\n');
 }
 
 async function beginAIOrchestration(goal) {
@@ -963,7 +938,9 @@ async function runAIOrchestrator() {
   if (!build) return;
   const model = selectedAIOrchestratorModel();
   const previous = aiHistory[project];
-  const history = previous && aiOrchestratorEngine(previous.model) === aiOrchestratorEngine(model) ? previous : {sessionId: '', messages: []};
+  // The server owns the transcript of a designer conversation; the canvas
+  // only remembers which conversation to continue on the same CLI.
+  const history = previous && aiOrchestratorEngine(previous.model) === aiOrchestratorEngine(model) ? previous : {sessionId: ''};
   build.goal = goal;
   build.referenced = referenced;
   if (button) button.disabled = true;
@@ -974,14 +951,26 @@ async function runAIOrchestrator() {
   appendOrchestratorNote(goal, 'mine');
   setAIBuildStatus(editing ? '正在按当前流程修改，画布先保持原样' : '正在连接 AI…');
   if (!editing) placeAIGhost();
-  const messages = history.messages.concat([{role: 'user', content: aiOrchestratePrompt(goal, canvas, referenced)}]);
+  // The server adds the role list, the canvas and the referenced SOPs to the
+  // turn and keeps them out of the transcript, so the message is the goal.
+  const request = {
+    surface: 'sop-designer',
+    projectId: project,
+    sessionId: history.sessionId,
+    model,
+    approvalMode: 'confirm',
+    workflowId: state.workflow?.id || '',
+    canvas: canvas ? compactWorkflowForAI(canvas) : null,
+    referenceWorkflowIds: referenced.map(wf => wf.id).filter(Boolean),
+    messages: [{role: 'user', content: goal}]
+  };
   aiAbort = new AbortController();
   try {
     const res = await fetch('/api/assistant/chat', {
       method: 'POST',
       headers: {'Content-Type': 'application/json', 'Accept': 'text/event-stream'},
       signal: aiAbort.signal,
-      body: JSON.stringify({projectId: project, sessionId: history.sessionId, model, approvalMode: 'confirm', messages})
+      body: JSON.stringify(request)
     });
     if (!res.ok) {
       let msg = 'HTTP ' + res.status;
@@ -990,7 +979,7 @@ async function runAIOrchestrator() {
     }
     const reply = (res.headers.get('Content-Type') || '').includes('text/event-stream') ? await readAssistantSSE(res, pushAIThought) : await res.json();
     if (build.token !== aiBuildToken) return;
-    aiHistory[project] = {sessionId: reply.sessionId || history.sessionId, model, messages: messages.concat([{role: 'assistant', model, content: reply.message || '已提交草稿'}]).slice(-8)};
+    aiHistory[project] = {sessionId: reply.sessionId || history.sessionId, model};
     document.querySelectorAll('.ai-live-thought.live').forEach(box => box.classList.remove('live'));
     if (reply.message) appendOrchestratorNote(reply.message, '');
     const draft = (reply.drafts || []).find(item => item.tool === 'workflows_save' && item.body);

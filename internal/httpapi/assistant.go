@@ -63,8 +63,15 @@ type assistantRequest struct {
 	ApprovalMode    string                           `json:"approvalMode"`
 	RunID           string                           `json:"runId,omitempty"`
 	SpaceID         string                           `json:"spaceId,omitempty"`
-	workspaceToken  string
-	contextText     string
+	// Surface names the entry that sends the turn. Empty is the workbench;
+	// assistantSurfaceSOPDesigner is the SOP canvas, which also sends the
+	// SOP it edits, its canvas snapshot and the SOPs the user named.
+	Surface              string          `json:"surface,omitempty"`
+	WorkflowID           string          `json:"workflowId,omitempty"`
+	Canvas               json.RawMessage `json:"canvas,omitempty"`
+	ReferenceWorkflowIDs []string        `json:"referenceWorkflowIds,omitempty"`
+	workspaceToken       string
+	contextText          string
 	// roles are the project's roles plus shared roles mentioned in the
 	// conversation; each is written to the CLI home as a native subagent.
 	roles []roleSubagent
@@ -108,6 +115,10 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 	if !decodeLimit(c, &req, assistantRequestBodyLimit) {
 		return
 	}
+	if err := normalizeAssistantSurface(&req); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
 	req.Executor = assistantExecutor(req.Executor)
 	req.Model = assistantRequestModel(req.Executor, req.Model)
 	user, model, refusal := h.assistantTurnUser(stored, req.Model)
@@ -141,6 +152,10 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 	ownerID, shared, scopeErr := h.conversationScope(c, req.SessionID, req.RunID, req.ProjectID, user.ID)
 	if scopeErr != nil {
 		c.JSON(403, gin.H{"error": scopeErr.Error()})
+		return
+	}
+	if err := h.bindSOPDesignerTranscript(ownerID, &req); err != nil {
+		c.JSON(409, gin.H{"error": err.Error()})
 		return
 	}
 	if err := h.validateAssistantTriggerHistory(ownerID, req); err != nil {
@@ -236,6 +251,9 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 			return
 		}
 		savedConversation = assistantConversation{ID: req.SessionID, ProjectID: req.ProjectID, RunID: req.RunID, Model: req.Model, Effort: req.Effort, ExecutionTarget: target, Messages: req.Messages}
+		if req.sopDesigner() {
+			savedConversation.Source, savedConversation.WorkflowID = domain.AssistantSourceSOPDesigner, req.WorkflowID
+		}
 		if err = h.repo.PutAssistantSession(ownerID, savedConversation); err != nil {
 			c.JSON(409, gin.H{"error": err.Error()})
 			return
@@ -324,6 +342,7 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 				loadTurnWorkspace(h.deps, sess, conv)
 			}
 		}
+		sess.Surface = req.Surface
 		sess.SpaceID = strings.TrimSpace(req.SpaceID)
 		if sess.SpaceID != "" {
 			sess.mu.Lock()
@@ -494,7 +513,7 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 				if req.workspaceMode {
 					system = assistantWorkspaceSystemPrompt
 					prompt = assistantWorkspaceSystemPrompt + "\n审批模式：" + approvalMode + "。\n" + prompt
-				} else {
+				} else if !req.sopDesigner() {
 					prompt = assistantPlatformExecutionReminder + "\n" + prompt
 				}
 				prompt += conversationAttachmentNote(cliRoot, req)
@@ -719,6 +738,9 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 		reply.SessionID = req.SessionID
 		reply.SpeakerName = ""
 		reply.SpeakerAgentID = ""
+		if req.sopDesigner() {
+			reply.Drafts = sopDesignerDrafts(req, reply.Drafts)
+		}
 		if len(reply.Drafts) > 0 {
 			draftCtx := ctx
 			if req.RunID == "" {
@@ -746,6 +768,9 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 			}
 			stored = append(stored, assistantMessage{Assets: assets, RunIDs: runIDs, Activity: activityEvents, StartedAt: &startedAt, CreatedAt: time.Now().UTC(), SpeakerName: reply.SpeakerName, SpeakerAgentID: reply.SpeakerAgentID, Model: replyModel, Usage: turnUsage.snapshot(), Role: "assistant", Content: jsonObject(gin.H{"message": reply.Message, "drafts": reply.Drafts}), Attachments: reply.Images, GenerationID: assistantControlScopeFrom(modelCtx).GenerationID})
 			conversation := assistantConversation{Shared: shared, ID: req.SessionID, ProjectID: req.ProjectID, Model: req.Model, Effort: req.Effort, Executor: req.Executor, RunID: req.RunID, Messages: stored}
+			if req.sopDesigner() {
+				conversation.Source, conversation.WorkflowID = domain.AssistantSourceSOPDesigner, req.WorkflowID
+			}
 			if toolSession != nil {
 				conversation.WorkspaceRunID = toolSession.conversationWorkspace()
 			}
@@ -804,6 +829,9 @@ func assistantModeTurnReminder(mode string) string {
 }
 
 func (h *assistantHandlers) turnPrompt(req assistantRequest, sourceRoot string, resume bool) string {
+	if req.sopDesigner() {
+		return h.sopDesignerTurnPrompt(req, resume)
+	}
 	context := assistantTurnContext(req)
 	if resume {
 		return context + assistantUnfinishedTurnNote(req.Messages) + "\n用户：\n" + assistantSteerPrefix(req.Messages) + lastAssistantUserContent(req.Messages)

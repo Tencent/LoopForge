@@ -181,6 +181,9 @@ var errForeignReference = fmt.Errorf("只能引用当前项目的需求、角色
 var errNotProjectMember = fmt.Errorf("你还不是这个项目的成员，不能在项目里对话。可以把项目切换为「个人对话」直接聊，或请项目 Owner 把你加入项目")
 
 func (h *assistantHandlers) prepareWorkbenchContext(c *gin.Context, req *assistantRequest, user domain.User) error {
+	if req.sopDesigner() {
+		return h.prepareSOPDesignerContext(c, req, user)
+	}
 	if !h.workbenchProjectAllowed(c, req.ProjectID, user.ID) {
 		return errNotProjectMember
 	}

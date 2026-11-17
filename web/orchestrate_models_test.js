@@ -40,7 +40,6 @@ dom.load('orchestrate.js');
 dom.run(`
   beginAIOrchestration = async () => ({token: aiBuildToken, mode: 'new'});
   aiReferencedWorkflows = () => [];
-  aiOrchestratePrompt = goal => goal;
   placeAIGhost = () => {};
   completeAIBuild = async () => true;
   appendOrchestratorNote = () => {};
@@ -107,6 +106,10 @@ dom.run(`
     dom.document.querySelectorAll('[data-model-toggle]').forEach(toggle => assert.equal(toggle.disabled, false));
     const request = requests.at(-1);
     assert.equal(request.approvalMode, 'confirm', 'orchestration keeps draft-only permissions');
+    assert.equal(request.surface, 'sop-designer', 'the canvas runs on its own conversation surface');
+    assert.deepEqual(request.messages, [{role: 'user', content: 'Build workflow'}], 'the server owns the transcript; the canvas sends only the goal');
+    assert.equal(request.canvas, null, 'an empty canvas sends no snapshot');
+    assert.deepEqual(request.referenceWorkflowIds, []);
     return request;
   }
   let request = await send();
@@ -114,7 +117,6 @@ dom.run(`
   assert.equal(request.sessionId, '');
   request = await send();
   assert.equal(request.sessionId, 'session-1', 'same CLI resumes the conversation');
-  assert.equal(request.messages[1].model, 'codex:gpt-test', 'history retains CLI identity');
   pick('codex:gpt-other');
   request = await send();
   assert.equal(request.sessionId, 'session-2', 'same CLI model change keeps history');
@@ -124,7 +126,6 @@ dom.run(`
   pick('claude-code:sonnet-test');
   request = await send();
   assert.equal(request.sessionId, '', 'different CLI starts a fresh session');
-  assert.equal(request.messages.length, 1);
   assert.equal(request.model, 'claude-code:sonnet-test');
   pick('pi:custom-test');
   assert.equal((await send()).model, 'pi:custom-test', 'additional CLIs use the same path');
@@ -142,6 +143,16 @@ dom.run(`
   dom.window.state.projectFilter = 'project-a';
   request = await send();
   assert.equal(request.sessionId, '');
-  assert.equal(request.messages.length, 1);
+
+  // Editing a canvas sends its snapshot and named SOPs as data, not as text.
+  dom.window.state.workflow = {id: 'sop-a', name: 'Flow', nodes: [{id: 'n1', name: 'Build', type: 'agent', agentId: 'dev', position: {x: 1, y: 2}}], edges: []};
+  dom.run(`aiReferencedWorkflows = () => [{id: 'sop-ref', name: 'Reference'}];`);
+  dom.document.querySelector('#aiOrchestratorInput').value = 'Add a review step';
+  await dom.run('runAIOrchestrator()');
+  request = requests.at(-1);
+  assert.equal(request.workflowId, 'sop-a');
+  assert.deepEqual(request.canvas.nodes, [{id: 'n1', name: 'Build', type: 'agent', agentId: 'dev'}], 'canvas snapshot drops layout');
+  assert.deepEqual(request.referenceWorkflowIds, ['sop-ref']);
+  assert.deepEqual(request.messages, [{role: 'user', content: 'Add a review step'}]);
   console.log('orchestrator multi-CLI models ok');
 })().catch(error => { console.error(error); process.exit(1); });
