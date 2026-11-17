@@ -1,9 +1,12 @@
 package runtime
 
 import (
+	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 )
 
 // A CLI that refreshes its rotating OAuth token inside the isolated home must
@@ -117,4 +120,44 @@ func TestRunnerLoginWritesBackRefreshedToken(t *testing.T) {
 			t.Fatalf("a planted symlink was followed: %s", got)
 		}
 	})
+}
+
+// The conversation process pool (the Runner's path) keeps a login the CLI
+// refreshed while it ran.
+func TestConversationRunnerLoginKeepsRefreshThroughProcessPool(t *testing.T) {
+	login, _ := runnerLoginSpec("codex")
+	host := t.TempDir()
+	t.Setenv(login.configEnv, host)
+	t.Setenv("OPENAI_API_KEY", "")
+	const original = `{"auth_mode":"chatgpt","tokens":{"account_id":"acct-1","refresh_token":"r1"}}`
+	const refreshed = `{"auth_mode":"chatgpt","tokens":{"account_id":"acct-1","refresh_token":"r2"}}`
+	if err := os.WriteFile(filepath.Join(host, login.file), []byte(original), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	pool := &ConversationProcessPool{}
+	// Like Codex refreshing its token: rewrite auth.json in the isolated home.
+	script := `set -eu; printf '%s' "$1" > "$CODEX_HOME/auth.json"; printf 'refreshed\n'`
+	started, err := pool.Handle(ctx, root, "", nil, ConversationProcessRequest{Operation: "start", Command: &ConversationCommand{
+		Argv: []string{"sh", "-c", script, "refresh", refreshed}, Provider: "codex",
+		Bindings: []CredentialBinding{login.binding}, RunnerLogin: true,
+	}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := conversationPoll(t, pool, ctx, root, started.ID); strings.TrimSpace(got) != "refreshed" {
+		t.Fatalf("CLI output = %q", got)
+	}
+	if _, err := pool.Handle(ctx, root, "", nil, ConversationProcessRequest{Operation: "stop", ID: started.ID}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "home", login.dir, login.file)); !os.IsNotExist(err) {
+		t.Fatalf("isolated copy was not removed: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(host, login.file))
+	if err != nil || string(data) != refreshed {
+		t.Fatalf("host login = %s, %v; want the refreshed login", data, err)
+	}
 }
