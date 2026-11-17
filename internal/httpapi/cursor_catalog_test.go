@@ -86,7 +86,7 @@ func TestCursorFamiliesSurviveRestart(t *testing.T) {
 		t.Fatal("unknown model accepted an effort")
 	}
 	var listed []assistantModel
-	for _, model := range assistantEngineModels(context.Background(), a) {
+	for _, model := range assistantEngineModels(context.Background(), a, nil) {
 		if model.Engine == runtime.AgentCLICursor {
 			listed = append(listed, model)
 		}

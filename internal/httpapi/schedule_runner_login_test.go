@@ -1,0 +1,145 @@
+package httpapi
+
+import (
+	"bytes"
+	"encoding/json"
+	"net/http"
+	"path/filepath"
+	"slices"
+	"strings"
+	"testing"
+	"time"
+
+	"agentflow/internal/domain"
+	"agentflow/internal/engine"
+	"agentflow/internal/runtime"
+	"agentflow/internal/tracker"
+)
+
+func TestScheduleJobUsesSaversDefaultRunnerLogin(t *testing.T) {
+	t.Setenv("TMPDIR", t.TempDir())
+	t.Setenv("AGENTFLOW_AUTH_REQUIRED", "true")
+	t.Setenv("AGENTFLOW_SESSION_SECRET", "schedule-runner-login-test")
+	h, owner := workbenchFixture(t)
+	st := h.repo
+	if err := st.PutUser(domain.User{LoginName: "schedule-runner-saver"}); err != nil {
+		t.Fatal(err)
+	}
+	saver, _ := st.UserByLoginName("schedule-runner-saver")
+	joinScheduledProject(t, st, "workbench", saver.ID)
+	machine := domain.Runner{ID: "saver-machine", OwnerUserID: saver.ID, Status: domain.RunnerStatusOnline,
+		RunnerVersion: domain.RunnerVersionRuntimeTest, Runtimes: []domain.RunnerRuntime{
+			{Provider: assistantEngineClaude, Status: domain.RuntimeStatusOnline, AuthMode: domain.RuntimeAuthLocal},
+		},
+	}
+	foreign := machine
+	foreign.ID, foreign.OwnerUserID = "owner-machine", owner.ID
+	for _, runner := range []domain.Runner{machine, foreign} {
+		if err := st.PutRunner(runner); err != nil {
+			t.Fatal(err)
+		}
+	}
+	setDefault := func(id string) {
+		t.Helper()
+		if err := st.SetDefaultRunner(saver.ID, id, time.Now()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	server := New(st, engine.New(st, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "")
+	body := domain.ScheduleJob{
+		ID: "runner-login-job", ProjectID: "workbench", Name: "巡检", SkipDispatch: true, AssistantPrompt: "检查",
+		AssistantModel: "claude-code:opus", RunAsUserID: owner.ID, IntervalSec: 3600, Enabled: true,
+	}
+	setDefault(foreign.ID)
+	if code := scheduleAuthzStatus(t, server, saver, http.MethodPut, "/api/schedule-jobs", body); code != http.StatusBadRequest {
+		t.Fatalf("a default runner owned by someone else enabled a keyless save: %d", code)
+	}
+	setDefault(machine.ID)
+	saved := requestJSONAuthed[domain.ScheduleJob](t, server, saver, http.MethodPut, "/api/schedule-jobs", body, http.StatusOK)
+	if saved.RunAsUserID != saver.ID || saved.AssistantModel != body.AssistantModel {
+		t.Fatalf("saved run-as identity = %d, model = %q", saved.RunAsUserID, saved.AssistantModel)
+	}
+
+	for _, test := range []struct {
+		query string
+		want  bool
+	}{{"", false}, {"?schedule=1", true}} {
+		c, rec := workbenchContext(saver, http.MethodGet, "/api/assistant/models"+test.query, &bytes.Buffer{})
+		h.models(c)
+		var catalog assistantModelCatalog
+		if err := json.Unmarshal(rec.Body.Bytes(), &catalog); err != nil {
+			t.Fatal(err)
+		}
+		hasClaude := slices.ContainsFunc(catalog.Models, func(m assistantModel) bool {
+			return m.Engine == assistantEngineClaude
+		})
+		if rec.Code != http.StatusOK || hasClaude != test.want {
+			t.Fatalf("catalog %q lists keyless Claude models = %v, status = %d", test.query, hasClaude, rec.Code)
+		}
+	}
+
+	h.runnerControls = quietRunnerHub()
+	conn := testRunnerConn(machine.ID)
+	registerTestConn(h.runnerControls, conn)
+	t.Cleanup(conn.close)
+	type outcome struct {
+		message string
+		err     error
+	}
+	done := make(chan outcome, 1)
+	go func() {
+		message, err := h.prepareScheduleJob(saved)
+		done <- outcome{message, err}
+	}()
+
+	timeout := time.NewTimer(10 * time.Second)
+	defer timeout.Stop()
+	var launched, completed bool
+	for !completed {
+		select {
+		case msg := <-conn.send:
+			var req runtime.ConversationProcessRequest
+			if msg.WorkspaceRequest == nil || json.Unmarshal(msg.WorkspaceRequest.Conversation, &req) != nil {
+				t.Fatal("expected runner conversation request")
+			}
+			result := runtime.ConversationProcessResult{ID: req.ID}
+			switch req.Operation {
+			case "start":
+				if req.Command == nil || !req.Command.RunnerLogin || req.Command.Credentials.ClaudeCode.APIKey != "" {
+					t.Fatal("scheduled turn did not request CLI account login")
+				}
+				launched = true
+			case "poll":
+				result.Events = []domain.TelemetryEvent{{Name: "process.stdout", Message: `{"type":"result","result":"巡检完成"}`}}
+				result.Sequence, result.Done = 1, true
+			case "stop":
+				result.Done = true
+			}
+			raw, _ := json.Marshal(result)
+			h.runnerControls.resolveWorkspace(msg.RequestID, domain.RunnerWorkspaceResponse{Status: http.StatusOK, Payload: raw})
+		case result := <-done:
+			if result.err != nil || result.message != "巡检完成" || !launched {
+				t.Fatalf("scheduled run = %q, %v, launched = %v", result.message, result.err, launched)
+			}
+			completed = true
+		case <-timeout.C:
+			t.Fatal("scheduled run did not finish")
+		}
+	}
+
+	sessions := st.ListAssistantSessionsByTask(domain.AssistantSourceScheduled, saved.ID)
+	if len(sessions) != 1 || sessions[0].UserID != saver.ID || sessions[0].Execution().RunnerID != machine.ID || !sessions[0].ExecutionLocked() {
+		t.Fatal("scheduled session did not retain the saver and their machine")
+	}
+	machine.Status = domain.RunnerStatusOffline
+	if err := st.PutRunner(machine); err != nil {
+		t.Fatal(err)
+	}
+	saver.ClaudeCodeAPIKey = "saver-test-key"
+	if err := st.PutUser(saver); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.prepareScheduleJob(saved); err == nil || !strings.Contains(err.Error(), "已离线") {
+		t.Fatalf("offline default runner returned %v", err)
+	}
+}

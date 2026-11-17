@@ -133,7 +133,7 @@ func (h *assistantHandlers) runTaskNow(c *gin.Context) {
 	user, ok := h.repo.User(current.ID)
 	task, err := loadAssistantTask(h.repo, current.ID, c.Param("id"))
 	engine, _ := assistantModelEngine(task.Model)
-	if key, _ := assistantEngineCredential(user, engine); !ok || key == "" {
+	if !ok || !scheduleHasPersonalCredential(h.repo, user, engine) {
 		msg := "请先在个人配置中配置自己的 CodeBuddy API Key"
 		if engine != assistantEngineCodeBuddy {
 			msg = assistantEngineMissingKey(engine)
@@ -227,34 +227,43 @@ func (h *assistantHandlers) executeAssistantTask(ctx context.Context, user domai
 		return errors.New(msg)
 	}
 
-	// The task's model picks the CLI; a scheduled run needs a key for it (the
-	// runner's own, or the shared CodeBuddy key already substituted by
-	// scheduleKeyUser), checked before a conversation is opened.
+	// Pin a machine login to the actor's default runner before creating the
+	// conversation, so the turn uses the same authentication path as chat.
 	engine, _ := assistantModelEngine(task.Model)
-	if key, _ := assistantEngineCredential(user, engine); key == "" {
-		if engine != assistantEngineCodeBuddy {
-			return fail(assistantEngineMissingKey(engine))
+	model := strings.TrimSpace(task.Model)
+	var target *domain.AssistantExecutionTarget
+	if machine := scheduleLoginRunner(h.repo, user.ID, engine); machine.ID != "" {
+		if machine.Status != domain.RunnerStatusOnline {
+			return fail(fmt.Sprintf("默认执行机器 %s 已离线，请启动 Runner 后重试", firstNonEmpty(machine.Name, machine.ID)))
 		}
-		return fail("未配置 CodeBuddy API Key")
-	}
-	model, err := scheduledRunModel(ctx, task.Model, user)
-	if err != nil {
-		return fail(err.Error())
+		target = &domain.AssistantExecutionTarget{Pool: domain.ExecutionModeRunner, RunnerID: machine.ID}
+	} else {
+		if key, _ := assistantEngineCredential(user, engine); key == "" {
+			if engine != assistantEngineCodeBuddy {
+				return fail(assistantEngineMissingKey(engine))
+			}
+			return fail("未配置 CodeBuddy API Key")
+		}
+		var err error
+		if model, err = scheduledRunModel(ctx, model, user); err != nil {
+			return fail(err.Error())
+		}
 	}
 	cliEngine, _ := assistantModelEngine(model)
 	prevSession := strings.TrimSpace(task.SessionID)
 	sessionID := newAssistantSessionID()
 	now := time.Now().UTC()
 	req := assistantRequest{
-		ApprovalMode: AssistantApprovalAuto,
-		ProjectID:    task.ProjectID,
-		SessionID:    sessionID,
-		Model:        model,
-		Executor:     cliEngine,
-		Messages:     []assistantMessage{{Role: "user", Content: scheduledAssistantPrompt(*task, mode), AuthorID: user.ID, AuthorName: user.LoginName, CreatedAt: now}},
+		ApprovalMode:    AssistantApprovalAuto,
+		ProjectID:       task.ProjectID,
+		SessionID:       sessionID,
+		Model:           model,
+		Executor:        cliEngine,
+		ExecutionTarget: target,
+		Messages:        []assistantMessage{{Role: "user", Content: scheduledAssistantPrompt(*task, mode), AuthorID: user.ID, AuthorName: user.LoginName, CreatedAt: now}},
 	}
 	g := domain.AssistantGeneration{StartedAt: now, ActorID: user.ID, ActorName: user.LoginName, ID: newAssistantSessionID(), SessionID: sessionID, UserID: user.ID, ProjectID: task.ProjectID, Status: "running", Events: []domain.AssistantGenerationEvent{}, MessageCount: len(req.Messages)}
-	pending := assistantConversation{ID: sessionID, Title: "定时 · " + task.Name, ProjectID: task.ProjectID, Model: model, Executor: cliEngine, Source: origin.Source, TaskID: origin.TaskID, Messages: req.Messages}
+	pending := assistantConversation{ID: sessionID, Title: "定时 · " + task.Name, ProjectID: task.ProjectID, Model: model, Executor: cliEngine, ExecutionTarget: target, Source: origin.Source, TaskID: origin.TaskID, Messages: req.Messages}
 	if err := h.repo.BeginAssistantGeneration(g, pending); err != nil {
 		_ = fail("无法创建定时任务会话")
 		return err

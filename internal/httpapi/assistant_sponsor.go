@@ -11,7 +11,7 @@ import (
 // Users who have not configured their own CodeBuddy API Key can still chat
 // with the platform's shared key (see repo.SharedCodeBuddyKey), limited to
 // the models a platform administrator allowed. SOP runs use it the same way
-// through the engine, and AI scheduled tasks through scheduleKeyUser;
+// through the engine, and AI scheduled tasks through scheduleCredentialUser;
 // clarification, reports and bots keep requiring the user's own key.
 const (
 	assistantSponsorLoginEnv = repo.CodeBuddySponsorLoginEnv

@@ -219,9 +219,21 @@ func (h *assistantHandlers) models(c *gin.Context) {
 		catalog.SponsoredModel, catalog.SponsoredModels = key.Models[0], key.Models
 	}
 	if signedIn {
-		catalog.Models = append(catalog.Models, assistantEngineModels(c.Request.Context(), user)...)
-		h.saveCursorCatalog(user)
 		catalog.Engines = assistantEngineOptions(user, shared && strings.TrimSpace(user.CodeBuddyAPIKey) == "")
+		var runnerLogin map[string]bool
+		if c.Query("schedule") == "1" {
+			c.Header("Cache-Control", "private, no-store")
+			runnerLogin = make(map[string]bool)
+			for i := range catalog.Engines {
+				engine := catalog.Engines[i].ID
+				if scheduleLoginRunner(h.repo, user.ID, engine).ID != "" {
+					runnerLogin[engine] = true
+					catalog.Engines[i].Configured = true
+				}
+			}
+		}
+		catalog.Models = append(catalog.Models, assistantEngineModels(c.Request.Context(), user, runnerLogin)...)
+		h.saveCursorCatalog(user)
 	}
 	c.JSON(200, catalog)
 }

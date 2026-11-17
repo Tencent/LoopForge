@@ -328,13 +328,16 @@ func assistantDiscoveredModelsFor(ctx context.Context, user domain.User, engine 
 	return listed
 }
 
-func assistantEngineModels(ctx context.Context, user domain.User) []assistantModel {
+func assistantEngineModels(ctx context.Context, user domain.User, runnerLogin map[string]bool) []assistantModel {
 	var out []assistantModel
 	for _, engine := range assistantCLIEngines() {
-		if key, _ := assistantEngineCredential(user, engine); key == "" {
+		if key, _ := assistantEngineCredential(user, engine); key == "" && !runnerLogin[engine] {
 			continue
 		}
-		listed := assistantDiscoveredModelsFor(ctx, user, engine)
+		var listed []assistantDiscoveredModel
+		if !runnerLogin[engine] {
+			listed = assistantDiscoveredModelsFor(ctx, user, engine)
+		}
 		if len(listed) == 0 {
 			listed = assistantEngineBuiltinModels(engine)
 		}

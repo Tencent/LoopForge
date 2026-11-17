@@ -61,8 +61,12 @@ func (h *assistantHandlers) assistantUsesRunnerLogin(userID int64, target *domai
 }
 
 func runnerUsesLocalLogin(runner domain.Runner, engine string) bool {
-	return (engine == assistantEngineCodex || engine == assistantEngineClaude) &&
+	return assistantSupportsRunnerLogin(engine) &&
 		runner.RuntimeAuthMode(engine) == domain.RuntimeAuthLocal
+}
+
+func assistantSupportsRunnerLogin(engine string) bool {
+	return engine == assistantEngineCodex || engine == assistantEngineClaude
 }
 
 func (h *assistantHandlers) sessionMode(c *gin.Context) {
