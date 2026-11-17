@@ -29,6 +29,7 @@ func activeReportSession(t *testing.T) *AgentToolSession {
 }
 
 func TestSOPReportUsesResponsibleUserAndMCPSubmission(t *testing.T) {
+	t.Setenv("AGENTFLOW_ASSISTANT_MODELS", "glm-5.1")
 	store, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -70,12 +71,12 @@ func TestSOPReportUsesResponsibleUserAndMCPSubmission(t *testing.T) {
 		return "not a JSON result", context.Canceled // The committed tool result survives CLI cancellation.
 	}
 	run := domain.Run{ID: "run-report", ExecutionContext: domain.TelemetryContext{ResponsibleUserID: 42, ProjectID: "report-project"}}
-	report, err := h.generateSOPReport(context.Background(), run, domain.DefaultNotificationReportModel, "资料")
+	report, err := h.generateSOPReport(context.Background(), run, "", "资料")
 	if err != nil || report.Body != "最终验证通过 [redacted]" || calls != 1 {
 		t.Fatalf("report=%+v calls=%d err=%v", report, calls, err)
 	}
 	run.ExecutionContext.ResponsibleUserID = 99
-	if _, err = h.generateSOPReport(context.Background(), run, domain.DefaultNotificationReportModel, "资料"); !errors.Is(err, notification.ErrReportCredentials) {
+	if _, err = h.generateSOPReport(context.Background(), run, "", "资料"); !errors.Is(err, notification.ErrReportCredentials) {
 		t.Fatal("borrowed owner key")
 	}
 	command, err := prepareAssistantCommand(assistantCommandOpts{Bin: "codebuddy", Config: "{}", Prompt: "资料", ReportOnly: true, Native: true})
@@ -91,6 +92,7 @@ func TestSOPReportUsesResponsibleUserAndMCPSubmission(t *testing.T) {
 }
 
 func TestSOPReportMissingSubmissionRetriesWithoutParsingText(t *testing.T) {
+	t.Setenv("AGENTFLOW_ASSISTANT_MODELS", "glm-5.1")
 	store, _ := repo.OpenTest()
 	defer store.Close()
 	store.PutUser(domain.User{ID: 42, LoginName: "executor", CodeBuddyAPIKey: "key"})
@@ -100,7 +102,7 @@ func TestSOPReportMissingSubmissionRetriesWithoutParsingText(t *testing.T) {
 		calls++
 		return "```notification\n{\"body\":\"looks valid\"}\n```", nil
 	}
-	_, err := h.generateSOPReport(context.Background(), domain.Run{ExecutionContext: domain.TelemetryContext{ResponsibleUserID: 42}}, domain.DefaultNotificationReportModel, "资料")
+	_, err := h.generateSOPReport(context.Background(), domain.Run{ExecutionContext: domain.TelemetryContext{ResponsibleUserID: 42}}, "", "资料")
 	if !errors.Is(err, notification.ErrReportFormat) || calls != nativeTerminalMaxRetries+1 {
 		t.Fatalf("calls=%d err=%v", calls, err)
 	}
@@ -116,7 +118,7 @@ func TestSOPReportMissingSubmissionRetriesWithoutParsingText(t *testing.T) {
 		_, err := gateway.callTool(ctx, session, args)
 		return "", err
 	}
-	report, err := h.generateSOPReport(context.Background(), domain.Run{ExecutionContext: domain.TelemetryContext{ResponsibleUserID: 42}}, domain.DefaultNotificationReportModel, "资料")
+	report, err := h.generateSOPReport(context.Background(), domain.Run{ExecutionContext: domain.TelemetryContext{ResponsibleUserID: 42}}, "", "资料")
 	if err != nil || calls != 2 || report.Body != "补交成功" {
 		t.Fatalf("repair report=%+v calls=%d err=%v", report, calls, err)
 	}

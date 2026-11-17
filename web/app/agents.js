@@ -151,16 +151,13 @@ function paintAgentPicker(pickerId,item){
   const label=toggle?.querySelector('[data-model-label]');
   if(toggle&&label&&label.scrollWidth<=label.clientWidth){toggle.removeAttribute('title');toggle.removeAttribute('data-hui-title')}
 }
-// The empty choice runs the CLI's own default model; name it instead of
-// showing an unset 「选择模型」.
-function agentDefaultModelItem(executorId){
-  const exec=(state.data?.executors||[]).find(x=>x.id===executorId);
-  return {id:'',name:exec?.model?`默认 · ${exec.model}`:'默认模型',icon:false};
-}
+// A role starts on the first model its CLI lists; there is no CLI-default
+// choice.
+function agentFirstModel(executorId){return (executorModelCatalogs()[executorId]?.models||[])[0]?.id||''}
 function renderAgentModelPicker(){
   const picker=$('#agentModelPicker');if(!picker)return;
   const current=picker.querySelector('[name="modelChoice"]').value;
-  const items=[agentDefaultModelItem(currentAgentExecutorId())].concat(agentModelItems(currentAgentExecutorId(),current));
+  const items=agentModelItems(currentAgentExecutorId(),current);
   const menu=picker.querySelector('.ai-model-menu');
   agentModelAPI()?.renderOptions?.(menu,items,current,id=>{
     picker.querySelector('[name="modelChoice"]').value=id;
@@ -191,7 +188,9 @@ function renderAgentEffortPicker(){
 function applyAgentModelUI(executorId,model,effort){
   const picker=$('#agentModelPicker');if(!picker||!$('#agentEffortPicker'))return;
   const cat=executorModelCatalogs()[executorId]||{};
-  let choice=model||'';
+  // Roles saved by earlier versions may hold "default", the retired
+  // placeholder for "let the CLI pick": they start on the first model too.
+  let choice=model&&model!=='default'?model:agentFirstModel(executorId);
   if(choice&&!(cat.models||[]).some(m=>m.id===choice)&&cat.customModel)choice=AGENT_CUSTOM_MODEL;
   picker.querySelector('[name="modelChoice"]').value=choice;
   const customInput=$('#agentModelCustomField')?.querySelector('input[name="model"]');

@@ -189,7 +189,7 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 	if catalogEngine == assistantEngineCodeBuddy {
 		catalog = h.turnCatalog(c.Request.Context(), user, req.Model)
 	}
-	req.Model = assistantAllowedUserModel(req.Model, catalog, user)
+	req.Model = assistantAllowedUserModel(c.Request.Context(), req.Model, catalog, user)
 	cliEngine, _ = assistantModelEngine(req.Model)
 	req.Executor = cliEngine
 	if err := validateAssistantEffort(user, req.Model, req.Effort); err != nil {
@@ -413,9 +413,6 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 	nativeContinuationReady := false
 	var turnUsage assistantTurnUsage
 	replyModel := strings.TrimSpace(req.Model)
-	if replyModel == "" {
-		replyModel = assistantDefaultModel
-	}
 	generate := h.generate
 	if generate == nil {
 		resume := false
@@ -1699,9 +1696,9 @@ type assistantCommandOpts struct {
 }
 
 func prepareAssistantCommand(opts assistantCommandOpts) (runtime.CommandSpec, error) {
-	model := strings.TrimSpace(opts.Model)
+	model := domain.ChosenModel(opts.Model)
 	if model == "" {
-		model = assistantFixedCatalog().Default
+		model = assistantKnownCatalog().Default
 	}
 	sys := strings.TrimSpace(opts.SystemPrompt)
 	if sys == "" {

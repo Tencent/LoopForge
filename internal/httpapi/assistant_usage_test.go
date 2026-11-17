@@ -65,6 +65,7 @@ func generateWithFakeCLI(t *testing.T, script string) (assistantMessage, []byte)
 		t.Fatal(err)
 	}
 	t.Setenv("AGENTFLOW_CODEBUDDY_BIN", bin)
+	t.Setenv("AGENTFLOW_ASSISTANT_MODELS", "glm-5.1")
 	sid := "usage-" + filepath.Base(t.TempDir())
 	body, _ := json.Marshal(assistantRequest{SessionID: sid, ProjectID: "workbench", Messages: []assistantMessage{{Role: "user", Content: "检查文件"}}})
 	c, rec := workbenchContext(user, "POST", "/api/assistant/generations", bytes.NewBuffer(body))

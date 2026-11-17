@@ -271,7 +271,7 @@ func (h *scheduleHandlers) bindScheduleRunAs(c *gin.Context, job *domain.Schedul
 		return false
 	}
 	if shared != nil {
-		model, allowed := assistantSponsoredModelFor(shared, scheduleSharedRequestedModel(requestedModel))
+		model, allowed := assistantSponsoredModelFor(shared, requestedModel)
 		if !allowed {
 			if stopOnly() {
 				return false
@@ -304,15 +304,6 @@ func scheduleRunConfigUnchanged(prior, job domain.ScheduleJob) bool {
 		prior.SharedTaskID == job.SharedTaskID &&
 		prior.SharedTaskVersion == job.SharedTaskVersion &&
 		maps.Equal(prior.ParameterValues, job.ParameterValues)
-}
-
-// scheduleSharedRequestedModel treats the CLI-default placeholder as "no
-// model chosen", which the shared key resolves to its own default.
-func scheduleSharedRequestedModel(model string) string {
-	if model = strings.TrimSpace(model); model == assistantDefaultModel {
-		return ""
-	}
-	return model
 }
 
 func scheduleMissingKeyError(engine string) string {

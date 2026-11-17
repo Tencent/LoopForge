@@ -14,10 +14,6 @@ import (
 	"agentflow/internal/tracker"
 )
 
-const (
-	clarifyDefaultModel = assistantDefaultModel
-)
-
 var (
 	tapdURLRe          = regexp.MustCompile(`(?i)https?://(?:www\.)?(?:tapd\.example\.com|tapd\.cn)[^\s<>"'）】\]]+`)
 	gongfengIssueURLRe = regexp.MustCompile(`(?i)https?://git\.example\.com/[^\s<>"'）】\]]+/issues/\d+`)

@@ -153,19 +153,15 @@ func (h *notificationHandlers) save(c *gin.Context, old *domain.NotificationBot)
 		bot.InteractionEnabled = *req.InteractionEnabled
 	}
 	if req.Model != nil {
-		model := strings.TrimSpace(*req.Model)
-		if model == "" {
-			model = domain.DefaultNotificationReportModel
-		}
-		if assistantAllowedModel(model, assistantKnownCatalog()) != model {
+		// No model reports on the first listed model when the report runs.
+		model := domain.ChosenModel(*req.Model)
+		if model != "" && assistantAllowedModel(model, assistantKnownCatalog()) != model {
 			c.JSON(400, gin.H{"error": "请选择有效的 CodeBuddy 模型"})
 			return
 		}
 		bot.Model = model
 	}
-	if bot.Model == "" {
-		bot.Model = domain.DefaultNotificationReportModel
-	}
+	bot.Model = domain.ChosenModel(bot.Model)
 	if !h.access(c, bot.ProjectID, true) {
 		return
 	}

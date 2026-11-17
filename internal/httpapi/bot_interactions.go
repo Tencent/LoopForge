@@ -74,11 +74,12 @@ func (h *assistantHandlers) generateBotReply(ctx context.Context, bot domain.Not
 	if strings.TrimSpace(user.CodeBuddyAPIKey) == "" {
 		return "你的平台账号尚未配置 CodeBuddy Key，请在平台个人配置中配置。", nil
 	}
-	model := bot.Model
+	catalog := loadAssistantModels(ctx, user.CodeBuddyInternetEnvironment)
+	model := domain.ChosenModel(bot.Model)
 	if model == "" {
-		model = domain.DefaultNotificationReportModel
+		model = catalog.Default
 	}
-	if assistantAllowedModel(model, loadAssistantModels(ctx, user.CodeBuddyInternetEnvironment)) != model {
+	if model == "" || assistantAllowedModel(model, catalog) != model {
 		return "所选模型不可用，请在 Bot 管理中重新选择。", nil
 	}
 	if err = ensureAssistantSessionDirs(user.ID); err != nil {

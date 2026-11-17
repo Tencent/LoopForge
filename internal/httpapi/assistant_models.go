@@ -16,12 +16,9 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-const assistantDefaultModel = "default"
-
 // assistantChatDefaultModel is the model the legacy sponsor account lends.
-// New chat conversations preselect the shared key's default model when one is
-// configured; otherwise chat uses the operator's default, like clarification,
-// scheduled prompts, reports and executors.
+// New chat conversations preselect the shared key's first model when one is
+// configured; otherwise every picker starts on the first model it lists.
 const assistantChatDefaultModel = assistantSponsoredModel
 
 type assistantModel struct {
@@ -35,6 +32,7 @@ type assistantModel struct {
 }
 
 type assistantModelCatalog struct {
+	// Default is the first listed model: what a setting without a model runs on.
 	Default string           `json:"default"`
 	Models  []assistantModel `json:"models"`
 	// SponsoredModels is set when users without their own CodeBuddy API Key
@@ -154,7 +152,7 @@ func assistantKnownCatalog() assistantModelCatalog {
 			}
 		}
 	}
-	return catalog
+	return catalog.withFirstDefault()
 }
 
 func cachedCLIModels(environment string) []string {
@@ -188,11 +186,11 @@ func (h *assistantHandlers) models(c *gin.Context) {
 			c.JSON(400, gin.H{"error": "不支持的执行器"})
 			return
 		}
-		result := assistantModelCatalog{Default: "default", Models: []assistantModel{{ID: "default", Name: "CLI default", Family: map[string]string{"codex": "gpt", "claude": "claude"}[id]}}}
+		var result assistantModelCatalog
 		for _, item := range catalog.Models {
 			result.Models = append(result.Models, assistantModel{ID: item.ID, Name: item.Name, Family: map[string]string{"codex": "gpt", "claude": "claude"}[id]})
 		}
-		c.JSON(200, result)
+		c.JSON(200, result.withFirstDefault())
 		return
 	}
 
@@ -266,33 +264,34 @@ func loadAssistantModels(_ context.Context, environment string) assistantModelCa
 			seen[id] = true
 		}
 	}
-	return catalog
+	return catalog.withFirstDefault()
 }
 
-// assistantFixedCatalog mirrors `codebuddy --help` (CodeBuddy Code 2.180.0)
-// --model list, names/credits from the CLI's remote product catalog. Two ids
-// are kept although the CLI no longer advertises them: deepseek-v4-flash-ioa
-// is pinned by live roles (and was the old built-in executor default), and
-// hy4-preview-ioa stays alongside hy4std for existing users.
+// withFirstDefault makes the first listed model the default. A catalog
+// with no models has no default.
+func (c assistantModelCatalog) withFirstDefault() assistantModelCatalog {
+	c.Default = ""
+	if len(c.Models) > 0 {
+		c.Default = c.Models[0].ID
+	}
+	return c
+}
+
+// assistantFixedCatalog lists the models the operator configured:
+// AGENTFLOW_ASSISTANT_MODEL first, then AGENTFLOW_ASSISTANT_MODELS. The
+// models CodeBuddy advertises (`codebuddy --help`) follow them in the
+// catalogs built on this one.
 func assistantFixedCatalog() assistantModelCatalog {
-	defaultID := strings.TrimSpace(os.Getenv("AGENTFLOW_ASSISTANT_MODEL"))
-	if defaultID == "" {
-		defaultID = assistantDefaultModel
-	}
-	defaultName := defaultID
-	if defaultID == assistantDefaultModel {
-		defaultName = "CLI 默认模型"
-	}
-	models := []assistantModel{assistantListedModel(defaultID, defaultName, "")}
-	seen := map[string]bool{defaultID: true}
-	for _, id := range strings.Split(os.Getenv("AGENTFLOW_ASSISTANT_MODELS"), ",") {
-		id = strings.TrimSpace(id)
+	var models []assistantModel
+	seen := map[string]bool{}
+	for _, id := range append([]string{os.Getenv("AGENTFLOW_ASSISTANT_MODEL")}, strings.Split(os.Getenv("AGENTFLOW_ASSISTANT_MODELS"), ",")...) {
+		id = domain.ChosenModel(id)
 		if id != "" && !seen[id] {
 			models = append(models, assistantListedModel(id, id, ""))
 			seen[id] = true
 		}
 	}
-	return assistantModelCatalog{Default: defaultID, Models: models}
+	return assistantModelCatalog{Models: models}.withFirstDefault()
 }
 
 func assistantListedModel(id, name, credits string) assistantModel {
@@ -325,8 +324,10 @@ func assistantModelFamily(id string) string {
 	}
 }
 
+// assistantAllowedModel is id when catalog lists it, else the first listed
+// model.
 func assistantAllowedModel(id string, catalog assistantModelCatalog) string {
-	id = strings.TrimSpace(id)
+	id = domain.ChosenModel(id)
 	if id == "" {
 		return catalog.Default
 	}

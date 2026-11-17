@@ -339,10 +339,7 @@ func (r *NotificationsRepo) enqueueNotification(tx *gorm.DB, key string, binding
 		}
 		item.ReportRequest = string(request)
 		item.ReportState = "pending"
-		item.ReportModel = bot.Model
-		if item.ReportModel == "" {
-			item.ReportModel = domain.DefaultNotificationReportModel
-		}
+		item.ReportModel = domain.ChosenModel(bot.Model)
 	}
 	item.CreatedAt = time.Now().UTC()
 	item.NextAttemptAt = item.CreatedAt

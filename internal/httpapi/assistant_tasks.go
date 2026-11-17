@@ -460,13 +460,13 @@ func firstNonEmpty(values ...string) string {
 func scheduledRunModel(ctx context.Context, requested string, user domain.User) (string, error) {
 	requested = strings.TrimSpace(requested)
 	env := user.CodeBuddyInternetEnvironment
-	model := assistantAllowedUserModel(requested, loadAssistantModels(ctx, env), user)
-	if requested == "" || model == requested {
+	model := assistantAllowedUserModel(ctx, requested, loadAssistantModels(ctx, env), user)
+	if _, chosen := assistantModelEngine(requested); domain.ChosenModel(chosen) == "" || model == requested {
 		return model, nil
 	}
 	if engine, _ := assistantModelEngine(requested); engine == assistantEngineCodeBuddy {
 		refreshCLIModels(ctx, env, user.CodeBuddyAPIKey)
-		if model = assistantAllowedUserModel(requested, loadAssistantModels(ctx, env), user); model == requested {
+		if model = assistantAllowedUserModel(ctx, requested, loadAssistantModels(ctx, env), user); model == requested {
 			return model, nil
 		}
 	}

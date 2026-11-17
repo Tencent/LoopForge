@@ -40,6 +40,7 @@ func TestPutAgentValidatesEffortLevel(t *testing.T) {
 }
 
 func TestExecutorModelsCatalogListsPerCLI(t *testing.T) {
+	t.Setenv("AGENTFLOW_ASSISTANT_MODELS", "glm-5.1")
 	s, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)

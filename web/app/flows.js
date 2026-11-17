@@ -4,7 +4,6 @@ function workflowPreviewContract(wf){
 const PREVIEW_BUILD_NODE_ID='af-preview-build';
 const PREVIEW_BUILD_AGENT_ID='af-preview-builder';
 const PREVIEW_MODEL_FALLBACK=[
-  {id:'default',name:'GLM-5.3-Flash'},
   {id:'glm-5.3-ioa',name:'GLM-5.3'},
   {id:'gpt-5.6-terra',name:'GPT-5.6-Terra'},
   {id:'gpt-5.6-luna',name:'GPT-5.6-Luna'},
@@ -16,9 +15,9 @@ const PREVIEW_MODEL_FALLBACK=[
 function isPreviewBuildNode(id){return id===PREVIEW_BUILD_NODE_ID}
 function workflowPreviewModel(wf){
   const api=window.AgentFlowAssistantModels;
-  const fallback=(api&&api.DEFAULT)||'default';
   const model=(workflowPreviewContract(wf)||{}).model;
-  return (model&&String(model).trim())||fallback;
+  if(api?.codeBuddyModel)return api.codeBuddyModel(model);
+  return (model&&String(model).trim())||previewModelChoices()[0]?.id||'';
 }
 function previewModelChoices(){
   const api=window.AgentFlowAssistantModels;
@@ -30,7 +29,7 @@ function previewModelChoices(){
 function fillPreviewModelSelect(sel, selected){
   if(!sel)return;
   const items=previewModelChoices();
-  const keep=selected||items[0]?.id||'default';
+  const keep=selected||items[0]?.id||'';
   if(keep&&!items.some(m=>m.id===keep))items.unshift({id:keep,name:keep});
   sel.innerHTML=items.map(m=>`<option value="${escapeHTML(m.id)}" ${m.id===keep?'selected':''}>${escapeHTML(m.name||m.id)}</option>`).join('');
 }
@@ -38,7 +37,7 @@ function ensurePreviewContract(){
   const wf=state.workflow;if(!wf)return null;
   const prev=workflowPreviewContract(wf)||{};
   const api=window.AgentFlowAssistantModels;
-  const model=(prev.model&&String(prev.model).trim())||(api&&api.DEFAULT)||'default';
+  const model=api?.codeBuddyModel?api.codeBuddyModel(prev.model):((prev.model&&String(prev.model).trim())||previewModelChoices()[0]?.id||'');
   wf.preview={
     ...prev,
     enabled:true,
@@ -919,7 +918,7 @@ function renderAgentHookEditors(d){
 function renderAgentSummary(){
   const f=$('#agentForm'),d=state.agentDraft||{};
   const exec=(state.data.executors||[]).find(x=>x.id===(f?.elements?.executorId?.value||d.executorId));
-  const chosen=agentEffectiveModel(f),model=chosen||(exec?.model?`${exec.model}（默认）`:'默认模型');
+  const chosen=agentEffectiveModel(f),model=chosen||agentFirstModel(exec?.id||'codebuddy')||'选择模型';
   const effort=(f?.elements?.effort?.value||'').trim();
   const meta=$('#agentRuntimeMeta');
   if(meta)meta.textContent=[exec?.name,effort?`${model} · ${effort}`:model].filter(Boolean).join(' · ');

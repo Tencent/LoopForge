@@ -274,16 +274,37 @@ func (h *assistantHandlers) assistantTurnUser(stored domain.User, model string) 
 // assistantAllowedUserModel is assistantAllowedModel plus the caller's CLI
 // models. Any well-formed model ID is accepted for a configured CLI: the
 // gateway behind the Base URL decides what exists, and a discovery outage
-// must not silently move the conversation back to CodeBuddy.
-func assistantAllowedUserModel(id string, catalog assistantModelCatalog, user domain.User) string {
+// must not silently move the conversation back to CodeBuddy. A CLI turn
+// without a model runs on the first model that CLI lists.
+func assistantAllowedUserModel(ctx context.Context, id string, catalog assistantModelCatalog, user domain.User) string {
 	engine, model := assistantModelEngine(id)
 	if engine == assistantEngineCodeBuddy {
 		return assistantAllowedModel(id, catalog)
 	}
-	if key, _ := assistantEngineCredential(user, engine); key == "" || !assistantValidEngineModel(model) {
+	if key, _ := assistantEngineCredential(user, engine); key == "" {
+		return catalog.Default
+	}
+	if domain.ChosenModel(model) == "" {
+		if first := assistantEngineFirstModel(ctx, user, engine); first != "" {
+			return first
+		}
+		return catalog.Default
+	}
+	if !assistantValidEngineModel(model) {
 		return catalog.Default
 	}
 	return engine + ":" + model
+}
+
+// assistantEngineFirstModel is the first model engine lists for user, with
+// its CLI prefix, or "" when it lists none.
+func assistantEngineFirstModel(ctx context.Context, user domain.User, engine string) string {
+	for _, model := range assistantEngineModels(ctx, user) {
+		if model.Engine == engine {
+			return model.ID
+		}
+	}
+	return ""
 }
 
 // assistantScheduledModel normalizes the model of an AI scheduled task on
@@ -292,6 +313,7 @@ func assistantAllowedUserModel(id string, catalog assistantModelCatalog, user do
 // the owner's account when it runs (see scheduledRunModel).
 func assistantScheduledModel(id string, catalog assistantModelCatalog) string {
 	engine, model := assistantModelEngine(id)
+	model = domain.ChosenModel(model)
 	if engine != assistantEngineCodeBuddy && assistantValidEngineModel(model) {
 		return engine + ":" + model
 	}

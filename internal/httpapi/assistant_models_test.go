@@ -39,7 +39,8 @@ func TestCodeBuddyModelDiscoveryPerEnvironment(t *testing.T) {
 		t.Fatalf("discovery must be cached per environment: %v", calls)
 	}
 	ioa := loadAssistantModels(context.Background(), "ioa")
-	if ioa.Default != "default" || assistantAllowedModel("claude-sonnet-5", ioa) != "claude-sonnet-5" || assistantAllowedModel("gpt-5.5", ioa) != "default" || assistantAllowedModel("claude-opus-5.5", ioa) != "default" {
+	// The first listed model is the default; an unlisted one falls back to it.
+	if ioa.Default != "claude-sonnet-5" || assistantAllowedModel("claude-sonnet-5", ioa) != "claude-sonnet-5" || assistantAllowedModel("gpt-5.5", ioa) != "claude-sonnet-5" || assistantAllowedModel("claude-opus-5.5", ioa) != "claude-sonnet-5" {
 		t.Fatalf("ioa catalog: %+v", ioa)
 	}
 	for range 2 {

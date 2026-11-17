@@ -25,7 +25,7 @@ func TestIndependentReportFrozenAcrossSendRetries(t *testing.T) {
 	if err := svc.Store.PutRun(run); err != nil {
 		t.Fatal(err)
 	}
-	bot.Model = domain.DefaultNotificationReportModel
+	bot.Model = ""
 	if err := svc.Store.SaveNotificationBot(bot, ""); err != nil {
 		t.Fatal(err)
 	}

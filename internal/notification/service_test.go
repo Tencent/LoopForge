@@ -224,7 +224,7 @@ func TestSOPCompletionSendsOnceAfterAllNodeEvents(t *testing.T) {
 	}
 	svc.GenerateReport = func(_ context.Context, actual domain.Run, model, prompt string) (domain.AINotificationContent, error) {
 		calls++
-		if actual.ID != "sop-report" || model != domain.DefaultNotificationReportModel || !strings.Contains(prompt, "校验通过") {
+		if actual.ID != "sop-report" || model != "" || !strings.Contains(prompt, "校验通过") {
 			t.Fatal("missing report input")
 		}
 		return domain.AINotificationContent{Title: "需求已完成", Body: "已实现功能，校验通过"}, nil

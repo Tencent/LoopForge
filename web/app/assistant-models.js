@@ -5,7 +5,6 @@
 // Only the picker chrome lives here; per-feature selections stay in the
 // callers (localStorage keys, hidden inputs, form fields).
 (() => {
-  const DEFAULT_MODEL = 'default';
   const FAMILY_MARK = {claude:'',gpt:'',glm:'智',gemini:'G',kimi:'K',deepseek:'D',minimax:'M',hunyuan:'混',mimo:'Mi',echo:'E',other:'AI'};
   const FAMILY_ICON = {
     claude:'/images/credentials/claude.svg',
@@ -18,10 +17,9 @@
     hunyuan:'/images/credentials/hunyuan.svg',
     mimo:'/images/credentials/mimo.svg'
   };
-  let catalog = {
-    default: DEFAULT_MODEL,
-    models: [{id: DEFAULT_MODEL, name: 'CLI 默认模型', family: 'other'}]
-  };
+  // Every picker starts on the first listed model; there is no CLI-default
+  // entry. The list is empty until /api/assistant/models answers.
+  let catalog = {default: '', models: []};
   let loading = null;
 
   function familyOf(id) {
@@ -48,7 +46,7 @@
     return (catalog.engines || []).some(e => e.id === prefix) ? prefix : 'codebuddy';
   }
   function modelMeta(id) {
-    return (catalog.models || []).find(m => m.id === id) || {id: id || DEFAULT_MODEL, family: familyOf(id), name: id || DEFAULT_MODEL};
+    return (catalog.models || []).find(m => m.id === id) || {id: id || '', family: familyOf(id), name: id || '选择模型'};
   }
   function fillModelIcon(el, family, id) {
     if (!el) return;
@@ -132,13 +130,23 @@
   function renderCodeBuddyList(menu, selectedId, onPick) {
     renderOptions(menu, codeBuddyModels(), selectedId, onPick);
   }
-  // codeBuddyModel keeps a CodeBuddy id and turns an empty id, or a saved id
-  // of another CLI, into the CLI default the server resolves itself.
+  // firstModel is the first listed model: what a picker without a saved
+  // choice selects. It is '' until the catalog has loaded.
+  function firstModel() {
+    return catalog.default || (catalog.models || [])[0]?.id || '';
+  }
+  function firstCodeBuddyModel() {
+    return codeBuddyModels()[0]?.id || '';
+  }
+  // codeBuddyModel keeps a listed CodeBuddy id and turns an empty id, a saved
+  // id of another CLI, or one the loaded list no longer offers into the first
+  // CodeBuddy model.
   function codeBuddyModel(id) {
     const value = String(id || '').trim();
     // The catalog may not have landed yet; the built-in CLI prefixes still count.
-    if (!value || /^(codex|claude-code):/.test(value) || engineOf(value) !== 'codebuddy') return DEFAULT_MODEL;
-    return value;
+    if (!value || /^(codex|claude-code):/.test(value) || engineOf(value) !== 'codebuddy') return firstCodeBuddyModel();
+    const listed = codeBuddyModels();
+    return !listed.length || listed.some(m => m.id === value) ? value : listed[0].id;
   }
   async function fetchCatalog() {
     const resp = await fetch('/api/assistant/models', {headers: {Accept: 'application/json'}, credentials: 'same-origin'});
@@ -150,17 +158,18 @@
   function load() {
     if (!loading) {
       loading = fetchCatalog().then(data => {
-        if (data?.models?.length) catalog = {default: data.default || DEFAULT_MODEL, models: data.models, engines: data.engines || []};
+        if (data?.models?.length) catalog = {default: data.default || data.models[0].id, models: data.models, engines: data.engines || []};
         return catalog;
       }).catch(() => catalog).finally(() => { loading = null; });
     }
     return loading;
   }
   window.AgentFlowAssistantModels = {
-    DEFAULT: DEFAULT_MODEL,
     catalog: () => catalog,
     codeBuddyModel,
     codeBuddyModels,
+    firstCodeBuddyModel,
+    firstModel,
     engineOf,
     load,
     paint,

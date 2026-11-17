@@ -74,7 +74,8 @@ func TestAssistantTitleModelReusesSessionModelOnOtherCLIs(t *testing.T) {
 	if model, effort := assistantTitleModel(context.Background(), domain.User{}, assistantChatDefaultModel, []string{assistantSponsoredModel}); model != assistantSponsoredModel || effort != "" {
 		t.Fatalf("sponsored CodeBuddy title = %q/%q", model, effort)
 	}
-	if model, effort := assistantTitleModel(context.Background(), domain.User{}, assistantChatDefaultModel, nil); model == "" || effort != "" {
+	t.Setenv("AGENTFLOW_ASSISTANT_MODELS", "glm-5.1")
+	if model, effort := assistantTitleModel(context.Background(), domain.User{}, assistantChatDefaultModel, nil); model != "glm-5.1" || effort != "" {
 		t.Fatalf("CodeBuddy title without prices = %q/%q", model, effort)
 	}
 }

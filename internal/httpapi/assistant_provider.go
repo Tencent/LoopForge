@@ -130,7 +130,7 @@ func prepareAlternateAssistantCommand(ctx context.Context, req assistantCLIReque
 	} else {
 		args = []string{"-p", "--bare", "--output-format", "stream-json", "--verbose", "--include-partial-messages", "--max-turns", nativeAssistantUnlimitedTurns, "--system-prompt", sys, "--tools", "", "--mcp-config", req.MCPConfig, "--strict-mcp-config", "--setting-sources", "", "--permission-mode", "dontAsk", "--allowedTools", "mcp__agentflow_session__*", "--no-session-persistence"}
 	}
-	if req.Model != "" && req.Model != "default" {
+	if req.Model != "" {
 		args = append(args, "--model", req.Model)
 	}
 	args = append([]string{bin}, append(args, req.Prompt)...)

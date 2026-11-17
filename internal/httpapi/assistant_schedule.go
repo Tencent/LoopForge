@@ -74,7 +74,7 @@ func (h *assistantHandlers) runScheduleJobPromptReporting(job domain.ScheduleJob
 	if shared != nil {
 		// On the shared key a run only uses the models the administrator
 		// allows, and never silently switches to another one.
-		allowed, ok := assistantSponsoredModelFor(shared, scheduleSharedRequestedModel(model))
+		allowed, ok := assistantSponsoredModelFor(shared, model)
 		if !ok {
 			return "", "", fmt.Errorf("定时任务使用平台共享 Key 执行，只能用平台管理员允许的模型（%s），任务指定的 %s 不在其中，本次没有运行；请在定时任务里改选允许的模型，或在个人配置中填写自己的 Key", strings.Join(shared, "、"), model)
 		}

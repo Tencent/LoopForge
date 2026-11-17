@@ -36,7 +36,6 @@ const (
 	PreviewBuildNodeID     = "af-preview-build"
 	PreviewBuildAgentID    = "af-preview-builder"
 	PreviewBuildExecutor   = "codebuddy"
-	PreviewDefaultModel    = "default"
 	PreviewDefaultSource   = "dist"
 	PreviewBuildEdgeID     = "af-preview-build-edge"
 	PreviewMaxRetentionSec = int64(30 * 24 * 3600)
@@ -105,14 +104,14 @@ func (c *PreviewContract) ExecutorOrCodeBuddy() string {
 	return PreviewBuildExecutor
 }
 
-func (c *PreviewContract) ModelOrDefault() string {
+// ChosenModel is the model the preview build runs on. Saving an SOP fills
+// in the first listed CodeBuddy model when none is chosen (see
+// attachPreviewBuild in internal/httpapi/catalog.go).
+func (c *PreviewContract) ChosenModel() string {
 	if c == nil {
-		return PreviewDefaultModel
+		return ""
 	}
-	if model := strings.TrimSpace(c.Model); model != "" {
-		return model
-	}
-	return PreviewDefaultModel
+	return ChosenModel(c.Model)
 }
 
 func (c *PreviewContract) Retention() time.Duration {
@@ -136,7 +135,7 @@ func (c *PreviewContract) Normalize() {
 	}
 	c.Kind = c.KindOrStatic()
 	c.ExecutorID = c.ExecutorOrCodeBuddy()
-	c.Model = c.ModelOrDefault()
+	c.Model = c.ChosenModel()
 	c.SourcePath = c.SourceOrDist()
 	c.IndexFile = c.Index()
 	if c.RetentionSec <= 0 || c.RetentionSec > PreviewMaxRetentionSec {
@@ -154,9 +153,6 @@ func (c *PreviewContract) Validate() error {
 	}
 	if !strings.EqualFold(c.ExecutorID, PreviewBuildExecutor) {
 		return fmt.Errorf("frontend preview currently supports CodeBuddy CLI only")
-	}
-	if strings.TrimSpace(c.Model) == "" {
-		return fmt.Errorf("frontend preview requires a CodeBuddy model")
 	}
 	if strings.Contains(c.SourcePath, "..") || strings.HasPrefix(c.SourcePath, "/") {
 		return fmt.Errorf("frontend preview sourcePath %q is invalid", c.SourcePath)

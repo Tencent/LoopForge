@@ -10,7 +10,7 @@ import (
 )
 
 func TestAssistantEffortReachesNativeCLIAndPersists(t *testing.T) {
-	t.Setenv("AGENTFLOW_ASSISTANT_MODELS", assistantChatDefaultModel)
+	t.Setenv("AGENTFLOW_ASSISTANT_MODELS", assistantChatDefaultModel+",hy4-preview-ioa")
 	h, user := workbenchFixture(t)
 	_, calls := nativeCLIRecorder(t)
 	// calls counts conversation turns; keep model discovery off the fake CLI.

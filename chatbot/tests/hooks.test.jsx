@@ -17,7 +17,7 @@ const { apiMock, writeMock } = vi.hoisted(() => {
       return { result: { structuredContent: { data: { id: "saved" } } } };
     if (path === "/api/auth/current") return { user: { id: 1, loginName: "tester", codeBuddyApiKeyConfigured: true } };
     if (path === "/api/projects") return [{ id: "p1", name: "项目一", ownerId: 1, members: [1] }];
-    if (path === "/api/assistant/models?executor=codex") return { default: "default", models: [{ id: "default", name: "CLI default", family: "gpt" }, { id: "gpt-5", name: "GPT-5", family: "gpt" }] };
+    if (path === "/api/assistant/models?executor=codex") return { default: "gpt-5", models: [{ id: "gpt-5", name: "GPT-5", family: "gpt" }, { id: "gpt-5.5", name: "GPT-5.5", family: "gpt" }] };
     if (path === "/api/assistant/models") return { default: "m1", sponsoredModel: "m1", models: [{ id: "m1", name: "模型一", effort: true }] };
     if (path === "/api/users") return [{ id: 1, loginName: "tester", codeBuddyApiKeyConfigured: true }];
     if (path === "/api/assistant/sessions") return [baseSession];
@@ -43,7 +43,7 @@ vi.mock("../src/api.js", async (original) => ({
   newId: () => "new-session",
 }));
 
-import { EXECUTORS, chatModelList, useChat } from "../src/useChat.js";
+import { EXECUTORS, useChat } from "../src/useChat.js";
 import {
   isLocalConversation,
   useLocalConversations,
@@ -81,9 +81,9 @@ describe("conversation hooks", () => {
     expect(result.current.executor).toBe("codebuddy");
     expect(result.current.executors.map((item) => item.id)).toEqual(EXECUTORS.map((item) => item.id));
     act(() => result.current.setExecutor("codex"));
-    // The CLI's own default is not offered: the first listed model is.
-    await waitFor(() => expect(result.current.models.map((m) => m.id)).toEqual(["gpt-5"]));
+    await waitFor(() => expect(result.current.models.map((m) => m.id)).toEqual(["gpt-5", "gpt-5.5"]));
     expect(localStorage.getItem("loopforge.assistant.executor")).toBe("codex");
+    // The first listed model, not a CLI-default placeholder.
     expect(result.current.model).toBe("gpt-5");
     expect(result.current.effort).toBe("");
     expect(result.current.sponsored).toBe(false);
@@ -133,15 +133,14 @@ describe("conversation hooks", () => {
     const original = apiMock.getMockImplementation();
     apiMock.mockImplementation(async (path, options) => {
       if (path === "/api/assistant/models")
-        return { default: "default", models: [{ id: "default", name: "CLI 默认模型" }, { id: "claude-opus-5.5", name: "Opus" }] };
+        return { default: "glm-5.1", models: [{ id: "glm-5.1", name: "GLM" }, { id: "claude-opus-5.5", name: "Opus" }] };
       return original(path, options);
     });
     try {
       const first = renderHook(() => useChat());
       await waitFor(() => expect(first.result.current.ready).toBe(true));
-      // Nothing remembered yet: the first listed model, not the CLI default.
-      expect(first.result.current.models.map((m) => m.id)).toEqual(["claude-opus-5.5"]);
-      expect(first.result.current.model).toBe("claude-opus-5.5");
+      // Nothing remembered yet: the first listed model.
+      expect(first.result.current.model).toBe("glm-5.1");
       act(() => { first.result.current.setModel("claude-opus-5.5"); });
       expect(localStorage.getItem("loopforge.assistant.model.codebuddy")).toBe("claude-opus-5.5");
       // A new conversation no longer goes back to the default model.
@@ -155,12 +154,12 @@ describe("conversation hooks", () => {
       // Another CLI keeps its own pick and does not overwrite CodeBuddy's.
       act(() => first.result.current.newChat());
       act(() => first.result.current.setExecutor("codex"));
-      await waitFor(() => expect(first.result.current.models.map((m) => m.id)).toEqual(["gpt-5"]));
-      act(() => { first.result.current.setModel("gpt-5"); });
+      await waitFor(() => expect(first.result.current.models.map((m) => m.id)).toEqual(["gpt-5", "gpt-5.5"]));
+      act(() => { first.result.current.setModel("gpt-5.5"); });
       act(() => first.result.current.setExecutor("codebuddy"));
       expect(first.result.current.model).toBe("claude-opus-5.5");
       act(() => first.result.current.setExecutor("codex"));
-      expect(first.result.current.model).toBe("gpt-5");
+      expect(first.result.current.model).toBe("gpt-5.5");
       act(() => first.result.current.setExecutor("codebuddy"));
       first.unmount();
       // Reloading the home page starts on the remembered model too.
@@ -171,52 +170,10 @@ describe("conversation hooks", () => {
       // A remembered model that is no longer offered falls back to the list.
       localStorage.setItem("loopforge.assistant.model.codebuddy", "retired-model");
       act(() => reloaded.result.current.newChat());
-      expect(reloaded.result.current.model).toBe("claude-opus-5.5");
+      expect(reloaded.result.current.model).toBe("glm-5.1");
     } finally {
       apiMock.mockImplementation(original);
       localStorage.removeItem("loopforge.assistant.executor");
-    }
-  });
-
-  test("chat lists the CLI default only when nothing else is offered", () => {
-    const ids = (list) => list.map((m) => m.id);
-    const cliDefault = { id: "default", name: "CLI 默认模型" };
-    const opus = { id: "claude-opus-5.5", name: "Opus" };
-    const codex = { id: "codex:gpt-5", name: "GPT-5", engine: "codex" };
-    expect(ids(chatModelList([cliDefault, opus, codex]))).toEqual(["claude-opus-5.5", "codex:gpt-5"]);
-    // CodeBuddy has nothing else to offer: keep its default so chat still works.
-    expect(ids(chatModelList([cliDefault, codex]))).toEqual(["default", "codex:gpt-5"]);
-    expect(ids(chatModelList([cliDefault]))).toEqual(["default"]);
-    // The administrator limited the shared key to it.
-    expect(ids(chatModelList([cliDefault, opus], ["default", "claude-opus-5.5"]))).toEqual(["default", "claude-opus-5.5"]);
-    expect(chatModelList(undefined)).toEqual([]);
-  });
-
-  test("a conversation saved on the CLI default continues on the first listed model", async () => {
-    localStorage.removeItem("loopforge.assistant.executor");
-    localStorage.removeItem("loopforge.assistant.model.codebuddy");
-    const original = apiMock.getMockImplementation();
-    const saved = {
-      id: "s8", title: "旧会话", projectId: "p1", model: "default", effort: "",
-      updatedAt: "2026-01-01T00:00:00Z",
-      messages: [{ role: "user", content: "hi" }, { role: "assistant", content: "ok", model: "default" }],
-    };
-    apiMock.mockImplementation(async (path, options) => {
-      if (path === "/api/assistant/models")
-        return { default: "default", models: [{ id: "default", name: "CLI 默认模型" }, { id: "glm-5.1", name: "GLM" }] };
-      if (path === "/api/assistant/sessions/s8") return structuredClone(saved);
-      return original(path, options);
-    });
-    try {
-      const { result } = renderHook(() => useChat());
-      await waitFor(() => expect(result.current.ready).toBe(true));
-      act(() => result.current.open("s8"));
-      await waitFor(() => expect(result.current.session?.id).toBe("s8"));
-      expect(result.current.model).toBe("glm-5.1");
-      await act(() => result.current.regenerate(saved));
-      expect(writeMock).toHaveBeenLastCalledWith("/api/assistant/generations", expect.objectContaining({ model: "glm-5.1" }));
-    } finally {
-      apiMock.mockImplementation(original);
     }
   });
 

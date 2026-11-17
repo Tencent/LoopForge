@@ -96,7 +96,7 @@
       S.booting = false; S.error = err.message || String(err);
     }
     window.AgentFlowAssistantModels?.load?.().then(cat => {
-      if (!S.model) S.model = cat?.default || window.AgentFlowAssistantModels?.DEFAULT || '';
+      if (!S.model) S.model = cat?.default || window.AgentFlowAssistantModels?.firstModel?.() || '';
       paintComposerChrome();
     }).catch(() => {});
     paint();

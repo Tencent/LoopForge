@@ -91,8 +91,8 @@ func TestNotificationBotAPIAuthBindingAndSecrets(t *testing.T) {
 	if err = json.Unmarshal(rsp.Body.Bytes(), &bot); err != nil {
 		t.Fatal(err)
 	}
-	if bot.Model != domain.DefaultNotificationReportModel {
-		t.Fatal("missing default Bot model")
+	if bot.Model != "" {
+		t.Fatalf("a Bot without a model saved %q", bot.Model)
 	}
 	storedSecret, err := s.BotCredential(bot.ID)
 	if err != nil || storedSecret != "super-secret" {

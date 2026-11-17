@@ -84,7 +84,7 @@ func PreviewBuildAgent(contract *PreviewContract) AgentDefinition {
 		Name:            "构建静态站点",
 		Description:     "系统步骤：用 CodeBuddy 产出可托管的静态站点，再由预览收尾归档。",
 		ExecutorID:      PreviewBuildExecutor,
-		Model:           contract.ModelOrDefault(),
+		Model:           contract.ChosenModel(),
 		Prompt:          PreviewBuildPrompt(contract),
 		ArtifactOutputs: []ArtifactContract{PreviewBuildArtifact(contract)},
 		Loop: AgentLoopPolicy{

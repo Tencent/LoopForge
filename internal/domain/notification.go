@@ -35,8 +35,6 @@ type NotificationBinding struct {
 }
 type NodeNotification = NotificationBinding
 
-const DefaultNotificationReportModel = "default"
-
 type NotificationReportRequest struct {
 	Binding NotificationBinding
 	Context NotificationContext

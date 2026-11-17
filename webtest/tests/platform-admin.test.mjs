@@ -143,8 +143,8 @@ test('platform admins share a CodeBuddy key limited to the models they pick', as
   t.after(app.close);
   app.evaluate(`state.currentUser={...state.data.users[0],isGuest:false,isPlatformAdmin:true}`);
   const catalogs = {
-    '': [{ id: 'default', name: 'CLI 默认模型' }, { id: 'glm-5.1', name: 'GLM-5.1', credits: '0.2x' }, { id: 'kimi-k2.6', name: 'Kimi-K2.6' }],
-    internal: [{ id: 'default', name: 'CLI 默认模型' }, { id: 'deepseek-v4.1-flash', name: 'Deepseek-V4.1-Flash' }, { id: 'glm-5.1', name: 'GLM-5.1' }],
+    '': [{ id: 'glm-5.1', name: 'GLM-5.1', credits: '0.2x' }, { id: 'kimi-k2.6', name: 'Kimi-K2.6' }],
+    internal: [{ id: 'deepseek-v4.1-flash', name: 'Deepseek-V4.1-Flash' }, { id: 'glm-5.1', name: 'GLM-5.1' }],
   };
   let saved = { configured: false, internetEnvironment: '', models: [], legacySponsor: 'sponsor', legacySponsorModel: 'deepseek-v4.1-flash' };
   app.router.get('/api/platform/admins', []);

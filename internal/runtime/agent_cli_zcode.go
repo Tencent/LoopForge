@@ -7,6 +7,8 @@ import (
 	"io/fs"
 	"reflect"
 	"strings"
+
+	"agentflow/internal/domain"
 )
 
 const (
@@ -72,10 +74,10 @@ func nonEmpty(value any) bool {
 // exists only until ZCode has read it: ZCode accepts a literal key and
 // nothing else, and the key must not stay on disk.
 func applyZCodeCredential(home AgentCLIHome, homeEnv, key, baseURL, protocol, model string, argv []string) ([]string, map[string]string, error) {
-	// The private provider has no model of its own, so "CLI default" (sent as
-	// "default") must name a real one: BigModel's coding model on the default
-	// endpoint, while a custom endpoint has no model we could guess.
-	if model == "" || model == "default" {
+	// The private provider has no model of its own, so a role without a model
+	// must name a real one: BigModel's coding model on the default endpoint,
+	// while a custom endpoint has no model we could guess.
+	if model = domain.ChosenModel(model); model == "" {
 		if baseURL != "" {
 			return nil, nil, fmt.Errorf("%s 需要指定模型", AgentCLILabel(AgentCLIZCode))
 		}

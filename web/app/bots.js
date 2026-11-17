@@ -1,11 +1,13 @@
 function loadBotModels(){return window.AgentFlowAssistantModels?.load?.()||Promise.resolve()}
-function botModelPickerHTML(bot){return `<div class="schedule-model-field bot-model-field" id="botModelPicker"><input type="hidden" name="model" value="${escapeHTML(bot.model||'default')}"><button type="button" class="ai-model-toggle" data-model-toggle aria-label="AI 模型（CodeBuddy）" aria-haspopup="listbox" aria-expanded="false"><span class="ai-model-icon" data-family="glm">智</span><span data-model-label>选择模型</span><span class="ai-model-caret" aria-hidden="true"></span></button><div class="ai-model-menu" hidden role="listbox" aria-label="CodeBuddy 模型"></div></div>`}
+function botModelPickerHTML(bot){return `<div class="schedule-model-field bot-model-field" id="botModelPicker"><input type="hidden" name="model" value="${escapeHTML(bot.model||'')}"><button type="button" class="ai-model-toggle" data-model-toggle aria-label="AI 模型（CodeBuddy）" aria-haspopup="listbox" aria-expanded="false"><span class="ai-model-icon" data-family="glm">智</span><span data-model-label>选择模型</span><span class="ai-model-caret" aria-hidden="true"></span></button><div class="ai-model-menu" hidden role="listbox" aria-label="CodeBuddy 模型"></div></div>`}
 function closeBotModelPicker(){const picker=document.querySelector('#botModelPicker');if(!picker)return;picker.querySelector('.ai-model-menu').hidden=true;picker.querySelector('[data-model-toggle]').setAttribute('aria-expanded','false')}
 function bindBotModelPicker(host){
  const picker=host.querySelector('#botModelPicker'),models=window.AgentFlowAssistantModels;
  if(!picker||!models)return;
  const toggle=picker.querySelector('[data-model-toggle]'),menu=picker.querySelector('.ai-model-menu'),value=picker.querySelector('[name="model"]');
- models.paint(toggle,value.value);
+ // A Bot without a model replies on the first listed CodeBuddy model.
+ const settle=()=>{value.value=models.codeBuddyModel(value.value);models.paint(toggle,value.value)};
+ settle();Promise.resolve(models.load?.()).then(settle,()=>{});
  toggle.onclick=event=>{
   event.stopPropagation();if(toggle.disabled||toggle.closest('fieldset')?.disabled)return;
   const open=menu.hidden;closeBotModelPicker();if(!open)return;
@@ -21,7 +23,7 @@ function bindBotModelPicker(host){
 }
 // Project-scoped enterprise chat notifications.
 const botUI={projectId:'',items:[],deliveries:[],selected:null,sessions:[],query:'',loading:false,error:'',busy:false,busyAction:'',revision:0,tab:'list',step:1,recordsTab:'deliveries',interactionBotId:'',interaction:null,interactionLoading:false,interactionError:'',testResult:'',flashId:'',motion:null,animations:[],shownCount:null,shownError:'',watchTimer:0,watchCount:0,deletingId:''};
-const BOT_TABS=['list','edit','records'],BOT_STEPS=[[1,'填写凭据'],[2,'选择接收会话'],[3,'发送测试']],BOT_DEFAULT_MODEL='glm-5.3-flash-ioa';
+const BOT_TABS=['list','edit','records'],BOT_STEPS=[[1,'填写凭据'],[2,'选择接收会话'],[3,'发送测试']];
 // In-progress states breathe; terminal states stay still.
 const BOT_LIVE_STATES=['pending','sending','connecting','reconnecting','queued','running','ready'];
 const BOT_CONNECTION={connected:['已连接','success'],connecting:['连接中','info'],reconnecting:['重连中','info'],error:['连接异常','error'],offline:['未连接','neutral']};
@@ -39,7 +41,7 @@ function canManageBot(bot){
 function botStepAllowed(bot,step){return step===1||(step===2&&!!bot?.id)||(step===3&&!!bot?.id&&!!bot?.target&&!bot._targetChanged)}
 function botStepDone(bot,step){return step===1?!!bot?.id:step===2?botStepAllowed(bot,3):false}
 function botStoredBot(bot){return bot?.id?botUI.items.find(b=>b.id===bot.id):null}
-function botCredentialsDirty(bot){const stored=botStoredBot(bot);if(!stored)return !!bot;return !!bot._secret||(bot.name||'')!==(stored.name||'')||(bot.botId||'')!==(stored.botId||'')||(bot.model||BOT_DEFAULT_MODEL)!==(stored.model||BOT_DEFAULT_MODEL)||!!bot.enabled!==!!stored.enabled||!!bot.interactionEnabled!==!!stored.interactionEnabled}
+function botCredentialsDirty(bot){const stored=botStoredBot(bot);if(!stored)return !!bot;return !!bot._secret||(bot.name||'')!==(stored.name||'')||(bot.botId||'')!==(stored.botId||'')||(bot.model||'')!==(stored.model||'')||!!bot.enabled!==!!stored.enabled||!!bot.interactionEnabled!==!!stored.interactionEnabled}
 
 function botIcon(name){return `<span class="bot-icon" data-bot-icon="${name}" aria-hidden="true"></span>`}
 // Harness StatusBadge: in-progress states breathe, settled states carry a glyph so colour is never the only cue.
@@ -75,7 +77,7 @@ function botPanelHeadHTML(){
 function botTargetHTML(target){return target?`<span class="bot-target"><span class="bot-chip">${botTypeLabel(target.type)}</span><span class="bot-target-name">${escapeHTML(target.name)}</span></span>`:'<span class="bot-target is-empty">尚未选择接收会话</span>'}
 function botRowHTML(bot){
  const id=escapeHTML(bot.id),name=escapeHTML(bot.name),manage=canManageBot(bot),target=botTargetHTML(bot.target);
- const sub=escapeHTML(bot.model||BOT_DEFAULT_MODEL)+(bot.interactionEnabled?' · 已启用对话':'');
+ const sub=escapeHTML(bot.model||globalThis.AgentFlowAssistantModels?.firstCodeBuddyModel?.()||'')+(bot.interactionEnabled?' · 已启用对话':'');
  return `<tr data-bot-row="${id}"><td><div class="bot-row-main"><span class="bot-glyph">${botIcon('robot')}</span><span class="bot-row-text"><b class="bot-row-name">${name}</b><small class="bot-row-sub">${sub}</small><small class="bot-row-target">${target}</small></span></div></td><td class="bot-col-target">${target}</td><td>${botEnabledBadge(bot.enabled)}</td><td class="bot-col-sub">${botHealthBadge(bot.health)}</td><td class="bot-col-actions"><div class="bot-row-actions"><button type="button" class="hui-icon-btn" data-bot-edit="${id}" aria-label="编辑 ${name}" title="编辑">${botIcon('edit')}</button>${manage?`<button type="button" class="hui-icon-btn is-danger" data-bot-delete="${id}" aria-label="删除 ${name}" title="删除">${botIcon('trash')}</button>`:''}</div></td></tr>`;
 }
 function botListHTML(items){

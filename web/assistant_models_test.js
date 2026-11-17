@@ -90,12 +90,13 @@ vm.runInContext(moduleSource, ctx);
   for (const name of ['catalog', 'load', 'paint', 'paintItem', 'renderList', 'renderOptions']) {
     assert.equal(typeof api[name], 'function', `AgentFlowAssistantModels.${name}`);
   }
-  assert.equal(api.DEFAULT, 'default');
-  // Pickers keep painting before the catalog lands, so the built-in fallback
-  // must already render a usable label.
-  assert.equal(api.codeBuddyModel('codex:gpt-5.5'), 'default', 'codex ids fall back before the catalog loads');
-  api.paint(toggle, api.DEFAULT);
-  assert.equal(label.textContent, 'CLI 默认模型');
+  assert.equal(api.DEFAULT, undefined, 'there is no CLI-default model');
+  // Pickers keep painting before the catalog lands: nothing is listed yet,
+  // so nothing is selected and the toggle asks for a model.
+  assert.equal(api.firstModel(), '');
+  assert.equal(api.codeBuddyModel('codex:gpt-5.5'), '', 'codex ids fall back before the catalog loads');
+  api.paint(toggle, api.firstModel());
+  assert.equal(label.textContent, '选择模型');
   assert.equal(icon.dataset.family, 'other');
 
   await api.load();
@@ -104,8 +105,11 @@ vm.runInContext(moduleSource, ctx);
   // Issue #228: clarification runs on CodeBuddy only, so CodeBuddy-only
   // pickers hide other CLIs and a saved "codex:…" id falls back.
   assert.deepEqual(api.codeBuddyModels().map(m => m.id), ['model-a', 'model-b']);
-  assert.equal(api.codeBuddyModel('codex:gpt-5.5'), 'default');
-  assert.equal(api.codeBuddyModel(''), 'default');
+  // Without a usable saved id a picker starts on the first CodeBuddy model,
+  // also for the retired "default" placeholder.
+  assert.equal(api.codeBuddyModel('codex:gpt-5.5'), 'model-a');
+  assert.equal(api.codeBuddyModel(''), 'model-a');
+  assert.equal(api.codeBuddyModel('default'), 'model-a');
   assert.equal(api.codeBuddyModel('model-a'), 'model-a');
 
   // Pull the real picker helpers out of the bundle and bind them to the stub host.
@@ -133,6 +137,6 @@ vm.runInContext(moduleSource, ctx);
 
   // A Codex id saved before this fix must not reach chat-clarify.
   store.set('agentflow.clarifyModel', 'codex:gpt-5.5');
-  assert.equal(ctx.selectedClarifyModel(), 'default');
+  assert.equal(ctx.selectedClarifyModel(), 'model-a');
   console.log('assistant models ok');
 })().catch(err => { console.error(err); process.exit(1); });

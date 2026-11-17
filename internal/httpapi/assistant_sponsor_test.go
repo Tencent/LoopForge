@@ -129,7 +129,8 @@ func TestOwnKeyKeepsItsEnvironmentDefaultWhileAKeyIsShared(t *testing.T) {
 		used = u
 		return `{"message":"ok","drafts":[]}`, nil
 	}}
-	operatorDefault := assistantFixedCatalog().Default
+	// The first model of the user's own environment, not the shared key's.
+	operatorDefault := "claude-opus-5"
 
 	var catalog assistantModelCatalog
 	mrec := httptest.NewRecorder()
@@ -288,7 +289,8 @@ func TestAssistantModelsPerExecutor(t *testing.T) {
 	}
 	for executor, family := range map[string]string{"codex": "gpt", "claude": "claude"} {
 		rec, catalog := get(executor)
-		if rec.Code != 200 || catalog.Default != "default" || len(catalog.Models) < 2 || catalog.Models[0].ID != "default" {
+		// No CLI-default entry: the first listed model is the default.
+		if rec.Code != 200 || len(catalog.Models) == 0 || catalog.Default != catalog.Models[0].ID || strings.Contains(rec.Body.String(), `"id":"default"`) {
 			t.Fatalf("%s catalog: %d %s", executor, rec.Code, rec.Body.String())
 		}
 		for _, model := range catalog.Models {
