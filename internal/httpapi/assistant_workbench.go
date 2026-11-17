@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -1038,6 +1039,25 @@ func openWorkbenchAttachment(userID int64, id string) (workbenchAttachmentRecord
 	}
 	file, err := os.OpenInRoot(workbenchAttachmentDir(userID), filepath.Base(path))
 	return record, file, err
+}
+
+// removeWorkbenchAttachment deletes the file and metadata of one attachment
+// from the owner's attachment directory. Only well-formed ids are accepted and
+// removal goes through os.Root, so nothing outside that directory is touched.
+func removeWorkbenchAttachment(userID int64, id string) {
+	if userID <= 0 || !validWorkbenchAttachmentID(id) {
+		return
+	}
+	root, err := os.OpenRoot(workbenchAttachmentDir(userID))
+	if err != nil {
+		return
+	}
+	defer root.Close()
+	for _, name := range []string{id + ".bin", id + ".json"} {
+		if err := root.Remove(name); err != nil && !errors.Is(err, os.ErrNotExist) {
+			log.Printf("remove attachment %s of user %d: %v", name, userID, err)
+		}
+	}
 }
 
 func (h *assistantHandlers) uploadAttachment(c *gin.Context) {

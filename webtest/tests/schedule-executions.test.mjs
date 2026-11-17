@@ -148,6 +148,25 @@ test('an interrupted AI execution that opened a conversation still links to it',
   assert.match(rows[1].querySelector('.is-unavailable').textContent, /准备中/);
 });
 
+test('an AI execution whose conversation was cleaned up says so instead of linking to it', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  app.router.get(/^\/api\/schedule-job-executions\?/, () => [
+    { id: 'sjx-new', jobId: 'job-ai', jobName: 'Daily summary', jobKind: 'assistant', projectId: 'project-1', traceId: OK_TRACE, status: 'success', assistantMessage: '新的', sessionId: 'chat-new', startedAt: '2026-11-16T10:00:00Z', durationMs: 3000 },
+    { id: 'sjx-old', jobId: 'job-ai', jobName: 'Daily summary', jobKind: 'assistant', projectId: 'project-1', traceId: FAILED_TRACE, status: 'success', assistantMessage: '旧的', sessionId: 'chat-old', sessionGone: true, startedAt: '2026-11-10T10:00:00Z', durationMs: 3000 },
+  ]);
+  app.evaluate(`state.projectFilter='project-1';state.data.scheduleJobs=[];renderScheduleJobs();`);
+  await app.evaluate(`selectAIScheduleTab('executions')`);
+  await settle();
+  const rows = app.document.querySelectorAll('#scheduleExecList .sched-exec-row');
+  assert.ok(rows[0].querySelector('[data-open-exec-chat]'), 'a kept conversation still opens');
+  assert.equal(rows[1].querySelector('[data-open-exec-chat]'), null, 'no dead link to a cleaned-up conversation');
+  const gone = rows[1].querySelector('.sched-exec-action.is-unavailable');
+  assert.match(gone.textContent, /会话已清理/);
+  assert.match(gone.title, /保留会话数/);
+  assert.equal(rows[1].querySelector('.sched-exec-action-slots').children.length, 2, 'the action column stays aligned');
+});
+
 test('the overview compares the last 7 days with the week before and the table filters and pages', async (t) => {
   const app = await loadApp();
   t.after(app.close);

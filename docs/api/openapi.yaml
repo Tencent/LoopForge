@@ -5380,6 +5380,12 @@ components:
           type: integer
         assistantMessage:
           type: string
+        sessionId:
+          type: string
+          description: Studio conversation an AI execution ran in.
+        sessionGone:
+          type: boolean
+          description: Computed on each read, never stored. True when sessionId names a conversation that no longer exists (trimmed by the job's sessionKeep or the retention period, or deleted by hand). Running executions are never marked.
         runs:
           type: array
           items:

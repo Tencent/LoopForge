@@ -117,3 +117,51 @@ func TestScheduleJobExecutionsFollowJobAccess(t *testing.T) {
 		t.Fatalf("outsider job filter status = %d", code)
 	}
 }
+
+// Executions outlive the conversations a job keeps; the list marks an
+// execution whose conversation is gone so the page shows no dead link.
+func TestScheduleJobExecutionsMarkCleanedUpConversations(t *testing.T) {
+	t.Setenv("AGENTFLOW_AUTH_REQUIRED", "true")
+	t.Setenv("AGENTFLOW_SESSION_SECRET", "schedule-exec-test-secret")
+	h, _ := workbenchFixture(t)
+	st := h.repo
+	if err := st.PutUser(domain.User{LoginName: "gone-owner", CodeBuddyAPIKey: "key"}); err != nil {
+		t.Fatal(err)
+	}
+	owner, _ := st.UserByLoginName("gone-owner")
+	if err := st.PutProject(domain.Project{ID: "gone-proj", Name: "Gone", OwnerID: owner.ID}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.PutScheduleJob(domain.ScheduleJob{ID: "gone-job", ProjectID: "gone-proj", Name: "巡检", SkipDispatch: true, AssistantPrompt: "p", IntervalSec: 3600, OwnerUserID: owner.ID}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.PutAssistantSession(owner.ID, domain.AssistantSession{ID: "chat-kept", ProjectID: "gone-proj", Messages: []domain.AssistantMessage{{Role: "user", Content: "p"}}}); err != nil {
+		t.Fatal(err)
+	}
+	started := time.Now().UTC().Add(-time.Hour)
+	for i, e := range []domain.ScheduleJobExecution{
+		{TraceID: "t-kept", Status: "success", SessionID: "chat-kept"},
+		{TraceID: "t-gone", Status: "success", SessionID: "chat-cleaned"},
+		{TraceID: "t-none", Status: "failed", Error: "no key"},
+	} {
+		e.JobID, e.ProjectID, e.StartedAt = "gone-job", "gone-proj", started.Add(time.Duration(i)*time.Second)
+		if err := st.PutScheduleJobExecution(e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	server := New(st, engine.New(st, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "")
+	// Started after the server, so startup recovery leaves it running.
+	if err := st.PutScheduleJobExecution(domain.ScheduleJobExecution{JobID: "gone-job", ProjectID: "gone-proj", TraceID: "t-running", Status: "running", SessionID: "chat-starting", StartedAt: time.Now().UTC()}); err != nil {
+		t.Fatal(err)
+	}
+	got := requestJSONAuthed[[]scheduleJobExecutionView](t, server, owner, http.MethodGet, "/api/schedule-job-executions?jobId=gone-job", nil, http.StatusOK)
+	want := map[string]bool{"t-kept": false, "t-gone": true, "t-running": false, "t-none": false}
+	if len(got) != len(want) {
+		t.Fatalf("executions = %+v", got)
+	}
+	for _, e := range got {
+		if e.SessionGone != want[e.TraceID] {
+			t.Errorf("%s sessionGone = %v, want %v", e.TraceID, e.SessionGone, want[e.TraceID])
+		}
+	}
+}

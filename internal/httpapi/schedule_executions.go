@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"strings"
 
+	"agentflow/internal/domain"
 	"agentflow/internal/repo"
 
 	"github.com/gin-gonic/gin"
@@ -34,10 +35,41 @@ func (h *scheduleHandlers) scheduleJobExecutions(c *gin.Context) {
 		}
 	}
 	limit, _ := strconv.Atoi(c.Query("limit"))
-	c.JSON(http.StatusOK, h.repo.ScheduleJobExecutions(repo.ScheduleJobExecutionQuery{
+	items := h.repo.ScheduleJobExecutions(repo.ScheduleJobExecutionQuery{
 		JobIDs:  ids,
 		Status:  strings.TrimSpace(c.Query("status")),
 		TraceID: strings.TrimSpace(c.Query("traceId")),
 		Limit:   limit,
-	}))
+	})
+	c.JSON(http.StatusOK, h.scheduleExecutionViews(items))
+}
+
+// scheduleJobExecutionView is an execution as listed. SessionGone is computed
+// on every read, never stored: executions outlive the conversations a job
+// keeps, so an old row may point at a conversation that has been cleaned up.
+type scheduleJobExecutionView struct {
+	domain.ScheduleJobExecution
+	SessionGone bool `json:"sessionGone,omitempty"`
+}
+
+func (h *scheduleHandlers) scheduleExecutionViews(items []domain.ScheduleJobExecution) []scheduleJobExecutionView {
+	var sessionIDs []string
+	for _, e := range items {
+		// A running execution may record its conversation just before saving it.
+		if e.SessionID != "" && e.Status != "running" {
+			sessionIDs = append(sessionIDs, e.SessionID)
+		}
+	}
+	exists := map[string]bool{}
+	if len(sessionIDs) > 0 {
+		exists = h.repo.ExistingAssistantSessionIDs(sessionIDs)
+	}
+	out := make([]scheduleJobExecutionView, len(items))
+	for i, e := range items {
+		out[i] = scheduleJobExecutionView{ScheduleJobExecution: e}
+		if alive, checked := exists[e.SessionID]; checked && e.Status != "running" {
+			out[i].SessionGone = !alive
+		}
+	}
+	return out
 }

@@ -153,6 +153,7 @@ function scheduleExecDetailHTML(e,detailId){
 // the primary slot says why there is nothing to open instead of vanishing.
 function scheduleExecPrimaryActionHTML(e){
   if(e.jobKind==='assistant'){
+    if(e.sessionId&&e.sessionGone)return `<span class="sched-exec-action is-unavailable" title="这次执行的会话已被清理（超出任务的保留会话数或保留期限，或被手动删除），无法再打开；AI 回复仍可在详情里查看">${scheduleExecIcon('preview-expand')}<span>会话已清理</span></span>`;
     if(e.sessionId)return `<a class="sched-exec-action sched-exec-chat" data-open-exec-chat="${escapeHTML(e.sessionId)}" href="${escapeHTML(scheduleExecConversationURL(e))}" target="_blank" rel="noopener" title="在新标签页打开本次执行的对话">${scheduleExecIcon('preview-expand')}<span>打开会话</span></a>`;
     const why=e.status==='running'?'会话创建后即可打开':'这次执行在创建会话之前就结束了（例如缺少 Key），没有对话可打开';
     return `<span class="sched-exec-action is-unavailable" title="${why}">${scheduleExecIcon('preview-expand')}<span>${e.status==='running'?'准备中':'无会话'}</span></span>`;

@@ -388,7 +388,7 @@ curl -u "$AGENTFLOW_USER:$AGENTFLOW_PASS" -X POST -H 'Content-Type: application/
 
 ### `GET /api/schedule-job-executions`
 
-返回执行记录 `ScheduleJobExecution[]`，按开始时间倒序。每次运行（定时触发或手动运行）对应一条记录，包含 `status`（running / success / failed / waiting）、`error`、`durationMs`、候选与派发数、AI 回复摘要，以及派发出的 `runs[]`（`issueId`、`runId`）。每个 job 保留最近 200 条，删除 job 时一并删除。
+返回执行记录 `ScheduleJobExecution[]`，按开始时间倒序。每次运行（定时触发或手动运行）对应一条记录，包含 `status`（running / success / failed / waiting）、`error`、`durationMs`、候选与派发数、AI 回复摘要，以及派发出的 `runs[]`（`issueId`、`runId`）。每个 job 保留最近 200 条，删除 job 时一并删除。AI 执行带 `sessionId`。执行记录比会话保留得久（会话按 `sessionKeep` 和保留期限清理，也可能被手动删除），因此列表在每次读取时检查会话是否还在：已不存在时返回 `sessionGone: true`。这个字段只在读取时计算，不会写入记录；进行中的执行不做标记。
 
 每次执行认领时生成 32 位十六进制 `traceId`，同时写入 job 的 `lastTraceId` 和这次执行的所有调度日志（`schedule job <id> trace=<traceId>: …`），可以按它在服务端日志里检索失败原因。平台工具 `schedule_job_executions_list`（`/mcp` 与 Studio 助手均可用）对应这个接口，把复制的 Trace ID 贴给助手时，助手会按 `query.traceId` 查询这次执行。服务重启时，重启前仍为 running 的执行记为 failed（「上次运行中断（服务重启）」）。
 
