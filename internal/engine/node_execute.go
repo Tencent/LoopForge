@@ -490,7 +490,7 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 		}
 		repoWorkspaces := repositoryWorkspaceDirs(sb.Workspace(), current.RepositoryContexts())
 		for _, dir := range repoWorkspaces {
-			if err := runtime.RestoreProjectAgentGitIndex(ctx, dir, sb.Driver()); err != nil {
+			if err := runtime.RestoreLegacyProjectAgentConfig(ctx, dir); err != nil {
 				return fmt.Errorf("restore repository Agent configuration index: %w", err)
 			}
 		}
