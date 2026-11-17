@@ -25,22 +25,32 @@ func checkNodeExpectation(run domain.Run, expected []NodeExpectation) error {
 	}
 	want := expected[0]
 	node := run.Nodes[want.NodeID]
-	if node == nil || node.Status != want.Status || node.Attempt != want.Attempt || node.ReworkCount != want.ReworkCount {
-		return apperr.New(apperr.Conflict, "通知对应的节点状态已变化，请查看最新消息")
+	if node == nil {
+		return apperr.Newf(apperr.Conflict, "通知对应的节点 %q 已不存在，请查看最新消息", want.NodeID)
 	}
-	if strings.TrimSpace(want.ArtifactName) == "" {
+	if node.Status != want.Status || node.Attempt != want.Attempt || node.ReworkCount != want.ReworkCount {
+		return apperr.Newf(apperr.Conflict, "通知对应的节点状态已变化：期望 status=%s attempt=%d rework=%d，实际 status=%s attempt=%d rework=%d",
+			want.Status, want.Attempt, want.ReworkCount, node.Status, node.Attempt, node.ReworkCount)
+	}
+	name, sha := strings.TrimSpace(want.ArtifactName), strings.TrimSpace(want.ArtifactSHA256)
+	if name == "" && sha == "" {
 		return nil
 	}
-	artifact := latestRunArtifact(run, want.ArtifactName)
-	if artifact == nil {
-		return apperr.Newf(apperr.Conflict, "批准绑定的产物 %q 不在当前 run 中，请查看最新消息", want.ArtifactName).
-			With("expectedArtifact", want.ArtifactName).
-			With("expectedSha256", want.ArtifactSHA256)
+	if name == "" || sha == "" {
+		// Half a binding is a caller bug, not an unbound approval: accepting it
+		// would let a client believe its approval is artifact-bound when it is not.
+		return apperr.New(apperr.Invalid, "expected.artifactName 与 expected.artifactSha256 必须同时提供")
 	}
-	if want.ArtifactSHA256 != "" && !strings.EqualFold(artifact.SHA256, want.ArtifactSHA256) {
-		return apperr.Newf(apperr.Conflict, "批准绑定的产物 %q 内容已变化：期望 sha256 %s，实际 %s", want.ArtifactName, want.ArtifactSHA256, artifact.SHA256).
-			With("expectedArtifact", want.ArtifactName).
-			With("expectedSha256", want.ArtifactSHA256).
+	artifact := latestRunArtifact(run, name)
+	if artifact == nil {
+		return apperr.Newf(apperr.Conflict, "批准绑定的产物 %q 不在当前 run 中，请查看最新消息", name).
+			With("expectedArtifact", name).
+			With("expectedSha256", sha)
+	}
+	if !strings.EqualFold(artifact.SHA256, sha) {
+		return apperr.Newf(apperr.Conflict, "批准绑定的产物 %q 内容已变化：期望 sha256 %s，实际 %s", name, sha, artifact.SHA256).
+			With("expectedArtifact", name).
+			With("expectedSha256", sha).
 			With("actualSha256", artifact.SHA256)
 	}
 	return nil
@@ -49,7 +59,8 @@ func checkNodeExpectation(run domain.Run, expected []NodeExpectation) error {
 // latestRunArtifact returns the newest artifact with this logical name. Old
 // attempts stay in the run for audit, and a decision must bind to the newest
 // one — binding an older attempt is exactly the stale approval this check
-// exists to reject.
+// exists to reject. Newest means creation time, not attempt number: attempts
+// are per node, so comparing them across nodes is meaningless.
 func latestRunArtifact(run domain.Run, name string) *domain.Artifact {
 	var best *domain.Artifact
 	for i := range run.Artifacts {
@@ -57,7 +68,8 @@ func latestRunArtifact(run domain.Run, name string) *domain.Artifact {
 		if artifact.Name != name {
 			continue
 		}
-		if best == nil || artifact.Attempt > best.Attempt || artifact.Attempt == best.Attempt && artifact.CreatedAt.After(best.CreatedAt) {
+		if best == nil || artifact.CreatedAt.After(best.CreatedAt) ||
+			artifact.CreatedAt.Equal(best.CreatedAt) && artifact.Attempt > best.Attempt {
 			best = artifact
 		}
 	}

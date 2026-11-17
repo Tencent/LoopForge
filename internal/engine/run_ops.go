@@ -5,6 +5,7 @@ import (
 	"agentflow/internal/domain"
 	"agentflow/internal/repo"
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"sort"
@@ -190,16 +191,35 @@ func (e *Engine) recordGateRejection(runID string, r *domain.Run, nodeID string,
 
 // persistAuditEvent stores one control decision record without changing run or
 // node status. The caller holds stateMu.
+//
+// The write is revision-guarded like the decision path: a stale snapshot must
+// not overwrite a newer run header. When another writer won the revision, the
+// record is re-applied to the newest snapshot instead of being dropped. The
+// lease tail releases only the lease this call acquired; never the lease of a
+// worker that owns the run.
 func (e *Engine) persistAuditEvent(runID string, r *domain.Run, nodeID, typ, message string) {
 	e.event(r, nodeID, typ, message)
 	appendControlTelemetry(r, nodeID, typ, message)
-	if err := e.repo.PutRun(*r); err != nil {
-		log.Printf("record %s %s: %v", typ, runID, err)
-		return
+	if err := e.repo.PutRunAtRevision(*r, r.Revision); err != nil {
+		if !errors.Is(err, repo.ErrRunDecisionStale) {
+			log.Printf("record %s %s: %v", typ, runID, err)
+			return
+		}
+		latest, ok := e.repo.RunState(runID)
+		if !ok {
+			log.Printf("record %s %s: run disappeared", typ, runID)
+			return
+		}
+		e.event(&latest, nodeID, typ, message)
+		appendControlTelemetry(&latest, nodeID, typ, message)
+		if err := e.repo.PutRunAtRevision(latest, latest.Revision); err != nil {
+			log.Printf("record %s %s: %v", typ, runID, err)
+			return
+		}
 	}
 	e.publish(runID)
-	if !e.executes() && r.OwnerInstanceID != "" {
-		_ = e.repo.ReleaseRunLease(runID, r.OwnerInstanceID, r.Generation)
+	if e.executes() {
+		_ = e.repo.ReleaseRunLease(runID, e.instanceID, r.Generation)
 	}
 }
 
@@ -1029,6 +1049,7 @@ func overlayLatestNodeBindings(st *repo.Store, r *domain.Run, nodeIDs map[string
 		}
 		n.AgentID, n.ExecutorID = src.AgentID, src.ExecutorID
 		n.ArtifactOutputs = src.ArtifactOutputs
+		n.Requires, n.VerificationStep = src.Requires, src.VerificationStep
 		n.OnFailure, n.RejectTo = src.OnFailure, src.RejectTo
 		n.RetryStrategy, n.CarryOver = src.RetryStrategy, src.CarryOver
 		if src.MaxAttempts > n.MaxAttempts {

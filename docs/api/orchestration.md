@@ -238,7 +238,7 @@ curl -u "$AGENTFLOW_USER:$AGENTFLOW_PASS" -OJ \
 }
 ```
 
-`artifactName`/`artifactSha256` 校验当前 run 中该名字的**最新**产物仍带这个内容哈希。节点状态或产物哈希任一不匹配时返回 `409`，节点保持 `waiting_approval`，run 追加 `gate.approval_rejected` 审计事件（写明期望值与实际值）。不带 `expected` 时行为不变。
+`artifactName`/`artifactSha256` 必须同时提供，校验当前 run 中该名字的**最新**产物（按创建时间）仍带这个内容哈希；只给其中一半返回 `400`（避免看起来绑定了实际没有）。节点状态或产物哈希任一不匹配时返回 `409`，节点保持 `waiting_approval`，run 追加 `gate.approval_rejected` 审计事件（写明期望值与实际值）。同一 `expected` 校验也作用于 `/reject`、`/retry`、`/decline-retry`、`/resume`。不带 `expected` 时行为不变。
 
 ### `POST /api/runs/{runId}/pass`
 

@@ -21,8 +21,9 @@ type nodeRequirement struct {
 	diffHash string // expected diff hash (kind=verdict)
 }
 
-// parseNodeRequirement parses the two supported precondition forms. Validation
-// rejects malformed values at publish time so a typo never waits for a run.
+// parseNodeRequirement parses the two supported precondition forms. Workflow
+// validation (run start, and RefreshRunSOP) rejects malformed values; the save
+// path does not call this validator, so a typo is reported when a run starts.
 func parseNodeRequirement(raw string) (nodeRequirement, error) {
 	value := strings.TrimSpace(raw)
 	kind, rest, ok := strings.Cut(value, ":")
@@ -112,7 +113,8 @@ func latestVerdictArtifact(run domain.Run) *domain.Artifact {
 		if !matches {
 			continue
 		}
-		if best == nil || artifact.Attempt > best.Attempt || artifact.Attempt == best.Attempt && artifact.CreatedAt.After(best.CreatedAt) {
+		if best == nil || artifact.CreatedAt.After(best.CreatedAt) ||
+			artifact.CreatedAt.Equal(best.CreatedAt) && artifact.Attempt > best.Attempt {
 			best = artifact
 		}
 	}
