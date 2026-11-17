@@ -401,7 +401,10 @@ esac
 host=${url#https://}
 host=${host%%/*}
 host=${host##*@}
-[ "$host" = github.com ] || exit 1
+case "$host" in
+  github.com|github.com:443) ;;
+  *) exit 1 ;;
+esac
 case "$1" in
   *[Uu]sername*) printf '%s\n' "${AGENTFLOW_GIT_USER:-x-access-token}" ;;
   *) printf '%s\n' "${AGENTFLOW_GIT_TOKEN-}" ;;
