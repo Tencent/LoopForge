@@ -1744,6 +1744,9 @@ func prepareAssistantCommand(opts assistantCommandOpts) (runtime.CommandSpec, er
 	}
 	command.CredentialBindings = []runtime.CredentialBinding{runtime.BindCodeBuddy}
 	command.Telemetry = nil
+	// A fresh session embeds the whole conversation in the prompt; past
+	// MAX_ARG_STRLEN it would fail with E2BIG before the CLI starts.
+	command = runtime.PromptOnStdin(command, opts.Prompt)
 	return command.WithMCPStartupWait(agentToolSessionMCPStartupWait), nil
 }
 
