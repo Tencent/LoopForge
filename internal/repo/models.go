@@ -33,6 +33,9 @@ type userRow struct {
 func (userRow) TableName() string { return "users" }
 
 type userConfigRow struct {
+	OpenAIAPIKey                 *string    `gorm:"column:openai_api_key;type:text"`
+	OpenAIBaseURL                *string    `gorm:"column:openai_base_url;type:text"`
+	OpenAIModels                 *string    `gorm:"column:openai_models;type:text"`
 	UserID                       int64      `gorm:"column:user_id;primaryKey"`
 	GitToken                     *string    `gorm:"column:git_token;type:text"`
 	GongfengRefreshToken         *string    `gorm:"column:gongfeng_refresh_token;type:text"`

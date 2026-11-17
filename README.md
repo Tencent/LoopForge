@@ -91,6 +91,12 @@ Open the address printed by the installer and create your account; the first one
 
 For GitLab, Gitea, Gogs and other Git hosts, [set up Git SSH](docs/deployment.md#git-repositories-over-ssh) to check out and push branches with a personal key. PR/MR and Issue automation requires a hosting API token or a separately configured MCP.
 
+### Direct OpenAI API for chat and clarification
+
+In **Personal settings → Model credentials → OpenAI API**, save your own API key and select the models to offer. Leave Base URL empty for `https://api.openai.com/v1`, or provide a trusted Responses API endpoint. Select **OpenAI API** beside the chat composer, then a concrete model; requirement clarification offers the same models. Clarification uses the requirement owner's key, or the project owner's key when no assignee is set.
+
+LoopForge calls `/responses` directly with streaming and `store: false`, supplies the conversation history on each turn, and routes tool calls through its authenticated session gateway. This path does not start a model CLI or create its local conversation journal. API data handling still follows your provider's policy. Repository analysis in clarification exposes only bounded, read-only file tools for the selected checkout. SOP agent nodes and run evaluations retain their existing executor requirements.
+
 ### Try it without an API key
 
 New accounts join the **LoopForge demo project**, which includes an SOP made only of a script and a human gate:
@@ -112,7 +118,7 @@ New accounts join the **LoopForge demo project**, which includes an SOP made onl
 
 <br>
 
-- **Executors.** Pick one of ten CLIs beside the home composer, then a model. Every SOP role can choose its executor independently (built-in roles default to CodeBuddy). Requirement clarification, AI notification summaries, Bot replies and run evals currently use CodeBuddy, so their model pickers list CodeBuddy models only and the server refuses a model of another CLI instead of switching it to CodeBuddy; scheduled assistant tasks run on the CLI the task selects.
+- **Executors.** Pick one of ten CLIs beside the home composer, then a model. Every SOP role can choose its executor independently (built-in roles default to CodeBuddy). Requirement clarification supports CodeBuddy and direct OpenAI API models. Run evals use CodeBuddy and refuse other providers instead of switching models; scheduled assistant tasks run on the CLI the task selects.
 
   | Executor | Credentials | Installation |
   | --- | --- | --- |

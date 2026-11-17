@@ -413,6 +413,12 @@ func (h *streamHandlers) executeClarify(ctx context.Context, issue domain.Issue,
 	if responsibleErr != nil {
 		return nil, "", nil, responsibleErr
 	}
+	modelID, err := clarifyExecutionModel(responsible, request.Model)
+	if err != nil {
+		return nil, "", nil, err
+	}
+	modelProvider, _ := assistantModelEngine(modelID)
+	codeBuddyTurn := modelProvider == assistantEngineCodeBuddy
 	extras := clarifyRequestTexts(request)
 	hydrateClarifyIssueFromText(&issue, extras...)
 	workItemType := "需求"
@@ -475,9 +481,13 @@ func (h *streamHandlers) executeClarify(ctx context.Context, issue domain.Issue,
 	}
 	prompt.WriteString(clarifyRoundBudgetHint(clarifyAssistantRounds(request.History)))
 	prompt.WriteString("\n请基于以上对话继续澄清，只围绕「## 需求」本身，完成后调用 submit_clarification。")
-	cbPath, cbErr := resolveCodeBuddyBin()
-	if cbErr != nil {
-		return nil, "", nil, cbErr
+	cbPath := ""
+	if codeBuddyTurn {
+		var cbErr error
+		cbPath, cbErr = resolveCodeBuddyBin()
+		if cbErr != nil {
+			return nil, "", nil, cbErr
+		}
 	}
 	workDir := ""
 	repoInfo := map[string]any{"analyzed": false, "reason": "该 Issue 未绑定代码仓库"}
@@ -550,7 +560,7 @@ func (h *streamHandlers) executeClarify(ctx context.Context, issue domain.Issue,
 		sessionID = strings.TrimSpace(issue.Clarification.SessionID)
 	}
 	resume := sessionID != ""
-	if resume && !canResumeClarifySession(homeDir, sessionID, issue.Clarification.SessionUserID, responsible.ID) {
+	if resume && codeBuddyTurn && !canResumeClarifySession(homeDir, sessionID, issue.Clarification.SessionUserID, responsible.ID) {
 		emit("thought", map[string]string{"kind": "status", "text": "分析环境已变化，正在结合已有回答重新分析…"})
 		sessionID = ""
 	}
@@ -642,12 +652,15 @@ func (h *streamHandlers) executeClarify(ctx context.Context, issue domain.Issue,
 	}
 	userMsg := prompt.String()
 	clarifyID := fmt.Sprintf("clarify-%d", time.Now().UnixNano())
-	modelID := clarifyAllowedModel(request.Model)
 	credentials := runtime.RunCredentials{
 		CodeBuddy: runtime.CodeBuddyCredential{APIKey: strings.TrimSpace(responsible.CodeBuddyAPIKey), InternetEnvironment: strings.TrimSpace(responsible.CodeBuddyInternetEnvironment)},
 		GitToken:  strings.TrimSpace(h.repo.GitCredential(ctx, responsible.ID)),
 	}
 	turnPrompt := userMsg
+	// Direct API requests carry the complete platform history every turn.
+	if modelProvider == assistantEngineOpenAI {
+		resume = false
+	}
 	if resume {
 		turnPrompt = clarifyResumeTurnPrompt(issue.Title, request.Message, clarifyAssistantRounds(request.History))
 		if len(codeBaselines) > 0 {
@@ -667,6 +680,15 @@ func (h *streamHandlers) executeClarify(ctx context.Context, issue domain.Issue,
 	emit("open", map[string]any{"repository": repoInfo, "model": modelID, "sessionId": sessionID})
 	emit("thought", map[string]string{"kind": "status", "text": "正在分析需求…"})
 	turnOpts := clarifyTurnOpts{Native: true, MCPConfig: toolFiles.MCPConfig, Settings: toolFiles.Settings}
+	if !codeBuddyTurn {
+		turnOpts.Session = toolSession
+		toolSession.ChatOwnerID = responsible.ID
+		toolSession.RuntimeMode = domain.AssistantModePlatform
+		if len(analyzedRepos) > 0 {
+			toolSession.ClarifyWorkspace = workDir
+			turnPrompt += "\n\n代码分析只使用 clarify_list_files 和 clarify_read_file 只读工具，路径相对于已检出的分析仓库。不要直接访问平台文件路径。"
+		}
+	}
 	jsonRetries := 0
 	var recoveredParsed any
 	var recoveredRaw string
@@ -706,7 +728,10 @@ func (h *streamHandlers) executeClarify(ctx context.Context, issue domain.Issue,
 			turnOpts.SubmitOnly = true
 			emit("thought", map[string]string{"kind": "status", "text": "正在提交澄清结论…"})
 			turnPrompt = clarifyNativeRetryPrompt()
-			resume = true
+			resume = codeBuddyTurn
+			if !codeBuddyTurn {
+				turnPrompt = userMsg + "\n\n" + turnRaw + "\n\n" + turnPrompt
+			}
 			continue
 		}
 		if recoveredParsed != nil {
@@ -738,6 +763,9 @@ func (h *streamHandlers) rememberClarifySession(issueID, sessionID string, userI
 }
 
 func (h *streamHandlers) runClarifyTurn(ctx context.Context, workDir, cbPath, model, prompt, runID, sessionID, homeDir string, resume bool, credentials runtime.RunCredentials, emit func(event string, payload any), opts clarifyTurnOpts) (any, string, string, error) {
+	if opts.Session != nil {
+		return runAPIClarifyTurn(ctx, model, prompt, sessionID, emit, opts)
+	}
 	command, err := prepareClarifyCommandWith(clarifyCommandOpts{
 		Bin: cbPath, Model: model, Prompt: prompt, RunID: runID, SessionID: sessionID, Resume: resume,
 		Native: opts.Native, MCPConfig: opts.MCPConfig, Settings: opts.Settings, SubmitOnly: opts.SubmitOnly,
@@ -795,6 +823,7 @@ func recoverNativeClarification(raw string) (any, string, bool) {
 }
 
 type clarifyTurnOpts struct {
+	Session             *AgentToolSession
 	Native              bool
 	MCPConfig, Settings string
 	SubmitOnly          bool

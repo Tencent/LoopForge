@@ -55,6 +55,7 @@ type AgentToolSession struct {
 	pendingMode       string
 	modeAction        func(context.Context) error
 	SelectedMCPIDs    map[string]bool
+	ClarifyWorkspace  string
 	ExecutionRunnerID string
 	RuntimeMode       string
 	Notify            func(string, any)

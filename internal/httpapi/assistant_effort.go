@@ -24,7 +24,11 @@ func assistantModelEfforts(user domain.User, model string) []string {
 // assistantModelEffortsIn is assistantModelEfforts with the Cursor catalog
 // given directly.
 func assistantModelEffortsIn(model string, cursor []domain.CLIModel) []string {
-	if engine, id := assistantModelEngine(model); engine == runtime.AgentCLICursor {
+	if engine, id := assistantModelEngine(model); engine == assistantEngineOpenAI {
+		// API models use their provider default; CLI effort levels do not
+		// describe the capabilities of an arbitrary API model.
+		return nil
+	} else if engine == runtime.AgentCLICursor {
 		return runtime.CursorModelEfforts(id, cursor)
 	} else if engine == runtime.AgentCLIAntigravity {
 		return runtime.AgyModelEfforts(id)

@@ -2124,7 +2124,7 @@ export default function App() {
                     />
                     {chat.executors.length > 1 && !pinnedExecutor ? (
                       <PermissionPicker
-                        label="CLI"
+                        label={chat.executor === "openai" ? "OpenAI API" : "CLI"}
                         options={chat.executors.map((executor) => {
                           const brand = engineBrand(executor.id);
                           return {

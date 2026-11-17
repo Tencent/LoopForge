@@ -180,3 +180,5 @@ Object.assign(window.LF_I18N_EN,{
   "外部原单会保留，后续同步可能重新导入。":"The original external record is kept, and a later sync may import it again.",
   "需求已有执行记录或已完成，请确认强制删除":"This requirement has execution history or is already completed. Confirm force deletion."
 });
+
+Object.assign(window.LF_I18N_EN,{"直接调用 OpenAI API，用于网页聊天与需求澄清":"Direct OpenAI API for web chat and requirement clarification","通过 Responses API 调用模型，对话记录保存在 LoopForge。":"Calls models through the Responses API; conversations are saved in LoopForge.","在 OpenAI 平台创建项目 API Key":"Create a project API key on the OpenAI platform","打开 OpenAI API Key 页面":"Open the OpenAI API key page","使用领取 API 额度的组织创建 Key，再粘贴保存":"Create a key in the organization with your API credits, then paste and save it","请输入 OpenAI API Key":"Enter your OpenAI API key","OpenAI API 聊天与需求澄清将无法使用。":"OpenAI API chat and requirement clarification will be unavailable.","需求澄清支持 CodeBuddy 或 OpenAI API 模型，请在模型列表中改选":"Requirement clarification supports CodeBuddy or OpenAI API; choose a supported model","请先在个人配置中配置 OpenAI API Key":"Set your OpenAI API key in Personal settings first","请为 OpenAI API 选择具体模型":"Choose a specific OpenAI API model"});

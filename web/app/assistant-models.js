@@ -123,8 +123,8 @@
   function renderList(menu, selectedId, onPick) {
     renderOptions(menu, catalog.models || [], selectedId, onPick);
   }
-  // Requirement clarification, Bot replies, run evals and the SOP preview
-  // build run on CodeBuddy only, so their pickers list CodeBuddy models and
+  // CodeBuddy-only operations, such as run evals and the SOP preview
+  // build, use this filtered list and
   // never offer a "codex:…" id the server would have to refuse.
   function codeBuddyModels() {
     return (catalog.models || []).filter(m => (m.engine || 'codebuddy') === 'codebuddy');

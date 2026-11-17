@@ -13,18 +13,16 @@ import (
 	"agentflow/internal/repo"
 )
 
-// Issue #228: clarification and run evals run on CodeBuddy only. A model of
-// another CLI ("codex:…") must be refused up front, not silently swapped for
-// the CodeBuddy default.
+// Unsupported providers must be refused rather than silently replaced.
 func TestClarifyModelEngineError(t *testing.T) {
-	for _, id := range []string{"", "default", "glm-5.1", "public-model"} {
+	for _, id := range []string{"", "default", "glm-5.1", "public-model", "openai:gpt-4.1-mini"} {
 		if err := clarifyModelEngineError(id); err != nil {
 			t.Fatalf("CodeBuddy model %q refused: %v", id, err)
 		}
 	}
 	for _, id := range []string{"codex:gpt-5.5", "claude-code:sonnet"} {
-		if err := clarifyModelEngineError(id); err != errClarifyNeedsCodeBuddy {
-			t.Fatalf("model %q = %v, want errClarifyNeedsCodeBuddy", id, err)
+		if err := clarifyModelEngineError(id); err != errClarifyModelProvider {
+			t.Fatalf("model %q = %v, want errClarifyModelProvider", id, err)
 		}
 	}
 }
@@ -46,7 +44,7 @@ func TestChatClarifyRefusesOtherCLIModel(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400: %s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), "只支持 CodeBuddy") {
+	if !strings.Contains(rec.Body.String(), "CodeBuddy 或 OpenAI API") {
 		t.Fatalf("error does not explain the CodeBuddy limit: %s", rec.Body.String())
 	}
 	if called {
