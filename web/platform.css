@@ -553,6 +553,8 @@ html[data-theme="dark"] .issue-title-tag.tone-cyan{color:#67e8f9}
 .detail-empty.compact{padding:16px;font-size:12px}
 /* 对话需求：阶段卡片 + 按仓库展示「工作分支 → 目标分支」与 MR */
 .conv-outcome .conv-outcome-kicker{display:block;margin-bottom:4px;font-size:10.5px;font-weight:600;letter-spacing:.04em;color:var(--muted-2)}
+.no-sop-switch{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.no-sop-switch .select{flex:1;min-width:180px;max-width:320px}
 .conv-repos{display:flex;flex-direction:column;gap:10px}
 .conv-repo{display:flex;flex-direction:column;gap:10px;padding:12px 14px;border:1px solid var(--line);border-radius:10px;background:var(--panel);transition:border-color .15s}
 .conv-repo:hover{border-color:var(--line-strong)}

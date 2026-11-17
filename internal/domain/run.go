@@ -90,6 +90,17 @@ func (r Run) HistoricalGroup() bool {
 	return !r.IsWorkspace() && r.WorkflowSnapshot.CollaborationMode == "group"
 }
 
+// HasActiveNode reports whether any node of the run is still executing: it is
+// running or paused for input that the agent asked for mid-step.
+func (r Run) HasActiveNode() bool {
+	for _, nr := range r.Nodes {
+		if nr != nil && (nr.Status == "running" || nr.Status == "pending_input") {
+			return true
+		}
+	}
+	return false
+}
+
 // RepositoryContexts returns the frozen repositories of this run. New runs
 // fill Repositories; legacy runs only carry the single Repository field.
 func (r Run) RepositoryContexts() []RepositoryContext {

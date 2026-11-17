@@ -189,28 +189,7 @@ func (r *NotificationsRepo) enqueueRunNotifications(tx *gorm.DB, run domain.Run,
 	nodes := append([]domain.WorkflowNode(nil), run.WorkflowSnapshot.Nodes...)
 	nodes = append(nodes, domain.WorkflowNode{Type: "agent", Notifications: domain.WorkflowNotifications(run.WorkflowSnapshot)})
 	for _, node := range nodes {
-		bindings := domain.NodeReminderBindings(domain.WorkflowNotifications(run.WorkflowSnapshot))
-		if node.ID == "" {
-			bindings = node.Notifications
-			if runTrigger == "failed" {
-				// Setup/runtime failures may end a SOP without a node failure event.
-				hasNodeFailure := false
-				for _, prior := range run.Events {
-					if notificationTrigger(prior.Type) == "failed" && prior.NodeID != "" {
-						hasNodeFailure = true
-						break
-					}
-				}
-				if !hasNodeFailure {
-					bindings = domain.NodeReminderBindings(node.Notifications)
-					for i := range bindings {
-						bindings[i].Scope = "run"
-						bindings[i].Events = []string{"failed"}
-					}
-				}
-			}
-		}
-		for _, binding := range bindings {
+		for _, binding := range runNotificationBindings(run, node, runTrigger) {
 			trigger := nodeTrigger
 			nodeID := node.ID
 			labelPrefix := "节点"
@@ -257,6 +236,36 @@ func (r *NotificationsRepo) enqueueRunNotifications(tx *gorm.DB, run domain.Run,
 		}
 	}
 	return nil
+}
+
+// runNotificationBindings selects the bindings evaluated for one node of a run.
+// Workflow nodes use the SOP reminder bindings; the synthetic SOP-level node
+// (empty ID) uses its own bindings, falling back to run-scoped "failed"
+// reminders when the run failed without any node failure event.
+func runNotificationBindings(run domain.Run, node domain.WorkflowNode, runTrigger string) []domain.NotificationBinding {
+	if node.ID != "" {
+		return domain.NodeReminderBindings(domain.WorkflowNotifications(run.WorkflowSnapshot))
+	}
+	// Setup/runtime failures may end a SOP without a node failure event.
+	if runTrigger != "failed" || runHasNodeFailureEvent(run.Events) {
+		return node.Notifications
+	}
+	bindings := domain.NodeReminderBindings(node.Notifications)
+	for i := range bindings {
+		bindings[i].Scope = "run"
+		bindings[i].Events = []string{"failed"}
+	}
+	return bindings
+}
+
+// runHasNodeFailureEvent reports whether any recorded event is a node-level failure.
+func runHasNodeFailureEvent(events []domain.RunEvent) bool {
+	for _, event := range events {
+		if notificationTrigger(event.Type) == "failed" && event.NodeID != "" {
+			return true
+		}
+	}
+	return false
 }
 func (r *NotificationsRepo) enqueueTaskNotifications(tx *gorm.DB, sourceType, id, projectID, name, trigger string, at time.Time, bindings []domain.NotificationBinding, result, errorText string) error {
 	for _, binding := range bindings {

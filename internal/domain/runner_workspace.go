@@ -30,6 +30,7 @@ const (
 	RunnerWorkspaceOperationLog               = "log"
 	RunnerWorkspaceOperationCommit            = "commit"
 	RunnerWorkspaceOperationBrowser           = "browser"
+	RunnerWorkspaceOperationCheckouts         = "checkouts"
 )
 
 // RunnerWorkspaceRequest is a bounded workspace request sent over the

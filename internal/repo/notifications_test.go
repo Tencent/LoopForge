@@ -229,3 +229,49 @@ func TestDisabledBotDoesNotPreventEditingItsWorkflow(t *testing.T) {
 		t.Fatal("disabled bot enqueued notification")
 	}
 }
+
+func TestRunNotificationBindings(t *testing.T) {
+	sopBindings := []domain.NotificationBinding{{BotID: "bot-sop", Events: []string{"succeeded", "failed"}, Scope: "run"}}
+	run := domain.Run{WorkflowSnapshot: domain.WorkflowDefinition{Notifications: sopBindings, Nodes: []domain.WorkflowNode{{ID: "agent", Type: "agent"}}}}
+	sopNode := domain.WorkflowNode{Type: "agent", Notifications: sopBindings}
+	nodeFailed := []domain.RunEvent{{NodeID: "agent", Type: "node.failed"}}
+
+	got := runNotificationBindings(run, domain.WorkflowNode{ID: "agent"}, "failed")
+	if len(got) != 1 || got[0].BotID != "bot-sop" || got[0].Scope != "node" || fmt.Sprint(got[0].Events) != "[waiting failed]" {
+		t.Fatalf("workflow node should use SOP reminder bindings, got %+v", got)
+	}
+	if got := runNotificationBindings(run, sopNode, "succeeded"); fmt.Sprint(got) != fmt.Sprint(sopBindings) {
+		t.Fatalf("SOP node on success should keep its own bindings, got %+v", got)
+	}
+	run.Events = nodeFailed
+	if got := runNotificationBindings(run, sopNode, "failed"); fmt.Sprint(got) != fmt.Sprint(sopBindings) {
+		t.Fatalf("SOP node after a node failure should keep its own bindings, got %+v", got)
+	}
+	run.Events = nil
+	got = runNotificationBindings(run, sopNode, "failed")
+	if len(got) != 1 || got[0].BotID != "bot-sop" || got[0].Scope != "run" || fmt.Sprint(got[0].Events) != "[failed]" || got[0].WaitingPolicy != "actionable" {
+		t.Fatalf("SOP node failing without node failure should fall back to run-scoped failed reminders, got %+v", got)
+	}
+	if fmt.Sprint(sopBindings[0].Events) != "[succeeded failed]" {
+		t.Fatalf("fallback must not mutate the workflow bindings, got %+v", sopBindings)
+	}
+}
+
+func TestRunHasNodeFailureEvent(t *testing.T) {
+	cases := []struct {
+		name   string
+		events []domain.RunEvent
+		want   bool
+	}{
+		{"empty", nil, false},
+		{"run-level failure", []domain.RunEvent{{Type: "node.failed"}}, false},
+		{"node success", []domain.RunEvent{{NodeID: "agent", Type: "node.succeeded"}}, false},
+		{"node failure", []domain.RunEvent{{NodeID: "agent", Type: "node.succeeded"}, {NodeID: "agent", Type: "node.failed"}}, true},
+		{"declined turns", []domain.RunEvent{{NodeID: "agent", Type: "agent.turns.declined"}}, true},
+	}
+	for _, tc := range cases {
+		if got := runHasNodeFailureEvent(tc.events); got != tc.want {
+			t.Errorf("%s: runHasNodeFailureEvent = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}

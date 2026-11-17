@@ -12,6 +12,7 @@ import (
 	"agentflow/internal/domain"
 	"agentflow/internal/gitwork"
 	"agentflow/internal/repo"
+	"agentflow/internal/runtime"
 )
 
 const ConversationWorkspaceIdleTTL = time.Hour
@@ -76,7 +77,7 @@ func (e *Engine) conversationWorkspaceIdle(run domain.Run) bool {
 	if e.WorkspaceActive != nil && e.WorkspaceActive(run) {
 		return false
 	}
-	if run.Status == "running" || run.Status == "queued" || hasRunningNode(run) {
+	if run.Status == "running" || run.Status == "queued" || run.HasActiveNode() {
 		return false
 	}
 	if run.Status == "waiting" && !run.IsWorkspace() {
@@ -90,7 +91,7 @@ func (e *Engine) conversationGenerationRunning(run domain.Run) bool {
 	if !ok {
 		return false
 	}
-	job, ok := e.repo.AssistantGeneration(session.UserID, session.ID)
+	job, ok := e.repo.PeekAssistantGeneration(session.UserID, session.ID)
 	return ok && job.Status == "running"
 }
 func (e *Engine) EndConversationWorkspaceUse(ctx context.Context, id, token string) error {
@@ -216,7 +217,7 @@ func (e *Engine) PrepareConversationWorkspace(ctx context.Context, id, token str
 	}
 	// Readers stay available during execution; never inject prior outputs while
 	// a node is currently expected to generate its own fresh deliverables.
-	if hasRunningNode(run) || !run.IsWorkspace() && (run.Status == "running" || run.Status == "queued") {
+	if run.HasActiveNode() || !run.IsWorkspace() && (run.Status == "running" || run.Status == "queued") {
 		return nil, nil
 	}
 	return e.restoreArchivedWorkspaceFiles(ctx, run)
@@ -285,10 +286,24 @@ func (e *Engine) ensureConversationWorkspace(ctx context.Context, id, token stri
 	}
 	root := e.sandboxes.RunWorkspace(id)
 	if info, statErr := os.Lstat(root); statErr == nil && info.IsDir() && !e.foreignWorkspaceBind(run) {
-		if err = e.verifyStoredCheckpoint(ctx, id); err != nil {
+		hasContent, contentErr := runtime.WorkspaceDirHasContent(root)
+		if contentErr != nil {
+			return contentErr
+		}
+		if hasContent {
+			if err = e.verifyStoredCheckpoint(ctx, id); err != nil {
+				return err
+			}
+			return e.repo.RestoreCheckpointWorkspaceBinding(id, token, e.workspaceHost, e.sandboxes.Root(), time.Now().UTC())
+		}
+		// An empty or .agentflow-only directory created before restoration
+		// holds no user files; tear down any container bound to its old inode
+		// so restoreConversationCheckpoint can atomically replace it and the
+		// next container bind sees the restored files.
+		if err = e.releaseRunEnvironment(id, false); err != nil {
 			return err
 		}
-		return e.repo.RestoreCheckpointWorkspaceBinding(id, token, e.workspaceHost, e.sandboxes.Root(), time.Now().UTC())
+		e.sandboxes.DiscardRunContainer(ctx, id)
 	}
 	if err = e.restoreConversationCheckpoint(ctx, run, root); err != nil {
 		return err

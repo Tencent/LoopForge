@@ -44,7 +44,7 @@ func (r *RunsRepo) WithWorkspaceEditor(runID string, userID int64, fn func(domai
 }
 
 // WithMainBotWorkspace lets Main Bot edit a live conversation workspace as is;
-// a borrowed SOP workspace must be stopped first (workbench_workspace_sop).
+// a borrowed SOP workspace must be stopped first (runs_pause / runs_cancel).
 func (r *RunsRepo) WithMainBotWorkspace(runID string, userID int64, fn func(domain.Run) error) error {
 	return r.withWorkspaceWriter(runID, userID, true, fn)
 }

@@ -70,18 +70,27 @@ func uniqueGateID(base string, used map[string]bool) string {
 	}
 }
 
+// VerificationModeMR gates pass only when, for every repository whose pushed
+// work branch carries new commits, the hosting platform has an MR from that
+// work branch into the run's target branch that carries the pushed tip. The
+// engine runs the check; the gate has no commands.
+const VerificationModeMR = "mr"
+
 // ValidateVerificationGate requires command gates to declare run or repositories.
-// Manual gates and empty command lists may omit the field.
+// Manual and MR gates and empty command lists may omit the field.
 func ValidateVerificationGate(gate VerificationGate) error {
 	mode := gateMode(gate)
 	switch mode {
-	case "", "command", "manual":
+	case "", "command", "manual", VerificationModeMR:
 	default:
 		return fmt.Errorf("verification gate %s has invalid mode %q", gate.ID, gate.Mode)
 	}
 	scope := strings.TrimSpace(gate.ExecutionScope)
 	if scope != "" && scope != ExecutionScopeRun && scope != ExecutionScopeRepositories {
 		return fmt.Errorf("verification gate %s has invalid executionScope %q", gate.ID, gate.ExecutionScope)
+	}
+	if mode == VerificationModeMR && commandHasContent(gate) {
+		return fmt.Errorf("verification gate %s: mode %q takes no commands", gate.ID, VerificationModeMR)
 	}
 	if mode == "manual" || !commandHasContent(gate) {
 		return nil
@@ -124,17 +133,7 @@ func SplitVerificationGates(gates []VerificationGate) []VerificationGate {
 			out = append(out, gate)
 			continue
 		}
-		var runCmds, repoCmds []string
-		for _, command := range gate.Commands {
-			if strings.TrimSpace(command) == "" {
-				continue
-			}
-			if CommandNeedsRepository(command) {
-				repoCmds = append(repoCmds, rewriteRepositoryWorkspaceRefs(command))
-				continue
-			}
-			runCmds = append(runCmds, command)
-		}
+		runCmds, repoCmds := partitionGateCommands(gate.Commands)
 		if len(runCmds) == 0 && len(repoCmds) == 0 {
 			out = append(out, gate)
 			continue
@@ -154,21 +153,45 @@ func SplitVerificationGates(gates []VerificationGate) []VerificationGate {
 		runGate := gate
 		runGate.Commands = runCmds
 		runGate.ExecutionScope = ExecutionScopeRun
-		repoGate := gate
-		baseID := strings.TrimSpace(gate.ID)
-		if baseID == "" {
-			baseID = "gate"
-		}
-		repoGate.ID = uniqueGateID(baseID+"-git", used)
-		used[repoGate.ID] = true
-		if name := strings.TrimSpace(gate.Name); name != "" {
-			repoGate.Name = name + " · Git 检查"
-		} else {
-			repoGate.Name = "Git 检查"
-		}
-		repoGate.Commands = repoCmds
-		repoGate.ExecutionScope = ExecutionScopeRepositories
+		repoGate := repositoryGitGate(gate, repoCmds, used)
 		out = append(out, runGate, repoGate)
 	}
 	return out
+}
+
+// partitionGateCommands drops blank commands and splits the rest into
+// run-scoped deliverable checks and repository-scoped git checks. Repository
+// commands are rewritten so run-root paths keep resolving from each repo.
+func partitionGateCommands(commands []string) (runCmds, repoCmds []string) {
+	for _, command := range commands {
+		if strings.TrimSpace(command) == "" {
+			continue
+		}
+		if CommandNeedsRepository(command) {
+			repoCmds = append(repoCmds, rewriteRepositoryWorkspaceRefs(command))
+			continue
+		}
+		runCmds = append(runCmds, command)
+	}
+	return runCmds, repoCmds
+}
+
+// repositoryGitGate derives the repositories-scoped companion of gate that
+// runs repoCmds, reserving its unique "-git" ID in used.
+func repositoryGitGate(gate VerificationGate, repoCmds []string, used map[string]bool) VerificationGate {
+	repoGate := gate
+	baseID := strings.TrimSpace(gate.ID)
+	if baseID == "" {
+		baseID = "gate"
+	}
+	repoGate.ID = uniqueGateID(baseID+"-git", used)
+	used[repoGate.ID] = true
+	if name := strings.TrimSpace(gate.Name); name != "" {
+		repoGate.Name = name + " · Git 检查"
+	} else {
+		repoGate.Name = "Git 检查"
+	}
+	repoGate.Commands = repoCmds
+	repoGate.ExecutionScope = ExecutionScopeRepositories
+	return repoGate
 }

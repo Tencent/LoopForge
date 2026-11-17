@@ -1045,27 +1045,28 @@ func TestRequirementDirectCreateUI(t *testing.T) {
 	}
 	composer := page[reqStart:reqEnd]
 	for _, want := range []string{
-		`id="reqSteps"`, `data-req-step="1"`, `data-req-step="2"`, `data-req-step="3"`, `>描述<`, `>澄清<`, `>确认<`, `id="reqStepSkipTag"`,
-		`id="reqStepDescribe"`, `id="reqStepClarify"`, `id="reqStepConfirm"`, `id="reqFooter"`,
-		`id="chatInput"`, `placeholder="要做什么？例如：`, `id="reqRepoChip"`, `id="reqRepoPopover"`, `id="reqRepository"`, `id="reqBaseBranch"`, `id="reqClarifyModelPicker"`,
-		`id="reqThinking"`, `id="reqTraceToggle"`, `已用 0 个工具`, `id="reqClarifyPanel"`, `id="reqAnswerHistory"`,
-		`id="reqTitle"`, `id="reqSummary"`, `id="reqConfirmRepoSlot"`, `id="reqWorkflow"`, `SOP 流程`, `id="reqTarget"`, `data-req-target="local"`, `data-req-target="tapd"`, `id="reqOutcome"`,
-		`id="reqRepoChangedAlert"`, `id="reqReclarify"`,
-		`id="reqBack"`, `id="chatStop"`, `id="reqSkip"`, `跳过澄清`, `id="reqNext"`, `开始澄清`, `id="reqGoCreate"`, `直接去创建`, `id="reqCreate"`, `先写一句需求`,
+		`id="reqStepDescribe"`, `id="reqFooter"`,
+		`id="chatInput"`, `placeholder="要做什么？例如：`, `id="reqRepoChip"`, `id="reqRepoPopover"`, `id="reqRepository"`, `id="reqBaseBranch"`,
+		`id="reqWorkflow"`, `SOP 流程`, `id="reqTarget"`, `data-req-target="local"`, `data-req-target="tapd"`,
+		`id="reqCreate"`, `创建需求`, `id="reqCreateChat"`, `创建并去对话澄清`, `先写一句需求`,
 	} {
 		if !strings.Contains(composer, want) {
-			t.Fatalf("requirement wizard UI is missing %q", want)
+			t.Fatalf("requirement composer UI is missing %q", want)
 		}
 	}
-	for _, gone := range []string{`id="chatSend"`, `id="chatCreateDirect"`, `id="chatCreateLocal"`, `id="chatCreateTAPD"`, `id="reqDestinations"`, `id="reqSetupRow"`, `id="reqContextLine"`, `id="chatCreateGongfeng"`, `需求套餐`, `id="reqSopRow"`, `id="reqPlaybooks"`, `问清再建单`, `再建模`, `已全部选择`} {
+	for _, gone := range []string{
+		`id="chatSend"`, `id="chatCreateDirect"`, `id="chatCreateLocal"`, `id="chatCreateTAPD"`, `id="reqDestinations"`, `id="reqSetupRow"`, `id="reqContextLine"`, `id="chatCreateGongfeng"`, `需求套餐`, `id="reqSopRow"`, `id="reqPlaybooks"`, `问清再建单`, `再建模`, `已全部选择`,
+		`id="reqSteps"`, `data-req-step=`, `id="reqStepClarify"`, `id="reqStepConfirm"`, `id="reqClarifyModelPicker"`, `id="reqThinking"`, `id="reqClarifyPanel"`, `id="reqAnswerHistory"`,
+		`id="reqSkip"`, `跳过澄清`, `id="reqNext"`, `开始澄清`, `id="reqGoCreate"`, `id="reqBack"`, `id="chatStop"`, `id="reqReclarify"`,
+	} {
 		if strings.Contains(composer, gone) {
-			t.Fatalf("requirement wizard must not keep %q", gone)
+			t.Fatalf("requirement composer must not keep the clarification step %q", gone)
 		}
 	}
-	skipIdx := strings.Index(composer, `id="reqSkip"`)
-	nextIdx := strings.Index(composer, `id="reqNext"`)
-	if skipIdx < 0 || nextIdx < 0 || skipIdx > nextIdx {
-		t.Fatal("跳过澄清 must sit to the left of the primary 开始澄清")
+	createIdx := strings.Index(composer, `id="reqCreate"`)
+	chatIdx := strings.Index(composer, `id="reqCreateChat"`)
+	if createIdx < 0 || chatIdx < 0 || createIdx > chatIdx {
+		t.Fatal("创建需求 must sit to the left of the primary 创建并去对话澄清")
 	}
 	js, err := readAppBundle()
 	if err != nil {
@@ -1085,20 +1086,20 @@ func TestRequirementDirectCreateUI(t *testing.T) {
 		t.Fatal("script retry must skip the context prompt")
 	}
 	for _, want := range []string{
-		`function goReqStep(`, `function renderReqSteps(`, `function renderReqFooter(`, `function renderReqConfirm(`, `function renderReqRepoChip(`, `function pickReqOption(`, `function submitReqAnswers(`, `function reclarifyRequirement(`,
-		`reqCreateDirect`, `reqCreateAccepted`, `可在详情里触发 SOP`, `persistRequirementComposer`, `agentflow.requirementComposer`, `未配置`, `if(modal.id==='requirementModal')return`,
-		`resumeChatClarify`, `jobId:chatClarifyJobId`, `正在接上分析`, `从空白开始`, `stripClarifyReason`, `renderClarifyPanel(JSON.parse(lastAssistant.content))`,
-		`assigneeUserId:Number(state.currentUser?.id)||0`, `fillReqWorkflow`, `selectedReqWorkflowId`, `workflowId:selectedReqWorkflowId()`, `composerProgressHTML`,
-		`已问清，可以创建`, `至少回答一题，或点「直接去创建」`, `提交回答`, `跳过此题`, `上一题`, `你的回答`, `全部用推荐答案`, `下一步：确认创建`, `澄清基于原仓库`, `重新澄清`, `· 已跳过`,
-		`questionIndex:`, `answers:`, `repoSnapshot:`, `target:`, `step:`,
+		`function renderReqFooter(`, `function renderReqRepoChip(`, `persistRequirementComposer`, `agentflow.requirementComposer`, `未配置`, `if(modal.id==='requirementModal')return`,
+		`assigneeUserId:Number(state.currentUser?.id)||0`, `fillReqWorkflow`, `selectedReqWorkflowId`, `可在详情里触发 SOP`,
+		`createIssueFromChat(undefined,'chat')`, `if(toChat)openIssueInChat(issue)`, `function openIssueInChat(`, `type:'agentflow-chat-mention-issue'`, `&mentionIssue=`,
 	} {
 		if !strings.Contains(code, want) {
-			t.Fatalf("requirement wizard behavior is missing %q", want)
+			t.Fatalf("requirement composer behavior is missing %q", want)
 		}
 	}
-	for _, gone := range []string{`查看完整度详情`, `准入线`, `composerAssessmentView`, `invalidateRequirementAnalysis`, `没有固定轮数`, `composerCreateReady`, `setComposerRetryMode`, `composerClarifyRetry`, `state.reqCreateMode`, `createIssueDirect`, `setChatCreateEnabled`, `syncReqComposerLayout`} {
+	for _, gone := range []string{
+		`查看完整度详情`, `准入线`, `composerAssessmentView`, `invalidateRequirementAnalysis`, `没有固定轮数`, `composerCreateReady`, `setComposerRetryMode`, `composerClarifyRetry`, `state.reqCreateMode`, `createIssueDirect`, `setChatCreateEnabled`, `syncReqComposerLayout`,
+		`function goReqStep(`, `function startReqClarify(`, `function sendChatClarify(`, `function pickReqOption(`, `function submitReqAnswers(`, `function reclarifyRequirement(`, `'/api/chat-clarify'`,
+	} {
 		if strings.Contains(code, gone) {
-			t.Fatalf("requirement wizard must not keep %q", gone)
+			t.Fatalf("requirement composer must not keep %q", gone)
 		}
 	}
 	createStart := strings.Index(code, "async function createIssueFromChat(")
@@ -1114,9 +1115,6 @@ func TestRequirementDirectCreateUI(t *testing.T) {
 	}
 	if strings.Contains(code[createStart:createStart+1+createEnd], "afConfirm") {
 		t.Fatal("creating a requirement must be one click, without afConfirm")
-	}
-	if strings.Contains(code, `renderClarifyPanel(JSON.parse(lastAssistant.content), reconnect?'':interruptHint)`) {
-		t.Fatal("restored analysis must not treat the interrupt hint as a render error")
 	}
 }
 
@@ -1176,7 +1174,7 @@ func TestTAPDImportUI(t *testing.T) {
 		t.Fatal(err)
 	}
 	code := string(js)
-	for _, want := range []string{`/api/issues/import-tapd`, `openImportTAPDModal`, `fillImportTAPDWorkflow`, `fillImportTAPDRepository`, `selectedImportTAPDRepositoryIds`, `renderImportTAPDRepositoryPicker`, `repositoryIds`, `请至少选择一个代码仓库`, `importTAPDStory`, `clarificationNeedsConfirm`, `data-dtab="clarify"`, `确认结论`, `issueClarifyJobs`, `attachIssueClarifyStream`, `关闭网页也不会中断`, `clarifyOptionLabel`, `clarifyQuestionOptions`, `createIssueFromChat`, `projectTAPDReady`, `reqCreate`, `setReqTarget`, `pushIssueToTAPDFromDetail`, `dashImportTAPD`, `run-id-copy`, `data-export-logs`, `从这里重跑`, `重新触发`, `data-retrigger-issue`, `data-rerun-from-here`, `canRetriggerIssue`, `openRerunFromNode`, `executionContext?.issueId`, `run?.status==='succeeded'`, `/api/issues/${encodeURIComponent(issueId)}/requirement`, `inferSOPLane`, `req-lane-card`, `issueLaneDots`, `.filter(l=>!l.orphan)`, `lanes.length<2`, `collapseSingleSOPLane`, `issueSOPLabel`, `actionWorkflow`, `data-workflow`, `workflowSOPLane`, `需求开发`, `saveIssueSOPS`, `/sops`, `effectiveIssueSOPBindings`, `projectSOPBindings`, `fillReqWorkflow`, `plannedSOPNodes`, `sopWorkflowId`, `sopWorkflowChoices`, `renderReqConfirm`} {
+	for _, want := range []string{`/api/issues/import-tapd`, `openImportTAPDModal`, `fillImportTAPDWorkflow`, `fillImportTAPDRepository`, `selectedImportTAPDRepositoryIds`, `renderImportTAPDRepositoryPicker`, `repositoryIds`, `请至少选择一个代码仓库`, `importTAPDStory`, `clarificationNeedsConfirm`, `data-dtab="clarify"`, `确认结论`, `issueClarifyJobs`, `attachIssueClarifyStream`, `关闭网页也不会中断`, `clarifyOptionLabel`, `clarifyQuestionOptions`, `createIssueFromChat`, `projectTAPDReady`, `reqCreate`, `setReqTarget`, `pushIssueToTAPDFromDetail`, `dashImportTAPD`, `run-id-copy`, `data-export-logs`, `从这里重跑`, `重新触发`, `data-retrigger-issue`, `data-rerun-from-here`, `canRetriggerIssue`, `openRerunFromNode`, `executionContext?.issueId`, `run?.status==='succeeded'`, `/api/issues/${encodeURIComponent(issueId)}/requirement`, `inferSOPLane`, `req-lane-card`, `issueLaneDots`, `.filter(l=>!l.orphan)`, `lanes.length<2`, `collapseSingleSOPLane`, `issueSOPLabel`, `actionWorkflow`, `data-workflow`, `workflowSOPLane`, `需求开发`, `saveIssueSOPS`, `/sops`, `effectiveIssueSOPBindings`, `projectSOPBindings`, `fillReqWorkflow`, `plannedSOPNodes`, `sopWorkflowId`, `sopWorkflowChoices`} {
 		if !strings.Contains(code, want) {
 			t.Fatalf("app.js is missing %q", want)
 		}
@@ -2204,16 +2202,6 @@ func TestClarifyOptionToggleLogic(t *testing.T) {
 	}
 	if !strings.Contains(source, "if(!wasSelected)b.classList.add('selected');") {
 		t.Fatal("issue clarify option does not conditionally add selected")
-	}
-
-	// Verify the requirement wizard question card toggles an option off on repeat click
-	for _, want := range []string{
-		"if(q.multiSelect)selected=selected.includes(option)?selected.filter(x=>x!==option):[...selected,option];",
-		"else selected=selected.includes(option)?[]:[option];",
-	} {
-		if !strings.Contains(source, want) {
-			t.Fatalf("req question option does not toggle off on repeat click: missing %q", want)
-		}
 	}
 
 	// Verify CSS distinguishes hover from selected so cancellation is visually obvious

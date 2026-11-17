@@ -98,27 +98,7 @@ func (d *Daemon) readControls(ctx context.Context, conn *websocket.Conn) error {
 		d.conversationReplies = map[string]chan domain.RunnerToolResponse{}
 	}
 	d.conversationForward = func(callCtx context.Context, token string, body json.RawMessage) (json.RawMessage, error) {
-		id := fmt.Sprintf("tool-%d", time.Now().UnixNano())
-		reply := make(chan domain.RunnerToolResponse, 1)
-		d.conversationMu.Lock()
-		d.conversationReplies[id] = reply
-		d.conversationMu.Unlock()
-		defer func() { d.conversationMu.Lock(); delete(d.conversationReplies, id); d.conversationMu.Unlock() }()
-		err := writeMessage(controlMessage{Type: "agent_tool.request", RequestID: id, ToolRequest: &domain.RunnerToolRequest{Token: token, Body: body}})
-		if err != nil {
-			return nil, err
-		}
-		select {
-		case response := <-reply:
-			if response.Error != "" {
-				return nil, errors.New(response.Error)
-			}
-			return response.Body, nil
-		case <-callCtx.Done():
-			return nil, callCtx.Err()
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		}
+		return d.forwardConversationTool(ctx, callCtx, writeMessage, token, body)
 	}
 	d.conversationMu.Unlock()
 	slots := make(chan struct{}, 8)
@@ -151,15 +131,7 @@ func (d *Daemon) readControls(ctx context.Context, conn *websocket.Conn) error {
 		}
 		_ = conn.SetReadDeadline(time.Now().Add(controlReadTimeout))
 		if message.Type == "agent_tool.response" && message.ToolResponse != nil {
-			d.conversationMu.Lock()
-			reply := d.conversationReplies[message.RequestID]
-			d.conversationMu.Unlock()
-			if reply != nil {
-				select {
-				case reply <- *message.ToolResponse:
-				default:
-				}
-			}
+			d.deliverConversationReply(message.RequestID, *message.ToolResponse)
 			continue
 		}
 		if message.Type == "workspace.cancel" {
@@ -273,4 +245,47 @@ func (d *Daemon) activeTaskIDs() []string {
 		ids = append(ids, id)
 	}
 	return ids
+}
+
+// forwardConversationTool sends one agent_tool.request over the control
+// connection and waits for the matching agent_tool.response. It returns early
+// when either the caller (callCtx) or the control connection (connCtx) ends.
+// readControls must have initialised d.conversationReplies.
+func (d *Daemon) forwardConversationTool(connCtx, callCtx context.Context, write func(controlMessage) error, token string, body json.RawMessage) (json.RawMessage, error) {
+	id := fmt.Sprintf("tool-%d", time.Now().UnixNano())
+	reply := make(chan domain.RunnerToolResponse, 1)
+	d.conversationMu.Lock()
+	d.conversationReplies[id] = reply
+	d.conversationMu.Unlock()
+	defer func() { d.conversationMu.Lock(); delete(d.conversationReplies, id); d.conversationMu.Unlock() }()
+	err := write(controlMessage{Type: "agent_tool.request", RequestID: id, ToolRequest: &domain.RunnerToolRequest{Token: token, Body: body}})
+	if err != nil {
+		return nil, err
+	}
+	select {
+	case response := <-reply:
+		if response.Error != "" {
+			return nil, errors.New(response.Error)
+		}
+		return response.Body, nil
+	case <-callCtx.Done():
+		return nil, callCtx.Err()
+	case <-connCtx.Done():
+		return nil, connCtx.Err()
+	}
+}
+
+// deliverConversationReply hands an agent_tool.response to the waiting
+// forwardConversationTool call. Replies for unknown or already-answered
+// request IDs are dropped without blocking the control read loop.
+func (d *Daemon) deliverConversationReply(requestID string, response domain.RunnerToolResponse) {
+	d.conversationMu.Lock()
+	reply := d.conversationReplies[requestID]
+	d.conversationMu.Unlock()
+	if reply != nil {
+		select {
+		case reply <- response:
+		default:
+		}
+	}
 }

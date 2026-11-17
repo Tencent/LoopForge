@@ -11,9 +11,10 @@ import (
 	"gorm.io/gorm"
 )
 
-// scheduleProjectAllowed guards every schedule job: AI jobs run as the project
-// Owner with full access, so only the project's writers may create, edit, run
-// or delete them, and only its members may read their prompts.
+// scheduleProjectAllowed guards every schedule job: AI jobs run with full
+// access as the project Owner (or the member who bound the job to their own
+// keys), so only the project's writers may create, edit, run or delete them,
+// and only its members may read their prompts.
 func (h *scheduleHandlers) scheduleProjectAllowed(r *http.Request, id string, write bool) bool {
 	user, authenticated := h.requestUser(r, true)
 	if !authenticated || user == nil {

@@ -312,6 +312,30 @@ func (a *assistantDiagnosticAttempt) tools(line string) {
 	}
 }
 
+// nativeMilestone classifies one native CLI protocol event into a diagnostic
+// timeline milestone. dedupe reports whether the milestone should be recorded
+// at most once per attempt. An empty milestone means the event is not one.
+func nativeMilestone(raw map[string]any) (milestone string, dedupe bool) {
+	get := func(v map[string]any, key string) string { value, _ := v[key].(string); return value }
+	result, _ := raw["result"].(map[string]any)
+	eventSub, _ := raw["event"].(map[string]any)
+	method, kind := get(raw, "method"), get(raw, "type")
+	switch {
+	case kind == "system" && get(raw, "subtype") == "init" || get(result, "userAgent") != "" || get(raw, "event") == "init":
+		return "cli.initialized", true
+	case method == "turn/started" || kind == "turn_start":
+		return "model.turn_started", false
+	case method == "item/agentMessage/delta" || method == "item/reasoning/summaryTextDelta" || method == "item/reasoning/textDelta" ||
+		(kind == "stream_event" && get(eventSub, "type") == "content_block_delta") || kind == "model.streaming" || kind == "message_update":
+		return "model.first_output_delta", true
+	case method == "turn/completed":
+		return "model.turn_finished", false
+	case kind == "result" || kind == "final" || kind == "agent_end":
+		return "protocol.result_received", false
+	}
+	return "", false
+}
+
 func (a *assistantDiagnosticAttempt) nativeMetadata(raw map[string]any) {
 	get := func(v map[string]any, key string) string { value, _ := v[key].(string); return value }
 	params, _ := raw["params"].(map[string]any)
@@ -329,8 +353,8 @@ func (a *assistantDiagnosticAttempt) nativeMetadata(raw map[string]any) {
 			version = match
 		}
 	}
-	method, kind := get(raw, "method"), get(raw, "type")
-	eventSub, _ := raw["event"].(map[string]any)
+	method := get(raw, "method")
+	milestone, dedupe := nativeMilestone(raw)
 	a.update(func(attempt *domain.AssistantCLIAttempt) {
 		if version != "" {
 			attempt.CLIVersion, attempt.VersionSource = version, "native_handshake"
@@ -348,21 +372,6 @@ func (a *assistantDiagnosticAttempt) nativeMetadata(raw map[string]any) {
 		}
 		if turn, ok := params["turn"].(map[string]any); ok && get(turn, "id") != "" {
 			attempt.NativeTurnID = sanitizeAssistantDiagnostic(get(turn, "id"), a.user, 160)
-		}
-		milestone := ""
-		dedupe := false
-		switch {
-		case kind == "system" && get(raw, "subtype") == "init" || get(result, "userAgent") != "" || get(raw, "event") == "init":
-			milestone, dedupe = "cli.initialized", true
-		case method == "turn/started" || kind == "turn_start":
-			milestone = "model.turn_started"
-		case method == "item/agentMessage/delta" || method == "item/reasoning/summaryTextDelta" || method == "item/reasoning/textDelta" ||
-			(kind == "stream_event" && get(eventSub, "type") == "content_block_delta") || kind == "model.streaming" || kind == "message_update":
-			milestone, dedupe = "model.first_output_delta", true
-		case method == "turn/completed":
-			milestone = "model.turn_finished"
-		case kind == "result" || kind == "final" || kind == "agent_end":
-			milestone = "protocol.result_received"
 		}
 		if milestone != "" {
 			if dedupe {

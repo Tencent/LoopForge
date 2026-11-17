@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 	"unicode/utf8"
 )
@@ -55,25 +56,37 @@ func ValidateNotificationBinding(binding NotificationBinding) error {
 	if len(binding.AIInstruction) > 4000 {
 		return fmt.Errorf("AI 通知编写要求不能超过 4000 字节")
 	}
-	names := map[string]bool{}
-	for _, name := range NotificationVariableNames {
-		names[name] = true
+	if err := validateNotificationTemplate(binding.Template); err != nil {
+		return err
 	}
-	for _, match := range notificationVariable.FindAllStringSubmatch(binding.Template, -1) {
-		if !names[match[1]] {
+	return validateNotificationEvents(binding.Events, binding.Scope)
+}
+
+// validateNotificationTemplate accepts only whitelisted {{variable}}
+// placeholders and rejects any stray "{{" or "}}" left after removing them.
+func validateNotificationTemplate(template string) error {
+	for _, match := range notificationVariable.FindAllStringSubmatch(template, -1) {
+		if !slices.Contains(NotificationVariableNames, match[1]) {
 			return fmt.Errorf("通知模板包含不支持的变量：%s", match[1])
 		}
 	}
-	rest := notificationVariable.ReplaceAllString(binding.Template, "")
+	rest := notificationVariable.ReplaceAllString(template, "")
 	if strings.Contains(rest, "{{") || strings.Contains(rest, "}}") {
 		return fmt.Errorf("通知模板的变量格式无效")
 	}
-	if len(binding.Events) == 0 || len(binding.Events) > 3 {
+	return nil
+}
+
+// validateNotificationEvents requires one to three distinct supported events;
+// run-scoped bindings cannot fire on waiting.
+func validateNotificationEvents(events []string, scope string) error {
+	if len(events) == 0 || len(events) > 3 {
 		return fmt.Errorf("请选择通知触发条件")
 	}
 	seen := map[string]bool{}
-	for _, event := range binding.Events {
-		if seen[event] || (event != "succeeded" && event != "failed" && event != "waiting") || (binding.Scope == "run" && event == "waiting") {
+	for _, event := range events {
+		supported := event == "succeeded" || event == "failed" || event == "waiting"
+		if seen[event] || !supported || (scope == "run" && event == "waiting") {
 			return fmt.Errorf("不支持的通知触发条件")
 		}
 		seen[event] = true

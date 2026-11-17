@@ -13,9 +13,14 @@ import (
 // 32-bit millisecond timer and let the hook end itself first.
 const conversationApprovalHookWatchdog = 2147483
 
-// Hooks deny once the gateway stays unreachable this long. Must stay below
-// every CLI-enforced hook timeout; Kimi caps its timeout at 600 seconds.
-const conversationApprovalRetrySeconds = "120"
+// Hooks deny once the gateway stays unreachable this long, and in any case
+// after the hard limit, which covers waiting for the user to approve an
+// external write. Both must stay below every CLI-enforced hook timeout; Kimi
+// caps its timeout at 600 seconds and then runs the tool.
+const (
+	conversationApprovalRetrySeconds = "120"
+	conversationApprovalLimitSeconds = "570"
+)
 
 // InstallConversationApproval installs only provider-owned hooks. Generated
 // scripts contain no credentials; their private gateway capability is supplied
@@ -131,7 +136,8 @@ func conversationReplaceFlag(argv []string, name, value string) []string {
 const conversationApprovalPython = `import json,os,sys,time,uuid,urllib.request,urllib.error
 allowed=False
 reason="原生工具审批服务不可用，操作未执行"
-deadline=time.monotonic()+` + conversationApprovalRetrySeconds + `
+limit=time.monotonic()+` + conversationApprovalLimitSeconds + `
+deadline=min(limit,time.monotonic()+` + conversationApprovalRetrySeconds + `)
 def wait():
     time.sleep(max(0,min(1,deadline-time.monotonic())))
 try:
@@ -160,6 +166,9 @@ try:
             reason="本阶段已结束，审批已失效"
             break
         if result.get("pending") is True:
+            # Waiting for the user: the gateway is reachable, so restart the
+            # unreachable-gateway timer; the platform bounds the wait itself.
+            deadline=min(limit,time.monotonic()+` + conversationApprovalRetrySeconds + `)
             wait()
             continue
         allowed=result.get("allow") is True
@@ -181,7 +190,8 @@ if not allowed:
 const conversationApprovalJS = `import {randomUUID} from "node:crypto";
 async function approve(name,input,signal) {
   const payload=JSON.stringify({jsonrpc:"2.0",id:1,method:"agentflow/nativeApproval",params:{id:randomUUID(),name,input}});
-  const deadline=Date.now()+` + conversationApprovalRetrySeconds + `*1000;
+  const limit=Date.now()+` + conversationApprovalLimitSeconds + `*1000;
+  let deadline=Math.min(limit,Date.now()+` + conversationApprovalRetrySeconds + `*1000);
   for(;;) {
     if(signal?.aborted) throw new Error("本轮已停止");
     const remaining=deadline-Date.now();
@@ -203,6 +213,7 @@ async function approve(name,input,signal) {
         if(rpc.result?.allow!==true) throw new Error(rpc.result?.reason||"操作未批准");
         return;
       }
+      deadline=Math.min(limit,Date.now()+` + conversationApprovalRetrySeconds + `*1000);
     }
     await new Promise(resolve=>setTimeout(resolve,Math.max(0,Math.min(1000,deadline-Date.now()))));
   }

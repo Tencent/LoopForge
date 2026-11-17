@@ -85,7 +85,9 @@ func TestNativeProviderCustomGateway(t *testing.T) {
 				}
 			}))
 			defer server.Close()
-			args := []string{"exec", "--json", "--skip-git-repo-check", "--ephemeral"}
+			// Gateway acceptance does not need plugins. Disable their background
+			// repository sync so Git children cannot race TempDir cleanup after exit.
+			args := []string{"exec", "--json", "--skip-git-repo-check", "--ephemeral", "-c", "features.plugins=false"}
 			if kind == "claude-code" {
 				args = []string{"-p", "--output-format", "stream-json", "--tools", "", "--max-turns", "1", "--no-session-persistence"}
 			}
