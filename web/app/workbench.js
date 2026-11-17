@@ -63,7 +63,9 @@ const CREDENTIAL_KINDS=[
     placeholder:'请输入个人访问令牌（PAT）',hint:'保存前会先校验令牌有效性与权限',
     impact:'依赖私有仓库的 SOP 将无法克隆或推送仓库。'},
   {key:'gitSshKey',group:'platform',name:'Git SSH',short:'Git SSH 密钥',icon:'key',
-    use:'按 SSH 主机管理个人密钥，仓库自动匹配'},
+    use:'按 SSH 主机管理个人密钥，仓库自动匹配',dialog:()=>openGitSSHKeys(),action:'管理密钥'},
+  {key:'gitHttpCredentials',group:'platform',name:'Git HTTPS',short:'Git 访问令牌',icon:'lock',
+    use:'按主机管理 HTTPS 访问令牌，工作区的 git、gh、glab 自动认证',dialog:()=>openGitHTTPCredentials(),action:'管理令牌'},
   {key:'codeBuddyApiKey',group:'model',name:'CodeBuddy',short:'CodeBuddy API Key',logo:'codebuddy',
     use:'AI 对话与 SOP 的 CodeBuddy 执行器',
     description:'AI 对话（含 Claude、GPT 等模型）和 SOP 的 CodeBuddy 执行器都使用它；网络环境按账号所在环境配置。',
@@ -422,6 +424,8 @@ function validateCredentialCatalog(catalog,models){
 const CREDENTIAL_RECOMMENDED=['gitToken','codeBuddyApiKey'];
 const CREDENTIAL_PAT_WARNING='请填写 GitHub <b>个人访问令牌（PAT）</b>，为目标仓库授予 <b>Contents</b> 和 <b>Pull requests</b> 的读写权限；少勾权限会导致克隆 / 推送仓库失败。';
 function credentialKind(key){return CREDENTIAL_KINDS.find(kind=>kind.key===key)||null}
+// Kinds with a dialog manage several entries there instead of the inline editor.
+function credentialDialog(key){return credentialKind(key)?.dialog||null}
 function credentialConfigured(kind,user){return !!credentialValue(user,kind.agentCli?kind.key+'.apiKeyConfigured':kind.key+'Configured')}
 function credentialUser(){return userById(state.currentUser?.id)||{}}
 function credentialUI(){return state.credentialUI||(state.credentialUI={open:null,filter:'all',closed:{}})}
@@ -608,16 +612,16 @@ function credentialEditorHTML(kind,user){
   </div>`;
 }
 function credentialRowMainHTML(kind,user){
-  const ssh=kind.key==='gitSshKey',on=credentialConfigured(kind,user),open=on&&credentialUI().open===kind.key,status=credentialStatus(kind,user);
-  const end=on&&!ssh
+  const managed=!!kind.dialog,on=credentialConfigured(kind,user),open=on&&credentialUI().open===kind.key,status=credentialStatus(kind,user);
+  const end=on&&!managed
     ?`${credentialBadgeHTML(status)}${kind.key==='gitToken'?`<span class="credential-tip" data-tip="重新校验"><button type="button" class="credential-btn ghost icon credential-ink git-token-verify" data-credential-act="verify" aria-label="重新校验"${status==='busy'?' disabled':''}>${credentialGlyph('refresh',15)}</button></span>`:''}<span class="credential-chevron">${credentialGlyph('chevron-down',16)}</span>`
-    :`${credentialBadgeHTML(status)}<button type="button" class="credential-btn secondary credential-ink" data-credential-act="setup"${ssh?' aria-haspopup="dialog"':''}>${ssh?'管理密钥':'去配置'}<span class="credential-nudge">${credentialGlyph('chevron-right',13)}</span></button>`;
-  const interaction=ssh?'':` role="button" tabindex="0"${on?` aria-expanded="${open}"`:''}`;
+    :`${credentialBadgeHTML(status)}<button type="button" class="credential-btn secondary credential-ink" data-credential-act="setup"${managed?' aria-haspopup="dialog"':''}>${managed?kind.action:'去配置'}<span class="credential-nudge">${credentialGlyph('chevron-right',13)}</span></button>`;
+  const interaction=managed?'':` role="button" tabindex="0"${on?` aria-expanded="${open}"`:''}`;
   return `<div class="credential-row-main credential-ink"${interaction}>${credentialLogo(kind,on?'':'is-dim')}<div class="credential-row-who"><b>${escapeHTML(kind.name)}<span>${escapeHTML(kind.short)}</span></b><small>${credentialSubline(kind,user)}</small></div><div class="credential-row-end">${end}</div></div>`;
 }
 function credentialRowHTML(kind,user){
   const on=credentialConfigured(kind,user),open=on&&credentialUI().open===kind.key;
-  const editor=on&&kind.key!=='gitSshKey'?credentialEditorHTML(kind,user):'';
+  const editor=on&&!kind.dialog?credentialEditorHTML(kind,user):'';
   return `<div class="credential-row${on?' is-configured':''}${open?' is-open':''}" data-credential-row="${kind.key}">${credentialRowMainHTML(kind,user)}<div class="credential-editor"><div><div class="credential-editor-inner">${editor}</div></div></div></div>`;
 }
 function credentialGroupHTML(group,user){
@@ -852,7 +856,7 @@ function toggleCredentialGroup(head){
 }
 function activateCredentialRow(row){
   const key=row.dataset.credentialRow;
-  if(key==='gitSshKey')return openGitSSHKeys();
+  const dialog=credentialDialog(key);if(dialog)return dialog();
   return row.classList.contains('is-configured')?toggleCredentialRow(key):openCredentialWizard(key);
 }
 function bindCredentialPanel(panel){
@@ -919,7 +923,7 @@ function credentialWizardDefaults(kind,user){return kind?.extra?credentialExtraV
 function openCredentialWizard(key){
   const user=credentialUser();
   if(!state.currentUser||state.currentUser.isGuest||!$('#credentialPanel'))return;
-  if(key==='gitSshKey')return openGitSSHKeys();
+  const dialog=credentialDialog(key);if(dialog)return dialog();
   const preset=key?credentialKind(key):null;
   if(preset&&credentialConfigured(preset,user))return revealCredentialRow(key);
   const kind=preset||CREDENTIAL_RECOMMENDED.map(credentialKind).find(k=>!credentialConfigured(k,user))||CREDENTIAL_KINDS.find(k=>!credentialConfigured(k,user))||null;
@@ -975,7 +979,7 @@ function credentialWizardStepOneHTML(user){
   const wizard=credentialWizard,all=CREDENTIAL_KINDS.every(kind=>credentialConfigured(kind,user));
   const groups=CREDENTIAL_GROUPS.map(group=>`<p class="credential-opt-label">${escapeHTML(group.name)}</p><div class="credential-opts" role="radiogroup" aria-label="${escapeHTML(group.name)}">${CREDENTIAL_KINDS.filter(kind=>kind.group===group.id).map((kind,index)=>{
     const on=credentialConfigured(kind,user),selected=wizard.kind===kind.key;
-    return `<button type="button" class="credential-opt${selected?' is-selected':''}" style="--i:${index}" role="radio" aria-checked="${selected}" data-wizard-kind="${kind.key}"${on&&kind.key!=='gitSshKey'?' disabled':''}><span class="credential-radio">${credentialGlyph('check',10)}</span>${credentialLogo(kind)}<span class="credential-opt-text"><b>${escapeHTML(kind.name)}</b><small>${escapeHTML(kind.short)}</small></span>${on?'<span class="credential-pill is-ok">已配置</span>':CREDENTIAL_RECOMMENDED.includes(kind.key)?'<span class="credential-pill">推荐</span>':''}</button>`;
+    return `<button type="button" class="credential-opt${selected?' is-selected':''}" style="--i:${index}" role="radio" aria-checked="${selected}" data-wizard-kind="${kind.key}"${on&&!kind.dialog?' disabled':''}><span class="credential-radio">${credentialGlyph('check',10)}</span>${credentialLogo(kind)}<span class="credential-opt-text"><b>${escapeHTML(kind.name)}</b><small>${escapeHTML(kind.short)}</small></span>${on?'<span class="credential-pill is-ok">已配置</span>':CREDENTIAL_RECOMMENDED.includes(kind.key)?'<span class="credential-pill">推荐</span>':''}</button>`;
   }).join('')}</div>`).join('');
   return `<div class="credential-question">${credentialGlyph('key',16)}<span>要添加哪一项凭证？</span><small>选择一项 · 已配置的可在列表中编辑</small></div>${groups}${all?`<div class="credential-note">${credentialGlyph('check',14)}<span>已全部配置，可在列表中编辑。</span></div>`:''}`;
 }
@@ -1021,7 +1025,7 @@ function credentialWizardFootHTML(){
     ?'<span class="credential-kbd"><kbd>Esc</kbd> 关闭</span>'
     :`<button type="button" class="credential-btn ghost credential-ink" data-wizard-back${wizard.saving?' disabled':''}><span class="credential-nudge is-left">${credentialGlyph('arrow-left',13)}</span>上一步</button>`;
   if(wizard.step<3){
-    const ok=wizard.step===1?!!wizard.kind&&(wizard.kind==='gitSshKey'||!credentialConfigured(credentialKind(wizard.kind),credentialUser())):credentialWizardValid().ok;
+    const ok=wizard.step===1?!!wizard.kind&&(!!credentialDialog(wizard.kind)||!credentialConfigured(credentialKind(wizard.kind),credentialUser())):credentialWizardValid().ok;
     return `${back}<button type="button" class="credential-btn secondary credential-ink" data-wizard-next${ok?'':' disabled'}>下一步<span class="credential-nudge">${credentialGlyph('chevron-right',13)}</span></button>`;
   }
   const gongfeng=wizard.kind==='gitToken';
@@ -1130,10 +1134,11 @@ function credentialWizardClick(event){
 async function advanceCredentialWizard(){
   const wizard=credentialWizard;if(!wizard||wizard.saving||wizard.done)return;
   if(wizard.step===1){
-    if(!wizard.kind||(wizard.kind!=='gitSshKey'&&credentialConfigured(credentialKind(wizard.kind),credentialUser())))return;
-    if(wizard.kind==='gitSshKey'){
+    const dialog=credentialDialog(wizard.kind);
+    if(!wizard.kind||(!dialog&&credentialConfigured(credentialKind(wizard.kind),credentialUser())))return;
+    if(dialog){
       closeCredentialWizard(true);
-      return openGitSSHKeys();
+      return dialog();
     }
     wizard.step=2;paintCredentialWizard(1);setTimeout(focusCredentialWizard,220);return;
   }

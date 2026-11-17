@@ -219,7 +219,7 @@ func dockerWorkspaceExecArgv(argv []string) []string {
 }
 
 const dockerMCPCallLaunch = `cd /workspace || exit
-if [ -x /workspace/.agentflow/runtime/bin/agentflow ]; then
+if [ -x /workspace/.agentflow/runtime/bin/agentflow-helper ]; then
   PATH=/workspace/.agentflow/runtime/bin:$PATH
   export PATH
 fi

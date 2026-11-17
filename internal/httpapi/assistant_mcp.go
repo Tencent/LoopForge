@@ -403,7 +403,7 @@ func redactAssistantSecrets(text string, user domain.User) string {
 			text = strings.ReplaceAll(text, secret, "[redacted]")
 		}
 	}
-	return text
+	return gitSecretRedactions.redact(text, "[redacted]")
 }
 
 // assistantSessionReadOperation marks read-only platform tools that return

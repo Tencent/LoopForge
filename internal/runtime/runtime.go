@@ -26,9 +26,10 @@ const (
 	// CLI and writes that CLI's model configuration into its private HOME.
 	BindAgentCLI CredentialBinding = "agent-cli"
 	// BindGitWorkspace gives a conversation workspace CLI the requester's Git
-	// credentials for any repository it clones itself: HTTPS asks a helper that
-	// answers only github.com, GH_TOKEN serves gh and API calls, and
-	// SSH uses the requester's keys per configured host without exposing them.
+	// credentials for any repository it clones itself: Git's credential helper
+	// and the gh/glab wrappers fetch the token of the exact HTTPS host from the
+	// session gateway while the turn runs, and SSH uses the requester's keys
+	// per configured host without exposing them.
 	BindGitWorkspace CredentialBinding = "git-workspace"
 )
 
@@ -55,9 +56,12 @@ type RunCredentials struct {
 	// conversation workspace. It travels to the execution machine on the
 	// authenticated control connection only, in the start request of the CLI.
 	GitSSHHostKeys map[string]string `json:",omitempty"`
-	GitUserName    string
-	GitUserEmail   string
-	MCPServers     []domain.MCPServerDefinition
+	// GitHTTPHosts maps each HTTPS host the requester exposes to a workspace
+	// to its platform. It holds no tokens; the helper asks for them per host.
+	GitHTTPHosts map[string]string `json:",omitempty"`
+	GitUserName  string
+	GitUserEmail string
+	MCPServers   []domain.MCPServerDefinition
 }
 
 type ProviderCredential struct {

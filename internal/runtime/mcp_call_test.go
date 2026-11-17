@@ -15,7 +15,7 @@ import (
 )
 
 func TestMain(m *testing.M) {
-	if RunMCPCallCLI(os.Args[1:]) {
+	if RunMCPCallCLI(os.Args[1:]) || RunGitHelperCLI(os.Args[1:]) {
 		return
 	}
 	os.Exit(m.Run())

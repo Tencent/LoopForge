@@ -1,10 +1,14 @@
 package runtime
 
 import (
+	"agentflow/internal/domain"
+	"agentflow/internal/gitwork"
 	"agentflow/internal/observability"
 	"fmt"
 	"net/url"
+	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -326,48 +330,109 @@ func bindGitEnvironment(sandbox Sandbox, workspace string, environment map[strin
 }
 
 // bindWorkspaceGitEnvironment configures git for an agent that clones and
-// pushes on its own. Unlike bindGitEnvironment it rewrites no remote: the
-// helper answers HTTPS prompts for github.com only, so the token is never sent
-// to another host the agent happens to contact.
+// pushes on its own. No token is placed in the environment or on disk: Git's
+// credential helper and the gh/glab wrappers fetch the speaker's token for the
+// exact host through the turn's session gateway, which only answers while the
+// turn is active.
 func bindWorkspaceGitEnvironment(sandbox Sandbox, workspace string, environment map[string]string, credentials RunCredentials) error {
 	environment["GIT_TERMINAL_PROMPT"] = "0"
 	if _, err := EnsureControlDirectory(workspace, "runtime"); err != nil {
 		return fmt.Errorf("create git runtime dir: %w", err)
 	}
+	runtimeHost := mcpCallHostDir(workspace)
+	runtimePath := func(rel string) string {
+		if sandboxDriver(sandbox) == "docker" {
+			return mcpCallGuestPath(rel)
+		}
+		return filepath.Join(runtimeHost, filepath.FromSlash(rel))
+	}
 	// The requester's identity is the lowest-precedence (system) default, so
 	// the agent can still set its own with git config --global or --local.
 	if identity := workspaceGitIdentity(credentials.GitUserName, credentials.GitUserEmail); identity != "" {
-		systemHost := filepath.Join(workspace, ".agentflow", "runtime", "gitconfig-system")
-		if err := writeManagedFile(workspace, systemHost, []byte(identity), 0o600); err != nil {
+		if err := writeManagedFile(workspace, filepath.Join(runtimeHost, "gitconfig-system"), []byte(identity), 0o600); err != nil {
 			return fmt.Errorf("write git identity: %w", err)
 		}
-		system := systemHost
-		if sandboxDriver(sandbox) == "docker" {
-			system = filepath.ToSlash(filepath.Join("/workspace", ".agentflow", "runtime", "gitconfig-system"))
+		environment["GIT_CONFIG_SYSTEM"] = runtimePath("gitconfig-system")
+	}
+	// gh and glab keep logins of a previous speaker in their config
+	// directories; each turn starts with empty ones.
+	for key, dir := range map[string]string{"GH_CONFIG_DIR": "gh-config", "GLAB_CONFIG_DIR": "glab-config"} {
+		if _, err := resetControlDirectory(workspace, "runtime", dir); err != nil {
+			return fmt.Errorf("reset %s: %w", dir, err)
 		}
-		environment["GIT_CONFIG_SYSTEM"] = system
+		environment[key] = runtimePath(dir)
 	}
-	token := strings.TrimSpace(credentials.GitToken)
-	if token == "" {
+	gateway := strings.TrimSpace(environment[SessionGatewayEnv])
+	hosts := workspaceGitHosts(credentials.GitHTTPHosts)
+	if gateway == "" || hosts == "" {
+		delete(environment, SessionGatewayEnv)
 		return nil
 	}
-	// oauth2: / private: mark a non-GitHub grant; it is never offered.
-	if lower := strings.ToLower(token); strings.HasPrefix(lower, "oauth2:") || strings.HasPrefix(lower, "private:") {
-		return nil
+	hostBin := filepath.Join(runtimeHost, "bin")
+	if _, err := EnsureControlDirectory(workspace, "runtime", "bin"); err != nil {
+		return fmt.Errorf("create git helper dir: %w", err)
 	}
-	askpassHost := filepath.Join(workspace, ".agentflow", "runtime", "git-askpass-hosts")
-	if err := writeManagedFile(workspace, askpassHost, []byte(workspaceGitAskPassScript), 0o700); err != nil {
-		return fmt.Errorf("write git askpass: %w", err)
+	if err := installMCPCallHelper(workspace, filepath.Join(hostBin, "agentflow-helper")); err != nil {
+		return fmt.Errorf("install git credential helper: %w", err)
 	}
-	askpass := askpassHost
-	if sandboxDriver(sandbox) == "docker" {
-		askpass = filepath.ToSlash(filepath.Join("/workspace", ".agentflow", "runtime", "git-askpass-hosts"))
+	helper := runtimePath("bin/agentflow-helper")
+	for _, name := range []string{"gh", "glab"} {
+		script := "#!/bin/sh\nexec " + shellSingleQuote(helper) + " cli-shim " + name + " \"$@\"\n"
+		if err := writeManagedFile(workspace, filepath.Join(hostBin, name), []byte(script), 0o700); err != nil {
+			return fmt.Errorf("write %s wrapper: %w", name, err)
+		}
 	}
-	environment["AGENTFLOW_GIT_TOKEN"] = token
-	environment["AGENTFLOW_GIT_USER"] = "x-access-token"
-	environment["GIT_ASKPASS"] = askpass
-	environment["GH_TOKEN"] = token
+	// The empty helper entry drops every helper configured before it (system,
+	// global, repository), so a stored credential never answers instead.
+	environment["GIT_CONFIG_COUNT"] = "2"
+	environment["GIT_CONFIG_KEY_0"] = "credential.helper"
+	environment["GIT_CONFIG_VALUE_0"] = ""
+	environment["GIT_CONFIG_KEY_1"] = "credential.helper"
+	environment["GIT_CONFIG_VALUE_1"] = "!" + shellSingleQuote(helper) + " git-credential"
+	environment[GitHostsEnv] = hosts
+	if sandboxDriver(sandbox) != "docker" {
+		base := environment["PATH"]
+		if base == "" {
+			base = sandboxBasePath(sandbox)
+		}
+		environment["PATH"] = hostBin + string(os.PathListSeparator) + base
+	}
 	return nil
+}
+
+// workspaceGitHosts renders host→platform as the sorted "host=platform" list
+// of GitHostsEnv, skipping anything that is not a plain HTTPS host.
+func workspaceGitHosts(hosts map[string]string) string {
+	pairs := make([]string, 0, len(hosts))
+	for host, platform := range hosts {
+		scope, err := gitwork.HTTPSHostScope(host)
+		if err != nil || scope != host {
+			continue
+		}
+		var ok bool
+		if platform, ok = domain.NormalizeGitPlatform(platform); !ok {
+			platform = domain.GitPlatformOther
+		}
+		pairs = append(pairs, host+"="+platform)
+	}
+	sort.Strings(pairs)
+	return strings.Join(pairs, ",")
+}
+
+// sandboxBasePath is the PATH a process in sandbox starts with: the profile's
+// (which carries an activated environment's tools) or the host's.
+func sandboxBasePath(sandbox Sandbox) string {
+	switch sb := unwrapSandbox(sandbox).(type) {
+	case *processSandbox:
+		if path := sb.profile.Environment["PATH"]; path != "" {
+			return path
+		}
+	case *localSandbox:
+		if path := sb.environment["PATH"]; path != "" {
+			return path
+		}
+	}
+	return os.Getenv("PATH")
 }
 
 func workspaceGitIdentity(name, email string) string {
@@ -386,27 +451,6 @@ func workspaceGitIdentity(name, email string) string {
 	}
 	return b.String()
 }
-
-// workspaceGitAskPassScript answers git's HTTPS prompts ("Password for
-// 'https://user@host/path': ") for exactly https://github.com; any other host,
-// including look-alikes such as github.com.example or github.com@example,
-// gets no credential.
-const workspaceGitAskPassScript = `#!/bin/sh
-url=${1#*\'}
-url=${url%\'*}
-case "$url" in
-  https://*) ;;
-  *) exit 1 ;;
-esac
-host=${url#https://}
-host=${host%%/*}
-host=${host##*@}
-[ "$host" = github.com ] || exit 1
-case "$1" in
-  *[Uu]sername*) printf '%s\n' "${AGENTFLOW_GIT_USER:-x-access-token}" ;;
-  *) printf '%s\n' "${AGENTFLOW_GIT_TOKEN-}" ;;
-esac
-`
 
 const gitAskPassScript = `#!/bin/sh
 case "$1" in

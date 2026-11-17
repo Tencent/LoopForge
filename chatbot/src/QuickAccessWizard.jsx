@@ -1830,6 +1830,7 @@ export default function QuickAccessWizard({
                           </button>
                           <p className="qa-hint">在个人配置中完成授权，返回后继续；无需手动复制令牌。</p>
                           <p className="qa-hint">GitLab 等 SSH 仓库：<button type="button" className="qa-link-btn" onClick={() => openCredentialSettings("gitSshKey")}>{hasSSHKeys ? "管理 Git SSH 密钥" : "配置 Git SSH 密钥"}</button></p>
+                          <p className="qa-hint">工作区访问 GitLab、GitHub Enterprise 等 HTTPS 主机：<button type="button" className="qa-link-btn" onClick={() => openCredentialSettings("gitHttpCredentials")}>{storedUser?.gitHttpCredentialsConfigured ? "管理 Git 访问令牌" : "配置 Git 访问令牌"}</button></p>
                           <details>
                             <summary>使用访问令牌（高级）</summary>
                           <div className="qa-input-row">

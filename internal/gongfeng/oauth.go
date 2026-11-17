@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -38,6 +39,9 @@ type Config struct {
 	AuthorizeURL string
 	TokenURL     string
 	APIBase      string
+	// ExposeToWorkspace hands the managed repository token to the owner's
+	// workspace turns like any personal HTTPS credential. Off by default.
+	ExposeToWorkspace bool
 }
 
 // Enabled reports whether the process has enough configuration to start a grant.
@@ -56,7 +60,14 @@ func ConfigFromEnv() Config {
 		AuthorizeURL: envOr("AGENTFLOW_GONGFENG_OAUTH_AUTHORIZE_URL", defaultAuthorizeURL),
 		TokenURL:     envOr("AGENTFLOW_GONGFENG_OAUTH_TOKEN_URL", defaultTokenURL),
 		APIBase:      strings.TrimRight(envOr("AGENTFLOW_GONGFENG_OAUTH_API_BASE", defaultAPIBase), "/"),
+
+		ExposeToWorkspace: envBool("AGENTFLOW_GONGFENG_WORKSPACE_CREDENTIAL"),
 	}
+}
+
+func envBool(key string) bool {
+	on, _ := strconv.ParseBool(strings.TrimSpace(os.Getenv(key)))
+	return on
 }
 
 func envOr(key, fallback string) string {

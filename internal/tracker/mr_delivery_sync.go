@@ -124,6 +124,14 @@ func (s *Service) syncMRDeliveryStates(store MRDeliveryStore) {
 			}
 			continue
 		}
+		if strings.HasPrefix(row.MRProject, domain.MRProjectGHE) || strings.HasPrefix(row.MRProject, domain.MRProjectGitLab) {
+			if ok, err := s.refreshExternalDelivery(store, row); err != nil {
+				log.Printf("mr-delivery refresh %s!%d: %v", row.MRProject, row.MRIID, err)
+			} else if ok {
+				updated++
+			}
+			continue
+		}
 		client, _, clientErr := s.gongfengClientForRemoteProject(row.MRProject)
 		if clientErr != nil {
 			log.Printf("mr-delivery auth %s: %v", row.MRProject, clientErr)

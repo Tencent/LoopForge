@@ -2408,6 +2408,11 @@ html[data-theme="dark"] .credential-logo.monochrome img{filter:invert(1)}
 .git-ssh-missing{margin:8px 0 0;color:var(--hui-error);font-size:12px;line-height:1.6}
 .git-ssh-form-actions{justify-content:flex-end}
 .git-ssh-dialog textarea{padding:8px 11px;border:1px solid var(--hui-border);border-radius:8px;background:var(--hui-surface);color:var(--hui-text);font-size:12px}
+.git-http-warning{margin:0 0 12px}
+.git-http-select{width:100%;min-height:32px;padding:0 8px;border:0;background:transparent;color:var(--hui-text);font:inherit;font-size:13px}
+.git-http-expose{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 12px;border:1px solid var(--hui-border);border-radius:9px}
+.git-http-expose span{display:grid;gap:3px;font-size:13px}
+.git-http-expose small{color:var(--hui-muted);font-size:12px;line-height:1.5}
 .credential-input.is-plain input{padding-right:11px}
 .credential-input input::placeholder{color:var(--cr-tertiary)}
 .credential-input input:hover{border-color:var(--cr-line-strong)}
