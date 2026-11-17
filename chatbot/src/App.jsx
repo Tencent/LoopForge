@@ -1609,13 +1609,14 @@ export default function App() {
                             </span>
                             <MessageTime messages={messages} index={index} />
                           </div>
-                          <div className="user-bubble">{message.content}</div>
+                          <div className="user-bubble" data-i18n-skip>{message.content}</div>
                           {message.references?.length ? (
                             <div className="message-references">
                               {message.references.map((ref) => (
                                 <span
                                   key={ref.type + ref.id}
                                   title={ref.type === "element" ? elementTitle(ref) : undefined}
+                                  data-i18n-skip
                                 >
                                   {ref.type === "element" ? (
                                     <HarnessIcon name="crosshair" size={12} />
@@ -1970,9 +1971,10 @@ export default function App() {
                           ) : (
                             "@"
                           )}
-                          {ref.name || ref.id}
+                          <span data-i18n-skip>{ref.name || ref.id}</span>
                           <button
                             aria-label={`移除引用 ${ref.name || ref.id}`}
+                            data-i18n-skip
                             onClick={() => {
                               setReferences((old) =>
                                 old.filter(

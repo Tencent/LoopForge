@@ -41,6 +41,7 @@ test('main document mounts chat, preserves drafts, and shares theme and routing'
       else if(pathname==='/api/projects') body=sampleBootstrap().projects;
       else if(pathname==='/api/users') body=[user];
       else if(pathname==='/api/issues/issue-browser-test') body={id:'issue-browser-test',title:'需求转交测试',projectId:'project-1'};
+      else if(pathname==='/api/assistant/references') body={items:[{type:'sop',id:'sop-browser-test',name:'平台验收 · 脚本与审批',projectId:'project-1'}]};
       else if(pathname==='/api/assistant/models') body={models:[],default:''};
       else if(pathname.startsWith('/api/assistant/sessions/')) body={id:pathname.split('/').pop(),projectId:'',title:'浏览器测试会话',messages:[]};
       else if(pathname==='/api/runners/default') body={runnerId:''};
@@ -91,6 +92,19 @@ test('main document mounts chat, preserves drafts, and shares theme and routing'
     await page.locator('#settingsView.active').waitFor();
     await page.evaluate(() => openIssueInChat({id:'issue-browser-test',projectId:'project-1'}));
     await page.waitForFunction(() => document.querySelector('#chatRoot .composer-column textarea')?.value.startsWith('@需求转交测试 '));
+    assert.deepEqual(errors,[]);
+    await page.addInitScript(() => localStorage.setItem('loopforge.lang','en'));
+    await page.goto(`http://127.0.0.1:${server.address().port}/#/collaboration`);
+    await composer.waitFor({state:'visible',timeout:20000});
+    await composer.fill('@');
+    await page.locator('#chatRoot .mention-options [role="option"]').filter({hasText:'SOP'}).click();
+    const option=page.locator('#chatRoot .mention-options [role="option"]').first();
+    await option.locator('strong').getByText('平台验收 · 脚本与审批',{exact:true}).waitFor();
+    await option.click();
+    assert.match(await composer.inputValue(), /@平台验收 · 脚本与审批 /);
+    await page.locator('#chatRoot .composer-attachment-file').getByText('平台验收 · 脚本与审批',{exact:true}).waitFor();
+    await page.getByRole('button',{name:'移除引用 平台验收 · 脚本与审批'}).click();
+    assert.doesNotMatch(await composer.inputValue(), /平台验收/);
     assert.deepEqual(errors,[]);
   } finally {
     await browser?.close();
