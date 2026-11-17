@@ -81,8 +81,8 @@ func (d *Daemon) controlLoop(ctx context.Context) {
 	}
 }
 
-func (d *Daemon) readControls(ctx context.Context, conn *websocket.Conn) error {
-	ctx, cancel := context.WithCancel(ctx)
+func (d *Daemon) readControls(daemonCtx context.Context, conn *websocket.Conn) error {
+	ctx, cancel := context.WithCancel(daemonCtx)
 	var requests sync.WaitGroup
 	var checkpointMu sync.Mutex
 	checkpointCancels := map[string]context.CancelFunc{}
@@ -176,8 +176,17 @@ func (d *Daemon) readControls(ctx context.Context, conn *websocket.Conn) error {
 					delete(checkpointCancels, message.RequestID)
 					checkpointMu.Unlock()
 				}()
-				response := d.readRunnerWorkspace(requestCtx, *message.WorkspaceRequest)
+				var response domain.RunnerWorkspaceResponse
+				var startUpdate func()
+				if message.WorkspaceRequest.Operation == domain.RunnerWorkspaceOperationMaintenance {
+					response, startUpdate = d.maintenanceResponse(requestCtx, daemonCtx, message.WorkspaceRequest.Maintenance)
+				} else {
+					response = d.readRunnerWorkspace(requestCtx, *message.WorkspaceRequest)
+				}
 				err := writeMessage(controlMessage{Type: "workspace.response", RequestID: message.RequestID, WorkspaceResponse: &response})
+				if startUpdate != nil {
+					startUpdate()
+				}
 				if err != nil {
 					_ = conn.Close()
 				}

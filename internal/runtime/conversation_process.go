@@ -14,6 +14,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	goruntime "runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -29,6 +30,7 @@ var ErrConversationNotStarted = errors.New("conversation process was not started
 // ConversationProcessRequest travels only over the authenticated runner
 // control connection. Keys and process input never enter durable task rows.
 type ConversationProcessRequest struct {
+	Transient  bool                 `json:"transient,omitempty"`
 	Operation  string               `json:"operation"`
 	ID         string               `json:"id,omitempty"`
 	SessionKey string               `json:"sessionKey"`
@@ -50,6 +52,7 @@ type ConversationFile struct {
 }
 
 type ConversationCommand struct {
+	RunnerLogin bool `json:",omitempty"`
 	Argv        []string
 	Provider    string
 	Bindings    []CredentialBinding
@@ -86,6 +89,12 @@ type ConversationProcessPool struct {
 type conversationAssetFence struct {
 	mu    sync.Mutex
 	users int
+}
+
+func (p *ConversationProcessPool) Active() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return len(p.roots) != 0
 }
 
 func (p *ConversationProcessPool) lockAssets(ctx context.Context, root string) (func(), error) {
@@ -152,7 +161,7 @@ func (p *ConversationProcessPool) Handle(ctx context.Context, root, workspace st
 	if req.Operation == "start" {
 		return p.start(ctx, root, workspace, sandbox, req, forward, factories...)
 	}
-	if req.Operation == "prepare" || req.Operation == "sync" || req.Operation == "resetAssets" {
+	if req.Operation == "prepare" || req.Operation == "sync" || req.Operation == "resetAssets" || req.Operation == "discard" {
 		// Serialize asset writes with reservation of a new process. Checking
 		// roots and releasing the fence before a write allows start to race it.
 		unlock, lockErr := p.lockAssets(ctx, root)
@@ -168,6 +177,12 @@ func (p *ConversationProcessPool) Handle(ctx context.Context, root, workspace st
 		}
 		if err = ValidateConversationRoot(root); err != nil {
 			return ConversationProcessResult{}, err
+		}
+		if req.Operation == "discard" {
+			if !req.Transient {
+				return ConversationProcessResult{}, fmt.Errorf("only transient conversations can be discarded")
+			}
+			return ConversationProcessResult{}, os.RemoveAll(root)
 		}
 		if err = os.MkdirAll(filepath.Join(root, "home", "tmp"), 0700); err != nil {
 			return ConversationProcessResult{}, err
@@ -410,11 +425,15 @@ func (p *ConversationProcessPool) start(ctx context.Context, root, workspace str
 	var sb Sandbox
 	var release func()
 	var stdin io.Closer
+	var cleanupLogin func() error
 	finish := func(runErr error, notStarted bool) {
 		cancel()
 		// Cancellation can skip the shell EXIT trap. Clean ephemeral ZCode
 		// credentials before publishing completion or releasing this root.
 		credentialCleanupErr := cleanupConversationCredentialFiles(root, req.Command.Provider)
+		if cleanupLogin != nil {
+			credentialCleanupErr = errors.Join(credentialCleanupErr, cleanupLogin())
+		}
 		if stdin != nil {
 			_ = stdin.Close()
 		}
@@ -589,11 +608,28 @@ func (p *ConversationProcessPool) start(ctx context.Context, root, workspace str
 	} else {
 		bindWorkspace = bindSandbox.Workspace()
 	}
+	var localEnv map[string]string
+	login, supported := runnerLoginSpec(command.Provider)
+	if req.Command.RunnerLogin && !supported {
+		return ConversationProcessResult{}, fmt.Errorf("该 CLI 不支持使用执行机器的本机登录")
+	}
+	if supported {
+		cleanupLogin, localEnv, err = prepareConversationRunnerLogin(root, login, req.Command.RunnerLogin)
+		if err != nil {
+			return ConversationProcessResult{}, err
+		}
+		if req.Command.RunnerLogin {
+			command.CredentialBindings = slices.DeleteFunc(slices.Clone(command.CredentialBindings), func(binding CredentialBinding) bool {
+				return binding == login.binding
+			})
+		}
+	}
 	nativeArgv := append([]string(nil), command.Argv...)
 	command, err = bindCommand(bindSandbox, bindWorkspace, command, req.Command.Credentials)
 	if err != nil {
 		return ConversationProcessResult{}, err
 	}
+	command = WithCommandEnvironment(command, localEnv)
 	if command.Provider == AgentCLIZCode {
 		command.Argv = conversationZCodeResumeArgv(root, nativeArgv, command.Argv)
 	}

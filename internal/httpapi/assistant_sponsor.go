@@ -12,7 +12,7 @@ import (
 // Users who have not configured their own CodeBuddy API Key can still chat
 // with the platform's shared key (see repo.SharedCodeBuddyKey), limited to
 // the models a platform administrator allowed. SOP runs use it the same way
-// through the engine, and AI scheduled tasks through scheduleKeyUser;
+// through the engine, and AI scheduled tasks through scheduleCredentialUser;
 // clarification, reports and bots keep requiring the user's own key.
 const (
 	assistantSponsorLoginEnv = repo.CodeBuddySponsorLoginEnv
@@ -72,7 +72,7 @@ func (h *assistantHandlers) usesSharedKey(user domain.User) bool {
 func (h *assistantHandlers) chatCatalog(ctx context.Context, user domain.User) assistantModelCatalog {
 	key, shared := h.assistantSharedKey()
 	if !shared || !h.usesSharedKey(user) {
-		return assistantChatCatalog(ctx, user.CodeBuddyInternetEnvironment, nil)
+		return withCodeBuddyPersonalModels(assistantChatCatalog(ctx, user.CodeBuddyInternetEnvironment, nil), user)
 	}
 	return restrictAssistantCatalog(assistantChatCatalog(ctx, user.CodeBuddyInternetEnvironment, key.Models), key.Models)
 }

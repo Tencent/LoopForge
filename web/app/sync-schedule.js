@@ -152,24 +152,28 @@ function bindClarifyModelPicker(host){
 // The AI 定时任务 model picker: a CLI select narrows the model list to that
 // CLI, like the chat composer's CLI switch. The menu is fixed-positioned so the
 // modal's scroll area cannot clip it, and opens toward the side with room.
+let scheduleCatalog=null;
+function scheduleModelCatalog(){
+  return scheduleCatalog||scheduleModelAPI()?.catalog?.()||{};
+}
 function scheduleEngineModels(engine){
-  return (scheduleModelAPI()?.catalog?.().models||[]).filter(m=>(m.engine||'codebuddy')===engine);
+  return (scheduleModelCatalog().models||[]).filter(m=>(m.engine||'codebuddy')===engine);
 }
 function scheduleModelEngine(id){
-  return scheduleModelAPI()?.engineOf?.(id)||'codebuddy';
+  return scheduleModelAPI()?.engineOf?.(id,scheduleModelCatalog())||'codebuddy';
 }
 function paintScheduleEngines(selected){
   const select=$('#scheduleEngine');
   if(!select)return;
   const current=scheduleModelEngine(selected);
-  const engines=scheduleModelAPI()?.catalog?.().engines||[];
+  const engines=scheduleModelCatalog().engines||[];
   const list=engines.length?[...engines]:[{id:'codebuddy',name:'CodeBuddy'}];
   if(!list.some(e=>e.id===current))list.push({id:current,name:current});
-  // A CLI without listed models has no key in this account; a saved task
+  // A CLI without listed models lacks credentials in this account. A saved task
   // keeps its CLI selectable so editing it does not move it elsewhere.
   select.replaceChildren(...list.map(e=>{
     const usable=e.id===current||scheduleEngineModels(e.id).length>0;
-    const option=new Option(usable?e.name:`${e.name}（未配置 Key）`,e.id);
+    const option=new Option(usable?e.name:`${e.name}（缺少凭据）`,e.id);
     option.disabled=!usable;
     return option;
   }));
@@ -224,7 +228,7 @@ function bindScheduleModelPicker(){
   if(engine)engine.onchange=()=>{
     const api=scheduleModelAPI();
     const models=scheduleEngineModels(engine.value);
-    const fallback=engine.value==='codebuddy'?(api?.catalog?.().default||api?.DEFAULT):'';
+    const fallback=engine.value==='codebuddy'?(scheduleModelCatalog().default||api?.DEFAULT):'';
     const next=models.some(m=>m.id===fallback)?fallback:models[0]?.id;
     if(next)paintScheduleModel(next);
   };
@@ -235,20 +239,27 @@ function bindScheduleModelPicker(){
   window.addEventListener('resize',closeScheduleModelMenu);
 }
 async function loadScheduleModels(){
-  const api=scheduleModelAPI();
-  if(!api)return;
-  try{await api.load()}catch{}
-  paintScheduleModel($('#scheduleJobForm')?.elements.assistantModel.value||api.DEFAULT);
+  const picker=scheduleModelAPI();
+  if(!picker)return;
+  try{
+    scheduleCatalog=await api('/api/assistant/models?schedule=1',{silent:true});
+  }catch{
+    scheduleCatalog=await picker.load();
+  }
+  paintScheduleModel($('#scheduleJobForm')?.elements.assistantModel.value||picker.DEFAULT);
 }
 function paintScheduleModel(selected){
   const api=scheduleModelAPI();
   const host=$('#scheduleModelPicker');
   const f=$('#scheduleJobForm');
   if(!api||!host||!f)return;
-  const catalog=api.catalog?.()||{};
+  const catalog=scheduleModelCatalog();
   const keep=selected||f.elements.assistantModel.value||catalog.default||api.DEFAULT;
   f.elements.assistantModel.value=keep;
-  api.paint(host.querySelector('[data-model-toggle]'), keep);
+  const toggle=host.querySelector('[data-model-toggle]');
+  const item=catalog.models?.find(model=>model.id===keep);
+  if(item)api.paintItem(toggle,item);
+  else api.paint(toggle,keep);
   paintScheduleEngines(keep);
 }
 function syncScheduleJobTiming(){
@@ -275,7 +286,7 @@ function syncScheduleJobKind(){
   f.elements.name.required=kind==='assistant';
   const assistant=kind==='assistant';
   $('#scheduleModalTitle').textContent=assistant?'AI 定时任务':'触发配置';
-  $('#scheduleModalHint').textContent=assistant?'按计划用保存人的 Key 在所选 CLI 上执行提示词（没有个人 CodeBuddy Key 时用平台共享 Key），使用与主页 AI 对话相同的完全权限，可调用 SOP、平台工具、工作区及浏览器。':'按计划扫描本项目选定状态、尚未跑过 SOP 的需求，通过基线门禁后派发 SOP。基线冲突会先由对齐 Agent 解决并合入，期间暂停派发。';
+  $('#scheduleModalHint').textContent=assistant?'按计划以保存人的身份和完全权限执行提示词，可调用 SOP、平台工具、工作区及浏览器。':'按计划扫描本项目选定状态、尚未跑过 SOP 的需求，通过基线门禁后派发 SOP。基线冲突会先由对齐 Agent 解决并合入，期间暂停派发。';
   $('#scheduleModal').querySelector('.schedule-head').hidden=assistant;
   $('#scheduleJobList').hidden=assistant||!projectTriggerJob();
   f.querySelector('[type="submit"]').textContent=assistant?'保存 AI 定时任务':'保存触发配置';
@@ -455,7 +466,7 @@ function renderScheduleJobs(){
   const disabled='本实例不执行定时任务；任务可在主实例自动运行。';
   $('#scheduleRuntimeHint').textContent=canRun?'每个项目使用一份触发配置，修改后保存即可生效。立即运行在服务端执行，关闭页面不会中断。':disabled;
   const triggerHint=$('#aiScheduleTriggerHint');if(triggerHint)triggerHint.textContent=canRun?'按计划扫描本项目选定状态、尚未跑过 SOP 的需求，通过基线门禁后派发 SOP。每个项目使用一份触发配置。':disabled;
-  $('#aiScheduleRuntimeHint').textContent=!state.projectFilter?'请先在顶栏选择项目，再管理 AI 定时任务。':canRun?'使用最后保存任务的人在所选 CLI 上的 Key（没有个人 CodeBuddy Key 时用平台共享 Key，仅限管理员允许的模型），以完全权限执行，与主页 AI 对话相同。可调用 SOP、工作区及浏览器工具；关闭页面不会中断执行。':disabled;
+  $('#aiScheduleRuntimeHint').textContent=!state.projectFilter?'请先在顶栏选择项目，再管理 AI 定时任务。':canRun?'以最后保存任务的人的身份和完全权限执行。默认执行机器离线时使用该用户的 API Key。CodeBuddy 缺少个人 Key 时可使用平台共享 Key。关闭页面不会中断执行。':disabled;
   $('#aiScheduleProjectName').textContent=currentProject()?.name||'当前项目';
   $('#aiScheduleCount').textContent=`${assistant.length} 个任务`;
   $('#newAISchedule').disabled=!state.projectFilter;

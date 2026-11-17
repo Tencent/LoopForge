@@ -40,12 +40,12 @@
   }
   // engineOf names the CLI that runs a model: catalog entries carry it, and a
   // saved "codex:…" id that the viewer cannot list still keeps its prefix.
-  function engineOf(id) {
-    const listed = (catalog.models || []).find(m => m.id === id);
+  function engineOf(id, source = catalog) {
+    const listed = (source.models || []).find(m => m.id === id);
     if (listed) return listed.engine || 'codebuddy';
     const value = String(id || '');
     const prefix = value.slice(0, Math.max(0, value.indexOf(':')));
-    return (catalog.engines || []).some(e => e.id === prefix) ? prefix : 'codebuddy';
+    return (source.engines || []).some(e => e.id === prefix) ? prefix : 'codebuddy';
   }
   function modelMeta(id) {
     return (catalog.models || []).find(m => m.id === id) || {id: id || DEFAULT_MODEL, family: familyOf(id), name: id || DEFAULT_MODEL};
