@@ -182,15 +182,16 @@ func cachedCLIModels(environment string) []string {
 // requires login plus a configured or sponsored CodeBuddy key.
 func (h *assistantHandlers) models(c *gin.Context) {
 	if raw := strings.TrimSpace(c.Query("executor")); raw != "" && assistantExecutor(raw) != "codebuddy" {
-		id := assistantExecutor(raw)
-		catalog, ok := executorModelCatalogs()[id]
+		catalogKey := assistantExecutorCatalogKey(assistantExecutor(raw))
+		catalog, ok := executorModelCatalogs()[catalogKey]
 		if !ok {
 			c.JSON(400, gin.H{"error": "不支持的执行器"})
 			return
 		}
-		result := assistantModelCatalog{Default: "default", Models: []assistantModel{{ID: "default", Name: "CLI default", Family: map[string]string{"codex": "gpt", "claude": "claude"}[id]}}}
+		family := map[string]string{"codex": "gpt", "claude": "claude"}[catalogKey]
+		result := assistantModelCatalog{Default: "default", Models: []assistantModel{{ID: "default", Name: "CLI default", Family: family}}}
 		for _, item := range catalog.Models {
-			result.Models = append(result.Models, assistantModel{ID: item.ID, Name: item.Name, Family: map[string]string{"codex": "gpt", "claude": "claude"}[id]})
+			result.Models = append(result.Models, assistantModel{ID: item.ID, Name: item.Name, Family: family})
 		}
 		c.JSON(200, result)
 		return

@@ -142,15 +142,18 @@ func assistantEngineCustomModels(user domain.User, engine string) []domain.CLIMo
 	return user.AgentCLICredentials[engine].Models
 }
 
+func assistantExecutorCatalogKey(engine string) string {
+	if engine == assistantEngineClaude {
+		return "claude"
+	}
+	return engine
+}
+
 // assistantEngineBuiltinModels is the executor catalog for a CLI, used on the
 // official endpoint (no Base URL) or when the Base URL lists no model.
 func assistantEngineBuiltinModels(engine string) []assistantDiscoveredModel {
-	catalogKey := engine
-	if engine == assistantEngineClaude {
-		catalogKey = "claude"
-	}
 	var out []assistantDiscoveredModel
-	for _, model := range executorModelCatalogs()[catalogKey].Models {
+	for _, model := range executorModelCatalogs()[assistantExecutorCatalogKey(engine)].Models {
 		out = append(out, assistantDiscoveredModel{ID: model.ID, Name: model.Name})
 	}
 	return out
