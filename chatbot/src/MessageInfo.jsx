@@ -181,7 +181,7 @@ export default function MessageInfo({ message }) {
               onPointerEnter={cancelClose}
               onPointerLeave={leave}
             />,
-            document.body,
+            document.getElementById("chatRoot") || document.body,
           )
         : null}
     </>

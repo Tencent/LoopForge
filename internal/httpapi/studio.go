@@ -7,6 +7,7 @@ import (
 	htmlpkg "html"
 	"io/fs"
 	"net/http"
+	"net/url"
 	"os"
 	"regexp"
 	"strings"
@@ -22,6 +23,9 @@ func stampStudioIndex(static fs.FS, raw []byte) []byte {
 			return m
 		}
 		name := strings.TrimPrefix(sub[2], "/")
+		if strings.HasPrefix(name, "chatbot/") {
+			name = "native-chat/" + strings.TrimPrefix(name, "chatbot/")
+		}
 		body, err := fs.ReadFile(static, name)
 		if err != nil {
 			return m
@@ -98,6 +102,29 @@ func studioFileServer(static fs.FS) http.Handler {
 	native, _ := fs.Sub(static, "native-chat")
 	nativeFiles := http.StripPrefix("/chatbot/", http.FileServer(http.FS(native)))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/chatbot/" || r.URL.Path == "/chatbot/index.html" || r.URL.Path == "/chatbot" {
+			query := r.URL.Query()
+			session := query.Get("session")
+			issue := query.Get("issueId")
+			query.Del("session")
+			query.Del("issueId")
+			if session != "" {
+				query.Set("chatSession", session)
+			}
+			if issue != "" {
+				query.Set("chatIssue", issue)
+			}
+			target := "/"
+			if encoded := query.Encode(); encoded != "" {
+				target += "?" + encoded
+			}
+			target += "#/collaboration"
+			if session != "" {
+				target += "/" + url.PathEscape(session)
+			}
+			http.Redirect(w, r, target, http.StatusFound)
+			return
+		}
 		if strings.HasPrefix(r.URL.Path, "/chatbot/") {
 			w.Header().Set("Cache-Control", "no-store")
 			nativeFiles.ServeHTTP(w, r)

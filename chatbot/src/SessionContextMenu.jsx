@@ -66,12 +66,6 @@ export default function SessionContextMenu({
 
   useEffect(() => {
     const documents = [document];
-    try {
-      if (window.parent !== window && window.parent.document !== document)
-        documents.push(window.parent.document);
-    } catch {
-      /* The embedded workbench can also run across origins. */
-    }
     const outside = (event) => {
       if (!root.current?.contains(event.target)) close();
     };
@@ -147,6 +141,6 @@ export default function SessionContextMenu({
     >
       {children}
     </div>,
-    document.body,
+    document.getElementById("chatRoot") || document.body,
   );
 }

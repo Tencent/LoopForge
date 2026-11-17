@@ -393,7 +393,7 @@ export function ImageLightbox({ src, alt, onClose }) {
         <X size={18} />
       </button>
     </div>,
-    document.body,
+    document.getElementById("chatRoot") || document.body,
   );
 }
 

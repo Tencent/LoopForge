@@ -8,6 +8,7 @@ import React, {
 } from "react";
 import { useChat } from "./useChat";
 import NativeApprovalPanel from "./NativeApprovalPanel";
+import { platform, initialChatContext, navigate as platformNavigate, subscribe } from "./platform-host.js";
 import { AgentBrowserLinks } from "./agent-browser-links.js";
 import ActivityTrace, { ReplyTimeline } from "./ActivityTrace";
 import MessageInfo from "./MessageInfo";
@@ -99,15 +100,7 @@ const environmentVisibilityKey = "agentflow.native-chat.environmentVisibility.v1
 const sidebarWidthKey = "agentflow.sidebarWidth";
 const sidebarLayoutKey = "agentflow.sidebarLayoutVersion";
 const sidebarLayoutVersion = "grasp-reference-v3";
-function sidebarViewport() {
-  try {
-    // The workbench and settings share the host's desktop breakpoint.
-    window.parent.matchMedia("(min-width:1001px)");
-    return window.parent;
-  } catch {
-    return window;
-  }
-}
+function sidebarViewport() { return window; }
 function readSidebarWidth() {
   // Also migrate standalone workbench loads, before the first React render.
   if (localStorage.getItem(sidebarLayoutKey) !== sidebarLayoutVersion) {
@@ -344,9 +337,9 @@ export default function App() {
     [runsRefresh, setRunsRefresh] = useState(0),
     [approval, setApproval] = useState("confirm"),
     [quickAccessOpen, setQuickAccessOpen] = useState(
-      () => new URLSearchParams(location.search).get("quickAccess") === "1",
+      () => initialChatContext().quickAccess,
     ),
-    [theme, setTheme] = useState(() => readThemePreference(localStorage)),
+    [theme, setTheme] = useState(() => platform()?.getSnapshot?.().theme || readThemePreference(localStorage)),
     [environmentVisibility, setEnvironmentVisibility] = useState(() => readJSON(environmentVisibilityKey, {}));
   const environmentPreferenceOwner = String(chat.user?.id || "guest");
   const showEnvironmentPicker = environmentVisibility[environmentPreferenceOwner] === true;
@@ -360,6 +353,14 @@ export default function App() {
     setIssueMention(null);
     chat.newChat();
   }
+  useEffect(() => subscribe("view", (view) => {
+    if (view === "collaboration") return;
+    setMenu(null);
+    setSessionContext(null);
+    setDialog(null);
+    setMention(null);
+    setQuickAccessOpen(false);
+  }), []);
   const input = useRef(),
     sessionPress = useRef(null),
     sessionClickSuppressed = useRef(null),
@@ -524,14 +525,17 @@ export default function App() {
       ) apply();
     };
     apply();
+    const unsubscribe = subscribe("sidebarWidth", apply);
     wide.addEventListener("change", apply);
     window.addEventListener("storage", onStorage);
     return () => {
+      unsubscribe();
       wide.removeEventListener("change", apply);
       window.removeEventListener("storage", onStorage);
     };
   }, []);
   useEffect(() => {
+    if (platform()) return;
     const media = matchMedia("(prefers-color-scheme: dark)");
     const apply = () => {
       document.documentElement.dataset.theme = resolveTheme(
@@ -545,13 +549,10 @@ export default function App() {
     return () => media.removeEventListener("change", apply);
   }, [theme]);
   useEffect(() => {
-    // The host shell writes the same key; storage events only reach the other documents.
-    const onStorage = (event) => {
-      if (!event.key || event.key === THEME_KEY)
-        setTheme(readThemePreference(localStorage));
-    };
+    const unsubscribe = subscribe("theme", setTheme);
+    const onStorage = (event) => { if (!event.key || event.key === THEME_KEY) setTheme(readThemePreference(localStorage)); };
     window.addEventListener("storage", onStorage);
-    return () => window.removeEventListener("storage", onStorage);
+    return () => { unsubscribe(); window.removeEventListener("storage", onStorage); };
   }, []);
   useEffect(() => {
     if (!chat.user) return;
@@ -576,21 +577,12 @@ export default function App() {
   // new conversation with the requirement already @-mentioned. It waits for
   // the new conversation's draft to load so the draft does not overwrite it.
   useEffect(() => {
-    const listener = (event) => {
-      if (
-        event.source !== window.parent ||
-        event.origin !== location.origin ||
-        event.data?.type !== "agentflow-chat-mention-issue"
-      ) return;
-      const issueId = String(event.data.issueId || "");
-      const projectId = String(event.data.projectId || "");
+    return subscribe("mentionIssue", ({ issueId, projectId }) => {
       if (!issueId || !projectId) return;
       chat.startProjectDraft(projectId);
       setIssueDraft({ issueId, projectId });
       setIssueMention({ issueId, projectId });
-    };
-    window.addEventListener("message", listener);
-    return () => window.removeEventListener("message", listener);
+    });
   }, [chat.startProjectDraft]);
   useEffect(() => {
     if (
@@ -700,6 +692,7 @@ export default function App() {
   ]);
   useEffect(() => {
     const keyboard = (e) => {
+      if (platform() && !document.body.classList.contains("platform-chat-active")) return;
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
         e.preventDefault();
         setDialog({ type: "search" });
@@ -751,12 +744,7 @@ export default function App() {
     setSelectedArtifact(a);
   }
   function navigate(view, options = {}) {
-    if (window.parent !== window)
-      window.parent.postMessage(
-        { type: "agentflow-chat-open-view", view, ...options },
-        location.origin,
-      );
-    else location.href = `/${options.projectId ? "?projectId=" + encodeURIComponent(options.projectId) : ""}#/${view}${options.action === "create" ? "/__new__" : ""}`;
+    platformNavigate(view, options);
     closeDialog();
     closeMenu();
   }
@@ -2451,7 +2439,7 @@ export default function App() {
                 <HarnessSelect
                   value={theme}
                   ariaLabel="外观"
-                  onChange={(e) => setTheme(e.target.value)}
+                  onChange={(e) => platform() ? platform().setTheme(e.target.value) : setTheme(e.target.value)}
                   options={THEME_OPTIONS}
                 />
               </label>

@@ -154,22 +154,8 @@
     return null;
   }
 
-  function workbenchFrame() {
-    const frame = doc.getElementById('chatNextFrame');
-    if (!frame || !frame.closest || !frame.closest('.page-view.active')) return null;
-    return frame;
-  }
-
-  function frameLocation() {
-    const frame = workbenchFrame();
-    if (!frame) return '';
-    try {
-      const href = frame.contentWindow && frame.contentWindow.location && frame.contentWindow.location.href;
-      return href && href !== 'about:blank' ? sanitizeURL(href) : '';
-    } catch (_) {
-      return '';
-    }
-  }
+  // Chat shares the main document, so there is no separate frame URL.
+  function frameLocation() { return ''; }
 
   function collectPageContext() {
     const loc = root.location || {};
@@ -355,12 +341,10 @@
     else if (ui) placeFab();
   }
 
-  // Lift the button above the workbench "return" floating button when shown.
+  // Keep the feedback control above transient workbench overlays.
   function placeFab() {
     if (!ui) return;
-    const other = doc.querySelector('.chat-next-return');
-    const visible = !!(other && !other.hidden && other.getClientRects && other.getClientRects().length);
-    ui.root.classList.toggle('fb-lift', visible);
+    ui.root.classList.remove('fb-lift');
   }
 
   function isOpen() { return !!ui && ui.panel.classList.contains('open'); }

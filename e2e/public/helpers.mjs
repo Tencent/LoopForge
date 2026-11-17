@@ -41,8 +41,8 @@ export async function openSettingsPage(page,view){
   await entry.click();
 }
 
-// The home page embeds the chat app in an iframe; its composer is the entry point.
-export const chat=page=>page.frameLocator('iframe[src*="/chatbot/"]');
+// Chat is mounted directly within the main document.
+export const chat=page=>page.locator('#chatRoot');
 export const composer=page=>chat(page).locator('.composer-column textarea');
 export async function openHome(page){
   const {expect}=await import('@playwright/test');

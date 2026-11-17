@@ -76,9 +76,6 @@ export default function Participants({ session, users, compact = false }) {
       details.querySelector("summary")?.focus();
     };
     const documents = [document];
-    try {
-      if (window.parent !== window) documents.push(window.parent.document);
-    } catch {}
     for (const ownerDocument of documents) {
       ownerDocument.addEventListener("pointerdown", outside, true);
       ownerDocument.addEventListener("click", outside, true);

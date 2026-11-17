@@ -486,6 +486,7 @@ const assert = require('node:assert/strict');
 const code = require('node:fs').readFileSync('` + appBundlePath(t) + `', 'utf8');
 const user = {id: 1, gitTokenConfigured: true, codexApiKeyConfigured: true, codexBaseUrl: 'https://proxy.example.com/v1'};
 const state = {currentUser: {id: 1}, data: {users: [user]}};
+const platformNotify = () => {};
 const userById = id => state.data.users.find(u => u.id === id);
 const escapeHTML = v => String(v), toast = () => {};
 const calls = [];

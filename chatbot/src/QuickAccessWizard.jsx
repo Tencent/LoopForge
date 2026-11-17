@@ -8,6 +8,7 @@ import React, {
   useState,
 } from "react";
 import { createPortal } from "react-dom";
+import { platform, subscribe } from "./platform-host.js";
 import "../../web/app/git-ssh.js";
 import HarnessIcon from "./HarnessIcon";
 import SlidingTabs from "./SlidingTabs";
@@ -459,7 +460,7 @@ export function HarnessSelect({
                 )}
               </div>
             </div>,
-            document.body,
+            document.getElementById("chatRoot") || document.body,
           )
         : null}
     </div>
@@ -1056,16 +1057,13 @@ export default function QuickAccessWizard({
           if (active && version === generation) setSSHCredentials({ userId: user.id, keys: [], error: true });
         });
     };
-    const credentialsChanged = (event) => {
-      if (event.origin === location.origin && event.source === window.parent && event.data?.type === "agentflow-credentials-changed") refresh();
-    };
+    const unsubscribe = subscribe("credentials", refresh);
     refresh();
     window.addEventListener("focus", refresh);
-    window.addEventListener("message", credentialsChanged);
     return () => {
       active = false;
       window.removeEventListener("focus", refresh);
-      window.removeEventListener("message", credentialsChanged);
+      unsubscribe();
     };
   }, [open, user?.id, user?.isGuest]);
 
@@ -1115,13 +1113,10 @@ export default function QuickAccessWizard({
         .catch(() => {});
     };
     window.addEventListener("focus", refreshUser);
-    const credentialsChanged = (event) => {
-      if (event.origin === location.origin && event.source === window.parent && event.data?.type === "agentflow-credentials-changed") refreshUser();
-    };
-    window.addEventListener("message", credentialsChanged);
+    const unsubscribe = subscribe("credentials", refreshUser);
     return () => {
       window.removeEventListener("focus", refreshUser);
-      window.removeEventListener("message", credentialsChanged);
+      unsubscribe();
     };
   }, [open, user?.id, verifyStoredGitToken]);
 
@@ -1242,11 +1237,7 @@ export default function QuickAccessWizard({
     setCodeBuddyApiKey("");
     setCodeBuddyEnvChoice(null);
     void onCredentialsSaved?.();
-    window.parent !== window &&
-      window.parent.postMessage(
-        { type: "agentflow-credentials-changed" },
-        location.origin,
-      );
+    platform()?.credentialsChanged();
     return merged;
   }
 
@@ -1495,14 +1486,7 @@ export default function QuickAccessWizard({
         }
       }
 
-      window.parent !== window &&
-        window.parent.postMessage(
-          {
-            type: "agentflow-quick-access-completed",
-            projectId: targetProject?.id || "",
-          },
-          location.origin,
-        );
+      platform()?.quickAccessCompleted(targetProject?.id || "");
 
       setCompletedSummary({
         project: targetProject,

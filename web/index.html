@@ -25,6 +25,7 @@
   <link rel="stylesheet" href="/bots.css">
   <link rel="stylesheet" href="/app/frame.css">
   <link rel="stylesheet" href="/chat-codex.css?v=20261031drawer">
+  <link rel="stylesheet" href="/chatbot/assets/workbench.css">
   <link rel="stylesheet" href="/app/harness-icons.css">
   <link rel="stylesheet" href="/app/navigation.css">
   <link rel="stylesheet" href="/app/hover-ink.css">
@@ -183,8 +184,8 @@
 
   <main>
     <section id="collaborationView" class="view page-view">
-      <div class="chat-next-host" id="chatNextHost">
-        <iframe id="chatNextFrame" class="chat-next-frame" aria-label="LoopForge 工作台" src="about:blank"></iframe>
+      <div class="platform-chat-host" id="platformChatHost">
+        <div id="chatRoot" class="chat-workbench" aria-label="LoopForge 工作台"></div>
       </div>
     </section>
     <section id="settingsView" class="view page-view">
@@ -1259,6 +1260,7 @@
     </div>
   </div>
   <div id="revisionModal" class="modal"><div class="modal-card revision-card"><button type="button" class="modal-close" id="revisionClose">×</button><div class="wizard-head"><div><p class="eyebrow">版本历史</p><h2 id="revisionTitle">版本历史</h2><p>对比上一版并回退。回退会生成新版本，不会改已经跑完的记录。</p></div></div><div id="revisionList" class="revision-list"></div><pre id="revisionDiff" class="revision-diff">选择一个历史版本查看差异。</pre><div class="wizard-actions"><button type="button" class="button ghost" id="revisionClose2">关闭</button><button type="button" class="button primary" id="revisionRestore" disabled>回退到此版本</button></div></div></div>
+  <script src="/app/platform-state.js"></script>
   <script src="/app.js"></script>
   <script src="/app/assistant-models.js"></script>
   <script src="/app/access.js"></script>
@@ -1309,5 +1311,6 @@
   </div>
   </div>
   <script src="/orchestrate.js?v=20261109cli"></script>
+  <script type="module" src="/chatbot/assets/workbench.js"></script>
 </body>
 </html>

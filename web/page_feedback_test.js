@@ -261,7 +261,7 @@ const { createDOM } = require('./hui_fake_dom');
   assert.strictEqual(payload.url, 'https://flow.test/?tab=2#/runs/r1?view=log');
   assert.strictEqual(payload.route, '#/runs/r1?view=log');
   assert.strictEqual(payload.view, '运行记录');
-  assert.strictEqual(payload.frameUrl, 'https://flow.test/chatbot/?projectId=p1', 'the workbench location is captured without secrets');
+  assert.strictEqual(payload.frameUrl, '', 'the workbench shares the main document');
   assert.deepStrictEqual(Object.keys(payload.context).sort(), ['capturedAt', 'dpr', 'language', 'scroll', 'theme', 'userAgent', 'viewport']);
   assert.strictEqual(payload.context.dpr, 2);
   assert.strictEqual(entries.filter(e => e.name === 'images').length, 4);
