@@ -622,6 +622,10 @@ func (p *ConversationProcessPool) start(ctx context.Context, root, workspace str
 			command.CredentialBindings = slices.DeleteFunc(slices.Clone(command.CredentialBindings), func(binding CredentialBinding) bool {
 				return binding == login.binding
 			})
+			if command.Provider == AgentCLICursor {
+				command.Argv = bindCursorModel(command.Argv, command.AgentCLI, req.Command.Credentials.AgentCLI[AgentCLICursor].Models)
+				localEnv = cursorPrivateEnvironment(filepath.Join(root, "home"))
+			}
 		}
 	}
 	nativeArgv := append([]string(nil), command.Argv...)

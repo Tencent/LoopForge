@@ -34,6 +34,20 @@ fi
 read -r request; case "$request" in *'"subtype":"initialize"'*) ;; *) exit 2 ;; esac
 printf '%s\n' '{"type":"control_response","response":{"subtype":"success","request_id":"loopforge-models","response":{"models":[{"value":"fixture-model","displayName":"Fixture Model"}]}}}'
 `},
+		{AgentCLICursor, "CURSOR_CONFIG_DIR", "auth.json", `
+test "$AGENT_CLI_CREDENTIAL_STORE" = file
+test "$CURSOR_CONFIG_DIR" = "$HOME/.cursor"
+test -f "$CURSOR_CONFIG_DIR/auth.json"
+test -z "${CURSOR_API_KEY:-}${CURSOR_AUTH_TOKEN:-}"
+case "$1" in
+  status)
+    test "$2" = --format && test "$3" = json
+    printf '%s\n' '{"isAuthenticated":true,"userInfo":{"email":"fixture@example.test"}}'
+    ;;
+  models) printf '%s\n' 'fixture-model - Fixture Model' ;;
+  *) exit 1 ;;
+esac
+`},
 	}
 	for _, tc := range tests {
 		t.Run(tc.provider, func(t *testing.T) {
@@ -43,6 +57,8 @@ printf '%s\n' '{"type":"control_response","response":{"subtype":"success","reque
 			t.Setenv("CLAUDE_CODE_OAUTH_TOKEN", "")
 			t.Setenv("OPENAI_API_KEY", "must-stay-on-host")
 			t.Setenv("ANTHROPIC_API_KEY", "must-stay-on-host")
+			t.Setenv("CURSOR_API_KEY", "must-stay-on-host")
+			t.Setenv("CURSOR_AUTH_TOKEN", "must-stay-on-host")
 			if err := os.WriteFile(filepath.Join(dir, tc.loginFile), []byte(`{"test":true}`), 0600); err != nil {
 				t.Fatal(err)
 			}

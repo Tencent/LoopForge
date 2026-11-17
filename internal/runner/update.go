@@ -132,7 +132,11 @@ func (d *Daemon) runnerWorkActive() bool {
 	d.maintenance.mu.Lock()
 	updatingCLI := d.maintenance.active != "" && d.maintenance.active != runnerMaintenanceKey
 	d.maintenance.mu.Unlock()
-	return updatingCLI || atomic.LoadInt32(&d.running) != 0 || d.conversationProcesses.Active() ||
+	return updatingCLI || d.runnerExecutionActive()
+}
+
+func (d *Daemon) runnerExecutionActive() bool {
+	return atomic.LoadInt32(&d.running) != 0 || d.conversationProcesses.Active() ||
 		d.workspaceTerminals.Active() || d.checkpointTransfers.Active()
 }
 

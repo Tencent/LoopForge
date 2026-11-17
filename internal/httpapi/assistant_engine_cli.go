@@ -132,6 +132,9 @@ func (e assistantCredentialError) Is(target error) bool {
 }
 
 func assistantRunnerLoginError(engine string) error {
+	if engine == runtime.AgentCLICursor {
+		return runtime.CursorRunnerLoginError()
+	}
 	return fmt.Errorf("执行机器上的 %s 本机登录态无效或已过期，请检查 Runner 账户的 CLI 登录", assistantEngineLabel(engine))
 }
 

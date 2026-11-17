@@ -41,10 +41,10 @@ func (h *runnersHandlers) runnerMaintenance(c *gin.Context) {
 		StatusOnly: c.Query("status") == "1",
 	}
 	if input.Provider != "" {
-		managed := slices.ContainsFunc(runner.Runtimes, func(rt domain.RunnerRuntime) bool {
-			return rt.Provider == input.Provider && slices.Contains(rt.Capabilities, domain.RuntimeCapabilityManagedUpdate)
+		canUpdate := slices.ContainsFunc(runner.Runtimes, func(rt domain.RunnerRuntime) bool {
+			return rt.Provider == input.Provider && (rt.SupportsCLIUpdate() || input.StatusOnly)
 		})
-		if !managed {
+		if !canUpdate {
 			c.JSON(http.StatusConflict, gin.H{"error": "请在执行机器上使用该 CLI 原来的安装方式更新"})
 			return
 		}

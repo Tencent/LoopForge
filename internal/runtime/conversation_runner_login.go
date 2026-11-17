@@ -20,6 +20,8 @@ func runnerLoginSpec(provider string) (conversationLoginSpec, bool) {
 		return conversationLoginSpec{"Codex", ".codex", "auth.json", "CODEX_HOME", BindCodex}, true
 	case "claude-code":
 		return conversationLoginSpec{"Claude Code", ".claude", ".credentials.json", "CLAUDE_CONFIG_DIR", BindClaudeCode}, true
+	case AgentCLICursor:
+		return conversationLoginSpec{"Cursor CLI", ".cursor", "auth.json", "CURSOR_CONFIG_DIR", BindAgentCLI}, true
 	default:
 		return conversationLoginSpec{}, false
 	}
@@ -62,7 +64,17 @@ func prepareConversationRunnerLogin(root string, login conversationLoginSpec, en
 		}
 	}
 	data, err := readRunnerLoginFile(configDir, login.file)
+	// Cursor's file store also uses ~/.cursor with a custom CLI config
+	// directory. Prefer the configured directory when it contains a login.
+	if os.IsNotExist(err) && login.binding == BindAgentCLI && strings.TrimSpace(os.Getenv(login.configEnv)) != "" {
+		if base, homeErr := os.UserHomeDir(); homeErr == nil && base != "" {
+			data, err = readRunnerLoginFile(filepath.Join(base, login.dir), login.file)
+		}
+	}
 	if err != nil {
+		if login.binding == BindAgentCLI {
+			return nil, nil, CursorRunnerLoginError()
+		}
 		return nil, nil, fmt.Errorf("执行机器上的 %s 本机登录态不可用，请检查 Runner 账户的 CLI 登录", login.label)
 	}
 	cleanup := func() error {
@@ -77,6 +89,12 @@ func prepareConversationRunnerLogin(root string, login conversationLoginSpec, en
 		return cleanup, nil, fmt.Errorf("无法准备 %s 的本机登录态", login.label)
 	}
 	return cleanup, nil, nil
+}
+
+// CursorRunnerLoginError points to Cursor's supported file store for
+// sandboxes that cannot access the system keychain.
+func CursorRunnerLoginError() error {
+	return fmt.Errorf("执行机器上的 Cursor CLI 本机登录态不可用，请在运行 Runner 的系统账号下执行 AGENT_CLI_CREDENTIAL_STORE=file agent login")
 }
 
 func readRunnerLoginFile(dir, name string) ([]byte, error) {

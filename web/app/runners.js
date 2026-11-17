@@ -68,14 +68,24 @@ function runnerPersonalCredentialConfigured(provider){
   if(provider==='codebuddy')return !!user.codeBuddyApiKeyConfigured;
   return !!user.agentCliCredentials?.[provider]?.apiKeyConfigured;
 }
+function runnerRuntimeSupportsLogin(runtime){
+  return runtime.provider==='codex'||runtime.provider==='claude-code'||
+    runtime.provider==='cursor'&&runtime.capabilities?.includes('cursor_account_login');
+}
 function runnerRuntimeAuthMode(runtime){
-  return (runtime.provider==='codex'||runtime.provider==='claude-code')?(runtime.authMode||'local'):'personal';
+  if(!runnerRuntimeSupportsLogin(runtime))return 'personal';
+  return runtime.authMode||(runtime.provider==='cursor'?'personal':'local');
 }
 function runnerAuthHTML(runtime,key,busy,shared){
-  const canSwitch=!shared&&(runtime.provider==='codex'||runtime.provider==='claude-code');
+  const canSwitch=!shared&&runnerRuntimeSupportsLogin(runtime);
   const mode=runnerAuthChanges.get(key)||runnerRuntimeAuthMode(runtime);
   const missing=mode==='personal'&&!runnerPersonalCredentialConfigured(runtime.provider);
-  const title=missing?' title="请在个人配置中填写 API Key"':'';
+  let hint=missing?'请在个人配置中填写 API Key':'';
+  if(!shared&&runtime.provider==='cursor'){
+    if(!canSwitch)hint='Cursor CLI 账号登录需要 Runner 0.10.5 或以上版本';
+    else if(mode==='local')hint='使用 Cursor CLI 的文件式登录。用 AGENT_CLI_CREDENTIAL_STORE=file agent login 登录。';
+  }
+  const title=hint?` title="${escapeHTML(hint)}"`:'';
   if(canSwitch)return `<select class="runner-auth-select${missing?' missing':''}" data-runner-auth="${escapeHTML(key)}" aria-label="${runnerCLILabels[runtime.provider]} 认证方式"${title} ${busy?'disabled':''}>
     <option value="local" ${mode==='local'?'selected':''}>${runnerAuthLabel.local}</option>
     <option value="personal" ${mode==='personal'?'selected':''}>${runnerAuthLabel.personal}</option>
@@ -463,7 +473,7 @@ async function checkRunnerUpdate(id){
 }
 async function updateRunnerCLI(runner,runtime){
   const id=runner.id,provider=runtime.provider,label=runnerCLILabels[provider],key=`${id}|${provider}`;
-  if(!runtime.capabilities?.includes('managed_update')){
+  if(!runtime.capabilities?.some(capability=>capability==='native_update'||capability==='managed_update')){
     await afAlert({title:`更新 ${label}`,message:'请在这台执行机器上使用原来的安装方式更新。更新后刷新机器列表即可看到版本。'});
     return;
   }
@@ -490,6 +500,8 @@ async function followRunnerUpdate(id,provider){
       const version=result.version||result.current;
       toast(`${label}${version?' '+version:''} 已就绪`,'ok');
       await refreshRunners(true);
+    }else if(provider&&result.status==='manual'){
+      await afAlert({title:`更新 ${label}`,message:result.message||'请在执行机器上使用该 CLI 原来的安装方式更新'});
     }else if(result.status==='ready'){
       toast(`${label} 更新状态已中断，请刷新确认版本`,'err',5000);
     }else{

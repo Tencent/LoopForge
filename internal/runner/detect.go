@@ -13,6 +13,7 @@ import (
 
 	"agentflow/internal/domain"
 	"agentflow/internal/managedcli"
+	"agentflow/internal/runtime"
 )
 
 // providerSpec maps a platform executor kind to the local CLI binary the
@@ -21,6 +22,7 @@ import (
 type providerSpec struct {
 	Kind   string
 	Binary string
+	Update string // non-interactive update subcommand for an unmanaged installation
 	// VersionFlags precede --version. A CLI that rejects them is not the one
 	// the platform drives (other tools share the name) and is not reported.
 	VersionFlags []string
@@ -31,15 +33,15 @@ type providerSpec struct {
 // receive the configured CODEBUDDY_API_KEY from the daemon. Additional
 // providers can be detected by name.
 var defaultProviders = []providerSpec{
-	{Kind: "claude-code", Binary: "claude"},
-	{Kind: "codex", Binary: "codex"},
-	{Kind: "codebuddy", Binary: "codebuddy"},
+	{Kind: "claude-code", Binary: "claude", Update: "update"},
+	{Kind: "codex", Binary: "codex", Update: "update"},
+	{Kind: "codebuddy", Binary: "codebuddy", Update: "update"},
 	// Agent CLIs (domain.AgentCLIExecutorKinds) always run with the
 	// responsible user's key in a private HOME. cursor and agy have no npm
 	// package and are found on PATH only.
-	{Kind: "opencode", Binary: "opencode"},
-	{Kind: "cursor", Binary: "cursor-agent"},
-	{Kind: "agy", Binary: "agy"},
+	{Kind: "opencode", Binary: "opencode", Update: "upgrade"},
+	{Kind: "cursor", Binary: "cursor-agent", Update: "update"},
+	{Kind: "agy", Binary: "agy", Update: "update"},
 	{Kind: "kimi", Binary: "kimi"},
 	{Kind: "pi", Binary: "pi"},
 	{Kind: "dsh", Binary: "dsh"},
@@ -132,6 +134,11 @@ func detectRuntimes(ctx context.Context, extraBinaries map[string]string, invent
 		capabilities := []string{"non_interactive"}
 		if managed {
 			capabilities = append(capabilities, domain.RuntimeCapabilityManagedUpdate)
+		} else if spec.Update != "" && cliListsUpdate(ctx, path, spec.Update) {
+			capabilities = append(capabilities, domain.RuntimeCapabilityNativeUpdate)
+		}
+		if spec.Kind == runtime.AgentCLICursor {
+			capabilities = append(capabilities, domain.RuntimeCapabilityCursorLogin)
 		}
 		out = append(out, domain.RunnerRuntime{
 			Provider:     spec.Kind,

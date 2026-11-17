@@ -90,6 +90,8 @@ const RunnerVersionMaintenance = "0.10.3"
 // RunnerVersionLoginModels serves model discovery from the machine's CLI login.
 const RunnerVersionLoginModels = "0.10.4"
 
+const RunnerVersionCursorLogin = "0.10.5"
+
 func (r Runner) SupportsLoginModels() bool {
 	return versionAtLeast(r.RunnerVersion, RunnerVersionLoginModels)
 }
@@ -289,29 +291,44 @@ func (r Runner) SupportsProvider(provider string) bool {
 	return false
 }
 
-// RuntimeAuthMode returns the configured credential source for a provider.
-// The Runner currently reuses the login state of Codex and Claude Code,
-// which default to local login. Other providers use a personal credential.
+// RuntimeAuthMode returns the effective credential source for a provider.
 func (r Runner) RuntimeAuthMode(provider string) string {
-	if IsAgentCLIKind(provider) {
-		return RuntimeAuthPersonal
-	}
 	provider = strings.TrimSpace(provider)
 	for _, rt := range r.Runtimes {
 		if strings.EqualFold(rt.Provider, provider) {
-			if rt.AuthMode == RuntimeAuthPersonal {
-				return RuntimeAuthPersonal
-			}
-			if rt.AuthMode == RuntimeAuthLocal {
-				return RuntimeAuthLocal
-			}
-			break
+			return rt.EffectiveAuthMode(rt.AuthMode)
 		}
 	}
-	if strings.EqualFold(provider, "codebuddy") {
+	return (RunnerRuntime{Provider: provider}).EffectiveAuthMode("")
+}
+
+// EffectiveAuthMode preserves the owner's choice when the CLI can use it.
+// Cursor remains on API Key by default when an existing Runner is upgraded.
+func (rt RunnerRuntime) EffectiveAuthMode(saved string) string {
+	if !rt.SupportsAccountLogin() {
+		return RuntimeAuthPersonal
+	}
+	if saved == RuntimeAuthLocal || saved == RuntimeAuthPersonal {
+		return saved
+	}
+	if strings.EqualFold(rt.Provider, "cursor") {
 		return RuntimeAuthPersonal
 	}
 	return RuntimeAuthLocal
+}
+
+func (rt RunnerRuntime) SupportsAccountLogin() bool {
+	switch strings.ToLower(strings.TrimSpace(rt.Provider)) {
+	case "codex", "claude-code":
+		return true
+	case "cursor":
+		for _, capability := range rt.Capabilities {
+			if capability == RuntimeCapabilityCursorLogin {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 const (
@@ -321,7 +338,18 @@ const (
 	RuntimeAuthLocal               = "local"
 	RuntimeAuthPersonal            = "personal"
 	RuntimeCapabilityManagedUpdate = "managed_update"
+	RuntimeCapabilityCursorLogin   = "cursor_account_login"
+	RuntimeCapabilityNativeUpdate  = "native_update"
 )
+
+func (rt RunnerRuntime) SupportsCLIUpdate() bool {
+	for _, capability := range rt.Capabilities {
+		if capability == RuntimeCapabilityManagedUpdate || capability == RuntimeCapabilityNativeUpdate {
+			return true
+		}
+	}
+	return false
+}
 
 // RunnerRuntime is one discovered Agent CLI on the runner machine. Credentials
 // for the CLI stay on that machine; the control plane only learns the binary

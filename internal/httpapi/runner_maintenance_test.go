@@ -17,6 +17,7 @@ func TestRunnerMaintenanceRequiresOwnerAndDispatchesToBoundRunner(t *testing.T) 
 		Status: domain.RunnerStatusOnline, Runtimes: []domain.RunnerRuntime{
 			{Provider: "codex", Capabilities: []string{domain.RuntimeCapabilityManagedUpdate}},
 			{Provider: "claude-code"},
+			{Provider: "cursor", Capabilities: []string{domain.RuntimeCapabilityNativeUpdate}},
 		}}
 	if err := h.repo.PutRunner(row); err != nil {
 		t.Fatal(err)
@@ -49,6 +50,7 @@ func TestRunnerMaintenanceRequiresOwnerAndDispatchesToBoundRunner(t *testing.T) 
 		{http.MethodGet, "", "", false, 200},
 		{http.MethodPost, "", "", false, 202},
 		{http.MethodPost, "?provider=codex", "codex", false, 202},
+		{http.MethodPost, "?provider=cursor", "cursor", false, 202},
 		{http.MethodGet, "?provider=codex&status=1", "codex", true, 200},
 	} {
 		c, w := workbenchContext(owner, tc.method, "/"+tc.query, bytes.NewBuffer(nil))

@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
-	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -232,8 +231,6 @@ func (h *usersHandlers) probeCursorModels(c *gin.Context, apiKey string) {
 	c.JSON(http.StatusOK, cliModelProbeResult{Models: models, Source: "official"})
 }
 
-var cursorModelLine = regexp.MustCompile(`^([A-Za-z0-9][A-Za-z0-9._-]*) - (.+)$`)
-
 // cursorAgentModels runs `cursor-agent models` in a throwaway HOME with only
 // the user's key, so no server token or stored CLI login is visible to it.
 func cursorAgentModels(ctx context.Context, apiKey string) ([]domain.CLIModel, error) {
@@ -264,25 +261,7 @@ func cursorAgentModels(ctx context.Context, apiKey string) ([]domain.CLIModel, e
 		}
 		return nil, fmt.Errorf("cursor-agent models 退出：%v", err)
 	}
-	return cursorModelFamilies(parseCursorModels(string(out))), nil
-}
-
-// cursorModelFamilies folds the effort variants cursor-agent lists into one
-// row per family. The built-in table wins; other IDs ending in a recognized
-// effort suffix fold the same way.
-func cursorModelFamilies(models []domain.CLIModel) []domain.CLIModel {
-	return runtime.FoldCursorCLIModels(models)
-}
-
-func parseCursorModels(output string) []domain.CLIModel {
-	models := []domain.CLIModel{}
-	for _, line := range strings.Split(output, "\n") {
-		line = strings.Join(strings.Fields(strings.ReplaceAll(line, "\u200b", "")), " ")
-		if match := cursorModelLine.FindStringSubmatch(line); match != nil {
-			models = append(models, domain.CLIModel{ID: match[1], Name: strings.TrimSuffix(match[2], " (default)")})
-		}
-	}
-	return models
+	return runtime.FoldCursorCLIModels(runtime.ParseCursorCLIModels(string(out))), nil
 }
 
 func cliModelsOf(models []assistantDiscoveredModel) []domain.CLIModel {

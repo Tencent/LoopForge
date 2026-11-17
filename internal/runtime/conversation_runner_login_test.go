@@ -8,12 +8,14 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"agentflow/internal/domain"
 )
 
 func TestConversationRunnerLoginUsesOnlyNativeAuthInIsolatedHome(t *testing.T) {
-	for _, provider := range []string{"codex", "claude-code"} {
+	for _, provider := range []string{"codex", "claude-code", AgentCLICursor} {
 		t.Run(provider, func(t *testing.T) {
-			if provider == "codex" {
+			if provider == "codex" || provider == AgentCLICursor {
 				if _, err := exec.LookPath("python3"); err != nil {
 					t.Skip("python3 unavailable")
 				}
@@ -25,6 +27,8 @@ func TestConversationRunnerLoginUsesOnlyNativeAuthInIsolatedHome(t *testing.T) {
 			t.Setenv("CLAUDE_CODE_OAUTH_TOKEN", "")
 			t.Setenv("ANTHROPIC_API_KEY", "host-key")
 			t.Setenv("OPENAI_API_KEY", "host-key")
+			t.Setenv("CURSOR_API_KEY", "host-key")
+			t.Setenv("CURSOR_AUTH_TOKEN", "host-token")
 			file := filepath.Join(host, login.file)
 			if err := os.WriteFile(file, []byte("{}"), 0600); err != nil {
 				t.Fatal(err)
@@ -39,12 +43,26 @@ func TestConversationRunnerLoginUsesOnlyNativeAuthInIsolatedHome(t *testing.T) {
 test -f "$HOME/$1/$2"
 test ! -e "$HOME/$1/settings.json"
 test -z "${OPENAI_API_KEY:-}${CODEX_API_KEY:-}${ANTHROPIC_API_KEY:-}"
+if [ "$1" = .cursor ]; then
+  test "$CURSOR_CONFIG_DIR" = "$HOME/.cursor"
+  test "$AGENT_CLI_CREDENTIAL_STORE" = file
+  test -z "${CURSOR_API_KEY:-}${CURSOR_AUTH_TOKEN:-}"
+  test "$3" = --model && test "$4" = fixture-maximum
+fi
 printf 'local-auth-ok\n'`
 			req := ConversationProcessRequest{Operation: "start", Command: &ConversationCommand{
 				Argv: []string{"sh", "-c", script, "runner-login", login.dir, login.file}, Provider: provider,
 				Bindings: []CredentialBinding{login.binding}, RunnerLogin: true,
 				Credentials: RunCredentials{Codex: ProviderCredential{APIKey: "personal"}, ClaudeCode: ProviderCredential{APIKey: "personal"}},
 			}}
+			if provider == AgentCLICursor {
+				req.Command.Argv = append(req.Command.Argv, "--model", "fixture")
+				req.Command.AgentCLI = AgentCLIOptions{Model: "fixture", Effort: "max"}
+				req.Command.Credentials.AgentCLI = map[string]ProviderCredential{AgentCLICursor: {
+					APIKey: "personal",
+					Models: []domain.CLIModel{{ID: "fixture", Efforts: map[string]string{"max": "fixture-maximum"}, DefaultEffort: "max"}},
+				}}
+			}
 			started, err := pool.Handle(ctx, root, "", nil, req, nil)
 			if err != nil {
 				t.Fatal(err)

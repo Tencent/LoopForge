@@ -23,12 +23,10 @@ type runnerMaintenanceState struct {
 	jobs    sync.WaitGroup
 }
 
-func (d *Daemon) managedRuntime(provider string) (domain.RunnerRuntime, bool) {
-	if d.cfg.ManagedCLIRoot != "" {
-		for _, rt := range d.currentRuntimes() {
-			if rt.Provider == provider && slices.Contains(rt.Capabilities, domain.RuntimeCapabilityManagedUpdate) {
-				return rt, true
-			}
+func (d *Daemon) cliUpdateRuntime(provider string) (domain.RunnerRuntime, bool) {
+	for _, rt := range d.currentRuntimes() {
+		if rt.Provider == provider && rt.SupportsCLIUpdate() {
+			return rt, true
 		}
 	}
 	return domain.RunnerRuntime{}, false
@@ -42,11 +40,10 @@ func (d *Daemon) maintenanceResponse(ctx, daemonCtx context.Context, request *do
 	}
 	provider := request.Provider
 	key, version := runnerMaintenanceKey, runnerVersion
+	updateAvailable := true
 	if provider != "" {
-		rt, managed := d.managedRuntime(provider)
-		if !managed {
-			return domain.RunnerWorkspaceResponse{Status: http.StatusConflict, Error: "请在执行机器上使用该 CLI 原来的安装方式更新"}, nil
-		}
+		var rt domain.RunnerRuntime
+		rt, updateAvailable = d.cliUpdateRuntime(provider)
 		key, version = provider, rt.Version
 	}
 
@@ -58,9 +55,15 @@ func (d *Daemon) maintenanceResponse(ctx, daemonCtx context.Context, request *do
 			return runnerWorkspacePayload(result), nil
 		}
 		if provider != "" {
+			if !updateAvailable {
+				return runnerWorkspacePayload(cliUpdateManualResult()), nil
+			}
 			return runnerWorkspacePayload(domain.RunnerMaintenanceResult{Status: "ready", Current: version, CanUpdate: true}), nil
 		}
 		return runnerWorkspacePayload(d.inspectRunnerUpdate(ctx)), nil
+	}
+	if !updateAvailable {
+		return domain.RunnerWorkspaceResponse{Status: http.StatusConflict, Error: cliUpdateManualResult().Message}, nil
 	}
 
 	if provider == "" && d.cfg.DisableAutoUpdate {
@@ -122,7 +125,7 @@ func (d *Daemon) runMaintenance(ctx context.Context, key, provider, version stri
 	} else {
 		updateCtx, cancel := context.WithTimeout(ctx, 45*time.Minute)
 		defer cancel()
-		result = d.applyManagedCLIUpdate(updateCtx, provider)
+		result = d.applyCLIUpdate(updateCtx, provider)
 	}
 	result.Current = version
 	d.maintenance.mu.Lock()
@@ -131,6 +134,22 @@ func (d *Daemon) runMaintenance(ctx context.Context, key, provider, version stri
 	if result.Status == "restarting" && d.cancelClaimLoop != nil {
 		d.cancelClaimLoop()
 	}
+}
+
+func (d *Daemon) applyCLIUpdate(ctx context.Context, provider string) domain.RunnerMaintenanceResult {
+	rt, ok := d.cliUpdateRuntime(provider)
+	if !ok {
+		return cliUpdateManualResult()
+	}
+	if slices.Contains(rt.Capabilities, domain.RuntimeCapabilityNativeUpdate) {
+		if result := d.applyNativeCLIUpdate(ctx, rt); result.Status != "manual" {
+			return result
+		}
+	}
+	if d.cfg.ManagedCLIRoot != "" && slices.Contains(rt.Capabilities, domain.RuntimeCapabilityManagedUpdate) {
+		return d.applyManagedCLIUpdate(ctx, provider)
+	}
+	return cliUpdateManualResult()
 }
 
 func (d *Daemon) applyRunnerUpdate(ctx context.Context) domain.RunnerMaintenanceResult {

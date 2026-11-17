@@ -14,6 +14,7 @@ import (
 
 	"agentflow/internal/domain"
 	"agentflow/internal/managedcli"
+	"agentflow/internal/runtime"
 )
 
 func TestResolveUnmanagedCLIPreservesPathAndInstallerFallback(t *testing.T) {
@@ -64,13 +65,13 @@ func TestResolveUnmanagedCLIPreservesPathAndInstallerFallback(t *testing.T) {
 func TestParseCursorModels(t *testing.T) {
 	output := "Available models\n\nauto - Auto (default)\ncomposer-2.5 - Composer 2.5\ngrok-4.7-low-fast - Grok 4.7  Low Fast\u200b\u200b\nTip: use --model\n"
 	want := []domain.CLIModel{{ID: "auto", Name: "Auto"}, {ID: "composer-2.5", Name: "Composer 2.5"}, {ID: "grok-4.7-low-fast", Name: "Grok 4.7 Low Fast"}}
-	if got := parseCursorModels(output); !reflect.DeepEqual(got, want) {
+	if got := runtime.ParseCursorCLIModels(output); !reflect.DeepEqual(got, want) {
 		t.Fatalf("models=%+v", got)
 	}
 }
 
 func TestCursorModelFamilies(t *testing.T) {
-	got := cursorModelFamilies([]domain.CLIModel{
+	got := runtime.FoldCursorCLIModels([]domain.CLIModel{
 		{ID: "grok-4.7-low-fast", Name: "Grok 4.7 Low Fast"}, {ID: "brand-new", Name: "Brand New"},
 		{ID: "auto", Name: "Auto"}, {ID: "grok-4.7-high-fast"}, {ID: "kimi-k3-max"}, {ID: "brand-new"},
 	})

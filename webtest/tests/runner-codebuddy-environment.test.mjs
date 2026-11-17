@@ -54,6 +54,39 @@ test('runner card indicates a missing CodeBuddy key on its single-line label', a
   assert.ok(el.classList.contains('missing'));
 });
 
+test('Cursor shows an upgrade hint on older runners and a login choice after upgrading', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  renderCodeBuddyRow(app, {});
+  const selector = '[data-runner-auth="runner-cb|cursor"]';
+  const auth = () => app.document.querySelector(selector);
+  app.evaluate(`
+    state.runners[0].runtimes.push({provider:'cursor',authMode:'personal',status:'online'});
+    renderRunnersView();
+  `);
+  assert.equal(auth(),null);
+  assert.ok(app.document.querySelector('[title*="Runner 0.10.5"]'));
+  app.evaluate(`
+    state.runners[0].runtimes[2].capabilities=['cursor_account_login'];
+    renderRunnersView();
+  `);
+  assert.deepEqual([...auth().options].map(option=>option.textContent),['账号登录','API Key']);
+  assert.equal(auth().value,'personal');
+  const updated = app.evaluate(`
+    ({...state.runners[0],runtimes:state.runners[0].runtimes.map(runtime=>runtime.provider==='cursor'?{...runtime,authMode:'local'}:runtime)})
+  `);
+  app.router.put('/api/runners/runtimes', updated);
+  app.router.get('/api/runners', [updated]);
+  auth().value='local';
+  auth().dispatchEvent(new app.window.Event('change',{bubbles:true}));
+  await settle();
+  assert.equal(auth().value,'local');
+  assert.match(auth().title,/AGENT_CLI_CREDENTIAL_STORE=file agent login/);
+  assert.deepEqual(app.router.calls.find(call=>call.path==='/api/runners/runtimes').body,{
+    runnerId:'runner-cb',provider:'cursor',authMode:'local'
+  });
+});
+
 test('testing a CLI sends its machine and provider and shows the result', async (t) => {
   const app = await loadApp();
   t.after(app.close);
@@ -137,7 +170,7 @@ test('CLI model editor uses the selected auth source and saves the personal cata
   app.document.querySelector('#confirmCancelBtn').click();
 });
 
-test('CLI update is available for managed installations and guides others locally', async t => {
+test('CLI update runs the Runner action for native updates and guides unsupported installations locally', async t => {
   const app = await loadApp();
   t.after(app.close);
   renderCodeBuddyRow(app, {});
@@ -149,7 +182,7 @@ test('CLI update is available for managed installations and guides others locall
   assert.match(app.document.querySelector('#confirmMessage').textContent,/原来的安装方式/);
   assert.equal(app.router.calls.filter(c => c.path.endsWith('/maintenance')).length,0);
   app.document.querySelector('#confirmOkBtn').click();
-  app.evaluate(`state.runners[0].runtimes[1].capabilities=['managed_update'];renderRunnersView();followRunnerUpdate=async()=>{}`);
+  app.evaluate(`state.runners[0].runtimes[1].capabilities=['native_update'];renderRunnersView();followRunnerUpdate=async()=>{}`);
   app.router.post('/api/runners/runner-cb/maintenance', {status:'updating'});
   update();
   await settle();
