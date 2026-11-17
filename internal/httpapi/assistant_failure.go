@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"regexp"
 	"strings"
+	"syscall"
 
 	"agentflow/internal/domain"
 	"agentflow/internal/runtime"
@@ -142,6 +143,8 @@ func classifyAssistantFailureText(f domain.AssistantFailure, err error, text str
 		return false
 	}
 	switch {
+	case errors.Is(err, syscall.ENOSPC), has("no space left on device", "enospc", "there is not enough space on the disk"):
+		f.Code, f.Phase, f.Message, f.Suggestion = "DISK_FULL", "execution", "执行环境磁盘空间不足，无法继续生成", "请管理员检查执行机器或沙箱所在磁盘的可用空间，清理后重试。"
 	case has("本机登录态"):
 		f.Code, f.Phase, f.Message, f.Suggestion = "RUNNER_LOGIN_REQUIRED", "setup", "执行机器上的 CLI 本机登录态不可用，请检查执行机器上的 CLI 登录", "请在运行 Runner 的系统账户下检查 CLI 登录，或切换到个人凭证。"
 	case has("执行机器需升级至"):
