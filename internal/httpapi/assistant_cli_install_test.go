@@ -54,6 +54,16 @@ func hostHas(binary string) bool {
 	return false
 }
 
+// withoutGlobalCLIs hides the global install locations from
+// resolveAssistantEngineBin for one test, so a CLI preinstalled on the host
+// (the platform image ships dsh in /usr/local/bin) does not look installed.
+func withoutGlobalCLIs(t *testing.T) {
+	t.Helper()
+	saved := assistantCLIGlobalDirs
+	assistantCLIGlobalDirs = nil
+	t.Cleanup(func() { assistantCLIGlobalDirs = saved })
+}
+
 func TestInstallCLIRequiresLoginAndAllowlist(t *testing.T) {
 	h := &assistantHandlers{deps: &deps{}}
 	rec := postCLIInstall(t, h, nil, `{"engine":"opencode"}`)
@@ -165,6 +175,7 @@ chmod 755 "$prefix/node_modules/.bin/$NPM_TEST_BIN"
 
 func TestInstallStatusSurvivesAReload(t *testing.T) {
 	resetCLIInstallJobs(t)
+	withoutGlobalCLIs(t)
 	root := t.TempDir()
 	npm := t.TempDir()
 	script := `#!/bin/sh
