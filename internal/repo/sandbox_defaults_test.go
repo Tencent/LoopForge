@@ -120,3 +120,35 @@ func TestSeededGenericDockerSandboxIsSharedForConversations(t *testing.T) {
 		t.Fatal("generic-docker missing from the project's conversation sandboxes")
 	}
 }
+
+// Conversation workspaces run in Docker or in the execution machine's native
+// lightweight sandbox; local (no isolation) is never offered.
+func TestConversationSandboxAcceptsDockerAndNative(t *testing.T) {
+	s, err := OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { s.Close() })
+	for _, profile := range []domain.SandboxProfile{
+		{ID: "cs-native", Name: "Native", ProjectID: "p", Driver: domain.SandboxDriverNative},
+		{ID: "cs-bwrap", Name: "Bwrap", ProjectID: "p", Driver: domain.SandboxDriverBwrap},
+		{ID: "cs-local", Name: "Local", ProjectID: "p", Driver: domain.SandboxDriverLocal},
+		{ID: "cs-other", Name: "Other", ProjectID: "q", Driver: domain.SandboxDriverNative},
+	} {
+		if err := s.PutSandbox(profile); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for id, ok := range map[string]bool{"cs-native": true, "cs-bwrap": true, GenericDockerSandboxID: true, "cs-local": false, "cs-other": false} {
+		if _, err := s.ConversationSandbox("p", id); (err == nil) != ok {
+			t.Fatalf("ConversationSandbox(%s) err=%v, want ok=%v", id, err, ok)
+		}
+	}
+	listed := map[string]bool{}
+	for _, profile := range s.ConversationSandboxes("p") {
+		listed[profile.ID] = true
+	}
+	if !listed["cs-native"] || listed["cs-local"] || listed["cs-other"] {
+		t.Fatalf("conversation sandboxes = %v", listed)
+	}
+}

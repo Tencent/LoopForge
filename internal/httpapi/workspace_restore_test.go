@@ -155,3 +155,72 @@ func TestAsyncWorkspaceRestoreDoesNotAcknowledgeMissingSnapshot(t *testing.T) {
 		t.Fatalf("missing snapshot was acknowledged as restored: %d %s", response.Code, response.Body)
 	}
 }
+
+func TestWorkspaceRestoreEligibilityUsesWorkspaceEditAccess(t *testing.T) {
+	t.Setenv("AGENTFLOW_AUTH_REQUIRED", "true")
+	a, owner, member, viewer, _ := sharedWorkbenchFixture(t)
+	project, _ := a.repo.Project("workbench")
+	project.Members = append(project.Members, domain.ProjectMember{UserID: viewer.ID, Role: "viewer"})
+	if err := a.repo.PutProject(project); err != nil {
+		t.Fatal(err)
+	}
+	a.deps.engine = engine.New(a.repo, runtime.NewManager(t.TempDir()))
+	h := &runsHandlers{deps: a.deps}
+	run, _ := a.repo.RunState("shared-run")
+	now := time.Now().UTC()
+	token, err := h.engine.BeginConversationWorkspaceUse(run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = h.repo.SaveWorkspaceCheckpoint(run.ID, token, now, runtime.EmptyWorkspaceCheckpoint()); err != nil {
+		t.Fatal(err)
+	}
+	if err = h.repo.FinishWorkspaceUse(run.ID, token, now, nil, ""); err != nil {
+		t.Fatal(err)
+	}
+	run.Status = "succeeded"
+	run.WorkspaceCleanedAt = now
+	if err = h.repo.PutRun(run); err != nil {
+		t.Fatal(err)
+	}
+
+	router := gin.New()
+	router.Use(h.runWriteGuard())
+	router.GET("/api/runs/:id/workspace", h.runWorkspace)
+	router.POST("/api/runs/:id/workspace/restore", h.workspaceRestore)
+	const workspace = "/api/runs/shared-run/workspace"
+	for _, tc := range []struct {
+		name       string
+		user       domain.User
+		restorable bool
+	}{
+		{"viewer", viewer, false},
+		{"member", member, true},
+		{"owner", owner, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			request, response := workbenchContext(tc.user, http.MethodGet, workspace, bytes.NewBuffer(nil))
+			router.ServeHTTP(response, request.Request)
+			var result struct {
+				Available         bool       `json:"available"`
+				Restorable        *bool      `json:"restorable"`
+				CheckpointSavedAt *time.Time `json:"checkpointSavedAt"`
+			}
+			err := json.Unmarshal(response.Body.Bytes(), &result)
+			if response.Code != http.StatusOK || err != nil || result.Available || result.CheckpointSavedAt == nil || result.Restorable == nil || *result.Restorable != tc.restorable {
+				t.Fatalf("restorable should be %v for %s: %d %s", tc.restorable, tc.name, response.Code, response.Body)
+			}
+		})
+	}
+	request, response := workbenchContext(viewer, http.MethodPost, workspace+"/restore", bytes.NewBuffer(nil))
+	request.Request.Header.Set("Prefer", "respond-async")
+	router.ServeHTTP(response, request.Request)
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("viewer restore: %d %s", response.Code, response.Body)
+	}
+	request, response = workbenchContext(owner, http.MethodPost, workspace+"/restore", bytes.NewBuffer(nil))
+	router.ServeHTTP(response, request.Request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("owner restore: %d %s", response.Code, response.Body)
+	}
+}

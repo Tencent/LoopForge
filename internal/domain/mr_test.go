@@ -60,3 +60,23 @@ func TestMRArtifactPriorityIgnoresPatches(t *testing.T) {
 		t.Fatalf("unrelated artifact priority=%d", got)
 	}
 }
+
+func TestIsGitHubPRURL(t *testing.T) {
+	for _, ok := range []string{"https://github.com/acme/web/pull/9", " https://github.com/acme/web.go/pull/12/ "} {
+		if !IsGitHubPRURL(ok) {
+			t.Fatalf("%q should be a GitHub PR link", ok)
+		}
+	}
+	for _, bad := range []string{
+		"https://git.example.com/team/web/merge_requests/7",
+		"http://github.com/acme/web/pull/9",
+		"https://github.com.evil.example/acme/web/pull/9",
+		"https://github.com/acme/web/pull/9#discussion",
+		"see https://github.com/acme/web/pull/9",
+		"https://github.com/acme/web/issues/9",
+	} {
+		if IsGitHubPRURL(bad) {
+			t.Fatalf("%q must not be accepted", bad)
+		}
+	}
+}

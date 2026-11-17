@@ -52,6 +52,36 @@ function storedExecutor() {
     return "codebuddy";
   }
 }
+// The chat model is a personal preference like the executor: new
+// conversations and page reloads keep the last pick. Each CLI remembers its
+// own, because model IDs differ between CLIs.
+const MODEL_KEY = "loopforge.assistant.model.";
+function storedModel(executor) {
+  try {
+    return localStorage.getItem(MODEL_KEY + executor) || "";
+  } catch {
+    return "";
+  }
+}
+function rememberModel(executor, id) {
+  if (!id) return;
+  try {
+    localStorage.setItem(MODEL_KEY + executor, id);
+  } catch {
+    // Without storage the pick still applies to this page.
+  }
+}
+const codeBuddyModels = (models) => (models || []).filter((m) => !m.engine || m.engine === "codebuddy");
+const executorModelList = (models, executor) =>
+  executor === "codebuddy" ? codeBuddyModels(models) : engineModels(models, executor);
+// The model a new conversation on executor starts with: the remembered one
+// while list still offers it, else the first listed. Before a CLI's list has
+// loaded the remembered model (or that CLI's own default) holds the place.
+function preferredModel(list, executor) {
+  const remembered = storedModel(executor);
+  if (!list?.length) return remembered || (executor === "codebuddy" ? "" : "default");
+  return list.some((m) => m.id === remembered) ? remembered : list[0].id;
+}
 
 // Mirrors errAssistantSponsoredModel in internal/httpapi/assistant_sponsor.go;
 // credentialHint turns it into a "去配置" button.
@@ -96,7 +126,7 @@ export function useChat() {
     // the header reveals that conversation's title once it has loaded.
     [revealId, setRevealId] = useState(activeId),
     [projectId, setProjectId] = useState(initialProject),
-    [model, setModel] = useState(""),
+    [model, setModel] = useState(() => storedModel(storedExecutor())),
     [effort, setEffort] = useState(""),
     [sponsoredModels, setSponsoredModels] = useState([]),
     [executor, setExecutorState] = useState(storedExecutor),
@@ -112,6 +142,10 @@ export function useChat() {
     // The generation whose final transcript has been loaded. A queued message
     // waits for it, so it is sent after the finished (or unfinished) reply.
     [settledId, setSettledId] = useState(null),
+    // The conversation whose reply status has been fetched since it was
+    // opened. Until then a reply may still be running there, so queued
+    // messages must not go out (they would be rejected and get lost).
+    [generationKnown, setGenerationKnown] = useState(null),
     // A queued message sent with "send now": it interrupts the running reply
     // and stays on screen until the server's follow-up turn has started.
     [steering, setSteering] = useState(null);
@@ -132,8 +166,7 @@ export function useChat() {
     applyingRef = useRef(new Set()),
     dispatchingRef = useRef(false),
     steeringRef = useRef(null),
-    selectRef = useRef(null),
-    defaultModel = useRef("");
+    selectRef = useRef(null);
   currentId.current = activeId;
   sessionRef.current = session;
   projectRef.current = projectId;
@@ -175,17 +208,16 @@ export function useChat() {
       if (id === currentId.current && sessionRef.current?.id === id) return;
       setError("");
       setGeneration(null);
+      setGenerationKnown(null);
       setLive({ answer: "", thinking: "", tools: [] });
       setSession(null);
       executionMachines.resetMachine();
-      // A new conversation starts on the platform default, not on whatever
-      // model the previously opened conversation used.
+      // A new conversation starts on the person's remembered model, not on
+      // whatever model the previously opened conversation used.
       if (!id) {
         const preferred = storedExecutor();
         setExecutorState(preferred);
-        const next = engineModels(models, preferred);
-        if (preferred === "codebuddy") setModel(defaultModel.current || next[0]?.id || "");
-        else setModel(next[0]?.id || "default");
+        setModel(preferredModel(executorModelList(models, preferred), preferred));
       }
       setEffort("");
       setSandboxProfileId("");
@@ -219,9 +251,9 @@ export function useChat() {
         setProjects(projectRows || []);
         setSandboxes(sandboxRows || []);
         setModels(catalog.models || []);
-        defaultModel.current = catalog.default || "";
         setSponsoredModels(sponsoredModelList(catalog));
-        setModel(catalog.default);
+        const startExecutor = storedExecutor();
+        setModel(preferredModel(executorModelList(catalog.models, startExecutor), startExecutor));
         await refreshSessions();
         if (!current) return;
         const recovered = connectionError;
@@ -258,8 +290,10 @@ export function useChat() {
         // A conversation stays on the CLI that answered it. Replies saved before
         // model prefixes keep that CLI on the session executor.
         const locked = conversationEngine(stored.messages, models, stored.executor);
-        setExecutorState(knownExecutor(locked || stored.executor));
-        setModel(stored.model || defaultModel.current || models[0]?.id || "");
+        const storedEngine = knownExecutor(locked || stored.executor);
+        setExecutorState(storedEngine);
+        // A conversation shows the model it runs on.
+        setModel(stored.model || preferredModel(executorModelList(models, storedEngine), storedEngine));
         setEffort(stored.effort || "");
         setProjectId(stored.projectId || "");
         syncProject(stored.projectId || "");
@@ -365,6 +399,7 @@ export function useChat() {
       accumulated = mergeEvents(accumulated, events);
       setLive(accumulated);
       setGeneration(g);
+      setGenerationKnown(activeId);
       if (g.status !== "running") setStopRequest((old) => old?.generationId === g.id ? null : old);
       if (g.status === "running" && ["platform", "workspace"].includes(g.runtimeMode)) {
         setSession((stored) => stored?.id === activeId && stored.runtimeMode !== g.runtimeMode ? { ...stored, runtimeMode: g.runtimeMode } : stored);
@@ -419,7 +454,9 @@ export function useChat() {
         timer = setTimeout(poll, g.status === "running" ? 200 : 2000);
       } catch (e) {
         if (cancelled) return;
-        if (e.status !== 404) {
+        // No reply was ever started here: nothing can be running.
+        if (e.status === 404) setGenerationKnown(activeId);
+        else {
           connectionError = e.status ? e.message : "连接暂时中断，正在重连…";
           setError(connectionError);
         }
@@ -472,6 +509,18 @@ export function useChat() {
     [generation?.status, newChat, refreshSessions, syncProject],
   );
   selectRef.current = selectProject;
+  // Starts a new conversation in a project without binding or leaving the
+  // conversation that is open now (selectProject would bind a personal one).
+  const startProjectDraft = useCallback(
+    (id) => {
+      newChat();
+      if (id === projectRef.current) return;
+      setSandboxProfileId("");
+      setProjectId(id);
+      syncProject(id);
+    },
+    [newChat, syncProject],
+  );
   // The page's project switcher defaults to the first project, which a new
   // user usually has not joined. Start their new chats as personal chats
   // instead of failing on the first message. The parent page keeps its
@@ -510,6 +559,12 @@ export function useChat() {
         );
     return () => window.removeEventListener("message", listener);
   }, [ready]);
+  const personalMachineId = executionLocked(session)
+    ? (session.executionTarget?.pool === "runner" ? session.executionTarget.runnerId : "")
+    : executionMachines.defaultRunnerId;
+  const personalMachine = executionMachines.machines.find(
+    (machine) => machine.id === personalMachineId && machine.ownerUserId === user?.id,
+  );
   const codeBuddy = executor === "codebuddy";
   const listedForEngine = engineModels(models, executor);
   const executorModels = listedForEngine.length || codeBuddy
@@ -530,7 +585,13 @@ export function useChat() {
       .then((catalog) => {
         if (!current) return;
         setProviderCatalogs((old) => ({ ...old, [executor]: catalog }));
-        setModel((old) => (catalog.models || []).some((m) => m.id === old) ? old : catalog.default || "default");
+        // An open conversation keeps the model it runs on: the catalog lists
+        // bare IDs without the CLI prefix, and no gateway models.
+        setModel((old) =>
+          (catalog.models || []).some((m) => m.id === old) || (old && old === sessionRef.current?.model)
+            ? old
+            : preferredModel(catalog.models, executor),
+        );
       })
       .catch((e) => current && setError(e.message));
     return () => {
@@ -546,10 +607,9 @@ export function useChat() {
         localStorage.setItem(EXECUTOR_KEY, id);
       } catch {}
       setEffort("");
-      const next = engineModels(models, id);
-      const catalog = id === "codebuddy" ? { default: defaultModel.current } : providerCatalogs[id];
+      const listed = executorModelList(models, id);
       setExecutorState(id);
-      setModel(next[0]?.id || catalog?.default || (id === "codebuddy" ? defaultModel.current : "default"));
+      setModel(preferredModel(listed.length || id === "codebuddy" ? listed : providerCatalogs[id]?.models, id));
       if (locked && locked !== id) open(null);
     },
     [executor, models, open, providerCatalogs],
@@ -561,10 +621,11 @@ export function useChat() {
         return false;
       }
       setModel(id);
+      rememberModel(executor, id);
       setEffort((value) => modelEffort(executorModels.find((m) => m.id === id), value));
       return true;
     },
-    [sponsored, sponsoredModels, executorModels],
+    [sponsored, sponsoredModels, executorModels, executor],
   );
   // Credential flags are omitted when false, so drop the old ones before
   // merging; otherwise a cleared key would still look configured.
@@ -640,6 +701,9 @@ export function useChat() {
     if (!next || dispatchingRef.current || submittingRef.current) return;
     if (steeringRef.current) return;
     if (generation?.status === "running" || sessionRef.current?.id !== id) return;
+    // Wait until this conversation's reply status is known: right after
+    // switching back the transcript can arrive before the running reply does.
+    if (generationKnown !== id) return;
     // Wait until the ended turn's transcript (with its reply) is loaded.
     if (generation && settledId !== generation.id) return;
     dispatchingRef.current = true;
@@ -670,7 +734,7 @@ export function useChat() {
     const item = id ? queues[id]?.items.find((m) => m.id === itemId) : null;
     if (!item || steeringRef.current || dispatchingRef.current) return false;
     if (generation?.status !== "running" || !generation.id) {
-      if (submittingRef.current) return false;
+      if (submittingRef.current || generationKnown !== id) return false;
       dispatchingRef.current = true;
       setQueues((old) => removeQueued(old, id, item.id));
       try {
@@ -852,8 +916,12 @@ export function useChat() {
           ]);
           if (currentId.current === s.id) setSession(stored);
           if (g?.id !== previousGeneration && g?.status === "running") {
-            setGeneration(g);
-            return true;
+            if (currentId.current === s.id) setGeneration(g);
+            // Only a lost response may hide an accepted turn. A clear
+            // rejection (e.g. 409 while another reply runs) means this
+            // message was not taken, so a queued one goes back instead of
+            // being dropped.
+            if (!e.status || e.status >= 500) return true;
           }
         } catch {}
       }
@@ -922,7 +990,7 @@ export function useChat() {
       );
       open(stored.id);
       setSession(stored);
-      setModel(stored.model || defaultModel.current);
+      setModel(stored.model || preferredModel(executorModels, executor));
       setEffort(stored.effort || "");
       await refreshSessions();
       return stored;
@@ -931,7 +999,9 @@ export function useChat() {
       return null;
     }
   }
-  async function regenerate(stored) {
+  // approvalMode is the composer's current choice, so a regenerated reply
+  // follows it like a new message does.
+  async function regenerate(stored, approvalMode = "confirm") {
     try {
       submittingRef.current = true;
       setSubmitting(true);
@@ -948,7 +1018,7 @@ export function useChat() {
         model: chosen,
         effort: codeBuddy ? modelEffort(models.find((m) => m.id === chosen), stored.effort || "") : "",
         messages: stored.messages,
-        approvalMode: "confirm",
+        approvalMode: ["confirm", "assisted", "auto"].includes(approvalMode) ? approvalMode : "confirm",
       });
       setGeneration(g);
       await refreshSessions();
@@ -1233,7 +1303,11 @@ export function useChat() {
     selectSandbox,
     models: executorModels,
     executor,
-    executors: EXECUTORS,
+    executors: EXECUTORS.map((item) => {
+      if (!personalMachine || (item.id !== "codex" && item.id !== "claude-code")) return item;
+      const runtime = personalMachine.runtimes?.find((runtime) => runtime.provider === item.id);
+      return runtime?.authMode === "personal" ? item : { ...item, detail: "使用执行机器上的本机登录态。" };
+    }),
     setExecutor: chooseExecutor,
     sessions,
     session,
@@ -1268,6 +1342,7 @@ export function useChat() {
     open,
     newChat,
     selectProject,
+    startProjectDraft,
     send,
     stop,
     rename,

@@ -25,7 +25,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - {os: ubuntu-latest, python-version: "3.8", node-version: "22"}
+          # ubuntu-latest is Ubuntu 26.04, which has no Python 3.8 build.
+          - {os: ubuntu-24.04, python-version: "3.8", node-version: "22"}
           - {os: ubuntu-latest, python-version: "3.12", node-version: "22"}
           - {os: ubuntu-latest, python-version: "3.12", node-version: "20"}
           - {os: macos-latest, python-version: "3.12", node-version: "22"}
@@ -55,7 +56,9 @@ jobs:
           node-version: "22"
       - name: Install Playwright
         run: |
-          python3 -m pip install pyyaml==6.0.3 playwright==1.55.0
+          # 1.55 has no Chromium build for Ubuntu 26.04. 1.64.1 matches
+          # e2e/package.json, which already installs on that image.
+          python3 -m pip install pyyaml==6.0.3 playwright==1.64.1
           bash ../scripts/install-playwright-deps.sh python3 -m playwright
       - name: Render the observability dashboard
         env:

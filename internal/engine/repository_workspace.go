@@ -4,6 +4,7 @@ import (
 	"agentflow/internal/domain"
 	"agentflow/internal/gitwork"
 	"agentflow/internal/procwatch"
+	"agentflow/internal/runtime"
 	"bytes"
 	"context"
 	"crypto/rand"
@@ -57,8 +58,8 @@ func repositoryWorkspaceDirs(workspace string, repositories []domain.RepositoryC
 // prepareRepositories checks out every run repository into its WorkspaceDir
 // (a first-level sub-directory of the run workspace).
 func prepareRepositories(ctx context.Context, workspace string, repositories []domain.RepositoryContext) error {
-	if len(repositories) == 0 {
-		return nil
+	if err := runtime.RestoreLegacyWorkspaceAgentConfig(ctx, workspace, repositories); err != nil {
+		return err
 	}
 	for _, rc := range repositories {
 		if err := prepareRepository(ctx, repositoryWorkspacePath(workspace, rc), rc); err != nil {
@@ -629,7 +630,7 @@ func defaultWorkBranch(issueNumber int, issueID string, now time.Time) string {
 	if issueNumber > 0 {
 		branchOwner = fmt.Sprintf("fix-issue-%d", issueNumber)
 	} else if issueID != "" {
-		branchOwner = "fix-" + safeGitRefSegment(issueID)
+		branchOwner = "fix-" + domain.SafeGitRefSegment(issueID)
 	}
 	branch := "feature/" + branchOwner + "-" + now.In(time.Local).Format("20060102-1504")
 	if issueNumber <= 0 && issueID == "" {
@@ -647,25 +648,6 @@ func workBranchNonce() string {
 		return strconv.FormatInt(time.Now().UnixNano()%(1<<24), 36)
 	}
 	return hex.EncodeToString(b[:])
-}
-
-func safeGitRefSegment(value string) string {
-	var b strings.Builder
-	for _, r := range strings.ToLower(value) {
-		if r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '-' || r == '_' {
-			b.WriteRune(r)
-		} else if b.Len() > 0 {
-			b.WriteByte('-')
-		}
-		if b.Len() >= 64 {
-			break
-		}
-	}
-	result := strings.Trim(b.String(), "-.")
-	if result == "" {
-		return "run"
-	}
-	return result
 }
 
 func recordRepositoryBaseline(workspace, baseBranch string) error {

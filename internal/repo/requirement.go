@@ -148,14 +148,9 @@ func buildRequirementLanes(issue domain.Issue, project domain.Project, runs []do
 		}
 		acc := byWF[workflowID]
 		if acc == nil {
-			if workflow.ID == "" {
-				workflow = workflows[workflowID]
-			}
+			workflow = resolvedRequirementWorkflow(workflows, workflowID, workflow)
 			lane := domain.InferSOPLane(workflow)
-			name := workflow.Name
-			if name == "" {
-				name = workflowID
-			}
+			name := requirementLaneName(workflow, workflowID)
 			acc = &wfAcc{lane: domain.RequirementLane{
 				Lane: lane, Label: name, WorkflowID: workflowID, WorkflowName: name,
 			}}
@@ -164,10 +159,7 @@ func buildRequirementLanes(issue domain.Issue, project domain.Project, runs []do
 		return acc
 	}
 	for _, run := range runs {
-		workflow := run.WorkflowSnapshot
-		if workflow.ID == "" {
-			workflow = workflows[run.WorkflowID]
-		}
+		workflow := resolvedRequirementWorkflow(workflows, run.WorkflowID, run.WorkflowSnapshot)
 		acc := accumulate(run.WorkflowID, workflow)
 		if acc == nil {
 			continue
@@ -239,10 +231,7 @@ func buildRequirementLanes(issue domain.Issue, project domain.Project, runs []do
 		if workflow.ID == "" {
 			lane.Lane = domain.InferSOPLane(domain.WorkflowDefinition{ID: binding.WorkflowID})
 		}
-		lane.WorkflowName = workflow.Name
-		if lane.WorkflowName == "" {
-			lane.WorkflowName = binding.WorkflowID
-		}
+		lane.WorkflowName = requirementLaneName(workflow, binding.WorkflowID)
 		lane.Label = lane.WorkflowName
 		if acc := byWF[binding.WorkflowID]; acc != nil {
 			copied := withSOPBinding(acc.lane, binding)
@@ -294,6 +283,25 @@ func buildRequirementLanes(issue domain.Issue, project domain.Project, runs []do
 	sort.Slice(orphans, func(i, j int) bool { return orphans[i].WorkflowName < orphans[j].WorkflowName })
 	out = append(out, orphans...)
 	return out
+}
+
+// resolvedRequirementWorkflow prefers the workflow definition frozen into a run
+// snapshot and falls back to the catalog entry when the snapshot is missing, so
+// a lane still gets a name and lane after its workflow leaves the catalog.
+func resolvedRequirementWorkflow(workflows map[string]domain.WorkflowDefinition, workflowID string, snapshot domain.WorkflowDefinition) domain.WorkflowDefinition {
+	if snapshot.ID != "" {
+		return snapshot
+	}
+	return workflows[workflowID]
+}
+
+// requirementLaneName is the lane display name: the workflow name, or the bare
+// id when the catalog entry is unknown.
+func requirementLaneName(workflow domain.WorkflowDefinition, workflowID string) string {
+	if workflow.Name != "" {
+		return workflow.Name
+	}
+	return workflowID
 }
 
 func laneStatusFromRun(run domain.Run) string {

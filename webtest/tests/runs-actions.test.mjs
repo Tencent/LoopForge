@@ -74,7 +74,7 @@ test('run helpers merge streams and format timing, output, logs, telemetry, prev
     ];
     const stages=workflowStages({nodes:[{id:'a'},{id:'b'},{id:'c'}],
       edges:[{source:'a',target:'b'},{source:'a',target:'c'}]}).map(s=>s.map(n=>n.id));
-    state.runWorkspace={runId:'run-x',loading:false,error:'',info:{available:true}};
+    state.runWorkspace={runId:'run-x',cleaned:false,loading:false,error:'',info:{available:true}};
     const workspace=workspacePaneHTML(run);
     state.runPreview={runId:'run-x',loading:false,error:'',info:{status:'ready',entryFile:'index.html',fileCount:4},
       session:{url:'http://preview.example/x',backendUrl:'https://api.example'}};
@@ -216,7 +216,7 @@ test('run helpers merge streams and format timing, output, logs, telemetry, prev
   assert.deepEqual(structuredClone(app.evaluate(`state.runLogs.items.map(x=>x.sequence)`)), [3]);
   assert.deepEqual(structuredClone(app.evaluate(`state.runTelemetry.items.map(x=>x.sequence)`)), [3]);
   app.evaluate(`
-    state.runWorkspace={runId:'run-live',info:{available:true},maximized:false};
+    state.runWorkspace={runId:'run-live',cleaned:false,info:{available:true},maximized:false};
     onWorkspaceVscodeMessage({origin:location.origin,data:{type:'agentflow-vscode',runId:'run-live',action:'maximize',maximized:true}});
     HTMLAnchorElement.prototype.click=function(){};
   `);

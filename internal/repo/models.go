@@ -39,6 +39,7 @@ type userConfigRow struct {
 	GongfengTokenExpiresAt       *time.Time `gorm:"column:gongfeng_token_expires_at"`
 	CodeBuddyAPIKey              *string    `gorm:"column:codebuddy_api_key;type:text"`
 	CodeBuddyInternetEnvironment string     `gorm:"column:codebuddy_internet_environment;size:64"`
+	CodeBuddyModels              *string    `gorm:"column:codebuddy_models;type:text"`
 	CodexAPIKey                  *string    `gorm:"column:codex_api_key;type:text"`
 	CodexBaseURL                 *string    `gorm:"column:codex_base_url;type:text"`
 	CodexModels                  *string    `gorm:"column:codex_models;type:text"`
@@ -236,6 +237,37 @@ type scheduleJobRow struct {
 }
 
 func (scheduleJobRow) TableName() string { return "schedule_jobs" }
+
+// scheduleJobExecutionRow is one schedule job execution; the indexed columns
+// mirror the payload for filtering.
+type scheduleJobExecutionRow struct {
+	ID        string     `gorm:"column:id;primaryKey;size:80"`
+	JobID     string     `gorm:"column:job_id;size:64;index:idx_schedule_job_executions_job"`
+	ProjectID string     `gorm:"column:project_id;size:64;index:idx_schedule_job_executions_project"`
+	TraceID   string     `gorm:"column:trace_id;size:64;index:idx_schedule_job_executions_trace"`
+	Status    string     `gorm:"column:status;size:32"`
+	Payload   []byte     `gorm:"column:payload;type:json"`
+	Started   *time.Time `gorm:"column:started_at;index:idx_schedule_job_executions_started"`
+	Updated   *time.Time `gorm:"column:updated_at"`
+}
+
+func (scheduleJobExecutionRow) TableName() string { return "schedule_job_executions" }
+
+// scheduleJobExecutionStatRow counts the finished executions of one job that
+// started in one UTC hour. Rows outlive the 200 executions a job keeps, so the
+// dashboard overview stays exact for frequent jobs.
+type scheduleJobExecutionStatRow struct {
+	JobID      string    `gorm:"column:job_id;primaryKey;size:64"`
+	BucketHour time.Time `gorm:"column:bucket_hour;primaryKey"`
+	ProjectID  string    `gorm:"column:project_id;size:64;index:idx_schedule_job_execution_stats_project"`
+	Finished   int       `gorm:"column:finished;not null;default:0"`
+	Success    int       `gorm:"column:success;not null;default:0"`
+	Failed     int       `gorm:"column:failed;not null;default:0"`
+	Timed      int       `gorm:"column:timed;not null;default:0"`
+	DurationMs int64     `gorm:"column:duration_ms;not null;default:0"`
+}
+
+func (scheduleJobExecutionStatRow) TableName() string { return "schedule_job_execution_stats" }
 
 type sharedScheduleVersionRow struct {
 	ID           string     `gorm:"column:id;primaryKey;size:64"`
@@ -704,7 +736,7 @@ func allModels() []any {
 		projectRow{}, projectMemberRow{}, repositoryRow{}, businessDomainRow{}, businessDomainAssignmentRow{},
 		agentRow{}, ruleRow{}, skillRow{}, skillFileRow{}, mcpServerRow{}, mcpFileRow{}, executorRow{},
 		dockerfileRow{}, environmentRow{}, sandboxRow{},
-		workflowRow{}, syncConfigRow{}, scheduleJobRow{}, sharedScheduleVersionRow{},
+		workflowRow{}, syncConfigRow{}, scheduleJobRow{}, scheduleJobExecutionRow{}, scheduleJobExecutionStatRow{}, sharedScheduleVersionRow{},
 		issueRow{}, issueCommentRow{}, taskRow{},
 		runAdmissionLockRow{}, runRow{}, runNodeRow{}, runEventRow{}, runTelemetryRow{}, runLogRow{}, runArtifactRow{}, runEvalRow{},
 		runPreviewRow{}, previewSessionRow{}, previewBlobRow{}, WorkspaceCheckpoint{}, workspaceCheckpointChunk{},

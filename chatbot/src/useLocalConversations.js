@@ -200,6 +200,10 @@ export function useLocalConversations(real) {
     } : {}),
     open,
     newChat,
+    startProjectDraft(id) {
+      selectLocal(null);
+      return real.startProjectDraft(id);
+    },
     setError(value) {
       if (selected()) setLocalError(value);
       else real.setError(value);
@@ -266,8 +270,8 @@ export function useLocalConversations(real) {
       selectLocal(id);
       return forked;
     },
-    async regenerate(stored) {
-      if (!isLocalConversation(stored?.id)) return real.regenerate(stored);
+    async regenerate(stored, approvalMode) {
+      if (!isLocalConversation(stored?.id)) return real.regenerate(stored, approvalMode);
       selectLocal(stored.id);
       return complete(stored, [...stored.messages].reverse().find((message) => message.role === "user")?.content || stored.title);
     },

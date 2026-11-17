@@ -9,7 +9,7 @@ function assetPageCopy(type=state.assetType){
     sandboxes:{group:'运行环境',page:'环境资产',tab:'沙箱',desc:'维护当前项目的运行隔离方式及环境依赖。',create:'新建沙箱'}
   })[type]||{group:'运行环境',page:'环境资产',tab:'Dockerfile',desc:'维护当前项目的容器构建定义。',create:'新建 Dockerfile'};
 }
-function assetSharedDescription(type=state.assetType){return type==='rules'?'查看其他项目共享的规则；共享规则只读，可直接绑定到本项目角色。':type==='skills'?'查看其他项目共享的技能；共享技能只读，可直接绑定到本项目角色。':'查看其他项目共享的环境资产；共享资产只读，可直接用于本项目。'}
+function assetSharedDescription(type=state.assetType){return type==='rules'?'查看其他项目共享的规则；共享规则只读，可直接绑定到本项目角色。':type==='skills'?'查看其他项目共享的技能；共享技能只读，会自动装入平台上所有对话和定时任务，也可绑定到本项目角色。':'查看其他项目共享的环境资产；共享资产只读，可直接用于本项目。'}
 function assetIconName(type=state.assetType){return ({rules:'gate',skills:'skills',dockerfiles:'layers',environments:'terminal',sandboxes:'server'})[type]||'layers'}
 function assetRefIconName(type=state.assetType){return ({rules:'robot',skills:'robot',dockerfiles:'server',environments:'server',sandboxes:'workflow'})[type]||'layers'}
 function assetScopeItems(scope){return (state.data[state.assetType]||[]).filter(item=>scope==='shared'?catalogShared(item.projectId,item.shared):catalogOwned(item.projectId))}
@@ -237,9 +237,13 @@ async function closeAssetDetail({force=false}={}){
   scrollAssetTop();
   return true;
 }
+// A shared skill is installed into every conversation and scheduled task on
+// the platform, not only offered for binding, so sharing one asks first.
+const SHARED_SKILL_NOTICE='共享后，这个技能会自动装入平台上所有用户的对话和定时任务（包括其他项目和无项目的对话），模型可以直接调用。继续？';
 async function toggleAssetShare(id){
   const item=(state.data[state.assetType]||[]).find(x=>x.id===id);
   if(!item||!catalogOwned(item.projectId))return toast('只能共享本项目的资产');
+  if(!item.shared&&state.assetType==='skills'&&!(await afConfirm({title:'共享技能',message:SHARED_SKILL_NOTICE,confirmText:'共享'})))return;
   try{
     const saved={...item,shared:!item.shared};
     await api(`/api/${state.assetType}`,{method:'PUT',body:JSON.stringify(saved)});
@@ -247,7 +251,7 @@ async function toggleAssetShare(id){
     if(state.selectedAsset===id){renderAssetDetailHead(item);refreshAssetAside(item)}
     else renderAssets();
     const agent=state.data.agents.find(a=>a.id===state.selectedAgent)||state.agentDraft;if(agent)renderAgentAssetsPanel(agent);
-    toast(saved.shared?'已共享，其他项目可绑定':'已取消共享');
+    toast(saved.shared?(state.assetType==='skills'?'已共享，所有对话和定时任务会自动装入':'已共享，其他项目可绑定'):'已取消共享');
   }catch(e){toast(e.message)}
 }
 function assetEmptyHint(){return ({rules:'规则是写给 Agent 的行为约束，例如编码规范、禁止事项。建好后在「角色定义」里绑定到角色。',skills:'技能是 Agent 可按需加载的说明和附加文件，例如某个框架的操作手册。建好后在「角色定义」里绑定到角色。',dockerfiles:'Dockerfile 定义沙箱容器的镜像。建好后在「沙箱管理」里选用；也可以直接用「共享」里的现成配置。',environments:'安装脚本在沙箱初始化时把工具装进隔离环境，例如指定版本的 Go、PHP、Node。建好后在「沙箱管理」里选用。',sandboxes:'沙箱决定 SOP 节点在什么隔离环境里执行，由 Dockerfile 和安装脚本组合而成。建好后在流程设置里选用；也可以直接用「共享」里的现成配置。'})[state.assetType]||''}
