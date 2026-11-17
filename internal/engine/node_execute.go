@@ -165,6 +165,10 @@ func (e *Engine) execute(ctx context.Context, runID string) {
 		}
 		for _, node := range ready {
 			node := node
+			if err := checkNodeRequires(r, node); err != nil {
+				e.nodeRequirementFailed(runID, node, generation, err)
+				continue
+			}
 			inflightMu.Lock()
 			inflight[node.ID] = true
 			inflightMu.Unlock()

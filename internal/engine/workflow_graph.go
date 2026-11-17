@@ -223,6 +223,11 @@ func validateNode(workflowID string, n domain.WorkflowNode) error {
 	if n.RetryStrategy != "" && n.RetryStrategy != "targeted_fix" && n.RetryStrategy != "full_redo" {
 		return fmt.Errorf("node %s has invalid retryStrategy %q", n.ID, n.RetryStrategy)
 	}
+	for _, raw := range n.Requires {
+		if _, err := parseNodeRequirement(raw); err != nil {
+			return fmt.Errorf("node %s has invalid requires %q: %w", n.ID, raw, err)
+		}
+	}
 	artifactNames := map[string]bool{}
 	for _, contract := range n.ArtifactOutputs {
 		clean := filepath.Clean(contract.Path)
