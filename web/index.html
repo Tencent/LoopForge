@@ -244,6 +244,7 @@
           <button id="aiScheduleProjectTab" class="active" type="button" role="tab" aria-selected="true" aria-controls="aiScheduleProjectPanel" data-ai-schedule-tab="project">提示词任务<span id="aiScheduleProjectCount" class="mcp-tab-count">0</span></button>
           <button id="aiScheduleTriggerTab" type="button" role="tab" aria-selected="false" aria-controls="aiScheduleTriggerPanel" data-ai-schedule-tab="trigger">SOP 触发<span id="scheduleJobCount" class="schedule-job-count">未配置</span></button>
           <button id="aiScheduleMarketTab" type="button" role="tab" aria-selected="false" aria-controls="aiScheduleMarketPanel" data-ai-schedule-tab="market">共享任务市场<span id="sharedScheduleMarketCount" class="mcp-tab-count">0</span></button>
+          <button id="aiScheduleExecTab" type="button" role="tab" aria-selected="false" aria-controls="aiScheduleExecPanel" data-ai-schedule-tab="executions">执行记录<span id="aiScheduleExecCount" class="mcp-tab-count" hidden></span></button>
         </div>
         <label id="sharedScheduleSearchField" class="mcp-search" hidden><svg class="agent-icon harness-icon" data-icon="search" width="14" height="14" aria-hidden="true" focusable="false"></svg><input id="sharedScheduleSearch" type="search" aria-label="搜索共享任务" placeholder="搜索名称、用途或来源项目"></label>
       </div>
@@ -261,6 +262,27 @@
         <p id="sharedScheduleMarketHint" class="mcp-scope-hint"></p>
         <div id="sharedScheduleMarketStatus" role="status"></div>
         <div id="sharedScheduleLibrary" class="mcp-market-grid" aria-live="polite"></div>
+      </section>
+      <section id="aiScheduleExecPanel" class="sched-exec-panel" role="tabpanel" aria-labelledby="aiScheduleExecTab" hidden>
+        <div class="sched-exec-card sched-exec-overview">
+          <div class="sched-exec-overview-main">
+            <h2 class="sched-exec-card-title">执行概览<span id="scheduleExecOverviewScope" class="muted">（最近 7 天）</span><span class="sched-exec-th-hint" title="按开始时间统计最近 7×24 小时的执行，与之前 7×24 小时对比"><svg class="agent-icon harness-icon" data-icon="info" width="13" height="13" aria-hidden="true" focusable="false"></svg></span></h2>
+            <div id="scheduleExecMetrics" class="sched-exec-metrics"></div>
+          </div>
+        </div>
+        <div class="sched-exec-filters" role="search" aria-label="筛选执行记录">
+          <label class="sched-exec-search"><svg class="agent-icon harness-icon" data-icon="search" width="15" height="15" aria-hidden="true" focusable="false"></svg><input id="scheduleExecSearch" type="search" autocomplete="off" aria-label="搜索执行记录" placeholder="搜索任务名称 / Trace ID / 关键词"></label>
+          <label class="sched-exec-select"><svg class="agent-icon harness-icon" data-icon="calendar" width="15" height="15" aria-hidden="true" focusable="false"></svg><select id="scheduleExecRange" aria-label="按时间筛选"><option value="">全部时间</option><option value="today">今天</option><option value="7d">最近 7 天</option><option value="30d">最近 30 天</option></select></label>
+          <label class="sched-exec-select"><svg class="agent-icon harness-icon" data-icon="layers" width="15" height="15" aria-hidden="true" focusable="false"></svg><select id="scheduleExecJob" aria-label="按任务筛选"><option value="">全部任务</option></select></label>
+          <label class="sched-exec-select"><svg class="agent-icon harness-icon" data-icon="filter" width="15" height="15" aria-hidden="true" focusable="false"></svg><select id="scheduleExecStatus" aria-label="按状态筛选"><option value="">全部状态</option><option value="failed">失败</option><option value="success">成功</option><option value="running">进行中</option><option value="waiting">待对齐基线</option></select></label>
+          <button id="scheduleExecReset" class="button ghost small sched-exec-reset" type="button" disabled><svg class="agent-icon harness-icon" data-icon="refresh" width="14" height="14" aria-hidden="true" focusable="false"></svg>重置</button>
+        </div>
+        <div class="sched-exec-card">
+          <h2 class="sched-exec-card-title">执行记录<span id="scheduleExecTotal" class="muted"></span></h2>
+          <div id="scheduleExecList" class="sched-exec-list" aria-live="polite"></div>
+          <div id="scheduleExecPager" class="sched-exec-pager" hidden></div>
+          <p id="scheduleExecFootnote" class="sched-exec-footnote"></p>
+        </div>
       </section>
     </section>
 
@@ -1134,6 +1156,24 @@
               </div>
               <p class="schedule-field-hint" id="scheduleModelHint">与 AI 助手相同的 CLI 与模型，到点用保存人在所选 CLI 上配置的 Key 执行；没有个人 CodeBuddy Key 时使用平台共享 Key。</p>
             </div>
+            <div data-schedule-kind="assistant" hidden>
+              <label for="scheduleSessionMode">会话</label>
+              <select id="scheduleSessionMode" class="select" name="sessionMode">
+                <option value="">每次新开会话</option>
+                <option value="fixed">始终在同一个会话里继续</option>
+              </select>
+              <p class="schedule-field-hint" id="scheduleSessionHint">每次执行各开一个会话，可在执行记录里打开。</p>
+              <div id="scheduleSessionKeepField" class="schedule-session-keep">
+                <label for="scheduleSessionKeep">保留会话数</label>
+                <select id="scheduleSessionKeep" class="select" name="sessionKeep">
+                  <option value="10">最近 10 个</option>
+                  <option value="50" selected>最近 50 个</option>
+                  <option value="100">最近 100 个</option>
+                  <option value="-1">不限</option>
+                </select>
+                <p class="schedule-field-hint" id="scheduleSessionKeepHint">超过后每次执行结束时自动删除最早的会话，执行记录仍保留，但打不开已删除的会话。</p>
+              </div>
+            </div>
             <div data-schedule-kind="assistant" data-schedule-prompt hidden>
               <label>提示词</label>
               <textarea name="assistantPrompt" class="input" rows="4" placeholder="到点后助手要做的事，原文执行。例如：给能确定仓库的 backlog 绑仓库；没把握的标 ignored。"></textarea>
@@ -1279,6 +1319,7 @@
   <script src="/app/issue-bulk-delete.js"></script>
   <script src="/app/sync-schedule.js"></script>
   <script src="/app/shared-schedules.js"></script>
+  <script src="/app/schedule-executions.js"></script>
   <script src="/app/notification-editor.js"></script>
   <script src="/app/bots.js"></script>
   <script src="/app/assistant-settings.js"></script>

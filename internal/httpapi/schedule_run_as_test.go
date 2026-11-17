@@ -253,3 +253,50 @@ func TestScheduleStopAllowedChecksTheStoredJob(t *testing.T) {
 		}
 	}
 }
+
+// Starting or stopping a job from its row flips only enabled: another
+// writer's toggle keeps the member's key binding and the pinned session.
+func TestScheduleJobEnabledTogglesOnlyTheFlag(t *testing.T) {
+	t.Setenv("AGENTFLOW_AUTH_REQUIRED", "true")
+	t.Setenv("AGENTFLOW_SESSION_SECRET", "schedule-enabled-test-secret")
+	h, _ := workbenchFixture(t)
+	st := h.repo
+	for _, login := range []string{"toggle-owner", "toggle-member", "toggle-viewer"} {
+		if err := st.PutUser(domain.User{LoginName: login, CodeBuddyAPIKey: "k"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	owner, _ := st.UserByLoginName("toggle-owner")
+	member, _ := st.UserByLoginName("toggle-member")
+	viewer, _ := st.UserByLoginName("toggle-viewer")
+	if err := st.PutProject(domain.Project{ID: "toggle-proj", Name: "T", OwnerID: owner.ID, Members: []domain.ProjectMember{{UserID: member.ID, Role: "member"}, {UserID: viewer.ID, Role: "viewer"}}}); err != nil {
+		t.Fatal(err)
+	}
+	job := domain.ScheduleJob{ID: "toggle-job", ProjectID: "toggle-proj", Name: "巡检", SkipDispatch: true, AssistantPrompt: "p", IntervalSec: 3600, Enabled: true,
+		RunAsUserID: member.ID, RunAsName: "toggle-member", SessionMode: domain.ScheduleSessionFixed, FixedSessionID: "chat-pinned"}
+	if err := st.PutScheduleJob(job); err != nil {
+		t.Fatal(err)
+	}
+	server := New(st, engine.New(st, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "")
+	path := "/api/schedule-jobs/toggle-job/enabled"
+	if code := scheduleAuthzStatus(t, server, viewer, http.MethodPost, path, map[string]any{"enabled": false}); code != http.StatusForbidden {
+		t.Fatalf("viewer toggled a job: %d", code)
+	}
+	if code := scheduleAuthzStatus(t, server, owner, http.MethodPost, path, map[string]any{}); code != http.StatusBadRequest {
+		t.Fatalf("missing enabled = %d", code)
+	}
+	if code := scheduleAuthzStatus(t, server, owner, http.MethodPost, "/api/schedule-jobs/missing/enabled", map[string]any{"enabled": false}); code != http.StatusNotFound {
+		t.Fatalf("missing job = %d", code)
+	}
+	saved := requestJSONAuthed[domain.ScheduleJob](t, server, owner, http.MethodPost, path, map[string]any{"enabled": false}, http.StatusOK)
+	if saved.Enabled || saved.RunAsUserID != member.ID || saved.FixedSessionID != "chat-pinned" || saved.AssistantPrompt != "p" {
+		t.Fatalf("stop = %+v", saved)
+	}
+	stored, _ := st.ScheduleJob("toggle-job")
+	if stored.Enabled {
+		t.Fatal("stop was not stored")
+	}
+	if saved = requestJSONAuthed[domain.ScheduleJob](t, server, owner, http.MethodPost, path, map[string]any{"enabled": true}, http.StatusOK); !saved.Enabled || saved.RunAsUserID != member.ID {
+		t.Fatalf("start = %+v", saved)
+	}
+}
