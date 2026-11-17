@@ -12,35 +12,50 @@ import (
 // "创建并去对话澄清" opens a new conversation whose first message @-mentions
 // the requirement. The browser saves the empty conversation first, so the
 // turn links the mentioned issue to it while starting; that link must not be
-// mistaken for a concurrent rebinding and reject the turn.
+// mistaken for a concurrent rebinding and reject the turn. The link does not
+// depend on how the requirement is delivered, so every SOP choice of the
+// new-requirement dialog is covered.
 func TestFirstTurnMentioningAnIssueLinksItAndStarts(t *testing.T) {
-	h, u := workbenchFixture(t)
-	h.generate = func(context.Context, string, domain.User) (string, error) {
-		return `{"message":"好的","drafts":[]}`, nil
-	}
-	if err := h.repo.PutIssue(domain.Issue{ID: "clarify-issue", ProjectID: "workbench", Title: "test1"}); err != nil {
-		t.Fatal(err)
-	}
-	if err := h.repo.PutAssistantSession(u.ID, domain.AssistantSession{ID: "clarify-chat", ProjectID: "workbench"}); err != nil {
-		t.Fatal(err)
-	}
-	body, _ := json.Marshal(map[string]any{
-		"sessionId": "clarify-chat",
-		"projectId": "workbench",
-		"messages": []domain.AssistantMessage{{
-			Role:       "user",
-			Content:    "@test1 aaaa",
-			References: []domain.AssistantReference{{Type: "issue", ID: "clarify-issue", Name: "test1", ProjectID: "workbench"}},
-		}},
-	})
-	c, rec := workbenchContext(u, "POST", "/api/assistant/generations", bytes.NewBuffer(body))
-	h.startGeneration(c)
-	if rec.Code != 202 {
-		t.Fatalf("start: %d %s", rec.Code, rec.Body.String())
-	}
-	s := waitForCompletedGeneration(t, h, u.ID, "clarify-chat")
-	if s.IssueID != "clarify-issue" {
-		t.Fatalf("mentioned issue not linked: %q", s.IssueID)
+	for _, tc := range []struct {
+		name  string
+		issue domain.Issue
+	}{
+		{"bound SOP", domain.Issue{WorkflowID: "generic-backend-delivery"}},
+		{"SOP chosen later", domain.Issue{}},
+		{"no SOP", domain.Issue{SOPMode: domain.IssueSOPNone}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h, u := workbenchFixture(t)
+			h.generate = func(context.Context, string, domain.User) (string, error) {
+				return `{"message":"好的","drafts":[]}`, nil
+			}
+			issue := tc.issue
+			issue.ID, issue.ProjectID, issue.Title = "clarify-issue", "workbench", "test1"
+			if err := h.repo.PutIssue(issue); err != nil {
+				t.Fatal(err)
+			}
+			if err := h.repo.PutAssistantSession(u.ID, domain.AssistantSession{ID: "clarify-chat", ProjectID: "workbench"}); err != nil {
+				t.Fatal(err)
+			}
+			body, _ := json.Marshal(map[string]any{
+				"sessionId": "clarify-chat",
+				"projectId": "workbench",
+				"messages": []domain.AssistantMessage{{
+					Role:       "user",
+					Content:    "@test1 aaaa",
+					References: []domain.AssistantReference{{Type: "issue", ID: "clarify-issue", Name: "test1", ProjectID: "workbench"}},
+				}},
+			})
+			c, rec := workbenchContext(u, "POST", "/api/assistant/generations", bytes.NewBuffer(body))
+			h.startGeneration(c)
+			if rec.Code != 202 {
+				t.Fatalf("start: %d %s", rec.Code, rec.Body.String())
+			}
+			s := waitForCompletedGeneration(t, h, u.ID, "clarify-chat")
+			if s.IssueID != "clarify-issue" {
+				t.Fatalf("mentioned issue not linked: %q", s.IssueID)
+			}
+		})
 	}
 }
 
