@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	mysqldriver "github.com/go-sql-driver/mysql"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -117,6 +118,24 @@ func NewSQLLeaseStore(db *gorm.DB) *SQLLeaseStore {
 }
 
 func (s *SQLLeaseStore) Acquire(req LeaseRequest) (Lease, error) {
+	var lease Lease
+	var err error
+	for attempt := 0; attempt < 3; attempt++ {
+		lease, err = s.acquireOnce(req)
+		if !retryableLeaseDBError(err) {
+			return lease, err
+		}
+		time.Sleep(time.Duration(attempt+1) * 25 * time.Millisecond)
+	}
+	return lease, err
+}
+
+func retryableLeaseDBError(err error) bool {
+	var mysqlErr *mysqldriver.MySQLError
+	return errors.As(err, &mysqlErr) && (mysqlErr.Number == 1205 || mysqlErr.Number == 1213)
+}
+
+func (s *SQLLeaseStore) acquireOnce(req LeaseRequest) (Lease, error) {
 	if s == nil || s.db == nil {
 		return Lease{}, errors.New("sql lease store is not configured")
 	}
