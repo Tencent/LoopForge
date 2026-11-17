@@ -92,7 +92,7 @@
 - 浮层根据可用空间向上或向下展开，限制在可视视口内；手机键盘改变 `visualViewport` 时重新定位。
 - Escape 关闭并返回触发器，Tab 接回输入区的正常顺序；点击外部关闭时不抢焦点。
 - 权限选择保留原有确认模式和选值，视觉调整不改变执行权限或审批语义。
-- SOP「AI 编排助手」在输入区下提供 CLI 与模型选择，复用 `/api/assistant/models` 的个人模型目录，拆成「CLI」「模型」两个按钮，模型列表只显示所选 CLI 的模型，两处都支持搜索。选择独立记忆；同 CLI 切模型保留会话，跨 CLI 开启新对话，画布保留。生成期间禁用选择器，审批仍为每次确认，只生成草稿。面板使用固定标题栏、独立滚动消息区和底部输入框，推荐场景、发送按钮和消息状态完整应用 Harness 样式；窄屏下限制在画布宽度内。
+- SOP「AI 编排助手」的面板只保留固定标题栏（新对话、收起）和画布构建状态，对话本身是嵌入的 chatbot `sop-designer` 入口（`/chatbot/?surface=sop-designer`，`chatbot/src/SopDesigner.jsx`），消息、执行过程、CLI 与模型选择、发送和停止按钮都复用工作台组件。CLI 与模型选择复用 `/api/assistant/models` 的个人模型目录，选择独立记忆（`agentflow.orchestratorModel`）；同 CLI 切模型保留会话，跨 CLI 开启新对话，画布保留。生成期间禁用选择器，审批固定为每次确认，只生成草稿。对话与画布只通过 `agentflow-sop-designer-*` 窗口消息交互：每轮开始前画布交出当前流程，生成中把草稿流交给画布逐个放节点，结束后画布按 SOP id 决定原地修改还是另起一条（另起需用户确认）。窄屏下面板限制在画布宽度内。
 
 模型品牌 SVG 来自 Grasp 的品牌资源集合。具体来源及许可见 `chatbot/src/assets/provider-logos/README.md`、`SOURCE.md` 和相邻许可文件。
 

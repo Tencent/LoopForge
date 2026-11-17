@@ -222,3 +222,139 @@ func TestWorkflowDraftWarningsAcceptPreviewBuildNode(t *testing.T) {
 		t.Fatalf("preview build node warned: %v", warns)
 	}
 }
+
+const designerOpsCanvas = `{"id":"sop-a","projectId":"workbench","sandboxProfileId":"local","name":"交付","description":"旧说明","preview":{"enabled":true},
+"nodes":[{"id":"plan","name":"计划","type":"agent","agentId":"dev","prompt":"写计划","position":{"x":10,"y":20}},
+{"id":"impl","name":"实现","type":"script","script":"make build","position":{"x":300,"y":20}},
+{"id":"old","name":"旧节点","type":"approval","position":{"x":600,"y":20}},
+{"id":"af-preview-build","name":"构建静态站点","type":"agent","agentId":"af-preview-builder","position":{"x":900,"y":20}}],
+"edges":[{"id":"e1","source":"plan","target":"impl","when":"success"},{"id":"e2","source":"impl","target":"old","when":"success"},{"id":"e3","source":"impl","target":"af-preview-build","when":"success"}]}`
+
+func expandDesignerOps(t *testing.T, ops string) (map[string]any, error) {
+	t.Helper()
+	raw := json.RawMessage(`{"message":"改好了","drafts":[{"tool":"workflows_save","body":{"operations":` + ops + `}}]}`)
+	out, err := expandSOPDesignerReply(raw, json.RawMessage(designerOpsCanvas))
+	if err != nil {
+		return nil, err
+	}
+	var reply struct {
+		Drafts []struct {
+			Body map[string]any `json:"body"`
+		} `json:"drafts"`
+	}
+	if err := json.Unmarshal(out, &reply); err != nil {
+		t.Fatal(err)
+	}
+	return reply.Drafts[0].Body, nil
+}
+
+func designerNode(body map[string]any, id string) map[string]any {
+	for _, item := range body["nodes"].([]any) {
+		if node := item.(map[string]any); node["id"] == id {
+			return node
+		}
+	}
+	return nil
+}
+
+// Operations edit the canvas in place: everything the model did not name,
+// including layout, scripts and the preview build node, survives the turn.
+func TestSOPDesignerOperationsEditTheCanvas(t *testing.T) {
+	body, err := expandDesignerOps(t, `[
+		{"op":"add_node","node":{"id":"review","name":"人工评审","type":"approval","position":{"x":1,"y":1}}},
+		{"op":"update_node","id":"plan","set":{"prompt":"写详细计划","position":{"x":0,"y":0},"agentId":null}},
+		{"op":"remove_node","id":"old"},
+		{"op":"add_edge","source":"impl","target":"review"},
+		{"op":"remove_edge","source":"plan","target":"impl"},
+		{"op":"add_edge","source":"plan","target":"impl"},
+		{"op":"update_workflow","set":{"name":"交付 v2"}}]`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if body["id"] != "sop-a" || body["projectId"] != "workbench" || body["sandboxProfileId"] != "local" || body["name"] != "交付 v2" || body["description"] != "旧说明" || body["preview"] == nil {
+		t.Fatalf("workflow fields lost: %+v", body)
+	}
+	if _, has := body["operations"]; has {
+		t.Fatal("operations leaked into the saved body")
+	}
+	plan := designerNode(body, "plan")
+	if plan["prompt"] != "写详细计划" || plan["agentId"] != nil || plan["position"].(map[string]any)["x"] != float64(10) {
+		t.Fatalf("update_node = %+v", plan)
+	}
+	if impl := designerNode(body, "impl"); impl["script"] != "make build" {
+		t.Fatalf("untouched node changed: %+v", impl)
+	}
+	if designerNode(body, "old") != nil || designerNode(body, "af-preview-build") == nil {
+		t.Fatal("remove_node removed the wrong nodes")
+	}
+	review := designerNode(body, "review")
+	if review == nil || review["position"] != nil || review["type"] != "approval" {
+		t.Fatalf("add_node = %+v", review)
+	}
+	var pairs []string
+	for _, item := range body["edges"].([]any) {
+		edge := item.(map[string]any)
+		pairs = append(pairs, edge["id"].(string)+":"+edge["source"].(string)+">"+edge["target"].(string))
+	}
+	if strings.Join(pairs, ",") != "e3:impl>af-preview-build,edge-impl-review:impl>review,edge-plan-impl:plan>impl" {
+		t.Fatalf("edges = %v", pairs)
+	}
+}
+
+func TestSOPDesignerOperationErrorsAreActionable(t *testing.T) {
+	for ops, want := range map[string]string{
+		`[]`: "operations 为空",
+		`[{"op":"add_node","node":{"id":"plan","name":"x"}}]`:                                           "已存在",
+		`[{"op":"update_node","id":"ghost","set":{"name":"x"}}]`:                                        "ghost 不存在",
+		`[{"op":"update_node","id":"plan","set":{"id":"p2"}}]`:                                          "不能修改节点 id",
+		`[{"op":"add_edge","source":"plan","target":"ghost"}]`:                                          "不存在的节点",
+		`[{"op":"add_edge","source":"plan","target":"impl"}]`:                                           "已存在",
+		`[{"op":"remove_edge","source":"old","target":"plan"}]`:                                         "不存在",
+		`[{"op":"update_workflow","set":{"projectId":"other"}}]`:                                        "不能用 update_workflow",
+		`[{"op":"rename","id":"plan"}]`:                                                                 "未知操作",
+		`[{"op":"update_node","id":"impl","set":{"rejectTo":"plan"}},{"op":"remove_node","id":"plan"}]`: "第 2 个操作",
+	} {
+		if _, err := expandDesignerOps(t, ops); err == nil || !strings.Contains(err.Error(), want) {
+			t.Fatalf("%s: err = %v, want %q", ops, err, want)
+		}
+	}
+	if _, err := expandSOPDesignerReply(json.RawMessage(`{"message":"x","drafts":[{"tool":"workflows_save","body":{"operations":[{"op":"remove_node","id":"a"}]}}]}`), nil); err == nil || !strings.Contains(err.Error(), "画布是空的") {
+		t.Fatalf("operations on an empty canvas: %v", err)
+	}
+}
+
+func TestSOPDesignerFullBodyKeepsCanvasIdentity(t *testing.T) {
+	raw := json.RawMessage(`{"message":"重搭","drafts":[{"tool":"workflows_save","body":{"name":"新流程","nodes":[{"id":"a","name":"A","type":"approval"}],"edges":[]}}]}`)
+	out, err := expandSOPDesignerReply(raw, json.RawMessage(designerOpsCanvas))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(out), `"id":"sop-a"`) || !strings.Contains(string(out), `"sandboxProfileId":"local"`) || strings.Contains(string(out), "旧节点") {
+		t.Fatalf("full body = %s", out)
+	}
+	own := json.RawMessage(`{"message":"另建","drafts":[{"tool":"workflows_save","body":{"id":"workbench-new","name":"新流程","nodes":[],"edges":[]}}]}`)
+	out, _ = expandSOPDesignerReply(own, json.RawMessage(designerOpsCanvas))
+	if !strings.Contains(string(out), `"id":"workbench-new"`) {
+		t.Fatalf("model-chosen id replaced: %s", out)
+	}
+}
+
+func TestSOPDesignerTerminalAppliesOperations(t *testing.T) {
+	resetAgentToolSessionsForTest()
+	gw := &agentToolGateway{}
+	session := &AgentToolSession{Mode: AgentToolAssistant, Surface: assistantSurfaceSOPDesigner, ProjectID: "workbench", DesignerCanvas: json.RawMessage(designerOpsCanvas), ExpiresAt: time.Now().Add(time.Minute), Final: make(chan AgentTerminalResult, 1)}
+	result, err := gw.callTerminal(session, submitAssistantReplyTool, json.RawMessage(`{"message":"改","drafts":[{"tool":"workflows_save","body":{"operations":[{"op":"remove_node","id":"ghost"}]}}]}`))
+	encoded, _ := json.Marshal(result)
+	if err != nil || result["isError"] != true || session.finished() || !strings.Contains(string(encoded), "ghost 不存在") {
+		t.Fatalf("bad operation was not sent back: %s %v", encoded, err)
+	}
+	result, err = gw.callTerminal(session, submitAssistantReplyTool, json.RawMessage(`{"message":"加评审","drafts":[{"tool":"workflows_save","body":{"operations":[{"op":"add_node","node":{"id":"review","name":"评审","type":"approval"}},{"op":"add_edge","source":"impl","target":"review"}]}}]}`))
+	if err != nil || result["isError"] == true || !session.finished() {
+		t.Fatalf("operations draft rejected: %v %v", result, err)
+	}
+	final, _ := session.takeFinal()
+	body := string(final.Assistant.Drafts[0].Body)
+	if !strings.Contains(body, `"review"`) || !strings.Contains(body, `"make build"`) || !strings.Contains(body, `"position"`) {
+		t.Fatalf("expanded draft = %s", body)
+	}
+}

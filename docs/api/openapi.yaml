@@ -102,11 +102,15 @@ paths:
                     private to the caller, stays out of the workbench list
                     and cannot be continued from the workbench. The server
                     owns the transcript: send only the new user message.
+                    On a canvas with nodes the draft body may be
+                    `{"operations":[…]}` (add_node, update_node, remove_node,
+                    add_edge, remove_edge, update_workflow); the server
+                    applies them to `canvas` and returns the full workflow.
                 workflowId: {type: string, description: "SOP the canvas edits (sop-designer only)"}
                 canvas:
                   type: object
                   additionalProperties: true
-                  description: "Current canvas snapshot (sop-designer only, up to 256 KiB); injected into the turn as data and not stored in the transcript"
+                  description: "Current canvas workflow (sop-designer only, up to 256 KiB). Injected into the turn as data without layout, not stored in the transcript; edit operations are applied to it"
                 referenceWorkflowIds:
                   type: array
                   maxItems: 2

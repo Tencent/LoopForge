@@ -342,7 +342,7 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 				loadTurnWorkspace(h.deps, sess, conv)
 			}
 		}
-		sess.Surface = req.Surface
+		sess.Surface, sess.DesignerCanvas = req.Surface, req.Canvas
 		sess.SpaceID = strings.TrimSpace(req.SpaceID)
 		if sess.SpaceID != "" {
 			sess.mu.Lock()

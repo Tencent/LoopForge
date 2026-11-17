@@ -329,6 +329,14 @@ func (h *agentToolGateway) callTerminal(session *AgentToolSession, name string, 
 		}
 		return mcpToolTextResult("提交成功，本轮结束。", false), nil
 	case name == submitAssistantReplyTool && session.Mode == AgentToolAssistant:
+		if session.sopDesigner() {
+			expanded, err := expandSOPDesignerReply(raw, session.DesignerCanvas)
+			if err != nil {
+				logAgentToolEvent("terminal-invalid", "mode="+string(session.Mode), "tool="+name, "err="+truncateRunes(err.Error(), 160))
+				return mcpToolTextResult("草稿未提交，本轮继续；请修正后重新提交："+err.Error(), true), nil
+			}
+			raw = expanded
+		}
 		reply, err := parseSubmitAssistantReplyArgs(raw, session.ProjectID)
 		if err != nil {
 			logAgentToolEvent("terminal-invalid", "mode="+string(session.Mode), "tool="+name, "err="+truncateRunes(err.Error(), 160))
