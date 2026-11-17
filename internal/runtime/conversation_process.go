@@ -614,7 +614,7 @@ func (p *ConversationProcessPool) start(ctx context.Context, root, workspace str
 		return ConversationProcessResult{}, fmt.Errorf("该 CLI 不支持使用执行机器的本机登录")
 	}
 	if supported {
-		cleanupLogin, localEnv, err = prepareConversationRunnerLogin(root, login, req.Command.RunnerLogin)
+		cleanupLogin, localEnv, err = prepareConversationRunnerLogin(root, login, req.Command.RunnerLogin, spec != nil && spec.Profile.Driver == domain.SandboxDriverDocker)
 		if err != nil {
 			return ConversationProcessResult{}, err
 		}

@@ -27,6 +27,7 @@ type antigravityLogin struct {
 	Email      string `json:"id_token_email"`
 	IDToken    string `json:"id_token"`
 	Token      struct {
+		Access  string `json:"access_token"`
 		Refresh string `json:"refresh_token"`
 	} `json:"token"`
 }
@@ -45,7 +46,7 @@ func sameAntigravityLogin(before, after []byte) bool {
 		return false
 	}
 	b, err := parseAntigravityLogin(after)
-	if err != nil || a.AuthMethod != b.AuthMethod {
+	if err != nil || a.AuthMethod != b.AuthMethod || a.Token.Refresh != b.Token.Refresh {
 		return false
 	}
 	email := func(login antigravityLogin) string {
@@ -117,7 +118,14 @@ func readAntigravityRunnerLogin() ([]byte, func([]byte) error, error) {
 			if !sameAntigravityLogin(original, refreshed) {
 				return fmt.Errorf("refreshed Antigravity login belongs to a different account")
 			}
-			return replaceRunnerLoginFile(dir, antigravityTokenFile, original, refreshed)
+			if current, err := readRunnerLoginFile(dir, antigravityTokenFile); err != nil || !bytes.Equal(current, original) {
+				return nil
+			}
+			canonical, err := canonicalAntigravityRefresh(original, refreshed)
+			if err != nil {
+				return err
+			}
+			return replaceRunnerLoginFile(dir, antigravityTokenFile, original, canonical)
 		}, nil
 	}
 	return antigravityKeyringLogin(readAntigravityKeyring, writeAntigravityKeyring)
@@ -146,7 +154,14 @@ func antigravityKeyringLogin(read func() (string, error), write func(string) err
 		if err != nil || current != stored {
 			return nil
 		}
-		if err := write(string(refreshed)); err != nil {
+		canonical, err := canonicalAntigravityRefresh(original, refreshed)
+		if err != nil {
+			return err
+		}
+		if current, err := read(); err != nil || current != stored {
+			return nil
+		}
+		if err := write(string(canonical)); err != nil {
 			return fmt.Errorf("cannot save refreshed Antigravity system credentials")
 		}
 		return nil

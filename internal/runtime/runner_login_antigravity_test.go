@@ -5,17 +5,71 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"io"
+	"net/http"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
 
 const agyOriginalLogin = `{"token":{"access_token":"old-access","refresh_token":"original-refresh","expiry":"2026-11-01T00:00:00Z"},"auth_method":"consumer","id_token_email":"owner@example.test"}`
-const agyRefreshedLogin = `{"token":{"access_token":"new-access","refresh_token":"new-refresh","expiry":"2026-12-01T00:00:00Z"},"auth_method":"consumer","id_token_email":"owner@example.test"}`
+const agyRefreshedLogin = `{"token":{"access_token":"new-access","refresh_token":"original-refresh","expiry":"2026-12-01T00:00:00Z"},"auth_method":"consumer","id_token_email":"owner@example.test"}`
+
+func sameAgyFixtureJSON(a, b []byte) bool {
+	var left, right any
+	return json.Unmarshal(a, &left) == nil && json.Unmarshal(b, &right) == nil && reflect.DeepEqual(left, right)
+}
+
+func TestAntigravityRefreshKeepsTrustedMetadata(t *testing.T) {
+	setAgyIdentityFixture(t, "owner@example.test")
+	var candidate map[string]any
+	_ = json.Unmarshal([]byte(agyRefreshedLogin), &candidate)
+	candidate["id_token"] = "sandbox-forged-identity"
+	candidate["extra_setting"] = "sandbox-setting"
+	raw, _ := json.Marshal(candidate)
+	canonical, err := canonicalAntigravityRefresh([]byte(agyOriginalLogin), raw)
+	if err != nil || !sameAgyFixtureJSON(canonical, []byte(agyRefreshedLogin)) {
+		t.Fatal("sandbox metadata entered trusted source")
+	}
+}
+
+func TestAntigravityIdentityFailureKeepsHost(t *testing.T) {
+	before := antigravityIdentityClient
+	antigravityIdentityClient = &http.Client{Transport: agyIdentityFixtureTransport(func(*http.Request) (*http.Response, error) { return nil, errors.New("offline") })}
+	t.Cleanup(func() { antigravityIdentityClient = before })
+	stored, writes := agyOriginalLogin, 0
+	_, keep, err := antigravityKeyringLogin(func() (string, error) { return stored, nil }, func(value string) error { stored = value; writes++; return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := keep([]byte(agyRefreshedLogin)); err == nil || writes != 0 || stored != agyOriginalLogin {
+		t.Fatal("unverified access token replaced host login")
+	}
+}
+
+type agyIdentityFixtureTransport func(*http.Request) (*http.Response, error)
+
+func (f agyIdentityFixtureTransport) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+func setAgyIdentityFixture(t *testing.T, email string) {
+	t.Helper()
+	previous := antigravityIdentityClient
+	antigravityIdentityClient = &http.Client{Transport: agyIdentityFixtureTransport(func(r *http.Request) (*http.Response, error) {
+		owner := email
+		if strings.Contains(r.Header.Get("Authorization"), "foreign-access") {
+			owner = "other@example.test"
+		}
+		body, _ := json.Marshal(map[string]any{"sub": "fixture-subject-" + owner, "email": owner, "email_verified": true})
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(string(body))), Header: make(http.Header)}, nil
+	})}
+	t.Cleanup(func() { antigravityIdentityClient = previous })
+}
 
 func agyFileLoginFixture(t *testing.T) string {
 	t.Helper()
+	setAgyIdentityFixture(t, "owner@example.test")
 	host := t.TempDir()
 	t.Setenv("HOME", host)
 	t.Setenv("SSH_CONNECTION", "test-remote-session")
@@ -65,7 +119,7 @@ func TestAntigravityRunnerLoginLifecycle(t *testing.T) {
 	if err := cleanup(); err != nil {
 		t.Fatal(err)
 	}
-	if raw, err := os.ReadFile(source); err != nil || string(raw) != agyRefreshedLogin {
+	if raw, err := os.ReadFile(source); err != nil || !sameAgyFixtureJSON(raw, []byte(agyRefreshedLogin)) {
 		t.Fatal("refreshed login was not saved to its source")
 	}
 	if _, err := os.Stat(copy); !os.IsNotExist(err) {
@@ -75,7 +129,7 @@ func TestAntigravityRunnerLoginLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if raw, _ := os.ReadFile(copy); string(raw) != agyRefreshedLogin {
+	if raw, _ := os.ReadFile(copy); !sameAgyFixtureJSON(raw, []byte(agyRefreshedLogin)) {
 		t.Fatal("next invocation did not use the refreshed source")
 	}
 	if err := cleanup(); err != nil {
@@ -103,6 +157,7 @@ func TestAntigravityRunnerLoginLifecycle(t *testing.T) {
 }
 
 func TestAntigravityKeyringLoginRefresh(t *testing.T) {
+	setAgyIdentityFixture(t, "owner@example.test")
 	for _, tc := range []struct {
 		name, concurrent, refreshed string
 		wantWrite, wantError        bool
@@ -111,6 +166,8 @@ func TestAntigravityKeyringLoginRefresh(t *testing.T) {
 		{name: "host switched accounts", concurrent: "different-host-login", refreshed: agyRefreshedLogin},
 		{name: "host logged out", concurrent: "missing", refreshed: agyRefreshedLogin},
 		{name: "sandbox switched accounts", refreshed: strings.ReplaceAll(agyRefreshedLogin, "owner@example.test", "other@example.test"), wantError: true},
+		{name: "sandbox changed only refresh token", refreshed: strings.ReplaceAll(agyRefreshedLogin, "original-refresh", "foreign-refresh"), wantError: true},
+		{name: "sandbox forged local identity", refreshed: strings.ReplaceAll(agyRefreshedLogin, "new-access", "foreign-access"), wantError: true},
 		{name: "unchanged", refreshed: agyOriginalLogin},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -181,7 +238,7 @@ printf 'Fetching available models...\n' >&2
 	if err != nil || len(models) != 1 || models[0].ID != "gemini-4-hydrogen-high" {
 		t.Fatalf("models=%+v error=%v", models, err)
 	}
-	if raw, _ := os.ReadFile(source); string(raw) != agyRefreshedLogin {
+	if raw, _ := os.ReadFile(source); !sameAgyFixtureJSON(raw, []byte(agyRefreshedLogin)) {
 		t.Fatal("model query lost its refreshed credential")
 	}
 }
