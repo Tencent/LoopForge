@@ -428,10 +428,12 @@ func applyAgentCLICredentialUpdates(user *domain.User, updates map[string]AgentC
 		} else if value := strings.TrimSpace(update.APIKey); value != "" {
 			cred.APIKey = value
 		}
-		// Cursor's catalog is the list the key's plan offered (saved by the
-		// chat model list); another key starts from that key's own list.
-		if kind == "cursor" && !cred.ModelsCustomized && cred.APIKey != previousKey && update.Models == nil {
+		// Cursor's catalog and effort variants belong to the key's plan.
+		// A replacement key starts with its own list unless the edit also
+		// supplies a catalog.
+		if kind == "cursor" && cred.APIKey != previousKey && update.Models == nil {
 			cred.Models = nil
+			cred.ModelsCustomized = false
 		}
 		if update.BaseURL != nil {
 			cred.BaseURL = strings.TrimSpace(*update.BaseURL)

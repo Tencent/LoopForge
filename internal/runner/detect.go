@@ -27,11 +27,9 @@ type providerSpec struct {
 }
 
 // defaultProviders lists the CLIs this runner drives in non-interactive
-// mode. Codex and Claude Code authenticate with the machine's own login
-// state; CodeBuddy cannot, so its tasks carry the responsible user's
-// platform API key (injected as CODEBUDDY_API_KEY by the daemon). Additional
-// providers can be added here without any protocol change: the server only
-// matches on the provider name.
+// mode. Runner tasks can reuse Codex or Claude Code's login. CodeBuddy tasks
+// receive the configured CODEBUDDY_API_KEY from the daemon. Additional
+// providers can be detected by name.
 var defaultProviders = []providerSpec{
 	{Kind: "claude-code", Binary: "claude"},
 	{Kind: "codex", Binary: "codex"},
