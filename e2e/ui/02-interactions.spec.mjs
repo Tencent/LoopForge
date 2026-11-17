@@ -89,7 +89,7 @@ test('requirement composer: create and clarify opens the chat with the requireme
   expect(issue.automationState).toBe('ignored');
   await expect(page.locator('#requirementModal')).not.toHaveClass(/open/);
   await expect(page).toHaveURL(/#\/collaboration/);
-  const chat = page.frameLocator('#chatNextFrame');
+  const chat = page.locator('#chatRoot');
   const input = chat.locator('textarea').first();
   await expect(input).toHaveValue(new RegExp(`^@${title.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} `), { timeout: 30_000 });
   await expect(chat.getByText(title).first()).toBeVisible();

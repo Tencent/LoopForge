@@ -41,12 +41,15 @@ export async function openSettingsPage(page,view){
   await entry.click();
 }
 
-// Chat is mounted directly within the main document.
-export const chat=page=>page.locator('#chatRoot');
+// The first-run job also tests the pinned release, which may still use an iframe.
+const legacyChatPages=new WeakSet();
+export const chat=page=>legacyChatPages.has(page)?page.frameLocator('#chatNextFrame'):page.locator('#chatRoot');
 export const composer=page=>chat(page).locator('.composer-column textarea');
 export async function openHome(page){
   const {expect}=await import('@playwright/test');
   await page.goto('/#/collaboration');
+  if(await page.locator('#chatNextFrame').count())legacyChatPages.add(page);
+  else legacyChatPages.delete(page);
   await expect(composer(page)).toBeEditable();
   // The saved draft is restored once the signed-in user loads; typing earlier is overwritten.
   await page.waitForLoadState('networkidle');

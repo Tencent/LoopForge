@@ -40,6 +40,7 @@ test('main document mounts chat, preserves drafts, and shares theme and routing'
       else if(pathname==='/api/bootstrap') body=sampleBootstrap();
       else if(pathname==='/api/projects') body=sampleBootstrap().projects;
       else if(pathname==='/api/users') body=[user];
+      else if(pathname==='/api/issues/issue-browser-test') body={id:'issue-browser-test',title:'需求转交测试',projectId:'project-1'};
       else if(pathname==='/api/assistant/models') body={models:[],default:''};
       else if(pathname.startsWith('/api/assistant/sessions/')) body={id:pathname.split('/').pop(),projectId:'',title:'浏览器测试会话',messages:[]};
       else if(pathname==='/api/runners/default') body={runnerId:''};
@@ -85,6 +86,11 @@ test('main document mounts chat, preserves drafts, and shares theme and routing'
     await page.setViewportSize({width:390,height:844});
     await composer.waitFor({state:'visible'});
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+    await page.setViewportSize({width:1440,height:900});
+    await page.evaluate(() => window.loopforgePlatform.navigate('settings'));
+    await page.locator('#settingsView.active').waitFor();
+    await page.evaluate(() => openIssueInChat({id:'issue-browser-test',projectId:'project-1'}));
+    await page.waitForFunction(() => document.querySelector('#chatRoot .composer-column textarea')?.value.startsWith('@需求转交测试 '));
     assert.deepEqual(errors,[]);
   } finally {
     await browser?.close();
