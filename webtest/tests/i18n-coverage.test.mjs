@@ -1,0 +1,213 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
+import path from 'node:path';
+import vm from 'node:vm';
+import { JSDOM } from 'jsdom';
+import { loadApp, settle, WEB_ROOT } from '../lib/load-app.mjs';
+
+const HAN = /[\u3400-\u9fff]/;
+const ATTRS = ['placeholder', 'title', 'aria-label', 'data-tip', 'data-tooltip'];
+// The zones web/i18n.js leaves alone. Attributes are still rewritten inside a textarea or a code block.
+const SKIP_ZONES = '[data-i18n-skip],.monaco-editor,.xterm,.log-line,.run-log,.markdown-body,[contenteditable="true"]';
+const SKIP_TEXT = `${SKIP_ZONES},script,style,noscript,textarea,code,pre`;
+
+async function englishPage(html = '<html><body></body></html>') {
+  const dom = new JSDOM(html.replace('<html', '<html data-lang="en"'), { runScripts: 'outside-only', url: 'http://127.0.0.1/' });
+  for (const file of ['i18n-en.js', 'i18n.js']) {
+    new vm.Script(await readFile(path.join(WEB_ROOT, file), 'utf8'), { filename: file }).runInContext(dom.getInternalVMContext());
+  }
+  return dom.window;
+}
+
+function leftoverChinese(roots) {
+  const left = [];
+  for (const root of roots) {
+    for (const el of [root, ...root.querySelectorAll('*')]) {
+      if (!el.closest(SKIP_TEXT)) for (const node of el.childNodes) if (node.nodeType === 3 && HAN.test(node.nodeValue)) left.push(node.nodeValue.trim());
+      if (el.closest(SKIP_ZONES)) continue;
+      for (const name of ATTRS) {
+        const value = el.getAttribute(name);
+        if (value && HAN.test(value)) left.push(`${name}="${value}"`);
+      }
+    }
+  }
+  return left;
+}
+
+// Markup the app rendered in Chinese, put into an English page so i18n.js rewrites it as it would live.
+async function leftoverIn(...htmls) {
+  const window = await englishPage();
+  const hosts = htmls.map((html) => {
+    const host = window.document.createElement('div');
+    host.innerHTML = html;
+    window.document.body.append(host);
+    return host;
+  });
+  await new Promise((resolve) => window.setTimeout(resolve, 0));
+  const left = leftoverChinese(hosts);
+  window.close();
+  return left;
+}
+
+// Interpolated messages cannot be checked as markup: each [Chinese, English] pair is a real message with its values filled in.
+async function assertTranslated(pairs) {
+  const window = await englishPage();
+  for (const [zh, en] of pairs) assert.equal(window.lfTranslate(zh), en, zh);
+  window.close();
+}
+
+test('English mode formats step, total and count patterns without touching digit counts that mean characters', async () => {
+  const window = await englishPage();
+  for (const [zh, en] of Object.entries({
+    '第 2 步，共 4 步': 'Step 2 of 4',
+    '共 12 条': 'Total 12',
+    '共 3 次': 'Total 3 times',
+    '共 5 个需求': '5 requirements',
+    '1 位': '1 person',
+    '3 位': '3 people',
+    '1 行': '1 line',
+    '12 字': '12 characters',
+    '在 mybox 上执行': 'Runs on mybox',
+  })) assert.equal(window.lfTranslate(zh), en, zh);
+  assert.doesNotMatch(window.lfTranslate('Key 最多 6 位'), /people/);
+  window.close();
+});
+
+test('English mode leaves no Chinese in the page markup, its tooltips or the title', async () => {
+  const window = await englishPage(await readFile(path.join(WEB_ROOT, 'index.html'), 'utf8'));
+  assert.deepEqual(leftoverChinese([window.document.body]), []);
+  assert.doesNotMatch(window.document.title, HAN);
+  window.close();
+});
+
+test('English mode translates the work overview, the feedback widget and the shared controls', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  const widget = app.document.querySelector('.fb-root');
+  assert.ok(widget, 'the feedback widget is mounted');
+  assert.deepEqual(await leftoverIn(app.document.querySelector('#dashboardView').innerHTML, widget.innerHTML), []);
+  await assertTranslated([
+    ['最多 5 张图片', 'Up to 5 images'],
+    ['图片 logo.png 超过 5MB', 'Image logo.png exceeds 5MB'],
+    ['提交失败（502），请稍后重试', 'Submit failed (502). Try again later.'],
+    ['单个文件', 'single file'],
+    ['不支持的文件类型：a.exe', 'Unsupported file type: a.exe'],
+  ]);
+});
+
+test('English mode translates the new-project wizard, the project settings and the repository messages', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  app.evaluate(`
+    state.currentUser={id:1,loginName:'owner',chineseName:'Owner'};
+    state.data.users=[state.currentUser,{id:2,loginName:'member',chineseName:'Member'}];
+    state.data.workflows.push({id:'generic-backend-delivery',name:'Generic',generic:true});
+    state.data.mcpServers=[{id:'tapd',marketId:'70'}];
+    openProjectWizard();
+  `);
+  const wizard = () => app.document.querySelector('#projectWizard').innerHTML;
+  const pages = [];
+  for (const step of ['basic', 'repos', 'members', 'tapd', 'done']) {
+    app.evaluate(`projectWizard.step=${JSON.stringify(step)};projectWizard.projectId='project-1';renderProjectWizard()`);
+    pages.push(wizard());
+  }
+  app.evaluate(`projectWizard.step='repos';projectWizard.repo.url='git@gitlab.com:g/r.git';renderProjectWizard()`);
+  pages.push(wizard());
+  for (const [id, tab] of [['project-1', 'basic'], ['project-1', 'repos'], ['project-1', 'members'], ['project-1', 'tapd'], ['new', 'basic']]) {
+    app.evaluate(`openProjectAdminDetail(${JSON.stringify(id)},${JSON.stringify(tab)})`);
+    await settle(6);
+    pages.push(app.document.querySelector('#projectsView').innerHTML);
+  }
+  assert.deepEqual(await leftoverIn(...pages), []);
+  await assertTranslated([
+    ['第 1 步，共 4 步', 'Step 1 of 4'],
+    ['项目「Atlas」已创建', 'Project "Atlas" created'],
+    ['已删除项目「Atlas」', 'Deleted project "Atlas"'],
+    ['「Atlas」有未保存的修改，离开后这些修改会丢失。', '"Atlas" has unsaved changes. They will be lost if you leave.'],
+    ['项目标识「atlas」已被占用，请换一个', 'Project ID "atlas" is already taken. Choose another.'],
+    ['确定删除项目「Atlas」吗？\n\n项目会从列表中移除，需求、运行记录和设置保留，可以恢复；标识 atlas 仍被占用。',
+      'Delete project "Atlas"?\n\nThe project is removed from the list. Requirements, runs, and settings are kept and can be restored. The ID atlas stays reserved.'],
+    ['已移除仓库「web」，已将「api」设为默认仓库', 'Removed repository "web", set "api" as the default repository'],
+    ['2 个，默认 web', '2 linked, default web'],
+    ['已连接 GitHub · octocat', 'Connected to GitHub · octocat'],
+    ['尚未配置 gitlab.com 的 SSH 密钥，可稍后在「个人配置 → Git SSH 密钥」添加。', 'Not configured gitlab.com SSH key. Add one later under “Personal settings → Git SSH keys”.'],
+  ]);
+});
+
+test('English mode translates run rows and details, the queue messages and the runner list', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  const base = JSON.parse(JSON.stringify(app.evaluate('state.data.runs[0]')));
+  const runs = [
+    { ...base, id: 'run-queued', status: 'queued' },
+    { ...base, id: 'run-chat', kind: 'workspace', status: 'running' },
+    { ...base, id: 'run-failed', status: 'failed' },
+    { ...base, id: 'run-done', status: 'succeeded' },
+  ];
+  const runners = [
+    { id: 'runner-1', name: 'My laptop', status: 'online', ownerUserId: 1, runLimit: 5, runnerVersion: '0.1.0', providers: ['codebuddy'], lastSeenAt: new Date().toISOString() },
+    { id: 'runner-2', name: 'Shared box', status: 'offline', ownerUserId: 0, runnerVersion: '0.1.0' },
+  ];
+  app.evaluate(`state.data.runs=${JSON.stringify(runs)}`);
+  app.evaluate("switchView('runs')");
+  await settle(6);
+  const pages = [app.document.querySelector('#runsView').innerHTML];
+  for (const run of runs) {
+    app.evaluate(`state.selectedRun=${JSON.stringify(run.id)};renderRunDetail(state.data.runs.find(r=>r.id===${JSON.stringify(run.id)}))`);
+    pages.push(app.document.querySelector('#runsView').innerHTML);
+  }
+  app.evaluate("switchView('runners')");
+  await settle(6);
+  app.evaluate(`state.runners=${JSON.stringify(runners)};state.runnerPool={configured:true,online:2};renderRunnersView()`);
+  assert.match(app.document.querySelector('#runnersView').textContent, /My laptop/);
+  pages.push(app.document.querySelector('#runnersView').innerHTML);
+  assert.deepEqual(await leftoverIn(...pages), []);
+  await assertTranslated([
+    ['个人机器 · 最多同时运行 5 条 SOP（不受项目 10 条限额）', "Personal machine · runs at most 5 SOPs at once (not subject to the project's 10-SOP limit)"],
+    ['个人机器 my-laptop · 不受项目 10 条 SOP 限额，本机最多 5 条', "Personal machine my-laptop · not subject to the project's 10-SOP limit, machine limit: 5"],
+    ['已设置：最多同时运行 5 条', 'Limit saved. Max concurrent runs: 5'],
+    ['云端执行 · 2 台在线', 'Runs in the cloud · 2 online'],
+    ['在 my-laptop 上执行', 'Runs on my-laptop'],
+    ['执行机器版本 0.3.1 过低，需升级至 0.4.0 及以上', 'Runner version 0.3.1 is too old. Upgrade to 0.4.0 or later'],
+    ['SOP 主干已冷冻 · 5 步可展开 · 群内任务 2 个', 'SOP frozen · 5 steps to expand · room jobs: 2'],
+    ['12 秒前', '12 s ago'],
+    ['网络环境「foo」无法识别，CodeBuddy 会按国际站连接。到个人配置重新选择网络环境',
+      'Network environment "foo" isn\'t recognized, so CodeBuddy connects to the international site. Choose the network environment again in Personal settings.'],
+  ]);
+});
+
+test('English mode translates requirements, chat delivery, SOP triggers, access keys and the approvals page', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  const base = JSON.parse(JSON.stringify(app.evaluate('state.data.issues[0]')));
+  const issues = [
+    { ...base, id: 'issue-sop' },
+    { ...base, id: 'issue-chat', sopMode: 'none', status: 'in_review', title: 'Chat requirement' },
+  ];
+  app.evaluate(`state.data.issues=${JSON.stringify(issues)}`);
+  const pages = [];
+  for (const [view, id] of [['issues', 'issuesView'], ['aiSchedules', 'aiSchedulesView'], ['mcp', 'mcpView'], ['agents', 'agentsView'], ['approvals', 'approvalsView'], ['guide', 'guideView']]) {
+    app.evaluate(`switchView(${JSON.stringify(view)})`);
+    await settle(6);
+    pages.push(app.document.querySelector(`#${id}`).innerHTML);
+  }
+  for (const issue of issues) {
+    for (const tab of ['overview', 'conversations', 'delivery']) {
+      app.evaluate(`state.issueDetailTab=${JSON.stringify(tab)};openIssueDetail(${JSON.stringify(issue.id)})`);
+      await settle(6);
+      pages.push(app.document.querySelector('#issueDetailDrawer').innerHTML);
+    }
+  }
+  assert.deepEqual(await leftoverIn(...pages), []);
+  await assertTranslated([
+    ['确定删除选中的 3 条需求（「a」、「b」）？', 'Delete the selected 3 requirements ("a", "b")?'],
+    ['已删除 3 条，1 条未删除', 'Deleted 3, 1 not deleted'],
+    ['确定删除这个AI 定时任务吗？此操作不可恢复。', 'Delete this AI scheduled task? This cannot be undone.'],
+    ['· 单次最多 10 个需求', '· at most 10 requirements'],
+    ['同步完成：已刷新外部工作项', 'Sync complete. External work items refreshed'],
+    ['已在工蜂创建 Issue #12', 'Created Gongfeng issue #12'],
+    ['对话提交的 MR 已合入，需求已交付', 'The PR submitted from chat was merged. The requirement is delivered.'],
+    ['关联 MR 已合入默认分支。如需继续修改，请用重新触发再开一条 SOP。', 'The linked PR was merged into the default branch. To make more changes, re-trigger to start another SOP.'],
+  ]);
+});
