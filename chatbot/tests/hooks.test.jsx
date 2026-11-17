@@ -176,6 +176,40 @@ describe("conversation hooks", () => {
     }
   });
 
+  test("regenerating after an edit follows the composer's approval mode", async () => {
+    const { result } = renderHook(() => useChat());
+    await waitFor(() => expect(result.current.ready).toBe(true));
+    const stored = { id: "s1", projectId: "p1", model: "m1", messages: [{ role: "user", content: "修改" }] };
+    await act(() => result.current.regenerate(stored, "assisted"));
+    expect(writeMock).toHaveBeenLastCalledWith("/api/assistant/generations", expect.objectContaining({ approvalMode: "assisted" }));
+    await act(() => result.current.regenerate(stored, "bogus"));
+    expect(writeMock).toHaveBeenLastCalledWith("/api/assistant/generations", expect.objectContaining({ approvalMode: "confirm" }));
+  });
+
+  test("an open conversation on a CLI without a key keeps its model", async () => {
+    localStorage.removeItem("loopforge.assistant.executor");
+    const original = apiMock.getMockImplementation();
+    const codexSession = {
+      id: "s9", title: "Codex 会话", projectId: "p1", executor: "codex", model: "codex:gpt-5.6-sol", effort: "",
+      updatedAt: "2026-01-01T00:00:00Z",
+      messages: [{ role: "user", content: "hi" }, { role: "assistant", content: "ok", model: "codex:gpt-5.6-sol" }],
+    };
+    apiMock.mockImplementation(async (path, options) =>
+      path === "/api/assistant/sessions/s9" ? structuredClone(codexSession) : original(path, options));
+    try {
+      history.replaceState({}, "", "/?session=s9");
+      const { result } = renderHook(() => useChat());
+      await waitFor(() => expect(result.current.session?.id).toBe("s9"));
+      await waitFor(() => expect(apiMock).toHaveBeenCalledWith("/api/assistant/models?executor=codex"));
+      await act(async () => {});
+      expect(result.current.executor).toBe("codex");
+      expect(result.current.model).toBe("codex:gpt-5.6-sol");
+    } finally {
+      apiMock.mockImplementation(original);
+      localStorage.removeItem("loopforge.assistant.executor");
+    }
+  });
+
   test("persists the draft sandbox selection when creating a conversation", async () => {
     history.replaceState({}, "", "/?projectId=p1");
     const { result } = renderHook(() => useChat());
