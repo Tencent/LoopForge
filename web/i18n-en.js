@@ -182,7 +182,7 @@ Object.assign(window.LF_I18N_EN,{
 });
 
 Object.assign(window.LF_I18N_EN,{
-  "Claude Code 和 Codex 可用账号登录":"Account login for Claude Code and Codex",
+  "Claude Code、Codex 和 Antigravity 可用账号登录":"Account login for Claude Code, Codex and Antigravity",
   "Claude Code、Codex 和 Antigravity 可以使用运行 Runner 的系统账号在这台机器上的已有登录，对话与 SOP 的 native、Docker 沙箱均可复用。共享对话中，只有机器所有者发言时会使用此登录。":"Claude Code, Codex and Antigravity can reuse the login of the system user running the Runner, in both native and Docker sandboxes for chats and SOPs. In a shared chat, that login applies to messages from the machine owner.",
   "API Key 说明":"API Key help",
   "GLM Coding Plan 的 API Key 配合套餐专用地址可使用订阅额度，请在「个人配置」中填写。Start Plan 额度需要登录 ZCode 账号，无法通过 API Key 使用。":"Enter the GLM Coding Plan API key and its dedicated endpoint in Personal Settings to use your subscription allowance. Start Plan allowance requires signing in to ZCode.",
