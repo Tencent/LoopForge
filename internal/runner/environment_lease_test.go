@@ -11,9 +11,9 @@ import (
 )
 
 func TestIndependentEnvironmentManagerFailsClosed(t *testing.T) {
-	d, err := New(Config{ServerURL: "http://localhost", BootstrapToken: "bootstrap", EnvironmentManagerURL: "http://localhost:8091", EnvironmentManagerToken: "token"})
-	if err != nil || d == nil {
-		t.Fatalf("independent manager configuration rejected: %v", err)
+	_, err := New(Config{ServerURL: "http://localhost", BootstrapToken: "bootstrap", EnvironmentManagerURL: "http://localhost:8091", EnvironmentManagerToken: "token"})
+	if err == nil || !strings.Contains(err.Error(), "lease fencing is incomplete") {
+		t.Fatalf("unsafe independent manager configuration accepted: %v", err)
 	}
 }
 
@@ -52,5 +52,11 @@ func TestLeaseSandboxCancelsExecutionWhenLeaseIsLost(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("execution continued after lease loss")
+	}
+}
+
+func TestEnvironmentLeaseUsesShortRenewalWindow(t *testing.T) {
+	if environmentLeaseTTL != 90*time.Second || environmentLeaseRenewal != 20*time.Second {
+		t.Fatalf("lease timing changed: ttl=%s renewal=%s", environmentLeaseTTL, environmentLeaseRenewal)
 	}
 }

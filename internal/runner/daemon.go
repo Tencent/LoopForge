@@ -98,8 +98,8 @@ func DefaultStatePath() (string, error) {
 }
 
 func New(cfg Config) (*Daemon, error) {
-	if strings.TrimSpace(cfg.EnvironmentManagerURL) != "" && strings.TrimSpace(cfg.EnvironmentManagerToken) == "" {
-		return nil, errors.New("environment manager token is required when independent manager is enabled")
+	if strings.TrimSpace(cfg.EnvironmentManagerURL) != "" {
+		return nil, errors.New("independent sandbox manager is not ready: workspace and cleanup lease fencing is incomplete")
 	}
 	cfg.ManagedCLIRoot = strings.TrimSpace(cfg.ManagedCLIRoot)
 	cfg.ServerURL = trimTrailingSlash(cfg.ServerURL)
@@ -616,6 +616,14 @@ func (d *Daemon) executeTask(ctx context.Context, task domain.RunnerTask) {
 	}
 
 	releaseGate()
+	if taskEnvironmentLease != nil {
+		if err := taskEnvironmentLease.contextErr(ctx); err != nil {
+			result.status = domain.RunnerTaskCanceled
+			result.errMsg = fmt.Sprintf("execution environment lease lost before completion: %v", err)
+			result.result = ""
+			artifacts = nil
+		}
+	}
 	completeCtx, cancel := context.WithTimeout(context.WithValue(context.Background(), taskAttemptContextKey{}, task.Attempt), 30*time.Second)
 	defer cancel()
 	req := CompleteRequest{Status: result.status, Result: result.result, Error: result.errMsg, Artifacts: artifacts, Outputs: result.outputs}

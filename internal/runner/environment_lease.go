@@ -27,6 +27,12 @@ type environmentLease struct {
 	err    error
 }
 
+const (
+	environmentLeaseTTL      = 90 * time.Second
+	environmentLeaseRenewal  = 20 * time.Second
+	environmentLeaseStopWait = 10 * time.Second
+)
+
 type environmentLeaseContextKey struct{}
 
 func withEnvironmentLease(ctx context.Context, lease *environmentLease) context.Context {
@@ -52,7 +58,7 @@ func (d *Daemon) acquireEnvironmentLease(ctx context.Context, task domain.Runner
 		requestID = "task-" + hex.EncodeToString(sum[:8])
 	}
 	client := executionenv.NewClient(base, d.cfg.EnvironmentManagerToken)
-	lease, err := client.Acquire(ctx, executionenv.LeaseRequest{RequestID: requestID, WorkerID: d.state.RunnerID, RequestLease: 3600, Environment: executionenv.Identity{EnvironmentID: task.RunID, WorkspaceID: task.Workspace, Generation: task.RunGeneration}})
+	lease, err := client.Acquire(ctx, executionenv.LeaseRequest{RequestID: requestID, WorkerID: d.state.RunnerID, RequestLease: int(environmentLeaseTTL / time.Second), Environment: executionenv.Identity{EnvironmentID: task.RunID, WorkspaceID: task.Workspace, Generation: task.RunGeneration}})
 	if err != nil {
 		return nil, err
 	}
@@ -75,13 +81,13 @@ func (l *environmentLease) release() {
 		stop()
 	}
 	l.once.Do(func() { close(l.done) })
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), environmentLeaseStopWait)
 	defer cancel()
 	_ = l.client.Release(ctx, lease.LeaseID, l.worker, lease.Identity.Generation)
 }
 
 func (l *environmentLease) renewLoop(ctx context.Context) {
-	ticker := time.NewTicker(15 * time.Minute)
+	ticker := time.NewTicker(environmentLeaseRenewal)
 	defer ticker.Stop()
 	for {
 		select {
@@ -110,6 +116,16 @@ func (l *environmentLease) check() error {
 	err := l.err
 	l.mu.RUnlock()
 	return err
+}
+
+func (l *environmentLease) contextErr(ctx context.Context) error {
+	if err := l.check(); err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return nil
 }
 
 // leaseSandbox fences every command with the environment lease. A lease

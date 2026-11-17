@@ -8,18 +8,10 @@ Runner protocol. The local environment adapter still delegates to
 tasks carry the Run generation, which fences task callbacks against scheduler
 lease changes. This scheduler fence is distinct from a resource lease.
 
-The independent sandbox manager now supports two lease-store modes. A JSON
-journal is suitable for single-process development. Multi-instance deployment
-must use MySQL and first apply `migrations/033_execution_environment_leases.sql`;
-set `AGENTFLOW_SANDBOX_MANAGER_DSN` and
-`AGENTFLOW_SANDBOX_MANAGER_TOKEN`. SQL storage uses transactions and row locks
-for idempotent acquire/renew/release and generation fencing.
-
-Runner tasks now acquire one environment lease before workspace preparation and
-hold it through execution, artifact collection, cleanup, and the terminal task
-report. Configure `AGENTFLOW_SANDBOX_MANAGER_URL` together with the manager
-token only after applying the SQL migration and validating the manager's
-network availability from the execution host.
+The independent sandbox manager is experimental and is not ready for deployment.
+Resource leases do not yet fence every workspace operation, cleanup and result
+submission. Runner startup rejects `AGENTFLOW_SANDBOX_MANAGER_URL` until these
+paths and their recovery semantics are complete. Keep the variable unset.
 
 ## Native development
 
