@@ -36,7 +36,7 @@ func TestResolveRunnerResumeSessionIDPrefersEngineOption(t *testing.T) {
 	}
 }
 
-func TestGateCommandInvocationCarriesResponsibleGitToken(t *testing.T) {
+func TestGateCommandInvocationCarriesResponsibleCredentialReference(t *testing.T) {
 	t.Parallel()
 	s, err := repo.OpenTest()
 	if err != nil {
@@ -66,7 +66,7 @@ func TestGateCommandInvocationCarriesResponsibleGitToken(t *testing.T) {
 		t.Fatalf("invocation = %+v", invocation)
 	}
 	got := invocation.Repositories[0]
-	if got.GitToken != "tok_gate" || got.Dir != "skillhub" || got.WorkBranch != "feature/fix-issue-67" {
+	if got.GitToken != "" || got.Dir != "skillhub" || got.WorkBranch != "feature/fix-issue-67" {
 		t.Fatalf("repository = %+v", got)
 	}
 	if invocation.GitUserName != "private" || invocation.GitUserEmail != "private@users.noreply.loopforge.invalid" {
@@ -82,7 +82,7 @@ func TestBindRunnerRepositoriesUsesConfiguredMainBranchWhenBaseIsEmpty(t *testin
 		{Repositories: []domain.RepositoryContext{repository}},
 	} {
 		invocation := &domain.RunnerInvocation{}
-		bindRunnerRepositories(invocation, run, "", "", "")
+		bindRunnerRepositories(invocation, run, "", "")
 		if len(invocation.Repositories) != 1 || invocation.Repositories[0].Ref != repository.DefaultBranch {
 			t.Fatalf("runner must receive the configured main branch: %+v", invocation)
 		}

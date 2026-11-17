@@ -484,7 +484,7 @@ func TestCredentialListAndWizard(t *testing.T) {
 	script := `
 const assert = require('node:assert/strict');
 const code = require('node:fs').readFileSync('` + appBundlePath(t) + `', 'utf8');
-const user = {id: 1, gitTokenConfigured: true, codexApiKeyConfigured: true, codexBaseUrl: 'https://proxy.example.com/v1'};
+const user = {id: 1, gitHubCredentialConfigured: true, codexApiKeyConfigured: true, codexBaseUrl: 'https://proxy.example.com/v1'};
 const state = {currentUser: {id: 1}, data: {users: [user]}};
 const userById = id => state.data.users.find(u => u.id === id);
 const escapeHTML = v => String(v), toast = () => {};
@@ -786,7 +786,7 @@ global.escapeHTML = value => String(value);
 global.state = {
   currentUser: {id: 7}, projectFilter: 'alpha',
   mcpMarket: [{id: '61', aliases: ['gongfeng'], url: 'https://mcp-gateway.example.com/gongfeng'}],
-  data: {users: [{id: 7, gitTokenConfigured: true}], mcpServers: []}
+  data: {users: [{id: 7, gitHttpCredentialsConfigured: true}], mcpServers: []}
 };
 global.userById = id => state.data.users.find(u => Number(u.id) === Number(id));
 eval(code.slice(code.indexOf('const GENERIC_REQUIREMENT_CHECKS='), code.indexOf('function genericRequirementChips(')));

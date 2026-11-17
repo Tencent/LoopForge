@@ -309,7 +309,7 @@ func TestTurnEndRegistersWorkspacePullRequests(t *testing.T) {
 	githubAPIBase, gitHostClient = srv.URL, func() *http.Client { return srv.Client() }
 	t.Cleanup(func() { githubAPIBase, gitHostClient = base, client })
 	if err := st.SaveGitHTTPCredential(s.UserID, "", domain.GitHTTPCredentialSecret{
-		GitHTTPCredential: domain.GitHTTPCredential{Name: "GitHub", Platform: domain.GitPlatformGitHub, Host: "github.com", ExposeToWorkspace: true},
+		GitHTTPCredential: domain.GitHTTPCredential{Name: "GitHub", Platform: domain.GitPlatformGitHub, Host: "github.com"},
 		Token:             "gh-token",
 	}); err != nil {
 		t.Fatal(err)
@@ -400,7 +400,7 @@ func TestTurnEndRegistersMergeRequestsOnOtherHosts(t *testing.T) {
 		{"gitlab.unasked.example", domain.GitPlatformGitLab, "unasked-token"},
 	} {
 		if err := st.SaveGitHTTPCredential(s.UserID, "", domain.GitHTTPCredentialSecret{
-			GitHTTPCredential: domain.GitHTTPCredential{Name: c.host, Platform: c.platform, Host: c.host, ExposeToWorkspace: true},
+			GitHTTPCredential: domain.GitHTTPCredential{Name: c.host, Platform: c.platform, Host: c.host},
 			Token:             c.token,
 		}); err != nil {
 			t.Fatal(err)

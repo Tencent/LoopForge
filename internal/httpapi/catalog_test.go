@@ -674,7 +674,7 @@ func TestRepositoryOneLinkSetup(t *testing.T) {
 		"name":          "存储",
 		"defaultBranch": "release",
 	}, http.StatusOK)
-	if updated.GongfengProjectID != "infra/storage" || updated.Name != "存储" || updated.DefaultBranch != "release" {
+	if updated.Provider != domain.RepositoryProviderSSH || updated.GongfengProjectID != "" || updated.Name != "存储" || updated.DefaultBranch != "release" {
 		t.Fatalf("unexpected scp parse / field priority: %+v", updated)
 	}
 	if updated.CloneURL != "git@git.example.com:infra/storage.git" {
@@ -685,7 +685,7 @@ func TestRepositoryOneLinkSetup(t *testing.T) {
 		"projectId": "linkproj",
 		"repoUrl":   "git clone git@git.example.com:infra/dns.git",
 	}, http.StatusOK)
-	if cloned.GongfengProjectID != "infra/dns" || cloned.CloneURL != "git@git.example.com:infra/dns.git" {
+	if cloned.Provider != domain.RepositoryProviderSSH || cloned.GongfengProjectID != "" || cloned.CloneURL != "git@git.example.com:infra/dns.git" {
 		t.Fatalf("git clone prefix was not parsed: %+v", cloned)
 	}
 

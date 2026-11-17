@@ -150,7 +150,7 @@ func TestPreparationFailureIncludesBoundedOutputTailAndPreservesExitError(t *tes
 
 func TestPreparationFailureOutputRedactsCredentialsBeforeTruncation(t *testing.T) {
 	sb := &managedSandbox{Sandbox: &localSandbox{environment: map[string]string{"DB_PASSWORD": "db-secret-value"}}, credentials: RunCredentials{
-		GitToken: "owned-secret",
+		GitHTTPCredentials: testHTTPSCredentials("owned-secret"),
 		MCPServers: []domain.MCPServerDefinition{{
 			Headers:     map[string]string{"Authorization": "Bearer header-owned-secret"},
 			Environment: map[string]string{"API_TOKEN": "mcp-owned-secret", "ENABLED": "1"},

@@ -31,7 +31,7 @@ type User struct {
 	// "admin" may edit generic SOP templates; empty is a regular user.
 	PlatformRole                 string     `json:"platformRole,omitempty"`
 	GitToken                     string     `json:"gitToken,omitempty"`
-	GitTokenConfigured           bool       `json:"gitTokenConfigured,omitempty"`
+	GitHubCredentialConfigured   bool       `json:"gitHubCredentialConfigured,omitempty"`
 	GitTokenOAuth                bool       `json:"gitTokenOAuth,omitempty"`
 	GitSSHKeyConfigured          bool       `json:"gitSshKeyConfigured,omitempty"`
 	GitHTTPCredentialsConfigured bool       `json:"gitHttpCredentialsConfigured,omitempty"`
@@ -74,13 +74,12 @@ const ManagedGitHTTPCredentialID = "managed-internal"
 // GitHTTPCredential is the public description of a personal HTTPS Git
 // credential bound to one host[:port]. It never carries the token.
 type GitHTTPCredential struct {
-	ID                string `json:"id"`
-	Name              string `json:"name"`
-	Platform          string `json:"platform"`
-	Host              string `json:"host"`
-	Username          string `json:"username,omitempty"`
-	ExposeToWorkspace bool   `json:"exposeToWorkspace"`
-	Managed           bool   `json:"managed,omitempty"`
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	Platform string `json:"platform"`
+	Host     string `json:"host"`
+	Username string `json:"username,omitempty"`
+	Managed  bool   `json:"managed,omitempty"`
 }
 
 // GitUsername is the Basic-auth user Git sends with the token.
@@ -126,6 +125,15 @@ type GitHTTPCredentialSecret struct {
 	ExpiresAt time.Time `json:"-"`
 }
 
+// GitHTTPExecutionCredential is only for authenticated, transient execution
+// dispatch. Unlike the settings secret, it must carry the token over the wire.
+// Queued tasks and public management responses always remove these values.
+type GitHTTPExecutionCredential struct {
+	GitHTTPCredential
+	Token     string    `json:"token"`
+	ExpiresAt time.Time `json:"expiresAt,omitempty"`
+}
+
 // NormalizeGitPlatform reports ok=false for a platform outside the three kinds.
 func NormalizeGitPlatform(raw string) (string, bool) {
 	switch p := strings.ToLower(strings.TrimSpace(raw)); p {
@@ -164,7 +172,6 @@ func PublicUser(u User) User {
 	u.CodexAPIKey = ""
 	u.ClaudeCodeAPIKeyConfigured = strings.TrimSpace(u.ClaudeCodeAPIKey) != ""
 	u.ClaudeCodeAPIKey = ""
-	u.GitTokenConfigured = strings.TrimSpace(u.GitToken) != ""
 	u.GitTokenOAuth = strings.TrimSpace(u.GongfengRefreshToken) != ""
 	u.GitToken = ""
 	u.GongfengRefreshToken = ""

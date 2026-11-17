@@ -125,6 +125,7 @@ func TestBindGitWorkspaceFetchesTokenPerHost(t *testing.T) {
 
 // gh and glab logins written in one turn are gone in the next.
 func TestBindGitWorkspaceResetsCLIConfig(t *testing.T) {
+	provideDockerHelperFixture(t)
 	workspace := t.TempDir()
 	sb := &localSandbox{workspace: workspace, driver: "docker"}
 	env := map[string]string{SessionGatewayEnv: "http://relay.invalid/mcp"}

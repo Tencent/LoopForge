@@ -455,7 +455,7 @@ func waitConversationProcessStop(ctx context.Context, id string, call func(conte
 // with the command: the helper fetches them from this turn's session, so a
 // removed token stops working at once.
 func (h *assistantHandlers) bindWorkspaceGit(ctx context.Context, s *AgentToolSession, command runtime.CommandSpec, credentials runtime.RunCredentials) (runtime.CommandSpec, runtime.RunCredentials) {
-	credentials.GitToken = ""
+	credentials.GitHTTPCredentials = nil
 	if s.User.ID <= 0 || h.repo == nil {
 		return command, credentials
 	}

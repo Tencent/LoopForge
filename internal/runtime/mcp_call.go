@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path"
 	"path/filepath"
+	goruntime "runtime"
 	"strings"
 	"time"
 
@@ -78,7 +79,7 @@ func PrepareMCPCall(sandbox Sandbox, workspace string, servers []domain.MCPServe
 		return nil, fmt.Errorf("write mcp call config: %w", err)
 	}
 	helperHost := filepath.Join(hostBin, "agentflow-helper")
-	if err := installMCPCallHelper(workspace, helperHost); err != nil {
+	if err := installMCPCallHelperForSandbox(sandbox, workspace, helperHost); err != nil {
 		return nil, err
 	}
 	wrapperHost := filepath.Join(hostBin, "agentflow")
@@ -162,6 +163,29 @@ func installMCPCallHelper(workspace, dest string) error {
 	if err != nil {
 		return err
 	}
+	return installMCPCallHelperFrom(workspace, src, dest)
+}
+
+func installMCPCallHelperForSandbox(sandbox Sandbox, workspace, dest string) error {
+	if sandboxDriver(sandbox) != "docker" || goruntime.GOOS == "linux" {
+		return installMCPCallHelper(workspace, dest)
+	}
+	self, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	pattern := strings.TrimSpace(os.Getenv("AGENTFLOW_RUNNER_BINARY"))
+	if !strings.Contains(pattern, "{os}") {
+		pattern = filepath.Join(filepath.Dir(self), "agentflow-runner-{os}-{arch}")
+	}
+	src := strings.NewReplacer("{os}", "linux", "{arch}", goruntime.GOARCH).Replace(pattern)
+	if _, err := os.Stat(src); err != nil {
+		return fmt.Errorf("Docker Git/MCP helper requires a Linux runner binary: set AGENTFLOW_RUNNER_BINARY with {os} and {arch}: %w", err)
+	}
+	return installMCPCallHelperFrom(workspace, src, dest)
+}
+
+func installMCPCallHelperFrom(workspace, src, dest string) error {
 	srcInfo, err := os.Stat(src)
 	if err != nil {
 		return err

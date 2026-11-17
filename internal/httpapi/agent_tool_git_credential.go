@@ -66,7 +66,7 @@ func (h *agentToolGateway) gitCredential(ctx context.Context, s *AgentToolSessio
 		return gitCredentialResult{}
 	}
 	cred, ok := h.repo.GitHTTPCredentialForHost(ctx, s.UserID, host)
-	if !ok || !cred.ExposeToWorkspace || cred.Token == "" {
+	if !ok || cred.Token == "" {
 		outcome = "not configured"
 		return gitCredentialResult{}
 	}

@@ -35,6 +35,21 @@ globalThis.LoopForgeGitSSH = function parseSSHRepository(raw) {
   if (!endpoint) return null;
   // git@github.com: stays a GitHub repository (HTTPS + token, automatic PRs),
   // the same as on the server; only an explicit provider "ssh" uses SSH there.
-  if (endpoint === 'github.com:22') return null;
   return { provider: 'ssh', host: endpoint, project: `${host.toLowerCase()}${port === '22' ? '' : ':' + port}/${segments.join('/')}`, name, cloneUrl, webUrl: '' };
+};
+
+// Unknown HTTPS hosts use Git transport without identifying the hosting product.
+globalThis.LoopForgeGitHTTPS = function parseHTTPSRepository(raw) {
+  const address=String(raw||'').trim().replace(/^git clone\s+/i,'');
+  if(!/^https:\/\//i.test(address)||/[\s\\]/.test(address))return null;
+  try{
+    const u=new URL(address),host=u.host.toLowerCase();
+    if(u.username||u.password||u.search||u.hash||['github.com','git.example.com'].includes(u.hostname.toLowerCase()))return null;
+    if(!/^[a-z0-9][a-z0-9.-]*(?::[0-9]+)?$/i.test(host)||u.hostname.includes('..')||/^\d+(?:\.\d+){3}$/.test(u.hostname))return null;
+    const parts=u.pathname.replace(/^\/+|\/+$/g,'').split('/');
+    if(parts.some(part=>!part||decodeURIComponent(part)==='.'||decodeURIComponent(part)==='..'))return null;
+    const name=parts[parts.length-1].replace(/\.git$/,'');if(!name)return null;
+    const cloneUrl='https://'+host+'/'+parts.join('/');
+    return {provider:'https',host,project:host+'/'+parts.join('/').replace(/\.git$/,''),name,cloneUrl,webUrl:cloneUrl.replace(/\.git$/,'')};
+  }catch{return null}
 };

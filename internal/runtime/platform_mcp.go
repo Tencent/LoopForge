@@ -12,8 +12,8 @@ type MCPTarget struct {
 	// ServerURL is how that place reaches the platform. Execution machines
 	// pass their own server URL; cloud runs leave it empty and keep whatever
 	// absolute URL the engine resolved.
-	ServerURL string
-	GitToken  string
+	ServerURL          string
+	GitHTTPCredentials map[string]domain.GitHTTPExecutionCredential
 	// RequireCredentials fails when a credential-authenticated MCP has no
 	// token. Agent invocations require it; scripts and gates bind
 	// opportunistically.
@@ -28,7 +28,11 @@ type MCPTarget struct {
 // returned warnings name servers that had to be dropped.
 func PrepareMCPServers(assets domain.AgentAssetBundle, target MCPTarget) (domain.AgentAssetBundle, []string, error) {
 	var warnings []string
-	if target.SSHRepositoriesOnly && strings.TrimSpace(target.GitToken) == "" {
+	githubToken := ""
+	if credential := target.GitHTTPCredentials["github.com"]; credential.Token != "" {
+		githubToken = credential.Token
+	}
+	if target.SSHRepositoriesOnly && githubToken == "" {
 		servers := assets.MCPServers
 		assets.MCPServers = nil
 		for _, server := range servers {
@@ -40,7 +44,7 @@ func PrepareMCPServers(assets domain.AgentAssetBundle, target MCPTarget) (domain
 		}
 	}
 	var githubErr error
-	assets, githubErr = BindGitHubMCPHeaders(assets, target.GitToken, target.RequireCredentials)
+	assets, githubErr = BindGitHubMCPHeaders(assets, githubToken, target.RequireCredentials)
 	if githubErr != nil {
 		return assets, nil, githubErr
 	}

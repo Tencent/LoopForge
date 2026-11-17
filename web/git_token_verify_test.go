@@ -40,7 +40,7 @@ func TestGitTokenVerificationBadge(t *testing.T) {
 	script := `
 const assert=require('node:assert/strict');
 const code=require('node:fs').readFileSync('` + appBundlePath(t) + `','utf8');
-const state={currentUser:{id:1},data:{users:[{id:1,gitTokenConfigured:true}]}};
+const state={currentUser:{id:1},data:{users:[{id:1,gitHubCredentialConfigured:true}]}};
 const userById=id=>state.data.users.find(u=>u.id===id);
 const escapeHTML=v=>String(v),userAvatarHTML=()=>'',userDisplay=()=>'Alice';
 const toasts=[];const toast=(message,kind)=>toasts.push({message,kind});
@@ -48,7 +48,7 @@ let result={valid:false,error:'当前配置的是工蜂「私人令牌」，只�
 const calls=[];
 const api=async(path,options={})=>{
   calls.push({path,method:options.method||'GET',body:options.body});
-  if(path.endsWith('/credentials'))return {id:1,gitTokenConfigured:true};
+  if(path.endsWith('/git-http-credentials'))return options.method==='PUT'?[{id:'github',host:'github.com'}]:[];
   if(path==='/api/auth/gongfeng')return {enabled:false};
   return result;
 };
@@ -120,7 +120,7 @@ const gitToken=cred.kind('gitToken');
  const saved=await verifyAndSaveGitToken('typed-pat');
  assert.equal(saved.saved,true);
  assert.equal(putCalls().length,1);
- assert.deepEqual(JSON.parse(putCalls()[0].body),{gitToken:'typed-pat'});
+ assert.deepEqual(JSON.parse(putCalls()[0].body),{name:'GitHub',platform:'github',host:'github.com',username:'x-access-token',token:'typed-pat'});
  assert.equal(state.gitTokenVerify.result.valid,true);
  assert.deepEqual(posted,[{type:'agentflow-credentials-changed'}]);
  // Returning from Gongfeng OAuth clears the cache, announces and re-verifies.

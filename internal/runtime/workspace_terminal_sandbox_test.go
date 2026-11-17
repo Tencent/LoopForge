@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"os"
 	"os/exec"
@@ -26,7 +27,7 @@ func TestWorkspaceTerminalSandboxUsesOverlayAndPrivateCredentials(t *testing.T) 
 	if err := os.WriteFile(filepath.Join(bin, "env-tool"), []byte("#!/bin/sh\nprintf '%s' \"$SOP_ENV_MARKER\"\n"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	sb := &managedSandbox{Sandbox: &localSandbox{workspace: workspace, environment: map[string]string{"PATH": bin + ":" + os.Getenv("PATH"), "SOP_ENV_MARKER": "same-environment"}}, workspace: workspace, credentials: RunCredentials{GitToken: "run-owned-token", CodeBuddy: CodeBuddyCredential{APIKey: "not-for-terminal"}}}
+	sb := &managedSandbox{Sandbox: &localSandbox{workspace: workspace, environment: map[string]string{"PATH": bin + ":" + os.Getenv("PATH"), "SOP_ENV_MARKER": "same-environment"}}, workspace: workspace, credentials: RunCredentials{GitHTTPCredentials: testHTTPSCredentials("run-owned-token"), CodeBuddy: CodeBuddyCredential{APIKey: "not-for-terminal"}}}
 	var released atomic.Int32
 	var pool TerminalPool
 	ctx, cancel := context.WithCancel(context.Background())
@@ -36,7 +37,7 @@ func TestWorkspaceTerminalSandboxUsesOverlayAndPrivateCredentials(t *testing.T) 
 	}
 	defer pool.CloseScope("run:1")
 	cancel() // HTTP lifetime must not kill a terminal returned to the browser.
-	input := "env-tool > tool-result; printf '%s|%s|%s|%s' \"$AGENTFLOW_DATABASE_URL\" \"$AGENTFLOW_TEST_SECRET\" \"$OPENAI_API_KEY\" \"$CODEBUDDY_API_KEY\" > leaked; printf '%s' \"$AGENTFLOW_GIT_TOKEN\" > git-token\n"
+	input := `env-tool > tool-result; printf '%s|%s|%s|%s' "$AGENTFLOW_DATABASE_URL" "$AGENTFLOW_TEST_SECRET" "$OPENAI_API_KEY" "$CODEBUDDY_API_KEY" > leaked; printf 'protocol=https\nhost=github.com\n\n' | git credential fill | python3 -c 'import sys,hashlib; c=dict(l.strip().split("=",1)for l in sys.stdin if "="in l);print(hashlib.sha256(c["password"].encode()).hexdigest())' > git-token` + "\n"
 	if _, err := pool.HandleSandbox(context.Background(), nil, "run:1", domain.WorkspaceTerminalRequest{Operation: "input", ID: opened.ID, Data: input}, nil); err != nil {
 		t.Fatal(err)
 	}
@@ -44,7 +45,7 @@ func TestWorkspaceTerminalSandboxUsesOverlayAndPrivateCredentials(t *testing.T) 
 	for time.Now().Before(deadline) {
 		body, _ := os.ReadFile(filepath.Join(workspace, "tool-result"))
 		token, _ := os.ReadFile(filepath.Join(workspace, "git-token"))
-		if string(body) == "same-environment" && string(token) == "run-owned-token" {
+		if string(body) == "same-environment" && strings.TrimSpace(string(token)) == fmt.Sprintf("%x", sha256.Sum256([]byte("run-owned-token"))) {
 			break
 		}
 		time.Sleep(10 * time.Millisecond)
@@ -55,7 +56,7 @@ func TestWorkspaceTerminalSandboxUsesOverlayAndPrivateCredentials(t *testing.T) 
 	if body, _ := os.ReadFile(filepath.Join(workspace, "leaked")); string(body) != "|||" {
 		t.Fatalf("host/model environment leaked: %q", body)
 	}
-	if body, _ := os.ReadFile(filepath.Join(workspace, "git-token")); string(body) != "run-owned-token" {
+	if body, _ := os.ReadFile(filepath.Join(workspace, "git-token")); strings.TrimSpace(string(body)) != fmt.Sprintf("%x", sha256.Sum256([]byte("run-owned-token"))) {
 		t.Fatalf("explicit run Git binding missing: %q", body)
 	}
 	pool.CloseScope("run:1")

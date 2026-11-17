@@ -29,8 +29,7 @@ func (row gitHTTPCredentialRow) secret() domain.GitHTTPCredentialSecret {
 	return domain.GitHTTPCredentialSecret{
 		GitHTTPCredential: domain.GitHTTPCredential{
 			ID: row.ID, Name: row.Name, Platform: row.Platform, Host: row.Host,
-			Username: row.Username, ExposeToWorkspace: row.ExposeToWorkspace,
-		},
+			Username: row.Username},
 		Token: row.Token,
 	}
 }
@@ -45,7 +44,7 @@ func managedGitHost() string {
 // "private:" token kept in user_configs as a read-only credential, without
 // refreshing it. A plain pasted token is a personal credential instead.
 func managedGitHTTPCredential(user domain.User) (domain.GitHTTPCredentialSecret, bool) {
-	raw := formatUserGitCredential(user)
+	raw := formatManagedGitCredential(user)
 	lower := strings.ToLower(raw)
 	if !strings.HasPrefix(lower, gitwork.OAuthHTTPUser+":") && !strings.HasPrefix(lower, gitwork.HTTPUser+":") {
 		return domain.GitHTTPCredentialSecret{}, false
@@ -58,7 +57,7 @@ func managedGitHTTPCredential(user domain.User) (domain.GitHTTPCredentialSecret,
 	secret := domain.GitHTTPCredentialSecret{
 		GitHTTPCredential: domain.GitHTTPCredential{
 			ID: domain.ManagedGitHTTPCredentialID, Name: "内部托管凭据", Platform: domain.GitPlatformGitLab,
-			Host: host, Username: username, ExposeToWorkspace: gongfeng.ConfigFromEnv().ExposeToWorkspace, Managed: true,
+			Host: host, Username: username, Managed: true,
 		},
 		Token: token,
 	}
@@ -73,7 +72,7 @@ func managedGitHTTPCredential(user domain.User) (domain.GitHTTPCredentialSecret,
 // Tokens are never read into the description.
 func (r *UsersRepo) GitHTTPCredentials(userID int64) ([]domain.GitHTTPCredential, error) {
 	var rows []gitHTTPCredentialRow
-	err := r.DB.Select("id", "name", "platform", "host", "username", "expose_to_workspace").
+	err := r.DB.Select("id", "name", "platform", "host", "username").
 		Where("user_id = ?", userID).Order("name, id").Find(&rows).Error
 	if err != nil {
 		return nil, err
@@ -111,8 +110,7 @@ func (r *UsersRepo) SaveGitHTTPCredential(userID int64, existingID string, input
 		}
 		row := gitHTTPCredentialRow{
 			UserID: userID, ID: id, Name: input.Name, Platform: input.Platform, Host: host,
-			Username: input.Username, Token: input.Token, ExposeToWorkspace: input.ExposeToWorkspace,
-			Created: &now, Updated: &now,
+			Username: input.Username, Token: input.Token, Created: &now, Updated: &now,
 		}
 		err := r.DB.Create(&row).Error
 		if errors.Is(err, gorm.ErrDuplicatedKey) {
@@ -126,7 +124,7 @@ func (r *UsersRepo) SaveGitHTTPCredential(userID int64, existingID string, input
 	row := r.DB.Model(&gitHTTPCredentialRow{}).Where("user_id = ? AND id = ?", userID, id)
 	updates := map[string]any{
 		"name": input.Name, "platform": input.Platform, "username": input.Username,
-		"expose_to_workspace": input.ExposeToWorkspace, "updated_at": now,
+		"updated_at": now,
 	}
 	if input.Token != "" {
 		updates["token"] = input.Token
@@ -154,8 +152,7 @@ func (r *UsersRepo) DeleteGitHTTPCredential(userID int64, id string) error {
 }
 
 // GitHTTPCredentialForHost returns the user's credential for exactly one
-// host[:port], refreshing a managed OAuth token first. It does not check
-// ExposeToWorkspace: workspace callers must.
+// host[:port], refreshing a managed OAuth token first.
 func (r *UsersRepo) GitHTTPCredentialForHost(ctx context.Context, userID int64, host string) (domain.GitHTTPCredentialSecret, bool) {
 	host, err := gitwork.HTTPSHostScope(host)
 	if err != nil || userID <= 0 {
@@ -174,6 +171,22 @@ func (r *UsersRepo) GitHTTPCredentialForHost(ctx context.Context, userID int64, 
 	return r.refreshedManagedGitHTTPCredential(ctx, userID)
 }
 
+// GitHTTPCredentialSecrets is used only by authenticated execution dispatch.
+// Public settings and run snapshots continue to use credential descriptions.
+func (r *UsersRepo) GitHTTPCredentialSecrets(ctx context.Context, userID int64) map[string]domain.GitHTTPExecutionCredential {
+	out := map[string]domain.GitHTTPExecutionCredential{}
+	credentials, err := r.GitHTTPCredentials(userID)
+	if err != nil {
+		return out
+	}
+	for _, credential := range credentials {
+		if secret, ok := r.GitHTTPCredentialForHost(ctx, userID, credential.Host); ok {
+			out[credential.Host] = domain.GitHTTPExecutionCredential{GitHTTPCredential: secret.GitHTTPCredential, Token: secret.Token, ExpiresAt: secret.ExpiresAt}
+		}
+	}
+	return out
+}
+
 // GitHTTPCredentialByID resolves one listed credential for verification.
 func (r *UsersRepo) GitHTTPCredentialByID(ctx context.Context, userID int64, id string) (domain.GitHTTPCredentialSecret, bool) {
 	if id == domain.ManagedGitHTTPCredentialID {
@@ -187,7 +200,7 @@ func (r *UsersRepo) GitHTTPCredentialByID(ctx context.Context, userID int64, id 
 }
 
 func (r *UsersRepo) refreshedManagedGitHTTPCredential(ctx context.Context, userID int64) (domain.GitHTTPCredentialSecret, bool) {
-	if r.GitCredential(ctx, userID) == "" {
+	if r.managedGitCredential(ctx, userID) == "" {
 		return domain.GitHTTPCredentialSecret{}, false
 	}
 	user, ok := r.User(userID)
@@ -210,9 +223,7 @@ func (r *UsersRepo) GitHTTPWorkspaceHosts(userID int64) map[string]string {
 	}
 	hosts := make(map[string]string, len(creds))
 	for _, cred := range creds {
-		if cred.ExposeToWorkspace {
-			hosts[cred.Host] = cred.Platform
-		}
+		hosts[cred.Host] = cred.Platform
 	}
 	return hosts
 }

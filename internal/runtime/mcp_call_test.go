@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	goruntime "runtime"
 	"strings"
 	"testing"
 
@@ -148,6 +149,7 @@ func TestBindMCPWritesWorkspaceBinWithoutPATH(t *testing.T) {
 }
 
 func TestDockerMCPCallPointsAtWorkspaceBin(t *testing.T) {
+	provideDockerHelperFixture(t)
 	workspace := t.TempDir()
 	sb := &localSandbox{workspace: workspace, driver: "docker"}
 	env, err := ScriptMCPEnvironment(sb, workspace, []domain.MCPServerDefinition{{
@@ -181,6 +183,19 @@ func TestDockerMCPCallPointsAtWorkspaceBin(t *testing.T) {
 	if argv[1] != "-lc" || strings.Contains(argv[2], "agentflow()") {
 		t.Fatalf("docker argv is rewritten by dockerWorkspaceExecArgv, BindMCPCallArgv should leave it, got %v", argv)
 	}
+}
+
+func provideDockerHelperFixture(t *testing.T) {
+	t.Helper()
+	if goruntime.GOOS == "linux" {
+		return
+	}
+	pattern := filepath.Join(t.TempDir(), "helper-{os}-{arch}")
+	path := strings.NewReplacer("{os}", "linux", "{arch}", goruntime.GOARCH).Replace(pattern)
+	if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("AGENTFLOW_RUNNER_BINARY", pattern)
 }
 
 func TestProcessSandboxMCPCallUsesAbsoluteManagedLauncher(t *testing.T) {

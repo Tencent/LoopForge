@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"agentflow/internal/domain"
+	"agentflow/internal/gitwork"
 	"agentflow/internal/runtime"
 )
 
@@ -183,18 +184,19 @@ func (e *Engine) dispatchRunnerTask(ctx context.Context, runnerID string, run do
 	authMode := runner.RuntimeAuthMode(ex.Kind)
 	resumeSessionID := resolveRunnerResumeSessionID(run, node.ID, options)
 	invocation := &domain.RunnerInvocation{
-		ArchivedFiles:    e.legacyArchivedWorkspaceFiles(run, node.ID),
-		RunID:            run.ID,
-		NodeID:           node.ID,
-		InvocationID:     invocationID,
-		ResumeSessionID:  resumeSessionID,
-		Executor:         ex,
-		Agent:            agent,
-		Assets:           assets,
-		Artifacts:        node.ArtifactOutputs,
-		HumanContext:     run.HumanContext,
-		CredentialSource: authMode,
-		GateResultPath:   options.GateResultPath,
+		ArchivedFiles:                 e.legacyArchivedWorkspaceFiles(run, node.ID),
+		RunID:                         run.ID,
+		NodeID:                        node.ID,
+		InvocationID:                  invocationID,
+		ResumeSessionID:               resumeSessionID,
+		Executor:                      ex,
+		Agent:                         agent,
+		Assets:                        assets,
+		Artifacts:                     node.ArtifactOutputs,
+		HumanContext:                  run.HumanContext,
+		CredentialSource:              authMode,
+		GateResultPath:                options.GateResultPath,
+		RepositoryPreparationFallback: firstRepositoryAgent(run.WorkflowSnapshot, node),
 	}
 	if strings.TrimSpace(options.GateResultPath) != "" {
 		invocation.Artifacts = append(invocation.Artifacts, gateResultContract(options.GateResultPath))
@@ -232,7 +234,7 @@ func (e *Engine) dispatchRunnerTask(ctx context.Context, runnerID string, run do
 			}
 		}
 	}
-	bindRunnerRepositories(invocation, run, sb.credentialSnapshot().GitToken, sb.credentialSnapshot().GitUserName, sb.credentialSnapshot().GitUserEmail)
+	bindRunnerRepositories(invocation, run, sb.credentialSnapshot().GitUserName, sb.credentialSnapshot().GitUserEmail)
 	reported := sb.reportedOutputs(node.ID)
 	if reported != nil {
 		invocation.Artifacts = nil
@@ -307,7 +309,7 @@ func (e *Engine) dispatchRunnerTask(ctx context.Context, runnerID string, run do
 		if final.ExitCode != nil {
 			msg = fmt.Sprintf("%s (exit %d)", msg, *final.ExitCode)
 		}
-		return "", explainGitAuthFailure(errors.New(msg), strings.TrimSpace(sb.credentialSnapshot().GitToken) != "")
+		return "", explainGitAuthFailure(errors.New(msg), strings.TrimSpace(sb.credentialSnapshot().GitHTTPCredentials["github.com"].Token) != "")
 	case domain.RunnerTaskCanceled:
 		return "", errors.New("runner task canceled")
 	default:
@@ -331,12 +333,13 @@ func resolveRunnerResumeSessionID(run domain.Run, nodeID string, options runtime
 	return ""
 }
 
-func bindRunnerRepositories(invocation *domain.RunnerInvocation, run domain.Run, gitToken, gitUserName, gitUserEmail string) {
+func bindRunnerRepositories(invocation *domain.RunnerInvocation, run domain.Run, gitUserName, gitUserEmail string) {
 	if invocation == nil {
 		return
 	}
 	invocation.GitUserName = strings.TrimSpace(gitUserName)
 	invocation.GitUserEmail = strings.TrimSpace(gitUserEmail)
+	invocation.GitHTTPUserID = run.ExecutionContext.ResponsibleUserID
 	if strings.TrimSpace(run.Repository.CloneURL) != "" && len(run.Repositories) == 0 {
 		invocation.Repository = &domain.RunnerRepository{
 			RepositoryID:              run.Repository.RepositoryID,
@@ -346,8 +349,7 @@ func bindRunnerRepositories(invocation *domain.RunnerInvocation, run domain.Run,
 			WorkBranch:                run.Repository.WorkBranch,
 			RequireExistingWorkBranch: run.Repository.RequireExistingWorkBranch,
 			CreateNewWorkBranch:       run.Repository.CreateNewWorkBranch,
-			GitToken:                  gitToken,
-			UseSSH:                    run.Repository.Provider == domain.RepositoryProviderSSH,
+			UseSSH:                    run.Repository.Provider == domain.RepositoryProviderSSH || gitwork.IsSSHReference(run.Repository.CloneURL),
 		}
 	}
 	for _, rc := range run.RepositoryContexts() {
@@ -362,8 +364,7 @@ func bindRunnerRepositories(invocation *domain.RunnerInvocation, run domain.Run,
 			WorkBranch:                rc.WorkBranch,
 			RequireExistingWorkBranch: rc.RequireExistingWorkBranch,
 			CreateNewWorkBranch:       rc.CreateNewWorkBranch,
-			GitToken:                  gitToken,
-			UseSSH:                    rc.Provider == domain.RepositoryProviderSSH,
+			UseSSH:                    rc.Provider == domain.RepositoryProviderSSH || gitwork.IsSSHReference(rc.CloneURL),
 			Dir:                       rc.WorkspaceDir,
 		})
 	}
@@ -402,7 +403,7 @@ func (e *Engine) dispatchRunnerScript(ctx context.Context, runnerID string, run 
 	invocation := &domain.RunnerInvocation{
 		ArchivedFiles: e.legacyArchivedWorkspaceFiles(run, nodeID),
 		RunID:         run.ID, NodeID: nodeID, Artifacts: artifacts, ArtifactDirectory: artifactDirectory, Assets: assets, MCPCallServers: assets.MCPServers, HumanContext: run.HumanContext}
-	bindRunnerRepositories(invocation, run, gitToken, gitUserName, gitUserEmail)
+	bindRunnerRepositories(invocation, run, gitUserName, gitUserEmail)
 	reported := sb.reportedOutputs(nodeID)
 	if reported != nil {
 		invocation.Artifacts = nil
@@ -669,7 +670,7 @@ func (e *Engine) gateCommandInvocation(run domain.Run, nodeID string) *domain.Ru
 	invocation := &domain.RunnerInvocation{
 		RunID: run.ID, NodeID: nodeID, Assets: assets, MCPCallServers: assets.MCPServers}
 	identity := resolveGitIdentity(e.repo, run.ExecutionContext.ResponsibleUserID)
-	bindRunnerRepositories(invocation, run, resolveGitToken(e.repo, run.ExecutionContext.ResponsibleUserID), identity.name, identity.email)
+	bindRunnerRepositories(invocation, run, identity.name, identity.email)
 	return invocation
 }
 

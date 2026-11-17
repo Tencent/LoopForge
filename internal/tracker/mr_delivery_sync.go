@@ -117,6 +117,14 @@ func (s *Service) syncMRDeliveryStates(store MRDeliveryStore) {
 	updated := 0
 	for _, row := range pending {
 		if strings.HasPrefix(row.MRProject, "github:") {
+			if ok, err := s.refreshExternalDelivery(store, row); ok || err != nil {
+				if err != nil {
+					log.Printf("GitHub delivery refresh: %v", err)
+				} else {
+					updated++
+				}
+				continue
+			}
 			if err := s.refreshGitHubDelivery(store, row.MRProject, row.MRIID); err != nil {
 				log.Printf("GitHub delivery refresh: %v", err)
 			} else {

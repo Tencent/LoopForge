@@ -63,7 +63,7 @@ const CREDENTIAL_KINDS=[
     placeholder:'请输入个人访问令牌（PAT）',hint:'保存前会先校验令牌有效性与权限',
     impact:'依赖私有仓库的 SOP 将无法克隆或推送仓库。'},
   {key:'gitSshKey',group:'platform',name:'Git SSH',short:'Git SSH 密钥',icon:'key',
-    use:'按 SSH 主机管理个人密钥，仓库自动匹配',dialog:()=>openGitSSHKeys(),action:'管理密钥'},
+    use:'SSH 密钥用于克隆和推送；创建 PR/MR 需要访问令牌',dialog:()=>openGitSSHKeys(),action:'管理密钥'},
   {key:'gitHttpCredentials',group:'platform',name:'Git HTTPS',short:'Git 访问令牌',icon:'lock',
     use:'按主机管理 HTTPS 访问令牌，工作区的 git、gh、glab 自动认证',dialog:()=>openGitHTTPCredentials(),action:'管理令牌'},
   {key:'codeBuddyApiKey',group:'model',name:'CodeBuddy',short:'CodeBuddy API Key',logo:'codebuddy',
@@ -426,7 +426,7 @@ const CREDENTIAL_PAT_WARNING='请填写 GitHub <b>个人访问令牌（PAT）</b
 function credentialKind(key){return CREDENTIAL_KINDS.find(kind=>kind.key===key)||null}
 // Kinds with a dialog manage several entries there instead of the inline editor.
 function credentialDialog(key){return credentialKind(key)?.dialog||null}
-function credentialConfigured(kind,user){return !!credentialValue(user,kind.agentCli?kind.key+'.apiKeyConfigured':kind.key+'Configured')}
+function credentialConfigured(kind,user){if(kind.key==='gitToken')return !!user.gitHubCredentialConfigured;return !!credentialValue(user,kind.agentCli?kind.key+'.apiKeyConfigured':kind.key+'Configured')}
 function credentialUser(){return userById(state.currentUser?.id)||{}}
 function credentialUI(){return state.credentialUI||(state.credentialUI={open:null,filter:'all',closed:{}})}
 function credentialGlyph(name,size=16,cls=''){return `<svg class="agent-icon harness-icon${cls?' '+cls:''}" data-icon="${name}" width="${size}" height="${size}" aria-hidden="true" focusable="false"></svg>`}
@@ -742,7 +742,12 @@ function storeCredentialUser(saved){
 function notifyCredentialsChanged(){$('#chatNextFrame')?.contentWindow?.postMessage({type:'agentflow-credentials-changed'},location.origin)}
 async function saveCredential(key,values={},options={}){
   const user=state.currentUser,kind=credentialKind(key);
-  const saved=await api(`/api/users/${user.id}/credentials`,{method:'PUT',body:JSON.stringify(credentialSavePayload(kind,values))});
+  let saved;
+  if(key==='gitToken'){
+    const endpoint=`/api/users/${user.id}/git-http-credentials`,credentials=await api(endpoint),existing=credentials.find(credential=>credential.host==='github.com');
+    const listed=await api(endpoint,{method:'PUT',body:JSON.stringify({...(existing?{id:existing.id}:{}),name:'GitHub',platform:'github',host:'github.com',username:'x-access-token',token:values.secret})});
+    saved={...credentialUser(),id:user.id,gitHubCredentialConfigured:listed.some(item=>item.host==='github.com'),gitHttpCredentialsConfigured:listed.length>0};
+  }else saved=await api(`/api/users/${user.id}/credentials`,{method:'PUT',body:JSON.stringify(credentialSavePayload(kind,values))});
   if(key==='gitToken'&&!options.verified)state.gitTokenVerify=null;
   storeCredentialUser(saved);
   notifyCredentialsChanged();
@@ -750,7 +755,12 @@ async function saveCredential(key,values={},options={}){
 }
 async function deleteCredential(key){
   const user=state.currentUser,kind=credentialKind(key);
-  const saved=await api(`/api/users/${user.id}/credentials`,{method:'PUT',body:JSON.stringify(credentialClearPayload(kind))});
+  let saved;
+  if(key==='gitToken'){
+    const endpoint=`/api/users/${user.id}/git-http-credentials`,credentials=await api(endpoint),existing=credentials.find(credential=>credential.host==='github.com');
+    const listed=existing?await api(`${endpoint}/${encodeURIComponent(existing.id)}`,{method:'DELETE'}):credentials;
+    saved={...credentialUser(),id:user.id,gitHubCredentialConfigured:listed.some(item=>item.host==='github.com'),gitHttpCredentialsConfigured:listed.length>0};
+  }else saved=await api(`/api/users/${user.id}/credentials`,{method:'PUT',body:JSON.stringify(credentialClearPayload(kind))});
   if(key==='gitToken')state.gitTokenVerify=null;
   storeCredentialUser(saved);
   notifyCredentialsChanged();
@@ -1182,8 +1192,8 @@ async function refreshGongfengGrant(){
   if(!fresh||!row||Number(state.currentUser?.id)!==Number(user.id))return;
   storeCredentialUser(fresh);
   state.gitTokenVerify=null;
-  if(credentialWizard?.kind==='gitToken'&&fresh.gitTokenConfigured)closeCredentialWizard(true);
-  if(row.classList.contains('is-configured')!==!!fresh.gitTokenConfigured){
+  if(credentialWizard?.kind==='gitToken'&&fresh.gitHubCredentialConfigured)closeCredentialWizard(true);
+  if(row.classList.contains('is-configured')!==!!fresh.gitHubCredentialConfigured){
     const holder=document.createElement('div');
     holder.innerHTML=credentialRowHTML(credentialKind('gitToken'),fresh);
     row.replaceWith(holder.firstElementChild);
@@ -1192,7 +1202,7 @@ async function refreshGongfengGrant(){
     applyCredentialFilter(panel,fresh);
     hydrateCredentialIcons(panel);
   }
-  if(!fresh.gitTokenConfigured){repaintCredentialRow('gitToken');return}
+  if(!fresh.gitHubCredentialConfigured){repaintCredentialRow('gitToken');return}
   state.gitTokenAnnounceVerify=true;
   toast('工蜂授权已保存，正在校验授权有效性…');
   await refreshGitTokenStatus();
@@ -1225,7 +1235,7 @@ async function renderPersonalSettings(){
   setTimeout(()=>panel.classList.remove('is-entering'),900);
   // Offer the OAuth shortcut only when the server has a Gongfeng application.
   api('/api/auth/gongfeng',{silent:true}).then(capability=>{state.gongfengOAuthEnabled=!!capability?.enabled;document.querySelectorAll('[data-gongfeng-oauth]').forEach(el=>{el.hidden=!state.gongfengOAuthEnabled})}).catch(()=>{});
-  if(storedUser.gitTokenConfigured){
+  if(storedUser.gitHubCredentialConfigured){
     const cached=gitTokenVerifyFor(user);
     if(!cached||(cached.busy&&!state.gitTokenVerifyInFlight)){state.gitTokenVerifyInFlight=true;refreshGitTokenStatus().finally(()=>{state.gitTokenVerifyInFlight=false})}
   }

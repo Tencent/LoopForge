@@ -50,7 +50,6 @@ type RunCredentials struct {
 	Codex      ProviderCredential
 	ClaudeCode ProviderCredential
 	AgentCLI   map[string]ProviderCredential
-	GitToken   string
 	GitSSHKeys map[string]string `json:"-"`
 	// GitSSHHostKeys maps "host:port" to the requester's private key for a
 	// conversation workspace. It travels to the execution machine on the
@@ -59,9 +58,12 @@ type RunCredentials struct {
 	// GitHTTPHosts maps each HTTPS host the requester exposes to a workspace
 	// to its platform. It holds no tokens; the helper asks for them per host.
 	GitHTTPHosts map[string]string `json:",omitempty"`
-	GitUserName  string
-	GitUserEmail string
-	MCPServers   []domain.MCPServerDefinition
+	// GitHTTPCredentials travels only on authenticated execution dispatches.
+	// SOP commands fetch a matching, exposed credential from an ephemeral relay.
+	GitHTTPCredentials map[string]domain.GitHTTPExecutionCredential `json:",omitempty"`
+	GitUserName        string
+	GitUserEmail       string
+	MCPServers         []domain.MCPServerDefinition
 }
 
 type ProviderCredential struct {

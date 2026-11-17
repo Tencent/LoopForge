@@ -1,8 +1,7 @@
 -- Personal HTTPS Git credentials, one per user and host[:port]. The id is the
 -- hex SHA-256 of the host, so a host keeps one credential and re-running this
--- script is idempotent. Tokens are never returned by the credential API; when
--- expose_to_workspace is set the token is handed in plain text to the owner's
--- workspace turns on request.
+-- script is idempotent. Tokens are never returned by the settings API;
+-- the owner's workspace requests them from its authenticated Git helper.
 CREATE TABLE IF NOT EXISTS user_git_http_credentials (
   user_id BIGINT NOT NULL,
   id VARCHAR(64) NOT NULL,
@@ -11,7 +10,6 @@ CREATE TABLE IF NOT EXISTS user_git_http_credentials (
   host VARCHAR(255) NOT NULL,
   username VARCHAR(128) NOT NULL DEFAULT '',
   token TEXT NOT NULL,
-  expose_to_workspace BOOLEAN NOT NULL DEFAULT TRUE,
   created_at DATETIME(3) NULL,
   updated_at DATETIME(3) NULL,
   PRIMARY KEY (user_id, id)
@@ -22,11 +20,11 @@ CREATE TABLE IF NOT EXISTS user_git_http_credentials (
 -- keep refreshing, and surface as the read-only managed credential.
 -- user_configs.git_token keeps its copy until a later cleanup script.
 INSERT IGNORE INTO user_git_http_credentials (
-  user_id, id, name, platform, host, username, token, expose_to_workspace, created_at, updated_at
+  user_id, id, name, platform, host, username, token, created_at, updated_at
 )
 SELECT
   c.user_id, SHA2('github.com', 256), 'GitHub', 'github', 'github.com', 'x-access-token',
-  TRIM(c.git_token), TRUE, UTC_TIMESTAMP(3), UTC_TIMESTAMP(3)
+  TRIM(c.git_token), UTC_TIMESTAMP(3), UTC_TIMESTAMP(3)
 FROM user_configs c
 WHERE COALESCE(TRIM(c.git_token), '') <> ''
   AND COALESCE(TRIM(c.gongfeng_refresh_token), '') = ''

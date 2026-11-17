@@ -63,19 +63,16 @@ type gitSSHKeyRow struct {
 
 func (gitSSHKeyRow) TableName() string { return "user_git_ssh_keys" }
 
-// ExposeToWorkspace has no gorm default: gorm would drop an explicit false on
-// insert in favour of a column default.
 type gitHTTPCredentialRow struct {
-	UserID            int64      `gorm:"primaryKey;autoIncrement:false"`
-	ID                string     `gorm:"primaryKey;size:64"`
-	Name              string     `gorm:"size:80;not null"`
-	Platform          string     `gorm:"size:16;not null"`
-	Host              string     `gorm:"size:255;not null"`
-	Username          string     `gorm:"size:128;not null"`
-	Token             string     `gorm:"type:text;not null"`
-	ExposeToWorkspace bool       `gorm:"not null"`
-	Created           *time.Time `gorm:"column:created_at"`
-	Updated           *time.Time `gorm:"column:updated_at"`
+	UserID   int64      `gorm:"primaryKey;autoIncrement:false"`
+	ID       string     `gorm:"primaryKey;size:64"`
+	Name     string     `gorm:"size:80;not null"`
+	Platform string     `gorm:"size:16;not null"`
+	Host     string     `gorm:"size:255;not null"`
+	Username string     `gorm:"size:128;not null"`
+	Token    string     `gorm:"type:text;not null"`
+	Created  *time.Time `gorm:"column:created_at"`
+	Updated  *time.Time `gorm:"column:updated_at"`
 }
 
 func (gitHTTPCredentialRow) TableName() string { return "user_git_http_credentials" }

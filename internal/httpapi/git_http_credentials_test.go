@@ -37,7 +37,7 @@ func TestGitHTTPCredentialsSettings(t *testing.T) {
 	}
 
 	creds := put(map[string]any{"host": "https://GitHub.com/", "name": "GitHub", "token": secret}, http.StatusOK)
-	if len(creds) != 1 || creds[0].Host != "github.com" || creds[0].Platform != domain.GitPlatformGitHub || !creds[0].ExposeToWorkspace {
+	if len(creds) != 1 || creds[0].Host != "github.com" || creds[0].Platform != domain.GitPlatformGitHub {
 		t.Fatalf("created credential = %+v", creds)
 	}
 	githubID := creds[0].ID
@@ -55,7 +55,7 @@ func TestGitHTTPCredentialsSettings(t *testing.T) {
 		t.Fatalf("credentials = %+v", creds)
 	}
 	creds = put(map[string]any{"id": githubID, "host": "github.com", "name": "GitHub renamed"}, http.StatusOK)
-	if creds[1].Name != "GitHub renamed" || !creds[1].ExposeToWorkspace {
+	if creds[1].Name != "GitHub renamed" {
 		t.Fatalf("an edit without token or exposure must keep both: %+v", creds)
 	}
 	ctx := context.Background()
@@ -69,8 +69,8 @@ func TestGitHTTPCredentialsSettings(t *testing.T) {
 		t.Fatal("another user borrowed the credential")
 	}
 	hosts := f.s.GitHTTPWorkspaceHosts(f.user.ID)
-	if len(hosts) != 1 || hosts["github.com"] != domain.GitPlatformGitHub {
-		t.Fatalf("workspace hosts = %v; unexposed credentials must stay out", hosts)
+	if len(hosts) != 2 || hosts["github.com"] != domain.GitPlatformGitHub {
+		t.Fatalf("workspace hosts = %v; all configured credentials must be available", hosts)
 	}
 	if user, _ := f.s.User(f.user.ID); !user.GitHTTPCredentialsConfigured {
 		t.Fatal("user must report configured HTTPS credentials")
@@ -85,15 +85,15 @@ func TestGitHTTPCredentialsSettings(t *testing.T) {
 	}
 	_ = json.Unmarshal(resp.Body.Bytes(), &creds)
 	managed := creds[len(creds)-1]
-	if !managed.Managed || managed.ID != domain.ManagedGitHTTPCredentialID || managed.Host != "git.internal.example" || managed.ExposeToWorkspace {
+	if !managed.Managed || managed.ID != domain.ManagedGitHTTPCredentialID || managed.Host != "git.internal.example" {
 		t.Fatalf("managed credential = %+v", managed)
 	}
 	got, ok := f.s.GitHTTPCredentialForHost(ctx, f.user.ID, "git.internal.example")
 	if !ok || got.Token != "managed-access" || got.Username != "oauth2" || got.ExpiresAt.IsZero() {
 		t.Fatalf("managed secret = %+v, %v", got.GitHTTPCredential, ok)
 	}
-	if _, ok := f.s.GitHTTPWorkspaceHosts(f.user.ID)["git.internal.example"]; ok {
-		t.Fatal("the managed credential must not reach workspaces by default")
+	if _, ok := f.s.GitHTTPWorkspaceHosts(f.user.ID)["git.internal.example"]; !ok {
+		t.Fatal("the managed credential must reach workspaces")
 	}
 	put(map[string]any{"id": domain.ManagedGitHTTPCredentialID, "host": "git.internal.example", "name": "Edit"}, http.StatusBadRequest)
 	if resp := cvBRequest(t, f, http.MethodDelete, endpoint+"/"+domain.ManagedGitHTTPCredentialID, nil, true); resp.Code != http.StatusBadRequest {

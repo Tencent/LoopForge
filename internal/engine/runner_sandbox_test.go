@@ -149,7 +149,7 @@ func TestBindRunnerRepositoriesPreservesMultiRepositoryLayout(t *testing.T) {
 		},
 	}
 	invocation := &domain.RunnerInvocation{}
-	bindRunnerRepositories(invocation, run, "git-token", "example-admin", "example-admin@users.noreply.loopforge.invalid")
+	bindRunnerRepositories(invocation, run, "example-admin", "example-admin@users.noreply.loopforge.invalid")
 	if invocation.GitUserName != "example-admin" || invocation.GitUserEmail != "example-admin@users.noreply.loopforge.invalid" {
 		t.Fatalf("runner git identity = %q <%s>", invocation.GitUserName, invocation.GitUserEmail)
 	}
@@ -158,7 +158,7 @@ func TestBindRunnerRepositoriesPreservesMultiRepositoryLayout(t *testing.T) {
 	}
 	for i, wantDir := range []string{"frontend", "backend"} {
 		got := invocation.Repositories[i]
-		if got.Dir != wantDir || got.WorkBranch != "feature/issue-7" || got.GitToken != "git-token" {
+		if got.Dir != wantDir || got.WorkBranch != "feature/issue-7" || got.GitToken != "" {
 			t.Fatalf("runner repository %d = %+v", i, got)
 		}
 	}

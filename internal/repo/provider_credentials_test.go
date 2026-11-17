@@ -104,7 +104,7 @@ func TestProviderUserCredentials(t *testing.T) {
 			if err := st.PutUser(domain.User{ID: u.ID, LoginName: login, ChineseName: "更新姓名"}); err != nil {
 				t.Fatal(err)
 			}
-			_, err = st.UpdateUserCredentials(u.ID, UserCredentialUpdate{GitToken: "git-secret"})
+			err = st.SaveGitHTTPCredential(u.ID, "", domain.GitHTTPCredentialSecret{GitHTTPCredential: domain.GitHTTPCredential{Host: "github.com", Name: "GitHub", Platform: domain.GitPlatformGitHub}, Token: "git-secret"})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -142,7 +142,7 @@ func TestProviderUserCredentials(t *testing.T) {
 				t.Fatal(err)
 			}
 			cleared, _ := st.User(u.ID)
-			if cleared.CodexAPIKey != "" || cleared.ClaudeCodeAPIKey != "" || cleared.CodexBaseURL != "" || cleared.ClaudeCodeBaseURL != "" || len(cleared.CodexModels) != 0 || len(cleared.ClaudeCodeModels) != 0 || cleared.GitToken != "git-secret" {
+			if cleared.CodexAPIKey != "" || cleared.ClaudeCodeAPIKey != "" || cleared.CodexBaseURL != "" || cleared.ClaudeCodeBaseURL != "" || len(cleared.CodexModels) != 0 || len(cleared.ClaudeCodeModels) != 0 || !cleared.GitHubCredentialConfigured {
 				t.Fatal("clear operation did not isolate providers")
 			}
 		})

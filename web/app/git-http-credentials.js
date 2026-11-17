@@ -1,4 +1,3 @@
-const GIT_HTTP_EXPOSE_WARNING = '开启「提供给工作区」后，令牌会以明文提供给本人回合中的 Agent 和命令。请使用仓库级、最小权限、短有效期的令牌。';
 const GIT_HTTP_PLATFORMS = [['github', 'GitHub / GitHub Enterprise'], ['gitlab', 'GitLab'], ['other', '其他平台']];
 
 // Mirrors gitwork.HTTPSHostScope closely enough to prefill the form; the server
@@ -35,8 +34,7 @@ function openGitHTTPCredentials() {
       <h2 id="gitHTTPCredentialTitle">Git 访问令牌（按主机）</h2>
       <button type="button" class="credential-btn ghost icon" data-http-cred-close aria-label="关闭">${credentialGlyph('close', 16)}</button>
     </header>
-    <p class="git-ssh-description">每个 HTTPS 主机配置一个个人访问令牌。工作区里的 git、gh、glab 访问该主机时，平台按本轮发言人提供令牌。</p>
-    <div class="credential-note is-warn git-http-warning">${credentialGlyph('alert', 14)}<span>${GIT_HTTP_EXPOSE_WARNING}</span></div>
+    <p class="git-ssh-description">每个 HTTPS 主机配置一个个人访问令牌。平台与工作区访问该主机时，使用本轮责任人或发言人的凭据。</p>
     <p class="git-ssh-status" role="status">正在读取凭据…</p>
     <div class="git-ssh-key-list"></div>
     <button type="button" class="credential-btn primary" data-http-cred-add disabled>添加令牌</button>
@@ -45,9 +43,8 @@ function openGitHTTPCredentials() {
       ${credentialFieldHTML({label:'HTTPS 主机', name:'host', type:'text', placeholder:'github.com 或 gitlab.example.org:8443', hint:'只填主机名，可附带端口；令牌只提供给这台主机。'})}
       <label class="credential-field"><span>平台</span><div class="credential-input is-plain"><select name="platform" class="git-http-select" aria-label="平台">${GIT_HTTP_PLATFORMS.map(([value, label]) => `<option value="${value}">${escapeHTML(label)}</option>`).join('')}</select></div><small>决定 gh / glab 的便利配置与 PR 自动登记；「其他平台」只做 git 认证。</small></label>
       ${credentialFieldHTML({label:'名称', name:'name', type:'text', placeholder:'例如 公司 GitLab', hint:null})}
-      ${credentialFieldHTML({label:'用户名', name:'username', type:'text', placeholder:'x-access-token', hint:'git 认证使用的用户名，留空时为 x-access-token。'})}
+      ${credentialFieldHTML({label:'Git 认证用户名', name:'username', type:'text', placeholder:'x-access-token', hint:'按托管平台要求填写；这是 HTTPS 认证用户名，不是提交作者名，通常无法从 Token 推导。'})}
       ${credentialFieldHTML({label:'访问令牌', name:'token', placeholder:'粘贴个人访问令牌', hint:'保存后不再显示；编辑时留空保留现有令牌。'})}
-      <label class="git-http-expose"><span><b>提供给工作区</b><small>关闭后只供平台在控制面使用（PR 登记、状态轮询），工作区拿不到这条令牌。</small></span><input type="checkbox" name="exposeToWorkspace" class="hui-switch" role="switch"></label>
       <footer class="git-ssh-form-actions">
         <button type="button" class="credential-btn secondary" data-http-cred-cancel>取消</button>
         <button type="submit" class="credential-btn primary">保存令牌</button>
@@ -59,7 +56,7 @@ function openGitHTTPCredentials() {
   const add = dialog.querySelector('[data-http-cred-add]');
   const form = dialog.querySelector('form');
   const field = key => form.elements.namedItem(key);
-  const [host, platform, name, username, token, expose] = ['host', 'platform', 'name', 'username', 'token', 'exposeToWorkspace'].map(field);
+  const [host, platform, name, username, token] = ['host', 'platform', 'name', 'username', 'token'].map(field);
   host.maxLength = 255;
   name.maxLength = 80;
   username.maxLength = 128;
@@ -74,7 +71,7 @@ function openGitHTTPCredentials() {
 
   function credentialSummary(cred) {
     const platformLabel = (GIT_HTTP_PLATFORMS.find(([value]) => value === cred.platform) || [, cred.platform])[1];
-    const tags = [platformLabel, cred.exposeToWorkspace ? '提供给工作区' : '仅控制面', cred.managed ? '平台托管' : ''].filter(Boolean);
+    const tags = [platformLabel, cred.managed ? '平台托管' : ''].filter(Boolean);
     return `<div class="git-ssh-key-summary"><b>${escapeHTML(cred.name)}</b><small><code>${escapeHTML(cred.host)}</code> · ${tags.map(escapeHTML).join(' · ')}</small></div>`;
   }
 
@@ -105,7 +102,6 @@ function openGitHTTPCredentials() {
     name.value = cred?.name || '';
     username.value = cred?.username || '';
     username.placeholder = gitHTTPDefaultUsername(platform.value);
-    expose.checked = cred ? !!cred.exposeToWorkspace : true;
     token.required = !cred;
     token.placeholder = cred ? '留空保留现有令牌' : '粘贴个人访问令牌';
     (cred ? name : host).focus();
@@ -133,7 +129,7 @@ function openGitHTTPCredentials() {
       creds = await api(id ? `${endpoint}/${encodeURIComponent(id)}` : endpoint, {
         method, silent:true, ...(body ? {body:JSON.stringify(body)} : {}),
       });
-      storeCredentialUser({...credentialUser(), id:user.id, gitHttpCredentialsConfigured:creds.some(cred => !cred.managed)});
+      storeCredentialUser({...credentialUser(), id:user.id, gitHttpCredentialsConfigured:creds.length > 0});
       renderCredentialPanel();
       notifyCredentialsChanged();
       deleting = '';
@@ -192,7 +188,7 @@ function openGitHTTPCredentials() {
     const body = {
       host:host.value, platform:platform.value, name:name.value,
       username:username.value.trim() || gitHTTPDefaultUsername(platform.value),
-      token:token.value, exposeToWorkspace:expose.checked,
+      token:token.value,
     };
     if (editing) body.id = editing.id;
     return request('PUT', body);

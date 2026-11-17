@@ -12,12 +12,12 @@ import (
 	"agentflow/internal/runtime"
 )
 
-func TestGatewayGitCredentialServesOnlyTheSpeakersExposedHost(t *testing.T) {
+func TestGatewayGitCredentialServesOnlyTheSpeakersConfiguredHost(t *testing.T) {
 	f := cvBNewHTTPFixture(t)
 	save := func(userID int64, host, platform, token string, expose bool) {
 		t.Helper()
 		err := f.s.SaveGitHTTPCredential(userID, "", domain.GitHTTPCredentialSecret{
-			GitHTTPCredential: domain.GitHTTPCredential{Name: host, Platform: platform, Host: host, ExposeToWorkspace: expose},
+			GitHTTPCredential: domain.GitHTTPCredential{Name: host, Platform: platform, Host: host},
 			Token:             token,
 		})
 		if err != nil {
@@ -57,10 +57,12 @@ func TestGatewayGitCredentialServesOnlyTheSpeakersExposedHost(t *testing.T) {
 	if got := ask(s, map[string]string{"protocol": "https", "host": "gitlab.example.org:8443"}); got.Password != "speaker-gitlab" {
 		t.Fatalf("host with port = %+v", got)
 	}
+	if got := ask(s, map[string]string{"protocol": "https", "host": "hidden.example.org"}); got.Password != "speaker-hidden" {
+		t.Fatal("all configured hosts must be available")
+	}
 	for name, params := range map[string]map[string]string{
 		"plain http":          {"protocol": "http", "host": "github.com"},
 		"different port":      {"protocol": "https", "host": "gitlab.example.org"},
-		"unexposed":           {"protocol": "https", "host": "hidden.example.org"},
 		"another user's host": {"protocol": "https", "host": "ghe.example.com"},
 		"unconfigured":        {"protocol": "https", "host": "evil.example.net"},
 		"injected attributes": {"protocol": "https", "host": "github.com\nhost=evil.example.net"},
@@ -70,7 +72,7 @@ func TestGatewayGitCredentialServesOnlyTheSpeakersExposedHost(t *testing.T) {
 		}
 	}
 	hosts := s.requestedGitHosts()
-	if len(hosts) != 2 || hosts["github.com"] != domain.GitPlatformGitHub || hosts["gitlab.example.org:8443"] != domain.GitPlatformGitLab {
+	if len(hosts) != 3 || hosts["github.com"] != domain.GitPlatformGitHub || hosts["gitlab.example.org:8443"] != domain.GitPlatformGitLab {
 		t.Fatalf("requested hosts = %v", hosts)
 	}
 	basic := base64.StdEncoding.EncodeToString([]byte(domain.GitTokenHTTPUser + ":speaker-github"))
@@ -97,7 +99,7 @@ func TestGatewayGitCredentialServesOnlyTheSpeakersExposedHost(t *testing.T) {
 func TestBindWorkspaceGitCarriesHostsNotTokens(t *testing.T) {
 	f := cvBNewHTTPFixture(t)
 	err := f.s.SaveGitHTTPCredential(f.user.ID, "", domain.GitHTTPCredentialSecret{
-		GitHTTPCredential: domain.GitHTTPCredential{Name: "GitHub", Platform: domain.GitPlatformGitHub, Host: "github.com", ExposeToWorkspace: true},
+		GitHTTPCredential: domain.GitHTTPCredential{Name: "GitHub", Platform: domain.GitPlatformGitHub, Host: "github.com"},
 		Token:             "speaker-github",
 	})
 	if err != nil {
@@ -114,10 +116,10 @@ func TestBindWorkspaceGitCarriesHostsNotTokens(t *testing.T) {
 		bound  bool
 	}{{"", true}, {"new", true}, {"old", false}} {
 		s := &AgentToolSession{Token: "bind-" + tc.runner, UserID: f.user.ID, User: f.user, ExecutionRunnerID: tc.runner}
-		command, credentials := h.bindWorkspaceGit(context.Background(), s, runtime.CommandSpec{}, runtime.RunCredentials{GitToken: "legacy-token"})
+		command, credentials := h.bindWorkspaceGit(context.Background(), s, runtime.CommandSpec{}, runtime.RunCredentials{GitHTTPCredentials: map[string]domain.GitHTTPExecutionCredential{"github.com": {Token: "must-not-travel-with-main-bot-command"}}})
 		env := runtime.CommandEnvironment(command)
-		if credentials.GitToken != "" || !slices.Contains(command.CredentialBindings, runtime.BindGitWorkspace) {
-			t.Fatalf("runner %q: token %q, bindings %v", tc.runner, credentials.GitToken, command.CredentialBindings)
+		if credentials.GitHTTPCredentials != nil || !slices.Contains(command.CredentialBindings, runtime.BindGitWorkspace) {
+			t.Fatalf("runner %q: credentials %v, bindings %v", tc.runner, credentials.GitHTTPCredentials, command.CredentialBindings)
 		}
 		if got := credentials.GitHTTPHosts["github.com"] == domain.GitPlatformGitHub && env[runtime.SessionGatewayEnv] == agentToolMCPURL(s.Token); got != tc.bound {
 			t.Fatalf("runner %q: hosts %v, gateway %q", tc.runner, credentials.GitHTTPHosts, env[runtime.SessionGatewayEnv])

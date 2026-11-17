@@ -857,6 +857,11 @@ func (h *runnersHandlers) runnerTaskClaim(c *gin.Context) {
 			task.Invocation.GitSSHUserID = 0
 			c.Header("Cache-Control", "no-store")
 		}
+		if task.Invocation != nil && task.Invocation.GitHTTPUserID > 0 && runner.SupportsGitHTTP() {
+			task.Invocation.GitHTTPCredentials = h.repo.GitHTTPCredentialSecrets(c.Request.Context(), task.Invocation.GitHTTPUserID)
+			task.Invocation.GitHTTPUserID = 0
+			c.Header("Cache-Control", "no-store")
+		}
 		c.JSON(http.StatusOK, map[string]any{"task": resolveRunnerTaskSandbox(task, runner.OS)})
 	}
 	deadline := time.Now().Add(runnerLongPollTimeout())

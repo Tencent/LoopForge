@@ -392,13 +392,27 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 			emit = sink
 		}
 		forward := emit
+		var secretStream assistantSecretStream
+		publish := func(events []assistantStreamEvent) {
+			for _, event := range events {
+				activity.add(event)
+				forward("thought", event)
+			}
+		}
+		defer func() { publish(secretStream.flush(user)) }()
 		emit = func(kind string, value any) {
 			if kind == "thought" {
 				if event, ok := value.(assistantStreamEvent); ok {
-					event = publicAssistantEvent(event, user)
-					activity.add(event)
-					value = event
+					publish(secretStream.push(event, user))
+					return
 				}
+			}
+			if kind == "result" || kind == "error" {
+				publish(secretStream.flush(user))
+			}
+			if kind == "flush" {
+				publish(secretStream.flush(user))
+				return
 			}
 			forward(kind, value)
 		}
@@ -710,6 +724,9 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 			}
 			turn = "上一条只有进度说明，本轮请求尚未完成。请在当前上下文继续完成用户请求，先核对已执行操作，避免重复写入。需要确认则提交完整草稿，有真实阻塞则明确说明；不要只承诺稍后处理就结束。"
 			continue
+		}
+		if streaming {
+			emit("flush", nil)
 		}
 		reply.Message = redactAssistantSecrets(reply.Message, user)
 		// Join every streamed paragraph before slides and path cleanup, so a

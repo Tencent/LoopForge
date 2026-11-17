@@ -36,10 +36,10 @@ func TestClarifyWorkspaceUsesSelectedBranchAndRefreshesAcrossBranches(t *testing
 	cache := filepath.Join(t.TempDir(), "checkout")
 	repository := domain.Repository{ID: "repo", CloneURL: remote, DefaultBranch: "master"}
 	ctx := context.Background()
-	if _, err := PrepareClarifyWorkspace(ctx, cache, repository, "test-token"); err != nil {
+	if _, err := PrepareClarifyWorkspace(ctx, cache, repository, testRunCredentials("test-token")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := PrepareClarifyWorkspaceAtBranch(ctx, cache, repository, "feature/continue", "test-token"); err != nil {
+	if _, err := PrepareClarifyWorkspaceAtBranch(ctx, cache, repository, "feature/continue", testRunCredentials("test-token")); err != nil {
 		t.Fatal(err)
 	}
 	assertContent := func(want string) {
@@ -56,11 +56,11 @@ func TestClarifyWorkspaceUsesSelectedBranchAndRefreshesAcrossBranches(t *testing
 	mustGit(t, source, "checkout", "feature/continue")
 	gitCommitFile(t, source, "version.txt", "latest feature work\n")
 	mustGit(t, source, "push", remote, "feature/continue")
-	if _, err := PrepareClarifyWorkspaceAtBranch(ctx, cache, repository, "feature/continue", "test-token"); err != nil {
+	if _, err := PrepareClarifyWorkspaceAtBranch(ctx, cache, repository, "feature/continue", testRunCredentials("test-token")); err != nil {
 		t.Fatal(err)
 	}
 	assertContent("latest feature work\n")
-	if _, err := PrepareClarifyWorkspaceAtBranch(ctx, cache, repository, "feature/missing", "test-token"); err == nil {
+	if _, err := PrepareClarifyWorkspaceAtBranch(ctx, cache, repository, "feature/missing", testRunCredentials("test-token")); err == nil {
 		t.Fatal("missing selected branch must fail instead of falling back to master")
 	}
 }
@@ -96,7 +96,7 @@ func TestClarifySelectedBranchRejectsTagOnlyRef(t *testing.T) {
 	mustGit(t, source, "tag", "release-v1")
 	mustGit(t, source, "push", remote, "refs/tags/release-v1")
 	repository := domain.Repository{ID: "repo", CloneURL: remote, DefaultBranch: "master"}
-	if _, err := PrepareClarifyWorkspaceAtBranch(context.Background(), filepath.Join(t.TempDir(), "checkout"), repository, "release-v1", "test-token"); err == nil {
+	if _, err := PrepareClarifyWorkspaceAtBranch(context.Background(), filepath.Join(t.TempDir(), "checkout"), repository, "release-v1", testRunCredentials("test-token")); err == nil {
 		t.Fatal("tag-only ref must not be accepted as a selected branch")
 	}
 }

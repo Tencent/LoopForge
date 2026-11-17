@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"agentflow/internal/domain"
@@ -25,6 +26,12 @@ type GitHTTPCredentialStore interface {
 // is left as is: ok is false and there is no error.
 func (s *Service) refreshExternalDelivery(store MRDeliveryStore, row domain.MRDeliveryState) (ok bool, err error) {
 	platform, host, path, valid := domain.ExternalMRProject(row.MRProject)
+	if strings.HasPrefix(row.MRProject, "github:") {
+		info, ok := domain.ParseRepositoryURL("https://github.com/" + strings.TrimPrefix(row.MRProject, "github:"))
+		if ok && info.Project == row.MRProject {
+			platform, host, path, valid = domain.GitPlatformGitHub, "github.com", strings.TrimPrefix(row.MRProject, "github:"), true
+		}
+	}
 	if !valid || row.MRIID <= 0 {
 		return false, fmt.Errorf("invalid MR project %q", row.MRProject)
 	}
@@ -72,6 +79,9 @@ func (s *Service) refreshExternalDelivery(store MRDeliveryStore, row domain.MRDe
 
 func (s *Service) gitHostGet(ctx context.Context, cred domain.GitHTTPCredentialSecret, path string, out any) error {
 	base, client := cred.APIBase(), gitegress.Client()
+	if cred.Host == "github.com" && s.githubAPIBase != "" {
+		base, client = s.githubAPIBase, http.DefaultClient
+	}
 	if s.gitHostAPIBase != "" {
 		base, client = s.gitHostAPIBase, http.DefaultClient
 	}

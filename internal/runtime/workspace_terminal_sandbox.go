@@ -16,6 +16,8 @@ import (
 	"time"
 )
 
+var terminalGitRelays sync.Map
+
 func terminalBaseEnvironment(home string) []string {
 	return []string{"PATH=" + os.Getenv("PATH"), "HOME=" + home, "TERM=xterm-256color", "LANG=C.UTF-8"}
 }
@@ -103,10 +105,18 @@ func sandboxTerminalCommandBound(ctx context.Context, sandbox Sandbox, command C
 		credentials := s.credentials
 		s.credentialsMu.RUnlock()
 		command.CredentialBindings = []CredentialBinding{BindGit}
-		bound, err := bindCommand(s.Sandbox, s.workspace, command, credentials)
+		prepared, closeGit, err := prepareRunGitBinding(context.Background(), s.Sandbox, command, credentials)
 		if err != nil {
 			return nil, err
 		}
+		command = prepared
+		credentials.GitHTTPHosts = runGitHosts(credentials)
+		bound, err := bindCommand(s.Sandbox, s.workspace, command, credentials)
+		if err != nil {
+			closeGit()
+			return nil, err
+		}
+		terminalGitRelays.Store(command.environment["AGENTFLOW_TERMINAL_ID"], closeGit)
 		return sandboxTerminalCommandBound(ctx, s.Sandbox, bound, base, bind)
 	}
 	if bind != nil {
@@ -232,6 +242,9 @@ func filesystemEnvironmentIdentity(workspace, driver string, environment map[str
 // Root-scoped deletion prevents a workspace shell from replacing .agentflow or
 // private-home with a symlink and turning terminal cleanup into a host deletion.
 func removeTerminalHome(home string) error {
+	if closeGit, ok := terminalGitRelays.LoadAndDelete(filepath.Base(home)); ok {
+		closeGit.(func())()
+	}
 	if home == "" {
 		return nil
 	}

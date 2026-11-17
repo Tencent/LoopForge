@@ -26,13 +26,12 @@ import (
 var gitHTTPVerifyClient = gitegress.Client
 
 type gitHTTPCredentialInput struct {
-	ID                string `json:"id"`
-	Host              string `json:"host"`
-	Name              string `json:"name"`
-	Platform          string `json:"platform"`
-	Username          string `json:"username"`
-	Token             string `json:"token"`
-	ExposeToWorkspace *bool  `json:"exposeToWorkspace"`
+	ID       string `json:"id"`
+	Host     string `json:"host"`
+	Name     string `json:"name"`
+	Platform string `json:"platform"`
+	Username string `json:"username"`
+	Token    string `json:"token"`
 }
 
 func (h *usersHandlers) gitHTTPCredentials(c *gin.Context) {
@@ -97,8 +96,7 @@ func respondGitHTTPCredentialError(c *gin.Context, err error) {
 }
 
 // gitHTTPCredentialFromInput validates the form. The platform defaults to
-// GitHub for github.com and "other" elsewhere; exposure defaults to on for a
-// new credential and to the stored value for an edit.
+// GitHub for github.com and "other" elsewhere.
 func (h *usersHandlers) gitHTTPCredentialFromInput(ctx context.Context, userID int64, input gitHTTPCredentialInput) (domain.GitHTTPCredentialSecret, error) {
 	host, err := gitwork.HTTPSHostScope(input.Host)
 	if err != nil {
@@ -126,18 +124,9 @@ func (h *usersHandlers) gitHTTPCredentialFromInput(ctx context.Context, userID i
 	if len(token) > 4096 || strings.IndexFunc(token, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) >= 0 {
 		return domain.GitHTTPCredentialSecret{}, errors.New("访问令牌不超过 4096 个字符，且不能包含空白或控制字符")
 	}
-	expose := true
-	if input.ExposeToWorkspace != nil {
-		expose = *input.ExposeToWorkspace
-	} else if input.ID != "" {
-		if stored, ok := h.repo.GitHTTPCredentialByID(ctx, userID, input.ID); ok {
-			expose = stored.ExposeToWorkspace
-		}
-	}
 	return domain.GitHTTPCredentialSecret{
 		GitHTTPCredential: domain.GitHTTPCredential{
-			Name: name, Platform: platform, Host: host, Username: username, ExposeToWorkspace: expose,
-		},
+			Name: name, Platform: platform, Host: host, Username: username},
 		Token: token,
 	}, nil
 }

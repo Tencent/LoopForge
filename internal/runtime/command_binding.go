@@ -5,7 +5,6 @@ import (
 	"agentflow/internal/gitwork"
 	"agentflow/internal/observability"
 	"fmt"
-	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -49,6 +48,22 @@ func bindCommand(sandbox Sandbox, workspace string, command CommandSpec, credent
 	bound.environment["AGENTFLOW_GIT_TOKEN"] = ""
 	bound.environment["GH_TOKEN"] = ""
 	bound.environment["GITHUB_TOKEN"] = ""
+	for _, key := range workspaceGitSecretEnvironment {
+		bound.environment[key] = ""
+	}
+	gitBinding := false
+	for _, binding := range command.CredentialBindings {
+		if binding == BindGit || binding == BindGitWorkspace {
+			gitBinding = true
+		}
+	}
+	if !gitBinding {
+		bound.environment["GIT_CONFIG_COUNT"] = "1"
+		bound.environment["GIT_CONFIG_KEY_0"] = "credential.helper"
+		bound.environment["GIT_CONFIG_VALUE_0"] = ""
+		bound.environment["GIT_CONFIG_GLOBAL"] = os.DevNull
+		bound.environment["GIT_CONFIG_SYSTEM"] = os.DevNull
+	}
 	for _, key := range []string{"OPENAI_API_KEY", "CODEX_API_KEY", "OPENAI_BASE_URL", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL", "CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY"} {
 		bound.environment[key] = ""
 	}
@@ -99,7 +114,7 @@ func bindCommand(sandbox Sandbox, workspace string, command CommandSpec, credent
 			}
 			bound.environment["CODEBUDDY_INTERNET_ENVIRONMENT"] = strings.TrimSpace(credentials.CodeBuddy.InternetEnvironment)
 		case BindGit:
-			if err := bindGitEnvironment(sandbox, workspace, bound.environment, credentials.GitToken); err != nil {
+			if err := bindWorkspaceGitEnvironment(sandbox, workspace, bound.environment, credentials); err != nil {
 				return CommandSpec{}, err
 			}
 		case BindGitWorkspace:
@@ -277,63 +292,8 @@ func privateHomePaths(sandbox Sandbox, workspace string, command CommandSpec) (h
 	return host, host
 }
 
-// GitEnvironment is the git environment a child process needs to reach
-// private remotes with token without the token touching any git config.
-func GitEnvironment(sandbox Sandbox, workspace, token string) (map[string]string, error) {
-	environment := map[string]string{}
-	if err := bindGitEnvironment(sandbox, workspace, environment, token); err != nil {
-		return nil, err
-	}
-	return environment, nil
-}
-
-func bindGitEnvironment(sandbox Sandbox, workspace string, environment map[string]string, token string) error {
-	environment["GIT_TERMINAL_PROMPT"] = "0"
-	token = strings.TrimSpace(token)
-	if token == "" {
-		return nil
-	}
-	user := "private"
-	if strings.HasPrefix(strings.ToLower(token), "oauth2:") {
-		if stripped := strings.TrimSpace(token[len("oauth2:"):]); stripped != "" {
-			user = "oauth2"
-			token = stripped
-		}
-	} else if strings.HasPrefix(strings.ToLower(token), "private:") {
-		if stripped := strings.TrimSpace(token[len("private:"):]); stripped != "" {
-			token = stripped
-		}
-	}
-	prefixes := []string{"git@git.example.com:", "ssh://git@git.example.com/", "https://git.example.com/", "http://git.example.com/"}
-	authed := "https://" + url.UserPassword(user, token).String() + "@git.example.com/"
-	environment["GIT_CONFIG_COUNT"] = strconv.Itoa(len(prefixes))
-	for index, prefix := range prefixes {
-		environment[fmt.Sprintf("GIT_CONFIG_KEY_%d", index)] = "url." + authed + ".insteadof"
-		environment[fmt.Sprintf("GIT_CONFIG_VALUE_%d", index)] = prefix
-	}
-	// Verification/command nodes keep the host HOME, so ~/.gitconfig insteadOf
-	// rewrites git@ to https://git.example.com/ without credentials. insteadOf does
-	// not chain; GIT_ASKPASS answers the resulting username/password prompt.
-	askpassHost := filepath.Join(workspace, ".agentflow", "runtime", "git-askpass")
-	if err := writeGitAskPass(workspace, askpassHost); err != nil {
-		return err
-	}
-	askpass := askpassHost
-	if sandboxDriver(sandbox) == "docker" {
-		askpass = filepath.ToSlash(filepath.Join("/workspace", ".agentflow", "runtime", "git-askpass"))
-	}
-	environment["AGENTFLOW_GIT_TOKEN"] = token
-	environment["AGENTFLOW_GIT_USER"] = user
-	environment["GIT_ASKPASS"] = askpass
-	environment["SSH_ASKPASS"] = askpass
-	return nil
-}
-
-// bindWorkspaceGitEnvironment configures git for an agent that clones and
-// pushes on its own. No token is placed in the environment or on disk: Git's
-// credential helper and the gh/glab wrappers fetch the speaker's token for the
-// exact host through the turn's session gateway, which only answers while the
-// turn is active.
+// bindWorkspaceGitEnvironment installs the standard host-scoped helper.
+// It requests credentials through a live relay rather than writing tokens.
 func bindWorkspaceGitEnvironment(sandbox Sandbox, workspace string, environment map[string]string, credentials RunCredentials) error {
 	environment["GIT_TERMINAL_PROMPT"] = "0"
 	if _, err := EnsureControlDirectory(workspace, "runtime"); err != nil {
@@ -353,6 +313,7 @@ func bindWorkspaceGitEnvironment(sandbox Sandbox, workspace string, environment 
 			return fmt.Errorf("write git identity: %w", err)
 		}
 		environment["GIT_CONFIG_SYSTEM"] = runtimePath("gitconfig-system")
+		environment["GIT_CONFIG_NOSYSTEM"] = "0"
 	}
 	// gh and glab keep logins of a previous speaker in their config
 	// directories; each turn starts with empty ones.
@@ -364,15 +325,20 @@ func bindWorkspaceGitEnvironment(sandbox Sandbox, workspace string, environment 
 	}
 	gateway := strings.TrimSpace(environment[SessionGatewayEnv])
 	hosts := workspaceGitHosts(credentials.GitHTTPHosts)
+	environment[GitHostsEnv] = hosts
+	environment["GIT_CONFIG_COUNT"] = "1"
+	environment["GIT_CONFIG_KEY_0"] = "credential.helper"
+	environment["GIT_CONFIG_VALUE_0"] = ""
 	if gateway == "" || hosts == "" {
 		delete(environment, SessionGatewayEnv)
+		environment[GitHostsEnv] = ""
 		return nil
 	}
 	hostBin := filepath.Join(runtimeHost, "bin")
 	if _, err := EnsureControlDirectory(workspace, "runtime", "bin"); err != nil {
 		return fmt.Errorf("create git helper dir: %w", err)
 	}
-	if err := installMCPCallHelper(workspace, filepath.Join(hostBin, "agentflow-helper")); err != nil {
+	if err := installMCPCallHelperForSandbox(sandbox, workspace, filepath.Join(hostBin, "agentflow-helper")); err != nil {
 		return fmt.Errorf("install git credential helper: %w", err)
 	}
 	helper := runtimePath("bin/agentflow-helper")

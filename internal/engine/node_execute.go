@@ -465,8 +465,8 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 	}
 	current, _ = e.repo.RunState(runID)
 	gitCredentials := sb.credentialSnapshot()
-	gitTok := gitCredentials.GitToken
-	ctx = withGitToken(ctx, gitTok)
+	gitTok := gitCredentials.GitHTTPCredentials["github.com"].Token
+	ctx = withRunGitCredentials(ctx, sb.credentialSnapshot())
 	ctx = gitwork.WithSSHKeys(ctx, gitCredentials.GitSSHKeys)
 	ctx = withGitIdentity(ctx, sb.credentialSnapshot().GitUserName, sb.credentialSnapshot().GitUserEmail)
 	// Share the checkout between nodes. A reconstructed run environment
@@ -477,20 +477,25 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 	if runner, ok := e.repo.Runner(e.defaultExecutionRunner(current)); ok && runner.SupportsIntegrate() {
 		stagingCheckout = false
 	}
+	repositoryFallback := ""
 	if err := sb.prepareRepositoriesOnce(func() error {
 		if !stagingCheckout {
 			return nil
 		}
 		if err := prepareRepositories(ctx, sb.Workspace(), current.RepositoryContexts()); err != nil {
-			return explainGitAuthFailure(fmt.Errorf("repository checkout: %w", err), strings.TrimSpace(gitTok) != "")
+			return explainGitAuthFailure(fmt.Errorf("repository checkout: %w", err), strings.TrimSpace(gitTok) != "" || len(gitCredentials.GitHTTPCredentials) > 0)
 		}
 		for _, rc := range current.RepositoryContexts() {
 			e.observe(runID, node.ID, domain.TelemetryEvent{Category: "sandbox", Name: "repository.checked_out", Phase: "finish", Message: rc.Name + " @ " + rc.WorkBranch, Attributes: map[string]any{"repositoryId": rc.RepositoryID, "repositoryDir": rc.WorkspaceDir, "baseBranch": rc.BaseBranch, "workBranch": rc.WorkBranch}})
 		}
 		return nil
 	}); err != nil {
-		failNode(err, nodeRejects(node))
-		return
+		if ctx.Err() != nil || !firstRepositoryAgent(wf, node) {
+			failNode(err, nodeRejects(node))
+			return
+		}
+		repositoryFallback = err.Error()
+		e.observe(runID, node.ID, domain.TelemetryEvent{Category: "sandbox", Name: "repository.preparation.fallback", Phase: "progress", Level: "warn", Message: "平台仓库准备失败，交给首个 Agent 节点处理：" + repositoryFallback})
 	}
 	// An execution machine that reports its outputs receives the inputs and
 	// human context with each task and returns the files the engine needs;
@@ -557,15 +562,45 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 			return
 		}
 	}
-	_, preparationErr := e.PrepareNodeWorkspace(ctx, current, sb)
-	if preparationErr != nil {
-		failNode(preparationErr, nodeRejects(node))
-		return
+	if repositoryFallback == "" {
+		_, preparationErr := e.PrepareNodeWorkspace(ctx, current, sb)
+		if preparationErr != nil {
+			// A remote execution machine prepares its own checkout. Let its
+			// first Agent recover a checkout failure there as well.
+			if e.defaultExecutionRunner(current) == "" || !firstRepositoryAgent(wf, node) || !strings.Contains(preparationErr.Error(), "repositories") || ctx.Err() != nil {
+				failNode(preparationErr, nodeRejects(node))
+				return
+			}
+			repositoryFallback = preparationErr.Error()
+		}
 	}
 	// The environment is ready and this node's inputs are in place; parallel
 	// branches execute from here on without holding the environment lock.
-	preparing = false
-	sb.nodeMu.Unlock()
+	if repositoryFallback == "" {
+		preparing = false
+		sb.nodeMu.Unlock()
+	}
+	// A recovery Agent keeps the preparation lock until its checkout has been
+	// verified, so parallel nodes cannot use partially prepared repositories.
+	completeRepositoryFallback := func() error {
+		if repositoryFallback == "" {
+			return nil
+		}
+		if e.defaultExecutionRunner(current) == "" {
+			if err := runtime.VerifyGitPreparation(ctx, sb.Workspace(), current.RepositoryContexts()); err != nil {
+				return fmt.Errorf("Agent 仓库准备兜底校验失败: %w", err)
+			}
+		}
+		if _, err := e.PrepareNodeWorkspace(ctx, current, sb); err != nil {
+			return err
+		}
+		sb.repositoriesPrepared = true
+		repositoryFallback = ""
+		preparing = false
+		sb.nodeMu.Unlock()
+		e.observe(runID, node.ID, domain.TelemetryEvent{Category: "sandbox", Name: "repository.preparation.recovered", Phase: "finish", Message: "Agent 已完成仓库准备，冻结仓库和工作分支校验通过"})
+		return nil
+	}
 	sb.activeExecutions.Add(1)
 	defer sb.activeExecutions.Add(-1)
 	var output string
@@ -605,7 +640,7 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 				scriptAssets := e.resolveScriptMCPAssets(current.ExecutionContext.ProjectID, current.ExecutionContext.ResponsibleUserID)
 				if execMachine := e.defaultExecutionRunner(current); execMachine != "" {
 					workspace := runnerWorkspaceRel(current, node.ID)
-					return e.dispatchRunnerScript(ctx, execMachine, current, node.ID, workspace, "shell", bound, target.directory(), effectiveNode.ArtifactOutputs, sb, sb.credentialSnapshot().GitToken, sb.credentialSnapshot().GitUserName, sb.credentialSnapshot().GitUserEmail, scriptAssets, targetSink)
+					return e.dispatchRunnerScript(ctx, execMachine, current, node.ID, workspace, "shell", bound, target.directory(), effectiveNode.ArtifactOutputs, sb, sb.credentialSnapshot().GitHTTPCredentials["github.com"].Token, sb.credentialSnapshot().GitUserName, sb.credentialSnapshot().GitUserEmail, scriptAssets, targetSink)
 				}
 				if err := runtime.ProvisionMCPAssets(ctx, sb, sb.Workspace(), scriptAssets, targetSink); err != nil {
 					return "", err
@@ -713,6 +748,9 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 			if requiresSubmit {
 				prompt = appendSubmitGateInstruction(prompt, node.RejectTo, feedback == gateMissingRetryMarker)
 			}
+			if repositoryFallback != "" {
+				prompt = runtime.GitPreparationFallbackPrompt(current.RepositoryContexts(), repositoryFallback) + prompt
+			}
 			assets := e.resolveAssets(agent, current.ExecutionContext.ProjectID, wf.ID, current.ExecutionContext.ResponsibleUserID)
 			warnMCPSkipped := func(message string) {
 				sink(domain.TelemetryEvent{Category: "mcp", Name: "mcp.skipped", Phase: "start", Level: "warn", Message: message})
@@ -746,7 +784,7 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 			}
 			repositories := current.RepositoryContexts()
 			boundAssets, skipped, bindErr := runtime.PrepareMCPServers(assets, runtime.MCPTarget{
-				GitToken: gitTok, RequireCredentials: true,
+				GitHTTPCredentials: gitCredentials.GitHTTPCredentials, RequireCredentials: true,
 				SSHRepositoriesOnly: len(repositories) > 0 && len(sshRepositoryURLs(repositories)) == len(repositories),
 			})
 			for _, warning := range skipped {
@@ -857,6 +895,9 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 					}
 				}
 			}
+		}
+		if err == nil {
+			err = completeRepositoryFallback()
 		}
 		if err == nil {
 			live, _ := e.repo.RunState(runID)

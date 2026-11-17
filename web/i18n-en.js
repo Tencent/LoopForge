@@ -98,7 +98,9 @@ Object.assign(window.LF_I18N_EN,{
 "没有匹配的模型":"No matching model",
 "发送编排要求":"Send orchestration request",
 "仅生成草稿 · 切换 CLI 开启新对话，保留画布":"Draft only · switching CLI starts a new chat and keeps the canvas",
-"暂无模型":"No models yet"
+"暂无模型":"No models yet",
+"SSH 密钥用于克隆和推送；创建 PR/MR 需要访问令牌":"SSH keys clone and push repositories; an access token is required to create PRs/MRs",
+"粘贴 Git HTTPS 链接或 Git SSH 地址":"Paste a Git HTTPS URL or Git SSH address"
 });
 Object.assign(window.LF_I18N_EN,{
 "查看澄清":"View clarification",
