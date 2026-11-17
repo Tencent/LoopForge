@@ -362,6 +362,15 @@ func TestSubagentStreamEventsCarryTheirDispatch(t *testing.T) {
 			t.Fatalf("%s: dispatch=%+v, want model %q", input, got, want)
 		}
 	}
+	// A subagent's line reports the model it actually runs on, under its
+	// dispatch; Main Bot's own lines do not.
+	ran := assistantStreamEvents(`{"type":"assistant","parent_tool_use_id":"call-1","message":{"model":"deepseek-v4.1-flash-ioa","content":[{"type":"text","text":"ok"}]}}`)
+	if len(ran) != 2 || ran[0].Kind != "agentModel" || ran[0].Model != "deepseek-v4.1-flash-ioa" || ran[0].Parent != "call-1" {
+		t.Fatalf("subagent line=%+v", ran)
+	}
+	if main := assistantStreamEvents(`{"type":"assistant","message":{"model":"deepseek-v4.1-flash-ioa","content":[{"type":"text","text":"ok"}]}}`); len(main) != 1 || main[0].Kind != "answer" {
+		t.Fatalf("main line=%+v", main)
+	}
 	if got := labelRoleSubagent(dispatch[0], []roleSubagent{{Role: domain.AgentDefinition{ID: "qa", Name: "测试工程师"}}}); got.Role != "测试工程师" {
 		t.Fatalf("role label=%q", got.Role)
 	}

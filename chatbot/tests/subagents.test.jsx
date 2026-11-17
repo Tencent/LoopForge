@@ -105,6 +105,31 @@ describe("dispatched subagents", () => {
     ]);
   });
 
+  test("a subagent shows the model it reported running on", () => {
+    const dispatch = (id, extra = {}) => ({ kind: "tool", id, tool: "Agent", detail: id, subagent: "Explore", ...extra, at });
+    const ran = (parent, model) => ({ kind: "agentModel", parent, model, at });
+    const steps = mergeActivity([], events(dispatch("c1", { model: "lite" }), ran("c1", "hy4flash"), { kind: "text", parent: "c1", text: "done", at }));
+    // The report stays out of the subagent's own steps.
+    expect(steps[0].ranModel).toBe("hy4flash");
+    expect(steps[0].children.map((child) => child.kind)).toEqual(["text"]);
+    const agents = collectSubagents(
+      [
+        {
+          role: "assistant",
+          model: "deepseek-v4.1-flash",
+          activity: [dispatch("c1", { model: "lite" }), ran("c1", "hy4flash"), { kind: "toolDone", id: "c1", agentId: "agent-aaa", at }],
+        },
+      ],
+      // A live subagent that reported before its dispatch event arrived.
+      mergeActivity([], events(ran("c2", "deepseek-v4.1-flash-ioa"), dispatch("c2"))),
+      "glm-5.3-flash-ioa",
+    );
+    expect(agents.map((agent) => [agent.key, agent.model])).toEqual([
+      ["agent-aaa", "hy4flash"],
+      ["c2", "deepseek-v4.1-flash-ioa"],
+    ]);
+  });
+
   test("the 子 Agent card and its session show the model it ran on", async () => {
     const messages = [
       { role: "user", content: "补单测" },

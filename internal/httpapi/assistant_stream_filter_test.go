@@ -87,3 +87,24 @@ func TestAssistantStreamFilterToolEndsReplyDraft(t *testing.T) {
 		t.Fatal("draft delta kept after a tool event")
 	}
 }
+
+// Each subagent line names its model; only the first and a change pass, per
+// dispatch.
+func TestAssistantStreamFilterForwardsEachSubagentModelOnce(t *testing.T) {
+	var f assistantStreamFilter
+	for _, step := range []struct {
+		ev   assistantStreamEvent
+		want bool
+	}{
+		{assistantStreamEvent{Kind: "agentModel", Parent: "c1", Model: "deepseek-v4.1-flash-ioa"}, true},
+		{assistantStreamEvent{Kind: "agentModel", Parent: "c1", Model: "deepseek-v4.1-flash-ioa"}, false},
+		{assistantStreamEvent{Kind: "agentModel", Parent: "c2", Model: "deepseek-v4.1-flash-ioa"}, true},
+		{assistantStreamEvent{Kind: "agentModel", Parent: "c1", Model: "glm-5.3-flash-ioa"}, true},
+		{assistantStreamEvent{Kind: "agentModel", Parent: "", Model: "glm-5.3-flash-ioa"}, false},
+		{assistantStreamEvent{Kind: "agentModel", Parent: "c3"}, false},
+	} {
+		if got := f.accept(step.ev); got != step.want {
+			t.Fatalf("accept(%+v) = %v, want %v", step.ev, got, step.want)
+		}
+	}
+}

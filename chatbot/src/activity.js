@@ -17,6 +17,12 @@ export function mergeActivity(previous = [], events = []) {
         host = { id: event.parent, kind: "tool", tool: "Agent", detail: "", text: "", startedAt: at };
         steps.push(host);
       }
+      // The model the subagent reports it runs on, whatever the dispatch
+      // asked for (an alias such as "lite", or nothing).
+      if (event.kind === "agentModel") {
+        if (event.model) host.ranModel = event.model;
+        continue;
+      }
       const child = { ...event, parent: undefined };
       if (child.kind === "agentText") child.kind = "text";
       host.children = mergeActivity(host.children || [], [{ data: child, sequence }]);
@@ -278,10 +284,12 @@ export const resumeMissed = (step) =>
 // collectSubagents lists every subagent of a conversation, newest last. A
 // dispatch that resumed an earlier agent joins it, so one entry holds every
 // task that agent was given.
-// A subagent runs on the model its dispatch named, else on the model of the
-// reply that dispatched it; a live dispatch has no saved reply yet and uses
-// liveModel, the model the running reply was sent with. agent.model is the
-// latest dispatch's, agent.models[step.id] each dispatch's.
+// A subagent shows the model it reported running on (step.ranModel). Before
+// it reports, and for replies saved before that was recorded, it falls back
+// to the model its dispatch named, else the model of the reply that
+// dispatched it; a live dispatch has no saved reply yet and uses liveModel,
+// the model the running reply was sent with. agent.model is the latest
+// dispatch's, agent.models[step.id] each dispatch's.
 export function collectSubagents(messages = [], liveSteps = [], liveModel = "") {
   const agents = [];
   // messageIndex is the saved reply that holds the dispatch; a live one has
@@ -296,7 +304,7 @@ export function collectSubagents(messages = [], liveSteps = [], liveModel = "") 
     if (step.agentId) agent.agentId = step.agentId;
     agent.role = step.role || agent.role;
     agent.subagent = step.subagent || agent.subagent;
-    const model = String(step.model || replyModel || "").trim();
+    const model = String(step.ranModel || step.model || replyModel || "").trim();
     if (model) agent.models[step.id] = model;
     agent.model = model || agent.model;
     agent.dispatches.push(step);
