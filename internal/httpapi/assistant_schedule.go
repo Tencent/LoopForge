@@ -94,7 +94,9 @@ func (h *assistantHandlers) runScheduleJobPromptReporting(job domain.ScheduleJob
 		policy.Continue = strings.TrimSpace(job.FixedSessionID)
 	}
 	ctx = withScheduledSessionPolicy(ctx, policy)
-	if err := h.executeAssistantTask(ctx, user, &task); err != nil {
+	err = h.executeAssistantTask(ctx, user, &task)
+	h.pruneScheduledTaskSessions(job)
+	if err != nil {
 		if msg := strings.TrimSpace(task.LastError); msg != "" {
 			return task.LastMessage, task.SessionID, fmt.Errorf("%s", msg)
 		}

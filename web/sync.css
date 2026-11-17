@@ -288,6 +288,8 @@
 #scheduleModal .schedule-head[hidden], #scheduleModal .schedule-job-list[hidden] { display:none; }
 #scheduleModal .schedule-fields>div>label:not(.schedule-check) { font-size:12.5px;font-weight:500; }
 #scheduleModal .schedule-field-hint { font-size:12px; }
+#scheduleModal .schedule-session-keep { margin-top:12px; }
+#scheduleModal .schedule-session-keep[hidden] { display:none; }
 #scheduleModal .schedule-job-main b { font-size:13px; }
 #scheduleModal .schedule-job-main>span, #scheduleModal .schedule-job-main small { font-size:12px; }
 @media(max-width:700px) {

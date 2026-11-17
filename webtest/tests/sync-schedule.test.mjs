@@ -203,6 +203,40 @@ test('an AI job can keep running in one conversation', async (t) => {
   assert.equal(call.body.sessionMode, 'fixed');
 });
 
+test('a job that opens a conversation per execution chooses how many to keep', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  app.router.put('/api/schedule-jobs', call => ({ ...call.body }));
+  app.evaluate(`(() => {
+    state.projectFilter='project-1';
+    state.data.scheduleJobs=[];
+    fillScheduleJobForm({});
+    const f=$('#scheduleJobForm');
+    f.elements.jobKind.value='assistant';syncScheduleJobKind();
+  })()`);
+  const form = app.document.querySelector('#scheduleJobForm');
+  const field = app.document.querySelector('#scheduleSessionKeepField');
+  assert.deepEqual([...form.elements.sessionKeep.options].map(o => o.textContent), ['最近 10 个', '最近 50 个', '最近 100 个', '不限']);
+  assert.equal(form.elements.sessionKeep.value, '50', 'new jobs keep 50 by default');
+  assert.equal(field.hidden, false);
+  form.elements.sessionMode.value = 'fixed';
+  form.elements.sessionMode.dispatchEvent(new app.window.Event('change'));
+  assert.equal(field.hidden, true, 'a fixed conversation has nothing to keep');
+  form.elements.sessionMode.value = '';
+  form.elements.sessionMode.dispatchEvent(new app.window.Event('change'));
+  assert.equal(field.hidden, false);
+
+  app.evaluate(`fillScheduleJobForm({id:'job-ai',projectId:'project-1',name:'巡检',skipDispatch:true,assistantPrompt:'x',intervalSec:300,enabled:true,sessionKeep:-1})`);
+  assert.equal(form.elements.sessionKeep.value, '-1');
+  app.evaluate(`fillScheduleJobForm({id:'job-ai',projectId:'project-1',name:'巡检',skipDispatch:true,assistantPrompt:'x',intervalSec:300,enabled:true})`);
+  assert.equal(form.elements.sessionKeep.value, '50', 'a job saved before the setting shows the default');
+  form.elements.sessionKeep.value = '10';
+  form.dispatchEvent(new app.window.Event('submit', { bubbles: true, cancelable: true }));
+  await settle(4);
+  const call = app.router.calls.find(c => c.method === 'PUT' && c.path === '/api/schedule-jobs');
+  assert.equal(call.body.sessionKeep, 10);
+});
+
 test('an AI job runs with the saver\'s key without asking whose key to use', async (t) => {
   const app = await loadApp();
   t.after(app.close);

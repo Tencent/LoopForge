@@ -158,3 +158,90 @@ func TestScheduleJobSaveKeepsSessionModeServerManaged(t *testing.T) {
 		t.Fatalf("leaving fixed mode = mode %q fixed %q", saved.SessionMode, saved.FixedSessionID)
 	}
 }
+
+// A job that opens a conversation per execution keeps only its newest
+// SessionKeep conversations; older ones go right after the next execution.
+func TestScheduleJobKeepsItsNewestConversations(t *testing.T) {
+	h, owner, job := scheduleSessionFixture(t)
+	job.SessionKeep = 10
+	if err := h.repo.PutScheduleJob(job); err != nil {
+		t.Fatal(err)
+	}
+	var ids []string
+	for i := 0; i < 12; i++ {
+		_, id, err := h.runScheduleJobPrompt(job)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, id)
+		time.Sleep(2 * time.Millisecond)
+	}
+	if got := len(h.repo.ListAssistantSessionsByTask(domain.AssistantSourceScheduled, job.ID)); got != 10 {
+		t.Fatalf("kept %d conversations, want 10", got)
+	}
+	for i, id := range ids {
+		_, ok := h.repo.AssistantSession(owner.ID, id)
+		if want := i >= 2; ok != want {
+			t.Fatalf("conversation %d kept=%v, want %v", i, ok, want)
+		}
+	}
+
+	// Unlimited keeps everything, also through the daily janitor.
+	job.SessionKeep = domain.ScheduleSessionKeepUnlimited
+	if err := h.repo.PutScheduleJob(job); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := h.runScheduleJobPrompt(job); err != nil {
+		t.Fatal(err)
+	}
+	h.pruneScheduledAssistantSessions(time.Date(2099, 1, 1, 0, 0, 0, 0, time.UTC))
+	if got := len(h.repo.ListAssistantSessionsByTask(domain.AssistantSourceScheduled, job.ID)); got != 11 {
+		t.Fatalf("unlimited kept %d conversations, want 11", got)
+	}
+
+	// The janitor applies the stored limit whatever the age, and a job
+	// saved before the setting keeps the default 50.
+	job.SessionKeep = 10
+	if err := h.repo.PutScheduleJob(job); err != nil {
+		t.Fatal(err)
+	}
+	if removed := h.pruneScheduledAssistantSessions(time.Now().UTC()); removed != 1 {
+		t.Fatalf("janitor removed %d, want 1", removed)
+	}
+	if got := (domain.ScheduleJob{SkipDispatch: true}).SessionKeepLimit(); got != domain.ScheduleSessionKeepDefault {
+		t.Fatalf("default limit = %d", got)
+	}
+	if got := (domain.ScheduleJob{SkipDispatch: true, SessionMode: domain.ScheduleSessionFixed, SessionKeep: 10}).SessionKeepLimit(); got != 0 {
+		t.Fatalf("fixed mode limit = %d", got)
+	}
+}
+
+// A save accepts only the offered limits and fills in the default.
+func TestScheduleJobSaveValidatesSessionKeep(t *testing.T) {
+	t.Setenv("AGENTFLOW_AUTH_REQUIRED", "true")
+	t.Setenv("AGENTFLOW_SESSION_SECRET", "schedule-keep-test-secret")
+	h, _ := workbenchFixture(t)
+	st := h.repo
+	if err := st.PutUser(domain.User{LoginName: "keep-owner", CodeBuddyAPIKey: "k"}); err != nil {
+		t.Fatal(err)
+	}
+	owner, _ := st.UserByLoginName("keep-owner")
+	if err := st.PutProject(domain.Project{ID: "keep-proj", Name: "Keep", OwnerID: owner.ID}); err != nil {
+		t.Fatal(err)
+	}
+	server := New(st, engine.New(st, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "")
+	body := func(keep int) map[string]any {
+		return map[string]any{"id": "keep-job", "projectId": "keep-proj", "name": "巡检", "skipDispatch": true, "assistantPrompt": "p", "intervalSec": 3600, "sessionKeep": keep}
+	}
+	if saved := requestJSONAuthed[domain.ScheduleJob](t, server, owner, http.MethodPut, "/api/schedule-jobs", body(0), http.StatusOK); saved.SessionKeep != 50 {
+		t.Fatalf("default keep = %d", saved.SessionKeep)
+	}
+	for _, keep := range []int{10, 100, -1} {
+		if saved := requestJSONAuthed[domain.ScheduleJob](t, server, owner, http.MethodPut, "/api/schedule-jobs", body(keep), http.StatusOK); saved.SessionKeep != keep {
+			t.Fatalf("keep %d saved as %d", keep, saved.SessionKeep)
+		}
+	}
+	if code := scheduleAuthzStatus(t, server, owner, http.MethodPut, "/api/schedule-jobs", body(7)); code != http.StatusBadRequest {
+		t.Fatalf("keep 7 = %d", code)
+	}
+}

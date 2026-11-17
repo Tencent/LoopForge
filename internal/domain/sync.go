@@ -89,6 +89,11 @@ type ScheduleJob struct {
 	// a new conversation for every execution; "fixed" keeps continuing
 	// FixedSessionID.
 	SessionMode string `json:"sessionMode,omitempty"`
+	// SessionKeep is how many of its newest conversations an AI job that
+	// opens a new one per execution keeps: 10, 50 or 100, or -1 for no
+	// limit. Zero (jobs saved before the setting) means the default, 50.
+	// Ignored in fixed mode.
+	SessionKeep int `json:"sessionKeep,omitempty"`
 	// FixedSessionID is server-managed: the pinned conversation, set by the
 	// first fixed-mode execution and cleared when the mode leaves "fixed".
 	FixedSessionID string `json:"fixedSessionId,omitempty"`

@@ -3,6 +3,7 @@ package domain
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"fmt"
 	"time"
 )
 
@@ -51,6 +52,46 @@ const ScheduleSessionFixed = "fixed"
 // UsesFixedSession reports whether an AI job continues its pinned conversation.
 func (j ScheduleJob) UsesFixedSession() bool {
 	return j.SkipDispatch && j.SessionMode == ScheduleSessionFixed
+}
+
+const (
+	// ScheduleSessionKeepDefault is the SessionKeep of a job that has none.
+	ScheduleSessionKeepDefault = 50
+	// ScheduleSessionKeepUnlimited keeps every conversation of a job.
+	ScheduleSessionKeepUnlimited = -1
+)
+
+// ScheduleSessionKeepChoices are the limits an AI job may pick, besides
+// ScheduleSessionKeepUnlimited.
+var ScheduleSessionKeepChoices = []int{10, 50, 100}
+
+// NormalizeScheduleSessionKeep validates a requested SessionKeep; zero picks
+// the default.
+func NormalizeScheduleSessionKeep(n int) (int, error) {
+	if n == 0 {
+		return ScheduleSessionKeepDefault, nil
+	}
+	if n == ScheduleSessionKeepUnlimited {
+		return n, nil
+	}
+	for _, choice := range ScheduleSessionKeepChoices {
+		if n == choice {
+			return n, nil
+		}
+	}
+	return 0, fmt.Errorf("保留会话数只能是 10、50、100 或不限")
+}
+
+// SessionKeepLimit is how many newest conversations the job keeps; 0 means no
+// limit by count. A fixed-mode job has a single conversation and no limit.
+func (j ScheduleJob) SessionKeepLimit() int {
+	if !j.SkipDispatch || j.UsesFixedSession() || j.SessionKeep == ScheduleSessionKeepUnlimited {
+		return 0
+	}
+	if j.SessionKeep <= 0 {
+		return ScheduleSessionKeepDefault
+	}
+	return j.SessionKeep
 }
 
 // ScheduleJobKind labels a job for the execution dashboard.

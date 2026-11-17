@@ -183,6 +183,18 @@ func (h *scheduleHandlers) scheduleJobs(c *gin.Context) {
 		} else {
 			job.SessionMode = ""
 		}
+		// SessionKeep only limits jobs that open a conversation per execution;
+		// a fixed-mode job keeps its choice for when it leaves fixed mode.
+		if job.SkipDispatch {
+			keep, err := domain.NormalizeScheduleSessionKeep(job.SessionKeep)
+			if err != nil {
+				c.JSON(400, gin.H{"error": err.Error()})
+				return
+			}
+			job.SessionKeep = keep
+		} else {
+			job.SessionKeep = 0
+		}
 		job.NotificationSnapshot = prior.NotificationSnapshot
 		job.NotificationResult = prior.NotificationResult
 		var saveErr error

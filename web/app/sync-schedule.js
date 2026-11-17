@@ -283,15 +283,20 @@ function syncScheduleJobKind(){
   if(assistant)paintScheduleModel(f.elements.assistantModel.value);
 }
 // The pinned conversation is chosen by the server on the first fixed run.
+// Only jobs that open a conversation per execution choose how many to keep.
+const SCHEDULE_SESSION_KEEP_CHOICES=['10','50','100','-1'];
 function fillScheduleSessionMode(f,job){
   const select=f.elements.sessionMode;if(!select)return;
   select.value=job.sessionMode==='fixed'?'fixed':'';
+  const keep=f.elements.sessionKeep;
+  if(keep){const v=String(job.sessionKeep||50);keep.value=SCHEDULE_SESSION_KEEP_CHOICES.includes(v)?v:'50'}
   scheduleSessionModeHint(job);
   select.onchange=()=>scheduleSessionModeHint(job);
 }
 function scheduleSessionModeHint(job){
   const f=$('#scheduleJobForm'),hint=$('#scheduleSessionHint');if(!f||!hint)return;
   const fixed=f.elements.sessionMode.value==='fixed';
+  const keepField=$('#scheduleSessionKeepField');if(keepField)keepField.hidden=fixed;
   const pinned=fixed&&job.sessionMode==='fixed'&&job.fixedSessionId&&job.projectId===state.projectFilter?job.fixedSessionId:'';
   if(!fixed){hint.textContent='每次执行各开一个会话，可在执行记录里打开。';return}
   hint.innerHTML=pinned
@@ -596,6 +601,7 @@ async function saveScheduleJob(e){
     assistantPrompt:assistant?f.elements.assistantPrompt.value.trim():'',
     assistantModel:assistant?f.elements.assistantModel.value.trim():'',
     sessionMode:assistant&&f.elements.sessionMode?f.elements.sessionMode.value:'',
+    sessionKeep:assistant&&f.elements.sessionKeep?Number(f.elements.sessionKeep.value)||50:0,
     enabled:assistant?scheduleSavedEnabled(f.elements.id.value):f.elements.enabled.checked
   };
   if(assistant&&typeof sharedScheduleFormPayload==='function')Object.assign(payload,sharedScheduleFormPayload(f));

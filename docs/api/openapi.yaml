@@ -5306,6 +5306,14 @@ components:
           type: string
           readOnly: true
           description: Display name of runAsUserId.
+        sessionMode:
+          type: string
+          enum: ["", fixed]
+          description: AI jobs only. Empty opens a new Studio conversation per execution; "fixed" keeps continuing one pinned conversation (fixedSessionId, server-managed).
+        sessionKeep:
+          type: integer
+          enum: [10, 50, 100, -1]
+          description: AI jobs that open a conversation per execution keep only their newest sessionKeep conversations; older ones are deleted after each execution (the execution records stay). -1 keeps all. Omitted or 0 saves the default 50; other values are rejected with 400. Ignored in fixed mode.
         lastRunAt:
           type: string
           format: date-time

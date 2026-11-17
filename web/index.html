@@ -1194,6 +1194,16 @@
                 <option value="fixed">始终在同一个会话里继续</option>
               </select>
               <p class="schedule-field-hint" id="scheduleSessionHint">每次执行各开一个会话，可在执行记录里打开。</p>
+              <div id="scheduleSessionKeepField" class="schedule-session-keep">
+                <label for="scheduleSessionKeep">保留会话数</label>
+                <select id="scheduleSessionKeep" class="select" name="sessionKeep">
+                  <option value="10">最近 10 个</option>
+                  <option value="50" selected>最近 50 个</option>
+                  <option value="100">最近 100 个</option>
+                  <option value="-1">不限</option>
+                </select>
+                <p class="schedule-field-hint" id="scheduleSessionKeepHint">超过后每次执行结束时自动删除最早的会话，执行记录仍保留，但打不开已删除的会话。</p>
+              </div>
             </div>
             <div data-schedule-kind="assistant" data-schedule-prompt hidden>
               <label>提示词</label>
