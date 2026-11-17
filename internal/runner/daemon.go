@@ -613,14 +613,23 @@ func (d *Daemon) executeTask(ctx context.Context, task domain.RunnerTask) {
 	completeCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	req := CompleteRequest{Status: result.status, Result: result.result, Error: result.errMsg, Artifacts: artifacts, Outputs: result.outputs}
-	if result.status == domain.RunnerTaskFailed || result.status == domain.RunnerTaskSuccess {
-		exit := result.exitCode
-		req.ExitCode = &exit
-	}
+	req.ExitCode = reportedExitCode(result)
 	if err := d.client.Complete(completeCtx, task.ID, req); err != nil {
 		log.Printf("task %s complete report: %v", task.ID, err)
 	}
 	log.Printf("task %s finished (%s)", task.ID, result.status)
+}
+
+// reportedExitCode is the exit status the control plane should show. A task that
+// never spawned its executor has none: reporting the zero value made every
+// pre-flight failure read "… (exit 0)" next to the real error, which sent
+// operators looking for a crashed process instead of a missing CLI or model.
+func reportedExitCode(result execResult) *int {
+	if result.status == domain.RunnerTaskSuccess || (result.status == domain.RunnerTaskFailed && result.ran) {
+		code := result.exitCode
+		return &code
+	}
+	return nil
 }
 
 func (d *Daemon) executeRunCleanup(ctx context.Context, task domain.RunnerTask) execResult {
