@@ -17,8 +17,10 @@ type assistantStreamFilter struct {
 	lastTool   string
 	lastDetail string
 	seenTools  map[string]string
-	answer     string
-	thinking   string
+	// agentModels is the model each dispatch's subagent last reported.
+	agentModels map[string]string
+	answer      string
+	thinking    string
 }
 
 func (f *assistantStreamFilter) accept(ev assistantStreamEvent) bool {
@@ -46,6 +48,16 @@ func (f *assistantStreamFilter) accept(ev assistantStreamEvent) bool {
 		return ev.ID != ""
 	case "thinking":
 		return appendStreamText(&f.thinking, ev)
+	case "agentModel":
+		// Every line of a subagent names its model; forward a change only.
+		if ev.Parent == "" || ev.Model == "" || f.agentModels[ev.Parent] == ev.Model {
+			return false
+		}
+		if f.agentModels == nil {
+			f.agentModels = map[string]string{}
+		}
+		f.agentModels[ev.Parent] = ev.Model
+		return true
 	default:
 		return ev.Text != "" || ev.Tool != ""
 	}
@@ -146,6 +158,9 @@ func assistantLineEvents(line string) []assistantStreamEvent {
 		// Set on lines a sub-agent (Agent/Task tool) produced.
 		ParentToolUseID string `json:"parent_tool_use_id"`
 		Message         struct {
+			// Model is the model that produced this message. On a subagent's
+			// line it is the model the subagent actually runs on.
+			Model   string `json:"model"`
 			Content []struct {
 				Type      string          `json:"type"`
 				ID        string          `json:"id"`
@@ -183,6 +198,10 @@ func assistantLineEvents(line string) []assistantStreamEvent {
 	switch evt.Type {
 	case "assistant":
 		var out []assistantStreamEvent
+		if model := strings.TrimSpace(evt.Message.Model); subAgent && model != "" {
+			// assistantStreamEvents puts it under the dispatch (Parent).
+			out = append(out, assistantStreamEvent{Kind: "agentModel", Model: truncateRunes(model, 128)})
+		}
 		for _, block := range evt.Message.Content {
 			switch block.Type {
 			case "thinking":
