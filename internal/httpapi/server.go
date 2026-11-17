@@ -518,6 +518,7 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.GET("/api/runs/:id", api.runs.run)
 	g.DELETE("/api/runs/:id", api.runs.run)
 	g.GET("/api/runs/:id/telemetry", api.runs.run)
+	g.GET("/api/runs/:id/events", api.runs.run)
 	g.GET("/api/runs/:id/logs", api.runs.run)
 	g.GET("/api/runs/:id/logs.txt", api.runs.run)
 	g.POST("/api/runs/:id/workspace/takeover", api.runs.workspaceTakeover)

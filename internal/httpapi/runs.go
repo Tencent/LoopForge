@@ -167,6 +167,26 @@ func (h *runsHandlers) run(c *gin.Context) {
 			return
 		}
 		c.JSON(200, map[string]string{"status": "deleted"})
+	case "/api/runs/:id/events":
+		if !h.repo.RunExists(id) {
+			c.JSON(http.StatusNotFound, map[string]string{"error": "run not found"})
+			return
+		}
+		var after int64
+		if raw, ok := c.GetQuery("after"); ok {
+			cursor, err := strconv.ParseInt(raw, 10, 64)
+			if err != nil || cursor < 0 {
+				c.JSON(http.StatusBadRequest, map[string]string{"error": "after must be a non-negative event cursor"})
+				return
+			}
+			after = cursor
+		}
+		page, err := h.repo.QueryRunFacts(id, after, parsePageLimit(c.Request))
+		if err != nil {
+			respond(c, err)
+			return
+		}
+		c.JSON(http.StatusOK, map[string]any{"runId": id, "events": page.Events, "nextAfter": page.NextAfter, "hasMore": page.HasMore})
 	case "/api/runs/:id/telemetry":
 		if !h.repo.RunExists(id) {
 			c.JSON(404, map[string]string{"error": "run not found"})
