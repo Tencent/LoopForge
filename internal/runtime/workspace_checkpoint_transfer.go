@@ -46,7 +46,12 @@ func WorkspaceCheckpointStatus(root string) domain.RunnerWorkspaceResponse {
 	if !info.IsDir() {
 		return domain.RunnerWorkspaceResponse{Status: 409, Error: "workspace is not a directory"}
 	}
-	return domain.RunnerWorkspaceResponse{Status: 200, Payload: json.RawMessage(`{"exists":true}`)}
+	hasContent, err := WorkspaceDirHasContent(root)
+	if err != nil {
+		return domain.RunnerWorkspaceResponse{Status: 409, Error: err.Error()}
+	}
+	payload, _ := json.Marshal(map[string]bool{"exists": true, "empty": !hasContent})
+	return domain.RunnerWorkspaceResponse{Status: 200, Payload: payload}
 }
 
 func (p *CheckpointTransfers) Sweep(now time.Time) {
@@ -134,7 +139,7 @@ func (p *CheckpointTransfers) handle(ctx context.Context, root string, req domai
 		item.info.ID = hex.EncodeToString(raw)
 		if op == domain.RunnerWorkspaceOperationCheckpointExport {
 			hash := sha256.New()
-			if err = CreateWorkspaceCheckpointTo(root, checkpointContextWriter{ctx, io.MultiWriter(f, hash)}); err != nil {
+			if err = CreateWorkspaceCheckpointToContext(ctx, root, checkpointContextWriter{ctx, io.MultiWriter(f, hash)}); err != nil {
 				return nil, err
 			}
 			stat, err := f.Stat()

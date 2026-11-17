@@ -56,6 +56,8 @@ func TestAssistantStreamFilterAcceptToolDedupes(t *testing.T) {
 		{"identical repeat", assistantStreamEvent{Tool: "Bash", ID: "t1", Detail: "ls"}, false},
 		{"repeat with empty detail and input", assistantStreamEvent{Tool: "Bash", ID: "t1", AgentID: "a1"}, false},
 		{"agent call adds task", assistantStreamEvent{Tool: "Agent", ID: "t2", Subagent: "Explore", Input: "find x"}, true},
+		{"agent call adds model", assistantStreamEvent{Tool: "Agent", ID: "t2", Subagent: "Explore", Input: "find x", Model: "lite"}, true},
+		{"agent call repeats model", assistantStreamEvent{Tool: "Agent", ID: "t2", Subagent: "Explore", Input: "find x", Model: "lite"}, false},
 		{"no id empty tool", assistantStreamEvent{}, false},
 		{"no id same as last", assistantStreamEvent{Tool: "Agent", Detail: ""}, false},
 		{"no id new detail", assistantStreamEvent{Tool: "Agent", Detail: "y"}, true},
@@ -83,5 +85,26 @@ func TestAssistantStreamFilterToolEndsReplyDraft(t *testing.T) {
 	}
 	if f.accept(assistantStreamEvent{Kind: "draftDelta", Detail: "x"}) {
 		t.Fatal("draft delta kept after a tool event")
+	}
+}
+
+// Each subagent line names its model; only the first and a change pass, per
+// dispatch.
+func TestAssistantStreamFilterForwardsEachSubagentModelOnce(t *testing.T) {
+	var f assistantStreamFilter
+	for _, step := range []struct {
+		ev   assistantStreamEvent
+		want bool
+	}{
+		{assistantStreamEvent{Kind: "agentModel", Parent: "c1", Model: "deepseek-v4.1-flash-ioa"}, true},
+		{assistantStreamEvent{Kind: "agentModel", Parent: "c1", Model: "deepseek-v4.1-flash-ioa"}, false},
+		{assistantStreamEvent{Kind: "agentModel", Parent: "c2", Model: "deepseek-v4.1-flash-ioa"}, true},
+		{assistantStreamEvent{Kind: "agentModel", Parent: "c1", Model: "glm-5.3-flash-ioa"}, true},
+		{assistantStreamEvent{Kind: "agentModel", Parent: "", Model: "glm-5.3-flash-ioa"}, false},
+		{assistantStreamEvent{Kind: "agentModel", Parent: "c3"}, false},
+	} {
+		if got := f.accept(step.ev); got != step.want {
+			t.Fatalf("accept(%+v) = %v, want %v", step.ev, got, step.want)
+		}
 	}
 }

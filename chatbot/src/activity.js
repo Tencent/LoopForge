@@ -17,6 +17,12 @@ export function mergeActivity(previous = [], events = []) {
         host = { id: event.parent, kind: "tool", tool: "Agent", detail: "", text: "", startedAt: at };
         steps.push(host);
       }
+      // The model the subagent reports it runs on, whatever the dispatch
+      // asked for (an alias such as "lite", or nothing).
+      if (event.kind === "agentModel") {
+        if (event.model) host.ranModel = event.model;
+        continue;
+      }
       const child = { ...event, parent: undefined };
       if (child.kind === "agentText") child.kind = "text";
       host.children = mergeActivity(host.children || [], [{ data: child, sequence }]);
@@ -104,6 +110,7 @@ export function mergeActivity(previous = [], events = []) {
         if (event.subagent) existing.subagent = event.subagent;
         if (event.role) existing.role = event.role;
         if (event.input) existing.input = event.input;
+        if (event.model) existing.model = event.model;
         // A resumed dispatch names its agent before it finishes. Keep the
         // target apart: the CLI may still finish it under a new agent.
         if (event.agentId) existing.agentId = existing.resumed = event.agentId;
@@ -118,6 +125,7 @@ export function mergeActivity(previous = [], events = []) {
           ...(event.subagent ? { subagent: event.subagent } : {}),
           ...(event.role ? { role: event.role } : {}),
           ...(event.input ? { input: event.input } : {}),
+          ...(event.model ? { model: event.model } : {}),
           ...(event.agentId ? { agentId: event.agentId, resumed: event.agentId } : {}),
         });
     }
@@ -276,20 +284,29 @@ export const resumeMissed = (step) =>
 // collectSubagents lists every subagent of a conversation, newest last. A
 // dispatch that resumed an earlier agent joins it, so one entry holds every
 // task that agent was given.
-export function collectSubagents(messages = [], liveSteps = []) {
+// A subagent shows the model it reported running on (step.ranModel). Before
+// it reports, and for replies saved before that was recorded, it falls back
+// to the model its dispatch named, else the model of the reply that
+// dispatched it; a live dispatch has no saved reply yet and uses liveModel,
+// the model the running reply was sent with. agent.model is the latest
+// dispatch's, agent.models[step.id] each dispatch's.
+export function collectSubagents(messages = [], liveSteps = [], liveModel = "") {
   const agents = [];
   // messageIndex is the saved reply that holds the dispatch; a live one has
   // none yet, and its collected files are not attachments until it is saved.
-  const add = (step, messageIndex = null) => {
+  const add = (step, messageIndex = null, replyModel = "") => {
     const key = step.agentId || step.id;
     let agent = agents.find((item) => item.key === key || (step.agentId && item.agentId === step.agentId));
     if (!agent) {
-      agent = { key, agentId: step.agentId || "", role: "", subagent: "", dispatches: [], published: [] };
+      agent = { key, agentId: step.agentId || "", role: "", subagent: "", model: "", models: {}, dispatches: [], published: [] };
       agents.push(agent);
     }
     if (step.agentId) agent.agentId = step.agentId;
     agent.role = step.role || agent.role;
     agent.subagent = step.subagent || agent.subagent;
+    const model = String(step.ranModel || step.model || replyModel || "").trim();
+    if (model) agent.models[step.id] = model;
+    agent.model = model || agent.model;
     agent.dispatches.push(step);
     // What it published, and the role deliverables the platform collected
     // when it finished (a required one it did not write is marked missing).
@@ -309,9 +326,9 @@ export function collectSubagents(messages = [], liveSteps = []) {
     if (message.role !== "assistant") return;
     savedActivity(message)
       .filter(isDispatch)
-      .forEach((step) => add(step, index));
+      .forEach((step) => add(step, index, message.model));
   });
-  liveSteps.filter(isDispatch).forEach((step) => add(step));
+  liveSteps.filter(isDispatch).forEach((step) => add(step, null, liveModel));
   return agents;
 }
 // While streaming, the latest paragraph is the answer only once nothing has

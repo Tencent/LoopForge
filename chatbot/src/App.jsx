@@ -75,7 +75,7 @@ import { usePanelPresence } from "./usePanelPresence";
 import HomeWelcome from "./HomeWelcome";
 import ModelPicker from "./ModelPicker";
 import ModelProviderIcon, { hasProviderLogo } from "./ModelProviderIcon";
-import PermissionPicker from "./PermissionPicker";
+import PermissionPicker, { rememberApprovalMode, storedApprovalMode } from "./PermissionPicker";
 import { conversationEngine, engineBrand } from "./engines.js";
 import { effortOptions } from "./effort.js";
 import QuickAccessWizard from "./QuickAccessWizard";
@@ -342,12 +342,16 @@ export default function App() {
     [repositorySelections, setRepositorySelections] = useState({}),
     [uploading, setUploading] = useState(false),
     [runsRefresh, setRunsRefresh] = useState(0),
-    [approval, setApproval] = useState("confirm"),
+    [approval, setApprovalState] = useState(storedApprovalMode),
     [quickAccessOpen, setQuickAccessOpen] = useState(
       () => new URLSearchParams(location.search).get("quickAccess") === "1",
     ),
     [theme, setTheme] = useState(() => readThemePreference(localStorage)),
     [environmentVisibility, setEnvironmentVisibility] = useState(() => readJSON(environmentVisibilityKey, {}));
+  function setApproval(value) {
+    setApprovalState(value);
+    rememberApprovalMode(value);
+  }
   const environmentPreferenceOwner = String(chat.user?.id || "guest");
   const showEnvironmentPicker = environmentVisibility[environmentPreferenceOwner] === true;
   function changeEnvironmentVisibility(visible) {
@@ -2325,7 +2329,7 @@ export default function App() {
                       );
                       if (stored) {
                         closeDialog();
-                        await chat.regenerate(stored);
+                        await chat.regenerate(stored, approval);
                       }
                     }
                   }}

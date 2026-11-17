@@ -12,6 +12,7 @@ import (
 	"agentflow/internal/domain"
 	"agentflow/internal/gitwork"
 	"agentflow/internal/repo"
+	"agentflow/internal/runtime"
 )
 
 const ConversationWorkspaceIdleTTL = time.Hour
@@ -285,10 +286,24 @@ func (e *Engine) ensureConversationWorkspace(ctx context.Context, id, token stri
 	}
 	root := e.sandboxes.RunWorkspace(id)
 	if info, statErr := os.Lstat(root); statErr == nil && info.IsDir() && !e.foreignWorkspaceBind(run) {
-		if err = e.verifyStoredCheckpoint(ctx, id); err != nil {
+		hasContent, contentErr := runtime.WorkspaceDirHasContent(root)
+		if contentErr != nil {
+			return contentErr
+		}
+		if hasContent {
+			if err = e.verifyStoredCheckpoint(ctx, id); err != nil {
+				return err
+			}
+			return e.repo.RestoreCheckpointWorkspaceBinding(id, token, e.workspaceHost, e.sandboxes.Root(), time.Now().UTC())
+		}
+		// An empty or .agentflow-only directory created before restoration
+		// holds no user files; tear down any container bound to its old inode
+		// so restoreConversationCheckpoint can atomically replace it and the
+		// next container bind sees the restored files.
+		if err = e.releaseRunEnvironment(id, false); err != nil {
 			return err
 		}
-		return e.repo.RestoreCheckpointWorkspaceBinding(id, token, e.workspaceHost, e.sandboxes.Root(), time.Now().UTC())
+		e.sandboxes.DiscardRunContainer(ctx, id)
 	}
 	if err = e.restoreConversationCheckpoint(ctx, run, root); err != nil {
 		return err
