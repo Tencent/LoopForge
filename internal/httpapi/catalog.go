@@ -1101,6 +1101,18 @@ func (h *catalogHandlers) workflows(c *gin.Context) {
 					return
 				}
 			}
+			// A lease makes "two tabs on the same revision" visible before anyone
+			// types: the revision check alone cannot stop the second save from
+			// winning, it only reports the conflict afterwards.
+			if holder, held := h.repo.WorkflowLock(v.ID); held && holder.UserID != h.currentUserID(c) {
+				c.JSON(http.StatusConflict, gin.H{
+					"error":     "SOP 正在被 " + holder.UserLogin + " 编辑，保存会覆盖对方的改动",
+					"holder":    holder.UserLogin,
+					"expiresAt": holder.ExpiresAt,
+					"hint":      "等对方保存（租约 3 分钟自动过期），或 POST /api/workflows/" + v.ID + "/edit-lock {takeover:true} 接管后再保存。",
+				})
+				return
+			}
 			if err := h.repo.PutWorkflow(v); err != nil {
 				respondWorkflowSaveError(c, err)
 				return

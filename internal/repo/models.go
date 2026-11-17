@@ -704,7 +704,7 @@ func allModels() []any {
 		projectRow{}, projectMemberRow{}, repositoryRow{}, businessDomainRow{}, businessDomainAssignmentRow{},
 		agentRow{}, ruleRow{}, skillRow{}, skillFileRow{}, mcpServerRow{}, mcpFileRow{}, executorRow{},
 		dockerfileRow{}, environmentRow{}, sandboxRow{},
-		workflowRow{}, syncConfigRow{}, scheduleJobRow{}, sharedScheduleVersionRow{},
+		workflowRow{}, WorkflowEditLock{}, syncConfigRow{}, scheduleJobRow{}, sharedScheduleVersionRow{},
 		issueRow{}, issueCommentRow{}, taskRow{},
 		runAdmissionLockRow{}, runRow{}, runNodeRow{}, runEventRow{}, runTelemetryRow{}, runLogRow{}, runArtifactRow{}, runEvalRow{},
 		runPreviewRow{}, previewSessionRow{}, previewBlobRow{}, WorkspaceCheckpoint{}, workspaceCheckpointChunk{},
