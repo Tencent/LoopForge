@@ -142,6 +142,10 @@ export function useChat() {
     // The generation whose final transcript has been loaded. A queued message
     // waits for it, so it is sent after the finished (or unfinished) reply.
     [settledId, setSettledId] = useState(null),
+    // The conversation whose reply status has been fetched since it was
+    // opened. Until then a reply may still be running there, so queued
+    // messages must not go out (they would be rejected and get lost).
+    [generationKnown, setGenerationKnown] = useState(null),
     // A queued message sent with "send now": it interrupts the running reply
     // and stays on screen until the server's follow-up turn has started.
     [steering, setSteering] = useState(null);
@@ -204,6 +208,7 @@ export function useChat() {
       if (id === currentId.current && sessionRef.current?.id === id) return;
       setError("");
       setGeneration(null);
+      setGenerationKnown(null);
       setLive({ answer: "", thinking: "", tools: [] });
       setSession(null);
       executionMachines.resetMachine();
@@ -394,6 +399,7 @@ export function useChat() {
       accumulated = mergeEvents(accumulated, events);
       setLive(accumulated);
       setGeneration(g);
+      setGenerationKnown(activeId);
       if (g.status !== "running") setStopRequest((old) => old?.generationId === g.id ? null : old);
       if (g.status === "running" && ["platform", "workspace"].includes(g.runtimeMode)) {
         setSession((stored) => stored?.id === activeId && stored.runtimeMode !== g.runtimeMode ? { ...stored, runtimeMode: g.runtimeMode } : stored);
@@ -448,7 +454,9 @@ export function useChat() {
         timer = setTimeout(poll, g.status === "running" ? 200 : 2000);
       } catch (e) {
         if (cancelled) return;
-        if (e.status !== 404) {
+        // No reply was ever started here: nothing can be running.
+        if (e.status === 404) setGenerationKnown(activeId);
+        else {
           connectionError = e.status ? e.message : "连接暂时中断，正在重连…";
           setError(connectionError);
         }
@@ -693,6 +701,9 @@ export function useChat() {
     if (!next || dispatchingRef.current || submittingRef.current) return;
     if (steeringRef.current) return;
     if (generation?.status === "running" || sessionRef.current?.id !== id) return;
+    // Wait until this conversation's reply status is known: right after
+    // switching back the transcript can arrive before the running reply does.
+    if (generationKnown !== id) return;
     // Wait until the ended turn's transcript (with its reply) is loaded.
     if (generation && settledId !== generation.id) return;
     dispatchingRef.current = true;
@@ -723,7 +734,7 @@ export function useChat() {
     const item = id ? queues[id]?.items.find((m) => m.id === itemId) : null;
     if (!item || steeringRef.current || dispatchingRef.current) return false;
     if (generation?.status !== "running" || !generation.id) {
-      if (submittingRef.current) return false;
+      if (submittingRef.current || generationKnown !== id) return false;
       dispatchingRef.current = true;
       setQueues((old) => removeQueued(old, id, item.id));
       try {
@@ -905,8 +916,12 @@ export function useChat() {
           ]);
           if (currentId.current === s.id) setSession(stored);
           if (g?.id !== previousGeneration && g?.status === "running") {
-            setGeneration(g);
-            return true;
+            if (currentId.current === s.id) setGeneration(g);
+            // Only a lost response may hide an accepted turn. A clear
+            // rejection (e.g. 409 while another reply runs) means this
+            // message was not taken, so a queued one goes back instead of
+            // being dropped.
+            if (!e.status || e.status >= 500) return true;
           }
         } catch {}
       }

@@ -1,7 +1,7 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
-const state = vi.hoisted(() => ({ transcript: [], generation: null }));
+const state = vi.hoisted(() => ({ transcript: [], generation: null, generationGate: null }));
 const { apiMock, writeMock } = vi.hoisted(() => {
   const apiMock = vi.fn(async (path) => {
     if (path === "/api/auth/current")
@@ -11,7 +11,14 @@ const { apiMock, writeMock } = vi.hoisted(() => {
       return { default: "m1", sponsoredModel: "m1", models: [{ id: "m1", name: "模型一" }] };
     if (path === "/api/users") return [{ id: 1, loginName: "tester", codeBuddyApiKeyConfigured: true }];
     if (path === "/api/assistant/sessions") return [];
-    if (path.includes("/generation")) return structuredClone(state.generation);
+    if (path.startsWith("/api/assistant/sessions/s2")) {
+      if (path.includes("/generation")) throw Object.assign(new Error("not found"), { status: 404 });
+      return { id: "s2", title: "别的会话", projectId: "p1", model: "m1", messages: [] };
+    }
+    if (path.includes("/generation")) {
+      if (state.generationGate) await state.generationGate;
+      return structuredClone(state.generation);
+    }
     if (path.startsWith("/api/assistant/sessions/"))
       return { id: "s1", title: "排队", projectId: "p1", model: "m1", messages: structuredClone(state.transcript) };
     return [];
@@ -83,6 +90,7 @@ describe("sending while a reply runs", () => {
     history.replaceState({}, "", "/");
     state.transcript = [{ role: "user", content: "查失败节点" }];
     state.generation = { id: "g-running", status: "running", events: [{ sequence: 1, data: { kind: "tool", tool: "runs_get" } }] };
+    state.generationGate = null;
     globalThis.EventSource = FakeEventSource;
   });
   afterEach(() => {
@@ -256,6 +264,67 @@ describe("sending while a reply runs", () => {
     await finish("completed");
     await waitFor(() => expect(generationPosts()).toHaveLength(1));
     expect(generationPosts()[0][1].messages.at(-1).content).toBe("补充一句");
+    unmount();
+  });
+
+  test("switching away and back keeps the queue while the reply still runs", async () => {
+    const { result, unmount } = await openRunning();
+    await act(async () => {
+      await result.current.send({ text: "切走前排队的消息" });
+    });
+    expect(result.current.queue.map((m) => m.text)).toEqual(["切走前排队的消息"]);
+
+    act(() => result.current.open("s2"));
+    await waitFor(() => expect(result.current.session?.id).toBe("s2"));
+    expect(result.current.queue).toHaveLength(0);
+
+    // Coming back, the conversation loads before its running generation does.
+    // The server rejects a new turn while one runs (409).
+    let release;
+    state.generationGate = new Promise((done) => { release = done; });
+    writeMock.mockImplementation(async (path) => {
+      if (path === "/api/assistant/generations")
+        throw Object.assign(new Error("此会话正在后台生成"), { status: 409 });
+      return {};
+    });
+    act(() => result.current.open("s1"));
+    await waitFor(() => expect(result.current.session?.id).toBe("s1"));
+    await act(async () => { await new Promise((done) => setTimeout(done, 50)); });
+    expect(generationPosts()).toHaveLength(0);
+    expect(result.current.queue.map((m) => m.text)).toEqual(["切走前排队的消息"]);
+
+    state.generationGate = null;
+    await act(async () => { release(); });
+    await waitFor(() => expect(result.current.busy).toBe(true));
+    expect(generationPosts()).toHaveLength(0);
+    expect(result.current.queue.map((m) => m.text)).toEqual(["切走前排队的消息"]);
+    expect(result.current.queueHeld).toBe(false);
+    unmount();
+  });
+
+  test("a rejected queued send is never mistaken for an accepted one", async () => {
+    const { result, unmount } = await openRunning();
+    await act(async () => {
+      await result.current.send({ text: "不能丢" });
+    });
+    act(() => result.current.open("s2"));
+    await waitFor(() => expect(result.current.session?.id).toBe("s2"));
+    act(() => result.current.open("s1"));
+    await waitFor(() => expect(result.current.busy).toBe(true));
+    // The reply finishes but another one is already running there; the
+    // server rejects the queued send with 409. The message must come back, not disappear.
+    writeMock.mockImplementationOnce(async () => {
+      throw Object.assign(new Error("此会话正在后台生成"), { status: 409 });
+    });
+    state.generation = { id: "g-other", status: "running", events: [] };
+    state.transcript = [{ role: "user", content: "查失败节点" }, unfinished];
+    await act(async () => {
+      sources.at(-1).generation({ data: JSON.stringify({ id: "g-running", status: "completed", events: [] }) });
+    });
+    await waitFor(() => expect(generationPosts()).toHaveLength(1));
+    await waitFor(() => expect(result.current.queue.map((m) => m.text)).toEqual(["不能丢"]));
+    // The rejected message is not left on screen as if it had been sent.
+    await waitFor(() => expect(result.current.session?.messages.map((m) => m.content)).toEqual(["查失败节点", unfinished.content]));
     unmount();
   });
 });
