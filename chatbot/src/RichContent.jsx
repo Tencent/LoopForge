@@ -456,11 +456,10 @@ export function Attachment({ attachment, sessionId, onOpen }) {
       <button
         type="button"
         className={image ? "message-image" : "attachment-chip"}
+        // The card shows no caption, so the hover title names the file.
         title={
           image
-            ? failed
-              ? "单击在产物栏打开"
-              : "单击在产物栏打开，双击查看大图"
+            ? `${attachment.name}\n${failed ? "单击在产物栏打开" : "单击在产物栏打开，双击查看大图"}`
             : undefined
         }
         onClick={(e) => {
