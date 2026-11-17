@@ -1484,11 +1484,6 @@ func runAssistantCLI(ctx context.Context, req assistantCLIRequest, user domain.U
 	default:
 		if runtime.IsAgentCLI(engine) {
 			engineOpts.User = runtime.AgentCLIUserCredentials(user)[engine]
-			if req.RunnerLogin {
-				// The Runner needs model metadata for Cursor effort aliases.
-				// Credentials for a local-login turn stay on the machine.
-				engineOpts.User = runtime.ProviderCredential{Models: engineOpts.User.Models}
-			}
 			inv, err = prepareAssistantAgentCLIInvocation(engine, engineOpts)
 			break
 		}

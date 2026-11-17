@@ -14,7 +14,7 @@ import (
 func TestRunnerModelProbeUsesOwnersSelectedMachine(t *testing.T) {
 	h, owner := workbenchFixture(t)
 	row := domain.Runner{
-		ID: "models-runner", OwnerUserID: owner.ID, Status: domain.RunnerStatusOnline, RunnerVersion: domain.RunnerVersionLoginModels,
+		ID: "models-runner", OwnerUserID: owner.ID, Status: domain.RunnerStatusOnline, RunnerVersion: domain.RunnerVersionCLISettings,
 		Runtimes: []domain.RunnerRuntime{{Provider: "codex"}, {Provider: "claude-code", AuthMode: domain.RuntimeAuthPersonal}},
 	}
 	if err := h.repo.PutRunner(row); err != nil {

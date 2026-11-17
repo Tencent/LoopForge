@@ -15,7 +15,7 @@ import (
 func TestRunnerCLITestUsesOwnerLoginAndCleansUp(t *testing.T) {
 	h, owner := workbenchFixture(t)
 	runner := domain.Runner{ID: "test-laptop", OwnerUserID: owner.ID, Status: domain.RunnerStatusOnline,
-		RunnerVersion: domain.RunnerVersionRuntimeTest, Runtimes: []domain.RunnerRuntime{{Provider: "claude-code", AuthMode: "local"}}}
+		RunnerVersion: domain.RunnerVersionCLISettings, Runtimes: []domain.RunnerRuntime{{Provider: "claude-code", AuthMode: "local"}}}
 	if err := h.repo.PutRunner(runner); err != nil {
 		t.Fatal(err)
 	}

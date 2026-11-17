@@ -2788,10 +2788,13 @@ html[data-theme="dark"] #runnersView .runner-runtime-icon:is(.codex,.claude-code
 #runnersView .runner-runtime-name b{font-size:13px;font-weight:600;line-height:1.15}
 #runnersView .runner-runtime-name small{color:var(--rv-muted-2);font:11px/1.15 var(--hui-mono,monospace)}
 #runnersView .runner-runtime-row.off :is(.runner-runtime-name,.runner-runtime-icon){opacity:.48}
-#runnersView :is(.runner-auth-select,.runner-auth-fixed){box-sizing:border-box;min-width:0;width:100%;height:32px;padding:0 8px;border:1px solid var(--rv-line);border-radius:7px;background-color:var(--rv-surface);color:var(--rv-text);font:500 11.5px/1.2 var(--hui-sans)}
-#runnersView .runner-auth-select{padding-right:23px;text-overflow:ellipsis}
-#runnersView .runner-auth-fixed{display:flex;align-items:center;white-space:nowrap}
-#runnersView :is(.runner-auth-select,.runner-auth-fixed).missing{color:var(--rv-warn)}
+#runnersView :is(.runner-auth-select,.runner-auth-fixed){box-sizing:border-box;min-width:0;width:100%;height:32px;padding:0 8px;color:var(--rv-text);font:500 11.5px/1.2 var(--hui-sans)}
+#runnersView .runner-auth-select{padding-right:23px;border:1px solid var(--rv-line);border-radius:7px;background-color:var(--rv-surface);text-overflow:ellipsis}
+#runnersView .runner-auth-select.is-personal{border-color:transparent;background-color:transparent}
+#runnersView .runner-auth-fixed{display:flex;align-items:center;justify-content:space-between;gap:4px;white-space:nowrap}
+#runnersView .runner-auth-tip{display:grid;place-items:center;flex:none;width:24px;height:24px;margin-right:-4px;padding:0;border:0;border-radius:6px;background:none;color:var(--rv-muted);cursor:help}
+#runnersView .runner-auth-tip span{box-sizing:border-box;display:grid;place-items:center;width:15px;height:15px;border:1px solid currentColor;border-radius:50%;font-size:10px;font-weight:700;line-height:1}
+#runnersView .runner-auth-tip:is(:hover,:focus-visible){background:var(--rv-hover);color:var(--rv-text)}
 #runnersView .runner-more{display:grid;place-items:center;width:30px;height:30px;padding:0;border:1px solid transparent;border-radius:7px;background:transparent;color:var(--rv-muted);cursor:pointer;transition:background .16s,color .16s}
 #runnersView .runner-more:is(:hover,:focus-visible,[aria-expanded="true"]){background:var(--rv-hover);color:var(--rv-text)}
 #runnersView .runner-more .harness-icon{width:16px;height:16px}

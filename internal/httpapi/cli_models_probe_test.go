@@ -12,7 +12,6 @@ import (
 	"testing"
 
 	"agentflow/internal/domain"
-	"agentflow/internal/runtime"
 
 	"github.com/gin-gonic/gin"
 )
@@ -84,7 +83,7 @@ gemini-4-argon-low - Gemini 4 Argon Low
 gemini-4-argon-medium - Gemini 4 Argon Medium (default)
 gemini-4-argon-high - Gemini 4 Argon High
 `
-	got := runtime.FoldCursorCLIModels(runtime.ParseCursorCLIModels(output))
+	got := cursorModelFamilies(parseCursorModels(output))
 	want := []domain.CLIModel{
 		{ID: "gemini-4-carbon", Name: "Gemini 4 Carbon"},
 		{ID: "gemini-4-hydrogen", Name: "Gemini 4 Hydrogen"},

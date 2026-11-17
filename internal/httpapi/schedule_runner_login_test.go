@@ -31,7 +31,7 @@ func TestScheduleJobUsesSaversDefaultRunnerLogin(t *testing.T) {
 	saver, _ := st.UserByLoginName("schedule-runner-saver")
 	joinScheduledProject(t, st, "workbench", saver.ID)
 	machine := domain.Runner{ID: "saver-machine", OwnerUserID: saver.ID, Status: domain.RunnerStatusOnline,
-		RunnerVersion: domain.RunnerVersionRuntimeTest, Runtimes: []domain.RunnerRuntime{
+		RunnerVersion: domain.RunnerVersionCLISettings, Runtimes: []domain.RunnerRuntime{
 			{Provider: assistantEngineClaude, Status: domain.RuntimeStatusOnline, AuthMode: domain.RuntimeAuthLocal},
 		},
 	}
@@ -168,5 +168,15 @@ func TestScheduleJobUsesSaversDefaultRunnerLogin(t *testing.T) {
 	if _, err := h.prepareScheduleJob(saved); err == nil || !strings.Contains(err.Error(), "已离线") ||
 		!strings.Contains(err.Error(), "Claude Code 拒绝了你的 API Key") || keyAttempts != 2 {
 		t.Fatalf("offline fallback with rejected key = %v, attempts = %d", err, keyAttempts)
+	}
+
+	machine.Status = domain.RunnerStatusOnline
+	machine.RunnerVersion = domain.RunnerVersionConversationCLI
+	if err := st.PutRunner(machine); err != nil {
+		t.Fatal(err)
+	}
+	keyError = nil
+	if message, err := h.prepareScheduleJob(saved); err != nil || message != "云端巡检完成" || keyAttempts != 3 {
+		t.Fatalf("fallback with a Runner from main = %q, %v, attempts = %d", message, err, keyAttempts)
 	}
 }

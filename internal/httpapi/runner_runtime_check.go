@@ -46,8 +46,8 @@ func (h *runnersHandlers) runnerRuntimeTest(c *gin.Context) {
 		c.JSON(http.StatusConflict, gin.H{"error": "执行机器离线，请启动 Runner 后重试"})
 		return
 	}
-	if !runner.SupportsRuntimeTest() {
-		c.JSON(http.StatusConflict, gin.H{"error": fmt.Sprintf("执行机器需升级至 %s 才能测试 CLI", domain.RunnerVersionRuntimeTest)})
+	if !runner.SupportsCLISettings() {
+		c.JSON(http.StatusConflict, gin.H{"error": fmt.Sprintf("执行机器需升级至 %s 才能测试 CLI", domain.RunnerVersionCLISettings)})
 		return
 	}
 	if !runner.SupportsProvider(provider) {

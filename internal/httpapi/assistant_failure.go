@@ -144,10 +144,6 @@ func classifyAssistantFailureText(f domain.AssistantFailure, err error, text str
 	switch {
 	case has("本机登录态"):
 		f.Code, f.Phase, f.Message, f.Suggestion = "RUNNER_LOGIN_REQUIRED", "setup", "执行机器上的 CLI 本机登录态不可用，请检查执行机器上的 CLI 登录", "请在运行 Runner 的系统账户下检查 CLI 登录，或切换到个人凭证。"
-		if has("agent_cli_credential_store=file agent login") {
-			f.Message = "执行机器上的 Cursor CLI 文件式登录不可用。请在该机器上运行 AGENT_CLI_CREDENTIAL_STORE=file agent login"
-			f.Suggestion = "在运行 Runner 的系统账户下完成 Cursor 浏览器登录后重试。"
-		}
 	case has("执行机器需升级至"):
 		f.Code, f.Phase, f.Message, f.Suggestion = "EXECUTION_MACHINE_UPDATE_REQUIRED", "setup", "执行机器版本过低，请升级 Runner 后重试", "请升级执行机器上的 Runner 后重试。"
 	case has("insufficient_quota", "quota exceeded", "credit balance", "billing", "额度不足", "余额不足"):

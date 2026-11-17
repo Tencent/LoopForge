@@ -97,8 +97,7 @@ const agentCLIKeyEnv = "AGENTFLOW_CLI_API_KEY"
 // agentCLIHostEnv is cleared for every child: these variables would select
 // the host's own login, key, gateway or configuration directory.
 var agentCLIHostEnv = append([]string{
-	agentCLIKeyEnv, "CURSOR_API_KEY", "CURSOR_AUTH_TOKEN", "CURSOR_CONFIG_DIR", "AGENT_CLI_CREDENTIAL_STORE",
-	"GEMINI_API_KEY", "GOOGLE_API_KEY", "GOOGLE_GEMINI_BASE_URL", "GEMINI_BASE_URL",
+	agentCLIKeyEnv, "CURSOR_API_KEY", "CURSOR_AUTH_TOKEN", "GEMINI_API_KEY", "GOOGLE_API_KEY", "GOOGLE_GEMINI_BASE_URL", "GEMINI_BASE_URL",
 	"AGY_LLM_GATEWAY_URL", "AGY_LLM_GATEWAY_API_KEY", "AGY_LLM_GATEWAY_WIRE_PROTOCOL", "AGY_LLM_GATEWAY_MODELS",
 	"DEEPSEEK_API_KEY", "DSH_HOME", "MOONSHOT_API_KEY", "KIMI_API_KEY", "KIMI_BASE_URL", "KIMI_CODE_HOME",
 	"KIMI_MODEL_NAME", "KIMI_MODEL_API_KEY", "KIMI_MODEL_BASE_URL", "KIMI_MODEL_PROVIDER_TYPE",
@@ -406,9 +405,10 @@ func ApplyAgentCLICredential(kind string, cred ProviderCredential, options Agent
 		env["OPENCODE_CONFIG_CONTENT"] = string(content)
 		env["OPENCODE_DISABLE_AUTOUPDATE"] = "1"
 	case AgentCLICursor:
-		env = cursorPrivateEnvironment(homeEnv)
 		env["CURSOR_API_KEY"] = key
-		argv = bindCursorModel(argv, options, cred.Models)
+		if model != "" {
+			argv = withCursorModelArg(argv, CursorModelID(model, options.Effort, cred.Models))
+		}
 	case AgentCLIAntigravity:
 		settings := map[string]any{}
 		if protocol == AgentCLIProtocolChat {
@@ -582,22 +582,6 @@ func AgentCLIBinary(kind string) string {
 		return "cursor-agent"
 	}
 	return kind
-}
-
-func cursorPrivateEnvironment(home string) map[string]string {
-	return map[string]string{
-		"AGENT_CLI_CREDENTIAL_STORE": "file",
-		"CURSOR_CONFIG_DIR":          filepath.ToSlash(filepath.Join(home, ".cursor")),
-		"CURSOR_API_KEY":             "",
-		"CURSOR_AUTH_TOKEN":          "",
-	}
-}
-
-func bindCursorModel(argv []string, options AgentCLIOptions, models []domain.CLIModel) []string {
-	if model := strings.TrimSpace(options.Model); model != "" {
-		return withCursorModelArg(argv, CursorModelID(model, options.Effort, models))
-	}
-	return argv
 }
 
 // withCursorModelArg replaces the value of the first --model option.

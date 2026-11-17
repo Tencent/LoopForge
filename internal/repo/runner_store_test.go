@@ -108,40 +108,6 @@ func TestAgentCLIHeartbeatForcesPersonalAuth(t *testing.T) {
 	}
 }
 
-func TestCursorRunnerAuthSurvivesHeartbeatWhenSupported(t *testing.T) {
-	s := newTestRunner(t)
-	now := time.Now().UTC()
-	cursor := domain.RunnerRuntime{Provider: "cursor", Status: domain.RuntimeStatusOnline}
-	if err := s.PutRunner(domain.Runner{ID: "runner-cursor", Runtimes: []domain.RunnerRuntime{cursor}}); err != nil {
-		t.Fatal(err)
-	}
-	setLocal := func() error {
-		return s.SetRunnerRuntimeAuthMode("runner-cursor", "cursor", domain.RuntimeAuthLocal, now)
-	}
-	if err := setLocal(); err == nil {
-		t.Fatal("an old Runner accepted Cursor account login")
-	}
-	cursor.Capabilities = []string{domain.RuntimeCapabilityCursorLogin}
-	heartbeat := func() {
-		if err := s.RunnerHeartbeat("runner-cursor", []domain.RunnerRuntime{cursor}, domain.RunnerVersionCursorLogin, now, now.Add(time.Hour)); err != nil {
-			t.Fatal(err)
-		}
-	}
-	heartbeat()
-	row, _ := s.Runner("runner-cursor")
-	if row.RuntimeAuthMode("cursor") != domain.RuntimeAuthPersonal {
-		t.Fatal("upgrading silently changed the existing authentication choice")
-	}
-	if err := setLocal(); err != nil {
-		t.Fatal(err)
-	}
-	heartbeat()
-	row, _ = s.Runner("runner-cursor")
-	if row.RuntimeAuthMode("cursor") != domain.RuntimeAuthLocal {
-		t.Fatalf("heartbeat lost the owner's choice: %+v", row.Runtimes)
-	}
-}
-
 func TestRunnerTaskClaimRespectsProviderAndTargeting(t *testing.T) {
 	s := newTestRunner(t)
 	putQueuedTask(t, s, "rt-codex", "codex", "", 0)

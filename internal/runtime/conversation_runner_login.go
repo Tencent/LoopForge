@@ -1,7 +1,9 @@
 package runtime
 
 import (
+	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -20,8 +22,6 @@ func runnerLoginSpec(provider string) (conversationLoginSpec, bool) {
 		return conversationLoginSpec{"Codex", ".codex", "auth.json", "CODEX_HOME", BindCodex}, true
 	case "claude-code":
 		return conversationLoginSpec{"Claude Code", ".claude", ".credentials.json", "CLAUDE_CONFIG_DIR", BindClaudeCode}, true
-	case AgentCLICursor:
-		return conversationLoginSpec{"Cursor CLI", ".cursor", "auth.json", "CURSOR_CONFIG_DIR", BindAgentCLI}, true
 	default:
 		return conversationLoginSpec{}, false
 	}
@@ -31,7 +31,40 @@ func runnerLoginSpec(provider string) (conversationLoginSpec, bool) {
 // This runs on the executing machine. The file never goes through the control
 // connection or enters the synchronized asset set.
 func prepareConversationRunnerLogin(root string, login conversationLoginSpec, enabled bool) (func() error, map[string]string, error) {
-	home := AgentCLIHome{Base: root, Rel: filepath.Join("home", login.dir)}
+	return prepareRunnerLogin(AgentCLIHome{Base: root, Rel: "home"}, login, enabled)
+}
+
+// PrepareRunnerSandboxLogin stages the selected CLI's login in the node's
+// private home. The CLI can resume its session on a later attempt after the
+// login file has been removed. Checkpoints exclude this control directory.
+func PrepareRunnerSandboxLogin(sandbox Sandbox, provider, runID, nodeID string) (map[string]string, func() error, error) {
+	login, supported := runnerLoginSpec(provider)
+	if !supported {
+		return nil, nil, nil
+	}
+	scope := sha256.Sum256([]byte(runID + "\x00" + nodeID))
+	home := WorkspaceAgentCLIHome(sandbox.Workspace(), fmt.Sprintf("%s-login-%x", provider, scope[:12]))
+	cleanup, env, err := prepareRunnerLogin(home, login, true)
+	if err != nil {
+		if cleanup != nil {
+			err = errors.Join(err, cleanup())
+		}
+		return nil, nil, err
+	}
+	if env == nil {
+		env = map[string]string{}
+	}
+	homePath := home.Path()
+	if sandboxDriver(sandbox) == "docker" {
+		homePath = filepath.ToSlash(filepath.Join("/workspace", home.Rel))
+	}
+	env["HOME"] = homePath
+	env[login.configEnv] = filepath.ToSlash(filepath.Join(homePath, login.dir))
+	return env, cleanup, nil
+}
+
+func prepareRunnerLogin(home AgentCLIHome, login conversationLoginSpec, enabled bool) (func() error, map[string]string, error) {
+	home.Rel = filepath.Join(home.Rel, login.dir)
 	target, err := openAgentCLIHome(home)
 	if err != nil {
 		return nil, nil, err
@@ -64,17 +97,7 @@ func prepareConversationRunnerLogin(root string, login conversationLoginSpec, en
 		}
 	}
 	data, err := readRunnerLoginFile(configDir, login.file)
-	// Cursor's file store also uses ~/.cursor with a custom CLI config
-	// directory. Prefer the configured directory when it contains a login.
-	if os.IsNotExist(err) && login.binding == BindAgentCLI && strings.TrimSpace(os.Getenv(login.configEnv)) != "" {
-		if base, homeErr := os.UserHomeDir(); homeErr == nil && base != "" {
-			data, err = readRunnerLoginFile(filepath.Join(base, login.dir), login.file)
-		}
-	}
 	if err != nil {
-		if login.binding == BindAgentCLI {
-			return nil, nil, CursorRunnerLoginError()
-		}
 		return nil, nil, fmt.Errorf("执行机器上的 %s 本机登录态不可用，请检查 Runner 账户的 CLI 登录", login.label)
 	}
 	cleanup := func() error {
@@ -89,12 +112,6 @@ func prepareConversationRunnerLogin(root string, login conversationLoginSpec, en
 		return cleanup, nil, fmt.Errorf("无法准备 %s 的本机登录态", login.label)
 	}
 	return cleanup, nil, nil
-}
-
-// CursorRunnerLoginError points to Cursor's supported file store for
-// sandboxes that cannot access the system keychain.
-func CursorRunnerLoginError() error {
-	return fmt.Errorf("执行机器上的 Cursor CLI 本机登录态不可用，请在运行 Runner 的系统账号下执行 AGENT_CLI_CREDENTIAL_STORE=file agent login")
 }
 
 func readRunnerLoginFile(dir, name string) ([]byte, error) {

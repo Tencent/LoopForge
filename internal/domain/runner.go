@@ -81,27 +81,12 @@ const RunnerVersionConversationWorkspace = "0.8.0"
 // queued CLI or block a following turn behind a previous background save.
 const RunnerVersionConversationCLI = "0.10.1"
 
-// RunnerVersionRuntimeTest supports isolated CLI tests and local login in chat.
-const RunnerVersionRuntimeTest = "0.10.2"
+// RunnerVersionCLISettings adds chat account login, CLI tests, model discovery
+// and updates from the machine card.
+const RunnerVersionCLISettings = "0.10.2"
 
-// RunnerVersionMaintenance accepts authenticated update requests from the machine card.
-const RunnerVersionMaintenance = "0.10.3"
-
-// RunnerVersionLoginModels serves model discovery from the machine's CLI login.
-const RunnerVersionLoginModels = "0.10.4"
-
-const RunnerVersionCursorLogin = "0.10.5"
-
-func (r Runner) SupportsLoginModels() bool {
-	return versionAtLeast(r.RunnerVersion, RunnerVersionLoginModels)
-}
-
-func (r Runner) SupportsMaintenance() bool {
-	return versionAtLeast(r.RunnerVersion, RunnerVersionMaintenance)
-}
-
-func (r Runner) SupportsRuntimeTest() bool {
-	return versionAtLeast(r.RunnerVersion, RunnerVersionRuntimeTest)
+func (r Runner) SupportsCLISettings() bool {
+	return versionAtLeast(r.RunnerVersion, RunnerVersionCLISettings)
 }
 
 func (r Runner) SupportsConversationCLI() bool {
@@ -291,44 +276,30 @@ func (r Runner) SupportsProvider(provider string) bool {
 	return false
 }
 
-// RuntimeAuthMode returns the effective credential source for a provider.
+// RuntimeAuthMode returns the configured credential source for a provider.
+// CodeBuddy and the extra agent CLIs have no reusable local-login flow, so
+// they always use the responsible user's personal credential. Codex and
+// Claude Code default to local login.
 func (r Runner) RuntimeAuthMode(provider string) string {
+	if IsAgentCLIKind(provider) {
+		return RuntimeAuthPersonal
+	}
 	provider = strings.TrimSpace(provider)
 	for _, rt := range r.Runtimes {
 		if strings.EqualFold(rt.Provider, provider) {
-			return rt.EffectiveAuthMode(rt.AuthMode)
+			if rt.AuthMode == RuntimeAuthPersonal {
+				return RuntimeAuthPersonal
+			}
+			if rt.AuthMode == RuntimeAuthLocal {
+				return RuntimeAuthLocal
+			}
+			break
 		}
 	}
-	return (RunnerRuntime{Provider: provider}).EffectiveAuthMode("")
-}
-
-// EffectiveAuthMode preserves the owner's choice when the CLI can use it.
-// Cursor remains on API Key by default when an existing Runner is upgraded.
-func (rt RunnerRuntime) EffectiveAuthMode(saved string) string {
-	if !rt.SupportsAccountLogin() {
-		return RuntimeAuthPersonal
-	}
-	if saved == RuntimeAuthLocal || saved == RuntimeAuthPersonal {
-		return saved
-	}
-	if strings.EqualFold(rt.Provider, "cursor") {
+	if strings.EqualFold(provider, "codebuddy") {
 		return RuntimeAuthPersonal
 	}
 	return RuntimeAuthLocal
-}
-
-func (rt RunnerRuntime) SupportsAccountLogin() bool {
-	switch strings.ToLower(strings.TrimSpace(rt.Provider)) {
-	case "codex", "claude-code":
-		return true
-	case "cursor":
-		for _, capability := range rt.Capabilities {
-			if capability == RuntimeCapabilityCursorLogin {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 const (
@@ -338,7 +309,6 @@ const (
 	RuntimeAuthLocal               = "local"
 	RuntimeAuthPersonal            = "personal"
 	RuntimeCapabilityManagedUpdate = "managed_update"
-	RuntimeCapabilityCursorLogin   = "cursor_account_login"
 	RuntimeCapabilityNativeUpdate  = "native_update"
 )
 

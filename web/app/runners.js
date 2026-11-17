@@ -59,8 +59,13 @@ function runnerStatusLabel(status,lastSeen){
 const runnerCLILabels={'claude-code':'Claude Code','codex':'Codex','codebuddy':'CodeBuddy',opencode:'OpenCode',cursor:'Cursor CLI',agy:'Antigravity',kimi:'Kimi Code',pi:'Pi',dsh:'DeepSeek Harness',zcode:'ZCode'};
 const runnerCLIIcons={'claude-code':'claude',codex:'codex',codebuddy:'codebuddy',opencode:'opencode',cursor:'cursor',agy:'gemini',kimi:'kimi',pi:'pi',dsh:'deepseek',zcode:'glm'};
 const runnerAuthLabel={local:'账号登录',personal:'API Key'};
-const runnerAuthDescription={local:'沿用这台机器上运行 Runner 的系统账号已登录的 CLI。共享对话中，只有机器所有者发言时会使用此登录。',personal:'读取「个人配置」中保存的 API Key。对话使用当前发言人的 Key，SOP 使用运行责任人的 Key。'};
+const runnerAuthDescription={local:'Claude Code 和 Codex 可以使用运行 Runner 的系统账号在这台机器上的已有登录。共享对话中，只有机器所有者发言时会使用此登录。',personal:'读取「个人配置」中保存的 API Key。对话使用当前发言人的 Key，SOP 使用运行责任人的 Key。'};
 const runnerOSLabels={darwin:'macOS',linux:'Linux',windows:'Windows'};
+function runnerKeyDescription(provider){
+  if(provider==='agy')return 'LoopForge 沙箱目前无法复用 Antigravity 保存在系统凭据库中的登录。请在「个人配置」中填写 Gemini API Key。用量按 Gemini API 单独计费。';
+  if(provider==='zcode')return 'GLM Coding Plan 的 API Key 配合套餐专用地址可使用订阅额度，请在「个人配置」中填写。Start Plan 额度需要登录 ZCode 账号，无法通过 API Key 使用。';
+  return '该 CLI 支持 API Key。使用服务商订阅套餐提供的 Key，执行用量会计入对应的套餐额度。请在「个人配置」中填写 API Key。';
+}
 function runnerPersonalCredentialConfigured(provider){
   const user=userById(state.currentUser?.id)||{};
   if(provider==='codex')return !!user.codexApiKeyConfigured;
@@ -69,28 +74,22 @@ function runnerPersonalCredentialConfigured(provider){
   return !!user.agentCliCredentials?.[provider]?.apiKeyConfigured;
 }
 function runnerRuntimeSupportsLogin(runtime){
-  return runtime.provider==='codex'||runtime.provider==='claude-code'||
-    runtime.provider==='cursor'&&runtime.capabilities?.includes('cursor_account_login');
+  return runtime.provider==='codex'||runtime.provider==='claude-code';
 }
 function runnerRuntimeAuthMode(runtime){
-  if(!runnerRuntimeSupportsLogin(runtime))return 'personal';
-  return runtime.authMode||(runtime.provider==='cursor'?'personal':'local');
+  return runnerRuntimeSupportsLogin(runtime)&&runtime.authMode!=='personal'?'local':'personal';
 }
 function runnerAuthHTML(runtime,key,busy,shared){
-  const canSwitch=!shared&&runnerRuntimeSupportsLogin(runtime);
+  const supportsLogin=runnerRuntimeSupportsLogin(runtime);
   const mode=runnerAuthChanges.get(key)||runnerRuntimeAuthMode(runtime);
   const missing=mode==='personal'&&!runnerPersonalCredentialConfigured(runtime.provider);
-  let hint=missing?'请在个人配置中填写 API Key':'';
-  if(!shared&&runtime.provider==='cursor'){
-    if(!canSwitch)hint='Cursor CLI 账号登录需要 Runner 0.10.5 或以上版本';
-    else if(mode==='local')hint='使用 Cursor CLI 的文件式登录。用 AGENT_CLI_CREDENTIAL_STORE=file agent login 登录。';
-  }
-  const title=hint?` title="${escapeHTML(hint)}"`:'';
-  if(canSwitch)return `<select class="runner-auth-select${missing?' missing':''}" data-runner-auth="${escapeHTML(key)}" aria-label="${runnerCLILabels[runtime.provider]} 认证方式"${title} ${busy?'disabled':''}>
+  const title=missing?' title="请在个人配置中填写 API Key"':'';
+  if(!shared&&supportsLogin)return `<select class="runner-auth-select${mode==='personal'?' is-personal':''}" data-runner-auth="${escapeHTML(key)}" aria-label="${runnerCLILabels[runtime.provider]} 认证方式"${title} ${busy?'disabled':''}>
     <option value="local" ${mode==='local'?'selected':''}>${runnerAuthLabel.local}</option>
     <option value="personal" ${mode==='personal'?'selected':''}>${runnerAuthLabel.personal}</option>
   </select>`;
-  return `<span class="runner-auth-fixed${missing?' missing':''}"${title}>${runnerAuthLabel[mode]}</span>`;
+  const keyHelp=supportsLogin?'':`<button class="runner-auth-tip" type="button" data-runner-key-help="${runtime.provider}" aria-label="${runnerCLILabels[runtime.provider]} API Key 说明" aria-haspopup="dialog" title="${escapeHTML(runnerKeyDescription(runtime.provider))}"><span aria-hidden="true">?</span></button>`;
+  return `<span class="runner-auth-fixed"${title}><span>${runnerAuthLabel[mode]}</span>${keyHelp}</span>`;
 }
 function runnerRuntimeHTML(runner,runtime,shared){
   const provider=runtime.provider,label=runnerCLILabels[provider];
@@ -220,6 +219,13 @@ function renderRunnersView(){
     title:'模型认证方式',
     message:`${runnerAuthLabel.local}\n${runnerAuthDescription.local}\n\n${runnerAuthLabel.personal}\n${runnerAuthDescription.personal}`
   }));
+  list.querySelectorAll('[data-runner-key-help]').forEach(btn=>btn.onclick=()=>{
+    const provider=btn.dataset.runnerKeyHelp;
+    return afAlert({
+      title:`${runnerCLILabels[provider]} API Key 说明`,
+      message:runnerKeyDescription(provider)
+    });
+  });
   list.querySelectorAll('[data-runner-runtime-menu]').forEach(btn=>{
     btn.onclick=()=>showRunnerRuntimeMenu(btn);
     btn.onkeydown=e=>{if(e.key==='ArrowDown'||e.key==='ArrowUp'){e.preventDefault();showRunnerRuntimeMenu(btn,e.key==='ArrowUp')}};
@@ -231,7 +237,7 @@ function renderRunnersView(){
   });
   window.AgentFlowHarnessIcons?.hydrate?.(list);
   if(!runnerRefreshTimer)runnerRefreshTimer=setInterval(()=>{
-    if(!document.hidden&&activeViewName()==='runners'&&!runnerRuntimeTrigger&&!document.activeElement?.matches?.('[data-runner-run-limit],[data-runner-auth]'))refreshRunners(true);
+    if(!document.hidden&&activeViewName()==='runners'&&!runnerRuntimeTrigger&&!document.activeElement?.matches?.('[data-runner-run-limit],[data-runner-auth],[data-runner-key-help]'))refreshRunners(true);
   },15000);
 }
 async function removeRunner(runnerId){

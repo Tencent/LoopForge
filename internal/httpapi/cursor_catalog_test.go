@@ -54,7 +54,7 @@ func TestCursorFamiliesSurviveRestart(t *testing.T) {
 		if apiKey != "crsr_cursor-a" {
 			return nil, nil
 		}
-		return runtime.FoldCursorCLIModels(runtime.ParseCursorCLIModels(cursorCatalogTestOutput)), nil
+		return cursorModelFamilies(parseCursorModels(cursorCatalogTestOutput)), nil
 	}
 	clearCursorModelsCache()
 	cachedCursorModels("crsr_cursor-a")
@@ -136,7 +136,7 @@ func TestCursorFamiliesSurviveRestart(t *testing.T) {
 		return stored
 	}
 	save(repo.AgentCLICredentialUpdate{Models: &custom})
-	refresh := runtime.FoldCursorCLIModels(runtime.ParseCursorCLIModels(cursorCatalogTestOutput))
+	refresh := cursorModelFamilies(parseCursorModels(cursorCatalogTestOutput))
 	stored := save(repo.AgentCLICredentialUpdate{Models: &refresh, DiscoveredForKey: "crsr_cursor-a"})
 	if got := assistantCursorCatalog(stored); len(got) != 1 || got[0].ID != "nova" || got[0].Name != "My Nova" {
 		t.Fatalf("discovery replaced a user catalog: %+v", got)

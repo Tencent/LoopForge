@@ -13,7 +13,7 @@ import (
 
 func TestRunnerMaintenanceRequiresOwnerAndDispatchesToBoundRunner(t *testing.T) {
 	h, owner := workbenchFixture(t)
-	row := domain.Runner{ID: "maintenance-runner", OwnerUserID: owner.ID, RunnerVersion: domain.RunnerVersionMaintenance,
+	row := domain.Runner{ID: "maintenance-runner", OwnerUserID: owner.ID, RunnerVersion: domain.RunnerVersionCLISettings,
 		Status: domain.RunnerStatusOnline, Runtimes: []domain.RunnerRuntime{
 			{Provider: "codex", Capabilities: []string{domain.RuntimeCapabilityManagedUpdate}},
 			{Provider: "claude-code"},

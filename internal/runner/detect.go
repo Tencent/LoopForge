@@ -13,7 +13,6 @@ import (
 
 	"agentflow/internal/domain"
 	"agentflow/internal/managedcli"
-	"agentflow/internal/runtime"
 )
 
 // providerSpec maps a platform executor kind to the local CLI binary the
@@ -134,11 +133,9 @@ func detectRuntimes(ctx context.Context, extraBinaries map[string]string, invent
 		capabilities := []string{"non_interactive"}
 		if managed {
 			capabilities = append(capabilities, domain.RuntimeCapabilityManagedUpdate)
-		} else if spec.Update != "" && cliListsUpdate(ctx, path, spec.Update) {
+		} else if spec.Update != "" {
+			// Inspect the installed CLI's subcommands only when asked to update.
 			capabilities = append(capabilities, domain.RuntimeCapabilityNativeUpdate)
-		}
-		if spec.Kind == runtime.AgentCLICursor {
-			capabilities = append(capabilities, domain.RuntimeCapabilityCursorLogin)
 		}
 		out = append(out, domain.RunnerRuntime{
 			Provider:     spec.Kind,

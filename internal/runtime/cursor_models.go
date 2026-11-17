@@ -1,26 +1,11 @@
 package runtime
 
 import (
-	"regexp"
 	"slices"
 	"strings"
 
 	"agentflow/internal/domain"
 )
-
-var cursorModelLine = regexp.MustCompile(`^([A-Za-z0-9][A-Za-z0-9._-]*) - (.+)$`)
-
-// ParseCursorCLIModels parses the model list printed by the Cursor CLI.
-func ParseCursorCLIModels(output string) []domain.CLIModel {
-	var models []domain.CLIModel
-	for _, line := range strings.Split(output, "\n") {
-		line = strings.Join(strings.Fields(strings.ReplaceAll(line, "\u200b", "")), " ")
-		if match := cursorModelLine.FindStringSubmatch(line); match != nil {
-			models = append(models, domain.CLIModel{ID: match[1], Name: strings.TrimSuffix(match[2], " (default)")})
-		}
-	}
-	return models
-}
 
 // CursorModel is one model family of cursor-agent. The CLI has no effort
 // flag; every reasoning effort is its own model ID, so the family picks the

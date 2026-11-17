@@ -315,7 +315,15 @@ func (r *RunnersRepo) RunnerHeartbeat(id string, runtimes []domain.RunnerRuntime
 		if disabled[runtimes[i].Provider] {
 			runtimes[i].Status = domain.RuntimeStatusDisabled
 		}
-		runtimes[i].AuthMode = runtimes[i].EffectiveAuthMode(authModes[runtimes[i].Provider])
+		if domain.IsAgentCLIKind(runtimes[i].Provider) {
+			runtimes[i].AuthMode = domain.RuntimeAuthPersonal
+		} else if mode := authModes[runtimes[i].Provider]; mode != "" {
+			runtimes[i].AuthMode = mode
+		} else if strings.EqualFold(runtimes[i].Provider, "codebuddy") {
+			runtimes[i].AuthMode = domain.RuntimeAuthPersonal
+		} else {
+			runtimes[i].AuthMode = domain.RuntimeAuthLocal
+		}
 	}
 	raw, err := json.Marshal(runtimes)
 	if err != nil {
@@ -345,16 +353,16 @@ func (r *RunnersRepo) SetRunnerRuntimeAuthMode(runnerID, provider, authMode stri
 	if authMode != domain.RuntimeAuthLocal && authMode != domain.RuntimeAuthPersonal {
 		return fmt.Errorf("invalid runtime auth mode %q", authMode)
 	}
+	if strings.EqualFold(provider, "codebuddy") && authMode != domain.RuntimeAuthPersonal {
+		return fmt.Errorf("CodeBuddy 仅支持个人凭证")
+	}
+	if domain.IsAgentCLIKind(provider) && authMode != domain.RuntimeAuthPersonal {
+		return fmt.Errorf("%s 仅支持个人凭证", provider)
+	}
 	return r.updateRunnerRuntimes(runnerID, func(runtimes []domain.RunnerRuntime) (bool, error) {
 		found := false
 		for i := range runtimes {
 			if strings.EqualFold(runtimes[i].Provider, provider) {
-				if authMode == domain.RuntimeAuthLocal && !runtimes[i].SupportsAccountLogin() {
-					if strings.EqualFold(provider, "cursor") {
-						return false, fmt.Errorf("Cursor CLI 账号登录需要 Runner %s 或以上版本", domain.RunnerVersionCursorLogin)
-					}
-					return false, fmt.Errorf("%s 仅支持 API Key", provider)
-				}
 				runtimes[i].AuthMode = authMode
 				found = true
 			}

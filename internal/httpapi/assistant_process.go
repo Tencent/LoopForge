@@ -153,8 +153,8 @@ func (h *assistantHandlers) conversationExecutor(s *AgentToolSession, root strin
 			if !runner.SupportsConversationCLI() {
 				return preDispatchError(fmt.Errorf("执行机器需升级至 %s", domain.RunnerVersionConversationCLI))
 			}
-			if (s.runnerLogin || s.transient) && !runner.SupportsRuntimeTest() {
-				return preDispatchError(fmt.Errorf("执行机器需升级至 %s 才能使用对话本机登录和 CLI 测试", domain.RunnerVersionRuntimeTest))
+			if (s.runnerLogin || s.transient) && !runner.SupportsCLISettings() {
+				return preDispatchError(fmt.Errorf("执行机器需升级至 %s 才能使用对话本机登录和 CLI 测试", domain.RunnerVersionCLISettings))
 			}
 			raw, err := json.Marshal(req)
 			if err != nil {

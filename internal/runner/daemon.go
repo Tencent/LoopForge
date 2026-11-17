@@ -889,6 +889,21 @@ func (d *Daemon) executeInvocation(ctx context.Context, task domain.RunnerTask) 
 		if err != nil {
 			return execResult{status: domain.RunnerTaskFailed, errMsg: err.Error()}, nil
 		}
+	} else if sandbox != nil && inv.CredentialSource == domain.RuntimeAuthLocal && prepared.Command.PrivateHome {
+		loginEnv, cleanup, err := runtime.PrepareRunnerSandboxLogin(sandbox, prepared.Command.Provider, inv.RunID, inv.NodeID)
+		if err != nil {
+			return execResult{status: domain.RunnerTaskFailed, errMsg: err.Error()}, nil
+		}
+		if cleanup != nil {
+			defer func() {
+				if err := cleanup(); err != nil {
+					log.Printf("task %s: clean sandbox CLI login: %v", task.ID, err)
+				}
+			}()
+		}
+		for key, value := range loginEnv {
+			credentialEnv[key] = value
+		}
 	}
 	commandEnv := runtime.CommandEnvironment(prepared.Command)
 	for key, value := range d.taskManagedEnvironment(task) {
@@ -1395,7 +1410,7 @@ func (d *Daemon) defaultWorkspace(taskID string) string {
 }
 
 // runnerVersion is reported at registration; it matches the module build.
-var runnerVersion = domain.RunnerVersionCursorLogin
+var runnerVersion = domain.RunnerVersionCLISettings
 
 // Version returns the runner build version reported at registration.
 func Version() string { return runnerVersion }

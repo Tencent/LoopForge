@@ -29,8 +29,8 @@ test('runner card uses the same short CodeBuddy authentication label in all netw
   t.after(app.close);
   for (const value of ['', 'internal', 'ioa', 'china<b>']) {
     const el = renderCodeBuddyRow(app, { codeBuddyApiKeyConfigured: true, codeBuddyInternetEnvironment: value });
-    assert.equal(el.textContent, 'API Key');
-    assert.equal(el.classList.contains('missing'), false);
+    assert.equal(el.firstElementChild.textContent, 'API Key');
+    assert.equal(el.hasAttribute('title'), false);
   }
 });
 
@@ -41,7 +41,7 @@ test('runner card offers the short authentication labels with a separate explana
   const select = app.document.querySelector('[data-runner-auth="runner-cb|codex"]');
   assert.deepEqual([...select.options].map(option=>option.textContent), ['账号登录', 'API Key']);
   app.document.querySelector('[data-runner-auth-help]').click();
-  assert.match(app.document.querySelector('#confirmMessage').textContent, /系统账号已登录的 CLI/);
+  assert.match(app.document.querySelector('#confirmMessage').textContent, /Claude Code 和 Codex.*已有登录/);
   assert.match(app.document.querySelector('#confirmMessage').textContent, /当前发言人的 Key/);
 });
 
@@ -49,42 +49,45 @@ test('runner card indicates a missing CodeBuddy key on its single-line label', a
   const app = await loadApp();
   t.after(app.close);
   const el = renderCodeBuddyRow(app, { codeBuddyApiKeyConfigured: false, codeBuddyInternetEnvironment: 'ioa' });
-  assert.equal(el.textContent, 'API Key');
+  assert.equal(el.firstElementChild.textContent, 'API Key');
   assert.match(el.getAttribute('title'), /个人配置/);
-  assert.ok(el.classList.contains('missing'));
+  assert.equal(el.classList.contains('missing'), false);
 });
 
-test('Cursor shows an upgrade hint on older runners and a login choice after upgrading', async (t) => {
+test('only Claude Code and Codex offer account login and API Key rows explain their credentials', async (t) => {
   const app = await loadApp();
   t.after(app.close);
   renderCodeBuddyRow(app, {});
-  const selector = '[data-runner-auth="runner-cb|cursor"]';
-  const auth = () => app.document.querySelector(selector);
   app.evaluate(`
-    state.runners[0].runtimes.push({provider:'cursor',authMode:'personal',status:'online'});
+    state.runners[0].runtimes.push(
+      {provider:'claude-code',authMode:'local',status:'online'},
+      {provider:'cursor',authMode:'personal',status:'online'},
+      {provider:'agy',authMode:'personal',status:'online'},
+      {provider:'zcode',authMode:'personal',status:'online'}
+    );
     renderRunnersView();
   `);
-  assert.equal(auth(),null);
-  assert.ok(app.document.querySelector('[title*="Runner 0.10.5"]'));
-  app.evaluate(`
-    state.runners[0].runtimes[2].capabilities=['cursor_account_login'];
-    renderRunnersView();
-  `);
-  assert.deepEqual([...auth().options].map(option=>option.textContent),['账号登录','API Key']);
-  assert.equal(auth().value,'personal');
-  const updated = app.evaluate(`
-    ({...state.runners[0],runtimes:state.runners[0].runtimes.map(runtime=>runtime.provider==='cursor'?{...runtime,authMode:'local'}:runtime)})
-  `);
-  app.router.put('/api/runners/runtimes', updated);
-  app.router.get('/api/runners', [updated]);
-  auth().value='local';
-  auth().dispatchEvent(new app.window.Event('change',{bubbles:true}));
-  await settle();
-  assert.equal(auth().value,'local');
-  assert.match(auth().title,/AGENT_CLI_CREDENTIAL_STORE=file agent login/);
-  assert.deepEqual(app.router.calls.find(call=>call.path==='/api/runners/runtimes').body,{
-    runnerId:'runner-cb',provider:'cursor',authMode:'local'
-  });
+  const choices = [...app.document.querySelectorAll('[data-runner-auth]')];
+  assert.deepEqual(choices.map(select => select.dataset.runnerAuth), ['runner-cb|codex', 'runner-cb|claude-code']);
+  for (const select of choices) {
+    assert.deepEqual([...select.options].map(option => option.textContent), ['账号登录', 'API Key']);
+  }
+  const help = [...app.document.querySelectorAll('[data-runner-key-help]')];
+  assert.deepEqual(help.map(button => button.dataset.runnerKeyHelp), ['codebuddy', 'cursor', 'agy', 'zcode']);
+  const commonHelp = /支持 API Key.*订阅套餐.*计入对应的套餐额度.*个人配置/;
+  const providerHelp = {
+    agy: /系统凭据库.*Gemini API Key.*单独计费/,
+    zcode: /GLM Coding Plan.*订阅额度.*Start Plan.*无法通过 API Key 使用/,
+  };
+  for (const button of help) {
+    assert.equal(button.parentElement.firstElementChild.textContent, 'API Key');
+    const tooltip = providerHelp[button.dataset.runnerKeyHelp] || commonHelp;
+    assert.match(button.title, tooltip);
+    button.click();
+    assert.match(app.document.querySelector('#confirmMessage').textContent, tooltip);
+    app.document.querySelector('#confirmOkBtn').click();
+    await settle();
+  }
 });
 
 test('testing a CLI sends its machine and provider and shows the result', async (t) => {
@@ -113,7 +116,7 @@ test('Runner update checks first and applies after the user chooses to update', 
   const app = await loadApp();
   t.after(app.close);
   renderCodeBuddyRow(app, {});
-  app.router.get('/api/runners/runner-cb/maintenance', {status: 'available', current: '0.10.3', canUpdate: true});
+  app.router.get('/api/runners/runner-cb/maintenance', {status: 'available', current: '0.10.2', canUpdate: true});
   app.router.post('/api/runners/runner-cb/maintenance', {status: 'updating'});
   app.evaluate(`followRunnerUpdate=async()=>{}`);
   app.document.querySelector('[data-runner-check-update]').click();

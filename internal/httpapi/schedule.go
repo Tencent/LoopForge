@@ -292,11 +292,7 @@ func scheduleSharedRequestedModel(model string) string {
 
 func scheduleMissingKeyError(engine string) string {
 	if assistantSupportsRunnerLogin(engine) {
-		minVersion := domain.RunnerVersionRuntimeTest
-		if engine == "cursor" {
-			minVersion = domain.RunnerVersionCursorLogin
-		}
-		return fmt.Sprintf("你还没有可用的 %s 凭据，请在默认执行机器启用账号登录（Runner %s 及以上），或在个人配置填写 API Key", assistantEngineLabel(engine), minVersion)
+		return fmt.Sprintf("你还没有可用的 %s 凭据，请在默认执行机器启用账号登录（Runner %s 及以上），或在个人配置填写 API Key", assistantEngineLabel(engine), domain.RunnerVersionCLISettings)
 	}
 	if engine != assistantEngineCodeBuddy {
 		return fmt.Sprintf("你还没有配置 %s API Key，平台共享 Key 只支持 CodeBuddy 模型：请先在个人配置中填写，或改选 CodeBuddy 模型", assistantEngineLabel(engine))

@@ -32,8 +32,8 @@ func (h *runnersHandlers) runnerMaintenance(c *gin.Context) {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "执行机器暂未连接，请稍后重试"})
 		return
 	}
-	if !runner.SupportsMaintenance() {
-		c.JSON(http.StatusConflict, gin.H{"error": fmt.Sprintf("网页更新需要 Runner %s 或以上版本，请先在执行机器上升级", domain.RunnerVersionMaintenance)})
+	if !runner.SupportsCLISettings() {
+		c.JSON(http.StatusConflict, gin.H{"error": fmt.Sprintf("网页更新需要 Runner %s 或以上版本，请先在执行机器上升级", domain.RunnerVersionCLISettings)})
 		return
 	}
 	input := domain.RunnerMaintenanceRequest{

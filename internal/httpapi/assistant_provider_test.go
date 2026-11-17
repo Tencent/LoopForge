@@ -347,7 +347,7 @@ func TestAssistantUsesBoundRunnerLoginWithoutPersonalKey(t *testing.T) {
 	h, user := workbenchFixture(t)
 	runner := domain.Runner{
 		ID: "local-login", OwnerUserID: user.ID, Status: domain.RunnerStatusOnline,
-		RunnerVersion: domain.RunnerVersionRuntimeTest,
+		RunnerVersion: domain.RunnerVersionCLISettings,
 		Runtimes: []domain.RunnerRuntime{
 			{Provider: "codex", AuthMode: domain.RuntimeAuthLocal},
 			{Provider: "claude-code", AuthMode: domain.RuntimeAuthLocal},

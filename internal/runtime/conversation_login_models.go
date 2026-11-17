@@ -47,9 +47,6 @@ func DiscoverRunnerLoginModels(ctx context.Context, provider, binary string) ([]
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	environment := appendEnvironment(terminalBaseEnvironment(home), env, loginEnv)
-	if provider == AgentCLICursor {
-		return cursorLoginModels(ctx, binary, root, appendEnvironment(environment, cursorPrivateEnvironment(home)))
-	}
 	if login.binding == BindClaudeCode {
 		status := exec.CommandContext(ctx, binary, "auth", "status")
 		status.Dir, status.Env, status.WaitDelay = root, environment, time.Second
@@ -94,31 +91,6 @@ func DiscoverRunnerLoginModels(ctx context.Context, provider, binary string) ([]
 		return nil, fmt.Errorf("%s 无法返回账号模型，请检查执行机器上的 CLI 版本和登录状态", login.label)
 	}
 	return models, nil
-}
-
-func cursorLoginModels(ctx context.Context, binary, root string, env []string) ([]domain.CLIModel, error) {
-	status := exec.CommandContext(ctx, binary, "status", "--format", "json")
-	status.Dir, status.Env, status.WaitDelay = root, env, time.Second
-	output, err := status.Output()
-	if ctx.Err() != nil {
-		return nil, fmt.Errorf("查询 Cursor CLI 模型超时")
-	}
-	var auth struct {
-		Authenticated bool `json:"isAuthenticated"`
-	}
-	if err != nil || json.Unmarshal(output, &auth) != nil || !auth.Authenticated {
-		return nil, CursorRunnerLoginError()
-	}
-	cmd := exec.CommandContext(ctx, binary, "models")
-	cmd.Dir, cmd.Env, cmd.WaitDelay = root, env, time.Second
-	output, err = cmd.Output()
-	if ctx.Err() != nil {
-		return nil, fmt.Errorf("查询 Cursor CLI 模型超时")
-	}
-	if err != nil {
-		return nil, fmt.Errorf("Cursor CLI 无法获取账号模型，请检查登录状态和网络连接")
-	}
-	return FoldCursorCLIModels(ParseCursorCLIModels(string(output))), nil
 }
 
 func codexLoginModels(send *json.Encoder, scanner *bufio.Scanner) []domain.CLIModel {

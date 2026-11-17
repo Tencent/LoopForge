@@ -44,8 +44,8 @@ func (h *runnersHandlers) probeRunnerModels(c *gin.Context) {
 		c.JSON(http.StatusServiceUnavailable, cliModelProbeResult{Error: "执行机器或所选 CLI 当前不可用"})
 		return
 	}
-	if !runner.SupportsLoginModels() {
-		c.JSON(http.StatusConflict, cliModelProbeResult{Error: fmt.Sprintf("获取账号模型需要 Runner %s 或以上版本", domain.RunnerVersionLoginModels)})
+	if !runner.SupportsCLISettings() {
+		c.JSON(http.StatusConflict, cliModelProbeResult{Error: fmt.Sprintf("获取账号模型需要 Runner %s 或以上版本", domain.RunnerVersionCLISettings)})
 		return
 	}
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 20*time.Second)
