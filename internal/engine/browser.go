@@ -88,6 +88,9 @@ func (e *Engine) ensureRunBrowser(ctx context.Context, run domain.Run) error {
 		if _, err := e.PrepareConversationWorkspace(ctx, run.ID, token); err != nil {
 			return err
 		}
+		if latest, ok := e.repo.RunState(run.ID); ok {
+			run = latest
+		}
 		ctx = WithConversationWorkspaceToken(ctx, token, run.ID)
 	}
 	env, err := e.acquireConversationEnvironment(ctx, run)
