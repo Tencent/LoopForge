@@ -29,19 +29,14 @@ func WorkspaceRunID(run domain.Run) string {
 // execution machine; ok is false when the engine has none and must inspect
 // RunWorkspace itself.
 func (e *Engine) RunWorkspaceFacts(runID string) (domain.RunnerWorkspaceFacts, bool) {
-	e.runEnvMu.Lock()
-	defer e.runEnvMu.Unlock()
-	facts, ok := e.workspaceFacts[runID]
-	return facts, ok
+	return e.environments.workspaceFacts(runID)
 }
 
 func (e *Engine) recordWorkspaceFacts(runID string, outputs *domain.RunnerTaskOutputs) {
 	if outputs == nil || outputs.Facts == nil {
 		return
 	}
-	e.runEnvMu.Lock()
-	e.workspaceFacts[runID] = *outputs.Facts
-	e.runEnvMu.Unlock()
+	e.environments.recordWorkspaceFacts(runID, *outputs.Facts)
 }
 
 func (e *Engine) QueuePreviewArchive(run domain.Run, spec domain.RunnerPreviewArchiveSpec) error {
@@ -65,7 +60,7 @@ func (e *Engine) CancelPreviewArchive(runID string) {
 		}
 		e.NotifyRunnerTaskChanged(task.ID)
 		if updated, ok := e.repo.RunnerTask(task.ID); ok {
-			e.notifyRunnerControl(updated.LeaseOwner, updated.ID, updated.DesiredState)
+			e.notifyRunnerControl(updated.LeaseOwner, updated.ID, updated.DesiredState, updated.Attempt)
 		}
 	}
 }
@@ -162,6 +157,11 @@ func (e *Engine) cleanupRunWorkspace(runID string) {
 }
 
 func (e *Engine) cleanupWorkspace(run domain.Run, now time.Time) {
+	// Local workspace deletion belongs to an execution host. A remote Runner
+	// remains eligible here because its cleanup is a durable Runner task.
+	if !e.executes() && e.defaultExecutionRunner(run) == "" {
+		return
+	}
 	managed, checkpointClaimed, releaseCheckpoint, checkpointErr := e.claimIdleConversationWorkspace(run, now)
 	if releaseCheckpoint != nil {
 		defer releaseCheckpoint()
@@ -225,9 +225,11 @@ func (e *Engine) cleanupWorkspace(run domain.Run, now time.Time) {
 		}
 		return
 	}
-	if err := e.releaseRunEnvironment(run.ID, true); err != nil {
-		reset(err)
-		return
+	if e.executes() {
+		if err := e.releaseRunEnvironment(run.ID, true); err != nil {
+			reset(err)
+			return
+		}
 	}
 	if runnerID != "" {
 		if err := e.queueRunnerRunCleanup(run); err != nil {
@@ -238,8 +240,11 @@ func (e *Engine) cleanupWorkspace(run domain.Run, now time.Time) {
 	log.Printf("cleaned terminal workspace %s", run.ID)
 }
 
-func (e *Engine) liveSandboxRunIDs() []string {
-	ids := e.repo.LiveSandboxRunIDs()
+func (e *Engine) liveSandboxRunIDs() ([]string, error) {
+	ids, err := e.repo.LiveSandboxRunIDsChecked()
+	if err != nil {
+		return nil, err
+	}
 	seen := map[string]bool{}
 	for _, id := range ids {
 		seen[id] = true
@@ -263,7 +268,7 @@ func (e *Engine) liveSandboxRunIDs() []string {
 			}
 		}
 	}
-	return ids
+	return ids, nil
 }
 
 // SupersedeIssueRuns releases the sandbox containers of an issue's earlier
@@ -302,10 +307,9 @@ func (e *Engine) destroySandbox(runID string) {
 	}
 }
 
-// DeleteRun removes a settled run only after its local execution environment
-// has been destroyed and any runner-owned workspace cleanup has been durably
-// queued. Failed runs normally keep their workspace for retry; an explicit
-// delete must therefore clean both hosts.
+// DeleteRun removes a settled run after queuing runner-owned cleanup. An
+// execution host destroys its local environment immediately; otherwise its
+// orphan sweep reclaims the local resources after the run record is removed.
 func (e *Engine) DeleteRun(runID string) error {
 	run, ok := e.repo.RunState(runID)
 	if !ok {
@@ -342,8 +346,10 @@ func (e *Engine) DeleteRun(runID string) error {
 	if err := e.queueRunnerRunCleanup(run); err != nil {
 		return fmt.Errorf("queue runner workspace cleanup: %w", err)
 	}
-	if err := e.releaseRunEnvironment(runID, true); err != nil {
-		return fmt.Errorf("destroy run sandbox: %w", err)
+	if e.executes() && !e.foreignWorkspaceBind(run) {
+		if err := e.releaseRunEnvironment(runID, true); err != nil {
+			return fmt.Errorf("destroy run sandbox: %w", err)
+		}
 	}
 	return e.repo.DeleteRun(runID)
 }
@@ -369,7 +375,16 @@ func (e *Engine) settleDeletedRunTasks(run domain.Run) error {
 }
 
 func (e *Engine) reclaimSandboxes() {
-	live := e.liveSandboxRunIDs()
+	// The API can share a host or workspace mount with an executing worker.
+	// Only execution hosts may sweep host directories, containers and images.
+	if !e.executes() {
+		return
+	}
+	live, err := e.liveSandboxRunIDs()
+	if err != nil {
+		log.Printf("skip sandbox reclamation: live workspace list: %v", err)
+		return
+	}
 	n, err := e.sandboxes.ReclaimExcept(live)
 	if err != nil {
 		log.Printf("reclaim sandboxes: %v", err)
@@ -423,9 +438,7 @@ func (e *Engine) discardIdleRunContainers(ctx context.Context, now time.Time) in
 	// An in-process handle holds the workspace flock, which the docker scan
 	// below treats as busy, so those runs are released first.
 	for _, runID := range candidates {
-		e.runEnvMu.Lock()
-		_, held := e.runEnvs[runID]
-		e.runEnvMu.Unlock()
+		held := e.environments.lookup(runID) != nil
 		if held && e.discardIdleRunContainer(ctx, runID, now) {
 			discarded[runID] = struct{}{}
 		}

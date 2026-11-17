@@ -4,12 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
 
 	"agentflow/internal/domain"
+	"agentflow/internal/executionenv"
 	"agentflow/internal/repo"
 	"agentflow/internal/runtime"
 )
@@ -31,6 +31,101 @@ type runEnvironment struct {
 	// reported holds, per node, what the execution machine reports when it
 	// supports RunnerTask.Outputs; absent nodes use the sandbox workspace.
 	reported map[string]*reportedOutputs
+}
+
+// environmentRegistry owns the process-local handles for run environments.
+// The workspace owner and sandbox owner can differ for a child SOP, so handles
+// remain keyed by the run whose sandbox they represent.
+type environmentRegistry struct {
+	mu    sync.Mutex
+	locks keyedLocks
+	envs  map[string]*runEnvironment
+	facts map[string]domain.RunnerWorkspaceFacts
+}
+
+func newEnvironmentRegistry() *environmentRegistry {
+	return &environmentRegistry{envs: make(map[string]*runEnvironment), facts: make(map[string]domain.RunnerWorkspaceFacts)}
+}
+
+func (r *environmentRegistry) lookup(id string) *runEnvironment {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.envs[id]
+}
+
+func (r *environmentRegistry) workspaceFacts(id string) (domain.RunnerWorkspaceFacts, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	facts, ok := r.facts[id]
+	return facts, ok
+}
+
+func (r *environmentRegistry) recordWorkspaceFacts(id string, facts domain.RunnerWorkspaceFacts) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.facts[id] = facts
+}
+
+// acquire serializes handle creation and publishes it only after bind has
+// succeeded. A Run ID identifies the sandbox; its checkout may belong to a
+// parent SOP.
+func (r *environmentRegistry) acquire(runID string, credentials runtime.RunCredentials, create func() (runtime.Sandbox, error), bind func() (bool, error)) (*runEnvironment, bool, error) {
+	unlock := r.locks.lock(runID)
+	defer unlock()
+	r.mu.Lock()
+	env := r.envs[runID]
+	r.mu.Unlock()
+	if env != nil {
+		if bind != nil {
+			if _, err := bind(); err != nil {
+				return nil, false, err
+			}
+		}
+		env.setCredentials(credentials)
+		return env, false, nil
+	}
+	sandbox, err := create()
+	if err != nil {
+		return nil, false, err
+	}
+	env = &runEnvironment{sandbox: sandbox, credentials: credentials}
+	first := false
+	if bind != nil {
+		first, err = bind()
+		if err != nil {
+			_ = env.Close(context.Background())
+			return nil, false, err
+		}
+	}
+	r.mu.Lock()
+	r.envs[runID] = env
+	r.mu.Unlock()
+	return env, first, nil
+}
+
+func (r *environmentRegistry) release(manager executionenv.LocalBackend, runID string, destroy bool) error {
+	unlock := r.locks.lock(runID)
+	defer unlock()
+	r.mu.Lock()
+	env := r.envs[runID]
+	delete(r.envs, runID)
+	if destroy {
+		delete(r.facts, runID)
+	}
+	r.mu.Unlock()
+	var closeErr error
+	if env != nil {
+		closeErr = env.Close(context.Background())
+	}
+	if destroy {
+		if err := manager.Destroy(runID); err != nil {
+			if closeErr != nil {
+				return fmt.Errorf("close run sandbox: %v; destroy workspace: %w", closeErr, err)
+			}
+			return err
+		}
+	}
+	return closeErr
 }
 
 func (r *runEnvironment) beginReportedOutputs(nodeID string, inputs []domain.RunnerInputFile) *reportedOutputs {
@@ -157,11 +252,19 @@ func sandboxResourcesFromSnapshot(snapshot *domain.RunnerSandboxSpec) runtime.Sa
 }
 
 func (e *Engine) acquireRunEnvironment(ctx context.Context, run domain.Run, profile domain.SandboxProfile, requirements runtime.SandboxRequirements, onWorkspaceBusy ...func()) (*runEnvironment, bool, error) {
+	// Remote execution creates its sandbox on the Runner. The local handle is
+	// only a staging workspace for inputs and outputs, never a Docker sandbox.
+	if e.defaultExecutionRunner(run) != "" {
+		profile = domain.SandboxProfile{ID: profile.ID + "-runner-staging", Name: profile.Name + " staging", Driver: "local"}
+	}
 	needsRestore := !run.WorkspaceCleanedAt.IsZero()
 	if !needsRestore && !sharesWorkspace(run) && e.defaultExecutionRunner(run) == "" {
 		if _, saved := e.repo.WorkspaceCheckpoint(run.ID); saved {
-			_, err := os.Stat(e.sandboxes.RunWorkspace(run.ID))
-			needsRestore = os.IsNotExist(err)
+			exists, err := e.executionBackend.WorkspaceExists(run.ID)
+			if err != nil {
+				return nil, false, err
+			}
+			needsRestore = !exists
 		}
 	}
 	if needsRestore {
@@ -180,47 +283,31 @@ func (e *Engine) acquireRunEnvironment(ctx context.Context, run domain.Run, prof
 	if err := e.adoptForeignWorkspace(current); err != nil {
 		return nil, false, err
 	}
-	e.runEnvMu.Lock()
-	defer e.runEnvMu.Unlock()
 	// Credentials are resolved from the responsible user on every entry. The
 	// sandbox directory stays; only the in-memory handle is refreshed. A retry
 	// otherwise keeps the token captured at the first acquire, including an
 	// empty token from a run that had no responsible user yet.
 	credentials := e.resolveRunCredentials(current)
-	if existing := e.runEnvs[run.ID]; existing != nil {
-		existing.setCredentials(credentials)
-		return existing, false, nil
-	}
-	resources := sandboxResourcesFromSnapshot(run.WorkflowSnapshot.SandboxSnapshot)
-	if run.WorkflowSnapshot.SandboxSnapshot == nil {
-		var err error
-		resources, err = resolveSandboxResources(e.repo, profile)
-		if err != nil {
-			return nil, false, err
+	return e.environments.acquire(run.ID, credentials, func() (runtime.Sandbox, error) {
+		resources := sandboxResourcesFromSnapshot(run.WorkflowSnapshot.SandboxSnapshot)
+		if run.WorkflowSnapshot.SandboxSnapshot == nil {
+			var err error
+			resources, err = resolveSandboxResources(e.repo, profile)
+			if err != nil {
+				return nil, err
+			}
 		}
-	}
-	sandbox, err := e.sandboxes.AcquireRunIn(ctx, run.ID, workspaceRunID(current), profile, requirements, credentials, resources)
-	if err != nil {
-		return nil, false, err
-	}
-	env := &runEnvironment{
-		sandbox:     sandbox,
-		credentials: credentials,
-	}
-	e.runEnvs[run.ID] = env
-	first, err := e.repo.BindRunWorkspace(run.ID, e.instanceID, run.Generation, e.workspaceHost, e.sandboxes.Root())
-	if err == nil && !current.WorkspaceCleanedAt.IsZero() {
-		// Legacy runs without an archive are rebuilt by normal execution, not
-		// restored by the preflight. Once a real sandbox exists, clear the old
-		// cleanup marker so follow-up writes and checkpoint capture can use it.
-		err = e.repo.ResetRunWorkspaceCleanup(run.ID)
-	}
-	if err != nil {
-		delete(e.runEnvs, run.ID)
-		_ = env.Close(context.Background())
-		return nil, false, err
-	}
-	return env, first, nil
+		return e.executionBackend.Acquire(ctx, executionenv.AcquireRequest{Identity: executionenv.Identity{EnvironmentID: run.ID, WorkspaceID: workspaceRunID(current), Generation: run.Generation}, Profile: profile, Requirements: requirements, Credentials: credentials, Resources: resources})
+	}, func() (bool, error) {
+		first, err := e.repo.BindRunWorkspace(run.ID, e.instanceID, run.Generation, e.workspaceHost, e.sandboxes.Root())
+		if err == nil && !current.WorkspaceCleanedAt.IsZero() {
+			// Legacy runs without an archive are rebuilt by normal execution, not
+			// restored by the preflight. Once a real sandbox exists, clear the old
+			// cleanup marker so follow-up writes and checkpoint capture can use it.
+			err = e.repo.ResetRunWorkspaceCleanupForLease(run.ID, e.instanceID, run.Generation)
+		}
+		return first, err
+	})
 }
 
 func (e *Engine) resolveRunCredentials(run domain.Run) runtime.RunCredentials {
@@ -310,46 +397,28 @@ func (e *Engine) rebindWorkspaceHere(run domain.Run, lost bool) error {
 }
 
 func (e *Engine) releaseRunEnvironment(runID string, destroy bool) error {
-	e.runEnvMu.Lock()
-	env := e.runEnvs[runID]
-	delete(e.runEnvs, runID)
-	if destroy {
-		delete(e.workspaceFacts, runID)
-	}
-	e.runEnvMu.Unlock()
-
-	var closeErr error
-	if env != nil {
-		closeErr = env.Close(context.Background())
-	}
-	if destroy {
-		if err := e.sandboxes.DestroyRun(runID); err != nil {
-			if closeErr != nil {
-				return fmt.Errorf("close run sandbox: %v; destroy workspace: %w", closeErr, err)
-			}
-			return err
-		}
-	}
-	return closeErr
+	return e.environments.release(e.executionBackend, runID, destroy)
 }
 
 func (e *Engine) detachRunEnvironment(runID string) {
-	e.runEnvMu.Lock()
-	env := e.runEnvs[runID]
-	delete(e.runEnvs, runID)
-	e.runEnvMu.Unlock()
+	unlock := e.environments.locks.lock(runID)
+	defer unlock()
+	e.environments.mu.Lock()
+	env := e.environments.envs[runID]
+	delete(e.environments.envs, runID)
+	e.environments.mu.Unlock()
 	if env != nil {
 		_ = env.Detach()
 	}
 }
 
 func (e *Engine) detachAllRunEnvironments() {
-	e.runEnvMu.Lock()
-	ids := make([]string, 0, len(e.runEnvs))
-	for id := range e.runEnvs {
+	e.environments.mu.Lock()
+	ids := make([]string, 0, len(e.environments.envs))
+	for id := range e.environments.envs {
 		ids = append(ids, id)
 	}
-	e.runEnvMu.Unlock()
+	e.environments.mu.Unlock()
 	for _, id := range ids {
 		e.detachRunEnvironment(id)
 	}

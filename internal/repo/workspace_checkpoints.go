@@ -260,6 +260,10 @@ func (r *RunsRepo) ClaimCheckpointWorkspaceCleanup(runID, token string, revision
 		if row.Revision != revision || row.Status == "running" || row.Status == "queued" || row.WorkspaceCleaned != nil || row.CleanupNotBefore != nil && now.Before(*row.CleanupNotBefore) {
 			return nil
 		}
+		inUse, err := r.sharedWorkspaceInUse(tx, runID)
+		if err != nil || inUse {
+			return err
+		}
 		var checkpoint WorkspaceCheckpoint
 		if err = tx.Omit("archive").Where("run_id = ? AND lease_token = ? AND lease_until > ?", runID, token, now).Take(&checkpoint).Error; err != nil {
 			return err
@@ -454,6 +458,13 @@ func (r *RunsRepo) ClaimWorkspaceDeletion(runID, token string, revision int, now
 			return err
 		}
 		if row.Revision != revision || row.Status == "running" || row.Status == "waiting" || row.Status == "queued" {
+			return ErrWorkspaceInUse
+		}
+		inUse, err := r.sharedWorkspaceInUse(tx, runID)
+		if err != nil {
+			return err
+		}
+		if inUse {
 			return ErrWorkspaceInUse
 		}
 		var count int64

@@ -3,6 +3,8 @@ package engine
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -142,7 +144,11 @@ func TestCompletedConversationSavesBeforeReclamationEvenWhenNotArchived(t *testi
 		t.Fatal("completed SOP workspace was not reclaimed")
 	}
 	kept := false
-	for _, id := range e.liveSandboxRunIDs() {
+	live, err := e.liveSandboxRunIDs()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range live {
 		if id == r.ID {
 			kept = true
 		}
@@ -160,5 +166,69 @@ func TestCompletedConversationSavesBeforeReclamationEvenWhenNotArchived(t *testi
 	got, _ = s.RunState(r.ID)
 	if got.WorkspaceCleanedAt.IsZero() {
 		t.Fatal("archived workspace was never reclaimed")
+	}
+}
+
+func TestSandboxSweepPreservesWorkspaceWhenDatabaseUnavailable(t *testing.T) {
+	store, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	e := New(store, runtime.NewManager(root))
+	workspace := filepath.Join(root, "run-preserve")
+	if err := os.MkdirAll(workspace, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	store.Close()
+	e.reclaimSandboxes()
+	if _, err := os.Stat(workspace); err != nil {
+		t.Fatalf("database outage removed workspace: %v", err)
+	}
+}
+
+func TestSandboxSweepDoesNotRunOnAPIOnlyProcess(t *testing.T) {
+	store, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(store.Close)
+	root := t.TempDir()
+	e := New(store, runtime.NewManager(root))
+	e.ConfigureExecution("api", "shared-host", time.Minute, false)
+	workspace := filepath.Join(root, "another-workers-workspace")
+	if err := os.MkdirAll(workspace, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	e.reclaimSandboxes()
+	if _, err := os.Stat(workspace); err != nil {
+		t.Fatalf("API sweep modified a worker workspace: %v", err)
+	}
+}
+
+func TestAPIOnlyProcessLeavesLocalCleanupToWorker(t *testing.T) {
+	store, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(store.Close)
+	root := t.TempDir()
+	api := New(store, runtime.NewManager(root))
+	api.ConfigureExecution("api", "shared-host", time.Minute, false)
+	run := domain.Run{ID: "local-worker-run", Status: "succeeded", Nodes: map[string]*domain.NodeRun{}}
+	if err := store.PutRun(run); err != nil {
+		t.Fatal(err)
+	}
+	workspace := api.RunWorkspace(run.ID)
+	if err := os.MkdirAll(workspace, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	api.cleanupWorkspace(run, time.Now().UTC())
+	stored, _ := store.RunState(run.ID)
+	if !stored.WorkspaceCleanedAt.IsZero() {
+		t.Fatal("API claimed the local worker workspace")
+	}
+	if _, err := os.Stat(workspace); err != nil {
+		t.Fatalf("API removed a local worker workspace: %v", err)
 	}
 }

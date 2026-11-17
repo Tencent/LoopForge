@@ -338,9 +338,10 @@ type RunnerTask struct {
 	UpdatedAt    time.Time  `json:"updatedAt"`
 	// RunID/NodeID link a task to a workflow execution. Runner events for a
 	// linked task are bridged into the run timeline (adapter runner-v1).
-	RunID      string            `json:"runId,omitempty"`
-	NodeID     string            `json:"nodeId,omitempty"`
-	Invocation *RunnerInvocation `json:"invocation,omitempty"`
+	RunID         string            `json:"runId,omitempty"`
+	NodeID        string            `json:"nodeId,omitempty"`
+	RunGeneration int               `json:"runGeneration,omitempty"`
+	Invocation    *RunnerInvocation `json:"invocation,omitempty"`
 	// Sandbox is the workflow sandbox definition resolved by the control
 	// plane. The runner creates it locally so Docker/seatbelt/bwrap isolation
 	// lives on the same machine that executes the Agent CLI.

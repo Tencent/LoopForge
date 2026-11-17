@@ -54,8 +54,8 @@ func TestExecuteProcessAndSandboxOutcomes(t *testing.T) {
 	d := &Daemon{
 		cfg:             Config{DefaultWorkspaceRoot: t.TempDir()},
 		client:          NewClient(server.URL),
-		controls:        map[string]chan string{},
-		pendingControls: map[string]string{},
+		controls:        map[taskControlID]chan string{},
+		pendingControls: map[taskControlID]string{},
 	}
 	success := d.executeProcess(context.Background(), domain.RunnerTask{ID: "success"}, []string{"sh", "-c", "printf 'hello\\n'"})
 	if success.status != domain.RunnerTaskSuccess || success.result != "hello" {
@@ -87,8 +87,8 @@ func TestExecuteProcessAndSandboxCancellation(t *testing.T) {
 	d := &Daemon{
 		cfg:             Config{DefaultWorkspaceRoot: t.TempDir()},
 		client:          NewClient(server.URL),
-		controls:        map[string]chan string{},
-		pendingControls: map[string]string{},
+		controls:        map[taskControlID]chan string{},
+		pendingControls: map[taskControlID]string{},
 	}
 	// Cancel only after the child is running: an earlier cancel races
 	// StartTask and yields failed instead of canceled.
@@ -259,8 +259,8 @@ func TestManagedRuntimeDetectionAndPendingControls(t *testing.T) {
 	}
 	d := &Daemon{
 		cfg:             Config{ManagedCLIRoot: root},
-		controls:        map[string]chan string{},
-		pendingControls: map[string]string{},
+		controls:        map[taskControlID]chan string{},
+		pendingControls: map[taskControlID]string{},
 	}
 	runtimes, err := d.detectManagedRuntimes(context.Background())
 	if err != nil || len(runtimes) < 2 {
@@ -399,7 +399,7 @@ func TestRunnerUpdateMetadataAndDownloadErrors(t *testing.T) {
 }
 
 func TestControlLoopConnectionErrorAndPreparedInvocationErrors(t *testing.T) {
-	d := &Daemon{client: NewClient("file:///tmp"), controls: map[string]chan string{}, pendingControls: map[string]string{}}
+	d := &Daemon{client: NewClient("file:///tmp"), controls: map[taskControlID]chan string{}, pendingControls: map[taskControlID]string{}}
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() {
 		time.Sleep(10 * time.Millisecond)
@@ -440,8 +440,8 @@ func TestExecuteTaskUnsupportedAndUnavailableProvider(t *testing.T) {
 	d := &Daemon{
 		cfg:             Config{DefaultWorkspaceRoot: t.TempDir()},
 		client:          NewClient(server.URL),
-		controls:        map[string]chan string{},
-		pendingControls: map[string]string{},
+		controls:        map[taskControlID]chan string{},
+		pendingControls: map[taskControlID]string{},
 	}
 	atomic.StoreInt32(&d.running, 2)
 	d.executeTask(context.Background(), domain.RunnerTask{ID: "unknown", Action: "future-action"})

@@ -51,6 +51,7 @@ func (e *Engine) integrateOnRunner(ctx context.Context, runner domain.Runner, ru
 		Status:           domain.RunnerTaskQueued,
 		MaxAttempts:      1,
 		RunID:            run.ID,
+		RunGeneration:    run.Generation,
 		NodeID:           integrationTaskNode,
 		Invocation:       invocation,
 	}

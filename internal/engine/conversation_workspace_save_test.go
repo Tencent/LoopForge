@@ -42,7 +42,7 @@ func TestBackgroundWorkspaceSaveIsPreemptedByAnotherInstance(t *testing.T) {
 		}
 	}
 	owner.WorkspaceCheckpointTransport = transport
-	other := New(owner.repo, owner.sandboxes)
+	other := NewWithExecutionManager(owner.repo, owner.sandboxes)
 	other.WorkspaceCheckpointTransport = transport
 	use, err := owner.BeginConversationWorkspaceUse(id)
 	if err != nil {

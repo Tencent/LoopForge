@@ -37,6 +37,26 @@ func awaitWorkspaceRestore(t *testing.T, e *Engine, id string) domain.WorkspaceR
 	return domain.WorkspaceRestoreStatus{}
 }
 
+func TestAcquireRunEnvironmentReportsWorkspaceInspectionFailure(t *testing.T) {
+	e, s := newRecoveryEngine(t)
+	run := domain.Run{ID: "inspect-workspace", Status: "running", Nodes: map[string]*domain.NodeRun{}}
+	if err := s.PutRun(run); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.BeginWorkspaceUse(run.ID, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Join(t.TempDir(), "not-a-directory")
+	if err := os.WriteFile(root, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	e.setLocalSandboxManager(runtime.NewManager(root))
+	_, _, err := e.acquireRunEnvironment(context.Background(), run, domain.SandboxProfile{}, runtime.SandboxRequirements{})
+	if err == nil || !strings.Contains(err.Error(), "inspect run workspace") {
+		t.Fatalf("expected workspace inspection error, got %v", err)
+	}
+}
+
 func TestBackgroundWorkspaceRestoreSharesLeaseAcrossAPIInstances(t *testing.T) {
 	t.Parallel()
 	for _, backend := range []string{"sqlite", "mysql"} {

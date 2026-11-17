@@ -65,6 +65,15 @@ func (e *Engine) startWorkflow(workflowID, input string, repositories []domain.R
 // startWorkflowDefinition also accepts a run-only conversation workspace definition.
 // It never writes a template to the catalog.
 func (e *Engine) startWorkflowDefinition(wf domain.WorkflowDefinition, input string, repositories []domain.RepositoryContext, executionContext domain.TelemetryContext, workspace bool) (domain.Run, error) {
+	return e.startWorkflowDefinitionGuarded(wf, input, repositories, executionContext, workspace, nil)
+}
+
+type childStartGuard struct {
+	parentID, nodeID    string
+	generation, attempt int
+}
+
+func (e *Engine) startWorkflowDefinitionGuarded(wf domain.WorkflowDefinition, input string, repositories []domain.RepositoryContext, executionContext domain.TelemetryContext, workspace bool, guard *childStartGuard) (domain.Run, error) {
 	workflowID := wf.ID
 	repositories = normalizeRepositories(repositories)
 	domain.AssignRepositoryDirs(repositories)
@@ -190,8 +199,14 @@ func (e *Engine) startWorkflowDefinition(wf domain.WorkflowDefinition, input str
 	// Control plane persists an unowned running row. The worker claims it
 	// through ResumeInterruptedRuns. Combined instances still insert already
 	// leased so another process cannot start a second execute() on the same run.
-	if err := e.repo.PutRun(r); err != nil {
-		return domain.Run{}, err
+	var putErr error
+	if guard == nil {
+		putErr = e.repo.PutRun(r)
+	} else {
+		putErr = e.repo.PutChildRun(r, guard.parentID, guard.nodeID, instanceID, guard.generation, guard.attempt)
+	}
+	if putErr != nil {
+		return domain.Run{}, putErr
 	}
 	if current, ok := e.repo.RunState(r.ID); ok {
 		r = current

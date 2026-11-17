@@ -2,11 +2,50 @@ package runtime
 
 import (
 	"context"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
+
+// Opt in on a host with Docker for a real container/lock regression.
+func TestDockerLiveReclaimRespectsSandboxLock(t *testing.T) {
+	if os.Getenv("AGENTFLOW_TEST_DOCKER_RECLAIM") != "1" {
+		t.Skip("set AGENTFLOW_TEST_DOCKER_RECLAIM=1 to create a stopped Docker test container")
+	}
+	image := os.Getenv("AGENTFLOW_TEST_DOCKER_RECLAIM_IMAGE")
+	if image == "" {
+		image = "mysql:8.0"
+	}
+	root := t.TempDir()
+	id := fmt.Sprintf("lf-reclaim-test-%d", time.Now().UnixNano())
+	workspace := filepath.Join(root, id)
+	if err := os.MkdirAll(workspace, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	name := dockerContainerName(id)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	if output, err := exec.CommandContext(ctx, "docker", "create", "--name", name, "-v", workspace+":/workspace", image, "true").CombinedOutput(); err != nil {
+		t.Fatalf("create fixture: %s: %v", output, err)
+	}
+	t.Cleanup(func() { _ = exec.Command("docker", "rm", "-f", name).Run() })
+	m := NewManager(root)
+	lock, acquired, err := m.tryAcquireLock(id)
+	if err != nil || !acquired {
+		t.Fatalf("acquire lock: %v, %v", acquired, err)
+	}
+	defer unlockFile(lock)
+	if count, err := m.ReclaimDockerSandboxes(ctx, nil); err != nil || count != 0 {
+		t.Fatalf("reclaim while locked = %d, %v", count, err)
+	}
+	if out, err := exec.CommandContext(ctx, "docker", "inspect", name).CombinedOutput(); err != nil {
+		t.Fatalf("locked container was removed: %s: %v", out, err)
+	}
+}
 
 // 一台机器上可能同时有控制面的 agentflow-run-* 和执行机的 agentflow-rt-*，
 // 后者由 runner 自己按工作区清理。归属只能看 /workspace 绑定，不能看名字。

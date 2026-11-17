@@ -161,7 +161,7 @@ func (e *Engine) MaterializeConversationWorkspace(ctx context.Context, id string
 	ctx = withGitToken(e.withPreparationProgress(ctx, run.ID), gitToken)
 	ctx = gitwork.WithSSHKeys(ctx, credentials.GitSSHKeys)
 	return env.prepareRepositoriesOnce(func() error {
-		if err := prepareRepositories(ctx, env.Workspace(), run.RepositoryContexts()); err != nil {
+		if err := prepareRepositoriesWithLiveCheck(ctx, env.Workspace(), run.RepositoryContexts(), e.sandboxes.LiveDockerSandbox); err != nil {
 			return explainGitAuthFailure(fmt.Errorf("repository checkout: %w", err), strings.TrimSpace(gitToken) != "")
 		}
 		return nil
