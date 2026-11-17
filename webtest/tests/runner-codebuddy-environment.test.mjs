@@ -92,27 +92,49 @@ test('Runner update checks first and applies after the user chooses to update', 
   assert.equal(app.router.calls.filter(c => c.method === 'POST' && c.path.endsWith('/maintenance')).length, 1);
 });
 
-test('CLI model menu uses the catalog matching the row authentication', async t => {
+test('CLI model editor uses the selected auth source and saves the personal catalog', async t => {
   const app = await loadApp();
   t.after(app.close);
-  renderCodeBuddyRow(app, { codeBuddyApiKeyConfigured: true });
-  app.router.get('/api/executor-models', call => call.search === '?builtin=1'
-    ? { codex: { models: [{id:'built-in-codex',name:'Built-in Codex'}] } }
-    : { codebuddy: {source:'personal',models:[{id:'gateway/model',name:'Personal model'}]} });
+  const model = {id:'gateway/model',name:'Personal model'};
+  renderCodeBuddyRow(app, { codeBuddyApiKeyConfigured: true, codeBuddyModels: [model] });
+  app.router.post('/api/runners/runner-cb/models/probe', {
+    source:'runner', models:[{id:'codex/account-model',name:'Account model'}],
+  });
+  app.router.post('/api/users/1/cli-models/probe', {
+    source:'official', models:[model,{id:'another-model',name:'Another model'}],
+  });
+  app.router.put('/api/users/1/credentials', ({body}) => ({
+    id:1, codeBuddyApiKeyConfigured:true, codeBuddyModels:[model], ...body,
+  }));
   const show = provider => {
     app.document.querySelector(`[data-runner-runtime-menu="runner-cb|${provider}"]`).click();
     [...app.document.querySelectorAll('.runner-runtime-menu button')].find(b => b.textContent.trim()==='模型列表').click();
   };
+  const picker = action => app.document.querySelector(`.runner-model-editor [data-catalog-act="${action}"]`);
+  const modelIDs = () => [...app.document.querySelectorAll('.runner-model-editor [data-catalog-field="id"]')].map(input => input.value);
   show('codex');
+  assert.match(app.document.querySelector('#confirmMessage').textContent, /个人配置共用.*机器的账号登录/);
+  picker('probe').click();
   await settle();
-  assert.match(app.document.querySelector('.runner-model-list').textContent, /built-in-codex/);
-  assert.equal(app.document.querySelector('#confirmMessage').textContent, 'CLI 内置模型目录');
+  assert.deepEqual(app.router.calls.find(c => c.path.endsWith('/models/probe')).body, {provider:'codex'});
+  picker('probe-apply').click();
+  assert.deepEqual(modelIDs(), ['codex/account-model']);
   app.document.querySelector('#confirmOkBtn').click();
+  await settle();
+  const saved = {id:'codex/account-model',name:'Account model'};
+  assert.deepEqual(app.router.calls.find(c => c.method==='PUT').body, {codexApiKey:'',codexModels:[saved]});
+  show('codex');
+  assert.deepEqual(modelIDs(), [saved.id]);
+  app.document.querySelector('#confirmCancelBtn').click();
+
   show('codebuddy');
+  assert.match(app.document.querySelector('#confirmMessage').textContent, /个人配置共用.*API Key/);
+  assert.deepEqual(modelIDs(), [model.id]);
+  picker('probe').click();
   await settle();
-  assert.match(app.document.querySelector('.runner-model-list').textContent, /Personal modelgateway\/model/);
-  assert.equal(app.document.querySelector('#confirmMessage').textContent, '个人配置的模型目录');
-  app.document.querySelector('#confirmOkBtn').click();
+  assert.match(app.document.querySelector('.runner-model-editor').textContent, /来自官方服务/);
+  assert.deepEqual(app.router.calls.find(c => c.path.endsWith('/cli-models/probe')).body, {engine:'codebuddy',apiKey:''});
+  app.document.querySelector('#confirmCancelBtn').click();
 });
 
 test('CLI update is available for managed installations and guides others locally', async t => {

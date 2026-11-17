@@ -320,7 +320,7 @@ function showRunnerRuntimeMenu(trigger,last=false){
   const actions=[
     {label:testBusy?'测试中…':'测试',icon:'flask',disabled:testBusy||runnerAuthChanges.has(key)||runner.status!=='online'||runtime.status==='disabled',run:()=>testRunnerRuntime(id,provider)},
     {label:updateBusy?'更新中…':'更新',icon:'download',disabled:updateBusy||runner.status!=='online',run:()=>updateRunnerCLI(runner,runtime)},
-    {label:'模型列表',icon:'layers',disabled:runnerAuthChanges.has(key),run:()=>showRunnerModels(runtime)}
+    {label:'模型列表',icon:'layers',disabled:runnerAuthChanges.has(key),run:()=>showRunnerModels(runner,runtime)}
   ];
   menu.innerHTML=actions.map((action,index)=>`<button type="button" role="menuitem" tabindex="-1" class="issue-popover-item" data-action="${index}" ${action.disabled?'disabled':''}>${huiIcon(action.icon)}${action.label}</button>`).join('');
   menu.setAttribute('aria-label',`${runnerCLILabels[provider]} 更多操作`);
@@ -349,34 +349,85 @@ function showRunnerRuntimeMenu(trigger,last=false){
   window.AgentFlowHarnessIcons?.hydrate?.(menu);
   (last?enabled.at(-1):enabled[0])?.focus({preventScroll:true});
 }
-function showRunnerModels(runtime){
-  const local=runnerRuntimeAuthMode(runtime)==='local';
-  const provider=runtime.provider,id=provider==='claude-code'?'claude':provider;
+function showRunnerModels(runner,runtime){
+  const provider=runtime.provider,local=runnerRuntimeAuthMode(runtime)==='local';
+  const kind=CREDENTIAL_KINDS.find(item=>item.models?.engine===provider);
+  if(!kind)return;
   return afOpenDialog(modal=>{
     $('#confirmTitle').textContent=`${runnerCLILabels[provider]} 模型列表`;
-    const message=$('#confirmMessage'),ok=$('#confirmOkBtn');
-    message.textContent='正在加载模型目录…';
+    const keySource=kind.extra?.url?'API Key 和服务地址':kind.extra?'API Key 和网络环境':'API Key';
+    $('#confirmMessage').textContent=local
+      ?'与个人配置共用模型目录。获取时使用这台机器的账号登录。'
+      :`与个人配置共用模型目录。获取时使用个人配置里的 ${keySource}。`;
+    const ok=$('#confirmOkBtn'),cancel=$('#confirmCancelBtn'),card=modal.querySelector('.confirm-modal-card');
     const panel=document.createElement('div');
-    panel.className='runner-model-list';
-    panel.hidden=true;
-    panel.tabIndex=0;
-    panel.setAttribute('aria-label','模型列表');
+    panel.className='credential-panel runner-model-editor';
+    panel.dataset.credentialRow=kind.key;
+    panel.innerHTML=credentialCatalogHTML(kind,credentialUser(),{runnerLogin:local,label:local?'账号登录':'API Key'});
     modal.querySelector('.confirm-modal-footer').before(panel);
-    ok.textContent='关闭';ok.className='button primary';
-    $('#confirmCancelBtn').hidden=true;
+    card.classList.add('runner-model-card');
+    const catalog=panel.querySelector('[data-credential-catalog]');
+    if(local){
+      catalog.probeModels=()=>api(`/api/runners/${encodeURIComponent(runner.id)}/models/probe`,{
+        method:'POST',body:JSON.stringify({provider}),silent:true
+      });
+    }
+    ok.textContent='保存';ok.className='button primary';ok.disabled=true;
+    cancel.textContent='取消';
     setConfirmIcon('info','layers');
-    api(local?'/api/executor-models?builtin=1':'/api/executor-models',{silent:true}).then(catalogs=>{
-      if(!panel.isConnected)return;
-      const catalog=catalogs[id],models=catalog?.models||[];
-      message.textContent=models.length?(catalog.source==='personal'?'个人配置的模型目录':local?'CLI 内置模型目录':'CLI 模型目录'):'暂无可显示的模型';
-      if(!models.length)return;
-      panel.innerHTML=`<ul>${models.map(model=>{
-        const id=escapeHTML(model.id),name=escapeHTML(model.name||model.id);
-        return `<li><b>${name}</b>${id!==name?`<small>${id}</small>`:''}</li>`;
-      }).join('')}</ul>`;
-      panel.hidden=false;
-    }).catch(err=>{if(panel.isConnected)message.textContent=err.message});
-    return {focus:ok,value:()=>panel.remove()};
+    let saving=false;
+    const syncSave=()=>{if(!saving)ok.disabled=!credentialCatalogDirty(catalog)};
+    catalog.onCatalogChange=syncSave;
+    catalog.oninput=event=>{
+      if(event.target.closest('[data-catalog-probe]'))return syncCredentialCatalogProbe(catalog);
+      event.target.closest('.credential-input')?.classList.remove('is-bad');
+      syncSave();
+    };
+    catalog.onclick=event=>{
+      const button=event.target.closest('[data-catalog-act]');
+      if(button&&!button.disabled)credentialCatalogAction(button.dataset.catalogAct,panel,catalog,button);
+    };
+    catalog.onpointerdown=event=>{
+      const grip=event.target.closest('[data-catalog-grip]');
+      if(grip)startCredentialCatalogDrag(event,grip);
+    };
+    catalog.onkeydown=event=>{
+      credentialCatalogKeydown(event);
+      if(event.key==='Enter'&&event.target.tagName==='INPUT'){
+        event.preventDefault();
+        event.stopPropagation();
+        if(event.target.matches('[data-catalog-field]')&&!ok.disabled)ok.click();
+      }
+    };
+    const submit=async event=>{
+      event.stopImmediatePropagation();
+      if(saving)return;
+      const models=credentialCatalogPayload(catalog);
+      if(!models||!validateCredentialCatalog(catalog,models))return;
+      saving=true;
+      ok.disabled=true;
+      cancel.disabled=true;
+      ok.textContent='保存中…';
+      catalog.inert=true;
+      try{
+        await saveCredential(kind.key,{models});
+        toast('模型列表已保存','ok');
+        if(panel.isConnected)confirmPromiseResolve?.(true);
+      }catch(err){
+        if(panel.isConnected){
+          toast(err.message,'err');
+          ok.textContent='保存';ok.disabled=false;cancel.disabled=false;catalog.inert=false;
+        }
+      }finally{saving=false}
+    };
+    hydrateCredentialIcons(panel);
+    ok.addEventListener('click',submit,true);
+    return {focus:catalog.querySelector('[data-catalog-act="probe"]'),value:()=>{
+      ok.removeEventListener('click',submit,true);
+      ok.disabled=false;cancel.disabled=false;
+      panel.remove();
+      card.classList.remove('runner-model-card');
+    }};
   });
 }
 function runnerMaintenancePath(id,provider,status=false){

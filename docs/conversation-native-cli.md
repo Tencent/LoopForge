@@ -24,7 +24,9 @@ Runner 需要 0.10.1 或以上版本，该版本支持取消后台导出并释�
 
 个人执行机器可为 Codex 和 Claude Code 选择「账号登录」。Runner 0.10.2 起，对话按所绑定机器的认证设置启动 CLI。在运行 Runner 的系统账户下登录后，Codex 读取 `CODEX_HOME` 下的 `auth.json`，Claude Code 读取 `CLAUDE_CONFIG_DIR` 下的 `.credentials.json` 或 Runner 环境中的 `CLAUDE_CODE_OAUTH_TOKEN`。登录状态仅在该执行机器上使用。仍需直接通过 CLI 管理登录和续期。仅存于系统钥匙串的登录需要改用 CLI 支持的文件式登录或 API Key。设置页在 CLI 行的「更多」菜单提供「测试」，按当前认证方式在该机器上发送一次短模型请求。
 
-Runner 0.10.3 起，机器卡片可检查并手动安装平台提供的 Runner 构建。更新在机器空闲时应用。CLI 菜单可更新已纳入平台托管的安装，自行安装的 CLI 继续通过原安装方式升级。模型列表按当前认证方式显示个人配置的目录或 CLI 内置目录。
+Runner 0.10.3 起，机器卡片可检查并手动安装平台提供的 Runner 构建。更新在机器空闲时应用。CLI 菜单可更新已纳入平台托管的安装，自行安装的 CLI 继续通过原安装方式升级。
+
+CLI 菜单中的「模型列表」与个人配置共用当前用户的模型目录。可以获取、筛选、添加、重命名和排序模型。保存后，AI 对话和角色编辑器使用该目录。API Key 模式通过个人配置里的 Key 与服务地址获取模型，留空地址时使用 CLI 的官方服务。Codex 和 Claude Code 的账号登录模式从所选机器查询，需要 Runner 0.10.4 或以上版本。Cursor CLI 和 Antigravity 的原生 CLI 支持账号登录，LoopForge Runner 当前通过个人 API Key 调用它们。
 
 原生会话的工具回调在执行机器上中继。宿主进程使用 Docker host gateway；通过 docker.sock 管理工作区的容器进程自动识别自身容器网络，工作区加入相同网络并访问该地址。自定义路由可通过 `AGENTFLOW_CONVERSATION_RELAY_HOST` 和 `AGENTFLOW_CONVERSATION_DOCKER_NETWORK` 显式指定工作区能访问的执行进程地址与 Docker 网络。会话目录会以相同路径挂进工作区，而 docker.sock 背后的 Docker 守护进程按自己所在主机解析挂载源，因此容器内的平台进程须把 `AGENTFLOW_CONVERSATION_DIR` 设在与宿主机同路径挂载的目录中；`compose.yaml` 将其设为 `${LOOPFORGE_DATA_DIR}/conversations`。Runner 不读该变量，原生会话目录固定在其工作区根目录的 `.conversations` 下，容器内运行 Runner 时须同路径挂载该工作区目录。未设置时会话目录位于 `AGENTFLOW_ASSISTANT_SESSION_DIR` 下，该目录在命名卷里时打开工作区会报 `mkdirat ... read-only file system`。附件等按用户保存的助手数据仍在 `AGENTFLOW_ASSISTANT_SESSION_DIR`，不挂进工作区。Docker 工作区直接在主容器中运行 SOP 脚本和 CLI。历史容器存在指令遮蔽挂载时，工作区下次取得执行权后会重建容器并保留工作区文件。标记为重建时运行的准备脚本随后在新容器补跑。
 

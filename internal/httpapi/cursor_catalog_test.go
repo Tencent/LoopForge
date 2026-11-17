@@ -122,6 +122,25 @@ func TestCursorFamiliesSurviveRestart(t *testing.T) {
 			t.Errorf("%s %s/%s: argv %q, want --model %s", c.user.LoginName, c.model, c.effort, argv, c.want)
 		}
 	}
+
+	// A refresh already in flight must not replace a catalog just saved in
+	// personal settings or on a machine card.
+	custom := []domain.CLIModel{{ID: "nova", Name: "My Nova"}}
+	save := func(change repo.AgentCLICredentialUpdate) domain.User {
+		stored, err := st.UpdateUserCredentials(a.ID, repo.UserCredentialUpdate{
+			AgentCLICredentials: map[string]repo.AgentCLICredentialUpdate{runtime.AgentCLICursor: change},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return stored
+	}
+	save(repo.AgentCLICredentialUpdate{Models: &custom})
+	refresh := cursorModelFamilies(parseCursorModels(cursorCatalogTestOutput))
+	stored := save(repo.AgentCLICredentialUpdate{Models: &refresh, DiscoveredForKey: "crsr_cursor-a"})
+	if got := assistantCursorCatalog(stored); len(got) != 1 || got[0].ID != "nova" || got[0].Name != "My Nova" {
+		t.Fatalf("discovery replaced a user catalog: %+v", got)
+	}
 }
 
 func clearCursorModelsCache() {

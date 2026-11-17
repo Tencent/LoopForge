@@ -212,6 +212,10 @@ func (h *assistantHandlers) models(c *gin.Context) {
 		// shared key's default may not exist in that environment.
 		refreshCLIModels(c.Request.Context(), user.CodeBuddyInternetEnvironment, user.CodeBuddyAPIKey)
 		catalog = assistantChatCatalog(c.Request.Context(), user.CodeBuddyInternetEnvironment, nil)
+		if saved := codeBuddyPersonalModels(user); len(saved) > 0 {
+			catalog.Models = saved
+			catalog.Default = saved[0].ID
+		}
 	default:
 		catalog = assistantChatCatalog(c.Request.Context(), "", nil)
 	}
@@ -236,6 +240,21 @@ func (h *assistantHandlers) models(c *gin.Context) {
 		h.saveCursorCatalog(user)
 	}
 	c.JSON(200, catalog)
+}
+
+func codeBuddyPersonalModels(user domain.User) []assistantModel {
+	if strings.TrimSpace(user.CodeBuddyAPIKey) == "" {
+		return nil
+	}
+	var models []assistantModel
+	for _, item := range assistantSavedModels(user, assistantEngineCodeBuddy) {
+		name := item.Name
+		if name == "" {
+			name = item.ID
+		}
+		models = append(models, assistantListedModel(item.ID, name, ""))
+	}
+	return models
 }
 
 // assistantChatCatalog is the catalog used by chat conversations: the same

@@ -134,6 +134,8 @@ func assistantEngineAnthropicModels(engine, protocol string) bool {
 
 func assistantEngineCustomModels(user domain.User, engine string) []domain.CLIModel {
 	switch engine {
+	case assistantEngineCodeBuddy:
+		return user.CodeBuddyModels
 	case assistantEngineCodex:
 		return user.CodexModels
 	case assistantEngineClaude:
@@ -311,18 +313,23 @@ func assistantScheduledModel(id string, catalog assistantModelCatalog) string {
 func assistantDiscoveredModelsFor(ctx context.Context, user domain.User, engine string) []assistantDiscoveredModel {
 	key, baseURL := assistantEngineCredential(user, engine)
 	protocol := assistantEngineProtocol(user, engine)
+	listed := assistantSavedModels(user, engine)
+	if len(listed) == 0 && key != "" && baseURL != "" && protocol != runtime.AgentCLIProtocolGemini {
+		listed = cachedAssistantEngineDiscovery(ctx, assistantEngineAnthropicModels(engine, protocol), key, baseURL)
+	}
+	if engine == runtime.AgentCLICursor && key != "" && !user.AgentCLICredentials[engine].ModelsCustomized {
+		if fresh := cachedCursorModels(key); len(fresh) > 0 {
+			listed = fresh
+		}
+	}
+	return listed
+}
+
+func assistantSavedModels(user domain.User, engine string) []assistantDiscoveredModel {
 	var listed []assistantDiscoveredModel
 	for _, model := range assistantEngineCustomModels(user, engine) {
 		if assistantValidEngineModel(model.ID) {
 			listed = append(listed, assistantDiscoveredModel{ID: model.ID, Name: model.Name, Efforts: model.Efforts, DefaultEffort: model.DefaultEffort})
-		}
-	}
-	if len(listed) == 0 && key != "" && baseURL != "" && protocol != runtime.AgentCLIProtocolGemini {
-		listed = cachedAssistantEngineDiscovery(ctx, assistantEngineAnthropicModels(engine, protocol), key, baseURL)
-	}
-	if engine == runtime.AgentCLICursor && key != "" {
-		if fresh := cachedCursorModels(key); len(fresh) > 0 {
-			listed = fresh
 		}
 	}
 	return listed
@@ -331,10 +338,11 @@ func assistantDiscoveredModelsFor(ctx context.Context, user domain.User, engine 
 func assistantEngineModels(ctx context.Context, user domain.User, runnerLogin map[string]bool) []assistantModel {
 	var out []assistantModel
 	for _, engine := range assistantCLIEngines() {
-		if key, _ := assistantEngineCredential(user, engine); key == "" && !runnerLogin[engine] {
+		key, _ := assistantEngineCredential(user, engine)
+		listed := assistantSavedModels(user, engine)
+		if key == "" && !runnerLogin[engine] && len(listed) == 0 {
 			continue
 		}
-		var listed []assistantDiscoveredModel
 		if !runnerLogin[engine] {
 			listed = assistantDiscoveredModelsFor(ctx, user, engine)
 		}
@@ -456,7 +464,7 @@ func cachedCursorModels(apiKey string) []assistantDiscoveredModel {
 // resolve from that saved list, so a family keeps working on every instance
 // and after a restart, and each user resolves against their own CLI's list.
 func (h *assistantHandlers) saveCursorCatalog(user domain.User) {
-	if h == nil || h.repo == nil || user.ID <= 0 {
+	if h == nil || h.repo == nil || user.ID <= 0 || user.AgentCLICredentials[runtime.AgentCLICursor].ModelsCustomized {
 		return
 	}
 	key, _ := assistantEngineCredential(user, runtime.AgentCLICursor)
@@ -472,7 +480,7 @@ func (h *assistantHandlers) saveCursorCatalog(user domain.User) {
 		return
 	}
 	if _, err := h.repo.UpdateUserCredentials(user.ID, repo.UserCredentialUpdate{
-		AgentCLICredentials: map[string]repo.AgentCLICredentialUpdate{runtime.AgentCLICursor: {Models: &models}},
+		AgentCLICredentials: map[string]repo.AgentCLICredentialUpdate{runtime.AgentCLICursor: {Models: &models, DiscoveredForKey: key}},
 	}); err != nil {
 		log.Printf("cursor model catalog save skipped user=%d: %v", user.ID, err)
 	}
@@ -501,7 +509,11 @@ func discoverAssistantEngineModels(ctx context.Context, anthropic bool, apiKey, 
 	}
 	schemes := []string{"bearer"}
 	if anthropic {
-		schemes = append(schemes, "x-api-key")
+		if strings.TrimRight(baseURL, "/") == assistantAnthropicAPIBase {
+			schemes = []string{"x-api-key"}
+		} else {
+			schemes = append(schemes, "x-api-key")
+		}
 	}
 	var lastErr error
 	for _, scheme := range schemes {
@@ -509,11 +521,13 @@ func discoverAssistantEngineModels(ctx context.Context, anthropic bool, apiKey, 
 		if err != nil {
 			return nil, err
 		}
+		if anthropic {
+			req.Header.Set("anthropic-version", "2023-06-01")
+		}
 		if scheme == "bearer" {
 			req.Header.Set("Authorization", "Bearer "+apiKey)
 		} else {
 			req.Header.Set("x-api-key", apiKey)
-			req.Header.Set("anthropic-version", "2023-06-01")
 		}
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {

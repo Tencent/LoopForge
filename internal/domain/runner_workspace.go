@@ -32,15 +32,17 @@ const (
 	RunnerWorkspaceOperationBrowser           = "browser"
 	RunnerWorkspaceOperationCheckouts         = "checkouts"
 	RunnerWorkspaceOperationMaintenance       = "maintenance"
+	RunnerWorkspaceOperationLoginModels       = "login_models"
 )
 
 // RunnerWorkspaceRequest is a bounded workspace request sent over the
 // runner's outbound control socket. Responses are transient and are never
 // persisted in runner_tasks or the run record.
 type RunnerWorkspaceRequest struct {
-	Maintenance  *RunnerMaintenanceRequest `json:"maintenance,omitempty"`
-	Conversation json.RawMessage           `json:"conversation,omitempty"`
-	RunKind      string                    `json:"runKind,omitempty"`
+	Maintenance   *RunnerMaintenanceRequest `json:"maintenance,omitempty"`
+	ModelProvider string                    `json:"modelProvider,omitempty"`
+	Conversation  json.RawMessage           `json:"conversation,omitempty"`
+	RunKind       string                    `json:"runKind,omitempty"`
 	// ConcurrentEdit marks a person editing from the IDE: the runner writes and
 	// opens terminals beside running tasks instead of waiting for their fence.
 	ConcurrentEdit     bool                         `json:"concurrentEdit,omitempty"`

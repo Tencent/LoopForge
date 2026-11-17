@@ -87,6 +87,13 @@ const RunnerVersionRuntimeTest = "0.10.2"
 // RunnerVersionMaintenance accepts authenticated update requests from the machine card.
 const RunnerVersionMaintenance = "0.10.3"
 
+// RunnerVersionLoginModels serves model discovery from the machine's CLI login.
+const RunnerVersionLoginModels = "0.10.4"
+
+func (r Runner) SupportsLoginModels() bool {
+	return versionAtLeast(r.RunnerVersion, RunnerVersionLoginModels)
+}
+
 func (r Runner) SupportsMaintenance() bool {
 	return versionAtLeast(r.RunnerVersion, RunnerVersionMaintenance)
 }

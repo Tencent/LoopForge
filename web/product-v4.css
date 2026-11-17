@@ -2796,12 +2796,8 @@ html[data-theme="dark"] #runnersView .runner-runtime-icon:is(.codex,.claude-code
 #runnersView .runner-more:is(:hover,:focus-visible,[aria-expanded="true"]){background:var(--rv-hover);color:var(--rv-text)}
 #runnersView .runner-more .harness-icon{width:16px;height:16px}
 #runnersView .runner-runtime-empty{padding:12px 0;border-bottom:1px solid var(--rv-line-soft);color:var(--rv-muted-2);font-size:12px}
-#confirmModal .runner-model-list{max-height:min(45vh,340px);overflow:auto;margin-top:14px;border:1px solid var(--hui-border);border-radius:8px}
-#confirmModal .runner-model-list ul{margin:0;padding:0;list-style:none}
-#confirmModal .runner-model-list li{display:grid;gap:3px;padding:9px 12px;overflow-wrap:anywhere}
-#confirmModal .runner-model-list li+li{border-top:1px solid var(--hui-border)}
-#confirmModal .runner-model-list li b{color:var(--hui-text);font-size:13px;font-weight:550}
-#confirmModal .runner-model-list li small{color:var(--hui-muted);font:11px/1.5 var(--hui-mono,monospace)}
+#confirmModal .runner-model-card{box-sizing:border-box;width:min(660px,94vw)}
+#confirmModal .runner-model-editor{max-height:min(55dvh,540px);overflow:auto;margin-top:14px}
 #runnersView .runner-card-action{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:12px;padding:0;border:0}
 #runnersView .runner-card-spacer{flex:1}
 #runnersView .runner-card-action .button{height:28px;padding:0 10px;border-radius:8px;font-size:12px;font-weight:500;box-shadow:none;transition:background-color .16s,color .16s,opacity .16s}
