@@ -47,6 +47,8 @@ type runnerLoginManager struct {
 
 var nativeRunnerLogins = &runnerLoginManager{}
 
+const claudeRunnerOAuthClientID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e" // gitleaks:allow public OAuth application ID shipped by the official Claude Code CLI.
+
 func loginDigest(raw []byte) string {
 	sum := sha256.Sum256(raw)
 	return hex.EncodeToString(sum[:])
@@ -484,7 +486,7 @@ func (m *runnerLoginManager) refreshOAuth(ctx context.Context, provider string, 
 	endpoint, clientID := "https://auth.openai.com/oauth/token", "app_EMoamEEZ73f0CkXaXp7hrann"
 	body := map[string]any{"grant_type": "refresh_token", "refresh_token": snapshot.refresh}
 	if provider == "claude-code" {
-		endpoint, clientID = "https://platform.claude.com/v1/oauth/token", "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
+		endpoint, clientID = "https://platform.claude.com/v1/oauth/token", claudeRunnerOAuthClientID
 		var doc struct {
 			OAuth struct {
 				Scopes []string `json:"scopes"`
