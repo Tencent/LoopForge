@@ -571,7 +571,13 @@ export function useChat() {
       .then((catalog) => {
         if (!current) return;
         setProviderCatalogs((old) => ({ ...old, [executor]: catalog }));
-        setModel((old) => (catalog.models || []).some((m) => m.id === old) ? old : preferredModel(catalog.models, executor));
+        // An open conversation keeps the model it runs on: the catalog lists
+        // bare IDs without the CLI prefix, and no gateway models.
+        setModel((old) =>
+          (catalog.models || []).some((m) => m.id === old) || (old && old === sessionRef.current?.model)
+            ? old
+            : preferredModel(catalog.models, executor),
+        );
       })
       .catch((e) => current && setError(e.message));
     return () => {
@@ -972,7 +978,9 @@ export function useChat() {
       return null;
     }
   }
-  async function regenerate(stored) {
+  // approvalMode is the composer's current choice, so a regenerated reply
+  // follows it like a new message does.
+  async function regenerate(stored, approvalMode = "confirm") {
     try {
       submittingRef.current = true;
       setSubmitting(true);
@@ -989,7 +997,7 @@ export function useChat() {
         model: chosen,
         effort: codeBuddy ? modelEffort(models.find((m) => m.id === chosen), stored.effort || "") : "",
         messages: stored.messages,
-        approvalMode: "confirm",
+        approvalMode: ["confirm", "assisted", "auto"].includes(approvalMode) ? approvalMode : "confirm",
       });
       setGeneration(g);
       await refreshSessions();

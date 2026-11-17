@@ -2329,7 +2329,7 @@ export default function App() {
                       );
                       if (stored) {
                         closeDialog();
-                        await chat.regenerate(stored);
+                        await chat.regenerate(stored, approval);
                       }
                     }
                   }}
