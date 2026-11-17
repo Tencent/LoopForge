@@ -22,7 +22,7 @@ ZCode 恢复时通过官方会话协议应用当前选择的模型，再启动�
 
 Runner 需要 0.10.1 或以上版本，该版本支持取消后台导出并释放工作区锁。Docker 镜像优先使用已安装的 CLI；支持官方安装器的 CLI 缺失时自动安装。ZCode 没有独立 npm 包，须在执行机器及工作区镜像内预装官方 CLI 并加入 PATH，缺失时明确报错。原生工具调用围栏与进程生命周期管理依赖 Python3。每个 Docker 会话阶段使用独立的 Linux 子进程收养进程，结束或取消时回收其全部后代，包含另建进程组的原生命令；不影响容器里的其他命令。平台会在启动前检查依赖，固定安装步骤以容器 root 用户在 `/` 中运行，实际 CLI 保留工作区的容器用户；无法准备时中止，不降级绕过调用围栏。建议在受控工作区镜像中预安装 CLI 和依赖。
 
-个人执行机器可为 Codex 和 Claude Code 选择「账号登录」。Runner 0.10.2 起，对话按所绑定机器的认证设置启动 CLI。在运行 Runner 的系统账户下登录后，Codex 读取 `CODEX_HOME` 下的 `auth.json`，Claude Code 读取 `CLAUDE_CONFIG_DIR` 下的 `.credentials.json` 或 Runner 环境中的 `CLAUDE_CODE_OAUTH_TOKEN`。登录状态仅在该执行机器上使用。仍需直接通过 CLI 管理登录和续期。仅存于系统钥匙串的登录需要改用 CLI 支持的文件式登录或 API Key。设置页在 CLI 行的「更多」菜单提供「测试」，按当前认证方式在该机器上发送一次短模型请求。
+个人执行机器可为 Codex 和 Claude Code 选择「账号登录」。Runner 0.10.2 起，对话按所绑定机器的认证设置启动 CLI。在运行 Runner 的系统账户下登录后，Codex 读取 `CODEX_HOME` 下的 `auth.json`，Claude Code 读取 `CLAUDE_CONFIG_DIR` 下的 `.credentials.json` 或 Runner 环境中的 `CLAUDE_CODE_OAUTH_TOKEN`。登录状态仅在该执行机器上使用。每次运行把登录文件复制进隔离的 CLI home，结束后删除；CLI 在运行中刷新了 token（Codex、Claude Code 的 refresh token 会轮换）时，删除前按内容做比较并交换写回 Runner 账户的原文件：原文件在此期间未被改动、且刷新后的文件仍是同一账号（顶层字段一致，Codex 的 `tokens.account_id` 相同）才写回，否则保留宿主机上的版本。仍需直接通过 CLI 管理登录和续期。仅存于系统钥匙串的登录需要改用 CLI 支持的文件式登录或 API Key。设置页在 CLI 行的「更多」菜单提供「测试」，按当前认证方式在该机器上发送一次短模型请求。
 
 SOP 的 native 和 Docker 沙箱也使用所选 Runner 的认证设置。每次 CLI 调用都在节点的独立 HOME 中使用临时登录文件，结束后清理该文件，会话可在同一节点续接。
 

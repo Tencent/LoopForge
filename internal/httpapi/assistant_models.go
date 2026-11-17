@@ -242,6 +242,20 @@ func (h *assistantHandlers) models(c *gin.Context) {
 	c.JSON(200, catalog)
 }
 
+// withCodeBuddyPersonalModels also accepts the user's saved CodeBuddy models
+// and, like the picker (/api/assistant/models), defaults to the first of them,
+// so a request without a model (API, bots, scheduled runs) runs on the model
+// the UI shows as default. The environment's models stay accepted.
+func withCodeBuddyPersonalModels(catalog assistantModelCatalog, user domain.User) assistantModelCatalog {
+	saved := codeBuddyPersonalModels(user)
+	if len(saved) == 0 {
+		return catalog
+	}
+	catalog.Models = append(catalog.Models, saved...)
+	catalog.Default = saved[0].ID
+	return catalog
+}
+
 func codeBuddyPersonalModels(user domain.User) []assistantModel {
 	if strings.TrimSpace(user.CodeBuddyAPIKey) == "" {
 		return nil

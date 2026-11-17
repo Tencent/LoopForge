@@ -477,8 +477,7 @@ func firstNonEmpty(values ...string) string {
 func scheduledRunModel(ctx context.Context, requested string, user domain.User) (string, error) {
 	requested = strings.TrimSpace(requested)
 	env := user.CodeBuddyInternetEnvironment
-	catalog := loadAssistantModels(ctx, env)
-	catalog.Models = append(catalog.Models, codeBuddyPersonalModels(user)...)
+	catalog := withCodeBuddyPersonalModels(loadAssistantModels(ctx, env), user)
 	model := assistantAllowedUserModel(requested, catalog, user)
 	if requested == "" || model == requested {
 		return model, nil

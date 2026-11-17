@@ -1,13 +1,16 @@
 package runtime
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 )
 
@@ -106,6 +109,12 @@ func prepareRunnerLogin(home AgentCLIHome, login conversationLoginSpec, enabled 
 			return err
 		}
 		defer dir.Close()
+		// Codex and Claude Code rotate refresh tokens: a refresh inside the
+		// sandbox invalidates the host's copy, so keep the refreshed login
+		// before the copy is removed.
+		if err := writeBackRefreshedLogin(dir, login, configDir, data); err != nil {
+			log.Printf("runner login: keep refreshed %s login: %v", login.label, err)
+		}
 		return remove(dir)
 	}
 	if err := target.WriteFile(login.file, data, 0600); err != nil {
@@ -140,4 +149,110 @@ func readRunnerLoginFile(dir, name string) ([]byte, error) {
 		return nil, fmt.Errorf("invalid login file")
 	}
 	return data, nil
+}
+
+// writeBackRefreshedLogin copies a login the CLI refreshed in its isolated home
+// back to the Runner account's file. It is a compare-and-swap on content: the
+// host file must still be the one copied in (otherwise the host CLI or another
+// session refreshed it first and stays authoritative), and the refreshed file
+// must be the same kind of login (same top-level fields and, for Codex, the
+// same account) so a sandboxed agent cannot swap in another account.
+func writeBackRefreshedLogin(dir *os.Root, login conversationLoginSpec, configDir string, original []byte) error {
+	refreshed, err := readRootLoginFile(dir, login.file)
+	if err != nil || bytes.Equal(refreshed, original) {
+		return nil
+	}
+	if !sameRunnerLogin(original, refreshed) {
+		return fmt.Errorf("refreshed login does not match the original account; not written back")
+	}
+	if configDir == "" {
+		return nil
+	}
+	path := filepath.Join(configDir, login.file)
+	current, err := readRunnerLoginFile(configDir, login.file)
+	if err != nil || !bytes.Equal(current, original) {
+		return nil
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(configDir, "."+login.file+".refresh-*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(tmp.Name())
+	if err := tmp.Chmod(info.Mode().Perm()); err != nil {
+		tmp.Close()
+		return err
+	}
+	if _, err := tmp.Write(refreshed); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	// Re-check right before the swap to keep the window with a concurrent
+	// host refresh as small as possible.
+	if current, err := readRunnerLoginFile(configDir, login.file); err != nil || !bytes.Equal(current, original) {
+		return nil
+	}
+	return os.Rename(tmp.Name(), path)
+}
+
+// readRootLoginFile reads the login file below the isolated home through
+// os.Root, so a symlink planted by the sandbox cannot point elsewhere.
+func readRootLoginFile(dir *os.Root, name string) ([]byte, error) {
+	const maxSize = 1 << 20
+	info, err := dir.Lstat(name)
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() || info.Size() > maxSize {
+		return nil, fmt.Errorf("invalid login file")
+	}
+	file, err := dir.Open(name)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	data, err := io.ReadAll(io.LimitReader(file, maxSize+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > maxSize || !json.Valid(data) {
+		return nil, fmt.Errorf("invalid login file")
+	}
+	return data, nil
+}
+
+func sameRunnerLogin(original, refreshed []byte) bool {
+	var before, after map[string]json.RawMessage
+	if json.Unmarshal(original, &before) != nil || json.Unmarshal(refreshed, &after) != nil {
+		return false
+	}
+	keys := func(m map[string]json.RawMessage) []string {
+		out := make([]string, 0, len(m))
+		for key := range m {
+			out = append(out, key)
+		}
+		slices.Sort(out)
+		return out
+	}
+	if !slices.Equal(keys(before), keys(after)) {
+		return false
+	}
+	account := func(m map[string]json.RawMessage) string {
+		var tokens struct {
+			AccountID string `json:"account_id"`
+		}
+		_ = json.Unmarshal(m["tokens"], &tokens)
+		return tokens.AccountID
+	}
+	return account(before) == account(after)
 }
