@@ -29,6 +29,12 @@ async function toggleShare(kind,id){
   try{
     const full=await catalogItemFull(kind,id);
     if(!catalogOwned(full.projectId))return toast('只能共享本项目的内容');
+    // Sharing a role also shares the project's skills bound to it, and a
+    // shared skill is installed into every conversation, so name them first.
+    // The list is reloaded: a skill may have been added since the page loaded.
+    if(kind==='agent'&&!full.shared&&(full.skills||[]).length)state.data.skills=await api('/api/skills',{silent:true});
+    const newlyShared=kind==='agent'&&!full.shared?(state.data.skills||[]).filter(s=>(full.skills||[]).includes(s.id)&&s.projectId===full.projectId&&!s.shared):[];
+    if(newlyShared.length&&!(await afConfirm({title:'共享角色',message:`共享这个角色会同时共享它绑定的技能：${newlyShared.map(s=>s.name||s.id).join('、')}。${SHARED_SKILL_NOTICE}`,confirmText:'共享'})))return;
     const saved=await api(kind==='workflow'?'/api/workflows':'/api/agents',{method:'PUT',body:JSON.stringify({...full,shared:!full.shared})});
     replaceCatalogItem(kind,saved);
     if(kind==='agent'&&saved.shared){(state.data.rules||[]).forEach(item=>{if((saved.rules||[]).includes(item.id)&&item.projectId===saved.projectId)item.shared=true});(state.data.skills||[]).forEach(item=>{if((saved.skills||[]).includes(item.id)&&item.projectId===saved.projectId)item.shared=true})}
