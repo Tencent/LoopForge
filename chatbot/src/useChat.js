@@ -908,10 +908,7 @@ export function useChat() {
       await refreshSessions();
       return true;
     } catch (e) {
-      // Only a lost response may hide an accepted turn. A clear rejection
-      // (e.g. 429 while another reply runs) means this message was not taken,
-      // so a queued message goes back instead of being dropped.
-      if (s && (!e.status || e.status >= 500)) {
+      if (s) {
         try {
           const [stored, g] = await Promise.all([
             api(sessionPath(s.id)),
@@ -919,8 +916,12 @@ export function useChat() {
           ]);
           if (currentId.current === s.id) setSession(stored);
           if (g?.id !== previousGeneration && g?.status === "running") {
-            setGeneration(g);
-            return true;
+            if (currentId.current === s.id) setGeneration(g);
+            // Only a lost response may hide an accepted turn. A clear
+            // rejection (e.g. 409 while another reply runs) means this
+            // message was not taken, so a queued one goes back instead of
+            // being dropped.
+            if (!e.status || e.status >= 500) return true;
           }
         } catch {}
       }

@@ -279,12 +279,12 @@ describe("sending while a reply runs", () => {
     expect(result.current.queue).toHaveLength(0);
 
     // Coming back, the conversation loads before its running generation does.
-    // The server rejects a new turn while one runs.
+    // The server rejects a new turn while one runs (409).
     let release;
     state.generationGate = new Promise((done) => { release = done; });
     writeMock.mockImplementation(async (path) => {
       if (path === "/api/assistant/generations")
-        throw Object.assign(new Error("已有对话正在生成，请稍后重试"), { status: 429 });
+        throw Object.assign(new Error("此会话正在后台生成"), { status: 409 });
       return {};
     });
     act(() => result.current.open("s1"));
@@ -311,10 +311,10 @@ describe("sending while a reply runs", () => {
     await waitFor(() => expect(result.current.session?.id).toBe("s2"));
     act(() => result.current.open("s1"));
     await waitFor(() => expect(result.current.busy).toBe(true));
-    // The reply finishes; the server still answers 429 once (it has not
-    // released the turn yet). The message must come back, not disappear.
+    // The reply finishes but another one is already running there; the
+    // server rejects the queued send with 409. The message must come back, not disappear.
     writeMock.mockImplementationOnce(async () => {
-      throw Object.assign(new Error("已有对话正在生成，请稍后重试"), { status: 429 });
+      throw Object.assign(new Error("此会话正在后台生成"), { status: 409 });
     });
     state.generation = { id: "g-other", status: "running", events: [] };
     state.transcript = [{ role: "user", content: "查失败节点" }, unfinished];
@@ -323,6 +323,8 @@ describe("sending while a reply runs", () => {
     });
     await waitFor(() => expect(generationPosts()).toHaveLength(1));
     await waitFor(() => expect(result.current.queue.map((m) => m.text)).toEqual(["不能丢"]));
+    // The rejected message is not left on screen as if it had been sent.
+    await waitFor(() => expect(result.current.session?.messages.map((m) => m.content)).toEqual(["查失败节点", unfinished.content]));
     unmount();
   });
 });
