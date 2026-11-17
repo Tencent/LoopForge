@@ -1277,7 +1277,7 @@ func (h *assistantHandlers) workspaceTurnContext(req *assistantRequest, user dom
 		}
 	}
 	if len(others) > 0 {
-		b.WriteString("本对话之前在其他运行环境开过的工作区（传它的 sandboxProfileId 切回，文件和已克隆的仓库都在）：\n" + strings.Join(others, "\n") + "\n")
+		b.WriteString("本对话之前在其他运行环境开过的工作区（传它的 sandboxProfileId 或 workspaceRunId 切回，文件和已克隆的仓库都在）：\n" + strings.Join(others, "\n") + "\n")
 	}
 	issues := []string{}
 	for _, issue := range turnIssues(h.deps, req.ProjectID, session.IssueID, lastMessageReferences(req.Messages)) {
@@ -1298,7 +1298,7 @@ func (h *assistantHandlers) workspaceTurnContext(req *assistantRequest, user dom
 	if b.Len() == 0 {
 		return ""
 	}
-	b.WriteString("按用户这条消息实际要处理的事决定（@ 只是线索）：只在要看或改代码、跑命令时才进入工作区；工作区按运行环境区分，当前环境合适就直接用，需要别的语言或工具链再传 sandboxProfileId 切换。要接着某个需求 SOP 的改动，进入工作区后自己 git clone 仓库并 checkout 它的工作分支。")
+	b.WriteString("按用户这条消息实际要处理的事决定（@ 只是线索）：只在要看或改代码、跑命令时才进入工作区；工作区按运行环境区分，当前环境合适就直接用，需要别的语言或工具链再传 sandboxProfileId 切换，并在里面自己 git clone 仓库和切换分支。要直接恢复并接着某次 SOP 运行的现场继续干活（保留未推送修改和产物，或改完后回 SOP 重跑测试节点/继续执行），打开工作区时传入该 SOP 的 workspaceRunId（与当前对话在同一执行机器时直接复用原工作区，已回收时自动恢复快照；不在同一执行机器时如实告知用户需要在哪台执行机器下新建对话）。")
 	return b.String()
 }
 
