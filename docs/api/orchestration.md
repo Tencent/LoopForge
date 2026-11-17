@@ -354,6 +354,8 @@ AI 定时任务没有单独的时长上限：这一轮和普通对话一样，�
 
 缺少凭据的保存返回 `400`。没有凭据的项目成员也可以停用执行配置未变的任务，服务端在行锁内重新核对项目和执行配置，然后仅将 `enabled` 改为 false。若并发修改使核对失败，返回 `409`。
 
+AI 定时任务的 `sessionMode` 为空时每次执行新开一个会话，`fixed` 时始终在同一个会话里继续；每次新开时用 `sessionKeep` 设置保留最近多少个会话（`10` / `50` / `100`，`-1` 不限，不传默认 `50`，其他值 `400`），每次执行结束后删除更早的会话，执行记录不受影响。
+
 `id` 为空时生成；`projectId` 默认 `platform`；`intervalSec<30` 时重置为 `300`。更新若不提供 `lastRunAt` 会保留已有最近运行字段。成功 `200` 返回 job；校验/存储错误 `400`。
 
 ```bash
@@ -379,6 +381,44 @@ curl -u "$AGENTFLOW_USER:$AGENTFLOW_PASS" -X POST \
 ```bash
 curl -u "$AGENTFLOW_USER:$AGENTFLOW_PASS" -X POST \
   "$AGENTFLOW_URL/api/schedule-jobs/job-1/run"
+```
+
+### `POST /api/schedule-jobs/{id}/enabled`
+
+启用或停用 job 的定时调度，请求体 `{"enabled": true|false}`，`200` 返回更新后的 `ScheduleJob`。只改 `enabled`：提示词、执行身份（`runAsUserId`）和会话模式保持不变；正在运行的那次执行不会被中断。需要该项目的写权限（只读成员 `403`），job 不存在 `404`，缺少 `enabled` 时 `400`。
+
+```bash
+curl -u "$AGENTFLOW_USER:$AGENTFLOW_PASS" -X POST -H 'Content-Type: application/json' \
+  -d '{"enabled":false}' "$AGENTFLOW_URL/api/schedule-jobs/job-1/enabled"
+```
+
+### `GET /api/schedule-job-executions`
+
+返回执行记录 `ScheduleJobExecution[]`，按开始时间倒序。每次运行（定时触发或手动运行）对应一条记录，包含 `status`（running / success / failed / waiting）、`error`、`durationMs`、候选与派发数、AI 回复摘要，以及派发出的 `runs[]`（`issueId`、`runId`）。每个 job 保留最近 200 条，删除 job 时一并删除。AI 执行带 `sessionId`。执行记录比会话保留得久（会话按 `sessionKeep` 和保留期限清理，也可能被手动删除），因此列表在每次读取时检查会话是否还在：已不存在时返回 `sessionGone: true`。这个字段只在读取时计算，不会写入记录；进行中的执行不做标记。
+
+每次执行认领时生成 32 位十六进制 `traceId`，同时写入 job 的 `lastTraceId` 和这次执行的所有调度日志（`schedule job <id> trace=<traceId>: …`），可以按它在服务端日志里检索失败原因。平台工具 `schedule_job_executions_list`（`/mcp` 与 Studio 助手均可用）对应这个接口，把复制的 Trace ID 贴给助手时，助手会按 `query.traceId` 查询这次执行。服务重启时，重启前仍为 running 的执行记为 failed（「上次运行中断（服务重启）」）。
+
+查询参数：`projectId`、`jobId`、`status`、`traceId`、`limit`（默认 100，最大 500）。只返回调用方可读的 job 的记录；`jobId` 指向无权读取的 job 时返回 `403`。
+
+```bash
+curl -u "$AGENTFLOW_USER:$AGENTFLOW_PASS" \
+  "$AGENTFLOW_URL/api/schedule-job-executions?projectId=platform&status=failed"
+```
+
+### `GET /api/schedule-job-executions/dashboard`
+
+执行记录看板的一页，筛选、计数、分页都在服务端完成。参数：`projectId`（必填）、`jobId`、`status`、`since`（RFC 3339，只看此后开始的执行）、`q`（不区分大小写，匹配任务名、任务 ID、Trace ID、错误、AI 回复和派发的运行）、`offset`、`limit`（默认 20，最多 100）。返回：
+
+- `items`：当前页的执行记录，按开始时间倒序，字段同上（含 `sessionGone`）；
+- `total`：符合筛选条件的记录数；
+- `overview.current` / `overview.previous`：最近 7×24 小时（含当前小时）与再往前 7×24 小时的 `total`、`finished`、`success`、`failed`、`running`、`avgMs`，只随 `jobId` 变化。已结束的执行来自按小时累计的统计表 `schedule_job_execution_stats`（保留 30 天，删除任务时一并删除），不受每个任务只保留 200 条记录的影响；进行中的执行从记录里数；
+- `records`：该项目保留的记录总数；`recentFailed`：该项目最近 7 天的失败次数（标签角标用）。
+
+缺 `projectId` 或 `since` 格式不对返回 400；`jobId` 属于无权访问的项目返回 403。统计表从部署后开始累计，部署前的执行不计入概览。
+
+```bash
+curl -u "$AGENTFLOW_USER:$AGENTFLOW_PASS" \
+  "$AGENTFLOW_URL/api/schedule-job-executions/dashboard?projectId=platform&status=failed&offset=0&limit=20"
 ```
 
 定时派发会冻结集成分支上下文，并避免同一需求重复执行。需求是否澄清过不影响派发。Worker signals、实例 lease 和沙箱回收属于内部机制，不是调度公共 API。

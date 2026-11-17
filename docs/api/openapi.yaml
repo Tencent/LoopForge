@@ -3296,6 +3296,116 @@ paths:
           $ref: "#/components/responses/NotFound"
         "409":
           $ref: "#/components/responses/Conflict"
+  /api/schedule-jobs/{jobId}/enabled:
+    parameters:
+      - $ref: "#/components/parameters/JobId"
+    post:
+      tags: [Scheduling]
+      operationId: setScheduleJobEnabled
+      description: |
+        Starts or stops the job's schedule. Only `enabled` changes: the prompt,
+        key binding (runAsUserId) and session mode stay as saved, and a run in
+        progress finishes either way. Requires write access to the job's project.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [enabled]
+              properties:
+                enabled: { type: boolean }
+      responses:
+        "200":
+          $ref: "#/components/responses/ScheduleJob"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/schedule-job-executions:
+    get:
+      tags: [Scheduling]
+      operationId: listScheduleJobExecutions
+      description: |
+        Execution history of the schedule jobs the caller may read, newest first.
+      parameters:
+        - { name: projectId, in: query, schema: { type: string } }
+        - { name: jobId, in: query, schema: { type: string } }
+        - { name: status, in: query, schema: { type: string, enum: [running, success, failed, waiting] } }
+        - { name: traceId, in: query, schema: { type: string } }
+        - { name: limit, in: query, schema: { type: integer, default: 100, maximum: 500 } }
+      responses:
+        "200":
+          description: Executions
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ScheduleJobExecution"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: jobId belongs to a project the caller cannot read
+  /api/schedule-job-executions/dashboard:
+    get:
+      tags: [Scheduling]
+      operationId: scheduleJobExecutionDashboard
+      description: |
+        One page of a project's execution dashboard, filtered, counted and paged on the server.
+        `total` counts the executions matching the filters. `overview` follows the job filter
+        only and compares the last 7×24 hours (the current hour included) with the 7×24 hours
+        before, counted by the hour an execution started. Finished executions come from hourly
+        statistics kept 30 days, independent of the 200 executions a job keeps; running ones
+        are counted from the history. `records` and `recentFailed` cover the whole project.
+      parameters:
+        - { name: projectId, in: query, required: true, schema: { type: string } }
+        - { name: jobId, in: query, schema: { type: string } }
+        - { name: status, in: query, schema: { type: string, enum: [running, success, failed, waiting] } }
+        - { name: since, in: query, description: Only executions started at or after this time, schema: { type: string, format: date-time } }
+        - { name: q, in: query, description: Case-insensitive search in job name and ID, trace ID, error, AI reply and dispatched runs, schema: { type: string } }
+        - { name: offset, in: query, schema: { type: integer, default: 0 } }
+        - { name: limit, in: query, schema: { type: integer, default: 20, maximum: 100 } }
+      responses:
+        "200":
+          description: Dashboard page
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/ScheduleJobExecution"
+                  total:
+                    type: integer
+                  overview:
+                    type: object
+                    properties:
+                      current:
+                        $ref: "#/components/schemas/ScheduleExecutionWindow"
+                      previous:
+                        $ref: "#/components/schemas/ScheduleExecutionWindow"
+                      since:
+                        type: string
+                        format: date-time
+                  records:
+                    type: integer
+                    description: Executions kept for the project
+                  recentFailed:
+                    type: integer
+                    description: Failed executions of the project in the current window
+        "400":
+          description: projectId missing or since is not RFC 3339
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: jobId belongs to a project the caller cannot read
   /api/page-feedback:
     post:
       tags: [Feedback]
@@ -5252,6 +5362,15 @@ components:
         runAsName:
           type: string
           readOnly: true
+          description: Display name of runAsUserId.
+        sessionMode:
+          type: string
+          enum: ["", fixed]
+          description: AI jobs only. Empty opens a new Studio conversation per execution; "fixed" keeps continuing one pinned conversation (fixedSessionId, server-managed).
+        sessionKeep:
+          type: integer
+          enum: [10, 50, 100, -1]
+          description: AI jobs that open a conversation per execution keep only their newest sessionKeep conversations; older ones are deleted after each execution (the execution records stay). -1 keeps all. Omitted or 0 saves the default 50; other values are rejected with 400. Ignored in fixed mode.
         lastRunAt:
           type: string
           format: date-time
@@ -5274,6 +5393,10 @@ components:
         lastAssistantMessage:
           type: string
           readOnly: true
+        lastTraceId:
+          type: string
+          description: Trace ID of the latest execution; matches ScheduleJobExecution.traceId and the scheduler log lines.
+          readOnly: true
         createdAt:
           type: string
           format: date-time
@@ -5282,6 +5405,73 @@ components:
           type: string
           format: date-time
           readOnly: true
+    ScheduleExecutionWindow:
+      type: object
+      description: Executions started in one window. total = finished + running; avgMs averages finished executions with a duration.
+      properties:
+        total: { type: integer }
+        finished: { type: integer }
+        success: { type: integer }
+        failed: { type: integer }
+        running: { type: integer }
+        avgMs: { type: integer, format: int64 }
+    ScheduleJobExecution:
+      type: object
+      description: One execution of a schedule job. Each job keeps its latest 200 executions.
+      properties:
+        id:
+          type: string
+        jobId:
+          type: string
+        jobName:
+          type: string
+        jobKind:
+          type: string
+          enum: [assistant, trigger]
+        projectId:
+          type: string
+        traceId:
+          type: string
+          description: 32-hex trace ID, also written to every scheduler log line of this execution.
+        triggerOrigin:
+          type: string
+          enum: [timer, manual_run]
+        status:
+          type: string
+          enum: [running, success, failed, waiting]
+        error:
+          type: string
+        pulled:
+          type: integer
+        dispatched:
+          type: integer
+        assistantMessage:
+          type: string
+        sessionId:
+          type: string
+          description: Studio conversation an AI execution ran in.
+        sessionGone:
+          type: boolean
+          description: Computed on each read, never stored. True when sessionId names a conversation that no longer exists (trimmed by the job's sessionKeep or the retention period, or deleted by hand). Running executions are never marked.
+        runs:
+          type: array
+          items:
+            type: object
+            properties:
+              issueId:
+                type: string
+              issueTitle:
+                type: string
+              runId:
+                type: string
+        startedAt:
+          type: string
+          format: date-time
+        finishedAt:
+          type: string
+          format: date-time
+        durationMs:
+          type: integer
     WorkflowMetrics:
       type: object
       additionalProperties: true

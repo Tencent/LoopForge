@@ -158,9 +158,13 @@ func TestScheduleJobUsesSaversDefaultRunnerLogin(t *testing.T) {
 	if message, err := h.prepareScheduleJob(saved); err != nil || message != "云端巡检完成" || keyAttempts != 1 {
 		t.Fatalf("offline fallback = %q, %v, attempts = %d", message, err, keyAttempts)
 	}
+	// Schedule jobs keep every execution's conversation, so the fallback run
+	// opens a second one next to the earlier runner conversation.
+	runnerSession := sessions[0].ID
 	sessions = st.ListAssistantSessionsByTask(domain.AssistantSourceScheduled, saved.ID)
-	if len(sessions) != 1 || sessions[0].UserID != saver.ID ||
-		sessions[0].Execution().Pool != domain.ExecutionModeCloud || sessions[0].Model != saved.AssistantModel {
+	cloud := slices.IndexFunc(sessions, func(s domain.AssistantSession) bool { return s.ID != runnerSession })
+	if len(sessions) != 2 || cloud < 0 || sessions[cloud].UserID != saver.ID ||
+		sessions[cloud].Execution().Pool != domain.ExecutionModeCloud || sessions[cloud].Model != saved.AssistantModel {
 		t.Fatal("offline fallback did not run the same model and user in the cloud")
 	}
 

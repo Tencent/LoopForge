@@ -171,6 +171,31 @@ func (h *scheduleHandlers) scheduleJobs(c *gin.Context) {
 		job.LastPulled = prior.LastPulled
 		job.LastDispatched = prior.LastDispatched
 		job.LastAssistantMessage = prior.LastAssistantMessage
+		job.LastTraceID = prior.LastTraceID
+		job.LastSessionID = prior.LastSessionID
+		// The pinned conversation is chosen by the first fixed-mode run, never
+		// by a save; leaving fixed mode unpins it, so re-enabling starts fresh.
+		job.FixedSessionID = ""
+		if job.SkipDispatch && strings.TrimSpace(job.SessionMode) == domain.ScheduleSessionFixed {
+			job.SessionMode = domain.ScheduleSessionFixed
+			if prior.UsesFixedSession() && prior.ProjectID == job.ProjectID {
+				job.FixedSessionID = prior.FixedSessionID
+			}
+		} else {
+			job.SessionMode = ""
+		}
+		// SessionKeep only limits jobs that open a conversation per execution;
+		// a fixed-mode job keeps its choice for when it leaves fixed mode.
+		if job.SkipDispatch {
+			keep, err := domain.NormalizeScheduleSessionKeep(job.SessionKeep)
+			if err != nil {
+				c.JSON(400, gin.H{"error": err.Error()})
+				return
+			}
+			job.SessionKeep = keep
+		} else {
+			job.SessionKeep = 0
+		}
 		job.NotificationSnapshot = prior.NotificationSnapshot
 		job.NotificationResult = prior.NotificationResult
 		var saveErr error
@@ -325,6 +350,37 @@ func (h *scheduleHandlers) scheduleJob(c *gin.Context) {
 	c.JSON(200, map[string]bool{"ok": true})
 }
 
+// scheduleJobEnabled starts or stops a job's schedule without a full save, so
+// toggling never rewrites its prompt, key binding or session. A run already
+// in progress finishes either way.
+// 路由: g.POST("/api/schedule-jobs/:id/enabled", h.scheduleJobEnabled)
+func (h *scheduleHandlers) scheduleJobEnabled(c *gin.Context) {
+	var body struct {
+		Enabled *bool `json:"enabled"`
+	}
+	if !decode(c, &body) {
+		return
+	}
+	if body.Enabled == nil {
+		c.JSON(400, gin.H{"error": "enabled is required"})
+		return
+	}
+	job, ok := h.repo.ScheduleJob(c.Param("id"))
+	if !ok {
+		c.JSON(404, gin.H{"error": "schedule job not found"})
+		return
+	}
+	if !h.requireScheduleJob(c, job, true) {
+		return
+	}
+	saved, err := h.repo.SetScheduleJobEnabled(job.ID, *body.Enabled)
+	if err != nil {
+		respond(c, err)
+		return
+	}
+	c.JSON(200, saved)
+}
+
 // scheduleJobRun starts a scheduled job on the server and returns 202 with
 // lastStatus=running. Closing the client does not cancel the run; poll GET
 // /api/schedule-jobs until lastStatus leaves running.
@@ -354,8 +410,15 @@ func (h *scheduleHandlers) scheduleJobRun(c *gin.Context) {
 }
 
 func (h *scheduleHandlers) dispatchScheduled(job domain.ScheduleJob, issue domain.Issue, triggerOrigin string) error {
-	_, err := dispatchIssue(h.deps, dispatchRequest{IssueID: issue.ID, WorkflowID: job.ResolveWorkflow(issue), ScheduleJobID: job.ID, TriggerOrigin: triggerOrigin})
+	_, err := h.dispatchScheduledRun(job, issue, triggerOrigin)
 	return err
+}
+
+// dispatchScheduledRun is dispatchScheduled reporting the started run ID for
+// the execution record.
+func (h *scheduleHandlers) dispatchScheduledRun(job domain.ScheduleJob, issue domain.Issue, triggerOrigin string) (string, error) {
+	task, err := dispatchIssue(h.deps, dispatchRequest{IssueID: issue.ID, WorkflowID: job.ResolveWorkflow(issue), ScheduleJobID: job.ID, TriggerOrigin: triggerOrigin})
+	return task.RunID, err
 }
 
 func (h *scheduleHandlers) guardScheduledBaseline(job domain.ScheduleJob, issues []domain.Issue) (map[string]domain.ScheduleJobBlocker, error) {

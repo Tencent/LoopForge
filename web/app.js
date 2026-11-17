@@ -1228,6 +1228,7 @@ function bind(){
   $('#newAISchedule').onclick=()=>{selectAIScheduleTab('project');openScheduleJobModal('assistant')};
   $('#refreshAISchedules').onclick=refreshAISchedules;
   bindSharedScheduleUI();
+  bindScheduleExecutionUI();
   bindProjectAdmin();bindRepoDrawer();
   $$('.requirement-close').forEach(b=>b.onclick=()=>closeRequirementComposer());
   $('#reqCreate').onclick=()=>createIssueFromChat();
