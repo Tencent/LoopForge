@@ -26,21 +26,24 @@ async function refreshSharedScheduleCatalog(){
   }catch(err){if(request===sharedScheduleCatalogRequest)sharedScheduleCatalogError=err.message;throw err}
   finally{if(request===sharedScheduleCatalogRequest){sharedScheduleCatalogLoading=false;renderAISchedulePanels()}}
 }
-const aiScheduleTabs=['project','trigger','market'];
+const aiScheduleTabs=['project','trigger','market','executions'];
 async function selectAIScheduleTab(tab){
   aiScheduleTab=aiScheduleTabs.includes(tab)?tab:'project';
   renderAISchedulePanels();
   if(aiScheduleTab==='market')try{await refreshSharedScheduleCatalog()}catch{}
+  if(aiScheduleTab==='executions')await refreshScheduleExecutions();
 }
 function renderAISchedulePanels(){
   const market=aiScheduleTab==='market';
   $$('[data-ai-schedule-tab]').forEach(b=>{const active=b.dataset.aiScheduleTab===aiScheduleTab;b.classList.toggle('active',active);b.setAttribute('aria-selected',String(active))});
   $('#aiScheduleProjectPanel').hidden=aiScheduleTab!=='project';$('#aiScheduleMarketPanel').hidden=!market;
   const trigger=$('#aiScheduleTriggerPanel');if(trigger)trigger.hidden=aiScheduleTab!=='trigger';
+  const execPanel=$('#aiScheduleExecPanel');if(execPanel)execPanel.hidden=aiScheduleTab!=='executions';
   $('#sharedScheduleSearchField').hidden=!market;
   $('#aiScheduleProjectCount').textContent=scheduleJobsInView(state.data.scheduleJobs,state.projectFilter).filter(j=>j.skipDispatch&&state.projectFilter).length;
   $('#sharedScheduleMarketCount').textContent=sharedScheduleCatalog.length;
   if(market)renderSharedScheduleMarket();
+  if(typeof renderScheduleExecutions==='function')renderScheduleExecutions();
 }
 function renderSharedScheduleMarket(){
   const host=$('#sharedScheduleLibrary'),projectId=state.projectFilter;
@@ -73,12 +76,19 @@ function sharedScheduleRowInfo(job){
   const v=sharedScheduleDefinition(job.sharedTaskId,job.sharedTaskVersion);
   return `<span class="shared-schedule-origin">订阅 · v${Number(job.sharedTaskVersion)}${v?` · ${escapeHTML(v.sourceProjectName||v.sourceProjectId)}`:''}</span>`;
 }
+// Only a pending update stays on the row; publishing and browsing versions
+// live in the row's ⋯ menu (sharedScheduleRowMenuItem).
 function sharedScheduleRowAction(job){
-  if(!job.skipDispatch)return '';
-  if(!job.sharedTaskId)return `<button type="button" class="button ghost small" data-publish-schedule="${escapeHTML(job.id)}">发布共享</button>`;
+  if(!job.skipDispatch||!job.sharedTaskId)return '';
   const latest=sharedScheduleCatalog.find(v=>v.id===job.sharedTaskId);
-  const newer=latest?.version>job.sharedTaskVersion;
-  return `<button type="button" class="button ${newer?'hui-btn-soft':'ghost'} small" data-shared-versions="${escapeHTML(job.id)}">${newer?`有新版 v${latest.version}`:'查看版本'}</button>`;
+  if(!(latest?.version>job.sharedTaskVersion))return '';
+  return `<button type="button" class="button hui-btn-soft small" data-shared-versions="${escapeHTML(job.id)}">有新版 v${latest.version}</button>`;
+}
+function sharedScheduleRowMenuItem(job,item){
+  if(!job.skipDispatch)return '';
+  if(!job.sharedTaskId)return item('data-publish-schedule','发布共享','layers');
+  const latest=sharedScheduleCatalog.find(v=>v.id===job.sharedTaskId);
+  return latest?.version>job.sharedTaskVersion?'':item('data-shared-versions','查看版本','layers');
 }
 function bindSharedScheduleRowActions(host){
   host.querySelectorAll('[data-publish-schedule]').forEach(b=>b.onclick=()=>openSharedSchedulePublish(b.dataset.publishSchedule));

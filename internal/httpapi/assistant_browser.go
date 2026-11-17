@@ -19,7 +19,7 @@ const mainBotBrowserPrefix = "workbench_browser_"
 // errMainBotBrowserNoWorkspace keeps the ordinary conversation case
 // actionable: the browser runs on an execution machine, which only exists once
 // the conversation has a workspace.
-var errMainBotBrowserNoWorkspace = errors.New("本对话还没有工作区，浏览器没有可运行的执行机：先调用 workbench_workspace_open 为要改的仓库开一个临时工作区，再用 workbench_browser_navigate 打开页面")
+var errMainBotBrowserNoWorkspace = errors.New("本对话还没有工作区，浏览器没有可运行的执行机：先调用 workbench_workspace_open 打开一个工作区，再用 workbench_browser_navigate 打开页面")
 
 // mainBotBrowserRun is the run whose workspace hosts the browser: the task run
 // of a task conversation, or the temporary workspace Main Bot opened in an

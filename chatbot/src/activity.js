@@ -453,8 +453,10 @@ export function activityFace(step) {
     return { kind: "verify", busy: "正在提交节点结果", done: "已提交节点结果" };
   if (/workbench_workspace_open/.test(name))
     return { kind: "workflow", busy: "正在打开工作区", done: "已打开工作区" };
-  if (/workbench_workspace_submit_mr/.test(name))
-    return { kind: "workflow", busy: "正在提交 MR", done: "已提交 MR" };
+  if (/workbench_delivery_register/.test(name))
+    return { kind: "workflow", busy: "正在登记交付", done: "已登记交付" };
+  if (/workbench_publish_artifact/.test(name))
+    return { kind: "tool", busy: "正在发布产物", done: "已发布产物" };
   if (/todo/.test(name))
     return { kind: "plan", busy: "正在更新计划", done: "已更新计划" };
   if (/^(task|agent)$/.test(name)) {
@@ -553,7 +555,8 @@ export function activityTarget(step) {
         (typeof args.path === "string" ? args.path : "") ||
         args.body?.name ||
         args.body?.title ||
-        args.goal ||
+        args.title ||
+        args.sandboxProfileId ||
         "";
     } catch {
       if (activityFace(step).kind !== "command") return "";

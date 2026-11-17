@@ -267,11 +267,8 @@ func (h *agentToolGateway) callTool(ctx context.Context, session *AgentToolSessi
 		body, _ := json.Marshal(map[string]any{"name": op.Name, "description": op.Description, "inputSchema": mcpserver.ToolInputSchema(op)})
 		return map[string]any{"content": []map[string]any{{"type": "text", "text": string(body)}}}, nil
 	}
-	if name == "workbench_attachment_read" {
-		return readWorkbenchAttachmentTool(session, params.Arguments)
-	}
 	if name == "workbench_publish_artifact" {
-		return h.publishWorkbenchArtifact(session, params.Arguments)
+		return h.publishArtifact(ctx, session, params.Arguments)
 	}
 	catalog := h.buildCatalog(ctx, session)
 	tool, ok := lookupAgentTool(catalog, name)
@@ -357,12 +354,6 @@ func (h *agentToolGateway) dispatch(ctx context.Context, session *AgentToolSessi
 	}
 	if tool.Kind == "workspace" {
 		return h.callMainBotWorkspace(ctx, session, tool.Name, args)
-	}
-	// 轻量 GitHub 工具（agent_tool_github.go）：用请求人自己的 Git Token 直连
-	// GitHub，范围限定在当前项目已绑定的仓库。与 workspace 工具一样不走 drafts，
-	// 「帮我批准」时写操作在 callMainBotGitHub 里逐项过审查。
-	if tool.Kind == "github" {
-		return h.callMainBotGitHub(ctx, session, tool.Name, args)
 	}
 	if tool.Kind == "agentflow" {
 		if session.Mode == AgentToolClarify && !agentToolNameAllowed(AgentToolClarify, "agentflow", tool.UpstreamName) {

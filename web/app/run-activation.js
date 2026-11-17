@@ -1,15 +1,16 @@
 // Keep restoration and SOP execution distinct. Only the final control response
 // means the run has restarted; a 202 means the background restore is underway.
 const runActivationRequests=new Map();
-const runRestoreWatchers=new Map();
 
 function paintRunActivationProgress(id){
   const host=$('#runDetail');
   if(!host||host.dataset.runId!==id)return;
   const activation=runActivationRequests.get(id);
-  const pending=activation||(runRestoreWatchers.get(id)?.status==='restoring'?{restoring:true}:null);
+  const workspace=state.runWorkspace;
+  const restoring=workspace?.runId===id&&workspace.restoring;
+  const pending=activation||restoring;
   let notice=host.querySelector('[data-run-activation-status]');
-  if(pending){
+  if(activation||(restoring&&state.runDetailTab!=='workspace')){
     if(!notice){
       notice=document.createElement('div');
       notice.dataset.runActivationStatus='';
@@ -18,7 +19,9 @@ function paintRunActivationProgress(id){
       notice.setAttribute('aria-live','polite');
       host.querySelector('.run-detail-header')?.after(notice);
     }
-    notice.textContent=pending.restoring?(activation?'正在恢复工作区，完成后继续执行，请稍候…':'正在后台恢复工作区，完成后可继续操作，请稍候…'):'正在提交执行请求，请稍候…';
+    notice.textContent=activation
+      ? (activation.restoring?'正在恢复工作区，完成后继续执行，请稍候…':'正在提交执行请求，请稍候…')
+      : '正在后台恢复工作区，完成后可继续操作，请稍候…';
   }else notice?.remove();
   host.querySelectorAll('[data-rerun-from-here],[data-resume-run],[data-retry-node],[data-resume-paused]').forEach(button=>{
     if(pending&&!button.disabled){button.dataset.activationDisabled='true';button.disabled=true}
@@ -26,26 +29,15 @@ function paintRunActivationProgress(id){
   });
 }
 
-// A page reload observes the existing restore without replaying the user's
-// previous control decision or creating another restoration task.
-function observeRunWorkspaceRestore(id){
-  if(runRestoreWatchers.has(id))return;
-  const watcher={status:'idle'};
-  runRestoreWatchers.set(id,watcher);
-  (async()=>{
-    for(;;){
-      if($('#runDetail')?.dataset.runId!==id)return;
-      const status=await api(`/api/runs/${encodeURIComponent(id)}/workspace/restore`,{silent:true});
-      watcher.status=status.status;
-      paintRunActivationProgress(id);
-      if(status.status==='failed')toast(status.error||'工作区恢复失败，请重新发起操作','err');
-      if(status.status!=='restoring')return;
-      await new Promise(resolve=>setTimeout(resolve,1000));
-    }
-  })().catch(()=>{}).finally(()=>{
-    runRestoreWatchers.delete(id);
-    paintRunActivationProgress(id);
-  });
+async function waitForRunWorkspaceRestore(id, isCurrent=()=>true){
+  for(;;){
+    await new Promise(resolve=>setTimeout(resolve,1000));
+    if(!isCurrent())return;
+    const status=await api(`/api/runs/${encodeURIComponent(id)}/workspace/restore`,{silent:true});
+    if(status.status==='ready')return;
+    if(status.status==='failed')throw new Error(status.error||'工作区恢复失败，请重试');
+    if(status.status!=='restoring')throw new Error('工作区恢复状态已变化，请重新发起操作');
+  }
 }
 
 function requestRunActivation(id,action,body={}){
@@ -65,13 +57,7 @@ function requestRunActivation(id,action,body={}){
       if(result.workspaceRestore?.status!=='restoring')return result;
       pending.restoring=true;
       paintRunActivationProgress(id);
-      for(;;){
-        await new Promise(resolve=>setTimeout(resolve,1000));
-        const status=await api(`/api/runs/${encodeURIComponent(id)}/workspace/restore`,{silent:true});
-        if(status.status==='failed')throw new Error(status.error||'工作区恢复失败，请重试');
-        if(status.status==='ready')break;
-        if(status.status!=='restoring')throw new Error('工作区恢复状态已变化，请重新发起操作');
-      }
+      await waitForRunWorkspaceRestore(id);
       pending.restoring=false;
       paintRunActivationProgress(id);
     }

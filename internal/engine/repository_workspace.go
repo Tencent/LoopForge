@@ -4,6 +4,7 @@ import (
 	"agentflow/internal/domain"
 	"agentflow/internal/gitwork"
 	"agentflow/internal/procwatch"
+	"agentflow/internal/runtime"
 	"bytes"
 	"context"
 	"crypto/rand"
@@ -61,6 +62,9 @@ func prepareRepositories(ctx context.Context, workspace string, repositories []d
 }
 
 func prepareRepositoriesWithLiveCheck(ctx context.Context, workspace string, repositories []domain.RepositoryContext, liveCheck func(string) bool) error {
+	if err := runtime.RestoreLegacyWorkspaceAgentConfig(ctx, workspace, repositories); err != nil {
+		return err
+	}
 	if len(repositories) == 0 {
 		return nil
 	}

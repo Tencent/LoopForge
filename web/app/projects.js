@@ -3,7 +3,7 @@ function renderProjectSwitcher(){
   const switcher=$('#projectSwitcher');if(!switcher)return;
   switcher.innerHTML=projects.map(p=>`<option value="${escapeHTML(p.id)}" ${p.id===state.projectFilter?'selected':''}>${escapeHTML(p.key||'PROJECT')} · ${escapeHTML(p.name)}</option>`).join('')||'<option value="">暂无项目</option>';
   window.enhanceSelect?.(switcher);
-  if(!projects.some(p=>p.id===state.projectFilter))state.projectFilter=defaultProjectId(projects);
+  if(!projects.some(p=>p.id===state.projectFilter))state.projectFilter=defaultProjectId(projects,state.currentUser?.id);
 }
 function renderProjectContext(projectIssues){
   const projects=state.data.projects||[],project=projects.find(p=>p.id===state.projectFilter);renderProjectSwitcher();
@@ -448,7 +448,7 @@ async function deleteProjectAdmin(projectId){
     await api('/api/projects/'+encodeURIComponent(project.id),{method:'DELETE'});
     state.data.projects=(state.data.projects||[]).filter(p=>p.id!==project.id);
     if(state.projectFilter===project.id){
-      state.projectFilter=defaultProjectId(state.data.projects)||'';state.selectedIssue=null;
+      state.projectFilter=defaultProjectId(state.data.projects,state.currentUser?.id)||'';state.selectedIssue=null;
       localStorage.setItem('agentflow.activeProject',state.projectFilter);
       $('#chatNextFrame')?.contentWindow?.postMessage({type:'agentflow-project-context',projectId:state.projectFilter},location.origin);
     }

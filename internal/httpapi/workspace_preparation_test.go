@@ -12,7 +12,7 @@ import (
 	"agentflow/internal/domain"
 	"agentflow/internal/engine"
 	"agentflow/internal/runtime"
-	"agentflow/internal/tracker"
+
 	"github.com/gin-gonic/gin"
 )
 
@@ -71,40 +71,6 @@ func TestWorkspacePreparationAPISeparatesReadersAndWriters(t *testing.T) {
 	current, _ := a.repo.RunState(run.ID)
 	if current.Status != "succeeded" || current.Nodes["prep"].Attempt != 7 || current.Nodes["prep"].Output != "business history" {
 		t.Fatal("preflight changed business history", current)
-	}
-}
-
-func TestMainBotCommandUsesConfiguredEnvironmentAndReportsPreparationBoundary(t *testing.T) {
-	a, owner, _, _, _ := sharedWorkbenchFixture(t)
-	root := t.TempDir()
-	en := engine.New(a.repo, runtime.NewManager(root))
-	a.deps.engine = en
-	run, _ := a.repo.RunState("shared-run")
-	run.Status = "succeeded"
-	run.WorkflowSnapshot.SandboxSnapshot = &domain.RunnerSandboxSpec{Profile: domain.SandboxProfile{ID: "isolated-terminal", Driver: "local", Environment: map[string]string{"WORKSPACE_MARKER": "configured-environment"}}}
-	if err := a.repo.PutRun(run); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(filepath.Join(root, run.ID), 0700); err != nil {
-		t.Fatal(err)
-	}
-	gateway := &agentToolGateway{deps: a.deps}
-	gateway.api = New(a.repo, en, tracker.NewService(), "", "")
-	session := &AgentToolSession{Mode: AgentToolAssistant, RunID: run.ID, ProjectID: run.ExecutionContext.ProjectID, UserID: owner.ID, User: owner}
-	raw, err := gateway.callMainBotWorkspace(context.Background(), session, "workbench_workspace_command", map[string]any{"command": "printf '%s' \"$WORKSPACE_MARKER\""})
-	if err != nil {
-		t.Fatal(err)
-	}
-	var result struct {
-		Output      string                             `json:"output"`
-		Preparation runtime.WorkspacePreparationStatus `json:"workspacePreparation"`
-		Notice      string                             `json:"workspaceNotice"`
-	}
-	if err = json.Unmarshal([]byte(raw), &result); err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(result.Output, "configured-environment") || result.Preparation.Status != "ready" || !strings.Contains(result.Notice, "未配置额外工作区准备脚本") {
-		t.Fatal(raw)
 	}
 }
 
