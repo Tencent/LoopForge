@@ -538,7 +538,21 @@ func normalizeCLIModels(models []domain.CLIModel) ([]domain.CLIModel, error) {
 		if err != nil {
 			return nil, fmt.Errorf("模型 %s：%w", id, err)
 		}
-		out = append(out, domain.CLIModel{ID: id, Name: name, Efforts: efforts, DefaultEffort: defaultEffort})
+		var reasoningEfforts *[]string
+		if model.ReasoningEfforts != nil {
+			levels := make([]string, 0, len(*model.ReasoningEfforts))
+			for _, level := range *model.ReasoningEfforts {
+				level = strings.TrimSpace(level)
+				if !slices.Contains(domain.ExecutorEffortLevels["cursor"], level) && level != "ultracode" {
+					return nil, fmt.Errorf("模型 %s：不支持思考强度 %q", id, level)
+				}
+				if !slices.Contains(levels, level) {
+					levels = append(levels, level)
+				}
+			}
+			reasoningEfforts = &levels
+		}
+		out = append(out, domain.CLIModel{ID: id, Name: name, Efforts: efforts, DefaultEffort: defaultEffort, ReasoningEfforts: reasoningEfforts})
 	}
 	return out, nil
 }

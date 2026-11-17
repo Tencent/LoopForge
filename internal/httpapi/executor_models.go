@@ -12,9 +12,10 @@ import (
 
 // executorModelInfo describes one selectable model of a built-in CLI.
 type executorModelInfo struct {
-	ID      string `json:"id"`
-	Name    string `json:"name"`
-	Credits string `json:"credits,omitempty"`
+	ID      string                 `json:"id"`
+	Name    string                 `json:"name"`
+	Credits string                 `json:"credits,omitempty"`
+	Efforts []executorEffortOption `json:"efforts"`
 }
 
 // executorEffortOption is one reasoning-effort level of a built-in CLI.
@@ -66,7 +67,7 @@ func executorModelCatalogs() map[string]executorModelCatalog {
 	for _, model := range known.Models {
 		codebuddyModels = append(codebuddyModels, executorModelInfo{ID: model.ID, Name: model.Name, Credits: model.Credits})
 	}
-	return map[string]executorModelCatalog{
+	catalogs := map[string]executorModelCatalog{
 		"codebuddy": {
 			Default: known.Default,
 			Models:  codebuddyModels,
@@ -149,6 +150,18 @@ func executorModelCatalogs() map[string]executorModelCatalog {
 			},
 		},
 	}
+	for engine, catalog := range catalogs {
+		for i := range catalog.Models {
+			id := catalog.Models[i].ID
+			if engine == "claude" {
+				id = assistantEngineClaude + ":" + id
+			} else if engine != assistantEngineCodeBuddy {
+				id = engine + ":" + id
+			}
+			catalog.Models[i].Efforts = effortOptions(assistantModelEffortsIn(id, nil))
+		}
+	}
+	return catalogs
 }
 
 func cursorCatalogModels() []executorModelInfo {
@@ -187,12 +200,17 @@ func (h *catalogHandlers) executorModels(c *gin.Context) {
 		catalog := catalogs[id]
 		catalog.Source = "personal"
 		catalog.Models = make([]executorModelInfo, 0, len(models))
+		personal := cliModelsOf(models)
 		for _, model := range models {
 			name := strings.TrimSpace(model.Name)
 			if name == "" {
 				name = model.ID
 			}
-			catalog.Models = append(catalog.Models, executorModelInfo{ID: model.ID, Name: name})
+			modelID := model.ID
+			if engine != assistantEngineCodeBuddy {
+				modelID = engine + ":" + modelID
+			}
+			catalog.Models = append(catalog.Models, executorModelInfo{ID: model.ID, Name: name, Efforts: effortOptions(assistantModelEffortsIn(modelID, personal))})
 		}
 		catalogs[id] = catalog
 	}

@@ -286,7 +286,7 @@ func TestAssistantModelsPerExecutor(t *testing.T) {
 		_ = json.Unmarshal(rec.Body.Bytes(), &catalog)
 		return rec, catalog
 	}
-	for executor, family := range map[string]string{"codex": "gpt", "claude": "claude"} {
+	for executor, family := range map[string]string{"codex": "gpt", "claude": "claude", "claude-code": "claude"} {
 		rec, catalog := get(executor)
 		if rec.Code != 200 || catalog.Default != "default" || len(catalog.Models) < 2 || catalog.Models[0].ID != "default" {
 			t.Fatalf("%s catalog: %d %s", executor, rec.Code, rec.Body.String())
@@ -294,6 +294,9 @@ func TestAssistantModelsPerExecutor(t *testing.T) {
 		for _, model := range catalog.Models {
 			if model.Family != family {
 				t.Fatalf("%s model %s family = %q", executor, model.ID, model.Family)
+			}
+			if len(model.Efforts) == 0 {
+				t.Fatalf("%s model %s lost reasoning efforts", executor, model.ID)
 			}
 		}
 		if catalog.SponsoredModel != "" {

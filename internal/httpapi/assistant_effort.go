@@ -18,20 +18,44 @@ import (
 // user's saved Cursor catalog resolves the Cursor families folded out of
 // their CLI's own model list (runtime.FoldCursorCLIModels).
 func assistantModelEfforts(user domain.User, model string) []string {
-	return assistantModelEffortsIn(model, assistantCursorCatalog(user))
+	engine, _ := assistantModelEngine(model)
+	catalog := assistantEngineCustomModels(user, engine)
+	if len(catalog) == 0 {
+		key, baseURL := assistantEngineCredential(user, engine)
+		anthropic := assistantEngineAnthropicModels(engine, assistantEngineProtocol(user, engine))
+		if cached, ok := assistantDiscoveryCache.Load(assistantDiscoveryKey(anthropic, key, baseURL)); ok {
+			catalog = cliModelsOf(cached.(assistantDiscoveryEntry).models)
+		}
+	}
+	return assistantModelEffortsIn(model, catalog)
 }
 
-// assistantModelEffortsIn is assistantModelEfforts with the Cursor catalog
+// assistantModelEffortsIn is assistantModelEfforts with the engine's catalog
 // given directly.
-func assistantModelEffortsIn(model string, cursor []domain.CLIModel) []string {
-	if engine, id := assistantModelEngine(model); engine == runtime.AgentCLICursor {
-		return runtime.CursorModelEfforts(id, cursor)
+func assistantModelEffortsIn(model string, catalog []domain.CLIModel) []string {
+	engine, id := assistantModelEngine(model)
+	supported := domain.ExecutorEffortLevels[engine]
+	if engine == runtime.AgentCLICursor {
+		supported = runtime.CursorModelEfforts(id, catalog)
 	} else if engine == runtime.AgentCLIAntigravity {
-		return runtime.AgyModelEfforts(id)
-	} else if runtime.IsAgentCLI(engine) {
-		return domain.ExecutorEffortLevels[engine]
+		supported = runtime.AgyModelEfforts(id)
 	}
-	switch model {
+	for _, item := range catalog {
+		if item.ID != id || item.ReasoningEfforts == nil {
+			continue
+		}
+		levels := []string{}
+		for _, level := range supported {
+			if slices.Contains(*item.ReasoningEfforts, level) {
+				levels = append(levels, level)
+			}
+		}
+		return levels
+	}
+	if runtime.IsAgentCLI(engine) {
+		return supported
+	}
+	switch id {
 	case "hy4std", "hy4-preview-ioa":
 		return []string{"high"}
 	case "glm-5.3-ioa", "glm-5.3-flash-ioa", "glm-5.3-flashx", "kimi-k3.1-pro", "kimi-k2.8-preview":
@@ -53,6 +77,9 @@ func validateAssistantEffort(user domain.User, model, effort string) error {
 	}
 	efforts := assistantModelEfforts(user, model)
 	if !slices.Contains(efforts, effort) {
+		if len(efforts) == 0 {
+			return fmt.Errorf("模型 %s 仅支持默认思考强度", model)
+		}
 		return fmt.Errorf("模型 %s 不支持思考强度 %q，可选：默认、%s", model, effort, strings.Join(efforts, "、"))
 	}
 	return nil

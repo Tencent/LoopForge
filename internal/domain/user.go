@@ -113,6 +113,10 @@ type CLIModel struct {
 	Name          string            `json:"name,omitempty"`
 	Efforts       map[string]string `json:"efforts,omitempty"`
 	DefaultEffort string            `json:"defaultEffort,omitempty"`
+	// ReasoningEfforts overrides the selectable levels for this model. Omitted
+	// follows the CLI catalog; an empty list permits only the native default.
+	// Efforts above remains the Cursor effort-to-model-ID mapping.
+	ReasoningEfforts *[]string `json:"reasoningEfforts,omitempty"`
 }
 
 // AgentCLICredential is the personal configuration of one agent CLI. An

@@ -110,7 +110,7 @@ func (h *usersHandlers) probeCLIModels(c *gin.Context) {
 		if apiKey == "" {
 			source = "builtin"
 		}
-		c.JSON(http.StatusOK, cliModelProbeResult{Models: models, Source: source})
+		c.JSON(http.StatusOK, cliModelProbeResult{Models: cliModelsWithEfforts(engine, models), Source: source})
 		return
 	}
 	if engine == runtime.AgentCLICursor {
@@ -118,7 +118,7 @@ func (h *usersHandlers) probeCLIModels(c *gin.Context) {
 		return
 	}
 	if baseURL == "" && apiKey == "" {
-		c.JSON(http.StatusOK, cliModelProbeResult{Models: cliModelsOf(assistantEngineBuiltinModels(engine)), Source: "builtin"})
+		c.JSON(http.StatusOK, cliModelProbeResult{Models: cliModelsWithEfforts(engine, cliModelsOf(assistantEngineBuiltinModels(engine))), Source: "builtin"})
 		return
 	}
 	if apiKey == "" {
@@ -164,7 +164,7 @@ func (h *usersHandlers) probeCLIModels(c *gin.Context) {
 		c.JSON(http.StatusOK, cliModelProbeResult{Error: "服务没有返回可用模型，可以手动添加模型"})
 		return
 	}
-	c.JSON(http.StatusOK, cliModelProbeResult{Models: cliModelsOf(models), Source: source})
+	c.JSON(http.StatusOK, cliModelProbeResult{Models: cliModelsWithEfforts(engine, cliModelsOf(models)), Source: source})
 }
 
 func discoverGeminiModels(ctx context.Context, key, baseURL string) ([]assistantDiscoveredModel, error) {
@@ -218,7 +218,7 @@ func (h *usersHandlers) probeCursorModels(c *gin.Context, apiKey string) {
 	defer cancel()
 	models, err := cursorAgentModels(ctx, apiKey)
 	if errors.Is(err, errAssistantCLIMissing) {
-		c.JSON(http.StatusOK, cliModelProbeResult{Models: cliModelsOf(assistantEngineBuiltinModels(runtime.AgentCLICursor)), Source: "builtin"})
+		c.JSON(http.StatusOK, cliModelProbeResult{Models: cliModelsWithEfforts(runtime.AgentCLICursor, cliModelsOf(assistantEngineBuiltinModels(runtime.AgentCLICursor))), Source: "builtin"})
 		return
 	}
 	if err != nil {
@@ -229,7 +229,7 @@ func (h *usersHandlers) probeCursorModels(c *gin.Context, apiKey string) {
 		c.JSON(http.StatusOK, cliModelProbeResult{Error: "Cursor CLI 没有返回可用模型，可以手动添加模型"})
 		return
 	}
-	c.JSON(http.StatusOK, cliModelProbeResult{Models: models, Source: "official"})
+	c.JSON(http.StatusOK, cliModelProbeResult{Models: cliModelsWithEfforts(runtime.AgentCLICursor, models), Source: "official"})
 }
 
 var cursorModelLine = regexp.MustCompile(`^([A-Za-z0-9][A-Za-z0-9._-]*) - (.+)$`)
@@ -288,7 +288,22 @@ func parseCursorModels(output string) []domain.CLIModel {
 func cliModelsOf(models []assistantDiscoveredModel) []domain.CLIModel {
 	out := make([]domain.CLIModel, 0, len(models))
 	for _, model := range models {
-		out = append(out, domain.CLIModel{ID: model.ID, Name: model.Name, Efforts: model.Efforts, DefaultEffort: model.DefaultEffort})
+		out = append(out, domain.CLIModel{ID: model.ID, Name: model.Name, Efforts: model.Efforts, DefaultEffort: model.DefaultEffort, ReasoningEfforts: model.ReasoningEfforts})
 	}
 	return out
+}
+
+// Standard model listings often contain only IDs. Supply the CLI's catalog
+// levels when the endpoint omits them, and constrain advertised metadata to
+// levels this CLI can actually pass to its provider.
+func cliModelsWithEfforts(engine string, models []domain.CLIModel) []domain.CLIModel {
+	for i := range models {
+		id := models[i].ID
+		if engine != assistantEngineCodeBuddy {
+			id = engine + ":" + id
+		}
+		levels := append([]string{}, assistantModelEffortsIn(id, models)...)
+		models[i].ReasoningEfforts = &levels
+	}
+	return models
 }

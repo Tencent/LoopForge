@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -94,8 +95,9 @@ func TestProviderUserCredentials(t *testing.T) {
 			}
 			u, _ := st.UserByLoginName(login)
 			codexURL, claudeURL := "https://codex.example/v1", "https://claude.example"
-			codexModels := []domain.CLIModel{{ID: "gpt-5.5", Name: "gpt-5.5"}}
-			claudeModels := []domain.CLIModel{{ID: "claude-sonnet", Name: "Sonnet"}}
+			levels, defaultOnly := []string{" low ", "xhigh", "low"}, []string{}
+			codexModels := []domain.CLIModel{{ID: "gpt-5.5", Name: "gpt-5.5", ReasoningEfforts: &levels}}
+			claudeModels := []domain.CLIModel{{ID: "claude-sonnet", Name: "Sonnet", ReasoningEfforts: &defaultOnly}}
 			_, err = st.UpdateUserCredentials(u.ID, UserCredentialUpdate{CodexAPIKey: "codex-secret", CodexBaseURL: &codexURL, CodexModels: &codexModels, ClaudeCodeAPIKey: "claude-secret", ClaudeCodeBaseURL: &claudeURL, ClaudeCodeModels: &claudeModels})
 			if err != nil {
 				t.Fatal(err)
@@ -111,6 +113,12 @@ func TestProviderUserCredentials(t *testing.T) {
 			got, ok := st.User(u.ID)
 			if !ok || got.CodexAPIKey != "codex-secret" || got.ClaudeCodeAPIKey != "claude-secret" || got.CodexBaseURL != codexURL || got.ClaudeCodeBaseURL != claudeURL || len(got.CodexModels) != 1 || got.CodexModels[0].ID != "gpt-5.5" || got.CodexModels[0].Name != "" || len(got.ClaudeCodeModels) != 1 || got.ClaudeCodeModels[0].Name != "Sonnet" {
 				t.Fatalf("credentials did not survive refresh and partial update: %+v %+v", got.CodexModels, got.ClaudeCodeModels)
+			}
+			if efforts := got.CodexModels[0].ReasoningEfforts; efforts == nil || !slices.Equal(*efforts, []string{"low", "xhigh"}) {
+				t.Fatalf("reasoning levels lost on refresh: %+v", got.CodexModels)
+			}
+			if efforts := got.ClaudeCodeModels[0].ReasoningEfforts; efforts == nil || len(*efforts) != 0 {
+				t.Fatal("explicit default-only model reverted to automatic reasoning levels")
 			}
 			{
 				var configRows int
@@ -192,8 +200,9 @@ func TestCursorFamilyEffortsRoundTrip(t *testing.T) {
 		t.Fatalf("new key kept the old catalog: %+v", got.AgentCLICredentials["cursor"])
 	}
 	for name, bad := range map[string]domain.CLIModel{
-		"unknown effort": {ID: "widget", Efforts: map[string]string{"turbo": "widget-turbo"}},
-		"bad target":     {ID: "widget", Efforts: map[string]string{"low": "widget low"}},
+		"unknown effort":          {ID: "widget", Efforts: map[string]string{"turbo": "widget-turbo"}},
+		"bad target":              {ID: "widget", Efforts: map[string]string{"low": "widget low"}},
+		"unknown reasoning level": {ID: "widget", ReasoningEfforts: &[]string{"turbo"}},
 	} {
 		if _, err := st.UpdateUserCredentials(user.ID, UserCredentialUpdate{AgentCLICredentials: map[string]AgentCLICredentialUpdate{
 			"cursor": {Models: &[]domain.CLIModel{bad}},

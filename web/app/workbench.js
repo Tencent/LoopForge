@@ -141,15 +141,21 @@ function credentialModelsEndpoint(kind,protocol){
 // (or the protocol is Gemini), and the Base URL's published models otherwise.
 // Edits stay in the DOM until 保存.
 const CREDENTIAL_CATALOG_MAX=100;
+let credentialEffortCatalogs,credentialEffortCatalogRequest;
+async function loadCredentialEffortCatalogs(){
+  if(credentialEffortCatalogs)return;
+  if(!credentialEffortCatalogRequest)credentialEffortCatalogRequest=api('/api/executor-models?builtin=1',{silent:true}).then(data=>{credentialEffortCatalogs=data}).catch(()=>{}).finally(()=>{credentialEffortCatalogRequest=null});
+  await credentialEffortCatalogRequest;
+}
 function credentialCatalogModels(value){
   return (Array.isArray(value)?value:[]).map(model=>{
     const id=String(model?.id||'').trim(),name=String(model?.name||'').trim();
-    const metadata=model?.efforts?{efforts:model.efforts,defaultEffort:model.defaultEffort}:{};
+    const metadata={...(model?.efforts?{efforts:model.efforts,defaultEffort:model.defaultEffort}:{}),...(Array.isArray(model?.reasoningEfforts)?{reasoningEfforts:model.reasoningEfforts}:{})};
     return {id,name:name===id?'':name,...metadata};
   }).filter(model=>model.id||model.name);
 }
 function credentialCatalogStored(models){return credentialCatalogModels(models).map(({name,...model})=>name?{...model,name}:model)}
-function credentialCatalogKey(models){return JSON.stringify(credentialCatalogModels(models).map(model=>[model.id,model.name]))}
+function credentialCatalogKey(models){return JSON.stringify(credentialCatalogModels(models).map(model=>[model.id,model.name,Array.isArray(model.reasoningEfforts)?[...model.reasoningEfforts].sort():null,Object.entries(model.efforts||{}).sort(([a],[b])=>a.localeCompare(b)),model.defaultEffort||'']))}
 function credentialCatalogError(models){
   const seen=new Set();
   if(models.length>CREDENTIAL_CATALOG_MAX)return {index:CREDENTIAL_CATALOG_MAX,error:`模型目录最多 ${CREDENTIAL_CATALOG_MAX} 个`};
@@ -164,9 +170,40 @@ function credentialCatalogError(models){
   }
   return null;
 }
-function credentialCatalogRowHTML(model={}){
-  const metadata=model.efforts?` data-catalog-metadata="${escapeHTML(JSON.stringify({id:model.id,efforts:model.efforts,defaultEffort:model.defaultEffort}))}"`:'';
-  return `<li class="credential-catalog-row" data-catalog-row${metadata}><button type="button" class="credential-catalog-grip" data-catalog-grip aria-label="拖动排序，也可以按 ↑ ↓ 移动">${credentialGlyph('grip',14)}</button><span class="credential-input is-plain"><input class="credential-mono" data-catalog-field="id" value="${escapeHTML(model.id||'')}" placeholder="模型 ID，如 gpt-5.5" aria-label="模型 ID" autocomplete="off" spellcheck="false"></span><span class="credential-input is-plain"><input data-catalog-field="name" value="${escapeHTML(model.name||'')}" placeholder="显示名称（可选）" aria-label="显示名称" autocomplete="off"></span><button type="button" class="credential-btn ghost icon danger credential-ink" data-catalog-act="remove" aria-label="移除模型">${credentialGlyph('trash',14)}</button></li>`;
+function credentialCatalogEffortHTML(model,engine){
+  const available=credentialEffortCatalogs?.[engine==='claude-code'?'claude':engine]?.efforts||[];
+  const options=available.concat((model.reasoningEfforts||[]).filter(value=>!available.some(option=>option.value===value)).map(value=>({value,label:value})));
+  if(!options.length)return '';
+  const custom=Array.isArray(model.reasoningEfforts),selected=model.reasoningEfforts||[];
+  return `<details class="credential-catalog-effort"><summary>思考强度<span data-catalog-effort-summary>${custom?(selected.length?selected.map(escapeHTML).join(' / '):'仅使用默认'):'自动'}</span></summary><label class="credential-catalog-effort-mode">可选强度<select data-catalog-effort-mode aria-label="思考强度配置"><option value="auto"${custom?'':' selected'}>自动</option><option value="custom"${custom?' selected':''}>自定义</option></select></label><div class="credential-catalog-effort-levels" data-catalog-effort-levels${custom?'':' hidden'}>${options.map(({value,label})=>`<label><input type="checkbox" data-catalog-effort="${escapeHTML(value)}"${selected.includes(value)?' checked':''}>${escapeHTML(label)}</label>`).join('')}<small>勾选此模型支持的强度；全部取消时仅使用模型默认强度。</small></div></details>`;
+}
+function syncCredentialCatalogEfforts(row){
+  if(!row)return;
+  const mode=row.querySelector('[data-catalog-effort-mode]');if(!mode)return;
+  const custom=mode.value==='custom',selected=[...row.querySelectorAll('[data-catalog-effort]:checked')].map(input=>input.dataset.catalogEffort);
+  row.querySelector('[data-catalog-effort-levels]').hidden=!custom;
+  row.querySelector('[data-catalog-effort-summary]').textContent=custom?(selected.join(' / ')||'仅使用默认'):'自动';
+}
+function refreshCredentialCatalogEfforts(catalog){
+  if(!catalog?.isConnected)return;
+  credentialCatalogRows(catalog).forEach(row=>{
+    const html=credentialCatalogEffortHTML(credentialCatalogRowModel(row),catalog.dataset.catalogEngine),levels=row.querySelector('[data-catalog-effort-levels]');
+    if(!levels){row.insertAdjacentHTML('beforeend',html);return}
+    // Capabilities may arrive after a row was expanded. Add missing choices
+    // without replacing focused controls or the user's unsaved selections.
+    const holder=document.createElement('div');holder.innerHTML=html;
+    const options=[...holder.querySelectorAll('[data-catalog-effort]')];
+    const labels=new Map([...levels.querySelectorAll('[data-catalog-effort]')].map(input=>[input.dataset.catalogEffort,input.closest('label')]));
+    options.forEach((input,index)=>{
+      if(labels.has(input.dataset.catalogEffort))return;
+      const next=options.slice(index+1).map(option=>labels.get(option.dataset.catalogEffort)).find(Boolean)||levels.querySelector('small');
+      const label=input.closest('label');levels.insertBefore(label,next);labels.set(input.dataset.catalogEffort,label);
+    });
+  });
+}
+function credentialCatalogRowHTML(model={},engine=''){
+  const metadata=` data-catalog-metadata="${escapeHTML(JSON.stringify(credentialCatalogModels([model])[0]||{}))}"`;
+  return `<li class="credential-catalog-row" data-catalog-row${metadata}><button type="button" class="credential-catalog-grip" data-catalog-grip aria-label="拖动排序，也可以按 ↑ ↓ 移动">${credentialGlyph('grip',14)}</button><span class="credential-input is-plain"><input class="credential-mono" data-catalog-field="id" value="${escapeHTML(model.id||'')}" placeholder="模型 ID，如 gpt-5.5" aria-label="模型 ID" autocomplete="off" spellcheck="false"></span><span class="credential-input is-plain"><input data-catalog-field="name" value="${escapeHTML(model.name||'')}" placeholder="显示名称（可选）" aria-label="显示名称" autocomplete="off"></span><button type="button" class="credential-btn ghost icon danger credential-ink" data-catalog-act="remove" aria-label="移除模型">${credentialGlyph('trash',14)}</button>${credentialCatalogEffortHTML(model,engine)}</li>`;
 }
 function credentialCatalogCopy(mode,kind){
   const name=kind?.name||'该 CLI';
@@ -185,11 +222,11 @@ function credentialCatalogHTML(kind,user,{runnerLogin=false,label='模型目录'
   const models=credentialCatalogModels(cursorAutomatic?[]:credentialValue(user,kind.models.name)),empty=!models.length;
   const mode=runnerLogin?'runner':!String(baseUrl||'').trim()||protocol==='gemini'?'official':'remote';
   const copy=credentialCatalogCopy(mode,kind);
-  return `<section class="credential-catalog" data-credential-catalog data-catalog-mode="${mode}" data-catalog-protocol="${escapeHTML(protocol)}" data-original-key="${escapeHTML(credentialCatalogKey(models))}" data-catalog-source="${escapeHTML(credentialCatalogSource(baseUrl))}" aria-label="模型目录">
+  return `<section class="credential-catalog" data-credential-catalog data-catalog-engine="${escapeHTML(kind.models.engine)}" data-catalog-mode="${mode}" data-catalog-protocol="${escapeHTML(protocol)}" data-original-key="${escapeHTML(credentialCatalogKey(models))}" data-catalog-source="${escapeHTML(credentialCatalogSource(baseUrl))}" aria-label="模型目录">
     <div class="credential-catalog-body" data-catalog-body>
     <div class="credential-catalog-head"><div>${label?`<b>${escapeHTML(label)}</b>`:''}<small data-catalog-count>${credentialCatalogCountText(models.length)}</small></div><div><button type="button" class="credential-btn secondary credential-ink" data-catalog-act="probe">${credentialGlyph('download',14)}<span>获取可用模型</span></button><button type="button" class="credential-btn secondary credential-ink" data-catalog-act="add"><span class="credential-turn">${credentialGlyph('plus',14)}</span><span>添加模型</span></button></div></div>
     <div class="credential-catalog-probe" data-catalog-probe hidden></div>
-    <ol class="credential-catalog-list" data-catalog-list${empty?' hidden':''}>${models.map(credentialCatalogRowHTML).join('')}</ol>
+    <ol class="credential-catalog-list" data-catalog-list${empty?' hidden':''}>${models.map(model=>credentialCatalogRowHTML(model,kind.models.engine)).join('')}</ol>
     <div class="credential-catalog-empty" data-catalog-empty${empty?'':' hidden'}>${credentialGlyph('layers',16)}<div><b data-catalog-empty-title>${escapeHTML(copy.title)}</b><small data-catalog-empty-detail>${credentialCatalogDetailHTML(mode,kind,protocol)}</small></div></div>
     <div class="credential-catalog-foot" data-catalog-foot${empty?' hidden':''}><button type="button" class="credential-btn link credential-ink" data-catalog-act="reset">${credentialGlyph('undo',13)}<span>恢复默认</span></button><small data-catalog-reset-note>${escapeHTML(copy.reset)}</small></div>
     </div>
@@ -202,7 +239,12 @@ function credentialCatalogRows(catalog){return [...catalog.querySelectorAll('[da
 function credentialCatalogRowModel(row){
   const id=row.querySelector('[data-catalog-field="id"]').value,name=row.querySelector('[data-catalog-field="name"]').value;
   const metadata=row.dataset.catalogMetadata?JSON.parse(row.dataset.catalogMetadata):null;
-  return metadata?.id===id.trim()?{...metadata,id,name}:{id,name};
+  const model=metadata?.id===id.trim()?{...metadata,id,name}:{id,name},mode=row.querySelector('[data-catalog-effort-mode]');
+  if(mode){
+    delete model.reasoningEfforts;
+    if(mode.value==='custom')model.reasoningEfforts=[...row.querySelectorAll('[data-catalog-effort]:checked')].map(input=>input.dataset.catalogEffort);
+  }
+  return model;
 }
 function credentialCatalogFilledRows(catalog){return credentialCatalogRows(catalog).filter(row=>credentialCatalogModels([credentialCatalogRowModel(row)]).length)}
 function readCredentialCatalog(catalog){return credentialCatalogModels(credentialCatalogRows(catalog).map(credentialCatalogRowModel))}
@@ -249,7 +291,7 @@ function resetCredentialCatalog(row){
 }
 function addCredentialCatalogRow(catalog,model={}){
   const list=catalog.querySelector('[data-catalog-list]');
-  list.insertAdjacentHTML('beforeend',credentialCatalogRowHTML(model));
+  list.insertAdjacentHTML('beforeend',credentialCatalogRowHTML(model,catalog.dataset.catalogEngine));
   const row=list.lastElementChild;
   hydrateCredentialIcons(row);
   credentialCatalogChanged(catalog);
@@ -365,14 +407,21 @@ function applyCredentialCatalogProbe(catalog){
   const probe=catalog.probe;if(!probe)return;
   const picked=new Set([...catalog.querySelectorAll('[data-catalog-probe] input[type="checkbox"]:checked')].map(input=>input.value));
   const offered=new Set(probe.models.map(model=>model.id)),kept=new Set();
+  const discovered=new Map(probe.models.map(model=>[model.id,model]));
   let removed=0;
   credentialCatalogRows(catalog).forEach(row=>{
     const id=row.querySelector('[data-catalog-field="id"]').value.trim();
-    if(offered.has(id)&&!picked.has(id)){row.remove();removed++}else kept.add(id);
+    if(offered.has(id)&&!picked.has(id)){row.remove();removed++}else{
+      kept.add(id);
+      if(picked.has(id)&&discovered.has(id)){
+        const current=credentialCatalogRowModel(row),fresh=discovered.get(id);
+        row.outerHTML=credentialCatalogRowHTML({...current,...fresh,name:current.name,reasoningEfforts:current.reasoningEfforts??fresh.reasoningEfforts},catalog.dataset.catalogEngine);
+      }
+    }
   });
   const added=probe.models.filter(model=>picked.has(model.id)&&!kept.has(model.id));
   const room=Math.max(0,CREDENTIAL_CATALOG_MAX-kept.size),list=catalog.querySelector('[data-catalog-list]');
-  list.insertAdjacentHTML('beforeend',credentialCatalogModels(added.slice(0,room)).map(credentialCatalogRowHTML).join(''));
+  list.insertAdjacentHTML('beforeend',credentialCatalogModels(added.slice(0,room)).map(model=>credentialCatalogRowHTML(model,catalog.dataset.catalogEngine)).join(''));
   hydrateCredentialIcons(list);
   closeCredentialCatalogProbe(catalog);
   credentialCatalogChanged(catalog);
@@ -890,6 +939,7 @@ function bindCredentialPanel(panel){
     if(catalog){
       if(event.target.closest('[data-catalog-probe]'))return syncCredentialCatalogProbe(catalog);
       event.target.closest('.credential-input')?.classList.remove('is-bad');
+      syncCredentialCatalogEfforts(event.target.closest('[data-catalog-row]'));
     }
     if(event.target.name==='extra'||event.target.name==='protocol'){const catalogBox=form.querySelector('[data-credential-catalog]');if(catalogBox)syncCredentialCatalog(catalogBox)}
     if(event.target.name==='secret'){
@@ -1216,6 +1266,7 @@ async function renderPersonalSettings(){
   const panel=host.querySelector('#credentialPanel');
   bindCredentialPanel(panel);
   renderCredentialPanel();
+  loadCredentialEffortCatalogs().then(()=>panel.querySelectorAll('[data-credential-catalog]').forEach(refreshCredentialCatalogEfforts));
   hydrateCredentialIcons(host);
   setTimeout(()=>panel.classList.remove('is-entering'),900);
   // Offer the OAuth shortcut only when the server has a Gongfeng application.

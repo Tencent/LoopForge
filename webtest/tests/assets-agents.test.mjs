@@ -129,3 +129,24 @@ test('role model picker reloads the editor catalog and preserves a CLI change wh
   assert.deepEqual(menu().map(row => row.dataset.id), ['', 'private/second', '__custom__']);
   assert.equal(app.document.querySelector('#agentModelPicker [data-model-label]').textContent, 'Renamed model');
 });
+
+test('role effort picker follows each model and resets an unsupported level on model changes', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  const xhigh = { value:'xhigh', label:'超高 xhigh' };
+  app.router.get('/api/executor-models', {
+    codebuddy:{models:[],efforts:[]}, claude:{models:[],efforts:[]},
+    codex:{customModel:true,models:[{id:'reasoner',name:'Reasoner',efforts:[xhigh]}, {id:'plain',name:'Plain',efforts:[]}],efforts:[{value:'low',label:'低 low'},xhigh]},
+  });
+  app.evaluate(`
+    state.data.executors=[{id:'codebuddy',name:'CodeBuddy'}, {id:'codex',name:'Codex'}];
+    openAgentWizard({id:'test-role',name:'Test',prompt:'Test',executorId:'codex',model:'reasoner',effort:'xhigh'});
+  `);
+  await settle();
+  const choices = () => [...app.document.querySelectorAll('#agentEffortPicker [role=option]')].map(row=>row.dataset.id);
+  assert.deepEqual(choices(), ['', 'xhigh']);
+  assert.equal(app.document.querySelector('#agentEffortPicker [name="effort"]').value, 'xhigh');
+  app.document.querySelector('#agentModelPicker [data-id="plain"]').click();
+  assert.deepEqual(choices(), ['']);
+  assert.equal(app.document.querySelector('#agentEffortPicker [name="effort"]').value, '');
+});

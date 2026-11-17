@@ -383,6 +383,7 @@ function showRunnerModels(runner,runtime){
     modal.querySelector('.confirm-modal-footer').before(panel);
     card.classList.add('runner-model-card');
     const catalog=panel.querySelector('[data-credential-catalog]');
+    loadCredentialEffortCatalogs().then(()=>refreshCredentialCatalogEfforts(catalog));
     if(local){
       catalog.probeModels=()=>api(`/api/runners/${encodeURIComponent(runner.id)}/models/probe`,{
         method:'POST',body:JSON.stringify({provider}),silent:true
@@ -397,6 +398,7 @@ function showRunnerModels(runner,runtime){
     catalog.oninput=event=>{
       if(event.target.closest('[data-catalog-probe]'))return syncCredentialCatalogProbe(catalog);
       event.target.closest('.credential-input')?.classList.remove('is-bad');
+      syncCredentialCatalogEfforts(event.target.closest('[data-catalog-row]'));
       syncSave();
     };
     catalog.onclick=event=>{

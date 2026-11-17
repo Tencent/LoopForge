@@ -182,15 +182,25 @@ func cachedCLIModels(environment string) []string {
 // requires login plus a configured or sponsored CodeBuddy key.
 func (h *assistantHandlers) models(c *gin.Context) {
 	if raw := strings.TrimSpace(c.Query("executor")); raw != "" && assistantExecutor(raw) != "codebuddy" {
-		id := assistantExecutor(raw)
+		engine := assistantExecutor(raw)
+		id := engine
+		if engine == assistantEngineClaude {
+			id = "claude"
+		} else if id == "claude" {
+			engine = assistantEngineClaude
+		}
 		catalog, ok := executorModelCatalogs()[id]
 		if !ok {
 			c.JSON(400, gin.H{"error": "不支持的执行器"})
 			return
 		}
-		result := assistantModelCatalog{Default: "default", Models: []assistantModel{{ID: "default", Name: "CLI default", Family: map[string]string{"codex": "gpt", "claude": "claude"}[id]}}}
+		result := assistantModelCatalog{Default: "default", Models: []assistantModel{{ID: "default", Name: "CLI default", Family: map[string]string{"codex": "gpt", "claude": "claude"}[id], Efforts: assistantModelEffortsIn(engine+":default", nil)}}}
 		for _, item := range catalog.Models {
-			result.Models = append(result.Models, assistantModel{ID: item.ID, Name: item.Name, Family: map[string]string{"codex": "gpt", "claude": "claude"}[id]})
+			levels := make([]string, 0, len(item.Efforts))
+			for _, option := range item.Efforts {
+				levels = append(levels, option.Value)
+			}
+			result.Models = append(result.Models, assistantModel{ID: item.ID, Name: item.Name, Family: map[string]string{"codex": "gpt", "claude": "claude"}[id], Efforts: levels})
 		}
 		c.JSON(200, result)
 		return
@@ -266,7 +276,9 @@ func codeBuddyPersonalModels(user domain.User) []assistantModel {
 		if name == "" {
 			name = item.ID
 		}
-		models = append(models, assistantListedModel(item.ID, name, ""))
+		model := assistantListedModel(item.ID, name, "")
+		model.Efforts = assistantModelEfforts(user, item.ID)
+		models = append(models, model)
 	}
 	return models
 }

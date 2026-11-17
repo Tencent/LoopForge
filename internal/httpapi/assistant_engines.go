@@ -329,7 +329,7 @@ func assistantSavedModels(user domain.User, engine string) []assistantDiscovered
 	var listed []assistantDiscoveredModel
 	for _, model := range assistantEngineCustomModels(user, engine) {
 		if assistantValidEngineModel(model.ID) {
-			listed = append(listed, assistantDiscoveredModel{ID: model.ID, Name: model.Name, Efforts: model.Efforts, DefaultEffort: model.DefaultEffort})
+			listed = append(listed, assistantDiscoveredModel{ID: model.ID, Name: model.Name, Efforts: model.Efforts, DefaultEffort: model.DefaultEffort, ReasoningEfforts: model.ReasoningEfforts})
 		}
 	}
 	return listed
@@ -373,8 +373,9 @@ type assistantDiscoveredModel struct {
 	Name string
 	// Efforts and DefaultEffort describe a Cursor family folded out of the
 	// CLI's list (domain.CLIModel).
-	Efforts       map[string]string
-	DefaultEffort string
+	Efforts          map[string]string
+	DefaultEffort    string
+	ReasoningEfforts *[]string
 }
 
 type assistantDiscoveryEntry struct {
@@ -395,9 +396,13 @@ var (
 	assistantEngineDiscover = discoverAssistantEngineModels
 )
 
-func cachedAssistantEngineDiscovery(ctx context.Context, anthropic bool, apiKey, baseURL string) []assistantDiscoveredModel {
+func assistantDiscoveryKey(anthropic bool, apiKey, baseURL string) string {
 	sum := sha256.Sum256([]byte(fmt.Sprint(anthropic) + "\x00" + baseURL + "\x00" + apiKey))
-	cacheKey := hex.EncodeToString(sum[:])
+	return hex.EncodeToString(sum[:])
+}
+
+func cachedAssistantEngineDiscovery(ctx context.Context, anthropic bool, apiKey, baseURL string) []assistantDiscoveredModel {
+	cacheKey := assistantDiscoveryKey(anthropic, apiKey, baseURL)
 	now := time.Now()
 	if cached, ok := assistantDiscoveryCache.Load(cacheKey); ok {
 		if entry := cached.(assistantDiscoveryEntry); now.Before(entry.expires) {
@@ -551,9 +556,11 @@ func discoverAssistantEngineModels(ctx context.Context, anthropic bool, apiKey, 
 		}
 		var payload struct {
 			Data []struct {
-				ID          string `json:"id"`
-				Name        string `json:"name"`
-				DisplayName string `json:"display_name"`
+				ID                        string    `json:"id"`
+				Name                      string    `json:"name"`
+				DisplayName               string    `json:"display_name"`
+				ReasoningEfforts          *[]string `json:"reasoningEfforts"`
+				SupportedReasoningEfforts *[]string `json:"supported_reasoning_efforts"`
 			} `json:"data"`
 		}
 		if err := json.Unmarshal(body, &payload); err != nil {
@@ -571,7 +578,11 @@ func discoverAssistantEngineModels(ctx context.Context, anthropic bool, apiKey, 
 			if name == "" {
 				name = strings.TrimSpace(item.Name)
 			}
-			out = append(out, assistantDiscoveredModel{ID: id, Name: truncateRunes(name, 64)})
+			efforts := item.ReasoningEfforts
+			if efforts == nil {
+				efforts = item.SupportedReasoningEfforts
+			}
+			out = append(out, assistantDiscoveredModel{ID: id, Name: truncateRunes(name, 64), ReasoningEfforts: efforts})
 			if len(out) == assistantDiscoveryMaxModels {
 				break
 			}

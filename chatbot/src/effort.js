@@ -7,6 +7,7 @@ const levels = {
   xhigh: { label: "更高", icon: "search", detail: "投入更多推理时间，适合困难任务。" },
   max: { label: "最高", icon: "effort-max", detail: "使用模型支持的最高思考强度，耗时可能更长。" },
   ultra: { label: "极致", icon: "effort-max", detail: "使用极致推理强度，耗时可能更长。" },
+  ultracode: { label: "极致", icon: "effort-max", detail: "使用模型的 ultracode 思考强度，耗时可能更长。" },
 };
 
 export function modelEffort(model, value) {

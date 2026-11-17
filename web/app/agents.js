@@ -149,7 +149,9 @@ function agentModelItems(executorId,current){
 }
 function agentEffortItems(executorId){
   const cat=executorModelCatalogs()[executorId]||{};
-  return [{id:'',name:'默认',icon:false}].concat((cat.efforts||[]).map(e=>({id:e.value,name:e.label,icon:false})));
+  const choice=$('#agentModelPicker [name="modelChoice"]')?.value,model=choice===AGENT_CUSTOM_MODEL?$('#agentModelCustomField input[name="model"]')?.value:choice;
+  const selected=(cat.models||[]).find(item=>item.id===model),efforts=Array.isArray(selected?.efforts)?selected.efforts:(cat.efforts||[]);
+  return [{id:'',name:'默认',icon:false}].concat(efforts.map(e=>({id:e.value,name:e.label,icon:false})));
 }
 function paintAgentPicker(pickerId,item){
   const picker=$(pickerId);if(!picker)return;
@@ -175,6 +177,7 @@ function renderAgentModelPicker(){
     picker.querySelector('[name="modelChoice"]').value=id;
     syncAgentModelCustomField();
     paintAgentPicker('#agentModelPicker',items.find(x=>x.id===id));
+    renderAgentEffortPicker();
     menu.hidden=true;picker.querySelector('[data-model-toggle]').setAttribute('aria-expanded','false');
   });
   syncAgentModelCustomField();
@@ -188,7 +191,9 @@ function syncAgentModelCustomField(){
 function renderAgentEffortPicker(){
   const picker=$('#agentEffortPicker');if(!picker)return;
   const items=agentEffortItems(currentAgentExecutorId());
-  const current=picker.querySelector('[name="effort"]').value;
+  const field=picker.querySelector('[name="effort"]');
+  if(executorModelCatalogs()[currentAgentExecutorId()]&&!items.some(item=>item.id===field.value))field.value='';
+  const current=field.value;
   const menu=picker.querySelector('.ai-model-menu');
   agentModelAPI()?.renderOptions?.(menu,items,current,id=>{
     picker.querySelector('[name="effort"]').value=id;

@@ -2465,6 +2465,15 @@ html[data-theme="dark"] .credential-logo.monochrome img{filter:invert(1)}
 .credential-catalog-row:hover{border-color:var(--cr-line)}
 .credential-catalog-row .credential-input input{height:32px;font-size:12.5px}
 .credential-catalog-row .credential-input input.credential-mono{font-size:12px}
+.credential-catalog-effort{grid-column:2/4;min-width:0;padding:0 2px 5px;color:var(--cr-muted);font-size:11.5px}
+.credential-catalog-effort summary{cursor:pointer;line-height:24px}
+.credential-catalog-effort summary span{margin-left:8px;color:var(--cr-tertiary);overflow-wrap:anywhere}
+.credential-catalog-effort-mode{display:flex;align-items:center;gap:10px;margin:4px 0 8px}
+.credential-catalog-effort-mode select{padding:4px 8px;border:1px solid var(--cr-line);border-radius:6px;background:var(--cr-surface);color:var(--cr-text);font:inherit}
+.credential-catalog-effort-levels{display:flex;flex-wrap:wrap;gap:8px 14px;padding-bottom:4px}
+.credential-catalog-effort-levels label{display:flex;align-items:center;gap:5px;cursor:pointer;color:var(--cr-text-2)}
+.credential-catalog-effort-levels input{margin:0;accent-color:var(--cr-accent)}
+.credential-catalog-effort-levels small{flex-basis:100%;color:var(--cr-tertiary);font-size:11px;line-height:1.5}
 .credential-catalog-grip{display:grid;place-items:center;width:24px;height:30px;margin:0;padding:0;border:0;border-radius:6px;background:transparent;color:var(--cr-tertiary);cursor:grab;touch-action:none}
 .credential-catalog-grip:hover{background:var(--cr-hover);color:var(--cr-text)}
 .credential-catalog-grip:focus-visible{outline:2px solid color-mix(in srgb,var(--cr-accent) 65%,transparent);outline-offset:1px;color:var(--cr-text)}

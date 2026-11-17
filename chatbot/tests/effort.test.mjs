@@ -18,3 +18,8 @@ test("cursor-only effort levels none, minimal and ultra are offered when the mod
   }
   assert.equal(modelEffort({ efforts: ["none", "ultra"] }, "ultra"), "ultra");
 });
+
+test("custom model effort metadata can expose ultracode or only the native default", () => {
+  assert.deepEqual(effortOptions({ efforts: ["high", "ultracode"] }).map(({ id }) => id), ["", "high", "ultracode"]);
+  assert.deepEqual(effortOptions({ efforts: [] }).map(({ id }) => id), [""]);
+});
