@@ -1,6 +1,6 @@
 # 企业 IM 接入实施方案（单分支开发）
 
-状态：实施方案第 2 版（2026-11-17）。产品范围、验收条件和评审结论以 [enterprise-im-integration.md](enterprise-im-integration.md)（评审稿第 3 版，下称“方案”）为准；本文只说明代码怎么改、按什么顺序改、怎么验证。代码现状核对基于 `main@69e4bf0`。
+状态：实施方案第 3 版（2026-11-18）。产品范围、验收条件和评审结论以 [enterprise-im-integration.md](enterprise-im-integration.md)（评审稿第 3 版，下称“方案”）为准；本文只说明代码怎么改、按什么顺序改、怎么验证。代码现状核对基于 `main@69e4bf0`，R1-1 完成后已 rebase 到 `main@9909482`（详见 §0 分支表）。
 
 第 2 版相对第 1 版的变化：
 
@@ -13,7 +13,7 @@
 
 | 事项 | 约定 |
 | --- | --- |
-| 分支 | 本地分支 `feat/enterprise-im`，基于 `main@69e4bf0`，暂不推送 |
+| 分支 | 本地分支 `feat/enterprise-im`，起点 `main@69e4bf0`；完成 R1-1（企微基线测试）后 rebase 到 `main@9909482`，推送到 `origin/feat/enterprise-im` |
 | 交付轮次 | 第一轮（R1）企微回归基线 + 飞书私聊；第二轮（R2）钉钉复用同一条链路；第三轮（R3）企微发送重构、存量迁移与清理；第四轮（R4）助手与主动通知。每轮按步骤提交，每个提交都保证测试通过 |
 | 与需求的关系 | 需求 #1–#4 是按旧的 M1–M4 拆分的。R1 横跨 #1 和 #2。等这一版方案确认后，再提交需求描述的修改草稿，把 #1–#4 对齐到 R1–R4 |
 | 迁移 | 遵守 `AGENTS.md`。新列和索引由 gorm 增量 DDL 补齐（`internal/repo/automigrate.go`）；手工 SQL 只做检查和回填，由运维执行。R1 不需要执行任何手工 SQL |
@@ -120,20 +120,20 @@ R1 不新增表。钉钉的 `reply_route` 和 `route_expires_at` 放到 R2，`bo
 
 - **不手写补列 DDL**。LoopForge 的 Compose 使用 `mysql:8.4`，而 MySQL 不支持 `ADD COLUMN IF NOT EXISTS`。列一律交给增量 DDL 补齐。如果以后确实需要手工补列，按仓库已有写法（`020_conversation_workspaces.sql`、`021_*`、`032_*`）：先查 `information_schema.COLUMNS`，再用 `PREPARE` 执行。
 - **R1 不需要手工 SQL**：`channel` 为空按企微处理，企微不依赖 `receive_slot`。
-- **R3 的 `034_enterprise_im_backfill.sql`**：
+- **R3 的 `035_enterprise_im_backfill.sql`**（rebase 到最新 `origin/main` 后，`034` 已被 `034_schedule_job_executions.sql` 占用，企业 IM 的手工迁移统一从 035 起编号）：
   1. 前置检查：查询 `information_schema.COLUMNS`，确认 `channel`、`external_app_id`、`receive_slot`、`config_id` 等列都已存在。缺列时用 `SIGNAL SQLSTATE '45000'` 中止，并提示“请先用新版本启动一次 API 补齐列”。
   2. 查重：列出启用了对话、且外部 Bot ID 重复的配置。如果有重复，就中止并输出清单。
   3. 回填：`channel='wecom'`、`external_app_id`，以及启用了对话的行的 `receive_slot`。
 - **MySQL 8.4 升级演练**（R1-10 做第一次，R3 再做一次）：
   1. 用 `compose.yaml` 中的 `mysql:8.4`，导入一份带存量企微数据的备份。
   2. 先启动旧版本，再换新版本启动，确认增量 DDL 补齐了全部新列和唯一索引、启动没有报错、企微连接正常。
-  3. R3 时再执行 034，验证前置检查、查重、回填三条路径：列缺失、存在重复、正常。
+  3. R3 时再执行 035，验证前置检查、查重、回填三条路径：列缺失、存在重复、正常。
 
   工作区如果起不了 MySQL 8.4，就在测试环境由运维执行，我提供脚本和检查清单。
 
 ### 2.3 企微旧绑定归属（R3 执行，R1 只建列）
 
-旧绑定只记录了外部 Bot ID。`035_bot_binding_ownership.sql` 只做分类和输出，不自动归属：
+旧绑定只记录了外部 Bot ID。`036_bot_binding_ownership.sql` 只做分类和输出，不自动归属：
 
 | 分类 | 判定 | 处理 |
 | --- | --- | --- |
@@ -205,7 +205,7 @@ R1 不新增表。钉钉的 `reply_route` 和 `route_expires_at` 放到 R2，`bo
 | 轮次 | 内容 | 对应原需求 |
 | --- | --- | --- |
 | R2 钉钉 | • Stream 接收：先核对 SDK 收到处理函数返回的 error 后怎样回复平台<br>• 用 `sessionWebhook` 回复原会话；Webhook 加密保存在 `reply_route`，并检查过期，过期时记录原因<br>• 校验 CorpId 与 `chatbotCorpId` 是否一致：先在真实应用上确认 `chatbotCorpId` 是不是明文<br>• 复用同一套固定只读查询和绑定流程<br>• 编写三个渠道的配置文档 | #3 |
-| R3 企微发送重构、存量迁移与清理 | • 企微发送结果三类分类和退避重试；流式回复失败后，只有 `NotDelivered` 或 `Rejected` 才改用 `send`<br>• 人工处理：“确认已送达”和“重发已保存的回复”<br>• `-credential-action status\|reencrypt`<br>• 034 回填、035 归属核查<br>• 禁止原地修改企微 Bot ID；删除 Bot 时清理关联数据（规则见 §2.3）<br>• 保留期自动清理、核查 CLI 原生会话日志<br>• 第二次 MySQL 8.4 演练，补齐升级说明 | #1 |
+| R3 企微发送重构、存量迁移与清理 | • 企微发送结果三类分类和退避重试；流式回复失败后，只有 `NotDelivered` 或 `Rejected` 才改用 `send`<br>• 人工处理：“确认已送达”和“重发已保存的回复”<br>• `-credential-action status\|reencrypt`<br>• 035 回填、036 归属核查<br>• 禁止原地修改企微 Bot ID；删除 Bot 时清理关联数据（规则见 §2.3）<br>• 保留期自动清理、核查 CLI 原生会话日志<br>• 第二次 MySQL 8.4 演练，补齐升级说明 | #1 |
 | R4 助手与主动通知 | • 飞书、钉钉接入只读助手（`ReadOnly` 执行模式：网关拦截写入工具、不注入外部 MCP、丢弃草稿）<br>• 企微增加写操作审批开关，网页确认链接（`bot_pending_drafts` 加上复用 `resolveAssistantDrafts`）<br>• 防提示注入的分隔标记<br>• 身份撤销后作废待确认草稿<br>• 「待人工处理」和「失败」通知的主动发送<br>• CLI 日志清理 | #4 |
 
 ## 5. 测试要求
