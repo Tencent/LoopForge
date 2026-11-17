@@ -57,17 +57,11 @@ func TestBootLoaderClosesAfterShellOrChatReady(t *testing.T) {
 	app := readThemeSource(t, "app.js")
 	start := readThemeSource(t, "app/start.js")
 
-	if !strings.Contains(app, "BOOT_LOADER_CHAT_TIMEOUT_MS=8000") {
-		t.Error("app.js should cap the chat-ready wait at 8000ms")
-	}
-	if !regexp.MustCompile(`(?s)function settleBootLoader\(\)\{.*chat-next-active.*nativeChatReady.*finishBootLoader\(\).*setTimeout\(finishBootLoader,BOOT_LOADER_CHAT_TIMEOUT_MS\)`).MatchString(app) {
-		t.Error("settleBootLoader should close immediately outside the AI workbench and otherwise arm the 8s fallback")
+	if !strings.Contains(app, "function settleBootLoader(){finishBootLoader()}") {
+		t.Error("the main application should finish its own startup without an iframe handshake")
 	}
 	if !regexp.MustCompile(`switchView\(view\);\s*settleBootLoader\(\);`).MatchString(app) {
 		t.Error("boot() should settle the loader right after the first switchView")
-	}
-	if !regexp.MustCompile(`(?s)message\.type==='agentflow-chat-ready'\)\{\s*nativeChatReady=true;.*?finishBootLoader\(\);`).MatchString(app) {
-		t.Error("agentflow-chat-ready should record readiness and close the loader")
 	}
 	if !regexp.MustCompile(`(?s)function finishBootLoader\(\)\{\s*clearTimeout\(bootLoaderTimer\).*classList\.remove\('booting'\)`).MatchString(app) {
 		t.Error("finishBootLoader should clear the fallback timer and drop body.booting")
@@ -78,7 +72,7 @@ func TestBootLoaderClosesAfterShellOrChatReady(t *testing.T) {
 	if !regexp.MustCompile(`finishBootLoader\(\);\s*document\.body\.innerHTML=`).MatchString(app) {
 		t.Error("the local acceptance login screen should drop the loader before replacing body")
 	}
-	if !strings.Contains(start, "boot().catch(e=>{finishBootLoader();document.body.innerHTML=") {
+	if !strings.Contains(start, "fail(e){finishBootLoader();document.body.innerHTML=") {
 		t.Error("the boot failure page should drop the loader before replacing body")
 	}
 }

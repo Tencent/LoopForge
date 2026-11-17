@@ -556,7 +556,7 @@ function SelectPopover({
   };
 
   const listId = `${id}-list`;
-  const container = anchorRef?.current?.closest(".chat-shell") || document.body;
+  const container = anchorRef?.current?.closest(".chat-shell") || document.getElementById("chatRoot") || document.body;
   return createPortal(
     <div
       ref={root}

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { platform, initialChatContext, subscribe } from "./platform-host.js";
 import {
   api,
   write,
@@ -70,9 +71,9 @@ const PROJECT_LIST_TOOLS = new Set([
   "projects_delete",
   "projects_restore",
 ]);
-const initialProject =
-  new URLSearchParams(location.search).get("projectId") || "";
 export function useChat() {
+  const initialContext = initialChatContext();
+  const initialProject = initialContext.projectId;
   const stopRequestRef = useRef(null);
   const [user, setUser] = useState(null),
     [projects, setProjects] = useState([]),
@@ -84,13 +85,13 @@ export function useChat() {
     [workspaceExecutionError, setWorkspaceExecutionError] = useState(""),
     [users, setUsers] = useState([]),
     [draftIssueId, setDraftIssueId] = useState(
-      new URLSearchParams(location.search).get("issueId") || "",
+      initialContext.issueId,
     ),
     [models, setModels] = useState([]),
     [sessions, setSessions] = useState([]),
     [session, setSession] = useState(null),
     [activeId, setActiveId] = useState(
-      new URLSearchParams(location.search).get("session") || null,
+      initialContext.sessionId || null,
     ),
     // The last conversation reached by opening it rather than by creating it;
     // the header reveals that conversation's title once it has loaded.
@@ -151,24 +152,17 @@ export function useChat() {
     }
   }, []);
   const changeURL = useCallback((id) => {
-    const url = new URL(location.href);
-    url.searchParams.delete("issueId");
-    if (id) url.searchParams.set("session", id);
-    else url.searchParams.delete("session");
-    history.replaceState({}, "", url);
-    window.parent !== window &&
-      window.parent.postMessage(
-        { type: "agentflow-chat-session", sessionId: id || "" },
-        location.origin,
-      );
+    if (platform()) platform().setSession(id || "");
+    else {
+      const url = new URL(location.href);
+      url.searchParams.delete("issueId");
+      if (id) url.searchParams.set("session", id); else url.searchParams.delete("session");
+      history.replaceState({}, "", url);
+    }
   }, []);
   const syncProject = useCallback((id) => {
     globalProject.current = id;
-    window.parent !== window &&
-      window.parent.postMessage(
-        { type: "agentflow-chat-project", projectId: id },
-        location.origin,
-      );
+    platform()?.setProject(id);
   }, []);
   const open = useCallback(
     (id) => {
@@ -198,6 +192,7 @@ export function useChat() {
   );
   const newChat = useCallback(() => {
     setDraftIssueId("");
+    platform()?.setIssue("");
     open(null);
   }, [open]);
   useEffect(() => {
@@ -434,13 +429,17 @@ export function useChat() {
     };
   }, [activeId, ready, refreshSessions]);
   const selectProject = useCallback(
-    async (id, { external = false } = {}) => {
+    async (id, { external = false, previousProject } = {}) => {
       const current = sessionRef.current;
+      const restoreExternalProject = () => {
+        if (external && globalProject.current === id) syncProject(previousProject ?? projectRef.current);
+      };
       const strategy = projectChange(current, id);
       setError("");
       if (strategy === "bind") {
         if (generation?.status === "running" || submittingRef.current) {
           setError("请先停止当前生成，再绑定项目。");
+          restoreExternalProject();
           return;
         }
         try {
@@ -455,6 +454,7 @@ export function useChat() {
           await refreshSessions();
         } catch (e) {
           setError(e.message);
+          restoreExternalProject();
         }
         return;
       }
@@ -462,9 +462,8 @@ export function useChat() {
       if (id !== projectRef.current) {
         setSandboxProfileId("");
         setDraftIssueId("");
-        const url = new URL(location.href);
-        url.searchParams.delete("issueId");
-        history.replaceState({}, "", url);
+        if (platform()) platform().setIssue("");
+        else { const url = new URL(location.href); url.searchParams.delete("issueId"); history.replaceState({}, "", url); }
       }
       setProjectId(id);
       syncProject(id);
@@ -491,37 +490,29 @@ export function useChat() {
   useEffect(() => {
     if (!ready || activeId || !projectId) return;
     const project = projects.find((p) => p.id === projectId);
-    if (project && !canChatInProject(project, user)) setProjectId("");
-  }, [ready, activeId, projectId, projects, user]);
+    if (project && !canChatInProject(project, user)) {
+      setProjectId("");
+      syncProject("");
+    }
+  }, [ready, activeId, projectId, projects, user, syncProject]);
   useEffect(() => {
-    const listener = (e) => {
-      if (
-        e.source !== window.parent ||
-        e.origin !== location.origin
-      ) return;
-      if (e.data?.type === "agentflow-environments-changed" && ready) {
-        void Promise.all([api("/api/sandboxes"), api("/api/projects")])
-          .then(([sandboxRows, projectRows]) => {
-            if (Array.isArray(sandboxRows)) setSandboxes(sandboxRows);
-            if (Array.isArray(projectRows)) setProjects(projectRows);
-          }).catch(() => {});
-        return;
-      }
-      if (e.data?.type !== "agentflow-project-context") return;
-      const id = e.data.projectId || "";
+    const offProject = subscribe("project", (id, previousProject) => {
+      id ||= "";
       if (id === globalProject.current) return;
       globalProject.current = id;
-      void selectRef.current?.(id, { external: true });
-    };
-    window.addEventListener("message", listener);
-    if (ready)
-      window.parent !== window &&
-        window.parent.postMessage(
-          { type: "agentflow-chat-ready" },
-          location.origin,
-        );
-    return () => window.removeEventListener("message", listener);
-  }, [ready]);
+      void selectRef.current?.(id, { external: true, previousProject });
+    });
+    const offEnvironments = subscribe("environments", () => {
+      if (!ready) return;
+      void Promise.all([api("/api/sandboxes"), api("/api/projects")])
+        .then(([sandboxRows, projectRows]) => {
+          if (Array.isArray(sandboxRows)) setSandboxes(sandboxRows);
+          if (Array.isArray(projectRows)) setProjects(projectRows);
+        }).catch(() => {});
+    });
+    const offSession = subscribe("session", (id) => { if (id !== currentId.current) open(id || null); });
+    return () => { offProject(); offEnvironments(); offSession(); };
+  }, [ready, open]);
   const codeBuddy = executor === "codebuddy";
   const listedForEngine = engineModels(models, executor);
   const executorModels = listedForEngine.length || codeBuddy
@@ -605,18 +596,10 @@ export function useChat() {
   );
   useEffect(() => {
     if (!ready) return;
-    const onMessage = (e) => {
-      if (
-        e.source === window.parent &&
-        e.origin === location.origin &&
-        e.data?.type === "agentflow-credentials-changed"
-      )
-        void refreshUser();
-    };
-    window.addEventListener("message", onMessage);
+    const unsubscribe = subscribe("credentials", refreshUser);
     if (missingKey) window.addEventListener("focus", refreshUser);
     return () => {
-      window.removeEventListener("message", onMessage);
+      unsubscribe();
       window.removeEventListener("focus", refreshUser);
     };
   }, [ready, missingKey, refreshUser]);
@@ -1052,11 +1035,7 @@ export function useChat() {
         void api("/api/projects")
           .then((rows) => Array.isArray(rows) && setProjects(rows))
           .catch(() => {});
-        window.parent !== window &&
-          window.parent.postMessage(
-            { type: "agentflow-projects-changed" },
-            location.origin,
-          );
+        platform()?.projectsChanged();
       }
       stored.messages[messageIndex].content = JSON.stringify(reply);
       const saved = await write(sessionPath(id), stored, "PUT");
@@ -1125,10 +1104,8 @@ export function useChat() {
     setError("");
     if (!s) {
       setDraftIssueId(issueId);
-      const url = new URL(location.href);
-      if (issueId) url.searchParams.set("issueId", issueId);
-      else url.searchParams.delete("issueId");
-      history.replaceState({}, "", url);
+      if (platform()) platform().setIssue(issueId);
+      else { const url = new URL(location.href); if (issueId) url.searchParams.set("issueId", issueId); else url.searchParams.delete("issueId"); history.replaceState({}, "", url); }
       return true;
     }
     try {

@@ -81,67 +81,91 @@ test('code editor keyboard controls indent, outdent, auto-indent, save, and clos
   assert.equal(app.document.querySelector('#codeEditorModal').classList.contains('open'), false);
 });
 
-test('native chat bridge validates messages and updates session, project, and requested views', async (t) => {
+test('workbench interface updates session, project and requested views', async (t) => {
   const app = await loadApp();
   t.after(app.close);
-  app.evaluate(`mountNativeChat()`);
-  const frame = app.document.querySelector('#chatNextFrame');
-  const send = data => app.window.dispatchEvent(new app.window.MessageEvent('message', {
-    data, origin: app.window.location.origin, source: frame.contentWindow,
-  }));
-  send({ type: 'agentflow-chat-session', sessionId: 'session-42' });
+  const platform = app.window.loopforgePlatform;
+  assert.ok(app.document.querySelector('#chatRoot'));
+  assert.equal(app.document.querySelector('#applicationRoot'), null);
+  assert.equal(app.document.querySelector('#chatNextFrame'), null);
+  platform.setSession('session-42');
+  assert.equal(platform.getSnapshot().session, 'session-42');
   assert.match(app.window.location.search, /chatSession=session-42/);
-  send({ type: 'agentflow-chat-session', sessionId: 'not valid!' });
+  platform.setSession('not valid!');
   assert.match(app.window.location.search, /session-42/);
-  send({ type: 'agentflow-chat-project', projectId: 'project-1' });
+  platform.setProject('project-1');
   await settle(3);
   assert.equal(app.evaluate(`state.projectFilter`), 'project-1');
-  send({ type: 'agentflow-chat-open-view', view: 'settings' });
+  assert.equal(platform.getSnapshot().project, 'project-1');
+  platform.navigate('settings');
   await new Promise(resolve => setTimeout(resolve, 400));
   await settle(3);
   assert.equal(app.evaluate(`state.currentView`), 'settings');
-  assert.equal(app.document.querySelector('#pageTitle').textContent, '个人配置');
-  send({ type: 'agentflow-chat-open-view', view: 'runs', runId: 'run-1' });
+  assert.equal(platform.getSnapshot().view, 'settings');
+  for (const view of ['projects', 'sops', 'runs', 'agents', 'mcp', 'runners', 'dockerfiles']) {
+    platform.navigate(view);
+    await settle(3);
+    assert.equal(app.evaluate(`state.currentView`), view);
+    assert.equal(app.document.querySelector('#chatRoot') !== null, true, `${view} must keep the chat mount available`);
+    assert.equal(app.document.querySelector('#chatNextFrame'), null);
+  }
+  platform.navigate('runs', {runId: 'run-1'});
   await settle(3);
   assert.match(app.window.location.hash, /runs\/run-1/);
   assert.equal(app.evaluate(`state.currentView`), 'runs');
 });
 
-test('the chat opens personal until a project is picked and follows projects created in the chat', async (t) => {
+test('chat initialization reads the latest route while preserving quick access', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  app.window.history.replaceState({}, '', '/?quickAccess=1&chatSession=old#/collaboration/old');
+  app.window.loopforgeBootstrap.prepareApplication();
+  app.window.history.replaceState({}, '', '/?chatSession=new#/collaboration/new');
+  const context = app.window.loopforgePlatform.initialChatContext();
+  assert.equal(context.sessionId, 'new');
+  assert.equal(context.quickAccess, true);
+});
+
+test('the shared state exposes immutable snapshots and releases subscribers', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  const state = app.window.loopforgeApplicationState;
+  const initial = state.getSnapshot();
+  let calls = 0;
+  const unsubscribe = state.subscribe(() => { calls++; });
+  state.update({issue: 'issue-1'});
+  assert.equal(state.getSnapshot().issue, 'issue-1');
+  assert.equal(initial.issue, '');
+  assert.notEqual(state.getSnapshot(), initial);
+  state.update({issue: 'issue-1'});
+  assert.equal(calls, 1);
+  unsubscribe();
+  state.update({issue: ''});
+  assert.equal(calls, 1);
+});
+
+test('personal chat follows selected and newly created projects', async (t) => {
   const app = await loadApp();
   t.after(app.close);
   app.window.localStorage.removeItem('agentflow.activeProject');
-  assert.equal(app.evaluate(`state.projectFilter`), 'project-1');
   assert.equal(app.evaluate(`nativeChatProjectId()`), '');
   app.window.localStorage.setItem('agentflow.activeProject', 'project-1');
   assert.equal(app.evaluate(`nativeChatProjectId()`), 'project-1');
-
-  app.evaluate(`mountNativeChat()`);
-  const frame = app.document.querySelector('#chatNextFrame');
-  const send = data => app.window.dispatchEvent(new app.window.MessageEvent('message', {
-    data, origin: app.window.location.origin, source: frame.contentWindow,
-  }));
+  const platform = app.window.loopforgePlatform;
   const withProject = (...extra) => () => {
-    const shell = sampleBootstrap();
-    shell.projects.push(...extra);
-    return shell;
+    const shell = sampleBootstrap(); shell.projects.push(...extra); return shell;
   };
-  // The chat just created okr-system; the shell has not loaded it yet.
-  app.router.get('/api/bootstrap', withProject({ id: 'okr-system', name: 'OKR系统', key: 'OKR' }));
-  send({ type: 'agentflow-chat-project', projectId: 'okr-system' });
+  app.router.get('/api/bootstrap', withProject({ id:'okr-system', name:'OKR系统', key:'OKR' }));
+  platform.setProject('okr-system');
   await settle(8);
   assert.equal(app.evaluate(`state.projectFilter`), 'okr-system');
-  assert.ok([...app.document.querySelectorAll('#projectSwitcher option')].some(o => o.value === 'okr-system'));
-
-  send({ type: 'agentflow-chat-project', projectId: 'missing-project' });
+  platform.setProject('missing-project');
   await settle(8);
   assert.equal(app.evaluate(`state.projectFilter`), 'okr-system');
-
-  app.router.get('/api/bootstrap', withProject({ id: 'okr-system', name: 'OKR系统', key: 'OKR' }, { id: 'crm', name: 'CRM', key: 'CRM' }));
-  send({ type: 'agentflow-projects-changed' });
+  app.router.get('/api/bootstrap', withProject({ id:'okr-system', name:'OKR系统' }, { id:'crm', name:'CRM' }));
+  platform.projectsChanged();
   await settle(8);
-  assert.ok(app.evaluate(`state.data.projects.some(p => p.id === 'crm')`));
-  assert.ok([...app.document.querySelectorAll('#projectSwitcher option')].some(o => o.value === 'crm'));
+  assert.ok(app.evaluate(`state.data.projects.some(p=>p.id==='crm')`));
 });
 
 test('generic workflow hydration, project switching, flow routes, and shell keyboard interactions update state', async (t) => {

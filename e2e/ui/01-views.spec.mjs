@@ -91,8 +91,8 @@ for (const project of projects) {
         await expect(pane).toBeVisible();
         if (TITLES[view]) await expect(page.locator('#pageTitle')).toHaveText(TITLES[view]);
         await page.waitForLoadState('networkidle', { timeout: 8_000 }).catch(() => {});
-        // The AI workbench is the native chat app inside an iframe.
-        const content = view === 'collaboration' ? page.frameLocator('#chatNextFrame').locator('body') : pane;
+        // The AI workbench is mounted in the main document.
+        const content = view === 'collaboration' ? page.locator('#chatRoot') : pane;
         await expect.poll(async () => (await content.innerText()).trim().length, { message: `${view} rendered nothing` }).toBeGreaterThan(10);
         await expect(pane.locator('text=/undefined|NaN|\\[object Object\\]/')).toHaveCount(0);
         await page.screenshot({ path: test.info().outputPath(`${projectId}-${view}.png`), fullPage: false });

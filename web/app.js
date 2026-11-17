@@ -8,9 +8,9 @@ window.__AGENTFLOW_APP_DOMAIN__ = document.querySelector('meta[name="agentflow-a
 const knownTime = v => { const d = v ? new Date(v) : null; return d && d.getFullYear() > 1970 ? d : null; };
 const clone = v => v==null ? v : JSON.parse(JSON.stringify(v));
 const state = {
-  data:null, currentUser:null, authRequired:false, currentView:'', analytics:null, workflow:null, workflowSaved:null, workflowDirty:false, selectedNode:null, connectFrom:null, connectCursor:null, activeRun:null,
+  data:null, currentUser:null, authRequired:false, analytics:null, workflow:null, workflowSaved:null, workflowDirty:false, selectedNode:null, connectFrom:null, connectCursor:null, activeRun:null,
   selectedAgent:null, selectedRun:null, selectedRunNode:null, runFilter:'all', runQuery:'', runWorkflowFilter:'',
-  selectedIssue:null, projectFilter:'', projectDraft:null, requirementIssueId:null, sourceFilter:'',
+  selectedIssue:null, projectDraft:null, requirementIssueId:null, sourceFilter:'',
   projectAdminDetailId:null, projectAdminTab:'basic', projectAdminQuery:'', projectAdminFilter:'all', projectDraftFor:'', projectDraftBase:null, projectIdentCustom:false, projectIdentSeed:'', projectAdminErrors:{},
   sopScope:'project', agentScope:'project', ruleScope:'project', skillScope:'project', dockerfileScope:'project', environmentScope:'project', sandboxScope:'project',
   issueRunFilter:'', issueStatusFilter:'', issueAssigneeFilter:'', issueQuery:'', issueView:localStorage.getItem('agentflow.issueView')||'table',
@@ -23,6 +23,11 @@ const state = {
   issueSelectionMode:false, issueSelection:new Set(), issueSelectionScope:'', issueBulkDeleting:false, issueBulkDeleteProgress:null, issueBulkDeleteResult:null,
   listPages:{}
 };
+const applicationState=window.loopforgeApplicationState;
+Object.defineProperties(state,{
+  currentView:{get:()=>applicationState.getSnapshot().view,set:value=>applicationState.update({view:value})},
+  projectFilter:{get:()=>applicationState.getSnapshot().project,set:value=>applicationState.update({project:value})},
+});
 
 const LIST_PAGE_SIZE={issues:20,runs:20,mcp:24,obs:20};
 function listPageSize(key){return String(key||'').startsWith('obs-')?LIST_PAGE_SIZE.obs:(LIST_PAGE_SIZE[key]||20)}
@@ -893,7 +898,7 @@ async function boot(){
 
   if (shouldAutoSSORedirect({isGuest, hostname: window.location.hostname, bypassAutoAuth, authErr, loginUrl: state.loginUrl})) {
     window.location.href = state.loginUrl;
-    return;
+    return false;
   }
 
   // Explicitly enabled loopback acceptance login is available before protected bootstrap.
@@ -903,10 +908,10 @@ async function boot(){
       finishBootLoader();
       document.body.innerHTML='<main style="max-width:480px;margin:15vh auto;padding:32px"><h1>本地验收环境</h1><p>登录配置的本地验收账号后查看项目和业务域。</p><button id="localBootLogin" class="button primary">本地验收登录</button><p id="localBootError"></p></main>';
       $('#localBootLogin').onclick=async()=>{const button=$('#localBootLogin');button.disabled=true;try{await api('/api/auth/local',{method:'POST',body:'{}'});location.reload()}catch(e){$('#localBootError').textContent=e.message;button.disabled=false}};
-      return;
+      return false;
     }
   }
-  if(isGuest&&state.authRequired){location.replace('/login.html');return}
+  if(isGuest&&state.authRequired){location.replace('/login.html');return false}
   renderUserBadge();
 
   const view=restoredView();
@@ -946,7 +951,7 @@ async function boot(){
     if(name==='projects')applyProjectAdminRoute();
     if(name==='collaboration'){
       const id=routePart(1);
-      if(id){const url=new URL(location.href);url.searchParams.set('chatSession',id);history.replaceState({},'',url);const frame=$('#chatNextFrame');if(frame){frame.dataset.src='';mountNativeChat()}}
+      {const url=new URL(location.href);if(id)url.searchParams.set('chatSession',id);else url.searchParams.delete('chatSession');history.replaceState({},'',url);platformNotify('session',id||'')}
     }
   });
   if(view==='projects')syncProjectAdminRouteState();
@@ -955,9 +960,9 @@ async function boot(){
   settleBootLoader();
   if(!['approvals','issues','runs','sops'].includes(state.currentView))preloadApprovalBadge();
   restoreRequirementComposer();
+  return true;
 }
-const BOOT_LOADER_CHAT_TIMEOUT_MS=8000;
-let nativeChatReady=false,bootLoaderTimer=0;
+let bootLoaderTimer=0;
 function finishBootLoader(){
   clearTimeout(bootLoaderTimer);bootLoaderTimer=0;
   document.body.classList.remove('booting');
@@ -970,19 +975,15 @@ function finishBootLoader(){
   loader.addEventListener('transitionend',remove,{once:true});
   setTimeout(remove,250);
 }
-function settleBootLoader(){
-  if(!document.body.classList.contains('chat-next-active')||nativeChatReady){finishBootLoader();return}
-  clearTimeout(bootLoaderTimer);
-  bootLoaderTimer=setTimeout(finishBootLoader,BOOT_LOADER_CHAT_TIMEOUT_MS);
-}
+function settleBootLoader(){finishBootLoader()}
 window.addEventListener('pageshow',event=>{if(event.persisted)finishBootLoader()});
-// Shared with the /chatbot/ iframe (chatbot/src/theme.js): light|dark|system, while data-theme stays light|dark.
+// Shared theme preference: light|dark|system, while data-theme stays light|dark.
 const THEME_KEY='agentflow.theme.v3',LEGACY_THEME_KEY='agentflow.native-chat.theme',EARLIER_THEME_KEY='loopforge.theme.v3',themeMedia=matchMedia('(prefers-color-scheme: dark)');
 function readThemePreference(){try{const current=localStorage.getItem(THEME_KEY),legacy=localStorage.getItem(LEGACY_THEME_KEY),earlier=localStorage.getItem(EARLIER_THEME_KEY),valid=value=>['light','dark','system'].includes(value);let preference='light';if(valid(current))preference=current;else if(valid(legacy)||valid(earlier)){preference=valid(legacy)?legacy:earlier;localStorage.setItem(THEME_KEY,preference)}if(legacy!==null)localStorage.removeItem(LEGACY_THEME_KEY);if(earlier!==null)localStorage.removeItem(EARLIER_THEME_KEY);return preference}catch{return'light'}}
 function resolvedTheme(preference){return preference==='system'?(themeMedia.matches?'dark':'light'):preference==='dark'?'dark':'light'}
 // Kept in memory so the switcher still reflects the choice when localStorage is unavailable.
 let activeThemePreference='light',themeFadeTimer=0;
-function applyTheme(preference=readThemePreference()){const root=document.documentElement,previous=root.dataset.theme,next=resolvedTheme(preference);activeThemePreference=preference;if(previous&&previous!==next&&!matchMedia('(prefers-reduced-motion: reduce)').matches){root.classList.add('theme-fading');clearTimeout(themeFadeTimer);themeFadeTimer=setTimeout(()=>root.classList.remove('theme-fading'),320)}root.dataset.theme=next;if(typeof renderThemeToggle==='function')renderThemeToggle()}
+function applyTheme(preference=readThemePreference()){const root=document.documentElement,previous=root.dataset.theme,next=resolvedTheme(preference);activeThemePreference=preference;if(previous&&previous!==next&&!matchMedia('(prefers-reduced-motion: reduce)').matches){root.classList.add('theme-fading');clearTimeout(themeFadeTimer);themeFadeTimer=setTimeout(()=>root.classList.remove('theme-fading'),320)}root.dataset.theme=next;if(typeof renderThemeToggle==='function')renderThemeToggle();platformNotify('theme',preference)}
 applyTheme();
 themeMedia.addEventListener('change',()=>applyTheme());
 window.addEventListener('storage',event=>{if(!event.key||event.key===THEME_KEY)applyTheme()});
@@ -1322,7 +1323,7 @@ function bind(){
     const handle=document.createElement('button');handle.type='button';handle.className='sidebar-resize';handle.title='拖动调整侧栏宽度，双击恢复默认';handle.setAttribute('aria-label','调整侧栏宽度');sidebar.append(handle);
     const clamp=px=>Math.round(Math.min(MAX,Math.max(MIN,px)));
     const apply=()=>{const saved=Number(localStorage.getItem(KEY));if(wide.matches&&saved)document.documentElement.style.setProperty('--sidebar-w',clamp(saved)+'px');else document.documentElement.style.removeProperty('--sidebar-w')};
-    const save=px=>{localStorage.setItem(KEY,String(clamp(px)));apply()};
+    const save=px=>{localStorage.setItem(KEY,String(clamp(px)));apply();platformNotify('sidebarWidth')};
     apply();wide.addEventListener('change',apply);
     window.addEventListener('storage',event=>{if(!event.key||event.key===KEY||event.key===SIDEBAR_LAYOUT_KEY)apply()});
     handle.onpointerdown=ev=>{
@@ -1332,7 +1333,7 @@ function bind(){
       handle.onpointermove=move=>document.documentElement.style.setProperty('--sidebar-w',clamp(startW+move.clientX-startX)+'px');
       handle.onpointerup=handle.onpointercancel=()=>{handle.onpointermove=handle.onpointerup=handle.onpointercancel=null;document.body.classList.remove('sidebar-resizing');save(sidebar.getBoundingClientRect().width)};
     };
-    handle.ondblclick=()=>{localStorage.removeItem(KEY);apply()};
+    handle.ondblclick=()=>{localStorage.removeItem(KEY);apply();platformNotify('sidebarWidth')};
     handle.onkeydown=ev=>{const cur=sidebar.getBoundingClientRect().width;if(ev.key==='ArrowRight'){ev.preventDefault();save(cur+16)}if(ev.key==='ArrowLeft'){ev.preventDefault();save(cur-16)}};
   })();
   $('#dashImportTAPD')&&($('#dashImportTAPD').onclick=openImportTAPDModal);
@@ -1349,8 +1350,7 @@ function bind(){
   $$('[data-close-drawer]').forEach(el=>el.onclick=closeIssueDrawer);
   $('#projectSwitcher').onchange=async e=>{
     if(!await confirmAssetLeave()){e.target.value=state.projectFilter||'';return}
-    const frame=$('#chatNextFrame');
-    if(frame?.contentWindow)frame.contentWindow.postMessage({type:'agentflow-project-context',projectId:e.target.value},location.origin);
+    const previousProject=state.projectFilter||'';
     closeScheduleJobModal();
     state.projectFilter=e.target.value;state.selectedIssue=null;
     if(state.currentView==='aiSchedules')refreshAISchedules();
@@ -1365,6 +1365,7 @@ function bind(){
     if($('#dashboardView').classList.contains('active'))renderDashboard();
     if($('#observabilityView').classList.contains('active'))refreshObs();
     if($('#sopsView').classList.contains('active'))refreshWorkflowMetrics();
+    platformNotify('project',state.projectFilter,previousProject);
   };
   document.querySelectorAll('[data-scope-for]').forEach(bar=>{
     bar.querySelectorAll('[data-scope]').forEach(btn=>btn.onclick=()=>{
@@ -1473,117 +1474,66 @@ function nativeChatProjectId(){
   const chosen=new URL(location.href).searchParams.has('projectId')||!!localStorage.getItem('agentflow.activeProject');
   return chosen?($('#projectSwitcher')?.value||state.projectFilter||''):'';
 }
-function postNativeChatProject(frame){
-  frame.contentWindow?.postMessage({type:'agentflow-project-context',projectId:nativeChatProjectId()},location.origin);
-  frame.contentWindow?.postMessage({type:'agentflow-environments-changed'},location.origin);
-}
-// A requirement handed to the chat opens a new conversation with the
-// requirement already @-mentioned. It waits here until the chat frame can
-// take it: in the frame URL on first mount, otherwise once the chat is ready.
-let pendingChatIssueMention=null;
-function postPendingChatIssueMention(frame){
-  if(!pendingChatIssueMention||!nativeChatReady||frame?.dataset.src!=='native')return;
-  frame.contentWindow?.postMessage({type:'agentflow-chat-mention-issue',...pendingChatIssueMention},location.origin);
-  pendingChatIssueMention=null;
+// Explicit boundary between the React chat surface and the in-document management views.
+function platformNotify(type, ...values){applicationState.emit(type,...values)}
+function reloadShellProjects(){
+  return api('/api/bootstrap',{silent:true}).then(shell=>{Object.assign(state.data,shell);renderAll();return state.data.projects||[]});
 }
 function openIssueInChat(issue){
   if(!issue?.id||!issue.projectId)return;
-  pendingChatIssueMention={issueId:issue.id,projectId:issue.projectId};
   localStorage.setItem('agentflow.activeProject',issue.projectId);
   const url=new URL(location.href);
   ['chatSession','chatIssue'].forEach(key=>url.searchParams.delete(key));
   history.replaceState({},'',url.pathname+url.search+'#/collaboration');
-  // The mention goes first: it moves the chat to the requirement's project,
-  // so the project context posted by switchView no longer rebinds anything.
-  postPendingChatIssueMention($('#chatNextFrame'));
+  platformNotify('mentionIssue',{issueId:issue.id,projectId:issue.projectId});
   switchView('collaboration');
 }
-// A project created, deleted or restored from the chat must reach the project
-// switcher without a page refresh.
-function reloadShellProjects(){
-  return api('/api/bootstrap',{silent:true}).then(shell=>{Object.assign(state.data,shell);renderAll();return state.data.projects||[]});
-}
-function mountNativeChat(){
-  const frame=$('#chatNextFrame');
-  if(!frame)return;
-  if(!frame.dataset.nativeBridge){
-    frame.dataset.nativeBridge='1';
-    frame.addEventListener('load',()=>postNativeChatProject(frame));
-    window.addEventListener('message',event=>{
-      if(event.origin!==location.origin||event.source!==frame.contentWindow)return;
-      const message=event.data||{};
-      if(message.type==='agentflow-chat-ready'){
-        nativeChatReady=true;
-        postPendingChatIssueMention(frame);
-        postNativeChatProject(frame);
-        finishBootLoader();
-      }
-      if(message.type==='agentflow-chat-session'){
-        const id=message.sessionId||'';
-        if(id&&!/^[a-zA-Z0-9_-]{1,64}$/.test(id))return;
-        const url=new URL(location.href);
-        if(id)url.searchParams.set('chatSession',id);else url.searchParams.delete('chatSession');
-        url.searchParams.delete('chatIssue');
-        if(activeViewName()==='collaboration')url.hash=id?'#/collaboration/'+encodeURIComponent(id):'#/collaboration';
-        history.replaceState({},'',url);
-      }
-      if(message.type==='agentflow-chat-project'){
-        const projectId=typeof message.projectId==='string'?message.projectId:'';
-        const known=()=>!projectId||(state.data.projects||[]).some(project=>project.id===projectId);
-        const follow=()=>{
-          if(!known())return;
-          localStorage.setItem('agentflow.activeProject',projectId);
-          if(state.projectFilter===projectId)return;
-          const select=$('#projectSwitcher');
-          const option=[...select.options].find(item=>item.value===projectId);
-          if(option)option.selected=true;else select.value=projectId;
-          select.dispatchEvent(new Event('change',{bubbles:true}));
-        };
-        if(known())follow();
-        else reloadShellProjects().then(follow).catch(()=>{});
-      }
-      if(message.type==='agentflow-projects-changed')reloadShellProjects().catch(()=>{});
-      if(message.type==='agentflow-quick-access-completed'){
-        api('/api/bootstrap',{silent:true}).then(shell=>{
-          Object.assign(state.data,shell);
-          const pid=typeof message.projectId==='string'?message.projectId:'';
-          if(pid&&(state.data.projects||[]).some(p=>p.id===pid)){
-            state.projectFilter=pid;
-            localStorage.setItem('agentflow.activeProject',pid);
-          }
-          renderAll();
-        }).catch(()=>{});
-      }
-      if(message.type==='agentflow-chat-open-view'&&['settings','runners','sops','projects','runs','agents','environments','dockerfiles','sandboxes','flow','mcp'].includes(message.view)){
-        if(message.view==='settings'&&CREDENTIAL_FIELDS[message.credential])gotoCredential(message.credential,message.sshRemote);
-        else if(message.view==='sandboxes'&&message.action==='create')createConversationSandbox(message.projectId).catch(error=>toast(error.message));
-        else if(message.view==='runs'&&/^run-[\w-]+$/.test(message.runId||''))location.hash='#/runs/'+encodeURIComponent(message.runId);
-        else switchView(message.view);
-      }
-    });
-  }
-  if(frame.dataset.src!=='native'){
-    frame.dataset.src='native';
-    const topParams=new URL(location.href).searchParams;
-    const projectId=nativeChatProjectId();
-    const sessionId=topParams.get('chatSession')||'';
-    const issueId=topParams.get('chatIssue')||'';
-    const quickAccess=topParams.get('quickAccess')==='1';
-    if(quickAccess||topParams.get('gongfeng')==='ok'){
-      // renderPersonalSettings still owes the OAuth return toast after the URL is cleaned.
-      if(topParams.get('gongfeng')==='ok')state.gongfengReturned=true;
-      topParams.delete('quickAccess');
-      topParams.delete('gongfeng');
-      const clean=topParams.toString();
-      history.replaceState({},'',location.pathname+(clean?'?'+clean:'')+location.hash);
-    }
-    const mention=pendingChatIssueMention;
-    pendingChatIssueMention=null;
-    frame.src=mention
-      ?'/chatbot/?projectId='+encodeURIComponent(mention.projectId)+'&mentionIssue='+encodeURIComponent(mention.issueId)
-      :'/chatbot/?projectId='+encodeURIComponent(projectId)+(sessionId?'&session='+encodeURIComponent(sessionId):issueId?'&issueId='+encodeURIComponent(issueId):'')+(quickAccess?'&quickAccess=1':'');
-  }
-  postNativeChatProject(frame);
+let initialQuickAccess=false;
+window.loopforgePlatform={
+  subscribe(type,listener){return applicationState.on(type,listener)},
+  getSnapshot(){return applicationState.getSnapshot()},
+  subscribeState(listener){return applicationState.subscribe(listener)},
+  initialChatContext(){
+    const params=new URL(location.href).searchParams;
+    return {projectId:nativeChatProjectId(),sessionId:((routePart(0)==='collaboration'&&routePart(1))||params.get('chatSession')||''),issueId:params.get('chatIssue')||'',quickAccess:initialQuickAccess||params.get('quickAccess')==='1'};
+  },
+  setSession(id){
+    id=id||'';if(id&&!/^[a-zA-Z0-9_-]{1,64}$/.test(id))return;
+    const url=new URL(location.href);
+    if(id)url.searchParams.set('chatSession',id);else url.searchParams.delete('chatSession');
+    url.searchParams.delete('chatIssue');
+    if(activeViewName()==='collaboration')url.hash=id?'#/collaboration/'+encodeURIComponent(id):'#/collaboration';
+    history.replaceState({},'',url);
+    applicationState.update({session:id,issue:''});
+  },
+  setIssue(id){const url=new URL(location.href);if(id)url.searchParams.set('chatIssue',id);else url.searchParams.delete('chatIssue');history.replaceState({},'',url);applicationState.update({issue:id||''})},
+  setProject(projectId){
+    applicationState.update({chatProject:projectId||''});
+    if(!projectId){localStorage.removeItem('agentflow.activeProject');return}
+    const known=()=>!projectId||(state.data.projects||[]).some(project=>project.id===projectId);
+    const follow=()=>{if(!known())return;localStorage.setItem('agentflow.activeProject',projectId);if(state.projectFilter===projectId)return;const select=$('#projectSwitcher'),option=[...select.options].find(item=>item.value===projectId);if(option)option.selected=true;else select.value=projectId;select.dispatchEvent(new Event('change',{bubbles:true}))};
+    if(known())follow();else reloadShellProjects().then(follow).catch(()=>{});
+  },
+  projectsChanged(){reloadShellProjects().catch(()=>{})},
+  credentialsChanged(){platformNotify('credentials')},
+  setTheme(preference){setThemePreference(preference)},
+  navigate(view,options={}){
+    if(!['settings','runners','sops','projects','runs','agents','environments','dockerfiles','sandboxes','flow','mcp'].includes(view))return;
+    if(view==='settings'&&CREDENTIAL_FIELDS[options.credential])gotoCredential(options.credential,options.sshRemote);
+    else if(view==='sandboxes'&&options.action==='create')createConversationSandbox(options.projectId).catch(error=>toast(error.message));
+    else if(view==='runs'&&/^run-[\w-]+$/.test(options.runId||''))location.hash='#/runs/'+encodeURIComponent(options.runId);
+    else switchView(view);
+  },
+  quickAccessCompleted(projectId){api('/api/bootstrap',{silent:true}).then(shell=>{Object.assign(state.data,shell);if(projectId&&(state.data.projects||[]).some(p=>p.id===projectId)){state.projectFilter=projectId;localStorage.setItem('agentflow.activeProject',projectId);applicationState.update({chatProject:projectId})}renderAll()}).catch(()=>{})},
+};
+function prepareApplication(){
+  const url=new URL(location.href),params=url.searchParams;
+  initialQuickAccess=params.get('quickAccess')==='1';
+  const context=window.loopforgePlatform.initialChatContext();
+  applicationState.update({chatProject:context.projectId,session:context.sessionId,issue:context.issueId});
+  if(params.get('gongfeng')==='ok')state.gongfengReturned=true;
+  params.delete('gongfeng');params.delete('quickAccess');
+  history.replaceState(history.state,'',url);
 }
 function settingsSidebarExpanded(){
   return document.body.classList.contains('management-mode')&&!document.body.classList.contains('settings-sidebar-hidden');
@@ -1603,15 +1553,12 @@ function settingsRouteSurface(name){
     const rect=card.getBoundingClientRect(),top=header.getBoundingClientRect().bottom;
     return {nav,expanded:settingsSidebarExpanded(),geometry:{left:rect.left+1,top,width:rect.width-2,height:Math.max(0,rect.bottom-top-1),background:getComputedStyle(card).backgroundColor}};
   }
-  const frame=$('#chatNextFrame');
-  try{
-    const shell=frame?.contentDocument?.querySelector('.chat-shell');
-    const nav=shell?.querySelector('.conversation-sidebar'),header=shell?.querySelector('.brand');
-    if(!shell||!nav||!header)return null;
-    const frameRect=frame.getBoundingClientRect(),width=parseFloat(shell.style.getPropertyValue('--sidebar-width'))||304;
-    const top=frameRect.top+header.getBoundingClientRect().bottom;
-    return {nav,shell,expanded:!shell.classList.contains('sidebar-hidden'),geometry:{left:frameRect.left+1,top,width:width-2,height:Math.max(0,frameRect.bottom-14-top-1),background:shell.ownerDocument.defaultView.getComputedStyle(shell).backgroundColor}};
-  }catch{return null}
+  const host=$('#chatRoot'),shell=host?.querySelector('.chat-shell');
+  const nav=shell?.querySelector('.conversation-sidebar'),header=shell?.querySelector('.brand');
+  if(!shell||!nav||!header)return null;
+  const rect=host.getBoundingClientRect(),width=parseFloat(shell.style.getPropertyValue('--sidebar-width'))||304;
+  const top=header.getBoundingClientRect().bottom;
+  return {nav,shell,expanded:!shell.classList.contains('sidebar-hidden'),geometry:{left:rect.left+1,top,width:width-2,height:Math.max(0,rect.bottom-14-top-1),background:getComputedStyle(shell).backgroundColor}};
 }
 function cancelSettingsRouteTransition(){
   const transition=settingsRouteTransition;
@@ -1908,7 +1855,7 @@ function persistView(name,push=false){
     const current=(location.hash||'').replace(/^#\/?/,'').split('?')[0].split('/').filter(Boolean);
     let fromHash=current[0]==='collaboration'?current[1]||'':'';
     try{fromHash=decodeURIComponent(fromHash)}catch{}
-    const id=new URL(location.href).searchParams.get('chatSession')||fromHash;
+    const id=fromHash||new URL(location.href).searchParams.get('chatSession');
     if(id)next='#/collaboration/'+encodeURIComponent(id);
   }
   if(location.hash===next)return;
@@ -1960,8 +1907,16 @@ function switchView(name){
   $('#railSettingsEntry')?.classList.toggle('active', isPureManagement);
   const noSidebarViews = ['issues', 'approvals', 'observability'];
   document.body.classList.toggle('no-sidebar', noSidebarViews.includes(name));
-  document.body.classList.toggle('chat-next-active', name==='collaboration');
-  if(name==='collaboration'||isPureManagement)mountNativeChat();
+  document.body.classList.toggle('platform-chat-active', name==='collaboration');
+  platformNotify('view',name);
+  // Chat stays mounted while management views are active. Project and
+  // environment changes travel through the shared application state instead
+  // of a parent/child window bridge.
+  if(name==='collaboration'||isPureManagement){
+    platformNotify('project',nativeChatProjectId());
+    platformNotify('environments');
+  }
+  if(name==='collaboration'&&previous!==name){const id=routePart(0)==='collaboration'&&routePart(1)||new URL(location.href).searchParams.get('chatSession');if(id)platformNotify('session',id)}
   showDirectRunButton(name==='flow');
   closeIssueDrawer();
   if(name!=='sops'&&typeof hideSOPCardMenu==='function')hideSOPCardMenu();

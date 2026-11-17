@@ -7,12 +7,13 @@ vi.mock("react-dom/client", () => ({
 vi.mock("../src/App.jsx", () => ({ default: () => null }));
 
 test("browser entrypoint mounts the application", async () => {
-  document.body.innerHTML = '<div id="root"></div>';
-  await import("../src/main.jsx");
+  document.body.innerHTML = '<div id="chatRoot"></div>';
+  const { Boundary } = await import("../src/main.jsx");
   expect(render).toHaveBeenCalledOnce();
   const tree = render.mock.calls[0][0];
-  expect(tree.type.getDerivedStateFromError(new Error("boom")).error.message).toBe("boom");
-  const boundary = new tree.type({ children: "content" });
+  expect(tree.type.name).toBe("MainApplication");
+  expect(Boundary.getDerivedStateFromError(new Error("boom")).error.message).toBe("boom");
+  const boundary = new Boundary({ children: "content" });
   boundary.state = { error: null };
   expect(boundary.render()).toBe("content");
   boundary.state = { error: new Error("boom") };

@@ -1,3 +1,4 @@
+import { installTestPlatform } from "./setup.js";
 import React from "react";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -148,6 +149,7 @@ describe("QuickAccessWizard", () => {
   });
 
   test("warns only when the selected SSH host has no personal key and refreshes after settings changes", async () => {
+    const host = installTestPlatform();
     mockState.sshKeys = [{ id: "gitlab", name: "GitLab", host: "gitlab.example.org:22" }];
     const userAction = userEvent.setup();
     try {
@@ -165,7 +167,7 @@ describe("QuickAccessWizard", () => {
       expect(screen.getByRole("alert")).toHaveTextContent("尚未配置 gitlab.example.org:2222 的 SSH 密钥");
       expect(screen.getByRole("alert").querySelector("button")).toBeNull();
       mockState.sshKeys = [...mockState.sshKeys, { id: "port", name: "Other SSH port", host: "gitlab.example.org:2222" }];
-      window.dispatchEvent(new MessageEvent("message", { origin: location.origin, source: window.parent, data: { type: "agentflow-credentials-changed" } }));
+      host.emit("credentials");
       await waitFor(() => expect(screen.queryByText(/尚未配置 .* 的 SSH 密钥/)).toBeNull());
       expect(address).toHaveValue("ssh://git@gitlab.example.org:2222/team/repo.git");
       await userAction.clear(address);

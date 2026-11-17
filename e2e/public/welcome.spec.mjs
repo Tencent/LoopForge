@@ -24,7 +24,6 @@ for(const variant of [
     const input=await openHome(page);
     const frame=chat(page);
     await expect(page.locator('html')).toHaveAttribute('data-theme',variant.theme);
-    await expect(frame.locator('html')).toHaveAttribute('data-theme',variant.theme);
     const notice=frame.locator('.credential-notice');
     await expect(notice).toBeVisible();
     await expect(notice.getByRole('button')).toBeVisible();
@@ -37,10 +36,8 @@ for(const variant of [
     // A first conversation is personal until a project is picked.
     await expect(frame.locator('.project-picker')).toHaveClass(/is-unset/);
     const starters=frame.locator('.home-starter');
-    // The pinned release that first-run installs still has the one-click demo starter.
     await expect.poll(()=>starters.count()).toBeGreaterThanOrEqual(3);
     for(let i=0;i<await starters.count();i++){await starters.nth(i).scrollIntoViewIfNeeded();await expect(starters.nth(i)).toBeInViewport()}
-    expect(await frame.locator('html').evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
     expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
     await page.screenshot({path:info.outputPath(`home-${variant.name}.png`)});
     await input.fill('Draft a small tool');
@@ -101,7 +98,7 @@ test('the home composer asks a real model with one click',async({page})=>{
   await switchProject(page,'welcome');
   const input=await openHome(page);
   const frame=chat(page);
-  const sessionId=()=>new URL(page.frames().find(f=>f.url().includes('/chatbot/'))?.url()||'http://x/').searchParams.get('session')||'';
+  const sessionId=()=>new URL(page.url()).searchParams.get('chatSession')||'';
   try{
     await frame.locator('.home-starter').filter({hasText:'选用 SOP 与角色'}).click();
     await input.press('End');await input.pressSequentially('只介绍，不要创建或修改任何数据。');

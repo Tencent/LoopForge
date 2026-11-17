@@ -1,10 +1,12 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
+import scopeChatCSS from "./scope-chat-css.js";
 const api = process.env.LOOPFORGE_API || "http://127.0.0.1:8080";
 export default defineConfig({
   base: "/chatbot/",
   plugins: [react()],
-  build: { outDir: "../web/native-chat", emptyOutDir: true },
+  css: { postcss: { plugins: [scopeChatCSS()] } },
+  build: { outDir: "../web/native-chat", emptyOutDir: true, rollupOptions: { output: { entryFileNames: "assets/workbench.js", assetFileNames: (asset) => asset.names?.some((name) => name.endsWith(".css")) ? "assets/workbench.css" : "assets/[name]-[hash][extname]" } } },
   server: {
     port: 18769,
     proxy: {

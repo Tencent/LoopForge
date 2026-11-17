@@ -91,24 +91,11 @@ export default function ModelPicker({ models, value, label, open, onOpenChange, 
     const outside = (event) => {
       if (!inside(event.target)) callbacks.current.onOpenChange(false);
     };
-    const parentOutside = (event) => {
-      if (event.target !== window.frameElement) callbacks.current.onOpenChange(false);
-    };
     document.addEventListener("pointerdown", outside);
     document.addEventListener("focusin", outside);
-    let parentDocument;
-    try {
-      if (window.parent !== window) {
-        parentDocument = window.parent.document;
-        parentDocument.addEventListener("pointerdown", parentOutside);
-        parentDocument.addEventListener("focusin", parentOutside);
-      }
-    } catch {}
     return () => {
       document.removeEventListener("pointerdown", outside);
       document.removeEventListener("focusin", outside);
-      parentDocument?.removeEventListener("pointerdown", parentOutside);
-      parentDocument?.removeEventListener("focusin", parentOutside);
     };
   }, [open]);
 
@@ -214,7 +201,7 @@ export default function ModelPicker({ models, value, label, open, onOpenChange, 
               </button>
             )) : <p className="model-picker-empty" role="status">没有匹配的模型</p>}
           </div>
-        </div>, document.body,
+        </div>, document.getElementById("chatRoot") || document.body,
       ) : null}
     </div>
   );

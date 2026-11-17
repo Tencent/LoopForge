@@ -232,7 +232,7 @@ export async function loadApp({ routes = [], hash = '', dispatchReady = true, or
   window.EventSource = EventSourceStub;
   window.WebSocket = WebSocketStub;
 
-  const scriptElements = [...window.document.querySelectorAll('script[src]')];
+  const scriptElements = [...window.document.querySelectorAll('script[src]:not([type=module])')];
   const files = scriptElements.map((element) => {
     const src = new URL(element.getAttribute('src'), window.location.href);
     return path.join(WEB_ROOT, decodeURIComponent(src.pathname).replace(/^\/+/, ''));
@@ -243,6 +243,8 @@ export async function loadApp({ routes = [], hash = '', dispatchReady = true, or
     new vm.Script(sources[index], { filename: files[index] }).runInContext(context);
   }
   if (dispatchReady) {
+    await window.loopforgeBootstrap.start();
+    window.loopforgeBootstrap.prepareApplication();
     window.document.dispatchEvent(new window.Event('DOMContentLoaded', { bubbles: true }));
     window.dispatchEvent(new window.Event('load'));
     await settle();

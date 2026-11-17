@@ -1,3 +1,4 @@
+import { navigate } from "./platform-host.js";
 // Personal credentials configured under 个人配置 → 个人凭证. Field names match
 // the inputs there so the parent page can scroll to and focus the right card.
 // Keep the rules in sync with credentialHint in web/app/access.js.
@@ -172,10 +173,5 @@ export function credentialHint(text) {
 
 export function openCredentialSettings(field, sshRemote) {
   const credential = CREDENTIALS[field] ? field : "";
-  if (window.parent !== window)
-    window.parent.postMessage(
-      { type: "agentflow-chat-open-view", view: "settings", credential, ...(credential === "gitSshKey" && sshRemote ? { sshRemote } : {}) },
-      location.origin,
-    );
-  else location.href = "/#/settings";
+  navigate("settings", { credential, ...(credential === "gitSshKey" && sshRemote ? { sshRemote } : {}) });
 }
