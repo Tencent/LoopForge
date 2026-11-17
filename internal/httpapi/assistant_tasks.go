@@ -222,23 +222,27 @@ func (h *assistantHandlers) executeAssistantTask(ctx context.Context, user domai
 	if strings.TrimSpace(task.ID) != "" {
 		_ = saveAssistantTask(h.repo, user.ID, *task)
 	}
+	engine, _ := assistantModelEngine(task.Model)
+	machine := scheduleLoginRunner(h.repo, user.ID, engine)
+	machineOffline := machine.ID != "" && machine.Status != domain.RunnerStatusOnline
 	fail := func(msg string) error {
+		if machineOffline {
+			msg = fmt.Sprintf("默认执行机器 %s 已离线。%s", firstNonEmpty(machine.Name, machine.ID), msg)
+		}
 		task.LastStatus, task.LastError = "error", msg
 		return errors.New(msg)
 	}
 
-	// Pin a machine login to the actor's default runner before creating the
-	// conversation, so the turn uses the same authentication path as chat.
-	engine, _ := assistantModelEngine(task.Model)
+	// Select the credential and machine before creating the conversation.
 	model := strings.TrimSpace(task.Model)
 	var target *domain.AssistantExecutionTarget
-	if machine := scheduleLoginRunner(h.repo, user.ID, engine); machine.ID != "" {
-		if machine.Status != domain.RunnerStatusOnline {
-			return fail(fmt.Sprintf("默认执行机器 %s 已离线，请启动 Runner 后重试", firstNonEmpty(machine.Name, machine.ID)))
-		}
+	if machine.ID != "" && !machineOffline {
 		target = &domain.AssistantExecutionTarget{Pool: domain.ExecutionModeRunner, RunnerID: machine.ID}
 	} else {
 		if key, _ := assistantEngineCredential(user, engine); key == "" {
+			if machineOffline {
+				return fail(fmt.Sprintf("未配置 %s API Key。请启动 Runner，或在个人配置中填写 Key 后重试", assistantEngineLabel(engine)))
+			}
 			if engine != assistantEngineCodeBuddy {
 				return fail(assistantEngineMissingKey(engine))
 			}
@@ -274,7 +278,11 @@ func (h *assistantHandlers) executeAssistantTask(ctx context.Context, user domai
 	// Like a chat turn, a scheduled run has no time limit: it ends when the
 	// CLI finishes or someone stops it from the conversation page.
 	h.executeGeneration(ctx, req, g, domainUserToAuth(user))
-	return h.readScheduledTurn(user, task, g, len(req.Messages), prevSession, origin.TaskID)
+	err := h.readScheduledTurn(user, task, g, len(req.Messages), prevSession, origin.TaskID)
+	if err != nil && machineOffline {
+		return fail("使用个人 API Key 执行失败。" + err.Error())
+	}
+	return err
 }
 
 // readScheduledTurn reports the finished turn back onto the task. The reply

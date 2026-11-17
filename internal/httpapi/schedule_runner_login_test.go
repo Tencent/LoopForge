@@ -2,7 +2,9 @@ package httpapi
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"path/filepath"
 	"slices"
@@ -12,6 +14,7 @@ import (
 
 	"agentflow/internal/domain"
 	"agentflow/internal/engine"
+	"agentflow/internal/repo"
 	"agentflow/internal/runtime"
 	"agentflow/internal/tracker"
 )
@@ -135,11 +138,35 @@ func TestScheduleJobUsesSaversDefaultRunnerLogin(t *testing.T) {
 	if err := st.PutRunner(machine); err != nil {
 		t.Fatal(err)
 	}
-	saver.ClaudeCodeAPIKey = "saver-test-key"
-	if err := st.PutUser(saver); err != nil {
+	const saverKey = "saver-test-key"
+	keyAttempts := 0
+	var keyError error
+	h.generate = func(_ context.Context, _ string, actor domain.User) (string, error) {
+		keyAttempts++
+		if actor.ID != saver.ID || actor.ClaudeCodeAPIKey != saverKey {
+			return "", errors.New("fallback used the wrong credentials")
+		}
+		return "云端巡检完成", keyError
+	}
+	if _, err := h.prepareScheduleJob(saved); err == nil || !strings.Contains(err.Error(), "已离线。未配置 Claude Code API Key") || keyAttempts != 0 {
+		t.Fatalf("offline runner without a key = %v, attempts = %d", err, keyAttempts)
+	}
+
+	if _, err := st.UpdateUserCredentials(saver.ID, repo.UserCredentialUpdate{ClaudeCodeAPIKey: saverKey}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := h.prepareScheduleJob(saved); err == nil || !strings.Contains(err.Error(), "已离线") {
-		t.Fatalf("offline default runner returned %v", err)
+	if message, err := h.prepareScheduleJob(saved); err != nil || message != "云端巡检完成" || keyAttempts != 1 {
+		t.Fatalf("offline fallback = %q, %v, attempts = %d", message, err, keyAttempts)
+	}
+	sessions = st.ListAssistantSessionsByTask(domain.AssistantSourceScheduled, saved.ID)
+	if len(sessions) != 1 || sessions[0].UserID != saver.ID ||
+		sessions[0].Execution().Pool != domain.ExecutionModeCloud || sessions[0].Model != saved.AssistantModel {
+		t.Fatal("offline fallback did not run the same model and user in the cloud")
+	}
+
+	keyError = assistantCredentialError{engine: assistantEngineClaude}
+	if _, err := h.prepareScheduleJob(saved); err == nil || !strings.Contains(err.Error(), "已离线") ||
+		!strings.Contains(err.Error(), "Claude Code 拒绝了你的 API Key") || keyAttempts != 2 {
+		t.Fatalf("offline fallback with rejected key = %v, attempts = %d", err, keyAttempts)
 	}
 }

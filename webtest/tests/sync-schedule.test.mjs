@@ -403,5 +403,5 @@ test('AI schedule model picker includes account login CLI models and keeps a sav
   assert.equal(engine.value, 'claude-code');
   assert.equal(engine.selectedOptions[0].disabled, false);
   assert.equal(form.elements.assistantModel.value, 'claude-code:opus');
-  assert.match(doc.querySelector('#scheduleModelHint').textContent, /优先使用保存人默认执行机器的账号登录.*个人 API Key.*平台共享 Key/);
+  assert.match(doc.querySelector('#scheduleModelHint').textContent, /默认执行机器的账号登录.*离线时改用个人 API Key.*Key 缺失或不可用时任务失败.*平台共享 Key/);
 });

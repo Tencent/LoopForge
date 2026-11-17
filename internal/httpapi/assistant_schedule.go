@@ -124,9 +124,8 @@ func (h *assistantHandlers) scheduleJobRunAsUser(job domain.ScheduleJob, engine 
 	return runUser, shared, nil
 }
 
-// scheduleLoginRunner resolves the actor's personal default machine at save
-// and run time. An offline machine keeps its configured login; the run checks
-// connectivity before creating a session.
+// scheduleLoginRunner resolves the actor's configured personal machine at
+// save and run time. At run time an offline machine uses the API Key path.
 func scheduleLoginRunner(r *repo.Store, userID int64, engine string) domain.Runner {
 	if r == nil || userID <= 0 || !assistantSupportsRunnerLogin(engine) {
 		return domain.Runner{}

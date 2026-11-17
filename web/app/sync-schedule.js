@@ -442,7 +442,7 @@ function renderScheduleJobs(){
   const disabled='本实例不执行定时任务；任务可在主实例自动运行。';
   $('#scheduleRuntimeHint').textContent=canRun?'每个项目使用一份触发配置，修改后保存即可生效。立即运行在服务端执行，关闭页面不会中断。':disabled;
   const triggerHint=$('#aiScheduleTriggerHint');if(triggerHint)triggerHint.textContent=canRun?'按计划扫描本项目选定状态、尚未跑过 SOP 的需求，通过基线门禁后派发 SOP。每个项目使用一份触发配置。':disabled;
-  $('#aiScheduleRuntimeHint').textContent=!state.projectFilter?'请先在顶栏选择项目，再管理 AI 定时任务。':canRun?'使用最后保存任务的人的账号登录或 API Key，以完全权限执行。CodeBuddy 可使用平台共享 Key 和管理员允许的模型。关闭页面不会中断执行。':disabled;
+  $('#aiScheduleRuntimeHint').textContent=!state.projectFilter?'请先在顶栏选择项目，再管理 AI 定时任务。':canRun?'以最后保存任务的人的身份和完全权限执行。默认执行机器离线时使用该用户的 API Key。CodeBuddy 缺少个人 Key 时可使用平台共享 Key。关闭页面不会中断执行。':disabled;
   $('#aiScheduleProjectName').textContent=currentProject()?.name||'当前项目';
   $('#aiScheduleCount').textContent=`${assistant.length} 个任务`;
   $('#newAISchedule').disabled=!state.projectFilter;

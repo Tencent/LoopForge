@@ -5248,7 +5248,7 @@ components:
           type: integer
           format: int64
           readOnly: true
-          description: User bound by the server to the last saver. The job uses account login from their default personal Runner for Codex and Claude Code when configured, then their API Key, then the shared CodeBuddy key for allowed CodeBuddy models. A bound user must retain write access to the project. Zero uses legacy owner selection.
+          description: User bound by the server to the last saver. Codex and Claude Code use configured account login on their online default personal Runner. Other configurations and offline Runners use the saver's personal API Key. CodeBuddy can use the shared key for allowed models if the personal key is missing. A bound user must retain write access to the project. Zero uses legacy owner selection.
         runAsName:
           type: string
           readOnly: true
