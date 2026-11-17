@@ -1,10 +1,17 @@
 // AI 定时任务「执行记录」看板：最近 7 天概览、组合筛选、可展开的分页表格。
 // 每次执行一条记录，失败可直接复制 Trace ID 去日志里检索。
+// 筛选、计数、分页和概览都在服务端完成（/api/schedule-job-executions/dashboard），
+// 这里只持有当前一页，结果不受一次能拉多少条的限制。
 let scheduleExecutions=[];
+let scheduleExecTotal=0;
+let scheduleExecOverview=null;
+let scheduleExecRecords=0;
+let scheduleExecRecentFailed=0;
 let scheduleExecProject=null;
 let scheduleExecLoading=false;
 let scheduleExecError='';
 let scheduleExecRequest=0;
+let scheduleExecSearchTimer=0;
 let scheduleExecStatusFilter='';
 let scheduleExecJobFilter='';
 let scheduleExecRangeFilter='';
@@ -14,13 +21,14 @@ let scheduleExecPageSize=10;
 const scheduleExecExpanded=new Set();
 const SCHEDULE_EXEC_DAY=86400000;
 const SCHEDULE_EXEC_PAGE_SIZES=[10,20,50];
+const SCHEDULE_EXEC_SEARCH_DELAY=250;
 const SCHEDULE_EXEC_STATUS={
   running:{label:'进行中',tone:'info',icon:''},
   success:{label:'成功',tone:'success',icon:'check'},
   failed:{label:'失败',tone:'error',icon:'alert'},
   waiting:{label:'待对齐基线',tone:'warn',icon:'clock'}
 };
-// Overridable clock so the 7-day windows are testable.
+// Overridable clock so the time-range filters are testable.
 function scheduleExecNow(){return Date.now()}
 function scheduleExecStatusInfo(status){return SCHEDULE_EXEC_STATUS[status]||{label:status||'未知',tone:'neutral',icon:'circle'}}
 function scheduleExecIcon(name,size=14){return `<svg class="agent-icon harness-icon" data-icon="${name}" width="${size}" height="${size}" aria-hidden="true" focusable="false"></svg>`}
@@ -45,50 +53,51 @@ function scheduleExecTimeLabel(value){
   const p=n=>String(n).padStart(2,'0');
   return `${d.getFullYear()}/${p(d.getMonth()+1)}/${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
 }
-function scheduleExecStartMs(e){return knownTime(e?.startedAt)?.getTime()??NaN}
 function scheduleExecDayStart(ms){const d=new Date(ms);d.setHours(0,0,0,0);return d.getTime()}
-function scheduleExecSummary(list){
-  const done=list.filter(e=>e.status!=='running');
-  const success=list.filter(e=>e.status==='success').length,failed=list.filter(e=>e.status==='failed').length;
-  const timed=done.filter(e=>Number(e.durationMs)>0);
-  return {
-    total:list.length,success,failed,
-    running:list.filter(e=>e.status==='running').length,
-    rate:done.length?Math.round(success/done.length*100):null,
-    avgMs:timed.length?timed.reduce((sum,e)=>sum+Number(e.durationMs),0)/timed.length:0
-  };
+// The server counts windows; this only turns one into the four metrics.
+function scheduleExecWindow(w){
+  const finished=Number(w?.finished)||0,success=Number(w?.success)||0;
+  return {total:Number(w?.total)||0,success,failed:Number(w?.failed)||0,running:Number(w?.running)||0,rate:finished?Math.round(success/finished*100):null,avgMs:Number(w?.avgMs)||0};
 }
-// This week is the last 7×24h; last week the 7×24h before it.
-function scheduleExecWeeks(list,now=scheduleExecNow()){
-  const inRange=(from,to)=>list.filter(e=>{const t=scheduleExecStartMs(e);return t>=from&&t<to});
-  return {current:scheduleExecSummary(inRange(now-7*SCHEDULE_EXEC_DAY,now+60000)),previous:scheduleExecSummary(inRange(now-14*SCHEDULE_EXEC_DAY,now-7*SCHEDULE_EXEC_DAY))};
-}
-function scheduleExecSearchText(e){
-  return [e.jobName,e.jobId,e.traceId,e.error,e.assistantMessage,...(e.runs||[]).flatMap(r=>[r.issueTitle,r.issueId,r.runId])].filter(Boolean).join('\n').toLowerCase();
-}
-function scheduleExecInRange(e,range,now=scheduleExecNow()){
-  if(!range)return true;
-  const t=scheduleExecStartMs(e);if(Number.isNaN(t))return false;
-  if(range==='today')return t>=scheduleExecDayStart(now);
+// "today" starts at local midnight; 7d/30d count back from now.
+function scheduleExecSince(range,now=scheduleExecNow()){
+  if(range==='today')return new Date(scheduleExecDayStart(now)).toISOString();
   const days={'7d':7,'30d':30}[range];
-  return days?t>=now-days*SCHEDULE_EXEC_DAY:true;
+  return days?new Date(now-days*SCHEDULE_EXEC_DAY).toISOString():'';
 }
-function scheduleExecMatches(e,{status=scheduleExecStatusFilter,job=scheduleExecJobFilter,range=scheduleExecRangeFilter,query=scheduleExecQuery}={}){
-  const q=String(query||'').trim().toLowerCase();
-  return (!status||e.status===status)&&(!job||e.jobId===job)&&scheduleExecInRange(e,range)&&(!q||scheduleExecSearchText(e).includes(q));
+function scheduleExecDashboardPath(projectId){
+  const p=new URLSearchParams({projectId});
+  if(scheduleExecJobFilter)p.set('jobId',scheduleExecJobFilter);
+  if(scheduleExecStatusFilter)p.set('status',scheduleExecStatusFilter);
+  const since=scheduleExecSince(scheduleExecRangeFilter);if(since)p.set('since',since);
+  const q=scheduleExecQuery.trim();if(q)p.set('q',q);
+  p.set('offset',String((scheduleExecPage-1)*scheduleExecPageSize));
+  p.set('limit',String(scheduleExecPageSize));
+  return `/api/schedule-job-executions/dashboard?${p}`;
 }
 async function refreshScheduleExecutions(){
+  clearTimeout(scheduleExecSearchTimer);
   const projectId=state.projectFilter||'';
   const request=++scheduleExecRequest;
-  if(scheduleExecProject!==projectId){scheduleExecExpanded.clear();scheduleExecPage=1}
+  if(scheduleExecProject!==projectId){
+    scheduleExecExpanded.clear();scheduleExecPage=1;
+    scheduleExecutions=[];scheduleExecTotal=0;scheduleExecOverview=null;scheduleExecRecords=0;scheduleExecRecentFailed=0;
+  }
   scheduleExecProject=projectId;
-  if(!projectId){scheduleExecutions=[];scheduleExecError='';scheduleExecLoading=false;renderScheduleExecutions();return scheduleExecutions}
+  if(!projectId){scheduleExecError='';scheduleExecLoading=false;renderScheduleExecutions();return scheduleExecutions}
   scheduleExecLoading=true;scheduleExecError='';
   renderScheduleExecutions();
   try{
-    const list=await api(`/api/schedule-job-executions?projectId=${encodeURIComponent(projectId)}&limit=500`,{silent:true});
+    let page=await api(scheduleExecDashboardPath(projectId),{silent:true});
+    // The list shrank under the current page: show its last page instead.
+    const pages=Math.max(1,Math.ceil((Number(page?.total)||0)/scheduleExecPageSize));
+    if(request===scheduleExecRequest&&scheduleExecPage>pages){scheduleExecPage=pages;page=await api(scheduleExecDashboardPath(projectId),{silent:true})}
     if(request!==scheduleExecRequest)return scheduleExecutions;
-    scheduleExecutions=Array.isArray(list)?list:[];
+    scheduleExecutions=Array.isArray(page?.items)?page.items:[];
+    scheduleExecTotal=Number(page?.total)||0;
+    scheduleExecOverview=page?.overview||null;
+    scheduleExecRecords=Number(page?.records)||0;
+    scheduleExecRecentFailed=Number(page?.recentFailed)||0;
   }catch(err){
     if(request===scheduleExecRequest)scheduleExecError=err.message;
   }finally{
@@ -106,8 +115,8 @@ function scheduleExecDeltaHTML(cur,prev,{unit='%',lowerIsBetter=false}={}){
   const up=diff>0,good=up!==lowerIsBetter;
   return `<small class="sched-exec-delta" data-trend="${up?'up':'down'}" data-good="${good}">较上周 <b>${up?'+':'−'}${Math.abs(diff)}${unit}</b>${scheduleExecIcon(up?'arrow-up':'arrow-down',12)}</small>`;
 }
-function scheduleExecMetricsHTML(list){
-  const {current:c,previous:p}=scheduleExecWeeks(list);
+function scheduleExecMetricsHTML(overview){
+  const c=scheduleExecWindow(overview?.current),p=scheduleExecWindow(overview?.previous);
   const cell=(tone,icon,label,value,delta)=>`<div class="sched-exec-metric" data-tone="${tone}"><span class="sched-exec-metric-icon" aria-hidden="true">${scheduleExecIcon(icon,18)}</span><div class="sched-exec-metric-body"><span>${label}</span><b>${value}</b>${delta}</div></div>`;
   return cell('accent','layers','执行次数',c.total,c.total||p.total?scheduleExecDeltaHTML(c.total,p.total):'<small class="sched-exec-delta" data-trend="flat">最近 7 天无执行</small>')
     +cell('success','check','成功率',c.rate===null?'—':`${c.rate}%`,scheduleExecDeltaHTML(c.rate,p.rate,{unit:'pp'}))
@@ -187,18 +196,19 @@ function scheduleExecJobOptions(){
   const jobs=new Map();
   for(const j of scheduleJobsInView(state.data.scheduleJobs,state.projectFilter))jobs.set(j.id,j.name||j.id);
   for(const e of scheduleExecutions)if(!jobs.has(e.jobId))jobs.set(e.jobId,e.jobName||e.jobId);
-  if(scheduleExecJobFilter&&!jobs.has(scheduleExecJobFilter))scheduleExecJobFilter='';
+  // A deleted job keeps its option while filtered, so the select matches the query.
+  if(scheduleExecJobFilter&&!jobs.has(scheduleExecJobFilter))jobs.set(scheduleExecJobFilter,scheduleExecJobFilter);
   return [...jobs].sort((a,b)=>a[1].localeCompare(b[1],'zh'));
 }
 function renderScheduleExecutionCount(){
   const count=$('#aiScheduleExecCount');
   if(!count)return;
-  const mine=scheduleExecProject===(state.projectFilter||'')?scheduleExecutions:[];
-  const failed=scheduleExecWeeks(mine).current.failed;
-  count.textContent=mine.length?String(mine.length):'';
-  count.hidden=!mine.length;
+  const mine=scheduleExecProject===(state.projectFilter||'');
+  const records=mine?scheduleExecRecords:0,failed=mine?scheduleExecRecentFailed:0;
+  count.textContent=records?String(records):'';
+  count.hidden=!records;
   count.classList.toggle('is-danger',failed>0);
-  count.title=mine.length?`共 ${mine.length} 条执行记录${failed?`，最近 7 天失败 ${failed} 次`:''}`:'';
+  count.title=records?`共 ${records} 条执行记录${failed?`，最近 7 天失败 ${failed} 次`:''}`:'';
 }
 function scheduleExecFiltersActive(){return !!(scheduleExecStatusFilter||scheduleExecJobFilter||scheduleExecRangeFilter||scheduleExecQuery.trim())}
 function renderScheduleExecutions(){
@@ -217,35 +227,31 @@ function renderScheduleExecutions(){
   if(search&&search.value!==scheduleExecQuery)search.value=scheduleExecQuery;
   const reset=$('#scheduleExecReset');if(reset)reset.disabled=!scheduleExecFiltersActive();
   // The overview follows the job filter only: it always covers the last 7 days.
-  const scoped=scheduleExecutions.filter(e=>!scheduleExecJobFilter||e.jobId===scheduleExecJobFilter);
   const jobName=scheduleExecJobFilter?options.find(([id])=>id===scheduleExecJobFilter)?.[1]:'';
   const scope=$('#scheduleExecOverviewScope');if(scope)scope.textContent=jobName?`（最近 7 天 · ${jobName}）`:'（最近 7 天）';
-  $('#scheduleExecMetrics').innerHTML=scheduleExecMetricsHTML(scoped);
+  $('#scheduleExecMetrics').innerHTML=scheduleExecMetricsHTML(scheduleExecOverview);
   const list=$('#scheduleExecList');
   const focused=document.activeElement;
   const focusKey=list.contains(focused)?['copyTrace','execToggle','execPage','scheduleMenu','openExecFirstRun'].find(k=>focused.dataset?.[k]!==undefined&&!focused.closest('.schedule-row-menu')):'';
   const focusValue=focusKey?focused.dataset[focusKey]:'';
-  const rows=scheduleExecutions.filter(e=>scheduleExecMatches(e));
-  const pages=Math.max(1,Math.ceil(rows.length/scheduleExecPageSize));
-  scheduleExecPage=Math.min(Math.max(1,scheduleExecPage),pages);
-  const pageRows=rows.slice((scheduleExecPage-1)*scheduleExecPageSize,scheduleExecPage*scheduleExecPageSize);
+  const rows=scheduleExecutions,total=scheduleExecTotal;
   list.setAttribute('aria-busy',String(scheduleExecLoading));
   let empty='';
   if(!state.projectFilter)empty='请先在顶栏选择项目，再查看执行记录。';
   else if(scheduleExecError)empty=`读取执行记录失败：${escapeHTML(scheduleExecError)} <button type="button" class="button ghost small" data-retry-exec>重试</button>`;
-  else if(scheduleExecLoading&&!scheduleExecutions.length)empty='正在读取执行记录…';
-  else if(!scheduleExecutions.length)empty='还没有执行记录。任务每次运行后，这里会记录结果、耗时和 Trace ID。';
+  else if(scheduleExecLoading&&!rows.length)empty='正在读取执行记录…';
+  else if(!scheduleExecRecords&&!rows.length)empty='还没有执行记录。任务每次运行后，这里会记录结果、耗时和 Trace ID。';
   else if(!rows.length)empty='没有符合筛选条件的执行记录。<button type="button" class="button ghost small" data-reset-exec>清除筛选</button>';
-  list.innerHTML=empty?`<div class="sync-empty">${empty}</div>`:scheduleExecTableHTML(pageRows);
-  $('#scheduleExecTotal').textContent=rows.length?`（共 ${rows.length} 条）`:'';
+  list.innerHTML=empty?`<div class="sync-empty">${empty}</div>`:scheduleExecTableHTML(rows);
+  $('#scheduleExecTotal').textContent=!empty&&total?`（共 ${total} 条）`:'';
   const pager=$('#scheduleExecPager');
-  pager.hidden=!rows.length;
-  pager.innerHTML=rows.length?scheduleExecPagerHTML(rows.length):'';
+  pager.hidden=!!empty||!total;
+  pager.innerHTML=pager.hidden?'':scheduleExecPagerHTML(total);
   list.querySelector('[data-retry-exec]')?.addEventListener('click',()=>refreshScheduleExecutions());
   list.querySelector('[data-reset-exec]')?.addEventListener('click',resetScheduleExecFilters);
   bindScheduleExecList(list);
   bindScheduleExecPager(pager);
-  $('#scheduleExecFootnote').textContent=rows.length?'每个任务保留最近 200 次执行；概览与趋势按已保留的记录统计。':'';
+  $('#scheduleExecFootnote').textContent=empty?'':'列表保留每个任务最近 200 次执行；概览按全部执行统计，不受保留条数限制。';
   window.AgentFlowHarnessIcons?.hydrate(panel);
   if(focusKey){
     const host=focusKey==='execPage'?pager:list;
@@ -273,7 +279,7 @@ function bindScheduleExecList(list){
   });
   list.querySelectorAll('[data-open-exec-run]').forEach(b=>b.onclick=()=>openRunFromId(b.dataset.openExecRun,{forceRuns:true}));
   list.querySelectorAll('[data-open-exec-first-run]').forEach(b=>b.onclick=()=>openRunFromId(b.dataset.openExecFirstRun,{forceRuns:true}));
-  list.querySelectorAll('[data-exec-only-job]').forEach(b=>b.onclick=()=>{scheduleExecJobFilter=b.dataset.execOnlyJob;scheduleExecPage=1;renderScheduleExecutions()});
+  list.querySelectorAll('[data-exec-only-job]').forEach(b=>b.onclick=()=>{scheduleExecJobFilter=b.dataset.execOnlyJob;reloadScheduleExecutions()});
   list.querySelectorAll('[data-exec-edit-job]').forEach(b=>b.onclick=()=>{
     const job=(state.data.scheduleJobs||[]).find(j=>j.id===b.dataset.execEditJob);
     if(!job)return;
@@ -283,13 +289,18 @@ function bindScheduleExecList(list){
   if(typeof bindScheduleRowMenus==='function')bindScheduleRowMenus(list);
 }
 function bindScheduleExecPager(pager){
-  pager.querySelectorAll('[data-exec-page]').forEach(b=>b.onclick=()=>{scheduleExecPage=Number(b.dataset.execPage)||1;renderScheduleExecutions()});
+  pager.querySelectorAll('[data-exec-page]').forEach(b=>b.onclick=()=>reloadScheduleExecutions({page:Number(b.dataset.execPage)||1}));
   const size=pager.querySelector('#scheduleExecPageSize');
-  if(size)size.onchange=()=>{scheduleExecPageSize=Number(size.value)||10;scheduleExecPage=1;renderScheduleExecutions();$('#scheduleExecPageSize')?.focus()};
+  if(size)size.onchange=async()=>{scheduleExecPageSize=Number(size.value)||10;await reloadScheduleExecutions();$('#scheduleExecPageSize')?.focus()};
+}
+// Filters, pages and page sizes are applied by the server: each change refetches.
+function reloadScheduleExecutions({page=1}={}){
+  scheduleExecPage=page;
+  return refreshScheduleExecutions().catch(()=>{});
 }
 function resetScheduleExecFilters(){
-  scheduleExecStatusFilter='';scheduleExecJobFilter='';scheduleExecRangeFilter='';scheduleExecQuery='';scheduleExecPage=1;
-  renderScheduleExecutions();
+  scheduleExecStatusFilter='';scheduleExecJobFilter='';scheduleExecRangeFilter='';scheduleExecQuery='';
+  reloadScheduleExecutions();
   $('#scheduleExecSearch')?.focus();
 }
 // The copied notes start with the Trace ID on its own line (greppable as
@@ -354,10 +365,16 @@ function openScheduleExecutions(jobId=''){
 }
 function bindScheduleExecutionUI(){
   const status=$('#scheduleExecStatus'),job=$('#scheduleExecJob'),range=$('#scheduleExecRange'),search=$('#scheduleExecSearch'),reset=$('#scheduleExecReset');
-  const refilter=()=>{scheduleExecPage=1;renderScheduleExecutions()};
+  const refilter=()=>reloadScheduleExecutions();
   if(status)status.onchange=()=>{scheduleExecStatusFilter=status.value;refilter()};
   if(job)job.onchange=()=>{scheduleExecJobFilter=job.value;refilter()};
   if(range)range.onchange=()=>{scheduleExecRangeFilter=range.value;refilter()};
-  if(search)search.oninput=()=>{scheduleExecQuery=search.value;refilter()};
+  // Typing waits for a pause before asking the server.
+  if(search)search.oninput=()=>{
+    scheduleExecQuery=search.value;
+    const reset=$('#scheduleExecReset');if(reset)reset.disabled=!scheduleExecFiltersActive();
+    clearTimeout(scheduleExecSearchTimer);
+    scheduleExecSearchTimer=setTimeout(refilter,SCHEDULE_EXEC_SEARCH_DELAY);
+  };
   if(reset)reset.onclick=resetScheduleExecFilters;
 }

@@ -399,4 +399,20 @@ curl -u "$AGENTFLOW_USER:$AGENTFLOW_PASS" \
   "$AGENTFLOW_URL/api/schedule-job-executions?projectId=platform&status=failed"
 ```
 
+### `GET /api/schedule-job-executions/dashboard`
+
+执行记录看板的一页，筛选、计数、分页都在服务端完成。参数：`projectId`（必填）、`jobId`、`status`、`since`（RFC 3339，只看此后开始的执行）、`q`（不区分大小写，匹配任务名、任务 ID、Trace ID、错误、AI 回复和派发的运行）、`offset`、`limit`（默认 20，最多 100）。返回：
+
+- `items`：当前页的执行记录，按开始时间倒序，字段同上（含 `sessionGone`）；
+- `total`：符合筛选条件的记录数；
+- `overview.current` / `overview.previous`：最近 7×24 小时（含当前小时）与再往前 7×24 小时的 `total`、`finished`、`success`、`failed`、`running`、`avgMs`，只随 `jobId` 变化。已结束的执行来自按小时累计的统计表 `schedule_job_execution_stats`（保留 30 天，删除任务时一并删除），不受每个任务只保留 200 条记录的影响；进行中的执行从记录里数；
+- `records`：该项目保留的记录总数；`recentFailed`：该项目最近 7 天的失败次数（标签角标用）。
+
+缺 `projectId` 或 `since` 格式不对返回 400；`jobId` 属于无权访问的项目返回 403。统计表从部署后开始累计，部署前的执行不计入概览。
+
+```bash
+curl -u "$AGENTFLOW_USER:$AGENTFLOW_PASS" \
+  "$AGENTFLOW_URL/api/schedule-job-executions/dashboard?projectId=platform&status=failed&offset=0&limit=20"
+```
+
 定时派发会冻结集成分支上下文，并避免同一需求重复执行。需求是否澄清过不影响派发。Worker signals、实例 lease 和沙箱回收属于内部机制，不是调度公共 API。

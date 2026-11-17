@@ -5,6 +5,62 @@ import { loadApp, settle } from '../lib/load-app.mjs';
 const FAILED_TRACE = '0123456789abcdef0123456789abcdef';
 const OK_TRACE = 'fedcba9876543210fedcba9876543210';
 
+const HOUR = 3600000;
+
+// Mirrors /api/schedule-job-executions/dashboard: filters, pages and counts
+// the 7×24h windows (by the hour an execution started) on the "server".
+function fakeDashboard(list, now = Date.parse('2026-11-16T12:00:00Z')) {
+  const text = (e) => [e.jobName, e.jobId, e.traceId, e.error, e.assistantMessage, ...(e.runs || []).flatMap((r) => [r.issueTitle, r.issueId, r.runId])].filter(Boolean).join('\n').toLowerCase();
+  const currentFrom = Math.floor(now / HOUR) * HOUR - 167 * HOUR;
+  const previousFrom = currentFrom - 168 * HOUR;
+  const windowOf = (items, from, to) => {
+    const inside = items.filter((e) => { const t = Date.parse(e.startedAt); return t >= from && t < to; });
+    const finished = inside.filter((e) => e.status !== 'running');
+    const timed = finished.filter((e) => Number(e.durationMs) > 0);
+    return {
+      total: inside.length, finished: finished.length,
+      success: inside.filter((e) => e.status === 'success').length,
+      failed: inside.filter((e) => e.status === 'failed').length,
+      running: inside.length - finished.length,
+      avgMs: timed.length ? Math.floor(timed.reduce((sum, e) => sum + Number(e.durationMs), 0) / timed.length) : 0,
+    };
+  };
+  return (call) => {
+    const p = call.url.searchParams;
+    const project = list.filter((e) => e.projectId === p.get('projectId'));
+    const scoped = project.filter((e) => !p.get('jobId') || e.jobId === p.get('jobId'));
+    const since = p.get('since') ? Date.parse(p.get('since')) : 0;
+    const q = (p.get('q') || '').trim().toLowerCase();
+    const matches = scoped
+      .filter((e) => (!p.get('status') || e.status === p.get('status')) && (!since || Date.parse(e.startedAt) >= since) && (!q || text(e).includes(q)))
+      .sort((a, b) => Date.parse(b.startedAt) - Date.parse(a.startedAt));
+    const offset = Number(p.get('offset')) || 0, limit = Number(p.get('limit')) || 20;
+    return {
+      items: matches.slice(offset, offset + limit),
+      total: matches.length,
+      overview: { current: windowOf(scoped, currentFrom, Infinity), previous: windowOf(scoped, previousFrom, currentFrom), since: new Date(currentFrom).toISOString() },
+      records: project.length,
+      recentFailed: windowOf(project, currentFrom, Infinity).failed,
+    };
+  };
+}
+const DASHBOARD = /^\/api\/schedule-job-executions\/dashboard\?/;
+const dashboardCalls = (app) => app.router.calls.filter((c) => c.path === '/api/schedule-job-executions/dashboard');
+// Search waits for a pause in typing before it asks the server.
+async function typeSearch(app, value) {
+  const search = app.document.querySelector('#scheduleExecSearch');
+  search.value = value;
+  search.dispatchEvent(new app.window.Event('input'));
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  await settle();
+}
+async function change(app, selector, value) {
+  const el = app.document.querySelector(selector);
+  el.value = value;
+  el.dispatchEvent(new app.window.Event('change'));
+  await settle();
+}
+
 function executions() {
   return [
     { id: `sjx-${FAILED_TRACE}`, jobId: 'job-ai', jobName: 'Daily summary', jobKind: 'assistant', projectId: 'project-1', traceId: FAILED_TRACE, triggerOrigin: 'timer', status: 'failed', error: 'CodeBuddy key expired', startedAt: '2026-11-16T08:00:00Z', finishedAt: '2026-11-16T08:00:05Z', durationMs: 5200 },
@@ -15,7 +71,7 @@ function executions() {
 test('execution dashboard lists history with metrics, filters and copyable traces', async (t) => {
   const app = await loadApp();
   t.after(app.close);
-  app.router.get(/^\/api\/schedule-job-executions\?/, () => executions());
+  app.router.get(DASHBOARD, fakeDashboard(executions()));
   app.router.get('/api/schedule-jobs', () => app.evaluate('state.data.scheduleJobs'));
   app.evaluate(`
     state.projectFilter='project-1';
@@ -49,8 +105,9 @@ test('execution dashboard lists history with metrics, filters and copyable trace
   assert.equal(panel.hidden, false);
   assert.equal(app.document.querySelector('#aiScheduleProjectPanel').hidden, true);
   assert.equal(app.document.querySelector('#aiScheduleExecTab').getAttribute('aria-selected'), 'true');
-  const request = app.router.calls.filter((c) => c.path === '/api/schedule-job-executions').at(-1);
+  const request = dashboardCalls(app).at(-1);
   assert.match(request.search, /projectId=project-1/);
+  assert.match(request.search, /jobId=job-ai/, 'the job filter is applied by the server');
 
   // Opened from the job row: filtered to that job.
   let rows = panel.querySelectorAll('.sched-exec-row');
@@ -59,9 +116,7 @@ test('execution dashboard lists history with metrics, filters and copyable trace
   assert.equal(app.document.querySelector('#aiScheduleExecCount').textContent, '2');
   assert.match(app.document.querySelector('#scheduleExecOverviewScope').textContent, /最近 7 天 · Daily summary/);
 
-  const jobFilter = app.document.querySelector('#scheduleExecJob');
-  jobFilter.value = '';
-  jobFilter.dispatchEvent(new app.window.Event('change'));
+  await change(app, '#scheduleExecJob', '');
   rows = panel.querySelectorAll('.sched-exec-row');
   assert.equal(rows.length, 2);
   const metrics = app.document.querySelector('#scheduleExecMetrics').textContent;
@@ -95,9 +150,8 @@ test('execution dashboard lists history with metrics, filters and copyable trace
   assert.match(fromExec, /派发运行: run-77（登录页改版）/);
   assert.doesNotMatch(fromExec, /错误:/);
 
-  const statusFilter = app.document.querySelector('#scheduleExecStatus');
-  statusFilter.value = 'failed';
-  statusFilter.dispatchEvent(new app.window.Event('change'));
+  await change(app, '#scheduleExecStatus', 'failed');
+  assert.match(dashboardCalls(app).at(-1).search, /status=failed/);
   rows = panel.querySelectorAll('.sched-exec-row');
   assert.equal(rows.length, 1);
   assert.equal(rows[0].dataset.status, 'failed');
@@ -106,10 +160,10 @@ test('execution dashboard lists history with metrics, filters and copyable trace
 test('an AI execution links to the conversation it ran in', async (t) => {
   const app = await loadApp();
   t.after(app.close);
-  app.router.get(/^\/api\/schedule-job-executions\?/, () => [
+  app.router.get(DASHBOARD, fakeDashboard([
     { id: 'sjx-ok', jobId: 'job-ai', jobName: 'Daily summary', jobKind: 'assistant', projectId: 'project-1', traceId: OK_TRACE, status: 'success', assistantMessage: '巡检完成', sessionId: 'chat-run-1', startedAt: '2026-11-16T09:00:00Z', durationMs: 3000 },
     executions()[0],
-  ]);
+  ]));
   app.evaluate(`state.projectFilter='project-1';state.data.scheduleJobs=[];renderScheduleJobs();`);
   await app.evaluate(`selectAIScheduleTab('executions')`);
   await settle();
@@ -136,25 +190,26 @@ test('an AI execution links to the conversation it ran in', async (t) => {
 test('an interrupted AI execution that opened a conversation still links to it', async (t) => {
   const app = await loadApp();
   t.after(app.close);
-  app.router.get(/^\/api\/schedule-job-executions\?/, () => [
+  app.router.get(DASHBOARD, fakeDashboard([
     { id: 'sjx-cut', jobId: 'job-ai', jobName: 'Daily summary', jobKind: 'assistant', projectId: 'project-1', traceId: FAILED_TRACE, status: 'failed', error: '上次运行中断（服务重启）', sessionId: 'chat-cut', startedAt: '2026-11-16T09:00:00Z', durationMs: 247000 },
     { id: 'sjx-run', jobId: 'job-ai', jobName: 'Daily summary', jobKind: 'assistant', projectId: 'project-1', traceId: OK_TRACE, status: 'running', startedAt: '2026-11-16T10:00:00Z' },
-  ]);
+  ]));
   app.evaluate(`state.projectFilter='project-1';state.data.scheduleJobs=[];renderScheduleJobs();`);
   await app.evaluate(`selectAIScheduleTab('executions')`);
   await settle();
   const rows = app.document.querySelectorAll('#scheduleExecList .sched-exec-row');
-  assert.equal(new URL(rows[0].querySelector('[data-open-exec-chat]').href).searchParams.get('chatSession'), 'chat-cut');
-  assert.match(rows[1].querySelector('.is-unavailable').textContent, /准备中/);
+  // Newest first: the running execution, then the interrupted one.
+  assert.match(rows[0].querySelector('.is-unavailable').textContent, /准备中/);
+  assert.equal(new URL(rows[1].querySelector('[data-open-exec-chat]').href).searchParams.get('chatSession'), 'chat-cut');
 });
 
 test('an AI execution whose conversation was cleaned up says so instead of linking to it', async (t) => {
   const app = await loadApp();
   t.after(app.close);
-  app.router.get(/^\/api\/schedule-job-executions\?/, () => [
+  app.router.get(DASHBOARD, fakeDashboard([
     { id: 'sjx-new', jobId: 'job-ai', jobName: 'Daily summary', jobKind: 'assistant', projectId: 'project-1', traceId: OK_TRACE, status: 'success', assistantMessage: '新的', sessionId: 'chat-new', startedAt: '2026-11-16T10:00:00Z', durationMs: 3000 },
     { id: 'sjx-old', jobId: 'job-ai', jobName: 'Daily summary', jobKind: 'assistant', projectId: 'project-1', traceId: FAILED_TRACE, status: 'success', assistantMessage: '旧的', sessionId: 'chat-old', sessionGone: true, startedAt: '2026-11-10T10:00:00Z', durationMs: 3000 },
-  ]);
+  ]));
   app.evaluate(`state.projectFilter='project-1';state.data.scheduleJobs=[];renderScheduleJobs();`);
   await app.evaluate(`selectAIScheduleTab('executions')`);
   await settle();
@@ -167,18 +222,17 @@ test('an AI execution whose conversation was cleaned up says so instead of linki
   assert.equal(rows[1].querySelector('.sched-exec-action-slots').children.length, 2, 'the action column stays aligned');
 });
 
-test('the overview compares the last 7 days with the week before and the table filters and pages', async (t) => {
+test('the overview comes from the server and the table filters and pages there', async (t) => {
   const app = await loadApp();
   t.after(app.close);
   const now = Date.parse('2026-11-16T12:00:00Z');
-  const hour = 3600000;
   const list = [];
   const add = (i, jobId, status, ago, durationMs) => list.push({ id: `sjx-${i}`, jobId, jobName: jobId === 'job-a' ? '巡检' : '周报', jobKind: 'assistant', projectId: 'project-1', traceId: `trace-${String(i).padStart(4, '0')}`, triggerOrigin: 'timer', status, error: status === 'failed' ? 'key missing' : '', assistantMessage: status === 'success' ? `完成 ${i}` : '', startedAt: new Date(now - ago).toISOString(), durationMs });
   // This week: 10 ok + 2 failed, 1 minute each; last week: 4 ok + 4 failed, 2 minutes each.
-  for (let i = 0; i < 12; i++) add(i, 'job-a', i < 10 ? 'success' : 'failed', (2 + i * 9) * hour, 60000);
-  for (let i = 12; i < 20; i++) add(i, 'job-a', i < 16 ? 'success' : 'failed', (8 * 24 + (i - 12) * 6) * hour, 120000);
-  for (let i = 20; i < 25; i++) add(i, 'job-b', 'success', (20 * 24 + i) * hour, 30000);
-  app.router.get(/^\/api\/schedule-job-executions\?/, () => list);
+  for (let i = 0; i < 12; i++) add(i, 'job-a', i < 10 ? 'success' : 'failed', (2 + i * 9) * HOUR, 60000);
+  for (let i = 12; i < 20; i++) add(i, 'job-a', i < 16 ? 'success' : 'failed', (8 * 24 + (i - 12) * 6) * HOUR, 120000);
+  for (let i = 20; i < 25; i++) add(i, 'job-b', 'success', (20 * 24 + i) * HOUR, 30000);
+  app.router.get(DASHBOARD, fakeDashboard(list, now));
   app.evaluate(`
     scheduleExecNow=()=>${now};
     state.projectFilter='project-1';
@@ -188,8 +242,10 @@ test('the overview compares the last 7 days with the week before and the table f
   await app.evaluate(`selectAIScheduleTab('executions')`);
   await settle();
   const doc = app.document;
-  const request = app.router.calls.filter((c) => c.path === '/api/schedule-job-executions').at(-1);
-  assert.match(request.search, /limit=500/);
+  const last = () => new URL(dashboardCalls(app).at(-1).url).searchParams;
+  assert.equal(last().get('offset'), '0');
+  assert.equal(last().get('limit'), '10', 'only one page is fetched');
+  assert.equal(app.router.calls.some((c) => c.path === '/api/schedule-job-executions'), false, 'no bulk download of the history');
 
   const metric = (tone) => doc.querySelector(`#scheduleExecMetrics [data-tone="${tone}"]`);
   assert.match(metric('accent').textContent, /执行次数\s*12\s*较上周 \+50%/);
@@ -198,6 +254,8 @@ test('the overview compares the last 7 days with the week before and the table f
   assert.equal(metric('error').querySelector('.sched-exec-delta').dataset.good, 'true', 'fewer failures read as good');
   assert.match(metric('info').textContent, /平均耗时\s*1 分 0 秒\s*较上周 −50%/);
   assert.equal(doc.querySelector('#scheduleExecTrend'), null, 'the overview has no trend chart');
+  assert.match(doc.querySelector('#scheduleExecFootnote').textContent, /不受保留条数限制/);
+  assert.equal(doc.querySelector('#aiScheduleExecCount').textContent, '25');
 
   // 25 records, 10 per page.
   const rows = () => doc.querySelectorAll('#scheduleExecList .sched-exec-row');
@@ -206,36 +264,40 @@ test('the overview compares the last 7 days with the week before and the table f
   const pager = doc.querySelector('#scheduleExecPager');
   assert.match(pager.textContent, /共 3 页/);
   pager.querySelector('[data-exec-page="3"]').click();
+  await settle();
+  assert.equal(last().get('offset'), '20');
   assert.equal(rows().length, 5);
   assert.equal(doc.querySelector('#scheduleExecPager .is-current').textContent, '3');
   assert.equal(doc.querySelector('#scheduleExecPager [aria-label="下一页"]').disabled, true);
-  const size = doc.querySelector('#scheduleExecPageSize');
-  size.value = '20';
-  size.dispatchEvent(new app.window.Event('change'));
+  await change(app, '#scheduleExecPageSize', '20');
+  assert.equal(last().get('limit'), '20');
+  assert.equal(last().get('offset'), '0');
   assert.equal(rows().length, 20);
   assert.match(doc.querySelector('#scheduleExecPager').textContent, /共 2 页/);
 
   // Search covers names, trace IDs and messages; it resets to the first page.
-  const search = doc.querySelector('#scheduleExecSearch');
   const reset = doc.querySelector('#scheduleExecReset');
   assert.equal(reset.disabled, true);
-  search.value = 'trace-0003';
-  search.dispatchEvent(new app.window.Event('input'));
+  const before = dashboardCalls(app).length;
+  await typeSearch(app, 'trace-0003');
+  assert.equal(dashboardCalls(app).length, before + 1, 'typing asks the server once');
+  assert.equal(last().get('q'), 'trace-0003');
   assert.equal(rows().length, 1);
   assert.equal(rows()[0].dataset.execId, 'sjx-3');
   assert.equal(reset.disabled, false);
-  search.value = '周报';
-  search.dispatchEvent(new app.window.Event('input'));
+  await typeSearch(app, '周报');
   assert.equal(rows().length, 5);
-  search.value = '';
-  search.dispatchEvent(new app.window.Event('input'));
+  await typeSearch(app, '');
+  assert.equal(last().has('q'), false);
 
-  const range = doc.querySelector('#scheduleExecRange');
-  range.value = '7d';
-  range.dispatchEvent(new app.window.Event('change'));
+  await change(app, '#scheduleExecRange', '7d');
+  assert.equal(last().get('since'), new Date(now - 7 * 24 * HOUR).toISOString());
   assert.equal(rows().length, 12);
+  assert.match(metric('accent').textContent, /执行次数\s*12/, 'the overview ignores the time range');
   reset.click();
-  assert.equal(range.value, '');
+  await settle();
+  assert.equal(doc.querySelector('#scheduleExecRange').value, '');
+  assert.equal(last().has('since'), false);
   assert.equal(rows().length, 20);
   assert.equal(reset.disabled, true);
 
@@ -245,6 +307,8 @@ test('the overview compares the last 7 days with the week before and the table f
   const items = [...first.querySelectorAll('.schedule-row-menu [role="menuitem"]')].map(b => b.textContent.trim());
   assert.deepEqual(items, ['复制排障信息', '只看该任务', '编辑任务']);
   first.querySelector('[data-exec-only-job]').click();
+  await settle();
+  assert.equal(last().get('jobId'), 'job-a');
   assert.equal(doc.querySelector('#scheduleExecJob').value, 'job-a');
   assert.match(doc.querySelector('#scheduleExecTotal').textContent, /共 20 条/);
   assert.equal(rows()[0].querySelector('[data-exec-only-job]'), null, 'already filtered to this job');
@@ -255,11 +319,29 @@ test('the overview compares the last 7 days with the week before and the table f
   assert.match(rows()[0].nextElementSibling.textContent, /AI 回复完成 0/);
 });
 
+test('a page past the end of a shrunken list falls back to the last page', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  const list = Array.from({ length: 25 }, (_, i) => ({ id: `sjx-${i}`, jobId: 'job-a', jobName: '巡检', jobKind: 'assistant', projectId: 'project-1', traceId: `t-${i}`, status: 'success', startedAt: new Date(Date.parse('2026-11-16T10:00:00Z') - i * HOUR).toISOString(), durationMs: 1000 }));
+  app.router.get(DASHBOARD, fakeDashboard(list));
+  app.evaluate(`state.projectFilter='project-1';state.data.scheduleJobs=[];renderScheduleJobs();`);
+  await app.evaluate(`selectAIScheduleTab('executions')`);
+  await settle();
+  app.document.querySelector('#scheduleExecPager [data-exec-page="3"]').click();
+  await settle();
+  list.splice(12);
+  await app.evaluate('refreshScheduleExecutions()');
+  await settle();
+  const rows = app.document.querySelectorAll('#scheduleExecList .sched-exec-row');
+  assert.equal(rows.length, 2);
+  assert.equal(app.document.querySelector('#scheduleExecPager .is-current').textContent, '2');
+});
+
 test('execution dashboard reports empty, error and duration states', async (t) => {
   const app = await loadApp();
   t.after(app.close);
   let fail = true;
-  app.router.get(/^\/api\/schedule-job-executions\?/, () => (fail ? { status: 500, body: { error: 'db down' } } : []));
+  app.router.get(DASHBOARD, (call) => (fail ? { status: 500, body: { error: 'db down' } } : fakeDashboard([])(call)));
   app.evaluate(`state.projectFilter='project-1';state.data.scheduleJobs=[];renderScheduleJobs();`);
   await app.evaluate(`selectAIScheduleTab('executions')`);
   await settle();

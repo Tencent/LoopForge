@@ -90,6 +90,9 @@ type assistantHandlers struct {
 	review        func(context.Context, assistantApprovalInput, domain.User, string) (assistantApprovalReview, error)
 	reviewCatalog func(string) assistantModelCatalog
 	titleSummary  func(context.Context, domain.User, string) (string, error)
+	// attachmentSweepWake nudges the background sweep after a deletion
+	// queues files; nil when no sweeper runs (tests sweep directly).
+	attachmentSweepWake chan struct{}
 }
 
 func (h *assistantHandlers) chat(c *gin.Context) {

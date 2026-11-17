@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"agentflow/internal/domain"
 	"agentflow/internal/repo"
@@ -42,6 +43,89 @@ func (h *scheduleHandlers) scheduleJobExecutions(c *gin.Context) {
 		Limit:   limit,
 	})
 	c.JSON(http.StatusOK, h.scheduleExecutionViews(items))
+}
+
+// scheduleExecutionDashboard is one page of the execution dashboard. Total
+// counts the executions matching the filters; Overview covers the job filter
+// only; Records and RecentFailed cover the whole project (the tab badge).
+type scheduleExecutionDashboard struct {
+	Items        []scheduleJobExecutionView `json:"items"`
+	Total        int                        `json:"total"`
+	Overview     scheduleExecutionOverview  `json:"overview"`
+	Records      int                        `json:"records"`
+	RecentFailed int                        `json:"recentFailed"`
+}
+
+type scheduleExecutionOverview struct {
+	Current  domain.ScheduleExecutionWindow `json:"current"`
+	Previous domain.ScheduleExecutionWindow `json:"previous"`
+	// Since starts the current window; windows are counted by the hour an
+	// execution started.
+	Since time.Time `json:"since"`
+}
+
+// scheduleJobExecutionDashboard filters, counts and pages the executions of a
+// project on the server, so neither the overview nor the filters depend on
+// how many executions a page loads. Query: projectId (required), jobId,
+// status, since (RFC 3339), q, offset, limit (default 20, max 100).
+// 路由: g.GET("/api/schedule-job-executions/dashboard", h.scheduleJobExecutionDashboard)
+func (h *scheduleHandlers) scheduleJobExecutionDashboard(c *gin.Context) {
+	projectID := strings.TrimSpace(c.Query("projectId"))
+	if projectID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请指定项目"})
+		return
+	}
+	var since time.Time
+	if raw := strings.TrimSpace(c.Query("since")); raw != "" {
+		parsed, err := time.Parse(time.RFC3339Nano, raw)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "since 需要 RFC 3339 时间"})
+			return
+		}
+		since = parsed
+	}
+	jobID := strings.TrimSpace(c.Query("jobId"))
+	project := []string{}
+	scoped := []string{}
+	for _, job := range h.visibleScheduleJobs(c.Request, h.repo.ScheduleJobs()) {
+		if job.ProjectID != projectID {
+			continue
+		}
+		project = append(project, job.ID)
+		if jobID == "" || job.ID == jobID {
+			scoped = append(scoped, job.ID)
+		}
+	}
+	if jobID != "" && len(scoped) == 0 {
+		if job, exists := h.repo.ScheduleJob(jobID); exists && !h.scheduleJobAllowed(c.Request, job, false) {
+			c.JSON(http.StatusForbidden, gin.H{"error": "没有该项目的定时任务访问权限"})
+			return
+		}
+	}
+	offset, _ := strconv.Atoi(c.Query("offset"))
+	limit, _ := strconv.Atoi(c.Query("limit"))
+	items, total := h.repo.ScheduleJobExecutionPage(repo.ScheduleJobExecutionPageQuery{
+		JobIDs: scoped,
+		Status: strings.TrimSpace(c.Query("status")),
+		Since:  since,
+		Search: c.Query("q"),
+		Offset: offset,
+		Limit:  limit,
+	})
+	now := time.Now().UTC()
+	current, previous := h.repo.ScheduleJobExecutionOverview(scoped, now)
+	recentFailed := current.Failed
+	if jobID != "" {
+		whole, _ := h.repo.ScheduleJobExecutionOverview(project, now)
+		recentFailed = whole.Failed
+	}
+	c.JSON(http.StatusOK, scheduleExecutionDashboard{
+		Items:        h.scheduleExecutionViews(items),
+		Total:        total,
+		Overview:     scheduleExecutionOverview{Current: current, Previous: previous, Since: now.Truncate(time.Hour).Add(-167 * time.Hour)},
+		Records:      h.repo.CountScheduleJobExecutions(project),
+		RecentFailed: recentFailed,
+	})
 }
 
 // scheduleJobExecutionView is an execution as listed. SessionGone is computed

@@ -4,16 +4,23 @@ import (
 	"strings"
 )
 
-// AssistantAttachmentsInUse reports which attachment ids a conversation other
-// than exceptSessionID still lists, in its transcript or in a pending turn.
-// Forks inherit the attachment ids of the messages before the fork point.
-func (r *AssistantRepo) AssistantAttachmentsInUse(ids []string, exceptSessionID string) map[string]bool {
-	exceptSessionID = assistantRecordID(exceptSessionID)
-	inUse := payloadMentions(r.DB, "assistant_sessions", ids, "id = ?", exceptSessionID)
-	for id := range payloadMentions(r.DB, "assistant_generations", ids, "session_id = ?", exceptSessionID) {
+// AssistantAttachmentsInUse reports which attachment ids a conversation still
+// lists, in its transcript or in a pending turn. Forks inherit the attachment
+// ids of the messages before the fork point. One call scans each table once
+// per 64 ids, so callers batch the ids of many deleted conversations.
+func (r *AssistantRepo) AssistantAttachmentsInUse(ids []string) (map[string]bool, error) {
+	inUse, err := payloadMentions(r.DB, "assistant_sessions", ids)
+	if err != nil {
+		return nil, err
+	}
+	pending, err := payloadMentions(r.DB, "assistant_generations", ids)
+	if err != nil {
+		return nil, err
+	}
+	for id := range pending {
 		inUse[id] = true
 	}
-	return inUse
+	return inUse, nil
 }
 
 // ExistingAssistantSessionIDs reports which of ids still name a conversation.

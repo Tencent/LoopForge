@@ -116,6 +116,39 @@ func TestScheduleJobExecutionsFollowJobAccess(t *testing.T) {
 	if code := scheduleAuthzStatus(t, server, outsider, http.MethodGet, "/api/schedule-job-executions?jobId=exec-job", nil); code != http.StatusForbidden {
 		t.Fatalf("outsider job filter status = %d", code)
 	}
+
+	// The dashboard filters, counts and pages on the server.
+	dash := requestJSONAuthed[scheduleExecutionDashboard](t, server, viewer, http.MethodGet, "/api/schedule-job-executions/dashboard?projectId=exec-proj&limit=1", nil, http.StatusOK)
+	if dash.Total != 2 || len(dash.Items) != 1 || dash.Items[0].TraceID != "t-bad" || dash.Records != 2 || dash.RecentFailed != 1 {
+		t.Fatalf("viewer dashboard = %+v", dash)
+	}
+	if c := dash.Overview.Current; c.Total != 2 || c.Success != 1 || c.Failed != 1 || dash.Overview.Since.IsZero() {
+		t.Fatalf("viewer overview = %+v", dash.Overview)
+	}
+	next := requestJSONAuthed[scheduleExecutionDashboard](t, server, viewer, http.MethodGet, "/api/schedule-job-executions/dashboard?projectId=exec-proj&limit=1&offset=1", nil, http.StatusOK)
+	if len(next.Items) != 1 || next.Items[0].TraceID != "t-ok" {
+		t.Fatalf("second page = %+v", next.Items)
+	}
+	searched := requestJSONAuthed[scheduleExecutionDashboard](t, server, owner, http.MethodGet, "/api/schedule-job-executions/dashboard?projectId=exec-proj&jobId=exec-job&q=BOOM", nil, http.StatusOK)
+	if searched.Total != 1 || searched.Items[0].TraceID != "t-bad" || searched.Records != 2 {
+		t.Fatalf("searched dashboard = %+v", searched)
+	}
+	later := requestJSONAuthed[scheduleExecutionDashboard](t, server, owner, http.MethodGet, "/api/schedule-job-executions/dashboard?projectId=exec-proj&since="+started.Add(time.Hour).Format(time.RFC3339), nil, http.StatusOK)
+	if later.Total != 0 || len(later.Items) != 0 || later.Overview.Current.Total != 2 {
+		t.Fatalf("since filters the list, not the overview: %+v", later)
+	}
+	if hidden := requestJSONAuthed[scheduleExecutionDashboard](t, server, outsider, http.MethodGet, "/api/schedule-job-executions/dashboard?projectId=exec-proj", nil, http.StatusOK); hidden.Total != 0 || hidden.Records != 0 || hidden.Overview.Current.Total != 0 {
+		t.Fatalf("outsider read the dashboard: %+v", hidden)
+	}
+	for path, want := range map[string]int{
+		"/api/schedule-job-executions/dashboard?projectId=exec-proj&jobId=exec-job":  http.StatusForbidden,
+		"/api/schedule-job-executions/dashboard":                                     http.StatusBadRequest,
+		"/api/schedule-job-executions/dashboard?projectId=exec-proj&since=yesterday": http.StatusBadRequest,
+	} {
+		if code := scheduleAuthzStatus(t, server, outsider, http.MethodGet, path, nil); code != want {
+			t.Errorf("%s = %d, want %d", path, code, want)
+		}
+	}
 }
 
 // Executions outlive the conversations a job keeps; the list marks an

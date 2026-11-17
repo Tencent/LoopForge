@@ -252,6 +252,22 @@ type scheduleJobExecutionRow struct {
 
 func (scheduleJobExecutionRow) TableName() string { return "schedule_job_executions" }
 
+// scheduleJobExecutionStatRow counts the finished executions of one job that
+// started in one UTC hour. Rows outlive the 200 executions a job keeps, so the
+// dashboard overview stays exact for frequent jobs.
+type scheduleJobExecutionStatRow struct {
+	JobID      string    `gorm:"column:job_id;primaryKey;size:64"`
+	BucketHour time.Time `gorm:"column:bucket_hour;primaryKey"`
+	ProjectID  string    `gorm:"column:project_id;size:64;index:idx_schedule_job_execution_stats_project"`
+	Finished   int       `gorm:"column:finished;not null;default:0"`
+	Success    int       `gorm:"column:success;not null;default:0"`
+	Failed     int       `gorm:"column:failed;not null;default:0"`
+	Timed      int       `gorm:"column:timed;not null;default:0"`
+	DurationMs int64     `gorm:"column:duration_ms;not null;default:0"`
+}
+
+func (scheduleJobExecutionStatRow) TableName() string { return "schedule_job_execution_stats" }
+
 type sharedScheduleVersionRow struct {
 	ID           string     `gorm:"column:id;primaryKey;size:64"`
 	SharedTaskID string     `gorm:"column:shared_task_id;size:64;uniqueIndex:idx_shared_schedule_version"`
@@ -719,7 +735,7 @@ func allModels() []any {
 		projectRow{}, projectMemberRow{}, repositoryRow{}, businessDomainRow{}, businessDomainAssignmentRow{},
 		agentRow{}, ruleRow{}, skillRow{}, skillFileRow{}, mcpServerRow{}, mcpFileRow{}, executorRow{},
 		dockerfileRow{}, environmentRow{}, sandboxRow{},
-		workflowRow{}, syncConfigRow{}, scheduleJobRow{}, scheduleJobExecutionRow{}, sharedScheduleVersionRow{},
+		workflowRow{}, syncConfigRow{}, scheduleJobRow{}, scheduleJobExecutionRow{}, scheduleJobExecutionStatRow{}, sharedScheduleVersionRow{},
 		issueRow{}, issueCommentRow{}, taskRow{},
 		runAdmissionLockRow{}, runRow{}, runNodeRow{}, runEventRow{}, runTelemetryRow{}, runLogRow{}, runArtifactRow{}, runEvalRow{},
 		runPreviewRow{}, previewSessionRow{}, previewBlobRow{}, WorkspaceCheckpoint{}, workspaceCheckpointChunk{},

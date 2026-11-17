@@ -19,47 +19,9 @@ func (h *assistantHandlers) deleteConversation(userID int64, id string) error {
 	}
 	if found {
 		h.settleDeletedConversation(conv)
-		h.removeConversationAttachments(conv)
+		h.queueConversationAttachments(conv)
 	}
 	return nil
-}
-
-// removeConversationAttachments deletes the screenshots, uploads and reply
-// files a deleted conversation listed. They live in the attachment directory
-// of whoever posted them (the message author, else the conversation owner),
-// not in the conversation's own directory. A file another conversation (a
-// fork keeps the ids before its fork point), a pending turn or a room message
-// still lists is kept.
-func (h *assistantHandlers) removeConversationAttachments(conv domain.AssistantSession) {
-	owners := map[string]int64{}
-	var ids []string
-	for _, m := range conv.Messages {
-		owner := m.AuthorID
-		if owner == 0 {
-			owner = conv.UserID
-		}
-		for _, a := range m.Attachments {
-			if owner <= 0 || !validWorkbenchAttachmentID(a.ID) {
-				continue
-			}
-			if _, seen := owners[a.ID]; !seen {
-				ids = append(ids, a.ID)
-			}
-			owners[a.ID] = owner
-		}
-	}
-	if len(ids) == 0 {
-		return
-	}
-	inUse := h.repo.AssistantAttachmentsInUse(ids, conv.ID)
-	for id := range h.repo.RoomAttachmentsInUse(ids) {
-		inUse[id] = true
-	}
-	for _, id := range ids {
-		if !inUse[id] {
-			removeWorkbenchAttachment(owners[id], id)
-		}
-	}
 }
 
 // settleDeletedConversation handles every requirement a deleted conversation

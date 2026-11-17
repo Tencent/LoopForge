@@ -117,6 +117,7 @@ func NewWithNotificationsAndBackground(ctx context.Context, s *repo.Store, e *en
 	bg := &Background{recoveryGate: opts.RecoveryGate}
 	router := newWithNotifications(s, e, syncSvc, basicUser, basicPass, notifications, bg, func(h *assistantHandlers, runs *runsHandlers) {
 		h.startSessionJanitor(ctx)
+		h.startAttachmentSweeper(ctx)
 	})
 	return router, bg
 }
@@ -287,7 +288,7 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	})
 
 	api.botIdentities = &botIdentityHandlers{deps: d, publicURL: api.notifications.service.PublicURL}
-	asst := &assistantHandlers{deps: d, runnerControls: runnerControls, sourceRoot: assistantSourceRoot(), notifications: api.notifications, identities: api.botIdentities}
+	asst := &assistantHandlers{deps: d, runnerControls: runnerControls, sourceRoot: assistantSourceRoot(), notifications: api.notifications, identities: api.botIdentities, attachmentSweepWake: make(chan struct{}, 1)}
 	api.runs.assistant = asst
 	api.schedule.assistant = asst
 	api.notifications.service.GenerateReport = asst.generateSOPReport
@@ -580,6 +581,7 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.POST("/api/schedule-jobs/:id/run", api.schedule.scheduleJobRun)
 	g.POST("/api/schedule-jobs/:id/enabled", api.schedule.scheduleJobEnabled)
 	g.GET("/api/schedule-job-executions", api.schedule.scheduleJobExecutions)
+	g.GET("/api/schedule-job-executions/dashboard", api.schedule.scheduleJobExecutionDashboard)
 
 	// --- runner management plane ---
 	g.GET("/api/runners", api.runners.runners)

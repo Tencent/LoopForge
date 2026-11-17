@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -43,6 +44,42 @@ type ScheduleJobExecutionRun struct {
 // ScheduleJobExecutionID derives the execution primary key from its trace.
 func ScheduleJobExecutionID(traceID string) string {
 	return "sjx-" + traceID
+}
+
+// Finished reports whether the execution has an outcome.
+func (e ScheduleJobExecution) Finished() bool {
+	return e.Status != "" && e.Status != "running"
+}
+
+// MatchesSearch reports whether a lower-case query occurs in what the
+// execution dashboard lets users search: names, IDs, the error, the AI reply
+// and the runs it started.
+func (e ScheduleJobExecution) MatchesSearch(query string) bool {
+	if query == "" {
+		return true
+	}
+	fields := []string{e.JobName, e.JobID, e.TraceID, e.Error, e.AssistantMessage}
+	for _, r := range e.Runs {
+		fields = append(fields, r.IssueTitle, r.IssueID, r.RunID)
+	}
+	for _, f := range fields {
+		if strings.Contains(strings.ToLower(f), query) {
+			return true
+		}
+	}
+	return false
+}
+
+// ScheduleExecutionWindow summarizes the executions started in one window.
+// Total is Finished plus Running; AvgMs averages finished executions with a
+// duration.
+type ScheduleExecutionWindow struct {
+	Total    int   `json:"total"`
+	Finished int   `json:"finished"`
+	Success  int   `json:"success"`
+	Failed   int   `json:"failed"`
+	Running  int   `json:"running"`
+	AvgMs    int64 `json:"avgMs"`
 }
 
 // ScheduleSessionFixed is ScheduleJob.SessionMode for an AI job that keeps
