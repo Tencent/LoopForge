@@ -188,12 +188,9 @@ func (h *assistantHandlers) scheduledMessageReferences(projectID string, refs []
 	return out, nil
 }
 
-// scheduleJobAssistantUser picks who runs the job: the member the job is bound
-// to (whoever last saved it), else the project owner, else (for a non-shared
-// job) its owner. A bound job never falls back to someone else's account. The
-// model's CLI decides which key they need: their own, else for CodeBuddy the
-// platform's shared key, whose allowed models are returned as shared (nil on
-// the user's own key).
+// scheduleJobAssistantUser picks the saved run-as member, or the project or
+// recorded owner for a legacy job. A bound job can only use that member's
+// credentials. The platform's CodeBuddy key is the last resort.
 func (h *assistantHandlers) scheduleJobAssistantUser(job domain.ScheduleJob, model string) (domain.User, []string, error) {
 	engine, _ := assistantModelEngine(model)
 	if job.RunAsUserID > 0 {
@@ -214,20 +211,18 @@ func (h *assistantHandlers) scheduleJobAssistantUser(job domain.ScheduleJob, mod
 	if job.SharedTaskID == "" {
 		add(job.OwnerUserID)
 	}
-	// Personal keys go first in the original order, so a job whose recorded
-	// owner still has a key keeps running on it after the project changes
-	// owner; the shared key is only the fallback.
+	// Try each candidate's own credentials before considering the shared key.
 	for _, user := range candidates {
-		if key, _ := assistantEngineCredential(user, engine); key != "" {
+		if scheduleHasPersonalCredential(h.repo, user, engine) {
 			return user, nil, nil
 		}
 	}
 	for _, user := range candidates {
-		if user, shared, ok := scheduleKeyUser(h.repo, user, engine); ok {
+		if user, shared, ok := scheduleCredentialUser(h.repo, user, engine); ok {
 			return user, shared, nil
 		}
 	}
-	return domain.User{}, nil, fmt.Errorf("执行提示词需要项目 Owner 的 %s API Key：请在该账号的个人配置中配置，或在自己的个人配置里填好 Key 后编辑并保存一次任务，改用你的 Key", assistantEngineLabel(engine))
+	return domain.User{}, nil, fmt.Errorf("项目 Owner 缺少 %s 凭据。请编辑并保存一次任务，以你的凭据执行", assistantEngineLabel(engine))
 }
 
 // scheduleJobRunAsUser runs a bound job as that member while they can still
@@ -236,13 +231,16 @@ func (h *assistantHandlers) scheduleJobRunAsUser(job domain.ScheduleJob, engine 
 	name := firstNonEmpty(job.RunAsName, fmt.Sprintf("用户 %d", job.RunAsUserID))
 	user, ok := h.repo.User(job.RunAsUserID)
 	if !ok {
-		return domain.User{}, nil, fmt.Errorf("任务保存人 %s 的账号已不存在：请编辑并保存一次任务，改用你的 Key", name)
+		return domain.User{}, nil, fmt.Errorf("任务保存人 %s 的账号已不存在，请编辑并保存一次任务，以你的凭据执行", name)
 	}
 	if !scheduleProjectWriter(h.repo, job.ProjectID, user) {
-		return domain.User{}, nil, fmt.Errorf("%s 已不是该项目的可写成员，不能再用其 Key 执行：请编辑并保存一次任务，改用你的 Key", name)
+		return domain.User{}, nil, fmt.Errorf("%s 已不是该项目的可写成员，请编辑并保存一次任务，以你的凭据执行", name)
 	}
-	runUser, shared, ok := scheduleKeyUser(h.repo, user, engine)
+	runUser, shared, ok := scheduleCredentialUser(h.repo, user, engine)
 	if !ok {
+		if assistantSupportsRunnerLogin(engine) {
+			return domain.User{}, nil, fmt.Errorf("任务保存人 %s 缺少 %s 凭据，请在其默认执行机器启用账号登录，或在个人配置填写 API Key", name, assistantEngineLabel(engine))
+		}
 		if engine != assistantEngineCodeBuddy {
 			return domain.User{}, nil, fmt.Errorf("执行提示词需要 %s 的 %s API Key：请在该账号的个人配置中配置", name, assistantEngineLabel(engine))
 		}
@@ -251,14 +249,33 @@ func (h *assistantHandlers) scheduleJobRunAsUser(job domain.ScheduleJob, engine 
 	return runUser, shared, nil
 }
 
-// scheduleKeyUser is user with the key a scheduled run for engine uses: their
-// own, else for CodeBuddy the platform's shared key (whose allowed models are
-// returned as shared). Everything but the key stays the user's own. ok is
-// false when neither exists.
-func scheduleKeyUser(r interface {
-	SharedCodeBuddyKey() (repo.SharedCodeBuddyKey, bool)
-}, user domain.User, engine string) (domain.User, []string, bool) {
-	if key, _ := assistantEngineCredential(user, engine); key != "" {
+// scheduleLoginRunner resolves the actor's configured personal machine at
+// save and run time. At run time an offline machine uses the API Key path.
+func scheduleLoginRunner(r *repo.Store, userID int64, engine string) domain.Runner {
+	if r == nil || userID <= 0 || !assistantSupportsRunnerLogin(engine) {
+		return domain.Runner{}
+	}
+	id := r.DefaultRunner(userID)
+	if id == "" {
+		return domain.Runner{}
+	}
+	machine, ok := r.Runner(id)
+	if !ok || machine.OwnerUserID != userID || !machine.SupportsCLISettings() ||
+		!machine.SupportsProvider(engine) || !runnerUsesLocalLogin(machine, engine) {
+		return domain.Runner{}
+	}
+	return machine
+}
+
+func scheduleHasPersonalCredential(r *repo.Store, user domain.User, engine string) bool {
+	key, _ := assistantEngineCredential(user, engine)
+	return key != "" || scheduleLoginRunner(r, user.ID, engine).ID != ""
+}
+
+// scheduleCredentialUser keeps the actor's identity, substituting only the
+// CodeBuddy key and its environment when the platform sponsors the run.
+func scheduleCredentialUser(r *repo.Store, user domain.User, engine string) (domain.User, []string, bool) {
+	if scheduleHasPersonalCredential(r, user, engine) {
 		return user, nil, true
 	}
 	if engine != assistantEngineCodeBuddy || r == nil {

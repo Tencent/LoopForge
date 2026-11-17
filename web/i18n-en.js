@@ -180,4 +180,13 @@ Object.assign(window.LF_I18N_EN,{
   "外部原单会保留，后续同步可能重新导入。":"The original external record is kept, and a later sync may import it again.",
   "需求已有执行记录或已完成，请确认强制删除":"This requirement has execution history or is already completed. Confirm force deletion."
 });
+
+Object.assign(window.LF_I18N_EN,{
+  "Claude Code 和 Codex 可用账号登录":"Account login for Claude Code and Codex",
+  "Claude Code 和 Codex 可以使用运行 Runner 的系统账号在这台机器上的已有登录。共享对话中，只有机器所有者发言时会使用此登录。":"Claude Code and Codex can reuse the login of the system user running the Runner. In a shared chat, that login applies to messages from the machine owner.",
+  "API Key 说明":"API Key help",
+  "LoopForge 沙箱目前无法复用 Antigravity 保存在系统凭据库中的登录。请在「个人配置」中填写 Gemini API Key。用量按 Gemini API 单独计费。":"LoopForge sandboxes cannot currently access Antigravity's login in the system credential store. Enter a Gemini API Key in Personal Settings. Gemini API usage is billed separately.",
+  "GLM Coding Plan 的 API Key 配合套餐专用地址可使用订阅额度，请在「个人配置」中填写。Start Plan 额度需要登录 ZCode 账号，无法通过 API Key 使用。":"Enter the GLM Coding Plan API key and its dedicated endpoint in Personal Settings to use your subscription allowance. Start Plan allowance requires signing in to ZCode.",
+  "该 CLI 支持 API Key。使用服务商订阅套餐提供的 Key，执行用量会计入对应的套餐额度。请在「个人配置」中填写 API Key。":"This CLI supports API keys. With a key included in your provider's subscription, usage counts toward that plan's allowance. Enter the API key in Personal Settings."
+});
 Object.assign(window.LF_I18N_EN,{"查看其他项目共享的技能；共享技能只读，会自动装入平台上所有对话和定时任务，也可绑定到本项目角色。": "Skills shared by other projects. Shared Skills are read-only, are installed automatically into every conversation and scheduled task on the platform, and can be bound to Roles in this project.", "共享后，这个技能会自动装入平台上所有用户的对话和定时任务（包括其他项目和无项目的对话），模型可以直接调用。继续？": "Once shared, this Skill is installed automatically into every user's conversations and scheduled tasks on the platform (including other projects and conversations without a project), and the model can call it directly. Continue?", "共享这个角色会同时共享它绑定的技能：": "Sharing this Role also shares the Skills bound to it: ", "已共享，所有对话和定时任务会自动装入": "Shared. Every conversation and scheduled task will install it automatically", "其他项目可在「共享角色」里选用；绑定的本项目技能会一起共享，并自动装入所有对话": "Other projects can pick it under Shared roles; the project Skills bound to it are shared too and installed into every conversation automatically", "共享技能": "Share Skill"});

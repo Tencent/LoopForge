@@ -13,6 +13,8 @@ func TestAssistantEffortReachesNativeCLIAndPersists(t *testing.T) {
 	t.Setenv("AGENTFLOW_ASSISTANT_MODELS", assistantChatDefaultModel)
 	h, user := workbenchFixture(t)
 	_, calls := nativeCLIRecorder(t)
+	// calls counts conversation turns; keep model discovery off the fake CLI.
+	stubCLIModelDiscovery(t)
 	messages := []assistantMessage{{Role: "user", Content: "回答一个简单问题"}}
 	for _, effort := range []string{"max", "high", ""} {
 		body, _ := json.Marshal(assistantRequest{SessionID: "effort-native", Model: assistantChatDefaultModel, Effort: effort, Messages: messages})

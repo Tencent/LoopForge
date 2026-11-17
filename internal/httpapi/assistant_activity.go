@@ -29,7 +29,7 @@ func (l *assistantActivityLog) add(event assistantStreamEvent) {
 		defer l.mu.Unlock()
 		l.appendTextLocked(event)
 		return
-	case "thinkingStart", "thinking", "tool", "toolDone", "status", "agentText":
+	case "thinkingStart", "thinking", "tool", "toolDone", "status", "agentText", "agentModel":
 	default:
 		return
 	}

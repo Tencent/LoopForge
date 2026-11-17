@@ -166,10 +166,12 @@ paths:
     get:
       tags: [Assistant]
       operationId: listAssistantModels
-      summary: List CodeBuddy models available to the Studio assistant
-      description: |
-        Hardcoded iOA assistant catalog with display names and credit
-        multipliers. Defaults to default.
+      summary: List models available to the Studio assistant
+      parameters:
+        - name: schedule
+          in: query
+          schema: {type: integer, enum: [1]}
+          description: Include built-in models for CLIs configured to use account login on the signed-in user's default execution machine.
       responses:
         "200":
           description: Model catalog
@@ -184,7 +186,7 @@ paths:
                     type: array
                     items:
                       type: object
-                      required: [id, name, family, credits]
+                      required: [id, name, family]
                       properties:
                         id: {type: string}
                         name: {type: string}
@@ -5344,19 +5346,19 @@ components:
           description: Optional 5-field cron (minute hour day month weekday) in Asia/Shanghai. When set, intervalSec is ignored.
         assistantPrompt:
           type: string
-          description: User-written CodeBuddy prompt executed at schedule time. Required for independent AI jobs; subscriptions resolve their pinned shared version instead. Cleared on trigger jobs.
+          description: User-written prompt executed at schedule time. Required for independent AI jobs. Subscriptions resolve their pinned shared version. Cleared on trigger jobs.
         assistantModel:
           type: string
-          description: CodeBuddy model id from GET /api/assistant/models.
+          description: Model id from GET /api/assistant/models?schedule=1.
         ownerUserId:
           type: integer
           format: int64
-          description: Project owner, whose keys run assistantPrompt for a job without runAsUserId (saved before the binding, or without a signed-in user)
+          description: Project owner recorded for jobs saved without a run-as identity.
         runAsUserId:
           type: integer
           format: int64
           readOnly: true
-          description: User whose keys run the AI job, set by the server to whoever last saved it (never taken from the request). Their own key for the model's CLI is used, else the platform's shared CodeBuddy key limited to the models it allows; a save with neither is rejected with 400. 0 means the project owner. A bound job fails rather than fall back to another account when that user is gone or can no longer write to the project.
+          description: User bound by the server to the last saver. Codex and Claude Code use configured account login on their online default personal Runner. Other configurations and offline Runners use the saver's personal API Key. CodeBuddy can use the shared key for allowed models if the personal key is missing. A bound user must retain write access to the project. Zero uses legacy owner selection.
         runAsName:
           type: string
           readOnly: true

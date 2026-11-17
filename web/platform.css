@@ -2236,7 +2236,7 @@ html[data-theme="light"] body{color-scheme:light}html[data-theme="light"] .platf
 .obs-card>.pager{margin:10px 0 2px;border:0;background:transparent;padding:8px 0 0}
 
 /* ================= 个人凭证（harness-ui 设计语言） ================= */
-#personalSettingsContent,.credential-scrim,.github-connect,.git-ssh-dialog{
+#personalSettingsContent,.credential-scrim,.github-connect,.git-ssh-dialog,.runner-model-editor{
   --cr-accent:var(--hui-accent);--cr-accent-hover:var(--hui-accent-hover);
   --cr-surface:var(--hui-surface);--cr-canvas:var(--hui-canvas);--cr-elevated:var(--hui-soft);
   --cr-text:var(--hui-text);--cr-text-2:var(--hui-secondary);--cr-muted:var(--hui-muted);--cr-tertiary:var(--hui-tertiary);

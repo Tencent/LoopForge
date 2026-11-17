@@ -347,8 +347,34 @@ func TestEverySharedSkillIsInstalledHoweverManyAreShared(t *testing.T) {
 
 func TestSubagentStreamEventsCarryTheirDispatch(t *testing.T) {
 	dispatch := assistantStreamEvents(`{"type":"assistant","message":{"content":[{"type":"tool_use","id":"call-1","name":"Agent","input":{"subagent_type":"role-qa","description":"补单测","prompt":"x"}}]}}`)
-	if len(dispatch) != 1 || dispatch[0].Subagent != "role-qa" || dispatch[0].Parent != "" || dispatch[0].Input != "x" {
+	if len(dispatch) != 1 || dispatch[0].Subagent != "role-qa" || dispatch[0].Parent != "" || dispatch[0].Input != "x" || dispatch[0].Model != "" {
 		t.Fatalf("dispatch=%+v", dispatch)
+	}
+	// A dispatch that names a model keeps it; one that only inherits does not.
+	for input, want := range map[string]string{
+		`"model":"claude-sonnet-4-5"`: "claude-sonnet-4-5",
+		`"model":" lite "`:            "lite",
+		`"model":"default"`:           "",
+		`"model":"inherit"`:           "",
+		`"model":"<synthetic>"`:       "",
+	} {
+		got := assistantStreamEvents(`{"type":"assistant","message":{"content":[{"type":"tool_use","id":"call-m","name":"Agent","input":{"subagent_type":"Explore","prompt":"x",` + input + `}}]}}`)
+		if len(got) != 1 || got[0].Model != want {
+			t.Fatalf("%s: dispatch=%+v, want model %q", input, got, want)
+		}
+	}
+	// A subagent's line reports the model it actually runs on, under its
+	// dispatch; Main Bot's own lines do not.
+	ran := assistantStreamEvents(`{"type":"assistant","parent_tool_use_id":"call-1","message":{"model":"deepseek-v4.1-flash-ioa","content":[{"type":"text","text":"ok"}]}}`)
+	if len(ran) != 2 || ran[0].Kind != "agentModel" || ran[0].Model != "deepseek-v4.1-flash-ioa" || ran[0].Parent != "call-1" {
+		t.Fatalf("subagent line=%+v", ran)
+	}
+	// A synthesized line names no real model.
+	if synthetic := assistantStreamEvents(`{"type":"assistant","parent_tool_use_id":"call-1","message":{"model":"<synthetic>","content":[{"type":"text","text":"ok"}]}}`); len(synthetic) != 1 || synthetic[0].Kind != "agentText" {
+		t.Fatalf("synthetic line=%+v", synthetic)
+	}
+	if main := assistantStreamEvents(`{"type":"assistant","message":{"model":"deepseek-v4.1-flash-ioa","content":[{"type":"text","text":"ok"}]}}`); len(main) != 1 || main[0].Kind != "answer" {
+		t.Fatalf("main line=%+v", main)
 	}
 	if got := labelRoleSubagent(dispatch[0], []roleSubagent{{Role: domain.AgentDefinition{ID: "qa", Name: "测试工程师"}}}); got.Role != "测试工程师" {
 		t.Fatalf("role label=%q", got.Role)

@@ -56,6 +56,8 @@ type AgentToolSession struct {
 	modeAction        func(context.Context) error
 	SelectedMCPIDs    map[string]bool
 	ExecutionRunnerID string
+	runnerLogin       bool
+	transient         bool
 	RuntimeMode       string
 	Notify            func(string, any)
 	Token             string
@@ -106,7 +108,10 @@ type AgentToolSession struct {
 	dispatches map[string]string
 	// nativeReviews are the assisted-mode reviews of external writes this
 	// phase, by approval ID; hook polls read the verdict here.
-	nativeReviews     map[string]*agentNativeReview
+	nativeReviews map[string]*agentNativeReview
+	// toolCalls cancels the tools/call requests still running, by JSON-RPC
+	// id, when the CLI sends notifications/cancelled for them.
+	toolCalls         map[string]*agentToolCallCancel
 	nativePhaseClosed atomic.Bool
 	closed            atomic.Bool
 	committed         atomic.Bool

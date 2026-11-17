@@ -144,6 +144,17 @@ func (r *AssistantRepo) DecideNativeApproval(owner, actor int64, session, id, de
 	})
 }
 
+// ReleaseNativeApproval removes the card for a single finished or cancelled
+// gateway call. Other calls waiting in the same phase retain their approvals.
+func (r *AssistantRepo) ReleaseNativeApproval(owner int64, session, generation, phase, id string) error {
+	return r.updateNativeApprovals(owner, session, generation, false, func(payload *assistantGenerationPayload) error {
+		payload.NativeApprovals = slices.DeleteFunc(payload.NativeApprovals, func(item assistantNativeApprovalState) bool {
+			return item.Phase == phase && item.ID == id
+		})
+		return nil
+	})
+}
+
 // ReleaseNativeApprovals revokes only the exiting CLI phase, including its
 // resolved callbacks. Sibling sessions and later generations are untouched.
 func (r *AssistantRepo) ReleaseNativeApprovals(owner int64, session, generation, phase string) error {

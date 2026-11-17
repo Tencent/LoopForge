@@ -35,7 +35,7 @@ var assistantResumeRejectedRe = regexp.MustCompile(`(?i)(must end with a user me
 // with none of these executed nothing and can safely start over.
 func assistantPhaseProgress(ev assistantStreamEvent) bool {
 	switch ev.Kind {
-	case "tool", "toolDone", "toolEnd", "text", "answer", "agentText", "draftStart", "draftDelta", "thinking", "thinkingStart":
+	case "tool", "toolDone", "toolEnd", "text", "answer", "agentText", "agentModel", "draftStart", "draftDelta", "thinking", "thinkingStart":
 		return true
 	}
 	return false

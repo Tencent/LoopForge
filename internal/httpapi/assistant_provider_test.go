@@ -340,3 +340,83 @@ func TestAssistantCodexAppServerDisablesNativeTools(t *testing.T) {
 		t.Fatalf("guard script = %q err=%v", guard, err)
 	}
 }
+
+func TestAssistantUsesBoundRunnerLoginWithoutPersonalKey(t *testing.T) {
+	// Keep reply-asset discovery inside the test's temporary directory.
+	t.Setenv("TMPDIR", t.TempDir())
+	h, user := workbenchFixture(t)
+	runner := domain.Runner{
+		ID: "local-login", OwnerUserID: user.ID, Status: domain.RunnerStatusOnline,
+		RunnerVersion: domain.RunnerVersionCLISettings,
+		Runtimes: []domain.RunnerRuntime{
+			{Provider: "codex", AuthMode: domain.RuntimeAuthLocal},
+			{Provider: "claude-code", AuthMode: domain.RuntimeAuthLocal},
+		},
+	}
+	if err := h.repo.PutRunner(runner); err != nil {
+		t.Fatal(err)
+	}
+	h.generate = func(_ context.Context, _ string, actor domain.User) (string, error) {
+		if actor.CodexAPIKey != "" || actor.ClaudeCodeAPIKey != "" {
+			return "", fmt.Errorf("fixture unexpectedly has personal provider credentials")
+		}
+		return "runner reply", nil
+	}
+	target := domain.AssistantExecutionTarget{Pool: domain.ExecutionModeRunner, RunnerID: runner.ID}
+	messages := []assistantMessage{{Role: "user", Content: "Hello"}}
+
+	// A saved session owns the choice of machine on both generation entry points.
+	if err := h.repo.PutAssistantSession(user.ID, domain.AssistantSession{
+		ID: "bound-runner", ExecutionTarget: &target, ExecutionTargetLocked: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	start := assistantRequest{SessionID: "bound-runner", Executor: "codex", Model: "gpt-local", Messages: messages}
+	data, _ := json.Marshal(start)
+	c, rec := workbenchContext(user, "POST", "/api/assistant/generations", bytes.NewBuffer(data))
+	h.startGeneration(c)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("generate on bound runner: %d %s", rec.Code, rec.Body)
+	}
+	for deadline := time.Now().Add(5 * time.Second); ; {
+		generation, _ := h.repo.AssistantGeneration(user.ID, start.SessionID)
+		if generation.Status == "completed" {
+			break
+		}
+		if generation.Status == "failed" || time.Now().After(deadline) {
+			t.Fatalf("generation = %s: %s", generation.Status, generation.Error)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	saved, _ := h.repo.AssistantSession(user.ID, start.SessionID)
+	if saved.Model != "codex:gpt-local" || saved.Execution() != target {
+		t.Fatalf("saved model or runner changed: %q, %+v", saved.Model, saved.Execution())
+	}
+
+	for _, tc := range []struct {
+		name   string
+		target *domain.AssistantExecutionTarget
+		want   int
+	}{
+		{"runner", &target, http.StatusOK},
+		{"cloud", nil, http.StatusBadRequest},
+		{"foreign", &domain.AssistantExecutionTarget{Pool: domain.ExecutionModeRunner, RunnerID: "someone-else"}, http.StatusBadRequest},
+		{"personal-key", &target, http.StatusBadRequest},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.name == "personal-key" {
+				runner.Runtimes[1].AuthMode = domain.RuntimeAuthPersonal
+				if err := h.repo.PutRunner(runner); err != nil {
+					t.Fatal(err)
+				}
+			}
+			req := assistantRequest{SessionID: tc.name + "-claude", Executor: "claude-code", Model: "sonnet", Messages: messages, ExecutionTarget: tc.target}
+			body, _ := json.Marshal(req)
+			c, rec := workbenchContext(user, "POST", "/api/assistant/chat", bytes.NewBuffer(body))
+			h.chat(c)
+			if rec.Code != tc.want {
+				t.Fatalf("chat status %d, want %d: %s", rec.Code, tc.want, rec.Body)
+			}
+		})
+	}
+}
