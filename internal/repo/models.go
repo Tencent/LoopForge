@@ -376,7 +376,7 @@ type runArtifactRow struct {
 	SizeBytes     int64      `gorm:"column:size_bytes"`
 	SHA256        string     `gorm:"column:sha256;size:64"`
 	RepositoryDir string     `gorm:"column:repository_dir;size:128"`
-	Content       string     `gorm:"column:content;type:text"`
+	Content       string     `gorm:"column:content;type:mediumtext"`
 	Created       *time.Time `gorm:"column:created_at"`
 }
 

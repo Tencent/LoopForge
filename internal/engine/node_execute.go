@@ -1032,7 +1032,7 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 	if !shouldCommitNodeOutcome(current, current.Nodes[node.ID], executionGeneration, executionAttempt, true) {
 		return
 	}
-	e.updateRun(runID, func(r *domain.Run) {
+	committed, commitErr := e.updateRunAtErr(runID, false, func(r *domain.Run) {
 		nr := r.Nodes[node.ID]
 		if !shouldCommitNodeOutcome(*r, nr, executionGeneration, executionAttempt, true) {
 			return
@@ -1050,6 +1050,20 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 			e.event(r, node.ID, "node.succeeded", node.Name+" 已完成")
 		}
 	})
+	if commitErr != nil {
+		// The node's terminal state never reached the store. Nothing reschedules
+		// a node that still reads "running", so a rejected write (an artifact
+		// larger than the column, for one) has to become the node's outcome
+		// instead of a log line that leaves the run hanging until a restart.
+		e.observe(runID, node.ID, domain.TelemetryEvent{Category: "orchestration", Name: "node.commit.failed", Phase: "finish", Level: "error", Message: "节点终态写入失败：" + commitErr.Error(), Attributes: map[string]any{"error": commitErr.Error(), "artifacts": len(artifacts)}})
+		failNode(fmt.Errorf("写入节点终态失败：%w", commitErr), false)
+		return
+	}
+	if !committed {
+		// A skipped update (run gone, or its lease moved to another instance) is
+		// not a write failure; that owner commits the outcome.
+		return
+	}
 	for _, artifact := range artifacts {
 		e.observe(runID, node.ID, domain.TelemetryEvent{Category: "artifact", Name: "artifact.published", Phase: "finish", Message: artifact.Name, Attributes: map[string]any{"artifactId": artifact.ID, "path": artifact.Path, "mediaType": artifact.MediaType, "size": artifact.Size, "sha256": artifact.SHA256}})
 	}
