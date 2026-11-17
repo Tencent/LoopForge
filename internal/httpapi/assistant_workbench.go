@@ -1365,5 +1365,6 @@ func (h *assistantHandlers) linkMentionedIssue(req *assistantRequest, user domai
 	if !linked {
 		return ""
 	}
+	req.linkedIssueID = issueID
 	return "需求 " + issueID + " 已设为本会话的关联主需求。"
 }
