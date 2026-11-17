@@ -240,13 +240,29 @@ func (e *Engine) ensureConversationWorkspace(ctx context.Context, id, token stri
 	}
 	runner := e.defaultExecutionRunner(run)
 	if runner == "" && e.foreignWorkspaceBind(run) {
-		if run.WorkspaceCleanedAt.IsZero() {
-			return nil
+		if !run.WorkspaceCleanedAt.IsZero() {
+			if err := e.restoreOrReuseRemoteConversationCheckpoint(ctx, run); err != nil {
+				return err
+			}
+			return e.repo.RestoreCheckpointWorkspaceBinding(id, token, "", "", time.Now().UTC())
 		}
-		if err := e.restoreOrReuseRemoteConversationCheckpoint(ctx, run); err != nil {
+		// An uncleaned checkout still belongs to a live instance. Returning
+		// success here used to let the chat start, then fail in
+		// LocalRunWorkspace with a generic generation error.
+		if e.workspaceBlocked(run) {
+			return ErrConversationWorkspaceBound
+		}
+		// The owning process is gone. Rebind onto this instance before the
+		// local checkout logic below; rebindWorkspaceHere cannot be used
+		// because a conversation does not hold an execution lease, and it
+		// would delete a checkout that is still on this sandbox root.
+		if err := e.rebindOfflineConversationWorkspace(id, token, run); err != nil {
 			return err
 		}
-		return e.repo.RestoreCheckpointWorkspaceBinding(id, token, "", "", time.Now().UTC())
+		run, ok = e.repo.RunState(id)
+		if !ok {
+			return fmt.Errorf("运行不存在")
+		}
 	}
 	if runner == "" && run.WorkspaceCleanedAt.IsZero() {
 		root, reason := e.LocalRunWorkspace(run)
@@ -309,6 +325,57 @@ func (e *Engine) ensureConversationWorkspace(ctx context.Context, id, token stri
 		return err
 	}
 	return e.repo.RestoreCheckpointWorkspaceBinding(id, token, e.workspaceHost, e.sandboxes.Root(), time.Now().UTC())
+}
+
+// ErrConversationWorkspaceBound means this process must not open a checkout
+// that a live instance still serves.
+var ErrConversationWorkspaceBound = errors.New("工作区绑定在其他 LoopForge 实例")
+
+// ErrConversationWorkspaceLost means the bound instance is gone and neither
+// the checkout nor a snapshot could be recovered. The workspace is already
+// bound to the current instance, so the next turn can start.
+var ErrConversationWorkspaceLost = errors.New("原工作区实例已下线，未保存的改动无法恢复。工作区已换到当前实例，请重试")
+
+// rebindOfflineConversationWorkspace moves a conversation workspace off an
+// instance that is no longer alive. A checkout still present under this
+// sandbox root is kept. Otherwise the caller restores a snapshot, or this
+// function prepares an empty directory and reports that unsaved edits are gone.
+func (e *Engine) rebindOfflineConversationWorkspace(id, token string, run domain.Run) error {
+	_, boundRoot := e.workspaceBind(run)
+	local := e.sandboxes.RunWorkspace(id)
+	sameRoot := strings.TrimSpace(boundRoot) == strings.TrimSpace(e.sandboxes.Root())
+	if !sameRoot {
+		if err := e.releaseRunEnvironment(id, true); err != nil {
+			return err
+		}
+	} else if info, err := os.Lstat(local); err == nil && info.IsDir() {
+		if err = e.repo.RestoreCheckpointWorkspaceBinding(id, token, e.workspaceHost, e.sandboxes.Root(), time.Now().UTC()); err != nil {
+			return err
+		}
+		e.noteConversationWorkspaceRebound(id, "原工作区实例已下线，当前实例继续使用同一目录中的检出")
+		return nil
+	} else if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	if err := e.repo.RestoreCheckpointWorkspaceBinding(id, token, e.workspaceHost, e.sandboxes.Root(), time.Now().UTC()); err != nil {
+		return err
+	}
+	meta, _ := e.repo.WorkspaceCheckpoint(id)
+	if meta.SavedAt != nil && meta.SHA256 != "" && meta.Error == "" {
+		e.noteConversationWorkspaceRebound(id, "原工作区实例已下线，已从最近一次快照恢复；快照之后的未提交改动已丢失")
+		return nil
+	}
+	if err := os.MkdirAll(local, 0o700); err != nil {
+		return err
+	}
+	e.noteConversationWorkspaceRebound(id, ErrConversationWorkspaceLost.Error())
+	return ErrConversationWorkspaceLost
+}
+
+func (e *Engine) noteConversationWorkspaceRebound(id, message string) {
+	e.updateRunSettling(id, func(r *domain.Run) {
+		e.event(r, "", "workspace.rebound", message)
+	})
 }
 
 // claimIdleConversationWorkspace returns managed=true even on save failure, so
