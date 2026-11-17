@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -79,6 +80,9 @@ func TestSOPDesignerConversationIsPrivateAndServerOwned(t *testing.T) {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("designer prompt lacks %q:\n%s", want, prompt)
 		}
+	}
+	if !strings.Contains(prompt, "脚本共 500 字") {
+		t.Fatalf("a long script reads as empty to the model:\n%s", prompt)
 	}
 	for _, unwanted := range []string{"当前是平台模式", "源码文件列表", "子 Agent", `"position"`, strings.Repeat("x", 500)} {
 		if strings.Contains(prompt, unwanted) {
@@ -356,5 +360,56 @@ func TestSOPDesignerTerminalAppliesOperations(t *testing.T) {
 	body := string(final.Assistant.Drafts[0].Body)
 	if !strings.Contains(body, `"review"`) || !strings.Contains(body, `"make build"`) || !strings.Contains(body, `"position"`) {
 		t.Fatalf("expanded draft = %s", body)
+	}
+}
+
+// The model reads long scripts as an "omitted" marker; whatever path its
+// draft takes, the marker never replaces the real script.
+func TestSOPDesignerOmittedScriptIsRestored(t *testing.T) {
+	long := strings.Repeat("echo test; ", 60)
+	canvas := json.RawMessage(`{"id":"sop-a","projectId":"workbench","sandboxProfileId":"local","nodes":[{"id":"checks","name":"测试","type":"script","script":"` + long + `"}],"edges":[]}`)
+	compact := string(compactSOPDesignerWorkflow(canvas))
+	if !strings.Contains(compact, "脚本共 660 字") || strings.Contains(compact, "echo test") {
+		t.Fatalf("compact canvas = %s", compact)
+	}
+	marker := fmt.Sprintf(sopDesignerScriptOmitted, 660)
+	for name, draft := range map[string]string{
+		"full body":   `{"name":"重搭","nodes":[{"id":"checks","name":"测试","type":"script","script":"` + marker + `"},{"id":"new","name":"新","type":"script","script":"` + marker + `"}],"edges":[]}`,
+		"update_node": `{"operations":[{"op":"update_node","id":"checks","set":{"name":"跑测试","script":"` + marker + `"}}]}`,
+	} {
+		out, err := expandSOPDesignerReply(json.RawMessage(`{"message":"x","drafts":[{"tool":"workflows_save","body":`+draft+`}]}`), canvas)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if strings.Contains(string(out), "已省略") || !strings.Contains(string(out), "echo test") {
+			t.Fatalf("%s: marker kept or script lost: %s", name, out)
+		}
+	}
+}
+
+// The roles offered to the model and the draft warnings follow the rule a SOP
+// save enforces, so the model never picks a role the save then rejects.
+func TestSOPDesignerRolesMatchTheSaveRule(t *testing.T) {
+	h, _ := workbenchFixture(t)
+	for _, role := range []domain.AgentDefinition{
+		{ID: "own-dev", Name: "本项目开发", ProjectID: "workbench"},
+		{ID: "other-shared", Name: "别的项目共享", ProjectID: "other", Shared: true},
+		{ID: "other-private", Name: "别的项目私有", ProjectID: "other"},
+		{ID: "global-builtin", Name: "无项目内置", Shared: true},
+	} {
+		if err := h.repo.PutAgent(role); err != nil {
+			t.Fatal(err)
+		}
+	}
+	text := sopDesignerRolesContext(h.repo.Agents(), "workbench")
+	for id, want := range map[string]bool{"own-dev": true, "other-shared": true, "other-private": false, "global-builtin": false} {
+		if strings.Contains(text, "- "+id+"：") != want {
+			t.Fatalf("role %s offered=%v, want %v:\n%s", id, !want, want, text)
+		}
+	}
+	draft := assistantDraft{Tool: "workflows_save", Body: json.RawMessage(`{"projectId":"workbench","nodes":[{"id":"a","name":"A","type":"agent","agentId":"global-builtin"},{"id":"b","name":"B","type":"agent","agentId":"own-dev"},{"id":"c","name":"C","type":"agent","agentId":"other-shared"}],"edges":[]}`)}
+	warns := h.assistantDraftWarnings(draft)
+	if len(warns) != 1 || !strings.Contains(warns[0], "节点 A") || !strings.Contains(warns[0], "保存会失败") {
+		t.Fatalf("warnings = %v", warns)
 	}
 }

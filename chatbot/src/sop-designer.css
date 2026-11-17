@@ -138,3 +138,46 @@
   font-size: 11px;
   line-height: 1.6;
 }
+/* The panel is narrower than the container query that lets the workbench
+   toolbar wrap; keep send/stop on the row and shrink the picker labels. */
+.sop-designer-composer .composer-toolbar {
+  flex-wrap: nowrap;
+  gap: 2px;
+}
+.sop-designer-composer .composer-toolbar > .permission-picker-anchor {
+  flex: none;
+}
+.sop-designer-composer .composer-toolbar > .menu-anchor.model-picker-anchor {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+.sop-designer-composer .composer-toolbar button.permission-selector,
+.sop-designer-composer .composer-toolbar .model-picker {
+  max-width: 100%;
+  min-width: 0;
+  overflow: hidden;
+}
+.sop-designer-composer .composer-toolbar button.permission-selector > span,
+.sop-designer-composer .composer-toolbar .model-picker-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sop-designer-composer .composer-toolbar .send-button {
+  flex: none;
+}
+.sop-designer-composer .composer-toolbar button.permission-selector {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  white-space: nowrap;
+}
+/* The studio's floating feedback button sits over the panel's bottom-right
+   corner; keep the send button and the note clear of it. */
+.sop-designer-composer {
+  padding-bottom: 22px;
+}
+.sop-designer-composer > small {
+  padding-right: 40px;
+}

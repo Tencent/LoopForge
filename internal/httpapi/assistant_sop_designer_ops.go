@@ -66,7 +66,14 @@ func expandSOPDesignerReply(raw, canvas json.RawMessage) (json.RawMessage, error
 			// A full body keeps the canvas's identity and sandbox unless the
 			// model chose them, so a new graph is not rejected for a field
 			// the user never sees.
-			if filled, ok := fillSOPDesignerIdentity(obj, canvas); ok {
+			filled, ok := fillSOPDesignerIdentity(obj, canvas)
+			if !ok {
+				filled, _ = json.Marshal(obj)
+			}
+			if restored, ok := restoreSOPDesignerScripts(filled, canvas); ok {
+				filled = restored
+			}
+			if ok || !bytes.Equal(filled, body) {
 				drafts[i]["body"] = filled
 				changed = true
 			}
@@ -75,6 +82,9 @@ func expandSOPDesignerReply(raw, canvas json.RawMessage) (json.RawMessage, error
 		next, err := applySOPDesignerOperations(canvas, obj, ops)
 		if err != nil {
 			return nil, err
+		}
+		if restored, ok := restoreSOPDesignerScripts(next, canvas); ok {
+			next = restored
 		}
 		drafts[i]["body"] = next
 		changed = true
@@ -306,4 +316,47 @@ func sopDesignerCanvasEmpty(canvas json.RawMessage) bool {
 		Nodes []json.RawMessage `json:"nodes"`
 	}
 	return len(bytes.TrimSpace(canvas)) == 0 || json.Unmarshal(canvas, &wf) != nil || len(wf.Nodes) == 0
+}
+
+// restoreSOPDesignerScripts puts back a script the model copied as the
+// "omitted" marker it was shown: that marker is not a script, the canvas
+// node with the same id holds the real one.
+func restoreSOPDesignerScripts(body, canvas json.RawMessage) (json.RawMessage, bool) {
+	var wf map[string]any
+	if json.Unmarshal(body, &wf) != nil {
+		return nil, false
+	}
+	var base struct {
+		Nodes []map[string]any `json:"nodes"`
+	}
+	_ = json.Unmarshal(canvas, &base)
+	scripts := map[string]string{}
+	for _, node := range base.Nodes {
+		id, _ := node["id"].(string)
+		script, _ := node["script"].(string)
+		scripts[id] = script
+	}
+	changed := false
+	for _, node := range sopDesignerObjects(wf["nodes"]) {
+		script, _ := node["script"].(string)
+		if !sopDesignerOmittedScript(script) {
+			continue
+		}
+		id, _ := node["id"].(string)
+		if original := scripts[id]; original != "" {
+			node["script"] = original
+		} else {
+			delete(node, "script")
+		}
+		changed = true
+	}
+	if !changed {
+		return nil, false
+	}
+	out, err := json.Marshal(wf)
+	return out, err == nil
+}
+
+func sopDesignerOmittedScript(script string) bool {
+	return strings.HasPrefix(script, "（脚本共 ") && strings.Contains(script, "已省略")
 }

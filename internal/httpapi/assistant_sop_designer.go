@@ -27,6 +27,10 @@ const (
 	sopDesignerRoleLimit       = 200
 	sopDesignerWorkflowIDLimit = 128
 	sopDesignerScriptLimit     = 400
+	// sopDesignerScriptOmitted stands in for a long script in the canvas the
+	// model reads. Operations apply to the full canvas, so the script itself
+	// stays as it is unless the model sets a new one.
+	sopDesignerScriptOmitted = "（脚本共 %d 字，为节省篇幅已省略；它不是空的，用户没要求改脚本时不要改动它）"
 )
 
 // sopDesignerReadTools is the catalog of the designer: enough to look up the
@@ -197,7 +201,7 @@ func sopDesignerRolesContext(agents []domain.AgentDefinition, projectID string) 
 		if domain.IsPreviewBuildAgent(role.ID) {
 			continue
 		}
-		if role.ProjectID == projectID || role.Shared {
+		if workflowCanUseRole(role, projectID) {
 			roles = append(roles, role)
 		}
 	}
@@ -257,8 +261,10 @@ func compactSOPDesignerWorkflow(raw json.RawMessage) json.RawMessage {
 			}
 			copied[k] = v
 		}
+		// A long script is left out to keep the turn small, but marked so the
+		// model does not take it for an empty one and offer to write it.
 		if script, ok := copied["script"].(string); ok && utf8.RuneCountInString(script) > sopDesignerScriptLimit {
-			copied["script"] = ""
+			copied["script"] = fmt.Sprintf(sopDesignerScriptOmitted, utf8.RuneCountInString(script))
 		}
 		compactNodes = append(compactNodes, copied)
 	}
@@ -480,4 +486,12 @@ func sopDesignerWorkflowsContext(workflows []domain.WorkflowDefinition, projectI
 		n++
 	}
 	return b.String()
+}
+
+// workflowCanUseRole mirrors validateWorkflowAgentScopes, the rule a SOP save
+// enforces: a role of this project, or one another project shares. A role
+// that belongs to no project cannot be saved into a SOP.
+func workflowCanUseRole(role domain.AgentDefinition, projectID string) bool {
+	owner := strings.TrimSpace(role.ProjectID)
+	return owner != "" && (owner == strings.TrimSpace(projectID) || role.Shared)
 }

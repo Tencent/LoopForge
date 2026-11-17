@@ -50,6 +50,8 @@ test('AI orchestrator panel stacks header, build status and the embedded chat', 
   assert.match(rule('#flowView .ai-orchestrator.fd-ai-panel'), /display:flex;flex-direction:column/);
   assert.match(rule('#aiOrchestrator .ai-orchestrator-head'), /display:flex;align-items:center;justify-content:space-between/);
   assert.match(rule('#aiOrchestrator .ai-orchestrator-frame'), /flex:1;min-height:0;width:100%;border:0/);
+  // The page tooltip must not cover the panel while the pointer is over the chat.
+  assert.match(html, /<iframe id="aiOrchestratorFrame"[^>]*data-hui-tooltip="off"/);
   assert.doesNotMatch(css, /#aiOrchestrator \.ai-orchestrator-(log|form|suggest)/, 'styles of the removed hand-written chat remain');
 });
 

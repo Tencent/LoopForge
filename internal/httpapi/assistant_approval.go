@@ -157,7 +157,8 @@ func (h *assistantHandlers) workflowDraftNodeWarnings(d assistantDraft) []string
 		return nil
 	}
 	var wf struct {
-		Nodes []domain.WorkflowNode `json:"nodes"`
+		ProjectID string                `json:"projectId"`
+		Nodes     []domain.WorkflowNode `json:"nodes"`
 	}
 	if json.Unmarshal(d.Body, &wf) != nil {
 		return nil
@@ -179,8 +180,11 @@ func (h *assistantHandlers) workflowDraftNodeWarnings(d assistantDraft) []string
 			if domain.IsPreviewBuildNode(node.ID) && domain.IsPreviewBuildAgent(node.AgentID) {
 				continue
 			}
-			if _, ok := h.repo.Agent(strings.TrimSpace(node.AgentID)); !ok {
+			role, ok := h.repo.Agent(strings.TrimSpace(node.AgentID))
+			if !ok {
 				warns = append(warns, fmt.Sprintf("节点 %s 绑定的角色 %s 不存在，请先创建该角色或改用现有角色", name, node.AgentID))
+			} else if strings.TrimSpace(wf.ProjectID) != "" && !workflowCanUseRole(role, wf.ProjectID) {
+				warns = append(warns, fmt.Sprintf("节点 %s 绑定的角色「%s」不属于当前项目也未共享，保存会失败；请换成本项目的角色，或先把它复制到本项目", name, role.Name))
 			}
 		case "script":
 			if strings.TrimSpace(node.Script) == "" {
