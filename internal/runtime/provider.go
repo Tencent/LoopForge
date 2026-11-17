@@ -105,6 +105,28 @@ func positionalPrompt(in providerInvocation) string {
 	return in.Prompt
 }
 
+// PromptOnStdin moves an oversized trailing positional prompt to stdin.
+//
+// Linux rejects any single argv string above MAX_ARG_STRLEN (128KiB) with
+// E2BIG, so the CLI never starts ("fork/exec ...: argument list too long").
+// Chat prompts embed the whole conversation on a fresh native session and
+// have no prompt file to point at. CodeBuddy and Claude Code in print mode
+// read the prompt from stdin when no positional prompt is given; stdin is
+// forwarded by local, Docker and remote conversation execution.
+//
+// Only a command ending in "--", prompt is rewritten. The "--" terminator
+// stays so flags appended later by callers remain before it. Short prompts
+// keep the existing argv form.
+func PromptOnStdin(command CommandSpec, prompt string) CommandSpec {
+	n := len(command.Argv)
+	if len(prompt) <= maxArgvPromptBytes || command.Stdin != nil || n < 3 || command.Argv[n-1] != prompt || command.Argv[n-2] != "--" {
+		return command
+	}
+	command.Argv = append([]string(nil), command.Argv[:n-1]...)
+	command.Stdin = strings.NewReader(prompt)
+	return command
+}
+
 func (p baseProvider) Protocol(ex domain.ExecutorDefinition, sink EventSink) *protocolAdapter {
 	return makeProtocolAdapter(ex, sink, p.parser, p.adapter)
 }

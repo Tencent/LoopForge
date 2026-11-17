@@ -111,7 +111,7 @@ func (h *assistantHandlers) startGeneration(c *gin.Context) {
 	catalogEngine, _ := assistantModelEngine(req.Model)
 	catalog := assistantChatCatalog(c.Request.Context(), user.CodeBuddyInternetEnvironment, nil)
 	if catalogEngine == assistantEngineCodeBuddy {
-		catalog = h.chatCatalog(c.Request.Context(), user)
+		catalog = h.turnCatalog(c.Request.Context(), user, req.Model)
 	}
 	if !runnerLogin {
 		req.Model = assistantAllowedUserModel(req.Model, catalog, user)
@@ -502,7 +502,13 @@ func (h *assistantHandlers) steerGeneration(c *gin.Context) {
 		}
 		model = forced
 	}
-	model = assistantAllowedModel(model, h.chatCatalog(c.Request.Context(), user))
+	// A CodeBuddy model this instance has not listed yet refreshes the list
+	// first, like a new turn, instead of silently becoming the default.
+	catalog := h.chatCatalog(c.Request.Context(), user)
+	if engine, _ := assistantModelEngine(model); engine == assistantEngineCodeBuddy {
+		catalog = h.turnCatalog(c.Request.Context(), user, model)
+	}
+	model = assistantAllowedModel(model, catalog)
 	if err := validateAssistantEffort(user, model, body.Effort); err != nil {
 		c.JSON(400, gin.H{"error": err.Error()})
 		return

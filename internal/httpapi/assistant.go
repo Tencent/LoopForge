@@ -211,7 +211,7 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 	catalogEngine, _ := assistantModelEngine(req.Model)
 	catalog := assistantChatCatalog(c.Request.Context(), user.CodeBuddyInternetEnvironment, nil)
 	if catalogEngine == assistantEngineCodeBuddy {
-		catalog = h.chatCatalog(c.Request.Context(), user)
+		catalog = h.turnCatalog(c.Request.Context(), user, req.Model)
 	}
 	if !runnerLogin {
 		req.Model = assistantAllowedUserModel(req.Model, catalog, user)
@@ -1762,6 +1762,9 @@ func prepareAssistantCommand(opts assistantCommandOpts) (runtime.CommandSpec, er
 	}
 	command.CredentialBindings = []runtime.CredentialBinding{runtime.BindCodeBuddy}
 	command.Telemetry = nil
+	// A fresh session embeds the whole conversation in the prompt; past
+	// MAX_ARG_STRLEN it would fail with E2BIG before the CLI starts.
+	command = runtime.PromptOnStdin(command, opts.Prompt)
 	return command.WithMCPStartupWait(agentToolSessionMCPStartupWait), nil
 }
 

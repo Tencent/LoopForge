@@ -219,6 +219,7 @@ func prepareAssistantClaudeInvocation(o assistantEngineInvocationOpts) (assistan
 	// --disallowedTools is variadic: end option parsing before the prompt.
 	argv = append(argv, "--", o.Prompt)
 	command := runtime.CommandSpec{Argv: argv, Provider: "claude-code", CredentialBindings: []runtime.CredentialBinding{runtime.BindClaudeCode}}
+	command = runtime.PromptOnStdin(command, o.Prompt)
 	return assistantCLIInvocation{
 		command:     command.WithClaudeBypassAccepted(),
 		credentials: runtime.RunCredentials{ClaudeCode: o.User},

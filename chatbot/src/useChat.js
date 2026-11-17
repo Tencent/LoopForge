@@ -52,6 +52,36 @@ function storedExecutor() {
     return "codebuddy";
   }
 }
+// The chat model is a personal preference like the executor: new
+// conversations and page reloads keep the last pick. Each CLI remembers its
+// own, because model IDs differ between CLIs.
+const MODEL_KEY = "loopforge.assistant.model.";
+function storedModel(executor) {
+  try {
+    return localStorage.getItem(MODEL_KEY + executor) || "";
+  } catch {
+    return "";
+  }
+}
+function rememberModel(executor, id) {
+  if (!id) return;
+  try {
+    localStorage.setItem(MODEL_KEY + executor, id);
+  } catch {
+    // Without storage the pick still applies to this page.
+  }
+}
+const codeBuddyModels = (models) => (models || []).filter((m) => !m.engine || m.engine === "codebuddy");
+const executorModelList = (models, executor) =>
+  executor === "codebuddy" ? codeBuddyModels(models) : engineModels(models, executor);
+// The model a new conversation on executor starts with: the remembered one
+// while list still offers it, else the first listed. Before a CLI's list has
+// loaded the remembered model (or that CLI's own default) holds the place.
+function preferredModel(list, executor) {
+  const remembered = storedModel(executor);
+  if (!list?.length) return remembered || (executor === "codebuddy" ? "" : "default");
+  return list.some((m) => m.id === remembered) ? remembered : list[0].id;
+}
 
 // Mirrors errAssistantSponsoredModel in internal/httpapi/assistant_sponsor.go;
 // credentialHint turns it into a "去配置" button.
@@ -96,7 +126,7 @@ export function useChat() {
     // the header reveals that conversation's title once it has loaded.
     [revealId, setRevealId] = useState(activeId),
     [projectId, setProjectId] = useState(initialProject),
-    [model, setModel] = useState(""),
+    [model, setModel] = useState(() => storedModel(storedExecutor())),
     [effort, setEffort] = useState(""),
     [sponsoredModels, setSponsoredModels] = useState([]),
     [executor, setExecutorState] = useState(storedExecutor),
@@ -132,8 +162,7 @@ export function useChat() {
     applyingRef = useRef(new Set()),
     dispatchingRef = useRef(false),
     steeringRef = useRef(null),
-    selectRef = useRef(null),
-    defaultModel = useRef("");
+    selectRef = useRef(null);
   currentId.current = activeId;
   sessionRef.current = session;
   projectRef.current = projectId;
@@ -178,14 +207,12 @@ export function useChat() {
       setLive({ answer: "", thinking: "", tools: [] });
       setSession(null);
       executionMachines.resetMachine();
-      // A new conversation starts on the platform default, not on whatever
-      // model the previously opened conversation used.
+      // A new conversation starts on the person's remembered model, not on
+      // whatever model the previously opened conversation used.
       if (!id) {
         const preferred = storedExecutor();
         setExecutorState(preferred);
-        const next = engineModels(models, preferred);
-        if (preferred === "codebuddy") setModel(defaultModel.current || next[0]?.id || "");
-        else setModel(next[0]?.id || "default");
+        setModel(preferredModel(executorModelList(models, preferred), preferred));
       }
       setEffort("");
       setSandboxProfileId("");
@@ -219,9 +246,9 @@ export function useChat() {
         setProjects(projectRows || []);
         setSandboxes(sandboxRows || []);
         setModels(catalog.models || []);
-        defaultModel.current = catalog.default || "";
         setSponsoredModels(sponsoredModelList(catalog));
-        setModel(catalog.default);
+        const startExecutor = storedExecutor();
+        setModel(preferredModel(executorModelList(catalog.models, startExecutor), startExecutor));
         await refreshSessions();
         if (!current) return;
         const recovered = connectionError;
@@ -258,8 +285,10 @@ export function useChat() {
         // A conversation stays on the CLI that answered it. Replies saved before
         // model prefixes keep that CLI on the session executor.
         const locked = conversationEngine(stored.messages, models, stored.executor);
-        setExecutorState(knownExecutor(locked || stored.executor));
-        setModel(stored.model || defaultModel.current || models[0]?.id || "");
+        const storedEngine = knownExecutor(locked || stored.executor);
+        setExecutorState(storedEngine);
+        // A conversation shows the model it runs on.
+        setModel(stored.model || preferredModel(executorModelList(models, storedEngine), storedEngine));
         setEffort(stored.effort || "");
         setProjectId(stored.projectId || "");
         syncProject(stored.projectId || "");
@@ -548,7 +577,13 @@ export function useChat() {
       .then((catalog) => {
         if (!current) return;
         setProviderCatalogs((old) => ({ ...old, [executor]: catalog }));
-        setModel((old) => (catalog.models || []).some((m) => m.id === old) ? old : catalog.default || "default");
+        // An open conversation keeps the model it runs on: the catalog lists
+        // bare IDs without the CLI prefix, and no gateway models.
+        setModel((old) =>
+          (catalog.models || []).some((m) => m.id === old) || (old && old === sessionRef.current?.model)
+            ? old
+            : preferredModel(catalog.models, executor),
+        );
       })
       .catch((e) => current && setError(e.message));
     return () => {
@@ -564,10 +599,9 @@ export function useChat() {
         localStorage.setItem(EXECUTOR_KEY, id);
       } catch {}
       setEffort("");
-      const next = engineModels(models, id);
-      const catalog = id === "codebuddy" ? { default: defaultModel.current } : providerCatalogs[id];
+      const listed = executorModelList(models, id);
       setExecutorState(id);
-      setModel(next[0]?.id || catalog?.default || (id === "codebuddy" ? defaultModel.current : "default"));
+      setModel(preferredModel(listed.length || id === "codebuddy" ? listed : providerCatalogs[id]?.models, id));
       if (locked && locked !== id) open(null);
     },
     [executor, models, open, providerCatalogs],
@@ -579,10 +613,11 @@ export function useChat() {
         return false;
       }
       setModel(id);
+      rememberModel(executor, id);
       setEffort((value) => modelEffort(executorModels.find((m) => m.id === id), value));
       return true;
     },
-    [sponsored, sponsoredModels, executorModels],
+    [sponsored, sponsoredModels, executorModels, executor],
   );
   // Credential flags are omitted when false, so drop the old ones before
   // merging; otherwise a cleared key would still look configured.
@@ -940,7 +975,7 @@ export function useChat() {
       );
       open(stored.id);
       setSession(stored);
-      setModel(stored.model || defaultModel.current);
+      setModel(stored.model || preferredModel(executorModels, executor));
       setEffort(stored.effort || "");
       await refreshSessions();
       return stored;
@@ -949,7 +984,9 @@ export function useChat() {
       return null;
     }
   }
-  async function regenerate(stored) {
+  // approvalMode is the composer's current choice, so a regenerated reply
+  // follows it like a new message does.
+  async function regenerate(stored, approvalMode = "confirm") {
     try {
       submittingRef.current = true;
       setSubmitting(true);
@@ -966,7 +1003,7 @@ export function useChat() {
         model: chosen,
         effort: codeBuddy ? modelEffort(models.find((m) => m.id === chosen), stored.effort || "") : "",
         messages: stored.messages,
-        approvalMode: "confirm",
+        approvalMode: ["confirm", "assisted", "auto"].includes(approvalMode) ? approvalMode : "confirm",
       });
       setGeneration(g);
       await refreshSessions();
