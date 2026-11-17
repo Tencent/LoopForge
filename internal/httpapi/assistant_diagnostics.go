@@ -97,7 +97,7 @@ func (d *assistantDiagnosticsCollector) fail(ctx context.Context, err error, use
 	if err != nil && ctx.Err() == nil {
 		_, specific = classifyAssistantFailureParts(domain.AssistantFailure{Code: "GENERATION_FAILED"}, err)
 	}
-	if !specific && (assistantFailureGeneric(f.Code) || f.Phase == "provider" || f.Phase == "connection") {
+	if !specific && (assistantFailureGeneric(f.Code) || f.Phase == "provider" || f.Phase == "connection" || f.Code == "DISK_FULL") {
 		if candidate, ok := d.structuredFailureLocked(ctx); ok {
 			f = candidate
 		}
