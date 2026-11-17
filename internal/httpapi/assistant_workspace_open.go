@@ -209,11 +209,8 @@ func (h *agentToolGateway) openConversationWorkspace(ctx context.Context, s *Age
 
 func (h *agentToolGateway) resolveWorkspaceRunTarget(conv domain.AssistantSession, projectID, targetID string) (domain.Run, error) {
 	run, ok := h.repo.RunState(targetID)
-	if !ok {
-		return domain.Run{}, fmt.Errorf("工作区或运行 %s 不存在", targetID)
-	}
-	if strings.TrimSpace(run.ExecutionContext.ProjectID) == "" || run.ExecutionContext.ProjectID != projectID {
-		return domain.Run{}, fmt.Errorf("工作区或运行 %s 不属于当前项目", targetID)
+	if !ok || strings.TrimSpace(run.ExecutionContext.ProjectID) == "" || run.ExecutionContext.ProjectID != projectID {
+		return domain.Run{}, fmt.Errorf("工作区或运行 %s 不存在或不属于当前项目", targetID)
 	}
 	if !run.IsWorkspace() {
 		if canonicalID := engine.WorkspaceRunID(run); canonicalID != "" && canonicalID != run.ID {

@@ -176,9 +176,13 @@ func TestWorkspaceOpenBindsSOPChildAndPreservesAcrossConversationDelete(t *testi
 	})
 
 	// Rejects foreign project, historical group, another chat's private workspace, missing run, conflicting sandbox, task session switch.
+	for _, id := range []string{"missing-run", foreignSOP.ID} {
+		_, err := gateway.openConversationWorkspace(context.Background(), s, map[string]any{"workspaceRunId": id})
+		if err == nil || err.Error() != "工作区或运行 "+id+" 不存在或不属于当前项目" {
+			t.Fatalf("missing/foreign run %s error = %v", id, err)
+		}
+	}
 	for _, args := range []map[string]any{
-		{"workspaceRunId": "missing-run"},
-		{"workspaceRunId": foreignSOP.ID},
 		{"workspaceRunId": historicalGroup.ID},
 		{"workspaceRunId": otherChatWS.ID},
 		{"workspaceRunId": sopDone.ID, "sandboxProfileId": "shared"},
