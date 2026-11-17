@@ -152,7 +152,13 @@ func (h *assistantHandlers) startGeneration(c *gin.Context) {
 		}
 	}
 	g := domain.AssistantGeneration{StartedAt: time.Now().UTC(), ActorID: user.ID, ActorName: user.LoginName, ID: newAssistantSessionID(), SessionID: req.SessionID, UserID: ownerID, ProjectID: req.ProjectID, Status: "running", Events: []domain.AssistantGenerationEvent{}, MessageCount: len(req.Messages)}
-	pending := assistantConversation{ExecutionTarget: req.ExecutionTarget, ID: req.SessionID, Shared: old.Shared, ProjectID: req.ProjectID, IssueID: old.IssueID, Model: req.Model, Effort: req.Effort, Executor: req.Executor, RunID: req.RunID, Messages: req.Messages, TitleEdited: old.TitleEdited, TitleGenerated: old.TitleGenerated}
+	// The issue this turn linked from its @-mention is the conversation's
+	// issue now; any other change since old was read is still refused.
+	issueID := old.IssueID
+	if issueID == "" && req.linkedIssueID != "" {
+		issueID = req.linkedIssueID
+	}
+	pending := assistantConversation{ExecutionTarget: req.ExecutionTarget, ID: req.SessionID, Shared: old.Shared, ProjectID: req.ProjectID, IssueID: issueID, Model: req.Model, Effort: req.Effort, Executor: req.Executor, RunID: req.RunID, Messages: req.Messages, TitleEdited: old.TitleEdited, TitleGenerated: old.TitleGenerated}
 	if old.TitleEdited || old.TitleGenerated {
 		pending.Title = old.Title
 	} else {

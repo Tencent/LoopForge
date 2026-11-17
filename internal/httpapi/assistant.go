@@ -65,6 +65,10 @@ type assistantRequest struct {
 	SpaceID         string                           `json:"spaceId,omitempty"`
 	workspaceToken  string
 	contextText     string
+	// linkedIssueID is the issue this turn itself linked to the conversation
+	// while preparing its context (an @-mentioned issue), so starting the
+	// turn does not mistake that link for a concurrent rebinding.
+	linkedIssueID string
 	// roles are the project's roles plus shared roles mentioned in the
 	// conversation; each is written to the CLI home as a native subagent.
 	roles []roleSubagent
