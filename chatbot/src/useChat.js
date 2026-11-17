@@ -74,6 +74,20 @@ function rememberModel(executor, id) {
 const codeBuddyModels = (models) => (models || []).filter((m) => !m.engine || m.engine === "codebuddy");
 const executorModelList = (models, executor) =>
   executor === "codebuddy" ? codeBuddyModels(models) : engineModels(models, executor);
+// "default" leaves the model to the CLI. Chat does not offer it: a
+// conversation starts on the first listed model instead. It stays only when
+// the list has no other model, or when the shared key is limited to it.
+const CLI_DEFAULT_MODEL = "default";
+export function chatModelList(models, keep = []) {
+  const list = models || [];
+  const listed = list.filter((m) => m.id !== CLI_DEFAULT_MODEL || keep.includes(m.id));
+  return codeBuddyModels(listed).length || !codeBuddyModels(list).length ? listed : list;
+}
+// sessionModel is the model a saved conversation continues on. One saved on
+// the CLI default moves to the first listed model like a new conversation,
+// unless the list still offers the default.
+const sessionModel = (id, list) =>
+  id === CLI_DEFAULT_MODEL && !(list || []).some((m) => m.id === id) ? "" : id || "";
 // The model a new conversation on executor starts with: the remembered one
 // while list still offers it, else the first listed. Before a CLI's list has
 // loaded the remembered model (or that CLI's own default) holds the place.
@@ -245,10 +259,11 @@ export function useChat() {
         setUsers(users || []);
         setProjects(projectRows || []);
         setSandboxes(sandboxRows || []);
-        setModels(catalog.models || []);
+        const listed = chatModelList(catalog.models, sponsoredModelList(catalog));
+        setModels(listed);
         setSponsoredModels(sponsoredModelList(catalog));
         const startExecutor = storedExecutor();
-        setModel(preferredModel(executorModelList(catalog.models, startExecutor), startExecutor));
+        setModel(preferredModel(executorModelList(listed, startExecutor), startExecutor));
         await refreshSessions();
         if (!current) return;
         const recovered = connectionError;
@@ -288,7 +303,8 @@ export function useChat() {
         const storedEngine = knownExecutor(locked || stored.executor);
         setExecutorState(storedEngine);
         // A conversation shows the model it runs on.
-        setModel(stored.model || preferredModel(executorModelList(models, storedEngine), storedEngine));
+        const listed = executorModelList(models, storedEngine);
+        setModel(sessionModel(stored.model, listed) || preferredModel(listed, storedEngine));
         setEffort(stored.effort || "");
         setProjectId(stored.projectId || "");
         syncProject(stored.projectId || "");
@@ -570,13 +586,14 @@ export function useChat() {
     api(`/api/assistant/models?executor=${encodeURIComponent(executor)}`)
       .then((catalog) => {
         if (!current) return;
-        setProviderCatalogs((old) => ({ ...old, [executor]: catalog }));
+        const listed = chatModelList(catalog.models);
+        setProviderCatalogs((old) => ({ ...old, [executor]: { ...catalog, models: listed } }));
         // An open conversation keeps the model it runs on: the catalog lists
         // bare IDs without the CLI prefix, and no gateway models.
         setModel((old) =>
-          (catalog.models || []).some((m) => m.id === old) || (old && old === sessionRef.current?.model)
+          listed.some((m) => m.id === old) || (old && old === sessionRef.current?.model)
             ? old
-            : preferredModel(catalog.models, executor),
+            : preferredModel(listed, executor),
         );
       })
       .catch((e) => current && setError(e.message));
@@ -969,7 +986,7 @@ export function useChat() {
       );
       open(stored.id);
       setSession(stored);
-      setModel(stored.model || preferredModel(executorModels, executor));
+      setModel(sessionModel(stored.model, executorModels) || preferredModel(executorModels, executor));
       setEffort(stored.effort || "");
       await refreshSessions();
       return stored;
@@ -986,7 +1003,8 @@ export function useChat() {
       setSubmitting(true);
       open(stored.id);
       setSession(stored);
-      const chosen = sponsored ? sharedModelFor(stored.model || model) : stored.model || model;
+      const continued = sessionModel(stored.model, executorModels) || model;
+      const chosen = sponsored ? sharedModelFor(continued) : continued;
       setModel(chosen);
       setEffort(stored.effort || "");
       const g = await write("/api/assistant/generations", {
