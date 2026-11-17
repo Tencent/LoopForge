@@ -345,6 +345,8 @@ export default function ArtifactPanel({
       subagentName(agent),
       agent.subagent,
       agent.agentId,
+      // Every dispatch's model: a resumed agent may have run on several.
+      ...Object.values(agent.models || {}),
       agent.model,
       subagentStatus(agent, live).label,
       ...agent.dispatches.map((step) => step.detail),

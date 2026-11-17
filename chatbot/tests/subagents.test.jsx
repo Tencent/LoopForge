@@ -130,6 +130,29 @@ describe("dispatched subagents", () => {
     ]);
   });
 
+  test("searching the artifacts finds a resumed subagent by an earlier dispatch's model", async () => {
+    const dispatch = (id, extra = {}) => ({ kind: "tool", id, tool: "Agent", detail: `任务 ${id}`, role: "测试工程师", ...extra, at });
+    const messages = [
+      { role: "user", content: "补单测" },
+      {
+        role: "assistant",
+        model: "deepseek-v4.1-flash",
+        activity: [
+          dispatch("c1"), { kind: "agentModel", parent: "c1", model: "hy4flash", at }, { kind: "toolDone", id: "c1", agentId: "agent-aaa", at },
+          dispatch("c2", { agentId: "agent-aaa" }), { kind: "agentModel", parent: "c2", model: "glm-5.3-flash-ioa", at }, { kind: "toolDone", id: "c2", agentId: "agent-aaa", at },
+        ],
+      },
+    ];
+    const chat = { session: { id: "s1", projectId: "p1", messages }, projectId: "p1", projects: [] };
+    render(
+      <div className="chat-shell">
+        <ArtifactPanel artifacts={[]} runs={[]} selected={null} setSelected={vi.fn()} chat={chat} onClose={vi.fn()} open />
+      </div>,
+    );
+    await userEvent.type(screen.getByRole("searchbox", { name: "搜索产物" }), "hy4flash");
+    expect(screen.getByRole("button", { name: /测试工程师/ })).toBeTruthy();
+  });
+
   test("the 子 Agent card and its session show the model it ran on", async () => {
     const messages = [
       { role: "user", content: "补单测" },
