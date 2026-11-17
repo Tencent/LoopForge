@@ -379,6 +379,15 @@ func gitlabRepoPath(rc domain.RepositoryContext) (string, string) {
 // createGitLabMR 在自托管 GitLab 上开 MR（v4 REST）。分支已有打开的 MR 时
 // 返回该 MR 并把标题/描述更新到本次提交的内容（对齐 createGongfengMR 语义）。
 func createGitLabMR(ctx context.Context, token, base, path, source, target, title, description string) (gongfengMR, error) {
+	// 实例必须由管理员显式声明：任何 host 都能由仓库标识推导出来，若不在
+	// allowlist 内，连请求都不发（PRIVATE-TOKEN 是发起人的 Git 令牌）。
+	u, err := url.Parse(base)
+	if err != nil || u.Host == "" {
+		return gongfengMR{}, fmt.Errorf("无效的 GitLab 地址 %q", base)
+	}
+	if !domain.GitLabHostAllowed(u.Host) {
+		return gongfengMR{}, fmt.Errorf("GitLab 实例 %s 未在管理员允许列表（%s）中：已拒绝发送凭据", u.Host, domain.GitLabAllowedHostsEnv)
+	}
 	// 不跟随重定向：PRIVATE-TOKEN 是凭证，302 到别的 origin 不能携带。
 	client := &http.Client{Timeout: 20 * time.Second, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}
 	apiBase := base + "/api/v4/projects/" + url.PathEscape(path)
@@ -388,7 +397,10 @@ func createGitLabMR(ctx context.Context, token, base, path, source, target, titl
 		return gongfengMR{}, err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("PRIVATE-TOKEN", token)
+	// 没有该实例的凭据就不发认证头（空头也会被服务端当成一次凭证提交）。
+	if token != "" {
+		req.Header.Set("PRIVATE-TOKEN", token)
+	}
 	resp, err := client.Do(req)
 	if err != nil {
 		return gongfengMR{}, fmt.Errorf("无法连接 GitLab %s：%v", base, err)
@@ -423,7 +435,9 @@ func findOpenGitLabMR(ctx context.Context, client *http.Client, token, base, sou
 	if err != nil {
 		return gongfengOpenMR{}, false
 	}
-	req.Header.Set("PRIVATE-TOKEN", token)
+	if token != "" {
+		req.Header.Set("PRIVATE-TOKEN", token)
+	}
 	resp, err := client.Do(req)
 	if err != nil {
 		return gongfengOpenMR{}, false
@@ -448,7 +462,9 @@ func updateGitLabMR(ctx context.Context, client *http.Client, token, base string
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("PRIVATE-TOKEN", token)
+	if token != "" {
+		req.Header.Set("PRIVATE-TOKEN", token)
+	}
 	resp, err := client.Do(req)
 	if err != nil {
 		return err

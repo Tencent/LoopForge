@@ -732,6 +732,8 @@ func TestRepositoryOneLinkSetup(t *testing.T) {
 
 	// 自托管 GitLab：gitlab: 前缀标识（host 进 ID，多实例靠 host 区分）与
 	// 可信内网 URL 都归一为前缀标识，provider=gitlab，默认分支 main。
+	// 实例须由管理员在 allowlist 中声明，这里显式给出两个测试实例。
+	t.Setenv(domain.GitLabAllowedHostsEnv, "gitlab.example.test,172.20.0.10")
 	gl := requestJSON[domain.Repository](t, h, http.MethodPost, "/api/repositories", map[string]any{
 		"projectId":         "linkproj",
 		"gongfengProjectId": "gitlab:gitlab.example.test/group/repo",
@@ -761,6 +763,54 @@ func TestRepositoryOneLinkSetup(t *testing.T) {
 	}, http.StatusBadRequest)
 	if bare["error"] == "" {
 		t.Fatalf("bare gongfeng path with provider=gitlab must be rejected, got %+v", bare)
+	}
+}
+
+// 回归（评审阻塞项）：GitLab 实例必须由管理员显式声明（部署配置
+// AGENTFLOW_GITLAB_ALLOWED_HOSTS）。项目成员能写 POST /api/repositories，
+// 若放行任意 gitlab:<host>，后续 MR 同步会把 owner 的 Git token 当
+// PRIVATE-TOKEN 发到该 host——公网主机与内网/回环地址同样危险。
+func TestRepositoryGitLabBindingRequiresAllowlistedHost(t *testing.T) {
+	t.Setenv(domain.GitLabAllowedHostsEnv, "")
+	s, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { s.Close() })
+	h := New(s, engine.New(s, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "")
+	requestJSON[domain.Project](t, h, http.MethodPost, "/api/projects", domain.Project{ID: "allowproj", Key: "ALLOW", Name: "Allow"}, http.StatusOK)
+
+	for _, id := range []string{
+		"gitlab:gitlab.attacker.example/group/repo",
+		"gitlab:127.0.0.1:8080/group/repo",
+	} {
+		resp := requestJSON[map[string]string](t, h, http.MethodPost, "/api/repositories", map[string]any{
+			"projectId":         "allowproj",
+			"gongfengProjectId": id,
+		}, http.StatusBadRequest)
+		if !strings.Contains(resp["error"], domain.GitLabAllowedHostsEnv) {
+			t.Fatalf("error for %q = %q, want it to name %s", id, resp["error"], domain.GitLabAllowedHostsEnv)
+		}
+	}
+
+	// 粘贴内网 URL 同样不能绕过：归一成 gitlab: 标识后仍走 allowlist
+	// （内网地址也能起服务收 token）。
+	resp := requestJSON[map[string]string](t, h, http.MethodPost, "/api/repositories", map[string]any{
+		"projectId": "allowproj",
+		"repoUrl":   "http://172.20.0.10/team/svc.git",
+	}, http.StatusBadRequest)
+	if !strings.Contains(resp["error"], domain.GitLabAllowedHostsEnv) {
+		t.Fatalf("bare internal URL error = %q, want it to name %s", resp["error"], domain.GitLabAllowedHostsEnv)
+	}
+
+	// 管理员声明后即可绑定，标识保持 gitlab: 前缀形式。
+	t.Setenv(domain.GitLabAllowedHostsEnv, "gitlab.attacker.example")
+	created := requestJSON[domain.Repository](t, h, http.MethodPost, "/api/repositories", map[string]any{
+		"projectId":         "allowproj",
+		"gongfengProjectId": "gitlab:gitlab.attacker.example/group/repo",
+	}, http.StatusOK)
+	if created.Provider != "gitlab" || created.GongfengProjectID != "gitlab:gitlab.attacker.example/group/repo" {
+		t.Fatalf("declared instance must bind as a gitlab repo, got %+v", created)
 	}
 }
 

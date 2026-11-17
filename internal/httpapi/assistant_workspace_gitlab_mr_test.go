@@ -26,11 +26,45 @@ func TestCreateGitLabMRRefusesCrossOriginRedirect(t *testing.T) {
 		http.Redirect(w, r, foreign.URL+"/hook", http.StatusFound)
 	}))
 	defer origin.Close()
+	// 实例必须由管理员显式声明：凭据只会发往 allowlist 内的 host。
+	t.Setenv(domain.GitLabAllowedHostsEnv, strings.TrimPrefix(origin.URL, "http://"))
 	if _, err := createGitLabMR(context.Background(), "secret-token", origin.URL, "group/repo", "feat", "main", "T", "D"); err == nil {
 		t.Fatal("redirect must be rejected, not followed")
 	}
 	if n := atomic.LoadInt32(&foreignHits); n != 0 {
 		t.Fatalf("redirect target was hit %d times", n)
+	}
+}
+
+// 回归（评审阻塞项）：未在管理员 allowlist 中的 GitLab 实例，工作区 MR
+// 客户端必须在发请求前就拒绝，绝不能把发起人 token 带过去。
+func TestCreateGitLabMRRejectsUnlistedInstance(t *testing.T) {
+	t.Setenv(domain.GitLabAllowedHostsEnv, "")
+	_, err := createGitLabMR(context.Background(), "secret-token", "https://gitlab.attacker.example", "group/repo", "feat", "main", "T", "D")
+	if err == nil || !strings.Contains(err.Error(), domain.GitLabAllowedHostsEnv) {
+		t.Fatalf("unlisted instance must be rejected with an actionable error, got %v", err)
+	}
+}
+
+// 未配置该实例凭据时，请求里不能出现 PRIVATE-TOKEN 头（空值也不行）。
+func TestCreateGitLabMROmitsTokenWithoutCredential(t *testing.T) {
+	var tokenHeaders int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if n := len(r.Header.Values("PRIVATE-TOKEN")); n > 0 {
+			atomic.AddInt32(&tokenHeaders, int32(n))
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"iid":4}`))
+	}))
+	defer srv.Close()
+	t.Setenv(domain.GitLabAllowedHostsEnv, strings.TrimPrefix(srv.URL, "http://"))
+	mr, err := createGitLabMR(context.Background(), "", srv.URL, "group/repo", "feat", "main", "T", "D")
+	if err != nil || mr.IID != 4 {
+		t.Fatalf("MR = %+v err = %v", mr, err)
+	}
+	if n := atomic.LoadInt32(&tokenHeaders); n != 0 {
+		t.Fatalf("PRIVATE-TOKEN must not be sent without a credential, saw %d", n)
 	}
 }
 

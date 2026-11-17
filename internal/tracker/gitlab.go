@@ -45,6 +45,15 @@ func (s *Service) gitlabClient(project string) (*gitlabClient, error) {
 	if !ok {
 		return nil, fmt.Errorf("invalid GitLab repository")
 	}
+	// 凭据只发往管理员显式声明的实例（AGENTFLOW_GITLAB_ALLOWED_HOSTS）。
+	// 成员只要能写 POST /api/repositories 就能绑定任意 gitlab:<host>，若按
+	// "前缀即管理员声明"放行，owner 的 Git 令牌会被当 PRIVATE-TOKEN 发到
+	// 攻击者主机。这里与绑定入口双重拦截，失败即拒绝构造客户端、不携带任何
+	// 凭据；反过来，声明实例也即管理员确认"该实例可以使用部署的 Git 令牌"，
+	// 未声明则绝不下发。
+	if !domain.GitLabHostAllowed(host) {
+		return nil, fmt.Errorf("GitLab 实例 %s 未在管理员允许列表（%s）中：已拒绝发送凭据，请让管理员在部署配置中声明该实例", host, domain.GitLabAllowedHostsEnv)
+	}
 	var token string
 	var siteURLs []string
 	if s.projectAuth != nil {

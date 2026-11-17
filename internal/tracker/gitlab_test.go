@@ -12,7 +12,13 @@ import (
 
 // gitLabFixture 起一个本地 GitLab（httptest），注册 owner 凭证与 gitlab: 仓库行。
 // 仓库行的 WebURL 指向测试服务器，因此实例 scheme 为 http（scheme 以记录为准）。
+// 实例 host 写进管理员 allowlist：凭据只允许发往显式声明的实例。
 func gitLabFixture(t *testing.T, handler http.HandlerFunc) (*Service, string) {
+	t.Helper()
+	return gitLabFixtureWithToken(t, handler, "gl-private-token")
+}
+
+func gitLabFixtureWithToken(t *testing.T, handler http.HandlerFunc, token string) (*Service, string) {
 	t.Helper()
 	srv := httptest.NewServer(handler)
 	t.Cleanup(srv.Close)
@@ -21,7 +27,7 @@ func gitLabFixture(t *testing.T, handler http.HandlerFunc) (*Service, string) {
 		t.Fatal(err)
 	}
 	t.Cleanup(st.Close)
-	if err := st.PutUser(domain.User{LoginName: "gitlab-owner", GitToken: "gl-private-token"}); err != nil {
+	if err := st.PutUser(domain.User{LoginName: "gitlab-owner", GitToken: token}); err != nil {
 		t.Fatal(err)
 	}
 	u, _ := st.UserByLoginName("gitlab-owner")
@@ -29,6 +35,7 @@ func gitLabFixture(t *testing.T, handler http.HandlerFunc) (*Service, string) {
 		t.Fatal(err)
 	}
 	host := strings.TrimPrefix(srv.URL, "http://")
+	t.Setenv(domain.GitLabAllowedHostsEnv, host)
 	project := "gitlab:" + host + "/group/repo"
 	if err := st.PutRepository(domain.Repository{ID: "gl-repo", ProjectID: "glproj", Provider: "gitlab", Name: "repo", GongfengProjectID: project, DefaultBranch: "main", WebURL: srv.URL + "/group/repo"}); err != nil {
 		t.Fatal(err)
@@ -36,6 +43,47 @@ func gitLabFixture(t *testing.T, handler http.HandlerFunc) (*Service, string) {
 	s := NewService()
 	s.ConfigureWithStore(domain.SyncConfig{}, st)
 	return s, project
+}
+
+// 回归（评审阻塞项）：实例未在管理员 allowlist 中时，连客户端都不能建，
+// 更不能带着 owner 的 Git 令牌发请求。
+func TestGitLabClientRejectsInstanceOutsideAllowlist(t *testing.T) {
+	t.Setenv(domain.GitLabAllowedHostsEnv, "")
+	if _, err := NewService().gitlabClient("gitlab:gitlab.attacker.example/group/repo"); err == nil ||
+		!strings.Contains(err.Error(), domain.GitLabAllowedHostsEnv) {
+		t.Fatalf("unlisted GitLab instance must be rejected with an actionable error, got %v", err)
+	}
+}
+
+// 声明过的公网实例可以建客户端；没有用户令牌时不注入任何凭证。
+func TestGitLabClientAllowsDeclaredInstanceWithoutToken(t *testing.T) {
+	t.Setenv(domain.GitLabAllowedHostsEnv, "gitlab.example.test")
+	g, err := NewService().gitlabClient("gitlab:gitlab.example.test/group/repo")
+	if err != nil {
+		t.Fatalf("declared instance must be accepted: %v", err)
+	}
+	if g.base != "https://gitlab.example.test" || g.token != "" {
+		t.Fatalf("base = %q token = %q, want https base and no token", g.base, g.token)
+	}
+}
+
+// 未配置用户 Git 令牌时，请求里不能出现 PRIVATE-TOKEN 头。
+func TestGitLabFindBranchOmitsTokenWithoutCredential(t *testing.T) {
+	var tokenHeaders int32
+	s, project := gitLabFixtureWithToken(t, func(w http.ResponseWriter, r *http.Request) {
+		if n := len(r.Header.Values("PRIVATE-TOKEN")); n > 0 {
+			atomic.AddInt32(&tokenHeaders, int32(n))
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[{"iid":3,"state":"merged","source_branch":"feat","target_branch":"main"}]`))
+	}, "")
+	mr, ok, err := s.gitlabFindBranch(project, "feat")
+	if err != nil || !ok || mr.IID != 3 {
+		t.Fatalf("find branch = %+v ok=%v err=%v", mr, ok, err)
+	}
+	if n := atomic.LoadInt32(&tokenHeaders); n != 0 {
+		t.Fatalf("PRIVATE-TOKEN must not be sent without a user credential, saw %d", n)
+	}
 }
 
 // 回归：EnsureAndMergeBranchMR 必须真正调用 merge 端点并校验 state=merged，
