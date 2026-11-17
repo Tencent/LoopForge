@@ -366,6 +366,9 @@ func (d *Daemon) availableProviders() []string {
 	for _, rt := range d.currentRuntimes() {
 		if rt.Status != domain.RuntimeStatusDisabled {
 			providers = append(providers, rt.Provider)
+			if rt.Provider == "codex" && slices.Contains(rt.Capabilities, domain.RunnerCapabilityDeepSeek) {
+				providers = append(providers, domain.ExecutorKindDeepSeek)
+			}
 		}
 	}
 	return providers
@@ -1045,7 +1048,7 @@ func bindSandboxPrivateHome(workspace, driver, provider string, env map[string]s
 		env["HOME"] = home
 		env["TMPDIR"] = tmp
 	}
-	switch provider {
+	switch domain.BinaryProvider(provider) {
 	case "codex":
 		if err := os.MkdirAll(filepath.Join(home, ".codex"), 0o700); err != nil {
 			return nil, err
@@ -1077,16 +1080,29 @@ func bindInvocationCredentials(inv *domain.RunnerInvocation, bindings []runtime.
 			if net := strings.TrimSpace(inv.CodeBuddyInternetEnvironment); net != "" {
 				env["CODEBUDDY_INTERNET_ENVIRONMENT"] = net
 			}
-		case runtime.BindCodex:
-			if !personal {
+		case runtime.BindCodex, runtime.BindDeepSeek:
+			// DeepSeek always uses a personal credential, even when Codex uses local login.
+			if !personal && binding != runtime.BindDeepSeek {
 				continue
 			}
-			key := strings.TrimSpace(inv.CodexAPIKey)
+			key, baseURL, label := inv.CodexAPIKey, inv.CodexBaseURL, "Codex"
+			if binding == runtime.BindDeepSeek {
+				key, baseURL, label = inv.AgentCLIAPIKey, inv.AgentCLIBaseURL, "DeepSeek"
+				if strings.TrimSpace(baseURL) == "" {
+					baseURL = domain.DeepSeekDefaultBaseURL
+				}
+			}
+			key = strings.TrimSpace(key)
 			if key == "" {
-				return nil, nil, errors.New("Codex 个人 API Key 未配置")
+				return nil, nil, fmt.Errorf("%s 个人 API Key 未配置", label)
 			}
 			env["CODEX_API_KEY"] = key
-			withProvider, err := runtime.CodexUserProviderArgv(argv, inv.CodexBaseURL)
+			if binding == runtime.BindDeepSeek {
+				for _, name := range []string{"ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN", "DEEPSEEK_API_KEY", "CODEBUDDY_API_KEY", "OPENAI_API_KEY"} {
+					env[name] = ""
+				}
+			}
+			withProvider, err := runtime.CodexUserProviderArgv(argv, baseURL)
 			if err != nil {
 				return nil, nil, err
 			}

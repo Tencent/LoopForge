@@ -137,6 +137,9 @@ func detectRuntimes(ctx context.Context, extraBinaries map[string]string, invent
 			// Inspect the installed CLI's subcommands only when asked to update.
 			capabilities = append(capabilities, domain.RuntimeCapabilityNativeUpdate)
 		}
+		if spec.Kind == "codex" {
+			capabilities = append(capabilities, domain.RunnerCapabilityDeepSeek)
+		}
 		out = append(out, domain.RunnerRuntime{
 			Provider:     spec.Kind,
 			BinaryPath:   path,
@@ -221,6 +224,7 @@ func probeVersion(ctx context.Context, path string, flags []string, environments
 // providerBinaryPath resolves the binary path for a claimed task from the
 // runner's own runtime inventory.
 func providerBinaryPath(runtimes []domain.RunnerRuntime, provider string) (string, bool) {
+	provider = domain.BinaryProvider(provider)
 	for _, rt := range runtimes {
 		if strings.EqualFold(rt.Provider, provider) && rt.Status != domain.RuntimeStatusDisabled {
 			return rt.BinaryPath, true
@@ -235,7 +239,7 @@ func providerBinaryPath(runtimes []domain.RunnerRuntime, provider string) (strin
 // value.
 func providerArgv(provider, binary string, prompt string, extraArgs []string) ([]string, error) {
 	args := append([]string{}, extraArgs...)
-	switch strings.TrimSpace(provider) {
+	switch domain.BinaryProvider(strings.TrimSpace(provider)) {
 	case "claude-code":
 		return append([]string{binary}, append(args, "-p", "--output-format", "text", prompt)...), nil
 	case "codex":

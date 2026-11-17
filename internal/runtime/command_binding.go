@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"agentflow/internal/domain"
 	"agentflow/internal/observability"
 	"fmt"
 	"net/url"
@@ -45,6 +46,7 @@ func bindCommand(sandbox Sandbox, workspace string, command CommandSpec, credent
 	bound.environment["AGENTFLOW_GIT_TOKEN"] = ""
 	bound.environment["GH_TOKEN"] = ""
 	bound.environment["GITHUB_TOKEN"] = ""
+	bound.environment["DEEPSEEK_API_KEY"] = ""
 	for _, key := range []string{"OPENAI_API_KEY", "CODEX_API_KEY", "OPENAI_BASE_URL", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL", "CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY"} {
 		bound.environment[key] = ""
 	}
@@ -73,7 +75,7 @@ func bindCommand(sandbox Sandbox, workspace string, command CommandSpec, credent
 			bound.environment["HOME"] = hostHome
 			bound.environment["TMPDIR"] = hostTmp
 		}
-		if command.Provider == "codex" || command.Provider == "claude-code" {
+		if binaryProvider := domain.BinaryProvider(command.Provider); binaryProvider == "codex" || binaryProvider == "claude-code" {
 			dir, key := ".codex", "CODEX_HOME"
 			if command.Provider == "claude-code" {
 				dir, key = ".claude", "CLAUDE_CONFIG_DIR"
@@ -107,12 +109,19 @@ func bindCommand(sandbox Sandbox, workspace string, command CommandSpec, credent
 				return CommandSpec{}, err
 			}
 			bound.Argv = BindMCPCallArgv(sandbox, bound.Argv)
-		case BindCodex:
-			bound.environment["CODEX_API_KEY"] = strings.TrimSpace(credentials.Codex.APIKey)
-			if bound.environment["CODEX_API_KEY"] == "" {
-				return CommandSpec{}, fmt.Errorf("需求责任人未配置 Codex API Key，请在个人配置中配置")
+		case BindCodex, BindDeepSeek:
+			credential, label := credentials.Codex, "Codex"
+			if binding == BindDeepSeek {
+				credential, label = credentials.AgentCLI[domain.ExecutorKindDeepSeek], "DeepSeek"
+				if strings.TrimSpace(credential.BaseURL) == "" {
+					credential.BaseURL = domain.DeepSeekDefaultBaseURL
+				}
 			}
-			argv, err := CodexUserProviderArgv(bound.Argv, credentials.Codex.BaseURL)
+			bound.environment["CODEX_API_KEY"] = strings.TrimSpace(credential.APIKey)
+			if bound.environment["CODEX_API_KEY"] == "" {
+				return CommandSpec{}, fmt.Errorf("需求责任人未配置 %s API Key，请在个人配置中配置", label)
+			}
+			argv, err := CodexUserProviderArgv(bound.Argv, credential.BaseURL)
 			if err != nil {
 				return CommandSpec{}, err
 			}
