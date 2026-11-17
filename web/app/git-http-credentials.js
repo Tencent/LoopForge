@@ -46,7 +46,7 @@ function openGitHTTPCredentials() {
       <label class="credential-field"><span>平台</span><div class="credential-input is-plain"><select name="platform" class="git-http-select" aria-label="平台">${GIT_HTTP_PLATFORMS.map(([value, label]) => `<option value="${value}">${escapeHTML(label)}</option>`).join('')}</select></div><small>决定 gh / glab 的便利配置与 PR 自动登记；「其他平台」只做 git 认证。</small></label>
       ${credentialFieldHTML({label:'名称', name:'name', type:'text', placeholder:'例如 公司 GitLab', hint:null})}
       ${credentialFieldHTML({label:'用户名', name:'username', type:'text', placeholder:'x-access-token', hint:'git 认证使用的用户名，留空时为 x-access-token。'})}
-      ${credentialFieldHTML({label:'访问令牌', name:'token', placeholder:'粘贴个人访问令牌', hint:'保存后不再显示；编辑时留空保留现有令牌。'})}
+      ${credentialFieldHTML({label:'个人访问令牌', name:'token', placeholder:'粘贴个人访问令牌', hint:'保存后不再显示；编辑时留空保留现有令牌。'})}
       <label class="git-http-expose"><span><b>提供给工作区</b><small>关闭后只供平台在控制面使用（PR 登记、状态轮询），工作区拿不到这条令牌。</small></span><input type="checkbox" name="exposeToWorkspace" class="hui-switch" role="switch"></label>
       <footer class="git-ssh-form-actions">
         <button type="button" class="credential-btn secondary" data-http-cred-cancel>取消</button>
