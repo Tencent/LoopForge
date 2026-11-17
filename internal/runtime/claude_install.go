@@ -14,7 +14,7 @@ import (
 // ClaudeCodeVersion is installed from npm on first use. Published platform
 // images do not redistribute Claude Code, so each installation downloads it
 // from Anthropic's registry package itself.
-const ClaudeCodeVersion = "2.1.300"
+const ClaudeCodeVersion = "2.1.326"
 
 var claudeInstallMu sync.Mutex
 

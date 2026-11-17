@@ -107,6 +107,10 @@ type CommandSpec struct {
 	privateBinds []string
 	// Conversation preparation binds credentials before acknowledging start.
 	bindingsPrepared bool
+	// Runner-owned authentication state never enters serialized invocations.
+	runnerLogin           *runnerLoginLease
+	runnerLoginPrompt     string
+	runnerLoginInitialize bool
 }
 
 // WithPrivateHomeDir keeps CodeBuddy/Claude isolated from the operator HOME
