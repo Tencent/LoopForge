@@ -1,310 +1,235 @@
 # 企业 IM 接入实施方案（单分支开发）
 
-状态：实施方案第 1 版（2026-11-17）。产品范围、验收条件和评审结论以 [enterprise-im-integration.md](enterprise-im-integration.md)（评审稿第 3 版，下称“方案”）为准；本文只回答“代码怎么改、按什么顺序改、怎么验证”。代码现状核对基于 `main@69e4bf0`；`777f16a` 之后合入的 5 个提交没有改动 Bot、通知和凭据相关代码。
+状态：实施方案第 2 版（2026-11-17）。产品范围、验收条件和评审结论以 [enterprise-im-integration.md](enterprise-im-integration.md)（评审稿第 3 版，下称“方案”）为准；本文只说明代码怎么改、按什么顺序改、怎么验证。代码现状核对基于 `main@69e4bf0`。
+
+第 2 版相对第 1 版的变化：
+
+- 交付顺序改为“第一轮：企微回归基线 + 飞书私聊跑通”，让真实 IM 消息尽早进来。凭据批量迁移、企微发送重构、数据清理、助手写审批和主动通知往后挪。
+- 迁移脚本：不再手写补列 DDL。列由现有的增量 DDL 补齐，手工 SQL 只做前置检查、查重和回填，并在 MySQL 8.4 上演练升级（§2.2）。
+- 企微旧绑定归属：同一个外部 Bot ID 对应多个配置时，不再按“当前启用”推断归属，改为列出来人工确认，必要时让用户重新绑定（§2.3）。
+- 换主与投递：补充“请求已发出、还没收到回执时换主”的处理和测试；写清新实例怎样领取 `ready` 和到期可重试的 `sending`；企微 `WriteJSON` 报错一律按“结果不确定”处理（§3）。
 
 ## 0. 开发约定
 
 | 事项 | 约定 |
 | --- | --- |
-| 分支 | 本地分支 `feat/enterprise-im`，基于 `main@69e4bf0`，前两个提交是方案第 2、3 版。全部开发都在这个分支上进行，暂不推送 |
-| 提交组织 | 按第 3 节的阶段 A–G 顺序提交，每个阶段 1–3 个提交。每个阶段结束时全量测试通过、企微行为不回退，可以在任意阶段停下来评审 |
-| 与需求的关系 | 需求 #1–#4 保留，作为验收清单使用：阶段 A–C 对应 #1，D–E 对应 #2，F 对应 #3，G 对应 #4。最终开一个 PR，描述里逐条列出四个需求的验收结果 |
-| 迁移 | 遵守 `AGENTS.md`：新列和索引靠 gorm 增量 DDL 自动补齐；数据回填和归属核查写成 `migrations/034_*.sql`、`035_*.sql`，由运维手动执行。不新增启动自愈逻辑 |
-| 依赖 | 新增 `github.com/larksuite/oapi-sdk-go/v3`（v3.13.0）和 `github.com/open-dingtalk/dingtalk-stream-sdk-go`（v0.9.1），已确认可以从 proxy.golang.org 拉取。不引入其他依赖 |
-| 环境 | 工作区先装 Go 1.26.11（`go.mod` 要求）。每个阶段跑 `go test -p=2 ./... -count=1`、`go vet ./...`、`python3 scripts/check-public.py`、`scripts/scan-secrets.sh`。需要 MySQL 的用例在环境不具备时标注“未运行” |
-| 兼容底线 | 企微存量 Bot 的外部 Bot ID、绑定键、去重键、租约键和审批行为全程不变（方案第 10 节第 1–3 条） |
+| 分支 | 本地分支 `feat/enterprise-im`，基于 `main@69e4bf0`，暂不推送 |
+| 交付轮次 | 第一轮（R1）企微回归基线 + 飞书私聊；第二轮（R2）钉钉复用同一条链路；第三轮（R3）企微发送重构、存量迁移与清理；第四轮（R4）助手与主动通知。每轮按步骤提交，每个提交都保证测试通过 |
+| 与需求的关系 | 需求 #1–#4 是按旧的 M1–M4 拆分的。R1 横跨 #1 和 #2。等这一版方案确认后，再提交需求描述的修改草稿，把 #1–#4 对齐到 R1–R4 |
+| 迁移 | 遵守 `AGENTS.md`。新列和索引由 gorm 增量 DDL 补齐（`internal/repo/automigrate.go`）；手工 SQL 只做检查和回填，由运维执行。R1 不需要执行任何手工 SQL |
+| 依赖 | `github.com/larksuite/oapi-sdk-go/v3` v3.13.0（R1），`github.com/open-dingtalk/dingtalk-stream-sdk-go` v0.9.1（R2） |
+| 环境 | 工作区已装好 Go 1.26.11，`chatbot` 前端已构建（`internal/httpapi` 编译需要 `web/native-chat`） |
+| 兼容底线 | 企微存量 Bot 的外部 Bot ID、绑定键、去重键、租约键、审批行为和发送行为在 R1 全部保持不变 |
 
-## 1. 目标结构
+### 0.1 基线测试结果（未改代码时）
 
-### 1.1 包内分层
+| 包 | 结果 |
+| --- | --- |
+| `internal/botinteraction` | 通过 |
+| `internal/notification` | 通过 |
+| `internal/repo` | 通过 |
+| `internal/httpapi` | 只有 `TestInstallStatusSurvivesAReload` 失败。这条测试检查 CLI 安装状态，与 Bot 无关，失败原因是本工作区已经装有 `dsh`；Bot、通知、绑定相关的用例全部通过。之后每次对比都以这份结果为基线 |
 
-渠道适配器留在 `internal/botinteraction` 包内，按文件拆分，不新建子包。原因是现有卡片逻辑（`cards.go`）直接使用企微 `socket` 的未导出方法；拆成子包需要导出一大批内部类型，收益不大。
+## 1. 第一轮（R1）：企微回归基线 + 飞书私聊跑通
 
-```text
-internal/botinteraction/
-  channel.go            渠道接口、事件、发送结果类型（新增）
-  service.go            公共流程：reconcile、租约、入站管道、处理循环（重构）
-  inbound.go            入站校验、分类、限频、入库（新增，从 service.go 拆出）
-  delivery.go           两段式发送、结果分类、自动重试、恢复（新增）
-  retention.go          保留期清理（新增）
-  channel_wecom.go      企微适配器：包装现有 socket、progress、cards（新增，迁移现有代码）
-  channel_feishu.go     飞书适配器（新增）
-  channel_dingtalk.go   钉钉适配器（新增）
-  channel_fake_test.go  测试用模拟渠道（新增）
-  socket.go / progress.go / cards.go / persistence.go   保留，供企微适配器使用
-internal/credcrypt/     凭据加解密（新增，不依赖 repo）
-```
+### 1.1 第一轮的验收结果
 
-### 1.2 渠道接口
+R1 只看一个结果：
+
+> 一个真实的飞书用户，用 LoopForge 现有的网页登录绑定自己已有的账号，在私聊里发「项目状态」，在原会话收到这个项目的状态；同一条消息被重复投递时只执行一次；同时，现有企微的回归全部通过。
+
+「项目状态」是一条**固定的只读查询**，由服务端直接生成回复，不调用模型，也不依赖 SSO：本地登录或 OIDC 都可以完成绑码。
+
+### 1.2 步骤
+
+| 步骤 | 内容 | 提交后的状态 |
+| --- | --- | --- |
+| R1-1 企微基线 | 先补企微的特征测试，把现状固定下来：<br>• `BotMessageID`、绑定 ID、租约键的取值<br>• 私聊流式回复，以及流式失败后改用 `send` 的现有行为<br>• 群聊会话 ID<br>• 卡片发送和卡片回调路由<br>• 通知卡片的入队<br>同时整理一份真实环境回归清单（私聊、群聊 @、交互卡片、主动通知、重启恢复），在改代码前和 R1 完成后各跑一次 | 只加测试，不改代码 |
+| R1-2 最小接口 | 新增 `channel.go`，只定义飞书需要的接口（见 1.3），企微的现有代码包装成 `wecomChannel`：<br>• `run`、`receive`、`process` 里的协议细节搬进 `channel_wecom.go`<br>• 流式进度和卡片作为企微的可选能力，用类型断言取得 | 现有测试和 R1-1 的特征测试**一行不改**全部通过 |
+| R1-3 数据列 | 按 §2.1 新增列，由增量 DDL 补齐。代码里 `channel` 为空就按企微处理，企微的 `receive_slot` 暂时留空，旧的加锁扫描逻辑保留 | 存量数据不用回填就能正常运行 |
+| R1-4 凭据加密 | 新增 `internal/credcrypt` 包（§2.4）：<br>• 三个渠道新建或轮换凭据，都要求部署配置了主密钥<br>• 存量企微的明文凭据照常读取，Bot 管理页提示“未加密”<br>• 批量 `reencrypt` 命令放到 R3 | 企微旧凭据照常连接 |
+| R1-5 租约版本与领取规则 | 实现 §3 的 epoch、带版本条件的写回、领取规则和恢复规则。企微仍走现有发送路径，只是写回时多带版本条件；飞书使用两段式发送 | 换主相关测试通过 |
+| R1-6 绑定 | `IdentityScope` 按渠道区分：企微不变，飞书使用 `内部配置 ID + open_id`。<br>• 挑战记录渠道、`config_id`、脱敏后的发送者<br>• 确认页显示渠道、Bot、项目、脱敏发送者和授权说明（方案 §5.5）<br>• 飞书启用绑定引导限频<br>• 企微是否同时启用限频，见 §6 第 2 条 | 飞书绑码流程可以端到端走通 |
+| R1-7 飞书适配器 | 实现 Verify、Connect、事件映射、群消息忽略、非文本和超长消息提示（含限频）、按 `内部配置 ID + message_id` 去重、带 `uuid` 回复原消息（§1.4） | 模拟平台下的适配器测试通过 |
+| R1-8 固定只读查询 | 实现「项目状态」「帮助」和绑定命令（§1.5）。权限沿用 `botExecutionUser` 的现有规则 | 服务测试通过 |
+| R1-9 管理页 | `web/app/bots.js` 增加渠道选择、飞书的 App ID / App Secret 表单、识别出的企业名称和连接状态。“编辑时不能修改外部应用 ID”同时对企微生效，因为它只拦截改 ID，不影响其他编辑 | 页面可以创建飞书 Bot |
+| R1-10 真实环境验收 | 用一个真实飞书自建应用、一个试点项目和一个非管理员账号，跑 §1.1 的验收；再跑一遍企微回归清单；最后在 MySQL 8.4 上做升级演练（§2.2） | R1 收口 |
+
+### 1.3 第一轮的最小接口
 
 ```go
-// channel.go
-type ChannelKind string
-const (ChannelWeCom ChannelKind = "wecom"; ChannelFeishu = "feishu"; ChannelDingTalk = "dingtalk")
-
 type Channel interface {
     Kind() ChannelKind
-    // 保存凭据前调用：换取令牌校验凭据，飞书顺带取 tenant_key 和企业名称
     Verify(ctx context.Context, bot domain.NotificationBot, cred Credential) (TenantInfo, error)
-    // 建立长连接；每个合法事件同步调用 sink，sink 返回 error 时适配器按协议报告失败
     Connect(ctx context.Context, bot domain.NotificationBot, cred Credential, sink InboundSink) (Conn, error)
 }
-
 type Conn interface {
     Done() <-chan struct{}
-    Reply(ctx context.Context, msg OutboundMessage) SendResult
+    Reply(ctx context.Context, msg OutboundMessage) SendResult // msg 中包含 ReplyKey，飞书用作 uuid
     Close()
 }
-// 可选能力，用类型断言获取：企微的流式进度和模板卡片
-type ProgressConn interface { Progress(ctx context.Context, item domain.BotInteraction) (context.Context, func()) }
-type CardConn interface { SendCard(...) SendResult; UpdateCard(...) error }
-// M4：主动发送到已验证会话
-type PushConn interface { Push(ctx context.Context, chatID, text, key string) SendResult }
-
-type InboundEvent struct {
-    MessageID, PlatformEventID, SenderID, ChatID, ChatType string // ChatType: single / group
-    MsgType, Text, Quote string
-    TextLength int
-    TenantKey, AppID string           // 由适配器从事件头取出，交给公共校验
-    Action, TaskID, RequestID string  // 企微卡片回调
-    Route *ReplyRoute                 // 钉钉 sessionWebhook 及过期时间；飞书为 message_id
-}
-
-type SendOutcome int
-const (Delivered SendOutcome = iota; NotDelivered; Rejected; Unknown)
-type SendResult struct { Outcome SendOutcome; Code int; Detail string; Retryable bool }
+type InboundSink func(ctx context.Context, ev InboundEvent) error // 返回 error 时，适配器按协议报告失败
+type SendResult struct { Outcome SendOutcome; Code int; Detail string } // Delivered / NotDelivered / Rejected / Unknown
 ```
 
-公共服务只依赖这几个类型。企微适配器包装现有的 `dial`、`socket.request`、`stream`、`updateActionCard`，协议细节不变。
+企微的流式进度（`ProgressConn`）和卡片（`CardConn`）是可选接口。主动发送（`PushConn`）在 R4 再加，R1 不定义。
 
-### 1.3 标识规则（集中在 `domain.NotificationBot` 的方法里）
-
-`NotificationBot.BotID` 字段沿用，含义扩大为“外部应用 ID”：企微 Bot ID、飞书 App ID、钉钉 Client ID。JSON 键 `botId` 和前端都不用改名。
-
-| 方法 | 企微（含存量） | 飞书、钉钉 |
-| --- | --- | --- |
-| `ChannelKind()` | 字段为空时返回 `wecom` | `feishu` / `dingtalk` |
-| `ReceiveSlot()` | `wecom:<BotID>`（启用对话时） | `feishu:<App ID>` / `dingtalk:<Client ID>` |
-| `LeaseKey()`（`bot_connections` 主键） | `<BotID>`（不变） | 同 `ReceiveSlot()` |
-| `IdentityScope()`（绑定和消息去重的范围） | `<BotID>`（不变） | 内部配置 `ID` |
-
-现有所有用到 `bot.BotID` 的地方都改为调用这几个方法：`BotMessageID`、`BotUserBinding`、`NewBotBindingChallenge`、`ClaimBotConnection`、`BotConnectionState`、`botExecutionUser`，以及 `httpapi/bot_identities.go` 里的全部调用。改完后，“企微的值不变”由单元测试固定下来。
-
-## 2. 数据模型与迁移
-
-### 2.1 新增列（gorm tag 声明，启动时自动补齐）
-
-| 表 | 新列 | 说明 |
-| --- | --- | --- |
-| `notification_bots` | `channel` varchar(16)、`external_app_id` varchar(191)、`tenant_key` varchar(191)、`receive_slot` varchar(208) NULL **唯一索引** | 物理列，`SaveNotificationBot` 写 payload 时一并写入。payload JSON 里同步加 `channel`、`tenantKey`、`tenantName`、`credentialVersion`、`writeApproval`、`credentialEncrypted` |
-| `bot_connections` | `epoch` bigint default 0、`takeovers` bigint、`last_event_at`、`auth_failures` bigint、`ignored_group` bigint、`last_auth_error` varchar(255) | 租约版本和可观测性计数 |
-| `bot_interactions` | `lease_owner` varchar(64)、`lease_epoch` bigint、`reply_key` varchar(64)、`send_started_at`、`send_attempts` int、`next_send_at`（并入 `idx_bot_queue`）、`reply_route` text（密文）、`route_expires_at`、`msg_type` varchar(32)、`content_length` int、`platform_event_id` varchar(191)、`resent_by` bigint | 状态新增 `sending`、`reply_unknown`、`cancelled`、`ignored_unsupported`、`ignored_too_long` |
-| `bot_conversations` | `last_notice_at`、`guide_window_at`、`guide_count` int | 非文本/超长提示限频、绑定引导限频 |
-| `bot_user_bindings` | `config_id` varchar(191) index | 绑定归属的配置 ID；新渠道必填，企微旧行由迁移回填 |
-| `bot_binding_challenges` | `config_id`、`channel`、`sender_mask` varchar(64) | 确认页展示，以及按配置撤销绑码 |
-| `notification_deliveries` | `send_key` varchar(64) | 飞书主动发送的 uuid；状态新增 `reply_unknown` |
-| `bot_pending_drafts`（新表，阶段 G） | `id`（不透明 32 字节随机值）、`interaction_id`、`config_id`、`user_id`、`project_id`、`tool`、`body` json、`summary`、`status`、`expires_at`、`created_at` | IM 写操作的网页确认 |
-
-`user_bot_credentials.ciphertext` 列不变，只改存放格式（见 2.3）。
-
-### 2.2 手动迁移脚本
-
-- **`034_enterprise_im_channels.sql`**：
-  1. 先执行检查查询：列出启用对话、且 `payload.botId` 重复的配置。如果有结果，先人工处理，否则下一步建唯一索引会失败。
-  2. 回填存量行：`channel='wecom'`、`external_app_id=JSON_UNQUOTE(JSON_EXTRACT(payload,'$.botId'))`；启用且开启对话的行写入 `receive_slot=CONCAT('wecom:',external_app_id)`。
-  3. 补齐列（`ADD COLUMN IF NOT EXISTS` 形式，与 gorm 自动补列互不冲突）。
-- **`035_bot_binding_ownership.sql`**：
-  - 输出三类清单的 SELECT：外部 Bot ID 只对应一个配置；对应多个配置（取开启对话的那个）；没有对应配置（孤立绑定）。
-  - 附带回填 `config_id` 和撤销孤立绑定的 UPDATE，默认注释掉，运维确认清单后再执行。
-
-`receive_slot` 回填之前，`SaveNotificationBot` 里现有的加锁扫描逻辑继续保留作为兜底；全部部署完成回填后，再在后续版本删除。
-
-### 2.3 凭据加密（`internal/credcrypt`）
-
-- 用 `Keyring` 从 `AGENTFLOW_CREDENTIAL_KEYS`（`kid:base64(32B)[,kid:...]`）解析密钥。`Seal(plain, aad)` 输出 `lf1:<kid>:<base64(nonce‖ct)>`；`Open` 遇到没有 `lf1:` 前缀的值按明文返回，同时标记 `legacy=true`。
-- `AGENTFLOW_CREDENTIAL_KEYS` 在 `main` 启动时解析一次，注入到 `UsersRepo` 的字段 `crypt *credcrypt.Keyring`。Keyring 不放进 `deps`，因为 `AGENTS.md` 约定 deps 只放 gorm 句柄。测试用 `credcrypt.NewTestKeyring()`。
-- 凭据体改为 JSON：`{"secret":"..."}`（企微、飞书、钉钉都只有一个 Secret；以后增加字段不需要改表）。旧明文值读取时按“仅 secret”解析。AAD 为 `内部配置 ID + "\x00" + 渠道`。
-- `putBotCredential` 在没有主密钥时返回 `ErrCredentialKeyMissing`，handler 转成 400：“部署未配置凭据加密密钥”。
-- 运维命令：`agentflow -credential-action status|reencrypt`，写法参照现有 `-cli-action`。连库后逐行加行锁处理：明文和旧 kid 的值改用当前 kid 加密。输出处理数、跳过数、失败数，不打印任何密文或明文。可以重复执行。
-- `reply_route`（钉钉 `sessionWebhook`）用同一个 Keyring 加密，AAD 为交互 ID。
-
-## 3. 阶段计划
-
-### 阶段 A · 底座：渠道字段、凭据加密、Bot 生命周期（需求 #1 第 1–3 项）
-
-| 改动 | 文件 |
-| --- | --- |
-| `NotificationBot` 新增字段和 1.3 节的方法；`notificationBotRow` 新增物理列；`SaveNotificationBot` 写物理列和 `receive_slot`，唯一键冲突转成 `ErrInteractiveBotAlreadyExists` | `internal/domain/notification.go`、`internal/repo/notifications.go` |
-| `credcrypt` 包；`BotCredential` 和 `putBotCredential` 走加解密；`credentialVersion` 在保存新 Secret 时加一 | `internal/credcrypt/*`、`internal/repo/bot_credentials.go`、`internal/repo/users.go` |
-| `-credential-action` 命令 | `cmd/agentflow/main.go` |
-| handler：`channel` 字段（新建时必填，默认 `wecom`；保存后不能修改）；企微原地改 Bot ID 返回 400；所有渠道都不能修改外部应用 ID。保存新 Secret 前调用 `Channel.Verify`，失败返回 400，原凭据和原连接保留 | `internal/httpapi/notifications.go` |
-| `DeleteNotificationBot` 在同一事务里完成：删凭据；取消未发送的通知（已有）；撤销 `config_id` 等于该配置的绑定和 pending/claimed 绑码；对企微旧绑定，只在没有其他配置使用同一外部 Bot ID 时按外部 Bot ID 撤销；`queued`/`ready` 交互改为 `cancelled` 并清空 `reply_route` | `internal/repo/notifications.go`、`bot_identities.go`、`bot_interactions.go` |
-| 迁移脚本 034、035 | `migrations/` |
-
-测试：
-- 企微的 `IdentityScope`、`LeaseKey`、`BotMessageID` 与改动前逐字相等。
-- 加解密往返；AAD 不匹配时解密失败；明文值兼容读取；没有主密钥时拒绝保存；reencrypt 可以重复执行。
-- `receive_slot` 冲突返回 409。
-- 原地修改 Bot ID 返回 400。
-- 删除 Bot 的四类数据处理，包括“多配置共用外部 Bot ID 时不撤销”。
-
-完成标准：存量企微全部单元测试通过，Bot 管理页的行为只多了“凭据未加密”提示。
-
-### 阶段 B · 公共流程重构：渠道接口、企微适配器、租约版本、两段式发送（需求 #1 第 1、4、5 项）
-
-这是改动风险最大的阶段，拆成两个提交：
-
-1. **只搬代码、不改行为**：建立 `Channel`/`Conn`，把 `service.run`、`receive`、`process` 里的企微协议代码搬到 `channel_wecom.go`，公共服务通过接口调用。提交时现有测试必须一个不改就通过。
-2. **加入租约版本和发送状态机。**
-
-**租约版本：**
-- `ClaimBotConnection` 换主成功时执行 `epoch=epoch+1, takeovers=takeovers+1`，返回 `(epoch, ok)`。同一 owner 续约时 epoch 不变。
-- `ClaimBotInteraction` 在已经加锁的事务里同时写入 `lease_owner` 和 `lease_epoch`。
-- `SaveBotReply`、`MarkBotReplySending`（新增）、`MarkBotReplySent`、`FailBotReply`、`MarkBotReplyUnknown`（新增）、`SetBotCardTaskID` 的条件统一改为：
-
-```sql
-WHERE id=? AND status=? AND lease_owner=? AND lease_epoch=?
-  AND EXISTS (SELECT 1 FROM bot_connections c
-              WHERE c.bot_id=? AND c.owner=? AND c.epoch=? AND c.lease_until>?)
-```
-
-  影响行数不是 1 时返回 `repo.ErrLeaseLost`。`process` 收到这个错误后立即退出循环，不再发送。`SaveBotReply` 现在 0 行也返回成功的问题一并修正。
-- `RecoverBotInteractions(configID, epoch)` 只处理 `lease_epoch < epoch` 的行：
-  - `running` 改为 `ready`，并写入中断提示（沿用现有文案）；
-  - `sending` 交给 `delivery.go` 的恢复规则（见下）。
-
-**两段式发送（`delivery.go`）：**
-
-```text
-ready ──MarkBotReplySending(reply_key, send_started_at)──▶ sending
-sending ──Delivered──▶ replied
-sending ──Rejected──▶ reply_failed（记录错误码）
-sending ──NotDelivered 且 send_attempts<3──▶ ready（next_send_at = now + 5s / 30s / 2m）
-sending ──NotDelivered 且已重试 3 次──▶ reply_failed
-sending ──Unknown──▶ 飞书：保持 sending，按同一个 reply_key 重试，直到 send_started_at+55min；其余渠道：reply_unknown
-```
-
-发送前再检查一次本地租约余量：最近一次续约成功时间 + 45 秒 − 10 秒。余量不足就放弃这次发送，留给新属主恢复。
-
-**企微发送结果分类**（依据 `socket.request` 的实际返回）：
-- `WriteJSON` 失败，或调用时连接已经关闭：`NotDelivered`。
-- 平台回执带非 0 错误码：`Rejected`。限流类错误码列入可重试名单，实现时按企微文档逐个核对。
-- 写出成功后等回执超时，或等待期间连接中断、`ctx` 取消：`Unknown`。
-
-**行为修正：** 现在流式回复失败后，会直接改用 `aibot_send_msg` 再发一次。改造后只有在 `NotDelivered` 或 `Rejected` 时才改用主动发送；`Unknown` 不再补发，避免用户收到两条相同回复。这是企微唯一一处可见的行为变化，在 PR 里单独说明。
-
-**人工重发**：新增两个接口，只有项目管理员可以调用：
-- `POST /api/notification-bots/{id}/messages/{mid}/resend`：只接受 `reply_failed` 和 `reply_unknown`。状态改回 `ready`，`send_attempts` 清零，`reply_key` 重新生成，记录 `resent_by`。
-- `POST .../confirm-delivered`：把 `reply_unknown` 改为 `replied`。
-
-前端记录页加两个按钮，新状态加文案。
-
-**模拟渠道**：`channel_fake_test.go` 实现 `Channel`，可以注入事件、指定每次发送的结果、模拟连接断开。阶段 B 之后所有服务测试都用它。
-
-测试：
-- 跨 Bot 同名发送者；同一消息重复投递。
-- 换主并发：旧实例暂停超过 45 秒（用可注入时钟模拟）后恢复，写回返回 `ErrLeaseLost`，发送次数为 0。
-- 三类发送结果各自的状态迁移；退避节奏；`sending` 恢复后的处理。
-- 人工重发不调用 `Generate`。
-- 企微现有测试全部保留并通过。
-
-### 阶段 C · 数据保留、CLI 日志核查和升级说明（需求 #1 第 6–8 项）
-
-- **保留期清理**：`retention.go` 挂在 `Start` 循环里，和现有过期绑码清理一样每小时执行一次。
-  - 配置项：`AGENTFLOW_BOT_MESSAGE_RETENTION_DAYS`（默认 90）、`AGENTFLOW_BOT_METADATA_RETENTION_DAYS`（默认 180）；设为 0 时关闭对应清理。
-  - 每批 1000 行，按 `updated_at` 加状态白名单筛选：终态包括 `replied`、`reply_failed`、`ignored_*`、`cancelled`，以及已确认的 `reply_unknown`。
-  - 交互正文到期后清空 `content`、`quote`、`reply`；元数据到期后删除整行；会话按最后活跃时间清理；通知投递记录的正文清空 `content` 和 `report_request`。
-  - 多实例同时跑也安全：每批都是带条件的 UPDATE 或 DELETE。
-- **CLI 原生会话日志核查**：初步看代码，`generateBotReply` 每一轮都新建一个 CLI 会话（`Native: true`），会话的 HOME 是 `assistantSessionRoot(userID)/home`。这个目录和该用户的网页助手共用，原生日志写在它下面的 CLI projects 目录里，代码里没有看到针对 Bot 会话的清理。阶段 C 要实际跑一轮，确认日志的位置和内容，把结论写进方案第 8 节。清理逻辑本身放在阶段 G 实现。
-- **升级说明**：在 `CHANGELOG.md` 和发布说明里写入方案第 9.1 节的五个步骤，并给出 034、035 两个脚本的执行顺序。
-
-**阶段 A–C 完成后，需求 #1 的全部内容就做完了。** 这时需要在现有的企微测试环境跑一遍 IM-05 回归（私聊、群聊、群内 @、卡片、主动通知、重启恢复）。这一步要用到真实环境，需要你安排时间。
-
-### 阶段 D · 绑定流程升级（三个渠道共用，为 #2、#3 做准备）
-
-- 发起绑定挑战时记录 `config_id`、`channel` 和 `sender_mask`。脱敏规则：保留前 3 个和后 3 个字符，中间用 `***` 代替；长度不超过 8 时只保留首字符。
-- **限频**，状态存在会话行上，用一条带条件的 UPDATE 完成，保证原子性：
-  - 15 分钟内已有待处理挑战时，复用这个挑战，不生成新链接；
-  - 10 分钟内最多发 3 次引导，超过后不再回复，只计数；
-  - 用户主动发送“绑定账号”时允许生成新链接，但每分钟最多一次。
-  - 现有挑战只把 nonce 的哈希存进数据库，复用时拿不回原链接。所以复用时回复“绑定链接已发送，请查看上一条消息”，不再重复发链接。
-- `/api/bot-bindings/status` 增加返回字段：`channel`、`botName`、`projectName`、`senderMask`、`requestedAt`。
-- `web/bot-bind.js` 改为方案第 5.5 节规定的确认页：页面显示渠道、Bot 名称、项目、发送者，授权说明用原文。原来写死的“企微”字样改成按渠道显示名称。
-- 企微也使用新的确认页和限频规则。这是一次安全修正，在 PR 里说明，并纳入 IM-05 回归。
-
-### 阶段 E · 飞书（需求 #2）
+### 1.4 飞书适配器要点
 
 | 环节 | 实现 |
 | --- | --- |
-| 校验（Verify） | 用 `tenant_access_token/internal` 换取令牌，再调用 `GET /open-apis/tenant/v2/tenant/query` 取 `tenant_key` 和企业名称。如果试点证明租户只读权限取不到 `tenant_key`，保存时留空，等第一条合法事件到达后写入，之后不再修改 |
-| 连接（Connect） | 使用 `larkws.NewClient(appID, secret, larkws.WithEventHandler(dispatcher))`，`dispatcher.OnP2MessageReceiveV1(handler)`。连接状态通过 SDK 回调接入 `RenewBotConnection` 的 state |
-| 事件映射 | `header.app_id` 和 `header.tenant_key` 交给公共校验；`event_id` 存入 `platform_event_id`；`message.message_id`；`message.chat_type`（`p2p` 对应 `single`，`group` 对应 `group`）；`sender.sender_id.open_id`；`message.message_type` 加 `content`（文本类型解析 JSON 里的 `text` 字段） |
-| 入站时限 | handler 里只调用 `sink`，也就是一次数据库事务，然后返回，保证在官方 3 秒内完成。`sink` 返回错误时 handler 也返回错误。SDK 收到错误后是否会让平台重新投递，在试点中验证 |
-| 回复 | `client.Im.Message.Reply`（`message_id`、`msg_type=text`、`uuid=reply_key`）。`uuid` 取 `"lf"+hex(sha256(交互 ID))[:40]` |
-| 结果分类 | HTTP 层失败（连接失败、DNS 失败、请求没有写出）判为 `NotDelivered`；业务错误码 99991400 一类的限流判为 `NotDelivered` 并允许重试；鉴权和权限错误判为 `Rejected`；读取响应超时判为 `Unknown`，在 55 分钟内带同一个 uuid 重试 |
-| 前端 | 渠道选择器、App ID 和 App Secret 表单；详情页显示识别出的企业名称 |
+| Verify | 用 `tenant_access_token/internal` 换取令牌（同时校验凭据），再调用 `GET /open-apis/tenant/v2/tenant/query` 取得 `tenant_key` 和企业名称。R1-10 的第一项验证：这个接口取到的 `tenant_key` 是否和事件头里的一致。如果取不到，就改成用第一条合法事件的 `tenant_key` 固定下来 |
+| Connect | 使用 `ws.NewClient(appID, secret, ws.WithEventHandler(dispatcher), ws.WithOnReady/OnDisconnected/OnReconnecting(...))` 和 `Start(ctx)`，SDK 的连接状态回调接到 `RenewBotConnection` 的 state |
+| 入站确认 | 已核对 SDK v3.13.0 源码（`ws/client_message.go`）：事件处理函数返回 error 时，SDK 回 500，否则回 200。处理函数只调用 `sink`（一次数据库事务），保证在 3 秒内返回。入库失败时返回 error，让平台重新投递；已经落库的重复事件直接返回成功 |
+| 事件映射 | • `header.app_id`、`header.tenant_key`：交给公共校验，不一致就丢弃，并计一次鉴权失败<br>• `event_id` 存入 `platform_event_id`<br>• `message.chat_type`：`p2p` 对应 `single`，`group` 对应 `group`<br>• 发送者：`sender.sender_id.open_id`<br>• `message_type` 和 `content`：文本消息解析其中 JSON 的 `text` 字段 |
+| 消息边界 | 群消息：确认后丢弃，不写入交互表，只计数。私聊的非文本或超过 16000 字的消息：写入一条 `ignored_*` 交互，只记类型或长度，回复一次固定提示，10 分钟内最多提示一次（限频用会话行 `last_notice_at` 的条件 UPDATE 实现） |
+| 回复 | 调用 `im.v1.message.reply`，参数为 `message_id`、`msg_type=text`、`uuid=reply_key`，其中 `reply_key = "lf" + hex(sha256(交互 ID))[:40]`，第一次发送前生成，之后一直不变 |
+| 发送结果 | • 建连失败、请求没有写出：`NotDelivered`<br>• 限流错误码：`NotDelivered`，允许重试<br>• 鉴权或权限错误码：`Rejected`<br>• 请求已写出但读取响应超时：`Unknown`<br>四类结果的处理见 §3.3 |
 
-用飞书官方事件样例做适配器测试，模拟发送端用 `httptest.Server` 搭建，替换 SDK 的 BaseURL。
+### 1.5 固定只读查询
 
-### 阶段 F · 钉钉（需求 #3）
-
-| 环节 | 实现 |
+| 用户发送 | 回复 |
 | --- | --- |
-| 校验（Verify） | 调用 `POST https://api.dingtalk.com/v1.0/oauth2/accessToken` 校验凭据；CorpId 必填，存入 `tenant_key` |
-| 连接（Connect） | `client.NewStreamClient(client.WithAppCredential(...))`，并调用 `RegisterChatBotCallbackRouter(handler)` |
-| 事件映射 | `robotCode` 对应 App ID 校验；`chatbotCorpId` 对应租户校验；`conversationType`（`1` 为单聊，`2` 为群聊）；`senderStaffId`；`msgId`；`msgtype` 加 `text.content`；`sessionWebhook` 和 `sessionWebhookExpiredTime`（毫秒）加密后存入 `reply_route` 和 `route_expires_at` |
-| 回复 | 向 `sessionWebhook` 发 POST，内容为文本消息。发送前检查是否过期：已过期时，交互记为 `reply_failed`，原因写“会话回复授权已过期”，并且不能重发 |
-| 结果分类 | 和企微相同，按 HTTP 请求是否已经写出来区分：没写出判为 `NotDelivered`，返回非 0 的 errcode 判为 `Rejected`（限流码除外），超时判为 `Unknown` |
-| 清理 | 回复结束或过期后清空 `reply_route` |
-| 第一项验证 | 确认 `chatbotCorpId` 是否为明文 CorpId，不是的话暂停并回到评审 |
-| 文档 | 新增 `docs/im-channels.md`，写三个渠道的配置说明 |
+| `项目状态` | 由服务端生成，分四部分：<br>① 项目名称和链接<br>② 需求按状态计数（backlog / todo / in_progress / in_review / blocked）<br>③ 进行中的运行，最多 5 条，每条包含需求标题、当前节点、状态和运行链接<br>④ 最近 24 小时失败的运行，最多 3 条<br>数据来源为 `IssuesRepo.Issues()` 和 `RunsRepo.RunSummariesFor(filter{ProjectID})`，都按 Bot 所属项目过滤 |
+| `帮助` | 列出当前支持的命令 |
+| `绑定账号` / `解除绑定` / `/bind <码>` | 沿用现有的绑定流程 |
+| 其他内容 | 回复“首版只支持：项目状态、帮助、绑定账号、解除绑定”。不调用模型 |
 
-### 阶段 G · 助手审批与主动通知（需求 #4）
+每次执行前都会重新校验：Bot 处于启用状态、发送者已绑定、绑定的账号存在，并且对该项目有执行权限。权限规则沿用 `botExecutionUser`：项目 owner、平台管理员，或角色不是 viewer 的成员。只读查询要不要对 viewer 放开，见 §6 第 3 条。
 
-- **审批模式**：`NotificationBot.WriteApproval` 取值 `auto`、`confirm`、`readonly`。
-  - 企微存量 Bot 字段为空时按 `auto` 处理，行为不变；新建企微 Bot 默认 `confirm`。
-  - 飞书和钉钉固定为 `readonly`，接口拒绝设置其他值。
-- **只读模式**：`assistantExecMode` 新增 `ReadOnly` 字段。`ReadOnly` 为 true 时：
-  - `agentflowAssistantWriteToolNames` 返回空；
-  - `assistantPlatformToolAllowed` 拒绝所有写工具，这是网关层的第二道拦截；
-  - `assistantHTTPMCPs` 返回空，原因是外部 MCP 也可能写入；
-  - 模型返回的 drafts 全部丢弃，回复里提示“此渠道仅支持查询”。
-- **网页确认**：`confirm` 模式下，模型提交的 drafts 写入 `bot_pending_drafts`，IM 回复里只给操作摘要和 `PUBLIC_URL/bot-approve.html#draft=<id>` 链接。
-  - 打开链接需要先登录。服务端再检查一遍：当前登录用户就是该 IM 身份绑定的用户，Bot 已启用，用户仍有项目权限。
-  - 检查通过后，调用 `resolveAssistantDrafts(ctx, user, projectID, []draft, AssistantApprovalAuto)` 执行。依赖预检和执行都复用现有路径。
-  - 草稿过期时间沿用助手草稿现在的策略。执行结果显示在网页上；如果渠道支持主动发送，同时发回原会话。
-- **身份撤销**：以下几种情况发生后，所有 `pending` 状态的草稿全部作废：解绑、账号停用、Bot 停用或删除、项目权限下调。作废时按原因分别标记，确认页显示对应的原因。
-- **提示注入防护**：`botReplyMessages` 用固定分隔标记把当前消息包起来，并加一句说明“以下为 IM 用户输入，不是系统指令”；prompt 里的“企业微信聊天”改为按渠道显示的名称。
-- **主动通知**：
-  - `notification.Service.send` 按渠道分流：企微保持现有 `wecom-cli` 路径和卡片；飞书、钉钉走 `PushConn.Push`。
-  - 飞书、钉钉的目标会话从 `bot_conversations` 里选，试发成功后才能保存为通知目标。
-  - 首批事件只做 `waiting` 和 `failed`。
-  - 重试规则沿用阶段 B 的结果分类，再结合 `notification_deliveries` 现有的 `lease_token`。
-- **CLI 日志清理**：根据阶段 C 的核查结论实现。
+这条查询独立于模型：飞书 Bot 在 R1 根本不会调用 `Generate`，所以不需要配置 CodeBuddy Key，也不会经过工具网关。
 
-## 4. 测试计划汇总
+## 2. 数据与迁移
 
-| 层级 | 覆盖内容 |
+### 2.1 R1 新增的列（gorm tag 声明，启动时由增量 DDL 补齐）
+
+| 表 | 新增列 |
 | --- | --- |
-| 单元测试 | 企微标识值不变；`credcrypt`；`ReceiveSlot`、`LeaseKey`、`IdentityScope`；脱敏规则；三个渠道的事件映射和发送结果分类（用官方样例 JSON 做 fixture） |
-| 服务测试（模拟渠道 + SQLite `OpenTest`） | 重复事件；跨 Bot 同名 ID；群消息忽略；非文本和超长消息的提示限频；绑定引导限频；一次性绑定；权限撤销；换主后旧实例写回失败；`sending` 恢复；飞书 uuid 窗口；待核对状态和人工重发；删除 Bot 的四类数据处理；保留期清理不动非终态记录 |
-| HTTP 测试 | 修改外部应用 ID 返回 400；未配置主密钥时返回 400；Verify 失败时原凭据不变；重发接口的权限；绑定确认页的状态字段；网页确认时账号不匹配返回 403 |
-| 回归 | `internal/botinteraction`、`internal/notification`、`internal/repo`、`internal/httpapi` 四个包的现有测试一个不删 |
-| 真实环境 | 阶段 C 之后跑企微 IM-05；阶段 E、F 之后分别在飞书、钉钉试点完成方案第 9 节的上线验证步骤 |
+| `notification_bots` | `channel` varchar(16)；`external_app_id` varchar(191)；`tenant_key` varchar(191)；`receive_slot` varchar(208) NULL，带唯一索引。<br>payload JSON 同步增加 `channel`、`tenantKey`、`tenantName`、`credentialVersion`、`credentialEncrypted` |
+| `bot_connections` | `epoch` bigint default 0；`takeovers`、`auth_failures`、`ignored_group` bigint；`last_event_at`；`last_auth_error` varchar(255) |
+| `bot_interactions` | `lease_owner` varchar(64)；`lease_epoch` bigint；`reply_key` varchar(64)；`send_started_at`；`send_attempts` int；`next_send_at`；`msg_type` varchar(32)；`content_length` int；`platform_event_id` varchar(191) |
+| `bot_conversations` | `last_notice_at`；`guide_window_at`；`guide_count` int |
+| `bot_user_bindings` | `config_id` varchar(191)，带索引 |
+| `bot_binding_challenges` | `config_id`；`channel`；`sender_mask` varchar(64) |
 
-## 5. 风险与应对
+R1 不新增表。钉钉的 `reply_route` 和 `route_expires_at` 放到 R2，`bot_pending_drafts` 放到 R4。
 
-| 风险 | 应对 |
-| --- | --- |
-| 阶段 B 的重构让企微行为回退 | 先提交只搬代码的版本，要求现有测试零改动通过；行为变化只有“`Unknown` 不再补发”这一处，并单独写测试 |
-| 唯一索引与存量重复数据冲突 | gorm 增量 DDL 建索引失败会让启动报错（`automigrate.go` 直接返回错误）。因为新列刚补上时全部为 NULL，gorm 建唯一索引不会失败；真正可能冲突的是 034 的回填，所以 034 先跑检查查询，有重复时回填会在手动执行阶段报错，不影响服务启动。回填完成前，新保存的配置和未回填的旧行之间靠保留的加锁扫描兜底 |
-| SDK 的确认（ack）时机和文档说的不一致 | 适配器测试固定我们自己这一侧的行为；平台的重投行为在试点中验证，结论写进渠道配置文档 |
-| 单分支越来越大，评审困难 | 每个阶段的提交都能单独看懂，并保证可以停下来评审；PR 描述按阶段给出 diff 的范围 |
-| 工作区没有真实的飞书和钉钉租户 | 阶段 E、F 的代码和自动化测试可以先完成，真实环境验证等你提供试点企业后再做 |
+**唯一索引的安全性**：`automigrate.go` 建索引失败会直接返回错误，导致服务启动失败。`receive_slot` 是新补的列，补完时全部为 NULL，MySQL 唯一索引允许多个 NULL，所以建索引不会失败。R1 只有飞书的新配置会写这个列。
+
+### 2.2 手工 SQL 与 MySQL 8.4 演练
+
+- **不手写补列 DDL**。LoopForge 的 Compose 使用 `mysql:8.4`，而 MySQL 不支持 `ADD COLUMN IF NOT EXISTS`。列一律交给增量 DDL 补齐。如果以后确实需要手工补列，按仓库已有写法（`020_conversation_workspaces.sql`、`021_*`、`032_*`）：先查 `information_schema.COLUMNS`，再用 `PREPARE` 执行。
+- **R1 不需要手工 SQL**：`channel` 为空按企微处理，企微不依赖 `receive_slot`。
+- **R3 的 `034_enterprise_im_backfill.sql`**：
+  1. 前置检查：查询 `information_schema.COLUMNS`，确认 `channel`、`external_app_id`、`receive_slot`、`config_id` 等列都已存在。缺列时用 `SIGNAL SQLSTATE '45000'` 中止，并提示“请先用新版本启动一次 API 补齐列”。
+  2. 查重：列出启用了对话、且外部 Bot ID 重复的配置。如果有重复，就中止并输出清单。
+  3. 回填：`channel='wecom'`、`external_app_id`，以及启用了对话的行的 `receive_slot`。
+- **MySQL 8.4 升级演练**（R1-10 做第一次，R3 再做一次）：
+  1. 用 `compose.yaml` 中的 `mysql:8.4`，导入一份带存量企微数据的备份。
+  2. 先启动旧版本，再换新版本启动，确认增量 DDL 补齐了全部新列和唯一索引、启动没有报错、企微连接正常。
+  3. R3 时再执行 034，验证前置检查、查重、回填三条路径：列缺失、存在重复、正常。
+
+  工作区如果起不了 MySQL 8.4，就在测试环境由运维执行，我提供脚本和检查清单。
+
+### 2.3 企微旧绑定归属（R3 执行，R1 只建列）
+
+旧绑定只记录了外部 Bot ID。`035_bot_binding_ownership.sql` 只做分类和输出，不自动归属：
+
+| 分类 | 判定 | 处理 |
+| --- | --- | --- |
+| 明确 | 这个外部 Bot ID 在 `notification_bots` 中只对应一个配置 | 脚本里给出回填 `config_id` 的 UPDATE，运维确认后执行 |
+| 有歧义 | 对应多个配置，包括跨项目、仅用于通知的配置 | **不推断归属**，输出清单（配置、项目、绑定数），交给人工确认。确认归属后手工回填；确认不了的，撤销绑定，让用户在目标 Bot 上重新绑定。被撤销的用户下次发消息时会自动收到绑定引导 |
+| 孤立 | 没有对应的配置 | 列出来，确认后撤销 |
+
+在归属确认完成之前，删除企微 Bot 时不撤销 `config_id` 为空的旧绑定；它们只在后续核查中处理。
+
+### 2.4 凭据加密（R1）
+
+- `internal/credcrypt.Keyring` 从 `AGENTFLOW_CREDENTIAL_KEYS` 读取密钥，格式为 `kid:base64(32 字节)`，多个用逗号分隔。加密用 AES-256-GCM，存储格式为 `lf1:<kid>:<base64(nonce‖密文)>`，附加认证数据（AAD）为 `内部配置 ID + 渠道`。
+- Keyring 在 `main` 中解析，注入 `UsersRepo` 的一个字段。按 `AGENTS.md` 的约定，它不放进 `deps`。
+- 凭据内容统一为 JSON：`{"secret":"..."}`。没有 `lf1:` 前缀的旧值按明文读取。
+- 没有配置主密钥时，三个渠道的新建和轮换都返回 400。存量企微 Bot 的连接不受影响。
+- 保存新 Secret 之前，先调用 `Channel.Verify`。校验失败就保留原凭据和原连接。重连判断改用“渠道 + 外部应用 ID + 凭据版本”组成的指纹，不再看 `UpdatedAt`，所以只改名称不会再触发重连。
+
+## 3. 租约版本、领取规则和换主时的投递
+
+### 3.1 写回加版本条件（R1）
+
+- `ClaimBotConnection` 换主成功时，`epoch` 和 `takeovers` 各加一，并返回新的 epoch。同一 owner 续约时 epoch 不变。
+- `SaveBotReply`、`MarkBotReplySending`（新增）、`MarkBotReplySent`、`FailBotReply`、`MarkBotReplyUnknown`（新增）、`SetBotCardTaskID` 这几个写回操作，统一加条件：`lease_owner=? AND lease_epoch=?`，并要求 `bot_connections` 中的 owner、epoch 仍是自己，且 `lease_until > now`。影响行数不等于 1 时返回 `ErrLeaseLost`，处理循环收到后立即退出。
+- 现有 `SaveBotReply` 影响 0 行时也返回成功，这个问题一并修正。
+
+### 3.2 新实例的领取规则
+
+1. **接管时恢复**（`RecoverBotInteractions(configID, epoch)`）。只处理 `lease_epoch` 小于当前 epoch 的行；旧行的 `lease_epoch` 为 NULL，也算在内。
+
+   | 原状态 | 处理 |
+   | --- | --- |
+   | `running` | 改为 `ready`，并写入中断提示（沿用现有文案） |
+   | `sending`，飞书，当前时间早于 `send_started_at + 55 分钟` | 改为 `ready`，**保留** `reply_key` 和 `send_started_at`，让新实例用同一个 uuid 重试 |
+   | `sending`，飞书已超过 55 分钟，或企微、钉钉 | 改为 `reply_unknown`（待核对），不自动重发 |
+   | `queued`、`ready` | 不改状态，等领取时再写入新属主 |
+
+2. **领取**（`ClaimBotInteraction`）：
+   - 在持有租约的事务里，选 `status IN ('queued','ready') AND (next_send_at IS NULL OR next_send_at <= now)`，按 `created_at, id` 排序取第一条。
+   - **无论 `queued` 还是 `ready`**，都写入 `lease_owner` 和 `lease_epoch`。现有代码遇到 `ready` 直接返回、不更新属主，这里要修正。
+3. **发送**：
+   - 发送前把状态从 `ready` 改为 `sending`，带版本条件。`reply_key` 为空时才生成，已有就沿用。`send_started_at` 只在第一次发送时写入。
+   - 发送前再检查一次本地租约余量：最近一次续约成功时间 + 45 秒 − 10 秒。余量不足就不发，留给新属主处理。
+
+### 3.3 发送结果的处理
+
+| 结果 | 飞书（R1） | 企微 | 钉钉（R2） |
+| --- | --- | --- | --- |
+| `Delivered` | `replied` | `replied` | `replied` |
+| `Rejected` | `reply_failed` | `reply_failed`（现有行为） | `reply_failed` |
+| `NotDelivered` | 回到 `ready`，`next_send_at` 依次退避 5 秒、30 秒、2 分钟，第 3 次仍失败则记为 `reply_failed` | R1 保持现状；R3 改为同样的退避 | 同飞书，另外每次重试前检查 Webhook 是否已过期 |
+| `Unknown` | 保持 `sending`，用同一个 uuid 重试，直到 55 分钟 | R1 保持现状（见下）；R3 改为 `reply_unknown` | `reply_unknown` |
+
+**企微 `WriteJSON` 一律保守处理（R3 实施）。** gorilla 的 `WriteJSON` 在刷出缓冲时报错，数据可能已经部分写到了连接上，无法确定平台有没有收到。所以只有一种情况算 `NotDelivered`：调用 `WriteJSON` **之前**就已经确认 `socket.done` 关闭或 `ctx` 已取消。`WriteJSON` 返回的任何错误，以及等待回执超时、等待期间连接中断，都算 `Unknown`。
+
+**企微现状的风险，R1 不改，R3 修复。** 现在发送出现非业务错误时，`process` 直接返回，状态留在 `ready`，重连后会自动再发一次；流式回复失败后也会立即改用 `send` 再发一次。这两处都可能让用户收到重复消息。R1 承诺企微发送行为不变，所以只用特征测试把现状固定下来，R3 和三类结果分类一起改。
+
+### 3.4 换主时的投递测试（R1，使用模拟渠道和可注入时钟）
+
+| 场景 | 步骤 | 断言 |
+| --- | --- | --- |
+| 飞书：已发出、未收到回执时换主 | 旧实例完成 `MarkBotReplySending`，模拟平台收下请求但不返回回执。时钟推进 46 秒后，新实例接管（epoch+1）、恢复、领取，并用同一个 uuid 重试。之后旧实例收到回执，尝试 `MarkBotReplySent` | 模拟平台按 uuid 去重后，用户只看到 1 条消息；该行由新实例写成 `replied`；旧实例写回得到 `ErrLeaseLost`，没有再发送 |
+| 企微：同样的场景 | 用模拟的企微连接，其余同上 | 平台只收到 1 次请求；该行变为 `reply_unknown`；新实例没有自动重发 |
+| 换主后领取 `ready` | 旧实例已把结果写成 `ready`，还没发送就失去租约 | 新实例领取后写入新属主并发送；旧实例无法再把它改成 `sending` |
+| 到期的 `NotDelivered` | 飞书返回 `NotDelivered`，`next_send_at` 设为 5 秒后 | 5 秒内领不到这一行，5 秒后能领到，`reply_key` 保持不变 |
+| 旧实例暂停后恢复 | 旧实例在 `running` 时暂停超过 45 秒 | 新实例写入中断提示；旧实例恢复后 `SaveBotReply` 得到 `ErrLeaseLost` |
+
+## 4. 后续轮次
+
+| 轮次 | 内容 | 对应原需求 |
+| --- | --- | --- |
+| R2 钉钉 | • Stream 接收：先核对 SDK 收到处理函数返回的 error 后怎样回复平台<br>• 用 `sessionWebhook` 回复原会话；Webhook 加密保存在 `reply_route`，并检查过期，过期时记录原因<br>• 校验 CorpId 与 `chatbotCorpId` 是否一致：先在真实应用上确认 `chatbotCorpId` 是不是明文<br>• 复用同一套固定只读查询和绑定流程<br>• 编写三个渠道的配置文档 | #3 |
+| R3 企微发送重构、存量迁移与清理 | • 企微发送结果三类分类和退避重试；流式回复失败后，只有 `NotDelivered` 或 `Rejected` 才改用 `send`<br>• 人工处理：“确认已送达”和“重发已保存的回复”<br>• `-credential-action status\|reencrypt`<br>• 034 回填、035 归属核查<br>• 禁止原地修改企微 Bot ID；删除 Bot 时清理关联数据（规则见 §2.3）<br>• 保留期自动清理、核查 CLI 原生会话日志<br>• 第二次 MySQL 8.4 演练，补齐升级说明 | #1 |
+| R4 助手与主动通知 | • 飞书、钉钉接入只读助手（`ReadOnly` 执行模式：网关拦截写入工具、不注入外部 MCP、丢弃草稿）<br>• 企微增加写操作审批开关，网页确认链接（`bot_pending_drafts` 加上复用 `resolveAssistantDrafts`）<br>• 防提示注入的分隔标记<br>• 身份撤销后作废待确认草稿<br>• 「待人工处理」和「失败」通知的主动发送<br>• CLI 日志清理 | #4 |
+
+## 5. 测试要求
+
+- 每个提交跑四个包：`internal/botinteraction`、`internal/notification`、`internal/repo`、`internal/httpapi`，结果和 §0.1 的基线对比；再跑 `go vet ./...`、`scripts/check-public.py`、`scripts/scan-secrets.sh`。
+- 飞书适配器测试：用官方事件样例 JSON 做 fixture，用 `httptest.Server` 模拟开放平台，覆盖映射、应用和租户校验、入站确认码、四类发送结果和 uuid 是否透传。
+- 服务测试（模拟渠道 + SQLite `OpenTest`）：
+  - 跨 Bot 的同名 `open_id`
+  - 重复投递只执行一次
+  - 群消息被忽略
+  - 非文本和超长消息的提示限频
+  - 绑定引导限频
+  - 一次性绑码
+  - 解绑或权限下调后，「项目状态」被拒绝
+  - §3.4 的全部换主场景
+- 企微：R1-1 的特征测试在 R1 全程都不允许修改。
 
 ## 6. 需要确认的事项
 
-1. 由谁开发：我直接在当前工作区按阶段 A–G 提交，还是把这个分支交给 SOP。如果交给 SOP，需要先把分支推到远端，目前推送凭据没有写权限。
-2. 需求 #1–#4 是保留为四条验收清单，最后由一个 PR 关联全部四条；还是合并成一条需求。
-3. 企微的绑定确认页和绑定限频（阶段 D）是否在本次一起改。建议一起改，因为这属于安全修正。
-4. 阶段 C 结束后的企微真实环境回归，什么时候安排。
+1. 需求 #1–#4 是否按 R1–R4 重新对齐。确认后我逐条提交描述修改的草稿。
+2. 企微的绑定引导限频是否在 R1 一起启用。确认页的新展示对企微同样生效，我建议启用；不启用的话，企微改为放到 R3。
+3. 「项目状态」只读查询是否对项目里的 viewer 也开放。默认沿用现有规则，即 viewer 不能使用。
+4. R1-10 所需的环境：
+   - 飞书自建应用：开通机器人能力，申请单聊收发权限和 `tenant:tenant:readonly` 权限，发布给试点用户；
+   - 试点项目和一个非管理员账号；
+   - 企微测试环境；
+   - 一份可以用于 MySQL 8.4 演练的存量数据备份。
