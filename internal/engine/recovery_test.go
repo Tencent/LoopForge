@@ -250,6 +250,35 @@ func TestFinishAtKeepsRewoundRunAlive(t *testing.T) {
 	}
 }
 
+func TestFinishAtRejectsOlderGenerationWithoutStoppingScheduler(t *testing.T) {
+	e, s := newRecoveryEngine(t)
+	e.ConfigureExecution("worker", "host", time.Minute, true)
+	wf := domain.WorkflowDefinition{ID: "wf-fenced-finish", Nodes: []domain.WorkflowNode{{ID: "done"}}}
+	run := domain.Run{ID: "run-fenced-finish", WorkflowID: wf.ID, WorkflowSnapshot: wf, Status: "running", Nodes: map[string]*domain.NodeRun{"done": {NodeID: "done", Status: "succeeded"}}}
+	if err := s.PutRun(run); err != nil {
+		t.Fatal(err)
+	}
+	owned, err := e.acquireLease(run)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	e.mu.Lock()
+	e.running[run.ID] = cancel
+	e.mu.Unlock()
+	defer func() { e.mu.Lock(); delete(e.running, run.ID); e.mu.Unlock() }()
+
+	e.finishAt(run.ID, owned.Generation-1, "succeeded", "old scheduler")
+	got, _ := s.Run(run.ID)
+	if got.Status != "running" {
+		t.Fatalf("stale scheduler settled run: %s", got.Status)
+	}
+	if ctx.Err() != nil {
+		t.Fatal("stale scheduler stopped the current scheduler")
+	}
+}
+
 func TestFinishAtFailsWhenANodeIsStillFailed(t *testing.T) {
 	t.Parallel()
 	e, s := newRecoveryEngine(t)

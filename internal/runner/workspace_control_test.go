@@ -18,10 +18,10 @@ import (
 func TestWorkspacePreparationDoesNotBlockTaskControl(t *testing.T) {
 	d, request, root := runnerPreparationFixture(t)
 	request.Workflow.Nodes[0].Script = "touch preparation-started; sleep 2"
-	d.controls = map[string]chan string{}
-	d.pendingControls = map[string]string{}
-	control := d.registerTaskControl("active-task")
-	defer d.unregisterTaskControl("active-task")
+	d.controls = map[taskControlID]chan string{}
+	d.pendingControls = map[taskControlID]string{}
+	control := d.registerTaskControl("active-task", 1)
+	defer d.unregisterTaskControl("active-task", 1)
 	connections := make(chan *websocket.Conn, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		conn, err := (&websocket.Upgrader{}).Upgrade(w, r, nil)
@@ -53,7 +53,7 @@ func TestWorkspacePreparationDoesNotBlockTaskControl(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(root, "preparation-started")); err != nil {
 		t.Fatal("preparation never started", err)
 	}
-	if err := peer.WriteJSON(controlMessage{Type: "task.control", TaskID: "active-task", DesiredState: domain.RunnerTaskDesiredCancel}); err != nil {
+	if err := peer.WriteJSON(controlMessage{Type: "task.control", TaskID: "active-task", Attempt: 1, DesiredState: domain.RunnerTaskDesiredCancel}); err != nil {
 		t.Fatal(err)
 	}
 	select {

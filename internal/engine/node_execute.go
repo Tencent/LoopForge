@@ -180,7 +180,7 @@ func (e *Engine) execute(ctx context.Context, runID string) {
 					default:
 					}
 				}()
-				e.executeNode(ctx, runID, wf, node)
+				e.executeNode(ctx, runID, wf, node, generation)
 			}()
 		}
 	}
@@ -261,6 +261,13 @@ func dockerImageNeedsBuild(ctx context.Context, snap *domain.RunnerSandboxSpec) 
 	return !runtime.DockerImageCached(ctx, *snap.Dockerfile)
 }
 
+func (e *Engine) environmentImageNeedsBuild(ctx context.Context, snap *domain.RunnerSandboxSpec) bool {
+	if snap == nil || snap.Dockerfile == nil || strings.TrimSpace(snap.Dockerfile.Content) == "" {
+		return true
+	}
+	return !e.sandboxes.DockerImageCached(ctx, *snap.Dockerfile)
+}
+
 func formatElapsedCN(d time.Duration) string {
 	if d < 0 {
 		d = 0
@@ -278,7 +285,7 @@ func formatElapsedCN(d time.Duration) string {
 }
 
 func (e *Engine) bindDockerWorkspace(ctx context.Context, runID, nodeID string, snap *domain.RunnerSandboxSpec, sb *runEnvironment) error {
-	building := dockerImageNeedsBuild(ctx, snap)
+	building := e.environmentImageNeedsBuild(ctx, snap)
 	if building {
 		e.observe(runID, nodeID, domain.TelemetryEvent{
 			Category:   "sandbox",
@@ -313,21 +320,27 @@ func dockerfileID(snap *domain.RunnerSandboxSpec) string {
 	return snap.Dockerfile.ID
 }
 
-func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.WorkflowDefinition, node domain.WorkflowNode) {
+func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.WorkflowDefinition, node domain.WorkflowNode, schedulerGeneration ...int) {
 	currentLease, ok := e.repo.RunState(runID)
-	if !ok || !e.ownsRun(currentLease) {
+	if !ok || !e.ownsRun(currentLease) || len(schedulerGeneration) > 0 && schedulerGeneration[0] != currentLease.Generation {
 		return
 	}
 	// Sibling branches run concurrently; only another execution of this same
 	// node (a resume, rework or takeover racing a winding-down attempt) waits.
 	unlock := e.lockNodeExec(runID, node.ID)
 	defer unlock()
+	if ctx.Err() != nil {
+		return
+	}
 	executionGeneration := currentLease.Generation
 	executionAttempt := 0
 	started := false
 	e.updateRun(runID, func(r *domain.Run) {
+		if ctx.Err() != nil || r.Generation != executionGeneration || !e.ownsRun(*r) {
+			return
+		}
 		nr := r.Nodes[node.ID]
-		if nr.Status != "pending" {
+		if nr == nil || nr.Status != "pending" {
 			return
 		}
 		if nr.Error != "" && runtime.IsCwdMountFailure(errors.New(nr.Error)) {
@@ -418,15 +431,7 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 		failNode(err, nodeRejects(node))
 		return
 	}
-	acquireProfile := profile
-	// A selected execution machine owns the real process sandbox. The control
-	// plane keeps only a local staging workspace for prompt/materialization and
-	// artifact handoff; creating Docker here would put isolation on the wrong
-	// host and leave the runner CLI outside it.
-	if e.defaultExecutionRunner(current) != "" {
-		acquireProfile = domain.SandboxProfile{ID: profile.ID + "-runner-staging", Name: profile.Name + " staging", Driver: "local"}
-	}
-	sb, created, err := e.acquireRunEnvironment(ctx, current, acquireProfile, requirements, func() {
+	sb, created, err := e.acquireRunEnvironment(ctx, current, profile, requirements, func() {
 		e.observe(runID, node.ID, domain.TelemetryEvent{Category: "sandbox", Name: "workspace.waiting", Phase: "wait", Message: "等待工作区操作完成"})
 	})
 	if err != nil {
@@ -455,7 +460,9 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 			sb.nodeMu.Unlock()
 		}
 	}()
-	sink := func(event domain.TelemetryEvent) { e.observe(runID, node.ID, event) }
+	sink := func(event domain.TelemetryEvent) {
+		e.enqueueObservationAt(runID, node.ID, event, executionGeneration, executionAttempt)
+	}
 	// gateExec runs a verification-gate command. In cloud mode it executes in
 	// the control-plane sandbox; when the Agent is bound to a CLI Runner
 	// (执行器) it is dispatched to that machine so gates run next to the CLI
@@ -481,7 +488,13 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 		if !stagingCheckout {
 			return nil
 		}
-		if err := prepareRepositories(ctx, sb.Workspace(), current.RepositoryContexts()); err != nil {
+		repoWorkspaces := repositoryWorkspaceDirs(sb.Workspace(), current.RepositoryContexts())
+		for _, dir := range repoWorkspaces {
+			if err := runtime.RestoreLegacyProjectAgentConfig(ctx, dir); err != nil {
+				return fmt.Errorf("restore repository Agent configuration index: %w", err)
+			}
+		}
+		if err := prepareRepositoriesWithLiveCheck(ctx, sb.Workspace(), current.RepositoryContexts(), e.sandboxes.LiveDockerSandbox); err != nil {
 			return explainGitAuthFailure(fmt.Errorf("repository checkout: %w", err), strings.TrimSpace(gitTok) != "")
 		}
 		for _, rc := range current.RepositoryContexts() {
@@ -615,7 +628,7 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 			if execMachine := e.defaultExecutionRunner(current); execMachine != "" {
 				workspace := runnerWorkspaceRel(current, node.ID)
 				gateExec = func(command string, target executionTarget, gateSink runtime.EventSink) (string, error) {
-					return e.dispatchRunnerCommand(ctx, execMachine, runID, node.ID, workspace, bindExecutionTarget(command, target), gateSink)
+					return e.dispatchRunnerCommand(ctx, execMachine, runID, node.ID, workspace, bindExecutionTarget(command, target), gateSink, executionGeneration)
 				}
 			}
 			if runErr == nil && node.RunOnWorkspaceRebuild {
@@ -739,7 +752,7 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 				result, dispatchErr := e.dispatchRunnerTask(ctx, execMachine, current, effectiveNode, sb, workspace, ex, agent, assets, prompt, invocationID, options, sink)
 				if dispatchErr == nil {
 					gateExec = func(command string, target executionTarget, gateSink runtime.EventSink) (string, error) {
-						return e.dispatchRunnerCommand(ctx, execMachine, runID, node.ID, workspace, bindExecutionTarget(command, target), gateSink)
+						return e.dispatchRunnerCommand(ctx, execMachine, runID, node.ID, workspace, bindExecutionTarget(command, target), gateSink, executionGeneration)
 					}
 				}
 				return result, dispatchErr

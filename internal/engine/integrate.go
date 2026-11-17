@@ -59,9 +59,7 @@ func (e *Engine) integrateScheduledRun(id string) (bool, error) {
 	if len(repositories) == 0 {
 		return false, nil
 	}
-	e.runEnvMu.Lock()
-	env := e.runEnvs[id]
-	e.runEnvMu.Unlock()
+	env := e.environments.lookup(id)
 	if env == nil {
 		return false, fmt.Errorf("run sandbox missing")
 	}

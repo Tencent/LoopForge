@@ -79,6 +79,60 @@ func TestNonOwnerExecuteNodeDoesNotMutateRun(t *testing.T) {
 	}
 }
 
+func TestOldSchedulerCannotStartNodeAfterSameWorkerReacquiresLease(t *testing.T) {
+	s, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(s.Close)
+	e := leaseEngine(t, s, "worker")
+	e.leaseTTL = time.Minute
+	run := leaseRun(t, s, "run-old-scheduler", "running", "pending")
+	old, err := e.acquireLease(run)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ReleaseRunLease(run.ID, "worker", old.Generation); err != nil {
+		t.Fatal(err)
+	}
+	current, err := e.acquireLease(old)
+	if err != nil || current.Generation == old.Generation {
+		t.Fatalf("reacquire = %+v, %v", current, err)
+	}
+	e.executeNode(context.Background(), run.ID, domain.WorkflowDefinition{}, domain.WorkflowNode{ID: "node", Type: "approval"}, old.Generation)
+	stored, _ := s.RunState(run.ID)
+	if stored.Nodes["node"].Status != "pending" || stored.Nodes["node"].Attempt != 0 {
+		t.Fatalf("old scheduler started node: %+v", stored.Nodes["node"])
+	}
+}
+
+func TestStaleNodeObservationsAreDroppedAfterLeaseTakeover(t *testing.T) {
+	s, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(s.Close)
+	e := leaseEngine(t, s, "worker")
+	e.leaseTTL = time.Minute
+	run := leaseRun(t, s, "run-old-observation", "running", "running")
+	old, err := e.acquireLease(run)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.enqueueObservationAt(run.ID, "node", domain.TelemetryEvent{Category: "process", Name: "process.stdout", Message: "stale output"}, old.Generation, 0)
+	if err := s.ReleaseRunLease(run.ID, "worker", old.Generation); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.acquireLease(old); err != nil {
+		t.Fatal(err)
+	}
+	e.flushAllObservations()
+	got, ok := s.Run(run.ID)
+	if !ok || len(got.Telemetry) != 0 || len(got.Logs) != 0 {
+		t.Fatalf("stale observation was published: %+v", got.Telemetry)
+	}
+}
+
 func TestStaleOwnerCannotFailAfterGenerationTakeover(t *testing.T) {
 	t.Parallel()
 	s, _ := repo.OpenTest()

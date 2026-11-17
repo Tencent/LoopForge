@@ -39,9 +39,9 @@ func TestSharedWorkspacePreparationConversationUsesOwnerDirectoryAndSeparateRece
 			t.Fatal(id, state, readyErr)
 		}
 	}
-	e.runEnvMu.Lock()
-	parentEnv, childEnv := e.runEnvs[parent.ID], e.runEnvs[child.ID]
-	e.runEnvMu.Unlock()
+	e.environments.mu.Lock()
+	parentEnv, childEnv := e.environments.envs[parent.ID], e.environments.envs[child.ID]
+	e.environments.mu.Unlock()
 	if childEnv == nil || parentEnv == nil || childEnv.Workspace() != parentEnv.Workspace() || childEnv.Workspace() != filepath.Join(root, parent.ID) || childEnv.ID() == parentEnv.ID() {
 		t.Fatal("shared checkout must retain independent sandbox identity")
 	}

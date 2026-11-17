@@ -60,7 +60,7 @@ func TestRetryFromEntryNodeDiscardsSandbox(t *testing.T) {
 	engine, store := retryEngine(t)
 	run := retryableRun(t, store, "rerun-all")
 	sandbox := &recordingSandbox{workspace: engine.sandboxes.RunWorkspace(run.ID)}
-	engine.runEnvs[run.ID] = &runEnvironment{sandbox: sandbox}
+	engine.environments.envs[run.ID] = &runEnvironment{sandbox: sandbox}
 
 	if err := engine.Retry(run.ID, "a", "从头重跑", ""); err != nil {
 		t.Fatal(err)
@@ -69,7 +69,7 @@ func TestRetryFromEntryNodeDiscardsSandbox(t *testing.T) {
 	if !sandbox.closed {
 		t.Fatal("full rerun must tear the previous container down")
 	}
-	if _, held := engine.runEnvs[run.ID]; held {
+	if _, held := engine.environments.envs[run.ID]; held {
 		t.Fatal("stale sandbox handle survived the rerun")
 	}
 }
@@ -88,14 +88,14 @@ func TestSupersedeIssueRunsDiscardsReplacedSandbox(t *testing.T) {
 		t.Fatal(err)
 	}
 	sandbox := &recordingSandbox{workspace: engine.sandboxes.RunWorkspace(old.ID)}
-	engine.runEnvs[old.ID] = &runEnvironment{sandbox: sandbox}
+	engine.environments.envs[old.ID] = &runEnvironment{sandbox: sandbox}
 
 	engine.SupersedeIssueRuns("issue-1", "run-new")
 
 	if !sandbox.closed {
 		t.Fatal("a run replaced by a fresh dispatch must release its container")
 	}
-	if _, held := engine.runEnvs[old.ID]; held {
+	if _, held := engine.environments.envs[old.ID]; held {
 		t.Fatal("superseded sandbox handle survived")
 	}
 	// 工作区保留，上一次的现场还要能查。
@@ -118,7 +118,7 @@ func TestSupersedeIssueRunsKeepsOtherSOPRuns(t *testing.T) {
 		}
 	}
 	sandbox := &recordingSandbox{workspace: engine.sandboxes.RunWorkspace("run-backend")}
-	engine.runEnvs["run-backend"] = &runEnvironment{sandbox: sandbox}
+	engine.environments.envs["run-backend"] = &runEnvironment{sandbox: sandbox}
 
 	engine.SupersedeIssueRuns("issue-1", "run-frontend")
 
@@ -145,7 +145,7 @@ func TestDiscardIdleRunContainersReleasesStaleFailedAndWaitingRuns(t *testing.T)
 			t.Fatal(err)
 		}
 		sandboxes[run.ID] = &recordingSandbox{workspace: engine.sandboxes.RunWorkspace(run.ID)}
-		engine.runEnvs[run.ID] = &runEnvironment{sandbox: sandboxes[run.ID]}
+		engine.environments.envs[run.ID] = &runEnvironment{sandbox: sandboxes[run.ID]}
 	}
 
 	if n := engine.discardIdleRunContainers(context.Background(), time.Now().UTC().Add(3*time.Hour)); n != 2 {
@@ -155,7 +155,7 @@ func TestDiscardIdleRunContainersReleasesStaleFailedAndWaitingRuns(t *testing.T)
 		if sandboxes[id].closed != want {
 			t.Fatalf("%s closed=%v, want %v", id, sandboxes[id].closed, want)
 		}
-		if _, held := engine.runEnvs[id]; held == want {
+		if _, held := engine.environments.envs[id]; held == want {
 			t.Fatalf("%s handle held=%v after discard", id, held)
 		}
 	}
@@ -178,8 +178,8 @@ func TestDiscardIdleRunContainersWaitsForIdleThreshold(t *testing.T) {
 	}
 	failed := &recordingSandbox{workspace: engine.sandboxes.RunWorkspace("run-failed")}
 	waiting := &recordingSandbox{workspace: engine.sandboxes.RunWorkspace("run-waiting")}
-	engine.runEnvs["run-failed"] = &runEnvironment{sandbox: failed}
-	engine.runEnvs["run-waiting"] = &runEnvironment{sandbox: waiting}
+	engine.environments.envs["run-failed"] = &runEnvironment{sandbox: failed}
+	engine.environments.envs["run-waiting"] = &runEnvironment{sandbox: waiting}
 
 	if n := engine.discardIdleRunContainers(context.Background(), time.Now().UTC().Add(10*time.Minute)); n != 0 || failed.closed || waiting.closed {
 		t.Fatalf("a run that just failed must keep its container for a quick retry (n=%d)", n)
@@ -201,7 +201,7 @@ func TestDiscardIdleRunContainersReleasesRunnerBoundLocalSandbox(t *testing.T) {
 		t.Fatal(err)
 	}
 	sandbox := &recordingSandbox{workspace: engine.sandboxes.RunWorkspace(run.ID)}
-	engine.runEnvs[run.ID] = &runEnvironment{sandbox: sandbox}
+	engine.environments.envs[run.ID] = &runEnvironment{sandbox: sandbox}
 
 	if n := engine.discardIdleRunContainers(context.Background(), time.Now().UTC().Add(3*time.Hour)); n != 1 || !sandbox.closed {
 		t.Fatalf("a run that moved to a runner must still release its local container (n=%d closed=%v)", n, sandbox.closed)
@@ -214,7 +214,7 @@ func TestRetryFromInterruptedNodeKeepsSandbox(t *testing.T) {
 	engine, store := retryEngine(t)
 	run := retryableRun(t, store, "rerun-tail")
 	sandbox := &recordingSandbox{workspace: engine.sandboxes.RunWorkspace(run.ID)}
-	engine.runEnvs[run.ID] = &runEnvironment{sandbox: sandbox}
+	engine.environments.envs[run.ID] = &runEnvironment{sandbox: sandbox}
 
 	if err := engine.Retry(run.ID, "b", "从中断处继续", ""); err != nil {
 		t.Fatal(err)
@@ -223,7 +223,7 @@ func TestRetryFromInterruptedNodeKeepsSandbox(t *testing.T) {
 	if sandbox.closed {
 		t.Fatal("partial retry must reuse the existing container")
 	}
-	if _, held := engine.runEnvs[run.ID]; !held {
+	if _, held := engine.environments.envs[run.ID]; !held {
 		t.Fatal("partial retry dropped the sandbox handle")
 	}
 }

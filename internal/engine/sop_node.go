@@ -39,7 +39,8 @@ func (e *Engine) executeSOPNode(ctx context.Context, runID string, wf domain.Wor
 		fail(err)
 		return
 	}
-	if _, found := e.repo.Workflow(childID); !found {
+	childWorkflow, found := e.repo.Workflow(childID)
+	if !found {
 		fail(fmt.Errorf("SOP 流程 %q 不存在", childID))
 		return
 	}
@@ -78,7 +79,11 @@ func (e *Engine) executeSOPNode(ctx context.Context, runID string, wf domain.Wor
 		exec.WorkspaceRunID = workspaceRunID(parent)
 		exec.RunID = ""
 		exec.TraceID = parent.ExecutionContext.TraceID
-		started, err := e.StartWithRepositoriesContext(childID, childInput, parent.RepositoryContexts(), exec)
+		// Serialize the parent-node reference update with this engine's normal
+		// read/modify/write path; the repository transaction fences other workers.
+		e.stateMu.Lock()
+		started, err := e.startWorkflowDefinitionGuarded(childWorkflow, childInput, parent.RepositoryContexts(), exec, false, &childStartGuard{parentID: runID, nodeID: node.ID, generation: generation, attempt: attempt})
+		e.stateMu.Unlock()
 		if err != nil {
 			fail(fmt.Errorf("启动子 SOP：%w", err))
 			return
