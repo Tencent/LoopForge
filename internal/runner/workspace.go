@@ -143,6 +143,11 @@ func (d *Daemon) readRunnerWorkspace(ctx context.Context, request domain.RunnerW
 				return workspaceBusyResponse("workspace is still in use")
 			}
 			defer gate.Unlock()
+			if request.Operation == domain.RunnerWorkspaceOperationCheckpointCommit {
+				if hasContent, err := runtime.WorkspaceDirHasContent(root); err == nil && !hasContent {
+					d.closeRunSandboxes(ctx, request.RunID)
+				}
+			}
 		}
 		return d.checkpointTransfers.Handle(ctx, root, request)
 	}
@@ -155,6 +160,9 @@ func (d *Daemon) readRunnerWorkspace(ctx context.Context, request domain.RunnerW
 			return workspaceBusyResponse("workspace is still in use")
 		}
 		defer gate.Unlock()
+		if hasContent, err := runtime.WorkspaceDirHasContent(root); err == nil && !hasContent {
+			d.closeRunSandboxes(ctx, request.RunID)
+		}
 		if err := runtime.RestoreWorkspaceCheckpoint(root, request.Checkpoint); err != nil {
 			return runnerWorkspaceError(err)
 		}

@@ -8,6 +8,8 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"os/exec"
+	pathpkg "path"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -24,13 +26,39 @@ const WorkspaceCheckpointChunkBytes = 4 << 20
 const workspaceCheckpointExpandedMax = 2 << 30
 
 // checkpointRestoreExcludedNames are path components a restored archive must
-// never contain.
-var checkpointRestoreExcludedNames = []string{".agentflow", "node_modules", ".cache", "__pycache__"}
+// never contain (and never capture, even if committed inside a repository).
+var checkpointRestoreExcludedNames = []string{".agentflow"}
 
-// checkpointExcludedNames are skipped when capturing. Older valid archives can
-// contain .zvec-grep, so it is excluded from new captures only and must not
-// make those existing snapshots unrestorable.
-var checkpointExcludedNames = append(slices.Clone(checkpointRestoreExcludedNames), ".zvec-grep")
+// checkpointExcludedNames are skipped when capturing unless preserved as
+// Git-tracked repository files (except checkpointRestoreExcludedNames).
+var checkpointExcludedNames = append(slices.Clone(checkpointRestoreExcludedNames), "node_modules", ".cache", "__pycache__", ".zvec-grep")
+
+// WorkspaceDirHasContent reports whether root already holds user or repository
+// files on disk. An empty directory or one containing only the platform's
+// runtime .agentflow directory holds no user workspace data.
+func WorkspaceDirHasContent(root string) (bool, error) {
+	info, err := os.Lstat(root)
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if !info.IsDir() {
+		return false, fmt.Errorf("workspace is not a directory")
+	}
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return false, err
+	}
+	for _, entry := range entries {
+		if entry.Name() == ".agentflow" && entry.IsDir() {
+			continue
+		}
+		return true, nil
+	}
+	return false, nil
+}
 
 func checkpointPathHasComponent(path string, names []string) bool {
 	for _, part := range strings.Split(filepath.ToSlash(path), "/") {
@@ -85,6 +113,7 @@ func CreateWorkspaceCheckpointTo(root string, destination io.Writer) error {
 	writer := tar.NewWriter(&checkpointBoundedWriter{writer: zipped, left: workspaceCheckpointExpandedMax})
 	var expanded int64
 	entries := 0
+	tracker := &checkpointGitTracker{root: root, base: base}
 	err = fs.WalkDir(base.FS(), ".", func(path string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
@@ -93,10 +122,12 @@ func CreateWorkspaceCheckpointTo(root string, destination io.Writer) error {
 			return nil
 		}
 		if checkpointExcluded(path) {
-			if entry.IsDir() {
-				return fs.SkipDir
+			if checkpointRestoreExcluded(path) || !tracker.keeps(path, entry.IsDir()) {
+				if entry.IsDir() {
+					return fs.SkipDir
+				}
+				return nil
 			}
-			return nil
 		}
 		entries++
 		if entries > 100000 {
@@ -184,6 +215,184 @@ func copyCheckpointFile(base *os.Root, writer io.Writer, path string, size int64
 	return closeErr
 }
 
+type checkpointGitIndex struct {
+	files map[string]bool
+	dirs  map[string]bool
+}
+
+// checkpointGitTracker lazily indexes Git-tracked files matching
+// checkpointExcludedNames per repository inside root, so tracked files (such
+// as committed web/*/node_modules assets) survive snapshots while untracked
+// dependency installs are still skipped.
+type checkpointGitTracker struct {
+	root      string
+	base      *os.Root
+	repoFlags map[string]bool
+	indexes   map[string]*checkpointGitIndex
+}
+
+func (t *checkpointGitTracker) keeps(rel string, isDir bool) bool {
+	repoRel, ok := t.findRepo(pathpkg.Dir(filepath.ToSlash(rel)))
+	if !ok {
+		return false
+	}
+	idx := t.repoIndex(repoRel)
+	if idx == nil || len(idx.files) == 0 {
+		return false
+	}
+	repoFile := filepath.ToSlash(rel)
+	if repoRel != "." {
+		repoFile = strings.TrimPrefix(repoFile, repoRel+"/")
+	}
+	if isDir {
+		return idx.dirs[repoFile] || idx.files[repoFile]
+	}
+	return idx.files[repoFile]
+}
+
+func (t *checkpointGitTracker) findRepo(startDir string) (string, bool) {
+	if t.repoFlags == nil {
+		t.repoFlags = map[string]bool{}
+	}
+	for dir := pathpkg.Clean(startDir); ; dir = pathpkg.Dir(dir) {
+		if isRepo, checked := t.repoFlags[dir]; checked {
+			if isRepo {
+				return dir, true
+			}
+		} else {
+			gitPath := ".git"
+			if dir != "." {
+				gitPath = pathpkg.Join(dir, ".git")
+			}
+			info, err := t.base.Lstat(filepath.FromSlash(gitPath))
+			isRepo = err == nil && info.IsDir()
+			t.repoFlags[dir] = isRepo
+			if isRepo {
+				return dir, true
+			}
+		}
+		if dir == "." || dir == "/" || dir == "" {
+			return "", false
+		}
+	}
+}
+
+func (t *checkpointGitTracker) repoIndex(repoRel string) *checkpointGitIndex {
+	if t.indexes == nil {
+		t.indexes = map[string]*checkpointGitIndex{}
+	}
+	if idx, cached := t.indexes[repoRel]; cached {
+		return idx
+	}
+	idx := &checkpointGitIndex{}
+	t.indexes[repoRel] = idx
+	repoAbs := t.root
+	if repoRel != "." {
+		repoAbs = filepath.Join(t.root, filepath.FromSlash(repoRel))
+	}
+	// Pin git-dir/work-tree and disable executable repo config keys, matching
+	// gitwork.checkoutGit so scanning a sandbox-controlled repo stays safe.
+	cmd := exec.Command("git",
+		"--git-dir="+filepath.Join(repoAbs, ".git"),
+		"--work-tree="+repoAbs,
+		"-c", "safe.directory=*",
+		"-c", "core.fsmonitor=",
+		"-c", "core.hooksPath="+os.DevNull,
+		"-c", "core.pager=cat",
+		"-c", "core.editor=true",
+		"-c", "core.askPass=",
+		"-c", "credential.helper=",
+		"ls-files", "-z", "--",
+	)
+	cmd.Dir = repoAbs
+	env := make([]string, 0, len(os.Environ())+7)
+	for _, entry := range os.Environ() {
+		name, _, _ := strings.Cut(entry, "=")
+		switch name {
+		case "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_COMMON_DIR", "GIT_CONFIG_PARAMETERS", "GIT_CONFIG_COUNT":
+			continue
+		}
+		env = append(env, entry)
+	}
+	cmd.Env = append(env,
+		"GIT_CONFIG_NOSYSTEM=1",
+		"GIT_CONFIG_GLOBAL="+os.DevNull,
+		"GIT_TERMINAL_PROMPT=0",
+		"GIT_OPTIONAL_LOCKS=0",
+		"GIT_PAGER=cat",
+		"GIT_ASKPASS=",
+		"SSH_ASKPASS=",
+	)
+	out, err := cmd.Output()
+	if err != nil || len(out) == 0 {
+		return idx
+	}
+	idx.files = map[string]bool{}
+	idx.dirs = map[string]bool{}
+	for _, raw := range bytes.Split(out, []byte{0}) {
+		if len(raw) == 0 {
+			continue
+		}
+		p := filepath.ToSlash(string(raw))
+		if !checkpointExcluded(p) || checkpointRestoreExcluded(p) {
+			continue
+		}
+		idx.files[p] = true
+		for dir := pathpkg.Dir(p); dir != "." && dir != ""; dir = pathpkg.Dir(dir) {
+			if idx.dirs[dir] {
+				break
+			}
+			idx.dirs[dir] = true
+		}
+	}
+	return idx
+}
+
+func ensureReplaceableWorkspaceTarget(root string) (bool, error) {
+	info, err := os.Lstat(root)
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if !info.IsDir() {
+		return false, fmt.Errorf("workspace already exists; refusing to overwrite")
+	}
+	hasContent, err := WorkspaceDirHasContent(root)
+	if err != nil {
+		return false, err
+	}
+	if hasContent {
+		return false, fmt.Errorf("workspace already exists; refusing to overwrite")
+	}
+	return true, nil
+}
+
+func replaceRestoredWorkspace(stage, root string) error {
+	exists, err := ensureReplaceableWorkspaceTarget(root)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return os.Rename(stage, root)
+	}
+	backupParent, err := os.MkdirTemp(filepath.Dir(root), ".workspace-replace-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(backupParent)
+	backup := filepath.Join(backupParent, "prev")
+	if err := os.Rename(root, backup); err != nil {
+		return err
+	}
+	if err := os.Rename(stage, root); err != nil {
+		_ = os.Rename(backup, root)
+		return err
+	}
+	return nil
+}
+
 func RestoreWorkspaceCheckpoint(root string, content []byte) error {
 	if len(content) == 0 || len(content) > WorkspaceCheckpointMaxBytes {
 		return fmt.Errorf("invalid workspace checkpoint size")
@@ -192,9 +401,8 @@ func RestoreWorkspaceCheckpoint(root string, content []byte) error {
 }
 
 func RestoreWorkspaceCheckpointFrom(root string, source io.Reader) error {
-	if _, err := os.Lstat(root); err == nil {
-		return fmt.Errorf("workspace already exists; refusing to overwrite")
-	} else if !os.IsNotExist(err) {
+	root = filepath.Clean(root)
+	if _, err := ensureReplaceableWorkspaceTarget(root); err != nil {
 		return err
 	}
 	if err := os.MkdirAll(filepath.Dir(root), 0700); err != nil {
@@ -254,7 +462,7 @@ func RestoreWorkspaceCheckpointFrom(root string, source io.Reader) error {
 	if limited.N == 0 || compressed.N == 0 {
 		return fmt.Errorf("checkpoint expanded size exceeds limit")
 	}
-	return os.Rename(stage, root)
+	return replaceRestoredWorkspace(stage, root)
 }
 
 // restoreCheckpointEntry materializes one validated tar entry at path inside

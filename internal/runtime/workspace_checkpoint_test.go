@@ -5,7 +5,9 @@ import (
 	"bytes"
 	"compress/gzip"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -163,4 +165,197 @@ func TestWorkspaceCheckpointRestoreNeverWritesThroughExternalSymlinks(t *testing
 			}
 		})
 	}
+}
+
+func TestWorkspaceCheckpointPreservesTrackedFilesUnderExcludedDirsWhileSkippingUntracked(t *testing.T) {
+	root := t.TempDir()
+	repoDir := filepath.Join(root, "repo")
+	if err := os.MkdirAll(repoDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	git := func(dir string, args ...string) string {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-c", "core.hooksPath=/dev/null", "-C", dir}, args...)...)
+		cmd.Env = append(os.Environ(),
+			"GIT_CONFIG_GLOBAL=/dev/null",
+			"GIT_CONFIG_NOSYSTEM=1",
+			"GIT_AUTHOR_NAME=Checkpoint Test",
+			"GIT_AUTHOR_EMAIL=test@example.invalid",
+			"GIT_COMMITTER_NAME=Checkpoint Test",
+			"GIT_COMMITTER_EMAIL=test@example.invalid",
+		)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %s %v", args, out, err)
+		}
+		return string(out)
+	}
+	write := func(rel, body string) {
+		t.Helper()
+		full := filepath.Join(root, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	git(repoDir, "init", "-q", "-b", "main")
+	write("repo/web/vscode-web/node_modules/@microsoft/1ds/dist/ms.core.min.js", "v1\n")
+	write("repo/web/vscode-web/node_modules/pkg/target.txt", "target\n")
+	write("repo/assets/.cache/manifest.json", "{\"ok\":true}\n")
+	write("repo/py/__pycache__/keep.pyc", "pyc-tracked")
+	write("repo/.agentflow/committed-secret", "must-never-capture")
+	if err := os.Symlink("../pkg/target.txt", filepath.Join(repoDir, "web/vscode-web/node_modules/@microsoft/link")); err != nil {
+		t.Fatal(err)
+	}
+	git(repoDir, "add", "-f",
+		"web/vscode-web/node_modules/@microsoft/1ds/dist/ms.core.min.js",
+		"web/vscode-web/node_modules/pkg/target.txt",
+		"web/vscode-web/node_modules/@microsoft/link",
+		"assets/.cache/manifest.json",
+		"py/__pycache__/keep.pyc",
+		".agentflow/committed-secret",
+	)
+	git(repoDir, "commit", "-qm", "track vendored assets")
+
+	// Unstaged edit and staged new file inside node_modules must keep their live contents.
+	write("repo/web/vscode-web/node_modules/@microsoft/1ds/dist/ms.core.min.js", "v2-modified\n")
+	write("repo/web/vscode-web/node_modules/staged.js", "staged\n")
+	git(repoDir, "add", "-f", "web/vscode-web/node_modules/staged.js")
+
+	// Untracked dependencies/caches inside the same repo and workspace must stay excluded.
+	write("repo/chatbot/node_modules/huge/index.js", "npm-dep\n")
+	write("repo/web/vscode-web/node_modules/untracked/dep.js", "untracked-dep\n")
+	write("repo/assets/.cache/ephemeral.bin", "tmp")
+	write("repo/py/__pycache__/ephemeral.pyc", "tmp")
+	write("repo/.zvec-grep/index", "idx")
+	write(".agentflow/auth/token", "host-secret")
+
+	archive, err := CreateWorkspaceCheckpoint(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dest := filepath.Join(t.TempDir(), "restored")
+	if err := RestoreWorkspaceCheckpoint(dest, archive); err != nil {
+		t.Fatal(err)
+	}
+
+	wantPreserved := map[string]string{
+		"repo/web/vscode-web/node_modules/@microsoft/1ds/dist/ms.core.min.js": "v2-modified\n",
+		"repo/web/vscode-web/node_modules/pkg/target.txt":                     "target\n",
+		"repo/web/vscode-web/node_modules/staged.js":                          "staged\n",
+		"repo/assets/.cache/manifest.json":                                    "{\"ok\":true}\n",
+		"repo/py/__pycache__/keep.pyc":                                        "pyc-tracked",
+	}
+	for rel, want := range wantPreserved {
+		got, err := os.ReadFile(filepath.Join(dest, filepath.FromSlash(rel)))
+		if err != nil || string(got) != want {
+			t.Fatalf("restored %s = %q (%v), want %q", rel, got, err, want)
+		}
+	}
+	if link, err := os.Readlink(filepath.Join(dest, "repo/web/vscode-web/node_modules/@microsoft/link")); err != nil || link != "../pkg/target.txt" {
+		t.Fatalf("restored symlink = %q (%v)", link, err)
+	}
+	for _, excluded := range []string{
+		"repo/chatbot/node_modules",
+		"repo/web/vscode-web/node_modules/untracked",
+		"repo/assets/.cache/ephemeral.bin",
+		"repo/py/__pycache__/ephemeral.pyc",
+		"repo/.zvec-grep",
+		"repo/.agentflow",
+		".agentflow",
+	} {
+		if _, err := os.Lstat(filepath.Join(dest, filepath.FromSlash(excluded))); !os.IsNotExist(err) {
+			t.Fatalf("untracked or secret path %s should not be restored", excluded)
+		}
+	}
+	status := git(filepath.Join(dest, "repo"), "status", "--short")
+	for _, line := range strings.Split(strings.TrimSpace(status), "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "D ") && !strings.Contains(line, ".agentflow/") {
+			t.Fatalf("restored repo has missing tracked file %q\nfull status:\n%s", line, status)
+		}
+	}
+}
+
+func TestRestoreWorkspaceCheckpointReplacesEmptyAndRuntimeOnlyDirectoryAtomically(t *testing.T) {
+	src := t.TempDir()
+	if err := os.WriteFile(filepath.Join(src, "app.txt"), []byte("restored"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	archive, err := CreateWorkspaceCheckpoint(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("empty-dir", func(t *testing.T) {
+		dest := filepath.Join(t.TempDir(), "ws")
+		if err := os.MkdirAll(dest, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := RestoreWorkspaceCheckpoint(dest, archive); err != nil {
+			t.Fatal(err)
+		}
+		got, err := os.ReadFile(filepath.Join(dest, "app.txt"))
+		if err != nil || string(got) != "restored" {
+			t.Fatalf("restored app.txt = %q (%v)", got, err)
+		}
+	})
+
+	t.Run("agentflow-only-dir", func(t *testing.T) {
+		dest := filepath.Join(t.TempDir(), "ws")
+		if err := os.MkdirAll(filepath.Join(dest, ".agentflow", "hooks"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dest, ".agentflow", "hooks", "pre.json"), []byte("{}"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := RestoreWorkspaceCheckpoint(dest, archive); err != nil {
+			t.Fatal(err)
+		}
+		got, err := os.ReadFile(filepath.Join(dest, "app.txt"))
+		if err != nil || string(got) != "restored" {
+			t.Fatalf("restored app.txt = %q (%v)", got, err)
+		}
+		if _, err := os.Lstat(filepath.Join(dest, ".agentflow")); !os.IsNotExist(err) {
+			t.Fatalf("stale .agentflow should have been replaced, stat err=%v", err)
+		}
+	})
+
+	t.Run("corrupt-archive-preserves-target", func(t *testing.T) {
+		dest := filepath.Join(t.TempDir(), "ws")
+		marker := filepath.Join(dest, ".agentflow", "hooks", "pre.json")
+		if err := os.MkdirAll(filepath.Dir(marker), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(marker, []byte("keep"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := RestoreWorkspaceCheckpoint(dest, []byte("not-gzip")); err == nil {
+			t.Fatal("corrupt archive accepted")
+		}
+		got, err := os.ReadFile(marker)
+		if err != nil || string(got) != "keep" {
+			t.Fatalf("corrupt archive altered target: %q (%v)", got, err)
+		}
+	})
+
+	t.Run("real-file-refuses-overwrite", func(t *testing.T) {
+		dest := filepath.Join(t.TempDir(), "ws")
+		if err := os.MkdirAll(dest, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		existing := filepath.Join(dest, "surviving.txt")
+		if err := os.WriteFile(existing, []byte("survive"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := RestoreWorkspaceCheckpoint(dest, archive); err == nil {
+			t.Fatal("existing workspace overwritten")
+		}
+		got, err := os.ReadFile(existing)
+		if err != nil || string(got) != "survive" {
+			t.Fatalf("surviving file altered: %q (%v)", got, err)
+		}
+	})
 }

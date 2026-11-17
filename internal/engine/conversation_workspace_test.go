@@ -504,3 +504,62 @@ func TestConversationWorkspaceRetriesFailedSaveBeforeIdleReclamation(t *testing.
 		t.Fatal("retry reclaimed active conversation files", err)
 	}
 }
+
+func TestConversationWorkspaceRestoresOverPrecreatedEmptyAndAgentFlowDirectory(t *testing.T) {
+	t.Parallel()
+	for _, mode := range []string{"empty", "agentflow-only"} {
+		t.Run(mode, func(t *testing.T) {
+			e, id := checkpointFixture(t)
+			e.reconcileTerminalWorkspaceCleanup()
+			r, _ := e.repo.RunState(id)
+			if r.WorkspaceCleanedAt.IsZero() {
+				t.Fatal("precondition: workspace not reclaimed")
+			}
+			root := e.RunWorkspace(id)
+			if err := os.MkdirAll(root, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if mode == "agentflow-only" {
+				if err := os.MkdirAll(filepath.Join(root, ".agentflow", "hooks"), 0o700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(root, ".agentflow", "hooks", "pre.json"), []byte("{}"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			token, err := e.BeginConversationWorkspaceUse(id)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := e.EnsureConversationWorkspace(context.Background(), id, token); err != nil {
+				t.Fatal(err)
+			}
+			defer e.EndConversationWorkspaceUse(context.Background(), id, token)
+
+			body, err := os.ReadFile(filepath.Join(root, "README.md"))
+			if err != nil || string(body) != "uncommitted" {
+				t.Fatalf("snapshot not unpacked over %s directory: %q (%v)", mode, body, err)
+			}
+			r, _ = e.repo.RunState(id)
+			if !r.WorkspaceCleanedAt.IsZero() {
+				t.Fatal("cleanup marker not cleared after restore")
+			}
+		})
+	}
+}
+
+func TestAcquireConversationEnvironmentRefusesUnrestoredReclaimedWorkspace(t *testing.T) {
+	t.Parallel()
+	e, id := checkpointFixture(t)
+	e.reconcileTerminalWorkspaceCleanup()
+	if _, err := os.Lstat(e.RunWorkspace(id)); !os.IsNotExist(err) {
+		t.Fatalf("precondition: reclaimed dir still exists: %v", err)
+	}
+	if _, err := e.EnsureWorkspaceReady(context.Background(), id); err == nil {
+		t.Fatal("EnsureWorkspaceReady succeeded on unrestored reclaimed workspace")
+	}
+	if _, err := os.Lstat(e.RunWorkspace(id)); !os.IsNotExist(err) {
+		t.Fatalf("EnsureWorkspaceReady pre-created empty dir before snapshot restore: %v", err)
+	}
+}

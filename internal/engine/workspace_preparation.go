@@ -35,6 +35,11 @@ func (e *Engine) acquireConversationEnvironment(ctx context.Context, run domain.
 	if e.foreignWorkspaceBind(run) || e.defaultExecutionRunner(run) != "" {
 		return nil, fmt.Errorf("工作区属于其他执行实例")
 	}
+	if !run.WorkspaceCleanedAt.IsZero() {
+		if meta, saved := e.repo.WorkspaceCheckpoint(run.ID); saved && meta.SavedAt != nil {
+			return nil, fmt.Errorf("工作区已回收，请先恢复快照后再打开环境")
+		}
+	}
 	e.runEnvMu.Lock()
 	defer e.runEnvMu.Unlock()
 	if env := e.runEnvs[run.ID]; env != nil {
@@ -333,6 +338,9 @@ func (e *Engine) PrepareNodeWorkspace(ctx context.Context, run domain.Run, env *
 // contract as SOP execution. The pool owns the PTY, the Engine owns the sandbox.
 func (e *Engine) HandleWorkspaceTerminal(ctx context.Context, id string, pool *runtime.TerminalPool, scope string, req domain.WorkspaceTerminalRequest, actorID int64) (runtime.TerminalResult, error) {
 	if req.Operation == "open" {
+		if err := e.RestoreConversationWorkspaceIfNeeded(ctx, id); err != nil {
+			return runtime.TerminalResult{}, err
+		}
 		if _, err := e.EnsureWorkspaceReady(ctx, id); err != nil {
 			return runtime.TerminalResult{}, err
 		}

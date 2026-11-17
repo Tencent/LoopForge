@@ -216,6 +216,14 @@ func (e *Engine) restoreOrReuseRemoteConversationCheckpoint(ctx context.Context,
 		}
 	} else {
 		err = workspaceCheckpointResponseError(probe)
+		if err == nil {
+			var status struct {
+				Empty bool `json:"empty"`
+			}
+			if len(probe.Payload) > 0 && json.Unmarshal(probe.Payload, &status) == nil && status.Empty {
+				err = os.ErrNotExist
+			}
+		}
 	}
 	if err == nil {
 		return e.verifyStoredCheckpoint(ctx, run.ID)
