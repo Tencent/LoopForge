@@ -17,8 +17,8 @@
 #   --download-url <URL>   从指定 URL 下载二进制（含 {os} {arch} 占位符）
 #   --source <目录>        平台未分发二进制时，从本地 AgentFlow 源码构建（需要 Go）
 #   --strict-https         禁止在 HTTPS 网络不可达时降级到 HTTP
-#   --service              安装 launchd (macOS) / systemd (Linux) 常驻服务。
-#                          Linux 上没有用户会话时会自动拉起 systemd 用户实例。
+#   --service              安装常驻服务。macOS 用 launchd；Linux 有 systemd 时用用户服务，
+#                          没有用户会话时会先拉起 systemd 用户实例。没有 systemd 时改为后台运行。
 #   --no-start             只安装配置，不立即启动
 #   --no-auto-update       禁止从平台自动更新（自定义二进制默认禁用）
 #   --upgrade              原地升级已绑定的 runner，保留配置、机器绑定和工作区
@@ -72,6 +72,7 @@ fi
 
 fail() { echo "[bind-cli] 错误: $*" >&2; exit 1; }
 info() { echo "[bind-cli] $*"; }
+warn() { echo "[bind-cli] 警告: $*" >&2; }
 
 # systemctl --user 走用户 D-Bus。SSH 进 CVM、以 root 执行，或当前 shell
 # 没有登录会话时，这条总线还不存在，会报 Failed to connect to bus。
@@ -167,6 +168,168 @@ require_systemd_user_bus() {
   fail "无法连接 systemd 用户总线。请在终端执行：sudo loginctl enable-linger $(id -un)，然后再运行安装命令"
 }
 
+# 容器和云开发机里经常装着 systemctl，但 1 号进程不是 systemd。
+linux_has_systemd() {
+  command -v systemctl >/dev/null 2>&1 || return 1
+  SYSTEMD_ASK_PASSWORD=0 systemctl show --property=Version >/dev/null 2>&1
+}
+
+shell_quote() { printf '%q' "$1"; }
+
+# 判断 pid 是不是正在执行 run-service.sh 的进程：argv[0] 就是这个脚本，或 argv[0]
+# 是 bash/sh、argv[1] 是这个脚本。PID 文件可能是重启前留下的旧值，那个 PID 已被
+# 别的进程复用；查看或编辑这个脚本的进程（less、vim …）命令行里也带着路径，都不能算。
+is_background_runner_pid() {
+  local pid="$1"
+  local -a args=()
+  [[ "$pid" =~ ^[0-9]+$ ]] || return 1
+  if [[ -r "/proc/${pid}/cmdline" ]]; then
+    mapfile -d '' -t args < "/proc/${pid}/cmdline" 2>/dev/null || return 1
+  else
+    read -r -a args <<< "$(ps -o args= -p "$pid" 2>/dev/null || true)" || true
+  fi
+  [[ "${#args[@]}" -gt 0 ]] || return 1
+  [[ "${args[0]}" == "$BACKGROUND_SCRIPT" ]] && return 0
+  case "${args[0]##*/}" in
+    bash|sh) [[ "${args[1]:-}" == "$BACKGROUND_SCRIPT" ]] ;;
+    *) return 1 ;;
+  esac
+}
+
+# 只给核对过命令行的 run-service.sh 进程发信号。PID 文件里的旧 PID 不匹配时只删文件；
+# PID 文件丢失或过期时，再按 /proc 里的命令行找仍在运行的 run-service.sh。
+stop_background_runner() {
+  local pid="" proc
+  local -a pids=()
+  if [[ -f "$BACKGROUND_PID" ]]; then
+    pid="$(tr -d '[:space:]' < "$BACKGROUND_PID" 2>/dev/null || true)"
+    rm -f "$BACKGROUND_PID"
+  fi
+  if [[ -n "$pid" ]] && is_background_runner_pid "$pid"; then
+    pids+=("$pid")
+  fi
+  if [[ -n "$BACKGROUND_SCRIPT" && -d /proc ]]; then
+    for proc in /proc/[0-9]*; do
+      proc="${proc#/proc/}"
+      [[ "$proc" == "$pid" || "$proc" == "$$" ]] && continue
+      is_background_runner_pid "$proc" && pids+=("$proc")
+    done
+  fi
+  [[ "${#pids[@]}" -gt 0 ]] || return 0
+  for proc in "${pids[@]}"; do
+    kill -TERM "$proc" >/dev/null 2>&1 || true
+  done
+  sleep 0.2
+  for proc in "${pids[@]}"; do
+    pkill -P "$proc" >/dev/null 2>&1 || true
+  done
+}
+
+# 读当前用户的 crontab 到 CRONTAB_CURRENT。读取成功，或明确是「还没有 crontab」时
+# 返回 0；其他失败（权限、spool 读不了等）返回 1 并把原因放进 CRONTAB_ERROR。
+# 调用方必须在失败时放弃改写：把读失败当成空表写回，会覆盖用户原有的定时任务。
+read_user_crontab() {
+  local err_file status=0
+  CRONTAB_CURRENT=""
+  CRONTAB_ERROR=""
+  err_file="$(mktemp "${TMPDIR:-/tmp}/bind-cli-crontab.XXXXXX")" || {
+    CRONTAB_ERROR="无法创建临时文件"
+    return 1
+  }
+  CRONTAB_CURRENT="$(crontab -l 2>"$err_file")" || status=$?
+  CRONTAB_ERROR="$(head -n 1 "$err_file" 2>/dev/null || true)"
+  rm -f "$err_file"
+  [[ "$status" -eq 0 ]] && return 0
+  CRONTAB_CURRENT=""
+  if [[ "$CRONTAB_ERROR" == *"no crontab for"* ]]; then
+    CRONTAB_ERROR=""
+    return 0
+  fi
+  [[ -n "$CRONTAB_ERROR" ]] || CRONTAB_ERROR="crontab -l 退出码 ${status}"
+  return 1
+}
+
+remove_background_reboot_hook() {
+  command -v crontab >/dev/null 2>&1 || return 0
+  local filtered
+  if ! read_user_crontab; then
+    warn "读取 crontab 失败（${CRONTAB_ERROR}），未改动 crontab；如有 # agentflow-runner 开机项请手动删除"
+    return 0
+  fi
+  [[ "$CRONTAB_CURRENT" == *"# agentflow-runner"* ]] || return 0
+  filtered="$(printf '%s\n' "$CRONTAB_CURRENT" | grep -v '# agentflow-runner' || true)"
+  printf '%s\n' "$filtered" | crontab - >/dev/null 2>&1 ||
+    warn "写回 crontab 失败，请手动删除 # agentflow-runner 开机项"
+}
+
+install_background_reboot_hook() {
+  command -v crontab >/dev/null 2>&1 || return 0
+  [[ "$BACKGROUND_SCRIPT" != *" "* && "$RUNNER_HOME" != *" "* ]] || return 0
+  local entry
+  if ! read_user_crontab; then
+    warn "读取 crontab 失败（${CRONTAB_ERROR}），为免覆盖已有定时任务，未安装开机自启；runner 本次仍在后台运行"
+    return 0
+  fi
+  entry="@reboot ${BACKGROUND_SCRIPT} >> ${RUNNER_HOME}/runner.log 2>&1 # agentflow-runner"
+  {
+    if [[ -n "$CRONTAB_CURRENT" ]]; then
+      printf '%s\n' "$CRONTAB_CURRENT" | grep -v '# agentflow-runner' || true
+    fi
+    printf '%s\n' "$entry"
+  } | crontab - >/dev/null 2>&1 ||
+    warn "写入 crontab 失败，未安装开机自启；runner 本次仍在后台运行"
+}
+
+launch_background_wrapper() {
+  mkdir -p "$RUNNER_HOME"
+  if command -v nohup >/dev/null 2>&1; then
+    nohup "$BACKGROUND_SCRIPT" >> "${RUNNER_HOME}/runner.log" 2>&1 < /dev/null &
+  else
+    "$BACKGROUND_SCRIPT" >> "${RUNNER_HOME}/runner.log" 2>&1 < /dev/null &
+  fi
+  echo "$!" > "$BACKGROUND_PID"
+  disown "$!" >/dev/null 2>&1 || true
+}
+
+# 没有 systemd 时仍把 runner 留在后台，避免安装停在用户看不懂的报错上。
+start_background_runner() {
+  local arg
+  stop_background_runner
+  {
+    echo '#!/usr/bin/env bash'
+    # @reboot 直接执行本脚本、不经过 launch_background_wrapper，由脚本自己写 PID 文件，
+    # 重启后 PID 文件里也是当前进程。
+    echo "echo \$\$ > $(shell_quote "$BACKGROUND_PID")"
+    echo "trap '' HUP"
+    echo 'child=0'
+    echo 'trap '\''if [[ "$child" != 0 ]]; then kill "$child" 2>/dev/null || true; fi; exit 0'\'' TERM INT'
+    echo "export PATH=$(shell_quote "$USER_PATH")"
+    echo "export AGENTFLOW_GATE_MCP_BINARY=$(shell_quote "$GATE_BINARY_PATTERN")"
+    echo 'while true; do'
+    printf '  %s' "$(shell_quote "$BINARY")"
+    for arg in "${RUN_ARGS[@]}"; do
+      printf ' %s' "$(shell_quote "$arg")"
+    done
+    echo ' &'
+    echo '  child=$!'
+    echo '  wait "$child" || true'
+    echo '  sleep 5'
+    echo 'done'
+  } > "$BACKGROUND_SCRIPT"
+  chmod 700 "$BACKGROUND_SCRIPT"
+  launch_background_wrapper
+  install_background_reboot_hook
+  info "安装完成，已在后台运行。日志: ${RUNNER_HOME}/runner.log"
+}
+
+restart_background_runner() {
+  [[ -x "$BACKGROUND_SCRIPT" ]] || fail "未找到后台启动脚本，无法原地升级"
+  stop_background_runner
+  launch_background_wrapper
+  install_background_reboot_hook
+  info "已原地升级并重启后台进程；机器绑定和工作区保持不变"
+}
+
 OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
 ARCH="$(uname -m)"
 case "$ARCH" in
@@ -183,6 +346,8 @@ BINARY="${BIN_DIR}/agentflow-runner"
 GATE_BINARY_PATTERN="${BIN_DIR}/agentflow-gate-mcp-{os}-{arch}"
 PLIST="${HOME}/Library/LaunchAgents/com.agentflow.runner.plist"
 UNIT="${HOME}/.config/systemd/user/agentflow-runner.service"
+BACKGROUND_SCRIPT="${RUNNER_HOME}/run-service.sh"
+BACKGROUND_PID="${RUNNER_HOME}/service.pid"
 
 # ---------- 卸载 ----------
 if [[ "$UNINSTALL" == "1" ]]; then
@@ -193,6 +358,7 @@ if [[ "$UNINSTALL" == "1" ]]; then
   if [[ "$OS" == "darwin" ]]; then
     [[ -f "$PLIST" ]] && launchctl unload "$PLIST" >/dev/null 2>&1 || true
   else
+    stop_background_runner
     ensure_systemd_user_bus quiet || true
     systemctl --user stop agentflow-runner.service >/dev/null 2>&1 || true
   fi
@@ -227,11 +393,19 @@ if [[ "$UNINSTALL" == "1" ]]; then
       info "已移除 launchd 服务"
     fi
   else
-    ensure_systemd_user_bus quiet || true
-    systemctl --user disable --now agentflow-runner.service >/dev/null 2>&1 || true
-    rm -f "$UNIT"
-    systemctl --user daemon-reload >/dev/null 2>&1 || true
-    info "已移除 systemd 服务"
+    if [[ -f "$BACKGROUND_SCRIPT" || -f "$BACKGROUND_PID" ]]; then
+      stop_background_runner
+      remove_background_reboot_hook
+      rm -f "$BACKGROUND_SCRIPT"
+      info "已停止后台运行"
+    fi
+    if [[ -f "$UNIT" ]]; then
+      ensure_systemd_user_bus quiet || true
+      systemctl --user disable --now agentflow-runner.service >/dev/null 2>&1 || true
+      rm -f "$UNIT"
+      systemctl --user daemon-reload >/dev/null 2>&1 || true
+      info "已移除 systemd 服务"
+    fi
   fi
   # 回收异常退出时可能遗留的 runner 专属容器和临时镜像。名称严格
   # 限定为 agentflow-rt-*，不会碰同机控制面或用户自己的容器。
@@ -435,10 +609,12 @@ if [[ "$UPGRADE" == "1" ]]; then
     launchctl unload "$PLIST"
     launchctl load "$PLIST"
     info "已原地升级并重启 launchd 服务；机器绑定和工作区保持不变"
-  elif [[ "$OS" == "linux" && -f "$UNIT" ]]; then
+  elif [[ "$OS" == "linux" && -f "$UNIT" ]] && linux_has_systemd; then
     require_systemd_user_bus
     systemctl --user restart agentflow-runner.service
     info "已原地升级并重启 systemd 服务；机器绑定和工作区保持不变"
+  elif [[ "$OS" == "linux" && -x "$BACKGROUND_SCRIPT" ]]; then
+    restart_background_runner
   else
     info "已原地升级 runner；请重启前台运行的旧进程以启用新版"
   fi
@@ -502,7 +678,7 @@ EOF
     launchctl unload "$PLIST" >/dev/null 2>&1 || true
     launchctl load "$PLIST"
     info "launchd 服务已安装并启动（日志: ${RUNNER_HOME}/runner.log）"
-  else
+  elif linux_has_systemd; then
     mkdir -p "$(dirname "$UNIT")"
     {
       echo "[Unit]"
@@ -526,6 +702,8 @@ EOF
     systemctl --user enable agentflow-runner.service
     systemctl --user restart agentflow-runner.service
     info "systemd 服务已安装并启动（journalctl --user -u agentflow-runner -f 查看日志）"
+  else
+    start_background_runner
   fi
   info "卸载方式：curl -fsSL ${SERVER}/runners/install.sh | bash -s -- --uninstall"
 else

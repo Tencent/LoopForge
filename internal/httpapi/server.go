@@ -116,6 +116,7 @@ func NewWithNotificationsAndBackground(ctx context.Context, s *repo.Store, e *en
 	bg := &Background{recoveryGate: opts.RecoveryGate}
 	router := newWithNotifications(s, e, syncSvc, basicUser, basicPass, notifications, bg, func(h *assistantHandlers, runs *runsHandlers) {
 		h.startSessionJanitor(ctx)
+		h.startAttachmentSweeper(ctx)
 	})
 	return router, bg
 }
@@ -177,6 +178,7 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	if syncSvc != nil {
 		e.MergeIntoBranch = syncSvc.EnsureAndMergeBranchMR
 		e.FindBranchMR = syncSvc.FindBranchMR
+		e.FindBranchMRsInto = syncSvc.FindBranchMRsInto
 	}
 	// Wake long-polling CLI runners the moment the engine queues a task.
 	e.SetRunnerDispatchNotify(func(provider string) { api.runners.runnerWaiters.notify([]string{provider}) })
@@ -184,6 +186,7 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	e.SetRunnerControlNotify(api.runners.runnerControls.sendControl)
 	sched := schedule.New(s, syncSvc, api.schedule.dispatchScheduled)
 	sched.SetBaselineGuard(api.schedule.guardScheduledBaseline)
+	sched.SetRunDispatcher(api.schedule.dispatchScheduledRun)
 	// deps 由所有领域共享，schedule 服务就绪后回填一次即全局可见。
 	d.schedule = sched
 	if schedulerEnabled() {
@@ -283,7 +286,7 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	})
 
 	api.botIdentities = &botIdentityHandlers{deps: d, publicURL: api.notifications.service.PublicURL}
-	asst := &assistantHandlers{deps: d, runnerControls: runnerControls, sourceRoot: assistantSourceRoot(), notifications: api.notifications, identities: api.botIdentities}
+	asst := &assistantHandlers{deps: d, runnerControls: runnerControls, sourceRoot: assistantSourceRoot(), notifications: api.notifications, identities: api.botIdentities, attachmentSweepWake: make(chan struct{}, 1)}
 	api.runs.assistant = asst
 	api.schedule.assistant = asst
 	api.notifications.service.GenerateReport = asst.generateSOPReport
@@ -568,6 +571,9 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	// http.NotFound（404 text），由 handler 内方法分派实现。
 	g.Any("/api/schedule-jobs/:id", api.schedule.scheduleJob)
 	g.POST("/api/schedule-jobs/:id/run", api.schedule.scheduleJobRun)
+	g.POST("/api/schedule-jobs/:id/enabled", api.schedule.scheduleJobEnabled)
+	g.GET("/api/schedule-job-executions", api.schedule.scheduleJobExecutions)
+	g.GET("/api/schedule-job-executions/dashboard", api.schedule.scheduleJobExecutionDashboard)
 
 	// --- runner management plane ---
 	g.GET("/api/runners", api.runners.runners)
@@ -631,6 +637,7 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	d.api = g
 	if d.schedule != nil {
 		d.schedule.SetAssistantPrep(asst.prepareScheduleJob)
+		d.schedule.SetAssistantSessionPrep(asst.runScheduleJobPromptReporting)
 	}
 	static, _ := fs.Sub(webassets.Files, ".")
 	g.NoRoute(func(c *gin.Context) {

@@ -65,7 +65,7 @@ func (h *assistantHandlers) sessionMode(c *gin.Context) {
 		c.JSON(404, gin.H{"error": "会话不存在"})
 		return
 	}
-	if g, ok := h.repo.AssistantGeneration(owner, saved.ID); ok && g.Status == "running" {
+	if g, ok := h.readGeneration(owner, saved.ID); ok && g.Status == "running" {
 		c.JSON(409, gin.H{"error": "请先停止当前生成再切换模式"})
 		return
 	}
@@ -94,8 +94,8 @@ func (h *assistantHandlers) sessionMode(c *gin.Context) {
 			return
 		}
 		request, err := h.engine.TrustedWorkspaceRequest(runID, domain.RunnerWorkspaceRequest{})
-		if err != nil || request.Sandbox == nil || request.Sandbox.Profile.Driver != "docker" {
-			c.JSON(409, gin.H{"error": "对话工作区仅支持 Docker"})
+		if err != nil || request.Sandbox == nil || !domain.ConversationSandboxDriver(request.Sandbox.Profile.Driver) {
+			c.JSON(409, gin.H{"error": "对话工作区只支持 Docker 或 native 沙箱"})
 			return
 		}
 	}

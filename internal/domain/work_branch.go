@@ -17,7 +17,7 @@ func DefaultWorkBranch(issue Issue, now time.Time) string {
 
 	if source == "tapd" || strings.HasPrefix(strings.TrimSpace(issue.ID), "tapd-") {
 		if id := tapdStoryID(issue); id != "" {
-			return "feature/story-" + workBranchSegment(id) + "-" + suffix
+			return "feature/story-" + SafeGitRefSegment(id) + "-" + suffix
 		}
 	}
 	if source == "gongfeng" || kind == "issue" {
@@ -34,7 +34,7 @@ func DefaultWorkBranch(issue Issue, now time.Time) string {
 		return fmt.Sprintf("feature/fix-issue-%d-%s", issue.Number, suffix)
 	}
 	if issue.ID != "" {
-		return "feature/" + workBranchSegment(issue.ID) + "-" + suffix
+		return "feature/" + SafeGitRefSegment(issue.ID) + "-" + suffix
 	}
 	return "feature/fix-" + suffix
 }
@@ -55,7 +55,12 @@ func tapdStoryID(issue Issue) string {
 	return strings.TrimPrefix(strings.TrimSpace(issue.ID), "tapd-")
 }
 
-func workBranchSegment(value string) string {
+// SafeGitRefSegment turns an arbitrary value into a single git ref segment:
+// lowercase letters, digits, dash and underscore, with every other rune
+// replaced by a dash and the segment cut at 64 characters. Leading and
+// trailing dashes/dots are trimmed; values that sanitize to nothing fall back
+// to "run" so callers always get a usable branch name.
+func SafeGitRefSegment(value string) string {
 	var b strings.Builder
 	for _, r := range strings.ToLower(value) {
 		if r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '-' || r == '_' {

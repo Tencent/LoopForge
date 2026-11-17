@@ -648,3 +648,43 @@ func TestRunnerConcurrentEditSharesOnlyTheAgentFence(t *testing.T) {
 	}
 	gate.Unlock()
 }
+
+func TestRunnerCheckpointStatusAndRestoreOverEmptyDirectory(t *testing.T) {
+	d, request, root := runnerPreparationFixture(t)
+	defer d.closeAllRunSandboxes(context.Background())
+
+	src := t.TempDir()
+	if err := os.WriteFile(filepath.Join(src, "restored.txt"), []byte("from-checkpoint"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	archive, err := runtime.CreateWorkspaceCheckpoint(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.MkdirAll(filepath.Join(root, ".agentflow", "hooks"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	status := d.readRunnerWorkspace(context.Background(), domain.RunnerWorkspaceRequest{
+		RunID:           request.RunID,
+		WorkspaceLayout: domain.RunnerWorkspaceLayoutShared,
+		Operation:       domain.RunnerWorkspaceOperationCheckpointStatus,
+	})
+	if status.Status != 200 || !strings.Contains(string(status.Payload), `"empty":true`) {
+		t.Fatalf("status = %+v payload=%s", status, status.Payload)
+	}
+
+	restored := d.readRunnerWorkspace(context.Background(), domain.RunnerWorkspaceRequest{
+		RunID:           request.RunID,
+		WorkspaceLayout: domain.RunnerWorkspaceLayoutShared,
+		Operation:       domain.RunnerWorkspaceOperationRestore,
+		Checkpoint:      archive,
+	})
+	if restored.Status != 200 || restored.Error != "" {
+		t.Fatalf("restore = %+v", restored)
+	}
+	got, err := os.ReadFile(filepath.Join(root, "restored.txt"))
+	if err != nil || string(got) != "from-checkpoint" {
+		t.Fatalf("restored.txt = %q (%v)", got, err)
+	}
+}

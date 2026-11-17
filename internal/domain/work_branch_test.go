@@ -60,3 +60,30 @@ func TestDefaultWorkBranch(t *testing.T) {
 		})
 	}
 }
+
+func TestSafeGitRefSegment(t *testing.T) {
+	long := ""
+	for len(long) < 80 {
+		long += "a"
+	}
+	tests := []struct {
+		name  string
+		value string
+		want  string
+	}{
+		{name: "trims surrounding blank and slash", value: " feature/hello world ", want: "feature-hello-world"},
+		{name: "strips leading dots and lock suffix", value: "..bad.lock", want: "bad-lock"},
+		{name: "collapses each separator rune to a dash", value: "a /  /b", want: "a-----b"},
+		{name: "keeps upper case as lower case", value: "Feature-ABC_9", want: "feature-abc_9"},
+		{name: "empty falls back to run", value: "", want: "run"},
+		{name: "separators only fall back to run", value: " / . ", want: "run"},
+		{name: "caps the segment at 64 characters", value: long, want: long[:64]},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := SafeGitRefSegment(tc.value); got != tc.want {
+				t.Fatalf("SafeGitRefSegment(%q) = %q, want %q", tc.value, got, tc.want)
+			}
+		})
+	}
+}

@@ -32,8 +32,16 @@ func (e *Engine) workspaceSandboxProfile(run domain.Run) (domain.SandboxProfile,
 // lease. The workspace-use lease fences cleanup; the sandbox's workspace flock
 // fences another process. An active local scheduler shares its existing handle.
 func (e *Engine) acquireConversationEnvironment(ctx context.Context, run domain.Run) (*runEnvironment, error) {
+	if latest, ok := e.repo.RunState(run.ID); ok {
+		run = latest
+	}
 	if e.foreignWorkspaceBind(run) || e.defaultExecutionRunner(run) != "" {
 		return nil, fmt.Errorf("工作区属于其他执行实例")
+	}
+	if !run.WorkspaceCleanedAt.IsZero() {
+		if meta, saved := e.repo.WorkspaceCheckpoint(run.ID); saved && meta.SavedAt != nil {
+			return nil, fmt.Errorf("工作区已回收，请先恢复快照后再打开环境")
+		}
 	}
 	e.runEnvMu.Lock()
 	defer e.runEnvMu.Unlock()
@@ -333,6 +341,9 @@ func (e *Engine) PrepareNodeWorkspace(ctx context.Context, run domain.Run, env *
 // contract as SOP execution. The pool owns the PTY, the Engine owns the sandbox.
 func (e *Engine) HandleWorkspaceTerminal(ctx context.Context, id string, pool *runtime.TerminalPool, scope string, req domain.WorkspaceTerminalRequest, actorID int64) (runtime.TerminalResult, error) {
 	if req.Operation == "open" {
+		if err := e.RestoreConversationWorkspaceIfNeeded(ctx, id); err != nil {
+			return runtime.TerminalResult{}, err
+		}
 		if _, err := e.EnsureWorkspaceReady(ctx, id); err != nil {
 			return runtime.TerminalResult{}, err
 		}

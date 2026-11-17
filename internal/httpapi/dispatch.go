@@ -51,6 +51,14 @@ func dispatchIssue(d *deps, req dispatchRequest) (domain.Task, error) {
 		}
 	}
 	scheduled := strings.TrimSpace(req.ScheduleJobID) != ""
+	if issue.WithoutSOP() {
+		if scheduled {
+			return domain.Task{}, HTTPError{http.StatusConflict, "该需求不使用 SOP"}
+		}
+		if strings.TrimSpace(req.WorkflowID) == "" {
+			return domain.Task{}, HTTPError{http.StatusBadRequest, "该需求不使用 SOP，请先选择要运行的 SOP"}
+		}
+	}
 	project, _ := d.repo.Project(issue.ProjectID)
 	workflowID := strings.TrimSpace(req.WorkflowID)
 	if workflowID == "" {
@@ -116,7 +124,7 @@ func dispatchIssue(d *deps, req dispatchRequest) (domain.Task, error) {
 	}
 	var repositories []domain.RepositoryContext
 	for _, repo := range boundRepositories {
-		rc := domain.RepositoryContext{RepositoryID: repo.ID, Provider: repo.Provider, Name: repo.Name, GongfengProjectID: repo.GongfengProjectID, WebURL: repo.WebURL, CloneURL: repo.CloneURL, BaseBranch: repo.DefaultBranch, LocalPath: repo.LocalPath, PipelineProjectID: repo.PipelineProjectID, PipelineDefID: repo.PipelineDefID, PipelineURLPattern: repo.PipelineURLPattern, DefaultBranch: repo.DefaultBranch}
+		rc := repositoryRunContext(repo)
 		if selectedWorkBranch := branchSelection.WorkBranchForRepository(repo.ID); selectedWorkBranch != "" {
 			rc.WorkBranch = selectedWorkBranch
 			rc.RequireExistingWorkBranch = true
@@ -213,6 +221,9 @@ func dispatchIssue(d *deps, req dispatchRequest) (domain.Task, error) {
 	// Bind only after the run actually starts. A second lane keeps the SOP
 	// that already ran; a stored list of several SOPs is left unchanged.
 	// A failed start returns above and does not reach this write.
+	if issue.WithoutSOP() {
+		issue.SOPMode, issue.AutomationState = domain.IssueSOPUse, "eligible"
+	}
 	alreadyStarted := strings.TrimSpace(issue.WorkflowID) != "" && issue.WorkflowID != workflowID && d.repo.IssueHasTaskForWorkflow(issue.ID, issue.WorkflowID)
 	if len(issue.SOPBindings) > 1 {
 		if strings.TrimSpace(issue.WorkflowID) == "" {
