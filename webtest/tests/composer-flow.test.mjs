@@ -60,6 +60,9 @@ test('创建并去对话澄清 creates the issue and opens a new chat with the r
   const app = await loadApp();
   t.after(app.close);
   const $ = (s) => app.document.querySelector(s);
+  const mentions = [];
+  const unsubscribe = app.window.loopforgePlatform.subscribe('mentionIssue', issue => mentions.push({...issue}));
+  t.after(unsubscribe);
   app.evaluate(`openRequirementWizard()`);
   describe(app, 'Add CSV export');
   $('[data-req-delivery="none"]').click();
@@ -80,46 +83,30 @@ test('创建并去对话澄清 creates the issue and opens a new chat with the r
   assert.equal(app.evaluate(`activeViewName()`), 'collaboration');
   assert.equal(app.evaluate(`localStorage.getItem('agentflow.activeProject')`), 'project-1');
 
-  // The chat frame is mounted but not ready yet: the mention waits for it.
-  const frame = $('#chatNextFrame');
-  const posted = [];
-  frame.contentWindow.postMessage = (message) => posted.push(JSON.parse(JSON.stringify(message)));
-  assert.deepEqual(JSON.parse(JSON.stringify(app.evaluate(`pendingChatIssueMention`))), { issueId: 'issue-chat', projectId: 'project-1' });
-  app.window.dispatchEvent(new app.window.MessageEvent('message', {
-    data: { type: 'agentflow-chat-ready' }, origin: app.window.location.origin, source: frame.contentWindow,
-  }));
-  assert.deepEqual(posted[0], { type: 'agentflow-chat-mention-issue', issueId: 'issue-chat', projectId: 'project-1' });
-  assert.equal(posted[1]?.type, 'agentflow-project-context', 'the project context follows the mention');
-  assert.equal(app.evaluate(`pendingChatIssueMention`), null);
-
-  // A ready chat receives the next requirement at once, without reloading.
-  posted.length = 0;
-  const src = frame.src;
+  // The mounted chat receives the handoff through the in-document interface.
+  assert.deepEqual(mentions[0], { issueId: 'issue-chat', projectId: 'project-1' });
+  assert.equal($('#chatNextFrame'), null);
+  const root = $('#chatRoot');
   app.evaluate(`switchView('issues');openIssueInChat({id:'issue-next',projectId:'project-1'})`);
-  assert.deepEqual(posted[0], { type: 'agentflow-chat-mention-issue', issueId: 'issue-next', projectId: 'project-1' });
-  assert.equal(frame.src, src);
+  assert.deepEqual(mentions[1], { issueId: 'issue-next', projectId: 'project-1' });
+  assert.equal($('#chatRoot'), root);
   assert.equal(app.evaluate(`activeViewName()`), 'collaboration');
-
-  // A chat that was never mounted loads with the requirement in its URL.
-  app.evaluate(`switchView('issues');$('#chatNextFrame').dataset.src='';openIssueInChat({id:'issue-cold',projectId:'project-1'})`);
-  const cold = new URL(frame.src, 'http://localhost');
-  assert.equal(cold.pathname, '/chatbot/');
-  assert.equal(cold.searchParams.get('mentionIssue'), 'issue-cold');
-  assert.equal(cold.searchParams.get('projectId'), 'project-1');
-  assert.equal(app.evaluate(`pendingChatIssueMention`), null);
 });
 
 test('Ctrl+Enter hands the requirement to the chat and TAPD sync failures are reported', async (t) => {
   const app = await loadApp();
   t.after(app.close);
   const $ = (s) => app.document.querySelector(s);
+  const mentions = [];
+  const unsubscribe = app.window.loopforgePlatform.subscribe('mentionIssue', issue => mentions.push({...issue}));
+  t.after(unsubscribe);
   app.evaluate(`openRequirementWizard()`);
   describe(app, 'Keyboard request');
   app.router.post('/api/issues', (call) => ({ status: 200, body: { id: 'issue-key', ...call.body } }));
   $('#chatInput').dispatchEvent(new app.window.KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true, bubbles: true }));
   await settle(4);
   assert.ok(app.router.calls.some((c) => c.path === '/api/issues' && c.body.description === 'Keyboard request'));
-  assert.equal(app.evaluate(`pendingChatIssueMention?.issueId`), 'issue-key');
+  assert.equal(mentions[0]?.issueId, 'issue-key');
 
   app.evaluate(`
     Object.assign(currentProject(),{tapdWorkspaceId:'ws',tapdIterationId:'it'});
