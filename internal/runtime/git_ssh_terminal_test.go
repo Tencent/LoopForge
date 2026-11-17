@@ -101,7 +101,7 @@ func TestTerminalGitSSHAgentStaysOutOfWorkspace(t *testing.T) {
 // every other bwrap process of the workspace sees an empty tmpfs there.
 func TestBwrapPrivateBindsReachOnlyTheirProcess(t *testing.T) {
 	workspace := t.TempDir()
-	base, err := bwrapArgsCommand(workspace, SandboxRequirements{}, false)
+	base, err := bwrapArgsCommand(workspace, SandboxRequirements{})
 	if err != nil {
 		t.Fatal(err)
 	}

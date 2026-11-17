@@ -159,7 +159,16 @@ func SandboxEnvironmentIdentity(ctx context.Context, sandbox Sandbox) (string, e
 		if err := s.ensureStarted(ctx); err != nil {
 			return "", err
 		}
-		if err := s.ensureScriptContainer(ctx); err != nil {
+		identity, err := ReadSandboxEnvironmentIdentity(ctx, s)
+		if err == nil || ctx.Err() != nil {
+			return identity, err
+		}
+		// The started flag is a process-local cache. A container stopped or
+		// removed outside this process (daemon restart, prune, manual cleanup)
+		// must be revalidated here, or every later preparation keeps failing.
+		// Restarting or recreating changes the identity, so preparation replays.
+		s.invalidate()
+		if err := s.ensureStarted(ctx); err != nil {
 			return "", err
 		}
 	}
@@ -180,13 +189,6 @@ func ReadSandboxEnvironmentIdentity(ctx context.Context, sandbox Sandbox) (strin
 		}
 		if !strings.HasPrefix(strings.TrimSpace(string(output)), "true|") {
 			return "", fmt.Errorf("workspace execution environment is not running")
-		}
-		companion, companionErr := exec.CommandContext(ctx, "docker", "inspect", "--format", "{{.State.Running}}|{{.Id}}|{{.State.StartedAt}}", dockerScriptContainerName(s.name)).CombinedOutput()
-		if companionErr != nil && !dockerObjectGone(string(companion), companionErr) {
-			return "", fmt.Errorf("inspect script environment: %w", companionErr)
-		}
-		if companionErr == nil {
-			output = append(output, companion...)
 		}
 		overlay, err := json.Marshal(s.profile.Environment)
 		if err != nil {

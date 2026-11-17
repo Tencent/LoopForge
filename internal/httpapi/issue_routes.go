@@ -293,6 +293,9 @@ func (h issuesHandlers) issueSOPs(c *gin.Context, issue domain.Issue) {
 			issue.WorkflowID = bindings[0].WorkflowID
 		}
 	}
+	if issue.WithoutSOP() && strings.TrimSpace(issue.WorkflowID) != "" {
+		issue.SOPMode, issue.AutomationState = domain.IssueSOPUse, "eligible"
+	}
 	if err := h.repo.PutIssue(issue); err != nil {
 		respond(c, err)
 		return

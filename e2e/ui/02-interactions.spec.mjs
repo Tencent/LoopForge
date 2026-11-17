@@ -18,10 +18,7 @@ test('requirement composer: create, find and dispatch a requirement from its dra
   await page.locator('#newIssue').click();
   await expect(page.locator('#requirementModal')).toHaveClass(/open/);
   await page.locator('#chatInput').fill(`${title}\n\n自动化 UI 测试创建，会被关闭。`);
-  await page.locator('#reqSkip').click();
-  await expect(page.locator('#reqStepConfirm')).toBeVisible();
-  await expect(page.locator('#reqCreate')).toBeVisible();
-  await expect(page.locator('#reqTitle')).toHaveValue(title);
+  await expect(page.locator('#reqCreate')).toBeEnabled();
   await page.getByRole('button', { name: 'SOP 流程', exact: true }).click();
   await page.getByRole('listbox', { name: 'SOP 流程', exact: true })
     .getByRole('option', { name: /E2E ui-requirement/ }).click();
@@ -35,6 +32,7 @@ test('requirement composer: create, find and dispatch a requirement from its dra
   track(`issue ${issue.id}`, () => post(`/api/issues/${issue.id}/close`, {}, { expect: [200, 404, 409] }));
   expect(issue.source || 'local').toBe('local');
   expect(issue.workflowId).toBe(wf);
+  expect(issue.title).toBe(title);
   await expect(page.locator('#requirementModal')).not.toHaveClass(/open/);
 
   // Creation opens the drawer automatically. Close it, then exercise the
@@ -70,23 +68,31 @@ test('requirement composer: create, find and dispatch a requirement from its dra
   expect(errors).toEqual([]);
 });
 
-test('requirement composer: AI analysis answers', async ({ page }) => {
-  test.skip(!cfg.model, 'AGENTFLOW_E2E_MODEL=0');
-  test.setTimeout(420_000);
+test('requirement composer: create and clarify opens the chat with the requirement @-mentioned', async ({ page }) => {
   const errors = watchErrors(page);
+  const title = `E2E UI 对话澄清 ${cfg.runTag}-${Date.now() % 100000}`;
   await openView(page, 'issues');
   await page.locator('#newIssue').click();
-  await page.locator('#chatInput').fill('自动化测试：给运行记录列表增加按 SOP 名称筛选的能力。这只是测试，请只做分析，不需要读代码。');
-  await page.locator('#reqNext').click();
-  await expect(page.locator('#reqStepClarify')).toBeVisible();
-  await expect(page.locator('#chatStop')).toBeVisible({ timeout: 30_000 });
-  await expect(page.locator('#chatStop')).toBeHidden({ timeout: 400_000 });
-  await expect.poll(async () => (await page.locator('#reqClarifyPanel').innerText()).trim().length).toBeGreaterThan(20);
-  await expect(page.locator('#reqClarifyPanel .req-q-card, #reqClarifyPanel .req-ready-card, #reqClarifyPanel .req-supplement').first()).toBeVisible();
-  // Close without creating anything.
-  await page.locator('#requirementModal .requirement-close').first().click();
-  const confirm = page.locator('#confirmModal.open #confirmOkBtn');
-  if (await confirm.isVisible().catch(() => false)) await confirm.click();
+  await page.locator('#chatInput').fill(`${title}\n\n自动化 UI 测试创建，会被关闭。`);
+  await page.locator('[data-req-delivery="none"]').click();
+  await expect(page.locator('#reqWorkflowField')).toBeHidden();
+  const [created] = await Promise.all([
+    page.waitForResponse(r => new URL(r.url()).pathname === '/api/issues' && r.request().method() === 'POST'),
+    page.locator('#reqCreateChat').click(),
+  ]);
+  expect(created.ok()).toBe(true);
+  const issue = await created.json();
+  track(`issue ${issue.id}`, () => post(`/api/issues/${issue.id}/close`, {}, { expect: [200, 404, 409] }));
+  expect(issue.title).toBe(title);
+  expect(issue.sopMode).toBe('none');
+  expect(issue.workflowId || '').toBe('');
+  expect(issue.automationState).toBe('ignored');
+  await expect(page.locator('#requirementModal')).not.toHaveClass(/open/);
+  await expect(page).toHaveURL(/#\/collaboration/);
+  const chat = page.frameLocator('#chatNextFrame');
+  const input = chat.locator('textarea').first();
+  await expect(input).toHaveValue(new RegExp(`^@${title.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} `), { timeout: 30_000 });
+  await expect(chat.getByText(title).first()).toBeVisible();
   expect(errors).toEqual([]);
 });
 

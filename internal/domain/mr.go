@@ -14,6 +14,13 @@ var githubPRURL = regexp.MustCompile(`https?://github\.com/([A-Za-z0-9_.-]+/[A-Z
 
 var gongfengMRURL = regexp.MustCompile(`https?://git\.example\.com/([^\s"'<>#]+)/merge_requests/(\d+)`)
 
+var githubPRLink = regexp.MustCompile(`^https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/pull/\d+/?$`)
+
+// IsGitHubPRURL reports whether text is exactly one GitHub pull request link.
+func IsGitHubPRURL(text string) bool {
+	return githubPRLink.MatchString(strings.TrimSpace(text))
+}
+
 // GongfengMRRef is one merge request URL extracted from free text.
 type GongfengMRRef struct {
 	Project string

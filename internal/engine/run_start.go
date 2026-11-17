@@ -110,8 +110,10 @@ func (e *Engine) startWorkflowDefinitionGuarded(wf domain.WorkflowDefinition, in
 	if !ok {
 		return domain.Run{}, fmt.Errorf("sandbox profile %q not found", wf.SandboxProfileID)
 	}
-	if workspace && (profile.Driver != "docker" || profile.DockerfileID == "" || !(profile.ProjectID == executionContext.ProjectID || profile.Shared)) {
-		return domain.Run{}, fmt.Errorf("对话工作区必须选择本项目或共享的 Docker 沙箱")
+	if workspace {
+		if _, err := e.repo.ConversationSandbox(executionContext.ProjectID, profile.ID); err != nil {
+			return domain.Run{}, err
+		}
 	}
 	resources, err := resolveSandboxResources(e.repo, profile)
 	if err != nil {

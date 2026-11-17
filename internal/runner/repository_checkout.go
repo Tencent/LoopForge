@@ -10,6 +10,7 @@ import (
 
 	"agentflow/internal/domain"
 	"agentflow/internal/gitwork"
+	"agentflow/internal/runtime"
 )
 
 func checkoutRepositoryForPreparation(ctx context.Context, workspace string, repository *domain.RunnerRepository, refresh bool) error {
@@ -28,6 +29,9 @@ func checkoutRepositoryForPreparation(ctx context.Context, workspace string, rep
 	}
 	if !info.IsDir() {
 		return fmt.Errorf("repository .git is not a real directory")
+	}
+	if err := runtime.RestoreLegacyProjectAgentConfig(ctx, workspace); err != nil {
+		return err
 	}
 	if _, ok := gitwork.RevParse(ctx, workspace, "HEAD"); !ok {
 		// A killed clone leaves .git before there are refs or checked-out files.
