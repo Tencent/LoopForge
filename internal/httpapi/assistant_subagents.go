@@ -177,11 +177,14 @@ func subagentRolePrompt(prompt string) string {
 var rolePromptPlaceholder = regexp.MustCompile(`\{\{[^{}]+\}\}`)
 
 // writeConversationAssets rewrites the conversation's CLI home each turn:
-// .codebuddy/skills holds the project's skills plus those of its roles and
-// the mentioned ones, and
-// .codebuddy/agents holds one subagent per role, so Main Bot and its
-// subagents use them natively. A conversation without a project and without
-// mentioned shared roles gets empty directories.
+// skills holds the project's own skills and the shared skills, plus those of
+// its roles and the mentioned ones, and agents holds one subagent per role,
+// so Main Bot and its subagents use them natively. Every shared skill is
+// installed on every turn, including a conversation without a project, so a
+// scheduled task can call one without mentioning it; it brings only its
+// SKILL.md unless it is also the project's own, bound or mentioned. A turn
+// with no project, no shared skills and no mentioned roles gets empty
+// directories.
 func (h *assistantHandlers) writeConversationAssets(root string, req assistantRequest) error {
 	if err := runtime.ValidateConversationRoot(root); err != nil {
 		return err
@@ -202,16 +205,21 @@ func (h *assistantHandlers) writeConversationAssets(root string, req assistantRe
 			files[skill.ID] = contents
 		}
 	}
-	if project := strings.TrimSpace(req.ProjectID); project != "" {
-		for _, skill := range h.repo.Skills() {
-			if skill.ProjectID != project {
-				continue
-			}
-			var contents map[string][]byte
-			if len(skill.FileRefs) > 0 {
-				contents = h.repo.SkillFileContents(skill.ID)
-			}
-			add(skill, contents)
+	project := strings.TrimSpace(req.ProjectID)
+	load := func(skill domain.SkillDefinition) {
+		var contents map[string][]byte
+		if len(skill.FileRefs) > 0 {
+			contents = h.repo.SkillFileContents(skill.ID)
+		}
+		add(skill, contents)
+	}
+	var shared []domain.SkillDefinition
+	for _, skill := range h.repo.Skills() {
+		switch {
+		case project != "" && skill.ProjectID == project:
+			load(skill)
+		case skill.Shared:
+			shared = append(shared, skill)
 		}
 	}
 	for _, role := range req.roles {
@@ -220,10 +228,22 @@ func (h *assistantHandlers) writeConversationAssets(root string, req assistantRe
 		}
 	}
 	for _, skill := range req.skills {
-		var contents map[string][]byte
-		if len(skill.FileRefs) > 0 {
-			contents = h.repo.SkillFileContents(skill.ID)
+		load(skill)
+	}
+	// A shared skill nobody bound or mentioned gets only its SKILL.md: its
+	// other files would be copied into every conversation on the platform
+	// each turn. Mentioning it or binding it to a role installs them.
+	sort.Slice(shared, func(i, j int) bool { return shared[i].ID < shared[j].ID })
+	for _, skill := range shared {
+		if seen[skill.ID] {
+			continue
 		}
+		var contents map[string][]byte
+		if data, ok := h.repo.SkillFileContent(skill.ID, "SKILL.md"); ok {
+			contents = map[string][]byte{"SKILL.md": data}
+		}
+		skill.Files = nil
+		skill.FileRefs = nil
 		add(skill, contents)
 	}
 	engine, _ := assistantModelEngine(req.Model)
