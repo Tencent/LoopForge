@@ -16,6 +16,7 @@ import (
 	"syscall"
 
 	"agentflow/internal/domain"
+	"agentflow/internal/gitwork"
 )
 
 func appendEnvironment(base []string, overlays ...map[string]string) []string {
@@ -62,6 +63,7 @@ func controlledBaseEnvironment(base []string) []string {
 		"AGENTFLOW_GIT_TOKEN=",
 		"GH_TOKEN=",
 		"GITHUB_TOKEN=",
+		gitwork.HTTPSCredentialTokenEnv + "=",
 		"AGENTFLOW_MCP_CONFIG=",
 		"AGENTFLOW_BIN=",
 		"GIT_CONFIG_COUNT=",

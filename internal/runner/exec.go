@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"agentflow/internal/domain"
+	"agentflow/internal/gitwork"
 	flowruntime "agentflow/internal/runtime"
 )
 
@@ -34,14 +35,15 @@ const (
 // deduplicates on (task_id, seq), so a failed batch is retried inside the
 // next batch instead of being lost or duplicated.
 type eventBatcher struct {
-	mu       sync.Mutex
-	taskID   string
-	client   *Client
-	seq      int64
-	size     int
-	buf      []domain.RunnerTaskEvent
-	tail     []string
-	observer *flowruntime.ProtocolObserver
+	mu          sync.Mutex
+	taskID      string
+	client      *Client
+	seq         int64
+	size        int
+	buf         []domain.RunnerTaskEvent
+	tail        []string
+	observer    *flowruntime.ProtocolObserver
+	gitLabToken string
 }
 
 // executeSandboxProcess runs a prepared command through a sandbox created on
@@ -148,6 +150,7 @@ func tailString(value string, limit int) string {
 func newEventBatcher(task domain.RunnerTask, client *Client) *eventBatcher {
 	b := &eventBatcher{taskID: task.ID, client: client}
 	if task.Invocation != nil {
+		b.gitLabToken = task.Invocation.GitLabToken
 		b.observer = flowruntime.NewProtocolObserver(task.Invocation.Executor, b.addObservation)
 	}
 	return b
@@ -167,6 +170,9 @@ func (b *eventBatcher) add(typ, data string) {
 func (b *eventBatcher) addLine(typ, line string) {
 	if line == "" {
 		return
+	}
+	if b.gitLabToken != "" {
+		line = gitwork.Redact(line, b.gitLabToken)
 	}
 	b.add(typ, line)
 	if b.observer != nil && (typ == "stdout" || typ == "stderr") {
@@ -193,6 +199,9 @@ func (b *eventBatcher) addObservation(event domain.TelemetryEvent) {
 	if err != nil {
 		b.add("system", "encode observation: "+err.Error())
 		return
+	}
+	if b.gitLabToken != "" {
+		raw = []byte(gitwork.Redact(string(raw), b.gitLabToken))
 	}
 	b.add("observation", string(raw))
 }

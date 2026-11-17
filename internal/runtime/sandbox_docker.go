@@ -200,7 +200,7 @@ cd "$1" && shift && exec "$@"`, "conversation", command.WorkingDir}, dropShellLo
 		}()
 	}
 	args = append(args, argv...)
-	cmd := exec.CommandContext(ctx, "docker", args...)
+	cmd := dockerExecCommand(ctx, args, command.environment)
 	cmd.Stdin = command.Stdin
 	return runCommand(cmd, sink)
 }

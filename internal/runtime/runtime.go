@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"agentflow/internal/domain"
+	"agentflow/internal/gitwork"
 )
 
 type EventSink func(event domain.TelemetryEvent)
@@ -50,7 +51,8 @@ type RunCredentials struct {
 	ClaudeCode ProviderCredential
 	AgentCLI   map[string]ProviderCredential
 	GitToken   string
-	GitSSHKeys map[string]string `json:"-"`
+	GitLab     gitwork.HTTPSCredential `json:"-"`
+	GitSSHKeys map[string]string       `json:"-"`
 	// GitSSHHostKeys maps "host:port" to the requester's private key for a
 	// conversation workspace. It travels to the execution machine on the
 	// authenticated control connection only, in the start request of the CLI.
