@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"agentflow/internal/domain"
@@ -38,13 +39,20 @@ func (h *agentToolGateway) waitForMCPWriteApproval(ctx context.Context, session 
 		return fmt.Errorf("外部 MCP 审批参数无效: %w", err)
 	}
 	phase := nativeApprovalPhase(session.Token)
+	shown, hiddenFields := redactNativeApprovalInputFields(input, session.User)
+	summary := mcpServerName(h, session, call.Server) + " · " + name
+	if len(hiddenFields) > 0 {
+		// The approver must know the card does not show everything that will
+		// be sent upstream.
+		summary += fmt.Sprintf("（%d 个字段已隐藏：%s）", len(hiddenFields), truncateRunes(strings.Join(hiddenFields, "、"), 120))
+	}
 	item := domain.AssistantNativeApproval{
 		ID:           id,
 		GenerationID: generation,
 		ActorID:      session.UserID,
 		Tool:         name,
-		Summary:      redactAgentToolResult(mcpServerName(h, session, call.Server)+" · "+name, session.User),
-		Input:        redactNativeApprovalInput(input, session.User),
+		Summary:      redactAgentToolResult(summary, session.User),
+		Input:        shown,
 	}
 	if err := h.repo.CreateNativeApproval(session.ChatOwnerID, session.ChatSessionID, phase, item); err != nil {
 		return fmt.Errorf("无法保存外部 MCP 审批请求: %w", err)

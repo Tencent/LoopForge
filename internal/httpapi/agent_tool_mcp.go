@@ -99,6 +99,14 @@ func (h *agentToolGateway) handleRPC(ctx context.Context, session *AgentToolSess
 	if request.Method != "tools/call" && !validAgentToolToken(ctx, session) {
 		return &agentToolRPCResponse{JSONRPC: "2.0", ID: request.ID, Error: &agentToolRPCError{Code: -32602, Message: errAgentToolInvalidSession.Error()}}
 	}
+	if request.Method == "notifications/cancelled" {
+		// Streamable HTTP does not treat a dropped stream as cancellation;
+		// the CLI gives up on a call (e.g. its own tool timeout) with this
+		// notification. A call waiting for approval then ends and its card
+		// expires, so a late approval cannot write anymore.
+		session.cancelToolCall(cancelledRequestID(request.Params))
+		return nil
+	}
 	if strings.HasPrefix(request.Method, "notifications/") {
 		return nil
 	}
@@ -122,6 +130,8 @@ func (h *agentToolGateway) handleRPC(ctx context.Context, session *AgentToolSess
 		result := h.approveNativeTool(ctx, session, request.Params)
 		return &agentToolRPCResponse{JSONRPC: "2.0", ID: request.ID, Result: result}
 	case "tools/call":
+		ctx, done := session.trackToolCall(ctx, request.ID)
+		defer done()
 		result, err := h.callTool(ctx, session, request.Params)
 		if err != nil {
 			return &agentToolRPCResponse{JSONRPC: "2.0", ID: request.ID, Error: &agentToolRPCError{Code: -32602, Message: err.Error()}}
