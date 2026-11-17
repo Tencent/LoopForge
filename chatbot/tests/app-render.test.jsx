@@ -91,6 +91,19 @@ describe("App", () => {
       Object.assign(chat, previous);
     }
   });
+  test("keeps the picked approval mode after a reload", async () => {
+    const user = userEvent.setup();
+    const first = render(<App />);
+    await user.click(screen.getByRole("button", { name: "操作确认方式" }));
+    await user.click(screen.getByRole("menuitemradio", { name: "帮我批准" }));
+    expect(screen.getByRole("button", { name: "操作确认方式" })).toHaveTextContent("帮我批准");
+    first.unmount();
+    render(<App />);
+    expect(screen.getByRole("button", { name: "操作确认方式" })).toHaveTextContent("帮我批准");
+    await user.type(screen.getByRole("textbox", { name: /消息|输入/ }), "你好");
+    await user.click(screen.getByRole("button", { name: "发送消息" }));
+    expect(chat.send).toHaveBeenLastCalledWith(expect.objectContaining({ approvalMode: "assisted" }));
+  });
   test("does not ask for per-command native approval in a working conversation", () => {
     const previous = {...chat};
     Object.assign(chat,{activeId:"workspace-chat",busy:true,session:{id:"workspace-chat",runtimeMode:"workspace",messages:[{role:"user",content:"检查目录"}]}});

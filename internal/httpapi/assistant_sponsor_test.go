@@ -304,3 +304,38 @@ func TestAssistantModelsPerExecutor(t *testing.T) {
 		t.Fatalf("unknown executor: %d %s", rec.Code, rec.Body.String())
 	}
 }
+
+// The model list is cached per instance. A turn on a model this instance has
+// not listed yet (another instance served the picker, or it just restarted)
+// refreshes the list instead of silently running on the default model.
+func TestTurnCatalogRefreshesBeforeFallingBackToTheDefault(t *testing.T) {
+	st, member := sponsorFixture(t)
+	stubCLIModelDiscovery(t)
+	calls := 0
+	discoverCLIModels = func(_ context.Context, _, apiKey string) []string {
+		calls++
+		if apiKey == "own-secret" {
+			return []string{"claude-opus-5.5"}
+		}
+		return nil
+	}
+	if _, err := st.UpdateUserCredentials(member.ID, repo.UserCredentialUpdate{CodeBuddyAPIKey: "own-secret"}); err != nil {
+		t.Fatal(err)
+	}
+	stored, _ := st.User(member.ID)
+	h := &assistantHandlers{deps: &deps{repo: st}}
+	if got := assistantAllowedModel("claude-opus-5.5", h.chatCatalog(context.Background(), stored)); got == "claude-opus-5.5" {
+		t.Fatalf("precondition: a cold cache must not list the model yet")
+	}
+	if got := assistantAllowedModel("claude-opus-5.5", h.turnCatalog(context.Background(), stored, "claude-opus-5.5")); got != "claude-opus-5.5" {
+		t.Fatalf("picked claude-opus-5.5, turn runs on %q", got)
+	}
+	if calls != 1 {
+		t.Fatalf("a missing model must refresh the list once, got %d discoveries", calls)
+	}
+	h.turnCatalog(context.Background(), stored, "claude-opus-5.5")
+	h.turnCatalog(context.Background(), stored, "")
+	if calls != 1 {
+		t.Fatalf("a listed or empty model must not run discovery again, got %d", calls)
+	}
+}

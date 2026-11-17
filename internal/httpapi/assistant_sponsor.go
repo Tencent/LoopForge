@@ -76,6 +76,29 @@ func (h *assistantHandlers) chatCatalog(ctx context.Context, user domain.User) a
 	return restrictAssistantCatalog(assistantChatCatalog(ctx, user.CodeBuddyInternetEnvironment, key.Models), key.Models)
 }
 
+// turnCatalog is chatCatalog for a turn on model. The CodeBuddy model list is
+// cached in memory per instance, so a model picked from another instance's
+// list, or before a restart, would otherwise be replaced by the default
+// without a word. A miss refreshes the list once before deciding.
+func (h *assistantHandlers) turnCatalog(ctx context.Context, user domain.User, model string) assistantModelCatalog {
+	catalog := h.chatCatalog(ctx, user)
+	model = strings.TrimSpace(model)
+	if model == "" || assistantCatalogLists(catalog, model) {
+		return catalog
+	}
+	refreshCLIModels(ctx, user.CodeBuddyInternetEnvironment, user.CodeBuddyAPIKey)
+	return h.chatCatalog(ctx, user)
+}
+
+func assistantCatalogLists(catalog assistantModelCatalog, id string) bool {
+	for _, model := range catalog.Models {
+		if model.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
 // restrictAssistantCatalog keeps the allowed models, in the allowed order.
 func restrictAssistantCatalog(catalog assistantModelCatalog, allowed []string) assistantModelCatalog {
 	byID := map[string]assistantModel{}
