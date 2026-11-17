@@ -266,7 +266,7 @@ func (e *Engine) HandleWorkspaceCheckpoint(w http.ResponseWriter, r *http.Reques
 				result.Payload, _ = json.Marshal(map[string]any{"restoredArtifacts": restored})
 			}
 		} else if request.Operation == domain.RunnerWorkspaceOperationCheckpoint {
-			archive, err := runtime.CreateWorkspaceCheckpoint(root)
+			archive, err := runtime.CreateWorkspaceCheckpointContext(r.Context(), root)
 			if err != nil {
 				result.Error = err.Error()
 			} else {

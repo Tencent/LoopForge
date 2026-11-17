@@ -4,11 +4,14 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
+	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestWorkspaceCheckpointRoundTrip(t *testing.T) {
@@ -358,4 +361,98 @@ func TestRestoreWorkspaceCheckpointReplacesEmptyAndRuntimeOnlyDirectoryAtomicall
 			t.Fatalf("surviving file altered: %q (%v)", got, err)
 		}
 	})
+}
+
+func TestCheckpointGitTrackerTimeoutsDegradeToUntracked(t *testing.T) {
+	root := t.TempDir()
+	repo := filepath.Join(root, "repo")
+	if err := os.MkdirAll(filepath.Join(repo, ".git"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, ".git", "HEAD"), []byte("ref: refs/heads/main\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, ".git", "index"), []byte{}, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(repo, "node_modules", "pkg"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "node_modules", "pkg", "index.js"), []byte("tracked"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "app.txt"), []byte("app"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	bin := t.TempDir()
+	fakeGit := filepath.Join(bin, "git")
+	if err := os.WriteFile(fakeGit, []byte("#!/bin/sh\nsleep 10\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	prevTimeout := checkpointGitIndexTimeout
+	checkpointGitIndexTimeout = 100 * time.Millisecond
+	t.Cleanup(func() { checkpointGitIndexTimeout = prevTimeout })
+
+	archive, err := CreateWorkspaceCheckpointContext(context.Background(), root)
+	if err != nil {
+		t.Fatalf("CreateWorkspaceCheckpointContext failed: %v", err)
+	}
+	dest := filepath.Join(t.TempDir(), "restored")
+	if err := RestoreWorkspaceCheckpoint(dest, archive); err != nil {
+		t.Fatalf("RestoreWorkspaceCheckpoint failed: %v", err)
+	}
+	if got, err := os.ReadFile(filepath.Join(dest, "repo", "app.txt")); err != nil || string(got) != "app" {
+		t.Fatalf("expected repo/app.txt restored, got %q (%v)", got, err)
+	}
+	if _, err := os.Lstat(filepath.Join(dest, "repo", "node_modules", "pkg", "index.js")); !os.IsNotExist(err) {
+		t.Fatalf("expected timed-out git index lookup to degrade and skip node_modules, err=%v", err)
+	}
+}
+
+func TestCheckpointGitTrackerOverflowAndContextCancel(t *testing.T) {
+	buf := &checkpointLimitedBuffer{limit: 4}
+	if _, err := buf.Write([]byte("hello")); err == nil || !buf.overflow {
+		t.Fatalf("expected overflow error, overflow=%v err=%v", buf.overflow, err)
+	}
+
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("data"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := CreateWorkspaceCheckpointContext(ctx, root); !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context.Canceled, got %v", err)
+	}
+}
+
+func TestReplaceRestoredWorkspaceRollsBackOnConcurrentWrite(t *testing.T) {
+	parent := t.TempDir()
+	root := filepath.Join(parent, "ws")
+	stage := filepath.Join(parent, "stage")
+	if err := os.MkdirAll(filepath.Join(root, ".agentflow"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(stage, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(stage, "from-snapshot.txt"), []byte("snap"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	err := replaceRestoredWorkspaceWithRaceHook(stage, root, func() {
+		_ = os.WriteFile(filepath.Join(root, "raced.txt"), []byte("concurrent"), 0o600)
+	})
+	if err == nil || !strings.Contains(err.Error(), "refusing to overwrite") {
+		t.Fatalf("expected refusing to overwrite error, got %v", err)
+	}
+	got, readErr := os.ReadFile(filepath.Join(root, "raced.txt"))
+	if readErr != nil || string(got) != "concurrent" {
+		t.Fatalf("concurrent file was not preserved after rollback: %q (%v)", got, readErr)
+	}
+	if _, snapErr := os.Lstat(filepath.Join(root, "from-snapshot.txt")); !os.IsNotExist(snapErr) {
+		t.Fatalf("stage snapshot leaked into target after rollback: %v", snapErr)
+	}
 }

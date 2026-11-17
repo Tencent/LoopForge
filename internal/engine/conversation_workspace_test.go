@@ -563,3 +563,48 @@ func TestAcquireConversationEnvironmentRefusesUnrestoredReclaimedWorkspace(t *te
 		t.Fatalf("EnsureWorkspaceReady pre-created empty dir before snapshot restore: %v", err)
 	}
 }
+
+func TestEnsureRunBrowserRestoresReclaimedWorkspaceWithStaleRun(t *testing.T) {
+	bin := t.TempDir()
+	chromium := filepath.Join(bin, "chromium")
+	script := `#!/bin/sh
+profile=
+for arg in "$@"; do
+  case "$arg" in --user-data-dir=*) profile="${arg#*=}";; esac
+done
+mkdir -p "$profile"
+printf '9224\n/devtools/browser/stale\n' > "$profile/DevToolsActivePort"
+exec sleep 30
+`
+	if err := os.WriteFile(chromium, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(bin, "playwright-mcp"), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("AGENTFLOW_CHROMIUM", chromium)
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	e, id := checkpointFixture(t)
+	t.Cleanup(func() {
+		_, _ = runtime.HandleBrowser(context.Background(), id, domain.BrowserRequest{Operation: "stop"})
+		_ = e.releaseRunEnvironment(id, true)
+	})
+	e.reconcileTerminalWorkspaceCleanup()
+	staleRun, ok := e.repo.RunState(id)
+	if !ok || staleRun.WorkspaceCleanedAt.IsZero() {
+		t.Fatalf("precondition: expected reclaimed run, got %+v (ok=%v)", staleRun, ok)
+	}
+
+	if err := e.ensureRunBrowser(context.Background(), staleRun); err != nil {
+		t.Fatalf("ensureRunBrowser with stale reclaimed run failed: %v", err)
+	}
+	body, err := os.ReadFile(filepath.Join(e.RunWorkspace(id), "README.md"))
+	if err != nil || string(body) != "uncommitted" {
+		t.Fatalf("restored README.md = %q (%v)", body, err)
+	}
+	fresh, _ := e.repo.RunState(id)
+	if !fresh.WorkspaceCleanedAt.IsZero() {
+		t.Fatal("cleanup marker not cleared after ensureRunBrowser restore")
+	}
+}

@@ -38,7 +38,7 @@ func (e *Engine) saveConversationWorkspace(ctx context.Context, run domain.Run, 
 		if reason != "" {
 			return fmt.Errorf("%s", reason)
 		}
-		err = runtime.CreateWorkspaceCheckpointTo(root, workspaceCheckpointContextWriter{ctx, file})
+		err = runtime.CreateWorkspaceCheckpointToContext(ctx, root, workspaceCheckpointContextWriter{ctx, file})
 		if os.IsNotExist(err) && run.WorkspaceHost == "" {
 			if err = file.Truncate(0); err != nil {
 				return err

@@ -221,7 +221,7 @@ func (d *Daemon) readRunnerWorkspace(ctx context.Context, request domain.RunnerW
 			return workspaceBusyResponse("workspace is still in use")
 		}
 		defer gate.Unlock()
-		archive, err := runtime.CreateWorkspaceCheckpoint(root)
+		archive, err := runtime.CreateWorkspaceCheckpointContext(ctx, root)
 		if err != nil {
 			return runnerWorkspaceError(err)
 		}

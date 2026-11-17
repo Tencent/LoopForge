@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
+	"context"
 	"fmt"
 	"io"
 	"io/fs"
@@ -13,6 +14,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 )
 
 // Checkpoints exclude execution credentials and reproducible dependency caches.
@@ -24,6 +26,9 @@ const WorkspaceCheckpointMaxBytes = 12 << 20
 const WorkspaceCheckpointArchiveMaxBytes = 512 << 20
 const WorkspaceCheckpointChunkBytes = 4 << 20
 const workspaceCheckpointExpandedMax = 2 << 30
+const checkpointGitOutputMaxBytes = 16 << 20
+
+var checkpointGitIndexTimeout = 15 * time.Second
 
 // checkpointRestoreExcludedNames are path components a restored archive must
 // never contain (and never capture, even if committed inside a repository).
@@ -85,8 +90,12 @@ func checkpointPath(path string) (string, error) {
 	return clean, nil
 }
 func CreateWorkspaceCheckpoint(root string) ([]byte, error) {
+	return CreateWorkspaceCheckpointContext(context.Background(), root)
+}
+
+func CreateWorkspaceCheckpointContext(ctx context.Context, root string) ([]byte, error) {
 	var buffer bytes.Buffer
-	err := CreateWorkspaceCheckpointTo(root, &checkpointBoundedWriter{writer: &buffer, left: WorkspaceCheckpointMaxBytes})
+	err := CreateWorkspaceCheckpointToContext(ctx, root, &checkpointBoundedWriter{writer: &buffer, left: WorkspaceCheckpointMaxBytes})
 	if err != nil {
 		return nil, err
 	}
@@ -94,6 +103,13 @@ func CreateWorkspaceCheckpoint(root string) ([]byte, error) {
 }
 
 func CreateWorkspaceCheckpointTo(root string, destination io.Writer) error {
+	return CreateWorkspaceCheckpointToContext(context.Background(), root, destination)
+}
+
+func CreateWorkspaceCheckpointToContext(ctx context.Context, root string, destination io.Writer) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	info, err := os.Lstat(root)
 	if err != nil {
 		return err
@@ -113,10 +129,13 @@ func CreateWorkspaceCheckpointTo(root string, destination io.Writer) error {
 	writer := tar.NewWriter(&checkpointBoundedWriter{writer: zipped, left: workspaceCheckpointExpandedMax})
 	var expanded int64
 	entries := 0
-	tracker := &checkpointGitTracker{root: root, base: base}
+	tracker := &checkpointGitTracker{ctx: ctx, root: root, base: base}
 	err = fs.WalkDir(base.FS(), ".", func(path string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
+		}
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
 		}
 		if path == "." {
 			return nil
@@ -220,11 +239,26 @@ type checkpointGitIndex struct {
 	dirs  map[string]bool
 }
 
+type checkpointLimitedBuffer struct {
+	buf      bytes.Buffer
+	limit    int
+	overflow bool
+}
+
+func (b *checkpointLimitedBuffer) Write(p []byte) (int, error) {
+	if b.buf.Len()+len(p) > b.limit {
+		b.overflow = true
+		return 0, fmt.Errorf("git output exceeds limit")
+	}
+	return b.buf.Write(p)
+}
+
 // checkpointGitTracker lazily indexes Git-tracked files matching
 // checkpointExcludedNames per repository inside root, so tracked files (such
 // as committed web/*/node_modules assets) survive snapshots while untracked
 // dependency installs are still skipped.
 type checkpointGitTracker struct {
+	ctx       context.Context
 	root      string
 	base      *os.Root
 	repoFlags map[string]bool
@@ -264,6 +298,9 @@ func (t *checkpointGitTracker) findRepo(startDir string) (string, bool) {
 			if dir != "." {
 				gitPath = pathpkg.Join(dir, ".git")
 			}
+			// Submodules and linked worktrees use a regular .git file (already
+			// rejected when referencing external metadata), so only
+			// self-contained .git directories are indexed here.
 			info, err := t.base.Lstat(filepath.FromSlash(gitPath))
 			isRepo = err == nil && info.IsDir()
 			t.repoFlags[dir] = isRepo
@@ -286,13 +323,26 @@ func (t *checkpointGitTracker) repoIndex(repoRel string) *checkpointGitIndex {
 	}
 	idx := &checkpointGitIndex{}
 	t.indexes[repoRel] = idx
+	if indexInfo, statErr := t.base.Lstat(filepath.FromSlash(pathpkg.Join(repoRel, ".git/index"))); statErr == nil {
+		if !indexInfo.Mode().IsRegular() {
+			return idx
+		}
+	} else if !os.IsNotExist(statErr) {
+		return idx
+	}
 	repoAbs := t.root
 	if repoRel != "." {
 		repoAbs = filepath.Join(t.root, filepath.FromSlash(repoRel))
 	}
+	parentCtx := t.ctx
+	if parentCtx == nil {
+		parentCtx = context.Background()
+	}
+	cmdCtx, cancel := context.WithTimeout(parentCtx, checkpointGitIndexTimeout)
+	defer cancel()
 	// Pin git-dir/work-tree and disable executable repo config keys, matching
 	// gitwork.checkoutGit so scanning a sandbox-controlled repo stays safe.
-	cmd := exec.Command("git",
+	cmd := exec.CommandContext(cmdCtx, "git",
 		"--git-dir="+filepath.Join(repoAbs, ".git"),
 		"--work-tree="+repoAbs,
 		"-c", "safe.directory=*",
@@ -304,6 +354,7 @@ func (t *checkpointGitTracker) repoIndex(repoRel string) *checkpointGitIndex {
 		"-c", "credential.helper=",
 		"ls-files", "-z", "--",
 	)
+	cmd.WaitDelay = time.Second
 	cmd.Dir = repoAbs
 	env := make([]string, 0, len(os.Environ())+7)
 	for _, entry := range os.Environ() {
@@ -323,13 +374,14 @@ func (t *checkpointGitTracker) repoIndex(repoRel string) *checkpointGitIndex {
 		"GIT_ASKPASS=",
 		"SSH_ASKPASS=",
 	)
-	out, err := cmd.Output()
-	if err != nil || len(out) == 0 {
+	out := &checkpointLimitedBuffer{limit: checkpointGitOutputMaxBytes}
+	cmd.Stdout = out
+	if err := cmd.Run(); err != nil || out.overflow || out.buf.Len() == 0 {
 		return idx
 	}
 	idx.files = map[string]bool{}
 	idx.dirs = map[string]bool{}
-	for _, raw := range bytes.Split(out, []byte{0}) {
+	for _, raw := range bytes.Split(out.buf.Bytes(), []byte{0}) {
 		if len(raw) == 0 {
 			continue
 		}
@@ -370,12 +422,19 @@ func ensureReplaceableWorkspaceTarget(root string) (bool, error) {
 }
 
 func replaceRestoredWorkspace(stage, root string) error {
+	return replaceRestoredWorkspaceWithRaceHook(stage, root, nil)
+}
+
+func replaceRestoredWorkspaceWithRaceHook(stage, root string, beforeRename func()) error {
 	exists, err := ensureReplaceableWorkspaceTarget(root)
 	if err != nil {
 		return err
 	}
 	if !exists {
 		return os.Rename(stage, root)
+	}
+	if beforeRename != nil {
+		beforeRename()
 	}
 	backupParent, err := os.MkdirTemp(filepath.Dir(root), ".workspace-replace-")
 	if err != nil {
@@ -385,6 +444,14 @@ func replaceRestoredWorkspace(stage, root string) error {
 	backup := filepath.Join(backupParent, "prev")
 	if err := os.Rename(root, backup); err != nil {
 		return err
+	}
+	hasContent, err := WorkspaceDirHasContent(backup)
+	if err != nil || hasContent {
+		_ = os.Rename(backup, root)
+		if err != nil {
+			return err
+		}
+		return fmt.Errorf("workspace already exists; refusing to overwrite")
 	}
 	if err := os.Rename(stage, root); err != nil {
 		_ = os.Rename(backup, root)
