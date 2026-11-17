@@ -23,21 +23,20 @@ function element(value = "") {
   return {
     value, dataset: {}, hidden: false, disabled: false, textContent: "", innerHTML: "",
     classList: {contains: v => classes.has(v), add: v => classes.add(v), remove: v => classes.delete(v)},
-    querySelectorAll: () => [], querySelector: () => null,
+    querySelectorAll: () => [], querySelector: () => null, focus() {},
   };
 }
 const elements = {};
 for (const id of [
-  "reqRepository", "reqBaseBranch", "reqBaseBranchHint", "requirementModal", "reqRepoChip", "reqRepoChipLabel", "reqTitle",
-  "chatInput", "reqClarifyPanel", "reqComposerHint", "reqWorkflow",
+  "reqRepository", "reqBaseBranch", "reqBaseBranchHint", "requirementModal", "reqRepoChip", "reqRepoChipLabel",
+  "chatInput", "reqComposerHint", "reqWorkflow",
   "importTAPDModal", "importTAPDURL", "importTAPDWorkflow",
   "importTAPDRepository", "importTAPDBaseBranch", "importTAPDBaseBranchHint", "importTAPDRepositoryBranches", "confirmImportTAPD",
 ]) elements["#" + id] = element();
 elements["#reqRepository"].dataset.ids = '["r1"]';
 elements["#reqWorkflow"].value = "sop";
 elements["#importTAPDWorkflow"].value = "sop";
-const storage = new Map(), requests = [], notices = [], opened = [];
-let changedAlerts = 0;
+const storage = new Map(), requests = [], notices = [], opened = [], chats = [];
 const ctx = {
   state: {
     projectFilter: "p", currentUser: {id: 1},
@@ -46,25 +45,20 @@ const ctx = {
       {id: "r2", projectId: "p", name: "Web", defaultBranch: "main"},
     ], issues: [], tasks: []},
   },
-  chatHistory: [], chatClarifySessionId: "", chatClarifyJobId: "", chatAbortController: null,
   $: selector => elements[selector],
   currentProject: () => ({id: "p", defaultRepositoryId: "r1"}),
   escapeHTML: s => String(s).replace(/[&<>"]/g, c => ({"&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;"}[c])),
-  collectChatReply: () => "",
   requirementComposerOpen: () => true, requirementComposerBusy: () => false, requirementComposerDirty: () => true,
-  selectedReqWorkflowId: () => elements["#reqWorkflow"].value, selectedReqPlaybookId: () => "",
+  selectedReqWorkflowId: () => elements["#reqWorkflow"].value, selectedReqPlaybookId: () => "", reqUsesSOP: () => true,
   sessionStorage: {getItem: key => storage.get(key), setItem: (key, value) => storage.set(key, value), removeItem: key => storage.delete(key)},
-  clarifyThinkingReset: () => {}, renderReqFooter: () => {}, renderReqAnswerHistory: () => {}, updateReqCharCount: () => {},
-  goReqStep: step => {ctx.state.reqStep = Number(step) || 1},
-  renderReqRepoChangedAlert: () => {changedAlerts++},
-  paintRequirementComposerChrome: () => {}, renderClarifyPanel: () => {},
+  renderReqFooter: () => {}, updateReqCharCount: () => {}, renderReqTarget: () => {}, renderReqDelivery: () => {}, resetRequirementComposer: () => {},
   fillReqWorkflow: value => {elements["#reqWorkflow"].value = value || "sop"},
   renderReqContext: () => {
     elements["#reqRepository"].dataset.ids = '["r1","r2"]';
     ctx.renderReqRepositoryPicker();
   },
-  projectTAPDReady: () => true, usableClarifySummary: s => s,
-  renderIssues: () => {}, openIssueDetail: (id, tab) => opened.push([id, tab || ""]), openRunFromId: () => {},
+  projectTAPDReady: () => true,
+  renderIssues: () => {}, openIssueDetail: (id, tab) => opened.push([id, tab || ""]), openIssueInChat: issue => chats.push(issue.id),
   toast: message => notices.push(message),
   api: async (url, init) => {
     const body = JSON.parse(init.body);
@@ -75,9 +69,9 @@ const ctx = {
 vm.createContext(ctx);
 load(ctx, [
   "updateIssueBaseBranchInput", "reqProjectRepositories", "selectedReqRepositoryIds", "selectedReqRepositoryId", "selectedReqBaseBranch",
-  "renderReqRepositoryPicker", "syncReqBaseBranch", "setReqRepositoryIds", "reqCurrentRepoSnapshot", "reqRepoSnapshotChanged",
+  "renderReqRepositoryPicker", "syncReqBaseBranch", "setReqRepositoryIds",
   "reqRepoNames", "renderReqRepoChip", "reqDescription", "collectRequirementDraft",
-  "persistRequirementComposer", "applyRequirementComposerDraft", "reqCreateDirect", "reqCreateAccepted",
+  "persistRequirementComposer", "applyRequirementComposerDraft", "pushExistingIssueToTAPD",
   "createIssueFromChat", "rememberIssue", "clearRequirementComposer", "selectedImportTAPDRepositoryIds", "importTAPDStory",
   "selectedIssueRepositoryBranches", "renderIssueRepositoryBranchInputs", "renderImportTAPDRepositoryPicker", "setImportTAPDRepositoryIds",
 ]);
@@ -87,7 +81,7 @@ assert.equal(input.disabled, false);
 assert.match(input.placeholder, /release\/2026\.10/);
 assert.equal(hint.hidden, true, "a single repository needs no inline branch hint");
 assert.match(input.title, /继续该已有分支/, "the long branch explanation moves into the input title");
-assert.match(elements["#reqRepoChipLabel"].innerHTML, /分析仓库 <b>API<\/b>/);
+assert.match(elements["#reqRepoChipLabel"].innerHTML, /仓库 <b>API<\/b>/);
 assert.ok(!elements["#reqRepository"].innerHTML.includes("data-remove-req-repo"), "a lone repository cannot be removed");
 assert.ok(elements["#reqRepository"].innerHTML.includes("＋ 添加仓库"));
 assert.ok(!elements["#reqRepository"].innerHTML.includes("已全部选择"));
@@ -96,21 +90,8 @@ ctx.renderReqRepositoryPicker();
 assert.equal(input.value, "feature/continue", "rerendering the same repository must preserve an explicit branch");
 assert.match(elements["#reqRepoChipLabel"].innerHTML, /API<\/b> · feature\/continue/);
 
-ctx.chatHistory = [{role: "user", content: "原始需求"}, {role: "assistant", content: "已经分析"}];
-ctx.chatClarifySessionId = "old-session";
-ctx.state.chatClarifyResult = {ready: true};
-ctx.state.reqClarifyRepoSnapshot = ctx.reqCurrentRepoSnapshot();
-ctx.state.reqStep = 3;
-elements["#chatInput"].value = "原始需求";
-ctx.setReqRepositoryIds(["r1"]);
-assert.equal(ctx.reqRepoSnapshotChanged(), false, "unchanged repository selection keeps the analysis");
 ctx.setReqRepositoryIds(["r2"]);
 assert.equal(input.value, "", "changing repository must clear a branch from the previous repository");
-assert.equal(ctx.chatClarifySessionId, "old-session", "changing repository keeps the clarification session");
-assert.equal(ctx.state.chatClarifyResult.ready, true, "changing repository keeps the conclusion");
-assert.equal(ctx.reqRepoSnapshotChanged(), true, "the confirm page must flag that the conclusion used other repositories");
-assert.ok(changedAlerts > 0, "the confirm page re-renders its repository alert");
-assert.equal(elements["#chatInput"].value, "原始需求");
 input.value = "feature/web";
 ctx.setReqRepositoryIds(["r1", "r2"]);
 assert.equal(input.disabled, true);
@@ -128,68 +109,54 @@ assert.match(elements["#reqRepoChipLabel"].innerHTML, /未选择/);
 
 ctx.setReqRepositoryIds(["r1"]);
 input.value = " feature/continue ";
-ctx.chatHistory = [{role: "user", content: "继续开发已有分支"}];
-ctx.chatClarifySessionId = "branch-session";
-ctx.state.chatClarifyResult = {ready: true, summary: "该分支分析通过"};
-Object.assign(ctx.state, {reqStep: 2, reqReached: 3, reqQuestionIndex: 1, reqAnswers: {0: {selected: [1], other: ""}}, reqTarget: "tapd", reqClarifyRepoSnapshot: {ids: ["r1"], baseBranch: "feature/continue"}});
-elements["#reqTitle"].value = "继续开发";
+elements["#chatInput"].value = "继续开发已有分支";
+ctx.state.reqTarget = "tapd";
 ctx.persistRequirementComposer();
 const draft = JSON.parse(storage.get("agentflow.requirementComposer"));
 assert.equal(draft.baseBranch, "feature/continue");
-assert.equal(draft.step, 2);
-assert.equal(draft.questionIndex, 1);
-assert.deepEqual(draft.answers, {0: {selected: [1], other: ""}});
+assert.equal(draft.input, "继续开发已有分支");
 assert.equal(draft.target, "tapd");
-assert.equal(draft.title, "继续开发");
+for (const gone of ["step", "history", "answers", "clarifyResult", "jobId"]) assert.ok(!(gone in draft), `the draft must not keep ${gone}`);
 input.value = "";
-elements["#reqTitle"].value = "";
-Object.assign(ctx.state, {reqStep: 1, reqQuestionIndex: 0, reqAnswers: {}, reqTarget: "local"});
+elements["#chatInput"].value = "";
+ctx.state.reqTarget = "local";
 ctx.applyRequirementComposerDraft(draft);
 assert.equal(input.value, "feature/continue");
 assert.equal(ctx.selectedReqRepositoryId(), "r1");
-assert.equal(ctx.chatClarifySessionId, "branch-session");
-assert.equal(ctx.state.chatClarifyResult.ready, true, "restoring the same saved context must keep its analysis");
-assert.equal(ctx.state.reqStep, 2);
-assert.equal(ctx.state.reqQuestionIndex, 1);
 assert.equal(ctx.state.reqTarget, "tapd");
-assert.equal(elements["#reqTitle"].value, "继续开发");
-assert.equal(ctx.reqRepoSnapshotChanged(), false);
-input.value = "feature/other";
-assert.equal(ctx.reqRepoSnapshotChanged(), true, "editing the base branch is flagged instead of discarding the result");
-assert.equal(ctx.state.chatClarifyResult.ready, true);
+assert.equal(elements["#chatInput"].value, "继续开发已有分支");
 
 (async () => {
   input.value = "feature/continue";
-  elements["#reqTitle"].value = "";
-  elements["#chatInput"].value = "跳过澄清的需求";
-  ctx.state.reqClarifySkipped = true;
+  elements["#chatInput"].value = "个人主页增加徽章\n兼容现有成就体系";
   ctx.state.reqTarget = "local";
   await ctx.createIssueFromChat();
-  assert.equal(requests.at(-1).url, "/api/issues");
-  assert.equal(requests.at(-1).body.baseBranch, "feature/continue");
-  assert.equal(requests.at(-1).body.description, "跳过澄清的需求");
-  assert.deepEqual(opened.at(-1), ["created", ""], "a skipped clarification opens the issue detail without dispatching");
+  const created = requests.at(-1);
+  assert.equal(created.url, "/api/issues");
+  assert.equal(created.body.title, "个人主页增加徽章", "the title comes from the first line of the description");
+  assert.equal(created.body.description, "个人主页增加徽章\n兼容现有成就体系");
+  assert.equal(created.body.baseBranch, "feature/continue");
+  assert.equal(created.body.clarification, undefined, "creating no longer carries a clarification");
+  assert.deepEqual(opened.at(-1), ["created", ""], "plain creation opens the issue detail without dispatching");
+  assert.equal(chats.length, 0);
 
-  ctx.state.reqClarifySkipped = false;
-  ctx.state.chatClarifyResult = {ready: true, suggestedTitle: "继续开发", summary: "分析通过"};
-  elements["#reqTitle"].value = "确认页标题";
-  await ctx.createIssueFromChat("local");
-  const analyzed = requests.filter(request => request.url === "/api/issues").at(-1);
-  assert.equal(analyzed.body.baseBranch, "feature/continue");
-  assert.equal(analyzed.body.title, "确认页标题");
-  assert.equal(analyzed.body.clarification.status, "ready");
-  assert.equal(analyzed.body.clarification.passed, undefined, "no score/pass flag is sent");
-  assert.equal(requests.at(-1).url, "/api/issues/created/dispatch");
-
-  ctx.state.chatClarifyResult = {ready: false, summary: "还差验收标准", questions: [{question: "验收？", options: []}]};
   const before = requests.length;
-  await ctx.createIssueFromChat("local");
-  assert.equal(requests.length, before + 1, "a not-ready conclusion creates the issue but does not dispatch");
-  assert.equal(requests.at(-1).body.clarification.status, "in_progress");
-  assert.deepEqual(opened.at(-1), ["created", "clarify"]);
+  elements["#chatInput"].value = "要和 AI 聊清楚的需求";
+  await ctx.createIssueFromChat(undefined, "chat");
+  assert.equal(requests.length, before + 1, "creating for the chat only creates the issue, it does not dispatch");
+  assert.equal(requests.at(-1).url, "/api/issues");
+  assert.deepEqual(chats, ["created"], "creating for the chat opens the issue in the chat");
+  assert.equal(opened.length, 1, "creating for the chat does not open the issue detail");
+  assert.equal(ctx.state.reqCreating, "");
+
+  elements["#chatInput"].value = "   ";
+  const blank = requests.length;
+  await ctx.createIssueFromChat(undefined, "chat");
+  assert.equal(requests.length, blank, "a blank description creates nothing");
+  assert.equal(notices.at(-1), "先写一句需求");
 
   input.value = "";
-  ctx.state.reqClarifySkipped = true;
+  elements["#chatInput"].value = "空分支";
   await ctx.createIssueFromChat("local");
   assert.equal(requests.at(-1).body.baseBranch, "", "blank branch preserves server-side repository defaults");
 

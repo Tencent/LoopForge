@@ -119,23 +119,31 @@ func (h *assistantHandlers) scheduleJobAssistantUser(job domain.ScheduleJob, mod
 	if job.RunAsUserID > 0 {
 		return h.scheduleJobRunAsUser(job, engine)
 	}
-	try := func(id int64) (domain.User, []string, bool) {
+	var candidates []domain.User
+	add := func(id int64) {
 		if id == 0 || h.repo == nil {
-			return domain.User{}, nil, false
+			return
 		}
-		user, ok := h.repo.User(id)
-		if !ok {
-			return domain.User{}, nil, false
+		if user, ok := h.repo.User(id); ok {
+			candidates = append(candidates, user)
 		}
-		return scheduleKeyUser(h.repo, user, engine)
 	}
 	if project, ok := h.repo.Project(job.ProjectID); ok {
-		if user, shared, ok := try(project.OwnerID); ok {
-			return user, shared, nil
-		}
+		add(project.OwnerID)
 	}
 	if job.SharedTaskID == "" {
-		if user, shared, ok := try(job.OwnerUserID); ok {
+		add(job.OwnerUserID)
+	}
+	// Personal keys go first in the original order, so a job whose recorded
+	// owner still has a key keeps running on it after the project changes
+	// owner; the shared key is only the fallback.
+	for _, user := range candidates {
+		if key, _ := assistantEngineCredential(user, engine); key != "" {
+			return user, nil, nil
+		}
+	}
+	for _, user := range candidates {
+		if user, shared, ok := scheduleKeyUser(h.repo, user, engine); ok {
 			return user, shared, nil
 		}
 	}

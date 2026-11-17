@@ -21,31 +21,34 @@ func (h *runsHandlers) workspaceEditActor(c *gin.Context) (domain.Run, int64, bo
 		c.JSON(404, gin.H{"error": "运行不存在"})
 		return run, 0, false
 	}
-	user, ok := h.requestUser(c.Request, true)
-	if !ok {
-		c.JSON(401, gin.H{"error": "请先登录"})
+	userID, status, message := h.workspaceEditAccess(c.Request, run)
+	if status != 0 {
+		c.JSON(status, gin.H{"error": message})
 		return run, 0, false
+	}
+	return run, userID, true
+}
+
+func (h *runsHandlers) workspaceEditAccess(r *http.Request, run domain.Run) (int64, int, string) {
+	user, ok := h.requestUser(r, true)
+	if !ok {
+		return 0, http.StatusUnauthorized, "请先登录"
 	}
 	// Conversation tools inherit project access from their authenticated entry
 	// point; the separate task-panel editor policy does not apply to them.
-	if mainBotWorkspaceRun(c.Request.Context()) != run.ID {
-		if !h.workspaceEditAllowed(c.Request, run, user.ID) {
-			c.JSON(403, gin.H{"error": "无权编辑该任务工作区"})
-			return run, 0, false
-		}
+	if run.ID == "" || (mainBotWorkspaceRun(r.Context()) != run.ID && !h.workspaceEditAllowed(r, run, user.ID)) {
+		return 0, http.StatusForbidden, "无权编辑该任务工作区"
 	}
 	if engine.WorkspaceRunID(run) != run.ID {
-		c.JSON(409, gin.H{"error": "子 SOP 共享父任务工作区，请从父任务操作"})
-		return run, 0, false
+		return 0, http.StatusConflict, "子 SOP 共享父任务工作区，请从父任务操作"
 	}
 	// Parent/child workspace ownership needs a separate coordinated lease.
 	for _, node := range run.Nodes {
 		if node != nil && node.ChildRunID != "" {
-			c.JSON(409, gin.H{"error": "请进入子 SOP 运行后再编辑对应工作区"})
-			return run, 0, false
+			return 0, http.StatusConflict, "请进入子 SOP 运行后再编辑对应工作区"
 		}
 	}
-	return run, user.ID, true
+	return user.ID, 0, ""
 }
 func (h *runsHandlers) workspaceTakeover(c *gin.Context) {
 	run, user, ok := h.workspaceEditActor(c)
@@ -151,18 +154,17 @@ func (h *runsHandlers) workspaceEditAllowed(r *http.Request, run domain.Run, use
 
 func (h *runsHandlers) workspaceWritable(c *gin.Context, run domain.Run) bool {
 	// Read-only probe: never write HTTP errors here (browse handlers still return the payload).
-	if engine.WorkspaceRunID(run) != run.ID {
+	if run.ID == "" || engine.WorkspaceRunID(run) != run.ID {
 		return false
 	}
 	user, ok := h.requestUser(c.Request, true)
 	if !ok {
 		return false
 	}
-	allowed := mainBotWorkspaceRun(c.Request.Context()) == run.ID || h.workspaceEditAllowed(c.Request, run, user.ID)
 	if mainBotWorkspaceRun(c.Request.Context()) == run.ID {
 		return run.LiveWorkspace() || (run.Status == "waiting" && run.PauseRequested && !run.CancelRequested) || domain.TerminalRunStatus(run.Status)
 	}
-	return allowed && run.HumanEditable()
+	return run.HumanEditable() && h.workspaceEditAllowed(c.Request, run, user.ID)
 }
 
 func (h *runsHandlers) workspaceTerminal(c *gin.Context) {

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"maps"
 	"net/http"
 	"strings"
 	"time"
@@ -126,7 +127,7 @@ func (h *scheduleHandlers) scheduleJobs(c *gin.Context) {
 		} else if job.SharedTaskID == "" {
 			job.OwnerUserID = existingJob.OwnerUserID
 		}
-		if !h.bindScheduleRunAs(c, &job, requestedModel) {
+		if !h.bindScheduleRunAs(c, &job, existingJob, requestedModel) {
 			return
 		}
 		if job.ID == "" {
@@ -222,8 +223,14 @@ func (h *scheduleHandlers) scheduleJobs(c *gin.Context) {
 // key for the job's CLI is used, else the platform's shared CodeBuddy key
 // (limited to the models it allows, its default when requestedModel is empty);
 // with neither the save is refused, since the job could not run. Without a
-// signed-in user the job stays on the project owner's keys.
-func (h *scheduleHandlers) bindScheduleRunAs(c *gin.Context, job *domain.ScheduleJob, requestedModel string) bool {
+// signed-in user the job stays on the project owner's keys. A saver without
+// a usable key may still stop the job when nothing it runs changes; only
+// enabled is then turned off, since the name and notifications also go into
+// the prompt and a stopped job can be run by hand. That is checked again
+// under the row lock against the stored job, which another save may have
+// edited or moved meanwhile; then the save gets 409. A false return means the
+// response has been written.
+func (h *scheduleHandlers) bindScheduleRunAs(c *gin.Context, job *domain.ScheduleJob, prior domain.ScheduleJob, requestedModel string) bool {
 	job.RunAsUserID, job.RunAsName = 0, ""
 	if !job.SkipDispatch {
 		return true
@@ -237,14 +244,38 @@ func (h *scheduleHandlers) bindScheduleRunAs(c *gin.Context, job *domain.Schedul
 		return true
 	}
 	engine, _ := assistantModelEngine(job.AssistantModel)
+	stopOnly := func() bool {
+		if job.Enabled || !scheduleRunConfigUnchanged(prior, *job) {
+			return false
+		}
+		stored, err := h.repo.DisableScheduleJob(prior.ID, func(current domain.ScheduleJob) bool {
+			return scheduleStopAllowed(prior, *job, current)
+		})
+		if errors.Is(err, repo.ErrScheduleJobChanged) {
+			c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+			return true
+		}
+		if err != nil {
+			respond(c, err)
+			return true
+		}
+		c.JSON(200, stored)
+		return true
+	}
 	_, shared, ok := scheduleKeyUser(h.repo, self, engine)
 	if !ok {
+		if stopOnly() {
+			return false
+		}
 		c.JSON(400, gin.H{"error": scheduleMissingKeyError(engine)})
 		return false
 	}
 	if shared != nil {
 		model, allowed := assistantSponsoredModelFor(shared, scheduleSharedRequestedModel(requestedModel))
 		if !allowed {
+			if stopOnly() {
+				return false
+			}
 			c.JSON(400, gin.H{"error": "你还没有配置个人 CodeBuddy API Key，定时任务会使用平台共享 Key，只能选平台管理员允许的模型（" + strings.Join(shared, "、") + "）；要用其他模型，请先在个人配置中填写自己的 Key"})
 			return false
 		}
@@ -252,6 +283,27 @@ func (h *scheduleHandlers) bindScheduleRunAs(c *gin.Context, job *domain.Schedul
 	}
 	job.RunAsUserID, job.RunAsName = self.ID, scheduleUserName(self)
 	return true
+}
+
+// scheduleStopAllowed reports whether a keyless stop request, authorized
+// against prior, may still turn off current, the job as stored under the lock:
+// it must be in the project write access was checked for and run exactly what
+// the request was checked against.
+func scheduleStopAllowed(prior, request, current domain.ScheduleJob) bool {
+	return current.ProjectID == prior.ProjectID && scheduleRunConfigUnchanged(current, request)
+}
+
+// scheduleRunConfigUnchanged reports whether job still runs exactly what the
+// stored prior runs. A run can be started by hand while a job is stopped, so
+// the binding may only be kept when nothing that is executed changed.
+func scheduleRunConfigUnchanged(prior, job domain.ScheduleJob) bool {
+	return prior.ID != "" && prior.ID == job.ID && prior.SkipDispatch &&
+		prior.ProjectID == job.ProjectID &&
+		prior.AssistantPrompt == job.AssistantPrompt &&
+		prior.AssistantModel == job.AssistantModel &&
+		prior.SharedTaskID == job.SharedTaskID &&
+		prior.SharedTaskVersion == job.SharedTaskVersion &&
+		maps.Equal(prior.ParameterValues, job.ParameterValues)
 }
 
 // scheduleSharedRequestedModel treats the CLI-default placeholder as "no
