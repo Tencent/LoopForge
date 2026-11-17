@@ -64,7 +64,7 @@ func TestScheduledAssistantEffortReachesCLI(t *testing.T) {
 		t.Run("session-"+mode, func(t *testing.T) {
 			h, owner := workbenchFixture(t)
 			_, calls := nativeCLIRecorder(t)
-			job := domain.ScheduleJob{ID: "effort-job", Name: "Inspect", ProjectID: "workbench", OwnerUserID: owner.ID, AssistantPrompt: "Inspect", AssistantModel: assistantChatDefaultModel, SessionMode: mode}
+			job := domain.ScheduleJob{ID: "effort-job", Name: "Inspect", ProjectID: "workbench", OwnerUserID: owner.ID, SkipDispatch: true, AssistantPrompt: "Inspect", AssistantModel: assistantChatDefaultModel, SessionMode: mode}
 			for _, effort := range []string{"high", "max", ""} {
 				before := len(calls())
 				job.AssistantEffort = effort
