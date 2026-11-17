@@ -13,12 +13,15 @@
 -- every pushed work branch with new commits needs a non-closed MR into the
 -- run's target branch, and a host that cannot be queried goes to a person.
 --
--- New installs get these templates from the seed. This script changes the
--- behaviour of existing SOPs, so it is not run on install or ./start.sh pull;
--- an operator runs it by hand. Only templates whose node graph and deliver
--- position are still the shipped original are rewritten; the deliver prompt is
--- replaced only when unedited. Project SOPs already adopted from these
--- templates are copies and are not touched.
+-- New installs get these templates from the seed; existing installs get them
+-- from this script, which scripts/install-schema-extensions.sh replays on
+-- install and on ./start.sh pull, so ./start.sh pull upgrades the graph
+-- without a manual step. Only templates whose node graph and deliver position
+-- are still the shipped original are rewritten; the deliver prompt is replaced
+-- only when unedited. Project SOPs already adopted from these templates are
+-- copies and are not touched. After it, a run of these SOPs needs a Git
+-- credential with push access when a repository is bound: without one it stops
+-- at 发起 MR for a person instead of succeeding.
 SET NAMES utf8mb4;
 START TRANSACTION;
 UPDATE generic_templates
