@@ -29,6 +29,7 @@ import (
 // turn on that CLI with the caller's own key and Base URL from 个人配置; the
 // part after the prefix is passed to the CLI as-is.
 const (
+	assistantEngineOpenAI    = "openai"
 	assistantEngineCodeBuddy = "codebuddy"
 	assistantEngineCodex     = "codex"
 	assistantEngineClaude    = "claude-code"
@@ -39,9 +40,13 @@ func assistantCLIEngines() []string {
 	return append([]string{assistantEngineCodex, assistantEngineClaude}, runtime.AgentCLIKinds...)
 }
 
+func assistantModelEngines() []string {
+	return append([]string{assistantEngineOpenAI}, assistantCLIEngines()...)
+}
+
 func assistantModelEngine(id string) (engine, model string) {
 	id = strings.TrimSpace(id)
-	for _, engine := range assistantCLIEngines() {
+	for _, engine := range assistantModelEngines() {
 		if rest, ok := strings.CutPrefix(id, engine+":"); ok {
 			return engine, strings.TrimSpace(rest)
 		}
@@ -61,6 +66,8 @@ type assistantEngineOption struct {
 // assistantEngineCredentialField is the 个人配置 field that enables a CLI.
 func assistantEngineCredentialField(engine string) string {
 	switch engine {
+	case assistantEngineOpenAI:
+		return "openaiApiKey"
 	case assistantEngineCodeBuddy:
 		return "codeBuddyApiKey"
 	case assistantEngineCodex:
@@ -75,7 +82,7 @@ func assistantEngineCredentialField(engine string) string {
 // also shows where to add a key. CodeBuddy counts as configured when the
 // platform sponsors chats without one.
 func assistantEngineOptions(user domain.User, sponsored bool) []assistantEngineOption {
-	engines := append([]string{assistantEngineCodeBuddy}, assistantCLIEngines()...)
+	engines := append([]string{assistantEngineCodeBuddy}, assistantModelEngines()...)
 	out := make([]assistantEngineOption, 0, len(engines))
 	for _, engine := range engines {
 		key, _ := assistantEngineCredential(user, engine)
@@ -91,6 +98,8 @@ func assistantEngineOptions(user domain.User, sponsored bool) []assistantEngineO
 
 func assistantEngineLabel(engine string) string {
 	switch engine {
+	case assistantEngineOpenAI:
+		return "OpenAI API"
 	case assistantEngineCodex:
 		return "Codex"
 	case assistantEngineClaude:
@@ -103,6 +112,8 @@ func assistantEngineLabel(engine string) string {
 
 func assistantEngineCredential(user domain.User, engine string) (apiKey, baseURL string) {
 	switch engine {
+	case assistantEngineOpenAI:
+		return strings.TrimSpace(user.OpenAIAPIKey), openAIBaseURL(user)
 	case assistantEngineCodex:
 		return strings.TrimSpace(user.CodexAPIKey), strings.TrimSpace(user.CodexBaseURL)
 	case assistantEngineClaude:
@@ -134,6 +145,8 @@ func assistantEngineAnthropicModels(engine, protocol string) bool {
 
 func assistantEngineCustomModels(user domain.User, engine string) []domain.CLIModel {
 	switch engine {
+	case assistantEngineOpenAI:
+		return user.OpenAIModels
 	case assistantEngineCodex:
 		return user.CodexModels
 	case assistantEngineClaude:
@@ -198,7 +211,7 @@ func assistantConversationEngine(messages []assistantMessage, legacyExecutor ...
 
 func assistantModelHasEnginePrefix(id string) bool {
 	id = strings.TrimSpace(id)
-	for _, engine := range append([]string{assistantEngineCodeBuddy}, assistantCLIEngines()...) {
+	for _, engine := range append([]string{assistantEngineCodeBuddy}, assistantModelEngines()...) {
 		if _, ok := strings.CutPrefix(id, engine+":"); ok {
 			return true
 		}
@@ -308,7 +321,7 @@ func assistantScheduledModel(id string, catalog assistantModelCatalog) string {
 // list, so an empty catalog there uses the built-in models directly.
 func assistantEngineModels(ctx context.Context, user domain.User) []assistantModel {
 	var out []assistantModel
-	for _, engine := range assistantCLIEngines() {
+	for _, engine := range assistantModelEngines() {
 		key, baseURL := assistantEngineCredential(user, engine)
 		if key == "" {
 			continue
@@ -602,6 +615,8 @@ func assistantRequestModel(executor, model string) string {
 		return model
 	}
 	switch assistantExecutor(executor) {
+	case assistantEngineOpenAI:
+		return assistantEngineOpenAI + ":" + model
 	case assistantEngineCodex:
 		return assistantEngineCodex + ":" + model
 	case "claude", assistantEngineClaude:

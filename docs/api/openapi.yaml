@@ -677,6 +677,18 @@ paths:
                 codeBuddyApiKey: {type: string, writeOnly: true}
                 codeBuddyApiKeyClear: {type: boolean}
                 codeBuddyInternetEnvironment: {type: string, description: "Edition that issued the CodeBuddy key: empty for International, \"internal\" for China, \"ioa\" for iOA (\"public\" and \"China\" are also accepted). Any other value is rejected with 400."}
+                openaiApiKey: {type: string, writeOnly: true, description: "Personal key for direct Responses API calls. Blank preserves the stored key."}
+                openaiApiKeyClear: {type: boolean}
+                openaiBaseUrl: {type: string, description: "HTTP(S) Responses API base URL; empty uses https://api.openai.com/v1."}
+                openaiModels:
+                  type: array
+                  description: "Personal model catalog, in display order. IDs omit the openai: prefix."
+                  items:
+                    type: object
+                    required: [id]
+                    properties:
+                      id: {type: string}
+                      name: {type: string}
                 codexApiKey: {type: string, writeOnly: true, description: "Blank preserves the stored key."}
                 codexApiKeyClear: {type: boolean}
                 codexBaseUrl: {type: string, description: "HTTP(S) Responses API base URL. Omitted preserves the value; empty uses the official endpoint."}
@@ -4251,6 +4263,15 @@ components:
         avatarUrl: {type: string}
         gitTokenConfigured: {type: boolean, readOnly: true}
         codeBuddyApiKeyConfigured: {type: boolean, readOnly: true}
+        openaiApiKeyConfigured: {type: boolean, readOnly: true}
+        openaiBaseUrl: {type: string}
+        openaiModels:
+          type: array
+          items:
+            type: object
+            properties:
+              id: {type: string}
+              name: {type: string}
         codexApiKeyConfigured: {type: boolean, readOnly: true}
         codexBaseUrl: {type: string}
         claudeCodeApiKeyConfigured: {type: boolean, readOnly: true}

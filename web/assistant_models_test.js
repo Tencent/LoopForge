@@ -73,6 +73,7 @@ const ctx = {
         { id: 'model-a', name: 'Model A', family: 'claude', credits: 'x1.00' },
         { id: 'model-b', name: 'Model B', family: 'glm', credits: 'x0.06' },
         { id: 'codex:gpt-5.5', name: 'GPT-5.5', family: 'gpt', engine: 'codex' },
+        { id: 'openai:gpt-4.1-mini', name: 'OpenAI API', family: 'gpt', engine: 'openai' },
       ],
       engines: [{ id: 'codebuddy', name: 'CodeBuddy' }, { id: 'codex', name: 'Codex' }],
     }),
@@ -100,7 +101,7 @@ vm.runInContext(moduleSource, ctx);
 
   await api.load();
   assert.equal(api.catalog().default, 'model-b');
-  assert.equal(api.catalog().models.length, 3, 'catalog adopts /api/assistant/models');
+  assert.equal(api.catalog().models.length, 4, 'catalog adopts /api/assistant/models');
   // Issue #228: clarification runs on CodeBuddy only, so CodeBuddy-only
   // pickers hide other CLIs and a saved "codex:…" id falls back.
   assert.deepEqual(api.codeBuddyModels().map(m => m.id), ['model-a', 'model-b']);
@@ -121,7 +122,7 @@ vm.runInContext(moduleSource, ctx);
 
   toggle.onclick({ stopPropagation() {} });
   assert.equal(menu.hidden, false, 'clicking 选择模型 must open the menu');
-  assert.equal(menu.children.length, 2, 'menu lists only CodeBuddy models');
+  assert.equal(menu.children.length, 3, 'menu lists CodeBuddy and OpenAI API models');
   assert.ok(!menu.children.some(opt => opt.dataset.id.startsWith('codex:')), 'clarify menu hides Codex models');
   assert.ok(menu.children[0].className.includes('is-active'), 'stored model is marked active');
 
@@ -131,7 +132,12 @@ vm.runInContext(moduleSource, ctx);
   assert.equal(menu.hidden, true);
   assert.equal(label.textContent, 'Model B');
 
-  // A Codex id saved before this fix must not reach chat-clarify.
+  toggle.onclick({ stopPropagation() {} });
+  menu.children[2].onclick();
+  assert.equal(ctx.selectedClarifyModel(), 'openai:gpt-4.1-mini');
+  assert.equal(input.value, 'openai:gpt-4.1-mini');
+
+  // A Codex id must not reach chat-clarify.
   store.set('agentflow.clarifyModel', 'codex:gpt-5.5');
   assert.equal(ctx.selectedClarifyModel(), 'default');
   console.log('assistant models ok');

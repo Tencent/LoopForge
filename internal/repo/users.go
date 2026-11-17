@@ -16,6 +16,9 @@ import (
 // ---------- Users ----------
 
 type userWithConfig struct {
+	OpenAIAPIKey                 *string    `gorm:"column:openai_api_key"`
+	OpenAIBaseURL                *string    `gorm:"column:openai_base_url"`
+	OpenAIModels                 *string    `gorm:"column:openai_models"`
 	ID                           int64      `gorm:"column:id"`
 	StaffID                      int        `gorm:"column:staff_id"`
 	LoginName                    string     `gorm:"column:login_name"`
@@ -44,7 +47,7 @@ const userSelectColumns = `u.id, u.staff_id, u.login_name, u.chinese_name, u.dep
 	COALESCE(u.platform_role, '') AS platform_role,
 	c.git_token, EXISTS (SELECT 1 FROM user_git_ssh_keys k WHERE k.user_id = u.id) AS git_ssh_key_configured,
 	c.gongfeng_refresh_token, c.gongfeng_token_expires_at, c.codebuddy_api_key, COALESCE(c.codebuddy_internet_environment, '') AS codebuddy_internet_environment,
-	c.codex_api_key, c.codex_base_url, c.codex_models, c.claude_code_api_key, c.claude_code_base_url, c.claude_code_models,
+	c.openai_api_key, c.openai_base_url, c.openai_models, c.codex_api_key, c.codex_base_url, c.codex_models, c.claude_code_api_key, c.claude_code_base_url, c.claude_code_models,
 	c.agent_cli_credentials,
 	u.created_at, u.updated_at`
 
@@ -67,6 +70,13 @@ func (r userWithConfig) toDomain() domain.User {
 	if r.CodeBuddyAPIKey != nil {
 		u.CodeBuddyAPIKey = *r.CodeBuddyAPIKey
 	}
+	if r.OpenAIAPIKey != nil {
+		u.OpenAIAPIKey = *r.OpenAIAPIKey
+	}
+	if r.OpenAIBaseURL != nil {
+		u.OpenAIBaseURL = *r.OpenAIBaseURL
+	}
+	u.OpenAIModels = decodeCLIModels(r.OpenAIModels)
 	if r.CodexAPIKey != nil {
 		u.CodexAPIKey = *r.CodexAPIKey
 	}
@@ -157,6 +167,7 @@ func (r *UsersRepo) PutUser(v domain.User) error {
 		v.GongfengRefreshToken = old.GongfengRefreshToken
 		v.GongfengTokenExpiresAt = old.GongfengTokenExpiresAt
 		v.CodexAPIKey, v.CodexBaseURL, v.CodexModels = old.CodexAPIKey, old.CodexBaseURL, old.CodexModels
+		v.OpenAIAPIKey, v.OpenAIBaseURL, v.OpenAIModels = old.OpenAIAPIKey, old.OpenAIBaseURL, old.OpenAIModels
 		v.ClaudeCodeAPIKey, v.ClaudeCodeBaseURL, v.ClaudeCodeModels = old.ClaudeCodeAPIKey, old.ClaudeCodeBaseURL, old.ClaudeCodeModels
 		v.CodeBuddyAPIKey = old.CodeBuddyAPIKey
 		v.CodeBuddyInternetEnvironment = old.CodeBuddyInternetEnvironment
@@ -224,7 +235,7 @@ func (r *UsersRepo) writeUser(v domain.User) (domain.User, error) {
 }
 
 func userHasConfig(user domain.User) bool {
-	return user.GitToken != "" ||
+	return user.OpenAIAPIKey != "" || user.OpenAIBaseURL != "" || len(user.OpenAIModels) > 0 || user.GitToken != "" ||
 		user.GongfengRefreshToken != "" ||
 		user.CodeBuddyAPIKey != "" ||
 		user.CodeBuddyInternetEnvironment != "" ||
@@ -238,6 +249,10 @@ func userHasConfig(user domain.User) bool {
 }
 
 type UserCredentialUpdate struct {
+	OpenAIAPIKey                 string             `json:"openaiApiKey"`
+	OpenAIAPIKeyClear            bool               `json:"openaiApiKeyClear"`
+	OpenAIBaseURL                *string            `json:"openaiBaseUrl"`
+	OpenAIModels                 *[]domain.CLIModel `json:"openaiModels"`
 	GitToken                     string             `json:"gitToken"`
 	GitTokenClear                bool               `json:"gitTokenClear"`
 	CodeBuddyAPIKey              string             `json:"codeBuddyApiKey"`
@@ -287,6 +302,21 @@ func (r *UsersRepo) UpdateUserCredentials(id int64, update UserCredentialUpdate)
 	}
 	if update.CodeBuddyInternetEnvironment != nil {
 		user.CodeBuddyInternetEnvironment = strings.TrimSpace(*update.CodeBuddyInternetEnvironment)
+	}
+	if update.OpenAIAPIKeyClear {
+		user.OpenAIAPIKey = ""
+	} else if value := strings.TrimSpace(update.OpenAIAPIKey); value != "" {
+		user.OpenAIAPIKey = value
+	}
+	if update.OpenAIBaseURL != nil {
+		user.OpenAIBaseURL = strings.TrimSpace(*update.OpenAIBaseURL)
+	}
+	if update.OpenAIModels != nil {
+		models, err := normalizeCLIModels(*update.OpenAIModels)
+		if err != nil {
+			return domain.User{}, err
+		}
+		user.OpenAIModels = models
 	}
 	if update.CodexAPIKeyClear {
 		user.CodexAPIKey = ""
@@ -352,7 +382,8 @@ func (r *UsersRepo) writeUserConfig(v domain.User) error {
 		"gongfeng_refresh_token": nullableString(v.GongfengRefreshToken), "gongfeng_token_expires_at": timePtr(v.GongfengTokenExpiresAt),
 		"codebuddy_api_key":              nullableString(v.CodeBuddyAPIKey),
 		"codebuddy_internet_environment": v.CodeBuddyInternetEnvironment,
-		"codex_api_key":                  nullableString(v.CodexAPIKey), "codex_base_url": nullableString(v.CodexBaseURL), "codex_models": encodeCLIModels(v.CodexModels),
+		"openai_api_key":                 nullableString(v.OpenAIAPIKey), "openai_base_url": nullableString(v.OpenAIBaseURL), "openai_models": encodeCLIModels(v.OpenAIModels),
+		"codex_api_key": nullableString(v.CodexAPIKey), "codex_base_url": nullableString(v.CodexBaseURL), "codex_models": encodeCLIModels(v.CodexModels),
 		"claude_code_api_key": nullableString(v.ClaudeCodeAPIKey), "claude_code_base_url": nullableString(v.ClaudeCodeBaseURL), "claude_code_models": encodeCLIModels(v.ClaudeCodeModels),
 		"agent_cli_credentials": encodeAgentCLICredentials(v.AgentCLICredentials),
 		"created_at":            timePtr(v.CreatedAt), "updated_at": timePtr(v.UpdatedAt),

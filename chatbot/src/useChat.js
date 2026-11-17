@@ -29,6 +29,7 @@ import {
 } from "./message-queue.js";
 // Main Bot can run on any configured agent CLI; CodeBuddy stays the default.
 export const EXECUTORS = [
+  { id: "openai", icon: "sparkles", label: "OpenAI API", detail: "直接调用 OpenAI API，对话记录由 LoopForge 管理。" },
   { id: "codebuddy", icon: "sparkles", label: "CodeBuddy", detail: "使用 CodeBuddy 模型与个人 API Key。" },
   { id: "codex", icon: "terminal", label: "Codex", detail: "使用 Codex CLI 与个人 Codex API Key。" },
   { id: "claude-code", icon: "brain", label: "Claude Code", detail: "使用 Claude Code CLI 与个人 Claude Code API Key。" },
@@ -221,7 +222,8 @@ export function useChat() {
         setModels(catalog.models || []);
         defaultModel.current = catalog.default || "";
         setSponsoredModels(sponsoredModelList(catalog));
-        setModel(catalog.default);
+        const preferred = storedExecutor();
+        setModel((old) => preferred === "codebuddy" ? catalog.default : engineModels(catalog.models, preferred)[0]?.id || old);
         await refreshSessions();
         if (!current) return;
         const recovered = connectionError;

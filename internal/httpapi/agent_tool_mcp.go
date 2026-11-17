@@ -349,6 +349,9 @@ func (h *agentToolGateway) callTerminal(session *AgentToolSession, name string, 
 }
 
 func (h *agentToolGateway) dispatch(ctx context.Context, session *AgentToolSession, tool agentToolDescriptor, args map[string]any) (string, error) {
+	if tool.Kind == "clarify-files" {
+		return callClarifyFiles(session, tool.Name, args)
+	}
 	if session.Mode == AgentToolAssistant && session.ExecMode.ReviewWrites {
 		ctx = withAssistantApprovalReviewer(ctx, session.approvalReviewer)
 	}

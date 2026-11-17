@@ -183,6 +183,25 @@ func cachedCLIModels(environment string) []string {
 func (h *assistantHandlers) models(c *gin.Context) {
 	if raw := strings.TrimSpace(c.Query("executor")); raw != "" && assistantExecutor(raw) != "codebuddy" {
 		id := assistantExecutor(raw)
+		if id == assistantEngineOpenAI {
+			current, ok := h.requestUser(c.Request, true)
+			if !ok {
+				c.JSON(401, gin.H{"error": "请先登录"})
+				return
+			}
+			user, _ := h.repo.User(current.ID)
+			result := assistantModelCatalog{Models: []assistantModel{}}
+			for _, model := range assistantEngineModels(c.Request.Context(), user) {
+				if model.Engine == assistantEngineOpenAI {
+					result.Models = append(result.Models, model)
+				}
+			}
+			if len(result.Models) > 0 {
+				result.Default = result.Models[0].ID
+			}
+			c.JSON(200, result)
+			return
+		}
 		catalog, ok := executorModelCatalogs()[id]
 		if !ok {
 			c.JSON(400, gin.H{"error": "不支持的执行器"})

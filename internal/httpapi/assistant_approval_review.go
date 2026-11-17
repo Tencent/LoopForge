@@ -224,7 +224,7 @@ func runAssistantApprovalReview(ctx context.Context, input assistantApprovalInpu
 		return assistantApprovalReview{}, fmt.Errorf("review input too large")
 	}
 	prompt := redactAgentToolResult(string(data), user)
-	raw, _, err := runAssistantCLI(ctx, assistantCLIRequest{Prompt: prompt, Model: model, SystemPrompt: assistantApprovalReviewPolicy, SessionRoot: root, ReviewOnly: true}, user, nil)
+	raw, _, err := runAssistantModel(ctx, assistantCLIRequest{Prompt: prompt, Model: model, SystemPrompt: assistantApprovalReviewPolicy, SessionRoot: root, ReviewOnly: true}, user, nil)
 	if err != nil {
 		return assistantApprovalReview{}, err
 	}

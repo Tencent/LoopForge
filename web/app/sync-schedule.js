@@ -101,7 +101,8 @@ function scheduleModelAPI(){return window.AgentFlowAssistantModels}
 function selectedClarifyModel(){
   const api=window.AgentFlowAssistantModels;
   const stored=localStorage.getItem('agentflow.clarifyModel')||'';
-  // Clarification runs on CodeBuddy only; a saved "codex:…" id falls back.
+  // API clarification keeps its explicit model; other CLIs are unsupported.
+  if(stored.startsWith('openai:'))return stored;
   if(api?.codeBuddyModel)return api.codeBuddyModel(stored);
   return stored||(api&&api.DEFAULT)||'default';
 }
@@ -140,7 +141,8 @@ function bindClarifyModelPicker(host){
     menu.hidden=!open;
     toggle.setAttribute('aria-expanded',open?'true':'false');
     if(open){
-      api.renderCodeBuddyList(menu, selectedClarifyModel(), id=>{
+      const models=(api.catalog?.().models||[]).filter(m=>!m.engine||['codebuddy','openai'].includes(m.engine));
+      api.renderOptions(menu, models, selectedClarifyModel(), id=>{
         setClarifyModel(id);
         api.paint(toggle, id);
         menu.hidden=true;

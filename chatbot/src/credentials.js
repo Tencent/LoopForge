@@ -2,6 +2,7 @@
 // the inputs there so the parent page can scroll to and focus the right card.
 // Keep the rules in sync with credentialHint in web/app/access.js.
 export const CREDENTIALS = {
+ openaiApiKey: "OpenAI API Key",
   codeBuddyApiKey: "CodeBuddy API Key",
   codexApiKey: "Codex API Key",
   claudeCodeApiKey: "Claude Code API Key",

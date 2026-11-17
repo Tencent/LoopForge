@@ -432,7 +432,7 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 			turn = fullPrompt
 			cliSessionID = newAssistantSessionID()
 		}
-		if shared {
+		if shared && cliEngine != assistantEngineOpenAI {
 			saved, ok := h.repo.AssistantSession(ownerID, req.SessionID)
 			if !ok {
 				fail(409, "共享会话不可用，请重新打开")
@@ -477,6 +477,12 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 			}
 		}
 		generate = func(ctx context.Context, prompt string, u domain.User) (string, error) {
+			if cliEngine == assistantEngineOpenAI {
+				resume = false
+				if !strings.Contains(prompt, fullPrompt) {
+					prompt = fullPrompt + "\n\n" + prompt
+				}
+			}
 			// A mode request completes its CLI phase normally. Waiting for exit
 			// drains output and lets each CLI commit tool results to its native
 			// journal before the next process is allowed to resume that journal.
@@ -495,7 +501,7 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 					system = assistantWorkspaceSystemPrompt
 					prompt = assistantWorkspaceSystemPrompt + "\n审批模式：" + approvalMode + "。\n" + prompt
 				} else {
-					prompt = assistantPlatformExecutionReminder + "\n" + prompt
+					prompt = assistantExecutionReminder(req) + "\n" + prompt
 				}
 				prompt += conversationAttachmentNote(cliRoot, req)
 				cliReq := assistantCLIRequest{Executor: req.Executor, Prompt: prompt, Model: req.Model, Effort: req.Effort, SessionID: cliSessionID, Resume: resume, UserID: u.ID, Native: true, MCPConfig: mcp, Settings: settings, SystemPrompt: system, SessionRoot: cliRoot, OnUsage: turnUsage.add, Workspace: req.workspaceMode, RemoteBinary: req.workspaceMode || toolSession.ExecutionRunnerID != "", Execute: h.conversationExecutor(toolSession, cliRoot)}
@@ -538,7 +544,7 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 						}
 					}
 				}
-				raw, _, err := runAssistantCLI(ctx, cliReq, u, relay)
+				raw, _, err := runAssistantModel(ctx, cliReq, u, relay)
 				if assistantHandoffOutlivesPhaseError(ctx, toolSession, err) {
 					// The handoff tool already succeeded; how the old phase ended
 					// (for example without a type=result line) must not strand the

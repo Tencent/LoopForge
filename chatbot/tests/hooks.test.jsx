@@ -98,6 +98,28 @@ describe("conversation hooks", () => {
     localStorage.removeItem("loopforge.assistant.executor");
   });
 
+  test("initializes a preferred API provider without selecting the CodeBuddy default", async () => {
+    const original = apiMock.getMockImplementation();
+    localStorage.setItem("loopforge.assistant.executor", "openai");
+    apiMock.mockImplementation((path, options) => {
+      if (path === "/api/assistant/models?executor=openai") return new Promise(() => {});
+      if (path === "/api/assistant/models") return Promise.resolve({
+        default: "m1",
+        models: [{id: "m1", name: "CodeBuddy"}, {id: "openai:gpt-4.1-mini", name: "OpenAI API", engine: "openai"}],
+      });
+      return original(path, options);
+    });
+    try {
+      const { result } = renderHook(() => useChat());
+      await waitFor(() => expect(result.current.ready).toBe(true));
+      expect(result.current.executor).toBe("openai");
+      expect(result.current.model).toBe("openai:gpt-4.1-mini");
+    } finally {
+      apiMock.mockImplementation(original);
+      localStorage.removeItem("loopforge.assistant.executor");
+    }
+  });
+
   test("without an own key chat is limited to the administrator's shared models", async () => {
     localStorage.removeItem("loopforge.assistant.executor");
     const original = apiMock.getMockImplementation();

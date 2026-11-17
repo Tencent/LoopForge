@@ -163,7 +163,7 @@ func runAssistantTitleSummary(ctx context.Context, user domain.User, model, effo
 		return "", err
 	}
 	defer os.RemoveAll(root)
-	raw, _, err := runAssistantCLI(ctx, assistantCLIRequest{
+	raw, _, err := runAssistantModel(ctx, assistantCLIRequest{
 		Prompt:       redactAgentToolResult(string(payload), user),
 		Model:        model,
 		Effort:       effort,
