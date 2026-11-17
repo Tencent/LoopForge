@@ -69,12 +69,12 @@
   }
   // engineOf names the CLI that runs a model: catalog entries carry it, and a
   // saved "codex:…" id that the viewer cannot list still keeps its prefix.
-  function engineOf(id) {
-    const listed = (catalog.models || []).find(m => m.id === id);
+  function engineOf(id, source = catalog) {
+    const listed = (source.models || []).find(m => m.id === id);
     if (listed) return listed.engine || 'codebuddy';
     const value = String(id || '');
     const prefix = value.slice(0, Math.max(0, value.indexOf(':')));
-    return (catalog.engines || []).some(e => e.id === prefix) ? prefix : 'codebuddy';
+    return (source.engines || []).some(e => e.id === prefix) ? prefix : 'codebuddy';
   }
   function modelMeta(id) {
     return (catalog.models || []).find(m => m.id === id) || {id: id || DEFAULT_MODEL, family: familyOf(id), name: id || DEFAULT_MODEL};
@@ -514,7 +514,21 @@
       close,
       isOpen,
       // Re-render an open menu after its items change (catalog landed, CLI switched).
-      refresh() { if (isOpen()) { renderList(); place(); } },
+      refresh() {
+        if (!isOpen()) return;
+        const focused = list.contains(doc.activeElement) ? doc.activeElement.closest('.lf-picker-option') : null;
+        const focusedId = focused?.dataset.id;
+        const scrollTop = list.scrollTop;
+        renderList();
+        if (focused) {
+          const options = [...list.querySelectorAll('.lf-picker-option')].filter(option => !option.disabled);
+          // Catalog refreshes keep keyboard navigation on the same model;
+          // if it disappeared, return to search (or the first usable row).
+          (options.find(option => option.dataset.id === focusedId) || search || options[0])?.focus({preventScroll: true});
+        }
+        list.scrollTop = scrollTop;
+        place();
+      },
       configure(next) { if (next) opts = next; },
     };
     toggle.setAttribute('aria-haspopup', 'menu');

@@ -52,7 +52,8 @@
     const above = rect.top - 12;
     const height = Math.min(panel.scrollHeight || 320, opts.maxHeight ?? 360);
     const down = below >= height || below >= above;
-    const left = Math.min(Math.max(8, rect.left), Math.max(8, viewportW - width - 8));
+    const anchorLeft = opts.align === 'end' ? rect.right - width : rect.left;
+    const left = Math.min(Math.max(8, anchorLeft), Math.max(8, viewportW - width - 8));
     panel.style.width = width + 'px';
     panel.style.left = Math.round(left) + 'px';
     panel.style.maxHeight = Math.max(120, Math.floor(down ? below : above)) + 'px';

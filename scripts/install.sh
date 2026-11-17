@@ -201,6 +201,5 @@ if [[ "${users//[^0-9]/}" == 0 ]]; then
 else
   printf '  Open it in your browser and sign in.\n'
 fi
-printf '  Open “一键体验” on the home page to run a real SOP without an API key.\n'
 printf '  Default sandboxes reuse the installed runtime image; no second CLI image build is needed.\n'
 printf '  Stop: ./start.sh stop   ·   Logs: ./start.sh logs   ·   Update images: ./start.sh pull\n'

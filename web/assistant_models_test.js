@@ -6,7 +6,7 @@
 // opening. This test boots the shared module plus the real picker helpers
 // from the bundle and drives the menus the way a user does.
 //
-// Issue #441: the chat composer, the role wizard and 新建需求 each drew a
+// Issue #441: the chat composer, the role wizard and requirement clarification each drew a
 // different picker. They now share AgentFlowAssistantModels.bindPicker, the
 // classic-SPA twin of chatbot/src/ModelPicker.jsx: a body-level menu with
 // search, brand icons, the "family · credits" line and a fixed check slot.
@@ -108,7 +108,7 @@ const key = (target, name) => {
   assert.equal(api.codeBuddyModel(''), 'default');
   assert.equal(api.codeBuddyModel('model-a'), 'model-a');
 
-  // ---- 新建需求 / 澄清: the clarification picker ----
+  // ---- 需求详情 / 澄清: the clarification picker ----
   for (const name of ['selectedClarifyModel', 'setClarifyModel', 'clarifyModelPickerHTML', 'bindClarifyModelPicker']) extract(name);
   const host = dom.html(win.clarifyModelPickerHTML(false));
   const toggle = host.querySelector('[data-model-toggle]');
@@ -216,7 +216,7 @@ const key = (target, name) => {
     codex: { models: [{ id: 'gpt-5.5', name: 'GPT-5.5' }], efforts: [], customModel: true },
     claude: { models: [] },
   };
-  for (const name of ['executorOptions', 'AGENT_CUSTOM_MODEL', 'executorModelCatalogs', 'agentModelAPI', 'currentAgentExecutorId',
+  for (const name of ['executorOptions', 'AGENT_CUSTOM_MODEL', 'agentPickerBindings', 'executorModelCatalogs', 'agentModelAPI', 'currentAgentExecutorId',
     'agentModelItems', 'agentEffortItems', 'paintAgentPicker', 'agentDefaultModelItem', 'agentExecutorItems', 'agentModelChoices',
     'renderAgentExecutorPicker', 'renderAgentModelPicker', 'syncAgentModelCustomField', 'renderAgentEffortPicker',
     'applyAgentModelUI', 'bindAgentPickers']) extract(name);
@@ -224,6 +224,7 @@ const key = (target, name) => {
   let changes = 0;
   select.addEventListener('change', event => { changes++; win.applyAgentModelUI(event.target.value, '', ''); });
   win.bindAgentPickers();
+  win.bindAgentPickers(); // Rebinding must not duplicate trigger/change listeners.
   win.applyAgentModelUI('codebuddy', 'glm-5', 'high');
   const cliToggle = form.querySelector('#agentExecutorPicker [data-model-toggle]');
   const modelToggle = form.querySelector('#agentModelPicker [data-model-toggle]');
@@ -245,12 +246,48 @@ const key = (target, name) => {
   assert.equal(document.activeElement, rows[0], 'without search the checked row takes focus');
   assert.equal(rows[1].querySelector('.ai-model-icon').dataset.brand, 'gpt');
   assert.equal(rows[0].querySelector('small').textContent, '1 个可用模型');
+  win.AgentFlowExecutorModels.codebuddy.models.push({ id: 'glm-6', name: 'GLM-6' });
+  win.renderAgentExecutorPicker();
+  assert.equal(options(menu)[0].querySelector('small').textContent, '2 个可用模型', 'an open CLI menu receives catalog counts');
+  assert.ok(document.activeElement === options(menu)[0], 'refresh preserves the focused CLI');
 
   // Only one menu at a time.
   modelToggle.click();
   assert.equal(menus().length, 1, 'opening another picker closes the first');
   assert.equal(cliToggle.getAttribute('aria-expanded'), 'false');
   assert.equal(menus()[0].getAttribute('aria-label'), '模型');
+  [menu] = menus();
+  const modelSearch = menu.querySelector('.lf-picker-search input');
+  modelSearch.value = 'glm';
+  modelSearch.dispatchEvent(new win.Event('input', { bubbles: true }));
+  key(modelSearch, 'ArrowDown');
+  key(document.activeElement, 'ArrowDown');
+  win.AgentFlowExecutorModels.codebuddy.models = [
+    { id: 'glm-6', name: 'GLM-6' }, { id: 'glm-5', name: 'GLM-5 renamed' }, { id: 'glm-7', name: 'GLM-7' },
+  ];
+  win.renderAgentModelPicker();
+  assert.ok(menus()[0] === menu, 'catalog refresh does not reopen the menu');
+  assert.equal(modelSearch.value, 'glm', 'catalog refresh keeps the search query');
+  assert.deepEqual(options(menu).map(row => row.dataset.id), ['', 'glm-6', 'glm-5', 'glm-7']);
+  assert.ok(document.activeElement === options(menu)[2], 'focus follows the model ID when rows reorder');
+  assert.equal(form.elements.modelChoice.value, 'glm-5', 'refresh preserves the selected model');
+  assert.equal(options(menu)[2].getAttribute('aria-checked'), 'true');
+  assert.equal(form.elements.effort.value, 'high', 'refresh preserves the selected effort');
+  win.AgentFlowExecutorModels.codebuddy.models = [{ id: 'glm-7', name: 'GLM-7' }];
+  // A filtered, unselected focused option can disappear from the new catalog.
+  key(document.activeElement, 'ArrowUp');
+  win.renderAgentModelPicker();
+  assert.ok(document.activeElement === modelSearch, 'a removed keyboard option returns focus to search');
+  key(document.activeElement, 'Escape');
+  dom.advance(200);
+
+  effortToggle.click();
+  [menu] = menus();
+  win.AgentFlowExecutorModels.codebuddy.efforts = [{ value: 'high', label: '高强度' }, { value: 'medium', label: '中' }];
+  win.renderAgentEffortPicker();
+  assert.deepEqual(options(menu).map(row => row.dataset.id), ['', 'high', 'medium']);
+  assert.ok(document.activeElement === options(menu)[1], 'an effort refresh preserves keyboard focus');
+  assert.equal(form.elements.effort.value, 'high');
   key(document.activeElement, 'Escape');
   dom.advance(200);
 

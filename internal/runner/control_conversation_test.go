@@ -92,6 +92,29 @@ func TestForwardConversationToolStopsOnCallerOrConnectionCancel(t *testing.T) {
 	}
 }
 
+func TestForwardConversationToolCancelsTheSentRequest(t *testing.T) {
+	d := newConversationDaemon()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var sent []controlMessage
+	_, err := d.forwardConversationTool(context.Background(), ctx, func(message controlMessage) error {
+		sent = append(sent, message)
+		cancel()
+		return nil
+	}, "fixture-token", nil)
+	if !errors.Is(err, context.Canceled) || len(sent) != 2 {
+		t.Fatalf("sent %d messages, err = %v", len(sent), err)
+	}
+	request, cancelled := sent[0], sent[1]
+	if request.ToolRequest == nil || !request.ToolRequest.SupportsCancel ||
+		cancelled.Type != "agent_tool.cancel" || cancelled.RequestID != request.RequestID || cancelled.ToolRequest != nil {
+		t.Fatalf("cancellation does not match the request: %+v", cancelled)
+	}
+	if pendingReplies(d) != 0 {
+		t.Fatal("cancelled response slot was retained")
+	}
+}
+
 func TestDeliverConversationReplyIgnoresUnknownAndDuplicateReplies(t *testing.T) {
 	d := newConversationDaemon()
 	d.deliverConversationReply("missing", domain.RunnerToolResponse{Body: json.RawMessage(`1`)})

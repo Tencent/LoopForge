@@ -34,14 +34,6 @@ func (h *assistantHandlers) startGeneration(c *gin.Context) {
 		return
 	}
 	req.Model = assistantRequestModel(req.Executor, req.Model)
-	user, model, refusal := h.assistantTurnUser(stored, req.Model)
-	if refusal != "" {
-		c.JSON(400, gin.H{"error": refusal})
-		return
-	}
-	req.Model = model
-	cliEngine, _ := assistantModelEngine(req.Model)
-	req.Executor = cliEngine
 	if len(req.Messages) == 0 || req.Messages[len(req.Messages)-1].Role != "user" {
 		c.JSON(400, gin.H{"error": "请提供用户消息"})
 		return
@@ -59,17 +51,41 @@ func (h *assistantHandlers) startGeneration(c *gin.Context) {
 		c.JSON(400, gin.H{"error": "会话 ID 无效"})
 		return
 	}
-	ownerID, shared, err := h.conversationScope(c, req.SessionID, req.RunID, req.ProjectID, user.ID)
+	ownerID, shared, err := h.conversationScope(c, req.SessionID, req.RunID, req.ProjectID, stored.ID)
 	if err != nil {
 		c.JSON(403, gin.H{"error": err.Error()})
 		return
 	}
+	old, _ := h.repo.AssistantSession(ownerID, req.SessionID)
+	if old.ID != "" && old.ExecutionLocked() {
+		if req.ExecutionTarget != nil && *req.ExecutionTarget != old.Execution() {
+			c.JSON(409, gin.H{"error": "会话执行机器已固定，不能更换"})
+			return
+		}
+		target := old.Execution()
+		req.ExecutionTarget = &target
+	} else {
+		var targetErr error
+		req.ExecutionTarget, targetErr = h.newExecutionTarget(stored.ID, req.ProjectID, draftExecutionTarget(old, req.ExecutionTarget))
+		if targetErr != nil {
+			c.JSON(400, gin.H{"error": targetErr.Error()})
+			return
+		}
+	}
+	cliEngine, _ := assistantModelEngine(req.Model)
+	runnerLogin := h.assistantUsesRunnerLogin(stored.ID, req.ExecutionTarget, cliEngine)
+	user, model, refusal := h.assistantTurnUser(stored, req.Model, runnerLogin)
+	if refusal != "" {
+		c.JSON(400, gin.H{"error": refusal})
+		return
+	}
+	req.Model = model
 	if err := h.validateAssistantTriggerHistory(ownerID, req); err != nil {
 		c.JSON(400, gin.H{"error": err.Error()})
 		return
 	}
 	if shared {
-		if old, ok := h.repo.AssistantSession(ownerID, req.SessionID); ok {
+		if old.ID != "" {
 			if !sharedTranscriptPrefix(old.Messages, req.Messages) {
 				c.JSON(409, gin.H{"error": "共享会话已更新，请重新打开后发送"})
 				return
@@ -95,28 +111,23 @@ func (h *assistantHandlers) startGeneration(c *gin.Context) {
 	catalogEngine, _ := assistantModelEngine(req.Model)
 	catalog := assistantChatCatalog(c.Request.Context(), user.CodeBuddyInternetEnvironment, nil)
 	if catalogEngine == assistantEngineCodeBuddy {
-		catalog = h.chatCatalog(c.Request.Context(), user)
+		catalog = h.turnCatalog(c.Request.Context(), user, req.Model)
 	}
-	req.Model = assistantAllowedUserModel(req.Model, catalog, user)
+	if !runnerLogin {
+		req.Model = assistantAllowedUserModel(req.Model, catalog, user)
+	}
 	cliEngine, _ = assistantModelEngine(req.Model)
 	req.Executor = cliEngine
 	if err := validateAssistantEffort(user, req.Model, req.Effort); err != nil {
 		c.JSON(400, gin.H{"error": err.Error()})
 		return
 	}
-	legacyExecutor := ""
-	if old, ok := h.repo.AssistantSession(ownerID, req.SessionID); ok {
-		legacyExecutor = old.Executor
-	}
-	if refusal := assistantEngineSwitchRefusal(assistantConversationEngine(req.Messages, legacyExecutor), req.Model); refusal != "" {
+	if refusal := assistantEngineSwitchRefusal(assistantConversationEngine(req.Messages, old.Executor), req.Model); refusal != "" {
 		c.JSON(409, gin.H{"error": refusal})
 		return
 	}
-	freshCLI := false
-	if old, ok := h.repo.AssistantSession(ownerID, req.SessionID); ok {
-		freshCLI = assistantConversationEngine(old.Messages, old.Executor) != cliEngine
-	}
-	if old, ok := h.repo.AssistantSession(ownerID, req.SessionID); ok {
+	freshCLI := old.ID != "" && assistantConversationEngine(old.Messages, old.Executor) != cliEngine
+	if old.ID != "" {
 		if len(req.Messages) < len(old.Messages) {
 			c.JSON(409, gin.H{"error": "会话已更新，请重新打开后发送"})
 			return
@@ -130,21 +141,6 @@ func (h *assistantHandlers) startGeneration(c *gin.Context) {
 			}
 		}
 	}
-	old, _ := h.repo.AssistantSession(ownerID, req.SessionID)
-	if old.ID != "" && old.ExecutionLocked() {
-		if req.ExecutionTarget != nil && *req.ExecutionTarget != old.Execution() {
-			c.JSON(409, gin.H{"error": "会话执行机器已固定，不能更换"})
-			return
-		}
-		req.ExecutionTarget = old.ExecutionTarget
-	} else {
-		var targetErr error
-		req.ExecutionTarget, targetErr = h.newExecutionTarget(user.ID, req.ProjectID, draftExecutionTarget(old, req.ExecutionTarget))
-		if targetErr != nil {
-			c.JSON(400, gin.H{"error": targetErr.Error()})
-			return
-		}
-	}
 	// Every message shows when it was sent. The server clock stamps the new
 	// question, so a skewed or missing browser clock cannot misdate it.
 	sentAt := time.Now().UTC()
@@ -156,7 +152,13 @@ func (h *assistantHandlers) startGeneration(c *gin.Context) {
 		}
 	}
 	g := domain.AssistantGeneration{StartedAt: time.Now().UTC(), ActorID: user.ID, ActorName: user.LoginName, ID: newAssistantSessionID(), SessionID: req.SessionID, UserID: ownerID, ProjectID: req.ProjectID, Status: "running", Events: []domain.AssistantGenerationEvent{}, MessageCount: len(req.Messages)}
-	pending := assistantConversation{ExecutionTarget: req.ExecutionTarget, ID: req.SessionID, Shared: old.Shared, ProjectID: req.ProjectID, IssueID: old.IssueID, Model: req.Model, Effort: req.Effort, Executor: req.Executor, RunID: req.RunID, Messages: req.Messages, TitleEdited: old.TitleEdited, TitleGenerated: old.TitleGenerated}
+	// The issue this turn linked from its @-mention is the conversation's
+	// issue now; any other change since old was read is still refused.
+	issueID := old.IssueID
+	if issueID == "" && req.linkedIssueID != "" {
+		issueID = req.linkedIssueID
+	}
+	pending := assistantConversation{ExecutionTarget: req.ExecutionTarget, ID: req.SessionID, Shared: old.Shared, ProjectID: req.ProjectID, IssueID: issueID, Model: req.Model, Effort: req.Effort, Executor: req.Executor, RunID: req.RunID, Messages: req.Messages, TitleEdited: old.TitleEdited, TitleGenerated: old.TitleGenerated}
 	if old.TitleEdited || old.TitleGenerated {
 		pending.Title = old.Title
 	} else {
@@ -506,7 +508,13 @@ func (h *assistantHandlers) steerGeneration(c *gin.Context) {
 		}
 		model = forced
 	}
-	model = assistantAllowedModel(model, h.chatCatalog(c.Request.Context(), user))
+	// A CodeBuddy model this instance has not listed yet refreshes the list
+	// first, like a new turn, instead of silently becoming the default.
+	catalog := h.chatCatalog(c.Request.Context(), user)
+	if engine, _ := assistantModelEngine(model); engine == assistantEngineCodeBuddy {
+		catalog = h.turnCatalog(c.Request.Context(), user, model)
+	}
+	model = assistantAllowedModel(model, catalog)
 	if err := validateAssistantEffort(user, model, body.Effort); err != nil {
 		c.JSON(400, gin.H{"error": err.Error()})
 		return
