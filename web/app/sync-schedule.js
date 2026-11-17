@@ -179,6 +179,20 @@ function paintScheduleEngines(selected){
   }));
   select.value=current;
 }
+const SCHEDULE_EFFORT_LABELS={none:'关闭 none',minimal:'最低 minimal',low:'低 low',medium:'中 medium',high:'高 high',xhigh:'超高 xhigh',max:'最大 max',ultra:'极致 ultra',ultracode:'极致 ultracode'};
+function paintScheduleEffort(saved){
+  const select=$('#scheduleEffort'),form=$('#scheduleJobForm');
+  if(!select||!form)return;
+  const want=saved===undefined?select.value:String(saved||'');
+  const model=(scheduleModelCatalog().models||[]).find(m=>m.id===form.elements.assistantModel.value);
+  // The catalog may still be loading or omit a saved model. Keep its effort
+  // until it loads; the server validates it as the execution user.
+  const efforts=model?[...(model.efforts||[])]:want?[want]:[];
+  select.replaceChildren(new Option('默认强度',''),...efforts.map(value=>new Option(SCHEDULE_EFFORT_LABELS[value]||value,value)));
+  select.value=efforts.includes(want)?want:'';
+  select.hidden=!efforts.length;
+  select.closest('.schedule-model-row').classList.toggle('has-effort',!select.hidden);
+}
 function closeScheduleModelMenu(){
   const host=$('#scheduleModelPicker');
   if(!host)return;
@@ -261,6 +275,7 @@ function paintScheduleModel(selected){
   if(item)api.paintItem(toggle,item);
   else api.paint(toggle,keep);
   paintScheduleEngines(keep);
+  paintScheduleEffort();
 }
 function syncScheduleJobTiming(){
   const f=$('#scheduleJobForm');if(!f)return;
@@ -332,6 +347,7 @@ function fillScheduleJobForm(job={}){
   f.elements.jobKind.value=job.id?scheduleJobKind(job):scheduleEditorKind;
   f.elements.assistantPrompt.value=job.assistantPrompt||'';
   f.elements.assistantModel.value=job.assistantModel||scheduleModelAPI()?.DEFAULT||'default';
+  paintScheduleEffort(job.assistantEffort||'');
   fillScheduleSessionMode(f,job);
   f.elements.useIssueWorkflow.checked=job.id?!!job.useIssueWorkflow:true;
   f.elements.maxDispatch.value=job.maxDispatch||'';
@@ -611,6 +627,7 @@ async function saveScheduleJob(e){
     cron:cron?f.elements.cron.value.trim():'',
     assistantPrompt:assistant?f.elements.assistantPrompt.value.trim():'',
     assistantModel:assistant?f.elements.assistantModel.value.trim():'',
+    assistantEffort:assistant?(f.elements.assistantEffort?.value||''):'',
     sessionMode:assistant&&f.elements.sessionMode?f.elements.sessionMode.value:'',
     sessionKeep:assistant&&f.elements.sessionKeep?Number(f.elements.sessionKeep.value)||50:0,
     enabled:assistant?scheduleSavedEnabled(f.elements.id.value):f.elements.enabled.checked

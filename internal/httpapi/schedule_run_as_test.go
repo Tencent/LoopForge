@@ -245,6 +245,7 @@ func TestScheduleStopAllowedChecksTheStoredJob(t *testing.T) {
 		"moved meanwhile":     {edit(func(j *domain.ScheduleJob) { j.ProjectID = "b" }), false},
 		"prompt edited":       {edit(func(j *domain.ScheduleJob) { j.AssistantPrompt = "p2" }), false},
 		"model edited":        {edit(func(j *domain.ScheduleJob) { j.AssistantModel = "m2" }), false},
+		"effort edited":       {edit(func(j *domain.ScheduleJob) { j.AssistantEffort = "high" }), false},
 		"turned into trigger": {edit(func(j *domain.ScheduleJob) { j.SkipDispatch = false }), false},
 		"parameters edited":   {edit(func(j *domain.ScheduleJob) { j.ParameterValues = map[string]string{"k": "v"} }), false},
 	} {

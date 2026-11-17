@@ -81,6 +81,8 @@ Object.assign(window.LF_I18N_EN,{
 Object.assign(window.LF_I18N_EN,{
 "CLI 与模型":"CLI and model",
 "执行 CLI":"Execution CLI",
+"默认强度":"Default effort",
+"关闭 none":"Off none","最低 minimal":"Minimal minimal","低 low":"Low low","中 medium":"Medium medium","高 high":"High high","超高 xhigh":"Extra high xhigh","最大 max":"Maximum max","极致 ultra":"Ultra ultra","极致 ultracode":"Ultra ultracode",
 "（未配置 Key）":" (no key configured)",
 "与 AI 助手相同的 CLI 与模型，到点用项目 Owner 在所选 CLI 上配置的 Key 执行。":"Same CLI and model as the AI assistant. At the scheduled time it runs with the project owner's key for the selected CLI.",
 "按计划用项目 Owner 在所选 CLI 上的 Key 执行提示词，使用与主页 AI 对话相同的完全权限，可调用 SOP、平台工具、工作区及浏览器。":"Runs the prompt on schedule with the project owner's key for the selected CLI, using the same full access as the home AI chat, including SOPs, platform tools, the workspace and the browser.",

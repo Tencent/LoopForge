@@ -84,6 +84,7 @@ func (h *assistantHandlers) runScheduleJobPromptReporting(job domain.ScheduleJob
 		Name:          job.Name,
 		Prompt:        prompt,
 		Model:         model,
+		Effort:        strings.TrimSpace(job.AssistantEffort),
 		ProjectID:     job.ProjectID,
 		Notifications: domain.CloneNotificationBindings(job.Notifications),
 	}

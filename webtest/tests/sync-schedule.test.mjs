@@ -595,3 +595,71 @@ test('AI schedule model picker includes account login CLI models and keeps a sav
   assert.equal(form.elements.assistantModel.value, 'claude-code:opus');
   assert.match(doc.querySelector('#scheduleModelHint').textContent, /默认执行机器的账号登录.*离线时改用个人 API Key.*Key 缺失或不可用时任务失败.*平台共享 Key/);
 });
+
+test('AI schedule reasoning effort follows the model and survives saving and reopening', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  app.router.get('/api/assistant/models', {
+    default: 'glm-test',
+    models: [
+      { id: 'glm-test', name: 'GLM Test', efforts: ['low', 'high', 'max'] },
+      { id: 'cursor:opus', name: 'Opus', engine: 'cursor', efforts: ['none', 'medium', 'ultra'] },
+      { id: 'kimi:k3', name: 'Kimi', engine: 'kimi', efforts: [] },
+    ],
+    engines: [{ id: 'codebuddy', name: 'CodeBuddy' }, { id: 'cursor', name: 'Cursor' }, { id: 'kimi', name: 'Kimi' }],
+  });
+  app.router.put('/api/schedule-jobs', call => call.body);
+  app.evaluate(`fillScheduleJobForm({id:'effort-job',name:'Inspect',skipDispatch:true,assistantPrompt:'Inspect',assistantModel:'cursor:opus',assistantEffort:'ultra'})`);
+  await app.evaluate('loadScheduleModels()');
+  const form = app.document.querySelector('#scheduleJobForm');
+  const effort = form.elements.assistantEffort;
+  assert.ok(effort, 'AI schedules must offer a reasoning effort field');
+  assert.equal(effort.hidden, false);
+  assert.deepEqual([...effort.options].map(option => option.value), ['', 'none', 'medium', 'ultra']);
+  assert.equal(effort.value, 'ultra', 'loading the catalog must preserve the saved effort');
+
+  effort.value = 'none';
+  effort.dispatchEvent(new app.window.Event('change'));
+  form.dispatchEvent(new app.window.Event('submit', { bubbles: true, cancelable: true }));
+  await settle(4);
+  const saved = app.router.calls.find(call => call.method === 'PUT' && call.path === '/api/schedule-jobs').body;
+  assert.equal(saved.assistantEffort, 'none', 'explicit none differs from the default');
+  app.evaluate(`fillScheduleJobForm(${JSON.stringify(saved)})`);
+  assert.equal(effort.value, 'none');
+
+  const engine = app.document.querySelector('#scheduleEngine');
+  engine.value = 'codebuddy';
+  engine.dispatchEvent(new app.window.Event('change'));
+  assert.deepEqual([...effort.options].map(option => option.value), ['', 'low', 'high', 'max']);
+  assert.equal(effort.value, '', 'an unsupported effort resets to the default');
+  effort.value = 'high';
+  effort.dispatchEvent(new app.window.Event('change'));
+  form.dispatchEvent(new app.window.Event('submit', { bubbles: true, cancelable: true }));
+  await settle(4);
+  const saves = () => app.router.calls.filter(call => call.method === 'PUT' && call.path === '/api/schedule-jobs');
+  assert.equal(saves().at(-1).body.assistantEffort, 'high');
+
+  engine.value = 'kimi';
+  engine.dispatchEvent(new app.window.Event('change'));
+  assert.equal(effort.hidden, true);
+  assert.equal(effort.value, '');
+  form.dispatchEvent(new app.window.Event('submit', { bubbles: true, cancelable: true }));
+  await settle(4);
+  assert.equal(saves().at(-1).body.assistantEffort || '', '', 'a CLI without efforts must not send a stale choice');
+});
+
+test('AI schedule editing preserves effort when the saved model is unavailable in the viewer catalog', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  app.router.put('/api/schedule-jobs', call => call.body);
+  app.evaluate(`fillScheduleJobForm({id:'owner-job',name:'Inspect',skipDispatch:true,assistantPrompt:'Inspect',assistantModel:'cursor:owner-model',assistantEffort:'high'})`);
+  await app.evaluate('loadScheduleModels()');
+  const form = app.document.querySelector('#scheduleJobForm');
+  assert.equal(form.elements.assistantEffort?.value, 'high');
+  form.dispatchEvent(new app.window.Event('submit', { bubbles: true, cancelable: true }));
+  await settle(4);
+  const saved = app.router.calls.find(call => call.method === 'PUT' && call.path === '/api/schedule-jobs');
+  assert.equal(saved.body.assistantEffort, 'high');
+  app.evaluate('fillScheduleJobForm({})');
+  assert.equal(form.elements.assistantEffort.value, '', 'a new task must not inherit the previous task effort');
+});
