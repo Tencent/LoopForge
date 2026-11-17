@@ -10,6 +10,27 @@ const modes = [
   { id: "auto", icon: "priority-bolt", label: "完全权限", tone: "danger", detail: "工作区文件和命令自动执行；平台及外部操作使用当前账号权限直接执行。" },
 ];
 
+// The approval mode is a personal preference: new conversations and reloads
+// keep the last pick instead of going back to "请求批准".
+const APPROVAL_KEY = "loopforge.assistant.approvalMode";
+const knownMode = (value) => modes.some((mode) => mode.id === value);
+export function storedApprovalMode() {
+  try {
+    const value = localStorage.getItem(APPROVAL_KEY);
+    return knownMode(value) ? value : "confirm";
+  } catch {
+    return "confirm";
+  }
+}
+export function rememberApprovalMode(value) {
+  if (!knownMode(value)) return;
+  try {
+    localStorage.setItem(APPROVAL_KEY, value);
+  } catch {
+    // Without storage the pick still applies to this page.
+  }
+}
+
 // `glyph` is a rendered brand mark. Options that only set `icon` keep the Harness icon.
 export default function PermissionPicker({ value, onSelect, open, onOpenChange, label = "操作确认方式", icon, options = modes }) {
   const trigger = useRef(null);

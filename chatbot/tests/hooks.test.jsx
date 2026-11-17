@@ -127,6 +127,55 @@ describe("conversation hooks", () => {
     }
   });
 
+  test("remembers each CLI's model across new conversations and reloads", async () => {
+    localStorage.removeItem("loopforge.assistant.executor");
+    const original = apiMock.getMockImplementation();
+    apiMock.mockImplementation(async (path, options) => {
+      if (path === "/api/assistant/models")
+        return { default: "default", models: [{ id: "default", name: "CLI 默认模型" }, { id: "claude-opus-5.5", name: "Opus" }] };
+      return original(path, options);
+    });
+    try {
+      const first = renderHook(() => useChat());
+      await waitFor(() => expect(first.result.current.ready).toBe(true));
+      // Nothing remembered yet: the first listed model.
+      expect(first.result.current.model).toBe("default");
+      act(() => { first.result.current.setModel("claude-opus-5.5"); });
+      expect(localStorage.getItem("loopforge.assistant.model.codebuddy")).toBe("claude-opus-5.5");
+      // A new conversation no longer goes back to the default model.
+      act(() => first.result.current.newChat());
+      expect(first.result.current.model).toBe("claude-opus-5.5");
+      await act(() => first.result.current.send({ text: "你好" }));
+      expect(writeMock).toHaveBeenCalledWith(
+        "/api/assistant/generations",
+        expect.objectContaining({ model: "claude-opus-5.5" }),
+      );
+      // Another CLI keeps its own pick and does not overwrite CodeBuddy's.
+      act(() => first.result.current.newChat());
+      act(() => first.result.current.setExecutor("codex"));
+      await waitFor(() => expect(first.result.current.models.map((m) => m.id)).toEqual(["default", "gpt-5"]));
+      act(() => { first.result.current.setModel("gpt-5"); });
+      act(() => first.result.current.setExecutor("codebuddy"));
+      expect(first.result.current.model).toBe("claude-opus-5.5");
+      act(() => first.result.current.setExecutor("codex"));
+      expect(first.result.current.model).toBe("gpt-5");
+      act(() => first.result.current.setExecutor("codebuddy"));
+      first.unmount();
+      // Reloading the home page starts on the remembered model too.
+      history.replaceState({}, "", "/");
+      const reloaded = renderHook(() => useChat());
+      await waitFor(() => expect(reloaded.result.current.ready).toBe(true));
+      expect(reloaded.result.current.model).toBe("claude-opus-5.5");
+      // A remembered model that is no longer offered falls back to the list.
+      localStorage.setItem("loopforge.assistant.model.codebuddy", "retired-model");
+      act(() => reloaded.result.current.newChat());
+      expect(reloaded.result.current.model).toBe("default");
+    } finally {
+      apiMock.mockImplementation(original);
+      localStorage.removeItem("loopforge.assistant.executor");
+    }
+  });
+
   test("persists the draft sandbox selection when creating a conversation", async () => {
     history.replaceState({}, "", "/?projectId=p1");
     const { result } = renderHook(() => useChat());
