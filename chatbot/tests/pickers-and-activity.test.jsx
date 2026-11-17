@@ -91,6 +91,15 @@ describe("pickers and activity", () => {
     expect(storedApprovalMode()).toBe("confirm");
   });
 
+  test("never remembers full permission across reloads", () => {
+    rememberApprovalMode("assisted");
+    rememberApprovalMode("auto");
+    expect(storedApprovalMode()).toBe("assisted");
+    // A value stored by an older build does not come back either.
+    localStorage.setItem("loopforge.assistant.approvalMode", "auto");
+    expect(storedApprovalMode()).toBe("confirm");
+  });
+
   test("expands detailed activity including failures", async () => {
     const user = userEvent.setup();
     const start = "2026-01-01T00:00:00Z";

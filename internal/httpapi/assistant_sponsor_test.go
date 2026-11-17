@@ -339,3 +339,20 @@ func TestTurnCatalogRefreshesBeforeFallingBackToTheDefault(t *testing.T) {
 		t.Fatalf("a listed or empty model must not run discovery again, got %d", calls)
 	}
 }
+
+// The chat picker starts a person with nothing remembered on the first listed
+// model, so every chat catalog must list its default first.
+func TestChatCatalogsListTheDefaultFirst(t *testing.T) {
+	t.Setenv("AGENTFLOW_ASSISTANT_MODEL", "glm-5.3-flash-ioa")
+	t.Setenv("AGENTFLOW_ASSISTANT_MODELS", "claude-opus-5.5,glm-5.3-flash-ioa")
+	ctx := context.Background()
+	shared := []string{"deepseek-v4.1-flash", "glm-5.3-flash-ioa"}
+	for name, catalog := range map[string]assistantModelCatalog{
+		"own key":    assistantChatCatalog(ctx, "", nil),
+		"shared key": restrictAssistantCatalog(assistantChatCatalog(ctx, "", shared), shared),
+	} {
+		if len(catalog.Models) == 0 || catalog.Models[0].ID != catalog.Default {
+			t.Fatalf("%s: default %q is not listed first in %+v", name, catalog.Default, catalog.Models)
+		}
+	}
+}

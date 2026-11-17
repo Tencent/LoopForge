@@ -11,19 +11,21 @@ const modes = [
 ];
 
 // The approval mode is a personal preference: new conversations and reloads
-// keep the last pick instead of going back to "请求批准".
+// keep the last pick instead of going back to "请求批准". 完全权限 is never
+// stored: it lets platform and external writes run unreviewed, so it lasts
+// for this page only and a reload returns to the last reviewed mode.
 const APPROVAL_KEY = "loopforge.assistant.approvalMode";
-const knownMode = (value) => modes.some((mode) => mode.id === value);
+const rememberedMode = (value) => value === "confirm" || value === "assisted";
 export function storedApprovalMode() {
   try {
     const value = localStorage.getItem(APPROVAL_KEY);
-    return knownMode(value) ? value : "confirm";
+    return rememberedMode(value) ? value : "confirm";
   } catch {
     return "confirm";
   }
 }
 export function rememberApprovalMode(value) {
-  if (!knownMode(value)) return;
+  if (!rememberedMode(value)) return;
   try {
     localStorage.setItem(APPROVAL_KEY, value);
   } catch {

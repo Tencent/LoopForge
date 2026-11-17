@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"log"
 	"strings"
 
 	"agentflow/internal/domain"
@@ -87,7 +88,13 @@ func (h *assistantHandlers) turnCatalog(ctx context.Context, user domain.User, m
 		return catalog
 	}
 	refreshCLIModels(ctx, user.CodeBuddyInternetEnvironment, user.CodeBuddyAPIKey)
-	return h.chatCatalog(ctx, user)
+	catalog = h.chatCatalog(ctx, user)
+	if !assistantCatalogLists(catalog, model) {
+		// The list is fresh (or discovery failed) and still lacks the model:
+		// the turn falls back to the default, so leave a trace of why.
+		log.Printf("assistant model %q is not offered to user %d; the turn runs on %q", model, user.ID, catalog.Default)
+	}
+	return catalog
 }
 
 func assistantCatalogLists(catalog assistantModelCatalog, id string) bool {
