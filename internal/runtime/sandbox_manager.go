@@ -323,6 +323,15 @@ type managedSandbox struct {
 	credentialsMu sync.RWMutex
 }
 
+// Unwrap returns the underlying driver sandbox so wrappers remain transparent
+// to runtime helpers such as browser provisioning and conversation CLI setup.
+func (s *managedSandbox) Unwrap() Sandbox {
+	if s == nil {
+		return nil
+	}
+	return s.Sandbox
+}
+
 func (s *managedSandbox) Driver() string {
 	if value, ok := s.Sandbox.(interface{ Driver() string }); ok {
 		return value.Driver()

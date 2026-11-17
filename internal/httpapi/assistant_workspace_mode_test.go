@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -52,7 +53,7 @@ func TestWorkspaceCatalogAndCallRejectPlatformCapabilities(t *testing.T) {
 	g := &agentToolGateway{deps: h.deps}
 	list := g.handleRPC(withAgentToolToken(context.Background(), s.Token), s, agentToolRPCRequest{ID: 1, Method: "tools/list"})
 	data, _ := json.Marshal(list)
-	for _, name := range []string{"agents_save", "workflows_save", "submit_assistant_reply", "workbench_workspace_write", "workbench_workspace_command", "workbench_workspace_open"} {
+	for _, name := range []string{"agents_save", "workflows_save", "submit_assistant_reply", "workbench_workspace_write", "workbench_workspace_command", "workbench_workspace_open", "workbench_workspace_tree", "workbench_workspace_submit_mr", "workbench_github_pr_create", "workbench_attachment_read", "workbench_workspace_attach", "workbench_delivery_register"} {
 		if strings.Contains(string(data), `"name":"`+name+`"`) {
 			t.Fatalf("workspace leaked %s", name)
 		}
@@ -63,7 +64,7 @@ func TestWorkspaceCatalogAndCallRejectPlatformCapabilities(t *testing.T) {
 			t.Fatalf("legacy tool callable: %s", raw)
 		}
 	}
-	for _, name := range []string{"workbench_platform_mode", "workbench_workspace_submit_mr"} {
+	for _, name := range []string{"workbench_platform_mode", "workbench_publish_artifact"} {
 		if !strings.Contains(string(data), `"name":"`+name+`"`) {
 			t.Fatalf("missing integration: %s", name)
 		}
@@ -174,6 +175,134 @@ func TestWorkspaceNativeToolsRunWithoutReviewInEveryApprovalMode(t *testing.T) {
 	}
 }
 
+// Commands that write outside the sandbox follow the approval mode: auto runs
+// them, assisted asks the reviewer first, and confirm waits for the speaker.
+func TestWorkspaceExternalWritesFollowApprovalMode(t *testing.T) {
+	h, actor, _, _, conv := sharedWorkbenchFixture(t)
+	gateway := &agentToolGateway{deps: h.deps}
+	generation := domain.AssistantGeneration{ID: "external-generation", UserID: actor.ID, SessionID: conv.ID, ActorID: actor.ID, Status: "running"}
+	if err := h.repo.BeginAssistantGeneration(generation); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.WithValue(context.Background(), assistantControlScopeKey{}, assistantControlScope{GenerationID: generation.ID})
+	reviews := 0
+	verdict := assistantApprovalReview{Outcome: "allow", RiskLevel: "low"}
+	s := &AgentToolSession{Token: "external-phase", UserID: actor.ID, User: actor, ChatOwnerID: actor.ID, ChatSessionID: conv.ID, RuntimeMode: domain.AssistantModeWorkspace, ctx: ctx,
+		approvalReviewer: func(context.Context, string, string, map[string]any) assistantApprovalReview {
+			reviews++
+			return verdict
+		},
+	}
+	approve := func(id, command string) nativeToolApprovalResult {
+		raw, _ := json.Marshal(map[string]any{"id": id, "name": "Bash", "input": map[string]any{"command": command}})
+		return gateway.approveNativeTool(ctx, s, raw)
+	}
+
+	s.ExecMode = assistantExecModeForApproval(AssistantApprovalAuto)
+	if result := approve("auto", "git push origin fix"); !result.Allow || reviews != 0 {
+		t.Fatalf("auto: %+v reviews=%d", result, reviews)
+	}
+
+	s.ExecMode = assistantExecModeForApproval(AssistantApprovalAssisted)
+	if result := approve("assisted", "gh pr create --fill"); !result.Allow || reviews != 1 {
+		t.Fatalf("assisted allow: %+v reviews=%d", result, reviews)
+	}
+	verdict = assistantApprovalReview{Outcome: "deny", RiskLevel: "high", Rationale: "未授权合并"}
+	if result := approve("assisted-refused", "gh pr merge 3"); result.Allow || result.Pending || !strings.Contains(result.Reason, "未授权合并") {
+		t.Fatalf("a refused review must deny, not ask the speaker: %+v", result)
+	}
+	verdict = assistantApprovalReview{Outcome: "unavailable", Rationale: "自动审批已取消或超时，请手动确认后执行"}
+	if result := approve("assisted-unavailable", "git push origin fix"); result.Allow || result.Pending || strings.Contains(result.Reason, "手动确认") {
+		t.Fatalf("an unavailable review must deny without a manual step: %+v", result)
+	}
+	if result := approve("assisted-refused", "gh pr merge 3"); result.Allow || result.Pending || reviews != 3 {
+		t.Fatalf("a repeated poll must keep the verdict without another review: %+v reviews=%d", result, reviews)
+	}
+	if result := approve("assisted-refused", "gh pr merge 4"); result.Allow || !strings.Contains(result.Reason, "其他操作") {
+		t.Fatalf("a reused invocation ID must not review different input: %+v", result)
+	}
+	if items := h.repo.PendingNativeApprovals(actor.ID, conv.ID); len(items) != 0 {
+		t.Fatalf("assisted mode created approval cards: %+v", items)
+	}
+
+	s.ExecMode = assistantExecModeForApproval(AssistantApprovalConfirm)
+	if result := approve("confirm", "git -C web push -u origin fix"); result.Allow || !result.Pending {
+		t.Fatalf("confirm must wait: %+v", result)
+	}
+	if result := approve("confirm", "git -C web push -u origin fix"); !result.Pending {
+		t.Fatalf("a poll must keep waiting: %+v", result)
+	}
+	pending := h.repo.PendingNativeApprovals(actor.ID, conv.ID)
+	if len(pending) != 1 || pending[0].Summary != "git push" || pending[0].CreatedAt.IsZero() {
+		t.Fatalf("only the confirm-mode command waits for the speaker: %+v", pending)
+	}
+	if err := h.repo.DecideNativeApproval(actor.ID, actor.ID, conv.ID, pending[0].ID, "allow"); err != nil {
+		t.Fatal(err)
+	}
+	if result := approve("confirm", "git -C web push -u origin fix"); !result.Allow {
+		t.Fatalf("approved command: %+v", result)
+	}
+	if result := approve("confirm-denied", "curl -X POST https://api.github.com/repos/a/b/issues"); !result.Pending {
+		t.Fatalf("HTTP write must wait: %+v", result)
+	}
+	denied := h.repo.PendingNativeApprovals(actor.ID, conv.ID)
+	if err := h.repo.DecideNativeApproval(actor.ID, actor.ID, conv.ID, denied[len(denied)-1].ID, "deny"); err != nil {
+		t.Fatal(err)
+	}
+	if result := approve("confirm-denied", "curl -X POST https://api.github.com/repos/a/b/issues"); result.Allow || result.Pending || !strings.Contains(result.Reason, "拒绝") {
+		t.Fatalf("denied command: %+v", result)
+	}
+	if result := approve("local", "docker rm -f old-db && git commit -am fix && curl -s https://example.com"); !result.Allow || result.Pending {
+		t.Fatalf("sandbox-internal commands need no approval: %+v", result)
+	}
+}
+
+func TestNativeApprovalCardInputStaysValidJSONWhenRedacted(t *testing.T) {
+	command := `curl -sS -X POST -H "Authorization: token $GH_TOKEN" -H 'Accept: application/vnd.github+json' -d '{"head":"fix","base":"main"}' https://api.github.com/repos/a/b/pulls`
+	raw, _ := json.Marshal(map[string]any{"command": command, "timeout": 120000})
+	if json.Valid([]byte(redactAgentToolResult(string(raw), domain.User{}))) {
+		t.Fatal("fixture no longer breaks text redaction; keep it representative")
+	}
+	got := redactNativeApprovalInput(raw, domain.User{})
+	var input struct {
+		Command string      `json:"command"`
+		Timeout json.Number `json:"timeout"`
+	}
+	if err := json.Unmarshal(got, &input); err != nil {
+		t.Fatalf("card input must stay JSON: %v %s", err, got)
+	}
+	if strings.Contains(input.Command, "$GH_TOKEN") || !strings.Contains(input.Command, `"Authorization: [redacted]"`) || !strings.Contains(input.Command, "api.github.com/repos/a/b/pulls") || input.Timeout != "120000" {
+		t.Fatalf("redacted input = %s", got)
+	}
+	if got := redactNativeApprovalInput(json.RawMessage(`{"command":`), domain.User{}); string(got) != `"[redacted]"` {
+		t.Fatalf("undecodable input must be hidden: %s", got)
+	}
+}
+
+func TestNativeExternalWriteClassifier(t *testing.T) {
+	for input, want := range map[string]string{
+		`{"command":"git push"}`: "git push",
+		`{"command":"cd web && git -c core.x=1 push --force origin fix"}`: "git push",
+		`{"command":["bash","-lc","gh pr create --title x"]}`:             "GitHub CLI 写操作",
+		`{"cmd":"gh api repos/a/b/pulls -f title=x"}`:                     "GitHub API 写请求",
+		`{"command":"gh api -X DELETE repos/a/b/git/refs/heads/x"}`:       "GitHub API 写请求",
+		`{"command":"curl -sS --data '{}' https://api.example.com"}`:      "HTTP 写请求",
+		`{"command":"npm publish --access public"}`:                       "发布软件包",
+		`{"command":"docker push ghcr.io/a/b:1"}`:                         "推送镜像",
+		`{"command":"kubectl apply -f deploy.yaml"}`:                      "集群或基础设施变更",
+		`{"command":"git status && git log --oneline"}`:                   "",
+		`{"command":"gh pr view 3 && gh api repos/a/b/pulls"}`:            "",
+		`{"command":"curl -s https://example.com"}`:                       "",
+		`{"command":"docker run --rm -v $PWD:/m alpine ls /m"}`:           "",
+		`{"path":"notes.md","content":"git push origin main"}`:            "",
+	} {
+		got, ok := nativeExternalWrite(json.RawMessage(input))
+		if got != want || ok != (want != "") {
+			t.Errorf("%s = %q %v, want %q", input, got, ok, want)
+		}
+	}
+}
+
 func TestRuntimeModeHandoffPublishesToLiveGeneration(t *testing.T) {
 	recorder := newAssistantGenerationRecorder(domain.AssistantGeneration{ID: "mode-stream", Status: "running"})
 	defer recorder.close()
@@ -240,54 +369,66 @@ func TestNativeApprovalRecognizesCLIGatewayAliases(t *testing.T) {
 	}
 }
 
-func TestRollingDeploymentSettlesOnlyLiveWorkspaceNativeRequests(t *testing.T) {
-	for _, state := range []string{"workspace", "platform", "cancelled"} {
-		t.Run(state, func(t *testing.T) {
-			h, actor, _, _, session := sharedWorkbenchFixture(t)
-			g := domain.AssistantGeneration{ID: "old-worker", SessionID: session.ID, UserID: actor.ID, ActorID: actor.ID, Status: "running"}
-			if err := h.repo.BeginAssistantGeneration(g); err != nil {
-				t.Fatal(err)
+// A pending external write waits for the speaker: reading the generation from
+// an instance that does not run it must not decide it.
+// A review slower than one hook request answers pending; the next poll of
+// the same invocation reads the verdict instead of reviewing again.
+func TestAssistedNativeReviewOutlivesOneHookRequest(t *testing.T) {
+	h, actor, _, _, conv := sharedWorkbenchFixture(t)
+	gateway := &agentToolGateway{deps: h.deps}
+	generation := domain.AssistantGeneration{ID: "slow-review", UserID: actor.ID, SessionID: conv.ID, ActorID: actor.ID, Status: "running"}
+	if err := h.repo.BeginAssistantGeneration(generation); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.WithValue(context.Background(), assistantControlScopeKey{}, assistantControlScope{GenerationID: generation.ID})
+	release := make(chan struct{})
+	var reviews atomic.Int32
+	s := &AgentToolSession{Token: "slow-phase", UserID: actor.ID, User: actor, ChatOwnerID: actor.ID, ChatSessionID: conv.ID, RuntimeMode: domain.AssistantModeWorkspace, ctx: ctx,
+		ExecMode: assistantExecModeForApproval(AssistantApprovalAssisted),
+		approvalReviewer: func(reviewCtx context.Context, _, _ string, _ map[string]any) assistantApprovalReview {
+			reviews.Add(1)
+			select {
+			case <-release:
+			case <-reviewCtx.Done():
+				return assistantApprovalReview{Outcome: "unavailable"}
 			}
-			mode := domain.AssistantModeWorkspace
-			if state == "platform" {
-				mode = domain.AssistantModePlatform
-			}
-			if err := h.repo.SetAssistantRuntimeMode(actor.ID, session.ID, session.ProjectID, mode, g.ID); err != nil {
-				t.Fatal(err)
-			}
-			for _, decision := range []string{"pending", "deny"} {
-				if err := h.repo.CreateNativeApproval(actor.ID, session.ID, "old-phase", domain.AssistantNativeApproval{ID: decision, GenerationID: g.ID, ActorID: actor.ID, Tool: "Bash", Input: json.RawMessage(`{"command":"pwd"}`)}); err != nil {
-					t.Fatal(err)
-				}
-				if decision == "deny" {
-					if err := h.repo.DecideNativeApproval(actor.ID, actor.ID, session.ID, decision, "deny"); err != nil {
-						t.Fatal(err)
-					}
-				}
-			}
-			if state == "cancelled" {
-				if err := h.repo.CancelAssistantGeneration(actor.ID, session.ID, g.ID); err != nil {
-					t.Fatal(err)
-				}
-			}
-			if _, ok := h.currentGeneration(actor.ID, session.ID); !ok {
-				t.Fatal("generation missing")
-			}
-			if state == "cancelled" {
-				return
-			}
-			item, ok := h.repo.NativeApproval(actor.ID, session.ID, "pending")
-			want := "pending"
-			if state == "workspace" {
-				want = "allow"
-			}
-			if !ok || item.Decision != want {
-				t.Fatalf("legacy %s request: %+v", state, item)
-			}
-			denied, ok := h.repo.NativeApproval(actor.ID, session.ID, "deny")
-			if !ok || denied.Decision != "deny" {
-				t.Fatal("explicit old refusal changed")
-			}
-		})
+			return assistantApprovalReview{Outcome: "allow", RiskLevel: "low", Rationale: "用户要求推送"}
+		},
+	}
+	raw := json.RawMessage(`{"id":"push","name":"Bash","input":{"command":"git push origin fix"}}`)
+	poll, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	if result := gateway.approveNativeTool(poll, s, raw); result.Allow || !result.Pending {
+		t.Fatalf("a running review must answer pending: %+v", result)
+	}
+	close(release)
+	if result := gateway.approveNativeTool(ctx, s, raw); !result.Allow || result.Reason != "用户要求推送" {
+		t.Fatalf("the next poll must read the verdict: %+v", result)
+	}
+	if n := reviews.Load(); n != 1 {
+		t.Fatalf("reviews = %d", n)
+	}
+	if items := h.repo.PendingNativeApprovals(actor.ID, conv.ID); len(items) != 0 {
+		t.Fatalf("assisted mode created approval cards: %+v", items)
+	}
+}
+
+func TestPendingNativeApprovalWaitsForTheSpeaker(t *testing.T) {
+	h, actor, _, _, session := sharedWorkbenchFixture(t)
+	g := domain.AssistantGeneration{ID: "other-worker", SessionID: session.ID, UserID: actor.ID, ActorID: actor.ID, Status: "running"}
+	if err := h.repo.BeginAssistantGeneration(g); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.repo.SetAssistantRuntimeMode(actor.ID, session.ID, session.ProjectID, domain.AssistantModeWorkspace, g.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.repo.CreateNativeApproval(actor.ID, session.ID, "phase", domain.AssistantNativeApproval{ID: "push", GenerationID: g.ID, ActorID: actor.ID, Tool: "Bash", Input: json.RawMessage(`{"command":"git push"}`)}); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := h.currentGeneration(actor.ID, session.ID); !ok {
+		t.Fatal("generation missing")
+	}
+	if item, ok := h.repo.NativeApproval(actor.ID, session.ID, "push"); !ok || item.Decision != "pending" {
+		t.Fatalf("pending approval decided without the speaker: %+v", item)
 	}
 }

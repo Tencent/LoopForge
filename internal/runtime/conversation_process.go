@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	goruntime "runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -472,9 +473,18 @@ func (p *ConversationProcessPool) start(ctx context.Context, root, workspace str
 		}
 	}
 	if spec != nil {
-		if spec.Profile.Driver != "docker" {
-			return ConversationProcessResult{}, fmt.Errorf("对话工作区仅支持 Docker")
+		profile := spec.Profile
+		if profile.Driver == domain.SandboxDriverNative {
+			if profile.Driver, err = domain.ResolveSandboxDriver(profile.Driver, goruntime.GOOS); err != nil {
+				return ConversationProcessResult{}, err
+			}
 		}
+		if profile.Driver != domain.SandboxDriverDocker && profile.Driver != domain.SandboxDriverBwrap && profile.Driver != domain.SandboxDriverSeatbelt {
+			return ConversationProcessResult{}, fmt.Errorf("对话工作区只支持 Docker 或 native 沙箱")
+		}
+		resolved := *spec
+		resolved.Profile = profile
+		spec = &resolved
 		if len(factories) > 0 && factories[0] != nil {
 			sb, release, err = factories[0](procCtx, root)
 		} else {
@@ -511,12 +521,22 @@ func (p *ConversationProcessPool) start(ctx context.Context, root, workspace str
 	command = command.WithPrivateHomeDir(filepath.Join(root, "home"))
 	command.AgentCLI.SystemPromptFile = conversationRemap(command.AgentCLI.SystemPromptFile, req.SourceRoot, root)
 	command.WorkingDir = filepath.Join(root, "ws")
+	if spec != nil && spec.Profile.Driver == domain.SandboxDriverSeatbelt {
+		// macOS seatbelt has no mount namespace to map <root>/ws onto the run
+		// workspace, so point the sandboxed CLI directly at the run workspace.
+		switch {
+		case sb != nil && strings.TrimSpace(sb.Workspace()) != "":
+			command.WorkingDir = sb.Workspace()
+		case strings.TrimSpace(workspace) != "":
+			command.WorkingDir = workspace
+		}
+	}
 	command.OwnProcessGroup = true
 	if spec != nil {
 		command.Argv[0] = conversationBinary(command.Provider)
 	}
 	if forward != nil && req.Token != "" {
-		url, closeRelay, err := startConversationRelay(procCtx, req.Token, forward, spec != nil)
+		url, closeRelay, err := startConversationRelay(procCtx, req.Token, forward, spec != nil && spec.Profile.Driver == domain.SandboxDriverDocker)
 		if err != nil {
 			return ConversationProcessResult{}, err
 		}
@@ -533,7 +553,7 @@ func (p *ConversationProcessPool) start(ctx context.Context, root, workspace str
 	}
 	// Some CLIs continue after a hook interpreter cannot be spawned. Both
 	// the platform guard and the native approval hook must fail closed.
-	if spec == nil && (command.Provider == AgentCLIKimi || command.Provider == "codex" || command.Provider == AgentCLICursor || command.Provider == AgentCLIAntigravity || command.Provider == AgentCLIZCode) {
+	if (spec == nil || spec.Profile.Driver != domain.SandboxDriverDocker) && (command.Provider == AgentCLIKimi || command.Provider == "codex" || command.Provider == AgentCLICursor || command.Provider == AgentCLIAntigravity || command.Provider == AgentCLIZCode) {
 		check := exec.CommandContext(procCtx, "python3", "-c", "import json,urllib.request")
 		if err = check.Run(); err != nil {
 			return ConversationProcessResult{}, fmt.Errorf("原生工具审批需要 Python3：%w", err)

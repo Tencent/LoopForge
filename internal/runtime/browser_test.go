@@ -58,9 +58,23 @@ func TestBrowserWantedForExecutor(t *testing.T) {
 	}
 }
 
+type testSandboxWrapper struct {
+	Sandbox
+}
+
+func (w testSandboxWrapper) Unwrap() Sandbox { return w.Sandbox }
+
 func TestEnsureSandboxBrowserUnwrapsAndSkipsUnknownSandboxes(t *testing.T) {
 	if _, ok := unwrapSandbox(WithSandboxCredentials(&dockerSandbox{id: "x"}, RunCredentials{})).(*dockerSandbox); !ok {
 		t.Fatal("managed sandbox must unwrap to its docker sandbox")
+	}
+	nested := testSandboxWrapper{Sandbox: WithSandboxCredentials(&dockerSandbox{id: "nested"}, RunCredentials{})}
+	if _, ok := unwrapSandbox(nested).(*dockerSandbox); !ok {
+		t.Fatal("nested Unwrap wrapper must unwrap to its docker sandbox")
+	}
+	var typedNil *managedSandbox
+	if got := unwrapSandbox(typedNil); got != nil {
+		t.Fatalf("typed nil managedSandbox unwrapped to %T, want nil", got)
 	}
 	sb := &capturingSandbox{workspace: t.TempDir()}
 	var events []domain.TelemetryEvent

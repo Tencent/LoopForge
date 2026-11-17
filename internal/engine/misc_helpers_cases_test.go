@@ -209,6 +209,9 @@ func TestObservationQueuesRunStateAndFlushLoopBranches(t *testing.T) {
 	if e.updateRunAt("missing", false, nil) {
 		t.Fatal("missing run update succeeded")
 	}
+	if updated, err := e.updateRunAtErr("missing", false, nil); updated || err != nil {
+		t.Fatalf("missing run update returned updated=%t, err=%v", updated, err)
+	}
 	if _, _, err := e.Subscribe("missing"); err == nil {
 		t.Fatal("missing subscription succeeded")
 	}

@@ -1049,12 +1049,7 @@ func (h *catalogHandlers) workflows(c *gin.Context) {
 					c.JSON(http.StatusConflict, map[string]string{"error": "通用模板为只读，请先复制到本项目再修改"})
 					return
 				}
-				if strings.TrimSpace(v.SandboxProfileID) == "" {
-					c.JSON(http.StatusBadRequest, map[string]string{"error": "workflow sandboxProfileId is required"})
-					return
-				}
-				if _, exists := h.repo.Sandbox(v.SandboxProfileID); !exists {
-					c.JSON(http.StatusBadRequest, map[string]string{"error": "sandbox profile not found"})
+				if _, ok := h.requireWorkflowSandbox(c, v); !ok {
 					return
 				}
 				v, err := domain.AttachPreviewBuild(v)
@@ -1064,11 +1059,7 @@ func (h *catalogHandlers) workflows(c *gin.Context) {
 				}
 				stored, err := h.repo.UpdateGenericWorkflow(v)
 				if err != nil {
-					if strings.Contains(err.Error(), "revision conflict") {
-						c.JSON(http.StatusConflict, map[string]string{"error": err.Error()})
-					} else {
-						respond(c, err)
-					}
+					respondWorkflowSaveError(c, err)
 					return
 				}
 				c.JSON(200, stored)
@@ -1083,13 +1074,8 @@ func (h *catalogHandlers) workflows(c *gin.Context) {
 				c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
 				return
 			}
-			if strings.TrimSpace(v.SandboxProfileID) == "" {
-				c.JSON(http.StatusBadRequest, map[string]string{"error": "workflow sandboxProfileId is required"})
-				return
-			}
-			profile, exists := h.repo.Sandbox(v.SandboxProfileID)
-			if !exists {
-				c.JSON(http.StatusBadRequest, map[string]string{"error": "sandbox profile not found"})
+			profile, ok := h.requireWorkflowSandbox(c, v)
+			if !ok {
 				return
 			}
 			if v.ProjectID != "" && profile.ProjectID != "" && profile.ProjectID != v.ProjectID && !profile.Shared {
@@ -1116,11 +1102,7 @@ func (h *catalogHandlers) workflows(c *gin.Context) {
 				}
 			}
 			if err := h.repo.PutWorkflow(v); err != nil {
-				if strings.Contains(err.Error(), "revision conflict") {
-					c.JSON(http.StatusConflict, map[string]string{"error": err.Error()})
-				} else {
-					respond(c, err)
-				}
+				respondWorkflowSaveError(c, err)
 				return
 			}
 			stored, _ := h.repo.Workflow(v.ID)
@@ -1128,6 +1110,31 @@ func (h *catalogHandlers) workflows(c *gin.Context) {
 		}
 	}
 }
+
+// requireWorkflowSandbox 校验 SOP 载荷指定的沙箱档案：标识必填且必须存在。
+// 校验失败时已写好 400 响应，调用方直接返回即可。
+func (h *catalogHandlers) requireWorkflowSandbox(c *gin.Context, wf domain.WorkflowDefinition) (domain.SandboxProfile, bool) {
+	if strings.TrimSpace(wf.SandboxProfileID) == "" {
+		c.JSON(http.StatusBadRequest, map[string]string{"error": "workflow sandboxProfileId is required"})
+		return domain.SandboxProfile{}, false
+	}
+	profile, exists := h.repo.Sandbox(wf.SandboxProfileID)
+	if !exists {
+		c.JSON(http.StatusBadRequest, map[string]string{"error": "sandbox profile not found"})
+		return domain.SandboxProfile{}, false
+	}
+	return profile, true
+}
+
+// respondWorkflowSaveError 统一 SOP 保存失败响应：版本冲突回 409，其余交给 respond。
+func respondWorkflowSaveError(c *gin.Context, err error) {
+	if strings.Contains(err.Error(), "revision conflict") {
+		c.JSON(http.StatusConflict, map[string]string{"error": err.Error()})
+		return
+	}
+	respond(c, err)
+}
+
 func (h *catalogHandlers) workflow(c *gin.Context) {
 	id := c.Param("id")
 	// Generic template ids are reserved: the built-in catalog always wins so a

@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -68,16 +69,34 @@ func removeDockerSandbox(ctx context.Context, container, image string) {
 	ctx, cancel := context.WithTimeout(ctx, dockerTeardownTimeout)
 	defer cancel()
 	if strings.TrimSpace(container) != "" {
-		_ = exec.CommandContext(ctx, "docker", "rm", "-f", dockerScriptContainerName(container)).Run()
-		removeDockerBrowser(ctx, container)
-		_ = exec.CommandContext(ctx, "docker", "rm", "-f", container).Run()
+		_ = removeDockerWorkspaceContainers(ctx, container)
 	}
 	if ephemeralDockerImage(image) {
 		_ = exec.CommandContext(ctx, "docker", "rmi", "-f", image).Run()
 	}
 }
 
-const dockerTeardownTimeout = 60 * time.Second
+const (
+	dockerTeardownTimeout    = 60 * time.Second
+	legacyDockerScriptSuffix = "-scripts"
+)
+
+func removeDockerWorkspaceContainers(ctx context.Context, container string) error {
+	// Older runs can still own a script companion. Reclaim it with the workspace.
+	if err := removeDockerContainer(ctx, container+legacyDockerScriptSuffix); err != nil {
+		return err
+	}
+	removeDockerBrowser(ctx, container)
+	return removeDockerContainer(ctx, container)
+}
+
+func removeDockerContainer(ctx context.Context, name string) error {
+	out, err := exec.CommandContext(ctx, "docker", "rm", "-f", name).CombinedOutput()
+	if err != nil && !dockerObjectGone(string(out), err) {
+		return fmt.Errorf("remove Docker container %s: %w: %s", name, err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
 
 // dockerAvailable keeps run teardown from spawning processes on control planes
 // that only ever use the local driver. Cleanup runs per finished run and on a
@@ -145,14 +164,6 @@ func (s *dockerSandbox) Exec(ctx context.Context, command CommandSpec, sink Even
 }
 
 func (s *dockerSandbox) execOnce(ctx context.Context, command CommandSpec, sink EventSink) (out string, err error) {
-	if trustedScriptCommand(command) {
-		return s.execScript(ctx, command, sink)
-	}
-	if maskedAgentCommand(command) {
-		if err := s.refreshAgentMasks(ctx); err != nil {
-			return "", err
-		}
-	}
 	args := []string{"exec"}
 	if command.Stdin != nil {
 		args = append(args, "-i")
@@ -167,6 +178,8 @@ func (s *dockerSandbox) execOnce(ctx context.Context, command CommandSpec, sink 
 	if cliPath != "" {
 		args = append(args, "-e", "AGENTFLOW_RUNTIME_CLI_PATH="+cliPath)
 	}
+	toolchain := s.toolchainExecEnv()
+	args = append(args, toolchain...)
 	args = append(args, s.name)
 	argv := dockerWorkspaceExecArgv(command.Argv)
 	if command.WorkingDir != "" {
@@ -180,7 +193,7 @@ cd "$1" && shift && exec "$@"`, "conversation", command.WorkingDir}, dropShellLo
 		defer func() {
 			stopCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
-			stopArgs := append([]string{"exec", s.name}, dockerConversationStopArgv(processFile)...)
+			stopArgs := append(append(append([]string{"exec"}, toolchain...), s.name), dockerConversationStopArgv(processFile)...)
 			if stopErr := exec.CommandContext(stopCtx, "docker", stopArgs...).Run(); stopErr != nil {
 				err = errors.Join(err, fmt.Errorf("停止 CLI 子进程失败: %w", stopErr))
 			}
@@ -214,7 +227,7 @@ if [ -n "${AGENTFLOW_RUNTIME_CLI_PATH:-}" ] && [ -d "$AGENTFLOW_RUNTIME_CLI_PATH
   PATH=$PATH:$AGENTFLOW_RUNTIME_CLI_PATH
   export PATH
 fi
-`
+` + toolchainPathSetup
 
 // onDemandCLIPath installs a CLI the published runtime image does not bundle
 // (Claude Code and the npm agent CLIs) for sandboxes of that image, and returns
@@ -265,14 +278,7 @@ func dropShellLoginFlag(argv []string) []string {
 }
 
 func (s *dockerSandbox) Recreate(ctx context.Context) error {
-	s.mu.Lock()
-	s.started = false
-	name := s.name
-	s.mu.Unlock()
-	_ = exec.CommandContext(ctx, "docker", "rm", "-f", dockerScriptContainerName(name)).Run()
-	removeDockerBrowser(ctx, name)
-	_ = exec.CommandContext(ctx, "docker", "rm", "-f", name).Run()
-	return s.ensureStarted(ctx)
+	return s.start(ctx, true)
 }
 
 // invalidate drops the cached started flag without docker rm. The next
@@ -366,10 +372,6 @@ func dockerInterruptExcerpt(out string) string {
 
 const dockerInterruptTailLines = 5
 
-func dockerContainerReusable(source string, sourceErr error, workspace string) bool {
-	return sourceErr == nil && dockerBindMatchesWorkspace(source, workspace)
-}
-
 func isDockerCwdUnsafe(out string, err error) bool {
 	if err == nil {
 		return false
@@ -378,12 +380,36 @@ func isDockerCwdUnsafe(out string, err error) bool {
 	return strings.Contains(msg, "outside of container mount") || strings.Contains(msg, "container breakout") || strings.Contains(msg, "oci runtime exec failed") || strings.Contains(msg, "exit status 126")
 }
 
-func dockerWorkspaceBindSource(ctx context.Context, name string) (string, error) {
-	out, err := exec.CommandContext(ctx, "docker", "inspect", "-f", `{{range .Mounts}}{{if eq .Destination "/workspace"}}{{.Source}}{{end}}{{end}}`, name).CombinedOutput()
-	if err != nil {
-		return "", fmt.Errorf("docker inspect mounts: %w: %s", err, out)
+type dockerWorkspaceMounts struct {
+	source      string
+	legacyMasks bool
+}
+
+func inspectDockerWorkspaceMounts(ctx context.Context, name string) (*dockerWorkspaceMounts, error) {
+	out, err := exec.CommandContext(ctx, "docker", "inspect", "--type", "container", "--format", `{{json .Mounts}}`, name).CombinedOutput()
+	if dockerObjectGone(string(out), err) {
+		return nil, nil
 	}
-	return strings.TrimSpace(string(out)), nil
+	if err != nil {
+		return nil, fmt.Errorf("docker inspect mounts: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	var mounts []struct {
+		Destination, Source string
+	}
+	if err := json.Unmarshal(out, &mounts); err != nil {
+		return nil, fmt.Errorf("decode Docker mounts for %s: %w", name, err)
+	}
+	workspace := &dockerWorkspaceMounts{}
+	for _, mount := range mounts {
+		switch mount.Destination {
+		case "/workspace":
+			workspace.source = mount.Source
+		case "/workspace/.agentflow/isolation/empty-dir", "/workspace/.agentflow/isolation/empty-file":
+			// Older containers keep these binds even when restarted.
+			workspace.legacyMasks = true
+		}
+	}
+	return workspace, nil
 }
 
 func dockerBindMatchesWorkspace(source, workspace string) bool {
@@ -644,27 +670,32 @@ func staleCachedDockerImages(listed []string, keep, inUse map[string]struct{}) [
 }
 
 func (s *dockerSandbox) ensureStarted(ctx context.Context) error {
+	return s.start(ctx, false)
+}
+
+func (s *dockerSandbox) start(ctx context.Context, recreate bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.started {
+	if s.started && !recreate {
 		return nil
 	}
+	s.started = false
 	name, workspace, p := s.name, s.workspace, s.profile
-	if err := exec.CommandContext(ctx, "docker", "inspect", name).Run(); err == nil {
-		source, sourceErr := dockerWorkspaceBindSource(ctx, name)
-		if dockerContainerReusable(source, sourceErr, workspace) {
-			if startErr := exec.CommandContext(ctx, "docker", "start", name).Run(); startErr != nil {
-				_ = exec.CommandContext(ctx, "docker", "rm", "-f", name).Run()
-			} else if readyErr := waitDockerWorkspaceReady(ctx, name); readyErr != nil {
-				_ = exec.CommandContext(ctx, "docker", "rm", "-f", name).Run()
-			} else {
-				s.started = true
-				return nil
+	mounts, err := inspectDockerWorkspaceMounts(ctx, name)
+	if err != nil {
+		return err
+	}
+	if mounts != nil {
+		if !dockerBindMatchesWorkspace(mounts.source, workspace) {
+			return fmt.Errorf("docker sandbox %s is bound to %s, not %s", name, mounts.source, workspace)
+		}
+		if !recreate && !mounts.legacyMasks {
+			if err := exec.CommandContext(ctx, "docker", "start", name).Run(); err == nil {
+				if err := waitDockerWorkspaceReady(ctx, name); err == nil {
+					s.started = true
+					return nil
+				}
 			}
-		} else if sourceErr != nil {
-			_ = exec.CommandContext(ctx, "docker", "rm", "-f", name).Run()
-		} else {
-			return fmt.Errorf("docker sandbox %s is bound to %s, not %s", name, source, workspace)
 		}
 	}
 	built, err := ensureDockerImage(ctx, workspace, s.dockerfile)
@@ -672,7 +703,6 @@ func (s *dockerSandbox) ensureStarted(ctx context.Context) error {
 		return err
 	}
 	image := built
-	s.builtImage = built
 	args := []string{"create", "--name", name, "--init", "--cap-drop=ALL", "--security-opt", "no-new-privileges", "-v", workspace + ":/workspace"}
 	// Native installs own private (0700) workspaces as the service user.
 	// A root image without DAC capabilities cannot access another UID's bind.
@@ -705,21 +735,12 @@ func (s *dockerSandbox) ensureStarted(ctx context.Context) error {
 		}
 		args = append(args, guards...)
 	}
-	var aliases []string
-	if root := s.requirements.ConversationRoot; root != "" {
-		aliases = append(aliases, filepath.Join(root, "ws"))
-	}
-	maskArgs, err := dockerAgentConfigMasks(workspace, aliases...)
-	if err != nil {
-		return err
-	}
-	args = append(args, maskArgs...)
 	stateArgs, err := dockerAgentStateMountRequirements(s.requirements)
 	if err != nil {
 		return err
 	}
 	args = append(args, stateArgs...)
-	if cliDir := RuntimeCLIDir(); cliDir != "" && image == isolatedRuntimeImage(s.dockerfile) {
+	if cliDir := RuntimeCLIDir(); cliDir != "" {
 		if err := os.MkdirAll(cliDir, 0o755); err != nil {
 			return fmt.Errorf("prepare runtime CLI directory: %w", err)
 		}
@@ -733,6 +754,14 @@ func (s *dockerSandbox) ensureStarted(ctx context.Context) error {
 	} else {
 		args = append(args, image, "sh", "-lc", "trap : TERM INT; sleep infinity & wait")
 	}
+	// Resolve the replacement image and mounts before retiring a workspace with
+	// legacy masks. Its new container ID invalidates old preparation receipts.
+	if mounts != nil || recreate {
+		if err := removeDockerWorkspaceContainers(ctx, name); err != nil {
+			return err
+		}
+	}
+	s.builtImage = built
 	if out, err := exec.CommandContext(ctx, "docker", args...).CombinedOutput(); err != nil {
 		dropEphemeralDockerImage(s.builtImage)
 		s.builtImage = ""

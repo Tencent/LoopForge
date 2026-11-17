@@ -207,6 +207,20 @@ small {
 .conversation-title > .preview-badge {
   flex-shrink: 0;
 }
+.conversation-engine {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 4px;
+  height: 20px;
+  padding: 0 6px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1;
+  cursor: default;
+}
 .conversation-status {
   position: relative;
   flex-shrink: 0;

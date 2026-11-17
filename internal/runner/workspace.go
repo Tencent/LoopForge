@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"agentflow/internal/domain"
+	"agentflow/internal/gitwork"
 	"agentflow/internal/runtime"
 )
 
@@ -276,6 +277,8 @@ func (d *Daemon) readRunnerWorkspace(ctx context.Context, request domain.RunnerW
 			"changes": changes, "repositories": runnerCollectWorkspaceGitRepositories(root, request.Repositories), "warning": warning,
 		}
 		return runnerWorkspacePayload(payload)
+	case domain.RunnerWorkspaceOperationCheckouts:
+		return runnerWorkspacePayload(map[string]any{"checkouts": gitwork.Checkouts(ctx, root)})
 	case domain.RunnerWorkspaceOperationTree:
 		entries, truncated, readErr := runnerReadWorkspaceTree(root, request.Path)
 		if readErr != nil {

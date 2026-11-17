@@ -29,9 +29,8 @@ func (h *assistantHandlers) startGeneration(c *gin.Context) {
 		c.JSON(400, gin.H{"error": "请先配置个人 CodeBuddy API Key"})
 		return
 	}
-	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 4<<20)
 	var req assistantRequest
-	if !decode(c, &req) {
+	if !decodeLimit(c, &req, assistantRequestBodyLimit) {
 		return
 	}
 	req.Model = assistantRequestModel(req.Executor, req.Model)
@@ -188,6 +187,7 @@ func (h *assistantHandlers) startGeneration(c *gin.Context) {
 		c.JSON(409, gin.H{"error": err.Error()})
 		return
 	}
+	h.recordGenerationWorkspaceLease(g, req.RunID, req.workspaceToken)
 	// Keep the authenticated identity, but disconnect model execution from the
 	// lifetime of the browser request. Only explicit cancellation stops a turn.
 	parent := context.WithValue(context.WithoutCancel(c.Request.Context()), assistantFreshCLIKey{}, freshCLI)
@@ -287,6 +287,30 @@ func (h *assistantHandlers) executeGeneration(parent context.Context, req assist
 	sink := rec.sink
 	stopped := make(chan struct{})
 	done := make(chan struct{})
+	renewed := make(chan struct{})
+	// The lease renews on its own ticker. A heartbeat commit that stalls on the
+	// generation row must not also stop the renewal: a replica that reaps this
+	// turn meanwhile releases its lease only once renewal has stopped for 45s.
+	go func() {
+		defer close(renewed)
+		if req.workspaceToken == "" {
+			return
+		}
+		ticker := time.NewTicker(500 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-stopped:
+				return
+			case <-ticker.C:
+				if err := h.engine.RenewConversationWorkspaceUse(req.RunID, req.workspaceToken); err != nil {
+					rec.diagnostics.terminate("WORKSPACE_LEASE_LOST", "会话工作区续租失败："+err.Error(), diagUser)
+					cancel()
+					return
+				}
+			}
+		}
+	}()
 	go func() {
 		defer close(done)
 		ticker := time.NewTicker(500 * time.Millisecond)
@@ -296,13 +320,7 @@ func (h *assistantHandlers) executeGeneration(parent context.Context, req assist
 			case <-stopped:
 				return
 			case <-ticker.C:
-				if req.workspaceToken != "" {
-					if err := h.engine.RenewConversationWorkspaceUse(req.RunID, req.workspaceToken); err != nil {
-						rec.diagnostics.terminate("WORKSPACE_LEASE_LOST", "会话工作区续租失败："+err.Error(), diagUser)
-						cancel()
-					}
-				}
-				old, ok := h.repo.AssistantGeneration(g.UserID, g.SessionID)
+				old, ok := h.repo.PeekAssistantGeneration(g.UserID, g.SessionID)
 				if ok && old.ID == g.ID && old.Steer != nil {
 					rec.mu.Lock()
 					rec.g.Steer = old.Steer
@@ -356,6 +374,7 @@ func (h *assistantHandlers) executeGeneration(parent context.Context, req assist
 	// The turn is complete once its execution has exited, without archive I/O.
 	close(stopped)
 	<-done
+	<-renewed
 	workspaceWarning := ""
 	if req.workspaceToken != "" {
 		if result, err := h.engine.EndConversationWorkspaceUseAsync(ctx, req.RunID, req.workspaceToken); err != nil {
@@ -405,7 +424,7 @@ func (h *assistantHandlers) executeGeneration(parent context.Context, req assist
 	steer := g.Steer
 	rec.mu.Unlock()
 	if steer == nil {
-		if latest, ok := h.repo.AssistantGeneration(g.UserID, g.SessionID); ok && latest.ID == g.ID && latest.Steer != nil {
+		if latest, ok := h.repo.PeekAssistantGeneration(g.UserID, g.SessionID); ok && latest.ID == g.ID && latest.Steer != nil {
 			rec.mu.Lock()
 			g.Steer = latest.Steer
 			steer = latest.Steer
@@ -464,7 +483,7 @@ func (h *assistantHandlers) steerGeneration(c *gin.Context) {
 	if content == "" {
 		content = "请阅读本轮附件并回答。"
 	}
-	g, ok := h.repo.AssistantGeneration(ownerID, c.Param("id"))
+	g, ok := h.readGeneration(ownerID, c.Param("id"))
 	if !ok || g.Status != "running" {
 		c.JSON(409, gin.H{"error": "当前没有进行中的回复"})
 		return
@@ -567,5 +586,6 @@ func (h *assistantHandlers) followSteer(parent context.Context, prev domain.Assi
 		}
 		return
 	}
+	h.recordGenerationWorkspaceLease(next, req.RunID, req.workspaceToken)
 	h.executeGeneration(parent, req, next, actor)
 }

@@ -14,7 +14,10 @@ defaults:
 
 jobs:
   validate:
-    runs-on: ubuntu-latest
+    # ubuntu-latest is Ubuntu 26.04, and actions/setup-python has no 3.8
+    # build for it. Keep the 3.8 cell on 24.04 so the required check name
+    # stays "validate (3.8)".
+    runs-on: ${{ matrix.python-version == '3.8' && 'ubuntu-24.04' || 'ubuntu-latest' }}
     strategy:
       fail-fast: false
       matrix:

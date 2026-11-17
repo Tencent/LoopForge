@@ -100,10 +100,10 @@ func TestScheduleJobAssistantUserNeedsModelCLIKey(t *testing.T) {
 	_ = st.PutProject(domain.Project{ID: "owner-project", Name: "Owner", OwnerID: owner.ID})
 	h := &assistantHandlers{deps: &deps{repo: st}}
 	job := domain.ScheduleJob{ProjectID: "owner-project"}
-	if got, err := h.scheduleJobAssistantUser(job, "codex:gpt-6-sol"); err != nil || got.ID != owner.ID {
-		t.Fatalf("codex owner = %+v %v", got, err)
+	if got, shared, err := h.scheduleJobAssistantUser(job, "codex:gpt-6-sol"); err != nil || got.ID != owner.ID || shared != nil {
+		t.Fatalf("codex owner = %+v %v %v", got, shared, err)
 	}
-	if _, err := h.scheduleJobAssistantUser(job, "glm-5.3-ioa"); err == nil || !strings.Contains(err.Error(), "CodeBuddy") {
+	if _, _, err := h.scheduleJobAssistantUser(job, "glm-5.3-ioa"); err == nil || !strings.Contains(err.Error(), "CodeBuddy") {
 		t.Fatalf("codebuddy without key = %v", err)
 	}
 }
