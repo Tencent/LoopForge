@@ -198,7 +198,7 @@ func assistantLineEvents(line string) []assistantStreamEvent {
 	switch evt.Type {
 	case "assistant":
 		var out []assistantStreamEvent
-		if model := strings.TrimSpace(evt.Message.Model); subAgent && model != "" {
+		if model := strings.TrimSpace(evt.Message.Model); subAgent && model != "" && !assistantPlaceholderModel(model) {
 			// assistantStreamEvents puts it under the dispatch (Parent).
 			out = append(out, assistantStreamEvent{Kind: "agentModel", Model: truncateRunes(model, 128)})
 		}
@@ -329,12 +329,21 @@ func assistantToolStreamEvent(id, name string, input json.RawMessage) (assistant
 
 var assistantAgentIDRe = regexp.MustCompile(`Agent ID:\s*(agent-[A-Za-z0-9-]+)`)
 
+// assistantPlaceholderModel reports a model name the CLI puts on lines no
+// model produced, such as "<synthetic>" on a synthesized assistant message.
+func assistantPlaceholderModel(model string) bool {
+	return strings.HasPrefix(model, "<") && strings.HasSuffix(model, ">")
+}
+
 // assistantDispatchModel is the model an Agent call names for its subagent.
 // No model, or one that only says to inherit, leaves it to the reply's own.
 func assistantDispatchModel(model string) string {
 	model = strings.TrimSpace(model)
 	switch strings.ToLower(model) {
 	case "", "default", "inherit":
+		return ""
+	}
+	if assistantPlaceholderModel(model) {
 		return ""
 	}
 	return truncateRunes(model, 128)

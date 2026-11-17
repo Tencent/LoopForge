@@ -356,6 +356,7 @@ func TestSubagentStreamEventsCarryTheirDispatch(t *testing.T) {
 		`"model":" lite "`:            "lite",
 		`"model":"default"`:           "",
 		`"model":"inherit"`:           "",
+		`"model":"<synthetic>"`:       "",
 	} {
 		got := assistantStreamEvents(`{"type":"assistant","message":{"content":[{"type":"tool_use","id":"call-m","name":"Agent","input":{"subagent_type":"Explore","prompt":"x",` + input + `}}]}}`)
 		if len(got) != 1 || got[0].Model != want {
@@ -367,6 +368,10 @@ func TestSubagentStreamEventsCarryTheirDispatch(t *testing.T) {
 	ran := assistantStreamEvents(`{"type":"assistant","parent_tool_use_id":"call-1","message":{"model":"deepseek-v4.1-flash-ioa","content":[{"type":"text","text":"ok"}]}}`)
 	if len(ran) != 2 || ran[0].Kind != "agentModel" || ran[0].Model != "deepseek-v4.1-flash-ioa" || ran[0].Parent != "call-1" {
 		t.Fatalf("subagent line=%+v", ran)
+	}
+	// A synthesized line names no real model.
+	if synthetic := assistantStreamEvents(`{"type":"assistant","parent_tool_use_id":"call-1","message":{"model":"<synthetic>","content":[{"type":"text","text":"ok"}]}}`); len(synthetic) != 1 || synthetic[0].Kind != "agentText" {
+		t.Fatalf("synthetic line=%+v", synthetic)
 	}
 	if main := assistantStreamEvents(`{"type":"assistant","message":{"model":"deepseek-v4.1-flash-ioa","content":[{"type":"text","text":"ok"}]}}`); len(main) != 1 || main[0].Kind != "answer" {
 		t.Fatalf("main line=%+v", main)
