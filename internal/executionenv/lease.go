@@ -139,7 +139,11 @@ func (s *SQLLeaseStore) Acquire(req LeaseRequest) (Lease, error) {
 				return ErrRequestConflict
 			}
 			var prior sqlLeaseRow
-			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("lease_id = ?", request.LeaseID).First(&prior).Error; err == nil && prior.ReleasedAt == nil && prior.ExpiresAt.After(now) {
+			err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("lease_id = ?", request.LeaseID).First(&prior).Error
+			if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+				return err
+			}
+			if err == nil && prior.ReleasedAt == nil && prior.ExpiresAt.After(now) {
 				out = sqlLeaseToLease(prior)
 				return nil
 			}
@@ -168,9 +172,6 @@ func (s *SQLLeaseStore) Acquire(req LeaseRequest) (Lease, error) {
 				}
 				out = sqlLeaseToLease(current)
 				return nil
-			}
-			if req.Environment.Generation < current.Generation {
-				return ErrLeaseLost
 			}
 			oldLeaseID := current.LeaseID
 			newLeaseID := randomLeaseID()
@@ -211,6 +212,12 @@ func (s *SQLLeaseStore) Acquire(req LeaseRequest) (Lease, error) {
 }
 
 func (s *SQLLeaseStore) Renew(leaseID, workerID string, generation int, ttl time.Duration) (Lease, error) {
+	if s == nil || s.db == nil {
+		return Lease{}, errors.New("sql lease store is not configured")
+	}
+	if ttl > time.Hour {
+		return Lease{}, errors.New("invalid lease duration")
+	}
 	if ttl <= 0 {
 		ttl = 30 * time.Second
 	}
@@ -219,7 +226,10 @@ func (s *SQLLeaseStore) Renew(leaseID, workerID string, generation int, ttl time
 	err := s.db.Transaction(func(tx *gorm.DB) error {
 		var row sqlLeaseRow
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("lease_id = ?", leaseID).First(&row).Error; err != nil {
-			return ErrLeaseLost
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return ErrLeaseLost
+			}
+			return err
 		}
 		if row.WorkerID != workerID || row.Generation != generation || row.ReleasedAt != nil || !row.ExpiresAt.After(now) {
 			return ErrLeaseLost
@@ -236,13 +246,25 @@ func (s *SQLLeaseStore) Renew(leaseID, workerID string, generation int, ttl time
 }
 
 func (s *SQLLeaseStore) Release(leaseID, workerID string, generation int) error {
+	if s == nil || s.db == nil {
+		return errors.New("sql lease store is not configured")
+	}
 	now := s.clock().UTC()
 	return s.db.Transaction(func(tx *gorm.DB) error {
 		var row sqlLeaseRow
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("lease_id = ?", leaseID).First(&row).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return ErrLeaseLost
+			}
+			return err
+		}
+		if row.WorkerID != workerID || row.Generation != generation {
 			return ErrLeaseLost
 		}
-		if row.WorkerID != workerID || row.Generation != generation || row.ReleasedAt != nil || !row.ExpiresAt.After(now) {
+		if row.ReleasedAt != nil {
+			return nil
+		}
+		if !row.ExpiresAt.After(now) {
 			return ErrLeaseLost
 		}
 		row.ReleasedAt = &now
@@ -421,6 +443,9 @@ func (s *LeaseStore) Acquire(req LeaseRequest) (Lease, error) {
 }
 
 func (s *LeaseStore) Renew(leaseID, workerID string, generation int, ttl time.Duration) (Lease, error) {
+	if ttl > time.Hour {
+		return Lease{}, errors.New("invalid lease duration")
+	}
 	if ttl <= 0 {
 		ttl = 30 * time.Second
 	}
