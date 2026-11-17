@@ -2,6 +2,10 @@
 
 Platform releases use `vX.Y.Z` tags and publish `ghcr.io/tencent/loopforge`. LoopForge Local packages use `local-vX.Y.Z` tags and are published by manually running the `release-local` workflow.
 
+## Unreleased
+
+- `scripts/install.sh` on macOS saves `LOOPFORGE_DOCKER_SOCKET=/var/run/docker.sock`. It used to save the active Docker context's socket, which under Docker Desktop is `~/.docker/run/docker.sock` on the macOS host; a host socket cannot be bind mounted into a container, so the platform container never started (`error while creating mount source path ... docker.sock: operation not supported`). `/var/run/docker.sock` is resolved inside the Docker VM (Docker Desktop, Colima, OrbStack, Rancher Desktop). Re-running `./start.sh` on a Mac repairs a `~/.docker/run/docker.sock` value an earlier installer saved to `.env`; other values are kept.
+
 ## 0.4.0 — scheduled task history, an MR node in delivery SOPs and agent CLIs in conversation workspaces
 
 - Scheduled tasks keep an execution history with a session mode, keep conversations per job and gain row actions (#958). AI jobs run with the key of the user who saved them and fall back to the shared key (#966).

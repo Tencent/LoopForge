@@ -46,6 +46,7 @@ if [[ "$1" == info ]]; then
   exit
 fi
 if [[ "$1" == image && "$2" == inspect && "${MOCK_IMAGE_PRESENT:-0}" != 1 ]]; then exit 1; fi
+if [[ "$1" == context && "$2" == inspect ]]; then [[ -n "${MOCK_CONTEXT_HOST:-}" ]] && echo "$MOCK_CONTEXT_HOST"; exit 0; fi
 if [[ "$1" == pull && "${MOCK_PULL_FAIL:-0}" == 1 ]]; then exit 42; fi
 if [[ "$1" == tag && "${MOCK_TAG_FAIL:-0}" == 1 ]]; then exit 1; fi
 if [[ "$*" == 'compose version' && "${MOCK_COMPOSE_MISSING:-0}" == 1 && ! -f "$MOCK_COMPOSE_INSTALLED" ]]; then exit 1; fi
@@ -67,7 +68,7 @@ export MOCK_PRIVILEGED=1
 exec "$@"
 ''')
         self.environ = dict(os.environ, PATH=str(self.root / 'mock') + ':' + os.environ['PATH'], MOCK_LOG=str(self.root / 'docker.log'), MOCK_SQL_LOG=str(self.root / 'mysql.log'), AGENTFLOW_HTTP_PORT='18765', LOOPFORGE_PUBLIC_URL='https://team.example.test', LOOPFORGE_BIND='0.0.0.0')
-        for name in ('LOOPFORGE_DOCKER_USE_SUDO', 'LOOPFORGE_DATA_DIR', 'LOOPFORGE_IMAGE', 'COMPOSE_FILE', 'LOOPFORGE_BUILD_FROM_SOURCE', 'LOOPFORGE_PULL_POLICY', 'MIRROR', 'MOCK_USER', 'MOCK_DIRECT', 'MOCK_SUDO_DENIED', 'MOCK_IMAGE_PRESENT', 'MOCK_PULL_FAIL', 'MOCK_TAG_FAIL'):
+        for name in ('LOOPFORGE_DOCKER_USE_SUDO', 'LOOPFORGE_DATA_DIR', 'LOOPFORGE_IMAGE', 'COMPOSE_FILE', 'LOOPFORGE_BUILD_FROM_SOURCE', 'LOOPFORGE_PULL_POLICY', 'MIRROR', 'MOCK_USER', 'MOCK_DIRECT', 'MOCK_SUDO_DENIED', 'MOCK_IMAGE_PRESENT', 'MOCK_PULL_FAIL', 'MOCK_TAG_FAIL', 'MOCK_CONTEXT_HOST', 'LOOPFORGE_DOCKER_SOCKET', 'DOCKER_HOST'):
             self.environ.pop(name, None)
         self.environ.pop('MOCK_COLUMN_COUNT', None)
 
@@ -362,6 +363,33 @@ if [[ "$*" == *'install'* ]]; then touch "$MOCK_PACKAGE_STATE/python3" "$MOCK_PA
 ''')
         self.assert_success(self.install(BASH_ENV=str(shell_env), MOCK_PYTHON_READY=str(ready), LOOPFORGE_YES='1'))
         self.assertIn('brew install python3', (self.root / 'docker.log').read_text())
+
+    def mock_os(self, name):
+        self.executable('uname', '#!/usr/bin/env bash\nif [[ "$1" == -s ]]; then echo %s; else echo arm64; fi\n' % name)
+
+    def saved_socket(self):
+        return [line for line in (self.root / '.env').read_text().splitlines() if line.startswith('LOOPFORGE_DOCKER_SOCKET=')]
+
+    def test_linux_saves_the_context_socket(self):
+        self.mock_os('Linux')
+        self.assert_success(self.install(MOCK_CONTEXT_HOST='unix:///run/user/1000/docker.sock'))
+        self.assertEqual(self.saved_socket(), ['LOOPFORGE_DOCKER_SOCKET=/run/user/1000/docker.sock'])
+
+    def test_macos_saves_the_vm_socket_instead_of_the_host_context_socket(self):
+        self.mock_os('Darwin')
+        self.assert_success(self.install(MOCK_CONTEXT_HOST='unix:///Users/someone/.docker/run/docker.sock'))
+        self.assertEqual(self.saved_socket(), ['LOOPFORGE_DOCKER_SOCKET=/var/run/docker.sock'])
+
+    def test_macos_repairs_a_previously_saved_host_socket(self):
+        self.mock_os('Linux')
+        self.assert_success(self.install(MOCK_CONTEXT_HOST='unix:///Users/someone/.docker/run/docker.sock'))
+        self.assertEqual(self.saved_socket(), ['LOOPFORGE_DOCKER_SOCKET=/Users/someone/.docker/run/docker.sock'])
+        secrets = (self.root / '.env').read_text()
+        self.mock_os('Darwin')
+        self.assert_success(self.install())
+        self.assertEqual(self.saved_socket(), ['LOOPFORGE_DOCKER_SOCKET=/var/run/docker.sock'])
+        self.assertEqual((self.root / '.env').read_text(), secrets.replace('/Users/someone/.docker/run/docker.sock', '/var/run/docker.sock'))
+        self.assertEqual((self.root / '.env').stat().st_mode & 0o777, 0o600)
 
     def mock_compose_install(self, fail_download=False):
         # Exercise the shell wiring without writing a plugin to the host.

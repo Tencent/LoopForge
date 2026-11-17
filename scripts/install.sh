@@ -124,8 +124,22 @@ export LOOPFORGE_BIND="${LOOPFORGE_BIND:-0.0.0.0}"
 if [[ -n "$requested_public_url" ]]; then export LOOPFORGE_PUBLIC_URL="$requested_public_url"; fi
 python3 scripts/install-address.py --prepare "${AGENTFLOW_HTTP_PORT:-8090}"
 set -a; source .env; set +a
+# On macOS the engine runs in a VM (Docker Desktop, Colima, OrbStack, Rancher
+# Desktop). The context's socket is a macOS host file that cannot be bind
+# mounted into a container ("operation not supported"); /var/run/docker.sock
+# is resolved inside the VM and reaches the engine directly.
+if [[ "$(uname -s)" == Darwin && "${LOOPFORGE_DOCKER_SOCKET:-}" == */.docker/run/docker.sock ]]; then
+  # Repair the host-side path that earlier installers saved to .env.
+  python3 - <<'PY'
+import pathlib,re
+config=pathlib.Path('.env')
+config.write_text(re.sub(r'(?m)^LOOPFORGE_DOCKER_SOCKET=.*/\.docker/run/docker\.sock\'?$', 'LOOPFORGE_DOCKER_SOCKET=/var/run/docker.sock', config.read_text()))
+PY
+  export LOOPFORGE_DOCKER_SOCKET=/var/run/docker.sock
+fi
 if [[ -z "${LOOPFORGE_DOCKER_SOCKET:-}" ]]; then
   docker_host="${DOCKER_HOST:-$(docker_access context inspect --format '{{(index .Endpoints "docker").Host}}' 2>/dev/null || true)}"
+  [[ "$(uname -s)" == Darwin && "$docker_host" == unix://* ]] && docker_host=unix:///var/run/docker.sock
   case "$docker_host" in
     unix://*) export LOOPFORGE_DOCKER_SOCKET="${docker_host#unix://}" ;;
     '') export LOOPFORGE_DOCKER_SOCKET=/var/run/docker.sock ;;
