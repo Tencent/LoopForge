@@ -213,7 +213,7 @@ curl -u "$AGENTFLOW_USER:$AGENTFLOW_PASS" -OJ \
 
 ## 人工动作
 
-以下接口成功均返回 `200 {"ok":true}`；run/node/状态错误通常 `400`。与 Issue 关联且执行被关闭/交付锁定的 run，在 approve、pass、reject、retry 时返回 `409`。
+以下接口成功均返回 `200 {"ok":true}`；run/node/状态错误通常 `400`。与 Issue 关联且执行被关闭/交付锁定的 run，以及 `expected` 中的节点尝试或产物哈希已变化、`verificationStep` 节点未带 `override` 的 pass，在 approve、pass、reject、retry 时返回 `409`。
 
 ### `POST /api/runs/{runId}/approve`
 
@@ -223,6 +223,23 @@ curl -u "$AGENTFLOW_USER:$AGENTFLOW_PASS" -OJ \
 
 批准等待中的节点。
 
+`expected` 可把批准绑定到操作者看到的那个节点尝试和产物上：
+
+```json
+{
+  "nodeId":"approval",
+  "expected":{
+    "status":"waiting_approval",
+    "attempt":2,
+    "reworkCount":0,
+    "artifactName":"verify",
+    "artifactSha256":"9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
+  }
+}
+```
+
+`artifactName`/`artifactSha256` 校验当前 run 中该名字的**最新**产物仍带这个内容哈希。节点状态或产物哈希任一不匹配时返回 `409`，节点保持 `waiting_approval`，run 追加 `gate.approval_rejected` 审计事件（写明期望值与实际值）。不带 `expected` 时行为不变。
+
 ### `POST /api/runs/{runId}/pass`
 
 ```json
@@ -230,6 +247,14 @@ curl -u "$AGENTFLOW_USER:$AGENTFLOW_PASS" -OJ \
 ```
 
 将已失败的**脚本**节点视为通过并继续下游，不重新执行该节点。用于 `onFailure=fail` 停下来之后，或打回返工到达最大轮次后，避免硬脚本一直卡住。Agent / AI 节点不能手动通过，应走 `/retry` 并附带补充上下文。
+
+节点带 `verificationStep: true` 时，`/pass` 默认返回 `409`（节点保持失败，run 追加 `node.pass_rejected` 审计事件）。确需人工放行时显式带 `override`：
+
+```json
+{"nodeId":"phpunit-full","override":true,"context":"环境问题，验证本身已人工复核"}
+```
+
+放行仍会写 `node.passed_override` 审计事件，并记录请求的操作者（登录用户，未登录记为「未记录操作者」）。
 
 ### `POST /api/runs/{runId}/reject`
 

@@ -130,6 +130,19 @@ func (d deps) requestUser(r *http.Request, allowBearer bool) (*auth.User, bool) 
 	return user, true
 }
 
+// requestActor names the signed-in operator for audit records. Anonymous calls
+// return an empty string and the engine records that fact instead of a name.
+func requestActor(d *deps, r *http.Request) string {
+	user, ok := d.requestUser(r, true)
+	if !ok {
+		return ""
+	}
+	if name := strings.TrimSpace(user.ChineseName); name != "" {
+		return name
+	}
+	return strings.TrimSpace(user.LoginName)
+}
+
 func bearerToken(r *http.Request) (string, bool) {
 	value := strings.TrimSpace(r.Header.Get("Authorization"))
 	scheme, raw, ok := strings.Cut(value, " ")
