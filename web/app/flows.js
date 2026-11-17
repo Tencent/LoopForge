@@ -792,8 +792,10 @@ function renderAgentArtifactEditors(d){
   host.querySelectorAll('[data-remove-artifact]').forEach(el=>el.onclick=()=>{d.artifactOutputs.splice(Number(el.dataset.removeArtifact),1);renderAgentGovernance(d);touch();dirty()});
   host.querySelector('#agentAddArtifact')?.addEventListener('click',()=>{d.artifactOutputs.push({name:'',path:'',mediaType:'text/markdown',required:true});renderAgentGovernance(d);touch();dirty()});
 }
-function gateFailureSelect(g){
+function gateFailureSelect(g,noScope){
   const v=['loop','reject','fail','human'].includes(g.onFailure)?g.onFailure:'loop',scope=g.executionScope==='repositories'?'repositories':'run';
+  const failure=`<label>失败后怎么走</label><select data-gk="onFailure"><option value="loop" ${v==='loop'?'selected':''}>本节点自修正</option><option value="reject" ${v==='reject'?'selected':''}>打回上游</option><option value="fail" ${v==='fail'?'selected':''}>本节点失败</option><option value="human" ${v==='human'?'selected':''}>转人工确认</option></select>`;
+  if(noScope)return failure;
   return `<label>检查范围</label><select data-gk="executionScope"><option value="run" ${scope==='run'?'selected':''}>Run工作区（校验产物等场景）</option><option value="repositories" ${scope==='repositories'?'selected':''}>每个代码仓库</option></select><label>失败后怎么走</label><select data-gk="onFailure"><option value="loop" ${v==='loop'?'selected':''}>本节点自修正</option><option value="reject" ${v==='reject'?'selected':''}>打回上游</option><option value="fail" ${v==='fail'?'selected':''}>本节点失败</option><option value="human" ${v==='human'?'selected':''}>转人工确认</option></select><p class="prop-hint">范围必须显式选择。Run 工作区适合报告和产物；每个代码仓库适合测试和 Git 检查。保存后按所选范围执行，不会再根据命令是否以 git 开头自动切换目录。</p>`;
 }
 function applyGateField(gate,el){
@@ -806,6 +808,7 @@ function renderAgentGateEditors(d){
   const host=$('#agentGatePanel');if(!host)return;
   const gates=d.verification||[];
   host.innerHTML=gates.length?gates.map((g,i)=>{
+    if(g.mode==='mr')return `<article class="as-gate" data-gate-row="${i}"><div class="as-gate-head"><span class="as-file-icon">⌘</span><input data-gk="name" value="${escapeHTML(g.name||'')}" placeholder="例如：MR 已创建"><button type="button" data-remove-gate="${i}" title="删除">×</button></div><p class="prop-hint">由平台到代码托管平台核验，无需编写命令：本轮推送了新提交的每个仓库，都必须有从本轮工作分支到目标分支、且未关闭的 MR/PR。无法自动查询的平台会转人工确认。</p>${gateFailureSelect(g,true)}</article>`;
     const cmds=(g.commands||[]).filter(Boolean);
     const countText=cmds.length?`已配置 ${cmds.length} 条验收命令`:'未配置 (点击编写)';
     const preview=cmds.length?`<div class="script-snippet-preview" data-editor-agent-gate="${i}" title="点击在代码编辑器中修改"><code>${escapeHTML(cmds.join(' && '))}</code></div>`:'';

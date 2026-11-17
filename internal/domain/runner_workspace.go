@@ -31,14 +31,18 @@ const (
 	RunnerWorkspaceOperationCommit            = "commit"
 	RunnerWorkspaceOperationBrowser           = "browser"
 	RunnerWorkspaceOperationCheckouts         = "checkouts"
+	RunnerWorkspaceOperationMaintenance       = "maintenance"
+	RunnerWorkspaceOperationLoginModels       = "login_models"
 )
 
 // RunnerWorkspaceRequest is a bounded workspace request sent over the
 // runner's outbound control socket. Responses are transient and are never
 // persisted in runner_tasks or the run record.
 type RunnerWorkspaceRequest struct {
-	Conversation json.RawMessage `json:"conversation,omitempty"`
-	RunKind      string          `json:"runKind,omitempty"`
+	Maintenance   *RunnerMaintenanceRequest `json:"maintenance,omitempty"`
+	ModelProvider string                    `json:"modelProvider,omitempty"`
+	Conversation  json.RawMessage           `json:"conversation,omitempty"`
+	RunKind       string                    `json:"runKind,omitempty"`
 	// ConcurrentEdit marks a person editing from the IDE: the runner writes and
 	// opens terminals beside running tasks instead of waiting for their fence.
 	ConcurrentEdit     bool                         `json:"concurrentEdit,omitempty"`
@@ -75,11 +79,26 @@ type RunnerWorkspaceRequest struct {
 	Repositories    []RepositoryContext `json:"repositories,omitempty"`
 }
 
+type RunnerMaintenanceRequest struct {
+	Provider   string `json:"provider,omitempty"` // Empty selects the Runner binary.
+	Apply      bool   `json:"apply,omitempty"`
+	StatusOnly bool   `json:"statusOnly,omitempty"`
+}
+
+type RunnerMaintenanceResult struct {
+	Status    string `json:"status"`
+	Current   string `json:"current,omitempty"`
+	Version   string `json:"version,omitempty"`
+	Message   string `json:"message,omitempty"`
+	CanUpdate bool   `json:"canUpdate,omitempty"`
+}
+
 // RunnerToolRequest is forwarded over the same instance-owned control socket
 // as the conversation process, avoiding loopback and load-balancer affinity.
 type RunnerToolRequest struct {
-	Token string          `json:"token"`
-	Body  json.RawMessage `json:"body"`
+	SupportsCancel bool            `json:"supportsCancel,omitempty"`
+	Token          string          `json:"token"`
+	Body           json.RawMessage `json:"body"`
 }
 type RunnerToolResponse struct {
 	Body  json.RawMessage `json:"body,omitempty"`

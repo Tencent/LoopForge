@@ -38,7 +38,7 @@ The installer checks Docker, Compose, Python 3 and curl. It offers to install mi
 
 Run it as the installation owner, including an ordinary Linux user. If that user cannot access Docker directly, the installer validates sudo and uses `sudo -n docker` consistently for Compose, schema installation and seeds. Before each operation it checks whether sudo credentials expired during a long build, prompting again in a terminal or failing with instructions in unattended mode. It does not require adding the user to the Docker group or logging out. For unattended installations run `sudo -v` first; `LOOPFORGE_YES=1` accepts installation prompts but does not bypass operating-system permissions. Without sudo or Docker access it fails immediately with instructions. Rootless Docker uses its active context's Unix socket; remote Docker contexts need a separately configured deployment because sandbox workspaces are local bind mounts.
 
-`compose.yaml` is the published-image stack and never builds: `./start.sh`, `scripts/install.sh` and a plain `docker compose --profile platform up` all pull the GHCR release pinned there (currently `ghcr.io/tencent/loopforge:0.3.8`). The pin matches the checkout's migrations and seeds, so check out a release tag when you install. Set `LOOPFORGE_IMAGE` (for example to an `@sha256:` digest) only to override it; a value saved in `.env` takes precedence over later pin changes.
+`compose.yaml` is the published-image stack and never builds: `./start.sh`, `scripts/install.sh` and a plain `docker compose --profile platform up` all pull the GHCR release pinned there (currently `ghcr.io/tencent/loopforge:0.4.0`). The pin matches the checkout's migrations and seeds, so check out a release tag when you install. Set `LOOPFORGE_IMAGE` (for example to an `@sha256:` digest) only to override it; a value saved in `.env` takes precedence over later pin changes.
 
 To upgrade, update the checkout first, then refresh the containers:
 
@@ -169,9 +169,15 @@ cancels its runner request and active Git/build command. Upgrade both platform
 and runner to receive live runner progress and cancellation; older runners
 still return their final result and retain their previous preparation timeout.
 
-A failed open retains its workspace binding and existing files. Retry with
+A failed open of the conversation's own workspace retains its binding and
+existing files. Retry with
 `workbench_workspace_open` and no arguments to reuse the current environment
 and run. Choosing another sandbox profile switches environments instead.
+Passing `workspaceRunId` can attach an existing same-project SOP workspace on
+the same execution machine. If that first attachment fails, the conversation
+returns to its previous binding (or no binding if it had none). An SOP already
+bound to the conversation stays bound after a failed retry. Its files and SOP
+lifecycle remain intact.
 
 For platform-managed checkouts, Git cannot resume an interrupted pack download:
 an empty incomplete clone is retried, but local files, refs and indexes are
@@ -226,6 +232,14 @@ docker compose exec -T mysql sh -c 'MYSQL_PWD="$MYSQL_PASSWORD" mysql -u loopfor
 ```
 
 This repeatable SQL changes only instruction fields that still match the original public seed. It preserves operator edits and project copies. New installations already receive these instructions from the public catalog seed; application startup does not migrate data.
+
+To add the 「发起 MR」 node to the built-in backend, frontend and defect-fix SOPs of an existing installation, apply `033_generic_sop_mr_node.sql` the same way:
+
+```bash
+docker compose exec -T mysql sh -c 'MYSQL_PWD="$MYSQL_PASSWORD" mysql -u loopforge loopforge' < migrations/033_generic_sop_mr_node.sql
+```
+
+After it, a run of these SOPs commits and pushes its work branch and opens an MR/PR before 交付汇总, so the Git credentials of the run's responsible user need push access. The installer and `./start.sh pull` do not run it. It rewrites a template only while its node graph and 交付汇总 position are the shipped original, and the 交付汇总 prompt only while unedited; it is safe to repeat. Project SOPs adopted from these templates are copies and are not changed.
 
 ## GitHub credentials
 

@@ -80,21 +80,42 @@ type ScheduleJob struct {
 	// Empty means backlog + todo. AI jobs leave this unused.
 	IssueStatuses []string `json:"issueStatuses,omitempty"`
 	// MaxDispatch caps successful SOP dispatches per execution. Zero defaults to 10.
-	MaxDispatch          int                  `json:"maxDispatch,omitempty"`
-	IntervalSec          int                  `json:"intervalSec"`
-	Cron                 string               `json:"cron,omitempty"`
-	AssistantPrompt      string               `json:"assistantPrompt,omitempty"`
-	AssistantModel       string               `json:"assistantModel,omitempty"`
-	OwnerUserID          int64                `json:"ownerUserId,omitempty"`
-	LastRunAt            time.Time            `json:"lastRunAt,omitempty"`
-	LastStatus           string               `json:"lastStatus,omitempty"` // running, success, failed, waiting
-	LastError            string               `json:"lastError,omitempty"`
-	LastPulled           int                  `json:"lastPulled,omitempty"`
-	LastDispatched       int                  `json:"lastDispatched,omitempty"`
-	LastAssistantMessage string               `json:"lastAssistantMessage,omitempty"`
-	Blockers             []ScheduleJobBlocker `json:"blockers,omitempty"`
-	CreatedAt            time.Time            `json:"createdAt"`
-	UpdatedAt            time.Time            `json:"updatedAt"`
+	MaxDispatch     int    `json:"maxDispatch,omitempty"`
+	IntervalSec     int    `json:"intervalSec"`
+	Cron            string `json:"cron,omitempty"`
+	AssistantPrompt string `json:"assistantPrompt,omitempty"`
+	AssistantModel  string `json:"assistantModel,omitempty"`
+	// SessionMode picks the Studio conversation an AI job runs in: empty opens
+	// a new conversation for every execution; "fixed" keeps continuing
+	// FixedSessionID.
+	SessionMode string `json:"sessionMode,omitempty"`
+	// SessionKeep is how many of its newest conversations an AI job that
+	// opens a new one per execution keeps: 10, 50 or 100, or -1 for no
+	// limit. Zero (jobs saved before the setting) means the default, 50.
+	// Ignored in fixed mode.
+	SessionKeep int `json:"sessionKeep,omitempty"`
+	// FixedSessionID is server-managed: the pinned conversation, set by the
+	// first fixed-mode execution and cleared when the mode leaves "fixed".
+	FixedSessionID string `json:"fixedSessionId,omitempty"`
+	OwnerUserID    int64  `json:"ownerUserId,omitempty"`
+	// RunAsUserID is server-managed: the user whose credentials run an AI job,
+	// set to whoever last saved it. Zero keeps the legacy project-owner
+	// selection. RunAsName is for display.
+	RunAsUserID          int64     `json:"runAsUserId,omitempty"`
+	RunAsName            string    `json:"runAsName,omitempty"`
+	LastRunAt            time.Time `json:"lastRunAt,omitempty"`
+	LastStatus           string    `json:"lastStatus,omitempty"` // running, success, failed, waiting
+	LastError            string    `json:"lastError,omitempty"`
+	LastPulled           int       `json:"lastPulled,omitempty"`
+	LastDispatched       int       `json:"lastDispatched,omitempty"`
+	LastAssistantMessage string    `json:"lastAssistantMessage,omitempty"`
+	// LastTraceID identifies the latest execution (ScheduleJobExecution.TraceID).
+	LastTraceID string `json:"lastTraceId,omitempty"`
+	// LastSessionID is the Studio conversation of the latest AI execution.
+	LastSessionID string               `json:"lastSessionId,omitempty"`
+	Blockers      []ScheduleJobBlocker `json:"blockers,omitempty"`
+	CreatedAt     time.Time            `json:"createdAt"`
+	UpdatedAt     time.Time            `json:"updatedAt"`
 }
 
 // ResolveWorkflow picks the SOP for a scheduled dispatch: the issue's bound

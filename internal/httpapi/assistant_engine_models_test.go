@@ -19,7 +19,7 @@ func TestAssistantEngineModelsKeepPersonalCatalogOnOfficialKey(t *testing.T) {
 	}
 	ids := func(user domain.User) []string {
 		var out []string
-		for _, model := range assistantEngineModels(context.Background(), user) {
+		for _, model := range assistantEngineModels(context.Background(), user, nil) {
 			out = append(out, model.ID)
 		}
 		return out

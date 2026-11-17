@@ -35,6 +35,11 @@ type AssistantActivityEvent struct {
 	Subagent string `json:"subagent,omitempty"`
 	Role     string `json:"role,omitempty"`
 	AgentID  string `json:"agentId,omitempty"`
+	// Model is the model an Agent dispatch asked its subagent to run on
+	// (empty when it inherits the reply's model). An "agentModel" event,
+	// whose Parent is the dispatch, carries the model the subagent reported
+	// it actually ran on, which also resolves aliases such as "lite".
+	Model string `json:"model,omitempty"`
 	// Input is the task an Agent dispatch hands the subagent and Output the
 	// report it returns; the side panel shows them like an SOP node session.
 	Input  string `json:"input,omitempty"`

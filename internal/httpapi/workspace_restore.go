@@ -102,7 +102,12 @@ func (h *runsHandlers) workspaceLifecycleInfo(c *gin.Context, run domain.Run, pa
 	if !ok {
 		return
 	}
-	payload["restorable"] = meta.SavedAt != nil && meta.SHA256 != "" && h.workspaceWritable(c, domain.Run{Status: "succeeded", ExecutionContext: run.ExecutionContext})
+	restorable := false
+	if meta.SavedAt != nil && meta.SHA256 != "" {
+		_, status, _ := h.workspaceEditAccess(c.Request, run)
+		restorable = status == 0
+	}
+	payload["restorable"] = restorable
 	payload["checkpointSavedAt"] = meta.SavedAt
 	if state, err := h.engine.WorkspaceRestoreStatus(run.ID); err == nil && (state.Status == "restoring" || state.Status == "failed") {
 		payload["restore"] = state

@@ -154,6 +154,9 @@ func TestWorkspaceOpeningFailureKeepsBindingAndRetryUsesSameRun(t *testing.T) {
 	if run.Status != "waiting" || run.LatestWorkspaceOpening() == nil || run.LatestWorkspaceOpening().State != "failed" {
 		t.Fatalf("failure not retained: %+v", run)
 	}
+	if stored, _ := h.repo.AssistantSession(owner.ID, s.ChatSessionID); stored.WorkspaceRunID != first {
+		t.Fatalf("failed workspace binding was not persisted: %q, want %q", stored.WorkspaceRunID, first)
+	}
 	if _, err := gateway.callMainBotWorkspace(context.Background(), s, "workbench_workspace_open", map[string]any{}); err != nil {
 		t.Fatal(err)
 	}
@@ -163,6 +166,66 @@ func TestWorkspaceOpeningFailureKeepsBindingAndRetryUsesSameRun(t *testing.T) {
 	run, _ = h.repo.RunState(first)
 	if opening := run.LatestWorkspaceOpening(); opening == nil || opening.State != "ready" {
 		t.Fatalf("successful retry did not clear opening failure: %+v", opening)
+	}
+}
+
+func TestWorkspaceOpeningBorrowedSOPFailurePreservesPreviousBinding(t *testing.T) {
+	for _, alreadyBound := range []bool{false, true} {
+		name := "first_attachment_without_previous_workspace"
+		if alreadyBound {
+			name = "retry_current_sop"
+		}
+		t.Run(name, func(t *testing.T) {
+			h, owner, s := chatSandboxFixture(t)
+			gateway := workspaceAccessGateway(t, h)
+			sop := domain.Run{
+				ID:                 "sop-missing-checkpoint",
+				Status:             "succeeded",
+				WorkspaceCleanedAt: time.Now().UTC().Add(-time.Hour),
+				ExecutionContext:   domain.TelemetryContext{ProjectID: "workbench", ExecutionMode: "cloud"},
+				WorkflowSnapshot: domain.WorkflowDefinition{
+					SandboxProfileID: "business",
+					SandboxSnapshot:  &domain.RunnerSandboxSpec{Profile: domain.SandboxProfile{ID: "business", Driver: domain.SandboxDriverDocker}},
+				},
+				Nodes: map[string]*domain.NodeRun{},
+			}
+			if err := h.repo.PutRun(sop); err != nil {
+				t.Fatal(err)
+			}
+			args := map[string]any{"workspaceRunId": sop.ID}
+			wantBinding := ""
+			if alreadyBound {
+				if _, err := gateway.bindConversationWorkspace(context.Background(), s, workspaceOpenChoice{WorkspaceRunID: sop.ID}); err != nil {
+					t.Fatal(err)
+				}
+				wantBinding = sop.ID
+				args = map[string]any{}
+			}
+			if _, err := gateway.openConversationWorkspace(context.Background(), s, args); err == nil {
+				t.Fatal("opening a reclaimed SOP without a snapshot should fail")
+			} else if restored := strings.Contains(err.Error(), "已恢复原绑定"); restored == alreadyBound {
+				t.Fatalf("error misreported the binding after failure: %v", err)
+			}
+			stored, _ := h.repo.AssistantSession(owner.ID, s.ChatSessionID)
+			if s.workspaceRunID != wantBinding || stored.WorkspaceRunID != wantBinding {
+				t.Fatalf("failed attachment changed the previous binding: memory=%q stored=%q want=%q", s.workspaceRunID, stored.WorkspaceRunID, wantBinding)
+			}
+			if current, _ := h.repo.RunState(sop.ID); current.Status != sop.Status {
+				t.Fatalf("opening failure changed the borrowed SOP status: %q", current.Status)
+			}
+			// Once the snapshot becomes available, the same explicit attachment
+			// or parameterless retry must recover the original SOP and its files.
+			seedSavedSOPCheckpoint(t, h.repo, sop.ID, map[string]string{"retained.txt": "unpublished work\n"})
+			t.Cleanup(func() { waitWorkspaceCheckpointSettled(t, h.repo, sop.ID) })
+			raw, err := gateway.openConversationWorkspace(context.Background(), s, args)
+			if err != nil {
+				t.Fatalf("retry after checkpoint recovery: %v", err)
+			}
+			stored, _ = h.repo.AssistantSession(owner.ID, s.ChatSessionID)
+			if s.workspaceRunID != sop.ID || stored.WorkspaceRunID != sop.ID || !strings.Contains(raw, "retained.txt") {
+				t.Fatalf("retry did not recover the same SOP and files: memory=%q stored=%q result=%s", s.workspaceRunID, stored.WorkspaceRunID, raw)
+			}
+		})
 	}
 }
 

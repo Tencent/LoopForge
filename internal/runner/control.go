@@ -83,8 +83,8 @@ func (d *Daemon) controlLoop(ctx context.Context) {
 	}
 }
 
-func (d *Daemon) readControls(ctx context.Context, conn *websocket.Conn) error {
-	ctx, cancel := context.WithCancel(ctx)
+func (d *Daemon) readControls(daemonCtx context.Context, conn *websocket.Conn) error {
+	ctx, cancel := context.WithCancel(daemonCtx)
 	var requests sync.WaitGroup
 	var cancelMu sync.Mutex
 	cancellations := map[string]context.CancelFunc{}
@@ -93,7 +93,11 @@ func (d *Daemon) readControls(ctx context.Context, conn *websocket.Conn) error {
 		writeMu.Lock()
 		defer writeMu.Unlock()
 		_ = conn.SetWriteDeadline(time.Now().Add(controlWriteTimeout))
-		return conn.WriteJSON(message)
+		err := conn.WriteJSON(message)
+		if err != nil {
+			cancel()
+		}
+		return err
 	}
 	d.conversationMu.Lock()
 	if d.conversationReplies == nil {
@@ -189,8 +193,17 @@ func (d *Daemon) readControls(ctx context.Context, conn *websocket.Conn) error {
 						}
 					})
 				}
-				response := d.readRunnerWorkspace(requestCtx, *message.WorkspaceRequest)
+				var response domain.RunnerWorkspaceResponse
+				var startUpdate func()
+				if message.WorkspaceRequest.Operation == domain.RunnerWorkspaceOperationMaintenance {
+					response, startUpdate = d.maintenanceResponse(requestCtx, daemonCtx, message.WorkspaceRequest.Maintenance)
+				} else {
+					response = d.readRunnerWorkspace(requestCtx, *message.WorkspaceRequest)
+				}
 				err := writeMessage(controlMessage{Type: "workspace.response", RequestID: message.RequestID, WorkspaceResponse: &response})
+				if startUpdate != nil {
+					startUpdate()
+				}
 				if err != nil {
 					_ = conn.Close()
 				}
@@ -265,13 +278,16 @@ func (d *Daemon) activeTaskIDs() []string {
 // when either the caller (callCtx) or the control connection (connCtx) ends.
 // readControls must have initialised d.conversationReplies.
 func (d *Daemon) forwardConversationTool(connCtx, callCtx context.Context, write func(controlMessage) error, token string, body json.RawMessage) (json.RawMessage, error) {
-	id := fmt.Sprintf("tool-%d", time.Now().UnixNano())
+	if err := callCtx.Err(); err != nil {
+		return nil, err
+	}
+	id := fmt.Sprintf("tool-%d", d.conversationToolSeq.Add(1))
 	reply := make(chan domain.RunnerToolResponse, 1)
 	d.conversationMu.Lock()
 	d.conversationReplies[id] = reply
 	d.conversationMu.Unlock()
 	defer func() { d.conversationMu.Lock(); delete(d.conversationReplies, id); d.conversationMu.Unlock() }()
-	err := write(controlMessage{Type: "agent_tool.request", RequestID: id, ToolRequest: &domain.RunnerToolRequest{Token: token, Body: body}})
+	err := write(controlMessage{Type: "agent_tool.request", RequestID: id, ToolRequest: &domain.RunnerToolRequest{Token: token, Body: body, SupportsCancel: true}})
 	if err != nil {
 		return nil, err
 	}
@@ -282,6 +298,9 @@ func (d *Daemon) forwardConversationTool(connCtx, callCtx context.Context, write
 		}
 		return response.Body, nil
 	case <-callCtx.Done():
+		if connCtx.Err() == nil {
+			_ = write(controlMessage{Type: "agent_tool.cancel", RequestID: id})
+		}
 		return nil, callCtx.Err()
 	case <-connCtx.Done():
 		return nil, connCtx.Err()

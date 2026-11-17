@@ -1,8 +1,10 @@
 package httpapi
 
 import (
-	"agentflow/internal/domain"
 	"fmt"
+
+	"agentflow/internal/domain"
+
 	"github.com/gin-gonic/gin"
 )
 
@@ -47,6 +49,24 @@ func (h *assistantHandlers) newExecutionTarget(userID int64, projectID string, r
 		return nil, fmt.Errorf("无效的执行机器")
 	}
 	return &target, nil
+}
+
+// Use a machine's login only for its owner on a personal execution target.
+func (h *assistantHandlers) assistantUsesRunnerLogin(userID int64, target *domain.AssistantExecutionTarget, engine string) bool {
+	if target == nil || target.Pool != domain.ExecutionModeRunner {
+		return false
+	}
+	runner, ok := h.repo.Runner(target.RunnerID)
+	return ok && runner.OwnerUserID == userID && runnerUsesLocalLogin(runner, engine)
+}
+
+func runnerUsesLocalLogin(runner domain.Runner, engine string) bool {
+	return assistantSupportsRunnerLogin(engine) &&
+		runner.RuntimeAuthMode(engine) == domain.RuntimeAuthLocal
+}
+
+func assistantSupportsRunnerLogin(engine string) bool {
+	return engine == assistantEngineCodex || engine == assistantEngineClaude
 }
 
 func (h *assistantHandlers) sessionMode(c *gin.Context) {
