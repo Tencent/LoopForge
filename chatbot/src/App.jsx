@@ -577,12 +577,19 @@ export default function App() {
   // new conversation with the requirement already @-mentioned. It waits for
   // the new conversation's draft to load so the draft does not overwrite it.
   useEffect(() => {
-    return subscribe("mentionIssue", ({ issueId, projectId }) => {
+    const receive = ({ issueId, projectId }) => {
       if (!issueId || !projectId) return;
       chat.startProjectDraft(projectId);
       setIssueDraft({ issueId, projectId });
       setIssueMention({ issueId, projectId });
-    });
+    };
+    if (platform()) return subscribe("mentionIssue", receive);
+    const listener = (event) => {
+      if (event.source !== window.parent || event.origin !== location.origin || event.data?.type !== "agentflow-chat-mention-issue") return;
+      receive({ issueId: String(event.data.issueId || ""), projectId: String(event.data.projectId || "") });
+    };
+    window.addEventListener("message", listener);
+    return () => window.removeEventListener("message", listener);
   }, [chat.startProjectDraft]);
   useEffect(() => {
     if (
