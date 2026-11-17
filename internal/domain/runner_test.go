@@ -81,6 +81,13 @@ func TestAgentCLIRuntimeAuthModeIsPersonal(t *testing.T) {
 	if r.RuntimeAuthMode("codebuddy") != RuntimeAuthPersonal {
 		t.Fatal("codebuddy still defaults to personal credentials")
 	}
+	if r.RuntimeAuthMode("agy") != RuntimeAuthLocal {
+		t.Fatal("Antigravity supports local account login")
+	}
+	r.Runtimes = append(r.Runtimes, RunnerRuntime{Provider: "agy", AuthMode: RuntimeAuthPersonal})
+	if r.RuntimeAuthMode("agy") != RuntimeAuthPersonal {
+		t.Fatal("Antigravity API-key preference was ignored")
+	}
 }
 
 func TestRunnerSupportsWorkBranchSync(t *testing.T) {

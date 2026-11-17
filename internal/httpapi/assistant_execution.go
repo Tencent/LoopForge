@@ -66,7 +66,7 @@ func runnerUsesLocalLogin(runner domain.Runner, engine string) bool {
 }
 
 func assistantSupportsRunnerLogin(engine string) bool {
-	return engine == assistantEngineCodex || engine == assistantEngineClaude
+	return domain.SupportsRunnerLogin(engine)
 }
 
 func (h *assistantHandlers) sessionMode(c *gin.Context) {

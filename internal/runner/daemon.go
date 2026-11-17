@@ -876,9 +876,21 @@ func (d *Daemon) executeInvocation(ctx context.Context, task domain.RunnerTask) 
 		return execResult{status: domain.RunnerTaskFailed, errMsg: err.Error()}, nil
 	}
 	if runtime.IsAgentCLI(prepared.Command.Provider) {
-		cred := runtime.ProviderCredential{APIKey: inv.AgentCLIAPIKey, BaseURL: inv.AgentCLIBaseURL, Protocol: inv.AgentCLIProtocol, Models: inv.AgentCLIModels}
 		var agentEnv map[string]string
-		argv, agentEnv, err = runtime.BindAgentCLICommand(sandbox, workspace, prepared.Command, cred, argv)
+		if inv.CredentialSource == domain.RuntimeAuthLocal && domain.SupportsRunnerLogin(prepared.Command.Provider) {
+			var cleanup func() error
+			agentEnv, cleanup, err = runtime.PrepareRunnerAgentCLILogin(sandbox, prepared.Command)
+			if cleanup != nil {
+				defer func() {
+					if err := cleanup(); err != nil {
+						log.Printf("task %s: clean sandbox CLI login: %v", task.ID, err)
+					}
+				}()
+			}
+		} else {
+			cred := runtime.ProviderCredential{APIKey: inv.AgentCLIAPIKey, BaseURL: inv.AgentCLIBaseURL, Protocol: inv.AgentCLIProtocol, Models: inv.AgentCLIModels}
+			argv, agentEnv, err = runtime.BindAgentCLICommand(sandbox, workspace, prepared.Command, cred, argv)
+		}
 		if err != nil {
 			return execResult{status: domain.RunnerTaskFailed, errMsg: err.Error()}, nil
 		}

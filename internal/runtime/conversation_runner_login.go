@@ -25,6 +25,8 @@ func runnerLoginSpec(provider string) (conversationLoginSpec, bool) {
 		return conversationLoginSpec{"Codex", ".codex", "auth.json", "CODEX_HOME", BindCodex}, true
 	case "claude-code":
 		return conversationLoginSpec{"Claude Code", ".claude", ".credentials.json", "CLAUDE_CONFIG_DIR", BindClaudeCode}, true
+	case AgentCLIAntigravity:
+		return conversationLoginSpec{"Antigravity", ".gemini/antigravity-cli", "antigravity-oauth-token", "", BindAgentCLI}, true
 	default:
 		return conversationLoginSpec{}, false
 	}
@@ -62,7 +64,40 @@ func PrepareRunnerSandboxLogin(sandbox Sandbox, provider, runID, nodeID string) 
 		homePath = filepath.ToSlash(filepath.Join("/workspace", home.Rel))
 	}
 	env["HOME"] = homePath
-	env[login.configEnv] = filepath.ToSlash(filepath.Join(homePath, login.dir))
+	if login.configEnv != "" {
+		env[login.configEnv] = filepath.ToSlash(filepath.Join(homePath, login.dir))
+	}
+	return env, cleanup, nil
+}
+
+// Agent CLIs keep MCP and session configuration in the agent's existing HOME.
+// Stage account authentication there rather than replacing that HOME.
+func PrepareRunnerAgentCLILogin(sandbox Sandbox, command CommandSpec) (map[string]string, func() error, error) {
+	login, supported := runnerLoginSpec(command.Provider)
+	if !supported || !IsAgentCLI(command.Provider) {
+		return nil, nil, fmt.Errorf("该 CLI 不支持使用执行机器的本机登录")
+	}
+	home := WorkspaceAgentCLIHome(sandbox.Workspace(), PrivateHomeName(command))
+	cleanup, env, err := prepareRunnerLogin(home, login, true)
+	if err != nil {
+		if cleanup != nil {
+			err = errors.Join(err, cleanup())
+		}
+		return nil, nil, err
+	}
+	_, homeEnv := privateHomePaths(sandbox, sandbox.Workspace(), command)
+	env["HOME"] = homeEnv
+	tmp, err := EnsureControlDirectory(sandbox.Workspace(), "tmp", PrivateHomeName(command))
+	if err != nil {
+		if cleanup != nil {
+			err = errors.Join(err, cleanup())
+		}
+		return nil, nil, err
+	}
+	env["TMPDIR"] = tmp
+	if sandboxDriver(sandbox) == "docker" {
+		env["TMPDIR"] = filepath.ToSlash(filepath.Join("/workspace", ".agentflow", "tmp", PrivateHomeName(command)))
+	}
 	return env, cleanup, nil
 }
 
@@ -99,7 +134,13 @@ func prepareRunnerLogin(home AgentCLIHome, login conversationLoginSpec, enabled 
 			configDir = filepath.Join(base, login.dir)
 		}
 	}
-	data, err := readRunnerLoginFile(configDir, login.file)
+	var data []byte
+	var keepAntigravity func([]byte) error
+	if login.binding == BindAgentCLI {
+		data, keepAntigravity, err = readAntigravityRunnerLogin()
+	} else {
+		data, err = readRunnerLoginFile(configDir, login.file)
+	}
 	if err != nil {
 		return nil, nil, fmt.Errorf("执行机器上的 %s 本机登录态不可用，请检查 Runner 账户的 CLI 登录", login.label)
 	}
@@ -112,13 +153,34 @@ func prepareRunnerLogin(home AgentCLIHome, login conversationLoginSpec, enabled 
 		// Codex and Claude Code rotate refresh tokens: a refresh inside the
 		// sandbox invalidates the host's copy, so keep the refreshed login
 		// before the copy is removed.
-		if err := writeBackRefreshedLogin(dir, login, configDir, data); err != nil {
-			log.Printf("runner login: keep refreshed %s login: %v", login.label, err)
+		var keepErr error
+		if keepAntigravity != nil {
+			if refreshed, err := readRootLoginFile(dir, login.file); err == nil {
+				keepErr = keepAntigravity(refreshed)
+			}
+		} else {
+			keepErr = writeBackRefreshedLogin(dir, login, configDir, data)
+		}
+		if keepErr != nil {
+			log.Printf("runner login: keep refreshed %s login: %v", login.label, keepErr)
 		}
 		return remove(dir)
 	}
 	if err := target.WriteFile(login.file, data, 0600); err != nil {
 		return cleanup, nil, fmt.Errorf("无法准备 %s 的本机登录态", login.label)
+	}
+	if login.binding == BindAgentCLI {
+		// The official CLI selects file storage in remote sessions. This also
+		// prevents a sandbox from trying to open the host's OS credential store.
+		env := map[string]string{"SSH_CONNECTION": "127.0.0.1 0 127.0.0.1 0"}
+		for _, key := range agentCLIHostEnv {
+			env[key] = ""
+		}
+		// A prior API-key turn may have selected the direct Gemini API.
+		if err := target.WriteFile("settings.json", []byte("{}"), 0600); err != nil {
+			return cleanup, nil, fmt.Errorf("无法准备 Antigravity 的账号登录配置")
+		}
+		return cleanup, env, nil
 	}
 	return cleanup, nil, nil
 }
@@ -165,11 +227,15 @@ func writeBackRefreshedLogin(dir *os.Root, login conversationLoginSpec, configDi
 	if !sameRunnerLogin(original, refreshed) {
 		return fmt.Errorf("refreshed login does not match the original account; not written back")
 	}
+	return replaceRunnerLoginFile(configDir, login.file, original, refreshed)
+}
+
+func replaceRunnerLoginFile(configDir, name string, original, refreshed []byte) error {
 	if configDir == "" {
 		return nil
 	}
-	path := filepath.Join(configDir, login.file)
-	current, err := readRunnerLoginFile(configDir, login.file)
+	path := filepath.Join(configDir, name)
+	current, err := readRunnerLoginFile(configDir, name)
 	if err != nil || !bytes.Equal(current, original) {
 		return nil
 	}
@@ -177,7 +243,7 @@ func writeBackRefreshedLogin(dir *os.Root, login conversationLoginSpec, configDi
 	if err != nil {
 		return err
 	}
-	tmp, err := os.CreateTemp(configDir, "."+login.file+".refresh-*")
+	tmp, err := os.CreateTemp(configDir, "."+name+".refresh-*")
 	if err != nil {
 		return err
 	}
@@ -199,7 +265,7 @@ func writeBackRefreshedLogin(dir *os.Root, login conversationLoginSpec, configDi
 	}
 	// Re-check right before the swap to keep the window with a concurrent
 	// host refresh as small as possible.
-	if current, err := readRunnerLoginFile(configDir, login.file); err != nil || !bytes.Equal(current, original) {
+	if current, err := readRunnerLoginFile(configDir, name); err != nil || !bytes.Equal(current, original) {
 		return nil
 	}
 	return os.Rename(tmp.Name(), path)

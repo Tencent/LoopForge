@@ -622,6 +622,10 @@ func (p *ConversationProcessPool) start(ctx context.Context, root, workspace str
 			command.CredentialBindings = slices.DeleteFunc(slices.Clone(command.CredentialBindings), func(binding CredentialBinding) bool {
 				return binding == login.binding
 			})
+			if command.Provider == AgentCLIAntigravity && command.AgentCLI.ReadOnly {
+				settings, _ := json.Marshal(map[string]any{"permissions": agyChatPermissions})
+				command.Argv = insertBeforeFlag(command.Argv, "-p", "--settings", string(settings))
+			}
 		}
 	}
 	nativeArgv := append([]string(nil), command.Argv...)
