@@ -28,6 +28,9 @@ type MavenRunner struct {
 	Timeout time.Duration
 	// Network is passed to docker run --network; empty keeps Docker's default.
 	Network string
+	// CacheDir, when set, is mounted at /root/.m2 so repeated runs reuse the
+	// local Maven repository instead of downloading it again.
+	CacheDir string
 }
 
 // TestOutcome is the acceptance decision and its evidence.
@@ -63,6 +66,9 @@ func (r MavenRunner) RunTests(ctx context.Context, repo, command string) (TestOu
 	defer cancel()
 
 	args := []string{"run", "--rm", "-v", repo + ":/work", "-w", "/work"}
+	if cache := strings.TrimSpace(r.CacheDir); cache != "" {
+		args = append(args, "-v", cache+":/root/.m2")
+	}
 	if network := strings.TrimSpace(r.Network); network != "" {
 		args = append(args, "--network", network)
 	}

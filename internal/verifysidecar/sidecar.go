@@ -36,6 +36,8 @@ type Server struct {
 	// AllowTestCommand enables running the request's testCommand. Off by
 	// default because the request is operator-supplied shell.
 	AllowTestCommand bool
+	// MavenCacheDir, when set, is mounted at /root/.m2 across runs.
+	MavenCacheDir string
 	// GitTimeout bounds one git invocation.
 	GitTimeout time.Duration
 	// TestTimeout bounds a test command run.
@@ -168,7 +170,7 @@ func (s *Server) runAcceptance(ctx context.Context, repo string, req verifyReque
 		defer cleanup()
 		runDir = dir
 	}
-	runner := verification.MavenRunner{Image: req.MavenImage, Timeout: s.TestTimeout}
+	runner := verification.MavenRunner{Image: req.MavenImage, Timeout: s.TestTimeout, CacheDir: s.MavenCacheDir}
 	outcome, err := runner.RunTests(ctx, runDir, command)
 	if err != nil {
 		return acceptance{Status: "FAIL", Reason: err.Error()}
