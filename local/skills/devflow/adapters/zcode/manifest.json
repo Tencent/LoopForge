@@ -1,0 +1,15 @@
+{
+  "version": "1.0",
+  "id": "zcode",
+  "compatibility": {
+    "verified_on": "2026-11-11",
+    "documentation": "https://github.com/zai-org/ZCode"
+  },
+  "dispatch_tool": "agent",
+  "topology": "spawn",
+  "stage_executor": "dynamic",
+  "research_executor": "dynamic",
+  "required_tools": [
+    "Agent"
+  ]
+}

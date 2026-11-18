@@ -1,16 +1,17 @@
+import json
 import os
 import stat
 import subprocess
 import sys
 import tempfile
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from io import StringIO
 from pathlib import Path
 
 from devflow_cli.cli import main
 from devflow_cli.core import DevFlowError, apply_install, doctor, status_rows, uninstall
-from devflow_cli.editions import DEFAULT_EDITION, EDITION_SPECS, HOSTS, source_for
+from devflow_cli.editions import DEFAULT_EDITION, EDITION_SPECS, HOSTS, entrypoint_for, source_for
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -195,6 +196,27 @@ class InstallerTests(unittest.TestCase):
             self.assertTrue((project / ".hermes/skills/devflow/adapters/hermes/manifest.json").is_file())
             with self.assertRaises(DevFlowError):
                 apply_install(project, "hermes", "classic")
+
+    def test_zcode_installs_project_skills_and_rejects_classic(self):
+        with tempfile.TemporaryDirectory() as td:
+            project = Path(td)
+            installed, _unchanged = apply_install(project, "zcode", "portable")
+            self.assertGreater(installed, 0)
+            skills = project / ".zcode/skills"
+            self.assertTrue((skills / "devflow/SKILL.md").is_file())
+            self.assertTrue((skills / "devflow-clarify-requirements/SKILL.md").is_file())
+            self.assertTrue((skills / "manifest.json").is_file())
+            self.assertFalse((project / ".zcode/commands").exists())
+            self.assertFalse((project / ".zcode/agents").exists())
+            self.assertEqual("/skill devflow", entrypoint_for("portable", "zcode"))
+            adapter = json.loads((skills / "devflow/adapters/zcode/manifest.json").read_text(encoding="utf-8"))
+            self.assertEqual("agent", adapter["dispatch_tool"])
+            self.assertEqual(["Agent"], adapter["required_tools"])
+            self.assertNotIn("version_policy", adapter["compatibility"])
+            output, errors = StringIO(), StringIO()
+            with redirect_stdout(output), redirect_stderr(errors):
+                self.assertNotEqual(0, main(["install", "zcode", "--project-root", str(project)]))
+            self.assertIn("ZCode 只有 Portable，请运行: loopforge skills install zcode", errors.getvalue())
 
     def test_editions_and_plan_make_the_split_visible_without_writing(self):
         output = StringIO()
