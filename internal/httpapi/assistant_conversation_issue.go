@@ -131,7 +131,11 @@ func (h *agentToolGateway) recordConversationMRs(issueID string, delivered []del
 	}
 	mrs := []domain.DeliveryMR{}
 	for _, r := range delivered {
-		project, iid, url, ok := domain.ParseGongfengMR(r.URL)
+		project, iid, url, ok := r.Project, r.IID, r.URL, r.Project != "" && r.IID > 0
+		if !ok {
+			// GitHub/Gongfeng 调用方仍只给 URL，回落到 URL 反解。
+			project, iid, url, ok = domain.ParseGongfengMR(r.URL)
+		}
 		if !ok {
 			continue
 		}
@@ -181,6 +185,10 @@ func (h *agentToolGateway) recordConversationMRs(issueID string, delivered []del
 // (team/repo, github:owner/repo) belongs to.
 func repositoryForMRProject(repos []domain.Repository, project string) (domain.Repository, bool) {
 	for _, r := range repos {
+		// 绑定记录里的 gitlab: 标识最直接（公网 URL 无法按信任规则反解）。
+		if strings.EqualFold(strings.TrimSpace(r.GongfengProjectID), project) {
+			return r, true
+		}
 		for _, raw := range []string{r.CloneURL, r.WebURL} {
 			if info, ok := domain.ParseRepositoryURL(raw); ok && strings.EqualFold(info.Project, project) {
 				return r, true
