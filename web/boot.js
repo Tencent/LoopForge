@@ -10,4 +10,5 @@ window.lfT = window.lfT || ((zh, en, ko) => zh);
   } catch (_) { /* Restricted storage still permits the default interface. */ }
   root.dataset.lang = lang;
   root.lang = lang === 'en' ? 'en' : (lang === 'ko' ? 'ko-KR' : 'zh-CN');
+  if (lang !== 'zh') root.classList.add('notranslate');
 })();
