@@ -74,11 +74,16 @@ func eventsFromExport(export otlpExport) []domain.TelemetryEvent {
 	var out []domain.TelemetryEvent
 	for _, rs := range export.ResourceSpans {
 		res := kvMap(rs.Resource.Attributes)
-		runID := firstNonEmpty(res["agentflow.run_id"], res["agentflow.runId"])
-		nodeID := firstNonEmpty(res["agentflow.node_id"], res["agentflow.nodeId"])
+		resourceRunID := firstNonEmpty(res["agentflow.run_id"], res["agentflow.runId"])
+		resourceNodeID := firstNonEmpty(res["agentflow.node_id"], res["agentflow.nodeId"])
 		for _, ss := range rs.ScopeSpans {
 			for _, span := range ss.Spans {
 				attrs := kvMap(span.Attributes)
+				// A resource can export spans from several runs or nodes.
+				// Resolve the span's identity before filling resource defaults,
+				// including when the two levels use different naming aliases.
+				runID := firstNonEmpty(attrs["agentflow.run_id"], attrs["agentflow.runId"], resourceRunID)
+				nodeID := firstNonEmpty(attrs["agentflow.node_id"], attrs["agentflow.nodeId"], resourceNodeID)
 				for k, v := range res {
 					if _, ok := attrs[k]; !ok {
 						attrs[k] = v
