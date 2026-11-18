@@ -222,12 +222,16 @@ func (h *assistantHandlers) models(c *gin.Context) {
 		// shared key's default may not exist in that environment.
 		refreshCLIModels(c.Request.Context(), user.CodeBuddyInternetEnvironment, user.CodeBuddyAPIKey)
 		catalog = assistantChatCatalog(c.Request.Context(), user.CodeBuddyInternetEnvironment, nil)
-		if saved := codeBuddyPersonalModels(user); len(saved) > 0 {
+		if saved := selectableCodeBuddyModels(codeBuddyPersonalModels(user)); len(saved) > 0 {
 			catalog.Models = saved
 			catalog.Default = saved[0].ID
 		}
 	default:
 		catalog = assistantChatCatalog(c.Request.Context(), "", nil)
+	}
+	catalog.Models = selectableCodeBuddyModels(catalog.Models)
+	if catalog.Default == assistantDefaultModel && len(catalog.Models) > 0 {
+		catalog.Default = catalog.Models[0].ID
 	}
 	if shared {
 		catalog.SponsoredModel, catalog.SponsoredModels = key.Models[0], key.Models
@@ -252,10 +256,21 @@ func (h *assistantHandlers) models(c *gin.Context) {
 	c.JSON(200, catalog)
 }
 
-// withCodeBuddyPersonalModels also accepts the user's saved CodeBuddy models
-// and, like the picker (/api/assistant/models), defaults to the first of them,
-// so a request without a model (API, bots, scheduled runs) runs on the model
-// the UI shows as default. The environment's models stay accepted.
+// Keep the CLI default as an execution fallback and for older saved records.
+// The model pickers offer the concrete models available to the caller.
+func selectableCodeBuddyModels(models []assistantModel) []assistantModel {
+	listed := make([]assistantModel, 0, len(models))
+	for _, model := range models {
+		if model.ID != assistantDefaultModel {
+			listed = append(listed, model)
+		}
+	}
+	return listed
+}
+
+// withCodeBuddyPersonalModels accepts the user's saved CodeBuddy models and
+// defaults requests without a model to the first of them. The environment's
+// models stay accepted.
 func withCodeBuddyPersonalModels(catalog assistantModelCatalog, user domain.User) assistantModelCatalog {
 	saved := codeBuddyPersonalModels(user)
 	if len(saved) == 0 {

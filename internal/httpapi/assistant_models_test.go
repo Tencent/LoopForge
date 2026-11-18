@@ -1,10 +1,33 @@
 package httpapi
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"net/http"
 	"reflect"
 	"testing"
 )
+
+func TestAssistantModelPickerOmitsCodeBuddyCLIDefault(t *testing.T) {
+	t.Setenv("AGENTFLOW_ASSISTANT_MODEL", "")
+	t.Setenv("AGENTFLOW_ASSISTANT_MODELS", "model-a,model-b")
+	h, user := workbenchFixture(t)
+	stubCLIModelDiscovery(t)
+
+	c, rec := workbenchContext(user, http.MethodGet, "/api/assistant/models", bytes.NewBuffer(nil))
+	h.models(c)
+	var catalog assistantModelCatalog
+	if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &catalog) != nil {
+		t.Fatalf("model picker: %d %s", rec.Code, rec.Body)
+	}
+	if catalog.Default != "model-a" || assistantCatalogLists(catalog, assistantDefaultModel) || !assistantCatalogLists(catalog, "model-b") {
+		t.Fatalf("model picker shows the wrong choices: %+v", catalog)
+	}
+	if got := assistantAllowedModel("", h.chatCatalog(context.Background(), user)); got != assistantDefaultModel {
+		t.Fatalf("an omitted request model should still use the CLI fallback, got %q", got)
+	}
+}
 
 func TestCodeBuddyModelDiscoveryPerEnvironment(t *testing.T) {
 	help := "  --model <model>  Model for the current session. Currently supported: (gpt-5.5, glm-5.3, echo, custom-local:glm-5.2, kimi-k3)\n"

@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import HarnessIcon from "./HarnessIcon";
+import { readComposerPreference, writeComposerPreference } from "./composer-preferences.js";
 import { usePanelPresence } from "./usePanelPresence";
 import "./permission-picker.css";
 
@@ -10,27 +11,15 @@ const modes = [
   { id: "auto", icon: "priority-bolt", label: "完全权限", tone: "danger", detail: "工作区文件和命令自动执行；平台及外部操作使用当前账号权限直接执行。" },
 ];
 
-// The approval mode is a personal preference: new conversations and reloads
-// keep the last pick instead of going back to "请求批准". 完全权限 is never
-// stored: it lets platform and external writes run unreviewed, so it lasts
-// for this page only and a reload returns to the last reviewed mode.
-const APPROVAL_KEY = "loopforge.assistant.approvalMode";
-const rememberedMode = (value) => value === "confirm" || value === "assisted";
+const validApprovalMode = (value) => modes.some((mode) => mode.id === value);
+
 export function storedApprovalMode() {
-  try {
-    const value = localStorage.getItem(APPROVAL_KEY);
-    return rememberedMode(value) ? value : "confirm";
-  } catch {
-    return "confirm";
-  }
+  const value = readComposerPreference("approvalMode");
+  return validApprovalMode(value) ? value : "confirm";
 }
+
 export function rememberApprovalMode(value) {
-  if (!rememberedMode(value)) return;
-  try {
-    localStorage.setItem(APPROVAL_KEY, value);
-  } catch {
-    // Without storage the pick still applies to this page.
-  }
+  if (validApprovalMode(value)) writeComposerPreference("approvalMode", value);
 }
 
 // `glyph` is a rendered brand mark. Options that only set `icon` keep the Harness icon.

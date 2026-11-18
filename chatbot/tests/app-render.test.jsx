@@ -104,16 +104,19 @@ describe("App", () => {
     await user.click(screen.getByRole("button", { name: "发送消息" }));
     expect(chat.send).toHaveBeenLastCalledWith(expect.objectContaining({ approvalMode: "assisted" }));
   });
-  test("keeps full permission for this page only", async () => {
+  test("restores full permission for a new conversation after a reload", async () => {
     const user = userEvent.setup();
-    localStorage.setItem("loopforge.assistant.approvalMode", "assisted");
     const first = render(<App />);
     await user.click(screen.getByRole("button", { name: "操作确认方式" }));
     await user.click(screen.getByRole("menuitemradio", { name: "完全权限" }));
-    expect(screen.getByRole("button", { name: "操作确认方式" })).toHaveTextContent("完全权限");
     first.unmount();
     render(<App />);
-    expect(screen.getByRole("button", { name: "操作确认方式" })).toHaveTextContent("帮我批准");
+    fireEvent.keyDown(window, { key: "O", ctrlKey: true, shiftKey: true });
+    expect(chat.newChat).toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "操作确认方式" })).toHaveTextContent("完全权限");
+    await user.type(screen.getByRole("textbox", { name: /消息|输入/ }), "你好");
+    await user.click(screen.getByRole("button", { name: "发送消息" }));
+    expect(chat.send).toHaveBeenLastCalledWith(expect.objectContaining({ approvalMode: "auto" }));
   });
   test("does not ask for per-command native approval in a working conversation", () => {
     const previous = {...chat};

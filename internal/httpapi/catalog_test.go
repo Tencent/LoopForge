@@ -42,6 +42,8 @@ func TestPutAgentValidatesEffortLevel(t *testing.T) {
 }
 
 func TestExecutorModelsCatalogListsPerCLI(t *testing.T) {
+	t.Setenv("AGENTFLOW_ASSISTANT_MODEL", "")
+	t.Setenv("AGENTFLOW_ASSISTANT_MODELS", "test-model")
 	s, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -56,6 +58,11 @@ func TestExecutorModelsCatalogListsPerCLI(t *testing.T) {
 	}
 	if cb.Models[0].Credits != "" {
 		t.Fatal("unconfigured public model must not claim a private price")
+	}
+	for _, model := range cb.Models {
+		if model.ID == assistantDefaultModel {
+			t.Fatal("the CodeBuddy CLI default must not be listed as a model")
+		}
 	}
 	codex := catalogs["codex"]
 	if len(codex.Models) < 2 || codex.Models[0].ID != "gpt-6.1-sol" || codex.Models[1].ID != "gpt-6.1-terra" || codex.Models[1].Name != "GPT-6.1 Terra" {

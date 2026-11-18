@@ -17,6 +17,7 @@ import { useExecutionMachines } from "./useExecutionMachines.js";
 import { executionLocked } from "./execution-target.js";
 import { modelEffort } from "./effort.js";
 import { conversationEngine, engineModels } from "./engines.js";
+import { readComposerPreference, writeComposerPreference } from "./composer-preferences.js";
 import {
   enqueue,
   holdQueue,
@@ -40,47 +41,42 @@ export const EXECUTORS = [
   { id: "dsh", icon: "terminal", label: "DeepSeek Harness", detail: "使用 DeepSeek Harness 与个人 API Key。" },
   { id: "zcode", icon: "terminal", label: "ZCode", detail: "使用 ZCode 与个人 API Key。" },
 ];
-const EXECUTOR_KEY = "loopforge.assistant.executor";
 function knownExecutor(id) {
   if (id === "claude") return "claude-code";
   return EXECUTORS.some((item) => item.id === id) ? id : "codebuddy";
 }
 function storedExecutor() {
-  try {
-    return knownExecutor(localStorage.getItem(EXECUTOR_KEY));
-  } catch {
-    return "codebuddy";
-  }
+  return knownExecutor(readComposerPreference("executor"));
 }
-// The chat model is a personal preference like the executor: new
-// conversations and page reloads keep the last pick. Each CLI remembers its
-// own, because model IDs differ between CLIs.
-const MODEL_KEY = "loopforge.assistant.model.";
-function storedModel(executor) {
-  try {
-    return localStorage.getItem(MODEL_KEY + executor) || "";
-  } catch {
-    return "";
-  }
+
+function executorModelList(models, executor, providerCatalogs) {
+  const listed = engineModels(models, executor);
+  if (executor === "codebuddy") return listed.filter((model) => model.id !== "default");
+  return listed.length ? listed : providerCatalogs?.[executor]?.models || [];
 }
-function rememberModel(executor, id) {
-  if (!id) return;
-  try {
-    localStorage.setItem(MODEL_KEY + executor, id);
-  } catch {
-    // Without storage the pick still applies to this page.
-  }
+
+// A CLI's fallback list uses bare model IDs, while the personal catalog
+// prefixes them with the CLI. Both spellings share the same preference.
+function unprefixedModel(executor, model) {
+  const prefix = executor + ":";
+  return model?.startsWith(prefix) ? model.slice(prefix.length) : model;
 }
-const codeBuddyModels = (models) => (models || []).filter((m) => !m.engine || m.engine === "codebuddy");
-const executorModelList = (models, executor) =>
-  executor === "codebuddy" ? codeBuddyModels(models) : engineModels(models, executor);
+
+function findExecutorModel(list, executor, model) {
+  const id = unprefixedModel(executor, model);
+  return list.find((item) => unprefixedModel(executor, item.id) === id);
+}
+
+function effortPreference(executor, model) {
+  return `effort.${executor}.${unprefixedModel(executor, model)}`;
+}
+
 // The model a new conversation on executor starts with: the remembered one
-// while list still offers it, else the first listed. Before a CLI's list has
-// loaded the remembered model (or that CLI's own default) holds the place.
+// while the catalog still offers it, else the first listed.
 function preferredModel(list, executor) {
-  const remembered = storedModel(executor);
-  if (!list?.length) return remembered || (executor === "codebuddy" ? "" : "default");
-  return list.some((m) => m.id === remembered) ? remembered : list[0].id;
+  const remembered = readComposerPreference(`model.${executor}`);
+  if (!list.length) return executor === "codebuddy" ? "" : remembered || "default";
+  return findExecutorModel(list, executor, remembered)?.id || list[0].id;
 }
 
 // Mirrors errAssistantSponsoredModel in internal/httpapi/assistant_sponsor.go;
@@ -126,8 +122,8 @@ export function useChat() {
     // the header reveals that conversation's title once it has loaded.
     [revealId, setRevealId] = useState(activeId),
     [projectId, setProjectId] = useState(initialProject),
-    [model, setModel] = useState(() => storedModel(storedExecutor())),
-    [effort, setEffort] = useState(""),
+    [model, setModel] = useState(null),
+    [effort, setEffort] = useState(null),
     [sponsoredModels, setSponsoredModels] = useState([]),
     [executor, setExecutorState] = useState(storedExecutor),
     [providerCatalogs, setProviderCatalogs] = useState({}),
@@ -212,21 +208,16 @@ export function useChat() {
       setLive({ answer: "", thinking: "", tools: [] });
       setSession(null);
       executionMachines.resetMachine();
-      // A new conversation starts on the person's remembered model, not on
-      // whatever model the previously opened conversation used.
-      if (!id) {
-        const preferred = storedExecutor();
-        setExecutorState(preferred);
-        setModel(preferredModel(executorModelList(models, preferred), preferred));
-      }
-      setEffort("");
+      if (!id) setExecutorState(storedExecutor());
+      setModel(null);
+      setEffort(null);
       setSandboxProfileId("");
       currentId.current = id;
       setActiveId(id);
       if (id) setRevealId(id);
       changeURL(id);
     },
-    [changeURL, models, executionMachines.resetMachine],
+    [changeURL, executionMachines.resetMachine],
   );
   const newChat = useCallback(() => {
     setDraftIssueId("");
@@ -252,8 +243,6 @@ export function useChat() {
         setSandboxes(sandboxRows || []);
         setModels(catalog.models || []);
         setSponsoredModels(sponsoredModelList(catalog));
-        const startExecutor = storedExecutor();
-        setModel(preferredModel(executorModelList(catalog.models, startExecutor), startExecutor));
         await refreshSessions();
         if (!current) return;
         const recovered = connectionError;
@@ -293,7 +282,7 @@ export function useChat() {
         const storedEngine = knownExecutor(locked || stored.executor);
         setExecutorState(storedEngine);
         // A conversation shows the model it runs on.
-        setModel(stored.model || preferredModel(executorModelList(models, storedEngine), storedEngine));
+        setModel(stored.model || null);
         setEffort(stored.effort || "");
         setProjectId(stored.projectId || "");
         syncProject(stored.projectId || "");
@@ -567,17 +556,22 @@ export function useChat() {
   );
   const codeBuddy = executor === "codebuddy";
   const listedForEngine = engineModels(models, executor);
-  const executorModels = listedForEngine.length || codeBuddy
-    ? (codeBuddy ? models.filter((m) => !m.engine || m.engine === "codebuddy") : listedForEngine)
-    : providerCatalogs[executor]?.models || [];
+  const executorModels = executorModelList(models, executor, providerCatalogs);
   const missingKey = !!user && !user.codeBuddyApiKeyConfigured;
   // Without their own key users chat on the platform's shared key, limited to
   // the models the administrator allowed (the first is the default).
   const sponsoredModel = sponsoredModels[0] || "";
   const sponsored = codeBuddy && missingKey && !user.isGuest && !!sponsoredModel;
   const sharedModelFor = (id) => (sponsoredModels.includes(id) ? id : sponsoredModel);
-  const activeModel = sponsored ? sharedModelFor(model) : model;
-  const activeEffort = modelEffort(executorModels.find((m) => m.id === activeModel), effort);
+  const selectedModel = model ?? preferredModel(executorModels, executor);
+  const availableModel = sponsored ? sharedModelFor(selectedModel) : selectedModel;
+  const activeModelEntry = findExecutorModel(executorModels, executor, availableModel);
+  const activeModel = activeModelEntry?.id ?? availableModel;
+  // null follows the browser preference, while "" is the CLI's default level.
+  const activeEffort = modelEffort(
+    activeModelEntry,
+    effort ?? readComposerPreference(effortPreference(executor, activeModel)),
+  );
   useEffect(() => {
     if (codeBuddy || listedForEngine.length || providerCatalogs[executor]) return;
     let current = true;
@@ -585,13 +579,6 @@ export function useChat() {
       .then((catalog) => {
         if (!current) return;
         setProviderCatalogs((old) => ({ ...old, [executor]: catalog }));
-        // An open conversation keeps the model it runs on: the catalog lists
-        // bare IDs without the CLI prefix, and no gateway models.
-        setModel((old) =>
-          (catalog.models || []).some((m) => m.id === old) || (old && old === sessionRef.current?.model)
-            ? old
-            : preferredModel(catalog.models, executor),
-        );
       })
       .catch((e) => current && setError(e.message));
     return () => {
@@ -603,30 +590,41 @@ export function useChat() {
       if (id === "claude") id = "claude-code";
       if (!EXECUTORS.some((item) => item.id === id) || id === executor) return;
       const locked = conversationEngine(sessionRef.current?.messages, models, sessionRef.current?.executor);
-      try {
-        localStorage.setItem(EXECUTOR_KEY, id);
-      } catch {}
-      setEffort("");
-      const listed = executorModelList(models, id);
-      setExecutorState(id);
-      setModel(preferredModel(listed.length || id === "codebuddy" ? listed : providerCatalogs[id]?.models, id));
+      writeComposerPreference("executor", id);
       if (locked && locked !== id) open(null);
+      setExecutorState(id);
+      setModel(null);
+      setEffort(null);
     },
-    [executor, models, open, providerCatalogs],
+    [executor, models, open],
   );
-  const chooseModel = useCallback(
-    (id) => {
-      if (sponsored && !sponsoredModels.includes(id)) {
-        setError(sponsoredModelMessage(sponsoredModels));
-        return false;
-      }
-      setModel(id);
-      rememberModel(executor, id);
-      setEffort((value) => modelEffort(executorModels.find((m) => m.id === id), value));
-      return true;
-    },
-    [sponsored, sponsoredModels, executorModels, executor],
-  );
+
+  function rememberModelChoice(id, level) {
+    writeComposerPreference("executor", executor);
+    writeComposerPreference(`model.${executor}`, id);
+    writeComposerPreference(effortPreference(executor, id), level);
+  }
+
+  function chooseModel(id) {
+    if (sponsored && !sponsoredModels.includes(id)) {
+      setError(sponsoredModelMessage(sponsoredModels));
+      return false;
+    }
+    const entry = executorModels.find((item) => item.id === id);
+    if (!entry || entry.disabled || entry.unavailable) return false;
+    const savedLevel = readComposerPreference(effortPreference(executor, id));
+    const level = id === activeModel ? activeEffort : modelEffort(entry, savedLevel ?? activeEffort);
+    setModel(id);
+    setEffort(level);
+    rememberModelChoice(id, level);
+    return true;
+  }
+
+  function chooseEffort(value) {
+    const level = modelEffort(activeModelEntry, value);
+    setEffort(level);
+    if (activeModelEntry) rememberModelChoice(activeModel, level);
+  }
   // Credential flags are omitted when false, so drop the old ones before
   // merging; otherwise a cleared key would still look configured.
   const refreshUser = useCallback(
@@ -990,7 +988,7 @@ export function useChat() {
       );
       open(stored.id);
       setSession(stored);
-      setModel(stored.model || preferredModel(executorModels, executor));
+      setModel(stored.model || null);
       setEffort(stored.effort || "");
       await refreshSessions();
       return stored;
@@ -1007,7 +1005,7 @@ export function useChat() {
       setSubmitting(true);
       open(stored.id);
       setSession(stored);
-      const chosen = sponsored ? sharedModelFor(stored.model || model) : stored.model || model;
+      const chosen = sponsored ? sharedModelFor(stored.model || activeModel) : stored.model || activeModel;
       setModel(chosen);
       setEffort(stored.effort || "");
       const g = await write("/api/assistant/generations", {
@@ -1016,7 +1014,7 @@ export function useChat() {
         runId: stored.runId || "",
         executor,
         model: chosen,
-        effort: codeBuddy ? modelEffort(models.find((m) => m.id === chosen), stored.effort || "") : "",
+        effort: modelEffort(findExecutorModel(executorModels, executor, chosen), stored.effort || ""),
         messages: stored.messages,
         approvalMode: ["confirm", "assisted", "auto"].includes(approvalMode) ? approvalMode : "confirm",
       });
@@ -1316,7 +1314,7 @@ export function useChat() {
     projectId,
     model: activeModel,
     effort: activeEffort,
-    setEffort,
+    setEffort: chooseEffort,
     sponsored,
     sponsoredModel,
     sponsoredModels,

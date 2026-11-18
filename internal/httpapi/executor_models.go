@@ -64,7 +64,7 @@ func effortOptions(levels []string) []executorEffortOption {
 func executorModelCatalogs() map[string]executorModelCatalog {
 	codebuddyModels := make([]executorModelInfo, 0)
 	known := assistantKnownCatalog()
-	for _, model := range known.Models {
+	for _, model := range selectableCodeBuddyModels(known.Models) {
 		codebuddyModels = append(codebuddyModels, executorModelInfo{ID: model.ID, Name: model.Name, Credits: model.Credits})
 	}
 	catalogs := map[string]executorModelCatalog{
@@ -205,6 +205,9 @@ func (h *catalogHandlers) executorModels(c *gin.Context) {
 		catalog.Models = make([]executorModelInfo, 0, len(models))
 		personal := cliModelsOf(models)
 		for _, model := range models {
+			if engine == assistantEngineCodeBuddy && model.ID == assistantDefaultModel {
+				continue
+			}
 			name := strings.TrimSpace(model.Name)
 			if name == "" {
 				name = model.ID
@@ -215,7 +218,9 @@ func (h *catalogHandlers) executorModels(c *gin.Context) {
 			}
 			catalog.Models = append(catalog.Models, executorModelInfo{ID: model.ID, Name: name, Efforts: effortOptions(assistantModelEffortsIn(modelID, personal))})
 		}
-		catalogs[id] = catalog
+		if len(catalog.Models) > 0 {
+			catalogs[id] = catalog
+		}
 	}
 	c.JSON(http.StatusOK, catalogs)
 }
