@@ -126,7 +126,9 @@ func Env(token string) []string {
 			strings.HasPrefix(kv, "GIT_ALLOW_PROTOCOL="),
 			strings.HasPrefix(kv, "GIT_PROTOCOL_FROM_USER="),
 			strings.HasPrefix(kv, gitHTTPUserEnv+"="),
-			strings.HasPrefix(kv, gitHTTPPassEnv+"="):
+			strings.HasPrefix(kv, gitHTTPPassEnv+"="),
+			strings.HasPrefix(kv, scopedTokenEnvPrefix),
+			strings.HasPrefix(kv, scopedUserEnvPrefix):
 			continue
 		}
 		env = append(env, kv)
@@ -204,11 +206,12 @@ func AuthConfigArgs(token string) []string {
 	return args
 }
 
-// RewriteRemoteForToken embeds token in an HTTPS (or git@ SSH) remote URL.
+// RewriteRemoteForToken embeds token in an HTTPS (or git@ SSH) remote URL,
+// except on a managed host, which never receives the global token.
 func RewriteRemoteForToken(remote, token string) string {
 	remote = strings.TrimSpace(remote)
 	user, secret := SplitToken(token)
-	if remote == "" || secret == "" {
+	if remote == "" || secret == "" || IsManagedRemote(remote) {
 		return remote
 	}
 	if strings.HasPrefix(remote, "git@") {

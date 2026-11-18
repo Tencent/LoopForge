@@ -15,6 +15,7 @@
 工作区模式下的 CLI 进程（`runtime.BindGitWorkspace`）在每轮启动时按本轮发言人注入：
 
 - HTTPS：个人配置的 Git Token。`GIT_ASKPASS` 指向工作区 `.agentflow/runtime/git-askpass-hosts`，脚本本身不含令牌，从提示里解析出 URL 主机，只在它恰好是 `https://github.com` 时以 `x-access-token` 应答；`github.com.example`、`github.com@example`、`http://` 等其他地址都拿不到凭据。带 `oauth2:`/`private:` 前缀的令牌不是 GitHub 令牌，不会注入。`GIT_TERMINAL_PROMPT=0`，不会卡在交互输入上。
+- cnb.cool：个人配置的 CNB 令牌，只在请求 cnb.cool 时由 git 的 cnb.cool 专用 helper 应答，GitHub 令牌不会发给 cnb.cool，CNB 令牌也不会发给其他主机。对话区只负责推送分支，CNB 的 PR 需要用户自己在 cnb.cool 上开。
 - `GH_TOKEN`：同一个令牌，供 `gh` 或 `curl` 调 GitHub API。平台进程自身的 `GH_TOKEN`/`GITHUB_TOKEN` 不会透传进沙箱。
 - SSH：个人 SSH 密钥按 `host:port` 绑定（不再按项目登记的仓库地址），任何克隆地址只要主机端口匹配就能用。私钥只在平台进程内存中的临时 ssh-agent 里，沙箱只看到 agent socket、公钥与 ssh config；主机公钥必须固定：平台内置 GitHub 公布的 `github.com:22` 与 `ssh.github.com:443` 公钥（来自 api.github.com/meta），其他主机由管理员通过 `AGENTFLOW_GIT_SSH_KNOWN_HOSTS` 固定，两者合并生效（文件里的 `@revoked` 同样作用于内置公钥）；未固定的主机报错说明原因。
 - 提交身份：`GIT_CONFIG_SYSTEM` 设为发言人的登录名，邮箱 `<login>@users.noreply.loopforge.invalid`；Agent 可以用 `git config --global/--local` 覆盖。

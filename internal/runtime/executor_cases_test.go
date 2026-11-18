@@ -225,15 +225,15 @@ func TestEnvironmentIdentityGitAndMCPHeaders(t *testing.T) {
 	if _, err := ReadSandboxEnvironmentIdentity(context.Background(), &capturingSandbox{workspace: workspace}); err == nil {
 		t.Fatal("unsupported identity accepted")
 	}
-	env, err := GitEnvironment(local, workspace, "oauth2: secret")
+	env, err := GitEnvironment(local, workspace, "oauth2: secret", nil)
 	if err != nil || env["AGENTFLOW_GIT_USER"] != "oauth2" || env["AGENTFLOW_GIT_TOKEN"] != "secret" {
 		t.Fatalf("git env=%v err=%v", env, err)
 	}
-	env, err = GitEnvironment(&dockerSandbox{}, workspace, "private: token")
+	env, err = GitEnvironment(&dockerSandbox{}, workspace, "private: token", nil)
 	if err != nil || !strings.HasPrefix(env["GIT_ASKPASS"], "/workspace/") {
 		t.Fatalf("docker git env=%v err=%v", env, err)
 	}
-	env, err = GitEnvironment(nil, workspace, "")
+	env, err = GitEnvironment(nil, workspace, "", nil)
 	if err != nil || env["GIT_TERMINAL_PROMPT"] != "0" {
 		t.Fatalf("empty git env=%v err=%v", env, err)
 	}

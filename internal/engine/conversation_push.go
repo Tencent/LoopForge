@@ -10,6 +10,7 @@ import (
 
 	"agentflow/internal/domain"
 	"agentflow/internal/gitwork"
+	"agentflow/internal/runtime"
 )
 
 const (
@@ -31,12 +32,17 @@ func (e *Engine) PushConversationWorkspace(ctx context.Context, runID string, re
 	if WorkspaceRunID(run) != run.ID {
 		return nil, fmt.Errorf("子 SOP 共享父任务工作区，请从父任务提交")
 	}
+	https := e.repo.GitHTTPSCredentials(requesterID)
 	var repositories []domain.RepositoryContext
 	for _, rc := range run.RepositoryContexts() {
 		if rc.ReadOnly || strings.TrimSpace(rc.CloneURL) == "" || strings.TrimSpace(rc.WorkBranch) == "" {
 			continue
 		}
-		if rc.Provider != domain.RepositoryProviderSSH && strings.TrimSpace(gitToken) == "" {
+		if rc.Provider == domain.RepositoryProviderCNB {
+			if len(https) == 0 {
+				return nil, fmt.Errorf("%s: 未配置 CNB 访问令牌，无法推送工作分支。请到「个人配置」填写 CNB 令牌（权限 repo-code:rw 与 repo-pr:rw），打开 https://cnb.cool/profile/token 生成", rc.Name)
+			}
+		} else if rc.Provider != domain.RepositoryProviderSSH && strings.TrimSpace(gitToken) == "" {
 			return nil, fmt.Errorf("%s: 未配置 Git Token，无法推送工作分支。%s", rc.Name, gitTokenFixHint)
 		}
 		repositories = append(repositories, rc)
@@ -58,8 +64,7 @@ func (e *Engine) PushConversationWorkspace(ctx context.Context, runID string, re
 	sharedTarget = strings.TrimSpace(sharedTarget)
 	ctx, cancel := context.WithTimeout(ctx, conversationPushTimeout)
 	defer cancel()
-	ctx = withGitIdentity(withGitToken(ctx, gitToken), gitUserName, gitUserEmail)
-	ctx = gitwork.WithSSHKeys(ctx, sshKeys)
+	ctx = withGitIdentity(withRunGitCredentials(ctx, runtime.RunCredentials{GitToken: gitToken, GitSSHKeys: sshKeys, GitHTTPS: https}), gitUserName, gitUserEmail)
 	if runnerID := e.defaultExecutionRunner(run); runnerID != "" {
 		return e.pushConversationOnRunner(ctx, runnerID, run, repositories, requesterID, gitToken, gitUserName, gitUserEmail, message, sharedTarget)
 	}
@@ -148,6 +153,11 @@ func (e *Engine) pushConversationOnRunner(ctx context.Context, runnerID string, 
 		invocation.GitSSHUserID = requesterID
 	} else {
 		invocation.GitSSHUserID = 0
+	}
+	if len(invocation.GitHTTPSRemotes()) > 0 {
+		invocation.GitHTTPSUserID = requesterID
+	} else {
+		invocation.GitHTTPSUserID = 0
 	}
 	task := domain.RunnerTask{
 		ID:                fmt.Sprintf("rt-%d-%s-push", time.Now().UnixNano(), safeRunnerPath(run.ID)),

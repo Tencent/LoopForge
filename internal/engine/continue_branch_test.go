@@ -146,3 +146,53 @@ func TestCreateWorkBranchRequiresCompatibleRunner(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestCNBRepositoryRequiresCNBCapableRunner(t *testing.T) {
+	t.Parallel()
+	st, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(st.Close)
+	if err := st.PutRunner(domain.Runner{ID: "old", RunnerVersion: "0.10.1"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.PutRunner(domain.Runner{ID: "new", RunnerVersion: domain.RunnerVersionCNB}); err != nil {
+		t.Fatal(err)
+	}
+	e := &Engine{repo: st}
+	cnb := []domain.RepositoryContext{{RepositoryID: "cnb", CloneURL: "https://cnb.cool/org/repo.git"}}
+	if err := e.requireWorkBranchCapabilities("old", cnb); err == nil || !strings.Contains(err.Error(), domain.RunnerVersionCNB) {
+		t.Fatalf("an old runner must be refused with the upgrade version, got %v", err)
+	}
+	if err := e.requireWorkBranchCapabilities("new", cnb); err != nil {
+		t.Fatal(err)
+	}
+	other := []domain.RepositoryContext{{RepositoryID: "gh", CloneURL: "https://github.com/org/repo.git"}}
+	if err := e.requireWorkBranchCapabilities("old", other); err != nil {
+		t.Fatalf("other hosts must stay dispatchable to old runners: %v", err)
+	}
+}
+
+func TestBindRunnerRepositoriesKeepsGlobalTokenOffCNB(t *testing.T) {
+	t.Parallel()
+	run := domain.Run{ExecutionContext: domain.TelemetryContext{ResponsibleUserID: 9}, Repositories: []domain.RepositoryContext{
+		{RepositoryID: "cnb", CloneURL: "https://cnb.cool/org/repo.git"},
+		{RepositoryID: "gh", CloneURL: "https://github.com/org/repo.git"},
+	}}
+	invocation := &domain.RunnerInvocation{}
+	bindRunnerRepositories(invocation, run, "ghp_FAKEGLOBALPAT", "", "")
+	byID := map[string]domain.RunnerRepository{}
+	for _, repository := range invocation.Repositories {
+		byID[repository.RepositoryID] = repository
+	}
+	if byID["cnb"].GitToken != "" || !byID["cnb"].ScopedHTTPS {
+		t.Fatalf("CNB checkout carries the global token: %+v", byID["cnb"])
+	}
+	if byID["gh"].GitToken != "ghp_FAKEGLOBALPAT" || byID["gh"].ScopedHTTPS {
+		t.Fatalf("other hosts lost their token: %+v", byID["gh"])
+	}
+	if invocation.GitHTTPSUserID != 9 {
+		t.Fatalf("GitHTTPSUserID = %d, want the responsible user", invocation.GitHTTPSUserID)
+	}
+}

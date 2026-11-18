@@ -95,6 +95,21 @@ test("a GitHub pull request submitted in the conversation becomes a sidebar arti
   assert.equal(artifacts[0].source, "PR · example/agent-flow");
 });
 
+test("a cnb.cool pull request with a multi-level path becomes a sidebar artifact", () => {
+  const pr = "https://cnb.cool/org/team/repo/-/pulls/21";
+  const artifacts = collectArtifacts({
+    messages: [
+      { role: "assistant", content: `PR 已提交：${pr}` },
+      { role: "assistant", content: `同一个 PR：${pr}` },
+    ],
+  });
+  assert.equal(artifacts.length, 1);
+  assert.equal(artifacts[0].kind, "merge-request");
+  assert.equal(artifacts[0].name, "repo #21");
+  assert.equal(artifacts[0].url, pr);
+  assert.equal(artifacts[0].source, "PR · org/team/repo");
+});
+
 test("a /-/ merge request link names the repository, not the dash segment", () => {
   const dashed =
     "https://git.example.com/example/agent-flow/-/merge_requests/642";

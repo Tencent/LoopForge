@@ -12,6 +12,8 @@ import (
 // either scheme and store the canonical https URL.
 var githubPRURL = regexp.MustCompile(`https?://github\.com/([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)/pull/(\d+)`)
 
+var cnbPullURL = regexp.MustCompile(`https?://cnb\.cool/([A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)+?)/-/pulls/(\d+)`)
+
 var gongfengMRURL = regexp.MustCompile(`https?://git\.example\.com/([^\s"'<>#]+)/merge_requests/(\d+)`)
 
 var githubPRLink = regexp.MustCompile(`^https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/pull/\d+/?$`)
@@ -41,6 +43,9 @@ func ParseGongfengMR(text string) (project string, iid int, url string, ok bool)
 func ParseGongfengMRs(text string) []GongfengMRRef {
 	for _, match := range githubPRURL.FindAllStringSubmatch(text, -1) {
 		text = strings.ReplaceAll(text, match[0], "https://git.example.com/github:"+match[1]+"/merge_requests/"+match[2])
+	}
+	for _, match := range cnbPullURL.FindAllStringSubmatch(text, -1) {
+		text = strings.ReplaceAll(text, match[0], "https://git.example.com/cnb:"+match[1]+"/merge_requests/"+match[2])
 	}
 	matches := gongfengMRURL.FindAllStringSubmatch(text, -1)
 	if len(matches) == 0 {

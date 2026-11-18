@@ -163,11 +163,11 @@ Object.assign(window.LF_I18N_EN,{
   "密钥已保存":"Key saved",
   "删除这把密钥？":"Delete this key?",
   "密钥已删除":"Key deleted",
-  "GitHub 链接或 Git SSH 地址":"GitHub link or Git SSH address",
+  "GitHub / CNB 链接或 Git SSH 地址":"GitHub / CNB link or Git SSH address",
   "仓库网页地址":"Repository web URL",
   "配置 Git SSH 密钥":"Configure Git SSH key",
-  "请输入有效的 GitHub 链接或 Git SSH 克隆地址。CNB 只支持 HTTPS + 访问令牌。":"Enter a GitHub link or a Git SSH clone address. CNB supports HTTPS with an access token.",
-  "粘贴 GitHub 链接或 Git SSH 地址":"Paste a GitHub link or Git SSH address"
+  "请输入有效的 GitHub、CNB（cnb.cool）链接或 Git SSH 克隆地址。":"Enter a GitHub or CNB (cnb.cool) link, or a Git SSH clone address.",
+  "粘贴 GitHub、CNB 链接或 Git SSH 地址":"Paste a GitHub or CNB link, or a Git SSH address"
 });
 Object.assign(window.LF_I18N_EN,{
   "强制删除":"Force delete",
@@ -190,3 +190,23 @@ Object.assign(window.LF_I18N_EN,{
   "该 CLI 支持 API Key。使用服务商订阅套餐提供的 Key，执行用量会计入对应的套餐额度。请在「个人配置」中填写 API Key。":"This CLI supports API keys. With a key included in your provider's subscription, usage counts toward that plan's allowance. Enter the API key in Personal Settings."
 });
 Object.assign(window.LF_I18N_EN,{"查看其他项目共享的技能；共享技能只读，会自动装入平台上所有对话和定时任务，也可绑定到本项目角色。": "Skills shared by other projects. Shared Skills are read-only, are installed automatically into every conversation and scheduled task on the platform, and can be bound to Roles in this project.", "共享后，这个技能会自动装入平台上所有用户的对话和定时任务（包括其他项目和无项目的对话），模型可以直接调用。继续？": "Once shared, this Skill is installed automatically into every user's conversations and scheduled tasks on the platform (including other projects and conversations without a project), and the model can call it directly. Continue?", "共享这个角色会同时共享它绑定的技能：": "Sharing this Role also shares the Skills bound to it: ", "已共享，所有对话和定时任务会自动装入": "Shared. Every conversation and scheduled task will install it automatically", "其他项目可在「共享角色」里选用；绑定的本项目技能会一起共享，并自动装入所有对话": "Other projects can pick it under Shared roles; the project Skills bound to it are shared too and installed into every conversation automatically", "共享技能": "Share Skill"});
+Object.assign(window.LF_I18N_EN,{
+  "CNB 访问令牌":"CNB access token",
+  "CNB":"CNB",
+  "克隆 cnb.cool 仓库、推送工作分支、创建并合并 PR":"Clone cnb.cool repositories, push work branches, open and merge pull requests",
+  "用于克隆 cnb.cool 上的私有仓库、推送工作分支、发起并合并 PR。令牌只发送给 cnb.cool，不会与 GitHub 令牌混用。":"Used to clone private repositories on cnb.cool, push work branches, and open and merge pull requests. The token is only sent to cnb.cool and is never mixed with your GitHub token.",
+  "打开 CNB「个人设置 → 访问令牌」":"Open CNB “Settings → Access tokens”",
+  "前往 CNB 申请访问令牌":"Create a CNB access token",
+  "新建令牌，授予 <code>repo-code:rw</code> 与 <code>repo-pr:rw</code> 权限":"Create a token with <code>repo-code:rw</code> and <code>repo-pr:rw</code> permissions",
+  "复制令牌粘贴到下方，保存前会自动校验":"Paste the token below; it is verified before saving",
+  "请输入 CNB 访问令牌":"Enter your CNB access token",
+  "保存前会先校验令牌有效性":"The token is verified before saving",
+  "依赖 cnb.cool 仓库的 SOP 与对话提交将无法拉取、推送或发起 PR。":"SOPs and conversation submissions that depend on cnb.cool repositories can no longer clone, push or open pull requests.",
+  "CNB 令牌校验通过，已保存":"CNB token verified and saved",
+  "CNB 令牌校验未通过":"CNB token verification failed",
+  "请输入 GitHub、CNB（cnb.cool）链接或有效的 Git SSH 地址。":"Enter a GitHub or CNB (cnb.cool) link, or a valid Git SSH address.",
+  "请先粘贴 GitHub、CNB 链接或 Git SSH 地址":"Paste a GitHub or CNB link, or a Git SSH address first",
+  "请输入 GitHub、CNB 链接或 Git SSH 地址":"Enter a GitHub or CNB link, or a Git SSH address",
+  "例如 https://github.com/owner/repo、https://cnb.cool/group/repo 或 git@gitlab.com:group/repo.git":"For example https://github.com/owner/repo, https://cnb.cool/group/repo or git@gitlab.com:group/repo.git",
+  "。需要在个人配置中填写 CNB 访问令牌；主分支留空时自动读取默认分支。":". Add your CNB access token in personal settings; leave the main branch empty to read the default branch automatically."
+});

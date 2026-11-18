@@ -346,3 +346,115 @@ func TestWorkspaceTerminalOpensForTrivialPlanWhileBusy(t *testing.T) {
 		t.Fatalf("precondition: trivial plan wrote a ready status %+v", state)
 	}
 }
+
+func TestWorkspacePreparationGuardedCNBCredentialsByRunnerVersion(t *testing.T) {
+	t.Parallel()
+	store, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if err := store.PutUser(domain.User{LoginName: "cnb-prep-user"}); err != nil {
+		t.Fatal(err)
+	}
+	user, _ := store.UserByLoginName("cnb-prep-user")
+	const (
+		cnbToken    = "cnb-fake-token-0103"
+		githubToken = "ghp_FAKEGLOBALPAT"
+	)
+	if _, err := store.UpdateUserCredentials(user.ID, repo.UserCredentialUpdate{CNBToken: cnbToken, GitToken: githubToken}); err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range []domain.Runner{
+		{ID: "runner-0102", Status: domain.RunnerStatusOnline, RunnerVersion: "0.10.2"},
+		{ID: "runner-0103", Status: domain.RunnerStatusOnline, RunnerVersion: domain.RunnerVersionCNB},
+	} {
+		if err := store.PutRunner(r); err != nil {
+			t.Fatal(err)
+		}
+	}
+	e := New(store, runtime.NewManager(t.TempDir()))
+	makeRun := func(id, runnerID string, repos []domain.RepositoryContext) domain.Run {
+		return domain.Run{
+			ID:     id,
+			Status: "waiting",
+			ExecutionContext: domain.TelemetryContext{
+				ExecutionMode:         domain.ExecutionModeRunner,
+				ExecutionRunnerID:     runnerID,
+				ResponsibleUserID:     user.ID,
+				RunnerWorkspaceLayout: domain.RunnerWorkspaceLayoutShared,
+			},
+			WorkflowSnapshot: domain.WorkflowDefinition{ID: "prep-cnb-flow", SandboxProfileID: "local"},
+			Repositories:     repos,
+			Nodes:            map[string]*domain.NodeRun{},
+		}
+	}
+	cnbRepos := []domain.RepositoryContext{{
+		RepositoryID: "cnb-repo",
+		Provider:     domain.RepositoryProviderCNB,
+		CloneURL:     "https://cnb.cool/org/repo.git",
+	}}
+	githubRepos := []domain.RepositoryContext{{
+		RepositoryID: "gh-repo",
+		Provider:     "github",
+		CloneURL:     "https://github.com/org/repo.git",
+	}}
+
+	t.Run("rejects pre-CNB runner-0102", func(t *testing.T) {
+		req, err := e.preparedWorkspaceRequest(makeRun("run-runner-0102", "runner-0102", cnbRepos), domain.RunnerWorkspaceRequest{
+			RunID:     "run-runner-0102",
+			Operation: domain.RunnerWorkspaceOperationPrepare,
+		})
+		if err == nil || !strings.Contains(err.Error(), domain.RunnerVersionCNB) {
+			t.Fatalf("expected CNB upgrade error containing %s, got err=%v", domain.RunnerVersionCNB, err)
+		}
+		if req.PreparationInvocation != nil && len(req.PreparationInvocation.GitHTTPSCredentials) != 0 {
+			t.Fatalf("pre-CNB runner received CNB credentials: %+v", req.PreparationInvocation.GitHTTPSCredentials)
+		}
+	})
+
+	t.Run("rejects missing runner without CNB credentials", func(t *testing.T) {
+		req, err := e.preparedWorkspaceRequest(makeRun("run-missing-runner", "missing-runner", cnbRepos), domain.RunnerWorkspaceRequest{
+			RunID:     "run-missing-runner",
+			Operation: domain.RunnerWorkspaceOperationPrepare,
+		})
+		if err == nil {
+			t.Fatal("expected error for missing runner")
+		}
+		if req.PreparationInvocation != nil && len(req.PreparationInvocation.GitHTTPSCredentials) != 0 {
+			t.Fatalf("missing runner received CNB credentials: %+v", req.PreparationInvocation.GitHTTPSCredentials)
+		}
+	})
+
+	t.Run("preserves non-CNB preparation on 0.10.2 runner", func(t *testing.T) {
+		req, err := e.preparedWorkspaceRequest(makeRun("run-gh-0102", "runner-0102", githubRepos), domain.RunnerWorkspaceRequest{
+			RunID:     "run-gh-0102",
+			Operation: domain.RunnerWorkspaceOperationPrepare,
+		})
+		if err != nil {
+			t.Fatalf("ordinary non-CNB prepare on 0.10.2 failed: %v", err)
+		}
+		if req.PreparationInvocation == nil || len(req.PreparationInvocation.Repositories) != 1 || req.PreparationInvocation.Repositories[0].GitToken != githubToken {
+			t.Fatalf("unexpected non-CNB invocation: %+v", req.PreparationInvocation)
+		}
+		if len(req.PreparationInvocation.GitHTTPSCredentials) != 0 {
+			t.Fatalf("non-CNB preparation unexpectedly carried CNB credentials: %+v", req.PreparationInvocation.GitHTTPSCredentials)
+		}
+	})
+
+	t.Run("attaches scoped CNB credentials on 0.10.3 runner", func(t *testing.T) {
+		req, err := e.preparedWorkspaceRequest(makeRun("run-cnb-0103", "runner-0103", cnbRepos), domain.RunnerWorkspaceRequest{
+			RunID:     "run-cnb-0103",
+			Operation: domain.RunnerWorkspaceOperationPrepare,
+		})
+		if err != nil {
+			t.Fatalf("CNB prepare on 0.10.3 failed: %v", err)
+		}
+		if req.PreparationInvocation == nil || len(req.PreparationInvocation.GitHTTPSCredentials) != 1 || req.PreparationInvocation.GitHTTPSCredentials[0].Token != cnbToken {
+			t.Fatalf("expected CNB credentials on 0.10.3 runner, got %+v", req.PreparationInvocation)
+		}
+		if req.PreparationInvocation.Repositories[0].GitToken != "" {
+			t.Fatalf("CNB repository leaked global GitToken: %+v", req.PreparationInvocation.Repositories[0])
+		}
+	})
+}

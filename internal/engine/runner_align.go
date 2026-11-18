@@ -39,6 +39,7 @@ func (e *Engine) alignBaseline(repository domain.RepositoryContext, gitToken str
 		if ssh {
 			ctx = gitwork.WithSSHKeys(ctx, e.repo.GitSSHKeysForRemotes(userID, []string{repository.CloneURL}))
 		}
+		ctx = gitwork.WithHTTPSCredentials(ctx, e.repo.GitHTTPSCredentials(userID))
 		return alignIntegrateBaseline(ctx, repository, gitToken, e.repo)
 	}
 	if err := e.requireWorkBranchCapabilities(runner.ID, []domain.RepositoryContext{repository}); err != nil {
@@ -71,6 +72,10 @@ func (e *Engine) alignBaseline(repository domain.RepositoryContext, gitToken str
 	}
 	if ssh {
 		task.Invocation.GitSSHUserID = userID
+	}
+	scopeRunnerRepository(&task.Invocation.Repositories[0])
+	if len(task.Invocation.GitHTTPSRemotes()) > 0 {
+		task.Invocation.GitHTTPSUserID = userID
 	}
 	if err := e.repo.PutRunnerTask(task); err != nil {
 		return err

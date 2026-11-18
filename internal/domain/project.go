@@ -66,6 +66,10 @@ type ProjectMember struct {
 // RepositoryProviderSSH uses Git transport only; it has no hosting API adapter.
 const RepositoryProviderSSH = "ssh"
 
+// RepositoryProviderCNB is a repository on cnb.cool. It authenticates with the
+// user's CNB token only, never with the global Git token.
+const RepositoryProviderCNB = "cnb"
+
 type Repository struct {
 	ID                 string    `json:"id"`
 	ProjectID          string    `json:"projectId"`
