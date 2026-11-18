@@ -37,18 +37,35 @@ func (s SurefireSummary) FailuresText() string {
 }
 
 type surefireSuite struct {
-	XMLName  xml.Name `xml:"testsuite"`
-	Name     string   `xml:"name,attr"`
-	Tests    int      `xml:"tests,attr"`
-	Failures int      `xml:"failures,attr"`
-	Errors   int      `xml:"errors,attr"`
-	Skipped  int      `xml:"skipped,attr"`
+	XMLName  xml.Name           `xml:"testsuite"`
+	Name     string             `xml:"name,attr"`
+	Tests    int                `xml:"tests,attr"`
+	Failures int                `xml:"failures,attr"`
+	Errors   int                `xml:"errors,attr"`
+	Skipped  int                `xml:"skipped,attr"`
+	Cases    []surefireTestCase `xml:"testcase"`
+}
+
+type surefireTestCase struct {
+	Name      string    `xml:"name,attr"`
+	Classname string    `xml:"classname,attr"`
+	Failure   *struct{} `xml:"failure"`
+	Error     *struct{} `xml:"error"`
 }
 
 // ParseSurefire walks root for target/surefire-reports/TEST-*.xml and sums the
 // suite attributes. Unreadable files are reported, never silently zeroed.
 func ParseSurefire(root string) (SurefireSummary, error) {
+	summary, _, err := ParseSurefireResults(root)
+	return summary, err
+}
+
+// ParseSurefireResults also returns one boolean per test (true = failed or
+// errored). The key is "class#method", which is what baseline diffing and
+// flaky detection compare across runs.
+func ParseSurefireResults(root string) (SurefireSummary, map[string]bool, error) {
 	var summary SurefireSummary
+	results := map[string]bool{}
 	var files []string
 	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
@@ -61,15 +78,14 @@ func ParseSurefire(root string) (SurefireSummary, error) {
 		if !strings.HasPrefix(name, "TEST-") || !strings.HasSuffix(name, ".xml") {
 			return nil
 		}
-		parent := filepath.Base(filepath.Dir(path))
-		if parent != "surefire-reports" {
+		if filepath.Base(filepath.Dir(path)) != "surefire-reports" {
 			return nil
 		}
 		files = append(files, path)
 		return nil
 	})
 	if err != nil {
-		return summary, err
+		return summary, results, err
 	}
 	sort.Strings(files)
 	for _, file := range files {
@@ -88,6 +104,13 @@ func ParseSurefire(root string) (SurefireSummary, error) {
 		summary.Failures += suite.Failures
 		summary.Errors += suite.Errors
 		summary.Skipped += suite.Skipped
+		for _, test := range suite.Cases {
+			key := test.Name
+			if test.Classname != "" {
+				key = test.Classname + "#" + test.Name
+			}
+			results[key] = test.Failure != nil || test.Error != nil
+		}
 	}
-	return summary, nil
+	return summary, results, nil
 }

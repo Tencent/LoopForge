@@ -201,3 +201,10 @@ func TestPrepareRunDirRejectsMissingBase(t *testing.T) {
 		t.Fatal("missing base commit was accepted")
 	}
 }
+
+func TestPrewarmRequiresCacheDir(t *testing.T) {
+	repo := testRepo(t)
+	if err := (MavenRunner{}).Prewarm(context.Background(), repo); err == nil {
+		t.Fatal("prewarm without a cache directory was accepted")
+	}
+}

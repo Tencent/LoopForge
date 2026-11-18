@@ -17,7 +17,11 @@ fi
 # shellcheck disable=SC2086
 javac -encoding UTF-8 -d "$classes" -cp "$junit_jar" $sources
 set +e
-java -jar "$junit_jar" execute \
+base_url=""
+if [ -n "${LOOPFORGE_SUBJECT_URL:-}" ]; then
+  base_url="-Daegis.baseUrl=${LOOPFORGE_SUBJECT_URL}"
+fi
+java $base_url -jar "$junit_jar" execute \
   --class-path "$classes" \
   --scan-classpath "$classes" \
   --details=summary \

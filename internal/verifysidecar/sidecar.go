@@ -20,10 +20,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
 	"agentflow/internal/critique"
+	"agentflow/internal/spec"
 	"agentflow/internal/verification"
 )
 
@@ -40,6 +42,8 @@ type Server struct {
 	MavenCacheDir string
 	// AcceptanceImage overrides DefaultAcceptanceImage.
 	AcceptanceImage string
+	// MavenMirror redirects Maven's central repository when set.
+	MavenMirror string
 	// GitTimeout bounds one git invocation.
 	GitTimeout time.Duration
 	// TestTimeout bounds a test command run.
@@ -62,6 +66,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /verify", s.verify)
 	mux.HandleFunc("POST /critique", s.critique)
 	mux.HandleFunc("POST /delivery-check", s.deliveryCheck)
+	mux.HandleFunc("POST /compile-spec", s.compileSpec)
 	return mux
 }
 
@@ -78,15 +83,35 @@ type verifyRequest struct {
 	// acceptance image compiles and runs them and its verdict joins the result.
 	AcceptanceSpec  string `json:"acceptanceSpec,omitempty"`
 	AcceptanceImage string `json:"acceptanceImage,omitempty"`
+	// MavenPrewarm fills the cache with dependency:go-offline before the run;
+	// MavenOffline then forces the run to use only that cache.
+	MavenPrewarm bool   `json:"mavenPrewarm,omitempty"`
+	MavenOffline bool   `json:"mavenOffline,omitempty"`
+	MavenMirror  string `json:"mavenMirror,omitempty"`
+	// Subject is the app launched before generated JUnit specs run.
+	SubjectImage      string            `json:"subjectImage,omitempty"`
+	SubjectCommand    []string          `json:"subjectCommand,omitempty"`
+	SubjectPort       int               `json:"subjectPort,omitempty"`
+	SubjectHealthPath string            `json:"subjectHealthPath,omitempty"`
+	SubjectEnv        map[string]string `json:"subjectEnv,omitempty"`
+	// Repeat runs the graded tests 1-3 times; 3 enables flaky detection.
+	Repeat int `json:"repeat,omitempty"`
+	// BaselineCommit runs the same tests at that commit and diffs the failing
+	// sets, so only newly failing tests block.
+	BaselineCommit string `json:"baselineCommit,omitempty"`
 }
 
 type acceptance struct {
-	Status     string                          `json:"status"` // PASS, FAIL, SKIPPED
-	ExitCode   int                             `json:"exitCode,omitempty"`
-	DurationMs int64                           `json:"durationMs,omitempty"`
-	Reason     string                          `json:"reason,omitempty"`
-	Surefire   *verification.SurefireSummary   `json:"surefire,omitempty"`
-	JUnit      *verification.AcceptanceOutcome `json:"junit,omitempty"`
+	Status        string                          `json:"status"` // PASS, FAIL, SKIPPED
+	ExitCode      int                             `json:"exitCode,omitempty"`
+	DurationMs    int64                           `json:"durationMs,omitempty"`
+	Reason        string                          `json:"reason,omitempty"`
+	Surefire      *verification.SurefireSummary   `json:"surefire,omitempty"`
+	JUnit         *verification.AcceptanceOutcome `json:"junit,omitempty"`
+	Baseline      *verification.BaselineDiff      `json:"baseline,omitempty"`
+	Flaky         []string                        `json:"flaky,omitempty"`
+	AlwaysFailing []string                        `json:"alwaysFailing,omitempty"`
+	Runs          int                             `json:"runs,omitempty"`
 }
 
 type verifyResponse struct {
@@ -181,17 +206,49 @@ func (s *Server) runAcceptance(ctx context.Context, repo string, req verifyReque
 			defer cleanup()
 			runDir = dir
 		}
-		runner := verification.MavenRunner{Image: req.MavenImage, Timeout: s.TestTimeout, CacheDir: s.MavenCacheDir}
+		mirror := strings.TrimSpace(req.MavenMirror)
+		if mirror == "" {
+			mirror = s.MavenMirror
+		}
+		runner := verification.MavenRunner{Image: req.MavenImage, Timeout: s.TestTimeout, CacheDir: s.MavenCacheDir, Offline: req.MavenOffline, MirrorURL: mirror, Runs: req.Repeat}
+		if req.MavenPrewarm {
+			if err := runner.Prewarm(ctx, runDir); err != nil {
+				return acceptance{Status: "FAIL", Reason: err.Error()}
+			}
+		}
 		outcome, err := runner.RunTests(ctx, runDir, command)
 		if err != nil {
 			return acceptance{Status: "FAIL", Reason: err.Error()}
 		}
 		result = acceptance{
-			Status:     outcome.Status,
-			ExitCode:   outcome.ExitCode,
-			DurationMs: outcome.DurationMs,
-			Reason:     truncate(outcome.Reason, 4000),
-			Surefire:   outcome.Surefire,
+			Status:        outcome.Status,
+			ExitCode:      outcome.ExitCode,
+			DurationMs:    outcome.DurationMs,
+			Reason:        truncate(outcome.Reason, 4000),
+			Surefire:      outcome.Surefire,
+			Flaky:         outcome.Flaky,
+			AlwaysFailing: outcome.AlwaysFailing,
+			Runs:          outcome.Runs,
+		}
+		if base := strings.TrimSpace(req.BaselineCommit); base != "" {
+			baseline, err := runner.BaselineVerdicts(ctx, repo, base, command)
+			if err != nil {
+				result.Status, result.Reason = "FAIL", "baseline: "+err.Error()
+				return result
+			}
+			diff := verification.CompareBaseline(baseline, outcome.Verdicts)
+			result.Baseline = &diff
+			flaky := map[string]bool{}
+			for _, name := range outcome.Flaky {
+				flaky[name] = true
+			}
+			if blocking := diff.Blocking(flaky); len(blocking) > 0 {
+				result.Status = "FAIL"
+				result.Reason = fmt.Sprintf("newly failing vs %s: %s", base, strings.Join(blocking, ", "))
+			} else if outcome.Surefire != nil && outcome.Surefire.Reports > 0 {
+				result.Status = "PASS"
+				result.Reason = fmt.Sprintf("%d pre-existing failure(s), no new failures", len(diff.StillFailing))
+			}
 		}
 	}
 
@@ -204,7 +261,23 @@ func (s *Server) runAcceptance(ctx context.Context, repo string, req verifyReque
 		if image == "" {
 			image = s.AcceptanceImage
 		}
-		runner := verification.AcceptanceRunner{Image: image, Timeout: s.TestTimeout}
+		env := map[string]string{}
+		for key, value := range req.SubjectEnv {
+			env[key] = value
+		}
+		if strings.TrimSpace(req.SubjectImage) != "" {
+			subject, err := verification.StartSubject(ctx, verification.SubjectConfig{
+				Image: req.SubjectImage, Command: req.SubjectCommand, Port: req.SubjectPort,
+				HealthPath: req.SubjectHealthPath, Env: req.SubjectEnv,
+			})
+			if err != nil {
+				result.Status, result.Reason = "FAIL", "subject: "+err.Error()
+				return result
+			}
+			defer subject.Stop()
+			env["LOOPFORGE_SUBJECT_URL"] = subject.ContainerURL
+		}
+		runner := verification.AcceptanceRunner{Image: image, Timeout: s.TestTimeout, Env: env}
 		outcome, err := runner.Run(ctx, dir)
 		result.JUnit = &outcome
 		if err != nil {
@@ -278,6 +351,58 @@ func (s *Server) critique(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, answer)
 }
 
+type compileSpecRequest struct {
+	YAML       string `json:"yaml"`
+	OutputDir  string `json:"outputDir"`
+	BaseCommit string `json:"baseCommit,omitempty"`
+}
+
+// compileSpec validates an acceptance spec and writes its Java sources into
+// outputDir (which must be empty), so a later /verify can run them as
+// acceptanceSpec.
+func (s *Server) compileSpec(w http.ResponseWriter, r *http.Request) {
+	var req compileSpecRequest
+	if !decode(w, r, &req) {
+		return
+	}
+	document, err := spec.Parse([]byte(req.YAML))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	if problems := spec.Validate(document, req.BaseCommit); len(problems) > 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "spec validation failed", "problems": problems})
+		return
+	}
+	dir, err := s.boundedPath(req.OutputDir)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	if entries, err := os.ReadDir(dir); err == nil && len(entries) > 0 {
+		writeError(w, http.StatusConflict, fmt.Errorf("outputDir %s is not empty", dir))
+		return
+	}
+	files := spec.Compile(document)
+	for name, content := range files {
+		path := filepath.Join(dir, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+	}
+	names := make([]string, 0, len(files))
+	for name := range files {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	writeJSON(w, http.StatusOK, map[string]any{"outputDir": dir, "files": names})
+}
+
 type deliveryCheckRequest struct {
 	Repo         string `json:"repo"`
 	Commit       string `json:"commit"`
@@ -325,6 +450,11 @@ func (s *Server) repo(path string) (string, error) {
 	if path == "" {
 		return "", errors.New("repo is required")
 	}
+	return s.boundedPath(path)
+}
+
+// boundedPath resolves path and requires it to live under Root.
+func (s *Server) boundedPath(path string) (string, error) {
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		return "", err
@@ -335,7 +465,7 @@ func (s *Server) repo(path string) (string, error) {
 	}
 	rel, err := filepath.Rel(root, abs)
 	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return "", fmt.Errorf("repo %q is outside the sidecar root %q", abs, root)
+		return "", fmt.Errorf("path %q is outside the sidecar root %q", abs, root)
 	}
 	return abs, nil
 }

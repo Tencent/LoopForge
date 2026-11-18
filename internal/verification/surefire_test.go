@@ -75,3 +75,29 @@ func TestParseSurefireReportsUnreadableFiles(t *testing.T) {
 		t.Fatalf("malformed report was not reported: %+v", summary)
 	}
 }
+
+func TestParseSurefireResultsPerTest(t *testing.T) {
+	root := t.TempDir()
+	writeReport(t, root, "core", "a.CoreTest", `<testsuite name="a.CoreTest" tests="4" failures="1" errors="1" skipped="1">
+  <testcase name="passes" classname="a.CoreTest"/>
+  <testcase name="fails" classname="a.CoreTest"><failure message="boom"/></testcase>
+  <testcase name="errors" classname="a.CoreTest"><error message="bad"/></testcase>
+  <testcase name="skipped" classname="a.CoreTest"><skipped/></testcase>
+</testsuite>`)
+	summary, results, err := ParseSurefireResults(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if summary.Tests != 4 || len(results) != 4 {
+		t.Fatalf("summary=%+v results=%v", summary, results)
+	}
+	want := map[string]bool{
+		"a.CoreTest#passes": false, "a.CoreTest#fails": true,
+		"a.CoreTest#errors": true, "a.CoreTest#skipped": false,
+	}
+	for name, failed := range want {
+		if results[name] != failed {
+			t.Fatalf("%s = %v, want %v", name, results[name], failed)
+		}
+	}
+}

@@ -33,6 +33,9 @@ type AcceptanceRunner struct {
 	Docker  string
 	Image   string
 	Timeout time.Duration
+	// Env is passed into the runner container; LOOPFORGE_SUBJECT_URL becomes
+	// -Daegis.baseUrl for the generated tests.
+	Env map[string]string
 }
 
 func (r AcceptanceRunner) Run(ctx context.Context, specDir string) (AcceptanceOutcome, error) {
@@ -52,8 +55,14 @@ func (r AcceptanceRunner) Run(ctx context.Context, specDir string) (AcceptanceOu
 	defer cancel()
 
 	started := time.Now()
-	cmd := exec.CommandContext(callCtx, docker, "run", "--rm",
-		"-v", specDir+":/spec:ro", image, "/spec")
+	args := []string{"run", "--rm", "--add-host=host.docker.internal:host-gateway", "-v", specDir + ":/spec:ro"}
+	for key, value := range r.Env {
+		if key != "" {
+			args = append(args, "-e", key+"="+value)
+		}
+	}
+	args = append(args, image, "/spec")
+	cmd := exec.CommandContext(callCtx, docker, args...)
 	output, err := cmd.CombinedOutput()
 	outcome := AcceptanceOutcome{DurationMs: time.Since(started).Milliseconds()}
 	if err != nil {
