@@ -1512,6 +1512,11 @@ func runAssistantCLI(ctx context.Context, req assistantCLIRequest, user domain.U
 	if err != nil {
 		return "", "", err
 	}
+	// Every engine path (CodeBuddy branch and the per-provider invocation
+	// constructors) builds inv.credentials independently; load the
+	// deployment-registered extra credentials here once so a BindExtra
+	// binding on an assistant command can reach them.
+	inv.credentials.Extra = runtime.ExtraRunCredentials(user.ID)
 	if inv.resumeMissing {
 		return "", sessionID, errAssistantSessionMissing
 	}

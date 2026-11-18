@@ -43,9 +43,27 @@ func TestDockerSandboxLifecycleWithFakeCLI(t *testing.T) {
 	if sb.ID() != "cvR-run" || sb.Workspace() != workspace || sb.Driver() != "docker" {
 		t.Fatalf("sandbox=%+v", sb)
 	}
-	out, err := sb.Exec(context.Background(), CommandSpec{Argv: []string{"sh", "-lc", "echo ok"}, environment: map[string]string{"B": "2"}}, nil)
+	const extraValue = "test-extra-credential"
+	command, err := bindCommand(sb, workspace, CommandSpec{
+		Argv:               []string{"sh", "-lc", "echo ok"},
+		CredentialBindings: []CredentialBinding{BindExtra},
+		ExtraCredentialEnv: map[string]string{"DEPLOYMENT_VALUE": "registry"},
+		environment:        map[string]string{"B": "2"},
+	}, RunCredentials{Extra: map[string]string{"registry": extraValue}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var started string
+	out, err := sb.Exec(context.Background(), command, func(event domain.TelemetryEvent) {
+		if event.Name == "process.started" {
+			started = event.Message
+		}
+	})
 	if err != nil || !strings.Contains(out, "/workspace") {
 		t.Fatalf("exec=%q err=%v", out, err)
+	}
+	if strings.Contains(started, extraValue) || !strings.Contains(started, "DEPLOYMENT_VALUE=<redacted>") || !strings.Contains(started, "B=2") {
+		t.Fatalf("process.started must redact the extra credential and keep ordinary environment variables: %q", started)
 	}
 	if !sb.started || sb.builtImage == "" {
 		t.Fatalf("sandbox did not start: %+v", sb)
