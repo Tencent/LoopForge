@@ -4,10 +4,53 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"agentflow/internal/domain"
 )
+
+func TestDockerSOPExecInstallsMissingCLIOnce(t *testing.T) {
+	t.Setenv("AGENTFLOW_RUNTIME_CLI_DIR", "")
+	setupMarker := filepath.Join(t.TempDir(), "installed")
+	t.Setenv("LOOPFORGE_TEST_CLI_SETUP", setupMarker)
+	probes := filepath.Join(t.TempDir(), "probes")
+	t.Setenv("LOOPFORGE_TEST_CLI_PROBES", probes)
+	useFakeCommands(t, map[string]string{"docker": `#!/bin/sh
+set -eu
+case "$*" in
+  *loopforge-cli-probe*)
+    printf 'probe\n' >> "$LOOPFORGE_TEST_CLI_PROBES"
+    test -s "$LOOPFORGE_TEST_CLI_SETUP" || exit 127 ;;
+  *"id -u; id -g"*) printf '1000\n1000\n' ;;
+  *loopforge-cli-setup*)
+    printf 'install\n' >> "$LOOPFORGE_TEST_CLI_SETUP"
+    printf '/opt/loopforge/conversation-cli/.local/bin/agy\n' ;;
+  *pwd.getpwuid*) ;;
+  *) for arg do last=$arg; done
+     printf '%s\n' "$last" ;;
+esac
+`})
+	sandbox := &dockerSandbox{name: "workspace", started: true}
+	for _, command := range []CommandSpec{
+		{Provider: AgentCLIAntigravity, Argv: []string{"agy", "first"}},
+		{Provider: AgentCLIAntigravity, Argv: []string{"agy", "second"}},
+		{Provider: AgentCLIAntigravity, Argv: []string{"/custom/agy", "explicit"}},
+		{Provider: "script", Argv: []string{"sh", "-c", "script"}},
+	} {
+		want := command.Argv[len(command.Argv)-1]
+		out, err := sandbox.Exec(context.Background(), command, nil)
+		if err != nil || strings.TrimSpace(out) != want {
+			t.Fatalf("exec %v: %q %v", command.Argv, out, err)
+		}
+	}
+	if got, err := os.ReadFile(setupMarker); err != nil || string(got) != "install\n" {
+		t.Fatalf("expected exactly one setup, got %q: %v", got, err)
+	}
+	if got, err := os.ReadFile(probes); err != nil || string(got) != "probe\nprobe\n" {
+		t.Fatalf("expected probes only for standard CLI invocations, got %q: %v", got, err)
+	}
+}
 
 // A failed on-demand install must stop the sandbox exec instead of silently
 // running without the CLI on PATH.

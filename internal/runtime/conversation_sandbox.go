@@ -166,13 +166,30 @@ func ensureConversationCLI(ctx context.Context, sandbox Sandbox, provider, home 
 	if !ok {
 		return "", fmt.Errorf("对话工作区只支持 Docker 或 native 沙箱")
 	}
+	s.execGate.RLock()
+	defer s.execGate.RUnlock()
+	return s.ensureDockerCLI(ctx, provider, home)
+}
+
+// ensureDockerCLI prepares a provider in an existing container. SOP and chat
+// callers hold the execution gate so preparation cannot race recreation.
+func (s *dockerSandbox) ensureDockerCLI(ctx context.Context, provider, home string) (string, error) {
 	binary := conversationBinary(provider)
-	setup, err := conversationCLISetup(provider, binary)
+	setup, err := dockerCLISetup(provider, binary)
 	if err != nil {
 		return "", err
 	}
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
 	defer cancel()
+	// npm providers share the same install prefix. Serialize preparation even
+	// when different SOP nodes start different CLIs in the same container.
+	s.cliSetupOnce.Do(func() { s.cliSetupGate = make(chan struct{}, 1) })
+	select {
+	case s.cliSetupGate <- struct{}{}:
+		defer func() { <-s.cliSetupGate }()
+	case <-ctx.Done():
+		return "", ctx.Err()
+	}
 	// Probe the actual execution user, including numeric Docker USER values.
 	// Root preparation must preserve that identity when the native CLI starts.
 	identity, err := exec.CommandContext(ctx, "docker", "exec", "--workdir", "/", s.name, "sh", "-c", "id -u; id -g").CombinedOutput()
@@ -219,18 +236,15 @@ func ensureConversationCLI(ctx context.Context, sandbox Sandbox, provider, home 
 	return path, nil
 }
 
-func conversationCLISetup(provider, binary string) (string, error) {
-	packages := map[string]string{
-		"codebuddy": "@tencent-ai/codebuddy-code", "codex": "@openai/codex", "claude-code": "@anthropic-ai/claude-code",
-		AgentCLIOpenCode: "opencode-ai", AgentCLIKimi: "@moonshot-ai/kimi-code", AgentCLIPi: "@earendil-works/pi-coding-agent", AgentCLIDeepSeek: "@deepseek-ai/dsh@" + DeepSeekHarnessVersion,
-	}
+func dockerCLISetup(provider, binary string) (string, error) {
+	spec := onDemandCLICatalog()[provider]
 	installer := ""
-	if pkg := packages[provider]; pkg != "" {
+	if spec.Package != "" {
 		flags := ""
-		if provider == AgentCLIDeepSeek {
+		if spec.RelaxEngines {
 			flags = "--engine-strict=false "
 		}
-		installer = "npm install --no-audit --no-fund " + flags + "--prefix /opt/loopforge/conversation-cli " + shellSingleQuote(pkg) + " >&2\nln -sf ../node_modules/.bin/" + shellSingleQuote(binary) + " /opt/loopforge/conversation-cli/bin/" + shellSingleQuote(binary)
+		installer = "npm install --no-audit --no-fund " + flags + "--prefix /opt/loopforge/conversation-cli " + shellSingleQuote(spec.Package) + " >&2\nln -sf ../node_modules/.bin/" + shellSingleQuote(binary) + " /opt/loopforge/conversation-cli/bin/" + shellSingleQuote(binary)
 	} else {
 		switch provider {
 		case AgentCLIZCode:

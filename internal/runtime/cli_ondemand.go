@@ -45,7 +45,7 @@ func onDemandCLICatalog() map[string]onDemandCLI {
 	return map[string]onDemandCLI{
 		"codex":       {Engine: "codex", Binary: "codex", Package: "@openai/codex", Bundled: true},
 		"codebuddy":   {Engine: "codebuddy", Binary: "codebuddy", Package: "@tencent-ai/codebuddy-code", Bundled: true},
-		"claude-code": {Engine: "claude-code", Binary: "claude"},
+		"claude-code": {Engine: "claude-code", Binary: "claude", Package: "@anthropic-ai/claude-code"},
 		"opencode":    {Engine: "opencode", Binary: "opencode", Package: "opencode-ai"},
 		"cursor":      {Engine: "cursor", Binary: "cursor-agent", Script: cursorInstallScript},
 		"agy":         {Engine: "agy", Binary: "agy", Script: agyInstallScript},
