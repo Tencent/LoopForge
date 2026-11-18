@@ -428,6 +428,14 @@ func (s *managedSandbox) Exec(ctx context.Context, command CommandSpec, sink Eve
 	s.credentialsMu.RLock()
 	credentials := s.credentials
 	s.credentialsMu.RUnlock()
+	command, closeGit, err := prepareRunGitBinding(ctx, s.Sandbox, command, credentials)
+	if err != nil {
+		return "", err
+	}
+	defer closeGit()
+	if credentials.GitHTTPCredentials != nil {
+		credentials.GitHTTPHosts = runGitHosts(credentials)
+	}
 	// Binding writes the credential helpers into the workspace; parallel
 	// branches then run their commands concurrently.
 	s.execMu.Lock()
@@ -441,7 +449,9 @@ func (s *managedSandbox) Exec(ctx context.Context, command CommandSpec, sink Eve
 		return "", err
 	}
 	defer cleanup()
-	return s.Sandbox.Exec(ctx, bound, sink)
+	defer scrubRunGitCredentials(ctx, s.Sandbox, s.workspace, bound, credentials)
+	out, err := s.Sandbox.Exec(ctx, bound, runGitEventSink(sink, credentials))
+	return redactRunGitSecrets(out, credentials), err
 }
 
 // overlayEnvironment layers an activated environment's overlay under env,

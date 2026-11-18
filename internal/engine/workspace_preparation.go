@@ -146,8 +146,9 @@ func (e *Engine) preparedWorkspaceRequest(run domain.Run, request domain.RunnerW
 	request.Repositories = run.RepositoryContexts()
 	credentials := e.resolveRunCredentials(run)
 	invocation := &domain.RunnerInvocation{}
-	bindRunnerRepositories(invocation, run, credentials.GitToken, credentials.GitUserName, credentials.GitUserEmail)
+	bindRunnerRepositories(invocation, run, credentials.GitUserName, credentials.GitUserEmail)
 	invocation.GitSSHUserID = 0
+	invocation.GitHTTPUserID = 0
 	assets := e.resolveScriptMCPAssets(run.ExecutionContext.ProjectID, run.ExecutionContext.ResponsibleUserID)
 	invocation.Assets = assets
 	invocation.MCPCallServers = assets.MCPServers
@@ -155,15 +156,18 @@ func (e *Engine) preparedWorkspaceRequest(run domain.Run, request domain.RunnerW
 	// Status and terminal I/O don't need keys. A separate platform instance
 	// can also resolve its own credentials from the shared store.
 	request.TerminalGitSSHKeys = nil
+	request.TerminalGitHTTPCredentials = nil
 	terminalOpen := request.Operation == domain.RunnerWorkspaceOperationTerminal && request.Terminal != nil && request.Terminal.Operation == "open"
-	sshRemotes := invocation.GitSSHRemotes()
-	if runnerID != "" && len(sshRemotes) > 0 {
-		if request.Operation == domain.RunnerWorkspaceOperationPrepare || terminalOpen {
+	if runnerID != "" && (request.Operation == domain.RunnerWorkspaceOperationPrepare || terminalOpen) {
+		invocation.GitHTTPCredentials = credentials.GitHTTPCredentials
+		if len(invocation.GitSSHRemotes()) > 0 {
 			invocation.GitSSHKeys = credentials.GitSSHKeys
 		}
-		if terminalOpen {
-			request.TerminalGitSSHKeys = e.repo.GitSSHKeysForRemotes(request.TerminalOwner, sshRemotes)
-		}
+	}
+	if runnerID != "" && terminalOpen {
+		terminalCredentials := e.WorkspaceTerminalGitCredentials(context.Background(), run, request.TerminalOwner)
+		request.TerminalGitHTTPCredentials = terminalCredentials.HTTPS
+		request.TerminalGitSSHKeys = terminalCredentials.SSHKeys
 	}
 	request.RunStatus = run.Status
 	request.WorkspaceLayout = run.ExecutionContext.RunnerWorkspaceLayout
@@ -350,7 +354,23 @@ func (e *Engine) HandleWorkspaceTerminal(ctx context.Context, id string, pool *r
 	}
 	run, _ := e.repo.RunState(id)
 	run.ID = id
-	return e.HandlePreparedWorkspaceTerminal(ctx, run, pool, scope, req, actorID)
+	var credentials runtime.TerminalGitCredentials
+	if req.Operation == "open" {
+		credentials = e.WorkspaceTerminalGitCredentials(ctx, run, actorID)
+	}
+	return e.HandlePreparedWorkspaceTerminal(ctx, run, pool, scope, req, credentials)
+}
+
+// WorkspaceTerminalGitCredentials resolves the opening user's credentials before
+// acquiring an editor transaction on the run.
+func (e *Engine) WorkspaceTerminalGitCredentials(ctx context.Context, run domain.Run, actorID int64) runtime.TerminalGitCredentials {
+	if actorID <= 0 {
+		return runtime.TerminalGitCredentials{}
+	}
+	return runtime.TerminalGitCredentials{
+		HTTPS:   e.repo.GitHTTPCredentialSecrets(ctx, actorID),
+		SSHKeys: e.repo.GitSSHKeysForRemotes(actorID, sshRepositoryURLs(run.RepositoryContexts())),
+	}
 }
 
 // HandlePreparedWorkspaceTerminal takes the run from its caller, which may
@@ -358,7 +378,7 @@ func (e *Engine) HandleWorkspaceTerminal(ctx context.Context, id string, pool *r
 // The run must carry its node states (RunState, not a bare locked row):
 // without them every succeeded preparation step looks pending and the
 // readiness check would be skipped as if there were nothing to prepare.
-func (e *Engine) HandlePreparedWorkspaceTerminal(ctx context.Context, run domain.Run, pool *runtime.TerminalPool, scope string, req domain.WorkspaceTerminalRequest, actorID int64) (runtime.TerminalResult, error) {
+func (e *Engine) HandlePreparedWorkspaceTerminal(ctx context.Context, run domain.Run, pool *runtime.TerminalPool, scope string, req domain.WorkspaceTerminalRequest, credentials runtime.TerminalGitCredentials) (runtime.TerminalResult, error) {
 	id := run.ID
 	if req.Operation != "open" {
 		return pool.HandleSandbox(ctx, nil, scope, req, nil)
@@ -376,15 +396,7 @@ func (e *Engine) HandlePreparedWorkspaceTerminal(ctx context.Context, run domain
 	if !trivial && (err != nil || state.Status != "ready" || state.Environment != epoch) {
 		return runtime.TerminalResult{}, fmt.Errorf("工作区执行环境已变化，请重新准备后打开终端")
 	}
-	sshKeys := env.credentialSnapshot().GitSSHKeys
-	if len(sshKeys) > 0 {
-		remotes := make([]string, 0, len(sshKeys))
-		for remote := range sshKeys {
-			remotes = append(remotes, remote)
-		}
-		return pool.HandleSandboxWithGitSSH(ctx, env.sandbox, scope, req, nil, e.repo.GitSSHKeysForRemotes(actorID, remotes))
-	}
-	return pool.HandleSandbox(ctx, env.sandbox, scope, req, nil)
+	return pool.HandleSandboxWithGit(ctx, env.sandbox, scope, req, nil, credentials)
 }
 
 // TrustedWorkspaceRequest attaches frozen execution configuration to an

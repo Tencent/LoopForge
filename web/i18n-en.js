@@ -98,7 +98,14 @@ Object.assign(window.LF_I18N_EN,{
 "没有匹配的模型":"No matching model",
 "发送编排要求":"Send orchestration request",
 "仅生成草稿 · 切换 CLI 开启新对话，保留画布":"Draft only · switching CLI starts a new chat and keeps the canvas",
-"暂无模型":"No models yet"
+"暂无模型":"No models yet",
+"SSH 密钥用于克隆和推送；创建 PR/MR 需要访问令牌":"SSH keys clone and push repositories; an access token is required to create PRs/MRs",
+"粘贴 Git HTTPS 链接或 Git SSH 地址":"Paste a Git HTTPS URL or Git SSH address",
+"已配置 Git 访问令牌":"Git access token configured",
+"使用仓库进行需求分析、访问私有代码或提交 PR 前，请先配置 Git 访问令牌。SOP 使用需求责任人的 Token，未指定时使用项目 Owner 的 Token。":"Configure a Git access token before analyzing a repository, accessing private code or submitting a PR. SOPs use the assignee's token, or the project owner's token when no assignee is set.",
+"请确认 Token 已获得目标仓库的访问和写入权限。SOP 使用需求责任人的 Token，未指定时使用项目 Owner 的 Token。":"Confirm the token can read and write the target repository. SOPs use the assignee's token, or the project owner's token when no assignee is set.",
+"Git 认证用户名":"Git authentication username",
+"按托管平台要求填写；这是 HTTPS 认证用户名，不是提交作者名，通常无法从 Token 推导。":"Use the username required by your hosting provider. This is the HTTPS authentication username, separate from the commit author, and usually cannot be inferred from the token."
 });
 Object.assign(window.LF_I18N_EN,{
 "查看澄清":"View clarification",
@@ -168,6 +175,45 @@ Object.assign(window.LF_I18N_EN,{
   "配置 Git SSH 密钥":"Configure Git SSH key",
   "请输入有效的 GitHub 链接或 Git SSH 克隆地址。CNB 只支持 HTTPS + 访问令牌。":"Enter a GitHub link or a Git SSH clone address. CNB supports HTTPS with an access token.",
   "粘贴 GitHub 链接或 Git SSH 地址":"Paste a GitHub link or Git SSH address"
+});
+Object.assign(window.LF_I18N_EN,{
+  "Git 访问令牌":"Git access tokens",
+  "按主机管理 HTTPS 访问令牌，工作区的 git、gh、glab 自动认证":"Manage HTTPS access tokens by host; git, gh and glab in workspaces authenticate automatically",
+  "管理令牌":"Manage tokens",
+  "Git 访问令牌（按主机）":"Git access tokens (by host)",
+  "每个 HTTPS 主机配置一个个人访问令牌。工作区里的 git、gh、glab 访问该主机时，平台按本轮发言人提供令牌。":"Configure one personal access token per HTTPS host. When git, gh or glab in a workspace reach that host, the platform provides the current speaker's token.",
+  "开启「提供给工作区」后，令牌会以明文提供给本人回合中的 Agent 和命令。请使用仓库级、最小权限、短有效期的令牌。":"With \u201cProvide to workspaces\u201d on, the token is handed in plain text to the agent and commands in your own turns. Use a repository-scoped, least-privilege, short-lived token.",
+  "正在读取凭据…":"Loading credentials…",
+  "还没有配置 Git 访问令牌":"No Git access tokens configured yet",
+  "添加令牌":"Add token",
+  "编辑令牌":"Edit token",
+  "保存令牌":"Save token",
+  "令牌已保存":"Token saved",
+  "删除这条令牌？":"Delete this token?",
+  "令牌已删除":"Token deleted",
+  "HTTPS 主机":"HTTPS host",
+  "github.com 或 gitlab.example.org:8443":"github.com or gitlab.example.org:8443",
+  "只填主机名，可附带端口；令牌只提供给这台主机。":"Host name only, optionally with a port. The token is only provided to this host.",
+  "平台":"Platform",
+  "其他平台":"Other platform",
+  "GitHub 和 GitLab 支持 gh / glab 认证和 PR/MR 合并状态同步。其他平台也可由 Agent 创建 PR/MR，合并状态请到托管平台查看。":"GitHub and GitLab support gh / glab authentication and automatic PR/MR merge status updates. Agents can also create PRs/MRs on other platforms, where you can check their merge status.",
+  "名称":"Name",
+  "例如 公司 GitLab":"For example, Company GitLab",
+  "用户名":"Username",
+  "git 认证使用的用户名，留空时为 x-access-token。":"Username git authenticates with; x-access-token when blank.",
+  "个人访问令牌":"Personal access token",
+  "粘贴个人访问令牌":"Paste a personal access token",
+  "留空保留现有令牌":"Leave blank to keep the current token",
+  "保存后不再显示；编辑时留空保留现有令牌。":"Not shown again after saving; leave blank when editing to keep the current token.",
+  "提供给工作区":"Provide to workspaces",
+  "关闭后只供平台在控制面使用（PR 登记、状态轮询），工作区拿不到这条令牌。":"When off, only the platform uses it (PR registration, status polling); workspaces cannot obtain this token.",
+  "仅控制面":"Platform only",
+  "平台托管":"Managed by the platform",
+  "校验令牌":"Verify token",
+  "正在校验…":"Verifying…",
+  "令牌校验未通过":"Token verification failed",
+  "配置 Git 访问令牌":"Configure Git access tokens",
+  "管理 Git 访问令牌":"Manage Git access tokens"
 });
 Object.assign(window.LF_I18N_EN,{
   "强制删除":"Force delete",

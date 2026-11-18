@@ -130,6 +130,14 @@ func (r Runner) SupportsGitSSH() bool {
 	return versionAtLeast(r.RunnerVersion, RunnerVersionGitSSH)
 }
 
+// RunnerVersionGitHTTP is the first runner whose workspace helper answers
+// Git credential and gh/glab requests through the session gateway.
+const RunnerVersionGitHTTP = "0.11.0"
+
+func (r Runner) SupportsGitHTTP() bool {
+	return versionAtLeast(r.RunnerVersion, RunnerVersionGitHTTP)
+}
+
 func (r Runner) SupportsSharedPush() bool {
 	return versionAtLeast(r.RunnerVersion, RunnerVersionSharedPush)
 }
@@ -439,6 +447,8 @@ func PublicRunnerTask(task RunnerTask) RunnerTask {
 	copyInvocation.AgentCLIModels = nil
 	copyInvocation.GitSSHUserID = 0
 	copyInvocation.GitSSHKeys = nil
+	copyInvocation.GitHTTPUserID = 0
+	copyInvocation.GitHTTPCredentials = nil
 	if copyInvocation.Repository != nil {
 		copyRepository := publicRunnerRepository(*copyInvocation.Repository)
 		copyInvocation.Repository = &copyRepository
@@ -524,6 +534,13 @@ type RunnerInvocation struct {
 	// authenticated claim or on the outbound workspace control connection.
 	GitSSHUserID int64             `json:"gitSshUserId,omitempty"`
 	GitSSHKeys   map[string]string `json:"gitSshKeys,omitempty"` // clone URL to private key
+	// Only the responsible user id is queued; HTTPS secrets are hydrated on
+	// authenticated claim/control dispatch and never persisted in the task.
+	GitHTTPUserID      int64                                 `json:"gitHttpUserId,omitempty"`
+	GitHTTPCredentials map[string]GitHTTPExecutionCredential `json:"gitHttpCredentials,omitempty"`
+	// The first SOP Agent may recover a failed automatic checkout. The runner
+	// validates the frozen repository and branch before reporting success.
+	RepositoryPreparationFallback bool `json:"repositoryPreparationFallback,omitempty"`
 	// Repositories lists every repository the run touches (multi-repository
 	// support). Each entry checks out into its Dir under the task workspace.
 	Repositories []RunnerRepository `json:"repositories,omitempty"`

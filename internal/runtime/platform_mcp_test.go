@@ -51,7 +51,7 @@ func TestPrepareMCPServersGitHubCredentialPolicy(t *testing.T) {
 	if err != nil || got.MCPServers[0].Headers["Authorization"] != "" {
 		t.Fatalf("optional bind without token = %#v, %v", got.MCPServers, err)
 	}
-	got, _, err = PrepareMCPServers(assets, MCPTarget{GitToken: "ghp_test", RequireCredentials: true})
+	got, _, err = PrepareMCPServers(assets, MCPTarget{GitHTTPCredentials: testHTTPSCredentials("ghp_test"), RequireCredentials: true})
 	if err != nil || got.MCPServers[0].Headers["Authorization"] != "Bearer ghp_test" {
 		t.Fatalf("strict bind = %#v, %v", got.MCPServers, err)
 	}

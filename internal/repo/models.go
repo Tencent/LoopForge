@@ -63,6 +63,20 @@ type gitSSHKeyRow struct {
 
 func (gitSSHKeyRow) TableName() string { return "user_git_ssh_keys" }
 
+type gitHTTPCredentialRow struct {
+	UserID   int64      `gorm:"primaryKey;autoIncrement:false"`
+	ID       string     `gorm:"primaryKey;size:64"`
+	Name     string     `gorm:"size:80;not null"`
+	Platform string     `gorm:"size:16;not null"`
+	Host     string     `gorm:"size:255;not null"`
+	Username string     `gorm:"size:128;not null"`
+	Token    string     `gorm:"type:text;not null"`
+	Created  *time.Time `gorm:"column:created_at"`
+	Updated  *time.Time `gorm:"column:updated_at"`
+}
+
+func (gitHTTPCredentialRow) TableName() string { return "user_git_http_credentials" }
+
 type apiTokenRow struct {
 	ID         string     `gorm:"column:id;primaryKey;size:64"`
 	UserID     int64      `gorm:"column:user_id;index:idx_api_tokens_user"`
@@ -490,6 +504,7 @@ type mrDeliveryStateRow struct {
 	IssueID      string     `gorm:"column:issue_id;index:idx_mr_delivery_issue;size:64"`
 	MergedAt     *time.Time `gorm:"column:merged_at;index:idx_mr_delivery_merged_at"`
 	CheckedAt    *time.Time `gorm:"column:checked_at"`
+	RegisteredBy *int64     `gorm:"column:registered_by"`
 	Created      *time.Time `gorm:"column:created_at"`
 	Updated      *time.Time `gorm:"column:updated_at"`
 }
@@ -731,7 +746,7 @@ func (knowledgeSubmissionRow) TableName() string { return "knowledge_submissions
 // allModels lists every table for the sqlite test schema (AutoMigrate).
 func allModels() []any {
 	return []any{domain.BotUserBinding{}, domain.BotBindingChallenge{}, domain.BotConnection{}, domain.BotConversation{}, domain.BotInteraction{}, notificationBotRow{}, botCredentialRow{}, domain.NotificationDelivery{},
-		userRow{}, localAccountRow{}, userConfigRow{}, gitSSHKeyRow{}, authIntegrationRow{}, platformCodeBuddyKeyRow{}, apiTokenRow{}, genericTemplateRow{},
+		userRow{}, localAccountRow{}, userConfigRow{}, gitSSHKeyRow{}, gitHTTPCredentialRow{}, authIntegrationRow{}, platformCodeBuddyKeyRow{}, apiTokenRow{}, genericTemplateRow{},
 		insightSourceRow{}, insightExecutionRow{},
 		projectRow{}, projectMemberRow{}, repositoryRow{}, businessDomainRow{}, businessDomainAssignmentRow{},
 		agentRow{}, ruleRow{}, skillRow{}, skillFileRow{}, mcpServerRow{}, mcpFileRow{}, executorRow{},

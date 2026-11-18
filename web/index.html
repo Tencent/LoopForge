@@ -998,7 +998,7 @@
         <div class="pa-fs">
           <h5>仓库地址</h5>
           <div data-github-repositories></div>
-          <label class="pa-field"><span class="pa-field-l">GitHub 链接或 Git SSH 地址</span>
+          <label class="pa-field"><span class="pa-field-l">Git HTTPS 链接或 Git SSH 地址</span>
             <input class="pa-input mono" name="repoUrl" spellcheck="false" placeholder="https://github.com/owner/repo">
             <span class="pa-fmt"><code>https://github.com/owner/repo</code><code>git@gitlab.com:group/repo.git</code></span>
             <span class="pa-field-e" id="repoDrawerUrlError" hidden>请输入有效的 GitHub 链接或 Git SSH 克隆地址。CNB 只支持 HTTPS + 访问令牌。</span>
@@ -1335,6 +1335,7 @@
   <script src="/app/run-activation.js"></script>
   <script src="/app/workbench.js?v=20261030theme1"></script>
   <script src="/app/git-ssh-keys.js"></script>
+  <script src="/app/git-http-credentials.js"></script>
   <script src="/app/approvals.js"></script>
   <script src="/app/obs-charts.js"></script>
   <script src="/app/observability.js"></script>

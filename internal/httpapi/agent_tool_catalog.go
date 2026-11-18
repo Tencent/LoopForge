@@ -432,7 +432,7 @@ func (h *agentToolGateway) listUpstreamTools(ctx context.Context, session *Agent
 	if server.Scope != "personal" && session.Mode == AgentToolClarify {
 		caller = h.clarifyMCPUser(domain.Issue{ProjectID: session.ProjectID}, session.User)
 	}
-	bound, err := bindAssistantMCP(server, caller)
+	bound, err := bindAssistantMCP(h.repo, server, caller)
 	if err != nil {
 		return nil, err
 	}
