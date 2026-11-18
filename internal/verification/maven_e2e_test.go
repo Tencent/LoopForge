@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -136,4 +137,121 @@ func mavenMirror() string {
 		return value
 	}
 	return "https://maven.aliyun.com/repository/public"
+}
+
+func TestBaselineDiffRealContainer(t *testing.T) {
+	if os.Getenv("LOOPFORGE_VERIFY_E2E") != "1" {
+		t.Skip("set LOOPFORGE_VERIFY_E2E=1 to run the real Maven container test")
+	}
+	if err := exec.Command("docker", "info").Run(); err != nil {
+		t.Skip("docker daemon not available")
+	}
+	repo := mavenProject(t)
+	gitInit(t, repo)
+	base := gitHead(t, repo)
+	runner := MavenRunner{CacheDir: t.TempDir(), Timeout: 20 * time.Minute, MirrorURL: mavenMirror()}
+	baseVerdicts, err := runner.BaselineVerdicts(context.Background(), repo, base, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(repo, "src", "test", "java", "ExampleTest.java"), `
+import org.junit.jupiter.api.Test;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+
+class ExampleTest {
+    @Test
+    void passes() { assertEquals(1, 2); }
+}
+`)
+	current, err := runner.RunTests(context.Background(), repo, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	diff := CompareBaseline(baseVerdicts, current.Verdicts)
+	if len(diff.NewlyFailing) == 0 || len(diff.Blocking(nil)) == 0 {
+		t.Fatalf("diff = %+v (base %v, current %v)", diff, baseVerdicts, current.Verdicts)
+	}
+}
+
+func TestRepeatedRunsDetectAlwaysFailing(t *testing.T) {
+	if os.Getenv("LOOPFORGE_VERIFY_E2E") != "1" {
+		t.Skip("set LOOPFORGE_VERIFY_E2E=1 to run the real Maven container test")
+	}
+	if err := exec.Command("docker", "info").Run(); err != nil {
+		t.Skip("docker daemon not available")
+	}
+	repo := mavenProject(t)
+	writeFile(t, filepath.Join(repo, "src", "test", "java", "ExampleTest.java"), `
+import org.junit.jupiter.api.Test;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+
+class ExampleTest {
+    @Test
+    void alwaysFails() { assertEquals(1, 2); }
+}
+`)
+	runner := MavenRunner{CacheDir: t.TempDir(), Timeout: 30 * time.Minute, MirrorURL: mavenMirror(), Runs: 3}
+	outcome, err := runner.RunTests(context.Background(), repo, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if outcome.Runs != 3 || len(outcome.AlwaysFailing) == 0 || outcome.Status != "FAIL" {
+		t.Fatalf("outcome = %+v", outcome)
+	}
+}
+
+func TestRepeatedRunsDetectFlaky(t *testing.T) {
+	if os.Getenv("LOOPFORGE_VERIFY_E2E") != "1" {
+		t.Skip("set LOOPFORGE_VERIFY_E2E=1 to run the real Maven container test")
+	}
+	if err := exec.Command("docker", "info").Run(); err != nil {
+		t.Skip("docker daemon not available")
+	}
+	repo := mavenProject(t)
+	writeFile(t, filepath.Join(repo, "src", "test", "java", "ExampleTest.java"), `
+import java.nio.file.*;
+import org.junit.jupiter.api.Test;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+
+class ExampleTest {
+    @Test
+    void flaky() throws Exception {
+        Path marker = Path.of("target", "flaky-marker");
+        boolean first = !Files.exists(marker);
+        Files.createDirectories(marker.getParent());
+        Files.writeString(marker, "seen");
+        assertFalse(first, "first run fails, later runs pass");
+    }
+}
+`)
+	runner := MavenRunner{CacheDir: t.TempDir(), Timeout: 30 * time.Minute, MirrorURL: mavenMirror(), Runs: 3}
+	outcome, err := runner.RunTests(context.Background(), repo, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(outcome.Flaky) == 0 || outcome.Status != "PASS" {
+		t.Fatalf("outcome = %+v", outcome)
+	}
+}
+
+func gitInit(t *testing.T, repo string) {
+	t.Helper()
+	for _, args := range [][]string{
+		{"init", "-q"}, {"config", "user.email", "verify@example.com"},
+		{"config", "user.name", "verify"}, {"add", "."}, {"commit", "-qm", "init"},
+	} {
+		cmd := exec.Command("git", append([]string{"-C", repo}, args...)...)
+		if output, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, output)
+		}
+	}
+}
+
+func gitHead(t *testing.T, repo string) string {
+	t.Helper()
+	output, err := exec.Command("git", "-C", repo, "rev-parse", "HEAD").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return strings.TrimSpace(string(output))
 }
