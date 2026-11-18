@@ -109,7 +109,7 @@ func Review(ctx context.Context, config Config, req Request) (Response, error) {
 	budget := firstBudget
 	var lastProblem string
 	for attempt := 0; attempt < maxAttempts; attempt++ {
-		content, err := config.complete(ctx, messages(req, patch, lastProblem), budget)
+		content, err := config.complete(ctx, messages(req, patch, lastProblem), budget, "loopforge-critique-"+hash[:8])
 		if err != nil {
 			lastProblem = "model call failed: " + err.Error()
 			budget *= 2
@@ -162,7 +162,7 @@ func truncatePatch(patch string) string {
 	return patch[:maxPatchChars] + fmt.Sprintf("\n\n[the patch is truncated at %d characters; judge what is shown]", maxPatchChars)
 }
 
-func (c Config) complete(ctx context.Context, messages []map[string]string, budget int) (string, error) {
+func (c Config) complete(ctx context.Context, messages []map[string]string, budget int, session string) (string, error) {
 	timeout := c.Timeout
 	if timeout <= 0 {
 		timeout = 180 * time.Second
@@ -189,6 +189,8 @@ func (c Config) complete(ctx context.Context, messages []map[string]string, budg
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Authorization", "Bearer "+strings.TrimSpace(c.Key))
+	// OpenCode routes by session; AegisOS sends the same header.
+	httpReq.Header.Set("x-opencode-session", session)
 	response, err := client.Do(httpReq)
 	if err != nil {
 		return "", err
