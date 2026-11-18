@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -62,6 +64,92 @@ func TestPersonalWorkspaceBindingAndReuse(t *testing.T) {
 	back, err := gateway.bindConversationWorkspace(context.Background(), next, workspaceOpenChoice{WorkspaceRunID: first.Run.ID})
 	if err != nil || back.Created || back.Run.ID != first.Run.ID {
 		t.Fatalf("switching back to a workspace of the same conversation: %+v, %v", back, err)
+	}
+}
+
+func TestPersonalWorkspaceOpenFailureRollsBackOwnership(t *testing.T) {
+	for _, name := range []string{"first open", "switching environments"} {
+		t.Run(name, func(t *testing.T) {
+			h, owner := workbenchFixture(t)
+			gateway := workspaceAccessGateway(t, h)
+			const runnerID = "workspace-preparation-runner"
+			if err := h.repo.PutRunner(domain.Runner{ID: runnerID, RunnerVersion: domain.RunnerVersionConversationCLI, Status: domain.RunnerStatusOnline}); err != nil {
+				t.Fatal(err)
+			}
+			h.engine.WorkspaceCheckpointTransport = func(_ context.Context, _ domain.Run, req domain.RunnerWorkspaceRequest) (domain.RunnerWorkspaceResponse, error) {
+				if req.Operation == domain.RunnerWorkspaceOperationPrepare {
+					return domain.RunnerWorkspaceResponse{Status: http.StatusOK}, nil
+				}
+				return domain.RunnerWorkspaceResponse{}, os.ErrNotExist
+			}
+			const chatID = "workspace-preparation-failure"
+			chat := domain.AssistantSession{
+				ID:              chatID,
+				ExecutionTarget: &domain.AssistantExecutionTarget{Pool: domain.ExecutionModeRunner, RunnerID: runnerID},
+			}
+			if err := h.repo.PutAssistantSession(owner.ID, chat); err != nil {
+				t.Fatal(err)
+			}
+			session := &AgentToolSession{Mode: AgentToolAssistant, ChatSessionID: chat.ID, ChatOwnerID: owner.ID, UserID: owner.ID, User: owner}
+			ctx := context.Background()
+			var previous string
+			args := map[string]any{}
+			if name == "switching environments" {
+				bound, err := gateway.bindConversationWorkspace(ctx, session, workspaceOpenChoice{})
+				if err != nil {
+					t.Fatal(err)
+				}
+				previous = bound.Run.ID
+				args["sandboxProfileId"] = altConversationSandbox(t, h)
+				session.workspaceTurn = newAssistantWorkspaceTurn(h.engine, nil)
+				t.Cleanup(func() {
+					if err := session.workspaceTurn.close(ctx); err != nil {
+						t.Error(err)
+					}
+					waitWorkspaceCheckpointSettled(t, h.repo, previous)
+				})
+			}
+			api := gateway.api
+			var failedRunID string
+			gateway.api = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				failedRunID = mainBotWorkspaceRun(r.Context())
+				http.Error(w, "workspace tree unavailable", http.StatusServiceUnavailable)
+			})
+			if _, err := gateway.callMainBotWorkspace(ctx, session, "workbench_workspace_open", args); err == nil || !strings.Contains(err.Error(), "workspace tree unavailable") || failedRunID == "" {
+				t.Fatalf("expected preparation to reach the failing tree request, got %v", err)
+			}
+			waitWorkspaceCheckpointSettled(t, h.repo, failedRunID)
+			if run, ok := h.repo.RunState(failedRunID); !ok || run.Status != "cancelled" {
+				t.Fatalf("failed workspace was not cancelled: found=%v status=%q", ok, run.Status)
+			}
+			saved, _ := h.repo.AssistantSession(owner.ID, chat.ID)
+			var owned []string
+			if previous == "" {
+				req := httptest.NewRequest(http.MethodPut, "/api/assistant/sessions/"+chat.ID, strings.NewReader(`{"projectId":"workbench"}`))
+				req = req.WithContext(context.WithValue(req.Context(), requestUserContextKey{}, domainUserToAuth(owner)))
+				rec := httptest.NewRecorder()
+				api.ServeHTTP(rec, req)
+				if rec.Code != http.StatusOK {
+					t.Errorf("first failed open blocked binding to a project: %d %s", rec.Code, rec.Body.String())
+				}
+			} else {
+				owned = []string{previous}
+			}
+			if saved.WorkspaceRunID != previous || session.workspaceRun() != previous || !slices.Equal(saved.OwnWorkspaceRunIDs, owned) {
+				t.Fatalf("rollback left workspace state run=%q stored=%q owned=%v, want run=%q owned=%v", session.workspaceRun(), saved.WorkspaceRunID, saved.OwnWorkspaceRunIDs, previous, owned)
+			}
+			if previous != "" {
+				gateway.api = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if mainBotWorkspaceRun(r.Context()) != previous {
+						t.Error("retry did not use the restored workspace")
+					}
+					_, _ = w.Write([]byte(`{"entries":[]}`))
+				})
+				if _, err := gateway.callMainBotWorkspace(ctx, session, "workbench_workspace_open", nil); err != nil {
+					t.Fatalf("could not reuse the restored workspace in the same turn: %v", err)
+				}
+			}
+		})
 	}
 }
 

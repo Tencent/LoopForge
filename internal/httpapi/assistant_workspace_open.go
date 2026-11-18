@@ -175,17 +175,22 @@ func (h *agentToolGateway) openConversationWorkspace(ctx context.Context, s *Age
 	treeCtx := context.WithValue(ctx, mainBotWorkspaceKey{}, run.ID)
 	tree, err := h.callMainBotWorkspace(treeCtx, s, "workbench_workspace_tree", map[string]any{})
 	if err != nil {
-		if bound.Created {
-			h.discardConversationWorkspace(s, bound)
-			return "", fmt.Errorf("工作区准备失败（已放弃这个工作区）：%v", err)
-		}
 		// Reusing the bound workspace switched nothing, so there is no binding
 		// to restore: keep it for the next attempt.
-		if !bound.Reused && bound.Previous != bound.Run.ID {
-			h.restoreConversationWorkspaceBinding(s, bound)
-			return "", fmt.Errorf("打开工作区 %s 失败（已恢复原绑定）：%v", run.ID, err)
+		if bound.Reused {
+			return "", fmt.Errorf("工作区已绑定（%s），但准备时失败：%w", run.ID, err)
 		}
-		return "", fmt.Errorf("工作区已绑定（%s），但准备时失败：%v", run.ID, err)
+		active, rollbackErr := h.rollbackConversationWorkspaceBinding(ctx, s, bound)
+		switch {
+		case rollbackErr != nil:
+			return "", fmt.Errorf("工作区 %s 准备失败：%v。恢复绑定失败：%w", run.ID, err, rollbackErr)
+		case bound.Created:
+			return "", fmt.Errorf("工作区准备失败（已放弃这个工作区）：%w", err)
+		case active == bound.Previous:
+			return "", fmt.Errorf("打开工作区 %s 失败（已恢复原绑定）：%w", run.ID, err)
+		default:
+			return "", fmt.Errorf("打开工作区 %s 失败：%w", run.ID, err)
+		}
 	}
 	out["files"] = json.RawMessage(truncateJSONForTool(tree, 6000))
 	if run.IsWorkspace() || sopStopped(run) {
@@ -276,23 +281,29 @@ func (h *agentToolGateway) openTaskWorkspace(s *AgentToolSession) (string, error
 	return string(raw), nil
 }
 
-func (h *agentToolGateway) restoreConversationWorkspaceBinding(s *AgentToolSession, bound conversationWorkspaceBinding) {
+func (h *agentToolGateway) rollbackConversationWorkspaceBinding(ctx context.Context, s *AgentToolSession, bound conversationWorkspaceBinding) (string, error) {
+	if s.workspaceTurn != nil {
+		s.workspaceTurn.operations.Lock()
+		defer s.workspaceTurn.operations.Unlock()
+	}
 	s.workspaceMu.Lock()
 	defer s.workspaceMu.Unlock()
-	if s.workspaceRunID != bound.Run.ID {
-		return
+	if bound.Created {
+		h.cancelUnpreparedConversationWorkspace(bound.Run.ID)
 	}
-	s.workspaceRunID = bound.Previous
-	if err := h.repo.SetAssistantSessionWorkspaceRun(s.ChatOwnerID, s.ChatSessionID, s.ProjectID, bound.Previous, false); err != nil {
-		log.Printf("rebind conversation workspace after failure session=%s run=%s: %v", s.ChatSessionID, bound.Previous, err)
+	active, err := h.repo.RollbackAssistantSessionWorkspaceRun(s.ChatOwnerID, s.ChatSessionID, s.ProjectID, bound.Run.ID, bound.Previous, bound.Created)
+	if err != nil {
+		return "", err
 	}
-}
-
-// discardConversationWorkspace cancels a workspace this call created but could
-// not prepare, and puts the conversation back on the workspace it used before.
-func (h *agentToolGateway) discardConversationWorkspace(s *AgentToolSession, bound conversationWorkspaceBinding) {
-	h.cancelUnpreparedConversationWorkspace(bound.Run.ID)
-	h.restoreConversationWorkspaceBinding(s, bound)
+	if s.workspaceTurn != nil && s.workspaceRunID == bound.Run.ID {
+		// Release the failed binding's lease so the same turn can reuse the
+		// restored workspace.
+		if err := s.workspaceTurn.checkpoint(ctx); err != nil && !errors.Is(err, errAssistantTurnClosed) {
+			log.Printf("release failed workspace lease session=%s run=%s: %v", s.ChatSessionID, bound.Run.ID, err)
+		}
+	}
+	s.workspaceRunID = active
+	return active, nil
 }
 
 func (h *agentToolGateway) cancelUnpreparedConversationWorkspace(runID string) {
