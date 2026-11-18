@@ -70,5 +70,5 @@ func (h *runnersHandlers) probeRunnerModels(c *gin.Context) {
 		c.JSON(http.StatusOK, cliModelProbeResult{Error: "账号没有返回可用模型，可以手动添加模型"})
 		return
 	}
-	c.JSON(http.StatusOK, cliModelProbeResult{Models: cliModelsWithEfforts(provider, models), Source: "runner"})
+	c.JSON(http.StatusOK, cliModelProbeResult{Models: cliModelsWithEfforts(provider, models, ""), Source: "runner"})
 }

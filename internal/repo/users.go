@@ -561,7 +561,14 @@ func normalizeCLIReasoningEfforts(raw *[]string) (*[]string, error) {
 	levels := make([]string, 0, len(*raw))
 	for _, level := range *raw {
 		level = strings.TrimSpace(level)
-		if !slices.Contains(domain.ExecutorEffortLevels["cursor"], level) && level != "ultracode" {
+		supported := false
+		for _, allowed := range domain.ExecutorEffortLevels {
+			if slices.Contains(allowed, level) {
+				supported = true
+				break
+			}
+		}
+		if !supported {
 			return nil, fmt.Errorf("不支持思考强度 %q", level)
 		}
 		if !slices.Contains(levels, level) {

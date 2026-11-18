@@ -152,7 +152,7 @@ func assistantEngineBuiltinModels(engine string) []assistantDiscoveredModel {
 		catalogKey = "claude"
 	}
 	var out []assistantDiscoveredModel
-	for _, model := range executorModelCatalogs()[catalogKey].Models {
+	for _, model := range executorModelCatalogs("")[catalogKey].Models {
 		out = append(out, assistantDiscoveredModel{ID: model.ID, Name: model.Name})
 	}
 	return out
@@ -343,7 +343,7 @@ func assistantSavedModels(user domain.User, engine string) []assistantDiscovered
 
 func assistantEngineModels(ctx context.Context, user domain.User, runnerLogin map[string]bool) (models []assistantModel, cursorModelsPending bool) {
 	for _, engine := range assistantCLIEngines() {
-		key, _ := assistantEngineCredential(user, engine)
+		key, baseURL := assistantEngineCredential(user, engine)
 		listed := assistantSavedModels(user, engine)
 		if key == "" && !runnerLogin[engine] && len(listed) == 0 {
 			continue
@@ -368,7 +368,7 @@ func assistantEngineModels(ctx context.Context, user domain.User, runnerLogin ma
 				Name:    name,
 				Family:  assistantModelFamily(model.ID),
 				Engine:  engine,
-				Efforts: assistantModelEffortsIn(id, catalog),
+				Efforts: assistantModelEffortsForBaseURL(id, catalog, baseURL),
 			})
 		}
 	}

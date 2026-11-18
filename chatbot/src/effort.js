@@ -1,5 +1,6 @@
 const levels = {
   none: { label: "关闭", icon: "sparkles", detail: "不使用额外推理。" },
+  thinking: { label: "开启", icon: "brain", detail: "开启思考模式。" },
   minimal: { label: "最低", icon: "effort-low", detail: "只做最少推理，优先尽快返回。" },
   low: { label: "低", icon: "effort-low", detail: "优先响应速度，适合简单问题。" },
   medium: { label: "中", icon: "effort-medium", detail: "兼顾响应速度与推理深度。" },

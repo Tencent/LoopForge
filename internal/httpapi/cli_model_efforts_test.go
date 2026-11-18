@@ -97,12 +97,20 @@ func TestModelEffortsKeepLegacyCatalogsAndCLIConstraints(t *testing.T) {
 	custom := []string{"low", "xhigh", "ultra"}
 	discovered := []string{"high"}
 	explicitDefault := []string{}
+	switchLevels := []string{"off", "on"}
+	deepseekLevels := []string{"off", "max"}
 	for _, check := range []struct {
 		model string
 		entry domain.CLIModel
 		want  []string
 	}{
 		{"codex:custom", domain.CLIModel{ID: "custom"}, []string{"low", "medium", "high"}},
+		{"kimi:unknown", domain.CLIModel{ID: "unknown"}, nil},
+		{"kimi:kimi-for-coding-highspeed", domain.CLIModel{ID: "kimi-for-coding-highspeed", DiscoveredReasoningEfforts: &switchLevels}, []string{"none", "thinking"}},
+		{"kimi:k3.1-pro", domain.CLIModel{ID: "k3.1-pro", DiscoveredReasoningEfforts: &deepseekLevels}, []string{"max"}},
+		{"dsh:deepseek-flash", domain.CLIModel{ID: "deepseek-flash", DiscoveredReasoningEfforts: &deepseekLevels}, []string{"none", "max"}},
+		{"dsh:deepseek-flash", domain.CLIModel{ID: "deepseek-flash", ReasoningEfforts: &explicitDefault, DiscoveredReasoningEfforts: &deepseekLevels}, nil},
+		{"zcode:glm-5.3", domain.CLIModel{ID: "glm-5.3", DiscoveredReasoningEfforts: &discovered}, discovered},
 		{"codex:custom", domain.CLIModel{ID: "custom", DiscoveredReasoningEfforts: &discovered}, discovered},
 		{"codex:custom", domain.CLIModel{ID: "custom", ReasoningEfforts: &custom, DiscoveredReasoningEfforts: &discovered}, custom},
 		{"codex:custom", domain.CLIModel{ID: "custom", ReasoningEfforts: &custom}, custom},
@@ -164,10 +172,47 @@ func TestAutomaticDiscoveryUsesSameEffortsForColdValidation(t *testing.T) {
 	}
 }
 
+func TestKimiThinkingSwitchSurvivesSavedCatalog(t *testing.T) {
+	h, owner := workbenchFixture(t)
+	levels := []string{"none", "thinking"}
+	models := []domain.CLIModel{{ID: "kimi-for-coding-highspeed", ReasoningEfforts: &levels}}
+	if _, err := h.repo.UpdateUserCredentials(owner.ID, repo.UserCredentialUpdate{
+		AgentCLICredentials: map[string]repo.AgentCLICredentialUpdate{
+			"kimi": {APIKey: "fixture-key", Models: &models},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	owner, _ = h.repo.User(owner.ID)
+	chat, _ := assistantEngineModels(context.Background(), owner, nil)
+	if !slices.ContainsFunc(chat, func(model assistantModel) bool {
+		return model.ID == "kimi:kimi-for-coding-highspeed" && slices.Equal(model.Efforts, levels)
+	}) {
+		t.Fatalf("saved Kimi thinking options not shown: %+v", chat)
+	}
+
+	baseURL := "https://gateway.example/v1"
+	if _, err := h.repo.UpdateUserCredentials(owner.ID, repo.UserCredentialUpdate{
+		AgentCLICredentials: map[string]repo.AgentCLICredentialUpdate{"kimi": {BaseURL: &baseURL, Models: &models}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	owner, _ = h.repo.User(owner.ID)
+	chat, _ = assistantEngineModels(context.Background(), owner, nil)
+	if !slices.ContainsFunc(chat, func(model assistantModel) bool {
+		return model.ID == "kimi:kimi-for-coding-highspeed" && len(model.Efforts) == 0
+	}) {
+		t.Fatalf("gateway catalog advertised a Kimi override: %+v", chat)
+	}
+	if err := validateAssistantEffort(context.Background(), owner, "kimi:kimi-for-coding-highspeed", "thinking"); err == nil {
+		t.Fatal("Kimi gateway accepted an unsupported per-turn override")
+	}
+}
+
 func TestBuiltinModelEffortsMatchTheCatalogAndTurnValidation(t *testing.T) {
 	h, owner := workbenchFixture(t)
 	chatCatalogs := make(map[string]assistantModelCatalog)
-	for _, engine := range []string{"codex", "claude-code"} {
+	for _, engine := range []string{"codex", "claude-code", "kimi", "dsh", "zcode"} {
 		c, response := workbenchContext(owner, http.MethodGet, "/api/assistant/models?executor="+engine, &bytes.Buffer{})
 		h.models(c)
 		var chat assistantModelCatalog
@@ -185,6 +230,7 @@ func TestBuiltinModelEffortsMatchTheCatalogAndTurnValidation(t *testing.T) {
 	xhigh := []string{"low", "medium", "high", "xhigh"}
 	max := []string{"low", "medium", "high", "xhigh", "max"}
 	ultra := []string{"low", "medium", "high", "xhigh", "max", "ultra"}
+	levels := append([]string{"none", "thinking"}, ultra...)
 	for _, model := range []struct {
 		engine string
 		id     string
@@ -199,6 +245,13 @@ func TestBuiltinModelEffortsMatchTheCatalogAndTurnValidation(t *testing.T) {
 		{"claude-code", "claude-fable-5-2", max},
 		{"claude-code", "claude-opus-5-5", max},
 		{"claude-code", "claude-sonnet-4-6", []string{"low", "medium", "high", "max"}},
+		{"kimi", "k3.1-pro", []string{"low", "high", "max"}},
+		{"kimi", "k3", []string{"none", "low", "high", "max"}},
+		{"kimi", "kimi-for-coding-highspeed", []string{"none", "thinking"}},
+		{"dsh", "deepseek-flash", []string{"none", "low", "high", "max"}},
+		{"dsh", "deepseek-v4-pro", []string{"none", "low", "high", "max"}},
+		{"zcode", "glm-5.3", []string{"low", "high", "max"}},
+		{"zcode", "glm-5.3-flash", []string{"low", "high", "max"}},
 	} {
 		t.Run(model.engine+"/"+model.id, func(t *testing.T) {
 			chat := chatCatalogs[model.engine]
@@ -215,7 +268,7 @@ func TestBuiltinModelEffortsMatchTheCatalogAndTurnValidation(t *testing.T) {
 			if roleIndex < 0 || !slices.Equal(roleModels[roleIndex].Efforts, effortOptions(model.levels)) {
 				t.Errorf("role picker missing %s with efforts %v", model.id, model.levels)
 			}
-			for _, effort := range ultra {
+			for _, effort := range levels {
 				err := validateAssistantEffort(context.Background(), owner, model.engine+":"+model.id, effort)
 				if want := slices.Contains(model.levels, effort); (err == nil) != want {
 					t.Errorf("%s effort %s: validation returned %v, want accepted=%t", model.id, effort, err, want)

@@ -17,21 +17,36 @@ func assistantModelEfforts(ctx context.Context, user domain.User, model string) 
 	if engine == assistantEngineCodeBuddy || engine == runtime.AgentCLICursor {
 		return assistantModelEffortsIn(model, assistantEngineCustomModels(user, engine))
 	}
+	_, baseURL := assistantEngineCredential(user, engine)
+	if engine == runtime.AgentCLIKimi && baseURL != "" {
+		return nil
+	}
 	models, _ := assistantDiscoveredModelsFor(ctx, user, engine)
 	return assistantModelEffortsIn(model, cliModelsOf(models))
+}
+
+func assistantModelEffortsForBaseURL(model string, catalog []domain.CLIModel, baseURL string) []string {
+	if baseURL != "" && strings.HasPrefix(strings.TrimSpace(model), runtime.AgentCLIKimi+":") {
+		return nil
+	}
+	return assistantModelEffortsIn(model, catalog)
 }
 
 // assistantModelEffortsIn prefers configured levels, then discovered levels,
 // then the built-in model or CLI capabilities.
 // The CodeBuddy fallback mirrors CodeBuddy Code 2.180.0's model capabilities.
-// Unknown models fall back to low/medium/high.
+// Unknown CodeBuddy, Codex and Claude Code models fall back to low/medium/high.
 func assistantModelEffortsIn(model string, catalog []domain.CLIModel) []string {
 	engine, id := assistantModelEngine(model)
 	supported := domain.ExecutorEffortLevels[engine]
+	builtins := builtinExecutorModels[engine]
+	builtin := slices.IndexFunc(builtins, func(model builtinExecutorModel) bool { return model.id == id })
 	if engine == runtime.AgentCLICursor {
 		supported = runtime.CursorModelEfforts(id, catalog)
 	} else if engine == runtime.AgentCLIAntigravity {
 		supported = runtime.AgyModelEfforts(id)
+	} else if engine == runtime.AgentCLIKimi && builtin >= 0 {
+		supported = builtins[builtin].efforts
 	}
 	for _, item := range catalog {
 		if item.ID != id {
@@ -44,21 +59,34 @@ func assistantModelEffortsIn(model string, catalog []domain.CLIModel) []string {
 		if configured == nil {
 			continue
 		}
+		advertised := *configured
+		if engine == runtime.AgentCLIKimi || engine == runtime.AgentCLIDeepSeek {
+			advertised = slices.Clone(advertised)
+			for i, level := range advertised {
+				switch level {
+				case "off":
+					advertised[i] = "none"
+				case "on":
+					advertised[i] = "thinking"
+				}
+			}
+		}
 		levels := []string{}
 		for _, level := range supported {
-			if slices.Contains(*configured, level) {
+			if slices.Contains(advertised, level) {
 				levels = append(levels, level)
 			}
 		}
 		return levels
 	}
-	if runtime.IsAgentCLI(engine) {
-		return supported
+	if builtin >= 0 {
+		return builtins[builtin].efforts
 	}
-	for _, builtin := range builtinExecutorModels[engine] {
-		if builtin.id == id {
-			return builtin.efforts
+	if runtime.IsAgentCLI(engine) {
+		if len(builtins) > 0 {
+			return nil
 		}
+		return supported
 	}
 	if engine == assistantEngineCodex {
 		return []string{"low", "medium", "high"}

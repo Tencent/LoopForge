@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"agentflow/internal/domain"
+	"agentflow/internal/runtime"
 
 	"github.com/gin-gonic/gin"
 )
@@ -191,7 +192,15 @@ func (h *assistantHandlers) models(c *gin.Context) {
 		} else if id == "claude" {
 			engine = assistantEngineClaude
 		}
-		catalog, ok := executorModelCatalogs()[id]
+		var kimiBaseURL string
+		if engine == runtime.AgentCLIKimi {
+			if current, signedIn := h.requestUser(c.Request, true); signedIn {
+				if stored, found := h.repo.User(current.ID); found {
+					_, kimiBaseURL = assistantEngineCredential(stored, engine)
+				}
+			}
+		}
+		catalog, ok := executorModelCatalogs(kimiBaseURL)[id]
 		if !ok {
 			c.JSON(400, gin.H{"error": "不支持的执行器"})
 			return

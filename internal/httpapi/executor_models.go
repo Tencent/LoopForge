@@ -41,9 +41,11 @@ type builtinExecutorModel struct {
 	efforts []string
 }
 
-// Per-model defaults from the Codex catalog and the Claude Code effort table.
+// Reasoning levels offered by the built-in models on each CLI.
 var builtinExecutorModels = func() map[string][]builtinExecutorModel {
 	legacy := []string{"low", "medium", "high"}
+	lowHighMax := []string{"low", "high", "max"}
+	offLowHighMax := []string{"none", "low", "high", "max"}
 	xhigh := []string{"low", "medium", "high", "xhigh"}
 	max := []string{"low", "medium", "high", "xhigh", "max"}
 	maxWithoutXHigh := []string{"low", "medium", "high", "max"}
@@ -79,11 +81,28 @@ var builtinExecutorModels = func() map[string][]builtinExecutorModel {
 			{"claude-haiku-5-5", "Claude Haiku 5.5", max},
 			{"claude-haiku-4-5", "Claude Haiku 4.5", legacy},
 		},
+		runtime.AgentCLIKimi: {
+			{"k3.1-pro", "K3.1 Pro", lowHighMax},
+			{"k3.1-pro-highspeed", "K3.1 Pro Highspeed", lowHighMax},
+			{"k3", "K3", offLowHighMax},
+			{"k3-256k", "K3 256K", offLowHighMax},
+			{"kimi-for-coding", "K2.8 Preview", offLowHighMax},
+			{"kimi-for-coding-highspeed", "K2.7 Code Highspeed", []string{"none", "thinking"}},
+		},
+		runtime.AgentCLIDeepSeek: {
+			{"deepseek-flash", "DeepSeek V4.1 Flash", domain.ExecutorEffortLevels[runtime.AgentCLIDeepSeek]},
+			{"deepseek-v4-pro", "DeepSeek V4 Pro", domain.ExecutorEffortLevels[runtime.AgentCLIDeepSeek]},
+		},
+		runtime.AgentCLIZCode: {
+			{"glm-5.3", "GLM-5.3", lowHighMax},
+			{"glm-5.3-flash", "GLM-5.3 Flash", lowHighMax},
+		},
 	}
 }()
 
 var effortOptionLabels = map[string]string{
 	"none":      "关闭 none",
+	"thinking":  "开启 thinking",
 	"minimal":   "最低 minimal",
 	"low":       "低 low",
 	"medium":    "中 medium",
@@ -108,7 +127,7 @@ func effortOptions(levels []string) []executorEffortOption {
 
 // executorModelCatalogs returns the fixed per-CLI catalog. The CodeBuddy list
 // reuses the assistant catalog so the wizard, AI 助手 and 澄清 stay in sync.
-func executorModelCatalogs() map[string]executorModelCatalog {
+func executorModelCatalogs(kimiBaseURL string) map[string]executorModelCatalog {
 	codebuddyModels := make([]executorModelInfo, 0)
 	known := assistantKnownCatalog()
 	for _, model := range selectableCodeBuddyModels(known.Models) {
@@ -144,37 +163,18 @@ func executorModelCatalogs() map[string]executorModelCatalog {
 			},
 			Efforts: effortOptions(domain.ExecutorEffortLevels["agy"]),
 		},
-		"kimi": {
-			CustomModel: true,
-			Models: []executorModelInfo{
-				{ID: "k3.1-pro", Name: "K3.1 Pro"},
-				{ID: "k3.1-pro-highspeed", Name: "K3.1 Pro Highspeed"},
-				{ID: "k3", Name: "K3"},
-				{ID: "k3-256k", Name: "K3 256K"},
-				{ID: "kimi-for-coding", Name: "K2.8 Preview"},
-				{ID: "kimi-for-coding-highspeed", Name: "K2.7 Code Highspeed"},
-			},
-		},
-		"pi": {CustomModel: true, Efforts: effortOptions(domain.ExecutorEffortLevels["pi"])},
-		"dsh": {
-			CustomModel: true,
-			Models: []executorModelInfo{
-				{ID: "deepseek-flash", Name: "DeepSeek V4.1 Flash"},
-				{ID: "deepseek-v4-pro", Name: "DeepSeek V4 Pro"},
-			},
-		},
-		"zcode": {
-			CustomModel: true,
-			Models: []executorModelInfo{
-				{ID: "glm-5.3", Name: "GLM-5.3"},
-				{ID: "glm-5.3-flash", Name: "GLM-5.3 Flash"},
-			},
-		},
+		"kimi":  {CustomModel: true, Efforts: effortOptions(domain.ExecutorEffortLevels["kimi"])},
+		"pi":    {CustomModel: true, Efforts: effortOptions(domain.ExecutorEffortLevels["pi"])},
+		"dsh":   {CustomModel: true, Efforts: effortOptions(domain.ExecutorEffortLevels["dsh"])},
+		"zcode": {CustomModel: true, Efforts: effortOptions(domain.ExecutorEffortLevels["zcode"])},
 	}
 	for engine, catalog := range catalogs {
 		modelEngine := engine
 		if engine == "claude" {
 			modelEngine = assistantEngineClaude
+		}
+		if engine == runtime.AgentCLIKimi && kimiBaseURL != "" {
+			catalog.Efforts = effortOptions(nil)
 		}
 		for _, model := range builtinExecutorModels[modelEngine] {
 			catalog.Models = append(catalog.Models, executorModelInfo{ID: model.id, Name: model.name})
@@ -184,7 +184,7 @@ func executorModelCatalogs() map[string]executorModelCatalog {
 			if modelEngine != assistantEngineCodeBuddy {
 				id = modelEngine + ":" + id
 			}
-			catalog.Models[i].Efforts = effortOptions(assistantModelEffortsIn(id, nil))
+			catalog.Models[i].Efforts = effortOptions(assistantModelEffortsForBaseURL(id, nil, kimiBaseURL))
 		}
 		catalogs[engine] = catalog
 	}
@@ -204,7 +204,7 @@ func cursorCatalogModels() []executorModelInfo {
 func (h *catalogHandlers) executorModels(c *gin.Context) {
 	c.Header("Cache-Control", "private, no-store")
 	if c.Query("builtin") == "1" {
-		c.JSON(http.StatusOK, executorModelCatalogs())
+		c.JSON(http.StatusOK, executorModelCatalogs(""))
 		return
 	}
 	var user domain.User
@@ -214,7 +214,8 @@ func (h *catalogHandlers) executorModels(c *gin.Context) {
 			refreshCLIModels(c.Request.Context(), user.CodeBuddyInternetEnvironment, user.CodeBuddyAPIKey)
 		}
 	}
-	catalogs := executorModelCatalogs()
+	_, kimiBaseURL := assistantEngineCredential(user, runtime.AgentCLIKimi)
+	catalogs := executorModelCatalogs(kimiBaseURL)
 	for _, engine := range append([]string{assistantEngineCodeBuddy}, assistantCLIEngines()...) {
 		models, _ := assistantDiscoveredModelsFor(c.Request.Context(), user, engine)
 		if len(models) == 0 {
@@ -240,7 +241,7 @@ func (h *catalogHandlers) executorModels(c *gin.Context) {
 			if engine != assistantEngineCodeBuddy {
 				modelID = engine + ":" + modelID
 			}
-			catalog.Models = append(catalog.Models, executorModelInfo{ID: model.ID, Name: name, Efforts: effortOptions(assistantModelEffortsIn(modelID, personal))})
+			catalog.Models = append(catalog.Models, executorModelInfo{ID: model.ID, Name: name, Efforts: effortOptions(assistantModelEffortsForBaseURL(modelID, personal, kimiBaseURL))})
 		}
 		if len(catalog.Models) > 0 {
 			catalogs[id] = catalog
