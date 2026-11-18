@@ -165,7 +165,7 @@ func (s *dockerSandbox) Exec(ctx context.Context, command CommandSpec, sink Even
 
 func (s *dockerSandbox) execOnce(ctx context.Context, command CommandSpec, sink EventSink) (out string, err error) {
 	args := []string{"exec"}
-	if command.Stdin != nil {
+	if command.Stdin != nil || isManagedClaude(command) {
 		args = append(args, "-i")
 	}
 	for _, environment := range appendEnvironment(nil, s.profile.Environment, command.environment) {
@@ -202,7 +202,7 @@ cd "$1" && shift && exec "$@"`, "conversation", command.WorkingDir}, dropShellLo
 	args = append(args, argv...)
 	cmd := exec.CommandContext(ctx, "docker", args...)
 	cmd.Stdin = command.Stdin
-	return runCommand(cmd, sink, command.credentialEnvKeys...)
+	return runCommand(cmd, sink, command)
 }
 
 // dockerWorkspaceExecArgv runs argv inside /workspace without docker exec -w.
@@ -717,18 +717,22 @@ func (s *dockerSandbox) start(ctx context.Context, recreate bool) error {
 			args = append(args, "--user", fmt.Sprintf("%d:%d", os.Geteuid(), os.Getegid()))
 		}
 	}
-	if network := strings.TrimSpace(os.Getenv("AGENTFLOW_DOCKER_NETWORK")); network != "" && s.requirements.ConversationRoot == "" {
-		args = append(args, "--network", network)
-	}
-	if root := s.requirements.ConversationRoot; root != "" {
-		_, network, err := conversationDockerAccess(ctx)
+	network := strings.TrimSpace(os.Getenv("AGENTFLOW_DOCKER_NETWORK"))
+	if s.requirements.ConversationRoot != "" || s.requirements.RunnerLoginRelay {
+		_, relayNetwork, err := conversationDockerAccess(ctx)
 		if err != nil {
 			return err
 		}
-		if network != "" {
-			args = append(args, "--network", network)
+		if relayNetwork != "" {
+			network = relayNetwork
 		}
-		args = append(args, "--add-host", "host.docker.internal:host-gateway", "-v", root+":"+root+":ro", "-v", filepath.Join(root, "home")+":"+filepath.Join(root, "home"), "-v", workspace+":"+filepath.Join(root, "ws"))
+		args = append(args, "--add-host", "host.docker.internal:host-gateway")
+	}
+	if network != "" {
+		args = append(args, "--network", network)
+	}
+	if root := s.requirements.ConversationRoot; root != "" {
+		args = append(args, "-v", root+":"+root+":ro", "-v", filepath.Join(root, "home")+":"+filepath.Join(root, "home"), "-v", workspace+":"+filepath.Join(root, "ws"))
 		guards, err := conversationGuardMounts(root)
 		if err != nil {
 			return err

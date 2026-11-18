@@ -1304,7 +1304,7 @@ export function useChat() {
     models: executorModels,
     executor,
     executors: EXECUTORS.map((item) => {
-      if (!personalMachine || (item.id !== "codex" && item.id !== "claude-code")) return item;
+      if (!personalMachine || !["codex", "claude-code", "agy"].includes(item.id)) return item;
       const runtime = personalMachine.runtimes?.find((runtime) => runtime.provider === item.id);
       return runtime?.authMode === "personal" ? item : { ...item, detail: "使用执行机器上的本机登录态。" };
     }),

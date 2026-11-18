@@ -1519,7 +1519,9 @@ func runAssistantCLI(ctx context.Context, req assistantCLIRequest, user domain.U
 		inv, err = prepareAssistantCodexInvocation(engineOpts)
 	default:
 		if runtime.IsAgentCLI(engine) {
-			engineOpts.User = runtime.AgentCLIUserCredentials(user)[engine]
+			if !req.RunnerLogin {
+				engineOpts.User = runtime.AgentCLIUserCredentials(user)[engine]
+			}
 			inv, err = prepareAssistantAgentCLIInvocation(engine, engineOpts)
 			break
 		}

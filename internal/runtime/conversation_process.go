@@ -628,7 +628,7 @@ func (p *ConversationProcessPool) start(ctx context.Context, root, workspace str
 		return ConversationProcessResult{}, fmt.Errorf("该 CLI 不支持使用执行机器的本机登录")
 	}
 	if supported {
-		cleanupLogin, localEnv, err = prepareConversationRunnerLogin(root, login, req.Command.RunnerLogin)
+		cleanupLogin, localEnv, err = prepareConversationRunnerLogin(root, login, req.Command.RunnerLogin, spec != nil && spec.Profile.Driver == domain.SandboxDriverDocker)
 		if err != nil {
 			return ConversationProcessResult{}, err
 		}
@@ -636,6 +636,10 @@ func (p *ConversationProcessPool) start(ctx context.Context, root, workspace str
 			command.CredentialBindings = slices.DeleteFunc(slices.Clone(command.CredentialBindings), func(binding CredentialBinding) bool {
 				return binding == login.binding
 			})
+			if command.Provider == AgentCLIAntigravity && command.AgentCLI.ReadOnly {
+				settings, _ := json.Marshal(map[string]any{"permissions": agyChatPermissions})
+				command.Argv = insertBeforeFlag(command.Argv, "-p", "--settings", string(settings))
+			}
 		}
 	}
 	nativeArgv := append([]string(nil), command.Argv...)

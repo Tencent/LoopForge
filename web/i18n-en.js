@@ -228,10 +228,12 @@ Object.assign(window.LF_I18N_EN,{
 });
 
 Object.assign(window.LF_I18N_EN,{
-  "Claude Code 和 Codex 可用账号登录":"Account login for Claude Code and Codex",
-  "Claude Code 和 Codex 可以使用运行 Runner 的系统账号在这台机器上的已有登录。共享对话中，只有机器所有者发言时会使用此登录。":"Claude Code and Codex can reuse the login of the system user running the Runner. In a shared chat, that login applies to messages from the machine owner.",
+  "使用已有订阅":"Use your existing subscription",
+  "绑定已登录 Claude Code、Codex 或 Antigravity 的机器，选「账号登录」即可用订阅额度运行对话和 SOP，无需 API Key。":"Connect a machine where you are signed in to Claude Code, Codex, or Antigravity. Select Account login to use your subscription for chats and SOPs without an API key.",
+  "配置执行机器":"Configure runners",
+  "Claude Code、Codex 和 Antigravity 可用账号登录":"Account login for Claude Code, Codex and Antigravity",
+  "Claude Code、Codex 和 Antigravity 可以使用运行 Runner 的系统账号在这台机器上的已有登录，对话与 SOP 的 native、Docker 沙箱均可复用。共享对话中，只有机器所有者发言时会使用此登录。":"Claude Code, Codex and Antigravity can reuse the login of the system user running the Runner, in both native and Docker sandboxes for chats and SOPs. In a shared chat, that login applies to messages from the machine owner.",
   "API Key 说明":"API Key help",
-  "LoopForge 沙箱目前无法复用 Antigravity 保存在系统凭据库中的登录。请在「个人配置」中填写 Gemini API Key。用量按 Gemini API 单独计费。":"LoopForge sandboxes cannot currently access Antigravity's login in the system credential store. Enter a Gemini API Key in Personal Settings. Gemini API usage is billed separately.",
   "GLM Coding Plan 的 API Key 配合套餐专用地址可使用订阅额度，请在「个人配置」中填写。Start Plan 额度需要登录 ZCode 账号，无法通过 API Key 使用。":"Enter the GLM Coding Plan API key and its dedicated endpoint in Personal Settings to use your subscription allowance. Start Plan allowance requires signing in to ZCode.",
   "该 CLI 支持 API Key。使用服务商订阅套餐提供的 Key，执行用量会计入对应的套餐额度。请在「个人配置」中填写 API Key。":"This CLI supports API keys. With a key included in your provider's subscription, usage counts toward that plan's allowance. Enter the API key in Personal Settings."
 });
