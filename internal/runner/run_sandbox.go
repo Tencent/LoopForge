@@ -183,11 +183,14 @@ func taskSandboxSpec(task domain.RunnerTask) (runtime.SandboxRequirements, runti
 	if task.Sandbox.Environment != nil {
 		resources.Environment = *task.Sandbox.Environment
 	}
+	// Tasks queued before RunnerLoginRelay was added still carry their auth mode.
+	codexLoginRelay := task.Invocation != nil && task.Invocation.CredentialSource == domain.RuntimeAuthLocal &&
+		task.Provider == "codex" && strings.TrimSpace(task.Sandbox.Profile.Driver) == domain.SandboxDriverDocker
 	if frozen := task.Sandbox.Requirements; frozen != nil {
 		requirements := runtime.SandboxRequirements{
 			PrivateHome:      frozen.PrivateHome,
 			BunFS:            frozen.BunFS,
-			RunnerLoginRelay: frozen.RunnerLoginRelay,
+			RunnerLoginRelay: frozen.RunnerLoginRelay || codexLoginRelay,
 		}
 		for _, state := range frozen.CLIStates {
 			requirements.CLIStates = append(requirements.CLIStates, runtime.CLIStateRequirement{Directory: state.Directory, Files: append([]string(nil), state.Files...)})
@@ -195,11 +198,11 @@ func taskSandboxSpec(task domain.RunnerTask) (runtime.SandboxRequirements, runti
 		return requirements, resources
 	}
 	requirements := runtime.ProviderRequirements(task.Provider)
+	requirements.RunnerLoginRelay = codexLoginRelay
 	if task.Invocation != nil && task.Invocation.CredentialSource != domain.RuntimeAuthPersonal {
 		switch task.Provider {
 		case "codex":
 			requirements.CLIStates = []runtime.CLIStateRequirement{{Directory: ".codex"}}
-			requirements.RunnerLoginRelay = task.Sandbox.Profile.Driver == domain.SandboxDriverDocker && task.Invocation.CredentialSource == domain.RuntimeAuthLocal
 		case "claude-code":
 			requirements.CLIStates = []runtime.CLIStateRequirement{{Directory: ".claude", Files: []string{".claude.json"}}}
 		case "codebuddy":
