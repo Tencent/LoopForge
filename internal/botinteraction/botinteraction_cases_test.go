@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -184,15 +185,16 @@ func TestConnectionReconnectsAfterLocalClose(t *testing.T) {
 	}
 	connected := make(chan struct{}, 3)
 	var upgrader websocket.Upgrader
-	attempts := 0
+	// Handlers run on separate server goroutines; count attempts atomically.
+	var attempts atomic.Int64
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ws, err := upgrader.Upgrade(w, r, nil)
 		if err != nil {
 			return
 		}
-		attempts++
+		attempt := attempts.Add(1)
 		connected <- struct{}{}
-		if attempts%2 == 0 {
+		if attempt%2 == 0 {
 			var frame Frame
 			if ws.ReadJSON(&frame) == nil {
 				_ = ws.WriteJSON(map[string]any{"headers": frame.Headers, "errcode": 400})
