@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 const fakeToken = "cnb-fake-token-0000"
@@ -138,27 +139,178 @@ func TestPullNumberIsAStringAndMergedStateIsNormalised(t *testing.T) {
 	}
 }
 
-func TestCreateAndUpdatePull(t *testing.T) {
-	var sawCreate, sawUpdate bool
+func TestCreatePull(t *testing.T) {
+	var sawCreate bool
 	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.Method == http.MethodPost && r.URL.Path == "/org/repo/-/pulls":
+		if r.Method == http.MethodPost && r.URL.Path == "/org/repo/-/pulls" {
 			sawCreate = true
 			w.WriteHeader(http.StatusCreated)
 			_, _ = w.Write([]byte(`{"number":"5","state":"open","base":{"ref":"refs/heads/main"},"head":{"ref":"refs/heads/f"}}`))
-		case r.Method == http.MethodPatch && r.URL.Path == "/org/repo/-/pulls/5":
-			sawUpdate = true
-			_, _ = w.Write([]byte(`{"number":"5","state":"open","title":"new","base":{"ref":"refs/heads/main"},"head":{"ref":"refs/heads/f"}}`))
-		default:
-			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+			return
 		}
+		t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
 	})
 	p, err := c.CreatePull(context.Background(), "org/repo", "f", "main", "t", "b")
 	if err != nil || p.Number != 5 || !sawCreate {
 		t.Fatalf("create: %+v %v", p, err)
 	}
-	if p, err = c.UpdatePull(context.Background(), "org/repo", 5, "new", "b"); err != nil || p.Title != "new" || !sawUpdate {
-		t.Fatalf("update: %+v %v", p, err)
+}
+
+func TestListPullsCollectsAllPagesAndFilters(t *testing.T) {
+	var requests []string
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/group/sub/repo/-/pulls" {
+			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+		q := r.URL.Query()
+		if q.Get("state") != "all" || q.Get("order_by") != "-updated_at" || q.Get("page_size") != strconv.Itoa(pageSize) {
+			t.Errorf("unexpected query %s", r.URL.RawQuery)
+		}
+		requests = append(requests, q.Get("page")+":"+q.Get("base_ref"))
+		switch q.Get("page") {
+		case "1":
+			_, _ = w.Write([]byte(`[
+				{"number":"9","state":"open","head":{"ref":"refs/heads/feat","sha":"fork-sha","repo":{"path":"someone/fork"}},"base":{"ref":"refs/heads/main"}},
+				{"number":"10","state":"open","head":{"ref":"refs/heads/feat","sha":"other-target","repo":{"path":"group/sub/repo"}},"base":{"ref":"refs/heads/release"}},
+				{"number":"3","state":"closed","is_merged":true,"closed_at":"2026-01-02T03:04:05Z","head":{"ref":"refs/heads/feat","sha":"old-sha","repo":{"path":"group/sub/repo"}},"base":{"ref":"refs/heads/main"}}
+			]`))
+		case "2":
+			_, _ = w.Write([]byte(`[
+				{"number":"11","state":"open","head":{"ref":"refs/heads/other","sha":"other-branch","repo":{"path":"group/sub/repo"}},"base":{"ref":"refs/heads/main"}},
+				{"number":"5","state":"closed","closed_at":"2026-01-03T04:05:06Z","head":{"ref":"refs/heads/feat","sha":"stale-sha","repo":{"path":"group/sub/repo"}},"base":{"ref":"refs/heads/main"}},
+				{"number":"7","state":"opened","head":{"ref":"refs/heads/feat","sha":"tip-sha","repo":{"path":"group/sub/repo"}},"base":{"ref":"refs/heads/main"}}
+			]`))
+		default:
+			_, _ = w.Write([]byte(`[]`))
+		}
+	})
+
+	pulls, err := c.ListPulls(context.Background(), "group/sub/repo", "feat", "main")
+	if err != nil {
+		t.Fatalf("ListPulls err=%v", err)
+	}
+	if len(pulls) != 3 {
+		t.Fatalf("want 3 matching pulls across pages, got %+v", pulls)
+	}
+	if pulls[0].Number != 3 || pulls[0].State != "merged" || pulls[0].HeadSHA != "old-sha" || pulls[0].TargetBranch != "main" || pulls[0].ClosedAt.IsZero() {
+		t.Fatalf("pulls[0] = %+v", pulls[0])
+	}
+	if pulls[1].Number != 5 || pulls[1].State != "closed" || pulls[1].HeadSHA != "stale-sha" || pulls[1].TargetBranch != "main" {
+		t.Fatalf("pulls[1] = %+v", pulls[1])
+	}
+	if pulls[2].Number != 7 || pulls[2].State != "open" || pulls[2].HeadSHA != "tip-sha" || pulls[2].TargetBranch != "main" {
+		t.Fatalf("pulls[2] = %+v", pulls[2])
+	}
+	if strings.Join(requests, ",") != "1:main,2:main,3:main" {
+		t.Fatalf("requests = %v", requests)
+	}
+
+	allTargets, err := c.ListPulls(context.Background(), "group/sub/repo", "feat", "")
+	if err != nil || len(allTargets) != 4 {
+		t.Fatalf("empty target should collect all targets without base_ref filter, got %+v err=%v", allTargets, err)
+	}
+	if strings.HasSuffix(requests[len(requests)-1], "main") {
+		t.Fatalf("empty target must omit base_ref, got %v", requests)
+	}
+}
+
+func TestListPullsErrorsWhenMaxPagesNotExhausted(t *testing.T) {
+	fullPage := make([]string, 0, pageSize)
+	for i := 1; i <= pageSize; i++ {
+		fullPage = append(fullPage, pullItem(i, "other"))
+	}
+	fullJSON := "[" + strings.Join(fullPage, ",") + "]"
+
+	for _, tc := range []struct {
+		name string
+		body string
+	}{
+		{"full pageSize pages", fullJSON},
+		{"capped short pages", "[" + pullItem(1, "other") + "," + pullItem(2, "other") + "]"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			pages := 0
+			c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+				pages++
+				_, _ = w.Write([]byte(tc.body))
+			})
+			if _, err := c.ListPulls(context.Background(), "org/repo", "feature", "main"); err == nil {
+				t.Fatal("truncated listing past maxFindPages must return an explicit error")
+			}
+			if pages != maxFindPages {
+				t.Fatalf("pages = %d, want %d", pages, maxFindPages)
+			}
+		})
+	}
+}
+
+func TestPullStateValidationAndNormalization(t *testing.T) {
+	for _, tc := range []struct {
+		raw      string
+		isMerged bool
+		want     string
+	}{
+		{"open", false, "open"},
+		{"opened", false, "open"},
+		{" OPEN ", false, "open"},
+		{"closed", false, "closed"},
+		{"merged", false, "merged"},
+		{"closed", true, "merged"},
+	} {
+		c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+			merged := "false"
+			if tc.isMerged {
+				merged = "true"
+			}
+			_, _ = w.Write([]byte(`{"number":"12","state":"` + tc.raw + `","is_merged":` + merged + `,"head":{"ref":"refs/heads/f","repo":{"path":"org/repo"}},"base":{"ref":"refs/heads/main"}}`))
+		})
+		p, err := c.GetPull(context.Background(), "org/repo", 12)
+		if err != nil || p.State != tc.want {
+			t.Fatalf("raw=%q merged=%v: got %q err=%v want %q", tc.raw, tc.isMerged, p.State, err, tc.want)
+		}
+	}
+
+	for _, badState := range []string{"", "mystery", "draft"} {
+		c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/org/repo/-/pulls/12" {
+				_, _ = w.Write([]byte(`{"number":"12","state":"` + badState + `","head":{"ref":"refs/heads/f"},"base":{"ref":"refs/heads/main"}}`))
+				return
+			}
+			if r.URL.Query().Get("page") == "1" {
+				_, _ = w.Write([]byte(`[{"number":"12","state":"` + badState + `","head":{"ref":"refs/heads/f","repo":{"path":"org/repo"}},"base":{"ref":"refs/heads/main"}}]`))
+				return
+			}
+			_, _ = w.Write([]byte(`[]`))
+		})
+		if p, err := c.GetPull(context.Background(), "org/repo", 12); err == nil {
+			t.Fatalf("GetPull must reject unknown state %q, got %+v", badState, p)
+		}
+		if pulls, err := c.ListPulls(context.Background(), "org/repo", "f", "main"); err == nil {
+			t.Fatalf("ListPulls must reject unknown state %q, got %+v", badState, pulls)
+		}
+	}
+}
+
+func TestListPullsSurfacesAuthAndTimeoutErrors(t *testing.T) {
+	for _, status := range []int{http.StatusUnauthorized, http.StatusForbidden} {
+		c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(status)
+			_, _ = w.Write([]byte(`{"errmsg":"denied"}`))
+		})
+		_, err := c.ListPulls(context.Background(), "org/repo", "feat", "main")
+		var apiErr *APIError
+		if !errors.As(err, &apiErr) || apiErr.Status != status {
+			t.Fatalf("status %d: got err=%v", status, err)
+		}
+	}
+
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		<-r.Context().Done()
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer cancel()
+	if _, err := c.ListPulls(ctx, "org/repo", "feat", "main"); err == nil || !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("timeout must return DeadlineExceeded error, got %v", err)
 	}
 }
 
