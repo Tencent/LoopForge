@@ -17,6 +17,9 @@ cleanup 都不会把这些文件写回宿主机。
   stdin 返回 access token。任务 credential 文件不含 refresh token；临近过期的宿主凭证在启动前续期。
   单次 SOP 收到最终结果后关闭输入；对话保留原有可继续发送消息的输入通道。
 
+普通 Docker SOP 使用 `AGENTFLOW_DOCKER_NETWORK` 指定的网络。对话工作区和包含 Codex 账号登录节点的
+Docker SOP 使用中继网络配置连接执行机器上的回调。SOP 的准备脚本、终端和执行节点共享同一个容器。
+
 Claude Code 的回调在 **2.1.326** 的官方客户端中实测可用，但属于受入口限制的内部协议，
 并不是公开稳定的 SDK 类型契约。当前绑定 `local-agent` 入口，内置安装版本为 2.1.326。
 已知较旧版本或初始化失败会提示更新，不会退回向沙箱发送真实 refresh token。

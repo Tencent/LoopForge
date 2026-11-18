@@ -53,7 +53,7 @@ func (e *Engine) acquireConversationEnvironment(ctx context.Context, run domain.
 	if err != nil {
 		return nil, err
 	}
-	requirements, err := workspaceConversationRequirements(e.repo, run.WorkflowSnapshot)
+	requirements, err := workspaceConversationRequirements(e.repo, run.WorkflowSnapshot, false)
 	if err != nil {
 		return nil, err
 	}
@@ -409,7 +409,7 @@ func (e *Engine) ForwardWorkspaceRequest(ctx context.Context, run domain.Run, re
 // A settled historical workflow may refer to a role removed from the catalog.
 // Opening its files/terminal must not require resurrecting that model role.
 // Execution still uses the strict workflow validation and executor resolution.
-func workspaceConversationRequirements(st *repo.Store, wf domain.WorkflowDefinition) (runtime.SandboxRequirements, error) {
+func workspaceConversationRequirements(st *repo.Store, wf domain.WorkflowDefinition, codexLoginRelay bool) (runtime.SandboxRequirements, error) {
 	var items []runtime.SandboxRequirements
 	for _, node := range wf.Nodes {
 		if node.Type != "agent" {
@@ -423,7 +423,11 @@ func workspaceConversationRequirements(st *repo.Store, wf domain.WorkflowDefinit
 		if err != nil {
 			continue
 		}
-		items = append(items, runtime.ProviderRequirements(executor.Kind))
+		requirements := runtime.ProviderRequirements(executor.Kind)
+		// Freeze the relay need for the whole workflow so preparation, scripts,
+		// terminals and agents can reuse the same Docker container.
+		requirements.RunnerLoginRelay = codexLoginRelay && executor.Kind == "codex"
+		items = append(items, requirements)
 	}
 	return runtime.MergeSandboxRequirements(items...), nil
 }

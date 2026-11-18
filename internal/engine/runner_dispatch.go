@@ -147,7 +147,8 @@ func (e *Engine) requireWorkBranchCapabilities(runnerID string, repositories []d
 }
 
 func (e *Engine) runnerSandboxSpec(run domain.Run) (*domain.RunnerSandboxSpec, error) {
-	if err := e.requireWorkBranchCapabilities(e.defaultExecutionRunner(run), run.RepositoryContexts()); err != nil {
+	runnerID := e.defaultExecutionRunner(run)
+	if err := e.requireWorkBranchCapabilities(runnerID, run.RepositoryContexts()); err != nil {
 		return nil, err
 	}
 	profile, resources, err := e.workspaceSandboxProfile(run)
@@ -155,11 +156,20 @@ func (e *Engine) runnerSandboxSpec(run domain.Run) (*domain.RunnerSandboxSpec, e
 		return nil, err
 	}
 	spec := resolvedSandboxSnapshot(profile, resources)
-	requirements, err := workspaceConversationRequirements(e.repo, run.WorkflowSnapshot)
+	var codexLoginRelay bool
+	if profile.Driver == domain.SandboxDriverDocker && runnerID != "" {
+		runner, ok := e.repo.Runner(runnerID)
+		codexLoginRelay = ok && runner.RuntimeAuthMode("codex") == domain.RuntimeAuthLocal
+	}
+	requirements, err := workspaceConversationRequirements(e.repo, run.WorkflowSnapshot, codexLoginRelay)
 	if err != nil {
 		return nil, err
 	}
-	spec.Requirements = &domain.RunnerSandboxRequirements{PrivateHome: requirements.PrivateHome, BunFS: requirements.BunFS}
+	spec.Requirements = &domain.RunnerSandboxRequirements{
+		PrivateHome:      requirements.PrivateHome,
+		BunFS:            requirements.BunFS,
+		RunnerLoginRelay: requirements.RunnerLoginRelay,
+	}
 	for _, state := range requirements.CLIStates {
 		spec.Requirements.CLIStates = append(spec.Requirements.CLIStates, domain.RunnerCLIStateRequirement{Directory: state.Directory, Files: append([]string(nil), state.Files...)})
 	}

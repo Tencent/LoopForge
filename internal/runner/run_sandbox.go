@@ -184,7 +184,11 @@ func taskSandboxSpec(task domain.RunnerTask) (runtime.SandboxRequirements, runti
 		resources.Environment = *task.Sandbox.Environment
 	}
 	if frozen := task.Sandbox.Requirements; frozen != nil {
-		requirements := runtime.SandboxRequirements{PrivateHome: frozen.PrivateHome, BunFS: frozen.BunFS}
+		requirements := runtime.SandboxRequirements{
+			PrivateHome:      frozen.PrivateHome,
+			BunFS:            frozen.BunFS,
+			RunnerLoginRelay: frozen.RunnerLoginRelay,
+		}
 		for _, state := range frozen.CLIStates {
 			requirements.CLIStates = append(requirements.CLIStates, runtime.CLIStateRequirement{Directory: state.Directory, Files: append([]string(nil), state.Files...)})
 		}
@@ -195,6 +199,7 @@ func taskSandboxSpec(task domain.RunnerTask) (runtime.SandboxRequirements, runti
 		switch task.Provider {
 		case "codex":
 			requirements.CLIStates = []runtime.CLIStateRequirement{{Directory: ".codex"}}
+			requirements.RunnerLoginRelay = task.Sandbox.Profile.Driver == domain.SandboxDriverDocker && task.Invocation.CredentialSource == domain.RuntimeAuthLocal
 		case "claude-code":
 			requirements.CLIStates = []runtime.CLIStateRequirement{{Directory: ".claude", Files: []string{".claude.json"}}}
 		case "codebuddy":

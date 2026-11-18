@@ -718,19 +718,17 @@ func (s *dockerSandbox) start(ctx context.Context, recreate bool) error {
 		}
 	}
 	network := strings.TrimSpace(os.Getenv("AGENTFLOW_DOCKER_NETWORK"))
-	if s.requirements.PrivateHome || s.requirements.ConversationRoot != "" {
-		_, network, err := conversationDockerAccess(ctx)
+	if s.requirements.ConversationRoot != "" || s.requirements.RunnerLoginRelay {
+		_, relayNetwork, err := conversationDockerAccess(ctx)
 		if err != nil {
 			return err
 		}
-		if network != "" {
-			// A containerized Runner's refresh listener is on this network.
-			args = append(args, "--network", network)
-		} else if configured := strings.TrimSpace(os.Getenv("AGENTFLOW_DOCKER_NETWORK")); configured != "" {
-			args = append(args, "--network", configured)
+		if relayNetwork != "" {
+			network = relayNetwork
 		}
 		args = append(args, "--add-host", "host.docker.internal:host-gateway")
-	} else if network != "" {
+	}
+	if network != "" {
 		args = append(args, "--network", network)
 	}
 	if root := s.requirements.ConversationRoot; root != "" {

@@ -116,11 +116,19 @@ func TestManagedLoginRuntimePaths(t *testing.T) {
 							}
 						}
 					} else {
-						sb, err := OpenRemoteSandbox(ctx, fmt.Sprintf("auth-%d", time.Now().UnixNano()), workspace, profile, ProviderRequirements(provider), SandboxResources{Dockerfile: dockerfile})
+						requirements := ProviderRequirements(provider)
+						requirements.RunnerLoginRelay = driver == "docker" && provider == "codex"
+						sb, err := OpenRemoteSandbox(ctx, fmt.Sprintf("auth-%d", time.Now().UnixNano()), workspace, profile, requirements, SandboxResources{Dockerfile: dockerfile})
 						if err != nil {
 							t.Fatal(err)
 						}
 						defer sb.Close(context.Background())
+						if docker, ok := sb.(*dockerSandbox); ok {
+							// SOP workspace preparation may start the container before the CLI has a login lease.
+							if err := docker.BindWorkspace(ctx); err != nil {
+								t.Fatal(err)
+							}
+						}
 						env, cleanup, err := PrepareRunnerSandboxLogin(sb, provider, "run", "node")
 						if err != nil {
 							t.Fatal(err)

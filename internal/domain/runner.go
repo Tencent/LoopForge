@@ -407,9 +407,10 @@ type RunnerTask struct {
 // RunnerSandboxRequirements freezes the union needed by every run node, so
 // interactive terminals and script/agent tasks use the same sandbox identity.
 type RunnerSandboxRequirements struct {
-	CLIStates   []RunnerCLIStateRequirement `json:"cliStates,omitempty"`
-	PrivateHome bool                        `json:"privateHome,omitempty"`
-	BunFS       bool                        `json:"bunFS,omitempty"`
+	CLIStates        []RunnerCLIStateRequirement `json:"cliStates,omitempty"`
+	PrivateHome      bool                        `json:"privateHome,omitempty"`
+	BunFS            bool                        `json:"bunFS,omitempty"`
+	RunnerLoginRelay bool                        `json:"runnerLoginRelay,omitempty"`
 }
 type RunnerCLIStateRequirement struct {
 	Directory string   `json:"directory"`

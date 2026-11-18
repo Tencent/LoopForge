@@ -245,7 +245,7 @@ func TestWorkspacePreparationDirectValidationAndRemoteStates(t *testing.T) {
 	if plan.CollaborationMode != "" || plan.Nodes[0].RunOnWorkspaceRebuild {
 		t.Fatalf("preparation plan=%+v", plan)
 	}
-	if requirements, err := workspaceConversationRequirements(st, domain.WorkflowDefinition{Nodes: []domain.WorkflowNode{{Type: "agent", AgentID: "missing"}}}); err != nil || len(requirements.CLIStates) != 0 {
+	if requirements, err := workspaceConversationRequirements(st, domain.WorkflowDefinition{Nodes: []domain.WorkflowNode{{Type: "agent", AgentID: "missing"}}}, false); err != nil || len(requirements.CLIStates) != 0 {
 		t.Fatalf("conversation requirements=%+v err=%v", requirements, err)
 	}
 	if _, err := e.WorkspacePreparationStatus(context.Background(), "missing"); err == nil {
