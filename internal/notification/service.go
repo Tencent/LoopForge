@@ -10,6 +10,7 @@ import (
 	"errors"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -24,7 +25,33 @@ type Service struct {
 
 func New(s *repo.Store) *Service {
 	base := strings.TrimRight(os.Getenv("AGENTFLOW_PUBLIC_URL"), "/")
-	return &Service{Store: s, Provider: NewCLIProvider(), PublicURL: base, Interactions: botinteraction.New(s)}
+	provider := NewCLIProvider()
+	svc := &Service{Store: s, Provider: provider, PublicURL: base, Interactions: botinteraction.New(s)}
+	// The WeCom channel verifies credentials through the signed bootstrap and
+	// pushes through the current Provider (replaceable in tests). Notification
+	// delivery keeps calling Provider directly until stage G routes it through
+	// the channel PushSender.
+	svc.Interactions.ConfigureWeCom(provider.Verify, func(ctx context.Context, botID, secret, target, content string) botinteraction.SendResult {
+		return classifyProviderSend(svc.Provider.Send(ctx, botID, secret, target, content))
+	})
+	return svc
+}
+
+// classifyProviderSend maps wecom-cli outcomes to delivery evidence. Platform
+// error codes and local content validation are explicit rejections;
+// any other failure may have happened after the CLI submitted the message.
+func classifyProviderSend(err error) botinteraction.SendResult {
+	if err == nil {
+		return botinteraction.SendResult{Outcome: botinteraction.Delivered}
+	}
+	var pe *ProviderError
+	if errors.As(err, &pe) {
+		return botinteraction.SendResult{Outcome: botinteraction.Rejected, Code: strconv.Itoa(pe.Code), SafeDetail: pe.Error()}
+	}
+	if errors.Is(err, errNotificationContentLength) {
+		return botinteraction.SendResult{Outcome: botinteraction.Rejected, Code: "invalid_content", SafeDetail: err.Error()}
+	}
+	return botinteraction.SendResult{Outcome: botinteraction.Unknown, Code: "unconfirmed", SafeDetail: err.Error()}
 }
 func (s *Service) secret(bot domain.NotificationBot) (string, error) {
 	secret, err := s.Store.BotCredential(bot.ID)

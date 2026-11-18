@@ -22,16 +22,20 @@ type Service struct {
 	Generate Generate
 	Action   Action
 	URL      string
-	mu       sync.Mutex
-	running  map[string]*connection
-	Done     chan struct{}
-	start    sync.Once
+	// ChannelKind selects the adapter for a Bot. Stage A connects every Bot
+	// through WeCom; stage B reads the persisted channel field.
+	ChannelKind func(domain.NotificationBot) string
+	mu          sync.Mutex
+	running     map[string]*connection
+	channels    map[string]Channel
+	Done        chan struct{}
+	start       sync.Once
 }
 type connection struct {
 	bot    domain.NotificationBot
 	cancel context.CancelFunc
 	done   chan struct{}
-	socket *socket
+	conn   Conn
 }
 
 func randomID() string {
@@ -46,7 +50,38 @@ func New(store *repo.Store) *Service {
 	if endpoint == "" {
 		endpoint = "wss://openws.work.weixin.qq.com"
 	}
-	return &Service{Store: store, URL: endpoint, running: map[string]*connection{}, Done: make(chan struct{})}
+	s := &Service{Store: store, URL: endpoint, running: map[string]*connection{}, channels: map[string]Channel{}, Done: make(chan struct{})}
+	s.channels[ChannelWeCom] = &wecomChannel{svc: s}
+	return s
+}
+
+// ConfigureWeCom injects the credential check and proactive send used by the
+// WeCom channel. The notification service owns the wecom-cli provider.
+func (s *Service) ConfigureWeCom(verify WeComVerifyFunc, push WeComPushFunc) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.channels[ChannelWeCom] = &wecomChannel{svc: s, verify: verify, push: push}
+}
+
+// RegisterChannel adds or replaces the adapter for c.Kind().
+func (s *Service) RegisterChannel(c Channel) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.channels[c.Kind()] = c
+}
+
+// Channel returns the adapter for a Bot, or ErrChannelNotReady.
+func (s *Service) Channel(bot domain.NotificationBot) (Channel, error) {
+	kind := ChannelWeCom
+	if s.ChannelKind != nil {
+		kind = s.ChannelKind(bot)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if c, ok := s.channels[kind]; ok {
+		return c, nil
+	}
+	return nil, ErrChannelNotReady
 }
 func (s *Service) Start(ctx context.Context) {
 	s.start.Do(func() {
@@ -152,6 +187,15 @@ func (s *Service) run(ctx context.Context, c *connection) {
 			}
 		}
 	}()
+	channel, err := s.Channel(c.bot)
+	if err != nil {
+		// Keep the lease so the error stays visible until the configuration
+		// changes or the service stops; releasing would report "offline".
+		s.state(c.bot, owner, "error", "该渠道尚未接入")
+		<-runCtx.Done()
+		return
+	}
+	sink := func(ctx context.Context, ev InboundEvent) (InboundAck, error) { return s.accept(ctx, c.bot, ev) }
 	backoff := time.Second
 	for runCtx.Err() == nil {
 		secret, err := s.Store.BotCredential(c.bot.ID)
@@ -159,19 +203,17 @@ func (s *Service) run(ctx context.Context, c *connection) {
 			s.state(c.bot, owner, "error", "机器人凭据不可用")
 			return
 		}
-		var ws *socket
-		ws, err = dial(runCtx, s.URL, c.bot.BotID, secret, func(received *socket, f Frame) {
-			s.receive(runCtx, c.bot, f, received)
-		})
+		var conn Conn
+		conn, err = channel.Connect(runCtx, c.bot, Credential{Secret: secret}, sink)
 		if err == nil {
 			s.mu.Lock()
-			c.socket = ws
+			c.conn = conn
 			s.mu.Unlock()
 			s.state(c.bot, owner, "connected", "")
-			err = s.process(runCtx, c.bot, owner, ws)
-			ws.close()
+			err = s.process(runCtx, c.bot, owner, conn)
+			conn.Close()
 			s.mu.Lock()
-			c.socket = nil
+			c.conn = nil
 			s.mu.Unlock()
 			backoff = time.Second
 		}
@@ -194,93 +236,6 @@ func (s *Service) run(ctx context.Context, c *connection) {
 func (s *Service) state(bot domain.NotificationBot, owner, state, detail string) {
 	_, _ = s.Store.RenewBotConnection(bot.BotID, owner, state, detail, time.Now().UTC())
 }
-func normalizeIncoming(bot domain.NotificationBot, f Frame) (domain.BotInteraction, string, string, bool) {
-	var incoming Incoming
-	if json.Unmarshal(f.Body, &incoming) != nil || incoming.BotID != bot.BotID || incoming.MessageID == "" || incoming.From.UserID == "" {
-		return domain.BotInteraction{}, "", "", false
-	}
-	// Live WeCom callbacks wrap card parameters in template_card_event;
-	// also accept the flat structure used by older official SDK type definitions.
-	if incoming.Event.TemplateCardEvent.Key != "" {
-		incoming.Event.Key = incoming.Event.TemplateCardEvent.Key
-	}
-	if incoming.Event.TemplateCardEvent.TaskID != "" {
-		incoming.Event.TaskID = incoming.Event.TemplateCardEvent.TaskID
-	}
-	chat := incoming.ChatID
-	kind := incoming.ChatType
-	if kind == "" && f.Cmd == "aibot_event_callback" {
-		kind = "single"
-		if incoming.ChatID != "" {
-			kind = "group"
-		}
-	}
-	if kind == "single" {
-		chat = incoming.From.UserID
-	}
-	if chat == "" || (kind != "single" && kind != "group") || len(chat) > 191 || len(incoming.From.UserID) > 191 {
-		return domain.BotInteraction{}, "", "", false
-	}
-	text := incoming.Text.Content
-	if incoming.Type == "voice" {
-		text = incoming.Voice.Content
-	}
-	action, delivery := "", ""
-	if f.Cmd == "aibot_event_callback" {
-		if incoming.Event.Type != "template_card_event" {
-			return domain.BotInteraction{}, "", "", false
-		}
-		action, delivery = incoming.Event.Key, incoming.Event.TaskID
-		if prefix, _, found := strings.Cut(delivery, "_"); found {
-			delivery = prefix
-		}
-		if action == "" || action == "handled" || delivery == "" {
-			return domain.BotInteraction{}, "", "", false
-		}
-	} else if incoming.Type != "text" && incoming.Type != "voice" {
-		text = "[不支持的消息类型，请发送文字]"
-	}
-	text = domain.NotificationText(text, 16000)
-	if strings.TrimSpace(text) == "" && action == "" {
-		return domain.BotInteraction{}, "", "", false
-	}
-	return domain.BotInteraction{ID: repo.BotMessageID(bot.BotID, incoming.MessageID), BotID: bot.ID, SenderID: incoming.From.UserID, RequestID: f.Headers.RequestID, Content: text, Quote: domain.NotificationText(incoming.Quote.Text.Content, 8000), Action: action, DeliveryID: delivery, CardTaskID: incoming.Event.TaskID}, kind, chat, true
-}
-func (s *Service) receive(ctx context.Context, bot domain.NotificationBot, f Frame, ws *socket) {
-	item, kind, chat, ok := normalizeIncoming(bot, f)
-	if !ok {
-		if f.Cmd == "aibot_event_callback" {
-			var event Incoming
-			_ = json.Unmarshal(f.Body, &event)
-			log.Printf("wecom ignored event type=%s bot_matches=%t message_id=%t sender=%t chat_type=%s action=%s task_id=%t", event.Event.Type, event.BotID == bot.BotID, event.MessageID != "", event.From.UserID != "", event.ChatType, event.Event.Key, event.Event.TaskID != "")
-		}
-		return
-	}
-	// Single-chat callbacks identify the actor by internal userid, while CLI
-	// discovery targets use openid. Resolve only an exact, server-issued card
-	// task to its frozen recipient; group callbacks still require matching chatid.
-	if item.Action != "" && kind == "single" {
-		delivery, e := s.Store.NotificationDelivery(item.DeliveryID)
-		card, cardErr := s.Store.BotInteraction(repo.BotMessageID(bot.ID, "notification:"+item.DeliveryID))
-		if e == nil && cardErr == nil && delivery.BotID == bot.ID && delivery.ProjectID == bot.ProjectID && delivery.TargetType == "single" && card.CardTaskID == item.CardTaskID {
-			chat = delivery.TargetID
-		}
-	}
-	inserted, err := s.Store.EnqueueBotInteraction(item, kind, chat)
-	if err != nil || !inserted {
-		if err != nil {
-			log.Printf("wecom event enqueue failed action=%s", item.Action)
-		}
-		return
-	}
-	// Card operations are direct engine controls. Reply with the actual result
-	// within the callback window rather than consuming it with a receipt-only update.
-
-	if item.Action == "" {
-		state := ws.streamState(item.ID)
-		go func() { _ = ws.streamWithState(ctx, item, "已收到，正在处理…", false, state) }()
-	}
-}
 
 var ErrCardActionDeferred = errors.New("等待账号确认或项目授权")
 
@@ -296,14 +251,14 @@ func newConversationCommand(content string) bool {
 	}
 	return text == "/new" || text == "开启新会话" || text == "新会话"
 }
-func (s *Service) process(ctx context.Context, bot domain.NotificationBot, owner string, ws *socket) error {
+func (s *Service) process(ctx context.Context, bot domain.NotificationBot, owner string, conn Conn) error {
 	ticker := time.NewTicker(300 * time.Millisecond)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-ws.done:
+		case <-conn.Done():
 			return errors.New("连接中断")
 		case <-ticker.C:
 		}
@@ -343,17 +298,14 @@ func (s *Service) process(ctx context.Context, bot domain.NotificationBot, owner
 			if err = s.Store.SetBotCardTaskID(item.ID, taskID); err != nil {
 				return err
 			}
-			if err = ws.request(ctx, "aibot_send_msg", "", map[string]any{"chatid": conv.ChatID, "msgtype": "template_card", "template_card": card}); err != nil {
-				var business *ReplyError
-				if errors.As(err, &business) {
-					if err = s.Store.FailBotReply(item.ID, business.Error()); err != nil {
-						return err
-					}
-					continue
+			cards, ok := conn.(cardConn)
+			if !ok {
+				if err = s.Store.FailBotReply(item.ID, "当前渠道暂不支持交互卡片"); err != nil {
+					return err
 				}
-				return err
+				continue
 			}
-			if err = s.Store.MarkBotReplySent(item.ID); err != nil {
+			if err = s.finishSend(item.ID, cards.sendCard(ctx, conv.ChatID, card)); err != nil {
 				return err
 			}
 			continue
@@ -376,13 +328,13 @@ func (s *Service) process(ctx context.Context, bot domain.NotificationBot, owner
 			} else if newConversationCommand(item.Content) {
 				err = s.Store.NewBotConversation(*item)
 				reply = "已开启新会话。当前聊天将从新的上下文开始，历史记录保留。"
-			} else if item.Content == "[不支持的消息类型，请发送文字]" {
+			} else if item.Content == unsupportedMessageText {
 				reply = item.Content
 			} else {
 				turnCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 				var stopProgress func()
-				if item.Action == "" {
-					turnCtx, stopProgress = ws.progressTurn(turnCtx, *item)
+				if progress, ok := conn.(progressConn); ok && item.Action == "" {
+					turnCtx, stopProgress = progress.progressTurn(turnCtx, *item)
 				}
 				if item.Action != "" {
 					if s.Action == nil {
@@ -427,8 +379,9 @@ func (s *Service) process(ctx context.Context, bot domain.NotificationBot, owner
 			item.Reply = reply
 			item.LastError = detail
 		}
-		if item.Action != "" && item.Action != "notification_details" && item.CardTaskID != "" && item.LastError != ErrCardActionDeferred.Error() {
-			if updateErr := ws.updateActionCard(ctx, *item, item.Reply, true); updateErr != nil {
+		cards, hasCards := conn.(cardConn)
+		if hasCards && item.Action != "" && item.Action != "notification_details" && item.CardTaskID != "" && item.LastError != ErrCardActionDeferred.Error() {
+			if updateErr := cards.updateActionCard(ctx, *item, item.Reply, true); updateErr != nil {
 				code := 0
 				var business *ReplyError
 				if errors.As(updateErr, &business) {
@@ -437,27 +390,24 @@ func (s *Service) process(ctx context.Context, bot domain.NotificationBot, owner
 				log.Printf("wecom action card update failed action=%s code=%d", item.Action, code)
 			}
 		}
-		if item.Action == "" {
-			err = ws.stream(ctx, *item, item.Reply, true)
-			if err != nil {
-				err = ws.send(ctx, conv.ChatID, item.Reply)
-			}
-		} else {
-			err = ws.send(ctx, conv.ChatID, item.Reply)
-		}
-		ws.streams.Delete(item.ID)
-		if err != nil {
-			var business *ReplyError
-			if errors.As(err, &business) {
-				if err = s.Store.FailBotReply(item.ID, business.Error()); err != nil {
-					return err
-				}
-				continue
-			}
+		result := conn.Reply(ctx, OutboundMessage{InteractionID: item.ID, Action: item.Action, ChatID: conv.ChatID, ChatType: conv.ChatType, Text: item.Reply, Route: ReplyRoute{RequestID: item.RequestID}})
+		if err = s.finishSend(item.ID, result); err != nil {
 			return err
 		}
-		if err = s.Store.MarkBotReplySent(item.ID); err != nil {
-			return err
-		}
+	}
+}
+
+// finishSend records a classified send. Stage A keeps the pre-channel state
+// transitions: delivered → replied, rejected → reply_failed, and any other
+// outcome drops the connection so the ready reply is sent again after
+// reconnecting. Stage C replaces this with the persisted delivery state machine.
+func (s *Service) finishSend(id string, result SendResult) error {
+	switch result.Outcome {
+	case Delivered:
+		return s.Store.MarkBotReplySent(id)
+	case Rejected:
+		return s.Store.FailBotReply(id, result.SafeDetail)
+	default:
+		return result.err()
 	}
 }
