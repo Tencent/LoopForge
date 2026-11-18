@@ -26,10 +26,16 @@ const (
 	// CLI and writes that CLI's model configuration into its private HOME.
 	BindAgentCLI CredentialBinding = "agent-cli"
 	// BindGitWorkspace gives a conversation workspace CLI the requester's Git
-	// credentials for any repository it clones itself: HTTPS asks a helper that
-	// answers only github.com, GH_TOKEN serves gh and API calls, and
-	// SSH uses the requester's keys per configured host without exposing them.
+	// credentials for any repository it clones itself: Git's credential helper
+	// and the gh/glab wrappers fetch the token of the exact HTTPS host from the
+	// session gateway while the turn runs, and SSH uses the requester's keys
+	// per configured host without exposing them.
 	BindGitWorkspace CredentialBinding = "git-workspace"
+	// BindExtra exports credentials from RunCredentials.Extra into the
+	// environment names listed in CommandSpec.ExtraCredentialEnv. Empty values
+	// are exported as empty strings so a child never inherits the host
+	// process's own variables.
+	BindExtra CredentialBinding = "extra"
 )
 
 type CodeBuddyCredential struct {
@@ -49,15 +55,25 @@ type RunCredentials struct {
 	Codex      ProviderCredential
 	ClaudeCode ProviderCredential
 	AgentCLI   map[string]ProviderCredential
-	GitToken   string
 	GitSSHKeys map[string]string `json:"-"`
 	// GitSSHHostKeys maps "host:port" to the requester's private key for a
 	// conversation workspace. It travels to the execution machine on the
 	// authenticated control connection only, in the start request of the CLI.
 	GitSSHHostKeys map[string]string `json:",omitempty"`
-	GitUserName    string
-	GitUserEmail   string
-	MCPServers     []domain.MCPServerDefinition
+	// GitHTTPHosts maps each HTTPS host the requester exposes to a workspace
+	// to its platform. It holds no tokens; the helper asks for them per host.
+	GitHTTPHosts map[string]string `json:",omitempty"`
+	// GitHTTPCredentials travels only on authenticated execution dispatches.
+	// SOP commands fetch a matching, exposed credential from an ephemeral relay.
+	GitHTTPCredentials map[string]domain.GitHTTPExecutionCredential `json:",omitempty"`
+	GitUserName        string
+	GitUserEmail       string
+	MCPServers         []domain.MCPServerDefinition
+	// Extra carries deployment-registered credentials (see
+	// RegisterExtraCredentialSource). Like GitSSHKeys it lives only on the
+	// in-memory sandbox handle and is never serialized into domain objects,
+	// run-context.json, or workspace files.
+	Extra map[string]string `json:"-"`
 }
 
 type ProviderCredential struct {
@@ -99,6 +115,15 @@ type CommandSpec struct {
 	AgentCLI   AgentCLIOptions
 	HookOutput string
 	Telemetry  *InvocationOptions
+	// ExtraCredentialEnv maps environment variable names to keys in
+	// RunCredentials.Extra and takes effect only together with the BindExtra
+	// credential binding. Empty or missing credentials export as empty
+	// strings, clearing any value inherited from the host process.
+	ExtraCredentialEnv map[string]string
+	// credentialEnvKeys records the environment variable names populated from
+	// Extra credentials (set by bindCommand) so process telemetry can redact
+	// them by origin instead of relying on naming conventions.
+	credentialEnvKeys []string
 	// Stdin is forwarded by local, Docker and remote conversation execution.
 	Stdin       io.Reader
 	environment map[string]string
@@ -107,6 +132,10 @@ type CommandSpec struct {
 	privateBinds []string
 	// Conversation preparation binds credentials before acknowledging start.
 	bindingsPrepared bool
+	// Runner-owned authentication state never enters serialized invocations.
+	runnerLogin           *runnerLoginLease
+	runnerLoginPrompt     string
+	runnerLoginInitialize bool
 }
 
 // WithPrivateHomeDir keeps CodeBuddy/Claude isolated from the operator HOME

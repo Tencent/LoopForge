@@ -65,7 +65,7 @@ function closeRepoDrawer(opt){
 function repoDrawerPayload(f,info){
   const existing=(state.data.repositories||[]).find(r=>r.id===repoDrawerState.repoId)||{};
   const payload={...existing,id:existing.id||undefined,projectId:repoDrawerState.projectId,provider:info.provider||'gongfeng',name:f.elements.name.value.trim()||info.name,gongfengProjectId:info.project,webUrl:info.webUrl,cloneUrl:info.cloneUrl,defaultBranch:f.elements.defaultBranch.value.trim()||'main',integrateBranch:f.elements.integrateBranch.value.trim(),localPath:f.elements.localPath.value.trim(),repoUrl:f.elements.repoUrl.value.trim()};
-  if(info.provider==='ssh'){payload.gongfengProjectId='';payload.webUrl=f.elements.webUrl.value.trim()}
+  if(['ssh','https'].includes(info.provider)){payload.gongfengProjectId='';payload.webUrl=f.elements.webUrl.value.trim()}
   delete payload.gitToken;if(!payload.id)delete payload.id;
   return payload;
 }

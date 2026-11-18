@@ -63,6 +63,8 @@ type RunnerWorkspaceRequest struct {
 	Terminal              *WorkspaceTerminalRequest `json:"terminal,omitempty"`
 	TerminalOwner         int64                     `json:"terminalOwner,omitempty"`
 	TerminalGitSSHKeys    map[string]string         `json:"terminalGitSshKeys,omitempty"`
+	// TerminalGitHTTPCredentials belongs to TerminalOwner and is sent only on open.
+	TerminalGitHTTPCredentials map[string]GitHTTPExecutionCredential `json:"terminalGitHttpCredentials,omitempty"`
 	// WorkspaceRunID selects the shared checkout owner; RunID continues to
 	// identify this run's independent sandbox, terminal scope and locks.
 	Browser         *BrowserRequest     `json:"browser,omitempty"`
