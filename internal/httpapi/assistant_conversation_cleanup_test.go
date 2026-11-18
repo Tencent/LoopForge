@@ -42,7 +42,7 @@ func TestDeletingConversationSettlesItsRequirements(t *testing.T) {
 		if err := h.repo.PutRun(run); err != nil {
 			t.Fatal(err)
 		}
-		if err := h.repo.SetAssistantSessionWorkspaceRun(owner.ID, chat, id, true); err != nil {
+		if err := h.repo.SetAssistantSessionWorkspaceRun(owner.ID, chat, "workbench", id, true); err != nil {
 			t.Fatal(err)
 		}
 	}

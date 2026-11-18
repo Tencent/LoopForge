@@ -23,7 +23,7 @@ const workspaceOpenSchema = `{"type":"object","properties":{"sandboxProfileId":{
 func workspaceOpenDescriptor() agentToolDescriptor {
 	return agentToolDescriptor{
 		Name:        "workbench_workspace_open",
-		Description: "进入工作区模式：在指定的运行环境（沙箱配置）里打开本对话的工作区，或直接接入某次同项目 SOP 运行的原工作区，之后用 CLI 原生的文件、补丁和命令工具工作。需要看代码、改代码、跑命令、构建、访问 GitHub（查 PR、开 PR、合并、评论等）时调用。新开普通工作区默认是空目录，不预先检出任何仓库：自己 git clone 需要的仓库，自己建分支、提交、推送、开 PR、合并。若要在普通新对话里接着某次历史/暂停 SOP 的原工作区现场干活（保留未推送改动与产物，且支持之后回原 SOP 重跑节点或继续），传 workspaceRunId 直接接入（需与当前对话在同一执行机器，已回收的快照会自动恢复；删除本对话不会删除借用的 SOP 工作区）。平台已按本轮发言人的个人凭证配置好 Git（已配置主机的 HTTPS 自动认证，SSH 用个人 SSH 密钥），gh 和 glab 会按仓库所在主机拿到令牌，环境里没有时可以自己安装；其他 API 需要令牌时用 git credential fill 按主机获取。不要打印、回显或写入任何令牌。一个对话同一时间只有一个活动工作区：不传参数或传相同环境时继续用当前工作区，传不同的 sandboxProfileId 就切换过去；切走的工作区解绑，空闲时保存快照后回收。返回 handoff=true 时只回复一句「好的。」结束本阶段，平台会在工作区里续接同一原生会话。在 GitHub 或 GitLab 开好的 PR/MR 由平台在本轮结束时自动登记到需求并跟踪合入。子 Agent 不能调用本工具。",
+		Description: "进入工作区模式：在指定的运行环境（沙箱配置）里打开本对话的工作区，或直接接入某次同项目 SOP 运行的原工作区，之后用 CLI 原生的文件、补丁和命令工具工作。需要看代码、改代码、跑命令、构建、访问 GitHub 或 GitLab（查 PR/MR、开 PR/MR、合并、评论等）时调用。新开的普通工作区是空白可写目录，可以直接创建文件、运行命令和预览。涉及已有仓库时，自行 git clone、建分支、提交、推送并开 PR/MR。若要在普通新对话里接着某次历史/暂停 SOP 的原工作区现场干活（保留未推送改动与产物，且支持之后回原 SOP 重跑节点或继续），传 workspaceRunId 直接接入（需与当前对话在同一执行机器，已回收的快照会自动恢复；删除本对话不会删除借用的 SOP 工作区）。平台已按本轮发言人的个人凭证配置好 Git（已配置主机的 HTTPS 自动认证，SSH 用个人 SSH 密钥），gh 和 glab 会按仓库所在主机拿到令牌，环境里没有时可以自己安装；其他 API 需要令牌时用 git credential fill 按主机获取。不要打印、回显或写入任何令牌。一个对话同一时间只有一个活动工作区：不传参数或传相同环境时继续用当前工作区，传不同的 sandboxProfileId 就切换过去；切走的工作区解绑，空闲时保存快照后回收。返回 handoff=true 时只回复一句「好的。」结束本阶段，平台会在工作区里续接同一原生会话。项目对话中开好的 GitHub PR 或 GitLab MR 由平台在本轮结束时自动登记到需求并跟踪合入。子 Agent 不能调用本工具。",
 		InputSchema: json.RawMessage(workspaceOpenSchema),
 		Kind:        "workspace",
 	}
@@ -50,7 +50,9 @@ func (h *agentToolGateway) workspaceOpenDescriptorFor(s *AgentToolSession) agent
 			fmt.Fprintf(&b, "\n- %s：%s", profile.ID, truncateRunes(name, 80))
 		}
 	}
-	if repos := projectRepositoryHints(h.repo.Repositories(), s.ProjectID); repos != "" {
+	if s.ProjectID == "" {
+		b.WriteString("\n\n个人对话可直接打开可写工作区，使用共享运行环境。workspaceRunId 只可切回本对话开过的工作区。")
+	} else if repos := projectRepositoryHints(h.repo.Repositories(), s.ProjectID); repos != "" {
 		b.WriteString("\n\n项目登记的仓库（供 git clone 参考，不会自动检出）：" + repos)
 	}
 	d.Description = b.String()
@@ -74,12 +76,6 @@ func projectRepositoryHints(all []domain.Repository, projectID string) string {
 		}
 	}
 	return b.String()
-}
-
-// usableConversationWorkspace reports whether a bound workspace can still be
-// used by a conversation of projectID.
-func usableConversationWorkspace(run domain.Run, projectID string) bool {
-	return run.ExecutionContext.ProjectID == projectID && run.IsWorkspace() && !domain.TerminalRunStatus(run.Status)
 }
 
 type workspaceOpenChoice struct {
@@ -131,7 +127,7 @@ func (h *agentToolGateway) openConversationWorkspace(ctx context.Context, s *Age
 		return h.openTaskWorkspace(s)
 	}
 	if !s.canOpenConversationWorkspace() {
-		return "", fmt.Errorf("只有项目对话可以打开工作区")
+		return "", errAgentToolForbidden
 	}
 	bound, err := h.bindConversationWorkspace(ctx, s, choice)
 	if err != nil {
@@ -160,7 +156,7 @@ func (h *agentToolGateway) openConversationWorkspace(ctx context.Context, s *Age
 		fmt.Fprintf(&notice, "已切回运行环境 %s 中本对话之前开过的工作区 %s。", run.WorkflowSnapshot.SandboxProfileID, run.ID)
 	}
 	if run.IsWorkspace() && bound.Created && len(run.RepositoryContexts()) == 0 {
-		notice.WriteString("工作区是空目录：用 git clone 拉取需要的仓库，自己建分支、提交、推送并开 PR/MR。")
+		notice.WriteString("工作区已提供空白可写目录，可创建文件、运行命令和预览。有仓库相关任务时，用 git clone 拉取所需仓库。")
 	}
 	if previous, ok := h.repo.RunState(bound.Previous); ok {
 		out["previousRunId"] = previous.ID
@@ -179,17 +175,22 @@ func (h *agentToolGateway) openConversationWorkspace(ctx context.Context, s *Age
 	treeCtx := context.WithValue(ctx, mainBotWorkspaceKey{}, run.ID)
 	tree, err := h.callMainBotWorkspace(treeCtx, s, "workbench_workspace_tree", map[string]any{})
 	if err != nil {
-		if bound.Created {
-			h.discardConversationWorkspace(s, bound)
-			return "", fmt.Errorf("工作区准备失败（已放弃这个工作区）：%v", err)
-		}
 		// Reusing the bound workspace switched nothing, so there is no binding
 		// to restore: keep it for the next attempt.
-		if !bound.Reused && bound.Previous != bound.Run.ID {
-			h.restoreConversationWorkspaceBinding(s, bound.Previous)
-			return "", fmt.Errorf("打开工作区 %s 失败（已恢复原绑定）：%v", run.ID, err)
+		if bound.Reused {
+			return "", fmt.Errorf("工作区已绑定（%s），但准备时失败：%w", run.ID, err)
 		}
-		return "", fmt.Errorf("工作区已绑定（%s），但准备时失败：%v", run.ID, err)
+		active, rollbackErr := h.rollbackConversationWorkspaceBinding(ctx, s, bound)
+		switch {
+		case rollbackErr != nil:
+			return "", fmt.Errorf("工作区 %s 准备失败：%v。恢复绑定失败：%w", run.ID, err, rollbackErr)
+		case bound.Created:
+			return "", fmt.Errorf("工作区准备失败（已放弃这个工作区）：%w", err)
+		case active == bound.Previous:
+			return "", fmt.Errorf("打开工作区 %s 失败（已恢复原绑定）：%w", run.ID, err)
+		default:
+			return "", fmt.Errorf("打开工作区 %s 失败：%w", run.ID, err)
+		}
 	}
 	out["files"] = json.RawMessage(truncateJSONForTool(tree, 6000))
 	if run.IsWorkspace() || sopStopped(run) {
@@ -211,7 +212,13 @@ func (h *agentToolGateway) openConversationWorkspace(ctx context.Context, s *Age
 
 func (h *agentToolGateway) resolveWorkspaceRunTarget(conv domain.AssistantSession, projectID, targetID string) (domain.Run, error) {
 	run, ok := h.repo.RunState(targetID)
-	if !ok || strings.TrimSpace(run.ExecutionContext.ProjectID) == "" || run.ExecutionContext.ProjectID != projectID {
+	if projectID == "" {
+		if !ok || !run.IsPersonalWorkspace() || !conversationMayBind(conv, run, projectID) {
+			return domain.Run{}, fmt.Errorf("工作区 %s 不存在或不属于当前个人对话", targetID)
+		}
+		return run, nil
+	}
+	if !ok || run.ExecutionContext.ProjectID != projectID {
 		return domain.Run{}, fmt.Errorf("工作区或运行 %s 不存在或不属于当前项目", targetID)
 	}
 	if !run.IsWorkspace() {
@@ -263,7 +270,7 @@ func (h *agentToolGateway) executionMachineLabel(runnerID string) string {
 // openTaskWorkspace hands a task conversation over to its task's workspace.
 func (h *agentToolGateway) openTaskWorkspace(s *AgentToolSession) (string, error) {
 	run, ok := h.repo.RunState(s.RunID)
-	if !ok || run.ExecutionContext.ProjectID != s.ProjectID {
+	if !ok || run.IsPersonalWorkspace() || run.ExecutionContext.ProjectID != s.ProjectID {
 		return "", errAgentToolForbidden
 	}
 	if !run.IsWorkspace() && !sopStopped(run) {
@@ -274,25 +281,40 @@ func (h *agentToolGateway) openTaskWorkspace(s *AgentToolSession) (string, error
 	return string(raw), nil
 }
 
-func (h *agentToolGateway) restoreConversationWorkspaceBinding(s *AgentToolSession, previous string) {
-	s.workspaceRunID = previous
-	if err := h.repo.SetAssistantSessionWorkspaceRun(s.ChatOwnerID, s.ChatSessionID, previous, false); err != nil {
-		log.Printf("rebind conversation workspace after failure session=%s run=%s: %v", s.ChatSessionID, previous, err)
+func (h *agentToolGateway) rollbackConversationWorkspaceBinding(ctx context.Context, s *AgentToolSession, bound conversationWorkspaceBinding) (string, error) {
+	if s.workspaceTurn != nil {
+		s.workspaceTurn.operations.Lock()
+		defer s.workspaceTurn.operations.Unlock()
 	}
+	s.workspaceMu.Lock()
+	defer s.workspaceMu.Unlock()
+	if bound.Created {
+		h.cancelUnpreparedConversationWorkspace(bound.Run.ID)
+	}
+	active, err := h.repo.RollbackAssistantSessionWorkspaceRun(s.ChatOwnerID, s.ChatSessionID, s.ProjectID, bound.Run.ID, bound.Previous, bound.Created)
+	if err != nil {
+		return "", err
+	}
+	if s.workspaceTurn != nil && s.workspaceRunID == bound.Run.ID {
+		// Release the failed binding's lease so the same turn can reuse the
+		// restored workspace.
+		if err := s.workspaceTurn.checkpoint(ctx); err != nil && !errors.Is(err, errAssistantTurnClosed) {
+			log.Printf("release failed workspace lease session=%s run=%s: %v", s.ChatSessionID, bound.Run.ID, err)
+		}
+	}
+	s.workspaceRunID = active
+	return active, nil
 }
 
-// discardConversationWorkspace cancels a workspace this call created but could
-// not prepare, and puts the conversation back on the workspace it used before.
-func (h *agentToolGateway) discardConversationWorkspace(s *AgentToolSession, bound conversationWorkspaceBinding) {
+func (h *agentToolGateway) cancelUnpreparedConversationWorkspace(runID string) {
 	if h.engine != nil {
-		if err := h.engine.Cancel(bound.Run.ID); err != nil {
-			log.Printf("cancel unprepared conversation workspace %s: %v", bound.Run.ID, err)
+		if err := h.engine.Cancel(runID); err != nil {
+			log.Printf("cancel unprepared conversation workspace %s: %v", runID, err)
 		}
-		if err := h.engine.ReleaseConversationWorkspace(bound.Run.ID); err != nil {
-			log.Printf("release unprepared conversation workspace %s: %v", bound.Run.ID, err)
+		if err := h.engine.ReleaseConversationWorkspace(runID); err != nil {
+			log.Printf("release unprepared conversation workspace %s: %v", runID, err)
 		}
 	}
-	h.restoreConversationWorkspaceBinding(s, bound.Previous)
 }
 
 type conversationWorkspaceBinding struct {
@@ -323,11 +345,14 @@ func (h *agentToolGateway) bindConversationWorkspace(ctx context.Context, s *Age
 	}
 	s.workspaceMu.Lock()
 	defer s.workspaceMu.Unlock()
-	project, ok := h.repo.Project(s.ProjectID)
-	if !ok {
+	conv, exists := h.repo.AssistantSession(s.ChatOwnerID, s.ChatSessionID)
+	if s.ProjectID == "" {
+		if !s.canOpenConversationWorkspace() || s.User.ID != s.UserID || !exists || conv.ProjectID != "" || conv.Shared || conv.RunID != "" {
+			return conversationWorkspaceBinding{}, errAgentToolForbidden
+		}
+	} else if _, ok := h.repo.Project(s.ProjectID); !ok {
 		return conversationWorkspaceBinding{}, fmt.Errorf("项目不存在")
 	}
-	conv, _ := h.repo.AssistantSession(s.ChatOwnerID, s.ChatSessionID)
 	binding := conversationWorkspaceBinding{}
 	if choice.WorkspaceRunID != "" {
 		target, err := h.resolveWorkspaceRunTarget(conv, s.ProjectID, choice.WorkspaceRunID)
@@ -358,7 +383,7 @@ func (h *agentToolGateway) bindConversationWorkspace(ctx context.Context, s *Age
 			}
 		}
 		if !reuse {
-			run, err := h.startConversationWorkspace(s, project, conv, wanted)
+			run, err := h.startConversationWorkspace(s, conv, wanted)
 			if err != nil {
 				return binding, err
 			}
@@ -390,7 +415,7 @@ func (h *agentToolGateway) bindConversationWorkspace(ctx context.Context, s *Age
 		// fails too.
 		if err := s.workspaceTurn.checkpoint(ctx); errors.Is(err, errAssistantTurnClosed) {
 			if binding.Created {
-				_ = h.engine.ReleaseConversationWorkspace(binding.Run.ID)
+				h.cancelUnpreparedConversationWorkspace(binding.Run.ID)
 			}
 			return conversationWorkspaceBinding{}, err
 		} else if err != nil {
@@ -399,10 +424,13 @@ func (h *agentToolGateway) bindConversationWorkspace(ctx context.Context, s *Age
 		}
 	}
 	binding.Previous = s.workspaceRunID
-	s.workspaceRunID = binding.Run.ID
-	if err := h.repo.SetAssistantSessionWorkspaceRun(s.ChatOwnerID, s.ChatSessionID, binding.Run.ID, binding.Run.IsWorkspace()); err != nil {
-		log.Printf("bind conversation workspace session=%s run=%s: %v", s.ChatSessionID, binding.Run.ID, err)
+	if err := h.repo.SetAssistantSessionWorkspaceRun(s.ChatOwnerID, s.ChatSessionID, s.ProjectID, binding.Run.ID, binding.Run.IsWorkspace()); err != nil {
+		if binding.Created {
+			h.cancelUnpreparedConversationWorkspace(binding.Run.ID)
+		}
+		return conversationWorkspaceBinding{}, fmt.Errorf("保存对话工作区绑定失败：%w", err)
 	}
+	s.workspaceRunID = binding.Run.ID
 	if binding.Previous != "" && h.engine != nil {
 		if err := h.engine.ReleaseConversationWorkspace(binding.Previous); err != nil {
 			log.Printf("release conversation workspace session=%s run=%s: %v", s.ChatSessionID, binding.Previous, err)
@@ -424,8 +452,8 @@ func (h *agentToolGateway) ownConversationWorkspace(conv domain.AssistantSession
 	return domain.Run{}, false
 }
 
-func (h *agentToolGateway) startConversationWorkspace(s *AgentToolSession, project domain.Project, conv domain.AssistantSession, sandboxID string) (domain.Run, error) {
-	sandbox, err := h.repo.ResolveConversationSandbox(project.ID, sandboxID)
+func (h *agentToolGateway) startConversationWorkspace(s *AgentToolSession, conv domain.AssistantSession, sandboxID string) (domain.Run, error) {
+	sandbox, err := h.repo.ResolveConversationSandbox(s.ProjectID, sandboxID)
 	if err != nil {
 		return domain.Run{}, err
 	}
@@ -433,7 +461,11 @@ func (h *agentToolGateway) startConversationWorkspace(s *AgentToolSession, proje
 		return domain.Run{}, fmt.Errorf("执行引擎不可用")
 	}
 	title := "对话工作区：" + truncateRunes(sandbox.Name, 80)
-	return h.engine.StartConversationWorkspace(title, []domain.RepositoryContext{}, domain.TelemetryContext{ProjectID: project.ID, ResponsibleUserID: s.UserID, ExecutionPinned: true, ExecutionMode: conv.Execution().Pool, ExecutionRunnerID: conv.Execution().RunnerID}, sandbox.ID)
+	target := conv.Execution()
+	return h.engine.StartConversationWorkspace(title, domain.TelemetryContext{
+		ProjectID: s.ProjectID, ResponsibleUserID: s.UserID,
+		ExecutionPinned: true, ExecutionMode: target.Pool, ExecutionRunnerID: target.RunnerID,
+	}, sandbox.ID)
 }
 
 func truncateJSONForTool(raw string, limit int) string {

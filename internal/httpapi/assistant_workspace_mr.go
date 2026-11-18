@@ -91,7 +91,7 @@ func (p workspacePull) link() string {
 }
 
 // registerTurnDeliveries runs when a turn ends. PRs and MRs the speaker opened
-// from the conversation workspace are registered as the requirement's
+// from a project conversation workspace are registered as the requirement's
 // delivery (the conversation's open requirement, or a new one titled after
 // the first one), so MR polling completes the requirement once they merge.
 // Only hosts this turn fetched a token for are asked, on GitHub (github.com
@@ -101,7 +101,7 @@ func (p workspacePull) link() string {
 // left alone. It returns a note for the reply, empty when nothing was
 // registered.
 func (h *assistantHandlers) registerTurnDeliveries(ctx context.Context, s *AgentToolSession) string {
-	if s == nil || s.RunID != "" || h.engine == nil {
+	if s == nil || s.ProjectID == "" || s.RunID != "" || h.engine == nil {
 		return ""
 	}
 	hosts := s.requestedGitHosts()

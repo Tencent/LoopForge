@@ -231,7 +231,9 @@ export function projectChange(current, nextProjectId) {
   return !current.projectId &&
     nextProjectId &&
     !current.shared &&
-    !current.runId
+    !current.runId &&
+    !current.workspaceRunId &&
+    !current.ownWorkspaceRunIds?.length
     ? "bind"
     : "new";
 }

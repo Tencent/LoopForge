@@ -134,6 +134,9 @@ func (h *runsHandlers) workspaceWrite(c *gin.Context) {
 // from the task panel: platform admins, the project owner, anyone on an
 // unowned project without members, and non-viewer project members.
 func (h *runsHandlers) workspaceEditAllowed(r *http.Request, run domain.Run, userID int64) bool {
+	if run.IsPersonalWorkspace() {
+		return userID > 0 && userID == run.ExecutionContext.ResponsibleUserID
+	}
 	if h.isPlatformAdmin(r) {
 		return true
 	}
