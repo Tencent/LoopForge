@@ -182,6 +182,9 @@ func redactPreparationOutput(sb Sandbox, output string) string {
 		for _, credential := range credentials.GitHTTPCredentials {
 			secrets = append(secrets, credential.Token)
 		}
+		for _, secret := range credentials.Extra {
+			secrets = append(secrets, secret)
+		}
 		for _, server := range credentials.MCPServers {
 			for _, value := range server.Headers {
 				secrets = append(secrets, value)

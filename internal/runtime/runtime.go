@@ -31,6 +31,11 @@ const (
 	// session gateway while the turn runs, and SSH uses the requester's keys
 	// per configured host without exposing them.
 	BindGitWorkspace CredentialBinding = "git-workspace"
+	// BindExtra exports credentials from RunCredentials.Extra into the
+	// environment names listed in CommandSpec.ExtraCredentialEnv. Empty values
+	// are exported as empty strings so a child never inherits the host
+	// process's own variables.
+	BindExtra CredentialBinding = "extra"
 )
 
 type CodeBuddyCredential struct {
@@ -64,6 +69,11 @@ type RunCredentials struct {
 	GitUserName        string
 	GitUserEmail       string
 	MCPServers         []domain.MCPServerDefinition
+	// Extra carries deployment-registered credentials (see
+	// RegisterExtraCredentialSource). Like GitSSHKeys it lives only on the
+	// in-memory sandbox handle and is never serialized into domain objects,
+	// run-context.json, or workspace files.
+	Extra map[string]string `json:"-"`
 }
 
 type ProviderCredential struct {
@@ -105,6 +115,15 @@ type CommandSpec struct {
 	AgentCLI   AgentCLIOptions
 	HookOutput string
 	Telemetry  *InvocationOptions
+	// ExtraCredentialEnv maps environment variable names to keys in
+	// RunCredentials.Extra and takes effect only together with the BindExtra
+	// credential binding. Empty or missing credentials export as empty
+	// strings, clearing any value inherited from the host process.
+	ExtraCredentialEnv map[string]string
+	// credentialEnvKeys records the environment variable names populated from
+	// Extra credentials (set by bindCommand) so process telemetry can redact
+	// them by origin instead of relying on naming conventions.
+	credentialEnvKeys []string
 	// Stdin is forwarded by local, Docker and remote conversation execution.
 	Stdin       io.Reader
 	environment map[string]string
