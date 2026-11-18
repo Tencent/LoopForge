@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -85,5 +86,80 @@ func swapExtraCredentialSources(srcs ...ExtraCredentialSource) func() {
 		extraCredentialMu.Lock()
 		extraCredentialSources = prev
 		extraCredentialMu.Unlock()
+	}
+}
+
+func TestCompactCommandRedactsCredentialEnvKeysByOrigin(t *testing.T) {
+	args := []string{"docker", "exec", "-e", "AWS_SECRET_ACCESS_KEY=super-secret", "-e", "PATH=/usr/bin", "container", "sh"}
+	got := compactCommand(args, "aws_secret_access_key")
+	if strings.Contains(got, "super-secret") {
+		t.Fatalf("credential value leaked into command line: %s", got)
+	}
+	if !strings.Contains(got, "AWS_SECRET_ACCESS_KEY=<redacted>") {
+		t.Fatalf("expected origin-based redaction, got: %s", got)
+	}
+	if !strings.Contains(got, "PATH=/usr/bin") {
+		t.Fatal("unrelated environment must not be redacted")
+	}
+}
+
+func TestBindExtraMarksCredentialEnvKeysForRedaction(t *testing.T) {
+	sb := &localSandbox{id: "extra-cred-redact", workspace: t.TempDir()}
+	command := CommandSpec{
+		Argv:               []string{"sh", "-c", "exit 0"},
+		CredentialBindings: []CredentialBinding{BindExtra},
+		ExtraCredentialEnv: map[string]string{"AWS_SECRET_ACCESS_KEY": "gateway"},
+	}
+	bound, err := bindCommand(sb, sb.workspace, command, RunCredentials{Extra: map[string]string{"gateway": "tok-1"}})
+	if err != nil {
+		t.Fatalf("bindCommand: %v", err)
+	}
+	found := false
+	for _, key := range bound.credentialEnvKeys {
+		if key == "AWS_SECRET_ACCESS_KEY" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("credentialEnvKeys not populated: %v", bound.credentialEnvKeys)
+	}
+}
+
+// TestConversationPathBindsExtraCredentialEnv mirrors the ConversationProcessPool
+// rebuild in conversation_process.go: after ConversationCommandFor and the
+// CommandSpec reconstruction, BindExtra must still inject (and clear) the
+// mapped environment — the conversation child must never inherit the host
+// process's own value.
+func TestConversationPathBindsExtraCredentialEnv(t *testing.T) {
+	sb := &localSandbox{id: "extra-cred-conversation", workspace: t.TempDir()}
+	command := CommandSpec{
+		Argv:               []string{"cli", "--model", "m"},
+		Provider:           "codebuddy",
+		CredentialBindings: []CredentialBinding{BindExtra},
+		ExtraCredentialEnv: map[string]string{"MY_TOOL_TOKEN": "gateway", "MY_ABSENT_TOKEN": "absent"},
+	}
+
+	// Wire format (what travels to the execution machine).
+	wire := ConversationCommandFor(command, RunCredentials{Extra: map[string]string{"gateway": "host-owned-value"}})
+	if wire.ExtraCredentialEnv["MY_TOOL_TOKEN"] != "gateway" {
+		t.Fatalf("ConversationCommandFor dropped ExtraCredentialEnv: %+v", wire.ExtraCredentialEnv)
+	}
+
+	// Pool-side reconstruction (conversation_process.go) followed by binding.
+	rebuilt := CommandSpec{
+		Argv:               append([]string(nil), wire.Argv...),
+		Provider:           wire.Provider,
+		CredentialBindings: wire.Bindings,
+		ExtraCredentialEnv: wire.ExtraCredentialEnv,
+	}
+	bound, err := bindCommand(sb, sb.workspace, rebuilt, wire.Credentials)
+	if err != nil {
+		t.Fatalf("bindCommand: %v", err)
+	}
+	if got := bound.environment["MY_TOOL_TOKEN"]; got != "host-owned-value" {
+		t.Errorf("MY_TOOL_TOKEN: got %q, want the user credential", got)
+	}
+	if got := bound.environment["MY_ABSENT_TOKEN"]; got != "" {
+		t.Errorf("MY_ABSENT_TOKEN: got %q, want empty (host value must be cleared)", got)
 	}
 }

@@ -108,6 +108,7 @@ func bindCommand(sandbox Sandbox, workspace string, command CommandSpec, credent
 			// variable the deployment routes through Extra credentials.
 			for envName, credName := range command.ExtraCredentialEnv {
 				bound.environment[envName] = credentials.Extra[credName]
+				bound.credentialEnvKeys = append(bound.credentialEnvKeys, envName)
 			}
 		case BindMCP:
 			if err := bindMCPCallEnvironment(sandbox, workspace, bound.environment, credentials.MCPServers); err != nil {

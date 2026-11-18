@@ -114,6 +114,10 @@ type CommandSpec struct {
 	// credential binding. Empty or missing credentials export as empty
 	// strings, clearing any value inherited from the host process.
 	ExtraCredentialEnv map[string]string
+	// credentialEnvKeys records the environment variable names populated from
+	// Extra credentials (set by bindCommand) so process telemetry can redact
+	// them by origin instead of relying on naming conventions.
+	credentialEnvKeys []string
 	// Stdin is forwarded by local, Docker and remote conversation execution.
 	Stdin       io.Reader
 	environment map[string]string
