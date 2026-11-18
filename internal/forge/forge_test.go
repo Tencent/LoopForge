@@ -207,3 +207,40 @@ func TestForgeTokenNeverFollowsRedirect(t *testing.T) {
 		t.Fatalf("unlisted path accepted: %v", err)
 	}
 }
+
+func TestForgeBranchPullsCarryHistoricalAndCurrentHeads(t *testing.T) {
+	const current = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	const previous = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	instance := useTestForge(t, func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/pulls") {
+			if r.URL.Query().Get("state") != "all" || r.URL.Query().Get("head") != "feature/fix" || r.URL.Query().Get("base") != "main" {
+				t.Errorf("wrong branch query %s", r.URL.RawQuery)
+			}
+			pull := Pull{Number: 3, State: "closed", Merged: true,
+				Head: pullBranch{Name: "feature/fix", Commit: previous, RepoID: 31},
+				Base: pullBranch{Name: "main", RepoID: 31}}
+			if r.URL.Query().Get("page") == "1" {
+				w.Header().Set("Link", `<https://ignored.example.org>; rel="next"`)
+				fork := pull
+				fork.Number, fork.Head.RepoID = 4, 99
+				_ = json.NewEncoder(w).Encode([]Pull{fork, pull})
+			} else {
+				pull.Number, pull.State, pull.Merged, pull.Head.Commit = 5, "open", false, current
+				_ = json.NewEncoder(w).Encode([]Pull{pull})
+			}
+			return
+		}
+		_, _ = w.Write([]byte(`{"id":31,"full_name":"Acme/App"}`))
+	})
+	client, err := OpenRepository(t.Context(), domain.ForgeRepository{Instance: instance, Owner: "acme", Name: "app"}, "test-credential")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pulls, err := client.BranchPulls(t.Context(), "feature/fix", "main")
+	if err != nil || len(pulls) != 2 {
+		t.Fatalf("branch PRs = %+v, %v", pulls, err)
+	}
+	if pulls[0].Delivery(client.ref).HeadSHA != previous || pulls[1].Delivery(client.ref).HeadSHA != current {
+		t.Fatal("branch discovery dropped the commit used by MR verification")
+	}
+}

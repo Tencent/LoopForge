@@ -212,6 +212,10 @@ func (h *assistantHandlers) models(c *gin.Context) {
 		// shared key's default may not exist in that environment.
 		refreshCLIModels(c.Request.Context(), user.CodeBuddyInternetEnvironment, user.CodeBuddyAPIKey)
 		catalog = assistantChatCatalog(c.Request.Context(), user.CodeBuddyInternetEnvironment, nil)
+		if saved := codeBuddyPersonalModels(user); len(saved) > 0 {
+			catalog.Models = saved
+			catalog.Default = saved[0].ID
+		}
 	default:
 		catalog = assistantChatCatalog(c.Request.Context(), "", nil)
 	}
@@ -219,11 +223,52 @@ func (h *assistantHandlers) models(c *gin.Context) {
 		catalog.SponsoredModel, catalog.SponsoredModels = key.Models[0], key.Models
 	}
 	if signedIn {
-		catalog.Models = append(catalog.Models, assistantEngineModels(c.Request.Context(), user)...)
-		h.saveCursorCatalog(user)
 		catalog.Engines = assistantEngineOptions(user, shared && strings.TrimSpace(user.CodeBuddyAPIKey) == "")
+		var runnerLogin map[string]bool
+		if c.Query("schedule") == "1" {
+			c.Header("Cache-Control", "private, no-store")
+			runnerLogin = make(map[string]bool)
+			for i := range catalog.Engines {
+				engine := catalog.Engines[i].ID
+				if scheduleLoginRunner(h.repo, user.ID, engine).ID != "" {
+					runnerLogin[engine] = true
+					catalog.Engines[i].Configured = true
+				}
+			}
+		}
+		catalog.Models = append(catalog.Models, assistantEngineModels(c.Request.Context(), user, runnerLogin)...)
+		h.saveCursorCatalog(user)
 	}
 	c.JSON(200, catalog)
+}
+
+// withCodeBuddyPersonalModels also accepts the user's saved CodeBuddy models
+// and, like the picker (/api/assistant/models), defaults to the first of them,
+// so a request without a model (API, bots, scheduled runs) runs on the model
+// the UI shows as default. The environment's models stay accepted.
+func withCodeBuddyPersonalModels(catalog assistantModelCatalog, user domain.User) assistantModelCatalog {
+	saved := codeBuddyPersonalModels(user)
+	if len(saved) == 0 {
+		return catalog
+	}
+	catalog.Models = append(catalog.Models, saved...)
+	catalog.Default = saved[0].ID
+	return catalog
+}
+
+func codeBuddyPersonalModels(user domain.User) []assistantModel {
+	if strings.TrimSpace(user.CodeBuddyAPIKey) == "" {
+		return nil
+	}
+	var models []assistantModel
+	for _, item := range assistantSavedModels(user, assistantEngineCodeBuddy) {
+		name := item.Name
+		if name == "" {
+			name = item.ID
+		}
+		models = append(models, assistantListedModel(item.ID, name, ""))
+	}
+	return models
 }
 
 // assistantChatCatalog is the catalog used by chat conversations: the same

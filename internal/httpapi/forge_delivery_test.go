@@ -58,6 +58,27 @@ func testForgejoConversationPush(t *testing.T, borrowSOP bool) {
 	const branch = "feature/forgejo-test"
 	var created, merged atomic.Bool
 	var calls atomic.Int32
+	branchHead := func() string {
+		output, err := exec.Command("git", "-C", bare, "rev-parse", "refs/heads/"+branch).Output()
+		if err != nil {
+			t.Error("Forgejo request arrived before Git had pushed its branch")
+		}
+		return strings.TrimSpace(string(output))
+	}
+	pullResponse := func() map[string]any {
+		state := "open"
+		var at *time.Time
+		if merged.Load() {
+			state = "closed"
+			now := time.Now().UTC()
+			at = &now
+		}
+		return map[string]any{
+			"number": 4, "state": state, "merged": merged.Load(), "merged_at": at,
+			"head": map[string]any{"label": branch, "ref": "refs/pull/4/head", "repo_id": 27, "sha": branchHead()},
+			"base": map[string]any{"label": "main", "repo_id": 27},
+		}
+	}
 	api := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
 		if r.Header.Get("Authorization") != "token "+secret {
@@ -71,29 +92,20 @@ func testForgejoConversationPush(t *testing.T, borrowSOP bool) {
 			_, _ = w.Write([]byte(`{"id":13,"login":"submitter"}`))
 		case "GET " + repository:
 			_, _ = w.Write([]byte(`{"id":27,"full_name":"team/app"}`))
+		case "GET " + repository + "/branches/" + branch:
+			_ = json.NewEncoder(w).Encode(map[string]any{"name": branch, "commit": map[string]string{"id": branchHead()}})
 		case "GET " + repository + "/pulls":
-			_, _ = w.Write([]byte("[]"))
-		case "POST " + repository + "/pulls", "GET " + repository + "/pulls/4":
+			if created.Load() {
+				_ = json.NewEncoder(w).Encode([]any{pullResponse()})
+			} else {
+				_, _ = w.Write([]byte("[]"))
+			}
+		case "POST " + repository + "/pulls", "GET " + repository + "/pulls/4", "PATCH " + repository + "/pulls/4":
 			if r.Method == http.MethodPost {
 				created.Store(true)
 				w.WriteHeader(http.StatusCreated)
 			}
-			output, err := exec.Command("git", "-C", bare, "rev-parse", "refs/heads/"+branch).Output()
-			if err != nil {
-				t.Error("PR request arrived before Git had pushed its branch")
-			}
-			state := "open"
-			var at *time.Time
-			if merged.Load() {
-				state = "closed"
-				now := time.Now().UTC()
-				at = &now
-			}
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"number": 4, "state": state, "merged": merged.Load(), "merged_at": at,
-				"head": map[string]any{"label": branch, "ref": "refs/pull/4/head", "repo_id": 27, "sha": strings.TrimSpace(string(output))},
-				"base": map[string]any{"label": "main", "repo_id": 27},
-			})
+			_ = json.NewEncoder(w).Encode(pullResponse())
 		default:
 			t.Errorf("unexpected Forgejo request: %s %s", r.Method, r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)
@@ -115,61 +127,80 @@ func testForgejoConversationPush(t *testing.T, borrowSOP bool) {
 		t.Fatalf("SSH binding: HTTP %d %s", res.Code, res.Body)
 	}
 	run := domain.Run{
-		ID: "run-forgejo", Kind: domain.RunKindWorkspace, Status: "waiting",
+		ID: "run-forgejo", Kind: domain.RunKindWorkspace, Status: "waiting", Generation: 1,
 		WorkflowSnapshot: domain.WorkflowDefinition{ID: domain.ConversationWorkspaceWorkflowID, SandboxProfileID: "local"},
 		ExecutionContext: domain.TelemetryContext{ProjectID: "platform", ResponsibleUserID: f.user.ID},
-		Repositories: []domain.RepositoryContext{{
+		Nodes:            map[string]*domain.NodeRun{},
+	}
+	if borrowSOP {
+		// A completed SOP freezes its original SSH binding and branch choice.
+		run.Kind, run.Status = "", "succeeded"
+		run.WorkflowSnapshot = domain.WorkflowDefinition{ID: "delivery-sop", SandboxProfileID: "local"}
+		run.ExecutionContext.IssueID = "forgejo-sop-issue"
+		if err := f.s.PutIssue(domain.Issue{ID: run.ExecutionContext.IssueID, ProjectID: "platform", Title: "SOP delivery", Status: "in_progress"}); err != nil {
+			t.Fatal(err)
+		}
+		run.Repositories = []domain.RepositoryContext{{
 			RepositoryID: repository.ID, Name: repository.Name, Provider: repository.Provider,
 			CloneURL: repository.CloneURL, WebURL: repository.WebURL, GongfengProjectID: repository.GongfengProjectID,
 			BaseBranch: "main", DefaultBranch: "main", WorkBranch: branch, CreateNewWorkBranch: true, WorkspaceDir: "app",
-		}},
-		Nodes: map[string]*domain.NodeRun{},
+		}}
 	}
 	if err := f.s.PutRun(run); err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
 	defer cancel()
-	if err := f.e.MaterializeConversationWorkspace(ctx, run.ID); err != nil {
-		t.Fatal(err)
-	}
-	if borrowSOP {
-		// Give the same checkout the run state a conversation borrows after an SOP.
-		run, _ = f.s.RunState(run.ID)
-		run.Kind, run.Status = "", "succeeded"
-		run.WorkflowSnapshot = domain.WorkflowDefinition{ID: "delivery-sop", SandboxProfileID: "local"}
-		if err := f.s.PutRun(run); err != nil {
-			t.Fatal(err)
-		}
-	}
 	root, reason := f.e.LocalRunWorkspace(run)
 	if reason != "" {
 		t.Fatal(reason)
 	}
-	if err := os.WriteFile(filepath.Join(root, "app", "app.txt"), []byte("Forgejo delivery\n"), 0o600); err != nil {
+	if err := os.MkdirAll(root, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	gateway := &agentToolGateway{deps: &deps{repo: f.s, engine: f.e}}
-	session := &AgentToolSession{workspaceRunID: run.ID, ProjectID: "platform", UserID: f.user.ID, User: f.user, Mode: AgentToolAssistant}
-	type submission struct {
-		IssueID string
-		Results []workspaceMRResult
+	sshCtx := gitwork.WithSSHRemote(gitwork.WithSSHKeys(ctx, map[string]string{remote: privateKey}), remote)
+	if _, err := gitwork.C(sshCtx, root, "clone", remote, "app"); err != nil {
+		t.Fatal(err)
 	}
-	submit := func() submission {
+	checkout := filepath.Join(root, "app")
+	sshTestGit(t, checkout, "switch", "-c", branch)
+	if err := os.WriteFile(filepath.Join(checkout, "app.txt"), []byte("Forgejo delivery\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	pushed, err := gitwork.PushWorkBranch(sshCtx, checkout, branch, "Forgejo delivery")
+	if err != nil || pushed == "" || pushed != branchHead() {
+		t.Fatalf("native Git push = %q, %v", pushed, err)
+	}
+	gateway := &agentToolGateway{deps: &deps{repo: f.s, engine: f.e}}
+	session := &AgentToolSession{workspaceRunID: run.ID, ChatSessionID: "chat-forgejo", ProjectID: "platform",
+		UserID: f.user.ID, User: f.user, Mode: AgentToolAssistant, RuntimeMode: domain.AssistantModeWorkspace,
+		ExecMode: assistantExecMode{AutoWrite: true}}
+	type submission struct {
+		IssueID, MRURL, Commit, TargetBranch string
+		Existing, Updated                    bool
+	}
+	submit := func(expectError bool) submission {
 		t.Helper()
-		result, err := gateway.workspaceSubmitMR(ctx, session, map[string]any{"title": "Forgejo delivery"})
+		args, _ := json.Marshal(map[string]any{"name": workspaceForgejoPRTool, "arguments": map[string]string{
+			"repositoryId": repository.ID, "sourceBranch": branch, "commit": pushed, "title": "Forgejo delivery",
+		}})
+		result, err := gateway.callTool(ctx, session, args)
+		failed := err != nil || result["isError"] == true
+		if failed != expectError {
+			t.Fatalf("Forgejo PR gateway = %v, %v", result, err)
+		}
 		var got submission
-		if err != nil || json.Unmarshal([]byte(result), &got) != nil || len(got.Results) != 1 || strings.Contains(result, secret) {
-			t.Fatalf("workspace submission = %s, %v", result, err)
+		if !failed {
+			items := result["content"].([]map[string]any)
+			text := items[0]["text"].(string)
+			if strings.Contains(text, secret) || json.Unmarshal([]byte(text), &got) != nil {
+				t.Fatal("unexpected Forgejo PR tool output")
+			}
 		}
 		return got
 	}
 	callsBeforeSubmit := calls.Load()
-	first := submit()
-	pushed := first.Results[0]
-	if !pushed.Pushed || !pushed.PushOnly || pushed.Commit == "" || pushed.MRURL != "" || calls.Load() != callsBeforeSubmit {
-		t.Fatalf("SSH submission should only push the work branch: %+v", pushed)
-	}
+	submit(true) // A generic SSH binding offers Git transport only.
 	defaultBranch := "main"
 	if borrowSOP {
 		defaultBranch = "next" // A catalog edit must not retarget the existing workspace.
@@ -186,24 +217,63 @@ func testForgejoConversationPush(t *testing.T, borrowSOP bool) {
 	}
 	if borrowSOP {
 		bindForgejo(strings.Replace(remote, "/team/app.git", "/team/other.git", 1), api.URL+"/team/other")
-		if other := submit().Results[0]; !other.PushOnly || other.MRURL != "" || calls.Load() != callsBeforeSubmit {
-			t.Fatalf("a changed SSH remote must not enable Forgejo delivery for the old checkout: %+v", other)
-		}
+		submit(true) // A replaced binding cannot use the old checkout.
 	}
 	bindForgejo(remote, webURL)
-	got := submit()
-	if delivered := got.Results[0]; !created.Load() || !delivered.Pushed || delivered.PushOnly ||
-		delivered.MRURL != webURL+"/pulls/4" || delivered.Commit != pushed.Commit || delivered.TargetBranch != "main" {
-		t.Fatalf("retry did not open the Forgejo PR from the already-pushed commit against the original base: %+v", delivered)
+	session.ExecMode.AutoWrite = false
+	submit(true) // A request that cannot get approval cannot call Forgejo.
+	if calls.Load() != callsBeforeSubmit {
+		t.Fatal("an unauthorized call reached the Forgejo API")
 	}
-	if saved, _ := f.s.RunState(run.ID); saved.Repositories[0] != run.Repositories[0] {
-		t.Fatal("Forgejo submission changed the frozen repository context")
+	session.ExecMode.AutoWrite = true
+	got := submit(false)
+	if !created.Load() || got.MRURL != webURL+"/pulls/4" || got.Commit != pushed || got.TargetBranch != "main" || got.IssueID == "" {
+		t.Fatalf("Forgejo PR did not use the already-pushed commit against the original base: %+v", got)
+	}
+	if retried := submit(false); !retried.Existing || !retried.Updated || retried.MRURL != got.MRURL || retried.IssueID != got.IssueID {
+		t.Fatalf("retry did not reuse the Forgejo PR and requirement: %+v", retried)
 	}
 	if borrowSOP {
+		if saved, _ := f.s.RunState(run.ID); saved.Repositories[0] != run.Repositories[0] || got.IssueID != run.ExecutionContext.IssueID {
+			t.Fatal("Forgejo submission changed the frozen repository or issue of the SOP")
+		}
+		run.Status = "running"
+		run.Nodes["mr"] = &domain.NodeRun{NodeID: "mr", Status: "running", Attempt: 1}
+		bound, _ := f.s.Repository(repository.ID)
+		run.Repositories[0].Provider = bound.Provider
+		run.Repositories[0].GongfengProjectID = bound.GongfengProjectID
+		if err := f.s.PutRun(run); err != nil {
+			t.Fatal(err)
+		}
+		token, err := forge.SignRunGrant(forge.RunGrant{RunID: run.ID, NodeID: "mr", Generation: run.Generation, Attempt: 1}, time.Now())
+		if err != nil {
+			t.Fatal(err)
+		}
+		callNode := func(bearer string, expected int) {
+			t.Helper()
+			body, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": map[string]any{
+				"name": "forgejo_pr_submit", "arguments": map[string]string{"repositoryId": repository.ID, "commit": pushed, "title": "SOP MR"},
+			}})
+			req := httptest.NewRequest(http.MethodPost, forge.RunMCPPath, strings.NewReader(string(body)))
+			req.Header.Set("Authorization", "Bearer "+bearer)
+			recorder := httptest.NewRecorder()
+			f.h.ServeHTTP(recorder, req)
+			if recorder.Code != expected || (expected == http.StatusOK && (!strings.Contains(recorder.Body.String(), got.MRURL) || strings.Contains(recorder.Body.String(), `"isError":true`))) {
+				t.Fatalf("Forgejo node HTTP %d: %s", recorder.Code, recorder.Body)
+			}
+		}
+		before := calls.Load()
+		callNode(token+"x", http.StatusUnauthorized)
+		if calls.Load() != before {
+			t.Fatal("invalid node capability reached Forgejo")
+		}
+		callNode(token, http.StatusOK)
+		run.Nodes["mr"].Status = "succeeded"
+		if err := f.s.PutRun(run); err != nil {
+			t.Fatal(err)
+		}
+		callNode(token, http.StatusUnauthorized)
 		return
-	}
-	if got.IssueID == "" || got.IssueID != first.IssueID {
-		t.Fatalf("Forgejo retry did not keep the conversation requirement: %q, then %q", first.IssueID, got.IssueID)
 	}
 	pending, err := f.s.ListMRDeliveryStates()
 	if err != nil || len(pending) != 1 || pending[0].ForgeUserID != f.user.ID {

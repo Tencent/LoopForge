@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -469,11 +470,8 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 	ctx = withGitToken(ctx, gitTok)
 	ctx = gitwork.WithSSHKeys(ctx, gitCredentials.GitSSHKeys)
 	ctx = withGitIdentity(ctx, sb.credentialSnapshot().GitUserName, sb.credentialSnapshot().GitUserEmail)
-	// Repository checkout and Agent-configuration index isolation belong to the
-	// run environment, not to each node. The same checkout and .git/index are
-	// reused by all nodes, so repeatedly toggling skip-worktree only creates
-	// needless index.lock contention. A reconstructed runEnvironment (restart or
-	// lease takeover) starts unprepared and revalidates the persisted checkout.
+	// Share the checkout between nodes. A reconstructed run environment
+	// revalidates the persisted checkout after restart or lease takeover.
 	// A runner that integrates on its own checkout needs nothing from a
 	// control-plane clone, so none is made.
 	stagingCheckout := true
@@ -484,19 +482,8 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 		if !stagingCheckout {
 			return nil
 		}
-		repoWorkspaces := repositoryWorkspaceDirs(sb.Workspace(), current.RepositoryContexts())
-		for _, dir := range repoWorkspaces {
-			if err := runtime.RestoreProjectAgentGitIndex(ctx, dir, sb.Driver()); err != nil {
-				return fmt.Errorf("restore repository Agent configuration index: %w", err)
-			}
-		}
 		if err := prepareRepositories(ctx, sb.Workspace(), current.RepositoryContexts()); err != nil {
 			return explainGitAuthFailure(fmt.Errorf("repository checkout: %w", err), strings.TrimSpace(gitTok) != "")
-		}
-		for _, dir := range repoWorkspaces {
-			if err := runtime.ProtectProjectAgentGitIndex(ctx, dir, sb.Driver()); err != nil {
-				return fmt.Errorf("protect repository Agent configuration index: %w", err)
-			}
 		}
 		for _, rc := range current.RepositoryContexts() {
 			e.observe(runID, node.ID, domain.TelemetryEvent{Category: "sandbox", Name: "repository.checked_out", Phase: "finish", Message: rc.Name + " @ " + rc.WorkBranch, Attributes: map[string]any{"repositoryId": rc.RepositoryID, "repositoryDir": rc.WorkspaceDir, "baseBranch": rc.BaseBranch, "workBranch": rc.WorkBranch}})
@@ -728,6 +715,17 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 				prompt = appendSubmitGateInstruction(prompt, node.RejectTo, feedback == gateMissingRetryMarker)
 			}
 			assets := e.resolveAssets(agent, current.ExecutionContext.ProjectID, wf.ID, current.ExecutionContext.ResponsibleUserID)
+			if slices.ContainsFunc(gates, func(g verificationRun) bool { return strings.EqualFold(g.gate.Mode, domain.VerificationModeMR) }) &&
+				slices.ContainsFunc(current.RepositoryContexts(), func(rc domain.RepositoryContext) bool {
+					return !rc.ReadOnly && domain.IsForgeRepositoryProvider(rc.Provider)
+				}) {
+				server, err := e.forgeNodeMCP(current, node.ID)
+				if err != nil {
+					return "", err
+				}
+				assets.MCPServers = append(assets.MCPServers, server)
+				prompt += "\n\nForgejo 仓库使用已注入的 Forgejo PR MCP。提交并推送工作分支后，调用 forgejo_pr_submit，传 repositoryId、完整 commit SHA、title 和 description。源分支和目标分支由平台按本次运行确定；令牌由平台读取。把返回的 mrUrl 写入交付文档。"
+			}
 			warnMCPSkipped := func(message string) {
 				sink(domain.TelemetryEvent{Category: "mcp", Name: "mcp.skipped", Phase: "start", Level: "warn", Message: message})
 			}
@@ -893,6 +891,32 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 			for _, candidate := range gates {
 				gate := candidate.gate
 				if strings.EqualFold(gate.Mode, "manual") || strings.EqualFold(gate.Mode, "submit") {
+					continue
+				}
+				if strings.EqualFold(gate.Mode, domain.VerificationModeMR) {
+					live, _ := e.repo.RunState(runID)
+					mrErr := e.verifyRunMRs(live, gitTok, func(rc domain.RepositoryContext) (pushedWork, error) {
+						target := executionTarget{Scope: domain.ExecutionScopeRepositories, Repository: &rc}
+						out, execErr := gateExec(mrPendingCommand, target, executionTargetSink(func(event domain.TelemetryEvent) {
+							event.Category = "verification"
+							sink(event)
+						}, target))
+						if execErr != nil {
+							return pushedWork{}, execErr
+						}
+						return parseMRPending(out)
+					})
+					if mrErr != nil {
+						e.observe(runID, node.ID, domain.TelemetryEvent{Category: "verification", Name: "gate.mr.failed", Phase: "finish", Level: "error", Message: "门禁未通过：" + gate.Name, Attributes: map[string]any{"gateId": gate.ID, "gateName": gate.Name, "iteration": iteration, "detail": mrErr.Error()}})
+						err = fmt.Errorf("verification %s: %w", gate.Name, mrErr)
+						failedAction = candidate.onFailure
+						if errors.Is(mrErr, errMRUnverifiable) {
+							failedAction = "human"
+						}
+						gateRejected = failedAction == "reject"
+						break
+					}
+					e.observe(runID, node.ID, domain.TelemetryEvent{Category: "verification", Name: "gate.mr.passed", Phase: "finish", Message: "门禁通过：" + gate.Name, Attributes: map[string]any{"gateId": gate.ID, "gateName": gate.Name, "iteration": iteration}})
 					continue
 				}
 				gateCmd := joinGateCommands(gate.Commands, effectiveNode.ArtifactOutputs)

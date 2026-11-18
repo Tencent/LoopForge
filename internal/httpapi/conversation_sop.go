@@ -8,6 +8,8 @@ import (
 	"strings"
 
 	"agentflow/internal/domain"
+
+	"github.com/gin-gonic/gin"
 )
 
 // chatSessionHeader names the conversation a browser-confirmed tool call was
@@ -76,6 +78,13 @@ func conversationMayBind(conv domain.AssistantSession, run domain.Run, projectID
 		return usableConversationWorkspace(run, projectID) && slices.Contains(ownWorkspaceRunIDs(conv), run.ID)
 	}
 	return borrowableSOPRun(run, projectID)
+}
+
+// sopWorkspaceReadOnly reports whether conv is bound to an SOP run whose
+// workspace the speaker may not write: the turn then stays in platform mode.
+func (d deps) sopWorkspaceReadOnly(c *gin.Context, conv domain.AssistantSession, projectID string, userID int64) bool {
+	run, ok := d.repo.RunState(conv.WorkspaceRunID)
+	return ok && !run.IsWorkspace() && !d.projectWriterAllowed(c, projectID, userID)
 }
 
 // loadTurnWorkspace starts a conversation turn in the workspace the

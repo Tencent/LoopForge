@@ -3,6 +3,7 @@ package httpapi
 import (
 	"fmt"
 	"log"
+	"slices"
 	"strings"
 	"time"
 
@@ -14,27 +15,6 @@ import (
 type conversationRequirement struct {
 	Title       string
 	Description string
-}
-
-func parseConversationRequirement(args map[string]any) (conversationRequirement, error) {
-	raw, ok := args["requirement"]
-	if !ok || raw == nil {
-		return conversationRequirement{}, nil
-	}
-	obj, ok := raw.(map[string]any)
-	if !ok {
-		return conversationRequirement{}, fmt.Errorf("requirement 必须是包含 title 的对象")
-	}
-	title, _ := obj["title"].(string)
-	description, _ := obj["description"].(string)
-	req := conversationRequirement{Title: strings.TrimSpace(title), Description: strings.TrimSpace(description)}
-	if req.Title == "" || len([]rune(req.Title)) > 200 {
-		return conversationRequirement{}, fmt.Errorf("requirement.title 必填，最多 200 字")
-	}
-	if len([]rune(req.Description)) > 20000 {
-		return conversationRequirement{}, fmt.Errorf("requirement.description 最多 20000 字")
-	}
-	return req, nil
 }
 
 // openConversationIssue returns the requirement in the project that a
@@ -145,44 +125,40 @@ func conversationRequirementIssue(s *AgentToolSession, run domain.Run, conv doma
 // recordConversationMRs registers the MRs a conversation workspace submitted
 // as the requirement's delivery MRs. MR polling then marks the requirement
 // delivered once they merge, and analytics counts them like SOP deliveries.
-func (h *agentToolGateway) recordConversationMRs(issueID string, results []workspaceMRResult, repos []domain.RepositoryContext, userID int64) error {
+func (h *agentToolGateway) recordConversationMRs(issueID string, delivered []deliveredMR, repos []domain.Repository) error {
 	if strings.TrimSpace(issueID) == "" {
 		return nil
 	}
 	mrs := []domain.DeliveryMR{}
-	direct := 0
-	for _, r := range results {
-		project, iid, _, ok := domain.ParseDeliveryMRURL(r.MRURL)
-		if r.MRURL == "" || !ok {
-			if r.Direct {
-				// A direct push to a shared branch delivers work without an MR, so
-				// the requirement still needs review; only the MR list stays empty.
-				direct++
-			}
+	for _, r := range delivered {
+		project, iid, url, ok := domain.ParseDeliveryMRURL(r.URL)
+		if !ok {
 			continue
 		}
-		mr := domain.DeliveryMR{RepositoryID: r.repositoryID, Repository: r.Repository, Project: project, IID: iid, URL: r.MRURL, State: "opened", TargetBranch: r.TargetBranch}
-		var bound domain.RepositoryContext
-		for _, rc := range repos {
-			if (r.repositoryID != "" && rc.RepositoryID == r.repositoryID) || (r.repositoryID == "" && rc.Name == r.Repository) {
-				bound = rc
-				mr.RepositoryID = rc.RepositoryID
-				break
+		mr := domain.DeliveryMR{Repository: r.Repository, Project: project, IID: iid, URL: url, State: "opened", TargetBranch: r.TargetBranch}
+		repository, bound := repositoryForMRProject(repos, project)
+		if bound {
+			mr.RepositoryID = repository.ID
+			if mr.Repository == "" {
+				mr.Repository = repository.Name
 			}
 		}
+		if mr.Repository == "" {
+			mr.Repository = project
+		}
 		if ref, isForge := domain.ParseForgeProject(project); isForge {
-			if !domain.IsForgeRepositoryProvider(bound.Provider) || bound.GongfengProjectID != project || userID <= 0 {
+			if !bound || r.ForgeUserID <= 0 {
 				continue
 			}
-			if err := h.repo.EnsureForgeDeliveryState(ref, iid, issueID, userID); err != nil {
+			if err := h.repo.EnsureForgeDeliveryState(ref, iid, issueID, r.ForgeUserID); err != nil {
 				return err
 			}
-		} else if err := h.repo.EnsureMRDeliveryState(project, iid, r.MRURL, issueID); err != nil {
+		} else if err := h.repo.EnsureMRDeliveryState(project, iid, url, issueID); err != nil {
 			return err
 		}
 		mrs = append(mrs, mr)
 	}
-	if len(mrs) == 0 && direct == 0 {
+	if len(mrs) == 0 {
 		return nil
 	}
 	_, err := h.repo.PatchIssue(issueID, func(issue *domain.Issue) error {
@@ -193,12 +169,41 @@ func (h *agentToolGateway) recordConversationMRs(issueID string, results []works
 			}
 		}
 		issue.SetDeliveryMRs(list)
+		for _, mr := range mrs {
+			if mr.RepositoryID != "" && !slices.Contains(issue.RepositoryIDs, mr.RepositoryID) {
+				issue.RepositoryIDs = append(issue.RepositoryIDs, mr.RepositoryID)
+			}
+		}
+		if issue.RepositoryID == "" && len(issue.RepositoryIDs) > 0 {
+			issue.RepositoryID = issue.RepositoryIDs[0]
+		}
 		if !issue.Completed() && !strings.EqualFold(issue.Status, "in_review") {
 			issue.Status = "in_review"
 		}
 		return nil
 	})
 	return err
+}
+
+// repositoryForMRProject finds the registered repository a PR/MR project key
+// belongs to.
+func repositoryForMRProject(repos []domain.Repository, project string) (domain.Repository, bool) {
+	if domain.HasForgeProjectPrefix(project) {
+		for _, r := range repos {
+			if domain.IsForgeRepositoryProvider(r.Provider) && r.GongfengProjectID == project {
+				return r, true
+			}
+		}
+		return domain.Repository{}, false
+	}
+	for _, r := range repos {
+		for _, raw := range []string{r.CloneURL, r.WebURL} {
+			if info, ok := domain.ParseRepositoryURL(raw); ok && strings.EqualFold(info.Project, project) {
+				return r, true
+			}
+		}
+	}
+	return domain.Repository{}, false
 }
 
 // attributeConversationUsage runs after a turn is saved. It adds the turn's

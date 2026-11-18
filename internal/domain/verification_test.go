@@ -19,6 +19,12 @@ func TestValidateVerificationGateRequiresScopeForCommands(t *testing.T) {
 	if err := ValidateVerificationGate(VerificationGate{ID: "verdict", Mode: "submit", Required: true}); err == nil {
 		t.Fatal("submit is an engine-owned terminal protocol, not a configurable gate")
 	}
+	if err := ValidateVerificationGate(VerificationGate{ID: "mr-opened", Mode: VerificationModeMR, Required: true}); err != nil {
+		t.Fatalf("mr gate without scope or commands: %v", err)
+	}
+	if err := ValidateVerificationGate(VerificationGate{ID: "mr-opened", Mode: VerificationModeMR, Commands: []string{"true"}, ExecutionScope: ExecutionScopeRun}); err == nil {
+		t.Fatal("an mr gate is checked by the engine and takes no commands")
+	}
 }
 
 func TestSplitVerificationGatesSeparatesGitFromDeliverables(t *testing.T) {

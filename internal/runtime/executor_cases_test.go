@@ -175,8 +175,16 @@ func TestCheckpointValidationStatusAndBounds(t *testing.T) {
 		t.Fatal("invalid checkpoint accepted")
 	}
 	root := t.TempDir()
-	if response := WorkspaceCheckpointStatus(root); response.Status != 200 {
-		t.Fatalf("status=%+v", response)
+	if response := WorkspaceCheckpointStatus(root); response.Status != 200 || !strings.Contains(string(response.Payload), `"empty":true`) {
+		t.Fatalf("empty status=%+v payload=%s", response, response.Payload)
+	}
+	_ = os.MkdirAll(filepath.Join(root, ".agentflow", "hooks"), 0o700)
+	if response := WorkspaceCheckpointStatus(root); response.Status != 200 || !strings.Contains(string(response.Payload), `"empty":true`) {
+		t.Fatalf("runtime-only status=%+v payload=%s", response, response.Payload)
+	}
+	_ = os.WriteFile(filepath.Join(root, "real.txt"), []byte("x"), 0o600)
+	if response := WorkspaceCheckpointStatus(root); response.Status != 200 || !strings.Contains(string(response.Payload), `"empty":false`) {
+		t.Fatalf("populated status=%+v payload=%s", response, response.Payload)
 	}
 	missing := filepath.Join(root, "missing")
 	if response := WorkspaceCheckpointStatus(missing); response.Status != 404 {

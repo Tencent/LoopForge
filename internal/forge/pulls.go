@@ -55,7 +55,7 @@ func (p Pull) state() string {
 
 func (p Pull) Delivery(r domain.ForgeRepository) domain.DeliveryMR {
 	state := p.state()
-	return domain.DeliveryMR{Project: r.Project(), IID: p.Number, URL: r.PullURL(p.Number), State: state, GongfengState: state, TargetBranch: p.Base.name()}
+	return domain.DeliveryMR{Project: r.Project(), IID: p.Number, URL: r.PullURL(p.Number), State: state, GongfengState: state, TargetBranch: p.Base.name(), HeadSHA: p.Head.Commit}
 }
 
 func (c *RepositoryClient) sameRepository(p Pull) bool {
@@ -91,7 +91,6 @@ func (c *RepositoryClient) FindPull(ctx context.Context, source, target string, 
 	if openOnly {
 		state = "open"
 	}
-	const limit = 30
 	var best Pull
 	rank := func(p Pull) int {
 		switch p.state() {
@@ -105,6 +104,31 @@ func (c *RepositoryClient) FindPull(ctx context.Context, source, target string, 
 			return 0
 		}
 	}
+	err := c.visitBranchPulls(ctx, source, target, state, func(p Pull) bool {
+		if rank(p) > rank(best) || (rank(p) == rank(best) && p.Number > best.Number) {
+			best = p
+		}
+		return best.state() != "opened"
+	})
+	if err != nil {
+		return Pull{}, false, err
+	}
+	return best, best.Number > 0, nil
+}
+
+// BranchPulls lists matching PRs for verification, including previous merges
+// of a reused work branch. The verifier compares their heads to the push.
+func (c *RepositoryClient) BranchPulls(ctx context.Context, source, target string) ([]Pull, error) {
+	var out []Pull
+	err := c.visitBranchPulls(ctx, source, target, "all", func(p Pull) bool {
+		out = append(out, p)
+		return true
+	})
+	return out, err
+}
+
+func (c *RepositoryClient) visitBranchPulls(ctx context.Context, source, target, state string, visit func(Pull) bool) error {
+	const limit = 30
 	seen := 0
 	for page := 1; page <= 50; page++ {
 		q := url.Values{"state": {state}, "head": {source}, "limit": {strconv.Itoa(limit)}, "page": {strconv.Itoa(page)}}
@@ -114,29 +138,29 @@ func (c *RepositoryClient) FindPull(ctx context.Context, source, target string, 
 		var pulls []Pull
 		header, err := c.request(ctx, http.MethodGet, "/pulls?"+q.Encode(), nil, &pulls)
 		if err != nil {
-			return Pull{}, false, err
+			return err
 		}
+		keepGoing := true
 		for _, p := range pulls {
-			if !c.matches(p, source, target) || rank(p) == 0 || (openOnly && p.state() != "opened") {
+			if !c.matches(p, source, target) || p.state() == "unknown" || (state == "open" && p.state() != "opened") {
 				continue
 			}
-			if rank(p) > rank(best) || (rank(p) == rank(best) && p.Number > best.Number) {
-				best = p
+			if !visit(p) {
+				keepGoing = false
 			}
 		}
-		// Forgejo default to descending creation order. Stop after the
-		// first page with a matching open pull; never follow a URL from Link.
-		if best.state() == "opened" {
-			return best, true, nil
+		if !keepGoing {
+			return nil
 		}
+		// Only use Link as a pagination hint; construct the next URL locally.
 		seen += len(pulls)
 		total, _ := strconv.Atoi(header.Get("X-Total-Count"))
 		next := strings.Contains(strings.Join(header.Values("Link"), ","), `rel="next"`)
 		if len(pulls) == 0 || (!next && seen >= total && len(pulls) < limit) {
-			return best, best.Number > 0, nil
+			return nil
 		}
 	}
-	return Pull{}, false, errors.New("Forgejo PR 搜索超过 50 页")
+	return errors.New("Forgejo PR 搜索超过 50 页")
 }
 
 type Submission struct {
@@ -237,6 +261,19 @@ func (c *RepositoryClient) SubmitPull(ctx context.Context, source, target, head,
 		return Submission{}, errors.New("Forgejo 未确认新建 PR 的仓库、分支和提交")
 	}
 	return Submission{Pull: p}, nil
+}
+
+// SubmitPushedPull confirms the remote work branch before creating or updating
+// its PR, including retries where Git has already pushed the requested commit.
+func (c *RepositoryClient) SubmitPushedPull(ctx context.Context, source, target, head, title, body string) (Submission, error) {
+	pushed, err := c.BranchHead(ctx, source)
+	if err != nil {
+		return Submission{}, err
+	}
+	if pushed != head {
+		return Submission{}, errors.New("Forgejo 上的源分支未指向本次提交，请确认推送结果")
+	}
+	return c.SubmitPull(ctx, source, target, head, title, body, true)
 }
 
 // MergePull uses the host's atomic head precondition and respects branch

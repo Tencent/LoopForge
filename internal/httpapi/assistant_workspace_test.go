@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -15,158 +16,6 @@ import (
 	"agentflow/internal/runtime"
 	"agentflow/internal/tracker"
 )
-
-func TestMainBotWorkspaceWritesAndCommandsUseTaskFiles(t *testing.T) {
-	a, owner, _, _, _ := sharedWorkbenchFixture(t)
-	root := t.TempDir()
-	en := engine.New(a.repo, runtime.NewManager(root))
-	waitSaves := func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		if err := inflightTasks.Wait(ctx); err != nil {
-			t.Fatal("background saves did not finish", err)
-		}
-	}
-	t.Cleanup(waitSaves)
-	r, _ := a.repo.RunState("shared-run")
-	r.Status = "running"
-	r.PauseRequested = false
-	r.Kind = domain.RunKindWorkspace
-	r.Nodes = map[string]*domain.NodeRun{}
-	if err := a.repo.PutRun(r); err != nil {
-		t.Fatal(err)
-	}
-	workspace := filepath.Join(root, r.ID)
-	if err := os.MkdirAll(workspace, 0700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(workspace, "note.txt"), []byte("before"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	a.deps.engine = en
-	h := &agentToolGateway{deps: a.deps}
-	h.api = New(a.repo, en, tracker.NewService(), "", "")
-	s := &AgentToolSession{Mode: AgentToolAssistant, RunID: r.ID, ProjectID: r.ExecutionContext.ProjectID, UserID: owner.ID, User: owner}
-	call := func(name string, args map[string]any) (string, error) {
-		return h.callMainBotWorkspace(context.Background(), s, "workbench_workspace_"+name, args)
-	}
-	raw, err := call("read", map[string]any{"path": "note.txt"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	var file struct {
-		Content string `json:"content"`
-		SHA     string `json:"sha256"`
-	}
-	if err = json.Unmarshal([]byte(raw), &file); err != nil || file.Content != "before" {
-		t.Fatal(raw, err)
-	}
-	if _, err = call("write", map[string]any{"path": "note.txt", "content": "after", "expectedSha256": file.SHA}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err = call("write", map[string]any{"path": "note.txt", "content": "stale", "expectedSha256": file.SHA}); err == nil {
-		t.Fatal("overwrote another edit")
-	}
-	if _, err = call("write", map[string]any{"path": "created.txt", "content": "new", "expectedSha256": "missing"}); err != nil {
-		t.Fatal(err)
-	}
-	raw, err = call("command", map[string]any{"command": "test \"$(cat note.txt)\" = after && printf 'verified'"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	var result struct {
-		Output   string `json:"output"`
-		ExitCode int    `json:"exitCode"`
-	}
-	if err = json.Unmarshal([]byte(raw), &result); err != nil || result.ExitCode != 0 || !strings.Contains(result.Output, "verified") {
-		t.Fatal(raw, err)
-	}
-	raw, err = call("command", map[string]any{"command": "exit 7"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if json.Unmarshal([]byte(raw), &result) != nil || result.ExitCode != 7 {
-		t.Fatal(raw)
-	}
-	if _, err = call("write", map[string]any{"path": "../escaped", "content": "bad", "expectedSha256": "missing"}); err == nil {
-		t.Fatal("escaped workspace")
-	}
-	if _, err = call("write", map[string]any{"path": ".env", "content": "bad", "expectedSha256": "missing"}); err == nil {
-		t.Fatal("wrote hidden metadata")
-	}
-	s.ExecMode = assistantExecModeForApproval(AssistantApprovalAssisted)
-	allowReview := false
-	reviews := 0
-	s.approvalReviewer = func(_ context.Context, tool, _ string, args map[string]any) assistantApprovalReview {
-		reviews++
-		if args["runId"] != r.ID || args["arguments"] == nil {
-			t.Fatal("review lost workspace scope", args)
-		}
-		outcome := "deny"
-		if allowReview {
-			outcome = "allow"
-		}
-		return assistantApprovalReview{Outcome: outcome, RiskLevel: "low", UserAuthorization: "high", Rationale: "核对本次具体工作区操作"}
-	}
-	if _, err = call("write", map[string]any{"path": "blocked.txt", "content": "bad", "expectedSha256": "missing"}); err == nil {
-		t.Fatal("unapproved workspace write executed")
-	}
-	if _, err = call("command", map[string]any{"command": "touch blocked.txt"}); err == nil {
-		t.Fatal("unapproved command executed")
-	}
-	if _, err = os.Stat(filepath.Join(workspace, "blocked.txt")); !os.IsNotExist(err) {
-		t.Fatal("review happened after the side effect")
-	}
-	allowReview = true
-	if _, err = call("write", map[string]any{"path": "approved.txt", "content": "approved", "expectedSha256": "missing"}); err != nil {
-		t.Fatal(err)
-	}
-	if reviews != 3 {
-		t.Fatal("not every concrete workspace write was reviewed", reviews)
-	}
-	s.ExecMode = assistantExecMode{}
-	s.ProjectID = "foreign"
-	if _, err = call("read", map[string]any{"path": "note.txt"}); err == nil {
-		t.Fatal("foreign run accepted")
-	}
-	s.ProjectID = r.ExecutionContext.ProjectID
-	r.Kind = ""
-	r.WorkflowSnapshot.CollaborationMode = ""
-	if err = a.repo.PutRun(r); err != nil {
-		t.Fatal(err)
-	}
-	if _, err = call("write", map[string]any{"path": "note.txt", "content": "active SOP", "expectedSha256": runtime.WorkspaceContentSHA("after")}); err == nil {
-		t.Fatal("active SOP was edited")
-	}
-	r.Status = "succeeded"
-	if err = a.repo.PutRun(r); err != nil {
-		t.Fatal(err)
-	}
-	if _, err = call("write", map[string]any{"path": "note.txt", "content": "finished SOP edit", "expectedSha256": runtime.WorkspaceContentSHA("after")}); err != nil {
-		t.Fatal(err)
-	}
-	waitSaves()
-	if _, err = a.repo.WorkspaceCheckpointArchive(r.ID); err != nil {
-		t.Fatal("Main Bot did not persist edits", err)
-	}
-	r, _ = a.repo.RunState(r.ID)
-	r.WorkspaceCleanedAt = time.Now().UTC()
-	if err = a.repo.PutRun(r); err != nil {
-		t.Fatal(err)
-	}
-	if err = os.RemoveAll(workspace); err != nil {
-		t.Fatal(err)
-	}
-	raw, err = call("read", map[string]any{"path": "note.txt"})
-	if err != nil || (!strings.Contains(raw, "finished SOP edit") || !strings.Contains(raw, `"workspaceRestored":true`)) {
-		t.Fatal("Main Bot did not restore reclaimed edits", raw, err)
-	}
-	restored, _ := a.repo.RunState(r.ID)
-	if restored.Status != "succeeded" || !restored.WorkspaceCleanedAt.IsZero() {
-		t.Fatal("restore altered completed SOP", restored.Status)
-	}
-
-}
 
 func TestMainBotLegacyArtifactRepairExplainsPartialRebuild(t *testing.T) {
 	a, owner, _, _, _ := sharedWorkbenchFixture(t)
@@ -193,18 +42,22 @@ func TestMainBotLegacyArtifactRepairExplainsPartialRebuild(t *testing.T) {
 	h := &agentToolGateway{deps: a.deps}
 	h.api = New(a.repo, en, tracker.NewService(), "", "")
 	s := &AgentToolSession{Mode: AgentToolAssistant, RunID: r.ID, ProjectID: r.ExecutionContext.ProjectID, UserID: owner.ID, User: owner}
-	raw, err := h.callMainBotWorkspace(context.Background(), s, "workbench_workspace_read", map[string]any{"path": "design.md"})
+	// Preparing the workspace (as workbench_workspace_open does before handing
+	// over to the CLI) rebuilds the missing archived artifacts.
+	raw, err := h.callMainBotWorkspace(context.Background(), s, "workbench_workspace_tree", map[string]any{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	var payload struct {
-		Content  string   `json:"content"`
 		Notice   string   `json:"workspaceNotice"`
 		Restored []string `json:"restoredArtifacts"`
 		Snapshot bool     `json:"workspaceRestored"`
 	}
-	if json.Unmarshal([]byte(raw), &payload) != nil || payload.Content != "historical design" || payload.Snapshot || len(payload.Restored) != 1 || !strings.Contains(payload.Notice, "不是完整历史工作区快照恢复") {
+	if json.Unmarshal([]byte(raw), &payload) != nil || payload.Snapshot || len(payload.Restored) != 1 || !strings.Contains(payload.Notice, "不是完整历史工作区快照恢复") {
 		t.Fatal(raw)
+	}
+	if design, _ := os.ReadFile(filepath.Join(workspace, "design.md")); string(design) != "historical design" {
+		t.Fatalf("design.md = %q", design)
 	}
 	got, _ := os.ReadFile(filepath.Join(workspace, "change-report.md"))
 	if string(got) != "new group edits" {
@@ -245,9 +98,19 @@ func TestMainBotAttachesWorkspaceFilesToReply(t *testing.T) {
 	h.api = New(a.repo, en, tracker.NewService(), "", "")
 	user := owner
 	user.GitToken = "gt-secret-attach-value"
-	s := &AgentToolSession{Mode: AgentToolAssistant, RunID: r.ID, ProjectID: r.ExecutionContext.ProjectID, UserID: owner.ID, User: user}
+	s := &AgentToolSession{Mode: AgentToolAssistant, RuntimeMode: domain.AssistantModeWorkspace, RunID: r.ID, ProjectID: r.ExecutionContext.ProjectID, UserID: owner.ID, User: user}
+	// Files reach the user through workbench_publish_artifact's path.
 	attach := func(s *AgentToolSession, path string) (string, error) {
-		return h.callMainBotWorkspace(context.Background(), s, "workbench_workspace_attach", map[string]any{"path": path})
+		raw, _ := json.Marshal(map[string]any{"path": path})
+		result, err := h.publishArtifact(context.Background(), s, raw)
+		if err != nil {
+			return "", err
+		}
+		text := result["content"].([]map[string]any)[0]["text"].(string)
+		if result["isError"] == true {
+			return "", errors.New(text)
+		}
+		return text, nil
 	}
 	if raw, err := attach(s, "/workspace/demo.html"); err != nil || !strings.Contains(raw, `"attached":"demo.html"`) {
 		t.Fatalf("attach demo raw=%s err=%v", raw, err)
@@ -264,9 +127,12 @@ func TestMainBotAttachesWorkspaceFilesToReply(t *testing.T) {
 	if _, err := attach(s, "docs/notes.md"); err != nil {
 		t.Fatal(err)
 	}
-	participant := &AgentToolSession{Mode: AgentToolAssistant, RunID: r.ID, ProjectID: r.ExecutionContext.ProjectID, UserID: peer.ID, User: peer}
+	participant := &AgentToolSession{Mode: AgentToolAssistant, RuntimeMode: domain.AssistantModeWorkspace, RunID: r.ID, ProjectID: r.ExecutionContext.ProjectID, UserID: peer.ID, User: peer}
 	if _, err := attach(participant, "docs/notes.md"); err != nil || len(participant.takeReplyFiles()) != 1 {
 		t.Fatalf("project participant could not attach a shared workspace file: %v", err)
+	}
+	if raw, err := attach(participant, filepath.Join(workspace, "docs", "notes.md")); err != nil || !strings.Contains(raw, `"attached":"notes.md"`) || len(participant.takeReplyFiles()) != 1 {
+		t.Fatalf("attach host workspace path raw=%s err=%v", raw, err)
 	}
 	files := s.takeReplyFiles()
 	if len(files) != 2 || files[0].Name != "demo.html" || files[0].MimeType != "text/html" || files[1].Name != "notes.md" || files[1].MimeType != "text/markdown" {

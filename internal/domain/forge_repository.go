@@ -11,6 +11,7 @@ import (
 
 const (
 	RepositoryProviderForgejo = "forgejo"
+	ForgeMCPServerID          = "agentflow-forgejo"
 	forgeProjectPrefix        = "forge:"
 )
 

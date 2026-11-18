@@ -105,48 +105,85 @@ func currentRunnerExecutable() (string, error) {
 	return binary, nil
 }
 
-// checkForUpdate only commits while no task is running. The new binary is
-// downloaded and verified before acquiring the claim lock, and a failed
-// download leaves the previous executable untouched.
+var errRunnerUpdateBusy = errors.New("runner is busy")
+
+func (d *Daemon) runnerUpdateEndpoint() string {
+	return fmt.Sprintf("%s/runners/agentflow-runner?os=%s&arch=%s", d.client.base, runtime.GOOS, runtime.GOARCH)
+}
+
+func (d *Daemon) runnerUpdateHashes(ctx context.Context, binary string) (local, expected string, err error) {
+	local, err = hashFile(binary)
+	if err != nil {
+		return "", "", err
+	}
+	remote, err := runnerBinaryMetadata(ctx, d.runnerUpdateEndpoint())
+	return local, remote.SHA256, err
+}
+
 func (d *Daemon) checkForUpdate(ctx context.Context, binary string) error {
-	if atomic.LoadInt32(&d.running) != 0 {
+	_, err := d.installRunnerUpdate(ctx, binary)
+	if errors.Is(err, errRunnerUpdateBusy) {
 		return nil
 	}
-	endpoint := fmt.Sprintf("%s/runners/agentflow-runner?os=%s&arch=%s", d.client.base, runtime.GOOS, runtime.GOARCH)
-	metadata, err := runnerBinaryMetadata(ctx, endpoint)
-	if err != nil {
-		return err
+	return err
+}
+
+func (d *Daemon) runnerWorkActive() bool {
+	d.maintenance.mu.Lock()
+	updatingCLI := d.maintenance.active != "" && d.maintenance.active != runnerMaintenanceKey
+	d.maintenance.mu.Unlock()
+	return updatingCLI || d.runnerExecutionActive()
+}
+
+func (d *Daemon) runnerExecutionActive() bool {
+	return atomic.LoadInt32(&d.running) != 0 || d.conversationProcesses.Active() ||
+		d.workspaceTerminals.Active() || d.checkpointTransfers.Active()
+}
+
+// Download and verify outside the claim fence. Idle activity is checked
+// again before replacing the binary, with new workspace requests excluded.
+func (d *Daemon) installRunnerUpdate(ctx context.Context, binary string) (bool, error) {
+	if d.runnerWorkActive() || !d.updateDownloadMu.TryLock() {
+		return false, errRunnerUpdateBusy
 	}
-	localHash, err := hashFile(binary)
-	if err != nil {
-		return err
+	defer d.updateDownloadMu.Unlock()
+	if d.updateReady.Load() {
+		return true, nil
 	}
-	if localHash == metadata.SHA256 {
-		return nil
-	}
-	tmp, err := downloadRunnerBinary(ctx, endpoint, binary, metadata.SHA256)
+	localHash, expectedHash, err := d.runnerUpdateHashes(ctx, binary)
 	if err != nil {
-		return err
+		return false, err
+	}
+	if strings.EqualFold(localHash, expectedHash) {
+		return false, nil
+	}
+	tmp, err := downloadRunnerBinary(ctx, d.runnerUpdateEndpoint(), binary, expectedHash)
+	if err != nil {
+		return false, err
 	}
 	defer os.Remove(tmp)
-
-	d.updateMu.Lock()
+	if !d.updateMu.TryLock() {
+		return false, errRunnerUpdateBusy
+	}
 	defer d.updateMu.Unlock()
-	if d.updateReady.Load() || atomic.LoadInt32(&d.running) != 0 || ctx.Err() != nil {
-		return nil
+	if d.runnerWorkActive() {
+		return false, errRunnerUpdateBusy
+	}
+	if err := ctx.Err(); err != nil {
+		return false, err
 	}
 	// A manual upgrade may have happened while the download was in progress.
 	if current, err := hashFile(binary); err != nil {
-		return fmt.Errorf("check runner executable before update: %w", err)
+		return false, fmt.Errorf("check runner executable before update: %w", err)
 	} else if current != localHash {
-		return errors.New("runner executable changed during update")
+		return false, errors.New("runner executable changed during update")
 	}
 	if err := os.Rename(tmp, binary); err != nil {
-		return fmt.Errorf("replace runner executable: %w", err)
+		return false, fmt.Errorf("replace runner executable: %w", err)
 	}
 	d.updateReady.Store(true)
-	log.Printf("runner update installed (%s); restarting", metadata.SHA256[:12])
-	return nil
+	log.Printf("runner update installed (%s); restarting", expectedHash[:12])
+	return true, nil
 }
 
 type binaryMetadata struct {

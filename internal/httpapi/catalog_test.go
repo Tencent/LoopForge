@@ -1,6 +1,8 @@
 package httpapi
 
 import (
+	"bytes"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -785,5 +787,50 @@ func TestGlobalRuleWorkflowBinding(t *testing.T) {
 	cleared, _ := s.Rule("alpha-global")
 	if cleared.Global || len(cleared.WorkflowIDs) != 0 {
 		t.Fatalf("turning the switch off must drop SOP bindings: %#v", cleared)
+	}
+}
+
+func TestExecutorModelsCatalogUsesOnlyTheEditorsSavedModels(t *testing.T) {
+	assistant, user := workbenchFixture(t)
+	user = domain.User{
+		LoginName:        "personal-catalog",
+		CodexAPIKey:      "fixture-secret",
+		CodexModels:      []domain.CLIModel{{ID: "gateway/second", Name: "Second"}, {ID: "gateway/first"}},
+		ClaudeCodeModels: []domain.CLIModel{{ID: "custom-sonnet", Name: "Personal Sonnet"}},
+		AgentCLICredentials: map[string]domain.AgentCLICredential{
+			"opencode": {Models: []domain.CLIModel{{ID: "open/model", Name: "Open Model"}}},
+		},
+	}
+	if err := assistant.repo.PutUser(user); err != nil {
+		t.Fatal(err)
+	}
+	user, _ = assistant.repo.UserByLoginName(user.LoginName)
+	handler := &catalogHandlers{deps: assistant.deps}
+	c, rec := workbenchContext(user, "GET", "/api/executor-models", bytes.NewBuffer(nil))
+	handler.executorModels(c)
+	var catalogs map[string]executorModelCatalog
+	if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &catalogs) != nil {
+		t.Fatalf("catalog request: %d %s", rec.Code, rec.Body)
+	}
+	if rec.Header().Get("Cache-Control") != "private, no-store" || strings.Contains(rec.Body.String(), "fixture-secret") {
+		t.Fatal("personal model catalog or credentials were cacheable or leaked")
+	}
+	if models := catalogs["codex"].Models; len(models) != 2 || models[0].Name != "Second" || models[1].ID != "gateway/first" || models[1].Name != "gateway/first" {
+		t.Fatalf("Codex models = %+v", models)
+	}
+	if models := catalogs["claude"].Models; len(models) != 1 || models[0].Name != "Personal Sonnet" {
+		t.Fatalf("Claude models = %+v", models)
+	}
+	if models := catalogs["opencode"].Models; len(models) != 1 || models[0].Name != "Open Model" {
+		t.Fatalf("OpenCode models = %+v", models)
+	}
+	if !catalogs["codex"].CustomModel || len(catalogs["codex"].Efforts) == 0 {
+		t.Fatalf("built-in Codex options disappeared: %+v", catalogs["codex"])
+	}
+	other, _ := assistant.repo.UserByLoginName("workbench-owner")
+	c, rec = workbenchContext(other, "GET", "/api/executor-models", bytes.NewBuffer(nil))
+	handler.executorModels(c)
+	if rec.Code != http.StatusOK || strings.Contains(rec.Body.String(), "gateway/second") || !strings.Contains(rec.Body.String(), "gpt-6.1-sol") {
+		t.Fatalf("other user did not receive built-in models: %d %s", rec.Code, rec.Body)
 	}
 }

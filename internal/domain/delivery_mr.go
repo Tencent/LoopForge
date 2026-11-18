@@ -20,7 +20,25 @@ type DeliveryMR struct {
 	// GongfengState is the raw Gongfeng state from a live lookup; empty when
 	// the MR was only recovered from artifact text.
 	GongfengState string `json:"-"`
-	ForgeUserID   int64  `json:"-"`
+	// HeadSHA is the source commit a live lookup reports; empty when the host
+	// response carries none.
+	HeadSHA string `json:"-"`
+	// ForgeUserID is the actor whose personal credential tracks this delivery.
+	ForgeUserID int64 `json:"-"`
+}
+
+// BranchMRQuery asks the host for the MRs from one work branch into one target
+// branch, in a run's execution context: ProjectID is the run's project and
+// GitToken the credential the run pushed with.
+type BranchMRQuery struct {
+	ProjectID     string
+	RemoteProject string
+	SourceBranch  string
+	TargetBranch  string
+	GitToken      string
+	// ResponsibleUserID is the run's responsible user, the identity GitToken
+	// belongs to.
+	ResponsibleUserID int64
 }
 
 // GongfengMRURL is the canonical web URL of a Gongfeng merge request.
@@ -31,9 +49,6 @@ func GongfengMRURL(project string, iid int) string {
 	}
 	if strings.HasPrefix(project, "github:") {
 		return fmt.Sprintf("https://github.com/%s/pull/%d", strings.TrimPrefix(project, "github:"), iid)
-	}
-	if r, ok := ParseForgeProject(project); ok {
-		return r.PullURL(iid)
 	}
 	return fmt.Sprintf("https://git.example.com/%s/-/merge_requests/%d", project, iid)
 }
@@ -96,7 +111,7 @@ func (i Issue) DeliveryMRList() []DeliveryMR {
 		return nil
 	}
 	mr := DeliveryMR{URL: url, State: strings.TrimSpace(i.DeliveryMRState)}
-	if project, iid, _, ok := ParseDeliveryMRURL(url); ok {
+	if project, iid, _, ok := ParseGongfengMR(url); ok {
 		mr.Project, mr.IID = project, iid
 	}
 	return []DeliveryMR{mr}
@@ -154,7 +169,7 @@ func (i *Issue) SetDeliveryMRState(url, state string) bool {
 	list := i.DeliveryMRList()
 	if len(list) == 0 {
 		mr := DeliveryMR{URL: url, State: state}
-		if project, iid, _, ok := ParseDeliveryMRURL(url); ok {
+		if project, iid, _, ok := ParseGongfengMR(url); ok {
 			mr.Project, mr.IID = project, iid
 		}
 		i.SetDeliveryMRs([]DeliveryMR{mr})

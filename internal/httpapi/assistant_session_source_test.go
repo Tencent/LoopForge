@@ -11,7 +11,8 @@ import (
 	"agentflow/internal/repo"
 )
 
-func TestScheduledJobKeepsOneMarkedConversation(t *testing.T) {
+// Every execution keeps its own conversation, each marked with the task.
+func TestScheduledJobMarksEveryExecutionConversation(t *testing.T) {
 	st, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -36,14 +37,13 @@ func TestScheduledJobKeepsOneMarkedConversation(t *testing.T) {
 			scheduled = append(scheduled, item)
 		}
 	}
-	if len(scheduled) != 1 {
-		t.Fatalf("scheduled conversations = %d, want 1: %+v", len(scheduled), scheduled)
+	if len(scheduled) != 2 || scheduled[0].ID == scheduled[1].ID {
+		t.Fatalf("scheduled conversations = %d, want 2 distinct: %+v", len(scheduled), scheduled)
 	}
-	if scheduled[0].TaskID != job.ID {
-		t.Fatalf("task id = %q, want %q", scheduled[0].TaskID, job.ID)
-	}
-	if scheduled[0].Source != domain.AssistantSourceScheduled {
-		t.Fatalf("source = %q, want %q", scheduled[0].Source, domain.AssistantSourceScheduled)
+	for _, item := range scheduled {
+		if item.TaskID != job.ID {
+			t.Fatalf("task id = %q, want %q", item.TaskID, job.ID)
+		}
 	}
 }
 

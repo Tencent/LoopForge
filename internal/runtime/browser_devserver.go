@@ -61,16 +61,31 @@ var devServerDial = func(ctx context.Context, endpoint browserEndpoint, port int
 var devServerLookup = lookupBrowserEndpoint
 
 func handleDevServerHTTP(ctx context.Context, runID string, req *domain.BrowserHTTPRequest) (domain.BrowserState, error) {
-	if req == nil || req.Port <= 0 || req.Port > 65535 || !strings.HasPrefix(req.Path, "/") {
+	if req == nil || req.Port <= 0 || req.Port > 65535 || !strings.HasPrefix(req.Path, "/") || strings.ContainsAny(req.Path, "\r\n") {
 		return domain.BrowserState{}, errors.New("无效的开发服务器请求")
 	}
 	client, endpoint, ok := devServerClientFor(ctx, runID)
 	if !ok {
 		return domain.BrowserState{Available: false, Reason: "Agent 浏览器尚未启动：开发服务器预览需要它所在的沙箱网络"}, nil
 	}
-	method := strings.ToUpper(strings.TrimSpace(req.Method))
-	if method == "" {
+	var method string
+	switch strings.ToUpper(strings.TrimSpace(req.Method)) {
+	case "", http.MethodGet:
 		method = http.MethodGet
+	case http.MethodHead:
+		method = http.MethodHead
+	case http.MethodPost:
+		method = http.MethodPost
+	case http.MethodPut:
+		method = http.MethodPut
+	case http.MethodPatch:
+		method = http.MethodPatch
+	case http.MethodDelete:
+		method = http.MethodDelete
+	case http.MethodOptions:
+		method = http.MethodOptions
+	default:
+		return domain.BrowserState{}, errors.New("无效或不支持的 HTTP 请求方法")
 	}
 	target := "http://localhost:" + strconv.Itoa(req.Port) + req.Path
 	out, err := http.NewRequestWithContext(ctx, method, target, bytes.NewReader(req.Body))

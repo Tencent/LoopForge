@@ -93,3 +93,39 @@ test('agent catalog search, presets, validation, persistence, clone, and delete 
   await app.evaluate(`deleteAgent('agent-copy')`);
   assert.equal(app.evaluate(`state.data.agents.some(a=>a.id==='agent-copy')`), false);
 });
+
+test('role model picker reloads the editor catalog and preserves a CLI change while loading', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  let complete;
+  const delayed = new Promise(resolve => { complete = resolve; });
+  const catalog = (models) => ({
+    codebuddy: { models: [], efforts: [] },
+    claude: { models: [], efforts: [] },
+    codex: { customModel: true, models, efforts: [] },
+  });
+  app.router.get('/api/executor-models', () => delayed);
+  app.evaluate(`
+    state.data.executors=[
+      {id:'codebuddy',name:'CodeBuddy'},{id:'codex',name:'Codex'},{id:'claude',name:'Claude Code'}
+    ];
+    openAgentWizard();
+  `);
+  const f = app.document.querySelector('#agentForm');
+  f.elements.executorId.value = 'codex';
+  f.elements.executorId.dispatchEvent(new app.window.Event('change', { bubbles: true }));
+  complete(catalog([{ id: 'private/second', name: 'Second' }, { id: 'private/first', name: 'First' }]));
+  await settle();
+  const menu = () => [...app.document.querySelectorAll('#agentModelPicker [role=option]')];
+  assert.deepEqual(menu().map(row => row.dataset.id), ['', 'private/second', 'private/first', '__custom__']);
+  assert.equal(menu()[1].querySelector('.ai-model-name').textContent, 'Second');
+  assert.equal(f.elements.executorId.value, 'codex');
+  menu()[1].click();
+  assert.equal(app.evaluate(`agentEffectiveModel($('#agentForm'))`), 'private/second');
+
+  app.router.get('/api/executor-models', () => catalog([{ id: 'private/second', name: 'Renamed model' }]));
+  app.evaluate(`openAgentWizard({id:'role-review',name:'Review',prompt:'Review changes',executorId:'codex',model:'private/second'})`);
+  await settle();
+  assert.deepEqual(menu().map(row => row.dataset.id), ['', 'private/second', '__custom__']);
+  assert.equal(app.document.querySelector('#agentModelPicker [data-model-label]').textContent, 'Renamed model');
+});

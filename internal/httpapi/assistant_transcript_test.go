@@ -260,3 +260,49 @@ func TestSteerContinuesFromPartialTranscript(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 }
+
+// A steer on a remembered CodeBuddy model this instance has not listed yet
+// (another instance served the picker) refreshes the list instead of
+// switching the rest of the turn to the default model.
+func TestSteerRefreshesTheModelListBeforeFallingBack(t *testing.T) {
+	h, user := workbenchFixture(t)
+	stubCLIModelDiscovery(t)
+	discoverCLIModels = func(context.Context, string, string) []string { return []string{"claude-opus-5.5"} }
+	release := make(chan struct{})
+	t.Cleanup(func() { close(release) })
+	started := make(chan struct{})
+	h.generate = func(ctx context.Context, _ string, _ domain.User) (string, error) {
+		select {
+		case <-started:
+		default:
+			close(started)
+		}
+		<-release
+		return "", ctx.Err()
+	}
+	c, rec := workbenchContext(user, "POST", "/api/assistant/generations", bytes.NewBufferString(`{"projectId":"workbench","sessionId":"steer-model","messages":[{"role":"user","content":"先查项目"}]}`))
+	h.startGeneration(c)
+	if rec.Code != 202 {
+		t.Fatalf("start: %d %s", rec.Code, rec.Body.String())
+	}
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("generation never started")
+	}
+	// This instance has not seen the model list yet.
+	cliModelMu.Lock()
+	cliModelCache = map[string]cliModelEntry{}
+	cliModelMu.Unlock()
+	g, _ := h.repo.AssistantGeneration(user.ID, "steer-model")
+	c, rec = workbenchContext(user, "POST", "/api/assistant/sessions/steer-model/generation/steer?generationId="+g.ID, bytes.NewBufferString(`{"content":"改查仓库","model":"claude-opus-5.5","approvalMode":"confirm"}`))
+	c.Params = gin.Params{{Key: "id", Value: "steer-model"}}
+	h.steerGeneration(c)
+	if rec.Code != 200 {
+		t.Fatalf("steer: %d %s", rec.Code, rec.Body.String())
+	}
+	current, _ := h.repo.AssistantGeneration(user.ID, "steer-model")
+	if current.Steer == nil || current.Steer.Model != "claude-opus-5.5" {
+		t.Fatalf("steer model = %+v, want claude-opus-5.5", current.Steer)
+	}
+}

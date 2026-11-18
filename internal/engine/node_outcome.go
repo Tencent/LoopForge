@@ -87,7 +87,8 @@ func (e *Engine) nodeFailedAt(runID string, node domain.WorkflowNode, attempt, g
 }
 
 func shouldRetryFailedAttempt(node domain.WorkflowNode, attempt int, err error) bool {
-	if errors.Is(err, ErrWorkspaceControlConfiguration) {
+	// A failed artifact write must not repeat a child that already succeeded.
+	if errors.Is(err, ErrWorkspaceControlConfiguration) || errors.Is(err, errSOPArtifactWrite) {
 		return false
 	}
 	if err != nil && (isMaxTurnsErr(err) || strings.Contains(err.Error(), "verification ") || runtime.IsCwdMountFailure(err)) {

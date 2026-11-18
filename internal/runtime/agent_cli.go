@@ -175,6 +175,14 @@ func WriteAgentCLIMCPConfig(kind string, home AgentCLIHome, entries map[string]a
 			}
 			servers[id] = server
 		}
+		if kind == AgentCLIKimi {
+			// Kimi gives up on an MCP call after 60s by default; the gateway
+			// may wait up to 9 minutes for a write approval. A per-server
+			// toolTimeoutMs wins over KIMI_MCP_TOOL_TIMEOUT_MS and config.toml.
+			if server, ok := servers[id].(map[string]any); ok {
+				server["toolTimeoutMs"] = 600000
+			}
+		}
 	}
 	var document any
 	switch kind {

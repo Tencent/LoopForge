@@ -103,7 +103,7 @@ func (e *Engine) findForgeDelivery(run domain.Run, rc domain.RepositoryContext) 
 		log.Printf("resolve Forgejo delivery run=%s: %v", run.ID, err)
 		return domain.DeliveryMR{}, false
 	}
-	target := ""
+	target := repositoryBaseBranch(rc)
 	if run.ExecutionContext.ScheduleJobID != "" {
 		target = rc.IntegrateBranch
 	}
@@ -117,4 +117,53 @@ func (e *Engine) findForgeDelivery(run domain.Run, rc domain.RepositoryContext) 
 	mr := pull.Delivery(ref)
 	mr.ForgeUserID = userID
 	return mr, true
+}
+
+// forgeBranchDelivery verifies MR gates with the run's frozen binding and the
+// same personal credential as its delivery. A generic SSH binding has no API.
+func (e *Engine) forgeBranchDelivery(run domain.Run, rc domain.RepositoryContext, source, target string) ([]domain.DeliveryMR, error) {
+	ref, err := forge.RunRepository(rc)
+	if err != nil {
+		return nil, err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	userID := run.ExecutionContext.ResponsibleUserID
+	client, err := forge.OpenRepository(ctx, ref, e.repo.ForgeToken(userID, ref.Instance))
+	if err != nil {
+		return nil, err
+	}
+	pulls, err := client.BranchPulls(ctx, source, target)
+	if err != nil {
+		return nil, err
+	}
+	mrs := make([]domain.DeliveryMR, 0, len(pulls))
+	for _, pull := range pulls {
+		mr := pull.Delivery(ref)
+		if mr.HeadSHA != "" {
+			mrs = append(mrs, mr)
+		}
+	}
+	return mrs, nil
+}
+
+// forgeNodeMCP gives an MR node a capability for its own frozen work branches.
+// Forgejo personal tokens stay on the platform. Existing runner MCP transport
+// carries the node capability, as it does the scoped knowledge proxy token.
+func (e *Engine) forgeNodeMCP(run domain.Run, nodeID string) (domain.MCPServerDefinition, error) {
+	node := run.Nodes[nodeID]
+	if node == nil || node.Status != "running" {
+		return domain.MCPServerDefinition{}, errors.New("Forgejo PR 需要正在执行的节点")
+	}
+	token, err := forge.SignRunGrant(forge.RunGrant{RunID: run.ID, NodeID: nodeID, Generation: run.Generation, Attempt: node.Attempt}, time.Now())
+	if err != nil {
+		return domain.MCPServerDefinition{}, err
+	}
+	e.mu.Lock()
+	base := e.platformMCPBase
+	e.mu.Unlock()
+	return domain.MCPServerDefinition{
+		ID: domain.ForgeMCPServerID, Name: "Forgejo PR", Transport: "http",
+		URL: base + forge.RunMCPPath, Headers: map[string]string{"Authorization": "Bearer " + token}, TimeoutSec: 45,
+	}, nil
 }

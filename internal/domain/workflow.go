@@ -10,7 +10,7 @@ import (
 type VerificationGate struct {
 	ID        string   `json:"id"`
 	Name      string   `json:"name"`
-	Mode      string   `json:"mode"`            // command, manual
+	Mode      string   `json:"mode"`            // command, manual, mr
 	Stage     string   `json:"stage,omitempty"` // after_execution, before_publish
 	Commands  []string `json:"commands,omitempty"`
 	Required  bool     `json:"required"`
