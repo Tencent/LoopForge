@@ -27,9 +27,13 @@ func TestGitPreparationFallbackVerifiesTheFrozenCheckout(t *testing.T) {
 	git("init", "-b", "main")
 	git("config", "user.name", "Test")
 	git("config", "user.email", "test@example.invalid")
-	git("commit", "--allow-empty", "-m", "baseline")
+	git("commit", "--allow-empty", "-m", "shared history")
+	git("branch", "release")
+	git("commit", "--allow-empty", "-m", "frozen baseline")
 	git("remote", "add", "origin", "https://unfamiliar.example.org/team/code")
 	git("update-ref", "refs/remotes/origin/main", "HEAD")
+	git("checkout", "release")
+	git("commit", "--allow-empty", "-m", "release work")
 	git("checkout", "-b", "feature/frozen")
 	repositories := []domain.RepositoryContext{{RepositoryID: "r", Name: "code", WorkspaceDir: "code", CloneURL: "https://unfamiliar.example.org/team/code.git", BaseBranch: "main", WorkBranch: "feature/frozen"}}
 	verify := func(wantError bool) {
@@ -39,23 +43,26 @@ func TestGitPreparationFallbackVerifiesTheFrozenCheckout(t *testing.T) {
 			t.Fatalf("verification error = %v, want error %v", err, wantError)
 		}
 	}
-	verify(false)
+	verify(true) // The new branch started from release and lacks the frozen base.
 	git("checkout", "main")
 	verify(true)
-	git("checkout", "feature/frozen")
+	git("checkout", "-B", "feature/frozen", "main")
+	verify(false)
+	git("commit", "--allow-empty", "-m", "new branch work")
+	verify(false)
 	git("remote", "set-url", "origin", "https://unfamiliar.example.org/team/other")
 	verify(true)
 	git("remote", "set-url", "origin", repositories[0].CloneURL)
 	repositories[0].RequireExistingWorkBranch = true
 	verify(true)
 	remoteWorkRef := "refs/remotes/origin/feature/frozen"
-	git("checkout", "-b", "remote-work", "main")
+	git("checkout", "-b", "remote-work", "release")
 	git("commit", "--allow-empty", "-m", "existing remote work")
 	git("update-ref", remoteWorkRef, "HEAD")
-	git("checkout", "feature/frozen")
+	git("checkout", "-B", "feature/frozen", "release")
 	verify(true)
 	git("merge", "--ff-only", remoteWorkRef)
-	verify(false)
+	verify(false) // The continued branch follows its own remote history.
 	git("commit", "--allow-empty", "-m", "agent work")
 	verify(false)
 	repositories[0].WorkspaceDir = "code/missing"
