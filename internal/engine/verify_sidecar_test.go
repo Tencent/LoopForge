@@ -41,7 +41,7 @@ func sidecarRepo(t *testing.T) string {
 // the human gate approval binds to that artifact (P2).
 func TestVerifySidecarArtifactBindsApproval(t *testing.T) {
 	sidecarRepoDir := sidecarRepo(t)
-	sidecar := httptest.NewServer(verifysidecar.New(sidecarRepoDir, "").Handler())
+	sidecar := httptest.NewServer(verifysidecar.New(sidecarRepoDir).Handler())
 	defer sidecar.Close()
 
 	remote := sidecarRepoDir
