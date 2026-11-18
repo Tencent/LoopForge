@@ -72,6 +72,7 @@ func (h *runsHandlers) forgejoRunMCP(c *gin.Context) {
 func activeForgejoNode(run domain.Run, grant forge.RunGrant) bool {
 	node := run.Nodes[grant.NodeID]
 	return run.Status == "running" && !run.CancelRequested && !run.PauseRequested && run.Generation == grant.Generation &&
+		run.ExecutionContext.ResponsibleUserID == grant.UserID &&
 		node != nil && node.Status == "running" && node.Attempt == grant.Attempt
 }
 

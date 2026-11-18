@@ -9,13 +9,13 @@ import (
 func TestForgeRunGrantSignatureAndExpiry(t *testing.T) {
 	t.Setenv("AGENTFLOW_SESSION_SECRET", "forgejo-node-signing-test")
 	now := time.Now()
-	grant := RunGrant{RunID: "run-a", NodeID: "mr", Generation: 3, Attempt: 2}
+	grant := RunGrant{RunID: "run-a", NodeID: "mr", UserID: 7, Generation: 3, Attempt: 2}
 	token, err := SignRunGrant(grant, now)
 	if err != nil {
 		t.Fatal(err)
 	}
 	verified, err := VerifyRunGrant(token, now)
-	if err != nil || verified.RunID != grant.RunID || verified.NodeID != grant.NodeID || verified.Generation != 3 || verified.Attempt != 2 {
+	if err != nil || verified.RunID != grant.RunID || verified.NodeID != grant.NodeID || verified.UserID != 7 || verified.Generation != 3 || verified.Attempt != 2 {
 		t.Fatalf("verified grant = %+v, %v", verified, err)
 	}
 	for _, candidate := range []string{"", strings.Repeat("x", 4097), token + "x", "lfforge1.invalid.signature"} {

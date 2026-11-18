@@ -18,6 +18,7 @@ const RunMCPPath = "/internal/forgejo/run/mcp"
 type RunGrant struct {
 	RunID      string `json:"r"`
 	NodeID     string `json:"n"`
+	UserID     int64  `json:"u"`
 	Generation int    `json:"g"`
 	Attempt    int    `json:"a"`
 	ExpiresAt  int64  `json:"e"`
@@ -26,7 +27,7 @@ type RunGrant struct {
 var errRunGrant = errors.New("无效或已过期的 Forgejo 节点凭据")
 
 func SignRunGrant(grant RunGrant, now time.Time) (string, error) {
-	if runGrantSecret() == "" || grant.RunID == "" || grant.NodeID == "" || grant.Attempt <= 0 || grant.Generation <= 0 {
+	if runGrantSecret() == "" || grant.RunID == "" || grant.NodeID == "" || grant.UserID <= 0 || grant.Attempt <= 0 || grant.Generation <= 0 {
 		return "", errRunGrant
 	}
 	grant.ExpiresAt = now.Add(48 * time.Hour).Unix()
@@ -49,7 +50,7 @@ func VerifyRunGrant(token string, now time.Time) (RunGrant, error) {
 	}
 	raw, err := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(token[:index], "lfforge1."))
 	if err != nil || json.Unmarshal(raw, &grant) != nil || grant.ExpiresAt <= now.Unix() ||
-		grant.RunID == "" || grant.NodeID == "" || grant.Attempt <= 0 || grant.Generation <= 0 {
+		grant.RunID == "" || grant.NodeID == "" || grant.UserID <= 0 || grant.Attempt <= 0 || grant.Generation <= 0 {
 		return RunGrant{}, errRunGrant
 	}
 	return grant, nil

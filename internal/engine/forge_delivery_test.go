@@ -13,7 +13,7 @@ func TestForgejoNodeMCPScopesTheNodeAttempt(t *testing.T) {
 	t.Setenv("AGENTFLOW_SESSION_SECRET", "forgejo-node-capability-test")
 	e, _ := cvEEngine(t)
 	e.ConfigurePlatformMCP("https://platform.example.org", "")
-	run := domain.Run{ID: "r", Generation: 2, Nodes: map[string]*domain.NodeRun{
+	run := domain.Run{ID: "r", Generation: 2, ExecutionContext: domain.TelemetryContext{ResponsibleUserID: 7}, Nodes: map[string]*domain.NodeRun{
 		"mr": {Status: "running", Attempt: 3},
 	}}
 	server, err := e.forgeNodeMCP(run, "mr")
@@ -21,7 +21,7 @@ func TestForgejoNodeMCPScopesTheNodeAttempt(t *testing.T) {
 		t.Fatalf("Forgejo node MCP = %+v, %v", server, err)
 	}
 	grant, err := forge.VerifyRunGrant(strings.TrimPrefix(server.Headers["Authorization"], "Bearer "), time.Now())
-	if err != nil || grant.RunID != run.ID || grant.NodeID != "mr" || grant.Generation != 2 || grant.Attempt != 3 {
+	if err != nil || grant.RunID != run.ID || grant.NodeID != "mr" || grant.UserID != 7 || grant.Generation != 2 || grant.Attempt != 3 {
 		t.Fatalf("node capability = %+v, %v", grant, err)
 	}
 	run.Nodes["mr"].Status = "succeeded"

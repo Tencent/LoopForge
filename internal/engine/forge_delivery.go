@@ -155,7 +155,7 @@ func (e *Engine) forgeNodeMCP(run domain.Run, nodeID string) (domain.MCPServerDe
 	if node == nil || node.Status != "running" {
 		return domain.MCPServerDefinition{}, errors.New("Forgejo PR 需要正在执行的节点")
 	}
-	token, err := forge.SignRunGrant(forge.RunGrant{RunID: run.ID, NodeID: nodeID, Generation: run.Generation, Attempt: node.Attempt}, time.Now())
+	token, err := forge.SignRunGrant(forge.RunGrant{RunID: run.ID, NodeID: nodeID, UserID: run.ExecutionContext.ResponsibleUserID, Generation: run.Generation, Attempt: node.Attempt}, time.Now())
 	if err != nil {
 		return domain.MCPServerDefinition{}, err
 	}

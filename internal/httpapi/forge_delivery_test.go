@@ -230,6 +230,10 @@ func testForgejoConversationPush(t *testing.T, borrowSOP bool) {
 	if !created.Load() || got.MRURL != webURL+"/pulls/4" || got.Commit != pushed || got.TargetBranch != "main" || got.IssueID == "" {
 		t.Fatalf("Forgejo PR did not use the already-pushed commit against the original base: %+v", got)
 	}
+	ref, _ := domain.ParseForgeRepositoryURL(webURL)
+	if err := f.s.EnsureForgeDeliveryState(ref, 4, got.IssueID, f.user.ID+1); err != nil {
+		t.Fatal(err)
+	}
 	if retried := submit(false); !retried.Existing || !retried.Updated || retried.MRURL != got.MRURL || retried.IssueID != got.IssueID {
 		t.Fatalf("retry did not reuse the Forgejo PR and requirement: %+v", retried)
 	}
@@ -245,7 +249,7 @@ func testForgejoConversationPush(t *testing.T, borrowSOP bool) {
 		if err := f.s.PutRun(run); err != nil {
 			t.Fatal(err)
 		}
-		token, err := forge.SignRunGrant(forge.RunGrant{RunID: run.ID, NodeID: "mr", Generation: run.Generation, Attempt: 1}, time.Now())
+		token, err := forge.SignRunGrant(forge.RunGrant{RunID: run.ID, NodeID: "mr", UserID: f.user.ID, Generation: run.Generation, Attempt: 1}, time.Now())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -268,6 +272,12 @@ func testForgejoConversationPush(t *testing.T, borrowSOP bool) {
 			t.Fatal("invalid node capability reached Forgejo")
 		}
 		callNode(token, http.StatusOK)
+		run.ExecutionContext.ResponsibleUserID++
+		if err := f.s.PutRun(run); err != nil {
+			t.Fatal(err)
+		}
+		callNode(token, http.StatusUnauthorized)
+		run.ExecutionContext.ResponsibleUserID--
 		run.Nodes["mr"].Status = "succeeded"
 		if err := f.s.PutRun(run); err != nil {
 			t.Fatal(err)

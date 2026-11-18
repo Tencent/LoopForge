@@ -146,9 +146,10 @@ func (h *agentToolGateway) writeWorkspaceForgejoPR(ctx context.Context, userID i
 
 func (h *agentToolGateway) recordWorkspaceForgejoPR(s *AgentToolSession, run domain.Run, repository domain.Repository, ref domain.ForgeRepository, number int, target, title, body string) (string, error) {
 	key := domain.MRDeliveryKey{Project: ref.Project(), IID: number}
+	delivered := deliveredMR{URL: ref.PullURL(number), TargetBranch: target, ForgeUserID: s.UserID}
 	if existing := h.repo.MRDeliveryStatesMap([]domain.MRDeliveryKey{key})[key]; existing.IssueID != "" {
 		if issue, ok := h.repo.Issue(existing.IssueID); ok && issue.ProjectID == s.ProjectID {
-			return issue.ID, nil
+			return issue.ID, h.recordConversationMRs(issue.ID, []deliveredMR{delivered}, []domain.Repository{repository})
 		}
 		return "", nil
 	}
@@ -156,7 +157,6 @@ func (h *agentToolGateway) recordWorkspaceForgejoPR(s *AgentToolSession, run dom
 	if err != nil || issue.ID == "" || issue.ProjectID != repository.ProjectID {
 		return "", err
 	}
-	delivered := deliveredMR{URL: ref.PullURL(number), TargetBranch: target, ForgeUserID: s.UserID}
 	return issue.ID, h.recordConversationMRs(issue.ID, []deliveredMR{delivered}, []domain.Repository{repository})
 }
 
