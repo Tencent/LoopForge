@@ -11,7 +11,10 @@ function aiOrchestratorEngine(model) {
 }
 
 function selectedAIOrchestratorModel() {
-  return localStorage.getItem('agentflow.orchestratorModel') || localStorage.getItem('agentflow.assistantModel') || window.AgentFlowAssistantModels?.catalog().default || '';
+  const api = window.AgentFlowAssistantModels;
+  const remembered = localStorage.getItem('agentflow.orchestratorModel') || localStorage.getItem('agentflow.assistantModel');
+  if (remembered && remembered !== api?.DEFAULT) return remembered;
+  return api?.codeBuddyModels()[0]?.id || api?.catalog().default || remembered || '';
 }
 
 function aiOrchestratorModels(engine = aiOrchestratorEngine(selectedAIOrchestratorModel())) {
@@ -84,7 +87,7 @@ function bindAIOrchestratorModelPicker() {
           const models = aiOrchestratorModels(id);
           const remembered = localStorage.getItem('agentflow.orchestratorModel.' + id);
           const preference = id === selected() ? selectedAIOrchestratorModel() : remembered;
-          const fallback = id === 'codebuddy' ? api.catalog().default || api.DEFAULT : models[0]?.id;
+          const fallback = models[0]?.id || (id === 'codebuddy' ? api.catalog().default || api.DEFAULT : '');
           model = models.find(item => item.id === preference)?.id || fallback;
         }
         if (!model) return;

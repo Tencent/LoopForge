@@ -98,6 +98,15 @@ describe("conversation hooks", () => {
     localStorage.removeItem("loopforge.assistant.executor");
   });
 
+  test("restores the CLI and model saved by an earlier version", async () => {
+    localStorage.setItem("loopforge.assistant.executor", "codex");
+    localStorage.setItem("loopforge.assistant.model.codex", "gpt-5");
+    const { result } = renderHook(() => useChat());
+    await waitFor(() => expect(result.current.ready).toBe(true));
+    expect(result.current.executor).toBe("codex");
+    await waitFor(() => expect(result.current.model).toBe("gpt-5"));
+  });
+
   test.each(["after saving a key", "during the first open"])("refreshes a pending Cursor catalog %s", async (scenario) => {
     const original = apiMock.getMockImplementation();
     let configured = scenario === "during the first open";
@@ -195,12 +204,12 @@ describe("conversation hooks", () => {
       const first = renderHook(() => useChat());
       await waitFor(() => expect(first.result.current.ready).toBe(true));
       expect(first.result.current.models.map((m) => m.id)).toEqual(["m1", "claude-opus-5.5"]);
-      expect(first.result.current.model).toBe("default");
+      expect(first.result.current.model).toBe("m1");
       act(() => first.result.current.setEffort("low"));
-      await act(() => first.result.current.send({ text: "沿用默认模型" }));
+      await act(() => first.result.current.send({ text: "运行第一个可用模型" }));
       expect(writeMock).toHaveBeenCalledWith(
         "/api/assistant/generations",
-        expect.objectContaining({ model: "default", effort: "low" }),
+        expect.objectContaining({ model: "m1", effort: "low" }),
       );
       act(() => first.result.current.newChat());
       act(() => { first.result.current.setModel("claude-opus-5.5"); });
@@ -241,14 +250,15 @@ describe("conversation hooks", () => {
       expect(reloaded.result.current.model).toBe("claude-opus-5.5");
       expect(reloaded.result.current.effort).toBe("max");
       act(() => reloaded.result.current.setModel("m1"));
-      expect(reloaded.result.current.effort).toBe("");
+      expect(reloaded.result.current.effort).toBe("low");
       act(() => reloaded.result.current.setModel("claude-opus-5.5"));
       expect(reloaded.result.current.effort).toBe("max");
       act(() => reloaded.result.current.setEffort(""));
       // A remembered model that is no longer offered falls back to the list.
       writeComposerPreference("model.codebuddy", "retired-model");
       act(() => reloaded.result.current.newChat());
-      expect(reloaded.result.current.model).toBe("default");
+      expect(reloaded.result.current.model).toBe("m1");
+      expect(reloaded.result.current.effort).toBe("low");
       act(() => reloaded.result.current.setModel("claude-opus-5.5"));
       expect(reloaded.result.current.effort).toBe("");
     } finally {

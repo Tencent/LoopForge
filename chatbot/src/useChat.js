@@ -72,13 +72,12 @@ function effortPreference(executor, model) {
   return `effort.${executor}.${unprefixedModel(executor, model)}`;
 }
 
-// A new conversation restores a listed preference. CodeBuddy's execution
-// default is separate from the models offered in its picker.
+// A new conversation restores a listed preference or picks the first model.
+// When the list is empty, keep the CLI's fallback.
 function preferredModel(list, executor, codeBuddyDefault) {
   const remembered = readComposerPreference(`model.${executor}`);
   const listed = findExecutorModel(list, executor, remembered);
-  if (executor === "codebuddy") return listed?.id ?? codeBuddyDefault;
-  return listed?.id || list[0]?.id || remembered || "default";
+  return listed?.id || list[0]?.id || (executor === "codebuddy" ? codeBuddyDefault : remembered || "default");
 }
 
 // Mirrors errAssistantSponsoredModel in internal/httpapi/assistant_sponsor.go;
@@ -576,7 +575,8 @@ export function useChat() {
     return findExecutorModel(executorModels, executor, id) ??
       (codeBuddy && id === codeBuddyDefault.id ? codeBuddyDefault : undefined);
   }
-  const hasSelectedModel = model !== null && (session || !executorModels.length || modelEntry(model));
+  const hasSelectedModel = model !== null &&
+    (session || !executorModels.length || findExecutorModel(executorModels, executor, model));
   const selectedModel = hasSelectedModel ? model : preferredModel(executorModels, executor, codeBuddyDefault.id);
   const availableModel = sponsored ? sharedModelFor(selectedModel) : selectedModel;
   const activeModelEntry = modelEntry(availableModel);

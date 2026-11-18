@@ -228,7 +228,7 @@ function bindScheduleModelPicker(){
   if(engine)engine.onchange=()=>{
     const api=scheduleModelAPI();
     const models=scheduleEngineModels(engine.value);
-    const next=engine.value==='codebuddy'?(scheduleModelCatalog().default||api?.DEFAULT):models[0]?.id;
+    const next=models[0]?.id||(engine.value==='codebuddy'?(scheduleModelCatalog().default||api?.DEFAULT):'');
     if(next)paintScheduleModel(next);
   };
   document.addEventListener('click',e=>{if(!host.contains(e.target))closeScheduleModelMenu()});

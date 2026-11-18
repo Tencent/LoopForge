@@ -586,7 +586,7 @@ test('AI schedule model picker includes account login CLI models and keeps a sav
 
   engine.value = 'codebuddy';
   engine.dispatchEvent(new app.window.Event('change'));
-  assert.equal(form.elements.assistantModel.value, 'default');
+  assert.equal(form.elements.assistantModel.value, 'glm-test');
 
   // A job saved on a CLI this editor has no key for stays on that CLI.
   app.evaluate(`paintScheduleModel('claude-code:opus')`);
