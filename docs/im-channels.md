@@ -10,6 +10,8 @@
 | `AGENTFLOW_CREDENTIAL_KEYS` | `kid:base64(32字节)[,kid:base64(32字节)]`，第一把为当前写入密钥。所有副本配置相同的值。未配置时，已有的旧明文 Secret 仍可读取，保存新 Secret 返回 `503 credential_key_missing` |
 | `AGENTFLOW_BOT_WORKERS_ENABLED` | 默认 `true`。维护窗口设为 `false`：对话接收和通知发送都不启动，Bot 配置写接口返回 `503 bot_maintenance` |
 
+**Compose 部署**（`./start.sh`、`./start.sh dev`、`scripts/install.sh`）：`scripts/configure.sh` 会在 `.env` 中生成 `AGENTFLOW_CREDENTIAL_KEYS`，旧的 `.env` 缺少这一项时也会自动补上；`compose.yaml` 会把它、`AGENTFLOW_PUBLIC_URL`（未设置时使用 `LOOPFORGE_PUBLIC_URL`）和 `AGENTFLOW_BOT_WORKERS_ENABLED` 传给平台容器。**`.env` 里的密钥要和数据库备份一起保管**，密钥丢失后已保存的 Secret 无法解密，只能重新填写。确认生效：平台启动日志中有 `bot credential keyring current_kid=...`；如果日志显示 `AGENTFLOW_CREDENTIAL_KEYS is not set`，说明容器没有拿到这个变量。
+
 生成一把密钥：
 
 ```bash

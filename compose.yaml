@@ -33,6 +33,11 @@ services:
       AGENTFLOW_SECURE_COOKIES: ${AGENTFLOW_SECURE_COOKIES:-false}
       AGENTFLOW_GITHUB_CLIENT_ID: ${AGENTFLOW_GITHUB_CLIENT_ID:-}
       AGENTFLOW_GIT_SSH_KNOWN_HOSTS: ${AGENTFLOW_GIT_SSH_KNOWN_HOSTS:-}
+      # Chat Bots: keys sealing Bot secrets (scripts/configure.sh adds one),
+      # the address users open from chat links, and the maintenance switch.
+      AGENTFLOW_CREDENTIAL_KEYS: ${AGENTFLOW_CREDENTIAL_KEYS:-}
+      AGENTFLOW_PUBLIC_URL: ${AGENTFLOW_PUBLIC_URL:-${LOOPFORGE_PUBLIC_URL:-}}
+      AGENTFLOW_BOT_WORKERS_ENABLED: ${AGENTFLOW_BOT_WORKERS_ENABLED:-true}
       AGENTFLOW_ASSISTANT_SESSION_DIR: /data/assistant
       AGENTFLOW_CONVERSATION_DIR: ${LOOPFORGE_DATA_DIR}/conversations
       AGENTFLOW_CLARIFY_SESSION_DIR: /data/clarify
