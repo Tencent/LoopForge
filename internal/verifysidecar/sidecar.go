@@ -38,6 +38,8 @@ type Server struct {
 	AllowTestCommand bool
 	// MavenCacheDir, when set, is mounted at /root/.m2 across runs.
 	MavenCacheDir string
+	// AcceptanceImage overrides DefaultAcceptanceImage.
+	AcceptanceImage string
 	// GitTimeout bounds one git invocation.
 	GitTimeout time.Duration
 	// TestTimeout bounds a test command run.
@@ -72,14 +74,19 @@ type verifyRequest struct {
 	MavenImage  string   `json:"mavenImage,omitempty"`
 	Worktree    bool     `json:"worktree,omitempty"`
 	TestCommand string   `json:"testCommand,omitempty"`
+	// AcceptanceSpec is a directory of generated JUnit sources; when set the
+	// acceptance image compiles and runs them and its verdict joins the result.
+	AcceptanceSpec  string `json:"acceptanceSpec,omitempty"`
+	AcceptanceImage string `json:"acceptanceImage,omitempty"`
 }
 
 type acceptance struct {
-	Status     string                        `json:"status"` // PASS, FAIL, SKIPPED
-	ExitCode   int                           `json:"exitCode,omitempty"`
-	DurationMs int64                         `json:"durationMs,omitempty"`
-	Reason     string                        `json:"reason,omitempty"`
-	Surefire   *verification.SurefireSummary `json:"surefire,omitempty"`
+	Status     string                          `json:"status"` // PASS, FAIL, SKIPPED
+	ExitCode   int                             `json:"exitCode,omitempty"`
+	DurationMs int64                           `json:"durationMs,omitempty"`
+	Reason     string                          `json:"reason,omitempty"`
+	Surefire   *verification.SurefireSummary   `json:"surefire,omitempty"`
+	JUnit      *verification.AcceptanceOutcome `json:"junit,omitempty"`
 }
 
 type verifyResponse struct {
@@ -154,34 +161,66 @@ func (s *Server) verify(w http.ResponseWriter, r *http.Request) {
 // runAcceptance runs the test command inside the Maven toolchain container and
 // decides the verdict from the surefire reports, never from the exit code.
 func (s *Server) runAcceptance(ctx context.Context, repo string, req verifyRequest) acceptance {
+	result := acceptance{Status: "SKIPPED", Reason: "no testCommand or acceptanceSpec supplied"}
 	command := strings.TrimSpace(req.TestCommand)
-	if command == "" {
-		return acceptance{Status: "SKIPPED", Reason: "no testCommand supplied"}
+	spec := strings.TrimSpace(req.AcceptanceSpec)
+	if command == "" && spec == "" {
+		return result
 	}
 	if !s.AllowTestCommand {
-		return acceptance{Status: "SKIPPED", Reason: "test commands are disabled on this sidecar (start it with -allow-test-command)"}
+		return acceptance{Status: "SKIPPED", Reason: "test execution is disabled on this sidecar (start it with -allow-test-command)"}
 	}
-	runDir := repo
-	if strings.TrimSpace(req.BaseCommit) != "" || len(req.TestRoots) > 0 {
-		dir, cleanup, err := verification.PrepareRunDir(ctx, repo, req.BaseCommit, req.TestRoots)
+
+	if command != "" {
+		runDir := repo
+		if strings.TrimSpace(req.BaseCommit) != "" || len(req.TestRoots) > 0 {
+			dir, cleanup, err := verification.PrepareRunDir(ctx, repo, req.BaseCommit, req.TestRoots)
+			if err != nil {
+				return acceptance{Status: "FAIL", Reason: err.Error()}
+			}
+			defer cleanup()
+			runDir = dir
+		}
+		runner := verification.MavenRunner{Image: req.MavenImage, Timeout: s.TestTimeout, CacheDir: s.MavenCacheDir}
+		outcome, err := runner.RunTests(ctx, runDir, command)
 		if err != nil {
 			return acceptance{Status: "FAIL", Reason: err.Error()}
 		}
-		defer cleanup()
-		runDir = dir
+		result = acceptance{
+			Status:     outcome.Status,
+			ExitCode:   outcome.ExitCode,
+			DurationMs: outcome.DurationMs,
+			Reason:     truncate(outcome.Reason, 4000),
+			Surefire:   outcome.Surefire,
+		}
 	}
-	runner := verification.MavenRunner{Image: req.MavenImage, Timeout: s.TestTimeout, CacheDir: s.MavenCacheDir}
-	outcome, err := runner.RunTests(ctx, runDir, command)
-	if err != nil {
-		return acceptance{Status: "FAIL", Reason: err.Error()}
+
+	if spec != "" {
+		dir, err := s.repo(spec)
+		if err != nil {
+			return acceptance{Status: "FAIL", Reason: "acceptanceSpec: " + err.Error()}
+		}
+		image := strings.TrimSpace(req.AcceptanceImage)
+		if image == "" {
+			image = s.AcceptanceImage
+		}
+		runner := verification.AcceptanceRunner{Image: image, Timeout: s.TestTimeout}
+		outcome, err := runner.Run(ctx, dir)
+		result.JUnit = &outcome
+		if err != nil {
+			result.Status, result.Reason = "FAIL", err.Error()
+			return result
+		}
+		if result.Status == "SKIPPED" {
+			result.Status, result.Reason = outcome.Status, truncate(outcome.Reason, 4000)
+			return result
+		}
+		if outcome.Status != "PASS" {
+			result.Status = "FAIL"
+		}
+		result.Reason = strings.TrimSpace(result.Reason + "; " + outcome.Reason)
 	}
-	return acceptance{
-		Status:     outcome.Status,
-		ExitCode:   outcome.ExitCode,
-		DurationMs: outcome.DurationMs,
-		Reason:     truncate(outcome.Reason, 4000),
-		Surefire:   outcome.Surefire,
-	}
+	return result
 }
 
 type critiqueRequest struct {

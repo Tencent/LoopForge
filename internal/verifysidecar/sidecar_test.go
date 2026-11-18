@@ -219,3 +219,24 @@ func TestDeliveryCheckBindsCommitToVerifiedTree(t *testing.T) {
 		t.Fatalf("mismatched delivery-check = %d %v, want not ok", status, body)
 	}
 }
+
+func TestVerifyAcceptanceRequiresOptIn(t *testing.T) {
+	repo := testRepo(t)
+	specs := filepath.Join(repo, "specs")
+	if err := os.MkdirAll(specs, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(New(repo).Handler())
+	defer server.Close()
+
+	status, body := postJSON(t, server, "/verify", map[string]any{
+		"repo": repo, "spec": "spec.md", "acceptanceSpec": specs,
+	})
+	if status != http.StatusOK {
+		t.Fatalf("verify = %d %v", status, body)
+	}
+	acceptance, _ := body["acceptance"].(map[string]any)
+	if acceptance["status"] != "SKIPPED" {
+		t.Fatalf("acceptance = %v, want SKIPPED while execution is disabled", acceptance)
+	}
+}

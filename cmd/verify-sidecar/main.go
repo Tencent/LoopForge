@@ -27,6 +27,7 @@ func main() {
 	modelKeyFile := flag.String("model-key-file", os.Getenv("AEGIS_MODEL_KEY_FILE"), "file holding the model API key (env AEGIS_MODEL_KEY_FILE)")
 	modelName := flag.String("model", os.Getenv("AEGIS_MODEL_NAME"), "model name for /critique (env AEGIS_MODEL_NAME)")
 	mavenCache := flag.String("m2-cache", "", "host directory mounted at /root/.m2 for repeated Maven runs")
+	acceptanceImage := flag.String("acceptance-image", "", "JUnit acceptance runner image (default loopforge-verify-acceptance:local)")
 	allowTestCommand := flag.Bool("allow-test-command", false, "allow /verify to run the request testCommand inside the Maven container")
 	flag.Parse()
 
@@ -50,6 +51,7 @@ func main() {
 	sidecar.Critique = critique.Config{URL: strings.TrimSpace(*modelURL), Key: key, Model: strings.TrimSpace(*modelName)}
 	sidecar.AllowTestCommand = *allowTestCommand
 	sidecar.MavenCacheDir = strings.TrimSpace(*mavenCache)
+	sidecar.AcceptanceImage = strings.TrimSpace(*acceptanceImage)
 	server := &http.Server{
 		Addr:              *addr,
 		Handler:           sidecar.Handler(),
