@@ -37,7 +37,7 @@ type hostedPull struct {
 func (p hostedPull) ref() string { return "#" + strconv.Itoa(p.Number) }
 
 func (p hostedPull) delivery(project string) domain.DeliveryMR {
-	return domain.DeliveryMR{Project: project, IID: p.Number, URL: domain.GongfengMRURL(project, p.Number), State: p.State, GongfengState: p.State, TargetBranch: p.TargetBranch}
+	return domain.DeliveryMR{Project: project, IID: p.Number, URL: domain.GongfengMRURL(project, p.Number), State: p.State, GongfengState: p.State, TargetBranch: p.TargetBranch, HeadSHA: strings.TrimSpace(p.HeadSHA)}
 }
 
 // isPullHostProject reports whether project is served by a pullHost rather

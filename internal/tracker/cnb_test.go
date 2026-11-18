@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"agentflow/internal/cnb"
 	"agentflow/internal/domain"
 	"agentflow/internal/repo"
 )
@@ -237,5 +238,84 @@ func TestSyncMRDeliveryStatesLogsWhenCNBOwnerHasNoToken(t *testing.T) {
 	f.svc.syncMRDeliveryStates(store)
 	if len(store.updates) != 0 || !strings.Contains(logs.String(), "CNB") {
 		t.Fatalf("updates = %+v, log = %q", store.updates, logs.String())
+	}
+}
+
+func TestHostedFromCNBNormalizesAndDoesNotDefaultUnknownToOpen(t *testing.T) {
+	mergedAt := time.Date(2026, 11, 15, 8, 0, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		name      string
+		in        cnb.Pull
+		wantState string
+		wantHead  string
+	}{
+		{"open", cnb.Pull{Number: 1, State: "open", TargetBranch: "main", HeadSHA: " sha1 "}, "opened", "sha1"},
+		{"opened", cnb.Pull{Number: 2, State: "opened", TargetBranch: "main", HeadSHA: "sha2"}, "opened", "sha2"},
+		{"merged", cnb.Pull{Number: 3, State: "merged", TargetBranch: "main", HeadSHA: "sha3", ClosedAt: mergedAt}, "merged", "sha3"},
+		{"closed", cnb.Pull{Number: 4, State: "closed", TargetBranch: "main", HeadSHA: "sha4"}, "closed", "sha4"},
+		{"unknown string", cnb.Pull{Number: 5, State: "mystery", TargetBranch: "main", HeadSHA: "sha5"}, "unknown", "sha5"},
+		{"empty state", cnb.Pull{Number: 6, State: "", TargetBranch: "main", HeadSHA: "sha6"}, "unknown", "sha6"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			hp := hostedFromCNB(tc.in)
+			if hp.State != tc.wantState {
+				t.Fatalf("hostedFromCNB state=%q want %q", hp.State, tc.wantState)
+			}
+			if tc.wantState == "merged" && !hp.MergedAt.Equal(mergedAt) {
+				t.Fatalf("mergedAt = %v, want %v", hp.MergedAt, mergedAt)
+			}
+			mr := hp.delivery("cnb:org/team/repo")
+			if mr.State != tc.wantState || mr.GongfengState != tc.wantState || mr.HeadSHA != tc.wantHead {
+				t.Fatalf("delivery = %+v", mr)
+			}
+		})
+	}
+}
+
+func TestCNBHostForRunTokenPrecedenceAndErrors(t *testing.T) {
+	s := NewService()
+	s.cnbAPIBase = "https://cnb.example.test"
+	s.projectAuth = projectAuthFixture{
+		projects: map[string]domain.Project{
+			"first":    {ID: "first", OwnerID: 1},
+			"run":      {ID: "run", OwnerID: 2},
+			"no-token": {ID: "no-token", OwnerID: 3},
+		},
+		users: map[int64]domain.User{
+			1:  {ID: 1, CNBToken: "first-owner-cnb"},
+			2:  {ID: 2, CNBToken: "run-owner-cnb"},
+			3:  {ID: 3, CNBToken: ""},
+			10: {ID: 10, CNBToken: "resp-cnb", GitToken: "ghp_resp"},
+			11: {ID: 11, CNBToken: "", GitToken: "ghp_no_cnb"},
+		},
+		repos: []domain.Repository{
+			{ID: "r1", ProjectID: "first", Provider: "cnb", GongfengProjectID: "cnb:group/sub/repo"},
+			{ID: "r2", ProjectID: "run", Provider: "cnb", GongfengProjectID: "cnb:group/sub/repo"},
+			{ID: "r3", ProjectID: "no-token", Provider: "cnb", GongfengProjectID: "cnb:group/sub/repo"},
+		},
+	}
+
+	h, id, err := s.cnbHostForRun("cnb:group/sub/repo", domain.BranchMRQuery{ProjectID: "run", ResponsibleUserID: 10, GitToken: "ghp_MUST_IGNORE"})
+	if err != nil || h.client.Token != "resp-cnb" || h.slug != "group/sub/repo" || id != "本轮责任人的 CNB 访问令牌" {
+		t.Fatalf("1st priority failed: h=%+v id=%q err=%v", h, id, err)
+	}
+
+	h, id, err = s.cnbHostForRun("cnb:group/sub/repo", domain.BranchMRQuery{ProjectID: "run", ResponsibleUserID: 11, GitToken: "ghp_MUST_IGNORE"})
+	if err != nil || h.client.Token != "run-owner-cnb" || id != "项目 run Owner 的 CNB 访问令牌" {
+		t.Fatalf("2nd priority failed: h=%+v id=%q err=%v", h, id, err)
+	}
+
+	if h, id, err = s.cnbHostForRun("cnb:group/sub/repo", domain.BranchMRQuery{ProjectID: "no-token", ResponsibleUserID: 11, GitToken: "ghp_MUST_IGNORE"}); err == nil || !strings.Contains(err.Error(), "no-token") || !strings.Contains(err.Error(), "CNB 访问令牌") {
+		t.Fatalf("bound project without CNB token must fail instead of falling back to another project's owner: h=%+v id=%q err=%v", h, id, err)
+	}
+
+	h, id, err = s.cnbHostForRun("cnb:group/sub/repo", domain.BranchMRQuery{ProjectID: "", ResponsibleUserID: 0, GitToken: "ghp_MUST_IGNORE"})
+	if err != nil || h.client.Token != "first-owner-cnb" || id != "首个绑定该仓库的项目 Owner 的 CNB 访问令牌" {
+		t.Fatalf("3rd priority failed: h=%+v id=%q err=%v", h, id, err)
+	}
+
+	h, id, err = s.cnbHostForRun("cnb:group/sub/repo", domain.BranchMRQuery{ProjectID: "unbound", ResponsibleUserID: 0})
+	if err != nil || h.client.Token != "first-owner-cnb" || id != "首个绑定该仓库的项目 Owner 的 CNB 访问令牌" {
+		t.Fatalf("3rd priority for unbound project failed: h=%+v id=%q err=%v", h, id, err)
 	}
 }

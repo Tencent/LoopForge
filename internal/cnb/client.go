@@ -93,19 +93,36 @@ type pullJSON struct {
 	Head     pullRef `json:"head"`
 }
 
+func normalizePullState(raw string, isMerged bool) (string, error) {
+	if isMerged {
+		return "merged", nil
+	}
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "open", "opened":
+		return "open", nil
+	case "closed":
+		return "closed", nil
+	case "merged":
+		return "merged", nil
+	default:
+		return "", fmt.Errorf("CNB returned an unexpected pull request state %q", raw)
+	}
+}
+
 func (p pullJSON) pull() (Pull, error) {
 	number, err := strconv.Atoi(p.Number)
 	if err != nil || number <= 0 {
 		return Pull{}, fmt.Errorf("CNB returned an invalid pull request number %q", p.Number)
 	}
+	state, err := normalizePullState(p.State, p.IsMerged)
+	if err != nil {
+		return Pull{}, err
+	}
 	out := Pull{
-		Number: number, State: p.State, Title: p.Title, Body: p.Body,
+		Number: number, State: state, Title: p.Title, Body: p.Body,
 		TargetBranch: strings.TrimPrefix(p.Base.Ref, "refs/heads/"),
 		SourceBranch: strings.TrimPrefix(p.Head.Ref, "refs/heads/"),
 		SourceRepo:   p.Head.Repo.Path, HeadSHA: p.Head.SHA,
-	}
-	if p.IsMerged {
-		out.State = "merged"
 	}
 	if t, err := time.Parse(time.RFC3339, p.ClosedAt); err == nil {
 		out.ClosedAt = t.UTC()
@@ -137,6 +154,9 @@ func (c *Client) request(ctx context.Context, method, path string, query url.Val
 	}
 	res, err := c.HTTP.Do(req)
 	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) {
+			return fmt.Errorf("CNB request timed out: %w", context.DeadlineExceeded)
+		}
 		return errors.New("CNB request failed")
 	}
 	defer res.Body.Close()
@@ -199,10 +219,7 @@ func (c *Client) DefaultBranch(ctx context.Context, slug string) (string, error)
 	return head.Name, nil
 }
 
-// FindPull returns the newest pull request of the repository whose source is
-// the branch source in the same repository, into target when target is set,
-// in any state. A fork's branch of the same name never matches.
-func (c *Client) FindPull(ctx context.Context, slug, source, target string) (Pull, bool, error) {
+func (c *Client) walkPulls(ctx context.Context, slug, source, target string, visit func(Pull) bool) (exhausted bool, err error) {
 	for page := 1; page <= maxFindPages; page++ {
 		query := url.Values{"state": {"all"}, "order_by": {"-updated_at"}, "page": {strconv.Itoa(page)}, "page_size": {strconv.Itoa(pageSize)}}
 		if target != "" {
@@ -210,25 +227,67 @@ func (c *Client) FindPull(ctx context.Context, slug, source, target string) (Pul
 		}
 		var list []pullJSON
 		if err := c.request(ctx, http.MethodGet, repoPath(slug)+"/pulls", query, nil, &list); err != nil {
-			return Pull{}, false, err
+			return false, err
 		}
 		for _, item := range list {
 			if strings.TrimPrefix(item.Head.Ref, "refs/heads/") != source || item.Head.Repo.Path != slug {
 				continue
 			}
+			if target != "" && strings.TrimPrefix(item.Base.Ref, "refs/heads/") != target {
+				continue
+			}
 			p, err := item.pull()
 			if err != nil {
-				return Pull{}, false, err
+				return false, err
 			}
-			if target == "" || p.TargetBranch == target {
-				return p, true, nil
+			if visit(p) {
+				return true, nil
 			}
 		}
 		if len(list) == 0 {
-			break
+			return true, nil
 		}
 	}
-	return Pull{}, false, nil
+	return false, nil
+}
+
+// FindPull returns the newest pull request of the repository whose source is
+// the branch source in the same repository, into target when target is set,
+// in any state. A fork's branch of the same name never matches.
+func (c *Client) FindPull(ctx context.Context, slug, source, target string) (Pull, bool, error) {
+	var found Pull
+	ok := false
+	_, err := c.walkPulls(ctx, slug, source, target, func(p Pull) bool {
+		found, ok = p, true
+		return true
+	})
+	if err != nil || !ok {
+		return Pull{}, false, err
+	}
+	return found, true, nil
+}
+
+// ListPulls returns all pull requests of the repository whose source is the
+// branch source in the same repository, into target when target is set, in any
+// state. It returns an error if maxFindPages is reached without exhausting
+// results so callers escalate instead of treating truncated pages as missing.
+func (c *Client) ListPulls(ctx context.Context, slug, source, target string) ([]Pull, error) {
+	var out []Pull
+	seen := map[int]struct{}{}
+	exhausted, err := c.walkPulls(ctx, slug, source, target, func(p Pull) bool {
+		if _, dup := seen[p.Number]; !dup {
+			seen[p.Number] = struct{}{}
+			out = append(out, p)
+		}
+		return false
+	})
+	if err != nil {
+		return nil, err
+	}
+	if !exhausted {
+		return nil, fmt.Errorf("CNB pull request listing exceeded %d pages without exhausting", maxFindPages)
+	}
+	return out, nil
 }
 
 func (c *Client) CreatePull(ctx context.Context, slug, source, target, title, body string) (Pull, error) {
@@ -237,14 +296,6 @@ func (c *Client) CreatePull(ctx context.Context, slug, source, target, title, bo
 		return Pull{}, err
 	}
 	return created.pull()
-}
-
-func (c *Client) UpdatePull(ctx context.Context, slug string, number int, title, body string) (Pull, error) {
-	var updated pullJSON
-	if err := c.request(ctx, http.MethodPatch, repoPath(slug)+"/pulls/"+strconv.Itoa(number), nil, map[string]string{"title": title, "body": body}, &updated); err != nil {
-		return Pull{}, err
-	}
-	return updated.pull()
 }
 
 func (c *Client) GetPull(ctx context.Context, slug string, number int) (Pull, error) {
