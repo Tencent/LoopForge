@@ -18,6 +18,8 @@ import (
 	"gorm.io/gorm/clause"
 )
 
+var ErrAssistantPersonalWorkspaceProject = errors.New("此会话已有个人工作区，请在项目中新建对话")
+
 func assistantRecordID(id string) string {
 	id = filepath.Base(strings.TrimSpace(id))
 	if id == "" || id == "." || id == ".." {
@@ -309,6 +311,9 @@ func (r *AssistantRepo) putAssistantSession(userID int64, v domain.AssistantSess
 	}
 	old, exists := r.AssistantSession(userID, v.ID)
 	if exists {
+		if old.ProjectID == "" && strings.TrimSpace(v.ProjectID) != "" && (old.WorkspaceRunID != "" || len(old.OwnWorkspaceRunIDs) != 0) {
+			return ErrAssistantPersonalWorkspaceProject
+		}
 		target := old.Execution()
 		if old.ExecutionLocked() && v.ExecutionTarget != nil && *v.ExecutionTarget != target {
 			return ErrAssistantExecutionLocked
@@ -433,14 +438,18 @@ func (r *AssistantRepo) SetAssistantSessionArchived(userID int64, id string, arc
 // ordinary conversation, recording it among the conversation's own when the
 // conversation opened it. Like archiving it leaves updated_at alone, so a
 // generation that is still writing this session does not see a conflict.
-func (r *AssistantRepo) SetAssistantSessionWorkspaceRun(userID int64, id, runID string, own bool) error {
+// projectID is checked under the lock to keep a workspace in its own scope.
+func (r *AssistantRepo) SetAssistantSessionWorkspaceRun(userID int64, id, projectID, runID string, own bool) error {
 	return r.DB.Transaction(func(tx *gorm.DB) error {
 		var row assistantSessionRow
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ? AND user_id = ?", assistantRecordID(id), userID).Take(&row).Error; err != nil {
 			return fmt.Errorf("会话不存在")
 		}
 		item := decodeAssistantSession(row)
-		if item.Shared && item.RunID != "" {
+		if item.ProjectID != projectID {
+			return ErrAssistantSessionProjectChanged
+		}
+		if item.RunID != "" {
 			return fmt.Errorf("任务会话直接使用任务工作区")
 		}
 		item.WorkspaceRunID = strings.TrimSpace(runID)

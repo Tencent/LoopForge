@@ -406,7 +406,7 @@ func (h *assistantHandlers) workbenchReferences(c *gin.Context) {
 	var task *domain.Run
 	if runID := strings.TrimSpace(c.Query("runId")); runID != "" {
 		r, exists := h.repo.RunState(runID)
-		if !exists || r.ExecutionContext.ProjectID != project || !h.workbenchProjectAllowed(c, r.ExecutionContext.ProjectID, u.ID) {
+		if !exists || r.IsPersonalWorkspace() || r.ExecutionContext.ProjectID != project || !h.workbenchProjectAllowed(c, r.ExecutionContext.ProjectID, u.ID) {
 			c.JSON(403, gin.H{"error": "无权访问任务"})
 			return
 		}
@@ -1298,7 +1298,7 @@ func (h *assistantHandlers) workspaceTurnContext(req *assistantRequest, user dom
 	if b.Len() == 0 {
 		return ""
 	}
-	b.WriteString("按用户这条消息实际要处理的事决定（@ 只是线索）：只在要看或改代码、跑命令时才进入工作区；工作区按运行环境区分，当前环境合适就直接用，需要别的语言或工具链再传 sandboxProfileId 切换，并在里面自己 git clone 仓库和切换分支。要直接恢复并接着某次 SOP 运行的现场继续干活（保留未推送修改和产物，或改完后回 SOP 重跑测试节点/继续执行），打开工作区时传入该 SOP 的 workspaceRunId（与当前对话在同一执行机器时直接复用原工作区，已回收时自动恢复快照；不在同一执行机器时如实告知用户需要在哪台执行机器下新建对话）。")
+	b.WriteString("按用户这条消息实际要处理的事决定（@ 只是线索）：只在要看或改代码、跑命令时才进入工作区；工作区按运行环境区分，当前环境合适就直接用，需要别的语言或工具链再传 sandboxProfileId 切换。创建文件和运行命令可直接在工作区完成。需要已有仓库时在工作区内自行 git clone 和切换分支。要直接恢复并接着某次 SOP 运行的现场继续干活（保留未推送修改和产物，或改完后回 SOP 重跑测试节点/继续执行），打开工作区时传入该 SOP 的 workspaceRunId（与当前对话在同一执行机器时直接复用原工作区，已回收时自动恢复快照；不在同一执行机器时如实告知用户需要在哪台执行机器下新建对话）。")
 	return b.String()
 }
 

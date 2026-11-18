@@ -105,6 +105,10 @@ func (h *assistantHandlers) sessionMode(c *gin.Context) {
 			c.JSON(409, gin.H{"error": "工作区与会话不在同一执行机器"})
 			return
 		}
+		if run.IsPersonalWorkspace() && (user.ID != saved.UserID || !conversationMayBind(saved, run, saved.ProjectID)) {
+			c.JSON(403, gin.H{"error": "无权访问个人工作区"})
+			return
+		}
 		if !run.IsWorkspace() && !sopStopped(run) {
 			c.JSON(409, gin.H{"error": "请先暂停或接管 SOP，再进入工作区模式"})
 			return

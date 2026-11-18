@@ -75,7 +75,7 @@ type workspacePull struct {
 // requirement tracks it yet; PRs opened elsewhere are left alone. It returns
 // a note for the reply, empty when nothing was registered.
 func (h *assistantHandlers) registerTurnDeliveries(ctx context.Context, s *AgentToolSession) string {
-	if s == nil || s.RunID != "" || h.engine == nil || strings.TrimSpace(s.User.GitToken) == "" {
+	if s == nil || s.ProjectID == "" || s.RunID != "" || h.engine == nil || strings.TrimSpace(s.User.GitToken) == "" {
 		return ""
 	}
 	runID := s.conversationWorkspace()

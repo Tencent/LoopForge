@@ -413,7 +413,7 @@ func (h *assistantHandlers) session(c *gin.Context) {
 			saveErr = saveAssistantConversation(h.repo, ownerID, conv)
 		}
 		if saveErr != nil {
-			if errors.Is(saveErr, repo.ErrAssistantExecutionLocked) {
+			if errors.Is(saveErr, repo.ErrAssistantExecutionLocked) || errors.Is(saveErr, repo.ErrAssistantPersonalWorkspaceProject) {
 				c.JSON(409, gin.H{"error": saveErr.Error()})
 				return
 			}
