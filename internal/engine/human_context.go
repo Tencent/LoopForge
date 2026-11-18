@@ -9,24 +9,66 @@ import (
 
 const maxHumanContextBytes = 8000
 
+func runNodeLanguage(r *domain.Run, nodeID string, extra ...string) string {
+	var texts []string
+	texts = append(texts, extra...)
+	if r != nil {
+		texts = append(texts, r.HumanContext, r.Input)
+		if r.WorkflowSnapshot.Name != "" {
+			texts = append(texts, r.WorkflowSnapshot.Name)
+		}
+		if nodeID != "" {
+			if nr := r.Nodes[nodeID]; nr != nil {
+				texts = append(texts, nr.Feedback, nr.Output)
+			}
+			for _, n := range r.WorkflowSnapshot.Nodes {
+				if n.ID == nodeID {
+					texts = append(texts, n.Name, n.TaskPrompt)
+					break
+				}
+			}
+		}
+		for _, n := range r.WorkflowSnapshot.Nodes {
+			texts = append(texts, n.Name)
+		}
+	}
+	return detectPromptLanguage(texts...)
+}
+
 func composeHumanFeedback(reason, context string) string {
+	return composeHumanFeedbackWithLang(reason, context, detectPromptLanguage(reason, context))
+}
+
+func composeHumanFeedbackWithLang(reason, context, lang string) string {
 	reason = strings.TrimSpace(reason)
 	context = strings.TrimSpace(context)
 	if context != "" && len(context) > maxHumanContextBytes {
 		context = context[:maxHumanContextBytes]
 	}
+	header := "人工补充上下文：\n"
+	switch lang {
+	case "ko":
+		header = "사용자 추가 컨텍스트:\n"
+	case "en":
+		header = "Manual Context:\n"
+	}
 	switch {
 	case context == "":
 		return reason
 	case reason == "":
-		return "人工补充上下文：\n" + context
+		return header + context
 	default:
-		return reason + "\n\n人工补充上下文：\n" + context
+		return reason + "\n\n" + header + context
 	}
 }
 
 func recordHumanContext(r *domain.Run, nodeID, reason, context string) string {
-	note := composeHumanFeedback(reason, context)
+	lang := runNodeLanguage(r, nodeID, reason, context)
+	return recordHumanContextWithLang(r, nodeID, reason, context, lang)
+}
+
+func recordHumanContextWithLang(r *domain.Run, nodeID, reason, context, lang string) string {
+	note := composeHumanFeedbackWithLang(reason, context, lang)
 	ctx := strings.TrimSpace(context)
 	if ctx == "" {
 		return note
@@ -43,7 +85,14 @@ func recordHumanContext(r *domain.Run, nodeID, reason, context string) string {
 	if nr := r.Nodes[nodeID]; nr != nil {
 		attempt = nr.Attempt
 	}
-	appendArtifact(r, nodeID, attempt, "human-context", "human-context.md", "text/markdown", []byte("# 人工补充上下文\n\n"+ctx+"\n"))
+	artifactTitle := "# 人工补充上下文\n\n"
+	switch lang {
+	case "ko":
+		artifactTitle = "# 사용자 추가 컨텍스트\n\n"
+	case "en":
+		artifactTitle = "# Manual Context\n\n"
+	}
+	appendArtifact(r, nodeID, attempt, "human-context", "human-context.md", "text/markdown", []byte(artifactTitle+ctx+"\n"))
 	return note
 }
 
@@ -52,10 +101,18 @@ func writeHumanContextFile(workspace, note string) error {
 	if note == "" || strings.TrimSpace(workspace) == "" {
 		return nil
 	}
+	lang := detectPromptLanguage(note)
+	artifactTitle := "# 人工补充上下文\n\n"
+	switch lang {
+	case "ko":
+		artifactTitle = "# 사용자 추가 컨텍스트\n\n"
+	case "en":
+		artifactTitle = "# Manual Context\n\n"
+	}
 	// Replace through a rename: a parallel branch's CLI may be reading the
 	// file and must never see it truncated.
 	target := filepath.Join(workspace, "human-context.md")
-	content := []byte("# 人工补充上下文\n\n" + note + "\n")
+	content := []byte(artifactTitle + note + "\n")
 	if existing, err := os.ReadFile(target); err == nil && string(existing) == string(content) {
 		return nil
 	}

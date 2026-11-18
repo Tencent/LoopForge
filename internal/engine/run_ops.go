@@ -166,14 +166,33 @@ func (e *Engine) Approve(runID, nodeID, humanContext string, expected ...NodeExp
 	}
 	n.Status = "succeeded"
 	n.FinishedAt = time.Now().UTC()
-	note := recordHumanContext(&r, nodeID, "人工批准继续", humanContext)
-	decision := "# Approval\n\nApproved by a human gate.\n"
+	lang := runNodeLanguage(&r, nodeID, humanContext)
+	var defaultReason, decisionTitle, decisionBody, eventMsg string
+	switch lang {
+	case "ko":
+		defaultReason = "수동 승인으로 계속 진행"
+		decisionTitle = "# 승인\n\n"
+		decisionBody = "수동 승인 게이트를 통과했습니다.\n"
+		eventMsg = "수동 승인 게이트 통과"
+	case "en":
+		defaultReason = "Manually approved by human operator to continue"
+		decisionTitle = "# Approval\n\n"
+		decisionBody = "Approved by a human gate.\n"
+		eventMsg = "Human gate approved"
+	default:
+		defaultReason = "人工批准继续"
+		decisionTitle = "# Approval\n\n"
+		decisionBody = "Approved by a human gate.\n"
+		eventMsg = "人工门禁已通过"
+	}
+	note := recordHumanContextWithLang(&r, nodeID, defaultReason, humanContext, lang)
+	decision := decisionTitle + decisionBody
 	if note != "" {
 		decision += "\n" + note + "\n"
 	}
 	appendArtifact(&r, nodeID, n.Attempt, "decision", "decision.md", "text/markdown", []byte(decision))
-	e.event(&r, nodeID, "gate.approved", "人工门禁已通过")
-	appendControlTelemetry(&r, nodeID, "gate.approved", "人工门禁已通过")
+	e.event(&r, nodeID, "gate.approved", eventMsg)
+	appendControlTelemetry(&r, nodeID, "gate.approved", eventMsg)
 	r.Status = "running"
 	return e.persistControlDecision(runID, r, expected...)
 }
@@ -248,19 +267,45 @@ func (e *Engine) pass(runID, nodeID, humanContext string, expected ...NodeExpect
 	}
 	n.Status = "succeeded"
 	n.FinishedAt = time.Now().UTC()
-	n.Activity = "人工通过，未重新执行"
-	note := recordHumanContext(&r, nodeID, "人工通过该节点，继续下游", humanContext)
-	decisionReason := "after the node failed"
-	if pausedScript {
-		decisionReason = "while the run was paused mid-execution"
+	lang := runNodeLanguage(&r, nodeID, humanContext)
+	var passActivity, defaultReason, eventMsg, decision string
+	switch lang {
+	case "ko":
+		passActivity = "수동 통과 (재실행되지 않음)"
+		defaultReason = "이 단계를 수동으로 통과하고 후속 단계 진행"
+		eventMsg = "이 단계를 수동으로 통과하고 후속 단계 진행"
+		reasonDesc := "노드 실패 후"
+		if pausedScript {
+			reasonDesc = "실행 일시 중지 중"
+		}
+		decision = fmt.Sprintf("# 통과\n\n관리자가 %s 수동으로 통과시켰습니다.\n", reasonDesc)
+	case "en":
+		passActivity = "Manually passed, not re-executed"
+		defaultReason = "Manually passed this node, continue downstream"
+		eventMsg = "Manually passed this node, continue downstream"
+		reasonDesc := "after the node failed"
+		if pausedScript {
+			reasonDesc = "while the run was paused mid-execution"
+		}
+		decision = fmt.Sprintf("# Pass\n\nManually passed by a human %s.\n", reasonDesc)
+	default:
+		passActivity = "人工通过，未重新执行"
+		defaultReason = "人工通过该节点，继续下游"
+		eventMsg = "人工通过该节点，继续下游"
+		reasonDesc := "after the node failed"
+		if pausedScript {
+			reasonDesc = "while the run was paused mid-execution"
+		}
+		decision = fmt.Sprintf("# Pass\n\nManually passed by a human %s.\n", reasonDesc)
 	}
-	decision := fmt.Sprintf("# Pass\n\nManually passed by a human %s.\n", decisionReason)
+	n.Activity = passActivity
+	note := recordHumanContextWithLang(&r, nodeID, defaultReason, humanContext, lang)
 	if note != "" {
 		decision += "\n" + note + "\n"
 	}
 	appendArtifact(&r, nodeID, n.Attempt, "decision", "decision.md", "text/markdown", []byte(decision))
-	e.event(&r, nodeID, "node.passed", "人工通过该节点，继续下游")
-	appendControlTelemetry(&r, nodeID, "node.passed", "人工通过该节点，继续下游")
+	e.event(&r, nodeID, "node.passed", eventMsg)
+	appendControlTelemetry(&r, nodeID, "node.passed", eventMsg)
 	r.CancelRequested = false
 	r.PauseRequested = false
 	r.Status = "running"
@@ -339,8 +384,18 @@ func (e *Engine) Reject(runID string, req domain.RejectRequest, expected ...Node
 			}
 		}
 	}
-	e.event(&r, req.NodeID, "gate.rejected", fmt.Sprintf("打回到 %s：%s", target, req.Reason))
-	appendControlTelemetry(&r, req.NodeID, "gate.rejected", fmt.Sprintf("打回到 %s：%s", target, req.Reason))
+	lang := runNodeLanguage(&r, req.NodeID, req.Reason, req.Context)
+	var rejectMsg string
+	switch lang {
+	case "ko":
+		rejectMsg = fmt.Sprintf("%s(으)로 반려: %s", target, req.Reason)
+	case "en":
+		rejectMsg = fmt.Sprintf("Rejected to %s: %s", target, req.Reason)
+	default:
+		rejectMsg = fmt.Sprintf("打回到 %s：%s", target, req.Reason)
+	}
+	e.event(&r, req.NodeID, "gate.rejected", rejectMsg)
+	appendControlTelemetry(&r, req.NodeID, "gate.rejected", rejectMsg)
 	r.Status = "running"
 	e.cancelLiveChildRuns(stale)
 	if err := e.persistControlDecision(runID, r, expected...); err != nil {
@@ -427,7 +482,17 @@ func (e *Engine) resumeParentAfterChildRecoveryContext(ctx context.Context, chil
 	if !pointsAtChild {
 		return
 	}
-	if err := e.retryContext(ctx, parentID, nodeID, "子 SOP "+childID+" 已恢复，父流程重新接上", "", childID); err != nil {
+	childLang := runNodeLanguage(&child, "")
+	var childResumeReason string
+	switch childLang {
+	case "ko":
+		childResumeReason = fmt.Sprintf("하위 SOP %s 복구됨, 상위 SOP 재연결", childID)
+	case "en":
+		childResumeReason = fmt.Sprintf("Child SOP %s recovered, reconnecting parent SOP", childID)
+	default:
+		childResumeReason = "子 SOP " + childID + " 已恢复，父流程重新接上"
+	}
+	if err := e.retryContext(ctx, parentID, nodeID, childResumeReason, "", childID); err != nil {
 		log.Printf("resume parent %s after child %s recovery: %v", parentID, childID, err)
 		return
 	}
@@ -531,13 +596,33 @@ func (e *Engine) retryContext(ctx context.Context, runID, nodeID, reason, humanC
 			n.MaxAttempts = r.Nodes[nodeID].Attempt + 1
 		}
 	}
+	lang := runNodeLanguage(&r, nodeID, reason, humanContext)
 	if strings.TrimSpace(reason) == "" {
-		if waitingRetry {
-			reason = "对话轮次用尽后人工确认重试"
-		} else if replaySucceeded {
-			reason = "从指定节点重跑"
-		} else {
-			reason = "从中断处继续"
+		switch lang {
+		case "ko":
+			if waitingRetry {
+				reason = "대화 턴 소진 후 수동 재시도 확인"
+			} else if replaySucceeded {
+				reason = "지정 노드부터 다시 실행"
+			} else {
+				reason = "중단 지점부터 계속"
+			}
+		case "en":
+			if waitingRetry {
+				reason = "Manual retry after conversation turns exhausted"
+			} else if replaySucceeded {
+				reason = "Rerun from specified node"
+			} else {
+				reason = "Resume from interruption"
+			}
+		default:
+			if waitingRetry {
+				reason = "对话轮次用尽后人工确认重试"
+			} else if replaySucceeded {
+				reason = "从指定节点重跑"
+			} else {
+				reason = "从中断处继续"
+			}
 		}
 	}
 	reset := descendants(r.WorkflowSnapshot, nodeID)
@@ -599,15 +684,35 @@ func (e *Engine) retryContext(ctx context.Context, runID, nodeID, reason, humanC
 			}
 		}
 	}
-	retryLabel := "从中断处继续"
-	if explicitNode {
-		retryLabel = "从指定节点重跑"
+	var retryLabel, revivedMsg, retryEvent string
+	switch lang {
+	case "ko":
+		retryLabel = "중단 지점부터 계속"
+		if explicitNode {
+			retryLabel = "지정 노드부터 다시 실행"
+		}
+		retryEvent = retryLabel + ": " + note
+		revivedMsg = "취소된 병렬 브랜치 함께 복원: " + strings.Join(revived, ", ")
+	case "en":
+		retryLabel = "Resume from interruption"
+		if explicitNode {
+			retryLabel = "Rerun from specified node"
+		}
+		retryEvent = retryLabel + ": " + note
+		revivedMsg = "Also restored cancelled parallel branches: " + strings.Join(revived, ", ")
+	default:
+		retryLabel = "从中断处继续"
+		if explicitNode {
+			retryLabel = "从指定节点重跑"
+		}
+		retryEvent = retryLabel + "：" + note
+		revivedMsg = "一并恢复被取消的并行分支：" + strings.Join(revived, "、")
 	}
-	e.event(&r, nodeID, "node.retry_requested", retryLabel+"："+note)
+	e.event(&r, nodeID, "node.retry_requested", retryEvent)
 	if len(revived) > 0 {
-		e.event(&r, "", "node.retry_requested", "一并恢复被取消的并行分支："+strings.Join(revived, "、"))
+		e.event(&r, "", "node.retry_requested", revivedMsg)
 	}
-	appendControlTelemetry(&r, nodeID, "node.retry_requested", retryLabel+"："+strings.TrimSpace(reason))
+	appendControlTelemetry(&r, nodeID, "node.retry_requested", retryLabel+": "+strings.TrimSpace(reason))
 	r.CancelRequested = false
 	r.PauseRequested = false
 	r.Status = "running"
@@ -748,9 +853,24 @@ func (e *Engine) resumePaused(runID, humanContext string, expected ...NodeExpect
 				return err
 			}
 		}
-		message := "人工确认直接继续运行"
-		if r.IsWorkspace() && r.Status == "waiting" {
-			message = "继续自由协作"
+		lang := runNodeLanguage(&r, "")
+		var message string
+		switch lang {
+		case "ko":
+			message = "수동 확인으로 직접 계속 실행"
+			if r.IsWorkspace() && r.Status == "waiting" {
+				message = "자유 협업 계속"
+			}
+		case "en":
+			message = "Manually confirmed to continue execution directly"
+			if r.IsWorkspace() && r.Status == "waiting" {
+				message = "Continue free collaboration"
+			}
+		default:
+			message = "人工确认直接继续运行"
+			if r.IsWorkspace() && r.Status == "waiting" {
+				message = "继续自由协作"
+			}
 		}
 		e.event(&r, "", "run.resumed", message)
 		appendControlTelemetry(&r, "", "run.resumed", message)
