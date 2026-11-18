@@ -402,14 +402,19 @@ func (h *assistantHandlers) session(c *gin.Context) {
 		if conv.Model == "" {
 			conv.Model = existing.Model
 		}
-		editor, _ := h.repo.User(current.ID)
 		model := assistantRequestModel(conv.Executor, conv.Model)
-		if engine, _ := assistantModelEngine(model); engine == assistantEngineCodeBuddy {
-			editor, _, _ = h.assistantChatUser(editor)
-		}
-		if err := validateAssistantEffort(c.Request.Context(), editor, model, conv.Effort); err != nil {
-			c.JSON(400, gin.H{"error": err.Error()})
-			return
+		engine, modelID := assistantModelEngine(model)
+		oldEngine, oldModelID := assistantModelEngine(assistantRequestModel(existing.Executor, existing.Model))
+		// Metadata edits can keep historical settings after the model catalog changes.
+		if engine != oldEngine || modelID != oldModelID || conv.Effort != existing.Effort {
+			editor, _ := h.repo.User(current.ID)
+			if engine == assistantEngineCodeBuddy {
+				editor, _, _ = h.assistantChatUser(editor)
+			}
+			if err := validateAssistantEffort(c.Request.Context(), editor, model, conv.Effort); err != nil {
+				c.JSON(400, gin.H{"error": err.Error()})
+				return
+			}
 		}
 		var saveErr error
 		if shared {
