@@ -18,7 +18,7 @@ import (
 func installFakeDockerBuild(t *testing.T, buildScript string) {
 	t.Helper()
 	bin := t.TempDir()
-	script := "#!/bin/sh\ncase \"$1\" in\n  inspect|image) exit 1 ;;\n  build)\n" + buildScript + "\n  ;;\nesac\nexit 0\n"
+	script := "#!/bin/sh\ncase \"$1\" in\n  inspect) echo \"No such container\" >&2; exit 1 ;;\n  image) exit 1 ;;\n  build)\n" + buildScript + "\n  ;;\nesac\nexit 0\n"
 	if err := os.WriteFile(filepath.Join(bin, "docker"), []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}

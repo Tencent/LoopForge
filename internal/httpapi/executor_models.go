@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"net/http"
+	"strings"
 
 	"agentflow/internal/domain"
 	"agentflow/internal/runtime"
@@ -26,6 +27,7 @@ type executorEffortOption struct {
 // agent wizard. CustomModel marks CLIs that accept free-form model IDs
 // (custom base URLs); Credits is only surfaced for CodeBuddy.
 type executorModelCatalog struct {
+	Source      string                 `json:"source,omitempty"`
 	Default     string                 `json:"default,omitempty"`
 	CustomModel bool                   `json:"customModel,omitempty"`
 	Models      []executorModelInfo    `json:"models"`
@@ -157,14 +159,42 @@ func cursorCatalogModels() []executorModelInfo {
 	return out
 }
 
-// executorModels serves the built-in model/effort catalog. It is a static,
-// non-sensitive list (model IDs, credit multipliers, effort levels), so it is
-// readable without login; role editing and runs still enforce auth elsewhere.
+// executorModels returns built-in defaults and effort levels, with the
+// signed-in editor's model lists substituted where available.
 func (h *catalogHandlers) executorModels(c *gin.Context) {
+	c.Header("Cache-Control", "private, no-store")
+	if c.Query("builtin") == "1" {
+		c.JSON(http.StatusOK, executorModelCatalogs())
+		return
+	}
+	var user domain.User
 	if current, ok := h.requestUser(c.Request, true); ok {
-		if user, ok := h.repo.User(current.ID); ok {
+		if stored, found := h.repo.User(current.ID); found {
+			user = stored
 			refreshCLIModels(c.Request.Context(), user.CodeBuddyInternetEnvironment, user.CodeBuddyAPIKey)
 		}
 	}
-	c.JSON(http.StatusOK, executorModelCatalogs())
+	catalogs := executorModelCatalogs()
+	for _, engine := range append([]string{assistantEngineCodeBuddy}, assistantCLIEngines()...) {
+		models := assistantDiscoveredModelsFor(c.Request.Context(), user, engine)
+		if len(models) == 0 {
+			continue
+		}
+		id := engine
+		if engine == assistantEngineClaude {
+			id = "claude"
+		}
+		catalog := catalogs[id]
+		catalog.Source = "personal"
+		catalog.Models = make([]executorModelInfo, 0, len(models))
+		for _, model := range models {
+			name := strings.TrimSpace(model.Name)
+			if name == "" {
+				name = model.ID
+			}
+			catalog.Models = append(catalog.Models, executorModelInfo{ID: model.ID, Name: name})
+		}
+		catalogs[id] = catalog
+	}
+	c.JSON(http.StatusOK, catalogs)
 }

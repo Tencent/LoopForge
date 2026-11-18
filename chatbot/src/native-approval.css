@@ -1,0 +1,67 @@
+/* External-write approval cards at the end of the live reply (Harness UI
+ * panel language). Colours come from --hui-* tokens only. */
+.native-approvals {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+  margin: 12px 0 20px;
+}
+.native-approval {
+  padding: 16px 18px;
+  background: var(--hui-surface);
+  border: 1px solid var(--hui-border);
+  border-radius: 14px;
+  box-shadow: var(--hui-panel-shadow);
+}
+.native-approval-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--hui-text);
+  font-size: 14px;
+}
+.native-approval-title svg {
+  color: var(--hui-warn);
+  flex: none;
+}
+.native-approval pre {
+  max-height: 180px;
+  margin: 10px 0 0;
+  padding: 10px 12px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: 12px/1.5 var(--hui-mono);
+  background: var(--hui-soft);
+  border: 1px solid var(--hui-border);
+  border-radius: 8px;
+}
+.native-approval p {
+  margin: 10px 0 0;
+  font-size: 12px;
+  color: var(--hui-secondary);
+}
+.native-approval-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 12px;
+}
+.native-approval-actions button {
+  padding: 7px 12px;
+  color: inherit;
+  background: transparent;
+  border: 1px solid var(--hui-border);
+  border-radius: 7px;
+  cursor: pointer;
+}
+.native-approval-actions button.primary {
+  color: var(--hui-on-accent);
+  background: var(--hui-accent);
+  border-color: var(--hui-accent);
+}
+.native-approval-actions button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}

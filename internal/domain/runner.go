@@ -81,6 +81,14 @@ const RunnerVersionConversationWorkspace = "0.8.0"
 // queued CLI or block a following turn behind a previous background save.
 const RunnerVersionConversationCLI = "0.10.1"
 
+// RunnerVersionCLISettings adds chat account login, CLI tests, model discovery
+// and updates from the machine card.
+const RunnerVersionCLISettings = "0.10.2"
+
+func (r Runner) SupportsCLISettings() bool {
+	return versionAtLeast(r.RunnerVersion, RunnerVersionCLISettings)
+}
+
 func (r Runner) SupportsConversationCLI() bool {
 	return versionAtLeast(r.RunnerVersion, RunnerVersionConversationCLI)
 }
@@ -295,12 +303,23 @@ func (r Runner) RuntimeAuthMode(provider string) string {
 }
 
 const (
-	RuntimeStatusOnline   = "online"
-	RuntimeStatusOffline  = "offline"
-	RuntimeStatusDisabled = "disabled"
-	RuntimeAuthLocal      = "local"
-	RuntimeAuthPersonal   = "personal"
+	RuntimeStatusOnline            = "online"
+	RuntimeStatusOffline           = "offline"
+	RuntimeStatusDisabled          = "disabled"
+	RuntimeAuthLocal               = "local"
+	RuntimeAuthPersonal            = "personal"
+	RuntimeCapabilityManagedUpdate = "managed_update"
+	RuntimeCapabilityNativeUpdate  = "native_update"
 )
+
+func (rt RunnerRuntime) SupportsCLIUpdate() bool {
+	for _, capability := range rt.Capabilities {
+		if capability == RuntimeCapabilityManagedUpdate || capability == RuntimeCapabilityNativeUpdate {
+			return true
+		}
+	}
+	return false
+}
 
 // RunnerRuntime is one discovered Agent CLI on the runner machine. Credentials
 // for the CLI stay on that machine; the control plane only learns the binary

@@ -31,6 +31,7 @@ type Daemon struct {
 	conversationMu        sync.Mutex
 	conversationForward   runtime.ConversationToolForward
 	conversationReplies   map[string]chan domain.RunnerToolResponse
+	conversationToolSeq   atomic.Uint64
 	cfg                   Config
 	client                *Client
 	executor              *runtime.ExecutorRunner
@@ -46,6 +47,10 @@ type Daemon struct {
 	wsOnline             atomic.Bool
 	updateMu             sync.RWMutex
 	updateReady          atomic.Bool
+	updateDownloadMu     sync.Mutex
+	cancelClaimLoop      context.CancelFunc
+	heartbeatWake        chan struct{}
+	maintenance          runnerMaintenanceState
 	runSandboxMu         sync.Mutex
 	runSandboxes         map[string]*runSandbox
 	managedTasks         map[string]*managedTask
@@ -129,7 +134,8 @@ func New(cfg Config) (*Daemon, error) {
 		host, _ := os.Hostname()
 		cfg.Name = host
 	}
-	return &Daemon{cfg: cfg, client: NewClient(cfg.ServerURL), executor: runtime.NewExecutorRunner(), controls: map[string]chan string{}, pendingControls: map[string]string{}}, nil
+	return &Daemon{cfg: cfg, client: NewClient(cfg.ServerURL), executor: runtime.NewExecutorRunner(),
+		controls: map[string]chan string{}, pendingControls: map[string]string{}, heartbeatWake: make(chan struct{}, 1)}, nil
 }
 
 func trimTrailingSlash(s string) string {
@@ -148,16 +154,23 @@ func (d *Daemon) Run(ctx context.Context) error {
 		return err
 	}
 	d.refreshRuntimes(ctx)
+	claimCtx, cancelClaim := context.WithCancel(ctx)
+	defer cancelClaim()
+	d.cancelClaimLoop = cancelClaim
 	go d.rescanLoop(ctx)
 	heartbeatDone := make(chan struct{})
 	go func() { defer close(heartbeatDone); d.heartbeatLoop(ctx) }()
 	controlDone := make(chan struct{})
 	go func() { defer close(controlDone); d.controlLoop(ctx) }()
-	err := d.claimLoop(ctx)
+	err := d.claimLoop(claimCtx)
+	if d.updateReady.Load() {
+		err = ErrUpdateReady
+	}
 	// Workspace preparation runs on the control connection. Cancel and join it
 	// before closing shared sandboxes, including on an automatic-update exit.
 	stop()
 	<-controlDone
+	d.maintenance.jobs.Wait()
 	<-heartbeatDone
 	closeCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	d.closeAllRunSandboxes(closeCtx)
@@ -406,6 +419,7 @@ func (d *Daemon) heartbeatLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+		case <-d.heartbeatWake:
 		}
 	}
 }
@@ -717,7 +731,7 @@ func (d *Daemon) executeTerminal(ctx context.Context, task domain.RunnerTask) ex
 		return execResult{status: domain.RunnerTaskFailed, errMsg: fmt.Sprintf("workspace %s: %v", workspace, err)}
 	}
 	if task.Invocation != nil {
-		if err := checkoutInvocationRepositories(ctx, workspace, task.Invocation, runnerTaskSandboxDriver(task)); err != nil {
+		if err := checkoutInvocationRepositories(ctx, workspace, task.Invocation); err != nil {
 			return execResult{status: domain.RunnerTaskFailed, errMsg: fmt.Sprintf("repository checkout: %v", err)}
 		}
 		if err := writeRunnerHumanContext(workspace, task.Invocation.HumanContext); err != nil {
@@ -797,7 +811,7 @@ func (d *Daemon) executeInvocation(ctx context.Context, task domain.RunnerTask) 
 	if err := os.MkdirAll(workspace, 0o755); err != nil {
 		return execResult{status: domain.RunnerTaskFailed, errMsg: fmt.Sprintf("workspace %s: %v", workspace, err)}, nil
 	}
-	if err := checkoutInvocationRepositories(ctx, workspace, inv, runnerTaskSandboxDriver(task)); err != nil {
+	if err := checkoutInvocationRepositories(ctx, workspace, inv); err != nil {
 		return execResult{status: domain.RunnerTaskFailed, errMsg: fmt.Sprintf("repository checkout: %v", err)}, nil
 	}
 	if err := writeRunnerHumanContext(workspace, inv.HumanContext); err != nil {
@@ -875,6 +889,21 @@ func (d *Daemon) executeInvocation(ctx context.Context, task domain.RunnerTask) 
 		credentialEnv, err = bindSandboxPrivateHome(workspace, task.Sandbox.Profile.Driver, task.Provider, credentialEnv)
 		if err != nil {
 			return execResult{status: domain.RunnerTaskFailed, errMsg: err.Error()}, nil
+		}
+	} else if sandbox != nil && inv.CredentialSource == domain.RuntimeAuthLocal && prepared.Command.PrivateHome {
+		loginEnv, cleanup, err := runtime.PrepareRunnerSandboxLogin(sandbox, prepared.Command.Provider, inv.RunID, inv.NodeID)
+		if err != nil {
+			return execResult{status: domain.RunnerTaskFailed, errMsg: err.Error()}, nil
+		}
+		if cleanup != nil {
+			defer func() {
+				if err := cleanup(); err != nil {
+					log.Printf("task %s: clean sandbox CLI login: %v", task.ID, err)
+				}
+			}()
+		}
+		for key, value := range loginEnv {
+			credentialEnv[key] = value
 		}
 	}
 	commandEnv := runtime.CommandEnvironment(prepared.Command)
@@ -1105,7 +1134,7 @@ func invocationGitToken(inv *domain.RunnerInvocation) string {
 // kept for persisted legacy invocations that already checked out at the
 // workspace root. Later invocations and gates reuse the existing checkout
 // (once per workspace).
-func checkoutInvocationRepositories(ctx context.Context, workspace string, inv *domain.RunnerInvocation, driver string, refreshClean ...bool) error {
+func checkoutInvocationRepositories(ctx context.Context, workspace string, inv *domain.RunnerInvocation, refreshClean ...bool) error {
 	if inv == nil {
 		return nil
 	}
@@ -1132,9 +1161,6 @@ func checkoutInvocationRepositories(ctx context.Context, workspace string, inv *
 		}
 		if err := configureRepositoryGitIdentity(ctx, target, inv.GitUserName, inv.GitUserEmail); err != nil {
 			return err
-		}
-		if err := runtime.ProtectProjectAgentGitIndex(ctx, target, driver); err != nil {
-			return fmt.Errorf("protect repository Agent configuration in %s: %w", repo.Dir, err)
 		}
 	}
 	return nil
@@ -1385,7 +1411,7 @@ func (d *Daemon) defaultWorkspace(taskID string) string {
 }
 
 // runnerVersion is reported at registration; it matches the module build.
-var runnerVersion = "0.10.1"
+var runnerVersion = domain.RunnerVersionCLISettings
 
 // Version returns the runner build version reported at registration.
 func Version() string { return runnerVersion }

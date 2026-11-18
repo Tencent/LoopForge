@@ -88,6 +88,7 @@ type runnersHandlers struct {
 	*deps
 	runnerWaiters   *runnerWaiterRegistry
 	runnerControls  *runnerControlHub
+	assistant       *assistantHandlers
 	runnerBindMu    stdsync.Mutex
 	runnerBindCodes map[string]runnerBindCode
 }

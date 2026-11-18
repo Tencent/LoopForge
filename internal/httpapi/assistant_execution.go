@@ -1,8 +1,10 @@
 package httpapi
 
 import (
-	"agentflow/internal/domain"
 	"fmt"
+
+	"agentflow/internal/domain"
+
 	"github.com/gin-gonic/gin"
 )
 
@@ -49,6 +51,24 @@ func (h *assistantHandlers) newExecutionTarget(userID int64, projectID string, r
 	return &target, nil
 }
 
+// Use a machine's login only for its owner on a personal execution target.
+func (h *assistantHandlers) assistantUsesRunnerLogin(userID int64, target *domain.AssistantExecutionTarget, engine string) bool {
+	if target == nil || target.Pool != domain.ExecutionModeRunner {
+		return false
+	}
+	runner, ok := h.repo.Runner(target.RunnerID)
+	return ok && runner.OwnerUserID == userID && runnerUsesLocalLogin(runner, engine)
+}
+
+func runnerUsesLocalLogin(runner domain.Runner, engine string) bool {
+	return assistantSupportsRunnerLogin(engine) &&
+		runner.RuntimeAuthMode(engine) == domain.RuntimeAuthLocal
+}
+
+func assistantSupportsRunnerLogin(engine string) bool {
+	return engine == assistantEngineCodex || engine == assistantEngineClaude
+}
+
 func (h *assistantHandlers) sessionMode(c *gin.Context) {
 	user, ok := h.requestUser(c.Request, true)
 	if !ok {
@@ -65,7 +85,7 @@ func (h *assistantHandlers) sessionMode(c *gin.Context) {
 		c.JSON(404, gin.H{"error": "会话不存在"})
 		return
 	}
-	if g, ok := h.repo.AssistantGeneration(owner, saved.ID); ok && g.Status == "running" {
+	if g, ok := h.readGeneration(owner, saved.ID); ok && g.Status == "running" {
 		c.JSON(409, gin.H{"error": "请先停止当前生成再切换模式"})
 		return
 	}
@@ -94,8 +114,8 @@ func (h *assistantHandlers) sessionMode(c *gin.Context) {
 			return
 		}
 		request, err := h.engine.TrustedWorkspaceRequest(runID, domain.RunnerWorkspaceRequest{})
-		if err != nil || request.Sandbox == nil || request.Sandbox.Profile.Driver != "docker" {
-			c.JSON(409, gin.H{"error": "对话工作区仅支持 Docker"})
+		if err != nil || request.Sandbox == nil || !domain.ConversationSandboxDriver(request.Sandbox.Profile.Driver) {
+			c.JSON(409, gin.H{"error": "对话工作区只支持 Docker 或 native 沙箱"})
 			return
 		}
 	}

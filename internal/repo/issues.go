@@ -247,6 +247,9 @@ func (r *IssuesRepo) saveIssueLocked(v domain.Issue, fromSync, existingOnly bool
 		if strings.TrimSpace(v.ConversationSessionID) == "" {
 			v.ConversationSessionID = old.ConversationSessionID
 		}
+		if strings.TrimSpace(v.SOPMode) == "" {
+			v.SOPMode = old.SOPMode
+		}
 		if !old.Clarification.StartedAt.IsZero() && (v.Clarification.StartedAt.IsZero() || v.Clarification.StartedAt.After(old.Clarification.StartedAt)) {
 			v.Clarification.StartedAt = old.Clarification.StartedAt
 		}
@@ -304,7 +307,14 @@ func (r *IssuesRepo) saveIssueLocked(v domain.Issue, fromSync, existingOnly bool
 			v.CompletedAt = now
 		}
 	}
-	bindDefaultWorkflow(&v, r.projectWorkflowID(v.ProjectID), r.projectIssueWorkflowID(v.ProjectID))
+	if v.WithoutSOP() {
+		v.SOPMode = domain.IssueSOPNone
+		v.WorkflowID, v.PlaybookID, v.SOPBindings = "", "", nil
+		v.AutomationState = "ignored"
+	} else {
+		v.SOPMode = ""
+		bindDefaultWorkflow(&v, r.projectWorkflowID(v.ProjectID), r.projectIssueWorkflowID(v.ProjectID))
+	}
 	v.UpdatedAt = now
 	if existingOnly {
 		result := r.DB.Model(&issueRow{}).Where("id = ?", v.ID).Updates(issueValues(v))

@@ -20,6 +20,23 @@ type DeliveryMR struct {
 	// GongfengState is the raw Gongfeng state from a live lookup; empty when
 	// the MR was only recovered from artifact text.
 	GongfengState string `json:"-"`
+	// HeadSHA is the source commit a live lookup reports; empty when the host
+	// response carries none.
+	HeadSHA string `json:"-"`
+}
+
+// BranchMRQuery asks the host for the MRs from one work branch into one target
+// branch, in a run's execution context: ProjectID is the run's project and
+// GitToken the credential the run pushed with.
+type BranchMRQuery struct {
+	ProjectID     string
+	RemoteProject string
+	SourceBranch  string
+	TargetBranch  string
+	GitToken      string
+	// ResponsibleUserID is the run's responsible user, the identity GitToken
+	// belongs to.
+	ResponsibleUserID int64
 }
 
 // GongfengMRURL is the canonical web URL of a Gongfeng merge request.

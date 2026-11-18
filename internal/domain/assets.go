@@ -167,6 +167,18 @@ const (
 	SandboxDriverBwrap    = "bwrap"
 )
 
+// ConversationSandboxDriver reports whether a conversation workspace can run
+// in a sandbox of driver: Docker, or the native lightweight sandbox (stored as
+// native, or already resolved to seatbelt / bwrap).
+func ConversationSandboxDriver(driver string) bool {
+	switch strings.TrimSpace(driver) {
+	case SandboxDriverDocker, SandboxDriverNative, SandboxDriverSeatbelt, SandboxDriverBwrap:
+		return true
+	default:
+		return false
+	}
+}
+
 // ResolveSandboxDriver maps native onto the lightweight sandbox of goos and
 // returns every other driver unchanged. An empty goos (a runner that never
 // reported its OS) leaves native for that machine to resolve itself.

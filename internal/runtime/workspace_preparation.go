@@ -291,6 +291,9 @@ func EnsureWorkspacePreparation(ctx context.Context, sb Sandbox, wf domain.Workf
 	if err != nil {
 		return WorkspacePreparationStatus{Status: "failed", Error: err.Error(), Steps: []WorkspacePreparationStep{}}, err
 	}
+	if err := RestoreLegacyWorkspaceAgentConfig(ctx, sb.Workspace(), repositories); err != nil {
+		return WorkspacePreparationStatus{Status: "failed", Error: err.Error(), Steps: []WorkspacePreparationStep{}}, err
+	}
 	old := ReadWorkspacePreparationStatus(sb.Workspace(), sb.ID())
 	prior := map[string]WorkspacePreparationStep{}
 	if old.Environment == epoch {

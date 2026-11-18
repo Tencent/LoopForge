@@ -1069,17 +1069,8 @@ func extractJSONObject(raw string) (any, string) {
 			continue
 		}
 		if fmt.Sprint(event["type"]) == "result" {
-			if msg, ok := event["result"].(string); ok {
-				if v, ok := parseStreamJSONObject(msg); ok {
-					resultVal, resultRaw = v, msg
-				} else if strings.TrimSpace(msg) != "" {
-					resultVal = map[string]any{"summary": msg, "questions": []any{}, "ready": false}
-					resultRaw = msg
-				}
-			} else if obj, ok := event["result"].(map[string]any); ok {
-				if v, ok := unwrapStreamJSONEnvelope(obj); ok {
-					resultVal, resultRaw = v, line
-				}
+			if v, src, ok := streamResultEventValue(event, line); ok {
+				resultVal, resultRaw = v, src
 			}
 			continue
 		}
@@ -1101,7 +1092,34 @@ func extractJSONObject(raw string) (any, string) {
 	if fallback != nil {
 		return fallback, fallbackRaw
 	}
-	return map[string]any{"summary": raw, "questions": []any{}, "ready": false}, raw
+	return clarifySummaryFallback(raw), raw
+}
+
+// streamResultEventValue decodes the payload of one stream-json "result"
+// event. A string result is parsed as JSON, or wrapped as a not-ready summary
+// when it is non-blank prose; an object result is unwrapped from its envelope
+// and reported with the whole event line as its raw source.
+func streamResultEventValue(event map[string]any, line string) (any, string, bool) {
+	switch result := event["result"].(type) {
+	case string:
+		if v, ok := parseStreamJSONObject(result); ok {
+			return v, result, true
+		}
+		if strings.TrimSpace(result) != "" {
+			return clarifySummaryFallback(result), result, true
+		}
+	case map[string]any:
+		if v, ok := unwrapStreamJSONEnvelope(result); ok {
+			return v, line, true
+		}
+	}
+	return nil, "", false
+}
+
+// clarifySummaryFallback wraps free text as a not-ready clarify payload with
+// no questions.
+func clarifySummaryFallback(text string) map[string]any {
+	return map[string]any{"summary": text, "questions": []any{}, "ready": false}
 }
 
 func unwrapStreamJSONEnvelope(v any) (any, bool) {
