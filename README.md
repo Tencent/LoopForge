@@ -7,7 +7,6 @@
 
 <p align="center">
   <a href="https://github.com/Tencent/LoopForge/actions/workflows/platform.yml"><img src="https://img.shields.io/github/actions/workflow/status/Tencent/LoopForge/platform.yml?branch=main&label=CI&style=flat-square" alt="CI"></a>
-  <a href="https://www.npmjs.com/package/loopforge-cli"><img src="https://img.shields.io/npm/v/loopforge-cli?label=loopforge-cli&color=7b61ff&style=flat-square" alt="npm loopforge-cli"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-7b61ff?style=flat-square" alt="MIT License"></a>
   <img src="https://img.shields.io/badge/self--hosted-Docker-526ce8?style=flat-square&logo=docker&logoColor=white" alt="Self-hosted with Docker">
   <a href="https://github.com/Tencent/LoopForge/stargazers"><img src="https://img.shields.io/github/stars/Tencent/LoopForge?style=flat-square&color=f59e0b" alt="GitHub stars"></a>
@@ -26,7 +25,7 @@
   <a href="#quick-start">Quick start</a> ·
   <a href="#how-sops-work">SOPs</a> ·
   <a href="#features">Features</a> ·
-  <a href="#loopforge-local">Local</a> ·
+  <a href="#loopforge-local">Local (Legacy)</a> ·
   <a href="#faq">FAQ</a> ·
   <a href="#documentation">Docs</a>
 </p>
@@ -193,25 +192,11 @@ Each node declares its artifacts and dependencies, and the engine starts each st
 
 ## LoopForge Local
 
-Don't want to run a server? **LoopForge Local** brings the built-in delivery workflows straight into the coding assistant you already use:
+> **Legacy.** Previously published versions of LoopForge Local (`loopforge-cli`) remain available. The [Local guide](docs/local/usage.md) covers installing a fixed version and keeping existing workflows and artifacts.
 
-```bash
-# Run inside your target project, e.g. for Claude Code
-npx -y loopforge-cli@latest install claude
-```
+To use platform projects and SOPs from a coding assistant, [connect CodeBuddy to your LoopForge instance over MCP](docs/local/usage.md#connect-to-loopforge-with-mcp). Local continues to run its built-in workflows inside the coding assistant without a LoopForge server.
 
-Then run `/start-devflow "<your request>"` in Claude Code.
-
-| Host | Supported |
-| --- | --- |
-| Claude Code · CodeBuddy · Codex · Cursor | Classic (default) and Portable editions |
-| Pi | Portable edition |
-| DeepSeek Harness | Portable edition |
-| Hermes Agent | Portable edition |
-
-See the [local guide](docs/local/usage.md) for each host's entry point and [editions](docs/local/editions.md) for the differences. Source lives in [`local/`](local/). Local runs the built-in workflows today; exporting a platform SOP for standalone local execution is planned.
-
-| | Platform | Local |
+| | Platform | Local (Legacy) |
 | --- | --- | --- |
 | Best for | Teams sharing chat workspaces, SOPs, approvals and history | One developer inside an IDE or CLI |
 | Needs | Docker + Python 3 | Node.js 20+, Python 3.8+ and a coding assistant |
@@ -244,7 +229,7 @@ New installations listen on all interfaces and target a trusted team. Read the [
 | --- | --- |
 | Deploy, manage accounts, connect execution machines | [Deployment](docs/deployment.md) |
 | Understand chat workspaces, scheduled AI tasks and token pricing | [Conversation workspaces](docs/conversation-workspaces.md) · [AI scheduled tasks](docs/ai-scheduled-task-capabilities.md) · [Token pricing](docs/token-pricing.md) |
-| Install local workflows or choose an edition | [LoopForge Local](docs/local/usage.md) · [Editions](docs/local/editions.md) |
+| Maintain an existing Local installation | [LoopForge Local](docs/local/usage.md) · [Editions](docs/local/editions.md) |
 | Extend the platform or use the HTTP / MCP API | [Architecture](docs/architecture.md) · [API reference](docs/api/README.md) · [Shared schedules API](docs/api/shared-schedules.md) |
 | Contribute to the UI | [Frontend design conventions](design.md) (Chinese) |
 | Check functional coverage and release readiness | [Validation record](docs/validation.md) · [Acceptance matrix](docs/testing/acceptance-matrix.md) · [Release review](docs/release-readiness.md) |
