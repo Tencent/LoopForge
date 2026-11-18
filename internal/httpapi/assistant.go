@@ -61,6 +61,7 @@ type assistantRequest struct {
 	Effort          string                           `json:"effort"`
 	Executor        string                           `json:"executor,omitempty"`
 	ApprovalMode    string                           `json:"approvalMode"`
+	ApprovalUserID  int64                            `json:"approvalUserId,omitempty"`
 	RunID           string                           `json:"runId,omitempty"`
 	SpaceID         string                           `json:"spaceId,omitempty"`
 	workspaceToken  string
@@ -113,6 +114,9 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 	}
 	var req assistantRequest
 	if !decodeLimit(c, &req, assistantRequestBodyLimit) {
+		return
+	}
+	if !requireAssistantApprovalUser(c, current.ID, req.ApprovalUserID) {
 		return
 	}
 	req.Executor = assistantExecutor(req.Executor)
@@ -222,7 +226,7 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 	}
 	cliEngine, _ = assistantModelEngine(req.Model)
 	req.Executor = cliEngine
-	if err := validateAssistantEffort(user, req.Model, req.Effort); err != nil {
+	if err := validateAssistantEffort(c.Request.Context(), user, req.Model, req.Effort); err != nil {
 		c.JSON(400, gin.H{"error": err.Error()})
 		return
 	}

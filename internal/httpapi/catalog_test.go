@@ -42,6 +42,8 @@ func TestPutAgentValidatesEffortLevel(t *testing.T) {
 }
 
 func TestExecutorModelsCatalogListsPerCLI(t *testing.T) {
+	t.Setenv("AGENTFLOW_ASSISTANT_MODEL", "")
+	t.Setenv("AGENTFLOW_ASSISTANT_MODELS", "test-model")
 	s, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -57,11 +59,29 @@ func TestExecutorModelsCatalogListsPerCLI(t *testing.T) {
 	if cb.Models[0].Credits != "" {
 		t.Fatal("unconfigured public model must not claim a private price")
 	}
+	for _, model := range cb.Models {
+		if model.ID == assistantDefaultModel {
+			t.Fatal("the CodeBuddy CLI default must not be listed as a model")
+		}
+	}
 	codex := catalogs["codex"]
 	if len(codex.Models) < 2 || codex.Models[0].ID != "gpt-6.1-sol" || codex.Models[1].ID != "gpt-6.1-terra" || codex.Models[1].Name != "GPT-6.1 Terra" {
 		t.Fatalf("codex catalog = %+v", codex.Models)
 	}
+	codexNames := make(map[string]string, len(codex.Models))
+	for _, model := range codex.Models {
+		codexNames[model.ID] = model.Name
+	}
+	for id, name := range map[string]string{"gpt-6.2-sol": "GPT-6.2 Sol", "gpt-6.2-astra": "GPT-6.2 Astra"} {
+		if got := codexNames[id]; got != name {
+			t.Errorf("Codex model %s has name %q, want %q", id, got, name)
+		}
+	}
 	claude := catalogs["claude"]
+	if len(claude.Models) < 2 || claude.Models[0].ID != "claude-fable-5-1" ||
+		claude.Models[1].ID != "claude-fable-5-2" || claude.Models[1].Name != "Claude Fable 5.2" {
+		t.Fatalf("claude catalog = %+v", claude.Models)
+	}
 	haiku := -1
 	for i, model := range claude.Models {
 		if model.ID == "claude-haiku-5-5" {

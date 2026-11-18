@@ -490,7 +490,7 @@ func (h *assistantHandlers) testRunnerCLI(ctx context.Context, runnerID, provide
 	if provider == assistantEngineCodeBuddy {
 		model = loadAssistantModels(ctx, user.CodeBuddyInternetEnvironment).Default
 	} else if !runnerLogin {
-		models := assistantDiscoveredModelsFor(ctx, user, provider)
+		models, _ := assistantDiscoveredModelsFor(ctx, user, provider)
 		if len(models) == 0 {
 			models = assistantEngineBuiltinModels(provider)
 		}

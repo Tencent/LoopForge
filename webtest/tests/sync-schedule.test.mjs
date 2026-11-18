@@ -541,7 +541,7 @@ test('AI schedule model picker includes account login CLI models and keeps a sav
   const app = await loadApp();
   t.after(app.close);
   app.router.get('/api/assistant/models', call => ({
-    default: 'glm-test',
+    default: 'default',
     models: [
       { id: 'glm-test', name: 'GLM Test', family: 'glm' },
       { id: 'claude-test', name: 'Claude Test', family: 'claude' },

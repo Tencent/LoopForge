@@ -203,6 +203,10 @@ type CLIModel struct {
 	Name          string            `json:"name,omitempty"`
 	Efforts       map[string]string `json:"efforts,omitempty"`
 	DefaultEffort string            `json:"defaultEffort,omitempty"`
+	// ReasoningEfforts is the user's override. An empty list permits only the native default.
+	ReasoningEfforts *[]string `json:"reasoningEfforts,omitempty"`
+	// DiscoveredReasoningEfforts is supplied by model discovery and used in automatic mode.
+	DiscoveredReasoningEfforts *[]string `json:"discoveredReasoningEfforts,omitempty"`
 }
 
 // AgentCLICredential is the personal configuration of one agent CLI. An

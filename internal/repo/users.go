@@ -534,9 +534,44 @@ func normalizeCLIModels(models []domain.CLIModel) ([]domain.CLIModel, error) {
 		if err != nil {
 			return nil, fmt.Errorf("模型 %s：%w", id, err)
 		}
-		out = append(out, domain.CLIModel{ID: id, Name: name, Efforts: efforts, DefaultEffort: defaultEffort})
+		reasoningEfforts, err := normalizeCLIReasoningEfforts(model.ReasoningEfforts)
+		if err != nil {
+			return nil, fmt.Errorf("模型 %s：%w", id, err)
+		}
+		discoveredEfforts, err := normalizeCLIReasoningEfforts(model.DiscoveredReasoningEfforts)
+		if err != nil {
+			return nil, fmt.Errorf("模型 %s：%w", id, err)
+		}
+		out = append(out, domain.CLIModel{
+			ID: id, Name: name, Efforts: efforts, DefaultEffort: defaultEffort,
+			ReasoningEfforts: reasoningEfforts, DiscoveredReasoningEfforts: discoveredEfforts,
+		})
 	}
 	return out, nil
+}
+
+func normalizeCLIReasoningEfforts(raw *[]string) (*[]string, error) {
+	if raw == nil {
+		return nil, nil
+	}
+	levels := make([]string, 0, len(*raw))
+	for _, level := range *raw {
+		level = strings.TrimSpace(level)
+		supported := false
+		for _, allowed := range domain.ExecutorEffortLevels {
+			if slices.Contains(allowed, level) {
+				supported = true
+				break
+			}
+		}
+		if !supported {
+			return nil, fmt.Errorf("不支持思考强度 %q", level)
+		}
+		if !slices.Contains(levels, level) {
+			levels = append(levels, level)
+		}
+	}
+	return &levels, nil
 }
 
 func validCLIModelID(id string) error {
