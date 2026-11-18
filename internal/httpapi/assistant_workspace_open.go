@@ -23,7 +23,7 @@ const workspaceOpenSchema = `{"type":"object","properties":{"sandboxProfileId":{
 func workspaceOpenDescriptor() agentToolDescriptor {
 	return agentToolDescriptor{
 		Name:        "workbench_workspace_open",
-		Description: "进入工作区模式：在指定的运行环境（沙箱配置）里打开本对话的工作区，或直接接入某次同项目 SOP 运行的原工作区，之后用 CLI 原生的文件、补丁和命令工具工作。需要看代码、改代码、跑命令、构建、访问 GitHub（查 PR、开 PR、合并、评论等）时调用。新开的普通工作区是空白可写目录，可以直接创建文件、运行命令和预览。有仓库相关任务时，自行 git clone、建分支、提交、推送、开 PR。若要在普通新对话里接着某次历史/暂停 SOP 的原工作区现场干活（保留未推送改动与产物，且支持之后回原 SOP 重跑节点或继续），传 workspaceRunId 直接接入（需与当前对话在同一执行机器，已回收的快照会自动恢复；删除本对话不会删除借用的 SOP 工作区）。平台已按本轮发言人的个人凭证配置好 Git（github.com 的 HTTPS 用 Git Token，SSH 用个人 SSH 密钥），GH_TOKEN 也已设置，环境里没有 gh 时可以自己安装或用 curl 调 API。不要打印、回显或写入任何令牌。一个对话同一时间只有一个活动工作区：不传参数或传相同环境时继续用当前工作区，传不同的 sandboxProfileId 就切换过去；切走的工作区解绑，空闲时保存快照后回收。返回 handoff=true 时只回复一句「好的。」结束本阶段，平台会在工作区里续接同一原生会话。项目对话中开好的 PR 由平台在本轮结束时自动登记到需求并跟踪合入。子 Agent 不能调用本工具。",
+		Description: "进入工作区模式：在指定的运行环境（沙箱配置）里打开本对话的工作区，或直接接入某次同项目 SOP 运行的原工作区，之后用 CLI 原生的文件、补丁和命令工具工作。需要看代码、改代码、跑命令、构建、访问 GitHub 或 GitLab（查 PR/MR、开 PR/MR、合并、评论等）时调用。新开的普通工作区是空白可写目录，可以直接创建文件、运行命令和预览。涉及已有仓库时，自行 git clone、建分支、提交、推送并开 PR/MR。若要在普通新对话里接着某次历史/暂停 SOP 的原工作区现场干活（保留未推送改动与产物，且支持之后回原 SOP 重跑节点或继续），传 workspaceRunId 直接接入（需与当前对话在同一执行机器，已回收的快照会自动恢复；删除本对话不会删除借用的 SOP 工作区）。平台已按本轮发言人的个人凭证配置好 Git（已配置主机的 HTTPS 自动认证，SSH 用个人 SSH 密钥），gh 和 glab 会按仓库所在主机拿到令牌，环境里没有时可以自己安装；其他 API 需要令牌时用 git credential fill 按主机获取。不要打印、回显或写入任何令牌。一个对话同一时间只有一个活动工作区：不传参数或传相同环境时继续用当前工作区，传不同的 sandboxProfileId 就切换过去；切走的工作区解绑，空闲时保存快照后回收。返回 handoff=true 时只回复一句「好的。」结束本阶段，平台会在工作区里续接同一原生会话。项目对话中开好的 GitHub PR 或 GitLab MR 由平台在本轮结束时自动登记到需求并跟踪合入。子 Agent 不能调用本工具。",
 		InputSchema: json.RawMessage(workspaceOpenSchema),
 		Kind:        "workspace",
 	}

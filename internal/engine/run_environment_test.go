@@ -2,7 +2,9 @@ package engine
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -39,11 +41,11 @@ func TestAcquireRunEnvironmentRefreshesGitTokenWithoutReplacingWorkspace(t *test
 		t.Fatal(err)
 	}
 	workspace := env.Workspace()
-	if env.credentials.GitToken != "" {
-		t.Fatalf("git token = %q, want empty before the user configures one", env.credentials.GitToken)
+	if env.credentials.GitHTTPCredentials["github.com"].Token != "" {
+		t.Fatalf("git token = %q, want empty before the user configures one", env.credentials.GitHTTPCredentials["github.com"].Token)
 	}
 
-	if _, err := s.UpdateUserCredentials(3, repo.UserCredentialUpdate{GitToken: "tok_user"}); err != nil {
+	if err := s.SaveGitHTTPCredential(3, "", domain.GitHTTPCredentialSecret{GitHTTPCredential: domain.GitHTTPCredential{Host: "github.com", Name: "GitHub", Platform: domain.GitPlatformGitHub}, Token: "tok_user"}); err != nil {
 		t.Fatal(err)
 	}
 	stored, ok := s.RunState(run.ID)
@@ -64,18 +66,18 @@ func TestAcquireRunEnvironmentRefreshesGitTokenWithoutReplacingWorkspace(t *test
 	if again.Workspace() != workspace {
 		t.Fatalf("workspace changed from %s to %s", workspace, again.Workspace())
 	}
-	if again.credentials.GitToken != "tok_user" {
-		t.Fatalf("refreshed git token = %q, want tok_user", again.credentials.GitToken)
+	if again.credentials.GitHTTPCredentials["github.com"].Token != "tok_user" {
+		t.Fatalf("refreshed git token = %q, want tok_user", again.credentials.GitHTTPCredentials["github.com"].Token)
 	}
 	out, err := again.Exec(ctx, runtime.CommandSpec{
-		Argv:               []string{"sh", "-c", `printf %s "$AGENTFLOW_GIT_TOKEN"`},
+		Argv:               []string{"sh", "-c", `test -z "$AGENTFLOW_GIT_TOKEN" && printf 'protocol=https\nhost=github.com\n\n' | git credential fill | python3 -c 'import sys,hashlib; c=dict(l.rstrip().split("=",1) for l in sys.stdin if "=" in l); print(hashlib.sha256(c["password"].encode()).hexdigest())'`},
 		CredentialBindings: []runtime.CredentialBinding{runtime.BindGit},
 	}, func(domain.TelemetryEvent) {})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.TrimSpace(out) != "tok_user" {
-		t.Fatalf("sandbox command token = %q, want tok_user", out)
+	if strings.TrimSpace(out) != fmt.Sprintf("%x", sha256.Sum256([]byte("tok_user"))) {
+		t.Fatalf("the refreshed token was not available through the Git helper: %q", out)
 	}
 }
 

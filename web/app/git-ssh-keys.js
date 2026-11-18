@@ -68,7 +68,7 @@ function openGitSSHKeys(remote = '') {
       <h2 id="gitSSHKeyTitle">Git SSH 密钥</h2>
       <button type="button" class="credential-btn ghost icon" data-ssh-key-close aria-label="关闭">${credentialGlyph('close', 16)}</button>
     </header>
-    <p class="git-ssh-description">每个 SSH 主机配置一把个人密钥，同一主机的仓库自动共用。</p>
+    <p class="git-ssh-description">每个 SSH 主机配置一把个人密钥，同一主机的仓库自动共用。SSH 密钥只用于 Git 克隆和推送，不能用于创建 PR/MR；创建 PR/MR 需要访问令牌。</p>
     <p class="git-ssh-status" role="status">正在读取密钥…</p>
     <div class="git-ssh-key-list"></div>
     <button type="button" class="credential-btn primary" data-ssh-key-add disabled>添加密钥</button>

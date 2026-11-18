@@ -2408,6 +2408,8 @@ html[data-theme="dark"] .credential-logo.monochrome img{filter:invert(1)}
 .git-ssh-missing{margin:8px 0 0;color:var(--hui-error);font-size:12px;line-height:1.6}
 .git-ssh-form-actions{justify-content:flex-end}
 .git-ssh-dialog textarea{padding:8px 11px;border:1px solid var(--hui-border);border-radius:8px;background:var(--hui-surface);color:var(--hui-text);font-size:12px}
+.git-http-warning{margin:0 0 12px}
+.git-http-select{width:100%;min-height:32px;padding:0 8px;border:0;background:transparent;color:var(--hui-text);font:inherit;font-size:13px}
 .credential-input.is-plain input{padding-right:11px}
 .credential-input input::placeholder{color:var(--cr-tertiary)}
 .credential-input input:hover{border-color:var(--cr-line-strong)}
@@ -2437,6 +2439,11 @@ html[data-theme="dark"] .credential-logo.monochrome img{filter:invert(1)}
 .credential-note>svg{flex:none;margin-top:3px}
 .credential-note.is-warn{border-color:color-mix(in srgb,#d99a2b 25%,transparent);background:var(--cr-warn-fill);color:var(--cr-warn)}
 .credential-note b{font-weight:600}
+.credential-subscription-note{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:10px;margin-top:14px;padding:10px 12px;font-size:13px}
+.credential-subscription-note>svg{align-self:start;color:var(--cr-accent)}
+.credential-subscription-note strong{display:block;color:var(--cr-text);font-weight:600}
+.credential-subscription-note p{margin:2px 0 0}
+.credential-subscription-note .button{white-space:nowrap}
 .credential-vline{display:flex;align-items:center;gap:7px;margin:0;color:var(--cr-muted);font-size:12px}
 .credential-vline:empty{display:none}
 .credential-vline.is-err{color:var(--cr-err)}.credential-vline.is-info{color:var(--cr-info)}.credential-vline.is-warn{color:var(--cr-warn)}
@@ -2615,6 +2622,8 @@ html[data-theme="dark"] .credential-scrim::before{background:rgb(0 0 0 / .55)}
   .credential-account{flex-wrap:wrap}
   .credential-account-note{margin-left:52px;white-space:normal}
   .credential-section-head{flex-direction:column;align-items:flex-start}
+  .credential-subscription-note{grid-template-columns:auto minmax(0,1fr)}
+  .credential-subscription-note .button{grid-column:2;justify-self:start}
   .credential-next,.credential-ready{width:100%;margin-left:0}
   .credential-row-main{flex-wrap:wrap}
   .credential-row-who{flex-basis:calc(100% - 60px)}

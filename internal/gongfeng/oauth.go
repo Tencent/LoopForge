@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -57,6 +58,11 @@ func ConfigFromEnv() Config {
 		TokenURL:     envOr("AGENTFLOW_GONGFENG_OAUTH_TOKEN_URL", defaultTokenURL),
 		APIBase:      strings.TrimRight(envOr("AGENTFLOW_GONGFENG_OAUTH_API_BASE", defaultAPIBase), "/"),
 	}
+}
+
+func envBool(key string) bool {
+	on, _ := strconv.ParseBool(strings.TrimSpace(os.Getenv(key)))
+	return on
 }
 
 func envOr(key, fallback string) string {

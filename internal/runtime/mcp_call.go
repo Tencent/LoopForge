@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path"
 	"path/filepath"
+	goruntime "runtime"
 	"strings"
 	"time"
 
@@ -29,19 +30,20 @@ type mcpCallConfigFile struct {
 }
 
 type mcpCallServer struct {
-	ID          string            `json:"id"`
-	Name        string            `json:"name"`
-	MarketID    string            `json:"marketId,omitempty"`
-	URL         string            `json:"url"`
-	Command     string            `json:"command,omitempty"`
-	Args        []string          `json:"args,omitempty"`
-	CWD         string            `json:"cwd,omitempty"`
-	Environment map[string]string `json:"environment,omitempty"`
-	Transport   string            `json:"transport"`
-	AuthType    string            `json:"authType,omitempty"`
-	Headers     map[string]string `json:"headers,omitempty"`
-	TimeoutSec  int               `json:"timeoutSec,omitempty"`
-	Aliases     []string          `json:"aliases,omitempty"`
+	ID             string            `json:"id"`
+	Name           string            `json:"name"`
+	MarketID       string            `json:"marketId,omitempty"`
+	URL            string            `json:"url"`
+	Command        string            `json:"command,omitempty"`
+	Args           []string          `json:"args,omitempty"`
+	CWD            string            `json:"cwd,omitempty"`
+	Environment    map[string]string `json:"environment,omitempty"`
+	Transport      string            `json:"transport"`
+	AuthType       string            `json:"authType,omitempty"`
+	CredentialKind string            `json:"credentialKind,omitempty"`
+	Headers        map[string]string `json:"headers,omitempty"`
+	TimeoutSec     int               `json:"timeoutSec,omitempty"`
+	Aliases        []string          `json:"aliases,omitempty"`
 }
 
 func mcpCallHostDir(workspace string) string {
@@ -78,7 +80,7 @@ func PrepareMCPCall(sandbox Sandbox, workspace string, servers []domain.MCPServe
 		return nil, fmt.Errorf("write mcp call config: %w", err)
 	}
 	helperHost := filepath.Join(hostBin, "agentflow-helper")
-	if err := installMCPCallHelper(workspace, helperHost); err != nil {
+	if err := installMCPCallHelperForSandbox(sandbox, workspace, helperHost); err != nil {
 		return nil, err
 	}
 	wrapperHost := filepath.Join(hostBin, "agentflow")
@@ -121,19 +123,20 @@ func mcpCallConfigServers(servers []domain.MCPServerDefinition) []mcpCallServer 
 			continue
 		}
 		out = append(out, mcpCallServer{
-			ID:          server.ID,
-			Name:        server.Name,
-			MarketID:    server.MarketID,
-			URL:         server.URL,
-			Transport:   transport,
-			Command:     server.Command,
-			Args:        append([]string(nil), server.Args...),
-			CWD:         MCPRuntimeWorkingDirectory(server),
-			Environment: resolveMap(server.Environment),
-			AuthType:    server.AuthType,
-			Headers:     cloneHeaders(server.Headers),
-			TimeoutSec:  server.TimeoutSec,
-			Aliases:     mcpCallAliases(server),
+			ID:             server.ID,
+			Name:           server.Name,
+			MarketID:       server.MarketID,
+			URL:            server.URL,
+			Transport:      transport,
+			Command:        server.Command,
+			Args:           append([]string(nil), server.Args...),
+			CWD:            MCPRuntimeWorkingDirectory(server),
+			Environment:    resolveMap(server.Environment),
+			AuthType:       server.AuthType,
+			CredentialKind: server.CredentialKind,
+			Headers:        cloneHeaders(server.Headers),
+			TimeoutSec:     server.TimeoutSec,
+			Aliases:        mcpCallAliases(server),
 		})
 	}
 	return out
@@ -162,6 +165,29 @@ func installMCPCallHelper(workspace, dest string) error {
 	if err != nil {
 		return err
 	}
+	return installMCPCallHelperFrom(workspace, src, dest)
+}
+
+func installMCPCallHelperForSandbox(sandbox Sandbox, workspace, dest string) error {
+	if sandboxDriver(sandbox) != "docker" || goruntime.GOOS == "linux" {
+		return installMCPCallHelper(workspace, dest)
+	}
+	self, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	pattern := strings.TrimSpace(os.Getenv("AGENTFLOW_RUNNER_BINARY"))
+	if !strings.Contains(pattern, "{os}") {
+		pattern = filepath.Join(filepath.Dir(self), "agentflow-runner-{os}-{arch}")
+	}
+	src := strings.NewReplacer("{os}", "linux", "{arch}", goruntime.GOARCH).Replace(pattern)
+	if _, err := os.Stat(src); err != nil {
+		return fmt.Errorf("Docker Git/MCP helper requires a Linux runner binary: set AGENTFLOW_RUNNER_BINARY with {os} and {arch}: %w", err)
+	}
+	return installMCPCallHelperFrom(workspace, src, dest)
+}
+
+func installMCPCallHelperFrom(workspace, src, dest string) error {
 	srcInfo, err := os.Stat(src)
 	if err != nil {
 		return err
@@ -437,6 +463,9 @@ func mcpCallInvoke(args []string) error {
 		return err
 	}
 	if strings.EqualFold(strings.TrimSpace(server.Transport), "http") && strings.TrimSpace(server.AuthType) != "" && authorizationHeader(server.Headers) == "" {
+		if strings.EqualFold(strings.TrimSpace(server.AuthType), MCPAuthCredential) {
+			return fmt.Errorf("MCP %s 需要凭证 %q：请先在个人凭证中配置", server.Name, server.CredentialKind)
+		}
 		return fmt.Errorf("MCP %s 需要 GitHub Git Token：请先在个人凭证中配置", server.Name)
 	}
 	tool := strings.TrimSpace(args[1])
@@ -510,6 +539,9 @@ func mcpCallTools(args []string) error {
 		return err
 	}
 	if strings.EqualFold(strings.TrimSpace(server.Transport), "http") && strings.TrimSpace(server.AuthType) != "" && authorizationHeader(server.Headers) == "" {
+		if strings.EqualFold(strings.TrimSpace(server.AuthType), MCPAuthCredential) {
+			return fmt.Errorf("MCP %s 需要凭证 %q：请先在个人凭证中配置", server.Name, server.CredentialKind)
+		}
 		return fmt.Errorf("MCP %s 需要 GitHub Git Token：请先在个人凭证中配置", server.Name)
 	}
 	var names []string

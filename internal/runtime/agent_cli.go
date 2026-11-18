@@ -15,9 +15,9 @@ import (
 )
 
 // Agent CLIs beyond CodeBuddy / Codex / Claude Code. Each one runs with the
-// responsible user's own key from 个人配置 inside a private HOME that also
-// holds the CLI's MCP and model configuration, so neither the host login nor
-// the host configuration leaks into a run.
+// responsible user's credential inside a private HOME that also holds MCP
+// and model configuration. Antigravity may explicitly reuse the machine
+// owner's account login; other agent CLIs use a key from 个人配置.
 const (
 	AgentCLIOpenCode    = "opencode"
 	AgentCLICursor      = "cursor"
@@ -98,6 +98,7 @@ const agentCLIKeyEnv = "AGENTFLOW_CLI_API_KEY"
 // the host's own login, key, gateway or configuration directory.
 var agentCLIHostEnv = append([]string{
 	agentCLIKeyEnv, "CURSOR_API_KEY", "CURSOR_AUTH_TOKEN", "GEMINI_API_KEY", "GOOGLE_API_KEY", "GOOGLE_GEMINI_BASE_URL", "GEMINI_BASE_URL",
+	"AGY_ADC_AUTH", "GOOGLE_APPLICATION_CREDENTIALS", "GOOGLE_GENAI_USE_VERTEXAI", "GEMINI_HOME", "AGY_ACP_FORCE_FILE_STORAGE",
 	"AGY_LLM_GATEWAY_URL", "AGY_LLM_GATEWAY_API_KEY", "AGY_LLM_GATEWAY_WIRE_PROTOCOL", "AGY_LLM_GATEWAY_MODELS",
 	"DEEPSEEK_API_KEY", "DSH_HOME", "MOONSHOT_API_KEY", "KIMI_API_KEY", "KIMI_BASE_URL", "KIMI_CODE_HOME",
 	"KIMI_MODEL_NAME", "KIMI_MODEL_API_KEY", "KIMI_MODEL_BASE_URL", "KIMI_MODEL_PROVIDER_TYPE",
@@ -374,6 +375,14 @@ func ApplyAgentCLICredential(kind string, cred ProviderCredential, options Agent
 	key := strings.TrimSpace(cred.APIKey)
 	if key == "" {
 		return nil, nil, fmt.Errorf("需求责任人未配置 %s API Key，请在个人配置中配置", AgentCLILabel(kind))
+	}
+	if kind == AgentCLIAntigravity {
+		// A crashed account-login invocation may leave a credential copy.
+		// API-key execution must not retain or inherit that account.
+		login, _ := runnerLoginSpec(kind)
+		if _, _, err := prepareRunnerLogin(home, login, false); err != nil {
+			return nil, nil, err
+		}
 	}
 	baseURL := strings.TrimRight(strings.TrimSpace(cred.BaseURL), "/")
 	protocol := AgentCLIProtocol(kind, cred.Protocol)
