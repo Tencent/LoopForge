@@ -252,12 +252,15 @@ export function useChat() {
           event.data?.type === "agentflow-assistant-preferences-changed")
         void refresh();
     };
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") void refresh();
+    };
     void refresh();
-    window.addEventListener("focus", refresh);
+    document.addEventListener("visibilitychange", onVisibilityChange);
     window.addEventListener("message", onMessage);
     return () => {
       current = false;
-      window.removeEventListener("focus", refresh);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
       window.removeEventListener("message", onMessage);
     };
   }, [user?.id, user?.isGuest]);
@@ -713,6 +716,8 @@ export function useChat() {
     if (generation?.id !== s.generationId || generation.status === "running") return;
     if (settledId !== s.generationId) return;
     if (!generation.steer) {
+      // The POST can still reject the message after the reply finishes.
+      if (s.pending) return;
       // The reply ended before the message was taken: send it next instead.
       done();
       setQueues((old) => restoreQueued(old, s.sessionId, s.item, false));
@@ -781,7 +786,8 @@ export function useChat() {
   }
   async function steerMessage(id, item) {
     const from = generation.id;
-    steeringRef.current = { sessionId: id, generationId: from, item };
+    const request = { sessionId: id, generationId: from, item, pending: true };
+    steeringRef.current = request;
     setSteering({ sessionId: id, item });
     setQueues((old) => removeQueued(old, id, item.id));
     setError("");
@@ -797,13 +803,19 @@ export function useChat() {
           approvalMode: item.approvalMode || "confirm",
         },
       );
+      request.pending = false;
+      if (steeringRef.current === request) setSteering({ sessionId: id, item });
       return true;
     } catch (e) {
-      steeringRef.current = null;
-      setSteering(null);
-      // If the reply just ended, the message simply goes out next.
-      setQueues((old) => restoreQueued(old, id, item, false));
-      if (!/没有进行中|已经结束|已结束/.test(e.message || "")) setError(e.message);
+      if (steeringRef.current === request) {
+        steeringRef.current = null;
+        setSteering(null);
+      }
+      const turnEnded = e.status === 409 &&
+        /^(当前没有进行中的回复|这一轮已经结束，请重新发送|生成已结束或不存在)$/.test(e.message);
+      const held = !turnEnded && e.status >= 400 && e.status < 500;
+      setQueues((old) => restoreQueued(old, id, item, held));
+      if (!turnEnded && currentId.current === id) setError(e.message);
       return false;
     }
   }

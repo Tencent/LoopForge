@@ -494,8 +494,8 @@ func (h *assistantHandlers) steerGeneration(c *gin.Context) {
 		c.JSON(404, gin.H{"error": "会话不存在"})
 		return
 	}
-	// Steering resumes this saved CLI session. Bare model IDs belong to that
-	// CLI, including legacy replies whose CLI is only on session.Executor.
+	// The saved conversation selects the CLI for steering. Bare model IDs
+	// use that CLI, and an explicit CLI prefix must match it.
 	cliEngine := assistantConversationEngine(session.Messages, session.Executor)
 	if cliEngine == "" {
 		cliEngine, _ = assistantModelEngine(assistantRequestModel(session.Executor, session.Model))
@@ -532,12 +532,12 @@ func (h *assistantHandlers) steerGeneration(c *gin.Context) {
 	if !runnerLogin {
 		model = assistantAllowedUserModel(model, catalog, user)
 	}
+	// The catalog can substitute a configured default. Check that model too.
 	if refusal := assistantEngineSwitchRefusal(cliEngine, model); refusal != "" {
 		c.JSON(409, gin.H{"error": refusal})
 		return
 	}
-	effort := firstNonEmpty(body.Effort, session.Effort)
-	if err := validateAssistantEffort(user, model, effort); err != nil {
+	if err := validateAssistantEffort(user, model, body.Effort); err != nil {
 		c.JSON(400, gin.H{"error": err.Error()})
 		return
 	}
@@ -547,7 +547,7 @@ func (h *assistantHandlers) steerGeneration(c *gin.Context) {
 		return
 	}
 	message := probe.Messages[0]
-	steer := domain.AssistantSteer{Content: message.Content, Attachments: message.Attachments, References: message.References, Model: model, Effort: effort, ApprovalMode: normalizeAssistantApprovalMode(body.ApprovalMode), ActorID: user.ID, ActorName: user.LoginName}
+	steer := domain.AssistantSteer{Content: message.Content, Attachments: message.Attachments, References: message.References, Model: model, Effort: body.Effort, ApprovalMode: normalizeAssistantApprovalMode(body.ApprovalMode), ActorID: user.ID, ActorName: user.LoginName}
 	if err := h.repo.SteerAssistantGeneration(ownerID, g.SessionID, g.ID, steer); err != nil {
 		c.JSON(409, gin.H{"error": err.Error()})
 		return
@@ -598,10 +598,19 @@ func (h *assistantHandlers) followSteer(parent context.Context, prev domain.Assi
 	if strings.TrimSpace(steer.Model) != "" {
 		session.Model = steer.Model
 	}
-	if strings.TrimSpace(steer.Effort) != "" {
-		session.Effort = steer.Effort
+	// Empty effort selects the follow-up model's default.
+	session.Effort = steer.Effort
+	req := assistantRequest{
+		ProjectID:       session.ProjectID,
+		SessionID:       session.ID,
+		RunID:           session.RunID,
+		Executor:        session.Executor,
+		ExecutionTarget: session.ExecutionTarget,
+		Model:           session.Model,
+		Effort:          session.Effort,
+		ApprovalMode:    steer.ApprovalMode,
+		Messages:        session.Messages,
 	}
-	req := assistantRequest{ProjectID: session.ProjectID, SessionID: session.ID, RunID: session.RunID, Executor: session.Executor, ExecutionTarget: session.ExecutionTarget, Model: firstNonEmpty(steer.Model, session.Model), Effort: firstNonEmpty(steer.Effort, session.Effort), ApprovalMode: steer.ApprovalMode, Messages: session.Messages}
 	if req.RunID != "" && h.engine != nil {
 		token, err := h.engine.BeginConversationWorkspaceUse(req.RunID)
 		if err != nil {

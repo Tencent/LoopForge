@@ -214,7 +214,7 @@ func TestSteerContinuesFromPartialTranscript(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			h, user := workbenchFixture(t)
 			stubCLIModelDiscovery(t)
-			discoverCLIModels = func(context.Context, string, string) []string { return []string{"default", "claude-opus-5.5"} }
+			discoverCLIModels = func(context.Context, string, string) []string { return []string{"claude-opus-5.5", "gpt-6-sol"} }
 			credentials := repo.UserCredentialUpdate{CodeBuddyAPIKeyClear: tc.cli != "codebuddy"}
 			if !tc.login {
 				credentials.CodexAPIKey = "test-codex"
@@ -233,9 +233,10 @@ func TestSteerContinuesFromPartialTranscript(t *testing.T) {
 				}
 				target = domain.AssistantExecutionTarget{Pool: domain.ExecutionModeRunner, RunnerID: runner.ID}
 			}
-			initialModel, selectedModel := "default", "claude-opus-5.5"
+			// Switch between CodeBuddy models and reset an effort the new one does not support.
+			initialModel, selectedModel, initialEffort := "claude-opus-5.5", "gpt-6-sol", "max"
 			if tc.cli != "codebuddy" {
-				initialModel, selectedModel = tc.cli+":initial", tc.cli+":selected"
+				initialModel, selectedModel, initialEffort = tc.cli+":initial", tc.cli+":selected", ""
 			}
 			messages := []assistantMessage{{Role: "user", Content: "上一轮"}, {Role: "assistant", Content: "上一轮已完成", Model: initialModel}}
 			if err := h.repo.PutAssistantSession(user.ID, domain.AssistantSession{ID: "steer-chat", ProjectID: "workbench", Executor: tc.cli, Model: initialModel, ExecutionTarget: &target, Messages: messages}); err != nil {
@@ -259,7 +260,7 @@ func TestSteerContinuesFromPartialTranscript(t *testing.T) {
 				return "已改为查看仓库", nil
 			}
 			messages = append(messages, assistantMessage{Role: "user", Content: "先查项目"})
-			request, _ := json.Marshal(assistantRequest{ProjectID: "workbench", SessionID: "steer-chat", Model: initialModel, Messages: messages})
+			request, _ := json.Marshal(assistantRequest{ProjectID: "workbench", SessionID: "steer-chat", Model: initialModel, Effort: initialEffort, Messages: messages})
 			c, rec := workbenchContext(user, "POST", "/api/assistant/generations", bytes.NewBuffer(request))
 			h.startGeneration(c)
 			if rec.Code != 202 {
@@ -275,7 +276,7 @@ func TestSteerContinuesFromPartialTranscript(t *testing.T) {
 			if tc.cli != "codebuddy" && !tc.prefixed {
 				requestedModel = "selected"
 			}
-			body, _ := json.Marshal(domain.AssistantSteer{Content: "改查仓库", Model: requestedModel, ApprovalMode: "confirm"})
+			body, _ := json.Marshal(gin.H{"content": "改查仓库", "model": requestedModel, "effort": "", "approvalMode": "confirm"})
 			c, rec = workbenchContext(user, "POST", "/api/assistant/sessions/steer-chat/generation/steer?generationId="+g.ID, bytes.NewBuffer(body))
 			c.Params = gin.Params{{Key: "id", Value: "steer-chat"}}
 			h.steerGeneration(c)
@@ -287,6 +288,9 @@ func TestSteerContinuesFromPartialTranscript(t *testing.T) {
 				saved, _ := h.repo.AssistantSession(user.ID, "steer-chat")
 				current, _ := h.repo.AssistantGeneration(user.ID, "steer-chat")
 				if current.Status == "completed" && len(saved.Messages) == 6 {
+					if saved.Effort != "" {
+						t.Fatalf("follow-up kept the old effort %q", saved.Effort)
+					}
 					if saved.Executor != tc.cli || saved.Model != selectedModel || saved.Execution() != target || saved.Messages[5].Model != selectedModel {
 						t.Fatalf("follow-up changed CLI, model or execution target: %+v", saved)
 					}
