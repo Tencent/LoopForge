@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"mime/multipart"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -13,6 +14,38 @@ import (
 	"agentflow/internal/repo"
 	"github.com/gin-gonic/gin"
 )
+
+func TestSteerRejectsSecondRequestForSameGeneration(t *testing.T) {
+	h, user := workbenchFixture(t)
+	const sessionID = "steer-two-tabs"
+	session := domain.AssistantSession{ID: sessionID, Model: "default", Messages: []assistantMessage{
+		{Role: "user", Content: "original"},
+	}}
+	g := domain.AssistantGeneration{ID: "running-turn", SessionID: sessionID, UserID: user.ID, Status: "running"}
+	if err := h.repo.BeginAssistantGeneration(g, session); err != nil {
+		t.Fatal(err)
+	}
+	steer := func(content string) *httptest.ResponseRecorder {
+		body, _ := json.Marshal(domain.AssistantSteer{Content: content})
+		path := "/api/assistant/sessions/" + sessionID + "/generation/steer?generationId=" + g.ID
+		c, rec := workbenchContext(user, "POST", path, bytes.NewBuffer(body))
+		c.Params = gin.Params{{Key: "id", Value: sessionID}}
+		h.steerGeneration(c)
+		return rec
+	}
+	if rec := steer("first tab"); rec.Code != 200 {
+		t.Fatalf("first steer: %d %s", rec.Code, rec.Body)
+	}
+	first, _ := h.repo.PeekAssistantGeneration(user.ID, sessionID)
+	if rec := steer("second tab"); rec.Code != 409 || !strings.Contains(rec.Body.String(), "已有待处理的引导") {
+		t.Fatalf("second steer must report a pending steer: %d %s", rec.Code, rec.Body)
+	}
+	current, _ := h.repo.PeekAssistantGeneration(user.ID, sessionID)
+	if !current.CancelRequested || first.Steer == nil || current.Steer == nil ||
+		current.Steer.Content != "first tab" || current.Steer.TriggerID != first.Steer.TriggerID {
+		t.Fatalf("the first accepted steer was changed: %+v", current.Steer)
+	}
+}
 
 func TestSteerKeepsNewAttachmentsAndReferencesWithSameText(t *testing.T) {
 	h, user := workbenchFixture(t)

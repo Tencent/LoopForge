@@ -1,10 +1,89 @@
 package repo
 
 import (
-	"agentflow/internal/domain"
+	"fmt"
+	"os"
+	"strings"
 	"testing"
 	"time"
+
+	"agentflow/internal/domain"
 )
+
+func TestAssistantGenerationAllowsOnePendingSteer(t *testing.T) {
+	for _, backend := range []string{"sqlite", "mysql"} {
+		t.Run(backend, func(t *testing.T) {
+			var st *Store
+			var err error
+			if backend == "mysql" {
+				dsn := os.Getenv("AGENTFLOW_TEST_MYSQL_DSN")
+				if dsn == "" {
+					t.Skip("isolated local Docker MySQL required")
+				}
+				st, err = Open(dsn)
+			} else {
+				st, err = OpenTest()
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(st.Close)
+			sessionID := fmt.Sprintf("steer-conflict-%d", time.Now().UnixNano())
+			g := domain.AssistantGeneration{
+				ID: sessionID + "-first", SessionID: sessionID,
+				UserID: 91, Status: "running",
+			}
+			if err := st.BeginAssistantGeneration(g); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() {
+				st.DB.Where("session_id = ?", sessionID).Delete(&assistantGenerationRow{})
+				st.DB.Where("session_id = ?", sessionID).Delete(&assistantDiagnosticsRow{})
+			})
+
+			type result struct {
+				steer domain.AssistantSteer
+				err   error
+			}
+			start := make(chan struct{})
+			results := make(chan result, 2)
+			for _, request := range []domain.AssistantSteer{
+				{Content: "first tab", TriggerID: "steer-a"},
+				{Content: "second tab", TriggerID: "steer-b"},
+			} {
+				go func() {
+					<-start
+					results <- result{request, st.SteerAssistantGeneration(g.UserID, g.SessionID, g.ID, request)}
+				}()
+			}
+			close(start)
+			accepted, rejected := <-results, <-results
+			if accepted.err != nil {
+				accepted, rejected = rejected, accepted
+			}
+			if accepted.err != nil || rejected.err == nil || !strings.Contains(rejected.err.Error(), "已有待处理的引导") {
+				t.Fatalf("concurrent steers must accept one request and report one pending conflict: %v, %v", accepted.err, rejected.err)
+			}
+			saved, _ := st.PeekAssistantGeneration(g.UserID, g.SessionID)
+			if !saved.CancelRequested || saved.Steer == nil ||
+				saved.Steer.TriggerID != accepted.steer.TriggerID || saved.Steer.Content != accepted.steer.Content {
+				t.Fatalf("the accepted steer was lost: %+v", saved.Steer)
+			}
+
+			g.Status = "cancelled"
+			if err := st.CheckpointAssistantGeneration(g); err != nil {
+				t.Fatal(err)
+			}
+			g.ID, g.Status = sessionID+"-next", "running"
+			if err := st.BeginAssistantGeneration(g); err != nil {
+				t.Fatal(err)
+			}
+			if err := st.SteerAssistantGeneration(g.UserID, g.SessionID, g.ID, rejected.steer); err != nil {
+				t.Fatalf("next generation must accept a new steer: %v", err)
+			}
+		})
+	}
+}
 
 func TestAssistantGenerationClaimCheckpointAndPrivacy(t *testing.T) {
 	s, err := OpenTest()

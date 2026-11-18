@@ -300,6 +300,9 @@ func (r *AssistantRepo) SteerAssistantGeneration(userID int64, sessionID, id str
 			return fmt.Errorf("生成已结束或不存在")
 		}
 		g := decodeGeneration(row)
+		if g.Steer != nil {
+			return errors.New("本轮已有待处理的引导，请稍后重试")
+		}
 		g.Steer = &steer
 		return tx.Model(&row).Updates(map[string]any{"cancel_requested": true, "payload": mustJSON(g), "updated_at": r.generationClock()}).Error
 	})
