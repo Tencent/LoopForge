@@ -240,3 +240,5 @@
  #botsContent *,#botsContent *::before,#botsContent *::after,#botsView .bot-heading *{animation:none!important;transition:none!important}
  #botsContent .bot-spin svg{animation:none!important}
 }
+.bot-channel-fixed{display:flex;align-items:center;gap:8px;min-height:32px}
+.bot-entry-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}

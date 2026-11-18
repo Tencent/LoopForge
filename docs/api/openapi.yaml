@@ -3124,6 +3124,65 @@ paths:
               schema: {type: array, items: {type: object}}
         "403":
           description: Project membership required
+    post:
+      summary: Create a notification Bot (WeCom or Feishu)
+      description: |
+        `channel` is `wecom` (default for clients that omit it), `feishu` or
+        `dingtalk`. New Bots default to `writeApproval=readonly`; Feishu
+        accepts only `readonly`. Feishu credentials are verified before
+        anything is stored. Secrets are sealed with AGENTFLOW_CREDENTIAL_KEYS.
+      operationId: createNotificationBot
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/NotificationBotInput"}
+      responses:
+        "200":
+          description: Stored Bot, without credentials
+        "400":
+          description: Invalid input, `credential_invalid` or `immutable_field`
+        "409":
+          description: "`receive_slot_taken` (application already receives in another configuration) or `channel_not_ready`"
+        "503":
+          description: "`credential_key_missing` or `bot_maintenance`"
+  /api/notification-bots/{id}:
+    put:
+      summary: Update a notification Bot
+      description: |
+        Channel, project and (for Feishu) the App ID are immutable. Send the
+        `configVersion` read from the Bot; a concurrent change returns
+        `409 config_changed`.
+      operationId: updateNotificationBot
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/NotificationBotInput"}
+      responses:
+        "200":
+          description: Stored Bot
+        "400":
+          description: Invalid input or `immutable_field`
+        "409":
+          description: "`config_changed`, `receive_slot_taken` or `channel_not_ready`"
+        "503":
+          description: "`credential_key_missing` or `bot_maintenance`"
+    delete:
+      summary: Delete a notification Bot
+      description: |
+        Cancels unsent work, moves in-flight sends to `reply_unknown` /
+        `send_unknown`, and revokes the configuration's chat bindings.
+      operationId: deleteNotificationBot
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string}}
+      responses:
+        "200":
+          description: Deleted
+        "503":
+          description: "`bot_maintenance`"
   /api/notification-bots/{id}/interactions:
     get:
       summary: Inspect Bot connection and recent chat interactions
@@ -3138,9 +3197,93 @@ paths:
           description: Connection status, recent conversations and messages; credentials excluded
         "403":
           description: Bot management permission required
+  /api/notification-bots/{id}/tenant:
+    get:
+      summary: Read the enterprise confirmation state of a Feishu Bot
+      description: |
+        Returns `tenantState` (`awaiting_confirmation`, `locked`, `conflict`),
+        the candidate observed on the first trusted event, `configVersion`,
+        and the platform's enterprise query (`queried`) or `queryError`.
+      operationId: getNotificationBotTenant
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string}}
+      responses:
+        "200":
+          description: Confirmation state
+        "409":
+          description: "`channel_not_ready` (WeCom has no enterprise confirmation)"
+  /api/notification-bots/{id}/tenant/confirm:
+    post:
+      summary: Lock the candidate enterprise scope, or restart discovery
+      operationId: confirmNotificationBotTenant
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [configVersion]
+              properties:
+                tenantKey: {type: string}
+                configVersion: {type: integer}
+                rediscover: {type: boolean}
+      responses:
+        "200":
+          description: Stored Bot with `tenantState=locked` (or `awaiting_confirmation` after rediscover)
+        "403":
+          description: Same-origin browser request and Bot management permission required
+        "409":
+          description: "`config_changed` or `tenant_candidate_mismatch`"
+  /api/bot-interactions/pending:
+    get:
+      summary: List a project's chat replies awaiting manual review
+      description: Includes records of deleted Bots for project managers.
+      operationId: listPendingBotInteractions
+      parameters:
+        - {name: projectId, in: query, required: true, schema: {type: string}}
+      responses:
+        "200":
+          description: Interactions in `reply_unknown` or `reply_failed`
+        "403":
+          description: Bot creator or project maintainer required
+  /api/bot-interactions/{interactionId}/confirm:
+    post:
+      summary: Mark a reply_unknown reply as received
+      operationId: confirmBotInteraction
+      parameters:
+        - {name: interactionId, in: path, required: true, schema: {type: string}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/BotManualAction"}
+      responses:
+        "200":
+          description: Interaction now `replied` with `receiptSource=manual`; a repeated actionKey returns the same result
+        "409":
+          description: "`state_conflict`"
+  /api/bot-interactions/{interactionId}/resend:
+    post:
+      summary: Send a saved reply again as a new delivery generation
+      description: Accepts `reply_unknown` or `reply_failed`; the recipient may receive a duplicate.
+      operationId: resendBotInteraction
+      parameters:
+        - {name: interactionId, in: path, required: true, schema: {type: string}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/BotManualAction"}
+      responses:
+        "200":
+          description: Interaction back in `ready` with `deliveryGeneration` + 1; a repeated actionKey returns the same generation
+        "409":
+          description: "`bot_deleted`, `route_expired` or `state_conflict`"
   /api/bot-bindings:
     get:
-      summary: List the logged-in user's WeCom identity bindings
+      summary: List the logged-in user's chat identity bindings (WeCom, Feishu)
       operationId: listBotUserBindings
       responses:
         "200":
@@ -3149,7 +3292,7 @@ paths:
           description: Interactive browser login required
   /api/bot-bindings/{id}:
     delete:
-      summary: Revoke the logged-in user's WeCom identity binding
+      summary: Revoke the logged-in user's chat identity binding
       operationId: revokeBotUserBinding
       parameters:
         - name: id
@@ -3167,7 +3310,7 @@ paths:
           description: Binding does not belong to the current user
   /api/bot-bindings/claim:
     post:
-      summary: Nominate the logged-in account; original WeCom sender must confirm
+      summary: Nominate the logged-in account; the original chat sender must confirm
       operationId: claimBotUserBinding
       requestBody:
         required: true
@@ -3180,7 +3323,7 @@ paths:
                 token: {type: string, minLength: 64, maxLength: 64}
       responses:
         "200":
-          description: Login name, status and browser-only confirmation command
+          description: Login name, status, browser-only confirmation command, and channel, Bot, project and masked sender of the link
         "400":
           description: Expired, invalid or already claimed challenge
         "401":
@@ -3980,6 +4123,27 @@ components:
             items:
               $ref: "#/components/schemas/ScheduleJob"
   schemas:
+    NotificationBotInput:
+      type: object
+      required: [name, botId]
+      properties:
+        projectId: {type: string}
+        name: {type: string, maxLength: 80}
+        channel: {type: string, enum: [wecom, feishu, dingtalk]}
+        botId: {type: string, description: "WeCom Bot ID, Feishu App ID or DingTalk Client ID", maxLength: 191}
+        secret: {type: string, description: "Empty keeps the stored secret", maxLength: 512}
+        enabled: {type: boolean}
+        interactionEnabled: {type: boolean}
+        model: {type: string}
+        writeApproval: {type: string, enum: [readonly, auto], description: "auto is WeCom only"}
+        targetId: {type: string, description: "WeCom notification target"}
+        configVersion: {type: integer, description: "Expected version for updates"}
+    BotManualAction:
+      type: object
+      required: [actionKey]
+      properties:
+        actionKey: {type: string, maxLength: 64, description: "Client-generated key; a repeated key returns the same result"}
+        reason: {type: string, maxLength: 60}
     OpenObject:
       type: object
       additionalProperties: true

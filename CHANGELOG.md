@@ -2,6 +2,16 @@
 
 Platform releases use `vX.Y.Z` tags and publish `ghcr.io/tencent/loopforge`. LoopForge Local packages use `local-vX.Y.Z` tags and are published by manually running the `release-local` workflow.
 
+## Unreleased — enterprise IM channels (Feishu private chats)
+
+- Feishu self-built applications can be added as Bots: private text chats, account binding and read-only project queries over the official long connection (`larksuite/oapi-sdk-go` v3.13.0). The first message from a new application records its enterprise; a Bot manager confirms it before any request is processed, and messages from other enterprises are dropped. See `docs/im-channels.md`.
+- **New WeCom Bots default to read-only.** A Bot created from now on answers queries but does not write; writes are refused with a pointer to the platform page. Existing WeCom Bots keep automatic execution. Managers choose the mode under 执行权限.
+- **WeCom fallback send changed.** A reply whose stream fails is sent again as a proactive message only when the stream provably did not go out (stream unavailable, request never written, or rejected by WeCom). A stream that may have been delivered but had no receipt is no longer sent twice: the record shows 送达待核对, and a manager chooses 确认已收到 or 再次发送 (a new delivery that may duplicate) on the record page.
+- **Disabling a Bot keeps generated replies.** Queued and running turns are cancelled, replies already generated wait and are sent after the Bot is enabled again, and a send in progress becomes 送达待核对. Deleting a Bot cancels unsent work, moves in-flight sends to 待核对, and revokes the Bot's chat bindings.
+- Bot secrets are encrypted with AES-256-GCM using `AGENTFLOW_CREDENTIAL_KEYS`. Existing plaintext secrets stay readable; `agentflow -credential-action status|reencrypt` reports and migrates them. Without a key, saving a new secret returns `credential_key_missing`.
+- Receiving leases, send windows and retries are judged on the database clock with an epoch per owner, so a replica that lost its lease can no longer overwrite a reply or send it twice. Notification deliveries gain the state `send_unknown`.
+- Upgrading needs a maintenance window: stop every old replica, start the new version once with `AGENTFLOW_BOT_WORKERS_ENABLED=false`, run `migrations/036_enterprise_im_channels.sql` and `migrations/037_bot_binding_ownership.sql`, run `-credential-action reencrypt`, then restart with workers enabled. Bots not backfilled by 036 do not receive messages.
+
 ## 0.4.0 — scheduled task history, an MR node in delivery SOPs and agent CLIs in conversation workspaces
 
 - Scheduled tasks keep an execution history with a session mode, keep conversations per job and gain row actions (#958). AI jobs run with the key of the user who saved them and fall back to the shared key (#966).

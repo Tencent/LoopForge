@@ -94,3 +94,78 @@ test('bot pure helpers enforce permissions, filtering, and status labels', async
   assert.match(values.target, /Alice/);
   assert.equal(values.allowed, true);
 });
+
+test('feishu bot is created read-only and confirms its enterprise', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  const created = {
+    id: 'bot-fs', projectId: 'project-1', ownerId: 'user-1', name: 'Feishu Bot', channel: 'feishu',
+    botId: 'cli_app', model: 'glm-5.3-flash-ioa', enabled: true, interactionEnabled: true, writeApproval: 'readonly',
+    secretConfigured: true, health: 'ready', configVersion: 1, tenantState: 'awaiting_confirmation',
+  };
+  app.router.post('/api/notification-bots', (call) => ({ ...created, ...call.body, secret: undefined }));
+  app.router.get('/api/notification-bots/bot-fs/tenant', {
+    tenantState: 'awaiting_confirmation', configVersion: 1,
+    candidate: { tenantKey: 'tenant-1', receivedAt: '2026-11-18T03:00:00Z', credentialVersion: 1 },
+    queried: { tenantKey: 'tenant-1', tenantName: '测试企业' },
+  });
+  app.router.post('/api/notification-bots/bot-fs/tenant/confirm', (call) => ({ ...created, configVersion: 2, tenantState: 'locked', tenantKey: call.body.tenantKey, tenantName: '测试企业' }));
+  app.router.get('/api/notification-deliveries', []);
+  app.evaluate(`botUI.projectId=state.projectFilter;botUI.items=[];botUI.loading=false;renderBots();botOpenEditor(null)`);
+  const host = () => app.document.querySelector('#botsContent');
+  let form = host().querySelector('#botForm');
+  form.elements.channel.value = 'feishu';
+  form.elements.channel.dispatchEvent(new app.window.Event('change', { bubbles: true }));
+  await settle(4);
+  form = host().querySelector('#botForm');
+  assert.match(host().textContent, /App ID/);
+  assert.match(host().textContent, /只读查询/);
+  assert.equal(form.elements.writeApproval, undefined);
+  assert.ok(host().querySelector('option[value="dingtalk"]').disabled);
+  form.elements.name.value = 'Feishu Bot';
+  form.elements.botId.value = 'cli_app';
+  form.elements.secret.value = 'app-secret';
+  form.dispatchEvent(new app.window.Event('input', { bubbles: true }));
+  form.dispatchEvent(new app.window.Event('submit', { bubbles: true, cancelable: true }));
+  await settle(8);
+  const post = app.router.calls.find(c => c.method === 'POST' && c.path === '/api/notification-bots').body;
+  assert.equal(post.channel, 'feishu');
+  assert.equal(post.writeApproval, 'readonly');
+  assert.equal(app.evaluate(`botUI.step`), 2);
+  await settle(6);
+  assert.match(host().textContent, /tenant-1/);
+  assert.match(host().textContent, /与平台查询一致/);
+  host().querySelector('#botTenantConfirm').click();
+  await settle(8);
+  const confirm = app.router.calls.find(c => c.path === '/api/notification-bots/bot-fs/tenant/confirm').body;
+  assert.equal(confirm.tenantKey, 'tenant-1');
+  assert.equal(confirm.configVersion, 1);
+  assert.match(host().textContent, /企业已确认/);
+});
+
+test('records offer confirm and resend for unknown deliveries', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  const bot = { id: 'bot-a', projectId: 'project-1', ownerId: 'user-1', name: 'A', channel: 'wecom', botId: 'wx', enabled: true, interactionEnabled: true, configVersion: 3 };
+  app.router.get('/api/notification-bots/bot-a/interactions', {
+    connection: { state: 'connected' }, conversations: [],
+    messages: [
+      { id: 'i-unknown', createdAt: '2026-11-18T03:00:00Z', senderId: 'u', status: 'reply_unknown', terminalReason: 'delivery_unknown', content: 'q1', reply: 'r1' },
+      { id: 'i-expired', createdAt: '2026-11-18T03:00:00Z', senderId: 'u', status: 'reply_failed', terminalReason: 'route_expired', content: 'q2', reply: 'r2' },
+    ],
+  });
+  app.router.post('/api/bot-interactions/i-unknown/confirm', { id: 'i-unknown', status: 'replied' });
+  app.evaluate(`botUI.projectId=state.projectFilter;botUI.items=[${JSON.stringify(bot)}];botUI.loading=false;botUI.tab='records';botUI.recordsTab='interactions';botUI.interactionBotId='bot-a';renderBots()`);
+  await app.evaluate(`loadBotInteractions()`);
+  await settle(4);
+  const host = app.document.querySelector('#botsContent');
+  assert.match(host.textContent, /送达待核对/);
+  assert.match(host.textContent, /会话回复授权已过期/);
+  assert.ok(host.querySelector('[data-interaction-confirm="i-unknown"]'));
+  assert.ok(host.querySelector('[data-interaction-resend="i-unknown"]'));
+  assert.equal(host.querySelector('[data-interaction-resend="i-expired"]'), null);
+  host.querySelector('[data-interaction-confirm="i-unknown"]').click();
+  await settle(6);
+  const call = app.router.calls.find(c => c.path === '/api/bot-interactions/i-unknown/confirm');
+  assert.ok(call && call.body.actionKey.length >= 16);
+});

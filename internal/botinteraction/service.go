@@ -52,6 +52,7 @@ func New(store *repo.Store) *Service {
 	}
 	s := &Service{Store: store, URL: endpoint, running: map[string]*connection{}, channels: map[string]Channel{}, Done: make(chan struct{})}
 	s.channels[ChannelWeCom] = &wecomChannel{svc: s}
+	s.channels[ChannelFeishu] = newFeishuChannel()
 	return s
 }
 

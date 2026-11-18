@@ -1,6 +1,6 @@
 # LoopForge 企业 IM 接入实施方案（单分支开发）
 
-版本为第 3 版，日期为 2026-11-18。状态为实施中，阶段 A 已完成。第 3 版补齐数据库时间、配置物理列、锁顺序、重试终态、停用语义、状态枚举、企业确认和维护窗口的实现约定，并按 `origin/main@e89cda9` 重新核对源码和迁移编号。本文是 `feature/enterprise-im` 分支的执行清单。
+版本为第 3 版，日期为 2026-11-18。状态为实施中：阶段 A–E（R1 飞书私聊闭环）的代码与自动化测试已完成，真实租户验收待执行（`docs/im-channels.md` 第 6 节）。第 3 版补齐数据库时间、配置物理列、锁顺序、重试终态、停用语义、状态枚举、企业确认和维护窗口的实现约定，并按 `origin/main@e89cda9` 重新核对源码和迁移编号。本文是 `feature/enterprise-im` 分支的执行清单。
 
 目标是在 LoopForge 已有的企微 Bot、账号绑定、交互队列和通知服务之上，扩展飞书和钉钉。首轮先完成三个渠道的账号绑定、私聊查询和可靠回复，再接入项目助手与 SOP 主动通知。
 
@@ -82,21 +82,21 @@
 internal/botinteraction/
   channel.go                 渠道接口与事件、回复、发送结果类型（阶段 A 已新增）
   channel_wecom.go           包装现有 socket / progress / cards（阶段 A 已新增）
-  channel_feishu.go          飞书适配器（阶段 E）
+  channel_feishu.go          飞书适配器（阶段 E 已新增）
   channel_dingtalk.go        钉钉适配器（阶段 F）
   inbound.go                 公共入站校验、分类和持久化（阶段 A 已新增）
-  delivery.go                回复状态机和恢复（阶段 C）
+  delivery.go                回复状态机和恢复（阶段 C 已新增）
   retention.go               数据保留（阶段 H）
   service.go                 编排连接、领取和处理
 internal/credcrypt/
-  keyring.go                 AES-GCM 凭据加解密（阶段 B）
+  keyring.go                 AES-GCM 凭据加解密（阶段 B 已新增）
 internal/repo/
-  dbtime.go                  数据库时间方言函数（阶段 B）
+  dbtime.go                  数据库时间方言函数（阶段 B 已新增）
   notifications.go           Bot 配置与通知投递
   bot_credentials.go         凭据存储
   bot_identities.go          身份绑定
   bot_interactions.go        连接、交互和会话
-  bot_native_sessions.go     Bot 与原生 CLI 会话映射，归 AssistantRepo（阶段 B）
+  bot_native_sessions.go     Bot 与原生 CLI 会话映射，归 AssistantRepo（阶段 B 已新增）
 internal/httpapi/
   notifications.go           Bot 管理
   bot_identities.go          绑定确认
@@ -807,9 +807,9 @@ AGENTFLOW_BOT_METADATA_RETENTION_DAYS=180
 
 | 条件 | 核实动作 | 对应阶段 | 状态 |
 | --- | --- | --- | --- |
-| SDK 版本和关闭/确认接口 | 用固定 tag 编译探针，核对源码和实际行为 | A | 已完成。飞书可用；钉钉连接循环不可用，改为只用部分 SDK（第 8.3 节） |
+| SDK 版本和关闭/确认接口 | 用固定 tag 编译探针，核对源码和实际行为 | A | 已完成。飞书可用；钉钉连接循环不可用，改为只用部分 SDK（第 8.3 节）；复现步骤和调用栈见 `scripts/im-sdk-probe/README.md` |
 | 飞书企业信息接口 | 核对官方文档和固定版本 SDK 的模型 | A | 已完成。接口与字段已确认，所需权限在应用后台核实 |
-| 飞书企业范围与权限 | 准备一个自建应用，完成可信事件发现、管理员确认 tenant key，再做单聊收发 | E | 待准备 |
+| 飞书企业范围与权限 | 准备一个自建应用，完成可信事件发现、管理员确认 tenant key，再做单聊收发 | E | 代码完成；最小权限清单见 `docs/im-channels.md` 4.1，真实租户待验 |
 | 钉钉企业标识和机器人字段 | 保存脱敏的原始事件，确认 CorpId、应用和发送者之间的对应关系 | F | 待准备 |
 | 钉钉主动发送权限 | 用实际的机器人 API 完成一次本企业单聊通知 | G | 待准备 |
 | 企微历史绑定归属 | 跑只读 SQL 清单，核对重复 Bot、孤立绑定和现有通知配置 | B、上线前 | 待执行 |
