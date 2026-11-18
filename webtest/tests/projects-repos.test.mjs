@@ -240,3 +240,25 @@ test('project owner deletes a project from its danger zone and the list moves on
   assert.equal(app.evaluate(`localStorage.getItem('agentflow.activeProject')`), app.evaluate(`state.projectFilter`));
   assert.equal(app.evaluate(`state.projectAdminDetailId||''`), '');
 });
+
+test('repository modal allows submitting with empty defaultBranch', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  app.router.post('/api/repositories', (call) => ({ ...call.body, id: 'repo-modal-new' }));
+  app.router.put('/api/projects', (call) => call.body);
+  app.evaluate(`
+    state.projectFilter='project-1';
+    state.data.repositories=[];
+    openRepositoryModal();
+  `);
+  const form = app.document.querySelector('#repositoryForm');
+  assert.equal(form.elements.defaultBranch.required, false);
+  assert.equal(form.elements.defaultBranch.value, '');
+  form.elements.repoUrl.value = 'https://github.com/example/loopforge-e2e-fixture';
+  assert.equal(form.checkValidity(), true);
+  form.dispatchEvent(new app.window.Event('submit', { bubbles: true, cancelable: true }));
+  await settle(8);
+  const create = app.router.calls.find(c => c.method === 'POST' && c.path === '/api/repositories');
+  assert.equal(create?.body?.provider, 'github');
+  assert.equal(create?.body?.defaultBranch, '');
+});
