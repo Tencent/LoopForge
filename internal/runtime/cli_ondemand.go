@@ -16,8 +16,10 @@ import (
 // a person asks from a failed conversation. Package names and installer URLs are fixed:
 // the request may choose an engine, never a URL or a package.
 const (
-	cursorInstallScript = "curl -fsSL --proto '=https' --tlsv1.2 https://cursor.com/install | bash"
-	agyInstallScript    = "curl -fsSL --proto '=https' --tlsv1.2 https://antigravity.google/cli/install.sh | bash"
+	cursorInstallerURL  = "https://cursor.com/install"
+	agyInstallerURL     = "https://antigravity.google/cli/install.sh"
+	cursorInstallScript = "curl -fsSL --proto '=https' --tlsv1.2 " + cursorInstallerURL + " | bash"
+	agyInstallScript    = "curl -fsSL --proto '=https' --tlsv1.2 " + agyInstallerURL + " | bash"
 )
 
 // DeepSeekHarnessVersion is the dsh release the Dockerfile bundles and an

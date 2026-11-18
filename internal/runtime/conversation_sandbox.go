@@ -194,7 +194,15 @@ func ensureConversationCLI(ctx context.Context, sandbox Sandbox, provider, home 
 	if err != nil {
 		return "", err
 	}
-	setupArgs := append(append([]string{"exec", "--user", "0:0", "--workdir", "/"}, toolchain...), s.name, "sh", "-lc", setup, "loopforge-cli-setup", ids[0], ids[1], home)
+	setupArgs := []string{"exec", "--user", "0:0", "--workdir", "/"}
+	// Preparation uses a separate Docker exec as root. Carry the sandbox's
+	// configured network settings into that exec as well as normal CLI turns.
+	for _, key := range []string{"HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "all_proxy", "no_proxy"} {
+		if value, ok := s.profile.Environment[key]; ok {
+			setupArgs = append(setupArgs, "-e", key+"="+value)
+		}
+	}
+	setupArgs = append(append(setupArgs, toolchain...), s.name, "sh", "-lc", setup, "loopforge-cli-setup", ids[0], ids[1], home)
 	output, err := exec.CommandContext(ctx, "docker", setupArgs...).CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("准备 %s 原生CLI失败（工作区镜像需支持 Node.js/npm 和 Python3）：%w: %s", provider, err, conversationSetupOutput(output))
@@ -230,9 +238,9 @@ func conversationCLISetup(provider, binary string) (string, error) {
 			// it has no standalone npm package. Never install a namesake.
 			installer = "echo 'ZCode CLI 未安装；请在工作区镜像中预装官方 ZCode CLI 并将 zcode 加入 PATH' >&2; exit 1"
 		case AgentCLICursor:
-			installer = "curl -fsSL https://cursor.com/install | HOME=/opt/loopforge/conversation-cli bash >&2"
+			installer = conversationScriptInstaller(cursorInstallerURL)
 		case AgentCLIAntigravity:
-			installer = "curl -fsSL https://antigravity.google/cli/install.sh | HOME=/opt/loopforge/conversation-cli bash >&2"
+			installer = conversationScriptInstaller(agyInstallerURL)
 		default:
 			return "", fmt.Errorf("不支持的会话CLI %s", provider)
 		}
@@ -250,6 +258,21 @@ export PATH TAR_OPTIONS
 fi
 ` + conversationCLIIdentitySetup + "if ! command -v " + shellSingleQuote(binary) + " >/dev/null 2>&1; then\nmkdir -p /opt/loopforge/conversation-cli/bin\n" + installer + "\nfi\n" +
 		"python3 -c 'import json,urllib.request'\ncommand -v " + shellSingleQuote(binary) + "\n", nil
+}
+
+// Download the complete HTTPS installer before executing it. Retry the transfer
+// once because a TLS connection failure can be transient.
+func conversationScriptInstaller(url string) string {
+	return "installer_url=" + shellSingleQuote(url) + "\n" + `installer_file=$(mktemp)
+trap 'rm -f "$installer_file"' EXIT
+download_installer() {
+  curl -fsSL --proto '=https' --tlsv1.2 --connect-timeout 10 --max-time 45 -o "$installer_file" "$installer_url"
+}
+if ! download_installer; then
+  sleep 1
+  download_installer
+fi
+HOME=/opt/loopforge/conversation-cli bash "$installer_file" >&2`
 }
 
 // Node-based CLIs call getpwuid even when HOME is already set. Numeric
