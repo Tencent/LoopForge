@@ -29,7 +29,7 @@ const snoozed = { ...watching, id: 'evf-4', assetId: 'agent-3', assetName: 'Plan
 const summary = { total: 3, finished: 3, fixed: 2, regressed: 0, unchanged: 1, blocked: 0, passed: true, verdict: '通过：修好 2 个，退化 0 个，无变化 1 个' };
 const pending = {
   id: 'evp-1', projectId: 'project-1', findingId: 'evf-5', assetKind: 'agent', assetId: 'agent-1', assetName: 'Developer',
-  title: '补充自测要求', status: 'pending', summary, baseHash: 'h', createdAt: now, updatedAt: now,
+  title: '补充自测要求', status: 'pending', summary, baseHash: 'b', createdAt: now, updatedAt: now,
 };
 const validating = { ...pending, id: 'evp-2', title: '规则补充', status: 'validating', summary: { total: 4, finished: 1, passed: false, verdict: '回放进行中 1/4' } };
 const detail = {
@@ -62,9 +62,9 @@ function confirmPrompt(app, value = '') {
   app.document.querySelector('#confirmOkBtn').click();
 }
 
-test('evolution center renders issue list, record modal, proposals, versions, policies and samples', async (t) => {
+test('evolution center renders asset list, inspection, proposals, versions, policies and samples', async (t) => {
   const app = await loadApp({ routes: [
-    { method: 'GET', path: '/api/evolution/overview?projectId=project-1', body: overview },
+    { method: 'GET', path: '/api/evolution/overview?projectId=project-1', body: { ...overview, pending: [], validating: [], recent: [] } },
     { method: 'GET', path: '/api/evolution/findings?projectId=project-1', body: overview.findings },
     { method: 'GET', path: '/api/evolution/findings/evf-1/runs?cluster=legacy-0', body: { complete: false, total: 3, items: [{ runId: 'run-1', createdAt: now, status: 'failed', issueTitle: '登录页改版', workflowName: '需求交付', detail: '编译失败 第 12 行' }] } },
     { method: 'GET', path: '/api/evolution/samples?projectId=project-1', body: [{ projectId: 'project-1', runId: 'run-9', note: '典型成功', createdAt: now }] },
@@ -88,75 +88,80 @@ test('evolution center renders issue list, record modal, proposals, versions, po
   await settle(4);
   const body = () => $('#evolutionBody').textContent;
   assert.equal(app.document.querySelectorAll('#evoMetrics .evo-metric').length, 0);
-  assert.match($('#evoMetrics').textContent, /1 项修改需要你处理/);
-  assert.match($('#evoTab-issues').textContent, /发现的问题2/);
-  assert.equal(app.document.querySelectorAll('#evolutionBody [role="tab"]').length, 2);
-  assert.match(body(), /发生了什么问题.*涉及哪个对象.*准备怎么改/s);
-  const fixRow = $('[data-evo-finding="evf-1"]');
-  assert.ok(fixRow.classList.contains('v-fix'));
+  assert.equal($('#evoMetrics').textContent, '');
+  assert.match($('[data-evo-list-status="all"]').textContent, /全部记录4/);
+  assert.equal($('[data-evo-list-status="active"]').getAttribute('aria-pressed'), 'true');
+  assert.equal(app.document.querySelectorAll('.evo-list-row').length, 4);
+  assert.equal(app.document.querySelectorAll('#evolutionBody [role="tab"]').length, 0);
+  const fixRow = $('[data-evo-asset-group="asset:agent:agent-1"]');
   assert.match(fixRow.textContent, /编译失败 第 # 行/);
-  assert.ok(!fixRow.querySelector('.evo-ci'), 'statistics do not dominate the issue list');
-  assert.equal($('#evoFindingModal'), null, 'no inline detail or automatically opened modal');
-  assert.ok($('[data-evo-finding="evf-3"]'), 'watch findings are visible immediately');
-  $('[data-evo-status="noise"]').click();
-  assert.ok($('[data-evo-finding="evf-2"]'));
-  const kind = $('[data-evo-kind-select]');
-  kind.value = 'agent';
-  kind.dispatchEvent(new app.window.Event('change', { bubbles: true }));
-  assert.equal($('[data-evo-finding="evf-2"]'), null, 'kind filter hides rules');
-  kind.value = '';
-  kind.dispatchEvent(new app.window.Event('change', { bubbles: true }));
-  $('[data-evo-status="open"]').click();
-  const search = $('[data-evo-search]');
-  search.focus();
-  search.value = 'reviewer';
-  search.dispatchEvent(new app.window.Event('input', { bubbles: true }));
-  assert.equal($('[data-evo-finding="evf-1"]'), null, 'search filters by asset name');
-  assert.equal(app.document.activeElement, search, 'search preserves focus');
-  search.value = '';
-  search.dispatchEvent(new app.window.Event('input', { bubbles: true }));
+  assert.equal(fixRow.querySelector('.evo-ci'), null);
+  assert.equal($('#evoDetailPage'), null);
+  assert.ok($('[data-evo-asset-group="asset:agent:agent-2"]'));
+  assert.ok($('[data-evo-asset-group="asset:rule:rule-1"]'));
+  $('[data-evo-list-status="doing"]').click();
+  assert.equal(app.document.querySelectorAll('.evo-list-row').length, 0);
+  assert.equal(app.router.calls.some(c => c.method !== 'GET'), false);
+  $('[data-evo-list-status="all"]').click();
 
-  $('[data-evo-finding="evf-1"]').click();
+  $('[data-evo-asset-group="asset:agent:agent-1"]').click();
   await settle(4);
-  const fd = $('#evoFindingModal');
-  assert.equal(fd.querySelector('[role="dialog"]').getAttribute('aria-modal'), 'true');
+  const fd = $('#evoDetailPage');
+  assert.equal(fd.querySelector('[role="dialog"]'), null);
+  assert.equal($('#evoPageHead').hidden, true);
+  assert.equal(fd.querySelector('#evoDetailTrack').children.length, 4);
+  assert.ok(fd.querySelector('#evoChangeSummary'));
+  assert.equal(fd.querySelector('#evoInspection').open, false);
+  assert.ok(fd.querySelector('#evoInspection .evo-evidence-panel'));
+  $('[data-evo-inspect="records"]').click(); await settle(3);
+  assert.equal($('#evoInspection').open, true);
   assert.match(fd.textContent, /编译失败/);
   assert.match(fd.textContent, /98%/);
   assert.match(fd.textContent, /另有 2 次运行用的是旧版本/);
   assert.match(fd.textContent, /登录页改版/);
-  assert.ok(!$('#kbDrawer').classList.contains('open'), 'finding uses a modal, not the shared drawer');
-  assert.ok($('#evoFindingModal [data-evo-propose="evf-1"]').classList.contains('primary'));
-  app.document.dispatchEvent(new app.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-  assert.equal($('#evoFindingModal'), null);
-  assert.equal(app.document.activeElement.dataset.evoFinding, 'evf-1', 'focus returns to clicked row');
-  $('[data-evo-finding="evf-1"]').click();
+  assert.ok(!$('#kbDrawer').classList.contains('open'));
+  assert.ok($('#evoDetailPage [data-evo-propose="evf-1"]').classList.contains('primary'));
+  $('[data-evo-list-back]').click(); await settle(4);
+  assert.equal($('#evoDetailPage'), null);
+  assert.equal(app.document.activeElement.dataset.evoAssetGroup, 'asset:agent:agent-1');
+  $('[data-evo-asset-group="asset:agent:agent-1"]').click();
   await settle(2);
+  $('[data-evo-inspect="records"]').click(); await settle(2);
+  $('#evoDiagnosisDetails').open = true;
   $('[data-evo-snooze="evf-1"]').click();
   await settle(6);
   assert.deepEqual(call('POST', '/api/evolution/findings/evf-1/snooze').body, { days: 7 });
+  $('[data-evo-inspect="records"]').click();
+  $('#evoDiagnosisDetails').open = true;
   $('[data-evo-dismiss="evf-1"]').click();
   await settle(2);
   confirmPrompt(app, '外部依赖故障');
   await settle(6);
   assert.deepEqual(call('POST', '/api/evolution/findings/evf-1/dismiss').body, { reason: '外部依赖故障' });
 
-  $('[data-evo-finding="evf-1"]').click();
+  $('[data-evo-asset-group="asset:agent:agent-1"]').click();
   $('[data-evo-propose="evf-1"]').click();
   await settle(6);
   assert.deepEqual(call('POST', '/api/evolution/proposals').body, { projectId: 'project-1', findingId: 'evf-1' });
   app.evaluate(`evoCloseFinding();evoDrawerClose()`);
 
-  $('[data-evo-tab="proposals"]').click();
+  app.router.get('/api/evolution/overview?projectId=project-1', { ...overview, validating: [{ ...validating, assetId: 'agent-4' }] });
+  await app.evaluate('evoReload(document.querySelector("#evoRefresh"))'); await settle(5);
   assert.match(body(), /补充自测要求/);
-  assert.match(body(), /历史运行 1\/4/);
-  assert.equal(app.document.querySelectorAll('#evoChangeList .evo-change-row').length, 3);
-  assert.ok($('#evoChangeList [data-evo-proposal="evp-0"]'), 'published modifications are visible without expanding a group');
+  assert.match(body(), /验证中/);
+  assert.equal(app.document.querySelectorAll('#evoUnifiedList .evo-list-row').length, 5);
+  assert.match($('[data-evo-asset-group="asset:agent:agent-1"]').textContent, /1 次历史尝试/);
 
-  $('[data-evo-proposal="evp-1"]').click();
+  $('[data-evo-asset-group="asset:agent:agent-1"]').click();
   await settle(4);
-  assert.match($('#evoFindingModal').textContent, /出了什么问题.*准备改哪个东西.*这样改有用吗/s);
-  assert.ok($('#evoFindingModal .evo-diff-line.add'));
-  assert.ok(!$('#evoFindingModal').innerHTML.includes('<b>Run unit tests</b>'));
+  assert.match($('#evoChangeSummary').textContent, /历史验证 3 条 · 通过/);
+  assert.match($('#evoDetailActions').textContent, /先小范围试用/);
+  assert.match($('#evoDetailBody').textContent, /改了什么.*改写正文.*(?:历史|回放)验证.*灰度试用.*全量发布/s);
+  $('[data-evo-inspect="change"]').click();
+  assert.equal($('#evoInspection').open, true);
+  assert.equal($('#evoRecommendation .evo-detail-box'), null);
+  assert.ok($('#evoDetailPage .evo-diff-line.add'));
+  assert.ok(!$('#evoDetailPage').innerHTML.includes('<b>Run unit tests</b>'));
   $('[data-evo-process="evp-1"]').click();
   await settle(4);
   const drawer = $('#kbDrawerBody');
@@ -207,6 +212,7 @@ test('evolution center renders issue list, record modal, proposals, versions, po
   assert.deepEqual(rollback.body, { version: 1, note: '' });
 
   app.evaluate(`evoCloseFinding();evoDrawerClose()`);
+  $('[data-evo-tab="assets"]').click();
   $('[data-evo-tab="samples"]').click();
   assert.match($('#evolutionBody').textContent, /典型成功/);
   $('[data-evo-unpin="run-9"]').click();
@@ -221,7 +227,7 @@ test('issue modal isolates clusters, paginates, escapes text and rejects stale r
   ] };
   const records = Array.from({ length: 12 }, (_, i) => ({ runId: `run-${i}`, createdAt: now, status: i === 11 ? 'succeeded' : 'failed', issueTitle: '<script>bad()</script>', detail: 'Compile failed', nodeId: 'code' }));
   const app = await loadApp({ routes: [
-    { method: 'GET', path: '/api/evolution/overview?projectId=project-1', body: { ...overview, validating: [], pending: [] } },
+    { method: 'GET', path: '/api/evolution/overview?projectId=project-1', body: { ...overview, validating: [], pending: [], recent: [] } },
     { method: 'GET', path: '/api/evolution/findings?projectId=project-1', body: [f] },
     { method: 'GET', path: '/api/evolution/findings/evf-1/runs?cluster=first', body: { items: records, complete: true, total: 12 } },
     { method: 'GET', path: '/api/evolution/findings/evf-1/runs?cluster=second', body: { items: [{ runId: 'other-run', status: 'reworked', detail: 'Missing e2e' }], complete: true, total: 1 } },
@@ -231,11 +237,14 @@ test('issue modal isolates clusters, paginates, escapes text and rejects stale r
   const event = type => new app.window.Event(type, { bubbles: true });
   await app.evaluate(`state.projectFilter='project-1';switchView('evolution');renderEvolutionView()`);
   await settle(4);
-  assert.equal(app.document.querySelectorAll('[data-evo-finding="evf-1"]').length, 2);
-  assert.equal($('#evoIssueList img'), null);
-  $('[data-evo-cluster="first"]').click();
+  assert.equal(app.document.querySelectorAll('[data-evo-asset-group="asset:agent:agent-1"]').length, 1);
+  assert.match($('#evoUnifiedList').textContent, /2 类关联问题/);
+  assert.equal($('#evoUnifiedList img'), null);
+  $('[data-evo-asset-group="asset:agent:agent-1"]').click();
   await settle(4);
-  assert.equal($('#evoFindingModal img'), null);
+  $('[data-evo-inspect="records"]').click(); await settle(3);
+  $('#evoRunDetails').open = true;
+  assert.equal($('#evoDetailPage img'), null);
   assert.equal($('#evoFindingRecords script'), null);
   assert.equal(app.document.querySelectorAll('#evoFindingRecords tbody tr').length, 10);
   $('[data-evo-record-page="1"]').click();
@@ -246,19 +255,17 @@ test('issue modal isolates clusters, paginates, escapes text and rejects stale r
   assert.ok($('[data-evo-record-run="run-11"]'));
   status.value = 'unavailable'; status.dispatchEvent(event('change'));
   assert.match($('#evoFindingRecords').textContent, /没有符合条件/);
-  const close = $('[data-evo-close]'); close.focus();
-  app.document.dispatchEvent(new app.window.KeyboardEvent('keydown', { key: 'Tab', shiftKey: true, bubbles: true }));
-  assert.ok($('#evoFindingModal').contains(app.document.activeElement));
-  $('#evoFindingModal').click();
-  assert.equal($('#evoFindingModal'), null);
-  assert.equal(app.document.activeElement.dataset.evoCluster, 'first');
+  assert.equal(app.document.body.style.overflow, '');
+  $('[data-evo-list-back]').click(); await settle(4);
+  assert.equal($('#evoDetailPage'), null);
+  assert.equal(app.document.activeElement.dataset.evoAssetGroup, 'asset:agent:agent-1');
 
   let resolveFirst;
   app.router.get('/api/evolution/findings/evf-1/runs?cluster=first', () => new Promise(resolve => { resolveFirst = resolve; }));
-  $('[data-evo-cluster="first"]').click();
+  $('[data-evo-asset-group="asset:agent:agent-1"]').click();
   await settle(2);
-  $('[data-evo-close]').click();
-  $('[data-evo-cluster="second"]').click();
+  $('[data-evo-inspect="records"]').click();
+  $('[data-evo-related-finding="evf-1"][data-cluster="second"]').click();
   await settle(3);
   resolveFirst({ items: records, complete: true, total: 12 });
   await settle(3);
@@ -268,11 +275,12 @@ test('issue modal isolates clusters, paginates, escapes text and rejects stale r
   app.evaluate(`showRunDetail=(id)=>{window.__openedRun=id}`);
   $('[data-evo-record-run="other-run"]').click();
   assert.equal(app.window.__openedRun, 'other-run');
-  assert.equal($('#evoFindingModal'), null);
+  assert.equal($('#evoDetailPage'), null);
   assert.notEqual(app.document.body.style.overflow, 'hidden');
 
   app.evaluate(`switchView('evolution');evoOpenFinding('evf-1','second')`);
   await settle(3);
+  $('[data-evo-inspect="records"]').click();
   app.router.get('/api/evolution/findings/evf-1/runs?cluster=second', { status: 500, body: { error: 'temporary failure' } });
   app.evaluate(`evoLoadFindingRuns(evo.modal)`);
   await settle(3);
@@ -285,7 +293,7 @@ test('issue modal isolates clusters, paginates, escapes text and rejects stale r
   app.router.get('/api/evolution/overview?projectId=project-2', { projectId: 'project-2', findings: [], health: [] });
   app.router.get('/api/evolution/findings?projectId=project-2', []);
   await app.evaluate(`state.projectFilter='project-2';renderEvolutionView()`);
-  assert.equal($('#evoFindingModal'), null, 'project change closes modal');
+  assert.equal($('#evoDetailPage'), null, 'project change closes modal');
 });
 
 test('evolution center asks for a project and decorates run details', async (t) => {

@@ -20,6 +20,7 @@ func (env *evoTestEnv) seedPendingProposal(t *testing.T, id string) domain.EvoPr
 	if err := env.store.PutEvoProposal(p); err != nil {
 		t.Fatal(err)
 	}
+	p, _ = env.store.EvoProposal(p.ID)
 	return p
 }
 

@@ -56,9 +56,12 @@ func registerEvolutionRoutes(g *gin.Engine, h *evolutionHandlers) {
 	g.POST("/api/evolution/findings/:id/snooze", h.snoozeFinding)
 	g.GET("/api/evolution/proposals", h.proposals)
 	g.POST("/api/evolution/proposals", h.createProposal)
+	g.POST("/api/evolution/queue/:id/start", h.startQueue)
+	g.POST("/api/evolution/queue/:id/reject", h.rejectQueue)
 	g.GET("/api/evolution/proposals/:id", h.proposal)
 	g.GET("/api/evolution/proposals/:id/replays/:rid/compare", h.replayCompare)
 	g.POST("/api/evolution/proposals/:id/approve", h.approveProposal)
+	g.POST("/api/evolution/proposals/:id/canary/traffic", h.adjustCanaryTraffic)
 	g.POST("/api/evolution/proposals/:id/reject", h.rejectProposal)
 	g.GET("/api/evolution/policies", h.policies)
 	g.PUT("/api/evolution/policies/:kind/:id", h.putPolicy)
@@ -154,37 +157,6 @@ func (h *evolutionHandlers) loadAsset(kind, id string) (evoAsset, bool) {
 	return evoAsset{}, false
 }
 
-// writeAssetContent writes a new body into the live catalog asset.
-func (h *evolutionHandlers) writeAssetContent(asset evoAsset, content string) error {
-	switch asset.Kind {
-	case domain.EvoAssetAgent:
-		agent := asset.agent
-		agent.Prompt = content
-		return h.repo.PutAgent(agent)
-	case domain.EvoAssetRule:
-		rule := asset.rule
-		rule.Content = content
-		return h.repo.PutRule(rule)
-	}
-	return errUnsupportedEvoAsset
-}
-
-// ensureVersioned records the live body as a version when the version log
-// does not end with it: baseline for the first touch, manual for edits made
-// outside the evolution flow.
-func (h *evolutionHandlers) ensureVersioned(asset evoAsset, userID int64) (domain.AssetVersion, error) {
-	hash := domain.ContentHash(asset.Content)
-	latest, ok := h.repo.LatestAssetVersion(asset.Kind, asset.ID)
-	if ok && latest.Hash == hash {
-		return latest, nil
-	}
-	source, note := domain.EvoVersionBaseline, "进化前的基线"
-	if ok {
-		source, note = domain.EvoVersionManual, "进化流程外的手动修改"
-	}
-	return h.repo.AppendAssetVersion(domain.AssetVersion{AssetKind: asset.Kind, AssetID: asset.ID, Content: asset.Content, Source: source, Note: note, CreatedBy: userID})
-}
-
 // ---------- overview & findings ----------
 
 func evoWindowDays(raw string) int {
@@ -203,6 +175,7 @@ func (h *evolutionHandlers) overview(c *gin.Context) {
 	days := evoWindowDays(c.Query("days"))
 	out := domain.EvoOverview{ProjectID: projectID, WindowDays: days, GeneratedAt: time.Now().UTC()}
 	out.Findings = h.repo.EvoFindings(projectID, domain.EvoFindingOpen)
+	out.Queue = h.repo.EvoQueue(projectID)
 	out.Validating = evoProposalListView(h.repo.EvoProposals(projectID, 50, domain.EvoProposalDrafting, domain.EvoProposalValidating))
 	out.Pending = evoProposalListView(h.repo.EvoProposals(projectID, 50, domain.EvoProposalPending))
 	trial := h.repo.EvoProposals(projectID, 50, domain.EvoProposalCanary)
@@ -360,13 +333,29 @@ func (h *evolutionHandlers) diagnose(c *gin.Context) {
 	found := evolution.Diagnose(h.diagnoseInput(req.ProjectID, days, runs, h.repo.EvoLevel))
 	saved := make([]domain.EvoFinding, 0, len(found))
 	keep := map[string]bool{}
+	activeFindings := h.repo.EvoFindings(req.ProjectID, domain.EvoFindingOpen, domain.EvoFindingProposed)
+	queuedFindings := h.repo.EvoQueue(req.ProjectID)
 	for _, f := range found {
-		if existing, ok := h.repo.ActiveEvoFindingForAsset(req.ProjectID, f.AssetKind, f.AssetID); ok {
-			f = mergeEvoFinding(f, existing)
-		} else {
+		matched := false
+		for _, existing := range activeFindings {
+			if existing.AssetKind != f.AssetKind || existing.AssetID != f.AssetID {
+				continue
+			}
+			if existing.Status == domain.EvoFindingProposed || existing.ProposalID != "" || evoFindingQueued(queuedFindings, existing.ID) {
+				if !sameEvoFindingIntent(f, existing) {
+					continue
+				}
+				f = existing
+			} else {
+				f = mergeEvoFinding(f, existing)
+			}
+			matched = true
+			break
+		}
+		if !matched {
 			f.ID = "evf-" + randomID()
 		}
-		if p, open := h.repo.OpenEvoProposalForAsset(f.AssetKind, f.AssetID); open {
+		if p, open := h.repo.OpenEvoProposalForAsset(f.AssetKind, f.AssetID); open && p.ProjectID == req.ProjectID && p.FindingID == f.ID {
 			f.ProposalID = p.ID
 		}
 		if err := h.repo.PutEvoFinding(f); err != nil {
@@ -377,6 +366,9 @@ func (h *evolutionHandlers) diagnose(c *gin.Context) {
 		saved = append(saved, f)
 	}
 	archived := 0
+	for _, item := range h.repo.EvoQueue(req.ProjectID) {
+		keep[item.FindingID] = true
+	}
 	if len(runs) > 0 {
 		for _, f := range h.repo.EvoFindings(req.ProjectID, domain.EvoFindingOpen) {
 			if keep[f.ID] {
@@ -412,6 +404,37 @@ func (h *evolutionHandlers) diagnoseInput(projectID string, days int, runs []dom
 		WindowDays: days,
 		Pins:       h.repo.RunAssetPins,
 	}
+}
+
+func evoFindingQueued(items []domain.EvoQueueItem, findingID string) bool {
+	for _, item := range items {
+		if item.FindingID == findingID {
+			return true
+		}
+	}
+	return false
+}
+
+func sameEvoFindingIntent(a, b domain.EvoFinding) bool {
+	keys := func(f domain.EvoFinding) []string {
+		set := map[string]bool{}
+		for _, cluster := range f.Clusters {
+			set[cluster.Kind+"|"+cluster.NodeID+"|"+cluster.Label] = true
+		}
+		if len(set) == 0 {
+			for _, signal := range f.Signals {
+				set[signal.Kind+"|"+signal.NodeID+"|"+signal.Detail] = true
+			}
+		}
+		out := make([]string, 0, len(set))
+		for key := range set {
+			out = append(out, key)
+		}
+		sort.Strings(out)
+		return out
+	}
+	ak, bk := keys(a), keys(b)
+	return len(ak) > 0 && len(ak) == len(bk) && strings.Join(ak, "\n") == strings.Join(bk, "\n")
 }
 
 // mergeEvoFinding refreshes a tracked finding with a new diagnosis: same
@@ -601,7 +624,15 @@ func (h *evolutionHandlers) createProposal(c *gin.Context) {
 		AssetID   string `json:"assetId"`
 		Model     string `json:"model"`
 	}
-	if !decode(c, &req) {
+	startID := c.GetString("evoQueueStartID")
+	if startID != "" {
+		item, ok := h.repo.EvoQueueItem(startID)
+		if !ok || item.Status != "queued" {
+			c.JSON(http.StatusConflict, gin.H{"error": "待处理项已变化，请刷新"})
+			return
+		}
+		req.FindingID, req.Model = item.FindingID, item.Model
+	} else if !decode(c, &req) {
 		return
 	}
 	var finding domain.EvoFinding
@@ -629,10 +660,6 @@ func (h *evolutionHandlers) createProposal(c *gin.Context) {
 	}
 	if level := h.repo.EvoLevel(asset.Kind, asset.ID); level < domain.EvoLevelPropose {
 		c.JSON(http.StatusConflict, gin.H{"error": "该资产的进化级别不允许生成提案，请先在策略中调到 L2"})
-		return
-	}
-	if open, exists := h.repo.OpenEvoProposalForAsset(asset.Kind, asset.ID); exists {
-		c.JSON(http.StatusConflict, gin.H{"error": "该资产已有进行中的提案", "proposalId": open.ID})
 		return
 	}
 	current, loggedIn := h.requestUser(c.Request, true)
@@ -668,14 +695,18 @@ func (h *evolutionHandlers) createProposal(c *gin.Context) {
 		Model:       assistantAllowedModel(req.Model, catalog),
 		CreatedBy:   user.ID,
 	}
-	if err := h.repo.PutEvoProposal(p); err != nil {
-		respond(c, err)
+	p, queued, created, err := h.repo.SubmitEvoProposal(p, "evq-"+randomID(), startID)
+	if err != nil {
+		respondEvoError(c, err)
 		return
 	}
-	if finding.ID != "" {
-		finding.ProposalID = p.ID
-		finding.Status = domain.EvoFindingProposed
-		_ = h.repo.PutEvoFinding(finding)
+	if queued != nil {
+		c.JSON(http.StatusAccepted, gin.H{"status": queued.Status, "queueId": queued.ID, "queue": queued})
+		return
+	}
+	if !created {
+		c.JSON(http.StatusOK, evoProposalView(p, false))
+		return
 	}
 	h.launchProposalJob(p, finding, user)
 	c.JSON(http.StatusAccepted, p)
@@ -711,7 +742,12 @@ func (h *evolutionHandlers) approveProposal(c *gin.Context) {
 		out domain.EvoProposal
 		err error
 	)
-	if strings.TrimSpace(req.Mode) == "canary" {
+	mode := strings.TrimSpace(req.Mode)
+	if mode != "" && mode != "canary" && mode != "release" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "未知的发布模式"})
+		return
+	}
+	if mode == "canary" {
 		out, err = h.startCanary(p, asset, h.currentUserID(c), req.Percent, req.MinRuns, req.Note, false)
 	} else {
 		out, err = h.releaseProposal(p, asset, h.currentUserID(c), strings.TrimSpace(req.Note), req.Force && (!authRequired() || h.isPlatformAdmin(c.Request)))
@@ -742,7 +778,6 @@ func (h *evolutionHandlers) rejectProposal(c *gin.Context) {
 		c.JSON(http.StatusConflict, gin.H{"error": "提案已结束，不能打回"})
 		return
 	}
-	h.cancelReplays(p)
 	p.Status = domain.EvoProposalRejected
 	p.DecidedBy = h.currentUserID(c)
 	p.DecidedAt = time.Now().UTC()
@@ -755,22 +790,39 @@ func (h *evolutionHandlers) rejectProposal(c *gin.Context) {
 		respond(c, err)
 		return
 	}
-	h.reopenFinding(p)
+	h.cancelReplays(p)
 	stored, _ := h.repo.EvoProposal(p.ID)
 	c.JSON(http.StatusOK, evoProposalView(stored, false))
 }
 
-// reopenFinding puts the finding back on the board after a proposal ends
-// without a release, so the owner can try again.
-func (h *evolutionHandlers) reopenFinding(p domain.EvoProposal) {
-	if p.FindingID == "" {
+func (h *evolutionHandlers) startQueue(c *gin.Context) {
+	item, ok := h.repo.EvoQueueItem(c.Param("id"))
+	if !ok {
+		c.JSON(http.StatusNotFound, gin.H{"error": "待处理项不存在"})
 		return
 	}
-	if f, ok := h.repo.EvoFinding(p.FindingID); ok && f.ProposalID == p.ID {
-		f.Status = domain.EvoFindingOpen
-		f.ProposalID = ""
-		_ = h.repo.PutEvoFinding(f)
+	if !h.requireProjectReader(c, item.ProjectID) || !h.requireProjectWriter(c, item.ProjectID) {
+		return
 	}
+	c.Set("evoQueueStartID", item.ID)
+	h.createProposal(c)
+}
+
+func (h *evolutionHandlers) rejectQueue(c *gin.Context) {
+	item, ok := h.repo.EvoQueueItem(c.Param("id"))
+	if !ok {
+		c.JSON(http.StatusNotFound, gin.H{"error": "待处理项不存在"})
+		return
+	}
+	if !h.requireProjectReader(c, item.ProjectID) || !h.requireProjectWriter(c, item.ProjectID) {
+		return
+	}
+	out, err := h.repo.RejectEvoQueue(item.ID)
+	if err != nil {
+		respondEvoError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, out)
 }
 
 // ---------- policies ----------
@@ -881,7 +933,7 @@ func (h *evolutionHandlers) rollbackAsset(c *gin.Context) {
 	}
 	version, err := h.rollbackTo(asset, target, h.currentUserID(c), req.Note)
 	if err != nil {
-		respond(c, err)
+		respondEvoError(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, version)

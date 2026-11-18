@@ -90,6 +90,7 @@ func TestEvolutionCanarySplitsNewRuns(t *testing.T) {
 		t.Fatal("canary runs should say they take part in a trial")
 	}
 
+	trial, _ = s.EvoProposal(trial.ID)
 	trial.Canary.Status = domain.EvoCanaryAborted
 	if err := s.PutEvoProposal(trial); err != nil {
 		t.Fatal(err)

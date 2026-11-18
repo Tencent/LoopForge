@@ -279,6 +279,9 @@ type EvoProposal struct {
 	Rationale        string           `json:"rationale,omitempty"`
 	BaseContent      string           `json:"baseContent"`
 	BaseHash         string           `json:"baseHash"`
+	BaseVersion      int              `json:"baseVersion,omitempty"`
+	BaseCatalogHash  string           `json:"baseCatalogHash,omitempty"`
+	Revision         int64            `json:"revision"`
 	CandidateContent string           `json:"candidateContent,omitempty"`
 	Status           string           `json:"status"`
 	Model            string           `json:"model,omitempty"`
@@ -298,6 +301,27 @@ type EvoProposal struct {
 }
 
 func (p EvoProposal) Asset() EvoAssetRef { return EvoAssetRef{Kind: p.AssetKind, ID: p.AssetID} }
+
+func (p EvoProposal) OccupiesAsset() bool {
+	return p.Open() || (p.Status == EvoProposalReleased && p.Watch.Active())
+}
+
+// EvoQueueItem records a later improvement intent, never a generated candidate.
+type EvoQueueItem struct {
+	ID         string    `json:"id"`
+	ProjectID  string    `json:"projectId"`
+	FindingID  string    `json:"findingId"`
+	AssetKind  string    `json:"assetKind"`
+	AssetID    string    `json:"assetId"`
+	AssetName  string    `json:"assetName,omitempty"`
+	Title      string    `json:"title"`
+	Status     string    `json:"status"`
+	Model      string    `json:"model,omitempty"`
+	ProposalID string    `json:"proposalId,omitempty"`
+	CreatedBy  int64     `json:"createdBy,omitempty"`
+	CreatedAt  time.Time `json:"createdAt"`
+	UpdatedAt  time.Time `json:"updatedAt"`
+}
 
 // EvoOpenProposalStatuses hold the asset: one open proposal per asset.
 var EvoOpenProposalStatuses = []string{EvoProposalDrafting, EvoProposalValidating, EvoProposalPending, EvoProposalCanary}
@@ -443,10 +467,11 @@ type EvoAssetHealth struct {
 
 // EvoOverview is the 进化中心 dashboard payload.
 type EvoOverview struct {
-	ProjectID  string        `json:"projectId"`
-	Findings   []EvoFinding  `json:"findings"`
-	Validating []EvoProposal `json:"validating"`
-	Pending    []EvoProposal `json:"pending"`
+	ProjectID  string         `json:"projectId"`
+	Findings   []EvoFinding   `json:"findings"`
+	Validating []EvoProposal  `json:"validating"`
+	Pending    []EvoProposal  `json:"pending"`
+	Queue      []EvoQueueItem `json:"queue"`
 	// Trial lists proposals in a canary trial and released ones whose
 	// post-release watch is still running or flagged a degradation.
 	Trial       []EvoProposal    `json:"trial"`

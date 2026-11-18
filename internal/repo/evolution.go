@@ -16,10 +16,236 @@ import (
 
 // EvolutionRepo owns asset evolution state: autonomy policies, findings,
 // proposals, replays, immutable asset versions, run asset pins, feedback
-// signals and pinned regression samples. It never writes catalog assets;
-// releasing a version into an agent or rule is the caller's job.
+// signals and pinned regression samples. Catalog writes use explicit injection
+// so release and rollback commit together with evolution state.
 type EvolutionRepo struct {
 	*deps
+	catalog *CatalogRepo
+}
+
+var (
+	ErrEvoStale    = errors.New("进化状态或资产基线已变化，请刷新后重试")
+	ErrEvoBusy     = errors.New("该资产已有当前改进，请等待其结束")
+	ErrEvoParallel = errors.New("该资产存在历史并行改进冲突，需要管理员处理")
+)
+
+type evoAssetGateRow struct {
+	AssetKind string `gorm:"column:asset_kind;primaryKey;size:16"`
+	AssetID   string `gorm:"column:asset_id;primaryKey;size:128"`
+}
+
+func (evoAssetGateRow) TableName() string { return "evo_asset_gates" }
+
+type evoQueueRow struct {
+	ID        string     `gorm:"column:id;primaryKey;size:64"`
+	ProjectID string     `gorm:"column:project_id;size:64;index:idx_evo_queue_project_status,priority:1"`
+	Status    string     `gorm:"column:status;size:32;index:idx_evo_queue_project_status,priority:2"`
+	FindingID string     `gorm:"column:finding_id;size:64;uniqueIndex:idx_evo_queue_finding"`
+	AssetKind string     `gorm:"column:asset_kind;size:16;index:idx_evo_queue_asset,priority:1"`
+	AssetID   string     `gorm:"column:asset_id;size:128;index:idx_evo_queue_asset,priority:2"`
+	Payload   []byte     `gorm:"column:payload;type:json"`
+	Created   *time.Time `gorm:"column:created_at"`
+	Updated   *time.Time `gorm:"column:updated_at"`
+}
+
+func (evoQueueRow) TableName() string { return "evo_queue" }
+
+func (r *EvolutionRepo) assetTx(kind, id string, fn func(*EvolutionRepo) error) error {
+	if !domain.ValidEvoAssetKind(kind) || strings.TrimSpace(id) == "" {
+		return errors.New("invalid evolution asset")
+	}
+	return r.DB.Transaction(func(tx *gorm.DB) error {
+		row := evoAssetGateRow{AssetKind: kind, AssetID: id}
+		if _, err := insertIgnore(tx, "evo_asset_gates", map[string]any{"asset_kind": kind, "asset_id": id}); err != nil {
+			return err
+		}
+		if err := r.locking(tx.Where("asset_kind = ? AND asset_id = ?", kind, id)).Take(&row).Error; err != nil {
+			return err
+		}
+		return fn(&EvolutionRepo{deps: &deps{DB: tx}, catalog: r.catalog})
+	}, r.admissionTxOptions()...)
+}
+
+func (r *EvolutionRepo) currentAssetProposal(kind, id string) (domain.EvoProposal, bool, error) {
+	var rows []evoProposalRow
+	statuses := append(append([]string{}, domain.EvoOpenProposalStatuses...), domain.EvoProposalReleased)
+	if err := r.DB.Where("asset_kind = ? AND asset_id = ? AND status IN ?", kind, id, statuses).Find(&rows).Error; err != nil {
+		return domain.EvoProposal{}, false, err
+	}
+	var current domain.EvoProposal
+	found := false
+	for _, row := range rows {
+		p, ok := r.evoProposalFromRow(row, false)
+		if !ok {
+			return current, false, ErrEvoParallel
+		}
+		if p.OccupiesAsset() {
+			if found {
+				return current, false, ErrEvoParallel
+			}
+			current, found = p, true
+		}
+	}
+	return current, found, nil
+}
+
+func (r *EvolutionRepo) CurrentEvoProposalForAsset(kind, id string) (domain.EvoProposal, bool, error) {
+	return r.currentAssetProposal(kind, id)
+}
+
+func (r *EvolutionRepo) EvoQueueItem(id string) (domain.EvoQueueItem, bool) {
+	var row evoQueueRow
+	if r.DB.Where("id = ?", id).Take(&row).Error != nil {
+		return domain.EvoQueueItem{}, false
+	}
+	var item domain.EvoQueueItem
+	if json.Unmarshal(row.Payload, &item) != nil {
+		return domain.EvoQueueItem{}, false
+	}
+	item.Status = row.Status
+	return item, true
+}
+
+func (r *EvolutionRepo) EvoQueue(projectID string) []domain.EvoQueueItem {
+	var rows []evoQueueRow
+	out := []domain.EvoQueueItem{}
+	if r.DB.Where("project_id = ? AND status = ?", projectID, "queued").Order("created_at ASC, id ASC").Find(&rows).Error != nil {
+		return out
+	}
+	for _, row := range rows {
+		var item domain.EvoQueueItem
+		if json.Unmarshal(row.Payload, &item) == nil {
+			item.Status = row.Status
+			out = append(out, item)
+		}
+	}
+	return out
+}
+
+func (r *EvolutionRepo) saveQueue(item domain.EvoQueueItem, create bool) error {
+	item.UpdatedAt = time.Now().UTC()
+	row := evoQueueRow{ID: item.ID, ProjectID: item.ProjectID, Status: item.Status, FindingID: item.FindingID,
+		AssetKind: item.AssetKind, AssetID: item.AssetID, Payload: mustJSON(item), Created: timePtr(item.CreatedAt), Updated: timePtr(item.UpdatedAt)}
+	if create {
+		return r.DB.Create(&row).Error
+	}
+	result := r.DB.Model(&evoQueueRow{}).Where("id = ? AND status = ?", item.ID, "queued").Updates(map[string]any{"status": item.Status, "payload": row.Payload, "updated_at": row.Updated})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected != 1 {
+		return ErrEvoStale
+	}
+	return nil
+}
+
+func (r *EvolutionRepo) RejectEvoQueue(id string) (domain.EvoQueueItem, error) {
+	item, ok := r.EvoQueueItem(id)
+	if !ok {
+		return item, ErrEvoStale
+	}
+	err := r.assetTx(item.AssetKind, item.AssetID, func(tr *EvolutionRepo) error {
+		var exists bool
+		item, exists = tr.EvoQueueItem(id)
+		if !exists || item.Status != "queued" {
+			return ErrEvoStale
+		}
+		item.Status = "rejected"
+		return tr.saveQueue(item, false)
+	})
+	return item, err
+}
+
+// SubmitEvoProposal admits one current improvement, or persists a later intent.
+// startID is only set by the explicit, re-authorized queue-start endpoint.
+func (r *EvolutionRepo) SubmitEvoProposal(p domain.EvoProposal, queueID, startID string) (domain.EvoProposal, *domain.EvoQueueItem, bool, error) {
+	var queued *domain.EvoQueueItem
+	created := false
+	err := r.assetTx(p.AssetKind, p.AssetID, func(tr *EvolutionRepo) error {
+		current, busy, err := tr.currentAssetProposal(p.AssetKind, p.AssetID)
+		if err != nil {
+			return err
+		}
+		if busy && current.ProjectID == p.ProjectID && current.FindingID == p.FindingID && p.FindingID != "" {
+			p = current
+			return nil
+		}
+		var existing evoQueueRow
+		qerr := tr.DB.Where("finding_id = ?", p.FindingID).Take(&existing).Error
+		if qerr != nil && !errors.Is(qerr, gorm.ErrRecordNotFound) {
+			return qerr
+		}
+		if qerr == nil {
+			item, ok := tr.EvoQueueItem(existing.ID)
+			if !ok || item.ProjectID != p.ProjectID || item.AssetKind != p.AssetKind || item.AssetID != p.AssetID {
+				return ErrEvoStale
+			}
+			if startID != "" {
+				if item.ID != startID || item.Status != "queued" {
+					return ErrEvoStale
+				}
+			} else if item.Status == "queued" {
+				queued = &item
+				return nil
+			} else {
+				if item.Status != "started" && item.Status != "rejected" {
+					return ErrEvoStale
+				}
+				result := tr.DB.Where("id = ? AND status = ?", item.ID, item.Status).Delete(&evoQueueRow{})
+				if result.Error != nil {
+					return result.Error
+				}
+				if result.RowsAffected != 1 {
+					return ErrEvoStale
+				}
+			}
+		} else if startID != "" {
+			return ErrEvoStale
+		}
+		if busy {
+			if startID != "" {
+				return ErrEvoBusy
+			}
+			f, ok := tr.EvoFinding(p.FindingID)
+			if !ok || f.ProjectID != p.ProjectID {
+				return ErrEvoStale
+			}
+			item := domain.EvoQueueItem{ID: queueID, ProjectID: p.ProjectID, FindingID: p.FindingID, AssetKind: p.AssetKind, AssetID: p.AssetID,
+				AssetName: p.AssetName, Title: f.Title, Model: p.Model, Status: "queued", CreatedBy: p.CreatedBy, CreatedAt: time.Now().UTC()}
+			if err := tr.saveQueue(item, true); err != nil {
+				return err
+			}
+			queued = &item
+			return nil
+		}
+		if tr.EvoLevel(p.AssetKind, p.AssetID) < domain.EvoLevelPropose {
+			return ErrEvoStale
+		}
+		content, raw, err := tr.catalog.evolutionAsset(tr.DB, p.AssetKind, p.AssetID)
+		if err != nil {
+			return err
+		}
+		p.BaseContent, p.BaseHash, p.BaseCatalogHash = content, domain.ContentHash(content), domain.ContentHash(string(raw))
+		baseline, err := tr.versionLive(p.AssetKind, p.AssetID, content, p.CreatedBy)
+		if err != nil {
+			return err
+		}
+		p.BaseVersion = baseline.Version
+		if err := tr.writeProposal(p); err != nil {
+			return err
+		}
+		if startID != "" {
+			item, _ := tr.EvoQueueItem(startID)
+			item.Status, item.ProposalID = "started", p.ID
+			if err := tr.saveQueue(item, false); err != nil {
+				return err
+			}
+		}
+		p, _ = tr.EvoProposal(p.ID)
+		created = true
+		return nil
+	})
+	return p, queued, created, err
 }
 
 type evoPolicyRow struct {
@@ -47,6 +273,7 @@ type evoFindingRow struct {
 func (evoFindingRow) TableName() string { return "evo_findings" }
 
 type evoProposalRow struct {
+	Revision  int64      `gorm:"column:revision;not null;default:0"`
 	ID        string     `gorm:"column:id;primaryKey;size:64"`
 	ProjectID string     `gorm:"column:project_id;size:64;index:idx_evo_proposals_project"`
 	Status    string     `gorm:"column:status;size:32;index:idx_evo_proposals_status"`
@@ -174,6 +401,36 @@ func (r *EvolutionRepo) PutEvoPolicy(p domain.EvoPolicy) error {
 // ---------- findings ----------
 
 func (r *EvolutionRepo) PutEvoFinding(f domain.EvoFinding) error {
+	return r.assetTx(f.AssetKind, f.AssetID, func(tr *EvolutionRepo) error {
+		if old, ok := tr.EvoFinding(f.ID); ok {
+			if old.ProjectID != f.ProjectID || old.AssetKind != f.AssetKind || old.AssetID != f.AssetID {
+				return ErrEvoStale
+			}
+			proposalID := old.ProposalID
+			if proposalID == "" {
+				proposalID = f.ProposalID
+			}
+			if p, exists := tr.EvoProposal(proposalID); exists && p.FindingID == f.ID {
+				f.Status, f.ProposalID = old.Status, old.ProposalID
+				if p.Open() {
+					f.Status, f.ProposalID = domain.EvoFindingProposed, p.ID
+				} else if p.Status == domain.EvoProposalReleased {
+					f.Status, f.ProposalID = domain.EvoFindingResolved, p.ID
+				}
+			}
+			var count int64
+			if err := tr.DB.Model(&evoQueueRow{}).Where("finding_id = ? AND status = ?", f.ID, "queued").Count(&count).Error; err != nil {
+				return err
+			}
+			if count > 0 {
+				f.Status, f.CloseNote = old.Status, old.CloseNote
+			}
+		}
+		return tr.writeFinding(f)
+	})
+}
+
+func (r *EvolutionRepo) writeFinding(f domain.EvoFinding) error {
 	if strings.TrimSpace(f.ID) == "" {
 		return errors.New("finding id is required")
 	}
@@ -251,20 +508,99 @@ func (r *EvolutionRepo) evoFindingForAsset(projectID, kind, id string, statuses 
 // ---------- proposals ----------
 
 func (r *EvolutionRepo) PutEvoProposal(p domain.EvoProposal) error {
+	return r.assetTx(p.AssetKind, p.AssetID, func(tr *EvolutionRepo) error {
+		current, busy, err := tr.currentAssetProposal(p.AssetKind, p.AssetID)
+		if errors.Is(err, ErrEvoParallel) && p.Status == domain.EvoProposalRejected {
+			return tr.writeProposal(p)
+		}
+		if err != nil {
+			return err
+		}
+		if p.OccupiesAsset() && busy && current.ID != p.ID {
+			return ErrEvoBusy
+		}
+		if busy && current.ID == p.ID && current.Status != p.Status && (p.Status == domain.EvoProposalValidating || p.Status == domain.EvoProposalCanary) {
+			content, raw, err := tr.catalog.evolutionAsset(tr.DB, p.AssetKind, p.AssetID)
+			if err != nil {
+				return err
+			}
+			if domain.ContentHash(content) != p.BaseHash || (p.BaseCatalogHash != "" && domain.ContentHash(string(raw)) != p.BaseCatalogHash) {
+				return ErrEvoStale
+			}
+			if p.BaseVersion > 0 {
+				latest, ok := tr.LatestAssetVersion(p.AssetKind, p.AssetID)
+				if !ok || latest.Version != p.BaseVersion {
+					return ErrEvoStale
+				}
+			}
+		}
+		return tr.writeProposal(p)
+	})
+}
+
+func (r *EvolutionRepo) writeProposal(p domain.EvoProposal) error {
 	if strings.TrimSpace(p.ID) == "" || !domain.ValidEvoAssetKind(p.AssetKind) || strings.TrimSpace(p.AssetID) == "" {
 		return errors.New("proposal needs id, asset kind and asset id")
+	}
+	var old evoProposalRow
+	err := r.DB.Where("id = ?", p.ID).Take(&old).Error
+	create := errors.Is(err, gorm.ErrRecordNotFound)
+	if err != nil && !create {
+		return err
+	}
+	if !create {
+		if old.Revision != p.Revision || old.ProjectID != p.ProjectID || old.AssetKind != p.AssetKind || old.AssetID != p.AssetID {
+			return ErrEvoStale
+		}
+		previous, ok := r.evoProposalFromRow(old, false)
+		if !ok || (!previous.OccupiesAsset() && p.OccupiesAsset() && p.Status != domain.EvoProposalReleased) {
+			return ErrEvoStale
+		}
+		if previous.Status != domain.EvoProposalDrafting && (p.CandidateContent != previous.CandidateContent || p.BaseHash != previous.BaseHash) {
+			return ErrEvoStale
+		}
+	} else if p.Revision != 0 {
+		return ErrEvoStale
 	}
 	now := time.Now().UTC()
 	if p.CreatedAt.IsZero() {
 		p.CreatedAt = now
 	}
-	p.UpdatedAt = now
-	stored := p
-	stored.Replays = nil
-	return upsert(r.DB, "evo_proposals", map[string]any{
-		"id": p.ID, "project_id": p.ProjectID, "status": p.Status, "asset_kind": p.AssetKind, "asset_id": p.AssetID,
-		"payload": mustJSON(stored), "created_at": timePtr(p.CreatedAt), "updated_at": timePtr(p.UpdatedAt),
-	})
+	p.UpdatedAt, p.Revision = now, p.Revision+1
+	p.Replays = nil
+	row := evoProposalRow{ID: p.ID, ProjectID: p.ProjectID, Status: p.Status, AssetKind: p.AssetKind, AssetID: p.AssetID,
+		Revision: p.Revision, Payload: mustJSON(p), Created: timePtr(p.CreatedAt), Updated: timePtr(now)}
+	if create {
+		if err := r.DB.Create(&row).Error; err != nil {
+			return err
+		}
+	} else {
+		result := r.DB.Model(&evoProposalRow{}).Where("id = ? AND revision = ?", p.ID, old.Revision).
+			Updates(map[string]any{"status": p.Status, "revision": p.Revision, "payload": row.Payload, "updated_at": row.Updated})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			return ErrEvoStale
+		}
+	}
+	if p.FindingID != "" {
+		if f, ok := r.EvoFinding(p.FindingID); ok {
+			if p.OccupiesAsset() && p.Status != domain.EvoProposalReleased {
+				f.Status, f.ProposalID = domain.EvoFindingProposed, p.ID
+			} else if f.ProposalID == p.ID {
+				if p.Status == domain.EvoProposalReleased {
+					f.Status = domain.EvoFindingResolved
+				} else if p.Status == domain.EvoProposalFailed || p.Status == domain.EvoProposalRejected || p.Status == domain.EvoProposalRolledBack {
+					f.Status, f.ProposalID = domain.EvoFindingOpen, ""
+				}
+			}
+			if err := r.writeFinding(f); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func (r *EvolutionRepo) evoProposalFromRow(row evoProposalRow, withReplays bool) (domain.EvoProposal, bool) {
@@ -272,7 +608,7 @@ func (r *EvolutionRepo) evoProposalFromRow(row evoProposalRow, withReplays bool)
 	if json.Unmarshal(row.Payload, &p) != nil {
 		return domain.EvoProposal{}, false
 	}
-	p.Status = row.Status
+	p.Status, p.Revision = row.Status, row.Revision
 	if withReplays {
 		p.Replays = r.EvoReplays(p.ID)
 	}
@@ -417,6 +753,148 @@ func (r *EvolutionRepo) EvoReplayOverrides(id string) (domain.EvoAssetOverride, 
 		return domain.EvoAssetOverride{}, false
 	}
 	return v.Overrides, true
+}
+
+func (r *EvolutionRepo) appendVersion(v domain.AssetVersion) (domain.AssetVersion, error) {
+	var maxVersion sql.NullInt64
+	if err := r.DB.Model(&assetVersionRow{}).Where("asset_kind = ? AND asset_id = ?", v.AssetKind, v.AssetID).
+		Select("MAX(version)").Row().Scan(&maxVersion); err != nil {
+		return v, err
+	}
+	v.Version, v.Hash, v.CreatedAt = int(maxVersion.Int64)+1, domain.ContentHash(v.Content), time.Now().UTC()
+	err := r.DB.Create(&assetVersionRow{AssetKind: v.AssetKind, AssetID: v.AssetID, Version: v.Version, Hash: v.Hash,
+		Source: v.Source, ProposalID: v.ProposalID, Payload: mustJSON(v), Created: timePtr(v.CreatedAt)}).Error
+	return v, err
+}
+
+func (r *EvolutionRepo) versionLive(kind, id, content string, userID int64) (domain.AssetVersion, error) {
+	latest, ok := r.LatestAssetVersion(kind, id)
+	if ok && latest.Hash == domain.ContentHash(content) {
+		return latest, nil
+	}
+	source := domain.EvoVersionBaseline
+	if ok {
+		source = domain.EvoVersionManual
+	}
+	return r.appendVersion(domain.AssetVersion{AssetKind: kind, AssetID: id, Content: content, Source: source, CreatedBy: userID})
+}
+
+func (r *EvolutionRepo) ReleaseEvoProposal(expected domain.EvoProposal, userID int64, note string, force bool, minRuns int) (domain.EvoProposal, error) {
+	out := expected
+	err := r.assetTx(expected.AssetKind, expected.AssetID, func(tr *EvolutionRepo) error {
+		current, busy, err := tr.currentAssetProposal(expected.AssetKind, expected.AssetID)
+		if err != nil {
+			return err
+		}
+		if busy && current.ID != expected.ID {
+			return ErrEvoBusy
+		}
+		p, ok := tr.EvoProposal(expected.ID)
+		if !ok || p.Revision != expected.Revision {
+			return ErrEvoStale
+		}
+		allowed := p.Status == domain.EvoProposalPending || (p.Status == domain.EvoProposalCanary && p.Canary != nil && p.Canary.Status == domain.EvoCanaryPassed)
+		if force && p.Status == domain.EvoProposalFailed {
+			allowed = true
+		}
+		if !allowed || (!force && !p.Summary.Passed) || strings.TrimSpace(p.CandidateContent) == "" {
+			return ErrEvoStale
+		}
+		content, raw, err := tr.catalog.evolutionAsset(tr.DB, p.AssetKind, p.AssetID)
+		if err != nil {
+			return err
+		}
+		if domain.ContentHash(content) != p.BaseHash || (p.BaseCatalogHash != "" && domain.ContentHash(string(raw)) != p.BaseCatalogHash) {
+			return ErrEvoStale
+		}
+		previous, err := tr.versionLive(p.AssetKind, p.AssetID, content, userID)
+		if err != nil {
+			return err
+		}
+		if p.BaseVersion > 0 && previous.Version != p.BaseVersion {
+			return ErrEvoStale
+		}
+		if err := tr.catalog.writeEvolutionAsset(tr.DB, p.AssetKind, p.AssetID, p.CandidateContent, raw); err != nil {
+			return err
+		}
+		version, err := tr.appendVersion(domain.AssetVersion{AssetKind: p.AssetKind, AssetID: p.AssetID, Content: p.CandidateContent,
+			Source: domain.EvoVersionEvolution, ProposalID: p.ID, Note: p.Title, CreatedBy: userID})
+		if err != nil {
+			return err
+		}
+		now := time.Now().UTC()
+		if p.Canary != nil {
+			p.Canary.Status, p.Canary.EndedAt = domain.EvoCanaryPromoted, now
+		}
+		p.Status, p.ReleasedVersion, p.DecidedBy, p.DecidedAt, p.DecisionNote = domain.EvoProposalReleased, version.Version, userID, now, note
+		if force && !p.Summary.Passed {
+			p.DecisionNote = strings.TrimSpace("平台管理员强制发布。" + note)
+		}
+		p.Watch = &domain.EvoWatch{Version: version.Version, Hash: version.Hash, PrevVersion: previous.Version, PrevHash: previous.Hash,
+			MinRuns: minRuns, Status: domain.EvoWatchWatching, StartedAt: now, Verdict: "发布后观察中"}
+		if err := tr.writeProposal(p); err != nil {
+			return err
+		}
+		out, _ = tr.EvoProposal(p.ID)
+		return nil
+	})
+	return out, err
+}
+
+func (r *EvolutionRepo) RollbackEvoAsset(kind, id, expectedHash string, targetVersion int, userID int64, note string) (domain.AssetVersion, error) {
+	var out domain.AssetVersion
+	err := r.assetTx(kind, id, func(tr *EvolutionRepo) error {
+		current, busy, err := tr.currentAssetProposal(kind, id)
+		if err != nil {
+			return err
+		}
+		if busy && current.Open() {
+			return ErrEvoBusy
+		}
+		target, ok := tr.AssetVersion(kind, id, targetVersion)
+		if !ok {
+			return ErrEvoStale
+		}
+		content, raw, err := tr.catalog.evolutionAsset(tr.DB, kind, id)
+		if err != nil {
+			return err
+		}
+		if domain.ContentHash(content) != expectedHash || domain.ContentHash(content) == target.Hash {
+			return ErrEvoStale
+		}
+		if _, err := tr.versionLive(kind, id, content, userID); err != nil {
+			return err
+		}
+		if err := tr.catalog.writeEvolutionAsset(tr.DB, kind, id, target.Content, raw); err != nil {
+			return err
+		}
+		out, err = tr.appendVersion(domain.AssetVersion{AssetKind: kind, AssetID: id, Content: target.Content, Source: domain.EvoVersionRollback, Note: note, CreatedBy: userID})
+		if err != nil {
+			return err
+		}
+		var rows []evoProposalRow
+		if err := tr.DB.Where("asset_kind = ? AND asset_id = ? AND status = ?", kind, id, domain.EvoProposalReleased).Find(&rows).Error; err != nil {
+			return err
+		}
+		for _, row := range rows {
+			p, ok := tr.evoProposalFromRow(row, false)
+			if !ok {
+				return ErrEvoStale
+			}
+			if p.ReleasedVersion <= target.Version && !p.Watch.Active() {
+				continue
+			}
+			p.Status, p.DecisionNote = domain.EvoProposalRolledBack, strings.TrimSpace(p.DecisionNote+"\n已回滚："+note)
+			if p.Watch.Active() {
+				p.Watch.Status, p.Watch.EndedAt = domain.EvoWatchRolledBack, time.Now().UTC()
+			}
+			if err := tr.writeProposal(p); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	return out, err
 }
 
 // ---------- asset versions ----------

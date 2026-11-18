@@ -941,6 +941,7 @@ async function boot(){
       return;
     }
     if(name==='flow')applyFlowRoute();
+    if(name==='evolution'&&typeof evoApplyRoute==='function')evoApplyRoute();
     if(name==='agents')applyAgentRoute();
     if(isProjectSharedAsset(name))applyAssetRoute();
     if(name==='projects')applyProjectAdminRoute();
@@ -1890,6 +1891,7 @@ function persistView(name,push=false){
     if(linked)next=runViewHash(linked);
   }
   if(name==='flow')next=flowViewHash();
+  if(name==='evolution'&&routePart(0)==='evolution')next=location.hash;
   if(name==='agents'&&agentRouteId())next=`#/agents/${encodeURIComponent(agentRouteId())}`;
   if(isProjectSharedAsset(name)&&routePart(0)===name&&assetRouteId())next=`#/${name}/${encodeURIComponent(assetRouteId())}`;
   if(name==='projects')next=projectAdminHash(state.projectAdminDetailId||'',state.projectAdminTab);
@@ -1929,6 +1931,7 @@ function switchView(name){
   const staying=activeViewName()===name;
   const prevView=state.currentView;
   if(previous==='observability'&&name!=='observability'&&typeof obsDisposeCharts==='function'){obsCollapse?.({silent:true});obsDisposeCharts();obsDisposeSelects?.()}
+  if(previous==='evolution'&&name!=='evolution'&&typeof evoDispose==='function')evoDispose();
   state.currentView=name;
   if(name!=='runs')stopQueuedRunRefresh();
   $$('.nav[data-view]').forEach(n=>n.classList.toggle('active',settingsNavMatches(n,name)));

@@ -220,7 +220,7 @@ func newStore(db *gorm.DB) *Store {
 	s.SpacesRepo = &SpacesRepo{deps: d}
 	s.KnowledgeRepo = &KnowledgeRepo{deps: d}
 	s.FeedbackRepo = &FeedbackRepo{deps: d}
-	s.EvolutionRepo = &EvolutionRepo{deps: d}
+	s.EvolutionRepo = &EvolutionRepo{deps: d, catalog: s.CatalogRepo}
 	return s
 }
 

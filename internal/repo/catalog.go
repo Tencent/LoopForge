@@ -30,6 +30,63 @@ func BaselineAlignResolverAgent() domain.AgentDefinition {
 	}
 }
 
+func (r *CatalogRepo) evolutionAsset(tx *gorm.DB, kind, id string) (string, []byte, error) {
+	table := "agents"
+	if kind == domain.EvoAssetRule {
+		table = "rules"
+	} else if kind != domain.EvoAssetAgent {
+		return "", nil, errors.New("unsupported evolution asset")
+	}
+	var row struct{ Payload []byte }
+	if err := r.locking(tx.Table(table).Where("id = ?", id)).Take(&row).Error; err != nil {
+		return "", nil, err
+	}
+	if kind == domain.EvoAssetAgent {
+		var asset domain.AgentDefinition
+		if err := json.Unmarshal(row.Payload, &asset); err != nil {
+			return "", nil, err
+		}
+		return asset.Prompt, row.Payload, nil
+	}
+	var asset domain.RuleDefinition
+	if err := json.Unmarshal(row.Payload, &asset); err != nil {
+		return "", nil, err
+	}
+	return asset.Content, row.Payload, nil
+}
+
+func (r *CatalogRepo) writeEvolutionAsset(tx *gorm.DB, kind, id, content string, original []byte) error {
+	table := "agents"
+	var payload []byte
+	now := time.Now().UTC()
+	if kind == domain.EvoAssetAgent {
+		var asset domain.AgentDefinition
+		if err := json.Unmarshal(original, &asset); err != nil {
+			return err
+		}
+		asset.Prompt, asset.UpdatedAt = content, now
+		payload = mustJSON(asset)
+	} else if kind == domain.EvoAssetRule {
+		table = "rules"
+		var asset domain.RuleDefinition
+		if err := json.Unmarshal(original, &asset); err != nil {
+			return err
+		}
+		asset.Content, asset.UpdatedAt = content, now
+		payload = mustJSON(asset)
+	} else {
+		return errors.New("unsupported evolution asset")
+	}
+	result := tx.Table(table).Where("id = ? AND CAST(payload AS CHAR) = CAST(? AS CHAR)", id, string(original)).Updates(map[string]any{"payload": payload, "updated_at": timePtr(now)})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected != 1 {
+		return ErrEvoStale
+	}
+	return nil
+}
+
 // ---------- Agents ----------
 
 func (r *CatalogRepo) Agents() []domain.AgentDefinition {

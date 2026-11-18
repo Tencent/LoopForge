@@ -206,7 +206,7 @@ func TestEvolutionProposalReplayReleaseRollback(t *testing.T) {
 	finding := diag.Findings[0]
 
 	created := requestJSONAuthed[domain.EvoProposal](t, env.router, env.user, http.MethodPost, "/api/evolution/proposals", map[string]any{"findingId": finding.ID}, http.StatusAccepted)
-	requestJSONAuthed[map[string]any](t, env.router, env.user, http.MethodPost, "/api/evolution/proposals", map[string]any{"findingId": finding.ID}, http.StatusConflict)
+	requestJSONAuthed[map[string]any](t, env.router, env.user, http.MethodPost, "/api/evolution/proposals", map[string]any{"findingId": finding.ID}, http.StatusOK)
 
 	p := env.waitProposal(t, created.ID, domain.EvoProposalPending, domain.EvoProposalFailed)
 	if p.Status != domain.EvoProposalPending || !p.Summary.Passed || p.Summary.Fixed != 2 || p.Summary.Unchanged != 1 {
@@ -312,6 +312,179 @@ func TestEvolutionProposalFailsStaticCheckAndReopensFinding(t *testing.T) {
 	}
 }
 
+func TestEvolutionQueueAPIStartsFreshAndReauthorizes(t *testing.T) {
+	env := newEvoTestEnv(t)
+	env.seedRun(t, "queue-source", "failed", "failed", "缺少单测")
+	current := env.seedPendingProposal(t, "queue-current")
+	f := domain.EvoFinding{ID: "queue-finding", ProjectID: "evo-p", AssetKind: "agent", AssetID: env.agent.ID, AssetName: env.agent.Name,
+		Title: "另一个问题", Status: domain.EvoFindingOpen, SampleRunIDs: []string{"queue-source"}}
+	if err := env.store.PutEvoFinding(f); err != nil {
+		t.Fatal(err)
+	}
+	var mu sync.Mutex
+	calls := 0
+	seenBase := ""
+	setEvoImproveForTest(func(_ context.Context, p domain.EvoProposal, _, _ string, _ domain.User) (string, error) {
+		mu.Lock()
+		calls++
+		seenBase = p.BaseContent
+		mu.Unlock()
+		return fmt.Sprintf(`{"title":"队列改进","content":%q}`, p.BaseContent+"\n补充验证。"+evoTestCandidateMark), nil
+	})
+	t.Cleanup(func() { setEvoImproveForTest(nil) })
+	type queuedResponse struct {
+		Status  string              `json:"status"`
+		QueueID string              `json:"queueId"`
+		Queue   domain.EvoQueueItem `json:"queue"`
+	}
+	queued := requestJSONAuthed[queuedResponse](t, env.router, env.user, http.MethodPost, "/api/evolution/proposals", map[string]any{"findingId": f.ID}, http.StatusAccepted)
+	duplicate := requestJSONAuthed[queuedResponse](t, env.router, env.user, http.MethodPost, "/api/evolution/proposals", map[string]any{"findingId": f.ID}, http.StatusAccepted)
+	if queued.Status != "queued" || queued.QueueID == "" || duplicate.QueueID != queued.QueueID || queued.Queue.Title != f.Title {
+		t.Fatalf("persistent idempotent queue response: %+v %+v", queued, duplicate)
+	}
+	mu.Lock()
+	if calls != 0 {
+		t.Fatal("queued intent must not invoke generator")
+	}
+	mu.Unlock()
+	overview := requestJSON[domain.EvoOverview](t, env.router, http.MethodGet, "/api/evolution/overview?projectId=evo-p", nil, http.StatusOK)
+	if len(overview.Queue) != 1 || len(env.store.EvoProposals("evo-p", 100)) != 1 {
+		t.Fatalf("overview queue or candidate count: %+v", overview.Queue)
+	}
+	requestJSONAuthed[map[string]any](t, env.router, env.user, http.MethodPost, "/api/evolution/queue/"+queued.QueueID+"/start", nil, http.StatusConflict)
+	requestJSONAuthed[domain.EvoProposal](t, env.router, env.user, http.MethodPost, "/api/evolution/proposals/"+current.ID+"/reject", nil, http.StatusOK)
+	if len(env.store.EvoProposals("evo-p", 100)) != 1 {
+		t.Fatal("reject must not automatically start next")
+	}
+	if _, err := env.store.UpdateUserCredentials(env.user.ID, repo.UserCredentialUpdate{CodeBuddyAPIKeyClear: true}); err != nil {
+		t.Fatal(err)
+	}
+	requestJSONAuthed[map[string]any](t, env.router, env.user, http.MethodPost, "/api/evolution/queue/"+queued.QueueID+"/start", nil, http.StatusBadRequest)
+	if _, err := env.store.UpdateUserCredentials(env.user.ID, repo.UserCredentialUpdate{CodeBuddyAPIKey: "ck_evo_test"}); err != nil {
+		t.Fatal(err)
+	}
+	live, _ := env.store.Agent(env.agent.ID)
+	live.Prompt = "最新正文：请开发、完整校验并自测。"
+	if err := env.store.PutAgent(live); err != nil {
+		t.Fatal(err)
+	}
+	started := requestJSONAuthed[domain.EvoProposal](t, env.router, env.user, http.MethodPost, "/api/evolution/queue/"+queued.QueueID+"/start", nil, http.StatusAccepted)
+	if started.BaseContent != live.Prompt || started.BaseVersion != 1 || started.CandidateContent != "" {
+		t.Fatalf("start must snapshot latest live body, no old candidate: %+v", started)
+	}
+	p := env.waitProposal(t, started.ID, domain.EvoProposalPending, domain.EvoProposalFailed)
+	if p.Status != domain.EvoProposalPending || !p.Summary.Passed {
+		t.Fatalf("queue start must regenerate and replay: %+v", p)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if calls != 1 || seenBase != live.Prompt {
+		t.Fatalf("generator calls=%d base=%q", calls, seenBase)
+	}
+	requestJSONAuthed[map[string]any](t, env.router, env.user, http.MethodPost, "/api/evolution/queue/"+queued.QueueID+"/reject", nil, http.StatusConflict)
+}
+
+func TestEvolutionQueuePermissionsAndCrossProjectIsolation(t *testing.T) {
+	env := newEvoTestEnv(t)
+	t.Setenv("AGENTFLOW_AUTH_REQUIRED", "true")
+	if err := env.store.PutUser(domain.User{StaffID: 3102, LoginName: "queue-viewer"}); err != nil {
+		t.Fatal(err)
+	}
+	viewer, _ := env.store.UserByLoginName("queue-viewer")
+	if err := env.store.PutProject(domain.Project{ID: "evo-p", Name: "进化测试", OwnerID: env.user.ID, Members: []domain.ProjectMember{{UserID: viewer.ID, Role: "viewer"}}}); err != nil {
+		t.Fatal(err)
+	}
+	shared, _ := env.store.Agent(env.agent.ID)
+	shared.Shared = true
+	if err := env.store.PutAgent(shared); err != nil {
+		t.Fatal(err)
+	}
+	current := domain.EvoProposal{ID: "private-current", ProjectID: "private-project", AssetKind: "agent", AssetID: env.agent.ID,
+		Title: "其他项目私有改进", Status: domain.EvoProposalPending, BaseContent: shared.Prompt, BaseHash: domain.ContentHash(shared.Prompt),
+		CandidateContent: shared.Prompt + "\n私有候选", Summary: domain.EvoReplaySummary{Passed: true}}
+	if err := env.store.PutEvoProposal(current); err != nil {
+		t.Fatal(err)
+	}
+	f := domain.EvoFinding{ID: "permission-finding", ProjectID: "evo-p", AssetKind: "agent", AssetID: env.agent.ID, Title: "本项目问题", Status: domain.EvoFindingOpen}
+	if err := env.store.PutEvoFinding(f); err != nil {
+		t.Fatal(err)
+	}
+	requestJSONAuthed[map[string]any](t, env.router, viewer, http.MethodPost, "/api/evolution/proposals", map[string]any{"findingId": f.ID}, http.StatusForbidden)
+	queued := requestJSONAuthed[struct {
+		QueueID string `json:"queueId"`
+	}](t, env.router, env.user, http.MethodPost, "/api/evolution/proposals", map[string]any{"findingId": f.ID}, http.StatusAccepted)
+	if queued.QueueID == "" {
+		t.Fatal("cross-project shared asset must queue")
+	}
+	requestJSONAuthed[map[string]any](t, env.router, viewer, http.MethodPost, "/api/evolution/queue/"+queued.QueueID+"/start", nil, http.StatusForbidden)
+	requestJSONAuthed[map[string]any](t, env.router, viewer, http.MethodPost, "/api/evolution/queue/"+queued.QueueID+"/reject", nil, http.StatusForbidden)
+	overview := requestJSONAuthed[domain.EvoOverview](t, env.router, env.user, http.MethodGet, "/api/evolution/overview?projectId=evo-p", nil, http.StatusOK)
+	if len(overview.Queue) != 1 || len(overview.Pending) != 0 || len(overview.Trial) != 0 {
+		t.Fatalf("other project's current must not leak through overview: %+v", overview)
+	}
+	cancelled := requestJSONAuthed[domain.EvoQueueItem](t, env.router, env.user, http.MethodPost, "/api/evolution/queue/"+queued.QueueID+"/reject", nil, http.StatusOK)
+	if cancelled.Status != "rejected" {
+		t.Fatalf("queue cancellation = %+v", cancelled)
+	}
+}
+
+func TestEvolutionDiagnosisPreservesCurrentEvidenceAndQueuesNewIntent(t *testing.T) {
+	env := newEvoTestEnv(t)
+	env.seedRun(t, "intent-old", "failed", "failed", "编译失败")
+	type diagnosis struct {
+		Findings []domain.EvoFinding `json:"findings"`
+	}
+	first := requestJSON[diagnosis](t, env.router, http.MethodPost, "/api/evolution/diagnose", map[string]any{"projectId": "evo-p"}, http.StatusOK)
+	if len(first.Findings) != 1 {
+		t.Fatalf("initial findings: %+v", first.Findings)
+	}
+	p := env.seedPendingProposal(t, "intent-current")
+	p.FindingID = first.Findings[0].ID
+	if err := env.store.PutEvoProposal(p); err != nil {
+		t.Fatal(err)
+	}
+	env.seedRun(t, "intent-new", "failed", "failed", "缺少端到端测试")
+	second := requestJSON[diagnosis](t, env.router, http.MethodPost, "/api/evolution/diagnose", map[string]any{"projectId": "evo-p"}, http.StatusOK)
+	if len(second.Findings) != 1 || second.Findings[0].ID == first.Findings[0].ID || second.Findings[0].ProposalID != "" {
+		t.Fatalf("new problem fingerprint must not merge into validated coverage: %+v", second.Findings)
+	}
+	frozen, _ := env.store.EvoFinding(first.Findings[0].ID)
+	if len(frozen.SampleRunIDs) != 1 || frozen.SampleRunIDs[0] != "intent-old" {
+		t.Fatalf("current evidence was overwritten: %+v", frozen)
+	}
+	queued := requestJSONAuthed[struct {
+		QueueID string `json:"queueId"`
+	}](t, env.router, env.user, http.MethodPost, "/api/evolution/proposals", map[string]any{"findingId": second.Findings[0].ID}, http.StatusAccepted)
+	third := requestJSON[diagnosis](t, env.router, http.MethodPost, "/api/evolution/diagnose", map[string]any{"projectId": "evo-p"}, http.StatusOK)
+	if len(third.Findings) != 1 || third.Findings[0].ID != second.Findings[0].ID || queued.QueueID == "" {
+		t.Fatalf("queued intent must persist across diagnosis: %+v", third.Findings)
+	}
+	requestJSONAuthed[domain.EvoProposal](t, env.router, env.user, http.MethodPost, "/api/evolution/proposals/"+p.ID+"/approve", nil, http.StatusOK)
+	stale := first.Findings[0]
+	stale.Status, stale.ProposalID = domain.EvoFindingProposed, p.ID
+	if err := env.store.PutEvoFinding(stale); err != nil {
+		t.Fatal(err)
+	}
+	resolved, _ := env.store.EvoFinding(stale.ID)
+	if resolved.Status != domain.EvoFindingResolved {
+		t.Fatal("late diagnosis must not resurrect released finding")
+	}
+	if later, _ := env.store.EvoFinding(second.Findings[0].ID); later.Status != domain.EvoFindingOpen {
+		t.Fatal("release must not resolve queued, unvalidated problem")
+	}
+}
+
+func TestEvolutionLateGenerationCannotReviveRejectedProposal(t *testing.T) {
+	env := newEvoTestEnv(t)
+	p := env.seedPendingProposal(t, "late-current")
+	requestJSONAuthed[domain.EvoProposal](t, env.router, env.user, http.MethodPost, "/api/evolution/proposals/"+p.ID+"/reject", nil, http.StatusOK)
+	env.h.failProposal(p, "late failure")
+	got, _ := env.store.EvoProposal(p.ID)
+	if got.Status != domain.EvoProposalRejected || got.Error != "" {
+		t.Fatalf("late failure revived or overwrote terminal state: %+v", got)
+	}
+}
+
 func TestEvolutionPolicyFeedbackAndSamples(t *testing.T) {
 	env := newEvoTestEnv(t)
 	ok := env.seedRun(t, "evo-src-good", "succeeded", "succeeded", "")
@@ -383,6 +556,7 @@ func TestEvolutionFeedbackReplayDeliberateRejectIsNotRegression(t *testing.T) {
 		t.Fatalf("proposal should await review: status=%s summary=%+v", p.Status, p.Summary)
 	}
 
+	requestJSONAuthed[domain.EvoProposal](t, env.router, env.user, http.MethodPost, "/api/evolution/proposals/evp-fb/reject", nil, http.StatusOK)
 	env.seedValidatingProposal(t, "evp-crash")
 	env.seedReplay(t, "evp-crash", "evo-fb-src", domain.Run{
 		ID: "evo-crash-replay", WorkflowID: env.wf.ID, Status: "failed", WorkflowSnapshot: env.wf,
@@ -414,6 +588,7 @@ func TestEvolutionFeedbackReplayReworkIsAChangedVerdict(t *testing.T) {
 		t.Fatalf("a rework sent by the improved node is the change under test: %+v summary=%+v", p.Replays, p.Summary)
 	}
 
+	requestJSONAuthed[domain.EvoProposal](t, env.router, env.user, http.MethodPost, "/api/evolution/proposals/evp-rw/reject", nil, http.StatusOK)
 	env.seedValidatingProposal(t, "evp-budget")
 	env.seedReplay(t, "evp-budget", "evo-rw-src", domain.Run{ID: "evo-budget-replay", WorkflowID: wf.ID, Status: "waiting", WorkflowSnapshot: wf,
 		Nodes: map[string]*domain.NodeRun{"design": {NodeID: "design", Status: "succeeded", ReworkCount: 1},
@@ -444,6 +619,7 @@ func TestEvolutionReplayAutoApprovesGatesTheSourcePassed(t *testing.T) {
 		t.Fatalf("a gate raised by the improved node must stay open: node=%s replay=%+v", run.Nodes["code"].Status, p.Replays[0])
 	}
 
+	requestJSONAuthed[domain.EvoProposal](t, env.router, env.user, http.MethodPost, "/api/evolution/proposals/evp-own-gate/reject", nil, http.StatusOK)
 	env.seedValidatingProposal(t, "evp-approval")
 	env.seedReplay(t, "evp-approval", source.ID, domain.Run{ID: "evo-approval", WorkflowID: wf.ID, Status: "waiting", WorkflowSnapshot: wf,
 		Nodes: map[string]*domain.NodeRun{"accept": {NodeID: "accept", Status: "waiting_approval"}, "code": {NodeID: "code", Status: "succeeded"}}})

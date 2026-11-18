@@ -148,7 +148,6 @@ func (h *evolutionHandlers) endCanary(p domain.EvoProposal, now time.Time, canar
 		log.Printf("evolution trial %s persist: %v", p.ID, err)
 		return
 	}
-	h.reopenFinding(p)
 }
 
 func (h *evolutionHandlers) sweepCanary(p domain.EvoProposal, now time.Time) domain.EvoProposal {
@@ -186,6 +185,7 @@ func (h *evolutionHandlers) sweepCanary(p domain.EvoProposal, now time.Time) dom
 			log.Printf("evolution trial %s persist: %v", p.ID, err)
 			return p
 		}
+		p, _ = h.repo.EvoProposal(p.ID)
 	}
 	if p.Canary.Status == domain.EvoCanaryPassed && h.repo.EvoLevel(asset.Kind, asset.ID) >= domain.EvoLevelAuto {
 		released, err := h.releaseProposal(p, asset, 0, "L3 自动全量："+verdict, false)
@@ -203,10 +203,14 @@ func (h *evolutionHandlers) sweepWatch(p domain.EvoProposal, now time.Time) doma
 	if !w.Active() {
 		return p
 	}
-	save := func() {
+	save := func() bool {
 		if err := h.repo.PutEvoProposal(p); err != nil {
 			log.Printf("evolution watch %s persist: %v", p.ID, err)
+			return false
 		}
+		p, _ = h.repo.EvoProposal(p.ID)
+		w = p.Watch
+		return true
 	}
 	asset, ok := h.loadAsset(p.AssetKind, p.AssetID)
 	if !ok || domain.ContentHash(asset.Content) != w.Hash {
@@ -233,7 +237,10 @@ func (h *evolutionHandlers) sweepWatch(p domain.EvoProposal, now time.Time) doma
 	after.CheckedAt = before.CheckedAt
 	if after != before {
 		w.CheckedAt = now
-		save()
+		if !save() {
+			stored, _ := h.repo.EvoProposal(p.ID)
+			return stored
+		}
 	}
 	if status != domain.EvoWatchDegraded || h.repo.EvoLevel(asset.Kind, asset.ID) < domain.EvoLevelAuto {
 		return p
@@ -258,30 +265,8 @@ func (h *evolutionHandlers) sweepWatch(p domain.EvoProposal, now time.Time) doma
 // rollback version and closes released proposals (and their watches) newer
 // than the target.
 func (h *evolutionHandlers) rollbackTo(asset evoAsset, target domain.AssetVersion, userID int64, note string) (domain.AssetVersion, error) {
-	if _, err := h.ensureVersioned(asset, userID); err != nil {
-		return domain.AssetVersion{}, err
-	}
-	if err := h.writeAssetContent(asset, target.Content); err != nil {
-		return domain.AssetVersion{}, err
-	}
 	if note = strings.TrimSpace(note); note == "" {
 		note = "回滚到 v" + strconv.Itoa(target.Version)
 	}
-	version, err := h.repo.AppendAssetVersion(domain.AssetVersion{AssetKind: asset.Kind, AssetID: asset.ID, Content: target.Content, Source: domain.EvoVersionRollback, Note: note, CreatedBy: userID})
-	if err != nil {
-		return domain.AssetVersion{}, err
-	}
-	now := time.Now().UTC()
-	for _, p := range h.repo.EvoProposals("", 200, domain.EvoProposalReleased) {
-		if p.AssetKind != asset.Kind || p.AssetID != asset.ID || p.ReleasedVersion <= target.Version {
-			continue
-		}
-		p.Status = domain.EvoProposalRolledBack
-		p.DecisionNote = strings.TrimSpace(p.DecisionNote + "\n已回滚：" + note)
-		if p.Watch.Active() {
-			p.Watch.Status, p.Watch.EndedAt = domain.EvoWatchRolledBack, now
-		}
-		_ = h.repo.PutEvoProposal(p)
-	}
-	return version, nil
+	return h.repo.RollbackEvoAsset(asset.Kind, asset.ID, domain.ContentHash(asset.Content), target.Version, userID, note)
 }
