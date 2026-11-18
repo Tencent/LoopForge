@@ -29,19 +29,20 @@ type mcpCallConfigFile struct {
 }
 
 type mcpCallServer struct {
-	ID          string            `json:"id"`
-	Name        string            `json:"name"`
-	MarketID    string            `json:"marketId,omitempty"`
-	URL         string            `json:"url"`
-	Command     string            `json:"command,omitempty"`
-	Args        []string          `json:"args,omitempty"`
-	CWD         string            `json:"cwd,omitempty"`
-	Environment map[string]string `json:"environment,omitempty"`
-	Transport   string            `json:"transport"`
-	AuthType    string            `json:"authType,omitempty"`
-	Headers     map[string]string `json:"headers,omitempty"`
-	TimeoutSec  int               `json:"timeoutSec,omitempty"`
-	Aliases     []string          `json:"aliases,omitempty"`
+	ID             string            `json:"id"`
+	Name           string            `json:"name"`
+	MarketID       string            `json:"marketId,omitempty"`
+	URL            string            `json:"url"`
+	Command        string            `json:"command,omitempty"`
+	Args           []string          `json:"args,omitempty"`
+	CWD            string            `json:"cwd,omitempty"`
+	Environment    map[string]string `json:"environment,omitempty"`
+	Transport      string            `json:"transport"`
+	AuthType       string            `json:"authType,omitempty"`
+	CredentialKind string            `json:"credentialKind,omitempty"`
+	Headers        map[string]string `json:"headers,omitempty"`
+	TimeoutSec     int               `json:"timeoutSec,omitempty"`
+	Aliases        []string          `json:"aliases,omitempty"`
 }
 
 func mcpCallHostDir(workspace string) string {
@@ -121,19 +122,20 @@ func mcpCallConfigServers(servers []domain.MCPServerDefinition) []mcpCallServer 
 			continue
 		}
 		out = append(out, mcpCallServer{
-			ID:          server.ID,
-			Name:        server.Name,
-			MarketID:    server.MarketID,
-			URL:         server.URL,
-			Transport:   transport,
-			Command:     server.Command,
-			Args:        append([]string(nil), server.Args...),
-			CWD:         MCPRuntimeWorkingDirectory(server),
-			Environment: resolveMap(server.Environment),
-			AuthType:    server.AuthType,
-			Headers:     cloneHeaders(server.Headers),
-			TimeoutSec:  server.TimeoutSec,
-			Aliases:     mcpCallAliases(server),
+			ID:             server.ID,
+			Name:           server.Name,
+			MarketID:       server.MarketID,
+			URL:            server.URL,
+			Transport:      transport,
+			Command:        server.Command,
+			Args:           append([]string(nil), server.Args...),
+			CWD:            MCPRuntimeWorkingDirectory(server),
+			Environment:    resolveMap(server.Environment),
+			AuthType:       server.AuthType,
+			CredentialKind: server.CredentialKind,
+			Headers:        cloneHeaders(server.Headers),
+			TimeoutSec:     server.TimeoutSec,
+			Aliases:        mcpCallAliases(server),
 		})
 	}
 	return out
@@ -437,6 +439,9 @@ func mcpCallInvoke(args []string) error {
 		return err
 	}
 	if strings.EqualFold(strings.TrimSpace(server.Transport), "http") && strings.TrimSpace(server.AuthType) != "" && authorizationHeader(server.Headers) == "" {
+		if strings.EqualFold(strings.TrimSpace(server.AuthType), MCPAuthCredential) {
+			return fmt.Errorf("MCP %s 需要凭证 %q：请先在个人凭证中配置", server.Name, server.CredentialKind)
+		}
 		return fmt.Errorf("MCP %s 需要 GitHub Git Token：请先在个人凭证中配置", server.Name)
 	}
 	tool := strings.TrimSpace(args[1])
@@ -510,6 +515,9 @@ func mcpCallTools(args []string) error {
 		return err
 	}
 	if strings.EqualFold(strings.TrimSpace(server.Transport), "http") && strings.TrimSpace(server.AuthType) != "" && authorizationHeader(server.Headers) == "" {
+		if strings.EqualFold(strings.TrimSpace(server.AuthType), MCPAuthCredential) {
+			return fmt.Errorf("MCP %s 需要凭证 %q：请先在个人凭证中配置", server.Name, server.CredentialKind)
+		}
 		return fmt.Errorf("MCP %s 需要 GitHub Git Token：请先在个人凭证中配置", server.Name)
 	}
 	var names []string

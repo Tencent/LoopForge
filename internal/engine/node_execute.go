@@ -747,6 +747,10 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 			repositories := current.RepositoryContexts()
 			boundAssets, skipped, bindErr := runtime.PrepareMCPServers(assets, runtime.MCPTarget{
 				GitToken: gitTok, RequireCredentials: true,
+				// Credential-authenticated MCP servers resolve their Bearer
+				// token from the responsible user's extra credentials here —
+				// the agent node is the primary consumer of market MCPs.
+				ExtraCredentials:    gitCredentials.Extra,
 				SSHRepositoriesOnly: len(repositories) > 0 && len(sshRepositoryURLs(repositories)) == len(repositories),
 			})
 			for _, warning := range skipped {
