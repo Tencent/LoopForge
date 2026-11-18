@@ -53,25 +53,35 @@ type httpResponse struct {
 }
 
 func TestOldRunnerClaimGetsNoGitCredentialsForCNBTask(t *testing.T) {
-	task, resp, _, _, _ := claimCNBTask(t, "0.10.1")
-	var result struct{ Task domain.RunnerTask }
-	if err := json.Unmarshal([]byte(resp.body), &result); err != nil || resp.code != http.StatusOK || result.Task.ID != task.ID {
-		t.Fatalf("claim failed (HTTP %d): %s", resp.code, resp.body)
-	}
-	if strings.Contains(resp.body, testCNBToken) || strings.Contains(resp.body, testGlobalToken) {
-		t.Fatalf("an old runner received a token: %s", resp.body)
-	}
-	if len(result.Task.Invocation.GitHTTPSCredentials) != 0 || result.Task.Invocation.GitHTTPSUserID != 0 {
-		t.Fatalf("old runner got CNB credentials: %+v", result.Task.Invocation)
-	}
-	for _, repository := range result.Task.Invocation.Repositories {
-		if repository.GitToken != "" {
-			t.Fatalf("old runner kept a Git token for %s", repository.CloneURL)
-		}
+	for _, version := range []string{"0.10.1", "0.10.2"} {
+		t.Run(version, func(t *testing.T) {
+			task, resp, _, _, _ := claimCNBTask(t, version)
+			var result struct{ Task domain.RunnerTask }
+			if err := json.Unmarshal([]byte(resp.body), &result); err != nil || resp.code != http.StatusOK || result.Task.ID != task.ID {
+				t.Fatalf("claim failed (HTTP %d): %s", resp.code, resp.body)
+			}
+			if strings.Contains(resp.body, testCNBToken) || strings.Contains(resp.body, testGlobalToken) {
+				t.Fatalf("runner %s received a token: %s", version, resp.body)
+			}
+			if len(result.Task.Invocation.GitHTTPSCredentials) != 0 || result.Task.Invocation.GitHTTPSUserID != 0 {
+				t.Fatalf("runner %s got CNB credentials: %+v", version, result.Task.Invocation)
+			}
+			if result.Task.Invocation.Repository != nil && result.Task.Invocation.Repository.GitToken != "" {
+				t.Fatalf("runner %s kept a Git token on legacy Repository", version)
+			}
+			for _, repository := range result.Task.Invocation.Repositories {
+				if repository.GitToken != "" {
+					t.Fatalf("runner %s kept a Git token for %s", version, repository.CloneURL)
+				}
+			}
+		})
 	}
 }
 
 func TestCNBRunnerClaimGetsScopedCredentialUncached(t *testing.T) {
+	if domain.RunnerVersionCNB != "0.10.3" {
+		t.Fatalf("RunnerVersionCNB = %q, want 0.10.3", domain.RunnerVersionCNB)
+	}
 	task, resp, f, session, _ := claimCNBTask(t, domain.RunnerVersionCNB)
 	var result struct{ Task domain.RunnerTask }
 	if err := json.Unmarshal([]byte(resp.body), &result); err != nil || resp.code != http.StatusOK || result.Task.ID != task.ID {

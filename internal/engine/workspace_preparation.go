@@ -152,13 +152,17 @@ func (e *Engine) preparedWorkspaceRequest(run domain.Run, request domain.RunnerW
 	assets := e.resolveScriptMCPAssets(run.ExecutionContext.ProjectID, run.ExecutionContext.ResponsibleUserID)
 	invocation.Assets = assets
 	invocation.MCPCallServers = assets.MCPServers
-	request.PreparationInvocation = invocation
 	// Status and terminal I/O don't need keys. A separate platform instance
 	// can also resolve its own credentials from the shared store.
 	request.TerminalGitSSHKeys = nil
 	if runnerID != "" && len(invocation.GitHTTPSRemotes()) > 0 && request.Operation == domain.RunnerWorkspaceOperationPrepare {
+		runner, ok := e.repo.Runner(runnerID)
+		if !ok || !runner.SupportsCNB() {
+			return request, fmt.Errorf("CNB 仓库需要执行机器升级至 %s", domain.RunnerVersionCNB)
+		}
 		invocation.GitHTTPSCredentials = runtime.GitHTTPSToWire(credentials.GitHTTPS)
 	}
+	request.PreparationInvocation = invocation
 	terminalOpen := request.Operation == domain.RunnerWorkspaceOperationTerminal && request.Terminal != nil && request.Terminal.Operation == "open"
 	sshRemotes := invocation.GitSSHRemotes()
 	if runnerID != "" && len(sshRemotes) > 0 {

@@ -129,7 +129,7 @@ const RunnerVersionGitSSH = "0.9.3"
 // RunnerVersionCNB is the first runner that offers CNB credentials only to
 // cnb.cool. Older runners would offer the global Git token to every host, so
 // CNB repositories are neither dispatched to nor credentialed for them.
-const RunnerVersionCNB = "0.10.2"
+const RunnerVersionCNB = "0.10.3"
 
 func (r Runner) SupportsCNB() bool {
 	return versionAtLeast(r.RunnerVersion, RunnerVersionCNB)

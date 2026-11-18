@@ -13,6 +13,8 @@ import (
 	"testing"
 
 	"agentflow/internal/domain"
+	"agentflow/internal/engine"
+	"agentflow/internal/repo"
 	"agentflow/internal/runtime"
 )
 
@@ -390,4 +392,156 @@ func TestConversationProcessRetriesBusyRunner(t *testing.T) {
 			t.Fatal("busy runner never recovered")
 		}
 	}
+}
+
+func TestConversationExecutorGuardsGitHTTPSByRunnerVersion(t *testing.T) {
+	h, user := workbenchFixture(t)
+	h.deps.engine = engine.New(h.repo, runtime.NewManager(t.TempDir()))
+	const (
+		cnbToken    = "cnb_conv_secret_pat_0103"
+		githubToken = "ghp_conv_global_pat_0102"
+	)
+	if _, err := h.repo.UpdateUserCredentials(user.ID, repo.UserCredentialUpdate{CNBToken: cnbToken, GitToken: githubToken}); err != nil {
+		t.Fatal(err)
+	}
+
+	runRemoteStart := func(t *testing.T, runnerID, version string) (*runtime.ConversationCommand, string) {
+		t.Helper()
+		if err := h.repo.PutRunner(domain.Runner{ID: runnerID, OwnerUserID: user.ID, Status: domain.RunnerStatusOnline, RunnerVersion: version}); err != nil {
+			t.Fatal(err)
+		}
+		runID := "ws-" + runnerID
+		run := domain.Run{
+			ID:     runID,
+			Kind:   domain.RunKindWorkspace,
+			Status: "waiting",
+			ExecutionContext: domain.TelemetryContext{
+				ProjectID:             "workbench",
+				ExecutionMode:         domain.ExecutionModeRunner,
+				ExecutionRunnerID:     runnerID,
+				RunnerWorkspaceLayout: domain.RunnerWorkspaceLayoutShared,
+				ResponsibleUserID:     user.ID,
+			},
+			WorkflowSnapshot: domain.WorkflowDefinition{
+				ID:              "ws-wf",
+				SandboxSnapshot: &domain.RunnerSandboxSpec{Profile: domain.SandboxProfile{ID: "docker", Driver: domain.SandboxDriverDocker}},
+			},
+			Repositories: []domain.RepositoryContext{{
+				RepositoryID: "gh",
+				Provider:     "github",
+				CloneURL:     "https://github.com/org/repo.git",
+			}},
+			Nodes: map[string]*domain.NodeRun{},
+		}
+		if err := h.repo.PutRun(run); err != nil {
+			t.Fatal(err)
+		}
+		hub := quietRunnerHub()
+		h.runnerControls = hub
+		conn := testRunnerConn(runnerID)
+		registerTestConn(hub, conn)
+		s := &AgentToolSession{
+			UserID:            user.ID,
+			User:              user,
+			ChatOwnerID:       user.ID,
+			ChatSessionID:     "chat-" + runnerID,
+			ExecutionRunnerID: runnerID,
+			RuntimeMode:       domain.AssistantModeWorkspace,
+			workspaceRunID:    runID,
+		}
+		execute := h.conversationExecutor(s, t.TempDir())
+		remoteRoot := t.TempDir()
+		pool := &runtime.ConversationProcessPool{}
+		done := make(chan error, 1)
+		go func() {
+			_, err := execute(context.Background(), "", runtime.CommandSpec{Argv: []string{"sh", "-c", "echo ok"}, Provider: "codebuddy"}, runtime.RunCredentials{}, nil)
+			done <- err
+		}()
+		var captured *runtime.ConversationCommand
+		var capturedRaw string
+		deadline := time.After(5 * time.Second)
+		for {
+			select {
+			case message := <-conn.send:
+				var req runtime.ConversationProcessRequest
+				if err := json.Unmarshal(message.WorkspaceRequest.Conversation, &req); err != nil {
+					t.Fatal(err)
+				}
+				if req.Operation == "start" {
+					captured = req.Command
+					capturedRaw = string(message.WorkspaceRequest.Conversation)
+				}
+				if req.Command != nil {
+					req.Command.Argv[0] = "sh"
+				}
+				result, err := pool.Handle(context.Background(), remoteRoot, "", nil, req, nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				payload, _ := json.Marshal(result)
+				hub.resolveWorkspace(message.RequestID, domain.RunnerWorkspaceResponse{Status: 200, Payload: payload})
+			case err := <-done:
+				if err != nil {
+					t.Fatalf("remote conversation failed on %s: %v", version, err)
+				}
+				if captured == nil {
+					t.Fatalf("did not observe start RPC for %s", version)
+				}
+				return captured, capturedRaw
+			case <-deadline:
+				t.Fatalf("remote conversation timed out for %s", version)
+			}
+		}
+	}
+
+	t.Run("0.10.2 remote omits GitHTTPS and keeps GitToken", func(t *testing.T) {
+		cmd, raw := runRemoteStart(t, "runner-0102", "0.10.2")
+		if len(cmd.Credentials.GitHTTPS) != 0 || strings.Contains(raw, cnbToken) {
+			t.Fatalf("0.10.2 runner received CNB credentials: %+v raw=%s", cmd.Credentials.GitHTTPS, raw)
+		}
+		if cmd.Credentials.GitToken != githubToken {
+			t.Fatalf("0.10.2 runner lost ordinary GitToken: %q", cmd.Credentials.GitToken)
+		}
+	})
+
+	t.Run("0.10.3 remote includes GitHTTPS", func(t *testing.T) {
+		cmd, _ := runRemoteStart(t, "runner-0103", domain.RunnerVersionCNB)
+		if len(cmd.Credentials.GitHTTPS) != 1 || cmd.Credentials.GitHTTPS[0].Token != cnbToken || cmd.Credentials.GitHTTPS[0].BaseURL != "https://cnb.cool" {
+			t.Fatalf("0.10.3 runner missing CNB credentials: %+v", cmd.Credentials.GitHTTPS)
+		}
+		if cmd.Credentials.GitToken != githubToken {
+			t.Fatalf("0.10.3 runner lost ordinary GitToken: %q", cmd.Credentials.GitToken)
+		}
+	})
+
+	t.Run("local mode includes GitHTTPS", func(t *testing.T) {
+		s := &AgentToolSession{
+			UserID:        user.ID,
+			User:          user,
+			ChatOwnerID:   user.ID,
+			ChatSessionID: "chat-local",
+			RuntimeMode:   domain.AssistantModeWorkspace,
+		}
+		boundCmd, boundCreds := h.bindWorkspaceGit(context.Background(), s, runtime.CommandSpec{}, runtime.RunCredentials{})
+		if len(boundCreds.GitHTTPS) != 1 || boundCreds.GitHTTPS[0].Token != cnbToken || boundCreds.GitHTTPS[0].BaseURL != "https://cnb.cool" {
+			t.Fatalf("local bindWorkspaceGit dropped CNB credentials: %+v", boundCreds.GitHTTPS)
+		}
+		outFile := filepath.Join(t.TempDir(), "scoped-token.txt")
+		localSession := &AgentToolSession{
+			UserID:        user.ID,
+			User:          user,
+			ChatOwnerID:   user.ID,
+			ChatSessionID: "chat-local-exec",
+			RuntimeMode:   domain.AssistantModePlatform,
+		}
+		execute := h.conversationExecutor(localSession, t.TempDir())
+		boundCmd.Argv = []string{"sh", "-c", `printf '%s' "$AGENTFLOW_SCOPED_GIT_TOKEN_0" > ` + outFile}
+		if _, err := execute(context.Background(), "", boundCmd, boundCreds, nil); err != nil {
+			t.Fatalf("local conversation executor failed: %v", err)
+		}
+		got, err := os.ReadFile(outFile)
+		if err != nil || string(got) != cnbToken {
+			t.Fatalf("local mode did not bind CNB GitHTTPS token: got=%q err=%v", string(got), err)
+		}
+	})
 }

@@ -833,11 +833,16 @@ func (d *Daemon) executeInvocation(ctx context.Context, task domain.RunnerTask) 
 		defer release()
 	}
 	target := d.mcpTarget(true, invocationGitToken(inv))
+	repos := invocationRepositories(inv)
 	sshRepoCount := len(inv.GitSSHRemotes())
-	target.SSHRepositoriesOnly = sshRepoCount > 0 && sshRepoCount == max(len(inv.Repositories), 1)
-	boundAssets, _, err := runtime.PrepareMCPServers(inv.Assets, target)
+	target.SSHRepositoriesOnly = len(repos) > 0 && sshRepoCount == len(repos)
+	target.RunnerRepositories = repos
+	boundAssets, mcpWarnings, err := runtime.PrepareMCPServers(inv.Assets, target)
 	if err != nil {
 		return execResult{status: domain.RunnerTaskFailed, errMsg: fmt.Sprintf("bind MCP credentials: %v", err)}, nil
+	}
+	for _, warning := range mcpWarnings {
+		log.Printf("task %s: %s", task.ID, warning)
 	}
 	if err := runtime.ProvisionMCPAssets(ctx, sandbox, workspace, boundAssets, nil); err != nil {
 		return execResult{status: domain.RunnerTaskFailed, errMsg: fmt.Sprintf("provision MCP: %v", err)}, nil

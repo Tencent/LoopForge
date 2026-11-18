@@ -64,15 +64,15 @@ exit 7
 }
 
 func TestAssistantDiagnosticSanitizationAndBounds(t *testing.T) {
-	user := domain.User{GitToken: "git-secret", GongfengRefreshToken: "refresh-secret", AgentCLICredentials: map[string]domain.AgentCLICredential{"zcode": {APIKey: "agent-secret"}}}
+	user := domain.User{GitToken: "git-secret", CNBToken: "cnb_plain_pat_value_123456", GongfengRefreshToken: "refresh-secret", AgentCLICredentials: map[string]domain.AgentCLICredential{"zcode": {APIKey: "agent-secret"}}}
 	pemBlock := "-----BEGIN " + "PRIVATE KEY-----\nprivate-key-content\n-----END " + "PRIVATE KEY-----"
 	input := `{"api_key":"unrecognized-key","Authorization":"Bearer unknown-bearer","password":"unknown-pass"}
 https://username:url-pass@example.com/v1?signature=url-secret#fragment-secret
-git-secret refresh-secret agent-secret sk-abcdefghijklmnopqrstuvwxyz
+git-secret cnb_plain_pat_value_123456 refresh-secret agent-secret sk-abcdefghijklmnopqrstuvwxyz
 ` + pemBlock + `
 /home/user/.config/private.json C:\Users\user\private.json`
 	out := sanitizeAssistantDiagnostic(input, user, 8192)
-	for _, secret := range []string{"unrecognized-key", "unknown-bearer", "unknown-pass", "url-pass", "url-secret", "fragment-secret", "git-secret", "refresh-secret", "agent-secret", "sk-abc", "private-key-content", "/home/user", "C:\\Users"} {
+	for _, secret := range []string{"unrecognized-key", "unknown-bearer", "unknown-pass", "url-pass", "url-secret", "fragment-secret", "git-secret", "cnb_plain_pat_value_123456", "refresh-secret", "agent-secret", "sk-abc", "private-key-content", "/home/user", "C:\\Users"} {
 		if strings.Contains(out, secret) {
 			t.Fatalf("leaked %q: %s", secret, out)
 		}
@@ -262,5 +262,39 @@ func TestAssistantDiagnosticRecordsUserCancellationTermination(t *testing.T) {
 	report, ok := h.repo.AssistantDiagnostics(u.ID, "cancel-diag-chat", g.ID)
 	if !ok || report.Termination == nil || report.Termination.Code != "USER_CANCELLED" {
 		t.Fatalf("expected USER_CANCELLED in persisted diagnostics, got %+v", report)
+	}
+}
+
+func TestAssistantDiagnosticRedactsUnlabeledCNBToken(t *testing.T) {
+	const cnbPAT = "cnb_plain_pat_value_123456"
+	user := domain.User{ID: 42, CNBToken: cnbPAT}
+	cliErr := "fatal: remote authentication failed using " + cnbPAT + " while pushing branch"
+	got := sanitizeAssistantDiagnostic(cliErr, user, 4096)
+	want := "fatal: remote authentication failed using <redacted> while pushing branch"
+	if got != want {
+		t.Fatalf("sanitizeAssistantDiagnostic() = %q, want %q", got, want)
+	}
+	if strings.Contains(got, cnbPAT) {
+		t.Fatalf("unlabeled CNB PAT leaked: %q", got)
+	}
+
+	g := domain.AssistantGeneration{ID: "cnb-diag", SessionID: "cnb-sess", UserID: user.ID, Status: "running", StartedAt: time.Now().UTC()}
+	d := newAssistantDiagnosticsCollector(g)
+	d.begin("codex", "gpt-5.6", false, user).stderr("git push failed with " + cnbPAT)
+	f := d.fail(context.Background(), errors.New("CLI error: "+cnbPAT), user)
+	g.Failure, g.Status = &f, "failed"
+	snap := d.snapshot(g)
+	if snap.Error != "CLI error: <redacted>" {
+		t.Fatalf("snap.Error = %q, want redacted", snap.Error)
+	}
+	if len(snap.Attempts) != 1 || len(snap.Attempts[0].Stderr) != 1 || snap.Attempts[0].Stderr[0] != "git push failed with <redacted>" {
+		t.Fatalf("stderr not redacted: %+v", snap.Attempts)
+	}
+	raw, err := json.Marshal(snap)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(raw, []byte(cnbPAT)) {
+		t.Fatalf("diagnostic snapshot leaked unlabeled CNB PAT: %s", raw)
 	}
 }
