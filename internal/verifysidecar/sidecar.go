@@ -23,16 +23,16 @@ import (
 	"strings"
 	"time"
 
+	"agentflow/internal/critique"
 	"agentflow/internal/verification"
 )
 
 type Server struct {
 	// Root bounds every repo path the service will read.
 	Root string
-	// CritiqueFile is a JSON object mapping diffHash to
-	// {"verdict":"PASS|REJECT","summary":"..."}. Absent or stale entries mean
-	// REJECT: a critique is never assumed.
-	CritiqueFile string
+	// Critique is the model endpoint used by /critique. An unconfigured
+	// endpoint answers REJECT, never PASS.
+	Critique critique.Config
 	// AllowTestCommand enables running the request's testCommand. Off by
 	// default because the request is operator-supplied shell.
 	AllowTestCommand bool
@@ -42,12 +42,11 @@ type Server struct {
 	TestTimeout time.Duration
 }
 
-func New(root, critiqueFile string) *Server {
+func New(root string) *Server {
 	return &Server{
-		Root:         root,
-		CritiqueFile: critiqueFile,
-		GitTimeout:   30 * time.Second,
-		TestTimeout:  10 * time.Minute,
+		Root:        root,
+		GitTimeout:  30 * time.Second,
+		TestTimeout: 10 * time.Minute,
 	}
 }
 
@@ -184,18 +183,15 @@ func (s *Server) runAcceptance(ctx context.Context, repo string, req verifyReque
 }
 
 type critiqueRequest struct {
-	DiffHash string `json:"diffHash"`
-}
-
-type critiqueResponse struct {
-	Verdict  string `json:"verdict"`
-	Summary  string `json:"summary"`
-	DiffHash string `json:"diffHash"`
-}
-
-type critiqueEntry struct {
-	Verdict string `json:"verdict"`
-	Summary string `json:"summary"`
+	DiffHash        string                `json:"diffHash"`
+	Repo            string                `json:"repo,omitempty"`
+	BaseCommit      string                `json:"baseCommit,omitempty"`
+	Patch           string                `json:"patch,omitempty"`
+	Requirement     string                `json:"requirementTitle,omitempty"`
+	RequirementBody string                `json:"requirementBody,omitempty"`
+	Clauses         string                `json:"clauses,omitempty"`
+	Spec            string                `json:"spec,omitempty"`
+	Verification    critique.Verification `json:"verification,omitempty"`
 }
 
 func (s *Server) critique(w http.ResponseWriter, r *http.Request) {
@@ -204,47 +200,41 @@ func (s *Server) critique(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	hash := strings.ToLower(strings.TrimSpace(req.DiffHash))
+	patch := req.Patch
+	if strings.TrimSpace(patch) == "" {
+		repo, err := s.repo(req.Repo)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, errors.New("patch or repo is required for critique"))
+			return
+		}
+		computed, diff, err := verification.DiffHash(r.Context(), repo, req.BaseCommit)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		if hash == "" {
+			hash = computed
+		} else if hash != computed {
+			writeError(w, http.StatusBadRequest, fmt.Errorf("diff hash %s does not match the repository diff %s", hash, computed))
+			return
+		}
+		patch = string(diff)
+	}
 	if !isSHA256(hash) {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("diffHash %q is not a 64-hex sha256", req.DiffHash))
 		return
 	}
-	verdict := critiqueResponse{Verdict: "REJECT", Summary: "no critique recorded for this diff", DiffHash: hash}
-	entries, err := s.critiqueEntries()
+	answer, err := critique.Review(r.Context(), s.Critique, critique.Request{
+		DiffHash: hash, Patch: patch,
+		Requirement: req.Requirement, RequirementBody: req.RequirementBody,
+		Clauses: req.Clauses, Spec: req.Spec, Verification: req.Verification,
+	})
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err)
-		return
+		// Model/configuration failures still answer with a REJECT verdict so the
+		// SOP records the reason instead of failing to parse the answer.
+		answer.DiffHash = hash
 	}
-	if entry, ok := entries[hash]; ok {
-		verdict.Verdict = strings.ToUpper(strings.TrimSpace(entry.Verdict))
-		verdict.Summary = entry.Summary
-	}
-	if verdict.Verdict != "PASS" && verdict.Verdict != "REJECT" {
-		writeError(w, http.StatusInternalServerError, fmt.Errorf("critique file verdict %q must be PASS or REJECT", verdict.Verdict))
-		return
-	}
-	if verdict.Summary == "" {
-		verdict.Summary = map[string]string{"PASS": "critique recorded: PASS", "REJECT": "critique recorded: REJECT"}[verdict.Verdict]
-	}
-	writeJSON(w, http.StatusOK, verdict)
-}
-
-func (s *Server) critiqueEntries() (map[string]critiqueEntry, error) {
-	path := strings.TrimSpace(s.CritiqueFile)
-	if path == "" {
-		return nil, nil
-	}
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("read critique file: %w", err)
-	}
-	entries := map[string]critiqueEntry{}
-	if err := json.Unmarshal(raw, &entries); err != nil {
-		return nil, fmt.Errorf("parse critique file %s: %w", path, err)
-	}
-	return entries, nil
+	writeJSON(w, http.StatusOK, answer)
 }
 
 type deliveryCheckRequest struct {

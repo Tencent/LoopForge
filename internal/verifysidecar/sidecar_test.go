@@ -13,6 +13,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"agentflow/internal/critique"
 )
 
 func testRepo(t *testing.T) string {
@@ -73,7 +75,7 @@ func postJSON(t *testing.T, server *httptest.Server, path string, body any) (int
 
 func TestVerifyReturnsTreeSpecAndFingerprints(t *testing.T) {
 	repo := testRepo(t)
-	server := httptest.NewServer(New(repo, "").Handler())
+	server := httptest.NewServer(New(repo).Handler())
 	defer server.Close()
 
 	status, body := postJSON(t, server, "/verify", map[string]any{"repo": repo, "ref": "HEAD", "spec": "spec.md"})
@@ -105,7 +107,7 @@ func TestVerifyReturnsTreeSpecAndFingerprints(t *testing.T) {
 
 func TestVerifyRunsTestCommandOnlyWhenAllowed(t *testing.T) {
 	repo := testRepo(t)
-	sidecar := New(repo, "")
+	sidecar := New(repo)
 	server := httptest.NewServer(sidecar.Handler())
 	defer server.Close()
 
@@ -135,7 +137,7 @@ func TestVerifyRunsTestCommandOnlyWhenAllowed(t *testing.T) {
 
 func TestVerifyWorktreeHashesUncommittedFiles(t *testing.T) {
 	repo := testRepo(t)
-	server := httptest.NewServer(New(repo, "").Handler())
+	server := httptest.NewServer(New(repo).Handler())
 	defer server.Close()
 
 	cleanTree := gitOutput(t, repo, "rev-parse", "HEAD^{tree}")
@@ -154,7 +156,7 @@ func TestVerifyWorktreeHashesUncommittedFiles(t *testing.T) {
 func TestVerifyRejectsRepoOutsideRoot(t *testing.T) {
 	inside := testRepo(t)
 	outside := testRepo(t)
-	server := httptest.NewServer(New(inside, "").Handler())
+	server := httptest.NewServer(New(inside).Handler())
 	defer server.Close()
 
 	status, body := postJSON(t, server, "/verify", map[string]any{"repo": outside, "spec": "spec.md"})
@@ -163,32 +165,38 @@ func TestVerifyRejectsRepoOutsideRoot(t *testing.T) {
 	}
 }
 
-func TestCritiqueRejectsUntilRecordedThenPasses(t *testing.T) {
+func TestCritiqueRejectsWithoutModelThenUsesModel(t *testing.T) {
 	repo := testRepo(t)
-	critiqueFile := filepath.Join(t.TempDir(), "critique.json")
-	server := httptest.NewServer(New(repo, critiqueFile).Handler())
+	sidecar := New(repo)
+	server := httptest.NewServer(sidecar.Handler())
 	defer server.Close()
-	h := strings.Repeat("a", 64)
+	patch := "diff --git a/A.java b/A.java\n"
+	sum := sha256.Sum256([]byte(patch))
+	h := hex.EncodeToString(sum[:])
 	key := "diffHash"
 
-	status, body := postJSON(t, server, "/critique", map[string]any{key: h})
+	status, body := postJSON(t, server, "/critique", map[string]any{key: h, "patch": patch})
 	if status != http.StatusOK || body["verdict"] != "REJECT" {
-		t.Fatalf("unrecorded critique = %d %v, want REJECT", status, body)
+		t.Fatalf("unconfigured critique = %d %v, want REJECT", status, body)
 	}
-	if body[key] != h {
-		t.Fatalf("critique did not echo the diff hash: %v", body)
-	}
-
-	recorded, _ := json.Marshal(map[string]any{h: map[string]string{"verdict": "pass", "summary": "no blocking findings"}})
-	if err := os.WriteFile(critiqueFile, recorded, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	status, body = postJSON(t, server, "/critique", map[string]any{key: h})
-	if status != http.StatusOK || body["verdict"] != "PASS" || body["summary"] != "no blocking findings" {
-		t.Fatalf("recorded critique = %d %v, want PASS", status, body)
+	if !strings.Contains(body["summary"].(string), "not configured") {
+		t.Fatalf("unconfigured summary = %v", body["summary"])
 	}
 
-	status, _ = postJSON(t, server, "/critique", map[string]any{key: "short"})
+	model := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{"message": map[string]string{"content": `{"verdict":"PASS","summary":"reviewed"}`}}},
+		})
+	}))
+	defer model.Close()
+	sidecar.Critique = critique.Config{URL: model.URL, Key: "test-key", Model: "critic", Client: model.Client()}
+
+	status, body = postJSON(t, server, "/critique", map[string]any{key: h, "patch": patch})
+	if status != http.StatusOK || body["verdict"] != "PASS" || body["summary"] != "reviewed" {
+		t.Fatalf("model critique = %d %v, want PASS", status, body)
+	}
+
+	status, _ = postJSON(t, server, "/critique", map[string]any{key: "short", "patch": patch})
 	if status != http.StatusBadRequest {
 		t.Fatalf("short diff hash = %d, want 400", status)
 	}
@@ -196,7 +204,7 @@ func TestCritiqueRejectsUntilRecordedThenPasses(t *testing.T) {
 
 func TestDeliveryCheckBindsCommitToVerifiedTree(t *testing.T) {
 	repo := testRepo(t)
-	server := httptest.NewServer(New(repo, "").Handler())
+	server := httptest.NewServer(New(repo).Handler())
 	defer server.Close()
 	commit := gitOutput(t, repo, "rev-parse", "HEAD")
 	tree := gitOutput(t, repo, "rev-parse", "HEAD^{tree}")

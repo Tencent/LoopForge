@@ -15,13 +15,17 @@ import (
 	"syscall"
 	"time"
 
+	"agentflow/internal/critique"
 	"agentflow/internal/verifysidecar"
 )
 
 func main() {
 	addr := flag.String("addr", "127.0.0.1:8787", "listen address; keep it on loopback")
 	root := flag.String("root", ".", "directory that bounds every repo path the sidecar may read")
-	critiqueFile := flag.String("critique-file", "", "JSON object mapping diffHash to {verdict, summary}; absent hashes are REJECT")
+	modelURL := flag.String("model-url", os.Getenv("AEGIS_MODEL_URL"), "OpenAI-compatible base URL for /critique (env AEGIS_MODEL_URL)")
+	modelKey := flag.String("model-key", os.Getenv("AEGIS_MODEL_KEY"), "model API key (env AEGIS_MODEL_KEY)")
+	modelKeyFile := flag.String("model-key-file", os.Getenv("AEGIS_MODEL_KEY_FILE"), "file holding the model API key (env AEGIS_MODEL_KEY_FILE)")
+	modelName := flag.String("model", os.Getenv("AEGIS_MODEL_NAME"), "model name for /critique (env AEGIS_MODEL_NAME)")
 	allowTestCommand := flag.Bool("allow-test-command", false, "allow /verify to run the request testCommand inside the Maven container")
 	flag.Parse()
 
@@ -33,7 +37,16 @@ func main() {
 		log.Fatal(err)
 	}
 
-	sidecar := verifysidecar.New(rootAbs, *critiqueFile)
+	key := strings.TrimSpace(*modelKey)
+	if key == "" && strings.TrimSpace(*modelKeyFile) != "" {
+		raw, err := os.ReadFile(*modelKeyFile)
+		if err != nil {
+			log.Fatalf("read model key file: %v", err)
+		}
+		key = strings.TrimSpace(string(raw))
+	}
+	sidecar := verifysidecar.New(rootAbs)
+	sidecar.Critique = critique.Config{URL: strings.TrimSpace(*modelURL), Key: key, Model: strings.TrimSpace(*modelName)}
 	sidecar.AllowTestCommand = *allowTestCommand
 	server := &http.Server{
 		Addr:              *addr,
