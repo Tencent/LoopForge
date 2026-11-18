@@ -1041,7 +1041,19 @@ function bind(){
   };
   $$('.canvas-view-toggle [data-flow-view]').forEach(btn=>btn.onclick=()=>setFlowView(btn.dataset.flowView));
   const refreshRunnersBtn=$('#refreshRunners');if(refreshRunnersBtn)refreshRunnersBtn.onclick=()=>refreshRunners();
-  $('#langToggle').onclick=()=>window.lfSetLang(window.lfLang()==='en'?'zh':'en');
+  const langOrder = ['zh', 'en', 'ko'];
+  const updateLangButton = () => {
+    const btn = $('#langToggle');
+    if (!btn) return;
+    const cur = window.lfLang();
+    btn.textContent = cur === 'ko' ? '한국어' : (cur === 'en' ? 'English' : '中 / EN / KR');
+  };
+  $('#langToggle').onclick=()=>{
+    const cur = window.lfLang();
+    const nextIdx = (langOrder.indexOf(cur) + 1) % langOrder.length;
+    window.lfSetLang(langOrder[nextIdx]);
+  };
+  updateLangButton();
   $('#themeToggle').onclick=toggleTheme;renderThemeToggle();
   const profileWrap = $('#userProfileWrap');
   const userBadge = $('#userBadge');

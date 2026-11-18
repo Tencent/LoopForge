@@ -339,8 +339,9 @@ function applyAgentPreset(id){
   const f=$('#agentForm');if(!f)return;
   const prev=agentPresets.find(x=>x.id===state.agentCreatePreset),p=agentPresets.find(x=>x.id===id);
   if(id!=='blank'&&!p)return;
+  const trans=s=>((window.lfTranslate&&s)?window.lfTranslate(s):(s||''));
   const fill=(key,next,old)=>{const el=f.elements[key];if(el&&(p||!el.value||el.value===old))el.value=next};
-  fill('name',p?.title||'',prev?.title);fill('description',p?.desc||'',prev?.desc);const draft=state.agentDraft;if(draft&&(p||!draft.prompt||draft.prompt===prev?.prompt)){draft.prompt=p?.prompt||'';renderAgentTaskBook(draft)}
+  fill('name',trans(p?.title||''),prev?.title&&trans(prev.title));fill('description',trans(p?.desc||''),prev?.desc&&trans(prev.desc));const draft=state.agentDraft;if(draft&&(p||!draft.prompt||draft.prompt===prev?.prompt)){draft.prompt=trans(p?.prompt||'');renderAgentTaskBook(draft)}
   state.agentCreatePreset=id;
   $$('[data-agent-preset]').forEach(b=>{const on=b.dataset.agentPreset===id;b.classList.toggle('active',on);b.setAttribute('aria-pressed',on?'true':'false')});
   if(f.elements.name.value.trim())$('#agentNameError')&&($('#agentNameError').hidden=true);
