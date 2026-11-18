@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -125,8 +126,9 @@ func (h *catalogHandlers) repositories(c *gin.Context) {
 			legacySSH = remote.Port == "22" && (remote.Host == domain.GongfengRepoHost || remote.Host == "github.com")
 		}
 	}
-	githubShorthand := primary != "" && strings.HasPrefix(strings.TrimPrefix(primary, "git clone "), "github:")
-	if v.Provider == domain.RepositoryProviderSSH || (gitwork.IsSSHReference(sshReference) && !legacySSH && !githubShorthand) {
+	reference := strings.TrimPrefix(primary, "git clone ")
+	hostedShorthand := primary != "" && (strings.HasPrefix(reference, "github:") || strings.HasPrefix(reference, "cnb:"))
+	if v.Provider == domain.RepositoryProviderSSH || (gitwork.IsSSHReference(sshReference) && !legacySSH && !hostedShorthand) {
 		remote, err := gitwork.ParseSSHRemote(sshReference)
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -169,7 +171,7 @@ func (h *catalogHandlers) repositories(c *gin.Context) {
 	if primary != "" {
 		info, ok := domain.ParseRepositoryURL(primary)
 		if !ok {
-			c.JSON(400, gin.H{"error": "仓库 URL 无法识别，请提供 GitHub 链接或 Git SSH 克隆地址"})
+			c.JSON(400, gin.H{"error": "仓库 URL 无法识别，请提供 GitHub、CNB（cnb.cool）链接或 Git SSH 克隆地址"})
 			return
 		}
 		if body.RepoURL != "" && body.URL != "" {
@@ -191,7 +193,7 @@ func (h *catalogHandlers) repositories(c *gin.Context) {
 		if info, ok := domain.ParseRepositoryURL(v.GongfengProjectID); ok {
 			v.GongfengProjectID = info.Project
 		} else if !strings.HasPrefix(v.GongfengProjectID, "github:") && !domain.IsSafeGongfengProjectID(v.GongfengProjectID) {
-			c.JSON(400, map[string]string{"error": "仓库链接无法识别：请提供有效的 GitHub 仓库地址"})
+			c.JSON(400, map[string]string{"error": "仓库链接无法识别：请提供有效的 GitHub 或 CNB 仓库地址"})
 			return
 		}
 	}
@@ -230,12 +232,27 @@ func (h *catalogHandlers) repositories(c *gin.Context) {
 			v.DefaultBranch = "main"
 		}
 	}
+	if strings.HasPrefix(v.GongfengProjectID, "cnb:") {
+		v.Provider = domain.RepositoryProviderCNB
+		// The caller's cloneUrl/webUrl are replaced: a port or http would make
+		// the stored remote slip past the managed-host credential rules.
+		info, _ := domain.ParseRepositoryURL(v.GongfengProjectID)
+		v.WebURL, v.CloneURL = info.WebURL, info.CloneURL
+	}
 	if v.Provider == "" {
 		v.Provider = "gongfeng"
 	}
-	if v.Provider != "gongfeng" && v.Provider != "github" {
-		c.JSON(400, map[string]string{"error": "provider must be github or gongfeng"})
+	if v.Provider != "gongfeng" && v.Provider != "github" && v.Provider != domain.RepositoryProviderCNB {
+		c.JSON(400, map[string]string{"error": "provider must be github, cnb or gongfeng"})
 		return
+	}
+	if v.Provider == domain.RepositoryProviderCNB && v.DefaultBranch == "" {
+		branch, err := h.probeCNBDefaultBranch(c, strings.TrimPrefix(v.GongfengProjectID, "cnb:"))
+		if err != nil {
+			c.JSON(400, map[string]string{"error": err.Error()})
+			return
+		}
+		v.DefaultBranch = branch
 	}
 	if v.DefaultBranch == "" {
 		v.DefaultBranch = "master"
@@ -255,6 +272,26 @@ func (h *catalogHandlers) repositories(c *gin.Context) {
 		}
 	}
 	h.saveRepository(c, v)
+}
+
+// probeCNBDefaultBranch reads the default branch with the binding user's CNB
+// token. Saving without one would leave a repository whose base branch is a guess.
+func (h *catalogHandlers) probeCNBDefaultBranch(c *gin.Context, slug string) (string, error) {
+	user, ok := h.requestUser(c.Request, true)
+	if !ok {
+		return "", errors.New("请先登录")
+	}
+	stored, _ := h.repo.User(user.ID)
+	if stored.CNBToken == "" {
+		return "", errors.New("绑定 CNB 仓库需要你的 CNB 访问令牌来读取默认分支：请到「个人配置」填写 CNB 令牌（权限 repo-code:rw 与 repo-pr:rw），或在绑定时手动填写默认分支")
+	}
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 15*time.Second)
+	defer cancel()
+	branch, err := newCNBClient(stored.CNBToken).DefaultBranch(ctx, slug)
+	if err != nil {
+		return "", fmt.Errorf("读取 CNB 仓库默认分支失败：%v。请确认令牌对该仓库有 repo-code:r 权限，仓库路径 %s 正确，或在绑定时手动填写默认分支", err, slug)
+	}
+	return branch, nil
 }
 
 func (h *catalogHandlers) saveRepository(c *gin.Context, v domain.Repository) {

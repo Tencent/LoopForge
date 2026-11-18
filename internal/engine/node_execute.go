@@ -2,7 +2,6 @@ package engine
 
 import (
 	"agentflow/internal/domain"
-	"agentflow/internal/gitwork"
 	"agentflow/internal/repo"
 	"agentflow/internal/runtime"
 	"context"
@@ -466,8 +465,7 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 	current, _ = e.repo.RunState(runID)
 	gitCredentials := sb.credentialSnapshot()
 	gitTok := gitCredentials.GitToken
-	ctx = withGitToken(ctx, gitTok)
-	ctx = gitwork.WithSSHKeys(ctx, gitCredentials.GitSSHKeys)
+	ctx = withRunGitCredentials(ctx, gitCredentials)
 	ctx = withGitIdentity(ctx, sb.credentialSnapshot().GitUserName, sb.credentialSnapshot().GitUserEmail)
 	// Share the checkout between nodes. A reconstructed run environment
 	// revalidates the persisted checkout after restart or lease takeover.
@@ -746,8 +744,10 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 			}
 			repositories := current.RepositoryContexts()
 			boundAssets, skipped, bindErr := runtime.PrepareMCPServers(assets, runtime.MCPTarget{
-				GitToken: gitTok, RequireCredentials: true,
+				GitToken:            gitTok,
+				RequireCredentials:  true,
 				SSHRepositoriesOnly: len(repositories) > 0 && len(sshRepositoryURLs(repositories)) == len(repositories),
+				Repositories:        repositories,
 			})
 			for _, warning := range skipped {
 				warnMCPSkipped(warning)

@@ -122,6 +122,11 @@ var assistantCredentialRules = []struct {
 		"到 LoopForge「个人配置 → Git SSH 密钥」为该主机添加无口令私钥，同一主机的仓库自动共用",
 		"请管理员信任仓库的 SSH 主机，然后重试",
 	}},
+	{"cnbToken", "CNB 访问令牌", regexp.MustCompile(`CNB[^。\n]{0,12}(访问)?令牌`), "https://cnb.cool/profile/token", []string{
+		"打开 CNB「个人设置 → 访问令牌」新建令牌，授予 repo-code:rw 与 repo-pr:rw 权限，创建后立即复制",
+		"到 LoopForge「个人配置 → CNB 访问令牌」粘贴并保存，保存前会自动校验",
+		"回到运行重试失败节点",
+	}},
 	{"gitToken", "GitHub Git Token", regexp.MustCompile(`(?i)Git Token|工蜂[^。\n]{0,12}令牌|could not read Username|Authentication failed|HTTP Basic: Access denied|terminal prompts disabled|requested URL returned error: 40[13]`), "https://github.com/settings/tokens", []string{
 		"打开 GitHub「Settings → Developer settings → Personal access tokens」新建令牌",
 		"为目标仓库授予 Contents 和 Pull requests 的读写权限，创建后立即复制 token",

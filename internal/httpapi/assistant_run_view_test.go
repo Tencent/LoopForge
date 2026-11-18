@@ -131,3 +131,18 @@ func TestAssistantCredentialProblemPointsCodeBuddyAtEveryKeyPage(t *testing.T) {
 		}
 	}
 }
+
+func TestAssistantCredentialProblemPointsCNBErrorsAtTheCNBToken(t *testing.T) {
+	for _, text := range []string{
+		"需求责任人未配置 CNB 访问令牌，请让该账号到「个人配置」填写",
+		"CNB 访问令牌无效或已过期（HTTP 401）：请到「个人配置」重新生成并保存",
+	} {
+		fix := assistantCredentialProblem(text, "alice")
+		if fix == nil || fix.Field != "cnbToken" || fix.HelpURL != "https://cnb.cool/profile/token" || fix.Owner != "alice" {
+			t.Fatalf("%q -> %+v", text, fix)
+		}
+	}
+	if fix := assistantCredentialProblem("fatal: could not read Username for 'https://github.com': terminal prompts disabled", ""); fix == nil || fix.Field != "gitToken" {
+		t.Fatalf("GitHub errors must keep pointing at the Git token: %+v", fix)
+	}
+}

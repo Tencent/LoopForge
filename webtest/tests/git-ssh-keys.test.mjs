@@ -151,4 +151,11 @@ test('repository forms only warn for the current user missing the selected SSH h
   await settle(6);
   assert.equal(legacyHint.hidden, false, 'another user cannot borrow the first user’s host metadata');
   assert.match(legacyHint.textContent, /尚未配置 gitlab.example.org:22/);
+
+  legacy.elements.repoUrl.value = 'https://cnb.cool/org/team/repo';
+  legacy.elements.repoUrl.dispatchEvent(new app.window.Event('input', { bubbles: true }));
+  await settle(6);
+  assert.equal(legacyHint.hidden, false);
+  assert.match(legacyHint.textContent, /配置 CNB 访问令牌/);
+  assert.doesNotMatch(legacyHint.textContent, /GitHub Token/);
 });

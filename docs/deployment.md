@@ -94,6 +94,10 @@ Cloning a repository and building a custom sandbox image report progress while t
 
 A clone that is stopped this way is not retried, since a retry would wait on the same network. When the execution host reaches GitHub or Debian mirrors slowly, point git at a proxy (`git config --global http.proxy`) and use a nearby package mirror in the Dockerfile rather than raising these limits.
 
+### CNB repositories (cnb.cool)
+
+Bind a CNB repository with its web or clone address, for example `https://cnb.cool/group/subgroup/repo`; any number of group levels is accepted. Each user saves a personal CNB access token under **Personal settings** (generate it at `https://cnb.cool/profile/token` with `repo-code:rw` and `repo-pr:rw`). The token is sent only to `cnb.cool` and `api.cnb.cool`: git commands carry a cnb.cool-scoped credential helper that answers with the token, or refuses when none is configured, so the global Git token is never offered to CNB. SOP checkouts and pushes use the run's responsible user, a conversation workspace uses the requesting user's CNB token for git access to cnb.cool (the agent opens the pull request itself; the platform does not create it), built-in SOP `「发起 MR」` verification checks CNB PRs using the run's responsible user's CNB token (falling back to the project Owner), and delivery pull requests and background merge status use the project owner. Upgrade execution machines to Runner **0.10.3** or later; the platform refuses to dispatch CNB repositories to older ones and withholds Git tokens from an old runner that claims such a task. `migrations/037_cnb_credentials.sql` is optional and can be re-run: startup AutoMigrate already adds the `user_configs.cnb_token` column.
+
 ### Git repositories over SSH
 
 Use Git SSH for GitLab.com, self-managed GitLab, Gitea, Gogs, GitHub, and other Git hosts that offer this transport. In **Project settings → Code repositories** or **Quick access**, enter the clone address, such as `git@gitlab.com:group/repo.git` or `ssh://git@git.example.org:2222/group/repo.git`, and select the existing default branch. GitHub HTTPS continues to use GitHub authorization or a PAT.
@@ -148,7 +152,7 @@ For an external MySQL deployment, review that migration and check column existen
 | Kind | Example | What an operator does |
 | --- | --- | --- |
 | Already applied by the installer and `./start.sh pull` | `001_run_obs_generated_columns.sql`, `migrations/seed/*.sql`, `031_generic_backend_openssh.sql` | Nothing; the script above covers it |
-| Must run once when upgrading | `009_bot_interactions_utf8mb4.sql` (`CONVERT TO` an existing table), new tables and columns added by hand | Run it on the database after reviewing prerequisites |
+| Must run once when upgrading | `009_bot_interactions_utf8mb4.sql` (`CONVERT TO` an existing table), new tables and columns added by hand; `037_cnb_credentials.sql` is the optional, re-runnable form (AutoMigrate adds its column at startup) | Run it on the database after reviewing prerequisites |
 | Backfills and one-time rewrites of existing rows | `016_public_optional_repositories.sql`, `021_assistant_session_sources.sql` | Run it if the history matters; skipping it changes no schema but leaves old rows unconverted |
 
 ## Updating existing public SOPs

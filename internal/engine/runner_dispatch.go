@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"agentflow/internal/domain"
+	"agentflow/internal/gitwork"
 	"agentflow/internal/runtime"
 )
 
@@ -122,6 +123,12 @@ func (e *Engine) requireWorkBranchCapabilities(runnerID string, repositories []d
 		return nil
 	}
 	for _, repository := range repositories {
+		if gitwork.IsManagedRemote(repository.CloneURL) {
+			runner, ok := e.repo.Runner(runnerID)
+			if !ok || !runner.SupportsCNB() {
+				return fmt.Errorf("CNB 仓库需要执行机器升级至 %s 或更新版本，请先更新 Runner", domain.RunnerVersionCNB)
+			}
+		}
 		if repository.Provider == domain.RepositoryProviderSSH {
 			runner, ok := e.repo.Runner(runnerID)
 			if !ok || !runner.SupportsGitSSH() {
@@ -367,6 +374,15 @@ func bindRunnerRepositories(invocation *domain.RunnerInvocation, run domain.Run,
 			Dir:                       rc.WorkspaceDir,
 		})
 	}
+	if invocation.Repository != nil {
+		scopeRunnerRepository(invocation.Repository)
+	}
+	for i := range invocation.Repositories {
+		scopeRunnerRepository(&invocation.Repositories[i])
+	}
+	if len(invocation.GitHTTPSRemotes()) > 0 {
+		invocation.GitHTTPSUserID = run.ExecutionContext.ResponsibleUserID
+	}
 	if len(invocation.GitSSHRemotes()) > 0 {
 		invocation.GitSSHUserID = run.ExecutionContext.ResponsibleUserID
 		if invocation.Repository != nil && invocation.Repository.UseSSH {
@@ -377,6 +393,15 @@ func bindRunnerRepositories(invocation *domain.RunnerInvocation, run domain.Run,
 				invocation.Repositories[i].GitToken = ""
 			}
 		}
+	}
+}
+
+// scopeRunnerRepository marks a remote on a managed host and strips the
+// global Git token from it: that host only ever gets its own credential.
+func scopeRunnerRepository(repository *domain.RunnerRepository) {
+	if gitwork.IsManagedRemote(repository.CloneURL) {
+		repository.ScopedHTTPS = true
+		repository.GitToken = ""
 	}
 }
 

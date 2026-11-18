@@ -11,6 +11,7 @@ import (
 	"unicode/utf8"
 
 	"agentflow/internal/domain"
+	"agentflow/internal/gitwork"
 )
 
 func preparationFixture(t *testing.T) (Sandbox, domain.WorkflowDefinition) {
@@ -362,5 +363,12 @@ func TestPreparationScopedReadNeverFallsBackToLegacyOrUnsafeScopePath(t *testing
 		if entry.IsDir() && len(entry.Name()) != 64 {
 			t.Fatalf("scope not safely hashed: %q", entry.Name())
 		}
+	}
+}
+
+func TestPreparationFailureOutputRedactsCNBToken(t *testing.T) {
+	sb := &managedSandbox{Sandbox: &localSandbox{}, credentials: RunCredentials{GitHTTPS: []gitwork.HTTPSCredential{gitwork.CNBCredential("cnb_FAKE")}}}
+	if got := redactPreparationOutput(sb, "clone failed: cnb_FAKE rejected"); strings.Contains(got, "cnb_FAKE") {
+		t.Fatalf("CNB token survived redaction: %s", got)
 	}
 }

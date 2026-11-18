@@ -26,8 +26,8 @@ func (s *Service) MergeSourceBranchMR(project, sourceBranch string) (string, err
 // only merges an already-open MR for the source (no create). Same source and
 // target is a no-op.
 func (s *Service) EnsureAndMergeBranchMR(project, sourceBranch, targetBranch, title, description string) (string, error) {
-	if strings.HasPrefix(project, "github:") {
-		return s.githubMergeBranch(project, sourceBranch, targetBranch, title, description)
+	if isPullHostProject(project) {
+		return s.mergeHostedBranch(project, sourceBranch, targetBranch, title, description)
 	}
 	project = strings.TrimSpace(project)
 	src := strings.TrimSpace(sourceBranch)
@@ -138,8 +138,8 @@ type gongfengListedMR struct {
 // newest non-closed one, else the newest closed one. It is the authoritative
 // MR of a run repository; agents' MR links in artifacts are only a fallback.
 func (s *Service) FindBranchMR(project, sourceBranch string) (domain.DeliveryMR, bool, error) {
-	if strings.HasPrefix(project, "github:") {
-		return s.githubFindBranch(project, sourceBranch)
+	if isPullHostProject(project) {
+		return s.findHostedBranch(project, sourceBranch)
 	}
 	project = strings.TrimSpace(project)
 	src := strings.TrimSpace(sourceBranch)
@@ -182,8 +182,9 @@ func (s *Service) FindBranchMR(project, sourceBranch string) (domain.DeliveryMR,
 // never answers with an MR into another branch, and it keeps all of them so a
 // caller can tell an earlier merged MR from one that carries the current tip.
 // It reads with the run's credentials: GitHub uses the token the run pushed
-// with, else the Owner of the run's project; Gongfeng uses the MCP binding of
-// the run's project.
+// with, else the Owner of the run's project; CNB uses the run's responsible
+// user's CNB token, else the Owner of the run's project; Gongfeng uses the MCP
+// binding of the run's project.
 func (s *Service) FindBranchMRsInto(q domain.BranchMRQuery) ([]domain.DeliveryMR, error) {
 	project := strings.TrimSpace(q.RemoteProject)
 	src, target := strings.TrimSpace(q.SourceBranch), strings.TrimSpace(q.TargetBranch)
@@ -200,6 +201,17 @@ func (s *Service) FindBranchMRsInto(q domain.BranchMRQuery) ([]domain.DeliveryMR
 			return nil, fmt.Errorf("以%s查询 GitHub 失败：%w", identity, err)
 		}
 		return githubPullsInto(pulls, project, src, target), nil
+	}
+	if strings.HasPrefix(project, "cnb:") {
+		h, identity, err := s.cnbHostForRun(project, q)
+		if err != nil {
+			return nil, err
+		}
+		mrs, err := h.listPullsInto(project, src, target)
+		if err != nil {
+			return nil, fmt.Errorf("以%s查询 CNB 失败：%w", identity, err)
+		}
+		return mrs, nil
 	}
 	client, source, err := s.gongfengClientForRun(project, q)
 	if err != nil {

@@ -223,6 +223,9 @@ func (h *assistantHandlers) conversationExecutor(s *AgentToolSession, root strin
 		if s.RuntimeMode == domain.AssistantModeWorkspace {
 			command, credentials = h.bindWorkspaceGit(ctx, s, command, credentials)
 		}
+		if !h.runnerSupportsCNB(s.ExecutionRunnerID) {
+			credentials.GitHTTPS = nil
+		}
 		wire := runtime.ConversationCommandFor(command, credentials)
 		wire.RunnerLogin = s.runnerLogin
 		if s.ExecutionRunnerID != "" {
@@ -447,6 +450,17 @@ func waitConversationProcessStop(ctx context.Context, id string, call func(conte
 	return nil
 }
 
+func (h *assistantHandlers) runnerSupportsCNB(runnerID string) bool {
+	if runnerID == "" {
+		return true
+	}
+	if h.repo == nil {
+		return false
+	}
+	runner, ok := h.repo.Runner(runnerID)
+	return ok && runner.SupportsCNB()
+}
+
 // bindWorkspaceGit gives the workspace CLI this turn's requester's Git
 // credentials, so the agent clones, pushes and calls GitHub itself.
 // Each turn starts its CLI again, so a shared conversation always runs with
@@ -458,6 +472,11 @@ func (h *assistantHandlers) bindWorkspaceGit(ctx context.Context, s *AgentToolSe
 	}
 	credentials.GitToken = strings.TrimSpace(h.repo.GitCredential(ctx, s.User.ID))
 	credentials.GitSSHHostKeys = h.repo.GitSSHKeysByHost(s.User.ID)
+	if h.runnerSupportsCNB(s.ExecutionRunnerID) {
+		credentials.GitHTTPS = h.repo.GitHTTPSCredentials(s.User.ID)
+	} else {
+		credentials.GitHTTPS = nil
+	}
 	if user, ok := h.repo.User(s.User.ID); ok {
 		if login := strings.TrimSpace(user.LoginName); login != "" {
 			credentials.GitUserName = login

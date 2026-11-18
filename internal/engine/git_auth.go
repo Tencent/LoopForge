@@ -11,6 +11,7 @@ import (
 	"agentflow/internal/domain"
 	"agentflow/internal/gitwork"
 	"agentflow/internal/repo"
+	"agentflow/internal/runtime"
 )
 
 const gitTokenEnv = gitwork.TokenEnv
@@ -27,6 +28,14 @@ func withGitToken(ctx context.Context, token string) context.Context {
 }
 
 func gitTokenFrom(ctx context.Context) string { return gitwork.TokenFrom(ctx) }
+
+// withRunGitCredentials attaches every Git credential of a run: the global
+// token, SSH keys and the host-scoped HTTPS credentials.
+func withRunGitCredentials(ctx context.Context, credentials runtime.RunCredentials) context.Context {
+	ctx = withGitToken(ctx, credentials.GitToken)
+	ctx = gitwork.WithSSHKeys(ctx, credentials.GitSSHKeys)
+	return gitwork.WithHTTPSCredentials(ctx, credentials.GitHTTPS)
+}
 
 func withRepositoryGit(ctx context.Context, repository domain.RepositoryContext) context.Context {
 	if repository.Provider == domain.RepositoryProviderSSH {
@@ -113,7 +122,7 @@ func resolveGitToken(s *repo.Store, userID int64) string {
 
 var (
 	gitCommandFailure = regexp.MustCompile(`(?i)repository checkout|git (clone|fetch|pull|push|ls-remote)`)
-	gitAuthFailure    = regexp.MustCompile(`(?i)could not read Username|Authentication failed|HTTP Basic: Access denied|requested URL returned error: 40[13]|Invalid username or password`)
+	gitAuthFailure    = regexp.MustCompile(`(?i)could not read Username|Authentication failed|HTTP Basic: Access denied|requested URL returned error: 40[13]|Invalid username or password|told us to quit`)
 )
 
 const gitTokenFixHint = "请责任人到「个人配置 → GitHub Git Token」配置：打开 https://github.com/settings/tokens 新建令牌，为目标仓库授予 Contents 和 Pull requests 的读写权限，复制后粘贴并点校验，然后重试本节点"
@@ -128,6 +137,13 @@ func explainGitAuthFailure(err error, tokenConfigured bool) error {
 	msg := err.Error()
 	if strings.Contains(msg, "Git Token") || !gitCommandFailure.MatchString(msg) || !gitAuthFailure.MatchString(msg) {
 		return err
+	}
+	if strings.Contains(msg, "told us to quit") {
+		// Only the scoped CNB helper quits: the user has no CNB token.
+		return fmt.Errorf("运行责任人未配置 CNB 访问令牌，无法拉取仓库。请到「个人配置」填写 CNB 访问令牌（权限 repo-code:rw 与 repo-pr:rw）。原始错误：%w", err)
+	}
+	if gitwork.MentionsManagedHost(msg) {
+		return fmt.Errorf("运行责任人的 CNB 访问令牌无效、已过期或权限不足，无法拉取仓库。请到「个人配置」重新填写（权限 repo-code:rw 与 repo-pr:rw），并确认责任人对该仓库有权限。原始错误：%w", err)
 	}
 	if !tokenConfigured {
 		return fmt.Errorf("运行责任人未配置 Git Token，无法拉取仓库。%s。原始错误：%w", gitTokenFixHint, err)

@@ -56,3 +56,135 @@ func TestPrepareMCPServersGitHubCredentialPolicy(t *testing.T) {
 		t.Fatalf("strict bind = %#v, %v", got.MCPServers, err)
 	}
 }
+
+func TestPrepareMCPServersOptionalGitHubTokenForSSHAndCNBRuns(t *testing.T) {
+	assets := domain.AgentAssetBundle{MCPServers: []domain.MCPServerDefinition{
+		{ID: "github", Name: "GitHub", Transport: "http", AuthType: "github-token", URL: "https://api.githubcopilot.com/mcp/"},
+		{ID: "kb", Name: "Knowledge", Transport: "http", URL: "https://kb.example.com/mcp"},
+	}}
+
+	t.Run("preserves SSHRepositoriesOnly backward compatibility", func(t *testing.T) {
+		got, warnings, err := PrepareMCPServers(assets, MCPTarget{RequireCredentials: true, SSHRepositoriesOnly: true})
+		if err != nil || len(got.MCPServers) != 1 || got.MCPServers[0].ID != "kb" {
+			t.Fatalf("SSHRepositoriesOnly got=%#v err=%v", got.MCPServers, err)
+		}
+		if len(warnings) != 1 || !strings.Contains(warnings[0], "github") {
+			t.Fatalf("warnings = %v", warnings)
+		}
+	})
+
+	t.Run("skips github-token for CNB-only RepositoryContext", func(t *testing.T) {
+		got, warnings, err := PrepareMCPServers(assets, MCPTarget{
+			RequireCredentials: true,
+			Repositories: []domain.RepositoryContext{
+				{RepositoryID: "cnb", Provider: domain.RepositoryProviderCNB, CloneURL: "https://cnb.cool/org/repo.git"},
+			},
+		})
+		if err != nil || len(got.MCPServers) != 1 || got.MCPServers[0].ID != "kb" {
+			t.Fatalf("CNB-only got=%#v err=%v", got.MCPServers, err)
+		}
+		if len(warnings) != 1 || !strings.Contains(warnings[0], "github") {
+			t.Fatalf("warnings = %v", warnings)
+		}
+	})
+
+	t.Run("skips github-token for CNB plus SSH RepositoryContext", func(t *testing.T) {
+		got, warnings, err := PrepareMCPServers(assets, MCPTarget{
+			RequireCredentials: true,
+			Repositories: []domain.RepositoryContext{
+				{RepositoryID: "cnb", Provider: domain.RepositoryProviderCNB, CloneURL: "https://cnb.cool/org/repo.git"},
+				{RepositoryID: "ssh", Provider: domain.RepositoryProviderSSH, CloneURL: "git@example.com:org/infra.git"},
+			},
+		})
+		if err != nil || len(got.MCPServers) != 1 || got.MCPServers[0].ID != "kb" {
+			t.Fatalf("CNB+SSH got=%#v err=%v", got.MCPServers, err)
+		}
+		if len(warnings) != 1 || !strings.Contains(warnings[0], "github") {
+			t.Fatalf("warnings = %v", warnings)
+		}
+	})
+
+	t.Run("skips github-token for CNB-only and CNB plus SSH RunnerRepository", func(t *testing.T) {
+		for name, repos := range map[string][]domain.RunnerRepository{
+			"cnb-only": {{RepositoryID: "cnb", CloneURL: "https://cnb.cool/org/repo.git", ScopedHTTPS: true}},
+			"cnb+ssh": {
+				{RepositoryID: "cnb", CloneURL: "https://cnb.cool/org/repo.git", ScopedHTTPS: true},
+				{RepositoryID: "ssh", CloneURL: "git@example.com:org/infra.git", UseSSH: true},
+			},
+		} {
+			t.Run(name, func(t *testing.T) {
+				got, warnings, err := PrepareMCPServers(assets, MCPTarget{
+					RequireCredentials: true,
+					RunnerRepositories: repos,
+				})
+				if err != nil || len(got.MCPServers) != 1 || got.MCPServers[0].ID != "kb" {
+					t.Fatalf("%s got=%#v err=%v", name, got.MCPServers, err)
+				}
+				if len(warnings) != 1 || !strings.Contains(warnings[0], "github") {
+					t.Fatalf("%s warnings = %v", name, warnings)
+				}
+			})
+		}
+	})
+
+	t.Run("binds github-token when GitToken is provided even on CNB-only", func(t *testing.T) {
+		got, warnings, err := PrepareMCPServers(assets, MCPTarget{
+			GitToken:           "ghp_test",
+			RequireCredentials: true,
+			Repositories: []domain.RepositoryContext{
+				{RepositoryID: "cnb", Provider: domain.RepositoryProviderCNB, CloneURL: "https://cnb.cool/org/repo.git"},
+			},
+		})
+		if err != nil || len(warnings) != 0 || len(got.MCPServers) != 2 || got.MCPServers[0].Headers["Authorization"] != "Bearer ghp_test" {
+			t.Fatalf("CNB with GitToken got=%#v warnings=%v err=%v", got.MCPServers, warnings, err)
+		}
+	})
+
+	t.Run("errors when run has 0 repositories or includes GitHub", func(t *testing.T) {
+		cases := []struct {
+			name   string
+			target MCPTarget
+		}{
+			{
+				name:   "0 repositories",
+				target: MCPTarget{RequireCredentials: true},
+			},
+			{
+				name: "CNB plus GitHub RepositoryContext",
+				target: MCPTarget{
+					RequireCredentials: true,
+					Repositories: []domain.RepositoryContext{
+						{RepositoryID: "cnb", Provider: domain.RepositoryProviderCNB, CloneURL: "https://cnb.cool/org/repo.git"},
+						{RepositoryID: "gh", Provider: "github", CloneURL: "https://github.com/org/repo.git"},
+					},
+				},
+			},
+			{
+				name: "CNB-SSH plus GitHub RunnerRepository without double count",
+				target: MCPTarget{
+					RequireCredentials: true,
+					RunnerRepositories: []domain.RunnerRepository{
+						{RepositoryID: "cnb-ssh", CloneURL: "git@cnb.cool:org/repo.git", UseSSH: true, ScopedHTTPS: true},
+						{RepositoryID: "gh", CloneURL: "https://github.com/org/repo.git"},
+					},
+				},
+			},
+			{
+				name: "explicit github provider with cnb URL",
+				target: MCPTarget{
+					RequireCredentials: true,
+					Repositories: []domain.RepositoryContext{
+						{RepositoryID: "gh", Provider: "github", CloneURL: "https://cnb.cool/org/repo.git"},
+					},
+				},
+			},
+		}
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				if _, _, err := PrepareMCPServers(assets, tc.target); err == nil {
+					t.Fatalf("%s: expected GitHub token error, got nil", tc.name)
+				}
+			})
+		}
+	})
+}

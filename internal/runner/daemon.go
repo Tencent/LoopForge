@@ -767,7 +767,7 @@ func (d *Daemon) executeTerminal(ctx context.Context, task domain.RunnerTask) ex
 		}
 		command = runtime.WithCommandEnvironment(command, env)
 		command.Argv = runtime.BindMCPCallArgv(sandbox, command.Argv)
-		gitEnv, err := runtime.GitEnvironment(sandbox, workspace, invocationGitToken(task.Invocation))
+		gitEnv, err := runtime.GitEnvironment(sandbox, workspace, invocationGitToken(task.Invocation), invocationHTTPSCredentials(task.Invocation))
 		if err != nil {
 			return execResult{status: domain.RunnerTaskFailed, errMsg: fmt.Sprintf("prepare git credentials: %v", err)}
 		}
@@ -833,11 +833,16 @@ func (d *Daemon) executeInvocation(ctx context.Context, task domain.RunnerTask) 
 		defer release()
 	}
 	target := d.mcpTarget(true, invocationGitToken(inv))
+	repos := invocationRepositories(inv)
 	sshRepoCount := len(inv.GitSSHRemotes())
-	target.SSHRepositoriesOnly = sshRepoCount > 0 && sshRepoCount == max(len(inv.Repositories), 1)
-	boundAssets, _, err := runtime.PrepareMCPServers(inv.Assets, target)
+	target.SSHRepositoriesOnly = len(repos) > 0 && sshRepoCount == len(repos)
+	target.RunnerRepositories = repos
+	boundAssets, mcpWarnings, err := runtime.PrepareMCPServers(inv.Assets, target)
 	if err != nil {
 		return execResult{status: domain.RunnerTaskFailed, errMsg: fmt.Sprintf("bind MCP credentials: %v", err)}, nil
+	}
+	for _, warning := range mcpWarnings {
+		log.Printf("task %s: %s", task.ID, warning)
 	}
 	if err := runtime.ProvisionMCPAssets(ctx, sandbox, workspace, boundAssets, nil); err != nil {
 		return execResult{status: domain.RunnerTaskFailed, errMsg: fmt.Sprintf("provision MCP: %v", err)}, nil
@@ -917,7 +922,7 @@ func (d *Daemon) executeInvocation(ctx context.Context, task domain.RunnerTask) 
 		commandEnv[key] = value
 	}
 	if slices.Contains(prepared.Command.CredentialBindings, runtime.BindGit) {
-		gitEnv, gitErr := runtime.GitEnvironment(sandbox, workspace, invocationGitToken(inv))
+		gitEnv, gitErr := runtime.GitEnvironment(sandbox, workspace, invocationGitToken(inv), invocationHTTPSCredentials(inv))
 		if gitErr != nil {
 			return execResult{status: domain.RunnerTaskFailed, errMsg: fmt.Sprintf("prepare git credentials: %v", gitErr)}, nil
 		}
@@ -1112,6 +1117,16 @@ func bindInvocationCredentials(inv *domain.RunnerInvocation, bindings []runtime.
 	return argv, env, nil
 }
 
+// invocationHTTPSCredentials are the host-scoped credentials the platform
+// resolved for this invocation.
+func invocationHTTPSCredentials(inv *domain.RunnerInvocation) []gitwork.HTTPSCredential {
+	return runtime.GitHTTPSFromWire(inv.GitHTTPSCredentials)
+}
+
+func withInvocationGit(ctx context.Context, inv *domain.RunnerInvocation) context.Context {
+	return gitwork.WithHTTPSCredentials(gitwork.WithSSHKeys(ctx, inv.GitSSHKeys), invocationHTTPSCredentials(inv))
+}
+
 // invocationGitToken is the token child processes use for git remotes; every
 // repository of one run carries the same responsible user's token.
 func invocationGitToken(inv *domain.RunnerInvocation) string {
@@ -1138,7 +1153,7 @@ func checkoutInvocationRepositories(ctx context.Context, workspace string, inv *
 	if inv == nil {
 		return nil
 	}
-	ctx = gitwork.WithSSHKeys(ctx, inv.GitSSHKeys)
+	ctx = withInvocationGit(ctx, inv)
 	repos := invocationRepositories(inv)
 	for i := range repos {
 		repo := repos[i]
@@ -1411,7 +1426,7 @@ func (d *Daemon) defaultWorkspace(taskID string) string {
 }
 
 // runnerVersion is reported at registration; it matches the module build.
-var runnerVersion = domain.RunnerVersionCLISettings
+var runnerVersion = domain.RunnerVersionCNB
 
 // Version returns the runner build version reported at registration.
 func Version() string { return runnerVersion }

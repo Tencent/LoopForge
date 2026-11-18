@@ -340,6 +340,7 @@ func (h *streamHandlers) prepareClarifyRepo(ctx context.Context, repo domain.Rep
 	token := engine.ResolveClarifyGitToken(h.repo, responsibleUserID)
 	prepCtx, cancel := context.WithTimeout(ctx, 3*time.Minute)
 	defer cancel()
+	prepCtx = gitwork.WithHTTPSCredentials(prepCtx, h.repo.GitHTTPSCredentials(responsibleUserID))
 
 	if _, err := engine.PrepareClarifyWorkspaceAtBranch(prepCtx, cacheDir, repo, baseBranch, token); err != nil {
 		if hadCheckout && baseBranch == "" && !ssh {

@@ -21,7 +21,7 @@ func Run(ctx context.Context, workspace string, args ...string) (string, error) 
 	}
 	defer cleanup()
 	out, err := command(ctx, workspace, token, sshEnv, args).CombinedOutput()
-	text := Redact(strings.TrimSpace(string(out)), token)
+	text := Redact(strings.TrimSpace(string(out)), redactionTokens(ctx)...)
 	if err != nil {
 		if text != "" {
 			return text, fmt.Errorf("%w: %s", err, text)
@@ -48,7 +48,7 @@ func Watch(ctx context.Context, workspace string, opts procwatch.Options, args .
 		return "", err
 	}
 	defer cleanup()
-	opts.Redact = func(line string) string { return Redact(line, token) }
+	opts.Redact = func(line string) string { return Redact(line, redactionTokens(ctx)...) }
 	text, err := procwatch.Run(ctx, func(ctx context.Context) *exec.Cmd { return command(ctx, workspace, token, sshEnv, args) }, opts)
 	if err != nil && text != "" {
 		return text, fmt.Errorf("%w: %s", err, text)
@@ -61,9 +61,13 @@ func command(ctx context.Context, workspace, token string, sshEnv map[string]str
 	if len(sshEnv) > 0 {
 		token = ""
 	}
-	cmd := exec.CommandContext(ctx, "git", append(AuthConfigArgs(token), args...)...)
+	argv := append(append(AuthConfigArgs(token), ManagedHostArgs()...), args...)
+	cmd := exec.CommandContext(ctx, "git", argv...)
 	cmd.Dir = dir
 	cmd.Env = WithEnvValue(Env(token), "PWD", dir)
+	for k, v := range ManagedHostEnv(HTTPSCredentialsFrom(ctx)) {
+		cmd.Env = WithEnvValue(cmd.Env, k, v)
+	}
 	if len(sshEnv) > 0 {
 		// Do not let URL rewrites switch a managed SSH operation to another
 		// transport. SSH itself only connects to the requested pinned host.

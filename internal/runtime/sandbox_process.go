@@ -62,6 +62,7 @@ func controlledBaseEnvironment(base []string) []string {
 		"AGENTFLOW_GIT_TOKEN=",
 		"GH_TOKEN=",
 		"GITHUB_TOKEN=",
+		"AGENTFLOW_SCOPED_GIT_TOKEN_",
 		"AGENTFLOW_MCP_CONFIG=",
 		"AGENTFLOW_BIN=",
 		"GIT_CONFIG_COUNT=",

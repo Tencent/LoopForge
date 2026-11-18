@@ -130,9 +130,10 @@ func runnerTaskFromRow(row runnerTaskRow) domain.RunnerTask {
 }
 
 func runnerTaskPayloadBytes(v domain.RunnerTask) []byte {
-	if v.Invocation != nil && len(v.Invocation.GitSSHKeys) > 0 {
+	if v.Invocation != nil && (len(v.Invocation.GitSSHKeys) > 0 || len(v.Invocation.GitHTTPSCredentials) > 0) {
 		invocation := *v.Invocation
 		invocation.GitSSHKeys = nil
+		invocation.GitHTTPSCredentials = nil
 		v.Invocation = &invocation
 	}
 	return mustJSON(runnerTaskPayload{
@@ -678,6 +679,8 @@ func scrubRunnerTaskCredentials(task *domain.RunnerTask) {
 	task.Invocation.AgentCLIBaseURL = ""
 	task.Invocation.GitSSHUserID = 0
 	task.Invocation.GitSSHKeys = nil
+	task.Invocation.GitHTTPSUserID = 0
+	task.Invocation.GitHTTPSCredentials = nil
 	if task.Invocation.Repository != nil {
 		task.Invocation.Repository.GitToken = ""
 	}

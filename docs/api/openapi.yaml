@@ -676,6 +676,8 @@ paths:
               properties:
                 gitToken: {type: string, writeOnly: true}
                 gitTokenClear: {type: boolean}
+                cnbToken: {type: string, writeOnly: true, description: "Personal CNB (cnb.cool) access token with repo-code:rw and repo-pr:rw. Blank preserves the stored token."}
+                cnbTokenClear: {type: boolean}
                 codeBuddyApiKey: {type: string, writeOnly: true}
                 codeBuddyApiKeyClear: {type: boolean}
                 codeBuddyInternetEnvironment: {type: string, description: "Edition that issued the CodeBuddy key: empty for International, \"internal\" for China, \"ioa\" for iOA (\"public\" and \"China\" are also accepted). Any other value is rejected with 400."}
@@ -4362,6 +4364,7 @@ components:
         deptName: {type: string}
         avatarUrl: {type: string}
         gitTokenConfigured: {type: boolean, readOnly: true}
+        cnbTokenConfigured: {type: boolean, readOnly: true}
         codeBuddyApiKeyConfigured: {type: boolean, readOnly: true}
         codexApiKeyConfigured: {type: boolean, readOnly: true}
         codexBaseUrl: {type: string}

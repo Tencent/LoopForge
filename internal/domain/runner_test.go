@@ -145,3 +145,39 @@ func TestPublicRunnerRepositoryScrubsCredentialsOnly(t *testing.T) {
 		t.Fatal("publicRunnerRepository must not mutate its argument")
 	}
 }
+
+func TestRunnerSupportsCNB(t *testing.T) {
+	for version, want := range map[string]bool{
+		"":       false,
+		"dev":    false,
+		"0.10.1": false,
+		"0.10.2": false,
+		"v0.10.2": false,
+		"0.10.3": true,
+		"v0.10.3": true,
+		"0.11.0": true,
+	} {
+		if got := (Runner{RunnerVersion: version}).SupportsCNB(); got != want {
+			t.Errorf("SupportsCNB(%q) = %v, want %v", version, got, want)
+		}
+	}
+	stock := Runner{RunnerVersion: "0.10.2"}
+	if !stock.SupportsCLISettings() || stock.SupportsCNB() {
+		t.Fatalf("stock 0.10.2 capabilities: CLISettings=%v CNB=%v, want true/false", stock.SupportsCLISettings(), stock.SupportsCNB())
+	}
+}
+
+func TestPublicRunnerTaskScrubsGitHTTPSCredentials(t *testing.T) {
+	task := RunnerTask{Invocation: &RunnerInvocation{
+		GitHTTPSUserID:      7,
+		GitHTTPSCredentials: []GitHTTPSCredential{{BaseURL: "https://cnb.cool", Username: "cnb", Token: "cnb-fake-token-0000"}},
+		Repositories:        []RunnerRepository{{CloneURL: "https://cnb.cool/org/repo.git", ScopedHTTPS: true}},
+	}}
+	public := PublicRunnerTask(task)
+	if public.Invocation.GitHTTPSUserID != 0 || len(public.Invocation.GitHTTPSCredentials) != 0 {
+		t.Fatalf("public task kept CNB credentials: %+v", public.Invocation)
+	}
+	if len(task.Invocation.GitHTTPSCredentials) != 1 || len(task.Invocation.GitHTTPSRemotes()) != 1 {
+		t.Fatal("PublicRunnerTask must not mutate the claiming copy")
+	}
+}

@@ -154,7 +154,13 @@ for(const variant of [
       await expect(modal.locator('#repositoryCredentialHint')).toHaveAttribute('data-configured','false');
       if(variant.lang==='en')await expect(modal.locator('#repositoryCredentialHint')).not.toContainText(/[\u3400-\u9fff]/);
       await page.screenshot({path:info.outputPath(`repository-${variant.name}.png`)});
-      await modal.locator('[name="repoUrl"]').fill('https://github.com/example/loopforge-e2e-fixture');
+      const repoUrl=modal.locator('[name="repoUrl"]');
+      const defaultBranch=modal.locator('[name="defaultBranch"]');
+      await repoUrl.fill('https://cnb.cool/example/team/loopforge-e2e-fixture');
+      await expect(modal.locator('#repositoryCredentialHint')).toContainText('CNB');
+      await expect(defaultBranch).toHaveValue('');
+      expect(await defaultBranch.evaluate(input=>input.validity.valid)).toBe(true);
+      await repoUrl.fill('https://github.com/example/loopforge-e2e-fixture');
       const saved=page.waitForResponse(r=>r.request().method()==='POST'&&new URL(r.url()).pathname==='/api/repositories');
       await modal.locator('button[type="submit"]').click();
       const response=await saved;expect(response.ok()).toBe(true);repositoryId=(await response.json()).id;

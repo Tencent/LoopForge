@@ -126,6 +126,15 @@ const RunnerVersionSharedPush = "0.9.0"
 
 const RunnerVersionGitSSH = "0.9.3"
 
+// RunnerVersionCNB is the first runner that offers CNB credentials only to
+// cnb.cool. Older runners would offer the global Git token to every host, so
+// CNB repositories are neither dispatched to nor credentialed for them.
+const RunnerVersionCNB = "0.10.3"
+
+func (r Runner) SupportsCNB() bool {
+	return versionAtLeast(r.RunnerVersion, RunnerVersionCNB)
+}
+
 func (r Runner) SupportsGitSSH() bool {
 	return versionAtLeast(r.RunnerVersion, RunnerVersionGitSSH)
 }
@@ -439,6 +448,8 @@ func PublicRunnerTask(task RunnerTask) RunnerTask {
 	copyInvocation.AgentCLIModels = nil
 	copyInvocation.GitSSHUserID = 0
 	copyInvocation.GitSSHKeys = nil
+	copyInvocation.GitHTTPSUserID = 0
+	copyInvocation.GitHTTPSCredentials = nil
 	if copyInvocation.Repository != nil {
 		copyRepository := publicRunnerRepository(*copyInvocation.Repository)
 		copyInvocation.Repository = &copyRepository
@@ -524,9 +535,21 @@ type RunnerInvocation struct {
 	// authenticated claim or on the outbound workspace control connection.
 	GitSSHUserID int64             `json:"gitSshUserId,omitempty"`
 	GitSSHKeys   map[string]string `json:"gitSshKeys,omitempty"` // clone URL to private key
+	// GitHTTPSUserID and GitHTTPSCredentials work like the SSH pair: only the
+	// user reference is stored, the credentials are filled on authenticated claim.
+	GitHTTPSUserID      int64                `json:"gitHttpsUserId,omitempty"`
+	GitHTTPSCredentials []GitHTTPSCredential `json:"gitHttpsCredentials,omitempty"`
 	// Repositories lists every repository the run touches (multi-repository
 	// support). Each entry checks out into its Dir under the task workspace.
 	Repositories []RunnerRepository `json:"repositories,omitempty"`
+}
+
+// GitHTTPSCredential is a Git Basic-auth pair that may only be offered to the
+// host at BaseURL.
+type GitHTTPSCredential struct {
+	BaseURL  string `json:"baseUrl"`
+	Username string `json:"username"`
+	Token    string `json:"token"`
 }
 
 // RunnerRepository describes the checkout a runner machine should create.
@@ -540,6 +563,9 @@ type RunnerRepository struct {
 	WorkBranch   string `json:"workBranch,omitempty"`
 	GitToken     string `json:"gitToken,omitempty"`
 	UseSSH       bool   `json:"useSsh,omitempty"`
+	// ScopedHTTPS marks a remote on a host that has its own credential
+	// (GitHTTPSCredentials). Its GitToken is always empty.
+	ScopedHTTPS bool `json:"scopedHttps,omitempty"`
 	// RequireExistingWorkBranch keeps explicit continuation on an existing
 	// remote head. Missing/deleted heads are errors, never branch creation.
 	RequireExistingWorkBranch bool `json:"requireExistingWorkBranch,omitempty"`
@@ -576,6 +602,22 @@ func (inv *RunnerInvocation) GitSSHRemotes() []string {
 			}
 		}
 		if len(inv.Repositories) == 0 && inv.Repository != nil && inv.Repository.UseSSH {
+			remotes = append(remotes, inv.Repository.CloneURL)
+		}
+	}
+	return remotes
+}
+
+// GitHTTPSRemotes lists the remotes served with host-scoped credentials.
+func (inv *RunnerInvocation) GitHTTPSRemotes() []string {
+	var remotes []string
+	if inv != nil {
+		for _, repository := range inv.Repositories {
+			if repository.ScopedHTTPS {
+				remotes = append(remotes, repository.CloneURL)
+			}
+		}
+		if len(inv.Repositories) == 0 && inv.Repository != nil && inv.Repository.ScopedHTTPS {
 			remotes = append(remotes, inv.Repository.CloneURL)
 		}
 	}

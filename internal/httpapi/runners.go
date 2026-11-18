@@ -17,6 +17,7 @@ import (
 
 	"agentflow/internal/domain"
 	"agentflow/internal/repo"
+	"agentflow/internal/runtime"
 
 	"github.com/gin-gonic/gin"
 )
@@ -856,6 +857,23 @@ func (h *runnersHandlers) runnerTaskClaim(c *gin.Context) {
 			task.Invocation.GitSSHKeys = h.repo.GitSSHKeysForRemotes(task.Invocation.GitSSHUserID, task.Invocation.GitSSHRemotes())
 			task.Invocation.GitSSHUserID = 0
 			c.Header("Cache-Control", "no-store")
+		}
+		if len(task.Invocation.GitHTTPSRemotes()) > 0 {
+			inv := task.Invocation
+			if runner.SupportsCNB() {
+				inv.GitHTTPSCredentials = runtime.GitHTTPSToWire(h.repo.GitHTTPSCredentials(inv.GitHTTPSUserID))
+				c.Header("Cache-Control", "no-store")
+			} else {
+				// An old runner offers the global Git token to every host. With
+				// nothing to offer, the checkout fails instead of leaking it.
+				if inv.Repository != nil {
+					inv.Repository.GitToken = ""
+				}
+				for i := range inv.Repositories {
+					inv.Repositories[i].GitToken = ""
+				}
+			}
+			inv.GitHTTPSUserID = 0
 		}
 		c.JSON(http.StatusOK, map[string]any{"task": resolveRunnerTaskSandbox(task, runner.OS)})
 	}
