@@ -228,7 +228,8 @@ func analyticsPercentile(values []int64, pct int) int64 {
 	if pct >= 100 {
 		return sorted[len(sorted)-1]
 	}
-	idx := (len(sorted) - 1) * pct / 100
+	// Use the same nearest-rank definition as repository analytics.
+	idx := (len(sorted)*pct+99)/100 - 1
 	return sorted[idx]
 }
 
