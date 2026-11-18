@@ -166,7 +166,12 @@ loopforge skills status <agent>
 loopforge skills uninstall <agent>
 ```
 
-安装状态保存在 `.devflow/install-state.json`。检测到用户修改或文件冲突时，更新会停止而不是覆盖。只有在确认要替换冲突文件或切换 Edition 时才使用 `--force`，建议先运行 `loopforge plan` 检查变更。
+安装状态保存在 `.devflow/install-state.json`。检测到用户修改或文件冲突时，更新会停止而不是覆盖。只有在确认要替换冲突文件或切换 Edition 时才使用 `--force`，建议先运行 `loopforge update <agent> --dry-run` 检查变更。
+
+```bash
+loopforge update claude --dry-run
+loopforge update claude --dry-run --force
+```
 
 如果已经克隆本仓库，也可以在仓库根目录从当前源码安装：
 

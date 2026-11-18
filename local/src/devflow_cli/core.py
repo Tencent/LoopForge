@@ -256,13 +256,101 @@ def prepare_forced_destination(project: Path, destination: Path) -> None:
         remove_path(destination)
 
 
-def apply_install(
+class InstallPlan(object):
+    """Read-only preview of an install/update. Does not write the project."""
+
+    def __init__(
+        self,
+        project: Path,
+        host: str,
+        edition: str,
+        update_only: bool,
+        force: bool,
+        key: str,
+        bundle: Dict[str, Tuple[bytes, int]],
+        old_files: Dict[str, dict],
+        switch_from: Optional[str],
+        conflicts: List[str],
+        files: List[Tuple[str, str]],
+    ) -> None:
+        self.project = project
+        self.host = host
+        self.edition = edition
+        self.update_only = update_only
+        self.force = force
+        self.key = key
+        self.bundle = bundle
+        self.old_files = old_files
+        self.switch_from = switch_from
+        self.conflicts = conflicts
+        self.files = files
+
+    def counts(self) -> Dict[str, int]:
+        result = {
+            "add": 0,
+            "update": 0,
+            "unchanged": 0,
+            "remove": 0,
+            "conflict": len(self.conflicts),
+        }
+        for _path, action in self.files:
+            if action in {"add", "update", "unchanged", "remove"}:
+                result[action] += 1
+        return result
+
+
+def _planned_present(project: Path, relative: str, removed: set) -> bool:
+    if relative in removed:
+        return False
+    return path_present(project / relative)
+
+
+def _planned_bytes(project: Path, relative: str, removed: set) -> Optional[bytes]:
+    if relative in removed:
+        return None
+    destination = project / relative
+    if destination.is_file() and not destination.is_symlink():
+        return destination.read_bytes()
+    return None
+
+
+def _planned_blocking_parent(project: Path, relative: str, removed: set) -> Optional[str]:
+    current = project
+    for part in Path(relative).parts[:-1]:
+        current = current / part
+        rel = str(current.relative_to(project))
+        if rel in removed:
+            continue
+        if current.is_symlink() or (current.exists() and not current.is_dir()):
+            return rel
+    return None
+
+
+def _files_uninstalled_unmodified(project: Path, records: List[dict]) -> set:
+    removed = set()
+    for record in records:
+        relative = record["path"]
+        destination = project / relative
+        if not destination.exists():
+            continue
+        if (
+            destination.is_symlink()
+            or not destination.is_file()
+            or digest(destination.read_bytes()) != record["sha256"]
+        ):
+            continue
+        removed.add(relative)
+    return removed
+
+
+def plan_install(
     project: Path,
     host: str,
     edition: str,
     update_only: bool = False,
     force: bool = False,
-) -> Tuple[int, int]:
+) -> InstallPlan:
+    """Classify per-file install actions without writing the project."""
     validate_choice(host, edition)
     project = project.resolve()
     if not project.is_dir():
@@ -271,6 +359,8 @@ def apply_install(
     key = installation_key(host, edition)
     other_edition = "classic" if edition == "portable" else "portable"
     other = installation_key(host, other_edition)
+    removed = set()
+    switch_from = None  # type: Optional[str]
     if other in state["installations"]:
         if update_only:
             raise DevFlowError(
@@ -284,25 +374,26 @@ def apply_install(
             )
         # Materialize the target before removing the current edition so a broken
         # installer package cannot destroy an otherwise healthy installation.
-        plan = build_plan(host, edition)
-        uninstall(project, host, other_edition)
-        state = load_state(project)
+        bundle = build_plan(host, edition)
+        switch_from = other_edition
+        removed = _files_uninstalled_unmodified(
+            project, state["installations"][other].get("files", []),
+        )
     else:
-        plan = build_plan(host, edition)
+        bundle = build_plan(host, edition)
     previous = state["installations"].get(key)
     if update_only and previous is None:
         raise DevFlowError(f"尚未安装 {edition}/{host}")
     old_files = {item["path"]: item for item in (previous or {}).get("files", [])}
     conflicts = []
-    for relative, (data, _mode) in plan.items():
-        destination = project / relative
-        parent_conflict = blocking_parent(project, destination)
+    for relative, (data, _mode) in bundle.items():
+        parent_conflict = _planned_blocking_parent(project, relative, removed)
         if parent_conflict is not None:
-            conflicts.append(str(parent_conflict.relative_to(project)))
+            conflicts.append(parent_conflict)
             continue
-        if not path_present(destination):
+        if not _planned_present(project, relative, removed):
             continue
-        current = destination.read_bytes() if destination.is_file() and not destination.is_symlink() else None
+        current = _planned_bytes(project, relative, removed)
         old = old_files.get(relative)
         if old:
             if current is None or digest(current) != old["sha256"]:
@@ -311,22 +402,87 @@ def apply_install(
         elif current != data:
             conflicts.append(relative)
     for relative, old in old_files.items():
-        if relative in plan:
+        if relative in bundle:
             continue
-        destination = project / relative
-        parent_conflict = blocking_parent(project, destination)
+        parent_conflict = _planned_blocking_parent(project, relative, removed)
         if parent_conflict is not None:
-            conflicts.append(str(parent_conflict.relative_to(project)))
+            conflicts.append(parent_conflict)
             continue
-        if not path_present(destination):
+        if not _planned_present(project, relative, removed):
             continue
-        current = destination.read_bytes() if destination.is_file() and not destination.is_symlink() else None
+        current = _planned_bytes(project, relative, removed)
         if current is None or digest(current) != old["sha256"]:
             conflicts.append(relative)
     conflicts = sorted(set(conflicts))
-    if conflicts and not force:
-        preview = ", ".join(conflicts[:8])
-        raise DevFlowError(f"检测到用户文件冲突，未修改任何内容: {preview}")
+    conflict_set = set(conflicts)
+    labeled = {}
+    for relative, (data, _mode) in bundle.items():
+        parent_conflict = _planned_blocking_parent(project, relative, removed)
+        if parent_conflict is not None:
+            labeled[relative] = "add"
+            continue
+        if relative in conflict_set:
+            continue
+        if not _planned_present(project, relative, removed):
+            labeled[relative] = "add"
+            continue
+        current = _planned_bytes(project, relative, removed)
+        old = old_files.get(relative)
+        if current is not None and current == data:
+            labeled[relative] = "unchanged"
+        elif old and current is not None and digest(current) == old["sha256"]:
+            labeled[relative] = "update"
+        else:
+            labeled[relative] = "conflict"
+    for relative, old in old_files.items():
+        if relative in bundle or relative in conflict_set:
+            continue
+        parent_conflict = _planned_blocking_parent(project, relative, removed)
+        if parent_conflict is not None:
+            continue
+        if not _planned_present(project, relative, removed):
+            continue
+        current = _planned_bytes(project, relative, removed)
+        if current is not None and digest(current) == old["sha256"]:
+            labeled[relative] = "remove"
+    for relative in conflicts:
+        labeled[relative] = "conflict"
+    files = sorted(labeled.items(), key=lambda item: item[0])
+    return InstallPlan(
+        project=project,
+        host=host,
+        edition=edition,
+        update_only=update_only,
+        force=force,
+        key=key,
+        bundle=bundle,
+        old_files=old_files,
+        switch_from=switch_from,
+        conflicts=conflicts,
+        files=files,
+    )
+
+
+def apply_install(
+    project: Path,
+    host: str,
+    edition: str,
+    update_only: bool = False,
+    force: bool = False,
+) -> Tuple[int, int]:
+    preview = plan_install(project, host, edition, update_only=update_only, force=force)
+    project = preview.project
+    if preview.conflicts and not force:
+        listing = ", ".join(preview.conflicts[:8])
+        raise DevFlowError(f"检测到用户文件冲突，未修改任何内容: {listing}")
+    state = load_state(project)
+    if preview.switch_from is not None:
+        uninstall(project, host, preview.switch_from)
+        state = load_state(project)
+    plan = preview.bundle
+    key = preview.key
+    previous = state["installations"].get(key)
+    old_files = {item["path"]: item for item in (previous or {}).get("files", [])}
     installed = unchanged = 0
     records = []
     for relative, old in old_files.items():

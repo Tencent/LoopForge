@@ -167,7 +167,12 @@ loopforge skills status <agent>
 loopforge skills uninstall <agent>
 ```
 
-Installation state is stored in `.devflow/install-state.json`. An update stops instead of overwriting user-modified or conflicting files. Use `--force` only when you intend to replace conflicts or switch editions, preferably after inspecting `loopforge plan`.
+Installation state is stored in `.devflow/install-state.json`. An update stops instead of overwriting user-modified or conflicting files. Use `--force` only when you intend to replace conflicts or switch editions, preferably after inspecting `loopforge update <agent> --dry-run`.
+
+```bash
+loopforge update claude --dry-run
+loopforge update claude --dry-run --force
+```
 
 If you have cloned this repository, install the LoopForge CLI from the current source tree by running this in the repository root:
 

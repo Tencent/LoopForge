@@ -1,15 +1,17 @@
+import json
 import os
+import re
 import stat
 import subprocess
 import sys
 import tempfile
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from io import StringIO
 from pathlib import Path
 
 from devflow_cli.cli import main
-from devflow_cli.core import DevFlowError, apply_install, doctor, status_rows, uninstall
+from devflow_cli.core import DevFlowError, apply_install, digest, doctor, plan_install, status_rows, uninstall
 from devflow_cli.editions import DEFAULT_EDITION, EDITION_SPECS, HOSTS, source_for
 
 
@@ -32,6 +34,52 @@ class InstallerTests(unittest.TestCase):
     def project(self, temporary: str) -> Path:
         path = Path(temporary) / "project"
         path.mkdir()
+        return path
+
+    def run_cli(self, argv):
+        stdout = StringIO()
+        stderr = StringIO()
+        with redirect_stdout(stdout), redirect_stderr(stderr):
+            code = main(argv)
+        return code, stdout.getvalue(), stderr.getvalue()
+
+    def tree_snapshot(self, root: Path) -> dict:
+        entries = {}
+        for path in sorted(root.rglob("*")):
+            rel = str(path.relative_to(root))
+            mode = stat.S_IMODE(path.lstat().st_mode)
+            if path.is_symlink():
+                entries[rel] = ("symlink", os.readlink(str(path)), mode)
+            elif path.is_dir():
+                entries[rel] = ("dir", mode)
+            elif path.is_file():
+                entries[rel] = ("file", path.read_bytes(), mode)
+        return {
+            "devflow": (root / ".devflow").exists(),
+            "state": (root / ".devflow/install-state.json").exists(),
+            "entries": entries,
+        }
+
+    def summary_counts(self, output: str):
+        match = re.search(
+            r"add=(\d+) update=(\d+) unchanged=(\d+) remove=(\d+) conflict=(\d+)",
+            output,
+        )
+        self.assertIsNotNone(match, output)
+        return tuple(int(value) for value in match.groups())
+
+    def track_extra_file(self, project: Path, relative: str, content: str) -> Path:
+        path = project / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+        state_path = project / ".devflow/install-state.json"
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        key = next(iter(state["installations"]))
+        state["installations"][key]["files"].append({
+            "path": relative,
+            "sha256": digest(path.read_bytes()),
+        })
+        state_path.write_text(json.dumps(state, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         return path
 
     def test_all_host_and_edition_combinations_install_and_update(self):
@@ -325,6 +373,244 @@ class InstallerTests(unittest.TestCase):
             self.assertEqual(0, written)
             self.assertGreater(unchanged, 0)
             self.assertTrue(hook.stat().st_mode & stat.S_IXUSR)
+
+    def test_dry_run_fresh_install_is_all_add_and_writes_nothing(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            project = self.project(temporary)
+            before = self.tree_snapshot(project)
+            code, output, err = self.run_cli([
+                "install", "claude", "--dry-run", "--project-root", str(project),
+            ])
+            self.assertEqual(0, code, err)
+            self.assertTrue(
+                output.startswith("DRY RUN: install edition=classic host=claude "),
+                output,
+            )
+            add, update, unchanged, remove, conflict = self.summary_counts(output)
+            self.assertGreater(add, 0)
+            self.assertEqual((0, 0, 0, 0), (update, unchanged, remove, conflict))
+            self.assertIn("  add .claude/", output)
+            self.assertNotIn("  update ", output)
+            self.assertNotIn("  conflict ", output)
+            self.assertEqual("", err)
+            self.assertEqual(before, self.tree_snapshot(project))
+
+            preview = plan_install(project, "claude", "classic")
+            self.assertEqual(add, preview.counts()["add"])
+            self.assertTrue(all(action == "add" for _path, action in preview.files))
+            self.assertEqual(before, self.tree_snapshot(project))
+
+            code, output, err = self.run_cli([
+                "skills", "install", "claude", "--dry-run", "--project-root", str(project),
+            ])
+            self.assertEqual(0, code, err)
+            self.assertTrue(
+                output.startswith("DRY RUN: skills install edition=portable host=claude "),
+                output,
+            )
+            self.assertEqual(before, self.tree_snapshot(project))
+
+    def test_dry_run_after_install_is_all_unchanged(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            project = self.project(temporary)
+            apply_install(project, "claude", "classic")
+            before = self.tree_snapshot(project)
+            code, output, err = self.run_cli([
+                "update", "claude", "--dry-run", "--project-root", str(project),
+            ])
+            self.assertEqual(0, code, err)
+            add, update, unchanged, remove, conflict = self.summary_counts(output)
+            self.assertEqual((0, 0, 0, 0), (add, update, remove, conflict))
+            self.assertGreater(unchanged, 0)
+            self.assertNotIn("\n  add ", "\n" + output)
+            self.assertEqual(before, self.tree_snapshot(project))
+
+            preview = plan_install(project, "claude", "classic", update_only=True)
+            self.assertEqual(unchanged, preview.counts()["unchanged"])
+            self.assertTrue(all(action == "unchanged" for _path, action in preview.files))
+            self.assertEqual(before, self.tree_snapshot(project))
+
+    def test_dry_run_user_modified_tracked_file_conflict_and_force_overwrite(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            project = self.project(temporary)
+            apply_install(project, "claude", "classic")
+            managed = project / ".claude/README.md"
+            managed.write_text("user changed\n", encoding="utf-8")
+            before = self.tree_snapshot(project)
+
+            code, output, err = self.run_cli([
+                "update", "claude", "--dry-run", "--project-root", str(project),
+            ])
+            self.assertEqual(1, code)
+            add, update, unchanged, remove, conflict = self.summary_counts(output)
+            self.assertEqual(1, conflict)
+            self.assertEqual(0, add)
+            self.assertIn("  conflict .claude/README.md", output)
+            self.assertEqual(before, self.tree_snapshot(project))
+            self.assertEqual("user changed\n", managed.read_text(encoding="utf-8"))
+
+            code, output, err = self.run_cli([
+                "update", "claude", "--dry-run", "--force", "--project-root", str(project),
+            ])
+            self.assertEqual(0, code, err)
+            self.assertIn("  overwrite .claude/README.md", output)
+            self.assertNotIn("  conflict ", output)
+            _add, _update, _unchanged, _remove, conflict = self.summary_counts(output)
+            self.assertEqual(1, conflict)
+            self.assertEqual(before, self.tree_snapshot(project))
+            self.assertEqual("user changed\n", managed.read_text(encoding="utf-8"))
+
+    def test_dry_run_untracked_user_file_at_bundle_path(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            project = self.project(temporary)
+            user_file = project / ".claude/commands/start-devflow.md"
+            user_file.parent.mkdir(parents=True)
+            user_file.write_text("user content\n", encoding="utf-8")
+            before = self.tree_snapshot(project)
+            code, output, err = self.run_cli([
+                "install", "claude", "--dry-run", "--project-root", str(project),
+            ])
+            self.assertEqual(1, code)
+            self.assertIn("  conflict .claude/commands/start-devflow.md", output)
+            self.assertEqual(before, self.tree_snapshot(project))
+            self.assertEqual("user content\n", user_file.read_text(encoding="utf-8"))
+            self.assertFalse((project / ".devflow/install-state.json").exists())
+
+    def test_dry_run_blocking_parent_is_conflict(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            project = self.project(temporary)
+            blocker = project / ".claude"
+            blocker.write_text("not a directory\n", encoding="utf-8")
+            before = self.tree_snapshot(project)
+            code, output, err = self.run_cli([
+                "install", "claude", "--dry-run", "--project-root", str(project),
+            ])
+            self.assertEqual(1, code)
+            self.assertIn("  conflict .claude", output)
+            _add, _update, _unchanged, _remove, conflict = self.summary_counts(output)
+            self.assertGreaterEqual(conflict, 1)
+            self.assertEqual(before, self.tree_snapshot(project))
+            self.assertEqual("not a directory\n", blocker.read_text(encoding="utf-8"))
+
+    def test_dry_run_dropped_tracked_file_is_remove(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            project = self.project(temporary)
+            apply_install(project, "claude", "classic")
+            extra = self.track_extra_file(project, ".claude/extra-tracked.md", "tracked extra\n")
+            before = self.tree_snapshot(project)
+            code, output, err = self.run_cli([
+                "update", "claude", "--dry-run", "--project-root", str(project),
+            ])
+            self.assertEqual(0, code, err)
+            add, update, unchanged, remove, conflict = self.summary_counts(output)
+            self.assertEqual(1, remove)
+            self.assertEqual(0, conflict)
+            self.assertIn("  remove .claude/extra-tracked.md", output)
+            self.assertEqual(before, self.tree_snapshot(project))
+            self.assertEqual("tracked extra\n", extra.read_text(encoding="utf-8"))
+
+            extra.write_text("user changed extra\n", encoding="utf-8")
+            before = self.tree_snapshot(project)
+            code, output, err = self.run_cli([
+                "update", "claude", "--dry-run", "--project-root", str(project),
+            ])
+            self.assertEqual(1, code)
+            self.assertIn("  conflict .claude/extra-tracked.md", output)
+            self.assertEqual(before, self.tree_snapshot(project))
+
+    def test_dry_run_edition_switch_requires_force(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            project = self.project(temporary)
+            apply_install(project, "claude", "classic")
+            before = self.tree_snapshot(project)
+            code, output, err = self.run_cli([
+                "install", "claude", "--edition", "portable", "--dry-run",
+                "--project-root", str(project),
+            ])
+            self.assertEqual(1, code)
+            self.assertIn("如需切换到 portable", err)
+            self.assertEqual("", output)
+            self.assertEqual(before, self.tree_snapshot(project))
+
+            code, output, err = self.run_cli([
+                "install", "claude", "--edition", "portable", "--dry-run", "--force",
+                "--project-root", str(project),
+            ])
+            self.assertEqual(0, code, err)
+            self.assertIn("DRY RUN: install edition=portable host=claude ", output)
+            self.assertIn("  switch classic -> portable", output)
+            self.assertEqual(before, self.tree_snapshot(project))
+
+            code, output, err = self.run_cli([
+                "update", "claude", "--edition", "portable", "--dry-run", "--force",
+                "--project-root", str(project),
+            ])
+            self.assertEqual(1, code)
+            self.assertIn("update 不能切换 edition", err)
+            self.assertEqual(before, self.tree_snapshot(project))
+
+    def test_dry_run_json_and_update_without_install(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            project = self.project(temporary)
+            before = self.tree_snapshot(project)
+            code, output, err = self.run_cli([
+                "install", "claude", "--dry-run", "--json", "--project-root", str(project),
+            ])
+            self.assertEqual(0, code, err)
+            payload = json.loads(output)
+            self.assertEqual("install", payload["command"])
+            self.assertEqual("classic", payload["edition"])
+            self.assertEqual("claude", payload["host"])
+            self.assertGreater(payload["add"], 0)
+            self.assertEqual(0, payload["conflict"])
+            self.assertTrue(all(item["action"] == "add" for item in payload["files"]))
+            self.assertEqual(before, self.tree_snapshot(project))
+
+            code, output, err = self.run_cli([
+                "install", "claude", "--json", "--project-root", str(project),
+            ])
+            self.assertEqual(1, code)
+            self.assertIn("--json 只能与 --dry-run 一起使用", err)
+            self.assertEqual(before, self.tree_snapshot(project))
+
+            code, output, err = self.run_cli([
+                "update", "claude", "--dry-run", "--project-root", str(project),
+            ])
+            self.assertEqual(1, code)
+            self.assertIn("尚未安装 classic/claude", err)
+            self.assertEqual(before, self.tree_snapshot(project))
+
+    def test_dry_run_plan_matches_apply_install(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            project = self.project(temporary)
+            preview = plan_install(project, "claude", "classic")
+            counts = preview.counts()
+            written, unchanged = apply_install(project, "claude", "classic")
+            self.assertEqual(counts["add"] + counts["update"], written)
+            self.assertEqual(counts["unchanged"], unchanged)
+            for path, action in preview.files:
+                if action == "add":
+                    self.assertTrue((project / path).is_file(), path)
+
+            extra = self.track_extra_file(project, ".claude/extra-tracked.md", "tracked extra\n")
+            managed = project / ".claude/README.md"
+            managed.write_text("user changed\n", encoding="utf-8")
+            preview = plan_install(project, "claude", "classic", update_only=True, force=True)
+            counts = preview.counts()
+            labeled = dict(preview.files)
+            self.assertEqual("remove", labeled[".claude/extra-tracked.md"])
+            self.assertEqual("conflict", labeled[".claude/README.md"])
+            written, unchanged = apply_install(
+                project, "claude", "classic", update_only=True, force=True,
+            )
+            bundle_conflicts = sum(
+                1 for path, action in preview.files
+                if action == "conflict" and path in preview.bundle
+            )
+            self.assertEqual(counts["add"] + counts["update"] + bundle_conflicts, written)
+            self.assertEqual(counts["unchanged"], unchanged)
+            self.assertFalse(extra.exists())
+            self.assertNotEqual("user changed\n", managed.read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":
