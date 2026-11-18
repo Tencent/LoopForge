@@ -4,15 +4,18 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"mime/multipart"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"agentflow/internal/domain"
 	"agentflow/internal/repo"
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 func TestSteerRejectsSecondRequestForSameGeneration(t *testing.T) {
@@ -44,6 +47,84 @@ func TestSteerRejectsSecondRequestForSameGeneration(t *testing.T) {
 	if !current.CancelRequested || first.Steer == nil || current.Steer == nil ||
 		current.Steer.Content != "first tab" || current.Steer.TriggerID != first.Steer.TriggerID {
 		t.Fatalf("the first accepted steer was changed: %+v", current.Steer)
+	}
+}
+
+func TestSteerDuringTurnFinalization(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		steerFirst bool
+	}{
+		{name: "steer accepted before finalization", steerFirst: true},
+		{name: "steer arrives while saving partial reply"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h, user := workbenchFixture(t)
+			stubCLIModelDiscovery(t)
+			const followUp = "continue with this instruction"
+			s := domain.AssistantSession{ID: "steer-at-finish", ProjectID: "workbench", Model: "default", Messages: []assistantMessage{
+				{Role: "user", Content: "original"},
+			}}
+			g := domain.AssistantGeneration{ID: "finishing-turn", SessionID: s.ID, UserID: user.ID, ProjectID: s.ProjectID, Status: "running", MessageCount: 1}
+			if err := h.repo.BeginAssistantGeneration(g, s); err != nil {
+				t.Fatal(err)
+			}
+			submitSteer := func() *httptest.ResponseRecorder {
+				body, _ := json.Marshal(domain.AssistantSteer{Content: followUp})
+				path := "/api/assistant/sessions/" + s.ID + "/generation/steer?generationId=" + g.ID
+				c, rec := workbenchContext(user, "POST", path, bytes.NewBuffer(body))
+				c.Params = gin.Params{{Key: "id", Value: s.ID}}
+				h.steerGeneration(c)
+				return rec
+			}
+			var response *httptest.ResponseRecorder
+			var savePartial atomic.Bool
+			h.generate = func(ctx context.Context, prompt string, _ domain.User) (string, error) {
+				if strings.Contains(prompt, followUp) {
+					return `{"message":"follow-up reply","drafts":[]}`, nil
+				}
+				sink := ctx.Value(assistantGenerationSinkKey{}).(func(string, any))
+				sink("thought", assistantStreamEvent{Kind: "answer", Text: "partial reply"})
+				if tc.steerFirst {
+					response = submitSteer()
+				} else {
+					savePartial.Store(true)
+				}
+				return "", errors.New("test model stopped")
+			}
+			// This read starts the partial transcript write after the worker has
+			// stopped checking for steering requests. The old code accepted a
+			// request here, then closed the turn without following it.
+			const callback = "test:steer_during_transcript_save"
+			queries := h.repo.DB.Callback().Query()
+			if err := queries.After("gorm:query").Register(callback, func(tx *gorm.DB) {
+				if tx.Statement.Table == "assistant_sessions" && savePartial.CompareAndSwap(true, false) {
+					response = submitSteer()
+				}
+			}); err != nil {
+				t.Fatal(err)
+			}
+			defer queries.Remove(callback)
+			h.executeGeneration(t.Context(), assistantRequest{SessionID: s.ID, ProjectID: s.ProjectID, Model: s.Model, Messages: s.Messages}, g, domainUserToAuth(user))
+
+			if response == nil {
+				t.Fatal("steering request did not run")
+			}
+			saved, _ := h.repo.AssistantSession(user.ID, s.ID)
+			if len(saved.Messages) < 2 || replyMessageText(saved.Messages[1].Content) != "partial reply" {
+				t.Fatalf("the first turn must keep the partial reply: %+v", saved.Messages)
+			}
+			current, _ := h.repo.PeekAssistantGeneration(user.ID, s.ID)
+			if tc.steerFirst {
+				if response.Code != 200 || current.ID == g.ID || current.Status != "completed" || len(saved.Messages) != 4 ||
+					saved.Messages[2].Content != followUp || saved.Messages[2].TriggerID == "" || replyMessageText(saved.Messages[3].Content) != "follow-up reply" {
+					t.Fatalf("accepted steer must start its own turn: %d %s, %s, %+v", response.Code, response.Body, current.Status, saved.Messages)
+				}
+			} else if response.Code != 409 || !strings.Contains(response.Body.String(), "生成已结束或不存在") ||
+				current.ID != g.ID || current.Status != "failed" || current.CancelRequested || current.Steer != nil || len(saved.Messages) != 2 {
+				t.Fatalf("a turn that is closing must reject the steer as ended: %d %s, %+v, %+v", response.Code, response.Body, current, saved.Messages)
+			}
+		})
 	}
 }
 

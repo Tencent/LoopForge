@@ -1,6 +1,7 @@
 package repo
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -10,7 +11,7 @@ import (
 	"agentflow/internal/domain"
 )
 
-func TestAssistantGenerationAllowsOnePendingSteer(t *testing.T) {
+func TestAssistantGenerationCoordinatesSteering(t *testing.T) {
 	for _, backend := range []string{"sqlite", "mysql"} {
 		t.Run(backend, func(t *testing.T) {
 			var st *Store
@@ -69,12 +70,38 @@ func TestAssistantGenerationAllowsOnePendingSteer(t *testing.T) {
 				saved.Steer.TriggerID != accepted.steer.TriggerID || saved.Steer.Content != accepted.steer.Content {
 				t.Fatalf("the accepted steer was lost: %+v", saved.Steer)
 			}
+			pending, err := st.CloseAssistantGenerationSteering(g.UserID, g.SessionID, g.ID)
+			if err != nil || pending == nil || pending.TriggerID != accepted.steer.TriggerID || pending.Content != accepted.steer.Content {
+				t.Fatalf("finalization must receive the accepted steer: %+v %v", pending, err)
+			}
 
 			g.Status = "cancelled"
 			if err := st.CheckpointAssistantGeneration(g); err != nil {
 				t.Fatal(err)
 			}
 			g.ID, g.Status = sessionID+"-next", "running"
+			if err := st.BeginAssistantGeneration(g); err != nil {
+				t.Fatal(err)
+			}
+			pending, err = st.CloseAssistantGenerationSteering(g.UserID, g.SessionID, g.ID)
+			if err != nil || pending != nil {
+				t.Fatalf("finalization received a steer from the previous turn: %+v %v", pending, err)
+			}
+			if err := st.HeartbeatAssistantGeneration(g); err != nil {
+				t.Fatal(err)
+			}
+			if err := st.SteerAssistantGeneration(g.UserID, g.SessionID, g.ID, rejected.steer); !errors.Is(err, errAssistantGenerationEnded) {
+				t.Fatalf("a steer arriving after finalization must report an ended turn: %v", err)
+			}
+			saved, _ = st.PeekAssistantGeneration(g.UserID, g.SessionID)
+			if saved.Status != "running" || saved.CancelRequested || saved.Steer != nil {
+				t.Fatalf("the generation must stay running while its transcript is saved: %+v", saved)
+			}
+			g.Status = "completed"
+			if err := st.CheckpointAssistantGeneration(g); err != nil {
+				t.Fatal(err)
+			}
+			g.ID, g.Status = sessionID+"-third", "running"
 			if err := st.BeginAssistantGeneration(g); err != nil {
 				t.Fatal(err)
 			}

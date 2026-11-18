@@ -386,8 +386,7 @@ func (h *assistantHandlers) executeGeneration(parent context.Context, req assist
 			trackAssistantWorkspaceSave(req.RunID, result)
 		}
 	}
-	rec.mu.Lock()
-	g = rec.g
+	g = rec.snapshot()
 	if workspaceWarning != "" {
 		g.WorkspaceWarning = workspaceWarning
 	}
@@ -422,30 +421,32 @@ func (h *assistantHandlers) executeGeneration(parent context.Context, req assist
 	if g.Status == "failed" && g.Failure == nil {
 		g.Failure = rec.diagnostics.failureForMessage(g.Error)
 	}
+	steer, finishErr := h.repo.CloseAssistantGenerationSteering(g.UserID, g.SessionID, g.ID)
+	if finishErr != nil {
+		fmt.Printf("assistant generation steering close failed: %T\n", finishErr)
+	} else {
+		g.Steer = steer
+		g.CancelRequested = g.CancelRequested || steer != nil
+		// A stop or a mid-turn redirect keeps the paragraphs and tool rows
+		// written so far. The completed path already stored its own reply.
+		if g.Status != "completed" || steer != nil {
+			if err := h.commitTurnTranscript(g, steer, g.Status != "completed" && steer == nil); err != nil {
+				fmt.Printf("assistant transcript keep failed: %T\n", err)
+				steer = nil
+			}
+		}
+		finishErr = h.repo.CheckpointAssistantGeneration(g, rec.diagnostics.snapshot(g))
+		if finishErr != nil {
+			fmt.Printf("assistant generation checkpoint failed: %T\n", finishErr)
+		}
+	}
+	rec.mu.Lock()
 	rec.g = g
-	g = rec.snapshotLocked()
-	steer := g.Steer
 	rec.mu.Unlock()
-	if steer == nil {
-		if latest, ok := h.repo.PeekAssistantGeneration(g.UserID, g.SessionID); ok && latest.ID == g.ID && latest.Steer != nil {
-			rec.mu.Lock()
-			g.Steer = latest.Steer
-			steer = latest.Steer
-			rec.mu.Unlock()
-		}
-	}
-	// A stop or a mid-turn redirect keeps the paragraphs and tool rows written
-	// so far. The completed path already stored its own reply.
-	if g.Status != "completed" || steer != nil {
-		if err := h.commitTurnTranscript(g, steer, g.Status != "completed" && steer == nil); err != nil {
-			fmt.Printf("assistant transcript keep failed: %T\n", err)
-			steer = nil
-		}
-	}
-	if err := h.repo.CheckpointAssistantGeneration(g, rec.diagnostics.snapshot(g)); err != nil {
-		fmt.Printf("assistant generation checkpoint failed: %T\n", err)
-	}
 	rec.live.publish()
+	if finishErr != nil {
+		return
+	}
 	if steer != nil {
 		h.followSteer(parent, g, steer, actor)
 	} else if g.Status == "completed" {
