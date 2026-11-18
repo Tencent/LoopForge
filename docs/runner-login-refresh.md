@@ -58,8 +58,9 @@ Runner 会尽量识别并保留宿主更新，文件内容复核不能等价于�
 正常刷新会改变 access token，refresh token 不变。
 
 cleanup 要求 refresh token 与宿主原件一致，并通过 Google OIDC userinfo 核验新 access token
-属于原账号。沙箱的 email / ID token 不是身份证明。只更新 access token、token type 和 expiry，
-保留宿主原来的账户资料及 refresh token；宿主已变化、核验失败或只替换 refresh token 时不写回。
+属于原账号。access token 未变化时跳过写回。写回前检查 expiry 是尚未到期的时间戳，
+显式提供的 token type 必须为 Bearer。保留宿主原有的账户资料及 refresh token。
+宿主已变化、核验失败或只替换 refresh token 时继续保留宿主记录。
 这没有实现 access-only 的长任务热更新，也没有把未来可能出现的 Google refresh-token 轮换当作已验证行为。
 
 ## 验证方式

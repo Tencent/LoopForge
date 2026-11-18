@@ -27,8 +27,10 @@ type antigravityLogin struct {
 	Email      string `json:"id_token_email"`
 	IDToken    string `json:"id_token"`
 	Token      struct {
-		Access  string `json:"access_token"`
-		Refresh string `json:"refresh_token"`
+		Access  string          `json:"access_token"`
+		Refresh string          `json:"refresh_token"`
+		Type    json.RawMessage `json:"token_type"`
+		Expiry  json.RawMessage `json:"expiry"`
 	} `json:"token"`
 }
 
@@ -122,7 +124,7 @@ func readAntigravityRunnerLogin() ([]byte, func([]byte) error, error) {
 				return nil
 			}
 			canonical, err := canonicalAntigravityRefresh(original, refreshed)
-			if err != nil {
+			if err != nil || canonical == nil {
 				return err
 			}
 			return replaceRunnerLoginFile(dir, antigravityTokenFile, original, canonical)
@@ -155,7 +157,7 @@ func antigravityKeyringLogin(read func() (string, error), write func(string) err
 			return nil
 		}
 		canonical, err := canonicalAntigravityRefresh(original, refreshed)
-		if err != nil {
+		if err != nil || canonical == nil {
 			return err
 		}
 		if current, err := read(); err != nil || current != stored {

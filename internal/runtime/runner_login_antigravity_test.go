@@ -12,10 +12,13 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 const agyOriginalLogin = `{"token":{"access_token":"old-access","refresh_token":"original-refresh","expiry":"2026-11-01T00:00:00Z"},"auth_method":"consumer","id_token_email":"owner@example.test"}`
-const agyRefreshedLogin = `{"token":{"access_token":"new-access","refresh_token":"original-refresh","expiry":"2026-12-01T00:00:00Z"},"auth_method":"consumer","id_token_email":"owner@example.test"}`
+
+var agyRefreshedExpiry = time.Now().UTC().Add(time.Hour).Format(time.RFC3339)
+var agyRefreshedLogin = `{"token":{"access_token":"new-access","refresh_token":"original-refresh","token_type":"Bearer","expiry":"` + agyRefreshedExpiry + `"},"auth_method":"consumer","id_token_email":"owner@example.test"}`
 
 func sameAgyFixtureJSON(a, b []byte) bool {
 	var left, right any
@@ -158,6 +161,7 @@ func TestAntigravityRunnerLoginLifecycle(t *testing.T) {
 
 func TestAntigravityKeyringLoginRefresh(t *testing.T) {
 	setAgyIdentityFixture(t, "owner@example.test")
+	expiryField := `"expiry":"` + agyRefreshedExpiry + `"`
 	for _, tc := range []struct {
 		name, concurrent, refreshed string
 		wantWrite, wantError        bool
@@ -166,9 +170,16 @@ func TestAntigravityKeyringLoginRefresh(t *testing.T) {
 		{name: "host switched accounts", concurrent: "different-host-login", refreshed: agyRefreshedLogin},
 		{name: "host logged out", concurrent: "missing", refreshed: agyRefreshedLogin},
 		{name: "sandbox switched accounts", refreshed: strings.ReplaceAll(agyRefreshedLogin, "owner@example.test", "other@example.test"), wantError: true},
-		{name: "sandbox changed only refresh token", refreshed: strings.ReplaceAll(agyRefreshedLogin, "original-refresh", "foreign-refresh"), wantError: true},
+		{name: "sandbox changed only refresh token", refreshed: strings.ReplaceAll(agyOriginalLogin, "original-refresh", "foreign-refresh"), wantError: true},
 		{name: "sandbox forged local identity", refreshed: strings.ReplaceAll(agyRefreshedLogin, "new-access", "foreign-access"), wantError: true},
 		{name: "unchanged", refreshed: agyOriginalLogin},
+		{name: "unchanged access with updated metadata", refreshed: strings.Replace(agyRefreshedLogin, "new-access", "old-access", 1)},
+		{name: "refresh with malformed expiry", refreshed: strings.Replace(agyRefreshedLogin, expiryField, `"expiry":"invalid"`, 1), wantError: true},
+		{name: "refresh with missing expiry", refreshed: strings.Replace(agyRefreshedLogin, ","+expiryField, "", 1), wantError: true},
+		{name: "refresh with null expiry", refreshed: strings.Replace(agyRefreshedLogin, expiryField, `"expiry":null`, 1), wantError: true},
+		{name: "refresh with already expired metadata", refreshed: strings.Replace(agyRefreshedLogin, expiryField, `"expiry":"2000-01-01T00:00:00Z"`, 1), wantError: true},
+		{name: "refresh with invalid token type", refreshed: strings.Replace(agyRefreshedLogin, `"Bearer"`, `"unsupported"`, 1), wantError: true},
+		{name: "refresh without token type", refreshed: strings.Replace(agyRefreshedLogin, `"token_type":"Bearer",`, "", 1), wantWrite: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			stored, writes := agyOriginalLogin, 0
@@ -198,6 +209,22 @@ func TestAntigravityKeyringLoginRefresh(t *testing.T) {
 			t.Fatal("raw keychain error exposed")
 		}
 	})
+}
+
+func TestAntigravityFileLoginIgnoresMetadataOnlyUpdate(t *testing.T) {
+	path := agyFileLoginFixture(t)
+	original, keep, err := readAntigravityRunnerLogin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	candidate := strings.Replace(string(original), "2026-11-01T00:00:00Z", "invalid", 1)
+	if err := keep([]byte(candidate)); err != nil {
+		t.Fatal(err)
+	}
+	current, err := os.ReadFile(path)
+	if err != nil || string(current) != string(original) {
+		t.Fatal("metadata-only update changed the host credential file")
+	}
 }
 
 func TestAntigravityLoginIdentityMigration(t *testing.T) {

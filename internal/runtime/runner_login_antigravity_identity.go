@@ -41,22 +41,8 @@ func googleRunnerIdentity(access string) (antigravityIdentity, error) {
 	return identity, nil
 }
 
-func verifyAntigravityRefresh(original, refreshed []byte) error {
-	before, err := parseAntigravityLogin(original)
-	if err != nil {
-		return err
-	}
-	after, err := parseAntigravityLogin(refreshed)
-	if err != nil {
-		return err
-	}
-	if before.Token.Refresh != after.Token.Refresh {
-		return errors.New("Antigravity refresh token changed; host login retained")
-	}
-	if before.Token.Access == after.Token.Access {
-		return nil
-	}
-	identity, err := googleRunnerIdentity(after.Token.Access)
+func verifyAntigravityRefreshIdentity(before antigravityLogin, access string) error {
+	identity, err := googleRunnerIdentity(access)
 	if err != nil {
 		return err
 	}
@@ -97,25 +83,44 @@ func verifyAntigravityRefresh(original, refreshed []byte) error {
 	return nil
 }
 
-// Keep account metadata and the refresh token from the trusted source. A
-// successful userinfo response authorizes only the refreshed access token.
+// canonicalAntigravityRefresh keeps host account metadata and the refresh token.
+// A nil result without an error means the access token did not change.
 func canonicalAntigravityRefresh(original, refreshed []byte) ([]byte, error) {
-	if err := verifyAntigravityRefresh(original, refreshed); err != nil {
+	before, err := parseAntigravityLogin(original)
+	if err != nil {
 		return nil, err
 	}
-	var before, after map[string]json.RawMessage
-	if json.Unmarshal(original, &before) != nil || json.Unmarshal(refreshed, &after) != nil {
-		return nil, errors.New("invalid Antigravity login")
+	after, err := parseAntigravityLogin(refreshed)
+	if err != nil {
+		return nil, err
 	}
-	var token, candidate map[string]json.RawMessage
-	if json.Unmarshal(before["token"], &token) != nil || json.Unmarshal(after["token"], &candidate) != nil {
+	if before.Token.Refresh != after.Token.Refresh {
+		return nil, errors.New("Antigravity refresh token changed; host login retained")
+	}
+	if before.Token.Access == after.Token.Access {
+		return nil, nil
+	}
+	var expiry time.Time
+	if json.Unmarshal(after.Token.Expiry, &expiry) != nil || !expiry.After(time.Now()) {
+		return nil, errors.New("invalid Antigravity access token expiry; host login retained")
+	}
+	var tokenType string
+	if after.Token.Type != nil && (json.Unmarshal(after.Token.Type, &tokenType) != nil || !strings.EqualFold(tokenType, "Bearer")) {
+		return nil, errors.New("invalid Antigravity token type; host login retained")
+	}
+	if err := verifyAntigravityRefreshIdentity(before, after.Token.Access); err != nil {
+		return nil, err
+	}
+
+	var host, token map[string]json.RawMessage
+	if json.Unmarshal(original, &host) != nil || json.Unmarshal(host["token"], &token) != nil {
 		return nil, errors.New("invalid Antigravity token")
 	}
-	for _, key := range []string{"access_token", "token_type", "expiry"} {
-		if value := candidate[key]; len(value) > 0 {
-			token[key] = value
-		}
+	token["access_token"], _ = json.Marshal(after.Token.Access)
+	token["expiry"] = after.Token.Expiry
+	if after.Token.Type != nil {
+		token["token_type"] = json.RawMessage(`"Bearer"`)
 	}
-	before["token"], _ = json.Marshal(token)
-	return json.Marshal(before)
+	host["token"], _ = json.Marshal(token)
+	return json.Marshal(host)
 }
