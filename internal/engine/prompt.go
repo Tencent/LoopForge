@@ -26,35 +26,80 @@ func applyPromptPlaceholders(st *repo.Store, wf domain.WorkflowDefinition, node 
 	if role != nil && strings.TrimSpace(role.Prompt) != "" {
 		prompt = compileTaskPrompt(node, role.Name, role.Prompt, role.Verification)
 	}
+	promptLang := detectPromptLanguage(prompt, run.Input, run.HumanContext, wf.Name, node.Name)
 	// A role prompt may not reference {{input}}; never silently drop the run
 	// input.
 	if strings.TrimSpace(run.Input) != "" && !strings.Contains(prompt, "{{input}}") {
-		prompt += "\n\n## 本次运行输入\n\n{{input}}"
+		switch promptLang {
+		case "ko":
+			prompt += "\n\n## 이번 실행 입력\n\n{{input}}"
+		case "en":
+			prompt += "\n\n## Run Input\n\n{{input}}"
+		default:
+			prompt += "\n\n## 本次运行输入\n\n{{input}}"
+		}
 	}
 	prompt = strings.ReplaceAll(prompt, "{{input}}", run.Input)
 	prompt = strings.ReplaceAll(prompt, "{{repository}}", promptRepositoryLine(run))
 	pipelineURL := "未配置 Pipeline"
 	if run.Repository.PipelineURLPattern != "" {
 		pipelineURL = strings.ReplaceAll(run.Repository.PipelineURLPattern, "{build_id}", "current")
+	} else if promptLang == "ko" {
+		pipelineURL = "Pipeline 미설정"
+	} else if promptLang == "en" {
+		pipelineURL = "No pipeline configured"
 	}
 	prompt = strings.ReplaceAll(prompt, "{{pipelineUrl}}", pipelineURL)
 	if !strings.Contains(prompt, "{{existingMR}}") {
 		if hint := sshDeliveryHint(run); hint != "" {
-			prompt += "\n\n## Git 仓库交付\n\n" + hint
+			switch promptLang {
+			case "ko":
+				prompt += "\n\n## Git SSH 저장소 납품\n\n" + hint
+			case "en":
+				prompt += "\n\n## Git SSH Repository Delivery\n\n" + hint
+			default:
+				prompt += "\n\n## Git SSH 仓库交付\n\n" + hint
+			}
 		}
 	}
 	prompt = strings.ReplaceAll(prompt, "{{existingMR}}", existingMRBlurb(st, run))
 	rejectTo := node.RejectTo
 	if rejectTo == "" {
-		rejectTo = "上游实现节点"
+		switch promptLang {
+		case "ko":
+			rejectTo = "상위 구현 노드"
+		case "en":
+			rejectTo = "upstream implementation node"
+		default:
+			rejectTo = "上游实现节点"
+		}
 	}
 	prompt = strings.ReplaceAll(prompt, "{{rejectTo}}", rejectTo)
 	subject := "本次任务"
-	switch {
-	case strings.Contains(wf.ID, "issue"):
-		subject = "本次 Issue"
-	case strings.Contains(wf.ID, "requirement"):
-		subject = "本次需求"
+	switch promptLang {
+	case "ko":
+		subject = "이번 작업"
+		switch {
+		case strings.Contains(wf.ID, "issue"):
+			subject = "이번 Issue"
+		case strings.Contains(wf.ID, "requirement"):
+			subject = "이번 요구사항"
+		}
+	case "en":
+		subject = "this task"
+		switch {
+		case strings.Contains(wf.ID, "issue"):
+			subject = "this issue"
+		case strings.Contains(wf.ID, "requirement"):
+			subject = "this requirement"
+		}
+	default:
+		switch {
+		case strings.Contains(wf.ID, "issue"):
+			subject = "本次 Issue"
+		case strings.Contains(wf.ID, "requirement"):
+			subject = "本次需求"
+		}
 	}
 	prompt = strings.ReplaceAll(prompt, "{{subject}}", subject)
 	feedback := ""
@@ -65,20 +110,41 @@ func applyPromptPlaceholders(st *repo.Store, wf domain.WorkflowDefinition, node 
 	humanNote := strings.TrimSpace(run.HumanContext)
 	prompt = strings.ReplaceAll(prompt, "{{humanContext}}", humanNote)
 	if humanNote != "" {
-		prompt += "\n\n## 人工补充上下文\n\n操作员在审核或重试时补充了以下信息，请优先采信并据此行动：\n\n" + humanNote + "\n"
+		switch promptLang {
+		case "ko":
+			prompt += "\n\n## 사용자 추가 컨텍스트\n\n운영자가 검토 또는 재시도 시 다음 정보를 추가했습니다. 이를 최우선으로 반영하여 작업하십시오:\n\n" + humanNote + "\n"
+		case "en":
+			prompt += "\n\n## Manual Context\n\nOperator added the following information during review or retry; prioritize it and act accordingly:\n\n" + humanNote + "\n"
+		default:
+			prompt += "\n\n## 人工补充上下文\n\n操作员在审核或重试时补充了以下信息，请优先采信并据此行动：\n\n" + humanNote + "\n"
+		}
 	}
 	if st != nil {
 		if issueID := strings.TrimSpace(run.ExecutionContext.IssueID); issueID != "" {
 			if issue, ok := st.Issue(issueID); ok {
 				if block := issue.IdentityBlock(); block != "" && !issue.HasIdentityBlock(prompt) {
-					prompt += "\n\n## 需求身份\n\n" + block + "\n"
+					switch promptLang {
+					case "ko":
+						prompt += "\n\n## 요구사항 식별 정보\n\n" + block + "\n"
+					case "en":
+						prompt += "\n\n## Requirement Identity\n\n" + block + "\n"
+					default:
+						prompt += "\n\n## 需求身份\n\n" + block + "\n"
+					}
 				}
 			}
 		}
 	}
 	upstream := upstreamNodeOutputs(wf, node, run)
 	if len(upstream) > 0 && !strings.Contains(prompt, "{{upstream}}") {
-		prompt += "\n\n## 上游节点输出\n\n{{upstream}}"
+		switch promptLang {
+		case "ko":
+			prompt += "\n\n## 상위 노드 출력\n\n{{upstream}}"
+		case "en":
+			prompt += "\n\n## Upstream Node Outputs\n\n{{upstream}}"
+		default:
+			prompt += "\n\n## 上游节点输出\n\n{{upstream}}"
+		}
 	}
 	prompt = strings.ReplaceAll(prompt, "{{upstream}}", strings.Join(upstream, "\n\n"))
 	for id, nodeRun := range run.Nodes {
@@ -195,30 +261,82 @@ func latestNamedArtifact(run domain.Run, nodeID, name string) (domain.Artifact, 
 }
 
 func compileTaskPrompt(node domain.WorkflowNode, roleName, rolePrompt string, gates []domain.VerificationGate) string {
+	lang := detectPromptLanguage(rolePrompt, roleName, node.TaskPrompt)
 	var b strings.Builder
-	b.WriteString("# 节点任务书\n\n")
-	writePromptSection(&b, "执行角色", roleName)
-	writePromptSection(&b, "任务说明", strings.TrimSpace(rolePrompt))
-	var deliverables []string
-	for _, artifact := range node.ArtifactOutputs {
-		deliverables = append(deliverables, artifact.Name+"：在工作区创建 `"+artifact.Path+"`")
+	switch lang {
+	case "ko":
+		b.WriteString("# 노드 작업 명세서\n\n")
+		writePromptSection(&b, "수행 역할", roleName)
+		writePromptSection(&b, "작업 설명", strings.TrimSpace(rolePrompt))
+		var deliverables []string
+		for _, artifact := range node.ArtifactOutputs {
+			deliverables = append(deliverables, artifact.Name+": 작업 공간에 `"+artifact.Path+"` 생성")
+		}
+		var criteria []string
+		for _, gate := range gates {
+			criteria = append(criteria, gate.Name+" 통과 필수 및 실제 명령어 실행 증거 보존")
+		}
+		writePromptList(&b, "산출물", deliverables)
+		writePromptList(&b, "완료 조건 및 게이트 증거", criteria)
+		b.WriteString("## 실패 피드백 및 재시도\n\n")
+		strategy := map[string]string{"full_redo": "전체 재작업", "targeted_fix": "실패 항목만 수정"}[node.RetryStrategy]
+		if strategy == "" {
+			strategy = "실패 항목만 수정"
+		}
+		fmt.Fprintf(&b, "- 전략: %s\n", strategy)
+		if len(node.CarryOver) > 0 {
+			fmt.Fprintf(&b, "- 상속된 컨텍스트: %s\n", strings.Join(node.CarryOver, ", "))
+		}
+		b.WriteString("- 이전 라운드 피드백: {{feedback}}\n")
+	case "en":
+		b.WriteString("# Node Task Specification\n\n")
+		writePromptSection(&b, "Role", roleName)
+		writePromptSection(&b, "Task Description", strings.TrimSpace(rolePrompt))
+		var deliverables []string
+		for _, artifact := range node.ArtifactOutputs {
+			deliverables = append(deliverables, artifact.Name+": create `"+artifact.Path+"` in workspace")
+		}
+		var criteria []string
+		for _, gate := range gates {
+			criteria = append(criteria, gate.Name+" must pass with real command execution evidence preserved")
+		}
+		writePromptList(&b, "Deliverables", deliverables)
+		writePromptList(&b, "Completion Criteria & Gate Evidence", criteria)
+		b.WriteString("## Failure Feedback & Retry\n\n")
+		strategy := map[string]string{"full_redo": "Full redo", "targeted_fix": "Targeted fix"}[node.RetryStrategy]
+		if strategy == "" {
+			strategy = "Targeted fix"
+		}
+		fmt.Fprintf(&b, "- Strategy: %s\n", strategy)
+		if len(node.CarryOver) > 0 {
+			fmt.Fprintf(&b, "- Carried-over context: %s\n", strings.Join(node.CarryOver, ", "))
+		}
+		b.WriteString("- Previous round feedback: {{feedback}}\n")
+	default:
+		b.WriteString("# 节点任务书\n\n")
+		writePromptSection(&b, "执行角色", roleName)
+		writePromptSection(&b, "任务说明", strings.TrimSpace(rolePrompt))
+		var deliverables []string
+		for _, artifact := range node.ArtifactOutputs {
+			deliverables = append(deliverables, artifact.Name+"：在工作区创建 `"+artifact.Path+"`")
+		}
+		var criteria []string
+		for _, gate := range gates {
+			criteria = append(criteria, gate.Name+"必须通过，并保留真实命令证据")
+		}
+		writePromptList(&b, "交付物", deliverables)
+		writePromptList(&b, "完成条件与门禁证据", criteria)
+		b.WriteString("## 失败反馈与重试\n\n")
+		strategy := map[string]string{"full_redo": "完整重做", "targeted_fix": "仅修复失败项"}[node.RetryStrategy]
+		if strategy == "" {
+			strategy = "仅修复失败项"
+		}
+		fmt.Fprintf(&b, "- 策略：%s\n", strategy)
+		if len(node.CarryOver) > 0 {
+			fmt.Fprintf(&b, "- 继承上下文：%s\n", strings.Join(node.CarryOver, "、"))
+		}
+		b.WriteString("- 上一轮反馈：{{feedback}}\n")
 	}
-	var criteria []string
-	for _, gate := range gates {
-		criteria = append(criteria, gate.Name+"必须通过，并保留真实命令证据")
-	}
-	writePromptList(&b, "交付物", deliverables)
-	writePromptList(&b, "完成条件与门禁证据", criteria)
-	b.WriteString("## 失败反馈与重试\n\n")
-	strategy := map[string]string{"full_redo": "完整重做", "targeted_fix": "仅修复失败项"}[node.RetryStrategy]
-	if strategy == "" {
-		strategy = "仅修复失败项"
-	}
-	fmt.Fprintf(&b, "- 策略：%s\n", strategy)
-	if len(node.CarryOver) > 0 {
-		fmt.Fprintf(&b, "- 继承上下文：%s\n", strings.Join(node.CarryOver, "、"))
-	}
-	b.WriteString("- 上一轮反馈：{{feedback}}\n")
 	return b.String()
 }
 

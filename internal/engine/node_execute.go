@@ -620,6 +620,7 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 	invocationSeq := 0
 	requiresSubmit := false
 	var runOnce func(string) (string, error)
+	nodeLang := detectPromptLanguage(effectiveNode.TaskPrompt, effectiveNode.Name, wf.Name, current.Input)
 	switch node.Type {
 	case "script", "command":
 		runOnce = func(string) (string, error) {
@@ -708,6 +709,7 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 			maxIterations = max(1, agent.Loop.MaxIterations)
 			loopOnExhausted = agent.Loop.OnExhausted
 		}
+		nodeLang = detectPromptLanguage(nodeLang, agent.Prompt, agent.Name)
 		agentLockOwner := workspaceRunID(current)
 		runOnce = func(feedback string) (string, error) {
 			// Same-role nodes share the Agent's control directories in this
@@ -734,6 +736,7 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 			}
 			invocationID := fmt.Sprintf("%s-%d-%d", nodeControlKey(current, node.ID), attempt, invocationSeq)
 			rendered := renderPromptWithStore(e.repo, wf, effectiveNode, current)
+			lang := detectPromptLanguage(rendered, nodeLang)
 			hadCatalog := strings.Contains(rendered, "{{artifacts}}")
 			prompt := strings.ReplaceAll(rendered, "{{artifacts}}", artifactContext)
 			if !hadCatalog && artifactContext != "" {
@@ -743,18 +746,42 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 			if feedback != "" && feedback != gateMissingRetryMarker {
 				template := agent.Loop.FeedbackPrompt
 				if template == "" {
-					template = "上一轮未通过 Agent 门禁。请根据以下反馈在同一工作区内修正，只重做失败部分：\n{{feedback}}"
+					switch lang {
+					case "ko":
+						template = "이전 라운드에서 Agent 게이트를 통과하지 못했습니다. 아래 피드백을 바탕으로 동일한 작업 공간에서 실패한 부분만 수정하십시오:\n{{feedback}}"
+					case "en":
+						template = "The previous round did not pass the Agent gate. Please fix only the failed parts in the same workspace according to the following feedback:\n{{feedback}}"
+					default:
+						template = "上一轮未通过 Agent 门禁。请根据以下反馈在同一工作区内修正，只重做失败部分：\n{{feedback}}"
+					}
 				}
 				prompt += "\n\n" + strings.ReplaceAll(template, "{{feedback}}", feedback)
 			}
 			if resumeSessionID != "" {
-				prompt = "请从刚才中断的位置继续执行。"
-				if resumeFeedback != "" {
-					prompt += "\n\n操作员补充了以下信息，请结合它继续：\n\n" + resumeFeedback
+				switch lang {
+				case "ko":
+					prompt = "방금 중단된 위치부터 계속 진행하십시오."
+					if resumeFeedback != "" {
+						prompt += "\n\n운영자가 다음 정보를 추가했습니다. 이를 참고하여 계속 진행하십시오:\n\n" + resumeFeedback
+					}
+				case "en":
+					prompt = "Please continue execution from where it was interrupted."
+					if resumeFeedback != "" {
+						prompt += "\n\nOperator added the following information. Please proceed incorporating it:\n\n" + resumeFeedback
+					}
+				default:
+					prompt = "请从刚才中断的位置继续执行。"
+					if resumeFeedback != "" {
+						prompt += "\n\n操作员补充了以下信息，请结合它继续：\n\n" + resumeFeedback
+					}
 				}
 			}
 			if requiresSubmit {
-				prompt = appendSubmitGateInstruction(prompt, node.RejectTo, feedback == gateMissingRetryMarker)
+				promptWithLang := prompt
+				if feedback == gateMissingRetryMarker && lang != "zh" {
+					promptWithLang = "<!-- lang: " + lang + " -->\n" + prompt
+				}
+				prompt = appendSubmitGateInstruction(promptWithLang, node.RejectTo, feedback == gateMissingRetryMarker)
 			}
 			if repositoryFallback != "" {
 				prompt = runtime.GitPreparationFallbackPrompt(current.RepositoryContexts(), repositoryFallback) + prompt
@@ -846,6 +873,11 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 			submitted, err = readGateResultFrom(outputs, submitPath)
 			if err != nil || submitted == nil {
 				firstProblem := "未调用 submit_gate_result"
+				if nodeLang == "ko" {
+					firstProblem = "submit_gate_result가 호출되지 않았습니다"
+				} else if nodeLang == "en" {
+					firstProblem = "submit_gate_result was not called"
+				}
 				if err != nil {
 					firstProblem = err.Error()
 					if reported == nil {
@@ -859,7 +891,14 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 					sessionID = strings.TrimSpace(nr.SessionID)
 				}
 				if sessionID == "" {
-					err = fmt.Errorf("%s，且执行器没有返回可恢复的 CLI session ID", firstProblem)
+					switch nodeLang {
+					case "ko":
+						err = fmt.Errorf("%s. 실행기가 복원 가능한 CLI 세션 ID를 반환하지 않았습니다", firstProblem)
+					case "en":
+						err = fmt.Errorf("%s, and the executor did not return a resumable CLI session ID", firstProblem)
+					default:
+						err = fmt.Errorf("%s，且执行器没有返回可恢复的 CLI session ID", firstProblem)
+					}
 				} else {
 					e.observe(runID, node.ID, domain.TelemetryEvent{Category: "verification", Name: "gate.submit.missing", Phase: "progress", Level: "warn", Message: firstProblem + "，恢复同一 CLI session 要求重新提交", Attributes: map[string]any{"iteration": iteration, "sessionId": sessionID}})
 					output, err = runOnce(gateMissingRetryMarker)
@@ -872,7 +911,14 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 				}
 			}
 			if err == nil && submitted == nil {
-				err = fmt.Errorf("未收到 submit_gate_result，恢复 CLI session 后仍未提交")
+				switch nodeLang {
+				case "ko":
+					err = fmt.Errorf("submit_gate_result를 수신하지 못했습니다. CLI 세션을 복원한 후에도 제출되지 않았습니다")
+				case "en":
+					err = fmt.Errorf("did not receive submit_gate_result; still not submitted after resuming CLI session")
+				default:
+					err = fmt.Errorf("未收到 submit_gate_result，恢复 CLI session 后仍未提交")
+				}
 			}
 			if err != nil {
 				failedAction = "human"
@@ -1039,8 +1085,16 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 				if !shouldCommitNodeOutcome(*r, nr, executionGeneration, executionAttempt, false) {
 					return
 				}
-				nr.Output, nr.Error, nr.Status, nr.Activity, nr.FinishedAt = output, err.Error(), "waiting_approval", "等待人工确认", time.Now().UTC()
+				activity := "等待人工确认"
 				message := "Agent 请求人工确认"
+				if nodeLang == "ko" {
+					activity = "수동 승인 대기"
+					message = "Agent가 수동 승인을 요청했습니다"
+				} else if nodeLang == "en" {
+					activity = "Waiting for human approval"
+					message = "Agent requested human confirmation"
+				}
+				nr.Output, nr.Error, nr.Status, nr.Activity, nr.FinishedAt = output, err.Error(), "waiting_approval", activity, time.Now().UTC()
 				if nr.GateResult != nil && strings.TrimSpace(nr.GateResult.ActionRequired) != "" {
 					message += "：" + nr.GateResult.ActionRequired
 				} else if detail := strings.TrimSpace(nr.Error); detail != "" {

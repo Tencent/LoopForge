@@ -58,6 +58,64 @@ func TestSubmitGateInstructionExplainsReworkAvailability(t *testing.T) {
 	}
 }
 
+func TestSubmitGateInstructionLanguageDetection(t *testing.T) {
+	t.Parallel()
+
+	// Korean detection and instruction
+	koPrompt := "Phase 1: crates/wz-model 도메인 모델 크레이트 구현"
+	koResult := appendSubmitGateInstruction(koPrompt, "아키텍처_설계", false)
+	for _, want := range []string{"# 노드 최종 상태 필수 제출", "submit_gate_result", "pass: 작업이 정상 완료되었습니다", "상위 노드 「아키텍처_설계」", "모든 사고 과정과 최종 노드 출력은 반드시 한국어로 작성하십시오"} {
+		if !strings.Contains(koResult, want) {
+			t.Fatalf("korean instruction missing %q:\n%s", want, koResult)
+		}
+	}
+
+	koRetry := appendSubmitGateInstruction(koPrompt, "", true)
+	if !strings.Contains(koRetry, "방금 유효한 노드 최종 상태") || !strings.Contains(koRetry, "한국어로 작성하십시오") {
+		t.Fatalf("korean retry instruction invalid:\n%s", koRetry)
+	}
+
+	// English detection via directive
+	enPrompt := "Build user authentication service <!-- lang: en -->"
+	enResult := appendSubmitGateInstruction(enPrompt, "design", false)
+	for _, want := range []string{"# Must Submit Node Terminal Status", "submit_gate_result", "pass: task completed normally", "upstream node \"design\"", "Please write all reasoning and final node output in English"} {
+		if !strings.Contains(enResult, want) {
+			t.Fatalf("english instruction missing %q:\n%s", want, enResult)
+		}
+	}
+
+	enRetry := appendSubmitGateInstruction(enPrompt, "", true)
+	if !strings.Contains(enRetry, "Did not receive a valid node terminal status") || !strings.Contains(enRetry, "write all reasoning and final node output in English") {
+		t.Fatalf("english retry instruction invalid:\n%s", enRetry)
+	}
+
+	// Chinese detection (default fallback and Han text)
+	zhPrompt := "实现用户认证模块"
+	zhResult := appendSubmitGateInstruction(zhPrompt, "设计", false)
+	if !strings.Contains(zhResult, "# 必须提交节点终态") || !strings.Contains(zhResult, "上游节点「设计」") {
+		t.Fatalf("chinese instruction invalid:\n%s", zhResult)
+	}
+}
+
+func TestDetectPromptLanguage(t *testing.T) {
+	t.Parallel()
+	if got := detectPromptLanguage("도메인 모델 크레이트 구현"); got != "ko" {
+		t.Fatalf("expected ko, got %q", got)
+	}
+	if got := detectPromptLanguage("<!-- lang: ko --> Implement feature"); got != "ko" {
+		t.Fatalf("expected ko, got %q", got)
+	}
+	if got := detectPromptLanguage("<!-- lang: en --> Implement feature"); got != "en" {
+		t.Fatalf("expected en, got %q", got)
+	}
+	if got := detectPromptLanguage("实现用户认证"); got != "zh" {
+		t.Fatalf("expected zh, got %q", got)
+	}
+	if got := detectPromptLanguage("task"); got != "zh" {
+		t.Fatalf("expected default zh for ASCII task, got %q", got)
+	}
+}
+
 func TestReadGateResultRequiresHumanAction(t *testing.T) {
 	t.Parallel()
 	workspace := t.TempDir()
