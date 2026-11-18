@@ -1,16 +1,17 @@
 -- 037 Bot binding ownership (docs/proposals/enterprise-im.md §5.4 step 4).
--- Run after 036. WeCom bindings are scoped by the external Bot ID; this
+-- Run after 036; valid under ONLY_FULL_GROUP_BY (the MySQL 8.4 default).
+-- WeCom bindings are scoped by the external Bot ID; this
 -- script records the owning configuration where it is unambiguous and lists
 -- the rest for manual review. New-channel bindings always carry config_id.
 
 -- Section 1. Report: binding scopes shared by several WeCom configurations.
 -- These keep config_id empty; confirm the owner with the project and set it
 -- by hand (UPDATE bot_user_bindings SET config_id = ... WHERE bot_id = ...).
-SELECT b.external_app_id AS bot_scope, COUNT(*) AS configs, GROUP_CONCAT(b.id ORDER BY b.id) AS config_ids,
-       (SELECT COUNT(*) FROM bot_user_bindings u WHERE BINARY u.bot_id = BINARY b.external_app_id AND u.user_id > 0) AS bound_users
+SELECT MIN(b.external_app_id) AS bot_scope, COUNT(*) AS configs, GROUP_CONCAT(b.id ORDER BY b.id) AS config_ids,
+       (SELECT COUNT(*) FROM bot_user_bindings u WHERE BINARY u.bot_id = BINARY MIN(b.external_app_id) AND u.user_id > 0) AS bound_users
 FROM notification_bots b
 WHERE b.channel = 'wecom'
-GROUP BY b.external_app_id
+GROUP BY BINARY b.external_app_id
 HAVING COUNT(*) > 1;
 
 -- Section 2. Report: orphan bindings whose scope matches no configuration.
@@ -22,7 +23,7 @@ WHERE b.id IS NULL AND u.user_id > 0 AND (u.config_id IS NULL OR u.config_id = '
 -- Section 3. Backfill unambiguous WeCom ownership. Re-runnable.
 START TRANSACTION;
 UPDATE bot_user_bindings u
-JOIN (SELECT external_app_id, MIN(id) AS config_id FROM notification_bots
+JOIN (SELECT MIN(external_app_id) AS external_app_id, MIN(id) AS config_id FROM notification_bots
       WHERE channel = 'wecom' GROUP BY BINARY external_app_id HAVING COUNT(*) = 1) owner
   ON BINARY owner.external_app_id = BINARY u.bot_id
 SET u.config_id = owner.config_id, u.channel = 'wecom'

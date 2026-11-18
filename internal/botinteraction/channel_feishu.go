@@ -95,12 +95,7 @@ func (f *feishuChannel) Connect(ctx context.Context, bot domain.NotificationBot,
 		if !ok {
 			return nil
 		}
-		ackCtx, cancel := context.WithTimeout(ctx, f.ackTimeout)
-		defer cancel()
-		// A storage error is returned so the SDK answers 500 and Feishu
-		// redelivers; duplicates and ignored events are acknowledged.
-		_, err := sink(ackCtx, inbound)
-		return err
+		return f.acknowledge(ctx, inbound, sink)
 	})
 	ready := make(chan struct{})
 	var readyOnce sync.Once
@@ -132,6 +127,33 @@ func (f *feishuChannel) Connect(ctx context.Context, bot domain.NotificationBot,
 	case <-ctx.Done():
 		conn.Close()
 		return nil, ctx.Err()
+	}
+}
+
+// errFeishuAckTimeout: persistence did not finish inside the ack budget.
+var errFeishuAckTimeout = errors.New("飞书事件入库超时，等待平台重投")
+
+// acknowledge persists an event within Feishu's three-second ack window. A
+// storage error is returned so the SDK answers 500 and Feishu redelivers;
+// duplicates and ignored events are acknowledged. The repository calls do not
+// take a context, so the sink runs in its own goroutine and a slow database
+// answers with a failure at the deadline instead of blocking past the window.
+// The write may still complete afterwards; the redelivered event is then a
+// duplicate of the same business message and is acknowledged without a second
+// interaction.
+func (f *feishuChannel) acknowledge(ctx context.Context, inbound InboundEvent, sink InboundSink) error {
+	ackCtx, cancel := context.WithTimeout(ctx, f.ackTimeout)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		_, err := sink(ackCtx, inbound)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		return err
+	case <-ackCtx.Done():
+		return errFeishuAckTimeout
 	}
 }
 

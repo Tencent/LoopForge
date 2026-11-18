@@ -163,9 +163,11 @@ func (h *assistantHandlers) generateBotReply(ctx context.Context, bot domain.Not
 		final, ok := session.takeFinal()
 		if !ok || final.Assistant == nil {
 			// A completed conversational answer needs no terminal tool call
-			// (submit_assistant_reply only accepts drafts), as in the web
-			// assistant.
-			if cand, recovered := recoverNativeAssistantReply(raw, bot.ProjectID); cliErr == nil && recovered && len(cand.Drafts) == 0 && !assistantProgressOnly(cand.Message, messages) {
+			// (submit_assistant_reply only accepts drafts). Only plain text
+			// from a successful run is accepted: output carrying protocol
+			// JSON (a draft attempt, possibly filtered during parsing) and
+			// progress-only text still go through the terminal retry.
+			if cand, recovered := recoverNativeAssistantReply(raw, bot.ProjectID); cliErr == nil && recovered && !assistantProtocolJSONPresent(raw) && len(cand.Drafts) == 0 && !assistantProgressOnly(cand.Message, messages) {
 				final, ok = AgentTerminalResult{Kind: AgentTerminalAssistant, Assistant: &cand}, true
 			}
 		}

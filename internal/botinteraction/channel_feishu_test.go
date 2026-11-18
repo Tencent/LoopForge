@@ -292,3 +292,23 @@ func TestFeishuConnectFailsWhenBootstrapRejected(t *testing.T) {
 		t.Fatal("rejected bootstrap waited for the ready timeout")
 	}
 }
+
+// A sink that blocks (slow database) is answered with a failure at the ack
+// deadline so Feishu redelivers, instead of holding the ack past its window.
+func TestFeishuAckBoundedWhenPersistenceBlocks(t *testing.T) {
+	ch := newFeishuChannel()
+	ch.ackTimeout = 200 * time.Millisecond
+	release := make(chan struct{})
+	defer close(release)
+	start := time.Now()
+	err := ch.acknowledge(context.Background(), InboundEvent{MessageID: "om_1"}, func(context.Context, InboundEvent) (InboundAck, error) {
+		<-release
+		return InboundAck{Accepted: true}, nil
+	})
+	if !errors.Is(err, errFeishuAckTimeout) || time.Since(start) > time.Second {
+		t.Fatalf("blocked sink = %v after %s", err, time.Since(start))
+	}
+	if err := ch.acknowledge(context.Background(), InboundEvent{}, func(context.Context, InboundEvent) (InboundAck, error) { return InboundAck{}, nil }); err != nil {
+		t.Fatal(err)
+	}
+}
