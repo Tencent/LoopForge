@@ -55,14 +55,15 @@ func assistantModelEffortsIn(model string, catalog []domain.CLIModel) []string {
 	if runtime.IsAgentCLI(engine) {
 		return supported
 	}
-	if engine == assistantEngineCodex {
-		for _, builtin := range codexBuiltinModels {
-			if builtin.id == id {
-				return builtin.efforts
-			}
+	for _, builtin := range builtinExecutorModels[engine] {
+		if builtin.id == id {
+			return builtin.efforts
 		}
+	}
+	if engine == assistantEngineCodex {
 		return []string{"low", "medium", "high"}
 	}
+	// Keep the legacy fallback for CodeBuddy and custom Claude gateways.
 	switch id {
 	case "hy4std", "hy4-preview-ioa":
 		return []string{"high"}

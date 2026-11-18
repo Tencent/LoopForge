@@ -110,6 +110,12 @@ func TestModelEffortsKeepLegacyCatalogsAndCLIConstraints(t *testing.T) {
 		{"codex:gpt-5.5", domain.CLIModel{ID: "gpt-5.5", DiscoveredReasoningEfforts: &discovered}, discovered},
 		{"codex:gpt-5.5", domain.CLIModel{ID: "gpt-5.5", ReasoningEfforts: &custom, DiscoveredReasoningEfforts: &discovered}, custom},
 		{"codex:gpt-5.5", domain.CLIModel{ID: "gpt-5.5", ReasoningEfforts: &explicitDefault, DiscoveredReasoningEfforts: &discovered}, nil},
+		{"claude-code:claude-fable-5-2", domain.CLIModel{ID: "claude-fable-5-2"}, []string{"low", "medium", "high", "xhigh", "max"}},
+		{"claude-code:claude-fable-5-2", domain.CLIModel{ID: "claude-fable-5-2", DiscoveredReasoningEfforts: &discovered}, discovered},
+		{"claude-code:claude-fable-5-2", domain.CLIModel{ID: "claude-fable-5-2", ReasoningEfforts: &custom, DiscoveredReasoningEfforts: &discovered}, []string{"low", "xhigh"}},
+		{"claude-code:claude-fable-5-2", domain.CLIModel{ID: "claude-fable-5-2", ReasoningEfforts: &explicitDefault, DiscoveredReasoningEfforts: &discovered}, nil},
+		{"claude-code:claude-opus-5.5", domain.CLIModel{ID: "claude-opus-5.5"}, []string{"low", "medium", "high", "xhigh", "max"}},
+		{"claude-fable-5-2", domain.CLIModel{ID: "claude-fable-5-2"}, []string{"low", "medium", "high"}},
 		{"gpt-5.5", domain.CLIModel{ID: "gpt-5.5"}, []string{"low", "medium", "high"}},
 		{"opencode:custom", domain.CLIModel{ID: "custom", ReasoningEfforts: &custom}, []string{"low"}},
 		{"agy:claude-custom", domain.CLIModel{ID: "claude-custom", ReasoningEfforts: &custom}, nil},
@@ -158,15 +164,19 @@ func TestAutomaticDiscoveryUsesSameEffortsForColdValidation(t *testing.T) {
 	}
 }
 
-func TestCodexBuiltinEffortsMatchTheCatalogAndTurnValidation(t *testing.T) {
+func TestBuiltinModelEffortsMatchTheCatalogAndTurnValidation(t *testing.T) {
 	h, owner := workbenchFixture(t)
-	c, response := workbenchContext(owner, http.MethodGet, "/api/assistant/models?executor=codex", &bytes.Buffer{})
-	h.models(c)
-	var chat assistantModelCatalog
-	if err := json.Unmarshal(response.Body.Bytes(), &chat); response.Code != http.StatusOK || err != nil {
-		t.Fatalf("chat catalog: %d %s", response.Code, response.Body)
+	chatCatalogs := make(map[string]assistantModelCatalog)
+	for _, engine := range []string{"codex", "claude-code"} {
+		c, response := workbenchContext(owner, http.MethodGet, "/api/assistant/models?executor="+engine, &bytes.Buffer{})
+		h.models(c)
+		var chat assistantModelCatalog
+		if err := json.Unmarshal(response.Body.Bytes(), &chat); response.Code != http.StatusOK || err != nil {
+			t.Fatalf("%s chat catalog: %d %s", engine, response.Code, response.Body)
+		}
+		chatCatalogs[engine] = chat
 	}
-	c, response = workbenchContext(owner, http.MethodGet, "/api/executor-models?builtin=1", &bytes.Buffer{})
+	c, response := workbenchContext(owner, http.MethodGet, "/api/executor-models?builtin=1", &bytes.Buffer{})
 	(&catalogHandlers{deps: h.deps}).executorModels(c)
 	var role map[string]executorModelCatalog
 	if err := json.Unmarshal(response.Body.Bytes(), &role); response.Code != http.StatusOK || err != nil {
@@ -176,43 +186,52 @@ func TestCodexBuiltinEffortsMatchTheCatalogAndTurnValidation(t *testing.T) {
 	max := []string{"low", "medium", "high", "xhigh", "max"}
 	ultra := []string{"low", "medium", "high", "xhigh", "max", "ultra"}
 	for _, model := range []struct {
+		engine string
 		id     string
 		levels []string
 	}{
-		{"gpt-5.5", xhigh},
-		{"gpt-5.6-luna", max},
-		{"gpt-6-luna", max},
-		{"gpt-6.1-terra", ultra},
-		{"gpt-6.2-sol", ultra},
-		{"gpt-6.2-astra", ultra},
+		{"codex", "gpt-5.5", xhigh},
+		{"codex", "gpt-5.6-luna", max},
+		{"codex", "gpt-6-luna", max},
+		{"codex", "gpt-6.1-terra", ultra},
+		{"codex", "gpt-6.2-sol", ultra},
+		{"codex", "gpt-6.2-astra", ultra},
+		{"claude-code", "claude-fable-5-2", max},
+		{"claude-code", "claude-opus-5-5", max},
+		{"claude-code", "claude-sonnet-4-6", []string{"low", "medium", "high", "max"}},
 	} {
-		t.Run(model.id, func(t *testing.T) {
+		t.Run(model.engine+"/"+model.id, func(t *testing.T) {
+			chat := chatCatalogs[model.engine]
 			chatIndex := slices.IndexFunc(chat.Models, func(m assistantModel) bool { return m.ID == model.id })
 			if chatIndex < 0 || !slices.Equal(chat.Models[chatIndex].Efforts, model.levels) {
 				t.Errorf("chat picker missing %s with efforts %v", model.id, model.levels)
 			}
-			roleModels := role["codex"].Models
+			roleKey := model.engine
+			if roleKey == "claude-code" {
+				roleKey = "claude"
+			}
+			roleModels := role[roleKey].Models
 			roleIndex := slices.IndexFunc(roleModels, func(m executorModelInfo) bool { return m.ID == model.id })
 			if roleIndex < 0 || !slices.Equal(roleModels[roleIndex].Efforts, effortOptions(model.levels)) {
 				t.Errorf("role picker missing %s with efforts %v", model.id, model.levels)
 			}
 			for _, effort := range ultra {
-				err := validateAssistantEffort(context.Background(), owner, "codex:"+model.id, effort)
+				err := validateAssistantEffort(context.Background(), owner, model.engine+":"+model.id, effort)
 				if want := slices.Contains(model.levels, effort); (err == nil) != want {
 					t.Errorf("%s effort %s: validation returned %v, want accepted=%t", model.id, effort, err, want)
 				}
 			}
 			last := model.levels[len(model.levels)-1]
-			body, err := json.Marshal(map[string]string{"model": model.id, "executor": "codex", "effort": last})
+			body, err := json.Marshal(map[string]string{"model": model.id, "executor": model.engine, "effort": last})
 			if err != nil {
 				t.Fatal(err)
 			}
-			sessionID := "codex-" + model.id
+			sessionID := model.engine + "-" + model.id
 			c, response := workbenchContext(owner, http.MethodPut, "/api/assistant/sessions/"+sessionID, bytes.NewBuffer(body))
 			c.Params = gin.Params{{Key: "id", Value: sessionID}}
 			h.session(c)
 			if response.Code != http.StatusOK {
-				t.Fatalf("session rejected the bare model ID with a Codex executor: %d %s", response.Code, response.Body)
+				t.Fatalf("session rejected the bare model ID with executor %s: %d %s", model.engine, response.Code, response.Body)
 			}
 		})
 	}

@@ -35,29 +35,50 @@ type executorModelCatalog struct {
 	Efforts     []executorEffortOption `json:"efforts"`
 }
 
-type codexBuiltinModel struct {
+type builtinExecutorModel struct {
 	id      string
 	name    string
 	efforts []string
 }
 
-// Reasoning levels from the Codex model catalog for the models we list.
-var codexBuiltinModels = func() []codexBuiltinModel {
+// Per-model defaults from the Codex catalog and the Claude Code effort table.
+var builtinExecutorModels = func() map[string][]builtinExecutorModel {
+	legacy := []string{"low", "medium", "high"}
 	xhigh := []string{"low", "medium", "high", "xhigh"}
 	max := []string{"low", "medium", "high", "xhigh", "max"}
+	maxWithoutXHigh := []string{"low", "medium", "high", "max"}
 	ultra := []string{"low", "medium", "high", "xhigh", "max", "ultra"}
-	return []codexBuiltinModel{
-		{"gpt-6.1-sol", "GPT-6.1 Sol", ultra},
-		{"gpt-6.1-terra", "GPT-6.1 Terra", ultra},
-		{"gpt-6.2-sol", "GPT-6.2 Sol", ultra},
-		{"gpt-6.2-astra", "GPT-6.2 Astra", ultra},
-		{"gpt-6-astra", "GPT-6 Astra", ultra},
-		{"gpt-6-sol", "GPT-6 Sol", ultra},
-		{"gpt-6-luna", "GPT-6 Luna", max},
-		{"gpt-5.6-sol", "GPT-5.6 Sol", ultra},
-		{"gpt-5.6-terra", "GPT-5.6 Terra", ultra},
-		{"gpt-5.6-luna", "GPT-5.6 Luna", max},
-		{"gpt-5.5", "GPT-5.5", xhigh},
+	return map[string][]builtinExecutorModel{
+		assistantEngineCodex: {
+			{"gpt-6.1-sol", "GPT-6.1 Sol", ultra},
+			{"gpt-6.1-terra", "GPT-6.1 Terra", ultra},
+			{"gpt-6.2-sol", "GPT-6.2 Sol", ultra},
+			{"gpt-6.2-astra", "GPT-6.2 Astra", ultra},
+			{"gpt-6-astra", "GPT-6 Astra", ultra},
+			{"gpt-6-sol", "GPT-6 Sol", ultra},
+			{"gpt-6-luna", "GPT-6 Luna", max},
+			{"gpt-5.6-sol", "GPT-5.6 Sol", ultra},
+			{"gpt-5.6-terra", "GPT-5.6 Terra", ultra},
+			{"gpt-5.6-luna", "GPT-5.6 Luna", max},
+			{"gpt-5.5", "GPT-5.5", xhigh},
+		},
+		assistantEngineClaude: {
+			{"claude-fable-5-1", "Claude Fable 5.1", max},
+			{"claude-fable-5-2", "Claude Fable 5.2", max},
+			{"claude-fable-5", "Claude Fable 5", max},
+			{"claude-opus-5-5", "Claude Opus 5.5", max},
+			{"claude-opus-5", "Claude Opus 5", max},
+			{"claude-opus-4-8", "Claude Opus 4.8", max},
+			{"claude-opus-4-7", "Claude Opus 4.7", max},
+			{"claude-opus-4-6", "Claude Opus 4.6", maxWithoutXHigh},
+			{"claude-sonnet-5-5", "Claude Sonnet 5.5", max},
+			{"claude-sonnet-5", "Claude Sonnet 5", max},
+			{"claude-sonnet-4-6", "Claude Sonnet 4.6", maxWithoutXHigh},
+			// Keep accepting effort values saved in existing 4.5 conversations.
+			{"claude-sonnet-4-5", "Claude Sonnet 4.5", legacy},
+			{"claude-haiku-5-5", "Claude Haiku 5.5", max},
+			{"claude-haiku-4-5", "Claude Haiku 4.5", legacy},
+		},
 	}
 }()
 
@@ -93,10 +114,6 @@ func executorModelCatalogs() map[string]executorModelCatalog {
 	for _, model := range selectableCodeBuddyModels(known.Models) {
 		codebuddyModels = append(codebuddyModels, executorModelInfo{ID: model.ID, Name: model.Name, Credits: model.Credits})
 	}
-	codexModels := make([]executorModelInfo, 0, len(codexBuiltinModels))
-	for _, model := range codexBuiltinModels {
-		codexModels = append(codexModels, executorModelInfo{ID: model.id, Name: model.name})
-	}
 	catalogs := map[string]executorModelCatalog{
 		"codebuddy": {
 			Default: known.Default,
@@ -105,28 +122,11 @@ func executorModelCatalogs() map[string]executorModelCatalog {
 		},
 		"codex": {
 			CustomModel: true,
-			Models:      codexModels,
 			Efforts:     effortOptions(domain.ExecutorEffortLevels["codex"]),
 		},
 		"claude": {
 			CustomModel: true,
-			Models: []executorModelInfo{
-				{ID: "claude-fable-5-1", Name: "Claude Fable 5.1"},
-				{ID: "claude-fable-5-2", Name: "Claude Fable 5.2"},
-				{ID: "claude-fable-5", Name: "Claude Fable 5"},
-				{ID: "claude-opus-5-5", Name: "Claude Opus 5.5"},
-				{ID: "claude-opus-5", Name: "Claude Opus 5"},
-				{ID: "claude-opus-4-8", Name: "Claude Opus 4.8"},
-				{ID: "claude-opus-4-7", Name: "Claude Opus 4.7"},
-				{ID: "claude-opus-4-6", Name: "Claude Opus 4.6"},
-				{ID: "claude-sonnet-5-5", Name: "Claude Sonnet 5.5"},
-				{ID: "claude-sonnet-5", Name: "Claude Sonnet 5"},
-				{ID: "claude-sonnet-4-6", Name: "Claude Sonnet 4.6"},
-				{ID: "claude-sonnet-4-5", Name: "Claude Sonnet 4.5"},
-				{ID: "claude-haiku-5-5", Name: "Claude Haiku 5.5"},
-				{ID: "claude-haiku-4-5", Name: "Claude Haiku 4.5"},
-			},
-			Efforts: effortOptions(domain.ExecutorEffortLevels["claude-code"]),
+			Efforts:     effortOptions(domain.ExecutorEffortLevels["claude-code"]),
 		},
 		// Official-endpoint catalogs. OpenCode and Pi have none, so their
 		// models come from the Base URL.
@@ -172,15 +172,21 @@ func executorModelCatalogs() map[string]executorModelCatalog {
 		},
 	}
 	for engine, catalog := range catalogs {
+		modelEngine := engine
+		if engine == "claude" {
+			modelEngine = assistantEngineClaude
+		}
+		for _, model := range builtinExecutorModels[modelEngine] {
+			catalog.Models = append(catalog.Models, executorModelInfo{ID: model.id, Name: model.name})
+		}
 		for i := range catalog.Models {
 			id := catalog.Models[i].ID
-			if engine == "claude" {
-				id = assistantEngineClaude + ":" + id
-			} else if engine != assistantEngineCodeBuddy {
-				id = engine + ":" + id
+			if modelEngine != assistantEngineCodeBuddy {
+				id = modelEngine + ":" + id
 			}
 			catalog.Models[i].Efforts = effortOptions(assistantModelEffortsIn(id, nil))
 		}
+		catalogs[engine] = catalog
 	}
 	return catalogs
 }
