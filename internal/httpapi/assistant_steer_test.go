@@ -2,14 +2,160 @@ package httpapi
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"mime/multipart"
 	"strings"
 	"testing"
+	"time"
 
 	"agentflow/internal/domain"
 	"agentflow/internal/repo"
 	"github.com/gin-gonic/gin"
 )
+
+func TestSteerKeepsNewAttachmentsAndReferencesWithSameText(t *testing.T) {
+	h, user := workbenchFixture(t)
+	stubCLIModelDiscovery(t)
+	const projectID, sessionID = "workbench", "same-text-steer"
+	const question = "请查看这份文件"
+	upload := func(name string) domain.AssistantAttachment {
+		t.Helper()
+		var form bytes.Buffer
+		w := multipart.NewWriter(&form)
+		if err := w.WriteField("projectId", projectID); err != nil {
+			t.Fatal(err)
+		}
+		file, err := w.CreateFormFile("file", name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := file.Write([]byte(name)); err != nil {
+			t.Fatal(err)
+		}
+		if err := w.Close(); err != nil {
+			t.Fatal(err)
+		}
+		c, rec := workbenchContext(user, "POST", "/api/assistant/attachments", &form)
+		c.Request.Header.Set("Content-Type", w.FormDataContentType())
+		h.uploadAttachment(c)
+		var item domain.AssistantAttachment
+		if rec.Code != 201 || json.Unmarshal(rec.Body.Bytes(), &item) != nil {
+			t.Fatalf("upload %s: %d %s", name, rec.Code, rec.Body)
+		}
+		return item
+	}
+	first, second := upload("first.txt"), upload("second.txt")
+	for _, id := range []string{"first-issue", "second-issue"} {
+		if err := h.repo.PutIssue(domain.Issue{ID: id, Title: id, ProjectID: projectID}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	started := make(chan struct{})
+	followUpPrompt := make(chan string, 1)
+	h.generate = func(ctx context.Context, prompt string, _ domain.User) (string, error) {
+		select {
+		case <-started:
+			followUpPrompt <- prompt
+			return "已查看附件", nil
+		default:
+			close(started)
+			<-ctx.Done()
+			return "", ctx.Err()
+		}
+	}
+	request, _ := json.Marshal(assistantRequest{
+		SessionID: sessionID, ProjectID: projectID,
+		Messages: []assistantMessage{{
+			Role: "user", Content: question,
+			Attachments: []domain.AssistantAttachment{first},
+			References:  []domain.AssistantReference{{Type: "issue", ID: "first-issue"}},
+		}},
+	})
+	c, rec := workbenchContext(user, "POST", "/api/assistant/generations", bytes.NewBuffer(request))
+	h.startGeneration(c)
+	if rec.Code != 202 {
+		t.Fatalf("start: %d %s", rec.Code, rec.Body)
+	}
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("initial turn did not start")
+	}
+	generation, _ := h.repo.PeekAssistantGeneration(user.ID, sessionID)
+	body, _ := json.Marshal(domain.AssistantSteer{
+		Content: question, Attachments: []domain.AssistantAttachment{second},
+		References: []domain.AssistantReference{{Type: "issue", ID: "second-issue"}},
+	})
+	path := "/api/assistant/sessions/" + sessionID + "/generation/steer?generationId=" + generation.ID
+	c, rec = workbenchContext(user, "POST", path, bytes.NewBuffer(body))
+	c.Params = gin.Params{{Key: "id", Value: sessionID}}
+	h.steerGeneration(c)
+	if rec.Code != 200 {
+		t.Fatalf("steer: %d %s", rec.Code, rec.Body)
+	}
+
+	for deadline := time.Now().Add(5 * time.Second); ; {
+		next, _ := h.repo.PeekAssistantGeneration(user.ID, sessionID)
+		if next.ID != generation.ID && next.Status == "completed" {
+			break
+		}
+		if (next.ID != generation.ID && next.Status == "failed") || time.Now().After(deadline) {
+			t.Fatalf("follow-up did not complete: %s %s", next.Status, next.Error)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	saved, _ := h.repo.AssistantSession(user.ID, sessionID)
+	if len(saved.Messages) != 3 {
+		t.Fatalf("expected two user messages and a reply, got %+v", saved.Messages)
+	}
+	original, steered := saved.Messages[0], saved.Messages[1]
+	if original.Content != question || len(original.Attachments) != 1 || original.Attachments[0].ID != first.ID ||
+		len(original.References) != 1 || original.References[0].ID != "first-issue" {
+		t.Fatalf("original message changed: %+v", original)
+	}
+	if steered.Role != "user" || steered.Content != question || steered.Trigger != "steer" || steered.TriggerID == "" ||
+		len(steered.Attachments) != 1 || steered.Attachments[0].ID != second.ID ||
+		len(steered.References) != 1 || steered.References[0].ID != "second-issue" {
+		t.Fatalf("steered message lost its context: %+v", steered)
+	}
+	prompt := <-followUpPrompt
+	if !strings.Contains(prompt, second.Name) || !strings.Contains(prompt, "second-issue") {
+		t.Fatal("the follow-up prompt must contain the new file and reference")
+	}
+}
+
+func TestCommitTurnTranscriptKeepsSameSteerOnce(t *testing.T) {
+	for _, tc := range []struct{ name, id, want string }{
+		{"accepted steer", "accepted-steer-id", "accepted-steer-id"},
+		{"legacy steer", "", "interrupted-turn"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h, user := workbenchFixture(t)
+			session := domain.AssistantSession{ID: "steer-replay", Model: "default", Messages: []assistantMessage{
+				{Role: "user", Content: "original"},
+			}}
+			if err := h.repo.PutAssistantSession(user.ID, session); err != nil {
+				t.Fatal(err)
+			}
+			generation := domain.AssistantGeneration{ID: "interrupted-turn", SessionID: session.ID, UserID: user.ID,
+				Stream: &domain.AssistantStreamSnapshot{Answer: "partial reply"}}
+			steer := &domain.AssistantSteer{Content: "continue", TriggerID: tc.id}
+			for range 2 {
+				if err := h.commitTurnTranscript(generation, steer, false); err != nil {
+					t.Fatal(err)
+				}
+			}
+			stored, _ := h.repo.AssistantSession(user.ID, session.ID)
+			if len(stored.Messages) != 3 ||
+				stored.Messages[1].GenerationID != generation.ID ||
+				stored.Messages[2].TriggerID != tc.want || stored.Messages[2].Content != steer.Content {
+				t.Fatalf("replaying a steer must keep one partial reply and one follow-up: %+v", stored.Messages)
+			}
+		})
+	}
+}
 
 func TestSteerKeepsConversationCLI(t *testing.T) {
 	for _, tc := range []struct {

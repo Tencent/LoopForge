@@ -7,6 +7,7 @@ import (
 
 	"bytes"
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"github.com/gin-gonic/gin"
@@ -547,7 +548,17 @@ func (h *assistantHandlers) steerGeneration(c *gin.Context) {
 		return
 	}
 	message := probe.Messages[0]
-	steer := domain.AssistantSteer{Content: message.Content, Attachments: message.Attachments, References: message.References, Model: model, Effort: body.Effort, ApprovalMode: normalizeAssistantApprovalMode(body.ApprovalMode), ActorID: user.ID, ActorName: user.LoginName}
+	steer := domain.AssistantSteer{
+		Content:      message.Content,
+		Attachments:  message.Attachments,
+		References:   message.References,
+		Model:        model,
+		Effort:       body.Effort,
+		ApprovalMode: normalizeAssistantApprovalMode(body.ApprovalMode),
+		ActorID:      user.ID,
+		ActorName:    user.LoginName,
+		TriggerID:    rand.Text(),
+	}
 	if err := h.repo.SteerAssistantGeneration(ownerID, g.SessionID, g.ID, steer); err != nil {
 		c.JSON(409, gin.H{"error": err.Error()})
 		return
@@ -560,6 +571,17 @@ func (h *assistantHandlers) commitTurnTranscript(g domain.AssistantGeneration, s
 	if !ok {
 		return fmt.Errorf("会话不存在")
 	}
+	var trigger, triggerID string
+	if steer != nil {
+		trigger = firstNonEmpty(steer.Trigger, "steer")
+		// Generations written before steers had an ID still have a stable ID.
+		triggerID = firstNonEmpty(steer.TriggerID, g.ID)
+		for _, message := range session.Messages {
+			if triggerID != "" && message.Role == "user" && message.Trigger == trigger && message.TriggerID == triggerID {
+				return nil
+			}
+		}
+	}
 	changed := false
 	if message, worth := turnTranscriptMessage(g, session.Model, stopped); worth && (len(session.Messages) == 0 || session.Messages[len(session.Messages)-1].Role != "assistant") {
 		session.Messages = append(session.Messages, message)
@@ -570,11 +592,18 @@ func (h *assistantHandlers) commitTurnTranscript(g domain.AssistantGeneration, s
 		if content == "" {
 			content = "请阅读本轮附件并回答。"
 		}
-		last := len(session.Messages) - 1
-		if last < 0 || session.Messages[last].Role != "user" || session.Messages[last].Content != content {
-			session.Messages = append(session.Messages, domain.AssistantMessage{Role: "user", Content: content, AuthorID: steer.ActorID, AuthorName: steer.ActorName, CreatedAt: time.Now().UTC(), Attachments: steer.Attachments, References: steer.References, Trigger: firstNonEmpty(steer.Trigger, "steer")})
-			changed = true
-		}
+		session.Messages = append(session.Messages, domain.AssistantMessage{
+			Role:        "user",
+			Content:     content,
+			AuthorID:    steer.ActorID,
+			AuthorName:  steer.ActorName,
+			CreatedAt:   time.Now().UTC(),
+			Attachments: steer.Attachments,
+			References:  steer.References,
+			Trigger:     trigger,
+			TriggerID:   triggerID,
+		})
+		changed = true
 	}
 	if !changed {
 		return nil
@@ -587,7 +616,11 @@ func (h *assistantHandlers) commitTurnTranscript(g domain.AssistantGeneration, s
 
 func (h *assistantHandlers) followSteer(parent context.Context, prev domain.AssistantGeneration, steer *domain.AssistantSteer, actor *auth.User) {
 	session, ok := h.repo.AssistantSession(prev.UserID, prev.SessionID)
-	if !ok || len(session.Messages) == 0 || session.Messages[len(session.Messages)-1].Role != "user" {
+	if !ok || len(session.Messages) == 0 {
+		return
+	}
+	last := session.Messages[len(session.Messages)-1]
+	if last.Role != "user" || (steer.TriggerID != "" && last.TriggerID != steer.TriggerID) {
 		return
 	}
 	if steer.ActorID != 0 {
