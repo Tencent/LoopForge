@@ -101,7 +101,7 @@ describe("sending while a reply runs", () => {
     const { result, unmount } = await openRunning();
     let ok;
     await act(async () => {
-      ok = await result.current.send({ text: "应该看 CI 而不是 lint" });
+      ok = await result.current.send({ text: "应该看 CI 而不是 lint", approvalMode: "auto" });
     });
     expect(ok).toBe(true);
     expect(result.current.error).toBe("");
@@ -113,6 +113,7 @@ describe("sending while a reply runs", () => {
     await finish("failed");
     await waitFor(() => expect(generationPosts()).toHaveLength(1));
     const body = generationPosts()[0][1];
+    expect(body).toMatchObject({ approvalMode: "auto", approvalUserId: 1 });
     // The queued question follows the stored unfinished reply.
     expect(body.messages.map((m) => m.role)).toEqual(["user", "assistant", "user"]);
     expect(body.messages[1].unfinished).toBe("生成已停止");

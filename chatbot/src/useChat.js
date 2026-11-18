@@ -22,6 +22,7 @@ import {
   enqueue,
   holdQueue,
   nextQueued,
+  queuedApproval,
   queuedMessage,
   readQueues,
   removeQueued,
@@ -799,7 +800,7 @@ export function useChat() {
           references: item.references || [],
           model: activeModel,
           effort: activeEffort,
-          approvalMode: item.approvalMode || "confirm",
+          ...queuedApproval(item, user?.id),
         },
       );
       return true;
@@ -817,10 +818,14 @@ export function useChat() {
     attachments = [],
     references = [],
     approvalMode = "confirm",
+    approvalUserId,
     messagesOverride = null,
     fromQueue = false,
   }) {
     if (!text.trim() && !attachments.length) return false;
+    const approval = fromQueue
+      ? queuedApproval({ approvalMode, approvalUserId }, user?.id)
+      : { approvalMode, approvalUserId: user?.id };
     if (currentId.current && sessionRef.current?.id !== currentId.current) {
       setError("会话仍在加载，请稍候再发送。");
       return false;
@@ -838,7 +843,7 @@ export function useChat() {
       }
       const id = currentId.current;
       setQueues((old) =>
-        enqueue(old, id, queuedMessage({ text, attachments, references, approvalMode })),
+        enqueue(old, id, queuedMessage({ text, attachments, references, ...approval })),
       );
       setError("");
       return true;
@@ -890,6 +895,7 @@ export function useChat() {
             effort: activeEffort,
             executor,
             title: text.trim().slice(0, 36) || "图片与文件",
+            approvalUserId: approval.approvalUserId,
             messages: [],
           },
           "PUT",
@@ -933,7 +939,7 @@ export function useChat() {
         executor,
         model: activeModel,
         effort: activeEffort,
-        approvalMode,
+        ...approval,
         executionTarget,
         messages,
       });
@@ -1056,6 +1062,7 @@ export function useChat() {
         effort: modelEffort(modelEntry(chosen), stored.effort || ""),
         messages: stored.messages,
         approvalMode: ["confirm", "assisted", "auto"].includes(approvalMode) ? approvalMode : "confirm",
+        approvalUserId: user?.id,
       });
       setGeneration(g);
       await refreshSessions();

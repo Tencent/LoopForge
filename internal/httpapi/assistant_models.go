@@ -214,8 +214,9 @@ func (h *assistantHandlers) models(c *gin.Context) {
 	if current, ok := h.requestUser(c.Request, true); ok {
 		user, signedIn = h.repo.User(current.ID)
 	}
+	usingSharedKey := signedIn && shared && strings.TrimSpace(user.CodeBuddyAPIKey) == ""
 	switch {
-	case signedIn && shared && strings.TrimSpace(user.CodeBuddyAPIKey) == "":
+	case usingSharedKey:
 		// Chat runs on the shared key, so list what that key's environment offers.
 		refreshCLIModels(c.Request.Context(), key.InternetEnvironment, key.APIKey)
 		catalog = restrictAssistantCatalog(assistantChatCatalog(c.Request.Context(), key.InternetEnvironment, key.Models), key.Models)
@@ -234,7 +235,11 @@ func (h *assistantHandlers) models(c *gin.Context) {
 		catalog = assistantChatCatalog(c.Request.Context(), "", nil)
 	}
 	if catalog.Default == assistantDefaultModel {
-		catalog.DefaultEfforts = assistantModelEffortsIn(catalog.Default, user.CodeBuddyModels)
+		models := user.CodeBuddyModels
+		if usingSharedKey {
+			models = nil
+		}
+		catalog.DefaultEfforts = assistantModelEffortsIn(catalog.Default, models)
 	}
 	catalog.Models = selectableCodeBuddyModels(catalog.Models)
 	if shared {
@@ -242,7 +247,7 @@ func (h *assistantHandlers) models(c *gin.Context) {
 	}
 	if signedIn {
 		c.Header("Cache-Control", "private, no-store")
-		catalog.Engines = assistantEngineOptions(user, shared && strings.TrimSpace(user.CodeBuddyAPIKey) == "")
+		catalog.Engines = assistantEngineOptions(user, usingSharedKey)
 		var runnerLogin map[string]bool
 		if c.Query("schedule") == "1" {
 			runnerLogin = make(map[string]bool)

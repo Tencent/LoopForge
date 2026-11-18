@@ -33,6 +33,9 @@ func (h *assistantHandlers) startGeneration(c *gin.Context) {
 	if !decodeLimit(c, &req, assistantRequestBodyLimit) {
 		return
 	}
+	if !requireAssistantApprovalUser(c, current.ID, req.ApprovalUserID) {
+		return
+	}
 	req.Model = assistantRequestModel(req.Executor, req.Model)
 	if len(req.Messages) == 0 || req.Messages[len(req.Messages)-1].Role != "user" {
 		c.JSON(400, gin.H{"error": "请提供用户消息"})
@@ -458,6 +461,13 @@ func (h *assistantHandlers) steerGeneration(c *gin.Context) {
 		c.JSON(401, gin.H{"error": "请先登录"})
 		return
 	}
+	var body struct {
+		domain.AssistantSteer
+		ApprovalUserID int64 `json:"approvalUserId"`
+	}
+	if !decode(c, &body) || !requireAssistantApprovalUser(c, current.ID, body.ApprovalUserID) {
+		return
+	}
 	stored, ok := h.repo.User(current.ID)
 	if !ok {
 		c.JSON(400, gin.H{"error": "请先配置个人 CodeBuddy API Key"})
@@ -471,10 +481,6 @@ func (h *assistantHandlers) steerGeneration(c *gin.Context) {
 	ownerID, _, err := h.conversationScope(c, c.Param("id"), "", "", user.ID)
 	if err != nil {
 		c.JSON(403, gin.H{"error": err.Error()})
-		return
-	}
-	var body domain.AssistantSteer
-	if !decode(c, &body) {
 		return
 	}
 	content := strings.TrimSpace(body.Content)

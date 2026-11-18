@@ -142,3 +142,42 @@ func TestAutomaticDiscoveryUsesSameEffortsForColdValidation(t *testing.T) {
 		t.Fatalf("expected one discovery per process cache, got %d", got)
 	}
 }
+
+func TestCodex62BuiltinEffortsMatchTheCatalogAndTurnValidation(t *testing.T) {
+	h, owner := workbenchFixture(t)
+	c, response := workbenchContext(owner, http.MethodGet, "/api/assistant/models?executor=codex", &bytes.Buffer{})
+	h.models(c)
+	var chat assistantModelCatalog
+	if err := json.Unmarshal(response.Body.Bytes(), &chat); response.Code != http.StatusOK || err != nil {
+		t.Fatalf("chat catalog: %d %s", response.Code, response.Body)
+	}
+	c, response = workbenchContext(owner, http.MethodGet, "/api/executor-models?builtin=1", &bytes.Buffer{})
+	(&catalogHandlers{deps: h.deps}).executorModels(c)
+	var role map[string]executorModelCatalog
+	if err := json.Unmarshal(response.Body.Bytes(), &role); response.Code != http.StatusOK || err != nil {
+		t.Fatalf("role catalog: %d %s", response.Code, response.Body)
+	}
+	levels := []string{"low", "medium", "high", "xhigh", "max", "ultra"}
+	for _, id := range []string{"gpt-6.2-sol", "gpt-6.2-astra"} {
+		if !slices.ContainsFunc(chat.Models, func(m assistantModel) bool {
+			return m.ID == id && slices.Equal(m.Efforts, levels)
+		}) || !slices.ContainsFunc(role["codex"].Models, func(m executorModelInfo) bool {
+			return m.ID == id && slices.Equal(m.Efforts, effortOptions(levels))
+		}) {
+			t.Fatalf("%s missing built-in efforts in a picker", id)
+		}
+		for _, effort := range levels {
+			if err := validateAssistantEffort(context.Background(), owner, "codex:"+id, effort); err != nil {
+				t.Errorf("%s rejected advertised effort %s: %v", id, effort, err)
+			}
+		}
+		c, response = workbenchContext(owner, http.MethodPut, "/api/assistant/sessions/codex-"+id, bytes.NewBufferString(
+			`{"model":"`+id+`","executor":"codex","effort":"ultra"}`,
+		))
+		c.Params = gin.Params{{Key: "id", Value: "codex-" + id}}
+		h.session(c)
+		if response.Code != http.StatusOK {
+			t.Fatalf("session rejected the bare model ID with a Codex executor: %d %s", response.Code, response.Body)
+		}
+	}
+}

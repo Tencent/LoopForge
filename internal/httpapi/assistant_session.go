@@ -292,9 +292,10 @@ func (h *assistantHandlers) session(c *gin.Context) {
 		existing, _ := loadAssistantConversation(h.repo, ownerID, id)
 		var body struct {
 			assistantConversation
-			Effort *string `json:"effort"`
+			Effort         *string `json:"effort"`
+			ApprovalUserID int64   `json:"approvalUserId"`
 		}
-		if !decodeLimit(c, &body, assistantRequestBodyLimit) {
+		if !decodeLimit(c, &body, assistantRequestBodyLimit) || !requireAssistantApprovalUser(c, current.ID, body.ApprovalUserID) {
 			return
 		}
 		conv := body.assistantConversation
@@ -402,7 +403,11 @@ func (h *assistantHandlers) session(c *gin.Context) {
 			conv.Model = existing.Model
 		}
 		editor, _ := h.repo.User(current.ID)
-		if err := validateAssistantEffort(c.Request.Context(), editor, conv.Model, conv.Effort); err != nil {
+		model := assistantRequestModel(conv.Executor, conv.Model)
+		if engine, _ := assistantModelEngine(model); engine == assistantEngineCodeBuddy {
+			editor, _, _ = h.assistantChatUser(editor)
+		}
+		if err := validateAssistantEffort(c.Request.Context(), editor, model, conv.Effort); err != nil {
 			c.JSON(400, gin.H{"error": err.Error()})
 			return
 		}

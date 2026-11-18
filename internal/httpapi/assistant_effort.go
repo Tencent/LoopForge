@@ -54,6 +54,9 @@ func assistantModelEffortsIn(model string, catalog []domain.CLIModel) []string {
 	if runtime.IsAgentCLI(engine) {
 		return supported
 	}
+	if engine == assistantEngineCodex && (id == "gpt-6.2-sol" || id == "gpt-6.2-astra") {
+		return supported
+	}
 	switch id {
 	case "hy4std", "hy4-preview-ioa":
 		return []string{"high"}
