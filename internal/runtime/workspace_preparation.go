@@ -179,6 +179,9 @@ func redactPreparationOutput(sb Sandbox, output string) string {
 		credentials := managed.credentials
 		managed.credentialsMu.RUnlock()
 		secrets = append(secrets, credentials.GitToken, credentials.CodeBuddy.APIKey, credentials.Codex.APIKey, credentials.ClaudeCode.APIKey)
+		for _, secret := range credentials.Extra {
+			secrets = append(secrets, secret)
+		}
 		for _, server := range credentials.MCPServers {
 			for _, value := range server.Headers {
 				secrets = append(secrets, value)
