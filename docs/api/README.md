@@ -145,6 +145,54 @@ curl -H "Authorization: Bearer $AGENTFLOW_TOKEN" "$AGENTFLOW_URL/api/health"
 | `POST` | `/api/schedule-jobs/{id}/enabled` |
 | `GET` | `/api/schedule-job-executions` |
 
+### AI 对话（助手）
+
+`/api/assistant/*` 是 Studio 与嵌入式聊天的接口，也是本文件里体量最大的一个域。登录 Cookie 与 `Authorization: Bearer afp_<token>` 均可使用，异源请求返回 `403`；除附件与诊断下载外，请求与响应都是 UTF-8 JSON。
+
+| 方法 | 路径 |
+|---|---|
+| `POST` | `/api/assistant/chat` |
+| `POST` | `/api/assistant/generations` |
+| `GET` | `/api/assistant/sessions/{id}/generation` |
+| `GET` | `/api/assistant/sessions/{id}/generations/{generationId}/diagnostics` |
+| `POST` | `/api/assistant/sessions/{id}/generation/cancel` |
+| `POST` | `/api/assistant/sessions/{id}/generation/steer` |
+| `POST` | `/api/assistant/sessions/{id}/proposals` |
+| `GET` | `/api/assistant/preferences` |
+| `PUT` | `/api/assistant/preferences` |
+| `GET` | `/api/assistant/models` |
+| `POST` | `/api/assistant/cli-install` |
+| `GET` | `/api/assistant/cli-install` |
+| `POST` | `/api/assistant/attachments` |
+| `GET` | `/api/assistant/attachments/{id}` |
+| `GET` | `/api/assistant/references` |
+| `GET` | `/api/assistant/sessions` |
+| `POST` | `/api/assistant/sessions/{id}/read` |
+| `GET` | `/api/assistant/sessions/{id}` |
+| `PUT` | `/api/assistant/sessions/{id}` |
+| `DELETE` | `/api/assistant/sessions/{id}` |
+| `POST` | `/api/assistant/sessions/{id}/fork` |
+| `POST` | `/api/assistant/sessions/{id}/archive` |
+| `POST` | `/api/assistant/sessions/{id}/edit` |
+| `PUT` | `/api/assistant/sessions/{id}/issue` |
+| `PUT` | `/api/assistant/sessions/{id}/mode` |
+| `PUT` | `/api/assistant/sessions/{id}/sandbox` |
+| `GET` | `/api/assistant/sessions/{id}/native-approvals` |
+| `POST` | `/api/assistant/sessions/{id}/native-approvals/{approvalId}` |
+| `GET` | `/api/assistant/tasks` |
+| `PUT` | `/api/assistant/tasks` |
+| `DELETE` | `/api/assistant/tasks/{id}` |
+| `POST` | `/api/assistant/tasks/{id}/run` |
+
+### 共享 AI 定时任务
+
+| 方法 | 路径 |
+|---|---|
+| `GET` | `/api/shared-schedule-tasks` |
+| `GET` | `/api/shared-schedule-tasks/{id}/versions` |
+
+订阅、发布版本与业务参数的语义见[共享 AI 定时任务与订阅](shared-schedules.md)。
+
 ### 同步
 
 | 方法 | 路径 |
@@ -202,6 +250,41 @@ curl -u "$AGENTFLOW_USER:$AGENTFLOW_PASS" -X POST \
 ```
 
 JSON-RPC 有响应时 HTTP 为 `200`，JSON 解析失败为 `400`；`GET /mcp` 和其他不支持的方法为 `405`。`DELETE /mcp` 返回 `204`，由于服务无状态，仅用于协议兼容，不会销毁会话。MCP 与公共 API 使用相同的部署级 Basic Auth。
+
+## AI 对话：诊断导出与对话内安装 CLI
+
+这两个接口是 0.4.0 新增的错误自助处理路径，都不经 `/api/capabilities` 暴露，因此也不在 `openapi.yaml` 契约里。
+
+### `GET /api/assistant/sessions/{id}/generations/{generationId}/diagnostics`
+
+返回某一轮生成的 `version: 2` 诊断档案，对应界面上的「查看详情 / 复制诊断 / 下载诊断」：`environment`（平台与实例版本、每次调用的 CLI 版本与二进制来源）、`attempts[]`（进程状态、信号、stdout/stderr 行数、`firstStderr` 与 `firstError`）、`tools[]`（CLI 协议与平台 MCP 网关的工具调用，失败的调用带脱敏片段、`statusCode`、`requestId`）、`termination`（`USER_CANCELLED`、`USER_STEER`、`WORKSPACE_LEASE_LOST`、`CHECKPOINT_FAILED` 等）、`timeline`、`assessment`（`evidence` / `unknowns` / `nextSteps` 三段确定性结论）、`coverage` 与 `dropped`（各类截断计数）。
+
+- 响应带 `Cache-Control: no-store`。诊断按 `generationId` 独立保存，重试后仍可导出历史失败轮次。
+- `?download=1` 返回附件 `loopforge-diagnostics-<generationId>.json`，带 `Content-Disposition: attachment` 与 `X-Content-Type-Options: nosniff`。
+- 未登录 `401`；不是项目成员或没有该会话的访问权 `403`；该轮没有诊断记录 `404`。公开项目的只读会话链接只返回固定摘要，不包含详细诊断。
+- 档案不含提示词、思考正文、工具参数、成功工具的输出、环境变量与完整 stdout；密钥、令牌、URL 凭据与查询参数、ANSI 控制序列与本机绝对路径均已脱敏。
+
+```bash
+curl -H "Authorization: Bearer $AGENTFLOW_TOKEN" \
+  "$AGENTFLOW_URL/api/assistant/sessions/chat-1/generations/gen-1/diagnostics?download=1" \
+  -o diagnostics.json
+```
+
+### `POST /api/assistant/cli-install` / `GET /api/assistant/cli-install`
+
+对话因为「服务器未安装某个 CLI」失败时，用这两个接口把它装到平台侧。请求只能选择一个引擎 id，不能传包名或 URL：`{"engine":"opencode"}`，`claude` 等价于 `claude-code`。
+
+- 可安装：`codex`、`codebuddy`、`claude-code`、`opencode`、`cursor`、`agy`、`kimi`、`pi`、`dsh`。`zcode` 不在其中：官方 ZCode 没有 npm 包，只能由执行机原生安装后由 runner 探测。
+- 下载在后台进行，关闭页面不会中断，单次上限 10 分钟。
+- `POST` 成功返回 `{"engine":"opencode","installed":true}`；引擎不可安装 `400`；未登录 `401`；下载或安装失败 `502`，body 为 `{"error":"..."}`。
+- `GET ?engine=opencode` 供页面重载后查询，返回 `{"engine":"opencode","status":"missing|installing|installed|failed"}`，`failed` 时附带 `error`，同样会返回 `400` / `401`。
+
+```bash
+curl -H "Authorization: Bearer $AGENTFLOW_TOKEN" -H 'Content-Type: application/json' \
+  -d '{"engine":"opencode"}' "$AGENTFLOW_URL/api/assistant/cli-install"
+curl -H "Authorization: Bearer $AGENTFLOW_TOKEN" \
+  "$AGENTFLOW_URL/api/assistant/cli-install?engine=opencode"
+```
 
 ## 明确不属于公共 API 的接口
 
