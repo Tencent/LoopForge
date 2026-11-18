@@ -16,7 +16,11 @@ const processWaitDelay = time.Second
 
 var errProcessNotStarted = errors.New("process was not started")
 
-func runCommand(cmd *exec.Cmd, sink EventSink) (string, error) {
+// runCommand waits for cmd and streams process telemetry. credentialEnvKeys
+// names environment variables populated from Extra credentials; their values
+// are redacted from the process.started command line by origin, so arbitrary
+// names (for example AWS_SECRET_ACCESS_KEY) never rely on naming conventions.
+func runCommand(cmd *exec.Cmd, sink EventSink, credentialEnvKeys ...string) (string, error) {
 	var buf bytes.Buffer
 	var mu sync.Mutex
 	stdout := &processWriter{output: &buf, mu: &mu, sink: sink, name: "process.stdout", level: "info"}
@@ -34,7 +38,7 @@ func runCommand(cmd *exec.Cmd, sink EventSink) (string, error) {
 	mu.Lock()
 	err := cmd.Start()
 	if err == nil && sink != nil {
-		sink(domain.TelemetryEvent{Category: "process", Name: "process.started", Timestamp: time.Now().UTC(), Phase: "start", Message: compactCommand(cmd.Args), Attributes: map[string]any{"pid": cmd.Process.Pid}})
+		sink(domain.TelemetryEvent{Category: "process", Name: "process.started", Timestamp: time.Now().UTC(), Phase: "start", Message: compactCommand(cmd.Args, credentialEnvKeys...), Attributes: map[string]any{"pid": cmd.Process.Pid}})
 	}
 	mu.Unlock()
 	if err == nil {
@@ -129,18 +133,25 @@ func (w *processWriter) emit(line string) {
 	}
 }
 
-func compactCommand(args []string) string {
+func compactCommand(args []string, credentialEnvKeys ...string) string {
+	credentialKeys := make(map[string]bool, len(credentialEnvKeys))
+	for _, key := range credentialEnvKeys {
+		credentialKeys[strings.ToUpper(key)] = true
+	}
+	redact := func(key string) bool {
+		return sensitiveProcessEnvironmentKey(key) || credentialKeys[strings.ToUpper(key)]
+	}
 	safe := append([]string(nil), args...)
 	for index := 0; index < len(safe); index++ {
 		value := safe[index]
 		if value == "-e" && index+1 < len(safe) {
-			if key, _, found := strings.Cut(safe[index+1], "="); found && sensitiveProcessEnvironmentKey(key) {
+			if key, _, found := strings.Cut(safe[index+1], "="); found && redact(key) {
 				safe[index+1] = key + "=<redacted>"
 			}
 			index++
 			continue
 		}
-		if key, _, found := strings.Cut(value, "="); found && sensitiveProcessEnvironmentKey(key) {
+		if key, _, found := strings.Cut(value, "="); found && redact(key) {
 			safe[index] = key + "=<redacted>"
 		}
 	}

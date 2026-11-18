@@ -52,18 +52,19 @@ type ConversationFile struct {
 }
 
 type ConversationCommand struct {
-	RunnerLogin bool `json:",omitempty"`
-	Argv        []string
-	Provider    string
-	Bindings    []CredentialBinding
-	Environment map[string]string
-	AgentCLI    AgentCLIOptions
-	Credentials RunCredentials
-	Interactive bool
+	RunnerLogin        bool `json:",omitempty"`
+	Argv               []string
+	Provider           string
+	Bindings           []CredentialBinding
+	Environment        map[string]string
+	ExtraCredentialEnv map[string]string
+	AgentCLI           AgentCLIOptions
+	Credentials        RunCredentials
+	Interactive        bool
 }
 
 func ConversationCommandFor(command CommandSpec, credentials RunCredentials) *ConversationCommand {
-	return &ConversationCommand{Argv: command.Argv, Provider: command.Provider, Bindings: command.CredentialBindings, Environment: CommandEnvironment(command), AgentCLI: command.AgentCLI, Credentials: credentials, Interactive: command.Stdin != nil}
+	return &ConversationCommand{Argv: command.Argv, Provider: command.Provider, Bindings: command.CredentialBindings, Environment: CommandEnvironment(command), ExtraCredentialEnv: command.ExtraCredentialEnv, AgentCLI: command.AgentCLI, Credentials: credentials, Interactive: command.Stdin != nil}
 }
 
 type ConversationProcessResult struct {
@@ -528,7 +529,7 @@ func (p *ConversationProcessPool) start(ctx context.Context, root, workspace str
 			return ConversationProcessResult{}, err
 		}
 	}
-	command := CommandSpec{Argv: append([]string(nil), req.Command.Argv...), Provider: req.Command.Provider, CredentialBindings: req.Command.Bindings, AgentCLI: req.Command.AgentCLI}
+	command := CommandSpec{Argv: append([]string(nil), req.Command.Argv...), Provider: req.Command.Provider, CredentialBindings: req.Command.Bindings, ExtraCredentialEnv: req.Command.ExtraCredentialEnv, AgentCLI: req.Command.AgentCLI}
 	for i, arg := range command.Argv {
 		command.Argv[i] = conversationRemap(arg, req.SourceRoot, root)
 	}
