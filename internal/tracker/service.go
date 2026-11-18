@@ -318,6 +318,10 @@ func (s *Service) PullAll(store IssueStoreAdapter) error {
 			}
 			continue
 		}
+		if repo.Provider == "gitlab" {
+			// GitLab issue 导入暂不支持；MR 交付状态由独立的 MR 同步任务刷新。
+			continue
+		}
 		if repo.Provider != "gongfeng" || repo.GongfengProjectID == "" {
 			continue
 		}

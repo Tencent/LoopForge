@@ -230,12 +230,41 @@ func (h *catalogHandlers) repositories(c *gin.Context) {
 			v.DefaultBranch = "main"
 		}
 	}
+	if strings.HasPrefix(v.GongfengProjectID, "gitlab:") {
+		v.Provider = "gitlab"
+		if v.DefaultBranch == "" {
+			v.DefaultBranch = "main"
+		}
+	}
 	if v.Provider == "" {
 		v.Provider = "gongfeng"
 	}
-	if v.Provider != "gongfeng" && v.Provider != "github" {
-		c.JSON(400, map[string]string{"error": "provider must be github or gongfeng"})
+	if v.Provider != "gongfeng" && v.Provider != "github" && v.Provider != "gitlab" {
+		c.JSON(400, map[string]string{"error": "provider must be github, gitlab or gongfeng"})
 		return
+	}
+	// GitLab 仓库的标识必须带 gitlab: 前缀（host 进 ID）。裸工蜂路径配上
+	// provider=gitlab 会落成工蜂 URL，却走不了任何 GitLab 路径（MR/同步
+	// 都按前缀分发），必须在入口拒绝而不是静默落库。
+	if v.Provider == "gitlab" && !strings.HasPrefix(v.GongfengProjectID, "gitlab:") {
+		c.JSON(400, map[string]string{"error": "GitLab 仓库请使用 gitlab:<host>/<group>/<repo> 标识，或粘贴完整的 GitLab 仓库地址"})
+		return
+	}
+	// 能写 POST /api/repositories 的成员很多，而 gitlab: 前缀本身只说明
+	// "这是 GitLab"，不代表该 host 可信。实例必须由管理员在部署配置里显式
+	// 声明（allowlist），否则后续 MR/同步会把 owner 的 Git 令牌当
+	// PRIVATE-TOKEN 发到该 host。公网与内网/回环地址一视同仁——内网也能起
+	// 一个服务把令牌收走。这里在入口拒绝，tracker 侧再兜底。
+	if v.Provider == "gitlab" {
+		host, ok := domain.GitLabInstanceHost(v.GongfengProjectID)
+		if !ok {
+			c.JSON(400, map[string]string{"error": "GitLab 仓库标识无效：请使用 gitlab:<host>/<group>/<repo>"})
+			return
+		}
+		if !domain.GitLabHostAllowed(host) {
+			c.JSON(400, map[string]string{"error": fmt.Sprintf("GitLab 实例 %s 未在管理员允许列表（%s）中：请由管理员在部署配置中声明该实例后再绑定", host, domain.GitLabAllowedHostsEnv)})
+			return
+		}
 	}
 	if v.DefaultBranch == "" {
 		v.DefaultBranch = "master"

@@ -35,6 +35,10 @@ type deliveredMR struct {
 	Repository   string
 	URL          string
 	TargetBranch string
+	// Project 与 IID 由 turn 结束时的发现逻辑直接给出（GitHub PR / GitLab MR），
+	// 避免只靠 URL 反解——GitLab MR URL 不在 Gongfeng 解析规则内。
+	Project string
+	IID     int
 }
 
 func projectRepositories(all []domain.Repository, projectID string) []domain.Repository {
@@ -66,14 +70,16 @@ type workspacePull struct {
 	} `json:"base"`
 }
 
-// registerTurnDeliveries runs when a turn ends. GitHub PRs the speaker opened
-// from the conversation workspace are registered as the requirement's
-// delivery (the conversation's open requirement, or a new one titled after
-// the first PR), so MR polling completes the requirement once they merge. A
-// PR counts when the speaker's token authored it after the workspace was
-// created, a local branch in the workspace points at its head commit, and no
-// requirement tracks it yet; PRs opened elsewhere are left alone. It returns
-// a note for the reply, empty when nothing was registered.
+// registerTurnDeliveries runs when a turn ends. GitHub PRs and GitLab MRs the
+// speaker opened from the conversation workspace are registered as the
+// requirement's delivery (the conversation's open requirement, or a new one
+// titled after the first MR), so MR polling completes the requirement once
+// they merge. An MR counts when the speaker's token authored it after the
+// workspace was created, a local branch in the workspace points at its head
+// commit, and no requirement tracks it yet; MRs opened elsewhere are left
+// alone. GitLab instances must be admin-declared (allowlist), otherwise they
+// are skipped without sending any credential. It returns a note for the reply,
+// empty when nothing was registered.
 func (h *assistantHandlers) registerTurnDeliveries(ctx context.Context, s *AgentToolSession) string {
 	if s == nil || s.RunID != "" || h.engine == nil || strings.TrimSpace(s.User.GitToken) == "" {
 		return ""
@@ -92,39 +98,57 @@ func (h *assistantHandlers) registerTurnDeliveries(ctx context.Context, s *Agent
 	}
 	heads := map[string]bool{}
 	projects := []string{}
+	remotes := []string{}
 	for _, checkout := range checkouts {
 		for _, head := range checkout.Heads {
 			heads[head] = true
 		}
 		for _, remote := range checkout.Remotes {
-			info, ok := domain.ParseRepositoryURL(withoutURLUserinfo(remote))
+			clean := withoutURLUserinfo(remote)
+			remotes = append(remotes, clean)
+			info, ok := domain.ParseRepositoryURL(clean)
 			if ok && strings.HasPrefix(info.Project, "github:") && !slices.Contains(projects, info.Project) && len(projects) < turnDeliveryRepoMax {
 				projects = append(projects, info.Project)
 			}
 		}
 	}
-	if len(heads) == 0 || len(projects) == 0 {
+	// 公网/自建 GitLab 的裸 URL 不在 ParseRepositoryURL 的信任规则内，
+	// 但工作区仓库已经绑定并过了 allowlist：按仓库记录反查远端属于哪个
+	// gitlab: 项目，再逐个实例查询。
+	gitlabProjects := gitlabBoundProjects(remotes, h.repo.Repositories(), s.ProjectID)
+	if len(heads) == 0 || (len(projects) == 0 && len(gitlabProjects) == 0) {
 		return ""
 	}
-	pulls, err := workspacePulls(ctx, s.User.GitToken, projects, heads, run.CreatedAt)
-	if err != nil {
-		log.Printf("find conversation workspace %s pull requests: %v", run.ID, err)
-		return ""
-	}
-	keys := []domain.MRDeliveryKey{}
-	for _, p := range pulls {
-		if project, iid, _, ok := domain.ParseGongfengMR(p.URL); ok {
-			keys = append(keys, domain.MRDeliveryKey{Project: project, IID: iid})
+	deliveries := []turnDelivery{}
+	if len(projects) > 0 {
+		pulls, err := workspacePulls(ctx, s.User.GitToken, projects, heads, run.CreatedAt)
+		if err != nil {
+			// GitLab 侧仍可登记，不能因为 GitHub 查询失败就整体放弃。
+			log.Printf("find conversation workspace %s pull requests: %v", run.ID, err)
 		}
+		for _, p := range pulls {
+			project, iid, _, ok := domain.ParseGongfengMR(p.URL)
+			if !ok {
+				continue
+			}
+			deliveries = append(deliveries, turnDelivery{URL: p.URL, Title: p.Title, Body: p.Body, TargetBranch: p.Base.Ref, Project: project, IID: iid})
+		}
+	}
+	deliveries = append(deliveries, h.gitlabWorkspaceDeliveries(ctx, s.User.GitToken, run, gitlabProjects, heads)...)
+	if len(deliveries) == 0 {
+		return ""
+	}
+	keys := make([]domain.MRDeliveryKey, 0, len(deliveries))
+	for _, d := range deliveries {
+		keys = append(keys, domain.MRDeliveryKey{Project: d.Project, IID: d.IID})
 	}
 	tracked := h.repo.MRDeliveryStatesMap(keys)
-	fresh := []workspacePull{}
-	for _, p := range pulls {
-		project, iid, _, ok := domain.ParseGongfengMR(p.URL)
-		if !ok || strings.TrimSpace(tracked[domain.MRDeliveryKey{Project: project, IID: iid}].IssueID) != "" {
+	fresh := make([]turnDelivery, 0, len(deliveries))
+	for _, d := range deliveries {
+		if strings.TrimSpace(tracked[domain.MRDeliveryKey{Project: d.Project, IID: d.IID}].IssueID) != "" {
 			continue
 		}
-		fresh = append(fresh, p)
+		fresh = append(fresh, d)
 	}
 	if len(fresh) == 0 {
 		return ""
@@ -132,14 +156,14 @@ func (h *assistantHandlers) registerTurnDeliveries(ctx context.Context, s *Agent
 	gateway := &agentToolGateway{deps: h.deps}
 	issue, created, err := gateway.linkConversationRequirement(s, run, conversationRequirement{Title: strings.TrimSpace(fresh[0].Title), Description: strings.TrimSpace(fresh[0].Body)}, true)
 	if err != nil || issue.ID == "" {
-		log.Printf("link conversation workspace %s requirement for its pull requests: %v", run.ID, err)
+		log.Printf("link conversation workspace %s requirement for its merge requests: %v", run.ID, err)
 		return ""
 	}
 	mrs := make([]deliveredMR, 0, len(fresh))
 	links := make([]string, 0, len(fresh))
-	for _, p := range fresh {
-		mrs = append(mrs, deliveredMR{URL: p.URL, TargetBranch: p.Base.Ref})
-		links = append(links, fmt.Sprintf("[PR #%d](%s)", p.Number, p.URL))
+	for _, d := range fresh {
+		mrs = append(mrs, deliveredMR{URL: d.URL, TargetBranch: d.TargetBranch, Project: d.Project, IID: d.IID})
+		links = append(links, fmt.Sprintf("[%s](%s)", turnDeliveryLabel(d), d.URL))
 	}
 	if err := gateway.recordConversationMRs(issue.ID, mrs, projectRepositories(h.repo.Repositories(), s.ProjectID)); err != nil {
 		log.Printf("record conversation workspace %s delivery: %v", run.ID, err)
