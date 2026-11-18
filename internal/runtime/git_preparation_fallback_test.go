@@ -48,7 +48,15 @@ func TestGitPreparationFallbackVerifiesTheFrozenCheckout(t *testing.T) {
 	git("remote", "set-url", "origin", repositories[0].CloneURL)
 	repositories[0].RequireExistingWorkBranch = true
 	verify(true)
-	git("update-ref", "refs/remotes/origin/feature/frozen", "HEAD")
+	remoteWorkRef := "refs/remotes/origin/feature/frozen"
+	git("checkout", "-b", "remote-work", "main")
+	git("commit", "--allow-empty", "-m", "existing remote work")
+	git("update-ref", remoteWorkRef, "HEAD")
+	git("checkout", "feature/frozen")
+	verify(true)
+	git("merge", "--ff-only", remoteWorkRef)
+	verify(false)
+	git("commit", "--allow-empty", "-m", "agent work")
 	verify(false)
 	repositories[0].WorkspaceDir = "code/missing"
 	verify(true)

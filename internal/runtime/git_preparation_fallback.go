@@ -84,8 +84,12 @@ func VerifyGitPreparation(ctx context.Context, workspace string, repositories []
 			return fmt.Errorf("repository %s: frozen remote base branch is missing: %w", r.Name, err)
 		}
 		if r.RequireExistingWorkBranch {
-			if _, err := gitwork.C(ctx, dir, "rev-parse", "--verify", "refs/remotes/origin/"+branch+"^{commit}"); err != nil {
+			remoteTip, err := gitwork.C(ctx, dir, "rev-parse", "--verify", "refs/remotes/origin/"+branch+"^{commit}")
+			if err != nil {
 				return fmt.Errorf("repository %s: required existing remote work branch is missing: %w", r.Name, err)
+			}
+			if _, err := gitwork.C(ctx, dir, "merge-base", "--is-ancestor", remoteTip, "HEAD"); err != nil {
+				return fmt.Errorf("repository %s: HEAD does not contain the required remote work branch origin/%s: %w", r.Name, branch, err)
 			}
 		}
 		if err := gitwork.RecordBaseline(dir, base); err != nil {
