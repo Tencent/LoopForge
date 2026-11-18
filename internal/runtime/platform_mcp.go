@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"agentflow/internal/domain"
+	"agentflow/internal/gitwork"
 )
 
 // MCPTarget describes where an invocation's MCP servers will be called from.
@@ -24,6 +25,47 @@ type MCPTarget struct {
 	RequireCredentials bool
 	// SSH-only workflows can deliver branches without GitHub API access.
 	SSHRepositoriesOnly bool
+	// Repositories and RunnerRepositories describe the run's repositories so
+	// github-token MCP servers can be skipped when every repository (>= 1)
+	// uses SSH or host-scoped CNB credentials.
+	Repositories       []domain.RepositoryContext
+	RunnerRepositories []domain.RunnerRepository
+}
+
+func allRepositoriesSkipGitHub[T any](items []T, classify func(T) (ssh, cnb bool)) (skip, sshOnly bool) {
+	if len(items) == 0 {
+		return false, false
+	}
+	sshOnly = true
+	for _, item := range items {
+		ssh, cnb := classify(item)
+		if !ssh && !cnb {
+			return false, false
+		}
+		if !ssh {
+			sshOnly = false
+		}
+	}
+	return true, sshOnly
+}
+
+func (t MCPTarget) canSkipGitHubToken() (skip, sshOnly bool) {
+	switch {
+	case len(t.Repositories) > 0:
+		return allRepositoriesSkipGitHub(t.Repositories, func(r domain.RepositoryContext) (bool, bool) {
+			ssh := r.Provider == domain.RepositoryProviderSSH
+			cnb := r.Provider == domain.RepositoryProviderCNB || (r.Provider == "" && gitwork.IsManagedRemote(r.CloneURL))
+			return ssh, cnb
+		})
+	case len(t.RunnerRepositories) > 0:
+		return allRepositoriesSkipGitHub(t.RunnerRepositories, func(r domain.RunnerRepository) (bool, bool) {
+			return r.UseSSH, r.ScopedHTTPS || gitwork.IsManagedRemote(r.CloneURL)
+		})
+	case t.SSHRepositoriesOnly:
+		return true, true
+	default:
+		return false, false
+	}
 }
 
 // PrepareMCPServers is the single place that turns a resolved asset bundle
@@ -36,12 +78,16 @@ func PrepareMCPServers(assets domain.AgentAssetBundle, target MCPTarget) (domain
 	if credential := target.GitHTTPCredentials["github.com"]; credential.Token != "" {
 		githubToken = credential.Token
 	}
-	if target.SSHRepositoriesOnly && githubToken == "" {
+	if skip, sshOnly := target.canSkipGitHubToken(); skip && githubToken == "" {
 		servers := assets.MCPServers
 		assets.MCPServers = nil
+		prefix := "CNB 或 Git SSH 仓库无需 GitHub API 访问；未配置 GitHub Token，已跳过 "
+		if sshOnly {
+			prefix = "Git SSH 仓库可直接推送分支；未配置 GitHub Token，已跳过 "
+		}
 		for _, server := range servers {
 			if server.AuthType == "github-token" {
-				warnings = append(warnings, "Git SSH 仓库可直接推送分支；未配置 GitHub Token，已跳过 "+server.ID)
+				warnings = append(warnings, prefix+server.ID)
 				continue
 			}
 			assets.MCPServers = append(assets.MCPServers, server)

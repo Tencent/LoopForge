@@ -918,6 +918,7 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 				ExtraCredentials:    gitCredentials.Extra,
 				RequireCredentials:  true,
 				SSHRepositoriesOnly: len(repositories) > 0 && len(sshRepositoryURLs(repositories)) == len(repositories),
+				Repositories:        repositories,
 			})
 			for _, warning := range skipped {
 				warnMCPSkipped(warning)

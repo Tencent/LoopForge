@@ -169,7 +169,6 @@ func (e *Engine) preparedWorkspaceRequest(run domain.Run, request domain.RunnerW
 	assets := e.resolveRunScriptMCPAssets(run)
 	invocation.Assets = assets
 	invocation.MCPCallServers = assets.MCPServers
-	request.PreparationInvocation = invocation
 	// Status and terminal I/O don't need keys. A separate platform instance
 	// can also resolve its own credentials from the shared store.
 	request.TerminalGitSSHKeys = nil

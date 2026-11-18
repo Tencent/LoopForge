@@ -330,6 +330,9 @@ func (h *assistantHandlers) conversationExecutor(s *AgentToolSession, root strin
 		if s.RuntimeMode == domain.AssistantModeWorkspace {
 			command, credentials = h.bindWorkspaceGit(ctx, s, command, credentials)
 		}
+		if !h.runnerSupportsCNB(s.ExecutionRunnerID) {
+			credentials.GitHTTPS = nil
+		}
 		wire := runtime.ConversationCommandFor(command, credentials)
 		wire.ProjectCredentialEnv = projectCredentialEnv
 		wire.RunnerLogin = s.runnerLogin
@@ -595,6 +598,17 @@ func waitConversationProcessStop(ctx context.Context, id string, call func(conte
 		notify(false)
 	}
 	return nil
+}
+
+func (h *assistantHandlers) runnerSupportsCNB(runnerID string) bool {
+	if runnerID == "" {
+		return true
+	}
+	if h.repo == nil {
+		return false
+	}
+	runner, ok := h.repo.Runner(runnerID)
+	return ok && runner.SupportsCNB()
 }
 
 // bindWorkspaceGit gives the workspace CLI this turn's requester's Git
