@@ -196,7 +196,7 @@ Object.assign(window.LF_I18N_EN,{
   "只填主机名，可附带端口；令牌只提供给这台主机。":"Host name only, optionally with a port. The token is only provided to this host.",
   "平台":"Platform",
   "其他平台":"Other platform",
-  "决定 gh / glab 的便利配置与 PR 自动登记；「其他平台」只做 git 认证。":"Selects the gh / glab setup and automatic PR registration. \u201cOther platform\u201d only authenticates git.",
+  "GitHub 和 GitLab 支持 gh / glab 认证和 PR/MR 合并状态同步。其他平台也可由 Agent 创建 PR/MR，合并状态请到托管平台查看。":"GitHub and GitLab support gh / glab authentication and automatic PR/MR merge status updates. Agents can also create PRs/MRs on other platforms, where you can check their merge status.",
   "名称":"Name",
   "例如 公司 GitLab":"For example, Company GitLab",
   "用户名":"Username",

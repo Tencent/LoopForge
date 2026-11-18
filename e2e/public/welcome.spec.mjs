@@ -172,6 +172,17 @@ for(const variant of [
         await expect(credentials.locator('input[name="host"]')).toBeFocused();
         await expect(credentials.locator('input[name="token"]')).toBeVisible();
         await expect(credentials.locator('[name="exposeToWorkspace"]')).toHaveCount(0);
+        await expect(credentials.locator('#gitHTTPCredentialPlatformHint')).toContainText(variant.lang==='en'?'merge status':'合并状态');
+        const platform=credentials.locator('select[name="platform"]');
+        await platform.click();
+        const options=credentials.getByRole('listbox');
+        await options.getByRole('option',{name:'GitLab',exact:true}).click();
+        await expect(platform).toHaveValue('gitlab');
+        await expect(credentials.locator('input[name="username"]')).toHaveAttribute('placeholder','oauth2');
+        await platform.press('ArrowDown');
+        await page.keyboard.press('End');
+        await page.keyboard.press('Enter');
+        await expect(platform).toHaveValue('other');
       }else await expect(page.locator('#credentialWizard')).toBeVisible();
       await page.keyboard.press('Escape');
     }finally{

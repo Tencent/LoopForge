@@ -228,7 +228,9 @@
     function attach() {
       if (detachTimer) clearTimeout(detachTimer);
       detachTimer = 0;
-      if (panel.parentNode !== doc.body) doc.body.appendChild(panel);
+      // A native modal makes everything outside its dialog inert.
+      const container = anchor.closest?.('dialog[open]') || doc.body;
+      if (panel.parentNode !== container) container.appendChild(panel);
     }
     // `via` is 'touch' when opened by a tap: the search box is not focused
     // then, so the on-screen keyboard stays down.
@@ -267,7 +269,7 @@
       anchor.setAttribute('aria-expanded', 'false');
       if (focusAnchor) anchor.focus();
       if (mode === 'inline') {
-        // Keep the panel for its exit transition, then drop it from <body>.
+        // Keep the panel for its exit transition, then detach it.
         detachTimer = setTimeout(() => { if (!open) panel.remove(); }, 240);
       }
     }
