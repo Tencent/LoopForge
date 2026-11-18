@@ -22,7 +22,7 @@ func main() {
 	addr := flag.String("addr", "127.0.0.1:8787", "listen address; keep it on loopback")
 	root := flag.String("root", ".", "directory that bounds every repo path the sidecar may read")
 	critiqueFile := flag.String("critique-file", "", "JSON object mapping diffHash to {verdict, summary}; absent hashes are REJECT")
-	allowTestCommand := flag.Bool("allow-test-command", false, "allow /verify to run the request's testCommand in the repo")
+	allowTestCommand := flag.Bool("allow-test-command", false, "allow /verify to run the request testCommand inside the Maven container")
 	flag.Parse()
 
 	if !strings.HasPrefix(*addr, "127.0.0.1:") && !strings.HasPrefix(*addr, "localhost:") && !strings.HasPrefix(*addr, "[::1]:") {

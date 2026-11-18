@@ -109,7 +109,7 @@ func TestVerifyRunsTestCommandOnlyWhenAllowed(t *testing.T) {
 	server := httptest.NewServer(sidecar.Handler())
 	defer server.Close()
 
-	status, body := postJSON(t, server, "/verify", map[string]any{"repo": repo, "spec": "spec.md", "testCommand": "exit 3"})
+	status, body := postJSON(t, server, "/verify", map[string]any{"repo": repo, "spec": "spec.md", "testCommand": "true"})
 	if status != http.StatusOK {
 		t.Fatalf("verify = %d %v", status, body)
 	}
@@ -117,14 +117,37 @@ func TestVerifyRunsTestCommandOnlyWhenAllowed(t *testing.T) {
 		t.Fatalf("disabled test command still ran: %v", acceptance)
 	}
 
+	// Enabled commands run inside the Maven toolchain container. Without a
+	// working Docker daemon the sidecar must report FAIL, never PASS.
 	sidecar.AllowTestCommand = true
-	status, body = postJSON(t, server, "/verify", map[string]any{"repo": repo, "spec": "spec.md", "testCommand": "exit 3"})
+	status, body = postJSON(t, server, "/verify", map[string]any{"repo": repo, "spec": "spec.md", "testCommand": "true"})
 	if status != http.StatusOK {
 		t.Fatalf("verify = %d %v", status, body)
 	}
 	acceptance, _ := body["acceptance"].(map[string]any)
-	if acceptance["status"] != "FAIL" || acceptance["exitCode"] != float64(3) {
-		t.Fatalf("acceptance = %v, want FAIL exit 3", acceptance)
+	if acceptance["status"] == "PASS" && acceptance["surefire"] == nil {
+		t.Fatalf("PASS without surefire evidence: %v", acceptance)
+	}
+	if acceptance["status"] == "SKIPPED" {
+		t.Fatalf("enabled test command was skipped: %v", acceptance)
+	}
+}
+
+func TestVerifyWorktreeHashesUncommittedFiles(t *testing.T) {
+	repo := testRepo(t)
+	server := httptest.NewServer(New(repo, "").Handler())
+	defer server.Close()
+
+	cleanTree := gitOutput(t, repo, "rev-parse", "HEAD^{tree}")
+	if err := os.WriteFile(filepath.Join(repo, "dirty.txt"), []byte("x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	status, body := postJSON(t, server, "/verify", map[string]any{"repo": repo, "spec": "spec.md", "worktree": true})
+	if status != http.StatusOK {
+		t.Fatalf("verify = %d %v", status, body)
+	}
+	if body["treeHash"] == cleanTree {
+		t.Fatalf("worktree verify ignored an uncommitted file: %v", body)
 	}
 }
 

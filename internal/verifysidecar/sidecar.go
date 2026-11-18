@@ -20,20 +20,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
-	"sort"
 	"strings"
 	"time"
-)
 
-// buildFileNames mirrors AegisOS's FingerprintHandler so build_fp means the
-// same thing on both sides.
-var buildFileNames = map[string]bool{
-	"pom.xml": true, "build.gradle": true, "build.gradle.kts": true,
-	"settings.gradle": true, "settings.gradle.kts": true,
-	"gradle.properties": true, "maven-wrapper.properties": true,
-	"toolchains.xml": true,
-}
+	"agentflow/internal/verification"
+)
 
 type Server struct {
 	// Root bounds every repo path the service will read.
@@ -72,17 +63,22 @@ func (s *Server) Handler() http.Handler {
 }
 
 type verifyRequest struct {
-	Repo        string `json:"repo"`
-	Ref         string `json:"ref"`
-	Spec        string `json:"spec"`
-	TestCommand string `json:"testCommand"`
+	Repo        string   `json:"repo"`
+	Ref         string   `json:"ref"`
+	Spec        string   `json:"spec"`
+	BaseCommit  string   `json:"baseCommit,omitempty"`
+	TestRoots   []string `json:"testRoots,omitempty"`
+	MavenImage  string   `json:"mavenImage,omitempty"`
+	Worktree    bool     `json:"worktree,omitempty"`
+	TestCommand string   `json:"testCommand,omitempty"`
 }
 
 type acceptance struct {
-	Status     string `json:"status"` // PASS, FAIL, SKIPPED
-	ExitCode   int    `json:"exitCode,omitempty"`
-	DurationMs int64  `json:"durationMs,omitempty"`
-	Reason     string `json:"reason,omitempty"`
+	Status     string                        `json:"status"` // PASS, FAIL, SKIPPED
+	ExitCode   int                           `json:"exitCode,omitempty"`
+	DurationMs int64                         `json:"durationMs,omitempty"`
+	Reason     string                        `json:"reason,omitempty"`
+	Surefire   *verification.SurefireSummary `json:"surefire,omitempty"`
 }
 
 type verifyResponse struct {
@@ -107,10 +103,19 @@ func (s *Server) verify(w http.ResponseWriter, r *http.Request) {
 	if ref == "" {
 		ref = "HEAD"
 	}
-	treeHash, err := s.gitOutput(repo, "rev-parse", "--verify", ref+"^{tree}")
-	if err != nil {
-		writeError(w, http.StatusBadRequest, fmt.Errorf("resolve %s^{tree}: %w", ref, err))
-		return
+	var treeHash string
+	if req.Worktree {
+		treeHash, err = verification.WorkTree(r.Context(), repo)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, fmt.Errorf("hash working tree: %w", err))
+			return
+		}
+	} else {
+		treeHash, err = s.gitOutput(repo, "rev-parse", "--verify", ref+"^{tree}")
+		if err != nil {
+			writeError(w, http.StatusBadRequest, fmt.Errorf("resolve %s^{tree}: %w", ref, err))
+			return
+		}
 	}
 	if !isGitTreeHash(treeHash) {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("resolved tree hash %q is not a git sha1", treeHash))
@@ -130,7 +135,7 @@ func (s *Server) verify(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("read spec %s at %s: %w", spec, ref, err))
 		return
 	}
-	buildFp, err := s.buildFingerprint(repo, ref)
+	buildFp, err := verification.BuildFingerprint(r.Context(), repo, ref)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
@@ -138,39 +143,35 @@ func (s *Server) verify(w http.ResponseWriter, r *http.Request) {
 	response := verifyResponse{
 		TreeHash:    treeHash,
 		SpecHash:    sha256Hex(specContent),
-		ToolchainFp: toolchainFingerprint(),
+		ToolchainFp: verification.ToolchainFingerprint(req.MavenImage),
 		BuildFp:     buildFp,
-		Acceptance:  s.runAcceptance(repo, req.TestCommand),
+		Acceptance:  s.runAcceptance(r.Context(), repo, req),
 	}
 	writeJSON(w, http.StatusOK, response)
 }
 
-func (s *Server) runAcceptance(repo, command string) acceptance {
-	command = strings.TrimSpace(command)
+// runAcceptance runs the test command inside the Maven toolchain container and
+// decides the verdict from the surefire reports, never from the exit code.
+func (s *Server) runAcceptance(ctx context.Context, repo string, req verifyRequest) acceptance {
+	command := strings.TrimSpace(req.TestCommand)
 	if command == "" {
 		return acceptance{Status: "SKIPPED", Reason: "no testCommand supplied"}
 	}
 	if !s.AllowTestCommand {
 		return acceptance{Status: "SKIPPED", Reason: "test commands are disabled on this sidecar (start it with -allow-test-command)"}
 	}
-	started := time.Now()
-	ctx, cancel := timeoutContext(s.TestTimeout)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, "sh", "-c", command)
-	cmd.Dir = repo
-	output, err := cmd.CombinedOutput()
-	result := acceptance{Status: "PASS", DurationMs: time.Since(started).Milliseconds()}
+	runner := verification.MavenRunner{Image: req.MavenImage, Timeout: s.TestTimeout}
+	outcome, err := runner.RunTests(ctx, repo, command)
 	if err != nil {
-		result.Status = "FAIL"
-		result.Reason = truncate(strings.TrimSpace(string(output)), 4000)
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) {
-			result.ExitCode = exitErr.ExitCode()
-		} else {
-			result.Reason = err.Error()
-		}
+		return acceptance{Status: "FAIL", Reason: err.Error()}
 	}
-	return result
+	return acceptance{
+		Status:     outcome.Status,
+		ExitCode:   outcome.ExitCode,
+		DurationMs: outcome.DurationMs,
+		Reason:     truncate(outcome.Reason, 4000),
+		Surefire:   outcome.Surefire,
+	}
 }
 
 type critiqueRequest struct {
@@ -297,51 +298,6 @@ func (s *Server) repo(path string) (string, error) {
 		return "", fmt.Errorf("repo %q is outside the sidecar root %q", abs, root)
 	}
 	return abs, nil
-}
-
-func (s *Server) buildFingerprint(repo, ref string) (string, error) {
-	output, err := s.gitOutputBytes(repo, "ls-tree", "-r", "-z", ref)
-	if err != nil {
-		return "", fmt.Errorf("list tree %s: %w", ref, err)
-	}
-	type entry struct{ path, hash string }
-	var files []entry
-	for _, record := range strings.Split(string(output), "\x00") {
-		meta, path, ok := strings.Cut(record, "\t")
-		if !ok {
-			continue
-		}
-		fields := strings.Fields(meta)
-		if len(fields) != 3 || fields[1] != "blob" {
-			continue
-		}
-		path = strings.TrimPrefix(path, "./")
-		if !buildFileNames[filepath.Base(path)] {
-			continue
-		}
-		files = append(files, entry{path: path, hash: fields[2]})
-	}
-	sort.Slice(files, func(i, j int) bool { return files[i].path < files[j].path })
-	var canonical strings.Builder
-	for _, file := range files {
-		canonical.WriteString(file.path)
-		canonical.WriteByte(' ')
-		canonical.WriteString(file.hash)
-		canonical.WriteByte('\n')
-	}
-	return sha256Hex([]byte(canonical.String())), nil
-}
-
-// toolchainFingerprint names the verifying toolchain. The AegisOS service
-// replaces this with its JDK fingerprint; the shape (64-hex sha256) is what
-// the contract fixes.
-func toolchainFingerprint() string {
-	return sha256Hex([]byte(strings.Join([]string{
-		"sidecar=agentflow-verify-sidecar",
-		"go=" + runtime.Version(),
-		"os=" + runtime.GOOS,
-		"arch=" + runtime.GOARCH,
-	}, ";")))
 }
 
 func (s *Server) gitOutput(repo string, args ...string) (string, error) {
