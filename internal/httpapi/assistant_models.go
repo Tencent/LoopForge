@@ -183,6 +183,9 @@ func cachedCLIModels(environment string) []string {
 func (h *assistantHandlers) models(c *gin.Context) {
 	if raw := strings.TrimSpace(c.Query("executor")); raw != "" && assistantExecutor(raw) != "codebuddy" {
 		id := assistantExecutor(raw)
+		if id == assistantEngineClaude {
+			id = "claude"
+		}
 		catalog, ok := executorModelCatalogs()[id]
 		if !ok {
 			c.JSON(400, gin.H{"error": "不支持的执行器"})

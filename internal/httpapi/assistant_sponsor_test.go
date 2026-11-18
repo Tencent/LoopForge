@@ -286,7 +286,8 @@ func TestAssistantModelsPerExecutor(t *testing.T) {
 		_ = json.Unmarshal(rec.Body.Bytes(), &catalog)
 		return rec, catalog
 	}
-	for executor, family := range map[string]string{"codex": "gpt", "claude": "claude"} {
+	// The chat UI names Claude Code by its engine ID "claude-code".
+	for executor, family := range map[string]string{"codex": "gpt", "claude": "claude", "claude-code": "claude"} {
 		rec, catalog := get(executor)
 		if rec.Code != 200 || catalog.Default != "default" || len(catalog.Models) < 2 || catalog.Models[0].ID != "default" {
 			t.Fatalf("%s catalog: %d %s", executor, rec.Code, rec.Body.String())
