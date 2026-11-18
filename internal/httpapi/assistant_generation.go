@@ -463,12 +463,7 @@ func (h *assistantHandlers) steerGeneration(c *gin.Context) {
 		c.JSON(400, gin.H{"error": "请先配置个人 CodeBuddy API Key"})
 		return
 	}
-	user, sharedModels, ok := h.assistantChatUser(stored)
-	if !ok {
-		c.JSON(400, gin.H{"error": "请先配置个人 CodeBuddy API Key"})
-		return
-	}
-	ownerID, _, err := h.conversationScope(c, c.Param("id"), "", "", user.ID)
+	ownerID, _, err := h.conversationScope(c, c.Param("id"), "", "", stored.ID)
 	if err != nil {
 		c.JSON(403, gin.H{"error": err.Error()})
 		return
@@ -499,23 +494,50 @@ func (h *assistantHandlers) steerGeneration(c *gin.Context) {
 		c.JSON(404, gin.H{"error": "会话不存在"})
 		return
 	}
-	model := body.Model
-	if sharedModels != nil {
-		forced, allowed := assistantSponsoredModelFor(sharedModels, model)
-		if !allowed {
-			c.JSON(400, gin.H{"error": errAssistantSponsoredModel(sharedModels)})
-			return
-		}
-		model = forced
+	// Steering resumes this saved CLI session. Bare model IDs belong to that
+	// CLI, including legacy replies whose CLI is only on session.Executor.
+	cliEngine := assistantConversationEngine(session.Messages, session.Executor)
+	if cliEngine == "" {
+		cliEngine, _ = assistantModelEngine(assistantRequestModel(session.Executor, session.Model))
+	}
+	model := strings.TrimSpace(firstNonEmpty(body.Model, session.Model))
+	if !assistantModelHasEnginePrefix(model) {
+		model = assistantRequestModel(cliEngine, model)
+	} else if id, explicit := strings.CutPrefix(model, assistantEngineCodeBuddy+":"); explicit {
+		model = strings.TrimSpace(id)
+	}
+	// Refuse a switch before recording cancellation, even without credentials
+	// for the requested CLI. The current reply must keep running on refusal.
+	if refusal := assistantEngineSwitchRefusal(cliEngine, model); refusal != "" {
+		c.JSON(409, gin.H{"error": refusal})
+		return
+	}
+	target := session.Execution()
+	runnerLogin := h.assistantUsesRunnerLogin(stored.ID, &target, cliEngine)
+	user, model, refusal := h.assistantTurnUser(stored, model, runnerLogin)
+	if refusal != "" {
+		c.JSON(400, gin.H{"error": refusal})
+		return
+	}
+	if engine, id := assistantModelEngine(model); engine != assistantEngineCodeBuddy && !assistantValidEngineModel(id) {
+		c.JSON(400, gin.H{"error": "模型 ID 无效"})
+		return
 	}
 	// A CodeBuddy model this instance has not listed yet refreshes the list
 	// first, like a new turn, instead of silently becoming the default.
-	catalog := h.chatCatalog(c.Request.Context(), user)
+	catalog := assistantChatCatalog(c.Request.Context(), user.CodeBuddyInternetEnvironment, nil)
 	if engine, _ := assistantModelEngine(model); engine == assistantEngineCodeBuddy {
 		catalog = h.turnCatalog(c.Request.Context(), user, model)
 	}
-	model = assistantAllowedModel(model, catalog)
-	if err := validateAssistantEffort(user, model, body.Effort); err != nil {
+	if !runnerLogin {
+		model = assistantAllowedUserModel(model, catalog, user)
+	}
+	if refusal := assistantEngineSwitchRefusal(cliEngine, model); refusal != "" {
+		c.JSON(409, gin.H{"error": refusal})
+		return
+	}
+	effort := firstNonEmpty(body.Effort, session.Effort)
+	if err := validateAssistantEffort(user, model, effort); err != nil {
 		c.JSON(400, gin.H{"error": err.Error()})
 		return
 	}
@@ -525,7 +547,7 @@ func (h *assistantHandlers) steerGeneration(c *gin.Context) {
 		return
 	}
 	message := probe.Messages[0]
-	steer := domain.AssistantSteer{Content: message.Content, Attachments: message.Attachments, References: message.References, Model: model, Effort: body.Effort, ApprovalMode: normalizeAssistantApprovalMode(body.ApprovalMode), ActorID: user.ID, ActorName: user.LoginName}
+	steer := domain.AssistantSteer{Content: message.Content, Attachments: message.Attachments, References: message.References, Model: model, Effort: effort, ApprovalMode: normalizeAssistantApprovalMode(body.ApprovalMode), ActorID: user.ID, ActorName: user.LoginName}
 	if err := h.repo.SteerAssistantGeneration(ownerID, g.SessionID, g.ID, steer); err != nil {
 		c.JSON(409, gin.H{"error": err.Error()})
 		return
@@ -579,7 +601,7 @@ func (h *assistantHandlers) followSteer(parent context.Context, prev domain.Assi
 	if strings.TrimSpace(steer.Effort) != "" {
 		session.Effort = steer.Effort
 	}
-	req := assistantRequest{ProjectID: session.ProjectID, SessionID: session.ID, RunID: session.RunID, Model: firstNonEmpty(steer.Model, session.Model), Effort: firstNonEmpty(steer.Effort, session.Effort), ApprovalMode: steer.ApprovalMode, Messages: session.Messages}
+	req := assistantRequest{ProjectID: session.ProjectID, SessionID: session.ID, RunID: session.RunID, Executor: session.Executor, ExecutionTarget: session.ExecutionTarget, Model: firstNonEmpty(steer.Model, session.Model), Effort: firstNonEmpty(steer.Effort, session.Effort), ApprovalMode: steer.ApprovalMode, Messages: session.Messages}
 	if req.RunID != "" && h.engine != nil {
 		token, err := h.engine.BeginConversationWorkspaceUse(req.RunID)
 		if err != nil {

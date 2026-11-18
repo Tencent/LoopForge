@@ -137,6 +137,7 @@ export function useChat() {
     [error, setError] = useState(""),
     [ready, setReady] = useState(false),
     [submitting, setSubmitting] = useState(false),
+    [steerOnSend, setSteerOnSend] = useState(false),
     // Messages sent while a reply runs, per conversation (see message-queue.js).
     [queues, setQueues] = useState(readQueues),
     // The generation whose final transcript has been loaded. A queued message
@@ -232,6 +233,34 @@ export function useChat() {
     setDraftIssueId("");
     open(null);
   }, [open]);
+  useEffect(() => {
+    if (!user?.id || user.isGuest) {
+      setSteerOnSend(false);
+      return;
+    }
+    let current = true, revision = 0;
+    const refresh = () => {
+      const requested = ++revision;
+      return api("/api/assistant/preferences")
+        .then((prefs) => {
+          if (current && requested === revision) setSteerOnSend(!!prefs?.steerOnSend);
+        })
+        .catch(() => {});
+    };
+    const onMessage = (event) => {
+      if (event.source === window.parent && event.origin === location.origin &&
+          event.data?.type === "agentflow-assistant-preferences-changed")
+        void refresh();
+    };
+    void refresh();
+    window.addEventListener("focus", refresh);
+    window.addEventListener("message", onMessage);
+    return () => {
+      current = false;
+      window.removeEventListener("focus", refresh);
+      window.removeEventListener("message", onMessage);
+    };
+  }, [user?.id, user?.isGuest]);
   useEffect(() => {
     let current = true,
       timer,
@@ -748,6 +777,9 @@ export function useChat() {
         dispatchingRef.current = false;
       }
     }
+    return steerMessage(id, item);
+  }
+  async function steerMessage(id, item) {
     const from = generation.id;
     steeringRef.current = { sessionId: id, generationId: from, item };
     setSteering({ sessionId: id, item });
@@ -793,16 +825,22 @@ export function useChat() {
       generation?.status === "running" ||
       steeringRef.current?.sessionId === currentId.current
     ) {
-      // Like Codex, a message sent during a reply waits its turn instead of
-      // stopping the reply. Internal follow-ups (confirmed drafts) never queue.
+      // Internal follow-ups (confirmed drafts) never queue or interrupt.
       if (messagesOverride || fromQueue || !currentId.current) {
         setError("当前回复仍在生成，请稍后再试。");
         return false;
       }
       const id = currentId.current;
-      setQueues((old) =>
-        enqueue(old, id, queuedMessage({ text, attachments, references, approvalMode })),
-      );
+      const item = queuedMessage({ text, attachments, references, approvalMode });
+      if (steerOnSend && generation?.status === "running" && generation.id &&
+          !submittingRef.current && !steeringRef.current && !dispatchingRef.current &&
+          !stopRequestRef.current) {
+        // Failed steering restores the message to the queue, so the composer
+        // can clear without losing it. Further sends wait for this handoff.
+        await steerMessage(id, item);
+        return true;
+      }
+      setQueues((old) => enqueue(old, id, item));
       setError("");
       return true;
     }
