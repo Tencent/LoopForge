@@ -104,19 +104,30 @@ describe("App", () => {
     await user.click(screen.getByRole("button", { name: "发送消息" }));
     expect(chat.send).toHaveBeenLastCalledWith(expect.objectContaining({ approvalMode: "assisted" }));
   });
-  test("restores full permission for a new conversation after a reload", async () => {
+  test("restores full permission after a reload and resets it for another account", async () => {
     const user = userEvent.setup();
     const first = render(<App />);
     await user.click(screen.getByRole("button", { name: "操作确认方式" }));
     await user.click(screen.getByRole("menuitemradio", { name: "完全权限" }));
     first.unmount();
-    render(<App />);
+    const reloaded = render(<App />);
     fireEvent.keyDown(window, { key: "O", ctrlKey: true, shiftKey: true });
     expect(chat.newChat).toHaveBeenCalled();
     expect(screen.getByRole("button", { name: "操作确认方式" })).toHaveTextContent("完全权限");
     await user.type(screen.getByRole("textbox", { name: /消息|输入/ }), "你好");
     await user.click(screen.getByRole("button", { name: "发送消息" }));
     expect(chat.send).toHaveBeenLastCalledWith(expect.objectContaining({ approvalMode: "auto" }));
+    const originalUser = chat.user;
+    try {
+      chat.user = { id: "u2", loginName: "another-user" };
+      reloaded.rerender(<App />);
+      expect(screen.getByRole("button", { name: "操作确认方式" })).toHaveTextContent("请求批准");
+      await user.type(screen.getByRole("textbox", { name: "消息" }), "新账号");
+      await user.click(screen.getByRole("button", { name: "发送消息" }));
+      expect(chat.send).toHaveBeenLastCalledWith(expect.objectContaining({ approvalMode: "confirm" }));
+    } finally {
+      chat.user = originalUser;
+    }
   });
   test("does not ask for per-command native approval in a working conversation", () => {
     const previous = {...chat};

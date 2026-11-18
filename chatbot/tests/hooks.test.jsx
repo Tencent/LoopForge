@@ -140,7 +140,7 @@ describe("conversation hooks", () => {
         ];
         if (personalCodexCatalog)
           models.push({ id: "codex:gpt-5", engine: "codex", name: "GPT-5", efforts: ["high"] });
-        return { default: "default", models };
+        return { default: "default", defaultEfforts: ["low"], models };
       }
       return original(path, options);
     });
@@ -148,7 +148,14 @@ describe("conversation hooks", () => {
       const first = renderHook(() => useChat());
       await waitFor(() => expect(first.result.current.ready).toBe(true));
       expect(first.result.current.models.map((m) => m.id)).toEqual(["m1", "claude-opus-5.5"]);
-      expect(first.result.current.model).toBe("m1");
+      expect(first.result.current.model).toBe("default");
+      act(() => first.result.current.setEffort("low"));
+      await act(() => first.result.current.send({ text: "沿用默认模型" }));
+      expect(writeMock).toHaveBeenCalledWith(
+        "/api/assistant/generations",
+        expect.objectContaining({ model: "default", effort: "low" }),
+      );
+      act(() => first.result.current.newChat());
       act(() => { first.result.current.setModel("claude-opus-5.5"); });
       act(() => first.result.current.setEffort("max"));
       act(() => first.result.current.open("s1"));
@@ -194,7 +201,7 @@ describe("conversation hooks", () => {
       // A remembered model that is no longer offered falls back to the list.
       writeComposerPreference("model.codebuddy", "retired-model");
       act(() => reloaded.result.current.newChat());
-      expect(reloaded.result.current.model).toBe("m1");
+      expect(reloaded.result.current.model).toBe("default");
       act(() => reloaded.result.current.setModel("claude-opus-5.5"));
       expect(reloaded.result.current.effort).toBe("");
     } finally {

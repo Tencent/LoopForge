@@ -71,12 +71,13 @@ function effortPreference(executor, model) {
   return `effort.${executor}.${unprefixedModel(executor, model)}`;
 }
 
-// The model a new conversation on executor starts with: the remembered one
-// while the catalog still offers it, else the first listed.
-function preferredModel(list, executor) {
+// A new conversation restores a listed preference. CodeBuddy's execution
+// default is separate from the models offered in its picker.
+function preferredModel(list, executor, codeBuddyDefault) {
   const remembered = readComposerPreference(`model.${executor}`);
-  if (!list.length) return executor === "codebuddy" ? "" : remembered || "default";
-  return findExecutorModel(list, executor, remembered)?.id || list[0].id;
+  const listed = findExecutorModel(list, executor, remembered);
+  if (executor === "codebuddy") return listed?.id ?? codeBuddyDefault;
+  return listed?.id || list[0]?.id || remembered || "default";
 }
 
 // Mirrors errAssistantSponsoredModel in internal/httpapi/assistant_sponsor.go;
@@ -123,6 +124,7 @@ export function useChat() {
     [revealId, setRevealId] = useState(activeId),
     [projectId, setProjectId] = useState(initialProject),
     [model, setModel] = useState(null),
+    [codeBuddyDefault, setCodeBuddyDefault] = useState({ id: "default", name: "默认" }),
     [effort, setEffort] = useState(null),
     [sponsoredModels, setSponsoredModels] = useState([]),
     [executor, setExecutorState] = useState(storedExecutor),
@@ -242,6 +244,7 @@ export function useChat() {
         setProjects(projectRows || []);
         setSandboxes(sandboxRows || []);
         setModels(catalog.models || []);
+        setCodeBuddyDefault({ id: catalog.default || "default", name: "默认", efforts: catalog.defaultEfforts });
         setSponsoredModels(sponsoredModelList(catalog));
         await refreshSessions();
         if (!current) return;
@@ -563,9 +566,13 @@ export function useChat() {
   const sponsoredModel = sponsoredModels[0] || "";
   const sponsored = codeBuddy && missingKey && !user.isGuest && !!sponsoredModel;
   const sharedModelFor = (id) => (sponsoredModels.includes(id) ? id : sponsoredModel);
-  const selectedModel = model ?? preferredModel(executorModels, executor);
+  const selectedModel = model ?? preferredModel(executorModels, executor, codeBuddyDefault.id);
   const availableModel = sponsored ? sharedModelFor(selectedModel) : selectedModel;
-  const activeModelEntry = findExecutorModel(executorModels, executor, availableModel);
+  function modelEntry(id) {
+    return findExecutorModel(executorModels, executor, id) ??
+      (codeBuddy && id === codeBuddyDefault.id ? codeBuddyDefault : undefined);
+  }
+  const activeModelEntry = modelEntry(availableModel);
   const activeModel = activeModelEntry?.id ?? availableModel;
   // null follows the browser preference, while "" is the CLI's default level.
   const activeEffort = modelEffort(
@@ -1014,7 +1021,7 @@ export function useChat() {
         runId: stored.runId || "",
         executor,
         model: chosen,
-        effort: modelEffort(findExecutorModel(executorModels, executor, chosen), stored.effort || ""),
+        effort: modelEffort(modelEntry(chosen), stored.effort || ""),
         messages: stored.messages,
         approvalMode: ["confirm", "assisted", "auto"].includes(approvalMode) ? approvalMode : "confirm",
       });
@@ -1313,6 +1320,7 @@ export function useChat() {
     revealId,
     projectId,
     model: activeModel,
+    modelDetails: activeModelEntry,
     effort: activeEffort,
     setEffort: chooseEffort,
     sponsored,

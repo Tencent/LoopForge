@@ -150,12 +150,23 @@ async function loadCredentialEffortCatalogs(){
 function credentialCatalogModels(value){
   return (Array.isArray(value)?value:[]).map(model=>{
     const id=String(model?.id||'').trim(),name=String(model?.name||'').trim();
-    const metadata={...(model?.efforts?{efforts:model.efforts,defaultEffort:model.defaultEffort}:{}),...(Array.isArray(model?.reasoningEfforts)?{reasoningEfforts:model.reasoningEfforts}:{})};
+    const metadata={
+      ...(model?.efforts?{efforts:model.efforts,defaultEffort:model.defaultEffort}:{}),
+      ...(Array.isArray(model?.reasoningEfforts)?{reasoningEfforts:model.reasoningEfforts}:{}),
+      ...(Array.isArray(model?.discoveredReasoningEfforts)?{discoveredReasoningEfforts:model.discoveredReasoningEfforts}:{}),
+    };
     return {id,name:name===id?'':name,...metadata};
   }).filter(model=>model.id||model.name);
 }
 function credentialCatalogStored(models){return credentialCatalogModels(models).map(({name,...model})=>name?{...model,name}:model)}
-function credentialCatalogKey(models){return JSON.stringify(credentialCatalogModels(models).map(model=>[model.id,model.name,Array.isArray(model.reasoningEfforts)?[...model.reasoningEfforts].sort():null,Object.entries(model.efforts||{}).sort(([a],[b])=>a.localeCompare(b)),model.defaultEffort||'']))}
+function credentialCatalogKey(models){
+  return JSON.stringify(credentialCatalogModels(models).map(model=>[
+    model.id,model.name,
+    model.reasoningEfforts?.slice().sort()??null,
+    model.discoveredReasoningEfforts?.slice().sort()??null,
+    Object.entries(model.efforts||{}).sort(([a],[b])=>a.localeCompare(b)),model.defaultEffort||'',
+  ]));
+}
 function credentialCatalogError(models){
   const seen=new Set();
   if(models.length>CREDENTIAL_CATALOG_MAX)return {index:CREDENTIAL_CATALOG_MAX,error:`模型目录最多 ${CREDENTIAL_CATALOG_MAX} 个`};
@@ -170,19 +181,25 @@ function credentialCatalogError(models){
   }
   return null;
 }
+function credentialCatalogEffortSummary(model){
+  if(model.reasoningEfforts)return model.reasoningEfforts.join(' / ')||'仅使用默认';
+  if(!model.discoveredReasoningEfforts)return '自动';
+  return '自动 · '+(model.discoveredReasoningEfforts.join(' / ')||'仅使用默认');
+}
 function credentialCatalogEffortHTML(model,engine){
   const available=credentialEffortCatalogs?.[engine==='claude-code'?'claude':engine]?.efforts||[];
-  const options=available.concat((model.reasoningEfforts||[]).filter(value=>!available.some(option=>option.value===value)).map(value=>({value,label:value})));
-  if(!options.length)return '';
-  const custom=Array.isArray(model.reasoningEfforts),selected=model.reasoningEfforts||[];
-  return `<details class="credential-catalog-effort"><summary>思考强度<span data-catalog-effort-summary>${custom?(selected.length?selected.map(escapeHTML).join(' / '):'仅使用默认'):'自动'}</span></summary><label class="credential-catalog-effort-mode">可选强度<select data-catalog-effort-mode aria-label="思考强度配置"><option value="auto"${custom?'':' selected'}>自动</option><option value="custom"${custom?' selected':''}>自定义</option></select></label><div class="credential-catalog-effort-levels" data-catalog-effort-levels${custom?'':' hidden'}>${options.map(({value,label})=>`<label><input type="checkbox" data-catalog-effort="${escapeHTML(value)}"${selected.includes(value)?' checked':''}>${escapeHTML(label)}</label>`).join('')}<small>勾选此模型支持的强度；全部取消时仅使用模型默认强度。</small></div></details>`;
+  const knownLevels=new Set([...(model.reasoningEfforts||[]),...(model.discoveredReasoningEfforts||[])]);
+  const additional=[...knownLevels].filter(value=>!available.some(option=>option.value===value));
+  const options=available.concat(additional.map(value=>({value,label:value})));
+  if(!options.length&&!model.discoveredReasoningEfforts)return '';
+  const custom=Array.isArray(model.reasoningEfforts),selected=model.reasoningEfforts??model.discoveredReasoningEfforts??[];
+  return `<details class="credential-catalog-effort"><summary>思考强度<span data-catalog-effort-summary>${escapeHTML(credentialCatalogEffortSummary(model))}</span></summary><label class="credential-catalog-effort-mode">可选强度<select data-catalog-effort-mode aria-label="思考强度配置"><option value="auto"${custom?'':' selected'}>自动</option><option value="custom"${custom?' selected':''}>自定义</option></select></label><div class="credential-catalog-effort-levels" data-catalog-effort-levels${custom?'':' hidden'}>${options.map(({value,label})=>`<label><input type="checkbox" data-catalog-effort="${escapeHTML(value)}"${selected.includes(value)?' checked':''}>${escapeHTML(label)}</label>`).join('')}<small>勾选此模型支持的强度；全部取消时仅使用模型默认强度。</small></div></details>`;
 }
 function syncCredentialCatalogEfforts(row){
   if(!row)return;
   const mode=row.querySelector('[data-catalog-effort-mode]');if(!mode)return;
-  const custom=mode.value==='custom',selected=[...row.querySelectorAll('[data-catalog-effort]:checked')].map(input=>input.dataset.catalogEffort);
-  row.querySelector('[data-catalog-effort-levels]').hidden=!custom;
-  row.querySelector('[data-catalog-effort-summary]').textContent=custom?(selected.join(' / ')||'仅使用默认'):'自动';
+  row.querySelector('[data-catalog-effort-levels]').hidden=mode.value!=='custom';
+  row.querySelector('[data-catalog-effort-summary]').textContent=credentialCatalogEffortSummary(credentialCatalogRowModel(row));
 }
 function refreshCredentialCatalogEfforts(catalog){
   if(!catalog?.isConnected)return;
@@ -415,7 +432,7 @@ function applyCredentialCatalogProbe(catalog){
       kept.add(id);
       if(picked.has(id)&&discovered.has(id)){
         const current=credentialCatalogRowModel(row),fresh=discovered.get(id);
-        row.outerHTML=credentialCatalogRowHTML({...current,...fresh,name:current.name,reasoningEfforts:current.reasoningEfforts??fresh.reasoningEfforts},catalog.dataset.catalogEngine);
+        row.outerHTML=credentialCatalogRowHTML({...current,...fresh,name:current.name,reasoningEfforts:current.reasoningEfforts},catalog.dataset.catalogEngine);
       }
     }
   });

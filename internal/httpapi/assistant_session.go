@@ -402,7 +402,7 @@ func (h *assistantHandlers) session(c *gin.Context) {
 			conv.Model = existing.Model
 		}
 		editor, _ := h.repo.User(current.ID)
-		if err := validateAssistantEffort(editor, conv.Model, conv.Effort); err != nil {
+		if err := validateAssistantEffort(c.Request.Context(), editor, conv.Model, conv.Effort); err != nil {
 			c.JSON(400, gin.H{"error": err.Error()})
 			return
 		}

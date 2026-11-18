@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"fmt"
 	"slices"
 	"strings"
@@ -9,29 +10,19 @@ import (
 	"agentflow/internal/runtime"
 )
 
-// Mirrors CodeBuddy Code 2.180.0's product reasoning.supportedEfforts and
-// catalog effort capability. Unknown models use the conservative low/medium/high
-// fallback: the CLI clamps xhigh/max to high when no capability is known.
-// Keep this snapshot alongside the fixed chat model catalog when updating it.
-// Empty effort always leaves the model's native default untouched.
-//
-// user's saved Cursor catalog resolves the Cursor families folded out of
-// their CLI's own model list (runtime.FoldCursorCLIModels).
-func assistantModelEfforts(user domain.User, model string) []string {
+// assistantModelEfforts resolves the same capabilities as the picker for
+// custom gateways. Cursor uses the saved family mapping that drives its CLI.
+func assistantModelEfforts(ctx context.Context, user domain.User, model string) []string {
 	engine, _ := assistantModelEngine(model)
-	catalog := assistantEngineCustomModels(user, engine)
-	if len(catalog) == 0 {
-		key, baseURL := assistantEngineCredential(user, engine)
-		anthropic := assistantEngineAnthropicModels(engine, assistantEngineProtocol(user, engine))
-		if cached, ok := assistantDiscoveryCache.Load(assistantDiscoveryKey(anthropic, key, baseURL)); ok {
-			catalog = cliModelsOf(cached.(assistantDiscoveryEntry).models)
-		}
+	if engine == assistantEngineCodeBuddy || engine == runtime.AgentCLICursor {
+		return assistantModelEffortsIn(model, assistantEngineCustomModels(user, engine))
 	}
-	return assistantModelEffortsIn(model, catalog)
+	return assistantModelEffortsIn(model, cliModelsOf(assistantDiscoveredModelsFor(ctx, user, engine)))
 }
 
-// assistantModelEffortsIn is assistantModelEfforts with the engine's catalog
-// given directly.
+// assistantModelEffortsIn prefers configured levels, then the CLI catalog.
+// The CodeBuddy fallback mirrors CodeBuddy Code 2.180.0's model capabilities.
+// Unknown models fall back to low/medium/high.
 func assistantModelEffortsIn(model string, catalog []domain.CLIModel) []string {
 	engine, id := assistantModelEngine(model)
 	supported := domain.ExecutorEffortLevels[engine]
@@ -41,12 +32,19 @@ func assistantModelEffortsIn(model string, catalog []domain.CLIModel) []string {
 		supported = runtime.AgyModelEfforts(id)
 	}
 	for _, item := range catalog {
-		if item.ID != id || item.ReasoningEfforts == nil {
+		if item.ID != id {
+			continue
+		}
+		configured := item.ReasoningEfforts
+		if configured == nil {
+			configured = item.DiscoveredReasoningEfforts
+		}
+		if configured == nil {
 			continue
 		}
 		levels := []string{}
 		for _, level := range supported {
-			if slices.Contains(*item.ReasoningEfforts, level) {
+			if slices.Contains(*configured, level) {
 				levels = append(levels, level)
 			}
 		}
@@ -71,11 +69,11 @@ func assistantModelEffortsIn(model string, catalog []domain.CLIModel) []string {
 	}
 }
 
-func validateAssistantEffort(user domain.User, model, effort string) error {
+func validateAssistantEffort(ctx context.Context, user domain.User, model, effort string) error {
 	if effort == "" {
 		return nil
 	}
-	efforts := assistantModelEfforts(user, model)
+	efforts := assistantModelEfforts(ctx, user, model)
 	if !slices.Contains(efforts, effort) {
 		if len(efforts) == 0 {
 			return fmt.Errorf("模型 %s 仅支持默认思考强度", model)

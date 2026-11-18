@@ -60,25 +60,33 @@ test('model effort edits save independently of ID and name, and automatic differ
   assert.equal(fresh.querySelector('[data-catalog-effort-levels]').hidden, true);
 });
 
-test('fetching existing model IDs adopts missing capabilities while preserving an explicit override', async t => {
-  const {app,row,catalog} = await editor(t, [{id:'legacy',name:'My name'}, {id:'custom',reasoningEfforts:['low']}]);
+test('re-probing changes automatic capabilities and keeps explicit overrides', async t => {
+  const {app,row,catalog} = await editor(t, [
+    {id:'automatic',name:'My name',discoveredReasoningEfforts:['low']},
+    {id:'custom',discoveredReasoningEfforts:['low'],reasoningEfforts:['low']},
+    {id:'default-only',reasoningEfforts:[]},
+  ]);
   app.router.post('/api/users/1/cli-models/probe', {
     source:'remote', models:[
-      {id:'legacy',name:'Remote name',reasoningEfforts:['high','xhigh']},
-      {id:'custom',reasoningEfforts:['high']},
-      {id:'new',reasoningEfforts:[]},
+      {id:'automatic',name:'Remote name',discoveredReasoningEfforts:['high','xhigh']},
+      {id:'custom',discoveredReasoningEfforts:['high']},
+      {id:'default-only',discoveredReasoningEfforts:['high']},
     ],
   });
   catalog.querySelector('[data-catalog-act="probe"]').click();
   await settle();
   catalog.querySelector('[data-catalog-act="probe-apply"]').click();
+  const modes = [...catalog.querySelectorAll('[data-catalog-effort-mode]')];
+  assert.deepEqual(modes.map(mode=>mode.value), ['auto','custom','custom']);
+  assert.equal(catalog.querySelector('[data-catalog-effort-summary]').textContent, '自动 · high / xhigh');
   const save = row.querySelector('[data-credential-act="save"]');
   assert.equal(save.disabled, false);
   save.click();
   await settle();
   assert.deepEqual(app.router.calls.find(call => call.method === 'PUT').body.codexModels, [
-    {id:'legacy',name:'My name',reasoningEfforts:['high','xhigh']},
-    {id:'custom',reasoningEfforts:['low']},
+    {id:'automatic',name:'My name',discoveredReasoningEfforts:['high','xhigh']},
+    {id:'custom',discoveredReasoningEfforts:['high'],reasoningEfforts:['low']},
+    {id:'default-only',discoveredReasoningEfforts:['high'],reasoningEfforts:[]},
   ]);
 });
 

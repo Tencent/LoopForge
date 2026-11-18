@@ -288,7 +288,10 @@ func parseCursorModels(output string) []domain.CLIModel {
 func cliModelsOf(models []assistantDiscoveredModel) []domain.CLIModel {
 	out := make([]domain.CLIModel, 0, len(models))
 	for _, model := range models {
-		out = append(out, domain.CLIModel{ID: model.ID, Name: model.Name, Efforts: model.Efforts, DefaultEffort: model.DefaultEffort, ReasoningEfforts: model.ReasoningEfforts})
+		out = append(out, domain.CLIModel{
+			ID: model.ID, Name: model.Name, Efforts: model.Efforts, DefaultEffort: model.DefaultEffort,
+			ReasoningEfforts: model.ReasoningEfforts, DiscoveredReasoningEfforts: model.DiscoveredReasoningEfforts,
+		})
 	}
 	return out
 }
@@ -303,7 +306,7 @@ func cliModelsWithEfforts(engine string, models []domain.CLIModel) []domain.CLIM
 			id = engine + ":" + id
 		}
 		levels := append([]string{}, assistantModelEffortsIn(id, models)...)
-		models[i].ReasoningEfforts = &levels
+		models[i].DiscoveredReasoningEfforts = &levels
 	}
 	return models
 }

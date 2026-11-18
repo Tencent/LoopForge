@@ -150,3 +150,28 @@ test('role effort picker follows each model and resets an unsupported level on m
   assert.deepEqual(choices(), ['']);
   assert.equal(app.document.querySelector('#agentEffortPicker [name="effort"]').value, '');
 });
+
+test('a personal catalog does not rewrite an existing role effort during a name edit', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  let loaded;
+  app.router.get('/api/executor-models', () => new Promise(resolve => { loaded = resolve; }));
+  app.router.put('/api/agents', call => ({ status: 200, body: call.body }));
+  app.evaluate(`
+    state.data.executors=[{id:'codebuddy',name:'CodeBuddy'}, {id:'codex',name:'Codex'}];
+    openAgentWizard({id:'agent-1',name:'Developer',prompt:'Review',executorId:'codex',model:'reasoner',effort:'xhigh'});
+  `);
+  await settle();
+  loaded({codex:{customModel:true,models:[{id:'reasoner',name:'Reasoner',efforts:[]}],efforts:[]}});
+  await settle();
+  const picker = app.document.querySelector('#agentEffortPicker');
+  assert.deepEqual([...picker.querySelectorAll('[role=option]')].map(item=>item.dataset.id), ['']);
+  assert.equal(picker.querySelector('[data-model-label]').textContent, 'xhigh');
+  await app.evaluate(`
+    $('#agentForm').elements.name.value='Renamed';
+    persistAgent($('#agentForm'));
+  `);
+  const saved = app.router.calls.find(call=>call.path==='/api/agents'&&call.method==='PUT').body;
+  assert.equal(saved.name, 'Renamed');
+  assert.equal(saved.effort, 'xhigh');
+});

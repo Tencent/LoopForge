@@ -329,7 +329,10 @@ func assistantSavedModels(user domain.User, engine string) []assistantDiscovered
 	var listed []assistantDiscoveredModel
 	for _, model := range assistantEngineCustomModels(user, engine) {
 		if assistantValidEngineModel(model.ID) {
-			listed = append(listed, assistantDiscoveredModel{ID: model.ID, Name: model.Name, Efforts: model.Efforts, DefaultEffort: model.DefaultEffort, ReasoningEfforts: model.ReasoningEfforts})
+			listed = append(listed, assistantDiscoveredModel{
+				ID: model.ID, Name: model.Name, Efforts: model.Efforts, DefaultEffort: model.DefaultEffort,
+				ReasoningEfforts: model.ReasoningEfforts, DiscoveredReasoningEfforts: model.DiscoveredReasoningEfforts,
+			})
 		}
 	}
 	return listed
@@ -373,9 +376,10 @@ type assistantDiscoveredModel struct {
 	Name string
 	// Efforts and DefaultEffort describe a Cursor family folded out of the
 	// CLI's list (domain.CLIModel).
-	Efforts          map[string]string
-	DefaultEffort    string
-	ReasoningEfforts *[]string
+	Efforts                    map[string]string
+	DefaultEffort              string
+	ReasoningEfforts           *[]string
+	DiscoveredReasoningEfforts *[]string
 }
 
 type assistantDiscoveryEntry struct {
@@ -582,7 +586,7 @@ func discoverAssistantEngineModels(ctx context.Context, anthropic bool, apiKey, 
 			if efforts == nil {
 				efforts = item.SupportedReasoningEfforts
 			}
-			out = append(out, assistantDiscoveredModel{ID: id, Name: truncateRunes(name, 64), ReasoningEfforts: efforts})
+			out = append(out, assistantDiscoveredModel{ID: id, Name: truncateRunes(name, 64), DiscoveredReasoningEfforts: efforts})
 			if len(out) == assistantDiscoveryMaxModels {
 				break
 			}

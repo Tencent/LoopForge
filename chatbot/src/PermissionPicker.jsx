@@ -13,13 +13,14 @@ const modes = [
 
 const validApprovalMode = (value) => modes.some((mode) => mode.id === value);
 
-export function storedApprovalMode() {
-  const value = readComposerPreference("approvalMode");
+export function storedApprovalMode(userId) {
+  if (!userId) return "confirm";
+  const value = readComposerPreference(`approvalMode.${userId}`);
   return validApprovalMode(value) ? value : "confirm";
 }
 
-export function rememberApprovalMode(value) {
-  if (validApprovalMode(value)) writeComposerPreference("approvalMode", value);
+export function rememberApprovalMode(userId, value) {
+  if (userId && validApprovalMode(value)) writeComposerPreference(`approvalMode.${userId}`, value);
 }
 
 // `glyph` is a rendered brand mark. Options that only set `icon` keep the Harness icon.

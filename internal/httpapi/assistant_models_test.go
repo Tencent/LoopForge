@@ -21,11 +21,20 @@ func TestAssistantModelPickerOmitsCodeBuddyCLIDefault(t *testing.T) {
 	if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &catalog) != nil {
 		t.Fatalf("model picker: %d %s", rec.Code, rec.Body)
 	}
-	if catalog.Default != "model-a" || assistantCatalogLists(catalog, assistantDefaultModel) || !assistantCatalogLists(catalog, "model-b") {
+	if catalog.Default != assistantDefaultModel || len(catalog.DefaultEfforts) == 0 ||
+		assistantCatalogLists(catalog, assistantDefaultModel) || !assistantCatalogLists(catalog, "model-b") {
 		t.Fatalf("model picker shows the wrong choices: %+v", catalog)
 	}
 	if got := assistantAllowedModel("", h.chatCatalog(context.Background(), user)); got != assistantDefaultModel {
 		t.Fatalf("an omitted request model should still use the CLI fallback, got %q", got)
+	}
+	t.Setenv("AGENTFLOW_ASSISTANT_MODELS", "")
+	c, rec = workbenchContext(user, http.MethodGet, "/api/assistant/models", bytes.NewBuffer(nil))
+	h.models(c)
+	var unconfigured assistantModelCatalog
+	if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &unconfigured) != nil ||
+		unconfigured.Default != assistantDefaultModel || unconfigured.Models == nil || len(unconfigured.Models) != 0 {
+		t.Fatalf("unconfigured picker: %d %s", rec.Code, rec.Body)
 	}
 }
 

@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"slices"
 	"strconv"
+	"sync/atomic"
 	"testing"
 
 	"agentflow/internal/domain"
@@ -40,8 +41,11 @@ func TestModelEffortsSurviveProbeSaveAndSelection(t *testing.T) {
 		t.Fatalf("probe=%s err=%v", response.Body, err)
 	}
 	for i, want := range [][]string{{"low", "xhigh"}, {}, {"low", "medium", "high", "xhigh"}} {
-		if got := result.Models[i].ReasoningEfforts; got == nil || !slices.Equal(*got, want) {
+		if got := result.Models[i].DiscoveredReasoningEfforts; got == nil || !slices.Equal(*got, want) {
 			t.Fatalf("model %s lost efforts: %+v, want %v", result.Models[i].ID, got, want)
+		}
+		if result.Models[i].ReasoningEfforts != nil {
+			t.Fatalf("model %s returned an override instead of discovered capabilities", result.Models[i].ID)
 		}
 	}
 	if _, err := h.repo.UpdateUserCredentials(owner.ID, repo.UserCredentialUpdate{
@@ -65,7 +69,7 @@ func TestModelEffortsSurviveProbeSaveAndSelection(t *testing.T) {
 		{"codex:gateway-chat", "high", false},
 		{"codex:gateway-chat", "", true},
 	} {
-		if err := validateAssistantEffort(owner, check.model, check.effort); (err == nil) != check.valid {
+		if err := validateAssistantEffort(context.Background(), owner, check.model, check.effort); (err == nil) != check.valid {
 			t.Errorf("validate %s/%s: %v", check.model, check.effort, err)
 		}
 	}
@@ -82,12 +86,15 @@ func TestModelEffortsSurviveProbeSaveAndSelection(t *testing.T) {
 
 func TestModelEffortsKeepLegacyCatalogsAndCLIConstraints(t *testing.T) {
 	custom := []string{"low", "xhigh", "ultra"}
+	discovered := []string{"high"}
 	for _, check := range []struct {
 		model string
 		entry domain.CLIModel
 		want  []string
 	}{
 		{"codex:custom", domain.CLIModel{ID: "custom"}, []string{"low", "medium", "high"}},
+		{"codex:custom", domain.CLIModel{ID: "custom", DiscoveredReasoningEfforts: &discovered}, discovered},
+		{"codex:custom", domain.CLIModel{ID: "custom", ReasoningEfforts: &custom, DiscoveredReasoningEfforts: &discovered}, custom},
 		{"codex:custom", domain.CLIModel{ID: "custom", ReasoningEfforts: &custom}, custom},
 		{"opencode:custom", domain.CLIModel{ID: "custom", ReasoningEfforts: &custom}, []string{"low"}},
 		{"agy:claude-custom", domain.CLIModel{ID: "claude-custom", ReasoningEfforts: &custom}, nil},
@@ -100,19 +107,38 @@ func TestModelEffortsKeepLegacyCatalogsAndCLIConstraints(t *testing.T) {
 	}
 }
 
-func TestAutomaticDiscoveryUsesSameEffortsForValidation(t *testing.T) {
-	levels := []string{"xhigh"}
-	user := domain.User{CodexAPIKey: "fixture-key", CodexBaseURL: "https://effort-catalog.example/v1"}
+func TestAutomaticDiscoveryUsesSameEffortsForColdValidation(t *testing.T) {
+	var requests atomic.Int32
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/models" || r.Header.Get("Authorization") != "Bearer fixture-key" {
+			t.Error("unexpected model discovery request")
+		}
+		requests.Add(1)
+		_, _ = io.WriteString(w, `{"data":[{"id":"remote","supported_reasoning_efforts":["xhigh"]}]}`)
+	}))
+	t.Cleanup(gateway.Close)
+	ctx := context.Background()
+	user := domain.User{CodexAPIKey: "fixture-key", CodexBaseURL: gateway.URL}
 	key := assistantDiscoveryKey(false, user.CodexAPIKey, user.CodexBaseURL)
-	assistantDiscoveryCache.Store(key, assistantDiscoveryEntry{models: []assistantDiscoveredModel{{ID: "remote", ReasoningEfforts: &levels}}})
 	t.Cleanup(func() { assistantDiscoveryCache.Delete(key) })
-	if err := validateAssistantEffort(user, "codex:remote", "xhigh"); err != nil {
+	catalog := assistantEngineModels(ctx, user, nil)
+	if !slices.ContainsFunc(catalog, func(model assistantModel) bool {
+		return model.ID == "codex:remote" && slices.Equal(model.Efforts, []string{"xhigh"})
+	}) {
+		t.Fatalf("the picker did not expose the gateway capability: %+v", catalog)
+	}
+
+	assistantDiscoveryCache.Delete(key)
+	if err := validateAssistantEffort(ctx, user, "codex:remote", "xhigh"); err != nil {
 		t.Fatal(err)
 	}
-	if err := validateAssistantEffort(user, "codex:remote", "high"); err == nil {
+	if err := validateAssistantEffort(ctx, user, "codex:remote", "high"); err == nil {
 		t.Fatal("validation ignored the discovered model's capabilities")
 	}
-	if err := validateAssistantEffort(domain.User{}, "codex:remote", "xhigh"); err == nil {
+	if err := validateAssistantEffort(ctx, domain.User{}, "codex:remote", "xhigh"); err == nil {
 		t.Fatal("another user's discovered capabilities were used")
+	}
+	if got := requests.Load(); got != 2 {
+		t.Fatalf("expected one discovery per process cache, got %d", got)
 	}
 }

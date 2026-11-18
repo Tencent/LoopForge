@@ -222,7 +222,7 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 	}
 	cliEngine, _ = assistantModelEngine(req.Model)
 	req.Executor = cliEngine
-	if err := validateAssistantEffort(user, req.Model, req.Effort); err != nil {
+	if err := validateAssistantEffort(c.Request.Context(), user, req.Model, req.Effort); err != nil {
 		c.JSON(400, gin.H{"error": err.Error()})
 		return
 	}

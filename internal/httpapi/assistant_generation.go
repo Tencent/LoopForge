@@ -118,7 +118,7 @@ func (h *assistantHandlers) startGeneration(c *gin.Context) {
 	}
 	cliEngine, _ = assistantModelEngine(req.Model)
 	req.Executor = cliEngine
-	if err := validateAssistantEffort(user, req.Model, req.Effort); err != nil {
+	if err := validateAssistantEffort(c.Request.Context(), user, req.Model, req.Effort); err != nil {
 		c.JSON(400, gin.H{"error": err.Error()})
 		return
 	}
@@ -515,7 +515,7 @@ func (h *assistantHandlers) steerGeneration(c *gin.Context) {
 		catalog = h.turnCatalog(c.Request.Context(), user, model)
 	}
 	model = assistantAllowedModel(model, catalog)
-	if err := validateAssistantEffort(user, model, body.Effort); err != nil {
+	if err := validateAssistantEffort(c.Request.Context(), user, model, body.Effort); err != nil {
 		c.JSON(400, gin.H{"error": err.Error()})
 		return
 	}

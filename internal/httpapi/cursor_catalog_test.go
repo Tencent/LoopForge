@@ -73,16 +73,16 @@ func TestCursorFamiliesSurviveRestart(t *testing.T) {
 	assistantCursorModels = func(context.Context, string) ([]domain.CLIModel, error) { return nil, nil }
 	a, _ = st.User(a.ID)
 
-	if err := validateAssistantEffort(a, "cursor:widget", "xhigh"); err != nil {
+	if err := validateAssistantEffort(context.Background(), a, "cursor:widget", "xhigh"); err != nil {
 		t.Fatalf("saved family rejected its effort: %v", err)
 	}
-	if err := validateAssistantEffort(a, "cursor:nova", "max"); err == nil {
+	if err := validateAssistantEffort(context.Background(), a, "cursor:nova", "max"); err == nil {
 		t.Fatal("effort the family lacks was accepted")
 	}
-	if err := validateAssistantEffort(b, "cursor:widget", "xhigh"); err == nil {
+	if err := validateAssistantEffort(context.Background(), b, "cursor:widget", "xhigh"); err == nil {
 		t.Fatal("another user's family resolved")
 	}
-	if err := validateAssistantEffort(a, "cursor:grok-5-code", "high"); err == nil {
+	if err := validateAssistantEffort(context.Background(), a, "cursor:grok-5-code", "high"); err == nil {
 		t.Fatal("unknown model accepted an effort")
 	}
 	var listed []assistantModel

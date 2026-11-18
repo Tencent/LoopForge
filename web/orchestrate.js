@@ -53,10 +53,14 @@ function bindAIOrchestratorModelPicker() {
     const search = host.querySelector('[data-model-search]');
     const list = host.querySelector('[role="listbox"]');
     const selected = () => cli ? aiOrchestratorEngine(selectedAIOrchestratorModel()) : selectedAIOrchestratorModel();
-    const items = () => cli ? aiOrchestratorEngines().map(engine => ({...engine, icon: false, disabled: engine.configured === false || !aiOrchestratorModels(engine.id).length})) : aiOrchestratorModels();
+    const items = () => cli ? aiOrchestratorEngines().map(engine => ({
+      ...engine,
+      icon: false,
+      disabled: engine.configured === false || (engine.id !== 'codebuddy' && !aiOrchestratorModels(engine.id).length),
+    })) : aiOrchestratorModels();
     const paint = () => {
       const id = selected();
-      const item = items().find(item => item.id === id) || {id, name: id};
+      const item = items().find(item => item.id === id) || {id, name: !cli && id === api.DEFAULT ? '默认' : id};
       api.paintItem(toggle, item);
       if (cli) paintCLIIcon(toggle.querySelector('.ai-model-icon'), id);
     };
@@ -79,7 +83,9 @@ function bindAIOrchestratorModelPicker() {
         if (cli) {
           const models = aiOrchestratorModels(id);
           const remembered = localStorage.getItem('agentflow.orchestratorModel.' + id);
-          model = models.find(item => item.id === (id === selected() ? selectedAIOrchestratorModel() : remembered))?.id || models.find(item => item.id === api.catalog().default)?.id || models[0]?.id;
+          const preference = id === selected() ? selectedAIOrchestratorModel() : remembered;
+          const fallback = id === 'codebuddy' ? api.catalog().default || api.DEFAULT : models[0]?.id;
+          model = models.find(item => item.id === preference)?.id || fallback;
         }
         if (!model) return;
         selectAIOrchestratorModel(model);

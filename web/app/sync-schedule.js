@@ -169,10 +169,10 @@ function paintScheduleEngines(selected){
   const engines=scheduleModelCatalog().engines||[];
   const list=engines.length?[...engines]:[{id:'codebuddy',name:'CodeBuddy'}];
   if(!list.some(e=>e.id===current))list.push({id:current,name:current});
-  // A CLI without listed models lacks credentials in this account. A saved task
-  // keeps its CLI selectable so editing it does not move it elsewhere.
+  // CodeBuddy can run on its native default with no concrete model in the
+  // list. A saved task keeps its CLI selectable during edits.
   select.replaceChildren(...list.map(e=>{
-    const usable=e.id===current||scheduleEngineModels(e.id).length>0;
+    const usable=e.id===current||(e.id==='codebuddy'&&e.configured)||scheduleEngineModels(e.id).length>0;
     const option=new Option(usable?e.name:`${e.name}（缺少凭据）`,e.id);
     option.disabled=!usable;
     return option;
@@ -228,8 +228,7 @@ function bindScheduleModelPicker(){
   if(engine)engine.onchange=()=>{
     const api=scheduleModelAPI();
     const models=scheduleEngineModels(engine.value);
-    const fallback=engine.value==='codebuddy'?(scheduleModelCatalog().default||api?.DEFAULT):'';
-    const next=models.some(m=>m.id===fallback)?fallback:models[0]?.id;
+    const next=engine.value==='codebuddy'?(scheduleModelCatalog().default||api?.DEFAULT):models[0]?.id;
     if(next)paintScheduleModel(next);
   };
   document.addEventListener('click',e=>{if(!host.contains(e.target))closeScheduleModelMenu()});

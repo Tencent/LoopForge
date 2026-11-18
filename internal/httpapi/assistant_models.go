@@ -35,8 +35,9 @@ type assistantModel struct {
 }
 
 type assistantModelCatalog struct {
-	Default string           `json:"default"`
-	Models  []assistantModel `json:"models"`
+	Default        string           `json:"default"`
+	DefaultEfforts []string         `json:"defaultEfforts,omitempty"`
+	Models         []assistantModel `json:"models"`
 	// SponsoredModels is set when users without their own CodeBuddy API Key
 	// may still chat on the platform's shared key, limited to these models;
 	// SponsoredModel is the first (the default).
@@ -222,17 +223,19 @@ func (h *assistantHandlers) models(c *gin.Context) {
 		// shared key's default may not exist in that environment.
 		refreshCLIModels(c.Request.Context(), user.CodeBuddyInternetEnvironment, user.CodeBuddyAPIKey)
 		catalog = assistantChatCatalog(c.Request.Context(), user.CodeBuddyInternetEnvironment, nil)
-		if saved := selectableCodeBuddyModels(codeBuddyPersonalModels(user)); len(saved) > 0 {
-			catalog.Models = saved
+		if saved := codeBuddyPersonalModels(user); len(saved) > 0 {
 			catalog.Default = saved[0].ID
+			if listed := selectableCodeBuddyModels(saved); len(listed) > 0 {
+				catalog.Models = listed
+			}
 		}
 	default:
 		catalog = assistantChatCatalog(c.Request.Context(), "", nil)
 	}
-	catalog.Models = selectableCodeBuddyModels(catalog.Models)
-	if catalog.Default == assistantDefaultModel && len(catalog.Models) > 0 {
-		catalog.Default = catalog.Models[0].ID
+	if catalog.Default == assistantDefaultModel {
+		catalog.DefaultEfforts = assistantModelEffortsIn(catalog.Default, user.CodeBuddyModels)
 	}
+	catalog.Models = selectableCodeBuddyModels(catalog.Models)
 	if shared {
 		catalog.SponsoredModel, catalog.SponsoredModels = key.Models[0], key.Models
 	}
@@ -292,7 +295,7 @@ func codeBuddyPersonalModels(user domain.User) []assistantModel {
 			name = item.ID
 		}
 		model := assistantListedModel(item.ID, name, "")
-		model.Efforts = assistantModelEfforts(user, item.ID)
+		model.Efforts = assistantModelEffortsIn(item.ID, user.CodeBuddyModels)
 		models = append(models, model)
 	}
 	return models
@@ -368,7 +371,7 @@ func assistantFixedCatalog() assistantModelCatalog {
 }
 
 func assistantListedModel(id, name, credits string) assistantModel {
-	return assistantModel{ID: id, Name: name, Family: assistantModelFamily(id), Credits: credits, Efforts: assistantModelEfforts(domain.User{}, id)}
+	return assistantModel{ID: id, Name: name, Family: assistantModelFamily(id), Credits: credits, Efforts: assistantModelEffortsIn(id, nil)}
 }
 
 func assistantModelFamily(id string) string {
