@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"agentflow/internal/botinteraction"
 	"agentflow/internal/domain"
 	"agentflow/internal/notification"
 	"agentflow/internal/repo"
@@ -107,21 +108,32 @@ func (h *notificationHandlers) bot(c *gin.Context) {
 		if !ok {
 			return
 		}
+		if !notification.BotWorkersEnabled() {
+			c.JSON(503, gin.H{"error": "机器人配置维护中，请稍后再试", "code": "bot_maintenance"})
+			return
+		}
 		respond(c, h.repo.DeleteNotificationBot(bot.ID))
 	default:
 		c.JSON(405, gin.H{"error": "method not allowed"})
 	}
 }
 func (h *notificationHandlers) save(c *gin.Context, old *domain.NotificationBot) {
+	if !notification.BotWorkersEnabled() {
+		c.JSON(503, gin.H{"error": "机器人配置维护中，请稍后再试", "code": "bot_maintenance"})
+		return
+	}
 	var req struct {
 		ProjectID          string  `json:"projectId"`
 		Name               string  `json:"name"`
+		Channel            string  `json:"channel"`
 		BotID              string  `json:"botId"`
 		Secret             string  `json:"secret"`
 		Enabled            bool    `json:"enabled"`
 		Model              *string `json:"model"`
 		InteractionEnabled *bool   `json:"interactionEnabled"`
 		TargetID           *string `json:"targetId"`
+		WriteApproval      *string `json:"writeApproval"`
+		ConfigVersion      *int64  `json:"configVersion"`
 	}
 	if !decode(c, &req) {
 		return
@@ -130,15 +142,30 @@ func (h *notificationHandlers) save(c *gin.Context, old *domain.NotificationBot)
 	req.BotID = strings.TrimSpace(req.BotID)
 	req.Secret = strings.TrimSpace(req.Secret)
 	if req.Name == "" || len([]rune(req.Name)) > 80 || req.BotID == "" || len(req.BotID) > 191 || len(req.Secret) > 512 {
-		c.JSON(400, gin.H{"error": "请填写有效的名称、Bot ID 和 Secret"})
+		c.JSON(400, gin.H{"error": "请填写有效的名称、应用标识和 Secret"})
 		return
 	}
-	bot := domain.NotificationBot{ID: "bot-" + randomID(), ProjectID: strings.TrimSpace(req.ProjectID), Name: req.Name, BotID: req.BotID, Enabled: req.Enabled, Health: "unchecked"}
+	// Clients without a channel field only ever managed WeCom Bots.
+	channel := domain.NotificationBot{Channel: strings.TrimSpace(req.Channel)}.ChannelKind()
+	if req.Channel != "" && req.Channel != channel {
+		c.JSON(400, gin.H{"error": "不支持的渠道"})
+		return
+	}
+	bot := domain.NotificationBot{ID: "bot-" + randomID(), ProjectID: strings.TrimSpace(req.ProjectID), Name: req.Name, Channel: channel, BotID: req.BotID, Enabled: req.Enabled, Health: "unchecked", WriteApproval: domain.BotWriteReadOnly}
 	if old != nil {
 		bot = *old
 		bot.Name = req.Name
 		bot.Enabled = req.Enabled
+		if req.Channel != "" && channel != old.ChannelKind() {
+			c.JSON(400, gin.H{"error": repo.ErrBotImmutableField.Error(), "code": "immutable_field"})
+			return
+		}
+		channel = old.ChannelKind()
 		if old.BotID != req.BotID {
+			if channel != domain.BotChannelWeCom {
+				c.JSON(400, gin.H{"error": repo.ErrBotImmutableField.Error(), "code": "immutable_field"})
+				return
+			}
 			if req.Secret == "" {
 				c.JSON(400, gin.H{"error": "修改 Bot ID 时必须同时填写新 Secret"})
 				return
@@ -147,6 +174,21 @@ func (h *notificationHandlers) save(c *gin.Context, old *domain.NotificationBot)
 			bot.Target = nil
 			bot.Health = "unchecked"
 			bot.LastCheckedAt = nil
+		}
+	}
+	if !botChannelOpen(channel) {
+		c.JSON(409, gin.H{"error": "该渠道尚未开放", "code": "channel_not_ready"})
+		return
+	}
+	if req.WriteApproval != nil {
+		switch mode := strings.TrimSpace(*req.WriteApproval); {
+		case mode == domain.BotWriteReadOnly:
+			bot.WriteApproval = mode
+		case mode == domain.BotWriteAuto && channel == domain.BotChannelWeCom:
+			bot.WriteApproval = mode
+		default:
+			c.JSON(400, gin.H{"error": "该渠道目前只支持只读模式"})
+			return
 		}
 	}
 	if req.InteractionEnabled != nil {
@@ -182,6 +224,26 @@ func (h *notificationHandlers) save(c *gin.Context, old *domain.NotificationBot)
 		bot.SecretConfigured = true
 		bot.Health = "unchecked"
 		bot.LastCheckedAt = nil
+		// New channels verify the credential before anything is stored, outside
+		// the database transaction; a failure keeps the previous configuration.
+		if channel != domain.BotChannelWeCom {
+			adapter, err := h.service.Interactions.Channel(bot)
+			if err != nil {
+				c.JSON(409, gin.H{"error": "该渠道尚未开放", "code": "channel_not_ready"})
+				return
+			}
+			verified, err := adapter.Verify(c.Request.Context(), bot, botinteraction.Credential{Secret: req.Secret})
+			if err != nil {
+				c.JSON(400, gin.H{"error": "凭据校验失败：" + err.Error(), "code": "credential_invalid"})
+				return
+			}
+			bot.Health = "ready"
+			now := time.Now().UTC()
+			bot.LastCheckedAt = &now
+			if verified.TenantName != "" {
+				bot.TenantName = verified.TenantName
+			}
+		}
 	}
 	// A target is accepted only after refreshing the real provider list. Never trust a posted name/type.
 	if bot.InteractionEnabled {
@@ -189,22 +251,15 @@ func (h *notificationHandlers) save(c *gin.Context, old *domain.NotificationBot)
 			c.JSON(400, gin.H{"error": "请登录后创建支持对话的 Bot，平台需要记录创建者的执行身份"})
 			return
 		}
-		bots, err := h.repo.InteractiveNotificationBots()
-		if err != nil {
-			respond(c, err)
-			return
-		}
-		for _, existing := range bots {
-			if existing.BotID == bot.BotID && existing.ID != bot.ID && bot.Enabled {
-				c.JSON(409, gin.H{"error": "这只企业微信 Bot 已在另一个配置中启用对话，请复用原配置"})
-				return
-			}
-		}
 	}
 	if req.TargetID != nil {
 		if *req.TargetID == "" {
 			bot.Target = nil
 		} else {
+			if channel != domain.BotChannelWeCom {
+				c.JSON(409, gin.H{"error": "该渠道的主动通知尚未开放", "code": "channel_not_ready"})
+				return
+			}
 			if old == nil || req.Secret != "" || old.BotID != req.BotID {
 				c.JSON(400, gin.H{"error": "请先保存凭据，再刷新并选择接收会话"})
 				return
@@ -232,24 +287,120 @@ func (h *notificationHandlers) save(c *gin.Context, old *domain.NotificationBot)
 			bot.LastCheckedAt = &now
 		}
 	}
-	if err := h.repo.SaveNotificationBot(bot, req.Secret); err != nil {
-		if errors.Is(err, repo.ErrInteractiveBotAlreadyExists) {
-			c.JSON(409, gin.H{"error": err.Error()})
-			return
-		}
-		respond(c, err)
+	saved, err := h.repo.SaveNotificationBotChecked(bot, req.Secret, req.ConfigVersion)
+	if err != nil {
+		botSaveError(c, err)
 		return
 	}
-	stored, err := h.repo.NotificationBot(bot.ID)
+	stored, err := h.repo.NotificationBot(saved.ID)
 	if err != nil {
 		respond(c, err)
 		return
 	}
 	c.JSON(200, stored)
 }
+
+// botChannelOpen reports the channels configurable in this release.
+func botChannelOpen(channel string) bool {
+	return channel == domain.BotChannelWeCom || channel == domain.BotChannelFeishu
+}
+
+func botSaveError(c *gin.Context, err error) {
+	switch {
+	case errors.Is(err, repo.ErrInteractiveBotAlreadyExists):
+		c.JSON(409, gin.H{"error": "这个应用已在另一个配置中启用对话，请复用原配置", "code": "receive_slot_taken"})
+	case errors.Is(err, repo.ErrBotConfigChanged):
+		c.JSON(409, gin.H{"error": "配置已被其他人修改，请刷新后重试", "code": "config_changed"})
+	case errors.Is(err, repo.ErrBotImmutableField):
+		c.JSON(400, gin.H{"error": err.Error(), "code": "immutable_field"})
+	case errors.Is(err, repo.ErrCredentialKeyMissing):
+		c.JSON(503, gin.H{"error": "平台未配置凭据加密密钥，暂时无法保存 Secret，请联系管理员", "code": "credential_key_missing"})
+	default:
+		respond(c, err)
+	}
+}
+
+// tenant reads the enterprise information the channel reports for the
+// stored credential, shown next to the candidate on the confirmation page.
+func (h *notificationHandlers) tenant(c *gin.Context) {
+	bot, ok := h.find(c, true)
+	if !ok {
+		return
+	}
+	adapter, err := h.service.Interactions.Channel(bot)
+	if err != nil || bot.ChannelKind() == domain.BotChannelWeCom {
+		c.JSON(409, gin.H{"error": "该渠道没有企业确认", "code": "channel_not_ready"})
+		return
+	}
+	secret, err := h.repo.BotCredential(bot.ID)
+	if err != nil {
+		c.JSON(409, gin.H{"error": "机器人凭据不可用"})
+		return
+	}
+	info := gin.H{"tenantState": bot.TenantState, "candidate": bot.TenantCandidate, "tenantKey": bot.TenantKey, "configVersion": bot.ConfigVersion}
+	if verified, err := adapter.Verify(c.Request.Context(), bot, botinteraction.Credential{Secret: secret}); err == nil {
+		info["queried"] = gin.H{"tenantKey": verified.TenantKey, "tenantName": verified.TenantName}
+		if verified.TenantName != "" && verified.TenantName != bot.TenantName {
+			_ = h.repo.SetBotTenantName(bot.ID, verified.TenantName)
+		}
+	} else {
+		info["queryError"] = err.Error()
+	}
+	c.JSON(200, info)
+}
+
+// tenantConfirm locks the candidate enterprise scope (Bot managers only).
+func (h *notificationHandlers) tenantConfirm(c *gin.Context) {
+	bot, ok := h.find(c, true)
+	if !ok {
+		return
+	}
+	if !botBindingSameOrigin(c) {
+		c.JSON(403, gin.H{"error": "请从平台页面操作"})
+		return
+	}
+	var req struct {
+		TenantKey     string `json:"tenantKey"`
+		ConfigVersion int64  `json:"configVersion"`
+		Rediscover    bool   `json:"rediscover"`
+	}
+	if !decode(c, &req) {
+		return
+	}
+	var saved domain.NotificationBot
+	var err error
+	if req.Rediscover {
+		saved, err = h.repo.RediscoverBotTenant(bot.ID, req.ConfigVersion)
+	} else {
+		actor := int64(0)
+		if user, ok := h.requestUser(c.Request, true); ok && user != nil {
+			actor = user.ID
+		}
+		saved, err = h.repo.ConfirmBotTenant(bot.ID, strings.TrimSpace(req.TenantKey), req.ConfigVersion, actor)
+	}
+	switch {
+	case errors.Is(err, repo.ErrBotTenantCandidate):
+		c.JSON(409, gin.H{"error": "企业候选已变化或与当前凭据不一致，请刷新后重新确认", "code": "tenant_candidate_mismatch"})
+		return
+	case err != nil:
+		botSaveError(c, err)
+		return
+	}
+	stored, err := h.repo.NotificationBot(saved.ID)
+	if err != nil {
+		respond(c, err)
+		return
+	}
+	c.JSON(200, stored)
+}
+
 func (h *notificationHandlers) sessions(c *gin.Context) {
 	bot, ok := h.find(c, true)
 	if !ok {
+		return
+	}
+	if bot.ChannelKind() != domain.BotChannelWeCom {
+		c.JSON(409, gin.H{"error": "该渠道的主动通知尚未开放", "code": "channel_not_ready"})
 		return
 	}
 	chats, err := h.service.Sessions(c.Request.Context(), bot)
@@ -269,6 +420,10 @@ func (h *notificationHandlers) sessions(c *gin.Context) {
 func (h *notificationHandlers) test(c *gin.Context) {
 	bot, ok := h.find(c, true)
 	if !ok {
+		return
+	}
+	if bot.ChannelKind() != domain.BotChannelWeCom {
+		c.JSON(409, gin.H{"error": "该渠道的主动通知尚未开放", "code": "channel_not_ready"})
 		return
 	}
 	if bot.Target == nil {

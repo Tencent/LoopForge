@@ -13,6 +13,10 @@ import (
 
 var ErrCardExpired = errors.New("该节点已不再等待本次操作")
 
+// ErrCardDeliveryUnknown: the card may have reached the chat but the platform
+// did not confirm it; the notification needs manual review, not a resend.
+var ErrCardDeliveryUnknown = errors.New("企业微信卡片送达结果待核对")
+
 func ActionsForDelivery(store *repo.Store, item domain.NotificationDelivery) []map[string]any {
 	run, ok := store.RunState(item.RunID)
 	if !ok {
@@ -97,8 +101,13 @@ func (s *Service) QueueNotificationCard(ctx context.Context, bot domain.Notifica
 		if err != nil {
 			return err
 		}
-		if record.Status == "reply_failed" {
+		switch record.Status {
+		case domain.BotReplyFailed:
 			return errors.New("企业微信卡片发送失败，请检查会话和 Bot 授权")
+		case domain.BotReplyUnknown:
+			return ErrCardDeliveryUnknown
+		case domain.BotCancelled:
+			return errors.New("机器人已停用或删除，卡片未发送")
 		}
 		if record.Status == "replied" {
 			if record.LastError != "" {

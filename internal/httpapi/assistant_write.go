@@ -24,7 +24,16 @@ type assistantExecMode struct {
 	DeferSOP         bool
 	ConfirmDangerous bool
 	ReviewWrites     bool
+	// ReadOnly is the IM Bot read-only policy: platform writes are absent
+	// from the catalog and refused by the gateway (AutoWrite is false),
+	// external MCP calls that may write and workspace tools are refused
+	// outright instead of waiting for an approval nobody can give, and
+	// terminal drafts are never executed.
+	ReadOnly bool
 }
+
+// assistantReadOnlyExecMode is the execution policy of read-only IM Bots.
+func assistantReadOnlyExecMode() assistantExecMode { return assistantExecMode{ReadOnly: true} }
 
 // assistantExecModeForApproval maps the assistant approval mode to the
 // session gateway write policy. Writes are detected by the gateway itself

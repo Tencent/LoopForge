@@ -22,8 +22,8 @@ type Service struct {
 	Generate Generate
 	Action   Action
 	URL      string
-	// ChannelKind selects the adapter for a Bot. Stage A connects every Bot
-	// through WeCom; stage B reads the persisted channel field.
+	// ChannelKind overrides adapter selection in tests; by default the
+	// persisted channel of the Bot decides.
 	ChannelKind func(domain.NotificationBot) string
 	mu          sync.Mutex
 	running     map[string]*connection
@@ -72,7 +72,7 @@ func (s *Service) RegisterChannel(c Channel) {
 
 // Channel returns the adapter for a Bot, or ErrChannelNotReady.
 func (s *Service) Channel(bot domain.NotificationBot) (Channel, error) {
-	kind := ChannelWeCom
+	kind := bot.ChannelKind()
 	if s.ChannelKind != nil {
 		kind = s.ChannelKind(bot)
 	}
@@ -139,7 +139,9 @@ func (s *Service) reconcile(ctx context.Context) {
 	defer s.mu.Unlock()
 	for id, c := range s.running {
 		b, ok := wanted[id]
-		if !ok || !b.UpdatedAt.Equal(c.bot.UpdatedAt) {
+		// Only connection-relevant fields reconnect; names, models, tenant
+		// locking and write policy are re-read per event and per turn.
+		if !ok || b.ConnectionFingerprint() != c.bot.ConnectionFingerprint() {
 			c.cancel()
 		}
 		select {
@@ -160,14 +162,15 @@ func (s *Service) reconcile(ctx context.Context) {
 }
 func (s *Service) run(ctx context.Context, c *connection) {
 	owner := randomID()
-	claimed, err := s.Store.ClaimBotConnection(c.bot.BotID, owner, time.Now().UTC())
+	lease, claimed, err := s.Store.ClaimBotConnection(c.bot.LeaseKey(), owner)
 	if err != nil || !claimed {
 		return
 	}
-	defer s.Store.ReleaseBotConnection(c.bot.BotID, owner)
+	defer s.Store.ReleaseBotConnection(lease)
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	if err := s.Store.RecoverBotInteractions(c.bot.ID); err != nil {
+	policy := sendPolicy(c.bot)
+	if err := s.Store.RecoverBotInteractions(c.bot.ID, lease, policy); err != nil {
 		return
 	}
 	// Renew independently of model turns; a lost lease cancels every local action.
@@ -179,7 +182,7 @@ func (s *Service) run(ctx context.Context, c *connection) {
 			case <-runCtx.Done():
 				return
 			case <-ticker.C:
-				ok, err := s.Store.RenewBotConnection(c.bot.BotID, owner, "", "", time.Now().UTC())
+				ok, err := s.Store.RenewBotConnection(lease, "", "")
 				if err != nil || !ok {
 					cancel()
 					return
@@ -191,7 +194,7 @@ func (s *Service) run(ctx context.Context, c *connection) {
 	if err != nil {
 		// Keep the lease so the error stays visible until the configuration
 		// changes or the service stops; releasing would report "offline".
-		s.state(c.bot, owner, "error", "该渠道尚未接入")
+		s.state(lease, "error", "该渠道尚未接入")
 		<-runCtx.Done()
 		return
 	}
@@ -200,7 +203,7 @@ func (s *Service) run(ctx context.Context, c *connection) {
 	for runCtx.Err() == nil {
 		secret, err := s.Store.BotCredential(c.bot.ID)
 		if err != nil {
-			s.state(c.bot, owner, "error", "机器人凭据不可用")
+			s.state(lease, "error", "机器人凭据不可用")
 			return
 		}
 		var conn Conn
@@ -209,18 +212,21 @@ func (s *Service) run(ctx context.Context, c *connection) {
 			s.mu.Lock()
 			c.conn = conn
 			s.mu.Unlock()
-			s.state(c.bot, owner, "connected", "")
-			err = s.process(runCtx, c.bot, owner, conn)
+			s.state(lease, "connected", "")
+			err = s.process(runCtx, c.bot, lease, conn, policy)
 			conn.Close()
 			s.mu.Lock()
 			c.conn = nil
 			s.mu.Unlock()
 			backoff = time.Second
+			if errors.Is(err, repo.ErrBotLeaseLost) {
+				return
+			}
 		}
 		if runCtx.Err() != nil {
 			return
 		}
-		s.state(c.bot, owner, "reconnecting", "连接中断，正在重连")
+		s.state(lease, "reconnecting", "连接中断，正在重连")
 		timer := time.NewTimer(backoff)
 		select {
 		case <-runCtx.Done():
@@ -233,8 +239,8 @@ func (s *Service) run(ctx context.Context, c *connection) {
 		}
 	}
 }
-func (s *Service) state(bot domain.NotificationBot, owner, state, detail string) {
-	_, _ = s.Store.RenewBotConnection(bot.BotID, owner, state, detail, time.Now().UTC())
+func (s *Service) state(lease repo.BotLease, state, detail string) {
+	_, _ = s.Store.RenewBotConnection(lease, state, detail)
 }
 
 var ErrCardActionDeferred = errors.New("等待账号确认或项目授权")
@@ -251,7 +257,7 @@ func newConversationCommand(content string) bool {
 	}
 	return text == "/new" || text == "开启新会话" || text == "新会话"
 }
-func (s *Service) process(ctx context.Context, bot domain.NotificationBot, owner string, conn Conn) error {
+func (s *Service) process(ctx context.Context, bot domain.NotificationBot, lease repo.BotLease, conn Conn, policy repo.BotSendPolicy) error {
 	ticker := time.NewTicker(300 * time.Millisecond)
 	defer ticker.Stop()
 	for {
@@ -262,50 +268,24 @@ func (s *Service) process(ctx context.Context, bot domain.NotificationBot, owner
 			return errors.New("连接中断")
 		case <-ticker.C:
 		}
-		item, err := s.Store.ClaimBotInteraction(bot.ID, bot.BotID, owner)
+		item, err := s.Store.ClaimBotInteraction(bot.ID, lease, policy)
 		if err != nil {
 			return err
 		}
 		if item == nil {
 			continue
 		}
+		// Names, models and write policy may change without reconnecting.
+		current, err := s.Store.NotificationBot(bot.ID)
+		if err != nil {
+			return repo.ErrBotLeaseLost
+		}
 		conv, err := s.Store.BotConversation(item.ConversationID)
 		if err != nil {
 			return err
 		}
 		if item.Action == "notification" {
-			delivery, lookupErr := s.Store.NotificationDelivery(item.DeliveryID)
-			valid := lookupErr == nil && len(ActionsForDelivery(s.Store, delivery)) > 0
-			if !valid {
-				if err = s.Store.ExpireBotCard(item.ID); err != nil {
-					return err
-				}
-				continue
-			}
-			var card map[string]any
-			if json.Unmarshal([]byte(item.Quote), &card) != nil {
-				return errors.New("通知卡片无效")
-			}
-			if item.Status != "ready" {
-				if err = s.Store.SaveBotReply(*item, "", ""); err != nil {
-					return err
-				}
-			}
-			// A task_id may not be reused by the same Bot across sent cards.
-			// Keep the delivery prefix for callback routing; suffix each send attempt.
-			taskID := item.DeliveryID + "_" + randomID()[:12]
-			card["task_id"] = taskID
-			if err = s.Store.SetBotCardTaskID(item.ID, taskID); err != nil {
-				return err
-			}
-			cards, ok := conn.(cardConn)
-			if !ok {
-				if err = s.Store.FailBotReply(item.ID, "当前渠道暂不支持交互卡片"); err != nil {
-					return err
-				}
-				continue
-			}
-			if err = s.finishSend(item.ID, cards.sendCard(ctx, conv.ChatID, card)); err != nil {
+			if err = s.processCard(ctx, item, lease, conn, conv, policy); err != nil {
 				return err
 			}
 			continue
@@ -319,65 +299,10 @@ func (s *Service) process(ctx context.Context, bot domain.NotificationBot, owner
 				continue
 			}
 		}
-		if item.Status != "ready" {
-			reply, detail := "", ""
-			if item.Action == "notification_details" {
-				reply = item.Content
-			} else if time.Since(item.CreatedAt) > 10*time.Minute {
-				reply = "这条消息等待处理的时间较长，已停止自动执行。请重新发送当前请求。"
-			} else if newConversationCommand(item.Content) {
-				err = s.Store.NewBotConversation(*item)
-				reply = "已开启新会话。当前聊天将从新的上下文开始，历史记录保留。"
-			} else if item.Content == unsupportedMessageText {
-				reply = item.Content
-			} else {
-				turnCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
-				var stopProgress func()
-				if progress, ok := conn.(progressConn); ok && item.Action == "" {
-					turnCtx, stopProgress = progress.progressTurn(turnCtx, *item)
-				}
-				if item.Action != "" {
-					if s.Action == nil {
-						err = errors.New("操作服务未就绪")
-					} else {
-						reply, err = s.Action(turnCtx, bot, *item, conv)
-					}
-				} else {
-					history, historyErr := s.Store.BotHistory(conv.SessionID)
-					err = historyErr
-					if err == nil {
-						if s.Generate == nil {
-							err = errors.New("助手服务未就绪")
-						} else {
-							reply, err = s.Generate(turnCtx, bot, conv, history, *item)
-						}
-					}
-				}
-				if stopProgress != nil {
-					stopProgress()
-				}
-				cancel()
-			}
-			if errors.Is(err, ErrCardActionDeferred) {
-				detail = ErrCardActionDeferred.Error()
-			} else if err != nil {
-				detail = "本次处理失败"
-				reply = "本次处理未完成，请稍后重试或到平台查看状态。"
-				if errors.Is(err, context.DeadlineExceeded) {
-					detail = "模型回复提交超时"
-					reply = "本次处理已超时，未能提交最终回复。请重新发送请求；若涉及修改操作，请先在平台核对状态，避免重复执行。"
-				}
-			}
-			if strings.TrimSpace(reply) == "" {
-				detail = "助手未提交回复"
-				reply = "本次没有得到有效回复，请稍后重试。"
-			}
-			reply = domain.NotificationText(reply, 16000)
-			if reply, detail, err = s.saveReply(*item, reply, detail); err != nil {
+		if item.Status == domain.BotRunning {
+			if err = s.runTurn(ctx, current, item, lease, conn, conv); err != nil {
 				return err
 			}
-			item.Reply = reply
-			item.LastError = detail
 		}
 		cards, hasCards := conn.(cardConn)
 		if hasCards && item.Action != "" && item.Action != "notification_details" && item.CardTaskID != "" && item.LastError != ErrCardActionDeferred.Error() {
@@ -390,24 +315,110 @@ func (s *Service) process(ctx context.Context, bot domain.NotificationBot, owner
 				log.Printf("wecom action card update failed action=%s code=%d", item.Action, code)
 			}
 		}
-		result := conn.Reply(ctx, OutboundMessage{InteractionID: item.ID, Action: item.Action, ChatID: conv.ChatID, ChatType: conv.ChatType, Text: item.Reply, Route: ReplyRoute{RequestID: item.RequestID}})
-		if err = s.finishSend(item.ID, result); err != nil {
+		err = s.deliver(ctx, item.ID, lease, policy, func(ctx context.Context, sending domain.BotInteraction) SendResult {
+			return conn.Reply(ctx, OutboundMessage{InteractionID: sending.ID, Action: sending.Action, ChatID: conv.ChatID, ChatType: conv.ChatType, Text: sending.Reply, SendKey: sending.SendKey, Route: replyRoute(sending)})
+		})
+		if err != nil {
 			return err
 		}
 	}
 }
 
-// finishSend records a classified send. Stage A keeps the pre-channel state
-// transitions: delivered → replied, rejected → reply_failed, and any other
-// outcome drops the connection so the ready reply is sent again after
-// reconnecting. Stage C replaces this with the persisted delivery state machine.
-func (s *Service) finishSend(id string, result SendResult) error {
-	switch result.Outcome {
-	case Delivered:
-		return s.Store.MarkBotReplySent(id)
-	case Rejected:
-		return s.Store.FailBotReply(id, result.SafeDetail)
-	default:
-		return result.err()
+// runTurn executes a claimed running item and stores its reply.
+func (s *Service) runTurn(ctx context.Context, bot domain.NotificationBot, item *domain.BotInteraction, lease repo.BotLease, conn Conn, conv domain.BotConversation) error {
+	reply, detail := "", ""
+	var err error
+	if item.Action == "notification_details" {
+		reply = item.Content
+	} else if time.Since(item.CreatedAt) > 10*time.Minute {
+		reply = "这条消息等待处理的时间较长，已停止自动执行。请重新发送当前请求。"
+	} else if item.Action == actionSystemNotice {
+		reply = item.Content
+	} else if newConversationCommand(item.Content) {
+		if err = s.Store.NewBotConversation(*item, lease); errors.Is(err, repo.ErrBotLeaseLost) {
+			return err
+		}
+		reply = "已开启新会话。当前聊天将从新的上下文开始，历史记录保留。"
+	} else if item.Content == unsupportedMessageText {
+		reply = item.Content
+	} else {
+		turnCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+		var stopProgress func()
+		if progress, ok := conn.(progressConn); ok && item.Action == "" {
+			turnCtx, stopProgress = progress.progressTurn(turnCtx, *item)
+		}
+		if item.Action != "" {
+			if s.Action == nil {
+				err = errors.New("操作服务未就绪")
+			} else {
+				reply, err = s.Action(turnCtx, bot, *item, conv)
+			}
+		} else {
+			history, historyErr := s.Store.BotHistory(conv.SessionID)
+			err = historyErr
+			if err == nil {
+				if s.Generate == nil {
+					err = errors.New("助手服务未就绪")
+				} else {
+					reply, err = s.Generate(turnCtx, bot, conv, history, *item)
+				}
+			}
+		}
+		if stopProgress != nil {
+			stopProgress()
+		}
+		cancel()
 	}
+	if errors.Is(err, ErrCardActionDeferred) {
+		detail = ErrCardActionDeferred.Error()
+	} else if err != nil {
+		detail = "本次处理失败"
+		reply = "本次处理未完成，请稍后重试或到平台查看状态。"
+		if errors.Is(err, context.DeadlineExceeded) {
+			detail = "模型回复提交超时"
+			reply = "本次处理已超时，未能提交最终回复。请重新发送请求；若涉及修改操作，请先在平台核对状态，避免重复执行。"
+		}
+	}
+	if strings.TrimSpace(reply) == "" {
+		detail = "助手未提交回复"
+		reply = "本次没有得到有效回复，请稍后重试。"
+	}
+	reply = domain.NotificationText(reply, 16000)
+	if reply, detail, err = s.saveReply(*item, lease, reply, detail); err != nil {
+		return err
+	}
+	item.Reply, item.LastError, item.Status = reply, detail, domain.BotReady
+	return nil
+}
+
+// processCard sends a WeCom notification card through the delivery state
+// machine, or expires it when the node no longer waits.
+func (s *Service) processCard(ctx context.Context, item *domain.BotInteraction, lease repo.BotLease, conn Conn, conv domain.BotConversation, policy repo.BotSendPolicy) error {
+	delivery, lookupErr := s.Store.NotificationDelivery(item.DeliveryID)
+	if lookupErr != nil || len(ActionsForDelivery(s.Store, delivery)) == 0 {
+		return s.Store.ExpireBotCard(item.ID)
+	}
+	var card map[string]any
+	if json.Unmarshal([]byte(item.Quote), &card) != nil {
+		return errors.New("通知卡片无效")
+	}
+	if item.Status != domain.BotReady {
+		if err := s.Store.SaveBotReply(*item, lease, "", ""); err != nil {
+			return err
+		}
+	}
+	cards, ok := conn.(cardConn)
+	if !ok {
+		return s.Store.FailBotReply(item.ID, lease, "当前渠道暂不支持交互卡片")
+	}
+	// A task_id may not be reused by the same Bot across sent cards.
+	// Keep the delivery prefix for callback routing; suffix each send attempt.
+	taskID := item.DeliveryID + "_" + randomID()[:12]
+	card["task_id"] = taskID
+	if err := s.Store.SetBotCardTaskID(item.ID, lease, taskID); err != nil {
+		return err
+	}
+	return s.deliver(ctx, item.ID, lease, policy, func(ctx context.Context, _ domain.BotInteraction) SendResult {
+		return cards.sendCard(ctx, conv.ChatID, card)
+	})
 }

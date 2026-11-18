@@ -3,6 +3,7 @@ package repo
 import (
 	"agentflow/internal/domain"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -17,85 +18,329 @@ type NotificationsRepo struct {
 	issues       *IssuesRepo
 	interactions *BotInteractionsRepo
 }
+
+// notificationBotRow keeps the Bot entity in a JSON payload. Channel, app
+// identity, tenant, receive slot, enable flags and versions are physical
+// columns: lease fencing and uniqueness read only these columns, and they are
+// written in the same statement as the payload.
 type notificationBotRow struct {
-	ID        string `gorm:"primaryKey;size:191"`
-	ProjectID string `gorm:"size:191;index"`
-	Payload   []byte `gorm:"type:json"`
+	ID                 string  `gorm:"primaryKey;size:191"`
+	ProjectID          string  `gorm:"size:191;index"`
+	Payload            []byte  `gorm:"type:json"`
+	Channel            string  `gorm:"size:16;not null;default:''"`
+	ExternalAppID      string  `gorm:"size:191;not null;default:''"`
+	TenantKey          string  `gorm:"size:191;not null;default:''"`
+	ReceiveSlot        *string `gorm:"size:191;uniqueIndex:uq_notification_bots_receive_slot"`
+	Enabled            bool    `gorm:"not null;default:false"`
+	InteractionEnabled bool    `gorm:"not null;default:false"`
+	ConfigVersion      int64   `gorm:"not null;default:0"`
+	CredentialVersion  int64   `gorm:"not null;default:0"`
 }
 
 func (notificationBotRow) TableName() string { return "notification_bots" }
+
+var (
+	// ErrBotConfigChanged: the expected configVersion no longer matches.
+	ErrBotConfigChanged = errors.New("config_changed")
+	// ErrBotImmutableField: channel, project or (for new channels) the app
+	// identity cannot change; create a new configuration instead.
+	ErrBotImmutableField = errors.New("机器人渠道、项目和应用标识创建后不可修改，请新建配置")
+)
+
+func (row notificationBotRow) bot() (domain.NotificationBot, error) {
+	var b domain.NotificationBot
+	if err := json.Unmarshal(row.Payload, &b); err != nil {
+		return b, err
+	}
+	// Versions are authoritative in physical columns.
+	b.ConfigVersion, b.CredentialVersion = row.ConfigVersion, row.CredentialVersion
+	return b, nil
+}
+
+func botRow(b domain.NotificationBot) notificationBotRow {
+	var slot *string
+	if b.Enabled && b.InteractionEnabled {
+		v := b.ReceiveSlot()
+		slot = &v
+	}
+	tenant := ""
+	if b.TenantState == domain.BotTenantLocked {
+		tenant = b.TenantKey
+	}
+	b.CredentialFormat = ""
+	return notificationBotRow{ID: b.ID, ProjectID: b.ProjectID, Payload: mustJSON(b), Channel: b.ChannelKind(), ExternalAppID: b.BotID, TenantKey: tenant, ReceiveSlot: slot, Enabled: b.Enabled, InteractionEnabled: b.InteractionEnabled, ConfigVersion: b.ConfigVersion, CredentialVersion: b.CredentialVersion}
+}
+
+func (r *NotificationsRepo) decodeBots(rows []notificationBotRow) ([]domain.NotificationBot, error) {
+	ids := make([]string, 0, len(rows))
+	for _, row := range rows {
+		ids = append(ids, row.ID)
+	}
+	formats := r.users.botCredentialFormats(ids)
+	out := make([]domain.NotificationBot, 0, len(rows))
+	for _, row := range rows {
+		b, err := row.bot()
+		if err != nil {
+			return nil, err
+		}
+		b.CredentialFormat = formats[row.ID]
+		out = append(out, b)
+	}
+	return out, nil
+}
+
 func (r *NotificationsRepo) NotificationBots(projectID string) ([]domain.NotificationBot, error) {
 	var rows []notificationBotRow
 	if err := r.DB.Where("project_id = ?", projectID).Order("id").Find(&rows).Error; err != nil {
 		return nil, err
 	}
-	out := make([]domain.NotificationBot, 0, len(rows))
-	for _, row := range rows {
-		var b domain.NotificationBot
-		if err := json.Unmarshal(row.Payload, &b); err != nil {
-			return nil, err
-		}
-		out = append(out, b)
-	}
-	return out, nil
+	return r.decodeBots(rows)
 }
 func (r *NotificationsRepo) NotificationBot(id string) (domain.NotificationBot, error) {
 	var row notificationBotRow
 	if err := r.DB.Where("id = ?", id).First(&row).Error; err != nil {
 		return domain.NotificationBot{}, err
 	}
-	var b domain.NotificationBot
-	err := json.Unmarshal(row.Payload, &b)
-	return b, err
+	bots, err := r.decodeBots([]notificationBotRow{row})
+	if err != nil {
+		return domain.NotificationBot{}, err
+	}
+	return bots[0], nil
 }
 
-// SaveNotificationBot preserves creation metadata and atomically replaces credentials when provided.
+// SaveNotificationBot saves without an expected version (internal callers
+// and tests). HTTP writers use SaveNotificationBotChecked.
 func (r *NotificationsRepo) SaveNotificationBot(b domain.NotificationBot, secret string) error {
+	_, err := r.SaveNotificationBotChecked(b, secret, nil)
+	return err
+}
+
+// SaveNotificationBotChecked preserves creation metadata and tenant state,
+// enforces immutable fields and the expected configVersion, bumps versions,
+// keeps one receiving configuration per application, and atomically replaces
+// the sealed credential when a secret is provided.
+func (r *NotificationsRepo) SaveNotificationBotChecked(b domain.NotificationBot, secret string, expectedVersion *int64) (domain.NotificationBot, error) {
+	input := b
+	err := retryBotDeadlock(func() error { b = input; return r.saveNotificationBot(&b, secret, expectedVersion) })
+	if err != nil {
+		return domain.NotificationBot{}, err
+	}
+	return b, nil
+}
+
+func (r *NotificationsRepo) saveNotificationBot(out *domain.NotificationBot, secret string, expectedVersion *int64) error {
+	b := *out
+	defer func() { *out = b }()
 	return r.DB.Transaction(func(tx *gorm.DB) error {
 		var old notificationBotRow
 		err := r.locking(tx).Where("id = ?", b.ID).First(&old).Error
 		if err == nil {
-			var prior domain.NotificationBot
-			if err = json.Unmarshal(old.Payload, &prior); err != nil {
+			prior, err := old.bot()
+			if err != nil {
 				return err
+			}
+			if expectedVersion != nil && *expectedVersion != old.ConfigVersion {
+				return ErrBotConfigChanged
+			}
+			if prior.ChannelKind() != b.ChannelKind() || (prior.ChannelKind() != domain.BotChannelWeCom && prior.BotID != b.BotID) {
+				return ErrBotImmutableField
 			}
 			b.CreatedAt = prior.CreatedAt
 			b.OwnerID = prior.OwnerID
 			b.ProjectID = prior.ProjectID
+			b.Channel = prior.Channel
+			b.TenantKey, b.TenantName, b.TenantState, b.TenantCandidate = prior.TenantKey, prior.TenantName, prior.TenantState, prior.TenantCandidate
+			b.TenantConfirmedBy, b.TenantConfirmedAt = prior.TenantConfirmedBy, prior.TenantConfirmedAt
+			b.ConfigVersion = old.ConfigVersion + 1
+			b.CredentialVersion = old.CredentialVersion
+			if prior.Enabled && prior.InteractionEnabled && !(b.Enabled && b.InteractionEnabled) {
+				if err := r.interactions.stopBotInteractions(tx, b.ID, prior.LeaseKey(), false); err != nil {
+					return err
+				}
+			}
+			if prior.Enabled && !b.Enabled {
+				if err := r.stopNotificationDeliveries(tx, b.ID, false); err != nil {
+					return err
+				}
+			}
 		} else if err != gorm.ErrRecordNotFound {
 			return err
+		} else {
+			b.ConfigVersion = 1
+			b.CredentialVersion = 0
+			if b.ChannelKind() != domain.BotChannelWeCom && b.TenantState == "" {
+				b.TenantState = domain.BotTenantAwaiting
+			}
+		}
+		if secret != "" {
+			b.CredentialVersion++
 		}
 		if b.CreatedAt.IsZero() {
 			b.CreatedAt = time.Now().UTC()
 		}
 		if b.Enabled && b.InteractionEnabled {
-			if err := r.interactions.lockBotDefinition(tx, b.BotID); err != nil {
+			// Serializes registering the same application; the receiver
+			// later claims this connection row.
+			if err := r.interactions.lockBotDefinition(tx, b.LeaseKey()); err != nil {
 				return err
 			}
-			var peers []notificationBotRow
-			if err := tx.Where("id <> ?", b.ID).Find(&peers).Error; err != nil {
+			var taken int64
+			if err := tx.Model(&notificationBotRow{}).Where("receive_slot = ? AND id <> ?", b.ReceiveSlot(), b.ID).Count(&taken).Error; err != nil {
 				return err
 			}
-			for _, peer := range peers {
-				var other domain.NotificationBot
-				if err := json.Unmarshal(peer.Payload, &other); err != nil {
-					return err
-				}
-				if other.Enabled && other.InteractionEnabled && other.BotID == b.BotID {
-					return ErrInteractiveBotAlreadyExists
-				}
+			if taken > 0 || r.legacyInteractivePeer(tx, b) {
+				return ErrInteractiveBotAlreadyExists
 			}
 		}
 		b.UpdatedAt = time.Now().UTC()
-		if err := tx.Clauses(clause.OnConflict{UpdateAll: true}).Create(&notificationBotRow{ID: b.ID, ProjectID: b.ProjectID, Payload: mustJSON(b)}).Error; err != nil {
+		if err := tx.Clauses(clause.OnConflict{UpdateAll: true}).Create(ptr(botRow(b))).Error; err != nil {
+			if errors.Is(err, gorm.ErrDuplicatedKey) {
+				return ErrInteractiveBotAlreadyExists
+			}
 			return err
 		}
 		if secret != "" {
-			return r.users.putBotCredential(tx, b.ID, secret)
+			return r.users.putBotCredential(tx, b.ID, b.ChannelKind(), secret)
 		}
 		return nil
 	})
 }
+
+// legacyInteractivePeer covers rows not yet backfilled by migration 036
+// (receive_slot NULL, config_version 0) so the uniqueness rule holds during
+// the upgrade window as well.
+func (r *NotificationsRepo) legacyInteractivePeer(tx *gorm.DB, b domain.NotificationBot) bool {
+	var peers []notificationBotRow
+	tx.Where("id <> ? AND config_version = 0", b.ID).Find(&peers)
+	for _, peer := range peers {
+		other, err := peer.bot()
+		if err == nil && other.Enabled && other.InteractionEnabled && other.ReceiveSlot() == b.ReceiveSlot() {
+			return true
+		}
+	}
+	return false
+}
+
+func ptr[T any](v T) *T { return &v }
+
+// ErrBotTenantCandidate: the confirmation does not match the recorded
+// candidate, its credential version, or the current state.
+var ErrBotTenantCandidate = errors.New("tenant_candidate_mismatch")
+
+// RecordBotTenantCandidate stores the enterprise scope seen on a trusted
+// event of an unlocked configuration. It never changes config_version, so an
+// administrator page holding the version stays valid and the receiver does
+// not reconnect. A different second candidate moves the state to conflict.
+func (r *NotificationsRepo) RecordBotTenantCandidate(id, tenantKey, eventID string, credentialVersion int64) (string, error) {
+	state := ""
+	err := r.DB.Transaction(func(tx *gorm.DB) error {
+		var row notificationBotRow
+		if err := r.locking(tx).Where("id = ?", id).First(&row).Error; err != nil {
+			return err
+		}
+		b, err := row.bot()
+		if err != nil {
+			return err
+		}
+		state = b.TenantState
+		switch {
+		case b.TenantState == domain.BotTenantLocked:
+			return nil
+		case b.TenantCandidate == nil || b.TenantCandidate.CredentialVersion != credentialVersion:
+			b.TenantCandidate = &domain.TenantCandidate{TenantKey: tenantKey, EventID: truncateBotDetail(eventID), ReceivedAt: time.Now().UTC(), CredentialVersion: credentialVersion}
+			b.TenantState = domain.BotTenantAwaiting
+		case b.TenantCandidate.TenantKey == tenantKey:
+			return nil
+		default:
+			b.TenantCandidate.Conflict = tenantKey
+			b.TenantState = domain.BotTenantConflict
+		}
+		state = b.TenantState
+		b.CredentialFormat = ""
+		return tx.Model(&notificationBotRow{}).Where("id = ?", id).Update("payload", mustJSON(b)).Error
+	})
+	return state, err
+}
+
+// ConfirmBotTenant locks the candidate enterprise scope. The candidate must
+// match the posted value and come from the current credential version; the
+// expected configVersion guards concurrent edits. Locking bumps
+// config_version but not the connection fingerprint.
+func (r *NotificationsRepo) ConfirmBotTenant(id, tenantKey string, expectedVersion int64, actor int64) (domain.NotificationBot, error) {
+	var b domain.NotificationBot
+	err := r.DB.Transaction(func(tx *gorm.DB) error {
+		var row notificationBotRow
+		if err := r.locking(tx).Where("id = ?", id).First(&row).Error; err != nil {
+			return err
+		}
+		var err error
+		if b, err = row.bot(); err != nil {
+			return err
+		}
+		if row.ConfigVersion != expectedVersion {
+			return ErrBotConfigChanged
+		}
+		c := b.TenantCandidate
+		if b.TenantState != domain.BotTenantAwaiting || c == nil || c.Conflict != "" || c.TenantKey != tenantKey || c.CredentialVersion != row.CredentialVersion {
+			return ErrBotTenantCandidate
+		}
+		at := time.Now().UTC()
+		b.TenantKey, b.TenantState, b.TenantConfirmedBy, b.TenantConfirmedAt = tenantKey, domain.BotTenantLocked, actor, &at
+		b.ConfigVersion = row.ConfigVersion + 1
+		b.UpdatedAt = at
+		return tx.Model(&notificationBotRow{}).Where("id = ?", id).Updates(map[string]any{"payload": mustJSON(botPayload(b)), "tenant_key": tenantKey, "config_version": b.ConfigVersion}).Error
+	})
+	return b, err
+}
+
+// SetBotTenantName stores the display-only enterprise name.
+func (r *NotificationsRepo) SetBotTenantName(id, name string) error {
+	return r.DB.Transaction(func(tx *gorm.DB) error {
+		var row notificationBotRow
+		if err := r.locking(tx).Where("id = ?", id).First(&row).Error; err != nil {
+			return err
+		}
+		b, err := row.bot()
+		if err != nil {
+			return err
+		}
+		b.TenantName = truncateBotDetail(name)
+		return tx.Model(&notificationBotRow{}).Where("id = ?", id).Update("payload", mustJSON(botPayload(b))).Error
+	})
+}
+
+// RediscoverBotTenant clears an unlocked candidate (for example after a
+// conflict) so the next trusted event is recorded afresh.
+func (r *NotificationsRepo) RediscoverBotTenant(id string, expectedVersion int64) (domain.NotificationBot, error) {
+	var b domain.NotificationBot
+	err := r.DB.Transaction(func(tx *gorm.DB) error {
+		var row notificationBotRow
+		if err := r.locking(tx).Where("id = ?", id).First(&row).Error; err != nil {
+			return err
+		}
+		var err error
+		if b, err = row.bot(); err != nil {
+			return err
+		}
+		if row.ConfigVersion != expectedVersion {
+			return ErrBotConfigChanged
+		}
+		if b.TenantState == domain.BotTenantLocked || b.ChannelKind() == domain.BotChannelWeCom {
+			return ErrBotTenantCandidate
+		}
+		b.TenantCandidate, b.TenantState = nil, domain.BotTenantAwaiting
+		b.ConfigVersion = row.ConfigVersion + 1
+		return tx.Model(&notificationBotRow{}).Where("id = ?", id).Updates(map[string]any{"payload": mustJSON(botPayload(b)), "config_version": b.ConfigVersion}).Error
+	})
+	return b, err
+}
+
+// botPayload is the JSON payload of b without read-only derived fields.
+func botPayload(b domain.NotificationBot) domain.NotificationBot {
+	b.CredentialFormat = ""
+	return b
+}
+
 func (r *NotificationsRepo) SetNotificationBotHealth(id, health string) error {
 	return r.DB.Transaction(func(tx *gorm.DB) error {
 		var row notificationBotRow
@@ -109,20 +354,62 @@ func (r *NotificationsRepo) SetNotificationBotHealth(id, health string) error {
 		now := time.Now().UTC()
 		b.Health = health
 		b.LastCheckedAt = &now
+		b.CredentialFormat = ""
 		return tx.Model(&row).Update("payload", mustJSON(b)).Error
 	})
 }
+
+// DeleteNotificationBot removes the configuration and its credential, and
+// stops its work in the lock order configuration -> connection ->
+// interactions/deliveries: unsent work is cancelled; anything in flight
+// becomes reply_unknown / send_unknown for manual review.
 func (r *NotificationsRepo) DeleteNotificationBot(id string) error {
+	return retryBotDeadlock(func() error { return r.deleteNotificationBot(id) })
+}
+
+func (r *NotificationsRepo) deleteNotificationBot(id string) error {
 	return r.DB.Transaction(func(tx *gorm.DB) error {
+		var row notificationBotRow
+		if err := r.locking(tx).Where("id = ?", id).First(&row).Error; err != nil {
+			return err
+		}
+		b, err := row.bot()
+		if err != nil {
+			return err
+		}
+		if err := r.interactions.stopBotInteractions(tx, id, b.LeaseKey(), true); err != nil {
+			return err
+		}
+		if err := r.stopNotificationDeliveries(tx, id, true); err != nil {
+			return err
+		}
+		if err := r.users.revokeBotConfigIdentities(tx, b); err != nil {
+			return err
+		}
 		if err := tx.Where("id = ?", id).Delete(&notificationBotRow{}).Error; err != nil {
 			return err
 		}
-		if err := r.users.deleteBotCredential(tx, id); err != nil {
-			return err
-		}
-		return tx.Model(&domain.NotificationDelivery{}).Where("bot_id = ? AND status <> ?", id, "sent").Updates(map[string]any{"status": "cancelled", "lease_token": "", "lease_until": nil}).Error
+		return r.users.deleteBotCredential(tx, id)
 	})
 }
+
+// stopNotificationDeliveries: in-flight sends become send_unknown; on delete
+// every other unsent delivery is cancelled. Disable leaves pending work for
+// the worker, which cancels it when it sees the disabled Bot.
+func (r *NotificationsRepo) stopNotificationDeliveries(tx *gorm.DB, botID string, deleted bool) error {
+	reason := "机器人在发送过程中被停用，送达结果待核对"
+	if deleted {
+		reason = "机器人在发送过程中被删除，送达结果待核对"
+	}
+	if err := tx.Model(&domain.NotificationDelivery{}).Where("bot_id = ? AND status = ?", botID, "sending").Updates(map[string]any{"status": "send_unknown", "last_error": reason, "lease_token": "", "lease_until": nil}).Error; err != nil {
+		return err
+	}
+	if !deleted {
+		return nil
+	}
+	return tx.Model(&domain.NotificationDelivery{}).Where("bot_id = ? AND status IN ?", botID, []string{"pending", "failed", "awaiting_authorization", "target_unavailable"}).Updates(map[string]any{"status": "cancelled", "last_error": "机器人已删除", "lease_token": "", "lease_until": nil}).Error
+}
+
 func (r *NotificationsRepo) NotificationDeliveries(projectID string) ([]domain.NotificationDelivery, error) {
 	rows := []domain.NotificationDelivery{}
 	err := r.DB.Where("project_id = ?", projectID).Order("created_at desc").Limit(100).Find(&rows).Error
@@ -168,7 +455,7 @@ func (r *NotificationsRepo) FinishNotification(item domain.NotificationDelivery,
 	return r.DB.Model(&domain.NotificationDelivery{}).Where("id = ? AND status = ? AND lease_token = ?", item.ID, "sending", item.LeaseToken).Updates(updates).Error
 }
 func (r *NotificationsRepo) RetryNotification(projectID, id string) error {
-	result := r.DB.Model(&domain.NotificationDelivery{}).Where("id = ? AND project_id = ? AND (content_source IS NULL OR content_source <> 'invalid') AND status IN ?", id, projectID, []string{"failed", "awaiting_authorization", "target_unavailable"}).Updates(map[string]any{"status": "pending", "attempts": 0, "next_attempt_at": time.Now().UTC(), "last_error": ""})
+	result := r.DB.Model(&domain.NotificationDelivery{}).Where("id = ? AND project_id = ? AND (content_source IS NULL OR content_source <> 'invalid') AND status IN ?", id, projectID, []string{"failed", "awaiting_authorization", "target_unavailable", "send_unknown"}).Updates(map[string]any{"status": "pending", "attempts": 0, "next_attempt_at": time.Now().UTC(), "last_error": ""})
 	if result.Error != nil {
 		return result.Error
 	}
@@ -406,22 +693,23 @@ func notificationTrigger(eventType string) string {
 	}
 }
 
+// InteractiveNotificationBots lists receiving configurations by the physical
+// columns that lease fencing also reads. Rows not yet backfilled by
+// migration 036 are skipped; see UnmigratedNotificationBots.
 func (r *NotificationsRepo) InteractiveNotificationBots() ([]domain.NotificationBot, error) {
 	var rows []notificationBotRow
-	if err := r.DB.Order("id").Find(&rows).Error; err != nil {
+	if err := r.DB.Where("enabled = ? AND interaction_enabled = ? AND config_version > 0", true, true).Order("id").Find(&rows).Error; err != nil {
 		return nil, err
 	}
-	out := []domain.NotificationBot{}
-	for _, row := range rows {
-		var b domain.NotificationBot
-		if err := json.Unmarshal(row.Payload, &b); err != nil {
-			return nil, err
-		}
-		if b.Enabled && b.InteractionEnabled {
-			out = append(out, b)
-		}
-	}
-	return out, nil
+	return r.decodeBots(rows)
+}
+
+// UnmigratedNotificationBots counts configurations whose physical columns
+// were never backfilled (config_version = 0).
+func (r *NotificationsRepo) UnmigratedNotificationBots() (int64, error) {
+	var n int64
+	err := r.DB.Model(&notificationBotRow{}).Where("config_version = 0").Count(&n).Error
+	return n, err
 }
 
 func (r *NotificationsRepo) NotificationDelivery(id string) (domain.NotificationDelivery, error) {

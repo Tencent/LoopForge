@@ -65,21 +65,22 @@ func (c *wecomConn) Close() error {
 	return nil
 }
 
-// Reply keeps the pre-channel behavior: user messages finish their stream and
-// fall back to a proactive send when streaming fails; card actions send
-// directly. Stage C restricts the fallback to provably undelivered streams.
+// Reply finishes the stream of a user message. The proactive send fallback
+// runs at most once and only when the stream provably did not go out: stream
+// unavailable, request never written, or an explicit platform rejection of
+// the stream (for example an expired callback). A stream that may have been
+// delivered is reported as unknown instead of being sent twice. Card actions
+// send directly.
 func (c *wecomConn) Reply(ctx context.Context, msg OutboundMessage) SendResult {
-	var err error
-	if msg.Action == "" {
-		err = c.ws.stream(ctx, domain.BotInteraction{ID: msg.InteractionID, RequestID: msg.Route.RequestID}, msg.Text, true)
-		if err != nil {
-			err = c.ws.send(ctx, msg.ChatID, msg.Text)
-		}
-	} else {
-		err = c.ws.send(ctx, msg.ChatID, msg.Text)
+	defer c.ws.streams.Delete(msg.InteractionID)
+	if msg.Action != "" {
+		return classifyWeComSend(c.ws.send(ctx, msg.ChatID, msg.Text))
 	}
-	c.ws.streams.Delete(msg.InteractionID)
-	return classifyWeComSend(err)
+	streamed := classifyWeComSend(c.ws.stream(ctx, domain.BotInteraction{ID: msg.InteractionID, RequestID: msg.Route.RequestID}, msg.Text, true))
+	if streamed.Outcome == Delivered || streamed.Outcome == Unknown {
+		return streamed
+	}
+	return classifyWeComSend(c.ws.send(ctx, msg.ChatID, msg.Text))
 }
 
 func (c *wecomConn) progressTurn(ctx context.Context, item domain.BotInteraction) (context.Context, func()) {

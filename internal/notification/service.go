@@ -8,6 +8,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"log"
 	"net/url"
 	"os"
 	"strconv"
@@ -122,7 +123,28 @@ func (s *Service) send(ctx context.Context, bot domain.NotificationBot, targetID
 	}
 	return s.Provider.Send(ctx, bot.BotID, secret, targetID, content)
 }
+
+// BotWorkersEnabled reads AGENTFLOW_BOT_WORKERS_ENABLED (default true). The
+// upgrade maintenance window starts the new version with false: neither the
+// conversation receivers nor the notification sender run, and Bot
+// configuration writes are refused, while DDL and backfills are applied.
+func BotWorkersEnabled() bool {
+	raw := strings.TrimSpace(os.Getenv("AGENTFLOW_BOT_WORKERS_ENABLED"))
+	if raw == "" {
+		return true
+	}
+	enabled, err := strconv.ParseBool(raw)
+	return err != nil || enabled
+}
+
 func (s *Service) Start(ctx context.Context) {
+	if !BotWorkersEnabled() {
+		log.Printf("bot workers disabled by AGENTFLOW_BOT_WORKERS_ENABLED=false: conversation receivers and notification delivery are not started")
+		return
+	}
+	if n, err := s.Store.UnmigratedNotificationBots(); err == nil && n > 0 {
+		log.Printf("bot workers: %d Bot configuration(s) lack physical columns (config_version=0); run migrations/036_enterprise_im_channels.sql — they do not receive messages until then", n)
+	}
 	if s.Interactions != nil {
 		s.Interactions.Start(ctx)
 	}
@@ -175,6 +197,10 @@ func (s *Service) ProcessOne(ctx context.Context) (bool, error) {
 	}
 	if !bot.Enabled {
 		return finish("cancelled", "机器人已停用")
+	}
+	if bot.ChannelKind() != domain.BotChannelWeCom {
+		// Proactive sends of other channels arrive with stage G.
+		return finish("cancelled", "该渠道的主动通知尚未开放")
 	}
 	if bot.ProjectID != item.ProjectID {
 		return finish("cancelled", "通知项目不匹配")
@@ -242,6 +268,9 @@ func (s *Service) ProcessOne(ctx context.Context) (bool, error) {
 	}, *item)
 	if errors.Is(err, errNotificationExpired) || errors.Is(err, botinteraction.ErrCardExpired) {
 		return finish("expired", err.Error())
+	}
+	if errors.Is(err, botinteraction.ErrCardDeliveryUnknown) {
+		return finish("send_unknown", err.Error())
 	}
 	if err == nil {
 		return finish("sent", "")

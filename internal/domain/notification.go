@@ -1,6 +1,12 @@
 package domain
 
-import "time"
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"strconv"
+	"strings"
+	"time"
+)
 
 type BotChat struct {
 	ID              string `json:"id"`
@@ -9,11 +15,15 @@ type BotChat struct {
 	LastMessageTime string `json:"lastMessageTime,omitempty"`
 }
 type NotificationBot struct {
-	ID                 string     `json:"id"`
-	ProjectID          string     `json:"projectId"`
-	OwnerID            int64      `json:"ownerId"`
-	Model              string     `json:"model,omitempty"`
-	Name               string     `json:"name"`
+	ID        string `json:"id"`
+	ProjectID string `json:"projectId"`
+	OwnerID   int64  `json:"ownerId"`
+	Model     string `json:"model,omitempty"`
+	Name      string `json:"name"`
+	// Channel is wecom, feishu or dingtalk. Empty means a legacy WeCom record.
+	Channel string `json:"channel,omitempty"`
+	// BotID is the external application identity: the WeCom Bot ID, Feishu
+	// App ID or DingTalk Client ID.
 	BotID              string     `json:"botId"`
 	InteractionEnabled bool       `json:"interactionEnabled"`
 	Enabled            bool       `json:"enabled"`
@@ -23,7 +33,115 @@ type NotificationBot struct {
 	LastCheckedAt      *time.Time `json:"lastCheckedAt,omitempty"`
 	CreatedAt          time.Time  `json:"createdAt"`
 	UpdatedAt          time.Time  `json:"updatedAt"`
+
+	// WriteApproval is readonly or auto. Empty means a legacy WeCom record,
+	// which keeps the automatic execution it had before channels existed.
+	WriteApproval string `json:"writeApproval,omitempty"`
+	// ConfigVersion increments on every saved change; CredentialVersion only
+	// when the secret changes. Both mirror physical columns.
+	ConfigVersion     int64 `json:"configVersion"`
+	CredentialVersion int64 `json:"credentialVersion"`
+	// CredentialFormat reports whether the stored secret is still legacy
+	// plaintext ("plaintext") or sealed ("encrypted"). Filled on read.
+	CredentialFormat string `json:"credentialFormat,omitempty"`
+
+	// Enterprise scope (Feishu tenant_key, DingTalk CorpId). TenantState is
+	// awaiting_confirmation, locked or conflict; empty for WeCom.
+	TenantKey         string           `json:"tenantKey,omitempty"`
+	TenantName        string           `json:"tenantName,omitempty"`
+	TenantState       string           `json:"tenantState,omitempty"`
+	TenantCandidate   *TenantCandidate `json:"tenantCandidate,omitempty"`
+	TenantConfirmedBy int64            `json:"tenantConfirmedBy,omitempty"`
+	TenantConfirmedAt *time.Time       `json:"tenantConfirmedAt,omitempty"`
 }
+
+// TenantCandidate is the enterprise scope observed on the first trusted
+// event of an authenticated connection, awaiting administrator confirmation.
+type TenantCandidate struct {
+	TenantKey         string    `json:"tenantKey"`
+	EventID           string    `json:"eventId,omitempty"`
+	ReceivedAt        time.Time `json:"receivedAt"`
+	CredentialVersion int64     `json:"credentialVersion"`
+	Conflict          string    `json:"conflict,omitempty"`
+}
+
+const (
+	BotChannelWeCom    = "wecom"
+	BotChannelFeishu   = "feishu"
+	BotChannelDingTalk = "dingtalk"
+
+	BotWriteReadOnly = "readonly"
+	BotWriteAuto     = "auto"
+
+	BotTenantAwaiting = "awaiting_confirmation"
+	BotTenantLocked   = "locked"
+	BotTenantConflict = "conflict"
+)
+
+// ChannelKind returns the normalized channel; legacy records are WeCom.
+func (b NotificationBot) ChannelKind() string {
+	switch strings.TrimSpace(b.Channel) {
+	case BotChannelFeishu:
+		return BotChannelFeishu
+	case BotChannelDingTalk:
+		return BotChannelDingTalk
+	default:
+		return BotChannelWeCom
+	}
+}
+
+// IdentityScope namespaces platform identities (bindings, message
+// de-duplication). WeCom keeps its historical external Bot ID; new channels
+// use the immutable configuration ID because their user IDs are app-scoped.
+func (b NotificationBot) IdentityScope() string {
+	if b.ChannelKind() == BotChannelWeCom {
+		return b.BotID
+	}
+	return b.ID
+}
+
+// ReceiveSlot identifies one receiving application within a deployment.
+// Only enabled interactive configurations occupy it.
+func (b NotificationBot) ReceiveSlot() string {
+	sum := sha256.Sum256([]byte(b.BotID))
+	return b.ChannelKind() + ":" + hex.EncodeToString(sum[:])
+}
+
+// LeaseKey is the bot_connections.bot_id of the receiving connection. WeCom
+// keeps the external Bot ID so existing rows and running peers stay valid.
+func (b NotificationBot) LeaseKey() string {
+	if b.ChannelKind() == BotChannelWeCom {
+		return b.BotID
+	}
+	return b.ReceiveSlot()
+}
+
+// EffectiveWriteApproval maps legacy WeCom records without the field to the
+// automatic execution they always had.
+func (b NotificationBot) EffectiveWriteApproval() string {
+	switch b.WriteApproval {
+	case BotWriteReadOnly, BotWriteAuto:
+		return b.WriteApproval
+	}
+	if b.ChannelKind() == BotChannelWeCom {
+		return BotWriteAuto
+	}
+	return BotWriteReadOnly
+}
+
+// ConnectionFingerprint covers only the fields that require reconnecting.
+// Names, models, tenant locking and write policy are read per event/turn.
+func (b NotificationBot) ConnectionFingerprint() string {
+	return strings.Join([]string{b.ChannelKind(), b.BotID, strconv.FormatInt(b.CredentialVersion, 10), boolFlag(b.Enabled), boolFlag(b.InteractionEnabled)}, "|")
+}
+
+func boolFlag(v bool) string {
+	if v {
+		return "1"
+	}
+	return "0"
+}
+
 type NotificationBinding struct {
 	BotID         string   `json:"botId"`
 	Events        []string `json:"events"` // succeeded, failed, waiting

@@ -164,29 +164,50 @@ func TestFakeChannelDrivesServiceLifecycle(t *testing.T) {
 		t.Fatalf("reject detail = %q", item.LastError)
 	}
 
-	// Unknown → the connection is dropped and the saved reply is sent again on
-	// the next connection without re-running the model (stage A behavior).
-	var unknownOnce sync.Once
+	// Unknown → reply_unknown on a non-idempotent channel: no automatic
+	// resend and the connection stays up. A manual resend starts a new
+	// generation with a new key and sends only the saved reply.
+	sends := 0
+	var keys []string
 	fake.setOutcome(func(msg OutboundMessage) SendResult {
-		result := SendResult{Outcome: Delivered}
-		unknownOnce.Do(func() { result = SendResult{Outcome: Unknown, Code: "receipt_missing", SafeDetail: "回执超时"} })
-		return result
+		sends++
+		keys = append(keys, msg.SendKey)
+		if sends == 1 {
+			return SendResult{Outcome: Unknown, Code: "receipt_missing", SafeDetail: "回执超时"}
+		}
+		return SendResult{Outcome: Delivered, PlatformMessageID: "pm-1"}
 	})
 	conn.push(t, event("m3", "未知"))
 	waitReplyMsg(t, conn)
+	eventually(t, func() bool { return status("m3") == "reply_unknown" })
 	select {
 	case <-conn.Done():
-	case <-time.After(6 * time.Second):
-		t.Fatal("unknown outcome did not close the connection")
+		t.Fatal("unknown outcome dropped the connection")
+	case msg := <-conn.replies:
+		t.Fatalf("unknown outcome was resent automatically: %+v", msg)
+	case <-time.After(time.Second):
 	}
-	second := waitConn(t, fake)
-	if msg := waitReplyMsg(t, second); msg.Text != "答复：未知" {
+	resent, err := store.ResendBotInteraction(repo.BotMessageID(bot.BotID, "m3"), 7, "action-1", "用户未收到")
+	if err != nil || resent.DeliveryGeneration != 2 {
+		t.Fatalf("resend = %+v %v", resent, err)
+	}
+	if again, err := store.ResendBotInteraction(resent.ID, 7, "action-1", "重复点击"); err != nil || again.DeliveryGeneration != 2 {
+		t.Fatalf("duplicate action = %+v %v", again, err)
+	}
+	if msg := waitReplyMsg(t, conn); msg.Text != "答复：未知" {
 		t.Fatalf("resent reply = %+v", msg)
 	}
 	eventually(t, func() bool { return status("m3") == "replied" })
+	if len(keys) != 2 || keys[0] == "" || keys[0] == keys[1] {
+		t.Fatalf("send keys = %v", keys)
+	}
+	if item, _ := store.BotInteraction(resent.ID); item.PlatformMessageID != "pm-1" || item.ResentBy != 7 {
+		t.Fatalf("receipt = %+v", item)
+	}
+	fake.setOutcome(func(OutboundMessage) SendResult { return SendResult{Outcome: Delivered} })
 
 	// A dropped connection reconnects and keeps processing.
-	second.Close()
+	conn.Close()
 	third := waitConn(t, fake)
 	third.push(t, event("m4", "重连后"))
 	waitReplyMsg(t, third)
@@ -215,7 +236,7 @@ func TestUnregisteredChannelReportsNotReady(t *testing.T) {
 		t.Fatal(err)
 	}
 	service := New(store)
-	service.ChannelKind = func(domain.NotificationBot) string { return ChannelFeishu }
+	service.ChannelKind = func(domain.NotificationBot) string { return ChannelDingTalk }
 	if _, err := service.Channel(bot); !errors.Is(err, ErrChannelNotReady) {
 		t.Fatalf("channel = %v", err)
 	}
@@ -373,5 +394,106 @@ func TestSocketRequestPhases(t *testing.T) {
 	}
 	if got := classifyWeComSend(sock.request(ctx, "drop", "", nil)); got.Outcome != Unknown {
 		t.Fatalf("connection closed after write = %+v", got)
+	}
+}
+
+// kindChannel registers a fake adapter under a real channel kind.
+type kindChannel struct {
+	*fakeChannel
+	kind string
+}
+
+func (k kindChannel) Kind() string { return k.kind }
+
+// The Feishu private-chat loop through the common service: tenant discovery
+// answers with a fixed notice until an administrator locks the scope; then
+// text is processed once per business message, other tenants are dropped,
+// group chats are ignored and non-text gets a notice without the model.
+func TestFeishuPrivateChatLoopWithTenantConfirmation(t *testing.T) {
+	store, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	bot := domain.NotificationBot{ID: "cfg-fs", Channel: domain.BotChannelFeishu, BotID: "cli_app", ProjectID: "p", OwnerID: 1, Enabled: true, InteractionEnabled: true}
+	saved, err := store.SaveNotificationBotChecked(bot, "secret", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := New(store)
+	fake := newFakeChannel()
+	service.RegisterChannel(kindChannel{fake, ChannelFeishu})
+	var mu sync.Mutex
+	generated := map[string]int{}
+	service.Generate = func(ctx context.Context, b domain.NotificationBot, c domain.BotConversation, h []domain.BotInteraction, item domain.BotInteraction) (string, error) {
+		mu.Lock()
+		generated[item.Content]++
+		mu.Unlock()
+		return "答复：" + item.Content, nil
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	service.Start(ctx)
+	defer func() { cancel(); <-service.Done }()
+	conn := waitConn(t, fake)
+	event := func(eventID, msgID, tenant, chatType, msgType, text string) InboundEvent {
+		return InboundEvent{Channel: ChannelFeishu, AppID: "cli_app", TenantKey: tenant, EventID: eventID, MessageID: msgID, SenderID: "ou_1", ChatID: "oc_1", ChatType: chatType, MsgType: msgType, Text: text, Route: ReplyRoute{MessageID: msgID}}
+	}
+
+	// Before confirmation: candidate recorded, fixed notice, no model call.
+	conn.push(t, event("e1", "om_1", "tenant-1", "single", "text", "项目状态"))
+	if msg := waitReplyMsg(t, conn); msg.Text != noticeTenantPending || msg.Route.MessageID != "om_1" {
+		t.Fatalf("pending notice = %+v", msg)
+	}
+	pending, _ := store.NotificationBot(bot.ID)
+	if pending.TenantCandidate == nil || pending.TenantCandidate.TenantKey != "tenant-1" || pending.ConfigVersion != saved.ConfigVersion {
+		t.Fatalf("candidate = %+v", pending)
+	}
+	if _, err := store.ConfirmBotTenant(bot.ID, "tenant-1", pending.ConfigVersion, 1); err != nil {
+		t.Fatal(err)
+	}
+	// Locking does not reconnect.
+	select {
+	case <-conn.Done():
+		t.Fatal("tenant lock reconnected")
+	case <-time.After(500 * time.Millisecond):
+	}
+
+	conn.push(t, event("e2", "om_2", "tenant-1", "single", "text", "项目状态"))
+	if msg := waitReplyMsg(t, conn); msg.Text != "答复：项目状态" || msg.SendKey == "" || msg.Route.MessageID != "om_2" {
+		t.Fatalf("reply = %+v", msg)
+	}
+	// Redelivery with a new event ID is the same business message.
+	if ack := conn.push(t, event("e2-retry", "om_2", "tenant-1", "single", "text", "项目状态")); ack.Accepted {
+		t.Fatal("redelivered message accepted twice")
+	}
+	// Another enterprise, a group chat: dropped without a reply.
+	if ack := conn.push(t, event("e3", "om_3", "tenant-x", "single", "text", "越权")); ack.Accepted || ack.Ignored != "tenant_mismatch" {
+		t.Fatalf("foreign tenant = %+v", ack)
+	}
+	if ack := conn.push(t, event("e4", "om_4", "tenant-1", "group", "text", "群聊")); ack.Accepted || ack.Ignored != "group_not_supported" {
+		t.Fatalf("group = %+v", ack)
+	}
+	// Non-text: a notice, the content never reaches the model.
+	conn.push(t, event("e5", "om_5", "tenant-1", "single", "image", ""))
+	if msg := waitReplyMsg(t, conn); msg.Text != noticeUnsupported {
+		t.Fatalf("image notice = %+v", msg)
+	}
+	select {
+	case msg := <-conn.replies:
+		t.Fatalf("unexpected reply %+v", msg)
+	case <-time.After(500 * time.Millisecond):
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(generated) != 1 || generated["项目状态"] != 1 {
+		t.Fatalf("model calls = %v", generated)
+	}
+	// Records use the configuration as identity scope.
+	if item, err := store.BotInteraction(repo.BotMessageID(bot.ID, "om_2")); err != nil || item.Status != domain.BotReplied || item.ProjectID != "p" || item.PlatformEventID != "e2" {
+		t.Fatalf("record = %+v %v", item, err)
+	}
+	state, _ := store.BotConnectionState(saved.LeaseKey())
+	if state.IgnoredGroupMessages != 1 || !strings.HasPrefix(saved.LeaseKey(), "feishu:") {
+		t.Fatalf("connection = %+v key=%s", state, saved.LeaseKey())
 	}
 }

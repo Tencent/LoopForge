@@ -472,6 +472,16 @@ func TestNotificationCardTaskBranches(t *testing.T) {
 		"from": map[string]string{"userid": "internal-user"}, "msgtype": "event",
 		"event": map[string]string{"eventtype": "template_card_event", "event_key": "approve", "task_id": singleTask},
 	})
+	// The inbound path reads the current configuration, so the Bot exists.
+	bot.BotID, bot.OwnerID, bot.Enabled, bot.InteractionEnabled = "external-task", 1, true, true
+	if err := st.SaveNotificationBot(bot, "s"); err != nil {
+		t.Fatal(err)
+	}
+	body, _ = json.Marshal(map[string]any{
+		"msgid": "single-action", "aibotid": bot.BotID, "chattype": "single",
+		"from": map[string]string{"userid": "internal-user"}, "msgtype": "event",
+		"event": map[string]string{"eventtype": "template_card_event", "event_key": "approve", "task_id": singleTask},
+	})
 	svc.receive(context.Background(), bot, Frame{Cmd: "aibot_event_callback", Body: body}, nil)
 	if action, err := st.BotInteraction(repo.BotMessageID(bot.BotID, "single-action")); err != nil || action.Action != "approve" {
 		t.Fatalf("single action = %#v, %v", action, err)

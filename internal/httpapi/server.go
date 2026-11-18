@@ -299,6 +299,11 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	}
 	api.botInteractions = &botInteractionHandlers{deps: d, notifications: api.notifications}
 	g.GET("/api/notification-bots/:id/interactions", api.botInteractions.records)
+	g.GET("/api/notification-bots/:id/tenant", api.notifications.tenant)
+	g.POST("/api/notification-bots/:id/tenant/confirm", api.notifications.tenantConfirm)
+	g.GET("/api/bot-interactions/pending", api.botInteractions.pending)
+	g.POST("/api/bot-interactions/:interactionId/resend", api.botInteractions.act)
+	g.POST("/api/bot-interactions/:interactionId/confirm", api.botInteractions.act)
 	g.POST("/api/bot-bindings/claim", api.botIdentities.binding)
 	g.POST("/api/bot-bindings/status", api.botIdentities.binding)
 	g.GET("/api/bot-bindings", api.botIdentities.list)
