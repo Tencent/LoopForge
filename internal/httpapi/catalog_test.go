@@ -71,6 +71,10 @@ func TestExecutorModelsCatalogListsPerCLI(t *testing.T) {
 		}
 	}
 	claude := catalogs["claude"]
+	if len(claude.Models) < 2 || claude.Models[0].ID != "claude-fable-5-1" ||
+		claude.Models[1].ID != "claude-fable-5-2" || claude.Models[1].Name != "Claude Fable 5.2" {
+		t.Fatalf("claude catalog = %+v", claude.Models)
+	}
 	haiku := -1
 	for i, model := range claude.Models {
 		if model.ID == "claude-haiku-5-5" {

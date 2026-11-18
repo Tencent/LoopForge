@@ -94,6 +94,7 @@ func executorModelCatalogs() map[string]executorModelCatalog {
 			CustomModel: true,
 			Models: []executorModelInfo{
 				{ID: "claude-fable-5-1", Name: "Claude Fable 5.1"},
+				{ID: "claude-fable-5-2", Name: "Claude Fable 5.2"},
 				{ID: "claude-fable-5", Name: "Claude Fable 5"},
 				{ID: "claude-opus-5-5", Name: "Claude Opus 5.5"},
 				{ID: "claude-opus-5", Name: "Claude Opus 5"},
