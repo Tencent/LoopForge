@@ -398,8 +398,8 @@ func TestConversationExecutorGuardsGitHTTPSByRunnerVersion(t *testing.T) {
 	h, user := workbenchFixture(t)
 	h.deps.engine = engine.New(h.repo, runtime.NewManager(t.TempDir()))
 	const (
-		cnbToken    = "cnb_conv_secret_pat_0103"
-		githubToken = "ghp_conv_global_pat_0102"
+		cnbToken    = "cnb-fake-token-0103"
+		githubToken = "ghp_FAKEGLOBALPAT"
 	)
 	if _, err := h.repo.UpdateUserCredentials(user.ID, repo.UserCredentialUpdate{CNBToken: cnbToken, GitToken: githubToken}); err != nil {
 		t.Fatal(err)

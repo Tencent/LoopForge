@@ -359,8 +359,8 @@ func TestWorkspacePreparationGuardedCNBCredentialsByRunnerVersion(t *testing.T) 
 	}
 	user, _ := store.UserByLoginName("cnb-prep-user")
 	const (
-		cnbToken    = "cnb_prep_secret_pat_0103"
-		githubToken = "ghp_prep_global_pat_0102"
+		cnbToken    = "cnb-fake-token-0103"
+		githubToken = "ghp_FAKEGLOBALPAT"
 	)
 	if _, err := store.UpdateUserCredentials(user.ID, repo.UserCredentialUpdate{CNBToken: cnbToken, GitToken: githubToken}); err != nil {
 		t.Fatal(err)
