@@ -51,7 +51,10 @@ func BuildFacts(run domain.Run, catalog domain.RunEvalCatalog) domain.RunEvalFac
 	verification := map[string]int{}
 	toolCounts := map[string]*domain.RunEvalToolRepeat{}
 	errorCounts := map[string]*domain.RunEvalErrorFact{}
-	var digest []domain.RunEvalDigestEvent
+	// The final events contain delivery and failure evidence. Keep a bounded
+	// ring of the latest relevant observations rather than only the prefix.
+	digest := make([]domain.RunEvalDigestEvent, 0, maxDigestEvents)
+	digestNext := 0
 	for _, ev := range run.Telemetry {
 		switch ev.Category {
 		case "lifecycle":
@@ -69,8 +72,13 @@ func BuildFacts(run domain.Run, catalog domain.RunEvalCatalog) domain.RunEvalFac
 			}
 			bumpError(errorCounts, ev.NodeID, text)
 		}
-		if keepDigest(ev) && len(digest) < maxDigestEvents {
-			digest = append(digest, digestEvent(ev))
+		if keepDigest(ev) {
+			if len(digest) < maxDigestEvents {
+				digest = append(digest, digestEvent(ev))
+			} else {
+				digest[digestNext] = digestEvent(ev)
+				digestNext = (digestNext + 1) % maxDigestEvents
+			}
 		}
 	}
 	for _, ev := range run.Events {
@@ -112,6 +120,9 @@ func BuildFacts(run domain.Run, catalog domain.RunEvalCatalog) domain.RunEvalFac
 	}
 	facts.ToolRepeats = rankedTools(toolCounts)
 	facts.Errors = rankedErrors(errorCounts)
+	if digestNext != 0 {
+		digest = append(append(make([]domain.RunEvalDigestEvent, 0, len(digest)), digest[digestNext:]...), digest[:digestNext]...)
+	}
 	facts.Digest = digest
 	return facts
 }
