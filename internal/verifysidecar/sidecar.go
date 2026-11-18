@@ -160,8 +160,17 @@ func (s *Server) runAcceptance(ctx context.Context, repo string, req verifyReque
 	if !s.AllowTestCommand {
 		return acceptance{Status: "SKIPPED", Reason: "test commands are disabled on this sidecar (start it with -allow-test-command)"}
 	}
+	runDir := repo
+	if strings.TrimSpace(req.BaseCommit) != "" || len(req.TestRoots) > 0 {
+		dir, cleanup, err := verification.PrepareRunDir(ctx, repo, req.BaseCommit, req.TestRoots)
+		if err != nil {
+			return acceptance{Status: "FAIL", Reason: err.Error()}
+		}
+		defer cleanup()
+		runDir = dir
+	}
 	runner := verification.MavenRunner{Image: req.MavenImage, Timeout: s.TestTimeout}
-	outcome, err := runner.RunTests(ctx, repo, command)
+	outcome, err := runner.RunTests(ctx, runDir, command)
 	if err != nil {
 		return acceptance{Status: "FAIL", Reason: err.Error()}
 	}

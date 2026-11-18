@@ -157,3 +157,47 @@ func gitRun(t *testing.T, dir string, args ...string) {
 		t.Fatalf("git %v: %v\n%s", args, err, output)
 	}
 }
+
+func TestPrepareRunDirRestoresBaseTestRoots(t *testing.T) {
+	repo := testRepo(t)
+	testFile := filepath.Join(repo, "src", "test", "java", "ExampleTest.java")
+	if err := os.MkdirAll(filepath.Dir(testFile), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(testFile, []byte("original\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitRun(t, repo, "add", ".")
+	gitRun(t, repo, "commit", "-qm", "tests")
+	base := strings.TrimSpace(gitOutput(t, repo, "rev-parse", "HEAD"))
+	if err := os.WriteFile(testFile, []byte("weakened\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	dir, cleanup, err := PrepareRunDir(context.Background(), repo, base, []string{"src/test/java"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	restored, err := os.ReadFile(filepath.Join(dir, "src", "test", "java", "ExampleTest.java"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(restored) != "original\n" {
+		t.Fatalf("run dir kept the weakened test: %q", restored)
+	}
+	current, err := os.ReadFile(testFile)
+	if err != nil || string(current) != "weakened\n" {
+		t.Fatalf("source repo was modified: %q (%v)", current, err)
+	}
+	cleanup()
+	if _, err := os.Stat(dir); !os.IsNotExist(err) {
+		t.Fatalf("run dir not removed: %v", err)
+	}
+}
+
+func TestPrepareRunDirRejectsMissingBase(t *testing.T) {
+	repo := testRepo(t)
+	if _, _, err := PrepareRunDir(context.Background(), repo, strings.Repeat("0", 40), []string{"src/test/java"}); err == nil {
+		t.Fatal("missing base commit was accepted")
+	}
+}
