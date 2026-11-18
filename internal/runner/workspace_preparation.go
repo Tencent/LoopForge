@@ -148,7 +148,9 @@ func (d *Daemon) handleRunnerWorkspaceTerminal(ctx context.Context, root, scope 
 		gate.RLock()
 		release = onceRelease(releaseSandbox, gate.RUnlock)
 	}
-	result, err := d.workspaceTerminals.HandleSandboxWithGitSSH(ctx, execution, scope, *request.Terminal, release, request.TerminalGitSSHKeys)
+	result, err := d.workspaceTerminals.HandleSandboxWithGit(ctx, execution, scope, *request.Terminal, release, runtime.TerminalGitCredentials{
+		HTTPS: request.TerminalGitHTTPCredentials, SSHKeys: request.TerminalGitSSHKeys,
+	})
 	if err != nil {
 		release()
 	}
@@ -248,7 +250,9 @@ func (d *Daemon) openBusyGroupTerminal(ctx context.Context, root, scope string, 
 		credentials.GitUserName = inv.GitUserName
 		credentials.GitUserEmail = inv.GitUserEmail
 	}
-	result, err := d.workspaceTerminals.HandleSandboxWithGitSSH(ctx, runtime.WithSandboxCredentials(sb, credentials), scope, *request.Terminal, release, request.TerminalGitSSHKeys)
+	result, err := d.workspaceTerminals.HandleSandboxWithGit(ctx, runtime.WithSandboxCredentials(sb, credentials), scope, *request.Terminal, release, runtime.TerminalGitCredentials{
+		HTTPS: request.TerminalGitHTTPCredentials, SSHKeys: request.TerminalGitSSHKeys,
+	})
 	if err != nil {
 		release()
 	}

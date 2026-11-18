@@ -31,7 +31,9 @@ func TestWorkspaceTerminalSandboxUsesOverlayAndPrivateCredentials(t *testing.T) 
 	var released atomic.Int32
 	var pool TerminalPool
 	ctx, cancel := context.WithCancel(context.Background())
-	opened, err := pool.HandleSandbox(ctx, sb, "run:1", domain.WorkspaceTerminalRequest{Operation: "open"}, func() { released.Add(1) })
+	defer cancel()
+	const ownerToken = "terminal-owner-fixture"
+	opened, err := pool.HandleSandboxWithGit(ctx, sb, "run:1", domain.WorkspaceTerminalRequest{Operation: "open"}, func() { released.Add(1) }, TerminalGitCredentials{HTTPS: testHTTPSCredentials(ownerToken)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -45,7 +47,7 @@ func TestWorkspaceTerminalSandboxUsesOverlayAndPrivateCredentials(t *testing.T) 
 	for time.Now().Before(deadline) {
 		body, _ := os.ReadFile(filepath.Join(workspace, "tool-result"))
 		token, _ := os.ReadFile(filepath.Join(workspace, "git-token"))
-		if string(body) == "same-environment" && strings.TrimSpace(string(token)) == fmt.Sprintf("%x", sha256.Sum256([]byte("run-owned-token"))) {
+		if string(body) == "same-environment" && strings.TrimSpace(string(token)) == fmt.Sprintf("%x", sha256.Sum256([]byte(ownerToken))) {
 			break
 		}
 		time.Sleep(10 * time.Millisecond)
@@ -56,13 +58,33 @@ func TestWorkspaceTerminalSandboxUsesOverlayAndPrivateCredentials(t *testing.T) 
 	if body, _ := os.ReadFile(filepath.Join(workspace, "leaked")); string(body) != "|||" {
 		t.Fatalf("host/model environment leaked: %q", body)
 	}
-	if body, _ := os.ReadFile(filepath.Join(workspace, "git-token")); strings.TrimSpace(string(body)) != fmt.Sprintf("%x", sha256.Sum256([]byte("run-owned-token"))) {
-		t.Fatalf("explicit run Git binding missing: %q", body)
+	if body, _ := os.ReadFile(filepath.Join(workspace, "git-token")); strings.TrimSpace(string(body)) != fmt.Sprintf("%x", sha256.Sum256([]byte(ownerToken))) {
+		t.Fatal("terminal's explicit Git binding was not used")
 	}
 	pool.CloseScope("run:1")
 	pool.CloseScope("run:1")
 	if got := released.Load(); got != 1 {
 		t.Fatalf("release called %d times", got)
+	}
+}
+
+func TestWorkspaceTerminalWithoutCredentialsDoesNotBindSandboxGit(t *testing.T) {
+	workspace := t.TempDir()
+	sb := &managedSandbox{
+		Sandbox:     &localSandbox{workspace: workspace},
+		workspace:   workspace,
+		credentials: RunCredentials{GitHTTPCredentials: testHTTPSCredentials("run-owner-fixture")},
+	}
+	cmd, home, err := sandboxTerminalCommand(context.Background(), sb)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer removeTerminalHome(home)
+	for _, env := range cmd.Env {
+		key, value, _ := strings.Cut(env, "=")
+		if (key == SessionGatewayEnv || key == GitHostsEnv) && value != "" {
+			t.Fatal("terminal inherited the run's Git binding")
+		}
 	}
 }
 
