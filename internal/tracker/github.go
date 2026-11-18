@@ -284,7 +284,7 @@ func (s *Service) pullGitHubIssues(store IssueStoreAdapter, repo domain.Reposito
 					issue.Description = old.Description
 				}
 			}
-			if err := store.PutIssue(issue); err != nil {
+			if err := store.PutSyncedIssue(issue); err != nil {
 				return count, err
 			}
 			count++
