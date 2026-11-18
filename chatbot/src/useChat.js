@@ -114,6 +114,7 @@ export function useChat() {
       new URLSearchParams(location.search).get("issueId") || "",
     ),
     [models, setModels] = useState([]),
+    [modelCatalogRefresh, requestModelCatalogRefresh] = useState(0),
     [sessions, setSessions] = useState([]),
     [session, setSession] = useState(null),
     [activeId, setActiveId] = useState(
@@ -225,6 +226,11 @@ export function useChat() {
     setDraftIssueId("");
     open(null);
   }, [open]);
+  const applyModelCatalog = useCallback((catalog) => {
+    setModels(catalog.models || []);
+    setCodeBuddyDefault({ id: catalog.default || "default", name: "默认", efforts: catalog.defaultEfforts });
+    setSponsoredModels(sponsoredModelList(catalog));
+  }, []);
   useEffect(() => {
     let current = true,
       timer,
@@ -243,9 +249,8 @@ export function useChat() {
         setUsers(users || []);
         setProjects(projectRows || []);
         setSandboxes(sandboxRows || []);
-        setModels(catalog.models || []);
-        setCodeBuddyDefault({ id: catalog.default || "default", name: "默认", efforts: catalog.defaultEfforts });
-        setSponsoredModels(sponsoredModelList(catalog));
+        applyModelCatalog(catalog);
+        if (catalog.cursorModelsPending) requestModelCatalogRefresh((revision) => revision + 1);
         await refreshSessions();
         if (!current) return;
         const recovered = connectionError;
@@ -264,7 +269,7 @@ export function useChat() {
       current = false;
       clearTimeout(timer);
     };
-  }, [refreshSessions]);
+  }, [applyModelCatalog, refreshSessions]);
   useEffect(() => {
     if (!ready || !activeId) return;
     // send/edit already supplied this session. Reloading it here can return an
@@ -566,18 +571,20 @@ export function useChat() {
   const sponsoredModel = sponsoredModels[0] || "";
   const sponsored = codeBuddy && missingKey && !user.isGuest && !!sponsoredModel;
   const sharedModelFor = (id) => (sponsoredModels.includes(id) ? id : sponsoredModel);
-  const selectedModel = model ?? preferredModel(executorModels, executor, codeBuddyDefault.id);
-  const availableModel = sponsored ? sharedModelFor(selectedModel) : selectedModel;
   function modelEntry(id) {
     return findExecutorModel(executorModels, executor, id) ??
       (codeBuddy && id === codeBuddyDefault.id ? codeBuddyDefault : undefined);
   }
+  const hasSelectedModel = model !== null && (session || !executorModels.length || modelEntry(model));
+  const selectedModel = hasSelectedModel ? model : preferredModel(executorModels, executor, codeBuddyDefault.id);
+  const availableModel = sponsored ? sharedModelFor(selectedModel) : selectedModel;
   const activeModelEntry = modelEntry(availableModel);
   const activeModel = activeModelEntry?.id ?? availableModel;
   // null follows the browser preference, while "" is the CLI's default level.
   const activeEffort = modelEffort(
     activeModelEntry,
-    effort ?? readComposerPreference(effortPreference(executor, activeModel)),
+    ((model === null || hasSelectedModel) ? effort : null) ??
+      readComposerPreference(effortPreference(executor, activeModel)),
   );
   useEffect(() => {
     if (codeBuddy || listedForEngine.length || providerCatalogs[executor]) return;
@@ -630,7 +637,10 @@ export function useChat() {
   function chooseEffort(value) {
     const level = modelEffort(activeModelEntry, value);
     setEffort(level);
-    if (activeModelEntry) rememberModelChoice(activeModel, level);
+    if (activeModelEntry) {
+      setModel(activeModel);
+      rememberModelChoice(activeModel, level);
+    }
   }
   // Credential flags are omitted when false, so drop the old ones before
   // merging; otherwise a cleared key would still look configured.
@@ -658,22 +668,44 @@ export function useChat() {
     [],
   );
   useEffect(() => {
-    if (!ready) return;
     const onMessage = (e) => {
       if (
         e.source === window.parent &&
         e.origin === location.origin &&
         e.data?.type === "agentflow-credentials-changed"
-      )
-        void refreshUser();
+      ) requestModelCatalogRefresh((revision) => revision + 1);
     };
     window.addEventListener("message", onMessage);
-    if (missingKey) window.addEventListener("focus", refreshUser);
+    if (ready && missingKey) window.addEventListener("focus", refreshUser);
     return () => {
       window.removeEventListener("message", onMessage);
       window.removeEventListener("focus", refreshUser);
     };
   }, [ready, missingKey, refreshUser]);
+  useEffect(() => {
+    if (!ready || !modelCatalogRefresh) return;
+    void refreshUser();
+    const request = new AbortController();
+    // Cursor discovery can run for up to 30 seconds in the background.
+    const deadline = Date.now() + 40000;
+    let timer;
+    async function refreshModels() {
+      try {
+        const catalog = await api("/api/assistant/models", { signal: request.signal });
+        if (request.signal.aborted) return;
+        applyModelCatalog(catalog);
+        if (!catalog.cursorModelsPending) return;
+      } catch (error) {
+        if (error.status >= 400 && error.status < 500) return;
+      }
+      if (!request.signal.aborted && Date.now() < deadline) timer = setTimeout(refreshModels, 1500);
+    }
+    void refreshModels();
+    return () => {
+      request.abort();
+      clearTimeout(timer);
+    };
+  }, [ready, modelCatalogRefresh, refreshUser, applyModelCatalog]);
   useEffect(() => writeQueues(queues), [queues]);
   useEffect(() => {
     const s = steeringRef.current;

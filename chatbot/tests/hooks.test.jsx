@@ -98,6 +98,53 @@ describe("conversation hooks", () => {
     localStorage.removeItem("loopforge.assistant.executor");
   });
 
+  test.each(["after saving a key", "during the first open"])("refreshes a pending Cursor catalog %s", async (scenario) => {
+    const original = apiMock.getMockImplementation();
+    let configured = scenario === "during the first open";
+    let discovered = false;
+    let pendingReads = 0;
+    const fallback = { id: "widget", name: "Widget" };
+    writeComposerPreference("executor", "cursor");
+    apiMock.mockImplementation(async (path, options) => {
+      if (path === "/api/assistant/models?executor=cursor") return { models: [fallback] };
+      if (path === "/api/assistant/models" && configured) {
+        if (!discovered) pendingReads++;
+        return {
+          default: "m1",
+          cursorModelsPending: !discovered,
+          models: [{ ...fallback, id: "cursor:widget", engine: "cursor", efforts: discovered ? ["low", "xhigh"] : [] }],
+        };
+      }
+      return original(path, options);
+    });
+    try {
+      const { result } = renderHook(() => useChat());
+      await waitFor(() => expect(result.current.modelDetails?.name).toBe("Widget"));
+      await waitFor(() => expect(result.current.ready).toBe(true));
+      expect(result.current.modelDetails.efforts || []).toEqual([]);
+      act(() => { result.current.setModel(result.current.model); });
+      if (!configured) {
+        configured = true;
+        act(() => window.dispatchEvent(new MessageEvent("message", {
+          origin: location.origin,
+          source: window.parent,
+          data: { type: "agentflow-credentials-changed" },
+        })));
+      }
+      await waitFor(() => expect(pendingReads).toBeGreaterThan(0));
+      discovered = true;
+      await waitFor(() => expect(result.current.modelDetails.efforts).toEqual(["low", "xhigh"]), { timeout: 3500 });
+      act(() => result.current.setEffort("xhigh"));
+      expect(result.current.effort).toBe("xhigh");
+      await act(() => result.current.send({ text: "验证强度" }));
+      expect(writeMock).toHaveBeenCalledWith(
+        "/api/assistant/generations", expect.objectContaining({ executor: "cursor", model: "cursor:widget", effort: "xhigh" }),
+      );
+    } finally {
+      apiMock.mockImplementation(original);
+    }
+  });
+
   test("without an own key chat is limited to the administrator's shared models", async () => {
     localStorage.removeItem("loopforge.assistant.executor");
     const original = apiMock.getMockImplementation();

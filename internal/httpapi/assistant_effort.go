@@ -17,7 +17,8 @@ func assistantModelEfforts(ctx context.Context, user domain.User, model string) 
 	if engine == assistantEngineCodeBuddy || engine == runtime.AgentCLICursor {
 		return assistantModelEffortsIn(model, assistantEngineCustomModels(user, engine))
 	}
-	return assistantModelEffortsIn(model, cliModelsOf(assistantDiscoveredModelsFor(ctx, user, engine)))
+	models, _ := assistantDiscoveredModelsFor(ctx, user, engine)
+	return assistantModelEffortsIn(model, cliModelsOf(models))
 }
 
 // assistantModelEffortsIn prefers configured levels, then the CLI catalog.

@@ -192,7 +192,7 @@ func (h *catalogHandlers) executorModels(c *gin.Context) {
 	}
 	catalogs := executorModelCatalogs()
 	for _, engine := range append([]string{assistantEngineCodeBuddy}, assistantCLIEngines()...) {
-		models := assistantDiscoveredModelsFor(c.Request.Context(), user, engine)
+		models, _ := assistantDiscoveredModelsFor(c.Request.Context(), user, engine)
 		if len(models) == 0 {
 			continue
 		}

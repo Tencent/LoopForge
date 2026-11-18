@@ -95,16 +95,16 @@ func TestCachedCursorModelsRefreshInBackground(t *testing.T) {
 	}
 	t.Cleanup(func() { assistantCursorModels = previous })
 	key := "crsr_test_" + t.Name()
-	if got := cachedCursorModels(key); got != nil {
-		t.Fatalf("cold cache must answer at once with the builtin catalog: %+v", got)
+	if got, pending := cachedCursorModels(key); got != nil || !pending {
+		t.Fatalf("cold cache must answer at once with discovery pending: %+v, pending=%v", got, pending)
 	}
 	if got := <-calls; got != key {
 		t.Fatalf("discovery used key %q", got)
 	}
 	deadline := time.Now().Add(2 * time.Second)
 	for {
-		got := cachedCursorModels(key)
-		if len(got) == 1 && got[0].ID == "claude-opus-5-5-high" {
+		got, pending := cachedCursorModels(key)
+		if !pending && len(got) == 1 && got[0].ID == "claude-opus-5-5-high" {
 			break
 		}
 		if time.Now().After(deadline) {

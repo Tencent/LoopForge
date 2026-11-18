@@ -54,7 +54,7 @@ func TestModelEffortsSurviveProbeSaveAndSelection(t *testing.T) {
 		t.Fatal(err)
 	}
 	owner, _ = h.repo.User(owner.ID)
-	models := assistantEngineModels(context.Background(), owner, nil)
+	models, _ := assistantEngineModels(context.Background(), owner, nil)
 	for _, model := range models {
 		if model.ID == "codex:gateway-reasoner" && !slices.Equal(model.Efforts, []string{"low", "xhigh"}) {
 			t.Fatalf("chat catalog lost efforts: %+v", model)
@@ -121,7 +121,7 @@ func TestAutomaticDiscoveryUsesSameEffortsForColdValidation(t *testing.T) {
 	user := domain.User{CodexAPIKey: "fixture-key", CodexBaseURL: gateway.URL}
 	key := assistantDiscoveryKey(false, user.CodexAPIKey, user.CodexBaseURL)
 	t.Cleanup(func() { assistantDiscoveryCache.Delete(key) })
-	catalog := assistantEngineModels(ctx, user, nil)
+	catalog, _ := assistantEngineModels(ctx, user, nil)
 	if !slices.ContainsFunc(catalog, func(model assistantModel) bool {
 		return model.ID == "codex:remote" && slices.Equal(model.Efforts, []string{"xhigh"})
 	}) {

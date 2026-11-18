@@ -44,7 +44,8 @@ type assistantModelCatalog struct {
 	SponsoredModel  string   `json:"sponsoredModel,omitempty"`
 	SponsoredModels []string `json:"sponsoredModels,omitempty"`
 	// Engines lists the CLIs a signed-in user can switch between.
-	Engines []assistantEngineOption `json:"engines,omitempty"`
+	Engines             []assistantEngineOption `json:"engines,omitempty"`
+	CursorModelsPending bool                    `json:"cursorModelsPending,omitempty"`
 }
 
 func prefetchAssistantModels() {}
@@ -240,10 +241,10 @@ func (h *assistantHandlers) models(c *gin.Context) {
 		catalog.SponsoredModel, catalog.SponsoredModels = key.Models[0], key.Models
 	}
 	if signedIn {
+		c.Header("Cache-Control", "private, no-store")
 		catalog.Engines = assistantEngineOptions(user, shared && strings.TrimSpace(user.CodeBuddyAPIKey) == "")
 		var runnerLogin map[string]bool
 		if c.Query("schedule") == "1" {
-			c.Header("Cache-Control", "private, no-store")
 			runnerLogin = make(map[string]bool)
 			for i := range catalog.Engines {
 				engine := catalog.Engines[i].ID
@@ -253,7 +254,9 @@ func (h *assistantHandlers) models(c *gin.Context) {
 				}
 			}
 		}
-		catalog.Models = append(catalog.Models, assistantEngineModels(c.Request.Context(), user, runnerLogin)...)
+		models, pending := assistantEngineModels(c.Request.Context(), user, runnerLogin)
+		catalog.Models = append(catalog.Models, models...)
+		catalog.CursorModelsPending = pending
 		h.saveCursorCatalog(user)
 	}
 	c.JSON(200, catalog)
