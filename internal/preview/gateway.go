@@ -48,7 +48,11 @@ func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	prefix := PreviewBasePath(token)
 	if strings.TrimSuffix(r.URL.Path, "/") == prefix && !strings.HasSuffix(r.URL.Path, "/") {
-		http.Redirect(w, r, prefix+"/", http.StatusFound)
+		target := prefix + "/"
+		if r.URL.RawQuery != "" {
+			target += "?" + r.URL.RawQuery
+		}
+		http.Redirect(w, r, target, http.StatusFound)
 		return
 	}
 	session, preview, ok := s.LookupSession(token)
@@ -57,8 +61,10 @@ func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.RenewSession(session)
-	if rel == "" || strings.HasSuffix(r.URL.Path, "/") {
+	if rel == "" {
 		rel = preview.EntryFile
+	} else if strings.HasSuffix(r.URL.Path, "/") {
+		rel = path.Join(rel, "index.html")
 	}
 	body, name, err := s.memberBytes(r, preview, rel)
 	if err != nil {
@@ -67,7 +73,7 @@ func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	ext := strings.ToLower(path.Ext(name))
 	if ext == ".html" || ext == ".htm" {
-		body = rewritePreviewHTML(body, prefix, session.BackendURL, s.routedBundle(r, preview))
+		body = rewritePreviewDocument(body, prefix, session.BackendURL, s.routedBundle(r, preview), name)
 	} else if ext == ".css" {
 		body = []byte(rewriteCSSURLs(string(body), prefix))
 	} else if ext == ".js" || ext == ".mjs" || ext == ".cjs" {
@@ -234,10 +240,20 @@ func acceptsHTML(r *http.Request) bool {
 }
 
 func rewritePreviewHTML(body []byte, prefix, backend string, routed bool) []byte {
+	return rewritePreviewDocument(body, prefix, backend, routed, "index.html")
+}
+
+// Resolve relative assets beside the actual archive document, while root URLs
+// and client-side routes remain relative to the whole preview.
+func rewritePreviewDocument(body []byte, prefix, backend string, routed bool, member string) []byte {
 	if len(body) > maxRewrittenHTML {
 		return body
 	}
-	html := injectBaseTag(string(body), prefix)
+	base := prefix
+	if dir := path.Dir(member); dir != "." {
+		base = (&url.URL{Path: prefix + "/" + dir}).EscapedPath()
+	}
+	html := injectBaseTag(string(body), base)
 	html = rewriteReferrerMeta(html)
 	html = injectPreviewViewport(html)
 	html = injectPreviewBackend(html, prefix, backend)
