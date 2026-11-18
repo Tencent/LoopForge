@@ -28,7 +28,7 @@ func TestModelEffortsSurviveProbeSaveAndSelection(t *testing.T) {
 		_, _ = io.WriteString(w, `{"data":[
 			{"id":"gateway-reasoner","supported_reasoning_efforts":["xhigh","low","invalid","xhigh"]},
 			{"id":"gateway-chat","reasoningEfforts":[]},
-			{"id":"gpt-6.1-sol"}
+			{"id":"gpt-5.5"}
 		]}`)
 	}))
 	t.Cleanup(service.Close)
@@ -55,9 +55,14 @@ func TestModelEffortsSurviveProbeSaveAndSelection(t *testing.T) {
 	}
 	owner, _ = h.repo.User(owner.ID)
 	models, _ := assistantEngineModels(context.Background(), owner, nil)
-	for _, model := range models {
-		if model.ID == "codex:gateway-reasoner" && !slices.Equal(model.Efforts, []string{"low", "xhigh"}) {
-			t.Fatalf("chat catalog lost efforts: %+v", model)
+	for id, efforts := range map[string][]string{
+		"codex:gateway-reasoner": {"low", "xhigh"},
+		"codex:gpt-5.5":          {"low", "medium", "high", "xhigh"},
+	} {
+		if !slices.ContainsFunc(models, func(model assistantModel) bool {
+			return model.ID == id && slices.Equal(model.Efforts, efforts)
+		}) {
+			t.Errorf("chat catalog missing %s with efforts %v: %+v", id, efforts, models)
 		}
 	}
 	for _, check := range []struct {
@@ -68,6 +73,8 @@ func TestModelEffortsSurviveProbeSaveAndSelection(t *testing.T) {
 		{"codex:gateway-reasoner", "high", false},
 		{"codex:gateway-chat", "high", false},
 		{"codex:gateway-chat", "", true},
+		{"codex:gpt-5.5", "xhigh", true},
+		{"codex:gpt-5.5", "max", false},
 	} {
 		if err := validateAssistantEffort(context.Background(), owner, check.model, check.effort); (err == nil) != check.valid {
 			t.Errorf("validate %s/%s: %v", check.model, check.effort, err)
@@ -79,7 +86,9 @@ func TestModelEffortsSurviveProbeSaveAndSelection(t *testing.T) {
 	if err := json.Unmarshal(response.Body.Bytes(), &catalogs); err != nil {
 		t.Fatal(err)
 	}
-	if got := catalogs["codex"].Models; len(got) != 3 || !slices.EqualFunc(got[0].Efforts, effortOptions([]string{"low", "xhigh"}), func(a, b executorEffortOption) bool { return a == b }) || len(got[1].Efforts) != 0 {
+	if got := catalogs["codex"].Models; len(got) != 3 ||
+		!slices.Equal(got[0].Efforts, effortOptions([]string{"low", "xhigh"})) || len(got[1].Efforts) != 0 ||
+		!slices.Equal(got[2].Efforts, effortOptions([]string{"low", "medium", "high", "xhigh"})) {
 		t.Fatalf("role catalog lost per-model efforts: %+v", got)
 	}
 }
@@ -87,6 +96,7 @@ func TestModelEffortsSurviveProbeSaveAndSelection(t *testing.T) {
 func TestModelEffortsKeepLegacyCatalogsAndCLIConstraints(t *testing.T) {
 	custom := []string{"low", "xhigh", "ultra"}
 	discovered := []string{"high"}
+	explicitDefault := []string{}
 	for _, check := range []struct {
 		model string
 		entry domain.CLIModel
@@ -96,6 +106,11 @@ func TestModelEffortsKeepLegacyCatalogsAndCLIConstraints(t *testing.T) {
 		{"codex:custom", domain.CLIModel{ID: "custom", DiscoveredReasoningEfforts: &discovered}, discovered},
 		{"codex:custom", domain.CLIModel{ID: "custom", ReasoningEfforts: &custom, DiscoveredReasoningEfforts: &discovered}, custom},
 		{"codex:custom", domain.CLIModel{ID: "custom", ReasoningEfforts: &custom}, custom},
+		{"codex:gpt-5.5", domain.CLIModel{ID: "gpt-5.5"}, []string{"low", "medium", "high", "xhigh"}},
+		{"codex:gpt-5.5", domain.CLIModel{ID: "gpt-5.5", DiscoveredReasoningEfforts: &discovered}, discovered},
+		{"codex:gpt-5.5", domain.CLIModel{ID: "gpt-5.5", ReasoningEfforts: &custom, DiscoveredReasoningEfforts: &discovered}, custom},
+		{"codex:gpt-5.5", domain.CLIModel{ID: "gpt-5.5", ReasoningEfforts: &explicitDefault, DiscoveredReasoningEfforts: &discovered}, nil},
+		{"gpt-5.5", domain.CLIModel{ID: "gpt-5.5"}, []string{"low", "medium", "high"}},
 		{"opencode:custom", domain.CLIModel{ID: "custom", ReasoningEfforts: &custom}, []string{"low"}},
 		{"agy:claude-custom", domain.CLIModel{ID: "claude-custom", ReasoningEfforts: &custom}, nil},
 		{"cursor:unknown", domain.CLIModel{ID: "unknown", ReasoningEfforts: &custom}, nil},
@@ -143,7 +158,7 @@ func TestAutomaticDiscoveryUsesSameEffortsForColdValidation(t *testing.T) {
 	}
 }
 
-func TestCodex62BuiltinEffortsMatchTheCatalogAndTurnValidation(t *testing.T) {
+func TestCodexBuiltinEffortsMatchTheCatalogAndTurnValidation(t *testing.T) {
 	h, owner := workbenchFixture(t)
 	c, response := workbenchContext(owner, http.MethodGet, "/api/assistant/models?executor=codex", &bytes.Buffer{})
 	h.models(c)
@@ -157,27 +172,48 @@ func TestCodex62BuiltinEffortsMatchTheCatalogAndTurnValidation(t *testing.T) {
 	if err := json.Unmarshal(response.Body.Bytes(), &role); response.Code != http.StatusOK || err != nil {
 		t.Fatalf("role catalog: %d %s", response.Code, response.Body)
 	}
-	levels := []string{"low", "medium", "high", "xhigh", "max", "ultra"}
-	for _, id := range []string{"gpt-6.2-sol", "gpt-6.2-astra"} {
-		if !slices.ContainsFunc(chat.Models, func(m assistantModel) bool {
-			return m.ID == id && slices.Equal(m.Efforts, levels)
-		}) || !slices.ContainsFunc(role["codex"].Models, func(m executorModelInfo) bool {
-			return m.ID == id && slices.Equal(m.Efforts, effortOptions(levels))
-		}) {
-			t.Fatalf("%s missing built-in efforts in a picker", id)
-		}
-		for _, effort := range levels {
-			if err := validateAssistantEffort(context.Background(), owner, "codex:"+id, effort); err != nil {
-				t.Errorf("%s rejected advertised effort %s: %v", id, effort, err)
+	xhigh := []string{"low", "medium", "high", "xhigh"}
+	max := []string{"low", "medium", "high", "xhigh", "max"}
+	ultra := []string{"low", "medium", "high", "xhigh", "max", "ultra"}
+	for _, model := range []struct {
+		id     string
+		levels []string
+	}{
+		{"gpt-5.5", xhigh},
+		{"gpt-5.6-luna", max},
+		{"gpt-6-luna", max},
+		{"gpt-6.1-terra", ultra},
+		{"gpt-6.2-sol", ultra},
+		{"gpt-6.2-astra", ultra},
+	} {
+		t.Run(model.id, func(t *testing.T) {
+			chatIndex := slices.IndexFunc(chat.Models, func(m assistantModel) bool { return m.ID == model.id })
+			if chatIndex < 0 || !slices.Equal(chat.Models[chatIndex].Efforts, model.levels) {
+				t.Errorf("chat picker missing %s with efforts %v", model.id, model.levels)
 			}
-		}
-		c, response = workbenchContext(owner, http.MethodPut, "/api/assistant/sessions/codex-"+id, bytes.NewBufferString(
-			`{"model":"`+id+`","executor":"codex","effort":"ultra"}`,
-		))
-		c.Params = gin.Params{{Key: "id", Value: "codex-" + id}}
-		h.session(c)
-		if response.Code != http.StatusOK {
-			t.Fatalf("session rejected the bare model ID with a Codex executor: %d %s", response.Code, response.Body)
-		}
+			roleModels := role["codex"].Models
+			roleIndex := slices.IndexFunc(roleModels, func(m executorModelInfo) bool { return m.ID == model.id })
+			if roleIndex < 0 || !slices.Equal(roleModels[roleIndex].Efforts, effortOptions(model.levels)) {
+				t.Errorf("role picker missing %s with efforts %v", model.id, model.levels)
+			}
+			for _, effort := range ultra {
+				err := validateAssistantEffort(context.Background(), owner, "codex:"+model.id, effort)
+				if want := slices.Contains(model.levels, effort); (err == nil) != want {
+					t.Errorf("%s effort %s: validation returned %v, want accepted=%t", model.id, effort, err, want)
+				}
+			}
+			last := model.levels[len(model.levels)-1]
+			body, err := json.Marshal(map[string]string{"model": model.id, "executor": "codex", "effort": last})
+			if err != nil {
+				t.Fatal(err)
+			}
+			sessionID := "codex-" + model.id
+			c, response := workbenchContext(owner, http.MethodPut, "/api/assistant/sessions/"+sessionID, bytes.NewBuffer(body))
+			c.Params = gin.Params{{Key: "id", Value: sessionID}}
+			h.session(c)
+			if response.Code != http.StatusOK {
+				t.Fatalf("session rejected the bare model ID with a Codex executor: %d %s", response.Code, response.Body)
+			}
+		})
 	}
 }

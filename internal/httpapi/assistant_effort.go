@@ -21,7 +21,8 @@ func assistantModelEfforts(ctx context.Context, user domain.User, model string) 
 	return assistantModelEffortsIn(model, cliModelsOf(models))
 }
 
-// assistantModelEffortsIn prefers configured levels, then the CLI catalog.
+// assistantModelEffortsIn prefers configured levels, then discovered levels,
+// then the built-in model or CLI capabilities.
 // The CodeBuddy fallback mirrors CodeBuddy Code 2.180.0's model capabilities.
 // Unknown models fall back to low/medium/high.
 func assistantModelEffortsIn(model string, catalog []domain.CLIModel) []string {
@@ -54,8 +55,13 @@ func assistantModelEffortsIn(model string, catalog []domain.CLIModel) []string {
 	if runtime.IsAgentCLI(engine) {
 		return supported
 	}
-	if engine == assistantEngineCodex && (id == "gpt-6.2-sol" || id == "gpt-6.2-astra") {
-		return supported
+	if engine == assistantEngineCodex {
+		for _, builtin := range codexBuiltinModels {
+			if builtin.id == id {
+				return builtin.efforts
+			}
+		}
+		return []string{"low", "medium", "high"}
 	}
 	switch id {
 	case "hy4std", "hy4-preview-ioa":

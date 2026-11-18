@@ -35,6 +35,32 @@ type executorModelCatalog struct {
 	Efforts     []executorEffortOption `json:"efforts"`
 }
 
+type codexBuiltinModel struct {
+	id      string
+	name    string
+	efforts []string
+}
+
+// Reasoning levels from the Codex model catalog for the models we list.
+var codexBuiltinModels = func() []codexBuiltinModel {
+	xhigh := []string{"low", "medium", "high", "xhigh"}
+	max := []string{"low", "medium", "high", "xhigh", "max"}
+	ultra := []string{"low", "medium", "high", "xhigh", "max", "ultra"}
+	return []codexBuiltinModel{
+		{"gpt-6.1-sol", "GPT-6.1 Sol", ultra},
+		{"gpt-6.1-terra", "GPT-6.1 Terra", ultra},
+		{"gpt-6.2-sol", "GPT-6.2 Sol", ultra},
+		{"gpt-6.2-astra", "GPT-6.2 Astra", ultra},
+		{"gpt-6-astra", "GPT-6 Astra", ultra},
+		{"gpt-6-sol", "GPT-6 Sol", ultra},
+		{"gpt-6-luna", "GPT-6 Luna", max},
+		{"gpt-5.6-sol", "GPT-5.6 Sol", ultra},
+		{"gpt-5.6-terra", "GPT-5.6 Terra", ultra},
+		{"gpt-5.6-luna", "GPT-5.6 Luna", max},
+		{"gpt-5.5", "GPT-5.5", xhigh},
+	}
+}()
+
 var effortOptionLabels = map[string]string{
 	"none":      "关闭 none",
 	"minimal":   "最低 minimal",
@@ -67,6 +93,10 @@ func executorModelCatalogs() map[string]executorModelCatalog {
 	for _, model := range selectableCodeBuddyModels(known.Models) {
 		codebuddyModels = append(codebuddyModels, executorModelInfo{ID: model.ID, Name: model.Name, Credits: model.Credits})
 	}
+	codexModels := make([]executorModelInfo, 0, len(codexBuiltinModels))
+	for _, model := range codexBuiltinModels {
+		codexModels = append(codexModels, executorModelInfo{ID: model.id, Name: model.name})
+	}
 	catalogs := map[string]executorModelCatalog{
 		"codebuddy": {
 			Default: known.Default,
@@ -75,20 +105,8 @@ func executorModelCatalogs() map[string]executorModelCatalog {
 		},
 		"codex": {
 			CustomModel: true,
-			Models: []executorModelInfo{
-				{ID: "gpt-6.1-sol", Name: "GPT-6.1 Sol"},
-				{ID: "gpt-6.1-terra", Name: "GPT-6.1 Terra"},
-				{ID: "gpt-6.2-sol", Name: "GPT-6.2 Sol"},
-				{ID: "gpt-6.2-astra", Name: "GPT-6.2 Astra"},
-				{ID: "gpt-6-astra", Name: "GPT-6 Astra"},
-				{ID: "gpt-6-sol", Name: "GPT-6 Sol"},
-				{ID: "gpt-6-luna", Name: "GPT-6 Luna"},
-				{ID: "gpt-5.6-sol", Name: "GPT-5.6 Sol"},
-				{ID: "gpt-5.6-terra", Name: "GPT-5.6 Terra"},
-				{ID: "gpt-5.6-luna", Name: "GPT-5.6 Luna"},
-				{ID: "gpt-5.5", Name: "GPT-5.5"},
-			},
-			Efforts: effortOptions(domain.ExecutorEffortLevels["codex"]),
+			Models:      codexModels,
+			Efforts:     effortOptions(domain.ExecutorEffortLevels["codex"]),
 		},
 		"claude": {
 			CustomModel: true,
