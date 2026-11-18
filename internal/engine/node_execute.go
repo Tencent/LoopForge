@@ -461,7 +461,11 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 	// (执行器) it is dispatched to that machine so gates run next to the CLI
 	// output in the runner-side task workspace.
 	gateExec := func(command string, target executionTarget, gateSink runtime.EventSink) (string, error) {
-		return sb.Exec(ctx, runtime.CommandSpec{Argv: []string{"sh", "-lc", bindExecutionTarget(command, target)}, Provider: "verification", CredentialBindings: []runtime.CredentialBinding{runtime.BindGit, runtime.BindMCP}}, gateSink)
+		spec, err := runtime.CommandSpecWithCredentialEnv(runtime.CommandSpec{Argv: []string{"sh", "-lc", bindExecutionTarget(command, target)}, Provider: "verification", CredentialBindings: []runtime.CredentialBinding{runtime.BindGit, runtime.BindMCP}}, node.CredentialEnv, sb.credentialSnapshot())
+		if err != nil {
+			return "", err
+		}
+		return sb.Exec(ctx, spec, gateSink)
 	}
 	current, _ = e.repo.RunState(runID)
 	gitCredentials := sb.credentialSnapshot()
@@ -610,7 +614,11 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 				if err := runtime.ProvisionMCPAssets(ctx, sb, sb.Workspace(), scriptAssets, targetSink); err != nil {
 					return "", err
 				}
-				return sb.Exec(ctx, runtime.CommandSpec{Argv: []string{"sh", "-lc", bound}, Provider: "script", CredentialBindings: []runtime.CredentialBinding{runtime.BindGit, runtime.BindMCP}}, targetSink)
+				scriptSpec, err := runtime.CommandSpecWithCredentialEnv(runtime.CommandSpec{Argv: []string{"sh", "-lc", bound}, Provider: "script", CredentialBindings: []runtime.CredentialBinding{runtime.BindGit, runtime.BindMCP}}, effectiveNode.CredentialEnv, sb.credentialSnapshot())
+				if err != nil {
+					return "", err
+				}
+				return sb.Exec(ctx, scriptSpec, targetSink)
 			})
 			if execMachine := e.defaultExecutionRunner(current); execMachine != "" {
 				workspace := runnerWorkspaceRel(current, node.ID)

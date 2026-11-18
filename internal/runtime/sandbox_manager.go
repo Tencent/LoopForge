@@ -406,6 +406,18 @@ func (s *managedSandbox) SetCredentials(credentials RunCredentials) {
 	s.credentials = credentials
 }
 
+// CredentialSnapshot returns the current credential snapshot. Read-only use:
+// preparation code validating a node's declared credentials up front.
+func (s *managedSandbox) CredentialSnapshot() RunCredentials {
+	s.credentialsMu.RLock()
+	defer s.credentialsMu.RUnlock()
+	return s.credentials
+}
+
+// sandboxCredentialSnapshot lets runtime preparation code read a sandbox's
+// credentials without widening the public Sandbox interface.
+type sandboxCredentialSnapshot interface{ CredentialSnapshot() RunCredentials }
+
 func (s *managedSandbox) Exec(ctx context.Context, command CommandSpec, sink EventSink) (string, error) {
 	select {
 	case s.slots <- struct{}{}:
