@@ -387,6 +387,16 @@ func bindAssistantMCP(server domain.MCPServerDefinition, user domain.User) (doma
 	if githubErr != nil {
 		return domain.MCPServerDefinition{}, githubErr
 	}
+	// Credential-authenticated MCP servers resolve the responsible user's
+	// saved credential (RunCredentials.Extra) here — this entry point serves
+	// both tool discovery and actual calls.
+	bundle, _, credErr := runtime.BindCredentialMCPHeaders(bundle, runtime.ExtraRunCredentials(user.ID), true)
+	if credErr != nil {
+		return domain.MCPServerDefinition{}, credErr
+	}
+	if len(bundle.MCPServers) == 0 {
+		return domain.MCPServerDefinition{}, fmt.Errorf("MCP %s 未绑定任何凭证", server.Name)
+	}
 	server = bundle.MCPServers[0]
 	headers, err := runtime.ResolveMCPHeaders(server)
 	if err != nil {
