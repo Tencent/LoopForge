@@ -24,7 +24,7 @@ const botUI={projectId:'',items:[],deliveries:[],selected:null,sessions:[],query
 const BOT_TABS=['list','edit','records'],BOT_STEPS=[[1,'填写凭据'],[2,'选择接收会话'],[3,'发送测试']],BOT_TENANT_STEPS=[[1,'填写凭据'],[2,'企业确认']],BOT_DEFAULT_MODEL='glm-5.3-flash-ioa';
 // Channels: WeCom keeps the three-step notification setup; Feishu replaces
 // target selection with enterprise confirmation; DingTalk is not open yet.
-const BOT_CHANNELS={wecom:{name:'企业微信',app:'Bot ID',secret:'Secret',appHint:'企业微信智能机器人 Bot ID',ready:true},feishu:{name:'飞书',app:'App ID',secret:'App Secret',appHint:'飞书企业自建应用 App ID（cli_ 开头）',ready:true},dingtalk:{name:'钉钉',app:'Client ID',secret:'Client Secret',appHint:'钉钉企业内部应用 Client ID',ready:false}};
+const BOT_CHANNELS={wecom:{name:'企业微信',app:'Bot ID',secret:'Secret',appHint:'企业微信智能机器人 Bot ID',ready:true},feishu:{name:'飞书',app:'App ID',secret:'App Secret',appHint:'飞书企业自建应用 App ID（cli_ 开头）',ready:true},dingtalk:{name:'钉钉',app:'Client ID',secret:'Client Secret',appHint:'钉钉企业内部应用 Client ID（AppKey）',ready:true}};
 const BOT_TENANT={awaiting_confirmation:['企业待确认','warn'],locked:['企业已确认','success'],conflict:['企业冲突','error']};
 function botChannel(bot){return BOT_CHANNELS[bot?.channel]?bot.channel:'wecom'}
 function botChannelInfo(bot){return BOT_CHANNELS[botChannel(bot)]}
@@ -48,7 +48,7 @@ function canManageBot(bot){
 function botStepAllowed(bot,step){if(botChannel(bot)!=='wecom')return step===1||(step===2&&!!bot?.id);return step===1||(step===2&&!!bot?.id)||(step===3&&!!bot?.id&&!!bot?.target&&!bot._targetChanged)}
 function botStepDone(bot,step){if(botChannel(bot)!=='wecom')return step===1?!!bot?.id:step===2&&bot?.tenantState==='locked';return step===1?!!bot?.id:step===2?botStepAllowed(bot,3):false}
 function botStoredBot(bot){return bot?.id?botUI.items.find(b=>b.id===bot.id):null}
-function botCredentialsDirty(bot){const stored=botStoredBot(bot);if(!stored)return !!bot;return !!bot._secret||(bot.name||'')!==(stored.name||'')||(bot.botId||'')!==(stored.botId||'')||(bot.model||BOT_DEFAULT_MODEL)!==(stored.model||BOT_DEFAULT_MODEL)||!!bot.enabled!==!!stored.enabled||!!bot.interactionEnabled!==!!stored.interactionEnabled||botWriteApproval(bot)!==botWriteApproval(stored)}
+function botCredentialsDirty(bot){const stored=botStoredBot(bot);if(!stored)return !!bot;return !!bot._secret||(bot.name||'')!==(stored.name||'')||(bot.botId||'')!==(stored.botId||'')||(bot.model||BOT_DEFAULT_MODEL)!==(stored.model||BOT_DEFAULT_MODEL)||!!bot.enabled!==!!stored.enabled||!!bot.interactionEnabled!==!!stored.interactionEnabled||botWriteApproval(bot)!==botWriteApproval(stored)||(bot._tenantKey!==undefined&&bot._tenantKey.trim()!==(stored.tenantExpected||''))}
 // Legacy WeCom records without the field keep automatic execution.
 function botWriteApproval(bot){return bot?.writeApproval||(botChannel(bot)==='wecom'&&bot?.id?'auto':'readonly')}
 
@@ -121,11 +121,19 @@ function botWriteFieldHTML(bot){
 }
 function botCredentialPaneHTML(bot,manage){
  const c=botChannelInfo(bot),plaintext=bot.credentialFormat==='plaintext';
- return `<form id="botForm" novalidate><fieldset ${!manage||botUI.busy?'disabled':''}><div class="bot-fields"><label>名称<input class="input" name="name" required maxlength="80" value="${escapeHTML(bot.name)}" placeholder="例如：研发进展通知"></label>${botChannelFieldHTML(bot)}<label>${escapeHTML(c.app)}<input class="input" name="botId" required maxlength="191" value="${escapeHTML(bot.botId)}" autocomplete="off" placeholder="${escapeHTML(c.appHint)}" ${bot.id&&botChannel(bot)!=='wecom'?'readonly':''}></label><label>${escapeHTML(c.secret)}<input class="input" name="secret" type="password" value="${escapeHTML(bot._secret||'')}" maxlength="512" ${bot.id?'':'required'} autocomplete="new-password" placeholder="${bot.secretConfigured?'已配置 · 留空保留，填写则替换':'填写'+escapeHTML(c.secret)}">${plaintext?'<small class="bot-record-error">Secret 仍为旧格式存储，等待管理员执行加密迁移。</small>':''}</label><label>AI 模型（CodeBuddy）${botModelPickerHTML(bot)}<small class="muted">用于对话和完成汇报；对话使用发送者绑定的平台账号凭据，SOP 汇报使用本次执行者凭据。</small></label>${botWriteFieldHTML(bot)}<label class="bot-check"><input name="enabled" type="checkbox" role="switch" ${bot.enabled?'checked':''}>启用此 Bot</label><label class="bot-check"><input name="interactionEnabled" type="checkbox" role="switch" ${bot.interactionEnabled?'checked':''}>启用对话</label></div><p class="muted bot-hint">${botChannel(bot)==='wecom'?'首次对话请按 Bot 提示关联平台账号；新单聊和群聊会自动建立上下文。发送 /new 或“开启新会话”开始新的对话。':'首轮只处理单聊文字消息。保存时会校验凭据；首次收到消息后，需在第②步确认所属企业。'}</p><div class="bot-save-row"><button type="submit" class="button primary">${botBusyLabel('save','','保存并下一步','保存中…')}</button></div></fieldset></form>`;
+ return `<form id="botForm" novalidate><fieldset ${!manage||botUI.busy?'disabled':''}><div class="bot-fields"><label>名称<input class="input" name="name" required maxlength="80" value="${escapeHTML(bot.name)}" placeholder="例如：研发进展通知"></label>${botChannelFieldHTML(bot)}<label>${escapeHTML(c.app)}<input class="input" name="botId" required maxlength="191" value="${escapeHTML(bot.botId)}" autocomplete="off" placeholder="${escapeHTML(c.appHint)}" ${bot.id&&botChannel(bot)!=='wecom'?'readonly':''}></label><label>${escapeHTML(c.secret)}<input class="input" name="secret" type="password" value="${escapeHTML(bot._secret||'')}" maxlength="512" ${bot.id?'':'required'} autocomplete="new-password" placeholder="${bot.secretConfigured?'已配置 · 留空保留，填写则替换':'填写'+escapeHTML(c.secret)}">${plaintext?'<small class="bot-record-error">Secret 仍为旧格式存储，等待管理员执行加密迁移。</small>':''}</label>${botCorpFieldHTML(bot)}<label>AI 模型（CodeBuddy）${botModelPickerHTML(bot)}<small class="muted">用于对话和完成汇报；对话使用发送者绑定的平台账号凭据，SOP 汇报使用本次执行者凭据。</small></label>${botWriteFieldHTML(bot)}<label class="bot-check"><input name="enabled" type="checkbox" role="switch" ${bot.enabled?'checked':''}>启用此 Bot</label><label class="bot-check"><input name="interactionEnabled" type="checkbox" role="switch" ${bot.interactionEnabled?'checked':''}>启用对话</label></div><p class="muted bot-hint">${botChannel(bot)==='wecom'?'首次对话请按 Bot 提示关联平台账号；新单聊和群聊会自动建立上下文。发送 /new 或“开启新会话”开始新的对话。':botChannel(bot)==='dingtalk'?'首轮只处理单聊文字消息。保存时会校验凭据；首条单聊消息的企业与 CorpId 一致时自动确认企业。':'首轮只处理单聊文字消息。保存时会校验凭据；首次收到消息后，需在第②步确认所属企业。'}</p><div class="bot-save-row"><button type="submit" class="button primary">${botBusyLabel('save','','保存并下一步','保存中…')}</button></div></fieldset></form>`;
+}
+// DingTalk: the administrator enters the expected CorpId; it can be
+// corrected until the first matching message locks it.
+function botCorpFieldHTML(bot){
+ if(botChannel(bot)!=='dingtalk')return '';
+ const locked=bot.tenantState==='locked',value=bot._tenantKey??bot.tenantExpected??'';
+ return `<label>企业 CorpId<input class="input" name="tenantKey" ${bot.id?'':'required'} maxlength="191" autocomplete="off" value="${escapeHTML(value)}" placeholder="钉钉管理后台“企业信息”中的 CorpId（ding 开头）" ${locked?'readonly':''}><small class="muted">${locked?'企业已确认，更换企业请新建配置。':'首条单聊消息的企业与此一致时自动确认；不一致时停止处理并提示冲突。'}</small></label>`;
 }
 // Enterprise confirmation: the candidate comes from the first trusted event
 // of the authenticated connection; the platform query is shown alongside.
 function botTenantPaneHTML(bot,manage){
+ if(botChannel(bot)==='dingtalk')return botDingTalkTenantPaneHTML(bot,manage);
  const info=botUI.tenant?.botId===bot.id?botUI.tenant:null,candidate=bot.tenantCandidate,state=bot.tenantState||'awaiting_confirmation';
  const queried=info?.queried?`${escapeHTML(info.queried.tenantName||'未返回名称')} · ${escapeHTML(info.queried.tenantKey||'未返回企业标识')}`:info?.queryError?`<span class="bot-record-error">${escapeHTML(info.queryError)}</span>`:'<span class="muted">读取中…</span>';
  const match=candidate&&info?.queried?.tenantKey?(candidate.tenantKey===info.queried.tenantKey?'<span class="bot-chip">与平台查询一致</span>':'<span class="bot-record-error">与平台查询不一致，请核实</span>'):'';
@@ -135,6 +143,14 @@ function botTenantPaneHTML(bot,manage){
  else if(!candidate)body='<p>等待第一条消息。请让测试成员在飞书中给机器人发送一条单聊消息，收到后这里会显示候选企业。</p><p class="muted bot-hint">确认前机器人只回复“正在完成企业确认”的提示，不会处理业务。</p>';
  else body=`<p>候选企业标识：<code>${escapeHTML(candidate.tenantKey)}</code> ${match}</p><p class="muted bot-hint">来自 ${escapeHTML(new Date(candidate.receivedAt).toLocaleString())} 收到的消息。确认后只接收该企业的消息。</p><div class="bot-save-row"><button type="button" class="button primary" id="botTenantConfirm" ${manage&&!botUI.busy?'':'disabled'}>${botBusyLabel('tenant','check','确认企业','确认中…')}</button><button type="button" class="button ghost" id="botTenantRediscover" ${manage&&!botUI.busy?'':'disabled'}>重新发现</button></div>`;
  return `<div class="bot-summary"><span class="muted">状态</span><span>${botTenantBadge(state)}</span><span class="muted">平台查询</span><span>${queried}</span></div>${body}<div class="bot-save-row"><button type="button" class="hui-icon-btn" id="botTenantRefresh" title="刷新" aria-label="刷新企业信息">${botIcon('refresh')}</button><button type="button" class="button ghost" data-bot-back ${botUI.busy?'disabled':''}>返回列表</button></div>`;
+}
+function botDingTalkTenantPaneHTML(bot,manage){
+ const state=bot.tenantState||'awaiting_confirmation',candidate=bot.tenantCandidate;
+ let body;
+ if(state==='locked')body=`<p>已确认企业 <code>${escapeHTML(bot.tenantKey||'')}</code>，只接收该企业的消息。</p><p class="muted bot-hint">更换应用或企业请新建配置。</p>`;
+ else if(state==='conflict')body=`<p class="bot-record-error">收到的消息来自企业 <code>${escapeHTML(candidate?.conflict||'')}</code>，与填写的 CorpId <code>${escapeHTML(bot.tenantExpected||'')}</code> 不一致，已停止处理。</p><p class="muted bot-hint">核实后在第①步改正 CorpId 并保存，或点“重新发现”重新检查下一条消息。</p><div class="bot-save-row"><button type="button" class="button ghost" id="botTenantRediscover" ${manage&&!botUI.busy?'':'disabled'}>${botBusyLabel('tenant','refresh','重新发现','处理中…')}</button></div>`;
+ else body=`<p>等待第一条消息。请让测试成员在钉钉中给机器人发一条单聊消息；企业与 <code>${escapeHTML(bot.tenantExpected||'')}</code> 一致时自动确认，这条消息也会正常处理。</p>`;
+ return `<div class="bot-summary"><span class="muted">状态</span><span>${botTenantBadge(state)}</span><span class="muted">填写的 CorpId</span><span><code>${escapeHTML(bot.tenantExpected||'')}</code></span></div>${body}<div class="bot-save-row"><button type="button" class="hui-icon-btn" id="botTenantRefresh" title="刷新" aria-label="刷新企业信息">${botIcon('refresh')}</button><button type="button" class="button ghost" data-bot-back ${botUI.busy?'disabled':''}>返回列表</button></div>`;
 }
 function botTargetPaneHTML(bot,manage){
  const changed=!!bot._targetChanged;
@@ -373,7 +389,7 @@ function bindBots(host){
  host.querySelectorAll('[data-interaction-confirm]').forEach(el=>el.onclick=()=>botInteractionAction(el.dataset.interactionConfirm,'confirm',el));
  host.querySelectorAll('[data-interaction-resend]').forEach(el=>el.onclick=()=>botInteractionAction(el.dataset.interactionResend,'resend',el));
 }
-function captureBotDraft(host){const form=host.querySelector('#botForm');if(!form||!botUI.selected)return;const bot=botUI.selected,channel=form.elements.channel?.value;if(channel&&channel!==botChannel(bot)){bot.channel=channel;bot.writeApproval='readonly';botUI.motion=null;queueMicrotask(renderBots)}bot.name=form.elements.name.value;bot.botId=form.elements.botId.value;bot.enabled=form.elements.enabled.checked;bot.model=form.elements.model.value;bot.interactionEnabled=form.elements.interactionEnabled.checked;bot._secret=form.elements.secret.value;if(form.elements.writeApproval)bot.writeApproval=form.elements.writeApproval.value}
+function captureBotDraft(host){const form=host.querySelector('#botForm');if(!form||!botUI.selected)return;const bot=botUI.selected,channel=form.elements.channel?.value;if(channel&&channel!==botChannel(bot)){bot.channel=channel;bot.writeApproval='readonly';botUI.motion=null;queueMicrotask(renderBots)}bot.name=form.elements.name.value;bot.botId=form.elements.botId.value;bot.enabled=form.elements.enabled.checked;bot.model=form.elements.model.value;bot.interactionEnabled=form.elements.interactionEnabled.checked;bot._secret=form.elements.secret.value;if(form.elements.writeApproval)bot.writeApproval=form.elements.writeApproval.value;if(form.elements.tenantKey)bot._tenantKey=form.elements.tenantKey.value}
 function botSaveSelected(saved){const index=botUI.items.findIndex(b=>b.id===saved.id);if(index<0)botUI.items.push(saved);else botUI.items[index]=saved;botUI.selected=structuredClone(saved);botUI.error='';nodeBotCache.delete(botUI.projectId)}
 function bindBotEditor(host){
  host.querySelector('#botDelete')?.addEventListener('click',()=>botDelete(botStoredBot(botUI.selected)||botUI.selected,null));
@@ -387,11 +403,13 @@ function bindBotEditor(host){
   form.onsubmit=async event=>{
    event.preventDefault();if(botUI.busy)return;captureBotDraft(host);
    const bot=botUI.selected,projectId=botUI.projectId,revision=botUI.revision,creating=!bot.id;
-   const missing=['name','botId',...(creating?['secret']:[])].map(name=>form.elements[name]).filter(input=>!input.value.trim());
-   if(missing.length){botShake(missing);const c=botChannelInfo(bot);toast(creating?`请填写名称、${c.app} 和 ${c.secret}`:`请填写名称和 ${c.app}`,'warn');return}
+   const dingtalk=botChannel(bot)==='dingtalk';
+   const missing=['name','botId',...(creating?['secret']:[]),...(creating&&dingtalk?['tenantKey']:[])].map(name=>form.elements[name]).filter(input=>input&&!input.value.trim());
+   if(missing.length){botShake(missing);const c=botChannelInfo(bot);toast(creating?`请填写名称、${c.app}、${c.secret}${dingtalk?' 和企业 CorpId':''}`:`请填写名称和 ${c.app}`,'warn');return}
    const stored=botStoredBot(bot);
    const payload={projectId,name:bot.name,channel:botChannel(bot),botId:bot.botId,enabled:bot.enabled,model:bot.model,interactionEnabled:bot.interactionEnabled,writeApproval:botWriteApproval(bot),secret:form.elements.secret.value};
    if(stored)payload.configVersion=stored.configVersion;
+   if(dingtalk)payload.tenantKey=(form.elements.tenantKey?.value||'').trim();
    if(bot.id&&!payload.secret&&bot.botId===botStoredBot(bot)?.botId&&bot._targetChanged)payload.targetId=bot.target?.id||'';
    if(bot._targetChanged&&(payload.secret||!bot.id)){toast('请先保存凭据，再刷新并选择目标','warn');return}
    botUI.busy=true;botUI.busyAction='save';renderBots();

@@ -53,6 +53,7 @@ func New(store *repo.Store) *Service {
 	s := &Service{Store: store, URL: endpoint, running: map[string]*connection{}, channels: map[string]Channel{}, Done: make(chan struct{})}
 	s.channels[ChannelWeCom] = &wecomChannel{svc: s}
 	s.channels[ChannelFeishu] = newFeishuChannel()
+	s.channels[ChannelDingTalk] = newDingTalkChannel()
 	return s
 }
 
@@ -317,7 +318,7 @@ func (s *Service) process(ctx context.Context, bot domain.NotificationBot, lease
 			}
 		}
 		err = s.deliver(ctx, item.ID, lease, policy, func(ctx context.Context, sending domain.BotInteraction) SendResult {
-			return conn.Reply(ctx, OutboundMessage{InteractionID: sending.ID, Action: sending.Action, ChatID: conv.ChatID, ChatType: conv.ChatType, Text: sending.Reply, SendKey: sending.SendKey, Route: replyRoute(sending)})
+			return conn.Reply(ctx, OutboundMessage{InteractionID: sending.ID, Action: sending.Action, ChatID: conv.ChatID, ChatType: conv.ChatType, Text: sending.Reply, SendKey: sending.SendKey, Route: s.replyRoute(sending)})
 		})
 		if err != nil {
 			return err

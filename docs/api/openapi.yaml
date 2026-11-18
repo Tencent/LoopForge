@@ -3125,12 +3125,16 @@ paths:
         "403":
           description: Project membership required
     post:
-      summary: Create a notification Bot (WeCom or Feishu)
+      summary: Create a notification Bot (WeCom, Feishu or DingTalk)
       description: |
         `channel` is `wecom` (default for clients that omit it), `feishu` or
-        `dingtalk`. New Bots default to `writeApproval=readonly`; Feishu
-        accepts only `readonly`. Feishu credentials are verified before
-        anything is stored. Secrets are sealed with AGENTFLOW_CREDENTIAL_KEYS.
+        `dingtalk`. New Bots default to `writeApproval=readonly`; Feishu and
+        DingTalk accept only `readonly`. Feishu and DingTalk credentials are
+        verified before anything is stored. DingTalk requires `tenantKey`
+        (the enterprise CorpId): the first private message from that
+        enterprise locks it, another enterprise moves the Bot to
+        `tenantState=conflict`. Secrets are sealed with
+        AGENTFLOW_CREDENTIAL_KEYS.
       operationId: createNotificationBot
       requestBody:
         required: true
@@ -3141,7 +3145,7 @@ paths:
         "200":
           description: Stored Bot, without credentials
         "400":
-          description: Invalid input, `credential_invalid` or `immutable_field`
+          description: Invalid input, `credential_invalid`, `tenant_required` or `immutable_field`
         "409":
           description: "`receive_slot_taken` (application already receives in another configuration) or `channel_not_ready`"
         "503":
@@ -4138,6 +4142,7 @@ components:
         writeApproval: {type: string, enum: [readonly, auto], description: "auto is WeCom only"}
         targetId: {type: string, description: "WeCom notification target"}
         configVersion: {type: integer, description: "Expected version for updates"}
+        tenantKey: {type: string, maxLength: 191, description: "DingTalk enterprise CorpId; required on create, changeable until the enterprise is locked"}
     BotManualAction:
       type: object
       required: [actionKey]

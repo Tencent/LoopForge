@@ -186,3 +186,65 @@ func TestBotTenantCandidateAndConfirmation(t *testing.T) {
 		t.Fatalf("rediscover = %+v %v", reset, err)
 	}
 }
+
+func TestDingTalkExpectedTenantAndSealedRoute(t *testing.T) {
+	s, err := OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	bot := domain.NotificationBot{ID: "dt", Channel: domain.BotChannelDingTalk, BotID: "ding-app", ProjectID: "p", OwnerID: 1, Enabled: true, InteractionEnabled: true, TenantExpected: "corp-a", TenantExpectedBy: 5}
+	saved, err := s.SaveNotificationBotChecked(bot, "secret", nil)
+	if err != nil || saved.TenantState != domain.BotTenantAwaiting || saved.TenantExpected != "corp-a" {
+		t.Fatalf("create = %+v %v", saved, err)
+	}
+	// A different enterprise first: conflict, and it stays a conflict even
+	// when the expected enterprise shows up afterwards.
+	if state, _ := s.RecordBotTenantCandidate("dt", "corp-x", "e1", saved.CredentialVersion); state != domain.BotTenantConflict {
+		t.Fatalf("foreign first = %s", state)
+	}
+	if state, _ := s.RecordBotTenantCandidate("dt", "corp-a", "e2", saved.CredentialVersion); state != domain.BotTenantConflict {
+		t.Fatalf("conflict must be sticky, got %s", state)
+	}
+	conflicted, _ := s.NotificationBot("dt")
+	if conflicted.TenantCandidate == nil || conflicted.TenantCandidate.Conflict != "corp-x" || conflicted.TenantKey != "" {
+		t.Fatalf("conflict = %+v", conflicted)
+	}
+	// The administrator corrects the CorpId: the check starts afresh.
+	conflicted.TenantExpected, conflicted.TenantExpectedBy = "corp-x", 6
+	corrected, err := s.SaveNotificationBotChecked(conflicted, "", nil)
+	if err != nil || corrected.TenantState != domain.BotTenantAwaiting || corrected.TenantCandidate != nil || corrected.TenantExpected != "corp-x" {
+		t.Fatalf("correct = %+v %v", corrected, err)
+	}
+	if state, _ := s.RecordBotTenantCandidate("dt", "corp-x", "e3", corrected.CredentialVersion); state != domain.BotTenantLocked {
+		t.Fatalf("match = %s", state)
+	}
+	locked, _ := s.NotificationBot("dt")
+	if locked.TenantKey != "corp-x" || locked.TenantConfirmedBy != 6 || locked.ConfigVersion != corrected.ConfigVersion+1 || locked.ConnectionFingerprint() != corrected.ConnectionFingerprint() {
+		t.Fatalf("locked = %+v", locked)
+	}
+	// Once locked the expected value can no longer be changed.
+	locked.TenantExpected = "corp-y"
+	after, _ := s.SaveNotificationBotChecked(locked, "", nil)
+	if after.TenantKey != "corp-x" || after.TenantExpected != "corp-x" || after.TenantState != domain.BotTenantLocked {
+		t.Fatalf("locked change = %+v", after)
+	}
+	// Session webhooks are sealed per interaction.
+	sealed, err := s.SealBotRoute("dt", "i1", "https://oapi.dingtalk.com/robot/sendBySession?session=x")
+	if err != nil || !strings.HasPrefix(sealed, "lf1:") || strings.Contains(sealed, "session") {
+		t.Fatalf("seal = %q %v", sealed, err)
+	}
+	if got, err := s.OpenBotRoute("dt", "i1", sealed); err != nil || !strings.HasSuffix(got, "session=x") {
+		t.Fatalf("open = %q %v", got, err)
+	}
+	if _, err := s.OpenBotRoute("dt", "i2", sealed); err == nil {
+		t.Fatal("route opened for another interaction")
+	}
+	if got, _ := s.OpenBotRoute("dt", "i1", "om_plain"); got != "om_plain" {
+		t.Fatalf("plain route = %q", got)
+	}
+	s.SetCredentialKeyring(nil)
+	if _, err := s.SealBotRoute("dt", "i1", "x"); !errors.Is(err, ErrCredentialKeyMissing) {
+		t.Fatalf("no keyring = %v", err)
+	}
+}

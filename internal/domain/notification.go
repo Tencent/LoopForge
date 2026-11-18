@@ -53,6 +53,11 @@ type NotificationBot struct {
 	TenantCandidate   *TenantCandidate `json:"tenantCandidate,omitempty"`
 	TenantConfirmedBy int64            `json:"tenantConfirmedBy,omitempty"`
 	TenantConfirmedAt *time.Time       `json:"tenantConfirmedAt,omitempty"`
+	// TenantExpected is the enterprise scope an administrator entered
+	// (DingTalk CorpId). The first trusted event that matches it locks the
+	// scope automatically; a different value moves the state to conflict.
+	TenantExpected   string `json:"tenantExpected,omitempty"`
+	TenantExpectedBy int64  `json:"tenantExpectedBy,omitempty"`
 }
 
 // TenantCandidate is the enterprise scope observed on the first trusted

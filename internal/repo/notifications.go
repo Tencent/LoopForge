@@ -149,8 +149,17 @@ func (r *NotificationsRepo) saveNotificationBot(out *domain.NotificationBot, sec
 			b.OwnerID = prior.OwnerID
 			b.ProjectID = prior.ProjectID
 			b.Channel = prior.Channel
+			expected, expectedBy := b.TenantExpected, b.TenantExpectedBy
 			b.TenantKey, b.TenantName, b.TenantState, b.TenantCandidate = prior.TenantKey, prior.TenantName, prior.TenantState, prior.TenantCandidate
 			b.TenantConfirmedBy, b.TenantConfirmedAt = prior.TenantConfirmedBy, prior.TenantConfirmedAt
+			b.TenantExpected, b.TenantExpectedBy = prior.TenantExpected, prior.TenantExpectedBy
+			// An administrator may correct the expected enterprise (for
+			// example after a conflict) until the scope is locked; the
+			// next trusted event is then checked afresh.
+			if expected != "" && expected != prior.TenantExpected && prior.TenantState != domain.BotTenantLocked {
+				b.TenantExpected, b.TenantExpectedBy = expected, expectedBy
+				b.TenantCandidate, b.TenantState = nil, domain.BotTenantAwaiting
+			}
 			b.ConfigVersion = old.ConfigVersion + 1
 			b.CredentialVersion = old.CredentialVersion
 			if prior.Enabled && prior.InteractionEnabled && !(b.Enabled && b.InteractionEnabled) {
@@ -243,6 +252,9 @@ func (r *NotificationsRepo) RecordBotTenantCandidate(id, tenantKey, eventID stri
 			return err
 		}
 		state = b.TenantState
+		if b.TenantState != domain.BotTenantLocked && b.TenantExpected != "" {
+			return r.checkExpectedTenant(tx, row, b, tenantKey, eventID, credentialVersion, &state)
+		}
 		switch {
 		case b.TenantState == domain.BotTenantLocked:
 			return nil
@@ -260,6 +272,32 @@ func (r *NotificationsRepo) RecordBotTenantCandidate(id, tenantKey, eventID stri
 		return tx.Model(&notificationBotRow{}).Where("id = ?", id).Update("payload", mustJSON(b)).Error
 	})
 	return state, err
+}
+
+// checkExpectedTenant handles a configuration whose enterprise was entered by
+// an administrator (DingTalk CorpId): a trusted event from that enterprise
+// locks the scope at once, attributed to the administrator who entered it,
+// and bumps config_version (not the connection fingerprint); an event from
+// another enterprise records a conflict and is not processed.
+func (r *NotificationsRepo) checkExpectedTenant(tx *gorm.DB, row notificationBotRow, b domain.NotificationBot, tenantKey, eventID string, credentialVersion int64, state *string) error {
+	if b.TenantState == domain.BotTenantConflict {
+		// Two enterprises were seen; only an administrator correction or
+		// rediscovery reopens the check.
+		return nil
+	}
+	at := time.Now().UTC()
+	b.CredentialFormat = ""
+	if tenantKey == b.TenantExpected {
+		b.TenantCandidate = &domain.TenantCandidate{TenantKey: tenantKey, EventID: truncateBotDetail(eventID), ReceivedAt: at, CredentialVersion: credentialVersion}
+		b.TenantKey, b.TenantState, b.TenantConfirmedBy, b.TenantConfirmedAt = tenantKey, domain.BotTenantLocked, b.TenantExpectedBy, &at
+		b.ConfigVersion = row.ConfigVersion + 1
+		*state = domain.BotTenantLocked
+		return tx.Model(&notificationBotRow{}).Where("id = ?", row.ID).Updates(map[string]any{"payload": mustJSON(b), "tenant_key": tenantKey, "config_version": b.ConfigVersion}).Error
+	}
+	b.TenantCandidate = &domain.TenantCandidate{TenantKey: b.TenantExpected, EventID: truncateBotDetail(eventID), ReceivedAt: at, CredentialVersion: credentialVersion, Conflict: tenantKey}
+	b.TenantState = domain.BotTenantConflict
+	*state = domain.BotTenantConflict
+	return tx.Model(&notificationBotRow{}).Where("id = ?", row.ID).Update("payload", mustJSON(b)).Error
 }
 
 // ConfirmBotTenant locks the candidate enterprise scope. The candidate must

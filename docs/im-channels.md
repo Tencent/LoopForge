@@ -1,6 +1,6 @@
 # 企业 IM 渠道配置与联调手册
 
-本手册对应 `docs/proposals/enterprise-im.md`，记录各渠道的配置步骤、所需权限、上线顺序和真实环境验证方法。当前可配置的渠道：**企业微信、飞书（私聊、只读）**。钉钉在管理页显示为“开发中”，接口返回 `channel_not_ready`。
+本手册对应 `docs/proposals/enterprise-im.md`，记录各渠道的配置步骤、所需权限、上线顺序和真实环境验证方法。当前可配置的渠道：**企业微信、飞书（私聊、只读）、钉钉（私聊、只读）**。
 
 ## 1. 平台侧前置条件
 
@@ -106,6 +106,44 @@ agentflow -credential-action reencrypt   # 可重复执行
 AGENTFLOW_BOT_FAULT_TEST_MYSQL_DSN='user:pass@tcp(127.0.0.1:3306)/bot_fault?parseTime=true' \
   go test -count=1 -run '^TestFeishuFaultMySQL$' -v -timeout 15m ./internal/botinteraction
 ```
+
+## 4A. 钉钉（企业内部应用）
+
+### 4A.1 开发者后台配置
+
+1. 在钉钉开发者后台创建**企业内部应用**，记下 Client ID（原 AppKey）和 Client Secret（原 AppSecret）。
+2. 添加应用能力：**机器人**。消息接收模式选择 **Stream 模式**（不需要公网回调地址）。
+3. 发布应用，可用范围设为试点成员。
+4. 记下企业的 **CorpId**（`ding` 开头，开发者后台或管理后台的企业信息里可以看到）。
+
+原会话回复使用每条消息自带的 sessionWebhook，不需要额外的接口权限。主动通知（阶段 G）需要“企业内机器人发送消息”权限，届时补充。权限和字段的精确名称以开发者后台为准，联调时补记实际值。
+
+### 4A.2 平台配置
+
+1. 项目 → 通道管理 → 添加通道，渠道选“钉钉”，填写名称、Client ID、Client Secret 和**企业 CorpId**，开启“启用此 Bot”和“启用对话”。保存时平台用 Client ID / Secret 获取 accessToken 校验凭据，失败则不保存。
+2. 第②步“企业确认”显示“企业待确认”。与飞书不同，**钉钉不需要手动点确认**：首条单聊消息的企业（`chatbotCorpId`）与填写的 CorpId 一致时自动确认，这条消息也会正常处理。确认人记为填写 CorpId 的管理员。
+3. 不一致时状态变为“企业冲突”，之后的消息只回复“正在完成企业确认”的提示，不处理业务。核实后在第①步改正 CorpId 并保存，或点“重新发现”。企业确认后 CorpId 不能再改，更换企业请新建配置。
+
+绑定流程、只读策略与飞书相同（第 4.3 节）。发送者身份使用 `senderStaffId`；事件缺少它时丢弃并记录 `missing_staff_id`。发送者企业与机器人企业不一致的消息丢弃（`sender_corp_mismatch`）。
+
+### 4A.3 连接与送达
+
+- **连接**：平台自行实现 Stream 连接层，只用官方 SDK 的帧和事件数据结构（原因见 `scripts/im-sdk-probe/README.md`）。每 60 秒发一次 WebSocket ping，70 秒内没有任何数据就断开重连；收到服务端 `disconnect` 立即重连；重连由接收服务按 1 秒起的退避执行，每次重新读取凭据。
+- **入站确认**：消息入库后回执 200；数据库慢或不可用时，2.5 秒内回执 500，由钉钉重投，重投按 `msgId` 去重。
+- **会话回复**：sessionWebhook 只接受 `https://oapi.dingtalk.com/robot/sendBySession`，禁止重定向；以密文保存，绑定到这条交互，回复成功或过期后清除。
+- **过期**：发送时离 `sessionWebhookExpiredTime` 不足 10 秒，记为“回复失败 · 会话回复授权已过期”，回复内容保留在记录页，不能在原会话再次发送。
+- **重试**：明确未发出（连接失败、限流 130101、HTTP 429）最多重试 3 次。钉钉会话回复没有幂等键，结果未知（超时、5xx、系统繁忙 -1）直接记为“送达待核对”，不自动重发，由管理员在记录页确认或再次发送。
+
+多进程故障测试 `internal/botinteraction/dingtalk_fault_mysql_test.go`（专用空库）：
+
+```bash
+AGENTFLOW_BOT_FAULT_TEST_MYSQL_DSN='user:pass@tcp(127.0.0.1:3306)/bot_fault_dt?parseTime=true' \
+  go test -count=1 -run '^TestDingTalkFaultMySQL$' -v -timeout 15m ./internal/botinteraction
+```
+
+### 4A.4 R2 真实环境验收清单（钉钉私聊闭环）
+
+逐项结果见 [R2 验收记录](testing/im-r2-acceptance.md)。
 
 ## 5. 记录页人工处理
 

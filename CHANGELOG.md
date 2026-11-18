@@ -2,7 +2,9 @@
 
 Platform releases use `vX.Y.Z` tags and publish `ghcr.io/tencent/loopforge`. LoopForge Local packages use `local-vX.Y.Z` tags and are published by manually running the `release-local` workflow.
 
-## Unreleased — enterprise IM channels (Feishu private chats)
+## Unreleased — enterprise IM channels (Feishu and DingTalk private chats)
+
+- DingTalk enterprise internal applications can be added as Bots over Stream mode: private text chats, account binding and read-only queries, replies through each message's session webhook. The administrator enters the enterprise CorpId; the first matching message confirms it automatically, another enterprise stops processing as a conflict. The Stream connection is implemented by the platform (only data types of `open-dingtalk/dingtalk-stream-sdk-go` v0.9.1 are used) because the SDK's client can crash the process after a heartbeat timeout. Session webhooks are stored encrypted and cleared when used or expired; replies whose webhook expired stay on the record page as 会话回复授权已过期. See `docs/im-channels.md` section 4A.
 
 - Feishu self-built applications can be added as Bots: private text chats, account binding and read-only project queries over the official long connection (`larksuite/oapi-sdk-go` v3.13.0). The first message from a new application records its enterprise; a Bot manager confirms it before any request is processed, and messages from other enterprises are dropped. See `docs/im-channels.md`.
 - **New WeCom Bots default to read-only.** A Bot created from now on answers queries but does not write; writes are refused with a pointer to the platform page. Existing WeCom Bots keep automatic execution. Managers choose the mode under 执行权限.

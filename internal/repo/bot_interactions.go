@@ -1,6 +1,7 @@
 package repo
 
 import (
+	"agentflow/internal/credcrypt"
 	"agentflow/internal/domain"
 	"crypto/rand"
 	"encoding/hex"
@@ -365,7 +366,7 @@ func (r *BotInteractionsRepo) BeginBotSend(id string, lease BotLease, policy Bot
 		}
 		if item.RouteExpiresAtUS > 0 && now+BotSendTimeoutUS >= item.RouteExpiresAtUS {
 			item.Status = domain.BotReplyFailed
-			return r.fencedUpdate(tx, id, lease, []string{domain.BotReady}, map[string]any{"status": domain.BotReplyFailed, "terminal_reason": "route_expired", "last_error": "会话回复授权已过期，结果可在记录页查看"})
+			return r.fencedUpdate(tx, id, lease, []string{domain.BotReady}, map[string]any{"status": domain.BotReplyFailed, "terminal_reason": "route_expired", "last_error": "会话回复授权已过期，结果可在记录页查看", "reply_route": clearedRoute(item.ReplyRoute)})
 		}
 		if policy.Idempotent && item.SendStartedAtUS > 0 && now+BotSendTimeoutUS >= item.SendStartedAtUS+BotIdempotentWindowUS {
 			item.Status = domain.BotReplyUnknown
@@ -423,7 +424,7 @@ func (r *BotInteractionsRepo) FinishBotSend(id string, lease BotLease, policy Bo
 		switch out.Outcome {
 		case "delivered":
 			updates["status"], updates["platform_message_id"], updates["receipt_source"] = domain.BotReplied, out.PlatformMessageID, "platform"
-			updates["terminal_reason"] = ""
+			updates["terminal_reason"], updates["reply_route"] = "", clearedRoute(item.ReplyRoute)
 		case "rejected":
 			updates["status"], updates["terminal_reason"], updates["last_error"] = domain.BotReplyFailed, "rejected", truncateBotDetail(out.Detail)
 		case "not_delivered":
@@ -441,6 +442,15 @@ func (r *BotInteractionsRepo) FinishBotSend(id string, lease BotLease, policy Bo
 		return r.fencedUpdate(tx, id, lease, []string{domain.BotSending}, updates)
 	})
 	return item, err
+}
+
+// clearedRoute drops an authorization-bearing (sealed) route once it can no
+// longer be used; plain routing data such as a Feishu message ID is kept.
+func clearedRoute(route string) string {
+	if credcrypt.IsSealed(route) {
+		return ""
+	}
+	return route
 }
 
 func truncateBotDetail(s string) string {
@@ -649,7 +659,11 @@ func (r *BotInteractionsRepo) stopBotInteractions(tx *gorm.DB, configID, leaseKe
 		cancel = append(cancel, domain.BotReady)
 	}
 	now := time.Now().UTC()
-	if err := tx.Model(&domain.BotInteraction{}).Where("bot_id = ? AND status IN ?", configID, cancel).Updates(map[string]any{"status": domain.BotCancelled, "terminal_reason": reason, "lease_owner": "", "send_lease_until_us": 0, "updated_at": now}).Error; err != nil {
+	cancelled := map[string]any{"status": domain.BotCancelled, "terminal_reason": reason, "lease_owner": "", "send_lease_until_us": 0, "updated_at": now}
+	if deleted {
+		cancelled["reply_route"] = ""
+	}
+	if err := tx.Model(&domain.BotInteraction{}).Where("bot_id = ? AND status IN ?", configID, cancel).Updates(cancelled).Error; err != nil {
 		return err
 	}
 	updates := map[string]any{"status": domain.BotReplyUnknown, "terminal_reason": sendingReason, "last_error": "发送过程中机器人被停用或删除，送达结果待核对", "lease_owner": "", "send_lease_until_us": 0, "updated_at": now}

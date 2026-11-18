@@ -1,6 +1,7 @@
 package botinteraction
 
 import (
+	"agentflow/internal/credcrypt"
 	"agentflow/internal/domain"
 	"agentflow/internal/repo"
 	"context"
@@ -25,11 +26,22 @@ func sendPolicy(bot domain.NotificationBot) repo.BotSendPolicy {
 	return repo.BotSendPolicy{Idempotent: bot.ChannelKind() == domain.BotChannelFeishu}
 }
 
-// replyRoute rebuilds the routing data persisted with the interaction.
-func replyRoute(item domain.BotInteraction) ReplyRoute {
+// replyRoute rebuilds the routing data persisted with the interaction. A
+// sealed route is the DingTalk session webhook; plain values are Feishu
+// message IDs. A route that cannot be opened yields an empty route, which
+// the adapter rejects as route_missing.
+func (s *Service) replyRoute(item domain.BotInteraction) ReplyRoute {
 	route := ReplyRoute{RequestID: item.RequestID}
 	if item.ReplyRoute != "" {
-		route.MessageID = item.ReplyRoute
+		if credcrypt.IsSealed(item.ReplyRoute) {
+			if webhook, err := s.Store.OpenBotRoute(item.BotID, item.ID, item.ReplyRoute); err == nil {
+				route.Webhook = webhook
+			} else {
+				log.Printf("bot reply route unavailable id=%s err=%v", item.ID, err)
+			}
+		} else {
+			route.MessageID = item.ReplyRoute
+		}
 	}
 	if item.RouteExpiresAtUS > 0 {
 		route.ExpiresAt = time.UnixMicro(item.RouteExpiresAtUS).UTC()

@@ -236,7 +236,7 @@ func TestUnregisteredChannelReportsNotReady(t *testing.T) {
 		t.Fatal(err)
 	}
 	service := New(store)
-	service.ChannelKind = func(domain.NotificationBot) string { return ChannelDingTalk }
+	service.ChannelKind = func(domain.NotificationBot) string { return "unregistered-kind" }
 	if _, err := service.Channel(bot); !errors.Is(err, ErrChannelNotReady) {
 		t.Fatalf("channel = %v", err)
 	}
@@ -495,5 +495,95 @@ func TestFeishuPrivateChatLoopWithTenantConfirmation(t *testing.T) {
 	state, _ := store.BotConnectionState(saved.LeaseKey())
 	if state.IgnoredGroupMessages != 1 || !strings.HasPrefix(saved.LeaseKey(), "feishu:") {
 		t.Fatalf("connection = %+v key=%s", state, saved.LeaseKey())
+	}
+}
+
+// The DingTalk private-chat loop through the common service: the CorpId the
+// administrator entered locks on the first matching event (and that message
+// is processed), the session webhook is stored sealed and handed back to the
+// adapter, an expired route ends as route_expired with the reply kept, and
+// an unknown outcome is not resent automatically.
+func TestDingTalkPrivateChatLoop(t *testing.T) {
+	store, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	bot := domain.NotificationBot{ID: "cfg-dt", Channel: domain.BotChannelDingTalk, BotID: "ding-app", ProjectID: "p", OwnerID: 1, Enabled: true, InteractionEnabled: true, TenantExpected: "ding-corp", TenantExpectedBy: 7}
+	saved, err := store.SaveNotificationBotChecked(bot, "secret", nil)
+	if err != nil || saved.TenantState != domain.BotTenantAwaiting {
+		t.Fatal(saved, err)
+	}
+	service := New(store)
+	fake := newFakeChannel()
+	service.RegisterChannel(kindChannel{fake, ChannelDingTalk})
+	var mu sync.Mutex
+	generated := map[string]int{}
+	service.Generate = func(ctx context.Context, b domain.NotificationBot, c domain.BotConversation, h []domain.BotInteraction, item domain.BotInteraction) (string, error) {
+		mu.Lock()
+		generated[item.Content]++
+		mu.Unlock()
+		return "答复：" + item.Content, nil
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	service.Start(ctx)
+	defer func() { cancel(); <-service.Done }()
+	conn := waitConn(t, fake)
+	webhook := "https://oapi.dingtalk.com/robot/sendBySession?session=s-"
+	event := func(msgID, corp, text string, expires time.Time) InboundEvent {
+		return InboundEvent{Channel: ChannelDingTalk, AppID: "ding-app", TenantKey: corp, EventID: "f-" + msgID, MessageID: msgID, SenderID: "staff-1", ChatID: "cid-1", ChatType: "single", MsgType: "text", Text: text, Route: ReplyRoute{Webhook: webhook + msgID, ExpiresAt: expires}}
+	}
+	later := time.Now().Add(time.Hour)
+
+	conn.push(t, event("m1", "ding-corp", "项目状态", later))
+	msg := waitReplyMsg(t, conn)
+	if msg.Text != "答复：项目状态" || msg.Route.Webhook != webhook+"m1" {
+		t.Fatalf("first message = %+v", msg)
+	}
+	locked, _ := store.NotificationBot(bot.ID)
+	if locked.TenantState != domain.BotTenantLocked || locked.TenantKey != "ding-corp" || locked.TenantConfirmedBy != 7 || locked.ConfigVersion != saved.ConfigVersion+1 {
+		t.Fatalf("auto lock = %+v", locked)
+	}
+	// Sealed at rest, bound to the interaction; cleared once replied.
+	id1 := repo.BotMessageID(bot.ID, "m1")
+	eventually(t, func() bool { it, _ := store.BotInteraction(id1); return it.Status == domain.BotReplied })
+	if it, _ := store.BotInteraction(id1); it.ReplyRoute != "" || it.RouteExpiresAtUS == 0 {
+		t.Fatalf("replied route = %q %d", it.ReplyRoute, it.RouteExpiresAtUS)
+	}
+	// Another enterprise after locking: dropped.
+	if ack := conn.push(t, event("m2", "other-corp", "越权", later)); ack.Accepted || ack.Ignored != "tenant_mismatch" {
+		t.Fatalf("foreign corp = %+v", ack)
+	}
+	// Unknown outcome: reply_unknown, no automatic resend.
+	fake.setOutcome(func(OutboundMessage) SendResult {
+		return SendResult{Outcome: Unknown, Code: "transport", SafeDetail: "未返回结果"}
+	})
+	conn.push(t, event("m3", "ding-corp", "未知", later))
+	waitReplyMsg(t, conn)
+	id3 := repo.BotMessageID(bot.ID, "m3")
+	eventually(t, func() bool { it, _ := store.BotInteraction(id3); return it.Status == domain.BotReplyUnknown })
+	select {
+	case m := <-conn.replies:
+		t.Fatalf("unknown outcome resent: %+v", m)
+	case <-time.After(time.Second):
+	}
+	if it, _ := store.BotInteraction(id3); !strings.HasPrefix(it.ReplyRoute, "lf1:") || strings.Contains(it.ReplyRoute, "session") {
+		t.Fatalf("pending route must stay sealed for a manual resend: %q", it.ReplyRoute)
+	}
+	// Route already expiring: the reply is kept, the status is route_expired.
+	fake.setOutcome(func(OutboundMessage) SendResult { return SendResult{Outcome: Delivered} })
+	conn.push(t, event("m4", "ding-corp", "过期", time.Now().Add(5*time.Second)))
+	id4 := repo.BotMessageID(bot.ID, "m4")
+	eventually(t, func() bool { it, _ := store.BotInteraction(id4); return it.Status == domain.BotReplyFailed })
+	if it, _ := store.BotInteraction(id4); it.TerminalReason != "route_expired" || it.Reply != "答复：过期" || it.ReplyRoute != "" {
+		t.Fatalf("expired = %+v", it)
+	}
+	if _, err := store.ResendBotInteraction(id4, 7, "k-1", "x"); !errors.Is(err, repo.ErrBotRouteExpired) {
+		t.Fatalf("resend expired = %v", err)
+	}
+	select {
+	case m := <-conn.replies:
+		t.Fatalf("expired route was sent: %+v", m)
+	default:
 	}
 }

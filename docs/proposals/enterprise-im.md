@@ -1,6 +1,6 @@
 # LoopForge 企业 IM 接入实施方案（单分支开发）
 
-版本为第 3 版，日期为 2026-11-18。状态为实施中：阶段 A–E（R1 飞书私聊闭环）的代码与自动化测试已完成，R1 已于 2026-11-18 验收通过（真实环境通过 R1-01/02/05，其余经验收负责人豁免）。验收提交、预发演练、故障测试和逐项结果见 `docs/testing/im-r1-acceptance.md`。第 3 版补齐数据库时间、配置物理列、锁顺序、重试终态、停用语义、状态枚举、企业确认和维护窗口的实现约定，并按 `origin/main@e89cda9` 重新核对源码和迁移编号。本文是 `feature/enterprise-im` 分支的执行清单。
+版本为第 3 版，日期为 2026-11-18。状态为实施中：阶段 A–E（R1 飞书私聊闭环）的代码与自动化测试已完成，R1 已于 2026-11-18 验收通过（真实环境通过 R1-01/02/05，其余经验收负责人豁免）。阶段 F（R2 钉钉私聊闭环）代码与自动化测试已完成，真实企业验收见 `docs/testing/im-r2-acceptance.md`。验收提交、预发演练、故障测试和逐项结果见 `docs/testing/im-r1-acceptance.md`。第 3 版补齐数据库时间、配置物理列、锁顺序、重试终态、停用语义、状态枚举、企业确认和维护窗口的实现约定，并按 `origin/main@e89cda9` 重新核对源码和迁移编号。本文是 `feature/enterprise-im` 分支的执行清单。
 
 目标是在 LoopForge 已有的企微 Bot、账号绑定、交互队列和通知服务之上，扩展飞书和钉钉。首轮先完成三个渠道的账号绑定、私聊查询和可靠回复，再接入项目助手与 SOP 主动通知。
 
@@ -608,7 +608,7 @@ sending             → 停用 / 删除 → reply_unknown（bot_disabled_during_
 
 阶段 F 只采用该 SDK 中经过验证、无副作用的部分：
 
-- 用 `GetConnectionEndpoint(ctx)` 获取接入点；
+- 用 `payload.ConnectionEndpointRequest/Response` 获取接入点（实施时改为自建请求：SDK 的 `GetConnectionEndpoint` 挂在 `StreamClient` 上，使用默认传输和重定向策略，与本节的 HTTP 约定不符）；
 - 用 `payload` 包解析 DataFrame、构造确认帧；
 - 用 `chatbot.BotCallbackDataModel` 解析事件。
 

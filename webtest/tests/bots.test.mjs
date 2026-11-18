@@ -121,7 +121,7 @@ test('feishu bot is created read-only and confirms its enterprise', async (t) =>
   assert.match(host().textContent, /App ID/);
   assert.match(host().textContent, /只读查询/);
   assert.equal(form.elements.writeApproval, undefined);
-  assert.ok(host().querySelector('option[value="dingtalk"]').disabled);
+  assert.equal(host().querySelector('option[value="dingtalk"]').disabled, false);
   form.elements.name.value = 'Feishu Bot';
   form.elements.botId.value = 'cli_app';
   form.elements.secret.value = 'app-secret';
@@ -168,4 +168,47 @@ test('records offer confirm and resend for unknown deliveries', async (t) => {
   await settle(6);
   const call = app.router.calls.find(c => c.path === '/api/bot-interactions/i-unknown/confirm');
   assert.ok(call && call.body.actionKey.length >= 16);
+});
+
+test('dingtalk bot requires a CorpId and shows automatic enterprise confirmation', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  const created = {
+    id: 'bot-dt', projectId: 'project-1', ownerId: 'user-1', name: 'DingTalk Bot', channel: 'dingtalk',
+    botId: 'ding-app', model: 'glm-5.3-flash-ioa', enabled: true, interactionEnabled: true, writeApproval: 'readonly',
+    secretConfigured: true, health: 'ready', configVersion: 1, tenantState: 'awaiting_confirmation', tenantExpected: 'ding-corp',
+  };
+  app.router.post('/api/notification-bots', (call) => ({ ...created, tenantExpected: call.body.tenantKey }));
+  app.router.get('/api/notification-bots/bot-dt/tenant', { tenantState: 'awaiting_confirmation', configVersion: 1, queried: { tenantKey: '', tenantName: '' } });
+  app.router.get('/api/notification-deliveries', []);
+  app.evaluate(`botUI.projectId=state.projectFilter;botUI.items=[];botUI.loading=false;renderBots();botOpenEditor(null)`);
+  const host = () => app.document.querySelector('#botsContent');
+  let form = host().querySelector('#botForm');
+  form.elements.channel.value = 'dingtalk';
+  form.elements.channel.dispatchEvent(new app.window.Event('change', { bubbles: true }));
+  await settle(4);
+  form = host().querySelector('#botForm');
+  assert.match(host().textContent, /Client ID/);
+  assert.ok(form.elements.tenantKey, 'CorpId field');
+  form.elements.name.value = 'DingTalk Bot';
+  form.elements.botId.value = 'ding-app';
+  form.elements.secret.value = 'secret';
+  form.dispatchEvent(new app.window.Event('input', { bubbles: true }));
+  form.dispatchEvent(new app.window.Event('submit', { bubbles: true, cancelable: true }));
+  await settle(4);
+  assert.equal(app.router.calls.filter(c => c.method === 'POST' && c.path === '/api/notification-bots').length, 0, 'saved without CorpId');
+  form = host().querySelector('#botForm');
+  form.elements.tenantKey.value = 'ding-corp';
+  form.dispatchEvent(new app.window.Event('input', { bubbles: true }));
+  form.dispatchEvent(new app.window.Event('submit', { bubbles: true, cancelable: true }));
+  await settle(8);
+  const post = app.router.calls.find(c => c.method === 'POST' && c.path === '/api/notification-bots').body;
+  assert.equal(post.channel, 'dingtalk');
+  assert.equal(post.tenantKey, 'ding-corp');
+  assert.equal(post.writeApproval, 'readonly');
+  assert.equal(app.evaluate(`botUI.step`), 2);
+  await settle(6);
+  assert.match(host().textContent, /ding-corp/);
+  assert.match(host().textContent, /自动确认/);
+  assert.equal(host().querySelector('#botTenantConfirm'), null, 'no manual confirm for DingTalk');
 });

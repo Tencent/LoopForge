@@ -46,6 +46,33 @@ func (r *UsersRepo) credentialKeyring() *credcrypt.Keyring {
 	return r.keyring
 }
 
+// SealBotRoute encrypts authorization-bearing reply routing (the DingTalk
+// sessionWebhook) bound to one configuration and interaction, so a copied
+// value cannot be opened for another interaction.
+func (r *UsersRepo) SealBotRoute(configID, interactionID, route string) (string, error) {
+	if r.credentialKeyring() == nil {
+		return "", ErrCredentialKeyMissing
+	}
+	return r.credentialKeyring().Seal([]byte(route), botRouteAAD(configID, interactionID))
+}
+
+// OpenBotRoute reverses SealBotRoute. Values that are not sealed are routing
+// data without authority (Feishu message IDs) and are returned unchanged.
+func (r *UsersRepo) OpenBotRoute(configID, interactionID, stored string) (string, error) {
+	if !credcrypt.IsSealed(stored) {
+		return stored, nil
+	}
+	plain, err := r.credentialKeyring().Open(stored, botRouteAAD(configID, interactionID))
+	if err != nil {
+		return "", err
+	}
+	return string(plain), nil
+}
+
+func botRouteAAD(configID, interactionID string) string {
+	return "bot-route|" + configID + "|" + interactionID + "|session_webhook"
+}
+
 func botCredentialAAD(id, channel string) string {
 	return "bot-credential|" + id + "|" + domain.NotificationBot{Channel: channel}.ChannelKind()
 }

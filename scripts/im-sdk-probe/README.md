@@ -68,4 +68,6 @@ created by github.com/open-dingtalk/dingtalk-stream-sdk-go/client.(*StreamClient
 
 按官方 Stream 协议覆盖：接入点鉴权（`connections/open` 换 endpoint 和 ticket）、服务端 `SYSTEM/ping` 应答和客户端 WebSocket 心跳、context 取消、`SYSTEM/disconnect` 和断线后的退避重连、每个 `CALLBACK` 帧入库后的回执。测试覆盖 pong 超时后迟到的帧、关闭期间的帧、取消时的建连与重连，均要求进程不退出、连接循环按时结束并能恢复。
 
+实现位置：`internal/botinteraction/channel_dingtalk.go`。单进程测试 `TestDingTalkStream*`（`-race` 连跑 3 轮）覆盖 ping/pong、回执 200/500、入库超时、`disconnect`、心跳超时后的迟到帧、关闭期间的帧、取消；多进程故障测试 `TestDingTalkFaultMySQL` 的 D3 在真实子进程中复现“网关停止回 pong 后再推迟到帧”，接收进程不退出并自动重连。
+
 本探针在上游修复后会失败（不再复现 panic），届时重新评估是否改用 `StreamClient`。

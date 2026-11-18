@@ -78,6 +78,16 @@ func (s *Service) accept(ctx context.Context, connected domain.NotificationBot, 
 	if reason != "" {
 		return s.ignore(ev, reason), nil
 	}
+	if ev.Route.Webhook != "" {
+		// An authorization-bearing session webhook is stored sealed and
+		// bound to this interaction; its expiry decides route_expired.
+		if item.ReplyRoute, err = s.Store.SealBotRoute(bot.ID, item.ID, ev.Route.Webhook); err != nil {
+			return InboundAck{}, err
+		}
+		if !ev.Route.ExpiresAt.IsZero() {
+			item.RouteExpiresAtUS = ev.Route.ExpiresAt.UnixMicro()
+		}
+	}
 	if bot.ChannelKind() != domain.BotChannelWeCom {
 		s.Store.NoteBotConnectionEvent(bot.LeaseKey(), ev.ChatType == "group")
 		if ev.ChatType != "single" {

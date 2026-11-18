@@ -134,6 +134,8 @@ func (h *notificationHandlers) save(c *gin.Context, old *domain.NotificationBot)
 		TargetID           *string `json:"targetId"`
 		WriteApproval      *string `json:"writeApproval"`
 		ConfigVersion      *int64  `json:"configVersion"`
+		// TenantKey is the DingTalk CorpId entered by the administrator.
+		TenantKey *string `json:"tenantKey"`
 	}
 	if !decode(c, &req) {
 		return
@@ -193,6 +195,28 @@ func (h *notificationHandlers) save(c *gin.Context, old *domain.NotificationBot)
 	}
 	if req.InteractionEnabled != nil {
 		bot.InteractionEnabled = *req.InteractionEnabled
+	}
+	if channel == domain.BotChannelDingTalk {
+		corp := ""
+		if req.TenantKey != nil {
+			corp = strings.TrimSpace(*req.TenantKey)
+		}
+		switch {
+		case corp == "" && old == nil:
+			c.JSON(400, gin.H{"error": "请填写钉钉企业 CorpId", "code": "tenant_required"})
+			return
+		case len(corp) > 191 || strings.ContainsAny(corp, " \t\r\n"):
+			c.JSON(400, gin.H{"error": "钉钉企业 CorpId 格式无效"})
+			return
+		case corp != "" && old != nil && old.TenantState == domain.BotTenantLocked && corp != old.TenantKey:
+			c.JSON(400, gin.H{"error": "企业已确认，更换企业请新建配置", "code": "immutable_field"})
+			return
+		case corp != "":
+			bot.TenantExpected = corp
+			if user, ok := h.requestUser(c.Request, true); ok && user != nil {
+				bot.TenantExpectedBy = user.ID
+			}
+		}
 	}
 	if req.Model != nil {
 		model := strings.TrimSpace(*req.Model)
@@ -302,7 +326,7 @@ func (h *notificationHandlers) save(c *gin.Context, old *domain.NotificationBot)
 
 // botChannelOpen reports the channels configurable in this release.
 func botChannelOpen(channel string) bool {
-	return channel == domain.BotChannelWeCom || channel == domain.BotChannelFeishu
+	return channel == domain.BotChannelWeCom || channel == domain.BotChannelFeishu || channel == domain.BotChannelDingTalk
 }
 
 func botSaveError(c *gin.Context, err error) {
