@@ -163,3 +163,47 @@ func TestConversationPathBindsExtraCredentialEnv(t *testing.T) {
 		t.Errorf("MY_ABSENT_TOKEN: got %q, want empty (host value must be cleared)", got)
 	}
 }
+
+func TestCommandSpecWithCredentialEnvNoopWithoutDeclaration(t *testing.T) {
+	spec := CommandSpec{Argv: []string{"sh", "-c", "exit 0"}, CredentialBindings: []CredentialBinding{BindGit}}
+	out, err := CommandSpecWithCredentialEnv(spec, nil, RunCredentials{})
+	if err != nil {
+		t.Fatalf("CommandSpecWithCredentialEnv: %v", err)
+	}
+	if len(out.CredentialBindings) != 1 || out.CredentialBindings[0] != BindGit {
+		t.Fatalf("bindings changed without declaration: %v", out.CredentialBindings)
+	}
+	if out.ExtraCredentialEnv != nil {
+		t.Fatalf("ExtraCredentialEnv set without declaration: %v", out.ExtraCredentialEnv)
+	}
+}
+
+func TestCommandSpecWithCredentialEnvAppendsBinding(t *testing.T) {
+	spec := CommandSpec{Argv: []string{"sh", "-c", "exit 0"}, CredentialBindings: []CredentialBinding{BindGit, BindMCP}}
+	env := map[string]string{"BG_USER_TOKEN": "knotToken"}
+	out, err := CommandSpecWithCredentialEnv(spec, env, RunCredentials{Extra: map[string]string{"knotToken": "tok-1"}})
+	if err != nil {
+		t.Fatalf("CommandSpecWithCredentialEnv: %v", err)
+	}
+	if len(out.CredentialBindings) != 3 || out.CredentialBindings[2] != BindExtra {
+		t.Fatalf("BindExtra not appended: %v", out.CredentialBindings)
+	}
+	if out.ExtraCredentialEnv["BG_USER_TOKEN"] != "knotToken" {
+		t.Fatalf("ExtraCredentialEnv not mapped: %v", out.ExtraCredentialEnv)
+	}
+	if len(spec.CredentialBindings) != 2 {
+		t.Fatal("input spec bindings mutated")
+	}
+}
+
+func TestCommandSpecWithCredentialEnvFailsOnMissingCredential(t *testing.T) {
+	spec := CommandSpec{Argv: []string{"sh", "-c", "exit 0"}}
+	env := map[string]string{"BG_USER_TOKEN": "knotToken"}
+	_, err := CommandSpecWithCredentialEnv(spec, env, RunCredentials{})
+	if err == nil {
+		t.Fatal("missing declared credential must fail")
+	}
+	if !strings.Contains(err.Error(), "knotToken") {
+		t.Fatalf("error must name the credential kind: %v", err)
+	}
+}

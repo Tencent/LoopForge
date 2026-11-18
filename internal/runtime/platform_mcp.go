@@ -14,6 +14,10 @@ type MCPTarget struct {
 	// absolute URL the engine resolved.
 	ServerURL          string
 	GitHTTPCredentials map[string]domain.GitHTTPExecutionCredential
+	// ExtraCredentials carries the responsible user's platform-managed
+	// credentials (RunCredentials.Extra) for MCP servers authenticated with
+	// AuthType "credential".
+	ExtraCredentials map[string]string
 	// RequireCredentials fails when a credential-authenticated MCP has no
 	// token. Agent invocations require it; scripts and gates bind
 	// opportunistically.
@@ -47,6 +51,13 @@ func PrepareMCPServers(assets domain.AgentAssetBundle, target MCPTarget) (domain
 	assets, githubErr = BindGitHubMCPHeaders(assets, githubToken, target.RequireCredentials)
 	if githubErr != nil {
 		return assets, nil, githubErr
+	}
+	assets, credDropped, credErr := BindCredentialMCPHeaders(assets, target.ExtraCredentials, target.RequireCredentials)
+	if credErr != nil {
+		return assets, nil, credErr
+	}
+	for _, name := range credDropped {
+		warnings = append(warnings, "未配置所需凭证，已跳过 "+name)
 	}
 	if base := strings.TrimRight(strings.TrimSpace(target.ServerURL), "/"); base != "" {
 		assets.MCPServers = rebasePlatformMCP(assets.MCPServers, base)
