@@ -635,6 +635,12 @@ function credentialFilterHTML(user){
 }
 function credentialPanelHTML(user){
   return `<header class="credential-section-head"><div><h2>个人凭证</h2><p>SOP 使用需求责任人（未指定时为项目 Owner）的个人凭证，保存后对下一次任务生效。</p></div><button type="button" class="credential-btn primary credential-ink" id="credentialAddButton" data-credential-add><span class="credential-turn">${credentialGlyph('plus',15)}</span><span>添加凭证</span></button></header>
+    <div class="credential-note credential-subscription-note">
+      ${credentialGlyph('monitor',16)}
+      <div><strong>${lfT('使用已有订阅','Use your existing subscription')}</strong>
+        <p>${lfT('绑定已登录 Claude Code、Codex 或 Antigravity 的机器，选「账号登录」即可用订阅额度运行对话和 SOP，无需 API Key。','Connect a machine where you are signed in to Claude Code, Codex, or Antigravity. Select Account login to use your subscription for chats and SOPs without an API key.')}</p></div>
+      <a class="button ghost small" href="#/runners"><span>${lfT('配置执行机器','Configure runners')}</span>${credentialGlyph('arrow-right',14)}</a>
+    </div>
     <div class="credential-progress">${credentialProgressHTML(user)}</div>
     <div class="credential-toolbar"><div class="credential-filter" role="tablist" aria-label="筛选凭证">${credentialFilterHTML(user)}</div></div>
     <div class="credential-list">${CREDENTIAL_GROUPS.map(group=>credentialGroupHTML(group,user)).join('')}</div>`;
