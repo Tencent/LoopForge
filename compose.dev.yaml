@@ -10,5 +10,6 @@ services:
         LOOPFORGE_BUILD_JOBS: ${LOOPFORGE_BUILD_JOBS:-}
         LOOPFORGE_COMMIT: ${LOOPFORGE_COMMIT:-}
         NPM_REGISTRY: ${NPM_REGISTRY:-}
+        GOPROXY: ${GOPROXY:-}
     environment:
       AGENTFLOW_ISOLATED_IMAGE: loopforge-platform:local

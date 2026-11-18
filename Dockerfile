@@ -16,6 +16,9 @@ RUN npm --prefix chatbot run build && test -f web/native-chat/index.html
 FROM --platform=$BUILDPLATFORM golang:1.26.11-bookworm AS build
 ARG TARGETOS
 ARG TARGETARCH
+# Optional Go module proxy, e.g. https://goproxy.cn. Empty keeps Go's default.
+ARG GOPROXY=
+ENV GOPROXY=${GOPROXY}
 WORKDIR /src
 # Empty lets build-binaries.sh size parallelism from the builder's CPUs and memory.
 ARG LOOPFORGE_BUILD_JOBS=
