@@ -221,15 +221,11 @@ func (r *CatalogRepo) ScheduleJobExecutionPage(q ScheduleJobExecutionPageQuery) 
 		}
 		return decode(rows), int(total)
 	}
-	// The payload text narrows the candidates in SQL; the fields decide. A
-	// job keeps at most MaxScheduleJobExecutionsPerJob rows, so the candidates
-	// stay bounded.
-	cast := "LOWER(CAST(payload AS TEXT))"
-	if r.DB.Dialector.Name() == "mysql" {
-		cast = "LOWER(CAST(payload AS CHAR))"
-	}
+	// Search decoded fields: JSON escaping and database-specific case folding
+	// can hide matches in the serialized payload. The indexed job/status/time
+	// filters still apply, and each job retains a bounded execution history.
 	var rows []scheduleJobExecutionRow
-	if err := db.Where("INSTR("+cast+", ?) > 0", search).Order("started_at DESC").Order("id DESC").Find(&rows).Error; err != nil {
+	if err := db.Order("started_at DESC").Order("id DESC").Find(&rows).Error; err != nil {
 		return out, 0
 	}
 	for _, e := range decode(rows) {
