@@ -153,6 +153,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 	if err := d.ensureRegistered(ctx); err != nil {
 		return err
 	}
+	d.refreshDockerRunnerHelper(ctx, false)
 	d.refreshRuntimes(ctx)
 	claimCtx, cancelClaim := context.WithCancel(ctx)
 	defer cancelClaim()
@@ -380,6 +381,7 @@ func (d *Daemon) rescanLoop(ctx context.Context) {
 			return
 		case <-ticker.C:
 			d.refreshRuntimes(ctx)
+			d.refreshDockerRunnerHelper(ctx, true)
 			d.reapIdleRunSandboxes(ctx, runSandboxIdleTTL)
 		}
 	}

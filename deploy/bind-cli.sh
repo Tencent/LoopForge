@@ -25,7 +25,7 @@
 #   --uninstall            卸载：通知平台注销机器、停止服务、删除全部文件和配置
 #
 # 默认直接从平台下载对应 OS/架构的二进制（由服务端 /runners/agentflow-runner 分发）。
-# 脚本安装 agentflow-runner 和跨沙箱 Gate MCP helper、写配置并启动
+# 脚本安装 agentflow-runner 和跨沙箱 Git/MCP、Gate MCP helper、写配置并启动
 # daemon。Runner 仅向平台发起出站 HTTPS，不开放任何入站端口。
 
 set -euo pipefail
@@ -343,6 +343,7 @@ RUNNER_HOME="${HOME}/.agentflow-runner"
 ENV_FILE="${RUNNER_HOME}/env"
 STATE_FILE="${RUNNER_HOME}/state.json"
 BINARY="${BIN_DIR}/agentflow-runner"
+DOCKER_RUNNER_BINARY="${BIN_DIR}/agentflow-runner-linux-${ARCH}"
 GATE_BINARY_PATTERN="${BIN_DIR}/agentflow-gate-mcp-{os}-{arch}"
 PLIST="${HOME}/Library/LaunchAgents/com.agentflow.runner.plist"
 UNIT="${HOME}/.config/systemd/user/agentflow-runner.service"
@@ -421,6 +422,9 @@ if [[ "$UNINSTALL" == "1" ]]; then
     info "已清理 runner Docker 沙箱和临时镜像"
   fi
   rm -f "$BINARY"
+  if [[ "$OS" == "darwin" ]]; then
+    rm -f "$DOCKER_RUNNER_BINARY"
+  fi
   rm -f "${BIN_DIR}"/agentflow-gate-mcp-darwin-amd64 \
     "${BIN_DIR}"/agentflow-gate-mcp-darwin-arm64 \
     "${BIN_DIR}"/agentflow-gate-mcp-linux-amd64 \
@@ -537,6 +541,31 @@ case "$(printf '%s' "${AGENTFLOW_BROWSER:-}" | tr '[:upper:]' '[:lower:]')" in
 esac
 
 # ---------- 1. 安装二进制 ----------
+download_runner_binary() {
+  local target_os="$1" url
+  if [[ -n "$DOWNLOAD_URL" && ( "$target_os" == "$OS" || "$DOWNLOAD_URL" == *"{os}"* ) ]]; then
+    url="${DOWNLOAD_URL//\{os\}/$target_os}"
+    url="${url//\{arch\}/$ARCH}"
+  else
+    url="${SERVER}/runners/agentflow-runner?os=${target_os}&arch=${ARCH}"
+  fi
+  info "从 ${url} 下载 agentflow-runner（${target_os}/${ARCH}）..."
+  curl -fsSL "$url" -o "$TEMP_BINARY" && [[ -s "$TEMP_BINARY" ]]
+}
+
+build_runner_binary() {
+  local target_os="$1" source="$2"
+  info "从源码 ${source} 构建 agentflow-runner（${target_os}/${ARCH}）..."
+  (cd "$source" && CGO_ENABLED=0 GOOS="$target_os" GOARCH="$ARCH" go build -o "$TEMP_BINARY" ./cmd/agentflow-runner)
+}
+
+publish_runner_binary() {
+  [[ -s "$TEMP_BINARY" ]] || fail "下载或构建的 runner 二进制为空"
+  chmod +x "$TEMP_BINARY"
+  mv -f "$TEMP_BINARY" "$1"
+  TEMP_BINARY=""
+}
+
 install_binary() {
   mkdir -p "$BIN_DIR"
   TEMP_BINARY=$(mktemp "${BIN_DIR}/.agentflow-runner.XXXXXX")
@@ -544,14 +573,10 @@ install_binary() {
     [[ -f "$LOCAL_BINARY" ]] || fail "本地二进制不存在: $LOCAL_BINARY"
     cp "$LOCAL_BINARY" "$TEMP_BINARY"
   elif [[ -n "$DOWNLOAD_URL" ]]; then
-    URL="${DOWNLOAD_URL//\{os\}/$OS}"
-    URL="${URL//\{arch\}/$ARCH}"
-    info "从 ${URL} 下载二进制..."
-    curl -fsSL "$URL" -o "$TEMP_BINARY"
+    download_runner_binary "$OS"
   else
     # 默认：平台直接分发对应 OS/架构的二进制，无需本机 Go 工具链。
-    info "从 ${SERVER} 下载 agentflow-runner（${OS}/${ARCH}）..."
-    if curl -fsSL "${SERVER}/runners/agentflow-runner?os=${OS}&arch=${ARCH}" -o "$TEMP_BINARY"; then
+    if download_runner_binary "$OS"; then
       :
     else
       # 平台未配置分发：回退到本地源码构建（--source 或当前目录为源码 checkout）。
@@ -564,15 +589,25 @@ install_binary() {
   3) 本命令追加 --from <已编译的 agentflow-runner 二进制路径>"
       fi
       command -v go >/dev/null 2>&1 || fail "本机未安装 Go，无法从源码构建；请使用 --from 提供二进制"
-      info "从源码 ${SRC} 构建（${OS}/${ARCH}）..."
-      (cd "$SRC" && CGO_ENABLED=0 GOOS="$OS" GOARCH="$ARCH" go build -o "$TEMP_BINARY" ./cmd/agentflow-runner) \
+      build_runner_binary "$OS" "$SRC" \
         || fail "源码构建失败；请检查 Go 版本（需 1.22+）或改用 --from"
     fi
   fi
-  [[ -s "$TEMP_BINARY" ]] || fail "下载或构建的 runner 二进制为空"
-  chmod +x "$TEMP_BINARY"
-  mv -f "$TEMP_BINARY" "$BINARY"
+  publish_runner_binary "$BINARY"
+}
+
+install_docker_runner_binary() {
+  local source="${SOURCE_DIR:-$PWD}"
+  TEMP_BINARY=$(mktemp "${BIN_DIR}/.agentflow-runner.XXXXXX")
+  if download_runner_binary linux ||
+     { [[ -d "$source/cmd/agentflow-runner" ]] && command -v go >/dev/null 2>&1 &&
+       build_runner_binary linux "$source" && [[ -s "$TEMP_BINARY" ]]; }; then
+    publish_runner_binary "$DOCKER_RUNNER_BINARY"
+    return
+  fi
+  rm -f "$TEMP_BINARY"
   TEMP_BINARY=""
+  warn "无法获取 Linux/${ARCH} Git/MCP helper，Docker 工作区需要该文件：${DOCKER_RUNNER_BINARY}"
 }
 
 TEMP_BINARY=""
@@ -597,11 +632,11 @@ install_gate_binary() {
   chmod +x "$target"
 }
 
-# Host sandbox uses the native helper. Docker always uses Linux; on a macOS
-# runner both artifacts are therefore required.
+# Docker on macOS needs Linux versions of both the Gate MCP and Git/MCP helpers.
 install_gate_binary "$OS" "$ARCH"
 if [[ "$OS" != "linux" ]]; then
   install_gate_binary linux "$ARCH"
+  install_docker_runner_binary
 fi
 
 if [[ "$UPGRADE" == "1" ]]; then

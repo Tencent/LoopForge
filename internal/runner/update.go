@@ -16,6 +16,8 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+
+	flowruntime "agentflow/internal/runtime"
 )
 
 // ErrUpdateReady tells the entry point to exec the newly installed binary.
@@ -51,14 +53,40 @@ func (d *Daemon) checkGateMCPUpdates(ctx context.Context) error {
 	for _, targetOS := range targetOSes {
 		path := strings.ReplaceAll(strings.ReplaceAll(pattern, "{os}", targetOS), "{arch}", runtime.GOARCH)
 		endpoint := fmt.Sprintf("%s/runners/agentflow-gate-mcp?os=%s&arch=%s", d.client.base, targetOS, runtime.GOARCH)
-		if err := d.checkGateMCPUpdate(ctx, endpoint, path); err != nil {
+		if err := d.checkCompanionBinaryUpdate(ctx, "gate MCP", endpoint, path); err != nil {
 			return fmt.Errorf("%s/%s: %w", targetOS, runtime.GOARCH, err)
 		}
 	}
 	return nil
 }
 
-func (d *Daemon) checkGateMCPUpdate(ctx context.Context, endpoint, path string) error {
+// Sync at startup after Runner updates, and retry missing artifacts during
+// rescans. Conversation workspace requests do not go through the SOP claim loop.
+func (d *Daemon) refreshDockerRunnerHelper(ctx context.Context, onlyMissing bool) {
+	if runtime.GOOS != "darwin" || d.cfg.DisableAutoUpdate || d.runnerWorkActive() {
+		return
+	}
+	updateCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	if err := d.checkDockerRunnerHelperUpdate(updateCtx, onlyMissing); err != nil && ctx.Err() == nil {
+		log.Printf("Docker Git/MCP helper update: %v", err)
+	}
+}
+
+func (d *Daemon) checkDockerRunnerHelperUpdate(ctx context.Context, onlyMissing bool) error {
+	path, err := flowruntime.DockerRunnerHelperPath()
+	if err != nil {
+		return err
+	}
+	if onlyMissing {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			return err
+		}
+	}
+	return d.checkCompanionBinaryUpdate(ctx, "Docker Git/MCP helper", d.runnerUpdateEndpoint("linux"), path)
+}
+
+func (d *Daemon) checkCompanionBinaryUpdate(ctx context.Context, name, endpoint, path string) error {
 	metadata, err := runnerBinaryMetadata(ctx, endpoint)
 	if err != nil {
 		return err
@@ -75,9 +103,11 @@ func (d *Daemon) checkGateMCPUpdate(ctx context.Context, endpoint, path string) 
 		return err
 	}
 	defer os.Remove(tmp)
-	d.updateMu.Lock()
+	if !d.updateMu.TryLock() {
+		return nil
+	}
 	defer d.updateMu.Unlock()
-	if d.updateReady.Load() || atomic.LoadInt32(&d.running) != 0 || ctx.Err() != nil {
+	if d.updateReady.Load() || d.runnerExecutionActive() || ctx.Err() != nil {
 		return nil
 	}
 	current, err := hashFile(path)
@@ -85,12 +115,12 @@ func (d *Daemon) checkGateMCPUpdate(ctx context.Context, endpoint, path string) 
 		return err
 	}
 	if current != localHash {
-		return errors.New("gate MCP executable changed during update")
+		return fmt.Errorf("%s executable changed during update", name)
 	}
 	if err := os.Rename(tmp, path); err != nil {
-		return fmt.Errorf("replace gate MCP executable: %w", err)
+		return fmt.Errorf("replace %s executable: %w", name, err)
 	}
-	log.Printf("gate MCP update installed (%s) at %s", metadata.SHA256[:12], path)
+	log.Printf("%s update installed (%s) at %s", name, metadata.SHA256[:12], path)
 	return nil
 }
 
@@ -107,8 +137,8 @@ func currentRunnerExecutable() (string, error) {
 
 var errRunnerUpdateBusy = errors.New("runner is busy")
 
-func (d *Daemon) runnerUpdateEndpoint() string {
-	return fmt.Sprintf("%s/runners/agentflow-runner?os=%s&arch=%s", d.client.base, runtime.GOOS, runtime.GOARCH)
+func (d *Daemon) runnerUpdateEndpoint(targetOS string) string {
+	return fmt.Sprintf("%s/runners/agentflow-runner?os=%s&arch=%s", d.client.base, targetOS, runtime.GOARCH)
 }
 
 func (d *Daemon) runnerUpdateHashes(ctx context.Context, binary string) (local, expected string, err error) {
@@ -116,7 +146,7 @@ func (d *Daemon) runnerUpdateHashes(ctx context.Context, binary string) (local, 
 	if err != nil {
 		return "", "", err
 	}
-	remote, err := runnerBinaryMetadata(ctx, d.runnerUpdateEndpoint())
+	remote, err := runnerBinaryMetadata(ctx, d.runnerUpdateEndpoint(runtime.GOOS))
 	return local, remote.SHA256, err
 }
 
@@ -157,7 +187,7 @@ func (d *Daemon) installRunnerUpdate(ctx context.Context, binary string) (bool, 
 	if strings.EqualFold(localHash, expectedHash) {
 		return false, nil
 	}
-	tmp, err := downloadRunnerBinary(ctx, d.runnerUpdateEndpoint(), binary, expectedHash)
+	tmp, err := downloadRunnerBinary(ctx, d.runnerUpdateEndpoint(runtime.GOOS), binary, expectedHash)
 	if err != nil {
 		return false, err
 	}

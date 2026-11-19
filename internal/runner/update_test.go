@@ -163,6 +163,70 @@ func TestGateMCPHelperUpdatesWhileRunnerIdle(t *testing.T) {
 	}
 }
 
+func TestDockerRunnerHelperUpdateRepairsMissingBinary(t *testing.T) {
+	const payload = "Linux runner for the Docker Git/MCP helper"
+	var downloads atomic.Int32
+	var damaged atomic.Bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		query := req.URL.Query()
+		if req.URL.Path != "/runners/agentflow-runner" || query.Get("os") != "linux" || query.Get("arch") != runtime.GOARCH {
+			http.NotFound(w, req)
+			return
+		}
+		if query.Get("metadata") == "1" {
+			expected := payload
+			if damaged.Load() {
+				expected = "new companion"
+			}
+			hash := sha256.Sum256([]byte(expected))
+			fmt.Fprintf(w, `{"sha256":%q}`, hex.EncodeToString(hash[:]))
+			return
+		}
+		downloads.Add(1)
+		if damaged.Load() {
+			fmt.Fprint(w, "partial data")
+			return
+		}
+		fmt.Fprint(w, payload)
+	}))
+	defer server.Close()
+	d, err := New(Config{ServerURL: server.URL, BootstrapToken: "fixture"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bin := t.TempDir()
+	t.Setenv("AGENTFLOW_RUNNER_BINARY", filepath.Join(bin, "agentflow-runner-{os}-{arch}"))
+	helper := filepath.Join(bin, "agentflow-runner-linux-"+runtime.GOARCH)
+	ctx := context.Background()
+	if err := d.checkDockerRunnerHelperUpdate(ctx, true); err != nil {
+		t.Fatal(err)
+	}
+	assertHelper := func() {
+		t.Helper()
+		if got, err := os.ReadFile(helper); err != nil || string(got) != payload {
+			t.Fatalf("Docker helper = %q, %v", got, err)
+		}
+		if info, err := os.Stat(helper); err != nil || info.Mode().Perm()&0o100 == 0 {
+			t.Fatalf("helper is not executable: %v", err)
+		}
+		if d.updateReady.Load() {
+			t.Fatal("updating the companion must not restart the runner")
+		}
+	}
+	assertHelper()
+	if err := d.checkDockerRunnerHelperUpdate(ctx, false); err != nil {
+		t.Fatal(err)
+	}
+	if n := downloads.Load(); n != 1 {
+		t.Fatalf("already-current helper was re-downloaded, requests = %d", n)
+	}
+	damaged.Store(true)
+	if err := d.checkDockerRunnerHelperUpdate(ctx, false); err == nil || !strings.Contains(err.Error(), "checksum mismatch") {
+		t.Fatalf("replacement was not rejected: %v", err)
+	}
+	assertHelper()
+}
+
 func TestRunnerUpdateDefersWhileWorkspaceRequestIsActive(t *testing.T) {
 	const updated = "new runner"
 	hash := sha256.Sum256([]byte(updated))

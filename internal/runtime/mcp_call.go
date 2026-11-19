@@ -172,19 +172,28 @@ func installMCPCallHelperForSandbox(sandbox Sandbox, workspace, dest string) err
 	if sandboxDriver(sandbox) != "docker" || goruntime.GOOS == "linux" {
 		return installMCPCallHelper(workspace, dest)
 	}
-	self, err := os.Executable()
+	src, err := DockerRunnerHelperPath()
 	if err != nil {
 		return err
 	}
-	pattern := strings.TrimSpace(os.Getenv("AGENTFLOW_RUNNER_BINARY"))
-	if !strings.Contains(pattern, "{os}") {
-		pattern = filepath.Join(filepath.Dir(self), "agentflow-runner-{os}-{arch}")
-	}
-	src := strings.NewReplacer("{os}", "linux", "{arch}", goruntime.GOARCH).Replace(pattern)
 	if _, err := os.Stat(src); err != nil {
 		return fmt.Errorf("Docker Git/MCP helper requires a Linux runner binary: set AGENTFLOW_RUNNER_BINARY with {os} and {arch}: %w", err)
 	}
 	return installMCPCallHelperFrom(workspace, src, dest)
+}
+
+// DockerRunnerHelperPath is the Linux runner artifact used for Git and MCP
+// inside Docker on a non-Linux runner. Keep installation and lookup in sync.
+func DockerRunnerHelperPath() (string, error) {
+	pattern := strings.TrimSpace(os.Getenv("AGENTFLOW_RUNNER_BINARY"))
+	if !strings.Contains(pattern, "{os}") {
+		self, err := os.Executable()
+		if err != nil {
+			return "", err
+		}
+		pattern = filepath.Join(filepath.Dir(self), "agentflow-runner-{os}-{arch}")
+	}
+	return strings.NewReplacer("{os}", "linux", "{arch}", goruntime.GOARCH).Replace(pattern), nil
 }
 
 func installMCPCallHelperFrom(workspace, src, dest string) error {
