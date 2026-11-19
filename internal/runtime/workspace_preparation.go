@@ -178,7 +178,13 @@ func redactPreparationOutput(sb Sandbox, output string) string {
 		managed.credentialsMu.RLock()
 		credentials := managed.credentials
 		managed.credentialsMu.RUnlock()
-		secrets = append(secrets, credentials.GitToken, credentials.CodeBuddy.APIKey, credentials.Codex.APIKey, credentials.ClaudeCode.APIKey)
+		secrets = append(secrets, credentials.CodeBuddy.APIKey, credentials.Codex.APIKey, credentials.ClaudeCode.APIKey)
+		for _, credential := range credentials.GitHTTPCredentials {
+			secrets = append(secrets, credential.Token)
+		}
+		for _, secret := range credentials.Extra {
+			secrets = append(secrets, secret)
+		}
 		for _, server := range credentials.MCPServers {
 			for _, value := range server.Headers {
 				secrets = append(secrets, value)
@@ -291,6 +297,9 @@ func EnsureWorkspacePreparation(ctx context.Context, sb Sandbox, wf domain.Workf
 	if err != nil {
 		return WorkspacePreparationStatus{Status: "failed", Error: err.Error(), Steps: []WorkspacePreparationStep{}}, err
 	}
+	if err := RestoreLegacyWorkspaceAgentConfig(ctx, sb.Workspace(), repositories); err != nil {
+		return WorkspacePreparationStatus{Status: "failed", Error: err.Error(), Steps: []WorkspacePreparationStep{}}, err
+	}
 	old := ReadWorkspacePreparationStatus(sb.Workspace(), sb.ID())
 	prior := map[string]WorkspacePreparationStep{}
 	if old.Environment == epoch {
@@ -351,7 +360,25 @@ func EnsureWorkspacePreparation(ctx context.Context, sb Sandbox, wf domain.Workf
 		emit(node, "started", "正在恢复工作区环境："+node.Name)
 		var output string
 		execute := func(repo *domain.RepositoryContext) error {
-			raw, execErr := sb.Exec(ctx, CommandSpec{Argv: []string{"sh", "-lc", preparationCommand(node, repo)}, Provider: "script", CredentialBindings: []CredentialBinding{BindGit, BindMCP}}, nil)
+			spec := CommandSpec{Argv: []string{"sh", "-lc", preparationCommand(node, repo)}, Provider: "script", CredentialBindings: []CredentialBinding{BindGit, BindMCP}}
+			// A rebuilt environment binds exactly what a normal execution
+			// bound: the node's declared credentials are validated up front
+			// (where the sandbox exposes its snapshot) and injected through
+			// the same BindExtra path, so a replay never falls back to the
+			// host process's own variables.
+			if len(node.CredentialEnv) > 0 {
+				if snapshot, ok := sb.(sandboxCredentialSnapshot); ok {
+					var err error
+					spec, err = CommandSpecWithCredentialEnv(spec, node.CredentialEnv, snapshot.CredentialSnapshot())
+					if err != nil {
+						return err
+					}
+				} else {
+					spec.CredentialBindings = append(append([]CredentialBinding(nil), spec.CredentialBindings...), BindExtra)
+					spec.ExtraCredentialEnv = node.CredentialEnv
+				}
+			}
+			raw, execErr := sb.Exec(ctx, spec, nil)
 			output = tailAtRuneBoundary(output+redactPreparationOutput(sb, raw), preparationOutputLimit)
 			return execErr
 		}

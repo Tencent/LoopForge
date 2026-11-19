@@ -116,17 +116,9 @@ func (h *catalogHandlers) repositories(c *gin.Context) {
 	if sshReference == "" {
 		sshReference = v.CloneURL
 	}
-	// GitHub and the optional legacy host keep their existing token flow (and
-	// GitHub's automatic pull requests) for SSH-style addresses unless the
-	// caller explicitly selects SSH authentication.
-	legacySSH := false
-	if v.Provider != domain.RepositoryProviderSSH {
-		if remote, err := gitwork.ParseSSHRemote(sshReference); err == nil {
-			legacySSH = remote.Port == "22" && (remote.Host == domain.GongfengRepoHost || remote.Host == "github.com")
-		}
-	}
+	// An explicitly supplied SSH clone address keeps SSH transport.
 	githubShorthand := primary != "" && strings.HasPrefix(strings.TrimPrefix(primary, "git clone "), "github:")
-	if v.Provider == domain.RepositoryProviderSSH || (gitwork.IsSSHReference(sshReference) && !legacySSH && !githubShorthand) {
+	if v.Provider == domain.RepositoryProviderSSH || (gitwork.IsSSHReference(sshReference) && !githubShorthand) {
 		remote, err := gitwork.ParseSSHRemote(sshReference)
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -147,6 +139,42 @@ func (h *catalogHandlers) repositories(c *gin.Context) {
 		v.Provider, v.CloneURL, v.GongfengProjectID = domain.RepositoryProviderSSH, remote.URL, ""
 		if v.Name == "" {
 			v.Name = strings.TrimSuffix(remote.Path[strings.LastIndex(remote.Path, "/")+1:], ".git")
+		}
+		if v.DefaultBranch == "" {
+			v.DefaultBranch = "main"
+		}
+		h.saveRepository(c, v)
+		return
+	}
+	// One pasted repository reference (web / SSH / clone / git clone / group/repo)
+	// An unknown HTTPS host is a Git transport, not an unknown hosting adapter.
+	_, knownHost := domain.ParseRepositoryURL(sshReference)
+	if v.Provider == domain.RepositoryProviderHTTPS || !knownHost && strings.HasPrefix(strings.TrimPrefix(sshReference, "git clone "), "https://") {
+		remote, name, err := gitwork.HTTPSRepositoryURL(sshReference)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		for _, candidate := range []string{body.RepoURL, body.URL, v.CloneURL} {
+			if candidate == "" {
+				continue
+			}
+			other, _, err := gitwork.HTTPSRepositoryURL(candidate)
+			if err != nil || other != remote {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "仓库地址与 cloneUrl 不一致"})
+				return
+			}
+		}
+		if !validCLIBaseURL(v.WebURL) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "仓库网页地址必须是不含凭据的 HTTP(S) 地址"})
+			return
+		}
+		v.Provider, v.CloneURL, v.GongfengProjectID = domain.RepositoryProviderHTTPS, remote, ""
+		if v.WebURL == "" {
+			v.WebURL = strings.TrimSuffix(remote, ".git")
+		}
+		if v.Name == "" {
+			v.Name = name
 		}
 		if v.DefaultBranch == "" {
 			v.DefaultBranch = "main"
@@ -1049,12 +1077,7 @@ func (h *catalogHandlers) workflows(c *gin.Context) {
 					c.JSON(http.StatusConflict, map[string]string{"error": "通用模板为只读，请先复制到本项目再修改"})
 					return
 				}
-				if strings.TrimSpace(v.SandboxProfileID) == "" {
-					c.JSON(http.StatusBadRequest, map[string]string{"error": "workflow sandboxProfileId is required"})
-					return
-				}
-				if _, exists := h.repo.Sandbox(v.SandboxProfileID); !exists {
-					c.JSON(http.StatusBadRequest, map[string]string{"error": "sandbox profile not found"})
+				if _, ok := h.requireWorkflowSandbox(c, v); !ok {
 					return
 				}
 				v, err := domain.AttachPreviewBuild(v)
@@ -1064,11 +1087,7 @@ func (h *catalogHandlers) workflows(c *gin.Context) {
 				}
 				stored, err := h.repo.UpdateGenericWorkflow(v)
 				if err != nil {
-					if strings.Contains(err.Error(), "revision conflict") {
-						c.JSON(http.StatusConflict, map[string]string{"error": err.Error()})
-					} else {
-						respond(c, err)
-					}
+					respondWorkflowSaveError(c, err)
 					return
 				}
 				c.JSON(200, stored)
@@ -1083,13 +1102,8 @@ func (h *catalogHandlers) workflows(c *gin.Context) {
 				c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
 				return
 			}
-			if strings.TrimSpace(v.SandboxProfileID) == "" {
-				c.JSON(http.StatusBadRequest, map[string]string{"error": "workflow sandboxProfileId is required"})
-				return
-			}
-			profile, exists := h.repo.Sandbox(v.SandboxProfileID)
-			if !exists {
-				c.JSON(http.StatusBadRequest, map[string]string{"error": "sandbox profile not found"})
+			profile, ok := h.requireWorkflowSandbox(c, v)
+			if !ok {
 				return
 			}
 			if v.ProjectID != "" && profile.ProjectID != "" && profile.ProjectID != v.ProjectID && !profile.Shared {
@@ -1116,11 +1130,7 @@ func (h *catalogHandlers) workflows(c *gin.Context) {
 				}
 			}
 			if err := h.repo.PutWorkflow(v); err != nil {
-				if strings.Contains(err.Error(), "revision conflict") {
-					c.JSON(http.StatusConflict, map[string]string{"error": err.Error()})
-				} else {
-					respond(c, err)
-				}
+				respondWorkflowSaveError(c, err)
 				return
 			}
 			stored, _ := h.repo.Workflow(v.ID)
@@ -1128,6 +1138,31 @@ func (h *catalogHandlers) workflows(c *gin.Context) {
 		}
 	}
 }
+
+// requireWorkflowSandbox 校验 SOP 载荷指定的沙箱档案：标识必填且必须存在。
+// 校验失败时已写好 400 响应，调用方直接返回即可。
+func (h *catalogHandlers) requireWorkflowSandbox(c *gin.Context, wf domain.WorkflowDefinition) (domain.SandboxProfile, bool) {
+	if strings.TrimSpace(wf.SandboxProfileID) == "" {
+		c.JSON(http.StatusBadRequest, map[string]string{"error": "workflow sandboxProfileId is required"})
+		return domain.SandboxProfile{}, false
+	}
+	profile, exists := h.repo.Sandbox(wf.SandboxProfileID)
+	if !exists {
+		c.JSON(http.StatusBadRequest, map[string]string{"error": "sandbox profile not found"})
+		return domain.SandboxProfile{}, false
+	}
+	return profile, true
+}
+
+// respondWorkflowSaveError 统一 SOP 保存失败响应：版本冲突回 409，其余交给 respond。
+func respondWorkflowSaveError(c *gin.Context, err error) {
+	if strings.Contains(err.Error(), "revision conflict") {
+		c.JSON(http.StatusConflict, map[string]string{"error": err.Error()})
+		return
+	}
+	respond(c, err)
+}
+
 func (h *catalogHandlers) workflow(c *gin.Context) {
 	id := c.Param("id")
 	// Generic template ids are reserved: the built-in catalog always wins so a

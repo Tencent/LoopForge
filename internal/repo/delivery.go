@@ -18,6 +18,9 @@ func (r mrDeliveryStateRow) toDomain() domain.MRDeliveryState {
 		MRProject: r.MRProject, MRIID: r.MRIID, MRURL: r.MRURL, State: r.State,
 		TargetBranch: r.TargetBranch, IssueID: r.IssueID,
 	}
+	if r.RegisteredBy != nil {
+		item.RegisteredBy = *r.RegisteredBy
+	}
 	if r.MergedAt != nil {
 		item.MergedAt = r.MergedAt.UTC()
 	}
@@ -89,6 +92,17 @@ func (r *DeliveryRepo) EnsureMRDeliveryState(project string, iid int, url, issue
 		}
 		return upsert(tx, "mr_delivery_states", mrDeliveryRowValues(existing, now))
 	})
+}
+
+// SetMRDeliveryRegisteredBy records who registered an MR the first time; a
+// later registration by someone else keeps the original user.
+func (r *DeliveryRepo) SetMRDeliveryRegisteredBy(project string, iid int, userID int64) error {
+	if project == "" || iid <= 0 || userID <= 0 {
+		return nil
+	}
+	return r.DB.Table("mr_delivery_states").
+		Where("mr_project = ? AND mr_iid = ? AND registered_by IS NULL", project, iid).
+		Update("registered_by", userID).Error
 }
 
 func (r *DeliveryRepo) UpdateMRDeliveryState(project string, iid int, state string, targetBranch string, mergedAt, checkedAt time.Time) error {
@@ -172,7 +186,7 @@ func singleDeliveryMR(mrURL string) []domain.DeliveryMR {
 		return nil
 	}
 	mr := domain.DeliveryMR{URL: mrURL}
-	if project, iid, _, ok := domain.ParseGongfengMR(mrURL); ok {
+	if project, iid, _, ok := domain.ParseDeliveryMRURL(mrURL); ok {
 		mr.Project, mr.IID = project, iid
 	}
 	return []domain.DeliveryMR{mr}
@@ -183,7 +197,7 @@ func singleDeliveryMR(mrURL string) []domain.DeliveryMR {
 func (r *DeliveryRepo) registerDeliveryMR(issueID string, mr domain.DeliveryMR, at time.Time) string {
 	project, iid := mr.Project, mr.IID
 	if project == "" || iid <= 0 {
-		if p, n, _, ok := domain.ParseGongfengMR(mr.URL); ok {
+		if p, n, _, ok := domain.ParseDeliveryMRURL(mr.URL); ok {
 			project, iid = p, n
 		}
 	}
@@ -206,30 +220,10 @@ func (r *DeliveryRepo) markIssueDelivered(issueID string, mrs []domain.DeliveryM
 	if !ok {
 		return nil
 	}
-	// A manually closed issue is an explicit terminal state. Background MR
-	// polling and stale SOP callbacks must not change it.
-	if issue.ManuallyClosed() {
-		return nil
-	}
 	if deliveredAt.IsZero() {
 		deliveredAt = time.Now().UTC()
 	}
-	// A human reopen must stay open until a new SOP succeeds. MR poll / reconcile
-	// uses "now" as checkedAt and would otherwise immediately lock the item again.
-	if strings.EqualFold(issue.DeliveryState, "reopened") && !fromSOP {
-		return nil
-	}
-	// Poll / reconcile may see leftover MRs from earlier SOP runs. Those rows
-	// stay in mr_delivery_states for analytics, but must not replace the
-	// work item's delivery MRs.
-	if !fromSOP {
-		for _, mr := range mrs {
-			if len(issue.DeliveryMRList()) > 0 && !issue.HasDeliveryMR(mr.URL) {
-				return nil
-			}
-		}
-	}
-	if issue.DeliveryState == "merged" && !deliveredAt.After(issue.DeliveryUpdatedAt) {
+	if issueDeliverySkipped(issue, mrs, deliveredAt, fromSOP) {
 		return nil
 	}
 	issue.DeliveryState = "merged"
@@ -258,6 +252,32 @@ func (r *DeliveryRepo) markIssueDelivered(issueID string, mrs []domain.DeliveryM
 	}
 	issue.AutomationState = "ignored"
 	return r.issues.PutIssue(issue)
+}
+
+// issueDeliverySkipped reports whether a delivery signal must leave the work
+// item untouched. deliveredAt must already be resolved (non-zero).
+func issueDeliverySkipped(issue domain.Issue, mrs []domain.DeliveryMR, deliveredAt time.Time, fromSOP bool) bool {
+	// A manually closed issue is an explicit terminal state. Background MR
+	// polling and stale SOP callbacks must not change it.
+	if issue.ManuallyClosed() {
+		return true
+	}
+	// A human reopen must stay open until a new SOP succeeds. MR poll / reconcile
+	// uses "now" as checkedAt and would otherwise immediately lock the item again.
+	if strings.EqualFold(issue.DeliveryState, "reopened") && !fromSOP {
+		return true
+	}
+	// Poll / reconcile may see leftover MRs from earlier SOP runs. Those rows
+	// stay in mr_delivery_states for analytics, but must not replace the
+	// work item's delivery MRs.
+	if !fromSOP {
+		for _, mr := range mrs {
+			if len(issue.DeliveryMRList()) > 0 && !issue.HasDeliveryMR(mr.URL) {
+				return true
+			}
+		}
+	}
+	return issue.DeliveryState == "merged" && !deliveredAt.After(issue.DeliveryUpdatedAt)
 }
 
 func (r *DeliveryRepo) ReopenDeliveredIssue(issueID string) (domain.Issue, error) {
@@ -502,7 +522,7 @@ func (r *DeliveryRepo) promoteIntegratedIssues(project string, promoteAt time.Ti
 			if !strings.EqualFold(mr.State, "integrated") {
 				continue
 			}
-			proj, _, _, ok := domain.ParseGongfengMR(mr.URL)
+			proj, _, _, ok := domain.ParseDeliveryMRURL(mr.URL)
 			if !ok || !strings.EqualFold(strings.TrimSpace(proj), project) {
 				continue
 			}
@@ -583,7 +603,7 @@ func (r *DeliveryRepo) demoteIssueToBaseline(issueID, mrURL string) error {
 }
 
 func (r *DeliveryRepo) lookupMRDeliveryState(mrURL string) string {
-	project, iid, _, ok := domain.ParseGongfengMR(mrURL)
+	project, iid, _, ok := domain.ParseDeliveryMRURL(mrURL)
 	if !ok {
 		return ""
 	}
@@ -1312,7 +1332,7 @@ func (r *DeliveryRepo) applyMRDeliveryStates(items []domain.AnalyticsDelivery, m
 		// merged > integrated > opened/closed 取最新的一个。
 		preferProject, preferIID := "", 0
 		if issue, ok := issues[items[i].IssueID]; ok {
-			if p, iid, _, ok := domain.ParseGongfengMR(issue.DeliveryMRURL); ok {
+			if p, iid, _, ok := domain.ParseDeliveryMRURL(issue.DeliveryMRURL); ok {
 				preferProject, preferIID = p, iid
 			}
 		}

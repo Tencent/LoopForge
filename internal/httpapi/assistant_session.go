@@ -88,6 +88,12 @@ func (h *assistantHandlers) listSessions(c *gin.Context) {
 		out[i].Unread = false
 		if state, ok := statuses[out[i].ID]; ok {
 			out[i].GenerationStatus = state.Status
+			// The list only projects a late heartbeat as interrupted; the row
+			// still says running. A turn this process is executing is running.
+			// A row actually written as interrupted is reported as stored.
+			if state.Stale && generationExecutingHere(state.ID) {
+				out[i].GenerationStatus = "running"
+			}
 			out[i].GenerationID = state.ID
 			// A reply that completed while the reader was elsewhere stays
 			// unread until they open the conversation (Codex's blue dot).
@@ -262,7 +268,7 @@ func (h *assistantHandlers) session(c *gin.Context) {
 			return
 		}
 		if !item.Shared && !readOnly {
-			if job, ok := h.repo.AssistantGeneration(ownerID, id); !ok || job.Status != "running" {
+			if job, ok := h.readGeneration(ownerID, id); !ok || job.Status != "running" {
 				if materializeWorkspaceImages(ownerID, &item) {
 					if err := saveAssistantConversation(h.repo, ownerID, item); err == nil {
 						if stored, err := loadAssistantConversation(h.repo, ownerID, id); err == nil {
@@ -279,16 +285,17 @@ func (h *assistantHandlers) session(c *gin.Context) {
 		}
 		c.JSON(200, decorateRunSessionView(h.repo, item))
 	case "PUT":
-		if job, ok := h.repo.AssistantGeneration(ownerID, id); ok && job.Status == "running" {
+		if job, ok := h.readGeneration(ownerID, id); ok && job.Status == "running" {
 			c.JSON(409, gin.H{"error": "生成期间不能改写会话"})
 			return
 		}
 		existing, _ := loadAssistantConversation(h.repo, ownerID, id)
 		var body struct {
 			assistantConversation
-			Effort *string `json:"effort"`
+			Effort         *string `json:"effort"`
+			ApprovalUserID int64   `json:"approvalUserId"`
 		}
-		if !decode(c, &body) {
+		if !decodeLimit(c, &body, assistantRequestBodyLimit) || !requireAssistantApprovalUser(c, current.ID, body.ApprovalUserID) {
 			return
 		}
 		conv := body.assistantConversation
@@ -395,10 +402,20 @@ func (h *assistantHandlers) session(c *gin.Context) {
 		if conv.Model == "" {
 			conv.Model = existing.Model
 		}
-		editor, _ := h.repo.User(current.ID)
-		if err := validateAssistantEffort(editor, conv.Model, conv.Effort); err != nil {
-			c.JSON(400, gin.H{"error": err.Error()})
-			return
+		model := assistantRequestModel(conv.Executor, conv.Model)
+		engine, modelID := assistantModelEngine(model)
+		oldEngine, oldModelID := assistantModelEngine(assistantRequestModel(existing.Executor, existing.Model))
+		// Metadata edits can keep historical settings after the model catalog changes.
+		if engine != oldEngine || modelID != oldModelID || conv.Effort != existing.Effort {
+			editor, _ := h.repo.User(current.ID)
+			if engine == assistantEngineCodeBuddy {
+				editor, _, _ = h.assistantChatUser(editor)
+			}
+			loginRunner := h.assistantLoginRunner(current.ID, conv.ExecutionTarget, engine)
+			if _, err := h.resolveAssistantTurnModel(c.Request.Context(), editor, model, conv.Effort, loginRunner); err != nil {
+				c.JSON(400, gin.H{"error": err.Error()})
+				return
+			}
 		}
 		var saveErr error
 		if shared {
@@ -407,7 +424,7 @@ func (h *assistantHandlers) session(c *gin.Context) {
 			saveErr = saveAssistantConversation(h.repo, ownerID, conv)
 		}
 		if saveErr != nil {
-			if errors.Is(saveErr, repo.ErrAssistantExecutionLocked) {
+			if errors.Is(saveErr, repo.ErrAssistantExecutionLocked) || errors.Is(saveErr, repo.ErrAssistantPersonalWorkspaceProject) {
 				c.JSON(409, gin.H{"error": saveErr.Error()})
 				return
 			}
@@ -428,7 +445,7 @@ func (h *assistantHandlers) session(c *gin.Context) {
 				return
 			}
 		}
-		if job, ok := h.repo.AssistantGeneration(ownerID, id); ok && job.Status == "running" {
+		if job, ok := h.readGeneration(ownerID, id); ok && job.Status == "running" {
 			c.JSON(409, gin.H{"error": "请先停止生成后删除会话"})
 			return
 		}

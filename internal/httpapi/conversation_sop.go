@@ -8,6 +8,8 @@ import (
 	"strings"
 
 	"agentflow/internal/domain"
+
+	"github.com/gin-gonic/gin"
 )
 
 // chatSessionHeader names the conversation a browser-confirmed tool call was
@@ -56,7 +58,7 @@ func linkDispatchingConversation(d *deps, r *http.Request, userID int64, issue d
 // borrowableSOPRun reports whether a top-level SOP run of projectID can lend
 // its workspace to an ordinary conversation.
 func borrowableSOPRun(run domain.Run, projectID string) bool {
-	return run.ID != "" && !run.IsWorkspace() && !run.HistoricalGroup() && run.ExecutionContext.ParentRunID == "" && run.ExecutionContext.ProjectID == projectID
+	return projectID != "" && run.ID != "" && !run.IsWorkspace() && !run.HistoricalGroup() && run.ExecutionContext.ParentRunID == "" && run.ExecutionContext.ProjectID == projectID
 }
 
 // ownWorkspaceRunIDs lists the workspaces conv opened itself. A workspace run
@@ -72,10 +74,21 @@ func ownWorkspaceRunIDs(conv domain.AssistantSession) []string {
 // conversationMayBind reports whether conv may work in run: a workspace it
 // opened that is still usable, or a top-level SOP run of its project.
 func conversationMayBind(conv domain.AssistantSession, run domain.Run, projectID string) bool {
+	if run.IsPersonalWorkspace() && (conv.ProjectID != "" || conv.Shared || conv.RunID != "" || conv.UserID <= 0 || conv.UserID != run.ExecutionContext.ResponsibleUserID) {
+		return false
+	}
 	if run.IsWorkspace() {
-		return usableConversationWorkspace(run, projectID) && slices.Contains(ownWorkspaceRunIDs(conv), run.ID)
+		return run.ExecutionContext.ProjectID == projectID && !domain.TerminalRunStatus(run.Status) &&
+			slices.Contains(ownWorkspaceRunIDs(conv), run.ID)
 	}
 	return borrowableSOPRun(run, projectID)
+}
+
+// sopWorkspaceReadOnly reports whether conv is bound to an SOP run whose
+// workspace the speaker may not write: the turn then stays in platform mode.
+func (d deps) sopWorkspaceReadOnly(c *gin.Context, conv domain.AssistantSession, projectID string, userID int64) bool {
+	run, ok := d.repo.RunState(conv.WorkspaceRunID)
+	return ok && !run.IsWorkspace() && !d.projectWriterAllowed(c, projectID, userID)
 }
 
 // loadTurnWorkspace starts a conversation turn in the workspace the

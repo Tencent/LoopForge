@@ -46,7 +46,7 @@ async function main() {
   const control={state:{selectedRun:run.id,activeRun:run,data:{runs:[run],issues:[]},issueDetailData:{run}},api:async(path,opts)=>{calls.push([path,opts?.method||'GET']);return{id:run.id,status:'queued',pauseRequested:false,admissionState:'queued'};},toast:m=>messages.push(m),readHumanContext:()=>'',refreshIssues:async()=>{},refreshRuns:async()=>{},startLiveRun:id=>calls.push(['stream',id]),stopLiveRun:()=>{},renderRunDetail:()=>{},renderRuns:()=>{},renderIssueDetailTab:()=>{}};
   load(control,['cachedRun','queuedRunActionBlocked','patchCachedRun','paintRunControl','runStatus','runDisplayStatus','runControlToast','sortRunsDescending','syncRunControlState','resumePausedRun']);
   control.$=()=>null;
-  vm.runInContext('const runActivationRequests=new Map(); const runRestoreWatchers=new Map();',control);
+  vm.runInContext('const runActivationRequests=new Map();',control);
   load(control,['paintRunActivationProgress','requestRunActivation']);
   await control.resumePausedRun(run.id);
   assert.deepEqual(calls.slice(0,2),[['/api/runs/run%2F1/resume','POST'],['/api/runs/run%2F1','GET']]);

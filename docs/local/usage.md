@@ -2,36 +2,45 @@
 
 English | [简体中文](usage.zh-CN.md)
 
-LoopForge Local runs development workflows inside an existing coding assistant without starting the platform. It currently supports the built-in Classic and Portable workflows. Importing and independently executing platform SOP exports is not implemented yet. See [deployment](../deployment.md) for the platform.
+> **Legacy.** LoopForge Local runs built-in Classic and Portable workflows inside your coding assistant without a LoopForge server. You can keep using a published version for existing projects.
+
+## Connect to LoopForge with MCP
+
+Use CodeBuddy with a running LoopForge instance to access projects, SOPs, and runs on that instance. If you need an instance, see the [deployment guide](../deployment.md).
+
+1. Sign in to LoopForge and open **Access** (接入方式). Create a personal access token and select **CodeBuddy** for its MCP setup instructions.
+2. Apply the user-level configuration in CodeBuddy and confirm that the `agentflow` server is connected in the MCP settings. Ask CodeBuddy to list your LoopForge projects to verify access.
+
+See the [MCP API reference](../api/README.md#公共能力发现与-mcp) for the endpoint and available operations.
 
 ## Quick start
 
-Requires Node.js 20+ and Python 3.8+. The commands below install the default Classic Edition; choose it if you are unsure.
+Requires Node.js 20+ and Python 3.8+. Replace `X.Y.Z` in the commands below with the published version you use for your agent and edition. You can list published versions with `npm view loopforge-cli versions --json`. Host support depends on the version you install.
 
 | Agent | Install | Start a workflow |
 | --- | --- | --- |
-| CodeBuddy | `npx -y loopforge-cli@latest install codebuddy` | `/start-devflow "<request>"` |
-| Codex | `npx -y loopforge-cli@latest install codex` | `$devflow-codex "<request>"` |
-| Cursor | `npx -y loopforge-cli@latest install cursor` | `/start-devflow "<request>"` |
-| Claude Code | `npx -y loopforge-cli@latest install claude` | `/start-devflow "<request>"` |
-| DeepSeek Harness | `npx -y loopforge-cli@latest skills install dsh` | `/devflow "<request>"` |
-| Hermes Agent | `npx -y loopforge-cli@latest skills install hermes` then `hermes skills trust .` | `/devflow "<request>"` |
+| CodeBuddy | `npx -y loopforge-cli@X.Y.Z install codebuddy` | `/start-devflow "<request>"` |
+| Codex | `npx -y loopforge-cli@X.Y.Z install codex` | `$devflow-codex "<request>"` |
+| Cursor | `npx -y loopforge-cli@X.Y.Z install cursor` | `/start-devflow "<request>"` |
+| Claude Code | `npx -y loopforge-cli@X.Y.Z install claude` | `/start-devflow "<request>"` |
+| DeepSeek Harness | `npx -y loopforge-cli@X.Y.Z skills install dsh` | `/devflow "<request>"` |
+| Hermes Agent | `npx -y loopforge-cli@X.Y.Z skills install hermes` then `hermes skills trust .` | `/devflow "<request>"` |
 
 For example, with Claude Code:
 
 ```bash
-npx -y loopforge-cli@latest install claude
-npx -y loopforge-cli@latest status claude
+npx -y loopforge-cli@X.Y.Z install claude
+npx -y loopforge-cli@X.Y.Z status claude
 ```
 
 ```text
 /start-devflow "add status filtering to the order list and cover the API with tests"
 ```
 
-Check any installation with `npx -y loopforge-cli@latest status <agent>`. If installation or execution fails, diagnose the environment:
+Check any installation with `npx -y loopforge-cli@X.Y.Z status <agent>`. If installation or execution fails, diagnose the environment:
 
 ```bash
-npx -y loopforge-cli@latest doctor
+npx -y loopforge-cli@X.Y.Z doctor
 ```
 
 Pi, DeepSeek Harness and Hermes Agent are supported through the [Portable Edition](#portable-edition). DSH has an optional [plugin](../../local/dsh-plugin/README.md) for task controls, status, artifacts and approval gates. Hermes uses its project-local Agent Skills discovery and `delegate_task` tool; it does not modify `~/.hermes/config.yaml`. Hermes users can optionally install the native [Hermes plugin](../../local/hermes-plugin/README.md) for the same `/loopforge status`, `/loopforge result` and `/loopforge approve` controls.
@@ -131,26 +140,28 @@ For one-off code completion or a tiny, fully specified edit, using a coding agen
 
 ## Portable Edition
 
-The Classic Edition from the quick start is the right choice for most users. If you only want the portable Agent Skills workflow, use the Portable Edition. To prevent one coding agent from loading two workflows and mixing their state or artifacts, LoopForge enables only one edition per coding agent in each project. To switch editions, run the new install command with `--force`.
+Use the Portable Edition for the portable Agent Skills workflow. To prevent one coding agent from loading two workflows and mixing their state or artifacts, LoopForge enables only one edition per coding agent in each project. To switch editions, run the new install command with `--force`.
 
 | Agent | Install | Start a workflow |
 | --- | --- | --- |
-| CodeBuddy | `npx -y loopforge-cli@latest skills install codebuddy` | `/devflow "<request>"` |
-| Codex | `npx -y loopforge-cli@latest skills install codex` | `$devflow "<request>"` |
-| Cursor | `npx -y loopforge-cli@latest skills install cursor` | `/devflow "<request>"` |
-| Claude Code | `npx -y loopforge-cli@latest skills install claude` | `/devflow "<request>"` |
-| Pi | `npx -y loopforge-cli@latest skills install pi`, then `pi install npm:pi-subagents` | `/skill:devflow "<request>"` |
-| DeepSeek Harness | `npx -y loopforge-cli@latest skills install dsh` | `/devflow "<request>"` |
-| Hermes Agent | `npx -y loopforge-cli@latest skills install hermes`, then `hermes skills trust .` | `/devflow "<request>"` (optional plugin: `/loopforge`) |
+| CodeBuddy | `npx -y loopforge-cli@X.Y.Z skills install codebuddy` | `/devflow "<request>"` |
+| Codex | `npx -y loopforge-cli@X.Y.Z skills install codex` | `$devflow "<request>"` |
+| Cursor | `npx -y loopforge-cli@X.Y.Z skills install cursor` | `/devflow "<request>"` |
+| Claude Code | `npx -y loopforge-cli@X.Y.Z skills install claude` | `/devflow "<request>"` |
+| Pi | `npx -y loopforge-cli@X.Y.Z skills install pi`, then `pi install npm:pi-subagents` | `/skill:devflow "<request>"` |
+| DeepSeek Harness | `npx -y loopforge-cli@X.Y.Z skills install dsh` | `/devflow "<request>"` |
+| Hermes Agent | `npx -y loopforge-cli@X.Y.Z skills install hermes`, then `hermes skills trust .` | `/devflow "<request>"` (optional plugin: `/loopforge`) |
 
 See [Edition selection](editions.md) for the complete boundaries and directory layout.
 
 ## Update and uninstall
 
-For ongoing use, install the CLI globally:
+Before switching to platform MCP or uninstalling Local, back up your project's `artifacts/`, `.devflow/`, and any customized skills and agent configuration. Keep these files as the record of your Local runs. Use the same Local version to finish or resume any runs still in progress.
+
+To manage an existing Local installation, you can install the same CLI version globally.
 
 ```bash
-npm install --global loopforge-cli
+npm install --global loopforge-cli@X.Y.Z
 ```
 
 Then maintain an installation with the same agent names as above (`codebuddy`, `codex`, `cursor`, `claude`, `pi`, `dsh`, and `hermes` for the Portable Edition):
@@ -169,7 +180,7 @@ loopforge skills uninstall <agent>
 
 Installation state is stored in `.devflow/install-state.json`. An update stops instead of overwriting user-modified or conflicting files. Use `--force` only when you intend to replace conflicts or switch editions, preferably after inspecting `loopforge plan`.
 
-If you have cloned this repository, install the LoopForge CLI from the current source tree by running this in the repository root:
+To install from the source of a published release, check out its tag and run the following from the repository root.
 
 ```bash
 pipx install ./local

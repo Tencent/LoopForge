@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"agentflow/internal/domain"
+	"agentflow/internal/runtime"
 
 	"github.com/gin-gonic/gin"
 )
@@ -35,15 +36,17 @@ type assistantModel struct {
 }
 
 type assistantModelCatalog struct {
-	Default string           `json:"default"`
-	Models  []assistantModel `json:"models"`
+	Default        string           `json:"default"`
+	DefaultEfforts []string         `json:"defaultEfforts,omitempty"`
+	Models         []assistantModel `json:"models"`
 	// SponsoredModels is set when users without their own CodeBuddy API Key
 	// may still chat on the platform's shared key, limited to these models;
 	// SponsoredModel is the first (the default).
 	SponsoredModel  string   `json:"sponsoredModel,omitempty"`
 	SponsoredModels []string `json:"sponsoredModels,omitempty"`
 	// Engines lists the CLIs a signed-in user can switch between.
-	Engines []assistantEngineOption `json:"engines,omitempty"`
+	Engines             []assistantEngineOption `json:"engines,omitempty"`
+	CursorModelsPending bool                    `json:"cursorModelsPending,omitempty"`
 }
 
 func prefetchAssistantModels() {}
@@ -182,15 +185,40 @@ func cachedCLIModels(environment string) []string {
 // requires login plus a configured or sponsored CodeBuddy key.
 func (h *assistantHandlers) models(c *gin.Context) {
 	if raw := strings.TrimSpace(c.Query("executor")); raw != "" && assistantExecutor(raw) != "codebuddy" {
-		id := assistantExecutor(raw)
-		catalog, ok := executorModelCatalogs()[id]
+		engine := assistantExecutor(raw)
+		id := engine
+		if engine == assistantEngineClaude {
+			id = "claude"
+		} else if id == "claude" {
+			engine = assistantEngineClaude
+		}
+		var user domain.User
+		if h.repo != nil && (engine == runtime.AgentCLIKimi || engine == runtime.AgentCLIAntigravity) {
+			if current, signedIn := h.requestUser(c.Request, true); signedIn {
+				user, _ = h.repo.User(current.ID)
+			}
+		}
+		_, kimiBaseURL := assistantEngineCredential(user, runtime.AgentCLIKimi)
+		catalog, ok := executorModelCatalogs(kimiBaseURL)[id]
 		if !ok {
 			c.JSON(400, gin.H{"error": "不支持的执行器"})
 			return
 		}
-		result := assistantModelCatalog{Default: "default", Models: []assistantModel{{ID: "default", Name: "CLI default", Family: map[string]string{"codex": "gpt", "claude": "claude"}[id]}}}
+		result := assistantModelCatalog{Models: make([]assistantModel, 0, len(catalog.Models))}
+		if engine == runtime.AgentCLIAntigravity && antigravityUsesCustomEndpoint(user) {
+			c.Header("Cache-Control", "private, no-store")
+			c.JSON(200, result)
+			return
+		}
 		for _, item := range catalog.Models {
-			result.Models = append(result.Models, assistantModel{ID: item.ID, Name: item.Name, Family: map[string]string{"codex": "gpt", "claude": "claude"}[id]})
+			levels := make([]string, 0, len(item.Efforts))
+			for _, option := range item.Efforts {
+				levels = append(levels, option.Value)
+			}
+			result.Models = append(result.Models, assistantModel{ID: item.ID, Name: item.Name, Family: item.Family, Engine: engine, Efforts: levels})
+		}
+		if len(result.Models) > 0 {
+			result.Default = result.Models[0].ID
 		}
 		c.JSON(200, result)
 		return
@@ -202,8 +230,9 @@ func (h *assistantHandlers) models(c *gin.Context) {
 	if current, ok := h.requestUser(c.Request, true); ok {
 		user, signedIn = h.repo.User(current.ID)
 	}
+	usingSharedKey := signedIn && shared && strings.TrimSpace(user.CodeBuddyAPIKey) == ""
 	switch {
-	case signedIn && shared && strings.TrimSpace(user.CodeBuddyAPIKey) == "":
+	case usingSharedKey:
 		// Chat runs on the shared key, so list what that key's environment offers.
 		refreshCLIModels(c.Request.Context(), key.InternetEnvironment, key.APIKey)
 		catalog = restrictAssistantCatalog(assistantChatCatalog(c.Request.Context(), key.InternetEnvironment, key.Models), key.Models)
@@ -212,18 +241,92 @@ func (h *assistantHandlers) models(c *gin.Context) {
 		// shared key's default may not exist in that environment.
 		refreshCLIModels(c.Request.Context(), user.CodeBuddyInternetEnvironment, user.CodeBuddyAPIKey)
 		catalog = assistantChatCatalog(c.Request.Context(), user.CodeBuddyInternetEnvironment, nil)
+		if saved := codeBuddyPersonalModels(user); len(saved) > 0 {
+			catalog.Default = saved[0].ID
+			if listed := selectableCodeBuddyModels(saved); len(listed) > 0 {
+				catalog.Models = listed
+			}
+		}
 	default:
 		catalog = assistantChatCatalog(c.Request.Context(), "", nil)
 	}
+	if catalog.Default == assistantDefaultModel {
+		models := user.CodeBuddyModels
+		if usingSharedKey {
+			models = nil
+		}
+		catalog.DefaultEfforts = assistantModelEffortsIn(catalog.Default, models)
+	}
+	catalog.Models = selectableCodeBuddyModels(catalog.Models)
 	if shared {
 		catalog.SponsoredModel, catalog.SponsoredModels = key.Models[0], key.Models
 	}
 	if signedIn {
-		catalog.Models = append(catalog.Models, assistantEngineModels(c.Request.Context(), user)...)
+		c.Header("Cache-Control", "private, no-store")
+		catalog.Engines = assistantEngineOptions(user, usingSharedKey)
+		var runnerLogin map[string]bool
+		if c.Query("schedule") == "1" {
+			runnerLogin = make(map[string]bool)
+			for i := range catalog.Engines {
+				engine := catalog.Engines[i].ID
+				if scheduleLoginRunner(h.repo, user.ID, engine).ID != "" {
+					runnerLogin[engine] = true
+					catalog.Engines[i].Configured = true
+				}
+			}
+		}
+		models, pending := assistantEngineModels(c.Request.Context(), user, runnerLogin)
+		catalog.Models = append(catalog.Models, models...)
+		catalog.CursorModelsPending = pending
 		h.saveCursorCatalog(user)
-		catalog.Engines = assistantEngineOptions(user, shared && strings.TrimSpace(user.CodeBuddyAPIKey) == "")
 	}
 	c.JSON(200, catalog)
+}
+
+// Keep the CLI default as an execution fallback and for older saved records.
+// The model pickers offer the concrete models available to the caller.
+func selectableCodeBuddyModels(models []assistantModel) []assistantModel {
+	listed := make([]assistantModel, 0, len(models))
+	for _, model := range models {
+		if !codeBuddyIsDefaultModel(model.ID) {
+			listed = append(listed, model)
+		}
+	}
+	return listed
+}
+
+func codeBuddyIsDefaultModel(id string) bool {
+	return id == assistantDefaultModel || id == "default-model"
+}
+
+// withCodeBuddyPersonalModels accepts the user's saved CodeBuddy models and
+// defaults requests without a model to the first of them. The environment's
+// models stay accepted.
+func withCodeBuddyPersonalModels(catalog assistantModelCatalog, user domain.User) assistantModelCatalog {
+	saved := codeBuddyPersonalModels(user)
+	if len(saved) == 0 {
+		return catalog
+	}
+	catalog.Models = append(catalog.Models, saved...)
+	catalog.Default = saved[0].ID
+	return catalog
+}
+
+func codeBuddyPersonalModels(user domain.User) []assistantModel {
+	if strings.TrimSpace(user.CodeBuddyAPIKey) == "" {
+		return nil
+	}
+	var models []assistantModel
+	for _, item := range assistantSavedModels(user, assistantEngineCodeBuddy) {
+		name := item.Name
+		if name == "" {
+			name = item.ID
+		}
+		model := assistantListedModel(item.ID, name, "")
+		model.Efforts = assistantModelEffortsIn(item.ID, user.CodeBuddyModels)
+		models = append(models, model)
+	}
+	return models
 }
 
 // assistantChatCatalog is the catalog used by chat conversations: the same
@@ -296,11 +399,18 @@ func assistantFixedCatalog() assistantModelCatalog {
 }
 
 func assistantListedModel(id, name, credits string) assistantModel {
-	return assistantModel{ID: id, Name: name, Family: assistantModelFamily(id), Credits: credits, Efforts: assistantModelEfforts(domain.User{}, id)}
+	return assistantModel{ID: id, Name: name, Family: assistantModelFamily(id, assistantEngineCodeBuddy), Credits: credits, Efforts: assistantModelEffortsIn(id, nil)}
 }
 
-func assistantModelFamily(id string) string {
-	id = strings.ToLower(id)
+func assistantModelFamily(id, engine string) string {
+	id = strings.ToLower(strings.TrimSpace(id))
+	if engine == assistantEngineCodeBuddy {
+		switch id {
+		case "fast-model", "balanced-model", "primary-model", "deep-model":
+			return "codebuddy"
+		}
+	}
+	id = id[strings.LastIndexByte(id, '/')+1:]
 	switch {
 	case strings.HasPrefix(id, "claude"):
 		return "claude"
@@ -310,8 +420,22 @@ func assistantModelFamily(id string) string {
 		return "glm"
 	case strings.HasPrefix(id, "gemini"):
 		return "gemini"
-	case strings.HasPrefix(id, "kimi"):
+	case id == "grok" || strings.HasPrefix(id, "grok-") || strings.HasPrefix(id, "cursor-grok-"):
+		return "grok"
+	case id == "muse" || strings.HasPrefix(id, "muse-"):
+		return "muse"
+	case id == "composer" || strings.HasPrefix(id, "composer-") || (engine == runtime.AgentCLICursor && (id == "auto" || id == "auto-smart")):
+		return "cursor"
+	case strings.HasPrefix(id, "kimi") || id == "k3" || strings.HasPrefix(id, "k3-") || strings.HasPrefix(id, "k3."):
 		return "kimi"
+	case strings.HasPrefix(id, "moonshot"):
+		return "moonshot"
+	case strings.HasPrefix(id, "qwen") || strings.HasPrefix(id, "qvq"):
+		return "qwen"
+	case strings.HasPrefix(id, "doubao") || strings.HasPrefix(id, "seed-") || strings.HasPrefix(id, "seedream"):
+		return "doubao"
+	case strings.HasPrefix(id, "ernie") || strings.HasPrefix(id, "wenxin") || strings.HasPrefix(id, "qianfan"):
+		return "qianfan"
 	case strings.HasPrefix(id, "deepseek"):
 		return "deepseek"
 	case strings.HasPrefix(id, "minimax"):

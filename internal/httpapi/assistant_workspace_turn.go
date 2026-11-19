@@ -35,8 +35,11 @@ type assistantWorkspaceTurn struct {
 	closed      bool
 	renewError  error
 	saveErrors  map[string]error
-	stop        chan struct{}
-	done        chan struct{}
+	// onLease records each foreground lease on the turn's generation so a
+	// reader that reaps a dead turn can release exactly that lease.
+	onLease func(runID, token string)
+	stop    chan struct{}
+	done    chan struct{}
 }
 
 type assistantWorkspaceLeaseEngine interface {
@@ -66,6 +69,13 @@ func newAssistantWorkspaceTurn(en assistantWorkspaceLeaseEngine, cancel context.
 		}
 	}()
 	return t
+}
+
+// recordLeases sets where each lease this turn takes is recorded.
+func (t *assistantWorkspaceTurn) recordLeases(fn func(runID, token string)) {
+	t.mu.Lock()
+	t.onLease = fn
+	t.mu.Unlock()
 }
 
 // Tools may run in parallel, but a binding switch and the final checkpoint
@@ -114,6 +124,9 @@ func (t *assistantWorkspaceTurn) lease(ctx context.Context, runID string) (conte
 			return ctx, err
 		}
 		t.runID, t.token, t.renewedAt = runID, token, time.Now()
+		if t.onLease != nil {
+			t.onLease(runID, token)
+		}
 	}
 	ctx = engine.WithConversationWorkspaceToken(ctx, t.token, runID)
 	t.mu.Unlock()

@@ -27,7 +27,7 @@ type Project struct {
 	// Deprecated project-level credential fields are kept only so old payloads
 	// can be decoded and scrubbed by the schema migration.
 	GitToken                     string    `json:"-"`
-	GitTokenConfigured           bool      `json:"-"`
+	GitHubCredentialConfigured   bool      `json:"-"`
 	CodeBuddyAPIKey              string    `json:"-"`
 	CodeBuddyAPIKeyConfigured    bool      `json:"-"`
 	CodeBuddyInternetEnvironment string    `json:"-"`
@@ -44,7 +44,7 @@ type Project struct {
 
 func PublicProject(p Project) Project {
 	p.GitToken = ""
-	p.GitTokenConfigured = false
+	p.GitHubCredentialConfigured = false
 	p.CodeBuddyAPIKey = ""
 	p.CodeBuddyAPIKeyConfigured = false
 	return p
@@ -66,30 +66,37 @@ type ProjectMember struct {
 // RepositoryProviderSSH uses Git transport only; it has no hosting API adapter.
 const RepositoryProviderSSH = "ssh"
 
+// RepositoryProviderHTTPS uses Git transport without a hosting API adapter.
+const RepositoryProviderHTTPS = "https"
+
+func GitOnlyRepositoryProvider(provider string) bool {
+	return provider == RepositoryProviderSSH || provider == RepositoryProviderHTTPS
+}
+
 type Repository struct {
-	ID                 string    `json:"id"`
-	ProjectID          string    `json:"projectId"`
-	Provider           string    `json:"provider"`
-	Name               string    `json:"name"`
-	GongfengProjectID  string    `json:"gongfengProjectId"`
-	WebURL             string    `json:"webUrl,omitempty"`
-	CloneURL           string    `json:"cloneUrl,omitempty"`
-	DefaultBranch      string    `json:"defaultBranch"`
-	LocalPath          string    `json:"localPath,omitempty"`
-	GitToken           string    `json:"-"` // deprecated; credentials belong to users
-	GitTokenConfigured bool      `json:"-"`
-	PipelineProjectID  int       `json:"pipelineProjectId,omitempty"`
-	PipelineDefID      int       `json:"pipelineDefId,omitempty"`
-	PipelineURLPattern string    `json:"pipelineUrlPattern,omitempty"`
-	IntegrateBranch    string    `json:"integrateBranch,omitempty"`
-	CreatedAt          time.Time `json:"createdAt"`
-	UpdatedAt          time.Time `json:"updatedAt"`
+	ID                         string    `json:"id"`
+	ProjectID                  string    `json:"projectId"`
+	Provider                   string    `json:"provider"`
+	Name                       string    `json:"name"`
+	GongfengProjectID          string    `json:"gongfengProjectId"`
+	WebURL                     string    `json:"webUrl,omitempty"`
+	CloneURL                   string    `json:"cloneUrl,omitempty"`
+	DefaultBranch              string    `json:"defaultBranch"`
+	LocalPath                  string    `json:"localPath,omitempty"`
+	GitToken                   string    `json:"-"` // deprecated; credentials belong to users
+	GitHubCredentialConfigured bool      `json:"-"`
+	PipelineProjectID          int       `json:"pipelineProjectId,omitempty"`
+	PipelineDefID              int       `json:"pipelineDefId,omitempty"`
+	PipelineURLPattern         string    `json:"pipelineUrlPattern,omitempty"`
+	IntegrateBranch            string    `json:"integrateBranch,omitempty"`
+	CreatedAt                  time.Time `json:"createdAt"`
+	UpdatedAt                  time.Time `json:"updatedAt"`
 }
 
 // PublicRepository strips the git token for API responses. Clone/push still
 // reads the live Studio record; run snapshots never copy GitToken.
 func PublicRepository(r Repository) Repository {
-	r.GitTokenConfigured = false
+	r.GitHubCredentialConfigured = false
 	r.GitToken = ""
 	// Rows saved before credentials were rejected may still embed them.
 	r.CloneURL = StripURLCredentials(r.CloneURL)

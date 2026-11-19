@@ -13,15 +13,8 @@ import (
 	"gorm.io/gorm/clause"
 )
 
-// Approvals are transient control state in the existing generation payload.
-// Any API instance can answer the browser or CLI without a separate queue.
-// This envelope is absent from the public generation DTO: raw tool arguments
-// must only leave through the redacted approvals endpoint.
-type assistantGenerationPayload struct {
-	domain.AssistantGeneration
-	NativeApprovals []assistantNativeApprovalState `json:"nativeApprovals,omitempty"`
-}
-
+// Approval state is stored in the private generation payload, so any API
+// instance can answer without exposing raw tool arguments in the generation DTO.
 type assistantNativeApprovalState struct {
 	domain.AssistantNativeApproval
 	Phase       string `json:"phase"`
@@ -34,14 +27,10 @@ func nativeApprovalState(item assistantNativeApprovalState) domain.AssistantNati
 	return out
 }
 
-func generationPayload(row assistantGenerationRow) assistantGenerationPayload {
-	var payload assistantGenerationPayload
-	_ = json.Unmarshal(row.Payload, &payload)
-	return payload
-}
-
-func nativeApprovalGenerationActive(row assistantGenerationRow) bool {
-	return row.Status == "running" && !row.CancelRequested && time.Since(row.UpdatedAt) <= 45*time.Second
+// nativeApprovalGenerationActive measures the heartbeat on the same clock that
+// stamped it (see heartbeatNow).
+func (r *AssistantRepo) nativeApprovalGenerationActive(db *gorm.DB, row assistantGenerationRow) bool {
+	return row.Status == "running" && !row.CancelRequested && !r.heartbeatLate(db, row.UpdatedAt)
 }
 
 func (r *AssistantRepo) updateNativeApprovals(owner int64, session, generation string, requireLive bool, update func(*assistantGenerationPayload) error) error {
@@ -50,7 +39,7 @@ func (r *AssistantRepo) updateNativeApprovals(owner int64, session, generation s
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("session_id = ? AND user_id = ? AND generation_id = ?", session, owner, generation).Take(&row).Error; err != nil {
 			return fmt.Errorf("本轮已结束，审批已失效")
 		}
-		if requireLive && !nativeApprovalGenerationActive(row) {
+		if requireLive && !r.nativeApprovalGenerationActive(tx, row) {
 			return fmt.Errorf("本轮已结束，审批已失效")
 		}
 		payload := generationPayload(row)
@@ -80,6 +69,9 @@ func (r *AssistantRepo) CreateNativeApproval(owner int64, session, phase string,
 			return nil // A transport retry is still the same invocation.
 		}
 		item.Decision = "pending"
+		if item.CreatedAt.IsZero() {
+			item.CreatedAt = time.Now().UTC()
+		}
 		payload.NativeApprovals = append(payload.NativeApprovals, assistantNativeApprovalState{AssistantNativeApproval: item, Phase: phase, InputDigest: inputDigest})
 		return nil
 	})
@@ -87,7 +79,7 @@ func (r *AssistantRepo) CreateNativeApproval(owner int64, session, phase string,
 
 func (r *AssistantRepo) NativeApproval(owner int64, session, id string) (domain.AssistantNativeApproval, bool) {
 	var row assistantGenerationRow
-	if err := r.DB.Where("session_id = ? AND user_id = ?", session, owner).Take(&row).Error; err != nil || !nativeApprovalGenerationActive(row) {
+	if err := r.DB.Where("session_id = ? AND user_id = ?", session, owner).Take(&row).Error; err != nil || !r.nativeApprovalGenerationActive(r.DB, row) {
 		return domain.AssistantNativeApproval{}, false
 	}
 	for _, item := range generationPayload(row).NativeApprovals {
@@ -101,7 +93,7 @@ func (r *AssistantRepo) NativeApproval(owner int64, session, id string) (domain.
 func (r *AssistantRepo) PendingNativeApprovals(owner int64, session string) []domain.AssistantNativeApproval {
 	out := []domain.AssistantNativeApproval{}
 	var row assistantGenerationRow
-	if err := r.DB.Where("session_id = ? AND user_id = ?", session, owner).Take(&row).Error; err != nil || !nativeApprovalGenerationActive(row) {
+	if err := r.DB.Where("session_id = ? AND user_id = ?", session, owner).Take(&row).Error; err != nil || !r.nativeApprovalGenerationActive(r.DB, row) {
 		return out
 	}
 	for _, item := range generationPayload(row).NativeApprovals {
@@ -136,6 +128,17 @@ func (r *AssistantRepo) DecideNativeApproval(owner, actor int64, session, id, de
 			return nil
 		}
 		return fmt.Errorf("审批已失效或不属于当前发起人")
+	})
+}
+
+// ReleaseNativeApproval removes the card for a single finished or cancelled
+// gateway call. Other calls waiting in the same phase retain their approvals.
+func (r *AssistantRepo) ReleaseNativeApproval(owner int64, session, generation, phase, id string) error {
+	return r.updateNativeApprovals(owner, session, generation, false, func(payload *assistantGenerationPayload) error {
+		payload.NativeApprovals = slices.DeleteFunc(payload.NativeApprovals, func(item assistantNativeApprovalState) bool {
+			return item.Phase == phase && item.ID == id
+		})
+		return nil
 	})
 }
 

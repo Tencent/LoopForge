@@ -114,13 +114,18 @@ func EnsureSandboxBrowser(ctx context.Context, sb Sandbox, workspace, runID stri
 }
 
 func unwrapSandbox(sb Sandbox) Sandbox {
-	for {
-		managed, ok := sb.(*managedSandbox)
-		if !ok || managed == nil {
+	for sb != nil {
+		unwrapper, ok := sb.(interface{ Unwrap() Sandbox })
+		if !ok || unwrapper == nil {
 			return sb
 		}
-		sb = managed.Sandbox
+		next := unwrapper.Unwrap()
+		if next == sb {
+			return sb
+		}
+		sb = next
 	}
+	return nil
 }
 
 func browserUsageHint(servers []domain.MCPServerDefinition) string {
