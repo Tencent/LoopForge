@@ -758,11 +758,17 @@ installed_macos_runner_binary_pattern() {
   saved_runner_binary_pattern
 }
 
-configure_macos_docker_runner_helper() {
-  local pattern="${AGENTFLOW_RUNNER_BINARY-$1}"
+trim_runner_binary_pattern() {
+  local pattern="$1"
   # Keep the template expansion in sync with runtime.DockerRunnerHelperPath.
   pattern="${pattern#"${pattern%%[![:space:]]*}"}"
   pattern="${pattern%"${pattern##*[![:space:]]}"}"
+  printf '%s\n' "$pattern"
+}
+
+configure_macos_docker_runner_helper() {
+  local pattern
+  pattern=$(trim_runner_binary_pattern "${AGENTFLOW_RUNNER_BINARY-$1}")
   if [[ "$pattern" == *"{os}"* ]]; then
     if [[ "${#runner_arches[@]}" -gt 1 && "$pattern" != *"{arch}"* ]]; then
       fail "通用 macOS Runner 需要为每种架构安装 Linux Git/MCP helper，请在 AGENTFLOW_RUNNER_BINARY 中添加 {arch}"
@@ -827,15 +833,17 @@ if [[ "$OS" == "darwin" ]]; then
   require_replacement_helper=0
   if [[ "$UPGRADE" == "1" ]]; then
     previous_pattern=$(installed_macos_runner_binary_pattern)
+    previous_pattern=$(trim_runner_binary_pattern "$previous_pattern")
     read -r -a previous_arches <<< "$(macos_runner_arches "$BINARY")"
-    previous_arch="${previous_arches[0]}"
-    if [[ "$previous_arch" != "$required_arch" ]]; then
+    # The old universal binary may be running its Intel slice under Rosetta.
+    for previous_arch in "${previous_arches[@]}"; do
       previous_helper=$(macos_docker_runner_helper_path "$previous_arch" "$previous_pattern")
       if [[ ! "$previous_helper" -ef "$BINARY" ]] &&
          is_usable_docker_runner_helper "$previous_helper" "$previous_arch"; then
         require_replacement_helper=1
+        break
       fi
-    fi
+    done
   fi
   configure_macos_docker_runner_helper "$previous_pattern"
   check_macos_helper_paths
@@ -883,7 +891,7 @@ if [[ "$OS" == "darwin" ]]; then
     install_docker_runner_binary
     if [[ "$ARCH" == "$required_arch" && "$require_replacement_helper" == "1" ]] &&
        ! is_usable_docker_runner_helper "$DOCKER_RUNNER_BINARY"; then
-      fail "缺少切换架构所需的 Linux/${ARCH} Git/MCP helper，已保留当前 Runner 和服务：${DOCKER_RUNNER_BINARY}"
+      fail "缺少升级所需的 Linux/${ARCH} Git/MCP helper（${DOCKER_RUNNER_BINARY}），已保留当前 Runner 和服务"
     fi
   done
 else
