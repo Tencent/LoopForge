@@ -212,3 +212,58 @@ test('dingtalk bot requires a CorpId and shows automatic enterprise confirmation
   assert.match(host().textContent, /自动确认/);
   assert.equal(host().querySelector('#botTenantConfirm'), null, 'no manual confirm for DingTalk');
 });
+
+test('dingtalk notification recipient is saved after a trial and pending deliveries need a choice', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  const bot = {
+    id: 'bot-dt', projectId: 'project-1', ownerId: 'user-1', name: 'DingTalk Bot', channel: 'dingtalk',
+    botId: 'ding-app', model: 'glm-5.3-flash-ioa', enabled: true, interactionEnabled: false, writeApproval: 'readonly',
+    secretConfigured: true, health: 'ready', configVersion: 4, tenantState: 'locked', tenantKey: 'ding-corp', tenantExpected: 'ding-corp',
+    target: { id: 'staff-old', name: '旧成员 · st***ld', type: 'single', verifiedAt: '2026-11-19T02:00:00Z' },
+  };
+  const member = { id: 'staff-1', name: '成员（member） · st***-1', type: 'single' };
+  app.router.get('/api/notification-bots/bot-dt/tenant', { tenantState: 'locked', configVersion: 4, queried: {} });
+  app.router.get('/api/notification-bots/bot-dt/sessions', { sessions: [member], total: 1 });
+  app.router.get('/api/notification-deliveries', [
+    { id: 'd-unknown', botId: 'bot-dt', status: 'send_unknown', eventType: 'failed', targetName: '旧成员', createdAt: '2026-11-19T02:00:00Z', lastError: '钉钉返回服务端错误，送达结果未知' },
+  ]);
+  let puts = 0;
+  app.router.put('/api/notification-bots/bot-dt', (call) => {
+    puts++;
+    if (!call.body.pendingTargetAction) return { status: 409, body: { error: '原接收人还有 2 条待发通知，请选择取消或改发到新接收人', code: 'pending_deliveries', pending: 2 } };
+    return { ...bot, configVersion: 5, target: { ...member, verifiedAt: '2026-11-19T03:00:00Z' } };
+  });
+  app.router.post('/api/notification-deliveries/d-unknown/confirm', {});
+  app.evaluate(`afConfirm=()=>Promise.resolve(true);botUI.projectId=state.projectFilter;botUI.items=[${JSON.stringify(bot)}];botUI.loading=false;renderBots();botOpenEditor(botUI.items[0])`);
+  await settle(4);
+  app.evaluate(`botGoStep(3)`);
+  await settle(4);
+  const host = () => app.document.querySelector('#botsContent');
+  assert.match(host().textContent, /通知接收人/);
+  assert.match(host().textContent, /试发成功/);
+  host().querySelector('#botRefreshSessions').click();
+  await settle(6);
+  const radio = host().querySelector('input[name="targetId"][value="staff-1"]');
+  assert.ok(radio, 'bound member listed');
+  radio.checked = true;
+  radio.dispatchEvent(new app.window.Event('change', { bubbles: true }));
+  await settle(2);
+  host().querySelector('#botSaveTarget').click();
+  await settle(10);
+  const calls = app.router.calls.filter(c => c.method === 'PUT' && c.path === '/api/notification-bots/bot-dt');
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0].body.targetId, 'staff-1');
+  assert.equal(calls[0].body.pendingTargetAction, '');
+  assert.equal(calls[1].body.pendingTargetAction, 'migrate');
+  assert.equal(app.evaluate(`botUI.selected.target.id`), 'staff-1');
+  assert.match(host().textContent, /试发消息已发送到/);
+  // Records: an unknown delivery can be confirmed as received.
+  app.evaluate(`botUI.tab='records';botUI.recordsTab='deliveries';botUI.deliveries=[{id:'d-unknown',botId:'bot-dt',status:'send_unknown',eventType:'failed',targetName:'旧成员',createdAt:'2026-11-19T02:00:00Z'}];renderBots()`);
+  await settle(4);
+  assert.ok(host().querySelector('[data-delivery-retry="d-unknown"]'), 'resend offered');
+  host().querySelector('[data-delivery-confirm="d-unknown"]').click();
+  await settle(6);
+  assert.ok(app.router.calls.find(c => c.method === 'POST' && c.path === '/api/notification-deliveries/d-unknown/confirm'));
+  assert.equal(puts, 2);
+});

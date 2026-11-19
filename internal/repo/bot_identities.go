@@ -204,7 +204,7 @@ func (r *UsersRepo) ConfirmBotUserBinding(bot domain.NotificationBot, sender, co
 			}
 			return tx.Model(&challenge).Updates(updates).Error
 		}
-		if err = tx.Model(&binding).Updates(map[string]any{"user_id": challenge.UserID, "config_id": bot.ID, "channel": bot.ChannelKind(), "guide_count": 0, "updated_at": now}).Error; err != nil {
+		if err = tx.Model(&binding).Updates(map[string]any{"user_id": challenge.UserID, "config_id": bot.ID, "channel": bot.ChannelKind(), "guide_count": 0, "target_verified_at": nil, "updated_at": now}).Error; err != nil {
 			return err
 		}
 		binding.UserID, binding.ConfigID, binding.Channel = challenge.UserID, bot.ID, bot.ChannelKind()
@@ -230,7 +230,7 @@ func (r *UsersRepo) RevokeBotUserBinding(id string, userID int64, now time.Time)
 		if row.UserID != userID || userID <= 0 {
 			return gorm.ErrRecordNotFound
 		}
-		if err = tx.Model(&row).Updates(map[string]any{"user_id": 0, "updated_at": now}).Error; err != nil {
+		if err = tx.Model(&row).Updates(map[string]any{"user_id": 0, "target_verified_at": nil, "updated_at": now}).Error; err != nil {
 			return err
 		}
 		return tx.Model(&domain.BotBindingChallenge{}).Where("binding_id = ?", id).Updates(map[string]any{"status": "expired", "code_hash": ""}).Error
@@ -277,7 +277,7 @@ func (r *UsersRepo) revokeBotConfigIdentities(tx *gorm.DB, bot domain.Notificati
 	if len(ids) == 0 {
 		return nil
 	}
-	if err := tx.Model(&domain.BotUserBinding{}).Where("id IN ?", ids).Updates(map[string]any{"user_id": 0, "updated_at": time.Now().UTC()}).Error; err != nil {
+	if err := tx.Model(&domain.BotUserBinding{}).Where("id IN ?", ids).Updates(map[string]any{"user_id": 0, "target_verified_at": nil, "updated_at": time.Now().UTC()}).Error; err != nil {
 		return err
 	}
 	return tx.Model(&domain.BotBindingChallenge{}).Where("binding_id IN ?", ids).Updates(map[string]any{"status": "expired", "code_hash": ""}).Error

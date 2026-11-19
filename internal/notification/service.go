@@ -29,9 +29,10 @@ func New(s *repo.Store) *Service {
 	provider := NewCLIProvider()
 	svc := &Service{Store: s, Provider: provider, PublicURL: base, Interactions: botinteraction.New(s)}
 	// The WeCom channel verifies credentials through the signed bootstrap and
-	// pushes through the current Provider (replaceable in tests). Notification
-	// delivery keeps calling Provider directly until stage G routes it through
-	// the channel PushSender.
+	// pushes through the current Provider (replaceable in tests). WeCom
+	// notification delivery keeps calling Provider directly (cards and the
+	// chat list come from wecom-cli); Feishu and DingTalk deliveries go
+	// through the channel PushSender (push.go).
 	svc.Interactions.ConfigureWeCom(provider.Verify, func(ctx context.Context, botID, secret, target, content string) botinteraction.SendResult {
 		return classifyProviderSend(svc.Provider.Send(ctx, botID, secret, target, content))
 	})
@@ -61,7 +62,20 @@ func (s *Service) secret(bot domain.NotificationBot) (string, error) {
 	}
 	return secret, nil
 }
+func randomToken() string {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		panic(err)
+	}
+	return hex.EncodeToString(b)
+}
+
+// Sessions lists selectable notification targets: the wecom-cli chat list,
+// or the bound private-chat senders of a Feishu/DingTalk configuration.
 func (s *Service) Sessions(ctx context.Context, bot domain.NotificationBot) ([]domain.BotChat, error) {
+	if pushChannel(bot) {
+		return s.pushTargets(bot)
+	}
 	secret, err := s.secret(bot)
 	if err != nil {
 		return nil, err
@@ -198,10 +212,6 @@ func (s *Service) ProcessOne(ctx context.Context) (bool, error) {
 	if !bot.Enabled {
 		return finish("cancelled", "机器人已停用")
 	}
-	if bot.ChannelKind() != domain.BotChannelWeCom {
-		// Proactive sends of other channels arrive with stage G.
-		return finish("cancelled", "该渠道的主动通知尚未开放")
-	}
 	if bot.ProjectID != item.ProjectID {
 		return finish("cancelled", "通知项目不匹配")
 	}
@@ -253,7 +263,7 @@ func (s *Service) ProcessOne(ctx context.Context) (bool, error) {
 	if item.ContentSource == "" {
 		content = strings.ReplaceAll(content, "{{url}}", link)
 	}
-	err = s.send(ctx, bot, item.TargetID, content, func() error {
+	beforeSend := func() error {
 		if item.EventType != "waiting" || item.WaitingPolicy == "event" {
 			return nil
 		}
@@ -265,7 +275,11 @@ func (s *Service) ProcessOne(ctx context.Context) (bool, error) {
 			return errNotificationExpired
 		}
 		return nil
-	}, *item)
+	}
+	if pushChannel(bot) {
+		return s.processPush(ctx, item, bot, content, beforeSend)
+	}
+	err = s.send(ctx, bot, item.TargetID, content, beforeSend, *item)
 	if errors.Is(err, errNotificationExpired) || errors.Is(err, botinteraction.ErrCardExpired) {
 		return finish("expired", err.Error())
 	}

@@ -20,6 +20,9 @@ type BotUserBinding struct {
 	GuideCount       int        `json:"-" gorm:"not null;default:0"`
 	LastLinkAt       *time.Time `json:"-"`
 	SenderID         string     `json:"senderId" gorm:"size:191"`
+	// TargetVerifiedAt records a successful trial proactive send to this
+	// sender (Feishu/DingTalk notification target). Cleared on revocation.
+	TargetVerifiedAt *time.Time `json:"targetVerifiedAt,omitempty"`
 	UserID           int64      `json:"userId" gorm:"index"`
 	CreatedAt        time.Time  `json:"createdAt"`
 	UpdatedAt        time.Time  `json:"updatedAt"`

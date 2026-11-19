@@ -13,6 +13,9 @@ type BotChat struct {
 	Name            string `json:"name"`
 	Type            string `json:"type"`
 	LastMessageTime string `json:"lastMessageTime,omitempty"`
+	// VerifiedAt is set for Feishu/DingTalk targets after a trial
+	// proactive send succeeded (target_verified_at of the bound sender).
+	VerifiedAt *time.Time `json:"verifiedAt,omitempty"`
 }
 type NotificationBot struct {
 	ID        string `json:"id"`
@@ -196,6 +199,18 @@ type NotificationDelivery struct {
 	LastError     string     `json:"lastError,omitempty" gorm:"size:255"`
 	CreatedAt     time.Time  `json:"createdAt"`
 	SentAt        *time.Time `json:"sentAt,omitempty"`
+
+	// Proactive sends of Feishu and DingTalk (stage G). SendKey is the
+	// persisted idempotency key of the current generation (Feishu uuid);
+	// SendStartedAtUS is the database time the first attempt of this
+	// generation started, 0 while nothing may have been sent.
+	SendKey            string     `json:"-" gorm:"size:64"`
+	DeliveryGeneration int        `json:"deliveryGeneration,omitempty" gorm:"not null;default:0"`
+	SendStartedAtUS    int64      `json:"-" gorm:"not null;default:0"`
+	PlatformMessageID  string     `json:"-" gorm:"size:191"`
+	ConfirmedBy        int64      `json:"confirmedBy,omitempty"`
+	ConfirmedAt        *time.Time `json:"confirmedAt,omitempty"`
+	ReceiptSource      string     `json:"receiptSource,omitempty" gorm:"size:16"`
 }
 
 func (NotificationDelivery) TableName() string { return "notification_deliveries" }

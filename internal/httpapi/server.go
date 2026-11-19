@@ -233,6 +233,7 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.POST("/api/notification-preview", api.notifications.preview)
 	g.GET("/api/notification-deliveries", api.notifications.deliveries)
 	g.POST("/api/notification-deliveries/:deliveryId/retry", api.notifications.retry)
+	g.POST("/api/notification-deliveries/:deliveryId/confirm", api.notifications.retry)
 
 	// --- auth & users ---
 	g.GET("/api/health", api.health)

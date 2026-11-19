@@ -21,9 +21,10 @@ function bindBotModelPicker(host){
 }
 // Project-scoped enterprise chat notifications.
 const botUI={projectId:'',items:[],deliveries:[],selected:null,sessions:[],query:'',loading:false,error:'',busy:false,busyAction:'',revision:0,tab:'list',step:1,recordsTab:'deliveries',interactionBotId:'',interaction:null,interactionLoading:false,interactionError:'',testResult:'',flashId:'',motion:null,animations:[],shownCount:null,shownError:'',watchTimer:0,watchCount:0,deletingId:''};
-const BOT_TABS=['list','edit','records'],BOT_STEPS=[[1,'填写凭据'],[2,'选择接收会话'],[3,'发送测试']],BOT_TENANT_STEPS=[[1,'填写凭据'],[2,'企业确认']],BOT_DEFAULT_MODEL='glm-5.3-flash-ioa';
+const BOT_TABS=['list','edit','records'],BOT_STEPS=[[1,'填写凭据'],[2,'选择接收会话'],[3,'发送测试']],BOT_TENANT_STEPS=[[1,'填写凭据'],[2,'企业确认'],[3,'通知接收人']],BOT_DEFAULT_MODEL='glm-5.3-flash-ioa';
 // Channels: WeCom keeps the three-step notification setup; Feishu replaces
-// target selection with enterprise confirmation; DingTalk is not open yet.
+// target selection with enterprise confirmation followed by a bound member
+// who passed a trial proactive send.
 const BOT_CHANNELS={wecom:{name:'企业微信',app:'Bot ID',secret:'Secret',appHint:'企业微信智能机器人 Bot ID',ready:true},feishu:{name:'飞书',app:'App ID',secret:'App Secret',appHint:'飞书企业自建应用 App ID（cli_ 开头）',ready:true},dingtalk:{name:'钉钉',app:'Client ID',secret:'Client Secret',appHint:'钉钉企业内部应用 Client ID（AppKey）',ready:true}};
 const BOT_TENANT={awaiting_confirmation:['企业待确认','warn'],locked:['企业已确认','success'],conflict:['企业冲突','error']};
 function botChannel(bot){return BOT_CHANNELS[bot?.channel]?bot.channel:'wecom'}
@@ -45,8 +46,8 @@ function canManageBot(bot){
  const user=Number(state.currentUser.id),project=currentProject();
  return Number(bot?.ownerId)===user||Number(project?.ownerId)===user||(project?.members||[]).some(m=>Number(m.userId)===user&&m.role==='maintainer');
 }
-function botStepAllowed(bot,step){if(botChannel(bot)!=='wecom')return step===1||(step===2&&!!bot?.id);return step===1||(step===2&&!!bot?.id)||(step===3&&!!bot?.id&&!!bot?.target&&!bot._targetChanged)}
-function botStepDone(bot,step){if(botChannel(bot)!=='wecom')return step===1?!!bot?.id:step===2&&bot?.tenantState==='locked';return step===1?!!bot?.id:step===2?botStepAllowed(bot,3):false}
+function botStepAllowed(bot,step){if(botChannel(bot)!=='wecom')return step===1||(step===2&&!!bot?.id)||(step===3&&!!bot?.id&&bot?.tenantState==='locked');return step===1||(step===2&&!!bot?.id)||(step===3&&!!bot?.id&&!!bot?.target&&!bot._targetChanged)}
+function botStepDone(bot,step){if(botChannel(bot)!=='wecom')return step===1?!!bot?.id:step===2?bot?.tenantState==='locked':step===3&&!!bot?.target?.verifiedAt&&!bot._targetChanged;return step===1?!!bot?.id:step===2?botStepAllowed(bot,3):false}
 function botStoredBot(bot){return bot?.id?botUI.items.find(b=>b.id===bot.id):null}
 function botCredentialsDirty(bot){const stored=botStoredBot(bot);if(!stored)return !!bot;return !!bot._secret||(bot.name||'')!==(stored.name||'')||(bot.botId||'')!==(stored.botId||'')||(bot.model||BOT_DEFAULT_MODEL)!==(stored.model||BOT_DEFAULT_MODEL)||!!bot.enabled!==!!stored.enabled||!!bot.interactionEnabled!==!!stored.interactionEnabled||botWriteApproval(bot)!==botWriteApproval(stored)||(bot._tenantKey!==undefined&&bot._tenantKey.trim()!==(stored.tenantExpected||''))}
 // Legacy WeCom records without the field keep automatic execution.
@@ -87,7 +88,7 @@ function botPanelHeadHTML(){
 function botTargetHTML(target){return target?`<span class="bot-target"><span class="bot-chip">${botTypeLabel(target.type)}</span><span class="bot-target-name">${escapeHTML(target.name)}</span></span>`:'<span class="bot-target is-empty">尚未选择接收会话</span>'}
 function botRowHTML(bot){
  const id=escapeHTML(bot.id),name=escapeHTML(bot.name),manage=canManageBot(bot),wecom=botChannel(bot)==='wecom';
- const target=wecom?botTargetHTML(bot.target):`<span class="bot-target">${botTenantBadge(bot.tenantState)}</span>`;
+ const target=wecom||bot.target?botTargetHTML(bot.target):`<span class="bot-target">${botTenantBadge(bot.tenantState)}</span>`;
  const sub=escapeHTML((wecom?'':botChannelInfo(bot).name+' · ')+(bot.model||BOT_DEFAULT_MODEL))+(bot.interactionEnabled?(botWriteApproval(bot)==='readonly'?' · 已启用对话（只读）':' · 已启用对话'):'');
  return `<tr data-bot-row="${id}"><td><div class="bot-row-main"><span class="bot-glyph">${botIcon('robot')}</span><span class="bot-row-text"><b class="bot-row-name">${name}</b><small class="bot-row-sub">${sub}</small><small class="bot-row-target">${target}</small></span></div></td><td class="bot-col-target">${target}</td><td>${botEnabledBadge(bot.enabled)}</td><td class="bot-col-sub">${botHealthBadge(bot.health)}</td><td class="bot-col-actions"><div class="bot-row-actions"><button type="button" class="hui-icon-btn" data-bot-edit="${id}" aria-label="编辑 ${name}" title="编辑">${botIcon('edit')}</button>${manage?`<button type="button" class="hui-icon-btn is-danger" data-bot-delete="${id}" aria-label="删除 ${name}" title="删除">${botIcon('trash')}</button>`:''}</div></td></tr>`;
 }
@@ -107,7 +108,8 @@ function botStepsHTML(bot,step){
 function botEditTabHTML(bot){
  if(!bot)return botListHTML(botUI.items);
  const manage=!bot.id||canManageBot(bot),step=botUI.step;
- const pane=step===2?(botChannel(bot)==='wecom'?botTargetPaneHTML(bot,manage):botTenantPaneHTML(bot,manage)):step===3?botTestPaneHTML(bot,manage):botCredentialPaneHTML(bot,manage);
+ const wecom=botChannel(bot)==='wecom';
+ const pane=step===2?(wecom?botTargetPaneHTML(bot,manage):botTenantPaneHTML(bot,manage)):step===3?(wecom?botTestPaneHTML(bot,manage):botPushTargetPaneHTML(bot,manage)):botCredentialPaneHTML(bot,manage);
  return `<div class="bot-editor">${botStepsHTML(bot,step)}<div class="bot-step-fold"><div class="bot-step-pane" data-bot-pane="${step}">${pane}</div></div>${!manage?'<p class="muted bot-hint">仅创建者或项目管理员可修改凭据和接收目标。</p>':''}</div>`;
 }
 function botChannelFieldHTML(bot){
@@ -138,7 +140,7 @@ function botTenantPaneHTML(bot,manage){
  const queried=info?.queried?`${escapeHTML(info.queried.tenantName||'未返回名称')} · ${escapeHTML(info.queried.tenantKey||'未返回企业标识')}`:info?.queryError?`<span class="bot-record-error">${escapeHTML(info.queryError)}</span>`:'<span class="muted">读取中…</span>';
  const match=candidate&&info?.queried?.tenantKey?(candidate.tenantKey===info.queried.tenantKey?'<span class="bot-chip">与平台查询一致</span>':'<span class="bot-record-error">与平台查询不一致，请核实</span>'):'';
  let body;
- if(state==='locked')body=`<p>已确认企业：<b>${escapeHTML(bot.tenantName||'')}</b> <code>${escapeHTML(bot.tenantKey||'')}</code></p><p class="muted bot-hint">只接收该企业的消息。更换应用或企业请新建配置。</p>`;
+ if(state==='locked')body=`<p>已确认企业：<b>${escapeHTML(bot.tenantName||'')}</b> <code>${escapeHTML(bot.tenantKey||'')}</code></p><p class="muted bot-hint">只接收该企业的消息。更换应用或企业请新建配置。</p><div class="bot-save-row"><button type="button" class="button primary" data-bot-step="3" ${botUI.busy?'disabled':''}>下一步：通知接收人</button></div>`;
  else if(state==='conflict')body=`<p class="bot-record-error">收到了两个不同企业的消息：<code>${escapeHTML(candidate?.tenantKey||'')}</code> 与 <code>${escapeHTML(candidate?.conflict||'')}</code>。请核实应用发布范围后重新发现。</p><div class="bot-save-row"><button type="button" class="button ghost" id="botTenantRediscover" ${manage&&!botUI.busy?'':'disabled'}>${botBusyLabel('tenant','refresh','重新发现','处理中…')}</button></div>`;
  else if(!candidate)body='<p>等待第一条消息。请让测试成员在飞书中给机器人发送一条单聊消息，收到后这里会显示候选企业。</p><p class="muted bot-hint">确认前机器人只回复“正在完成企业确认”的提示，不会处理业务。</p>';
  else body=`<p>候选企业标识：<code>${escapeHTML(candidate.tenantKey)}</code> ${match}</p><p class="muted bot-hint">来自 ${escapeHTML(new Date(candidate.receivedAt).toLocaleString())} 收到的消息。确认后只接收该企业的消息。</p><div class="bot-save-row"><button type="button" class="button primary" id="botTenantConfirm" ${manage&&!botUI.busy?'':'disabled'}>${botBusyLabel('tenant','check','确认企业','确认中…')}</button><button type="button" class="button ghost" id="botTenantRediscover" ${manage&&!botUI.busy?'':'disabled'}>重新发现</button></div>`;
@@ -147,7 +149,7 @@ function botTenantPaneHTML(bot,manage){
 function botDingTalkTenantPaneHTML(bot,manage){
  const state=bot.tenantState||'awaiting_confirmation',candidate=bot.tenantCandidate;
  let body;
- if(state==='locked')body=`<p>已确认企业 <code>${escapeHTML(bot.tenantKey||'')}</code>，只接收该企业的消息。</p><p class="muted bot-hint">更换应用或企业请新建配置。</p>`;
+ if(state==='locked')body=`<p>已确认企业 <code>${escapeHTML(bot.tenantKey||'')}</code>，只接收该企业的消息。</p><p class="muted bot-hint">更换应用或企业请新建配置。</p><div class="bot-save-row"><button type="button" class="button primary" data-bot-step="3" ${botUI.busy?'disabled':''}>下一步：通知接收人</button></div>`;
  else if(state==='conflict')body=`<p class="bot-record-error">收到的消息来自企业 <code>${escapeHTML(candidate?.conflict||'')}</code>，与填写的 CorpId <code>${escapeHTML(bot.tenantExpected||'')}</code> 不一致，已停止处理。</p><p class="muted bot-hint">核实后在第①步改正 CorpId 并保存，或点“重新发现”重新检查下一条消息。</p><div class="bot-save-row"><button type="button" class="button ghost" id="botTenantRediscover" ${manage&&!botUI.busy?'':'disabled'}>${botBusyLabel('tenant','refresh','重新发现','处理中…')}</button></div>`;
  else body=`<p>等待第一条消息。请让测试成员在钉钉中给机器人发一条单聊消息；企业与 <code>${escapeHTML(bot.tenantExpected||'')}</code> 一致时自动确认，这条消息也会正常处理。</p>`;
  return `<div class="bot-summary"><span class="muted">状态</span><span>${botTenantBadge(state)}</span><span class="muted">填写的 CorpId</span><span><code>${escapeHTML(bot.tenantExpected||'')}</code></span></div>${body}<div class="bot-save-row"><button type="button" class="hui-icon-btn" id="botTenantRefresh" title="刷新" aria-label="刷新企业信息">${botIcon('refresh')}</button><button type="button" class="button ghost" data-bot-back ${botUI.busy?'disabled':''}>返回列表</button></div>`;
@@ -156,6 +158,14 @@ function botTargetPaneHTML(bot,manage){
  const changed=!!bot._targetChanged;
  return `<fieldset ${!manage||botUI.busy?'disabled':''}><div class="bot-bar"><b>接收会话</b><button type="button" class="button ghost small" id="botRefreshSessions" ${bot.id?'':'disabled'}>${botBusyLabel('sessions','refresh','刷新可发送列表','刷新中…')}</button></div><p class="muted bot-hint">只展示机器人当前可通知的最近会话。找不到目标时，请先在企业微信与 Bot 互动，再刷新。</p><div class="bot-current">${bot.target?`当前目标：<span class="bot-chip">${botTypeLabel(bot.target.type)}</span> ${escapeHTML(bot.target.name)}<button type="button" class="button ghost small" id="botClearTarget">清除目标</button>`:'尚未绑定接收会话'}</div><input class="input" id="botSessionSearch" type="search" placeholder="搜索已获取的联系人或群名" value="${escapeHTML(botUI.query)}"><div id="botSessionList" class="bot-sessions">${botSessionHTML()}</div><div class="bot-save-row"><button type="button" class="button primary" id="botSaveTarget" ${changed||bot.target?'':'disabled'}>${changed?botBusyLabel('target','','保存接收会话','保存中…'):'下一步'}</button></div></fieldset>`;
 }
+// Feishu/DingTalk notifications go to a member who bound a platform account
+// in a private chat with this Bot; saving sends a trial message first.
+function botPushTargetPaneHTML(bot,manage){
+ const changed=!!bot._targetChanged,verified=!!bot.target?.verifiedAt&&!changed,name=botChannelInfo(bot).name;
+ const current=bot.target?`当前接收人：${escapeHTML(bot.target.name)} ${verified?'<span class="bot-chip">试发成功</span>':'<span class="bot-record-error">未验证或已解绑，请重新试发</span>'}<button type="button" class="button ghost small" id="botClearTarget">清除</button>`:'尚未选择通知接收人';
+ const result=botUI.testResult?`<div class="bot-result-fold"><div class="bot-result" role="status">${botIcon('check-draw')}<span>试发消息已发送到 ${escapeHTML(botUI.testResult)}，可在「记录 → 发送记录」查看。</span></div></div>`:'';
+ return `<fieldset ${!manage||botUI.busy?'disabled':''}><div class="bot-bar"><b>通知接收人</b><button type="button" class="button ghost small" id="botRefreshSessions" ${bot.id?'':'disabled'}>${botBusyLabel('sessions','refresh','刷新成员列表','刷新中…')}</button></div><p class="muted bot-hint">只列出在${escapeHTML(name)}中与本 Bot 单聊并完成账号绑定的成员。保存时先向该成员发送一条试发消息，平台确认送达后才会保存；SOP 的完成、失败和待处理通知会以单聊发送给他。关闭“启用对话”后通知仍可发送。</p><div class="bot-current">${current}</div><input class="input" id="botSessionSearch" type="search" placeholder="搜索成员" value="${escapeHTML(botUI.query)}"><div id="botSessionList" class="bot-sessions">${botSessionHTML()}</div>${result}<div class="bot-save-row"><button type="button" class="button primary" id="botSaveTarget" ${changed?'':'disabled'}>${bot.target?botBusyLabel('target','send','试发并保存','试发中…'):botBusyLabel('target','','保存','保存中…')}</button><button type="button" class="button ghost" id="botSendTest" ${verified&&bot.enabled&&!botUI.busy?'':'disabled'}>${botBusyLabel('test','send','重新试发','发送中…')}</button><button type="button" class="button ghost" data-bot-back ${botUI.busy?'disabled':''}>返回列表</button></div></fieldset>`;
+}
 function botTestPaneHTML(bot,manage){
  const ready=!!(bot.enabled&&bot.target);
  const result=botUI.testResult?`<div class="bot-result-fold"><div class="bot-result" role="status">${botIcon('check-draw')}<span>测试通知已发送到 ${escapeHTML(botUI.testResult)}，可在「记录 → 发送记录」查看。</span></div></div>`:'';
@@ -163,9 +173,9 @@ function botTestPaneHTML(bot,manage){
 }
 function botSessionHTML(){
  const chats=filteredBotSessions(botUI.sessions,botUI.query);
- if(!botUI.sessions.length)return '<p class="muted bot-empty">点击刷新获取可发送会话；列表为空时，先与 Bot 互动。</p>';
+ if(!botUI.sessions.length)return botChannel(botUI.selected)==='wecom'?'<p class="muted bot-empty">点击刷新获取可发送会话；列表为空时，先与 Bot 互动。</p>':'<p class="muted bot-empty">点击刷新获取成员；列表为空时，请成员先在单聊中向 Bot 发送“绑定账号”完成绑定。</p>';
  if(!chats.length)return '<p class="muted bot-empty">没有匹配的会话，尝试其他名称。</p>';
- return '<span class="bot-session-hl" aria-hidden="true"></span>'+chats.map(chat=>`<label class="bot-session"><input type="radio" name="targetId" value="${escapeHTML(chat.id)}" ${botUI.selected?.target?.id===chat.id?'checked':''}><span><b>${escapeHTML(chat.name||'未命名会话')}</b><small>${escapeHTML(chat.lastMessageTime||'')}</small></span><span class="bot-chip">${botTypeLabel(chat.type)}</span></label>`).join('');
+ return '<span class="bot-session-hl" aria-hidden="true"></span>'+chats.map(chat=>`<label class="bot-session"><input type="radio" name="targetId" value="${escapeHTML(chat.id)}" ${botUI.selected?.target?.id===chat.id?'checked':''}><span><b>${escapeHTML(chat.name||'未命名会话')}</b><small>${escapeHTML(chat.lastMessageTime||'')}</small></span><span class="bot-chip">${chat.verifiedAt?'已试发 · ':''}${botTypeLabel(chat.type)}</span></label>`).join('');
 }
 function botRecordTabsHTML(active){const item=(id,label)=>{const on=id==='interactions'?active==='interactions':active!=='interactions';return `<button type="button" role="tab" aria-selected="${on}" class="${on?'active':''}" data-bot-records="${id}">${label}</button>`};return `<div class="bot-record-tabs" role="tablist" aria-label="记录类型">${item('deliveries','发送记录')}${item('interactions','对话记录')}</div>`}
 function botRecordsHTML(){
@@ -173,7 +183,9 @@ function botRecordsHTML(){
  return `<div class="bot-subbar">${botRecordTabsHTML(botUI.recordsTab)}${deliveries?'<span class="bot-subbar-hint">保留最近 100 条</span>':''}</div><div class="bot-record-pane">${deliveries?botDeliveryHTML():botInteractionPanelHTML()}</div>`;
 }
 function botDeliveryExtraHTML(item){return `${item.reportModel?`<small class="bot-source-label">CodeBuddy · ${escapeHTML(item.reportModel)}</small>`:''}${item.reportError?`<small class="bot-record-error">${escapeHTML(item.reportError)}</small>`:''}${item.lastError?`<small class="bot-record-error">${escapeHTML(item.lastError)}</small>`:''}`}
-function botDeliveryActionHTML(item){const bot=botUI.items.find(b=>b.id===item.botId);return ['failed','awaiting_authorization','target_unavailable'].includes(item.status)&&item.contentSource!=='invalid'&&bot&&canManageBot(bot)?`<button type="button" class="button small hui-btn-soft" data-delivery-retry="${escapeHTML(item.id)}">${botIcon('refresh')}重试</button>`:''}
+// send_unknown: the administrator checks the chat, then confirms receipt or
+// sends again (a new generation and key).
+function botDeliveryActionHTML(item){const bot=botUI.items.find(b=>b.id===item.botId);if(!bot||!canManageBot(bot)||item.contentSource==='invalid')return '';const id=escapeHTML(item.id);if(item.status==='send_unknown')return `<button type="button" class="button small hui-btn-soft" data-delivery-confirm="${id}">${botIcon('check')}确认已收到</button><button type="button" class="button small hui-btn-soft" data-delivery-retry="${id}">${botIcon('refresh')}再次发送</button>`;return ['failed','awaiting_authorization','target_unavailable'].includes(item.status)?`<button type="button" class="button small hui-btn-soft" data-delivery-retry="${id}">${botIcon('refresh')}重试</button>`:''}
 function botDeliveryHTML(){
  if(!botUI.deliveries.length)return '<p class="bot-empty">暂无发送记录。Agent 节点触发通知后，会在这里展示发送状态。</p>';
  return `<div class="bot-table-wrap"><table class="bot-table bot-record-table"><thead><tr><th>时间</th><th class="bot-col-sub">Bot</th><th class="bot-col-sub">接收会话</th><th>来源 / 触发条件</th><th>状态</th><th></th></tr></thead><tbody>${botUI.deliveries.map(item=>{const bot=botUI.items.find(b=>b.id===item.botId);return `<tr data-delivery-row="${escapeHTML(item.id)}"><td class="bot-nowrap bot-time">${escapeHTML(new Date(item.createdAt).toLocaleString())}</td><td class="bot-col-sub">${escapeHTML(bot?.name||'已删除的 Bot')}</td><td class="bot-col-sub">${escapeHTML(item.targetName)}</td><td>${escapeHTML(item.sourceName||'')}<small class="bot-source-label">${escapeHTML(({schedule_job:'定时任务',assistant_task:'AI 助手任务',run:'流程'})[item.sourceType]||'流程')} · ${escapeHTML(({succeeded:'完成',failed:'失败',waiting:'人工处理',test:'测试通知'})[item.eventType]||item.eventType)}</small>${item.contentSource&&item.contentSource!=='template'?`<small class="bot-source-label">${escapeHTML(({ai:'AI 内容',simulated_ai:'模拟 AI 内容',result_fallback:'执行结果回退',context_fallback:'状态摘要回退',invalid:'内容格式异常',fallback:'标准消息回退'})[item.contentSource]||item.contentSource)}</small>`:''}</td><td data-delivery-status>${botStatusBadge(item.status)}<span data-delivery-extra>${botDeliveryExtraHTML(item)}</span></td><td class="bot-nowrap" data-delivery-action>${botDeliveryActionHTML(item)}</td></tr>`}).join('')}</tbody></table></div>`;
@@ -439,13 +451,22 @@ function bindBotEditor(host){
   const stored=botStoredBot(bot),projectId=botUI.projectId,revision=botUI.revision;if(!stored)return;
   if(botCredentialsDirty(bot)){toast('请先保存凭据，再刷新并选择目标','warn');return}
   botUI.busy=true;botUI.busyAction='target';renderBots();
-  let saved=null;
+  let saved=null;const wecom=botChannel(stored)==='wecom';
+  const put=pendingTargetAction=>api(`/api/notification-bots/${encodeURIComponent(bot.id)}`,{method:'PUT',body:JSON.stringify({projectId,name:stored.name,channel:botChannel(stored),botId:stored.botId,enabled:stored.enabled,model:stored.model,interactionEnabled:stored.interactionEnabled,writeApproval:botWriteApproval(stored),secret:'',targetId:bot.target?.id||'',configVersion:stored.configVersion,pendingTargetAction})});
   try{
-   saved=await api(`/api/notification-bots/${encodeURIComponent(bot.id)}`,{method:'PUT',body:JSON.stringify({projectId,name:stored.name,channel:botChannel(stored),botId:stored.botId,enabled:stored.enabled,model:stored.model,interactionEnabled:stored.interactionEnabled,writeApproval:botWriteApproval(stored),secret:'',targetId:bot.target?.id||'',configVersion:stored.configVersion})});
+   try{saved=await put('')}
+   catch(e){
+    if(e.code!=='pending_deliveries')throw e;
+    // Queued notifications of the previous recipient need an explicit choice.
+    const action=await afConfirm({title:'原接收人还有待发通知',message:e.message+'。改发后这些通知会发给新接收人。',confirmText:'改发到新接收人',cancelText:'不改发'})?'migrate':await afConfirm({danger:true,title:'取消待发通知',message:'不改发时，原接收人的待发通知会被取消，并在发送记录中注明原因。',confirmText:'取消这些通知并切换',cancelText:'返回'})?'cancel':'';
+    if(!action)return;
+    saved=await put(action);
+   }
    if(revision!==botUI.revision||projectId!==state.projectFilter){saved=null;return}
-   botSaveSelected(saved);toast(saved.target?'接收会话已保存':'已清除接收会话','ok');
+   botSaveSelected(saved);toast(saved.target?(wecom?'接收会话已保存':`试发成功，已保存接收人 ${saved.target.name}`):(wecom?'已清除接收会话':'已清除接收人'),'ok');
+   if(!wecom&&saved.target)botUI.testResult=saved.target.name;
   }catch(e){if(revision===botUI.revision)botUI.error=e.message}
-  finally{botUI.busy=false;botUI.busyAction='';if(saved?.target&&botUI.tab==='edit'&&botUI.selected?.id===saved.id&&botGoStep(3,{render:false}))botMotion('check',2);renderBots()}
+  finally{botUI.busy=false;botUI.busyAction='';if(wecom&&saved?.target&&botUI.tab==='edit'&&botUI.selected?.id===saved.id&&botGoStep(3,{render:false}))botMotion('check',2);renderBots()}
  });
  host.querySelector('#botSendTest')?.addEventListener('click',async()=>{
   const bot=botUI.selected;if(botUI.busy||!bot?.id)return;
@@ -492,7 +513,15 @@ async function botDeleteRequest(bot,row,projectId,revision){
  if(botUI.interactionBotId===bot.id){botUI.interactionBotId='';botUI.interaction=null}
  renderBots();loadBots({silent:true});
 }
-function bindBotRetry(host){host.querySelectorAll('[data-delivery-retry]').forEach(el=>el.onclick=()=>botRetryDelivery(el.dataset.deliveryRetry,el))}
+function bindBotRetry(host){host.querySelectorAll('[data-delivery-retry]').forEach(el=>el.onclick=()=>botRetryDelivery(el.dataset.deliveryRetry,el));host.querySelectorAll('[data-delivery-confirm]').forEach(el=>el.onclick=()=>botConfirmDelivery(el.dataset.deliveryConfirm,el))}
+async function botConfirmDelivery(id,button){
+ button.disabled=true;
+ try{
+  await api(`/api/notification-deliveries/${encodeURIComponent(id)}/confirm?projectId=${encodeURIComponent(state.projectFilter)}`,{method:'POST'});toast('已记录为收到','ok');
+  const item=botUI.deliveries.find(d=>d.id===id);if(item){item.status='sent';item.receiptSource='manual';item.lastError='管理员已确认收到'}
+  const host=$('#botsContent');if(host&&item)botPatchDeliveryRow(host,item);
+ }catch(e){toast(e.message,'err');button.disabled=false}
+}
 async function botRetryDelivery(id,button){
  button.disabled=true;
  try{

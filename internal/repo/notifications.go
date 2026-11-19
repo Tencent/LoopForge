@@ -84,6 +84,16 @@ func (r *NotificationsRepo) decodeBots(rows []notificationBotRow) ([]domain.Noti
 			return nil, err
 		}
 		b.CredentialFormat = formats[row.ID]
+		if b.Target != nil && b.ChannelKind() != domain.BotChannelWeCom {
+			// The verification lives on the target's binding: revocation
+			// or re-binding clears it, so read it instead of the snapshot.
+			target := *b.Target
+			target.VerifiedAt = nil
+			if binding, err := r.BotPushTarget(b, target.ID); err == nil {
+				target.VerifiedAt = binding.TargetVerifiedAt
+			}
+			b.Target = &target
+		}
 		out = append(out, b)
 	}
 	return out, nil
@@ -493,7 +503,7 @@ func (r *NotificationsRepo) FinishNotification(item domain.NotificationDelivery,
 	return r.DB.Model(&domain.NotificationDelivery{}).Where("id = ? AND status = ? AND lease_token = ?", item.ID, "sending", item.LeaseToken).Updates(updates).Error
 }
 func (r *NotificationsRepo) RetryNotification(projectID, id string) error {
-	result := r.DB.Model(&domain.NotificationDelivery{}).Where("id = ? AND project_id = ? AND (content_source IS NULL OR content_source <> 'invalid') AND status IN ?", id, projectID, []string{"failed", "awaiting_authorization", "target_unavailable", "send_unknown"}).Updates(map[string]any{"status": "pending", "attempts": 0, "next_attempt_at": time.Now().UTC(), "last_error": ""})
+	result := r.DB.Model(&domain.NotificationDelivery{}).Where("id = ? AND project_id = ? AND (content_source IS NULL OR content_source <> 'invalid') AND status IN ?", id, projectID, []string{"failed", "awaiting_authorization", "target_unavailable", "send_unknown"}).Updates(map[string]any{"status": "pending", "attempts": 0, "next_attempt_at": time.Now().UTC(), "last_error": "", "send_key": "", "delivery_generation": gorm.Expr("delivery_generation + 1"), "send_started_at_us": 0})
 	if result.Error != nil {
 		return result.Error
 	}
