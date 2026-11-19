@@ -437,7 +437,7 @@ html[data-theme="dark"] #flowView .fd-toast button{background:rgba(0,0,0,.06);co
 #aiOrchestrator .ai-model-toggle .ai-model-caret{flex:none;margin-left:auto;border-top-color:var(--hui-tertiary)}
 #aiOrchestrator .ai-model-toggle:disabled{opacity:.45;cursor:default}
 #aiOrchestrator #aiOrchestratorCLIPicker .ai-model-icon{background:transparent;color:var(--hui-muted)}
-html[data-theme="dark"] #aiOrchestrator :is([data-cli="codex"],[data-cli="claude-code"],[data-cli="opencode"],[data-cli="cursor"],[data-cli="pi"]) img{filter:invert(1)}
+html[data-theme="dark"] #aiOrchestrator :is([data-cli="codex"],[data-cli="claude-code"],[data-cli="opencode"],[data-cli="cursor"],[data-cli="pi"],[data-cli="qodercn"]) img{filter:invert(1)}
 #aiOrchestrator .ai-model-menu{position:fixed;right:auto;z-index:var(--hui-z-popover);max-width:calc(100vw - 16px);overflow:auto;border:1px solid var(--hui-border);border-radius:12px;background:var(--hui-surface);color:var(--hui-text);box-shadow:var(--hui-popover-shadow)}
 #aiOrchestrator .ai-model-menu [data-model-search]{position:sticky;top:0;z-index:1;box-sizing:border-box;width:100%;height:38px;margin:0;padding:0 12px;border:0;border-bottom:1px solid var(--hui-border);border-radius:0;outline:0;background:var(--hui-surface);color:var(--hui-text);font:inherit;font-size:13px;box-shadow:none}
 #aiOrchestrator .ai-model-menu [role=listbox]{padding:4px}

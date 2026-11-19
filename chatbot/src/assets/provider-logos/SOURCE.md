@@ -1,9 +1,11 @@
 # Bundled model brand artwork
 
-Except for `pi.svg`, these SVGs and the accompanying README.md and
+Except for `pi.svg` and `qoder.svg`, these SVGs and the accompanying README.md and
 LICENSE.lobe-icons were originally copied from the Grasp repository,
 web/src/assets/provider-logos. `pi.svg` reuses the local π glyph from
-`web/images/credentials/pi.svg`; README.md records this addition. The original Grasp
+`web/images/credentials/pi.svg`; `qoder.svg` reuses the official Qoder CN brand
+mark (monochrome, background removed) from
+`web/images/credentials/qoder.svg`; README.md records these additions. The original Grasp
 MIT notice is retained as LICENSE.grasp. README.md records each artwork's own
 source and applicable license, including official brand artwork and Simple Icons.
 

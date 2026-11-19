@@ -52,7 +52,8 @@ Object.assign(window.LF_I18N_EN,{
 "AI 对话的 Kimi Code 模型与以 Kimi Code 运行的 SOP 节点":"Kimi Code models in AI chat, and SOP steps that run on Kimi Code",
 "AI 对话的 Pi 模型与以 Pi 运行的 SOP 节点":"Pi models in AI chat, and SOP steps that run on Pi",
 "AI 对话的 DeepSeek Harness 模型与以 DeepSeek Harness 运行的 SOP 节点":"DeepSeek Harness models in AI chat, and SOP steps that run on DeepSeek Harness",
-"AI 对话的 ZCode 模型与以 ZCode 运行的 SOP 节点":"ZCode models in AI chat, and SOP steps that run on ZCode"
+"AI 对话的 ZCode 模型与以 ZCode 运行的 SOP 节点":"ZCode models in AI chat, and SOP steps that run on ZCode",
+"AI 对话的 Qoder CN 模型与以 Qoder CN 运行的 SOP 节点":"Qoder CN models in AI chat, and SOP steps that run on Qoder CN"
 });
 Object.assign(window.LF_I18N_EN,{
 "继续回答关键问题，进度已经保存；不影响直接触发 SOP":"Keep answering the key questions. Progress is saved and does not block starting the SOP",
@@ -187,6 +188,15 @@ Object.assign(window.LF_I18N_EN,{
   "API Key 说明":"API Key help",
   "LoopForge 沙箱目前无法复用 Antigravity 保存在系统凭据库中的登录。请在「个人配置」中填写 Gemini API Key。用量按 Gemini API 单独计费。":"LoopForge sandboxes cannot currently access Antigravity's login in the system credential store. Enter a Gemini API Key in Personal Settings. Gemini API usage is billed separately.",
   "GLM Coding Plan 的 API Key 配合套餐专用地址可使用订阅额度，请在「个人配置」中填写。Start Plan 额度需要登录 ZCode 账号，无法通过 API Key 使用。":"Enter the GLM Coding Plan API key and its dedicated endpoint in Personal Settings to use your subscription allowance. Start Plan allowance requires signing in to ZCode.",
+  "Qoder CN 使用个人访问令牌（PAT），请在「个人配置」中填写。模型可选，未选择时使用 CLI 默认模型。":"Qoder CN uses a personal access token (PAT). Enter it in Personal Settings. Choosing a model is optional; the CLI default model is used otherwise.",
   "该 CLI 支持 API Key。使用服务商订阅套餐提供的 Key，执行用量会计入对应的套餐额度。请在「个人配置」中填写 API Key。":"This CLI supports API keys. With a key included in your provider's subscription, usage counts toward that plan's allowance. Enter the API key in Personal Settings."
+});
+Object.assign(window.LF_I18N_EN,{
+  "AI 对话切换到 Qoder CN 后可选用它的模型，SOP 在执行机器上以 Qoder CN 运行的节点也使用它。使用个人访问令牌（PAT）认证；模型可选，未选择时使用 CLI 默认模型。":"Switch AI chat to Qoder CN to pick its models; SOP steps that run on Qoder CN on a runner use the same token. It authenticates with a personal access token (PAT). Choosing a model is optional; the CLI default model is used otherwise.",
+  "使用个人访问令牌（PAT）认证；模型可选，未选择时使用 CLI 默认模型。":"Authenticates with a personal access token (PAT). Choosing a model is optional; the CLI default model is used otherwise.",
+  "在 Qoder CN 的个人设置中创建个人访问令牌（PAT）":"Create a personal access token (PAT) in your Qoder CN personal settings",
+  "复制令牌粘贴到下方保存":"Copy the token, paste it below, and save",
+  "请输入 Qoder CN 个人访问令牌（PAT）":"Enter your Qoder CN personal access token (PAT)",
+  "AI 对话将不能再切换到 Qoder CN，以 Qoder CN 运行的 SOP 节点将无法执行。":"AI chat can no longer switch to Qoder CN, and SOP steps that run on Qoder CN will fail."
 });
 Object.assign(window.LF_I18N_EN,{"查看其他项目共享的技能；共享技能只读，会自动装入平台上所有对话和定时任务，也可绑定到本项目角色。": "Skills shared by other projects. Shared Skills are read-only, are installed automatically into every conversation and scheduled task on the platform, and can be bound to Roles in this project.", "共享后，这个技能会自动装入平台上所有用户的对话和定时任务（包括其他项目和无项目的对话），模型可以直接调用。继续？": "Once shared, this Skill is installed automatically into every user's conversations and scheduled tasks on the platform (including other projects and conversations without a project), and the model can call it directly. Continue?", "共享这个角色会同时共享它绑定的技能：": "Sharing this Role also shares the Skills bound to it: ", "已共享，所有对话和定时任务会自动装入": "Shared. Every conversation and scheduled task will install it automatically", "其他项目可在「共享角色」里选用；绑定的本项目技能会一起共享，并自动装入所有对话": "Other projects can pick it under Shared roles; the project Skills bound to it are shared too and installed into every conversation automatically", "共享技能": "Share Skill"});

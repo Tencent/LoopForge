@@ -56,14 +56,15 @@ function runnerStatusLabel(status,lastSeen){
   const style=status==='online'?' online':status==='offline'?' offline':'';
   return `<span class="runner-status${style}" title="${escapeHTML(runnerLastSeen(lastSeen))}"><i></i>${escapeHTML(label)}</span>`;
 }
-const runnerCLILabels={'claude-code':'Claude Code','codex':'Codex','codebuddy':'CodeBuddy',opencode:'OpenCode',cursor:'Cursor CLI',agy:'Antigravity',kimi:'Kimi Code',pi:'Pi',dsh:'DeepSeek Harness',zcode:'ZCode'};
-const runnerCLIIcons={'claude-code':'claude',codex:'codex',codebuddy:'codebuddy',opencode:'opencode',cursor:'cursor',agy:'gemini',kimi:'kimi',pi:'pi',dsh:'deepseek',zcode:'glm'};
+const runnerCLILabels={'claude-code':'Claude Code','codex':'Codex','codebuddy':'CodeBuddy',opencode:'OpenCode',cursor:'Cursor CLI',agy:'Antigravity',kimi:'Kimi Code',pi:'Pi',dsh:'DeepSeek Harness',zcode:'ZCode',qodercn:'Qoder CN'};
+const runnerCLIIcons={'claude-code':'claude',codex:'codex',codebuddy:'codebuddy',opencode:'opencode',cursor:'cursor',agy:'gemini',kimi:'kimi',pi:'pi',dsh:'deepseek',zcode:'glm',qodercn:'qoder'};
 const runnerAuthLabel={local:'账号登录',personal:'API Key'};
 const runnerAuthDescription={local:'Claude Code 和 Codex 可以使用运行 Runner 的系统账号在这台机器上的已有登录。共享对话中，只有机器所有者发言时会使用此登录。',personal:'读取「个人配置」中保存的 API Key。对话使用当前发言人的 Key，SOP 使用运行责任人的 Key。'};
 const runnerOSLabels={darwin:'macOS',linux:'Linux',windows:'Windows'};
 function runnerKeyDescription(provider){
   if(provider==='agy')return 'LoopForge 沙箱目前无法复用 Antigravity 保存在系统凭据库中的登录。请在「个人配置」中填写 Gemini API Key。用量按 Gemini API 单独计费。';
   if(provider==='zcode')return 'GLM Coding Plan 的 API Key 配合套餐专用地址可使用订阅额度，请在「个人配置」中填写。Start Plan 额度需要登录 ZCode 账号，无法通过 API Key 使用。';
+  if(provider==='qodercn')return 'Qoder CN 使用个人访问令牌（PAT），请在「个人配置」中填写。模型可选，未选择时使用 CLI 默认模型。';
   return '该 CLI 支持 API Key。使用服务商订阅套餐提供的 Key，执行用量会计入对应的套餐额度。请在「个人配置」中填写 API Key。';
 }
 function runnerPersonalCredentialConfigured(provider){

@@ -223,6 +223,21 @@ func AgentCLICommand(kind string, o AgentCLICommandOptions) CommandSpec {
 			argv = append(argv, "--resume", resume)
 		}
 		argv = append(argv, extra...)
+	case AgentCLIQoderCN:
+		disallowed := qoderCNSOPDisallowedTools
+		if readOnly {
+			disallowed = qoderCNChatDisallowedTools
+		}
+		argv = []string{binary, "-p", prompt, "--output-format", "stream-json", "--disallowed-tools", disallowed}
+		if !readOnly {
+			// SOP and workspace turns bypass permissions; AI 对话 keeps the
+			// native approval hook and denies the chat tool set instead.
+			argv = append(argv, "--yolo")
+		}
+		if resume != "" {
+			argv = append(argv, "--resume", resume)
+		}
+		argv = append(argv, extra...)
 	}
 	return CommandSpec{Argv: argv, Provider: kind, AgentCLI: options}
 }

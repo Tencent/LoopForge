@@ -13,6 +13,10 @@ requests to an image host.
 - `pi.svg` is a plain π glyph drawn locally, not from Grasp. It is the same
   mark as `web/images/credentials/pi.svg`, bundled here for the chat CLI
   selector.
+- `qoder.svg` is the official Qoder CN brand mark, extracted from the installed
+  Qoder CN client's `qoderCnIdeLogo` vector asset and recolored to a monochrome
+  glyph (background removed). It is the same mark as
+  `web/images/credentials/qoder.svg`, bundled here for the chat CLI selector.
 - `openai.svg` comes from the [OpenAI 2025 logo package](https://cdn.openai.com/brand/OpenAI-Logos-2025.zip).
   `codex.svg` uses the same official OpenAI blossom because OpenAI does not
   publish a separate Codex mark in that package or in the official Codex CLI

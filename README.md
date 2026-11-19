@@ -37,7 +37,7 @@ https://github.com/user-attachments/assets/8af401d9-1aae-427c-b4bc-455c12d17beb
 
 **LoopForge** is a self-hosted workspace where your team ships software with coding agents. Describe what you need to **Main Bot** in chat: it opens a Docker sandbox, checks out your repositories, delegates to project roles, and opens the PR. When a way of working proves itself, save it as an **SOP** (a standard workflow of agents, scripts and human gates) so the next requirement is delivered the same way, with review and approval built in.
 
-Coding-agent CLIs do the work: CodeBuddy, Codex, Claude Code, OpenCode, Cursor CLI, Antigravity, Kimi Code, Pi, DeepSeek Harness and ZCode. LoopForge adds the roles, sandboxes, checkpoints and history around them, all on your own infrastructure under the MIT license.
+Coding-agent CLIs do the work: CodeBuddy, Codex, Claude Code, OpenCode, Cursor CLI, Antigravity, Kimi Code, Pi, DeepSeek Harness, ZCode and Qoder CN. LoopForge adds the roles, sandboxes, checkpoints and history around them, all on your own infrastructure under the MIT license.
 
 ## Two ways to work
 
@@ -123,6 +123,7 @@ New accounts join the **LoopForge demo project**, which includes an SOP made onl
   | **DeepSeek Harness** | Personal key only | In the Docker image |
   | **Cursor CLI · Antigravity** | Personal key only | Provider installer on first chat use; not installed into SOP sandboxes |
   | **ZCode** | Personal key only | Not bundled; install it on the service or execution machine PATH |
+  | **Qoder CN** | Personal access token (PAT) | npm `@qodercn-ai/qoderclicn` or the official install script |
 
   The seven agent CLIs after Claude Code keep their model and MCP configuration in a private home directory per run, so they always use the responsible user's own key and Base URL from personal settings, even on a connected execution machine. When rolling them out to a team, each member configures their own credentials. First-use installs need npm or provider access; [native deployments](docs/deployment.md#workers-and-runners) need the CLI for the executor you choose.
 - **GitHub is optional.** All built-in generic SOPs run without a repository: product SOPs deliver documents, and new frontend/backend projects deliver source files in the task workspace. Bug fixes still need source code and reproduction details. Connect a repository when you work on existing code or want PRs.

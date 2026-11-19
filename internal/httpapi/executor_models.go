@@ -148,6 +148,14 @@ func executorModelCatalogs() map[string]executorModelCatalog {
 				{ID: "glm-5.3-flash", Name: "GLM-5.3 Flash"},
 			},
 		},
+		// Qoder CN picks its own model on the official endpoint; "default"
+		// keeps that choice, and a custom ID is passed through QODERCN_MODEL.
+		"qodercn": {
+			CustomModel: true,
+			Models: []executorModelInfo{
+				{ID: "default", Name: "CLI 默认"},
+			},
+		},
 	}
 }
 

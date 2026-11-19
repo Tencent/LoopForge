@@ -6,6 +6,7 @@ export const defaultEngine = "codebuddy";
 const brands = {
   codebuddy: "codebuddy", codex: "codex", "claude-code": "claude",
   opencode: "opencode", cursor: "cursor", agy: "gemini", kimi: "kimi", pi: "pi", dsh: "deepseek", zcode: "zhipu",
+  qodercn: "qoder",
 };
 export const engineBrand = (id) => brands[id] || "";
 
@@ -30,7 +31,7 @@ export function engineMissingKeyMessage(engine) {
 }
 
 // CLIs a session Executor can name when the reply was saved before model prefixes.
-const legacyEngines = new Set(["codex", "claude-code", "opencode", "cursor", "agy", "kimi", "pi", "dsh", "zcode"]);
+const legacyEngines = new Set(["codex", "claude-code", "opencode", "cursor", "agy", "kimi", "pi", "dsh", "zcode", "qodercn"]);
 
 function modelHasEnginePrefix(id) {
   const prefix = /^([a-z][a-z0-9-]*):./.exec(id || "")?.[1];
