@@ -24,7 +24,7 @@
 | 草稿状态机：8 个并发确认只有 1 个成功、执行中断转待核对且不能再执行、过期、参数被改后拒绝 | 本机 SQLite；MariaDB | 通过 |
 | 阶段 G 语句集成测试 `TestMySQLStageGPushAndDrafts` | MariaDB（本机） | 通过 |
 | `internal/repo` 全部 MySQL 用例 | MariaDB（本机） | 新增用例通过；`TestMySQLReadsObserveExternalChangesWithoutReload` 与基线相同地失败；`TestMySQLAssistantParticipantProjectionReadOnly` 使用 `CAST(? AS JSON)`，MariaDB 不支持，与本阶段改动无关 |
-| MySQL 8.4 复跑 | — | 未运行：本机 MySQL 8.4 解压目录已被清理，需重新准备后补跑 |
+| MySQL 8.4 复跑 | MySQL 8.4.13（2026-11-20 补跑） | `TestMySQLStageGPushAndDrafts`、F1–F6、D1–D5 通过；`internal/repo` 全部 MySQL 用例只有基线同样失败的 `TestMySQLReadsObserveExternalChangesWithoutReload`。最初记为“未运行”是误判：本机的 MySQL 8.4 并未被清理，见[最终测试记录](im-final-test-record.md) |
 | `internal/httpapi`、`internal/notification`、`internal/botinteraction`、`internal/repo`、`internal/domain` | 本机 | 通过 |
 | 前端 `webtest` | Node 22.23.5 | 213 个通过，覆盖率 87.63%（门槛 85%） |
 | `go vet ./...`、`gofmt`、`check-public.py` | 本机 | 通过 |

@@ -2,8 +2,9 @@
 
 Platform releases use `vX.Y.Z` tags and publish `ghcr.io/tencent/loopforge`. LoopForge Local packages use `local-vX.Y.Z` tags and are published by manually running the `release-local` workflow.
 
-## Unreleased — enterprise IM channels (Feishu and DingTalk private chats)
+## Unreleased — enterprise IM channels (Feishu and DingTalk chats, proactive notifications, data retention)
 
+- **Chat Bot data now has a retention period.** An hourly cleanup removes the text of finished conversation turns, notification deliveries and web-confirmation drafts, and the native CLI logs of Bot turns, 90 days after they finished, and deletes the finished records after 180 days. This also applies to existing WeCom conversation and notification records on the first start after upgrading. Records still waiting for someone (in progress, ready to send, delivery unknown) are kept. Set `AGENTFLOW_BOT_BODY_RETENTION_DAYS` and `AGENTFLOW_BOT_RECORD_RETENTION_DAYS` (0 keeps forever) before enabling the Bot workers if you need longer. Records whose text was removed show “正文已按保留期清理” and cannot be sent again. See `docs/im-channels.md` sections 9 and 10.
 - Feishu and DingTalk Bots send SOP notifications (completed, failed, waiting) as private messages to one member who bound an account in a private chat with the Bot; notification-only configurations (chat disabled) work too. Saving the recipient first sends a trial message and only a confirmed delivery is accepted; unbinding clears it. Feishu unknown outcomes are retried with the same uuid for 55 minutes, DingTalk ones stop at 送达待核对, where managers can confirm receipt or send again. Switching the recipient with queued notifications asks whether to move or cancel them. See `docs/im-channels.md` section 8.
 - A DingTalk reply whose session webhook expired can be sent to the original sender as a proactive private message from the record page, after that member passed a trial send.
 - WeCom Bots gain the 网页确认 write mode: writes come back as a summary and a confirmation link, the bound user confirms on the platform page, and a draft runs at most once. Feishu and DingTalk stay read-only.

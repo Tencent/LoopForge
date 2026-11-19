@@ -3197,7 +3197,7 @@ paths:
           schema: {type: string}
       responses:
         "200":
-          description: Connection status, recent conversations and messages; credentials excluded
+          description: Connection status, recent conversations and messages; credentials excluded. Messages whose text was removed by the retention cleanup carry `bodyPurgedAt` and empty `content`/`reply`; they cannot be sent again. DingTalk messages carry `pushResendAvailable`.
         "403":
           description: Bot management permission required
   /api/notification-bots/{id}/tenant:
@@ -3324,6 +3324,55 @@ paths:
           description: "`push_target_unverified` or `push_target_unavailable`"
         "502":
           description: "`push_trial_failed`; `outcome` is `rejected`, `not_delivered` or `unknown`"
+  /api/notification-bots/{id}/sessions:
+    get:
+      summary: List selectable notification targets
+      description: WeCom lists chats from wecom-cli. Feishu and DingTalk list members bound in a private chat with this Bot (after the enterprise is confirmed); `verifiedAt` marks a successful trial send.
+      operationId: listNotificationBotSessions
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string}}
+      responses:
+        "200":
+          description: "`{sessions, total}`"
+        "409":
+          description: "`push_target_unavailable` (enterprise not confirmed)"
+  /api/notification-bots/{id}/test:
+    post:
+      summary: Send a test notification to the saved target
+      description: For Feishu and DingTalk this repeats the trial send and refreshes the target verification.
+      operationId: testNotificationBot
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string}}
+      responses:
+        "200":
+          description: Test sent
+        "409":
+          description: "`push_target_unavailable`"
+        "502":
+          description: "`push_trial_failed`"
+  /api/notification-deliveries:
+    get:
+      summary: List notification deliveries of a project
+      description: Content is never returned. `contentSource=purged` marks deliveries whose rendered text was removed by the retention cleanup; they cannot be retried.
+      operationId: listNotificationDeliveries
+      parameters:
+        - {name: projectId, in: query, required: true, schema: {type: string}}
+      responses:
+        "200":
+          description: Deliveries, newest first
+  /api/notification-deliveries/{deliveryId}/retry:
+    post:
+      summary: Send a failed, unauthorized, unavailable-target or send_unknown delivery again
+      description: Starts a new delivery generation with a new send key. Deliveries with invalid or purged content are refused.
+      operationId: retryNotificationDelivery
+      parameters:
+        - {name: deliveryId, in: path, required: true, schema: {type: string}}
+        - {name: projectId, in: query, required: true, schema: {type: string}}
+      responses:
+        "200":
+          description: Delivery back in `pending`
+        "409":
+          description: The delivery cannot be retried
   /api/notification-deliveries/{deliveryId}/confirm:
     post:
       summary: Mark a send_unknown notification as received

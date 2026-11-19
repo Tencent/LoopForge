@@ -1,6 +1,6 @@
 # 企业 IM 渠道配置与联调手册
 
-本手册对应 `docs/proposals/enterprise-im.md`，记录各渠道的配置步骤、所需权限、上线顺序和真实环境验证方法。当前可配置的渠道：**企业微信、飞书（私聊、只读）、钉钉（私聊、只读）**。
+本手册对应 `docs/proposals/enterprise-im.md`，记录各渠道的配置步骤、所需权限、上线顺序和真实环境验证方法。当前可配置的渠道：**企业微信、飞书（私聊、只读）、钉钉（私聊、只读）**；三个渠道都支持 SOP 主动通知，企业微信另有“网页确认”写操作。数据保留见第 9 节，升级与回退见第 2 节和第 10 节，最终测试记录见 [testing/im-final-test-record.md](testing/im-final-test-record.md)。
 
 ## 1. 平台侧前置条件
 
@@ -8,7 +8,9 @@
 | --- | --- |
 | `AGENTFLOW_PUBLIC_URL` | 用户从 IM 打开绑定页时使用的公开地址，必须是 `http(s)://host` |
 | `AGENTFLOW_CREDENTIAL_KEYS` | `kid:base64(32字节)[,kid:base64(32字节)]`，第一把为当前写入密钥。所有副本配置相同的值。未配置时，已有的旧明文 Secret 仍可读取，保存新 Secret 返回 `503 credential_key_missing` |
-| `AGENTFLOW_BOT_WORKERS_ENABLED` | 默认 `true`。维护窗口设为 `false`：对话接收和通知发送都不启动，Bot 配置写接口返回 `503 bot_maintenance` |
+| `AGENTFLOW_BOT_WORKERS_ENABLED` | 默认 `true`。维护窗口设为 `false`：对话接收、通知发送和数据保留清理都不启动，Bot 配置写接口返回 `503 bot_maintenance` |
+| `AGENTFLOW_BOT_BODY_RETENTION_DAYS` | 默认 `90`。已结束的对话、通知、网页确认草稿的正文，以及 Bot 轮次的原生 CLI 日志，在结束这么多天后清除。`0` 表示不清除 |
+| `AGENTFLOW_BOT_RECORD_RETENTION_DAYS` | 默认 `180`。已结束的记录本身在这么多天后删除。`0` 表示不删除；小于正文保留期时按正文保留期处理 |
 
 **Compose 部署**（`./start.sh`、`./start.sh dev`、`scripts/install.sh`）：`scripts/configure.sh` 会在 `.env` 中生成 `AGENTFLOW_CREDENTIAL_KEYS`，旧的 `.env` 缺少这一项时也会自动补上；`compose.yaml` 会把它、`AGENTFLOW_PUBLIC_URL`（未设置时使用 `LOOPFORGE_PUBLIC_URL`）和 `AGENTFLOW_BOT_WORKERS_ENABLED` 传给平台容器。**`.env` 里的密钥要和数据库备份一起保管**，密钥丢失后已保存的 Secret 无法解密，只能重新填写。确认生效：平台启动日志中有 `bot credential keyring current_kid=...`；如果日志显示 `AGENTFLOW_CREDENTIAL_KEYS is not set`，说明容器没有拿到这个变量。
 
@@ -39,13 +41,16 @@ agentflow -credential-action reencrypt   # 可重复执行
    - 第 5 段记录各渠道配置数和未回填数，`not_backfilled` 必须为 0。
 5. 执行 `migrations/037_bot_binding_ownership.sql`：第 1、2 段列出多配置共用和孤立的企微绑定，第 3 段回填唯一归属，第 4 段列出历史 Bot 原生会话（`legacy_unmapped`，只供核查，不删除）。
 6. 配置 `AGENTFLOW_CREDENTIAL_KEYS`，执行 `agentflow -credential-action reencrypt`，再用 `status` 确认 `plaintext=0`。
-7. 以 `AGENTFLOW_BOT_WORKERS_ENABLED=true` 重启全部新版本副本。先验证企微，再启用飞书。
+7. **确认数据保留设置。** 开启 worker 后的第一轮清理会立刻处理升级前的历史数据：默认清除 90 天前已结束记录的正文，删除 180 天前已结束的记录，包括企业微信已有的对话记录和发送记录。需要保留更久，先在 `.env` 设置第 9 节的两个变量（或设为 `0` 暂不清理），再进行下一步。数据库备份是唯一的恢复途径。
+8. 以 `AGENTFLOW_BOT_WORKERS_ENABLED=true` 重启全部新版本副本。先验证企微，再依次启用飞书、钉钉和主动通知。启动日志出现 `bot retention: …` 一行，列出本轮清理的数量；没有可清理的数据时不输出。
 
 未执行 036 的配置（`config_version = 0`）不会建立接收连接，启动日志会提示数量。
 
+阶段 C 之后的版本（G、H 等）没有新的手动脚本：启动时的增量 DDL 补齐 `bot_pending_drafts` 表和新增列。从任一预发版本（阶段 B 到 G）升级到最终版本，只需停旧副本、启动新版本，并按第 7 步确认保留设置。
+
 **数据库版本**：036/037 已在 MySQL 8.4.13（默认 `sql_mode` 含 `ONLY_FULL_GROUP_BY`）和 MariaDB 10.11 上各连续执行两次，结果一致。标识比较统一用 `BINARY`，避免 `information_schema` 与业务表排序规则不同时报 1267。
 
-**回退**：执行第 6 步（`reencrypt`）之后，库里的 Secret 是 `lf1:` 密文，旧版本会把密文当作 Secret 使用，企微连接无法鉴权。旧版本仍能启动并读出配置，但它不认识租约 epoch，会与新版本按两套协议争抢连接。因此回退必须：停止全部新版本副本 → 恢复第 1 步的备份 → 启动旧版本。维护窗口结束后新产生的对话和配置需要按停机时间段人工核对。预发演练结果见 [R1 验收记录](testing/im-r1-acceptance.md#3-预发升级与回退演练)。
+**回退**：完整的回退矩阵见第 10 节。执行第 6 步（`reencrypt`）之后，库里的 Secret 是 `lf1:` 密文，旧版本会把密文当作 Secret 使用，企微连接无法鉴权。旧版本仍能启动并读出配置，但它不认识租约 epoch，会与新版本按两套协议争抢连接。因此回退必须：停止全部新版本副本 → 恢复第 1 步的备份 → 启动旧版本。维护窗口结束后新产生的对话和配置需要按停机时间段人工核对。预发演练结果见 [R1 验收记录](testing/im-r1-acceptance.md#3-预发升级与回退演练)。
 
 ## 3. 企业微信
 
@@ -250,3 +255,56 @@ SOP 的完成（`succeeded`）、失败（`failed`）和待处理（`waiting`）
 阶段 G 没有需要手动执行的迁移脚本。新版本启动时的增量 DDL 会补齐 `notification_deliveries` 的发送 key、代数、开始时间、平台消息 ID 和人工确认列，`bot_user_bindings.target_verified_at`、`bot_interactions.send_route`，并新建 `bot_pending_drafts`（utf8mb4）。回退到阶段 F 的版本时，这些列和表保留不用；回退前请先处理“执行中”的网页确认草稿。
 
 逐项真实环境验收见 [阶段 G 验收记录](testing/im-stage-g-acceptance.md)。
+
+## 9. 数据保留（阶段 H）
+
+### 9.1 规则
+
+每个运行 Bot worker 的进程每小时清理一次，每批 1000 条，每类每轮最多 10 批，时间从记录**实际结束**算起：
+
+| 数据 | 正文保留期（默认 90 天）到期后 | 记录保留期（默认 180 天）到期后 |
+| --- | --- | --- |
+| 对话交互（`bot_interactions`），状态为已回复、回复失败、已取消 | 清空消息、引用、回复和会话回复路由，记录 `body_purged_at`；记录页显示“正文已按保留期清理”，不能再次发送 | 删除 |
+| 通知发送记录（`notification_deliveries`），状态为已发送、失败、已取消、已过期、会话不可用 | 清空渲染后的正文和 AI 汇报请求，`content_source=purged`，不能重试 | 删除 |
+| 网页确认草稿（`bot_pending_drafts`），状态为已执行、失败、已过期、已取消 | 清空草稿、摘要和执行结果 | 删除 |
+| Bot 轮次的原生 CLI 日志 | 按映射删除日志文件，见 9.2 | 日志已删除或确认不存在的映射被删除 |
+
+**不清理的数据**：排队中、执行中、待发送、发送中、送达待核对（`reply_unknown`、`send_unknown`）、待授权、网页确认的“执行中”和“执行中断，待核对”。这些记录保留到有人处理为止。等待确认的草稿过期后先改为“已过期”，再按上表处理。账号绑定、Bot 配置、会话映射（`bot_conversations`）和连接状态不在清理范围内。
+
+“实际结束”的取法：对话交互和草稿用最后更新时间；通知发送记录没有结束时间列，要求创建时间、最后一次尝试时间和发送时间都早于期限，最近重试过的记录不会被提前清理。清理正文时不改动更新时间，所以记录保留期仍从结束时算起。
+
+### 9.2 原生 CLI 日志
+
+Bot 轮次在用户共用的 CLI HOME（`AGENTFLOW_ASSISTANT_SESSION_DIR/<用户 ID>/home`）中运行，同一目录里还有其他来源的日志。清理只处理同时满足以下条件的文件：
+
+- 对应的 `bot_native_sessions` 映射已结束（完成、失败、中断），且结束时间早于正文保留期；
+- 文件名等于映射记录的请求 session ID 或 CLI 报告的 session ID：CodeBuddy 在 `.codebuddy/projects`、`.codebuddy/sessions` 下，Claude Code 在 `.claude/projects` 下，Codex 按线程 ID 匹配 `.codex/sessions/**/rollout-*-<线程 ID>.jsonl`，并从 `codex-threads.json` 删除对应条目；
+- 位于该映射所属用户自己的 CLI HOME 内。不跟随符号链接；日志目录经过符号链接指向 HOME 之外时整棵跳过；
+- 同一个 session 仍被其他未结束或未到期的映射使用时，本轮跳过。
+
+每条映射记录结果：`removed`（附删除的相对路径）、`missing`（没找到文件）、`error`（下一轮重试）、`unsupported`（该 CLI 的日志位置未登记，例如 OpenCode、Kimi Code，保留供人工核查）。查看统计：
+
+```sql
+SELECT engine, cleanup_status, COUNT(*) FROM bot_native_sessions GROUP BY engine, cleanup_status;
+SELECT id, user_id, requested_session_id, native_session_id, cleanup_detail FROM bot_native_sessions WHERE cleanup_status IN ('error', 'unsupported');
+```
+
+多个 API 副本部署时，`AGENTFLOW_ASSISTANT_SESSION_DIR` 需要是共享存储；否则没有执行该轮的副本找不到文件，会记为 `missing`，日志留在原副本上。状态为 `started` 的映射（进程在运行中退出）保留追踪状态，不自动清理。
+
+**升级前的历史日志**没有映射，清理永远不会触碰它们。`migrations/037_bot_binding_ownership.sql` 第 4 段在升级时列出 `legacy_unmapped` 交互清单，请在开启 worker 之前导出保存：记录保留期到期后这些交互会被删除，清单就无法再生成。按清单人工核查后再决定是否删除对应日志。
+
+### 9.3 调整与暂停
+
+- 改保留期：修改 `.env` 中的两个变量后重启。缩短保留期会在下一轮立即生效；延长保留期不能恢复已清理的数据。
+- 暂停清理：两个变量都设为 `0`，或者维护期间设置 `AGENTFLOW_BOT_WORKERS_ENABLED=false`（同时停止收发）。
+- 清理结果：日志 `bot retention: interaction bodies=… interactions=… notification bodies=… notifications=… drafts expired=… draft bodies=… drafts=… native mappings=… native logs handled=…`；失败时输出 `bot retention: cleanup failed`，下一小时重试。
+
+## 10. 回退
+
+| 回退目标 | 做法 | 数据影响 |
+| --- | --- | --- |
+| 最终版本 → 阶段 B 到 G 的预发版本 | 停止全部新版本副本，启动目标版本。新增列和表保留不用 | 停止数据保留清理。以下按各阶段代码推断：回到阶段 F 及更早：排队中的飞书、钉钉主动通知会被取消（“该渠道的主动通知尚未开放”），网页确认链接失效（`/bot-approve.html` 不存在），等待确认的草稿不再执行。回到阶段 E 及更早：钉钉配置不再建立连接 |
+| 最终版本 → 未接入 IM 的版本，未执行凭据重新加密 | 停止全部新版本副本，启动旧版本 | 旧版本能读出配置并使用明文 Secret；但它不认识租约 epoch，必须先停全部新副本。新增列和表保留不用。旧版本不认识渠道字段，飞书、钉钉配置会被当作企微配置读取（按代码推断，未演练），回退前先停用这些配置 |
+| 最终版本 → 未接入 IM 的版本，已执行凭据重新加密 | **只能**停止全部新版本副本 → 恢复升级前的备份 → 启动旧版本 | 维护窗口之后新产生的对话、配置和通知需要按停机时间段人工核对；已被数据保留清理删除的记录随备份恢复 |
+
+演练结果：[R1 验收记录第 3 节](testing/im-r1-acceptance.md#3-预发升级与回退演练)（阶段 B，MySQL 8.4.13）和 [最终测试记录第 3 节](testing/im-final-test-record.md#3-最终版本升级与回退演练)（最终版本，含数据保留首轮清理）。

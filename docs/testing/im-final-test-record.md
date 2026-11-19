@@ -1,0 +1,89 @@
+# 企业 IM 接入最终测试记录（阶段 A–H）
+
+对应方案 `docs/proposals/enterprise-im.md` 第 10、11 节，操作手册 `docs/im-channels.md`。状态取值：通过、失败、未运行、阻塞；验收负责人整体确认、没有逐项回报的，单独标注。时间均为北京时间。
+
+## 1. 版本与阶段
+
+| 项 | 值 |
+| --- | --- |
+| 分支 | `feature/enterprise-im`，基线 `origin/main@e89cda9`，2026-11-20 合入 `origin/main@6f606cf` |
+| 最终代码提交 | `6df93df`（合并提交；此后只有文档提交） |
+| 渠道 | 企业微信（对话、通知、网页确认）、飞书（私聊只读、通知）、钉钉（私聊只读、通知） |
+
+| 阶段 | 主要提交 | 内容 | 验收 |
+| --- | --- | --- | --- |
+| A | `e8f24e3`、`edd060a`、`386a7b1`、`addcaa1` | 渠道契约、包装企微、SDK 探针（独立模块） | 自动化 |
+| B–D | `7fc24c1` | 配置作用域、物理列、凭据加密、租约 epoch、两段式发送、两阶段绑定、只读 Bot、迁移 036/037 | 自动化；预发升级演练（R1 记录第 3 节） |
+| E（R1） | `5d52656`、`57c5450`、`b533691`、`e148fe1` | 飞书私聊闭环 | 2026-11-18 验收通过，[R1 记录](im-r1-acceptance.md) |
+| F（R2） | `f9c94e0`、`64e1619` | 钉钉 Stream 私聊闭环 | 2026-11-19 验收通过，[R2 记录](im-r2-acceptance.md) |
+| G | `32e8eea`、`03f9541`、`74bbc34`、`f86881a` | 飞书、钉钉主动通知；钉钉过期回复改用主动单聊；企微网页确认 | 2026-11-20 验收通过（未逐项回报），[阶段 G 记录](im-stage-g-acceptance.md) |
+| H | `859e0bf`、`96efdf8`、`6df93df` | 数据保留与原生日志清理、安装配置、合入主干、迁移与回退手册 | 本记录 |
+
+## 2. 最终代码的自动化结果（`6df93df`，2026-11-20）
+
+| 范围 | 环境 | 结果 |
+| --- | --- | --- |
+| `go build ./...`、`go vet ./...` | Go 1.26.11 | 通过 |
+| `gofmt -l internal cmd` | — | 本分支改动的文件全部通过；列出的 `internal/domain/workflow.go`、`internal/runtime/workspace_preparation_test.go` 在 `origin/main` 上同样未格式化，本分支未改动 |
+| `go test -p=2 ./...`（先执行 `scripts/build-chatbot.sh`） | 本机 SQLite | 除下面两项外全部通过 |
+| ↳ `cmd/agentflow` `TestSDNotifySendsReadyAndMainPID` | 本机 | 失败，环境相关：本机临时目录路径过长，unix 套接字绑定报 `invalid argument`；在 `origin/main@6f606cf` 上同样失败 |
+| ↳ `internal/runtime` 7 个 Docker 用例 | 本机 | 失败，本机没有 Docker；在 `origin/main@6f606cf` 上同样失败 |
+| `internal/repo` 全部 MySQL 用例 | MySQL 8.4.13 | 除 `TestMySQLReadsObserveExternalChangesWithoutReload` 外全部通过；该用例在基线上同样失败 |
+| 本分支的 MySQL 用例：租约竞争、阶段 G 语句、数据保留 | MySQL 8.4.13；MariaDB 10.11 | 通过 |
+| 飞书故障测试 F1–F6、钉钉故障测试 D1–D5 | MySQL 8.4.13 | 通过（123 秒、65 秒） |
+| 数据保留：保留期边界、只清终态、正文清理不改更新时间、清理后不能重发或重试、过期草稿、分批 | SQLite；MySQL 8.4.13；MariaDB | 通过 |
+| 原生日志清理：混合来源目录只删映射指向的到期文件；其他用户、网页助手、未到期、符号链接指向 HOME 外的文件都保留；Codex 按线程 ID 匹配并清理线程索引；未登记的 CLI 记为 `unsupported`；共享 session 跳过 | 本机临时目录 | 通过 |
+| 前端 `webtest`（`npm run coverage`） | Node 22.23.5 | 222 个通过，行覆盖率 87.89%（门槛 85%） |
+| `scripts/test-install.py` | 本机 | 50 个通过 |
+| `scripts/check-public.py`、`scripts/collect-go-notices.py` | 本机 | 通过（95 个模块） |
+| `govulncheck ./...` | 本机 | 代码不受影响（依赖中 1 个漏洞，未被调用） |
+| SDK 探针 `scripts/im-sdk-probe`：测试与 `govulncheck` | 本机 | 通过；无漏洞 |
+| OpenAPI | 本机 | YAML 可解析；`server.go` 中所有 `/api/notification*`、`/api/bot*` 路由都有条目 |
+| Go 覆盖率门禁、真实浏览器用例、`scan-secrets.sh`、Playwright e2e | — | 未运行：依赖 CI 的 Linux 环境和浏览器，由 PR 的 `platform` 与 `e2e` 工作流执行 |
+
+## 3. 最终版本升级与回退演练
+
+环境：本机 MySQL 8.4.13。旧版本为 `origin/main@6f606cf` 构建的二进制，新版本为 `6df93df` 构建的二进制。时间 2026-11-20 01:07–01:12。
+
+**升级前数据**（旧版本 API 写入，另用 SQL 补入历史行）：4 个企微配置（含共用 Bot ID 和一次被拒的重复启用）；4 条绑定（正常、共用、孤立、未完成）；6 条交互：200 天前和 100 天前已回复各 1 条、近期已回复、回复失败、待发、执行中各 1 条；4 条通知发送记录：200 天前已发送、200 天前仍待发、100 天前失败、近期已发送；用户 CLI HOME 里一个升级前的原生日志文件。备份 `mysqldump --single-transaction`，84 KB。
+
+| 步骤（手册第 2 节） | 实际结果 |
+| --- | --- |
+| 3. 新版本以 `AGENTFLOW_BOT_WORKERS_ENABLED=false` 启动 | worker 关闭；连接 `offline`；保存配置返回 `503 bot_maintenance`。**数据保留没有运行**：6 条交互、4 条通知原样保留，日志无 `bot retention` |
+| 4. 036，执行两次 | 15 个新列 `present=1`；`wecom` 配置 4 个、接收占位 2 个、未回填 0；交互缺项目 0。两次输出相同。200 天前交互的 `updated_at` 未被改动 |
+| 5. 037，执行两次 | 共用和孤立绑定各列出 1 条；唯一归属 2 条已回填；`legacy_unmapped` 列出 4 条。两次输出相同 |
+| 6. 凭据 | `plaintext=4` → `reencrypt` 改写 4 条 → 再次执行跳过 4 条 → `plaintext=0 kid_h1=4`；库中无明文 |
+| 8. 开启 worker 重启（默认 90/180 天） | 日志 `bot retention: interaction bodies=2 interactions=1 notification bodies=2 notifications=1 …`。200 天前的已回复交互和已发送通知被删除；100 天前的交互正文清空、`body_purged_at` 已记录、`updated_at` 仍为原值；100 天前失败的通知正文清空、`content_source=purged`，重试返回 409；近期记录、待发、执行中的交互保持原样；200 天前仍待发的通知未被删除（由通知 worker 按原规则处理为过期）；升级前的原生日志文件仍在 |
+| 新增结构 | `bot_interactions.body_purged_at`、`send_route`，`notification_deliveries.send_key`、`receipt_source`，`bot_native_sessions.cleanup_detail`、`cleaned_at`，`bot_user_bindings.target_verified_at` 已由启动时 DDL 补齐；`bot_pending_drafts` 为 `utf8mb4_unicode_ci` |
+| 回退 A：旧版本直接运行在已迁移的库上 | 能启动、读出配置并占用连接，但 Secret 已是密文，旧版本无法使用。**不支持** |
+| 回退 B：恢复备份后启动旧版本 | 4 张表行数与升级前一致（交互 6 条，含被保留清理删除的记录），Secret 为明文，库中没有新列；旧版本读出 4 个 Bot 并占用连接 |
+
+本机没有企微真实回调，企微连接停在“重连中”，与 R1 演练一致。
+
+## 4. 真实验收清单的追溯（方案第 11.2 节）
+
+| 编号 | 企业微信 | 飞书 | 钉钉 | 证据 |
+| --- | --- | --- | --- | --- |
+| IM-01 新建和轮换 Bot | 回归项，未单独执行 | 通过（R1-01、R1-02） | 通过（R2-01、R2-02） | R1、R2 记录；轮换未在真实环境执行，有自动化 |
+| IM-02 两阶段绑定 | 回归项，未单独执行 | 单人路径通过（R1-05 前置），跨人未运行（豁免） | 单人路径通过（R2-04） | `64e1619` 修复了纯文本渠道的链接 |
+| IM-03 原会话查询 | 回归项，未单独执行 | 通过（R1-05 得到自然语言回复） | 通过（R2-02 首条消息得到回复） | 三类查询未逐项报告 |
+| IM-04 重复入站 | 未运行 | 未运行（豁免），F1、F2 通过 | 未运行（豁免），D1、D2 通过 | 故障测试 |
+| IM-05 重启与易主 | 演练第 8 步：执行中改为“已中断”，待发保留 | 未运行（豁免），F4、F5 通过 | 未运行（豁免），D3、D4 通过 | 故障测试、本记录第 3 节 |
+| IM-06 发送结果未知 | 未运行 | 未运行（豁免），F5、F6 通过 | 未运行（豁免） | 自动化 |
+| IM-07 只读与撤权 | 回归项 | 写请求被拒通过（R1-05）；撤权未运行（豁免） | 未运行（豁免） | 只读策略与撤权测试 |
+| IM-08 企微回归与备用发送 | 未运行（豁免，R1-12） | — | — | 单测；预发中旧 Bot 可读、可解密、可占用连接 |
+| IM-09 钉钉回复到期 | — | — | G-07 确认通过（未逐项回报） | D5、阶段 G 服务层测试 |
+| IM-10 主动通知 | G-10 回归确认通过（未逐项回报） | G-01、G-03 确认通过（未逐项回报） | G-02、G-03 确认通过（未逐项回报） | 阶段 G 记录 |
+| IM-11 人工补发 | 未运行 | 未运行 | G-07 确认通过（未逐项回报） | 自动化 |
+| IM-12 数据升级和回退 | 通过（演练环境：R1 第 3 节、本记录第 3 节） | 同左 | 同左 | 团队预发库按 R1 时的手册执行过一次；最终版本仅在演练环境执行 |
+
+**数据保留（阶段 H）没有真实环境验收项**：默认 90 天才开始清理，预发环境里没有这么久的数据。建议在预发库上临时设置 `AGENTFLOW_BOT_BODY_RETENTION_DAYS=1`、`AGENTFLOW_BOT_RECORD_RETENTION_DAYS=2` 观察一轮，再恢复默认值。
+
+## 5. 遗留事项
+
+1. **钉钉主动单聊权限**：权限的确切名称、`robotCode` 用 Client ID 是否可用，真实环境未回报（阶段 G 记录第 3 节）。
+2. **豁免项**：R1、R2 的豁免项和阶段 G 的整体确认，没有逐项真实证据，按上表保留“未运行”或“确认通过（未逐项回报）”。
+3. **多副本部署**：原生日志清理要求 `AGENTFLOW_ASSISTANT_SESSION_DIR` 共享，否则其他副本记为 `missing`（手册第 9.2 节）。
+4. **未登记日志位置的 CLI**：OpenCode、Kimi Code 等引擎的 Bot 日志记为 `unsupported`，需要人工清理。
+5. **CI 项**：Go 覆盖率门禁、真实浏览器用例、密钥扫描和 e2e 由 PR 的 CI 执行，结果以 CI 为准。
+6. **提交说明中的个人登录名**：提交 `57adbf2` 的说明含有员工登录名，文件已在 `c9ea35e` 中改正；改写提交说明需要强推，未执行。
