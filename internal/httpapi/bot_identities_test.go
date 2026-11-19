@@ -7,6 +7,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -105,6 +106,32 @@ func TestBotBindingLinkSurvivesNotificationRedaction(t *testing.T) {
 	rendered := domain.NotificationText(reply, 16000)
 	if strings.Contains(rendered, "[redacted]") || !strings.Contains(rendered, "/bot-bind.html#request=") || !strings.Contains(rendered, ")（15 分钟内有效）") {
 		t.Fatal("binding URL damaged by reply pipeline", rendered)
+	}
+}
+
+// Feishu and DingTalk send plain text: the link must be a bare URL on its
+// own line, or auto-linking keeps the Markdown ")" and the token breaks.
+func TestBotBindingLinkIsBareURLOnPlainTextChannels(t *testing.T) {
+	for _, channel := range []string{domain.BotChannelFeishu, domain.BotChannelDingTalk} {
+		_, assistant, bot := botFixture(t)
+		bot.Channel = channel
+		h := &botIdentityHandlers{deps: assistant.deps, publicURL: "https://platform.example/"}
+		handled, reply, err := h.message(bot, domain.BotInteraction{SenderID: "plain-" + channel, Content: "绑定账号"})
+		if err != nil || !handled {
+			t.Fatal(channel, err)
+		}
+		if strings.ContainsAny(reply, "[]()") {
+			t.Fatal(channel, "markdown link syntax in plain-text reply", reply)
+		}
+		var line string
+		for _, l := range strings.Split(reply, "\n") {
+			if strings.HasPrefix(l, "https://") {
+				line = l
+			}
+		}
+		if !regexp.MustCompile(`^https://platform\.example/bot-bind\.html#request=[a-f0-9]{64}$`).MatchString(line) {
+			t.Fatal(channel, "binding URL is not alone on its line", reply)
+		}
 	}
 }
 

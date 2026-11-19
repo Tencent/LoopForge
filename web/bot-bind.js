@@ -1,8 +1,14 @@
 (() => {
  const content=document.getElementById('content');
  const escape=s=>String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
- let token=new URLSearchParams(location.hash.slice(1)).get('request')||sessionStorage.getItem('wecomBindingToken')||'';
- if(token){sessionStorage.setItem('wecomBindingToken',token);history.replaceState(null,'',location.pathname);}
+ // Plain-text chats (Feishu, DingTalk) auto-link URLs loosely and may append
+ // trailing punctuation or percent-escapes, so take the 64-hex token from the
+ // fragment or query wherever it appears instead of requiring an exact value.
+ const pick=v=>(String(v||'').toLowerCase().match(/[a-f0-9]{64}/)||[''])[0];
+ const linked=pick(new URLSearchParams(location.hash.slice(1)).get('request'))||pick(new URLSearchParams(location.search).get('request'));
+ let token=linked||sessionStorage.getItem('wecomBindingToken')||'';
+ if(location.hash||location.search){history.replaceState(null,'',location.pathname);}
+ if(linked){sessionStorage.setItem('wecomBindingToken',linked);}
  async function request(path,body){const response=await fetch(path,{method:body?'POST':'GET',headers:body?{'Content-Type':'application/json'}:{},body:body?JSON.stringify(body):undefined,credentials:'same-origin',cache:'no-store'});const data=await response.json();if(!response.ok)throw new Error(data.error||'请求未完成');return data;}
  function failure(error){content.innerHTML=`<p class="error">${escape(error.message)}</p><p>请回到聊天中，向机器人发送“绑定账号”获取新链接。</p>`;}
  // Shows what is being bound: channel, Bot, project and the masked sender.

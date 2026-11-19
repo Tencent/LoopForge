@@ -228,5 +228,11 @@ func (h *botIdentityHandlers) message(bot domain.NotificationBot, item domain.Bo
 		return true, "", err
 	}
 	link := strings.TrimRight(h.publicURL, "/") + "/bot-bind.html#request=" + url.QueryEscape(token)
+	if bot.ChannelKind() != domain.BotChannelWeCom {
+		// Feishu and DingTalk replies are plain text: Markdown link syntax
+		// is shown verbatim and auto-linking swallows the closing bracket,
+		// so the URL stands alone on its own line.
+		return true, "请先关联你的平台账号（链接 15 分钟内有效）：\n" + link + "\n登录确认后，将页面上的 /bind 确认码发回当前 Bot。其他人点击链接不会直接完成绑定。", nil
+	}
 	return true, "请先[关联你的平台账号](" + link + ")（15 分钟内有效）。登录确认后，将页面上的 /bind 确认码发回当前 Bot。其他人点击链接不会直接完成绑定。", nil
 }
