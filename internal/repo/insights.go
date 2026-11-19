@@ -117,6 +117,9 @@ func (r *InsightsRepo) IngestInsightExecution(source domain.InsightSource, execu
 func (r *InsightsRepo) insightExecutions(filter domain.AnalyticsFilter) ([]insightExecutionRow, error) {
 	rows := []insightExecutionRow{}
 	q := r.DB.Model(&insightExecutionRow{})
+	if filter.ProjectScope == "unassigned" {
+		q = q.Where("(project_id = '' OR project_id IS NULL)")
+	}
 	if filter.ProjectID != "" {
 		q = q.Where("project_id = ?", filter.ProjectID)
 	}

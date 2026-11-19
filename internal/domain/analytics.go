@@ -11,9 +11,11 @@ type AnalyticsFilter struct {
 	// ProjectIDs is a server-resolved scope; nil means unrestricted, empty means no projects.
 	ProjectIDs []string `json:"-"`
 	ProjectID  string
-	WorkflowID string
-	From       time.Time
-	To         time.Time
+	// ProjectScope "unassigned" keeps only records without a project.
+	ProjectScope string `json:"projectScope,omitempty"`
+	WorkflowID   string
+	From         time.Time
+	To           time.Time
 	// Scope "overview" skips delivery scans and detailed breakdowns for faster dashboards.
 	Scope string
 	// UserID keeps runs whose responsible executor or linked issue assignee matches.
@@ -534,6 +536,9 @@ type AnalyticsSnapshot struct {
 
 // MatchesProject treats a non-nil empty scope as no projects, never as all projects.
 func (f AnalyticsFilter) MatchesProject(id string) bool {
+	if f.ProjectScope == "unassigned" && id != "" {
+		return false
+	}
 	if f.ProjectID != "" && f.ProjectID != id {
 		return false
 	}
