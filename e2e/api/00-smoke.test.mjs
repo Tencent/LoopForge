@@ -95,7 +95,7 @@ test('GET /api/deployment-metrics is not served', async () => {
 test('current user resolves through the token and model credentials are explicit', async () => {
   const users = list(await get('/api/users'));
   assert.ok(users.length > 0);
-  const withCreds = users.filter(u => u.codeBuddyApiKeyConfigured || u.gitTokenConfigured);
+  const withCreds = users.filter(u => u.codeBuddyApiKeyConfigured || u.gitHubCredentialConfigured);
   if(cfg.model) assert.ok(withCreds.length > 0, 'no user has any credential configured; model-backed scenarios cannot run');
 });
 

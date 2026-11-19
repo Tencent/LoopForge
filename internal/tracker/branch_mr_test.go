@@ -74,8 +74,9 @@ func TestFindBranchMRsIntoReadsWithTheRunCredentials(t *testing.T) {
 	s := NewService()
 	s.githubAPIBase = srv.URL
 	s.projectAuth = projectAuthFixture{
-		projects: map[string]domain.Project{"first": {ID: "first", OwnerID: 1}, "run": {ID: "run", OwnerID: 2}},
-		users:    map[int64]domain.User{1: {ID: 1, GitToken: "first-owner"}, 2: {ID: 2, GitToken: "run-owner"}},
+		credentials: map[int64]map[string]domain.GitHTTPCredentialSecret{1: {"github.com": {Token: "first-owner"}}, 2: {"github.com": {Token: "run-owner"}}},
+		projects:    map[string]domain.Project{"first": {ID: "first", OwnerID: 1}, "run": {ID: "run", OwnerID: 2}},
+		users:       map[int64]domain.User{1: {ID: 1, GitToken: "first-owner"}, 2: {ID: 2, GitToken: "run-owner"}},
 		repos: []domain.Repository{
 			{ID: "a", ProjectID: "first", Provider: "github", GongfengProjectID: "github:o/r"},
 			{ID: "b", ProjectID: "run", Provider: "github", GongfengProjectID: "github:o/r"},

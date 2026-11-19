@@ -404,7 +404,7 @@ func serveSSHGit(raw net.Conn, config *ssh.ServerConfig, bare string, expected m
 
 // GitHub SSH-style addresses keep the GitHub provider (HTTPS + token and
 // automatic pull requests); only an explicit provider "ssh" switches transport.
-func TestGitHubSSHAddressStaysGitHubRepository(t *testing.T) {
+func TestExplicitGitHubSSHAddressKeepsSSHTransport(t *testing.T) {
 	f := cvBNewHTTPFixture(t)
 	for _, address := range []string{"git@github.com:octo/widgets.git", "ssh://git@github.com/octo/widgets.git", "git clone git@github.com:octo/widgets.git"} {
 		resp := cvBRequest(t, f, http.MethodPost, "/api/repositories", map[string]string{"projectId": "platform", "repoUrl": address}, true)
@@ -412,7 +412,7 @@ func TestGitHubSSHAddressStaysGitHubRepository(t *testing.T) {
 		if err := json.Unmarshal(resp.Body.Bytes(), &repository); err != nil || resp.Code != http.StatusOK {
 			t.Fatalf("%s: HTTP %d, %s", address, resp.Code, resp.Body.String())
 		}
-		if repository.Provider != "github" || repository.GongfengProjectID != "github:octo/widgets" || repository.CloneURL != "https://github.com/octo/widgets.git" {
+		if repository.Provider != domain.RepositoryProviderSSH || repository.GongfengProjectID != "" || !gitwork.IsSSHReference(repository.CloneURL) {
 			t.Fatalf("%s saved as provider=%q id=%q clone=%q", address, repository.Provider, repository.GongfengProjectID, repository.CloneURL)
 		}
 	}

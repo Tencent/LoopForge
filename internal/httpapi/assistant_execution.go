@@ -66,7 +66,7 @@ func runnerUsesLocalLogin(runner domain.Runner, engine string) bool {
 }
 
 func assistantSupportsRunnerLogin(engine string) bool {
-	return engine == assistantEngineCodex || engine == assistantEngineClaude
+	return domain.SupportsRunnerLogin(engine)
 }
 
 func (h *assistantHandlers) sessionMode(c *gin.Context) {
@@ -103,6 +103,10 @@ func (h *assistantHandlers) sessionMode(c *gin.Context) {
 		run, exists := h.repo.RunState(runID)
 		if !exists || run.ExecutionContext.ExecutionRunnerID != saved.Execution().RunnerID {
 			c.JSON(409, gin.H{"error": "工作区与会话不在同一执行机器"})
+			return
+		}
+		if run.IsPersonalWorkspace() && (user.ID != saved.UserID || !conversationMayBind(saved, run, saved.ProjectID)) {
+			c.JSON(403, gin.H{"error": "无权访问个人工作区"})
 			return
 		}
 		if !run.IsWorkspace() && !sopStopped(run) {

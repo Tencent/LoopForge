@@ -1,7 +1,10 @@
 package httpapi
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"net/http"
 	"slices"
 	"testing"
 	"time"
@@ -48,45 +51,74 @@ func TestCursorFamiliesSurviveRestart(t *testing.T) {
 	a, _ = st.User(a.ID)
 	b, _ = st.User(b.ID)
 
+	stubCLIModelDiscovery(t)
+	release := make(chan struct{})
 	previous := assistantCursorModels
 	t.Cleanup(func() { assistantCursorModels = previous; clearCursorModelsCache() })
 	assistantCursorModels = func(_ context.Context, apiKey string) ([]domain.CLIModel, error) {
 		if apiKey != "crsr_cursor-a" {
 			return nil, nil
 		}
+		select {
+		case <-release:
+		case <-t.Context().Done():
+			return nil, t.Context().Err()
+		}
 		return cursorModelFamilies(parseCursorModels(cursorCatalogTestOutput)), nil
 	}
 	clearCursorModelsCache()
-	cachedCursorModels("crsr_cursor-a")
+	h := &assistantHandlers{deps: &deps{repo: st}}
+	readCatalog := func() assistantModelCatalog {
+		t.Helper()
+		c, rec := workbenchContext(a, http.MethodGet, "/api/assistant/models", &bytes.Buffer{})
+		h.models(c)
+		var catalog assistantModelCatalog
+		if err := json.Unmarshal(rec.Body.Bytes(), &catalog); rec.Code != http.StatusOK || err != nil {
+			t.Fatalf("model catalog: %d %s", rec.Code, rec.Body)
+		}
+		return catalog
+	}
+	if catalog := readCatalog(); !catalog.CursorModelsPending {
+		t.Fatal("cold Cursor catalog must report that discovery is pending")
+	}
+	close(release)
 	deadline := time.Now().Add(5 * time.Second)
-	for len(cachedCursorModels("crsr_cursor-a")) == 0 {
+	for {
+		catalog := readCatalog()
+		if !catalog.CursorModelsPending {
+			if !slices.ContainsFunc(catalog.Models, func(model assistantModel) bool {
+				return model.ID == "cursor:widget" && slices.Contains(model.Efforts, "xhigh")
+			}) {
+				t.Fatal("completed discovery did not expose the model's efforts")
+			}
+			break
+		}
 		if time.Now().After(deadline) {
 			t.Fatal("cursor model list was never cached")
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	h := &assistantHandlers{deps: &deps{repo: st}}
-	h.saveCursorCatalog(a)
 
 	// Restart: the process forgets every listed model.
 	clearCursorModelsCache()
 	assistantCursorModels = func(context.Context, string) ([]domain.CLIModel, error) { return nil, nil }
 	a, _ = st.User(a.ID)
 
-	if err := validateAssistantEffort(a, "cursor:widget", "xhigh"); err != nil {
+	if err := validateAssistantEffort(context.Background(), a, "cursor:widget", "xhigh"); err != nil {
 		t.Fatalf("saved family rejected its effort: %v", err)
 	}
-	if err := validateAssistantEffort(a, "cursor:nova", "max"); err == nil {
+	if err := validateAssistantEffort(context.Background(), a, "cursor:nova", "max"); err == nil {
 		t.Fatal("effort the family lacks was accepted")
 	}
-	if err := validateAssistantEffort(b, "cursor:widget", "xhigh"); err == nil {
+	if err := validateAssistantEffort(context.Background(), b, "cursor:widget", "xhigh"); err == nil {
 		t.Fatal("another user's family resolved")
 	}
-	if err := validateAssistantEffort(a, "cursor:grok-5-code", "high"); err == nil {
+	if err := validateAssistantEffort(context.Background(), a, "cursor:grok-5-code", "high"); err == nil {
 		t.Fatal("unknown model accepted an effort")
 	}
 	var listed []assistantModel
-	for _, model := range assistantEngineModels(context.Background(), a, nil) {
+	models, _ := assistantEngineModels(context.Background(), a, nil)
+	for _, model := range models {
 		if model.Engine == runtime.AgentCLICursor {
 			listed = append(listed, model)
 		}

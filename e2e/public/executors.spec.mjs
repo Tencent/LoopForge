@@ -16,17 +16,25 @@ for(const viewport of [{width:1280,height:400},{width:390,height:600}]){
     await signInUnconfigured(page);
     await openHome(page);
     const frame=chat(page);
-    for(const [button,menu,name] of [[executorButton(frame),'.permission-menu[role="menu"]','执行器'],[frame.getByRole('button',{name:'选择模型',exact:true}),'.grasp-model-menu','选择模型']]){
-      await button.click();
-      const open=frame.locator(menu);
-      await expect(open).toBeVisible();
-      await expect.poll(()=>fitsFrame(open),{message:`${name} menu at ${viewport.width}x${viewport.height}`}).toBe(true);
-      await page.keyboard.press('Escape');
-      await expect(open).toBeHidden();
-    }
+    const cli=executorButton(frame),cliMenu=frame.locator('.permission-menu[role="menu"]');
+    const fits=async menu=>{
+      await expect(menu).toBeVisible();
+      await expect.poll(()=>fitsFrame(menu)).toBe(true);
+    };
+    await cli.click();
+    await fits(cliMenu);
+    await page.keyboard.press('Escape');
+    await expect(cliMenu).toBeHidden();
+    // Codex offers a built-in catalog on installations without any configured models.
+    await cli.click();
+    await cliMenu.getByRole('menuitemradio',{name:'Codex',exact:true}).click();
+    const model=frame.getByRole('button',{name:'选择模型',exact:true}),modelMenu=frame.locator('.grasp-model-menu');
+    await model.click();
+    await fits(modelMenu);
+    await page.keyboard.press('Escape');
+    await expect(modelMenu).toBeHidden();
     // Long catalogs are searched inside the menu.
-    await frame.getByRole('button',{name:'选择模型'}).click();
-    const modelMenu=frame.locator('.grasp-model-menu');
+    await model.click();
     const search=modelMenu.locator('input[aria-label="搜索模型"]');
     await expect(search).toBeVisible();
     const first=(await modelMenu.locator('[role^="menuitem"]').first().innerText()).split('\n')[0].trim();
@@ -63,7 +71,11 @@ test('executor selection has independent models, credentials and a persistent ch
     const response=await page.request.post('/api/assistant/generations',{data:{executor:id,model:'default',projectId:'welcome',messages:[{role:'user',content:'No key: reject before executing.'}]}});
     expect(response.status()).toBe(400);expect((await response.json()).error).toContain(label);
     const models=await page.request.get('/api/assistant/models?executor='+id);
-    expect(models.ok()).toBe(true);expect((await models.json()).models.length).toBeGreaterThan(0);
+    expect(models.ok()).toBe(true);
+    const catalog=await models.json();
+    expect(Array.isArray(catalog.models)).toBe(true);
+    if(id==='codebuddy')expect(catalog.default).toBeTruthy();
+    else expect(catalog.models.length).toBeGreaterThan(0);
   }
   await choose('Codex');
   await page.reload();

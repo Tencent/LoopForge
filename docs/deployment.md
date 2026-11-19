@@ -10,7 +10,7 @@ For a native installation, use Node.js 22+ on the API host and install the CLIs 
 npm install --global @tencent-ai/codebuddy-code
 codebuddy --version
 # Optional executors for Main Bot and SOP roles:
-npm install --global @openai/codex@0.162.1 @anthropic-ai/claude-code@2.1.300
+npm install --global @openai/codex@0.162.1 @anthropic-ai/claude-code@2.1.326
 ```
 
 Ensure the service can find `codebuddy` and Node.js on its PATH, or set `AGENTFLOW_CODEBUDDY_BIN` to the installed executable. Configure the model key and its network environment in personal settings. The no-key script demo does not need the CLI. The production Docker image includes CodeBuddy, Codex and DeepSeek Harness (`dsh`). Claude Code and the other agent CLIs are not bundled. When a conversation fails because one is missing, the error says it is not installed and offers an install button. That downloads the pinned `@anthropic-ai/claude-code` release, or the public package for OpenCode, Kimi Code and Pi, into `$LOOPFORGE_DATA_DIR/cli`; an installation outside the image gets the pinned `@deepseek-ai/dsh` release the same way. Cursor CLI and Antigravity use their providers' installers and land in the service user's `~/.local/bin`. Closing or reloading the browser does not stop an install that has already started, and the button stays on “自动安装” until it finishes. A finished install replaces the earlier generation failure with a prompt to send the message again. The next message reuses the installation. An SOP sandbox of the published image that selects Claude Code, OpenCode, Kimi Code or Pi installs the same package on first use and shares it with conversations. Cursor CLI and Antigravity are not installed into SOP sandboxes. Connected runners keep their own CLI requirements.
@@ -38,7 +38,7 @@ The installer checks Docker, Compose, Python 3 and curl. It offers to install mi
 
 Run it as the installation owner, including an ordinary Linux user. If that user cannot access Docker directly, the installer validates sudo and uses `sudo -n docker` consistently for Compose, schema installation and seeds. Before each operation it checks whether sudo credentials expired during a long build, prompting again in a terminal or failing with instructions in unattended mode. It does not require adding the user to the Docker group or logging out. For unattended installations run `sudo -v` first; `LOOPFORGE_YES=1` accepts installation prompts but does not bypass operating-system permissions. Without sudo or Docker access it fails immediately with instructions. Rootless Docker uses its active context's Unix socket; remote Docker contexts need a separately configured deployment because sandbox workspaces are local bind mounts.
 
-`compose.yaml` is the published-image stack and never builds: `./start.sh`, `scripts/install.sh` and a plain `docker compose --profile platform up` all pull the GHCR release pinned there (currently `ghcr.io/tencent/loopforge:0.3.8`). The pin matches the checkout's migrations and seeds, so check out a release tag when you install. Set `LOOPFORGE_IMAGE` (for example to an `@sha256:` digest) only to override it; a value saved in `.env` takes precedence over later pin changes.
+`compose.yaml` is the published-image stack and never builds: `./start.sh`, `scripts/install.sh` and a plain `docker compose --profile platform up` all pull the GHCR release pinned there (currently `ghcr.io/tencent/loopforge:0.4.0`). The pin matches the checkout's migrations and seeds, so check out a release tag when you install. Set `LOOPFORGE_IMAGE` (for example to an `@sha256:` digest) only to override it; a value saved in `.env` takes precedence over later pin changes.
 
 To upgrade, update the checkout first, then refresh the containers:
 
@@ -168,6 +168,8 @@ docker compose exec -T mysql sh -c 'MYSQL_PWD="$MYSQL_PASSWORD" mysql -u loopfor
 ```
 
 After it, a run of these SOPs commits and pushes its work branch and opens an MR/PR before 交付汇总, so the Git credentials of the run's responsible user need push access. The installer and `./start.sh pull` do not run it. It rewrites a template only while its node graph and 交付汇总 position are the shipped original, and the 交付汇总 prompt only while unedited; it is safe to repeat. Project SOPs adopted from these templates are copies and are not changed.
+
+After migrating personal Git credentials, apply `038_generic_sop_host_credentials.sql` to update the original authentication instruction in the three built-in MR roles. The roles can use a hosting CLI, a configured MCP, or the host's API with a token obtained through `git credential fill`.
 
 ## GitHub credentials
 

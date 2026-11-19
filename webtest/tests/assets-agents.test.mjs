@@ -129,3 +129,49 @@ test('role model picker reloads the editor catalog and preserves a CLI change wh
   assert.deepEqual(menu().map(row => row.dataset.id), ['', 'private/second', '__custom__']);
   assert.equal(app.document.querySelector('#agentModelPicker [data-model-label]').textContent, 'Renamed model');
 });
+
+test('role effort picker follows each model and resets an unsupported level on model changes', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  const xhigh = { value:'xhigh', label:'超高 xhigh' };
+  app.router.get('/api/executor-models', {
+    codebuddy:{models:[],efforts:[]}, claude:{models:[],efforts:[]},
+    codex:{customModel:true,models:[{id:'reasoner',name:'Reasoner',efforts:[xhigh]}, {id:'plain',name:'Plain',efforts:[]}],efforts:[{value:'low',label:'低 low'},xhigh]},
+  });
+  app.evaluate(`
+    state.data.executors=[{id:'codebuddy',name:'CodeBuddy'}, {id:'codex',name:'Codex'}];
+    openAgentWizard({id:'test-role',name:'Test',prompt:'Test',executorId:'codex',model:'reasoner',effort:'xhigh'});
+  `);
+  await settle();
+  const choices = () => [...app.document.querySelectorAll('#agentEffortPicker [role=option]')].map(row=>row.dataset.id);
+  assert.deepEqual(choices(), ['', 'xhigh']);
+  assert.equal(app.document.querySelector('#agentEffortPicker [name="effort"]').value, 'xhigh');
+  app.document.querySelector('#agentModelPicker [data-id="plain"]').click();
+  assert.deepEqual(choices(), ['']);
+  assert.equal(app.document.querySelector('#agentEffortPicker [name="effort"]').value, '');
+});
+
+test('a personal catalog does not rewrite an existing role effort during a name edit', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  let loaded;
+  app.router.get('/api/executor-models', () => new Promise(resolve => { loaded = resolve; }));
+  app.router.put('/api/agents', call => ({ status: 200, body: call.body }));
+  app.evaluate(`
+    state.data.executors=[{id:'codebuddy',name:'CodeBuddy'}, {id:'codex',name:'Codex'}];
+    openAgentWizard({id:'agent-1',name:'Developer',prompt:'Review',executorId:'codex',model:'reasoner',effort:'xhigh'});
+  `);
+  await settle();
+  loaded({codex:{customModel:true,models:[{id:'reasoner',name:'Reasoner',efforts:[]}],efforts:[]}});
+  await settle();
+  const picker = app.document.querySelector('#agentEffortPicker');
+  assert.deepEqual([...picker.querySelectorAll('[role=option]')].map(item=>item.dataset.id), ['']);
+  assert.equal(picker.querySelector('[data-model-label]').textContent, 'xhigh');
+  await app.evaluate(`
+    $('#agentForm').elements.name.value='Renamed';
+    persistAgent($('#agentForm'));
+  `);
+  const saved = app.router.calls.find(call=>call.path==='/api/agents'&&call.method==='PUT').body;
+  assert.equal(saved.name, 'Renamed');
+  assert.equal(saved.effort, 'xhigh');
+});

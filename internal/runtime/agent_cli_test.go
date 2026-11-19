@@ -71,6 +71,36 @@ func TestAgentCLICommandChatRestrictions(t *testing.T) {
 	}
 }
 
+func TestKimiThinkingConfiguration(t *testing.T) {
+	home := t.TempDir()
+	for _, tc := range []struct {
+		effort   string
+		thinking string
+	}{
+		{"none", "off"},
+		{"thinking", "on"},
+		{"max", "max"},
+		{"", ""},
+	} {
+		command := AgentCLICommand(AgentCLIKimi, AgentCLICommandOptions{Model: "fixture-model", Effort: tc.effort, Resume: "session", Prompt: "test"})
+		_, env, err := ApplyAgentCLICredential(AgentCLIKimi, ProviderCredential{APIKey: "fixture-key"},
+			command.AgentCLI, HostAgentCLIHome(home), home, command.Argv)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := env[kimiThinkingEffortEnv]; got != tc.thinking {
+			t.Errorf("effort %q yields per-turn override %q, want %q", tc.effort, got, tc.thinking)
+		}
+		config, err := os.ReadFile(filepath.Join(home, ".kimi-code", "config.toml"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(config), "[thinking]") {
+			t.Errorf("effort %q was written into the Kimi session defaults:\n%s", tc.effort, config)
+		}
+	}
+}
+
 func TestAgentCLICommandAgyEffortSuffix(t *testing.T) {
 	for _, tc := range []struct{ model, effort, want string }{
 		{"gemini-3.8-flash-medium", "low", "gemini-3.8-flash-low"},
