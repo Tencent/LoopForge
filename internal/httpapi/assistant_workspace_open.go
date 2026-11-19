@@ -92,17 +92,26 @@ func projectRepositoryHints(all []domain.Repository, projectID string) []workspa
 	return hints
 }
 
-// Repository URLs in model input need only the base address. Older records
+// Network URLs in model input need only the base address. Older records
 // may have signed query strings or fragments in addition to URL userinfo.
 func workspaceRepositoryURL(raw string) string {
 	base := strings.TrimSpace(raw)
-	if i := strings.IndexAny(base, "?#"); i >= 0 {
-		base = base[:i]
+	separator := strings.Index(base, "://")
+	if separator < 0 {
+		return base
 	}
-	if strings.Contains(base, "://") {
-		if _, err := url.Parse(base); err != nil {
-			return ""
+	prefix, err := url.Parse(base[:separator+3])
+	if err != nil || prefix.Scheme == "" {
+		return base
+	}
+	// Git treats these characters in file:// paths as part of the filename.
+	if prefix.Scheme != "file" {
+		if i := strings.IndexAny(base, "?#"); i >= 0 {
+			base = base[:i]
 		}
+	}
+	if _, err := url.Parse(base); err != nil {
+		return ""
 	}
 	return domain.StripURLCredentials(base)
 }

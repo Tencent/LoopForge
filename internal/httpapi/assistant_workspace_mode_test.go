@@ -140,6 +140,22 @@ func TestWorkspaceRepositoryHintsStripURLSecrets(t *testing.T) {
 	}
 }
 
+func TestWorkspaceRepositoryHintsPreserveGitPaths(t *testing.T) {
+	for _, path := range []string{
+		"/srv/repos/billing#core.git",
+		"./billing?core.git",
+		"file:///srv/repos/billing#core?.git",
+		"git@git.example.test://srv/repos/billing#core?.git",
+	} {
+		hints := projectRepositoryHints([]domain.Repository{
+			{ID: "billing", Name: "Billing", ProjectID: "p", CloneURL: path},
+		}, "p")
+		if len(hints) != 1 || hints[0].CloneURL != path {
+			t.Errorf("catalog changed Git path %q: %+v", path, hints)
+		}
+	}
+}
+
 func TestLargeWorkspaceRepositoryCatalogReachableOnResumeAndRebuild(t *testing.T) {
 	h, _ := workbenchFixture(t)
 	for i := range 1000 {
