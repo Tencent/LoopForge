@@ -305,12 +305,28 @@ func describeBoundKnowledgeRef(ctx context.Context, d *deps, project string, uid
 	var samples []string
 	if ctx.Err() == nil {
 		switch {
-		case hasListDocs:
-			if text, _, err := callKnowledgeReference(ctx, d, project, uid, ref, "list_documents", map[string]any{"page_size": knowledgeCatalogMaxDocs}); err == nil {
-				samples = extractCatalogTitles(text, knowledgeCatalogMaxDocs)
-			}
 		case hasListBases:
 			if text, _, err := callKnowledgeReference(ctx, d, project, uid, ref, "list_knowledge_bases", map[string]any{}); err == nil {
+				baseIDs := extractCatalogBaseIDs(text, 3)
+				if hasListDocs && len(baseIDs) > 0 {
+					for _, baseID := range baseIDs {
+						if ctx.Err() != nil || len(samples) >= knowledgeCatalogMaxDocs {
+							break
+						}
+						if docText, _, docErr := callKnowledgeReference(ctx, d, project, uid, ref, "list_documents", map[string]any{
+							"knowledge_base_id": baseID,
+							"page_size":         10,
+						}); docErr == nil {
+							samples = appendUniqueCatalogItems(samples, extractCatalogTitles(docText, knowledgeCatalogMaxDocs-len(samples)), knowledgeCatalogMaxDocs)
+						}
+					}
+				}
+				if len(samples) == 0 {
+					samples = extractCatalogTitles(text, knowledgeCatalogMaxDocs)
+				}
+			}
+		case hasListDocs:
+			if text, _, err := callKnowledgeReference(ctx, d, project, uid, ref, "list_documents", map[string]any{"page_size": knowledgeCatalogMaxDocs}); err == nil {
 				samples = extractCatalogTitles(text, knowledgeCatalogMaxDocs)
 			}
 		case hasListSources:
@@ -402,4 +418,58 @@ func clipCatalogText(s string, maxRunes int) string {
 func escapeXMLText(s string) string {
 	r := strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;")
 	return r.Replace(s)
+}
+
+func appendUniqueCatalogItems(dst, src []string, limit int) []string {
+	seen := make(map[string]bool, len(dst))
+	for _, s := range dst {
+		seen[s] = true
+	}
+	for _, s := range src {
+		if len(dst) >= limit {
+			break
+		}
+		if s == "" || seen[s] {
+			continue
+		}
+		seen[s] = true
+		dst = append(dst, s)
+	}
+	return dst
+}
+
+func extractCatalogBaseIDs(raw string, limit int) []string {
+	var parsed any
+	if json.Unmarshal([]byte(strings.TrimSpace(raw)), &parsed) != nil || limit <= 0 {
+		return nil
+	}
+	var out []string
+	seen := map[string]bool{}
+	var walk func(any)
+	walk = func(v any) {
+		if len(out) >= limit {
+			return
+		}
+		switch x := v.(type) {
+		case []any:
+			for _, item := range x {
+				walk(item)
+			}
+		case map[string]any:
+			if id, ok := x["id"].(string); ok {
+				id = strings.TrimSpace(id)
+				if id != "" && !seen[id] {
+					seen[id] = true
+					out = append(out, id)
+				}
+			}
+			for _, key := range []string{"knowledge_bases", "items", "data", "results"} {
+				if sub, ok := x[key]; ok {
+					walk(sub)
+				}
+			}
+		}
+	}
+	walk(parsed)
+	return out
 }

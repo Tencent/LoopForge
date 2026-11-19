@@ -267,3 +267,75 @@ func TestKnowledgeReferencePromptContextAndCache(t *testing.T) {
 		t.Fatalf("second call should use cache; list_documents calls = %d, want 1", listDocsCalls)
 	}
 }
+
+func TestKnowledgeReferencePromptContextWeKnoraFlow(t *testing.T) {
+	resetKnowledgeCatalogCacheForTest()
+	defer resetKnowledgeCatalogCacheForTest()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var rpc struct {
+			ID     any    `json:"id"`
+			Method string `json:"method"`
+			Params struct {
+				Name      string         `json:"name"`
+				Arguments map[string]any `json:"arguments"`
+			} `json:"params"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&rpc); err != nil {
+			http.Error(w, err.Error(), 400)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch rpc.Method {
+		case "initialize":
+			_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": rpc.ID, "result": map[string]any{"protocolVersion": "2024-11-05"}})
+		case "notifications/initialized":
+			w.WriteHeader(204)
+		case "tools/list":
+			_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": rpc.ID, "result": map[string]any{
+				"tools": []map[string]any{
+					{"name": "list_knowledge_bases", "description": "List KBs", "annotations": map[string]any{"readOnlyHint": true}},
+					{"name": "list_documents", "description": "List docs", "annotations": map[string]any{"readOnlyHint": true}},
+					{"name": "search_knowledge", "description": "Search KB", "annotations": map[string]any{"readOnlyHint": true}},
+				},
+			}})
+		case "tools/call":
+			switch rpc.Params.Name {
+			case "list_knowledge_bases":
+				_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": rpc.ID, "result": map[string]any{
+					"content": []map[string]any{{"type": "text", "text": `{"knowledge_bases":[{"id":"kb-net","name":"网络排障库","description":"VPC DNS 排障"}]}`}},
+				}})
+			case "list_documents":
+				if rpc.Params.Arguments["knowledge_base_id"] != "kb-net" {
+					_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": rpc.ID, "result": map[string]any{"isError": true, "content": []map[string]any{{"type": "text", "text": "knowledge_base_id required"}}}})
+					return
+				}
+				_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": rpc.ID, "result": map[string]any{
+					"content": []map[string]any{{"type": "text", "text": `{"documents":[{"title":"vpcdns-test.md"}]}`}},
+				}})
+			}
+		}
+	}))
+	defer srv.Close()
+
+	store, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if err := store.PutMCPServer(domain.MCPServerDefinition{
+		ID:        "weknora-2",
+		Name:      "WeKnora",
+		Scope:     "project",
+		ProjectID: "default",
+		Transport: "http",
+		URL:       srv.URL,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	d := &deps{repo: store}
+	got := knowledgeReferencePromptContext(context.Background(), d, "default", 1, []domain.KnowledgeRef{{ServerID: "weknora-2", Mode: "all"}})
+	if !strings.Contains(got, "vpcdns-test.md") {
+		t.Fatalf("expected vpcdns-test.md in L0 catalog, got:\n%s", got)
+	}
+}
