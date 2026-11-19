@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"slices"
+	"strings"
 	"testing"
 
 	"agentflow/internal/domain"
@@ -148,13 +149,79 @@ func TestAntigravityRunnerModelProbeGroupsAdvertisedEfforts(t *testing.T) {
 
 	ctx := context.Background()
 	const model = "agy:claude-opus-5-5-medium"
-	if err := validateAssistantTurnEffort(ctx, owner, model, "high", true); err != nil {
-		t.Errorf("advertised effort rejected: %v", err)
+	if got, err := h.resolveAssistantTurnModel(ctx, owner, model, "high", row); err != nil || got != "agy:claude-opus-5-5-high" {
+		t.Errorf("advertised effort did not resolve to the runner variant: %q %v", got, err)
 	}
-	if err := validateAssistantTurnEffort(ctx, owner, model, "max", true); err == nil {
+	if _, err := h.resolveAssistantTurnModel(ctx, owner, model, "max", row); err == nil {
 		t.Error("unadvertised effort accepted")
 	}
-	if err := validateAssistantTurnEffort(ctx, owner, model, "high", false); err == nil {
+	if err := validateAssistantEffort(ctx, owner, model, "high"); err == nil {
 		t.Error("account-only effort accepted for API key execution")
+	}
+}
+
+func TestAntigravityGenerationUsesLiveRunnerCatalog(t *testing.T) {
+	h, owner := workbenchFixture(t)
+	h.generate = func(context.Context, string, domain.User) (string, error) { return "test reply", nil }
+	runner := domain.Runner{
+		ID: "agy-live", OwnerUserID: owner.ID, Status: domain.RunnerStatusOnline, RunnerVersion: domain.RunnerVersionCLISettings,
+		Runtimes: []domain.RunnerRuntime{{Provider: runtime.AgentCLIAntigravity, AuthMode: domain.RuntimeAuthLocal}},
+	}
+	if err := h.repo.PutRunner(runner); err != nil {
+		t.Fatal(err)
+	}
+	hub := quietRunnerHub()
+	h.runnerControls = hub
+	conn := testRunnerConn(runner.ID)
+	registerTestConn(hub, conn)
+	defer conn.close()
+	go func() {
+		for {
+			select {
+			case <-conn.done:
+				return
+			case msg := <-conn.send:
+				if msg.WorkspaceRequest != nil && msg.WorkspaceRequest.Operation == domain.RunnerWorkspaceOperationLoginModels {
+					hub.resolveWorkspace(msg.RequestID, domain.RunnerWorkspaceResponse{Status: 200, Payload: []byte(`[
+						{"id":"gemini-3.8-flash-low"}, {"id":"gemini-3.8-flash-medium"}
+					]`)})
+				}
+			}
+		}
+	}()
+	probe := &runnersHandlers{deps: h.deps, runnerControls: hub}
+	c, w := workbenchContext(owner, http.MethodPost, "/", bytes.NewBufferString(`{"provider":"agy","useSaved":true}`))
+	c.Params = gin.Params{{Key: "id", Value: runner.ID}}
+	probe.probeRunnerModels(c)
+	var catalog cliModelProbeResult
+	if err := json.Unmarshal(w.Body.Bytes(), &catalog); err != nil || w.Code != http.StatusOK || catalog.Source != "runner" || len(catalog.Models) != 1 {
+		t.Fatalf("probe returned %d: %s (decode %v)", w.Code, w.Body, err)
+	}
+	if levels := catalog.Models[0].DiscoveredReasoningEfforts; levels == nil || !slices.Equal(*levels, []string{"low", "medium"}) {
+		t.Fatalf("unexpected runner model: %+v", catalog.Models[0])
+	}
+
+	request := assistantRequest{
+		SessionID: "agy-live-turn", Model: "agy:" + catalog.Models[0].ID, Effort: "high",
+		ExecutionTarget: &domain.AssistantExecutionTarget{Pool: domain.ExecutionModeRunner, RunnerID: runner.ID},
+		Messages:        []assistantMessage{{Role: "user", Content: "hello"}},
+	}
+	body, err := json.Marshal(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, w = workbenchContext(owner, http.MethodPost, "/api/assistant/generations", bytes.NewBuffer(body))
+	h.startGeneration(c)
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "可选：默认、low、medium") {
+		t.Fatalf("unadvertised effort returned %d: %s", w.Code, w.Body)
+	}
+	resolved, err := h.resolveAssistantTurnModel(t.Context(), owner, request.Model, "medium", runner)
+	if err != nil || resolved != "agy:gemini-3.8-flash-medium" {
+		t.Fatalf("advertised effort did not resolve to the runner variant: %q %v", resolved, err)
+	}
+	provider, modelID := assistantModelEngine(resolved)
+	command := runtime.AgentCLICommand(provider, runtime.AgentCLICommandOptions{Model: modelID, Effort: "medium", RunnerLogin: true})
+	if i := slices.Index(command.Argv, "--model"); i < 0 || i+1 == len(command.Argv) || command.Argv[i+1] != "gemini-3.8-flash-medium" {
+		t.Fatalf("command did not use the advertised model ID: %v", command.Argv)
 	}
 }

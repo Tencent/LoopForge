@@ -199,7 +199,8 @@ function renderAgentEffortPicker(modelChanged=false){
 function applyAgentModelUI(executorId,model,effort,pickFirst=false){
   const picker=$('#agentModelPicker');if(!picker||!$('#agentEffortPicker'))return;
   const cat=executorModelCatalogs()[executorId]||{};
-  let choice=model||(pickFirst?(cat.models||[]).find(item=>item.id!=='default')?.id:'')||'';
+  // Keep cached models available for manual picks while the catalog refreshes.
+  let choice=model||(pickFirst&&!executorModelCatalogRequest?(cat.models||[]).find(item=>item.id!=='default')?.id:'')||'';
   if(choice&&choice!=='default'&&!(cat.models||[]).some(m=>m.id===choice)&&cat.customModel)choice=AGENT_CUSTOM_MODEL;
   picker.querySelector('[name="modelChoice"]').value=choice;
   const customInput=$('#agentModelCustomField')?.querySelector('input[name="model"]');
@@ -244,16 +245,18 @@ function selectAgent(a,rerender=true){
   if(f.elements.executorId)f.elements.executorId.innerHTML=executorOptions(a.executorId||'codebuddy');
   const modelRevision=++agentModelRevision;
   const modelUser=state.currentUser?.id;
+  const refreshModels=loadExecutorModelCatalogs();
   applyAgentModelUI(currentAgentExecutorId(),a.model||'',a.effort||'',!a.id);
-  loadExecutorModelCatalogs().then(()=>{
+  refreshModels.then(()=>{
     if(modelRevision!==agentModelRevision||modelUser!==state.currentUser?.id)return;
     const model=agentEffectiveModel(f);
     if(!model&&f.elements.modelChoice?.value===AGENT_CUSTOM_MODEL){
       renderAgentModelPicker();
       renderAgentEffortPicker();
-      return;
+    }else{
+      applyAgentModelUI(currentAgentExecutorId(),model,f.elements.effort?.value,!a.id||currentAgentExecutorId()!==(a.executorId||'codebuddy'));
     }
-    applyAgentModelUI(currentAgentExecutorId(),model,f.elements.effort?.value,!a.id||currentAgentExecutorId()!==(a.executorId||'codebuddy'));
+    if(state.agentModalMode==='create'&&state.agentCreateStep===3)renderAgentCreateReview();
   });
   if(f.elements.id)f.elements.id.readOnly=!!a.id;
   renderAgentPresets();renderAgentTaskBook(a);renderAgentGovernance(a);renderAgentAssetsPanel(a);renderAgentSummary();
