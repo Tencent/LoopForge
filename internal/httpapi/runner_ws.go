@@ -489,6 +489,8 @@ var runnerWSUpgrader = websocket.Upgrader{
 	WriteBufferSize:  1024,
 }
 
+type legacyRunnerToolRequestKey struct{}
+
 // runnerControlConnect 升级 /runners/ws 连接并进入控制消息循环。
 // 路由: g.GET("/runners/ws", h.runnerControlConnect)
 func (h *runnersHandlers) runnerControlConnect(c *gin.Context) {
@@ -502,6 +504,9 @@ func (h *runnersHandlers) runnerControlConnect(c *gin.Context) {
 	}
 	conn := h.runnerControls.register(runner.ID, ws)
 	defer h.runnerControls.unregister(conn)
+	connCtx, cancel := context.WithCancel(c.Request.Context())
+	defer cancel()
+	var toolCancels sync.Map // request ID -> context.CancelFunc
 	go conn.writeLoop()
 	ws.SetReadLimit(20 << 20)
 	_ = ws.SetReadDeadline(time.Now().Add(runnerWSReadTimeout))
@@ -514,8 +519,21 @@ func (h *runnersHandlers) runnerControlConnect(c *gin.Context) {
 			return
 		}
 		_ = ws.SetReadDeadline(time.Now().Add(runnerWSReadTimeout))
+		if input.Type == "agent_tool.cancel" {
+			if stop, ok := toolCancels.Load(input.RequestID); ok {
+				stop.(context.CancelFunc)()
+			}
+			continue
+		}
 		if input.Type == "agent_tool.request" && input.ToolRequest != nil {
+			toolCtx, stop := context.WithCancel(connCtx)
+			if _, duplicate := toolCancels.LoadOrStore(input.RequestID, stop); duplicate {
+				stop()
+				continue
+			}
 			go func(input runnerControlMessage) {
+				defer toolCancels.Delete(input.RequestID)
+				defer stop()
 				result := domain.RunnerToolResponse{}
 				session, ok := agentToolSessions.get(input.ToolRequest.Token)
 				if !ok || session.ExecutionRunnerID != runner.ID {
@@ -525,7 +543,11 @@ func (h *runnersHandlers) runnerControlConnect(c *gin.Context) {
 					if err := json.Unmarshal(input.ToolRequest.Body, &request); err != nil {
 						result.Error = "invalid tool request"
 					} else {
-						response := (&agentToolGateway{deps: h.deps}).handleRPC(withAgentToolToken(c.Request.Context(), input.ToolRequest.Token), session, request)
+						ctx := withAgentToolToken(toolCtx, input.ToolRequest.Token)
+						if !input.ToolRequest.SupportsCancel {
+							ctx = context.WithValue(ctx, legacyRunnerToolRequestKey{}, true)
+						}
+						response := (&agentToolGateway{deps: h.deps}).handleRPC(ctx, session, request)
 						if response != nil {
 							result.Body, _ = json.Marshal(response)
 						}
@@ -533,6 +555,7 @@ func (h *runnersHandlers) runnerControlConnect(c *gin.Context) {
 				}
 				select {
 				case conn.send <- runnerControlMessage{Type: "agent_tool.response", RequestID: input.RequestID, ToolResponse: &result}:
+				case <-toolCtx.Done():
 				case <-conn.done:
 				}
 			}(input)

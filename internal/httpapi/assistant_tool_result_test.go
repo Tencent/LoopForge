@@ -316,13 +316,16 @@ func TestAssistantPromptExplainsLargeResultsWithoutRestrictingSubAgents(t *testi
 	}
 }
 
-func TestConversationWorkspaceGoalIsNotAPendingTask(t *testing.T) {
-	run := domain.Run{ID: "run-ws", Kind: domain.RunKindWorkspace, Input: "对话改代码：只读解析 JSON"}
-	if !run.IsWorkspace() {
-		t.Fatal("fixture must be a conversation workspace")
-	}
+// A workspace is described by its environment, never by an old goal that
+// would read like pending work.
+func TestConversationWorkspaceDescribedByEnvironment(t *testing.T) {
+	run := domain.Run{ID: "run-ws", Kind: domain.RunKindWorkspace, Input: "对话改代码：只读解析 JSON", WorkflowSnapshot: domain.WorkflowDefinition{SandboxProfileID: "generic-docker"}}
 	got := describeConversationWorkspace(run)
-	if !strings.Contains(got, "run-ws「只读解析 JSON」（「」里是开区时的目标") || !strings.Contains(got, "不代表还有待办任务") || !strings.Contains(got, "run-ws") {
+	if got != "对话工作区 run-ws（运行环境 generic-docker，在线）" {
 		t.Fatalf("workspace description=%s", got)
+	}
+	run.Repositories = []domain.RepositoryContext{{Name: "web"}}
+	if got := describeConversationWorkspace(run); !strings.Contains(got, "预检出仓库 web") {
+		t.Fatalf("legacy workspace description=%s", got)
 	}
 }

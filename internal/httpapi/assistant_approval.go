@@ -4,14 +4,17 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"regexp"
 	"strings"
 
 	"agentflow/internal/domain"
 	"agentflow/internal/repo"
+
+	"github.com/gin-gonic/gin"
 )
 
-// 平台与外部操作的审批模式；Docker 工作区原生开发操作默认执行。
+// 平台写入与沙箱外写入（外部 MCP、git push 等命令）的审批模式；工作区沙箱内的开发操作默认执行。
 // confirm  请求批准：平台草稿由用户确认后执行（默认）。
 // assisted 帮我批准：独立模型审查具体操作和对话授权，通过后执行；
 // 未通过或审查不可用时交给用户确认。
@@ -32,6 +35,16 @@ func normalizeAssistantApprovalMode(mode string) string {
 	default:
 		return AssistantApprovalConfirm
 	}
+}
+
+// Check the account attached by the browser against the account that
+// authenticated this request. Existing API clients may omit the field.
+func requireAssistantApprovalUser(c *gin.Context, currentID, approvalUserID int64) bool {
+	if approvalUserID != 0 && approvalUserID != currentID {
+		c.JSON(http.StatusConflict, gin.H{"error": "登录账号已变更，请刷新页面后重试"})
+		return false
+	}
+	return true
 }
 
 var assistantRiskyToolPattern = regexp.MustCompile(`(_delete|_publish|_dispatch|_start|_cancel|_reject|_run|_restore|_pass|_retry|_pause|_resume|_reopen)$`)

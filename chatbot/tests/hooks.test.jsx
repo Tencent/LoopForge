@@ -17,7 +17,7 @@ const { apiMock, writeMock } = vi.hoisted(() => {
       return { result: { structuredContent: { data: { id: "saved" } } } };
     if (path === "/api/auth/current") return { user: { id: 1, loginName: "tester", codeBuddyApiKeyConfigured: true } };
     if (path === "/api/projects") return [{ id: "p1", name: "项目一", ownerId: 1, members: [1] }];
-    if (path === "/api/assistant/models?executor=codex") return { default: "default", models: [{ id: "default", name: "CLI default", family: "gpt" }, { id: "gpt-5", name: "GPT-5", family: "gpt" }] };
+    if (path === "/api/assistant/models?executor=codex") return { default: "default", models: [{ id: "default", name: "CLI default", family: "gpt" }, { id: "gpt-5", name: "GPT-5", family: "gpt", efforts: ["high", "xhigh"] }] };
     if (path === "/api/assistant/models") return { default: "m1", sponsoredModel: "m1", models: [{ id: "m1", name: "模型一", effort: true }] };
     if (path === "/api/users") return [{ id: 1, loginName: "tester", codeBuddyApiKeyConfigured: true }];
     if (path === "/api/assistant/sessions") return [baseSession];
@@ -44,6 +44,7 @@ vi.mock("../src/api.js", async (original) => ({
 }));
 
 import { EXECUTORS, useChat } from "../src/useChat.js";
+import { writeComposerPreference } from "../src/composer-preferences.js";
 import {
   isLocalConversation,
   useLocalConversations,
@@ -82,7 +83,6 @@ describe("conversation hooks", () => {
     expect(result.current.executors.map((item) => item.id)).toEqual(EXECUTORS.map((item) => item.id));
     act(() => result.current.setExecutor("codex"));
     await waitFor(() => expect(result.current.models.map((m) => m.id)).toEqual(["default", "gpt-5"]));
-    expect(localStorage.getItem("loopforge.assistant.executor")).toBe("codex");
     expect(result.current.model).toBe("default");
     expect(result.current.effort).toBe("");
     expect(result.current.sponsored).toBe(false);
@@ -96,6 +96,62 @@ describe("conversation hooks", () => {
     act(() => result.current.setExecutor("codebuddy"));
     expect(result.current.model).toBe("m1");
     localStorage.removeItem("loopforge.assistant.executor");
+  });
+
+  test("restores the CLI and model saved by an earlier version", async () => {
+    localStorage.setItem("loopforge.assistant.executor", "codex");
+    localStorage.setItem("loopforge.assistant.model.codex", "gpt-5");
+    const { result } = renderHook(() => useChat());
+    await waitFor(() => expect(result.current.ready).toBe(true));
+    expect(result.current.executor).toBe("codex");
+    await waitFor(() => expect(result.current.model).toBe("gpt-5"));
+  });
+
+  test.each(["after saving a key", "during the first open"])("refreshes a pending Cursor catalog %s", async (scenario) => {
+    const original = apiMock.getMockImplementation();
+    let configured = scenario === "during the first open";
+    let discovered = false;
+    let pendingReads = 0;
+    const fallback = { id: "widget", name: "Widget" };
+    writeComposerPreference("executor", "cursor");
+    apiMock.mockImplementation(async (path, options) => {
+      if (path === "/api/assistant/models?executor=cursor") return { models: [fallback] };
+      if (path === "/api/assistant/models" && configured) {
+        if (!discovered) pendingReads++;
+        return {
+          default: "m1",
+          cursorModelsPending: !discovered,
+          models: [{ ...fallback, id: "cursor:widget", engine: "cursor", efforts: discovered ? ["low", "xhigh"] : [] }],
+        };
+      }
+      return original(path, options);
+    });
+    try {
+      const { result } = renderHook(() => useChat());
+      await waitFor(() => expect(result.current.modelDetails?.name).toBe("Widget"));
+      await waitFor(() => expect(result.current.ready).toBe(true));
+      expect(result.current.modelDetails.efforts || []).toEqual([]);
+      act(() => { result.current.setModel(result.current.model); });
+      if (!configured) {
+        configured = true;
+        act(() => window.dispatchEvent(new MessageEvent("message", {
+          origin: location.origin,
+          source: window.parent,
+          data: { type: "agentflow-credentials-changed" },
+        })));
+      }
+      await waitFor(() => expect(pendingReads).toBeGreaterThan(0));
+      discovered = true;
+      await waitFor(() => expect(result.current.modelDetails.efforts).toEqual(["low", "xhigh"]), { timeout: 3500 });
+      act(() => result.current.setEffort("xhigh"));
+      expect(result.current.effort).toBe("xhigh");
+      await act(() => result.current.send({ text: "验证强度" }));
+      expect(writeMock).toHaveBeenCalledWith(
+        "/api/assistant/generations", expect.objectContaining({ executor: "cursor", model: "cursor:widget", effort: "xhigh" }),
+      );
+    } finally {
+      apiMock.mockImplementation(original);
+    }
   });
 
   test("without an own key chat is limited to the administrator's shared models", async () => {
@@ -124,6 +180,123 @@ describe("conversation hooks", () => {
       expect(result.current.error).toContain("glm-5.1、kimi-k2.6");
     } finally {
       apiMock.mockImplementation(original);
+    }
+  });
+
+  test("restores model and effort choices in fresh chats and across catalog sources", async () => {
+    localStorage.setItem("loopforge.assistant.model.codebuddy", "default");
+    const original = apiMock.getMockImplementation();
+    let personalCodexCatalog = false;
+    apiMock.mockImplementation(async (path, options) => {
+      if (path === "/api/assistant/models") {
+        const models = [
+          { id: "default", name: "CLI 默认模型" },
+          { id: "m1", name: "模型一", efforts: ["low"] },
+          { id: "claude-opus-5.5", name: "Opus", efforts: ["max"] },
+        ];
+        if (personalCodexCatalog)
+          models.push({ id: "codex:gpt-5", engine: "codex", name: "GPT-5", efforts: ["high"] });
+        return { default: "default", defaultEfforts: ["low"], models };
+      }
+      return original(path, options);
+    });
+    try {
+      const first = renderHook(() => useChat());
+      await waitFor(() => expect(first.result.current.ready).toBe(true));
+      expect(first.result.current.models.map((m) => m.id)).toEqual(["m1", "claude-opus-5.5"]);
+      expect(first.result.current.model).toBe("m1");
+      act(() => first.result.current.setEffort("low"));
+      await act(() => first.result.current.send({ text: "运行第一个可用模型" }));
+      expect(writeMock).toHaveBeenCalledWith(
+        "/api/assistant/generations",
+        expect.objectContaining({ model: "m1", effort: "low" }),
+      );
+      act(() => first.result.current.newChat());
+      act(() => { first.result.current.setModel("claude-opus-5.5"); });
+      act(() => first.result.current.setEffort("max"));
+      act(() => first.result.current.open("s1"));
+      await waitFor(() => expect(first.result.current.session?.id).toBe("s1"));
+      expect(first.result.current.model).toBe("m1");
+      expect(first.result.current.effort).toBe("");
+      act(() => first.result.current.newChat());
+      expect(first.result.current.model).toBe("claude-opus-5.5");
+      expect(first.result.current.effort).toBe("max");
+      await act(() => first.result.current.send({ text: "你好" }));
+      expect(writeMock).toHaveBeenCalledWith(
+        "/api/assistant/generations",
+        expect.objectContaining({ model: "claude-opus-5.5", effort: "max" }),
+      );
+      act(() => first.result.current.newChat());
+      act(() => first.result.current.setExecutor("codex"));
+      await waitFor(() => expect(first.result.current.models.map((m) => m.id)).toEqual(["default", "gpt-5"]));
+      act(() => { first.result.current.setModel("gpt-5"); });
+      act(() => first.result.current.setEffort("high"));
+      act(() => first.result.current.setExecutor("codebuddy"));
+      expect(first.result.current.model).toBe("claude-opus-5.5");
+      expect(first.result.current.effort).toBe("max");
+      act(() => first.result.current.setExecutor("codex"));
+      act(() => first.result.current.newChat());
+      expect(first.result.current.model).toBe("gpt-5");
+      expect(first.result.current.effort).toBe("high");
+      first.unmount();
+      personalCodexCatalog = true;
+      history.replaceState({}, "", "/");
+      const reloaded = renderHook(() => useChat());
+      await waitFor(() => expect(reloaded.result.current.ready).toBe(true));
+      expect(reloaded.result.current.executor).toBe("codex");
+      expect(reloaded.result.current.model).toBe("codex:gpt-5");
+      expect(reloaded.result.current.effort).toBe("high");
+      act(() => reloaded.result.current.setExecutor("codebuddy"));
+      expect(reloaded.result.current.model).toBe("claude-opus-5.5");
+      expect(reloaded.result.current.effort).toBe("max");
+      act(() => reloaded.result.current.setModel("m1"));
+      expect(reloaded.result.current.effort).toBe("low");
+      act(() => reloaded.result.current.setModel("claude-opus-5.5"));
+      expect(reloaded.result.current.effort).toBe("max");
+      act(() => reloaded.result.current.setEffort(""));
+      // A remembered model that is no longer offered falls back to the list.
+      writeComposerPreference("model.codebuddy", "retired-model");
+      act(() => reloaded.result.current.newChat());
+      expect(reloaded.result.current.model).toBe("m1");
+      expect(reloaded.result.current.effort).toBe("low");
+      act(() => reloaded.result.current.setModel("claude-opus-5.5"));
+      expect(reloaded.result.current.effort).toBe("");
+    } finally {
+      apiMock.mockImplementation(original);
+    }
+  });
+
+  test("regenerating after an edit follows the composer's approval mode", async () => {
+    const { result } = renderHook(() => useChat());
+    await waitFor(() => expect(result.current.ready).toBe(true));
+    const stored = { id: "s1", projectId: "p1", model: "m1", messages: [{ role: "user", content: "修改" }] };
+    await act(() => result.current.regenerate(stored, "assisted"));
+    expect(writeMock).toHaveBeenLastCalledWith("/api/assistant/generations", expect.objectContaining({ approvalMode: "assisted" }));
+    await act(() => result.current.regenerate(stored, "bogus"));
+    expect(writeMock).toHaveBeenLastCalledWith("/api/assistant/generations", expect.objectContaining({ approvalMode: "confirm" }));
+  });
+
+  test("an open conversation on a CLI without a key keeps its model", async () => {
+    localStorage.removeItem("loopforge.assistant.executor");
+    const original = apiMock.getMockImplementation();
+    const codexSession = {
+      id: "s9", title: "Codex 会话", projectId: "p1", executor: "codex", model: "codex:gpt-5.6-sol", effort: "",
+      updatedAt: "2026-01-01T00:00:00Z",
+      messages: [{ role: "user", content: "hi" }, { role: "assistant", content: "ok", model: "codex:gpt-5.6-sol" }],
+    };
+    apiMock.mockImplementation(async (path, options) =>
+      path === "/api/assistant/sessions/s9" ? structuredClone(codexSession) : original(path, options));
+    try {
+      history.replaceState({}, "", "/?session=s9");
+      const { result } = renderHook(() => useChat());
+      await waitFor(() => expect(result.current.session?.id).toBe("s9"));
+      await waitFor(() => expect(apiMock).toHaveBeenCalledWith("/api/assistant/models?executor=codex"));
+      await act(async () => {});
+      expect(result.current.executor).toBe("codex");
+      expect(result.current.model).toBe("codex:gpt-5.6-sol");
+    } finally {
+      apiMock.mockImplementation(original);
+      localStorage.removeItem("loopforge.assistant.executor");
     }
   });
 

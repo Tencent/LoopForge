@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"agentflow/internal/domain"
-	"agentflow/internal/runtime"
 	"github.com/gin-gonic/gin"
 )
 
@@ -53,7 +52,7 @@ func TestGenerationRecordsTheWorkspaceLeaseItsToolTakes(t *testing.T) {
 		if session == nil || session.workspaceTurn == nil {
 			return "", errors.New("generation did not own its workspace lifetime")
 		}
-		if _, err := gateway.callMainBotWorkspace(ctx, session, "workbench_workspace_write", map[string]any{"path": "note.txt", "content": "after", "expectedSha256": runtime.WorkspaceContentSHA("before")}); err != nil {
+		if err := workspaceTestEdit(ctx, gateway, session, "note.txt", "after"); err != nil {
 			return "", err
 		}
 		var row recorded

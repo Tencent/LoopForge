@@ -89,9 +89,13 @@ type MCPServerDefinition struct {
 	WorkingDirectory string            `json:"workingDirectory,omitempty"`
 	PathEntries      []string          `json:"pathEntries,omitempty"`
 	FileRefs         []MCPFileRef      `json:"fileRefs,omitempty"`
-	AuthType         string            `json:"authType,omitempty"` // empty, github-token
-	TimeoutSec       int               `json:"timeoutSec"`
-	UpdatedAt        time.Time         `json:"updatedAt"`
+	AuthType         string            `json:"authType,omitempty"` // empty, github-token, credential
+	// CredentialKind names the platform-managed credential (RunCredentials.Extra
+	// key) bound as the Authorization Bearer header when AuthType is
+	// "credential". The stored asset never holds the secret itself.
+	CredentialKind string    `json:"credentialKind,omitempty"`
+	TimeoutSec     int       `json:"timeoutSec"`
+	UpdatedAt      time.Time `json:"updatedAt"`
 }
 
 type MCPFileRef struct {
@@ -166,6 +170,18 @@ const (
 	SandboxDriverSeatbelt = "seatbelt"
 	SandboxDriverBwrap    = "bwrap"
 )
+
+// ConversationSandboxDriver reports whether a conversation workspace can run
+// in a sandbox of driver: Docker, or the native lightweight sandbox (stored as
+// native, or already resolved to seatbelt / bwrap).
+func ConversationSandboxDriver(driver string) bool {
+	switch strings.TrimSpace(driver) {
+	case SandboxDriverDocker, SandboxDriverNative, SandboxDriverSeatbelt, SandboxDriverBwrap:
+		return true
+	default:
+		return false
+	}
+}
 
 // ResolveSandboxDriver maps native onto the lightweight sandbox of goos and
 // returns every other driver unchanged. An empty goos (a runner that never
@@ -376,21 +392,36 @@ func validateMCPScope(v MCPServerDefinition) error {
 	return nil
 }
 
-// validateMCPAuth checks v.AuthType and keeps GitHub token auth on HTTP
+// validateMCPAuth checks v.AuthType and keeps token auth on HTTP
 // servers without a stored Authorization header.
 func validateMCPAuth(v MCPServerDefinition) error {
 	switch strings.TrimSpace(v.AuthType) {
-	case "", "github-token":
+	case "", "github-token", "credential":
 	default:
-		return fmt.Errorf("authType must be empty or github-token")
+		return fmt.Errorf("authType must be empty, github-token or credential")
 	}
 	if v.AuthType == "github-token" && strings.TrimSpace(v.Transport) != "http" {
 		return fmt.Errorf("GitHub 令牌认证仅支持 HTTP MCP")
+	}
+	if v.AuthType == "credential" {
+		if strings.TrimSpace(v.Transport) != "http" {
+			return fmt.Errorf("credential authentication requires an HTTP MCP")
+		}
+		if strings.TrimSpace(v.CredentialKind) == "" {
+			return fmt.Errorf("credential authentication requires credentialKind")
+		}
 	}
 	if v.AuthType == "github-token" {
 		for key := range v.Headers {
 			if strings.EqualFold(strings.TrimSpace(key), "authorization") {
 				return fmt.Errorf("GitHub 令牌认证不允许在资产 Headers 中保存 Authorization")
+			}
+		}
+	}
+	if v.AuthType == "credential" {
+		for key := range v.Headers {
+			if strings.EqualFold(strings.TrimSpace(key), "authorization") {
+				return fmt.Errorf("credential authentication must not store an Authorization header on the asset")
 			}
 		}
 	}

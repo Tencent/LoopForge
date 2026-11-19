@@ -3,7 +3,7 @@
 // and user endpoints.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { api, get, post, put, del, list, track, cleanup, ensureProject, waitFor, waitRun } from '../lib/api.mjs';
+import { api, get, post, put, del, list, track, cleanup, ensureProject, waitFor, waitRun, tokenOwner, tokenBSkip, asB } from '../lib/api.mjs';
 import { cfg, uid } from '../lib/env.mjs';
 import { createWorkflow, script, trackRun } from '../lib/fixtures.mjs';
 
@@ -166,6 +166,40 @@ test('users: list, detail and credential flags never leak secrets', async () => 
   // Per-user endpoints are write-only; reads go through the list.
   await api('GET', `/api/users/${me.id}`, undefined, { expect: 405 });
   await api('GET', `/api/users/${me.id}/credentials`, undefined, { expect: [404, 405] });
+});
+
+test('users: per-host Git access tokens are write-only and scoped to their owner', async () => {
+  const me = await tokenOwner();
+  const base = `/api/users/${me.id}/git-http-credentials`;
+  const host = `${uid('git-host')}.example.com:8443`;
+  const secret = uid('git-token');
+  const before = list(await get(base));
+  let id = '';
+  try {
+    const saved = list(await put(base, { host: `https://${host}/`, name: 'e2e host', platform: 'other', token: secret }));
+    const cred = saved.find(c => c.host === host);
+    assert.ok(cred, `saved credential not listed: ${JSON.stringify(saved).slice(0, 300)}`);
+    id = cred.id;
+    assert.equal(Object.hasOwn(cred, 'exposeToWorkspace'), false);
+    assert.doesNotMatch(JSON.stringify(await get(base)), new RegExp(secret), 'the token is never returned');
+    // Saving the same host again with a blank token keeps one row and its token.
+    const replaced = list(await put(base, { id, host, name: 'e2e host renamed', platform: 'other', token: '' }));
+    assert.equal(replaced.filter(c => c.host === host).length, 1);
+    assert.equal(replaced.find(c => c.host === host).name, 'e2e host renamed');
+    await api('PUT', base, { host: 'not a host/with path', name: 'bad', platform: 'other', token: 'x' }, { expect: 400 });
+    await api('POST', `${base}/does-not-exist/verify`, {}, { expect: 404 });
+    await api('GET', '/api/users/not-a-number/git-http-credentials', undefined, { expect: 400 });
+    if (!tokenBSkip) {
+      await api('GET', base, undefined, asB({ expect: 403 }));
+      await api('DELETE', `${base}/${id}`, undefined, asB({ expect: 403 }));
+    }
+  } finally {
+    if (id) {
+      const after = list(await del(`${base}/${id}`, { expect: 200 }));
+      assert.ok(!after.some(c => c.host === host), 'deleted credential is gone');
+      assert.equal(after.length, before.length);
+    }
+  }
 });
 
 test('chat clarify and sync endpoints are reachable read-only', async () => {

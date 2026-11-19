@@ -91,6 +91,44 @@ describe("App", () => {
       Object.assign(chat, previous);
     }
   });
+  test("keeps the picked approval mode after a reload", async () => {
+    const user = userEvent.setup();
+    const first = render(<App />);
+    await user.click(screen.getByRole("button", { name: "操作确认方式" }));
+    await user.click(screen.getByRole("menuitemradio", { name: "帮我批准" }));
+    expect(screen.getByRole("button", { name: "操作确认方式" })).toHaveTextContent("帮我批准");
+    first.unmount();
+    render(<App />);
+    expect(screen.getByRole("button", { name: "操作确认方式" })).toHaveTextContent("帮我批准");
+    await user.type(screen.getByRole("textbox", { name: /消息|输入/ }), "你好");
+    await user.click(screen.getByRole("button", { name: "发送消息" }));
+    expect(chat.send).toHaveBeenLastCalledWith(expect.objectContaining({ approvalMode: "assisted" }));
+  });
+  test("restores full permission after a reload and resets it for another account", async () => {
+    const user = userEvent.setup();
+    const first = render(<App />);
+    await user.click(screen.getByRole("button", { name: "操作确认方式" }));
+    await user.click(screen.getByRole("menuitemradio", { name: "完全权限" }));
+    first.unmount();
+    const reloaded = render(<App />);
+    fireEvent.keyDown(window, { key: "O", ctrlKey: true, shiftKey: true });
+    expect(chat.newChat).toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "操作确认方式" })).toHaveTextContent("完全权限");
+    await user.type(screen.getByRole("textbox", { name: /消息|输入/ }), "你好");
+    await user.click(screen.getByRole("button", { name: "发送消息" }));
+    expect(chat.send).toHaveBeenLastCalledWith(expect.objectContaining({ approvalMode: "auto" }));
+    const originalUser = chat.user;
+    try {
+      chat.user = { id: "u2", loginName: "another-user" };
+      reloaded.rerender(<App />);
+      expect(screen.getByRole("button", { name: "操作确认方式" })).toHaveTextContent("请求批准");
+      await user.type(screen.getByRole("textbox", { name: "消息" }), "新账号");
+      await user.click(screen.getByRole("button", { name: "发送消息" }));
+      expect(chat.send).toHaveBeenLastCalledWith(expect.objectContaining({ approvalMode: "confirm" }));
+    } finally {
+      chat.user = originalUser;
+    }
+  });
   test("does not ask for per-command native approval in a working conversation", () => {
     const previous = {...chat};
     Object.assign(chat,{activeId:"workspace-chat",busy:true,session:{id:"workspace-chat",runtimeMode:"workspace",messages:[{role:"user",content:"检查目录"}]}});
@@ -163,6 +201,135 @@ describe("App", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     history.replaceState({}, "", "/");
+  });
+
+  test("a requirement handed over by the workbench opens @-mentioned in a new conversation", async () => {
+    const previous = { ...chat };
+    const originalFetch = globalThis.fetch;
+    const issues = {
+      i1: { id: "i1", title: "个人主页徽章", projectId: "p1" },
+      i2: { id: "i2", title: "导出报表", projectId: "p1" },
+    };
+    globalThis.fetch = vi.fn(async (path) => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ issue: issues[decodeURIComponent(String(path).split("/").pop())] }),
+    }));
+    Object.assign(chat, { projectId: "p1", startProjectDraft: vi.fn() });
+    history.replaceState({}, "", "/?projectId=p1&mentionIssue=i1");
+    let view;
+    try {
+      view = render(<App />);
+      const box = screen.getByRole("textbox");
+      await waitFor(() => expect(box.value).toBe("@个人主页徽章 "));
+      expect(screen.getByLabelText("移除引用 个人主页徽章")).toBeInTheDocument();
+      expect(globalThis.fetch).toHaveBeenCalledWith("/api/issues/i1", expect.anything());
+      expect(new URLSearchParams(location.search).has("mentionIssue")).toBe(false);
+
+      window.dispatchEvent(new MessageEvent("message", {
+        data: { type: "agentflow-chat-mention-issue", issueId: "i2", projectId: "p1" },
+        origin: location.origin,
+        source: window.parent,
+      }));
+      expect(chat.startProjectDraft).toHaveBeenCalledWith("p1");
+      await waitFor(() => expect(box.value).toBe("@导出报表 "));
+      expect(screen.queryByLabelText("移除引用 个人主页徽章")).not.toBeInTheDocument();
+      expect(screen.getByLabelText("移除引用 导出报表")).toBeInTheDocument();
+    } finally {
+      view?.unmount();
+      globalThis.fetch = originalFetch;
+      Object.assign(chat, previous);
+      delete chat.startProjectDraft;
+      localStorage.clear();
+    }
+  });
+
+  test("a requirement handoff keeps the project's unsent new-conversation draft", async () => {
+    const previous = { ...chat };
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ issue: { id: "i3", title: "订单导出", projectId: "p1" } }),
+    }));
+    Object.assign(chat, { projectId: "p1", startProjectDraft: vi.fn() });
+    const owner = chat.user?.id || "guest";
+    const projectDraftKey = `agentflow.native-chat.draft.${owner}.new:p1`;
+    const projectDraft = JSON.stringify({
+      text: "写了一半的问题",
+      attachments: [{ id: "att-1", name: "spec.pdf", type: "application/pdf", size: 12 }],
+      references: [],
+    });
+    localStorage.setItem(projectDraftKey, projectDraft);
+    history.replaceState({}, "", "/?projectId=p1&mentionIssue=i3");
+    let view;
+    try {
+      view = render(<App />);
+      const box = screen.getByRole("textbox");
+      await waitFor(() => expect(box.value).toBe("@订单导出 "));
+      expect(screen.queryByText("spec.pdf")).not.toBeInTheDocument();
+      expect(localStorage.getItem(projectDraftKey)).toBe(projectDraft);
+      // The draft is saved by an effect that runs after the mention renders;
+      // on a slow runner the box can already show it while storage does not.
+      await waitFor(() => {
+        const issueDraft = JSON.parse(localStorage.getItem(`agentflow.native-chat.draft.${owner}.issue:i3`));
+        expect(issueDraft.references).toEqual([{ type: "issue", id: "i3", name: "订单导出", projectId: "p1" }]);
+      });
+
+      fireEvent.change(box, { target: { value: "@订单导出 先聊范围" } });
+      window.dispatchEvent(new MessageEvent("message", {
+        data: { type: "agentflow-chat-mention-issue", issueId: "i3", projectId: "p1" },
+        origin: location.origin,
+        source: window.parent,
+      }));
+      await waitFor(() => expect(globalThis.fetch).toHaveBeenCalledTimes(2));
+      expect(box.value).toBe("@订单导出 先聊范围");
+    } finally {
+      view?.unmount();
+      globalThis.fetch = originalFetch;
+      Object.assign(chat, previous);
+      delete chat.startProjectDraft;
+      localStorage.clear();
+    }
+  });
+
+  test("leaving a requirement handoff before its details load cancels the mention", async () => {
+    const previous = { ...chat };
+    const originalFetch = globalThis.fetch;
+    let resolveIssue;
+    globalThis.fetch = vi.fn(() => new Promise((resolve) => {
+      resolveIssue = () => resolve({
+        ok: true,
+        status: 200,
+        json: async () => ({ issue: { id: "i4", title: "慢需求", projectId: "p1" } }),
+      });
+    }));
+    Object.assign(chat, { projectId: "p1", startProjectDraft: vi.fn() });
+    const owner = chat.user?.id || "guest";
+    const projectDraftKey = `agentflow.native-chat.draft.${owner}.new:p1`;
+    const projectDraft = JSON.stringify({ text: "原来的草稿", attachments: [], references: [] });
+    localStorage.setItem(projectDraftKey, projectDraft);
+    history.replaceState({}, "", "/?projectId=p1&mentionIssue=i4");
+    let view;
+    try {
+      view = render(<App />);
+      await waitFor(() => expect(globalThis.fetch).toHaveBeenCalledTimes(1));
+      fireEvent.keyDown(window, { key: "O", ctrlKey: true, shiftKey: true });
+      expect(chat.newChat).toHaveBeenCalled();
+      const box = screen.getByRole("textbox");
+      await waitFor(() => expect(box.value).toBe("原来的草稿"));
+      resolveIssue();
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(box.value).toBe("原来的草稿");
+      expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+      expect(localStorage.getItem(projectDraftKey)).toBe(projectDraft);
+    } finally {
+      view?.unmount();
+      globalThis.fetch = originalFetch;
+      Object.assign(chat, previous);
+      delete chat.startProjectDraft;
+      localStorage.clear();
+    }
   });
 
   test("renders the ready empty state and opens primary controls", async () => {

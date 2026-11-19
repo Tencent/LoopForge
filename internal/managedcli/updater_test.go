@@ -381,3 +381,19 @@ func fixtureClient(t *testing.T, server *httptest.Server) *http.Client {
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+func TestUpdateProviderOnlyChangesTheRequestedCLI(t *testing.T) {
+	f := newUpdaterFixture(t)
+	f.update(t, false)
+	f.setVersion("2.0.0")
+	report, err := f.manager.UpdateProvider(context.Background(), "codex")
+	must(t, err)
+	if len(report.Results) != 1 || report.Results[0].Provider != "codex" || report.Results[0].Status != "updated" {
+		t.Fatalf("update results = %+v", report.Results)
+	}
+	state := f.state(t)
+	if state.Current["codex"].Version != "2.0.0" || state.Current["claude-code"].Version != "1.0.0" ||
+		state.Current["codebuddy"].Version != "1.0.0" {
+		t.Fatal("single CLI update changed unrelated active versions")
+	}
+}

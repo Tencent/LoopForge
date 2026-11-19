@@ -553,6 +553,8 @@ html[data-theme="dark"] .issue-title-tag.tone-cyan{color:#67e8f9}
 .detail-empty.compact{padding:16px;font-size:12px}
 /* 对话需求：阶段卡片 + 按仓库展示「工作分支 → 目标分支」与 MR */
 .conv-outcome .conv-outcome-kicker{display:block;margin-bottom:4px;font-size:10.5px;font-weight:600;letter-spacing:.04em;color:var(--muted-2)}
+.no-sop-switch{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.no-sop-switch .select{flex:1;min-width:180px;max-width:320px}
 .conv-repos{display:flex;flex-direction:column;gap:10px}
 .conv-repo{display:flex;flex-direction:column;gap:10px;padding:12px 14px;border:1px solid var(--line);border-radius:10px;background:var(--panel);transition:border-color .15s}
 .conv-repo:hover{border-color:var(--line-strong)}
@@ -2234,7 +2236,7 @@ html[data-theme="light"] body{color-scheme:light}html[data-theme="light"] .platf
 .obs-card>.pager{margin:10px 0 2px;border:0;background:transparent;padding:8px 0 0}
 
 /* ================= 个人凭证（harness-ui 设计语言） ================= */
-#personalSettingsContent,.credential-scrim,.github-connect,.git-ssh-dialog{
+#personalSettingsContent,.credential-scrim,.github-connect,.git-ssh-dialog,.runner-model-editor{
   --cr-accent:var(--hui-accent);--cr-accent-hover:var(--hui-accent-hover);
   --cr-surface:var(--hui-surface);--cr-canvas:var(--hui-canvas);--cr-elevated:var(--hui-soft);
   --cr-text:var(--hui-text);--cr-text-2:var(--hui-secondary);--cr-muted:var(--hui-muted);--cr-tertiary:var(--hui-tertiary);
@@ -2411,6 +2413,8 @@ html[data-theme="dark"] .credential-logo.monochrome img{filter:invert(1)}
 .git-ssh-missing{margin:8px 0 0;color:var(--hui-error);font-size:12px;line-height:1.6}
 .git-ssh-form-actions{justify-content:flex-end}
 .git-ssh-dialog textarea{padding:8px 11px;border:1px solid var(--hui-border);border-radius:8px;background:var(--hui-surface);color:var(--hui-text);font-size:12px}
+.git-http-warning{margin:0 0 12px}
+.git-http-select{width:100%;min-height:32px;padding:0 8px;border:0;background:transparent;color:var(--hui-text);font:inherit;font-size:13px}
 .credential-input.is-plain input{padding-right:11px}
 .credential-input input::placeholder{color:var(--cr-tertiary)}
 .credential-input input:hover{border-color:var(--cr-line-strong)}
@@ -2440,6 +2444,11 @@ html[data-theme="dark"] .credential-logo.monochrome img{filter:invert(1)}
 .credential-note>svg{flex:none;margin-top:3px}
 .credential-note.is-warn{border-color:color-mix(in srgb,#d99a2b 25%,transparent);background:var(--cr-warn-fill);color:var(--cr-warn)}
 .credential-note b{font-weight:600}
+.credential-subscription-note{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:10px;margin-top:14px;padding:10px 12px;font-size:13px}
+.credential-subscription-note>svg{align-self:start;color:var(--cr-accent)}
+.credential-subscription-note strong{display:block;color:var(--cr-text);font-weight:600}
+.credential-subscription-note p{margin:2px 0 0}
+.credential-subscription-note .button{white-space:nowrap}
 .credential-vline{display:flex;align-items:center;gap:7px;margin:0;color:var(--cr-muted);font-size:12px}
 .credential-vline:empty{display:none}
 .credential-vline.is-err{color:var(--cr-err)}.credential-vline.is-info{color:var(--cr-info)}.credential-vline.is-warn{color:var(--cr-warn)}
@@ -2468,6 +2477,15 @@ html[data-theme="dark"] .credential-logo.monochrome img{filter:invert(1)}
 .credential-catalog-row:hover{border-color:var(--cr-line)}
 .credential-catalog-row .credential-input input{height:32px;font-size:12.5px}
 .credential-catalog-row .credential-input input.credential-mono{font-size:12px}
+.credential-catalog-effort{grid-column:2/4;min-width:0;padding:0 2px 5px;color:var(--cr-muted);font-size:11.5px}
+.credential-catalog-effort summary{cursor:pointer;line-height:24px}
+.credential-catalog-effort summary span{margin-left:8px;color:var(--cr-tertiary);overflow-wrap:anywhere}
+.credential-catalog-effort-mode{display:flex;align-items:center;gap:10px;margin:4px 0 8px}
+.credential-catalog-effort-mode select{padding:4px 8px;border:1px solid var(--cr-line);border-radius:6px;background:var(--cr-surface);color:var(--cr-text);font:inherit}
+.credential-catalog-effort-levels{display:flex;flex-wrap:wrap;gap:8px 14px;padding-bottom:4px}
+.credential-catalog-effort-levels label{display:flex;align-items:center;gap:5px;cursor:pointer;color:var(--cr-text-2)}
+.credential-catalog-effort-levels input{margin:0;accent-color:var(--cr-accent)}
+.credential-catalog-effort-levels small{flex-basis:100%;color:var(--cr-tertiary);font-size:11px;line-height:1.5}
 .credential-catalog-grip{display:grid;place-items:center;width:24px;height:30px;margin:0;padding:0;border:0;border-radius:6px;background:transparent;color:var(--cr-tertiary);cursor:grab;touch-action:none}
 .credential-catalog-grip:hover{background:var(--cr-hover);color:var(--cr-text)}
 .credential-catalog-grip:focus-visible{outline:2px solid color-mix(in srgb,var(--cr-accent) 65%,transparent);outline-offset:1px;color:var(--cr-text)}
@@ -2618,6 +2636,8 @@ html[data-theme="dark"] .credential-scrim::before{background:rgb(0 0 0 / .55)}
   .credential-account{flex-wrap:wrap}
   .credential-account-note{margin-left:52px;white-space:normal}
   .credential-section-head{flex-direction:column;align-items:flex-start}
+  .credential-subscription-note{grid-template-columns:auto minmax(0,1fr)}
+  .credential-subscription-note .button{grid-column:2;justify-self:start}
   .credential-next,.credential-ready{width:100%;margin-left:0}
   .credential-row-main{flex-wrap:wrap}
   .credential-row-who{flex-basis:calc(100% - 60px)}

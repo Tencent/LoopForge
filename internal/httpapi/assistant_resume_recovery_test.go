@@ -47,6 +47,14 @@ func TestFreshPhasePromptFollowsCurrentMode(t *testing.T) {
 	if strings.Contains(platform, "本轮之前的阶段已执行过操作") || !strings.Contains(workspace, "本轮之前的阶段已执行过操作") {
 		t.Fatal("prior-phase note does not follow the handoff count")
 	}
+	// A fresh session after a switch must not switch again to redo it.
+	if !strings.Contains(workspace, "你现在就在工作区里") || strings.Contains(platform, "你现在就在工作区里") {
+		t.Fatal("fresh workspace phase does not say it already entered the workspace")
+	}
+	req.workspaceMode = false
+	if back := h.freshPhasePrompt(req, t.TempDir(), 2); !strings.Contains(back, "本轮已经切回平台模式") {
+		t.Fatal("fresh platform phase after a switch does not say it is back in platform mode")
+	}
 }
 
 func TestHandoffOutlivesOldPhaseError(t *testing.T) {

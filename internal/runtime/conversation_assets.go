@@ -68,7 +68,7 @@ var conversationManagedFiles = []string{
 	"home/.gemini/config/mcp_config.json", "home/.gemini/antigravity-cli/settings.json",
 	"home/.kimi-code/mcp.json", "home/.pi/agent/mcp.json", "home/.pi/agent/models.json",
 	"home/.dsh/agentflow-mcp.json", "home/.dsh/agentflow-model.json",
-	"home/.zcode/v2",
+	"home/.zcode/v2", "home/.codex/auth.json", "home/.claude/.credentials.json",
 }
 
 // Only platform-generated inputs travel to the execution host. Native

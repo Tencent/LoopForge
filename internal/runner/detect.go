@@ -21,27 +21,26 @@ import (
 type providerSpec struct {
 	Kind   string
 	Binary string
+	Update string // non-interactive update subcommand for an unmanaged installation
 	// VersionFlags precede --version. A CLI that rejects them is not the one
 	// the platform drives (other tools share the name) and is not reported.
 	VersionFlags []string
 }
 
 // defaultProviders lists the CLIs this runner drives in non-interactive
-// mode. Codex and Claude Code authenticate with the machine's own login
-// state; CodeBuddy cannot, so its tasks carry the responsible user's
-// platform API key (injected as CODEBUDDY_API_KEY by the daemon). Additional
-// providers can be added here without any protocol change: the server only
-// matches on the provider name.
+// mode. Runner tasks can reuse Codex, Claude Code or Antigravity login. CodeBuddy tasks
+// receive the configured CODEBUDDY_API_KEY from the daemon. Additional
+// providers can be detected by name.
 var defaultProviders = []providerSpec{
-	{Kind: "claude-code", Binary: "claude"},
-	{Kind: "codex", Binary: "codex"},
-	{Kind: "codebuddy", Binary: "codebuddy"},
-	// Agent CLIs (domain.AgentCLIExecutorKinds) always run with the
-	// responsible user's key in a private HOME. cursor and agy have no npm
+	{Kind: "claude-code", Binary: "claude", Update: "update"},
+	{Kind: "codex", Binary: "codex", Update: "update"},
+	{Kind: "codebuddy", Binary: "codebuddy", Update: "update"},
+	// Agent CLIs run in a private HOME. Antigravity can reuse account login;
+	// the others receive the responsible user's key. cursor and agy have no npm
 	// package and are found on PATH only.
-	{Kind: "opencode", Binary: "opencode"},
-	{Kind: "cursor", Binary: "cursor-agent"},
-	{Kind: "agy", Binary: "agy"},
+	{Kind: "opencode", Binary: "opencode", Update: "upgrade"},
+	{Kind: "cursor", Binary: "cursor-agent", Update: "update"},
+	{Kind: "agy", Binary: "agy", Update: "update"},
 	{Kind: "kimi", Binary: "kimi"},
 	{Kind: "pi", Binary: "pi"},
 	{Kind: "dsh", Binary: "dsh"},
@@ -131,11 +130,18 @@ func detectRuntimes(ctx context.Context, extraBinaries map[string]string, invent
 		if version == "" && len(spec.VersionFlags) > 0 {
 			continue
 		}
+		capabilities := []string{"non_interactive"}
+		if managed {
+			capabilities = append(capabilities, domain.RuntimeCapabilityManagedUpdate)
+		} else if spec.Update != "" {
+			// Inspect the installed CLI's subcommands only when asked to update.
+			capabilities = append(capabilities, domain.RuntimeCapabilityNativeUpdate)
+		}
 		out = append(out, domain.RunnerRuntime{
 			Provider:     spec.Kind,
 			BinaryPath:   path,
 			Version:      version,
-			Capabilities: []string{"non_interactive"},
+			Capabilities: capabilities,
 			Status:       domain.RuntimeStatusOnline,
 		})
 	}
