@@ -340,6 +340,9 @@ func (h *agentToolGateway) callTerminal(session *AgentToolSession, name string, 
 			logAgentToolEvent("terminal-invalid", "mode="+string(session.Mode), "tool="+name, "err="+truncateRunes(err.Error(), 160))
 			return mcpToolTextResult("草稿参数校验失败，本轮继续；请按以下错误修正后重新提交，不代表工具不可用："+err.Error(), true), nil
 		}
+		if err := validateScheduledRunDrafts(session.ctx, reply.Drafts); err != nil {
+			return mcpToolTextResult(err.Error(), true), nil
+		}
 		if h.deps != nil && h.repo != nil {
 			if err := h.assistant().vetProposalDrafts(session, &reply); err != nil {
 				logAgentToolEvent("terminal-invalid", "mode="+string(session.Mode), "tool="+name, "err="+truncateRunes(err.Error(), 160))

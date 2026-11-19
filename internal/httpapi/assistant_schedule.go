@@ -38,6 +38,21 @@ func scheduledSessionPolicyFrom(ctx context.Context) scheduledSessionPolicy {
 	return p
 }
 
+// Terminal drafts are applied after the CLI exits, too late for a scheduled
+// prompt to receive the run ID and wait for or report its outcome.
+func validateScheduledRunDrafts(ctx context.Context, drafts []assistantDraft) error {
+	if assistantSessionOriginFrom(ctx).Source != domain.AssistantSourceScheduled {
+		return nil
+	}
+	for _, draft := range drafts {
+		switch draft.Tool {
+		case "issues_dispatch", "runs_start", "runs_retry":
+			return fmt.Errorf("本次草稿未执行。请直接调用 agentflow__%s 获取运行 ID；按任务要求等待结果时，继续用 agentflow__runs_wait 查询同一 ID", draft.Tool)
+		}
+	}
+	return nil
+}
+
 func (h *assistantHandlers) prepareScheduleJob(job domain.ScheduleJob) (string, error) {
 	msg, _, err := h.runScheduleJobPrompt(job)
 	return msg, err

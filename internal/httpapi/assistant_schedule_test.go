@@ -78,6 +78,27 @@ func TestScheduledAssistantStopsAtDeadline(t *testing.T) {
 	}
 }
 
+func TestScheduledAssistantRecoveredDraftDoesNotDispatchRun(t *testing.T) {
+	h, user := workbenchFixture(t)
+	wf := domain.WorkflowDefinition{ID: "wf", Name: "Scheduled approval", ProjectID: "workbench", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{ID: "review", Type: "approval"}}}
+	if err := h.repo.PutWorkflow(wf); err != nil {
+		t.Fatal(err)
+	}
+	h.engine = engine.New(h.repo, runtime.NewManager(t.TempDir()))
+	h.api = New(h.repo, h.engine, tracker.NewService(), "", "")
+	h.generate = func(context.Context, string, domain.User) (string, error) {
+		return `{"message":"启动并等待","drafts":[{"tool":"runs_start","body":{"workflowId":"wf"}}]}`, nil
+	}
+	task := assistantTask{ProjectID: "workbench", Name: "Wait for SOP", Prompt: "启动 SOP 并等待终态"}
+	err := h.executeAssistantTask(context.Background(), user, &task)
+	if err == nil || !strings.Contains(err.Error(), "agentflow__runs_start") || task.LastStatus != "error" {
+		t.Fatalf("scheduled draft fallback: status=%q err=%v", task.LastStatus, err)
+	}
+	if runs := h.repo.Runs(); len(runs) != 0 {
+		t.Fatalf("scheduled draft fallback dispatched %d runs", len(runs))
+	}
+}
+
 func TestScheduledAssistantAutoWritesWithoutConfirmation(t *testing.T) {
 	for _, scheduleJob := range []bool{false, true} {
 		name := "assistant_task"

@@ -205,6 +205,7 @@ func (h *assistantHandlers) executeAssistantTask(ctx context.Context, user domai
 	if origin.TaskID == "" {
 		origin.TaskID = strings.TrimSpace(task.ID)
 	}
+	ctx = withAssistantSessionOrigin(ctx, origin.Source, origin.TaskID)
 	// Each task runs in its own conversation, so one owner's loops run side
 	// by side; only the same task is kept from overlapping itself.
 	activeKey := assistantTaskActiveKey(origin.TaskID, user.ID)
@@ -393,7 +394,7 @@ func scheduledAssistantPrompt(task assistantTask, mode assistantExecMode) string
 		prefix += " 不要调用 issues_dispatch、runs_start、schedule_jobs_run、schedule_jobs_save；需要派发 SOP 时请单独创建触发任务。"
 	} else {
 		prefix += " 与主页 AI 对话的完全权限模式使用相同的工具和执行权限；按提示词调用 SOP、平台工具、工作区及浏览器工具完成任务。"
-		prefix += " 需要等待 SOP 结果时，用 agentflow__runs_wait，path.id 填派发结果的 runId（runs_start 返回 id）。" +
+		prefix += " 启动、派发或重试 SOP 时直接调用平台工具并保留返回的运行 ID。需要等待 SOP 结果时，用 agentflow__runs_wait，path.id 填派发结果的 runId（runs_start 返回 id）。" +
 			"只有 timedOut=true 才继续等待同一运行。收到终态（succeeded、failed、cancelled）或 waiting、paused 后结束等待并如实汇报，必要时用 runs_get 查看原因。"
 	}
 	return prefix + " 按下面的提示词原文执行。\n" + task.Prompt + domain.NotificationAIInstructions(task.Notifications)
