@@ -32,6 +32,7 @@ func TestBindCLIInstallsDockerRunnerHelper(t *testing.T) {
 		preserveHelper                   bool
 		templatePath                     bool
 		helperAliasesRunner              bool
+		universal                        bool
 	}{
 		{name: "macOS_install", hostOS: "darwin", arch: "arm64", unameArch: "arm64"},
 		{name: "macOS_uses_template_in_manual_start_and_upgrade", hostOS: "darwin", arch: "arm64", unameArch: "arm64", templatePath: true, source: "from"},
@@ -48,6 +49,7 @@ func TestBindCLIInstallsDockerRunnerHelper(t *testing.T) {
 		{name: "macOS_upgrades_launchd_with_custom_runner", hostOS: "darwin", arch: "arm64", unameArch: "arm64", source: "from", launchd: true, upgrade: true, preserveHelper: true},
 		{name: "macOS_upgrades_launchd_on_template_path", hostOS: "darwin", arch: "arm64", unameArch: "arm64", source: "from", launchd: true, upgrade: true, templatePath: true},
 		{name: "macOS_installs_companion_for_Intel_runner_on_arm64", hostOS: "darwin", arch: "amd64", unameArch: "arm64", source: "from"},
+		{name: "macOS_under_Rosetta_installs_both_companions_for_universal_Runner", hostOS: "darwin", arch: "arm64", unameArch: "x86_64", source: "from", universal: true},
 		{name: "macOS_repairs_incompatible_local_helper", hostOS: "darwin", arch: "arm64", unameArch: "arm64", source: "from", existing: "mach-o", upgrade: true},
 		{name: "macOS_preserves_custom_helper_script", hostOS: "darwin", arch: "arm64", unameArch: "arm64", source: "from", existing: "script", preserveHelper: true},
 		{name: "macOS_preserves_helper_with_host_only_URL", hostOS: "darwin", arch: "arm64", unameArch: "arm64", source: "host-url", preserveHelper: true},
@@ -83,6 +85,15 @@ func TestBindCLIInstallsDockerRunnerHelper(t *testing.T) {
 			if tc.source == "from" {
 				hostRunner += " custom"
 			}
+			if tc.universal {
+				const x8664, arm64 = 0x01000007, 0x0100000c
+				header := make([]byte, 8+2*20)
+				binary.BigEndian.PutUint32(header[:], 0xcafebabe)
+				binary.BigEndian.PutUint32(header[4:], 2)
+				binary.BigEndian.PutUint32(header[8:], x8664)
+				binary.BigEndian.PutUint32(header[28:], arm64)
+				hostRunner = string(header) + "universal runner"
+			}
 			switch tc.existing {
 			case "mach-o":
 				oldHelper = "\xcf\xfa\xed\xfe wrong OS"
@@ -91,7 +102,8 @@ func TestBindCLIInstallsDockerRunnerHelper(t *testing.T) {
 			}
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 				targetOS, arch := req.URL.Query().Get("os"), req.URL.Query().Get("arch")
-				if (arch != tc.arch && arch != tc.unameArch) || (targetOS != tc.hostOS && targetOS != "linux") {
+				if (arch != tc.arch && arch != tc.unameArch && !(tc.universal && arch == "amd64")) ||
+					(targetOS != tc.hostOS && targetOS != "linux") {
 					http.NotFound(w, req)
 					return
 				}
@@ -281,6 +293,11 @@ func TestBindCLIInstallsDockerRunnerHelper(t *testing.T) {
 				}
 			}
 			assertArtifact(filepath.Join(bin, "agentflow-runner"), hostRunner)
+			if tc.universal {
+				assertArtifact(filepath.Join(bin, "agentflow-runner-linux-amd64"), bindFixtureLinuxRunner("amd64", "new helper"))
+				assertArtifact(filepath.Join(bin, "agentflow-gate-mcp-darwin-amd64"), "gate darwin/amd64")
+				assertArtifact(filepath.Join(bin, "agentflow-gate-mcp-darwin-arm64"), "gate darwin/arm64")
+			}
 			switch {
 			case tc.hostOS == "linux":
 				if _, err := os.Stat(helper); !os.IsNotExist(err) {

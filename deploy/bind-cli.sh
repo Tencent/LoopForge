@@ -340,18 +340,44 @@ case "$ARCH" in
 esac
 [[ "$OS" == "darwin" || "$OS" == "linux" ]] || fail "不支持的系统: ${OS}（Windows 请使用 PowerShell 安装方式）"
 
-# A thin macOS Runner can execute under Rosetta. Its own GOARCH, instead of
-# the installer's uname, determines which Linux companion it looks up.
-macos_runner_arch() {
-  local header=""
+# Use the Mach-O slices instead of uname. A universal Runner installed under
+# Rosetta can later be launched natively by launchd.
+macos_runner_arches() {
+  local header="" entry_size little=0 arches
   if [[ -f "$1" ]]; then
     header="$(LC_ALL=C od -An -v -t x1 -N 8 "$1" | tr -d '[:space:]')"
   fi
   case "$header" in
-    cffaedfe07000001) printf '%s\n' amd64 ;;
-    cffaedfe0c000001) printf '%s\n' arm64 ;;
-    *) printf '%s\n' "$ARCH" ;;
+    cffaedfe07000001) printf '%s\n' amd64; return ;;
+    cffaedfe0c000001) printf '%s\n' arm64; return ;;
+    cafebabe*) entry_size=20 ;;
+    cafebabf*) entry_size=32 ;;
+    bebafeca*) entry_size=20; little=1 ;;
+    bfbafeca*) entry_size=32; little=1 ;;
+    *) printf '%s\n' "$ARCH"; return ;;
   esac
+  # A fat header is eight bytes. Bound the read to the architecture table
+  # and accept only the CPU types for which we distribute Linux companions.
+  arches=$(LC_ALL=C od -An -v -t u1 -N 4104 "$1" |
+    awk -v stride="$entry_size" -v little="$little" '
+      { for (i = 1; i <= NF; i++) bytes[count++] = $i }
+      function word(offset,   i, value) {
+        for (i = 0; i < 4; i++) value = 256 * value + bytes[offset + (little ? 3-i : i)]
+        return value
+      }
+      END {
+        slices = word(4)
+        if (slices < 1 || 8 + slices * stride > count) exit 1
+        for (slice = 0; slice < slices; slice++) {
+          cpu = word(8 + slice * stride)
+          if (cpu == 16777223) amd64 = 1
+          if (cpu == 16777228) arm64 = 1
+        }
+        if (amd64 && arm64) print "amd64 arm64"
+        else if (amd64) print "amd64"
+        else if (arm64) print "arm64"
+      }') || arches=""
+  printf '%s\n' "${arches:-$ARCH}"
 }
 
 RUNNER_HOME="${HOME}/.agentflow-runner"
@@ -436,8 +462,10 @@ if [[ "$UNINSTALL" == "1" ]]; then
     info "已清理 runner Docker 沙箱和临时镜像"
   fi
   if [[ "$OS" == "darwin" ]]; then
-    runner_arch=$(macos_runner_arch "$BINARY")
-    rm -f "${BIN_DIR}/agentflow-runner-linux-${runner_arch}"
+    read -r -a runner_arches <<< "$(macos_runner_arches "$BINARY")"
+    for runner_arch in "${runner_arches[@]}"; do
+      rm -f "${BIN_DIR}/agentflow-runner-linux-${runner_arch}"
+    done
   fi
   rm -f "$BINARY"
   rm -f "${BIN_DIR}"/agentflow-gate-mcp-darwin-amd64 \
@@ -726,16 +754,24 @@ configure_macos_docker_runner_helper() {
   # Keep the template expansion in sync with runtime.DockerRunnerHelperPath.
   pattern="${pattern#"${pattern%%[![:space:]]*}"}"
   pattern="${pattern%"${pattern##*[![:space:]]}"}"
-  DOCKER_RUNNER_BINARY="${BIN_DIR}/agentflow-runner-linux-${ARCH}"
   if [[ "$pattern" == *"{os}"* ]]; then
+    if [[ "${#runner_arches[@]}" -gt 1 && "$pattern" != *"{arch}"* ]]; then
+      fail "通用 macOS Runner 需要为每种架构安装 Linux Git/MCP helper，请在 AGENTFLOW_RUNNER_BINARY 中添加 {arch}"
+    fi
     [[ "$pattern" == /* ]] || pattern="$PWD/$pattern"
-    DOCKER_RUNNER_BINARY="${pattern//\{os\}/linux}"
+  fi
+  export AGENTFLOW_RUNNER_BINARY="$pattern"
+}
+
+select_macos_docker_runner_helper() {
+  DOCKER_RUNNER_BINARY="${BIN_DIR}/agentflow-runner-linux-${ARCH}"
+  if [[ "$AGENTFLOW_RUNNER_BINARY" == *"{os}"* ]]; then
+    DOCKER_RUNNER_BINARY="${AGENTFLOW_RUNNER_BINARY//\{os\}/linux}"
     DOCKER_RUNNER_BINARY="${DOCKER_RUNNER_BINARY//\{arch\}/$ARCH}"
   fi
   if [[ "$DOCKER_RUNNER_BINARY" -ef "$BINARY" ]]; then
     fail "Linux Git/MCP helper 路径与 macOS Runner 相同：${DOCKER_RUNNER_BINARY}"
   fi
-  export AGENTFLOW_RUNNER_BINARY="$pattern"
 }
 
 save_runner_binary_pattern() {
@@ -751,7 +787,7 @@ save_runner_binary_pattern() {
 }
 
 if [[ "$OS" == "darwin" ]]; then
-  ARCH=$(macos_runner_arch "$BINARY")
+  read -r -a runner_arches <<< "$(macos_runner_arches "$BINARY")"
   configure_macos_docker_runner_helper
 fi
 
@@ -773,11 +809,16 @@ install_gate_binary() {
   chmod +x "$target"
 }
 
-# Docker on macOS needs Linux versions of both the Gate MCP and Git/MCP helpers.
-install_gate_binary "$OS" "$ARCH"
-if [[ "$OS" != "linux" ]]; then
-  install_gate_binary linux "$ARCH"
-  install_docker_runner_binary
+# A universal Runner needs both companions whichever slice gets launched.
+if [[ "$OS" == "darwin" ]]; then
+  for ARCH in "${runner_arches[@]}"; do
+    select_macos_docker_runner_helper
+    install_gate_binary darwin "$ARCH"
+    install_gate_binary linux "$ARCH"
+    install_docker_runner_binary
+  done
+else
+  install_gate_binary "$OS" "$ARCH"
 fi
 
 if [[ "$UPGRADE" == "1" ]]; then
