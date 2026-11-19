@@ -26,7 +26,7 @@ func TestCatalogRepositoryAgentAndAssetBranches(t *testing.T) {
 		want         int
 	}{
 		{http.MethodDelete, "/api/repositories", nil, 400},
-		{http.MethodPost, "/api/repositories", map[string]any{"projectId": "cvb-cat", "repoUrl": "https://bitbucket.org/nope/x"}, 400},
+		{http.MethodPost, "/api/repositories", map[string]any{"projectId": "cvb-cat", "repoUrl": "https://bitbucket.org/nope/x"}, 200},
 		{http.MethodPost, "/api/repositories", map[string]any{"projectId": "cvb-cat", "repoUrl": "https://git.example.com/a/one", "url": "https://git.example.com/a/two"}, 400},
 		{http.MethodPost, "/api/repositories", map[string]any{"projectId": "missing", "name": "x", "gongfengProjectId": "a/x"}, 400},
 		{http.MethodPost, "/api/repositories", map[string]any{"projectId": "cvb-cat", "name": "x", "gongfengProjectId": "a/x", "provider": "gitlab"}, 400},

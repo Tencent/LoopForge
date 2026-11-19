@@ -2,6 +2,7 @@ import React from "react";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, test, vi } from "vitest";
+import { modelProviderFor } from "../src/ModelProviderIcon";
 
 const chat = {
   user: { id: "u1", loginName: "tester", chineseName: "测试用户" },
@@ -104,16 +105,30 @@ describe("App", () => {
     await user.click(screen.getByRole("button", { name: "发送消息" }));
     expect(chat.send).toHaveBeenLastCalledWith(expect.objectContaining({ approvalMode: "assisted" }));
   });
-  test("keeps full permission for this page only", async () => {
+  test("restores full permission after a reload and resets it for another account", async () => {
     const user = userEvent.setup();
-    localStorage.setItem("loopforge.assistant.approvalMode", "assisted");
     const first = render(<App />);
     await user.click(screen.getByRole("button", { name: "操作确认方式" }));
     await user.click(screen.getByRole("menuitemradio", { name: "完全权限" }));
-    expect(screen.getByRole("button", { name: "操作确认方式" })).toHaveTextContent("完全权限");
     first.unmount();
-    render(<App />);
-    expect(screen.getByRole("button", { name: "操作确认方式" })).toHaveTextContent("帮我批准");
+    const reloaded = render(<App />);
+    fireEvent.keyDown(window, { key: "O", ctrlKey: true, shiftKey: true });
+    expect(chat.newChat).toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "操作确认方式" })).toHaveTextContent("完全权限");
+    await user.type(screen.getByRole("textbox", { name: /消息|输入/ }), "你好");
+    await user.click(screen.getByRole("button", { name: "发送消息" }));
+    expect(chat.send).toHaveBeenLastCalledWith(expect.objectContaining({ approvalMode: "auto" }));
+    const originalUser = chat.user;
+    try {
+      chat.user = { id: "u2", loginName: "another-user" };
+      reloaded.rerender(<App />);
+      expect(screen.getByRole("button", { name: "操作确认方式" })).toHaveTextContent("请求批准");
+      await user.type(screen.getByRole("textbox", { name: "消息" }), "新账号");
+      await user.click(screen.getByRole("button", { name: "发送消息" }));
+      expect(chat.send).toHaveBeenLastCalledWith(expect.objectContaining({ approvalMode: "confirm" }));
+    } finally {
+      chat.user = originalUser;
+    }
   });
   test("does not ask for per-command native approval in a working conversation", () => {
     const previous = {...chat};
@@ -525,11 +540,26 @@ describe("App", () => {
     chat.executors = [
       ...previous.executors,
       { id: "pi", icon: "terminal", label: "Pi", detail: "Pi" },
+      { id: "agy", icon: "sparkles", label: "Antigravity", detail: "Antigravity" },
+      { id: "kimi", icon: "terminal", label: "Kimi Code", detail: "Kimi Code" },
     ];
     const view = render(<App />);
     await user.click(screen.getByRole("button", { name: "CLI" }));
     const pi = await screen.findByRole("menuitemradio", { name: "Pi" });
     expect(pi.querySelector('[data-model-provider="pi"] svg')).not.toBeNull();
+    const agy = screen.getByRole("menuitemradio", { name: "Antigravity" });
+    expect(agy.querySelector('[data-model-provider="antigravity"] svg')).not.toBeNull();
+    const kimi = screen.getByRole("menuitemradio", { name: "Kimi Code" });
+    expect(kimi.querySelector('[data-model-provider="kimi-code"] img')).not.toBeNull();
+    expect(modelProviderFor({ id: "agy:gemini-4-neon-high" })).toBe("gemini");
+    expect(modelProviderFor({ id: "agy:claude-opus-5-5-high" })).toBe("claude");
+    expect(modelProviderFor({ id: "claude-code:opus" })).toBe("claude");
+    expect(modelProviderFor({ id: "cursor:composer-2.5" })).toBe("cursor");
+    expect(modelProviderFor({ id: "cursor:cursor-grok-4.6" })).toBe("xai");
+    expect(modelProviderFor({ id: "cursor:muse-wonder-1.0" })).toBe("meta");
+    expect(modelProviderFor({ id: "auto", engine: "cursor" })).toBe("cursor");
+    expect(modelProviderFor({ id: "kimi:k3.1-pro-highspeed" })).toBe("kimi");
+    expect(modelProviderFor({ id: "kimi:deepseek-v4-pro" })).toBe("deepseek");
     await user.click(await screen.findByRole("menuitemradio", { name: "Codex" }));
     expect(chat.setExecutor).toHaveBeenCalledWith("codex");
     expect(screen.getByRole("button", { name: "思考强度" })).toBeInTheDocument();

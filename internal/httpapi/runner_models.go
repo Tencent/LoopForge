@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
 	"agentflow/internal/domain"
+	"agentflow/internal/runtime"
 
 	"github.com/gin-gonic/gin"
 )
@@ -31,6 +33,7 @@ func (h *runnersHandlers) probeRunnerModels(c *gin.Context) {
 	}
 	var req struct {
 		Provider string `json:"provider"`
+		UseSaved bool   `json:"useSaved"`
 	}
 	if !decode(c, &req) {
 		return
@@ -40,35 +43,62 @@ func (h *runnersHandlers) probeRunnerModels(c *gin.Context) {
 		c.JSON(http.StatusConflict, cliModelProbeResult{Error: "请先为该 CLI 启用账号登录"})
 		return
 	}
-	if runner.Status != domain.RunnerStatusOnline || !runner.SupportsProvider(provider) || h.runnerControls == nil {
-		c.JSON(http.StatusServiceUnavailable, cliModelProbeResult{Error: "执行机器或所选 CLI 当前不可用"})
-		return
+	var saved []domain.CLIModel
+	if provider == runtime.AgentCLIAntigravity && req.UseSaved {
+		stored, _ := h.repo.User(user.ID)
+		saved = assistantEngineCustomModels(stored, provider)
+	}
+	status, result := runnerLoginModelCatalog(c.Request.Context(), h.runnerControls, runner, provider, saved)
+	c.JSON(status, result)
+}
+
+func runnerLoginModelCatalog(ctx context.Context, controls *runnerControlHub, runner domain.Runner, provider string, saved []domain.CLIModel) (int, cliModelProbeResult) {
+	if models := runnerLoginModelsWithEfforts(provider, saved); len(models) > 0 {
+		return http.StatusOK, cliModelProbeResult{Models: models, Source: "saved"}
+	}
+	if runner.Status != domain.RunnerStatusOnline || !runner.SupportsProvider(provider) || controls == nil {
+		return http.StatusServiceUnavailable, cliModelProbeResult{Error: "执行机器或所选 CLI 当前不可用"}
 	}
 	if !runner.SupportsCLISettings() {
-		c.JSON(http.StatusConflict, cliModelProbeResult{Error: fmt.Sprintf("获取账号模型需要 Runner %s 或以上版本", domain.RunnerVersionCLISettings)})
-		return
+		return http.StatusConflict, cliModelProbeResult{Error: fmt.Sprintf("获取账号模型需要 Runner %s 或以上版本", domain.RunnerVersionCLISettings)}
 	}
-	ctx, cancel := context.WithTimeout(c.Request.Context(), 20*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
-	response, err := h.runnerControls.requestWorkspace(ctx, runner.ID, domain.RunnerWorkspaceRequest{
+	response, err := controls.requestWorkspace(ctx, runner.ID, domain.RunnerWorkspaceRequest{
 		Operation: domain.RunnerWorkspaceOperationLoginModels, ModelProvider: provider,
 	})
 	if err != nil {
-		c.JSON(http.StatusServiceUnavailable, cliModelProbeResult{Error: "无法连接执行机器，请稍后重试"})
-		return
+		return http.StatusServiceUnavailable, cliModelProbeResult{Error: "无法连接执行机器，请稍后重试"}
 	}
 	if response.Error != "" {
-		c.JSON(http.StatusBadGateway, cliModelProbeResult{Error: response.Error})
-		return
+		return http.StatusBadGateway, cliModelProbeResult{Error: response.Error}
 	}
 	var models []domain.CLIModel
 	if err := json.Unmarshal(response.Payload, &models); err != nil {
-		c.JSON(http.StatusBadGateway, cliModelProbeResult{Error: "执行机器返回了无效的模型列表"})
-		return
+		return http.StatusBadGateway, cliModelProbeResult{Error: "执行机器返回了无效的模型列表"}
 	}
+	models = runnerLoginModelsWithEfforts(provider, models)
 	if len(models) == 0 {
-		c.JSON(http.StatusOK, cliModelProbeResult{Error: "账号没有返回可用模型，可以手动添加模型"})
-		return
+		return http.StatusOK, cliModelProbeResult{Error: "账号没有返回可用模型，可以手动添加模型"}
 	}
-	c.JSON(http.StatusOK, cliModelProbeResult{Models: models, Source: "runner"})
+	return http.StatusOK, cliModelProbeResult{Models: models, Source: "runner"}
+}
+
+func runnerLoginModelsWithEfforts(provider string, models []domain.CLIModel) []domain.CLIModel {
+	models = slices.DeleteFunc(slices.Clone(models), func(model domain.CLIModel) bool {
+		return model.ID == assistantDefaultModel || model.ID == provider+":"+assistantDefaultModel || !assistantValidEngineModel(model.ID)
+	})
+	if provider != runtime.AgentCLIAntigravity {
+		return cliModelsWithEfforts(provider, models, "")
+	}
+	models = runtime.FoldAgyAccountModels(models)
+	for i, model := range models {
+		levels := append([]string{}, assistantModelEffortsInCatalog(provider+":"+model.ID, models, true)...)
+		if model.ReasoningEfforts != nil {
+			models[i].ReasoningEfforts = &levels
+		} else {
+			models[i].DiscoveredReasoningEfforts = &levels
+		}
+	}
+	return models
 }

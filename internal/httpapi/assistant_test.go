@@ -113,7 +113,7 @@ func TestAssistantAuthenticationAndCredentialIsolation(t *testing.T) {
 		if u.CodeBuddyAPIKey != "alice-secret" {
 			t.Fatal("wrong credential")
 		}
-		if strings.Contains(prompt, "secret") {
+		if strings.Contains(prompt, "alice-secret") || strings.Contains(prompt, "bob-secret") || strings.Contains(prompt, "project-secret") {
 			t.Fatal("credential leaked to prompt")
 		}
 		return `{"message":"alice-secret 已隐藏","drafts":[]}`, nil

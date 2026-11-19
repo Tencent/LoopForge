@@ -18,6 +18,9 @@ func (r mrDeliveryStateRow) toDomain() domain.MRDeliveryState {
 		MRProject: r.MRProject, MRIID: r.MRIID, MRURL: r.MRURL, State: r.State,
 		TargetBranch: r.TargetBranch, IssueID: r.IssueID,
 	}
+	if r.RegisteredBy != nil {
+		item.RegisteredBy = *r.RegisteredBy
+	}
 	if r.MergedAt != nil {
 		item.MergedAt = r.MergedAt.UTC()
 	}
@@ -89,6 +92,17 @@ func (r *DeliveryRepo) EnsureMRDeliveryState(project string, iid int, url, issue
 		}
 		return upsert(tx, "mr_delivery_states", mrDeliveryRowValues(existing, now))
 	})
+}
+
+// SetMRDeliveryRegisteredBy records who registered an MR the first time; a
+// later registration by someone else keeps the original user.
+func (r *DeliveryRepo) SetMRDeliveryRegisteredBy(project string, iid int, userID int64) error {
+	if project == "" || iid <= 0 || userID <= 0 {
+		return nil
+	}
+	return r.DB.Table("mr_delivery_states").
+		Where("mr_project = ? AND mr_iid = ? AND registered_by IS NULL", project, iid).
+		Update("registered_by", userID).Error
 }
 
 func (r *DeliveryRepo) UpdateMRDeliveryState(project string, iid int, state string, targetBranch string, mergedAt, checkedAt time.Time) error {
@@ -172,7 +186,7 @@ func singleDeliveryMR(mrURL string) []domain.DeliveryMR {
 		return nil
 	}
 	mr := domain.DeliveryMR{URL: mrURL}
-	if project, iid, _, ok := domain.ParseGongfengMR(mrURL); ok {
+	if project, iid, _, ok := domain.ParseDeliveryMRURL(mrURL); ok {
 		mr.Project, mr.IID = project, iid
 	}
 	return []domain.DeliveryMR{mr}
@@ -183,7 +197,7 @@ func singleDeliveryMR(mrURL string) []domain.DeliveryMR {
 func (r *DeliveryRepo) registerDeliveryMR(issueID string, mr domain.DeliveryMR, at time.Time) string {
 	project, iid := mr.Project, mr.IID
 	if project == "" || iid <= 0 {
-		if p, n, _, ok := domain.ParseGongfengMR(mr.URL); ok {
+		if p, n, _, ok := domain.ParseDeliveryMRURL(mr.URL); ok {
 			project, iid = p, n
 		}
 	}
@@ -508,7 +522,7 @@ func (r *DeliveryRepo) promoteIntegratedIssues(project string, promoteAt time.Ti
 			if !strings.EqualFold(mr.State, "integrated") {
 				continue
 			}
-			proj, _, _, ok := domain.ParseGongfengMR(mr.URL)
+			proj, _, _, ok := domain.ParseDeliveryMRURL(mr.URL)
 			if !ok || !strings.EqualFold(strings.TrimSpace(proj), project) {
 				continue
 			}
@@ -589,7 +603,7 @@ func (r *DeliveryRepo) demoteIssueToBaseline(issueID, mrURL string) error {
 }
 
 func (r *DeliveryRepo) lookupMRDeliveryState(mrURL string) string {
-	project, iid, _, ok := domain.ParseGongfengMR(mrURL)
+	project, iid, _, ok := domain.ParseDeliveryMRURL(mrURL)
 	if !ok {
 		return ""
 	}
@@ -1318,7 +1332,7 @@ func (r *DeliveryRepo) applyMRDeliveryStates(items []domain.AnalyticsDelivery, m
 		// merged > integrated > opened/closed 取最新的一个。
 		preferProject, preferIID := "", 0
 		if issue, ok := issues[items[i].IssueID]; ok {
-			if p, iid, _, ok := domain.ParseGongfengMR(issue.DeliveryMRURL); ok {
+			if p, iid, _, ok := domain.ParseDeliveryMRURL(issue.DeliveryMRURL); ok {
 				preferProject, preferIID = p, iid
 			}
 		}
