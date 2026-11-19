@@ -296,6 +296,9 @@ func (h *assistantHandlers) executeAssistantTask(ctx context.Context, user domai
 	}
 	// Like a chat turn, a scheduled run has no time limit: it ends when the
 	// CLI finishes or someone stops it from the conversation page.
+	if policy.ReportUsage != nil {
+		ctx = context.WithValue(ctx, scheduledUsageReportKey{}, scheduledUsageReport{GenerationID: g.ID, Report: policy.ReportUsage})
+	}
 	h.executeGeneration(ctx, req, g, domainUserToAuth(user))
 	if policy.KeepHistory {
 		// Schedule jobs keep every run's conversation for their execution

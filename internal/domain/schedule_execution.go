@@ -32,6 +32,51 @@ type ScheduleJobExecution struct {
 	StartedAt  time.Time                 `json:"startedAt"`
 	FinishedAt *time.Time                `json:"finishedAt,omitempty"`
 	DurationMs int64                     `json:"durationMs,omitempty"`
+	// Model and Usage cover this execution's generation, including retries
+	// and usage reported before failure, but not prior turns in a fixed session.
+	// Usage.CostUSD/CostStatus are the analytics estimate; CostCNY is set only
+	// when that estimate is known. Unreported executions and SOP triggers have
+	// no usage.
+	Model   string      `json:"model,omitempty"`
+	Usage   *TokenUsage `json:"usage,omitempty"`
+	CostCNY *float64    `json:"costCny,omitempty"`
+}
+
+// RecordUsage stores the prompt's model and usage on the execution, priced
+// like conversation turns in analytics. Empty usage is not recorded.
+func (e *ScheduleJobExecution) RecordUsage(model string, usage *TokenUsage) {
+	if usage == nil || usageTotalTokens(*usage) == 0 && usage.CostUSD == 0 {
+		return
+	}
+	priced := PriceScheduleExecutionUsage(model, *usage)
+	e.Model, e.Usage, e.CostCNY = strings.TrimSpace(model), &priced, nil
+	if priced.CostStatus == "estimated" {
+		cny := priced.CostUSD * AnalyticsUSDToCNY
+		e.CostCNY = &cny
+	}
+}
+
+// PriceScheduleExecutionUsage prices an AI prompt's usage the way analytics
+// prices conversation turns: GPT models report input including caches.
+func PriceScheduleExecutionUsage(model string, usage TokenUsage) TokenUsage {
+	inclusive := strings.HasPrefix(strings.ToLower(strings.TrimSpace(model)), "gpt-")
+	return AnalyticsPricedUsage(model, usage, inclusive)
+}
+
+// usageTotalTokens is the billed total, falling back to input + output.
+func usageTotalTokens(u TokenUsage) int64 {
+	if u.TotalTokens > 0 {
+		return u.TotalTokens
+	}
+	return u.InputTokens + u.OutputTokens
+}
+
+// ExecutionTotalTokens is the billed total of an execution's usage.
+func (e ScheduleJobExecution) ExecutionTotalTokens() int64 {
+	if e.Usage == nil {
+		return 0
+	}
+	return usageTotalTokens(*e.Usage)
 }
 
 // ScheduleJobExecutionRun links an execution to the SOP run it started.
@@ -80,6 +125,25 @@ type ScheduleExecutionWindow struct {
 	Failed   int   `json:"failed"`
 	Running  int   `json:"running"`
 	AvgMs    int64 `json:"avgMs"`
+	// Metered counts the finished executions that recorded token usage;
+	// AvgTokens averages Tokens.Total over them, so runs that failed before
+	// reaching a model do not pull the average down. Priced counts those
+	// whose cost could be estimated; CostCNY sums their estimates.
+	Metered   int                     `json:"metered"`
+	Tokens    ScheduleExecutionTokens `json:"tokens"`
+	AvgTokens int64                   `json:"avgTokens"`
+	Priced    int                     `json:"priced"`
+	CostCNY   float64                 `json:"costCny"`
+}
+
+// ScheduleExecutionTokens sums token usage. Total is the billed total; the
+// four parts follow the providers' own split and need not add up to it.
+type ScheduleExecutionTokens struct {
+	Total      int64 `json:"total"`
+	Input      int64 `json:"input"`
+	Output     int64 `json:"output"`
+	CacheRead  int64 `json:"cacheRead"`
+	CacheWrite int64 `json:"cacheWrite"`
 }
 
 // ScheduleSessionFixed is ScheduleJob.SessionMode for an AI job that keeps

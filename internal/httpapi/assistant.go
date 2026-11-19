@@ -429,6 +429,9 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 	if replyModel == "" {
 		replyModel = assistantDefaultModel
 	}
+	if report, ok := modelCtx.Value(scheduledUsageReportKey{}).(scheduledUsageReport); ok && report.GenerationID == assistantControlScopeFrom(modelCtx).GenerationID && report.Report != nil {
+		defer func() { report.Report(replyModel, turnUsage.snapshot()) }()
+	}
 	generate := h.generate
 	if generate == nil {
 		resume := false
