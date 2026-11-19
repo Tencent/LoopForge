@@ -227,9 +227,22 @@ func knowledgeReferencePromptContext(ctx context.Context, d *deps, project strin
 	return domain.KnowledgeLookupInstruction + "\n" + catalog
 }
 
-func knowledgeCatalogCacheKey(project string, uid int64, refs []domain.KnowledgeRef) string {
+func buildSOPKnowledgeCatalogXML(ctx context.Context, d *deps, project string, uid int64, refs []domain.KnowledgeRef) string {
+	if len(refs) == 0 {
+		return ""
+	}
+	return buildBoundKnowledgeCatalogXMLForMode(ctx, d, "sop", project, uid, refs, func(serverID, toolName string) string {
+		mcpID := serverID
+		if mcpID != domain.KnowledgeMCPServerID {
+			mcpID = domain.KnowledgeMCPServerID + "-" + mcpID
+		}
+		return "mcp__" + mcpID + "__" + toolName
+	})
+}
+
+func knowledgeCatalogCacheKey(mode, project string, uid int64, refs []domain.KnowledgeRef) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "%s|%d", project, uid)
+	fmt.Fprintf(&b, "%s|%s|%d", mode, project, uid)
 	for _, ref := range refs {
 		fmt.Fprintf(&b, "|%s:%s:%s", ref.ServerID, ref.Mode, strings.Join(ref.Sources, ","))
 	}
@@ -237,7 +250,13 @@ func knowledgeCatalogCacheKey(project string, uid int64, refs []domain.Knowledge
 }
 
 func buildBoundKnowledgeCatalogXML(ctx context.Context, d *deps, project string, uid int64, refs []domain.KnowledgeRef) string {
-	key := knowledgeCatalogCacheKey(project, uid, refs)
+	return buildBoundKnowledgeCatalogXMLForMode(ctx, d, "chat", project, uid, refs, func(serverID, toolName string) string {
+		return knowledgeToolNamespace(serverID) + "__" + toolName
+	})
+}
+
+func buildBoundKnowledgeCatalogXMLForMode(ctx context.Context, d *deps, mode, project string, uid int64, refs []domain.KnowledgeRef, formatTool func(serverID, toolName string) string) string {
+	key := knowledgeCatalogCacheKey(mode, project, uid, refs)
 	now := time.Now()
 	knowledgeCatalogCache.mu.Lock()
 	if entry, ok := knowledgeCatalogCache.items[key]; ok && now.Before(entry.expiresAt) {
@@ -255,7 +274,7 @@ func buildBoundKnowledgeCatalogXML(ctx context.Context, d *deps, project string,
 		if b.Len() >= knowledgeCatalogMaxRunes {
 			break
 		}
-		b.WriteString(describeBoundKnowledgeRef(probeCtx, d, project, uid, ref))
+		b.WriteString(describeBoundKnowledgeRef(probeCtx, d, project, uid, ref, formatTool))
 	}
 	b.WriteString("</bound_knowledge_bases>")
 	out := clipCatalogText(b.String(), knowledgeCatalogMaxRunes+len("</bound_knowledge_bases>")+32)
@@ -269,15 +288,14 @@ func buildBoundKnowledgeCatalogXML(ctx context.Context, d *deps, project string,
 	return out
 }
 
-func describeBoundKnowledgeRef(ctx context.Context, d *deps, project string, uid int64, ref domain.KnowledgeRef) string {
+func describeBoundKnowledgeRef(ctx context.Context, d *deps, project string, uid int64, ref domain.KnowledgeRef, formatTool func(serverID, toolName string) string) string {
 	name, desc := knowledgeServerMeta(d, ref.ServerID)
-	ns := knowledgeToolNamespace(ref.ServerID)
 
 	var toolNames []string
 	var hasListBases, hasListDocs, hasListSources bool
 	if tools, _, err := referenceTools(ctx, d, project, uid, ref); err == nil {
 		for _, t := range tools {
-			toolNames = append(toolNames, ns+"__"+t.Name)
+			toolNames = append(toolNames, formatTool(ref.ServerID, t.Name))
 			switch t.Name {
 			case "list_knowledge_bases":
 				hasListBases = true

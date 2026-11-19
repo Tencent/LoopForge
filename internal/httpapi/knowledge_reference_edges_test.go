@@ -338,4 +338,29 @@ func TestKnowledgeReferencePromptContextWeKnoraFlow(t *testing.T) {
 	if !strings.Contains(got, "vpcdns-test.md") {
 		t.Fatalf("expected vpcdns-test.md in L0 catalog, got:\n%s", got)
 	}
+	sopGot := buildSOPKnowledgeCatalogXML(context.Background(), d, "default", 1, []domain.KnowledgeRef{{ServerID: "weknora-2", Mode: "all"}})
+	for _, want := range []string{
+		"mcp__" + domain.KnowledgeMCPServerID + "-weknora-2__search_knowledge",
+		"vpcdns-test.md",
+	} {
+		if !strings.Contains(sopGot, want) {
+			t.Fatalf("buildSOPKnowledgeCatalogXML() missing %q in:\n%s", want, sopGot)
+		}
+	}
+
+	// Verify /runners/knowledge/mcp proxy initialize + tools/list for external claims.Ref.
+	kh := &knowledgeHandlers{deps: d}
+	claims := knowledge.ProxyClaims{ProjectID: "default", UserID: 1, Ref: &domain.KnowledgeRef{ServerID: "weknora-2", Mode: "all"}}
+	initResp := kh.handleProxyRPC(context.Background(), domain.KnowledgeSettings{}, claims, agentToolRPCRequest{ID: 1, Method: "initialize"})
+	initRaw, _ := json.Marshal(initResp.Result)
+	if strings.Contains(string(initRaw), "kb_search") || !strings.Contains(string(initRaw), "WeKnora") {
+		t.Fatalf("unexpected external initialize result: %s", initRaw)
+	}
+	listResp := kh.handleProxyRPC(context.Background(), domain.KnowledgeSettings{}, claims, agentToolRPCRequest{ID: 2, Method: "tools/list"})
+	listRaw, _ := json.Marshal(listResp.Result)
+	for _, want := range []string{"[用户已绑定知识库：WeKnora]", "优先调用", `"readOnlyHint":true`} {
+		if !strings.Contains(string(listRaw), want) {
+			t.Fatalf("external tools/list missing %q in: %s", want, listRaw)
+		}
+	}
 }

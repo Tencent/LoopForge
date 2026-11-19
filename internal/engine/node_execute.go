@@ -713,10 +713,7 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 			if requiresSubmit {
 				prompt = appendSubmitGateInstruction(prompt, node.RejectTo, feedback == gateMissingRetryMarker)
 			}
-			assets := e.resolveNodeAssets(agent, current, wf.ID, effectiveNode)
-			if len(effectiveNode.KnowledgeRefs) > 0 {
-				prompt += "\n" + domain.KnowledgeLookupInstruction
-			}
+			assets := e.resolveNodeAssets(ctx, agent, current, wf.ID, effectiveNode)
 			warnMCPSkipped := func(message string) {
 				sink(domain.TelemetryEvent{Category: "mcp", Name: "mcp.skipped", Phase: "start", Level: "warn", Message: message})
 			}
@@ -1059,6 +1056,7 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 		r.Artifacts = append(r.Artifacts, artifacts...)
 		nr.Output = output
 		nr.Error = ""
+		markKnowledgeReadsCited(nr.KnowledgeReads, executionAttempt, output, artifacts)
 		if manualGateName != "" {
 			nr.Status = "waiting_approval"
 			nr.FinishedAt = time.Now().UTC()
@@ -1171,6 +1169,25 @@ func lostCLISession(output string, err error) bool {
 		strings.Contains(msg, "session not found") ||
 		strings.Contains(msg, "no such session") ||
 		strings.Contains(msg, "conversation does not exist")
+}
+
+func markKnowledgeReadsCited(reads []domain.KnowledgeRead, attempt int, output string, artifacts []domain.Artifact) {
+	for i := range reads {
+		if reads[i].Attempt != attempt || reads[i].Status != "已返回" {
+			continue
+		}
+		marker := "[[knowledge:" + reads[i].ID + "]]"
+		if strings.Contains(output, marker) {
+			reads[i].Cited = true
+			continue
+		}
+		for _, artifact := range artifacts {
+			if strings.Contains(artifact.Content, marker) {
+				reads[i].Cited = true
+				break
+			}
+		}
+	}
 }
 
 func clipHumanGateDetail(detail string) string {

@@ -121,11 +121,16 @@ func (h *knowledgeHandlers) handleProxyRPC(ctx context.Context, settings domain.
 	}
 	switch request.Method {
 	case "initialize":
+		instructions := "团队知识库（只读）。先 kb_search 检索，再用 kb_fetch 读原文；引用时附上 citation。"
+		if claims.Ref != nil && claims.Ref.ServerID != domain.KnowledgeMCPServerID {
+			serverName, _ := knowledgeServerMeta(h.deps, claims.Ref.ServerID)
+			instructions = "用户为当前 SOP 节点绑定的只读知识服务（" + serverName + "）。请优先使用本服务的检索与文档读取工具核实团队规范、架构、接口与排障资料，引用时附上原文出处和 [[knowledge:<id>]] 标记。"
+		}
 		return reply(map[string]any{
 			"protocolVersion": agentToolProtocolVersion(request.Params),
 			"capabilities":    map[string]any{"tools": map[string]any{"listChanged": false}},
 			"serverInfo":      map[string]string{"name": domain.KnowledgeMCPServerID, "version": "1.0.0"},
-			"instructions":    "团队知识库（只读）。先 kb_search 检索，再用 kb_fetch 读原文；引用时附上 citation。",
+			"instructions":    instructions,
 		})
 	case "ping":
 		return reply(map[string]any{})
@@ -135,7 +140,20 @@ func (h *knowledgeHandlers) handleProxyRPC(ctx context.Context, settings domain.
 			if err != nil {
 				return fail(-32603, err.Error())
 			}
-			return reply(map[string]any{"tools": tools})
+			serverName, serverDesc := knowledgeServerMeta(h.deps, claims.Ref.ServerID)
+			out := make([]map[string]any, 0, len(tools))
+			for _, tool := range tools {
+				item := map[string]any{
+					"name":        tool.Name,
+					"description": knowledgeToolDescription(serverName, serverDesc, claims.Ref.ServerID, tool.Name, tool.Description),
+					"inputSchema": json.RawMessage(defaultToolSchema(tool.InputSchema)),
+				}
+				if len(tool.Annotations) > 0 && string(tool.Annotations) != "null" {
+					item["annotations"] = tool.Annotations
+				}
+				out = append(out, item)
+			}
+			return reply(map[string]any{"tools": out})
 		}
 		tools, err := h.proxyTools(ctx, settings)
 		if err != nil {

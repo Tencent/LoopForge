@@ -61,6 +61,10 @@ type Engine struct {
 	// branch with their head commits, for mode=mr gates. Nil cannot verify.
 	FindBranchMRsInto func(domain.BranchMRQuery) ([]domain.DeliveryMR, error)
 
+	// BuildKnowledgeCatalog builds the L0 <bound_knowledge_bases> XML block for
+	// an SOP node's bound KnowledgeRefs. Wired in httpapi.New.
+	BuildKnowledgeCatalog func(ctx context.Context, projectID string, userID int64, refs []domain.KnowledgeRef) string
+
 	// runnerDispatchNotify wakes long-polling CLI runners when the engine
 	// queues a runner task. Wired via SetRunnerDispatchNotify (httpapi.New);
 	// nil falls back to the runner claim retry interval.

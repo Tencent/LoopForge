@@ -144,8 +144,13 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	if bg != nil {
 		bg.runnerControls = runnerControls
 	}
-	e.WorkspaceCheckpointTransport = func(ctx context.Context, run domain.Run, request domain.RunnerWorkspaceRequest) (domain.RunnerWorkspaceResponse, error) {
-		return runnerControls.requestWorkspace(ctx, e.RunExecutionRunner(run), request)
+	if e != nil {
+		e.WorkspaceCheckpointTransport = func(ctx context.Context, run domain.Run, request domain.RunnerWorkspaceRequest) (domain.RunnerWorkspaceResponse, error) {
+			return runnerControls.requestWorkspace(ctx, e.RunExecutionRunner(run), request)
+		}
+		e.BuildKnowledgeCatalog = func(ctx context.Context, projectID string, userID int64, refs []domain.KnowledgeRef) string {
+			return buildSOPKnowledgeCatalogXML(ctx, d, projectID, userID, refs)
+		}
 	}
 	api := &Server{
 		deps:            d,

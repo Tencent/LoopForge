@@ -4,6 +4,8 @@ import (
 	"agentflow/internal/domain"
 	"agentflow/internal/knowledge"
 	"agentflow/internal/repo"
+	"context"
+	"fmt"
 	"sort"
 	"strings"
 	"time"
@@ -143,7 +145,7 @@ func (e *Engine) resolveAssets(agent domain.AgentDefinition, projectID, workflow
 	return bundle
 }
 
-func (e *Engine) resolveNodeAssets(agent domain.AgentDefinition, run domain.Run, wfID string, node domain.WorkflowNode) domain.AgentAssetBundle {
+func (e *Engine) resolveNodeAssets(ctx context.Context, agent domain.AgentDefinition, run domain.Run, wfID string, node domain.WorkflowNode) domain.AgentAssetBundle {
 	project := run.ExecutionContext.ProjectID
 	uid := run.ExecutionContext.ResponsibleUserID
 	selected := map[string]bool{}
@@ -165,6 +167,7 @@ func (e *Engine) resolveNodeAssets(agent domain.AgentDefinition, run domain.Run,
 	if nr := run.Nodes[node.ID]; nr != nil {
 		attempt = nr.Attempt
 	}
+	var attached []domain.MCPServerDefinition
 	for _, ref := range node.KnowledgeRefs {
 		s, ok := e.knowledgeMCPServer(knowledge.ProxyClaims{ProjectID: project, UserID: uid, AgentID: agent.ID, RunID: run.ID, NodeID: node.ID, Attempt: attempt, Ref: &ref})
 		if !ok {
@@ -181,8 +184,40 @@ func (e *Engine) resolveNodeAssets(agent domain.AgentDefinition, run domain.Run,
 			s.Description = v.Description
 		}
 		bundle.MCPServers = append(bundle.MCPServers, s)
+		attached = append(attached, s)
+	}
+	if len(attached) > 0 {
+		catalog := ""
+		if e.BuildKnowledgeCatalog != nil {
+			catalog = e.BuildKnowledgeCatalog(ctx, project, uid, node.KnowledgeRefs)
+		}
+		if catalog == "" {
+			catalog = fallbackSOPKnowledgeCatalog(attached)
+		}
+		bundle.Rules = append(bundle.Rules, domain.RuleDefinition{
+			ID:          domain.SOPKnowledgeUsageRuleID,
+			Name:        "节点知识库使用规范",
+			Description: "SOP 节点执行前先核对并检索已绑定知识库，引用附出处和标记",
+			Content:     domain.SOPKnowledgeLookupInstruction + "\n" + catalog,
+			Priority:    60,
+		})
 	}
 	return bundle
+}
+
+func fallbackSOPKnowledgeCatalog(servers []domain.MCPServerDefinition) string {
+	var b strings.Builder
+	b.WriteString("<bound_knowledge_bases>\n")
+	for _, s := range servers {
+		fmt.Fprintf(&b, "  <kb id=%q name=%q", s.ID, s.Name)
+		fmt.Fprintf(&b, " tools=\"mcp__%s__*\">\n", s.ID)
+		if desc := strings.TrimSpace(s.Description); desc != "" {
+			fmt.Fprintf(&b, "    <description>%s</description>\n", desc)
+		}
+		b.WriteString("  </kb>\n")
+	}
+	b.WriteString("</bound_knowledge_bases>")
+	return b.String()
 }
 
 // roleMCPServerVisible reports whether a catalog MCP server listed on a role
