@@ -1010,7 +1010,6 @@ function openCredentialWizard(key){
   if(!state.currentUser||state.currentUser.isGuest||!$('#credentialPanel'))return;
   const dialog=credentialDialog(key);if(dialog)return dialog();
   const preset=key?credentialKind(key):null;
-  if(preset?.dialog)return preset.dialog();
   if(preset&&credentialConfigured(preset,user))return revealCredentialRow(key);
   const kind=preset||CREDENTIAL_RECOMMENDED.map(credentialKind).find(k=>!credentialConfigured(k,user))||CREDENTIAL_KINDS.find(k=>!credentialConfigured(k,user))||null;
   if(credentialWizard)closeCredentialWizard(true);
