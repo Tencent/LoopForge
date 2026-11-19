@@ -20,6 +20,25 @@
         "github"
       ],
       "iconUrl": "/mcp-icons/github.svg"
+    },
+    {
+      "id": "aimlapi",
+      "name": "AI/ML API",
+      "description": "Official hosted MCP server with access to 10,000+ tools and models over Streamable HTTP. Server authentication: OAuth or Authorization: Bearer <API key> (https://aimlapi.com/app/keys). LoopForge does not provide an OAuth sign-in or key field for this entry; use a custom HTTP MCP configuration with an Authorization header for Bearer authentication. Model lookups and account checks are free; generation, chat, embeddings and tools_run are billed pay-as-you-go to your AI/ML API account.",
+      "category": "development",
+      "tags": [
+        "tools",
+        "models",
+        "search"
+      ],
+      "url": "https://mcp.aimlapi.com/mcp",
+      "transport": "http",
+      "authType": "",
+      "official": true,
+      "detailUrl": "https://docs.aimlapi.com/quickstart/mcp",
+      "aliases": [
+        "aimlapi-mcp"
+      ]
     }
   ]
 }

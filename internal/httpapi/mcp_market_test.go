@@ -56,7 +56,7 @@ func TestMCPInstallIDBoundsLongNamesAndOwners(t *testing.T) {
 }
 
 func TestMCPMarketCatalogContainsOnlyPublicServices(t *testing.T) {
-	if len(mcpMarketItems) != 1 {
+	if len(mcpMarketItems) != 2 {
 		t.Fatalf("catalog: %+v", mcpMarketItems)
 	}
 	item, ok := marketItem("github")
@@ -290,5 +290,50 @@ func TestMCPMarketIconsAreLocalAndEmbedded(t *testing.T) {
 	}
 	if withIcon < 1 {
 		t.Fatalf("expected local icons, got %d", withIcon)
+	}
+}
+
+func TestMCPMarketAIMLAPICatalog(t *testing.T) {
+	item, ok := marketItem("aimlapi-mcp")
+	if !ok || item.ID != "aimlapi" || item.Name != "AI/ML API" || item.URL != "https://mcp.aimlapi.com/mcp" || item.Transport != "http" || !item.Official {
+		t.Fatalf("unexpected catalog entry: %+v", item)
+	}
+	if item.AuthType != "" || item.DetailURL != "https://docs.aimlapi.com/quickstart/mcp" {
+		t.Fatalf("unexpected authentication or documentation: %+v", item)
+	}
+	for _, text := range []string{"OAuth", "Authorization: Bearer", "custom HTTP MCP configuration", "Model lookups and account checks are free", "generation, chat, embeddings and tools_run are billed pay-as-you-go"} {
+		if !strings.Contains(item.Description, text) {
+			t.Errorf("description missing %q", text)
+		}
+	}
+	hits := filterMCPMarket(mcpMarketItems, "aimlapi")
+	if len(hits) != 1 || hits[0].ID != item.ID {
+		t.Fatalf("search results: %+v", hits)
+	}
+}
+
+func TestMCPMarketAIMLAPIRequiresExplicitInstall(t *testing.T) {
+	st, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	if err := st.PutProject(domain.Project{ID: "catalog-test", Name: "Catalog test"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := ensureDefaultProjectMCPs(st, "catalog-test"); err != nil {
+		t.Fatal(err)
+	}
+	for _, server := range st.MCPServers() {
+		if sameMarketItem(server.MarketID, "aimlapi") {
+			t.Fatal("paid service installed automatically")
+		}
+	}
+	server, created, err := installMarketMCP(st, "aimlapi-mcp", "catalog-test")
+	if err != nil || !created {
+		t.Fatalf("install: created=%v err=%v", created, err)
+	}
+	if server.MarketID != "aimlapi" || server.URL != "https://mcp.aimlapi.com/mcp" || server.Transport != "http" || len(server.Headers) != 0 || server.AuthType != "" {
+		t.Fatalf("unexpected installed configuration: %+v", server)
 	}
 }
