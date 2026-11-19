@@ -106,7 +106,7 @@ exec "$@"
         self.assert_success(self.install())
         self.assertEqual(env.read_text(), first)
         compose = (ROOT / 'compose.yaml').read_text()
-        for name in ('AGENTFLOW_CREDENTIAL_KEYS', 'AGENTFLOW_PUBLIC_URL', 'AGENTFLOW_BOT_WORKERS_ENABLED'):
+        for name in ('AGENTFLOW_CREDENTIAL_KEYS', 'AGENTFLOW_PUBLIC_URL', 'AGENTFLOW_BOT_WORKERS_ENABLED', 'AGENTFLOW_BOT_BODY_RETENTION_DAYS', 'AGENTFLOW_BOT_RECORD_RETENTION_DAYS'):
             self.assertIn(f'      {name}: ${{{name}:-', compose)
 
     def test_non_root_without_docker_group_uses_sudo_everywhere(self):
