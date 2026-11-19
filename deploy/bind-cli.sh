@@ -926,6 +926,12 @@ RUN_ARGS=(-server "$SERVER" -token "$TOKEN" -name "${NAME:-$(hostname)}" -concur
 if [[ "$AUTO_UPDATE" == "0" ]]; then
   RUN_ARGS+=(-auto-update=false)
 fi
+RUNNER_LAUNCH=("$BINARY")
+if [[ "$OS" == "darwin" && "${#runner_arches[@]}" -gt 1 ]]; then
+  # Use the required native slice for foreground and manual starts, even
+  # when the shell runs under Rosetta and the optional amd64 files are absent.
+  RUNNER_LAUNCH=(/usr/bin/arch -arm64 "$BINARY")
+fi
 
 # 用户当前 PATH：launchd/systemd 的服务环境只有 /usr/bin:/bin，不含
 # ~/.local/bin、Homebrew、nvm 等 CLI 安装目录，必须显式带入。
@@ -937,11 +943,10 @@ if [[ "$NO_START" == "1" ]]; then
   if [[ "${AGENTFLOW_RUNNER_BINARY:-}" == *"{os}"* ]]; then
     runner_command="AGENTFLOW_RUNNER_BINARY=$(shell_quote "$AGENTFLOW_RUNNER_BINARY") "
   fi
-  runner_command+="$(shell_quote "$BINARY")"
-  for arg in "${RUN_ARGS[@]}"; do
-    runner_command+=" $(shell_quote "$arg")"
+  for arg in "${RUNNER_LAUNCH[@]}" "${RUN_ARGS[@]}"; do
+    runner_command+="$(shell_quote "$arg") "
   done
-  info "  $runner_command"
+  info "  ${runner_command% }"
   info "常驻方式：追加 --service 重新执行本脚本；卸载：追加 --uninstall（--purge 删除全部配置）"
 elif [[ "$INSTALL_SERVICE" == "1" ]]; then
   if [[ "$OS" == "darwin" ]]; then
@@ -1004,5 +1009,5 @@ EOF
   info "卸载方式：curl -fsSL ${SERVER}/runners/install.sh | bash -s -- --uninstall"
 else
   info "前台启动 agentflow-runner（Ctrl+C 停止；常驻请加 --service）..."
-  exec "$BINARY" "${RUN_ARGS[@]}"
+  exec "${RUNNER_LAUNCH[@]}" "${RUN_ARGS[@]}"
 fi

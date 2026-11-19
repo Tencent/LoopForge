@@ -253,6 +253,10 @@ func TestBindCLIInstallsDockerRunnerHelper(t *testing.T) {
 				return string(out)
 			}
 			output := install()
+			if tc.universal && !tc.intelHardware && !tc.sharedTemplateDir &&
+				!strings.Contains(output, "/usr/bin/arch -arm64 ") {
+				t.Fatalf("the manual launch command can inherit Rosetta: %s", output)
+			}
 			if tc.sharedTemplateDir {
 				if _, err := os.Stat(helper); !os.IsNotExist(err) {
 					t.Fatalf("the installer wrote a helper before rejecting the conflicting template: %v", err)
