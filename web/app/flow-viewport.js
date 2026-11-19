@@ -1,7 +1,7 @@
 // Pan/zoom viewport for the flow designer canvas. Node positions stay in
 // logical canvas coordinates; only #canvasStage is transformed.
 const flowViewport=(()=>{
-  const MIN=.25,MAX=2,GRID=18,NODE_W=244,NODE_H=132,PAL_W=256,PAL_MINI=48,MINIMAP_KEY='agentflow.flowMinimap';
+  const MIN=.25,MAX=2,GRID=18,NODE_W=200,NODE_H=132,PAL_W=256,PAL_MINI=48,MINIMAP_KEY='agentflow.flowMinimap';
   const vp={x:40,y:40,zoom:1};
   let fittedId=null,autoCollapsed=false,animTimer=0,bound=false,onBlankClick=null,minimapRaf=0;
   const byId=id=>document.getElementById(id);
@@ -12,6 +12,7 @@ const flowViewport=(()=>{
     const stage=byId('canvasStage'),c=canvas();if(!stage||!c)return;
     stage.classList.toggle('anim',!!anim);
     stage.style.transform=`translate(${vp.x}px,${vp.y}px) scale(${vp.zoom})`;
+    c.style.setProperty('--fd-zoom',vp.zoom);
     const g=GRID*vp.zoom;c.style.backgroundSize=`${g}px ${g}px`;c.style.backgroundPosition=`${vp.x}px ${vp.y}px`;
     const zv=byId('canvasZoomValue');if(zv)zv.textContent=Math.round(vp.zoom*100)+'%';
     scheduleMinimap();

@@ -478,7 +478,7 @@ function aiSleep(ms) {
 }
 
 function aiCanvasFollow(x, y) {
-  flowViewport.centerOn(x + 122, y + 60, {smooth: true});
+  flowViewport.centerOn(x + 100, y + 60, {smooth: true});
 }
 
 function aiProvisionalPosition(index) {

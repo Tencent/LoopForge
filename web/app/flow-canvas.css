@@ -196,15 +196,15 @@ html[data-theme="dark"] #flowView{
 #flowView .fd-canvas.check-hidden{display:none}
 
 /* nodes */
-#flowView .flow-node.fd-node{--tint:var(--fd-accent);position:absolute;width:244px;min-height:0;padding:0;border:1px solid var(--fd-line-2);border-radius:12px;background:var(--fd-surface);box-shadow:var(--fd-shadow-sm);color:var(--fd-ink);cursor:grab;user-select:none;transition:box-shadow .15s,border-color .15s}
+#flowView .flow-node.fd-node{--tint:var(--fd-accent);position:absolute;display:flex;flex-direction:column;width:200px;min-height:0;padding:0;border:1px solid var(--fd-line-2);border-radius:12px;background:var(--fd-surface);box-shadow:var(--fd-shadow-sm);color:var(--fd-ink);cursor:grab;user-select:none;transition:box-shadow .15s,border-color .15s}
 #flowView .flow-node.fd-node:hover{border-color:rgb(var(--tint) / .55);box-shadow:var(--fd-shadow)}
-#flowView .flow-node.fd-node.sel{border-color:rgb(var(--fd-accent));box-shadow:0 0 0 3px rgb(var(--fd-accent) / .16),var(--fd-shadow)}
+#flowView .flow-node.fd-node.sel{border-color:rgb(var(--fd-accent));box-shadow:0 0 0 1px rgb(var(--fd-accent) / .3),var(--fd-shadow)}
 #flowView .flow-node.fd-node.dragging{cursor:grabbing;box-shadow:var(--fd-shadow-lg);z-index:30!important}
 #flowView .flow-node.fd-node.connecting{border-color:rgb(var(--fd-accent))}
 #flowView .flow-node.fd-node.drop-ok{border-color:rgb(var(--fd-ok));box-shadow:0 0 0 3px rgb(var(--fd-ok) / .2)}
 #flowView .flow-node.fd-node.drop-bad{border-color:rgb(var(--fd-rj));box-shadow:0 0 0 3px rgb(var(--fd-rj) / .16);cursor:not-allowed}
 #flowView .flow-node.fd-node::before{content:"";position:absolute;left:-1px;top:12px;bottom:12px;width:3px;border-radius:0 3px 3px 0;background:rgb(var(--tint))}
-#flowView .fd-nh{display:flex;align-items:center;gap:10px;padding:11px 10px 8px 13px}
+#flowView .fd-nh{display:flex;align-items:center;gap:10px;padding:11px 10px 8px 13px;flex:none}
 #flowView .fd-nt{flex:1;min-width:0}
 #flowView .fd-node .node-title{font-size:13.5px;font-weight:600;color:var(--fd-ink);line-height:1.3;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 #flowView .fd-node .node-subtitle{margin-top:2px;font-size:11.5px;color:var(--fd-ink-3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -212,6 +212,20 @@ html[data-theme="dark"] #flowView{
 #flowView .fd-more{display:grid;place-items:center;width:24px;height:24px;padding:0;border:0;border-radius:6px;background:none;color:var(--fd-ink-4);cursor:pointer;opacity:0;transition:opacity .12s,background .12s}
 #flowView .fd-node:hover .fd-more,#flowView .fd-node.sel .fd-more{opacity:1}
 #flowView .fd-more:hover{background:var(--fd-hover);color:var(--fd-ink)}
+/* Resize frame, modelled on MiniMax Design's canvas: a selected card shows
+   four round corner handles and four edge hit strips. Sizes divide by the
+   canvas zoom so the handles keep a constant on-screen size. */
+#flowView .fd-rz{position:absolute;z-index:5;background:transparent}
+#flowView .fd-rz.corner{width:calc(10px / var(--fd-zoom,1));height:calc(10px / var(--fd-zoom,1));border-radius:50%;background:var(--fd-surface);border:calc(1.5px / var(--fd-zoom,1)) solid rgb(var(--fd-accent));box-shadow:0 1px 2px rgba(15,23,42,.18)}
+#flowView .fd-rz.corner.nw{left:0;top:0;transform:translate(-50%,-50%);cursor:nwse-resize}
+#flowView .fd-rz.corner.ne{left:100%;top:0;transform:translate(-50%,-50%);cursor:nesw-resize}
+#flowView .fd-rz.corner.sw{left:0;top:100%;transform:translate(-50%,-50%);cursor:nesw-resize}
+#flowView .fd-rz.corner.se{left:100%;top:100%;transform:translate(-50%,-50%);cursor:nwse-resize}
+#flowView .fd-rz.edge.n{left:calc(12px / var(--fd-zoom,1));right:calc(12px / var(--fd-zoom,1));top:calc(-4px / var(--fd-zoom,1));height:calc(8px / var(--fd-zoom,1));cursor:ns-resize}
+#flowView .fd-rz.edge.s{left:calc(12px / var(--fd-zoom,1));right:calc(12px / var(--fd-zoom,1));bottom:calc(-4px / var(--fd-zoom,1));height:calc(8px / var(--fd-zoom,1));cursor:ns-resize}
+#flowView .fd-rz.edge.w{top:calc(12px / var(--fd-zoom,1));bottom:calc(12px / var(--fd-zoom,1));left:calc(-4px / var(--fd-zoom,1));width:calc(8px / var(--fd-zoom,1));cursor:ew-resize}
+#flowView .fd-rz.edge.e{top:calc(12px / var(--fd-zoom,1));bottom:calc(12px / var(--fd-zoom,1));right:calc(-4px / var(--fd-zoom,1));width:calc(8px / var(--fd-zoom,1));cursor:ew-resize}
+#flowView .flow-node.fd-node.resizing{transition:none}
 #flowView .fd-status{flex:none;padding:2px 6px;border-radius:5px;font-size:10.5px;font-weight:600;background:var(--fd-soft);color:var(--fd-ink-3)}
 #flowView .fd-status.s-running{background:rgb(var(--fd-accent) / .12);color:rgb(var(--fd-accent))}
 #flowView .fd-status.s-succeeded{background:rgb(var(--fd-ok) / .12);color:rgb(var(--fd-ok))}
@@ -219,12 +233,20 @@ html[data-theme="dark"] #flowView{
 #flowView .fd-status.s-waiting_approval{background:rgb(var(--fd-warn) / .14);color:rgb(var(--fd-warn))}
 #flowView .fd-node.s-running{border-color:rgb(var(--fd-accent) / .7)}
 #flowView .fd-node.s-failed{border-color:rgb(var(--fd-rj) / .7)}
-#flowView .fd-nbody{display:flex;flex-wrap:wrap;gap:4px;padding:0 12px 9px 13px}
+#flowView .fd-nbody{display:flex;flex-direction:column;gap:6px;padding:0 12px 9px 13px;flex:1 1 auto;min-height:0;overflow:auto}
+#flowView .fd-tags{display:flex;flex-wrap:wrap;gap:4px;flex:none}
+#flowView .fd-detail{flex:1 1 auto;min-height:0;display:flex;flex-direction:column;gap:6px;color:var(--fd-ink-3);font-size:11.5px;line-height:1.5}
+#flowView .fd-detail-text{margin:0;white-space:pre-wrap;overflow-wrap:anywhere}
+#flowView .fd-detail-script{margin:0;padding:6px 8px;border-radius:8px;background:var(--fd-soft);color:var(--fd-ink-2);font:10.5px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap;overflow-wrap:anywhere}
+#flowView .fd-detail-line{display:flex;align-items:baseline;gap:6px;flex-wrap:wrap}
+#flowView .fd-detail-line b{font-weight:600;color:var(--fd-ink-3);flex:none}
+#flowView .fd-detail-line code{font:10.5px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;padding:1px 5px;border-radius:4px;background:var(--fd-soft);color:var(--fd-ink-2);overflow-wrap:anywhere}
+#flowView .fd-detail-steps{margin:0;padding-left:16px;display:flex;flex-direction:column;gap:2px}
 #flowView .fd-tag{display:inline-block;max-width:100%;height:20px;padding:0 7px;border-radius:5px;background:var(--fd-soft);color:var(--fd-ink-3);font-size:11px;line-height:20px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 #flowView .fd-tag.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:10.5px}
 #flowView .fd-tag.warn{background:rgb(var(--fd-warn) / .12);color:rgb(var(--fd-warn))}
 #flowView .fd-tag.soft{background:transparent;border:1px solid var(--fd-line)}
-#flowView .fd-outs{display:flex;flex-direction:column;border-top:1px solid var(--fd-line)}
+#flowView .fd-outs{display:flex;flex-direction:column;border-top:1px solid var(--fd-line);flex:none;margin-top:auto}
 #flowView .fd-out{position:relative;display:flex;align-items:center;justify-content:flex-end;height:24px;padding:0 16px 0 12px;font-size:11px;color:var(--fd-ink-4)}
 #flowView .fd-out+.fd-out{border-top:1px dashed var(--fd-line)}
 #flowView .fd-out.ok::before,#flowView .fd-out.rj::before{content:"";width:6px;height:6px;border-radius:50%;margin-right:6px}

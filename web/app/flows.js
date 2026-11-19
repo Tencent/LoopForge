@@ -254,17 +254,18 @@ function arrange(){
   flowToast('已按依赖层级整理画布',{undo:true});
 }
 // Layouts saved for the narrower legacy node, or templates on a 240px column
-// pitch, overlap the 244px node: the overlap hides the ports, so no reject
+// pitch, overlap the 200px node: the overlap hides the ports, so no reject
 // route can be drawn. Rows/columns that are that crowded are widened
 // proportionally in memory; a later save keeps it. Diagonal or far-off
 // overlaps are left to the user (and "整理").
-const FLOW_SPREAD={w:244,h:132,pitchW:280,pitchH:160,maxFactor:1.6};
+const FLOW_NODE_W=200,FLOW_NODE_H=132,FLOW_RESIZE_MIN_W=180,FLOW_RESIZE_MAX_W=480,FLOW_RESIZE_MIN_H=96,FLOW_RESIZE_MAX_H=640,FLOW_DETAIL_MIN_H=200;
+const FLOW_SPREAD={w:FLOW_NODE_W,h:FLOW_NODE_H,pitchW:280,pitchH:160,maxFactor:1.6};
 function spreadCrowdedNodes(wf){
   const nodes=(wf?.nodes||[]).filter(n=>n.position&&Number.isFinite(n.position.x)&&Number.isFinite(n.position.y));
   let minDx=Infinity,minDy=Infinity;
   for(let i=0;i<nodes.length;i++)for(let j=i+1;j<nodes.length;j++){
     const dx=Math.abs(nodes[i].position.x-nodes[j].position.x),dy=Math.abs(nodes[i].position.y-nodes[j].position.y);
-    if(dy<40&&dx>=1&&dx<FLOW_SPREAD.w+16)minDx=Math.min(minDx,dx);
+    if(dy<40&&dx>=1&&dx<Math.max(flowNodeWidth(nodes[i]),flowNodeWidth(nodes[j]))+16)minDx=Math.min(minDx,dx);
     else if(dx<40&&dy>=1&&dy<FLOW_SPREAD.h+8)minDy=Math.min(minDy,dy);
   }
   const fx=minDx<Infinity?FLOW_SPREAD.pitchW/minDx:1,fy=minDy<Infinity?FLOW_SPREAD.pitchH/minDy:1;
@@ -283,6 +284,28 @@ function flowNodeTint(n){
   return {agent:'79 107 255',script:'139 92 246',sop:'14 165 233',preview:'217 119 6',approval:'16 163 127'}[kind];
 }
 function flowNodeEl(id){return document.querySelector(`#nodes .flow-node[data-id="${CSS.escape(id)}"]`)}
+// Cards resize freely from the top-right handle; height stays content-driven
+// until the designer sets it, then the body scrolls inside the card. The
+// handle only appears for editable workflows.
+function flowNodeSize(n){
+  const s=n?.size||{};
+  return {
+    w:Number.isFinite(s.w)?Math.min(FLOW_RESIZE_MAX_W,Math.max(FLOW_RESIZE_MIN_W,s.w)):FLOW_NODE_W,
+    h:Number.isFinite(s.h)?Math.min(FLOW_RESIZE_MAX_H,Math.max(FLOW_RESIZE_MIN_H,s.h)):null
+  };
+}
+function flowNodeWidth(n){return flowNodeSize(n).w}
+function setFlowNodeSize(n,w,h){
+  if(!n)return;
+  const cur=flowNodeSize(n);
+  const nextW=Math.round(Number.isFinite(w)?Math.min(FLOW_RESIZE_MAX_W,Math.max(FLOW_RESIZE_MIN_W,w)):cur.w);
+  const nextH=Number.isFinite(h)?Math.round(Math.min(FLOW_RESIZE_MAX_H,Math.max(FLOW_RESIZE_MIN_H,h))):cur.h;
+  n.size=nextH==null?{w:nextW}:{w:nextW,h:nextH};
+  const el=flowNodeEl(n.id);if(el){el.style.width=nextW+'px';el.style.height=nextH==null?'':nextH+'px'}
+  flowNodeMetrics.cache?.clear();
+  scheduleFlowEdges();
+  flowViewport.renderMinimap();
+}
 function nodeMeta(n){
   if(isPreviewBuildNode(n.id))return {kind:'preview',subtitle:'CodeBuddy 静态站点构建',tags:[{text:workflowPreviewModel(state.workflow)}]};
   if(n.type==='agent'){
@@ -312,15 +335,41 @@ function nodeMeta(n){
   }
   return {kind:'approval',subtitle:'人工门禁',tags:[{text:'等待人工确认'}]};
 }
+// A tall card spends the extra room on the node's own detail instead of
+// whitespace: role brief, script body, nested steps or the approval ask.
+function flowNodeDetailHTML(n,kind,agent){
+  if(kind==='agent'){
+    const rows=[];
+    const brief=String(agent?.description||'').trim();
+    if(brief)rows.push(`<p class="fd-detail-text">${escapeHTML(brief)}</p>`);
+    const arts=effectiveNodeArtifacts(n,agent).filter(a=>a.name||a.path);
+    if(arts.length)rows.push(`<div class="fd-detail-line"><b>产物</b>${arts.map(a=>`<code>${escapeHTML(a.path||a.name)}</code>`).join('')}</div>`);
+    if(agent?.loop?.enabled)rows.push(`<div class="fd-detail-line"><b>循环</b><span>${agent.loop.maxIterations||1} 轮</span></div>`);
+    return rows.join('');
+  }
+  if(kind==='script'){
+    const code=String(n.script||'').trim();
+    return code?`<pre class="fd-detail-script">${escapeHTML(code)}</pre>`:'';
+  }
+  if(kind==='sop'){
+    const wf=sopWorkflowChoices().find(w=>w.id===n.sopWorkflowId)||(state.data.workflows||[]).find(w=>w.id===n.sopWorkflowId);
+    const steps=(wf?.nodes||[]).map(step=>step.name||step.id).filter(Boolean);
+    return steps.length?`<ul class="fd-detail-steps">${steps.map(step=>`<li>${escapeHTML(step)}</li>`).join('')}</ul>`:'';
+  }
+  if(kind==='approval'){const ask=String(n.taskPrompt||'').trim();return ask?`<p class="fd-detail-text">${escapeHTML(ask)}</p>`:''}
+  return '';
+}
 function flowNodeHTML(n,run,ro){
-  const m=nodeMeta(n),kind=m.kind,status=run?.nodes?.[n.id]?.status||'';
+  const m=nodeMeta(n),kind=m.kind,status=run?.nodes?.[n.id]?.status||'',size=flowNodeSize(n);
   const agent=kind==='agent'?workflowAgent(n.agentId):null;
   const tile=agent?escapeHTML(flowPalette.initial(agent.name)):flowPalette.icon(FLOW_NODE_TYPES[kind].icon,16);
   const title=state.renamingNode===n.id?`<input class="fd-rename" value="${escapeHTML(n.name)}" maxlength="120" aria-label="重命名步骤">`:escapeHTML(n.name);
   const cls=['flow-node','fd-node','t-'+kind,state.selectedNode===n.id?'sel':'',state.connectFrom===n.id?'connecting':'',status?'s-'+status:'',kind==='preview'?'preview-build':''].filter(Boolean).join(' ');
   const tags=m.tags.map(t=>`<span class="fd-tag${t.warn?' warn':''}${t.mono?' mono':''}" title="${escapeHTML(t.text)}">${escapeHTML(t.text)}</span>`).join('');
+  const detail=size.h&&size.h>=FLOW_DETAIL_MIN_H?flowNodeDetailHTML(n,kind,agent):'';
   const outs=`<div class="fd-out ok">成功<span class="fd-port out" data-outlet="success" title="拖到下一步"></span></div>`+(kind==='preview'?'':`<div class="fd-out rj">失败打回<span class="fd-port out" data-outlet="reject" title="拖到失败时要打回的步骤"></span></div>`);
-  return `<div class="${cls}" data-id="${escapeHTML(n.id)}" style="left:${n.position.x}px;top:${n.position.y}px;--tint:${flowNodeTint(n)}"><span class="fd-port in" title="连到这里"></span><div class="fd-nh"><span class="fd-tile">${tile}</span><div class="fd-nt"><div class="node-title">${title}</div><div class="node-subtitle">${escapeHTML(m.subtitle)}</div></div>${status?`<span class="fd-status s-${escapeHTML(status)}">${statusText(status)||escapeHTML(status)}</span>`:''}${ro?'':`<button type="button" class="fd-more" data-node-menu aria-label="更多操作">${flowPalette.icon('more')}</button>`}</div><div class="fd-nbody">${tags}</div><div class="fd-outs">${outs}</div></div>`;
+  const rz=ro||state.selectedNode!==n.id?'':['nw','ne','sw','se','n','s','w','e'].map(d=>`<span class="fd-rz ${d.length===2?'corner':'edge'} ${d}" data-resize="${d}"></span>`).join('');
+  return `<div class="${cls}" data-id="${escapeHTML(n.id)}" style="left:${n.position.x}px;top:${n.position.y}px;width:${size.w}px;${size.h?`height:${size.h}px;`:''}--tint:${flowNodeTint(n)}"><span class="fd-port in" title="连到这里"></span><div class="fd-nh"><span class="fd-tile">${tile}</span><div class="fd-nt"><div class="node-title">${title}</div><div class="node-subtitle">${escapeHTML(m.subtitle)}</div></div>${status?`<span class="fd-status s-${escapeHTML(status)}">${statusText(status)||escapeHTML(status)}</span>`:''}${ro?'':`<button type="button" class="fd-more" data-node-menu aria-label="更多操作">${flowPalette.icon('more')}</button>`}</div><div class="fd-nbody"><div class="fd-tags">${tags}</div>${detail?`<div class="fd-detail">${detail}</div>`:''}</div><div class="fd-outs">${outs}</div>${rz}</div>`;
 }
 function renderCanvas(){
   const nodes=$('#nodes');if(!nodes)return;
@@ -339,7 +388,7 @@ function renderCanvas(){
 function bindFlowNode(el){
   const n=state.workflow.nodes.find(x=>x.id===el.dataset.id);if(!n)return;
   el.addEventListener('pointerdown',e=>{
-    if(e.button!==0||e.target.closest('.fd-port,.fd-more,input'))return;
+    if(e.button!==0||e.target.closest('.fd-port,.fd-more,.fd-rz,input'))return;
     e.stopPropagation();closeNodeMenu();
     if(state.connectFrom&&state.connectFrom!==n.id){completeFlowConnect(n);return}
     const sx=e.clientX,sy=e.clientY,start={x:n.position.x,y:n.position.y},ro=flowReadOnly();
@@ -361,9 +410,39 @@ function bindFlowNode(el){
     el.addEventListener('pointermove',move);el.addEventListener('pointerup',up);el.addEventListener('pointercancel',up);
   });
   el.addEventListener('dblclick',e=>{if(!e.target.closest('input'))openNodeDrawer(n.id)});
+  el.querySelectorAll('[data-resize]').forEach(handle=>handle.addEventListener('pointerdown',e=>resizeFlowNode(e,el,n,handle.dataset.resize)));
   el.querySelector('[data-node-menu]')?.addEventListener('click',e=>{e.stopPropagation();openNodeMenu(n.id,e.currentTarget)});
   el.querySelectorAll('.fd-port.out').forEach(port=>port.addEventListener('pointerdown',e=>startFlowConnect(e,n,port.dataset.outlet)));
   el.querySelector('.fd-port.in')?.addEventListener('pointerdown',e=>{if(state.connectFrom&&state.connectFrom!==n.id){e.stopPropagation();completeFlowConnect(n)}});
+}
+// Eight-handle resize frame (MiniMax-style): corners move both edges, sides
+// move one. The opposite edge stays put when a size hits its limits.
+function resizeFlowNode(e,el,n,dir){
+  if(e.button!==0||flowReadOnly())return;
+  e.stopPropagation();e.preventDefault();
+  const size=flowNodeSize(n),start={w:size.w,h:size.h??el.offsetHeight,x:n.position.x,y:n.position.y};
+  const sx=e.clientX,sy=e.clientY,cursor=getComputedStyle(e.currentTarget).cursor;let resized=false;
+  flowHistory.record();
+  el.setPointerCapture(e.pointerId);
+  const move=ev=>{
+    const dx=(ev.clientX-sx)/flowViewport.zoom,dy=(ev.clientY-sy)/flowViewport.zoom;
+    if(!resized&&Math.abs(dx)<1&&Math.abs(dy)<1)return;
+    if(!resized){resized=true;el.classList.add('resizing');document.body.style.cursor=cursor}
+    const movesW=dir.includes('w'),movesE=dir.includes('e'),movesN=dir.includes('n'),movesS=dir.includes('s');
+    let w=start.w+(movesE?dx:0)-(movesW?dx:0);
+    let h=start.h+(movesS?dy:0)-(movesN?dy:0);
+    w=Math.min(FLOW_RESIZE_MAX_W,Math.max(FLOW_RESIZE_MIN_W,w));
+    h=Math.min(FLOW_RESIZE_MAX_H,Math.max(FLOW_RESIZE_MIN_H,h));
+    n.position={x:Math.round(movesW?start.x+start.w-w:start.x),y:Math.round(movesN?start.y+start.h-h:start.y)};
+    el.style.left=n.position.x+'px';el.style.top=n.position.y+'px';
+    setFlowNodeSize(n,w,movesN||movesS?h:undefined);
+  };
+  const up=()=>{
+    el.removeEventListener('pointermove',move);el.removeEventListener('pointerup',up);el.removeEventListener('pointercancel',up);
+    document.body.style.cursor='';el.classList.remove('resizing');
+    if(resized){renderEdges();dirty()}
+  };
+  el.addEventListener('pointermove',move);el.addEventListener('pointerup',up);el.addEventListener('pointercancel',up);
 }
 function startNodeRename(id){
   if(flowReadOnly()||!state.workflow?.nodes.some(n=>n.id===id))return;
@@ -495,7 +574,7 @@ function flowNodeMetrics(id){
   cache.set(id,m);return m;
 }
 function nodeBox(n){
-  const m=flowNodeMetrics(n.id),w=m?.w||244,h=m?.h||132;
+  const m=flowNodeMetrics(n.id),w=m?.w||FLOW_NODE_W,h=m?.h||FLOW_NODE_H;
   return {x:n.position.x,y:n.position.y,w,h,cx:n.position.x+w/2,cy:n.position.y+h/2,right:n.position.x+w,left:n.position.x,top:n.position.y,bottom:n.position.y+h};
 }
 function flowPortPoint(n,kind){

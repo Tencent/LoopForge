@@ -104,7 +104,7 @@ const flowPalette=(()=>{
       e.preventDefault();
       let item;try{item=JSON.parse(raw)}catch{return}
       const w=flowViewport.toWorld(e.clientX,e.clientY);
-      addNode(item.type,{agentId:item.agentId,at:{x:w.x-122,y:w.y-28}});
+      addNode(item.type,{agentId:item.agentId,at:{x:w.x-100,y:w.y-28}});
     });
   }
   function bind(){
