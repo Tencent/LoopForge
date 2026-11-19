@@ -37,7 +37,7 @@ func (h *assistantHandlers) generateReport(ctx context.Context, run domain.Run, 
 	generate := h.generate
 	if generate == nil {
 		generate = func(callCtx context.Context, input string, u domain.User) (string, error) {
-			raw, _, err := runAssistantCLI(callCtx, assistantCLIRequest{Prompt: input, Model: model, UserID: u.ID, ReportOnly: true, Native: true, MCPConfig: files.MCPConfig, Settings: files.Settings, SystemPrompt: system}, u, nil)
+			raw, _, err := runAssistantCLI(callCtx, assistantCLIRequest{Prompt: input, Model: model, UserID: u.ID, ReportOnly: true, Native: true, MCPConfig: files.MCPConfig, Settings: files.Settings, SystemPrompt: system, TerminalSession: session}, u, nil)
 			return raw, err
 		}
 	}
