@@ -705,7 +705,12 @@ func (p *ConversationProcessPool) start(ctx context.Context, root, workspace str
 			}
 		}()
 		sink := func(ev domain.TelemetryEvent) {
-			if ev.Name != "process.stdout" && ev.Name != "process.stderr" {
+			switch ev.Name {
+			case "process.started":
+				// Keep lifecycle metadata without forwarding argv or prompts.
+				ev.Message = ""
+			case "process.stdout", "process.stderr", "process.start_failed", "process.finished":
+			default:
 				return
 			}
 			proc.mu.Lock()

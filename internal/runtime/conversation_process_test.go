@@ -21,7 +21,9 @@ func conversationPoll(t *testing.T, p *ConversationProcessPool, ctx context.Cont
 			t.Fatal(err)
 		}
 		for _, e := range r.Events {
-			out.WriteString(e.Message)
+			if e.Name == "process.stdout" || e.Name == "process.stderr" {
+				out.WriteString(e.Message)
+			}
 		}
 		after = r.Sequence
 		if r.Done {
