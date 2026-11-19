@@ -452,6 +452,7 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 	generate := h.generate
 	if generate == nil {
 		resume := false
+		var workspaceRepositoryHash string
 		branch := false
 		rewritten := false
 		if saved, err := loadAssistantConversation(h.repo, assistantStorageOwner(h.repo, req.SessionID, user.ID), req.SessionID); err == nil {
@@ -483,6 +484,7 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 			defer nativeSession.Close()
 			resume = nativeSession.resume
 			cliSessionID = nativeSession.checkpoint.SessionID
+			workspaceRepositoryHash = nativeSession.checkpoint.WorkspaceRepositoryHash
 			if resume {
 				turn = assistantIncrementalPrompt(req, nativeSession.checkpoint)
 			}
@@ -505,6 +507,7 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 			} else if state.SessionID != "" {
 				cliSessionID = state.SessionID
 				resume = !state.Unstarted
+				workspaceRepositoryHash = state.WorkspaceRepositoryHash
 				if resume {
 					turn = h.turnPrompt(req, sourceRoot, true)
 				} else {
@@ -518,6 +521,9 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 			// journal before the next process is allowed to resume that journal.
 			restarted := false
 			for switches := 0; switches < 8; switches++ {
+				if !resume {
+					workspaceRepositoryHash = ""
+				}
 				req.workspaceMode = toolSession.RuntimeMode == domain.AssistantModeWorkspace
 				if err := h.writeConversationAssets(cliRoot, req); err != nil {
 					return "", err
@@ -527,20 +533,35 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 					return "", err
 				}
 				system := assistantSystemPromptForRequest(req, approvalMode)
+				prompt += conversationAttachmentNote(cliRoot, req)
+				var sentRepositoryHash string
 				if req.workspaceMode {
 					system = assistantWorkspaceSystemPrompt
-					prompt = assistantWorkspaceSystemPrompt + "\n审批模式：" + approvalMode + "。\n" + prompt
+					prefix := assistantWorkspaceSystemPrompt + "\n审批模式：" + approvalMode + "。\n"
+					var repositoryPrompt string
+					repositoryPrompt, sentRepositoryHash, err = h.workspaceRepositoryPrompt(toolSession, cliRoot, workspaceRepositoryHash, len(prefix)+len(prompt))
+					if err != nil {
+						return "", err
+					}
+					if sentRepositoryHash != "" {
+						// The journal's catalogue is uncertain until the phase completes.
+						workspaceRepositoryHash = ""
+					}
+					prompt = prefix + repositoryPrompt + prompt
 				} else {
 					prompt = assistantPlatformExecutionReminder + "\n" + prompt
 				}
-				prompt += conversationAttachmentNote(cliRoot, req)
 				cliReq := assistantCLIRequest{Executor: req.Executor, Prompt: prompt, Model: cliModel, Effort: req.Effort, SessionID: cliSessionID, Resume: resume, UserID: u.ID, Native: true, MCPConfig: mcp, Settings: settings, SystemPrompt: system, SessionRoot: cliRoot, RunnerLogin: runnerLogin, OnUsage: turnUsage.add, Workspace: req.workspaceMode, RemoteBinary: req.workspaceMode || toolSession.ExecutionRunnerID != "", Execute: h.conversationExecutor(toolSession, cliRoot)}
 				persistAttempt := func(unstarted bool) error {
 					if nativeSession != nil {
 						nativeSession.checkpoint.Unstarted = unstarted
+						nativeSession.checkpoint.WorkspaceRepositoryHash = workspaceRepositoryHash
 						return nativeSession.writeCheckpoint()
 					}
-					return writeAssistantEngineState(cliRoot, assistantEngineState{Engine: turnEngine, SessionID: cliSessionID, Unstarted: unstarted, HistoryRevision: savedConversation.HistoryRevision})
+					return writeAssistantEngineState(cliRoot, assistantEngineState{
+						Engine: turnEngine, SessionID: cliSessionID, Unstarted: unstarted,
+						HistoryRevision: savedConversation.HistoryRevision, WorkspaceRepositoryHash: workspaceRepositoryHash,
+					})
 				}
 				if err = persistAttempt(!resume); err != nil {
 					return "", err
@@ -575,6 +596,12 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 					}
 				}
 				raw, _, err := runAssistantCLI(ctx, cliReq, u, relay)
+				if err == nil && ctx.Err() == nil && sentRepositoryHash != "" {
+					workspaceRepositoryHash = sentRepositoryHash
+					if saveErr := persistAttempt(false); saveErr != nil {
+						log.Printf("assistant save workspace repository context session=%s: %v", req.SessionID, saveErr)
+					}
+				}
 				if assistantHandoffOutlivesPhaseError(ctx, toolSession, err) {
 					// The handoff tool already succeeded; how the old phase ended
 					// (for example without a type=result line) must not strand the
