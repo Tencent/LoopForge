@@ -1083,11 +1083,13 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 	if !shouldCommitNodeOutcome(current, current.Nodes[node.ID], executionGeneration, executionAttempt, true) {
 		return
 	}
-	e.updateRun(runID, func(r *domain.Run) {
+	committed := false
+	writeErr := e.updateRunErr(runID, func(r *domain.Run) {
 		nr := r.Nodes[node.ID]
 		if !shouldCommitNodeOutcome(*r, nr, executionGeneration, executionAttempt, true) {
 			return
 		}
+		committed = true
 		r.Artifacts = append(r.Artifacts, artifacts...)
 		nr.Output = output
 		nr.Error = ""
@@ -1101,6 +1103,15 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 			e.event(r, node.ID, "node.succeeded", node.Name+" 已完成")
 		}
 	})
+	if writeErr != nil {
+		// The store rejected the outcome (for example an artifact over the
+		// column limit): fail the node instead of reporting artifacts that
+		// were never saved.
+		if committed {
+			failNode(fmt.Errorf("保存节点产物失败：%w", writeErr), false)
+		}
+		return
+	}
 	for _, artifact := range artifacts {
 		e.observe(runID, node.ID, domain.TelemetryEvent{Category: "artifact", Name: "artifact.published", Phase: "finish", Message: artifact.Name, Attributes: map[string]any{"artifactId": artifact.ID, "path": artifact.Path, "mediaType": artifact.MediaType, "size": artifact.Size, "sha256": artifact.SHA256}})
 	}
