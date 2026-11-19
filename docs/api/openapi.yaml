@@ -3285,6 +3285,93 @@ paths:
           description: Interaction back in `ready` with `deliveryGeneration` + 1; a repeated actionKey returns the same generation
         "409":
           description: "`bot_deleted`, `route_expired` or `state_conflict`"
+  /api/bot-interactions/{interactionId}/push-resend:
+    post:
+      summary: Send an expired DingTalk reply as a proactive private message
+      description: Accepts `reply_failed` with `terminalReason=route_expired` on a DingTalk Bot. The original sender must still be bound to the same platform user, keep project permission and have passed a trial proactive send. The saved reply is sent again as a new generation with a new key.
+      operationId: pushResendBotInteraction
+      parameters:
+        - {name: interactionId, in: path, required: true, schema: {type: string}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/BotManualAction"}
+      responses:
+        "200":
+          description: Interaction back in `ready` with `sendRoute=push` and `deliveryGeneration` + 1; a repeated actionKey returns the same result
+        "409":
+          description: "`push_target_unverified`, `bot_deleted` or `state_conflict`"
+  /api/notification-bots/{id}/targets/verify:
+    post:
+      summary: Send a trial proactive message to a bound member (Feishu, DingTalk)
+      description: Records `targetVerifiedAt` on the member's binding when the platform confirms delivery. Does not change the notification recipient.
+      operationId: verifyBotPushTarget
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [targetId]
+              properties:
+                targetId: {type: string, description: Sender ID of the bound member (Feishu open_id, DingTalk staffId)}
+      responses:
+        "200":
+          description: Verified target
+        "409":
+          description: "`push_target_unverified` or `push_target_unavailable`"
+        "502":
+          description: "`push_trial_failed`; `outcome` is `rejected`, `not_delivered` or `unknown`"
+  /api/notification-deliveries/{deliveryId}/confirm:
+    post:
+      summary: Mark a send_unknown notification as received
+      operationId: confirmNotificationDelivery
+      parameters:
+        - {name: deliveryId, in: path, required: true, schema: {type: string}}
+        - {name: projectId, in: query, required: true, schema: {type: string}}
+      responses:
+        "200":
+          description: "`{\"ok\": true}`; delivery now `sent` with `receiptSource=manual`"
+        "409":
+          description: Only `send_unknown` deliveries can be confirmed
+  /api/bot-drafts/{id}:
+    get:
+      summary: Read a WeCom Bot write draft awaiting confirmation
+      description: Only the platform user bound to the chat sender can read it; other users get 404. Status is `pending`, `executing`, `executed`, `failed`, `needs_review`, `expired` or `cancelled`.
+      operationId: getBotDraft
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string}}
+      responses:
+        "200":
+          description: Draft summary, operations and results
+        "404":
+          description: Unknown draft or another user's draft
+  /api/bot-drafts/{id}/confirm:
+    post:
+      summary: Confirm and execute a WeCom Bot write draft
+      description: Re-checks the Bot (enabled, chat on, confirm mode), the sender binding, project permission, expiry and the frozen parameters, then moves the draft from `pending` to `executing` once. Any other state returns the current draft without executing.
+      operationId: confirmBotDraft
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string}}
+      responses:
+        "200":
+          description: Draft after the confirmation (or its current state)
+        "403":
+          description: Cross-origin request
+        "409":
+          description: "`draft_invalidated`; the draft was cancelled and `draft` carries the reason"
+  /api/bot-drafts/{id}/cancel:
+    post:
+      summary: Cancel a pending WeCom Bot write draft
+      operationId: cancelBotDraft
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string}}
+      responses:
+        "200":
+          description: Draft in its current state
   /api/bot-bindings:
     get:
       summary: List the logged-in user's chat identity bindings (WeCom, Feishu)
