@@ -16,19 +16,33 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-var botDraftLink = regexp.MustCompile(`/bot-approve\.html#draft=([a-f0-9]{32})\)`)
+var botDraftLink = regexp.MustCompile(`/bot-approve\.html#draft=([a-f0-9]{32})`)
 
 // confirmModeFixture: a WeCom Bot in the confirm write mode whose model run
 // submits one issues_save draft.
 func confirmModeFixture(t *testing.T) (*repo.Store, *assistantHandlers, domain.NotificationBot, func() string) {
+	s, h, bot, ask, _ := confirmModeFixtureFor(t, domain.BotChannelWeCom)
+	return s, h, bot, ask
+}
+
+// confirmModeFixtureFor also returns the last full reply text.
+func confirmModeFixtureFor(t *testing.T, channel string) (*repo.Store, *assistantHandlers, domain.NotificationBot, func() string, *string) {
 	t.Helper()
 	t.Setenv("AGENTFLOW_SESSION_SECRET", "bot-draft-test-session-secret")
 	s, h, bot := botFixture(t)
 	bot.WriteApproval = domain.BotWriteConfirm
-	if err := s.SaveNotificationBot(bot, ""); err != nil {
+	if channel != domain.BotChannelWeCom {
+		bot.ID, bot.BotID, bot.Channel, bot.TenantKey, bot.TenantState = "b-"+channel, "app-"+channel, channel, "tenant", domain.BotTenantLocked
+	}
+	if err := s.SaveNotificationBot(bot, "secret"); err != nil {
 		t.Fatal(err)
 	}
 	bot, _ = s.NotificationBot(bot.ID)
+	if channel != domain.BotChannelWeCom {
+		// Feishu/DingTalk identities are scoped by the configuration.
+		bindBotTestUser(t, s, bot, "new-wecom-user", 43)
+	}
+	last := new(string)
 	h.api = New(s, h.engine, tracker.NewService(), "", "")
 	title := 0
 	h.generate = func(ctx context.Context, prompt string, user domain.User) (string, error) {
@@ -49,13 +63,44 @@ func confirmModeFixture(t *testing.T) (*repo.Store, *assistantHandlers, domain.N
 		if err != nil {
 			t.Fatal(err)
 		}
+		*last = reply
 		m := botDraftLink.FindStringSubmatch(reply)
 		if m == nil {
 			t.Fatalf("no confirmation link in %q", reply)
 		}
 		return m[1]
 	}
-	return s, h, bot, ask
+	return s, h, bot, ask, last
+}
+
+// Feishu and DingTalk create requirements through web confirmation too. The
+// reply is plain text, so the link stands alone on its own line.
+func TestPlainTextChannelsConfirmWritesOnThePlatformPage(t *testing.T) {
+	for _, channel := range []string{domain.BotChannelFeishu, domain.BotChannelDingTalk} {
+		t.Run(channel, func(t *testing.T) {
+			s, h, _, ask, last := confirmModeFixtureFor(t, channel)
+			member, _ := s.User(43)
+			before := len(s.Issues())
+			id := ask()
+			if strings.ContainsAny(*last, "[]()") {
+				t.Fatalf("markdown in plain-text reply: %q", *last)
+			}
+			lines := strings.Split(*last, "\n")
+			if lines[len(lines)-1] != "http://platform.example/bot-approve.html#draft="+id {
+				t.Fatalf("link not alone on the last line: %q", *last)
+			}
+			if len(s.Issues()) != before {
+				t.Fatal("draft executed before confirmation")
+			}
+			code, done := draftCall(t, h, member, "POST", "/api/bot-drafts/"+id+"/confirm", true)
+			if code != 200 || done["status"] != repo.BotDraftExecuted || len(s.Issues()) != before+1 {
+				t.Fatalf("confirm = %d %v issues=%d", code, done, len(s.Issues()))
+			}
+			if _, again := draftCall(t, h, member, "POST", "/api/bot-drafts/"+id+"/confirm", true); again["status"] != repo.BotDraftExecuted || len(s.Issues()) != before+1 {
+				t.Fatalf("repeat = %v", again)
+			}
+		})
+	}
 }
 
 func draftCall(t *testing.T, h *assistantHandlers, user domain.User, method, path string, origin bool) (int, map[string]any) {

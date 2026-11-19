@@ -188,12 +188,14 @@ func (h *notificationHandlers) save(c *gin.Context, old *domain.NotificationBot)
 	}
 	if req.WriteApproval != nil {
 		switch mode := strings.TrimSpace(*req.WriteApproval); {
-		case mode == domain.BotWriteReadOnly:
+		case mode == domain.BotWriteReadOnly, mode == domain.BotWriteConfirm:
+			// Web confirmation works on every channel: drafts run only
+			// after the bound user confirms them on the platform page.
 			bot.WriteApproval = mode
-		case (mode == domain.BotWriteAuto || mode == domain.BotWriteConfirm) && channel == domain.BotChannelWeCom:
+		case mode == domain.BotWriteAuto && channel == domain.BotChannelWeCom:
 			bot.WriteApproval = mode
 		default:
-			c.JSON(400, gin.H{"error": "该渠道目前只支持只读模式"})
+			c.JSON(400, gin.H{"error": "该渠道只支持只读查询或网页确认"})
 			return
 		}
 	}

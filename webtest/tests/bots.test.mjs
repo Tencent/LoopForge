@@ -120,7 +120,10 @@ test('feishu bot is created read-only and confirms its enterprise', async (t) =>
   form = host().querySelector('#botForm');
   assert.match(host().textContent, /App ID/);
   assert.match(host().textContent, /只读查询/);
-  assert.equal(form.elements.writeApproval, undefined);
+  // Feishu/DingTalk: read-only or web confirmation, never automatic writes.
+  assert.deepEqual([...form.elements.writeApproval.options].map(o => o.value), ['readonly', 'confirm']);
+  assert.equal(form.elements.writeApproval.value, 'readonly');
+  form.elements.writeApproval.value = 'confirm';
   assert.equal(host().querySelector('option[value="dingtalk"]').disabled, false);
   form.elements.name.value = 'Feishu Bot';
   form.elements.botId.value = 'cli_app';
@@ -130,7 +133,7 @@ test('feishu bot is created read-only and confirms its enterprise', async (t) =>
   await settle(8);
   const post = app.router.calls.find(c => c.method === 'POST' && c.path === '/api/notification-bots').body;
   assert.equal(post.channel, 'feishu');
-  assert.equal(post.writeApproval, 'readonly');
+  assert.equal(post.writeApproval, 'confirm');
   assert.equal(app.evaluate(`botUI.step`), 2);
   await settle(6);
   assert.match(host().textContent, /tenant-1/);

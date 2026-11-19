@@ -117,8 +117,9 @@ function botChannelFieldHTML(bot){
  return `<label>渠道<select class="select" name="channel">${Object.entries(BOT_CHANNELS).map(([id,c])=>`<option value="${id}" ${botChannel(bot)===id?'selected':''} ${c.ready?'':'disabled'}>${escapeHTML(c.name)}${c.ready?'':'（开发中）'}</option>`).join('')}</select></label>`;
 }
 function botWriteFieldHTML(bot){
- if(botChannel(bot)!=='wecom')return '<label>执行权限<span class="bot-channel-fixed"><span class="bot-chip">只读查询</span><small class="muted">写操作请到平台页面完成</small></span></label>';
  const mode=botWriteApproval(bot);
+ // Feishu and DingTalk: writes only through web confirmation.
+ if(botChannel(bot)!=='wecom')return `<label>执行权限<select class="select" name="writeApproval"><option value="readonly" ${mode==='readonly'?'selected':''}>只读查询（写操作到平台页面完成）</option><option value="confirm" ${mode==='confirm'?'selected':''}>网页确认（发送者在平台页面确认后执行）</option></select></label>`;
  return `<label>执行权限<select class="select" name="writeApproval"><option value="readonly" ${mode==='readonly'?'selected':''}>只读查询（写操作到平台页面完成）</option><option value="confirm" ${mode==='confirm'?'selected':''}>网页确认（发送者在平台页面确认后执行）</option><option value="auto" ${mode==='auto'?'selected':''}>自动执行（沿用发送者权限直接写入）</option></select></label>`;
 }
 function botCredentialPaneHTML(bot,manage){

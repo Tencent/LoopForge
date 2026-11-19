@@ -98,7 +98,13 @@ func (h *assistantHandlers) confirmBotDrafts(ctx context.Context, bot domain.Not
 		return "\n\n操作草稿无法保存，没有执行。请稍后重试或到平台页面完成。"
 	}
 	link := base + "/bot-approve.html#draft=" + saved.ID
-	return "\n\n以下操作需要你在平台确认后才会执行（" + fmt.Sprint(int(repo.BotDraftTTL.Minutes())) + " 分钟内有效）：\n" + summary + "\n[在平台确认这些操作](" + link + ")"
+	head := "\n\n以下操作需要你在平台确认后才会执行（" + fmt.Sprint(int(repo.BotDraftTTL.Minutes())) + " 分钟内有效）：\n" + summary
+	if bot.ChannelKind() != domain.BotChannelWeCom {
+		// Feishu and DingTalk replies are plain text: the URL stands on
+		// its own line so auto-linking does not swallow other characters.
+		return head + "\n在平台确认这些操作：\n" + link
+	}
+	return head + "\n[在平台确认这些操作](" + link + ")"
 }
 
 type botDraftView struct {
