@@ -60,6 +60,7 @@ func assistantProviderCredentials(user domain.User) runtime.RunCredentials {
 		CodeBuddy:  runtime.CodeBuddyCredential{APIKey: user.CodeBuddyAPIKey, InternetEnvironment: user.CodeBuddyInternetEnvironment},
 		Codex:      runtime.ProviderCredential{APIKey: user.CodexAPIKey, BaseURL: user.CodexBaseURL},
 		ClaudeCode: runtime.ProviderCredential{APIKey: user.ClaudeCodeAPIKey, BaseURL: user.ClaudeCodeBaseURL},
+		Extra:      runtime.ExtraRunCredentials(user.ID),
 		AgentCLI:   runtime.AgentCLIUserCredentials(user),
 	}
 }

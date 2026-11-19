@@ -37,7 +37,7 @@ type assistantCLIInvocation struct {
 
 type assistantEngineInvocationOpts struct {
 	Bin, Root, Config, Prompt, Model, Effort, SessionID, SystemPrompt string
-	Resume, Workspace                                                 bool
+	Resume, Workspace, RunnerLogin                                    bool
 	// ReviewOnly is a one-shot call without MCP servers or session history,
 	// such as a title summary.
 	ReviewOnly bool

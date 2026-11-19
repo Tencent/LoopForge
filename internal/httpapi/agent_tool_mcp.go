@@ -129,6 +129,8 @@ func (h *agentToolGateway) handleRPC(ctx context.Context, session *AgentToolSess
 	case "agentflow/nativeApproval":
 		result := h.approveNativeTool(ctx, session, request.Params)
 		return &agentToolRPCResponse{JSONRPC: "2.0", ID: request.ID, Result: result}
+	case agentGitCredentialMethod:
+		return &agentToolRPCResponse{JSONRPC: "2.0", ID: request.ID, Result: h.gitCredential(ctx, session, request.Params)}
 	case "tools/call":
 		ctx, done := session.trackToolCall(ctx, request.ID)
 		defer done()

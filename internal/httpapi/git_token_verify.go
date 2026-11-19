@@ -64,12 +64,9 @@ func (h *usersHandlers) verifyGitToken(c *gin.Context) {
 			c.JSON(http.StatusOK, gitTokenVerifyResult{Error: "存储不可用"})
 			return
 		}
-		user, ok := h.repo.User(id)
-		if !ok {
-			c.JSON(http.StatusOK, gitTokenVerifyResult{Error: "用户不存在"})
-			return
+		if credential, ok := h.repo.GitHTTPCredentialForHost(c.Request.Context(), id, "github.com"); ok {
+			token = credential.Token
 		}
-		_, token = gitwork.SplitToken(h.repo.GitCredential(c.Request.Context(), user.ID))
 	}
 	_, token = gitwork.SplitToken(token)
 	if token == "" {

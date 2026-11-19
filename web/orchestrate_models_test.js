@@ -143,5 +143,13 @@ dom.run(`
   request = await send();
   assert.equal(request.sessionId, '');
   assert.equal(request.messages.length, 1);
+
+  catalog.default = 'default';
+  await dom.run('AgentFlowAssistantModels.load()');
+  store.delete('agentflow.orchestratorModel.codebuddy');
+  choose(cli, 'codebuddy');
+  assert.equal((await send()).model, 'cb-model', 'switching to CodeBuddy picks the first offered model');
+  open(model);
+  assert.deepEqual([...model.list.querySelectorAll('[role="option"]')].map(option => option.dataset.id), ['cb-model']);
   console.log('orchestrator multi-CLI models ok');
 })().catch(error => { console.error(error); process.exit(1); });

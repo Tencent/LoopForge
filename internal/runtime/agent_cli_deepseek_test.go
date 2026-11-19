@@ -69,3 +69,39 @@ func TestApplyDeepSeekCredentialRejectsShortArgv(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+func TestApplyDeepSeekCredentialSetsTurnEffort(t *testing.T) {
+	home := t.TempDir()
+	for _, tc := range []struct {
+		baseURL, effort string
+		provider        string
+		want            any
+	}{
+		{"", "none", "deepseek-official", "off"},
+		{"", "max", "deepseek-official", "max"},
+		{"", "", "deepseek-official", "high"},
+		{"https://gw.example/v1", "max", "agentflow-reasoning", "max"},
+		{"https://gw.example/v1", "", "agentflow", nil},
+	} {
+		command := AgentCLICommand(AgentCLIDeepSeek, AgentCLICommandOptions{Model: "deepseek-flash", Effort: tc.effort, Resume: "session", Prompt: "probe"})
+		if _, _, err := ApplyAgentCLICredential(AgentCLIDeepSeek, ProviderCredential{APIKey: "k", BaseURL: tc.baseURL},
+			command.AgentCLI, HostAgentCLIHome(home), home, command.Argv); err != nil {
+			t.Fatal(err)
+		}
+		data, err := os.ReadFile(filepath.Join(home, ".dsh", "agentflow-model.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var patch []struct {
+			ID     string         `json:"id"`
+			Config map[string]any `json:"config"`
+		}
+		if err = json.Unmarshal(data, &patch); err != nil || len(patch) == 0 {
+			t.Fatalf("invalid model patch: %s (%v)", data, err)
+		}
+		selection := patch[len(patch)-1]
+		if selection.ID != "agent-default-model" || selection.Config["provider"] != tc.provider || selection.Config["reasoningEffort"] != tc.want {
+			t.Errorf("base %q and effort %q: wrong model selection in %s", tc.baseURL, tc.effort, data)
+		}
+	}
+}
