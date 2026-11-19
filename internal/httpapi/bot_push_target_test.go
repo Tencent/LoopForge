@@ -1,6 +1,11 @@
 package httpapi
 
 import (
+	"bytes"
+	"net/http/httptest"
+
+	"github.com/gin-gonic/gin"
+
 	"agentflow/internal/botinteraction"
 	"agentflow/internal/domain"
 	"agentflow/internal/notification"
@@ -126,5 +131,75 @@ func TestPushTargetSelectionTrialSwitchAndConfirm(t *testing.T) {
 	rec = cvBDirectHandlerRequest(t, f, http.MethodPost, "/api/notification-bots/"+id+"/test", nil, nh.test, map[string]string{"id": id}, true)
 	if rec.Code != 200 || push.targets[len(push.targets)-1] != "staff-2" {
 		t.Fatalf("test = %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestPushResendEndpointRequiresVerifiedOriginalSender(t *testing.T) {
+	f := cvBNewHTTPFixture(t)
+	nh := &notificationHandlers{deps: &deps{repo: f.s, engine: f.e}, service: notification.New(f.s)}
+	push := &stubPushChannel{stubChannel: stubChannel{botinteraction.ChannelDingTalk}}
+	nh.service.Interactions.RegisterChannel(push)
+	bh := &botInteractionHandlers{deps: nh.deps, notifications: nh}
+	rec := cvBDirectHandlerRequest(t, f, http.MethodPost, "/api/notification-bots", map[string]any{"projectId": "platform", "name": "钉钉", "channel": "dingtalk", "botId": "ding-app", "secret": "good", "enabled": true, "interactionEnabled": true, "tenantKey": "ding-corp"}, nh.bots, nil, true)
+	if rec.Code != 200 {
+		t.Fatal(rec.Body.String())
+	}
+	var created domain.NotificationBot
+	json.Unmarshal(rec.Body.Bytes(), &created)
+	if _, err := f.s.RecordBotTenantCandidate(created.ID, "ding-corp", "e1", created.CredentialVersion); err != nil {
+		t.Fatal(err)
+	}
+	bot, _ := f.s.NotificationBot(created.ID)
+	bindBotTestUser(t, f.s, bot, "staff-1", f.user.ID)
+	item := domain.BotInteraction{ID: "expired-1", BotID: bot.ID, ProjectID: "platform", SenderID: "staff-1", Content: "进度", Reply: "答复", Status: domain.BotReplyFailed, TerminalReason: "route_expired", DeliveryGeneration: 1, SendKey: "old", CreatedAt: time.Now().UTC()}
+	if err := f.s.DB.Create(&item).Error; err != nil {
+		t.Fatal(err)
+	}
+	act := func(path string) (int, map[string]any) {
+		raw, _ := json.Marshal(map[string]any{"actionKey": "key-" + path, "reason": "过期"})
+		req := httptest.NewRequest(http.MethodPost, "/api/bot-interactions/expired-1/"+path, bytes.NewReader(raw))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Origin", "http://"+req.Host)
+		req = authedRequest(t, req, f.user)
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Request = req
+		c.Params = gin.Params{{Key: "interactionId", Value: "expired-1"}}
+		bh.act(c)
+		out := map[string]any{}
+		json.Unmarshal(w.Body.Bytes(), &out)
+		return w.Code, out
+	}
+	records := func() domain.BotInteraction {
+		w := cvBDirectHandlerRequest(t, f, http.MethodGet, "/api/notification-bots/"+bot.ID+"/interactions", nil, bh.records, map[string]string{"id": bot.ID}, true)
+		var out struct {
+			Messages []domain.BotInteraction `json:"messages"`
+		}
+		json.Unmarshal(w.Body.Bytes(), &out)
+		return out.Messages[0]
+	}
+	if records().PushResendAvailable {
+		t.Fatal("unverified sender offered push resend")
+	}
+	if code, out := act("push-resend"); code != 409 || out["code"] != "push_target_unverified" {
+		t.Fatalf("unverified = %d %v", code, out)
+	}
+	rec = cvBDirectHandlerRequest(t, f, http.MethodPost, "/api/notification-bots/"+bot.ID+"/targets/verify", map[string]any{"targetId": "staff-1"}, nh.verifyTarget, map[string]string{"id": bot.ID}, true)
+	if rec.Code != 200 || push.targets[len(push.targets)-1] != "staff-1" {
+		t.Fatalf("verify = %d %s", rec.Code, rec.Body.String())
+	}
+	if !records().PushResendAvailable {
+		t.Fatal("verified sender not offered push resend")
+	}
+	if code, out := act("resend"); code != 409 || out["code"] != "route_expired" {
+		t.Fatalf("plain resend = %d %v", code, out)
+	}
+	code, out := act("push-resend")
+	if code != 200 || out["sendRoute"] != "push" || out["status"] != domain.BotReady {
+		t.Fatalf("push resend = %d %v", code, out)
+	}
+	stored, _ := f.s.BotInteraction("expired-1")
+	if stored.DeliveryGeneration != 2 || stored.SendKey == "old" || stored.ResentBy != f.user.ID {
+		t.Fatalf("stored = %+v", stored)
 	}
 }

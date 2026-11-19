@@ -207,15 +207,25 @@ function botInteractionActionsHTML(m,bot){
  const id=escapeHTML(m.id),buttons=[];
  if(m.status==='reply_unknown')buttons.push(`<button type="button" class="button small hui-btn-soft" data-interaction-confirm="${id}">${botIcon('check')}确认已收到</button>`);
  if((m.status==='reply_unknown'||m.status==='reply_failed')&&m.terminalReason!=='route_expired'&&!String(m.terminalReason||'').startsWith('bot_deleted'))buttons.push(`<button type="button" class="button small hui-btn-soft" data-interaction-resend="${id}">${botIcon('refresh')}再次发送</button>`);
+ // An expired DingTalk reply can go out as a proactive private message to
+ // its original sender once that member passed a trial send.
+ if(botChannel(bot)==='dingtalk'&&m.status==='reply_failed'&&m.terminalReason==='route_expired')buttons.push(m.pushResendAvailable?`<button type="button" class="button small hui-btn-soft" data-interaction-push-resend="${id}">${botIcon('send')}改用主动单聊发送</button>`:`<button type="button" class="button small hui-btn-soft" data-interaction-push-verify="${escapeHTML(m.senderId||'')}">${botIcon('send')}试发给原发送者</button>`);
  return buttons.length?`<div class="bot-entry-actions">${buttons.join('')}</div>`:'';
 }
 async function botInteractionAction(id,kind,button){
  if(kind==='resend'&&!await afConfirm({message:'再次发送会把已保存的回复重新发给对方，对方可能收到重复消息。确定继续？',confirmText:'再次发送'}))return;
+ if(kind==='push-resend'&&!await afConfirm({message:'会话回复授权已过期。改用主动单聊，会把已保存的回复以 Bot 单聊消息发给原发送者。确定继续？',confirmText:'改用主动单聊发送'}))return;
  button.disabled=true;
  try{
-  await api(`/api/bot-interactions/${encodeURIComponent(id)}/${kind}`,{method:'POST',body:JSON.stringify({actionKey:botNewKey(),reason:kind==='resend'?'记录页再次发送':''})});
-  toast(kind==='resend'?'已重新加入发送队列':'已标记为已收到','ok');loadBotInteractions();
+  await api(`/api/bot-interactions/${encodeURIComponent(id)}/${kind}`,{method:'POST',body:JSON.stringify({actionKey:botNewKey(),reason:kind==='resend'?'记录页再次发送':kind==='push-resend'?'会话回复已过期，记录页改用主动单聊':''})});
+  toast(kind==='confirm'?'已标记为已收到':'已重新加入发送队列','ok');loadBotInteractions();
  }catch(e){toast(e.message,'err');button.disabled=false}
+}
+async function botVerifySender(sender,button){
+ const bot=botInteractionBots().find(b=>b.id===botUI.interactionBotId)||botInteractionBots()[0];if(!bot)return;
+ button.disabled=true;
+ try{await api(`/api/notification-bots/${encodeURIComponent(bot.id)}/targets/verify`,{method:'POST',body:JSON.stringify({targetId:sender})});toast('试发成功，现在可以改用主动单聊发送','ok');loadBotInteractions()}
+ catch(e){toast(e.message,'err');button.disabled=false}
 }
 function botSkeletonHTML(rows=3){return `<div class="bot-skeleton-rows" aria-hidden="true">${'<div class="bot-skeleton"></div>'.repeat(rows)}</div>`}
 function botLoadingShell(){return `<section class="bot-panel" data-bot-panel="${botUI.tab}">${botPanelHeadHTML()}<div class="bot-panel-body is-loading" role="status" aria-label="正在读取机器人">${botSkeletonHTML()}</div></section>`}
@@ -400,6 +410,8 @@ function bindBots(host){
  host.querySelector('#botRefreshInteractions')?.addEventListener('click',()=>{loadBotInteractions();renderBots()});
  host.querySelectorAll('[data-interaction-confirm]').forEach(el=>el.onclick=()=>botInteractionAction(el.dataset.interactionConfirm,'confirm',el));
  host.querySelectorAll('[data-interaction-resend]').forEach(el=>el.onclick=()=>botInteractionAction(el.dataset.interactionResend,'resend',el));
+ host.querySelectorAll('[data-interaction-push-resend]').forEach(el=>el.onclick=()=>botInteractionAction(el.dataset.interactionPushResend,'push-resend',el));
+ host.querySelectorAll('[data-interaction-push-verify]').forEach(el=>el.onclick=()=>botVerifySender(el.dataset.interactionPushVerify,el));
 }
 function captureBotDraft(host){const form=host.querySelector('#botForm');if(!form||!botUI.selected)return;const bot=botUI.selected,channel=form.elements.channel?.value;if(channel&&channel!==botChannel(bot)){bot.channel=channel;bot.writeApproval='readonly';botUI.motion=null;queueMicrotask(renderBots)}bot.name=form.elements.name.value;bot.botId=form.elements.botId.value;bot.enabled=form.elements.enabled.checked;bot.model=form.elements.model.value;bot.interactionEnabled=form.elements.interactionEnabled.checked;bot._secret=form.elements.secret.value;if(form.elements.writeApproval)bot.writeApproval=form.elements.writeApproval.value;if(form.elements.tenantKey)bot._tenantKey=form.elements.tenantKey.value}
 function botSaveSelected(saved){const index=botUI.items.findIndex(b=>b.id===saved.id);if(index<0)botUI.items.push(saved);else botUI.items[index]=saved;botUI.selected=structuredClone(saved);botUI.error='';nodeBotCache.delete(botUI.projectId)}

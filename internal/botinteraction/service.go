@@ -318,6 +318,11 @@ func (s *Service) process(ctx context.Context, bot domain.NotificationBot, lease
 			}
 		}
 		err = s.deliver(ctx, item.ID, lease, policy, func(ctx context.Context, sending domain.BotInteraction) SendResult {
+			if sending.SendRoute == repo.BotSendRoutePush {
+				// An expired DingTalk reply the administrator switched to
+				// a proactive private message to the original sender.
+				return s.Push(ctx, current, OutboundMessage{InteractionID: sending.ID, ChatID: sending.SenderID, ChatType: "single", Text: sending.Reply, SendKey: sending.SendKey})
+			}
 			return conn.Reply(ctx, OutboundMessage{InteractionID: sending.ID, Action: sending.Action, ChatID: conv.ChatID, ChatType: conv.ChatType, Text: sending.Reply, SendKey: sending.SendKey, Route: s.replyRoute(sending)})
 		})
 		if err != nil {

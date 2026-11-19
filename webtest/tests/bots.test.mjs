@@ -267,3 +267,32 @@ test('dingtalk notification recipient is saved after a trial and pending deliver
   assert.ok(app.router.calls.find(c => c.method === 'POST' && c.path === '/api/notification-deliveries/d-unknown/confirm'));
   assert.equal(puts, 2);
 });
+
+test('expired dingtalk replies offer a proactive resend only for verified senders', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  const bot = { id: 'bot-dt', projectId: 'project-1', ownerId: 'user-1', name: 'DT', channel: 'dingtalk', botId: 'ding', enabled: true, interactionEnabled: true, configVersion: 3, tenantState: 'locked' };
+  app.router.get('/api/notification-bots/bot-dt/interactions', {
+    connection: { state: 'connected' }, conversations: [],
+    messages: [
+      { id: 'i-ready', createdAt: '2026-11-19T03:00:00Z', senderId: 'staff-1', status: 'reply_failed', terminalReason: 'route_expired', content: 'q1', reply: 'r1', pushResendAvailable: true },
+      { id: 'i-unverified', createdAt: '2026-11-19T03:00:00Z', senderId: 'staff-2', status: 'reply_failed', terminalReason: 'route_expired', content: 'q2', reply: 'r2' },
+    ],
+  });
+  app.router.post('/api/bot-interactions/i-ready/push-resend', { id: 'i-ready', status: 'ready', sendRoute: 'push' });
+  app.router.post('/api/notification-bots/bot-dt/targets/verify', { id: 'staff-2', verifiedAt: '2026-11-19T04:00:00Z' });
+  app.evaluate(`afConfirm=()=>Promise.resolve(true);botUI.projectId=state.projectFilter;botUI.items=[${JSON.stringify(bot)}];botUI.loading=false;botUI.tab='records';botUI.recordsTab='interactions';botUI.interactionBotId='bot-dt';renderBots()`);
+  await app.evaluate(`loadBotInteractions()`);
+  await settle(4);
+  const host = app.document.querySelector('#botsContent');
+  assert.ok(host.querySelector('[data-interaction-push-resend="i-ready"]'));
+  assert.equal(host.querySelector('[data-interaction-push-resend="i-unverified"]'), null, 'no push resend without a verified target');
+  assert.equal(host.querySelector('[data-interaction-resend="i-ready"]'), null, 'webhook resend hidden after expiry');
+  host.querySelector('[data-interaction-push-verify="staff-2"]').click();
+  await settle(6);
+  assert.equal(app.router.calls.find(c => c.path === '/api/notification-bots/bot-dt/targets/verify').body.targetId, 'staff-2');
+  app.document.querySelector('#botsContent [data-interaction-push-resend="i-ready"]').click();
+  await settle(6);
+  const call = app.router.calls.find(c => c.path === '/api/bot-interactions/i-ready/push-resend');
+  assert.ok(call && call.body.actionKey.length >= 16);
+});

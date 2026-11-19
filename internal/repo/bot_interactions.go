@@ -672,3 +672,66 @@ func (r *BotInteractionsRepo) stopBotInteractions(tx *gorm.DB, configID, leaseKe
 	}
 	return tx.Model(&domain.BotInteraction{}).Where("bot_id = ? AND status = ?", configID, domain.BotSending).Updates(updates).Error
 }
+
+// ErrBotPushTargetUnverified: the original sender is not a verified
+// proactive target of this configuration.
+var ErrBotPushTargetUnverified = errors.New("push_target_unverified")
+
+// BotSendRoutePush marks replies delivered as proactive private messages.
+const BotSendRoutePush = "push"
+
+// PushResendBotInteraction switches a DingTalk reply whose session webhook
+// expired to a proactive private message to the original sender. Under the
+// configuration and interaction locks it re-checks that the reply failed
+// for route_expired and that the sender's binding still belongs to
+// expectedUser on this configuration with a successful trial send. The
+// saved reply is sent again as a new generation with a new key; the action
+// key makes a repeated click return the same result.
+func (r *BotInteractionsRepo) PushResendBotInteraction(id string, actor, expectedUser int64, actionKey, reason string) (domain.BotInteraction, error) {
+	var item domain.BotInteraction
+	err := r.DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.First(&item, "id = ?", id).Error; err != nil {
+			return err
+		}
+		cfg, cfgErr := r.lockBotConfig(tx, item.BotID)
+		if err := r.locking(tx).First(&item, "id = ?", id).Error; err != nil {
+			return err
+		}
+		if actionKey != "" && item.LastActionKey == actionKey {
+			return nil
+		}
+		if errors.Is(cfgErr, gorm.ErrRecordNotFound) {
+			return ErrBotDeleted
+		}
+		if cfgErr != nil {
+			return cfgErr
+		}
+		if !cfg.Enabled || !cfg.InteractionEnabled {
+			return ErrBotStateConflict
+		}
+		if item.Status != domain.BotReplyFailed || item.TerminalReason != "route_expired" {
+			return ErrBotStateConflict
+		}
+		var binding domain.BotUserBinding
+		err := r.locking(tx).Where("id = ? AND config_id = ? AND user_id = ? AND user_id > 0 AND target_verified_at IS NOT NULL", botIdentityID(item.BotID, item.SenderID), item.BotID, expectedUser).First(&binding).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return ErrBotPushTargetUnverified
+		}
+		if err != nil {
+			return err
+		}
+		item.Status = domain.BotReady
+		item.DeliveryGeneration++
+		item.SendKey = randomHex(16)
+		item.SendRoute = BotSendRoutePush
+		result := tx.Model(&domain.BotInteraction{}).Where("id = ? AND status = ?", id, domain.BotReplyFailed).Updates(map[string]any{"status": domain.BotReady, "delivery_generation": item.DeliveryGeneration, "send_key": item.SendKey, "send_route": BotSendRoutePush, "reply_route": "", "route_expires_at_us": 0, "send_started_at_us": 0, "send_attempts": 0, "undelivered_retries": 0, "next_send_at_us": 0, "send_lease_until_us": 0, "lease_owner": "", "lease_epoch": 0, "terminal_reason": "", "resent_by": actor, "last_action_key": actionKey, "last_error": truncateBotDetail("人工改用主动单聊发送：" + reason), "updated_at": time.Now().UTC()})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			return ErrBotStateConflict
+		}
+		return nil
+	})
+	return item, err
+}

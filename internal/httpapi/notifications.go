@@ -537,6 +537,43 @@ func (h *notificationHandlers) test(c *gin.Context) {
 	}
 	c.JSON(200, gin.H{"success": true, "targetName": bot.Target.Name})
 }
+
+// verifyTarget sends a trial proactive message to a bound member without
+// changing the notification target, so the member becomes a verified push
+// target (for example before switching an expired DingTalk reply).
+func (h *notificationHandlers) verifyTarget(c *gin.Context) {
+	bot, ok := h.find(c, true)
+	if !ok {
+		return
+	}
+	if bot.ChannelKind() == domain.BotChannelWeCom {
+		c.JSON(409, gin.H{"error": "企业微信不需要试发验证", "code": "state_conflict"})
+		return
+	}
+	if !botBindingSameOrigin(c) {
+		c.JSON(403, gin.H{"error": "请从平台页面操作"})
+		return
+	}
+	var req struct {
+		TargetID string `json:"targetId"`
+	}
+	if !decode(c, &req) {
+		return
+	}
+	target, err := h.service.VerifyPushTarget(c.Request.Context(), bot, strings.TrimSpace(req.TargetID))
+	var failed *notification.PushTargetError
+	switch {
+	case errors.As(err, &failed):
+		c.JSON(502, gin.H{"error": "试发未成功：" + failed.Error(), "code": "push_trial_failed", "outcome": failed.Result.Outcome})
+	case errors.Is(err, notification.ErrPushTargetUnverified):
+		c.JSON(409, gin.H{"error": "只能试发给已在本 Bot 单聊中绑定平台账号的成员", "code": "push_target_unverified"})
+	case err != nil:
+		c.JSON(409, gin.H{"error": err.Error(), "code": "push_target_unavailable"})
+	default:
+		c.JSON(200, target)
+	}
+}
+
 func (h *notificationHandlers) providerError(c *gin.Context, err error) {
 	code := 0
 	var pe *notification.ProviderError
