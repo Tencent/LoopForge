@@ -70,7 +70,8 @@ func (h *assistantHandlers) workbenchReference(ref domain.AssistantReference, pr
 			break
 		}
 		ref.Name = v.Title
-		data = gin.H{"id": v.ID, "title": v.Title, "description": v.Description, "status": v.Status, "projectId": v.ProjectID}
+		data = gin.H{"id": v.ID, "title": v.Title, "description": v.Description, "status": v.Status, "projectId": v.ProjectID,
+			"repositoryId": v.RepositoryID, "repositoryIds": v.RepositoryIDs}
 	case "sop":
 		v, ok := h.repo.Workflow(ref.ID)
 		if !ok || !(v.Generic && project != "" || allowed(v.ProjectID, v.Shared)) {

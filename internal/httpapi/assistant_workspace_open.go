@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -52,30 +53,38 @@ func (h *agentToolGateway) workspaceOpenDescriptorFor(s *AgentToolSession) agent
 	}
 	if s.ProjectID == "" {
 		b.WriteString("\n\n个人对话可直接打开可写工作区，使用共享运行环境。workspaceRunId 只可切回本对话开过的工作区。")
-	} else if repos := projectRepositoryHints(h.repo.Repositories(), s.ProjectID); repos != "" {
-		b.WriteString("\n\n项目登记的仓库（供 git clone 参考，不会自动检出）：" + repos)
+	} else if repos := projectRepositoryHints(h.repo.Repositories(), s.ProjectID); len(repos) > 0 {
+		b.WriteString("\n\n当前项目登记的仓库（JSON 数据，供 git clone 参考）\n" + jsonObject(repos))
 	}
 	d.Description = b.String()
 	return d
 }
 
-func projectRepositoryHints(all []domain.Repository, projectID string) string {
-	var b strings.Builder
-	for _, r := range all {
-		if r.ProjectID != projectID {
-			continue
+type workspaceRepositoryHint struct {
+	ID            string `json:"id"`
+	Name          string `json:"name"`
+	CloneURL      string `json:"cloneUrl,omitempty"`
+	WebURL        string `json:"webUrl,omitempty"`
+	DefaultBranch string `json:"defaultBranch,omitempty"`
+}
+
+func projectRepositoryHints(all []domain.Repository, projectID string) []workspaceRepositoryHint {
+	repositories := projectRepositories(all, projectID)
+	hints := make([]workspaceRepositoryHint, 0, len(repositories))
+	for _, r := range repositories {
+		r = domain.PublicRepository(r)
+		hint := workspaceRepositoryHint{
+			ID: r.ID, Name: r.Name, CloneURL: r.CloneURL, DefaultBranch: strings.TrimSpace(r.DefaultBranch),
 		}
-		fmt.Fprintf(&b, "\n- %s", r.Name)
-		if clone := strings.TrimSpace(r.CloneURL); clone != "" {
-			fmt.Fprintf(&b, "：%s", clone)
-		} else if web := strings.TrimSpace(r.WebURL); web != "" {
-			fmt.Fprintf(&b, "：%s", web)
+		if hint.CloneURL == "" {
+			hint.WebURL = r.WebURL
 		}
-		if branch := strings.TrimSpace(r.DefaultBranch); branch != "" {
-			fmt.Fprintf(&b, "（主分支 %s）", branch)
-		}
+		hints = append(hints, hint)
 	}
-	return b.String()
+	slices.SortFunc(hints, func(a, b workspaceRepositoryHint) int {
+		return cmp.Or(cmp.Compare(a.Name, b.Name), cmp.Compare(a.ID, b.ID))
+	})
+	return hints
 }
 
 type workspaceOpenChoice struct {

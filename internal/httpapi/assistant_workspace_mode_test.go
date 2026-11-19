@@ -43,6 +43,75 @@ func TestRuntimeModeSwitchDoesNotNarrateInternalHandoff(t *testing.T) {
 	}
 }
 
+func TestWorkspaceRepositoryPromptRefreshesOnlyWhenNeeded(t *testing.T) {
+	h, owner := workbenchFixture(t)
+	if err := h.repo.PutProject(domain.Project{ID: "another-project", Name: "Another project", OwnerID: owner.ID}); err != nil {
+		t.Fatal(err)
+	}
+	for _, repository := range []domain.Repository{
+		{ID: "other-repo", Name: "Other project repo", ProjectID: "another-project", CloneURL: "https://git.example.com/other/repo.git"},
+		{ID: "old-repo", Name: "Old repo", ProjectID: "workbench", CloneURL: "https://old-user:fixture-password@git.example.com/team/old.git", DefaultBranch: "develop"},
+	} {
+		if err := h.repo.PutRepository(repository); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	session := &AgentToolSession{ProjectID: "workbench", workspaceRunID: "first-workspace"}
+	repositories := func(prompt string) []workspaceRepositoryHint {
+		t.Helper()
+		data, found := strings.CutPrefix(prompt, workspaceRepositoryHeading)
+		if !found {
+			t.Fatalf("missing repository context: %s", prompt)
+		}
+		var hints []workspaceRepositoryHint
+		if err := json.Unmarshal([]byte(data), &hints); err != nil {
+			t.Fatal(err)
+		}
+		return hints
+	}
+	prompt, firstHash := h.workspaceRepositoryPrompt(session, "")
+	got := repositories(prompt)
+	want := workspaceRepositoryHint{ID: "old-repo", Name: "Old repo", CloneURL: "https://git.example.com/team/old.git", DefaultBranch: "develop"}
+	if firstHash == "" || len(got) != 1 || got[0] != want {
+		t.Fatalf("unexpected project repository context: %+v", got)
+	}
+	if prompt, hash := h.workspaceRepositoryPrompt(session, firstHash); prompt != "" || hash != "" {
+		t.Fatal("an unchanged catalog was sent again")
+	}
+	if err := h.repo.DeleteRepository("other-repo"); err != nil {
+		t.Fatal(err)
+	}
+	if prompt, hash := h.workspaceRepositoryPrompt(session, firstHash); prompt != "" || hash != "" {
+		t.Fatal("another project's change refreshed the catalog")
+	}
+	if err := h.repo.PutRepository(domain.Repository{ID: "new-repo", Name: "New repo", ProjectID: "workbench", CloneURL: "git@git.example.com:team/new.git"}); err != nil {
+		t.Fatal(err)
+	}
+	prompt, updatedHash := h.workspaceRepositoryPrompt(session, firstHash)
+	got = repositories(prompt)
+	if updatedHash == "" || updatedHash == firstHash || len(got) != 2 || got[0].ID != "new-repo" || got[1] != want {
+		t.Fatalf("did not send the full updated catalog: %+v", got)
+	}
+	session.workspaceRunID = "second-workspace"
+	prompt, switchedHash := h.workspaceRepositoryPrompt(session, updatedHash)
+	if switchedHash == "" || switchedHash == updatedHash || len(repositories(prompt)) != 2 {
+		t.Fatal("the new workspace did not receive its catalog")
+	}
+	for _, id := range []string{"old-repo", "new-repo"} {
+		if err := h.repo.DeleteRepository(id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	prompt, emptyHash := h.workspaceRepositoryPrompt(session, switchedHash)
+	if emptyHash == "" || emptyHash == switchedHash || prompt != workspaceRepositoryHeading+"[]\n" {
+		t.Fatal("removing all repositories did not clear the catalog")
+	}
+	if prompt, hash := h.workspaceRepositoryPrompt(&AgentToolSession{}, ""); prompt != "" || hash != "" {
+		t.Fatal("personal workspace received project data")
+	}
+}
+
 func TestWorkspaceCatalogAndCallRejectPlatformCapabilities(t *testing.T) {
 	h, a, _, _, conv := sharedWorkbenchFixture(t)
 	s := &AgentToolSession{Mode: AgentToolAssistant, UserID: a.ID, User: a, ChatOwnerID: a.ID, ChatSessionID: conv.ID, ProjectID: conv.ProjectID, RuntimeMode: domain.AssistantModeWorkspace, ExpiresAt: time.Now().Add(time.Minute), ctx: context.Background()}
