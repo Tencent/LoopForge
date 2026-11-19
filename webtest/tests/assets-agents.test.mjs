@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { loadApp, settle } from '../lib/load-app.mjs';
+import { chooseOption, loadApp, settle } from '../lib/load-app.mjs';
 
 test('asset catalog filters, opens, marks dirty, shares, saves, and deletes assets', async (t) => {
   const app = await loadApp();
@@ -55,13 +55,28 @@ test('asset forms save environment and sandbox-specific JSON fields', async (t) 
 
   app.evaluate(`state.assetType='sandboxes';state.selectedAsset='__new__';state.assetDetailKey='';renderAssets()`);
   form = app.document.querySelector('#assetForm');
+  const readOnlyHelp = form.querySelector('#assetReadOnlyRootFSHelp');
+  const dockerFields = readOnlyHelp.closest('[data-sandbox-drivers="docker"]');
+  assert.equal(dockerFields.hidden, true);
+  chooseOption(form.elements.driver, 'docker');
+  assert.equal(dockerFields.hidden, false);
+  readOnlyHelp.click();
+  const tooltip = app.document.querySelector('#huiTooltip:not([hidden])');
+  assert.match(tooltip?.textContent ?? '', /缺少的 CLI 无法在容器内自动安装。工作区 \/workspace 仍可写/);
+  assert.equal(form.elements.readOnlyRootFS.checked, false);
+  assert.equal(app.router.calls.some((c) => c.path === '/api/sandboxes' && c.method === 'PUT'), false);
+
   form.elements.id.value = 'sandbox-new';
   form.elements.name.value = 'Docker sandbox';
   form.elements.environment.value = '{"CI":"1"}';
+  chooseOption(form.elements.dockerfileId, 'docker-1');
+  form.elements.readOnlyRootFS.checked = true;
   form.dispatchEvent(new app.window.Event('submit', { bubbles: true, cancelable: true }));
   await settle(2);
   const sandbox = app.router.calls.find((c) => c.path === '/api/sandboxes' && c.method === 'PUT').body;
-  assert.equal(sandbox.driver, 'local');
+  assert.equal(sandbox.driver, 'docker');
+  assert.equal(sandbox.dockerfileId, 'docker-1');
+  assert.equal(sandbox.readOnlyRootFS, true);
   assert.deepEqual(sandbox.environment, { CI: '1' });
 });
 
