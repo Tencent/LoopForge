@@ -198,15 +198,21 @@ func installMCPCallHelperForSandbox(ctx context.Context, sandbox Sandbox, worksp
 // DockerRunnerHelperPath is the Linux runner artifact used for Git and MCP
 // inside Docker on a non-Linux runner. Keep installation and lookup in sync.
 func DockerRunnerHelperPath() (string, error) {
+	self, err := os.Executable()
+	if err != nil {
+		return "", err
+	}
 	pattern := strings.TrimSpace(os.Getenv("AGENTFLOW_RUNNER_BINARY"))
 	if !strings.Contains(pattern, "{os}") {
-		self, err := os.Executable()
-		if err != nil {
-			return "", err
-		}
 		pattern = filepath.Join(filepath.Dir(self), "agentflow-runner-{os}-{arch}")
 	}
-	return strings.NewReplacer("{os}", "linux", "{arch}", goruntime.GOARCH).Replace(pattern), nil
+	path := strings.NewReplacer("{os}", "linux", "{arch}", goruntime.GOARCH).Replace(pattern)
+	if helper, err := os.Stat(path); err == nil {
+		if host, err := os.Stat(self); err == nil && os.SameFile(helper, host) {
+			return "", fmt.Errorf("Docker Git/MCP helper path aliases the host Runner: %s", path)
+		}
+	}
+	return path, nil
 }
 
 func installMCPCallHelperFrom(workspace, src, dest string) error {

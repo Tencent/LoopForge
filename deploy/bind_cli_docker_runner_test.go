@@ -31,9 +31,11 @@ func TestBindCLIInstallsDockerRunnerHelper(t *testing.T) {
 		helperArtifact, source, existing string
 		preserveHelper                   bool
 		templatePath                     bool
+		helperAliasesRunner              bool
 	}{
 		{name: "macOS_install", hostOS: "darwin", arch: "arm64", unameArch: "arm64"},
-		{name: "macOS_creates_nested_runtime_helper_path", hostOS: "darwin", arch: "arm64", unameArch: "arm64", templatePath: true},
+		{name: "macOS_uses_template_in_manual_start_and_upgrade", hostOS: "darwin", arch: "arm64", unameArch: "arm64", templatePath: true, source: "from"},
+		{name: "macOS_rejects_template_aliasing_the_runner", hostOS: "darwin", arch: "arm64", unameArch: "arm64", templatePath: true, helperAliasesRunner: true},
 		{name: "macOS_upgrade", hostOS: "darwin", arch: "amd64", unameArch: "x86_64", upgrade: true},
 		{name: "Linux_install", hostOS: "linux", arch: "arm64", unameArch: "aarch64"},
 		{name: "macOS_preserves_helper_on_failed_download", hostOS: "darwin", arch: "arm64", unameArch: "arm64", helperArtifact: "unavailable", preserveHelper: true},
@@ -56,8 +58,12 @@ func TestBindCLIInstallsDockerRunnerHelper(t *testing.T) {
 				t.Skip("requires macOS plutil")
 			}
 			fixtureHome := t.TempDir()
+			bundle := filepath.Join(fixtureHome, "artifact bundle")
 			bin := filepath.Join(fixtureHome, "bin")
-			if err := os.Mkdir(bin, 0o755); err != nil {
+			if tc.helperAliasesRunner {
+				bin = filepath.Join(bundle, "linux", tc.arch)
+			}
+			if err := os.MkdirAll(bin, 0o755); err != nil {
 				t.Fatal(err)
 			}
 			uname := fmt.Sprintf("#!/bin/sh\ncase \"$1\" in -s) echo %s ;; -m) echo %s ;; esac\n", tc.hostOS, tc.unameArch)
@@ -124,8 +130,8 @@ func TestBindCLIInstallsDockerRunnerHelper(t *testing.T) {
 			helper := filepath.Join(bin, "agentflow-runner-linux-"+tc.arch)
 			patternEnv := ""
 			if tc.templatePath {
-				patternEnv = filepath.Join(fixtureHome, "bundle", "{os}", "{arch}", "agentflow-runner")
-				helper = filepath.Join(fixtureHome, "bundle", "linux", tc.arch, "agentflow-runner")
+				patternEnv = filepath.Join(bundle, "{os}", "{arch}", "agentflow-runner")
+				helper = filepath.Join(bundle, "linux", tc.arch, "agentflow-runner")
 			}
 			statePath := filepath.Join(fixtureHome, ".agentflow-runner", "state.json")
 			const state = `{"runnerId":"fixture"}`
@@ -199,13 +205,52 @@ func TestBindCLIInstallsDockerRunnerHelper(t *testing.T) {
 					cmd.Env = append(cmd.Env, "AGENTFLOW_RUNNER_BINARY="+patternEnv)
 				}
 				out, err := cmd.CombinedOutput()
-				if err != nil {
+				if tc.helperAliasesRunner {
+					if err == nil || !strings.Contains(string(out), "helper 路径与 macOS Runner 相同") {
+						t.Fatalf("installer did not reject the conflicting path: %v\n%s", err, out)
+					}
+				} else if err != nil {
 					t.Fatalf("install: %v\n%s", err, out)
 				}
 				return string(out)
 			}
-			if output := install(); tc.source == "checkout" && !strings.Contains(output, "-auto-update=false") {
+			output := install()
+			if tc.helperAliasesRunner {
+				if got, err := os.ReadFile(helper); err != nil || string(got) != hostRunner {
+					t.Fatalf("macOS Runner was changed by the helper install: %q, %v", got, err)
+				}
+				return
+			}
+			if tc.source == "checkout" && !strings.Contains(output, "-auto-update=false") {
 				t.Fatalf("local source fallback did not disable automatic updates: %s", output)
+			}
+			if tc.templatePath && !tc.upgrade {
+				var start string
+				for line := range strings.SplitSeq(output, "\n") {
+					if command, ok := strings.CutPrefix(line, "[bind-cli]   "); ok && strings.Contains(command, " -state ") {
+						start = command
+					}
+				}
+				if start == "" {
+					t.Fatalf("manual launch command missing: %s", output)
+				}
+				if err := os.WriteFile(filepath.Join(bin, "agentflow-runner"), []byte("#!/bin/sh\nprintf '%s' \"$AGENTFLOW_RUNNER_BINARY\"\n"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				cmd := exec.Command("/bin/bash", "-c", start)
+				cmd.Env = []string{"HOME=" + fixtureHome, "PATH=/usr/bin:/bin"}
+				if out, err := cmd.CombinedOutput(); err != nil || string(out) != patternEnv {
+					t.Fatalf("manual launch got helper template %q, %v, want %q", out, err, patternEnv)
+				}
+				if err := os.WriteFile(statePath, []byte(state), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Remove(helper); err != nil {
+					t.Fatal(err)
+				}
+				args = append(args, "--upgrade")
+				patternEnv = ""
+				install()
 			}
 			if tc.launchd {
 				if tc.templatePath {

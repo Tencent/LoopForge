@@ -252,6 +252,34 @@ func TestDockerRunnerHelperUpdateRepairsMissingBinary(t *testing.T) {
 	assertHelper()
 }
 
+func TestDockerRunnerHelperUpdateRejectsRunningExecutablePath(t *testing.T) {
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	if err := os.Symlink(filepath.Dir(self), filepath.Join(root, "linux")); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("AGENTFLOW_RUNNER_BINARY", filepath.Join(root, "{os}", filepath.Base(self)))
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		requests.Add(1)
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer server.Close()
+	d, err := New(Config{ServerURL: server.URL, BootstrapToken: "fixture"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := d.checkDockerRunnerHelperUpdate(t.Context(), false); err == nil || !strings.Contains(err.Error(), "aliases the host Runner") {
+		t.Fatalf("conflicting helper path was not rejected: %v", err)
+	}
+	if got := requests.Load(); got != 0 {
+		t.Fatalf("updater requested an artifact for a conflicting path, requests = %d", got)
+	}
+}
+
 func TestDockerRunnerHelperUpdateRejectsIncompatibleBinary(t *testing.T) {
 	otherArch := "arm64"
 	if runtime.GOARCH == otherArch {

@@ -709,10 +709,19 @@ TEMP_BINARY=""
 trap '[[ -z "$TEMP_BINARY" ]] || rm -f "$TEMP_BINARY"' EXIT
 install_binary
 
+saved_runner_binary_pattern() {
+  awk 'sub(/^AGENTFLOW_RUNNER_BINARY=/, "") { print; exit }' "$ENV_FILE"
+}
+
 configure_macos_docker_runner_helper() {
   local pattern="${AGENTFLOW_RUNNER_BINARY:-}"
-  if [[ "$UPGRADE" == "1" && -f "$PLIST" && -z "${AGENTFLOW_RUNNER_BINARY+x}" ]]; then
-    pattern=$(/usr/bin/plutil -extract EnvironmentVariables.AGENTFLOW_RUNNER_BINARY raw "$PLIST" 2>/dev/null || true)
+  if [[ "$UPGRADE" == "1" && -z "${AGENTFLOW_RUNNER_BINARY+x}" ]]; then
+    if [[ -f "$PLIST" ]]; then
+      pattern=$(/usr/bin/plutil -extract EnvironmentVariables.AGENTFLOW_RUNNER_BINARY raw "$PLIST" 2>/dev/null) ||
+        pattern=$(saved_runner_binary_pattern)
+    else
+      pattern=$(saved_runner_binary_pattern)
+    fi
   fi
   # Keep the template expansion in sync with runtime.DockerRunnerHelperPath.
   pattern="${pattern#"${pattern%%[![:space:]]*}"}"
@@ -723,7 +732,22 @@ configure_macos_docker_runner_helper() {
     DOCKER_RUNNER_BINARY="${pattern//\{os\}/linux}"
     DOCKER_RUNNER_BINARY="${DOCKER_RUNNER_BINARY//\{arch\}/$ARCH}"
   fi
+  if [[ "$DOCKER_RUNNER_BINARY" -ef "$BINARY" ]]; then
+    fail "Linux Git/MCP helper 路径与 macOS Runner 相同：${DOCKER_RUNNER_BINARY}"
+  fi
   export AGENTFLOW_RUNNER_BINARY="$pattern"
+}
+
+save_runner_binary_pattern() {
+  [[ "$(saved_runner_binary_pattern)" != "$AGENTFLOW_RUNNER_BINARY" ]] || return 0
+  local tmp
+  tmp=$(mktemp "${RUNNER_HOME}/.env.XXXXXX")
+  if ! { sed '/^AGENTFLOW_RUNNER_BINARY=/d' "$ENV_FILE" &&
+         printf 'AGENTFLOW_RUNNER_BINARY=%s\n' "$AGENTFLOW_RUNNER_BINARY"; } > "$tmp" ||
+     ! mv -f "$tmp" "$ENV_FILE"; then
+    rm -f "$tmp"
+    fail "无法保存 Git/MCP helper 路径配置"
+  fi
 }
 
 if [[ "$OS" == "darwin" ]]; then
@@ -757,6 +781,9 @@ if [[ "$OS" != "linux" ]]; then
 fi
 
 if [[ "$UPGRADE" == "1" ]]; then
+  if [[ "$OS" == "darwin" ]]; then
+    save_runner_binary_pattern
+  fi
   if [[ "$OS" == "darwin" && -f "$PLIST" ]]; then
     if [[ "$AUTO_UPDATE" == "0" ]]; then
       arg_count=$(/usr/bin/plutil -extract ProgramArguments raw -expect array "$PLIST")
@@ -815,7 +842,15 @@ USER_PATH="${PATH}"
 
 if [[ "$NO_START" == "1" ]]; then
   info "已完成安装与配置（--no-start，未启动）。手动启动："
-  info "  $BINARY ${RUN_ARGS[*]}"
+  runner_command=""
+  if [[ "${AGENTFLOW_RUNNER_BINARY:-}" == *"{os}"* ]]; then
+    runner_command="AGENTFLOW_RUNNER_BINARY=$(shell_quote "$AGENTFLOW_RUNNER_BINARY") "
+  fi
+  runner_command+="$(shell_quote "$BINARY")"
+  for arg in "${RUN_ARGS[@]}"; do
+    runner_command+=" $(shell_quote "$arg")"
+  done
+  info "  $runner_command"
   info "常驻方式：追加 --service 重新执行本脚本；卸载：追加 --uninstall（--purge 删除全部配置）"
 elif [[ "$INSTALL_SERVICE" == "1" ]]; then
   if [[ "$OS" == "darwin" ]]; then
