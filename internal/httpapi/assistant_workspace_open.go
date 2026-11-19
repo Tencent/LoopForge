@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net/url"
 	"slices"
 	"strings"
 
@@ -54,7 +55,12 @@ func (h *agentToolGateway) workspaceOpenDescriptorFor(s *AgentToolSession) agent
 	if s.ProjectID == "" {
 		b.WriteString("\n\n个人对话可直接打开可写工作区，使用共享运行环境。workspaceRunId 只可切回本对话开过的工作区。")
 	} else if repos := projectRepositoryHints(h.repo.Repositories(), s.ProjectID); len(repos) > 0 {
-		b.WriteString("\n\n当前项目登记的仓库（JSON 数据，供 git clone 参考）\n" + jsonObject(repos))
+		catalog := jsonObject(repos)
+		if len(catalog) <= workspaceRepositoryInlineBytes {
+			b.WriteString("\n\n当前项目登记的仓库（JSON 数据，供 git clone 参考）\n" + catalog)
+		} else {
+			b.WriteString("\n\n进入工作区后可以读取完整的项目仓库清单。")
+		}
 	}
 	d.Description = b.String()
 	return d
@@ -72,12 +78,11 @@ func projectRepositoryHints(all []domain.Repository, projectID string) []workspa
 	repositories := projectRepositories(all, projectID)
 	hints := make([]workspaceRepositoryHint, 0, len(repositories))
 	for _, r := range repositories {
-		r = domain.PublicRepository(r)
 		hint := workspaceRepositoryHint{
-			ID: r.ID, Name: r.Name, CloneURL: r.CloneURL, DefaultBranch: strings.TrimSpace(r.DefaultBranch),
+			ID: r.ID, Name: r.Name, CloneURL: workspaceRepositoryURL(r.CloneURL), DefaultBranch: strings.TrimSpace(r.DefaultBranch),
 		}
 		if hint.CloneURL == "" {
-			hint.WebURL = r.WebURL
+			hint.WebURL = workspaceRepositoryURL(r.WebURL)
 		}
 		hints = append(hints, hint)
 	}
@@ -85,6 +90,21 @@ func projectRepositoryHints(all []domain.Repository, projectID string) []workspa
 		return cmp.Or(cmp.Compare(a.Name, b.Name), cmp.Compare(a.ID, b.ID))
 	})
 	return hints
+}
+
+// Repository URLs in model input need only the base address. Older records
+// may have signed query strings or fragments in addition to URL userinfo.
+func workspaceRepositoryURL(raw string) string {
+	base := strings.TrimSpace(raw)
+	if i := strings.IndexAny(base, "?#"); i >= 0 {
+		base = base[:i]
+	}
+	if strings.Contains(base, "://") {
+		if _, err := url.Parse(base); err != nil {
+			return ""
+		}
+	}
+	return domain.StripURLCredentials(base)
 }
 
 type workspaceOpenChoice struct {

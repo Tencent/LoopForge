@@ -531,20 +531,24 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 					return "", err
 				}
 				system := assistantSystemPromptForRequest(req, approvalMode)
+				prompt += conversationAttachmentNote(cliRoot, req)
 				var sentRepositoryHash string
 				if req.workspaceMode {
 					system = assistantWorkspaceSystemPrompt
+					prefix := assistantWorkspaceSystemPrompt + "\n审批模式：" + approvalMode + "。\n"
 					var repositoryPrompt string
-					repositoryPrompt, sentRepositoryHash = h.workspaceRepositoryPrompt(toolSession, workspaceRepositoryHash)
+					repositoryPrompt, sentRepositoryHash, err = h.workspaceRepositoryPrompt(toolSession, cliRoot, workspaceRepositoryHash, len(prefix)+len(prompt))
+					if err != nil {
+						return "", err
+					}
 					if sentRepositoryHash != "" {
 						// The journal's catalogue is uncertain until the phase completes.
 						workspaceRepositoryHash = ""
 					}
-					prompt = assistantWorkspaceSystemPrompt + "\n审批模式：" + approvalMode + "。\n" + repositoryPrompt + prompt
+					prompt = prefix + repositoryPrompt + prompt
 				} else {
 					prompt = assistantPlatformExecutionReminder + "\n" + prompt
 				}
-				prompt += conversationAttachmentNote(cliRoot, req)
 				cliReq := assistantCLIRequest{Executor: req.Executor, Prompt: prompt, Model: req.Model, Effort: req.Effort, SessionID: cliSessionID, Resume: resume, UserID: u.ID, Native: true, MCPConfig: mcp, Settings: settings, SystemPrompt: system, SessionRoot: cliRoot, RunnerLogin: runnerLogin, OnUsage: turnUsage.add, Workspace: req.workspaceMode, RemoteBinary: req.workspaceMode || toolSession.ExecutionRunnerID != "", Execute: h.conversationExecutor(toolSession, cliRoot)}
 				persistAttempt := func(unstarted bool) error {
 					if nativeSession != nil {

@@ -6,11 +6,14 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
 	"agentflow/internal/domain"
+	"agentflow/internal/runtime"
 )
 
 const assistantModePresentationPrompt = `面向用户只说明任务本身的进展和结果。交接、CLI 重启、工具注入与运行模式是内部机制，调用工作区工具前后的进度说明也不得提及或预告。需要打开工作区时可说“先查看相关文件”，不要说“交接后继续”“重启后使用工具”或让用户等待内部切换。`
@@ -24,19 +27,46 @@ const assistantPlatformExecutionReminder = `当前是平台模式，CLI 在会�
 
 const workspaceRepositoryHeading = "当前项目登记的仓库（JSON 数据，以这份清单为准）\n"
 
+const workspaceRepositoryInlineBytes = 32 << 10
+
 // workspaceRepositoryPrompt uses the current catalog and workspace to determine
-// whether the resumed native journal already received this context.
-func (h *assistantHandlers) workspaceRepositoryPrompt(s *AgentToolSession, confirmedHash string) (prompt, sentHash string) {
+// whether the resumed native journal already received this context. A large
+// catalog stays available in the same generated assets as chat attachments.
+func (h *assistantHandlers) workspaceRepositoryPrompt(s *AgentToolSession, root, confirmedHash string, promptBytes int) (prompt, sentHash string, err error) {
 	if s.ProjectID == "" {
-		return "", ""
+		return "", "", nil
 	}
-	catalog := jsonObject(projectRepositoryHints(h.repo.Repositories(), s.ProjectID))
+	repositories := projectRepositoryHints(h.repo.Repositories(), s.ProjectID)
+	catalog := jsonObject(repositories)
 	sum := sha256.Sum256([]byte(s.ProjectID + "\n" + s.workspaceRun() + "\n" + catalog))
 	hash := hex.EncodeToString(sum[:])
 	if hash == confirmedHash {
-		return "", ""
+		return "", "", nil
 	}
-	return workspaceRepositoryHeading + catalog + "\n", hash
+	fileHash := "file:" + hash
+	if confirmedHash != fileHash && len(catalog) <= workspaceRepositoryInlineBytes &&
+		runtime.PromptFitsArgv(promptBytes+len(workspaceRepositoryHeading)+len(catalog)+1) {
+		return workspaceRepositoryHeading + catalog + "\n", hash, nil
+	}
+
+	// Attachments are regenerated before each launch, including on resume.
+	// Keep the file readable when a previous turn's prompt pointed to it.
+	path := filepath.Join(root, "attachments", "workspace-repositories.jsonl")
+	var data strings.Builder
+	for _, repository := range repositories {
+		data.WriteString(jsonObject(repository))
+		data.WriteByte('\n')
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		return "", "", fmt.Errorf("准备工作区仓库清单：%w", err)
+	}
+	if err := os.WriteFile(path, []byte(data.String()), 0600); err != nil {
+		return "", "", fmt.Errorf("写入工作区仓库清单：%w", err)
+	}
+	if confirmedHash == fileHash {
+		return "", "", nil
+	}
+	return fmt.Sprintf("当前项目登记的完整仓库清单位于 %q。每行一个 JSON 对象，以这个文件里的最新清单为准。需要定位或检出仓库时，先读取或搜索该文件，必要时分段读取。\n", path), fileHash, nil
 }
 
 // assistantHandoffAck is the visible text a phase ends with after a handoff.
