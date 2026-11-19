@@ -596,18 +596,40 @@ install_binary() {
   publish_runner_binary "$BINARY"
 }
 
+is_linux_runner_binary() {
+  local header machine
+  case "$ARCH" in
+    amd64) machine="3e00" ;;
+    arm64) machine="b700" ;;
+  esac
+  # Read the ELF64 little-endian header. e_type and e_machine start at bytes 16 and 18.
+  header="$(LC_ALL=C od -An -v -t x1 -N 64 "$1" | tr -d '[:space:]')" || return 1
+  [[ ${#header} -eq 128 && "${header:0:14}" == "7f454c46020101" &&
+     ( "${header:14:2}" == "00" || "${header:14:2}" == "03" ) &&
+     ( "${header:32:4}" == "0200" || "${header:32:4}" == "0300" ) &&
+     "${header:36:4}" == "$machine" ]]
+}
+
 install_docker_runner_binary() {
   local source="${SOURCE_DIR:-$PWD}"
+  # A custom host runner may have a matching helper managed by its installer.
+  # A per-OS download URL can replace the helper when it is the selected source.
+  if [[ -x "$DOCKER_RUNNER_BINARY" && -f "$DOCKER_RUNNER_BINARY" &&
+        ( -n "$LOCAL_BINARY" ||
+          ( "$DOWNLOAD_URL" != *"{os}"* && ( -n "$DOWNLOAD_URL" || -n "$SOURCE_DIR" ) ) ) ]]; then
+    info "保留自定义 Runner 的 Linux Git/MCP helper：${DOCKER_RUNNER_BINARY}"
+    return
+  fi
   TEMP_BINARY=$(mktemp "${BIN_DIR}/.agentflow-runner.XXXXXX")
-  if download_runner_binary linux ||
+  if { download_runner_binary linux && is_linux_runner_binary "$TEMP_BINARY"; } ||
      { [[ -d "$source/cmd/agentflow-runner" ]] && command -v go >/dev/null 2>&1 &&
-       build_runner_binary linux "$source" && [[ -s "$TEMP_BINARY" ]]; }; then
+       build_runner_binary linux "$source" && is_linux_runner_binary "$TEMP_BINARY"; }; then
     publish_runner_binary "$DOCKER_RUNNER_BINARY"
     return
   fi
   rm -f "$TEMP_BINARY"
   TEMP_BINARY=""
-  warn "无法获取 Linux/${ARCH} Git/MCP helper，Docker 工作区需要该文件：${DOCKER_RUNNER_BINARY}"
+  warn "无法获取有效的 Linux/${ARCH} Git/MCP helper，Docker 工作区需要该文件：${DOCKER_RUNNER_BINARY}"
 }
 
 TEMP_BINARY=""

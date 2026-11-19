@@ -3,6 +3,7 @@ package runner
 import (
 	"context"
 	"crypto/sha256"
+	"debug/elf"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -53,40 +54,91 @@ func (d *Daemon) checkGateMCPUpdates(ctx context.Context) error {
 	for _, targetOS := range targetOSes {
 		path := strings.ReplaceAll(strings.ReplaceAll(pattern, "{os}", targetOS), "{arch}", runtime.GOARCH)
 		endpoint := fmt.Sprintf("%s/runners/agentflow-gate-mcp?os=%s&arch=%s", d.client.base, targetOS, runtime.GOARCH)
-		if err := d.checkCompanionBinaryUpdate(ctx, "gate MCP", endpoint, path); err != nil {
+		if err := d.checkCompanionBinaryUpdate(ctx, "gate MCP", endpoint, path, nil, true); err != nil {
 			return fmt.Errorf("%s/%s: %w", targetOS, runtime.GOARCH, err)
 		}
 	}
 	return nil
 }
 
-// Sync at startup after Runner updates, and retry missing artifacts during
-// rescans. Conversation workspace requests do not go through the SOP claim loop.
-func (d *Daemon) refreshDockerRunnerHelper(ctx context.Context, onlyMissing bool) {
-	if runtime.GOOS != "darwin" || d.cfg.DisableAutoUpdate || d.runnerWorkActive() {
+// Sync in the background on startup, then retry missing or incompatible
+// helpers during rescans. Conversation requests bypass the SOP claim loop.
+func (d *Daemon) refreshDockerRunnerHelper(ctx context.Context, repairOnly bool) {
+	if runtime.GOOS != "darwin" || d.cfg.DisableAutoUpdate {
 		return
 	}
 	updateCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	if err := d.checkDockerRunnerHelperUpdate(updateCtx, onlyMissing); err != nil && ctx.Err() == nil {
+	if err := d.checkDockerRunnerHelperUpdate(updateCtx, repairOnly); err != nil && ctx.Err() == nil {
 		log.Printf("Docker Git/MCP helper update: %v", err)
 	}
 }
 
-func (d *Daemon) checkDockerRunnerHelperUpdate(ctx context.Context, onlyMissing bool) error {
+func (d *Daemon) checkDockerRunnerHelperUpdate(ctx context.Context, repairOnly bool) error {
 	path, err := flowruntime.DockerRunnerHelperPath()
 	if err != nil {
 		return err
 	}
-	if onlyMissing {
-		if _, err := os.Stat(path); !os.IsNotExist(err) {
-			return err
-		}
+	if repairOnly && validateDockerRunnerHelper(path) == nil {
+		return nil
 	}
-	return d.checkCompanionBinaryUpdate(ctx, "Docker Git/MCP helper", d.runnerUpdateEndpoint("linux"), path)
+	// Sandboxes copy this executable into the workspace, so an atomic replacement
+	// can run alongside active tasks and requests waiting for the first download.
+	return d.checkCompanionBinaryUpdate(ctx, "Docker Git/MCP helper", d.runnerUpdateEndpoint("linux"), path, validateDockerRunnerHelper, false)
 }
 
-func (d *Daemon) checkCompanionBinaryUpdate(ctx context.Context, name, endpoint, path string) error {
+func (d *Daemon) waitForDockerRunnerHelper(ctx context.Context) error {
+	if d.dockerHelperSyncDone == nil {
+		return nil
+	}
+	select {
+	case <-d.dockerHelperSyncDone:
+		return nil
+	default:
+	}
+	if path, err := flowruntime.DockerRunnerHelperPath(); err == nil && validateDockerRunnerHelper(path) == nil {
+		return nil
+	}
+	select {
+	case <-d.dockerHelperSyncDone:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func validateDockerRunnerHelper(path string) error {
+	var machine elf.Machine
+	switch runtime.GOARCH {
+	case "arm64":
+		machine = elf.EM_AARCH64
+	case "amd64":
+		machine = elf.EM_X86_64
+	default:
+		return fmt.Errorf("unsupported Linux helper architecture %s", runtime.GOARCH)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() || info.Mode().Perm()&0o111 == 0 {
+		return fmt.Errorf("expected executable Linux/%s helper", runtime.GOARCH)
+	}
+	file, err := elf.Open(path)
+	if err != nil {
+		return fmt.Errorf("expected Linux/%s ELF helper: %w", runtime.GOARCH, err)
+	}
+	defer file.Close()
+	if file.Class != elf.ELFCLASS64 || file.Data != elf.ELFDATA2LSB || file.Machine != machine ||
+		(file.OSABI != elf.ELFOSABI_NONE && file.OSABI != elf.ELFOSABI_LINUX) ||
+		(file.Type != elf.ET_EXEC && file.Type != elf.ET_DYN) {
+		return fmt.Errorf("expected Linux/%s executable, got ELF %s %s %s %s %s", runtime.GOARCH,
+			file.Class, file.Data, file.Machine, file.OSABI, file.Type)
+	}
+	return nil
+}
+
+func (d *Daemon) checkCompanionBinaryUpdate(ctx context.Context, name, endpoint, path string, validate func(string) error, requireIdle bool) error {
 	metadata, err := runnerBinaryMetadata(ctx, endpoint)
 	if err != nil {
 		return err
@@ -96,6 +148,9 @@ func (d *Daemon) checkCompanionBinaryUpdate(ctx context.Context, name, endpoint,
 		return err
 	}
 	if localHash == metadata.SHA256 {
+		if validate != nil {
+			return validate(path)
+		}
 		return nil
 	}
 	tmp, err := downloadRunnerBinary(ctx, endpoint, path, metadata.SHA256)
@@ -103,11 +158,21 @@ func (d *Daemon) checkCompanionBinaryUpdate(ctx context.Context, name, endpoint,
 		return err
 	}
 	defer os.Remove(tmp)
-	if !d.updateMu.TryLock() {
-		return nil
+	if validate != nil {
+		if err := validate(tmp); err != nil {
+			return fmt.Errorf("validate %s: %w", name, err)
+		}
 	}
-	defer d.updateMu.Unlock()
-	if d.updateReady.Load() || d.runnerExecutionActive() || ctx.Err() != nil {
+	if requireIdle {
+		if !d.updateMu.TryLock() {
+			return nil
+		}
+		defer d.updateMu.Unlock()
+		if d.runnerExecutionActive() {
+			return nil
+		}
+	}
+	if d.updateReady.Load() || ctx.Err() != nil {
 		return nil
 	}
 	current, err := hashFile(path)

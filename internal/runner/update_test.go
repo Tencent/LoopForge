@@ -3,6 +3,8 @@ package runner
 import (
 	"context"
 	"crypto/sha256"
+	"debug/elf"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -16,6 +18,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/gorilla/websocket"
 )
 
 func TestRunnerUpdateReplacesBinaryOnlyAfterVerification(t *testing.T) {
@@ -164,7 +168,7 @@ func TestGateMCPHelperUpdatesWhileRunnerIdle(t *testing.T) {
 }
 
 func TestDockerRunnerHelperUpdateRepairsMissingBinary(t *testing.T) {
-	const payload = "Linux runner for the Docker Git/MCP helper"
+	payload := dockerRunnerFixtureLinuxBinary(runtime.GOARCH, "Docker helper")
 	var downloads atomic.Int32
 	var damaged atomic.Bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
@@ -198,9 +202,6 @@ func TestDockerRunnerHelperUpdateRepairsMissingBinary(t *testing.T) {
 	t.Setenv("AGENTFLOW_RUNNER_BINARY", filepath.Join(bin, "agentflow-runner-{os}-{arch}"))
 	helper := filepath.Join(bin, "agentflow-runner-linux-"+runtime.GOARCH)
 	ctx := context.Background()
-	if err := d.checkDockerRunnerHelperUpdate(ctx, true); err != nil {
-		t.Fatal(err)
-	}
 	assertHelper := func() {
 		t.Helper()
 		if got, err := os.ReadFile(helper); err != nil || string(got) != payload {
@@ -212,6 +213,15 @@ func TestDockerRunnerHelperUpdateRepairsMissingBinary(t *testing.T) {
 		if d.updateReady.Load() {
 			t.Fatal("updating the companion must not restart the runner")
 		}
+	}
+	// A Docker workspace can already be waiting for the helper under the update fence.
+	d.updateMu.RLock()
+	atomic.StoreInt32(&d.running, 1)
+	err = d.checkDockerRunnerHelperUpdate(ctx, true)
+	atomic.StoreInt32(&d.running, 0)
+	d.updateMu.RUnlock()
+	if err != nil {
+		t.Fatal(err)
 	}
 	assertHelper()
 	if err := d.checkDockerRunnerHelperUpdate(ctx, false); err != nil {
@@ -225,6 +235,178 @@ func TestDockerRunnerHelperUpdateRepairsMissingBinary(t *testing.T) {
 		t.Fatalf("replacement was not rejected: %v", err)
 	}
 	assertHelper()
+	damaged.Store(false)
+	if err := os.WriteFile(helper, []byte("invalid existing helper"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.checkDockerRunnerHelperUpdate(ctx, true); err != nil {
+		t.Fatal(err)
+	}
+	assertHelper()
+}
+
+func TestDockerRunnerHelperUpdateRejectsWrongOSOrArchitecture(t *testing.T) {
+	otherArch := "arm64"
+	if runtime.GOARCH == otherArch {
+		otherArch = "amd64"
+	}
+	for _, tc := range []struct{ name, payload string }{
+		{name: "macOS_binary", payload: "\xcf\xfa\xed\xfemacOS runner"},
+		{name: "wrong_Linux_architecture", payload: dockerRunnerFixtureLinuxBinary(otherArch, "wrong architecture")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			hash := sha256.Sum256([]byte(tc.payload))
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+				if req.URL.Query().Get("metadata") == "1" {
+					fmt.Fprintf(w, `{"sha256":%q}`, hex.EncodeToString(hash[:]))
+					return
+				}
+				fmt.Fprint(w, tc.payload)
+			}))
+			defer server.Close()
+			d, err := New(Config{ServerURL: server.URL, BootstrapToken: "fixture"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			bin := t.TempDir()
+			t.Setenv("AGENTFLOW_RUNNER_BINARY", filepath.Join(bin, "agentflow-runner-{os}-{arch}"))
+			helper := filepath.Join(bin, "agentflow-runner-linux-"+runtime.GOARCH)
+			original := dockerRunnerFixtureLinuxBinary(runtime.GOARCH, "working helper")
+			if err := os.WriteFile(helper, []byte(original), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			updateErr := d.checkDockerRunnerHelperUpdate(t.Context(), false)
+			got, err := os.ReadFile(helper)
+			if err != nil || string(got) != original {
+				t.Fatalf("incompatible download replaced the helper: %q, read error %v, update error %v", got, err, updateErr)
+			}
+			if updateErr == nil || !strings.Contains(updateErr.Error(), "Linux/"+runtime.GOARCH) {
+				t.Fatalf("expected a platform validation error, got %v", updateErr)
+			}
+		})
+	}
+}
+
+func TestDockerRunnerHelperDownloadDoesNotBlockMacOSStartup(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("macOS Runner downloads the Linux helper at startup")
+	}
+	root := t.TempDir()
+	t.Setenv("HOME", root)
+	t.Setenv("PATH", "/usr/bin:/bin")
+	t.Setenv("AGENTFLOW_RUNNER_BINARY", filepath.Join(root, "agentflow-runner-{os}-{arch}"))
+	helper := filepath.Join(root, "agentflow-runner-linux-"+runtime.GOARCH)
+	original := dockerRunnerFixtureLinuxBinary(runtime.GOARCH, "working helper")
+	if err := os.WriteFile(helper, []byte(original), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	updated := dockerRunnerFixtureLinuxBinary(runtime.GOARCH, "updated helper")
+	hash := sha256.Sum256([]byte(updated))
+	helperRequested := make(chan struct{}, 1)
+	allowMetadata := make(chan struct{})
+	heartbeat := make(chan struct{}, 1)
+	controlHello := make(chan struct{}, 1)
+	claim := make(chan struct{}, 1)
+	signal := func(ch chan struct{}) {
+		select {
+		case ch <- struct{}{}:
+		default:
+		}
+	}
+	upgrader := websocket.Upgrader{}
+	ctx, cancel := context.WithCancel(t.Context())
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		switch req.URL.Path {
+		case "/runners/agentflow-runner":
+			if req.URL.Query().Get("os") != "linux" || req.URL.Query().Get("arch") != runtime.GOARCH {
+				http.NotFound(w, req)
+				return
+			}
+			if req.URL.Query().Get("metadata") == "1" {
+				signal(helperRequested)
+				select {
+				case <-allowMetadata:
+					fmt.Fprintf(w, `{"sha256":%q}`, hex.EncodeToString(hash[:]))
+				case <-req.Context().Done():
+				}
+				return
+			}
+			fmt.Fprint(w, updated)
+		case "/runners/heartbeat":
+			signal(heartbeat)
+			fmt.Fprint(w, `{}`)
+		case "/runners/connect":
+			conn, err := upgrader.Upgrade(w, req, nil)
+			if err != nil {
+				return
+			}
+			defer conn.Close()
+			var hello controlMessage
+			if conn.ReadJSON(&hello) == nil && hello.Type == "hello" {
+				signal(controlHello)
+				_, _, _ = conn.NextReader()
+			}
+		case "/runners/tasks/claim":
+			signal(claim)
+			<-ctx.Done()
+		case "/runners/disconnect":
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			http.NotFound(w, req)
+		}
+	}))
+	defer func() { cancel(); server.Close() }()
+	d, err := New(Config{ServerURL: server.URL, BootstrapToken: "fixture", StatePath: filepath.Join(root, "state.json")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := d.saveState(daemonState{RunnerID: "runner", SessionToken: "session", ExpiresAt: time.Now().Add(24 * time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- d.Run(ctx) }()
+	defer func() {
+		cancel()
+		if err := <-done; err != nil {
+			t.Errorf("run: %v", err)
+		}
+	}()
+	wait := func(ch <-chan struct{}, event string) {
+		t.Helper()
+		select {
+		case <-ch:
+		case <-time.After(5 * time.Second):
+			t.Fatalf("did not observe %s before the Linux helper download completed", event)
+		}
+	}
+	wait(helperRequested, "Linux helper metadata request")
+	wait(heartbeat, "heartbeat")
+	wait(controlHello, "control hello")
+	wait(claim, "task polling")
+	workspaceCtx, cancelWorkspace := context.WithTimeout(ctx, time.Second)
+	defer cancelWorkspace()
+	if err := d.waitForDockerRunnerHelper(workspaceCtx); err != nil {
+		t.Fatalf("existing helper should be available during the download: %v", err)
+	}
+	close(allowMetadata)
+	waitFor(t, 5*time.Second, "helper update", func() bool {
+		got, err := os.ReadFile(helper)
+		return err == nil && string(got) == updated
+	})
+}
+
+func dockerRunnerFixtureLinuxBinary(arch, payload string) string {
+	header := make([]byte, 64)
+	copy(header, "\x7fELF\x02\x01\x01\x00")
+	machine := elf.EM_X86_64
+	if arch == "arm64" {
+		machine = elf.EM_AARCH64
+	}
+	binary.LittleEndian.PutUint16(header[16:], uint16(elf.ET_EXEC))
+	binary.LittleEndian.PutUint16(header[18:], uint16(machine))
+	binary.LittleEndian.PutUint32(header[20:], uint32(elf.EV_CURRENT))
+	binary.LittleEndian.PutUint16(header[52:], uint16(len(header)))
+	return string(header) + payload
 }
 
 func TestRunnerUpdateDefersWhileWorkspaceRequestIsActive(t *testing.T) {

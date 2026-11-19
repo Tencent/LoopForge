@@ -48,6 +48,7 @@ type Daemon struct {
 	updateMu             sync.RWMutex
 	updateReady          atomic.Bool
 	updateDownloadMu     sync.Mutex
+	dockerHelperSyncDone chan struct{} // closed after the initial macOS helper sync
 	cancelClaimLoop      context.CancelFunc
 	heartbeatWake        chan struct{}
 	maintenance          runnerMaintenanceState
@@ -153,11 +154,13 @@ func (d *Daemon) Run(ctx context.Context) error {
 	if err := d.ensureRegistered(ctx); err != nil {
 		return err
 	}
-	d.refreshDockerRunnerHelper(ctx, false)
 	d.refreshRuntimes(ctx)
 	claimCtx, cancelClaim := context.WithCancel(ctx)
 	defer cancelClaim()
 	d.cancelClaimLoop = cancelClaim
+	if goruntime.GOOS == "darwin" && !d.cfg.DisableAutoUpdate {
+		d.dockerHelperSyncDone = make(chan struct{})
+	}
 	go d.rescanLoop(ctx)
 	heartbeatDone := make(chan struct{})
 	go func() { defer close(heartbeatDone); d.heartbeatLoop(ctx) }()
@@ -173,6 +176,9 @@ func (d *Daemon) Run(ctx context.Context) error {
 	<-controlDone
 	d.maintenance.jobs.Wait()
 	<-heartbeatDone
+	if d.dockerHelperSyncDone != nil {
+		<-d.dockerHelperSyncDone
+	}
 	closeCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	d.closeAllRunSandboxes(closeCtx)
 	cancel()
@@ -373,6 +379,10 @@ func (d *Daemon) availableProviders() []string {
 }
 
 func (d *Daemon) rescanLoop(ctx context.Context) {
+	if d.dockerHelperSyncDone != nil {
+		d.refreshDockerRunnerHelper(ctx, false)
+		close(d.dockerHelperSyncDone)
+	}
 	ticker := time.NewTicker(5 * time.Minute)
 	defer ticker.Stop()
 	for {
