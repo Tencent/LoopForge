@@ -104,9 +104,14 @@ func (h *assistantHandlers) generateBotReply(ctx context.Context, bot domain.Not
 		return "", err
 	}
 	readOnly := bot.EffectiveWriteApproval() == domain.BotWriteReadOnly
+	confirmWrites := bot.EffectiveWriteApproval() == domain.BotWriteConfirm
 	execMode, approval := assistantExecModeForApproval(AssistantApprovalAuto), AssistantApprovalAuto
 	if readOnly {
 		execMode, approval = assistantReadOnlyExecMode(), AssistantApprovalConfirm
+	} else if confirmWrites {
+		// Writes are blocked in the gateway and come back as drafts that
+		// the bound user confirms on the platform page.
+		execMode, approval = assistantExecModeForApproval(AssistantApprovalConfirm), AssistantApprovalConfirm
 	}
 	modelCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -119,6 +124,9 @@ func (h *assistantHandlers) generateBotReply(ctx context.Context, bot domain.Not
 	messages := botReplyMessages(history, item)
 	req := assistantRequest{ProjectID: bot.ProjectID, Model: model, SessionID: conv.SessionID, ApprovalMode: approval, Messages: messages}
 	policy := "直接完成明确的操作，目标不明确时询问。完成后用自然语言回复结果。"
+	if confirmWrites {
+		policy = "当前 Bot 为网页确认模式：查询直接完成；需要修改平台数据时提交操作草稿，不要声称已经完成。平台会把操作摘要和确认链接发给用户，用户在平台页面确认后才执行。用自然语言说明将要做什么。"
+	}
 	if readOnly {
 		policy = "当前 Bot 为只读模式：只使用只读工具查询项目状态、SOP 进度和待办；不要尝试修改平台数据或外部系统。用户要求修改时，说明需要到平台页面操作。用自然语言回答。"
 	}
@@ -177,6 +185,10 @@ func (h *assistantHandlers) generateBotReply(ctx context.Context, bot domain.Not
 				// Read-only Bots never execute drafts; the user confirms
 				// writes on the platform page.
 				reply.Message = strings.TrimSpace(reply.Message) + "\n当前 Bot 为只读模式，修改操作没有执行。请在平台页面确认并完成操作。"
+				reply.Drafts = nil
+			}
+			if len(reply.Drafts) > 0 && confirmWrites {
+				reply.Message = strings.TrimSpace(reply.Message) + h.confirmBotDrafts(ctx, bot, user, item, reply.Drafts)
 				reply.Drafts = nil
 			}
 			if len(reply.Drafts) > 0 {

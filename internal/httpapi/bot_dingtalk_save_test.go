@@ -55,6 +55,10 @@ func TestDingTalkBotSaveRequiresCorpIdAndVerifiesCredentials(t *testing.T) {
 	if code, _ := create(auto); code != 400 {
 		t.Fatalf("auto write on DingTalk = %d", code)
 	}
+	auto["writeApproval"] = "confirm"
+	if code, _ := create(auto); code != 400 {
+		t.Fatalf("confirm write on DingTalk = %d", code)
+	}
 	ok := base()
 	ok["tenantKey"] = " ding-corp "
 	code, out := create(ok)

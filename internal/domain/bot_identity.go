@@ -40,3 +40,26 @@ type BotBindingChallenge struct {
 	ExpiresAt  time.Time `json:"-" gorm:"index"`
 	CreatedAt  time.Time `json:"-"`
 }
+
+// BotPendingDraft is a frozen set of assistant write drafts from a WeCom
+// Bot in the confirm write mode, awaiting the bound user's confirmation on
+// the platform page. Drafts is the JSON the assistant produced.
+type BotPendingDraft struct {
+	ID            string     `json:"id"`
+	ConfigID      string     `json:"configId"`
+	IdentityScope string     `json:"-"`
+	SenderID      string     `json:"-"`
+	ProjectID     string     `json:"projectId"`
+	UserID        int64      `json:"-"`
+	InteractionID string     `json:"-"`
+	Summary       string     `json:"summary"`
+	Drafts        string     `json:"-"`
+	Status        string     `json:"status"`
+	ExecKey       string     `json:"-"`
+	Result        string     `json:"result,omitempty"`
+	Reason        string     `json:"reason,omitempty"`
+	ExpiresAt     time.Time  `json:"expiresAt"`
+	CreatedAt     time.Time  `json:"createdAt"`
+	UpdatedAt     time.Time  `json:"updatedAt"`
+	ExecutedAt    *time.Time `json:"executedAt,omitempty"`
+}

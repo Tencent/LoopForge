@@ -190,7 +190,7 @@ func (h *notificationHandlers) save(c *gin.Context, old *domain.NotificationBot)
 		switch mode := strings.TrimSpace(*req.WriteApproval); {
 		case mode == domain.BotWriteReadOnly:
 			bot.WriteApproval = mode
-		case mode == domain.BotWriteAuto && channel == domain.BotChannelWeCom:
+		case (mode == domain.BotWriteAuto || mode == domain.BotWriteConfirm) && channel == domain.BotChannelWeCom:
 			bot.WriteApproval = mode
 		default:
 			c.JSON(400, gin.H{"error": "该渠道目前只支持只读模式"})

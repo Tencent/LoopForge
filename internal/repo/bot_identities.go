@@ -233,6 +233,9 @@ func (r *UsersRepo) RevokeBotUserBinding(id string, userID int64, now time.Time)
 		if err = tx.Model(&row).Updates(map[string]any{"user_id": 0, "target_verified_at": nil, "updated_at": now}).Error; err != nil {
 			return err
 		}
+		if err = cancelBotDraftsWhere(tx, "账号绑定已解除", "identity_scope = ? AND sender_id = ?", row.BotID, row.SenderID); err != nil {
+			return err
+		}
 		return tx.Model(&domain.BotBindingChallenge{}).Where("binding_id = ?", id).Updates(map[string]any{"status": "expired", "code_hash": ""}).Error
 	})
 }
@@ -261,6 +264,9 @@ func (r *UsersRepo) DeleteExpiredBotBindingChallenges(ctx context.Context, now t
 // ID) is revoked only when no other configuration keeps using it.
 func (r *UsersRepo) revokeBotConfigIdentities(tx *gorm.DB, bot domain.NotificationBot) error {
 	scope := bot.IdentityScope()
+	if err := cancelBotDraftsWhere(tx, "机器人已删除", "config_id = ?", bot.ID); err != nil {
+		return err
+	}
 	if bot.ChannelKind() == domain.BotChannelWeCom {
 		var others int64
 		if err := tx.Table("notification_bots").Where("id <> ? AND external_app_id = ? AND (channel = ? OR channel = '')", bot.ID, bot.BotID, domain.BotChannelWeCom).Count(&others).Error; err != nil {

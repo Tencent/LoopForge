@@ -37,7 +37,7 @@ type NotificationBot struct {
 	CreatedAt          time.Time  `json:"createdAt"`
 	UpdatedAt          time.Time  `json:"updatedAt"`
 
-	// WriteApproval is readonly or auto. Empty means a legacy WeCom record,
+	// WriteApproval is readonly, auto or confirm (WeCom only). Empty means a legacy WeCom record,
 	// which keeps the automatic execution it had before channels existed.
 	WriteApproval string `json:"writeApproval,omitempty"`
 	// ConfigVersion increments on every saved change; CredentialVersion only
@@ -80,6 +80,9 @@ const (
 
 	BotWriteReadOnly = "readonly"
 	BotWriteAuto     = "auto"
+	// BotWriteConfirm (WeCom, stage G): write drafts are confirmed by the
+	// bound user on the platform page before they run.
+	BotWriteConfirm = "confirm"
 
 	BotTenantAwaiting = "awaiting_confirmation"
 	BotTenantLocked   = "locked"
@@ -128,7 +131,7 @@ func (b NotificationBot) LeaseKey() string {
 // automatic execution they always had.
 func (b NotificationBot) EffectiveWriteApproval() string {
 	switch b.WriteApproval {
-	case BotWriteReadOnly, BotWriteAuto:
+	case BotWriteReadOnly, BotWriteAuto, BotWriteConfirm:
 		return b.WriteApproval
 	}
 	if b.ChannelKind() == BotChannelWeCom {

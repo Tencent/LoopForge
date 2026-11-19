@@ -89,7 +89,7 @@ function botTargetHTML(target){return target?`<span class="bot-target"><span cla
 function botRowHTML(bot){
  const id=escapeHTML(bot.id),name=escapeHTML(bot.name),manage=canManageBot(bot),wecom=botChannel(bot)==='wecom';
  const target=wecom||bot.target?botTargetHTML(bot.target):`<span class="bot-target">${botTenantBadge(bot.tenantState)}</span>`;
- const sub=escapeHTML((wecom?'':botChannelInfo(bot).name+' · ')+(bot.model||BOT_DEFAULT_MODEL))+(bot.interactionEnabled?(botWriteApproval(bot)==='readonly'?' · 已启用对话（只读）':' · 已启用对话'):'');
+ const sub=escapeHTML((wecom?'':botChannelInfo(bot).name+' · ')+(bot.model||BOT_DEFAULT_MODEL))+(bot.interactionEnabled?({readonly:' · 已启用对话（只读）',confirm:' · 已启用对话（网页确认）'}[botWriteApproval(bot)]||' · 已启用对话'):'');
  return `<tr data-bot-row="${id}"><td><div class="bot-row-main"><span class="bot-glyph">${botIcon('robot')}</span><span class="bot-row-text"><b class="bot-row-name">${name}</b><small class="bot-row-sub">${sub}</small><small class="bot-row-target">${target}</small></span></div></td><td class="bot-col-target">${target}</td><td>${botEnabledBadge(bot.enabled)}</td><td class="bot-col-sub">${botHealthBadge(bot.health)}</td><td class="bot-col-actions"><div class="bot-row-actions"><button type="button" class="hui-icon-btn" data-bot-edit="${id}" aria-label="编辑 ${name}" title="编辑">${botIcon('edit')}</button>${manage?`<button type="button" class="hui-icon-btn is-danger" data-bot-delete="${id}" aria-label="删除 ${name}" title="删除">${botIcon('trash')}</button>`:''}</div></td></tr>`;
 }
 function botListHTML(items){
@@ -119,7 +119,7 @@ function botChannelFieldHTML(bot){
 function botWriteFieldHTML(bot){
  if(botChannel(bot)!=='wecom')return '<label>执行权限<span class="bot-channel-fixed"><span class="bot-chip">只读查询</span><small class="muted">写操作请到平台页面完成</small></span></label>';
  const mode=botWriteApproval(bot);
- return `<label>执行权限<select class="select" name="writeApproval"><option value="readonly" ${mode==='readonly'?'selected':''}>只读查询（写操作到平台页面完成）</option><option value="auto" ${mode==='auto'?'selected':''}>自动执行（沿用发送者权限直接写入）</option></select></label>`;
+ return `<label>执行权限<select class="select" name="writeApproval"><option value="readonly" ${mode==='readonly'?'selected':''}>只读查询（写操作到平台页面完成）</option><option value="confirm" ${mode==='confirm'?'selected':''}>网页确认（发送者在平台页面确认后执行）</option><option value="auto" ${mode==='auto'?'selected':''}>自动执行（沿用发送者权限直接写入）</option></select></label>`;
 }
 function botCredentialPaneHTML(bot,manage){
  const c=botChannelInfo(bot),plaintext=bot.credentialFormat==='plaintext';

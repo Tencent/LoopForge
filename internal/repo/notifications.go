@@ -182,6 +182,11 @@ func (r *NotificationsRepo) saveNotificationBot(out *domain.NotificationBot, sec
 					return err
 				}
 			}
+			if !(b.Enabled && b.InteractionEnabled) || b.EffectiveWriteApproval() != domain.BotWriteConfirm {
+				if err := cancelBotDraftsWhere(tx, "机器人已停用对话或不再使用网页确认", "config_id = ?", b.ID); err != nil {
+					return err
+				}
+			}
 		} else if err != gorm.ErrRecordNotFound {
 			return err
 		} else {
