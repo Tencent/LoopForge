@@ -484,7 +484,7 @@ func TestCredentialListAndWizard(t *testing.T) {
 	script := `
 const assert = require('node:assert/strict');
 const code = require('node:fs').readFileSync('` + appBundlePath(t) + `', 'utf8');
-const user = {id: 1, gitTokenConfigured: true, codexApiKeyConfigured: true, codexBaseUrl: 'https://proxy.example.com/v1'};
+const user = {id: 1, gitHubCredentialConfigured: true, codexApiKeyConfigured: true, codexBaseUrl: 'https://proxy.example.com/v1'};
 const state = {currentUser: {id: 1}, data: {users: [user]}};
 const userById = id => state.data.users.find(u => u.id === id);
 const escapeHTML = v => String(v), toast = () => {};
@@ -501,19 +501,19 @@ const count = (html, needle) => html.split(needle).length - 1;
 
 // Groups list credentials in a fixed order.
 assert.deepEqual(cred.CREDENTIAL_GROUPS.map(g => g.id), ['platform', 'model']);
-assert.deepEqual(cred.CREDENTIAL_KINDS.filter(k => k.group === 'platform').map(k => k.key), ['gitToken', 'gitSshKey']);
+assert.deepEqual(cred.CREDENTIAL_KINDS.filter(k => k.group === 'platform').map(k => k.key), ['gitToken', 'gitSshKey', 'gitHttpCredentials']);
 assert.deepEqual(cred.CREDENTIAL_KINDS.filter(k => k.group === 'model').map(k => k.key), ['codeBuddyApiKey', 'codexApiKey', 'claudeCodeApiKey', 'agentCli.opencode', 'agentCli.cursor', 'agentCli.agy', 'agentCli.kimi', 'agentCli.pi', 'agentCli.dsh', 'agentCli.zcode', 'agentCli.qodercn']);
 
 // Progress, next-step hint, filter counts and per-group counts.
 const html = credentialPanelHTML(user);
-assert.ok(html.includes('<b>2</b> / 13 已配置'));
+assert.ok(html.includes('<b>2</b> / 14 已配置'));
 assert.ok(html.includes('data-credential-setup="codeBuddyApiKey"'), 'next step follows Git → CodeBuddy');
-assert.ok(html.includes('1 / 2') && html.includes('1 / 11'));
-assert.ok(html.includes('已配置<span>2</span>') && html.includes('未配置<span>11</span>'));
-assert.equal(count(html, 'data-credential-row='), 13);
+assert.ok(html.includes('1 / 3') && html.includes('1 / 11'));
+assert.ok(html.includes('已配置<span>2</span>') && html.includes('未配置<span>12</span>'));
+assert.equal(count(html, 'data-credential-row='), 14);
 assert.ok(!html.includes('credential-grid') && !html.includes('credential-savebar') && !html.includes('userCredentialForm'));
 // Unconfigured rows only offer 去配置; configured rows carry an inline editor with delete.
-assert.equal(count(html, 'data-credential-act="setup"'), 11);
+assert.equal(count(html, 'data-credential-act="setup"'), 12);
 assert.equal(count(html, 'credential-editor-form'), 2);
 assert.equal(count(html, 'data-credential-act="delete"'), 2);
 for (const key of ['codeBuddyApiKey', 'claudeCodeApiKey']) {
@@ -533,6 +533,9 @@ assert.deepEqual(credentialSavePayload(cred.kind('gitToken'), {secret: ' ghp_1 '
 const sshRow = credentialRowHTML(cred.kind('gitSshKey'), {...user, gitSshKeyConfigured: true});
 assert.match(sshRow, /aria-haspopup="dialog">管理密钥/);
 assert.ok(!sshRow.includes('credential-editor-form'));
+const httpsRow = credentialRowHTML(cred.kind('gitHttpCredentials'), {...user, gitHttpCredentialsConfigured: true});
+assert.match(httpsRow, /aria-haspopup="dialog">管理令牌/);
+assert.ok(!httpsRow.includes('credential-editor-form'));
 assert.deepEqual(credentialSavePayload(cred.kind('codeBuddyApiKey'), {secret: '', extra: 'ioa'}), {codeBuddyApiKey: '', codeBuddyInternetEnvironment: 'ioa'});
 assert.deepEqual(credentialSavePayload(cred.kind('codeBuddyApiKey'), {secret: '', extra: ''}), {codeBuddyApiKey: '', codeBuddyInternetEnvironment: ''});
 assert.deepEqual(credentialSavePayload(cred.kind('codexApiKey'), {secret: 'sk-1'}), {codexApiKey: 'sk-1'});
@@ -562,8 +565,13 @@ const officialCatalog = credentialCatalogHTML(cred.kind('codexApiKey'), {codexMo
 assert.ok(officialCatalog.includes('value="hy4"') && officialCatalog.includes('data-catalog-act="probe"') && officialCatalog.includes('改回使用自带的模型') && !officialCatalog.includes('data-catalog-body hidden'), 'an official key keeps its custom catalog editable');
 const officialEmpty = credentialCatalogHTML(cred.kind('codexApiKey'), {});
 assert.ok(officialEmpty.includes('使用 Codex 自带的模型') && officialEmpty.includes('data-catalog-act="add"') && !officialEmpty.includes('data-catalog-body hidden'));
-const geminiCatalog = credentialCatalogHTML(cred.kind('agentCli.agy'), {agentCliCredentials: {agy: {baseUrl: 'https://gw.example/v1', protocol: 'gemini'}}});
-assert.ok(geminiCatalog.includes('使用 Antigravity 自带的模型') && geminiCatalog.includes('data-catalog-act="probe"') && !geminiCatalog.includes('data-catalog-body hidden'), 'Gemini official API can still keep a custom catalog');
+const agyKind = cred.kind('agentCli.agy');
+const geminiOfficial = credentialCatalogHTML(agyKind, {agentCliCredentials: {agy: {protocol: 'gemini', models: [{id: 'gemini-4-neon-high'}]}}});
+assert.match(geminiOfficial, /data-catalog-mode="official"/);
+assert.ok(geminiOfficial.includes('value="gemini-4-neon-high"') && geminiOfficial.includes('使用 Antigravity 自带的模型') && !geminiOfficial.includes('data-catalog-body hidden'), 'a saved catalog stays editable on the official endpoint');
+const geminiGateway = credentialCatalogHTML(agyKind, {agentCliCredentials: {agy: {baseUrl: 'https://gw.example/v1', protocol: 'gemini'}}});
+assert.match(geminiGateway, /data-catalog-mode="remote"/);
+assert.ok(geminiGateway.includes('跟随服务发布的模型') && geminiGateway.includes('data-catalog-endpoint>/v1beta/models') && geminiGateway.includes('data-catalog-act="probe"'), 'a Gemini gateway uses its own model listing');
 assert.ok(credentialEditorHTML(cred.kind('codexApiKey'), catalogUser).includes('data-credential-catalog') && credentialEditorHTML(cred.kind('codexApiKey'), catalogUser).includes('has-catalog'));
 assert.ok(credentialEditorHTML(cred.kind('agentCli.cursor'), {agentCliCredentials: {cursor: {apiKeyConfigured: true}}}).includes('data-credential-catalog'), 'Cursor can fetch the models of its account');
 assert.equal(credentialCatalogKey([{id: 'a', name: 'a'}, {id: '', name: ''}]), credentialCatalogKey([{id: 'a'}]));
@@ -736,6 +744,7 @@ const code = require('node:fs').readFileSync('` + appBundlePath(t) + `', 'utf8')
 const opened = [], toggled = [], acted = [];
 const openCredentialWizard = key => opened.push(key), toggleCredentialRow = key => toggled.push(key);
 const credentialRowAction = act => acted.push(act), credentialCatalogKeydown = () => {};
+const credentialDialog = () => null;
 eval(code.slice(code.indexOf('function activateCredentialRow('), code.indexOf('// gotoCredential lands here')));
 const panel = {};
 bindCredentialPanel(panel);
@@ -784,7 +793,7 @@ global.escapeHTML = value => String(value);
 global.state = {
   currentUser: {id: 7}, projectFilter: 'alpha',
   mcpMarket: [{id: '61', aliases: ['gongfeng'], url: 'https://mcp-gateway.example.com/gongfeng'}],
-  data: {users: [{id: 7, gitTokenConfigured: true}], mcpServers: []}
+  data: {users: [{id: 7, gitHttpCredentialsConfigured: true}], mcpServers: []}
 };
 global.userById = id => state.data.users.find(u => Number(u.id) === Number(id));
 eval(code.slice(code.indexOf('const GENERIC_REQUIREMENT_CHECKS='), code.indexOf('function genericRequirementChips(')));

@@ -28,15 +28,15 @@ type providerSpec struct {
 }
 
 // defaultProviders lists the CLIs this runner drives in non-interactive
-// mode. Runner tasks can reuse Codex or Claude Code's login. CodeBuddy tasks
+// mode. Runner tasks can reuse Codex, Claude Code or Antigravity login. CodeBuddy tasks
 // receive the configured CODEBUDDY_API_KEY from the daemon. Additional
 // providers can be detected by name.
 var defaultProviders = []providerSpec{
 	{Kind: "claude-code", Binary: "claude", Update: "update"},
 	{Kind: "codex", Binary: "codex", Update: "update"},
 	{Kind: "codebuddy", Binary: "codebuddy", Update: "update"},
-	// Agent CLIs (domain.AgentCLIExecutorKinds) always run with the
-	// responsible user's key in a private HOME. cursor and agy have no npm
+	// Agent CLIs run in a private HOME. Antigravity can reuse account login;
+	// the others receive the responsible user's key. cursor and agy have no npm
 	// package and are found on PATH only.
 	{Kind: "opencode", Binary: "opencode", Update: "upgrade"},
 	{Kind: "cursor", Binary: "cursor-agent", Update: "update"},

@@ -1,13 +1,12 @@
 # Bundled model brand artwork
 
-Except for `pi.svg` and `qoder.svg`, these SVGs and the accompanying README.md and
-LICENSE.lobe-icons were originally copied from the Grasp repository,
-web/src/assets/provider-logos. `pi.svg` reuses the local π glyph from
-`web/images/credentials/pi.svg`; `qoder.svg` reuses the official Qoder CN brand
-mark (monochrome, background removed) from
-`web/images/credentials/qoder.svg`; README.md records these additions. The original Grasp
-MIT notice is retained as LICENSE.grasp. README.md records each artwork's own
-source and applicable license, including official brand artwork and Simple Icons.
+The original model SVGs, README.md, and LICENSE.lobe-icons came from the
+Grasp repository at `web/src/assets/provider-logos`. The original Grasp MIT
+notice remains in LICENSE.grasp. README.md identifies each asset's source,
+including the Pi, Antigravity, and Kimi Code product marks added separately.
+`qoder.svg` is the official Qoder CN brand mark (monochrome, background
+removed) extracted from the installed Qoder CN client, mirrored from
+`web/images/credentials/qoder.svg`.
 
 ModelProviderIcon.jsx adapts Grasp's visual brand matching and theme treatment.
 Its internal light animation is local presentation code. A visual brand match

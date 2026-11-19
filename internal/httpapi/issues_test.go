@@ -682,7 +682,7 @@ func TestRepositoryBindingIsValidatedAndFrozenAtDispatch(t *testing.T) {
 	project, _ := s.Project("platform")
 	project.DefaultRepositoryID = repo.ID
 	savedProject := requestJSON[domain.Project](t, h, http.MethodPut, "/api/projects", project, http.StatusOK)
-	if savedProject.GitToken != "" || savedProject.GitTokenConfigured {
+	if savedProject.GitToken != "" || savedProject.GitHubCredentialConfigured {
 		t.Fatalf("projects must not expose project-level credentials: %+v", savedProject)
 	}
 	issue := domain.Issue{ID: "iss-bound", ProjectID: "platform", Title: "Bound work", AssigneeType: "agent", AssigneeID: "developer", WorkflowID: "repo-flow", RepositoryID: repo.ID, BaseBranch: "release/1.0"}
@@ -2103,7 +2103,10 @@ func TestUserCredentialsAreStoredAndRedacted(t *testing.T) {
 		t.Fatal(err)
 	}
 	alice, _ := s.UserByLoginName("alice")
-	body, _ := json.Marshal(map[string]any{"gitToken": "user_git_secret", "codeBuddyApiKey": "ck_user_secret", "codeBuddyInternetEnvironment": "ioa"})
+	body, _ := json.Marshal(map[string]any{"codeBuddyApiKey": "ck_user_secret", "codeBuddyInternetEnvironment": "ioa"})
+	if err := s.SaveGitHTTPCredential(alice.ID, "", domain.GitHTTPCredentialSecret{GitHTTPCredential: domain.GitHTTPCredential{Name: "GitHub", Host: "github.com", Platform: domain.GitPlatformGitHub}, Token: "user_git_secret"}); err != nil {
+		t.Fatal(err)
+	}
 	req := httptest.NewRequest(http.MethodPut, fmt.Sprintf("/api/users/%d/credentials", alice.ID), bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	token, err := auth.NewClientFromEnv().SignUser(&auth.User{ID: alice.ID, LoginName: alice.LoginName, AuthTime: time.Now().UTC()})
@@ -2120,11 +2123,11 @@ func TestUserCredentialsAreStoredAndRedacted(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &public); err != nil {
 		t.Fatal(err)
 	}
-	if public.GitToken != "" || public.CodeBuddyAPIKey != "" || !public.GitTokenConfigured || !public.CodeBuddyAPIKeyConfigured {
+	if public.GitToken != "" || public.CodeBuddyAPIKey != "" || !public.GitHubCredentialConfigured || !public.CodeBuddyAPIKeyConfigured {
 		t.Fatalf("credential response must be redacted: %+v", public)
 	}
 	stored, ok := s.User(alice.ID)
-	if !ok || stored.GitToken != "user_git_secret" || stored.CodeBuddyAPIKey != "ck_user_secret" || stored.CodeBuddyInternetEnvironment != "ioa" {
+	if !ok || stored.GitToken != "" || stored.CodeBuddyAPIKey != "ck_user_secret" || stored.CodeBuddyInternetEnvironment != "ioa" {
 		t.Fatalf("store must keep user secrets, got %+v", stored)
 	}
 	boot := requestJSON[map[string]any](t, h, http.MethodGet, "/api/bootstrap", nil, http.StatusOK)

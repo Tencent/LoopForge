@@ -16,8 +16,10 @@ import (
 // a person asks from a failed conversation. Package names and installer URLs are fixed:
 // the request may choose an engine, never a URL or a package.
 const (
-	cursorInstallScript = "curl -fsSL --proto '=https' --tlsv1.2 https://cursor.com/install | bash"
-	agyInstallScript    = "curl -fsSL --proto '=https' --tlsv1.2 https://antigravity.google/cli/install.sh | bash"
+	cursorInstallerURL  = "https://cursor.com/install"
+	agyInstallerURL     = "https://antigravity.google/cli/install.sh"
+	cursorInstallScript = "curl -fsSL --proto '=https' --tlsv1.2 " + cursorInstallerURL + " | bash"
+	agyInstallScript    = "curl -fsSL --proto '=https' --tlsv1.2 " + agyInstallerURL + " | bash"
 )
 
 // DeepSeekHarnessVersion is the dsh release the Dockerfile bundles and an
@@ -43,7 +45,7 @@ func onDemandCLICatalog() map[string]onDemandCLI {
 	return map[string]onDemandCLI{
 		"codex":       {Engine: "codex", Binary: "codex", Package: "@openai/codex", Bundled: true},
 		"codebuddy":   {Engine: "codebuddy", Binary: "codebuddy", Package: "@tencent-ai/codebuddy-code", Bundled: true},
-		"claude-code": {Engine: "claude-code", Binary: "claude"},
+		"claude-code": {Engine: "claude-code", Binary: "claude", Package: "@anthropic-ai/claude-code"},
 		"opencode":    {Engine: "opencode", Binary: "opencode", Package: "opencode-ai"},
 		"cursor":      {Engine: "cursor", Binary: "cursor-agent", Script: cursorInstallScript},
 		"agy":         {Engine: "agy", Binary: "agy", Script: agyInstallScript},

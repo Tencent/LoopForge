@@ -81,6 +81,7 @@ func (h *usersHandlers) probeCLIModels(c *gin.Context) {
 	if req.BaseURL != nil {
 		baseURL = strings.TrimSpace(*req.BaseURL)
 	}
+	configuredBaseURL := baseURL
 	if req.Protocol != nil && runtime.IsAgentCLI(engine) {
 		protocol = runtime.AgentCLIProtocol(engine, *req.Protocol)
 	}
@@ -98,7 +99,7 @@ func (h *usersHandlers) probeCLIModels(c *gin.Context) {
 		defer cancel()
 		var models []domain.CLIModel
 		for _, id := range discoverCLIModels(ctx, environment, apiKey) {
-			if assistantValidEngineModel(id) {
+			if !codeBuddyIsDefaultModel(id) && assistantValidEngineModel(id) {
 				models = append(models, domain.CLIModel{ID: id})
 			}
 		}
@@ -110,7 +111,7 @@ func (h *usersHandlers) probeCLIModels(c *gin.Context) {
 		if apiKey == "" {
 			source = "builtin"
 		}
-		c.JSON(http.StatusOK, cliModelProbeResult{Models: models, Source: source})
+		c.JSON(http.StatusOK, cliModelProbeResult{Models: cliModelsWithEfforts(engine, models, ""), Source: source})
 		return
 	}
 	if engine == runtime.AgentCLICursor {
@@ -130,7 +131,7 @@ func (h *usersHandlers) probeCLIModels(c *gin.Context) {
 		}
 	}
 	if baseURL == "" && apiKey == "" {
-		c.JSON(http.StatusOK, cliModelProbeResult{Models: cliModelsOf(assistantEngineBuiltinModels(engine)), Source: "builtin"})
+		c.JSON(http.StatusOK, cliModelProbeResult{Models: cliModelsWithEfforts(engine, cliModelsOf(assistantEngineBuiltinModels(engine)), ""), Source: "builtin"})
 		return
 	}
 	if apiKey == "" {
@@ -176,7 +177,7 @@ func (h *usersHandlers) probeCLIModels(c *gin.Context) {
 		c.JSON(http.StatusOK, cliModelProbeResult{Error: "服务没有返回可用模型，可以手动添加模型"})
 		return
 	}
-	c.JSON(http.StatusOK, cliModelProbeResult{Models: cliModelsOf(models), Source: source})
+	c.JSON(http.StatusOK, cliModelProbeResult{Models: cliModelsWithEfforts(engine, cliModelsOf(models), configuredBaseURL), Source: source})
 }
 
 func discoverGeminiModels(ctx context.Context, key, baseURL string) ([]assistantDiscoveredModel, error) {
@@ -230,7 +231,7 @@ func (h *usersHandlers) probeCursorModels(c *gin.Context, apiKey string) {
 	defer cancel()
 	models, err := cursorAgentModels(ctx, apiKey)
 	if errors.Is(err, errAssistantCLIMissing) {
-		c.JSON(http.StatusOK, cliModelProbeResult{Models: cliModelsOf(assistantEngineBuiltinModels(runtime.AgentCLICursor)), Source: "builtin"})
+		c.JSON(http.StatusOK, cliModelProbeResult{Models: cliModelsWithEfforts(runtime.AgentCLICursor, cliModelsOf(assistantEngineBuiltinModels(runtime.AgentCLICursor)), ""), Source: "builtin"})
 		return
 	}
 	if err != nil {
@@ -241,7 +242,7 @@ func (h *usersHandlers) probeCursorModels(c *gin.Context, apiKey string) {
 		c.JSON(http.StatusOK, cliModelProbeResult{Error: "Cursor CLI 没有返回可用模型，可以手动添加模型"})
 		return
 	}
-	c.JSON(http.StatusOK, cliModelProbeResult{Models: models, Source: "official"})
+	c.JSON(http.StatusOK, cliModelProbeResult{Models: cliModelsWithEfforts(runtime.AgentCLICursor, models, ""), Source: "official"})
 }
 
 var cursorModelLine = regexp.MustCompile(`^([A-Za-z0-9][A-Za-z0-9._-]*) - (.+)$`)
@@ -300,7 +301,25 @@ func parseCursorModels(output string) []domain.CLIModel {
 func cliModelsOf(models []assistantDiscoveredModel) []domain.CLIModel {
 	out := make([]domain.CLIModel, 0, len(models))
 	for _, model := range models {
-		out = append(out, domain.CLIModel{ID: model.ID, Name: model.Name, Efforts: model.Efforts, DefaultEffort: model.DefaultEffort})
+		out = append(out, domain.CLIModel{
+			ID: model.ID, Name: model.Name, Efforts: model.Efforts, DefaultEffort: model.DefaultEffort,
+			ReasoningEfforts: model.ReasoningEfforts, DiscoveredReasoningEfforts: model.DiscoveredReasoningEfforts,
+		})
 	}
 	return out
+}
+
+// Standard model listings often contain only IDs. Supply the CLI's catalog
+// levels when the endpoint omits them, and constrain advertised metadata to
+// levels this CLI can actually pass to its provider.
+func cliModelsWithEfforts(engine string, models []domain.CLIModel, baseURL string) []domain.CLIModel {
+	for i := range models {
+		id := models[i].ID
+		if engine != assistantEngineCodeBuddy {
+			id = engine + ":" + id
+		}
+		levels := append([]string{}, assistantModelEffortsForBaseURL(id, models, baseURL)...)
+		models[i].DiscoveredReasoningEfforts = &levels
+	}
+	return models
 }

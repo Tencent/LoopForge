@@ -182,8 +182,8 @@ func TestRunnerCredentialArtifactAndRepositoryHelpers(t *testing.T) {
 		t.Fatalf("artifacts=%v", artifacts)
 	}
 	contexts := invocationRepositoryContexts(inv)
-	if len(contexts) != 1 || contexts[0].WorkspaceDir != "repo" || invocationGitToken(inv) != "token" {
-		t.Fatalf("contexts=%+v token=%q", contexts, invocationGitToken(inv))
+	if len(contexts) != 1 || contexts[0].WorkspaceDir != "repo" || len(invocationGitCredentials(inv).GitHTTPCredentials) != 0 {
+		t.Fatalf("contexts=%+v credentials=%v", contexts, invocationGitCredentials(inv).GitHTTPCredentials)
 	}
 	legacy := &domain.RunnerInvocation{Repository: &domain.RunnerRepository{RepositoryID: "legacy", Dir: "."}}
 	if len(invocationRepositoryContexts(legacy)) != 1 {

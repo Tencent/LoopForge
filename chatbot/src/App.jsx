@@ -342,15 +342,19 @@ export default function App() {
     [repositorySelections, setRepositorySelections] = useState({}),
     [uploading, setUploading] = useState(false),
     [runsRefresh, setRunsRefresh] = useState(0),
-    [approval, setApprovalState] = useState(storedApprovalMode),
+    [approvalSelection, setApprovalSelection] = useState(null),
     [quickAccessOpen, setQuickAccessOpen] = useState(
       () => new URLSearchParams(location.search).get("quickAccess") === "1",
     ),
     [theme, setTheme] = useState(() => readThemePreference(localStorage)),
     [environmentVisibility, setEnvironmentVisibility] = useState(() => readJSON(environmentVisibilityKey, {}));
+  const approvalUserId = realChat.user?.isGuest ? null : realChat.user?.id ?? null;
+  const approval = approvalSelection?.userId === approvalUserId
+    ? approvalSelection.value
+    : storedApprovalMode(approvalUserId);
   function setApproval(value) {
-    setApprovalState(value);
-    rememberApprovalMode(value);
+    setApprovalSelection({ userId: approvalUserId, value });
+    rememberApprovalMode(approvalUserId, value);
   }
   const environmentPreferenceOwner = String(chat.user?.id || "guest");
   const showEnvironmentPicker = environmentVisibility[environmentPreferenceOwner] === true;
@@ -460,7 +464,7 @@ export default function App() {
     chat.projects.find((p) => p.id === chat.projectId)?.name ||
     (chat.projectId && (chat.session?.projectName || chat.projectId)) ||
     "个人对话";
-  const selectedModel = chat.models.find((m) => m.id === chat.model);
+  const selectedModel = chat.models.find((m) => m.id === chat.model) || (!chat.local ? chat.modelDetails : null);
   const modelLabel =
     selectedModel?.name?.replace(/^Claude-/, "").replace(/^GPT-/, "") || "模型";
   // The CLI switch is only for a conversation that has not started. A reply

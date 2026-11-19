@@ -130,6 +130,14 @@ func (r Runner) SupportsGitSSH() bool {
 	return versionAtLeast(r.RunnerVersion, RunnerVersionGitSSH)
 }
 
+// RunnerVersionGitHTTP is the first runner whose workspace helper answers
+// Git credential and gh/glab requests through the session gateway.
+const RunnerVersionGitHTTP = "0.11.0"
+
+func (r Runner) SupportsGitHTTP() bool {
+	return versionAtLeast(r.RunnerVersion, RunnerVersionGitHTTP)
+}
+
 func (r Runner) SupportsSharedPush() bool {
 	return versionAtLeast(r.RunnerVersion, RunnerVersionSharedPush)
 }
@@ -277,11 +285,10 @@ func (r Runner) SupportsProvider(provider string) bool {
 }
 
 // RuntimeAuthMode returns the configured credential source for a provider.
-// CodeBuddy and the extra agent CLIs have no reusable local-login flow, so
-// they always use the responsible user's personal credential. Codex and
-// Claude Code default to local login.
+// CLIs with reusable account authentication default to local login. Other
+// CLIs always use the responsible user's personal credential.
 func (r Runner) RuntimeAuthMode(provider string) string {
-	if IsAgentCLIKind(provider) {
+	if IsAgentCLIKind(provider) && !SupportsRunnerLogin(provider) {
 		return RuntimeAuthPersonal
 	}
 	provider = strings.TrimSpace(provider)
@@ -300,6 +307,15 @@ func (r Runner) RuntimeAuthMode(provider string) string {
 		return RuntimeAuthPersonal
 	}
 	return RuntimeAuthLocal
+}
+
+func SupportsRunnerLogin(provider string) bool {
+	switch strings.ToLower(strings.TrimSpace(provider)) {
+	case "codex", "claude-code", "agy":
+		return true
+	default:
+		return false
+	}
 }
 
 const (
@@ -399,9 +415,10 @@ type RunnerTask struct {
 // RunnerSandboxRequirements freezes the union needed by every run node, so
 // interactive terminals and script/agent tasks use the same sandbox identity.
 type RunnerSandboxRequirements struct {
-	CLIStates   []RunnerCLIStateRequirement `json:"cliStates,omitempty"`
-	PrivateHome bool                        `json:"privateHome,omitempty"`
-	BunFS       bool                        `json:"bunFS,omitempty"`
+	CLIStates        []RunnerCLIStateRequirement `json:"cliStates,omitempty"`
+	PrivateHome      bool                        `json:"privateHome,omitempty"`
+	BunFS            bool                        `json:"bunFS,omitempty"`
+	RunnerLoginRelay bool                        `json:"runnerLoginRelay,omitempty"`
 }
 type RunnerCLIStateRequirement struct {
 	Directory string   `json:"directory"`
@@ -439,6 +456,8 @@ func PublicRunnerTask(task RunnerTask) RunnerTask {
 	copyInvocation.AgentCLIModels = nil
 	copyInvocation.GitSSHUserID = 0
 	copyInvocation.GitSSHKeys = nil
+	copyInvocation.GitHTTPUserID = 0
+	copyInvocation.GitHTTPCredentials = nil
 	if copyInvocation.Repository != nil {
 		copyRepository := publicRunnerRepository(*copyInvocation.Repository)
 		copyInvocation.Repository = &copyRepository
@@ -524,6 +543,13 @@ type RunnerInvocation struct {
 	// authenticated claim or on the outbound workspace control connection.
 	GitSSHUserID int64             `json:"gitSshUserId,omitempty"`
 	GitSSHKeys   map[string]string `json:"gitSshKeys,omitempty"` // clone URL to private key
+	// Only the responsible user id is queued; HTTPS secrets are hydrated on
+	// authenticated claim/control dispatch and never persisted in the task.
+	GitHTTPUserID      int64                                 `json:"gitHttpUserId,omitempty"`
+	GitHTTPCredentials map[string]GitHTTPExecutionCredential `json:"gitHttpCredentials,omitempty"`
+	// The first SOP Agent may recover a failed automatic checkout. The runner
+	// validates the frozen repository and branch before reporting success.
+	RepositoryPreparationFallback bool `json:"repositoryPreparationFallback,omitempty"`
 	// Repositories lists every repository the run touches (multi-repository
 	// support). Each entry checks out into its Dir under the task workspace.
 	Repositories []RunnerRepository `json:"repositories,omitempty"`

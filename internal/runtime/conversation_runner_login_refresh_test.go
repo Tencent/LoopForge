@@ -9,18 +9,17 @@ import (
 	"time"
 )
 
-// A CLI that refreshes its rotating OAuth token inside the isolated home must
-// not leave the Runner account with an invalidated refresh token: the cleanup
-// writes the refreshed login back unless the host changed meanwhile or the
-// refreshed file is a different account.
-func TestRunnerLoginWritesBackRefreshedToken(t *testing.T) {
-	const original = `{"auth_mode":"chatgpt","tokens":{"account_id":"acct-1","refresh_token":"r1"},"last_refresh":"2026-11-01"}`
-	const refreshed = `{"auth_mode":"chatgpt","tokens":{"account_id":"acct-1","refresh_token":"r2"},"last_refresh":"2026-11-17"}`
+// Sandbox file edits are not trusted issuer responses, even if an account ID
+// matches. Managed renewal is exercised through the host manager separately.
+func TestRunnerLoginRejectsSandboxTokenEdits(t *testing.T) {
+	const original = `{"auth_mode":"chatgpt","tokens":{"account_id":"acct-1","access_token":"fake-access","refresh_token":"r1"},"last_refresh":"2026-11-01"}`
+	const refreshed = `{"auth_mode":"chatgpt","tokens":{"account_id":"acct-1","access_token":"fake-access","refresh_token":"r2"},"last_refresh":"2026-11-17"}`
 	setup := func(t *testing.T) (conversationLoginSpec, string, string, func() error) {
 		t.Helper()
 		login, _ := runnerLoginSpec("codex")
 		host := t.TempDir()
 		t.Setenv(login.configEnv, host)
+		t.Setenv("AGENTFLOW_RUNNER_AUTH_DIR", t.TempDir())
 		if err := os.WriteFile(filepath.Join(host, login.file), []byte(original), 0o600); err != nil {
 			t.Fatal(err)
 		}
@@ -48,8 +47,8 @@ func TestRunnerLoginWritesBackRefreshedToken(t *testing.T) {
 		if err := cleanup(); err != nil {
 			t.Fatal(err)
 		}
-		if got := read(t, filepath.Join(host, login.file)); got != refreshed {
-			t.Fatalf("host login = %s, want the refreshed one", got)
+		if got := read(t, filepath.Join(host, login.file)); got != original {
+			t.Fatal("sandbox-edited token reached the host")
 		}
 		if info, _ := os.Stat(filepath.Join(host, login.file)); info.Mode().Perm() != 0o600 {
 			t.Fatalf("host login mode = %v", info.Mode().Perm())
@@ -75,7 +74,7 @@ func TestRunnerLoginWritesBackRefreshedToken(t *testing.T) {
 	})
 	t.Run("host refreshed first", func(t *testing.T) {
 		login, host, copy, cleanup := setup(t)
-		const hostRefresh = `{"auth_mode":"chatgpt","tokens":{"account_id":"acct-1","refresh_token":"host"},"last_refresh":"2026-11-17"}`
+		const hostRefresh = `{"auth_mode":"chatgpt","tokens":{"account_id":"acct-1","access_token":"fake-access","refresh_token":"host"},"last_refresh":"2026-11-17"}`
 		if err := os.WriteFile(filepath.Join(host, login.file), []byte(hostRefresh), 0o600); err != nil {
 			t.Fatal(err)
 		}
@@ -122,15 +121,15 @@ func TestRunnerLoginWritesBackRefreshedToken(t *testing.T) {
 	})
 }
 
-// The conversation process pool (the Runner's path) keeps a login the CLI
-// refreshed while it ran.
-func TestConversationRunnerLoginKeepsRefreshThroughProcessPool(t *testing.T) {
+// The conversation process pool must not promote arbitrary file replacements.
+func TestConversationRunnerLoginRejectsEditsThroughProcessPool(t *testing.T) {
 	login, _ := runnerLoginSpec("codex")
 	host := t.TempDir()
 	t.Setenv(login.configEnv, host)
+	t.Setenv("AGENTFLOW_RUNNER_AUTH_DIR", t.TempDir())
 	t.Setenv("OPENAI_API_KEY", "")
-	const original = `{"auth_mode":"chatgpt","tokens":{"account_id":"acct-1","refresh_token":"r1"}}`
-	const refreshed = `{"auth_mode":"chatgpt","tokens":{"account_id":"acct-1","refresh_token":"r2"}}`
+	const original = `{"auth_mode":"chatgpt","tokens":{"account_id":"acct-1","access_token":"fake-access","refresh_token":"r1"}}`
+	const refreshed = `{"auth_mode":"chatgpt","tokens":{"account_id":"acct-1","access_token":"fake-access","refresh_token":"r2"}}`
 	if err := os.WriteFile(filepath.Join(host, login.file), []byte(original), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -157,7 +156,7 @@ func TestConversationRunnerLoginKeepsRefreshThroughProcessPool(t *testing.T) {
 		t.Fatalf("isolated copy was not removed: %v", err)
 	}
 	data, err := os.ReadFile(filepath.Join(host, login.file))
-	if err != nil || string(data) != refreshed {
-		t.Fatalf("host login = %s, %v; want the refreshed login", data, err)
+	if err != nil || string(data) != original {
+		t.Fatal("sandbox file edit replaced the host login")
 	}
 }
