@@ -1,6 +1,7 @@
 package domain
 
 import (
+	neturl "net/url"
 	"regexp"
 	"sort"
 	"strconv"
@@ -21,6 +22,79 @@ func IsGitHubPRURL(text string) bool {
 	return githubPRLink.MatchString(strings.TrimSpace(text))
 }
 
+// MR project keys of PRs/MRs on hosts other than github.com and the managed
+// Gongfeng host: "ghe:<host>/<owner>/<repo>" and "gitlab:<host>/<path>".
+const (
+	MRProjectGHE    = "ghe:"
+	MRProjectGitLab = "gitlab:"
+)
+
+var (
+	externalMRHost   = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+(:[1-9][0-9]{0,4})?$`)
+	externalPRPath   = regexp.MustCompile(`^/([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)/pull/([1-9][0-9]*)/?$`)
+	externalMRPath   = regexp.MustCompile(`^/((?:[A-Za-z0-9_.-]+/)+[A-Za-z0-9_.-]+)/-/merge_requests/([1-9][0-9]*)/?$`)
+	externalPathPart = regexp.MustCompile(`^[A-Za-z0-9_.-]+$`)
+)
+
+// ExternalMRProject splits a ghe: or gitlab: MR project key into its
+// platform, host and repository path.
+func ExternalMRProject(project string) (platform, host, path string, ok bool) {
+	rest := ""
+	switch {
+	case strings.HasPrefix(project, MRProjectGHE):
+		platform, rest = GitPlatformGitHub, strings.TrimPrefix(project, MRProjectGHE)
+	case strings.HasPrefix(project, MRProjectGitLab):
+		platform, rest = GitPlatformGitLab, strings.TrimPrefix(project, MRProjectGitLab)
+	default:
+		return "", "", "", false
+	}
+	host, path, found := strings.Cut(rest, "/")
+	if !found || !externalMRHost.MatchString(host) || host == "github.com" {
+		return "", "", "", false
+	}
+	parts := strings.Split(path, "/")
+	if len(parts) < 2 || (platform == GitPlatformGitHub && len(parts) != 2) {
+		return "", "", "", false
+	}
+	for _, part := range parts {
+		if !externalPathPart.MatchString(part) || part == "." || part == ".." {
+			return "", "", "", false
+		}
+	}
+	return platform, host, path, true
+}
+
+// ParseDeliveryMRURL reads one stored PR/MR link: a github.com PR or managed
+// Gongfeng MR as ParseGongfengMR does, a GitHub Enterprise PR
+// (https://host/owner/repo/pull/N) or a GitLab MR
+// (https://host/group/repo/-/merge_requests/N). Unlike ParseGongfengMRs it
+// does not search free text, so a link merely quoted in an artifact never
+// names an MR on another host.
+func ParseDeliveryMRURL(text string) (project string, iid int, url string, ok bool) {
+	if ref, number, isForge := ParseForgePullURL(text); isForge {
+		return ref.Project(), number, ref.PullURL(number), true
+	}
+	if project, iid, url, ok = ParseGongfengMR(text); ok {
+		return project, iid, url, true
+	}
+	u, err := neturl.Parse(strings.TrimSpace(text))
+	if err != nil || u.Scheme != "https" || u.User != nil || u.RawPath != "" {
+		return "", 0, "", false
+	}
+	host := strings.TrimSuffix(strings.ToLower(u.Host), ":443")
+	if match := externalPRPath.FindStringSubmatch(u.Path); match != nil {
+		project = MRProjectGHE + host + "/" + match[1]
+		iid, _ = strconv.Atoi(match[2])
+	} else if match := externalMRPath.FindStringSubmatch(u.Path); match != nil {
+		project = MRProjectGitLab + host + "/" + match[1]
+		iid, _ = strconv.Atoi(match[2])
+	}
+	if _, _, _, valid := ExternalMRProject(project); !valid || iid <= 0 {
+		return "", 0, "", false
+	}
+	return project, iid, GongfengMRURL(project, iid), true
+}
+
 // GongfengMRRef is one merge request URL extracted from free text.
 type GongfengMRRef struct {
 	Project string
@@ -35,15 +109,6 @@ func ParseGongfengMR(text string) (project string, iid int, url string, ok bool)
 		return "", 0, "", false
 	}
 	return refs[0].Project, refs[0].IID, refs[0].URL, true
-}
-
-// ParseDeliveryMRURL also reads Forgejo URLs recorded by the delivery flow.
-// Leave free-text artifact parsing to the known legacy host parsers.
-func ParseDeliveryMRURL(raw string) (project string, number int, canonical string, ok bool) {
-	if r, n, isForge := ParseForgePullURL(raw); isForge {
-		return r.Project(), n, r.PullURL(n), true
-	}
-	return ParseGongfengMR(raw)
 }
 
 // ParseGongfengMRs extracts unique Gongfeng merge request URLs in appearance order.

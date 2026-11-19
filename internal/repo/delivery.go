@@ -18,6 +18,9 @@ func (r mrDeliveryStateRow) toDomain() domain.MRDeliveryState {
 		MRProject: r.MRProject, MRIID: r.MRIID, MRURL: r.MRURL, State: r.State,
 		TargetBranch: r.TargetBranch, IssueID: r.IssueID, ForgeUserID: r.ForgeUserID,
 	}
+	if r.RegisteredBy != nil {
+		item.RegisteredBy = *r.RegisteredBy
+	}
 	if r.MergedAt != nil {
 		item.MergedAt = r.MergedAt.UTC()
 	}
@@ -100,6 +103,17 @@ func (r *DeliveryRepo) ensureMRDeliveryState(project string, iid int, url, issue
 		}
 		return upsert(tx, "mr_delivery_states", mrDeliveryRowValues(existing, now))
 	})
+}
+
+// SetMRDeliveryRegisteredBy records who registered an MR the first time; a
+// later registration by someone else keeps the original user.
+func (r *DeliveryRepo) SetMRDeliveryRegisteredBy(project string, iid int, userID int64) error {
+	if project == "" || iid <= 0 || userID <= 0 {
+		return nil
+	}
+	return r.DB.Table("mr_delivery_states").
+		Where("mr_project = ? AND mr_iid = ? AND registered_by IS NULL", project, iid).
+		Update("registered_by", userID).Error
 }
 
 func (r *DeliveryRepo) UpdateMRDeliveryState(project string, iid int, state string, targetBranch string, mergedAt, checkedAt time.Time) error {
@@ -519,7 +533,7 @@ func (r *DeliveryRepo) promoteIntegratedIssues(project string, promoteAt time.Ti
 			if !strings.EqualFold(mr.State, "integrated") {
 				continue
 			}
-			proj, _, _, ok := domain.ParseGongfengMR(mr.URL)
+			proj, _, _, ok := domain.ParseDeliveryMRURL(mr.URL)
 			if !ok || !strings.EqualFold(strings.TrimSpace(proj), project) {
 				continue
 			}

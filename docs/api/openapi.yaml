@@ -661,7 +661,8 @@ paths:
     put:
       tags: [Users]
       operationId: updateOwnCredentials
-      summary: Update credentials for the current authenticated user
+      summary: Update model credentials for the current authenticated user
+      description: Git access tokens are managed through /api/users/{id}/git-http-credentials.
       parameters:
         - name: id
           in: path
@@ -674,8 +675,6 @@ paths:
             schema:
               type: object
               properties:
-                gitToken: {type: string, writeOnly: true}
-                gitTokenClear: {type: boolean}
                 codeBuddyApiKey: {type: string, writeOnly: true}
                 codeBuddyApiKeyClear: {type: boolean}
                 codeBuddyInternetEnvironment: {type: string, description: "Edition that issued the CodeBuddy key: empty for International, \"internal\" for China, \"ioa\" for iOA (\"public\" and \"China\" are also accepted). Any other value is rejected with 400."}
@@ -4361,7 +4360,7 @@ components:
         deptId: {type: integer}
         deptName: {type: string}
         avatarUrl: {type: string}
-        gitTokenConfigured: {type: boolean, readOnly: true}
+        gitHubCredentialConfigured: {type: boolean, readOnly: true}
         forgeTokenConfigured: {type: boolean, readOnly: true}
         codeBuddyApiKeyConfigured: {type: boolean, readOnly: true}
         codexApiKeyConfigured: {type: boolean, readOnly: true}
@@ -4402,7 +4401,7 @@ components:
           type: string
         provider:
           type: string
-          description: Hosting provider, including github, forgejo and ssh
+          description: "Inferred from the repository URL: github, gongfeng, https, ssh, or explicitly selected forgejo. Unknown HTTPS hosts use Git transport without a hosting API adapter."
           example: github
         name:
           type: string
@@ -4417,12 +4416,6 @@ components:
           type: string
         localPath:
           type: string
-        gitToken:
-          type: string
-          writeOnly: true
-        gitTokenConfigured:
-          type: boolean
-          readOnly: true
         pipelineProjectId:
           type: integer
         pipelineDefId:

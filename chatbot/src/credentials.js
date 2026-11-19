@@ -8,6 +8,7 @@ export const CREDENTIALS = {
   gitToken: "GitHub Git Token",
   gitSshKey: "Git SSH 密钥",
   forgeToken: "Forgejo 访问令牌",
+  gitHttpCredentials: "Git 访问令牌",
 };
 
 // A CodeBuddy key only works on the edition that issued it, and the CLI
@@ -98,6 +99,13 @@ export const CREDENTIAL_GUIDES = {
     steps: [
       "在 Forgejo「设置 → 应用」为当前实例生成有 read:user 和 write:repository 权限的访问令牌",
       "到 LoopForge「个人配置 → Forgejo」为该实例保存令牌，然后重试",
+    ],
+  },
+  gitHttpCredentials: {
+    steps: [
+      "在代码托管平台创建仓库级、最小权限的个人访问令牌",
+      "到「个人配置 → Git 访问令牌」为该 HTTPS 主机添加令牌，并开启「提供给工作区」",
+      "回到这里重试",
     ],
   },
   gitToken: {

@@ -20,6 +20,7 @@ export function queuedMessage({
   attachments = [],
   references = [],
   approvalMode = "confirm",
+  approvalUserId,
 }) {
   return {
     id: localId("queued"),
@@ -27,7 +28,16 @@ export function queuedMessage({
     attachments,
     references,
     approvalMode,
+    approvalUserId,
     queuedAt: new Date().toISOString(),
+  };
+}
+
+export function queuedApproval({ approvalMode, approvalUserId }, userId) {
+  return {
+    // Queues saved before account binding require confirmation when resumed.
+    approvalMode: approvalUserId ? approvalMode || "confirm" : "confirm",
+    approvalUserId: approvalUserId ?? userId,
   };
 }
 

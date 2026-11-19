@@ -7,7 +7,6 @@
 
 <p align="center">
   <a href="https://github.com/Tencent/LoopForge/actions/workflows/platform.yml"><img src="https://img.shields.io/github/actions/workflow/status/Tencent/LoopForge/platform.yml?branch=main&label=CI&style=flat-square" alt="CI"></a>
-  <a href="https://www.npmjs.com/package/loopforge-cli"><img src="https://img.shields.io/npm/v/loopforge-cli?label=loopforge-cli&color=7b61ff&style=flat-square" alt="npm loopforge-cli"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-7b61ff?style=flat-square" alt="MIT License"></a>
   <img src="https://img.shields.io/badge/self--hosted-Docker-526ce8?style=flat-square&logo=docker&logoColor=white" alt="Self-hosted with Docker">
   <a href="https://github.com/Tencent/LoopForge/stargazers"><img src="https://img.shields.io/github/stars/Tencent/LoopForge?style=flat-square&color=f59e0b" alt="GitHub stars"></a>
@@ -26,7 +25,7 @@
   <a href="#quick-start">Quick start</a> ·
   <a href="#how-sops-work">SOPs</a> ·
   <a href="#features">Features</a> ·
-  <a href="#loopforge-local">Local</a> ·
+  <a href="#loopforge-local">Local (Legacy)</a> ·
   <a href="#faq">FAQ</a> ·
   <a href="#documentation">Docs</a>
 </p>
@@ -65,7 +64,7 @@ Ask a coding agent to "fix this bug" and the result depends on that run. It migh
 
 - **Repeatable.** Same SOP, same stages, same checks for every requirement. Start from built-in backend, frontend, bug-fix and product SOPs.
 - **Separated roles.** Planning, implementation, review and testing each get their own prompt, executor, model, rules, Skills and MCP tools. A role works as an SOP node or as a subagent in chat.
-- **Human in the loop.** Approval gates where they matter. Read the report, approve, or send the work back to a chosen step.
+- **Human on the loop.** Agents run on their own while you supervise. Pause, steer or take over anytime, and approval gates stop the run where a human must decide: approve, or send the work back to a chosen step.
 - **Observable and resumable.** Node status, tool traces, logs and artifacts in one place. Pause, retry a failed step, or rerun from any node.
 - **Your stack, your servers.** Ten coding-agent CLIs as executors, from CodeBuddy, Codex and Claude Code to OpenCode, Cursor CLI and more. GitHub, Skills and MCP as tools. Docker sandboxes or your own machine as the runtime.
 
@@ -121,10 +120,11 @@ New accounts join the **LoopForge demo project**, which includes an SOP made onl
   | **Claude Code** | Personal key; a connected execution machine can use its local login | Installed from npm on first use, then cached |
   | **OpenCode · Kimi Code · Pi** | Personal key only | Installed from npm on first use, then cached |
   | **DeepSeek Harness** | Personal key only | In the Docker image |
-  | **Cursor CLI · Antigravity** | Personal key only | Provider installer on first chat use; not installed into SOP sandboxes |
+  | **Cursor CLI** | Personal key only | Provider installer on first chat use; not installed into SOP sandboxes |
+  | **Antigravity** | Personal key, or the connected execution machine owner's existing account login | Install the official CLI on the execution machine and in Docker images used for SOP runs |
   | **ZCode** | Personal key only | Not bundled; install it on the service or execution machine PATH |
 
-  The seven agent CLIs after Claude Code keep their model and MCP configuration in a private home directory per run, so they always use the responsible user's own key and Base URL from personal settings, even on a connected execution machine. When rolling them out to a team, each member configures their own credentials. First-use installs need npm or provider access; [native deployments](docs/deployment.md#workers-and-runners) need the CLI for the executor you choose.
+  The seven agent CLIs after Claude Code keep their model and MCP configuration in a private home directory per run. Antigravity can reuse the execution machine owner's account login in conversation workspaces and native or Docker SOP sandboxes. Its official CLI refreshes the credential copy, and the Runner saves the refreshed login back to its original local store. Gemini API keys use separate API billing. The other agent CLIs use the responsible user's own key and Base URL from personal settings, including on a connected execution machine. First-use installs need npm or provider access; [native deployments](docs/deployment.md#workers-and-runners) need the CLI for the executor you choose.
 - **GitHub is optional.** All built-in generic SOPs run without a repository: product SOPs deliver documents, and new frontend/backend projects deliver source files in the task workspace. Bug fixes still need source code and reproduction details. Connect a repository when you work on existing code or want PRs.
 - **Delivering to a repository.** Choose **Connect GitHub** in personal settings, approve the device code on GitHub and pick your repository (the LoopForge OAuth App is built in; no PAT required, manual PAT entry still works). Set executor credentials (or bind a local execution machine), then either run a project SOP or ask Main Bot to change the code and submit a PR/MR.
 - **Sandboxes.** In the default Compose installation, SOP runs and conversation workspaces both use Docker sandbox containers started through the host Docker socket. Default sandboxes reuse the installed runtime image, so nothing extra is built after installation; custom Dockerfiles still build their own images. Docker socket access grants control of the host daemon, so this setup is for trusted teams, not untrusted multi-tenant isolation. See [deployment boundaries](docs/deployment.md#accounts). Re-running the installer keeps your data.
@@ -192,25 +192,11 @@ Each node declares its artifacts and dependencies, and the engine starts each st
 
 ## LoopForge Local
 
-Don't want to run a server? **LoopForge Local** brings the built-in delivery workflows straight into the coding assistant you already use:
+> **Legacy.** Previously published versions of LoopForge Local (`loopforge-cli`) remain available. The [Local guide](docs/local/usage.md) covers installing a fixed version and keeping existing workflows and artifacts.
 
-```bash
-# Run inside your target project, e.g. for Claude Code
-npx -y loopforge-cli@latest install claude
-```
+To use platform projects and SOPs from a coding assistant, [connect CodeBuddy to your LoopForge instance over MCP](docs/local/usage.md#connect-to-loopforge-with-mcp). Local continues to run its built-in workflows inside the coding assistant without a LoopForge server.
 
-Then run `/start-devflow "<your request>"` in Claude Code.
-
-| Host | Supported |
-| --- | --- |
-| Claude Code · CodeBuddy · Codex · Cursor | Classic (default) and Portable editions |
-| Pi | Portable edition |
-| DeepSeek Harness | Portable edition |
-| Hermes Agent | Portable edition |
-
-See the [local guide](docs/local/usage.md) for each host's entry point and [editions](docs/local/editions.md) for the differences. Source lives in [`local/`](local/). Local runs the built-in workflows today; exporting a platform SOP for standalone local execution is planned.
-
-| | Platform | Local |
+| | Platform | Local (Legacy) |
 | --- | --- | --- |
 | Best for | Teams sharing chat workspaces, SOPs, approvals and history | One developer inside an IDE or CLI |
 | Needs | Docker + Python 3 | Node.js 20+, Python 3.8+ and a coding assistant |
@@ -243,7 +229,7 @@ New installations listen on all interfaces and target a trusted team. Read the [
 | --- | --- |
 | Deploy, manage accounts, connect execution machines | [Deployment](docs/deployment.md) |
 | Understand chat workspaces, scheduled AI tasks and token pricing | [Conversation workspaces](docs/conversation-workspaces.md) · [AI scheduled tasks](docs/ai-scheduled-task-capabilities.md) · [Token pricing](docs/token-pricing.md) |
-| Install local workflows or choose an edition | [LoopForge Local](docs/local/usage.md) · [Editions](docs/local/editions.md) |
+| Maintain an existing Local installation | [LoopForge Local](docs/local/usage.md) · [Editions](docs/local/editions.md) |
 | Extend the platform or use the HTTP / MCP API | [Architecture](docs/architecture.md) · [API reference](docs/api/README.md) · [Shared schedules API](docs/api/shared-schedules.md) |
 | Contribute to the UI | [Frontend design conventions](design.md) (Chinese) |
 | Check functional coverage and release readiness | [Validation record](docs/validation.md) · [Acceptance matrix](docs/testing/acceptance-matrix.md) · [Release review](docs/release-readiness.md) |

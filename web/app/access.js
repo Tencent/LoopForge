@@ -42,6 +42,7 @@ function gotoCredential(name,sshRemote){
   if(!CREDENTIAL_FIELDS[name]){switchView('settings');return}
   if(name==='gitSshKey')return openGitSSHKeys(sshRemote);
   if(name==='forgeToken')return openForgeTokens();
+  if(name==='gitHttpCredentials')return openGitHTTPCredentials();
   switchView('settings');
   const requestedRoute=settingsRouteTransition;
   const focusAfter=performance.now()+150;
@@ -66,7 +67,7 @@ function gotoCredential(name,sshRemote){
 }
 // Personal credential fields and the errors they cause. Keep the rules in
 // sync with chatbot/src/credentials.js.
-const CREDENTIAL_FIELDS={codeBuddyApiKey:'CodeBuddy API Key',codexApiKey:'Codex API Key',claudeCodeApiKey:'Claude Code API Key',gitToken:'GitHub Git Token',gitSshKey:'Git SSH 密钥',forgeToken:'Forgejo 访问令牌'};
+const CREDENTIAL_FIELDS={codeBuddyApiKey:'CodeBuddy API Key',codexApiKey:'Codex API Key',claudeCodeApiKey:'Claude Code API Key',gitToken:'GitHub Git Token',gitSshKey:'Git SSH 密钥',gitHttpCredentials:'Git 访问令牌',forgeToken:'Forgejo 访问令牌'};
 const CREDENTIAL_RULES=[
   ['codexApiKey',/Codex[^。\n]{0,16}API Key/i],
   ['claudeCodeApiKey',/Claude Code[^。\n]{0,16}API Key/i],

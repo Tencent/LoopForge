@@ -13,6 +13,9 @@ type MRDeliveryState struct {
 	TargetBranch string `json:"targetBranch,omitempty"`
 	IssueID      string `json:"issueId,omitempty"`
 	ForgeUserID  int64  `json:"-"`
+	// RegisteredBy is the user whose workspace turn registered the MR; their
+	// Git credential for the MR's host is used to poll it.
+	RegisteredBy int64 `json:"-"`
 	// MergedAt is Gongfeng's merged_at/resolved_at, never the poll/update time.
 	MergedAt  time.Time `json:"mergedAt,omitempty"`
 	CheckedAt time.Time `json:"checkedAt,omitempty"`

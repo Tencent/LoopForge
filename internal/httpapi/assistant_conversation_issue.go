@@ -156,6 +156,9 @@ func (h *agentToolGateway) recordConversationMRs(issueID string, delivered []del
 		} else if err := h.repo.EnsureMRDeliveryState(project, iid, url, issueID); err != nil {
 			return err
 		}
+		if err := h.repo.SetMRDeliveryRegisteredBy(project, iid, r.RegisteredBy); err != nil {
+			return err
+		}
 		mrs = append(mrs, mr)
 	}
 	if len(mrs) == 0 {

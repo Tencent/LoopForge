@@ -46,6 +46,8 @@ type AssistantSteer struct {
 	ActorName    string                `json:"actorName,omitempty"`
 	// Trigger marks the follow-up message; empty means the user steered.
 	Trigger string `json:"trigger,omitempty"`
+	// TriggerID identifies the accepted steer in the saved transcript.
+	TriggerID string `json:"triggerId,omitempty"`
 }
 
 // A bounded projection survives eviction of old token events and reconnects.

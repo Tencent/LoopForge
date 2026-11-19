@@ -70,6 +70,7 @@ const ctx = {
     json: async () => ({
       default: 'model-b',
       models: [
+        { id: 'default', name: 'CLI 默认模型', family: 'other' },
         { id: 'model-a', name: 'Model A', family: 'claude', credits: 'x1.00' },
         { id: 'model-b', name: 'Model B', family: 'glm', credits: 'x0.06' },
         { id: 'codex:gpt-5.5', name: 'GPT-5.5', family: 'gpt', engine: 'codex' },
@@ -95,8 +96,9 @@ vm.runInContext(moduleSource, ctx);
   // must already render a usable label.
   assert.equal(api.codeBuddyModel('codex:gpt-5.5'), 'default', 'codex ids fall back before the catalog loads');
   api.paint(toggle, api.DEFAULT);
-  assert.equal(label.textContent, 'CLI 默认模型');
+  assert.equal(label.textContent, '默认');
   assert.equal(icon.dataset.family, 'other');
+  assert.equal(api.codeBuddyModels().length, 0, 'the placeholder is not selectable before loading');
 
   await api.load();
   assert.equal(api.catalog().default, 'model-b');

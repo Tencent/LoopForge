@@ -337,11 +337,11 @@ func (h *streamHandlers) prepareClarifyRepo(ctx context.Context, repo domain.Rep
 		return cacheDir, true, ""
 	}
 
-	token := engine.ResolveClarifyGitToken(h.repo, responsibleUserID)
+	credentials := engine.ResolveClarifyGitCredentials(h.repo, responsibleUserID)
 	prepCtx, cancel := context.WithTimeout(ctx, 3*time.Minute)
 	defer cancel()
 
-	if _, err := engine.PrepareClarifyWorkspaceAtBranch(prepCtx, cacheDir, repo, baseBranch, token); err != nil {
+	if _, err := engine.PrepareClarifyWorkspaceAtBranch(prepCtx, cacheDir, repo, baseBranch, credentials); err != nil {
 		if hadCheckout && baseBranch == "" && !ssh {
 			// Degrade to the previous (possibly stale) checkout.
 			return cacheDir, true, ""
@@ -644,8 +644,8 @@ func (h *streamHandlers) executeClarify(ctx context.Context, issue domain.Issue,
 	clarifyID := fmt.Sprintf("clarify-%d", time.Now().UnixNano())
 	modelID := clarifyAllowedModel(request.Model)
 	credentials := runtime.RunCredentials{
-		CodeBuddy: runtime.CodeBuddyCredential{APIKey: strings.TrimSpace(responsible.CodeBuddyAPIKey), InternetEnvironment: strings.TrimSpace(responsible.CodeBuddyInternetEnvironment)},
-		GitToken:  strings.TrimSpace(h.repo.GitCredential(ctx, responsible.ID)),
+		CodeBuddy:          runtime.CodeBuddyCredential{APIKey: strings.TrimSpace(responsible.CodeBuddyAPIKey), InternetEnvironment: strings.TrimSpace(responsible.CodeBuddyInternetEnvironment)},
+		GitHTTPCredentials: h.repo.GitHTTPCredentialSecrets(ctx, responsible.ID),
 	}
 	turnPrompt := userMsg
 	if resume {

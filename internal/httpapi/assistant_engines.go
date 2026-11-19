@@ -152,7 +152,7 @@ func assistantEngineBuiltinModels(engine string) []assistantDiscoveredModel {
 		catalogKey = "claude"
 	}
 	var out []assistantDiscoveredModel
-	for _, model := range executorModelCatalogs()[catalogKey].Models {
+	for _, model := range executorModelCatalogs("")[catalogKey].Models {
 		out = append(out, assistantDiscoveredModel{ID: model.ID, Name: model.Name})
 	}
 	return out
@@ -310,7 +310,8 @@ func assistantScheduledModel(id string, catalog assistantModelCatalog) string {
 
 // assistantDiscoveredModelsFor resolves the model list shared by the chat
 // composer and role editor. A saved catalog takes precedence over discovery.
-func assistantDiscoveredModelsFor(ctx context.Context, user domain.User, engine string) []assistantDiscoveredModel {
+// The second result reports whether Cursor is refreshing its automatic catalog.
+func assistantDiscoveredModelsFor(ctx context.Context, user domain.User, engine string) ([]assistantDiscoveredModel, bool) {
 	key, baseURL := assistantEngineCredential(user, engine)
 	protocol := assistantEngineProtocol(user, engine)
 	listed := assistantSavedModels(user, engine)
@@ -318,33 +319,39 @@ func assistantDiscoveredModelsFor(ctx context.Context, user domain.User, engine 
 		listed = cachedAssistantEngineDiscovery(ctx, assistantEngineAnthropicModels(engine, protocol), key, baseURL)
 	}
 	if engine == runtime.AgentCLICursor && key != "" && !user.AgentCLICredentials[engine].ModelsCustomized {
-		if fresh := cachedCursorModels(key); len(fresh) > 0 {
+		fresh, pending := cachedCursorModels(key)
+		if len(fresh) > 0 {
 			listed = fresh
 		}
+		return listed, pending
 	}
-	return listed
+	return listed, false
 }
 
 func assistantSavedModels(user domain.User, engine string) []assistantDiscoveredModel {
 	var listed []assistantDiscoveredModel
 	for _, model := range assistantEngineCustomModels(user, engine) {
 		if assistantValidEngineModel(model.ID) {
-			listed = append(listed, assistantDiscoveredModel{ID: model.ID, Name: model.Name, Efforts: model.Efforts, DefaultEffort: model.DefaultEffort})
+			listed = append(listed, assistantDiscoveredModel{
+				ID: model.ID, Name: model.Name, Efforts: model.Efforts, DefaultEffort: model.DefaultEffort,
+				ReasoningEfforts: model.ReasoningEfforts, DiscoveredReasoningEfforts: model.DiscoveredReasoningEfforts,
+			})
 		}
 	}
 	return listed
 }
 
-func assistantEngineModels(ctx context.Context, user domain.User, runnerLogin map[string]bool) []assistantModel {
-	var out []assistantModel
+func assistantEngineModels(ctx context.Context, user domain.User, runnerLogin map[string]bool) (models []assistantModel, cursorModelsPending bool) {
 	for _, engine := range assistantCLIEngines() {
-		key, _ := assistantEngineCredential(user, engine)
+		key, baseURL := assistantEngineCredential(user, engine)
 		listed := assistantSavedModels(user, engine)
 		if key == "" && !runnerLogin[engine] && len(listed) == 0 {
 			continue
 		}
 		if !runnerLogin[engine] {
-			listed = assistantDiscoveredModelsFor(ctx, user, engine)
+			var pending bool
+			listed, pending = assistantDiscoveredModelsFor(ctx, user, engine)
+			cursorModelsPending = cursorModelsPending || pending
 		}
 		if len(listed) == 0 {
 			listed = assistantEngineBuiltinModels(engine)
@@ -356,16 +363,16 @@ func assistantEngineModels(ctx context.Context, user domain.User, runnerLogin ma
 				name = model.ID
 			}
 			id := engine + ":" + model.ID
-			out = append(out, assistantModel{
+			models = append(models, assistantModel{
 				ID:      id,
 				Name:    name,
 				Family:  assistantModelFamily(model.ID),
 				Engine:  engine,
-				Efforts: assistantModelEffortsIn(id, catalog),
+				Efforts: assistantModelEffortsForBaseURL(id, catalog, baseURL),
 			})
 		}
 	}
-	return out
+	return models, cursorModelsPending
 }
 
 type assistantDiscoveredModel struct {
@@ -373,8 +380,10 @@ type assistantDiscoveredModel struct {
 	Name string
 	// Efforts and DefaultEffort describe a Cursor family folded out of the
 	// CLI's list (domain.CLIModel).
-	Efforts       map[string]string
-	DefaultEffort string
+	Efforts                    map[string]string
+	DefaultEffort              string
+	ReasoningEfforts           *[]string
+	DiscoveredReasoningEfforts *[]string
 }
 
 type assistantDiscoveryEntry struct {
@@ -395,9 +404,13 @@ var (
 	assistantEngineDiscover = discoverAssistantEngineModels
 )
 
-func cachedAssistantEngineDiscovery(ctx context.Context, anthropic bool, apiKey, baseURL string) []assistantDiscoveredModel {
+func assistantDiscoveryKey(anthropic bool, apiKey, baseURL string) string {
 	sum := sha256.Sum256([]byte(fmt.Sprint(anthropic) + "\x00" + baseURL + "\x00" + apiKey))
-	cacheKey := hex.EncodeToString(sum[:])
+	return hex.EncodeToString(sum[:])
+}
+
+func cachedAssistantEngineDiscovery(ctx context.Context, anthropic bool, apiKey, baseURL string) []assistantDiscoveredModel {
+	cacheKey := assistantDiscoveryKey(anthropic, apiKey, baseURL)
 	now := time.Now()
 	if cached, ok := assistantDiscoveryCache.Load(cacheKey); ok {
 		if entry := cached.(assistantDiscoveryEntry); now.Before(entry.expires) {
@@ -424,24 +437,26 @@ var (
 
 // cachedCursorModels lists the models the key's Cursor plan offers. The CLI
 // takes seconds, so a miss answers with the built-in catalog (nil) while a
-// background refresh fills the cache; a stale list is served meanwhile.
-func cachedCursorModels(apiKey string) []assistantDiscoveredModel {
+// background refresh fills the cache. The second result identifies snapshots
+// that should be fetched again after discovery completes.
+func cachedCursorModels(apiKey string) ([]assistantDiscoveredModel, bool) {
 	sum := sha256.Sum256([]byte("cursor\x00" + apiKey))
 	cacheKey := hex.EncodeToString(sum[:])
 	var stale []assistantDiscoveredModel
 	if cached, ok := assistantCursorModelsCache.Load(cacheKey); ok {
 		entry := cached.(assistantDiscoveryEntry)
 		if time.Now().Before(entry.expires) {
-			return entry.models
+			return entry.models, false
 		}
 		stale = entry.models
 	}
 	if _, running := assistantCursorModelsInflight.LoadOrStore(cacheKey, true); !running {
+		discover := assistantCursorModels
 		go func() {
 			defer assistantCursorModelsInflight.Delete(cacheKey)
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
-			found, err := assistantCursorModels(ctx, apiKey)
+			found, err := discover(ctx, apiKey)
 			var models []assistantDiscoveredModel
 			for _, model := range found {
 				if assistantValidEngineModel(model.ID) && len(models) < assistantDiscoveryMaxModels {
@@ -455,7 +470,7 @@ func cachedCursorModels(apiKey string) []assistantDiscoveredModel {
 			assistantCursorModelsCache.Store(cacheKey, assistantDiscoveryEntry{models: models, expires: time.Now().Add(ttl)})
 		}()
 	}
-	return stale
+	return stale, true
 }
 
 // saveCursorCatalog keeps the user's freshly listed Cursor models, folded
@@ -471,7 +486,7 @@ func (h *assistantHandlers) saveCursorCatalog(user domain.User) {
 	if key == "" {
 		return
 	}
-	fresh := cachedCursorModels(key)
+	fresh, _ := cachedCursorModels(key)
 	if len(fresh) == 0 {
 		return
 	}
@@ -551,9 +566,11 @@ func discoverAssistantEngineModels(ctx context.Context, anthropic bool, apiKey, 
 		}
 		var payload struct {
 			Data []struct {
-				ID          string `json:"id"`
-				Name        string `json:"name"`
-				DisplayName string `json:"display_name"`
+				ID                        string    `json:"id"`
+				Name                      string    `json:"name"`
+				DisplayName               string    `json:"display_name"`
+				ReasoningEfforts          *[]string `json:"reasoningEfforts"`
+				SupportedReasoningEfforts *[]string `json:"supported_reasoning_efforts"`
 			} `json:"data"`
 		}
 		if err := json.Unmarshal(body, &payload); err != nil {
@@ -571,7 +588,11 @@ func discoverAssistantEngineModels(ctx context.Context, anthropic bool, apiKey, 
 			if name == "" {
 				name = strings.TrimSpace(item.Name)
 			}
-			out = append(out, assistantDiscoveredModel{ID: id, Name: truncateRunes(name, 64)})
+			efforts := item.ReasoningEfforts
+			if efforts == nil {
+				efforts = item.SupportedReasoningEfforts
+			}
+			out = append(out, assistantDiscoveredModel{ID: id, Name: truncateRunes(name, 64), DiscoveredReasoningEfforts: efforts})
 			if len(out) == assistantDiscoveryMaxModels {
 				break
 			}

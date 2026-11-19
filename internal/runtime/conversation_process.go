@@ -75,6 +75,9 @@ type ConversationProcessResult struct {
 	Done       bool                    `json:"done,omitempty"`
 	Error      string                  `json:"error,omitempty"`
 	NotStarted bool                    `json:"notStarted,omitempty"`
+	// GitScrubbed names the Git credentials the agent wrote by hand that were
+	// removed when a workspace CLI finished; it never holds their values.
+	GitScrubbed []string `json:"gitScrubbed,omitempty"`
 }
 
 type ConversationSandboxFactory func(context.Context, string) (Sandbox, func(), error)
@@ -150,6 +153,8 @@ type conversationProcess struct {
 	root       string
 	bytes      int
 	notStarted bool
+	// gitScrubbed is set with done, under mu.
+	gitScrubbed []string
 }
 
 // Handle owns the stable native HOME on the executing machine. Only generated
@@ -324,6 +329,9 @@ func (p *ConversationProcessPool) Handle(ctx context.Context, root, workspace st
 		proc.base = req.After
 		n := min(len(proc.events), 256)
 		result := ConversationProcessResult{ID: req.ID, Events: append([]domain.TelemetryEvent(nil), proc.events[:n]...), Sequence: proc.base + int64(n), Done: proc.done && n == len(proc.events), Error: proc.err, NotStarted: proc.notStarted}
+		if result.Done {
+			result.GitScrubbed = append([]string(nil), proc.gitScrubbed...)
+		}
 		return result, nil
 	default:
 		return ConversationProcessResult{}, fmt.Errorf("invalid conversation process operation")
@@ -435,6 +443,10 @@ func (p *ConversationProcessPool) start(ctx context.Context, root, workspace str
 		if cleanupLogin != nil {
 			credentialCleanupErr = errors.Join(credentialCleanupErr, cleanupLogin())
 		}
+		var gitScrubbed []string
+		if slices.Contains(req.Command.Bindings, BindGitWorkspace) {
+			gitScrubbed = scrubConversationGitSecrets(root, sb)
+		}
 		if stdin != nil {
 			_ = stdin.Close()
 		}
@@ -452,6 +464,7 @@ func (p *ConversationProcessPool) start(ctx context.Context, root, workspace str
 			proc.err = "清理 CLI 临时凭证失败"
 			proc.notStarted = notStarted
 		}
+		proc.gitScrubbed = gitScrubbed
 		if runErr != nil && proc.err == "" {
 			proc.err = runErr.Error()
 			proc.notStarted = notStarted
@@ -615,7 +628,7 @@ func (p *ConversationProcessPool) start(ctx context.Context, root, workspace str
 		return ConversationProcessResult{}, fmt.Errorf("该 CLI 不支持使用执行机器的本机登录")
 	}
 	if supported {
-		cleanupLogin, localEnv, err = prepareConversationRunnerLogin(root, login, req.Command.RunnerLogin)
+		cleanupLogin, localEnv, err = prepareConversationRunnerLogin(root, login, req.Command.RunnerLogin, spec != nil && spec.Profile.Driver == domain.SandboxDriverDocker)
 		if err != nil {
 			return ConversationProcessResult{}, err
 		}
@@ -623,6 +636,10 @@ func (p *ConversationProcessPool) start(ctx context.Context, root, workspace str
 			command.CredentialBindings = slices.DeleteFunc(slices.Clone(command.CredentialBindings), func(binding CredentialBinding) bool {
 				return binding == login.binding
 			})
+			if command.Provider == AgentCLIAntigravity && command.AgentCLI.ReadOnly {
+				settings, _ := json.Marshal(map[string]any{"permissions": agyChatPermissions})
+				command.Argv = insertBeforeFlag(command.Argv, "-p", "--settings", string(settings))
+			}
 		}
 	}
 	nativeArgv := append([]string(nil), command.Argv...)
@@ -700,6 +717,26 @@ func (p *ConversationProcessPool) start(ctx context.Context, root, workspace str
 		}
 	}()
 	return ConversationProcessResult{Root: root, ID: id}, nil
+}
+
+// scrubConversationGitSecrets cleans the HOMEs a workspace CLI used (the
+// conversation's, and the private ones bindCommand gives docker commands) and
+// the checkouts in the workspace it worked in.
+func scrubConversationGitSecrets(root string, sb Sandbox) []string {
+	workspace := filepath.Join(root, "ws")
+	if sb != nil && strings.TrimSpace(sb.Workspace()) != "" {
+		workspace = sb.Workspace()
+	}
+	homes := []string{filepath.Join(root, "home")}
+	privateHomes := filepath.Join(workspace, ".agentflow", "private-home")
+	if entries, err := os.ReadDir(privateHomes); err == nil {
+		for _, entry := range entries {
+			if entry.IsDir() {
+				homes = append(homes, filepath.Join(privateHomes, entry.Name()))
+			}
+		}
+	}
+	return ScrubWorkspaceGitSecrets(context.Background(), homes, workspace)
 }
 
 func cleanupConversationCredentialFiles(root, provider string) error {

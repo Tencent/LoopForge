@@ -82,22 +82,24 @@ describe("pickers and activity", () => {
   });
 
   test("remembers the approval mode and ignores unknown values", () => {
-    expect(storedApprovalMode()).toBe("confirm");
-    rememberApprovalMode("assisted");
-    expect(storedApprovalMode()).toBe("assisted");
-    rememberApprovalMode("bogus");
-    expect(storedApprovalMode()).toBe("assisted");
-    localStorage.setItem("loopforge.assistant.approvalMode", "bogus");
-    expect(storedApprovalMode()).toBe("confirm");
+    expect(storedApprovalMode(1)).toBe("confirm");
+    rememberApprovalMode(1, "assisted");
+    expect(storedApprovalMode(1)).toBe("assisted");
+    rememberApprovalMode(1, "bogus");
+    expect(storedApprovalMode(1)).toBe("assisted");
+    localStorage.setItem("loopforge.assistant.approvalMode.1", "bogus");
+    expect(storedApprovalMode(1)).toBe("confirm");
   });
 
-  test("never remembers full permission across reloads", () => {
-    rememberApprovalMode("assisted");
-    rememberApprovalMode("auto");
-    expect(storedApprovalMode()).toBe("assisted");
-    // A value stored by an older build does not come back either.
+  test("only restores full permissions for the account that selected them", () => {
     localStorage.setItem("loopforge.assistant.approvalMode", "auto");
-    expect(storedApprovalMode()).toBe("confirm");
+    expect(storedApprovalMode(1)).toBe("confirm");
+    rememberApprovalMode(1, "auto");
+    expect(storedApprovalMode(1)).toBe("auto");
+    expect(storedApprovalMode(2)).toBe("confirm");
+    expect(storedApprovalMode(null)).toBe("confirm");
+    rememberApprovalMode(1, "confirm");
+    expect(storedApprovalMode(1)).toBe("confirm");
   });
 
   test("expands detailed activity including failures", async () => {

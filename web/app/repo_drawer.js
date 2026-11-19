@@ -9,7 +9,7 @@ function repoDrawerError(show){
   const error=$('#repoDrawerUrlError');
   if(show)error.textContent=f.elements.provider?.value==='forgejo'
     ?'请输入同一个 Forgejo 仓库的 SSH 克隆地址和 HTTPS 网页地址。'
-    :'请输入有效的 GitHub 链接或 Git SSH 克隆地址。CNB 只支持 HTTPS + 访问令牌。';
+    :'请输入有效的 Git HTTPS 链接或 Git SSH 克隆地址。';
   error.hidden=!show;
 }
 function repoDrawerInfo(form){
@@ -22,7 +22,7 @@ function syncRepoDrawerDetect(){
   const forgejo=f.elements.provider?.value==='forgejo';
   const info=repoDrawerInfo(f),box=$('#repoDrawerDetect');
   f.querySelector('[data-github-repositories]').hidden=forgejo;
-  f.querySelector('[data-repo-address-label]').textContent=forgejo?'SSH 克隆地址':'GitHub 链接或 Git SSH 地址';
+  f.querySelector('[data-repo-address-label]').textContent=forgejo?'SSH 克隆地址':'Git HTTPS 链接或 Git SSH 地址';
   f.querySelector('.pa-fmt').hidden=forgejo;
   f.elements.repoUrl.placeholder=forgejo?'git@forge.example.org:team/repo.git':'https://github.com/owner/repo';
   $('#repoDrawerSSH').hidden=!forgejo&&info?.provider!=='ssh';
@@ -85,7 +85,7 @@ function closeRepoDrawer(opt){
 function repoDrawerPayload(f,info){
   const existing=(state.data.repositories||[]).find(r=>r.id===repoDrawerState.repoId)||{};
   const payload={...existing,id:existing.id||undefined,projectId:repoDrawerState.projectId,provider:info.provider||'gongfeng',name:f.elements.name.value.trim()||info.name,gongfengProjectId:info.project,webUrl:info.webUrl,cloneUrl:info.cloneUrl,defaultBranch:f.elements.defaultBranch.value.trim()||'main',integrateBranch:f.elements.integrateBranch.value.trim(),localPath:f.elements.localPath.value.trim(),repoUrl:f.elements.repoUrl.value.trim()};
-  if(info.provider==='ssh'){payload.gongfengProjectId='';payload.webUrl=f.elements.webUrl.value.trim()}
+  if(['ssh','https'].includes(info.provider)){payload.gongfengProjectId='';payload.webUrl=f.elements.webUrl.value.trim()}
   delete payload.gitToken;if(!payload.id)delete payload.id;
   return payload;
 }

@@ -72,6 +72,20 @@ type forgeTokenRow struct {
 
 func (forgeTokenRow) TableName() string { return "user_forge_tokens" }
 
+type gitHTTPCredentialRow struct {
+	UserID   int64      `gorm:"primaryKey;autoIncrement:false"`
+	ID       string     `gorm:"primaryKey;size:64"`
+	Name     string     `gorm:"size:80;not null"`
+	Platform string     `gorm:"size:16;not null"`
+	Host     string     `gorm:"size:255;not null"`
+	Username string     `gorm:"size:128;not null"`
+	Token    string     `gorm:"type:text;not null"`
+	Created  *time.Time `gorm:"column:created_at"`
+	Updated  *time.Time `gorm:"column:updated_at"`
+}
+
+func (gitHTTPCredentialRow) TableName() string { return "user_git_http_credentials" }
+
 type apiTokenRow struct {
 	ID         string     `gorm:"column:id;primaryKey;size:64"`
 	UserID     int64      `gorm:"column:user_id;index:idx_api_tokens_user"`
@@ -500,6 +514,7 @@ type mrDeliveryStateRow struct {
 	ForgeUserID  int64      `gorm:"column:forge_user_id;not null;default:0"`
 	MergedAt     *time.Time `gorm:"column:merged_at;index:idx_mr_delivery_merged_at"`
 	CheckedAt    *time.Time `gorm:"column:checked_at"`
+	RegisteredBy *int64     `gorm:"column:registered_by"`
 	Created      *time.Time `gorm:"column:created_at"`
 	Updated      *time.Time `gorm:"column:updated_at"`
 }
@@ -575,11 +590,12 @@ type userRunnerPrefRow struct {
 
 func (userRunnerPrefRow) TableName() string { return "user_runner_prefs" }
 
-// assistantPreferenceRow: a missing row means both switches are off.
+// assistantPreferenceRow: a missing row means switches are off and messages queue.
 type assistantPreferenceRow struct {
 	UserID         int64      `gorm:"column:user_id;primaryKey;autoIncrement:false"`
 	ProactiveRoles bool       `gorm:"column:proactive_roles;not null;default:false"`
 	ProactiveSOPs  bool       `gorm:"column:proactive_sops;not null;default:false"`
+	SteerOnSend    bool       `gorm:"column:steer_on_send;not null;default:false"`
 	Instructions   string     `gorm:"column:instructions;type:text"`
 	UpdatedAt      *time.Time `gorm:"column:updated_at"`
 }
@@ -741,7 +757,7 @@ func (knowledgeSubmissionRow) TableName() string { return "knowledge_submissions
 // allModels lists every table for the sqlite test schema (AutoMigrate).
 func allModels() []any {
 	return []any{domain.BotUserBinding{}, domain.BotBindingChallenge{}, domain.BotConnection{}, domain.BotConversation{}, domain.BotInteraction{}, notificationBotRow{}, botCredentialRow{}, domain.NotificationDelivery{},
-		userRow{}, localAccountRow{}, userConfigRow{}, gitSSHKeyRow{}, forgeTokenRow{}, authIntegrationRow{}, platformCodeBuddyKeyRow{}, apiTokenRow{}, genericTemplateRow{},
+		userRow{}, localAccountRow{}, userConfigRow{}, gitSSHKeyRow{}, forgeTokenRow{}, gitHTTPCredentialRow{}, authIntegrationRow{}, platformCodeBuddyKeyRow{}, apiTokenRow{}, genericTemplateRow{},
 		insightSourceRow{}, insightExecutionRow{},
 		projectRow{}, projectMemberRow{}, repositoryRow{}, businessDomainRow{}, businessDomainAssignmentRow{},
 		agentRow{}, ruleRow{}, skillRow{}, skillFileRow{}, mcpServerRow{}, mcpFileRow{}, executorRow{},
