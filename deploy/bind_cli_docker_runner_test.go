@@ -37,6 +37,7 @@ func TestBindCLIInstallsDockerRunnerHelper(t *testing.T) {
 		arm64OnlyArtifacts               bool
 		templateMissingArch              bool
 		missingRequiredGate              bool
+		missingReplacementHelper         bool
 	}{
 		{name: "macOS_install", hostOS: "darwin", arch: "arm64", unameArch: "arm64"},
 		{name: "macOS_uses_template_in_manual_start_and_upgrade", hostOS: "darwin", arch: "arm64", unameArch: "arm64", templatePath: true, source: "from"},
@@ -59,13 +60,14 @@ func TestBindCLIInstallsDockerRunnerHelper(t *testing.T) {
 		{name: "macOS_rejects_universal_companions_with_a_shared_template_directory", hostOS: "darwin", arch: "arm64", unameArch: "x86_64", source: "from", universal: true, templatePath: true, sharedTemplateDir: true},
 		{name: "macOS_rejected_universal_upgrade_preserves_installed_runner", hostOS: "darwin", arch: "arm64", unameArch: "arm64", source: "from", universal: true, upgrade: true, launchd: true, templatePath: true, templateMissingArch: true},
 		{name: "macOS_preserves_installed_runner_if_required_gate_is_unavailable", hostOS: "darwin", arch: "arm64", unameArch: "arm64", source: "from", universal: true, upgrade: true, missingRequiredGate: true},
+		{name: "macOS_architecture_upgrade_keeps_working_runner_when_new_helper_is_unavailable", hostOS: "darwin", arch: "arm64", unameArch: "arm64", source: "from", universal: true, upgrade: true, launchd: true, missingReplacementHelper: true},
 		{name: "macOS_repairs_incompatible_local_helper", hostOS: "darwin", arch: "arm64", unameArch: "arm64", source: "from", existing: "mach-o", upgrade: true},
 		{name: "macOS_preserves_custom_helper_script", hostOS: "darwin", arch: "arm64", unameArch: "arm64", source: "from", existing: "script", preserveHelper: true},
 		{name: "macOS_preserves_helper_with_host_only_URL", hostOS: "darwin", arch: "arm64", unameArch: "arm64", source: "host-url", preserveHelper: true},
 		{name: "macOS_updates_helper_with_explicit_Linux_URL", hostOS: "darwin", arch: "arm64", unameArch: "arm64", source: "template"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if tc.launchd && runtime.GOOS != "darwin" {
+			if tc.launchd && !tc.missingReplacementHelper && runtime.GOOS != "darwin" {
 				t.Skip("requires macOS plutil")
 			}
 			fixtureHome := t.TempDir()
@@ -134,6 +136,10 @@ func TestBindCLIInstallsDockerRunnerHelper(t *testing.T) {
 						fmt.Fprint(w, hostRunner)
 						return
 					}
+					if tc.missingReplacementHelper && arch == "arm64" {
+						w.WriteHeader(http.StatusServiceUnavailable)
+						return
+					}
 					switch tc.helperArtifact {
 					case "unavailable":
 						http.NotFound(w, req)
@@ -170,6 +176,10 @@ func TestBindCLIInstallsDockerRunnerHelper(t *testing.T) {
 				patternEnv = filepath.Join(bundle, "{os}", "agentflow-runner")
 				helper = filepath.Join(bundle, "linux", "agentflow-runner")
 				oldHelper = bindFixtureLinuxRunner("amd64", "original Intel helper")
+			}
+			if tc.missingReplacementHelper {
+				oldHelper = bindFixtureLinuxRunner("amd64", "existing Intel helper")
+				helper = filepath.Join(bin, "agentflow-runner-linux-amd64")
 			}
 			if tc.sharedTemplateDir {
 				amd64 := filepath.Join(bundle, "linux", "amd64")
@@ -220,16 +230,26 @@ func TestBindCLIInstallsDockerRunnerHelper(t *testing.T) {
 			}
 			plist := filepath.Join(fixtureHome, "Library", "LaunchAgents", "com.agentflow.runner.plist")
 			oldServiceArgs := []string{filepath.Join(bin, "agentflow-runner"), "-labels", "fixture", "-auto-update=true"}
+			if tc.missingReplacementHelper {
+				oldServiceArgs[len(oldServiceArgs)-1] = "-auto-update=false"
+			}
+			initialPlist := ""
 			if tc.launchd {
 				if err := os.MkdirAll(filepath.Dir(plist), 0o700); err != nil {
 					t.Fatal(err)
 				}
-				data := fmt.Sprintf("<plist version=\"1.0\"><dict><key>KeepAlive</key><true/><key>ProgramArguments</key><array><string>%s</string></array></dict></plist>", strings.Join(oldServiceArgs, "</string><string>"))
-				if err := os.WriteFile(plist, []byte(data), 0o600); err != nil {
+				initialPlist = fmt.Sprintf("<plist version=\"1.0\"><dict><key>KeepAlive</key><true/><key>ProgramArguments</key><array><string>%s</string></array></dict></plist>", strings.Join(oldServiceArgs, "</string><string>"))
+				if err := os.WriteFile(plist, []byte(initialPlist), 0o600); err != nil {
 					t.Fatal(err)
 				}
-				launchctl := "#!/bin/sh\nif [ \"$1\" = load ]; then cp \"$2\" \"$HOME/reloaded.plist\"; fi\n"
+				launchctl := "#!/bin/sh\nprintf '%s\\n' \"$1\" >> \"$HOME/launchctl.log\"\nif [ \"$1\" = load ]; then cp \"$2\" \"$HOME/reloaded.plist\"; fi\n"
 				if err := os.WriteFile(filepath.Join(bin, "launchctl"), []byte(launchctl), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			oldGate := filepath.Join(bin, "agentflow-gate-mcp-linux-amd64")
+			if tc.missingReplacementHelper {
+				if err := os.WriteFile(oldGate, []byte("original Intel Gate"), 0o755); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -278,24 +298,35 @@ func TestBindCLIInstallsDockerRunnerHelper(t *testing.T) {
 					if err == nil || !strings.Contains(string(out), "平台未提供 Gate MCP darwin/arm64") {
 						t.Fatalf("installer did not report the missing required Gate helper: %v\n%s", err, out)
 					}
+				} else if tc.missingReplacementHelper {
+					if err == nil || !strings.Contains(string(out), "缺少切换架构所需的 Linux/arm64 Git/MCP helper") {
+						t.Fatalf("installer did not abort the architecture switch: %v\n%s", err, out)
+					}
 				} else if err != nil {
 					t.Fatalf("install: %v\n%s", err, out)
 				}
 				return string(out)
 			}
 			output := install()
-			if tc.templateMissingArch || tc.missingRequiredGate {
-				for path, want := range map[string]string{
+			if tc.templateMissingArch || tc.missingRequiredGate || tc.missingReplacementHelper {
+				preserved := map[string]string{
 					filepath.Join(bin, "agentflow-runner"): oldHost,
 					helper:                                 oldHelper,
 					envPath:                                initialEnv,
 					statePath:                              state,
-				} {
+				}
+				if tc.launchd {
+					preserved[plist] = initialPlist
+				}
+				if tc.missingReplacementHelper {
+					preserved[oldGate] = "original Intel Gate"
+				}
+				for path, want := range preserved {
 					if got, err := os.ReadFile(path); err != nil || string(got) != want {
 						t.Fatalf("rejected upgrade changed %s: %q, %v", filepath.Base(path), got, err)
 					}
 				}
-				if _, err := os.Stat(filepath.Join(fixtureHome, "reloaded.plist")); !os.IsNotExist(err) {
+				if _, err := os.Stat(filepath.Join(fixtureHome, "launchctl.log")); !os.IsNotExist(err) {
 					t.Fatalf("rejected upgrade restarted the service: %v", err)
 				}
 				return

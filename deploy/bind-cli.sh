@@ -341,7 +341,7 @@ esac
 [[ "$OS" == "darwin" || "$OS" == "linux" ]] || fail "不支持的系统: ${OS}（Windows 请使用 PowerShell 安装方式）"
 
 # Use the Mach-O slices instead of uname. A universal Runner installed under
-# Rosetta can later be launched natively by launchd.
+# Rosetta can later be launched natively by launchd. List the native slice first.
 macos_runner_arches() {
   local header="" entry_size little=0 arches
   if [[ -f "$1" ]]; then
@@ -373,10 +373,15 @@ macos_runner_arches() {
           if (cpu == 16777223) amd64 = 1
           if (cpu == 16777228) arm64 = 1
         }
-        if (amd64 && arm64) print "amd64 arm64"
+        if (amd64 && arm64) print "arm64 amd64"
         else if (amd64) print "amd64"
         else if (arm64) print "arm64"
       }') || arches=""
+  # uname reports x86_64 under Rosetta too. Intel Macs can use only amd64.
+  if [[ "$arches" == "arm64 amd64" && "$ARCH" == "amd64" &&
+        "$(PATH="$PATH:/usr/sbin" sysctl -n hw.optional.arm64 2>/dev/null || true)" != "1" ]]; then
+    arches="amd64"
+  fi
   printf '%s\n' "${arches:-$ARCH}"
 }
 
@@ -642,9 +647,10 @@ stage_runner_binary() {
 
 is_linux_runner_binary() {
   local binary="$1" machine size layout offset table_size
-  case "$ARCH" in
+  case "${2:-$ARCH}" in
     amd64) machine=62 ;;
     arm64) machine=183 ;;
+    *) return 1 ;;
   esac
   size=$(wc -c < "$binary") || return 1
   local decode_bytes='
@@ -688,11 +694,11 @@ is_linux_runner_binary() {
       }'
 }
 
-is_custom_docker_runner_helper() {
+is_usable_docker_runner_helper() {
   [[ -x "$1" && -f "$1" ]] || return 1
   # A custom installer may also provide an executable script wrapper.
   [[ "$(LC_ALL=C od -An -v -t x1 -N 2 "$1" | tr -d '[:space:]')" == 2321 ]] ||
-    is_linux_runner_binary "$1"
+    is_linux_runner_binary "$1" "${2:-$ARCH}"
 }
 
 stage_docker_runner_binary() {
@@ -713,7 +719,7 @@ install_docker_runner_binary() {
   # A per-OS download URL can replace the helper when it is the selected source.
   if [[ -n "$LOCAL_BINARY" || -n "$RUNNER_BUILD_SOURCE" ||
         ( "$DOWNLOAD_URL" != *"{os}"* && ( -n "$DOWNLOAD_URL" || -n "$SOURCE_DIR" ) ) ]] &&
-      is_custom_docker_runner_helper "$DOCKER_RUNNER_BINARY"; then
+      is_usable_docker_runner_helper "$DOCKER_RUNNER_BINARY"; then
     info "保留自定义 Runner 的 Linux Git/MCP helper：${DOCKER_RUNNER_BINARY}"
     return
   fi
@@ -744,16 +750,16 @@ saved_runner_binary_pattern() {
   awk 'sub(/^AGENTFLOW_RUNNER_BINARY=/, "") { print; exit }' "$ENV_FILE"
 }
 
-configure_macos_docker_runner_helper() {
-  local pattern="${AGENTFLOW_RUNNER_BINARY:-}"
-  if [[ "$UPGRADE" == "1" && -z "${AGENTFLOW_RUNNER_BINARY+x}" ]]; then
-    if [[ -f "$PLIST" ]]; then
-      pattern=$(/usr/bin/plutil -extract EnvironmentVariables.AGENTFLOW_RUNNER_BINARY raw "$PLIST" 2>/dev/null) ||
-        pattern=$(saved_runner_binary_pattern)
-    else
-      pattern=$(saved_runner_binary_pattern)
-    fi
+installed_macos_runner_binary_pattern() {
+  if [[ -f "$PLIST" ]] &&
+     /usr/bin/plutil -extract EnvironmentVariables.AGENTFLOW_RUNNER_BINARY raw "$PLIST" 2>/dev/null; then
+    return
   fi
+  saved_runner_binary_pattern
+}
+
+configure_macos_docker_runner_helper() {
+  local pattern="${AGENTFLOW_RUNNER_BINARY-$1}"
   # Keep the template expansion in sync with runtime.DockerRunnerHelperPath.
   pattern="${pattern#"${pattern%%[![:space:]]*}"}"
   pattern="${pattern%"${pattern##*[![:space:]]}"}"
@@ -767,13 +773,10 @@ configure_macos_docker_runner_helper() {
 }
 
 macos_docker_runner_helper_path() {
-  local target_arch="$1" target="${BIN_DIR}/agentflow-runner-linux-${1}"
-  if [[ "$AGENTFLOW_RUNNER_BINARY" == *"{os}"* ]]; then
-    target="${AGENTFLOW_RUNNER_BINARY//\{os\}/linux}"
+  local target_arch="$1" pattern="$2" target="${BIN_DIR}/agentflow-runner-linux-${1}"
+  if [[ "$pattern" == *"{os}"* ]]; then
+    target="${pattern//\{os\}/linux}"
     target="${target//\{arch\}/$target_arch}"
-  fi
-  if [[ "$target" -ef "$BINARY" ]]; then
-    fail "Linux Git/MCP helper 路径与 macOS Runner 相同：${target}"
   fi
   printf '%s\n' "$target"
 }
@@ -788,12 +791,12 @@ check_macos_helper_paths() {
   local host_target target resolved runner_arch previous_target="" previous_resolved=""
   host_target=$(canonical_helper_target "$BINARY")
   for runner_arch in "${runner_arches[@]}"; do
-    target=$(macos_docker_runner_helper_path "$runner_arch")
+    target=$(macos_docker_runner_helper_path "$runner_arch" "$AGENTFLOW_RUNNER_BINARY")
     # Compare physical parents even on fresh installs, where -ef cannot
     # compare inodes yet. Unavailable helper destinations are warned about
     # by the installer when it tries to stage the companion.
     resolved=$(canonical_helper_target "$target" 2>/dev/null) || resolved=""
-    if [[ -n "$resolved" && "$resolved" == "$host_target" ]]; then
+    if [[ "$target" -ef "$BINARY" ]] || [[ -n "$resolved" && "$resolved" == "$host_target" ]]; then
       fail "Linux Git/MCP helper 路径与 macOS Runner 相同：${target}"
     fi
     if [[ -n "$previous_target" && "$target" -ef "$previous_target" ]] ||
@@ -819,13 +822,22 @@ save_runner_binary_pattern() {
 
 if [[ "$OS" == "darwin" ]]; then
   read -r -a runner_arches <<< "$(macos_runner_arches "$STAGED_RUNNER")"
-  # uname reports x86_64 under Rosetta too. Intel Macs can use only the
-  # amd64 slice and may be connected to a platform that publishes only amd64.
-  if [[ "${#runner_arches[@]}" -gt 1 && "$ARCH" == "amd64" &&
-        "$(PATH="$PATH:/usr/sbin" sysctl -n hw.optional.arm64 2>/dev/null || true)" != "1" ]]; then
-    runner_arches=(amd64)
+  required_arch="${runner_arches[0]}"
+  previous_pattern=""
+  require_replacement_helper=0
+  if [[ "$UPGRADE" == "1" ]]; then
+    previous_pattern=$(installed_macos_runner_binary_pattern)
+    read -r -a previous_arches <<< "$(macos_runner_arches "$BINARY")"
+    previous_arch="${previous_arches[0]}"
+    if [[ "$previous_arch" != "$required_arch" ]]; then
+      previous_helper=$(macos_docker_runner_helper_path "$previous_arch" "$previous_pattern")
+      if [[ ! "$previous_helper" -ef "$BINARY" ]] &&
+         is_usable_docker_runner_helper "$previous_helper" "$previous_arch"; then
+        require_replacement_helper=1
+      fi
+    fi
   fi
-  configure_macos_docker_runner_helper
+  configure_macos_docker_runner_helper "$previous_pattern"
   check_macos_helper_paths
 fi
 
@@ -860,19 +872,19 @@ install_gate_binary() {
   fi
 }
 
-# A universal Runner needs both companions whichever slice gets launched.
+# Install the primary slice's companions before touching the optional slice.
 if [[ "$OS" == "darwin" ]]; then
-  required_arch="${runner_arches[0]}"
-  if [[ "${#runner_arches[@]}" -gt 1 ]]; then
-    required_arch="arm64"
-  fi
   for ARCH in "${runner_arches[@]}"; do
-    DOCKER_RUNNER_BINARY=$(macos_docker_runner_helper_path "$ARCH")
+    DOCKER_RUNNER_BINARY=$(macos_docker_runner_helper_path "$ARCH" "$AGENTFLOW_RUNNER_BINARY")
     optional_gate=0
     [[ "$ARCH" == "$required_arch" ]] || optional_gate=1
     install_gate_binary darwin "$optional_gate"
     install_gate_binary linux "$optional_gate"
     install_docker_runner_binary
+    if [[ "$ARCH" == "$required_arch" && "$require_replacement_helper" == "1" ]] &&
+       ! is_usable_docker_runner_helper "$DOCKER_RUNNER_BINARY"; then
+      fail "缺少切换架构所需的 Linux/${ARCH} Git/MCP helper，已保留当前 Runner 和服务：${DOCKER_RUNNER_BINARY}"
+    fi
   done
 else
   install_gate_binary "$OS"
