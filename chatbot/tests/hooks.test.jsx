@@ -276,6 +276,182 @@ describe("conversation hooks", () => {
     expect(writeMock).toHaveBeenLastCalledWith("/api/assistant/generations", expect.objectContaining({ approvalMode: "confirm" }));
   });
 
+  test("refreshes a fallback CLI catalog after personal credentials change", async () => {
+    const original = apiMock.getMockImplementation();
+    let changed = false;
+    apiMock.mockImplementation(async (path, options) => {
+      if (path === "/api/assistant/models") return { models: [] };
+      if (path === "/api/assistant/models?executor=codex") return {
+        models: [{ id: changed ? "new-model" : "old-model", name: "Gateway model" }],
+      };
+      return original(path, options);
+    });
+    try {
+      const { result } = renderHook(() => useChat());
+      await waitFor(() => expect(result.current.ready).toBe(true));
+      act(() => result.current.setExecutor("codex"));
+      await waitFor(() => expect(result.current.models.map((m) => m.id)).toEqual(["old-model"]));
+      changed = true;
+      act(() => window.dispatchEvent(new MessageEvent("message", {
+        origin: location.origin, source: window.parent,
+        data: { type: "agentflow-credentials-changed" },
+      })));
+      await waitFor(() => expect(result.current.models.map((m) => m.id)).toEqual(["new-model"]));
+    } finally { apiMock.mockImplementation(original); }
+  });
+
+  test.each([
+    ["", "codex:deepseek-v4-pro"],
+    ["codex:qwen-plus", "codex:qwen-plus"],
+  ])("continues a shared conversation with the speaker's available model (%s)", async (remembered, expected) => {
+    const original = apiMock.getMockImplementation();
+    const speaker = { id: 2, loginName: "member", codexApiKeyConfigured: true };
+    const shared = {
+      id: "shared", userId: 1, title: "Shared work", projectId: "p1",
+      executor: "codex", model: "codex:gpt-6-astra", effort: "",
+      executionTarget: { pool: "runner", runnerId: "owner-machine" },
+      executionTargetLocked: true, updatedAt: "2026-01-01T00:00:00Z",
+      messages: [
+        { role: "user", content: "Original request", authorId: 1 },
+        { role: "assistant", content: "Original answer", model: "codex:gpt-6-astra" },
+      ],
+    };
+    apiMock.mockImplementation(async (path, options) => {
+      if (path === "/api/auth/current") return { user: speaker };
+      if (path === "/api/users") return [speaker];
+      if (path === "/api/assistant/models") return {
+        models: [
+          { id: "codex:deepseek-v4-pro", name: "DeepSeek", engine: "codex" },
+          { id: "codex:qwen-plus", name: "Qwen", engine: "codex" },
+        ],
+      };
+      if (path === "/api/assistant/sessions/shared") return structuredClone(shared);
+      return original(path, options);
+    });
+    try {
+      if (remembered) localStorage.setItem("loopforge.assistant.model.codex", remembered);
+      history.replaceState({}, "", "/?session=shared");
+      const { result } = renderHook(() => useChat());
+      await waitFor(() => expect(result.current.session?.id).toBe("shared"));
+      expect(result.current.executor).toBe("codex");
+      expect(result.current.model).toBe(expected);
+      expect(result.current.models.map((m) => m.id)).toEqual(["codex:deepseek-v4-pro", "codex:qwen-plus"]);
+      expect(result.current.session).toEqual(shared);
+      act(() => result.current.setModel("codex:qwen-plus"));
+      await act(async () => expect(await result.current.send({ text: "Continue the request" })).toBe(true));
+      expect(writeMock).toHaveBeenCalledWith("/api/assistant/generations", expect.objectContaining({
+        sessionId: "shared", executor: "codex", model: "codex:qwen-plus",
+        executionTarget: shared.executionTarget,
+        messages: [...shared.messages, expect.objectContaining({ authorId: 2, content: "Continue the request" })],
+      }));
+      const retry = { ...shared, messages: shared.messages.slice(0, -1) };
+      await act(async () => expect(await result.current.regenerate(retry)).toBe(true));
+      expect(writeMock).toHaveBeenLastCalledWith("/api/assistant/generations", expect.objectContaining({
+        sessionId: "shared", executor: "codex", model: "codex:qwen-plus", messages: retry.messages,
+      }));
+    } finally { apiMock.mockImplementation(original); }
+  });
+
+  test.each([
+    ["runner", "local", "codex:gpt-6-astra"],
+    ["runner", "personal", "codex:deepseek-v4-pro"],
+    ["runner", "failed", "codex:gpt-6-astra"],
+    ["cloud", "local", "codex:deepseek-v4-pro"],
+  ])("resolves the speaker model after deferred machines (%s, %s)", async (pool, authMode, resolvedModel) => {
+    const original = apiMock.getMockImplementation();
+    let release, reject;
+    const pendingMachines = new Promise((resolve, fail) => { release = resolve; reject = fail; });
+    const owner = { id: 1, loginName: "owner", codexApiKeyConfigured: true };
+    const shared = {
+      id: "pending-owner-chat", userId: 1, projectId: "p1", executor: "codex",
+      model: "codex:gpt-6-astra", executionTargetLocked: true,
+      executionTarget: pool === "runner" ? { pool, runnerId: "owner-machine" } : { pool },
+      messages: [{ role: "user", content: "Original request" }],
+    };
+    apiMock.mockImplementation(async (path, options) => {
+      if (path === "/api/auth/current") return { user: owner };
+      if (path === "/api/users") return [owner];
+      if (path === "/api/assistant/models") return {
+        models: [{ id: "codex:deepseek-v4-pro", name: "DeepSeek", engine: "codex" }],
+      };
+      if (path === "/api/runners?mine=1") return pendingMachines;
+      if (path === "/api/runners/default") return { runnerId: "owner-machine" };
+      if (path === "/api/assistant/sessions/pending-owner-chat") return structuredClone(shared);
+      return original(path, options);
+    });
+    try {
+      history.replaceState({}, "", "/?session=pending-owner-chat");
+      const { result } = renderHook(() => useChat());
+      await waitFor(() => expect(result.current.session?.id).toBe(shared.id));
+      expect(result.current.machinesReady).toBe(false);
+      const pendingModel = pool === "cloud" ? "codex:deepseek-v4-pro" : shared.model;
+      expect(result.current.model).toBe(pendingModel);
+      await act(async () => expect(await result.current.send({ text: "Continue while machines load" })).toBe(true));
+      expect(writeMock).toHaveBeenLastCalledWith("/api/assistant/generations", expect.objectContaining({
+        sessionId: shared.id, model: pendingModel, executionTarget: shared.executionTarget,
+      }));
+      await act(async () => expect(await result.current.regenerate(shared)).toBe(true));
+      expect(writeMock).toHaveBeenLastCalledWith("/api/assistant/generations", expect.objectContaining({
+        sessionId: shared.id, model: pendingModel,
+      }));
+      if (authMode === "failed") {
+        await act(async () => reject(new Error("Machines unavailable")));
+        await waitFor(() => expect(result.current.machineError).toBe("Machines unavailable"));
+        expect(result.current.machinesReady).toBe(false);
+      } else {
+        await act(async () => release([{
+          id: "owner-machine", ownerUserId: owner.id,
+          runtimes: [{ provider: "codex", authMode }],
+        }]));
+        await waitFor(() => expect(result.current.machinesReady).toBe(true));
+      }
+      expect(result.current.model).toBe(resolvedModel);
+      await act(async () => expect(await result.current.regenerate(shared)).toBe(true));
+      expect(writeMock).toHaveBeenLastCalledWith("/api/assistant/generations", expect.objectContaining({
+        sessionId: shared.id, model: resolvedModel,
+      }));
+    } finally {
+      apiMock.mockImplementation(original);
+      release([]);
+    }
+  });
+
+  test.each([false, true])("keeps the machine owner's local-login model (personal catalog: %s)", async (hasPersonalCatalog) => {
+    const original = apiMock.getMockImplementation();
+    const owner = { id: 1, loginName: "owner", codexApiKeyConfigured: hasPersonalCatalog };
+    const shared = {
+      id: "owner-chat", userId: 1, projectId: "p1", executor: "codex",
+      model: "codex:gpt-6-astra", executionTargetLocked: true,
+      executionTarget: { pool: "runner", runnerId: "owner-machine" },
+      messages: [{ role: "assistant", content: "Local answer", model: "codex:gpt-6-astra" }],
+    };
+    apiMock.mockImplementation(async (path, options) => {
+      if (path === "/api/auth/current") return { user: owner };
+      if (path === "/api/users") return [owner];
+      if (path === "/api/assistant/models") return {
+        models: hasPersonalCatalog ? [{ id: "codex:deepseek-v4-pro", name: "DeepSeek", engine: "codex" }] : [],
+      };
+      if (path === "/api/runners?mine=1") return [{
+        id: "owner-machine", ownerUserId: 1, runtimes: [{ provider: "codex", authMode: "local" }],
+      }];
+      if (path === "/api/runners/default") return { runnerId: "owner-machine" };
+      if (path === "/api/assistant/sessions/owner-chat") return structuredClone(shared);
+      return original(path, options);
+    });
+    try {
+      history.replaceState({}, "", "/?session=owner-chat");
+      const { result } = renderHook(() => useChat());
+      await waitFor(() => expect(result.current.session?.id).toBe("owner-chat"));
+      await waitFor(() => expect(result.current.machinesReady).toBe(true));
+      expect(result.current.model).toBe("codex:gpt-6-astra");
+      expect(result.current.session).toEqual(shared);
+      await act(() => result.current.regenerate(shared));
+      expect(writeMock).toHaveBeenLastCalledWith("/api/assistant/generations", expect.objectContaining({
+        sessionId: "owner-chat", model: "codex:gpt-6-astra",
+      }));
+    } finally { apiMock.mockImplementation(original); }
+  });
+
   test("an open conversation on a CLI without a key keeps its model", async () => {
     localStorage.removeItem("loopforge.assistant.executor");
     const original = apiMock.getMockImplementation();

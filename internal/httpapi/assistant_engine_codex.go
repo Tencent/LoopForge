@@ -186,22 +186,32 @@ func (s *codexAppServer) response(message codexRPCMessage) []string {
 			return s.fail("Codex app-server 初始化失败：" + failure)
 		}
 		s.write(map[string]any{"method": "initialized", "params": map[string]any{}})
-		// App-server builds each thread's hook trust from its own config.
-		// Both the platform guard and workspace approval hook are generated
-		// and reviewed by the platform.
-		params := map[string]any{"developerInstructions": s.opts.SystemPrompt, "sandbox": "read-only", "approvalPolicy": "never", "cwd": filepath.Join(s.opts.Root, "ws"), "config": map[string]any{"bypass_hook_trust": true}}
-		if s.opts.Model != "" {
-			params["model"] = s.opts.Model
-		}
-		if s.opts.Workspace {
-			params["sandbox"] = "danger-full-access"
-		}
-		if s.resume != "" {
-			params["threadId"] = s.resume
-			s.request("thread/resume", params)
+		if strings.TrimSpace(s.opts.User.APIKey) != "" {
+			s.startThread("agentflow_user")
+		} else if s.resume != "" {
+			// A shared journal may belong to the previous speaker's provider.
+			// Resolve this machine's current configuration before resuming it.
+			s.request("config/read", map[string]any{"includeLayers": false})
 		} else {
-			s.request("thread/start", params)
+			s.startThread("")
 		}
+	case "config/read":
+		if failure != "" {
+			return s.fail("Codex app-server 读取模型配置失败：" + failure)
+		}
+		var result struct {
+			Config *struct {
+				ModelProvider string `json:"model_provider"`
+			} `json:"config"`
+		}
+		if json.Unmarshal(message.Result, &result) != nil || result.Config == nil {
+			return s.fail("Codex app-server 返回了无效的模型配置")
+		}
+		provider := strings.TrimSpace(result.Config.ModelProvider)
+		if provider == "" {
+			provider = "openai"
+		}
+		s.startThread(provider)
 	case "thread/start", "thread/resume":
 		if failure != "" {
 			if method == "thread/resume" {
@@ -230,6 +240,30 @@ func (s *codexAppServer) response(message codexRPCMessage) []string {
 		}
 	}
 	return nil
+}
+
+// startThread explicitly selects this turn's provider when resuming, so a
+// shared journal cannot silently restore another speaker's credential route.
+// Codex rejects incompatible provider changes before a turn starts; the normal
+// missing-session recovery then rebuilds from the platform transcript.
+func (s *codexAppServer) startThread(provider string) {
+	// Both approval hooks are generated and reviewed by the platform.
+	params := map[string]any{"developerInstructions": s.opts.SystemPrompt, "sandbox": "read-only", "approvalPolicy": "never", "cwd": filepath.Join(s.opts.Root, "ws"), "config": map[string]any{"bypass_hook_trust": true}}
+	if s.opts.Model != "" {
+		params["model"] = s.opts.Model
+	}
+	if provider != "" {
+		params["modelProvider"] = provider
+	}
+	if s.opts.Workspace {
+		params["sandbox"] = "danger-full-access"
+	}
+	if s.resume != "" {
+		params["threadId"] = s.resume
+		s.request("thread/resume", params)
+	} else {
+		s.request("thread/start", params)
+	}
 }
 
 func (s *codexAppServer) notification(method string, raw json.RawMessage) []string {

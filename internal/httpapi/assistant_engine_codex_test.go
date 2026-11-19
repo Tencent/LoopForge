@@ -233,15 +233,19 @@ func TestCodexAppServerResume(t *testing.T) {
 	readCodexTestRPC(t, stdin)
 	inv.translate(`{"id":1,"result":{}}`)
 	readCodexTestRPC(t, stdin)
+	if m := readCodexTestRPC(t, stdin); m.Method != "config/read" {
+		t.Fatalf("current provider request: %+v", m)
+	}
+	inv.translate(`{"id":2,"result":{"config":{"model_provider":"runner-provider"}}}`)
 	m := readCodexTestRPC(t, stdin)
-	if m.Method != "thread/resume" || m.Params["threadId"] != "019a-old" || m.Params["model"] != "gpt-5.5" {
+	if m.Method != "thread/resume" || m.Params["threadId"] != "019a-old" || m.Params["model"] != "gpt-5.5" || m.Params["modelProvider"] != "runner-provider" {
 		t.Fatalf("thread/resume: %+v", m)
 	}
 	if config, _ := m.Params["config"].(map[string]any); config["bypass_hook_trust"] != true {
 		t.Fatalf("resumed thread lost denial hook trust: %+v", m)
 	}
 	// A thread the server cannot load reads as a missing session.
-	out := inv.translate(`{"id":2,"error":{"code":-32600,"message":"no rollout found for thread id 019a-old"}}`)
+	out := inv.translate(`{"id":3,"error":{"code":-32600,"message":"no rollout found for thread id 019a-old"}}`)
 	if len(out) != 1 || !strings.Contains(out[0], "No conversation found with session ID: 019a-old") {
 		t.Fatalf("missing thread: %v", out)
 	}

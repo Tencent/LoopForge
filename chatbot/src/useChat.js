@@ -231,6 +231,7 @@ export function useChat() {
     setModels(catalog.models || []);
     setCodeBuddyDefault({ id: catalog.default || "default", name: "默认", efforts: catalog.defaultEfforts });
     setSponsoredModels(sponsoredModelList(catalog));
+    setProviderCatalogs({});
   }, []);
   useEffect(() => {
     if (!user?.id || user.isGuest) {
@@ -603,6 +604,30 @@ export function useChat() {
   const sponsoredModel = sponsoredModels[0] || "";
   const sponsored = codeBuddy && missingKey && !user.isGuest && !!sponsoredModel;
   const sharedModelFor = (id) => (sponsoredModels.includes(id) ? id : sponsoredModel);
+  const personalKeyConfigured = executor === "codex"
+    ? user?.codexApiKeyConfigured
+    : executor === "claude-code"
+      ? user?.claudeCodeApiKeyConfigured
+      : user?.agentCliCredentials?.[executor]?.apiKeyConfigured;
+  // The shared transcript can name a model the current speaker cannot use.
+  // Keep machine-login models and unknown targets/catalogs intact; substitute a
+  // model when the speaker's own credential-backed catalog is available.
+  function modelForSpeaker(candidate, conversation = session) {
+    const locked = executionLocked(conversation);
+    const targetKnown = (locked && conversation.executionTarget?.pool === "cloud") ||
+      (executionMachines.machinesReady && !executionMachines.machineError);
+    const runnerId = locked
+      ? (conversation.executionTarget?.pool === "runner" ? conversation.executionTarget.runnerId : "")
+      : executionMachines.defaultRunnerId;
+    const machine = executionMachines.machines.find((item) => item.id === runnerId && item.ownerUserId === user?.id);
+    const runnerLogin = machine && ["codex", "claude-code", "agy"].includes(executor) &&
+      machine.runtimes?.find((runtime) => runtime.provider === executor)?.authMode !== "personal";
+    const personalCatalog = targetKnown && conversation?.projectId && personalKeyConfigured && !runnerLogin && listedForEngine.length > 0;
+    const available = personalCatalog && !findExecutorModel(listedForEngine, executor, candidate)
+      ? preferredModel(listedForEngine, executor, codeBuddyDefault.id)
+      : candidate;
+    return sponsored ? sharedModelFor(available) : available;
+  }
   function modelEntry(id) {
     return findExecutorModel(executorModels, executor, id) ??
       (codeBuddy && id === codeBuddyDefault.id ? codeBuddyDefault : undefined);
@@ -610,7 +635,7 @@ export function useChat() {
   const hasSelectedModel = model !== null &&
     (session || !executorModels.length || findExecutorModel(executorModels, executor, model));
   const selectedModel = hasSelectedModel ? model : preferredModel(executorModels, executor, codeBuddyDefault.id);
-  const availableModel = sponsored ? sharedModelFor(selectedModel) : selectedModel;
+  const availableModel = modelForSpeaker(selectedModel);
   const activeModelEntry = modelEntry(availableModel);
   const activeModel = activeModelEntry?.id ?? availableModel;
   // null follows the browser preference, while "" is the CLI's default level.
@@ -1100,7 +1125,7 @@ export function useChat() {
       setSubmitting(true);
       open(stored.id);
       setSession(stored);
-      const chosen = sponsored ? sharedModelFor(stored.model || activeModel) : stored.model || activeModel;
+      const chosen = modelForSpeaker(stored.model || activeModel, stored);
       setModel(chosen);
       setEffort(stored.effort || "");
       const g = await write("/api/assistant/generations", {
