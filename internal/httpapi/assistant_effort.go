@@ -37,6 +37,10 @@ func assistantModelEffortsForBaseURL(model string, catalog []domain.CLIModel, ba
 // The CodeBuddy fallback mirrors CodeBuddy Code 2.180.0's model capabilities.
 // Unknown CodeBuddy, Codex and Claude Code models fall back to low/medium/high.
 func assistantModelEffortsIn(model string, catalog []domain.CLIModel) []string {
+	return assistantModelEffortsInCatalog(model, catalog, false)
+}
+
+func assistantModelEffortsInCatalog(model string, catalog []domain.CLIModel, runnerLogin bool) []string {
 	engine, id := assistantModelEngine(model)
 	supported := domain.ExecutorEffortLevels[engine]
 	builtins := builtinExecutorModels[engine]
@@ -55,6 +59,17 @@ func assistantModelEffortsIn(model string, catalog []domain.CLIModel) []string {
 		configured := item.ReasoningEfforts
 		if configured == nil {
 			configured = item.DiscoveredReasoningEfforts
+		}
+		if runnerLogin && engine == runtime.AgentCLIAntigravity && len(item.Efforts) > 0 {
+			supported = nil
+			for _, level := range runtime.AgyAccountModelEfforts(id) {
+				if item.Efforts[level] != "" {
+					supported = append(supported, level)
+				}
+			}
+			if configured == nil {
+				return supported
+			}
 		}
 		if configured == nil {
 			continue
@@ -109,10 +124,27 @@ func assistantModelEffortsIn(model string, catalog []domain.CLIModel) []string {
 }
 
 func validateAssistantEffort(ctx context.Context, user domain.User, model, effort string) error {
+	return validateAssistantTurnEffort(ctx, user, model, effort, false)
+}
+
+func validateAssistantTurnEffort(ctx context.Context, user domain.User, model, effort string, runnerLogin bool) error {
 	if effort == "" {
 		return nil
 	}
-	efforts := assistantModelEfforts(ctx, user, model)
+	engine, id := assistantModelEngine(model)
+	var efforts []string
+	if runnerLogin && engine == runtime.AgentCLIAntigravity {
+		efforts = runtime.AgyAccountModelEfforts(id)
+		models := runtime.FoldAgyAccountModels(assistantEngineCustomModels(user, engine))
+		for _, item := range models {
+			if item.ID == id || slices.ContainsFunc(efforts, func(level string) bool { return item.Efforts[level] == id }) {
+				efforts = assistantModelEffortsInCatalog(engine+":"+item.ID, models, true)
+				break
+			}
+		}
+	} else {
+		efforts = assistantModelEfforts(ctx, user, model)
+	}
 	if !slices.Contains(efforts, effort) {
 		if len(efforts) == 0 {
 			return fmt.Errorf("模型 %s 仅支持默认思考强度", model)

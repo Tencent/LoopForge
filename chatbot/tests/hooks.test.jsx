@@ -122,7 +122,7 @@ describe("conversation hooks", () => {
     }
   });
 
-  test("reads Antigravity models from the selected account-login machine", async () => {
+  test("reads Antigravity model families and restores a previous variant as an effort", async () => {
     const originalAPI = apiMock.getMockImplementation();
     const originalWrite = writeMock.getMockImplementation();
     apiMock.mockImplementation((path, options) => {
@@ -135,25 +135,44 @@ describe("conversation hooks", () => {
     });
     writeMock.mockImplementation((path, body) => path === "/api/runners/mac/models/probe"
       ? Promise.resolve({ models: [
-        { id: "claude-sonnet-5-5-medium", name: "Claude Sonnet 5.5 (Medium)" },
-        { id: "claude-opus-5-5-high", name: "Claude Opus 5.5 (High)" },
+        {
+          id: "claude-sonnet-5-5-medium", name: "Claude Sonnet 5.5",
+          efforts: {
+            low: "claude-sonnet-5-5-low", medium: "claude-sonnet-5-5-medium", high: "claude-sonnet-5-5-high",
+          },
+          discoveredReasoningEfforts: ["low", "medium", "high"],
+        },
+        { id: "claude-opus-5-5-medium", name: "Claude Opus 5.5" },
       ] })
       : originalWrite(path, body));
 
+    writeComposerPreference("model.agy", "agy:claude-sonnet-5-5-high");
     const view = renderHook(() => useChat());
     try {
       await waitFor(() => expect(view.result.current.defaultRunnerId).toBe("mac"));
       act(() => view.result.current.setExecutor("agy"));
       await waitFor(() => expect(view.result.current.models.map((m) => m.id)).toEqual([
-        "agy:claude-sonnet-5-5-medium", "agy:claude-opus-5-5-high",
+        "agy:claude-sonnet-5-5-medium", "agy:claude-opus-5-5-medium",
       ]));
-      expect(writeMock).toHaveBeenCalledWith("/api/runners/mac/models/probe", { provider: "agy" });
+      expect(writeMock).toHaveBeenCalledWith("/api/runners/mac/models/probe", { provider: "agy", useSaved: true });
       expect(view.result.current.model).toBe("agy:claude-sonnet-5-5-medium");
+      expect(view.result.current.modelDetails.efforts).toEqual(["low", "medium", "high"]);
+      expect(view.result.current.effort).toBe("high");
+      act(() => view.result.current.setEffort(""));
+      expect(view.result.current.effort).toBe("");
+      act(() => view.result.current.setEffort("low"));
+      await act(() => view.result.current.send({ text: "使用低思考强度" }));
+      expect(writeMock).toHaveBeenCalledWith("/api/assistant/generations", expect.objectContaining({
+        model: "agy:claude-sonnet-5-5-medium", effort: "low", executionTarget: { pool: "runner", runnerId: "mac" },
+      }));
     } finally {
       view.unmount();
       apiMock.mockImplementation(originalAPI);
       writeMock.mockImplementation(originalWrite);
       localStorage.removeItem("loopforge.assistant.executor");
+      localStorage.removeItem("loopforge.assistant.model.agy");
+      localStorage.removeItem("loopforge.assistant.effort.agy.claude-sonnet-5-5-medium");
+      history.replaceState({}, "", "/");
     }
   });
 

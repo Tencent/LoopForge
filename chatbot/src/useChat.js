@@ -65,7 +65,9 @@ function unprefixedModel(executor, model) {
 
 function findExecutorModel(list, executor, model) {
   const id = unprefixedModel(executor, model);
-  return list.find((item) => unprefixedModel(executor, item.id) === id);
+  if (!id) return undefined;
+  return list.find((item) => unprefixedModel(executor, item.id) === id) ??
+    list.find((item) => item.efforts?.some((level) => item.effortModelIds?.[level] === id));
 }
 
 function effortPreference(executor, model) {
@@ -78,7 +80,7 @@ function preferredModel(list, executor, codeBuddyDefault) {
   const remembered = readComposerPreference(`model.${executor}`);
   const available = list.filter((model) => !model.disabled && !model.unavailable);
   const listed = findExecutorModel(available, executor, remembered);
-  return listed?.id || available[0]?.id || (executor === "codebuddy" ? codeBuddyDefault : "");
+  return (listed && remembered) || available[0]?.id || (executor === "codebuddy" ? codeBuddyDefault : "");
 }
 
 // Mirrors errAssistantSponsoredModel in internal/httpapi/assistant_sponsor.go;
@@ -595,12 +597,9 @@ export function useChat() {
   const personalMachine = executionMachines.machines.find(
     (machine) => machine.id === personalMachineId && machine.ownerUserId === user?.id,
   );
-  const savedAgyModels = users.find((entry) => entry.id === user?.id)?.agentCliCredentials?.agy?.models;
   const agyRuntime = personalMachine?.runtimes?.find((runtime) => runtime.provider === "agy");
-  // An explicit catalog can be maintained from the runner's settings. Otherwise
-  // read the live account's model list rather than the Gemini API key catalog.
-  const agyAccountKey = executor === "agy" && agyRuntime && agyRuntime.authMode !== "personal" &&
-    !savedAgyModels?.length ? `agy-account:${user.id}:${personalMachine.id}` : "";
+  const agyAccountKey = executor === "agy" && agyRuntime && agyRuntime.authMode !== "personal"
+    ? `agy-account:${user.id}:${personalMachine.id}` : "";
   const codeBuddy = executor === "codebuddy";
   const listedForEngine = engineModels(models, executor);
   const executorModels = agyAccountKey ? providerCatalogs[agyAccountKey]?.models || [] :
@@ -621,18 +620,21 @@ export function useChat() {
   const availableModel = sponsored ? sharedModelFor(selectedModel) : selectedModel;
   const activeModelEntry = modelEntry(availableModel);
   const activeModel = activeModelEntry?.id ?? availableModel;
+  const requestedModelId = unprefixedModel(executor, availableModel);
+  // Older sessions and preferences stored the ID of the selected effort variant.
+  const legacyEffort = requestedModelId !== unprefixedModel(executor, activeModel)
+    ? activeModelEntry?.efforts?.find((level) => activeModelEntry.effortModelIds?.[level] === requestedModelId)
+    : undefined;
   // null follows the browser preference, while "" is the CLI's default level.
-  const activeEffort = modelEffort(
-    activeModelEntry,
-    ((model === null || hasSelectedModel) ? effort : null) ??
-      readComposerPreference(effortPreference(executor, activeModel)),
-  );
+  const preferredEffort = ((model === null || hasSelectedModel) ? effort : null) ??
+    readComposerPreference(effortPreference(executor, availableModel));
+  const activeEffort = modelEffort(activeModelEntry, preferredEffort || legacyEffort);
   useEffect(() => {
     const key = agyAccountKey || executor;
     if (codeBuddy || providerCatalogs[key] || (!agyAccountKey && listedForEngine.length)) return;
     let current = true;
     const request = agyAccountKey
-      ? write(`/api/runners/${encodeURIComponent(personalMachineId)}/models/probe`, { provider: "agy" })
+      ? write(`/api/runners/${encodeURIComponent(personalMachineId)}/models/probe`, { provider: "agy", useSaved: true })
       : api(`/api/assistant/models?executor=${encodeURIComponent(executor)}`);
     request
       .then((catalog) => {
@@ -644,6 +646,7 @@ export function useChat() {
             engine: "agy",
             name: model.name || model.id,
             efforts: model.reasoningEfforts ?? model.discoveredReasoningEfforts,
+            effortModelIds: model.efforts,
           })),
         } : catalog;
         setProviderCatalogs((old) => ({ ...old, [key]: result }));

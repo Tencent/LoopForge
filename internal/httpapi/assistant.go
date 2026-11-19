@@ -226,7 +226,7 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 	}
 	cliEngine, _ = assistantModelEngine(req.Model)
 	req.Executor = cliEngine
-	if err := validateAssistantEffort(c.Request.Context(), user, req.Model, req.Effort); err != nil {
+	if err := validateAssistantTurnEffort(c.Request.Context(), user, req.Model, req.Effort, runnerLogin); err != nil {
 		c.JSON(400, gin.H{"error": err.Error()})
 		return
 	}
@@ -1509,7 +1509,7 @@ func runAssistantCLI(ctx context.Context, req assistantCLIRequest, user domain.U
 		sessionID = newAssistantSessionID()
 	}
 	var inv assistantCLIInvocation
-	engineOpts := assistantEngineInvocationOpts{Bin: bin, Root: root, Config: config, Prompt: req.Prompt, Model: engineModel, Effort: req.Effort, SessionID: sessionID, Resume: req.Resume, SystemPrompt: req.SystemPrompt, ReviewOnly: req.ReviewOnly, Workspace: req.Workspace}
+	engineOpts := assistantEngineInvocationOpts{Bin: bin, Root: root, Config: config, Prompt: req.Prompt, Model: engineModel, Effort: req.Effort, SessionID: sessionID, Resume: req.Resume, SystemPrompt: req.SystemPrompt, ReviewOnly: req.ReviewOnly, Workspace: req.Workspace, RunnerLogin: req.RunnerLogin}
 	switch engine {
 	case assistantEngineClaude:
 		if !req.RunnerLogin {

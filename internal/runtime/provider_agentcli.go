@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"agentflow/internal/domain"
@@ -73,6 +74,7 @@ func (p agentCLIProvider) Prepare(in providerInvocation) (CommandSpec, error) {
 		Binary: in.Executor.Binary, Model: in.Executor.Model, Effort: in.Executor.Effort,
 		Resume: in.Options.ResumeSessionID, Prompt: positionalPrompt(in),
 		SystemPrompt: in.Compiled.SystemPrompt, SystemPromptFile: systemFile, Extra: in.Executor.Args,
+		RunnerLogin: in.Options.RunnerLogin,
 	})
 	command.CredentialBindings = []CredentialBinding{BindAgentCLI, BindGit, BindMCP}
 	command.PrivateHome = true
@@ -93,8 +95,9 @@ type AgentCLICommandOptions struct {
 	// Chat runs the CLI for AI 对话 on the control plane: MCP tools stay
 	// available, shell, file writes and web access do not. The MCP
 	// configuration (WriteAgentCLIMCPConfig ReadOnly) completes the policy.
-	Chat      bool
-	Workspace bool
+	Chat        bool
+	Workspace   bool
+	RunnerLogin bool
 	// AgentFile is Kimi Code's chat agent definition (WriteKimiChatAgent).
 	AgentFile string
 }
@@ -151,6 +154,9 @@ func AgentCLICommand(kind string, o AgentCLICommandOptions) CommandSpec {
 		// Chat deny rules travel as --settings (ApplyAgentCLICredential);
 		// they hold even with --dangerously-skip-permissions.
 		argv = []string{binary, "--output-format", "stream-json", "--dangerously-skip-permissions", "--disable-slash-commands"}
+		if family := agyClaudeFamily(model); o.RunnerLogin && family != "" && slices.Contains(AgyAccountModelEfforts(family), effort) {
+			model, effort = family+"-"+effort, ""
+		}
 		if model != "" && AgyModelEfforts(model) == nil {
 			effort = ""
 		}
@@ -226,16 +232,9 @@ func AgentCLICommand(kind string, o AgentCLICommandOptions) CommandSpec {
 	return CommandSpec{Argv: argv, Provider: kind, AgentCLI: options}
 }
 
-// AgyModelEfforts returns the separate effort choices for Gemini models.
-// Account-only Claude variants already include their effort in their model ID.
+// AgyModelEfforts returns the separate effort choices for Gemini API models.
 func AgyModelEfforts(model string) []string {
-	model = strings.TrimSpace(model)
-	for _, level := range domain.ExecutorEffortLevels[AgentCLIAntigravity] {
-		if base, ok := strings.CutSuffix(model, "-"+level); ok {
-			model = base
-			break
-		}
-	}
+	model, _ = splitAgyModelEffort(strings.TrimSpace(model))
 	switch model {
 	case "gemini-4-neon", "gemini-4-hydrogen":
 		return []string{"low", "medium", "high", "xhigh"}
@@ -257,10 +256,8 @@ func agyModelForEffort(model, effort string) string {
 	if effort == "" {
 		return model
 	}
-	for _, level := range domain.ExecutorEffortLevels[AgentCLIAntigravity] {
-		if base, ok := strings.CutSuffix(model, "-"+level); ok {
-			return base + "-" + effort
-		}
+	if base, existing := splitAgyModelEffort(model); existing != "" {
+		return base + "-" + effort
 	}
 	return model
 }

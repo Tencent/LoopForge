@@ -411,7 +411,8 @@ func (h *assistantHandlers) session(c *gin.Context) {
 			if engine == assistantEngineCodeBuddy {
 				editor, _, _ = h.assistantChatUser(editor)
 			}
-			if err := validateAssistantEffort(c.Request.Context(), editor, model, conv.Effort); err != nil {
+			runnerLogin := h.assistantUsesRunnerLogin(current.ID, conv.ExecutionTarget, engine)
+			if err := validateAssistantTurnEffort(c.Request.Context(), editor, model, conv.Effort, runnerLogin); err != nil {
 				c.JSON(400, gin.H{"error": err.Error()})
 				return
 			}

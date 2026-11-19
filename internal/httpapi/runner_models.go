@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"agentflow/internal/domain"
+	"agentflow/internal/runtime"
 
 	"github.com/gin-gonic/gin"
 )
@@ -31,6 +32,7 @@ func (h *runnersHandlers) probeRunnerModels(c *gin.Context) {
 	}
 	var req struct {
 		Provider string `json:"provider"`
+		UseSaved bool   `json:"useSaved"`
 	}
 	if !decode(c, &req) {
 		return
@@ -39,6 +41,13 @@ func (h *runnersHandlers) probeRunnerModels(c *gin.Context) {
 	if !runnerUsesLocalLogin(runner, provider) {
 		c.JSON(http.StatusConflict, cliModelProbeResult{Error: "请先为该 CLI 启用账号登录"})
 		return
+	}
+	if provider == runtime.AgentCLIAntigravity && req.UseSaved {
+		stored, _ := h.repo.User(user.ID)
+		if saved := assistantEngineCustomModels(stored, provider); len(saved) > 0 {
+			c.JSON(http.StatusOK, cliModelProbeResult{Models: runnerLoginModelsWithEfforts(provider, saved), Source: "saved"})
+			return
+		}
 	}
 	if runner.Status != domain.RunnerStatusOnline || !runner.SupportsProvider(provider) || h.runnerControls == nil {
 		c.JSON(http.StatusServiceUnavailable, cliModelProbeResult{Error: "执行机器或所选 CLI 当前不可用"})
@@ -70,5 +79,21 @@ func (h *runnersHandlers) probeRunnerModels(c *gin.Context) {
 		c.JSON(http.StatusOK, cliModelProbeResult{Error: "账号没有返回可用模型，可以手动添加模型"})
 		return
 	}
-	c.JSON(http.StatusOK, cliModelProbeResult{Models: cliModelsWithEfforts(provider, models, ""), Source: "runner"})
+	c.JSON(http.StatusOK, cliModelProbeResult{Models: runnerLoginModelsWithEfforts(provider, models), Source: "runner"})
+}
+
+func runnerLoginModelsWithEfforts(provider string, models []domain.CLIModel) []domain.CLIModel {
+	if provider != runtime.AgentCLIAntigravity {
+		return cliModelsWithEfforts(provider, models, "")
+	}
+	models = runtime.FoldAgyAccountModels(models)
+	for i, model := range models {
+		levels := append([]string{}, assistantModelEffortsInCatalog(provider+":"+model.ID, models, true)...)
+		if model.ReasoningEfforts != nil {
+			models[i].ReasoningEfforts = &levels
+		} else {
+			models[i].DiscoveredReasoningEfforts = &levels
+		}
+	}
+	return models
 }
