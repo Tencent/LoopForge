@@ -331,7 +331,7 @@ func (s *Server) toolList() []map[string]any {
 		op := s.operations[name]
 		tools = append(tools, map[string]any{
 			"name":        op.Name,
-			"description": op.Description + " (" + op.Method + " " + op.Path + ")",
+			"description": ToolDescription(op),
 			"inputSchema": ToolInputSchema(op),
 			"annotations": map[string]any{
 				"readOnlyHint":    op.ReadOnly,
