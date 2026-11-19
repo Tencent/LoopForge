@@ -3,12 +3,16 @@ package deploy
 import (
 	"debug/elf"
 	"encoding/binary"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
+	"slices"
+	"strings"
 	"testing"
 )
 
@@ -17,23 +21,40 @@ func TestBindCLIInstallsDockerRunnerHelper(t *testing.T) {
 	if err != nil {
 		t.Skip("curl is required for the runner installer")
 	}
+	script, err := filepath.Abs("bind-cli.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, tc := range []struct {
-		name, hostOS, arch, unameArch string
-		upgrade                       bool
-		helperArtifact, source        string
-		preserveHelper                bool
+		name, hostOS, arch, unameArch    string
+		upgrade, launchd                 bool
+		helperArtifact, source, existing string
+		preserveHelper                   bool
+		templatePath                     bool
 	}{
 		{name: "macOS_install", hostOS: "darwin", arch: "arm64", unameArch: "arm64"},
+		{name: "macOS_creates_nested_runtime_helper_path", hostOS: "darwin", arch: "arm64", unameArch: "arm64", templatePath: true},
 		{name: "macOS_upgrade", hostOS: "darwin", arch: "amd64", unameArch: "x86_64", upgrade: true},
 		{name: "Linux_install", hostOS: "linux", arch: "arm64", unameArch: "aarch64"},
 		{name: "macOS_preserves_helper_on_failed_download", hostOS: "darwin", arch: "arm64", unameArch: "arm64", helperArtifact: "unavailable", preserveHelper: true},
 		{name: "macOS_preserves_helper_when_server_serves_macOS_binary_for_Linux", hostOS: "darwin", arch: "arm64", unameArch: "arm64", upgrade: true, helperArtifact: "mach-o", preserveHelper: true},
 		{name: "macOS_preserves_helper_when_server_serves_wrong_architecture", hostOS: "darwin", arch: "amd64", unameArch: "x86_64", upgrade: true, helperArtifact: "wrong-arch", preserveHelper: true},
+		{name: "macOS_preserves_helper_when_only_ELF_header_is_served", hostOS: "darwin", arch: "arm64", unameArch: "arm64", upgrade: true, helperArtifact: "truncated-header", preserveHelper: true},
+		{name: "macOS_preserves_helper_when_ELF_segment_is_truncated", hostOS: "darwin", arch: "arm64", unameArch: "arm64", upgrade: true, helperArtifact: "truncated-segment", preserveHelper: true},
 		{name: "macOS_preserves_helper_with_local_runner", hostOS: "darwin", arch: "arm64", unameArch: "arm64", source: "from", preserveHelper: true},
+		{name: "macOS_preserves_helper_with_implicit_source_build", hostOS: "darwin", arch: "arm64", unameArch: "arm64", source: "checkout", preserveHelper: true},
+		{name: "macOS_upgrades_launchd_with_custom_runner", hostOS: "darwin", arch: "arm64", unameArch: "arm64", source: "from", launchd: true, upgrade: true, preserveHelper: true},
+		{name: "macOS_upgrades_launchd_on_template_path", hostOS: "darwin", arch: "arm64", unameArch: "arm64", source: "from", launchd: true, upgrade: true, templatePath: true},
+		{name: "macOS_installs_companion_for_Intel_runner_on_arm64", hostOS: "darwin", arch: "amd64", unameArch: "arm64", source: "from"},
+		{name: "macOS_repairs_incompatible_local_helper", hostOS: "darwin", arch: "arm64", unameArch: "arm64", source: "from", existing: "mach-o", upgrade: true},
+		{name: "macOS_preserves_custom_helper_script", hostOS: "darwin", arch: "arm64", unameArch: "arm64", source: "from", existing: "script", preserveHelper: true},
 		{name: "macOS_preserves_helper_with_host_only_URL", hostOS: "darwin", arch: "arm64", unameArch: "arm64", source: "host-url", preserveHelper: true},
 		{name: "macOS_updates_helper_with_explicit_Linux_URL", hostOS: "darwin", arch: "arm64", unameArch: "arm64", source: "template"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			if tc.launchd && runtime.GOOS != "darwin" {
+				t.Skip("requires macOS plutil")
+			}
 			fixtureHome := t.TempDir()
 			bin := filepath.Join(fixtureHome, "bin")
 			if err := os.Mkdir(bin, 0o755); err != nil {
@@ -47,20 +68,34 @@ func TestBindCLIInstallsDockerRunnerHelper(t *testing.T) {
 			oldHelper := bindFixtureLinuxRunner(tc.arch, "old helper")
 			hostRunner := linuxRunner
 			if tc.hostOS == "darwin" {
-				hostRunner = "\xcf\xfa\xed\xfe" + tc.arch + " macOS runner"
+				cpu := "\x0c\x00\x00\x01"
+				if tc.arch == "amd64" {
+					cpu = "\x07\x00\x00\x01"
+				}
+				hostRunner = "\xcf\xfa\xed\xfe" + cpu + " macOS runner"
 			}
 			if tc.source == "from" {
-				hostRunner = "custom " + hostRunner
+				hostRunner += " custom"
+			}
+			switch tc.existing {
+			case "mach-o":
+				oldHelper = "\xcf\xfa\xed\xfe wrong OS"
+			case "script":
+				oldHelper = "#!/bin/sh\nexec /opt/runner \"$@\"\n"
 			}
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 				targetOS, arch := req.URL.Query().Get("os"), req.URL.Query().Get("arch")
-				if arch != tc.arch || (targetOS != tc.hostOS && targetOS != "linux") {
+				if (arch != tc.arch && arch != tc.unameArch) || (targetOS != tc.hostOS && targetOS != "linux") {
 					http.NotFound(w, req)
 					return
 				}
 				switch req.URL.Path {
 				case "/runners/agentflow-runner":
 					if targetOS == tc.hostOS {
+						if tc.source == "checkout" {
+							http.NotFound(w, req)
+							return
+						}
 						fmt.Fprint(w, hostRunner)
 						return
 					}
@@ -71,8 +106,12 @@ func TestBindCLIInstallsDockerRunnerHelper(t *testing.T) {
 						fmt.Fprint(w, hostRunner)
 					case "wrong-arch":
 						fmt.Fprint(w, bindFixtureLinuxRunner("arm64", "new helper"))
+					case "truncated-header":
+						fmt.Fprint(w, linuxRunner[:64])
+					case "truncated-segment":
+						fmt.Fprint(w, linuxRunner[:len(linuxRunner)-1])
 					default:
-						fmt.Fprint(w, linuxRunner)
+						fmt.Fprint(w, bindFixtureLinuxRunner(arch, "new helper"))
 					}
 				case "/runners/agentflow-gate-mcp":
 					fmt.Fprintf(w, "gate %s/%s", targetOS, arch)
@@ -81,8 +120,13 @@ func TestBindCLIInstallsDockerRunnerHelper(t *testing.T) {
 				}
 			}))
 			defer server.Close()
-			args := []string{"bind-cli.sh", "--bin-dir", bin, "--no-start"}
+			args := []string{script, "--bin-dir", bin, "--no-start"}
 			helper := filepath.Join(bin, "agentflow-runner-linux-"+tc.arch)
+			patternEnv := ""
+			if tc.templatePath {
+				patternEnv = filepath.Join(fixtureHome, "bundle", "{os}", "{arch}", "agentflow-runner")
+				helper = filepath.Join(fixtureHome, "bundle", "linux", tc.arch, "agentflow-runner")
+			}
 			statePath := filepath.Join(fixtureHome, ".agentflow-runner", "state.json")
 			const state = `{"runnerId":"fixture"}`
 			if tc.upgrade {
@@ -114,15 +158,72 @@ func TestBindCLIInstallsDockerRunnerHelper(t *testing.T) {
 			case "template":
 				args = append(args, "--download-url", server.URL+"/runners/agentflow-runner?os={os}&arch={arch}")
 			}
-			if tc.upgrade || tc.source != "" || tc.preserveHelper {
+			plist := filepath.Join(fixtureHome, "Library", "LaunchAgents", "com.agentflow.runner.plist")
+			oldServiceArgs := []string{filepath.Join(bin, "agentflow-runner"), "-labels", "fixture", "-auto-update=true"}
+			if tc.launchd {
+				if err := os.MkdirAll(filepath.Dir(plist), 0o700); err != nil {
+					t.Fatal(err)
+				}
+				data := fmt.Sprintf("<plist version=\"1.0\"><dict><key>KeepAlive</key><true/><key>ProgramArguments</key><array><string>%s</string></array></dict></plist>", strings.Join(oldServiceArgs, "</string><string>"))
+				if err := os.WriteFile(plist, []byte(data), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				launchctl := "#!/bin/sh\nif [ \"$1\" = load ]; then cp \"$2\" \"$HOME/reloaded.plist\"; fi\n"
+				if err := os.WriteFile(filepath.Join(bin, "launchctl"), []byte(launchctl), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if (tc.upgrade && !tc.templatePath) || tc.source == "template" || tc.preserveHelper {
 				if err := os.WriteFile(helper, []byte(oldHelper), 0o755); err != nil {
 					t.Fatal(err)
 				}
 			}
-			cmd := exec.Command("/bin/bash", args...)
-			cmd.Env = []string{"HOME=" + fixtureHome, "PATH=" + bin + ":" + filepath.Dir(curl) + ":/usr/bin:/bin", "AGENTFLOW_BROWSER=off"}
-			if out, err := cmd.CombinedOutput(); err != nil {
-				t.Fatalf("install: %v\n%s", err, out)
+			if tc.source == "checkout" {
+				if err := os.MkdirAll(filepath.Join(fixtureHome, "cmd", "agentflow-runner"), 0o700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(fixtureHome, "source-host"), []byte(hostRunner), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				goBuild := "#!/bin/sh\n[ \"$GOOS\" = darwin ] && cp \"$HOME/source-host\" \"$3\"\n"
+				if err := os.WriteFile(filepath.Join(bin, "go"), []byte(goBuild), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			install := func() string {
+				t.Helper()
+				cmd := exec.Command("/bin/bash", args...)
+				cmd.Dir = fixtureHome
+				cmd.Env = []string{"HOME=" + fixtureHome, "PATH=" + bin + ":" + filepath.Dir(curl) + ":/usr/bin:/bin", "AGENTFLOW_BROWSER=off"}
+				if patternEnv != "" {
+					cmd.Env = append(cmd.Env, "AGENTFLOW_RUNNER_BINARY="+patternEnv)
+				}
+				out, err := cmd.CombinedOutput()
+				if err != nil {
+					t.Fatalf("install: %v\n%s", err, out)
+				}
+				return string(out)
+			}
+			if output := install(); tc.source == "checkout" && !strings.Contains(output, "-auto-update=false") {
+				t.Fatalf("local source fallback did not disable automatic updates: %s", output)
+			}
+			if tc.launchd {
+				if tc.templatePath {
+					// Use the saved service path during another upgrade without a shell override.
+					if err := os.Remove(helper); err != nil {
+						t.Fatal(err)
+					}
+					patternEnv = ""
+				}
+				install() // The same upgrade must keep only one disabling argument.
+				out, err := exec.Command("/usr/bin/plutil", "-extract", "ProgramArguments", "json", "-o", "-", filepath.Join(fixtureHome, "reloaded.plist")).CombinedOutput()
+				if err != nil {
+					t.Fatalf("read reloaded launchd arguments: %v %s", err, out)
+				}
+				var got []string
+				if err := json.Unmarshal(out, &got); err != nil || !slices.Equal(got, append(oldServiceArgs, "-auto-update=false")) {
+					t.Fatalf("launchd started with %q: %v", got, err)
+				}
 			}
 			assertArtifact := func(path, want string) {
 				t.Helper()
@@ -146,6 +247,11 @@ func TestBindCLIInstallsDockerRunnerHelper(t *testing.T) {
 				assertArtifact(helper, linuxRunner)
 				assertArtifact(filepath.Join(bin, "agentflow-gate-mcp-linux-"+tc.arch), "gate linux/"+tc.arch)
 			}
+			if tc.templatePath {
+				if _, err := os.Stat(filepath.Join(bin, "agentflow-runner-linux-"+tc.arch)); !os.IsNotExist(err) {
+					t.Fatalf("the installer also wrote the fallback helper path: %v", err)
+				}
+			}
 			if tc.upgrade {
 				if got, err := os.ReadFile(statePath); err != nil || string(got) != state {
 					t.Fatalf("upgrade changed runner state: %q, %v", got, err)
@@ -156,7 +262,8 @@ func TestBindCLIInstallsDockerRunnerHelper(t *testing.T) {
 }
 
 func bindFixtureLinuxRunner(arch, payload string) string {
-	header := make([]byte, 64)
+	const elfHeaderSize, programHeaderSize = 64, 56
+	header := make([]byte, elfHeaderSize+programHeaderSize)
 	copy(header, "\x7fELF\x02\x01\x01\x00")
 	machine := elf.EM_X86_64
 	if arch == "arm64" {
@@ -165,6 +272,15 @@ func bindFixtureLinuxRunner(arch, payload string) string {
 	binary.LittleEndian.PutUint16(header[16:], uint16(elf.ET_EXEC))
 	binary.LittleEndian.PutUint16(header[18:], uint16(machine))
 	binary.LittleEndian.PutUint32(header[20:], uint32(elf.EV_CURRENT))
-	binary.LittleEndian.PutUint16(header[52:], uint16(len(header)))
+	binary.LittleEndian.PutUint64(header[32:], elfHeaderSize)
+	binary.LittleEndian.PutUint16(header[52:], elfHeaderSize)
+	binary.LittleEndian.PutUint16(header[54:], programHeaderSize)
+	binary.LittleEndian.PutUint16(header[56:], 1)
+	program := header[elfHeaderSize:]
+	binary.LittleEndian.PutUint32(program, uint32(elf.PT_LOAD))
+	binary.LittleEndian.PutUint32(program[4:], uint32(elf.PF_R|elf.PF_X))
+	size := uint64(len(header) + len(payload))
+	binary.LittleEndian.PutUint64(program[32:], size)
+	binary.LittleEndian.PutUint64(program[40:], size)
 	return string(header) + payload
 }

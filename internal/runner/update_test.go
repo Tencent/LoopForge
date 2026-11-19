@@ -199,8 +199,8 @@ func TestDockerRunnerHelperUpdateRepairsMissingBinary(t *testing.T) {
 		t.Fatal(err)
 	}
 	bin := t.TempDir()
-	t.Setenv("AGENTFLOW_RUNNER_BINARY", filepath.Join(bin, "agentflow-runner-{os}-{arch}"))
-	helper := filepath.Join(bin, "agentflow-runner-linux-"+runtime.GOARCH)
+	t.Setenv("AGENTFLOW_RUNNER_BINARY", filepath.Join(bin, "{os}", "{arch}", "agentflow-runner"))
+	helper := filepath.Join(bin, "linux", runtime.GOARCH, "agentflow-runner")
 	ctx := context.Background()
 	assertHelper := func() {
 		t.Helper()
@@ -243,16 +243,26 @@ func TestDockerRunnerHelperUpdateRepairsMissingBinary(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertHelper()
+	if err := os.Chmod(helper, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.checkDockerRunnerHelperUpdate(ctx, true); err != nil {
+		t.Fatal(err)
+	}
+	assertHelper()
 }
 
-func TestDockerRunnerHelperUpdateRejectsWrongOSOrArchitecture(t *testing.T) {
+func TestDockerRunnerHelperUpdateRejectsIncompatibleBinary(t *testing.T) {
 	otherArch := "arm64"
 	if runtime.GOARCH == otherArch {
 		otherArch = "amd64"
 	}
+	complete := dockerRunnerFixtureLinuxBinary(runtime.GOARCH, "full program")
 	for _, tc := range []struct{ name, payload string }{
 		{name: "macOS_binary", payload: "\xcf\xfa\xed\xfemacOS runner"},
 		{name: "wrong_Linux_architecture", payload: dockerRunnerFixtureLinuxBinary(otherArch, "wrong architecture")},
+		{name: "only_ELF_header", payload: complete[:64]},
+		{name: "truncated_load_segment", payload: complete[:len(complete)-1]},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			hash := sha256.Sum256([]byte(tc.payload))
@@ -385,7 +395,7 @@ func TestDockerRunnerHelperDownloadDoesNotBlockMacOSStartup(t *testing.T) {
 	wait(claim, "task polling")
 	workspaceCtx, cancelWorkspace := context.WithTimeout(ctx, time.Second)
 	defer cancelWorkspace()
-	if err := d.waitForDockerRunnerHelper(workspaceCtx); err != nil {
+	if err := d.waitForDockerRunnerHelper(workspaceCtx, helper); err != nil {
 		t.Fatalf("existing helper should be available during the download: %v", err)
 	}
 	close(allowMetadata)
@@ -395,8 +405,109 @@ func TestDockerRunnerHelperDownloadDoesNotBlockMacOSStartup(t *testing.T) {
 	})
 }
 
+func TestDockerRunnerHelperRescanRetriesFailedVersionCheck(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("HOME", root)
+	t.Setenv("PATH", "/usr/bin:/bin")
+	t.Setenv("AGENTFLOW_RUNNER_BINARY", filepath.Join(root, "agentflow-runner-{os}-{arch}"))
+	helper := filepath.Join(root, "agentflow-runner-linux-"+runtime.GOARCH)
+	if err := os.WriteFile(helper, []byte(dockerRunnerFixtureLinuxBinary(runtime.GOARCH, "old version")), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	updated := dockerRunnerFixtureLinuxBinary(runtime.GOARCH, "updated version")
+	hash := sha256.Sum256([]byte(updated))
+	var metadataRequests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if req.URL.Query().Get("metadata") == "1" {
+			if metadataRequests.Add(1) == 1 {
+				w.WriteHeader(http.StatusServiceUnavailable)
+				return
+			}
+			fmt.Fprintf(w, `{"sha256":%q}`, hex.EncodeToString(hash[:]))
+			return
+		}
+		fmt.Fprint(w, updated)
+	}))
+	defer server.Close()
+	d, err := New(Config{ServerURL: server.URL, BootstrapToken: "fixture"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	d.dockerHelperSyncDone = make(chan struct{})
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		d.rescanLoop(ctx, 50*time.Millisecond)
+	}()
+	defer func() { cancel(); <-done }()
+	waitFor(t, 5*time.Second, "rescan to replace the old helper after a failed startup sync", func() bool {
+		data, err := os.ReadFile(helper)
+		return err == nil && string(data) == updated
+	})
+	if got := metadataRequests.Load(); got != 2 {
+		t.Fatalf("metadata requests = %d, want a failed check and one retry", got)
+	}
+}
+
+func TestDockerRunnerHelperSlowDownloadOutlivesWorkspaceWait(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("AGENTFLOW_RUNNER_BINARY", filepath.Join(root, "agentflow-runner-{os}-{arch}"))
+	helper := filepath.Join(root, "agentflow-runner-linux-"+runtime.GOARCH)
+	binary := dockerRunnerFixtureLinuxBinary(runtime.GOARCH, "complete slow download")
+	hash := sha256.Sum256([]byte(binary))
+	downloading := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if req.URL.Query().Get("metadata") == "1" {
+			fmt.Fprintf(w, `{"sha256":%q}`, hex.EncodeToString(hash[:]))
+			return
+		}
+		fmt.Fprint(w, binary[:64])
+		w.(http.Flusher).Flush()
+		close(downloading)
+		// Keep the transfer active beyond the old shared 30-second deadline.
+		timer := time.NewTimer(31 * time.Second)
+		defer timer.Stop()
+		select {
+		case <-timer.C:
+			fmt.Fprint(w, binary[64:])
+		case <-req.Context().Done():
+		}
+	}))
+	defer server.Close()
+	d, err := New(Config{ServerURL: server.URL, BootstrapToken: "fixture"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	d.dockerHelperSyncDone = make(chan struct{})
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		d.rescanLoop(ctx, time.Hour)
+	}()
+	defer func() { cancel(); <-done }()
+	select {
+	case <-downloading:
+	case <-time.After(5 * time.Second):
+		t.Fatal("helper download did not start")
+	}
+	if err := d.waitForDockerRunnerHelper(ctx, helper); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("workspace wait = %v, want its own deadline", err)
+	}
+	select {
+	case <-d.dockerHelperSyncDone:
+	case <-time.After(40 * time.Second):
+		t.Fatal("helper sync did not complete")
+	}
+	if data, err := os.ReadFile(helper); err != nil || string(data) != binary {
+		t.Fatalf("slow transfer did not publish the verified helper: %q, %v", data, err)
+	}
+}
+
 func dockerRunnerFixtureLinuxBinary(arch, payload string) string {
-	header := make([]byte, 64)
+	const elfHeaderSize, programHeaderSize = 64, 56
+	header := make([]byte, elfHeaderSize+programHeaderSize)
 	copy(header, "\x7fELF\x02\x01\x01\x00")
 	machine := elf.EM_X86_64
 	if arch == "arm64" {
@@ -405,7 +516,16 @@ func dockerRunnerFixtureLinuxBinary(arch, payload string) string {
 	binary.LittleEndian.PutUint16(header[16:], uint16(elf.ET_EXEC))
 	binary.LittleEndian.PutUint16(header[18:], uint16(machine))
 	binary.LittleEndian.PutUint32(header[20:], uint32(elf.EV_CURRENT))
-	binary.LittleEndian.PutUint16(header[52:], uint16(len(header)))
+	binary.LittleEndian.PutUint64(header[32:], elfHeaderSize)
+	binary.LittleEndian.PutUint16(header[52:], elfHeaderSize)
+	binary.LittleEndian.PutUint16(header[54:], programHeaderSize)
+	binary.LittleEndian.PutUint16(header[56:], 1)
+	program := header[elfHeaderSize:]
+	binary.LittleEndian.PutUint32(program, uint32(elf.PT_LOAD))
+	binary.LittleEndian.PutUint32(program[4:], uint32(elf.PF_R|elf.PF_X))
+	size := uint64(len(header) + len(payload))
+	binary.LittleEndian.PutUint64(program[32:], size)
+	binary.LittleEndian.PutUint64(program[40:], size)
 	return string(header) + payload
 }
 

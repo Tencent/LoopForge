@@ -57,7 +57,7 @@ func mcpCallGuestPath(rel string) string {
 // PrepareMCPCall writes the script-node helper (`agentflow mcp call`) and bound
 // MCP server list into the workspace. Tokens stay in a 0600 file; they are not
 // exported as environment variables.
-func PrepareMCPCall(sandbox Sandbox, workspace string, servers []domain.MCPServerDefinition) (map[string]string, error) {
+func PrepareMCPCall(ctx context.Context, sandbox Sandbox, workspace string, servers []domain.MCPServerDefinition) (map[string]string, error) {
 	hostRoot := mcpCallHostDir(workspace)
 	hostBin := filepath.Join(hostRoot, "bin")
 	if _, err := EnsureControlDirectory(workspace, "runtime", "bin"); err != nil {
@@ -80,7 +80,7 @@ func PrepareMCPCall(sandbox Sandbox, workspace string, servers []domain.MCPServe
 		return nil, fmt.Errorf("write mcp call config: %w", err)
 	}
 	helperHost := filepath.Join(hostBin, "agentflow-helper")
-	if err := installMCPCallHelperForSandbox(sandbox, workspace, helperHost); err != nil {
+	if err := installMCPCallHelperForSandbox(ctx, sandbox, workspace, helperHost); err != nil {
 		return nil, err
 	}
 	wrapperHost := filepath.Join(hostBin, "agentflow")
@@ -168,13 +168,26 @@ func installMCPCallHelper(workspace, dest string) error {
 	return installMCPCallHelperFrom(workspace, src, dest)
 }
 
-func installMCPCallHelperForSandbox(sandbox Sandbox, workspace, dest string) error {
+type dockerRunnerHelperWaitKey struct{}
+
+// WithDockerRunnerHelperWait lets a personal Runner wait for its background
+// download when a command actually needs the Linux Git/MCP executable.
+func WithDockerRunnerHelperWait(ctx context.Context, wait func(context.Context, string) error) context.Context {
+	return context.WithValue(ctx, dockerRunnerHelperWaitKey{}, wait)
+}
+
+func installMCPCallHelperForSandbox(ctx context.Context, sandbox Sandbox, workspace, dest string) error {
 	if sandboxDriver(sandbox) != "docker" || goruntime.GOOS == "linux" {
 		return installMCPCallHelper(workspace, dest)
 	}
 	src, err := DockerRunnerHelperPath()
 	if err != nil {
 		return err
+	}
+	if wait, ok := ctx.Value(dockerRunnerHelperWaitKey{}).(func(context.Context, string) error); ok {
+		if err := wait(ctx, src); err != nil {
+			return err
+		}
 	}
 	if _, err := os.Stat(src); err != nil {
 		return fmt.Errorf("Docker Git/MCP helper requires a Linux runner binary: set AGENTFLOW_RUNNER_BINARY with {os} and {arch}: %w", err)
@@ -254,8 +267,8 @@ func mcpCallAliases(server domain.MCPServerDefinition) []string {
 	return out
 }
 
-func bindMCPCallEnvironment(sandbox Sandbox, workspace string, environment map[string]string, servers []domain.MCPServerDefinition) error {
-	prepared, err := PrepareMCPCall(sandbox, workspace, servers)
+func bindMCPCallEnvironment(ctx context.Context, sandbox Sandbox, workspace string, environment map[string]string, servers []domain.MCPServerDefinition) error {
+	prepared, err := PrepareMCPCall(ctx, sandbox, workspace, servers)
 	if err != nil {
 		return err
 	}
@@ -344,9 +357,9 @@ func wrapIsolatedMCPCallExec(argv []string) []string {
 
 // ScriptMCPEnvironment materializes agentflow mcp call and returns AGENTFLOW_BIN
 // plus the config path. It does not rewrite PATH for local/unisolated processes.
-func ScriptMCPEnvironment(sandbox Sandbox, workspace string, servers []domain.MCPServerDefinition) (map[string]string, error) {
+func ScriptMCPEnvironment(ctx context.Context, sandbox Sandbox, workspace string, servers []domain.MCPServerDefinition) (map[string]string, error) {
 	env := map[string]string{}
-	if err := bindMCPCallEnvironment(sandbox, workspace, env, servers); err != nil {
+	if err := bindMCPCallEnvironment(ctx, sandbox, workspace, env, servers); err != nil {
 		return nil, err
 	}
 	return env, nil

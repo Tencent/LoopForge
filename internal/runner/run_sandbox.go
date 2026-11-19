@@ -38,11 +38,6 @@ func (d *Daemon) acquireTaskSandbox(ctx context.Context, task domain.RunnerTask)
 	if task.Sandbox == nil {
 		return nil, nil, fmt.Errorf("frozen run sandbox definition is required")
 	}
-	if strings.TrimSpace(task.Sandbox.Profile.Driver) == domain.SandboxDriverDocker {
-		if err := d.waitForDockerRunnerHelper(ctx); err != nil {
-			return nil, nil, err
-		}
-	}
 	requirements, resources := taskSandboxSpec(task)
 	key, id, shared := runSandboxKey(task, requirements, resources)
 	if !shared || d.cfg.DisableRunSandboxReuse {

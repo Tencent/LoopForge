@@ -819,7 +819,7 @@ func TestLightweightSandboxSmoke(t *testing.T) {
 		t.Fatal(createErr)
 	}
 	allowed := `test "$HOME" != "` + stateHome + `" && test -w "$HOME" && f=$(mktemp) && printf ok > "$f" && printf ok > /dev/null && printf ok > workspace-write.txt`
-	command, err := bindCommand(sb, workspace, CommandSpec{Argv: []string{fakeCodeBuddy, "-lc", allowed}, Provider: "codebuddy", PrivateHome: true}, RunCredentials{})
+	command, err := bindCommand(t.Context(), sb, workspace, CommandSpec{Argv: []string{fakeCodeBuddy, "-lc", allowed}, Provider: "codebuddy", PrivateHome: true}, RunCredentials{})
 	if err != nil {
 		t.Fatal(err)
 	}

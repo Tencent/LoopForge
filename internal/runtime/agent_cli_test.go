@@ -396,7 +396,7 @@ func TestBindCommandRejectsSymlinkedParentsBeforeWritingCredentials(t *testing.T
 				credentials := RunCredentials{AgentCLI: map[string]ProviderCredential{
 					kind: {APIKey: "fake-test-key", BaseURL: "https://example.test"},
 				}}
-				if _, err := bindCommand(sb, workspace, command, credentials); err == nil {
+				if _, err := bindCommand(t.Context(), sb, workspace, command, credentials); err == nil {
 					t.Fatal("symlinked private-home component was accepted")
 				}
 				entries, err := os.ReadDir(outside)
@@ -428,7 +428,7 @@ func TestBindAgentCLICommandRejectsSymlinkedPrivateHome(t *testing.T) {
 			if _, _, err := BindAgentCLICommand(sb, workspace, command, ProviderCredential{APIKey: "secret-key", BaseURL: "https://example.test"}, command.Argv); err == nil {
 				t.Fatal("symlinked private home was accepted")
 			}
-			if _, err := bindCommand(sb, workspace, command, RunCredentials{}); err == nil {
+			if _, err := bindCommand(t.Context(), sb, workspace, command, RunCredentials{}); err == nil {
 				t.Fatal("bindCommand accepted a symlinked private home")
 			}
 			if entries, _ := os.ReadDir(outside); len(entries) != 0 {

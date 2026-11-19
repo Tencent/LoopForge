@@ -161,7 +161,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 	if goruntime.GOOS == "darwin" && !d.cfg.DisableAutoUpdate {
 		d.dockerHelperSyncDone = make(chan struct{})
 	}
-	go d.rescanLoop(ctx)
+	go d.rescanLoop(ctx, 5*time.Minute)
 	heartbeatDone := make(chan struct{})
 	go func() { defer close(heartbeatDone); d.heartbeatLoop(ctx) }()
 	controlDone := make(chan struct{})
@@ -378,12 +378,13 @@ func (d *Daemon) availableProviders() []string {
 	return providers
 }
 
-func (d *Daemon) rescanLoop(ctx context.Context) {
+func (d *Daemon) rescanLoop(ctx context.Context, interval time.Duration) {
+	helperSynced := false
 	if d.dockerHelperSyncDone != nil {
-		d.refreshDockerRunnerHelper(ctx, false)
+		helperSynced = d.refreshDockerRunnerHelper(ctx, false)
 		close(d.dockerHelperSyncDone)
 	}
-	ticker := time.NewTicker(5 * time.Minute)
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
 		select {
@@ -391,7 +392,9 @@ func (d *Daemon) rescanLoop(ctx context.Context) {
 			return
 		case <-ticker.C:
 			d.refreshRuntimes(ctx)
-			d.refreshDockerRunnerHelper(ctx, true)
+			if d.dockerHelperSyncDone != nil {
+				helperSynced = d.refreshDockerRunnerHelper(ctx, helperSynced)
+			}
 			d.reapIdleRunSandboxes(ctx, runSandboxIdleTTL)
 		}
 	}
@@ -543,6 +546,7 @@ func (d *Daemon) executeTask(ctx context.Context, task domain.RunnerTask) {
 	// locks, cloning repositories, creating sandboxes and collecting outputs too.
 	ctx, stopLease := d.keepTaskLease(ctx, task, leaseRenewInterval)
 	defer stopLease()
+	ctx = d.withDockerRunnerHelperWait(ctx)
 	// The read fence ends before the completion report: once the control plane
 	// sees this task terminal (and lets a paused run continue), a follow-up
 	// preparation or snapshot must not still find the gate held.
@@ -773,7 +777,7 @@ func (d *Daemon) executeTerminal(ctx context.Context, task domain.RunnerTask) ex
 		if err := runtime.ProvisionMCPAssets(ctx, sandbox, workspace, bound, nil); err != nil {
 			return execResult{status: domain.RunnerTaskFailed, errMsg: fmt.Sprintf("provision MCP: %v", err)}
 		}
-		env, err := runtime.ScriptMCPEnvironment(sandbox, workspace, bound.MCPServers)
+		env, err := runtime.ScriptMCPEnvironment(ctx, sandbox, workspace, bound.MCPServers)
 		if err != nil {
 			return execResult{status: domain.RunnerTaskFailed, errMsg: fmt.Sprintf("prepare mcp call: %v", err)}
 		}
@@ -976,7 +980,7 @@ func (d *Daemon) executeInvocation(ctx context.Context, task domain.RunnerTask) 
 			gateAssets, _, _ := runtime.PrepareMCPServers(domain.AgentAssetBundle{MCPServers: servers}, d.mcpTarget(false, inv.GitHTTPCredentials))
 			servers = gateAssets.MCPServers
 		}
-		mcpEnv, mcpErr := runtime.ScriptMCPEnvironment(sandbox, workspace, servers)
+		mcpEnv, mcpErr := runtime.ScriptMCPEnvironment(ctx, sandbox, workspace, servers)
 		if mcpErr != nil {
 			return execResult{status: domain.RunnerTaskFailed, errMsg: fmt.Sprintf("prepare mcp call: %v", mcpErr)}, nil
 		}

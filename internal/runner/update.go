@@ -61,17 +61,16 @@ func (d *Daemon) checkGateMCPUpdates(ctx context.Context) error {
 	return nil
 }
 
-// Sync in the background on startup, then retry missing or incompatible
-// helpers during rescans. Conversation requests bypass the SOP claim loop.
-func (d *Daemon) refreshDockerRunnerHelper(ctx context.Context, repairOnly bool) {
-	if runtime.GOOS != "darwin" || d.cfg.DisableAutoUpdate {
-		return
+// Until the first successful sync, a rescan must retry the version check even
+// when an older helper is usable. Downloads use the normal updater's timeout.
+func (d *Daemon) refreshDockerRunnerHelper(ctx context.Context, repairOnly bool) bool {
+	if err := d.checkDockerRunnerHelperUpdate(ctx, repairOnly); err != nil {
+		if ctx.Err() == nil {
+			log.Printf("Docker Git/MCP helper update: %v", err)
+		}
+		return false
 	}
-	updateCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-	if err := d.checkDockerRunnerHelperUpdate(updateCtx, repairOnly); err != nil && ctx.Err() == nil {
-		log.Printf("Docker Git/MCP helper update: %v", err)
-	}
+	return true
 }
 
 func (d *Daemon) checkDockerRunnerHelperUpdate(ctx context.Context, repairOnly bool) error {
@@ -82,28 +81,39 @@ func (d *Daemon) checkDockerRunnerHelperUpdate(ctx context.Context, repairOnly b
 	if repairOnly && validateDockerRunnerHelper(path) == nil {
 		return nil
 	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("create Docker Git/MCP helper directory: %w", err)
+	}
 	// Sandboxes copy this executable into the workspace, so an atomic replacement
 	// can run alongside active tasks and requests waiting for the first download.
 	return d.checkCompanionBinaryUpdate(ctx, "Docker Git/MCP helper", d.runnerUpdateEndpoint("linux"), path, validateDockerRunnerHelper, false)
 }
 
-func (d *Daemon) waitForDockerRunnerHelper(ctx context.Context) error {
+func (d *Daemon) withDockerRunnerHelperWait(ctx context.Context) context.Context {
 	if d.dockerHelperSyncDone == nil {
-		return nil
+		return ctx
 	}
+	return flowruntime.WithDockerRunnerHelperWait(ctx, d.waitForDockerRunnerHelper)
+}
+
+func (d *Daemon) waitForDockerRunnerHelper(ctx context.Context, path string) error {
 	select {
 	case <-d.dockerHelperSyncDone:
 		return nil
 	default:
 	}
-	if path, err := flowruntime.DockerRunnerHelperPath(); err == nil && validateDockerRunnerHelper(path) == nil {
+	if validateDockerRunnerHelper(path) == nil {
 		return nil
 	}
+	// A workspace request can give up while the download continues. It never
+	// controls the downloader's deadline.
+	waitCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
 	select {
 	case <-d.dockerHelperSyncDone:
 		return nil
-	case <-ctx.Done():
-		return ctx.Err()
+	case <-waitCtx.Done():
+		return fmt.Errorf("Docker Git/MCP helper is still syncing: %w", waitCtx.Err())
 	}
 }
 
@@ -135,6 +145,23 @@ func validateDockerRunnerHelper(path string) error {
 		return fmt.Errorf("expected Linux/%s executable, got ELF %s %s %s %s %s", runtime.GOARCH,
 			file.Class, file.Data, file.Machine, file.OSABI, file.Type)
 	}
+	size := uint64(info.Size())
+	hasExecutableSegment := false
+	for _, segment := range file.Progs {
+		if segment.Type != elf.PT_NULL && segment.Filesz > 0 &&
+			(segment.Off > size || segment.Filesz > size-segment.Off) {
+			return fmt.Errorf("incomplete Linux/%s ELF helper segment", runtime.GOARCH)
+		}
+		if segment.Type == elf.PT_LOAD {
+			if segment.Filesz > segment.Memsz {
+				return fmt.Errorf("invalid Linux/%s ELF helper load segment", runtime.GOARCH)
+			}
+			hasExecutableSegment = hasExecutableSegment || segment.Filesz > 0 && segment.Flags&elf.PF_X != 0
+		}
+	}
+	if !hasExecutableSegment {
+		return fmt.Errorf("Linux/%s ELF helper has no executable load segment", runtime.GOARCH)
+	}
 	return nil
 }
 
@@ -147,10 +174,7 @@ func (d *Daemon) checkCompanionBinaryUpdate(ctx context.Context, name, endpoint,
 	if err != nil && !os.IsNotExist(err) {
 		return err
 	}
-	if localHash == metadata.SHA256 {
-		if validate != nil {
-			return validate(path)
-		}
+	if strings.EqualFold(localHash, metadata.SHA256) && (validate == nil || validate(path) == nil) {
 		return nil
 	}
 	tmp, err := downloadRunnerBinary(ctx, endpoint, path, metadata.SHA256)

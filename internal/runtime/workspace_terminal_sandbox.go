@@ -117,7 +117,7 @@ func sandboxTerminalCommandBound(ctx context.Context, sandbox Sandbox, command C
 			return nil, err
 		}
 		credentials.GitHTTPHosts = runGitHosts(credentials)
-		command, err = bindCommand(sandbox, sandbox.Workspace(), prepared, credentials)
+		command, err = bindCommand(ctx, sandbox, sandbox.Workspace(), prepared, credentials)
 		if err != nil {
 			closeGit()
 			return nil, err
