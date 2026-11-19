@@ -58,6 +58,9 @@ type botPendingDraftRow struct {
 	CreatedAt     time.Time
 	UpdatedAt     time.Time
 	ExecutedAt    *time.Time
+	// BodyPurgedAt: the retention cleanup removed the drafts, summary and
+	// result (stage H).
+	BodyPurgedAt *time.Time
 }
 
 func (botPendingDraftRow) TableName() string { return "bot_pending_drafts" }

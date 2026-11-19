@@ -592,6 +592,10 @@ func (r *BotInteractionsRepo) ResendBotInteraction(id string, actor int64, actio
 		if item.Status != domain.BotReplyUnknown && item.Status != domain.BotReplyFailed {
 			return ErrBotStateConflict
 		}
+		if item.BodyPurgedAt != nil {
+			// The saved reply was removed by the retention cleanup.
+			return ErrBotStateConflict
+		}
 		now, err := r.dbNowUS(tx)
 		if err != nil {
 			return err
@@ -709,7 +713,7 @@ func (r *BotInteractionsRepo) PushResendBotInteraction(id string, actor, expecte
 		if !cfg.Enabled || !cfg.InteractionEnabled {
 			return ErrBotStateConflict
 		}
-		if item.Status != domain.BotReplyFailed || item.TerminalReason != "route_expired" {
+		if item.Status != domain.BotReplyFailed || item.TerminalReason != "route_expired" || item.BodyPurgedAt != nil {
 			return ErrBotStateConflict
 		}
 		var binding domain.BotUserBinding

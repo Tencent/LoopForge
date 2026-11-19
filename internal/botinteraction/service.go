@@ -25,11 +25,15 @@ type Service struct {
 	// ChannelKind overrides adapter selection in tests; by default the
 	// persisted channel of the Bot decides.
 	ChannelKind func(domain.NotificationBot) string
-	mu          sync.Mutex
-	running     map[string]*connection
-	channels    map[string]Channel
-	Done        chan struct{}
-	start       sync.Once
+	// Retention is the data retention policy applied hourly (stage H);
+	// nil disables the cleanup. NativeLogs removes native CLI logs.
+	Retention  *repo.BotRetentionPolicy
+	NativeLogs NativeLogCleaner
+	mu         sync.Mutex
+	running    map[string]*connection
+	channels   map[string]Channel
+	Done       chan struct{}
+	start      sync.Once
 }
 type connection struct {
 	bot    domain.NotificationBot
@@ -50,7 +54,8 @@ func New(store *repo.Store) *Service {
 	if endpoint == "" {
 		endpoint = "wss://openws.work.weixin.qq.com"
 	}
-	s := &Service{Store: store, URL: endpoint, running: map[string]*connection{}, channels: map[string]Channel{}, Done: make(chan struct{})}
+	policy := RetentionPolicyFromEnv()
+	s := &Service{Store: store, URL: endpoint, Retention: &policy, running: map[string]*connection{}, channels: map[string]Channel{}, Done: make(chan struct{})}
 	s.channels[ChannelWeCom] = &wecomChannel{svc: s}
 	s.channels[ChannelFeishu] = newFeishuChannel()
 	s.channels[ChannelDingTalk] = newDingTalkChannel()
@@ -116,6 +121,7 @@ func (s *Service) Start(ctx context.Context) {
 					} else {
 						nextCleanup = now.Add(time.Hour)
 					}
+					s.retentionTick(ctx, now)
 				}
 				s.reconcile(ctx)
 				select {

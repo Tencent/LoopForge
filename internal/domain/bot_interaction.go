@@ -99,4 +99,8 @@ type BotInteraction struct {
 	// expired and the original sender is a verified push target.
 	PushResendAvailable bool   `json:"pushResendAvailable,omitempty" gorm:"-"`
 	LastActionKey       string `json:"-" gorm:"size:64"`
+	// BodyPurgedAt is set when the retention cleanup removed the message
+	// and reply text (stage H); the row stays until the record retention
+	// ends and can no longer be sent again.
+	BodyPurgedAt *time.Time `json:"bodyPurgedAt,omitempty"`
 }

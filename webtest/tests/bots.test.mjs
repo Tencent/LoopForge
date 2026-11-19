@@ -296,3 +296,28 @@ test('expired dingtalk replies offer a proactive resend only for verified sender
   const call = app.router.calls.find(c => c.path === '/api/bot-interactions/i-ready/push-resend');
   assert.ok(call && call.body.actionKey.length >= 16);
 });
+
+test('records hide manual actions for text removed by the retention cleanup', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  const bot = { id: 'bot-r', projectId: 'project-1', ownerId: 'user-1', name: 'R', channel: 'wecom', botId: 'w', enabled: true, interactionEnabled: true, configVersion: 1 };
+  app.router.get('/api/notification-bots/bot-r/interactions', {
+    connection: { state: 'connected' }, conversations: [],
+    messages: [
+      { id: 'i-purged', createdAt: '2026-01-01T03:00:00Z', senderId: 's', status: 'reply_failed', bodyPurgedAt: '2026-04-01T00:00:00Z' },
+      { id: 'i-live', createdAt: '2026-11-19T03:00:00Z', senderId: 's', status: 'reply_failed', content: 'q', reply: 'r' },
+    ],
+  });
+  app.evaluate(`botUI.projectId=state.projectFilter;botUI.items=[${JSON.stringify(bot)}];botUI.loading=false;botUI.tab='records';botUI.recordsTab='interactions';botUI.interactionBotId='bot-r';renderBots()`);
+  await app.evaluate(`loadBotInteractions()`);
+  await settle(4);
+  const host = app.document.querySelector('#botsContent');
+  assert.match(host.textContent, /正文已按保留期清理/);
+  assert.equal(host.querySelector('[data-interaction-resend="i-purged"]'), null);
+  assert.ok(host.querySelector('[data-interaction-resend="i-live"]'));
+  app.evaluate(`botUI.recordsTab='deliveries';botUI.deliveries=[{id:'d-purged',botId:'bot-r',status:'failed',eventType:'failed',targetName:'群',contentSource:'purged',createdAt:'2026-01-01T00:00:00Z'}];renderBots()`);
+  await settle(4);
+  assert.ok(app.document.querySelector('#botsContent [data-delivery-row="d-purged"]'), 'delivery row rendered');
+  assert.match(app.document.querySelector('#botsContent').textContent, /正文已按保留期清理/);
+  assert.equal(app.document.querySelector('#botsContent [data-delivery-retry="d-purged"]'), null);
+});

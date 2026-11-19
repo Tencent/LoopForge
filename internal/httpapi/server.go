@@ -298,6 +298,7 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	if api.notifications.service.Interactions != nil {
 		api.notifications.service.Interactions.Generate = asst.generateBotReply
 		api.notifications.service.Interactions.Action = asst.handleBotCardAction
+		api.notifications.service.Interactions.NativeLogs = cleanBotNativeLogs
 	}
 	api.botInteractions = &botInteractionHandlers{deps: d, notifications: api.notifications}
 	g.GET("/api/notification-bots/:id/interactions", api.botInteractions.records)

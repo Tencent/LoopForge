@@ -26,8 +26,10 @@ type botNativeSessionRow struct {
 	LogPath            string    `gorm:"size:512"`
 	Status             string    `gorm:"size:16;index"`
 	CleanupStatus      string    `gorm:"size:16"`
+	CleanupDetail      string    `gorm:"size:255"`
 	CreatedAt          time.Time `gorm:"index"`
 	FinishedAt         *time.Time
+	CleanedAt          *time.Time
 }
 
 func (botNativeSessionRow) TableName() string { return "bot_native_sessions" }

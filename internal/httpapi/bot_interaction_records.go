@@ -179,7 +179,7 @@ func (h *botInteractionHandlers) pushResendUser(bot domain.NotificationBot, item
 }
 
 func (h *botInteractionHandlers) pushResendTarget(bot domain.NotificationBot, item domain.BotInteraction) error {
-	if item.Status != domain.BotReplyFailed || item.TerminalReason != "route_expired" {
+	if item.Status != domain.BotReplyFailed || item.TerminalReason != "route_expired" || item.BodyPurgedAt != nil {
 		return errors.New("not expired")
 	}
 	_, err := h.pushResendUser(bot, item)
