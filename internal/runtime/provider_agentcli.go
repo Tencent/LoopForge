@@ -121,6 +121,7 @@ func AgentCLICommand(kind string, o AgentCLICommandOptions) CommandSpec {
 	}
 	extra := append([]string{}, o.Extra...)
 	var argv []string
+	promptOnStdin := false
 	readOnly := o.Chat && !o.Workspace
 	options := AgentCLIOptions{Model: model, Effort: effort, ReadOnly: readOnly}
 	switch kind {
@@ -207,7 +208,15 @@ func AgentCLICommand(kind string, o AgentCLICommandOptions) CommandSpec {
 		if readOnly {
 			argv = append(argv, "--exclude-tools", "bash,edit,write")
 		}
-		argv = append(append(argv, extra...), prompt)
+		// A chat turn embeds the whole conversation. Pi reads the prompt from
+		// stdin when no positional prompt is given; keeping an oversized one
+		// on argv makes fork/exec fail with E2BIG before the CLI starts.
+		if o.Chat && !PromptFitsArgv(len(prompt)) {
+			promptOnStdin = true
+			argv = append(argv, extra...)
+		} else {
+			argv = append(append(argv, extra...), prompt)
+		}
 	case AgentCLIDeepSeek:
 		mode := "danger-full-access"
 		if readOnly {
@@ -229,7 +238,11 @@ func AgentCLICommand(kind string, o AgentCLICommandOptions) CommandSpec {
 		}
 		argv = append(argv, extra...)
 	}
-	return CommandSpec{Argv: argv, Provider: kind, AgentCLI: options}
+	spec := CommandSpec{Argv: argv, Provider: kind, AgentCLI: options}
+	if promptOnStdin {
+		spec.Stdin = strings.NewReader(prompt)
+	}
+	return spec
 }
 
 // AgyModelEfforts returns the separate effort choices for Gemini API models.
