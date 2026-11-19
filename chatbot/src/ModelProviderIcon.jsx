@@ -13,7 +13,7 @@ const brandSources = import.meta.glob("./assets/provider-logos/*.svg", {
 });
 
 const modelBrands = [
-  [/^(?:claude|anthropic)(?:$|[-_.\s:\d])/i, "claude"],
+	[/^(?:claude|anthropic|opus|sonnet|haiku|fable)(?:$|[-_.\s:\d])/i, "claude"],
   [/^(?:gpt|chatgpt|codex|openai)(?:$|[-_.\s:\d])|^o[1-9]\d?(?:$|[-_.\s:])/i, "openai"],
   [/^(?:gemini|google)(?:$|[-_.\s:\d])/i, "gemini"],
   [/^deepseek(?:$|[-_.\s:\d])/i, "deepseek"],
@@ -25,6 +25,7 @@ const modelBrands = [
   [/^minimax(?:$|[-_.\s:\d])/i, "minimax"],
   [/^(?:mimo|xiaomi)(?:$|[-_.\s:\d])/i, "xiaomimimo"],
   [/^(?:grok|xai)(?:$|[-_.\s:\d])/i, "xai"],
+  [/^composer(?:$|[-_.\s:\d])/i, "cursor"],
   [/^(?:doubao|seed|seedream|bytedance)(?:$|[-_.\s:\d])/i, "doubao"],
   [/^(?:ernie|wenxin|baidu|qianfan)(?:$|[-_.\s:\d])/i, "qianfan"],
   [/^(?:zai|z\.ai)(?:$|[-_.\s:\d])/i, "zai"],
@@ -47,6 +48,7 @@ export function modelProviderFor(model) {
     const text = String(value || "").trim();
     const prefix = /^([a-z-]+):/i.exec(text)?.[1];
     const id = engineBrand(prefix) ? text.slice(prefix.length + 1) : text;
+    if ((prefix === "cursor" || model?.engine === "cursor") && /^auto(?:-smart)?$/i.test(id)) return "cursor";
     for (const part of id.split("/").reverse()) {
       const match = modelBrands.find(([pattern]) => pattern.test(part.trim()));
       if (match) return match[1];

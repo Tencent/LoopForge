@@ -553,6 +553,9 @@ describe("App", () => {
     expect(kimi.querySelector('[data-model-provider="kimi-code"] img')).not.toBeNull();
     expect(modelProviderFor({ id: "agy:gemini-4-neon-high" })).toBe("gemini");
     expect(modelProviderFor({ id: "agy:claude-opus-5-5-high" })).toBe("claude");
+    expect(modelProviderFor({ id: "claude-code:opus" })).toBe("claude");
+    expect(modelProviderFor({ id: "cursor:composer-2.5" })).toBe("cursor");
+    expect(modelProviderFor({ id: "auto", engine: "cursor" })).toBe("cursor");
     expect(modelProviderFor({ id: "kimi:k3.1-pro-highspeed" })).toBe("kimi");
     expect(modelProviderFor({ id: "kimi:deepseek-v4-pro" })).toBe("deepseek");
     await user.click(await screen.findByRole("menuitemradio", { name: "Codex" }));

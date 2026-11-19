@@ -9,6 +9,7 @@
   const FAMILY_MARK = {claude:'',gpt:'',glm:'智',gemini:'G',kimi:'K',deepseek:'D',minimax:'M',hunyuan:'混',mimo:'Mi',echo:'E',other:'AI'};
   const FAMILY_ICON = {
     claude:'/images/credentials/claude.svg',
+    cursor:'/images/credentials/cursor.svg',
     gpt:'/images/credentials/codex.svg',
     glm:'/images/credentials/glm.svg',
     gemini:'/images/credentials/gemini.svg',
@@ -30,8 +31,10 @@
   let loading = null;
 
   function familyOf(id) {
-    const v = String(id || '').toLowerCase().replace(/^(?:codebuddy|codex|claude-code|opencode|cursor|agy|kimi|pi|dsh|zcode):/, '').split('/').at(-1);
-    if (v.startsWith('claude')) return 'claude';
+    const raw = String(id || '').toLowerCase();
+    const v = raw.replace(/^(?:codebuddy|codex|claude-code|opencode|cursor|agy|kimi|pi|dsh|zcode):/, '').split('/').at(-1);
+    if (/^(?:claude|anthropic|opus|sonnet|haiku|fable)(?:$|[-_.\s:\d])/.test(v)) return 'claude';
+    if (/^composer(?:$|[-_.\s:\d])/.test(v) || (raw.startsWith('cursor:') && /^auto(?:-smart)?$/.test(v))) return 'cursor';
     if (v.startsWith('gpt') || v.includes('codex')) return 'gpt';
     if (v.startsWith('glm')) return 'glm';
     if (v.startsWith('gemini')) return 'gemini';

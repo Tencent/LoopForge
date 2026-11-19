@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -44,8 +45,8 @@ func (h *runnersHandlers) probeRunnerModels(c *gin.Context) {
 	}
 	if provider == runtime.AgentCLIAntigravity && req.UseSaved {
 		stored, _ := h.repo.User(user.ID)
-		if saved := assistantEngineCustomModels(stored, provider); len(saved) > 0 {
-			c.JSON(http.StatusOK, cliModelProbeResult{Models: runnerLoginModelsWithEfforts(provider, saved), Source: "saved"})
+		if saved := runnerLoginModelsWithEfforts(provider, assistantEngineCustomModels(stored, provider)); len(saved) > 0 {
+			c.JSON(http.StatusOK, cliModelProbeResult{Models: saved, Source: "saved"})
 			return
 		}
 	}
@@ -75,14 +76,18 @@ func (h *runnersHandlers) probeRunnerModels(c *gin.Context) {
 		c.JSON(http.StatusBadGateway, cliModelProbeResult{Error: "执行机器返回了无效的模型列表"})
 		return
 	}
+	models = runnerLoginModelsWithEfforts(provider, models)
 	if len(models) == 0 {
 		c.JSON(http.StatusOK, cliModelProbeResult{Error: "账号没有返回可用模型，可以手动添加模型"})
 		return
 	}
-	c.JSON(http.StatusOK, cliModelProbeResult{Models: runnerLoginModelsWithEfforts(provider, models), Source: "runner"})
+	c.JSON(http.StatusOK, cliModelProbeResult{Models: models, Source: "runner"})
 }
 
 func runnerLoginModelsWithEfforts(provider string, models []domain.CLIModel) []domain.CLIModel {
+	models = slices.DeleteFunc(models, func(model domain.CLIModel) bool {
+		return model.ID == assistantDefaultModel || model.ID == provider+":"+assistantDefaultModel || !assistantValidEngineModel(model.ID)
+	})
 	if provider != runtime.AgentCLIAntigravity {
 		return cliModelsWithEfforts(provider, models, "")
 	}

@@ -99,7 +99,7 @@ func (h *usersHandlers) probeCLIModels(c *gin.Context) {
 		defer cancel()
 		var models []domain.CLIModel
 		for _, id := range discoverCLIModels(ctx, environment, apiKey) {
-			if id != assistantDefaultModel && assistantValidEngineModel(id) {
+			if !codeBuddyIsDefaultModel(id) && assistantValidEngineModel(id) {
 				models = append(models, domain.CLIModel{ID: id})
 			}
 		}

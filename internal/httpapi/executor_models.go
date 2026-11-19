@@ -243,7 +243,7 @@ func (h *catalogHandlers) executorModels(c *gin.Context) {
 		catalog.Models = make([]executorModelInfo, 0, len(models))
 		personal := cliModelsOf(models)
 		for _, model := range models {
-			if model.ID == assistantDefaultModel {
+			if model.ID == assistantDefaultModel || (engine == assistantEngineCodeBuddy && codeBuddyIsDefaultModel(model.ID)) {
 				continue
 			}
 			name := strings.TrimSpace(model.Name)

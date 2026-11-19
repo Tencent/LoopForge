@@ -99,6 +99,10 @@ vm.runInContext(moduleSource, ctx);
   assert.match(icon.innerHTML, /\/images\/credentials\/kimi\.svg/);
   api.paintItem(toggle, {id: 'agy:gemini-4-neon-high'});
   assert.match(icon.innerHTML, /\/images\/credentials\/gemini\.svg/);
+  api.paintItem(toggle, {id: 'claude-code:opus'});
+  assert.match(icon.innerHTML, /\/images\/credentials\/claude\.svg/);
+  api.paintItem(toggle, {id: 'cursor:composer-2.5'});
+  assert.match(icon.innerHTML, /\/images\/credentials\/cursor\.svg/);
   // Pickers keep painting before the catalog lands, so the built-in fallback
   // must already render a usable label.
   assert.equal(api.codeBuddyModel('codex:gpt-5.5'), 'default', 'codex ids fall back before the catalog loads');

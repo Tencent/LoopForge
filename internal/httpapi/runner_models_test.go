@@ -54,12 +54,22 @@ func TestRunnerModelProbeUsesOwnersSelectedMachine(t *testing.T) {
 	c, w := probe(owner, "codex")
 	done := make(chan struct{})
 	go func() { handlers.probeRunnerModels(c); close(done) }()
-	request := answerOnce(t, hub, conn, domain.RunnerWorkspaceResponse{Status: 200, Payload: []byte(`[{"id":"runner-model"}]`)})
+	request := answerOnce(t, hub, conn, domain.RunnerWorkspaceResponse{Status: 200, Payload: []byte(`[
+		{"id":"default","name":"Default (recommended)"},
+		{"id":"runner-model","discoveredReasoningEfforts":["xhigh","unsupported"]}
+	]`)})
 	<-done
 	response := w.Result()
 	if request.Operation != domain.RunnerWorkspaceOperationLoginModels || request.ModelProvider != "codex" ||
 		response.StatusCode != http.StatusOK || response.Header.Get("Cache-Control") != "private, no-store" {
 		t.Fatalf("request=%+v response=%+v", request, response)
+	}
+	var catalog cliModelProbeResult
+	if err := json.Unmarshal(w.Body.Bytes(), &catalog); err != nil || len(catalog.Models) != 1 || catalog.Models[0].ID != "runner-model" {
+		t.Fatalf("unexpected selectable models: %s (decode %v)", w.Body, err)
+	}
+	if got := catalog.Models[0].DiscoveredReasoningEfforts; got == nil || !slices.Equal(*got, []string{"xhigh"}) {
+		t.Fatalf("runner metadata was not preserved and constrained: %s", w.Body)
 	}
 }
 

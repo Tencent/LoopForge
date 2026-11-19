@@ -215,7 +215,7 @@ func (h *assistantHandlers) models(c *gin.Context) {
 			for _, option := range item.Efforts {
 				levels = append(levels, option.Value)
 			}
-			result.Models = append(result.Models, assistantModel{ID: item.ID, Name: item.Name, Family: assistantModelFamily(item.ID), Efforts: levels})
+			result.Models = append(result.Models, assistantModel{ID: item.ID, Name: item.Name, Family: assistantModelFamily(item.ID), Engine: engine, Efforts: levels})
 		}
 		if len(result.Models) > 0 {
 			result.Default = result.Models[0].ID
@@ -288,11 +288,15 @@ func (h *assistantHandlers) models(c *gin.Context) {
 func selectableCodeBuddyModels(models []assistantModel) []assistantModel {
 	listed := make([]assistantModel, 0, len(models))
 	for _, model := range models {
-		if model.ID != assistantDefaultModel {
+		if !codeBuddyIsDefaultModel(model.ID) {
 			listed = append(listed, model)
 		}
 	}
 	return listed
+}
+
+func codeBuddyIsDefaultModel(id string) bool {
+	return id == assistantDefaultModel || id == "default-model"
 }
 
 // withCodeBuddyPersonalModels accepts the user's saved CodeBuddy models and
