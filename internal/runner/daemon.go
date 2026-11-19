@@ -859,8 +859,12 @@ func (d *Daemon) executeInvocation(ctx context.Context, task domain.RunnerTask) 
 		Agent:        inv.Agent,
 		Assets:       boundAssets,
 		Prompt:       task.Prompt,
-		Options:      runtime.InvocationOptions{RunID: inv.RunID, NodeID: inv.NodeID, ResumeSessionID: inv.ResumeSessionID, GateResultPath: inv.GateResultPath, Repositories: invocationRepositoryContexts(inv), BrowserMCP: browserMCP},
-		Driver:       driver,
+		Options: runtime.InvocationOptions{
+			RunID: inv.RunID, NodeID: inv.NodeID, ResumeSessionID: inv.ResumeSessionID,
+			GateResultPath: inv.GateResultPath, Repositories: invocationRepositoryContexts(inv),
+			BrowserMCP: browserMCP, RunnerLogin: inv.CredentialSource == domain.RuntimeAuthLocal,
+		},
+		Driver: driver,
 	})
 	if err != nil {
 		return execResult{status: domain.RunnerTaskFailed, errMsg: fmt.Sprintf("prepare invocation: %v", err)}, nil

@@ -148,7 +148,7 @@ func TestAutomaticDiscoveryUsesSameEffortsForColdValidation(t *testing.T) {
 	t.Cleanup(gateway.Close)
 	ctx := context.Background()
 	user := domain.User{CodexAPIKey: "fixture-key", CodexBaseURL: gateway.URL}
-	key := assistantDiscoveryKey(false, user.CodexAPIKey, user.CodexBaseURL)
+	key := assistantDiscoveryKey("", user.CodexAPIKey, user.CodexBaseURL)
 	t.Cleanup(func() { assistantDiscoveryCache.Delete(key) })
 	catalog, _ := assistantEngineModels(ctx, user, nil)
 	if !slices.ContainsFunc(catalog, func(model assistantModel) bool {

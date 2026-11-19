@@ -53,11 +53,18 @@ func (h *assistantHandlers) newExecutionTarget(userID int64, projectID string, r
 
 // Use a machine's login only for its owner on a personal execution target.
 func (h *assistantHandlers) assistantUsesRunnerLogin(userID int64, target *domain.AssistantExecutionTarget, engine string) bool {
+	return h.assistantLoginRunner(userID, target, engine).ID != ""
+}
+
+func (h *assistantHandlers) assistantLoginRunner(userID int64, target *domain.AssistantExecutionTarget, engine string) domain.Runner {
 	if target == nil || target.Pool != domain.ExecutionModeRunner {
-		return false
+		return domain.Runner{}
 	}
 	runner, ok := h.repo.Runner(target.RunnerID)
-	return ok && runner.OwnerUserID == userID && runnerUsesLocalLogin(runner, engine)
+	if ok && runner.OwnerUserID == userID && runnerUsesLocalLogin(runner, engine) {
+		return runner
+	}
+	return domain.Runner{}
 }
 
 func runnerUsesLocalLogin(runner domain.Runner, engine string) bool {

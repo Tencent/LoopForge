@@ -172,7 +172,8 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 		req.ExecutionTarget = target
 	}
 	cliEngine, _ := assistantModelEngine(req.Model)
-	runnerLogin := h.assistantUsesRunnerLogin(stored.ID, req.ExecutionTarget, cliEngine)
+	loginRunner := h.assistantLoginRunner(stored.ID, req.ExecutionTarget, cliEngine)
+	runnerLogin := loginRunner.ID != ""
 	user, model, refusal := h.assistantTurnUser(stored, req.Model, runnerLogin)
 	if refusal != "" {
 		c.JSON(400, gin.H{"error": refusal})
@@ -226,7 +227,8 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 	}
 	cliEngine, _ = assistantModelEngine(req.Model)
 	req.Executor = cliEngine
-	if err := validateAssistantEffort(c.Request.Context(), user, req.Model, req.Effort); err != nil {
+	cliModel, err := h.resolveAssistantTurnModel(c.Request.Context(), user, req.Model, req.Effort, loginRunner)
+	if err != nil {
 		c.JSON(400, gin.H{"error": err.Error()})
 		return
 	}
@@ -549,7 +551,7 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 				} else {
 					prompt = assistantPlatformExecutionReminder + "\n" + prompt
 				}
-				cliReq := assistantCLIRequest{Executor: req.Executor, Prompt: prompt, Model: req.Model, Effort: req.Effort, SessionID: cliSessionID, Resume: resume, UserID: u.ID, Native: true, MCPConfig: mcp, Settings: settings, SystemPrompt: system, SessionRoot: cliRoot, RunnerLogin: runnerLogin, OnUsage: turnUsage.add, Workspace: req.workspaceMode, RemoteBinary: req.workspaceMode || toolSession.ExecutionRunnerID != "", Execute: h.conversationExecutor(toolSession, cliRoot)}
+				cliReq := assistantCLIRequest{Executor: req.Executor, Prompt: prompt, Model: cliModel, Effort: req.Effort, SessionID: cliSessionID, Resume: resume, UserID: u.ID, Native: true, MCPConfig: mcp, Settings: settings, SystemPrompt: system, SessionRoot: cliRoot, RunnerLogin: runnerLogin, OnUsage: turnUsage.add, Workspace: req.workspaceMode, RemoteBinary: req.workspaceMode || toolSession.ExecutionRunnerID != "", Execute: h.conversationExecutor(toolSession, cliRoot)}
 				persistAttempt := func(unstarted bool) error {
 					if nativeSession != nil {
 						nativeSession.checkpoint.Unstarted = unstarted
@@ -1536,7 +1538,7 @@ func runAssistantCLI(ctx context.Context, req assistantCLIRequest, user domain.U
 		sessionID = newAssistantSessionID()
 	}
 	var inv assistantCLIInvocation
-	engineOpts := assistantEngineInvocationOpts{Bin: bin, Root: root, Config: config, Prompt: req.Prompt, Model: engineModel, Effort: req.Effort, SessionID: sessionID, Resume: req.Resume, SystemPrompt: req.SystemPrompt, ReviewOnly: req.ReviewOnly, Workspace: req.Workspace}
+	engineOpts := assistantEngineInvocationOpts{Bin: bin, Root: root, Config: config, Prompt: req.Prompt, Model: engineModel, Effort: req.Effort, SessionID: sessionID, Resume: req.Resume, SystemPrompt: req.SystemPrompt, ReviewOnly: req.ReviewOnly, Workspace: req.Workspace, RunnerLogin: req.RunnerLogin}
 	switch engine {
 	case assistantEngineClaude:
 		if !req.RunnerLogin {

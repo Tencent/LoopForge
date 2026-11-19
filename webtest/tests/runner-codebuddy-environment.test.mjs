@@ -70,6 +70,7 @@ test('Claude Code, Codex and Antigravity offer account login and API Key rows ex
   `);
   const choices = [...app.document.querySelectorAll('[data-runner-auth]')];
   assert.deepEqual(choices.map(select => select.dataset.runnerAuth), ['runner-cb|codex', 'runner-cb|claude-code', 'runner-cb|agy']);
+  assert.equal(app.document.querySelector('.runner-runtime-icon.agy img')?.getAttribute('src'), '/images/credentials/antigravity.svg');
   for (const select of choices) {
     assert.deepEqual([...select.options].map(option => option.textContent), ['账号登录', 'API Key']);
   }
