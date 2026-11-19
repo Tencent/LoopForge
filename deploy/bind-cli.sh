@@ -597,10 +597,10 @@ download_runner_binary() {
 }
 
 build_runner_binary() {
-  local target_os="$1" source="$2" output="$TEMP_BINARY"
+  local target_os="$1" source="$2" command="${3:-agentflow-runner}" output="$TEMP_BINARY"
   [[ "$output" == /* ]] || output="$PWD/$output"
-  info "从源码 ${source} 构建 agentflow-runner（${target_os}/${ARCH}）..."
-  (cd "$source" && CGO_ENABLED=0 GOOS="$target_os" GOARCH="$ARCH" go build -o "$output" ./cmd/agentflow-runner)
+  info "从源码 ${source} 构建 ${command}（${target_os}/${ARCH}）..."
+  (cd "$source" && CGO_ENABLED=0 GOOS="$target_os" GOARCH="$ARCH" go build -o "$output" "./cmd/$command")
 }
 
 publish_runner_binary() {
@@ -763,14 +763,38 @@ configure_macos_docker_runner_helper() {
   export AGENTFLOW_RUNNER_BINARY="$pattern"
 }
 
-select_macos_docker_runner_helper() {
-  DOCKER_RUNNER_BINARY="${BIN_DIR}/agentflow-runner-linux-${ARCH}"
+macos_docker_runner_helper_path() {
+  local target_arch="$1" target="${BIN_DIR}/agentflow-runner-linux-${1}"
   if [[ "$AGENTFLOW_RUNNER_BINARY" == *"{os}"* ]]; then
-    DOCKER_RUNNER_BINARY="${AGENTFLOW_RUNNER_BINARY//\{os\}/linux}"
-    DOCKER_RUNNER_BINARY="${DOCKER_RUNNER_BINARY//\{arch\}/$ARCH}"
+    target="${AGENTFLOW_RUNNER_BINARY//\{os\}/linux}"
+    target="${target//\{arch\}/$target_arch}"
   fi
-  if [[ "$DOCKER_RUNNER_BINARY" -ef "$BINARY" ]]; then
-    fail "Linux Git/MCP helper 路径与 macOS Runner 相同：${DOCKER_RUNNER_BINARY}"
+  if [[ "$target" -ef "$BINARY" ]]; then
+    fail "Linux Git/MCP helper 路径与 macOS Runner 相同：${target}"
+  fi
+  printf '%s\n' "$target"
+}
+
+canonical_helper_target() {
+  local target="$1" dir
+  dir=$(dirname "$target")
+  (mkdir -p "$dir" && cd -P "$dir" && printf '%s/%s\n' "$PWD" "${target##*/}")
+}
+
+check_universal_helper_paths() {
+  [[ "${#runner_arches[@]}" -gt 1 && "$AGENTFLOW_RUNNER_BINARY" == *"{os}"* ]] || return 0
+  local amd64 arm64 resolved_amd64 resolved_arm64
+  amd64=$(macos_docker_runner_helper_path amd64)
+  arm64=$(macos_docker_runner_helper_path arm64)
+  if [[ "$amd64" -ef "$arm64" ]]; then
+    fail "两种架构的 Linux Git/MCP helper 路径相同，请使用独立的架构目录"
+  fi
+  # The installer can still warn and skip a target whose directory is
+  # unavailable. For writable paths, check the physical parent directories.
+  resolved_amd64=$(canonical_helper_target "$amd64" 2>/dev/null) || return 0
+  resolved_arm64=$(canonical_helper_target "$arm64" 2>/dev/null) || return 0
+  if [[ "$resolved_amd64" == "$resolved_arm64" ]]; then
+    fail "两种架构的 Linux Git/MCP helper 路径相同，请使用独立的架构目录"
   fi
 }
 
@@ -788,37 +812,63 @@ save_runner_binary_pattern() {
 
 if [[ "$OS" == "darwin" ]]; then
   read -r -a runner_arches <<< "$(macos_runner_arches "$BINARY")"
+  # uname reports x86_64 under Rosetta too. Intel Macs can use only the
+  # amd64 slice and may be connected to a platform that publishes only amd64.
+  if [[ "${#runner_arches[@]}" -gt 1 && "$ARCH" == "amd64" &&
+        "$(PATH="$PATH:/usr/sbin" sysctl -n hw.optional.arm64 2>/dev/null || true)" != "1" ]]; then
+    runner_arches=(amd64)
+  fi
   configure_macos_docker_runner_helper
+  check_universal_helper_paths
 fi
 
 install_gate_binary() {
-  local target_os="$1" target_arch="$2" target
+  local target_os="$1" target_arch="$ARCH" optional="${2:-0}" target
+  local src="${SOURCE_DIR:-$PWD}" error
   target="${GATE_BINARY_PATTERN//\{os\}/$target_os}"
   target="${target//\{arch\}/$target_arch}"
   info "从 ${SERVER} 下载 Gate MCP（${target_os}/${target_arch}）..."
-  if curl -fsSL "${SERVER}/runners/agentflow-gate-mcp?os=${target_os}&arch=${target_arch}" -o "$target"; then
-    chmod +x "$target"
+  TEMP_BINARY=$(mktemp "${BIN_DIR}/.agentflow-gate-mcp.XXXXXX")
+  if curl -fsSL "${SERVER}/runners/agentflow-gate-mcp?os=${target_os}&arch=${target_arch}" -o "$TEMP_BINARY" &&
+     [[ -s "$TEMP_BINARY" ]]; then
+    publish_runner_binary "$target"
     return
   fi
-  local src="${SOURCE_DIR:-$PWD}"
-  [[ -d "$src/cmd/agentflow-gate-mcp" ]] || fail "平台未提供 Gate MCP ${target_os}/${target_arch} 二进制，且未找到本地源码"
-  command -v go >/dev/null 2>&1 || fail "本机未安装 Go，无法构建 Gate MCP；请让平台配置 AGENTFLOW_GATE_MCP_BINARY"
-  info "从源码 ${src} 构建 Gate MCP（${target_os}/${target_arch}）..."
-  (cd "$src" && CGO_ENABLED=0 GOOS="$target_os" GOARCH="$target_arch" go build -o "$target" ./cmd/agentflow-gate-mcp) \
-    || fail "Gate MCP 源码构建失败"
-  chmod +x "$target"
+  if [[ ! -d "$src/cmd/agentflow-gate-mcp" ]]; then
+    error="平台未提供 Gate MCP ${target_os}/${target_arch} 二进制，且未找到本地源码"
+  elif ! command -v go >/dev/null 2>&1; then
+    error="本机未安装 Go，无法构建 Gate MCP；请让平台配置 AGENTFLOW_GATE_MCP_BINARY"
+  elif build_runner_binary "$target_os" "$src" agentflow-gate-mcp && [[ -s "$TEMP_BINARY" ]]; then
+    publish_runner_binary "$target"
+    return
+  else
+    error="Gate MCP ${target_os}/${target_arch} 源码构建失败"
+  fi
+  rm -f "$TEMP_BINARY"
+  TEMP_BINARY=""
+  if [[ "$optional" == "1" ]]; then
+    warn "$error"
+  else
+    fail "$error"
+  fi
 }
 
 # A universal Runner needs both companions whichever slice gets launched.
 if [[ "$OS" == "darwin" ]]; then
+  required_arch="${runner_arches[0]}"
+  if [[ "${#runner_arches[@]}" -gt 1 ]]; then
+    required_arch="arm64"
+  fi
   for ARCH in "${runner_arches[@]}"; do
-    select_macos_docker_runner_helper
-    install_gate_binary darwin "$ARCH"
-    install_gate_binary linux "$ARCH"
+    DOCKER_RUNNER_BINARY=$(macos_docker_runner_helper_path "$ARCH")
+    optional_gate=0
+    [[ "$ARCH" == "$required_arch" ]] || optional_gate=1
+    install_gate_binary darwin "$optional_gate"
+    install_gate_binary linux "$optional_gate"
     install_docker_runner_binary
   done
 else
-  install_gate_binary "$OS" "$ARCH"
+  install_gate_binary "$OS"
 fi
 
 if [[ "$UPGRADE" == "1" ]]; then

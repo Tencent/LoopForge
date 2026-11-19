@@ -33,6 +33,8 @@ func TestBindCLIInstallsDockerRunnerHelper(t *testing.T) {
 		templatePath                     bool
 		helperAliasesRunner              bool
 		universal                        bool
+		intelHardware, sharedTemplateDir bool
+		arm64OnlyArtifacts               bool
 	}{
 		{name: "macOS_install", hostOS: "darwin", arch: "arm64", unameArch: "arm64"},
 		{name: "macOS_uses_template_in_manual_start_and_upgrade", hostOS: "darwin", arch: "arm64", unameArch: "arm64", templatePath: true, source: "from"},
@@ -50,6 +52,9 @@ func TestBindCLIInstallsDockerRunnerHelper(t *testing.T) {
 		{name: "macOS_upgrades_launchd_on_template_path", hostOS: "darwin", arch: "arm64", unameArch: "arm64", source: "from", launchd: true, upgrade: true, templatePath: true},
 		{name: "macOS_installs_companion_for_Intel_runner_on_arm64", hostOS: "darwin", arch: "amd64", unameArch: "arm64", source: "from"},
 		{name: "macOS_under_Rosetta_installs_both_companions_for_universal_Runner", hostOS: "darwin", arch: "arm64", unameArch: "x86_64", source: "from", universal: true},
+		{name: "macOS_Intel_installs_universal_Runner_from_amd64_only_platform", hostOS: "darwin", arch: "amd64", unameArch: "x86_64", source: "from", universal: true, intelHardware: true},
+		{name: "macOS_Apple_Silicon_installs_universal_Runner_from_arm64_only_platform", hostOS: "darwin", arch: "arm64", unameArch: "arm64", source: "from", universal: true, arm64OnlyArtifacts: true},
+		{name: "macOS_rejects_universal_companions_with_a_shared_template_directory", hostOS: "darwin", arch: "arm64", unameArch: "x86_64", source: "from", universal: true, templatePath: true, sharedTemplateDir: true},
 		{name: "macOS_repairs_incompatible_local_helper", hostOS: "darwin", arch: "arm64", unameArch: "arm64", source: "from", existing: "mach-o", upgrade: true},
 		{name: "macOS_preserves_custom_helper_script", hostOS: "darwin", arch: "arm64", unameArch: "arm64", source: "from", existing: "script", preserveHelper: true},
 		{name: "macOS_preserves_helper_with_host_only_URL", hostOS: "darwin", arch: "arm64", unameArch: "arm64", source: "host-url", preserveHelper: true},
@@ -93,6 +98,14 @@ func TestBindCLIInstallsDockerRunnerHelper(t *testing.T) {
 				binary.BigEndian.PutUint32(header[8:], x8664)
 				binary.BigEndian.PutUint32(header[28:], arm64)
 				hostRunner = string(header) + "universal runner"
+				arm64Hardware := 1
+				if tc.intelHardware {
+					arm64Hardware = 0
+				}
+				sysctl := fmt.Sprintf("#!/bin/sh\nprintf '%%s\\n' %d\n", arm64Hardware)
+				if err := os.WriteFile(filepath.Join(bin, "sysctl"), []byte(sysctl), 0o755); err != nil {
+					t.Fatal(err)
+				}
 			}
 			switch tc.existing {
 			case "mach-o":
@@ -102,7 +115,7 @@ func TestBindCLIInstallsDockerRunnerHelper(t *testing.T) {
 			}
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 				targetOS, arch := req.URL.Query().Get("os"), req.URL.Query().Get("arch")
-				if (arch != tc.arch && arch != tc.unameArch && !(tc.universal && arch == "amd64")) ||
+				if (arch != tc.arch && arch != tc.unameArch && !(tc.universal && arch == "amd64" && !tc.arm64OnlyArtifacts)) ||
 					(targetOS != tc.hostOS && targetOS != "linux") {
 					http.NotFound(w, req)
 					return
@@ -144,6 +157,15 @@ func TestBindCLIInstallsDockerRunnerHelper(t *testing.T) {
 			if tc.templatePath {
 				patternEnv = filepath.Join(bundle, "{os}", "{arch}", "agentflow-runner")
 				helper = filepath.Join(bundle, "linux", tc.arch, "agentflow-runner")
+			}
+			if tc.sharedTemplateDir {
+				amd64 := filepath.Join(bundle, "linux", "amd64")
+				if err := os.MkdirAll(amd64, 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(amd64, filepath.Join(bundle, "linux", "arm64")); err != nil {
+					t.Fatal(err)
+				}
 			}
 			statePath := filepath.Join(fixtureHome, ".agentflow-runner", "state.json")
 			const state = `{"runnerId":"fixture"}`
@@ -221,12 +243,22 @@ func TestBindCLIInstallsDockerRunnerHelper(t *testing.T) {
 					if err == nil || !strings.Contains(string(out), "helper 路径与 macOS Runner 相同") {
 						t.Fatalf("installer did not reject the conflicting path: %v\n%s", err, out)
 					}
+				} else if tc.sharedTemplateDir {
+					if err == nil || !strings.Contains(string(out), "两种架构的 Linux Git/MCP helper 路径相同") {
+						t.Fatalf("installer did not reject the shared template path: %v\n%s", err, out)
+					}
 				} else if err != nil {
 					t.Fatalf("install: %v\n%s", err, out)
 				}
 				return string(out)
 			}
 			output := install()
+			if tc.sharedTemplateDir {
+				if _, err := os.Stat(helper); !os.IsNotExist(err) {
+					t.Fatalf("the installer wrote a helper before rejecting the conflicting template: %v", err)
+				}
+				return
+			}
 			if tc.helperAliasesRunner {
 				if got, err := os.ReadFile(helper); err != nil || string(got) != hostRunner {
 					t.Fatalf("macOS Runner was changed by the helper install: %q, %v", got, err)
@@ -293,10 +325,20 @@ func TestBindCLIInstallsDockerRunnerHelper(t *testing.T) {
 				}
 			}
 			assertArtifact(filepath.Join(bin, "agentflow-runner"), hostRunner)
-			if tc.universal {
+			if tc.universal && !tc.intelHardware && !tc.arm64OnlyArtifacts {
 				assertArtifact(filepath.Join(bin, "agentflow-runner-linux-amd64"), bindFixtureLinuxRunner("amd64", "new helper"))
 				assertArtifact(filepath.Join(bin, "agentflow-gate-mcp-darwin-amd64"), "gate darwin/amd64")
 				assertArtifact(filepath.Join(bin, "agentflow-gate-mcp-darwin-arm64"), "gate darwin/arm64")
+			}
+			if tc.intelHardware {
+				if _, err := os.Stat(filepath.Join(bin, "agentflow-runner-linux-arm64")); !os.IsNotExist(err) {
+					t.Fatalf("Intel install wrote an arm64 helper: %v", err)
+				}
+			}
+			if tc.arm64OnlyArtifacts {
+				if _, err := os.Stat(filepath.Join(bin, "agentflow-gate-mcp-linux-amd64")); !os.IsNotExist(err) {
+					t.Fatalf("missing optional artifact changed the amd64 Gate helper: %v", err)
+				}
 			}
 			switch {
 			case tc.hostOS == "linux":
