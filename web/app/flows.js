@@ -322,12 +322,23 @@ function flowNodeHTML(n,run,ro){
   const outs=`<div class="fd-out ok">成功<span class="fd-port out" data-outlet="success" title="拖到下一步"></span></div>`+(kind==='preview'?'':`<div class="fd-out rj">失败打回<span class="fd-port out" data-outlet="reject" title="拖到失败时要打回的步骤"></span></div>`);
   return `<div class="${cls}" data-id="${escapeHTML(n.id)}" style="left:${n.position.x}px;top:${n.position.y}px;--tint:${flowNodeTint(n)}"><span class="fd-port in" title="连到这里"></span><div class="fd-nh"><span class="fd-tile">${tile}</span><div class="fd-nt"><div class="node-title">${title}</div><div class="node-subtitle">${escapeHTML(m.subtitle)}</div></div>${status?`<span class="fd-status s-${escapeHTML(status)}">${statusText(status)||escapeHTML(status)}</span>`:''}${ro?'':`<button type="button" class="fd-more" data-node-menu aria-label="更多操作">${flowPalette.icon('more')}</button>`}</div><div class="fd-nbody">${tags}</div><div class="fd-outs">${outs}</div></div>`;
 }
+// Drafts and old saves occasionally leave a node without usable coordinates;
+// one of those poisons every transform and fit computed from the canvas, so
+// park it on a grid slot instead.
+function repairNodePositions(wf){
+  (wf?.nodes||[]).forEach((n,i)=>{
+    const p=n.position;
+    if(p&&Number.isFinite(p.x)&&Number.isFinite(p.y))return;
+    n.position={x:80+(i%4)*280,y:80+Math.floor(i/4)*170};
+  });
+}
 function renderCanvas(){
   const nodes=$('#nodes');if(!nodes)return;
   const wf=state.workflow,empty=$('#canvasEmpty');
   flowNodeMetrics.cache?.clear();
   if(!wf){nodes.innerHTML='';if(empty)empty.hidden=false;renderEdges();flowViewport.afterRender();return}
   if(empty)empty.hidden=(wf.nodes||[]).length>0;
+  repairNodePositions(wf);
   spreadCrowdedNodes(wf);
   const ro=flowReadOnly();
   nodes.innerHTML=wf.nodes.map(n=>flowNodeHTML(n,state.activeRun,ro)).join('');

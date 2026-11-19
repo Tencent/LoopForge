@@ -7,9 +7,18 @@ const flowViewport=(()=>{
   const byId=id=>document.getElementById(id);
   const canvas=()=>byId('canvas');
   const clamp=z=>Math.min(MAX,Math.max(MIN,z));
+  const finite=n=>Number.isFinite(n);
+  // A non-finite x/y/zoom renders an invalid transform that the browser drops,
+  // freezing the canvas for good. Repair it before anyone divides by it.
+  function heal(){
+    if(!finite(vp.x))vp.x=40;
+    if(!finite(vp.y))vp.y=40;
+    vp.zoom=finite(vp.zoom)?clamp(vp.zoom):1;
+  }
 
   function apply(anim){
     const stage=byId('canvasStage'),c=canvas();if(!stage||!c)return;
+    heal();
     stage.classList.toggle('anim',!!anim);
     stage.style.transform=`translate(${vp.x}px,${vp.y}px) scale(${vp.zoom})`;
     const g=GRID*vp.zoom;c.style.backgroundSize=`${g}px ${g}px`;c.style.backgroundPosition=`${vp.x}px ${vp.y}px`;
@@ -19,7 +28,7 @@ const flowViewport=(()=>{
     if(anim)animTimer=setTimeout(()=>stage.classList.remove('anim'),400);
   }
   function rect(){return canvas()?.getBoundingClientRect()||{left:0,top:0,width:0,height:0}}
-  function toWorld(clientX,clientY){const r=rect();return {x:(clientX-r.left-vp.x)/vp.zoom,y:(clientY-r.top-vp.y)/vp.zoom}}
+  function toWorld(clientX,clientY){heal();const r=rect();return {x:(clientX-r.left-vp.x)/vp.zoom,y:(clientY-r.top-vp.y)/vp.zoom}}
   function drawerWidth(){
     const wrap=byId('flowStageWrap');if(!wrap||!wrap.classList.contains('has-drawer'))return 0;
     const open=wrap.querySelector('.fd-drawer.open,.fd-ai-panel:not([hidden])');
@@ -28,13 +37,15 @@ const flowViewport=(()=>{
   // Visible canvas size, minus the drawer that overlays its right edge.
   function visible(){const c=canvas();return {w:Math.max(0,(c?.clientWidth||0)-drawerWidth()),h:c?.clientHeight||0}}
   function zoomAt(z,clientX,clientY,anim){
+    heal();
+    if(!finite(z)){apply(anim);return}
     const r=rect(),v=visible();
     const cx=clientX??r.left+v.w/2,cy=clientY??r.top+v.h/2;
     const w=toWorld(cx,cy);
     vp.zoom=clamp(z);vp.x=cx-r.left-w.x*vp.zoom;vp.y=cy-r.top-w.y*vp.zoom;
     apply(anim);
   }
-  function zoomBy(factor,clientX,clientY){zoomAt(vp.zoom*factor,clientX,clientY,clientX==null)}
+  function zoomBy(factor,clientX,clientY){heal();zoomAt(vp.zoom*factor,clientX,clientY,clientX==null)}
   function setZoom(z){zoomAt(z,null,null,true)}
   function nodeSize(id){
     const m=typeof flowNodeMetrics==='function'?flowNodeMetrics(id):null;
@@ -46,20 +57,31 @@ const flowViewport=(()=>{
     const nodes=state.workflow?.nodes||[];
     if(!nodes.length)return null;
     let x0=Infinity,y0=Infinity,x1=-Infinity,y1=-Infinity;
-    nodes.forEach(n=>{const p=n.position||{x:0,y:0},s=nodeSize(n.id);x0=Math.min(x0,p.x);y0=Math.min(y0,p.y);x1=Math.max(x1,p.x+s.w);y1=Math.max(y1,p.y+s.h+(n.rejectTo?60:0))});
+    nodes.forEach(n=>{
+      const p=n.position;
+      if(!p||!finite(p.x)||!finite(p.y))return;
+      const s=nodeSize(n.id);
+      if(!finite(s.w)||!finite(s.h))return;
+      x0=Math.min(x0,p.x);y0=Math.min(y0,p.y);x1=Math.max(x1,p.x+s.w);y1=Math.max(y1,p.y+s.h+(n.rejectTo?60:0));
+    });
+    if(!finite(x0)||!finite(y0)||!(x1>=x0)||!(y1>=y0))return null;
     return {x:x0,y:y0,w:x1-x0,h:y1-y0};
   }
   function fit(opts={}){
     const smooth=opts.smooth!==false,pad=opts.padding??72,v=visible();
     if(!v.w||!v.h)return;
+    heal();
     const b=bounds();
     if(!b){vp.zoom=1;vp.x=40;vp.y=40;apply(smooth);return}
     vp.zoom=clamp(Math.min(opts.maxZoom??1,(v.w-pad*2)/b.w,(v.h-pad*2)/b.h));
     vp.x=(v.w-b.w*vp.zoom)/2-b.x*vp.zoom;
     vp.y=(v.h-b.h*vp.zoom)/2-b.y*vp.zoom;
+    if(!finite(vp.x)||!finite(vp.y)||!finite(vp.zoom)){vp.zoom=1;vp.x=40;vp.y=40}
     apply(smooth);
   }
   function centerOn(x,y,opts={}){
+    heal();
+    if(!finite(x)||!finite(y)){apply(!!opts.smooth);return}
     const v=visible();if(!v.w)return;
     vp.x=v.w/2-x*vp.zoom;vp.y=v.h/2-y*vp.zoom;
     apply(!!opts.smooth);
@@ -68,8 +90,10 @@ const flowViewport=(()=>{
   // Pans the least distance that brings a node fully into the visible area.
   function reveal(nodeId){
     const n=(state.workflow?.nodes||[]).find(x=>x.id===nodeId);if(!n)return;
+    heal();
     const v=visible(),s=nodeSize(nodeId),m=24,top=64,bottom=72;
     const sx=n.position.x*vp.zoom+vp.x,sy=n.position.y*vp.zoom+vp.y,sw=s.w*vp.zoom,sh=s.h*vp.zoom;
+    if(!finite(sx)||!finite(sy)||!finite(sw)||!finite(sh))return;
     let dx=0,dy=0;
     if(sx+sw>v.w-m)dx=v.w-m-(sx+sw);
     if(sx+dx<m)dx=m-sx;
@@ -79,6 +103,7 @@ const flowViewport=(()=>{
   }
   // A world point inside the visible area that does not sit on another node.
   function freeSpot(){
+    heal();
     const v=visible(),nodes=state.workflow?.nodes||[];
     const c={x:(v.w/2-vp.x)/vp.zoom-NODE_W/2,y:(v.h/2-vp.y)/vp.zoom-NODE_H/2};
     for(let i=0;i<24;i++){

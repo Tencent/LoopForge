@@ -581,7 +581,7 @@ function drainAIBuild() {
 }
 
 async function aiPlaceNode(build, node) {
-  if (!node.position) node.position = aiProvisionalPosition(build.placed.size);
+  if (!node.position || !Number.isFinite(node.position.x) || !Number.isFinite(node.position.y)) node.position = aiProvisionalPosition(build.placed.size);
   state.workflow.nodes.push(node);
   build.placed.set(node.id, node);
   build.spawned = (build.spawned || 0) + 1;
@@ -805,7 +805,7 @@ function mergeAIEdit(base, incoming, goal, referenced) {
     if (normalized.id && normalized.id !== prev.id) idMap.set(normalized.id, prev.id);
     const merged = {...prev, ...normalized, id: prev.id};
     if (!raw.script) merged.script = prev.script;
-    if (!raw.position || !Number.isFinite(raw.position.x)) merged.position = prev.position;
+    if (!raw.position || !Number.isFinite(raw.position.x) || !Number.isFinite(raw.position.y)) merged.position = prev.position;
     return merged;
   });
   const known = new Set(nodes.map(node => node.id));
