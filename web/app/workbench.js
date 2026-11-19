@@ -140,7 +140,7 @@ function credentialModelsEndpoint(kind,protocol){
 // ---- 模型目录（Codex / Claude Code / 可配置 Agent CLI） ----
 // A saved catalog is the chat list on the official endpoint and behind a Base URL.
 // An empty catalog follows the CLI's built-in models when there is no Base URL
-// (or the protocol is Gemini), and the Base URL's published models otherwise.
+// and the Base URL's published models otherwise.
 // Edits stay in the DOM until 保存.
 const CREDENTIAL_CATALOG_MAX=100;
 let credentialEffortCatalogs,credentialEffortCatalogRequest;
