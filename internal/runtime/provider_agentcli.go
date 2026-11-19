@@ -234,7 +234,7 @@ func AgentCLICommand(kind string, o AgentCLICommandOptions) CommandSpec {
 
 // AgyModelEfforts returns the separate effort choices for Gemini API models.
 func AgyModelEfforts(model string) []string {
-	model, _ = splitAgyModelEffort(strings.TrimSpace(model))
+	model, _ = SplitAgyModelEffort(strings.TrimSpace(model))
 	switch model {
 	case "gemini-4-neon", "gemini-4-hydrogen":
 		return []string{"low", "medium", "high", "xhigh"}
@@ -256,7 +256,7 @@ func agyModelForEffort(model, effort string) string {
 	if effort == "" {
 		return model
 	}
-	if base, existing := splitAgyModelEffort(model); existing != "" {
+	if base, existing := SplitAgyModelEffort(model); existing != "" {
 		return base + "-" + effort
 	}
 	return model

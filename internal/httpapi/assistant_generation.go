@@ -200,7 +200,7 @@ func (h *assistantHandlers) startGeneration(c *gin.Context) {
 	// Keep the authenticated identity, but disconnect model execution from the
 	// lifetime of the browser request. Only explicit cancellation stops a turn.
 	parent := context.WithValue(context.WithoutCancel(c.Request.Context()), assistantFreshCLIKey{}, freshCLI)
-	if runnerLogin && cliEngine == runtime.AgentCLIAntigravity && req.Effort != "" {
+	if runnerLogin && cliEngine == runtime.AgentCLIAntigravity {
 		parent = context.WithValue(parent, assistantRunnerTurnModelKey{}, assistantRunnerTurnModel{
 			runnerID: loginRunner.ID, model: req.Model, effort: req.Effort, resolved: cliModel,
 		})

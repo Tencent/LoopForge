@@ -224,4 +224,34 @@ func TestAntigravityGenerationUsesLiveRunnerCatalog(t *testing.T) {
 	if i := slices.Index(command.Argv, "--model"); i < 0 || i+1 == len(command.Argv) || command.Argv[i+1] != "gemini-3.8-flash-medium" {
 		t.Fatalf("command did not use the advertised model ID: %v", command.Argv)
 	}
+
+	legacy := domain.AssistantSession{
+		ID: "agy-live-legacy", Executor: runtime.AgentCLIAntigravity, Model: "agy:gemini-3.8-flash-high",
+		ExecutionTarget: request.ExecutionTarget,
+		Messages: []domain.AssistantMessage{
+			{Role: "user", Content: "first message"},
+			{Role: "assistant", Content: "first reply", Model: "agy:gemini-3.8-flash-high"},
+		},
+	}
+	if err := h.repo.PutAssistantSession(owner.ID, legacy); err != nil {
+		t.Fatal(err)
+	}
+	legacy, _ = h.repo.AssistantSession(owner.ID, legacy.ID)
+	request.SessionID, request.Model, request.Effort = legacy.ID, legacy.Model, ""
+	request.Messages = append(legacy.Messages, assistantMessage{Role: "user", Content: "continue"})
+	body, err = json.Marshal(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, w = workbenchContext(owner, http.MethodPost, "/api/assistant/generations", bytes.NewBuffer(body))
+	h.startGeneration(c)
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "请重新选择模型") {
+		t.Fatalf("retired legacy variant returned %d: %s", w.Code, w.Body)
+	}
+	if _, created := h.repo.AssistantGeneration(owner.ID, legacy.ID); created {
+		t.Fatal("retired legacy variant created a generation")
+	}
+	if got, err := h.resolveAssistantTurnModel(t.Context(), owner, "agy:gemini-3.8-flash-medium", "", runner); err != nil || got != "agy:gemini-3.8-flash-medium" {
+		t.Fatalf("available legacy variant was not preserved: %q %v", got, err)
+	}
 }

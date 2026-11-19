@@ -600,9 +600,10 @@ export function useChat() {
   const agyRuntime = personalMachine?.runtimes?.find((runtime) => runtime.provider === "agy");
   const agyAccountKey = executor === "agy" && agyRuntime && agyRuntime.authMode !== "personal"
     ? `agy-account:${user.id}:${personalMachine.id}` : "";
+  const agyAccountCatalog = providerCatalogs[agyAccountKey];
   const codeBuddy = executor === "codebuddy";
   const listedForEngine = engineModels(models, executor);
-  const executorModels = agyAccountKey ? providerCatalogs[agyAccountKey]?.models || [] :
+  const executorModels = agyAccountKey ? agyAccountCatalog?.models || [] :
     executorModelList(models, executor, providerCatalogs);
   const missingKey = !!user && !user.codeBuddyApiKeyConfigured;
   // Without their own key users chat on the platform's shared key, limited to
@@ -621,6 +622,8 @@ export function useChat() {
   const activeModelEntry = modelEntry(availableModel);
   const activeModel = activeModelEntry?.id ?? availableModel;
   const requestedModelId = unprefixedModel(executor, availableModel);
+  const unavailableAgyVariant = agyAccountCatalog && !activeModelEntry &&
+    /-(?:low|medium|high|xhigh|max)$/.test(requestedModelId || "");
   // Older sessions and preferences stored the ID of the selected effort variant.
   const legacyEffort = requestedModelId !== unprefixedModel(executor, activeModel)
     ? activeModelEntry?.efforts?.find((level) => activeModelEntry.effortModelIds?.[level] === requestedModelId)
@@ -897,6 +900,10 @@ export function useChat() {
     fromQueue = false,
   }) {
     if (!text.trim() && !attachments.length) return false;
+    if (unavailableAgyVariant) {
+      setError("当前模型已不在该执行机器的账号目录，请重新选择模型。");
+      return false;
+    }
     if (!activeModel) {
       setError("当前 CLI 暂无可用模型，请在个人配置中获取或添加模型。");
       return false;

@@ -141,12 +141,14 @@ type assistantRunnerTurnModel struct {
 }
 
 func (h *assistantHandlers) resolveAssistantTurnModel(ctx context.Context, user domain.User, model, effort string, runner domain.Runner) (string, error) {
-	if effort == "" {
-		return model, nil
-	}
 	engine, id := assistantModelEngine(model)
 	if runner.ID == "" || engine != runtime.AgentCLIAntigravity {
 		return model, validateAssistantEffort(ctx, user, model, effort)
+	}
+	// Legacy sessions can carry an explicit variant in the ID alone.
+	_, variantEffort := runtime.SplitAgyModelEffort(id)
+	if effort == "" && variantEffort == "" {
+		return model, nil
 	}
 	if admitted, ok := ctx.Value(assistantRunnerTurnModelKey{}).(assistantRunnerTurnModel); ok &&
 		admitted.runnerID == runner.ID && admitted.model == model && admitted.effort == effort {
@@ -157,8 +159,11 @@ func (h *assistantHandlers) resolveAssistantTurnModel(ctx context.Context, user 
 		return "", fmt.Errorf("无法验证模型 %s 的思考强度：%s", model, catalog.Error)
 	}
 	for _, item := range catalog.Models {
-		if item.ID != id && !slices.ContainsFunc(runtime.AgyAccountModelEfforts(id), func(level string) bool { return item.Efforts[level] == id }) {
+		if item.ID != id && (variantEffort == "" || item.Efforts[variantEffort] != id) {
 			continue
+		}
+		if effort == "" {
+			return model, nil
 		}
 		efforts := assistantModelEffortsInCatalog(engine+":"+item.ID, catalog.Models, true)
 		if err := validateAssistantModelEffort(model, effort, efforts); err != nil {
@@ -166,7 +171,7 @@ func (h *assistantHandlers) resolveAssistantTurnModel(ctx context.Context, user 
 		}
 		return engine + ":" + firstNonEmpty(item.Efforts[effort], id), nil
 	}
-	return "", fmt.Errorf("模型 %s 不在该执行机器的账号模型目录中", model)
+	return "", fmt.Errorf("模型 %s 已不在该执行机器的账号目录，请重新选择模型", model)
 }
 
 func validateAssistantModelEffort(model, effort string, efforts []string) error {

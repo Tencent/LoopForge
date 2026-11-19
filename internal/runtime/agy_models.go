@@ -7,7 +7,8 @@ import (
 	"agentflow/internal/domain"
 )
 
-func splitAgyModelEffort(model string) (base, effort string) {
+// SplitAgyModelEffort separates an Antigravity model ID's recognized effort suffix.
+func SplitAgyModelEffort(model string) (base, effort string) {
 	for _, level := range domain.ExecutorEffortLevels[AgentCLIAntigravity] {
 		if base, ok := strings.CutSuffix(model, "-"+level); ok {
 			return base, level
@@ -17,7 +18,7 @@ func splitAgyModelEffort(model string) (base, effort string) {
 }
 
 func agyClaudeFamily(model string) string {
-	base, _ := splitAgyModelEffort(model)
+	base, _ := SplitAgyModelEffort(model)
 	switch base {
 	case "claude-opus-5-5", "claude-sonnet-5-5":
 		return base
@@ -39,7 +40,7 @@ func FoldAgyAccountModels(models []domain.CLIModel) []domain.CLIModel {
 	out := make([]domain.CLIModel, 0, len(models))
 	groups := make(map[string]int)
 	for _, model := range models {
-		base, effort := splitAgyModelEffort(model.ID)
+		base, effort := SplitAgyModelEffort(model.ID)
 		levels := AgyAccountModelEfforts(base)
 		if !slices.Contains(levels, effort) {
 			out = append(out, model)

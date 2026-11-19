@@ -176,6 +176,50 @@ describe("conversation hooks", () => {
     }
   });
 
+  test("asks for a new model before continuing on a retired Antigravity variant", async () => {
+    const originalAPI = apiMock.getMockImplementation();
+    const originalWrite = writeMock.getMockImplementation();
+    const session = {
+      id: "legacy-agy", executor: "agy", model: "agy:gemini-3.8-flash-high", effort: "",
+      executionTarget: { pool: "runner", runnerId: "mac" },
+      messages: [{ role: "user", content: "原消息" }, { role: "assistant", content: "原回复", model: "agy:gemini-3.8-flash-high" }],
+    };
+    apiMock.mockImplementation(async (path, options) => {
+      if (path === "/api/runners?mine=1") return [
+        { id: "mac", status: "online", ownerUserId: 1, runtimes: [{ provider: "agy", authMode: "local" }] },
+      ];
+      if (path === "/api/assistant/sessions/legacy-agy") return structuredClone(session);
+      return originalAPI(path, options);
+    });
+    writeMock.mockImplementation(async (path, body) => path === "/api/runners/mac/models/probe"
+      ? { models: [{
+        id: "gemini-3.8-flash-low", name: "Gemini 3.8 Flash", discoveredReasoningEfforts: ["low", "medium"],
+        efforts: { low: "gemini-3.8-flash-low", medium: "gemini-3.8-flash-medium" },
+      }] }
+      : originalWrite(path, body));
+    const view = renderHook(() => useChat());
+    try {
+      await waitFor(() => expect(view.result.current.ready).toBe(true));
+      act(() => view.result.current.open(session.id));
+      await waitFor(() => expect(view.result.current.models.map(model => model.id)).toEqual(["agy:gemini-3.8-flash-low"]));
+      await act(async () => expect(await view.result.current.send({ text: "继续" })).toBe(false));
+      expect(view.result.current.error).toContain("请重新选择模型");
+      expect(writeMock).not.toHaveBeenCalledWith("/api/assistant/generations", expect.anything());
+      act(() => view.result.current.setModel("agy:gemini-3.8-flash-low"));
+      await act(async () => expect(await view.result.current.send({ text: "继续" })).toBe(true));
+      expect(writeMock).toHaveBeenCalledWith("/api/assistant/generations", expect.objectContaining({
+        sessionId: session.id, model: "agy:gemini-3.8-flash-low", effort: "",
+      }));
+    } finally {
+      view.unmount();
+      apiMock.mockImplementation(originalAPI);
+      writeMock.mockImplementation(originalWrite);
+      localStorage.removeItem("loopforge.assistant.executor");
+      localStorage.removeItem("loopforge.assistant.model.agy");
+      localStorage.removeItem("loopforge.assistant.effort.agy.gemini-3.8-flash-low");
+    }
+  });
+
   test.each(["after saving a key", "during the first open"])("refreshes a pending Cursor catalog %s", async (scenario) => {
     const original = apiMock.getMockImplementation();
     let configured = scenario === "during the first open";
