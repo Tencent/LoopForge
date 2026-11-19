@@ -63,8 +63,9 @@ func TestAssistantTitleModelReusesSessionModelOnOtherCLIs(t *testing.T) {
 		{"pi:deepseek-v4-flash", "minimal"},
 		{"opencode:glm-5", "low"},
 		{"kimi:kimi-k3", ""},
-		{"dsh:deepseek-v4-pro", ""},
-		{"zcode:glm-5.3", ""},
+		{"kimi:k3.1-pro", "low"},
+		{"dsh:deepseek-v4-pro", "none"},
+		{"zcode:glm-5.3", "low"},
 	} {
 		model, effort := assistantTitleModel(context.Background(), domain.User{}, tc.model, nil)
 		if model != tc.model || effort != tc.wantEffort {

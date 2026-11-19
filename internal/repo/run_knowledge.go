@@ -17,7 +17,7 @@ func (r *RunsRepo) KnowledgeArtifacts(projectID string, limit int) []domain.Know
 	}
 	base := domain.KnowledgeArtifactBasename
 	query := r.DB.Table("run_artifacts").
-		Select("run_artifacts.id, run_id, node_id, attempt, name, path, media_type, size_bytes, sha256, repository_dir, run_artifacts.created_at, runs.workflow_id, runs.status, runs.execution_context").
+		Select("run_artifacts.id, run_id, node_id, attempt, name, path, media_type, size_bytes, sha256, repository_dir, run_artifacts.created_at, runs.kind, runs.workflow_id, runs.status, runs.execution_context").
 		Joins("JOIN runs ON runs.id = run_artifacts.run_id").
 		Where("name = ? OR path = ? OR path LIKE ?", base, base, "%/"+base).
 		Order("run_artifacts.created_at DESC").Order("run_artifacts.id DESC")
@@ -26,6 +26,7 @@ func (r *RunsRepo) KnowledgeArtifacts(projectID string, limit int) []domain.Know
 	}
 	type candidateRow struct {
 		Artifact         runArtifactRow `gorm:"embedded"`
+		Kind             string
 		WorkflowID       string
 		Status           string
 		ExecutionContext []byte
@@ -44,6 +45,10 @@ func (r *RunsRepo) KnowledgeArtifacts(projectID string, limit int) []domain.Know
 			row := candidate.Artifact
 			var ctx domain.TelemetryContext
 			if json.Unmarshal(candidate.ExecutionContext, &ctx) != nil {
+				continue
+			}
+			run := domain.Run{Kind: candidate.Kind, ExecutionContext: ctx}
+			if run.IsPersonalWorkspace() {
 				continue
 			}
 			if projectID != "" && ctx.ProjectID != projectID {

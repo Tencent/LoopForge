@@ -20,6 +20,7 @@ func (r *AssistantRepo) AssistantPreferences(userID int64) domain.AssistantPrefe
 		return out
 	}
 	out.ProactiveRoles, out.ProactiveSOPs, out.Instructions = row.ProactiveRoles, row.ProactiveSOPs, row.Instructions
+	out.SteerOnSend = row.SteerOnSend
 	if row.UpdatedAt != nil {
 		out.UpdatedAt = *row.UpdatedAt
 	}
@@ -32,7 +33,7 @@ func (r *AssistantRepo) PutAssistantPreferences(userID int64, p domain.Assistant
 		return p, errors.New("user id is required")
 	}
 	now := time.Now().UTC()
-	row := assistantPreferenceRow{UserID: userID, ProactiveRoles: p.ProactiveRoles, ProactiveSOPs: p.ProactiveSOPs, Instructions: strings.TrimSpace(p.Instructions), UpdatedAt: &now}
+	row := assistantPreferenceRow{UserID: userID, ProactiveRoles: p.ProactiveRoles, ProactiveSOPs: p.ProactiveSOPs, SteerOnSend: p.SteerOnSend, Instructions: strings.TrimSpace(p.Instructions), UpdatedAt: &now}
 	if err := r.DB.Save(&row).Error; err != nil {
 		return p, err
 	}

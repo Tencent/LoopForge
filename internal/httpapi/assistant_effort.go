@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"fmt"
 	"slices"
 	"strings"
@@ -9,29 +10,89 @@ import (
 	"agentflow/internal/runtime"
 )
 
-// Mirrors CodeBuddy Code 2.180.0's product reasoning.supportedEfforts and
-// catalog effort capability. Unknown models use the conservative low/medium/high
-// fallback: the CLI clamps xhigh/max to high when no capability is known.
-// Keep this snapshot alongside the fixed chat model catalog when updating it.
-// Empty effort always leaves the model's native default untouched.
-//
-// user's saved Cursor catalog resolves the Cursor families folded out of
-// their CLI's own model list (runtime.FoldCursorCLIModels).
-func assistantModelEfforts(user domain.User, model string) []string {
-	return assistantModelEffortsIn(model, assistantCursorCatalog(user))
+// assistantModelEfforts resolves the same capabilities as the picker for
+// custom gateways. Cursor uses the saved family mapping that drives its CLI.
+func assistantModelEfforts(ctx context.Context, user domain.User, model string) []string {
+	engine, _ := assistantModelEngine(model)
+	if engine == assistantEngineCodeBuddy || engine == runtime.AgentCLICursor {
+		return assistantModelEffortsIn(model, assistantEngineCustomModels(user, engine))
+	}
+	_, baseURL := assistantEngineCredential(user, engine)
+	if engine == runtime.AgentCLIKimi && baseURL != "" {
+		return nil
+	}
+	models, _ := assistantDiscoveredModelsFor(ctx, user, engine)
+	return assistantModelEffortsIn(model, cliModelsOf(models))
 }
 
-// assistantModelEffortsIn is assistantModelEfforts with the Cursor catalog
-// given directly.
-func assistantModelEffortsIn(model string, cursor []domain.CLIModel) []string {
-	if engine, id := assistantModelEngine(model); engine == runtime.AgentCLICursor {
-		return runtime.CursorModelEfforts(id, cursor)
-	} else if engine == runtime.AgentCLIAntigravity {
-		return runtime.AgyModelEfforts(id)
-	} else if runtime.IsAgentCLI(engine) {
-		return domain.ExecutorEffortLevels[engine]
+func assistantModelEffortsForBaseURL(model string, catalog []domain.CLIModel, baseURL string) []string {
+	if baseURL != "" && strings.HasPrefix(strings.TrimSpace(model), runtime.AgentCLIKimi+":") {
+		return nil
 	}
-	switch model {
+	return assistantModelEffortsIn(model, catalog)
+}
+
+// assistantModelEffortsIn prefers configured levels, then discovered levels,
+// then the built-in model or CLI capabilities.
+// The CodeBuddy fallback mirrors CodeBuddy Code 2.180.0's model capabilities.
+// Unknown CodeBuddy, Codex and Claude Code models fall back to low/medium/high.
+func assistantModelEffortsIn(model string, catalog []domain.CLIModel) []string {
+	engine, id := assistantModelEngine(model)
+	supported := domain.ExecutorEffortLevels[engine]
+	builtins := builtinExecutorModels[engine]
+	builtin := slices.IndexFunc(builtins, func(model builtinExecutorModel) bool { return model.id == id })
+	if engine == runtime.AgentCLICursor {
+		supported = runtime.CursorModelEfforts(id, catalog)
+	} else if engine == runtime.AgentCLIAntigravity {
+		supported = runtime.AgyModelEfforts(id)
+	} else if engine == runtime.AgentCLIKimi && builtin >= 0 {
+		supported = builtins[builtin].efforts
+	}
+	for _, item := range catalog {
+		if item.ID != id {
+			continue
+		}
+		configured := item.ReasoningEfforts
+		if configured == nil {
+			configured = item.DiscoveredReasoningEfforts
+		}
+		if configured == nil {
+			continue
+		}
+		advertised := *configured
+		if engine == runtime.AgentCLIKimi || engine == runtime.AgentCLIDeepSeek {
+			advertised = slices.Clone(advertised)
+			for i, level := range advertised {
+				switch level {
+				case "off":
+					advertised[i] = "none"
+				case "on":
+					advertised[i] = "thinking"
+				}
+			}
+		}
+		levels := []string{}
+		for _, level := range supported {
+			if slices.Contains(advertised, level) {
+				levels = append(levels, level)
+			}
+		}
+		return levels
+	}
+	if builtin >= 0 {
+		return builtins[builtin].efforts
+	}
+	if runtime.IsAgentCLI(engine) {
+		if len(builtins) > 0 {
+			return nil
+		}
+		return supported
+	}
+	if engine == assistantEngineCodex {
+		return []string{"low", "medium", "high"}
+	}
+	// Keep the legacy fallback for CodeBuddy and custom Claude gateways.
+	switch id {
 	case "hy4std", "hy4-preview-ioa":
 		return []string{"high"}
 	case "glm-5.3-ioa", "glm-5.3-flash-ioa", "glm-5.3-flashx", "kimi-k3.1-pro", "kimi-k2.8-preview":
@@ -47,12 +108,15 @@ func assistantModelEffortsIn(model string, cursor []domain.CLIModel) []string {
 	}
 }
 
-func validateAssistantEffort(user domain.User, model, effort string) error {
+func validateAssistantEffort(ctx context.Context, user domain.User, model, effort string) error {
 	if effort == "" {
 		return nil
 	}
-	efforts := assistantModelEfforts(user, model)
+	efforts := assistantModelEfforts(ctx, user, model)
 	if !slices.Contains(efforts, effort) {
+		if len(efforts) == 0 {
+			return fmt.Errorf("模型 %s 仅支持默认思考强度", model)
+		}
 		return fmt.Errorf("模型 %s 不支持思考强度 %q，可选：默认、%s", model, effort, strings.Join(efforts, "、"))
 	}
 	return nil

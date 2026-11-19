@@ -61,3 +61,48 @@ func TestKnowledgeCandidatesFillPageAfterRetryDeduplication(t *testing.T) {
 		}
 	}
 }
+
+func TestKnowledgeCandidatesExcludePersonalWorkspacesWithoutUnderfillingPage(t *testing.T) {
+	st, err := OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(st.Close)
+	base := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
+	runs := []domain.Run{
+		{ID: "project-run", ExecutionContext: domain.TelemetryContext{ProjectID: "project"}},
+		{ID: "project-workspace", Kind: domain.RunKindWorkspace, ExecutionContext: domain.TelemetryContext{ProjectID: "project"}},
+		{ID: "legacy-run"},
+	}
+	for i, run := range runs {
+		run.Artifacts = []domain.Artifact{{ID: run.ID + "-artifact", RunID: run.ID, NodeID: "learn", Path: "knowledge.md", CreatedAt: base.Add(time.Duration(i) * time.Minute)}}
+		if err := st.PutRun(run); err != nil {
+			t.Fatal(err)
+		}
+	}
+	personal := domain.Run{ID: "personal-workspace", Kind: domain.RunKindWorkspace}
+	// Private retries span a batch, but must neither leak nor consume the page.
+	for i := range 105 {
+		personal.Artifacts = append(personal.Artifacts, domain.Artifact{ID: fmt.Sprintf("private-%03d", i), RunID: personal.ID, NodeID: "learn", Attempt: i + 1, Path: "knowledge.md", CreatedAt: base.Add(time.Duration(i+3) * time.Minute)})
+	}
+	if err := st.PutRun(personal); err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		project string
+		want    []string
+	}{
+		{"", []string{"legacy-run", "project-workspace", "project-run"}},
+		{"project", []string{"project-workspace", "project-run"}},
+	} {
+		items := st.KnowledgeArtifacts(test.project, len(test.want))
+		if len(items) != len(test.want) {
+			t.Fatalf("project %q: candidate count = %d, want %d", test.project, len(items), len(test.want))
+		}
+		for i, want := range test.want {
+			if items[i].Artifact.RunID != want {
+				t.Fatalf("project %q: candidate %d run = %q, want %q", test.project, i, items[i].Artifact.RunID, want)
+			}
+		}
+	}
+}

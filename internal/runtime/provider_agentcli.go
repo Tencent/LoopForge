@@ -119,7 +119,7 @@ func AgentCLICommand(kind string, o AgentCLICommandOptions) CommandSpec {
 	extra := append([]string{}, o.Extra...)
 	var argv []string
 	readOnly := o.Chat && !o.Workspace
-	options := AgentCLIOptions{Model: model, ReadOnly: readOnly}
+	options := AgentCLIOptions{Model: model, Effort: effort, ReadOnly: readOnly}
 	switch kind {
 	case AgentCLIOpenCode:
 		argv = []string{binary, "run", "--format", "json", "--thinking"}
@@ -142,7 +142,6 @@ func AgentCLICommand(kind string, o AgentCLICommandOptions) CommandSpec {
 			// ApplyAgentCLICredential re-resolves this against the owner's
 			// saved catalog, which only the credential carries.
 			argv = append(argv, "--model", CursorModelID(model, effort, nil))
-			options.Effort = effort
 		}
 		if resume != "" {
 			argv = append(argv, "--resume", resume)

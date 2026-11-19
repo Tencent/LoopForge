@@ -15,6 +15,8 @@ type SandboxRequirements struct {
 	CLIStates        []CLIStateRequirement
 	PrivateHome      bool
 	BunFS            bool
+	// RunnerLoginRelay allows Docker Codex account login to reach the host refresh listener.
+	RunnerLoginRelay bool `json:",omitempty"`
 }
 
 type CLIStateRequirement struct {
@@ -168,6 +170,7 @@ func MergeSandboxRequirements(values ...SandboxRequirements) SandboxRequirements
 	seen := map[string]bool{}
 	for _, value := range values {
 		merged.BunFS = merged.BunFS || value.BunFS
+		merged.RunnerLoginRelay = merged.RunnerLoginRelay || value.RunnerLoginRelay
 		states := append([]CLIStateRequirement(nil), value.CLIStates...)
 		for _, state := range states {
 			if state.Directory == "" || seen[state.Directory] {

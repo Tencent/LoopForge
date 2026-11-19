@@ -20,7 +20,7 @@
   };
   let catalog = {
     default: DEFAULT_MODEL,
-    models: [{id: DEFAULT_MODEL, name: 'CLI 默认模型', family: 'other'}]
+    models: []
   };
   let loading = null;
 
@@ -48,7 +48,8 @@
     return (source.engines || []).some(e => e.id === prefix) ? prefix : 'codebuddy';
   }
   function modelMeta(id) {
-    return (catalog.models || []).find(m => m.id === id) || {id: id || DEFAULT_MODEL, family: familyOf(id), name: id || DEFAULT_MODEL};
+    const value = id || DEFAULT_MODEL;
+    return catalog.models.find(m => m.id === value) || {id: value, family: familyOf(value), name: value === DEFAULT_MODEL ? '默认' : value};
   }
   function fillModelIcon(el, family, id) {
     if (!el) return;
@@ -145,12 +146,14 @@
     if (!resp.ok) throw new Error(`模型列表加载失败（${resp.status}）`);
     return resp.json();
   }
-  // load keeps one in-flight request and keeps the built-in fallback when the
-  // catalog cannot be read, so pickers never spin forever on a cold start.
+  // Share the in-flight request and retain the last catalog on a refresh failure.
   function load() {
     if (!loading) {
       loading = fetchCatalog().then(data => {
-        if (data?.models?.length) catalog = {default: data.default || DEFAULT_MODEL, models: data.models, engines: data.engines || []};
+        if (Array.isArray(data?.models)) {
+          const models = data.models.filter(m => m.id !== DEFAULT_MODEL || (m.engine && m.engine !== 'codebuddy'));
+          catalog = {default: data.default || DEFAULT_MODEL, models, engines: data.engines || []};
+        }
         return catalog;
       }).catch(() => catalog).finally(() => { loading = null; });
     }

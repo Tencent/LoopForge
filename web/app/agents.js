@@ -149,7 +149,9 @@ function agentModelItems(executorId,current){
 }
 function agentEffortItems(executorId){
   const cat=executorModelCatalogs()[executorId]||{};
-  return [{id:'',name:'默认',icon:false}].concat((cat.efforts||[]).map(e=>({id:e.value,name:e.label,icon:false})));
+  const choice=$('#agentModelPicker [name="modelChoice"]')?.value,model=choice===AGENT_CUSTOM_MODEL?$('#agentModelCustomField input[name="model"]')?.value:choice;
+  const selected=(cat.models||[]).find(item=>item.id===model),efforts=Array.isArray(selected?.efforts)?selected.efforts:(cat.efforts||[]);
+  return [{id:'',name:'默认',icon:false}].concat(efforts.map(e=>({id:e.value,name:e.label,icon:false})));
 }
 function paintAgentPicker(pickerId,item){
   const picker=$(pickerId);if(!picker)return;
@@ -175,6 +177,7 @@ function renderAgentModelPicker(){
     picker.querySelector('[name="modelChoice"]').value=id;
     syncAgentModelCustomField();
     paintAgentPicker('#agentModelPicker',items.find(x=>x.id===id));
+    renderAgentEffortPicker(id!==current);
     menu.hidden=true;picker.querySelector('[data-model-toggle]').setAttribute('aria-expanded','false');
   });
   syncAgentModelCustomField();
@@ -185,17 +188,19 @@ function syncAgentModelCustomField(){
   if(!picker||!field)return;
   field.hidden=picker.querySelector('[name="modelChoice"]').value!==AGENT_CUSTOM_MODEL;
 }
-function renderAgentEffortPicker(){
+function renderAgentEffortPicker(modelChanged=false){
   const picker=$('#agentEffortPicker');if(!picker)return;
   const items=agentEffortItems(currentAgentExecutorId());
-  const current=picker.querySelector('[name="effort"]').value;
+  const field=picker.querySelector('[name="effort"]');
+  if(modelChanged&&executorModelCatalogs()[currentAgentExecutorId()]&&!items.some(item=>item.id===field.value))field.value='';
+  const current=field.value;
   const menu=picker.querySelector('.ai-model-menu');
   agentModelAPI()?.renderOptions?.(menu,items,current,id=>{
     picker.querySelector('[name="effort"]').value=id;
     paintAgentPicker('#agentEffortPicker',items.find(x=>x.id===id));
     menu.hidden=true;picker.querySelector('[data-model-toggle]').setAttribute('aria-expanded','false');
   });
-  paintAgentPicker('#agentEffortPicker',items.find(x=>x.id===current)||items[0]);
+  paintAgentPicker('#agentEffortPicker',items.find(x=>x.id===current)||{id:current,name:current,icon:false});
 }
 function applyAgentModelUI(executorId,model,effort){
   const picker=$('#agentModelPicker');if(!picker||!$('#agentEffortPicker'))return;
@@ -206,8 +211,7 @@ function applyAgentModelUI(executorId,model,effort){
   const customInput=$('#agentModelCustomField')?.querySelector('input[name="model"]');
   if(customInput&&choice===AGENT_CUSTOM_MODEL)customInput.value=model||'';
   renderAgentModelPicker();
-  const efforts=cat.efforts||[];
-  $('#agentEffortPicker').querySelector('[name="effort"]').value=(!cat.efforts||efforts.some(e=>e.value===effort))?(effort||''):'';
+  $('#agentEffortPicker').querySelector('[name="effort"]').value=effort||'';
   renderAgentEffortPicker();
 }
 function bindAgentPicker(pickerId,render){

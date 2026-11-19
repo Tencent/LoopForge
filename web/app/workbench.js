@@ -63,7 +63,9 @@ const CREDENTIAL_KINDS=[
     placeholder:'请输入个人访问令牌（PAT）',hint:'保存前会先校验令牌有效性与权限',
     impact:'依赖私有仓库的 SOP 将无法克隆或推送仓库。'},
   {key:'gitSshKey',group:'platform',name:'Git SSH',short:'Git SSH 密钥',icon:'key',
-    use:'按 SSH 主机管理个人密钥，仓库自动匹配'},
+    use:'SSH 密钥用于克隆和推送；创建 PR/MR 需要访问令牌',dialog:()=>openGitSSHKeys(),action:'管理密钥'},
+  {key:'gitHttpCredentials',group:'platform',name:'Git HTTPS',short:'Git 访问令牌',icon:'lock',
+    use:'按主机管理 HTTPS 访问令牌，工作区的 git、gh、glab 自动认证',dialog:()=>openGitHTTPCredentials(),action:'管理令牌'},
   {key:'codeBuddyApiKey',group:'model',name:'CodeBuddy',short:'CodeBuddy API Key',logo:'codebuddy',
     use:'AI 对话与 SOP 的 CodeBuddy 执行器',
     description:'AI 对话（含 Claude、GPT 等模型）和 SOP 的 CodeBuddy 执行器都使用它；网络环境按账号所在环境配置。',
@@ -141,15 +143,32 @@ function credentialModelsEndpoint(kind,protocol){
 // (or the protocol is Gemini), and the Base URL's published models otherwise.
 // Edits stay in the DOM until 保存.
 const CREDENTIAL_CATALOG_MAX=100;
+let credentialEffortCatalogs,credentialEffortCatalogRequest;
+async function loadCredentialEffortCatalogs(){
+  if(credentialEffortCatalogs)return;
+  if(!credentialEffortCatalogRequest)credentialEffortCatalogRequest=api('/api/executor-models?builtin=1',{silent:true}).then(data=>{credentialEffortCatalogs=data}).catch(()=>{}).finally(()=>{credentialEffortCatalogRequest=null});
+  await credentialEffortCatalogRequest;
+}
 function credentialCatalogModels(value){
   return (Array.isArray(value)?value:[]).map(model=>{
     const id=String(model?.id||'').trim(),name=String(model?.name||'').trim();
-    const metadata=model?.efforts?{efforts:model.efforts,defaultEffort:model.defaultEffort}:{};
+    const metadata={
+      ...(model?.efforts?{efforts:model.efforts,defaultEffort:model.defaultEffort}:{}),
+      ...(Array.isArray(model?.reasoningEfforts)?{reasoningEfforts:model.reasoningEfforts}:{}),
+      ...(Array.isArray(model?.discoveredReasoningEfforts)?{discoveredReasoningEfforts:model.discoveredReasoningEfforts}:{}),
+    };
     return {id,name:name===id?'':name,...metadata};
   }).filter(model=>model.id||model.name);
 }
 function credentialCatalogStored(models){return credentialCatalogModels(models).map(({name,...model})=>name?{...model,name}:model)}
-function credentialCatalogKey(models){return JSON.stringify(credentialCatalogModels(models).map(model=>[model.id,model.name]))}
+function credentialCatalogKey(models){
+  return JSON.stringify(credentialCatalogModels(models).map(model=>[
+    model.id,model.name,
+    model.reasoningEfforts?.slice().sort()??null,
+    model.discoveredReasoningEfforts?.slice().sort()??null,
+    Object.entries(model.efforts||{}).sort(([a],[b])=>a.localeCompare(b)),model.defaultEffort||'',
+  ]));
+}
 function credentialCatalogError(models){
   const seen=new Set();
   if(models.length>CREDENTIAL_CATALOG_MAX)return {index:CREDENTIAL_CATALOG_MAX,error:`模型目录最多 ${CREDENTIAL_CATALOG_MAX} 个`};
@@ -164,9 +183,46 @@ function credentialCatalogError(models){
   }
   return null;
 }
-function credentialCatalogRowHTML(model={}){
-  const metadata=model.efforts?` data-catalog-metadata="${escapeHTML(JSON.stringify({id:model.id,efforts:model.efforts,defaultEffort:model.defaultEffort}))}"`:'';
-  return `<li class="credential-catalog-row" data-catalog-row${metadata}><button type="button" class="credential-catalog-grip" data-catalog-grip aria-label="拖动排序，也可以按 ↑ ↓ 移动">${credentialGlyph('grip',14)}</button><span class="credential-input is-plain"><input class="credential-mono" data-catalog-field="id" value="${escapeHTML(model.id||'')}" placeholder="模型 ID，如 gpt-5.5" aria-label="模型 ID" autocomplete="off" spellcheck="false"></span><span class="credential-input is-plain"><input data-catalog-field="name" value="${escapeHTML(model.name||'')}" placeholder="显示名称（可选）" aria-label="显示名称" autocomplete="off"></span><button type="button" class="credential-btn ghost icon danger credential-ink" data-catalog-act="remove" aria-label="移除模型">${credentialGlyph('trash',14)}</button></li>`;
+function credentialCatalogEffortSummary(model){
+  if(model.reasoningEfforts)return model.reasoningEfforts.join(' / ')||'仅使用默认';
+  if(!model.discoveredReasoningEfforts)return '自动';
+  return '自动 · '+(model.discoveredReasoningEfforts.join(' / ')||'仅使用默认');
+}
+function credentialCatalogEffortHTML(model,engine){
+  const available=credentialEffortCatalogs?.[engine==='claude-code'?'claude':engine]?.efforts||[];
+  const knownLevels=new Set([...(model.reasoningEfforts||[]),...(model.discoveredReasoningEfforts||[])]);
+  const additional=[...knownLevels].filter(value=>!available.some(option=>option.value===value));
+  const options=available.concat(additional.map(value=>({value,label:value})));
+  if(!options.length&&!model.discoveredReasoningEfforts)return '';
+  const custom=Array.isArray(model.reasoningEfforts),selected=model.reasoningEfforts??model.discoveredReasoningEfforts??[];
+  return `<details class="credential-catalog-effort"><summary>思考强度<span data-catalog-effort-summary>${escapeHTML(credentialCatalogEffortSummary(model))}</span></summary><label class="credential-catalog-effort-mode">可选强度<select data-catalog-effort-mode aria-label="思考强度配置"><option value="auto"${custom?'':' selected'}>自动</option><option value="custom"${custom?' selected':''}>自定义</option></select></label><div class="credential-catalog-effort-levels" data-catalog-effort-levels${custom?'':' hidden'}>${options.map(({value,label})=>`<label><input type="checkbox" data-catalog-effort="${escapeHTML(value)}"${selected.includes(value)?' checked':''}>${escapeHTML(label)}</label>`).join('')}<small>勾选此模型支持的强度；全部取消时仅使用模型默认强度。</small></div></details>`;
+}
+function syncCredentialCatalogEfforts(row){
+  if(!row)return;
+  const mode=row.querySelector('[data-catalog-effort-mode]');if(!mode)return;
+  row.querySelector('[data-catalog-effort-levels]').hidden=mode.value!=='custom';
+  row.querySelector('[data-catalog-effort-summary]').textContent=credentialCatalogEffortSummary(credentialCatalogRowModel(row));
+}
+function refreshCredentialCatalogEfforts(catalog){
+  if(!catalog?.isConnected)return;
+  credentialCatalogRows(catalog).forEach(row=>{
+    const html=credentialCatalogEffortHTML(credentialCatalogRowModel(row),catalog.dataset.catalogEngine),levels=row.querySelector('[data-catalog-effort-levels]');
+    if(!levels){row.insertAdjacentHTML('beforeend',html);return}
+    // Capabilities may arrive after a row was expanded. Add missing choices
+    // without replacing focused controls or the user's unsaved selections.
+    const holder=document.createElement('div');holder.innerHTML=html;
+    const options=[...holder.querySelectorAll('[data-catalog-effort]')];
+    const labels=new Map([...levels.querySelectorAll('[data-catalog-effort]')].map(input=>[input.dataset.catalogEffort,input.closest('label')]));
+    options.forEach((input,index)=>{
+      if(labels.has(input.dataset.catalogEffort))return;
+      const next=options.slice(index+1).map(option=>labels.get(option.dataset.catalogEffort)).find(Boolean)||levels.querySelector('small');
+      const label=input.closest('label');levels.insertBefore(label,next);labels.set(input.dataset.catalogEffort,label);
+    });
+  });
+}
+function credentialCatalogRowHTML(model={},engine=''){
+  const metadata=` data-catalog-metadata="${escapeHTML(JSON.stringify(credentialCatalogModels([model])[0]||{}))}"`;
+  return `<li class="credential-catalog-row" data-catalog-row${metadata}><button type="button" class="credential-catalog-grip" data-catalog-grip aria-label="拖动排序，也可以按 ↑ ↓ 移动">${credentialGlyph('grip',14)}</button><span class="credential-input is-plain"><input class="credential-mono" data-catalog-field="id" value="${escapeHTML(model.id||'')}" placeholder="模型 ID，如 gpt-5.5" aria-label="模型 ID" autocomplete="off" spellcheck="false"></span><span class="credential-input is-plain"><input data-catalog-field="name" value="${escapeHTML(model.name||'')}" placeholder="显示名称（可选）" aria-label="显示名称" autocomplete="off"></span><button type="button" class="credential-btn ghost icon danger credential-ink" data-catalog-act="remove" aria-label="移除模型">${credentialGlyph('trash',14)}</button>${credentialCatalogEffortHTML(model,engine)}</li>`;
 }
 function credentialCatalogCopy(mode,kind){
   const name=kind?.name||'该 CLI';
@@ -185,11 +241,11 @@ function credentialCatalogHTML(kind,user,{runnerLogin=false,label='模型目录'
   const models=credentialCatalogModels(cursorAutomatic?[]:credentialValue(user,kind.models.name)),empty=!models.length;
   const mode=runnerLogin?'runner':!String(baseUrl||'').trim()||protocol==='gemini'?'official':'remote';
   const copy=credentialCatalogCopy(mode,kind);
-  return `<section class="credential-catalog" data-credential-catalog data-catalog-mode="${mode}" data-catalog-protocol="${escapeHTML(protocol)}" data-original-key="${escapeHTML(credentialCatalogKey(models))}" data-catalog-source="${escapeHTML(credentialCatalogSource(baseUrl))}" aria-label="模型目录">
+  return `<section class="credential-catalog" data-credential-catalog data-catalog-engine="${escapeHTML(kind.models.engine)}" data-catalog-mode="${mode}" data-catalog-protocol="${escapeHTML(protocol)}" data-original-key="${escapeHTML(credentialCatalogKey(models))}" data-catalog-source="${escapeHTML(credentialCatalogSource(baseUrl))}" aria-label="模型目录">
     <div class="credential-catalog-body" data-catalog-body>
     <div class="credential-catalog-head"><div>${label?`<b>${escapeHTML(label)}</b>`:''}<small data-catalog-count>${credentialCatalogCountText(models.length)}</small></div><div><button type="button" class="credential-btn secondary credential-ink" data-catalog-act="probe">${credentialGlyph('download',14)}<span>获取可用模型</span></button><button type="button" class="credential-btn secondary credential-ink" data-catalog-act="add"><span class="credential-turn">${credentialGlyph('plus',14)}</span><span>添加模型</span></button></div></div>
     <div class="credential-catalog-probe" data-catalog-probe hidden></div>
-    <ol class="credential-catalog-list" data-catalog-list${empty?' hidden':''}>${models.map(credentialCatalogRowHTML).join('')}</ol>
+    <ol class="credential-catalog-list" data-catalog-list${empty?' hidden':''}>${models.map(model=>credentialCatalogRowHTML(model,kind.models.engine)).join('')}</ol>
     <div class="credential-catalog-empty" data-catalog-empty${empty?'':' hidden'}>${credentialGlyph('layers',16)}<div><b data-catalog-empty-title>${escapeHTML(copy.title)}</b><small data-catalog-empty-detail>${credentialCatalogDetailHTML(mode,kind,protocol)}</small></div></div>
     <div class="credential-catalog-foot" data-catalog-foot${empty?' hidden':''}><button type="button" class="credential-btn link credential-ink" data-catalog-act="reset">${credentialGlyph('undo',13)}<span>恢复默认</span></button><small data-catalog-reset-note>${escapeHTML(copy.reset)}</small></div>
     </div>
@@ -202,7 +258,12 @@ function credentialCatalogRows(catalog){return [...catalog.querySelectorAll('[da
 function credentialCatalogRowModel(row){
   const id=row.querySelector('[data-catalog-field="id"]').value,name=row.querySelector('[data-catalog-field="name"]').value;
   const metadata=row.dataset.catalogMetadata?JSON.parse(row.dataset.catalogMetadata):null;
-  return metadata?.id===id.trim()?{...metadata,id,name}:{id,name};
+  const model=metadata?.id===id.trim()?{...metadata,id,name}:{id,name},mode=row.querySelector('[data-catalog-effort-mode]');
+  if(mode){
+    delete model.reasoningEfforts;
+    if(mode.value==='custom')model.reasoningEfforts=[...row.querySelectorAll('[data-catalog-effort]:checked')].map(input=>input.dataset.catalogEffort);
+  }
+  return model;
 }
 function credentialCatalogFilledRows(catalog){return credentialCatalogRows(catalog).filter(row=>credentialCatalogModels([credentialCatalogRowModel(row)]).length)}
 function readCredentialCatalog(catalog){return credentialCatalogModels(credentialCatalogRows(catalog).map(credentialCatalogRowModel))}
@@ -249,7 +310,7 @@ function resetCredentialCatalog(row){
 }
 function addCredentialCatalogRow(catalog,model={}){
   const list=catalog.querySelector('[data-catalog-list]');
-  list.insertAdjacentHTML('beforeend',credentialCatalogRowHTML(model));
+  list.insertAdjacentHTML('beforeend',credentialCatalogRowHTML(model,catalog.dataset.catalogEngine));
   const row=list.lastElementChild;
   hydrateCredentialIcons(row);
   credentialCatalogChanged(catalog);
@@ -365,14 +426,21 @@ function applyCredentialCatalogProbe(catalog){
   const probe=catalog.probe;if(!probe)return;
   const picked=new Set([...catalog.querySelectorAll('[data-catalog-probe] input[type="checkbox"]:checked')].map(input=>input.value));
   const offered=new Set(probe.models.map(model=>model.id)),kept=new Set();
+  const discovered=new Map(probe.models.map(model=>[model.id,model]));
   let removed=0;
   credentialCatalogRows(catalog).forEach(row=>{
     const id=row.querySelector('[data-catalog-field="id"]').value.trim();
-    if(offered.has(id)&&!picked.has(id)){row.remove();removed++}else kept.add(id);
+    if(offered.has(id)&&!picked.has(id)){row.remove();removed++}else{
+      kept.add(id);
+      if(picked.has(id)&&discovered.has(id)){
+        const current=credentialCatalogRowModel(row),fresh=discovered.get(id);
+        row.outerHTML=credentialCatalogRowHTML({...current,...fresh,name:current.name,reasoningEfforts:current.reasoningEfforts},catalog.dataset.catalogEngine);
+      }
+    }
   });
   const added=probe.models.filter(model=>picked.has(model.id)&&!kept.has(model.id));
   const room=Math.max(0,CREDENTIAL_CATALOG_MAX-kept.size),list=catalog.querySelector('[data-catalog-list]');
-  list.insertAdjacentHTML('beforeend',credentialCatalogModels(added.slice(0,room)).map(credentialCatalogRowHTML).join(''));
+  list.insertAdjacentHTML('beforeend',credentialCatalogModels(added.slice(0,room)).map(model=>credentialCatalogRowHTML(model,catalog.dataset.catalogEngine)).join(''));
   hydrateCredentialIcons(list);
   closeCredentialCatalogProbe(catalog);
   credentialCatalogChanged(catalog);
@@ -422,7 +490,9 @@ function validateCredentialCatalog(catalog,models){
 const CREDENTIAL_RECOMMENDED=['gitToken','codeBuddyApiKey'];
 const CREDENTIAL_PAT_WARNING='请填写 GitHub <b>个人访问令牌（PAT）</b>，为目标仓库授予 <b>Contents</b> 和 <b>Pull requests</b> 的读写权限；少勾权限会导致克隆 / 推送仓库失败。';
 function credentialKind(key){return CREDENTIAL_KINDS.find(kind=>kind.key===key)||null}
-function credentialConfigured(kind,user){return !!credentialValue(user,kind.agentCli?kind.key+'.apiKeyConfigured':kind.key+'Configured')}
+// Kinds with a dialog manage several entries there instead of the inline editor.
+function credentialDialog(key){return credentialKind(key)?.dialog||null}
+function credentialConfigured(kind,user){if(kind.key==='gitToken')return !!user.gitHubCredentialConfigured;return !!credentialValue(user,kind.agentCli?kind.key+'.apiKeyConfigured':kind.key+'Configured')}
 function credentialUser(){return userById(state.currentUser?.id)||{}}
 function credentialUI(){return state.credentialUI||(state.credentialUI={open:null,filter:'all',closed:{}})}
 function credentialGlyph(name,size=16,cls=''){return `<svg class="agent-icon harness-icon${cls?' '+cls:''}" data-icon="${name}" width="${size}" height="${size}" aria-hidden="true" focusable="false"></svg>`}
@@ -608,16 +678,16 @@ function credentialEditorHTML(kind,user){
   </div>`;
 }
 function credentialRowMainHTML(kind,user){
-  const ssh=kind.key==='gitSshKey',on=credentialConfigured(kind,user),open=on&&credentialUI().open===kind.key,status=credentialStatus(kind,user);
-  const end=on&&!ssh
+  const managed=!!kind.dialog,on=credentialConfigured(kind,user),open=on&&credentialUI().open===kind.key,status=credentialStatus(kind,user);
+  const end=on&&!managed
     ?`${credentialBadgeHTML(status)}${kind.key==='gitToken'?`<span class="credential-tip" data-tip="重新校验"><button type="button" class="credential-btn ghost icon credential-ink git-token-verify" data-credential-act="verify" aria-label="重新校验"${status==='busy'?' disabled':''}>${credentialGlyph('refresh',15)}</button></span>`:''}<span class="credential-chevron">${credentialGlyph('chevron-down',16)}</span>`
-    :`${credentialBadgeHTML(status)}<button type="button" class="credential-btn secondary credential-ink" data-credential-act="setup"${ssh?' aria-haspopup="dialog"':''}>${ssh?'管理密钥':'去配置'}<span class="credential-nudge">${credentialGlyph('chevron-right',13)}</span></button>`;
-  const interaction=ssh?'':` role="button" tabindex="0"${on?` aria-expanded="${open}"`:''}`;
+    :`${credentialBadgeHTML(status)}<button type="button" class="credential-btn secondary credential-ink" data-credential-act="setup"${managed?' aria-haspopup="dialog"':''}>${managed?kind.action:'去配置'}<span class="credential-nudge">${credentialGlyph('chevron-right',13)}</span></button>`;
+  const interaction=managed?'':` role="button" tabindex="0"${on?` aria-expanded="${open}"`:''}`;
   return `<div class="credential-row-main credential-ink"${interaction}>${credentialLogo(kind,on?'':'is-dim')}<div class="credential-row-who"><b>${escapeHTML(kind.name)}<span>${escapeHTML(kind.short)}</span></b><small>${credentialSubline(kind,user)}</small></div><div class="credential-row-end">${end}</div></div>`;
 }
 function credentialRowHTML(kind,user){
   const on=credentialConfigured(kind,user),open=on&&credentialUI().open===kind.key;
-  const editor=on&&kind.key!=='gitSshKey'?credentialEditorHTML(kind,user):'';
+  const editor=on&&!kind.dialog?credentialEditorHTML(kind,user):'';
   return `<div class="credential-row${on?' is-configured':''}${open?' is-open':''}" data-credential-row="${kind.key}">${credentialRowMainHTML(kind,user)}<div class="credential-editor"><div><div class="credential-editor-inner">${editor}</div></div></div></div>`;
 }
 function credentialGroupHTML(group,user){
@@ -635,6 +705,12 @@ function credentialFilterHTML(user){
 }
 function credentialPanelHTML(user){
   return `<header class="credential-section-head"><div><h2>个人凭证</h2><p>SOP 使用需求责任人（未指定时为项目 Owner）的个人凭证，保存后对下一次任务生效。</p></div><button type="button" class="credential-btn primary credential-ink" id="credentialAddButton" data-credential-add><span class="credential-turn">${credentialGlyph('plus',15)}</span><span>添加凭证</span></button></header>
+    <div class="credential-note credential-subscription-note">
+      ${credentialGlyph('monitor',16)}
+      <div><strong>使用已有订阅</strong>
+        <p>绑定已登录 Claude Code、Codex 或 Antigravity 的机器，选「账号登录」即可用订阅额度运行对话和 SOP，无需 API Key。</p></div>
+      <a class="button ghost small" href="#/runners"><span>配置执行机器</span>${credentialGlyph('arrow-right',14)}</a>
+    </div>
     <div class="credential-progress">${credentialProgressHTML(user)}</div>
     <div class="credential-toolbar"><div class="credential-filter" role="tablist" aria-label="筛选凭证">${credentialFilterHTML(user)}</div></div>
     <div class="credential-list">${CREDENTIAL_GROUPS.map(group=>credentialGroupHTML(group,user)).join('')}</div>`;
@@ -738,7 +814,12 @@ function storeCredentialUser(saved){
 function notifyCredentialsChanged(){$('#chatNextFrame')?.contentWindow?.postMessage({type:'agentflow-credentials-changed'},location.origin)}
 async function saveCredential(key,values={},options={}){
   const user=state.currentUser,kind=credentialKind(key);
-  const saved=await api(`/api/users/${user.id}/credentials`,{method:'PUT',body:JSON.stringify(credentialSavePayload(kind,values))});
+  let saved;
+  if(key==='gitToken'){
+    const endpoint=`/api/users/${user.id}/git-http-credentials`,credentials=await api(endpoint),existing=credentials.find(credential=>credential.host==='github.com');
+    const listed=await api(endpoint,{method:'PUT',body:JSON.stringify({...(existing?{id:existing.id}:{}),name:'GitHub',platform:'github',host:'github.com',username:'x-access-token',token:values.secret})});
+    saved={...credentialUser(),id:user.id,gitHubCredentialConfigured:listed.some(item=>item.host==='github.com'),gitHttpCredentialsConfigured:listed.length>0};
+  }else saved=await api(`/api/users/${user.id}/credentials`,{method:'PUT',body:JSON.stringify(credentialSavePayload(kind,values))});
   if(key==='gitToken'&&!options.verified)state.gitTokenVerify=null;
   storeCredentialUser(saved);
   notifyCredentialsChanged();
@@ -746,7 +827,12 @@ async function saveCredential(key,values={},options={}){
 }
 async function deleteCredential(key){
   const user=state.currentUser,kind=credentialKind(key);
-  const saved=await api(`/api/users/${user.id}/credentials`,{method:'PUT',body:JSON.stringify(credentialClearPayload(kind))});
+  let saved;
+  if(key==='gitToken'){
+    const endpoint=`/api/users/${user.id}/git-http-credentials`,credentials=await api(endpoint),existing=credentials.find(credential=>credential.host==='github.com');
+    const listed=existing?await api(`${endpoint}/${encodeURIComponent(existing.id)}`,{method:'DELETE'}):credentials;
+    saved={...credentialUser(),id:user.id,gitHubCredentialConfigured:listed.some(item=>item.host==='github.com'),gitHttpCredentialsConfigured:listed.length>0};
+  }else saved=await api(`/api/users/${user.id}/credentials`,{method:'PUT',body:JSON.stringify(credentialClearPayload(kind))});
   if(key==='gitToken')state.gitTokenVerify=null;
   storeCredentialUser(saved);
   notifyCredentialsChanged();
@@ -852,7 +938,7 @@ function toggleCredentialGroup(head){
 }
 function activateCredentialRow(row){
   const key=row.dataset.credentialRow;
-  if(key==='gitSshKey')return openGitSSHKeys();
+  const dialog=credentialDialog(key);if(dialog)return dialog();
   return row.classList.contains('is-configured')?toggleCredentialRow(key):openCredentialWizard(key);
 }
 function bindCredentialPanel(panel){
@@ -890,6 +976,7 @@ function bindCredentialPanel(panel){
     if(catalog){
       if(event.target.closest('[data-catalog-probe]'))return syncCredentialCatalogProbe(catalog);
       event.target.closest('.credential-input')?.classList.remove('is-bad');
+      syncCredentialCatalogEfforts(event.target.closest('[data-catalog-row]'));
     }
     if(event.target.name==='extra'||event.target.name==='protocol'){const catalogBox=form.querySelector('[data-credential-catalog]');if(catalogBox)syncCredentialCatalog(catalogBox)}
     if(event.target.name==='secret'){
@@ -919,7 +1006,7 @@ function credentialWizardDefaults(kind,user){return kind?.extra?credentialExtraV
 function openCredentialWizard(key){
   const user=credentialUser();
   if(!state.currentUser||state.currentUser.isGuest||!$('#credentialPanel'))return;
-  if(key==='gitSshKey')return openGitSSHKeys();
+  const dialog=credentialDialog(key);if(dialog)return dialog();
   const preset=key?credentialKind(key):null;
   if(preset&&credentialConfigured(preset,user))return revealCredentialRow(key);
   const kind=preset||CREDENTIAL_RECOMMENDED.map(credentialKind).find(k=>!credentialConfigured(k,user))||CREDENTIAL_KINDS.find(k=>!credentialConfigured(k,user))||null;
@@ -975,7 +1062,7 @@ function credentialWizardStepOneHTML(user){
   const wizard=credentialWizard,all=CREDENTIAL_KINDS.every(kind=>credentialConfigured(kind,user));
   const groups=CREDENTIAL_GROUPS.map(group=>`<p class="credential-opt-label">${escapeHTML(group.name)}</p><div class="credential-opts" role="radiogroup" aria-label="${escapeHTML(group.name)}">${CREDENTIAL_KINDS.filter(kind=>kind.group===group.id).map((kind,index)=>{
     const on=credentialConfigured(kind,user),selected=wizard.kind===kind.key;
-    return `<button type="button" class="credential-opt${selected?' is-selected':''}" style="--i:${index}" role="radio" aria-checked="${selected}" data-wizard-kind="${kind.key}"${on&&kind.key!=='gitSshKey'?' disabled':''}><span class="credential-radio">${credentialGlyph('check',10)}</span>${credentialLogo(kind)}<span class="credential-opt-text"><b>${escapeHTML(kind.name)}</b><small>${escapeHTML(kind.short)}</small></span>${on?'<span class="credential-pill is-ok">已配置</span>':CREDENTIAL_RECOMMENDED.includes(kind.key)?'<span class="credential-pill">推荐</span>':''}</button>`;
+    return `<button type="button" class="credential-opt${selected?' is-selected':''}" style="--i:${index}" role="radio" aria-checked="${selected}" data-wizard-kind="${kind.key}"${on&&!kind.dialog?' disabled':''}><span class="credential-radio">${credentialGlyph('check',10)}</span>${credentialLogo(kind)}<span class="credential-opt-text"><b>${escapeHTML(kind.name)}</b><small>${escapeHTML(kind.short)}</small></span>${on?'<span class="credential-pill is-ok">已配置</span>':CREDENTIAL_RECOMMENDED.includes(kind.key)?'<span class="credential-pill">推荐</span>':''}</button>`;
   }).join('')}</div>`).join('');
   return `<div class="credential-question">${credentialGlyph('key',16)}<span>要添加哪一项凭证？</span><small>选择一项 · 已配置的可在列表中编辑</small></div>${groups}${all?`<div class="credential-note">${credentialGlyph('check',14)}<span>已全部配置，可在列表中编辑。</span></div>`:''}`;
 }
@@ -1021,7 +1108,7 @@ function credentialWizardFootHTML(){
     ?'<span class="credential-kbd"><kbd>Esc</kbd> 关闭</span>'
     :`<button type="button" class="credential-btn ghost credential-ink" data-wizard-back${wizard.saving?' disabled':''}><span class="credential-nudge is-left">${credentialGlyph('arrow-left',13)}</span>上一步</button>`;
   if(wizard.step<3){
-    const ok=wizard.step===1?!!wizard.kind&&(wizard.kind==='gitSshKey'||!credentialConfigured(credentialKind(wizard.kind),credentialUser())):credentialWizardValid().ok;
+    const ok=wizard.step===1?!!wizard.kind&&(!!credentialDialog(wizard.kind)||!credentialConfigured(credentialKind(wizard.kind),credentialUser())):credentialWizardValid().ok;
     return `${back}<button type="button" class="credential-btn secondary credential-ink" data-wizard-next${ok?'':' disabled'}>下一步<span class="credential-nudge">${credentialGlyph('chevron-right',13)}</span></button>`;
   }
   const gongfeng=wizard.kind==='gitToken';
@@ -1130,10 +1217,11 @@ function credentialWizardClick(event){
 async function advanceCredentialWizard(){
   const wizard=credentialWizard;if(!wizard||wizard.saving||wizard.done)return;
   if(wizard.step===1){
-    if(!wizard.kind||(wizard.kind!=='gitSshKey'&&credentialConfigured(credentialKind(wizard.kind),credentialUser())))return;
-    if(wizard.kind==='gitSshKey'){
+    const dialog=credentialDialog(wizard.kind);
+    if(!wizard.kind||(!dialog&&credentialConfigured(credentialKind(wizard.kind),credentialUser())))return;
+    if(dialog){
       closeCredentialWizard(true);
-      return openGitSSHKeys();
+      return dialog();
     }
     wizard.step=2;paintCredentialWizard(1);setTimeout(focusCredentialWizard,220);return;
   }
@@ -1177,8 +1265,8 @@ async function refreshGongfengGrant(){
   if(!fresh||!row||Number(state.currentUser?.id)!==Number(user.id))return;
   storeCredentialUser(fresh);
   state.gitTokenVerify=null;
-  if(credentialWizard?.kind==='gitToken'&&fresh.gitTokenConfigured)closeCredentialWizard(true);
-  if(row.classList.contains('is-configured')!==!!fresh.gitTokenConfigured){
+  if(credentialWizard?.kind==='gitToken'&&fresh.gitHubCredentialConfigured)closeCredentialWizard(true);
+  if(row.classList.contains('is-configured')!==!!fresh.gitHubCredentialConfigured){
     const holder=document.createElement('div');
     holder.innerHTML=credentialRowHTML(credentialKind('gitToken'),fresh);
     row.replaceWith(holder.firstElementChild);
@@ -1187,7 +1275,7 @@ async function refreshGongfengGrant(){
     applyCredentialFilter(panel,fresh);
     hydrateCredentialIcons(panel);
   }
-  if(!fresh.gitTokenConfigured){repaintCredentialRow('gitToken');return}
+  if(!fresh.gitHubCredentialConfigured){repaintCredentialRow('gitToken');return}
   state.gitTokenAnnounceVerify=true;
   toast('工蜂授权已保存，正在校验授权有效性…');
   await refreshGitTokenStatus();
@@ -1216,11 +1304,12 @@ async function renderPersonalSettings(){
   const panel=host.querySelector('#credentialPanel');
   bindCredentialPanel(panel);
   renderCredentialPanel();
+  loadCredentialEffortCatalogs().then(()=>panel.querySelectorAll('[data-credential-catalog]').forEach(refreshCredentialCatalogEfforts));
   hydrateCredentialIcons(host);
   setTimeout(()=>panel.classList.remove('is-entering'),900);
   // Offer the OAuth shortcut only when the server has a Gongfeng application.
   api('/api/auth/gongfeng',{silent:true}).then(capability=>{state.gongfengOAuthEnabled=!!capability?.enabled;document.querySelectorAll('[data-gongfeng-oauth]').forEach(el=>{el.hidden=!state.gongfengOAuthEnabled})}).catch(()=>{});
-  if(storedUser.gitTokenConfigured){
+  if(storedUser.gitHubCredentialConfigured){
     const cached=gitTokenVerifyFor(user);
     if(!cached||(cached.busy&&!state.gitTokenVerifyInFlight)){state.gitTokenVerifyInFlight=true;refreshGitTokenStatus().finally(()=>{state.gitTokenVerifyInFlight=false})}
   }

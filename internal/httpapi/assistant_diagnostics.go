@@ -420,6 +420,7 @@ func sanitizeAssistantDiagnostic(text string, user domain.User, limit int) strin
 			text = strings.ReplaceAll(text, secret, "<redacted>")
 		}
 	}
+	text = gitSecretRedactions.redact(text, "<redacted>")
 	text = diagnosticANSI.ReplaceAllString(text, "")
 	text = diagnosticPEM.ReplaceAllString(text, "<redacted private key>")
 	text = diagnosticBearer.ReplaceAllString(text, "$1 <redacted>")
