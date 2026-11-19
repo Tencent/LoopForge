@@ -226,11 +226,25 @@ func AgentCLICommand(kind string, o AgentCLICommandOptions) CommandSpec {
 	return CommandSpec{Argv: argv, Provider: kind, AgentCLI: options}
 }
 
-// AgyModelEfforts lists the efforts agy accepts for a model, weakest first.
-// Only its Gemini models take --effort; agy rejects the flag for any other
-// model a Base URL serves ("--effort is not supported for model …").
+// AgyModelEfforts returns the separate effort choices for Gemini models.
+// Account-only Claude variants already include their effort in their model ID.
 func AgyModelEfforts(model string) []string {
-	if strings.HasPrefix(strings.TrimSpace(model), "gemini-") {
+	model = strings.TrimSpace(model)
+	for _, level := range domain.ExecutorEffortLevels[AgentCLIAntigravity] {
+		if base, ok := strings.CutSuffix(model, "-"+level); ok {
+			model = base
+			break
+		}
+	}
+	switch model {
+	case "gemini-4-neon", "gemini-4-hydrogen":
+		return []string{"low", "medium", "high", "xhigh"}
+	case "gemini-4-carbon", "gemini-4-argon", "gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.6-flash":
+		return []string{"low", "medium", "high"}
+	case "gemini-3.1-pro", "gemini-3.1-pro-preview":
+		return []string{"low", "high"}
+	}
+	if strings.HasPrefix(model, "gemini-") && !strings.HasPrefix(model, "gemini-pro-orchestrator") {
 		return domain.ExecutorEffortLevels[AgentCLIAntigravity]
 	}
 	return nil

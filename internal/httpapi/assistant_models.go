@@ -192,26 +192,33 @@ func (h *assistantHandlers) models(c *gin.Context) {
 		} else if id == "claude" {
 			engine = assistantEngineClaude
 		}
-		var kimiBaseURL string
-		if engine == runtime.AgentCLIKimi {
+		var user domain.User
+		if h.repo != nil && (engine == runtime.AgentCLIKimi || engine == runtime.AgentCLIAntigravity) {
 			if current, signedIn := h.requestUser(c.Request, true); signedIn {
-				if stored, found := h.repo.User(current.ID); found {
-					_, kimiBaseURL = assistantEngineCredential(stored, engine)
-				}
+				user, _ = h.repo.User(current.ID)
 			}
 		}
+		_, kimiBaseURL := assistantEngineCredential(user, runtime.AgentCLIKimi)
 		catalog, ok := executorModelCatalogs(kimiBaseURL)[id]
 		if !ok {
 			c.JSON(400, gin.H{"error": "不支持的执行器"})
 			return
 		}
-		result := assistantModelCatalog{Default: "default", Models: []assistantModel{{ID: "default", Name: "CLI default", Family: map[string]string{"codex": "gpt", "claude": "claude"}[id], Efforts: assistantModelEffortsIn(engine+":default", nil)}}}
+		result := assistantModelCatalog{Models: make([]assistantModel, 0, len(catalog.Models))}
+		if engine == runtime.AgentCLIAntigravity && antigravityUsesCustomEndpoint(user) {
+			c.Header("Cache-Control", "private, no-store")
+			c.JSON(200, result)
+			return
+		}
 		for _, item := range catalog.Models {
 			levels := make([]string, 0, len(item.Efforts))
 			for _, option := range item.Efforts {
 				levels = append(levels, option.Value)
 			}
-			result.Models = append(result.Models, assistantModel{ID: item.ID, Name: item.Name, Family: map[string]string{"codex": "gpt", "claude": "claude"}[id], Efforts: levels})
+			result.Models = append(result.Models, assistantModel{ID: item.ID, Name: item.Name, Family: assistantModelFamily(item.ID), Efforts: levels})
+		}
+		if len(result.Models) > 0 {
+			result.Default = result.Models[0].ID
 		}
 		c.JSON(200, result)
 		return
@@ -402,7 +409,7 @@ func assistantModelFamily(id string) string {
 		return "glm"
 	case strings.HasPrefix(id, "gemini"):
 		return "gemini"
-	case strings.HasPrefix(id, "kimi"):
+	case strings.HasPrefix(id, "kimi") || id == "k3" || strings.HasPrefix(id, "k3-") || strings.HasPrefix(id, "k3."):
 		return "kimi"
 	case strings.HasPrefix(id, "deepseek"):
 		return "deepseek"

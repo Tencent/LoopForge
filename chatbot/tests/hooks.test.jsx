@@ -82,8 +82,8 @@ describe("conversation hooks", () => {
     expect(result.current.executor).toBe("codebuddy");
     expect(result.current.executors.map((item) => item.id)).toEqual(EXECUTORS.map((item) => item.id));
     act(() => result.current.setExecutor("codex"));
-    await waitFor(() => expect(result.current.models.map((m) => m.id)).toEqual(["default", "gpt-5"]));
-    expect(result.current.model).toBe("default");
+    await waitFor(() => expect(result.current.models.map((m) => m.id)).toEqual(["gpt-5"]));
+    expect(result.current.model).toBe("gpt-5");
     expect(result.current.effort).toBe("");
     expect(result.current.sponsored).toBe(false);
     act(() => result.current.setExecutor("unknown"));
@@ -91,7 +91,7 @@ describe("conversation hooks", () => {
     await act(() => result.current.send({ text: "你好" }));
     expect(writeMock).toHaveBeenCalledWith(
       "/api/assistant/generations",
-      expect.objectContaining({ executor: "codex", model: "default", effort: "" }),
+      expect.objectContaining({ executor: "codex", model: "gpt-5", effort: "" }),
     );
     act(() => result.current.setExecutor("codebuddy"));
     expect(result.current.model).toBe("m1");
@@ -105,6 +105,56 @@ describe("conversation hooks", () => {
     await waitFor(() => expect(result.current.ready).toBe(true));
     expect(result.current.executor).toBe("codex");
     await waitFor(() => expect(result.current.model).toBe("gpt-5"));
+  });
+
+  test("does not create a chat without a concrete model on Pi", async () => {
+    const view = renderHook(() => useChat());
+    try {
+      await waitFor(() => expect(view.result.current.ready).toBe(true));
+      act(() => view.result.current.setExecutor("pi"));
+      await waitFor(() => expect(apiMock).toHaveBeenCalledWith("/api/assistant/models?executor=pi"));
+      expect(view.result.current.models).toEqual([]);
+      await act(async () => expect(await view.result.current.send({ text: "开始" })).toBe(false));
+      expect(writeMock).not.toHaveBeenCalled();
+    } finally {
+      view.unmount();
+      localStorage.removeItem("loopforge.assistant.executor");
+    }
+  });
+
+  test("reads Antigravity models from the selected account-login machine", async () => {
+    const originalAPI = apiMock.getMockImplementation();
+    const originalWrite = writeMock.getMockImplementation();
+    apiMock.mockImplementation((path, options) => {
+      if (path === "/api/runners?mine=1") return Promise.resolve([
+        { id: "mac", name: "Mac", status: "online", ownerUserId: 1,
+          runtimes: [{ provider: "agy", authMode: "local" }] },
+      ]);
+      if (path === "/api/runners/default") return Promise.resolve({ runnerId: "mac" });
+      return originalAPI(path, options);
+    });
+    writeMock.mockImplementation((path, body) => path === "/api/runners/mac/models/probe"
+      ? Promise.resolve({ models: [
+        { id: "claude-sonnet-5-5-medium", name: "Claude Sonnet 5.5 (Medium)" },
+        { id: "claude-opus-5-5-high", name: "Claude Opus 5.5 (High)" },
+      ] })
+      : originalWrite(path, body));
+
+    const view = renderHook(() => useChat());
+    try {
+      await waitFor(() => expect(view.result.current.defaultRunnerId).toBe("mac"));
+      act(() => view.result.current.setExecutor("agy"));
+      await waitFor(() => expect(view.result.current.models.map((m) => m.id)).toEqual([
+        "agy:claude-sonnet-5-5-medium", "agy:claude-opus-5-5-high",
+      ]));
+      expect(writeMock).toHaveBeenCalledWith("/api/runners/mac/models/probe", { provider: "agy" });
+      expect(view.result.current.model).toBe("agy:claude-sonnet-5-5-medium");
+    } finally {
+      view.unmount();
+      apiMock.mockImplementation(originalAPI);
+      writeMock.mockImplementation(originalWrite);
+      localStorage.removeItem("loopforge.assistant.executor");
+    }
   });
 
   test.each(["after saving a key", "during the first open"])("refreshes a pending Cursor catalog %s", async (scenario) => {
@@ -228,7 +278,7 @@ describe("conversation hooks", () => {
       );
       act(() => first.result.current.newChat());
       act(() => first.result.current.setExecutor("codex"));
-      await waitFor(() => expect(first.result.current.models.map((m) => m.id)).toEqual(["default", "gpt-5"]));
+      await waitFor(() => expect(first.result.current.models.map((m) => m.id)).toEqual(["gpt-5"]));
       act(() => { first.result.current.setModel("gpt-5"); });
       act(() => first.result.current.setEffort("high"));
       act(() => first.result.current.setExecutor("codebuddy"));

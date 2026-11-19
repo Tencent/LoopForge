@@ -1,5 +1,7 @@
 import React, { useEffect, useId, useRef, useState } from "react";
 import HarnessIcon from "./HarnessIcon";
+import kimiCodeLogo from "./assets/provider-logos/kimi-code.png";
+import { engineBrand } from "./engines.js";
 import "./model-provider-icon.css";
 
 // Trusted, bundled brand artwork from Grasp and local assets. Source and
@@ -13,10 +15,10 @@ const brandSources = import.meta.glob("./assets/provider-logos/*.svg", {
 const modelBrands = [
   [/^(?:claude|anthropic)(?:$|[-_.\s:\d])/i, "claude"],
   [/^(?:gpt|chatgpt|codex|openai)(?:$|[-_.\s:\d])|^o[1-9]\d?(?:$|[-_.\s:])/i, "openai"],
-  [/^(?:gemini|google)(?:$|[-_.\s:\d])/i, "google"],
+  [/^(?:gemini|google)(?:$|[-_.\s:\d])/i, "gemini"],
   [/^deepseek(?:$|[-_.\s:\d])/i, "deepseek"],
   [/^(?:chatglm|glm|zhipu)(?:$|[-_.\s:\d])/i, "zhipu"],
-  [/^kimi(?:$|[-_.\s:\d])/i, "kimi"],
+  [/^kimi(?:$|[-_.\s:\d])|^k[23](?:$|[-_.\s])/i, "kimi"],
   [/^moonshot(?:ai)?(?:$|[-_.\s:\d])/i, "moonshot"],
   [/^(?:qwen|qvq|alibaba)(?:$|[-_.\s:\d])/i, "qwen"],
   [/^(?:hunyuan|tencent)(?:$|[-_.\s:\d])|^hy(?:\d|[-_.\s:])/i, "hunyuan"],
@@ -33,6 +35,7 @@ const fallbackBrands = new Set([
 ]);
 const colorBrands = new Set([
   "qwen", "doubao", "siliconflow", "minimax", "zhipu", "hunyuan", "qianfan",
+  "gemini", "antigravity", "pi", "kimi-code",
 ]);
 
 /** A visual label only. Never use inferred brands to route model requests. */
@@ -41,7 +44,10 @@ export function modelProviderFor(model) {
     ? [model]
     : [model?.family, model?.id, model?.name];
   for (const value of values) {
-    for (const part of String(value || "").trim().split("/").reverse()) {
+    const text = String(value || "").trim();
+    const prefix = /^([a-z-]+):/i.exec(text)?.[1];
+    const id = engineBrand(prefix) ? text.slice(prefix.length + 1) : text;
+    for (const part of id.split("/").reverse()) {
       const match = modelBrands.find(([pattern]) => pattern.test(part.trim()));
       if (match) return match[1];
     }
@@ -51,7 +57,7 @@ export function modelProviderFor(model) {
 }
 
 export function hasProviderLogo(name) {
-  return Boolean(brandSources[`./assets/provider-logos/${name}.svg`]);
+  return name === "kimi-code" || Boolean(brandSources[`./assets/provider-logos/${name}.svg`]);
 }
 
 function artwork(name, prefix) {
@@ -117,10 +123,11 @@ export default function ModelProviderIcon({ model, brand: named = "", size = 20,
   const identity = `model-provider-${useId().replace(/[^\w-]/g, "")}`;
   const [motionKey, setMotionKey] = useState(0);
   const brand = named || modelProviderFor(model);
+  const image = brand === "kimi-code" ? kimiCodeLogo : null;
 
   useEffect(() => {
     const element = host.current;
-    if (!element || !brand) return;
+    if (!element || !brand || image) return;
     const control = element.closest('button, [role="option"], [role="button"], summary, a[href]') || element;
     const play = () => {
       if (matchMedia("(prefers-reduced-motion: reduce)").matches ||
@@ -138,13 +145,13 @@ export default function ModelProviderIcon({ model, brand: named = "", size = 20,
       control.removeEventListener("pointerdown", press);
       control.removeEventListener("focusin", focus);
     };
-  }, [brand]);
+  }, [brand, image]);
 
   return (
     <span ref={host} aria-hidden="true" data-model-provider={brand || "unknown"}
       className={`model-provider-icon ${colorBrands.has(brand) ? "model-provider-icon--color" : brand === "kimi" ? "model-provider-icon--kimi" : "model-provider-icon--mono"} ${className}`.trim()}
       style={{ width: size, height: size }}>
-      {brand ? (
+      {image ? <img src={image} alt="" /> : brand ? (
         <>
           <BrandSvg name={brand} identity={identity} motionKey={motionKey}
             className={brand === "kimi" ? "model-provider-svg--light" : ""} />

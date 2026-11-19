@@ -92,6 +92,13 @@ vm.runInContext(moduleSource, ctx);
     assert.equal(typeof api[name], 'function', `AgentFlowAssistantModels.${name}`);
   }
   assert.equal(api.DEFAULT, 'default');
+  assert.equal(api.cliIcon('agy'), '/images/credentials/antigravity.svg');
+  assert.equal(api.cliIcon('kimi'), '/images/credentials/kimi-code.png');
+  assert.equal(api.cliIcon('pi'), '/images/credentials/pi.svg');
+  api.paintItem(toggle, {id: 'kimi:k3.1-pro', family: 'other'});
+  assert.match(icon.innerHTML, /\/images\/credentials\/kimi\.svg/);
+  api.paintItem(toggle, {id: 'agy:gemini-4-neon-high'});
+  assert.match(icon.innerHTML, /\/images\/credentials\/gemini\.svg/);
   // Pickers keep painting before the catalog lands, so the built-in fallback
   // must already render a usable label.
   assert.equal(api.codeBuddyModel('codex:gpt-5.5'), 'default', 'codex ids fall back before the catalog loads');

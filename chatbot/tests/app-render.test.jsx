@@ -2,6 +2,7 @@ import React from "react";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, test, vi } from "vitest";
+import { modelProviderFor } from "../src/ModelProviderIcon";
 
 const chat = {
   user: { id: "u1", loginName: "tester", chineseName: "测试用户" },
@@ -539,11 +540,21 @@ describe("App", () => {
     chat.executors = [
       ...previous.executors,
       { id: "pi", icon: "terminal", label: "Pi", detail: "Pi" },
+      { id: "agy", icon: "sparkles", label: "Antigravity", detail: "Antigravity" },
+      { id: "kimi", icon: "terminal", label: "Kimi Code", detail: "Kimi Code" },
     ];
     const view = render(<App />);
     await user.click(screen.getByRole("button", { name: "CLI" }));
     const pi = await screen.findByRole("menuitemradio", { name: "Pi" });
     expect(pi.querySelector('[data-model-provider="pi"] svg')).not.toBeNull();
+    const agy = screen.getByRole("menuitemradio", { name: "Antigravity" });
+    expect(agy.querySelector('[data-model-provider="antigravity"] svg')).not.toBeNull();
+    const kimi = screen.getByRole("menuitemradio", { name: "Kimi Code" });
+    expect(kimi.querySelector('[data-model-provider="kimi-code"] img')).not.toBeNull();
+    expect(modelProviderFor({ id: "agy:gemini-4-neon-high" })).toBe("gemini");
+    expect(modelProviderFor({ id: "agy:claude-opus-5-5-high" })).toBe("claude");
+    expect(modelProviderFor({ id: "kimi:k3.1-pro-highspeed" })).toBe("kimi");
+    expect(modelProviderFor({ id: "kimi:deepseek-v4-pro" })).toBe("deepseek");
     await user.click(await screen.findByRole("menuitemradio", { name: "Codex" }));
     expect(chat.setExecutor).toHaveBeenCalledWith("codex");
     expect(screen.getByRole("button", { name: "思考强度" })).toBeInTheDocument();

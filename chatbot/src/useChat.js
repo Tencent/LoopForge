@@ -16,7 +16,7 @@ import { cliFailureSettles } from "./cli-install.jsx";
 import { useExecutionMachines } from "./useExecutionMachines.js";
 import { executionLocked } from "./execution-target.js";
 import { modelEffort } from "./effort.js";
-import { conversationEngine, engineModels } from "./engines.js";
+import { concreteModel, conversationEngine, engineModels } from "./engines.js";
 import { readComposerPreference, writeComposerPreference } from "./composer-preferences.js";
 import {
   enqueue,
@@ -52,8 +52,8 @@ function storedExecutor() {
 
 function executorModelList(models, executor, providerCatalogs) {
   const listed = engineModels(models, executor);
-  if (executor === "codebuddy") return listed.filter((model) => model.id !== "default");
-  return listed.length ? listed : providerCatalogs?.[executor]?.models || [];
+  if (listed.length || executor === "codebuddy") return listed;
+  return (providerCatalogs?.[executor]?.models || []).filter((model) => concreteModel(model, executor));
 }
 
 // A CLI's fallback list uses bare model IDs, while the personal catalog
@@ -73,11 +73,12 @@ function effortPreference(executor, model) {
 }
 
 // A new conversation restores a listed preference or picks the first model.
-// When the list is empty, keep the CLI's fallback.
+// CodeBuddy also supports a server-configured fallback when the list is empty.
 function preferredModel(list, executor, codeBuddyDefault) {
   const remembered = readComposerPreference(`model.${executor}`);
-  const listed = findExecutorModel(list, executor, remembered);
-  return listed?.id || list[0]?.id || (executor === "codebuddy" ? codeBuddyDefault : remembered || "default");
+  const available = list.filter((model) => !model.disabled && !model.unavailable);
+  const listed = findExecutorModel(available, executor, remembered);
+  return listed?.id || available[0]?.id || (executor === "codebuddy" ? codeBuddyDefault : "");
 }
 
 // Mirrors errAssistantSponsoredModel in internal/httpapi/assistant_sponsor.go;
@@ -594,9 +595,16 @@ export function useChat() {
   const personalMachine = executionMachines.machines.find(
     (machine) => machine.id === personalMachineId && machine.ownerUserId === user?.id,
   );
+  const savedAgyModels = users.find((entry) => entry.id === user?.id)?.agentCliCredentials?.agy?.models;
+  const agyRuntime = personalMachine?.runtimes?.find((runtime) => runtime.provider === "agy");
+  // An explicit catalog can be maintained from the runner's settings. Otherwise
+  // read the live account's model list rather than the Gemini API key catalog.
+  const agyAccountKey = executor === "agy" && agyRuntime && agyRuntime.authMode !== "personal" &&
+    !savedAgyModels?.length ? `agy-account:${user.id}:${personalMachine.id}` : "";
   const codeBuddy = executor === "codebuddy";
   const listedForEngine = engineModels(models, executor);
-  const executorModels = executorModelList(models, executor, providerCatalogs);
+  const executorModels = agyAccountKey ? providerCatalogs[agyAccountKey]?.models || [] :
+    executorModelList(models, executor, providerCatalogs);
   const missingKey = !!user && !user.codeBuddyApiKeyConfigured;
   // Without their own key users chat on the platform's shared key, limited to
   // the models the administrator allowed (the first is the default).
@@ -620,18 +628,34 @@ export function useChat() {
       readComposerPreference(effortPreference(executor, activeModel)),
   );
   useEffect(() => {
-    if (codeBuddy || listedForEngine.length || providerCatalogs[executor]) return;
+    const key = agyAccountKey || executor;
+    if (codeBuddy || providerCatalogs[key] || (!agyAccountKey && listedForEngine.length)) return;
     let current = true;
-    api(`/api/assistant/models?executor=${encodeURIComponent(executor)}`)
+    const request = agyAccountKey
+      ? write(`/api/runners/${encodeURIComponent(personalMachineId)}/models/probe`, { provider: "agy" })
+      : api(`/api/assistant/models?executor=${encodeURIComponent(executor)}`);
+    request
       .then((catalog) => {
         if (!current) return;
-        setProviderCatalogs((old) => ({ ...old, [executor]: catalog }));
+        if (catalog.error) throw new Error(catalog.error);
+        const result = agyAccountKey ? {
+          models: (catalog.models || []).filter((model) => concreteModel(model, "agy")).map((model) => ({
+            id: `agy:${model.id}`,
+            engine: "agy",
+            name: model.name || model.id,
+            efforts: model.reasoningEfforts ?? model.discoveredReasoningEfforts,
+          })),
+        } : catalog;
+        setProviderCatalogs((old) => ({ ...old, [key]: result }));
       })
-      .catch((e) => current && setError(e.message));
+      .catch((e) => {
+        if (!current) return;
+        setError(e.message);
+      });
     return () => {
       current = false;
     };
-  }, [codeBuddy, executor, listedForEngine.length, providerCatalogs]);
+  }, [agyAccountKey, codeBuddy, executor, listedForEngine.length, personalMachineId, providerCatalogs]);
   const chooseExecutor = useCallback(
     (id) => {
       if (id === "claude") id = "claude-code";
@@ -706,7 +730,10 @@ export function useChat() {
         e.source === window.parent &&
         e.origin === location.origin &&
         e.data?.type === "agentflow-credentials-changed"
-      ) requestModelCatalogRefresh((revision) => revision + 1);
+      ) {
+        setProviderCatalogs({});
+        requestModelCatalogRefresh((revision) => revision + 1);
+      }
     };
     window.addEventListener("message", onMessage);
     if (ready && missingKey) window.addEventListener("focus", refreshUser);
@@ -867,6 +894,10 @@ export function useChat() {
     fromQueue = false,
   }) {
     if (!text.trim() && !attachments.length) return false;
+    if (!activeModel) {
+      setError("当前 CLI 暂无可用模型，请在个人配置中获取或添加模型。");
+      return false;
+    }
     const approval = fromQueue
       ? queuedApproval({ approvalMode, approvalUserId }, user?.id)
       : { approvalMode, approvalUserId: user?.id };

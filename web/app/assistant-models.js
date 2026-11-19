@@ -18,6 +18,11 @@
     hunyuan:'/images/credentials/hunyuan.svg',
     mimo:'/images/credentials/mimo.svg'
   };
+  const CLI_ICON = {
+    codebuddy:'codebuddy.svg', codex:'codex.svg', 'claude-code':'claude.svg',
+    opencode:'opencode.svg', cursor:'cursor.svg', agy:'antigravity.svg',
+    kimi:'kimi-code.png', pi:'pi.svg', dsh:'deepseek.svg', zcode:'glm.svg'
+  };
   let catalog = {
     default: DEFAULT_MODEL,
     models: []
@@ -25,12 +30,12 @@
   let loading = null;
 
   function familyOf(id) {
-    const v = String(id || '').toLowerCase();
+    const v = String(id || '').toLowerCase().replace(/^(?:codebuddy|codex|claude-code|opencode|cursor|agy|kimi|pi|dsh|zcode):/, '').split('/').at(-1);
     if (v.startsWith('claude')) return 'claude';
     if (v.startsWith('gpt') || v.includes('codex')) return 'gpt';
     if (v.startsWith('glm')) return 'glm';
     if (v.startsWith('gemini')) return 'gemini';
-    if (v.startsWith('kimi')) return 'kimi';
+    if (/^(?:kimi|k[23])(?:$|[-_.\s:])/.test(v)) return 'kimi';
     if (v.startsWith('deepseek')) return 'deepseek';
     if (v.startsWith('minimax')) return 'minimax';
     if (v.startsWith('hy') || v.includes('hunyuan')) return 'hunyuan';
@@ -53,9 +58,13 @@
   }
   function fillModelIcon(el, family, id) {
     if (!el) return;
+    if (!family || family === 'other') family = familyOf(id);
     el.dataset.family = family || 'other';
     const src = FAMILY_ICON[family];
-    if (src) { el.innerHTML = `<img src="${src}" alt="">`; return; }
+    if (src) {
+      el.innerHTML = `<img src="${src}" alt="">` + (family === 'kimi' ? '<img src="/images/credentials/kimi-dark.svg" alt="">' : '');
+      return;
+    }
     el.textContent = FAMILY_MARK[family] || String(id || 'AI').slice(0, 1).toUpperCase();
   }
   function creditLabel(item) {
@@ -151,7 +160,7 @@
     if (!loading) {
       loading = fetchCatalog().then(data => {
         if (Array.isArray(data?.models)) {
-          const models = data.models.filter(m => m.id !== DEFAULT_MODEL || (m.engine && m.engine !== 'codebuddy'));
+          const models = data.models.filter(m => m.id !== DEFAULT_MODEL && m.id !== `${m.engine}:default`);
           catalog = {default: data.default || DEFAULT_MODEL, models, engines: data.engines || []};
         }
         return catalog;
@@ -162,6 +171,7 @@
   window.AgentFlowAssistantModels = {
     DEFAULT: DEFAULT_MODEL,
     catalog: () => catalog,
+    cliIcon: id => Object.hasOwn(CLI_ICON, id) ? '/images/credentials/' + CLI_ICON[id] : '',
     codeBuddyModel,
     codeBuddyModels,
     engineOf,
