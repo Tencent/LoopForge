@@ -695,7 +695,8 @@ is_linux_runner_binary() {
 }
 
 is_usable_docker_runner_helper() {
-  [[ -x "$1" && -f "$1" ]] || return 1
+  # The runtime copies the source into the sandbox with executable mode.
+  [[ -r "$1" && -f "$1" ]] || return 1
   # A custom installer may also provide an executable script wrapper.
   [[ "$(LC_ALL=C od -An -v -t x1 -N 2 "$1" | tr -d '[:space:]')" == 2321 ]] ||
     is_linux_runner_binary "$1" "${2:-$ARCH}"
@@ -750,30 +751,34 @@ saved_runner_binary_pattern() {
   awk 'sub(/^AGENTFLOW_RUNNER_BINARY=/, "") { print; exit }' "$ENV_FILE"
 }
 
-installed_macos_runner_binary_pattern() {
-  if [[ -f "$PLIST" ]] &&
-     /usr/bin/plutil -extract EnvironmentVariables.AGENTFLOW_RUNNER_BINARY raw "$PLIST" 2>/dev/null; then
-    return
-  fi
-  saved_runner_binary_pattern
-}
-
-trim_runner_binary_pattern() {
-  local pattern="$1"
+normalize_runner_binary_pattern() {
+  local pattern="$1" working_dir="$2"
   # Keep the template expansion in sync with runtime.DockerRunnerHelperPath.
   pattern="${pattern#"${pattern%%[![:space:]]*}"}"
   pattern="${pattern%"${pattern##*[![:space:]]}"}"
+  if [[ "$pattern" == *"{os}"* && "$pattern" != /* ]]; then
+    pattern="${working_dir%/}/$pattern"
+  fi
   printf '%s\n' "$pattern"
+}
+
+installed_macos_runner_binary_pattern() {
+  local pattern working_dir
+  if [[ -f "$PLIST" ]] &&
+     pattern=$(/usr/bin/plutil -extract EnvironmentVariables.AGENTFLOW_RUNNER_BINARY raw "$PLIST" 2>/dev/null); then
+    working_dir=$(/usr/bin/plutil -extract WorkingDirectory raw "$PLIST" 2>/dev/null) || working_dir="/"
+    normalize_runner_binary_pattern "$pattern" "${working_dir:-/}"
+  else
+    pattern=$(saved_runner_binary_pattern)
+    normalize_runner_binary_pattern "$pattern" "$PWD"
+  fi
 }
 
 configure_macos_docker_runner_helper() {
   local pattern
-  pattern=$(trim_runner_binary_pattern "${AGENTFLOW_RUNNER_BINARY-$1}")
-  if [[ "$pattern" == *"{os}"* ]]; then
-    if [[ "${#runner_arches[@]}" -gt 1 && "$pattern" != *"{arch}"* ]]; then
-      fail "通用 macOS Runner 需要为每种架构安装 Linux Git/MCP helper，请在 AGENTFLOW_RUNNER_BINARY 中添加 {arch}"
-    fi
-    [[ "$pattern" == /* ]] || pattern="$PWD/$pattern"
+  pattern=$(normalize_runner_binary_pattern "${AGENTFLOW_RUNNER_BINARY-$1}" "$PWD")
+  if [[ "${#runner_arches[@]}" -gt 1 && "$pattern" == *"{os}"* && "$pattern" != *"{arch}"* ]]; then
+    fail "通用 macOS Runner 需要为每种架构安装 Linux Git/MCP helper，请在 AGENTFLOW_RUNNER_BINARY 中添加 {arch}"
   fi
   export AGENTFLOW_RUNNER_BINARY="$pattern"
 }
@@ -833,7 +838,6 @@ if [[ "$OS" == "darwin" ]]; then
   require_replacement_helper=0
   if [[ "$UPGRADE" == "1" ]]; then
     previous_pattern=$(installed_macos_runner_binary_pattern)
-    previous_pattern=$(trim_runner_binary_pattern "$previous_pattern")
     read -r -a previous_arches <<< "$(macos_runner_arches "$BINARY")"
     # The old universal binary may be running its Intel slice under Rosetta.
     for previous_arch in "${previous_arches[@]}"; do

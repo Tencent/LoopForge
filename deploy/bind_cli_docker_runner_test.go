@@ -37,6 +37,7 @@ func TestBindCLIInstallsDockerRunnerHelper(t *testing.T) {
 		arm64OnlyArtifacts               bool
 		templateMissingArch              bool
 		trimSavedTemplate                bool
+		relativeServiceTemplate          bool
 		missingRequiredGate              bool
 		missingReplacementHelper         bool
 	}{
@@ -64,13 +65,15 @@ func TestBindCLIInstallsDockerRunnerHelper(t *testing.T) {
 		{name: "macOS_architecture_upgrade_keeps_working_runner_when_new_helper_is_unavailable", hostOS: "darwin", arch: "arm64", unameArch: "arm64", source: "from", universal: true, upgrade: true, launchd: true, missingReplacementHelper: true},
 		{name: "macOS_keeps_working_Rosetta_slice_when_native_helper_is_unavailable", hostOS: "darwin", arch: "arm64", unameArch: "x86_64", source: "from", previousUniversal: true, upgrade: true, launchd: true, missingReplacementHelper: true},
 		{name: "macOS_preserves_working_helper_with_whitespace_in_saved_template", hostOS: "darwin", arch: "arm64", unameArch: "arm64", source: "from", upgrade: true, templatePath: true, trimSavedTemplate: true, missingReplacementHelper: true},
+		{name: "macOS_preserves_readable_old_helper_without_execute_permission", hostOS: "darwin", arch: "arm64", unameArch: "arm64", source: "from", existing: "non-executable", upgrade: true, launchd: true, missingReplacementHelper: true},
+		{name: "macOS_preserves_helper_relative_to_launchd_working_directory", hostOS: "darwin", arch: "arm64", unameArch: "arm64", source: "from", upgrade: true, launchd: true, relativeServiceTemplate: true, missingReplacementHelper: true},
 		{name: "macOS_repairs_incompatible_local_helper", hostOS: "darwin", arch: "arm64", unameArch: "arm64", source: "from", existing: "mach-o", upgrade: true},
 		{name: "macOS_preserves_custom_helper_script", hostOS: "darwin", arch: "arm64", unameArch: "arm64", source: "from", existing: "script", preserveHelper: true},
 		{name: "macOS_preserves_helper_with_host_only_URL", hostOS: "darwin", arch: "arm64", unameArch: "arm64", source: "host-url", preserveHelper: true},
 		{name: "macOS_updates_helper_with_explicit_Linux_URL", hostOS: "darwin", arch: "arm64", unameArch: "arm64", source: "template"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if tc.launchd && !tc.missingReplacementHelper && runtime.GOOS != "darwin" {
+			if tc.launchd && (!tc.missingReplacementHelper || tc.relativeServiceTemplate) && runtime.GOOS != "darwin" {
 				t.Skip("requires macOS plutil")
 			}
 			fixtureHome := t.TempDir()
@@ -122,11 +125,14 @@ func TestBindCLIInstallsDockerRunnerHelper(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
+			oldHelperMode := os.FileMode(0o755)
 			switch tc.existing {
 			case "mach-o":
 				oldHelper = "\xcf\xfa\xed\xfe wrong OS"
 			case "script":
 				oldHelper = "#!/bin/sh\nexec /opt/runner \"$@\"\n"
+			case "non-executable":
+				oldHelperMode = 0o644
 			}
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 				targetOS, arch := req.URL.Query().Get("os"), req.URL.Query().Get("arch")
@@ -193,6 +199,10 @@ func TestBindCLIInstallsDockerRunnerHelper(t *testing.T) {
 					helper = filepath.Join(bundle, "linux", "amd64", "agentflow-runner")
 				}
 			}
+			workingDir := filepath.Join(fixtureHome, "service directory")
+			if tc.relativeServiceTemplate {
+				helper = filepath.Join(workingDir, "relative helpers", "linux", "amd64", "agentflow-runner")
+			}
 			if tc.sharedTemplateDir {
 				amd64 := filepath.Join(bundle, "linux", "amd64")
 				if err := os.MkdirAll(amd64, 0o755); err != nil {
@@ -253,7 +263,11 @@ func TestBindCLIInstallsDockerRunnerHelper(t *testing.T) {
 				if err := os.MkdirAll(filepath.Dir(plist), 0o700); err != nil {
 					t.Fatal(err)
 				}
-				initialPlist = fmt.Sprintf("<plist version=\"1.0\"><dict><key>KeepAlive</key><true/><key>ProgramArguments</key><array><string>%s</string></array></dict></plist>", strings.Join(oldServiceArgs, "</string><string>"))
+				serviceConfig := ""
+				if tc.relativeServiceTemplate {
+					serviceConfig = fmt.Sprintf("<key>WorkingDirectory</key><string>%s</string><key>EnvironmentVariables</key><dict><key>AGENTFLOW_RUNNER_BINARY</key><string>relative helpers/{os}/{arch}/agentflow-runner</string></dict>", workingDir)
+				}
+				initialPlist = fmt.Sprintf("<plist version=\"1.0\"><dict><key>KeepAlive</key><true/><key>ProgramArguments</key><array><string>%s</string></array>%s</dict></plist>", strings.Join(oldServiceArgs, "</string><string>"), serviceConfig)
 				if err := os.WriteFile(plist, []byte(initialPlist), 0o600); err != nil {
 					t.Fatal(err)
 				}
@@ -272,7 +286,7 @@ func TestBindCLIInstallsDockerRunnerHelper(t *testing.T) {
 				if err := os.MkdirAll(filepath.Dir(helper), 0o755); err != nil {
 					t.Fatal(err)
 				}
-				if err := os.WriteFile(helper, []byte(oldHelper), 0o755); err != nil {
+				if err := os.WriteFile(helper, []byte(oldHelper), oldHelperMode); err != nil {
 					t.Fatal(err)
 				}
 			}
