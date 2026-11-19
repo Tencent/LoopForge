@@ -9,11 +9,18 @@
   const FAMILY_MARK = {claude:'',gpt:'',glm:'智',gemini:'G',kimi:'K',deepseek:'D',minimax:'M',hunyuan:'混',mimo:'Mi',echo:'E',other:'AI'};
   const FAMILY_ICON = {
     claude:'/images/credentials/claude.svg',
+    codebuddy:'/images/credentials/codebuddy.svg',
     cursor:'/images/credentials/cursor.svg',
     gpt:'/images/credentials/codex.svg',
     glm:'/images/credentials/glm.svg',
     gemini:'/images/credentials/gemini.svg',
+    grok:'/images/credentials/xai.svg',
+    muse:'/images/credentials/meta.svg',
     kimi:'/images/credentials/kimi.svg',
+    moonshot:'/images/credentials/moonshot.svg',
+    qwen:'/images/credentials/qwen.svg',
+    doubao:'/images/credentials/doubao.svg',
+    qianfan:'/images/credentials/qianfan.svg',
     deepseek:'/images/credentials/deepseek.svg',
     minimax:'/images/credentials/minimax.svg',
     hunyuan:'/images/credentials/hunyuan.svg',
@@ -38,7 +45,13 @@
     if (v.startsWith('gpt') || v.includes('codex')) return 'gpt';
     if (v.startsWith('glm')) return 'glm';
     if (v.startsWith('gemini')) return 'gemini';
+    if (/^(?:cursor-)?grok(?:$|[-_.\s:\d])/.test(v)) return 'grok';
+    if (/^muse(?:$|[-_.\s:\d])/.test(v)) return 'muse';
     if (/^(?:kimi|k[23])(?:$|[-_.\s:])/.test(v)) return 'kimi';
+    if (/^moonshot(?:ai)?(?:$|[-_.\s:\d])/.test(v)) return 'moonshot';
+    if (/^(?:qwen|qvq|alibaba)(?:$|[-_.\s:\d])/.test(v)) return 'qwen';
+    if (/^(?:doubao|seed|seedream|bytedance)(?:$|[-_.\s:\d])/.test(v)) return 'doubao';
+    if (/^(?:ernie|wenxin|baidu|qianfan)(?:$|[-_.\s:\d])/.test(v)) return 'qianfan';
     if (v.startsWith('deepseek')) return 'deepseek';
     if (v.startsWith('minimax')) return 'minimax';
     if (v.startsWith('hy') || v.includes('hunyuan')) return 'hunyuan';

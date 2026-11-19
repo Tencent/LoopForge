@@ -555,6 +555,8 @@ describe("App", () => {
     expect(modelProviderFor({ id: "agy:claude-opus-5-5-high" })).toBe("claude");
     expect(modelProviderFor({ id: "claude-code:opus" })).toBe("claude");
     expect(modelProviderFor({ id: "cursor:composer-2.5" })).toBe("cursor");
+    expect(modelProviderFor({ id: "cursor:cursor-grok-4.6" })).toBe("xai");
+    expect(modelProviderFor({ id: "cursor:muse-wonder-1.0" })).toBe("meta");
     expect(modelProviderFor({ id: "auto", engine: "cursor" })).toBe("cursor");
     expect(modelProviderFor({ id: "kimi:k3.1-pro-highspeed" })).toBe("kimi");
     expect(modelProviderFor({ id: "kimi:deepseek-v4-pro" })).toBe("deepseek");

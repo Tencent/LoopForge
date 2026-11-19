@@ -215,7 +215,7 @@ func (h *assistantHandlers) models(c *gin.Context) {
 			for _, option := range item.Efforts {
 				levels = append(levels, option.Value)
 			}
-			result.Models = append(result.Models, assistantModel{ID: item.ID, Name: item.Name, Family: assistantModelFamily(item.ID), Engine: engine, Efforts: levels})
+			result.Models = append(result.Models, assistantModel{ID: item.ID, Name: item.Name, Family: item.Family, Engine: engine, Efforts: levels})
 		}
 		if len(result.Models) > 0 {
 			result.Default = result.Models[0].ID
@@ -399,11 +399,18 @@ func assistantFixedCatalog() assistantModelCatalog {
 }
 
 func assistantListedModel(id, name, credits string) assistantModel {
-	return assistantModel{ID: id, Name: name, Family: assistantModelFamily(id), Credits: credits, Efforts: assistantModelEffortsIn(id, nil)}
+	return assistantModel{ID: id, Name: name, Family: assistantModelFamily(id, assistantEngineCodeBuddy), Credits: credits, Efforts: assistantModelEffortsIn(id, nil)}
 }
 
-func assistantModelFamily(id string) string {
-	id = strings.ToLower(id)
+func assistantModelFamily(id, engine string) string {
+	id = strings.ToLower(strings.TrimSpace(id))
+	if engine == assistantEngineCodeBuddy {
+		switch id {
+		case "fast-model", "balanced-model", "primary-model", "deep-model":
+			return "codebuddy"
+		}
+	}
+	id = id[strings.LastIndexByte(id, '/')+1:]
 	switch {
 	case strings.HasPrefix(id, "claude"):
 		return "claude"
@@ -413,8 +420,22 @@ func assistantModelFamily(id string) string {
 		return "glm"
 	case strings.HasPrefix(id, "gemini"):
 		return "gemini"
+	case id == "grok" || strings.HasPrefix(id, "grok-") || strings.HasPrefix(id, "cursor-grok-"):
+		return "grok"
+	case id == "muse" || strings.HasPrefix(id, "muse-"):
+		return "muse"
+	case id == "composer" || strings.HasPrefix(id, "composer-") || (engine == runtime.AgentCLICursor && (id == "auto" || id == "auto-smart")):
+		return "cursor"
 	case strings.HasPrefix(id, "kimi") || id == "k3" || strings.HasPrefix(id, "k3-") || strings.HasPrefix(id, "k3."):
 		return "kimi"
+	case strings.HasPrefix(id, "moonshot"):
+		return "moonshot"
+	case strings.HasPrefix(id, "qwen") || strings.HasPrefix(id, "qvq"):
+		return "qwen"
+	case strings.HasPrefix(id, "doubao") || strings.HasPrefix(id, "seed-") || strings.HasPrefix(id, "seedream"):
+		return "doubao"
+	case strings.HasPrefix(id, "ernie") || strings.HasPrefix(id, "wenxin") || strings.HasPrefix(id, "qianfan"):
+		return "qianfan"
 	case strings.HasPrefix(id, "deepseek"):
 		return "deepseek"
 	case strings.HasPrefix(id, "minimax"):

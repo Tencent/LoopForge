@@ -377,7 +377,7 @@ func assistantEngineModels(ctx context.Context, user domain.User, runnerLogin ma
 			models = append(models, assistantModel{
 				ID:      id,
 				Name:    name,
-				Family:  assistantModelFamily(model.ID),
+				Family:  assistantModelFamily(model.ID, engine),
 				Engine:  engine,
 				Efforts: assistantModelEffortsForBaseURL(id, catalog, baseURL),
 			})

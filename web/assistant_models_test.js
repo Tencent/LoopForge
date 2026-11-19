@@ -103,6 +103,26 @@ vm.runInContext(moduleSource, ctx);
   assert.match(icon.innerHTML, /\/images\/credentials\/claude\.svg/);
   api.paintItem(toggle, {id: 'cursor:composer-2.5'});
   assert.match(icon.innerHTML, /\/images\/credentials\/cursor\.svg/);
+  api.paintItem(toggle, {id: 'cursor:cursor-grok-4.6', family: 'other'});
+  assert.equal(icon.dataset.family, 'grok');
+  assert.match(icon.innerHTML, /\/images\/credentials\/xai\.svg/);
+  api.paintItem(toggle, {id: 'cursor:muse-wonder-1.0'});
+  assert.equal(icon.dataset.family, 'muse');
+  assert.match(icon.innerHTML, /\/images\/credentials\/meta\.svg/);
+  api.paintItem(toggle, {id: 'auto', family: 'cursor'});
+  assert.match(icon.innerHTML, /\/images\/credentials\/cursor\.svg/);
+  api.paintItem(toggle, {id: 'primary-model', family: 'codebuddy'});
+  assert.match(icon.innerHTML, /\/images\/credentials\/codebuddy\.svg/);
+  for (const [id, family] of [
+    ['opencode:alibaba/qwen3.7-plus', 'qwen'],
+    ['opencode:doubao-seed-2-0-lite-260428', 'doubao'],
+    ['pi:ernie-5.1', 'qianfan'],
+    ['pi:moonshot-v1-8k', 'moonshot'],
+  ]) {
+    api.paintItem(toggle, {id, family: 'other'});
+    assert.equal(icon.dataset.family, family);
+    assert.ok(icon.innerHTML.includes(`/images/credentials/${family}.svg`));
+  }
   // Pickers keep painting before the catalog lands, so the built-in fallback
   // must already render a usable label.
   assert.equal(api.codeBuddyModel('codex:gpt-5.5'), 'default', 'codex ids fall back before the catalog loads');

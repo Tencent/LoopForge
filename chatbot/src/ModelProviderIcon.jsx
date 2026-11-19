@@ -24,7 +24,8 @@ const modelBrands = [
   [/^(?:hunyuan|tencent)(?:$|[-_.\s:\d])|^hy(?:\d|[-_.\s:])/i, "hunyuan"],
   [/^minimax(?:$|[-_.\s:\d])/i, "minimax"],
   [/^(?:mimo|xiaomi)(?:$|[-_.\s:\d])/i, "xiaomimimo"],
-  [/^(?:grok|xai)(?:$|[-_.\s:\d])/i, "xai"],
+  [/^(?:(?:cursor-)?grok|xai)(?:$|[-_.\s:\d])/i, "xai"],
+  [/^(?:muse|meta)(?:$|[-_.\s:\d])/i, "meta"],
   [/^composer(?:$|[-_.\s:\d])/i, "cursor"],
   [/^(?:doubao|seed|seedream|bytedance)(?:$|[-_.\s:\d])/i, "doubao"],
   [/^(?:ernie|wenxin|baidu|qianfan)(?:$|[-_.\s:\d])/i, "qianfan"],
@@ -36,7 +37,7 @@ const fallbackBrands = new Set([
 ]);
 const colorBrands = new Set([
   "qwen", "doubao", "siliconflow", "minimax", "zhipu", "hunyuan", "qianfan",
-  "gemini", "antigravity", "pi", "kimi-code",
+  "gemini", "antigravity", "pi", "kimi-code", "meta",
 ]);
 
 /** A visual label only. Never use inferred brands to route model requests. */

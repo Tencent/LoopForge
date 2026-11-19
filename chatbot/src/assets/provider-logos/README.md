@@ -36,6 +36,7 @@ The interface uses these bundled assets in both chat and configuration.
   | `zhipu.svg` | [zhipu-color.svg](https://github.com/lobehub/lobe-icons/blob/7d7d0379f18b114a4009dc5cb85a7c375284f31b/packages/static-svg/icons/zhipu-color.svg) |
   | `zai.svg` | [zai.svg](https://github.com/lobehub/lobe-icons/blob/7d7d0379f18b114a4009dc5cb85a7c375284f31b/packages/static-svg/icons/zai.svg) |
   | `gemini.svg` | [gemini-color.svg](https://github.com/lobehub/lobe-icons/blob/7d7d0379f18b114a4009dc5cb85a7c375284f31b/packages/static-svg/icons/gemini-color.svg) |
+  | `meta.svg` | [meta-color.svg](https://github.com/lobehub/lobe-icons/blob/7d7d0379f18b114a4009dc5cb85a7c375284f31b/packages/static-svg/icons/meta-color.svg) |
   | `hunyuan.svg` | [hunyuan-color.svg](https://github.com/lobehub/lobe-icons/blob/7d7d0379f18b114a4009dc5cb85a7c375284f31b/packages/static-svg/icons/hunyuan-color.svg) |
   | `qianfan.svg` | [baiducloud-color.svg](https://github.com/lobehub/lobe-icons/blob/7d7d0379f18b114a4009dc5cb85a7c375284f31b/packages/static-svg/icons/baiducloud-color.svg) |
   | `xiaomimimo.svg` | [xiaomimimo.svg](https://github.com/lobehub/lobe-icons/blob/7d7d0379f18b114a4009dc5cb85a7c375284f31b/packages/static-svg/icons/xiaomimimo.svg)；经典 SPA 同一文件复制为 `web/images/credentials/mimo.svg` |

@@ -14,6 +14,7 @@ import (
 type executorModelInfo struct {
 	ID      string                 `json:"id"`
 	Name    string                 `json:"name"`
+	Family  string                 `json:"family"`
 	Credits string                 `json:"credits,omitempty"`
 	Efforts []executorEffortOption `json:"efforts"`
 }
@@ -189,6 +190,7 @@ func executorModelCatalogs(kimiBaseURL string) map[string]executorModelCatalog {
 		}
 		for i := range catalog.Models {
 			id := catalog.Models[i].ID
+			catalog.Models[i].Family = assistantModelFamily(id, modelEngine)
 			if modelEngine != assistantEngineCodeBuddy {
 				id = modelEngine + ":" + id
 			}
@@ -254,7 +256,12 @@ func (h *catalogHandlers) executorModels(c *gin.Context) {
 			if engine != assistantEngineCodeBuddy {
 				modelID = engine + ":" + modelID
 			}
-			catalog.Models = append(catalog.Models, executorModelInfo{ID: model.ID, Name: name, Efforts: effortOptions(assistantModelEffortsForBaseURL(modelID, personal, kimiBaseURL))})
+			catalog.Models = append(catalog.Models, executorModelInfo{
+				ID:      model.ID,
+				Name:    name,
+				Family:  assistantModelFamily(model.ID, engine),
+				Efforts: effortOptions(assistantModelEffortsForBaseURL(modelID, personal, kimiBaseURL)),
+			})
 		}
 		if len(catalog.Models) > 0 {
 			catalogs[id] = catalog
