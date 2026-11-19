@@ -19,6 +19,8 @@ import (
 	"testing"
 	"time"
 
+	flowruntime "agentflow/internal/runtime"
+
 	"github.com/gorilla/websocket"
 )
 
@@ -335,7 +337,7 @@ func TestDockerRunnerHelperDownloadDoesNotBlockMacOSStartup(t *testing.T) {
 	t.Setenv("AGENTFLOW_RUNNER_BINARY", filepath.Join(root, "agentflow-runner-{os}-{arch}"))
 	helper := filepath.Join(root, "agentflow-runner-linux-"+runtime.GOARCH)
 	original := dockerRunnerFixtureLinuxBinary(runtime.GOARCH, "working helper")
-	if err := os.WriteFile(helper, []byte(original), 0o755); err != nil {
+	if err := os.WriteFile(helper, []byte(original), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	updated := dockerRunnerFixtureLinuxBinary(runtime.GOARCH, "updated helper")
@@ -423,8 +425,16 @@ func TestDockerRunnerHelperDownloadDoesNotBlockMacOSStartup(t *testing.T) {
 	wait(claim, "task polling")
 	workspaceCtx, cancelWorkspace := context.WithTimeout(ctx, time.Second)
 	defer cancelWorkspace()
-	if err := d.waitForDockerRunnerHelper(workspaceCtx, helper); err != nil {
-		t.Fatalf("existing helper should be available during the download: %v", err)
+	workspace := t.TempDir()
+	if _, err := flowruntime.PrepareMCPCall(d.withDockerRunnerHelperWait(workspaceCtx), dockerHelperFixtureSandbox{}, workspace, nil); err != nil {
+		t.Fatalf("existing readable helper should be available while metadata is pending: %v", err)
+	}
+	workspaceHelper := filepath.Join(workspace, ".agentflow", "runtime", "bin", "agentflow-helper")
+	if got, err := os.ReadFile(workspaceHelper); err != nil || string(got) != original {
+		t.Fatalf("workspace helper = %q, %v", got, err)
+	}
+	if info, err := os.Stat(workspaceHelper); err != nil || info.Mode().Perm()&0o100 == 0 {
+		t.Fatalf("workspace helper did not receive executable permissions: %v", err)
 	}
 	close(allowMetadata)
 	waitFor(t, 5*time.Second, "helper update", func() bool {
@@ -432,6 +442,10 @@ func TestDockerRunnerHelperDownloadDoesNotBlockMacOSStartup(t *testing.T) {
 		return err == nil && string(got) == updated
 	})
 }
+
+type dockerHelperFixtureSandbox struct{ flowruntime.Sandbox }
+
+func (dockerHelperFixtureSandbox) Driver() string { return "docker" }
 
 func TestDockerRunnerHelperRescanRetriesFailedVersionCheck(t *testing.T) {
 	root := t.TempDir()

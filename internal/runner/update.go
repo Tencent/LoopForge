@@ -78,7 +78,10 @@ func (d *Daemon) checkDockerRunnerHelperUpdate(ctx context.Context, repairOnly b
 	if err != nil {
 		return err
 	}
-	if repairOnly && validateDockerRunnerHelper(path) == nil {
+	validateInstalled := func(path string) error {
+		return validateDockerRunnerHelper(path, true)
+	}
+	if repairOnly && validateInstalled(path) == nil {
 		return nil
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -86,7 +89,7 @@ func (d *Daemon) checkDockerRunnerHelperUpdate(ctx context.Context, repairOnly b
 	}
 	// Sandboxes copy this executable into the workspace, so an atomic replacement
 	// can run alongside active tasks and requests waiting for the first download.
-	return d.checkCompanionBinaryUpdate(ctx, "Docker Git/MCP helper", d.runnerUpdateEndpoint("linux"), path, validateDockerRunnerHelper, false)
+	return d.checkCompanionBinaryUpdate(ctx, "Docker Git/MCP helper", d.runnerUpdateEndpoint("linux"), path, validateInstalled, false)
 }
 
 func (d *Daemon) withDockerRunnerHelperWait(ctx context.Context) context.Context {
@@ -102,7 +105,8 @@ func (d *Daemon) waitForDockerRunnerHelper(ctx context.Context, path string) err
 		return nil
 	default:
 	}
-	if validateDockerRunnerHelper(path) == nil {
+	// A workspace copy gets its own executable permissions.
+	if validateDockerRunnerHelper(path, false) == nil {
 		return nil
 	}
 	// A workspace request can give up while the download continues. It never
@@ -117,7 +121,7 @@ func (d *Daemon) waitForDockerRunnerHelper(ctx context.Context, path string) err
 	}
 }
 
-func validateDockerRunnerHelper(path string) error {
+func validateDockerRunnerHelper(path string, requireExecutable bool) error {
 	var machine elf.Machine
 	switch runtime.GOARCH {
 	case "arm64":
@@ -131,7 +135,10 @@ func validateDockerRunnerHelper(path string) error {
 	if err != nil {
 		return err
 	}
-	if !info.Mode().IsRegular() || info.Mode().Perm()&0o111 == 0 {
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("expected regular Linux/%s helper file", runtime.GOARCH)
+	}
+	if requireExecutable && info.Mode().Perm()&0o111 == 0 {
 		return fmt.Errorf("expected executable Linux/%s helper", runtime.GOARCH)
 	}
 	file, err := elf.Open(path)
