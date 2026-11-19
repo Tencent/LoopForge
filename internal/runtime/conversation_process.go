@@ -10,6 +10,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -139,20 +140,21 @@ func (p *ConversationProcessPool) lockAssets(ctx context.Context, root string) (
 }
 
 type conversationProcess struct {
-	mu         sync.Mutex
-	cancel     context.CancelFunc
-	input      *os.File
-	events     []domain.TelemetryEvent
-	base       int64
-	done       bool
-	err        string
-	wake       chan struct{}
-	lastPoll   time.Time
-	closeRelay func()
-	finished   chan struct{}
-	root       string
-	bytes      int
-	notStarted bool
+	mu              sync.Mutex
+	cancel          context.CancelFunc
+	input           *os.File
+	inputWorkingDir string
+	events          []domain.TelemetryEvent
+	base            int64
+	done            bool
+	err             string
+	wake            chan struct{}
+	lastPoll        time.Time
+	closeRelay      func()
+	finished        chan struct{}
+	root            string
+	bytes           int
+	notStarted      bool
 	// gitScrubbed is set with done, under mu.
 	gitScrubbed []string
 }
@@ -268,6 +270,7 @@ func (p *ConversationProcessPool) Handle(ctx context.Context, root, workspace st
 	case "write":
 		proc.mu.Lock()
 		input := proc.input
+		inputWorkingDir := proc.inputWorkingDir
 		proc.mu.Unlock()
 		if input == nil {
 			return ConversationProcessResult{}, fmt.Errorf("process has no stdin")
@@ -280,7 +283,7 @@ func (p *ConversationProcessPool) Handle(ctx context.Context, root, workspace st
 		if req.EOF {
 			err = input.Close()
 		} else {
-			_, err = io.WriteString(input, conversationRemap(req.Data, req.SourceRoot, root))
+			_, err = io.WriteString(input, conversationInput(req.Data, req.SourceRoot, root, inputWorkingDir))
 		}
 		return ConversationProcessResult{}, err
 	case "stop":
@@ -569,18 +572,45 @@ func (p *ConversationProcessPool) start(ctx context.Context, root, workspace str
 		command.Argv[0] = conversationBinary(command.Provider)
 	}
 	if forward != nil && req.Token != "" {
-		url, closeRelay, err := startConversationRelay(procCtx, req.Token, forward, spec != nil && spec.Profile.Driver == domain.SandboxDriverDocker)
+		relayURL, closeRelay, err := startConversationRelay(procCtx, req.Token, forward, spec != nil && spec.Profile.Driver == domain.SandboxDriverDocker)
 		if err != nil {
 			return ConversationProcessResult{}, err
 		}
 		proc.closeRelay = closeRelay
 		for i, arg := range command.Argv {
-			command.Argv[i] = strings.ReplaceAll(arg, req.Gateway, url)
+			command.Argv[i] = strings.ReplaceAll(arg, req.Gateway, relayURL)
 		}
 		for key, value := range command.environment {
-			command.environment[key] = strings.ReplaceAll(value, req.Gateway, url)
+			command.environment[key] = strings.ReplaceAll(value, req.Gateway, relayURL)
 		}
-		if err := replaceConversationGateway(root, req.Gateway, url); err != nil {
+		// Keep the machine-local MCP relay reachable through inherited proxy
+		// settings. Clients using either spelling need all existing exceptions.
+		relay, err := url.Parse(relayURL)
+		if err != nil {
+			return ConversationProcessResult{}, err
+		}
+		var bypass []string
+		sandboxEnv := sandboxIsolationEnv(sb)
+		for _, key := range []string{"NO_PROXY", "no_proxy"} {
+			value, configured := command.environment[key]
+			if !configured {
+				value, configured = sandboxEnv[key]
+			}
+			if !configured {
+				value = os.Getenv(key)
+			}
+			for _, entry := range strings.Split(value, ",") {
+				if entry = strings.TrimSpace(entry); entry != "" && !slices.Contains(bypass, entry) {
+					bypass = append(bypass, entry)
+				}
+			}
+		}
+		if host := relay.Hostname(); !slices.Contains(bypass, host) {
+			bypass = append(bypass, host)
+		}
+		command.environment["NO_PROXY"] = strings.Join(bypass, ",")
+		command.environment["no_proxy"] = command.environment["NO_PROXY"]
+		if err := replaceConversationGateway(root, req.Gateway, relayURL); err != nil {
 			return ConversationProcessResult{}, err
 		}
 	}
@@ -659,6 +689,10 @@ func (p *ConversationProcessPool) start(ctx context.Context, root, workspace str
 		}
 		proc.mu.Lock()
 		proc.input = writer
+		if spec != nil && spec.Profile.Driver == domain.SandboxDriverSeatbelt && command.Provider == "codex" {
+			// App-server cwd is explicit in stdin and overrides the launch cwd.
+			proc.inputWorkingDir = command.WorkingDir
+		}
 		proc.mu.Unlock()
 		stdin = input
 		command.Stdin = input
@@ -872,6 +906,38 @@ func replaceConversationGateway(root, source, target string) error {
 		}
 		return nil
 	})
+}
+
+// conversationInput remaps protocol paths without treating a prompt or config
+// string that mentions the cache as a request to change working directory.
+func conversationInput(data, source, root, workingDir string) string {
+	data = conversationRemap(data, source, root)
+	if workingDir == "" {
+		return data
+	}
+	var frame map[string]json.RawMessage
+	if json.Unmarshal([]byte(data), &frame) != nil {
+		return data
+	}
+	var method string
+	if json.Unmarshal(frame["method"], &method) != nil || (method != "thread/start" && method != "thread/resume") {
+		return data
+	}
+	var params map[string]json.RawMessage
+	if json.Unmarshal(frame["params"], &params) != nil {
+		return data
+	}
+	var cwd string
+	if json.Unmarshal(params["cwd"], &cwd) != nil || cwd != filepath.Join(root, "ws") {
+		return data
+	}
+	params["cwd"], _ = json.Marshal(workingDir)
+	frame["params"], _ = json.Marshal(params)
+	mapped, _ := json.Marshal(frame)
+	if strings.HasSuffix(data, "\n") {
+		mapped = append(mapped, '\n')
+	}
+	return string(mapped)
 }
 
 func conversationRemap(value, source, target string) string {
