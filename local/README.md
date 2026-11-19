@@ -25,7 +25,7 @@ npx -y loopforge-cli@X.Y.Z install claude
 npx -y loopforge-cli@X.Y.Z status claude
 ```
 
-Start with `/start-devflow "<request>"` in Claude Code. Replace `claude` with `codebuddy`, `codex`, or `cursor` when installing for another host; use `skills install pi`, `skills install dsh`, or `skills install hermes` for Portable hosts. DSH uses `/devflow "<request>"` after installing the Skill, and the optional DSH plugin adds `/loopforge` task controls. Hermes loads the project skill after `hermes skills trust .`; its optional native plugin adds the same `/loopforge` controls.
+Start with `/start-devflow "<request>"` in Claude Code. Replace `claude` with `codebuddy`, `codex`, or `cursor` when installing for another host; use `skills install pi`, `skills install dsh`, or `skills install hermes` for Portable hosts. After installing the Skill, ask DSH to use `devflow` with your request; the optional DSH plugin adds `/loopforge` task controls. Hermes loads the project skill after `hermes skills trust .`; its optional native plugin adds the same `/loopforge` controls.
 
 在 Claude Code 中通过 `/start-devflow "<需求>"` 启动。其他宿主的安装命令、入口及 Portable 用法见统一文档。
 

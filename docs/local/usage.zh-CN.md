@@ -23,7 +23,7 @@
 | Codex | `npx -y loopforge-cli@X.Y.Z install codex` | `$devflow-codex "<需求>"` |
 | Cursor | `npx -y loopforge-cli@X.Y.Z install cursor` | `/start-devflow "<需求>"` |
 | Claude Code | `npx -y loopforge-cli@X.Y.Z install claude` | `/start-devflow "<需求>"` |
-| DeepSeek Harness | `npx -y loopforge-cli@X.Y.Z skills install dsh` | `/devflow "<需求>"` |
+| DeepSeek Harness | `npx -y loopforge-cli@X.Y.Z skills install dsh` | 请 DSH 使用 `devflow` Skill 处理需求 |
 | Hermes Agent | `npx -y loopforge-cli@X.Y.Z skills install hermes`，然后 `hermes skills trust .` | `/devflow "<需求>"` |
 
 以 Claude Code 为例：
@@ -148,7 +148,7 @@ LoopForge 尤其适合这些任务：
 | Cursor | `npx -y loopforge-cli@X.Y.Z skills install cursor` | `/devflow "<需求>"` |
 | Claude Code | `npx -y loopforge-cli@X.Y.Z skills install claude` | `/devflow "<需求>"` |
 | Pi | `npx -y loopforge-cli@X.Y.Z skills install pi`，然后 `pi install npm:pi-subagents` | `/skill:devflow "<需求>"` |
-| DeepSeek Harness | `npx -y loopforge-cli@X.Y.Z skills install dsh` | `/devflow "<需求>"` |
+| DeepSeek Harness | `npx -y loopforge-cli@X.Y.Z skills install dsh` | 请 DSH 使用 `devflow` Skill 处理需求 |
 | Hermes Agent | `npx -y loopforge-cli@X.Y.Z skills install hermes`，然后 `hermes skills trust .` | `/devflow "<需求>"`（可选插件：`/loopforge`） |
 
 完整边界和目录说明见 [Classic / Portable 说明](editions.md)。
