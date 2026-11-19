@@ -503,7 +503,9 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 					prompt = assistantPlatformExecutionReminder + "\n" + prompt
 				}
 				if len(toolSession.KnowledgeRefs) > 0 {
-					prompt += "\n" + domain.KnowledgeLookupInstruction
+					if kbCtx := knowledgeReferencePromptContext(ctx, h.deps, req.ProjectID, u.ID, toolSession.KnowledgeRefs); kbCtx != "" {
+						system += "\n" + kbCtx
+					}
 				}
 				prompt += conversationAttachmentNote(cliRoot, req)
 				cliReq := assistantCLIRequest{Executor: req.Executor, Prompt: prompt, Model: req.Model, Effort: req.Effort, SessionID: cliSessionID, Resume: resume, UserID: u.ID, Native: true, MCPConfig: mcp, Settings: settings, SystemPrompt: system, SessionRoot: cliRoot, OnUsage: turnUsage.add, Workspace: req.workspaceMode, RemoteBinary: req.workspaceMode || toolSession.ExecutionRunnerID != "", Execute: h.conversationExecutor(toolSession, cliRoot)}

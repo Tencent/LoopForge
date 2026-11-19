@@ -3,10 +3,8 @@ package httpapi
 import (
 	"agentflow/internal/knowledge"
 	"context"
-	"crypto/sha256"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"strings"
 	"sync"
 	"time"
@@ -560,9 +558,19 @@ func (h *agentToolGateway) knowledgeReferenceCatalog(ctx context.Context, s *Age
 			s.diagnostics().platform("knowledge.unavailable", ref.ServerID+"："+err.Error(), s.User)
 			continue
 		}
-		namespace := sha256.Sum256([]byte(ref.ServerID))
+		ns := knowledgeToolNamespace(ref.ServerID)
+		serverName, serverDesc := knowledgeServerMeta(h.deps, ref.ServerID)
 		for _, tool := range tools {
-			out = append(out, agentToolDescriptor{Name: fmt.Sprintf("kb_%x__%s", namespace[:6], tool.Name), Kind: "knowledge", ServerID: ref.ServerID, UpstreamName: tool.Name, InputSchema: defaultToolSchema(tool.InputSchema), Description: ref.ServerID + " · " + tool.Description})
+			out = append(out, agentToolDescriptor{
+				Name:         ns + "__" + tool.Name,
+				Kind:         "knowledge",
+				ServerID:     ref.ServerID,
+				UpstreamName: tool.Name,
+				InputSchema:  defaultToolSchema(tool.InputSchema),
+				OutputSchema: tool.OutputSchema,
+				Annotations:  tool.Annotations,
+				Description:  knowledgeToolDescription(serverName, serverDesc, ref.ServerID, tool.Name, tool.Description),
+			})
 		}
 	}
 	return out

@@ -3,11 +3,13 @@ package httpapi
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
 	"strings"
+	"sync"
 	"time"
 
 	"agentflow/internal/domain"
@@ -134,4 +136,270 @@ func knowledgeCallError(err error) error {
 	default:
 		return fmt.Errorf("知识服务不可用或调用失败")
 	}
+}
+
+const (
+	knowledgeCatalogCacheTTL  = 60 * time.Second
+	knowledgeCatalogProbeWait = 2 * time.Second
+	knowledgeCatalogMaxRunes  = 1600
+	knowledgeCatalogMaxDocs   = 20
+)
+
+type knowledgeCatalogCacheEntry struct {
+	xml       string
+	expiresAt time.Time
+}
+
+var knowledgeCatalogCache = struct {
+	mu    sync.Mutex
+	items map[string]knowledgeCatalogCacheEntry
+}{items: map[string]knowledgeCatalogCacheEntry{}}
+
+func resetKnowledgeCatalogCacheForTest() {
+	knowledgeCatalogCache.mu.Lock()
+	knowledgeCatalogCache.items = map[string]knowledgeCatalogCacheEntry{}
+	knowledgeCatalogCache.mu.Unlock()
+}
+
+func knowledgeToolNamespace(serverID string) string {
+	sum := sha256.Sum256([]byte(serverID))
+	return fmt.Sprintf("kb_%x", sum[:6])
+}
+
+func knowledgeServerMeta(d *deps, serverID string) (name, desc string) {
+	if serverID == domain.KnowledgeMCPServerID {
+		return "团队知识库", "团队内部知识库检索服务"
+	}
+	if d != nil && d.repo != nil {
+		if srv, ok := d.repo.MCPServer(serverID); ok {
+			name = strings.TrimSpace(srv.Name)
+			desc = strings.TrimSpace(srv.Description)
+		}
+	}
+	if name == "" {
+		name = serverID
+	}
+	return name, desc
+}
+
+func isKnowledgeSearchOrReadTool(upstreamName string) bool {
+	switch upstreamName {
+	case knowledge.ToolSearch, knowledge.ToolFetch, knowledge.ToolListSources,
+		"search_knowledge", "grep_chunks", "read_document", "list_documents", "list_knowledge_bases":
+		return true
+	default:
+		return strings.Contains(upstreamName, "search") || strings.Contains(upstreamName, "read") || strings.Contains(upstreamName, "fetch")
+	}
+}
+
+func knowledgeToolDescription(serverName, serverDesc, serverID, upstreamName, rawDesc string) string {
+	label := strings.TrimSpace(serverName)
+	if label == "" {
+		label = serverID
+	}
+	header := "[用户已绑定知识库：" + label
+	if d := strings.TrimSpace(serverDesc); d != "" {
+		header += "（" + clipCatalogText(d, 80) + "）"
+	}
+	header += "]"
+	desc := strings.TrimSpace(rawDesc)
+	if desc != "" {
+		desc = header + " · " + desc
+	} else {
+		desc = header + " · " + upstreamName
+	}
+	if isKnowledgeSearchOrReadTool(upstreamName) {
+		desc += "；涉及个人档案、团队规范、项目架构、排障或内部事实时优先调用；寒暄或纯通用知识无需调用。"
+	}
+	return desc
+}
+
+// knowledgeReferencePromptContext builds the SystemPrompt section for bound
+// knowledge references: policy instructions + a lightweight, cached L0 catalog.
+func knowledgeReferencePromptContext(ctx context.Context, d *deps, project string, uid int64, refs []domain.KnowledgeRef) string {
+	if len(refs) == 0 {
+		return ""
+	}
+	catalog := buildBoundKnowledgeCatalogXML(ctx, d, project, uid, refs)
+	if catalog == "" {
+		return domain.KnowledgeLookupInstruction
+	}
+	return domain.KnowledgeLookupInstruction + "\n" + catalog
+}
+
+func knowledgeCatalogCacheKey(project string, uid int64, refs []domain.KnowledgeRef) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s|%d", project, uid)
+	for _, ref := range refs {
+		fmt.Fprintf(&b, "|%s:%s:%s", ref.ServerID, ref.Mode, strings.Join(ref.Sources, ","))
+	}
+	return b.String()
+}
+
+func buildBoundKnowledgeCatalogXML(ctx context.Context, d *deps, project string, uid int64, refs []domain.KnowledgeRef) string {
+	key := knowledgeCatalogCacheKey(project, uid, refs)
+	now := time.Now()
+	knowledgeCatalogCache.mu.Lock()
+	if entry, ok := knowledgeCatalogCache.items[key]; ok && now.Before(entry.expiresAt) {
+		knowledgeCatalogCache.mu.Unlock()
+		return entry.xml
+	}
+	knowledgeCatalogCache.mu.Unlock()
+
+	probeCtx, cancel := context.WithTimeout(ctx, knowledgeCatalogProbeWait)
+	defer cancel()
+
+	var b strings.Builder
+	b.WriteString("<bound_knowledge_bases>\n")
+	for _, ref := range refs {
+		if b.Len() >= knowledgeCatalogMaxRunes {
+			break
+		}
+		b.WriteString(describeBoundKnowledgeRef(probeCtx, d, project, uid, ref))
+	}
+	b.WriteString("</bound_knowledge_bases>")
+	out := clipCatalogText(b.String(), knowledgeCatalogMaxRunes+len("</bound_knowledge_bases>")+32)
+	if !strings.HasSuffix(out, "</bound_knowledge_bases>") {
+		out += "\n</bound_knowledge_bases>"
+	}
+
+	knowledgeCatalogCache.mu.Lock()
+	knowledgeCatalogCache.items[key] = knowledgeCatalogCacheEntry{xml: out, expiresAt: now.Add(knowledgeCatalogCacheTTL)}
+	knowledgeCatalogCache.mu.Unlock()
+	return out
+}
+
+func describeBoundKnowledgeRef(ctx context.Context, d *deps, project string, uid int64, ref domain.KnowledgeRef) string {
+	name, desc := knowledgeServerMeta(d, ref.ServerID)
+	ns := knowledgeToolNamespace(ref.ServerID)
+
+	var toolNames []string
+	var hasListBases, hasListDocs, hasListSources bool
+	if tools, _, err := referenceTools(ctx, d, project, uid, ref); err == nil {
+		for _, t := range tools {
+			toolNames = append(toolNames, ns+"__"+t.Name)
+			switch t.Name {
+			case "list_knowledge_bases":
+				hasListBases = true
+			case "list_documents":
+				hasListDocs = true
+			case knowledge.ToolListSources:
+				hasListSources = true
+			}
+		}
+	}
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "  <kb id=%q name=%q", ref.ServerID, name)
+	if len(toolNames) > 0 {
+		fmt.Fprintf(&b, " tools=%q", strings.Join(toolNames, ", "))
+	}
+	b.WriteString(">\n")
+	if desc != "" {
+		fmt.Fprintf(&b, "    <description>%s</description>\n", escapeXMLText(clipCatalogText(desc, 160)))
+	}
+	if len(ref.Sources) > 0 {
+		fmt.Fprintf(&b, "    <scoped_sources>%s</scoped_sources>\n", escapeXMLText(strings.Join(ref.Sources, ", ")))
+	}
+
+	var samples []string
+	if ctx.Err() == nil {
+		switch {
+		case hasListDocs:
+			if text, _, err := callKnowledgeReference(ctx, d, project, uid, ref, "list_documents", map[string]any{"page_size": knowledgeCatalogMaxDocs}); err == nil {
+				samples = extractCatalogTitles(text, knowledgeCatalogMaxDocs)
+			}
+		case hasListBases:
+			if text, _, err := callKnowledgeReference(ctx, d, project, uid, ref, "list_knowledge_bases", map[string]any{}); err == nil {
+				samples = extractCatalogTitles(text, knowledgeCatalogMaxDocs)
+			}
+		case hasListSources:
+			if text, _, err := callKnowledgeReference(ctx, d, project, uid, ref, knowledge.ToolListSources, map[string]any{}); err == nil {
+				samples = extractCatalogTitles(text, knowledgeCatalogMaxDocs)
+			}
+		}
+	}
+	if len(samples) > 0 {
+		b.WriteString("    <sample_documents>\n")
+		for _, item := range samples {
+			fmt.Fprintf(&b, "      - %s\n", escapeXMLText(item))
+		}
+		b.WriteString("    </sample_documents>\n")
+	}
+	b.WriteString("  </kb>\n")
+	return b.String()
+}
+
+func extractCatalogTitles(raw string, limit int) []string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || limit <= 0 {
+		return nil
+	}
+	var out []string
+	seen := map[string]bool{}
+	add := func(s string) {
+		s = strings.TrimSpace(s)
+		if s == "" || seen[s] || len(out) >= limit {
+			return
+		}
+		seen[s] = true
+		out = append(out, clipCatalogText(s, 80))
+	}
+
+	var parsed any
+	if json.Unmarshal([]byte(raw), &parsed) == nil {
+		collectCatalogTitlesFromJSON(parsed, add)
+		if len(out) > 0 {
+			return out
+		}
+	}
+	for _, line := range strings.Split(raw, "\n") {
+		line = strings.TrimSpace(strings.TrimLeft(line, "-*•0123456789. "))
+		if line != "" && !strings.HasPrefix(line, "{") && !strings.HasPrefix(line, "[") {
+			add(line)
+		}
+		if len(out) >= limit {
+			break
+		}
+	}
+	return out
+}
+
+func collectCatalogTitlesFromJSON(v any, add func(string)) {
+	switch x := v.(type) {
+	case []any:
+		for _, item := range x {
+			collectCatalogTitlesFromJSON(item, add)
+		}
+	case map[string]any:
+		for _, key := range []string{"title", "name", "file_name", "filename", "doc_name", "id"} {
+			if s, ok := x[key].(string); ok && strings.TrimSpace(s) != "" {
+				if desc, ok := x["description"].(string); ok && strings.TrimSpace(desc) != "" && key != "description" {
+					add(s + " (" + clipCatalogText(strings.TrimSpace(desc), 40) + ")")
+				} else {
+					add(s)
+				}
+				break
+			}
+		}
+		for _, key := range []string{"documents", "items", "knowledge_bases", "sources", "data", "results"} {
+			if sub, ok := x[key]; ok {
+				collectCatalogTitlesFromJSON(sub, add)
+			}
+		}
+	}
+}
+
+func clipCatalogText(s string, maxRunes int) string {
+	s = strings.Join(strings.Fields(strings.TrimSpace(s)), " ")
+	runes := []rune(s)
+	if len(runes) <= maxRunes {
+		return s
+	}
+	return string(runes[:maxRunes]) + "…"
+}
+
+func escapeXMLText(s string) string {
+	r := strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;")
+	return r.Replace(s)
 }
