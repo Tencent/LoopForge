@@ -189,7 +189,13 @@ func (s *codexAppServer) response(message codexRPCMessage) []string {
 		// App-server builds each thread's hook trust from its own config.
 		// Both the platform guard and workspace approval hook are generated
 		// and reviewed by the platform.
-		params := map[string]any{"developerInstructions": s.opts.SystemPrompt, "sandbox": "read-only", "approvalPolicy": "never", "cwd": filepath.Join(s.opts.Root, "ws"), "config": map[string]any{"bypass_hook_trust": true}}
+		// The runtime starts the CLI in its per-sandbox working directory:
+		// <root>/ws in platform mode, Docker and bwrap, but the run workspace
+		// itself on macOS seatbelt, which cannot map <root>/ws. A relative cwd
+		// resolves against that directory. It must be sent on resume too:
+		// without it Codex keeps the cwd recorded when the thread started, so a
+		// platform-mode thread handed to a workspace would stay in <root>/ws.
+		params := map[string]any{"developerInstructions": s.opts.SystemPrompt, "sandbox": "read-only", "approvalPolicy": "never", "cwd": ".", "config": map[string]any{"bypass_hook_trust": true}}
 		if s.opts.Model != "" {
 			params["model"] = s.opts.Model
 		}
