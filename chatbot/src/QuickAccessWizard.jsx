@@ -48,12 +48,12 @@ const STEPS = [
   {
     id: "auth",
     title: "凭据与授权",
-    desc: "GitHub 访问与模型密钥",
+    desc: "GitHub / 云效访问与模型密钥",
   },
   {
     id: "project",
     title: "项目与仓库",
-    desc: "选择或新建项目，绑定 GitHub 仓库",
+    desc: "选择或新建项目，绑定代码仓库",
   },
   {
     id: "workflow",
@@ -581,6 +581,8 @@ function parseGitHubRepo(raw) {
 // SSH preview first (it leaves github.com to the GitHub parser, matching the
 // server); self-hosted legacy repositories keep the git.example.com form.
 export function parseGongfengRepo(raw) {
+  const codeupInfo = globalThis.LoopForgeCodeupRepo?.(raw);
+  if (codeupInfo) return codeupInfo;
   const httpsInfo = globalThis.LoopForgeGitHTTPS(raw);
   if (httpsInfo) return httpsInfo;
   const sshInfo = globalThis.LoopForgeGitSSH(raw);
@@ -793,6 +795,11 @@ export default function QuickAccessWizard({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [gitToken, setGitToken] = useState("");
+  const [codeupToken, setCodeupToken] = useState("");
+  const [codeupUsername, setCodeupUsername] = useState("");
+  const [codeupCredential, setCodeupCredential] = useState({ configured: false, username: "", id: "" });
+  const [verifyingCodeup, setVerifyingCodeup] = useState(false);
+  const [codeupVerify, setCodeupVerify] = useState(null);
   const [codeBuddyApiKey, setCodeBuddyApiKey] = useState("");
   // null follows the saved setting until the user picks an environment here.
   const [codeBuddyEnvChoice, setCodeBuddyEnvChoice] = useState(null);
@@ -947,6 +954,9 @@ export default function QuickAccessWizard({
     setPhase("wizard");
     setError("");
     setGitToken("");
+    setCodeupToken("");
+    setCodeupUsername("");
+    setCodeupVerify(null);
     setCodeBuddyApiKey("");
     setCodeBuddyEnvChoice(null);
     setGitVerify(null);
@@ -978,19 +988,45 @@ export default function QuickAccessWizard({
     [user?.id],
   );
 
+  // The Codeup card is driven by the per-host Git HTTPS credential list; the
+  // user summary only carries a GitHub boolean.
+  const refreshCodeupCredential = useCallback(async () => {
+    if (!user?.id) return null;
+    try {
+      const list = await api(
+        `/api/users/${encodeURIComponent(user.id)}/git-http-credentials`,
+      );
+      const record =
+        (Array.isArray(list) ? list : []).find(
+          (credential) => credential.host === "codeup.aliyun.com",
+        ) || null;
+      setCodeupCredential({
+        configured: !!record,
+        username: record?.username || "",
+        id: record?.id || "",
+      });
+      return record;
+    } catch {
+      return null;
+    }
+  }, [user?.id]);
+
   useEffect(() => {
     if (!open) return undefined;
     let active = true;
     async function load() {
       setLoading(true);
       try {
-        const [usersRes, projectsRes, reposRes, workflowsRes, agentsRes] =
+        const [usersRes, projectsRes, reposRes, workflowsRes, agentsRes, codeupCredsRes] =
           await Promise.all([
             api("/api/users").catch(() => []),
             api("/api/projects").catch(() => projects),
             api("/api/repositories").catch(() => []),
             api("/api/workflows").catch(() => []),
             api("/api/agents").catch(() => []),
+            user?.id
+              ? api(`/api/users/${encodeURIComponent(user.id)}/git-http-credentials`).catch(() => [])
+              : Promise.resolve([]),
           ]);
         if (!active) return;
         const freshUser =
@@ -998,6 +1034,15 @@ export default function QuickAccessWizard({
             (item) => Number(item.id) === Number(user?.id),
           ) || user;
         setStoredUser(mergeFreshUser(user, freshUser));
+        const codeupRecord =
+          (Array.isArray(codeupCredsRes) ? codeupCredsRes : []).find(
+            (credential) => credential.host === "codeup.aliyun.com",
+          ) || null;
+        setCodeupCredential({
+          configured: !!codeupRecord,
+          username: codeupRecord?.username || "",
+          id: codeupRecord?.id || "",
+        });
         if (freshUser?.gitHubCredentialConfigured && freshUser?.id) {
           void verifyStoredGitToken(freshUser.id);
         }
@@ -1102,6 +1147,7 @@ export default function QuickAccessWizard({
   useEffect(() => {
     if (!open) return undefined;
     const refreshUser = () => {
+      void refreshCodeupCredential();
       api("/api/users")
         .then((usersRes) => {
           const fresh = (usersRes || []).find(
@@ -1125,7 +1171,7 @@ export default function QuickAccessWizard({
       window.removeEventListener("focus", refreshUser);
       window.removeEventListener("message", credentialsChanged);
     };
-  }, [open, user?.id, verifyStoredGitToken]);
+  }, [open, user?.id, verifyStoredGitToken, refreshCodeupCredential]);
 
   useEffect(() => {
     if (!open) return undefined;
@@ -1186,6 +1232,7 @@ export default function QuickAccessWizard({
   const activeStep = STEPS[activeStepIndex] || STEPS[0];
   const wizardStepCount = STEPS.length - 1;
   const gitReady = Boolean(storedUser?.gitHubCredentialConfigured || gitToken.trim());
+  const codeupReady = Boolean(codeupCredential.configured || codeupToken.trim());
   const hasSSHKeys = Boolean(storedUser?.gitSshKeyConfigured);
   const selectedSSHRepo = parsedRepo || parseGongfengRepo(defaultRepo?.cloneUrl);
   const sshKeysLoaded = sshCredentials.userId === user?.id && sshCredentials.keys !== null;
@@ -1194,6 +1241,7 @@ export default function QuickAccessWizard({
   );
   const sshReady = hasSSHKey(selectedSSHRepo);
   const sshRepository = (parsedRepo || defaultRepo)?.provider === "ssh";
+  const codeupRepository = (parsedRepo || defaultRepo)?.provider === "codeup";
   const codeBuddyReady = Boolean(
     storedUser?.codeBuddyApiKeyConfigured || codeBuddyApiKey.trim(),
   );
@@ -1223,6 +1271,7 @@ export default function QuickAccessWizard({
     if (!user?.id) return storedUser;
     const payload = {};
     let savedGit = false;
+    let savedCodeup = false;
     if (gitToken.trim()) {
       const endpoint = `/api/users/${encodeURIComponent(user.id)}/git-http-credentials`;
       const credentials = await api(endpoint);
@@ -1230,12 +1279,23 @@ export default function QuickAccessWizard({
       await write(endpoint, { ...(existing ? {id:existing.id} : {}), host:"github.com", platform:"github", name:"GitHub", username:"x-access-token", token:gitToken.trim() }, "PUT");
       savedGit = true;
     }
+    if (codeupToken.trim()) {
+      const username = codeupUsername.trim() || codeupCredential.username;
+      if (!username) throw new Error("请填写云效 HTTPS 克隆账号（个人设置 → HTTPS 密码）。");
+      const endpoint = `/api/users/${encodeURIComponent(user.id)}/git-http-credentials`;
+      const credentials = await api(endpoint);
+      const existing = (Array.isArray(credentials) ? credentials : []).find(credential => credential.host === "codeup.aliyun.com");
+      const listed = await write(endpoint, { ...(existing ? {id:existing.id} : {}), host:"codeup.aliyun.com", platform:"codeup", name:"云效 Codeup", username, token:codeupToken.trim() }, "PUT");
+      const record = (Array.isArray(listed) ? listed : []).find(credential => credential.host === "codeup.aliyun.com");
+      setCodeupCredential({ configured: true, username, id: record?.id || existing?.id || "" });
+      savedCodeup = true;
+    }
     if (codeBuddyApiKey.trim())
       payload.codeBuddyApiKey = codeBuddyApiKey.trim();
     // A key is always saved with the environment it was issued for.
     if (codeBuddyApiKey.trim() || codeBuddyEnv !== storedCodeBuddyEnvRaw)
       payload.codeBuddyInternetEnvironment = codeBuddyEnv;
-    if (!Object.keys(payload).length && !savedGit) return storedUser;
+    if (!Object.keys(payload).length && !savedGit && !savedCodeup) return storedUser;
     const saved = await write(
       `/api/users/${encodeURIComponent(user.id)}/credentials`,
       payload,
@@ -1248,6 +1308,7 @@ export default function QuickAccessWizard({
         saved?.codeBuddyInternetEnvironment || "";
     setStoredUser(merged);
     setGitToken("");
+    setCodeupToken("");
     setCodeBuddyApiKey("");
     setCodeBuddyEnvChoice(null);
     void onCredentialsSaved?.();
@@ -1283,12 +1344,66 @@ export default function QuickAccessWizard({
     }
   }
 
+  // Codeup verifies the typed PAT + clone account before saving. Instances
+  // without /api/auth/codeup/verify fall back to save → per-credential verify
+  // → roll back on failure, so an invalid token still leaves nothing stored.
+  async function verifyCodeup() {
+    if (!user?.id || verifyingCodeup) return;
+    const typed = codeupToken.trim();
+    const username = codeupUsername.trim() || codeupCredential.username;
+    if (typed && !username) {
+      setCodeupVerify({ valid: false, error: "请填写云效 HTTPS 克隆账号（个人设置 → HTTPS 密码）。" });
+      return;
+    }
+    if (!typed && !codeupCredential.configured) return;
+    setVerifyingCodeup(true);
+    setCodeupVerify(null);
+    setError("");
+    try {
+      let result;
+      if (typed) {
+        try {
+          result = await write("/api/auth/codeup/verify", { token: typed, username });
+        } catch (err) {
+          if (err.status !== 404) throw err;
+          const previous = codeupCredential;
+          await saveTypedCredentials();
+          const record = await refreshCodeupCredential();
+          result = record?.id
+            ? await write(`/api/users/${encodeURIComponent(user.id)}/git-http-credentials/${encodeURIComponent(record.id)}/verify`, {})
+            : { valid: false, error: "令牌保存失败" };
+          if (!result?.valid) {
+            const endpoint = `/api/users/${encodeURIComponent(user.id)}/git-http-credentials`;
+            try {
+              if (previous.id)
+                await write(endpoint, { id: previous.id, name: "云效 Codeup", platform: "codeup", host: "codeup.aliyun.com", username: previous.username || "", token: "" }, "PUT");
+              else if (record?.id)
+                await write(`${endpoint}/${encodeURIComponent(record.id)}`, {}, "DELETE");
+            } catch {}
+            await refreshCodeupCredential();
+          }
+        }
+      } else {
+        result = await write(
+          `/api/users/${encodeURIComponent(user.id)}/git-http-credentials/${encodeURIComponent(codeupCredential.id)}/verify`,
+          {},
+        );
+      }
+      setCodeupVerify(result);
+      if (result?.valid && typed && codeupToken.trim()) await saveTypedCredentials();
+    } catch (err) {
+      setCodeupVerify({ valid: false, error: err.message });
+    } finally {
+      setVerifyingCodeup(false);
+    }
+  }
+
   async function nextStep() {
     if (saving) return;
     setError("");
     if (activeStep.id === "auth") {
-      if (!gitReady && !hasSSHKeys && !codeBuddyReady && !sponsoredModel) {
-        setError("请先配置 GitHub Git Token、Git SSH 密钥或 CodeBuddy API Key。");
+      if (!gitReady && !codeupReady && !hasSSHKeys && !codeBuddyReady && !sponsoredModel) {
+        setError("请先配置 GitHub Git Token、云效 Codeup 令牌、Git SSH 密钥或 CodeBuddy API Key。");
         return;
       }
       setSaving(true);
@@ -1518,7 +1633,13 @@ export default function QuickAccessWizard({
         repository: boundRepo,
         workflow: provisionedWorkflow || activeWorkflow,
         rolesCount: roles.length,
-        gitReady: Boolean(boundRepo?.provider === "ssh" ? hasSSHKey(parseGongfengRepo(boundRepo.cloneUrl)) : latestUser?.gitHubCredentialConfigured),
+        gitReady: Boolean(
+          boundRepo?.provider === "ssh"
+            ? hasSSHKey(parseGongfengRepo(boundRepo.cloneUrl))
+            : boundRepo?.provider === "codeup"
+              ? codeupCredential.configured || codeupToken.trim()
+              : latestUser?.gitHubCredentialConfigured,
+        ),
         codeBuddyReady: Boolean(
           latestUser?.codeBuddyApiKeyConfigured ||
             storedUser?.codeBuddyApiKeyConfigured,
@@ -1693,7 +1814,11 @@ export default function QuickAccessWizard({
                             size={14}
                           />
                           <span>
-                            {completedSummary?.repository?.provider === "ssh" ? "Git SSH 访问：" : "GitHub 访问："}
+                            {completedSummary?.repository?.provider === "ssh"
+                              ? "Git SSH 访问："
+                              : completedSummary?.repository?.provider === "codeup"
+                                ? "云效 Codeup 访问："
+                                : "GitHub 访问："}
                             {completedSummary?.gitReady
                               ? "已就绪"
                               : "未配置，克隆/推送私有仓库前可在个人配置补齐"}
@@ -1897,6 +2022,92 @@ export default function QuickAccessWizard({
                       <section className="qa-cred-card">
                         <header className="qa-cred-head">
                           <div>
+                            <strong>云效 Codeup 仓库授权</strong>
+                            <span>
+                              用于克隆云效私有仓库、创建分支、推送代码与发起合并请求
+                            </span>
+                          </div>
+                          <StatusPill ok={codeupReady} />
+                        </header>
+                        <div className="qa-cred-body">
+                          <button type="button" className="qa-btn qa-btn-primary qa-btn-sm" onClick={() => openCredentialSettings("codeupToken")}>
+                            {codeupCredential.configured ? "管理云效授权" : "配置云效授权"}
+                          </button>
+                          <p className="qa-hint">在个人配置中填写个人访问令牌（PAT）与 HTTPS 克隆账号，返回后继续。</p>
+                          <details>
+                            <summary>直接填写令牌（高级）</summary>
+                            <div className="qa-input-row">
+                              <input
+                                type="text"
+                                className="qa-input"
+                                value={codeupUsername}
+                                onChange={(e) => setCodeupUsername(e.target.value)}
+                                placeholder={
+                                  codeupCredential.configured && codeupCredential.username
+                                    ? `克隆账号 ${codeupCredential.username}（留空保持不变）`
+                                    : "HTTPS 克隆账号（个人设置 → HTTPS 密码）"
+                                }
+                                aria-label="云效 HTTPS 克隆账号"
+                                autoComplete="off"
+                                spellCheck={false}
+                              />
+                            </div>
+                            <div className="qa-input-row">
+                              <input
+                                type="password"
+                                className="qa-input"
+                                value={codeupToken}
+                                onChange={(e) => setCodeupToken(e.target.value)}
+                                placeholder={
+                                  codeupCredential.configured
+                                    ? "已配置，留空保持不变"
+                                    : "云效个人访问令牌（PAT，授予代码读写权限）"
+                                }
+                                aria-label="云效个人访问令牌"
+                                autoComplete="new-password"
+                              />
+                              <button
+                                type="button"
+                                className="qa-btn qa-btn-outline qa-btn-sm qa-btn-field"
+                                data-hover-ink-control=""
+                                aria-busy={verifyingCodeup || undefined}
+                                disabled={
+                                  !verifyingCodeup &&
+                                  !codeupToken.trim() &&
+                                  !codeupCredential.configured
+                                }
+                                onClick={verifyCodeup}
+                              >
+                                <BusyLabel
+                                  busy={verifyingCodeup}
+                                  busyLabel="校验中…"
+                                >
+                                  校验并连接
+                                </BusyLabel>
+                              </button>
+                              <a
+                                className="qa-link"
+                                data-hover-ink-control=""
+                                href="https://help.aliyun.com/zh/yunxiao/user-guide/personal-authentication-settings/"
+                                target="_blank"
+                                rel="noopener noreferrer"
+                              >
+                                令牌说明 ↗
+                              </a>
+                            </div>
+                            {codeupVerify ? (
+                              <VerifyMessage
+                                result={codeupVerify}
+                                okText={`令牌有效${codeupVerify.login ? `（${codeupVerify.login}）` : ""}`}
+                              />
+                            ) : null}
+                          </details>
+                        </div>
+                      </section>
+
+                      <section className="qa-cred-card">
+                        <header className="qa-cred-head">
+                          <div>
                             <strong>CodeBuddy API Key</strong>
                             <span>
                               {sponsoredModel
@@ -2021,7 +2232,7 @@ export default function QuickAccessWizard({
                                     </span>
                                     <strong>{repo.name}</strong>
                                     <code>
-                                      {repo.provider === "github" && repo.webUrl
+                                      {["github", "codeup"].includes(repo.provider) && repo.webUrl
                                         ? repo.webUrl.replace(
                                             /^https?:\/\//,
                                             "",
@@ -2098,8 +2309,8 @@ export default function QuickAccessWizard({
                           <div>
                             <strong>
                               {projectMode === "existing" && projectRepos.length
-                                ? "为该项目添加 GitHub 仓库"
-                                : "绑定默认 GitHub 仓库"}
+                                ? "为该项目添加代码仓库"
+                                : "绑定默认代码仓库"}
                             </strong>
                             <span
                               key={String(bindRepoNow)}
@@ -2214,7 +2425,7 @@ export default function QuickAccessWizard({
                                 </p>
                               ) : (
                                 <p key="help" className="qa-hint">
-                                  支持 Git HTTPS 链接或 Git SSH 地址，例如 <code>git@gitlab.com:group/repo.git</code>。
+                                  支持 Git HTTPS 链接或 Git SSH 地址，例如 <code>git@gitlab.com:group/repo.git</code>；云效仓库粘贴 <code>https://codeup.aliyun.com/组织ID/分组/仓库.git</code>。
                                 </p>
                               )}
                               {selectedSSHRepo?.provider === "ssh" && sshKeysLoaded && !sshReady ? (
@@ -2346,10 +2557,10 @@ export default function QuickAccessWizard({
                             <dt>凭据</dt>
                             <dd>
                               <span
-                                className={`qa-dot ${(sshRepository ? sshReady : gitReady) && (codeBuddyReady || sponsoredModel) ? "is-ok" : ""}`}
+                                className={`qa-dot ${(sshRepository ? sshReady : codeupRepository ? codeupReady : gitReady) && (codeBuddyReady || sponsoredModel) ? "is-ok" : ""}`}
                               />
                               <span>
-                                {sshRepository ? "Git SSH" : "GitHub"} {(sshRepository ? sshReady : gitReady) ? "已配置" : "未配置"} ·
+                                {sshRepository ? "Git SSH" : codeupRepository ? "云效 Codeup" : "GitHub"} {(sshRepository ? sshReady : codeupRepository ? codeupReady : gitReady) ? "已配置" : "未配置"} ·
                                 CodeBuddy{" "}
                                 {codeBuddyReady
                                   ? "已配置"

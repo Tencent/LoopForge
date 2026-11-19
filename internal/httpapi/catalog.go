@@ -218,7 +218,7 @@ func (h *catalogHandlers) repositories(c *gin.Context) {
 	if v.GongfengProjectID != "" {
 		if info, ok := domain.ParseRepositoryURL(v.GongfengProjectID); ok {
 			v.GongfengProjectID = info.Project
-		} else if !strings.HasPrefix(v.GongfengProjectID, "github:") && !domain.IsSafeGongfengProjectID(v.GongfengProjectID) {
+		} else if !strings.HasPrefix(v.GongfengProjectID, "github:") && !strings.HasPrefix(v.GongfengProjectID, "codeup:") && !domain.IsSafeGongfengProjectID(v.GongfengProjectID) {
 			c.JSON(400, map[string]string{"error": "仓库链接无法识别：请提供有效的 GitHub 仓库地址"})
 			return
 		}
@@ -258,11 +258,17 @@ func (h *catalogHandlers) repositories(c *gin.Context) {
 			v.DefaultBranch = "main"
 		}
 	}
+	if strings.HasPrefix(v.GongfengProjectID, "codeup:") {
+		v.Provider = domain.RepositoryProviderCodeup
+		if v.DefaultBranch == "" {
+			v.DefaultBranch = "master"
+		}
+	}
 	if v.Provider == "" {
 		v.Provider = "gongfeng"
 	}
-	if v.Provider != "gongfeng" && v.Provider != "github" {
-		c.JSON(400, map[string]string{"error": "provider must be github or gongfeng"})
+	if v.Provider != "gongfeng" && v.Provider != "github" && v.Provider != domain.RepositoryProviderCodeup {
+		c.JSON(400, map[string]string{"error": "provider must be github, gongfeng or codeup"})
 		return
 	}
 	if v.DefaultBranch == "" {

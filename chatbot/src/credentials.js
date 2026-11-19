@@ -6,6 +6,7 @@ export const CREDENTIALS = {
   codexApiKey: "Codex API Key",
   claudeCodeApiKey: "Claude Code API Key",
   gitToken: "GitHub Git Token",
+  codeupToken: "云效 Codeup 仓库授权",
   gitSshKey: "Git SSH 密钥",
   gitHttpCredentials: "Git 访问令牌",
 };
@@ -111,6 +112,16 @@ export const CREDENTIAL_GUIDES = {
       "回到这里点「重试节点」",
     ],
   },
+  codeupToken: {
+    url: "/#/settings",
+    link: "配置云效仓库授权",
+    steps: [
+      "在云效 Codeup「个人设置 → 个人访问令牌」创建授予代码读写权限的 PAT",
+      "在「个人设置 → HTTPS 密码」查看 HTTPS 克隆账号",
+      "到「个人配置 → 云效仓库授权」填写克隆账号与令牌，保存前会自动校验",
+      "回到这里点「重试节点」",
+    ],
+  },
   codeBuddyApiKey: {
     url: CODEBUDDY_ENVIRONMENTS[0].keyUrl,
     link: "打开 CodeBuddy 创建 Key",
@@ -155,6 +166,10 @@ const RULES = [
   [
     "gitSshKey",
     /Git SSH (?:密钥|私钥)/i,
+  ],
+  [
+    "codeupToken",
+    /Codeup|云效[^。\n]{0,12}(令牌|授权|凭据|克隆账号)/i,
   ],
   [
     "gitToken",

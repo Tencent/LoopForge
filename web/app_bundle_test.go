@@ -64,7 +64,9 @@ func appBundlePath(t testing.TB) string {
 	if err := os.WriteFile(path, data, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	return path
+	// The path is interpolated into node -e source; backslashes on Windows
+	// would be read as JS string escapes, so always hand node a slash path.
+	return filepath.ToSlash(path)
 }
 
 func TestAppBundleFilesAreEmbeddedAndListed(t *testing.T) {

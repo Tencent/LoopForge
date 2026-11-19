@@ -7,6 +7,9 @@ including the Pi, Antigravity, and Kimi Code product marks added separately.
 `qoder.svg` is the official Qoder CN brand mark (monochrome, background
 removed) extracted from the installed Qoder CN client, mirrored from
 `web/images/credentials/qoder.svg`.
+`codeup.svg` is original LoopForge artwork (monochrome cloud-and-brackets
+placeholder for Yunxiao Codeup), mirrored from
+`web/images/credentials/codeup.svg`; it carries no upstream license.
 
 ModelProviderIcon.jsx adapts Grasp's visual brand matching and theme treatment.
 Its internal light animation is local presentation code. A visual brand match

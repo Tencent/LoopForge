@@ -38,13 +38,36 @@ globalThis.LoopForgeGitSSH = function parseSSHRepository(raw) {
   return { provider: 'ssh', host: endpoint, project: `${host.toLowerCase()}${port === '22' ? '' : ':' + port}/${segments.join('/')}`, name, cloneUrl, webUrl: '' };
 };
 
+// Yunxiao Codeup keeps the organization in the first path segment:
+// https://codeup.aliyun.com/{orgId}/{group}/{repo}.git. Mirrors the server's
+// parseCodeupRepositoryURL: the codeup: shorthand and git@/ssh:// clone forms
+// normalize to the HTTPS identity, authenticated with the per-host Codeup
+// PAT + clone account.
+globalThis.LoopForgeCodeupRepo = function parseCodeupRepository(raw) {
+  let s = String(raw || '').trim().replace(/^git\s+clone\s+/i, '').trim().replace(/^['"]+|['"]+$/g, '');
+  if (!s) return null;
+  if (/^codeup:/i.test(s)) s = 'https://codeup.aliyun.com/' + s.slice('codeup:'.length);
+  s = s.replace(/^(?:git@codeup\.aliyun\.com:|ssh:\/\/git@codeup\.aliyun\.com(?::22)?\/)/i, 'https://codeup.aliyun.com/');
+  if (/^codeup\.aliyun\.com\//i.test(s)) s = 'https://' + s;
+  let u;
+  try { u = new URL(s); } catch { return null; }
+  if (u.hostname.toLowerCase() !== 'codeup.aliyun.com' || u.username || u.password || !['https:', 'http:'].includes(u.protocol)) return null;
+  const parts = u.pathname.replace(/^\/+|\/+$/g, '').split('/');
+  if (parts.length < 3) return null;
+  parts[parts.length - 1] = parts[parts.length - 1].replace(/\.git$/i, '');
+  const path = parts.join('/');
+  if (!/^[A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_.-]+){2,}$/.test(path) || parts.some(seg => seg === '.' || seg === '..')) return null;
+  const name = parts[parts.length - 1];
+  return { provider: 'codeup', host: 'codeup.aliyun.com', organizationId: parts[0], project: 'codeup:' + path, name, webUrl: 'https://codeup.aliyun.com/' + path, cloneUrl: 'https://codeup.aliyun.com/' + path + '.git' };
+};
+
 // Unknown HTTPS hosts use Git transport without identifying the hosting product.
 globalThis.LoopForgeGitHTTPS = function parseHTTPSRepository(raw) {
   const address=String(raw||'').trim().replace(/^git clone\s+/i,'');
   if(!/^https:\/\//i.test(address)||/[\s\\]/.test(address))return null;
   try{
     const u=new URL(address),host=u.host.toLowerCase();
-    if(u.username||u.password||u.search||u.hash||['github.com','git.example.com'].includes(u.hostname.toLowerCase()))return null;
+    if(u.username||u.password||u.search||u.hash||['github.com','git.example.com','codeup.aliyun.com'].includes(u.hostname.toLowerCase()))return null;
     if(!/^[a-z0-9][a-z0-9.-]*(?::[0-9]+)?$/i.test(host)||u.hostname.includes('..')||/^\d+(?:\.\d+){3}$/.test(u.hostname))return null;
     const parts=u.pathname.replace(/^\/+|\/+$/g,'').split('/');
     if(parts.some(part=>!part||decodeURIComponent(part)==='.'||decodeURIComponent(part)==='..'))return null;

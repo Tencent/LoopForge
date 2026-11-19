@@ -22,6 +22,7 @@ const { project, user, apiMock, writeMock, mockState } = vi.hoisted(() => {
   if (path === "/api/projects") return [project];
   if (path === "/api/repositories") return [];
   if (path === "/api/users/1/git-ssh-keys") return mockState.sshKeys || [];
+  if (path === "/api/users/1/git-http-credentials") return mockState.codeupCredentials || [];
   if (path === "/api/workflows")
     return [
       {
@@ -36,9 +37,11 @@ const { project, user, apiMock, writeMock, mockState } = vi.hoisted(() => {
   if (path.includes("/verify")) return { valid: true };
   return [];
   });
-  const mockState = { failClone: false, unconfigured: false, users: null, sshKeys: null };
+  const mockState = { failClone: false, unconfigured: false, users: null, sshKeys: null, codeupCredentials: null };
   const writeMock = vi.fn(async (path, body) => {
     if (path.includes("/git-token/verify")) return { valid: true };
+    if (path === "/api/auth/codeup/verify") return { valid: true, login: "clone-account" };
+    if (path.includes("/git-http-credentials/") && path.endsWith("/verify")) return { valid: true, login: "clone-account" };
     if (path === "/api/projects") return { ...project, ...body };
     if (path.includes("/clone")) {
       if (mockState.failClone) throw new Error("clone unavailable");
@@ -95,6 +98,19 @@ describe("QuickAccessWizard", () => {
     expect(parseGongfengRepo("https://git.example.com/team/repo/-/tree/main")?.name).toBe("repo");
     expect(parseGongfengRepo("https://example.com/team/repo")).toMatchObject({provider:"https",cloneUrl:"https://example.com/team/repo"});
     expect(parseGongfengRepo("")).toBeNull();
+    // Codeup keeps the organization in the path and normalizes SSH/shorthand to HTTPS.
+    expect(parseGongfengRepo("https://codeup.aliyun.com/org123/ai/loopforge.git")).toEqual({
+      provider: "codeup",
+      host: "codeup.aliyun.com",
+      organizationId: "org123",
+      project: "codeup:org123/ai/loopforge",
+      name: "loopforge",
+      webUrl: "https://codeup.aliyun.com/org123/ai/loopforge",
+      cloneUrl: "https://codeup.aliyun.com/org123/ai/loopforge.git",
+    });
+    expect(parseGongfengRepo("git@codeup.aliyun.com:org123/ai/loopforge.git")?.provider).toBe("codeup");
+    expect(parseGongfengRepo("codeup:org123/ai/loopforge")?.cloneUrl).toBe("https://codeup.aliyun.com/org123/ai/loopforge.git");
+    expect(parseGongfengRepo("https://codeup.aliyun.com/org123/loopforge")).toBeNull();
   });
 
   test("select and switch controls respond to keyboard and pointer input", async () => {
@@ -203,7 +219,7 @@ describe("QuickAccessWizard", () => {
     );
     await screen.findByRole("dialog");
     await userAction.click(screen.getByRole("button", { name: "下一步" }));
-    expect(screen.getByRole("alert")).toHaveTextContent("请先配置 GitHub Git Token、Git SSH 密钥或 CodeBuddy API Key");
+    expect(screen.getByRole("alert")).toHaveTextContent("请先配置 GitHub Git Token、云效 Codeup 令牌、Git SSH 密钥或 CodeBuddy API Key");
     expect(screen.queryByText(/工蜂/)).toBeNull();
     await userAction.click(screen.getByText("使用访问令牌（高级）"));
     await userAction.type(
@@ -216,6 +232,37 @@ describe("QuickAccessWizard", () => {
       expect.objectContaining({ host:"github.com", token: "token-value" }),
       "PUT",
     ));
+    mockState.unconfigured = false;
+  });
+
+  test("validates and saves a typed Codeup PAT with the HTTPS clone account", async () => {
+    mockState.unconfigured = true;
+    writeMock.mockClear();
+    const userAction = userEvent.setup();
+    render(
+      <QuickAccessWizard
+        open
+        user={{ id: 1, loginName: "tester", chineseName: "测试" }}
+        projects={[project]}
+        projectId="p1"
+        onClose={vi.fn()}
+        onCompleted={vi.fn()}
+        onOpenView={vi.fn()}
+      />,
+    );
+    await screen.findByRole("dialog");
+    await userAction.click(screen.getByText("直接填写令牌（高级）"));
+    await userAction.type(screen.getByLabelText("云效 HTTPS 克隆账号"), "clone-account");
+    await userAction.type(screen.getByLabelText("云效个人访问令牌"), "pt-token");
+    await userAction.click(screen.getByRole("button", { name: "校验并连接" }));
+    await waitFor(() => expect(writeMock).toHaveBeenCalledWith("/api/auth/codeup/verify", { token: "pt-token", username: "clone-account" }));
+    await waitFor(() => expect(writeMock).toHaveBeenCalledWith(
+      "/api/users/1/git-http-credentials",
+      expect.objectContaining({ host: "codeup.aliyun.com", platform: "codeup", username: "clone-account", token: "pt-token" }),
+      "PUT",
+    ));
+    // The card flips to configured without a page reload.
+    expect(await screen.findByText("管理云效授权")).toBeInTheDocument();
     mockState.unconfigured = false;
   });
 

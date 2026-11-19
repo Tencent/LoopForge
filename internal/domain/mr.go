@@ -15,6 +15,10 @@ var githubPRURL = regexp.MustCompile(`https?://github\.com/([A-Za-z0-9_.-]+/[A-Z
 
 var gongfengMRURL = regexp.MustCompile(`https?://git\.example\.com/([^\s"'<>#]+)/merge_requests/(\d+)`)
 
+// codeupMRURL matches a Codeup change-request detailUrl/webUrl:
+// https://codeup.aliyun.com/{orgId}/{group}/{repo}/change/{localId}.
+var codeupMRURL = regexp.MustCompile(`https?://codeup\.aliyun\.com/([A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+){2,})/change/(\d+)`)
+
 var githubPRLink = regexp.MustCompile(`^https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/pull/\d+/?$`)
 
 // IsGitHubPRURL reports whether text is exactly one GitHub pull request link.
@@ -114,15 +118,29 @@ func ParseGongfengMRs(text string) []GongfengMRRef {
 		text = strings.ReplaceAll(text, match[0], "https://git.example.com/github:"+match[1]+"/merge_requests/"+match[2])
 	}
 	matches := gongfengMRURL.FindAllStringSubmatch(text, -1)
-	if len(matches) == 0 {
+	codeupMatches := codeupMRURL.FindAllStringSubmatch(text, -1)
+	if len(matches) == 0 && len(codeupMatches) == 0 {
 		return nil
 	}
-	out := make([]GongfengMRRef, 0, len(matches))
+	out := make([]GongfengMRRef, 0, len(matches)+len(codeupMatches))
 	seen := map[string]struct{}{}
 	for _, match := range matches {
 		project := strings.TrimSuffix(strings.TrimSuffix(match[1], "/"), "/-")
 		iid, _ := strconv.Atoi(match[2])
 		if project == "" || iid <= 0 {
+			continue
+		}
+		key := gongfengMRKey(project, iid)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, GongfengMRRef{Project: project, IID: iid, URL: GongfengMRURL(project, iid)})
+	}
+	for _, match := range codeupMatches {
+		project := "codeup:" + match[1]
+		iid, _ := strconv.Atoi(match[2])
+		if iid <= 0 {
 			continue
 		}
 		key := gongfengMRKey(project, iid)

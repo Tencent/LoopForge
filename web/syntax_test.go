@@ -10,7 +10,7 @@ import (
 )
 
 func TestCredentialBrandAssetsEmbedded(t *testing.T) {
-	for _, name := range []string{"gongfeng.svg", "codebuddy.svg", "codex.svg", "claude.svg"} {
+	for _, name := range []string{"gongfeng.svg", "codebuddy.svg", "codex.svg", "claude.svg", "codeup.svg"} {
 		data, err := fs.ReadFile(Files, "images/credentials/"+name)
 		if err != nil {
 			t.Fatalf("credential logo %s is not embedded: %v", name, err)
@@ -501,19 +501,19 @@ const count = (html, needle) => html.split(needle).length - 1;
 
 // Groups list credentials in a fixed order.
 assert.deepEqual(cred.CREDENTIAL_GROUPS.map(g => g.id), ['platform', 'model']);
-assert.deepEqual(cred.CREDENTIAL_KINDS.filter(k => k.group === 'platform').map(k => k.key), ['gitToken', 'gitSshKey', 'gitHttpCredentials']);
+assert.deepEqual(cred.CREDENTIAL_KINDS.filter(k => k.group === 'platform').map(k => k.key), ['gitToken', 'codeupToken', 'gitSshKey', 'gitHttpCredentials']);
 assert.deepEqual(cred.CREDENTIAL_KINDS.filter(k => k.group === 'model').map(k => k.key), ['codeBuddyApiKey', 'codexApiKey', 'claudeCodeApiKey', 'agentCli.opencode', 'agentCli.cursor', 'agentCli.agy', 'agentCli.kimi', 'agentCli.pi', 'agentCli.dsh', 'agentCli.zcode', 'agentCli.qodercn']);
 
 // Progress, next-step hint, filter counts and per-group counts.
 const html = credentialPanelHTML(user);
-assert.ok(html.includes('<b>2</b> / 14 已配置'));
+assert.ok(html.includes('<b>2</b> / 15 已配置'));
 assert.ok(html.includes('data-credential-setup="codeBuddyApiKey"'), 'next step follows Git → CodeBuddy');
-assert.ok(html.includes('1 / 3') && html.includes('1 / 11'));
-assert.ok(html.includes('已配置<span>2</span>') && html.includes('未配置<span>12</span>'));
-assert.equal(count(html, 'data-credential-row='), 14);
+assert.ok(html.includes('1 / 4') && html.includes('1 / 11'));
+assert.ok(html.includes('已配置<span>2</span>') && html.includes('未配置<span>13</span>'));
+assert.equal(count(html, 'data-credential-row='), 15);
 assert.ok(!html.includes('credential-grid') && !html.includes('credential-savebar') && !html.includes('userCredentialForm'));
 // Unconfigured rows only offer 去配置; configured rows carry an inline editor with delete.
-assert.equal(count(html, 'data-credential-act="setup"'), 12);
+assert.equal(count(html, 'data-credential-act="setup"'), 13);
 assert.equal(count(html, 'credential-editor-form'), 2);
 assert.equal(count(html, 'data-credential-act="delete"'), 2);
 for (const key of ['codeBuddyApiKey', 'claudeCodeApiKey']) {
@@ -536,6 +536,9 @@ assert.ok(!sshRow.includes('credential-editor-form'));
 const httpsRow = credentialRowHTML(cred.kind('gitHttpCredentials'), {...user, gitHttpCredentialsConfigured: true});
 assert.match(httpsRow, /aria-haspopup="dialog">管理令牌/);
 assert.ok(!httpsRow.includes('credential-editor-form'));
+const codeupRow = credentialRowHTML(cred.kind('codeupToken'), user);
+assert.ok(codeupRow.includes('去配置') && !codeupRow.includes('is-configured'), 'Codeup starts unconfigured');
+assert.ok(credentialRowHTML(cred.kind('codeupToken'), {...user, codeupCredentialConfigured: true}).includes('data-credential-act="verify"'), 'a configured Codeup row keeps 重新校验');
 assert.deepEqual(credentialSavePayload(cred.kind('codeBuddyApiKey'), {secret: '', extra: 'ioa'}), {codeBuddyApiKey: '', codeBuddyInternetEnvironment: 'ioa'});
 assert.deepEqual(credentialSavePayload(cred.kind('codeBuddyApiKey'), {secret: '', extra: ''}), {codeBuddyApiKey: '', codeBuddyInternetEnvironment: ''});
 assert.deepEqual(credentialSavePayload(cred.kind('codexApiKey'), {secret: 'sk-1'}), {codexApiKey: 'sk-1'});
@@ -682,6 +685,18 @@ assert.equal(calls.length, 0);
   assert.equal(calls.filter(c => c.method === 'PUT').length, before);
   assert.ok(cred.wizard.error.includes('令牌无效或已过期') && cred.wizard.error.includes('未保存'));
   assert.ok(!cred.wizard.done);
+  // A failed Codeup verification in the wizard saves nothing either, and the
+  // clone account is required before the wizard can continue.
+  const beforeCodeup = calls.filter(c => c.method === 'PUT').length;
+  cred.wizard = {step: 3, kind: 'codeupToken', direct: true, secret: 'pt-bad', extra: 'clone-account', guide: {}, error: ''};
+  await advanceCredentialWizard();
+  assert.equal(calls.filter(c => c.method === 'PUT').length, beforeCodeup);
+  assert.ok(cred.wizard.error.includes('未保存'));
+  cred.wizard = {step: 2, kind: 'codeupToken', direct: true, secret: 'pt-x', extra: '', guide: {}, error: ''};
+  assert.equal(credentialWizardValid().ok, false);
+  assert.equal(credentialWizardValid().error, '请填写 HTTPS 克隆账号');
+  cred.wizard.extra = 'clone-account';
+  assert.equal(credentialWizardValid().ok, true);
   assert.ok(!code.includes('通常包含 /v1'));
   assert.ok(!code.includes('不含 /v1/messages'));
 })().catch(error => { console.error(error); process.exit(1); });
@@ -689,6 +704,77 @@ assert.equal(calls.length, 0);
 	out, err := exec.Command(node, "-e", script).CombinedOutput()
 	if err != nil {
 		t.Fatalf("credential list and wizard failed: %v\n%s", err, out)
+	}
+}
+
+func TestCodeupCredentialFlow(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node not installed; skipping Codeup credential check")
+	}
+	script := `
+const assert = require('node:assert/strict');
+const code = require('node:fs').readFileSync('` + appBundlePath(t) + `', 'utf8');
+const user = {id: 1};
+const state = {currentUser: {id: 1}, data: {users: [user]}};
+const userById = id => state.data.users.find(u => u.id === id);
+const escapeHTML = v => String(v), toast = () => {};
+const calls = [];
+let verifyResult = {valid: true, login: 'clone-account'};
+let list = [];
+const api = async (path, options = {}) => {
+  calls.push({path, method: options.method || 'GET', body: options.body && JSON.parse(options.body)});
+  if (path === '/api/auth/codeup/verify') return verifyResult;
+  if (path.endsWith('/git-http-credentials')) {
+    if (options.method === 'PUT') {
+      const body = JSON.parse(options.body);
+      list = [{id: 'c1', host: 'codeup.aliyun.com', platform: 'codeup', name: body.name, username: body.username}];
+      return list;
+    }
+    return list;
+  }
+  if (path.endsWith('/verify')) return verifyResult;
+  return {};
+};
+const $ = () => null, setTimeout = () => {}, location = {origin: 'http://localhost'};
+const document = {activeElement: null, querySelectorAll: () => []};
+eval(code.slice(code.indexOf('const CREDENTIAL_GROUPS='), code.indexOf('// 谁能改通用模板')) +
+  ';globalThis.cred={kind:credentialKind,get wizard(){return credentialWizard},set wizard(v){credentialWizard=v}};');
+(async () => {
+  const kind = cred.kind('codeupToken');
+  assert.equal(credentialConfigured(kind, user), false);
+  // A verified PAT is saved as the per-host Codeup credential with the clone account.
+  const outcome = await verifyAndSaveCodeupToken('pt-token', 'clone-account');
+  assert.equal(outcome.saved, true);
+  const put = calls.filter(c => c.method === 'PUT').at(-1);
+  assert.equal(put.path, '/api/users/1/git-http-credentials');
+  assert.deepEqual(put.body, {name: '云效 Codeup', platform: 'codeup', host: 'codeup.aliyun.com', username: 'clone-account', token: 'pt-token'});
+  assert.equal(credentialConfigured(kind, userById(1)), true);
+  assert.equal(codeupCredentialRecord(userById(1)).username, 'clone-account');
+  assert.ok(codeupTokenDetailHTML(kind, userById(1)).includes('clone-account'));
+  assert.ok(codeupTokenEditorHTML(kind, userById(1)).includes('data-codeup-detail'));
+  assert.equal(credentialStatus(kind, userById(1)), 'ok');
+  // A failed verification saves nothing.
+  verifyResult = {valid: false, error: '令牌无效'};
+  const before = calls.filter(c => c.method === 'PUT').length;
+  const failed = await verifyAndSaveCodeupToken('pt-bad', 'clone-account');
+  assert.equal(failed.saved, false);
+  assert.equal(calls.filter(c => c.method === 'PUT').length, before);
+  // The save → per-credential verify fallback (used when the dedicated verify
+  // route answers 404) verifies the stored credential.
+  verifyResult = {valid: true, login: 'clone-account'};
+  const viaCredential = await verifyAndSaveCodeupTokenViaCredential('pt-token', 'clone-account');
+  assert.equal(viaCredential.saved, true);
+  assert.ok(calls.some(c => c.path === '/api/users/1/git-http-credentials/c1/verify' && c.method === 'POST'));
+  // Deleting removes the per-host credential and clears the card.
+  await deleteCredential('codeupToken');
+  assert.equal(credentialConfigured(kind, userById(1)), false);
+  assert.equal(state.codeupCredential.record, null);
+})().catch(error => { console.error(error); process.exit(1); });
+`
+	out, err := exec.Command(node, "-e", script).CombinedOutput()
+	if err != nil {
+		t.Fatalf("Codeup credential flow failed: %v\n%s", err, out)
 	}
 }
 
@@ -994,21 +1080,38 @@ func TestRepositoryFormUsesSingleURL(t *testing.T) {
 	script := `
 const assert = require('node:assert/strict');
 const code = require('node:fs').readFileSync('` + appBundlePath(t) + `', 'utf8');
+eval(require('node:fs').readFileSync('app/git-ssh.js', 'utf8'));
+eval(code.slice(code.indexOf('function repoProviderLabel('), code.indexOf('function parseGongfengRepoURL(')));
 eval(code.slice(code.indexOf('function parseGongfengRepoURL(raw){'), code.indexOf('function fillRepositoryFromLink(')));
 const web = parseGongfengRepoURL('https://git.example.com/example/agent-flow');
 assert.equal(web.project, 'example/agent-flow');
 assert.equal(web.cloneUrl, 'https://git.example.com/example/agent-flow.git');
 const ssh = parseGongfengRepoURL('git@git.example.com:example/agent-flow.git');
-assert.equal(ssh.project, 'example/agent-flow');
+// With the real SSH parser loaded, legacy SSH remotes keep the ssh provider
+// and a host-qualified project, exactly as in the browser.
+assert.equal(ssh.provider, 'ssh');
+assert.equal(ssh.project, 'git.example.com/example/agent-flow.git');
 assert.equal(ssh.cloneUrl, 'git@git.example.com:example/agent-flow.git');
 const cloned = parseGongfengRepoURL('git clone git@git.example.com:example/agent-flow.git');
-assert.equal(cloned.project, 'example/agent-flow');
+assert.equal(cloned.provider, 'ssh');
 assert.equal(cloned.cloneUrl, 'git@git.example.com:example/agent-flow.git');
 assert.equal(web.name, 'agent-flow');
 const http = parseGongfengRepoURL('http://git.example.com/example/agent-flow.git');
 assert.equal(http.project, 'example/agent-flow');
 assert.equal(http.name, 'agent-flow');
 assert.equal(ssh.name, 'agent-flow');
+// Codeup mirrors the server: orgId/group/repo, HTTPS identity, SSH and codeup:
+// shorthand normalize to the HTTPS clone URL.
+const codeup = parseGongfengRepoURL('https://codeup.aliyun.com/60de7a6852743a5162b5f957/ai/loopforge.git');
+assert.deepEqual(codeup, {provider:'codeup', host:'codeup.aliyun.com', organizationId:'60de7a6852743a5162b5f957', project:'codeup:60de7a6852743a5162b5f957/ai/loopforge', name:'loopforge', webUrl:'https://codeup.aliyun.com/60de7a6852743a5162b5f957/ai/loopforge', cloneUrl:'https://codeup.aliyun.com/60de7a6852743a5162b5f957/ai/loopforge.git'});
+assert.equal(parseGongfengRepoURL('git clone https://codeup.aliyun.com/org/group/repo').cloneUrl, 'https://codeup.aliyun.com/org/group/repo.git');
+assert.equal(parseGongfengRepoURL('git@codeup.aliyun.com:org/group/repo.git').provider, 'codeup');
+assert.equal(parseGongfengRepoURL('ssh://git@codeup.aliyun.com/org/group/repo.git').cloneUrl, 'https://codeup.aliyun.com/org/group/repo.git');
+assert.equal(parseGongfengRepoURL('codeup:org/group/repo').project, 'codeup:org/group/repo');
+assert.equal(parseGongfengRepoURL('codeup.aliyun.com/org/group/repo').name, 'repo');
+assert.equal(parseGongfengRepoURL('https://codeup.aliyun.com/org/repo'), null, 'org + repo without a group is not a Codeup repository');
+assert.equal(parseGongfengRepoURL('https://token@codeup.aliyun.com/org/group/repo'), null);
+assert.equal(repoProviderLabel(codeup), '云效 Codeup');
 const html = require('node:fs').readFileSync('index.html', 'utf8');
 assert.ok(html.includes('集成分支用于检查多个 SOP 执行后工作分支之间是否存在合并冲突'));
 assert.ok(/<input[^>]*name="integrateBranch"[^>]*>/.test(html));
