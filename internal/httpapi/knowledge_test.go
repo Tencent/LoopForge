@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -267,5 +268,32 @@ func TestKnowledgeSubmissionFromArtifactPublishes(t *testing.T) {
 	}
 	if rec := doJSON(t, h, http.MethodDelete, "/api/knowledge/submissions/"+item.ID, "", nil); rec.Code != http.StatusConflict {
 		t.Fatalf("published submission deletable: %d", rec.Code)
+	}
+}
+
+func TestKnowledgeReferenceUsesCurrentScopeForEveryRead(t *testing.T) {
+	st, _, kb, settings := newKnowledgeTestServer(t)
+	t.Setenv("AGENTFLOW_AUTH_REQUIRED", "false")
+	d := &deps{repo: st}
+	ref := domain.KnowledgeRef{ServerID: domain.KnowledgeMCPServerID, Mode: "allowlist", Sources: []string{"a"}}
+	_, _, err := callKnowledgeReference(context.Background(), d, "p1", 0, ref, knowledge.ToolSearch, map[string]any{"query": "policy"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := kb.lastCall(knowledge.ToolSearch); got == nil || strings.Join(stringList(got["sources"]), ",") != "a" {
+		t.Fatalf("unscoped search: %v", got)
+	}
+	if _, _, err := callKnowledgeReference(context.Background(), d, "p1", 0, ref, knowledge.ToolFetch, map[string]any{"source": "b"}); err == nil {
+		t.Fatal("foreign fetch allowed")
+	}
+	if got := kb.lastCall(knowledge.ToolFetch); got != nil {
+		t.Fatalf("foreign fetch reached upstream: %v", got)
+	}
+	settings.ProjectSources["p1"] = []string{"b"}
+	if err := st.PutKnowledgeSettings(settings); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := callKnowledgeReference(context.Background(), d, "p1", 0, ref, knowledge.ToolSearch, nil); err == nil {
+		t.Fatal("removed source still usable")
 	}
 }

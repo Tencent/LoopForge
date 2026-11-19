@@ -287,6 +287,22 @@ func (h *agentToolGateway) callTool(ctx context.Context, session *AgentToolSessi
 			return nil, err
 		}
 	}
+	if tool.Kind == "knowledge" {
+		for _, ref := range session.KnowledgeRefs {
+			if ref.ServerID == tool.ServerID {
+				text, hits, err := callKnowledgeReference(ctx, h.deps, session.ProjectID, session.UserID, ref, tool.UpstreamName, args)
+				read, text := knowledgeReadResult(ref.ServerID, tool.UpstreamName, text, hits, err)
+				session.mu.Lock()
+				session.knowledgeReads = append(session.knowledgeReads, read)
+				session.mu.Unlock()
+				if err != nil {
+					return mcpToolTextResult(err.Error(), true), nil
+				}
+				return mcpToolTextResult(text, false), nil
+			}
+		}
+		return nil, errAgentToolForbidden
+	}
 	if tool.Kind == "browser" {
 		result, err := h.callMainBotBrowser(ctx, session, tool.Name, args)
 		logAgentToolEvent("call", "mode="+string(session.Mode), "tool="+tool.Name, fmt.Sprintf("ok=%t", err == nil && result["isError"] != true))

@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"net/http"
 	"strconv"
 
@@ -202,4 +203,96 @@ func (h *knowledgeHandlers) reject(c *gin.Context) {
 	}
 	item, err := h.svc.Reject(c.Param("id"), input.ReviewNote, h.actor(c.Request))
 	render(c, item, err)
+}
+
+// referenceOptions returns only identifiers and display names to the editor.
+func (h *knowledgeHandlers) referenceOptions(c *gin.Context) {
+	user, ok := h.requestUser(c.Request, true)
+	if !ok {
+		c.JSON(401, gin.H{"error": "请先登录"})
+		return
+	}
+	project := c.Query("projectId")
+	if project == "" {
+		c.JSON(400, gin.H{"error": "请选择项目"})
+		return
+	}
+	if !h.requireProjectWriter(c, project) {
+		return
+	}
+	if c.Query("sources") == "true" {
+		items, err := h.svc.Sources(c.Request.Context(), project)
+		if err != nil {
+			render(c, items, err)
+			return
+		}
+		allowed := []gin.H{}
+		for _, s := range items {
+			if s.Allowed {
+				allowed = append(allowed, gin.H{"id": s.ID, "name": s.Name})
+			}
+		}
+		c.JSON(200, allowed)
+		return
+	}
+	options := []gin.H{}
+	if h.repo.KnowledgeSettings().Ready() {
+		options = append(options, gin.H{"id": domain.KnowledgeMCPServerID, "name": "团队知识库", "scoped": true})
+	}
+	for _, s := range assistantOutboundMCPServers(h.repo.MCPServers(), project, user.ID) {
+		if s.Transport == "http" && s.ID != domain.KnowledgeMCPServerID {
+			options = append(options, gin.H{"id": s.ID, "name": s.Name})
+		}
+	}
+	c.JSON(200, options)
+}
+
+func (h *knowledgeHandlers) checkReferences(c *gin.Context) {
+	user, ok := h.requestUser(c.Request, true)
+	if !ok {
+		c.JSON(401, gin.H{"error": "请先登录"})
+		return
+	}
+	project := c.Query("projectId")
+	var body struct {
+		Refs []domain.KnowledgeRef `json:"knowledgeRefs"`
+	}
+	if !decode(c, &body) {
+		return
+	}
+	if err := domain.ValidateKnowledgeRefs(body.Refs); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+	ctx, cancel := context.WithTimeout(c.Request.Context(), knowledge.CallTimeout)
+	defer cancel()
+	for _, ref := range body.Refs {
+		if ctx.Err() != nil {
+			c.JSON(504, gin.H{"error": "知识服务探测超时"})
+			return
+		}
+		tools, _, err := referenceTools(ctx, h.deps, project, user.ID, ref)
+		if err != nil || len(tools) == 0 {
+			c.JSON(400, gin.H{"error": ref.ServerID + "：当前身份无法发现可用只读工具"})
+			return
+		}
+		if ref.ServerID == domain.KnowledgeMCPServerID && len(ref.Sources) > 0 {
+			sources, err := h.svc.Sources(ctx, project)
+			if err != nil {
+				c.JSON(400, gin.H{"error": "无法校验团队知识库来源"})
+				return
+			}
+			allowed := map[string]bool{}
+			for _, s := range sources {
+				allowed[s.ID] = s.Allowed
+			}
+			for _, id := range ref.Sources {
+				if !allowed[id] {
+					c.JSON(400, gin.H{"error": "知识库来源失效或未授权"})
+					return
+				}
+			}
+		}
+	}
+	c.Status(204)
 }

@@ -1040,6 +1040,10 @@ func (h *catalogHandlers) workflows(c *gin.Context) {
 				c.JSON(400, gin.H{"error": err.Error()})
 				return
 			}
+			if err := domain.ValidateWorkflowKnowledge(v); err != nil {
+				c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
+				return
+			}
 			if err := domain.ValidateWorkflowMetricStages(v); err != nil {
 				c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
 				return

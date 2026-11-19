@@ -23,6 +23,9 @@ const knowledgeActivityLimit = 200
 // knowledgeActivity is one proxied agent tool call, kept in memory so the
 // 知识库 page can show which roles are actually using the knowledge base.
 type knowledgeActivity struct {
+	RunID     string    `json:"runId,omitempty"`
+	NodeID    string    `json:"nodeId,omitempty"`
+	ServerID  string    `json:"serverId,omitempty"`
 	At        time.Time `json:"at"`
 	Tool      string    `json:"tool"`
 	ProjectID string    `json:"projectId,omitempty"`
@@ -66,16 +69,25 @@ func (l *knowledgeActivityLog) recent() []knowledgeActivity {
 // are listed or callable, and every call is narrowed to the project's sources.
 func (h *knowledgeHandlers) proxyMCP(c *gin.Context) {
 	settings := h.repo.KnowledgeSettings()
-	if !settings.Ready() {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": knowledge.ErrNotConfigured.Error()})
-		return
-	}
+
 	raw, _ := bearerToken(c.Request)
 	claims, err := knowledge.VerifyProxyToken(settings, raw, time.Now())
 	if err != nil {
 		c.Header("WWW-Authenticate", `Bearer realm="AgentFlow Knowledge"`)
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid knowledge token"})
 		return
+	}
+	if (claims.Ref == nil || claims.Ref.ServerID == domain.KnowledgeMCPServerID) && !settings.Ready() {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": knowledge.ErrNotConfigured.Error()})
+		return
+	}
+	if claims.Ref != nil {
+		run, ok := h.repo.RunState(claims.RunID)
+		nr := run.Nodes[claims.NodeID]
+		if !ok || nr == nil || nr.Status != "running" || nr.Attempt != claims.Attempt || run.ExecutionContext.ProjectID != claims.ProjectID || run.ExecutionContext.ResponsibleUserID != claims.UserID {
+			c.JSON(403, gin.H{"error": "节点执行身份已失效"})
+			return
+		}
 	}
 	if c.Request.Method != http.MethodPost {
 		c.Header("Allow", "POST")
@@ -118,6 +130,13 @@ func (h *knowledgeHandlers) handleProxyRPC(ctx context.Context, settings domain.
 	case "ping":
 		return reply(map[string]any{})
 	case "tools/list":
+		if claims.Ref != nil {
+			tools, _, err := referenceTools(ctx, h.deps, claims.ProjectID, claims.UserID, *claims.Ref)
+			if err != nil {
+				return fail(-32603, err.Error())
+			}
+			return reply(map[string]any{"tools": tools})
+		}
 		tools, err := h.proxyTools(ctx, settings)
 		if err != nil {
 			return fail(-32603, err.Error())
@@ -132,16 +151,25 @@ func (h *knowledgeHandlers) handleProxyRPC(ctx context.Context, settings domain.
 			return fail(-32602, err.Error())
 		}
 		name := strings.TrimSpace(params.Name)
-		if i := strings.LastIndex(name, "__"); i >= 0 {
+		if i := strings.LastIndex(name, "__"); claims.Ref == nil && i >= 0 {
 			name = name[i+2:]
 		}
-		if !knowledge.IsReadOnlyTool(name) {
+		if claims.Ref == nil && !knowledge.IsReadOnlyTool(name) {
 			return fail(-32602, fmt.Sprintf("知识库工具 %s 不可用：Agent 只能只读检索，新知识请写入 knowledge.md 等待审核", params.Name))
 		}
 		started := time.Now()
-		text, hits, err := h.callScoped(ctx, settings, claims.ProjectID, name, params.Arguments)
+		var text string
+		var hits int
+		var err error
+		serverID := domain.KnowledgeMCPServerID
+		if claims.Ref != nil {
+			serverID = claims.Ref.ServerID
+			text, hits, err = callKnowledgeReference(ctx, h.deps, claims.ProjectID, claims.UserID, *claims.Ref, name, params.Arguments)
+		} else {
+			text, hits, err = h.callScoped(ctx, settings, claims.ProjectID, name, params.Arguments)
+		}
 		activity := knowledgeActivity{
-			At: started.UTC(), Tool: name, ProjectID: claims.ProjectID, AgentID: claims.AgentID, UserID: claims.UserID,
+			RunID: claims.RunID, NodeID: claims.NodeID, ServerID: serverID, At: started.UTC(), Tool: name, ProjectID: claims.ProjectID, AgentID: claims.AgentID, UserID: claims.UserID,
 			Query: truncateRunes(fmt.Sprint(valueOr(params.Arguments["query"], "")), 120), Hits: hits,
 			OK: err == nil, LatencyMS: time.Since(started).Milliseconds(),
 		}
@@ -149,6 +177,14 @@ func (h *knowledgeHandlers) handleProxyRPC(ctx context.Context, settings domain.
 			activity.Error = truncateRunes(err.Error(), 200)
 		}
 		h.activity.add(activity)
+		if claims.Ref != nil && h.engine != nil {
+			read, result := knowledgeReadResult(serverID, name, text, hits, err)
+			text = result
+			read.Attempt = claims.Attempt
+			h.engine.RecordKnowledgeRead(claims.RunID, claims.NodeID, read)
+			state := read.Status
+			h.engine.IngestOTLPTraces([]domain.TelemetryEvent{{RunID: claims.RunID, NodeID: claims.NodeID, Category: "tool", Name: "knowledge.call", Phase: "finish", Message: serverID + " · " + name + " · " + state, Attributes: map[string]any{"knowledgeReadId": read.ID, "attempt": claims.Attempt, "ok": err == nil, "latencyMs": activity.LatencyMS}}})
+		}
 		log.Printf("knowledge-proxy tool=%s project=%s agent=%s ok=%t latency=%dms", name, claims.ProjectID, claims.AgentID, err == nil, activity.LatencyMS)
 		if err != nil {
 			return reply(mcpToolTextResult(err.Error(), true))

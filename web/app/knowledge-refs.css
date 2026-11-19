@@ -1,0 +1,21 @@
+.knowledge-ref-dialog {
+  color: inherit;
+  background: var(--surface, Canvas);
+  border: 1px solid var(--border, GrayText);
+  border-radius: 14px;
+  padding: 20px;
+  width: min(440px, calc(100vw - 40px));
+  max-height: 75vh;
+  overflow: auto;
+}
+.knowledge-ref-dialog::backdrop { background: rgb(0 0 0 / 28%); }
+.knowledge-ref-dialog h3 { margin: 0; }
+.knowledge-ref-dialog fieldset {
+  display: grid;
+  gap: 6px;
+  border: 0;
+  margin: 0;
+  padding: 8px 0;
+}
+.knowledge-ref-dialog p { font-size: .875rem; }
+.knowledge-ref-dialog button { margin: 12px 8px 0 0; }

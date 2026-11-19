@@ -358,6 +358,8 @@ func (r *AssistantRepo) putAssistantSession(userID int64, v domain.AssistantSess
 		v.Archived = old.Archived
 		v.Shared = old.Shared
 		// Environment preferences are changed only by the dedicated, locked setter.
+		v.KnowledgeRestricted = old.KnowledgeRestricted || len(old.KnowledgeRefs) > 0
+		v.KnowledgeRefs = old.KnowledgeRefs
 		v.SandboxProfileID = old.SandboxProfileID
 		if v.WorkspaceRunID == "" {
 			v.WorkspaceRunID = old.WorkspaceRunID
@@ -721,4 +723,17 @@ func decodeAssistantTask(row assistantTaskRow) domain.AssistantTask {
 func (r *AssistantRepo) AssistantTaskExists(projectID, id string) bool {
 	var count int64
 	return r.DB.Model(&assistantTaskRow{}).Where("id = ? AND project_id = ?", id, projectID).Count(&count).Error == nil && count > 0
+}
+
+func (r *AssistantRepo) SetAssistantSessionKnowledge(userID int64, id string, refs []domain.KnowledgeRef) error {
+	return r.DB.Transaction(func(tx *gorm.DB) error {
+		var row assistantSessionRow
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ? AND user_id = ?", assistantRecordID(id), userID).Take(&row).Error; err != nil {
+			return fmt.Errorf("会话不存在")
+		}
+		item := decodeAssistantSession(row)
+		item.KnowledgeRestricted = item.KnowledgeRestricted || len(item.KnowledgeRefs) > 0 || len(refs) > 0
+		item.KnowledgeRefs = refs
+		return tx.Model(&assistantSessionRow{}).Where("id = ? AND user_id = ?", row.ID, userID).Update("payload", mustJSON(item)).Error
+	})
 }

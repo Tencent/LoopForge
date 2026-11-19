@@ -298,6 +298,14 @@ func (h *assistantHandlers) session(c *gin.Context) {
 			return
 		}
 		conv := body.assistantConversation
+		if existing.ID != "" {
+			conv.KnowledgeRefs = existing.KnowledgeRefs
+		}
+		if err := domain.ValidateKnowledgeRefs(conv.KnowledgeRefs); err != nil {
+			c.JSON(400, gin.H{"error": err.Error()})
+			return
+		}
+		conv.KnowledgeRestricted = existing.KnowledgeRestricted || len(conv.KnowledgeRefs) > 0
 		conv.RuntimeMode = existing.Mode()
 		conv.ExecutionTargetLocked = existing.ExecutionLocked()
 		if existing.ID != "" && existing.ExecutionLocked() {
@@ -607,4 +615,43 @@ func deleteAssistantCLISession(userID int64, id string) {
 
 func assistantCLISessionName(name, id string) bool {
 	return name == id || strings.HasPrefix(name, id+".")
+}
+
+func (h *assistantHandlers) sessionKnowledge(c *gin.Context) {
+	user, ok := h.requestUser(c.Request, true)
+	if !ok {
+		c.JSON(401, gin.H{"error": "请先登录"})
+		return
+	}
+	id := c.Param("id")
+	owner, _, err := h.conversationScope(c, id, "", "", user.ID)
+	if err != nil {
+		c.JSON(403, gin.H{"error": err.Error()})
+		return
+	}
+	s, ok := h.repo.AssistantSession(owner, id)
+	if !ok || s.RunID != "" {
+		c.JSON(400, gin.H{"error": "请选择普通对话"})
+		return
+	}
+	var body struct {
+		Refs *[]domain.KnowledgeRef `json:"knowledgeRefs"`
+	}
+	if !decode(c, &body) {
+		return
+	}
+	if body.Refs == nil {
+		c.JSON(400, gin.H{"error": "缺少知识库引用列表"})
+		return
+	}
+	if err := domain.ValidateKnowledgeRefs(*body.Refs); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+	if err := h.repo.SetAssistantSessionKnowledge(owner, id, *body.Refs); err != nil {
+		respond(c, err)
+		return
+	}
+	saved, _ := h.repo.AssistantSession(owner, id)
+	c.JSON(200, saved)
 }

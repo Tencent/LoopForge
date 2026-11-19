@@ -24,15 +24,22 @@ const ProxyTokenTTL = 48 * time.Hour
 // and signed with a key derived from the upstream token, so rotating the
 // upstream token revokes every outstanding proxy token.
 type ProxyClaims struct {
-	ProjectID string `json:"p,omitempty"`
-	UserID    int64  `json:"u,omitempty"`
-	AgentID   string `json:"a,omitempty"`
-	ExpiresAt int64  `json:"e"`
+	Ref       *domain.KnowledgeRef `json:"ref,omitempty"`
+	Attempt   int                  `json:"attempt,omitempty"`
+	RunID     string               `json:"run,omitempty"`
+	NodeID    string               `json:"node,omitempty"`
+	ProjectID string               `json:"p,omitempty"`
+	UserID    int64                `json:"u,omitempty"`
+	AgentID   string               `json:"a,omitempty"`
+	ExpiresAt int64                `json:"e"`
 }
 
 var errInvalidProxyToken = errors.New("invalid knowledge proxy token")
 
 func SignProxyToken(settings domain.KnowledgeSettings, claims ProxyClaims, now time.Time) (string, error) {
+	if settings.Token == "" && (claims.Ref == nil || claims.Ref.ServerID == domain.KnowledgeMCPServerID) {
+		return "", ErrNotConfigured
+	}
 	key := proxyKey(settings)
 	if key == nil {
 		return "", ErrNotConfigured
@@ -78,12 +85,17 @@ func VerifyProxyToken(settings domain.KnowledgeSettings, token string, now time.
 
 func proxyKey(settings domain.KnowledgeSettings) []byte {
 	upstream := strings.TrimSpace(settings.Token)
-	if upstream == "" {
-		return nil
-	}
+
 	secret := strings.TrimSpace(os.Getenv("AGENTFLOW_SESSION_SECRET"))
 	if secret == "" {
 		secret = strings.TrimSpace(os.Getenv("SESSION_SECRET"))
+	}
+	if upstream == "" {
+		if secret == "" {
+			return nil
+		}
+		upstream = secret
+		secret = "external-knowledge-only"
 	}
 	mac := hmac.New(sha256.New, []byte(upstream))
 	mac.Write([]byte("agentflow-knowledge-proxy|" + secret))

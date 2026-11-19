@@ -1,9 +1,12 @@
 package httpapi
 
 import (
+	"agentflow/internal/knowledge"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"time"
@@ -271,7 +274,7 @@ func tapdInnerToolAllowed(mode AgentToolMode, name string) bool {
 
 func (h *agentToolGateway) buildCatalog(ctx context.Context, session *AgentToolSession) []agentToolDescriptor {
 	if session != nil && session.RuntimeMode == domain.AssistantModeWorkspace {
-		out := workspaceIntegrationCatalog(session)
+		out := append(workspaceIntegrationCatalog(session), h.knowledgeReferenceCatalog(ctx, session)...)
 		for i, tool := range out {
 			if tool.Name == "workbench_workspace_open" {
 				out[i] = h.workspaceOpenDescriptorFor(session)
@@ -415,6 +418,7 @@ func (h *agentToolGateway) buildCatalog(ctx context.Context, session *AgentToolS
 	if len(mainBotWorkspaceTools(session)) > 0 {
 		out = append(out, h.workspaceOpenDescriptorFor(session))
 	}
+	out = append(out, h.knowledgeReferenceCatalog(ctx, session)...)
 	out = append(out, mainBotBrowserTools(session)...)
 	out = append(out, terminalToolDescriptors(session.Mode, session.ExecMode)...)
 	session.mu.Lock()
@@ -538,4 +542,28 @@ func mcpToolTextResult(text string, isError bool) map[string]any {
 		"content": []map[string]any{{"type": "text", "text": text}},
 		"isError": isError,
 	}
+}
+
+func (h *agentToolGateway) knowledgeReferenceCatalog(ctx context.Context, s *AgentToolSession) []agentToolDescriptor {
+	var out []agentToolDescriptor
+	if len(s.KnowledgeRefs) == 0 {
+		return out
+	}
+	ctx, cancel := context.WithTimeout(ctx, knowledge.CallTimeout)
+	defer cancel()
+	for _, ref := range s.KnowledgeRefs {
+		if ctx.Err() != nil {
+			break
+		}
+		tools, _, err := referenceTools(ctx, h.deps, s.ProjectID, s.UserID, ref)
+		if err != nil {
+			s.diagnostics().platform("knowledge.unavailable", ref.ServerID+"："+err.Error(), s.User)
+			continue
+		}
+		namespace := sha256.Sum256([]byte(ref.ServerID))
+		for _, tool := range tools {
+			out = append(out, agentToolDescriptor{Name: fmt.Sprintf("kb_%x__%s", namespace[:6], tool.Name), Kind: "knowledge", ServerID: ref.ServerID, UpstreamName: tool.Name, InputSchema: defaultToolSchema(tool.InputSchema), Description: ref.ServerID + " · " + tool.Description})
+		}
+	}
+	return out
 }

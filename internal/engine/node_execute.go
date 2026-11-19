@@ -713,9 +713,28 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 			if requiresSubmit {
 				prompt = appendSubmitGateInstruction(prompt, node.RejectTo, feedback == gateMissingRetryMarker)
 			}
-			assets := e.resolveAssets(agent, current.ExecutionContext.ProjectID, wf.ID, current.ExecutionContext.ResponsibleUserID)
+			assets := e.resolveNodeAssets(agent, current, wf.ID, effectiveNode)
+			if len(effectiveNode.KnowledgeRefs) > 0 {
+				prompt += "\n" + domain.KnowledgeLookupInstruction
+			}
 			warnMCPSkipped := func(message string) {
 				sink(domain.TelemetryEvent{Category: "mcp", Name: "mcp.skipped", Phase: "start", Level: "warn", Message: message})
+			}
+			for _, ref := range effectiveNode.KnowledgeRefs {
+				id := ref.ServerID
+				if id != domain.KnowledgeMCPServerID {
+					id = domain.KnowledgeMCPServerID + "-" + id
+				}
+				found := false
+				for _, server := range assets.MCPServers {
+					if server.ID == id {
+						found = true
+						break
+					}
+				}
+				if !found {
+					warnMCPSkipped("知识服务未装配：" + ref.ServerID)
+				}
 			}
 			if warning := knowledgeSkippedWarning(agent, assets); warning != "" {
 				warnMCPSkipped(warning)

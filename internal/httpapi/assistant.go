@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -318,6 +319,10 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 		sess.mu.Unlock()
 		if saved, ok := h.repo.AssistantSession(ownerID, req.SessionID); ok {
 			sess.SandboxProfileID = saved.SandboxProfileID
+			sess.KnowledgeRefs = saved.KnowledgeRefs
+			for _, ref := range saved.KnowledgeRefs {
+				sess.MCPServers = slices.DeleteFunc(sess.MCPServers, func(s domain.MCPServerDefinition) bool { return s.ID == ref.ServerID })
+			}
 		}
 		if req.RunID == "" {
 			if conv, ok := h.repo.AssistantSession(ownerID, req.SessionID); ok {
@@ -496,6 +501,9 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 					prompt = assistantWorkspaceSystemPrompt + "\n审批模式：" + approvalMode + "。\n" + prompt
 				} else {
 					prompt = assistantPlatformExecutionReminder + "\n" + prompt
+				}
+				if len(toolSession.KnowledgeRefs) > 0 {
+					prompt += "\n" + domain.KnowledgeLookupInstruction
 				}
 				prompt += conversationAttachmentNote(cliRoot, req)
 				cliReq := assistantCLIRequest{Executor: req.Executor, Prompt: prompt, Model: req.Model, Effort: req.Effort, SessionID: cliSessionID, Resume: resume, UserID: u.ID, Native: true, MCPConfig: mcp, Settings: settings, SystemPrompt: system, SessionRoot: cliRoot, OnUsage: turnUsage.add, Workspace: req.workspaceMode, RemoteBinary: req.workspaceMode || toolSession.ExecutionRunnerID != "", Execute: h.conversationExecutor(toolSession, cliRoot)}
@@ -737,14 +745,19 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 		{
 			stored := append([]assistantMessage{}, req.Messages...)
 			var runIDs []string
+			var reads []domain.KnowledgeRead
 			var assets []domain.AssistantAssetRef
 			if toolSession != nil {
 				toolSession.mu.Lock()
 				runIDs = append(runIDs, toolSession.runIDs...)
 				assets = append(assets, toolSession.assets...)
+				reads = append(reads, toolSession.knowledgeReads...)
+				for i := range reads {
+					reads[i].Cited = reads[i].Status == "已返回" && strings.Contains(reply.Message, "[[knowledge:"+reads[i].ID+"]]")
+				}
 				toolSession.mu.Unlock()
 			}
-			stored = append(stored, assistantMessage{Assets: assets, RunIDs: runIDs, Activity: activityEvents, StartedAt: &startedAt, CreatedAt: time.Now().UTC(), SpeakerName: reply.SpeakerName, SpeakerAgentID: reply.SpeakerAgentID, Model: replyModel, Usage: turnUsage.snapshot(), Role: "assistant", Content: jsonObject(gin.H{"message": reply.Message, "drafts": reply.Drafts}), Attachments: reply.Images, GenerationID: assistantControlScopeFrom(modelCtx).GenerationID})
+			stored = append(stored, assistantMessage{KnowledgeReads: reads, Assets: assets, RunIDs: runIDs, Activity: activityEvents, StartedAt: &startedAt, CreatedAt: time.Now().UTC(), SpeakerName: reply.SpeakerName, SpeakerAgentID: reply.SpeakerAgentID, Model: replyModel, Usage: turnUsage.snapshot(), Role: "assistant", Content: jsonObject(gin.H{"message": reply.Message, "drafts": reply.Drafts}), Attachments: reply.Images, GenerationID: assistantControlScopeFrom(modelCtx).GenerationID})
 			conversation := assistantConversation{Shared: shared, ID: req.SessionID, ProjectID: req.ProjectID, Model: req.Model, Effort: req.Effort, Executor: req.Executor, RunID: req.RunID, Messages: stored}
 			if toolSession != nil {
 				conversation.WorkspaceRunID = toolSession.conversationWorkspace()

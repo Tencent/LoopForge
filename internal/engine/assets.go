@@ -36,7 +36,7 @@ func (e *Engine) platformMCPServer() domain.MCPServerDefinition {
 // knowledgeMCPServer materializes the reserved read-only knowledge proxy with
 // a fresh project-scoped token. It degrades to a no-op while the knowledge
 // base is not connected, so turning the role toggle on never fails a run.
-func (e *Engine) knowledgeMCPServer(agentID, projectID string, userID int64) (domain.MCPServerDefinition, bool) {
+func (e *Engine) knowledgeMCPServer(claims knowledge.ProxyClaims) (domain.MCPServerDefinition, bool) {
 	if e.repo == nil {
 		return domain.MCPServerDefinition{}, false
 	}
@@ -44,10 +44,10 @@ func (e *Engine) knowledgeMCPServer(agentID, projectID string, userID int64) (do
 	base := e.platformMCPBase
 	e.mu.Unlock()
 	settings := e.repo.KnowledgeSettings()
-	if !settings.Ready() {
+	if !settings.Ready() && (claims.Ref == nil || claims.Ref.ServerID == domain.KnowledgeMCPServerID) {
 		return domain.MCPServerDefinition{}, false
 	}
-	token, err := knowledge.SignProxyToken(settings, knowledge.ProxyClaims{ProjectID: projectID, UserID: userID, AgentID: agentID}, time.Now())
+	token, err := knowledge.SignProxyToken(settings, claims, time.Now())
 	if err != nil {
 		return domain.MCPServerDefinition{}, false
 	}
@@ -134,12 +134,54 @@ func (e *Engine) resolveAssets(agent domain.AgentDefinition, projectID, workflow
 		bundle.MCPServers = append(bundle.MCPServers, e.platformMCPServer())
 	}
 	if agent.KnowledgeBase {
-		if v, ok := e.knowledgeMCPServer(agent.ID, projectID, userID); ok {
+		if v, ok := e.knowledgeMCPServer(knowledge.ProxyClaims{ProjectID: projectID, UserID: userID, AgentID: agent.ID}); ok {
 			bundle.MCPServers = append(bundle.MCPServers, v)
 			bundle.Rules = append(bundle.Rules, knowledge.UsageRule())
 		}
 	}
 	e.appendWorkflowGlobalRules(&bundle, projectID, workflowID)
+	return bundle
+}
+
+func (e *Engine) resolveNodeAssets(agent domain.AgentDefinition, run domain.Run, wfID string, node domain.WorkflowNode) domain.AgentAssetBundle {
+	project := run.ExecutionContext.ProjectID
+	uid := run.ExecutionContext.ResponsibleUserID
+	selected := map[string]bool{}
+	for _, ref := range node.KnowledgeRefs {
+		selected[ref.ServerID] = true
+	}
+	ids := make([]string, 0, len(agent.MCPServers))
+	for _, id := range agent.MCPServers {
+		if !selected[id] {
+			ids = append(ids, id)
+		}
+	}
+	agent.MCPServers = ids
+	if selected[domain.KnowledgeMCPServerID] {
+		agent.KnowledgeBase = false
+	}
+	bundle := e.resolveAssets(agent, project, wfID, uid)
+	attempt := 0
+	if nr := run.Nodes[node.ID]; nr != nil {
+		attempt = nr.Attempt
+	}
+	for _, ref := range node.KnowledgeRefs {
+		s, ok := e.knowledgeMCPServer(knowledge.ProxyClaims{ProjectID: project, UserID: uid, AgentID: agent.ID, RunID: run.ID, NodeID: node.ID, Attempt: attempt, Ref: &ref})
+		if !ok {
+			continue
+		}
+		s.ID = ref.ServerID
+		if ref.ServerID != domain.KnowledgeMCPServerID {
+			v, ok := e.repo.MCPServer(ref.ServerID)
+			if !ok || !roleMCPServerVisible(v, project, uid) {
+				continue
+			}
+			s.ID = domain.KnowledgeMCPServerID + "-" + v.ID
+			s.Name = v.Name
+			s.Description = v.Description
+		}
+		bundle.MCPServers = append(bundle.MCPServers, s)
+	}
 	return bundle
 }
 

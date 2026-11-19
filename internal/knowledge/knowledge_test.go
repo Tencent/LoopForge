@@ -93,3 +93,16 @@ func TestNormalizeDocPath(t *testing.T) {
 		}
 	}
 }
+
+func TestNodeKnowledgeTokenBindsAttemptAndSources(t *testing.T) {
+	now := time.Now()
+	settings := domain.KnowledgeSettings{Token: "test-key"}
+	token, err := SignProxyToken(settings, ProxyClaims{ProjectID: "p", RunID: "r", NodeID: "n", Attempt: 2, Ref: &domain.KnowledgeRef{ServerID: domain.KnowledgeMCPServerID, Mode: "allowlist", Sources: []string{"dns"}}}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	claims, err := VerifyProxyToken(settings, token, now)
+	if err != nil || claims.Attempt != 2 || claims.NodeID != "n" || claims.RunID != "r" || claims.Ref == nil || len(claims.Ref.Sources) != 1 || claims.Ref.Sources[0] != "dns" {
+		t.Fatalf("claims=%+v err=%v", claims, err)
+	}
+}

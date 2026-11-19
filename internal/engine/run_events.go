@@ -286,3 +286,11 @@ func appendControlTelemetry(r *domain.Run, nodeID, name, message string) {
 	r.TelemetrySequence++
 	r.Telemetry = append(r.Telemetry, domain.TelemetryEvent{ID: fmt.Sprintf("obs-%d", now.UnixNano()), RunID: r.ID, NodeID: nodeID, Sequence: r.TelemetrySequence, Timestamp: now, Category: "verification", Name: name, Phase: "finish", Level: "info", Message: message})
 }
+
+func (e *Engine) RecordKnowledgeRead(runID, nodeID string, read domain.KnowledgeRead) {
+	e.updateRun(runID, func(r *domain.Run) {
+		if node := r.Nodes[nodeID]; node != nil && node.Attempt == read.Attempt {
+			node.KnowledgeReads = append(node.KnowledgeReads, read)
+		}
+	})
+}
