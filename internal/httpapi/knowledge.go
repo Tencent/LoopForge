@@ -272,8 +272,12 @@ func (h *knowledgeHandlers) checkReferences(c *gin.Context) {
 			return
 		}
 		tools, _, err := referenceTools(ctx, h.deps, project, user.ID, ref)
-		if err != nil || len(tools) == 0 {
-			c.JSON(400, gin.H{"error": ref.ServerID + "：当前身份无法发现可用只读工具"})
+		if err != nil {
+			c.JSON(400, gin.H{"error": ref.ServerID + "：" + err.Error()})
+			return
+		}
+		if len(tools) == 0 {
+			c.JSON(400, gin.H{"error": ref.ServerID + "：未发现声明为只读的工具，请检查端点的工具配置"})
 			return
 		}
 		if ref.ServerID == domain.KnowledgeMCPServerID && len(ref.Sources) > 0 {

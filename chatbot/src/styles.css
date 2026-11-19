@@ -2666,6 +2666,32 @@ a.project-entry {
 .reply-timing[open] summary svg {
   transform: rotate(90deg);
 }
+.knowledge-reads {
+  margin: 6px 0;
+  font-size: 11px;
+  color: var(--muted);
+}
+.knowledge-reads > summary {
+  display: inline-flex;
+  align-items: center;
+  cursor: pointer;
+  list-style: none;
+}
+.knowledge-reads > summary::-webkit-details-marker {
+  display: none;
+}
+.knowledge-reads > summary::before {
+  content: "▸";
+  margin-right: 6px;
+  transition: transform 0.15s;
+}
+.knowledge-reads[open] > summary::before {
+  transform: rotate(90deg);
+}
+.knowledge-reads > p {
+  margin: 4px 0 0 18px;
+  line-height: 1.5;
+}
 .reply-divider {
   display: block;
   width: 100%;
@@ -3813,6 +3839,12 @@ a.draft-title {
 .project-picker.is-unset span,
 .project-picker.is-unset svg {
   color: var(--home-blue, #5273dc);
+}
+/* The knowledge picker is a sibling of the project/environment breadcrumbs,
+   so it reads with the same weight and label colour. */
+.knowledge-picker span {
+  font-weight: 600;
+  color: var(--text);
 }
 .composer {
   container-type: inline-size;

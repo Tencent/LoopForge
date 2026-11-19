@@ -18,4 +18,10 @@
   padding: 8px 0;
 }
 .knowledge-ref-dialog p { font-size: .875rem; }
-.knowledge-ref-dialog button { margin: 12px 8px 0 0; }
+.knowledge-ref-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 20px;
+}
+.knowledge-ref-footer .button { min-width: 76px; }
