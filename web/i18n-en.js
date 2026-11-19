@@ -244,5 +244,11 @@ Object.assign(window.LF_I18N_EN,{
   "解析中":"Processing",
   "排队中":"Pending",
   "已发布":"Published",
-  "已驳回":"Rejected"
+  "已驳回":"Rejected",
+  "选择当前对话或节点可检索的知识库。":"Choose which knowledge bases this conversation or node can search.",
+  "可用范围取决于当前账号权限，仅启用服务声明为只读的工具。":"Visibility follows your account permissions; only read-only tools are enabled.",
+  "可检索范围":"Search scope",
+  "选择知识库":"Select knowledge bases",
+  "请选择至少一个知识库":"Select at least one knowledge base",
+  "高级：手动输入或查看来源 ID":"Advanced: edit or inspect source IDs"
 });
