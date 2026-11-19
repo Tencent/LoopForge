@@ -40,6 +40,8 @@ func TestParseDeliveryMRURL(t *testing.T) {
 		{" https://GHE.Example.com:443/team/svc/pull/4/ ", "ghe:ghe.example.com/team/svc", "https://ghe.example.com/team/svc/pull/4", 4},
 		{"https://gitlab.example.org/group/sub/app/-/merge_requests/3", "gitlab:gitlab.example.org/group/sub/app", "https://gitlab.example.org/group/sub/app/-/merge_requests/3", 3},
 		{"https://gitlab.example.org:8443/g/r/-/merge_requests/1", "gitlab:gitlab.example.org:8443/g/r", "https://gitlab.example.org:8443/g/r/-/merge_requests/1", 1},
+		{"https://forge.example.org/team/app/pulls/7", "forge:https://forge.example.org/team/app", "https://forge.example.org/team/app/pulls/7", 7},
+		{"https://forge.example.org/code/team/app/pulls/8", "forge:https://forge.example.org/code/team/app", "https://forge.example.org/code/team/app/pulls/8", 8},
 	}
 	for _, tc := range cases {
 		project, iid, url, ok := ParseDeliveryMRURL(tc.in)

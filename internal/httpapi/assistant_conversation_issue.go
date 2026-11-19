@@ -136,16 +136,24 @@ func (h *agentToolGateway) recordConversationMRs(issueID string, delivered []del
 			continue
 		}
 		mr := domain.DeliveryMR{Repository: r.Repository, Project: project, IID: iid, URL: url, State: "opened", TargetBranch: r.TargetBranch}
-		if repo, ok := repositoryForMRProject(repos, project); ok {
-			mr.RepositoryID = repo.ID
+		repository, bound := repositoryForMRProject(repos, project)
+		if bound {
+			mr.RepositoryID = repository.ID
 			if mr.Repository == "" {
-				mr.Repository = repo.Name
+				mr.Repository = repository.Name
 			}
 		}
 		if mr.Repository == "" {
 			mr.Repository = project
 		}
-		if err := h.repo.EnsureMRDeliveryState(project, iid, url, issueID); err != nil {
+		if ref, isForge := domain.ParseForgeProject(project); isForge {
+			if !bound || r.ForgeUserID <= 0 {
+				continue
+			}
+			if err := h.repo.EnsureForgeDeliveryState(ref, iid, issueID, r.ForgeUserID); err != nil {
+				return err
+			}
+		} else if err := h.repo.EnsureMRDeliveryState(project, iid, url, issueID); err != nil {
 			return err
 		}
 		if err := h.repo.SetMRDeliveryRegisteredBy(project, iid, r.RegisteredBy); err != nil {
@@ -181,8 +189,16 @@ func (h *agentToolGateway) recordConversationMRs(issueID string, delivered []del
 }
 
 // repositoryForMRProject finds the registered repository a PR/MR project key
-// (team/repo, github:owner/repo) belongs to.
+// belongs to.
 func repositoryForMRProject(repos []domain.Repository, project string) (domain.Repository, bool) {
+	if domain.HasForgeProjectPrefix(project) {
+		for _, r := range repos {
+			if domain.IsForgeRepositoryProvider(r.Provider) && r.GongfengProjectID == project {
+				return r, true
+			}
+		}
+		return domain.Repository{}, false
+	}
 	for _, r := range repos {
 		for _, raw := range []string{r.CloneURL, r.WebURL} {
 			if info, ok := domain.ParseRepositoryURL(raw); ok && strings.EqualFold(info.Project, project) {

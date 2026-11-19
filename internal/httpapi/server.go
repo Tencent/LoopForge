@@ -22,6 +22,7 @@ import (
 	"agentflow/internal/auth"
 	"agentflow/internal/domain"
 	"agentflow/internal/engine"
+	"agentflow/internal/forge"
 	"agentflow/internal/knowledge"
 	"agentflow/internal/mcpserver"
 	"agentflow/internal/notification"
@@ -282,6 +283,9 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.GET("/api/users/:id/git-ssh-keys", api.users.gitSSHKeys)
 	g.PUT("/api/users/:id/git-ssh-keys", api.users.gitSSHKeys)
 	g.DELETE("/api/users/:id/git-ssh-keys/:keyID", api.users.gitSSHKeys)
+	g.GET("/api/users/:id/forge-tokens", api.users.forgeTokens)
+	g.PUT("/api/users/:id/forge-tokens", api.users.forgeTokens)
+	g.DELETE("/api/users/:id/forge-tokens/:tokenID", api.users.forgeTokens)
 	g.GET("/api/users/:id/git-http-credentials", api.users.gitHTTPCredentials)
 	g.PUT("/api/users/:id/git-http-credentials", api.users.gitHTTPCredentials)
 	g.DELETE("/api/users/:id/git-http-credentials/:credID", api.users.gitHTTPCredentials)
@@ -649,6 +653,7 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.POST("/internal/workspace-checkpoint", func(c *gin.Context) { e.HandleWorkspaceCheckpoint(c.Writer, c.Request) })
 	g.POST(runnerWorkspaceRelayPath, handleRunnerWorkspaceRelay(e, runnerControls))
 	g.POST("/internal/agent-tools/:token/mcp", api.handleAgentToolMCP)
+	g.POST(forge.RunMCPPath, api.runs.forgejoRunMCP)
 	g.DELETE("/internal/agent-tools/:token/mcp", api.handleAgentToolMCP)
 	asst.api = g
 	d.api = g
@@ -868,7 +873,7 @@ func basicAuth(user, pass string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// The runner machine plane has its own bind/session authentication and
 		// must remain usable behind a gateway login or preview Basic Auth.
-		if c.Request.URL.Path == insightIngestPath || strings.HasPrefix(c.Request.URL.Path, "/runners/") || strings.HasPrefix(c.Request.URL.Path, "/internal/agent-tools/") {
+		if c.Request.URL.Path == insightIngestPath || c.Request.URL.Path == forge.RunMCPPath || strings.HasPrefix(c.Request.URL.Path, "/runners/") || strings.HasPrefix(c.Request.URL.Path, "/internal/agent-tools/") {
 			c.Next()
 			return
 		}

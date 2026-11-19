@@ -25,10 +25,10 @@ func TestRunnerIntegrateAndConversationPushCanceled(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := e.integrateOnRunner(ctx, runner, run, domain.RepositoryContext{RepositoryID: "missing"}, false); err == nil {
+	if _, _, err := e.integrateOnRunner(ctx, runner, run, domain.RepositoryContext{RepositoryID: "missing"}, false); err == nil {
 		t.Fatal("missing integration repository accepted")
 	}
-	if _, err := e.integrateOnRunner(ctx, runner, run, run.Repositories[0], false); !errors.Is(err, context.Canceled) {
+	if _, _, err := e.integrateOnRunner(ctx, runner, run, run.Repositories[0], false); !errors.Is(err, context.Canceled) {
 		t.Fatalf("integrate cancel = %v", err)
 	}
 	if _, err := e.pushConversationOnRunner(ctx, runner.ID, run, run.Repositories, 0, "name", "mail", "message", ""); !errors.Is(err, context.Canceled) {

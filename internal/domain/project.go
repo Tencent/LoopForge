@@ -73,6 +73,11 @@ func GitOnlyRepositoryProvider(provider string) bool {
 	return provider == RepositoryProviderSSH || provider == RepositoryProviderHTTPS
 }
 
+// RepositoryUsesSSH describes the Git transport independently of the hosting API.
+func RepositoryUsesSSH(provider string) bool {
+	return provider == RepositoryProviderSSH || IsForgeRepositoryProvider(provider)
+}
+
 type Repository struct {
 	ID                         string    `json:"id"`
 	ProjectID                  string    `json:"projectId"`

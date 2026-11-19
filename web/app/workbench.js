@@ -66,6 +66,8 @@ const CREDENTIAL_KINDS=[
     use:'SSH 密钥用于克隆和推送；创建 PR/MR 需要访问令牌',dialog:()=>openGitSSHKeys(),action:'管理密钥'},
   {key:'gitHttpCredentials',group:'platform',name:'Git HTTPS',short:'Git 访问令牌',icon:'lock',
     use:'按主机管理 HTTPS 访问令牌，工作区的 git、gh、glab 自动认证',dialog:()=>openGitHTTPCredentials(),action:'管理令牌'},
+  {key:'forgeToken',group:'platform',name:'Forgejo',short:'访问令牌',icon:'key',
+    use:'按实例管理用于 PR 交付的个人令牌',action:'管理令牌',dialog:()=>openForgeTokens()},
   {key:'codeBuddyApiKey',group:'model',name:'CodeBuddy',short:'CodeBuddy API Key',logo:'codebuddy',
     use:'AI 对话与 SOP 的 CodeBuddy 执行器',
     description:'AI 对话（含 Claude、GPT 等模型）和 SOP 的 CodeBuddy 执行器都使用它；网络环境按账号所在环境配置。',

@@ -2,6 +2,7 @@ package engine
 
 import (
 	"agentflow/internal/domain"
+	"agentflow/internal/forge"
 	"agentflow/internal/gitwork"
 	"context"
 	"fmt"
@@ -50,20 +51,20 @@ func lockIntegration(locks IntegrationLocker, id string) (func(), error) {
 // integrateScheduledRun merges each repository's work branch into its
 // integration branch once a scheduled run succeeded. It reports true when a
 // conflict sent the run back to a repair node.
-func (e *Engine) integrateScheduledRun(id string) (bool, error) {
+func (e *Engine) integrateScheduledRun(id string) (bool, []domain.DeliveryMR, error) {
 	r, ok := e.repo.RunState(id)
 	if !ok || strings.TrimSpace(r.ExecutionContext.ScheduleJobID) == "" {
-		return false, nil
+		return false, nil, nil
 	}
 	repositories := r.RepositoryContexts()
 	if len(repositories) == 0 {
-		return false, nil
+		return false, nil, nil
 	}
 	e.runEnvMu.Lock()
 	env := e.runEnvs[id]
 	e.runEnvMu.Unlock()
 	if env == nil {
-		return false, fmt.Errorf("run sandbox missing")
+		return false, nil, fmt.Errorf("run sandbox missing")
 	}
 	credentials := env.credentialSnapshot()
 	ctx := withGitIdentity(context.Background(), credentials.GitUserName, credentials.GitUserEmail)
@@ -71,7 +72,7 @@ func (e *Engine) integrateScheduledRun(id string) (bool, error) {
 	ctx = gitwork.WithSSHKeys(ctx, credentials.GitSSHKeys)
 	runner, onRunner, err := e.integrationRunner(r)
 	if err != nil {
-		return false, err
+		return false, nil, err
 	}
 	if !onRunner {
 		if missing := e.verifyDeliveryCompleteness(r, env.Workspace()); len(missing) > 0 {
@@ -80,27 +81,46 @@ func (e *Engine) integrateScheduledRun(id string) (bool, error) {
 			})
 		}
 	}
+	var delivered []domain.DeliveryMR
 	for _, rc := range repositories {
 		ctx := withRepositoryGit(ctx, rc)
 		b, w := strings.TrimSpace(rc.IntegrateBranch), strings.TrimSpace(rc.WorkBranch)
-		if b == "" || w == "" {
+		if b == "" || w == "" || rc.ReadOnly {
 			continue
+		}
+		userID := r.ExecutionContext.ResponsibleUserID
+		var forgeRepo domain.ForgeRepository
+		if domain.IsForgeRepositoryProvider(rc.Provider) {
+			if domain.IsMainlineBranch(b, rc.DefaultBranch) {
+				return false, nil, fmt.Errorf("Forgejo 定时 SOP 的集成分支必须与默认分支不同")
+			}
+			forgeRepo, err = forge.RunRepository(rc)
+			if err != nil {
+				return false, nil, err
+			}
+			if e.repo.ForgeToken(userID, forgeRepo.Instance) == "" {
+				return false, nil, forge.ErrTokenRequired
+			}
 		}
 		unlock, err := lockIntegration(e.repo, rc.RepositoryID)
 		if err != nil {
-			return false, err
+			return false, nil, err
 		}
 		var conflicts []string
+		var head string
 		var pushDirect func() error
 		if onRunner {
-			conflicts, err = e.integrateOnRunner(ctx, runner, r, rc, false)
+			conflicts, head, err = e.integrateOnRunner(ctx, runner, r, rc, false)
 			pushDirect = func() error {
-				_, err := e.integrateOnRunner(ctx, runner, r, rc, true)
+				_, _, err := e.integrateOnRunner(ctx, runner, r, rc, true)
 				return err
 			}
 		} else {
 			workspace := repositoryWorkspacePath(env.Workspace(), rc)
 			conflicts, err = integrateLocally(ctx, r, workspace, rc)
+			if forgeRepo.Instance != "" && err == nil && len(conflicts) == 0 {
+				head, _ = gitwork.RevParse(ctx, workspace, "HEAD")
+			}
 			pushDirect = func() error {
 				_, err := gitC(ctx, workspace, "push", "origin", "HEAD:refs/heads/"+b)
 				return err
@@ -109,17 +129,25 @@ func (e *Engine) integrateScheduledRun(id string) (bool, error) {
 		if err == nil && len(conflicts) > 0 {
 			err = e.requeueIntegrationConflict(id, rc.IntegrateBranch, conflicts)
 			unlock()
-			return err == nil, err
+			return err == nil, nil, err
 		}
 		if err == nil {
-			err = e.mergeWorkBranchIntoIntegrate(id, r, rc, w, b, pushDirect)
+			if forgeRepo.Instance == "" {
+				err = e.mergeWorkBranchIntoIntegrate(id, r, rc, w, b, pushDirect)
+			} else {
+				var mr domain.DeliveryMR
+				mr, err = e.mergeForgeIntegration(ctx, r, rc, forgeRepo, head)
+				if mr.URL != "" {
+					delivered = append(delivered, mr)
+				}
+			}
 		}
 		unlock()
 		if err != nil {
-			return false, err
+			return false, nil, err
 		}
 	}
-	return false, nil
+	return false, delivered, nil
 }
 
 // integrationRunner reports whether the run's integration happens on its

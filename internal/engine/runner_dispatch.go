@@ -123,7 +123,7 @@ func (e *Engine) requireWorkBranchCapabilities(runnerID string, repositories []d
 		return nil
 	}
 	for _, repository := range repositories {
-		if repository.Provider == domain.RepositoryProviderSSH {
+		if domain.RepositoryUsesSSH(repository.Provider) {
 			runner, ok := e.repo.Runner(runnerID)
 			if !ok || !runner.SupportsGitSSH() {
 				return fmt.Errorf("Git SSH 仓库需要执行机器升级至 %s 或更新版本，请先更新 Runner", domain.RunnerVersionGitSSH)

@@ -23,6 +23,8 @@ type DeliveryMR struct {
 	// HeadSHA is the source commit a live lookup reports; empty when the host
 	// response carries none.
 	HeadSHA string `json:"-"`
+	// ForgeUserID is the actor whose personal credential tracks this delivery.
+	ForgeUserID int64 `json:"-"`
 }
 
 // BranchMRQuery asks the host for the MRs from one work branch into one target
@@ -47,6 +49,9 @@ func GongfengMRURL(project string, iid int) string {
 	}
 	if strings.HasPrefix(project, "github:") {
 		return fmt.Sprintf("https://github.com/%s/pull/%d", strings.TrimPrefix(project, "github:"), iid)
+	}
+	if ref, ok := ParseForgeProject(project); ok {
+		return ref.PullURL(iid)
 	}
 	if platform, host, path, ok := ExternalMRProject(project); ok {
 		if platform == GitPlatformGitHub {

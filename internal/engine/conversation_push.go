@@ -44,7 +44,7 @@ func (e *Engine) PushConversationWorkspace(ctx context.Context, runID string, re
 	}
 	sshKeys := e.repo.GitSSHKeysForRemotes(requesterID, sshRepositoryURLs(repositories))
 	for _, rc := range repositories {
-		if rc.Provider == domain.RepositoryProviderSSH && sshKeys[rc.CloneURL] == "" {
+		if domain.RepositoryUsesSSH(rc.Provider) && sshKeys[rc.CloneURL] == "" {
 			return nil, fmt.Errorf("%s: %w", rc.Name, gitwork.ErrSSHKeyRequired)
 		}
 	}

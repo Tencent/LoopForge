@@ -63,6 +63,15 @@ type gitSSHKeyRow struct {
 
 func (gitSSHKeyRow) TableName() string { return "user_git_ssh_keys" }
 
+type forgeTokenRow struct {
+	UserID   int64  `gorm:"primaryKey;autoIncrement:false"`
+	ID       string `gorm:"primaryKey;size:64"`
+	Instance string `gorm:"size:255;not null"`
+	Token    string `gorm:"type:text;not null"`
+}
+
+func (forgeTokenRow) TableName() string { return "user_forge_tokens" }
+
 type gitHTTPCredentialRow struct {
 	UserID   int64      `gorm:"primaryKey;autoIncrement:false"`
 	ID       string     `gorm:"primaryKey;size:64"`
@@ -502,6 +511,7 @@ type mrDeliveryStateRow struct {
 	State        string     `gorm:"column:state;index:idx_mr_delivery_refresh;size:32"`
 	TargetBranch string     `gorm:"column:target_branch;size:255"`
 	IssueID      string     `gorm:"column:issue_id;index:idx_mr_delivery_issue;size:64"`
+	ForgeUserID  int64      `gorm:"column:forge_user_id;not null;default:0"`
 	MergedAt     *time.Time `gorm:"column:merged_at;index:idx_mr_delivery_merged_at"`
 	CheckedAt    *time.Time `gorm:"column:checked_at"`
 	RegisteredBy *int64     `gorm:"column:registered_by"`
@@ -747,7 +757,7 @@ func (knowledgeSubmissionRow) TableName() string { return "knowledge_submissions
 // allModels lists every table for the sqlite test schema (AutoMigrate).
 func allModels() []any {
 	return []any{domain.BotUserBinding{}, domain.BotBindingChallenge{}, domain.BotConnection{}, domain.BotConversation{}, domain.BotInteraction{}, notificationBotRow{}, botCredentialRow{}, domain.NotificationDelivery{},
-		userRow{}, localAccountRow{}, userConfigRow{}, gitSSHKeyRow{}, gitHTTPCredentialRow{}, authIntegrationRow{}, platformCodeBuddyKeyRow{}, apiTokenRow{}, genericTemplateRow{},
+		userRow{}, localAccountRow{}, userConfigRow{}, gitSSHKeyRow{}, forgeTokenRow{}, gitHTTPCredentialRow{}, authIntegrationRow{}, platformCodeBuddyKeyRow{}, apiTokenRow{}, genericTemplateRow{},
 		insightSourceRow{}, insightExecutionRow{},
 		projectRow{}, projectMemberRow{}, repositoryRow{}, businessDomainRow{}, businessDomainAssignmentRow{},
 		agentRow{}, ruleRow{}, skillRow{}, skillFileRow{}, mcpServerRow{}, mcpFileRow{}, executorRow{},

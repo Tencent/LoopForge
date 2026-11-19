@@ -310,7 +310,7 @@ func (h *streamHandlers) prepareClarifyRepo(ctx context.Context, repo domain.Rep
 	// Resolve the configured default before choosing a cache. Changing a
 	// repository's main branch must not reuse its previous branch's checkout.
 	cacheKey := repo.ID + "\x00" + resolvedBranch
-	ssh := repo.Provider == domain.RepositoryProviderSSH
+	ssh := domain.RepositoryUsesSSH(repo.Provider)
 	if ssh {
 		keys := h.repo.GitSSHKeysForRemotes(responsibleUserID, []string{repo.CloneURL})
 		key := keys[repo.CloneURL]
@@ -355,7 +355,7 @@ func (h *streamHandlers) prepareClarifyRepo(ctx context.Context, repo domain.Rep
 // Git checkouts are cloned before selecting a branch. Never switch the user's
 // original checkout to the configured main branch.
 func clarifyRepositorySource(repository domain.Repository, selectedBaseBranch string) (domain.Repository, bool) {
-	if repository.Provider == domain.RepositoryProviderSSH {
+	if domain.RepositoryUsesSSH(repository.Provider) {
 		return repository, false
 	}
 	localPath := strings.TrimSpace(repository.LocalPath)

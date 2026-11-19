@@ -13,7 +13,24 @@ import (
 
 var errMCPApprovalExpired = errors.New("本次外部 MCP 调用已结束，审批已失效，操作未执行")
 
-func (h *agentToolGateway) waitForMCPWriteApproval(ctx context.Context, session *AgentToolSession, name string, call assistantMCPCall) error {
+func (h *agentToolGateway) authorizeMCPWrite(ctx context.Context, session *AgentToolSession, name, destination string, call assistantMCPCall) error {
+	if !session.ExecMode.AutoWrite {
+		if err := h.waitForMCPWriteApproval(ctx, session, name, destination, call); err != nil {
+			return err
+		}
+		if !h.nativeToolTurnActive(ctx, session) {
+			return errMCPApprovalExpired
+		}
+	} else if session.ExecMode.ReviewWrites {
+		review := reviewAssistantAction(ctx, name, destination+" MCP 写入外部系统", map[string]any{"server": call.Server, "tool": call.Tool, "arguments": call.Arguments})
+		if !review.allows() {
+			return assistantReviewRefusal(name, review)
+		}
+	}
+	return nil
+}
+
+func (h *agentToolGateway) waitForMCPWriteApproval(ctx context.Context, session *AgentToolSession, name, destination string, call assistantMCPCall) error {
 	if ctx.Value(legacyRunnerToolRequestKey{}) != nil {
 		return errors.New("请先升级执行机器的 Runner，再使用外部 MCP 人工审批")
 	}
@@ -24,10 +41,6 @@ func (h *agentToolGateway) waitForMCPWriteApproval(ctx context.Context, session 
 	if generation == "" || !session.nativeToolPhaseActive(ctx) {
 		return errMCPApprovalExpired
 	}
-	if _, ok := h.lookupServer(session, call.Server); !ok {
-		return errors.New("当前会话没有可调用的外部 MCP 服务")
-	}
-
 	// Only this waiting request can execute the call. Every transport retry
 	// needs its own approval, and the browser never sends execution arguments.
 	id, err := newAgentToolSessionToken()
@@ -40,7 +53,7 @@ func (h *agentToolGateway) waitForMCPWriteApproval(ctx context.Context, session 
 	}
 	phase := nativeApprovalPhase(session.Token)
 	shown, hiddenFields := redactNativeApprovalInputFields(input, session.User)
-	summary := mcpServerName(h, session, call.Server) + " · " + name
+	summary := destination + " · " + name
 	if len(hiddenFields) > 0 {
 		// The approver must know the card does not show everything that will
 		// be sent upstream.

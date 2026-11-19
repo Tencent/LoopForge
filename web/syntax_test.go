@@ -501,19 +501,19 @@ const count = (html, needle) => html.split(needle).length - 1;
 
 // Groups list credentials in a fixed order.
 assert.deepEqual(cred.CREDENTIAL_GROUPS.map(g => g.id), ['platform', 'model']);
-assert.deepEqual(cred.CREDENTIAL_KINDS.filter(k => k.group === 'platform').map(k => k.key), ['gitToken', 'gitSshKey', 'gitHttpCredentials']);
+assert.deepEqual(cred.CREDENTIAL_KINDS.filter(k => k.group === 'platform').map(k => k.key), ['gitToken', 'gitSshKey', 'gitHttpCredentials', 'forgeToken']);
 assert.deepEqual(cred.CREDENTIAL_KINDS.filter(k => k.group === 'model').map(k => k.key), ['codeBuddyApiKey', 'codexApiKey', 'claudeCodeApiKey', 'agentCli.opencode', 'agentCli.cursor', 'agentCli.agy', 'agentCli.kimi', 'agentCli.pi', 'agentCli.dsh', 'agentCli.zcode']);
 
 // Progress, next-step hint, filter counts and per-group counts.
 const html = credentialPanelHTML(user);
-assert.ok(html.includes('<b>2</b> / 13 已配置'));
+assert.ok(html.includes('<b>2</b> / 14 已配置'));
 assert.ok(html.includes('data-credential-setup="codeBuddyApiKey"'), 'next step follows Git → CodeBuddy');
-assert.ok(html.includes('1 / 3') && html.includes('1 / 10'));
-assert.ok(html.includes('已配置<span>2</span>') && html.includes('未配置<span>11</span>'));
-assert.equal(count(html, 'data-credential-row='), 13);
+assert.ok(html.includes('1 / 4') && html.includes('1 / 10'));
+assert.ok(html.includes('已配置<span>2</span>') && html.includes('未配置<span>12</span>'));
+assert.equal(count(html, 'data-credential-row='), 14);
 assert.ok(!html.includes('credential-grid') && !html.includes('credential-savebar') && !html.includes('userCredentialForm'));
 // Unconfigured rows only offer 去配置; configured rows carry an inline editor with delete.
-assert.equal(count(html, 'data-credential-act="setup"'), 11);
+assert.equal(count(html, 'data-credential-act="setup"'), 12);
 assert.equal(count(html, 'credential-editor-form'), 2);
 assert.equal(count(html, 'data-credential-act="delete"'), 2);
 for (const key of ['codeBuddyApiKey', 'claudeCodeApiKey']) {
@@ -533,6 +533,9 @@ assert.deepEqual(credentialSavePayload(cred.kind('gitToken'), {secret: ' ghp_1 '
 const sshRow = credentialRowHTML(cred.kind('gitSshKey'), {...user, gitSshKeyConfigured: true});
 assert.match(sshRow, /aria-haspopup="dialog">管理密钥/);
 assert.ok(!sshRow.includes('credential-editor-form'));
+const forgeRow = credentialRowHTML(cred.kind('forgeToken'), {...user, forgeTokenConfigured: true});
+assert.match(forgeRow, /aria-haspopup="dialog">管理令牌/);
+assert.ok(!forgeRow.includes('credential-editor-form'));
 const httpsRow = credentialRowHTML(cred.kind('gitHttpCredentials'), {...user, gitHttpCredentialsConfigured: true});
 assert.match(httpsRow, /aria-haspopup="dialog">管理令牌/);
 assert.ok(!httpsRow.includes('credential-editor-form'));
