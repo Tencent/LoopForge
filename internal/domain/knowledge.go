@@ -18,14 +18,35 @@ const KnowledgeUsageRuleID = "agentflow-knowledge-usage"
 // when it has knowledge worth distilling back into the knowledge base.
 const KnowledgeArtifactBasename = "knowledge.md"
 
+const (
+	KnowledgeProviderLightCloud = "lightcloud"
+	KnowledgeProviderWeKnora    = "weknora"
+)
+
+type KnowledgeConnection struct {
+	ID              string `json:"id"`
+	Name            string `json:"name"`
+	Account         string `json:"account,omitempty"`
+	Provider        string `json:"provider,omitempty"`
+	URL             string `json:"url"`
+	Token           string `json:"token,omitempty"`
+	TokenConfigured bool   `json:"tokenConfigured"`
+	Enabled         bool   `json:"enabled"`
+}
+
 // KnowledgeSettings is the platform-wide connection to the upstream knowledge
-// base (lightcloud kb). Token is the upstream MCP bearer token; it never
-// leaves the server and Public() strips it before any API response.
+// base (lightcloud kb or WeKnora). Token is the upstream MCP bearer token or
+// WeKnora X-API-Key; it never leaves the server and Public() strips it before
+// any API response.
 type KnowledgeSettings struct {
+	Provider        string `json:"provider,omitempty"`
 	Enabled         bool   `json:"enabled"`
 	URL             string `json:"url"`
 	Token           string `json:"token,omitempty"`
 	TokenConfigured bool   `json:"tokenConfigured"`
+	// Connections holds additional named knowledge base connections (e.g. multiple
+	// WeKnora workspaces/instances) so admins can aggregate them without overwriting.
+	Connections []KnowledgeConnection `json:"connections,omitempty"`
 	// WriteEnabled gates publishing reviewed submissions upstream. Agents never
 	// receive the write tool regardless of this flag.
 	WriteEnabled bool `json:"writeEnabled"`
@@ -37,15 +58,65 @@ type KnowledgeSettings struct {
 	UpdatedAt      time.Time           `json:"updatedAt,omitempty"`
 }
 
+// EffectiveProvider returns the normalized provider name, defaulting to
+// lightcloud for backward compatibility with existing stored settings.
+func (s KnowledgeSettings) EffectiveProvider() string {
+	switch strings.ToLower(strings.TrimSpace(s.Provider)) {
+	case KnowledgeProviderWeKnora:
+		return KnowledgeProviderWeKnora
+	default:
+		return KnowledgeProviderLightCloud
+	}
+}
+
 func (s KnowledgeSettings) Public() KnowledgeSettings {
 	s.TokenConfigured = strings.TrimSpace(s.Token) != ""
 	s.Token = ""
+	if len(s.Connections) > 0 {
+		conns := make([]KnowledgeConnection, len(s.Connections))
+		for i, c := range s.Connections {
+			c.TokenConfigured = strings.TrimSpace(c.Token) != ""
+			c.Token = ""
+			conns[i] = c
+		}
+		s.Connections = conns
+	}
 	return s
+}
+
+// ActiveConnections returns all enabled connections with valid URL and Token.
+// If Connections is empty, it falls back to the primary URL/Token fields.
+func (s KnowledgeSettings) ActiveConnections() []KnowledgeConnection {
+	if !s.Enabled {
+		return nil
+	}
+	if len(s.Connections) > 0 {
+		out := make([]KnowledgeConnection, 0, len(s.Connections))
+		for _, c := range s.Connections {
+			if c.Enabled && strings.TrimSpace(c.URL) != "" && strings.TrimSpace(c.Token) != "" {
+				out = append(out, c)
+			}
+		}
+		if len(out) > 0 {
+			return out
+		}
+	}
+	if strings.TrimSpace(s.URL) != "" && strings.TrimSpace(s.Token) != "" {
+		return []KnowledgeConnection{{
+			ID:       "default",
+			Name:     "默认连接",
+			Provider: s.EffectiveProvider(),
+			URL:      s.URL,
+			Token:    s.Token,
+			Enabled:  true,
+		}}
+	}
+	return nil
 }
 
 // Ready reports whether agents and platform features may call the upstream.
 func (s KnowledgeSettings) Ready() bool {
-	return s.Enabled && strings.TrimSpace(s.URL) != "" && strings.TrimSpace(s.Token) != ""
+	return len(s.ActiveConnections()) > 0
 }
 
 // SourcesForProject returns the sources a project may read. A project entry

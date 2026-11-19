@@ -2,6 +2,7 @@ package knowledge
 
 import (
 	"context"
+	"io"
 	"net/url"
 	"slices"
 	"sort"
@@ -52,7 +53,7 @@ type Service struct {
 func NewService(store Store, newID func() string) *Service {
 	return &Service{
 		store: store,
-		dial:  func(s domain.KnowledgeSettings) (Upstream, error) { return NewClient(s) },
+		dial:  func(s domain.KnowledgeSettings) (Upstream, error) { return NewUpstream(s) },
 		now:   time.Now,
 		newID: newID,
 	}
@@ -61,6 +62,7 @@ func NewService(store Store, newID func() string) *Service {
 func (s *Service) Settings() domain.KnowledgeSettings { return s.store.KnowledgeSettings() }
 
 type SettingsInput struct {
+	Provider       string              `json:"provider"`
 	Enabled        bool                `json:"enabled"`
 	URL            string              `json:"url"`
 	Token          string              `json:"token"`
@@ -74,18 +76,34 @@ type SettingsInput struct {
 // unless ClearToken is set.
 func (s *Service) UpdateSettings(input SettingsInput, actor string) (domain.KnowledgeSettings, error) {
 	current := s.store.KnowledgeSettings()
+	provider := normalizeProvider(input.Provider, current.Provider)
 	rawURL := strings.TrimSpace(input.URL)
 	if rawURL != "" {
 		u, err := url.Parse(rawURL)
 		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
-			return current, apperr.New(apperr.Invalid, "知识库地址必须是 http(s)://host/mcp 形式")
+			msg := "知识库地址必须是 http(s)://host/mcp 形式"
+			if provider == domain.KnowledgeProviderWeKnora {
+				msg = "WeKnora 地址必须是 http(s)://host 形式"
+			}
+			return current, apperr.New(apperr.Invalid, msg)
+		}
+		if provider == domain.KnowledgeProviderWeKnora {
+			rawURL = NormalizeWeKnoraBaseURL(rawURL)
 		}
 	}
 	next := domain.KnowledgeSettings{
-		Enabled: input.Enabled, URL: rawURL, WriteEnabled: input.WriteEnabled,
+		Provider: provider,
+		Enabled:  input.Enabled, URL: rawURL, WriteEnabled: input.WriteEnabled,
 		Token:          resolveSettingsToken(input, current.Token),
+		Connections:    current.Connections,
 		DefaultSources: cleanSources(input.DefaultSources),
 		ProjectSources: cleanProjectSources(input.ProjectSources), UpdatedBy: actor,
+	}
+	if len(next.Connections) == 1 && next.URL != "" && next.Token != "" {
+		next.Connections[0].URL = next.URL
+		next.Connections[0].Token = next.Token
+		next.Connections[0].Provider = next.Provider
+		next.Connections[0].Enabled = next.Enabled
 	}
 	if next.Enabled && (next.URL == "" || next.Token == "") {
 		return current, apperr.New(apperr.Invalid, "启用前需要填写知识库地址和 Token")
@@ -94,6 +112,22 @@ func (s *Service) UpdateSettings(input SettingsInput, actor string) (domain.Know
 		return current, err
 	}
 	return s.store.KnowledgeSettings(), nil
+}
+
+func normalizeProvider(input, current string) string {
+	switch strings.ToLower(strings.TrimSpace(input)) {
+	case domain.KnowledgeProviderWeKnora:
+		return domain.KnowledgeProviderWeKnora
+	case domain.KnowledgeProviderLightCloud:
+		return domain.KnowledgeProviderLightCloud
+	case "":
+		if strings.ToLower(strings.TrimSpace(current)) == domain.KnowledgeProviderWeKnora {
+			return domain.KnowledgeProviderWeKnora
+		}
+		return domain.KnowledgeProviderLightCloud
+	default:
+		return domain.KnowledgeProviderLightCloud
+	}
 }
 
 // cleanProjectSources normalizes the per-project source lists, dropping
@@ -134,7 +168,15 @@ type CheckResult struct {
 // Check probes the upstream with the saved settings, overridden by any
 // unsaved URL/token so admins can verify a token before enabling it.
 func (s *Service) Check(ctx context.Context, overrideURL, overrideToken string) CheckResult {
+	return s.CheckWithProvider(ctx, "", overrideURL, overrideToken)
+}
+
+// CheckWithProvider probes the upstream with optional provider/URL/token overrides.
+func (s *Service) CheckWithProvider(ctx context.Context, overrideProvider, overrideURL, overrideToken string) CheckResult {
 	settings := s.store.KnowledgeSettings()
+	if strings.TrimSpace(overrideProvider) != "" {
+		settings.Provider = normalizeProvider(overrideProvider, settings.Provider)
+	}
 	if u := strings.TrimSpace(overrideURL); u != "" {
 		settings.URL = u
 	}
@@ -170,23 +212,45 @@ type SourceView struct {
 	Allowed bool `json:"allowed"`
 }
 
-// Sources lists upstream sources, marking which ones projectID may read.
+// Sources lists upstream sources across all active connections, marking which ones projectID may read.
 func (s *Service) Sources(ctx context.Context, projectID string) ([]SourceView, error) {
 	settings := s.store.KnowledgeSettings()
-	client, err := s.connect(settings)
-	if err != nil {
-		return nil, err
-	}
-	ctx, cancel := context.WithTimeout(ctx, CallTimeout)
-	defer cancel()
-	list, err := client.ListSources(ctx)
-	if err != nil {
-		return nil, apperr.New(apperr.Upstream, "知识库不可达："+err.Error())
+	conns := settings.ActiveConnections()
+	if len(conns) == 0 {
+		return nil, apperr.New(apperr.Unavailable, ErrNotConfigured.Error())
 	}
 	allowed := settings.SourcesForProject(projectID)
-	out := make([]SourceView, 0, len(list))
-	for _, src := range list {
-		out = append(out, SourceView{Source: src, Allowed: SourceAllowed(allowed, src.ID)})
+	multi := len(conns) > 1
+	out := make([]SourceView, 0)
+	var firstErr error
+	for _, conn := range conns {
+		client, err := s.dial(settingsForConnection(settings, conn))
+		if err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		cctx, cancel := context.WithTimeout(ctx, CallTimeout)
+		list, err := client.ListSources(cctx)
+		cancel()
+		if err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		for _, src := range list {
+			scopedID := EncodeScopedSourceID(settings, conn.ID, src.ID)
+			if multi && conn.Name != "" {
+				src.Name = "[" + conn.Name + "] " + src.Name
+			}
+			src.ID = scopedID
+			out = append(out, SourceView{Source: src, Allowed: SourceAllowed(allowed, scopedID)})
+		}
+	}
+	if len(out) == 0 && firstErr != nil {
+		return nil, apperr.New(apperr.Upstream, "知识库不可达："+firstErr.Error())
 	}
 	return out, nil
 }
@@ -204,22 +268,83 @@ func (s *Service) Search(ctx context.Context, projectID, query string, sources [
 		return SearchOutput{}, apperr.New(apperr.Invalid, "请输入要检索的问题或关键词")
 	}
 	settings := s.store.KnowledgeSettings()
+	conns := settings.ActiveConnections()
+	if len(conns) == 0 {
+		return SearchOutput{}, apperr.New(apperr.Unavailable, ErrNotConfigured.Error())
+	}
 	scoped, err := ScopeSources(settings.SourcesForProject(projectID), sources)
 	if err != nil {
 		return SearchOutput{}, apperr.New(apperr.Invalid, err.Error())
 	}
-	client, err := s.connect(settings)
-	if err != nil {
-		return SearchOutput{}, err
+	if len(conns) == 1 {
+		client, err := s.connect(settingsForConnection(settings, conns[0]))
+		if err != nil {
+			return SearchOutput{}, err
+		}
+		cctx, cancel := context.WithTimeout(ctx, CallTimeout)
+		defer cancel()
+		started := s.now()
+		result, err := client.Search(cctx, query, scoped)
+		if err != nil {
+			return SearchOutput{}, apperr.New(apperr.Upstream, "检索失败："+err.Error())
+		}
+		return SearchOutput{Result: result, Sources: scoped, LatencyMs: s.now().Sub(started).Milliseconds()}, nil
 	}
-	ctx, cancel := context.WithTimeout(ctx, CallTimeout)
-	defer cancel()
+
+	grouped := map[string][]string{}
+	if len(scoped) == 0 {
+		for _, c := range conns {
+			grouped[c.ID] = nil
+		}
+	} else {
+		for _, sid := range scoped {
+			conn, rawID, ok := DecodeScopedSourceID(settings, sid)
+			if ok {
+				grouped[conn.ID] = append(grouped[conn.ID], rawID)
+			}
+		}
+	}
 	started := s.now()
-	result, err := client.Search(ctx, query, scoped)
-	if err != nil {
-		return SearchOutput{}, apperr.New(apperr.Upstream, "检索失败："+err.Error())
+	var merged []SearchHit
+	var firstErr error
+	for _, conn := range conns {
+		rawIDs, want := grouped[conn.ID]
+		if !want {
+			continue
+		}
+		client, err := s.dial(settingsForConnection(settings, conn))
+		if err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		cctx, cancel := context.WithTimeout(ctx, CallTimeout)
+		res, err := client.Search(cctx, query, rawIDs)
+		cancel()
+		if err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		for _, h := range res.Results {
+			h.Source = EncodeScopedSourceID(settings, conn.ID, h.Source)
+			merged = append(merged, h)
+		}
 	}
-	return SearchOutput{Result: result, Sources: scoped, LatencyMs: s.now().Sub(started).Milliseconds()}, nil
+	if len(merged) == 0 && firstErr != nil {
+		return SearchOutput{}, apperr.New(apperr.Upstream, "检索失败："+firstErr.Error())
+	}
+	sort.Slice(merged, func(i, j int) bool { return merged[i].Score > merged[j].Score })
+	if merged == nil {
+		merged = []SearchHit{}
+	}
+	return SearchOutput{
+		Result:    SearchResult{Query: query, Mode: "hybrid", Results: merged},
+		Sources:   scoped,
+		LatencyMs: s.now().Sub(started).Milliseconds(),
+	}, nil
 }
 
 // Document fetches a source document (optionally a line range) if the
@@ -233,17 +358,278 @@ func (s *Service) Document(ctx context.Context, projectID, source, path string, 
 	if !SourceAllowed(settings.SourcesForProject(projectID), source) {
 		return Document{}, apperr.New(apperr.Forbidden, "该知识库来源不在当前项目的授权范围")
 	}
-	client, err := s.connect(settings)
+	conn, rawSource, ok := DecodeScopedSourceID(settings, source)
+	if !ok {
+		return Document{}, apperr.New(apperr.Unavailable, ErrNotConfigured.Error())
+	}
+	client, err := s.connect(settingsForConnection(settings, conn))
 	if err != nil {
 		return Document{}, err
 	}
 	ctx, cancel := context.WithTimeout(ctx, CallTimeout)
 	defer cancel()
-	doc, err := client.Fetch(ctx, source, path, start, end)
+	doc, err := client.Fetch(ctx, rawSource, path, start, end)
 	if err != nil {
 		return Document{}, apperr.New(apperr.Upstream, "读取原文失败："+err.Error())
 	}
+	doc.Source = source
 	return doc, nil
+}
+
+// Documents lists documents inside a WeKnora knowledge base when authorized for projectID.
+func (s *Service) Documents(ctx context.Context, projectID, sourceID, keyword string, page, pageSize int) (WeKnoraDocumentPage, error) {
+	sourceID = strings.TrimSpace(sourceID)
+	if sourceID == "" {
+		return WeKnoraDocumentPage{}, apperr.New(apperr.Invalid, "knowledge base id 必填")
+	}
+	settings := s.store.KnowledgeSettings()
+	if !settings.Ready() {
+		return WeKnoraDocumentPage{}, apperr.New(apperr.Unavailable, ErrNotConfigured.Error())
+	}
+	if !SourceAllowed(settings.SourcesForProject(projectID), sourceID) {
+		return WeKnoraDocumentPage{}, apperr.New(apperr.Forbidden, "该知识库来源不在当前项目的授权范围")
+	}
+	conn, rawKBID, ok := DecodeScopedSourceID(settings, sourceID)
+	if !ok {
+		return WeKnoraDocumentPage{}, apperr.New(apperr.Unavailable, ErrNotConfigured.Error())
+	}
+	if conn.Provider != "" && conn.Provider != domain.KnowledgeProviderWeKnora {
+		return WeKnoraDocumentPage{}, apperr.New(apperr.Invalid, "仅 WeKnora 引擎支持文档列表管理")
+	}
+	wc, err := NewWeKnoraClient(settingsForConnection(settings, conn))
+	if err != nil {
+		return WeKnoraDocumentPage{}, apperr.New(apperr.Unavailable, err.Error())
+	}
+	ctx, cancel := context.WithTimeout(ctx, CallTimeout)
+	defer cancel()
+	out, err := wc.ListDocuments(ctx, rawKBID, keyword, page, pageSize)
+	if err != nil {
+		return WeKnoraDocumentPage{}, apperr.New(apperr.Upstream, "获取文档列表失败："+err.Error())
+	}
+	return out, nil
+}
+
+// UploadDocument uploads a file to a WeKnora knowledge base when authorized for projectID.
+func (s *Service) UploadDocument(ctx context.Context, projectID, sourceID, filename string, r io.Reader) (WeKnoraDocument, error) {
+	sourceID = strings.TrimSpace(sourceID)
+	filename = strings.TrimSpace(filename)
+	if sourceID == "" || filename == "" {
+		return WeKnoraDocument{}, apperr.New(apperr.Invalid, "知识库和文件名必填")
+	}
+	settings := s.store.KnowledgeSettings()
+	if !settings.Ready() {
+		return WeKnoraDocument{}, apperr.New(apperr.Unavailable, ErrNotConfigured.Error())
+	}
+	if settings.EffectiveProvider() != domain.KnowledgeProviderWeKnora {
+		return WeKnoraDocument{}, apperr.New(apperr.Invalid, "仅 WeKnora 引擎支持文件上传")
+	}
+	if !SourceAllowed(settings.SourcesForProject(projectID), sourceID) {
+		return WeKnoraDocument{}, apperr.New(apperr.Forbidden, "该知识库来源不在当前项目的授权范围")
+	}
+	wc, err := NewWeKnoraClient(settings)
+	if err != nil {
+		return WeKnoraDocument{}, apperr.New(apperr.Unavailable, err.Error())
+	}
+	ctx, cancel := context.WithTimeout(ctx, 2*CallTimeout)
+	defer cancel()
+	doc, err := wc.UploadDocument(ctx, sourceID, filename, r)
+	if err != nil {
+		return WeKnoraDocument{}, apperr.New(apperr.Upstream, "上传文档失败："+err.Error())
+	}
+	return doc, nil
+}
+
+func (s *Service) requireWeKnoraClient() (domain.KnowledgeSettings, *WeKnoraClient, error) {
+	settings := s.store.KnowledgeSettings()
+	if !settings.Ready() {
+		return settings, nil, apperr.New(apperr.Unavailable, ErrNotConfigured.Error())
+	}
+	if settings.EffectiveProvider() != domain.KnowledgeProviderWeKnora {
+		return settings, nil, apperr.New(apperr.Invalid, "仅 WeKnora 引擎支持该操作")
+	}
+	wc, err := NewWeKnoraClient(settings)
+	if err != nil {
+		return settings, nil, apperr.New(apperr.Unavailable, err.Error())
+	}
+	return settings, wc, nil
+}
+
+func (s *Service) WeKnoraModels(ctx context.Context) ([]WeKnoraModel, error) {
+	_, wc, err := s.requireWeKnoraClient()
+	if err != nil {
+		return nil, err
+	}
+	ctx, cancel := context.WithTimeout(ctx, CallTimeout)
+	defer cancel()
+	models, err := wc.ListModels(ctx)
+	if err != nil {
+		return nil, apperr.New(apperr.Upstream, "获取 WeKnora 模型列表失败："+err.Error())
+	}
+	return models, nil
+}
+
+func (s *Service) CreateWeKnoraKB(ctx context.Context, projectID string, input WeKnoraCreateKBInput) (weKnoraKB, error) {
+	settings, wc, err := s.requireWeKnoraClient()
+	if err != nil {
+		return weKnoraKB{}, err
+	}
+	if strings.TrimSpace(input.Name) == "" {
+		return weKnoraKB{}, apperr.New(apperr.Invalid, "知识库名称不能为空")
+	}
+	ctx, cancel := context.WithTimeout(ctx, CallTimeout)
+	defer cancel()
+	kb, err := wc.CreateKnowledgeBase(ctx, input)
+	if err != nil {
+		return weKnoraKB{}, apperr.New(apperr.Upstream, "创建知识库失败："+err.Error())
+	}
+	// If this project has an explicit allowlist, auto-authorize the newly created KB for it.
+	if pid := strings.TrimSpace(projectID); pid != "" {
+		if list, ok := settings.ProjectSources[pid]; ok && len(list) > 0 && !slices.Contains(list, kb.ID) {
+			settings.ProjectSources[pid] = append(list, kb.ID)
+			_ = s.store.PutKnowledgeSettings(settings)
+		}
+	}
+	return kb, nil
+}
+
+func (s *Service) UpdateWeKnoraKB(ctx context.Context, projectID, kbID, name, description string) (weKnoraKB, error) {
+	settings, wc, err := s.requireWeKnoraClient()
+	if err != nil {
+		return weKnoraKB{}, err
+	}
+	if !SourceAllowed(settings.SourcesForProject(projectID), kbID) {
+		return weKnoraKB{}, apperr.New(apperr.Forbidden, "该知识库不在当前项目的授权范围")
+	}
+	ctx, cancel := context.WithTimeout(ctx, CallTimeout)
+	defer cancel()
+	kb, err := wc.UpdateKnowledgeBase(ctx, kbID, name, description)
+	if err != nil {
+		return weKnoraKB{}, apperr.New(apperr.Upstream, "更新知识库失败："+err.Error())
+	}
+	return kb, nil
+}
+
+func (s *Service) DeleteWeKnoraKB(ctx context.Context, projectID, kbID string) error {
+	settings, wc, err := s.requireWeKnoraClient()
+	if err != nil {
+		return err
+	}
+	if !SourceAllowed(settings.SourcesForProject(projectID), kbID) {
+		return apperr.New(apperr.Forbidden, "该知识库不在当前项目的授权范围")
+	}
+	ctx, cancel := context.WithTimeout(ctx, CallTimeout)
+	defer cancel()
+	if err := wc.DeleteKnowledgeBase(ctx, kbID); err != nil {
+		return apperr.New(apperr.Upstream, "删除知识库失败："+err.Error())
+	}
+	return nil
+}
+
+func (s *Service) CreateWeKnoraURLDoc(ctx context.Context, projectID, kbID, rawURL string) (WeKnoraDocument, error) {
+	settings, wc, err := s.requireWeKnoraClient()
+	if err != nil {
+		return WeKnoraDocument{}, err
+	}
+	if !SourceAllowed(settings.SourcesForProject(projectID), kbID) {
+		return WeKnoraDocument{}, apperr.New(apperr.Forbidden, "该知识库不在当前项目的授权范围")
+	}
+	if strings.TrimSpace(rawURL) == "" {
+		return WeKnoraDocument{}, apperr.New(apperr.Invalid, "网页或文档 URL 不能为空")
+	}
+	ctx, cancel := context.WithTimeout(ctx, 2*CallTimeout)
+	defer cancel()
+	doc, err := wc.CreateDocumentFromURL(ctx, kbID, rawURL)
+	if err != nil {
+		return WeKnoraDocument{}, apperr.New(apperr.Upstream, "URL 导入失败："+err.Error())
+	}
+	return doc, nil
+}
+
+func (s *Service) CreateWeKnoraManualDoc(ctx context.Context, projectID, kbID, title, content string, publish bool) (WeKnoraDocument, error) {
+	settings, wc, err := s.requireWeKnoraClient()
+	if err != nil {
+		return WeKnoraDocument{}, err
+	}
+	if !SourceAllowed(settings.SourcesForProject(projectID), kbID) {
+		return WeKnoraDocument{}, apperr.New(apperr.Forbidden, "该知识库不在当前项目的授权范围")
+	}
+	if strings.TrimSpace(title) == "" || strings.TrimSpace(content) == "" {
+		return WeKnoraDocument{}, apperr.New(apperr.Invalid, "标题和正文不能为空")
+	}
+	ctx, cancel := context.WithTimeout(ctx, CallTimeout)
+	defer cancel()
+	doc, err := wc.CreateManualDocument(ctx, kbID, title, content, publish)
+	if err != nil {
+		return WeKnoraDocument{}, apperr.New(apperr.Upstream, "创建文档失败："+err.Error())
+	}
+	return doc, nil
+}
+
+func (s *Service) UpdateWeKnoraManualDoc(ctx context.Context, projectID, docID, title, content string, publish bool) (WeKnoraDocument, error) {
+	settings, wc, err := s.requireWeKnoraClient()
+	if err != nil {
+		return WeKnoraDocument{}, err
+	}
+	ctx, cancel := context.WithTimeout(ctx, CallTimeout)
+	defer cancel()
+	if allowed := settings.SourcesForProject(projectID); len(allowed) > 0 {
+		kbID, err := wc.GetDocumentKBID(ctx, docID)
+		if err != nil {
+			return WeKnoraDocument{}, apperr.New(apperr.Upstream, "校验文档归属失败："+err.Error())
+		}
+		if !SourceAllowed(allowed, kbID) {
+			return WeKnoraDocument{}, apperr.New(apperr.Forbidden, "该文档所属知识库不在当前项目的授权范围")
+		}
+	}
+	doc, err := wc.UpdateManualDocument(ctx, docID, title, content, publish)
+	if err != nil {
+		return WeKnoraDocument{}, apperr.New(apperr.Upstream, "更新文档失败："+err.Error())
+	}
+	return doc, nil
+}
+
+func (s *Service) ReparseWeKnoraDoc(ctx context.Context, projectID, docID string) error {
+	settings, wc, err := s.requireWeKnoraClient()
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(ctx, CallTimeout)
+	defer cancel()
+	if allowed := settings.SourcesForProject(projectID); len(allowed) > 0 {
+		kbID, err := wc.GetDocumentKBID(ctx, docID)
+		if err != nil {
+			return apperr.New(apperr.Upstream, "校验文档归属失败："+err.Error())
+		}
+		if !SourceAllowed(allowed, kbID) {
+			return apperr.New(apperr.Forbidden, "该文档所属知识库不在当前项目的授权范围")
+		}
+	}
+	if err := wc.ReparseDocument(ctx, docID); err != nil {
+		return apperr.New(apperr.Upstream, "触发重解析失败："+err.Error())
+	}
+	return nil
+}
+
+func (s *Service) DeleteWeKnoraDoc(ctx context.Context, projectID, docID string) error {
+	settings, wc, err := s.requireWeKnoraClient()
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(ctx, CallTimeout)
+	defer cancel()
+	if allowed := settings.SourcesForProject(projectID); len(allowed) > 0 {
+		kbID, err := wc.GetDocumentKBID(ctx, docID)
+		if err != nil {
+			return apperr.New(apperr.Upstream, "校验文档归属失败："+err.Error())
+		}
+		if !SourceAllowed(allowed, kbID) {
+			return apperr.New(apperr.Forbidden, "该文档所属知识库不在当前项目的授权范围")
+		}
+	}
+	if err := wc.DeleteDocument(ctx, docID); err != nil {
+		return apperr.New(apperr.Upstream, "删除文档失败："+err.Error())
+	}
+	return nil
 }
 
 type UsageAgent struct {
@@ -423,22 +809,33 @@ func (s *Service) Publish(ctx context.Context, id, actor string) (domain.Knowled
 	if !SourceAllowed(settings.SourcesForProject(item.ProjectID), source) {
 		return item, apperr.New(apperr.Forbidden, "该知识库来源不在项目授权范围内")
 	}
-	path, ok := NormalizeDocPath(item.Path)
+	conn, rawSource, ok := DecodeScopedSourceID(settings, source)
 	if !ok {
-		return item, apperr.New(apperr.Invalid, "写入路径必须是仓库内的 .md 相对路径，例如 guides/xxx.md")
+		return item, apperr.New(apperr.Unavailable, ErrNotConfigured.Error())
+	}
+	connSettings := settingsForConnection(settings, conn)
+	var docPath string
+	if connSettings.EffectiveProvider() == domain.KnowledgeProviderWeKnora {
+		docPath = strings.TrimSpace(item.Path)
+	} else {
+		var ok bool
+		docPath, ok = NormalizeDocPath(item.Path)
+		if !ok {
+			return item, apperr.New(apperr.Invalid, "写入路径必须是仓库内的 .md 相对路径，例如 guides/xxx.md")
+		}
 	}
 	content := item.Content
 	if title := strings.TrimSpace(item.Title); title != "" && !strings.HasPrefix(strings.TrimSpace(content), "#") {
 		content = "# " + title + "\n\n" + content
 	}
-	client, err := s.dial(settings)
+	client, err := s.dial(connSettings)
 	if err != nil {
 		return item, err
 	}
 	ctx, cancel := context.WithTimeout(ctx, 2*CallTimeout)
 	defer cancel()
-	result, err := client.WriteDocument(ctx, source, path, content)
-	item.Path = path
+	result, err := client.WriteDocument(ctx, rawSource, docPath, content)
+	item.Path = docPath
 	item.ReviewedBy = actor
 	if err != nil {
 		item.Error = err.Error()

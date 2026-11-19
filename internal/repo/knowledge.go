@@ -34,6 +34,15 @@ func (r *KnowledgeRepo) KnowledgeSettings() domain.KnowledgeSettings {
 		out.Token = *row.Token
 	}
 	out.TokenConfigured = strings.TrimSpace(out.Token) != ""
+	if len(out.Connections) > 0 {
+		for i := range out.Connections {
+			var connRow knowledgeSettingsRow
+			if err := r.DB.Where("id = ?", "kbconn:"+out.Connections[i].ID).Take(&connRow).Error; err == nil && connRow.Token != nil {
+				out.Connections[i].Token = *connRow.Token
+				out.Connections[i].TokenConfigured = strings.TrimSpace(*connRow.Token) != ""
+			}
+		}
+	}
 	if row.Updated != nil {
 		out.UpdatedAt = *row.Updated
 	}
@@ -46,6 +55,21 @@ func (r *KnowledgeRepo) PutKnowledgeSettings(settings domain.KnowledgeSettings) 
 	settings.Token = ""
 	settings.TokenConfigured = false
 	settings.UpdatedAt = now
+
+	connTokens := map[string]string{}
+	if len(settings.Connections) > 0 {
+		cleanConns := make([]domain.KnowledgeConnection, len(settings.Connections))
+		for i, c := range settings.Connections {
+			if tok := strings.TrimSpace(c.Token); tok != "" {
+				connTokens[c.ID] = tok
+			}
+			c.Token = ""
+			c.TokenConfigured = false
+			cleanConns[i] = c
+		}
+		settings.Connections = cleanConns
+	}
+
 	payload, err := json.Marshal(settings)
 	if err != nil {
 		return err
@@ -54,10 +78,22 @@ func (r *KnowledgeRepo) PutKnowledgeSettings(settings domain.KnowledgeSettings) 
 	if token != "" {
 		row.Token = &token
 	}
-	return r.DB.Clauses(clause.OnConflict{
+	if err := r.DB.Clauses(clause.OnConflict{
 		Columns:   []clause.Column{{Name: "id"}},
 		DoUpdates: clause.AssignmentColumns([]string{"payload", "token", "updated_at"}),
-	}).Create(&row).Error
+	}).Create(&row).Error; err != nil {
+		return err
+	}
+	for id, tok := range connTokens {
+		cRow := knowledgeSettingsRow{ID: "kbconn:" + id, Token: &tok, Updated: &now}
+		if err := r.DB.Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "id"}},
+			DoUpdates: clause.AssignmentColumns([]string{"token", "updated_at"}),
+		}).Create(&cRow).Error; err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // KnowledgeSubmissions lists submissions newest first. Empty filters match

@@ -240,7 +240,7 @@ function AssistantTurn({ message, steps, assets, projectId, sessionId, local, re
       <div className="message-body">
         <RichContent message={answer} assets={assets} projectId={projectId} />
       </div>
-      {message.knowledgeReads?.length > 0 && <details className="knowledge-reads"><summary>知识库调用 · {message.knowledgeReads.length}</summary>{message.knowledgeReads.map(read=><p key={read.id}>{read.serverId} · {read.tool} · {read.cited ? "回答已引用" : read.status}</p>)}</details>}
+      {message.knowledgeReads?.length > 0 && <details className="knowledge-reads"><summary>知识库调用 · {message.knowledgeReads.length}</summary>{message.knowledgeReads.map(read=><p key={read.id}>{[read.serverId,read.query?`${read.tool} ("${read.query}")`:read.tool,read.targets?.length?`命中：${read.targets.join("、")}`:"",read.cited?"回答已引用":read.status].filter(Boolean).join(" · ")}</p>)}</details>}
       {message.failure && message.generationId && !local ? (
         <GenerationDiagnostics sessionId={sessionId} generationId={message.generationId} failure={message.failure} onCLIInstall={onCLIInstall} readOnly={readOnly} />
       ) : message.unfinished ? (

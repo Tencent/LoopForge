@@ -35,14 +35,15 @@ func referenceTools(ctx context.Context, d *deps, project string, uid int64, ref
 		if !s.Ready() {
 			return nil, nil, knowledge.ErrNotConfigured
 		}
-		c, err := knowledge.NewClient(s)
+		c, err := knowledge.NewUpstream(s)
 		if err != nil {
 			return nil, nil, err
 		}
 		tools, err := c.Tools(ctx)
+		isWeKnora := s.EffectiveProvider() == domain.KnowledgeProviderWeKnora
 		out := []mcpclient.Tool{}
 		for _, tool := range tools {
-			if knowledge.IsReadOnlyTool(tool.Name) {
+			if (isWeKnora && knowledge.IsWeKnoraReadOnlyTool(tool.Name)) || (!isWeKnora && knowledge.IsReadOnlyTool(tool.Name)) {
 				out = append(out, tool)
 			}
 		}
@@ -94,7 +95,9 @@ func callKnowledgeReference(ctx context.Context, d *deps, project string, uid in
 			if err != nil {
 				return "", 0, knowledgeCallError(err)
 			}
-			return truncateRunes(strings.TrimSpace(text), 32000), 0, nil
+			trimmed := truncateRunes(strings.TrimSpace(text), 32000)
+			_, hits := extractKnowledgeResultMeta(trimmed)
+			return trimmed, hits, nil
 		}
 		settings := d.repo.KnowledgeSettings()
 		if !settings.Ready() {
@@ -107,7 +110,13 @@ func callKnowledgeReference(ctx context.Context, d *deps, project string, uid in
 			}
 			settings.ProjectSources = map[string][]string{project: scoped}
 		}
-		return (&knowledgeHandlers{deps: d}).callScoped(ctx, settings, project, name, args)
+		text, hits, err := (&knowledgeHandlers{deps: d}).callScoped(ctx, settings, project, name, args)
+		if err == nil && hits == 0 {
+			if _, parsedHits := extractKnowledgeResultMeta(text); parsedHits > 0 {
+				hits = parsedHits
+			}
+		}
+		return text, hits, err
 	}
 	return "", 0, fmt.Errorf("知识服务未开放该只读工具")
 }
@@ -117,22 +126,187 @@ func knowledgeReadResult(serverID, tool, text string, hits int, err error) (doma
 	switch {
 	case err != nil:
 		read.Status = "调用失败"
-	case strings.TrimSpace(text) == "" || (serverID == domain.KnowledgeMCPServerID && tool == knowledge.ToolSearch && hits == 0):
+	case strings.TrimSpace(text) == "" || (serverID == domain.KnowledgeMCPServerID && (tool == knowledge.ToolSearch || tool == knowledge.WeKnoraToolSearchKnowledge) && hits == 0):
 		read.Status = "无匹配"
 	default:
+		read.Targets, _ = extractKnowledgeResultMeta(text)
 		text += "\n若输出引用本次结果，请附上原文出处和 [[knowledge:" + read.ID + "]]。"
 	}
 	return read, text
 }
 
-// Keep upstream response bodies and headers out of diagnostics.
+const maxKnowledgeReadTargets = 5
+
+func knowledgeCallQuerySummary(args map[string]any) string {
+	if len(args) == 0 {
+		return ""
+	}
+	for _, key := range []string{"query", "knowledge_id", "document_id", "path", "keyword"} {
+		v, ok := args[key]
+		if !ok || v == nil {
+			continue
+		}
+		s := strings.Join(strings.Fields(strings.TrimSpace(fmt.Sprint(v))), " ")
+		if s != "" && s != "<nil>" {
+			runes := []rune(s)
+			if len(runes) > 120 {
+				return string(runes[:119]) + "…"
+			}
+			return s
+		}
+	}
+	return ""
+}
+
+func extractKnowledgeResultMeta(raw string) ([]string, int) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, 0
+	}
+	var targets []string
+	seen := map[string]bool{}
+	addTarget := func(s string) {
+		s = clipCatalogText(s, 120)
+		if s == "" || seen[s] {
+			return
+		}
+		seen[s] = true
+		if len(targets) < maxKnowledgeReadTargets {
+			targets = append(targets, s)
+		}
+	}
+
+	var parsed any
+	if json.Unmarshal([]byte(raw), &parsed) == nil {
+		hits := collectKnowledgeTargetsFromJSON(parsed, addTarget)
+		return targets, hits
+	}
+
+	hits := 0
+	for _, line := range strings.Split(raw, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.Contains(line, "[[knowledge:") {
+			continue
+		}
+		if title := extractMarkdownKnowledgeTarget(line); title != "" {
+			hits++
+			addTarget(title)
+		}
+	}
+	return targets, hits
+}
+
+func collectKnowledgeTargetsFromJSON(v any, add func(string)) int {
+	switch x := v.(type) {
+	case []any:
+		for _, item := range x {
+			collectKnowledgeTargetsFromJSON(item, add)
+		}
+		return len(x)
+	case map[string]any:
+		containerKeys := []string{"results", "documents", "chunks", "items", "knowledge_bases", "sources", "pages", "hits"}
+		listHits := -1
+		for _, key := range containerKeys {
+			if sub, ok := x[key]; ok {
+				if arr, isArr := sub.([]any); isArr {
+					if len(arr) > listHits {
+						listHits = len(arr)
+					}
+					for _, item := range arr {
+						collectKnowledgeTargetsFromJSON(item, add)
+					}
+				}
+			}
+		}
+		if sub, ok := x["data"]; ok {
+			switch d := sub.(type) {
+			case []any:
+				if len(d) > listHits {
+					listHits = len(d)
+				}
+				for _, item := range d {
+					collectKnowledgeTargetsFromJSON(item, add)
+				}
+			case map[string]any:
+				subHits := collectKnowledgeTargetsFromJSON(d, add)
+				if listHits < 0 && subHits > 0 {
+					listHits = subHits
+				}
+			}
+		}
+		if listHits >= 0 {
+			return listHits
+		}
+		for _, key := range []string{"title", "knowledge_title", "document_title", "doc_title", "file_name", "filename", "doc_name", "name", "path", "knowledge_id", "document_id", "id"} {
+			if s, ok := x[key].(string); ok && strings.TrimSpace(s) != "" {
+				add(s)
+				return 1
+			}
+		}
+	}
+	return 0
+}
+
+func extractMarkdownKnowledgeTarget(line string) string {
+	if strings.HasPrefix(line, "#") {
+		heading := strings.TrimSpace(strings.TrimLeft(line, "#"))
+		heading = trimOrderedListPrefix(heading)
+		if heading != "" {
+			return heading
+		}
+	}
+	cleaned := strings.TrimSpace(strings.TrimLeft(line, "-*• "))
+	cleaned = strings.ReplaceAll(cleaned, "**", "")
+	lower := strings.ToLower(cleaned)
+	for _, prefix := range []string{
+		"title:", "title：", "标题:", "标题：",
+		"knowledge_title:", "knowledge_title：",
+		"document_title:", "document_title：",
+		"document:", "document：", "文档:", "文档：",
+		"file:", "file：", "文件:", "文件：",
+		"path:", "path：", "路径:", "路径：",
+		"knowledge_id:", "knowledge_id：",
+		"document_id:", "document_id：",
+	} {
+		if strings.HasPrefix(lower, prefix) {
+			val := strings.TrimSpace(cleaned[len(prefix):])
+			if val != "" {
+				return val
+			}
+		}
+	}
+	return ""
+}
+
+func trimOrderedListPrefix(s string) string {
+	s = strings.TrimSpace(s)
+	i := 0
+	for i < len(s) && s[i] >= '0' && s[i] <= '9' {
+		i++
+	}
+	if i > 0 && i < len(s) {
+		rest := s[i:]
+		for _, sep := range []string{".", ")", "、"} {
+			if strings.HasPrefix(rest, sep) {
+				return strings.TrimSpace(rest[len(sep):])
+			}
+		}
+	}
+	return s
+}
+
+// Keep upstream HTTP response bodies, hosts and credentials out of diagnostics,
+// while preserving structured MCP tool-level validation hints (e.g. invalid knowledge_base_id).
 func knowledgeCallError(err error) error {
 	var timed net.Error
+	msg := err.Error()
 	switch {
 	case errors.Is(err, context.DeadlineExceeded) || errors.As(err, &timed) && timed.Timeout():
 		return fmt.Errorf("知识服务超时")
-	case strings.Contains(err.Error(), "gateway HTTP 403:") || strings.Contains(err.Error(), "gateway HTTP 401:"):
+	case strings.Contains(msg, "gateway HTTP 403:") || strings.Contains(msg, "gateway HTTP 401:"):
 		return fmt.Errorf("知识服务拒绝访问")
+	case strings.HasPrefix(msg, "mcp tool ") && !strings.Contains(msg, "http://") && !strings.Contains(msg, "https://") && !strings.Contains(msg, "Bearer "):
+		return fmt.Errorf("%s", truncateRunes(strings.TrimSpace(msg), 200))
 	default:
 		return fmt.Errorf("知识服务不可用或调用失败")
 	}
@@ -320,12 +494,13 @@ func describeBoundKnowledgeRef(ctx context.Context, d *deps, project string, uid
 		fmt.Fprintf(&b, "    <scoped_sources>%s</scoped_sources>\n", escapeXMLText(strings.Join(ref.Sources, ", ")))
 	}
 
+	var baseIDs []string
 	var samples []string
 	if ctx.Err() == nil {
 		switch {
 		case hasListBases:
 			if text, _, err := callKnowledgeReference(ctx, d, project, uid, ref, "list_knowledge_bases", map[string]any{}); err == nil {
-				baseIDs := extractCatalogBaseIDs(text, 3)
+				baseIDs = extractCatalogBaseIDs(text, 5)
 				if hasListDocs && len(baseIDs) > 0 {
 					for _, baseID := range baseIDs {
 						if ctx.Err() != nil || len(samples) >= knowledgeCatalogMaxDocs {
@@ -352,6 +527,9 @@ func describeBoundKnowledgeRef(ctx context.Context, d *deps, project string, uid
 				samples = extractCatalogTitles(text, knowledgeCatalogMaxDocs)
 			}
 		}
+	}
+	if len(baseIDs) > 0 {
+		fmt.Fprintf(&b, "    <knowledge_base_ids>%s</knowledge_base_ids>\n", escapeXMLText(strings.Join(baseIDs, ", ")))
 	}
 	if len(samples) > 0 {
 		b.WriteString("    <sample_documents>\n")

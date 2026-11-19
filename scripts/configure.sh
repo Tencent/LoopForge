@@ -19,4 +19,14 @@ else:
  fd=os.open(str(p),os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600)
  with os.fdopen(fd,'w') as f: f.write(''.join(f'{k}={shlex.quote(v)}\n' for k,v in data.items()))
  print('Created .env with unique local secrets')
+if os.environ.get('LOOPFORGE_WITH_WEKNORA')=='1':
+ cur=p.read_text()
+ wk={'LOOPFORGE_WITH_WEKNORA':'1','WEKNORA_DB_USER':'weknora','WEKNORA_DB_NAME':'weknora','WEKNORA_DB_PASSWORD':secrets.token_hex(24),'WEKNORA_REDIS_PASSWORD':secrets.token_hex(24),'WEKNORA_SYSTEM_AES_KEY':secrets.token_hex(16),'WEKNORA_JWT_SECRET':secrets.token_hex(32)}
+ added=[]
+ for k,v in wk.items():
+  if f'{k}=' not in cur:
+   added.append(f'{k}={shlex.quote(v)}\n')
+ if added:
+  with p.open('a') as f: f.write('\n'+''.join(added))
+  print('Added WeKnora secrets to .env')
 PY

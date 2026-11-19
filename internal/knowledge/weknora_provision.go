@@ -1,0 +1,440 @@
+package knowledge
+
+import (
+	"bytes"
+	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"os"
+	"os/exec"
+	"strings"
+	"time"
+
+	"agentflow/internal/apperr"
+	"agentflow/internal/domain"
+)
+
+type WeKnoraProvisionInput struct {
+	Mode         string `json:"mode"` // "managed" | "external"
+	Name         string `json:"name"`
+	URL          string `json:"url"`
+	Token        string `json:"token"`
+	Email        string `json:"email"`
+	Password     string `json:"password"`
+	WriteEnabled bool   `json:"writeEnabled"`
+}
+
+type WeKnoraProvisionResult struct {
+	Settings domain.KnowledgeSettings `json:"settings"`
+	UIURL    string                   `json:"uiUrl,omitempty"`
+	Message  string                   `json:"message"`
+}
+
+// ProvisionWeKnora either starts a managed WeKnora stack in the current Docker
+// network and auto-provisions an API key, or links an existing WeKnora server
+// using either a direct API key or email/password login.
+func (s *Service) ProvisionWeKnora(ctx context.Context, input WeKnoraProvisionInput, actor string) (WeKnoraProvisionResult, error) {
+	mode := strings.ToLower(strings.TrimSpace(input.Mode))
+	if mode == "" {
+		mode = "external"
+	}
+
+	var targetURL, apiKey, uiURL, msg string
+	switch mode {
+	case "managed":
+		network := strings.TrimSpace(os.Getenv("AGENTFLOW_DOCKER_NETWORK"))
+		if network == "" {
+			network = "loopforge_default"
+		}
+		baseURL := strings.TrimSpace(os.Getenv("LOOPFORGE_WEKNORA_URL"))
+		if baseURL == "" {
+			baseURL = "http://weknora-app:8080"
+		}
+		uiURL = strings.TrimSpace(os.Getenv("LOOPFORGE_WEKNORA_UI_URL"))
+		if uiURL == "" {
+			uiURL = "http://localhost:18081"
+		}
+
+		if err := ensureManagedWeKnoraContainers(ctx, network, baseURL); err != nil {
+			return WeKnoraProvisionResult{}, apperr.New(apperr.Upstream, err.Error())
+		}
+		email := firstNonEmpty(strings.TrimSpace(input.Email), "admin@loopforge.local")
+		password := firstNonEmpty(strings.TrimSpace(input.Password), "LoopForge@2026!")
+		key, err := BootstrapWeKnoraAPIKey(ctx, baseURL, email, password, "loopforge")
+		if err != nil {
+			return WeKnoraProvisionResult{}, apperr.New(apperr.Upstream, "自动初始化 WeKnora API Key 失败："+err.Error())
+		}
+		targetURL = baseURL
+		apiKey = key
+		msg = "已启动内置 WeKnora 实例并自动写入知识中心配置"
+
+	case "external":
+		targetURL = NormalizeWeKnoraBaseURL(input.URL)
+		if targetURL == "" {
+			return WeKnoraProvisionResult{}, apperr.New(apperr.Invalid, "请填写已有 WeKnora 服务地址")
+		}
+		if tok := strings.TrimSpace(input.Token); tok != "" {
+			apiKey = stripBearer(tok)
+		} else if strings.TrimSpace(input.Email) != "" && strings.TrimSpace(input.Password) != "" {
+			key, err := BootstrapWeKnoraAPIKey(ctx, targetURL, strings.TrimSpace(input.Email), input.Password, "")
+			if err != nil {
+				return WeKnoraProvisionResult{}, apperr.New(apperr.Upstream, "登录 WeKnora 获取 API Key 失败："+err.Error())
+			}
+			apiKey = key
+		} else {
+			return WeKnoraProvisionResult{}, apperr.New(apperr.Invalid, "请填写 API Key，或填写 WeKnora 账号密码以自动获取")
+		}
+		check := s.CheckWithProvider(ctx, domain.KnowledgeProviderWeKnora, targetURL, apiKey)
+		if !check.OK {
+			return WeKnoraProvisionResult{}, apperr.New(apperr.Upstream, "连接 WeKnora 失败："+check.Error)
+		}
+		msg = "已成功链接外部 WeKnora 实例并保存配置"
+
+	default:
+		return WeKnoraProvisionResult{}, apperr.New(apperr.Invalid, "无效的接入模式（仅支持 managed 或 external）")
+	}
+
+	account := strings.TrimSpace(input.Email)
+	if mode == "managed" && account == "" {
+		account = "admin@loopforge.local"
+	}
+	connName := strings.TrimSpace(input.Name)
+	if connName == "" {
+		if mode == "managed" {
+			connName = "内置 WeKnora"
+		} else if account != "" {
+			connName = account
+		} else {
+			connName = targetURL
+		}
+	}
+
+	current := s.store.KnowledgeSettings()
+	conns := make([]domain.KnowledgeConnection, 0, len(current.Connections)+1)
+	if len(current.Connections) > 0 {
+		conns = append(conns, current.Connections...)
+	} else if strings.TrimSpace(current.URL) != "" && strings.TrimSpace(current.Token) != "" {
+		conns = append(conns, domain.KnowledgeConnection{
+			ID:       "conn-" + randomHex(4),
+			Name:     firstNonEmpty(current.URL, "默认连接"),
+			Provider: current.EffectiveProvider(),
+			URL:      current.URL,
+			Token:    current.Token,
+			Enabled:  true,
+		})
+	}
+
+	updatedExisting := false
+	for i := range conns {
+		if conns[i].URL == targetURL && conns[i].Name == connName {
+			conns[i].Token = apiKey
+			conns[i].Account = firstNonEmpty(account, conns[i].Account)
+			conns[i].Provider = domain.KnowledgeProviderWeKnora
+			conns[i].Enabled = true
+			updatedExisting = true
+			break
+		}
+	}
+	if !updatedExisting {
+		conns = append(conns, domain.KnowledgeConnection{
+			ID:       "wk-" + randomHex(4),
+			Name:     connName,
+			Account:  account,
+			Provider: domain.KnowledgeProviderWeKnora,
+			URL:      targetURL,
+			Token:    apiKey,
+			Enabled:  true,
+		})
+	}
+
+	next := domain.KnowledgeSettings{
+		Provider:       domain.KnowledgeProviderWeKnora,
+		Enabled:        true,
+		WriteEnabled:   input.WriteEnabled || current.WriteEnabled,
+		URL:            conns[0].URL,
+		Token:          conns[0].Token,
+		Connections:    conns,
+		DefaultSources: current.DefaultSources,
+		ProjectSources: current.ProjectSources,
+		UpdatedBy:      actor,
+	}
+	if err := s.store.PutKnowledgeSettings(next); err != nil {
+		return WeKnoraProvisionResult{}, err
+	}
+	saved := s.store.KnowledgeSettings()
+	return WeKnoraProvisionResult{
+		Settings: saved.Public(),
+		UIURL:    uiURL,
+		Message:  msg,
+	}, nil
+}
+
+// DeleteConnection removes one saved connection by id.
+func (s *Service) DeleteConnection(connID, actor string) (domain.KnowledgeSettings, error) {
+	current := s.store.KnowledgeSettings()
+	connID = strings.TrimSpace(connID)
+	kept := make([]domain.KnowledgeConnection, 0, len(current.Connections))
+	for _, c := range current.Connections {
+		if c.ID != connID {
+			kept = append(kept, c)
+		}
+	}
+	current.Connections = kept
+	current.UpdatedBy = actor
+	if len(kept) > 0 {
+		current.URL = kept[0].URL
+		current.Token = kept[0].Token
+		current.Provider = kept[0].Provider
+	} else {
+		current.URL = ""
+		current.Token = ""
+		current.Enabled = false
+	}
+	if err := s.store.PutKnowledgeSettings(current); err != nil {
+		return current, err
+	}
+	return s.store.KnowledgeSettings(), nil
+}
+
+// EncodeScopedSourceID namespaces a KB/document ID with its connection ID when
+// multiple connections are configured.
+func EncodeScopedSourceID(settings domain.KnowledgeSettings, connID, rawID string) string {
+	conns := settings.ActiveConnections()
+	if len(conns) <= 1 || connID == "" || connID == "default" {
+		return rawID
+	}
+	return connID + "::" + rawID
+}
+
+// DecodeScopedSourceID extracts the target connection and raw KB/document ID.
+func DecodeScopedSourceID(settings domain.KnowledgeSettings, scopedID string) (domain.KnowledgeConnection, string, bool) {
+	conns := settings.ActiveConnections()
+	if len(conns) == 0 {
+		return domain.KnowledgeConnection{}, scopedID, false
+	}
+	if connID, raw, ok := strings.Cut(strings.TrimSpace(scopedID), "::"); ok {
+		for _, c := range conns {
+			if c.ID == connID {
+				return c, raw, true
+			}
+		}
+		return domain.KnowledgeConnection{}, raw, false
+	}
+	return conns[0], strings.TrimSpace(scopedID), true
+}
+
+func settingsForConnection(base domain.KnowledgeSettings, conn domain.KnowledgeConnection) domain.KnowledgeSettings {
+	out := base
+	out.Provider = conn.Provider
+	out.URL = conn.URL
+	out.Token = conn.Token
+	return out
+}
+
+// BootstrapWeKnoraAPIKey registers (if username is non-empty and account does not
+// exist yet), logs in, and issues a full_access tenant API key.
+func BootstrapWeKnoraAPIKey(ctx context.Context, baseURL, email, password, username string) (string, error) {
+	baseURL = NormalizeWeKnoraBaseURL(baseURL)
+	hc := &http.Client{Timeout: 20 * time.Second}
+
+	if username != "" {
+		regBody, _ := json.Marshal(map[string]string{
+			"username": username,
+			"email":    email,
+			"password": password,
+		})
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/api/v1/auth/register", bytes.NewReader(regBody))
+		if err == nil {
+			req.Header.Set("Content-Type", "application/json")
+			if resp, err := hc.Do(req); err == nil {
+				_, _ = io.Copy(io.Discard, resp.Body)
+				resp.Body.Close()
+			}
+		}
+	}
+
+	loginBody, _ := json.Marshal(map[string]string{
+		"email":    email,
+		"password": password,
+	})
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/api/v1/auth/login", bytes.NewReader(loginBody))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := hc.Do(req)
+	if err != nil {
+		return "", err
+	}
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", parseWeKnoraError(resp.StatusCode, raw)
+	}
+	var loginOut struct {
+		Success bool   `json:"success"`
+		Token   string `json:"token"`
+		Message string `json:"message"`
+		User    *struct {
+			TenantID uint64 `json:"tenant_id"`
+		} `json:"user"`
+		ActiveTenant *struct {
+			ID uint64 `json:"id"`
+		} `json:"active_tenant"`
+	}
+	if err := json.Unmarshal(raw, &loginOut); err != nil {
+		return "", err
+	}
+	if !loginOut.Success || strings.TrimSpace(loginOut.Token) == "" {
+		return "", fmt.Errorf("WeKnora 登录失败：%s", firstNonEmpty(loginOut.Message, "未返回 token"))
+	}
+	var tenantID uint64
+	if loginOut.ActiveTenant != nil && loginOut.ActiveTenant.ID > 0 {
+		tenantID = loginOut.ActiveTenant.ID
+	} else if loginOut.User != nil && loginOut.User.TenantID > 0 {
+		tenantID = loginOut.User.TenantID
+	}
+	if tenantID == 0 {
+		return "", fmt.Errorf("WeKnora 登录响应缺少 tenant_id")
+	}
+
+	keyBody, _ := json.Marshal(map[string]any{
+		"name":        "loopforge-kb",
+		"full_access": true,
+	})
+	keyReq, err := http.NewRequestWithContext(ctx, http.MethodPost, fmt.Sprintf("%s/api/v1/tenants/%d/api-keys", baseURL, tenantID), bytes.NewReader(keyBody))
+	if err != nil {
+		return "", err
+	}
+	keyReq.Header.Set("Content-Type", "application/json")
+	keyReq.Header.Set("Authorization", "Bearer "+loginOut.Token)
+	keyResp, err := hc.Do(keyReq)
+	if err != nil {
+		return "", err
+	}
+	keyRaw, _ := io.ReadAll(io.LimitReader(keyResp.Body, 1<<20))
+	keyResp.Body.Close()
+	if keyResp.StatusCode < 200 || keyResp.StatusCode >= 300 {
+		return "", parseWeKnoraError(keyResp.StatusCode, keyRaw)
+	}
+	var keyOut struct {
+		Success bool `json:"success"`
+		Data    struct {
+			Token string `json:"token"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(keyRaw, &keyOut); err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(keyOut.Data.Token) == "" {
+		return "", fmt.Errorf("WeKnora 未返回 API Key token")
+	}
+	return strings.TrimSpace(keyOut.Data.Token), nil
+}
+
+func weknoraHealthy(ctx context.Context, baseURL string) bool {
+	c := &http.Client{Timeout: 2 * time.Second}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, NormalizeWeKnoraBaseURL(baseURL)+"/health", nil)
+	if err != nil {
+		return false
+	}
+	resp, err := c.Do(req)
+	if err != nil {
+		return false
+	}
+	resp.Body.Close()
+	return resp.StatusCode >= 200 && resp.StatusCode < 300
+}
+
+func ensureManagedWeKnoraContainers(ctx context.Context, network, baseURL string) error {
+	if weknoraHealthy(ctx, baseURL) {
+		return nil
+	}
+	if _, err := exec.LookPath("docker"); err != nil {
+		return fmt.Errorf("当前运行环境未挂载 docker CLI，请使用 ./start.sh --with-weknora 启动内置实例或改用外部实例模式")
+	}
+	ver := firstNonEmpty(strings.TrimSpace(os.Getenv("WEKNORA_VERSION")), "latest")
+	appPort := firstNonEmpty(strings.TrimSpace(os.Getenv("WEKNORA_APP_PORT")), "18080")
+	uiPort := firstNonEmpty(strings.TrimSpace(os.Getenv("WEKNORA_UI_PORT")), "18081")
+	secret := randomHex(16)
+	aesKey := randomHex(16) // 32 ASCII hex chars == 32 bytes required by SYSTEM_AES_KEY
+
+	steps := [][]string{
+		{"network", "create", network},
+		{"run", "-d", "--name", "loopforge-weknora-postgres", "--network", network, "--network-alias", "weknora-postgres",
+			"--restart", "unless-stopped",
+			"-e", "POSTGRES_USER=weknora", "-e", "POSTGRES_PASSWORD=" + secret, "-e", "POSTGRES_DB=weknora",
+			"-v", "loopforge-weknora-pg:/var/lib/postgresql/data",
+			"paradedb/paradedb:v0.25.11-pg17"},
+		{"run", "-d", "--name", "loopforge-weknora-redis", "--network", network, "--network-alias", "weknora-redis",
+			"--restart", "unless-stopped",
+			"-v", "loopforge-weknora-redis:/data",
+			"redis:7.0-alpine", "redis-server", "--appendonly", "yes", "--requirepass", secret},
+		{"run", "-d", "--name", "loopforge-weknora-docreader", "--network", network, "--network-alias", "weknora-docreader",
+			"--restart", "unless-stopped",
+			"-e", "TZ=Asia/Shanghai", "-e", "DOCREADER_IMAGE_OUTPUT_DIR=/tmp/docreader",
+			"-v", "loopforge-weknora-docreader:/tmp/docreader",
+			"wechatopenai/weknora-docreader:" + ver},
+		{"run", "-d", "--name", "loopforge-weknora-app", "--network", network, "--network-alias", "weknora-app",
+			"--restart", "unless-stopped",
+			"-p", "127.0.0.1:" + appPort + ":8080",
+			"--add-host", "host.docker.internal:host-gateway",
+			"-e", "TZ=Asia/Shanghai", "-e", "GIN_MODE=release", "-e", "AUTO_MIGRATE=true",
+			"-e", "DB_DRIVER=postgres", "-e", "DB_HOST=weknora-postgres", "-e", "DB_PORT=5432",
+			"-e", "DB_USER=weknora", "-e", "DB_PASSWORD=" + secret, "-e", "DB_NAME=weknora",
+			"-e", "RETRIEVE_DRIVER=postgres",
+			"-e", "DOCREADER_ADDR=weknora-docreader:50051", "-e", "DOCREADER_TRANSPORT=grpc",
+			"-e", "STORAGE_TYPE=local", "-e", "LOCAL_STORAGE_BASE_DIR=/data/files",
+			"-e", "REDIS_ADDR=weknora-redis:6379", "-e", "REDIS_PASSWORD=" + secret,
+			"-e", "SYSTEM_AES_KEY=" + aesKey, "-e", "JWT_SECRET=" + secret,
+			"-e", "OLLAMA_OPTIONAL=true",
+			"-v", "loopforge-weknora-files:/data/files",
+			"-v", "loopforge-weknora-docreader:/tmp/docreader:ro",
+			"wechatopenai/weknora-app:" + ver},
+		{"run", "-d", "--name", "loopforge-weknora-frontend", "--network", network, "--network-alias", "weknora-frontend",
+			"--restart", "unless-stopped",
+			"-p", "127.0.0.1:" + uiPort + ":80",
+			"-e", "APP_HOST=weknora-app", "-e", "APP_PORT=8080", "-e", "APP_SCHEME=http",
+			"wechatopenai/weknora-ui:" + ver},
+	}
+
+	// Ensure containers exist or are started if previously created.
+	for i, args := range steps {
+		if i == 0 {
+			_ = exec.CommandContext(ctx, "docker", args...).Run()
+			continue
+		}
+		name := args[3]
+		if err := exec.CommandContext(ctx, "docker", "inspect", name).Run(); err == nil {
+			_ = exec.CommandContext(ctx, "docker", "start", name).Run()
+			continue
+		}
+		out, err := exec.CommandContext(ctx, "docker", args...).CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("启动内置 WeKnora 容器 %s 失败：%s", name, clip(string(out), 200))
+		}
+	}
+
+	deadline := time.Now().Add(90 * time.Second)
+	for time.Now().Before(deadline) {
+		if weknoraHealthy(ctx, baseURL) {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(2 * time.Second):
+		}
+	}
+	return fmt.Errorf("等待内置 WeKnora 服务就绪超时（%s）", baseURL)
+}
+
+func randomHex(nBytes int) string {
+	b := make([]byte, nBytes)
+	_, _ = rand.Read(b)
+	return hex.EncodeToString(b)
+}

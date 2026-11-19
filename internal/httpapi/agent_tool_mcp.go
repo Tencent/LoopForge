@@ -292,6 +292,7 @@ func (h *agentToolGateway) callTool(ctx context.Context, session *AgentToolSessi
 			if ref.ServerID == tool.ServerID {
 				text, hits, err := callKnowledgeReference(ctx, h.deps, session.ProjectID, session.UserID, ref, tool.UpstreamName, args)
 				read, text := knowledgeReadResult(ref.ServerID, tool.UpstreamName, text, hits, err)
+				read.Query = knowledgeCallQuerySummary(args)
 				session.mu.Lock()
 				session.knowledgeReads = append(session.knowledgeReads, read)
 				session.mu.Unlock()

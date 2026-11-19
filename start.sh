@@ -22,14 +22,29 @@ source scripts/ghcr-mirror.sh
 compose() {
   [[ -f .env ]] || docker_access_fail 'Not installed yet. Run ./start.sh first.'
   select_docker_access || docker_access_fail 'Docker is not running, or this user cannot access it.'
-  docker_access compose --profile platform "$@"
+  local profiles=(--profile platform)
+  if grep -q '^LOOPFORGE_WITH_WEKNORA=1' .env 2>/dev/null; then
+    profiles+=(--profile weknora)
+  fi
+  docker_access compose "${profiles[@]}" "$@"
 }
+
+with_weknora=0
+args=()
+for arg in "$@"; do
+  if [[ "$arg" == "--with-weknora" ]]; then
+    with_weknora=1
+  else
+    args+=("$arg")
+  fi
+done
+set -- "${args[@]}"
 
 cmd="${1:--d}"
 shift || true
 case "$cmd" in
-  up|-d|detach) bash scripts/install.sh ;;
-  dev) LOOPFORGE_BUILD_FROM_SOURCE=1 bash scripts/install.sh ;;
+  up|-d|detach) LOOPFORGE_WITH_WEKNORA="$with_weknora" bash scripts/install.sh ;;
+  dev) LOOPFORGE_WITH_WEKNORA="$with_weknora" LOOPFORGE_BUILD_FROM_SOURCE=1 bash scripts/install.sh ;;
   release)
     [[ -f .env ]] && python3 - <<'PY'
 import pathlib,re

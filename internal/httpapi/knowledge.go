@@ -3,7 +3,9 @@ package httpapi
 import (
 	"context"
 	"net/http"
+	"os"
 	"strconv"
+	"strings"
 
 	"agentflow/internal/domain"
 	"agentflow/internal/knowledge"
@@ -43,10 +45,12 @@ func render[T any](c *gin.Context, value T, err error) {
 
 type knowledgeSettingsView struct {
 	domain.KnowledgeSettings
-	Ready     bool   `json:"ready"`
-	CanManage bool   `json:"canManage"`
-	ProxyPath string `json:"proxyPath"`
-	UsageRule string `json:"usageRule"`
+	Ready              bool   `json:"ready"`
+	CanManage          bool   `json:"canManage"`
+	ProxyPath          string `json:"proxyPath"`
+	UsageRule          string `json:"usageRule"`
+	DetectedWeKnoraURL string `json:"detectedWeKnoraUrl,omitempty"`
+	WeKnoraUIURL       string `json:"weKnoraUiUrl,omitempty"`
 }
 
 // 路由: g.GET("/api/knowledge/settings", h.settings)
@@ -71,9 +75,13 @@ func (h *knowledgeHandlers) settings(c *gin.Context) {
 		current = saved
 	}
 	c.JSON(http.StatusOK, knowledgeSettingsView{
-		KnowledgeSettings: current.Public(), Ready: current.Ready(),
-		CanManage: h.canManage(c.Request), ProxyPath: knowledge.ProxyPath,
-		UsageRule: knowledge.UsageRule().Content,
+		KnowledgeSettings:  current.Public(),
+		Ready:              current.Ready(),
+		CanManage:          h.canManage(c.Request),
+		ProxyPath:          knowledge.ProxyPath,
+		UsageRule:          knowledge.UsageRule().Content,
+		DetectedWeKnoraURL: strings.TrimSpace(os.Getenv("LOOPFORGE_WEKNORA_URL")),
+		WeKnoraUIURL:       strings.TrimSpace(os.Getenv("LOOPFORGE_WEKNORA_UI_URL")),
 	})
 }
 
@@ -84,13 +92,42 @@ func (h *knowledgeHandlers) check(c *gin.Context) {
 		return
 	}
 	var input struct {
-		URL   string `json:"url"`
-		Token string `json:"token"`
+		Provider string `json:"provider"`
+		URL      string `json:"url"`
+		Token    string `json:"token"`
 	}
 	if !decodeOptional(c, &input) {
 		return
 	}
-	c.JSON(http.StatusOK, h.svc.Check(c.Request.Context(), input.URL, input.Token))
+	c.JSON(http.StatusOK, h.svc.CheckWithProvider(c.Request.Context(), input.Provider, input.URL, input.Token))
+}
+
+// 路由: g.POST("/api/knowledge/weknora/provision", h.provisionWeKnora)
+func (h *knowledgeHandlers) provisionWeKnora(c *gin.Context) {
+	if !h.canManage(c.Request) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "只有平台管理员可以启用或配置 WeKnora 实例"})
+		return
+	}
+	var input knowledge.WeKnoraProvisionInput
+	if !decode(c, &input) {
+		return
+	}
+	res, err := h.svc.ProvisionWeKnora(c.Request.Context(), input, h.actor(c.Request))
+	render(c, res, err)
+}
+
+// 路由: g.DELETE("/api/knowledge/connections/:id", h.deleteConnection)
+func (h *knowledgeHandlers) deleteConnection(c *gin.Context) {
+	if !h.canManage(c.Request) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "只有平台管理员可以删除知识库连接"})
+		return
+	}
+	saved, err := h.svc.DeleteConnection(c.Param("id"), h.actor(c.Request))
+	if err != nil {
+		respond(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, saved.Public())
 }
 
 // 路由: g.GET("/api/knowledge/sources", h.sources)
@@ -118,6 +155,184 @@ func (h *knowledgeHandlers) document(c *gin.Context) {
 	start, _ := strconv.Atoi(c.Query("start"))
 	end, _ := strconv.Atoi(c.Query("end"))
 	doc, err := h.svc.Document(c.Request.Context(), c.Query("projectId"), c.Query("source"), c.Query("path"), start, end)
+	render(c, doc, err)
+}
+
+// 路由: g.GET("/api/knowledge/sources/:id/documents", h.documents)
+func (h *knowledgeHandlers) documents(c *gin.Context) {
+	page, _ := strconv.Atoi(c.Query("page"))
+	pageSize, _ := strconv.Atoi(c.Query("pageSize"))
+	out, err := h.svc.Documents(c.Request.Context(), c.Query("projectId"), c.Param("id"), c.Query("keyword"), page, pageSize)
+	render(c, out, err)
+}
+
+func (h *knowledgeHandlers) requireKnowledgeWriter(c *gin.Context) (string, bool) {
+	projectID := strings.TrimSpace(c.Query("projectId"))
+	if projectID != "" {
+		if !h.requireProjectWriter(c, projectID) {
+			return "", false
+		}
+		return projectID, true
+	}
+	if !h.canManage(c.Request) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "只有平台管理员或项目成员可以执行该操作"})
+		return "", false
+	}
+	return "", true
+}
+
+// 路由: g.GET("/api/knowledge/models", h.models)
+func (h *knowledgeHandlers) models(c *gin.Context) {
+	list, err := h.svc.WeKnoraModels(c.Request.Context())
+	render(c, list, err)
+}
+
+// 路由: g.POST("/api/knowledge/sources", h.createSource)
+func (h *knowledgeHandlers) createSource(c *gin.Context) {
+	projectID, ok := h.requireKnowledgeWriter(c)
+	if !ok {
+		return
+	}
+	var input knowledge.WeKnoraCreateKBInput
+	if !decode(c, &input) {
+		return
+	}
+	kb, err := h.svc.CreateWeKnoraKB(c.Request.Context(), projectID, input)
+	render(c, kb, err)
+}
+
+// 路由: g.PUT("/api/knowledge/sources/:id", h.updateSource)
+func (h *knowledgeHandlers) updateSource(c *gin.Context) {
+	projectID, ok := h.requireKnowledgeWriter(c)
+	if !ok {
+		return
+	}
+	var input struct {
+		Name        string `json:"name"`
+		Description string `json:"description"`
+	}
+	if !decode(c, &input) {
+		return
+	}
+	kb, err := h.svc.UpdateWeKnoraKB(c.Request.Context(), projectID, c.Param("id"), input.Name, input.Description)
+	render(c, kb, err)
+}
+
+// 路由: g.DELETE("/api/knowledge/sources/:id", h.deleteSource)
+func (h *knowledgeHandlers) deleteSource(c *gin.Context) {
+	projectID, ok := h.requireKnowledgeWriter(c)
+	if !ok {
+		return
+	}
+	if err := h.svc.DeleteWeKnoraKB(c.Request.Context(), projectID, c.Param("id")); err != nil {
+		respond(c, err)
+		return
+	}
+	c.Status(http.StatusNoContent)
+}
+
+// 路由: g.POST("/api/knowledge/sources/:id/url", h.createFromURL)
+func (h *knowledgeHandlers) createFromURL(c *gin.Context) {
+	projectID, ok := h.requireKnowledgeWriter(c)
+	if !ok {
+		return
+	}
+	var input struct {
+		URL string `json:"url"`
+	}
+	if !decode(c, &input) {
+		return
+	}
+	doc, err := h.svc.CreateWeKnoraURLDoc(c.Request.Context(), projectID, c.Param("id"), input.URL)
+	render(c, doc, err)
+}
+
+// 路由: g.POST("/api/knowledge/sources/:id/manual", h.createManual)
+func (h *knowledgeHandlers) createManual(c *gin.Context) {
+	projectID, ok := h.requireKnowledgeWriter(c)
+	if !ok {
+		return
+	}
+	var input struct {
+		Title   string `json:"title"`
+		Content string `json:"content"`
+		Publish bool   `json:"publish"`
+	}
+	if !decode(c, &input) {
+		return
+	}
+	doc, err := h.svc.CreateWeKnoraManualDoc(c.Request.Context(), projectID, c.Param("id"), input.Title, input.Content, input.Publish)
+	render(c, doc, err)
+}
+
+// 路由: g.PUT("/api/knowledge/documents/:docId", h.updateDocument)
+func (h *knowledgeHandlers) updateDocument(c *gin.Context) {
+	projectID, ok := h.requireKnowledgeWriter(c)
+	if !ok {
+		return
+	}
+	var input struct {
+		Title   string `json:"title"`
+		Content string `json:"content"`
+		Publish bool   `json:"publish"`
+	}
+	if !decode(c, &input) {
+		return
+	}
+	doc, err := h.svc.UpdateWeKnoraManualDoc(c.Request.Context(), projectID, c.Param("docId"), input.Title, input.Content, input.Publish)
+	render(c, doc, err)
+}
+
+// 路由: g.POST("/api/knowledge/documents/:docId/reparse", h.reparseDocument)
+func (h *knowledgeHandlers) reparseDocument(c *gin.Context) {
+	projectID, ok := h.requireKnowledgeWriter(c)
+	if !ok {
+		return
+	}
+	if err := h.svc.ReparseWeKnoraDoc(c.Request.Context(), projectID, c.Param("docId")); err != nil {
+		respond(c, err)
+		return
+	}
+	c.Status(http.StatusNoContent)
+}
+
+// 路由: g.DELETE("/api/knowledge/documents/:docId", h.deleteDocument)
+func (h *knowledgeHandlers) deleteDocument(c *gin.Context) {
+	projectID, ok := h.requireKnowledgeWriter(c)
+	if !ok {
+		return
+	}
+	if err := h.svc.DeleteWeKnoraDoc(c.Request.Context(), projectID, c.Param("docId")); err != nil {
+		respond(c, err)
+		return
+	}
+	c.Status(http.StatusNoContent)
+}
+
+// 路由: g.POST("/api/knowledge/sources/:id/upload", h.upload)
+func (h *knowledgeHandlers) upload(c *gin.Context) {
+	projectID := strings.TrimSpace(c.Query("projectId"))
+	if projectID != "" {
+		if !h.requireProjectWriter(c, projectID) {
+			return
+		}
+	} else if !h.canManage(c.Request) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "只有平台管理员或项目成员可以上传文档"})
+		return
+	}
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 50<<20)
+	fileHeader, err := c.FormFile("file")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请选择要上传的文件（字段名 file）"})
+		return
+	}
+	f, err := fileHeader.Open()
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "无法读取上传文件"})
+		return
+	}
+	defer f.Close()
+	doc, err := h.svc.UploadDocument(c.Request.Context(), projectID, c.Param("id"), fileHeader.Filename, f)
 	render(c, doc, err)
 }
 
@@ -236,8 +451,12 @@ func (h *knowledgeHandlers) referenceOptions(c *gin.Context) {
 		return
 	}
 	options := []gin.H{}
-	if h.repo.KnowledgeSettings().Ready() {
-		options = append(options, gin.H{"id": domain.KnowledgeMCPServerID, "name": "团队知识库", "scoped": true})
+	if ks := h.repo.KnowledgeSettings(); ks.Ready() {
+		label := "团队知识库"
+		if ks.EffectiveProvider() == domain.KnowledgeProviderWeKnora {
+			label = "团队知识库（WeKnora）"
+		}
+		options = append(options, gin.H{"id": domain.KnowledgeMCPServerID, "name": label, "scoped": true})
 	}
 	for _, s := range assistantOutboundMCPServers(h.repo.MCPServers(), project, user.ID) {
 		if s.Transport == "http" && s.ID != domain.KnowledgeMCPServerID {

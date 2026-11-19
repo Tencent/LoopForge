@@ -1,0 +1,123 @@
+# Optional WeKnora knowledge base stack layered on compose.yaml:
+#   ./start.sh --with-weknora
+#   ./start.sh dev --with-weknora
+#   docker compose -f compose.yaml -f compose.weknora.yaml --profile platform --profile weknora up -d
+services:
+  platform:
+    environment:
+      LOOPFORGE_WEKNORA_URL: ${LOOPFORGE_WEKNORA_URL:-http://weknora-app:8080}
+      LOOPFORGE_WEKNORA_UI_URL: ${LOOPFORGE_WEKNORA_UI_URL:-http://localhost:${WEKNORA_UI_PORT:-18081}}
+
+  weknora-postgres:
+    profiles: [weknora]
+    image: paradedb/paradedb:v0.25.11-pg17
+    environment:
+      POSTGRES_USER: ${WEKNORA_DB_USER:-weknora}
+      POSTGRES_PASSWORD: ${WEKNORA_DB_PASSWORD:?Run scripts/configure.sh with LOOPFORGE_WITH_WEKNORA=1 first}
+      POSTGRES_DB: ${WEKNORA_DB_NAME:-weknora}
+    volumes:
+      - weknora-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${WEKNORA_DB_USER:-weknora} -d ${WEKNORA_DB_NAME:-weknora}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    restart: unless-stopped
+
+  weknora-redis:
+    profiles: [weknora]
+    image: redis:7.0-alpine
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${WEKNORA_REDIS_PASSWORD:?Run scripts/configure.sh with LOOPFORGE_WITH_WEKNORA=1 first}"]
+    volumes:
+      - weknora-redis-data:/data
+    restart: unless-stopped
+
+  weknora-docreader:
+    profiles: [weknora]
+    image: wechatopenai/weknora-docreader:${WEKNORA_VERSION:-latest}
+    expose:
+      - "50051"
+    volumes:
+      - weknora-docreader-tmp:/tmp/docreader
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
+      DOCREADER_IMAGE_OUTPUT_DIR: /tmp/docreader
+      MAX_FILE_SIZE_MB: ${WEKNORA_MAX_FILE_SIZE_MB:-50}
+    healthcheck:
+      test: ["CMD", "grpc_health_probe", "-addr=localhost:50051"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  weknora-app:
+    profiles: [weknora]
+    image: wechatopenai/weknora-app:${WEKNORA_VERSION:-latest}
+    ports:
+      - "${WEKNORA_BIND:-127.0.0.1}:${WEKNORA_APP_PORT:-18080}:8080"
+    volumes:
+      - weknora-files:/data/files
+      - weknora-docreader-tmp:/tmp/docreader:ro
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
+      GIN_MODE: ${WEKNORA_GIN_MODE:-release}
+      AUTO_MIGRATE: "true"
+      DB_DRIVER: postgres
+      DB_HOST: weknora-postgres
+      DB_PORT: 5432
+      DB_USER: ${WEKNORA_DB_USER:-weknora}
+      DB_PASSWORD: ${WEKNORA_DB_PASSWORD:?Run scripts/configure.sh with LOOPFORGE_WITH_WEKNORA=1 first}
+      DB_NAME: ${WEKNORA_DB_NAME:-weknora}
+      RETRIEVE_DRIVER: postgres
+      DOCREADER_ADDR: weknora-docreader:50051
+      DOCREADER_TRANSPORT: grpc
+      STORAGE_TYPE: local
+      LOCAL_STORAGE_BASE_DIR: /data/files
+      REDIS_ADDR: weknora-redis:6379
+      REDIS_PASSWORD: ${WEKNORA_REDIS_PASSWORD:?Run scripts/configure.sh with LOOPFORGE_WITH_WEKNORA=1 first}
+      SYSTEM_AES_KEY: ${WEKNORA_SYSTEM_AES_KEY:?Run scripts/configure.sh with LOOPFORGE_WITH_WEKNORA=1 first}
+      JWT_SECRET: ${WEKNORA_JWT_SECRET:?Run scripts/configure.sh with LOOPFORGE_WITH_WEKNORA=1 first}
+      MAX_FILE_SIZE_MB: ${WEKNORA_MAX_FILE_SIZE_MB:-50}
+      OLLAMA_BASE_URL: ${WEKNORA_OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      OLLAMA_OPTIONAL: "true"
+    depends_on:
+      weknora-redis:
+        condition: service_started
+      weknora-postgres:
+        condition: service_healthy
+      weknora-docreader:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  weknora-frontend:
+    profiles: [weknora]
+    image: wechatopenai/weknora-ui:${WEKNORA_VERSION:-latest}
+    ports:
+      - "${WEKNORA_BIND:-127.0.0.1}:${WEKNORA_UI_PORT:-18081}:80"
+    environment:
+      APP_HOST: weknora-app
+      APP_PORT: 8080
+      APP_SCHEME: http
+      MAX_FILE_SIZE_MB: ${WEKNORA_MAX_FILE_SIZE_MB:-50}
+    depends_on:
+      weknora-app:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  weknora-postgres-data:
+  weknora-redis-data:
+  weknora-docreader-tmp:
+  weknora-files:

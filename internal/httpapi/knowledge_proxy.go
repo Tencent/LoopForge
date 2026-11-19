@@ -122,6 +122,9 @@ func (h *knowledgeHandlers) handleProxyRPC(ctx context.Context, settings domain.
 	switch request.Method {
 	case "initialize":
 		instructions := "团队知识库（只读）。先 kb_search 检索，再用 kb_fetch 读原文；引用时附上 citation。"
+		if settings.EffectiveProvider() == domain.KnowledgeProviderWeKnora {
+			instructions = "团队知识库（WeKnora，只读）。先 list_knowledge_bases 或 search_knowledge 检索，再用 read_document 读原文；引用时附上原文出处。"
+		}
 		if claims.Ref != nil && claims.Ref.ServerID != domain.KnowledgeMCPServerID {
 			serverName, _ := knowledgeServerMeta(h.deps, claims.Ref.ServerID)
 			instructions = "用户为当前 SOP 节点绑定的只读知识服务（" + serverName + "）。请优先使用本服务的检索与文档读取工具核实团队规范、架构、接口与排障资料，引用时附上原文出处和 [[knowledge:<id>]] 标记。"
@@ -172,8 +175,11 @@ func (h *knowledgeHandlers) handleProxyRPC(ctx context.Context, settings domain.
 		if i := strings.LastIndex(name, "__"); claims.Ref == nil && i >= 0 {
 			name = name[i+2:]
 		}
-		if claims.Ref == nil && !knowledge.IsReadOnlyTool(name) {
-			return fail(-32602, fmt.Sprintf("知识库工具 %s 不可用：Agent 只能只读检索，新知识请写入 knowledge.md 等待审核", params.Name))
+		if claims.Ref == nil {
+			isWeKnora := settings.EffectiveProvider() == domain.KnowledgeProviderWeKnora
+			if (isWeKnora && !knowledge.IsWeKnoraReadOnlyTool(name)) || (!isWeKnora && !knowledge.IsReadOnlyTool(name)) {
+				return fail(-32602, fmt.Sprintf("知识库工具 %s 不可用：Agent 只能只读检索，新知识请写入 knowledge.md 等待审核", params.Name))
+			}
 		}
 		started := time.Now()
 		var text string
@@ -186,9 +192,10 @@ func (h *knowledgeHandlers) handleProxyRPC(ctx context.Context, settings domain.
 		} else {
 			text, hits, err = h.callScoped(ctx, settings, claims.ProjectID, name, params.Arguments)
 		}
+		query := knowledgeCallQuerySummary(params.Arguments)
 		activity := knowledgeActivity{
 			RunID: claims.RunID, NodeID: claims.NodeID, ServerID: serverID, At: started.UTC(), Tool: name, ProjectID: claims.ProjectID, AgentID: claims.AgentID, UserID: claims.UserID,
-			Query: truncateRunes(fmt.Sprint(valueOr(params.Arguments["query"], "")), 120), Hits: hits,
+			Query: query, Hits: hits,
 			OK: err == nil, LatencyMS: time.Since(started).Milliseconds(),
 		}
 		if err != nil {
@@ -198,10 +205,24 @@ func (h *knowledgeHandlers) handleProxyRPC(ctx context.Context, settings domain.
 		if claims.Ref != nil && h.engine != nil {
 			read, result := knowledgeReadResult(serverID, name, text, hits, err)
 			text = result
+			read.Query = query
 			read.Attempt = claims.Attempt
 			h.engine.RecordKnowledgeRead(claims.RunID, claims.NodeID, read)
 			state := read.Status
-			h.engine.IngestOTLPTraces([]domain.TelemetryEvent{{RunID: claims.RunID, NodeID: claims.NodeID, Category: "tool", Name: "knowledge.call", Phase: "finish", Message: serverID + " · " + name + " · " + state, Attributes: map[string]any{"knowledgeReadId": read.ID, "attempt": claims.Attempt, "ok": err == nil, "latencyMs": activity.LatencyMS}}})
+			attrs := map[string]any{
+				"knowledgeReadId": read.ID,
+				"attempt":         claims.Attempt,
+				"ok":              err == nil,
+				"hits":            hits,
+				"latencyMs":       activity.LatencyMS,
+			}
+			if query != "" {
+				attrs["query"] = query
+			}
+			if len(read.Targets) > 0 {
+				attrs["targets"] = read.Targets
+			}
+			h.engine.IngestOTLPTraces([]domain.TelemetryEvent{{RunID: claims.RunID, NodeID: claims.NodeID, Category: "tool", Name: "knowledge.call", Phase: "finish", Message: serverID + " · " + name + " · " + state, Attributes: attrs}})
 		}
 		log.Printf("knowledge-proxy tool=%s project=%s agent=%s ok=%t latency=%dms", name, claims.ProjectID, claims.AgentID, err == nil, activity.LatencyMS)
 		if err != nil {
@@ -214,7 +235,7 @@ func (h *knowledgeHandlers) handleProxyRPC(ctx context.Context, settings domain.
 }
 
 func (h *knowledgeHandlers) proxyTools(ctx context.Context, settings domain.KnowledgeSettings) ([]map[string]any, error) {
-	client, err := knowledge.NewClient(settings)
+	client, err := knowledge.NewUpstream(settings)
 	if err != nil {
 		return nil, err
 	}
@@ -222,9 +243,10 @@ func (h *knowledgeHandlers) proxyTools(ctx context.Context, settings domain.Know
 	if err != nil {
 		return nil, fmt.Errorf("知识库不可达：%w", err)
 	}
-	out := make([]map[string]any, 0, len(knowledge.ReadOnlyTools))
+	isWeKnora := settings.EffectiveProvider() == domain.KnowledgeProviderWeKnora
+	out := make([]map[string]any, 0, len(upstream))
 	for _, tool := range upstream {
-		if !knowledge.IsReadOnlyTool(tool.Name) {
+		if (isWeKnora && !knowledge.IsWeKnoraReadOnlyTool(tool.Name)) || (!isWeKnora && !knowledge.IsReadOnlyTool(tool.Name)) {
 			continue
 		}
 		item := map[string]any{"name": tool.Name, "description": tool.Description, "inputSchema": json.RawMessage(defaultToolSchema(tool.InputSchema))}
@@ -241,6 +263,9 @@ func (h *knowledgeHandlers) proxyTools(ctx context.Context, settings domain.Know
 func (h *knowledgeHandlers) callScoped(ctx context.Context, settings domain.KnowledgeSettings, projectID, tool string, args map[string]any) (string, int, error) {
 	if args == nil {
 		args = map[string]any{}
+	}
+	if settings.EffectiveProvider() == domain.KnowledgeProviderWeKnora {
+		return h.callWeKnoraScoped(ctx, settings, projectID, tool, args)
 	}
 	allowed := settings.SourcesForProject(projectID)
 	switch tool {
@@ -325,4 +350,202 @@ func valueOr(v, fallback any) any {
 		return fallback
 	}
 	return v
+}
+
+func intArg(v any, fallback int) int {
+	switch x := v.(type) {
+	case int:
+		return x
+	case int64:
+		return int(x)
+	case float64:
+		return int(x)
+	case json.Number:
+		if n, err := x.Int64(); err == nil {
+			return int(n)
+		}
+	}
+	return fallback
+}
+
+func (h *knowledgeHandlers) callWeKnoraScoped(ctx context.Context, settings domain.KnowledgeSettings, projectID, tool string, args map[string]any) (string, int, error) {
+	conns := settings.ActiveConnections()
+	if len(conns) == 0 {
+		return "", 0, knowledge.ErrNotConfigured
+	}
+	allowed := settings.SourcesForProject(projectID)
+	multi := len(conns) > 1
+
+	switch tool {
+	case knowledge.WeKnoraToolListKnowledgeBases:
+		kept := make([]any, 0)
+		for _, conn := range conns {
+			wc, err := knowledge.NewWeKnoraClient(domain.KnowledgeSettings{URL: conn.URL, Token: conn.Token})
+			if err != nil {
+				continue
+			}
+			kbs, err := wc.ListKnowledgeBases(ctx)
+			if err != nil {
+				continue
+			}
+			for _, kb := range kbs {
+				sid := knowledge.EncodeScopedSourceID(settings, conn.ID, kb.ID)
+				if knowledge.SourceAllowed(allowed, sid) {
+					if multi && conn.Name != "" {
+						kb.Name = "[" + conn.Name + "] " + kb.Name
+					}
+					kb.ID = sid
+					kept = append(kept, kb)
+				}
+			}
+		}
+		raw, err := json.Marshal(map[string]any{"knowledge_bases": kept})
+		return string(raw), len(kept), err
+
+	case knowledge.WeKnoraToolSearchKnowledge:
+		query := strings.TrimSpace(fmt.Sprint(valueOr(args["query"], "")))
+		if query == "" {
+			return "", 0, errors.New("query 不能为空")
+		}
+		reqIDs := stringList(args["knowledge_base_ids"])
+		if len(reqIDs) == 0 {
+			if single := strings.TrimSpace(fmt.Sprint(valueOr(args["knowledge_base_id"], ""))); single != "" {
+				reqIDs = []string{single}
+			}
+		}
+		scoped, err := knowledge.ScopeSources(allowed, reqIDs)
+		if err != nil {
+			return "", 0, err
+		}
+		limit := intArg(args["limit"], 10)
+		grouped := map[string][]string{}
+		if len(scoped) == 0 {
+			for _, c := range conns {
+				grouped[c.ID] = nil
+			}
+		} else {
+			for _, sid := range scoped {
+				conn, rawKB, ok := knowledge.DecodeScopedSourceID(settings, sid)
+				if ok {
+					grouped[conn.ID] = append(grouped[conn.ID], rawKB)
+				}
+			}
+		}
+		var allHits []any
+		for _, conn := range conns {
+			rawKBs, want := grouped[conn.ID]
+			if !want {
+				continue
+			}
+			wc, err := knowledge.NewWeKnoraClient(domain.KnowledgeSettings{URL: conn.URL, Token: conn.Token})
+			if err != nil {
+				continue
+			}
+			hits, err := wc.HybridSearch(ctx, query, rawKBs, limit)
+			if err != nil {
+				continue
+			}
+			for _, h := range hits {
+				h.SourceKBID = knowledge.EncodeScopedSourceID(settings, conn.ID, h.SourceKBID)
+				h.KnowledgeID = knowledge.EncodeScopedSourceID(settings, conn.ID, h.KnowledgeID)
+				allHits = append(allHits, h)
+			}
+		}
+		if allHits == nil {
+			allHits = []any{}
+		}
+		raw, err := json.Marshal(map[string]any{"query": query, "results": allHits})
+		return string(raw), len(allHits), err
+
+	case knowledge.WeKnoraToolListDocuments:
+		kbID := strings.TrimSpace(fmt.Sprint(valueOr(args["knowledge_base_id"], "")))
+		if kbID == "" {
+			return "", 0, errors.New("knowledge_base_id 不能为空")
+		}
+		if !knowledge.SourceAllowed(allowed, kbID) {
+			return "", 0, fmt.Errorf("知识库来源 %q 不在当前项目的授权范围", kbID)
+		}
+		conn, rawKB, ok := knowledge.DecodeScopedSourceID(settings, kbID)
+		if !ok {
+			return "", 0, knowledge.ErrNotConfigured
+		}
+		wc, err := knowledge.NewWeKnoraClient(domain.KnowledgeSettings{URL: conn.URL, Token: conn.Token})
+		if err != nil {
+			return "", 0, err
+		}
+		keyword := strings.TrimSpace(fmt.Sprint(valueOr(args["keyword"], "")))
+		page := intArg(args["page"], 1)
+		pageSize := intArg(args["page_size"], 20)
+		res, err := wc.ListDocuments(ctx, rawKB, keyword, page, pageSize)
+		if err != nil {
+			return "", 0, err
+		}
+		for i := range res.Documents {
+			res.Documents[i].ID = knowledge.EncodeScopedSourceID(settings, conn.ID, res.Documents[i].ID)
+			res.Documents[i].KnowledgeBaseID = kbID
+		}
+		raw, err := json.Marshal(res)
+		return string(raw), len(res.Documents), err
+
+	case knowledge.WeKnoraToolReadDocument:
+		knowledgeID := strings.TrimSpace(fmt.Sprint(valueOr(args["knowledge_id"], "")))
+		if knowledgeID == "" {
+			return "", 0, errors.New("knowledge_id 不能为空")
+		}
+		conn, rawDocID, ok := knowledge.DecodeScopedSourceID(settings, knowledgeID)
+		if !ok {
+			return "", 0, knowledge.ErrNotConfigured
+		}
+		wc, err := knowledge.NewWeKnoraClient(domain.KnowledgeSettings{URL: conn.URL, Token: conn.Token})
+		if err != nil {
+			return "", 0, err
+		}
+		if len(allowed) > 0 {
+			kbID, err := wc.GetDocumentKBID(ctx, rawDocID)
+			if err != nil {
+				return "", 0, err
+			}
+			scopedKB := knowledge.EncodeScopedSourceID(settings, conn.ID, kbID)
+			if !knowledge.SourceAllowed(allowed, scopedKB) {
+				return "", 0, fmt.Errorf("文档 %q 所属知识库 %q 不在当前项目的授权范围", knowledgeID, scopedKB)
+			}
+		}
+		offset := intArg(args["offset"], 0)
+		limit := intArg(args["limit"], 20)
+		if limit <= 0 || limit > 100 {
+			limit = 20
+		}
+		page := (offset / limit) + 1
+		chunks, total, err := wc.ListChunks(ctx, rawDocID, page, limit)
+		if err != nil {
+			return "", 0, err
+		}
+		if q := strings.ToLower(strings.TrimSpace(fmt.Sprint(valueOr(args["query"], "")))); q != "" {
+			words := strings.Fields(q)
+			filtered := chunks[:0]
+			for _, ch := range chunks {
+				low := strings.ToLower(ch.Content)
+				matched := true
+				for _, w := range words {
+					if !strings.Contains(low, w) {
+						matched = false
+						break
+					}
+				}
+				if matched {
+					filtered = append(filtered, ch)
+				}
+			}
+			chunks = filtered
+		}
+		raw, err := json.Marshal(map[string]any{
+			"knowledge_id": knowledgeID,
+			"total":        total,
+			"chunks":       chunks,
+		})
+		return string(raw), len(chunks), err
+
+	default:
+		return "", 0, fmt.Errorf("未知的 WeKnora 工具 %q", tool)
+	}
 }

@@ -95,6 +95,14 @@ var (
 	clients   = map[string]*mcpclient.Client{}
 )
 
+// NewUpstream returns the Upstream implementation matching settings.Provider.
+func NewUpstream(settings domain.KnowledgeSettings) (Upstream, error) {
+	if settings.EffectiveProvider() == domain.KnowledgeProviderWeKnora {
+		return NewWeKnoraClient(settings)
+	}
+	return NewClient(settings)
+}
+
 // NewClient returns a client for the stored settings. Clients are cached per
 // URL+token so the MCP initialize handshake is not repeated on every call.
 func NewClient(settings domain.KnowledgeSettings) (*Client, error) {

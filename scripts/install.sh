@@ -149,34 +149,50 @@ if ! docker_access compose ps --status running --services 2>/dev/null | grep -qx
   fi
 fi
 
-dev_compose=compose.yaml:compose.dev.yaml
-if [[ "${LOOPFORGE_BUILD_FROM_SOURCE:-0}" == 1 && "${COMPOSE_FILE:-}" != "$dev_compose" ]]; then
-  # Persisted because sudo-run Compose only reads .env; later plain compose commands keep the source stack.
-  python3 - "$dev_compose" <<'PY'
+compose_files=(compose.yaml)
+if [[ "${LOOPFORGE_BUILD_FROM_SOURCE:-0}" == 1 ]]; then
+  compose_files+=(compose.dev.yaml)
+fi
+if [[ "${LOOPFORGE_WITH_WEKNORA:-0}" == 1 ]]; then
+  compose_files+=(compose.weknora.yaml)
+fi
+target_compose=$(IFS=:; echo "${compose_files[*]}")
+if [[ "$target_compose" != "compose.yaml" && "${COMPOSE_FILE:-}" != "$target_compose" ]]; then
+  # Persisted because sudo-run Compose only reads .env; later plain compose commands keep the stack.
+  python3 - "$target_compose" <<'PY'
 import pathlib,re,sys
 p=pathlib.Path('.env')
 text=re.sub(r'(?m)^COMPOSE_FILE=.*\n?','',p.read_text())
 p.write_text(text.rstrip('\n')+'\nCOMPOSE_FILE='+sys.argv[1]+'\n')
 PY
-  export COMPOSE_FILE="$dev_compose"
+  export COMPOSE_FILE="$target_compose"
 fi
 
-if [[ "${COMPOSE_FILE:-}" != "$dev_compose" ]]; then
+compose_profiles=(--profile platform)
+if [[ "${LOOPFORGE_WITH_WEKNORA:-0}" == 1 ]]; then
+  compose_profiles+=(--profile weknora)
+fi
+
+if [[ "${LOOPFORGE_BUILD_FROM_SOURCE:-0}" != 1 ]]; then
   pull_policy="${LOOPFORGE_PULL_POLICY:-missing}"
   if mirror_published_ghcr "$pull_policy"; then
     # The platform name is already local. Pull it with missing so Compose does
     # not contact ghcr.io; MySQL keeps the requested policy.
     if [[ "$pull_policy" == always ]]; then
-      docker_access compose --profile platform pull --policy missing platform
-      docker_access compose --profile platform pull --policy always mysql
+      docker_access compose "${compose_profiles[@]}" pull --policy missing platform
+      docker_access compose "${compose_profiles[@]}" pull --policy always mysql
     else
-      docker_access compose --profile platform pull --policy "$pull_policy" platform mysql
+      docker_access compose "${compose_profiles[@]}" pull --policy "$pull_policy" platform mysql
     fi
   else
     step "Pulling the published LoopForge image ${LOOPFORGE_IMAGE:-pinned in compose.yaml}"
-    docker_access compose --profile platform pull --policy "$pull_policy" platform mysql
+    docker_access compose "${compose_profiles[@]}" pull --policy "$pull_policy" platform mysql
   fi
-  docker_access compose --profile platform up -d --no-build --wait --wait-timeout 180
+  if [[ "${LOOPFORGE_WITH_WEKNORA:-0}" == 1 ]]; then
+    step 'Pulling WeKnora knowledge base images'
+    docker_access compose "${compose_profiles[@]}" pull --policy "$pull_policy" weknora-postgres weknora-redis weknora-docreader weknora-app weknora-frontend
+  fi
+  docker_access compose "${compose_profiles[@]}" up -d --no-build --wait --wait-timeout 180
 else
   step 'Building LoopForge from source (first install takes several minutes; frontend, Go and runtime stages build in parallel)'
   if [[ -z "${LOOPFORGE_COMMIT:-}" ]]; then
@@ -186,10 +202,14 @@ else
   # Download MySQL while the platform image builds instead of afterwards.
   docker_access compose pull --quiet --policy missing mysql >/dev/null 2>&1 &
   mysql_pull=$!
-  docker_access compose --profile platform build platform
+  docker_access compose "${compose_profiles[@]}" build platform
   wait "$mysql_pull" || true
+  if [[ "${LOOPFORGE_WITH_WEKNORA:-0}" == 1 ]]; then
+    step 'Pulling WeKnora knowledge base images'
+    docker_access compose "${compose_profiles[@]}" pull --policy missing weknora-postgres weknora-redis weknora-docreader weknora-app weknora-frontend
+  fi
   step 'Starting LoopForge'
-  docker_access compose --profile platform up -d --no-build --wait --wait-timeout 180
+  docker_access compose "${compose_profiles[@]}" up -d --no-build --wait --wait-timeout 180
 fi
 step 'Installing the schema extensions and the starter catalog'
 bash scripts/install-schema-extensions.sh

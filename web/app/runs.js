@@ -376,9 +376,18 @@ function hookTraceDetails(e){const a=e.attributes||{},facts=[["ID",a.hookId],["�
 function knowledgeArtifactCitations(event){
   if(event.name!=='knowledge.call')return '';
   const readId=event.attributes?.knowledgeReadId;
-  if(!readId)return '';
-  const artifacts=(state.activeRun?.artifacts||[]).filter(a=>a.nodeId===event.nodeId && a.attempt===event.attributes.attempt && a.content?.includes('[[knowledge:'+readId+']]'));
-  return artifacts.length ? '<p>产物已引用 · '+artifacts.map(a=>escapeHTML(a.name)).join('、')+'</p>' : '';
+  const nodeReads=state.activeRun?.nodes?.[event.nodeId]?.knowledgeReads||[];
+  const read=readId?nodeReads.find(r=>r.id===readId):null;
+  const query=event.attributes?.query||read?.query||'';
+  const targets=Array.isArray(event.attributes?.targets)&&event.attributes.targets.length?event.attributes.targets:(Array.isArray(read?.targets)?read.targets:[]);
+  const hits=event.attributes?.hits;
+  const parts=[];
+  if(query)parts.push(`检索词：${escapeHTML(query)}`);
+  if(targets.length)parts.push(`命中：${targets.map(t=>escapeHTML(t)).join('、')}`);
+  else if(typeof hits==='number'&&hits>0)parts.push(`命中 ${hits} 条`);
+  const artifacts=readId?(state.activeRun?.artifacts||[]).filter(a=>a.nodeId===event.nodeId && a.attempt===event.attributes.attempt && a.content?.includes('[[knowledge:'+readId+']]')):[];
+  if(artifacts.length)parts.push('产物已引用 · '+artifacts.map(a=>escapeHTML(a.name)).join('、'));
+  return parts.length?parts.map(p=>`<p>${p}</p>`).join(''):'';
 }
 function telemetryItemHTML(e){const hook=isHookAdapter(e.source?.adapter),tag=hook?'Hook':e.source?.adapter==='codebuddy-otel-v1'?'OTEL':'',title=hook?(e.attributes?.hookName||e.attributes?.hookId||e.name):e.name,repository=e.attributes?.repositoryName||e.attributes?.repositoryDir||e.attributes?.repositoryId||'';return `<article class="telemetry-event ${e.category}"><time>${new Date(e.timestamp).toLocaleTimeString()}</time><span class="telemetry-category">${telemetryLabel(e)}${tag?`<em class="adapter-tag">${tag}</em>`:''}</span><div><b>${escapeHTML(title)}</b><p>${escapeHTML(e.message||'')}</p>${knowledgeArtifactCitations(e)}${hook?hookTraceDetails(e):''}<small>${escapeHTML(e.nodeId||'run')}${repository?` · ${escapeHTML(repository)}`:''}${hook&&e.source?.provider?` · ${escapeHTML(e.source.provider)}`:''}${e.model?` · ${escapeHTML(e.model)}`:''}${e.toolCallId?` · ${escapeHTML(e.toolCallId)}`:''}</small></div></article>`}
 async function loadRunLogs(runId,nodeId,more=false){

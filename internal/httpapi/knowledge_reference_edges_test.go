@@ -27,6 +27,8 @@ func TestKnowledgeCallErrorRedactsUpstream(t *testing.T) {
 		{"401", errors.New("gateway HTTP 401: Bearer leaked-token"), "拒绝访问"},
 		{"generic", errors.New("gateway HTTP 500: internal detail https://secret.host"), "不可用"},
 		{"plain", errors.New("connection reset by peer"), "不可用"},
+		{"mcp tool validation", errors.New("mcp tool search_knowledge: knowledge base \"foo\" was not found"), "was not found"},
+		{"mcp tool with url redacted", errors.New("mcp tool search_knowledge: failed to reach https://secret.host"), "不可用"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -335,8 +337,10 @@ func TestKnowledgeReferencePromptContextWeKnoraFlow(t *testing.T) {
 	}
 	d := &deps{repo: store}
 	got := knowledgeReferencePromptContext(context.Background(), d, "default", 1, []domain.KnowledgeRef{{ServerID: "weknora-2", Mode: "all"}})
-	if !strings.Contains(got, "vpcdns-test.md") {
-		t.Fatalf("expected vpcdns-test.md in L0 catalog, got:\n%s", got)
+	for _, want := range []string{"vpcdns-test.md", "<knowledge_base_ids>kb-net</knowledge_base_ids>"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("expected %q in L0 catalog, got:\n%s", want, got)
+		}
 	}
 	sopGot := buildSOPKnowledgeCatalogXML(context.Background(), d, "default", 1, []domain.KnowledgeRef{{ServerID: "weknora-2", Mode: "all"}})
 	for _, want := range []string{
@@ -362,5 +366,164 @@ func TestKnowledgeReferencePromptContextWeKnoraFlow(t *testing.T) {
 		if !strings.Contains(string(listRaw), want) {
 			t.Fatalf("external tools/list missing %q in: %s", want, listRaw)
 		}
+	}
+}
+
+func TestKnowledgeCallQuerySummary(t *testing.T) {
+	if got := knowledgeCallQuerySummary(nil); got != "" {
+		t.Fatalf("nil args = %q, want empty", got)
+	}
+	if got := knowledgeCallQuerySummary(map[string]any{
+		"query":        "  vpc   dns  ",
+		"knowledge_id": "kn-1",
+	}); got != "vpc dns" {
+		t.Fatalf("query priority = %q, want %q", got, "vpc dns")
+	}
+	if got := knowledgeCallQuerySummary(map[string]any{
+		"knowledge_id": "kn-1",
+		"document_id":  "doc-1",
+	}); got != "kn-1" {
+		t.Fatalf("knowledge_id fallback = %q, want %q", got, "kn-1")
+	}
+	if got := knowledgeCallQuerySummary(map[string]any{
+		"document_id": "doc-1",
+		"path":        "a/b.md",
+	}); got != "doc-1" {
+		t.Fatalf("document_id fallback = %q, want %q", got, "doc-1")
+	}
+	if got := knowledgeCallQuerySummary(map[string]any{
+		"path":    "playbooks/dns.md",
+		"keyword": "dns",
+	}); got != "playbooks/dns.md" {
+		t.Fatalf("path fallback = %q, want %q", got, "playbooks/dns.md")
+	}
+	if got := knowledgeCallQuerySummary(map[string]any{
+		"keyword": "dns-timeout",
+	}); got != "dns-timeout" {
+		t.Fatalf("keyword fallback = %q, want %q", got, "dns-timeout")
+	}
+	longQuery := strings.Repeat("a", 150)
+	if got := knowledgeCallQuerySummary(map[string]any{"query": longQuery}); len([]rune(got)) > 120 {
+		t.Fatalf("long query not truncated to <=120 runes: len=%d", len([]rune(got)))
+	}
+}
+
+func TestExtractKnowledgeResultMeta(t *testing.T) {
+	// Built-in kb_search JSON.
+	builtinSearch := `{"query":"vpcdns","results":[{"source":"net","path":"playbooks/vpcdns.md","title":"vpcdns-test.md"},{"source":"net","path":"playbooks/vpcdns.md","title":"vpcdns-test.md"},{"source":"net","path":"playbooks/coredns.md"}]}`
+	targets, hits := extractKnowledgeResultMeta(builtinSearch)
+	if hits != 3 {
+		t.Fatalf("builtin search hits = %d, want 3", hits)
+	}
+	if !reflect.DeepEqual(targets, []string{"vpcdns-test.md", "playbooks/coredns.md"}) {
+		t.Fatalf("builtin search targets = %#v", targets)
+	}
+
+	// Built-in kb_fetch JSON.
+	builtinFetch := `{"source":"net","path":"playbooks/vpcdns.md","lines":[{"number":1,"text":"# title"}]}`
+	targets, hits = extractKnowledgeResultMeta(builtinFetch)
+	if hits != 1 || !reflect.DeepEqual(targets, []string{"playbooks/vpcdns.md"}) {
+		t.Fatalf("builtin fetch targets=%#v hits=%d", targets, hits)
+	}
+
+	// WeKnora JSON with >5 items and duplicate titles.
+	weknoraJSON := `{"results":[
+		{"knowledge_title":"doc-1.md","knowledge_id":"k1"},
+		{"knowledge_title":"doc-2.md","knowledge_id":"k2"},
+		{"knowledge_title":"doc-1.md","knowledge_id":"k1"},
+		{"title":"doc-3.md"},
+		{"title":"doc-4.md"},
+		{"title":"doc-5.md"},
+		{"title":"doc-6.md"}
+	]}`
+	targets, hits = extractKnowledgeResultMeta(weknoraJSON)
+	if hits != 7 {
+		t.Fatalf("weknora hits = %d, want 7", hits)
+	}
+	wantTop5 := []string{"doc-1.md", "doc-2.md", "doc-3.md", "doc-4.md", "doc-5.md"}
+	if !reflect.DeepEqual(targets, wantTop5) {
+		t.Fatalf("weknora targets = %#v, want %#v", targets, wantTop5)
+	}
+
+	// WeKnora single document data wrapper.
+	weknoraSingle := `{"success":true,"data":{"id":"kn-42","title":"vpcdns-test.md","content":"hello"}}`
+	targets, hits = extractKnowledgeResultMeta(weknoraSingle)
+	if hits != 1 || !reflect.DeepEqual(targets, []string{"vpcdns-test.md"}) {
+		t.Fatalf("weknora single targets=%#v hits=%d", targets, hits)
+	}
+
+	// Markdown text output.
+	markdown := "### 1. vpcdns-test.md\n相关段落内容...\n- **标题**: coredns-guide.md\n### 2. vpcdns-test.md\n"
+	targets, hits = extractKnowledgeResultMeta(markdown)
+	if hits != 3 || !reflect.DeepEqual(targets, []string{"vpcdns-test.md", "coredns-guide.md"}) {
+		t.Fatalf("markdown targets=%#v hits=%d", targets, hits)
+	}
+}
+
+func TestCallKnowledgeReferenceExtractsHitsAndTargets(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var rpc struct {
+			ID     any    `json:"id"`
+			Method string `json:"method"`
+			Params struct {
+				Name string `json:"name"`
+			} `json:"params"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&rpc); err != nil {
+			http.Error(w, err.Error(), 400)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch rpc.Method {
+		case "initialize":
+			_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": rpc.ID, "result": map[string]any{"protocolVersion": "2024-11-05"}})
+		case "notifications/initialized":
+			w.WriteHeader(204)
+		case "tools/list":
+			_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": rpc.ID, "result": map[string]any{
+				"tools": []map[string]any{
+					{"name": "search_knowledge", "description": "Search KB", "annotations": map[string]any{"readOnlyHint": true}},
+				},
+			}})
+		case "tools/call":
+			_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": rpc.ID, "result": map[string]any{
+				"content": []map[string]any{{"type": "text", "text": `{"results":[{"knowledge_title":"vpcdns-test.md"},{"knowledge_title":"dns-faq.md"}]}`}},
+			}})
+		}
+	}))
+	defer srv.Close()
+
+	store, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if err := store.PutMCPServer(domain.MCPServerDefinition{
+		ID:        "weknora-obs",
+		Name:      "WeKnora Obs",
+		Scope:     "project",
+		ProjectID: "default",
+		Transport: "http",
+		URL:       srv.URL,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	d := &deps{repo: store}
+	ref := domain.KnowledgeRef{ServerID: "weknora-obs", Mode: "all"}
+	args := map[string]any{"query": "vpcdns"}
+	text, hits, err := callKnowledgeReference(context.Background(), d, "default", 1, ref, "search_knowledge", args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hits != 2 {
+		t.Fatalf("hits = %d, want 2", hits)
+	}
+	read, _ := knowledgeReadResult(ref.ServerID, "search_knowledge", text, hits, err)
+	read.Query = knowledgeCallQuerySummary(args)
+	if read.Query != "vpcdns" {
+		t.Fatalf("read.Query = %q, want vpcdns", read.Query)
+	}
+	if !reflect.DeepEqual(read.Targets, []string{"vpcdns-test.md", "dns-faq.md"}) {
+		t.Fatalf("read.Targets = %#v", read.Targets)
 	}
 }
