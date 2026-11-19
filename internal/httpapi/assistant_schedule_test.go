@@ -15,8 +15,8 @@ import (
 	"agentflow/internal/tracker"
 )
 
-// A scheduled run, like a chat turn, has no time limit.
-func TestScheduledAssistantHasNoDeadline(t *testing.T) {
+func TestScheduledAssistantDeadline(t *testing.T) {
+	t.Setenv("AGENTFLOW_ASSISTANT_SESSION_DIR", t.TempDir())
 	st, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -26,17 +26,55 @@ func TestScheduledAssistantHasNoDeadline(t *testing.T) {
 		t.Fatal(err)
 	}
 	user, _ := st.UserByLoginName("schedule-owner")
-	called := false
-	stopped := errors.New("stop test generation")
-	h := &assistantHandlers{deps: &deps{repo: st}, generate: func(ctx context.Context, _ string, _ domain.User) (string, error) {
-		called = true
-		if deadline, ok := ctx.Deadline(); ok {
-			t.Fatalf("scheduled generation has a deadline: %s", time.Until(deadline))
-		}
-		return "", stopped
-	}}
-	if _, err := h.prepareScheduleJob(domain.ScheduleJob{OwnerUserID: user.ID, AssistantPrompt: "inspect"}); err == nil || !called {
-		t.Fatalf("generation was not reached: called=%v err=%v", called, err)
+	for _, tc := range []struct {
+		name    string
+		minutes int
+		want    time.Duration
+	}{
+		{"existing job", 0, 30 * time.Minute},
+		{"configured limit", 5, 5 * time.Minute},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			called := false
+			h := &assistantHandlers{deps: &deps{repo: st}, generate: func(ctx context.Context, _ string, _ domain.User) (string, error) {
+				called = true
+				deadline, ok := ctx.Deadline()
+				if remaining := time.Until(deadline); !ok || remaining > tc.want || remaining < tc.want-10*time.Second {
+					t.Errorf("scheduled generation deadline = %s remaining, want %s", remaining, tc.want)
+				}
+				return "定时巡检已完成", nil
+			}}
+			if _, err := h.prepareScheduleJob(domain.ScheduleJob{OwnerUserID: user.ID, AssistantPrompt: "inspect", TimeoutMinutes: tc.minutes}); err != nil || !called {
+				t.Fatalf("generation did not complete: called=%v err=%v", called, err)
+			}
+		})
+	}
+}
+
+func TestScheduledAssistantStopsAtDeadline(t *testing.T) {
+	h, user := workbenchFixture(t)
+	started := make(chan struct{})
+	h.generate = func(ctx context.Context, _ string, _ domain.User) (string, error) {
+		close(started)
+		<-ctx.Done()
+		return "", ctx.Err()
+	}
+	task := assistantTask{ProjectID: "workbench", Name: "Timeout", Prompt: "wait"}
+	ctx := withScheduledSessionPolicy(context.Background(), scheduledSessionPolicy{Timeout: time.Second})
+	if err := h.executeAssistantTask(ctx, user, &task); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("scheduled generation error = %v, want DeadlineExceeded", err)
+	}
+	select {
+	case <-started:
+	default:
+		t.Fatal("deadline elapsed before the turn started")
+	}
+	if task.LastStatus != "error" || task.LastError != "定时任务执行超时" || task.SessionID == "" {
+		t.Fatalf("unexpected task outcome: %+v", task)
+	}
+	generation, ok := h.repo.PeekAssistantGeneration(user.ID, task.SessionID)
+	if !ok || generation.Status != "failed" || generation.Failure == nil || generation.Failure.Code != "EXECUTION_TIMEOUT" {
+		t.Fatalf("unexpected generation outcome: %+v", generation)
 	}
 }
 

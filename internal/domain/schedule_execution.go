@@ -82,6 +82,30 @@ type ScheduleExecutionWindow struct {
 	AvgMs    int64 `json:"avgMs"`
 }
 
+const (
+	DefaultScheduleTimeoutMinutes = 30
+	MaxScheduleTimeoutMinutes     = 240
+)
+
+// NormalizeScheduleTimeoutMinutes validates an AI job's execution limit.
+func NormalizeScheduleTimeoutMinutes(minutes int) (int, error) {
+	if minutes == 0 {
+		return DefaultScheduleTimeoutMinutes, nil
+	}
+	if minutes < 1 || minutes > MaxScheduleTimeoutMinutes {
+		return 0, fmt.Errorf("执行超时必须为 1–%d 分钟", MaxScheduleTimeoutMinutes)
+	}
+	return minutes, nil
+}
+
+func (j ScheduleJob) ExecutionTimeout() time.Duration {
+	minutes, err := NormalizeScheduleTimeoutMinutes(j.TimeoutMinutes)
+	if err != nil {
+		minutes = DefaultScheduleTimeoutMinutes
+	}
+	return time.Duration(minutes) * time.Minute
+}
+
 // ScheduleSessionFixed is ScheduleJob.SessionMode for an AI job that keeps
 // running in one pinned conversation.
 const ScheduleSessionFixed = "fixed"

@@ -410,7 +410,9 @@ func (h *agentToolGateway) dispatch(ctx context.Context, session *AgentToolSessi
 		if session.WorkspaceToken != "" && session.RunID != "" && strings.HasPrefix(tool.UpstreamName, "runs_") && assistantToolInput(call).Path["id"] == session.RunID {
 			ctx = engine.WithConversationWorkspaceToken(ctx, session.WorkspaceToken, session.RunID)
 		}
-		if session.workspaceTurn != nil && strings.HasPrefix(tool.UpstreamName, "runs_") {
+		// Waiting only reads status. Do not hold the workspace operation lock
+		// while a separate tool or turn may be advancing the run.
+		if session.workspaceTurn != nil && strings.HasPrefix(tool.UpstreamName, "runs_") && tool.UpstreamName != "runs_wait" {
 			releaseTurn := session.workspaceTurn.lockOperation()
 			defer releaseTurn()
 			ctx = session.workspaceTurn.withLease(ctx, assistantToolInput(call).Path["id"])

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"agentflow/internal/domain"
 	"agentflow/internal/repo"
@@ -19,6 +20,8 @@ type scheduledSessionPolicy struct {
 	// KeepHistory keeps the conversations of earlier runs so each execution
 	// record can open its own; the session janitor trims them later.
 	KeepHistory bool
+	// Timeout caps the turn and its tool calls, including waits for SOP results.
+	Timeout time.Duration
 	// Opened, when set, learns the conversation as soon as it is created,
 	// before the prompt finishes.
 	Opened func(sessionID string)
@@ -89,7 +92,7 @@ func (h *assistantHandlers) runScheduleJobPromptReporting(job domain.ScheduleJob
 	}
 	ctx := withAssistantExecMode(context.Background(), assistantExecModeForApproval(AssistantApprovalAuto))
 	ctx = withAssistantSessionOrigin(ctx, domain.AssistantSourceScheduled, job.ID)
-	policy := scheduledSessionPolicy{KeepHistory: true, Opened: opened}
+	policy := scheduledSessionPolicy{KeepHistory: true, Timeout: job.ExecutionTimeout(), Opened: opened}
 	if job.UsesFixedSession() {
 		policy.Continue = strings.TrimSpace(job.FixedSessionID)
 	}

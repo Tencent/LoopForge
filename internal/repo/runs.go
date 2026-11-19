@@ -1,6 +1,7 @@
 package repo
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -265,6 +266,16 @@ func (r *RunsRepo) RunStatuses() map[string]string {
 		out[row.ID] = row.Status
 	}
 	return out
+}
+
+// ReadRunStatus reads a single run without loading its graph or event history.
+func (r *RunsRepo) ReadRunStatus(ctx context.Context, id string) (status string, found bool, err error) {
+	var row runRow
+	err = r.DB.WithContext(ctx).Select("status").Where("id = ?", id).Take(&row).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return "", false, nil
+	}
+	return row.Status, err == nil, err
 }
 
 // RunsWithActiveNodes reports runs that still have running or pending_input nodes.

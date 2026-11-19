@@ -1156,6 +1156,11 @@
               <p class="schedule-field-hint" id="scheduleModelHint">Codex 和 Claude Code 优先使用保存人默认执行机器的账号登录。机器离线时改用个人 API Key，Key 缺失或不可用时任务失败。CodeBuddy 缺少个人 Key 时可使用平台共享 Key。</p>
             </div>
             <div data-schedule-kind="assistant" hidden>
+              <label for="scheduleTimeoutMinutes">执行超时（分钟）</label>
+              <input id="scheduleTimeoutMinutes" class="input" name="timeoutMinutes" type="number" min="1" max="240" step="1" placeholder="30" aria-describedby="scheduleTimeoutHint">
+              <p class="schedule-field-hint" id="scheduleTimeoutHint">默认 30 分钟。达到时限会停止本次 AI 执行，已启动的 SOP 继续运行。</p>
+            </div>
+            <div data-schedule-kind="assistant" hidden>
               <label for="scheduleSessionMode">会话</label>
               <select id="scheduleSessionMode" class="select" name="sessionMode">
                 <option value="">每次新开会话</option>
