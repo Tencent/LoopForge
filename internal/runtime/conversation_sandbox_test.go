@@ -21,9 +21,10 @@ func TestConversationCLISetupUsesSandboxProxy(t *testing.T) {
 set -eu
 case "$*" in
   *"id -u; id -g"*) printf '1000\n1000\n' ;;
+  *loopforge-cli-available*) exit 127 ;;
   *"loopforge-cli-setup"*)
-    printf '%s\n' "$@" > "$LOOPFORGE_TEST_SETUP_ARGS"
-    printf '/opt/loopforge/conversation-cli/.local/bin/agy\n' ;;
+    printf '%s\n' "$@" > "$LOOPFORGE_TEST_SETUP_ARGS" ;;
+  *loopforge-cli-verify*) printf '/opt/loopforge/conversation-cli/.local/bin/agy\n' ;;
 esac
 `)
 	if err := os.Symlink(docker, filepath.Join(bin, "docker")); err != nil {

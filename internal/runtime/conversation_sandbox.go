@@ -171,6 +171,14 @@ func ensureConversationCLI(ctx context.Context, sandbox Sandbox, provider, home 
 	return s.ensureDockerCLI(ctx, provider, home)
 }
 
+const dockerCLISharedPath = "/opt/loopforge/conversation-cli/bin:/opt/loopforge/conversation-cli/.local/bin"
+const dockerCLISharedPathSetup = "PATH=" + dockerCLISharedPath + ":$PATH\nexport PATH\n"
+
+const dockerCLIProbe = `cli_path=$(command -v "$1") || exit 127
+[ -f "$cli_path" ] && [ -x "$cli_path" ] || exit 127
+printf '%s\n' "$cli_path"
+`
+
 // ensureDockerCLI prepares a provider in an existing container. SOP and chat
 // callers hold the execution gate so preparation cannot race recreation.
 func (s *dockerSandbox) ensureDockerCLI(ctx context.Context, provider, home string) (string, error) {
@@ -211,6 +219,19 @@ func (s *dockerSandbox) ensureDockerCLI(ctx context.Context, provider, home stri
 	if err != nil {
 		return "", err
 	}
+	// Only the task user's PATH and permissions determine whether to install.
+	// The root login shell may see a private copy the task cannot execute.
+	taskArgs := append(append([]string{"exec", "--workdir", "/"}, toolchain...), s.name, "sh", "-lc")
+	taskPathSetup := dockerCLISharedPathSetup + toolchainPathSetup
+	probe, err := exec.CommandContext(ctx, "docker", append(taskArgs, taskPathSetup+dockerCLIProbe, "loopforge-cli-available", binary)...).CombinedOutput()
+	installMode := "reuse"
+	if err != nil {
+		if !isDockerCLIMissing(err) {
+			return "", fmt.Errorf("探测工作区 CLI %s 失败：%w: %s", binary, err, conversationSetupOutput(probe))
+		}
+		installMode = "install"
+	}
+
 	setupArgs := []string{"exec", "--user", "0:0", "--workdir", "/"}
 	// Preparation uses a separate Docker exec as root. Carry the sandbox's
 	// configured network settings into that exec as well as normal CLI turns.
@@ -219,19 +240,21 @@ func (s *dockerSandbox) ensureDockerCLI(ctx context.Context, provider, home stri
 			setupArgs = append(setupArgs, "-e", key+"="+value)
 		}
 	}
-	setupArgs = append(append(setupArgs, toolchain...), s.name, "sh", "-lc", setup, "loopforge-cli-setup", ids[0], ids[1], home)
+	setupArgs = append(append(setupArgs, toolchain...), s.name, "sh", "-lc", setup, "loopforge-cli-setup", ids[0], ids[1], home, installMode)
 	output, err := exec.CommandContext(ctx, "docker", setupArgs...).CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("准备 %s 原生CLI失败（工作区镜像需支持 Node.js/npm 和 Python3）：%w: %s", provider, err, conversationSetupOutput(output))
 	}
-	checkArgs := append(append(append([]string{"exec", "--workdir", "/"}, toolchain...), s.name), withToolchainPath([]string{"python3", "-c", "import os,pwd; pwd.getpwuid(os.geteuid())"})...)
-	if check, err := exec.CommandContext(ctx, "docker", checkArgs...).CombinedOutput(); err != nil {
-		return "", fmt.Errorf("验证工作区 CLI 用户失败: %w: %s", err, conversationSetupOutput(check))
+	check := taskPathSetup + "python3 -c 'import os,pwd; pwd.getpwuid(os.geteuid())' || exit\n" + dockerCLIProbe
+	checkArgs := append(taskArgs, check, "loopforge-cli-verify", binary)
+	output, err = exec.CommandContext(ctx, "docker", checkArgs...).CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("验证工作区执行用户可使用 CLI %s 失败：%w: %s", binary, err, conversationSetupOutput(output))
 	}
 	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
 	path := strings.TrimSpace(lines[len(lines)-1])
 	if !strings.HasPrefix(path, "/") || strings.ContainsAny(path, "\r\n\x00") {
-		return "", fmt.Errorf("CLI安装未返回可执行文件路径")
+		return "", fmt.Errorf("工作区执行用户未返回 CLI %s 的可执行文件路径", binary)
 	}
 	return path, nil
 }
@@ -261,17 +284,14 @@ func dockerCLISetup(provider, binary string) (string, error) {
 	}
 	// Setup runs as root in a --cap-drop=ALL container, where GNU tar's default
 	// of restoring archive owners fails with EPERM.
-	return "set -eu\n" +
-		`PATH=/opt/loopforge/conversation-cli/bin:/opt/loopforge/conversation-cli/.local/bin:$PATH
-TAR_OPTIONS=--no-same-owner
-export PATH TAR_OPTIONS
-` + toolchainPathSetup + `if ! command -v python3 >/dev/null 2>&1; then
+	return "set -eu\n" + dockerCLISharedPathSetup + toolchainPathSetup + `export TAR_OPTIONS=--no-same-owner
+if ! command -v python3 >/dev/null 2>&1; then
   if command -v apt-get >/dev/null 2>&1; then apt-get update >&2 && apt-get install -y python3 >&2
   elif command -v apk >/dev/null 2>&1; then apk add --no-cache python3 >&2
   else echo 'Python3 is required for native CLI hooks and process supervision' >&2; exit 1; fi
 fi
-` + conversationCLIIdentitySetup + "if ! command -v " + shellSingleQuote(binary) + " >/dev/null 2>&1; then\nmkdir -p /opt/loopforge/conversation-cli/bin\n" + installer + "\nfi\n" +
-		"python3 -c 'import json,urllib.request'\ncommand -v " + shellSingleQuote(binary) + "\n", nil
+` + conversationCLIIdentitySetup + "if [ \"$4\" = install ]; then\nmkdir -p /opt/loopforge/conversation-cli/bin\n" + installer + "\nfi\n" +
+		"python3 -c 'import json,urllib.request'\n", nil
 }
 
 // Download the complete HTTPS installer before executing it. Retry the transfer
