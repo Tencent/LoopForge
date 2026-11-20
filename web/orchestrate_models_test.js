@@ -8,6 +8,7 @@ const html = fs.readFileSync('index.html', 'utf8');
 dom.html(html.slice(html.indexOf('<aside id="aiOrchestrator"'), html.indexOf('</aside>', html.indexOf('<aside id="aiOrchestrator"')) + 8));
 const store = new Map([['agentflow.assistantModel', 'cb-model']]);
 const requests = [];
+const transcripts = new Map();
 const catalog = {
   default: 'cb-model',
   engines: [{id: 'codebuddy', name: 'CodeBuddy', configured: true}, {id: 'codex', name: 'Codex', configured: true}, {id: 'claude-code', name: 'Claude Code', configured: true}, {id: 'pi', name: 'Pi', configured: true}, {id: 'opencode', name: 'OpenCode', configured: false}],
@@ -24,12 +25,23 @@ Object.assign(dom.window, {
   localStorage: {getItem: key => store.get(key) || null, setItem: (key, value) => store.set(key, value)},
   state: {projectFilter: 'project-a', workflow: null},
   AbortController,
+  api: async url => {
+    assert.match(url, /^\/api\/assistant\/sessions\/session-\d+$/);
+    return {messages: transcripts.get(url.split('/').pop())};
+  },
   fetch: async (url, options) => {
     if (url === '/api/assistant/models') return {ok: true, json: async () => catalog};
     assert.equal(url, '/api/assistant/chat');
-    requests.push(JSON.parse(options.body));
+    const request = JSON.parse(options.body);
+    requests.push(request);
+    const id = 'session-' + requests.length;
+    const reply = {sessionId: id, message: 'draft ready', drafts: []};
+    transcripts.set(id, [
+      ...request.messages.map(message => ({...message, authorId: 7})),
+      {role: 'assistant', model: request.model, content: JSON.stringify(reply), createdAt: '2026-11-21T00:00:00Z'},
+    ]);
     dom.document.querySelectorAll('[data-model-toggle]').forEach(toggle => assert.equal(toggle.disabled, true));
-    return {ok: true, headers: {get: () => 'application/json'}, json: async () => ({sessionId: 'session-' + requests.length, message: 'draft ready', drafts: []})};
+    return {ok: true, headers: {get: () => 'application/json'}, json: async () => reply};
   },
 });
 dom.load('app/hui-select.js');
@@ -38,11 +50,13 @@ dom.load('orchestrate.js');
 // Keep the real picker, transport and history; isolate canvas animation and
 // asset writes so this test cannot save or publish a workflow.
 dom.run(`
-  beginAIOrchestration = async () => ({token: aiBuildToken, mode: 'new'});
+  beginAIOrchestration = async () => (aiBuild = {token: aiBuildToken, mode: 'create', projectId: state.projectFilter});
   aiReferencedWorkflows = () => [];
   aiOrchestratePrompt = goal => goal;
+  refreshWorkflowAgents = async () => {};
+  renderWorkflowMeta = () => {};
   placeAIGhost = () => {};
-  completeAIBuild = async () => true;
+  completeAIBuild = async () => { aiBuild = null; return true; };
   appendOrchestratorNote = () => {};
   finishAIBuildVisuals = () => {};
   bindAIOrchestratorModelPicker();
@@ -114,7 +128,7 @@ dom.run(`
   assert.equal(request.sessionId, '');
   request = await send();
   assert.equal(request.sessionId, 'session-1', 'same CLI resumes the conversation');
-  assert.equal(request.messages[1].model, 'codex:gpt-test', 'history retains CLI identity');
+  assert.deepEqual(request.messages.slice(0, -1), transcripts.get('session-1'), 'resuming preserves the stored transcript');
   pick('codex:gpt-other');
   request = await send();
   assert.equal(request.sessionId, 'session-2', 'same CLI model change keeps history');

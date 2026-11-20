@@ -428,6 +428,8 @@ html[data-theme="dark"] #flowView .fd-toast button{background:rgba(0,0,0,.06);co
 #aiOrchestrator textarea::placeholder{color:var(--hui-tertiary)}
 #aiOrchestrator textarea:focus{outline:0;box-shadow:none}
 #aiOrchestrator .ai-orchestrator-toolbar{display:flex;align-items:center;justify-content:space-between;gap:6px;min-width:0}
+/* Keep the floating feedback control clear of the send button. */
+body:has(.fb-fab:not(.gone):not(.is-hidden)) #aiOrchestrator .ai-orchestrator-toolbar{padding-inline-end:52px}
 #aiOrchestrator .ai-orchestrator-runtime{display:flex;align-items:center;gap:2px;flex:1;min-width:0}
 #aiOrchestrator .ai-orchestrator-picker{min-width:0;flex:1}
 #aiOrchestrator #aiOrchestratorCLIPicker{flex:0 1 116px}

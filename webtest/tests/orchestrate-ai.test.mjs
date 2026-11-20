@@ -56,3 +56,30 @@ test('orchestrator renders scenarios and consumes an AI draft into a generated w
   assert.equal(app.evaluate(`state.workflow.nodes[0].name`), 'Only step');
   assert.match(app.document.querySelector('#aiOrchestratorLog').textContent, /完成/);
 });
+
+test('orchestration refreshes project roles and restores the canvas for an unavailable role', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  app.evaluate(`
+    switchView('flow');
+    state.workflow = {...state.workflow, nodes: [], edges: []};
+    state.workflowDirty = false;
+    state.data.agents.push({id:'private', name:'Private role', projectId:'other'});
+    renderAll();
+  `);
+  const workflowName = app.evaluate('state.workflow.name');
+  app.router.get('/api/agents?projectId=project-1', [{id:'new-role', name:'New role', projectId:'project-1'}]);
+  app.router.post('/api/assistant/chat', call => {
+    assert.match(call.body.messages.at(-1).content, /new-role：New role/);
+    assert.doesNotMatch(call.body.messages.at(-1).content, /private：Private role/);
+    return {drafts: [{tool:'workflows_save', body:{
+      name:'Unavailable draft', nodes:[{id:'bad', name:'Review', type:'agent', agentId:'private'}], edges:[],
+    }}]};
+  });
+  app.document.querySelector('#aiOrchestratorInput').value = 'Create a review workflow';
+  await app.evaluate('runAIOrchestrator()');
+  assert.equal(app.evaluate('state.workflow.name'), workflowName);
+  assert.equal(app.evaluate('state.workflow.nodes.length'), 0);
+  assert.equal(app.evaluate('state.workflowDirty'), false);
+  assert.match(app.document.querySelector('#aiOrchestratorLog').textContent, /Review（private）/);
+});
