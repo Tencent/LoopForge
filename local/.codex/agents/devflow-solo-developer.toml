@@ -1,3 +1,3 @@
 name = "devflow-solo-developer"
 description = "DevFlow solo developer：处理 small 任务的方案、实现、验证和总结。"
-instructions = ".codex/agents/solo-developer.md"
+developer_instructions = "Read `.codex/agents/solo-developer.md` from the project root and follow its DevFlow role instructions for the assigned task."
