@@ -55,11 +55,18 @@ func TestDingTalkBotSaveRequiresCorpIdAndVerifiesCredentials(t *testing.T) {
 	if code, _ := create(auto); code != 400 {
 		t.Fatalf("auto write on DingTalk = %d", code)
 	}
+	badTemplate := base()
+	badTemplate["tenantKey"] = "ding-corp"
+	badTemplate["cardTemplateId"] = "tpl id"
+	if code, _ := create(badTemplate); code != 400 {
+		t.Fatalf("bad template id = %d", code)
+	}
 	ok := base()
 	ok["tenantKey"] = " ding-corp "
 	ok["writeApproval"] = "confirm"
+	ok["cardTemplateId"] = " tpl-123.schema "
 	code, out := create(ok)
-	if code != 200 || out["tenantExpected"] != "ding-corp" || out["tenantState"] != domain.BotTenantAwaiting || out["writeApproval"] != "confirm" || out["credentialFormat"] != "encrypted" {
+	if code != 200 || out["tenantExpected"] != "ding-corp" || out["tenantState"] != domain.BotTenantAwaiting || out["writeApproval"] != "confirm" || out["credentialFormat"] != "encrypted" || out["cardTemplateId"] != "tpl-123.schema" {
 		t.Fatalf("create = %d %v", code, out)
 	}
 	id := out["id"].(string)

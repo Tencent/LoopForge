@@ -87,6 +87,9 @@ type OutboundMessage struct {
 	Text          string
 	SendKey       string // persisted idempotency key (stage C)
 	Route         ReplyRoute
+	// Card, when set on a Feishu or DingTalk push, is sent as an action
+	// card; Text stays the plain-text fallback.
+	Card *PushCard
 }
 
 // SendOutcome classifies a send by delivery evidence, not by error type.

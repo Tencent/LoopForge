@@ -137,6 +137,9 @@ func (h *notificationHandlers) save(c *gin.Context, old *domain.NotificationBot)
 		ConfigVersion      *int64  `json:"configVersion"`
 		// TenantKey is the DingTalk CorpId entered by the administrator.
 		TenantKey *string `json:"tenantKey"`
+		// CardTemplateID is the DingTalk interactive card template for
+		// action cards; empty sends plain-text notifications.
+		CardTemplateID *string `json:"cardTemplateId"`
 		// PendingTargetAction decides what happens to queued Feishu/DingTalk
 		// notifications of the previous target: "cancel" or "migrate".
 		PendingTargetAction string `json:"pendingTargetAction"`
@@ -222,6 +225,14 @@ func (h *notificationHandlers) save(c *gin.Context, old *domain.NotificationBot)
 			if user, ok := h.requestUser(c.Request, true); ok && user != nil {
 				bot.TenantExpectedBy = user.ID
 			}
+		}
+		if req.CardTemplateID != nil {
+			tpl := strings.TrimSpace(*req.CardTemplateID)
+			if len(tpl) > 128 || strings.ContainsAny(tpl, " \t\r\n/?#") {
+				c.JSON(400, gin.H{"error": "钉钉互动卡片模板 ID 格式无效"})
+				return
+			}
+			bot.CardTemplateID = tpl
 		}
 	}
 	if req.Model != nil {

@@ -202,12 +202,15 @@ test('dingtalk bot requires a CorpId and shows automatic enterprise confirmation
   assert.equal(app.router.calls.filter(c => c.method === 'POST' && c.path === '/api/notification-bots').length, 0, 'saved without CorpId');
   form = host().querySelector('#botForm');
   form.elements.tenantKey.value = 'ding-corp';
+  assert.ok(form.elements.cardTemplateId, 'card template field');
+  form.elements.cardTemplateId.value = ' tpl-1.schema ';
   form.dispatchEvent(new app.window.Event('input', { bubbles: true }));
   form.dispatchEvent(new app.window.Event('submit', { bubbles: true, cancelable: true }));
   await settle(8);
   const post = app.router.calls.find(c => c.method === 'POST' && c.path === '/api/notification-bots').body;
   assert.equal(post.channel, 'dingtalk');
   assert.equal(post.tenantKey, 'ding-corp');
+  assert.equal(post.cardTemplateId, 'tpl-1.schema');
   assert.equal(post.writeApproval, 'readonly');
   assert.equal(app.evaluate(`botUI.step`), 2);
   await settle(6);

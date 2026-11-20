@@ -139,6 +139,7 @@ func (d *dingtalkChannel) openConnection(ctx context.Context, bot domain.Notific
 			{Type: "SYSTEM", Topic: "ping"},
 			{Type: "SYSTEM", Topic: "disconnect"},
 			{Type: "CALLBACK", Topic: payload.BotMessageCallbackTopic},
+			{Type: "CALLBACK", Topic: payload.CardInstanceCallbackTopic},
 		},
 	}
 	status, data, err := d.postJSON(ctx, d.api+"/v1.0/gateway/connections/open", reqBody)
@@ -285,7 +286,7 @@ func (c *dingtalkConn) handleFrame(data []byte) bool {
 	case frame.Type == "SYSTEM" && frame.GetTopic() == "disconnect":
 		// The server is about to close this connection; reconnect now.
 		return false
-	case frame.Type == "CALLBACK" && frame.GetTopic() == payload.BotMessageCallbackTopic:
+	case frame.Type == "CALLBACK" && (frame.GetTopic() == payload.BotMessageCallbackTopic || frame.GetTopic() == payload.CardInstanceCallbackTopic):
 		select {
 		case c.slots <- struct{}{}:
 		case <-c.ctx.Done():
@@ -294,6 +295,10 @@ func (c *dingtalkConn) handleFrame(data []byte) bool {
 		c.handlers.Add(1)
 		go func() {
 			defer func() { <-c.slots; c.handlers.Done() }()
+			if frame.GetTopic() == payload.CardInstanceCallbackTopic {
+				c.write(c.handleCardCallback(frame))
+				return
+			}
 			c.write(c.handleCallback(frame))
 		}()
 		return true
@@ -317,6 +322,75 @@ func (c *dingtalkConn) handleCallback(frame *payload.DataFrame) *payload.DataFra
 	resp.SetHeader(payload.DataFrameHeaderKMessageId, frame.GetMessageId())
 	resp.SetHeader(payload.DataFrameHeaderKContentType, payload.DataFrameContentTypeKJson)
 	return resp
+}
+
+// handleCardCallback persists an action card click. DingTalk expects an
+// answer within two seconds; the card status line is updated in place and
+// the result follows as a private message.
+func (c *dingtalkConn) handleCardCallback(frame *payload.DataFrame) *payload.DataFrameResponse {
+	status := "已收到，处理结果会以消息发给你"
+	ev, reason := dingtalkCardEvent(c.bot, frame.Data, frame.GetMessageId())
+	if reason != "" {
+		log.Printf("dingtalk card callback ignored reason=%s", reason)
+		status = "这张卡片已失效，请到平台查看运行状态"
+	} else if err := c.acknowledge(ev); err != nil {
+		status = "暂时无法处理，请稍后再点一次"
+	}
+	resp := payload.NewSuccessDataFrameResponse()
+	_ = resp.SetJson(map[string]any{"response": map[string]any{
+		"cardData":          map[string]any{"cardParamMap": map[string]string{"status": status}},
+		"cardUpdateOptions": map[string]bool{"updateCardDataByKey": true},
+	}})
+	resp.SetHeader(payload.DataFrameHeaderKMessageId, frame.GetMessageId())
+	resp.SetHeader(payload.DataFrameHeaderKContentType, payload.DataFrameContentTypeKJson)
+	return resp
+}
+
+// dingtalkCardEvent maps a card callback to an action event. The template
+// buttons pass {"action": "<key>"} as callback parameters; the instance ID
+// names the delivery.
+func dingtalkCardEvent(bot domain.NotificationBot, raw, frameID string) (InboundEvent, string) {
+	var req struct {
+		Type       string `json:"type"`
+		OutTrackID string `json:"outTrackId"`
+		CorpID     string `json:"corpId"`
+		UserID     string `json:"userId"`
+		Content    string `json:"content"`
+	}
+	if json.Unmarshal([]byte(raw), &req) != nil {
+		return InboundEvent{}, "undecodable"
+	}
+	var content struct {
+		CardPrivateData struct {
+			ActionIDs []string       `json:"actionIds"`
+			Params    map[string]any `json:"params"`
+		} `json:"cardPrivateData"`
+	}
+	_ = json.Unmarshal([]byte(req.Content), &content)
+	action, _ := content.CardPrivateData.Params["action"].(string)
+	if action == "" && len(content.CardPrivateData.ActionIDs) > 0 {
+		action = content.CardPrivateData.ActionIDs[0]
+	}
+	action = strings.TrimSpace(action)
+	if !pushCardKey(action) {
+		return InboundEvent{}, "unknown_action"
+	}
+	if req.OutTrackID == "" || req.UserID == "" || frameID == "" {
+		return InboundEvent{}, "missing_identity"
+	}
+	return InboundEvent{
+		Channel:    ChannelDingTalk,
+		AppID:      bot.BotID, // callbacks arrive only on this application's connection
+		TenantKey:  req.CorpID,
+		EventID:    frameID,
+		MessageID:  "card:" + frameID,
+		SenderID:   req.UserID,
+		ChatID:     req.UserID,
+		ChatType:   "single",
+		MsgType:    "card_action",
+		Action:     action,
+		DeliveryID: dingtalkCardDelivery(req.OutTrackID),
+	}, ""
 }
 
 // acknowledge runs the sink with the ack budget. Repository calls take no

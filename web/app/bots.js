@@ -49,7 +49,7 @@ function canManageBot(bot){
 function botStepAllowed(bot,step){if(botChannel(bot)!=='wecom')return step===1||(step===2&&!!bot?.id)||(step===3&&!!bot?.id&&bot?.tenantState==='locked');return step===1||(step===2&&!!bot?.id)||(step===3&&!!bot?.id&&!!bot?.target&&!bot._targetChanged)}
 function botStepDone(bot,step){if(botChannel(bot)!=='wecom')return step===1?!!bot?.id:step===2?bot?.tenantState==='locked':step===3&&!!bot?.target?.verifiedAt&&!bot._targetChanged;return step===1?!!bot?.id:step===2?botStepAllowed(bot,3):false}
 function botStoredBot(bot){return bot?.id?botUI.items.find(b=>b.id===bot.id):null}
-function botCredentialsDirty(bot){const stored=botStoredBot(bot);if(!stored)return !!bot;return !!bot._secret||(bot.name||'')!==(stored.name||'')||(bot.botId||'')!==(stored.botId||'')||(bot.model||BOT_DEFAULT_MODEL)!==(stored.model||BOT_DEFAULT_MODEL)||!!bot.enabled!==!!stored.enabled||!!bot.interactionEnabled!==!!stored.interactionEnabled||botWriteApproval(bot)!==botWriteApproval(stored)||(bot._tenantKey!==undefined&&bot._tenantKey.trim()!==(stored.tenantExpected||''))}
+function botCredentialsDirty(bot){const stored=botStoredBot(bot);if(!stored)return !!bot;return !!bot._secret||(bot.name||'')!==(stored.name||'')||(bot.botId||'')!==(stored.botId||'')||(bot.model||BOT_DEFAULT_MODEL)!==(stored.model||BOT_DEFAULT_MODEL)||!!bot.enabled!==!!stored.enabled||!!bot.interactionEnabled!==!!stored.interactionEnabled||botWriteApproval(bot)!==botWriteApproval(stored)||(bot._tenantKey!==undefined&&bot._tenantKey.trim()!==(stored.tenantExpected||''))||(bot._cardTemplateId!==undefined&&bot._cardTemplateId.trim()!==(stored.cardTemplateId||''))}
 // Legacy WeCom records without the field keep automatic execution.
 function botWriteApproval(bot){return bot?.writeApproval||(botChannel(bot)==='wecom'&&bot?.id?'auto':'readonly')}
 
@@ -131,7 +131,7 @@ function botCredentialPaneHTML(bot,manage){
 function botCorpFieldHTML(bot){
  if(botChannel(bot)!=='dingtalk')return '';
  const locked=bot.tenantState==='locked',value=bot._tenantKey??bot.tenantExpected??'';
- return `<label>企业 CorpId<input class="input" name="tenantKey" ${bot.id?'':'required'} maxlength="191" autocomplete="off" value="${escapeHTML(value)}" placeholder="钉钉管理后台“企业信息”中的 CorpId（ding 开头）" ${locked?'readonly':''}><small class="muted">${locked?'企业已确认，更换企业请新建配置。':'首条单聊消息的企业与此一致时自动确认；不一致时停止处理并提示冲突。'}</small></label>`;
+ return `<label>企业 CorpId<input class="input" name="tenantKey" ${bot.id?'':'required'} maxlength="191" autocomplete="off" value="${escapeHTML(value)}" placeholder="钉钉管理后台“企业信息”中的 CorpId（ding 开头）" ${locked?'readonly':''}><small class="muted">${locked?'企业已确认，更换企业请新建配置。':'首条单聊消息的企业与此一致时自动确认；不一致时停止处理并提示冲突。'}</small></label><label>互动卡片模板 ID（可选）<input class="input" name="cardTemplateId" maxlength="128" autocomplete="off" value="${escapeHTML(bot._cardTemplateId??bot.cardTemplateId??'')}" placeholder="开发者后台 → 卡片平台中已发布的模板 ID"><small class="muted">填写后，待处理和失败的通知以带按钮的卡片发送，可直接通过、重试或退回；留空则发送文字通知。模板变量见使用手册。</small></label>`;
 }
 // Enterprise confirmation: the candidate comes from the first trusted event
 // of the authenticated connection; the platform query is shown alongside.
@@ -416,7 +416,7 @@ function bindBots(host){
  host.querySelectorAll('[data-interaction-push-resend]').forEach(el=>el.onclick=()=>botInteractionAction(el.dataset.interactionPushResend,'push-resend',el));
  host.querySelectorAll('[data-interaction-push-verify]').forEach(el=>el.onclick=()=>botVerifySender(el.dataset.interactionPushVerify,el));
 }
-function captureBotDraft(host){const form=host.querySelector('#botForm');if(!form||!botUI.selected)return;const bot=botUI.selected,channel=form.elements.channel?.value;if(channel&&channel!==botChannel(bot)){bot.channel=channel;bot.writeApproval='readonly';botUI.motion=null;queueMicrotask(renderBots)}bot.name=form.elements.name.value;bot.botId=form.elements.botId.value;bot.enabled=form.elements.enabled.checked;bot.model=form.elements.model.value;bot.interactionEnabled=form.elements.interactionEnabled.checked;bot._secret=form.elements.secret.value;if(form.elements.writeApproval)bot.writeApproval=form.elements.writeApproval.value;if(form.elements.tenantKey)bot._tenantKey=form.elements.tenantKey.value}
+function captureBotDraft(host){const form=host.querySelector('#botForm');if(!form||!botUI.selected)return;const bot=botUI.selected,channel=form.elements.channel?.value;if(channel&&channel!==botChannel(bot)){bot.channel=channel;bot.writeApproval='readonly';botUI.motion=null;queueMicrotask(renderBots)}bot.name=form.elements.name.value;bot.botId=form.elements.botId.value;bot.enabled=form.elements.enabled.checked;bot.model=form.elements.model.value;bot.interactionEnabled=form.elements.interactionEnabled.checked;bot._secret=form.elements.secret.value;if(form.elements.writeApproval)bot.writeApproval=form.elements.writeApproval.value;if(form.elements.tenantKey)bot._tenantKey=form.elements.tenantKey.value;if(form.elements.cardTemplateId)bot._cardTemplateId=form.elements.cardTemplateId.value}
 function botSaveSelected(saved){const index=botUI.items.findIndex(b=>b.id===saved.id);if(index<0)botUI.items.push(saved);else botUI.items[index]=saved;botUI.selected=structuredClone(saved);botUI.error='';nodeBotCache.delete(botUI.projectId)}
 function bindBotEditor(host){
  host.querySelector('#botDelete')?.addEventListener('click',()=>botDelete(botStoredBot(botUI.selected)||botUI.selected,null));
@@ -436,7 +436,7 @@ function bindBotEditor(host){
    const stored=botStoredBot(bot);
    const payload={projectId,name:bot.name,channel:botChannel(bot),botId:bot.botId,enabled:bot.enabled,model:bot.model,interactionEnabled:bot.interactionEnabled,writeApproval:botWriteApproval(bot),secret:form.elements.secret.value};
    if(stored)payload.configVersion=stored.configVersion;
-   if(dingtalk)payload.tenantKey=(form.elements.tenantKey?.value||'').trim();
+   if(dingtalk){payload.tenantKey=(form.elements.tenantKey?.value||'').trim();payload.cardTemplateId=(form.elements.cardTemplateId?.value||'').trim()}
    if(bot.id&&!payload.secret&&bot.botId===botStoredBot(bot)?.botId&&bot._targetChanged)payload.targetId=bot.target?.id||'';
    if(bot._targetChanged&&(payload.secret||!bot.id)){toast('请先保存凭据，再刷新并选择目标','warn');return}
    botUI.busy=true;botUI.busyAction='save';renderBots();

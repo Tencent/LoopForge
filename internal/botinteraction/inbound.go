@@ -103,6 +103,9 @@ func (s *Service) accept(ctx context.Context, connected domain.NotificationBot, 
 			}
 			return s.enqueueNotice(item, ev, notice)
 		}
+		if ev.Action != "" {
+			return s.acceptCardAction(bot, item, ev)
+		}
 		switch {
 		case ev.MsgType != "text":
 			return s.enqueueNotice(item, ev, noticeUnsupported)
@@ -115,6 +118,28 @@ func (s *Service) accept(ctx context.Context, connected domain.NotificationBot, 
 	inserted, err := s.Store.EnqueueBotInteraction(item, ev.ChatType, ev.ChatID)
 	if err != nil {
 		log.Printf("%s event enqueue failed action=%s", channelLabel(ev.Channel), item.Action)
+		return InboundAck{}, err
+	}
+	return InboundAck{Accepted: inserted, InteractionID: item.ID}, nil
+}
+
+// acceptCardAction queues a Feishu or DingTalk action card click. Only the
+// recipient of the notification is placed in its conversation; anyone else
+// lands in a conversation of their own and the action is refused as expired
+// (NotificationCardTask checks the conversation against the delivery). The
+// result goes out as a private message to the clicker.
+func (s *Service) acceptCardAction(bot domain.NotificationBot, item domain.BotInteraction, ev InboundEvent) (InboundAck, error) {
+	if !pushCardKey(ev.Action) || ev.DeliveryID == "" {
+		return s.ignore(ev, "unknown_action"), nil
+	}
+	chat := ev.SenderID
+	if delivery, err := s.Store.NotificationDelivery(ev.DeliveryID); err == nil && delivery.BotID == bot.ID && delivery.ProjectID == bot.ProjectID && delivery.TargetType == "single" && delivery.TargetID == ev.SenderID {
+		chat = delivery.TargetID
+	}
+	item.Content, item.Quote, item.ContentLength = "", "", 0
+	item.SendRoute = repo.BotSendRoutePush
+	inserted, err := s.Store.EnqueueBotInteraction(item, "single", chat)
+	if err != nil {
 		return InboundAck{}, err
 	}
 	return InboundAck{Accepted: inserted, InteractionID: item.ID}, nil

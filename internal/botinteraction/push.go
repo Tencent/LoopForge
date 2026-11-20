@@ -52,8 +52,13 @@ func (f *feishuChannel) Push(ctx context.Context, bot domain.NotificationBot, cr
 	if strings.TrimSpace(msg.ChatID) == "" {
 		return SendResult{Outcome: Rejected, Code: "target_missing", SafeDetail: "缺少飞书接收成员"}
 	}
-	content, _ := json.Marshal(map[string]string{"text": msg.Text})
-	body := larkim.NewCreateMessageReqBodyBuilder().ReceiveId(msg.ChatID).MsgType("text").Content(string(content))
+	msgType, content := "text", []byte(nil)
+	if msg.Card != nil {
+		msgType, content = "interactive", feishuCardJSON(msg.Card)
+	} else {
+		content, _ = json.Marshal(map[string]string{"text": msg.Text})
+	}
+	body := larkim.NewCreateMessageReqBodyBuilder().ReceiveId(msg.ChatID).MsgType(msgType).Content(string(content))
 	if msg.SendKey != "" {
 		body = body.Uuid(msg.SendKey)
 	}
@@ -142,6 +147,13 @@ func (d *dingtalkChannel) Push(ctx context.Context, bot domain.NotificationBot, 
 	token, failed := d.accessToken(ctx, bot, cred)
 	if failed != nil {
 		return *failed
+	}
+	if msg.Card != nil && strings.TrimSpace(bot.CardTemplateID) != "" {
+		out := d.deliverCard(ctx, bot, token, msg)
+		if out.Code == "token_invalid" {
+			forgetDingTalkToken(bot)
+		}
+		return out
 	}
 	param, _ := json.Marshal(map[string]string{"content": msg.Text})
 	raw, _ := json.Marshal(map[string]any{"robotCode": bot.BotID, "userIds": []string{msg.ChatID}, "msgKey": "sampleText", "msgParam": string(param)})

@@ -419,3 +419,29 @@ func expireLease(t *testing.T, svc *Service, id string) {
 		t.Fatal(err)
 	}
 }
+
+func TestPushSendsActionCardOnlyWhenTheBotReceivesClicks(t *testing.T) {
+	for _, interaction := range []bool{false, true} {
+		svc, fake, bot := pushFixture(t, domain.BotChannelFeishu)
+		bot = verifyTarget(t, svc, bot)
+		bot.InteractionEnabled = interaction
+		if err := svc.Store.SaveNotificationBot(bot, ""); err != nil {
+			t.Fatal(err)
+		}
+		trials := fake.count()
+		putPushRun(t, svc, bot, "gate.waiting", "node.failed", "run.succeeded")
+		drain(t, svc)
+		cards := 0
+		for _, msg := range fake.sent[trials:] {
+			if msg.Card != nil {
+				cards++
+				if len(msg.Card.Actions) == 0 || msg.Card.DeliveryID == "" || msg.Text == "" {
+					t.Fatalf("card = %+v", msg.Card)
+				}
+			}
+		}
+		if want := map[bool]int{false: 0, true: 2}[interaction]; cards != want {
+			t.Fatalf("interaction=%v cards = %d, want %d", interaction, cards, want)
+		}
+	}
+}

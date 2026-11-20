@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/rand"
 	"errors"
+	"net/url"
 	"regexp"
 	"strings"
 	"time"
@@ -170,7 +171,13 @@ func (s *Service) processPush(ctx context.Context, item *domain.NotificationDeli
 		// platform and cannot be de-duplicated: stop for manual review.
 		return done(repo.NotificationPushResult{Status: "send_unknown", Detail: "上一次发送中断，无法确认是否送达，请核对后确认收到或再次发送"})
 	}
-	res := s.Interactions.Push(ctx, bot, botinteraction.OutboundMessage{InteractionID: item.ID, ChatID: item.TargetID, ChatType: "single", Text: plainNotificationText(content), SendKey: begun.SendKey})
+	msg := botinteraction.OutboundMessage{InteractionID: item.ID, ChatID: item.TargetID, ChatType: "single", Text: plainNotificationText(content), SendKey: begun.SendKey}
+	// Waiting and failed nodes get an action card when the Bot receives
+	// messages (the click comes back on its connection).
+	if bot.InteractionEnabled && item.NodeID != "" && (item.EventType == "waiting" || item.EventType == "failed") {
+		msg.Card = s.Interactions.PushCardFor(*item, content, s.runURL(item.RunID))
+	}
+	res := s.Interactions.Push(ctx, bot, msg)
 	retryAt := now.Add(notificationBackoff(item.Attempts))
 	switch res.Outcome {
 	case botinteraction.Delivered:
@@ -228,4 +235,13 @@ func plainNotificationText(content string) string {
 		out = strings.ReplaceAll(out, "\n\n\n", "\n\n")
 	}
 	return strings.TrimSpace(out)
+}
+
+// runURL is the run page on the platform, or empty without a public URL.
+func (s *Service) runURL(runID string) string {
+	base, err := url.Parse(s.PublicURL)
+	if runID == "" || err != nil || (base.Scheme != "https" && base.Scheme != "http") || base.Host == "" {
+		return ""
+	}
+	return strings.TrimRight(s.PublicURL, "/") + "/#/runs/" + url.PathEscape(runID)
 }

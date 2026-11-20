@@ -12,6 +12,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -201,5 +202,46 @@ func TestPushResendEndpointRequiresVerifiedOriginalSender(t *testing.T) {
 	stored, _ := f.s.BotInteraction("expired-1")
 	if stored.DeliveryGeneration != 2 || stored.SendKey == "old" || stored.ResentBy != f.user.ID {
 		t.Fatalf("stored = %+v", stored)
+	}
+}
+
+// A Feishu action card click by the notification recipient approves the
+// waiting node with the recipient's platform identity; a second click on the
+// same card reports it as handled.
+func TestFeishuCardClickApprovesWaitingNode(t *testing.T) {
+	s, h, bot := botFixture(t)
+	bot.ID, bot.BotID, bot.Channel, bot.TenantKey, bot.TenantState = "b-feishu-card", "cli_card", domain.BotChannelFeishu, "tk", domain.BotTenantLocked
+	if err := s.SaveNotificationBot(bot, "secret"); err != nil {
+		t.Fatal(err)
+	}
+	bot, _ = s.NotificationBot(bot.ID)
+	bindBotTestUser(t, s, bot, "ou-member", 43)
+	run := domain.Run{ID: "feishu-card-run", Status: "waiting", WorkflowID: "wf", ExecutionContext: domain.TelemetryContext{ProjectID: "p"}, WorkflowSnapshot: domain.WorkflowDefinition{ID: "wf", ProjectID: "p", Nodes: []domain.WorkflowNode{{ID: "gate", Type: "human", Name: "人工确认"}}}, Nodes: map[string]*domain.NodeRun{"gate": {NodeID: "gate", Status: "waiting_approval", Attempt: 1}}}
+	if err := s.PutRun(run); err != nil {
+		t.Fatal(err)
+	}
+	delivery := domain.NotificationDelivery{ID: "d-feishu", BotID: bot.ID, ProjectID: "p", RunID: run.ID, NodeID: "gate", SourceName: "人工确认", EventType: "waiting", Attempt: 1, TargetID: "ou-member", TargetType: "single", Status: "sent", CreatedAt: time.Now().UTC()}
+	if err := s.CreateNotificationDelivery(delivery); err != nil {
+		t.Fatal(err)
+	}
+	card := h.notifications.service.Interactions.PushCardFor(delivery, "需求：登录优化\nSOP：交付", "https://platform.example/#/runs/"+run.ID)
+	if card == nil || card.Title != "登录优化" || len(card.Actions) == 0 || card.Actions[0].Key != "approve" {
+		t.Fatalf("card = %+v", card)
+	}
+	item := domain.BotInteraction{DeliveryID: delivery.ID, Action: "approve", SenderID: "ou-member"}
+	conv := domain.BotConversation{ChatID: "ou-member", ChatType: "single"}
+	reply, err := h.handleBotCardAction(context.Background(), bot, item, conv)
+	if err != nil || !strings.Contains(reply, "操作已完成") {
+		t.Fatal(reply, err)
+	}
+	updated, _ := s.RunState(run.ID)
+	if updated.Nodes["gate"].Status != "succeeded" {
+		t.Fatalf("node = %s", updated.Nodes["gate"].Status)
+	}
+	if reply, _ := h.handleBotCardAction(context.Background(), bot, item, conv); !strings.Contains(reply, "过期") {
+		t.Fatalf("second click = %q", reply)
+	}
+	if h.notifications.service.Interactions.PushCardFor(delivery, "", "") != nil {
+		t.Fatal("card offered after the node moved on")
 	}
 }

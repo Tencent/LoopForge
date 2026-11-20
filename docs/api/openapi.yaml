@@ -3387,8 +3387,8 @@ paths:
           description: Only `send_unknown` deliveries can be confirmed
   /api/bot-drafts/{id}:
     get:
-      summary: Read a WeCom Bot write draft awaiting confirmation
-      description: Only the platform user bound to the chat sender can read it; other users get 404. Status is `pending`, `executing`, `executed`, `failed`, `needs_review`, `expired` or `cancelled`.
+      summary: Read a Bot write draft awaiting confirmation
+      description: Only the platform user bound to the chat sender can read it; other users get 404. Status is `pending`, `executing`, `executed`, `failed`, `needs_review`, `expired` or `cancelled`. Pending drafts list `newIssues` (index, title, workflowId) and the selectable `workflows` of the project.
       operationId: getBotDraft
       parameters:
         - {name: id, in: path, required: true, schema: {type: string}}
@@ -3399,11 +3399,26 @@ paths:
           description: Unknown draft or another user's draft
   /api/bot-drafts/{id}/confirm:
     post:
-      summary: Confirm and execute a WeCom Bot write draft
-      description: Re-checks the Bot (enabled, chat on, confirm mode), the sender binding, project permission, expiry and the frozen parameters, then moves the draft from `pending` to `executing` once. Any other state returns the current draft without executing.
+      summary: Confirm and execute a Bot write draft
+      description: Re-checks the Bot (enabled, chat on, confirm mode), the sender binding, project permission, expiry and the frozen parameters, then moves the draft from `pending` to `executing` once. Any other state returns the current draft without executing. `choices` set the SOP of new requirements (only SOPs listed in the draft's `workflows`) and whether to start it after creation; results report `已启动` or `未启动`.
       operationId: confirmBotDraft
       parameters:
         - {name: id, in: path, required: true, schema: {type: string}}
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                choices:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      index: {type: integer, description: Position of the draft in the operation list}
+                      workflowId: {type: string}
+                      start: {type: boolean}
       responses:
         "200":
           description: Draft after the confirmation (or its current state)

@@ -40,6 +40,9 @@ type NotificationBot struct {
 	// WriteApproval is readonly, auto or confirm (WeCom only). Empty means a legacy WeCom record,
 	// which keeps the automatic execution it had before channels existed.
 	WriteApproval string `json:"writeApproval,omitempty"`
+	// CardTemplateID is the DingTalk interactive card template used for
+	// action cards of waiting or failed nodes. Empty sends plain text.
+	CardTemplateID string `json:"cardTemplateId,omitempty"`
 	// ConfigVersion increments on every saved change; CredentialVersion only
 	// when the secret changes. Both mirror physical columns.
 	ConfigVersion     int64 `json:"configVersion"`

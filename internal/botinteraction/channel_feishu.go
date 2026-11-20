@@ -15,6 +15,7 @@ import (
 	lark "github.com/larksuite/oapi-sdk-go/v3"
 	larkcore "github.com/larksuite/oapi-sdk-go/v3/core"
 	"github.com/larksuite/oapi-sdk-go/v3/event/dispatcher"
+	"github.com/larksuite/oapi-sdk-go/v3/event/dispatcher/callback"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 	larkws "github.com/larksuite/oapi-sdk-go/v3/ws"
 )
@@ -96,6 +97,15 @@ func (f *feishuChannel) Connect(ctx context.Context, bot domain.NotificationBot,
 			return nil
 		}
 		return f.acknowledge(ctx, inbound, sink)
+	}).OnP2CardActionTrigger(func(evCtx context.Context, ev *callback.CardActionTriggerEvent) (*callback.CardActionTriggerResponse, error) {
+		inbound, ok := feishuCardEvent(ev)
+		if !ok {
+			return feishuToast("error", "这张卡片已失效，请到平台查看运行状态"), nil
+		}
+		if err := f.acknowledge(ctx, inbound, sink); err != nil {
+			return feishuToast("error", "暂时无法处理，请稍后再点一次"), nil
+		}
+		return feishuToast("info", "已收到，处理结果会以消息发给你"), nil
 	})
 	ready := make(chan struct{})
 	var readyOnce sync.Once
@@ -193,6 +203,41 @@ func feishuEvent(ev *larkim.P2MessageReceiveV1) (InboundEvent, bool) {
 	}
 	out.Route.MessageID = out.MessageID
 	return out, true
+}
+
+// feishuCardEvent maps a card button click (card.action.trigger) to an
+// action event. The button value carries the action and the delivery; the
+// clicker is identified by open_id, like private-chat senders.
+func feishuCardEvent(ev *callback.CardActionTriggerEvent) (InboundEvent, bool) {
+	if ev == nil || ev.EventV2Base == nil || ev.EventV2Base.Header == nil || ev.Event == nil || ev.Event.Action == nil || ev.Event.Operator == nil {
+		return InboundEvent{}, false
+	}
+	action, _ := ev.Event.Action.Value["af_action"].(string)
+	delivery, _ := ev.Event.Action.Value["af_delivery"].(string)
+	if !pushCardKey(action) || delivery == "" || ev.Event.Operator.OpenID == "" || ev.EventV2Base.Header.EventID == "" {
+		return InboundEvent{}, false
+	}
+	out := InboundEvent{
+		Channel:    ChannelFeishu,
+		AppID:      ev.EventV2Base.Header.AppID,
+		TenantKey:  ev.EventV2Base.Header.TenantKey,
+		EventID:    ev.EventV2Base.Header.EventID,
+		MessageID:  "card:" + ev.EventV2Base.Header.EventID,
+		SenderID:   ev.Event.Operator.OpenID,
+		ChatID:     ev.Event.Operator.OpenID,
+		ChatType:   "single",
+		MsgType:    "card_action",
+		Action:     action,
+		DeliveryID: delivery,
+	}
+	if out.TenantKey == "" && ev.Event.Operator.TenantKey != nil {
+		out.TenantKey = *ev.Event.Operator.TenantKey
+	}
+	return out, true
+}
+
+func feishuToast(kind, text string) *callback.CardActionTriggerResponse {
+	return &callback.CardActionTriggerResponse{Toast: &callback.Toast{Type: kind, Content: text}}
 }
 
 func deref(s *string) string {
