@@ -128,6 +128,11 @@ func TestCodexAppServerTurn(t *testing.T) {
 	if config, _ := start.Params["config"].(map[string]any); config["bypass_hook_trust"] != true {
 		t.Fatalf("platform denial hook not trusted by thread: %+v", start)
 	}
+	// The runtime picks the working directory per sandbox (the run workspace
+	// on macOS seatbelt); the thread must follow it, not <root>/ws.
+	if start.Params["cwd"] != "." {
+		t.Fatalf("thread/start cwd must follow the process working directory: %+v", start.Params["cwd"])
+	}
 	if out := inv.translate(`{"id":2,"result":{"thread":{"id":"019a-thread"}}}`); len(out) != 1 || !strings.Contains(out[0], `"session_id":"019a-thread"`) {
 		t.Fatalf("thread started: %v", out)
 	}
@@ -240,6 +245,11 @@ func TestCodexAppServerResume(t *testing.T) {
 	}
 	if config, _ := m.Params["config"].(map[string]any); config["bypass_hook_trust"] != true {
 		t.Fatalf("resumed thread lost denial hook trust: %+v", m)
+	}
+	// Without an explicit cwd Codex resumes in the directory recorded when the
+	// thread started, so a thread handed to a seatbelt workspace stays in <root>/ws.
+	if m.Params["cwd"] != "." {
+		t.Fatalf("thread/resume cwd must override the recorded directory: %+v", m.Params["cwd"])
 	}
 	// A thread the server cannot load reads as a missing session.
 	out := inv.translate(`{"id":2,"error":{"code":-32600,"message":"no rollout found for thread id 019a-old"}}`)
