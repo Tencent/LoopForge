@@ -163,12 +163,23 @@ func (g *githubClient) findPull(branch, target string) (githubPull, bool, error)
 	if err != nil {
 		return githubPull{}, false, err
 	}
+	var historical githubPull
+	found := false
 	for _, p := range list {
-		if p.Head.Ref == branch && (target == "" || p.Base.Ref == target) {
+		if p.Head.Ref != branch || (target != "" && p.Base.Ref != target) {
+			continue
+		}
+		if p.State == "open" {
 			return p, true, nil
 		}
+		// A comment can make an old merged PR the most recently updated
+		// result for a reused branch. Prefer its current open PR, retaining
+		// the newest historical result only when no open match exists.
+		if !found {
+			historical, found = p, true
+		}
 	}
-	return githubPull{}, false, nil
+	return historical, found, nil
 }
 
 // listPulls returns the pulls from branch (and into target when set), most
