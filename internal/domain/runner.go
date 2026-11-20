@@ -676,6 +676,12 @@ type RunnerWorkBranchHead struct {
 	SharedHead   string `json:"sharedHead,omitempty"`
 }
 
+// Runner task event upload limits shared by the worker and the control plane.
+const (
+	RunnerTaskEventBatchLimit = 500
+	RunnerTaskEventBodyLimit  = 2 << 20
+)
+
 // RunnerTaskEvent is one batched output record reported by the runner. Seq is
 // assigned by the runner and used with the task id for idempotency, so an
 // HTTP retry never duplicates log data.
