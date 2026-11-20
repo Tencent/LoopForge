@@ -12,6 +12,9 @@
 #   ./start.sh pull       refresh images and recreate changed containers
 #   ./start.sh dev        build this checkout (compose.dev.yaml) and start it
 #   ./start.sh release    switch a source-built installation back to GHCR
+#   ./start.sh            time ghcr.io and ghcr.nju.edu.cn, then pull the faster one
+#   MIRROR=ghcr.io ./start.sh
+#                         pull ghcr.io directly
 #   MIRROR=ghcr.nju.edu.cn ./start.sh
 #                         pull ghcr.io images from that host and tag them back
 set -euo pipefail
@@ -39,12 +42,10 @@ PY
     COMPOSE_FILE=compose.yaml bash scripts/install.sh
     ;;
   pull)
-    # An empty MIRROR keeps the original refresh. A registry host pulls the pinned
-    # ghcr.io tag from that host and tags it back before MySQL is refreshed.
-    if [[ -n "${MIRROR:-}" ]]; then
-      [[ -f .env ]] || docker_access_fail 'Not installed yet. Run ./start.sh first.'
-      select_docker_access || docker_access_fail 'Docker is not running, or this user cannot access it.'
-    fi
+    # Docker is selected before the speed test: a faster Nanjing mirror pulls
+    # immediately, and the direct ghcr.io path needs it too.
+    [[ -f .env ]] || docker_access_fail 'Not installed yet. Run ./start.sh first.'
+    select_docker_access || docker_access_fail 'Docker is not running, or this user cannot access it.'
     if mirror_published_ghcr always; then
       compose pull --policy always mysql
     else
