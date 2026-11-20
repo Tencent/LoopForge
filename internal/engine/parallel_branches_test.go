@@ -242,11 +242,12 @@ func TestKeyedLocksSerializeOnlySameKey(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("different key blocked")
 	}
-	acquiredA := make(chan struct{})
+	acquiredA, releasedA := make(chan struct{}), make(chan struct{})
 	go func() {
 		release := locks.lock("a")
 		close(acquiredA)
 		release()
+		close(releasedA)
 	}()
 	select {
 	case <-acquiredA:
@@ -259,6 +260,9 @@ func TestKeyedLocksSerializeOnlySameKey(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("same key never released")
 	}
+	// The second holder releases after signalling; wait for it before
+	// checking that no entry is left.
+	<-releasedA
 	locks.mu.Lock()
 	defer locks.mu.Unlock()
 	if len(locks.locks) != 0 {
