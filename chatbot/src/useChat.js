@@ -230,7 +230,9 @@ export function useChat() {
     const picked = readOptions(`model.${stored.id}`);
     const modelEngine = engineOfModel(stored.model, models);
     // Fork responses can omit the executor for old, unprefixed model IDs.
-    const parentExecutor = stored.parentSessionId && stored.parentSessionId === session?.id ? session.executor : "";
+    const parent = stored.parentSessionId && (stored.parentSessionId === session?.id
+      ? session : sessions.find((item) => item.id === stored.parentSessionId));
+    const parentExecutor = parent?.executor || (parent && engineOfModel(parent.model, models));
     const recordedExecutor = stored.executor || (modelEngine === "codebuddy" && parentExecutor) || modelEngine;
     const locked = conversationEngine(stored.messages, models, recordedExecutor);
     const engine = knownExecutor(locked || picked.executor || recordedExecutor);
@@ -240,6 +242,17 @@ export function useChat() {
     setModel(choice.model);
     setEffort(choice.effort);
     return choice;
+  }
+  function receiveSession(stored) {
+    if (!stored || currentId.current !== stored.id) return;
+    if (sessionRef.current?.id !== stored.id) {
+      restoreConversationModel(stored);
+      changeURL(stored.id);
+      setProjectId(stored.projectId || "");
+      syncProject(stored.projectId || "");
+    }
+    sessionRef.current = stored;
+    setSession(stored);
   }
   const applyModelCatalog = useCallback((catalog) => {
     setModels(catalog.models || []);
@@ -327,16 +340,12 @@ export function useChat() {
     async function load() {
       try {
         const stored = await api(sessionPath(activeId));
-        if (!current || currentId.current !== activeId) return;
-        setSession(stored);
-        changeURL(stored.id);
-        restoreConversationModel(stored);
-        setProjectId(stored.projectId || "");
-        syncProject(stored.projectId || "");
+        if (!current || currentId.current !== activeId || sessionRef.current?.id === activeId) return;
+        receiveSession(stored);
         const recovered = connectionError;
         setError((old) => (old === recovered ? "" : old));
       } catch (e) {
-        if (!current) return;
+        if (!current || currentId.current !== activeId || sessionRef.current?.id === activeId) return;
         const retry = !e.status || e.status >= 500;
         connectionError = retry ? "连接暂时中断，正在重连…" : e.message;
         setError(connectionError);
@@ -417,8 +426,8 @@ export function useChat() {
         if (previous) {
           try {
             const stored = await api(sessionPath(activeId));
-            if (cancelled) return;
-            setSession(stored);
+            if (cancelled || currentId.current !== activeId) return;
+            receiveSession(stored);
           } catch {
             // The next poll retries. The live turn can still proceed.
           }
@@ -444,9 +453,9 @@ export function useChat() {
         source?.close();
         source = null;
         const stored = await api(sessionPath(activeId));
-        if (cancelled) return;
+        if (cancelled || currentId.current !== activeId) return;
         loaded = g.id;
-        setSession(stored);
+        receiveSession(stored);
         setSettledId(g.id);
         await refreshSessions();
         if (g.error && !["canceled", "cancelled"].includes(g.status))

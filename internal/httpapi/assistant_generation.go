@@ -129,11 +129,12 @@ func (h *assistantHandlers) startGeneration(c *gin.Context) {
 		c.JSON(400, gin.H{"error": err.Error()})
 		return
 	}
-	if refusal := assistantEngineSwitchRefusal(assistantConversationEngine(req.Messages, old.Executor), req.Model); refusal != "" {
+	executor := h.forkExecutor(c, old, user.ID)
+	if refusal := assistantEngineSwitchRefusal(assistantConversationEngine(req.Messages, executor), req.Model); refusal != "" {
 		c.JSON(409, gin.H{"error": refusal})
 		return
 	}
-	freshCLI := old.ID != "" && assistantConversationEngine(old.Messages, old.Executor) != cliEngine
+	freshCLI := old.ID != "" && assistantConversationEngine(old.Messages, executor) != cliEngine
 	if old.ID != "" {
 		if len(req.Messages) < len(old.Messages) {
 			c.JSON(409, gin.H{"error": "会话已更新，请重新打开后发送"})
@@ -512,9 +513,10 @@ func (h *assistantHandlers) steerGeneration(c *gin.Context) {
 	}
 	// The saved conversation selects the CLI for steering. Bare model IDs
 	// use that CLI, and an explicit CLI prefix must match it.
-	cliEngine := assistantConversationEngine(session.Messages, session.Executor)
+	executor := h.forkExecutor(c, session, stored.ID)
+	cliEngine := assistantConversationEngine(session.Messages, executor)
 	if cliEngine == "" {
-		cliEngine, _ = assistantModelEngine(assistantRequestModel(session.Executor, session.Model))
+		cliEngine, _ = assistantModelEngine(assistantRequestModel(executor, session.Model))
 	}
 	model := strings.TrimSpace(firstNonEmpty(body.Model, session.Model))
 	if !assistantModelHasEnginePrefix(model) {

@@ -10,8 +10,8 @@ import (
 
 func TestSharedConversationForkPreservesOriginalAndVisibility(t *testing.T) {
 	h, a, b, out, s := sharedWorkbenchFixture(t)
-	s.Model, s.Effort = assistantChatDefaultModel, "max"
-	s.Messages = append(s.Messages, domain.AssistantMessage{Role: "assistant", Content: `{"message":"草稿","drafts":[{"tool":"issues_save","body":{"title":"旧"}}]}`}, domain.AssistantMessage{Role: "user", Content: "原消息"})
+	s.Model, s.Effort, s.Executor = "gpt-5", "high", assistantEngineCodex
+	s.Messages = append(s.Messages, domain.AssistantMessage{Role: "assistant", Model: s.Model, Content: `{"message":"草稿","drafts":[{"tool":"issues_save","body":{"title":"旧"}}]}`}, domain.AssistantMessage{Role: "user", Content: "原消息"})
 	if err := h.repo.PutAssistantSession(a.ID, s); err != nil {
 		t.Fatal(err)
 	}
@@ -27,7 +27,7 @@ func TestSharedConversationForkPreservesOriginalAndVisibility(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &branch); err != nil {
 		t.Fatal(err)
 	}
-	if !branch.Shared || branch.ParentSessionID != s.ID || branch.UserID != b.ID || len(branch.Messages) != 3 || branch.Messages[2].AuthorID != b.ID || branch.Messages[2].Content != "修改后\n继续" || branch.Effort != "max" {
+	if !branch.Shared || branch.ParentSessionID != s.ID || branch.UserID != b.ID || len(branch.Messages) != 3 || branch.Messages[2].AuthorID != b.ID || branch.Messages[2].Content != "修改后\n继续" || branch.Effort != "high" || branch.Executor != assistantEngineCodex {
 		t.Fatal("invalid branch", branch)
 	}
 	var draft map[string]any
@@ -62,6 +62,28 @@ func TestSharedConversationForkPreservesOriginalAndVisibility(t *testing.T) {
 		if w.Code != tc.status {
 			t.Fatal(tc, w.Code, w.Body.String())
 		}
+	}
+
+	// Reopening a branch stored by the old fork endpoint still presents the
+	// executor from the shared parent, without requiring a data migration.
+	legacy := branch
+	legacy.Executor = ""
+	if err := h.repo.PutAssistantSession(b.ID, legacy); err != nil {
+		t.Fatal(err)
+	}
+	c, w = workbenchContext(b, "GET", "/", bytes.NewBuffer(nil))
+	c.Params = gin.Params{{Key: "id", Value: branch.ID}}
+	h.session(c)
+	var reopened domain.AssistantSession
+	if err := json.Unmarshal(w.Body.Bytes(), &reopened); err != nil || w.Code != 200 {
+		t.Fatal(w.Code, w.Body.String(), err)
+	}
+	if reopened.Executor != assistantEngineCodex || reopened.Effort != "high" ||
+		assistantConversationEngine(reopened.Messages, reopened.Executor) != assistantEngineCodex {
+		t.Fatal("legacy branch lost its executor or effort", reopened)
+	}
+	if persisted, _ := h.repo.AssistantSession(b.ID, legacy.ID); persisted.Executor != "" {
+		t.Fatal("GET changed the stored executor", persisted.Executor)
 	}
 }
 

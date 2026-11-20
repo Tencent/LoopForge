@@ -98,7 +98,7 @@ func (h *assistantHandlers) forkSession(c *gin.Context) {
 			prefix[i].Content = string(raw)
 		}
 	}
-	branch := domain.AssistantSession{ID: newAssistantSessionID(), UserID: user.ID, ProjectID: source.ProjectID, IssueID: source.IssueID, Model: source.Model, Effort: source.Effort, Messages: append(prefix, edited), Shared: source.Shared, RunID: source.RunID, ParentSessionID: source.ID, RootSessionID: source.RootSessionID, ForkMessageIndex: index, Title: "分支 · " + truncateRunes(edited.Content, 28)}
+	branch := domain.AssistantSession{ID: newAssistantSessionID(), UserID: user.ID, ProjectID: source.ProjectID, IssueID: source.IssueID, Model: source.Model, Effort: source.Effort, Executor: h.forkExecutor(c, source, user.ID), Messages: append(prefix, edited), Shared: source.Shared, RunID: source.RunID, ParentSessionID: source.ID, RootSessionID: source.RootSessionID, ForkMessageIndex: index, Title: "分支 · " + truncateRunes(edited.Content, 28)}
 	if branch.RootSessionID == "" {
 		branch.RootSessionID = source.ID
 	}
@@ -112,6 +112,40 @@ func (h *assistantHandlers) forkSession(c *gin.Context) {
 	saved, _ := h.repo.AssistantSession(user.ID, branch.ID)
 	c.JSON(201, saved)
 }
+
+// Older forks stored the model and transcript without the source executor.
+// Inherit it only from a readable conversation in the same project and run.
+func (h *assistantHandlers) forkExecutor(c *gin.Context, session domain.AssistantSession, userID int64) string {
+	if session.Executor != "" || session.ParentSessionID == "" {
+		return session.Executor
+	}
+	if assistantModelHasEnginePrefix(session.Model) {
+		engine, _ := assistantModelEngine(session.Model)
+		return engine
+	}
+	for _, id := range []string{session.ParentSessionID, session.RootSessionID} {
+		if id == "" || id == session.ID {
+			continue
+		}
+		owner, _, _, err := h.conversationReadScope(c, id, userID)
+		if err != nil {
+			continue
+		}
+		parent, ok := h.repo.AssistantSession(owner, id)
+		if !ok || parent.ProjectID != session.ProjectID || parent.RunID != session.RunID || parent.Shared != session.Shared {
+			continue
+		}
+		if parent.Executor != "" {
+			return parent.Executor
+		}
+		if assistantModelHasEnginePrefix(parent.Model) {
+			engine, _ := assistantModelEngine(parent.Model)
+			return engine
+		}
+	}
+	return ""
+}
+
 func copyForkAttachment(from, to int64, id, project string) (domain.AssistantAttachment, error) {
 	record, file, err := openWorkbenchAttachment(from, id)
 	if err != nil {
@@ -215,5 +249,6 @@ func (h *assistantHandlers) editSession(c *gin.Context) {
 		return
 	}
 	saved, _ := h.repo.AssistantSession(resultOwner, resultID)
+	saved.Executor = h.forkExecutor(c, saved, user.ID)
 	c.JSON(200, saved)
 }

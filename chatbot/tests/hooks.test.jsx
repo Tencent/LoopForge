@@ -151,6 +151,42 @@ describe("conversation hooks", () => {
     }
   });
 
+  test("restores model choices if the generation poll opens the transcript first", async () => {
+    const original = apiMock.getMockImplementation();
+    const stored = {
+      id: "s1", title: "会话", titleGenerated: true, model: "m1", executor: "codebuddy",
+      messages: [{ role: "user", content: "原消息" }],
+    };
+    let initial, reads = 0;
+    apiMock.mockImplementation((path, options) => {
+      if (path === "/api/assistant/models") return Promise.resolve({
+        default: "m1", models: [{ id: "m1" }, { id: "m2", efforts: ["high"] }],
+      });
+      if (path === "/api/assistant/sessions/s1") {
+        if (++reads > 1) return Promise.resolve(stored);
+        return new Promise((resolve) => { initial = () => resolve(stored); });
+      }
+      return original(path, options);
+    });
+    writeComposerPreference("conversation.1.model.s1", JSON.stringify({ executor: "codebuddy", model: "m2", effort: "high" }));
+    try {
+      history.replaceState({}, "", "/?session=s1");
+      const { result } = renderHook(useChat);
+      await waitFor(() => expect(result.current.session?.id).toBe("s1"));
+      expect(reads).toBe(2);
+      expect(result.current).toMatchObject({ model: "m2", effort: "high" });
+      await act(() => result.current.send({ text: "继续" }));
+      expect(writeMock).toHaveBeenCalledWith("/api/assistant/generations", expect.objectContaining({
+        sessionId: "s1", model: "m2", effort: "high",
+      }));
+      await act(async () => initial());
+      expect(result.current.session.messages.at(-1)?.content).toBe("继续");
+    } finally {
+      initial?.();
+      apiMock.mockImplementation(original);
+    }
+  });
+
   test.each([
     "credential check", "first save", "first save after reopening the draft",
   ])("keeps a model picked during the %s for later messages", async (delay) => {
@@ -668,25 +704,31 @@ describe("conversation hooks", () => {
     }
   });
 
-  test("regenerates a new fork with its parent's CLI when the legacy model is unprefixed", async () => {
+  test("regenerates and reopens a fork with its parent's CLI when the legacy model is unprefixed", async () => {
     const original = apiMock.getMockImplementation();
     const fork = {
       id: "fork", parentSessionId: "s1", model: "gpt-5", effort: "high",
       messages: [{ role: "user", content: "修改" }],
     };
+    const parent = { ...fork, id: "s1", parentSessionId: undefined, executor: "codex" };
     apiMock.mockImplementation((path, options) => {
-      if (path === "/api/assistant/sessions/s1") return Promise.resolve({ ...fork, id: "s1", executor: "codex" });
+      if (path === "/api/assistant/sessions") return Promise.resolve([parent, fork]);
+      if (path === "/api/assistant/sessions/s1") return Promise.resolve(parent);
       if (path === "/api/assistant/sessions/fork") return Promise.resolve(fork);
       return original(path, options);
     });
     try {
       history.replaceState({}, "", "/?session=s1");
-      const { result } = renderHook(useChat);
+      const { result, unmount } = renderHook(useChat);
       await waitFor(() => expect(result.current.effort).toBe("high"));
       await act(() => result.current.regenerate(fork));
       expect(writeMock).toHaveBeenCalledWith("/api/assistant/generations", expect.objectContaining({
         sessionId: fork.id, executor: "codex", model: "gpt-5", effort: "high",
       }));
+      unmount();
+      const reopened = renderHook(useChat);
+      await waitFor(() => expect(reopened.result.current.effort).toBe("high"));
+      expect(reopened.result.current).toMatchObject({ executor: "codex", model: "gpt-5" });
     } finally {
       apiMock.mockImplementation(original);
     }
