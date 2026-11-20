@@ -85,6 +85,7 @@ type ScheduleJob struct {
 	Cron            string `json:"cron,omitempty"`
 	AssistantPrompt string `json:"assistantPrompt,omitempty"`
 	AssistantModel  string `json:"assistantModel,omitempty"`
+	AssistantEffort string `json:"assistantEffort,omitempty"`
 	// SessionMode picks the Studio conversation an AI job runs in: empty opens
 	// a new conversation for every execution; "fixed" keeps continuing
 	// FixedSessionID.

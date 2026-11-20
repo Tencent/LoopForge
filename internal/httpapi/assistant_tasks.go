@@ -253,6 +253,10 @@ func (h *assistantHandlers) executeAssistantTask(ctx context.Context, user domai
 			return fail(err.Error())
 		}
 	}
+	effort := strings.TrimSpace(task.Effort)
+	if err := validateAssistantEffort(user, model, effort); err != nil {
+		return fail("定时任务指定的思考强度不可用：" + err.Error() + "；请在定时任务里改选")
+	}
 	cliEngine, _ := assistantModelEngine(model)
 	policy := scheduledSessionPolicyFrom(ctx)
 	prevSession := strings.TrimSpace(task.SessionID)
@@ -271,11 +275,13 @@ func (h *assistantHandlers) executeAssistantTask(ctx context.Context, user domai
 			sessionID = prev.ID
 		}
 	}
+	pending.Effort = effort
 	req := assistantRequest{
 		ApprovalMode:    AssistantApprovalAuto,
 		ProjectID:       task.ProjectID,
 		SessionID:       sessionID,
 		Model:           model,
+		Effort:          effort,
 		Executor:        cliEngine,
 		ExecutionTarget: target,
 		Messages:        pending.Messages,
@@ -391,6 +397,7 @@ func normalizeAssistantTask(in assistantTask, existing assistantTask) (assistant
 	in.Name = strings.TrimSpace(in.Name)
 	in.Prompt = strings.TrimSpace(in.Prompt)
 	in.Model = strings.TrimSpace(in.Model)
+	in.Effort = strings.TrimSpace(in.Effort)
 	in.ProjectID = strings.TrimSpace(in.ProjectID)
 	in.Cron = strings.TrimSpace(in.Cron)
 	if in.Name == "" || in.Prompt == "" {

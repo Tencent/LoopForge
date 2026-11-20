@@ -65,6 +65,7 @@ func (h *scheduleHandlers) scheduleJobs(c *gin.Context) {
 		job.Cron = strings.TrimSpace(job.Cron)
 		job.AssistantPrompt = strings.TrimSpace(job.AssistantPrompt)
 		job.AssistantModel = strings.TrimSpace(job.AssistantModel)
+		job.AssistantEffort = strings.TrimSpace(job.AssistantEffort)
 		job.WorkflowID = strings.TrimSpace(job.WorkflowID)
 		source, err := domain.NormalizeScheduleSource(job.Source)
 		if err != nil {
@@ -93,6 +94,7 @@ func (h *scheduleHandlers) scheduleJobs(c *gin.Context) {
 			}
 			job.AssistantPrompt = ""
 			job.AssistantModel = ""
+			job.AssistantEffort = ""
 			job.IssueStatuses = domain.NormalizeScheduleIssueStatuses(job.IssueStatuses)
 			if len(job.IssueStatuses) == 0 {
 				job.IssueStatuses = append([]string{}, domain.DefaultScheduleIssueStatuses...)
@@ -153,6 +155,21 @@ func (h *scheduleHandlers) scheduleJobs(c *gin.Context) {
 		}
 		if job.Cron == "" && job.IntervalSec < 30 {
 			job.IntervalSec = 300
+		}
+		if job.SkipDispatch && job.AssistantEffort != "" {
+			runAsID := job.RunAsUserID
+			if runAsID == 0 {
+				runAsID = job.OwnerUserID
+			}
+			user, ok := h.repo.User(runAsID)
+			if !ok {
+				c.JSON(400, map[string]string{"error": "定时任务执行账号不存在，请检查任务的执行身份"})
+				return
+			}
+			if err := validateAssistantEffort(user, job.AssistantModel, job.AssistantEffort); err != nil {
+				c.JSON(400, map[string]string{"error": err.Error()})
+				return
+			}
 		}
 
 		prior, _ := h.repo.ScheduleJob(job.ID)
@@ -301,6 +318,7 @@ func scheduleRunConfigUnchanged(prior, job domain.ScheduleJob) bool {
 		prior.ProjectID == job.ProjectID &&
 		prior.AssistantPrompt == job.AssistantPrompt &&
 		prior.AssistantModel == job.AssistantModel &&
+		prior.AssistantEffort == job.AssistantEffort &&
 		prior.SharedTaskID == job.SharedTaskID &&
 		prior.SharedTaskVersion == job.SharedTaskVersion &&
 		maps.Equal(prior.ParameterValues, job.ParameterValues)
