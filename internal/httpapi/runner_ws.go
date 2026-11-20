@@ -227,6 +227,7 @@ func runnerWorkspaceSSHKnownHosts(ctx context.Context, request domain.RunnerWork
 // send delivers one request; sent reports whether it reached the socket's
 // queue, after which it must not be retried elsewhere.
 func (h *runnerControlHub) send(ctx context.Context, conn *runnerControlConn, request domain.RunnerWorkspaceRequest) (domain.RunnerWorkspaceResponse, bool, error) {
+	// Older runners ignore the optional workspace field when decoding JSON.
 	request.GitSSHKnownHosts = runnerWorkspaceSSHKnownHosts(gitwork.WithSSHKnownHostsLookup(ctx, h.sshHostLookup), request)
 	h.mu.Lock()
 	h.nextID++

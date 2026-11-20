@@ -162,6 +162,52 @@ func TestSSHRepositoryCheckoutAndDelivery(t *testing.T) {
 	}
 }
 
+func TestPlatformSSHRevocationPreservesRunnerLocalPin(t *testing.T) {
+	if _, err := exec.LookPath("ssh"); err != nil {
+		t.Skip("OpenSSH client is not installed")
+	}
+	remote, privateKey, _, localFile := localSSHGit(t, nil)
+	currentPin, err := os.ReadFile(localFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	endpoint, err := gitwork.ParseSSHRemote(remote)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, oldKey := sshTestIdentity(t)
+	oldPin := knownhosts.Line([]string{endpoint.Endpoint()}, oldKey) + "\n"
+	keys := map[string]string{remote: privateKey}
+	for _, tc := range []struct {
+		name        string
+		revokedPin  string
+		wantFailure string
+	}{
+		{name: "old key revoked", revokedPin: oldPin},
+		{name: "current key revoked", revokedPin: string(currentPin), wantFailure: "REVOKED HOST KEY"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			platformFile := filepath.Join(t.TempDir(), "platform_known_hosts")
+			if err := os.WriteFile(platformFile, []byte("@revoked "+tc.revokedPin), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv(gitwork.SSHKnownHostsEnv, platformFile)
+			pins := gitwork.SSHKnownHostsForKeys(t.Context(), keys)
+			t.Setenv(gitwork.SSHKnownHostsEnv, localFile)
+			ctx := gitwork.WithSSHKnownHosts(t.Context(), pins)
+			ctx = gitwork.WithSSHRemote(gitwork.WithSSHKeys(ctx, keys), remote)
+			_, err := gitwork.Run(ctx, t.TempDir(), "ls-remote", "--", remote)
+			if tc.wantFailure == "" {
+				if err != nil {
+					t.Fatalf("runner-local replacement key was rejected: %v", err)
+				}
+			} else if err == nil || !strings.Contains(err.Error(), tc.wantFailure) {
+				t.Fatalf("OpenSSH did not reject the revoked key: %v", err)
+			}
+		})
+	}
+}
+
 func TestGitSSHKeysMatchHostAndPort(t *testing.T) {
 	if _, err := exec.LookPath("ssh"); err != nil {
 		t.Skip("OpenSSH client is not installed")

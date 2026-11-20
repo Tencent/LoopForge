@@ -163,9 +163,9 @@ func TestPlatformSSHKnownHostsAreScopedAndTakePrecedence(t *testing.T) {
 	if revoked == nil || revoked.Entries != "@revoked "+platform.Entries {
 		t.Fatalf("revocation was lost on dispatch: %+v", revoked)
 	}
-	t.Setenv(SSHKnownHostsEnv, localFile)
+	t.Setenv(SSHKnownHostsEnv, "")
 	if _, err := sshHostKeys(WithSSHKnownHosts(t.Context(), revoked), []SSHRemote{repo}); err == nil || !strings.Contains(err.Error(), "未获信任") {
-		t.Fatalf("local pins bypassed platform revocation: %v", err)
+		t.Fatalf("a revocation was treated as a trusted host key: %v", err)
 	}
 }
 
