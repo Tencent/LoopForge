@@ -47,6 +47,8 @@ type PushCard struct {
 	// ClarifyID marks a chat clarification card: buttons carry the
 	// session and their own reference (PushCardAction.Ref).
 	ClarifyID string
+	// Hint is shown below the rows (how to answer a node question).
+	Hint string
 	// lockedSelects are the drop-downs of a handled card (Done).
 	lockedSelects []*PushCardSelect
 }
@@ -118,6 +120,12 @@ func (s *Service) PushCardFor(item domain.NotificationDelivery, content, details
 	}
 	card := &PushCard{DeliveryID: item.ID, Title: cardText(title, 60), Tag: map[string]string{"waiting": "待人工确认", "failed": "执行失败"}[item.EventType], Reason: cardText(reason, 300), Required: cardText(required, 120), DetailsURL: detailsURL}
 	card.Rows = [][2]string{{"需求", cardText(issue, 60)}, {"节点", cardText(item.SourceName, 60)}, {"SOP", cardText(run.WorkflowSnapshot.Name, 60)}}
+	if question := run.Nodes[item.NodeID].Question(); question != "" && item.EventType == "waiting" {
+		card.Tag, card.Required = "需要补充信息", cardText(question, 300)
+		if bot, err := s.Store.NotificationBot(item.BotID); err == nil {
+			card.Hint = domain.NodeAnswerHint(bot.ChannelKind(), item.TargetType)
+		}
+	}
 	buttons, _ := notificationCardActions(actions)
 	for _, b := range buttons {
 		key, _ := b["key"].(string)
@@ -155,6 +163,9 @@ func (c *PushCard) PlainText() string {
 	for _, row := range c.Rows {
 		lines = append(lines, row[0]+"："+row[1])
 	}
+	if c.Hint != "" {
+		lines = append(lines, c.Hint)
+	}
 	if c.DetailsURL != "" {
 		lines = append(lines, "查看详情：", c.DetailsURL)
 	}
@@ -182,6 +193,9 @@ func feishuCardJSON(c *PushCard) []byte {
 	}
 	if len(fields) > 0 {
 		elements = append(elements, map[string]any{"tag": "div", "fields": fields})
+	}
+	if c.Hint != "" {
+		elements = append(elements, map[string]any{"tag": "div", "text": plain(c.Hint)})
 	}
 	value := func(key, ref string) map[string]string {
 		switch {
@@ -252,6 +266,9 @@ func dingtalkCardParams(c *PushCard) map[string]string {
 	}
 	for _, row := range c.Rows {
 		lines = append(lines, "**"+row[0]+"**："+dingtalkMarkdownText(row[1]))
+	}
+	if c.Hint != "" {
+		lines = append(lines, dingtalkMarkdownText(c.Hint))
 	}
 	params := map[string]string{"title": c.Tag + "：" + c.Title, "content": strings.Join(lines, "\n\n"), "detail_url": c.DetailsURL, "status": ""}
 	for _, key := range PushCardKeys {
@@ -477,7 +494,7 @@ func (c *PushCard) Done(status string) {
 		// with the drop-downs locked.
 		c.lockedSelects = c.Selects
 	}
-	c.Status, c.Actions, c.Selects = status, nil, nil
+	c.Status, c.Actions, c.Selects, c.Hint = status, nil, nil, ""
 }
 
 func (s *Service) publicURL() string {

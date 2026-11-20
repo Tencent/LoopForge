@@ -582,6 +582,7 @@ func (r *NotificationsRepo) enqueueRunNotifications(tx *gorm.DB, run domain.Run,
 // Templates of the messages sent back to the chat a run was started from.
 var originTemplates = map[string]string{
 	"waiting":       "### 需要人工处理\n需求：{{issue.title}}\nSOP：{{workflow}}\n节点：{{node}}\n查看详情：{{url}}",
+	"question":      "### 节点需要补充信息\n需求：{{issue.title}}\nSOP：{{workflow}}\n节点：{{node}}\n查看详情：{{url}}",
 	"failed":        "### 节点失败\n需求：{{issue.title}}\nSOP：{{workflow}}\n节点：{{node}}\n原因：{{error}}\n查看详情：{{url}}",
 	"run.succeeded": "### SOP 已完成\n需求：{{issue.title}}\nSOP：{{workflow}}\n查看详情：{{url}}",
 	"run.failed":    "### SOP 失败\n需求：{{issue.title}}\nSOP：{{workflow}}\n原因：{{error}}\n查看详情：{{url}}",
@@ -654,6 +655,7 @@ func (r *NotificationsRepo) enqueueOriginNotification(tx *gorm.DB, run domain.Ru
 		}
 	}
 	item := domain.NotificationDelivery{ProjectID: projectID, BotID: bot.ID, RunID: run.ID, EventType: trigger, SourceType: "run", SourceID: run.ID, SourceName: run.WorkflowSnapshot.Name, Origin: domain.NotificationOriginChat, TargetID: target, TargetType: targetType, TargetName: targetName, WaitingPolicy: "actionable"}
+	template, question := originTemplates[kind], ""
 	if event.NodeID != "" {
 		item.NodeID, item.SourceName = event.NodeID, node.Name
 		if nr := run.Nodes[event.NodeID]; nr != nil {
@@ -661,7 +663,13 @@ func (r *NotificationsRepo) enqueueOriginNotification(tx *gorm.DB, run domain.Ru
 			if nr.Error != "" {
 				values["error"] = nr.Error
 			}
+			if kind == "waiting" && event.Type == "gate.waiting" {
+				question = nr.Question()
+			}
 		}
+	}
+	if question != "" {
+		template = originTemplates["question"]
 	}
 	if strings.TrimSpace(values["error"]) == "" {
 		values["error"] = "请在平台查看运行详情"
@@ -671,9 +679,14 @@ func (r *NotificationsRepo) enqueueOriginNotification(tx *gorm.DB, run domain.Ru
 		// Same Bot and receiver as the SOP's node reminders: share the key.
 		key = fmt.Sprintf("run:%s:%d:%s", run.ID, seq, bot.ID)
 	}
-	content, source, renderErr := domain.RenderNotification(domain.NotificationBinding{BotID: bot.ID, Events: []string{trigger}, Template: originTemplates[kind]}, domain.NotificationContext{Values: values, SourceType: "run"})
+	content, source, renderErr := domain.RenderNotification(domain.NotificationBinding{BotID: bot.ID, Events: []string{trigger}, Template: template}, domain.NotificationContext{Values: values, SourceType: "run"})
 	if renderErr != nil {
 		return nil
+	}
+	if question != "" {
+		// The question is free text: it is added after rendering, outside
+		// the template variables.
+		content = strings.Replace(content, "\n查看详情：", "\n问题："+domain.NotificationText(question, 1200)+"\n"+domain.NodeAnswerHint(bot.ChannelKind(), origin.ChatType)+"\n查看详情：", 1)
 	}
 	item.ID = hexSHA256(key)
 	item.Content, item.ContentSource, item.Status = content, source, "pending"
@@ -873,6 +886,28 @@ func (r *NotificationsRepo) NotificationDelivery(id string) (domain.Notification
 	var item domain.NotificationDelivery
 	err := r.DB.First(&item, "id = ?", id).Error
 	return item, err
+}
+
+// ChatWaitingDeliveries lists the waiting-node messages a Bot sent to one
+// conversation since a time, oldest first.
+func (r *NotificationsRepo) ChatWaitingDeliveries(botID, targetType, targetID string, since time.Time) ([]domain.NotificationDelivery, error) {
+	var items []domain.NotificationDelivery
+	err := r.DB.Where("bot_id = ? AND event_type = ? AND node_id <> '' AND target_type = ? AND target_id = ? AND created_at >= ? AND status IN ?", botID, "waiting", targetType, targetID, since, []string{"pending", "sending", "sent"}).
+		Order("created_at, id").Limit(50).Find(&items).Error
+	return items, err
+}
+
+// NotificationDeliveryByPlatformMessage finds the delivery a Bot sent as the
+// given platform message (a quoted node question).
+func (r *NotificationsRepo) NotificationDeliveryByPlatformMessage(botID, platformMessageID string) (domain.NotificationDelivery, bool) {
+	var item domain.NotificationDelivery
+	if platformMessageID == "" {
+		return item, false
+	}
+	if err := r.DB.Where("bot_id = ? AND platform_message_id = ?", botID, platformMessageID).Limit(1).Find(&item).Error; err != nil || item.ID == "" {
+		return item, false
+	}
+	return item, true
 }
 
 var ErrInteractiveBotAlreadyExists = fmt.Errorf("同一企业微信 Bot 只能有一个启用的对话配置")

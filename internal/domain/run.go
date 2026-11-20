@@ -167,6 +167,15 @@ type NodeRun struct {
 	FinishedAt      time.Time   `json:"finishedAt,omitzero"`
 }
 
+// Question is what the node asks a human to supply: the actionRequired of
+// a "human" decision while the node waits for it. Empty otherwise.
+func (n *NodeRun) Question() string {
+	if n == nil || n.Status != "waiting_approval" || n.GateResult == nil || n.GateResult.Decision != "human" {
+		return ""
+	}
+	return strings.TrimSpace(n.GateResult.ActionRequired)
+}
+
 // GateResult is the structured terminal decision submitted by an Agent through
 // the invocation-scoped submit_gate_result MCP tool.
 type GateResult struct {

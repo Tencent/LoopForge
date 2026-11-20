@@ -86,6 +86,10 @@ func (h *assistantHandlers) generateBotReply(ctx context.Context, bot domain.Not
 	if handled, reply, err := identity.message(bot, item); handled {
 		return reply, err
 	}
+	if reply, handled := h.botNodeAnswer(ctx, bot, conv, item); handled {
+		// Answers to node questions need no model.
+		return reply, nil
+	}
 	user, err := h.botExecutionUser(bot, item.SenderID)
 	if err != nil {
 		return "绑定的平台账号不可用或已失去项目权限，请在平台检查配置。", nil
