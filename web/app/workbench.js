@@ -499,7 +499,8 @@ function credentialGlyph(name,size=16,cls=''){return `<svg class="agent-icon har
 function credentialSpinner(size=14){return credentialGlyph('arc-spinner',size,'credential-spin')}
 function credentialLogo(kind,cls=''){
   const file=kind.logo?.endsWith('.png')?kind.logo:kind.logo+'.svg';
-  return `<span class="credential-logo${kind.monochrome?' monochrome':''}${cls?' '+cls:''}">${kind.icon?credentialGlyph(kind.icon,18):`<img src="/images/credentials/${file}" alt="">`}</span>`;
+  const tint=kind.monochrome&&!kind.icon&&cls.split(/\s+/).includes('is-configured');
+  return `<span class="credential-logo${kind.monochrome?' monochrome':''}${cls?' '+cls:''}${tint?' is-tinted':''}"${tint?` style="--credential-logo-image:url('/images/credentials/${file}')"`:''}>${kind.icon?credentialGlyph(kind.icon,18):`<img src="/images/credentials/${file}" alt="">`}</span>`;
 }
 function hydrateCredentialIcons(root){if(root)window.AgentFlowHarnessIcons?.hydrate?.(root)}
 function credentialNextKind(user){return CREDENTIAL_RECOMMENDED.map(credentialKind).find(kind=>!credentialConfigured(kind,user))||null}
@@ -686,7 +687,7 @@ function credentialRowMainHTML(kind,user){
     ?`${credentialBadgeHTML(status)}${kind.key==='gitToken'?`<span class="credential-tip" data-tip="重新校验"><button type="button" class="credential-btn ghost icon credential-ink git-token-verify" data-credential-act="verify" aria-label="重新校验"${status==='busy'?' disabled':''}>${credentialGlyph('refresh',15)}</button></span>`:''}<span class="credential-chevron">${credentialGlyph('chevron-down',16)}</span>`
     :`${credentialBadgeHTML(status)}<button type="button" class="credential-btn secondary credential-ink" data-credential-act="setup"${managed?' aria-haspopup="dialog"':''}>${managed?kind.action:'去配置'}<span class="credential-nudge">${credentialGlyph('chevron-right',13)}</span></button>`;
   const interaction=managed?'':` role="button" tabindex="0"${on?` aria-expanded="${open}"`:''}`;
-  return `<div class="credential-row-main credential-ink"${interaction}>${credentialLogo(kind,on?'':'is-dim')}<div class="credential-row-who"><b>${escapeHTML(kind.name)}<span>${escapeHTML(kind.short)}</span></b><small>${credentialSubline(kind,user)}</small></div><div class="credential-row-end">${end}</div></div>`;
+  return `<div class="credential-row-main credential-ink"${interaction}>${credentialLogo(kind,on?'is-configured':'is-dim')}<div class="credential-row-who"><b>${escapeHTML(kind.name)}<span>${escapeHTML(kind.short)}</span></b><small>${credentialSubline(kind,user)}</small></div><div class="credential-row-end">${end}</div></div>`;
 }
 function credentialRowHTML(kind,user){
   const on=credentialConfigured(kind,user),open=on&&credentialUI().open===kind.key;
