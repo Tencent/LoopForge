@@ -241,6 +241,18 @@ func (h *assistantHandlers) editSession(c *gin.Context) {
 			c.JSON(409, gin.H{"error": "主讨论不存在"})
 			return
 		}
+		// The copied prefix has to be resumable using the main conversation's
+		// CLI. Refuse an incompatible edit before replacing its transcript.
+		inherited := assistantConversationEngine(source.Messages[:*body.MessageIndex], h.forkExecutor(c, source, user.ID))
+		mainExecutor := h.forkExecutor(c, main, user.ID)
+		mainEngine := assistantConversationEngine(main.Messages, mainExecutor)
+		if mainEngine == "" && (mainExecutor != "" || main.Model != "") {
+			mainEngine, _ = assistantModelEngine(assistantRequestModel(mainExecutor, main.Model))
+		}
+		if inherited != "" && mainEngine != "" && inherited != mainEngine {
+			c.JSON(409, gin.H{"error": "分支与主讨论使用不同的 CLI，无法将分支消息编辑到主讨论"})
+			return
+		}
 		target = append(target, main)
 		resultOwner, resultID = main.UserID, main.ID
 	}

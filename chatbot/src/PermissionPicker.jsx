@@ -15,7 +15,8 @@ export function normalizeApprovalMode(value) {
 }
 
 // `glyph` is a rendered brand mark. Options that only set `icon` keep the Harness icon.
-export default function PermissionPicker({ value, onSelect, open, onOpenChange, label = "操作确认方式", icon, options = modes }) {
+export default function PermissionPicker({ value, onSelect, open: requestedOpen, disabled = false, onOpenChange, label = "操作确认方式", icon, options = modes }) {
+  const open = requestedOpen && !disabled;
   const trigger = useRef(null);
   const panel = useRef(null);
   const initialFocus = useRef(null);
@@ -157,6 +158,7 @@ export default function PermissionPicker({ value, onSelect, open, onOpenChange, 
       <button
         ref={trigger}
         type="button"
+        disabled={disabled}
         className="permission-selector"
         data-tone={current.tone}
         aria-label={label}

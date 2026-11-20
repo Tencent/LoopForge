@@ -222,6 +222,20 @@ describe("App", () => {
       chat.model = original;
     }
   });
+  test("waits for the selected conversation before allowing model settings to change", () => {
+    const original = { activeId: chat.activeId, session: chat.session };
+    const settings = ["CLI", "选择模型", "思考强度"];
+    try {
+      Object.assign(chat, { activeId: "s1", session: null });
+      const view = render(<App />);
+      for (const name of settings) expect(screen.getByRole("button", { name })).toBeDisabled();
+      chat.session = { id: "s1", messages: [] };
+      view.rerender(<App />);
+      for (const name of settings) expect(screen.getByRole("button", { name })).toBeEnabled();
+    } finally {
+      Object.assign(chat, original);
+    }
+  });
   test("regenerates an edited shared branch with the returned main conversation's approval mode", async () => {
     const original = { activeId: chat.activeId, session: chat.session };
     const user = userEvent.setup();

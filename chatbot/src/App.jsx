@@ -471,6 +471,7 @@ export default function App() {
     chat.projects.find((p) => p.id === chat.projectId)?.name ||
     (chat.projectId && (chat.session?.projectName || chat.projectId)) ||
     "个人对话";
+  const sessionLoading = !!chat.activeId && chat.session?.id !== chat.activeId;
   const selectedModel = chat.models.find((m) => m.id === chat.model) || (!chat.local ? chat.modelDetails : null);
   const modelLabel =
     (selectedModel?.name || chat.model)?.replace(/^Claude-/, "").replace(/^GPT-/, "") || "模型";
@@ -2155,6 +2156,7 @@ export default function App() {
                     {chat.executors.length > 1 && !pinnedExecutor && !chat.submitting ? (
                       <PermissionPicker
                         label="CLI"
+                        disabled={sessionLoading}
                         options={chat.executors.map((executor) => {
                           const brand = engineBrand(executor.id);
                           return {
@@ -2175,6 +2177,7 @@ export default function App() {
                     ) : null}
                     <ModelPicker
                       models={chat.models}
+                      disabled={sessionLoading}
                       value={chat.model}
                       label={modelLabel}
                       open={menu?.type === "model"}
@@ -2186,6 +2189,7 @@ export default function App() {
                     />
                     <PermissionPicker
                       label="思考强度"
+                      disabled={sessionLoading}
                       options={effortOptions(selectedModel)}
                       value={chat.effort}
                       onSelect={chat.setEffort}
@@ -2224,7 +2228,7 @@ export default function App() {
                           !chat.ready ||
                           chat.submitting ||
                           chat.machineSaving ||
-                          (chat.activeId && chat.session?.id !== chat.activeId) ||
+                          sessionLoading ||
                           (!text.trim() && !attachments.length) ||
                           uploading
                         }

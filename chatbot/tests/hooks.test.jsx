@@ -734,11 +734,11 @@ describe("conversation hooks", () => {
     }
   });
 
-  test("an open conversation on a CLI without a key keeps its model", async () => {
+  test("an open conversation keeps its model and effort when the model is missing from the picker", async () => {
     localStorage.removeItem("loopforge.assistant.executor");
     const original = apiMock.getMockImplementation();
     const codexSession = {
-      id: "s9", title: "Codex 会话", projectId: "p1", executor: "codex", model: "codex:gpt-5.6-sol", effort: "",
+      id: "s9", title: "Codex 会话", projectId: "p1", executor: "codex", model: "codex:gpt-5.6-sol", effort: "high",
       updatedAt: "2026-01-01T00:00:00Z",
       messages: [{ role: "user", content: "hi" }, { role: "assistant", content: "ok", model: "codex:gpt-5.6-sol" }],
     };
@@ -752,6 +752,14 @@ describe("conversation hooks", () => {
       await act(async () => {});
       expect(result.current.executor).toBe("codex");
       expect(result.current.model).toBe("codex:gpt-5.6-sol");
+      expect(result.current.effort).toBe("high");
+      expect(result.current.modelDetails.efforts).toEqual(["high"]);
+      await act(() => result.current.send({ text: "继续" }));
+      expect(writeMock).toHaveBeenCalledWith("/api/assistant/generations", expect.objectContaining({
+        model: "codex:gpt-5.6-sol", effort: "high",
+      }));
+      act(() => result.current.setEffort(""));
+      expect(result.current).toMatchObject({ model: "codex:gpt-5.6-sol", effort: "" });
     } finally {
       apiMock.mockImplementation(original);
       localStorage.removeItem("loopforge.assistant.executor");

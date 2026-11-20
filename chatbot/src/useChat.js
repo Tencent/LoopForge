@@ -15,7 +15,7 @@ import { credentialHint } from "./credentials.js";
 import { cliFailureSettles } from "./cli-install.jsx";
 import { useExecutionMachines } from "./useExecutionMachines.js";
 import { executionLocked } from "./execution-target.js";
-import { modelEffort } from "./effort.js";
+import { knownEffort, modelEffort } from "./effort.js";
 import { concreteModel, conversationEngine, engineModels, engineOfModel } from "./engines.js";
 import { readComposerPreference, useComposerOptions, writeComposerPreference } from "./composer-preferences.js";
 import {
@@ -638,19 +638,25 @@ export function useChat() {
       draft ? readComposerPreference(`model.${executor}`) : null,
     );
     const availableModel = sponsored && !sponsoredModels.includes(selectedModel) ? sponsoredModel : selectedModel;
-    const activeModelEntry = findExecutorModel(executorModels, executor, availableModel) ??
+    const catalogEntry = findExecutorModel(executorModels, executor, availableModel) ??
       (codeBuddy && availableModel === codeBuddyDefault.id ? codeBuddyDefault : undefined);
-    const activeModel = activeModelEntry?.id ?? availableModel;
+    const activeModel = catalogEntry?.id ?? availableModel;
     const requestedModelId = unprefixedModel(executor, availableModel);
-    const unavailableAgyVariant = agyAccountKey && providerCatalog && !activeModelEntry &&
+    const unavailableAgyVariant = agyAccountKey && providerCatalog && !catalogEntry &&
       /-(?:low|medium|high|xhigh|max)$/.test(requestedModelId || "");
     // Older sessions and preferences stored the ID of the selected effort variant.
     const legacyEffort = requestedModelId !== unprefixedModel(executor, activeModel)
-      ? activeModelEntry?.efforts?.find((level) => activeModelEntry.effortModelIds?.[level] === requestedModelId)
+      ? catalogEntry?.efforts?.find((level) => catalogEntry.effortModelIds?.[level] === requestedModelId)
       : undefined;
     // null follows the browser preference, while "" is the CLI's default level.
     const preferredEffort = ((model === null || hasSelectedModel) ? effort : null) ??
       (draft ? readComposerPreference(effortPreference(executor, availableModel)) : null);
+    // Custom models can remain usable without a picker entry. Keep their
+    // saved effort visible and let the server validate it on send.
+    const historical = conversation && activeModel && !unavailableAgyVariant && availableModel === selectedModel;
+    const activeModelEntry = catalogEntry ?? (historical
+      ? { id: activeModel, efforts: [knownEffort(preferredEffort)] }
+      : undefined);
     const activeEffort = modelEffort(activeModelEntry, preferredEffort || legacyEffort);
     return {
       personalMachineId, personalMachine, agyAccountKey, catalogToLoad, codeBuddy, executorModels,
@@ -723,9 +729,13 @@ export function useChat() {
     if (error) throw Error(error);
     return { model: resolved.activeModel, effort: resolved.activeEffort };
   }
+  function sessionLoading() {
+    return !!currentId.current && sessionRef.current?.id !== currentId.current;
+  }
+
   function chooseExecutor(id) {
     if (id === "claude") id = "claude-code";
-    if (submittingRef.current || !EXECUTORS.some((item) => item.id === id) || id === executor) return;
+    if (sessionLoading() || submittingRef.current || !EXECUTORS.some((item) => item.id === id) || id === executor) return;
     const current = sessionRef.current;
     const locked = conversationEngine(current?.messages, models, current?.executor);
     writeComposerPreference("executor", id);
@@ -753,6 +763,7 @@ export function useChat() {
   }
 
   function chooseModel(id) {
+    if (sessionLoading()) return false;
     if (sponsored && !sponsoredModels.includes(id)) {
       setError(sponsoredModelMessage(sponsoredModels));
       return false;
@@ -768,6 +779,7 @@ export function useChat() {
   }
 
   function chooseEffort(value) {
+    if (sessionLoading()) return;
     const level = modelEffort(activeModelEntry, value);
     setEffort(level);
     if (activeModelEntry) {
@@ -981,7 +993,7 @@ export function useChat() {
     const approval = fromQueue
       ? queuedApproval({ approvalMode, approvalUserId }, user?.id)
       : { approvalMode, approvalUserId: user?.id };
-    if (currentId.current && sessionRef.current?.id !== currentId.current) {
+    if (sessionLoading()) {
       setError("会话仍在加载，请稍候再发送。");
       return false;
     }

@@ -118,3 +118,38 @@ func TestEditSharedMessageReplacesSameConversationAndRejectsStale(t *testing.T) 
 		t.Fatal("stale overwrite accepted", w.Code)
 	}
 }
+
+func TestEditSharedBranchRejectsDifferentCLIWithoutReplacingMain(t *testing.T) {
+	h, a, b, _, main := sharedWorkbenchFixture(t)
+	main.Executor, main.Model = assistantEngineCodex, "codex:gpt-5"
+	main.Messages = append(main.Messages, domain.AssistantMessage{Role: "assistant", Model: main.Model, Content: "主讨论回复"})
+	if err := h.repo.PutAssistantSession(a.ID, main); err != nil {
+		t.Fatal(err)
+	}
+	main, _ = h.repo.AssistantSession(a.ID, main.ID)
+	branch := domain.AssistantSession{
+		ID: "sop-branch-different-cli", UserID: b.ID, ProjectID: main.ProjectID,
+		RunID: main.RunID, Shared: true, ParentSessionID: main.ID, RootSessionID: main.ID,
+		Executor: assistantEngineClaude, Model: "claude-code:sonnet",
+		Messages: []domain.AssistantMessage{
+			main.Messages[0],
+			{Role: "assistant", Model: "claude-code:sonnet", Content: "分支回复"},
+			{Role: "user", Content: "分支里的后续消息"},
+		},
+	}
+	if err := h.repo.CreateAssistantSessionBranch(main, branch); err != nil {
+		t.Fatal(err)
+	}
+	branch, _ = h.repo.AssistantSession(b.ID, branch.ID)
+	body, _ := json.Marshal(gin.H{"messageIndex": 2, "content": "编辑后", "updatedAt": branch.UpdatedAt})
+	c, w := workbenchContext(b, "POST", "/", bytes.NewBuffer(body))
+	c.Params = gin.Params{{Key: "id", Value: branch.ID}}
+	h.editSession(c)
+	if w.Code != 409 {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	reopened, _ := h.repo.AssistantSession(a.ID, main.ID)
+	if !reopened.UpdatedAt.Equal(main.UpdatedAt) {
+		t.Fatal("incompatible edit changed the main conversation", reopened)
+	}
+}
