@@ -89,7 +89,7 @@ func (p *TerminalPool) HandleSandboxWithGit(ctx context.Context, sandbox Sandbox
 	var bind func(*CommandSpec) error
 	if len(credentials.SSHKeys) > 0 && sandbox != nil {
 		bind = func(command *CommandSpec) error {
-			stop, err := BindTerminalGitSSH(sandbox, command, credentials.SSHKeys)
+			stop, err := BindTerminalGitSSH(ctx, sandbox, command, credentials.SSHKeys)
 			if err == nil {
 				stopSSH = stop
 			}
