@@ -7,7 +7,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -74,54 +76,263 @@ func referenceTools(ctx context.Context, d *deps, project string, uid int64, ref
 	return out, client, nil
 }
 func callKnowledgeReference(ctx context.Context, d *deps, project string, uid int64, ref domain.KnowledgeRef, name string, args map[string]any) (string, int, error) {
-	tools, client, err := referenceTools(ctx, d, project, uid, ref)
+	res, err := callKnowledgeReferenceWithOrigin(ctx, d, project, uid, ref, name, args, domain.KnowledgeCallOriginModelTool)
 	if err != nil {
 		return "", 0, err
+	}
+	return res.Text, res.Hits, nil
+}
+
+func callKnowledgeReferenceWithOrigin(ctx context.Context, d *deps, project string, uid int64, ref domain.KnowledgeRef, name string, args map[string]any, origin string) (knowledge.ExecutionResult, error) {
+	if origin == "" {
+		origin = domain.KnowledgeCallOriginModelTool
+	}
+	started := time.Now()
+	tools, client, err := referenceTools(ctx, d, project, uid, ref)
+	if err != nil {
+		if origin == domain.KnowledgeCallOriginCatalogProbe {
+			log.Printf("knowledge-call origin=%s project=%s server=%s tool=%s ok=false latency=%dms", origin, project, ref.ServerID, name, time.Since(started).Milliseconds())
+		}
+		return knowledge.ExecutionResult{Status: domain.KnowledgeStatusUnavailable}, err
 	}
 	for _, tool := range tools {
 		if tool.Name != name {
 			continue
 		}
 		if client != nil {
-			text, err := client.CallToolContext(ctx, name, args)
-			if err != nil {
-				return "", 0, knowledgeCallError(err)
+			text, callErr := client.CallToolContext(ctx, name, args)
+			if origin == domain.KnowledgeCallOriginCatalogProbe {
+				log.Printf("knowledge-call origin=%s project=%s server=%s tool=%s ok=%t latency=%dms", origin, project, ref.ServerID, name, callErr == nil, time.Since(started).Milliseconds())
+			}
+			if callErr != nil {
+				return knowledge.ExecutionResult{Status: domain.KnowledgeStatusUnavailable}, knowledgeCallError(callErr)
 			}
 			trimmed := truncateRunes(strings.TrimSpace(text), 32000)
 			_, hits := extractKnowledgeResultMeta(trimmed)
-			return trimmed, hits, nil
+			return knowledge.ExecutionResult{Text: trimmed, Hits: hits}, nil
 		}
 		settings := d.repo.KnowledgeSettings()
 		if !settings.Ready() {
-			return "", 0, knowledge.ErrNotConfigured
+			return knowledge.ExecutionResult{Status: domain.KnowledgeStatusUnavailable}, knowledge.ErrNotConfigured
 		}
-		res, err := knowledge.NewService(d.repo, nil).ExecuteTool(ctx, project, name, args, knowledge.ExecuteOptions{ScopeOverride: ref.Sources})
-		if err != nil {
-			return "", 0, err
+		res, execErr := knowledge.NewService(d.repo, nil).ExecuteTool(ctx, project, name, args, knowledge.ExecuteOptions{ScopeOverride: ref.Sources})
+		if origin == domain.KnowledgeCallOriginCatalogProbe {
+			log.Printf("knowledge-call origin=%s project=%s server=%s tool=%s status=%s ok=%t latency=%dms", origin, project, ref.ServerID, name, res.Status, execErr == nil, time.Since(started).Milliseconds())
 		}
-		hits := res.Hits
-		if hits == 0 {
+		if execErr != nil {
+			return res, execErr
+		}
+		if res.Hits == 0 {
 			if _, parsedHits := extractKnowledgeResultMeta(res.Text); parsedHits > 0 {
-				hits = parsedHits
+				res.Hits = parsedHits
 			}
 		}
-		return res.Text, hits, nil
+		return res, nil
 	}
-	return "", 0, fmt.Errorf("知识服务未开放该只读工具")
+	return knowledge.ExecutionResult{Status: domain.KnowledgeStatusUnavailable}, fmt.Errorf("知识服务未开放该只读工具")
 }
 
 func knowledgeReadResult(serverID, tool, text string, hits int, err error) (domain.KnowledgeRead, string) {
-	read := domain.KnowledgeRead{ID: rand.Text(), ServerID: serverID, Tool: tool, Status: "已返回"}
+	return knowledgeReadResultWithMeta(serverID, tool, text, hits, "", "", domain.KnowledgeCallOriginModelTool, err)
+}
+
+func knowledgeReadResultWithMeta(serverID, tool, text string, hits int, execStatus, execWarning, origin string, err error) (domain.KnowledgeRead, string) {
+	if origin == "" {
+		origin = domain.KnowledgeCallOriginModelTool
+	}
+	read := domain.KnowledgeRead{
+		ID:       rand.Text(),
+		Origin:   origin,
+		ServerID: serverID,
+		Tool:     tool,
+		Warning:  strings.TrimSpace(execWarning),
+	}
+	if err != nil {
+		read.Status = domain.KnowledgeStatusUnavailable
+		if read.Warning == "" {
+			read.Warning = truncateRunes(strings.TrimSpace(err.Error()), 200)
+		}
+		return read, text
+	}
+	if strings.TrimSpace(text) == "" {
+		if execStatus == domain.KnowledgeStatusUnavailable {
+			read.Status = domain.KnowledgeStatusUnavailable
+		} else {
+			read.Status = domain.KnowledgeStatusEmpty
+		}
+		return read, text
+	}
+
+	targets, evidences, isJSON, jsonListCount := extractKnowledgeEvidences(text)
+	read.Targets = targets
+	read.Evidences = evidences
+
 	switch {
-	case err != nil:
-		read.Status = "调用失败"
-	case strings.TrimSpace(text) == "" || (serverID == domain.KnowledgeMCPServerID && (tool == knowledge.ToolSearch || tool == knowledge.WeKnoraToolSearchKnowledge) && hits == 0):
-		read.Status = "无匹配"
+	case execStatus == domain.KnowledgeStatusUnavailable:
+		read.Status = domain.KnowledgeStatusUnavailable
+	case execStatus == domain.KnowledgeStatusPartial:
+		read.Status = domain.KnowledgeStatusPartial
+	case execStatus == domain.KnowledgeStatusEmpty:
+		read.Status = domain.KnowledgeStatusEmpty
+	case isJSON && jsonListCount == 0:
+		read.Status = domain.KnowledgeStatusEmpty
+		read.Evidences = nil
+	case serverID == domain.KnowledgeMCPServerID && (tool == knowledge.ToolSearch || tool == knowledge.WeKnoraToolSearchKnowledge) && hits == 0 && len(evidences) == 0:
+		read.Status = domain.KnowledgeStatusEmpty
+	case serverID != domain.KnowledgeMCPServerID && len(evidences) == 0:
+		read.Status = domain.KnowledgeStatusUnstructured
 	default:
-		read.Targets, _ = extractKnowledgeResultMeta(text)
-		text += "\n若输出引用本次结果，请附上原文出处和 [[knowledge:" + read.ID + "]]。"
+		read.Status = domain.KnowledgeStatusHit
+	}
+
+	if domain.IsKnowledgeCitableStatus(read.Status) {
+		if len(read.Evidences) > 0 {
+			var b strings.Builder
+			b.WriteString(text)
+			b.WriteString("\n证据引用编号（若输出采用对应内容，请在引用处附上原文出处和对应标记）：")
+			for _, ev := range read.Evidences {
+				label := firstNonEmpty(ev.Title, ev.DocumentID, ev.SourceID)
+				if ev.Locator != "" {
+					fmt.Fprintf(&b, "\n- [[knowledge:%s]] %s (%s)", ev.ID, label, ev.Locator)
+				} else {
+					fmt.Fprintf(&b, "\n- [[knowledge:%s]] %s", ev.ID, label)
+				}
+			}
+			text = b.String()
+		} else {
+			text += "\n若输出引用本次结果，请附上原文出处和 [[knowledge:" + read.ID + "]]。"
+		}
 	}
 	return read, text
+}
+
+func extractKnowledgeEvidences(raw string) ([]string, []domain.KnowledgeEvidence, bool, int) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, nil, false, -1
+	}
+	var targets []string
+	seenTargets := map[string]bool{}
+	addTarget := func(s string) {
+		s = clipCatalogText(s, 120)
+		if s == "" || seenTargets[s] {
+			return
+		}
+		seenTargets[s] = true
+		if len(targets) < maxKnowledgeReadTargets {
+			targets = append(targets, s)
+		}
+	}
+
+	var parsed any
+	if json.Unmarshal([]byte(raw), &parsed) == nil {
+		var evidences []domain.KnowledgeEvidence
+		listCount := collectKnowledgeEvidencesFromJSON(parsed, addTarget, &evidences)
+		return targets, evidences, true, listCount
+	}
+
+	for _, line := range strings.Split(raw, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.Contains(line, "[[knowledge:") {
+			continue
+		}
+		if title := extractMarkdownKnowledgeTarget(line); title != "" {
+			addTarget(title)
+		}
+	}
+	return targets, nil, false, -1
+}
+
+func collectKnowledgeEvidencesFromJSON(v any, addTarget func(string), evidences *[]domain.KnowledgeEvidence) int {
+	switch x := v.(type) {
+	case []any:
+		for _, item := range x {
+			collectKnowledgeEvidencesFromJSON(item, addTarget, evidences)
+		}
+		return len(x)
+	case map[string]any:
+		containerKeys := []string{"results", "documents", "chunks", "items", "knowledge_bases", "sources", "pages", "hits"}
+		listCount := -1
+		for _, key := range containerKeys {
+			if sub, ok := x[key]; ok {
+				if arr, isArr := sub.([]any); isArr {
+					if listCount < 0 || len(arr) > listCount {
+						listCount = len(arr)
+					}
+					for _, item := range arr {
+						collectKnowledgeEvidencesFromJSON(item, addTarget, evidences)
+					}
+				}
+			}
+		}
+		if sub, ok := x["data"]; ok {
+			switch d := sub.(type) {
+			case []any:
+				if listCount < 0 || len(d) > listCount {
+					listCount = len(d)
+				}
+				for _, item := range d {
+					collectKnowledgeEvidencesFromJSON(item, addTarget, evidences)
+				}
+			case map[string]any:
+				subCount := collectKnowledgeEvidencesFromJSON(d, addTarget, evidences)
+				if listCount < 0 && subCount >= 0 {
+					listCount = subCount
+				}
+			}
+		}
+		if listCount >= 0 {
+			return listCount
+		}
+		ev, ok := buildKnowledgeEvidenceFromMap(x, len(*evidences)+1)
+		if ok {
+			*evidences = append(*evidences, ev)
+			if label := firstNonEmpty(ev.Title, ev.DocumentID, ev.SourceID); label != "" {
+				addTarget(label)
+			}
+			return 1
+		}
+	}
+	return -1
+}
+
+func buildKnowledgeEvidenceFromMap(m map[string]any, idx int) (domain.KnowledgeEvidence, bool) {
+	strVal := func(keys ...string) string {
+		for _, k := range keys {
+			if s, ok := m[k].(string); ok && strings.TrimSpace(s) != "" {
+				return strings.TrimSpace(s)
+			}
+		}
+		return ""
+	}
+	title := strVal("title", "knowledge_title", "document_title", "doc_title", "file_name", "filename", "doc_name", "name")
+	docID := strVal("document_id", "doc_id", "knowledge_id", "path", "uri", "id")
+	sourceID := strVal("source", "source_id", "knowledge_base_id", "kb_id")
+	connID := strVal("connection_id", "connectionId")
+	if connID == "" && strings.Contains(sourceID, "::") {
+		connID, _, _ = strings.Cut(sourceID, "::")
+	}
+	if title == "" && docID == "" && sourceID == "" {
+		return domain.KnowledgeEvidence{}, false
+	}
+	locator := strVal("locator")
+	if locator == "" {
+		if start, okS := m["start_line"]; okS {
+			if end, okE := m["end_line"]; okE {
+				locator = fmt.Sprintf("L%v-L%v", start, end)
+			}
+		} else if chunkIdx, okC := m["chunk_index"]; okC {
+			locator = fmt.Sprintf("#chunk-%v", chunkIdx)
+		}
+	}
+	return domain.KnowledgeEvidence{
+		ID:           fmt.Sprintf("ev_%d", idx),
+		ConnectionID: connID,
+		SourceID:     sourceID,
+		DocumentID:   docID,
+		Title:        clipCatalogText(title, 120),
+		Locator:      locator,
+	}, true
 }
 
 const maxKnowledgeReadTargets = 5
@@ -306,6 +517,7 @@ const (
 	knowledgeCatalogProbeWait = 2 * time.Second
 	knowledgeCatalogMaxRunes  = 1600
 	knowledgeCatalogMaxDocs   = 20
+	knowledgeCatalogCacheMax  = 256
 )
 
 type knowledgeCatalogCacheEntry struct {
@@ -313,14 +525,24 @@ type knowledgeCatalogCacheEntry struct {
 	expiresAt time.Time
 }
 
+type knowledgeCatalogFlight struct {
+	done chan struct{}
+	xml  string
+}
+
 var knowledgeCatalogCache = struct {
-	mu    sync.Mutex
-	items map[string]knowledgeCatalogCacheEntry
-}{items: map[string]knowledgeCatalogCacheEntry{}}
+	mu       sync.Mutex
+	items    map[string]knowledgeCatalogCacheEntry
+	inflight map[string]*knowledgeCatalogFlight
+}{
+	items:    map[string]knowledgeCatalogCacheEntry{},
+	inflight: map[string]*knowledgeCatalogFlight{},
+}
 
 func resetKnowledgeCatalogCacheForTest() {
 	knowledgeCatalogCache.mu.Lock()
 	knowledgeCatalogCache.items = map[string]knowledgeCatalogCacheEntry{}
+	knowledgeCatalogCache.inflight = map[string]*knowledgeCatalogFlight{}
 	knowledgeCatalogCache.mu.Unlock()
 }
 
@@ -403,11 +625,38 @@ func buildSOPKnowledgeCatalogXML(ctx context.Context, d *deps, project string, u
 	})
 }
 
-func knowledgeCatalogCacheKey(mode, project string, uid int64, refs []domain.KnowledgeRef) string {
+func knowledgeCatalogCacheKey(d *deps, mode, project string, uid int64, refs []domain.KnowledgeRef) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s|%s|%d", mode, project, uid)
+	hasBuiltin := false
 	for _, ref := range refs {
-		fmt.Fprintf(&b, "|%s:%s:%s", ref.ServerID, ref.Mode, strings.Join(ref.Sources, ","))
+		if ref.ServerID == domain.KnowledgeMCPServerID {
+			hasBuiltin = true
+		}
+		sources := append([]string(nil), ref.Sources...)
+		sort.Strings(sources)
+		fmt.Fprintf(&b, "|%s:%s:%s", ref.ServerID, ref.Mode, strings.Join(sources, ","))
+		if ref.ServerID != domain.KnowledgeMCPServerID && d != nil && d.repo != nil {
+			if srv, ok := d.repo.MCPServer(ref.ServerID); ok {
+				fmt.Fprintf(&b, "@%s#%d", strings.TrimSpace(srv.URL), srv.UpdatedAt.UTC().UnixNano())
+			}
+		}
+	}
+	if hasBuiltin && d != nil && d.repo != nil {
+		settings := d.repo.KnowledgeSettings()
+		rawAllowed := settings.SourcesForProject(project)
+		allowed := make([]string, 0, len(rawAllowed))
+		seenAllowed := map[string]bool{}
+		for _, src := range rawAllowed {
+			src = strings.TrimSpace(src)
+			if src == "" || seenAllowed[src] {
+				continue
+			}
+			seenAllowed[src] = true
+			allowed = append(allowed, src)
+		}
+		sort.Strings(allowed)
+		fmt.Fprintf(&b, "|scope=%s|fp=%s", strings.Join(allowed, ","), settings.ActiveConnectionsFingerprint())
 	}
 	return b.String()
 }
@@ -418,14 +667,49 @@ func buildBoundKnowledgeCatalogXML(ctx context.Context, d *deps, project string,
 	})
 }
 
+func evictKnowledgeCatalogCacheLocked(now time.Time) {
+	for k, entry := range knowledgeCatalogCache.items {
+		if !now.Before(entry.expiresAt) {
+			delete(knowledgeCatalogCache.items, k)
+		}
+	}
+	for len(knowledgeCatalogCache.items) >= knowledgeCatalogCacheMax {
+		var oldestKey string
+		var oldestTime time.Time
+		first := true
+		for k, entry := range knowledgeCatalogCache.items {
+			if first || entry.expiresAt.Before(oldestTime) {
+				oldestKey = k
+				oldestTime = entry.expiresAt
+				first = false
+			}
+		}
+		if oldestKey == "" {
+			break
+		}
+		delete(knowledgeCatalogCache.items, oldestKey)
+	}
+}
+
 func buildBoundKnowledgeCatalogXMLForMode(ctx context.Context, d *deps, mode, project string, uid int64, refs []domain.KnowledgeRef, formatTool func(serverID, toolName string) string) string {
-	key := knowledgeCatalogCacheKey(mode, project, uid, refs)
+	key := knowledgeCatalogCacheKey(d, mode, project, uid, refs)
 	now := time.Now()
 	knowledgeCatalogCache.mu.Lock()
 	if entry, ok := knowledgeCatalogCache.items[key]; ok && now.Before(entry.expiresAt) {
 		knowledgeCatalogCache.mu.Unlock()
 		return entry.xml
 	}
+	if flight, ok := knowledgeCatalogCache.inflight[key]; ok {
+		knowledgeCatalogCache.mu.Unlock()
+		select {
+		case <-flight.done:
+			return flight.xml
+		case <-ctx.Done():
+			return ""
+		}
+	}
+	flight := &knowledgeCatalogFlight{done: make(chan struct{})}
+	knowledgeCatalogCache.inflight[key] = flight
 	knowledgeCatalogCache.mu.Unlock()
 
 	probeCtx, cancel := context.WithTimeout(ctx, knowledgeCatalogProbeWait)
@@ -445,8 +729,13 @@ func buildBoundKnowledgeCatalogXMLForMode(ctx context.Context, d *deps, mode, pr
 		out += "\n</bound_knowledge_bases>"
 	}
 
+	writeNow := time.Now()
 	knowledgeCatalogCache.mu.Lock()
-	knowledgeCatalogCache.items[key] = knowledgeCatalogCacheEntry{xml: out, expiresAt: now.Add(knowledgeCatalogCacheTTL)}
+	delete(knowledgeCatalogCache.inflight, key)
+	evictKnowledgeCatalogCacheLocked(writeNow)
+	knowledgeCatalogCache.items[key] = knowledgeCatalogCacheEntry{xml: out, expiresAt: writeNow.Add(knowledgeCatalogCacheTTL)}
+	flight.xml = out
+	close(flight.done)
 	knowledgeCatalogCache.mu.Unlock()
 	return out
 }
@@ -488,32 +777,32 @@ func describeBoundKnowledgeRef(ctx context.Context, d *deps, project string, uid
 	if ctx.Err() == nil {
 		switch {
 		case hasListBases:
-			if text, _, err := callKnowledgeReference(ctx, d, project, uid, ref, "list_knowledge_bases", map[string]any{}); err == nil {
-				baseIDs = extractCatalogBaseIDs(text, 5)
+			if res, err := callKnowledgeReferenceWithOrigin(ctx, d, project, uid, ref, "list_knowledge_bases", map[string]any{}, domain.KnowledgeCallOriginCatalogProbe); err == nil {
+				baseIDs = extractCatalogBaseIDs(res.Text, 5)
 				if hasListDocs && len(baseIDs) > 0 {
 					for _, baseID := range baseIDs {
 						if ctx.Err() != nil || len(samples) >= knowledgeCatalogMaxDocs {
 							break
 						}
-						if docText, _, docErr := callKnowledgeReference(ctx, d, project, uid, ref, "list_documents", map[string]any{
+						if docRes, docErr := callKnowledgeReferenceWithOrigin(ctx, d, project, uid, ref, "list_documents", map[string]any{
 							"knowledge_base_id": baseID,
 							"page_size":         10,
-						}); docErr == nil {
-							samples = appendUniqueCatalogItems(samples, extractCatalogTitles(docText, knowledgeCatalogMaxDocs-len(samples)), knowledgeCatalogMaxDocs)
+						}, domain.KnowledgeCallOriginCatalogProbe); docErr == nil {
+							samples = appendUniqueCatalogItems(samples, extractCatalogTitles(docRes.Text, knowledgeCatalogMaxDocs-len(samples)), knowledgeCatalogMaxDocs)
 						}
 					}
 				}
 				if len(samples) == 0 {
-					samples = extractCatalogTitles(text, knowledgeCatalogMaxDocs)
+					samples = extractCatalogTitles(res.Text, knowledgeCatalogMaxDocs)
 				}
 			}
 		case hasListDocs:
-			if text, _, err := callKnowledgeReference(ctx, d, project, uid, ref, "list_documents", map[string]any{"page_size": knowledgeCatalogMaxDocs}); err == nil {
-				samples = extractCatalogTitles(text, knowledgeCatalogMaxDocs)
+			if res, err := callKnowledgeReferenceWithOrigin(ctx, d, project, uid, ref, "list_documents", map[string]any{"page_size": knowledgeCatalogMaxDocs}, domain.KnowledgeCallOriginCatalogProbe); err == nil {
+				samples = extractCatalogTitles(res.Text, knowledgeCatalogMaxDocs)
 			}
 		case hasListSources:
-			if text, _, err := callKnowledgeReference(ctx, d, project, uid, ref, knowledge.ToolListSources, map[string]any{}); err == nil {
-				samples = extractCatalogTitles(text, knowledgeCatalogMaxDocs)
+			if res, err := callKnowledgeReferenceWithOrigin(ctx, d, project, uid, ref, knowledge.ToolListSources, map[string]any{}, domain.KnowledgeCallOriginCatalogProbe); err == nil {
+				samples = extractCatalogTitles(res.Text, knowledgeCatalogMaxDocs)
 			}
 		}
 	}

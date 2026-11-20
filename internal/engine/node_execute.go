@@ -1172,21 +1172,16 @@ func lostCLISession(output string, err error) bool {
 }
 
 func markKnowledgeReadsCited(reads []domain.KnowledgeRead, attempt int, output string, artifacts []domain.Artifact) {
+	contents := make([]string, 0, 1+len(artifacts))
+	contents = append(contents, output)
+	for _, artifact := range artifacts {
+		contents = append(contents, artifact.Content)
+	}
 	for i := range reads {
-		if reads[i].Attempt != attempt || reads[i].Status != "已返回" {
+		if reads[i].Attempt != attempt {
 			continue
 		}
-		marker := "[[knowledge:" + reads[i].ID + "]]"
-		if strings.Contains(output, marker) {
-			reads[i].Cited = true
-			continue
-		}
-		for _, artifact := range artifacts {
-			if strings.Contains(artifact.Content, marker) {
-				reads[i].Cited = true
-				break
-			}
-		}
+		domain.MarkKnowledgeReadCited(&reads[i], contents...)
 	}
 }
 

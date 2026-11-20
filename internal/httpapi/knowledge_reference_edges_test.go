@@ -9,6 +9,8 @@ import (
 	"net/http/httptest"
 	"reflect"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 
 	"agentflow/internal/domain"
@@ -72,11 +74,12 @@ func TestKnowledgeReadResultStates(t *testing.T) {
 		wantStatus string
 		wantCite   bool
 	}{
-		{"success with text", domain.KnowledgeMCPServerID, knowledge.ToolSearch, "some answer", 1, nil, "已返回", true},
-		{"blank text", domain.KnowledgeMCPServerID, knowledge.ToolFetch, "   ", 0, nil, "无匹配", false},
-		{"search zero hits", domain.KnowledgeMCPServerID, knowledge.ToolSearch, `{"results":[]}`, 0, nil, "无匹配", false},
-		{"external zero hits not forced no-match", "handbook", knowledge.ToolSearch, "raw", 0, nil, "已返回", true},
-		{"call failure", domain.KnowledgeMCPServerID, knowledge.ToolSearch, "", 0, errors.New("boom"), "调用失败", false},
+		{"success with text", domain.KnowledgeMCPServerID, knowledge.ToolSearch, "some answer", 1, nil, domain.KnowledgeStatusHit, true},
+		{"blank text", domain.KnowledgeMCPServerID, knowledge.ToolFetch, "   ", 0, nil, domain.KnowledgeStatusEmpty, false},
+		{"search zero hits", domain.KnowledgeMCPServerID, knowledge.ToolSearch, `{"results":[]}`, 0, nil, domain.KnowledgeStatusEmpty, false},
+		{"external empty json results", "handbook", knowledge.ToolSearch, `{"results":[]}`, 0, nil, domain.KnowledgeStatusEmpty, false},
+		{"external plain text unstructured", "handbook", knowledge.ToolSearch, "raw", 0, nil, domain.KnowledgeStatusUnstructured, true},
+		{"call failure", domain.KnowledgeMCPServerID, knowledge.ToolSearch, "", 0, errors.New("boom"), domain.KnowledgeStatusUnavailable, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -500,5 +503,171 @@ func TestCallKnowledgeReferenceExtractsHitsAndTargets(t *testing.T) {
 	}
 	if !reflect.DeepEqual(read.Targets, []string{"vpcdns-test.md", "dns-faq.md"}) {
 		t.Fatalf("read.Targets = %#v", read.Targets)
+	}
+}
+
+func TestKnowledgeReadResultEvidencesAndFiveStates(t *testing.T) {
+	// 1. External MCP empty JSON array -> 无匹配 with empty evidences.
+	emptyRead, _ := knowledgeReadResult("ext-1", "search_knowledge", `{"results":[]}`, 0, nil)
+	if emptyRead.Status != domain.KnowledgeStatusEmpty || len(emptyRead.Evidences) != 0 {
+		t.Fatalf("empty external JSON = %+v, want 无匹配 & 0 evidences", emptyRead)
+	}
+
+	// 2. External MCP plain text -> 未知结构 and raw text preserved.
+	unstructuredRead, unstructuredText := knowledgeReadResult("ext-1", "search_knowledge", "raw", 0, nil)
+	if unstructuredRead.Status != domain.KnowledgeStatusUnstructured {
+		t.Fatalf("unstructured status = %q, want 未知结构", unstructuredRead.Status)
+	}
+	if !strings.Contains(unstructuredText, "raw") || !strings.Contains(unstructuredText, "[[knowledge:"+unstructuredRead.ID+"]]") {
+		t.Fatalf("unstructured text missing raw or marker: %q", unstructuredText)
+	}
+
+	// 3. 10 documents returned, only [[knowledge:ev_2]] cited -> only Evidences[1].Cited == true.
+	var items []map[string]any
+	for i := 1; i <= 10; i++ {
+		items = append(items, map[string]any{
+			"document_id": "doc-" + string(rune('0'+i%10)),
+			"title":       "Doc Title " + string(rune('A'+i-1)),
+			"source":      "conn-1::kb-1",
+		})
+	}
+	rawJSON, _ := json.Marshal(map[string]any{"results": items})
+	hitRead, hitText := knowledgeReadResult(domain.KnowledgeMCPServerID, "search_knowledge", string(rawJSON), 10, nil)
+	if hitRead.Status != domain.KnowledgeStatusHit {
+		t.Fatalf("hit status = %q, want 命中", hitRead.Status)
+	}
+	if len(hitRead.Evidences) != 10 {
+		t.Fatalf("len(Evidences) = %d, want 10", len(hitRead.Evidences))
+	}
+	if !strings.Contains(hitText, "[[knowledge:ev_2]]") {
+		t.Fatalf("expected [[knowledge:ev_2]] marker in output text:\n%s", hitText)
+	}
+	domain.MarkKnowledgeReadCited(&hitRead, "结论参考 [[knowledge:ev_2]]")
+	if !hitRead.Cited {
+		t.Fatal("expected read.Cited = true")
+	}
+	for i, ev := range hitRead.Evidences {
+		want := i == 1
+		if ev.Cited != want {
+			t.Fatalf("evidence[%d] (%s) Cited = %v, want %v", i, ev.ID, ev.Cited, want)
+		}
+	}
+
+	// 4. Partial status propagation.
+	partialRead, _ := knowledgeReadResultWithMeta(domain.KnowledgeMCPServerID, "search_knowledge", string(rawJSON), 10, domain.KnowledgeStatusPartial, "连接 B 超时", domain.KnowledgeCallOriginModelTool, nil)
+	if partialRead.Status != domain.KnowledgeStatusPartial || partialRead.Warning != "连接 B 超时" {
+		t.Fatalf("partial read = %+v", partialRead)
+	}
+}
+
+func TestKnowledgeCatalogCacheInvalidationAndSingleflight(t *testing.T) {
+	resetKnowledgeCatalogCacheForTest()
+	defer resetKnowledgeCatalogCacheForTest()
+
+	var listDocsCalls atomic.Int32
+	gate := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var rpc struct {
+			ID     any    `json:"id"`
+			Method string `json:"method"`
+			Params struct {
+				Name string `json:"name"`
+			} `json:"params"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&rpc); err != nil {
+			http.Error(w, err.Error(), 400)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch rpc.Method {
+		case "initialize":
+			_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": rpc.ID, "result": map[string]any{"protocolVersion": "2024-11-05"}})
+		case "notifications/initialized":
+			w.WriteHeader(204)
+		case "tools/list":
+			_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": rpc.ID, "result": map[string]any{
+				"tools": []map[string]any{
+					{"name": "list_documents", "description": "List docs", "annotations": map[string]any{"readOnlyHint": true}},
+				},
+			}})
+		case "tools/call":
+			listDocsCalls.Add(1)
+			<-gate
+			_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": rpc.ID, "result": map[string]any{
+				"content": []map[string]any{{"type": "text", "text": `{"documents":[{"title":"sf-doc.md"}]}`}},
+			}})
+		}
+	}))
+	defer srv.Close()
+
+	store, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if err := store.PutMCPServer(domain.MCPServerDefinition{
+		ID:        "sf-kb",
+		Name:      "Singleflight KB",
+		Scope:     "project",
+		ProjectID: "default",
+		Transport: "http",
+		URL:       srv.URL,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	d := &deps{repo: store}
+	refs := []domain.KnowledgeRef{{ServerID: "sf-kb", Mode: "all"}}
+
+	// Concurrent cold-start calls must coalesce via singleflight into 1 upstream probe.
+	var wg sync.WaitGroup
+	results := make([]string, 6)
+	for i := 0; i < 6; i++ {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			results[idx] = knowledgeReferencePromptContext(context.Background(), d, "default", 1, refs)
+		}(i)
+	}
+	close(gate)
+	wg.Wait()
+
+	if got := listDocsCalls.Load(); got != 1 {
+		t.Fatalf("concurrent cold-start list_documents calls = %d, want 1", got)
+	}
+	for i, res := range results {
+		if !strings.Contains(res, "sf-doc.md") {
+			t.Fatalf("result[%d] missing sf-doc.md: %q", i, res)
+		}
+	}
+
+	// Built-in knowledge cache key must invalidate immediately when project scope or connection state changes.
+	keyBefore := knowledgeCatalogCacheKey(d, "chat", "default", 1, []domain.KnowledgeRef{{ServerID: domain.KnowledgeMCPServerID, Mode: "all"}})
+	if err := store.PutKnowledgeSettings(domain.KnowledgeSettings{
+		Enabled:        true,
+		DefaultSources: []string{"c1::kb1"},
+		ProjectSources: map[string][]string{"default": {"c1::kb1"}},
+		Connections: []domain.KnowledgeConnection{{
+			ID: "c1", Name: "C1", Provider: domain.KnowledgeProviderWeKnora, URL: "http://kb.invalid", Token: "t1", Enabled: true,
+		}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	keyScoped := knowledgeCatalogCacheKey(d, "chat", "default", 1, []domain.KnowledgeRef{{ServerID: domain.KnowledgeMCPServerID, Mode: "all"}})
+	if keyScoped == keyBefore {
+		t.Fatal("expected cache key to change after enabling connection and setting project scope")
+	}
+	if err := store.PutKnowledgeSettings(domain.KnowledgeSettings{
+		Enabled:        true,
+		DefaultSources: []string{"c1::kb1"},
+		ProjectSources: map[string][]string{"default": {}},
+		Connections: []domain.KnowledgeConnection{{
+			ID: "c1", Name: "C1", Provider: domain.KnowledgeProviderWeKnora, URL: "http://kb.invalid", Token: "t1", Enabled: false,
+		}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	keyRevoked := knowledgeCatalogCacheKey(d, "chat", "default", 1, []domain.KnowledgeRef{{ServerID: domain.KnowledgeMCPServerID, Mode: "all"}})
+	if keyRevoked == keyScoped {
+		t.Fatal("expected cache key to change after revoking project scope / disabling connection")
 	}
 }

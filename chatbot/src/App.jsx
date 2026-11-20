@@ -240,7 +240,7 @@ function AssistantTurn({ message, steps, assets, projectId, sessionId, local, re
       <div className="message-body">
         <RichContent message={answer} assets={assets} projectId={projectId} />
       </div>
-      {message.knowledgeReads?.length > 0 && <details className="knowledge-reads"><summary>知识库调用 · {message.knowledgeReads.length}</summary>{message.knowledgeReads.map(read=><p key={read.id}>{[read.serverId,read.query?`${read.tool} ("${read.query}")`:read.tool,read.targets?.length?`命中：${read.targets.join("、")}`:"",read.cited?"回答已引用":read.status].filter(Boolean).join(" · ")}</p>)}</details>}
+      {message.knowledgeReads?.length > 0 && <details className="knowledge-reads"><summary>知识库调用 · {message.knowledgeReads.length}</summary>{message.knowledgeReads.map(read=>{const citedEvs=(read.evidences||[]).filter(ev=>ev.cited);const evText=citedEvs.length?`引用：${citedEvs.map(ev=>ev.title||ev.documentId||ev.sourceId||ev.id).join("、")}`:(read.targets?.length?`命中：${read.targets.join("、")}`:"");return <p key={read.id}>{[read.serverId,read.query?`${read.tool} ("${read.query}")`:read.tool,evText,read.status,read.cited?"回答已引用":"",read.warning].filter(Boolean).join(" · ")}</p>;})}</details>}
       {message.failure && message.generationId && !local ? (
         <GenerationDiagnostics sessionId={sessionId} generationId={message.generationId} failure={message.failure} onCLIInstall={onCLIInstall} readOnly={readOnly} />
       ) : message.unfinished ? (
@@ -1305,7 +1305,7 @@ export default function App() {
                   />
                 </div>
               ) : null}
-              {!chat.local && !chat.readOnly && chat.projectId && !chat.sandboxLocked ? <button className="context-pill knowledge-picker" type="button" title="关联知识库：会话回答时只读检索所选知识服务" aria-label="关联知识库" onClick={()=>window.editKnowledgeRefs(chat.projectId,chat.knowledgeRefs,chat.saveKnowledgeRefs)}><HarnessIcon name="layers" size={13} interactive={false} /><span>知识库{chat.knowledgeRefs.length ? " · "+chat.knowledgeRefs.length : ""}</span><HarnessIcon name="chevron-down" size={12} interactive={false} /></button> : null}
+              {!chat.local && !chat.readOnly && chat.projectId && !chat.sandboxLocked ? <button className="context-pill knowledge-picker" type="button" title="关联知识库：会话回答时只读检索所选知识服务" aria-label="关联知识库" onClick={()=>window.editKnowledgeRefs(chat.projectId,chat.knowledgeRefs,chat.saveKnowledgeRefs)}><HarnessIcon name="layers" size={13} interactive={false} /><span>知识库{chat.knowledgeRefs?.length ? " · "+chat.knowledgeRefs.length : ""}</span><HarnessIcon name="chevron-down" size={12} interactive={false} /></button> : null}
               {showEnvironmentPicker ? <SandboxPicker chat={chat} onCreate={() => navigate("sandboxes", { action: "create", projectId: chat.projectId })} /> : null}
               <Participants session={chat.session} users={chat.users} />
             </>
@@ -1877,7 +1877,7 @@ export default function App() {
                     />
                   </div>
                   {showEnvironmentPicker && chat.projectId ? <ChevronRightSmall /> : null}
-                  {!chat.local && !chat.readOnly && chat.projectId && !chat.sandboxLocked ? <button className="context-pill knowledge-picker" type="button" title="关联知识库：会话回答时只读检索所选知识服务" aria-label="关联知识库" onClick={()=>window.editKnowledgeRefs(chat.projectId,chat.knowledgeRefs,chat.saveKnowledgeRefs)}><HarnessIcon name="layers" size={13} interactive={false} /><span>知识库{chat.knowledgeRefs.length ? " · "+chat.knowledgeRefs.length : ""}</span><HarnessIcon name="chevron-down" size={12} interactive={false} /></button> : null}
+                  {!chat.local && !chat.readOnly && chat.projectId && !chat.sandboxLocked ? <button className="context-pill knowledge-picker" type="button" title="关联知识库：会话回答时只读检索所选知识服务" aria-label="关联知识库" onClick={()=>window.editKnowledgeRefs(chat.projectId,chat.knowledgeRefs,chat.saveKnowledgeRefs)}><HarnessIcon name="layers" size={13} interactive={false} /><span>知识库{chat.knowledgeRefs?.length ? " · "+chat.knowledgeRefs.length : ""}</span><HarnessIcon name="chevron-down" size={12} interactive={false} /></button> : null}
               {showEnvironmentPicker ? <SandboxPicker chat={chat} onCreate={() => navigate("sandboxes", { action: "create", projectId: chat.projectId })} /> : null}
                 </div>
                 ) : null}

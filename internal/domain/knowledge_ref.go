@@ -87,14 +87,79 @@ const (
 	KnowledgeStatusUnstructured = "未知结构"
 )
 
+const (
+	KnowledgeCallOriginModelTool    = "model_tool_call"
+	KnowledgeCallOriginCatalogProbe = "catalog_probe"
+)
+
+type KnowledgeEvidence struct {
+	ID           string `json:"id"`
+	ConnectionID string `json:"connectionId,omitempty"`
+	SourceID     string `json:"sourceId,omitempty"`
+	DocumentID   string `json:"documentId,omitempty"`
+	Title        string `json:"title,omitempty"`
+	Locator      string `json:"locator,omitempty"`
+	Cited        bool   `json:"cited,omitempty"`
+}
+
 type KnowledgeRead struct {
-	ID       string   `json:"id"`
-	ServerID string   `json:"serverId"`
-	Tool     string   `json:"tool"`
-	Status   string   `json:"status"`
-	Warning  string   `json:"warning,omitempty"`
-	Attempt  int      `json:"attempt,omitempty"`
-	Cited    bool     `json:"cited,omitempty"`
-	Query    string   `json:"query,omitempty"`
-	Targets  []string `json:"targets,omitempty"`
+	ID        string              `json:"id"`
+	Origin    string              `json:"origin,omitempty"`
+	ServerID  string              `json:"serverId"`
+	Tool      string              `json:"tool"`
+	Status    string              `json:"status"`
+	Warning   string              `json:"warning,omitempty"`
+	Attempt   int                 `json:"attempt,omitempty"`
+	Cited     bool                `json:"cited,omitempty"`
+	Query     string              `json:"query,omitempty"`
+	Targets   []string            `json:"targets,omitempty"`
+	Evidences []KnowledgeEvidence `json:"evidences,omitempty"`
+}
+
+// IsKnowledgeCitableStatus reports whether a KnowledgeRead status represents
+// citable content (new 5-state values plus legacy "已返回").
+func IsKnowledgeCitableStatus(status string) bool {
+	switch status {
+	case KnowledgeStatusHit, KnowledgeStatusPartial, KnowledgeStatusUnstructured, "已返回":
+		return true
+	default:
+		return false
+	}
+}
+
+// MarkKnowledgeReadCited updates document-level Evidence.Cited and call-level
+// Cited flags when any content contains [[knowledge:<id>]] markers.
+func MarkKnowledgeReadCited(read *KnowledgeRead, contents ...string) bool {
+	if read == nil || !IsKnowledgeCitableStatus(read.Status) {
+		return false
+	}
+	anyEvidenceCited := false
+	for i := range read.Evidences {
+		evID := strings.TrimSpace(read.Evidences[i].ID)
+		if evID == "" {
+			continue
+		}
+		marker := "[[knowledge:" + evID + "]]"
+		for _, content := range contents {
+			if strings.Contains(content, marker) {
+				read.Evidences[i].Cited = true
+				anyEvidenceCited = true
+				break
+			}
+		}
+	}
+	callCited := false
+	if readID := strings.TrimSpace(read.ID); readID != "" {
+		marker := "[[knowledge:" + readID + "]]"
+		for _, content := range contents {
+			if strings.Contains(content, marker) {
+				callCited = true
+				break
+			}
+		}
+	}
+	if anyEvidenceCited || callCited {
+		read.Cited = true
+	}
+	return read.Cited
 }

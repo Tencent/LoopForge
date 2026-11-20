@@ -755,7 +755,7 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 				assets = append(assets, toolSession.assets...)
 				reads = append(reads, toolSession.knowledgeReads...)
 				for i := range reads {
-					reads[i].Cited = reads[i].Status == "已返回" && strings.Contains(reply.Message, "[[knowledge:"+reads[i].ID+"]]")
+					domain.MarkKnowledgeReadCited(&reads[i], reply.Message)
 				}
 				toolSession.mu.Unlock()
 			}

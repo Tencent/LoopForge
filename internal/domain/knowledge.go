@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"strconv"
 	"strings"
 	"time"
 )
@@ -128,6 +129,30 @@ func (s KnowledgeSettings) ActiveConnections() []KnowledgeConnection {
 // Ready reports whether agents and platform features may call the upstream.
 func (s KnowledgeSettings) Ready() bool {
 	return len(s.ActiveConnections()) > 0
+}
+
+// ActiveConnectionsFingerprint returns a deterministic summary of enabled
+// connections and settings timestamp for cache invalidation.
+func (s KnowledgeSettings) ActiveConnectionsFingerprint() string {
+	conns := s.ActiveConnections()
+	var b strings.Builder
+	b.WriteString(strconv.FormatBool(s.Enabled))
+	b.WriteByte('|')
+	if !s.UpdatedAt.IsZero() {
+		b.WriteString(strconv.FormatInt(s.UpdatedAt.UTC().UnixNano(), 10))
+	}
+	b.WriteByte('|')
+	for i, c := range conns {
+		if i > 0 {
+			b.WriteByte(';')
+		}
+		b.WriteString(c.ID)
+		b.WriteByte(':')
+		b.WriteString(c.EffectiveProvider())
+		b.WriteByte(':')
+		b.WriteString(strings.TrimSpace(c.URL))
+	}
+	return b.String()
 }
 
 // SourcesForProject returns the sources a project may read. A project entry

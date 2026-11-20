@@ -106,3 +106,37 @@ func TestMarkKnowledgeReadsCited(t *testing.T) {
 		t.Fatalf("expected unused/nomatch/old attempt reads not to be cited: %+v", reads)
 	}
 }
+
+func TestMarkKnowledgeReadsCitedEvidenceGranularity(t *testing.T) {
+	evs := make([]domain.KnowledgeEvidence, 10)
+	for i := range evs {
+		evs[i] = domain.KnowledgeEvidence{ID: "ev_" + string(rune('1'+i)), Title: "doc"}
+	}
+	evs[9].ID = "ev_10"
+	reads := []domain.KnowledgeRead{
+		{ID: "kr_hit", Attempt: 1, Status: domain.KnowledgeStatusHit, Evidences: evs},
+		{ID: "kr_partial", Attempt: 1, Status: domain.KnowledgeStatusPartial},
+		{ID: "kr_unstructured", Attempt: 1, Status: domain.KnowledgeStatusUnstructured},
+		{ID: "kr_empty", Attempt: 1, Status: domain.KnowledgeStatusEmpty},
+		{ID: "kr_unavail", Attempt: 1, Status: domain.KnowledgeStatusUnavailable},
+	}
+	artifacts := []domain.Artifact{
+		{Name: "notes.md", Content: "补充 [[knowledge:kr_partial]] 与 [[knowledge:kr_empty]] 与 [[knowledge:kr_unavail]]"},
+	}
+	markKnowledgeReadsCited(reads, 1, "核心结论见 [[knowledge:ev_2]] 和 [[knowledge:kr_unstructured]]", artifacts)
+
+	if !reads[0].Cited {
+		t.Fatal("expected kr_hit to be cited via ev_2")
+	}
+	for i, ev := range reads[0].Evidences {
+		if ev.Cited != (i == 1) {
+			t.Fatalf("evidence[%d] Cited = %v, want %v", i, ev.Cited, i == 1)
+		}
+	}
+	if !reads[1].Cited || !reads[2].Cited {
+		t.Fatalf("expected partial and unstructured reads to be cited: %+v", reads)
+	}
+	if reads[3].Cited || reads[4].Cited {
+		t.Fatalf("expected empty and unavailable reads not to be cited: %+v", reads)
+	}
+}

@@ -380,12 +380,26 @@ function knowledgeArtifactCitations(event){
   const read=readId?nodeReads.find(r=>r.id===readId):null;
   const query=event.attributes?.query||read?.query||'';
   const targets=Array.isArray(event.attributes?.targets)&&event.attributes.targets.length?event.attributes.targets:(Array.isArray(read?.targets)?read.targets:[]);
+  const evidences=Array.isArray(read?.evidences)?read.evidences:[];
   const hits=event.attributes?.hits;
   const parts=[];
+  if(read?.status)parts.push(`状态：${escapeHTML(read.status)}`);
   if(query)parts.push(`检索词：${escapeHTML(query)}`);
-  if(targets.length)parts.push(`命中：${targets.map(t=>escapeHTML(t)).join('、')}`);
-  else if(typeof hits==='number'&&hits>0)parts.push(`命中 ${hits} 条`);
-  const artifacts=readId?(state.activeRun?.artifacts||[]).filter(a=>a.nodeId===event.nodeId && a.attempt===event.attributes.attempt && a.content?.includes('[[knowledge:'+readId+']]')):[];
+  if(evidences.length){
+    const citedEvs=evidences.filter(ev=>ev.cited);
+    const list=(citedEvs.length?citedEvs:evidences).slice(0,5).map(ev=>{
+      const label=escapeHTML(ev.title||ev.documentId||ev.sourceId||ev.id);
+      return ev.cited?`${label}（已引用）`:label;
+    });
+    parts.push(`证据：${list.join('、')}`);
+  }else if(targets.length){
+    parts.push(`命中：${targets.map(t=>escapeHTML(t)).join('、')}`);
+  }else if(typeof hits==='number'&&hits>0){
+    parts.push(`命中 ${hits} 条`);
+  }
+  if(read?.warning)parts.push(`提示：${escapeHTML(read.warning)}`);
+  const markers=[...(readId?[`[[knowledge:${readId}]]`]:[]),...evidences.map(ev=>`[[knowledge:${ev.id}]]`)];
+  const artifacts=markers.length?(state.activeRun?.artifacts||[]).filter(a=>a.nodeId===event.nodeId && a.attempt===event.attributes.attempt && markers.some(m=>a.content?.includes(m))):[];
   if(artifacts.length)parts.push('产物已引用 · '+artifacts.map(a=>escapeHTML(a.name)).join('、'));
   return parts.length?parts.map(p=>`<p>${p}</p>`).join(''):'';
 }

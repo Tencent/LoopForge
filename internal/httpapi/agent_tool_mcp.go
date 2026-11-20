@@ -290,12 +290,13 @@ func (h *agentToolGateway) callTool(ctx context.Context, session *AgentToolSessi
 	if tool.Kind == "knowledge" {
 		for _, ref := range session.KnowledgeRefs {
 			if ref.ServerID == tool.ServerID {
-				text, hits, err := callKnowledgeReference(ctx, h.deps, session.ProjectID, session.UserID, ref, tool.UpstreamName, args)
-				read, text := knowledgeReadResult(ref.ServerID, tool.UpstreamName, text, hits, err)
+				res, err := callKnowledgeReferenceWithOrigin(ctx, h.deps, session.ProjectID, session.UserID, ref, tool.UpstreamName, args, domain.KnowledgeCallOriginModelTool)
+				read, text := knowledgeReadResultWithMeta(ref.ServerID, tool.UpstreamName, res.Text, res.Hits, res.Status, res.Warning, domain.KnowledgeCallOriginModelTool, err)
 				read.Query = knowledgeCallQuerySummary(args)
 				session.mu.Lock()
 				session.knowledgeReads = append(session.knowledgeReads, read)
 				session.mu.Unlock()
+				logAgentToolEvent("call", "mode="+string(session.Mode), "origin="+domain.KnowledgeCallOriginModelTool, "tool="+tool.Name, "status="+read.Status, fmt.Sprintf("ok=%t", err == nil))
 				if err != nil {
 					return mcpToolTextResult(err.Error(), true), nil
 				}

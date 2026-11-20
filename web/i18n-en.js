@@ -250,5 +250,16 @@ Object.assign(window.LF_I18N_EN,{
   "可检索范围":"Search scope",
   "选择知识库":"Select knowledge bases",
   "请选择至少一个知识库":"Select at least one knowledge base",
-  "高级：手动输入或查看来源 ID":"Advanced: edit or inspect source IDs"
+  "高级：手动输入或查看来源 ID":"Advanced: edit or inspect source IDs",
+  "无匹配":"No match",
+  "部分完成":"Partial",
+  "不可用":"Unavailable",
+  "未知结构":"Unstructured",
+  "已返回":"Returned",
+  "调用失败":"Failed",
+  "已引用":"Cited",
+  "回答已引用":"Cited in reply",
+  "知识库调用":"Knowledge calls",
+  "证据":"Evidence",
+  "提示":"Notice"
 });

@@ -25,6 +25,7 @@ type knowledgeActivity struct {
 	RunID     string    `json:"runId,omitempty"`
 	NodeID    string    `json:"nodeId,omitempty"`
 	ServerID  string    `json:"serverId,omitempty"`
+	Origin    string    `json:"origin,omitempty"`
 	At        time.Time `json:"at"`
 	Tool      string    `json:"tool"`
 	ProjectID string    `json:"projectId,omitempty"`
@@ -182,19 +183,20 @@ func (h *knowledgeHandlers) handleProxyRPC(ctx context.Context, settings domain.
 			}
 		}
 		started := time.Now()
-		var text string
-		var hits int
+		var execRes knowledge.ExecutionResult
 		var err error
 		serverID := domain.KnowledgeMCPServerID
 		if claims.Ref != nil {
 			serverID = claims.Ref.ServerID
-			text, hits, err = callKnowledgeReference(ctx, h.deps, claims.ProjectID, claims.UserID, *claims.Ref, name, params.Arguments)
+			execRes, err = callKnowledgeReferenceWithOrigin(ctx, h.deps, claims.ProjectID, claims.UserID, *claims.Ref, name, params.Arguments, domain.KnowledgeCallOriginModelTool)
 		} else {
-			text, hits, err = h.callScoped(ctx, settings, claims.ProjectID, name, params.Arguments)
+			execRes, err = h.svc.ExecuteTool(ctx, claims.ProjectID, name, params.Arguments, knowledge.ExecuteOptions{})
 		}
+		text := execRes.Text
+		hits := execRes.Hits
 		query := knowledgeCallQuerySummary(params.Arguments)
 		activity := knowledgeActivity{
-			RunID: claims.RunID, NodeID: claims.NodeID, ServerID: serverID, At: started.UTC(), Tool: name, ProjectID: claims.ProjectID, AgentID: claims.AgentID, UserID: claims.UserID,
+			RunID: claims.RunID, NodeID: claims.NodeID, ServerID: serverID, Origin: domain.KnowledgeCallOriginModelTool, At: started.UTC(), Tool: name, ProjectID: claims.ProjectID, AgentID: claims.AgentID, UserID: claims.UserID,
 			Query: query, Hits: hits,
 			OK: err == nil, LatencyMS: time.Since(started).Milliseconds(),
 		}
@@ -203,18 +205,20 @@ func (h *knowledgeHandlers) handleProxyRPC(ctx context.Context, settings domain.
 		}
 		h.activity.add(activity)
 		if claims.Ref != nil && h.engine != nil {
-			read, result := knowledgeReadResult(serverID, name, text, hits, err)
+			read, result := knowledgeReadResultWithMeta(serverID, name, text, hits, execRes.Status, execRes.Warning, domain.KnowledgeCallOriginModelTool, err)
 			text = result
 			read.Query = query
 			read.Attempt = claims.Attempt
 			h.engine.RecordKnowledgeRead(claims.RunID, claims.NodeID, read)
 			state := read.Status
 			attrs := map[string]any{
-				"knowledgeReadId": read.ID,
-				"attempt":         claims.Attempt,
-				"ok":              err == nil,
-				"hits":            hits,
-				"latencyMs":       activity.LatencyMS,
+				"knowledgeReadId":            read.ID,
+				"origin":                     domain.KnowledgeCallOriginModelTool,
+				"loopforge.knowledge.origin": domain.KnowledgeCallOriginModelTool,
+				"attempt":                    claims.Attempt,
+				"ok":                         err == nil,
+				"hits":                       hits,
+				"latencyMs":                  activity.LatencyMS,
 			}
 			if query != "" {
 				attrs["query"] = query
@@ -224,7 +228,7 @@ func (h *knowledgeHandlers) handleProxyRPC(ctx context.Context, settings domain.
 			}
 			h.engine.IngestOTLPTraces([]domain.TelemetryEvent{{RunID: claims.RunID, NodeID: claims.NodeID, Category: "tool", Name: "knowledge.call", Phase: "finish", Message: serverID + " · " + name + " · " + state, Attributes: attrs}})
 		}
-		log.Printf("knowledge-proxy tool=%s project=%s agent=%s ok=%t latency=%dms", name, claims.ProjectID, claims.AgentID, err == nil, activity.LatencyMS)
+		log.Printf("knowledge-proxy origin=%s tool=%s project=%s agent=%s ok=%t latency=%dms", domain.KnowledgeCallOriginModelTool, name, claims.ProjectID, claims.AgentID, err == nil, activity.LatencyMS)
 		if err != nil {
 			return reply(mcpToolTextResult(err.Error(), true))
 		}
