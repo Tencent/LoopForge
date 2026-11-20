@@ -15,6 +15,8 @@ import (
 
 	"agentflow/internal/domain"
 	"agentflow/internal/engine"
+	"agentflow/internal/gitwork"
+	"agentflow/internal/runtime"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
@@ -61,7 +63,7 @@ type runnerWorkspaceForwarder func(context.Context, string, domain.RunnerWorkspa
 type runnerControlHub struct {
 	mu      sync.Mutex
 	conns   map[string]*runnerControlConn
-	pending map[string]chan domain.RunnerWorkspaceResponse
+	pending map[string]runnerWorkspaceWaiter
 	nextID  uint64
 	// registered is closed and replaced whenever a runner (re)connects.
 	registered chan struct{}
@@ -77,20 +79,28 @@ type runnerControlHub struct {
 	reconnectGrace time.Duration
 	startupGrace   time.Duration
 	handoverDrain  time.Duration
+	sshHostLookup  gitwork.SSHKnownHostsLookup
+}
+
+type runnerWorkspaceWaiter struct {
+	conn   *runnerControlConn
+	result chan domain.RunnerWorkspaceResponse
 }
 
 type runnerControlConn struct {
-	runnerID string
-	ws       *websocket.Conn
-	send     chan runnerControlMessage
-	done     chan struct{}
-	once     sync.Once
+	runnerID                string
+	ownerUserID             int64
+	supportsSSHHostKeyProbe bool
+	ws                      *websocket.Conn
+	send                    chan runnerControlMessage
+	done                    chan struct{}
+	once                    sync.Once
 }
 
 func newRunnerControlHub() *runnerControlHub {
 	return &runnerControlHub{
 		conns:          map[string]*runnerControlConn{},
-		pending:        map[string]chan domain.RunnerWorkspaceResponse{},
+		pending:        map[string]runnerWorkspaceWaiter{},
 		registered:     make(chan struct{}),
 		dropped:        map[string]time.Time{},
 		startedAt:      time.Now(),
@@ -201,14 +211,50 @@ func (h *runnerControlHub) reconnectExpectedLocked(runnerID string, now time.Tim
 	return ok && now.Sub(dropped) < h.reconnectGrace
 }
 
+// Resolve pins on the platform serving the socket, including requests relayed
+// by a predecessor during handover.
+func runnerWorkspaceSSHKnownHosts(ctx context.Context, request domain.RunnerWorkspaceRequest) *domain.GitSSHKnownHosts {
+	var preparationKeys, conversationKeys map[string]string
+	if request.PreparationInvocation != nil {
+		preparationKeys = request.PreparationInvocation.GitSSHKeys
+	}
+	if request.Operation == domain.RunnerWorkspaceOperationConversationCLI {
+		// Only starts need pins. Skip decoding asset transfers and stdin data.
+		var conversation struct {
+			Operation string                       `json:"operation"`
+			Command   *runtime.ConversationCommand `json:"command"`
+		}
+		if json.Unmarshal(request.Conversation, &conversation) == nil && conversation.Operation == "start" && conversation.Command != nil {
+			conversationKeys = conversation.Command.Credentials.GitSSHHostKeys
+		}
+	}
+	return gitwork.SSHKnownHostsForKeys(ctx, preparationKeys, request.TerminalGitSSHKeys, conversationKeys)
+}
+
 // send delivers one request; sent reports whether it reached the socket's
 // queue, after which it must not be retried elsewhere.
 func (h *runnerControlHub) send(ctx context.Context, conn *runnerControlConn, request domain.RunnerWorkspaceRequest) (domain.RunnerWorkspaceResponse, bool, error) {
+	if request.Operation == domain.RunnerWorkspaceOperationSSHHostKeyProbe {
+		// Runner IDs can be rebound before an old connection disconnects.
+		if request.SSHHostKeyOwnerID <= 0 || request.SSHHostKeyOwnerID != conn.ownerUserID {
+			return domain.RunnerWorkspaceResponse{
+				Status: http.StatusConflict, Error: "执行机器绑定已变更，请刷新后重试",
+			}, false, nil
+		}
+		if !conn.supportsSSHHostKeyProbe {
+			return domain.RunnerWorkspaceResponse{
+				Status: http.StatusConflict, Error: "该执行机器暂不支持读取 SSH 主机公钥，请升级 Runner 或手动录入",
+			}, false, nil
+		}
+		request.SSHHostKeyOwnerID = 0
+	}
+	// Older runners ignore the optional workspace field when decoding JSON.
+	request.GitSSHKnownHosts = runnerWorkspaceSSHKnownHosts(gitwork.WithSSHKnownHostsLookup(ctx, h.sshHostLookup), request)
 	h.mu.Lock()
 	h.nextID++
 	requestID := fmt.Sprintf("workspace-%d", h.nextID)
 	result := make(chan domain.RunnerWorkspaceResponse, 1)
-	h.pending[requestID] = result
+	h.pending[requestID] = runnerWorkspaceWaiter{conn: conn, result: result}
 	h.mu.Unlock()
 	defer func() {
 		h.mu.Lock()
@@ -249,24 +295,27 @@ func (h *runnerControlHub) send(ctx context.Context, conn *runnerControlConn, re
 	}
 }
 
-func (h *runnerControlHub) resolveWorkspace(requestID string, response domain.RunnerWorkspaceResponse) {
+func (h *runnerControlHub) resolveWorkspace(conn *runnerControlConn, requestID string, response domain.RunnerWorkspaceResponse) {
 	h.mu.Lock()
-	result := h.pending[requestID]
+	waiter, ok := h.pending[requestID]
 	h.mu.Unlock()
-	if result == nil {
+	if !ok || waiter.conn != conn {
 		return
 	}
 	select {
-	case result <- response:
+	case waiter.result <- response:
 	default:
 	}
 }
 
-func (h *runnerControlHub) register(runnerID string, ws *websocket.Conn) *runnerControlConn {
-	c := &runnerControlConn{runnerID: runnerID, ws: ws, send: make(chan runnerControlMessage, 64), done: make(chan struct{})}
+func (h *runnerControlHub) register(runner domain.Runner, ws *websocket.Conn, supportsSSHHostKeyProbe bool) *runnerControlConn {
+	c := &runnerControlConn{
+		runnerID: runner.ID, ownerUserID: runner.OwnerUserID, ws: ws, supportsSSHHostKeyProbe: supportsSSHHostKeyProbe,
+		send: make(chan runnerControlMessage, 64), done: make(chan struct{}),
+	}
 	h.mu.Lock()
-	old := h.conns[runnerID]
-	h.conns[runnerID] = c
+	old := h.conns[runner.ID]
+	h.conns[runner.ID] = c
 	close(h.registered)
 	h.registered = make(chan struct{})
 	h.mu.Unlock()
@@ -489,6 +538,8 @@ var runnerWSUpgrader = websocket.Upgrader{
 	WriteBufferSize:  1024,
 }
 
+type legacyRunnerToolRequestKey struct{}
+
 // runnerControlConnect 升级 /runners/ws 连接并进入控制消息循环。
 // 路由: g.GET("/runners/ws", h.runnerControlConnect)
 func (h *runnersHandlers) runnerControlConnect(c *gin.Context) {
@@ -500,8 +551,11 @@ func (h *runnersHandlers) runnerControlConnect(c *gin.Context) {
 	if err != nil {
 		return
 	}
-	conn := h.runnerControls.register(runner.ID, ws)
+	conn := h.runnerControls.register(runner, ws, c.GetHeader(domain.RunnerSSHHostKeyProbeHeader) == "1")
 	defer h.runnerControls.unregister(conn)
+	connCtx, cancel := context.WithCancel(c.Request.Context())
+	defer cancel()
+	var toolCancels sync.Map // request ID -> context.CancelFunc
 	go conn.writeLoop()
 	ws.SetReadLimit(20 << 20)
 	_ = ws.SetReadDeadline(time.Now().Add(runnerWSReadTimeout))
@@ -514,8 +568,21 @@ func (h *runnersHandlers) runnerControlConnect(c *gin.Context) {
 			return
 		}
 		_ = ws.SetReadDeadline(time.Now().Add(runnerWSReadTimeout))
+		if input.Type == "agent_tool.cancel" {
+			if stop, ok := toolCancels.Load(input.RequestID); ok {
+				stop.(context.CancelFunc)()
+			}
+			continue
+		}
 		if input.Type == "agent_tool.request" && input.ToolRequest != nil {
+			toolCtx, stop := context.WithCancel(connCtx)
+			if _, duplicate := toolCancels.LoadOrStore(input.RequestID, stop); duplicate {
+				stop()
+				continue
+			}
 			go func(input runnerControlMessage) {
+				defer toolCancels.Delete(input.RequestID)
+				defer stop()
 				result := domain.RunnerToolResponse{}
 				session, ok := agentToolSessions.get(input.ToolRequest.Token)
 				if !ok || session.ExecutionRunnerID != runner.ID {
@@ -525,7 +592,11 @@ func (h *runnersHandlers) runnerControlConnect(c *gin.Context) {
 					if err := json.Unmarshal(input.ToolRequest.Body, &request); err != nil {
 						result.Error = "invalid tool request"
 					} else {
-						response := (&agentToolGateway{deps: h.deps}).handleRPC(withAgentToolToken(c.Request.Context(), input.ToolRequest.Token), session, request)
+						ctx := withAgentToolToken(toolCtx, input.ToolRequest.Token)
+						if !input.ToolRequest.SupportsCancel {
+							ctx = context.WithValue(ctx, legacyRunnerToolRequestKey{}, true)
+						}
+						response := (&agentToolGateway{deps: h.deps}).handleRPC(ctx, session, request)
 						if response != nil {
 							result.Body, _ = json.Marshal(response)
 						}
@@ -533,13 +604,14 @@ func (h *runnersHandlers) runnerControlConnect(c *gin.Context) {
 				}
 				select {
 				case conn.send <- runnerControlMessage{Type: "agent_tool.response", RequestID: input.RequestID, ToolResponse: &result}:
+				case <-toolCtx.Done():
 				case <-conn.done:
 				}
 			}(input)
 			continue
 		}
 		if input.Type == "workspace.response" && input.WorkspaceResponse != nil {
-			h.runnerControls.resolveWorkspace(input.RequestID, *input.WorkspaceResponse)
+			h.runnerControls.resolveWorkspace(conn, input.RequestID, *input.WorkspaceResponse)
 			continue
 		}
 		if input.Type != "hello" {

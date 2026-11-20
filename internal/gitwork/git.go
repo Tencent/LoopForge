@@ -11,8 +11,8 @@ import (
 	"agentflow/internal/procwatch"
 )
 
-// Run executes git with the context token applied through AuthConfigArgs and
-// Env. Output is trimmed and redacted; on failure it is part of the error.
+// Run executes git with the context's host-scoped credential helper or SSH
+// key. Output is trimmed and redacted; on failure it is part of the error.
 func Run(ctx context.Context, workspace string, args ...string) (string, error) {
 	token := TokenFrom(ctx)
 	sshEnv, cleanup, err := sshCommandEnvironment(ctx, args)
@@ -20,8 +20,17 @@ func Run(ctx context.Context, workspace string, args ...string) (string, error) 
 		return "", err
 	}
 	defer cleanup()
-	out, err := command(ctx, workspace, token, sshEnv, args).CombinedOutput()
-	text := Redact(strings.TrimSpace(string(out)), token)
+	home, closeHome, err := privateHTTPHome(ctx)
+	if err != nil {
+		return "", err
+	}
+	defer closeHome()
+	cmd := command(ctx, workspace, sshEnv, args)
+	if home != "" {
+		cmd.Env = WithEnvValue(cmd.Env, "HOME", home)
+	}
+	out, err := cmd.CombinedOutput()
+	text := redactContextGitSecrets(ctx, Redact(strings.TrimSpace(string(out)), token))
 	if err != nil {
 		if text != "" {
 			return text, fmt.Errorf("%w: %s", err, text)
@@ -48,22 +57,40 @@ func Watch(ctx context.Context, workspace string, opts procwatch.Options, args .
 		return "", err
 	}
 	defer cleanup()
-	opts.Redact = func(line string) string { return Redact(line, token) }
-	text, err := procwatch.Run(ctx, func(ctx context.Context) *exec.Cmd { return command(ctx, workspace, token, sshEnv, args) }, opts)
+	home, closeHome, err := privateHTTPHome(ctx)
+	if err != nil {
+		return "", err
+	}
+	defer closeHome()
+	opts.Redact = func(line string) string { return redactContextGitSecrets(ctx, Redact(line, token)) }
+	text, err := procwatch.Run(ctx, func(ctx context.Context) *exec.Cmd {
+		cmd := command(ctx, workspace, sshEnv, args)
+		if home != "" {
+			cmd.Env = WithEnvValue(cmd.Env, "HOME", home)
+		}
+		return cmd
+	}, opts)
 	if err != nil && text != "" {
 		return text, fmt.Errorf("%w: %s", err, text)
 	}
 	return text, err
 }
 
-func command(ctx context.Context, workspace, token string, sshEnv map[string]string, args []string) *exec.Cmd {
+func command(ctx context.Context, workspace string, sshEnv map[string]string, args []string) *exec.Cmd {
 	dir := CommandDir(workspace)
-	if len(sshEnv) > 0 {
-		token = ""
-	}
-	cmd := exec.CommandContext(ctx, "git", append(AuthConfigArgs(token), args...)...)
+	credential, host, _ := httpCredentialForCommand(ctx, args)
+	authArgs := scopedHTTPAuthArgs(credential)
+	cmd := exec.CommandContext(ctx, "git", append(authArgs, args...)...)
 	cmd.Dir = dir
-	cmd.Env = WithEnvValue(Env(token), "PWD", dir)
+	cmd.Env = WithEnvValue(Env(""), "PWD", dir)
+	if len(sshEnv) == 0 {
+		cmd.Env = WithEnvValue(cmd.Env, "GIT_CONFIG_GLOBAL", os.DevNull)
+		cmd.Env = WithEnvValue(cmd.Env, "GIT_CONFIG_NOSYSTEM", "1")
+		cmd.Env = WithEnvValue(cmd.Env, "GIT_CONFIG_PARAMETERS", "")
+		cmd.Env = WithEnvValue(cmd.Env, gitHTTPHostEnv, host)
+		cmd.Env = WithEnvValue(cmd.Env, gitHTTPUserEnv, credential.Username)
+		cmd.Env = WithEnvValue(cmd.Env, gitHTTPPassEnv, credential.Token)
+	}
 	if len(sshEnv) > 0 {
 		// Do not let URL rewrites switch a managed SSH operation to another
 		// transport. SSH itself only connects to the requested pinned host.

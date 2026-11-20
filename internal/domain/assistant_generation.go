@@ -11,6 +11,7 @@ type AssistantGeneration struct {
 	Trigger          string                     `json:"trigger,omitempty"`
 	TriggerID        string                     `json:"triggerId,omitempty"`
 	ID               string                     `json:"id"`
+	ClientRequestID  string                     `json:"clientRequestId,omitempty"`
 	SessionID        string                     `json:"sessionId"`
 	ActorID          int64                      `json:"actorId,omitempty"`
 	ActorName        string                     `json:"actorName,omitempty"`
@@ -36,16 +37,19 @@ type AssistantGeneration struct {
 
 // AssistantSteer redirects a running reply without discarding it first.
 type AssistantSteer struct {
-	Content      string                `json:"content"`
-	Attachments  []AssistantAttachment `json:"attachments,omitempty"`
-	References   []AssistantReference  `json:"references,omitempty"`
-	Model        string                `json:"model,omitempty"`
-	Effort       string                `json:"effort,omitempty"`
-	ApprovalMode string                `json:"approvalMode,omitempty"`
-	ActorID      int64                 `json:"actorId,omitempty"`
-	ActorName    string                `json:"actorName,omitempty"`
+	Content           string                `json:"content"`
+	Attachments       []AssistantAttachment `json:"attachments,omitempty"`
+	References        []AssistantReference  `json:"references,omitempty"`
+	Model             string                `json:"model,omitempty"`
+	RequireExactModel bool                  `json:"requireExactModel,omitempty"`
+	Effort            string                `json:"effort,omitempty"`
+	ApprovalMode      string                `json:"approvalMode,omitempty"`
+	ActorID           int64                 `json:"actorId,omitempty"`
+	ActorName         string                `json:"actorName,omitempty"`
 	// Trigger marks the follow-up message; empty means the user steered.
 	Trigger string `json:"trigger,omitempty"`
+	// TriggerID identifies the accepted steer in the saved transcript.
+	TriggerID string `json:"triggerId,omitempty"`
 }
 
 // A bounded projection survives eviction of old token events and reconnects.

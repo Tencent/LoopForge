@@ -219,8 +219,8 @@ func (h *scheduleHandlers) scheduleJobs(c *gin.Context) {
 
 // bindScheduleRunAs binds an AI job to the user who saves it: the creator, and
 // later whoever edits it, so nobody can make a prompt run with another
-// member's keys. The binding is never taken from the request. The saver's own
-// key for the job's CLI is used, else the platform's shared CodeBuddy key
+// member's credentials. The binding is never taken from the request. The saver's
+// default machine login or own key is used, else the platform's shared CodeBuddy key
 // (limited to the models it allows, its default when requestedModel is empty);
 // with neither the save is refused, since the job could not run. Without a
 // signed-in user the job stays on the project owner's keys. A saver without
@@ -262,7 +262,7 @@ func (h *scheduleHandlers) bindScheduleRunAs(c *gin.Context, job *domain.Schedul
 		c.JSON(200, stored)
 		return true
 	}
-	_, shared, ok := scheduleKeyUser(h.repo, self, engine)
+	_, shared, ok := scheduleCredentialUser(h.repo, self, engine)
 	if !ok {
 		if stopOnly() {
 			return false
@@ -316,6 +316,9 @@ func scheduleSharedRequestedModel(model string) string {
 }
 
 func scheduleMissingKeyError(engine string) string {
+	if assistantSupportsRunnerLogin(engine) {
+		return fmt.Sprintf("你还没有可用的 %s 凭据，请在默认执行机器启用账号登录（Runner %s 及以上），或在个人配置填写 API Key", assistantEngineLabel(engine), domain.RunnerVersionCLISettings)
+	}
 	if engine != assistantEngineCodeBuddy {
 		return fmt.Sprintf("你还没有配置 %s API Key，平台共享 Key 只支持 CodeBuddy 模型：请先在个人配置中填写，或改选 CodeBuddy 模型", assistantEngineLabel(engine))
 	}

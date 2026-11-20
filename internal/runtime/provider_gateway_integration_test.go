@@ -107,7 +107,7 @@ func TestNativeProviderCustomGateway(t *testing.T) {
 			}
 			creds := RunCredentials{Codex: ProviderCredential{APIKey: "local-gateway-test-key", BaseURL: server.URL + "/v1"}, ClaudeCode: ProviderCredential{APIKey: "local-gateway-test-key", BaseURL: server.URL}}
 			sb := &localSandbox{workspace: workspace}
-			bound, err := bindCommand(sb, workspace, command, creds)
+			bound, err := bindCommand(t.Context(), sb, workspace, command, creds)
 			if err != nil {
 				t.Fatal(err)
 			}

@@ -26,7 +26,7 @@ type Store interface {
 	DeleteKnowledgeSubmission(id string) error
 	KnowledgeArtifacts(projectID string, limit int) []domain.KnowledgeCandidate
 	Artifact(runID, artifactID string) (domain.Artifact, bool)
-	Run(id string) (domain.Run, bool)
+	RunHeader(id string) (domain.Run, error)
 	Agents() []domain.AgentDefinition
 	Workflows() []domain.WorkflowDefinition
 }
@@ -332,6 +332,16 @@ func (s *Service) Submit(input SubmissionInput, actor string) (domain.KnowledgeS
 	}
 	content := input.Content
 	if input.ArtifactID != "" {
+		run, err := s.store.RunHeader(input.RunID)
+		if err != nil {
+			return item, err
+		}
+		if run.IsPersonalWorkspace() {
+			return item, apperr.New(apperr.Forbidden, "个人工作区产物不能提交到共享知识库")
+		}
+		if run.ID == "" {
+			return item, apperr.New(apperr.NotFound, "运行产物不存在")
+		}
 		if existing := s.store.KnowledgeSubmissionIDsByArtifact([]string{input.ArtifactID})[input.ArtifactID]; existing != "" {
 			return item, apperr.New(apperr.Conflict, "该产物已加入沉淀队列").With("id", existing)
 		}
@@ -341,9 +351,7 @@ func (s *Service) Submit(input SubmissionInput, actor string) (domain.KnowledgeS
 		}
 		item.RunID, item.NodeID, item.ArtifactID = art.RunID, art.NodeID, art.ID
 		content = art.Content
-		if run, ok := s.store.Run(art.RunID); ok {
-			item.ProjectID, item.IssueID, item.WorkflowID = run.ExecutionContext.ProjectID, run.ExecutionContext.IssueID, run.WorkflowID
-		}
+		item.ProjectID, item.IssueID, item.WorkflowID = run.ExecutionContext.ProjectID, run.ExecutionContext.IssueID, run.WorkflowID
 	}
 	parsed := ParseDistilled(content)
 	item.Content = parsed.Body

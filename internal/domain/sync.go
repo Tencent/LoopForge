@@ -98,10 +98,9 @@ type ScheduleJob struct {
 	// first fixed-mode execution and cleared when the mode leaves "fixed".
 	FixedSessionID string `json:"fixedSessionId,omitempty"`
 	OwnerUserID    int64  `json:"ownerUserId,omitempty"`
-	// RunAsUserID is server-managed: the user whose keys run an AI job, set to
-	// whoever last saved it. Zero (jobs saved before the binding, or without a
-	// signed-in user) runs it with the project owner's keys. RunAsName is for
-	// display.
+	// RunAsUserID is server-managed: the user whose credentials run an AI job,
+	// set to whoever last saved it. Zero keeps the legacy project-owner
+	// selection. RunAsName is for display.
 	RunAsUserID          int64     `json:"runAsUserId,omitempty"`
 	RunAsName            string    `json:"runAsName,omitempty"`
 	LastRunAt            time.Time `json:"lastRunAt,omitempty"`

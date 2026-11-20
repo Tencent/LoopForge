@@ -3,9 +3,8 @@ import { api, write, sessionPath } from "./api";
 import HarnessIcon from "./HarnessIcon";
 import "./native-approval.css";
 
-// Commands inside the workspace sandbox run without approval. In the
-// "请求批准" mode, a command that writes to an outside system (git push,
-// gh pr create, publishing...) waits here for the turn's speaker.
+// External commands and external MCP writes can wait here for the speaker
+// in "请求批准" mode.
 function commandText(input) {
   const command = input?.command ?? input?.cmd ?? input?.commands;
   if (typeof command === "string") return command;
@@ -65,7 +64,7 @@ export default function NativeApprovalPanel({ chat, onChange }) {
             <strong>批准外部写入{item.summary ? `：${item.summary}` : ""}</strong>
           </div>
           <pre>{commandText(item.input)}</pre>
-          <p>这条命令会写入工作区沙箱之外的系统。仅批准这一次；停止回复或 9 分钟内未处理会自动拒绝。</p>
+          <p>这项操作会写入外部系统。仅批准这一次。停止回复、调用取消或等待超时后，审批会失效。</p>
           <div className="native-approval-actions">
             <button type="button" disabled={!!saving} onClick={() => decide(item, "deny")}>
               拒绝

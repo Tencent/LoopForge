@@ -108,6 +108,26 @@ func TestAgentCLIHeartbeatForcesPersonalAuth(t *testing.T) {
 	}
 }
 
+func TestAntigravityHeartbeatPreservesSelectedAuthentication(t *testing.T) {
+	s := newTestRunner(t)
+	now := time.Now().UTC()
+	if err := s.PutRunner(domain.Runner{ID: "agy-auth", Status: domain.RunnerStatusOnline, Runtimes: []domain.RunnerRuntime{{Provider: "agy", Status: domain.RuntimeStatusOnline}}}); err != nil {
+		t.Fatal(err)
+	}
+	for _, mode := range []string{domain.RuntimeAuthLocal, domain.RuntimeAuthPersonal} {
+		if err := s.SetRunnerRuntimeAuthMode("agy-auth", "agy", mode, now); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.RunnerHeartbeat("agy-auth", []domain.RunnerRuntime{{Provider: "agy", Status: domain.RuntimeStatusOnline}}, "1", now, now.Add(time.Hour)); err != nil {
+			t.Fatal(err)
+		}
+		runner, _ := s.Runner("agy-auth")
+		if runner.RuntimeAuthMode("agy") != mode || runner.Runtimes[0].AuthMode != mode {
+			t.Fatalf("selected authentication changed: %+v", runner.Runtimes)
+		}
+	}
+}
+
 func TestRunnerTaskClaimRespectsProviderAndTargeting(t *testing.T) {
 	s := newTestRunner(t)
 	putQueuedTask(t, s, "rt-codex", "codex", "", 0)

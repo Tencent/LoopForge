@@ -89,7 +89,7 @@ func TestScheduledAssistantNativeGatewayKeepsWorkspaceAndTerminalReply(t *testin
 			t.Error("scheduled gateway lacks its persisted conversation or full-access workspace lifecycle")
 		}
 		// A binding written during execution must survive the final transcript save.
-		if err := h.repo.SetAssistantSessionWorkspaceRun(user.ID, sessionID, "scheduled-workspace", true); err != nil {
+		if err := h.repo.SetAssistantSessionWorkspaceRun(user.ID, sessionID, conv.ProjectID, "scheduled-workspace", true); err != nil {
 			t.Error(err)
 		}
 		if err := session.attachReplyFile("report.md", "text/markdown", []byte("# Scheduled report")); err != nil {

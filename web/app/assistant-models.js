@@ -9,28 +9,49 @@
   const FAMILY_MARK = {claude:'',gpt:'',glm:'智',gemini:'G',kimi:'K',deepseek:'D',minimax:'M',hunyuan:'混',mimo:'Mi',echo:'E',other:'AI'};
   const FAMILY_ICON = {
     claude:'/images/credentials/claude.svg',
+    codebuddy:'/images/credentials/codebuddy.svg',
+    cursor:'/images/credentials/cursor.svg',
     gpt:'/images/credentials/codex.svg',
     glm:'/images/credentials/glm.svg',
     gemini:'/images/credentials/gemini.svg',
+    grok:'/images/credentials/xai.svg',
+    muse:'/images/credentials/meta.svg',
     kimi:'/images/credentials/kimi.svg',
+    moonshot:'/images/credentials/moonshot.svg',
+    qwen:'/images/credentials/qwen.svg',
+    doubao:'/images/credentials/doubao.svg',
+    qianfan:'/images/credentials/qianfan.svg',
     deepseek:'/images/credentials/deepseek.svg',
     minimax:'/images/credentials/minimax.svg',
     hunyuan:'/images/credentials/hunyuan.svg',
     mimo:'/images/credentials/mimo.svg'
   };
+  const CLI_ICON = {
+    codebuddy:'codebuddy.svg', codex:'codex.svg', 'claude-code':'claude.svg',
+    opencode:'opencode.svg', cursor:'cursor.svg', agy:'antigravity.svg',
+    kimi:'kimi-code.png', pi:'pi.svg', dsh:'deepseek.svg', zcode:'glm.svg'
+  };
   let catalog = {
     default: DEFAULT_MODEL,
-    models: [{id: DEFAULT_MODEL, name: 'CLI 默认模型', family: 'other'}]
+    models: []
   };
   let loading = null;
 
   function familyOf(id) {
-    const v = String(id || '').toLowerCase();
-    if (v.startsWith('claude')) return 'claude';
+    const raw = String(id || '').toLowerCase();
+    const v = raw.replace(/^(?:codebuddy|codex|claude-code|opencode|cursor|agy|kimi|pi|dsh|zcode):/, '').split('/').at(-1);
+    if (/^(?:claude|anthropic|opus|sonnet|haiku|fable)(?:$|[-_.\s:\d])/.test(v)) return 'claude';
+    if (/^composer(?:$|[-_.\s:\d])/.test(v) || (raw.startsWith('cursor:') && /^auto(?:-smart)?$/.test(v))) return 'cursor';
     if (v.startsWith('gpt') || v.includes('codex')) return 'gpt';
     if (v.startsWith('glm')) return 'glm';
     if (v.startsWith('gemini')) return 'gemini';
-    if (v.startsWith('kimi')) return 'kimi';
+    if (/^(?:cursor-)?grok(?:$|[-_.\s:\d])/.test(v)) return 'grok';
+    if (/^muse(?:$|[-_.\s:\d])/.test(v)) return 'muse';
+    if (/^(?:kimi|k[23])(?:$|[-_.\s:])/.test(v)) return 'kimi';
+    if (/^moonshot(?:ai)?(?:$|[-_.\s:\d])/.test(v)) return 'moonshot';
+    if (/^(?:qwen|qvq|alibaba)(?:$|[-_.\s:\d])/.test(v)) return 'qwen';
+    if (/^(?:doubao|seed|seedream|bytedance)(?:$|[-_.\s:\d])/.test(v)) return 'doubao';
+    if (/^(?:ernie|wenxin|baidu|qianfan)(?:$|[-_.\s:\d])/.test(v)) return 'qianfan';
     if (v.startsWith('deepseek')) return 'deepseek';
     if (v.startsWith('minimax')) return 'minimax';
     if (v.startsWith('hy') || v.includes('hunyuan')) return 'hunyuan';
@@ -40,21 +61,26 @@
   }
   // engineOf names the CLI that runs a model: catalog entries carry it, and a
   // saved "codex:…" id that the viewer cannot list still keeps its prefix.
-  function engineOf(id) {
-    const listed = (catalog.models || []).find(m => m.id === id);
+  function engineOf(id, source = catalog) {
+    const listed = (source.models || []).find(m => m.id === id);
     if (listed) return listed.engine || 'codebuddy';
     const value = String(id || '');
     const prefix = value.slice(0, Math.max(0, value.indexOf(':')));
-    return (catalog.engines || []).some(e => e.id === prefix) ? prefix : 'codebuddy';
+    return (source.engines || []).some(e => e.id === prefix) ? prefix : 'codebuddy';
   }
   function modelMeta(id) {
-    return (catalog.models || []).find(m => m.id === id) || {id: id || DEFAULT_MODEL, family: familyOf(id), name: id || DEFAULT_MODEL};
+    const value = id || DEFAULT_MODEL;
+    return catalog.models.find(m => m.id === value) || {id: value, family: familyOf(value), name: value === DEFAULT_MODEL ? '默认' : value};
   }
   function fillModelIcon(el, family, id) {
     if (!el) return;
+    if (!family || family === 'other') family = familyOf(id);
     el.dataset.family = family || 'other';
     const src = FAMILY_ICON[family];
-    if (src) { el.innerHTML = `<img src="${src}" alt="">`; return; }
+    if (src) {
+      el.innerHTML = `<img src="${src}" alt="">` + (family === 'kimi' ? '<img src="/images/credentials/kimi-dark.svg" alt="">' : '');
+      return;
+    }
     el.textContent = FAMILY_MARK[family] || String(id || 'AI').slice(0, 1).toUpperCase();
   }
   function creditLabel(item) {
@@ -145,12 +171,14 @@
     if (!resp.ok) throw new Error(`模型列表加载失败（${resp.status}）`);
     return resp.json();
   }
-  // load keeps one in-flight request and keeps the built-in fallback when the
-  // catalog cannot be read, so pickers never spin forever on a cold start.
+  // Share the in-flight request and retain the last catalog on a refresh failure.
   function load() {
     if (!loading) {
       loading = fetchCatalog().then(data => {
-        if (data?.models?.length) catalog = {default: data.default || DEFAULT_MODEL, models: data.models, engines: data.engines || []};
+        if (Array.isArray(data?.models)) {
+          const models = data.models.filter(m => m.id !== DEFAULT_MODEL && m.id !== `${m.engine}:default`);
+          catalog = {default: data.default || DEFAULT_MODEL, models, engines: data.engines || []};
+        }
         return catalog;
       }).catch(() => catalog).finally(() => { loading = null; });
     }
@@ -159,6 +187,7 @@
   window.AgentFlowAssistantModels = {
     DEFAULT: DEFAULT_MODEL,
     catalog: () => catalog,
+    cliIcon: id => Object.hasOwn(CLI_ICON, id) ? '/images/credentials/' + CLI_ICON[id] : '',
     codeBuddyModel,
     codeBuddyModels,
     engineOf,

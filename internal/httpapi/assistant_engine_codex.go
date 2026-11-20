@@ -75,17 +75,22 @@ func prepareAssistantCodexInvocation(o assistantEngineInvocationOpts) (assistant
 // become assistant blocks, tool items become tool_use / tool_result, and the
 // turn's end becomes the result line.
 type codexAppServer struct {
-	input       *os.File
-	inputOnce   sync.Once
-	opts        assistantEngineInvocationOpts
-	resume      string
-	nextID      int
-	pending     map[string]string
-	threadID    string
-	lastMessage string
-	turnError   string
-	usage       map[string]any
-	started     map[string]bool
+	input        *os.File
+	inputOnce    sync.Once
+	opts         assistantEngineInvocationOpts
+	resume       string
+	nextID       int
+	pending      map[string]string
+	threadID     string
+	turnID       string
+	turnPending  bool
+	turnAccepted bool
+	lastMessage  string
+	turnError    string
+	usage        map[string]any
+	usageSum     codexTokenUsage
+	usageTotal   *codexTokenUsage
+	started      map[string]bool
 	// block is the key of the open stream_event content block.
 	block string
 }
@@ -144,7 +149,7 @@ func (s *codexAppServer) closeInput() {
 // fail ends the turn with an error line the pipeline reports.
 func (s *codexAppServer) fail(message string) []string {
 	s.closeInput()
-	return append(s.closeBlock(), codexLine(map[string]any{"type": "error", "error": message}))
+	return append(s.closeBlock(), codexLine(map[string]any{"type": "error", "error": message, "usage": s.usage}))
 }
 
 func (s *codexAppServer) translate(line string) []string {
@@ -189,7 +194,10 @@ func (s *codexAppServer) response(message codexRPCMessage) []string {
 		// App-server builds each thread's hook trust from its own config.
 		// Both the platform guard and workspace approval hook are generated
 		// and reviewed by the platform.
-		params := map[string]any{"model": s.opts.Model, "developerInstructions": s.opts.SystemPrompt, "sandbox": "read-only", "approvalPolicy": "never", "cwd": filepath.Join(s.opts.Root, "ws"), "config": map[string]any{"bypass_hook_trust": true}}
+		params := map[string]any{"developerInstructions": s.opts.SystemPrompt, "sandbox": "read-only", "approvalPolicy": "never", "cwd": filepath.Join(s.opts.Root, "ws"), "config": map[string]any{"bypass_hook_trust": true}}
+		if s.opts.Model != "" {
+			params["model"] = s.opts.Model
+		}
 		if s.opts.Workspace {
 			params["sandbox"] = "danger-full-access"
 		}
@@ -219,11 +227,21 @@ func (s *codexAppServer) response(message codexRPCMessage) []string {
 				return s.fail("无法保存 Codex 原生会话引用")
 			}
 		}
+		s.turnPending = true
 		s.request("turn/start", map[string]any{"threadId": s.threadID, "input": []map[string]any{{"type": "text", "text": s.opts.Prompt, "text_elements": []any{}}}})
 		return []string{codexLine(map[string]any{"type": "system", "subtype": "init", "session_id": s.threadID})}
 	case "turn/start":
 		if failure != "" {
 			return s.fail(failure)
+		}
+		s.turnAccepted = true
+		var result struct {
+			Turn struct {
+				ID string `json:"id"`
+			} `json:"turn"`
+		}
+		if json.Unmarshal(message.Result, &result) == nil && result.Turn.ID != "" {
+			s.turnID = result.Turn.ID
 		}
 	}
 	return nil
@@ -231,6 +249,8 @@ func (s *codexAppServer) response(message codexRPCMessage) []string {
 
 func (s *codexAppServer) notification(method string, raw json.RawMessage) []string {
 	var params struct {
+		ThreadID     string       `json:"threadId"`
+		TurnID       string       `json:"turnId"`
 		ItemID       string       `json:"itemId"`
 		Delta        string       `json:"delta"`
 		SummaryIndex int          `json:"summaryIndex"`
@@ -241,13 +261,11 @@ func (s *codexAppServer) notification(method string, raw json.RawMessage) []stri
 			Message string `json:"message"`
 		} `json:"error"`
 		TokenUsage struct {
-			Last struct {
-				InputTokens       int64 `json:"inputTokens"`
-				CachedInputTokens int64 `json:"cachedInputTokens"`
-				OutputTokens      int64 `json:"outputTokens"`
-			} `json:"last"`
+			Last  codexTokenUsage  `json:"last"`
+			Total *codexTokenUsage `json:"total"`
 		} `json:"tokenUsage"`
 		Turn struct {
+			ID     string `json:"id"`
 			Status string `json:"status"`
 			Error  *struct {
 				Message string `json:"message"`
@@ -255,6 +273,22 @@ func (s *codexAppServer) notification(method string, raw json.RawMessage) []stri
 		} `json:"turn"`
 	}
 	if json.Unmarshal(raw, &params) != nil {
+		return nil
+	}
+	if params.ThreadID != "" && params.ThreadID != s.threadID {
+		return nil
+	}
+	turnID := firstNonEmpty(params.TurnID, params.Turn.ID)
+	if method == "turn/started" {
+		if s.turnPending && s.turnID == "" {
+			s.turnID = turnID
+		}
+		return nil
+	}
+	if method == "turn/completed" && s.turnAccepted && s.turnID == "" {
+		s.turnID = turnID
+	}
+	if turnID != "" && turnID != s.turnID {
 		return nil
 	}
 	switch method {
@@ -269,8 +303,9 @@ func (s *codexAppServer) notification(method string, raw json.RawMessage) []stri
 	case "item/completed":
 		return s.item(params.Item, true)
 	case "thread/tokenUsage/updated":
-		last := params.TokenUsage.Last
-		s.usage = map[string]any{"input_tokens": last.InputTokens, "cached_input_tokens": last.CachedInputTokens, "output_tokens": last.OutputTokens}
+		if s.turnPending {
+			return s.collectUsage(params.TokenUsage.Last, params.TokenUsage.Total)
+		}
 	case "error":
 		if !params.WillRetry {
 			s.turnError = strings.TrimSpace(params.Error.Message)

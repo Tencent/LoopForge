@@ -39,6 +39,7 @@ type userConfigRow struct {
 	GongfengTokenExpiresAt       *time.Time `gorm:"column:gongfeng_token_expires_at"`
 	CodeBuddyAPIKey              *string    `gorm:"column:codebuddy_api_key;type:text"`
 	CodeBuddyInternetEnvironment string     `gorm:"column:codebuddy_internet_environment;size:64"`
+	CodeBuddyModels              *string    `gorm:"column:codebuddy_models;type:text"`
 	CodexAPIKey                  *string    `gorm:"column:codex_api_key;type:text"`
 	CodexBaseURL                 *string    `gorm:"column:codex_base_url;type:text"`
 	CodexModels                  *string    `gorm:"column:codex_models;type:text"`
@@ -61,6 +62,20 @@ type gitSSHKeyRow struct {
 }
 
 func (gitSSHKeyRow) TableName() string { return "user_git_ssh_keys" }
+
+type gitHTTPCredentialRow struct {
+	UserID   int64      `gorm:"primaryKey;autoIncrement:false"`
+	ID       string     `gorm:"primaryKey;size:64"`
+	Name     string     `gorm:"size:80;not null"`
+	Platform string     `gorm:"size:16;not null"`
+	Host     string     `gorm:"size:255;not null"`
+	Username string     `gorm:"size:128;not null"`
+	Token    string     `gorm:"type:text;not null"`
+	Created  *time.Time `gorm:"column:created_at"`
+	Updated  *time.Time `gorm:"column:updated_at"`
+}
+
+func (gitHTTPCredentialRow) TableName() string { return "user_git_http_credentials" }
 
 type apiTokenRow struct {
 	ID         string     `gorm:"column:id;primaryKey;size:64"`
@@ -264,6 +279,16 @@ type scheduleJobExecutionStatRow struct {
 	Failed     int       `gorm:"column:failed;not null;default:0"`
 	Timed      int       `gorm:"column:timed;not null;default:0"`
 	DurationMs int64     `gorm:"column:duration_ms;not null;default:0"`
+	// Token usage of the AI prompts, priced when each execution finished
+	// (the hour mixes models, so it cannot be priced afterwards).
+	Metered          int     `gorm:"column:metered;not null;default:0"`
+	TokensTotal      int64   `gorm:"column:tokens_total;not null;default:0"`
+	TokensInput      int64   `gorm:"column:tokens_input;not null;default:0"`
+	TokensOutput     int64   `gorm:"column:tokens_output;not null;default:0"`
+	TokensCacheRead  int64   `gorm:"column:tokens_cache_read;not null;default:0"`
+	TokensCacheWrite int64   `gorm:"column:tokens_cache_write;not null;default:0"`
+	Priced           int     `gorm:"column:priced;not null;default:0"`
+	CostUSD          float64 `gorm:"column:cost_usd;not null;default:0"`
 }
 
 func (scheduleJobExecutionStatRow) TableName() string { return "schedule_job_execution_stats" }
@@ -489,6 +514,7 @@ type mrDeliveryStateRow struct {
 	IssueID      string     `gorm:"column:issue_id;index:idx_mr_delivery_issue;size:64"`
 	MergedAt     *time.Time `gorm:"column:merged_at;index:idx_mr_delivery_merged_at"`
 	CheckedAt    *time.Time `gorm:"column:checked_at"`
+	RegisteredBy *int64     `gorm:"column:registered_by"`
 	Created      *time.Time `gorm:"column:created_at"`
 	Updated      *time.Time `gorm:"column:updated_at"`
 }
@@ -564,11 +590,12 @@ type userRunnerPrefRow struct {
 
 func (userRunnerPrefRow) TableName() string { return "user_runner_prefs" }
 
-// assistantPreferenceRow: a missing row means both switches are off.
+// assistantPreferenceRow: a missing row means switches are off and messages queue.
 type assistantPreferenceRow struct {
 	UserID         int64      `gorm:"column:user_id;primaryKey;autoIncrement:false"`
 	ProactiveRoles bool       `gorm:"column:proactive_roles;not null;default:false"`
 	ProactiveSOPs  bool       `gorm:"column:proactive_sops;not null;default:false"`
+	SteerOnSend    bool       `gorm:"column:steer_on_send;not null;default:false"`
 	Instructions   string     `gorm:"column:instructions;type:text"`
 	UpdatedAt      *time.Time `gorm:"column:updated_at"`
 }
@@ -730,7 +757,7 @@ func (knowledgeSubmissionRow) TableName() string { return "knowledge_submissions
 // allModels lists every table for the sqlite test schema (AutoMigrate).
 func allModels() []any {
 	return []any{domain.BotUserBinding{}, domain.BotBindingChallenge{}, domain.BotConnection{}, domain.BotConversation{}, domain.BotInteraction{}, notificationBotRow{}, botCredentialRow{}, domain.NotificationDelivery{},
-		userRow{}, localAccountRow{}, userConfigRow{}, gitSSHKeyRow{}, authIntegrationRow{}, platformCodeBuddyKeyRow{}, apiTokenRow{}, genericTemplateRow{},
+		userRow{}, localAccountRow{}, userConfigRow{}, gitSSHKeyRow{}, gitHTTPCredentialRow{}, authIntegrationRow{}, platformCodeBuddyKeyRow{}, apiTokenRow{}, genericTemplateRow{},
 		insightSourceRow{}, insightExecutionRow{},
 		projectRow{}, projectMemberRow{}, repositoryRow{}, businessDomainRow{}, businessDomainAssignmentRow{},
 		agentRow{}, ruleRow{}, skillRow{}, skillFileRow{}, mcpServerRow{}, mcpFileRow{}, executorRow{},
@@ -746,6 +773,6 @@ func allModels() []any {
 		requirementSpaceRow{}, spaceMemberRow{}, spaceArtifactRow{}, spaceArtifactRevisionRow{}, spaceThreadRow{},
 		engineInstanceRow{},
 		knowledgeSettingsRow{}, knowledgeSubmissionRow{},
-		pageFeedbackRow{}, pageFeedbackImageRow{},
+		pageFeedbackRow{}, pageFeedbackImageRow{}, PlatformGitSSHHost{},
 	}
 }

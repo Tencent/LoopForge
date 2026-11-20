@@ -12,7 +12,7 @@
   <link rel="stylesheet" href="/app/hui-controls.css">
   <link rel="stylesheet" href="/styles.css?v=20261031v1">
   <link rel="stylesheet" href="/assets.css?v=20260823v1">
-  <link rel="stylesheet" href="/platform.css?v=20261116nosop">
+  <link rel="stylesheet" href="/platform.css?v=20261120sshhostprobe">
   <link rel="stylesheet" href="/observability.css?v=20261031metrics2">
   <link rel="stylesheet" href="/artifacts.css?v=20260914r3">
   <link rel="stylesheet" href="/sops.css?v=20261030cards1">
@@ -335,7 +335,7 @@
     </section>
     <section id="assistantView" class="view page-view">
       <div class="page-heading">
-        <div><h1>AI 助手</h1><p>AI 工作台里和你对话、帮你动手的助手。设置它什么时候主动把事情交给角色或 SOP，以及每次对话都要遵守的规则；只对你自己生效。</p></div>
+        <div><h1>AI 助手</h1><p>AI 工作台里和你对话、帮你动手的助手。设置消息发送方式、角色与 SOP 的主动派发，以及每次对话都要遵守的规则；只对你自己生效。</p></div>
       </div>
       <div id="assistantContent"></div>
     </section>
@@ -774,7 +774,7 @@
         <ol class="runner-steps">
           <li><span class="runner-step-no">1</span><div><b>安装 CLI</b><small>claude / codex 等</small></div></li>
           <li><span class="runner-step-no">2</span><div><b>执行接入命令</b><small>绑定码 10 分钟有效</small></div></li>
-          <li><span class="runner-step-no">3</span><div><b>选择认证来源</b><small>本机登录或个人凭证</small></div></li>
+          <li><span class="runner-step-no">3</span><div><b>选择认证来源</b><small>Claude Code、Codex 和 Antigravity 可用账号登录</small></div></li>
         </ol>
         <div class="runner-command-box">
           <pre id="bindCliCommand" class="mono">(curl -fsSL --connect-timeout 5 <span id="bindHttpsOrigin">https://</span>/runners/install.sh || curl -fsSL <span id="bindHttpOrigin">http://</span>/runners/install.sh) | bash -s -- --server <span id="bindServerHost"></span> --token <span id="bindToken">生成中…</span> --service</pre>
@@ -793,7 +793,6 @@
       </div>
 
       <div class="runner-list-heading"><h2>我的机器</h2><span class="runner-count" id="runnerCount">0</span><p class="runner-pool-status" id="runnerPoolStatus" aria-live="polite"></p></div>
-      <aside id="runnerCLIUpdateNotice" class="runner-cli-update-notice" aria-labelledby="runnerCLIUpdateNoticeTitle"><b id="runnerCLIUpdateNoticeTitle">Agent CLI 需自行升级：</b>平台不会代为升级，版本过旧或无模型权限会导致任务失败。</aside>
       <div id="runnersList" class="runner-grid"></div>
     </section>
 
@@ -999,7 +998,7 @@
         <div class="pa-fs">
           <h5>仓库地址</h5>
           <div data-github-repositories></div>
-          <label class="pa-field"><span class="pa-field-l">GitHub 链接或 Git SSH 地址</span>
+          <label class="pa-field"><span class="pa-field-l">Git HTTPS 链接或 Git SSH 地址</span>
             <input class="pa-input mono" name="repoUrl" spellcheck="false" placeholder="https://github.com/owner/repo">
             <span class="pa-fmt"><code>https://github.com/owner/repo</code><code>git@gitlab.com:group/repo.git</code></span>
             <span class="pa-field-e" id="repoDrawerUrlError" hidden>请输入有效的 GitHub 链接或 Git SSH 克隆地址。CNB 只支持 HTTPS + 访问令牌。</span>
@@ -1154,7 +1153,7 @@
                   <div class="ai-model-menu" hidden role="listbox" aria-label="模型"></div>
                 </div>
               </div>
-              <p class="schedule-field-hint" id="scheduleModelHint">与 AI 助手相同的 CLI 与模型，到点用保存人在所选 CLI 上配置的 Key 执行；没有个人 CodeBuddy Key 时使用平台共享 Key。</p>
+              <p class="schedule-field-hint" id="scheduleModelHint">Codex 和 Claude Code 优先使用保存人默认执行机器的账号登录。机器离线时改用个人 API Key，Key 缺失或不可用时任务失败。CodeBuddy 缺少个人 Key 时可使用平台共享 Key。</p>
             </div>
             <div data-schedule-kind="assistant" hidden>
               <label for="scheduleSessionMode">会话</label>
@@ -1334,8 +1333,10 @@
   <script src="/app/runners.js"></script>
   <script src="/app/runs.js"></script>
   <script src="/app/run-activation.js"></script>
-  <script src="/app/workbench.js?v=20261030theme1"></script>
+  <script src="/app/platform-ssh-hosts.js"></script>
+  <script src="/app/workbench.js?v=20261120sshhosttrust"></script>
   <script src="/app/git-ssh-keys.js"></script>
+  <script src="/app/git-http-credentials.js"></script>
   <script src="/app/approvals.js"></script>
   <script src="/app/obs-charts.js"></script>
   <script src="/app/observability.js"></script>
