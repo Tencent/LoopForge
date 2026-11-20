@@ -302,7 +302,7 @@
 #scheduleModal #scheduleJobList[hidden] { display:none; }
 :is(#aiScheduleTriggerList, #scheduleModal) .schedule-config-runtime { display:flex;align-items:center;justify-content:space-between;gap:14px;padding:12px 0;color:var(--hui-secondary); }
 :is(#aiScheduleTriggerList, #scheduleModal) .schedule-config-runtime>div { display:flex;flex-direction:column;gap:5px;min-width:0; }
-:is(#aiScheduleTriggerList, #scheduleModal) .schedule-config-runtime b { color:var(--hui-text);font-size:13px;font-weight:500; }
+:is(#aiScheduleTriggerList, #scheduleModal) .schedule-config-runtime b { color:var(--hui-text);font-size:13px;font-weight:500;overflow-wrap:anywhere; }
 :is(#aiScheduleTriggerList, #scheduleModal) .schedule-config-runtime :is(span,small) { font-size:12px;line-height:1.5;overflow-wrap:anywhere; }
 :is(#aiScheduleTriggerList, #scheduleModal) .schedule-config-runtime button { flex:none; }
 #aiScheduleTriggerList .schedule-config-runtime {
