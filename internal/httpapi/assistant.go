@@ -1671,6 +1671,9 @@ func runAssistantCLI(ctx context.Context, req assistantCLIRequest, user domain.U
 	execute := req.Execute
 	if execute == nil {
 		execute = runtime.ExecuteLocalCommand
+		if attempt != nil {
+			defer runtime.ObserveCLIVersion(ctx, nil, engine, bin, attempt.recordCLIVersion)()
+		}
 	}
 	attempt.phase("execution")
 	_, err = execute(ctx, workspace, command, inv.credentials, sink)

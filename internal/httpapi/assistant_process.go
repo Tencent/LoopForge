@@ -252,7 +252,7 @@ func (h *assistantHandlers) conversationExecutor(s *AgentToolSession, root strin
 		}
 		defer stopProcess()
 		preparing = false
-		started, err := call(ctx, runtime.ConversationProcessRequest{Operation: "start", ID: id, Command: wire, Token: s.Token, Gateway: config.Current().AgentToolGateway})
+		started, err := call(ctx, runtime.ConversationProcessRequest{Operation: "start", ID: id, Command: wire, Token: s.Token, Gateway: config.Current().AgentToolGateway, ReportVersion: assistantDiagnosticsFrom(ctx) != nil})
 		if err != nil {
 			if errors.Is(err, runtime.ErrConversationNotStarted) {
 				stopOnce.Do(func() {}) // confirmed failure before process execution
@@ -301,6 +301,7 @@ func (h *assistantHandlers) conversationExecutor(s *AgentToolSession, root strin
 			}()
 		}
 		after := int64(0)
+		versionReported := false
 		for {
 			if err := ioCtx.Err(); err != nil {
 				return "", err
@@ -318,6 +319,12 @@ func (h *assistantHandlers) conversationExecutor(s *AgentToolSession, root strin
 			}
 			if pollErr != nil {
 				return "", pollErr
+			}
+			if sink != nil && !versionReported && result.CLIVersion != "" {
+				sink(domain.TelemetryEvent{Name: runtime.CLIVersionEvent, Attributes: map[string]any{
+					"version": result.CLIVersion, "source": result.VersionSource,
+				}})
+				versionReported = true
 			}
 			for _, event := range result.Events {
 				if sink != nil {
