@@ -42,7 +42,7 @@ func ParseConflictMarkers(file string, data []byte, max int) []ConflictBlock {
 	lines := strings.Split(string(data), "\n")
 	var out []ConflictBlock
 	var ours, theirs []string
-	state := 0 // 0 normal, 1 ours, 2 theirs
+	state := 0 // 0 normal, 1 ours, 2 theirs, 3 common ancestor (diff3/zdiff3)
 	for _, ln := range lines {
 		switch {
 		case strings.HasPrefix(ln, "<<<<<<<"):
@@ -54,7 +54,11 @@ func ParseConflictMarkers(file string, data []byte, max int) []ConflictBlock {
 			}
 			ours, theirs = nil, nil
 			state = 1
-		case strings.HasPrefix(ln, "=======") && state == 1:
+		case strings.HasPrefix(ln, "|||||||") && state == 1:
+			// Git's diff3 and zdiff3 styles include the base between ours
+			// and theirs. It is context, not part of the current branch.
+			state = 3
+		case strings.HasPrefix(ln, "=======") && (state == 1 || state == 3):
 			state = 2
 		case strings.HasPrefix(ln, ">>>>>>>") && state == 2:
 			out = append(out, newConflictBlock(file, ours, theirs))
