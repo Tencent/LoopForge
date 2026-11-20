@@ -2,6 +2,16 @@
 
 Platform releases use `vX.Y.Z` tags and publish `ghcr.io/tencent/loopforge`. LoopForge Local packages use `local-vX.Y.Z` tags and are published by manually running the `release-local` workflow.
 
+## 0.4.1-rc.1 — Git and MCP credentials, conversation workspaces and runners
+
+- Configure HTTPS Git credentials per host and distribute trusted SSH host keys to execution machines. MCP servers, market items and SOP nodes can use configured credentials.
+- Use personal conversation workspaces, refresh repository context on demand and restore the model and send preferences for a conversation. Assistant replies report the CLI and version that ran them.
+- Runners support Antigravity login and more managed CLI updates. Scheduled executions record token usage and show totals on the dashboard.
+
+**Upgrading from v0.4.0.** Stop the old API and workers, leave MySQL running and apply `migrations/036_git_http_credentials.sql` from this tag before starting the RC. Verify private repository access, then retire matching legacy credentials with `037_retire_plain_git_token.sql` after the rollback window. See the [deployment instructions](docs/deployment.md#migrating-existing-github-credentials).
+
+For existing built-in MR roles, `038_generic_sop_host_credentials.sql` updates their Git authentication instructions after the credential migration. For installations that want historical scheduling totals, the optional `039_schedule_execution_legacy_stats.sql` backfills retained executions. Follow the prerequisites in each script.
+
 ## 0.4.0 — scheduled task history, an MR node in delivery SOPs and agent CLIs in conversation workspaces
 
 - Scheduled tasks keep an execution history with a session mode, keep conversations per job and gain row actions (#958). AI jobs run with the key of the user who saved them and fall back to the shared key (#966).

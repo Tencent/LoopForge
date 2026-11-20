@@ -46,8 +46,15 @@ jobs:
             echo "Checkout does not match the release tag commit" >&2
             exit 1
           fi
-          if ! git merge-base --is-ancestor "${tag_commit}" origin/main; then
-            echo "Release tag ${TAG} is not on main" >&2
+          on_release_branch=false
+          for ref in origin/main $(git for-each-ref --format='%(refname:short)' 'refs/remotes/origin/release/*'); do
+            if git merge-base --is-ancestor "${tag_commit}" "${ref}"; then
+              on_release_branch=true
+              break
+            fi
+          done
+          if [[ "${on_release_branch}" != true ]]; then
+            echo "Release tag ${TAG} is not on main or a release/* branch" >&2
             exit 1
           fi
           ci="$(gh run list --repo "${GITHUB_REPOSITORY}" --workflow platform.yml --commit "${tag_commit}" \
@@ -132,7 +139,7 @@ jobs:
           PRERELEASE: ${{ steps.release.outputs.prerelease }}
         run: |
           notes="$(cat <<EOF
-          ## Install
+          ## New installation
 
           \`\`\`bash
           git clone --branch ${TAG} https://github.com/${GITHUB_REPOSITORY}.git
@@ -144,7 +151,21 @@ jobs:
 
           Digest: \`${IMAGE}@${DIGEST}\`.
 
-          Where \`ghcr.io\` is slow, set \`MIRROR\` to a registry host that replaces it (for example \`MIRROR=ghcr.nju.edu.cn ./start.sh\`). This trusts that host: the download is tagged as the pinned name. Check it with \`docker image inspect --format '{{index .RepoDigests 0}}' ${IMAGE}:${VERSION}\` and compare the digest after \`@\`. Existing installations: check out \`${TAG}\`, run \`./start.sh\`, and apply the new files under \`migrations/\` listed in [CHANGELOG.md](https://github.com/${GITHUB_REPOSITORY}/blob/${TAG}/CHANGELOG.md).
+          Where \`ghcr.io\` is slow, set \`MIRROR\` to a registry host that replaces it (for example \`MIRROR=ghcr.nju.edu.cn ./start.sh\`). This trusts that host: the download is tagged as the pinned name. Check it with \`docker image inspect --format '{{index .RepoDigests 0}}' ${IMAGE}:${VERSION}\` and compare the digest after \`@\`.
+
+          ## Upgrade from v0.4.0
+
+          Use your existing Compose checkout with its original \`.env\` and data volumes. Stop any separately deployed workers and keep MySQL running. If you use a \`LOOPFORGE_IMAGE\` override, update it to \`${IMAGE}:${VERSION}\` or the digest above.
+
+          \`\`\`bash
+          git fetch origin tag ${TAG} &&
+          git switch --detach ${TAG} &&
+          docker compose stop platform &&
+          docker compose exec -T mysql sh -c 'MYSQL_PWD="\$MYSQL_PASSWORD" mysql -u loopforge loopforge' < migrations/036_git_http_credentials.sql &&
+          ./start.sh pull
+          \`\`\`
+
+          Restart any separate workers on the new version and verify private repository access with an existing GitHub credential. Run \`037_retire_plain_git_token.sql\` manually after verification and the rollback window. See the [credential migration guide](https://github.com/${GITHUB_REPOSITORY}/blob/${TAG}/docs/deployment.md#migrating-existing-github-credentials) and [changelog](https://github.com/${GITHUB_REPOSITORY}/blob/${TAG}/CHANGELOG.md).
           EOF
           )"
           if gh release view "${TAG}" >/dev/null 2>&1; then
