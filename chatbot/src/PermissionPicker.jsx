@@ -24,7 +24,7 @@ export function rememberApprovalMode(userId, value) {
 }
 
 // `glyph` is a rendered brand mark. Options that only set `icon` keep the Harness icon.
-export default function PermissionPicker({ value, onSelect, open, onOpenChange, label = "操作确认方式", icon, options = modes }) {
+export default function PermissionPicker({ value, onSelect, open, onOpenChange, label = "操作确认方式", icon, options = modes, disabled = false, title }) {
   const trigger = useRef(null);
   const panel = useRef(null);
   const initialFocus = useRef(null);
@@ -136,7 +136,7 @@ export default function PermissionPicker({ value, onSelect, open, onOpenChange, 
     close(true);
   }
   function keyDown(event) {
-    if (event.isComposing || event.nativeEvent?.isComposing) return;
+    if (disabled || event.isComposing || event.nativeEvent?.isComposing) return;
     if (event.key === "Escape") {
       event.preventDefault();
       event.stopPropagation();
@@ -169,10 +169,14 @@ export default function PermissionPicker({ value, onSelect, open, onOpenChange, 
         className="permission-selector"
         data-tone={current.tone}
         aria-label={label}
-        aria-haspopup="menu"
-        aria-expanded={open}
+        disabled={disabled}
+        title={title}
+        aria-haspopup={disabled ? undefined : "menu"}
+        aria-expanded={disabled ? false : open}
         aria-controls={identity}
-        onClick={() => onOpenChange(!open)}
+        onClick={() => {
+          if (!disabled) onOpenChange(!open);
+        }}
         onKeyDown={(event) => {
           if (["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) {
             if (open && presence.mounted) keyDown(event);
