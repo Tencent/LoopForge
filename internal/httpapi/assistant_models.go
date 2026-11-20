@@ -220,6 +220,32 @@ func (h *assistantHandlers) models(c *gin.Context) {
 		if len(result.Models) > 0 {
 			result.Default = result.Models[0].ID
 		}
+		c.Header("Cache-Control", "private, no-store")
+		if current, signedIn := h.requestUser(c.Request, true); signedIn {
+			if user, found := h.repo.User(current.ID); found {
+				listed, pending := assistantDiscoveredModelsFor(c.Request.Context(), user, engine)
+				result.CursorModelsPending = pending
+				if len(listed) > 0 {
+					result.Models = result.Models[:1]
+					capabilities := cliModelsOf(listed)
+					_, baseURL := assistantEngineCredential(user, engine)
+					for _, model := range listed {
+						name := strings.TrimSpace(model.Name)
+						if name == "" {
+							name = model.ID
+						}
+						// This legacy endpoint returns bare model IDs; the caller
+						// supplies the executor separately when starting a turn.
+						result.Models = append(result.Models, assistantModel{
+							ID:      model.ID,
+							Name:    name,
+							Family:  assistantModelFamily(model.ID),
+							Efforts: assistantModelEffortsForBaseURL(engine+":"+model.ID, capabilities, baseURL),
+						})
+					}
+				}
+			}
+		}
 		c.JSON(200, result)
 		return
 	}
