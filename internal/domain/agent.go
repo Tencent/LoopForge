@@ -34,6 +34,19 @@ func IsAgentCLIKind(kind string) bool {
 	})
 }
 
+// ValidateAgentModel checks executor kinds that always require an explicit role model.
+func ValidateAgentModel(model, executorKind string) error {
+	if strings.TrimSpace(model) != "" {
+		return nil
+	}
+	switch executorKind {
+	case "pi", "opencode", "kimi":
+		return errors.New("该 CLI 需要指定模型")
+	default:
+		return nil
+	}
+}
+
 // ValidateAgentEffort checks a role's reasoning-effort choice against the
 // levels published for the resolved executor kind.
 func ValidateAgentEffort(effort, executorKind string) error {
