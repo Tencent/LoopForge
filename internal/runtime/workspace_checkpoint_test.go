@@ -363,7 +363,7 @@ func TestRestoreWorkspaceCheckpointReplacesEmptyAndRuntimeOnlyDirectoryAtomicall
 	})
 }
 
-func TestCheckpointGitTrackerTimeoutsDegradeToUntracked(t *testing.T) {
+func TestCheckpointGitTrackerTimeoutsRejectIncompleteSnapshots(t *testing.T) {
 	root := t.TempDir()
 	repo := filepath.Join(root, "repo")
 	if err := os.MkdirAll(filepath.Join(repo, ".git"), 0o700); err != nil {
@@ -395,19 +395,11 @@ func TestCheckpointGitTrackerTimeoutsDegradeToUntracked(t *testing.T) {
 	checkpointGitIndexTimeout = 100 * time.Millisecond
 	t.Cleanup(func() { checkpointGitIndexTimeout = prevTimeout })
 
-	archive, err := CreateWorkspaceCheckpointContext(context.Background(), root)
-	if err != nil {
-		t.Fatalf("CreateWorkspaceCheckpointContext failed: %v", err)
+	if archive, err := CreateWorkspaceCheckpointContext(context.Background(), root); !errors.Is(err, context.DeadlineExceeded) || archive != nil {
+		t.Fatalf("timed-out Git lookup authorized an incomplete snapshot: archive=%d bytes, err=%v", len(archive), err)
 	}
-	dest := filepath.Join(t.TempDir(), "restored")
-	if err := RestoreWorkspaceCheckpoint(dest, archive); err != nil {
-		t.Fatalf("RestoreWorkspaceCheckpoint failed: %v", err)
-	}
-	if got, err := os.ReadFile(filepath.Join(dest, "repo", "app.txt")); err != nil || string(got) != "app" {
-		t.Fatalf("expected repo/app.txt restored, got %q (%v)", got, err)
-	}
-	if _, err := os.Lstat(filepath.Join(dest, "repo", "node_modules", "pkg", "index.js")); !os.IsNotExist(err) {
-		t.Fatalf("expected timed-out git index lookup to degrade and skip node_modules, err=%v", err)
+	if got, err := os.ReadFile(filepath.Join(repo, "node_modules", "pkg", "index.js")); err != nil || string(got) != "tracked" {
+		t.Fatalf("original workspace changed: %q, %v", got, err)
 	}
 }
 
