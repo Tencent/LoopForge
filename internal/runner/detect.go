@@ -3,6 +3,7 @@ package runner
 import (
 	"context"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -108,7 +109,14 @@ func DetectRuntimes(ctx context.Context, extraBinaries map[string]string) []doma
 
 func detectRuntimes(ctx context.Context, extraBinaries map[string]string, inventory managedcli.Inventory) []domain.RunnerRuntime {
 	specs := runtimeProviderSpecs(extraBinaries)
-	enabledProviders, _ := managedcli.EnabledProviders()
+	var enabledProviders []string
+	if inventory != nil {
+		var err error
+		enabledProviders, err = managedcli.EnabledProviders()
+		if err != nil {
+			log.Printf("managed CLI updates disabled: %v", err)
+		}
+	}
 	out := make([]domain.RunnerRuntime, 0, len(specs)+2)
 	out = append(out, builtinRuntimes()...)
 	for _, spec := range specs {

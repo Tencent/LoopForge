@@ -93,6 +93,8 @@ func EnabledProviders() ([]string, error) {
 }
 
 // AutoUpdateEnvironment disables a provider's built-in updater during managed execution.
+// Pi replaces its CLI through the explicit pi update command. The shipped DSH
+// headless profile relies on package-manager updates for the CLI.
 func AutoUpdateEnvironment(provider string) map[string]string {
 	switch provider {
 	case "claude-code", "codebuddy":
