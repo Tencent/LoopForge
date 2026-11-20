@@ -37,7 +37,7 @@ Platform releases use `vX.Y.Z` tags and publish `ghcr.io/tencent/loopforge`. Loo
 
 Repositories saved earlier with a token in `cloneUrl` keep cloning until they are saved again. Saving one from the studio stores the URL without the token, so first put the Git token in 个人配置, then save the repository. Until then the token also lands in each workspace's `.git/config`, where the agent can read it, so re-save such repositories soon after upgrading.
 
-Startup AutoMigrate creates the tables and columns of migrations `028` to `035`, and the installer and `./start.sh pull` apply `031`. `030` only aligns the stored `shared` flag of `generic-docker` with what the application already reads and is optional. To add the 「发起 MR」 node to the built-in SOPs of an existing installation, run `migrations/033_generic_sop_mr_node.sql` by hand (see `docs/deployment.md`). Rotate any agent CLI key that ran an SOP role before this release.
+Startup AutoMigrate creates the tables and columns of migrations `028` to `035`, and the installer and `./start.sh pull` apply `031` and `033`. `030` only aligns the stored `shared` flag of `generic-docker` with what the application already reads and is optional. The Compose upgrade adds the 「发起 MR」 node to unmodified built-in delivery SOPs. Manual deployments can apply `migrations/033_generic_sop_mr_node.sql` as described in `docs/deployment.md`. Rotate any agent CLI key that ran an SOP role before this release.
 
 ## 0.3.8 — header sign-in hardening and a GHCR mirror option
 
