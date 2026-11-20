@@ -370,7 +370,10 @@
 /* Switches: the platform checkboxes (name="global" / name="readOnlyRootFS") drawn as Harness switches. */
 #assetsView .rule-global-block { margin: 14px 0 0; padding: 14px 0 0; border: 0; border-top: 1px solid var(--hui-border-soft); border-radius: 0; background: none; }
 #assetsView :is(.rule-global-row, .asset-switch-row) { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin: 0; padding: 0; border: 0; background: none; cursor: pointer; }
-#assetsView .asset-switch-row { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--hui-border-soft); }
+#assetsView .asset-switch-row { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--hui-border-soft); cursor: default; }
+#assetsView .asset-switch-row label { cursor: pointer; }
+#assetsView .asset-switch-controls { display: inline-flex; flex: none; align-items: center; gap: 8px; }
+#assetsView .asset-switch-controls .field-help { padding: 0; background: transparent; }
 #assetsView :is(.rule-global-row, .asset-switch-row) b { display: block; color: var(--hui-text); font: 500 13px/1.4 var(--hui-sans); }
 #assetsView :is(.rule-global-row, .asset-switch-row) small { display: block; margin-top: 2px; color: var(--hui-tertiary); font-size: 12px; font-weight: 400; line-height: 1.45; }
 #assetsView :is(.rule-global-input, .asset-switch) { margin: 2px 0 0; }

@@ -10,6 +10,7 @@ import (
 
 	"agentflow/internal/domain"
 	"agentflow/internal/gitwork"
+	"agentflow/internal/runtime"
 )
 
 const alignTaskTimeout = 15 * time.Minute
@@ -17,29 +18,22 @@ const alignTaskTimeout = 15 * time.Minute
 // AlignBaseline merges the repository's default branch into its integration
 // branch. With a cloud runner pool it runs on a pool runner; otherwise, and
 // for repositories only reachable through a local path, on this host.
-func (e *Engine) AlignBaseline(repository domain.RepositoryContext, gitToken string) error {
-	return e.alignBaseline(repository, gitToken, 0)
-}
-
 func (e *Engine) AlignBaselineForUser(repository domain.RepositoryContext, userID int64) error {
-	return e.alignBaseline(repository, resolveGitToken(e.repo, userID), userID)
+	return e.alignBaseline(repository, userID)
 }
 
-func (e *Engine) alignBaseline(repository domain.RepositoryContext, gitToken string, userID int64) error {
+func (e *Engine) alignBaseline(repository domain.RepositoryContext, userID int64) error {
 	if !ShouldAlignIntegrate(repository) {
 		return nil
 	}
 	runner, ok := e.alignRunner(repository)
 	ssh := repository.Provider == domain.RepositoryProviderSSH
-	if ssh {
-		gitToken = ""
-	}
 	if !ok {
-		ctx := context.Background()
+		ctx := withRunGitCredentials(context.Background(), runtime.RunCredentials{GitHTTPCredentials: e.repo.GitHTTPCredentialSecrets(context.Background(), userID)})
 		if ssh {
-			ctx = gitwork.WithSSHKeys(ctx, e.repo.GitSSHKeysForRemotes(userID, []string{repository.CloneURL}))
+			ctx = gitwork.WithSSHKeys(e.withSSHKnownHosts(ctx), e.repo.GitSSHKeysForRemotes(userID, []string{repository.CloneURL}))
 		}
-		return alignIntegrateBaseline(ctx, repository, gitToken, e.repo)
+		return alignIntegrateBaseline(ctx, repository, e.repo)
 	}
 	if err := e.requireWorkBranchCapabilities(runner.ID, []domain.RepositoryContext{repository}); err != nil {
 		return err
@@ -59,11 +53,10 @@ func (e *Engine) alignBaseline(repository domain.RepositoryContext, gitToken str
 		Workspace:   "align/" + id,
 		Status:      domain.RunnerTaskQueued,
 		MaxAttempts: 1,
-		Invocation: &domain.RunnerInvocation{Repositories: []domain.RunnerRepository{{
+		Invocation: &domain.RunnerInvocation{GitHTTPUserID: userID, Repositories: []domain.RunnerRepository{{
 			RepositoryID:    repository.RepositoryID,
 			Name:            repository.Name,
 			CloneURL:        repository.CloneURL,
-			GitToken:        gitToken,
 			UseSSH:          ssh,
 			IntegrateBranch: integrate,
 			DefaultBranch:   strings.TrimSpace(repository.DefaultBranch),

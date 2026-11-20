@@ -133,16 +133,16 @@ func TestRunnerIntegrateAndConversationTerminalResults(t *testing.T) {
 
 	headsJSON := `[{"repositoryId":"repo","name":"Repo","workBranch":"work","head":"def"}]`
 	e, _ = cvETerminalEngine(t, domain.RunnerTaskSuccess, headsJSON, "", nil)
-	heads, err := e.pushConversationOnRunner(context.Background(), "runner-terminal", run, []domain.RepositoryContext{rc}, 0, "token", "User", "user@example.com", "message", "")
+	heads, err := e.pushConversationOnRunner(context.Background(), "runner-terminal", run, []domain.RepositoryContext{rc}, 0, "User", "user@example.com", "message", "")
 	if err != nil || len(heads) != 1 {
 		t.Fatalf("heads=%v err=%v", heads, err)
 	}
 	e, _ = cvETerminalEngine(t, domain.RunnerTaskSuccess, "{", "", nil)
-	if _, err := e.pushConversationOnRunner(context.Background(), "runner-terminal", run, []domain.RepositoryContext{rc}, 0, "", "", "", "message", ""); err == nil || !strings.Contains(err.Error(), "decode") {
+	if _, err := e.pushConversationOnRunner(context.Background(), "runner-terminal", run, []domain.RepositoryContext{rc}, 0, "", "", "message", ""); err == nil || !strings.Contains(err.Error(), "decode") {
 		t.Fatalf("invalid push result err=%v", err)
 	}
 	e, _ = cvETerminalEngine(t, domain.RunnerTaskFailed, "", "", nil)
-	if _, err := e.pushConversationOnRunner(context.Background(), "runner-terminal", run, []domain.RepositoryContext{rc}, 0, "", "", "", "message", ""); err == nil {
+	if _, err := e.pushConversationOnRunner(context.Background(), "runner-terminal", run, []domain.RepositoryContext{rc}, 0, "", "", "message", ""); err == nil {
 		t.Fatal("failed push succeeded")
 	}
 }
@@ -173,7 +173,7 @@ func TestRunnerAlignTerminalResults(t *testing.T) {
 				t.Fatal(err)
 			}
 			e.ConfigureCloudRunnerPool(CloudRunnerPool{Label: "align-pool", Projects: []string{"*"}})
-			err := e.AlignBaseline(repository, "token")
+			err := e.AlignBaselineForUser(repository, 0)
 			if tc.want == "" {
 				if err != nil {
 					t.Fatal(err)

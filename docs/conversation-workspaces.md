@@ -1,8 +1,12 @@
 # 对话工作区与项目沙箱
 
-普通对话中的 Main Bot 保持本地对话进程，需要看代码、改代码、跑命令、构建或访问 GitHub 时才调用 `workbench_workspace_open` 进入工作区模式。工作区是一个**运行环境**，不是一次检出：`workbench_workspace_open` 只接收 `sandboxProfileId`（其他参数一律报错），工具描述列出本项目和共享的可用沙箱（Docker，或执行机器的 native 轻量沙箱）以及项目登记的仓库地址供 clone 参考。不选环境时沿用当前工作区，还没有工作区时用会话设置或平台 `generic-docker`；任何情况下都不使用无隔离的宿主机（`local`）。所选环境不可用（被删除、`local`、跨项目私有、Dockerfile 缺失）时返回可操作错误，由 Main Bot 改选，不会被静默替换。
+普通对话中的 Main Bot 保持本地对话进程，需要看代码、改代码、跑命令、构建或访问 GitHub 时才调用 `workbench_workspace_open` 进入工作区模式。工作区是一个**运行环境**，不是一次检出：`workbench_workspace_open` 接收可选的 `sandboxProfileId` 与 `workspaceRunId`（其他参数一律报错），工具描述列出本项目和共享的可用沙箱（Docker，或执行机器的 native 轻量沙箱）以及项目登记的仓库地址供 clone 参考。不选环境时沿用当前工作区，还没有工作区时用会话设置或平台 `generic-docker`；任何情况下都不使用无隔离的宿主机（`local`）。所选环境不可用（被删除、`local`、跨项目私有、Dockerfile 缺失）时返回可操作错误，由 Main Bot 改选，不会被静默替换。
 
-工作区新开时是空目录，平台不预先检出任何仓库、不建分支。交接给 CLI 后，Agent 用自己的 git `clone`、`checkout`、建分支、`commit`、`push`，需要时 `merge`，并自己开 PR（`gh` 或 `curl` 调 API；镜像里没有 `gh` 时由 Agent 自行安装，或在沙箱配置里预装）。推送到主分支、强推、合并 PR 只在用户明确要求时做。
+传入 `workspaceRunId`（同项目的 SOP 运行 ID，或本对话之前开启过的可用工作区 ID；子 SOP 会自动定位到父工作区）时，要求目标工作区与当前对话在同一执行机器上（不在同一机器时如实报错并说明双方所在机器），直接将本对话绑定到该原工作区；已回收的快照会先原地恢复，且修改结果直接保留在原 SOP 工作区中，之后可直接在 SOP 上 `Retry` 重跑后续节点或 `runs_resume` 继续流程，删除普通对话也不会删除借用的 SOP 工作区。接入或进入 SOP 工作区与 SOP 自身的工作区编辑、终端、Retry、resume 一样需要项目写权限：本轮发言人是项目只读成员（viewer）时拒绝接入；共享对话已被其他成员绑定到 SOP 时，只读成员发言的那一轮以平台模式运行，不会继承该 SOP 工作区的写入能力。重新打开当前已绑定的工作区时若准备失败（租约被占用、执行机器暂时离线等），保留原绑定，稍后重试即可。执行机器比对使用运行实际所在的机器：没有冻结执行模式的旧运行按负责人默认执行机器计算。
+
+工作区默认新开时是空目录，平台不预先检出任何仓库、不建分支。交接给 CLI 后，Agent 用自己的 git `clone`、`checkout`、建分支、`commit`、`push`，需要时 `merge`，并自己开 PR（`gh` 或 `curl` 调 API；镜像里没有 `gh` 时由 Agent 自行安装，或在沙箱配置里预装）。推送到主分支、强推、合并 PR 只在用户明确要求时做。
+
+个人对话可直接使用共享沙箱开启可写工作区。Agent 可以创建文件、运行命令、预览，并把产物附到回复供查看和下载。有 Git 任务时，Agent 仍使用本轮发言人的凭据自行操作仓库。个人工作区只向会话所有者开放，Agent 只能接入当前对话开启的工作区。从已有个人工作区的对话选项目时，会在项目中新建对话，原个人对话和文件可继续使用。
 
 用户可在「高级设置 → 显示运行环境选择」中为会话指定环境。会话 `sandboxProfileId` 非空时，它优先于 Main Bot 的选择，工具描述也会告诉 Main Bot 不要再选。
 
@@ -14,7 +18,7 @@
 
 - HTTPS：个人配置的 Git Token。`GIT_ASKPASS` 指向工作区 `.agentflow/runtime/git-askpass-hosts`，脚本本身不含令牌，从提示里解析出 URL 主机，只在它恰好是 `https://github.com` 时以 `x-access-token` 应答；`github.com.example`、`github.com@example`、`http://` 等其他地址都拿不到凭据。带 `oauth2:`/`private:` 前缀的令牌不是 GitHub 令牌，不会注入。`GIT_TERMINAL_PROMPT=0`，不会卡在交互输入上。
 - `GH_TOKEN`：同一个令牌，供 `gh` 或 `curl` 调 GitHub API。平台进程自身的 `GH_TOKEN`/`GITHUB_TOKEN` 不会透传进沙箱。
-- SSH：个人 SSH 密钥按 `host:port` 绑定（不再按项目登记的仓库地址），任何克隆地址只要主机端口匹配就能用。私钥只在平台进程内存中的临时 ssh-agent 里，沙箱只看到 agent socket、公钥与 ssh config；主机公钥必须固定：平台内置 GitHub 公布的 `github.com:22` 与 `ssh.github.com:443` 公钥（来自 api.github.com/meta），其他主机由管理员通过 `AGENTFLOW_GIT_SSH_KNOWN_HOSTS` 固定，两者合并生效（文件里的 `@revoked` 同样作用于内置公钥）；未固定的主机报错说明原因。
+- SSH 克隆使用按 `host:port` 绑定的个人密钥。同一主机和端口的仓库共用该密钥。执行进程在内存中持有私钥，并通过临时 ssh-agent 签名。沙箱只接收 agent socket、公钥与 SSH 配置。平台内置 `github.com:22` 与 `ssh.github.com:443` 的主机公钥，其他主机由平台管理员在「平台管理 → Git SSH 主机信任」核验并登记。部署文件 `AGENTFLOW_GIT_SSH_KNOWN_HOSTS` 的条目与页面记录合并生效。Runner 0.11.1 及以上会在启动工作区会话时收到匹配的条目。同一主机和端口优先使用平台下发的受信公钥。平台仅下发吊销记录或没有匹配条目时，Runner 使用本地配置的受信公钥。两处的 `@revoked` 条目都生效。
 - 提交身份：`GIT_CONFIG_SYSTEM` 设为发言人的登录名，邮箱 `<login>@users.noreply.loopforge.invalid`；Agent 可以用 `git config --global/--local` 覆盖。
 
 工具结果和回复都会对发言人的令牌（含去掉前缀后的裸令牌）做脱敏；提示词要求 Agent 不打印、不回显、不写入令牌。
@@ -57,7 +61,7 @@ Docker 与 bwrap 下两种模式的 CLI 都在 `<会话根>/ws` 运行（工作�
 
 要交给用户的文件（HTML demo、报告、JSON/CSV 等文本文件）用 `workbench_publish_artifact { path }` 发布：附在本轮回复里，HTML 在产物栏可交互预览。空间会话里不带 `path` 时照旧把 `body`/`imageBase64`/`url` 发布到空间侧边栏。原来的 `workbench_workspace_attach` 已并入这个工具，只在角色交付物收集里作为内部调用保留。
 
-对话里直接改代码也要落到需求上。Agent 不需要调用登记工具：每轮回复保存前，平台列出工作区里两层目录内的 git 检出（远程执行机器上由 Runner 扫描，旧版 Runner 不支持时跳过），对其中指向 github.com 的远程仓库，用本轮发言人的 Git Token 查最近创建的 PR，满足以下全部条件的才登记：作者是该 Token 的用户、创建时间晚于工作区创建、头提交是工作区某个本地分支的当前提交、未关闭（或已合入），且还没有任何需求跟踪它。这样同一用户在别的会话或浏览器里开的 PR 不会被误登记；Agent 推送后又在本地追加了未推送的提交时，本轮不登记，下次推送后再登记。登记成功时回复末尾附一句登记结果。工作区仍未关联需求时，优先复用会话已关联的未完成需求，否则以第一个 PR 的标题和描述创建；借用已结束 SOP 工作区时登记到该 SOP 的需求。新建需求为本地 `requirement`、`in_progress`、`automationState=ignored`（不会被自动派发 SOP），负责人为当前用户，记录来源会话、工作区仓库和创建操作，并同时关联工作区与会话。已关联需求的工作区不再改关联；SOP 运行的需求只在派发时确定。
+项目对话里直接改代码也要落到需求上。Agent 不需要调用登记工具：每轮回复保存前，平台列出工作区里两层目录内的 git 检出（远程执行机器上由 Runner 扫描，旧版 Runner 不支持时跳过），对其中指向 github.com 的远程仓库，用本轮发言人的 Git Token 查最近创建的 PR，满足以下全部条件的才登记：作者是该 Token 的用户、创建时间晚于工作区创建、头提交是工作区某个本地分支的当前提交、未关闭（或已合入），且还没有任何需求跟踪它。这样同一用户在别的会话或浏览器里开的 PR 不会被误登记；Agent 推送后又在本地追加了未推送的提交时，本轮不登记，下次推送后再登记。登记成功时回复末尾附一句登记结果。工作区仍未关联需求时，优先复用会话已关联的未完成需求，否则以第一个 PR 的标题和描述创建；借用已结束 SOP 工作区时登记到该 SOP 的需求。新建需求为本地 `requirement`、`in_progress`、`automationState=ignored`（不会被自动派发 SOP），负责人为当前用户，记录来源会话、工作区仓库和创建操作，并同时关联工作区与会话。已关联需求的工作区不再改关联；SOP 运行的需求只在派发时确定。
 
 登记的 PR（记为 `github:owner/repo`）写入该需求的交付 MR 并登记合入跟踪，链接能对上项目登记的仓库时同时记录仓库，需求转为 `in_review`；PR 合入默认分支后由轮询把需求标为完成。每轮对话的模型用量按回复模型定价累加到当前对话工作区。
 

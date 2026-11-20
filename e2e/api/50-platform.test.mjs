@@ -3,7 +3,8 @@
 // and user endpoints.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { api, get, post, put, del, list, track, cleanup, ensureProject, waitFor, waitRun } from '../lib/api.mjs';
+import { createHash, generateKeyPairSync } from 'node:crypto';
+import { api, get, post, put, del, list, track, cleanup, ensureProject, waitFor, waitRun, tokenOwner, tokenBSkip, asB } from '../lib/api.mjs';
 import { cfg, uid } from '../lib/env.mjs';
 import { createWorkflow, script, trackRun } from '../lib/fixtures.mjs';
 
@@ -166,6 +167,95 @@ test('users: list, detail and credential flags never leak secrets', async () => 
   // Per-user endpoints are write-only; reads go through the list.
   await api('GET', `/api/users/${me.id}`, undefined, { expect: 405 });
   await api('GET', `/api/users/${me.id}/credentials`, undefined, { expect: [404, 405] });
+});
+
+test('users: per-host Git access tokens are write-only and scoped to their owner', async () => {
+  const me = await tokenOwner();
+  const base = `/api/users/${me.id}/git-http-credentials`;
+  const host = `${uid('git-host')}.example.com:8443`;
+  const secret = uid('git-token');
+  const before = list(await get(base));
+  let id = '';
+  try {
+    const saved = list(await put(base, { host: `https://${host}/`, name: 'e2e host', platform: 'other', token: secret }));
+    const cred = saved.find(c => c.host === host);
+    assert.ok(cred, `saved credential not listed: ${JSON.stringify(saved).slice(0, 300)}`);
+    id = cred.id;
+    assert.equal(Object.hasOwn(cred, 'exposeToWorkspace'), false);
+    assert.doesNotMatch(JSON.stringify(await get(base)), new RegExp(secret), 'the token is never returned');
+    // Saving the same host again with a blank token keeps one row and its token.
+    const replaced = list(await put(base, { id, host, name: 'e2e host renamed', platform: 'other', token: '' }));
+    assert.equal(replaced.filter(c => c.host === host).length, 1);
+    assert.equal(replaced.find(c => c.host === host).name, 'e2e host renamed');
+    await api('PUT', base, { host: 'not a host/with path', name: 'bad', platform: 'other', token: 'x' }, { expect: 400 });
+    await api('POST', `${base}/does-not-exist/verify`, {}, { expect: 404 });
+    await api('GET', '/api/users/not-a-number/git-http-credentials', undefined, { expect: 400 });
+    if (!tokenBSkip) {
+      await api('GET', base, undefined, asB({ expect: 403 }));
+      await api('DELETE', `${base}/${id}`, undefined, asB({ expect: 403 }));
+    }
+  } finally {
+    if (id) {
+      const after = list(await del(`${base}/${id}`, { expect: 200 }));
+      assert.ok(!after.some(c => c.host === host), 'deleted credential is gone');
+      assert.equal(after.length, before.length);
+    }
+  }
+});
+
+function newSSHHostKey() {
+  const algorithm = Buffer.from('ssh-ed25519');
+  const { publicKey } = generateKeyPairSync('ed25519');
+  const key = Buffer.from(publicKey.export({ format: 'jwk' }).x, 'base64url');
+  const blob = Buffer.alloc(8 + algorithm.length + key.length);
+  blob.writeUInt32BE(algorithm.length);
+  algorithm.copy(blob, 4);
+  blob.writeUInt32BE(key.length, 4 + algorithm.length);
+  key.copy(blob, 8 + algorithm.length);
+  return {
+    publicKeys: `${algorithm.toString()} ${blob.toString('base64')}`,
+    fingerprint: `SHA256:${createHash('sha256').update(blob).digest('base64').replace(/=+$/, '')}`,
+  };
+}
+
+test('platform: Git SSH host trust previews, registers, rotates and removes a host', async () => {
+  const base = '/api/platform/git-ssh-hosts';
+  const host = `${uid('ssh-host')}.example.org:2222`;
+  const path = `${base}/${encodeURIComponent(host)}`;
+  const findHost = async () => (await get(base)).find(entry => entry.host === host);
+  const revisionHeader = revision => ({ 'If-Match': JSON.stringify(revision) });
+
+  const initial = newSSHHostKey();
+  const input = { host: host.toUpperCase(), publicKeys: initial.publicKeys };
+  const preview = await post(`${base}/preview`, input, { expect: 200 });
+  assert.equal(preview.host, host);
+  assert.deepEqual(preview.fingerprints, [initial.fingerprint]);
+  assert.equal(await findHost(), undefined, 'preview must not register the host');
+
+  track(`Git SSH host ${host}`, async () => {
+    const entry = await findHost();
+    if (entry) await del(path, { expect: 204, headers: revisionHeader(entry.revision) });
+  });
+  const created = await post(base, input, { expect: 201, raw: true });
+  assert.ok(created.data.revision);
+  assert.equal(created.headers.get('etag'), JSON.stringify(created.data.revision));
+  assert.deepEqual(created.data.fingerprints, [initial.fingerprint]);
+  assert.deepEqual(await findHost(), created.data);
+
+  const replacement = newSSHHostKey();
+  const rotated = await put(path, { publicKeys: replacement.publicKeys }, {
+    expect: 200, headers: revisionHeader(created.data.revision),
+  });
+  assert.notEqual(rotated.revision, created.data.revision);
+  assert.deepEqual(rotated.fingerprints, [replacement.fingerprint]);
+
+  const stale = { expect: 412, headers: revisionHeader(created.data.revision) };
+  assert.equal((await put(path, { publicKeys: initial.publicKeys }, stale)).code, 'ssh_host_trust_changed');
+  assert.equal((await del(path, stale)).code, 'ssh_host_trust_changed');
+  assert.deepEqual(await findHost(), rotated);
+
+  await del(`${base}?host=${encodeURIComponent(host)}`, { expect: 204, headers: revisionHeader(rotated.revision) });
+  assert.equal(await findHost(), undefined);
 });
 
 test('chat clarify and sync endpoints are reachable read-only', async () => {

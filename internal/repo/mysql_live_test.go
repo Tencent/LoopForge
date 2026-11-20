@@ -222,10 +222,11 @@ func TestMySQLGitSSHCredentialLifecycle(t *testing.T) {
 	}
 	defer func() {
 		_ = s.DB.Exec(`DELETE FROM user_git_ssh_keys WHERE user_id=?`, user.ID).Error
+		_ = s.DB.Exec(`DELETE FROM user_git_http_credentials WHERE user_id=?`, user.ID).Error
 		_ = s.DB.Exec(`DELETE FROM user_configs WHERE user_id=?`, user.ID).Error
 		_ = s.DB.Exec(`DELETE FROM users WHERE id=?`, user.ID).Error
 	}()
-	if _, err := s.UpdateUserCredentials(user.ID, UserCredentialUpdate{GitToken: "test-only token"}); err != nil {
+	if err := s.SaveGitHTTPCredential(user.ID, "", domain.GitHTTPCredentialSecret{GitHTTPCredential: domain.GitHTTPCredential{Host: "github.com", Name: "GitHub", Platform: domain.GitPlatformGitHub}, Token: "test-only-token"}); err != nil {
 		t.Fatal(err)
 	}
 	const first = "git@gitlab.example.org:team/app.git"

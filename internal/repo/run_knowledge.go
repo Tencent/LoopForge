@@ -1,7 +1,6 @@
 package repo
 
 import (
-	"encoding/json"
 	"strings"
 
 	"agentflow/internal/domain"
@@ -36,18 +35,15 @@ func (r *RunsRepo) KnowledgeArtifacts(projectID string, limit int) []domain.Know
 		}
 	}
 	var runs []runRow
-	if err := r.DB.Select("id", "workflow_id", "status", "execution_context").Where("id IN ?", runIDs).Find(&runs).Error; err != nil {
+	if err := r.DB.Select("id", "kind", "workflow_id", "status", "execution_context").Where("id IN ?", runIDs).Find(&runs).Error; err != nil {
 		return out
 	}
-	type runMeta struct {
-		workflowID, status string
-		ctx                domain.TelemetryContext
-	}
-	meta := make(map[string]runMeta, len(runs))
-	for _, run := range runs {
-		m := runMeta{workflowID: run.WorkflowID, status: run.Status}
-		_ = json.Unmarshal(run.ExecutionContext, &m.ctx)
-		meta[run.ID] = m
+	meta := make(map[string]domain.Run, len(runs))
+	for _, row := range runs {
+		run := runFromRow(row)
+		if !run.IsPersonalWorkspace() {
+			meta[run.ID] = run
+		}
 	}
 	// Retries emit one artifact per attempt; only the latest per run/node/path
 	// is a meaningful candidate.
@@ -57,7 +53,7 @@ func (r *RunsRepo) KnowledgeArtifacts(projectID string, limit int) []domain.Know
 		if !ok {
 			continue
 		}
-		if projectID != "" && m.ctx.ProjectID != projectID {
+		if projectID != "" && m.ExecutionContext.ProjectID != projectID {
 			continue
 		}
 		key := row.RunID + "\x00" + row.NodeID + "\x00" + row.Path
@@ -67,8 +63,8 @@ func (r *RunsRepo) KnowledgeArtifacts(projectID string, limit int) []domain.Know
 		latest[key] = true
 		out = append(out, domain.KnowledgeCandidate{
 			Artifact:  artifactFromRow(row, false),
-			ProjectID: m.ctx.ProjectID, IssueID: m.ctx.IssueID,
-			WorkflowID: m.workflowID, RunStatus: m.status,
+			ProjectID: m.ExecutionContext.ProjectID, IssueID: m.ExecutionContext.IssueID,
+			WorkflowID: m.WorkflowID, RunStatus: m.Status,
 		})
 		if len(out) >= limit {
 			break

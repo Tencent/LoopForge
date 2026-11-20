@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"agentflow/internal/domain"
+	"agentflow/internal/gitwork"
 	"agentflow/internal/repo"
 
 	"github.com/gin-gonic/gin"
@@ -88,6 +89,7 @@ type runnersHandlers struct {
 	*deps
 	runnerWaiters   *runnerWaiterRegistry
 	runnerControls  *runnerControlHub
+	assistant       *assistantHandlers
 	runnerBindMu    stdsync.Mutex
 	runnerBindCodes map[string]runnerBindCode
 }
@@ -683,7 +685,7 @@ func normalizeRunnerRuntimes(reported, existing []domain.RunnerRuntime) []domain
 		if previous.Status == domain.RuntimeStatusDisabled {
 			out[i].Status = domain.RuntimeStatusDisabled
 		}
-		if domain.IsAgentCLIKind(out[i].Provider) {
+		if domain.IsAgentCLIKind(out[i].Provider) && !domain.SupportsRunnerLogin(out[i].Provider) {
 			out[i].AuthMode = domain.RuntimeAuthPersonal
 		} else if previous.AuthMode == domain.RuntimeAuthLocal || previous.AuthMode == domain.RuntimeAuthPersonal {
 			out[i].AuthMode = previous.AuthMode
@@ -824,10 +826,11 @@ func (h *runnersHandlers) runnerTaskClaim(c *gin.Context) {
 		return
 	}
 	var input struct {
-		AvailableRuntimes []string `json:"availableRuntimes"`
-		Capacity          int      `json:"capacity"`
-		Preflight         bool     `json:"preflight"`
-		NoWait            bool     `json:"noWait"`
+		AvailableRuntimes        []string `json:"availableRuntimes"`
+		Capacity                 int      `json:"capacity"`
+		Preflight                bool     `json:"preflight"`
+		NoWait                   bool     `json:"noWait"`
+		SupportsGitSSHKnownHosts bool     `json:"supportsGitSshKnownHosts"`
 	}
 	if !decode(c, &input) {
 		return
@@ -853,7 +856,16 @@ func (h *runnersHandlers) runnerTaskClaim(c *gin.Context) {
 		}
 		if task.Invocation != nil && task.Invocation.GitSSHUserID > 0 && runner.SupportsGitSSH() && len(task.Invocation.GitSSHRemotes()) > 0 {
 			task.Invocation.GitSSHKeys = h.repo.GitSSHKeysForRemotes(task.Invocation.GitSSHUserID, task.Invocation.GitSSHRemotes())
+			if input.SupportsGitSSHKnownHosts {
+				ctx := gitwork.WithSSHKnownHostsLookup(c.Request.Context(), h.repo.PlatformSSHKnownHosts)
+				task.GitSSHKnownHosts = gitwork.SSHKnownHostsForKeys(ctx, task.Invocation.GitSSHKeys)
+			}
 			task.Invocation.GitSSHUserID = 0
+			c.Header("Cache-Control", "no-store")
+		}
+		if task.Invocation != nil && task.Invocation.GitHTTPUserID > 0 && runner.SupportsGitHTTP() {
+			task.Invocation.GitHTTPCredentials = h.repo.GitHTTPCredentialSecrets(c.Request.Context(), task.Invocation.GitHTTPUserID)
+			task.Invocation.GitHTTPUserID = 0
 			c.Header("Cache-Control", "no-store")
 		}
 		c.JSON(http.StatusOK, map[string]any{"task": resolveRunnerTaskSandbox(task, runner.OS)})

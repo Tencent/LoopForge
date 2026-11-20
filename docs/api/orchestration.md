@@ -336,7 +336,7 @@ curl -u "$AGENTFLOW_USER:$AGENTFLOW_PASS" \
 
 触发任务可选 `maxDispatch`，配置每次最多成功触发的需求数，取值为 1–10；不配置（或为 0）时默认为 10，旧任务同样适用。自动执行和「立即运行」共用此上限；已有任务、基线阻塞或派发时被跳过的需求不占用名额，其余需求留待后续执行。`lastPulled` 仍记录所有匹配候选数，`lastDispatched` 记录本次实际成功触发数。AI 定时任务不使用此配置。
 
-AI 定时任务（`skipDispatch=true`）字段包括 `id`、`name`、`enabled`、`projectId`、`assistantPrompt` / `assistantModel` / `ownerUserId`、`intervalSec` 或 `cron`。到点用项目 Owner（否则任务 Owner）在所选 CLI 上的 Key，按提示词原文走与主页相同的对话轮次并自动写入，不扫描需求、不派发 SOP。非 CodeBuddy CLI 仍要该账号自己的凭据，不借用平台共享的 CodeBuddy Key。
+AI 定时任务（`skipDispatch=true`）字段包括 `id`、`name`、`enabled`、`projectId`、`assistantPrompt`、`assistantModel`、`ownerUserId` 以及 `intervalSec` 或 `cron`。触发后以保存人的身份开启一轮完全权限对话，使用任务的提示词。模型目录通过 `GET /api/assistant/models?schedule=1` 读取。
 
 AI 定时任务固定使用自动执行模式，不受 Studio 对话审批模式影响，平台写入无需逐次人工确认。
 
@@ -348,7 +348,13 @@ AI 定时任务没有单独的时长上限：这一轮和普通对话一样，�
 
 ### `POST|PUT /api/schedule-jobs`
 
-新建或按 `id` 更新，两种方法语义相同。`name` 必填。调度为 `intervalSec`（常用间隔）或 5 段 `cron`（东八区）。`skipDispatch` 为 true 时是 AI 定时任务，必须有 `assistantPrompt`，保存时清空 SOP 字段；否则是触发任务，必须有 `workflowId`，保存时清空提示词。可选 `useIssueWorkflow`。`assistantModel` 保存时保留已支持 CLI 的模型（`codex:…`、`claude-code:…`）；CodeBuddy 模型仍限制在助手目录内。运行前检查执行账号在该 CLI 上的 Key。保存时把项目 Owner 记为 `ownerUserId`。AI 定时任务用保存人的 Key 执行：服务端把 `runAsUserId` 设为本次保存的登录用户（请求里传的值不生效），其他成员编辑保存后改用他的 Key。保存人没有个人 CodeBuddy Key 时用平台共享 Key，`assistantModel` 必须是共享 Key 允许的模型（为空或 `default` 时取共享 Key 的默认模型）；没有可用 Key（没配个人 Key 且平台也没有共享 Key，或 Codex / Claude Code 模型缺对应 Key）时返回 `400` 并说明原因；只有停用任务、提示词和模型等执行配置都不变时例外，此时只把库中当前任务的 `enabled` 改为 false，其余字段（包括名称、通知、调度以及期间其他人已保存的修改）保持库中的值，原执行身份也保留，方便没有 Key 的成员停用任务；写入前在行锁内重新核对当前任务仍在原项目、执行配置仍与请求一致，否则返回 `409`，需刷新后重试。没有执行身份的旧任务先按项目 Owner、任务 Owner 的顺序找个人 Key，都没有时才用平台共享 Key。AI 定时任务的 `sessionMode` 为空时每次执行新开一个会话，`fixed` 时始终在同一个会话里继续；每次新开时用 `sessionKeep` 设置保留最近多少个会话（`10` / `50` / `100`，`-1` 不限，不传默认 `50`，其他值 `400`），每次执行结束后删除更早的会话，执行记录不受影响。更新时若请求未带 `blockers`，保留触发任务已有的基线暂停状态。
+新建或按 `id` 更新，两种方法语义相同。`name` 必填。调度为 `intervalSec`（常用间隔）或 5 段 `cron`（东八区）。AI 定时任务需要 `assistantPrompt` 或共享任务版本。触发任务需要 `workflowId`，可选 `useIssueWorkflow`。更新时若请求未带 `blockers`，沿用触发任务的基线暂停状态。
+
+服务端把 `runAsUserId` 绑定到本次保存的登录用户。Codex 和 Claude Code 优先使用该用户默认个人执行机器上的「账号登录」，需要 Runner 0.10.2 或以上及已启用的 CLI。默认机器离线或未启用账号登录时，以该用户的个人 API Key 在云端执行任务指定的 CLI 和模型。Key 缺失或执行失败时，任务记录具体原因。CodeBuddy 缺少个人 Key 时使用平台共享 Key，只能选择管理员允许的模型。模型为空或 `default` 时取共享 Key 的默认模型。没有执行身份的旧任务依次尝试项目 Owner、独立任务记录的 Owner 的个人凭据，最后尝试平台共享 Key。
+
+缺少凭据的保存返回 `400`。没有凭据的项目成员也可以停用执行配置未变的任务，服务端在行锁内重新核对项目和执行配置，然后仅将 `enabled` 改为 false。若并发修改使核对失败，返回 `409`。
+
+AI 定时任务的 `sessionMode` 为空时每次执行新开一个会话，`fixed` 时始终在同一个会话里继续；每次新开时用 `sessionKeep` 设置保留最近多少个会话（`10` / `50` / `100`，`-1` 不限，不传默认 `50`，其他值 `400`），每次执行结束后删除更早的会话，执行记录不受影响。
 
 `id` 为空时生成；`projectId` 默认 `platform`；`intervalSec<30` 时重置为 `300`。更新若不提供 `lastRunAt` 会保留已有最近运行字段。成功 `200` 返回 job；校验/存储错误 `400`。
 
@@ -408,7 +414,9 @@ curl -u "$AGENTFLOW_USER:$AGENTFLOW_PASS" \
 - `overview.current` / `overview.previous`：最近 7×24 小时（含当前小时）与再往前 7×24 小时的 `total`、`finished`、`success`、`failed`、`running`、`avgMs`，只随 `jobId` 变化。已结束的执行来自按小时累计的统计表 `schedule_job_execution_stats`（保留 30 天，删除任务时一并删除），不受每个任务只保留 200 条记录的影响；进行中的执行从记录里数；
 - `records`：该项目保留的记录总数；`recentFailed`：该项目最近 7 天的失败次数（标签角标用）。
 
-缺 `projectId` 或 `since` 格式不对返回 400；`jobId` 属于无权访问的项目返回 403。统计表从部署后开始累计，部署前的执行不计入概览。
+缺 `projectId` 或 `since` 格式不对返回 400；`jobId` 属于无权访问的项目返回 403。统计表从部署后开始累计。升级时可备份并停止平台后，手动执行 `migrations/039_schedule_execution_legacy_stats.sql`，将仍保留的旧执行补入缺失的小时桶；脚本不覆盖已有桶，发现部分重叠时拒绝回补，不重建已清理的记录，也不推算旧 Token。
+
+AI 执行记录的可选 `model`、`usage`、`costCny` 保存本次 generation 的消耗与费用估计，包含重试及失败前已上报的调用，不含同一固定会话的前次执行或下游 SOP。`usage` 缺失表示未上报。`overview.current` / `overview.previous` 另外返回 `metered`、`tokens`（`total`、`input`、`output`、`cacheRead`、`cacheWrite`）、`avgTokens`、`priced`、`costCny`。`tokens.total` 优先使用模型上报总量，否则为输入加输出；缓存明细不再相加。`avgTokens` 仅对已上报执行取平均，`priced` 仅计入可估价执行。
 
 ```bash
 curl -u "$AGENTFLOW_USER:$AGENTFLOW_PASS" \

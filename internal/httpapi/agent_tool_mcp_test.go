@@ -356,8 +356,8 @@ func TestMCPClientPreservesInputSchema(t *testing.T) {
 }
 
 // A conversation sees every tool of the project's MCPs. Reads run; a write
-// follows the approval mode: confirm refuses it, auto runs it and assisted
-// runs it only after the review allows it.
+// follows the approval mode. Confirm requires a live turn, auto runs it,
+// and assisted runs it only after the review allows it.
 func TestConversationMCPFollowsApprovalModeOnly(t *testing.T) {
 	resetAgentToolSessionsForTest()
 	resetAgentToolCatalogCacheForTest()
@@ -432,8 +432,8 @@ func TestConversationMCPFollowsApprovalModeOnly(t *testing.T) {
 	if out := call(confirm, "allow", topLevel); len(called) != 1 {
 		t.Fatalf("a top-level tool must be callable: %v %s", called, out)
 	}
-	if out := call(confirm, "allow", write); len(called) != 0 || !strings.Contains(out, "审批模式") {
-		t.Fatalf("confirm mode must refuse the write: %v %s", called, out)
+	if out := call(confirm, "allow", write); len(called) != 0 || !strings.Contains(out, "审批上下文") {
+		t.Fatalf("confirm mode needs a live turn for approval: %v %s", called, out)
 	}
 	if out := call(assistantExecMode{AutoWrite: true}, "deny", write); len(called) != 1 || called[0] != "stories_update" {
 		t.Fatalf("auto mode runs the write without review: %v %s", called, out)

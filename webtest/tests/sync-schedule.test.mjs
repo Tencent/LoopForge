@@ -254,8 +254,7 @@ test('an AI job runs with the saver\'s key without asking whose key to use', asy
   const form = app.document.querySelector('#scheduleJobForm');
   assert.equal(form.elements.runAs, undefined, 'there is no run-as picker');
   assert.equal(app.document.querySelector('#scheduleRunAsHint'), null);
-  assert.match(app.document.querySelector('#scheduleModalHint').textContent, /保存人的 Key/);
-  assert.match(app.document.querySelector('#scheduleModalHint').textContent, /平台共享 Key/);
+  assert.match(app.document.querySelector('#scheduleModalHint').textContent, /保存人的身份/);
   form.elements.name.value = 'Mine';
   form.elements.assistantPrompt.value = 'check';
   form.dispatchEvent(new app.window.Event('submit', { bubbles: true, cancelable: true }));
@@ -391,7 +390,7 @@ test('AI schedule navigation separates existing tasks and preserves editor kind 
   assert.equal(form.elements.jobKind.value, 'assistant');
   assert.equal(app.document.querySelector('#scheduleModalTitle').textContent, 'AI 定时任务');
   assert.match(app.document.querySelector('#scheduleModalHint').textContent, /完全权限/);
-  assert.match(app.document.querySelector('#scheduleModalHint').textContent, /保存人的 Key.*平台共享 Key/);
+  assert.match(app.document.querySelector('#scheduleModalHint').textContent, /保存人的身份/);
   assert.doesNotMatch(app.document.querySelector('#aiScheduleRuntimeHint').textContent, /不直接运行|不会派发/);
   assert.equal(app.document.querySelector('#scheduleJobList').hidden, true);
   app.evaluate('resetScheduleJobForm()');
@@ -538,19 +537,19 @@ test('late save responses cannot close a newly opened editor',async t=>{
  assert.equal(form.querySelector('[type=submit]').disabled,false);
 });
 
-test('AI schedule model picker narrows models to the chosen CLI and keeps a saved CLI model', async (t) => {
+test('AI schedule model picker includes account login CLI models and keeps a saved CLI model', async (t) => {
   const app = await loadApp();
   t.after(app.close);
-  app.router.get('/api/assistant/models', () => ({
-    default: 'glm-test',
+  app.router.get('/api/assistant/models', call => ({
+    default: 'default',
     models: [
       { id: 'glm-test', name: 'GLM Test', family: 'glm' },
       { id: 'claude-test', name: 'Claude Test', family: 'claude' },
-      { id: 'codex:gpt-6-sol', name: 'GPT-6-Sol', family: 'gpt', engine: 'codex' },
+      ...(call.search === '?schedule=1' ? [{ id: 'codex:gpt-6-sol', name: 'GPT-6-Sol', family: 'gpt', engine: 'codex' }] : []),
     ],
     engines: [
       { id: 'codebuddy', name: 'CodeBuddy', configured: true },
-      { id: 'codex', name: 'Codex', configured: true },
+      { id: 'codex', name: 'Codex', configured: call.search === '?schedule=1' },
       { id: 'claude-code', name: 'Claude Code', configured: false },
     ],
   }));
@@ -564,7 +563,7 @@ test('AI schedule model picker narrows models to the chosen CLI and keeps a save
   const form = doc.querySelector('#scheduleJobForm');
   const engine = doc.querySelector('#scheduleEngine');
   assert.deepEqual([...engine.options].map(o => [o.value, o.disabled]), [['codebuddy', false], ['codex', false], ['claude-code', true]]);
-  assert.match(engine.options[2].textContent, /未配置 Key/);
+  assert.match(engine.options[2].textContent, /缺少凭据/);
   assert.equal(engine.value, 'codebuddy');
 
   const toggle = doc.querySelector('#scheduleModelPicker [data-model-toggle]');
@@ -579,6 +578,7 @@ test('AI schedule model picker narrows models to the chosen CLI and keeps a save
   engine.value = 'codex';
   engine.dispatchEvent(new app.window.Event('change'));
   assert.equal(form.elements.assistantModel.value, 'codex:gpt-6-sol');
+  assert.equal(toggle.querySelector('[data-model-label]').textContent, 'GPT-6-Sol');
   toggle.click();
   assert.deepEqual([...menu.querySelectorAll('.ai-model-option')].map(o => o.dataset.id), ['codex:gpt-6-sol']);
   menu.querySelector('.ai-model-option').click();
@@ -593,6 +593,5 @@ test('AI schedule model picker narrows models to the chosen CLI and keeps a save
   assert.equal(engine.value, 'claude-code');
   assert.equal(engine.selectedOptions[0].disabled, false);
   assert.equal(form.elements.assistantModel.value, 'claude-code:opus');
-  assert.match(doc.querySelector('#scheduleModelHint').textContent, /所选 CLI/);
-  assert.match(doc.querySelector('#scheduleModelHint').textContent, /保存人.*平台共享 Key/);
+  assert.match(doc.querySelector('#scheduleModelHint').textContent, /默认执行机器的账号登录.*离线时改用个人 API Key.*Key 缺失或不可用时任务失败.*平台共享 Key/);
 });

@@ -98,7 +98,11 @@ func (h *assistantHandlers) forkSession(c *gin.Context) {
 			prefix[i].Content = string(raw)
 		}
 	}
-	branch := domain.AssistantSession{ID: newAssistantSessionID(), UserID: user.ID, ProjectID: source.ProjectID, IssueID: source.IssueID, Model: source.Model, Effort: source.Effort, Messages: append(prefix, edited), Shared: source.Shared, RunID: source.RunID, ParentSessionID: source.ID, RootSessionID: source.RootSessionID, ForkMessageIndex: index, Title: "分支 · " + truncateRunes(edited.Content, 28)}
+	executor := h.forkExecutor(c, source, user.ID)
+	if executor == "" && source.Model != "" {
+		executor, _ = assistantModelEngine(source.Model)
+	}
+	branch := domain.AssistantSession{ID: newAssistantSessionID(), UserID: user.ID, ProjectID: source.ProjectID, IssueID: source.IssueID, Model: source.Model, Effort: source.Effort, Executor: executor, Messages: append(prefix, edited), Shared: source.Shared, RunID: source.RunID, ParentSessionID: source.ID, RootSessionID: source.RootSessionID, ForkMessageIndex: index, Title: "分支 · " + truncateRunes(edited.Content, 28)}
 	if branch.RootSessionID == "" {
 		branch.RootSessionID = source.ID
 	}
@@ -112,6 +116,69 @@ func (h *assistantHandlers) forkSession(c *gin.Context) {
 	saved, _ := h.repo.AssistantSession(user.ID, branch.ID)
 	c.JSON(201, saved)
 }
+
+// Older forks stored the model and transcript without the source executor.
+// A readable ancestor can supply it if it still describes the forked turn.
+func (h *assistantHandlers) forkExecutor(c *gin.Context, session domain.AssistantSession, userID int64) string {
+	if session.Executor != "" || session.ParentSessionID == "" {
+		return session.Executor
+	}
+	if assistantModelHasEnginePrefix(session.Model) {
+		engine, _ := assistantModelEngine(session.Model)
+		return engine
+	}
+	for _, id := range []string{session.ParentSessionID, session.RootSessionID} {
+		if id == "" || id == session.ID {
+			continue
+		}
+		owner, _, _, err := h.conversationReadScope(c, id, userID)
+		if err != nil {
+			continue
+		}
+		parent, ok := h.repo.AssistantSession(owner, id)
+		if !ok || parent.ProjectID != session.ProjectID || parent.RunID != session.RunID || parent.Shared != session.Shared {
+			continue
+		}
+		if !matchesForkHistory(session, parent) {
+			continue
+		}
+		if parent.Executor != "" {
+			return parent.Executor
+		}
+		if assistantModelHasEnginePrefix(parent.Model) {
+			engine, _ := assistantModelEngine(parent.Model)
+			return engine
+		}
+	}
+	return ""
+}
+
+func matchesForkHistory(fork, parent domain.AssistantSession) bool {
+	if parent.Model == fork.Model && !fork.CreatedAt.IsZero() && !parent.UpdatedAt.After(fork.CreatedAt) {
+		return true
+	}
+	// A parent can change CLI after an edit removes its earlier replies.
+	// The latest inherited reply identifies the CLI's surviving history.
+	for i := min(fork.ForkMessageIndex, len(fork.Messages)) - 1; i >= 0; i-- {
+		message := fork.Messages[i]
+		if message.Role != "assistant" || message.SpeakerAgentID != "" || message.Model == "" {
+			continue
+		}
+		if i >= len(parent.Messages) {
+			return false
+		}
+		other := parent.Messages[i]
+		if other.Role != message.Role || other.SpeakerAgentID != "" || other.Model != message.Model {
+			return false
+		}
+		if message.GenerationID != "" {
+			return message.GenerationID == other.GenerationID
+		}
+		return !message.CreatedAt.IsZero() && message.CreatedAt.Equal(other.CreatedAt)
+	}
+	return false
+}
+
 func copyForkAttachment(from, to int64, id, project string) (domain.AssistantAttachment, error) {
 	record, file, err := openWorkbenchAttachment(from, id)
 	if err != nil {
@@ -199,12 +266,27 @@ func (h *assistantHandlers) editSession(c *gin.Context) {
 			edited.Attachments[i] = copy
 		}
 	}
+	// Resolve a legacy branch's executor while its inherited replies are still
+	// available. A replacement can remove the reply that identifies its CLI.
+	source.Executor = h.forkExecutor(c, source, user.ID)
 	var target []domain.AssistantSession
 	resultOwner, resultID := owner, source.ID
 	if source.Shared && source.ParentSessionID != "" {
 		main, ok := h.repo.SharedAssistantSession(source.RootSessionID)
 		if !ok {
 			c.JSON(409, gin.H{"error": "主讨论不存在"})
+			return
+		}
+		// The copied prefix has to be resumable using the main conversation's
+		// CLI. Refuse an incompatible edit before replacing its transcript.
+		inherited := assistantConversationEngine(source.Messages[:*body.MessageIndex], source.Executor)
+		mainExecutor := h.forkExecutor(c, main, user.ID)
+		mainEngine := assistantConversationEngine(main.Messages, mainExecutor)
+		if mainEngine == "" && (mainExecutor != "" || main.Model != "") {
+			mainEngine, _ = assistantModelEngine(assistantRequestModel(mainExecutor, main.Model))
+		}
+		if inherited != "" && mainEngine != "" && inherited != mainEngine {
+			c.JSON(409, gin.H{"error": "分支与主讨论使用不同的 CLI，无法将分支消息编辑到主讨论"})
 			return
 		}
 		target = append(target, main)
@@ -215,5 +297,6 @@ func (h *assistantHandlers) editSession(c *gin.Context) {
 		return
 	}
 	saved, _ := h.repo.AssistantSession(resultOwner, resultID)
+	saved.Executor = h.forkExecutor(c, saved, user.ID)
 	c.JSON(200, saved)
 }

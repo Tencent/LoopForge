@@ -12,12 +12,13 @@ import (
 	"strings"
 
 	"agentflow/internal/domain"
+	"agentflow/internal/managedcli"
 )
 
 // Agent CLIs beyond CodeBuddy / Codex / Claude Code. Each one runs with the
-// responsible user's own key from 个人配置 inside a private HOME that also
-// holds the CLI's MCP and model configuration, so neither the host login nor
-// the host configuration leaks into a run.
+// responsible user's credential inside a private HOME that also holds MCP
+// and model configuration. Antigravity may explicitly reuse the machine
+// owner's account login; other agent CLIs use a key from 个人配置.
 const (
 	AgentCLIOpenCode    = "opencode"
 	AgentCLICursor      = "cursor"
@@ -80,8 +81,7 @@ func agentCLIModelOptional(kind, baseURL string) bool {
 type AgentCLIOptions struct {
 	ApprovalCommand string
 	Model           string
-	// Effort is the reasoning effort chosen for Model; Cursor resolves the
-	// pair to one model ID with the owner's catalog.
+	// Effort is the reasoning effort chosen for Model.
 	Effort string
 	// SystemPromptFile is the system prompt path as the process sees it
 	// (relative paths resolve against the working directory).
@@ -93,14 +93,16 @@ type AgentCLIOptions struct {
 // agentCLIKeyEnv holds the user's key for CLIs whose configuration names
 // the variable instead of the secret.
 const agentCLIKeyEnv = "AGENTFLOW_CLI_API_KEY"
+const kimiThinkingEffortEnv = "KIMI_MODEL_THINKING_EFFORT"
 
 // agentCLIHostEnv is cleared for every child: these variables would select
 // the host's own login, key, gateway or configuration directory.
 var agentCLIHostEnv = append([]string{
 	agentCLIKeyEnv, "CURSOR_API_KEY", "CURSOR_AUTH_TOKEN", "GEMINI_API_KEY", "GOOGLE_API_KEY", "GOOGLE_GEMINI_BASE_URL", "GEMINI_BASE_URL",
+	"AGY_ADC_AUTH", "GOOGLE_APPLICATION_CREDENTIALS", "GOOGLE_GENAI_USE_VERTEXAI", "GEMINI_HOME", "AGY_ACP_FORCE_FILE_STORAGE",
 	"AGY_LLM_GATEWAY_URL", "AGY_LLM_GATEWAY_API_KEY", "AGY_LLM_GATEWAY_WIRE_PROTOCOL", "AGY_LLM_GATEWAY_MODELS",
 	"DEEPSEEK_API_KEY", "DSH_HOME", "MOONSHOT_API_KEY", "KIMI_API_KEY", "KIMI_BASE_URL", "KIMI_CODE_HOME",
-	"KIMI_MODEL_NAME", "KIMI_MODEL_API_KEY", "KIMI_MODEL_BASE_URL", "KIMI_MODEL_PROVIDER_TYPE",
+	"KIMI_MODEL_NAME", "KIMI_MODEL_API_KEY", "KIMI_MODEL_BASE_URL", "KIMI_MODEL_PROVIDER_TYPE", kimiThinkingEffortEnv,
 	"OPENCODE_CONFIG", "OPENCODE_CONFIG_CONTENT", "OPENCODE_CONFIG_DIR", "PI_CODING_AGENT_DIR",
 	"ZCODE_DATA_BASE_DIR", zcodePersonalFileEnv,
 }, zcodeHostEnv...)
@@ -174,6 +176,14 @@ func WriteAgentCLIMCPConfig(kind string, home AgentCLIHome, entries map[string]a
 				}
 			}
 			servers[id] = server
+		}
+		if kind == AgentCLIKimi {
+			// Kimi gives up on an MCP call after 60s by default; the gateway
+			// may wait up to 9 minutes for a write approval. A per-server
+			// toolTimeoutMs wins over KIMI_MCP_TOOL_TIMEOUT_MS and config.toml.
+			if server, ok := servers[id].(map[string]any); ok {
+				server["toolTimeoutMs"] = 600000
+			}
 		}
 	}
 	var document any
@@ -367,6 +377,14 @@ func ApplyAgentCLICredential(kind string, cred ProviderCredential, options Agent
 	if key == "" {
 		return nil, nil, fmt.Errorf("需求责任人未配置 %s API Key，请在个人配置中配置", AgentCLILabel(kind))
 	}
+	if kind == AgentCLIAntigravity {
+		// A crashed account-login invocation may leave a credential copy.
+		// API-key execution must not retain or inherit that account.
+		login, _ := runnerLoginSpec(kind)
+		if _, _, err := prepareRunnerLogin(home, login, false); err != nil {
+			return nil, nil, err
+		}
+	}
 	baseURL := strings.TrimRight(strings.TrimSpace(cred.BaseURL), "/")
 	protocol := AgentCLIProtocol(kind, cred.Protocol)
 	if baseURL == "" && AgentCLINeedsBaseURL(kind, protocol) {
@@ -377,7 +395,10 @@ func ApplyAgentCLICredential(kind string, cred ProviderCredential, options Agent
 		return nil, nil, fmt.Errorf("%s 需要指定模型", AgentCLILabel(kind))
 	}
 	homeEnv = filepath.ToSlash(homeEnv)
-	env := map[string]string{}
+	env := managedcli.AutoUpdateEnvironment(kind)
+	if env == nil {
+		env = map[string]string{}
+	}
 	switch kind {
 	case AgentCLIOpenCode:
 		npm := map[string]string{AgentCLIProtocolChat: "@ai-sdk/openai-compatible", AgentCLIProtocolResponses: "@ai-sdk/openai", AgentCLIProtocolMessages: "@ai-sdk/anthropic"}[protocol]
@@ -403,7 +424,6 @@ func ApplyAgentCLICredential(kind string, cred ProviderCredential, options Agent
 		content, _ := json.Marshal(config)
 		env[agentCLIKeyEnv] = key
 		env["OPENCODE_CONFIG_CONTENT"] = string(content)
-		env["OPENCODE_DISABLE_AUTOUPDATE"] = "1"
 	case AgentCLICursor:
 		env["CURSOR_API_KEY"] = key
 		if model != "" {
@@ -445,7 +465,27 @@ func ApplyAgentCLICredential(kind string, cred ProviderCredential, options Agent
 		}
 		lines = append(lines, "api_key_env = "+strconv.Quote(agentCLIKeyEnv), "",
 			"[models.agentflow]", `provider = "agentflow"`, "model = "+strconv.Quote(model),
-			"max_context_size = 262144", `capabilities = ["thinking", "tool_use"]`, "")
+			"max_context_size = 262144")
+		effort := strings.TrimSpace(options.Effort)
+		if err := domain.ValidateAgentEffort(effort, kind); err != nil {
+			return nil, nil, err
+		}
+		if effort != "" {
+			if baseURL != "" {
+				return nil, nil, fmt.Errorf("%s 的第三方网关使用默认思考强度", AgentCLILabel(kind))
+			}
+			// Kimi's native provider applies this override on every turn,
+			// including resumes, without changing the session's saved default.
+			nativeEffort := effort
+			switch effort {
+			case "none":
+				nativeEffort = "off"
+			case "thinking":
+				nativeEffort = "on"
+			}
+			env[kimiThinkingEffortEnv] = nativeEffort
+		}
+		lines = append(lines, `capabilities = ["thinking", "tool_use"]`, "")
 		if hook := options.ApprovalCommand; hook != "" {
 			// Kimi validates 1–600 seconds and allows the tool on timeout; the
 			// hook's own retry budget ends well before that.
@@ -469,9 +509,9 @@ func ApplyAgentCLICredential(kind string, cred ProviderCredential, options Agent
 		env[agentCLIKeyEnv] = key
 		env["PI_CODING_AGENT_DIR"] = homeEnv + "/.pi/agent"
 	case AgentCLIDeepSeek:
-		return applyDeepSeekCredential(home, homeEnv, key, baseURL, protocol, model, argv)
+		return applyDeepSeekCredential(home, homeEnv, key, baseURL, protocol, model, strings.TrimSpace(options.Effort), argv)
 	case AgentCLIZCode:
-		return applyZCodeCredential(home, homeEnv, key, baseURL, protocol, model, argv)
+		return applyZCodeCredential(home, homeEnv, key, baseURL, protocol, model, strings.TrimSpace(options.Effort), argv)
 	default:
 		return nil, nil, fmt.Errorf("unknown agent CLI %q", kind)
 	}
@@ -486,24 +526,57 @@ func agentCLIPiAPI(protocol string) string {
 
 // applyDeepSeekCredential writes the DeepSeek Harness model patch and puts the
 // launcher --patch flags ahead of the profile's own arguments.
-func applyDeepSeekCredential(home AgentCLIHome, homeEnv, key, baseURL, protocol, model string, argv []string) ([]string, map[string]string, error) {
+func applyDeepSeekCredential(home AgentCLIHome, homeEnv, key, baseURL, protocol, model, effort string, argv []string) ([]string, map[string]string, error) {
 	env := map[string]string{}
 	patch := []any{}
-	if baseURL == "" {
+	selection := map[string]any{}
+	deepSeekModel := model == "deepseek-flash" || model == "deepseek-v4-pro"
+	if baseURL == "" && (deepSeekModel || model == "") && effort == "" {
+		// Headless resumes reuse the saved selection unless the patch names
+		// an effort. Restore the built-in route's default for a blank choice.
+		effort = "high"
+	}
+	if effort != "" {
+		if err := domain.ValidateAgentEffort(effort, AgentCLIDeepSeek); err != nil {
+			return nil, nil, err
+		}
+		if effort == "none" {
+			effort = "off"
+		}
+		selection["reasoningEffort"] = effort
+	}
+	if baseURL == "" || (deepSeekModel && protocol == AgentCLIProtocolMessages && effort != "") {
 		env["DEEPSEEK_API_KEY"] = key
+		if baseURL != "" {
+			patch = append(patch, map[string]any{"id": "llm-deepseek", "config": map[string]any{"baseURL": baseURL}})
+		}
 		if model != "" {
-			patch = append(patch, map[string]any{"id": "agent-default-model", "config": map[string]any{"provider": "deepseek-official", "model": model}})
+			selection["provider"] = "deepseek-official"
+			selection["model"] = model
 		}
 	} else {
 		api := agentCLIPiAPI(protocol)
 		env[agentCLIKeyEnv] = key
-		patch = []any{
-			map[string]any{"id": "llm-pi-ai", "config": map[string]any{"providers": map[string]any{"agentflow": map[string]any{
-				"displayName": "AgentFlow", "apiKeyEnv": agentCLIKeyEnv, "api": api, "baseURL": baseURL,
-				"models": []map[string]any{{"id": model}},
-			}}}},
-			map[string]any{"id": "agent-default-model", "config": map[string]any{"provider": "agentflow", "model": model}},
+		provider := "agentflow"
+		modelConfig := map[string]any{"id": model}
+		if effort != "" {
+			// Keep the gateway's unconfigured route distinct so reverting to
+			// it on resume does not inherit the explicitly selected effort.
+			provider = "agentflow-reasoning"
+			modelConfig["reasoningEfforts"] = map[string]any{"off": nil, "low": "low", "high": "high", "max": "max"}
+			if api == "openai-completions" && deepSeekModel {
+				modelConfig["compat"] = map[string]any{"thinkingFormat": "deepseek"}
+			}
 		}
+		patch = append(patch, map[string]any{"id": "llm-pi-ai", "config": map[string]any{"providers": map[string]any{provider: map[string]any{
+			"displayName": "AgentFlow", "apiKeyEnv": agentCLIKeyEnv, "api": api, "baseURL": baseURL,
+			"models": []map[string]any{modelConfig},
+		}}}})
+		selection["provider"] = provider
+		selection["model"] = model
+	}
+	if len(selection) > 0 {
+		patch = append(patch, map[string]any{"id": "agent-default-model", "config": selection})
 	}
 	data, _ := json.MarshalIndent(patch, "", "  ")
 	if err := writeAgentCLIFile(home, ".dsh/agentflow-model.json", data); err != nil {
