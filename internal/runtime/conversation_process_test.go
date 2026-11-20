@@ -89,16 +89,21 @@ func TestConversationCLIVersionPreservesOutputQuota(t *testing.T) {
 	case <-ctx.Done():
 		t.Fatal(ctx.Err())
 	}
-	var after int64
+	var after, outputLines int64
 	for {
 		result, err := pool.Handle(ctx, root, "", nil, ConversationProcessRequest{Operation: "poll", ID: start.ID, After: after}, nil)
 		if err != nil || result.Error != "" {
 			t.Fatalf("poll: %+v %v", result, err)
 		}
+		for _, event := range result.Events {
+			if event.Name == "process.stdout" || event.Name == "process.stderr" {
+				outputLines++
+			}
+		}
 		after = result.Sequence
 		if result.Done {
-			if after != 32768 || result.CLIVersion != "1.2.3" || result.VersionSource != "package_metadata" {
-				t.Fatalf("completion: lines=%d version=%q source=%q", after, result.CLIVersion, result.VersionSource)
+			if outputLines != 32768 || result.CLIVersion != "1.2.3" || result.VersionSource != "package_metadata" {
+				t.Fatalf("completion: lines=%d version=%q source=%q", outputLines, result.CLIVersion, result.VersionSource)
 			}
 			return
 		}

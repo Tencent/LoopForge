@@ -81,3 +81,47 @@ func TestConversationProcessPreservesLifecycleEvidence(t *testing.T) {
 		})
 	}
 }
+
+func TestConversationOutputOverflowKeepsExitEvidence(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	root := t.TempDir()
+	pool := &ConversationProcessPool{}
+	start, err := pool.Handle(ctx, root, "", nil, ConversationProcessRequest{
+		Operation: "start", Command: &ConversationCommand{Argv: []string{"sh", "-c", "awk 'BEGIN { for (i=0; i<32769; i++) print \"line\" }'"}},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pool.mu.Lock()
+	finished := pool.entries[start.ID].finished
+	pool.mu.Unlock()
+	select {
+	case <-finished:
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+	var after int64
+	lines, exits := 0, 0
+	for {
+		result, err := pool.Handle(ctx, root, "", nil, ConversationProcessRequest{Operation: "poll", ID: start.ID, After: after}, nil)
+		if err != nil || result.Error == "" {
+			t.Fatalf("overflow must remain an error: error=%q err=%v", result.Error, err)
+		}
+		for _, event := range result.Events {
+			if event.Name == "process.stdout" || event.Name == "process.stderr" {
+				lines++
+			}
+			if event.Name == "process.finished" {
+				exits++
+			}
+		}
+		after = result.Sequence
+		if result.Done {
+			if lines != 32768 || exits != 1 || after > 32771 {
+				t.Fatalf("overflow lost output quota or exit evidence: lines=%d exits=%d events=%d", lines, exits, after)
+			}
+			return
+		}
+	}
+}

@@ -156,6 +156,7 @@ type conversationProcess struct {
 	finished      chan struct{}
 	root          string
 	bytes         int
+	outputEvents  int
 	notStarted    bool
 	cliVersion    string
 	versionSource string
@@ -329,7 +330,10 @@ func (p *ConversationProcessPool) Handle(ctx context.Context, root, workspace st
 			return ConversationProcessResult{}, fmt.Errorf("invalid process cursor")
 		}
 		for _, event := range proc.events[:ack] {
-			proc.bytes -= len(event.Message)
+			if event.Name == "process.stdout" || event.Name == "process.stderr" {
+				proc.bytes -= len(event.Message)
+				proc.outputEvents--
+			}
 		}
 		proc.events = proc.events[ack:]
 		proc.base = req.After
@@ -714,9 +718,16 @@ func (p *ConversationProcessPool) start(ctx context.Context, root, workspace str
 				return
 			}
 			proc.mu.Lock()
-			if proc.bytes+len(ev.Message) <= 8<<20 && len(proc.events) < 32768 {
+			output := ev.Name == "process.stdout" || ev.Name == "process.stderr"
+			// The runtime emits at most three lifecycle events per process.
+			// Keep them outside the output quota so a full buffer neither
+			// reduces usable stdout/stderr capacity nor loses the exit evidence.
+			if !output || proc.bytes+len(ev.Message) <= 8<<20 && proc.outputEvents < 32768 {
 				proc.events = append(proc.events, ev)
-				proc.bytes += len(ev.Message)
+				if output {
+					proc.bytes += len(ev.Message)
+					proc.outputEvents++
+				}
 			} else {
 				proc.err = "原生进程输出超过缓冲限制"
 				cancel()
