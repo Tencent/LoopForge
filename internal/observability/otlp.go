@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -50,10 +51,10 @@ type otlpKV struct {
 }
 
 type otlpAnyVal struct {
-	StringValue string  `json:"stringValue"`
-	IntValue    any     `json:"intValue"`
-	DoubleValue float64 `json:"doubleValue"`
-	BoolValue   bool    `json:"boolValue"`
+	StringValue string   `json:"stringValue"`
+	IntValue    any      `json:"intValue"`
+	DoubleValue *float64 `json:"doubleValue"`
+	BoolValue   *bool    `json:"boolValue"`
 }
 
 func ParseOTLPTraces(body []byte) []domain.TelemetryEvent {
@@ -172,12 +173,12 @@ func kvMap(kvs []otlpKV) map[string]string {
 			out[kv.Key] = kv.Value.StringValue
 			continue
 		}
-		if kv.Value.BoolValue {
-			out[kv.Key] = "true"
+		if kv.Value.BoolValue != nil {
+			out[kv.Key] = strconv.FormatBool(*kv.Value.BoolValue)
 			continue
 		}
-		if kv.Value.DoubleValue != 0 {
-			out[kv.Key] = strconv.FormatFloat(kv.Value.DoubleValue, 'f', -1, 64)
+		if kv.Value.DoubleValue != nil {
+			out[kv.Key] = strconv.FormatFloat(*kv.Value.DoubleValue, 'f', -1, 64)
 			continue
 		}
 		if kv.Value.IntValue != nil {
@@ -337,7 +338,7 @@ func parseKV(msg []byte) []otlpKV {
 			kv.Key = string(val)
 		}
 		if num == 2 && wire == 2 {
-			kv.Value.StringValue = anyString(val)
+			kv.Value = parseProtoAnyValue(val)
 		}
 	})
 	if kv.Key == "" {
@@ -346,19 +347,29 @@ func parseKV(msg []byte) []otlpKV {
 	return []otlpKV{kv}
 }
 
-func anyString(msg []byte) string {
-	rest := msg
-	for len(rest) > 0 {
+func parseProtoAnyValue(msg []byte) otlpAnyVal {
+	for rest := msg; len(rest) > 0; {
 		num, wire, val, next, ok := readProtoField(rest)
 		if !ok {
-			return string(msg)
+			return otlpAnyVal{StringValue: string(msg)}
 		}
 		rest = next
-		if num == 1 && wire == 2 {
-			return string(val)
+		switch {
+		case num == 1 && wire == 2:
+			return otlpAnyVal{StringValue: string(val)}
+		case num == 2 && wire == 0:
+			number, _ := binary.Uvarint(val)
+			value := number != 0
+			return otlpAnyVal{BoolValue: &value}
+		case num == 3 && wire == 0:
+			number, _ := binary.Uvarint(val)
+			return otlpAnyVal{IntValue: int64(number)}
+		case num == 4 && wire == 1:
+			value := math.Float64frombits(binary.LittleEndian.Uint64(val))
+			return otlpAnyVal{DoubleValue: &value}
 		}
 	}
-	return ""
+	return otlpAnyVal{}
 }
 
 func readProtoField(b []byte) (num, wire int, val, rest []byte, ok bool) {
