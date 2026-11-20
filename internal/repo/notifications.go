@@ -588,7 +588,7 @@ var originTemplates = map[string]string{
 }
 
 // enqueueOriginNotification sends the key events of a run started from a
-// Feishu or DingTalk chat back to that conversation (group or private),
+// chat (Feishu, DingTalk, WeCom) back to that conversation (group or private),
 // whatever the SOP's notification bindings are: a waiting or failed node
 // (with an action card when the Bot receives messages) and the end of the
 // run. A run failure already explained by a node failure is not repeated.
@@ -622,10 +622,15 @@ func (r *NotificationsRepo) enqueueOriginNotification(tx *gorm.DB, run domain.Ru
 		return err
 	}
 	projectID := notificationRunProject(run)
-	if !bot.Enabled || bot.ProjectID != projectID || bot.ChannelKind() == domain.BotChannelWeCom {
+	if !bot.Enabled || bot.ProjectID != projectID {
 		return nil
 	}
 	target, targetType, targetName := origin.SenderID, "single", "发起人（单聊）"
+	if bot.ChannelKind() == domain.BotChannelWeCom {
+		// WeCom conversations are addressed by their chat ID (the
+		// userid of a private chat) over the live connection.
+		target = origin.ChatID
+	}
 	if origin.ChatType == "group" {
 		target, targetType, targetName = origin.ChatID, "group", "发起的群聊"
 	}

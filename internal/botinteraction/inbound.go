@@ -120,6 +120,11 @@ func (s *Service) accept(ctx context.Context, connected domain.NotificationBot, 
 			return s.ignore(ev, "empty"), nil
 		}
 	}
+	if bot.ChannelKind() == domain.BotChannelWeCom && (DraftAction(ev.Action) || ClarifyAction(ev.Action)) {
+		// WeCom confirmation and clarification cards follow the same
+		// rules as on Feishu.
+		return s.acceptCardAction(bot, item, ev)
+	}
 	inserted, err := s.Store.EnqueueBotInteraction(item, ev.ChatType, ev.ChatID)
 	if err != nil {
 		log.Printf("%s event enqueue failed action=%s", channelLabel(ev.Channel), item.Action)
@@ -226,6 +231,20 @@ func (s *Service) acceptDraftAction(bot domain.NotificationBot, item domain.BotI
 	if draft.Status != repo.BotDraftPending {
 		return InboundAck{Ignored: "draft_settled", Toast: draftStatusLine(draft), Card: s.draftCardByID(draft)}, nil
 	}
+	if len(ev.Selections) > 0 {
+		// A WeCom card submits the repository and the SOP with the
+		// operation: store them first, with the same checks as a pick.
+		if pick, ok := ev.Selections[DraftActionRepo]; ok && pick != "" && pick != draft.SelectedRepository() {
+			if draft, err = s.Store.SetBotPendingDraftRepository(draft.ID, bot.ID, ev.SenderID, pick, now); err != nil {
+				return InboundAck{Ignored: "repo_refused", Toast: "所选仓库不可用，请重新发起"}, nil
+			}
+		}
+		if pick, ok := ev.Selections[DraftActionSOP]; ok && pick != "" && pick != draft.Selected() {
+			if draft, err = s.Store.SetBotPendingDraftChoice(draft.ID, bot.ID, ev.SenderID, pick, now); err != nil {
+				return InboundAck{Ignored: "sop_refused", Toast: "所选 SOP 不可用，请重新发起"}, nil
+			}
+		}
+	}
 	if ev.Action == DraftActionSOP {
 		picked, err := s.Store.SetBotPendingDraftChoice(draft.ID, bot.ID, ev.SenderID, strings.TrimSpace(ev.Option), now)
 		if errors.Is(err, repo.ErrBotDraftNotPending) {
@@ -264,7 +283,7 @@ func (s *Service) acceptDraftAction(bot domain.NotificationBot, item domain.BotI
 		route = ""
 	}
 	item.ReplyRoute = route
-	if route == "" {
+	if route == "" && bot.ChannelKind() != domain.BotChannelWeCom {
 		item.SendRoute = repo.BotSendRoutePush
 		kind, chat = "single", ev.SenderID
 	}

@@ -139,6 +139,26 @@ func (s *Service) send(ctx context.Context, bot domain.NotificationBot, targetID
 	return s.Provider.Send(ctx, bot.BotID, secret, targetID, content)
 }
 
+// sendWeComOrigin sends a message back to the WeCom conversation a run was
+// started from, over the Bot's live connection (no wecom-cli session list):
+// waiting and failed nodes as action cards, the rest as text.
+func (s *Service) sendWeComOrigin(ctx context.Context, bot domain.NotificationBot, item domain.NotificationDelivery, content string, beforeSend func() error) error {
+	if !bot.Enabled || !bot.InteractionEnabled || s.Interactions == nil {
+		return &ProviderError{Code: 404, Message: "企业微信 Bot 未开启对话，无法发回发起的会话"}
+	}
+	if beforeSend != nil {
+		if err := beforeSend(); err != nil {
+			return err
+		}
+	}
+	ctx, cancel := context.WithTimeout(ctx, 90*time.Second)
+	defer cancel()
+	if item.NodeID != "" && (item.EventType == "waiting" || item.EventType == "failed") {
+		return s.Interactions.QueueNotificationCard(ctx, bot, item, content, s.runURL(item.RunID))
+	}
+	return s.Interactions.QueueChatPost(bot, item.TargetType, item.TargetID, item.ID, content)
+}
+
 // BotWorkersEnabled reads AGENTFLOW_BOT_WORKERS_ENABLED (default true). The
 // upgrade maintenance window starts the new version with false: neither the
 // conversation receivers nor the notification sender run, and Bot
@@ -280,7 +300,11 @@ func (s *Service) ProcessOne(ctx context.Context) (bool, error) {
 	if pushChannel(bot) {
 		return s.processPush(ctx, item, bot, content, beforeSend)
 	}
-	err = s.send(ctx, bot, item.TargetID, content, beforeSend, *item)
+	if item.Origin == domain.NotificationOriginChat {
+		err = s.sendWeComOrigin(ctx, bot, *item, content, beforeSend)
+	} else {
+		err = s.send(ctx, bot, item.TargetID, content, beforeSend, *item)
+	}
 	if errors.Is(err, errNotificationExpired) || errors.Is(err, botinteraction.ErrCardExpired) {
 		return finish("expired", err.Error())
 	}

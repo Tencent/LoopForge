@@ -153,16 +153,31 @@ func wecomEvent(bot domain.NotificationBot, f Frame) (InboundEvent, bool) {
 	if incoming.Type == "voice" {
 		text = incoming.Voice.Content
 	}
-	action, delivery := "", ""
+	action, delivery, option := "", "", ""
+	var selections map[string]string
 	if f.Cmd == "aibot_event_callback" {
 		if incoming.Event.Type != "template_card_event" {
 			return InboundEvent{}, false
 		}
 		action, delivery = incoming.Event.Key, incoming.Event.TaskID
-		if prefix, _, found := strings.Cut(delivery, "_"); found {
+		if prefix, rest, found := strings.Cut(delivery, "_"); found {
 			delivery = prefix
+			if ClarifyAction(action) {
+				// "<session>_<ref>_<nonce>": the button reference.
+				option, _, _ = strings.Cut(rest, "_")
+			}
 		}
-		if action == "" || action == "handled" || delivery == "" {
+		if action == DraftActionSubmit {
+			// A confirmation card with drop-downs: the operation is a
+			// selection, the others are the repository and the SOP.
+			selections = wecomCardSelections(incoming.Event.TemplateCardEvent.SelectedItems.SelectedItem)
+			action = selections[draftOpKey]
+			delete(selections, draftOpKey)
+			if !DraftAction(action) || DraftSelectAction(action) {
+				return InboundEvent{}, false
+			}
+		}
+		if action == "" || action == "handled" || delivery == "" || (ClarifyAction(action) && option == "") {
 			return InboundEvent{}, false
 		}
 	} else if incoming.Type != "text" && incoming.Type != "voice" {
@@ -180,6 +195,8 @@ func wecomEvent(bot domain.NotificationBot, f Frame) (InboundEvent, bool) {
 		Quote:      domain.NotificationText(incoming.Quote.Text.Content, 8000),
 		Action:     action,
 		DeliveryID: delivery,
+		Option:     option,
+		Selections: selections,
 		CardTaskID: incoming.Event.TaskID,
 		Route:      ReplyRoute{RequestID: f.Headers.RequestID},
 	}, true
@@ -227,6 +244,11 @@ func (s *Service) wecomFrame(ctx context.Context, bot domain.NotificationBot, f 
 		}
 	}
 	ack, err := sink(ctx, ev)
+	if err == nil && ev.Action != "" && (DraftAction(ev.Action) || ClarifyAction(ev.Action)) {
+		// Lock the clicked card (or explain a refusal) within the
+		// callback window.
+		ws.wecomCardAnswer(ctx, ev, ack)
+	}
 	if err != nil || !ack.Accepted {
 		return
 	}

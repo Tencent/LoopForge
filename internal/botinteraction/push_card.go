@@ -47,6 +47,8 @@ type PushCard struct {
 	// ClarifyID marks a chat clarification card: buttons carry the
 	// session and their own reference (PushCardAction.Ref).
 	ClarifyID string
+	// lockedSelects are the drop-downs of a handled card (Done).
+	lockedSelects []*PushCardSelect
 }
 
 // PushCardSelect is a drop-down whose change comes back as Key.
@@ -470,6 +472,11 @@ func draftStatusLine(d domain.BotPendingDraft) string {
 // Done turns the card into its handled state: the status line replaces the
 // buttons and the selection, so a second click is not possible.
 func (c *PushCard) Done(status string) {
+	if len(c.Selects) > 0 {
+		// WeCom updates a card with drop-downs as the same card type,
+		// with the drop-downs locked.
+		c.lockedSelects = c.Selects
+	}
 	c.Status, c.Actions, c.Selects = status, nil, nil
 }
 

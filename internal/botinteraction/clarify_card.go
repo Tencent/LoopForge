@@ -15,6 +15,10 @@ import (
 // Clarification actions.
 const (
 	ActionClarifyPost = "clarify_post"
+	// ActionChatPost is a prepared platform message sent into a WeCom
+	// conversation over the live connection (progress of a run started
+	// there).
+	ActionChatPost = "chat_post"
 
 	ClarifyActionNext      = "clarify_next"
 	ClarifyActionEnd       = "clarify_end"
@@ -211,4 +215,13 @@ func (s *Service) clarifySaver(bot domain.NotificationBot, sess domain.BotClarif
 	}
 	issue, _ := s.Store.Issue(sess.IssueID)
 	return domain.ClarifySaveAllowed(project, issue, sess, user.ID)
+}
+
+// QueueChatPost queues a prepared message into a conversation of a Bot with
+// a live connection (WeCom). key makes it idempotent.
+func (s *Service) QueueChatPost(bot domain.NotificationBot, kind, chat, key, text string) error {
+	text = domain.NotificationText(text, 16000)
+	item := domain.BotInteraction{ID: repo.BotMessageID(bot.ID, "chat-post:"+key), BotID: bot.ID, ProjectID: bot.ProjectID, SenderID: chat, Action: ActionChatPost, Content: text, ContentLength: len([]rune(text)), MsgType: "text", SendRoute: repo.BotSendRoutePushChat}
+	_, err := s.Store.EnqueueBotInteraction(item, kind, chat)
+	return err
 }

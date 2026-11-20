@@ -344,6 +344,15 @@ func (s *Service) process(ctx context.Context, bot domain.NotificationBot, lease
 				// a proactive private message to the original sender.
 				return s.Push(ctx, current, OutboundMessage{InteractionID: sending.ID, ChatID: sending.SenderID, ChatType: "single", Text: sending.Reply, SendKey: sending.SendKey})
 			case repo.BotSendRoutePushChat:
+				if current.ChannelKind() == domain.BotChannelWeCom {
+					// WeCom sends proactive messages over the live
+					// connection; the card follows the text.
+					res := conn.Reply(ctx, OutboundMessage{InteractionID: sending.ID, Action: sending.Action, ChatID: conv.ChatID, ChatType: conv.ChatType, Text: sending.Reply, SendKey: sending.SendKey})
+					if res.Outcome == Delivered {
+						sendWeComCard(ctx, conn, conv.ChatID, s.clarifyCardFor(sending))
+					}
+					return res
+				}
 				// A new message into the conversation: the group itself, or
 				// the private chat of the sender.
 				msg := OutboundMessage{InteractionID: sending.ID, ChatID: sending.SenderID, ChatType: "single", Text: sending.Reply, SendKey: sending.SendKey, Card: card}
@@ -353,7 +362,17 @@ func (s *Service) process(ctx context.Context, bot domain.NotificationBot, lease
 				return s.Push(ctx, current, msg)
 			}
 			out := OutboundMessage{InteractionID: sending.ID, Action: sending.Action, ChatID: conv.ChatID, ChatType: conv.ChatType, Text: sending.Reply, SendKey: sending.SendKey, Route: s.replyRoute(sending), Card: card}
-			return conn.Reply(ctx, out)
+			res := conn.Reply(ctx, out)
+			if res.Outcome == Delivered && current.ChannelKind() == domain.BotChannelWeCom && sending.Action == "" {
+				// WeCom replies stream text; a write confirmation or an
+				// "is this an answer?" question follows as a card.
+				followUp := s.DraftCardFor(sending, s.publicURL())
+				if followUp == nil {
+					followUp = s.clarifyCardFor(sending)
+				}
+				sendWeComCard(ctx, conn, conv.ChatID, followUp)
+			}
+			return res
 		})
 		if err != nil {
 			return err
@@ -365,7 +384,7 @@ func (s *Service) process(ctx context.Context, bot domain.NotificationBot, lease
 func (s *Service) runTurn(ctx context.Context, bot domain.NotificationBot, item *domain.BotInteraction, lease repo.BotLease, conn Conn, conv domain.BotConversation) error {
 	reply, detail := "", ""
 	var err error
-	if item.Action == "notification_details" || item.Action == ActionClarifyPost {
+	if item.Action == "notification_details" || item.Action == ActionClarifyPost || item.Action == ActionChatPost {
 		// Prepared by the platform; sent as is.
 		reply = item.Content
 	} else if time.Since(item.CreatedAt) > 10*time.Minute {

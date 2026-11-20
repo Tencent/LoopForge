@@ -105,12 +105,6 @@ func (h *assistantHandlers) botClarifyMessage(ctx context.Context, bot domain.No
 	text := botClarifyText(item.Content)
 	control := botClarifyControl(text)
 	ref, start := botClarifyStart(text)
-	if bot.ChannelKind() == domain.BotChannelWeCom {
-		if start && control == "" && botClarifyIssueRef(ref) {
-			return "企业微信暂不支持在聊天里澄清需求，请到平台的需求详情里澄清。", true
-		}
-		return "", false
-	}
 	sess, active := h.repo.ActiveBotClarifySession(conv.ID)
 	if control != "" && control != "yes" && control != "no" && !active {
 		return botClarifyNoSession, true
@@ -250,7 +244,7 @@ func (h *assistantHandlers) openBotClarify(bot domain.NotificationBot, conv doma
 		h.endBotClarify(sess.ID, "")
 		return "澄清没有开始：" + err.Error()
 	}
-	who := "回答"
+	who := "直接回复即可"
 	if conv.ChatType == "group" {
 		who = "群里绑定了平台账号的项目成员都可以 @我 回答"
 	}
@@ -360,11 +354,11 @@ func (h *assistantHandlers) botClarifyQuestionsText(bot domain.NotificationBot, 
 		}
 	}
 	b.WriteString("\n\n")
-	feishu := bot.ChannelKind() == domain.BotChannelFeishu
+	feishu := botClarifyCards(bot)
 	if sess.ChatType == "group" {
 		b.WriteString("回答方式：@机器人 发「Q1：你的回答」，多个问题可以分行写")
 		if feishu {
-			b.WriteString("，也可以 @机器人 回复这张卡片")
+			b.WriteString("，也可以 @机器人 回复（引用）这条问题")
 		}
 		b.WriteString("。群里绑定了平台账号的项目成员都可以回答。")
 	} else {
@@ -372,7 +366,7 @@ func (h *assistantHandlers) botClarifyQuestionsText(bot domain.NotificationBot, 
 	}
 	next := "发「下一轮」"
 	if feishu {
-		next = "点「提交回答，进入下一轮」或发「下一轮」"
+		next = "点卡片上的「提交回答，进入下一轮」或发「下一轮」"
 	}
 	b.WriteString("\n问题都答完、" + next + "，或最后一条回答后 3 分钟没有新回答，会进入下一轮分析。发「结束澄清」退出。")
 	return b.String()
@@ -383,8 +377,8 @@ func (h *assistantHandlers) botClarifyConclusionText(bot domain.NotificationBot,
 	b.WriteString(h.botClarifyIssueTitle(sess) + " · 澄清结论\n")
 	b.WriteString(truncateRunes(sess.Summary, 3000))
 	b.WriteString("\n\n")
-	if bot.ChannelKind() == domain.BotChannelFeishu {
-		b.WriteString("需求负责人、发起澄清的人或项目维护者可以点「保存澄清结果」写入需求（来自 TAPD、工蜂的需求同时写回原单），或点「保存并启动 SOP」。")
+	if botClarifyCards(bot) {
+		b.WriteString("需求负责人、发起澄清的人或项目维护者可以点卡片上的「保存澄清结果」写入需求（来自 TAPD、工蜂的需求同时写回原单），或点「保存并启动 SOP」。")
 	} else {
 		b.WriteString("需求负责人、发起澄清的人或项目维护者可以发「保存澄清」写入需求（来自 TAPD、工蜂的需求同时写回原单），或发「保存并启动」同时启动 SOP。")
 	}
@@ -479,11 +473,19 @@ func (h *assistantHandlers) botClarifyInSession(ctx context.Context, bot domain.
 	return h.askBotClarifyConfirm(bot, sess, item, name, guess, text), true
 }
 
+// botClarifyCards reports whether the channel shows clarification cards
+// with buttons (Feishu, WeCom); DingTalk uses text commands.
+func botClarifyCards(bot domain.NotificationBot) bool {
+	return bot.ChannelKind() != domain.BotChannelDingTalk
+}
+
 // botClarifyQuoted reports whether a message quotes one of the session's
-// clarification messages (Feishu replies).
+// clarification messages: a Feishu reply names the message; a WeCom quote
+// only carries its text, which starts with the clarification title.
 func (h *assistantHandlers) botClarifyQuoted(bot domain.NotificationBot, sess domain.BotClarifySession, item domain.BotInteraction) bool {
 	if item.ReplyTo == "" {
-		return false
+		quote := strings.TrimSpace(item.Quote)
+		return quote != "" && strings.Contains(quote, h.botClarifyIssueTitle(sess)) && (strings.Contains(quote, "轮澄清") || strings.Contains(quote, "澄清结论"))
 	}
 	post, ok := h.repo.BotInteractionByPlatformMessage(bot.ID, item.ReplyTo)
 	return ok && post.Action == botinteraction.ActionClarifyPost && post.DeliveryID == sess.ID
@@ -609,8 +611,8 @@ func (h *assistantHandlers) askBotClarifyConfirm(bot domain.NotificationBot, ses
 	if question := sess.Question(n); question != nil {
 		q = "（" + label + "：" + truncateRunes(question.Question, 60) + "）"
 	}
-	if bot.ChannelKind() == domain.BotChannelFeishu {
-		return name + "，这是对 " + label + " 的回答吗？" + q + "请点下方按钮确认。"
+	if botClarifyCards(bot) {
+		return name + "，这是对 " + label + " 的回答吗？" + q + "请点卡片上的按钮确认，或回复「是」「不是」。"
 	}
 	return name + "，这是对 " + label + " 的回答吗？" + q + "回复「是」记为 " + label + "，回复「不是」忽略（只认你本人的回复）。"
 }

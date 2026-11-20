@@ -73,8 +73,12 @@ type Incoming struct {
 		Key               string `json:"event_key"`
 		TaskID            string `json:"task_id"`
 		TemplateCardEvent struct {
-			Key    string `json:"event_key"`
-			TaskID string `json:"task_id"`
+			Key           string `json:"event_key"`
+			TaskID        string `json:"task_id"`
+			CardType      string `json:"card_type"`
+			SelectedItems struct {
+				SelectedItem []wecomSelectedItem `json:"selected_item"`
+			} `json:"selected_items"`
 		} `json:"template_card_event"`
 	} `json:"event"`
 }

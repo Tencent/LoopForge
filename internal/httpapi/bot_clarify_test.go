@@ -169,7 +169,7 @@ func TestChatClarificationInAGroup(t *testing.T) {
 	if len(posts) != 1 || posts[0].Quote != botinteraction.ClarifyPostQuestions || posts[0].SendRoute != repo.BotSendRoutePushChat || posts[0].SenderID != "ou_owner" {
 		t.Fatalf("posts = %+v", posts)
 	}
-	for _, want := range []string{"LOOP-7「登录优化」 · 第 1 轮澄清", "Q1 验收怎么确认？", "选项：接口回归 / 手工验收", "Q2 要不要短信验证码？", "@机器人 回复这张卡片", "提交回答，进入下一轮"} {
+	for _, want := range []string{"LOOP-7「登录优化」 · 第 1 轮澄清", "Q1 验收怎么确认？", "选项：接口回归 / 手工验收", "Q2 要不要短信验证码？", "@机器人 回复（引用）这条问题", "提交回答，进入下一轮"} {
 		if !strings.Contains(posts[0].Content, want) {
 			t.Fatalf("questions text misses %q: %s", want, posts[0].Content)
 		}
@@ -193,7 +193,7 @@ func TestChatClarificationInAGroup(t *testing.T) {
 	// Rule ⑤: the model is unsure, the speaker is asked.
 	f.classes = []string{`{"question":0,"guess":2,"confidence":0.4}`}
 	reply, unsure := f.say(t, "group", "oc_group", "ou_member", "我觉得得发个短信吧")
-	if !strings.Contains(reply, "这是对 Q2 的回答吗？") || !strings.Contains(reply, "请点下方按钮确认") {
+	if !strings.Contains(reply, "这是对 Q2 的回答吗？") || !strings.Contains(reply, "请点卡片上的按钮确认") {
 		t.Fatalf("unsure = %q", reply)
 	}
 	sess, _ = f.s.ActiveBotClarifySession(conv)
@@ -405,12 +405,6 @@ func TestChatClarificationEdgePaths(t *testing.T) {
 	if reply, _ := f.say(t, "group", "oc_edge", "ou_owner", "澄清这个需求"); !strings.Contains(reply, "请带上需求编号") {
 		t.Fatalf("this issue without origin = %q", reply)
 	}
-	// WeCom keeps its own path.
-	wecom := f.bot
-	wecom.Channel = domain.BotChannelWeCom
-	if reply, handled := f.h.botClarifyMessage(context.Background(), wecom, domain.BotConversation{ID: "x"}, domain.BotInteraction{Content: "澄清 LOOP-7"}, domain.User{ID: 42}); !handled || !strings.Contains(reply, "企业微信暂不支持") {
-		t.Fatalf("wecom = %q %v", reply, handled)
-	}
 	// The issue is synced from TAPD; the project owner starts by title.
 	issue, _ := f.s.Issue("iss-7")
 	issue.Source, issue.ExternalRef = "tapd", &domain.ExternalRef{Source: "tapd", ExternalID: "1001"}
@@ -530,5 +524,35 @@ func TestChatClarificationEdgePaths(t *testing.T) {
 	case <-block:
 	case <-time.After(5 * time.Second):
 		t.Fatal("analysis not cancelled")
+	}
+}
+
+// WeCom clarifies like Feishu: cards with buttons, and a quote of the
+// question message (WeCom quotes carry only the text) counts as an answer.
+func TestChatClarificationOnWeCom(t *testing.T) {
+	f := newClarifyChatFixture(t, domain.BotChannelWeCom)
+	f.rounds = []map[string]any{clarifyQuestionsRound}
+	reply, start := f.say(t, "group", "wr_group", "ou_owner", "澄清 LOOP-7")
+	if !strings.Contains(reply, "已开始澄清 LOOP-7") {
+		t.Fatalf("start = %q", reply)
+	}
+	conv := start.ConversationID
+	f.waitStatus(t, conv, domain.BotClarifyAsking)
+	post := f.posts(t, conv)[0]
+	if !strings.Contains(post.Content, "点卡片上的「提交回答，进入下一轮」") || post.SendRoute != repo.BotSendRoutePushChat {
+		t.Fatalf("questions = %+v", post)
+	}
+	item := domain.BotInteraction{ID: "wecom-quote", BotID: f.bot.ID, SenderID: "ou_member", Content: "要短信", Quote: strings.SplitN(post.Content, "\n", 2)[0] + "\nQ1 验收怎么确认？"}
+	f.s.EnqueueBotInteraction(item, "group", "wr_group")
+	quoted, _ := f.s.BotInteraction(item.ID)
+	cconv, _ := f.s.BotConversation(quoted.ConversationID)
+	f.classes = []string{`{"question":2,"guess":2,"confidence":0.4}`}
+	reply, err := f.h.generateBotReply(context.Background(), f.bot, cconv, nil, quoted)
+	if err != nil || !strings.Contains(reply, "这是对 Q2 的回答吗？") || !strings.Contains(reply, "请点卡片上的按钮确认") {
+		t.Fatalf("quoted = %q %v", reply, err)
+	}
+	// The speaker answers the question in text.
+	if reply, _ := f.say(t, "group", "wr_group", "ou_member", "是"); !strings.Contains(reply, "已记录为 Q2 的回答") {
+		t.Fatalf("yes = %q", reply)
 	}
 }

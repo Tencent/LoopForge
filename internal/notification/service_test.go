@@ -1,6 +1,7 @@
 package notification
 
 import (
+	"agentflow/internal/botinteraction"
 	"agentflow/internal/domain"
 	"agentflow/internal/repo"
 	"context"
@@ -325,5 +326,50 @@ func TestUnifiedSOPSetupFailureUsesStandardReminder(t *testing.T) {
 	items, _ := svc.Store.NotificationDeliveries(bot.ProjectID)
 	if len(items) != 1 || f.sent != 1 || !strings.Contains(f.content, "沙箱启动失败") || strings.Contains(f.content, "完成汇报专用") {
 		t.Fatalf("%+v %s", items, f.content)
+	}
+}
+
+// A run started from a WeCom chat reports back over the Bot's live
+// connection, without the wecom-cli session list: text events become a
+// queued chat message, and a Bot without chat cannot reach the
+// conversation.
+func TestWeComOriginDeliveryUsesTheLiveConnection(t *testing.T) {
+	svc, provider, bot, run := serviceFixture(t)
+	provider.err = context.Canceled // the CLI path must not be used
+	now := time.Now().UTC()
+	item := domain.NotificationDelivery{ID: "origin-done", ProjectID: "p", BotID: bot.ID, RunID: run.ID, EventType: "succeeded", SourceType: "run", SourceID: run.ID, Origin: domain.NotificationOriginChat, TargetID: "wr_group", TargetType: "group", Content: "### SOP 已完成", Status: "pending", CreatedAt: now, NextAttemptAt: now}
+	if err := svc.Store.CreateNotificationDelivery(item); err != nil {
+		t.Fatal(err)
+	}
+	drain := func() {
+		for i := 0; i < 10; i++ {
+			if processed, err := svc.ProcessOne(context.Background()); err != nil || !processed {
+				return
+			}
+		}
+	}
+	drain()
+	got, _ := svc.Store.NotificationDelivery(item.ID)
+	if got.Status != "target_unavailable" || !strings.Contains(got.LastError, "未开启对话") {
+		t.Fatalf("without chat = %+v", got)
+	}
+	bot.InteractionEnabled = true
+	if err := svc.Store.SaveNotificationBot(bot, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Store.RetryNotification("p", item.ID); err != nil {
+		t.Fatal(err)
+	}
+	drain()
+	if got, _ = svc.Store.NotificationDelivery(item.ID); got.Status != "sent" || provider.sent != 0 {
+		t.Fatalf("with chat = %+v sent=%d", got, provider.sent)
+	}
+	post, err := svc.Store.BotInteraction(repo.BotMessageID(bot.ID, "chat-post:"+item.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	conv, _ := svc.Store.BotConversation(post.ConversationID)
+	if post.Action != botinteraction.ActionChatPost || post.SendRoute != repo.BotSendRoutePushChat || conv.ChatType != "group" || conv.ChatID != "wr_group" || !strings.Contains(post.Content, "SOP 已完成") {
+		t.Fatalf("queued = %+v in %+v", post, conv)
 	}
 }

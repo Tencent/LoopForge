@@ -67,6 +67,9 @@ type InboundEvent struct {
 	CardChatID string
 	// ParentID is the message a text message replies to (Feishu quote).
 	ParentID string
+	// Selections are the drop-downs submitted with a WeCom card
+	// (question key → option).
+	Selections map[string]string
 
 	// WeCom card callbacks.
 	Action     string
