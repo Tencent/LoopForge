@@ -85,7 +85,7 @@ func TestAssistantDiagnosticsReceiveVersionFromConversationProcess(t *testing.T)
 	d := newAssistantDiagnosticsCollector(g)
 	ctx := context.WithValue(context.Background(), assistantDiagnosticsKey{}, d)
 	root := t.TempDir()
-	h := &assistantHandlers{deps: &deps{}}
+	h, _ := workbenchFixture(t)
 	session := &AgentToolSession{ChatOwnerID: 1, ChatSessionID: "version-session", RuntimeMode: domain.AssistantModePlatform}
 	req := assistantCLIRequest{Prompt: "test", SessionRoot: root, Execute: h.conversationExecutor(session, root)}
 	if _, _, err := runAssistantCLI(ctx, req, domain.User{ID: 1, CodeBuddyAPIKey: "test-private-key"}, nil); err != nil {
