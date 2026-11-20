@@ -19,12 +19,6 @@ var (
 	gongfengIssueURLRe = regexp.MustCompile(`(?i)https?://git\.example\.com/[^\s<>"'）】\]]+/issues/\d+`)
 )
 
-func codeBuddyAccountModel(ctx context.Context, user domain.User, id string) string {
-	refreshCLIModels(ctx, user.CodeBuddyInternetEnvironment, user.CodeBuddyAPIKey)
-	catalog := withCodeBuddyPersonalModels(loadAssistantModels(ctx, user.CodeBuddyInternetEnvironment, user.CodeBuddyAPIKey), user)
-	return assistantAllowedModel(id, catalog)
-}
-
 // errClarifyNeedsCodeBuddy is returned when a clarification asks for a model of
 // another CLI: clarification runs on CodeBuddy only, so a "codex:…" id must be
 // refused instead of being swapped for the CodeBuddy default.

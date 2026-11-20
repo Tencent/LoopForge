@@ -282,6 +282,12 @@ func codeBuddyIsDefaultModel(id string) bool {
 	return id == assistantDefaultModel || id == "default-model"
 }
 
+func codeBuddyAccountModel(ctx context.Context, user domain.User, id string) string {
+	refreshCLIModels(ctx, user.CodeBuddyInternetEnvironment, user.CodeBuddyAPIKey)
+	catalog := withCodeBuddyPersonalModels(loadAssistantModels(ctx, user.CodeBuddyInternetEnvironment, user.CodeBuddyAPIKey), user)
+	return assistantAllowedModel(id, catalog)
+}
+
 // withCodeBuddyPersonalModels accepts the user's saved CodeBuddy models and
 // defaults requests without a model to the first of them. The environment's
 // models stay accepted.
