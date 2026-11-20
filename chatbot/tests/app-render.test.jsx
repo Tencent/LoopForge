@@ -233,7 +233,11 @@ describe("App", () => {
     }
   });
 
-  test.each([true, false])("retains all of the first draft if generation is rejected (navigation: %s)", async (away) => {
+  test.each([
+    { phase: "navigation", away: true },
+    { phase: "in-session retry after reload" },
+    { phase: "independently edited original", edited: true },
+  ])("retains the first draft on failure and reconciles it after $phase", async ({ away, edited }) => {
     const original = { activeId: chat.activeId, session: chat.session, projectId: chat.projectId };
     const user = userEvent.setup();
     const saved = { id: "new-session", messages: [], projectId: "p1" };
@@ -242,7 +246,8 @@ describe("App", () => {
       attachments: [{ id: "upload-1", name: "说明.txt", mimeType: "text/plain" }],
       references: [{ type: "issue", id: "i1", name: "订单导出", projectId: "p1" }],
     };
-    localStorage.setItem("agentflow.native-chat.draft.u1.new:p1", JSON.stringify(failedDraft));
+    const originKey = "agentflow.native-chat.draft.u1.new:p1";
+    localStorage.setItem(originKey, JSON.stringify(failedDraft));
     let create, rejectGeneration;
     chat.send.mockImplementationOnce(({ onSessionCreated }) => new Promise((resolve) => {
       create = () => onSessionCreated(saved);
@@ -250,7 +255,7 @@ describe("App", () => {
     }));
     try {
       chat.projectId = "p1";
-      const view = render(<App />);
+      let view = render(<App />);
       await user.click(screen.getByRole("button", { name: "操作确认方式" }));
       await user.click(screen.getByRole("menuitemradio", { name: "帮我批准" }));
       await user.click(screen.getByRole("button", { name: "发送消息" }));
@@ -262,11 +267,21 @@ describe("App", () => {
       if (away) {
         Object.assign(chat, { activeId: null, session: null });
         view.rerender(<App />);
+      } else {
+        view.unmount();
+        if (edited) localStorage.setItem(originKey, JSON.stringify({ ...failedDraft, text: "另一份草稿" }));
+        view = render(<App />);
       }
       expect(screen.getByRole("button", { name: "操作确认方式" })).toHaveTextContent("帮我批准");
       expect(screen.getByRole("textbox", { name: "消息" })).toHaveValue(failedDraft.text);
       await user.click(screen.getByRole("button", { name: "发送消息" }));
       expect(chat.send).toHaveBeenLastCalledWith(expect.objectContaining({ ...failedDraft, approvalMode: "assisted" }));
+      if (!away) {
+        Object.assign(chat, { activeId: null, session: null });
+        view.rerender(<App />);
+        expect(screen.getByRole("textbox", { name: "消息" })).toHaveValue(edited ? "另一份草稿" : "");
+        expect(screen.getByRole("button", { name: "操作确认方式" })).toHaveTextContent(edited ? "帮我批准" : "请求批准");
+      }
     } finally {
       Object.assign(chat, original);
     }

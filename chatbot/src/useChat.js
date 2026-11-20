@@ -95,6 +95,9 @@ const PROJECT_LIST_TOOLS = new Set([
 ]);
 const initialProject =
   new URLSearchParams(location.search).get("projectId") || "";
+
+class ComposerModelError extends Error {}
+
 export function useChat() {
   const stopRequestRef = useRef(null);
   const [user, setUser] = useState(null),
@@ -737,11 +740,11 @@ export function useChat() {
       if (unprefixedModel(selection.executor, catalogModel?.id ?? visibleModel) !==
           unprefixedModel(selection.executor, resolved.activeModel) ||
           (visibleEffort && visibleEffort !== resolved.activeEffort)) {
-        throw Error("当前模型或思考强度已不在该执行机器的账号目录，请重新选择。");
+        throw new ComposerModelError("当前模型或思考强度已不在该执行机器的账号目录，请重新选择。");
       }
     }
     const error = composerModelError(resolved);
-    if (error) throw Error(error);
+    if (error) throw new ComposerModelError(error);
     return { model: resolved.activeModel, effort: resolved.activeEffort };
   }
   function sessionLoading() {
@@ -982,7 +985,7 @@ export function useChat() {
       }
       const turnEnded = e.status === 409 &&
         /^(当前没有进行中的回复|这一轮已经结束，请重新发送|生成已结束或不存在)$/.test(e.message);
-      const held = !turnEnded && e.status >= 400 && e.status < 500;
+      const held = e instanceof ComposerModelError || (!turnEnded && e.status >= 400 && e.status < 500);
       setQueues((old) => restoreQueued(old, id, item, held));
       if (!turnEnded && currentId.current === id) setError(e.message);
       return false;

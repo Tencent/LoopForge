@@ -371,6 +371,7 @@ export default function App() {
     scroll = useRef(),
     follow = useRef(true),
     draftReady = useRef(null),
+    draftOrigin = useRef(null),
     savingDraftApproval = useRef(null),
     previousArtifacts = useRef({ id: null, ids: new Set(), baselined: false }),
     dialogInput = useRef(),
@@ -394,6 +395,9 @@ export default function App() {
     const saving = savingDraftApproval.current;
     if (saving?.scope === approvalScope && saving.owner === approvalOwner) saving.mode = mode;
     saveApproval(approvalScope, { mode });
+  }
+  function clearDraftApproval(scope, mode) {
+    if (readApproval(scope).mode === mode) saveApproval(scope, null);
   }
   useEffect(() => {
     if (!chat.activeId) return;
@@ -579,6 +583,7 @@ export default function App() {
     setText(value.text || "");
     setAttachments(value.attachments || []);
     setReferences(value.references || []);
+    draftOrigin.current = value.copiedFrom || null;
     draftReady.current = draftKey;
   }, [draftKey, chat.user?.id]);
   useEffect(() => {
@@ -586,7 +591,10 @@ export default function App() {
     try {
       localStorage.setItem(
         draftKey,
-        JSON.stringify({ text, attachments, references }),
+        JSON.stringify({
+          text, attachments, references,
+          ...(draftOrigin.current && { copiedFrom: draftOrigin.current }),
+        }),
       );
     } catch {
       chat.setError("浏览器存储空间不足，草稿仍保留在当前页面。请移除较大的附件后重试。");
@@ -781,9 +789,11 @@ export default function App() {
     closeMenu();
   }
   async function submit() {
-    if (uploading || (!chat.activeId && savingDraftApproval.current)) return;
+    if (uploading || composerLoading || draftReady.current !== draftKey ||
+        (!chat.activeId && savingDraftApproval.current)) return;
     follow.current = true;
     const draftApproval = chat.activeId ? null : { owner: approvalOwner, scope: approvalScope, mode: approval };
+    const copiedFrom = draftOrigin.current;
     if (draftApproval) savingDraftApproval.current = draftApproval;
     let savedDraftKey, savedApprovalMode;
     const onSessionCreated = draftApproval ? (saved) => {
@@ -802,12 +812,18 @@ export default function App() {
       if (savingDraftApproval.current === draftApproval) savingDraftApproval.current = null;
     });
     if (ok) {
-      if (savedDraftKey && readApproval(draftApproval.scope).mode === savedApprovalMode) {
-        saveApproval(draftApproval.scope, null);
+      if (savedDraftKey) clearDraftApproval(draftApproval.scope, savedApprovalMode);
+      if (copiedFrom && /^(new|issue):/.test(copiedFrom.slot)) {
+        const originKey = draftKeyPrefix + copiedFrom.slot;
+        if (JSON.stringify(readJSON(originKey, null)) === copiedFrom.snapshot) {
+          localStorage.removeItem(originKey);
+          clearDraftApproval(`approval.${copiedFrom.slot}`, copiedFrom.mode);
+        }
       }
       for (const a of attachments) releaseComposerPreview(a.id);
       localStorage.removeItem(draftKey);
       if (visibleDraftKey.current !== draftKey) return;
+      draftOrigin.current = null;
       setMention(null);
       setText("");
       setAttachments([]);
@@ -816,6 +832,11 @@ export default function App() {
     } else if (visibleDraftKey.current === savedDraftKey) {
       // The session was saved but the first message was rejected. Keep its
       // content in the visible conversation so the user can retry.
+      draftOrigin.current = {
+        slot: newDraftSlot,
+        mode: savedApprovalMode,
+        snapshot: JSON.stringify({ text, attachments, references }),
+      };
       setText((current) => current || text);
       setAttachments((current) => [
         ...attachments.filter((item) => !current.some((other) => other.id === item.id)),

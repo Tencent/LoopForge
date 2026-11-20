@@ -189,6 +189,47 @@ describe("sending while a reply runs", () => {
     unmount();
   });
 
+  test("holds an immediate send when the runner catalog invalidates the chosen effort", async () => {
+    const originalAPI = apiMock.getMockImplementation();
+    const originalWrite = writeMock.getMockImplementation();
+    state.preferences = { steerOnSend: true };
+    state.sessionSettings = {
+      executor: "agy", model: "agy:gemini-thinking", effort: "high",
+      executionTarget: { pool: "runner", runnerId: "runner-a" },
+    };
+    let completeProbe;
+    apiMock.mockImplementation((path, options) => path === "/api/runners?mine=1"
+      ? Promise.resolve([{ id: "runner-a", ownerUserId: 1, runtimes: [{ provider: "agy", authMode: "local" }] }])
+      : originalAPI(path, options));
+    writeMock.mockImplementation((path, body, method) => path === "/api/runners/runner-a/models/probe"
+      ? new Promise((resolve) => { completeProbe = () => resolve({
+        models: [{ id: "gemini-thinking", discoveredReasoningEfforts: ["low"] }],
+      }); })
+      : originalWrite(path, body, method));
+    try {
+      const { result, unmount } = await openRunning();
+      await waitFor(() => expect(completeProbe).toBeTypeOf("function"));
+      expect(result.current.effort).toBe("high");
+      let request;
+      act(() => { request = result.current.send({ text: "保留这条补充" }); });
+      await act(async () => {
+        completeProbe();
+        expect(await request).toBe(true);
+      });
+      expect(result.current.error).toContain("请重新选择");
+      expect(result.current.queueHeld).toBe(true);
+      expect(result.current.queue.map((item) => item.text)).toEqual(["保留这条补充"]);
+      expect(steerPosts()).toHaveLength(0);
+      await finish("completed");
+      expect(generationPosts()).toHaveLength(0);
+      expect(result.current.queue).toHaveLength(1);
+      unmount();
+    } finally {
+      apiMock.mockImplementation(originalAPI);
+      writeMock.mockImplementation(originalWrite);
+    }
+  });
+
   test.each(["already running", "starts while opening", "finishes while opening"])(
     "follows the shared session's first CLI when another member's reply %s",
     async (phase) => {
