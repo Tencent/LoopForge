@@ -21,8 +21,9 @@
 进入 **「知识中心 -> 接入配置与用量」**（需管理员权限）：
 
 - **方式一：一键接入 WeKnora（推荐）**
-  - **内置实例（`managed`）**：选择「内置实例」，点击一键启动与接入，平台自动拉起 WeKnora 容器组并初始化 `full_access` API Key 写入配置。
-  - **外部实例（`external`）**：填写已有 WeKnora 服务地址（如 `http://host:18080`），填写 API Key **或** WeKnora 登录邮箱与密码，点击接入后系统自动完成连通性校验并保存为一条独立连接。
+  - **内置实例（`managed`）**：选择「内置实例」，点击一键启动与接入，平台自动拉起 WeKnora 容器组（后端 `weknora-app:8080`、前端 `0.0.0.0:18081`）并初始化 `full_access` API Key 写入配置（保存的连接 `url` 为 `http://weknora-app:8080`）。
+  - **外部实例（`external`）**：填写已有 WeKnora 服务地址，填写 API Key **或** WeKnora 登录邮箱与密码，点击接入后系统自动完成连通性校验并保存为一条独立连接。
+    - *跨节点 URL 填写注意*：连接保存的 `url` 同时供 **LoopForge 后端/Agent 调 `/api/v1/*` 接口** 与 **浏览器点击「管理此知识库 ↗」外链跳转** 使用。当接入跨节点的外部 WeKnora 时，请填写该节点的 **WeKnora 前端/网关地址**（如 `http://host:18081`、`http://host:80` 或反代域名，其 Nginx 已内置 `/api/v1/*` 反代），切勿填写纯后端 `:8080` 端口（否则浏览器点击「管理此知识库 ↗」将原样跳往 `:8080` 并返回 404）。详见 `docs/KNOWLEDGE_SPEC.md` 第 3.5 节。
 - **方式二：通用 / LightCloud MCP 接入**
   - 在配置表单中选择引擎（`weknora` 或 `lightcloud`），填写服务地址（LightCloud 需为 `http(s)://host/mcp` 形式）与 Token/API Key。
   - 勾选 **「启用知识中心」** 与按需勾选 **「允许审核后写回」**（`writeEnabled`）。

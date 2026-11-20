@@ -105,7 +105,7 @@ services:
     profiles: [weknora]
     image: wechatopenai/weknora-ui:${WEKNORA_VERSION:-latest}
     ports:
-      - "${WEKNORA_BIND:-127.0.0.1}:${WEKNORA_UI_PORT:-18081}:80"
+      - "${WEKNORA_BIND:-${LOOPFORGE_BIND:-0.0.0.0}}:${WEKNORA_UI_PORT:-18081}:80"
     environment:
       APP_HOST: weknora-app
       APP_PORT: 8080

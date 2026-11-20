@@ -65,6 +65,37 @@ type KnowledgeRef struct {
 - **签名密钥优先级**：`AGENTFLOW_SESSION_SECRET` -> `SESSION_SECRET` -> 上游连接密钥派生。
 - **Runner URL 重写**：`internal/runtime/platform_mcp.go` 读取 `AGENTFLOW_PLATFORM_MCP_URL`，将相对路径 `/runners/knowledge/mcp` 重写为绝对 URL；若云端/沙箱运行未配置基准地址，则剥离该 MCP 并输出告警。
 
+### 3.5 连接 URL（`connections[].url`）的双重消费链路与跨节点约束
+
+当前架构中，一条 WeKnora 连接仅保存单个 `url` 字段（`domain.KnowledgeConnection.URL`），但该字段同时被**两条网络位置不同的链路**消费：
+
+1. **链路一：服务端 API 与 Agent 运行时检索链路（由 LoopForge 后端容器发起）**
+   - **覆盖范围**：
+     - 控制台「知识库与文档」列表加载、文档分页查询（`/api/knowledge/sources/:id/documents`）、分块正文预览（`/api/knowledge/document`）；
+     - 控制台「排障调试」检索（`/api/knowledge/search`）与「知识沉淀」审核发布写回；
+     - **AI 对话助手与 SOP Agent 节点运行时**：Agent 并不直连 WeKnora，而是携带短期签名令牌 `afkb1.` 调用 LoopForge 平台自身的只读 MCP 代理端点（`POST /runners/knowledge/mcp`，`internal/httpapi/knowledge_proxy.go`），再由 LoopForge 后端容器根据 `<connID>::<kbID>` 查找对应连接的 `conn.URL`（携带服务端托管的 `X-API-Key`）请求 WeKnora 的 `/api/v1/*` 接口。
+   - **网络要求**：只要 **LoopForge 后端容器（`platform`）** 能访问 `conn.URL` 的 `/api/v1/*` 即可（例如同 Docker 网络下的 `http://weknora-app:8080`，或跨节点 IP/域名）。
+
+2. **链路二：浏览器「管理此知识库 ↗」跳转链路（由用户客户端浏览器直接发起）**
+   - **覆盖范围**：控制台「知识库与文档」右上角的 **「管理此知识库 ↗」** 按钮（`<a target="_blank">`，由 `web/app/knowledge.js` 中的 `resolveWeKnoraConsoleURL` 生成）。
+   - **当前转换规则（`resolveWeKnoraConsoleURL`）**：
+     - 取当前选中知识库所属连接的 `conn.url`（回退 `settings.weKnoraUiUrl` / `settings.url`）；
+     - 若 `hostname` 属于容器/本机内部地址 `['weknora-app', '172.17.0.1', 'host.docker.internal', 'localhost', '127.0.0.1']`：前端自动将 `hostname` 替换为浏览器当前访问 LoopForge 的 `window.location.hostname`；且当原主机名为 `weknora-app` 时将端口重写为 `18081`（内置 `weknora-frontend` UI 容器端口），当原端口为 `8080` 时清空端口；
+     - 若 `hostname` **不属于**上述内部地址（例如跨节点的外部 IP 或域名）：**不做任何主机名或端口转换，原样作为浏览器外链打开**。
+
+3. **不同部署模式下的行为表现与已知架构隐患**：
+
+| 部署与配置模式 | `connections[].url` 示例 | 服务端 / Agent / 对话检索 | 浏览器点击「管理此知识库 ↗」 | 现状评估与原因 |
+|---|---|---|---|---|
+| **内置实例（`managed`）** | `http://weknora-app:8080` | 正常（容器网内直连 `weknora-app:8080`） | 跳往 `http://<当前访问IP>:18081/` | 需确保宿主机 `18081` 绑定在 `0.0.0.0`（`WEKNORA_BIND`）且防火墙放行。 |
+| **外部跨节点（填前端/网关地址）** | `http://10.0.0.8:80` / `http://10.0.0.8:18081` / `https://kb.example.com` | **正常**（WeKnora 前端 Nginx 原生反代了 `/api/v1/*` 到后端） | **正常**（原样打开 `http://10.0.0.8:80` 等前端页面） | **当前推荐配置方式**：一个 URL 同时满足 API 调用与浏览器 UI 访问。 |
+| **外部跨节点（填纯后端 API 端口）** | `http://10.0.0.8:8080` 或 `http://10.0.0.8:18080` | 正常（后端直接调 `/api/v1/*`） | **异常（404）**（原样打开 `:8080`，而 `weknora-app` 无前端静态页面） | **已知隐患 1**：外部 IP 不触发 `weknora-app -> 18081` 规则，且单 `url` 字段未区分 `apiUrl` 与 `uiUrl`。 |
+| **外部私有内网节点（办公网隔离）** | `http://192.168.100.5:18081`（仅 LoopForge 服务端可达，用户浏览器不可达） | 正常（由 LoopForge 服务端代理请求） | **异常（连接超时）**（浏览器外链直连失败） | **已知隐患 2**：外链跳转要求客户端浏览器与外部 WeKnora 节点网络直通。 |
+
+4. **后续架构演进方向（待评审）**：
+   - **方向 A（控制台内闭环，消除外链依赖）**：在 `web/app/knowledge.js` 直接挂载后端已实现的 WeKnora 知识库 CRUD、模型列表、文档上传（文件/URL/手工）、重解析与删除接口（见第 4 节 Gap Matrix），所有管理请求统一由 LoopForge 后端转发，彻底解除浏览器跨节点网络与 UI 端口依赖。
+   - **方向 B（连接模型拆分或统一填前端网关）**：若保留外链跳转，可在 `KnowledgeConnection` 中拆分可选的 `uiUrl`（或明确约束外部实例统一填写同时承载 UI 与 `/api/v1/*` 反代的 WeKnora 前端/网关地址）。
+
 ---
 
 ## 4. 接口现状与待补齐缺口（Gap Matrix）

@@ -446,6 +446,7 @@ func ensureManagedWeKnoraContainers(ctx context.Context, network, baseURL string
 	ver := firstNonEmpty(strings.TrimSpace(os.Getenv("WEKNORA_VERSION")), "latest")
 	appPort := firstNonEmpty(strings.TrimSpace(os.Getenv("WEKNORA_APP_PORT")), "18080")
 	uiPort := firstNonEmpty(strings.TrimSpace(os.Getenv("WEKNORA_UI_PORT")), "18081")
+	uiBind := firstNonEmpty(strings.TrimSpace(os.Getenv("WEKNORA_BIND")), strings.TrimSpace(os.Getenv("LOOPFORGE_BIND")), "0.0.0.0")
 	secret := randomHex(16)
 	aesKey := randomHex(16) // 32 ASCII hex chars == 32 bytes required by SYSTEM_AES_KEY
 
@@ -483,7 +484,7 @@ func ensureManagedWeKnoraContainers(ctx context.Context, network, baseURL string
 			"wechatopenai/weknora-app:" + ver},
 		{"run", "-d", "--name", "loopforge-weknora-frontend", "--network", network, "--network-alias", "weknora-frontend",
 			"--restart", "unless-stopped",
-			"-p", "127.0.0.1:" + uiPort + ":80",
+			"-p", uiBind + ":" + uiPort + ":80",
 			"-e", "APP_HOST=weknora-app", "-e", "APP_PORT=8080", "-e", "APP_SCHEME=http",
 			"wechatopenai/weknora-ui:" + ver},
 	}
