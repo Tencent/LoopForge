@@ -140,7 +140,7 @@ func (l *assistantActivityLog) appendTextLocked(event assistantStreamEvent) {
 	event.Full = false
 	event.Tool = ""
 	event.Detail = ""
-	event.Text = truncateRunes(text, 32000)
+	event.Text = limitRunes(text, 32000)
 	if event.ID == "" {
 		event.ID = fmt.Sprintf("text-%d", len(l.events))
 	}
@@ -176,15 +176,9 @@ func replyRicher(primary, alternate string) string {
 }
 
 func replyParagraphs(text string) []string {
-	text = strings.TrimSpace(text)
-	if text == "" {
-		return nil
-	}
-	raw := strings.Split(text, "\n\n")
-	out := make([]string, 0, len(raw))
-	for _, part := range raw {
-		part = strings.TrimSpace(part)
-		if part != "" {
+	var out []string
+	for part := range strings.SplitSeq(text, "\n\n") {
+		if strings.TrimSpace(part) != "" {
 			out = append(out, part)
 		}
 	}
@@ -195,6 +189,7 @@ func replyParagraphs(text string) []string {
 // paragraph, or a second copy of the whole reply, is removed.
 func dropRepeatedReply(text string) string {
 	parts := replyParagraphs(text)
+	originalCount := len(parts)
 	for len(parts) >= 2 && replyCompact(parts[len(parts)-1]) == replyCompact(parts[len(parts)-2]) {
 		parts = parts[:len(parts)-1]
 	}
@@ -203,6 +198,9 @@ func dropRepeatedReply(text string) string {
 		if replyCompact(strings.Join(parts[:mid], "\n\n")) == replyCompact(strings.Join(parts[mid:], "\n\n")) {
 			parts = parts[:mid]
 		}
+	}
+	if len(parts) == originalCount && originalCount > 0 {
+		return text
 	}
 	return strings.Join(parts, "\n\n")
 }
@@ -219,7 +217,7 @@ func assistantVisibleReply(final string, events []domain.AssistantActivityEvent)
 			continue
 		}
 		if text := strings.TrimSpace(event.Text); text != "" && !assistantCLINoticeText(text) {
-			parts = append(parts, text)
+			parts = append(parts, strings.Trim(event.Text, "\r\n"))
 		}
 	}
 	joined := strings.Join(parts, "\n\n")

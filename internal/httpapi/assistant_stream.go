@@ -216,7 +216,7 @@ func assistantLineEvents(line string) []assistantStreamEvent {
 				if subAgent {
 					out = append(out, assistantStreamEvent{Kind: "agentText", Text: text, Full: true})
 				} else {
-					out = append(out, assistantStreamEvent{Kind: "answer", Text: text, Full: true})
+					out = append(out, assistantStreamEvent{Kind: "answer", Text: block.Text, Full: true})
 				}
 			case "tool_use":
 				if ev, ok := assistantToolStreamEvent(block.ID, block.Name, block.Input); ok {

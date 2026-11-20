@@ -1667,7 +1667,7 @@ func runAssistantCLI(ctx context.Context, req assistantCLIRequest, user domain.U
 				if captureClaudeText && result.ParentToolUseID == "" {
 					if result.Subtype == "success" && !result.IsError && strings.TrimSpace(final) == "" &&
 						(result.StopReason == "" || result.StopReason == "end_turn" || result.StopReason == "stop_sequence") {
-						claudeResultText = strings.Join(claudeTextBlocks, "\n\n")
+						claudeResultText = joinClaudeTextBlocks(claudeTextBlocks)
 					}
 					claudeMessageID, claudeTextBlocks = "", nil
 				}
@@ -1690,7 +1690,7 @@ func runAssistantCLI(ctx context.Context, req assistantCLIRequest, user domain.U
 						claudeMessageID, claudeTextBlocks = result.Message.ID, nil
 						resetClaudeText = false
 					}
-					claudeTextBlocks = append(claudeTextBlocks, text)
+					claudeTextBlocks = append(claudeTextBlocks, block.Text)
 				}
 			case "user", "stream_event":
 				modelStarted = true
@@ -1753,6 +1753,24 @@ func runAssistantCLI(ctx context.Context, req assistantCLIRequest, user domain.U
 		return "", sessionID, err
 	}
 	return out, sessionID, nil
+}
+
+// Claude supplies text blocks with their own whitespace. Separate blocks
+// with a paragraph break when neither side supplies a line ending.
+func joinClaudeTextBlocks(blocks []string) string {
+	var reply strings.Builder
+	for i, block := range blocks {
+		if i > 0 {
+			left := strings.TrimRight(blocks[i-1], " \t")
+			right := strings.TrimLeft(block, " \t")
+			if !strings.HasSuffix(left, "\n") && !strings.HasSuffix(left, "\r") &&
+				!strings.HasPrefix(right, "\n") && !strings.HasPrefix(right, "\r") {
+				reply.WriteString("\n\n")
+			}
+		}
+		reply.WriteString(block)
+	}
+	return reply.String()
 }
 
 func assistantUsageReported(u domain.TokenUsage) bool {

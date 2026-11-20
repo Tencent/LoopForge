@@ -60,6 +60,10 @@ func TestAssistantClaudeRecoversReplyFromEmptySuccessfulResult(t *testing.T) {
 	const earlierMessage = `{"type":"assistant","message":{"id":"msg_earlier","content":[{"type":"text","text":"Earlier message."}]}}`
 	const firstParagraph = `{"type":"assistant","message":{"id":"msg_reply","content":[{"type":"text","text":"First complete paragraph."}]}}`
 	const secondParagraph = `{"type":"assistant","message":{"id":"msg_reply","content":[{"type":"text","text":"Second complete paragraph."}]}}`
+	const codeIntroduction = `{"type":"assistant","message":{"id":"msg_code","content":[{"type":"text","text":"Minimal example:\n\n"}]}}`
+	const codeIntroductionWithoutBreak = `{"type":"assistant","message":{"id":"msg_code","content":[{"type":"text","text":"Minimal example:"}]}}`
+	const codeAfterIntroduction = `{"type":"assistant","message":{"id":"msg_code","content":[{"type":"text","text":"    first()\n    second()"}]}}`
+	const codeWithLeadingBreak = `{"type":"assistant","message":{"id":"msg_code","content":[{"type":"text","text":"\n\n    first()\n    second()"}]}}`
 	const success = `{"type":"result","subtype":"success","is_error":false,"stop_reason":"end_turn","result":""}`
 	missingResult := errAssistantMissingResult.Error()
 	processErr := errors.New("exit status 1")
@@ -75,6 +79,16 @@ func TestAssistantClaudeRecoversReplyFromEmptySuccessfulResult(t *testing.T) {
 			name:  "keep every complete paragraph of the latest main message",
 			lines: []string{earlierMessage, firstParagraph, child, secondParagraph, success},
 			want:  "First complete paragraph.\n\nSecond complete paragraph.",
+		},
+		{
+			name:  "preserve indentation after a paragraph break",
+			lines: []string{codeIntroduction, codeAfterIntroduction, success},
+			want:  "Minimal example:\n\n    first()\n    second()",
+		},
+		{
+			name:  "preserve the following block's paragraph break",
+			lines: []string{codeIntroductionWithoutBreak, codeWithLeadingBreak, success},
+			want:  "Minimal example:\n\n    first()\n    second()",
 		},
 		{name: "keep latest message without an ID", lines: []string{answer, later, success}, want: "later message"},
 		{name: "keep text from the completed turn", lines: []string{answer, success, later}, want: reply},

@@ -71,6 +71,7 @@ import {
   Menu,
   SelectMenu,
 } from "../src/ui.jsx";
+import { finalReply } from "../src/activity.js";
 
 const chat = {
   user: { id: 1 },
@@ -104,6 +105,23 @@ const run = {
 };
 
 describe("content and panels", () => {
+  test("renders recovered indented code as the final answer after tool activity", () => {
+    const intro = "Minimal example:";
+    const code = "    first()\n    second()";
+    const full = `${intro}\n\n${code}`;
+    const steps = [
+      { kind: "text", text: intro },
+      { kind: "tool", id: "t1" },
+      { kind: "text", text: code },
+    ];
+    const answer = finalReply(full, steps);
+    expect(answer).toBe(code);
+    const trimmedSteps = [...steps.slice(0, -1), { kind: "text", text: code.trimStart() }];
+    expect(finalReply(full, trimmedSteps)).toBe(code);
+    render(<RichContent message={answer} />);
+    expect(screen.getByRole("button", { name: "复制代码" })).toBeInTheDocument();
+  });
+
   test("renders rich content formats and preview controls", async () => {
     const user = userEvent.setup();
     expect(safeSVG("<svg><script>x</script><path /></svg>")).not.toContain("script");
