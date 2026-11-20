@@ -2,13 +2,18 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
+
+	"agentflow/internal/domain"
 )
 
 func conversationPoll(t *testing.T, p *ConversationProcessPool, ctx context.Context, root, id string) string {
@@ -32,6 +37,95 @@ func conversationPoll(t *testing.T, p *ConversationProcessPool, ctx context.Cont
 		}
 	}
 }
+func TestConversationRelayPreservesProxyExceptions(t *testing.T) {
+	for _, tc := range []struct {
+		name               string
+		upper              string
+		lower              string
+		environment        map[string]string
+		sandboxEnvironment map[string]string
+		wantProxy          string
+		want               []string
+	}{
+		{name: "empty"},
+		{name: "inherited lists", upper: "example.com,10.0.0.0/8", lower: "internal.example", want: []string{"example.com", "10.0.0.0/8", "internal.example"}},
+		{name: "command override", upper: "parent.example", lower: "internal.example", environment: map[string]string{"NO_PROXY": "request.example"}, want: []string{"request.example", "internal.example"}},
+		{name: "existing relay host", upper: "127.0.0.1", lower: "internal.example,127.0.0.1", want: []string{"127.0.0.1", "internal.example"}},
+		{name: "existing wildcard", upper: "*", lower: "internal.example", want: []string{"*", "internal.example"}},
+		{name: "activated sandbox environment", upper: "parent.example", lower: "parent-lower.example", sandboxEnvironment: map[string]string{"NO_PROXY": "sandbox.example,10.1.0.0/16", "no_proxy": "sandbox-lower.example", "HTTP_PROXY": "http://sandbox-proxy.example:8080"}, wantProxy: "http://sandbox-proxy.example:8080", want: []string{"sandbox.example", "10.1.0.0/16", "sandbox-lower.example"}},
+		{name: "command overrides sandbox", upper: "parent.example", lower: "parent-lower.example", sandboxEnvironment: map[string]string{"NO_PROXY": "sandbox.example", "no_proxy": "sandbox-lower.example", "HTTP_PROXY": "http://sandbox-proxy.example:8080"}, environment: map[string]string{"NO_PROXY": "request.example", "HTTP_PROXY": "http://request-proxy.example:8080"}, wantProxy: "http://request-proxy.example:8080", want: []string{"request.example", "sandbox-lower.example"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("NO_PROXY", tc.upper)
+			t.Setenv("no_proxy", tc.lower)
+			t.Setenv("HTTP_PROXY", "http://proxy.example:8080")
+			t.Setenv("HTTPS_PROXY", "http://proxy.example:8443")
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			root := t.TempDir()
+			pool := &ConversationProcessPool{}
+			gateway := "http://gateway.example"
+			req := ConversationProcessRequest{
+				Operation: "start", Gateway: gateway, Token: "fixture-token",
+				Command: &ConversationCommand{
+					Argv:        []string{"sh", "-c", `printf 'upper=%s|lower=%s|http=%s|https=%s|relay=%s' "$NO_PROXY" "$no_proxy" "$HTTP_PROXY" "$HTTPS_PROXY" "$1"`, "--", gateway},
+					Environment: tc.environment,
+				},
+			}
+			forward := func(context.Context, string, json.RawMessage) (json.RawMessage, error) { return nil, nil }
+			var factories []ConversationSandboxFactory
+			if tc.sandboxEnvironment != nil {
+				workspace := t.TempDir()
+				launcher := filepath.Join(t.TempDir(), "sandbox-exec-fixture")
+				if err := os.WriteFile(launcher, []byte("#!/bin/sh\nshift 2\nexec \"$@\"\n"), 0700); err != nil {
+					t.Fatal(err)
+				}
+				factories = append(factories, func(ctx context.Context, nativeRoot string) (Sandbox, func(), error) {
+					sb := &processSandbox{
+						id: "proxy-env", driver: "seatbelt", binary: launcher, workspace: workspace,
+						profile: domain.SandboxProfile{Environment: tc.sandboxEnvironment},
+					}
+					if err := ConfigureConversationSandbox(ctx, sb, nativeRoot); err != nil {
+						return nil, nil, err
+					}
+					return WithSandboxCredentials(sb, RunCredentials{}), func() {}, nil
+				})
+			}
+			result, err := pool.Handle(ctx, root, "", nil, req, forward, factories...)
+			if err != nil {
+				t.Fatal(err)
+			}
+			values := map[string]string{}
+			for _, line := range strings.Split(conversationPoll(t, pool, ctx, root, result.ID), "|") {
+				key, value, ok := strings.Cut(line, "=")
+				if ok {
+					values[key] = value
+				}
+			}
+			relay, err := url.Parse(values["relay"])
+			if err != nil || relay.Hostname() != "127.0.0.1" || relay.Port() == "" {
+				t.Fatalf("not the actual ephemeral relay URL: %q: %v", values["relay"], err)
+			}
+			want := append([]string(nil), tc.want...)
+			if !slices.Contains(want, relay.Hostname()) {
+				want = append(want, relay.Hostname())
+			}
+			for _, key := range []string{"upper", "lower"} {
+				if values[key] != strings.Join(want, ",") {
+					t.Errorf("%s = %q, want %q", key, values[key], strings.Join(want, ","))
+				}
+			}
+			wantProxy := tc.wantProxy
+			if wantProxy == "" {
+				wantProxy = "http://proxy.example:8080"
+			}
+			if values["http"] != wantProxy || values["https"] != "http://proxy.example:8443" {
+				t.Fatalf("model proxy configuration changed: %v", values)
+			}
+		})
+	}
+}
+
 func TestConversationProcessBidirectionalAndRootFence(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
