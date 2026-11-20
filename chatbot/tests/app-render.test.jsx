@@ -155,6 +155,30 @@ describe("App", () => {
       Object.assign(chat, original);
     }
   });
+  test("keeps the open conversation's draft when another draft finishes sending", async () => {
+    const original = { activeId: chat.activeId, session: chat.session };
+    const user = userEvent.setup();
+    const view = render(<App />);
+    let finish;
+    chat.send.mockImplementationOnce(({ onSessionCreated }) => new Promise((resolve) => {
+      finish = () => {
+        onSessionCreated("new-session");
+        resolve(true);
+      };
+    }));
+    const input = () => screen.getByRole("textbox", { name: "消息" });
+    try {
+      await user.type(input(), "原草稿");
+      await user.click(screen.getByRole("button", { name: "发送消息" }));
+      Object.assign(chat, { activeId: "s1", session: { id: "s1", messages: [] } });
+      view.rerender(<App />);
+      await user.type(input(), "另一个会话的草稿");
+      await act(async () => finish());
+      expect(input()).toHaveValue("另一个会话的草稿");
+    } finally {
+      Object.assign(chat, original);
+    }
+  });
   test("restores full permission only for the conversation and account that picked it", async () => {
     const original = { activeId: chat.activeId, session: chat.session, user: chat.user };
     const user = userEvent.setup();

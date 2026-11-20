@@ -378,7 +378,10 @@ export default function App() {
   // A requirement handed over by the workbench drafts in its own slot so the
   // project's unsent new-conversation draft and attachments stay untouched.
   const newDraftSlot = issueDraft && issueDraft.projectId === chat.projectId ? "issue:" + issueDraft.issueId : "new:" + chat.projectId;
-  const draftKey = `agentflow.native-chat.draft.${chat.user?.id || "guest"}.${chat.activeId || newDraftSlot}`;
+  const draftKeyPrefix = `agentflow.native-chat.draft.${chat.user?.id || "guest"}.`;
+  const draftKey = draftKeyPrefix + (chat.activeId || newDraftSlot);
+  const visibleDraftKey = useRef(draftKey);
+  visibleDraftKey.current = draftKey;
   const approvalOwner = realChat.user?.isGuest ? "guest" : realChat.user?.id;
   const { readOptions: readApproval, saveOptions: saveApproval } = useComposerOptions(approvalOwner);
   const approvalScope = chat.activeId ? sessionApprovalScope(chat.activeId) : `approval.${newDraftSlot}`;
@@ -777,7 +780,9 @@ export default function App() {
     follow.current = true;
     const draftApproval = chat.activeId ? null : { owner: approvalOwner, scope: approvalScope, mode: approval };
     if (draftApproval) savingDraftApproval.current = draftApproval;
+    let savedDraftKey;
     const onSessionCreated = draftApproval ? (id) => {
+      savedDraftKey = draftKeyPrefix + id;
       const { scope, mode } = draftApproval;
       saveApproval(sessionApprovalScope(id), { mode });
       if (readApproval(scope).mode === mode) saveApproval(scope, null);
@@ -791,15 +796,17 @@ export default function App() {
     }).finally(() => {
       if (savingDraftApproval.current === draftApproval) savingDraftApproval.current = null;
     });
+    const viewingSentDraft = visibleDraftKey.current === draftKey || visibleDraftKey.current === savedDraftKey;
     if (ok) {
+      for (const a of attachments) releaseComposerPreview(a.id);
+      localStorage.removeItem(draftKey);
+      if (!viewingSentDraft) return;
       setMention(null);
       setText("");
       setAttachments([]);
-      for (const a of attachments) releaseComposerPreview(a.id);
       setReferences([]);
-      localStorage.removeItem(draftKey);
       if (input.current) input.current.style.height = "";
-    } else {
+    } else if (viewingSentDraft) {
       // A failed first message may already have opened a new conversation,
       // which loads that conversation's (empty) draft. Keep what was typed.
       setText((current) => current || text);

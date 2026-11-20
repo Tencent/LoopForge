@@ -151,32 +151,39 @@ describe("conversation hooks", () => {
     }
   });
 
-  test("keeps a model picked during the first save for later messages", async () => {
+  test.each(["credential check", "first save"])("keeps a model picked during the %s for later messages", async (delay) => {
     const originalAPI = apiMock.getMockImplementation();
     const originalWrite = writeMock.getMockImplementation();
-    let saved, completeSave;
+    let saved, completePending, userReads = 0;
     apiMock.mockImplementation((path, options) => {
       if (path === "/api/assistant/models") return Promise.resolve({
         default: "m1", models: [{ id: "m1" }, { id: "m2", efforts: ["high"] }],
       });
+      if (path === "/api/users" && delay === "credential check") {
+        if (userReads++ === 0) return Promise.resolve([{ id: 1, loginName: "tester" }]);
+        return new Promise((resolve) => {
+          completePending = () => resolve([{ id: 1, loginName: "tester", codeBuddyApiKeyConfigured: true }]);
+        });
+      }
       if (path === "/api/assistant/sessions/new-session") return Promise.resolve(saved);
       return originalAPI(path, options);
     });
     writeMock.mockImplementation((path, body, method) => {
       if (path !== "/api/assistant/sessions/new-session" || method !== "PUT") return originalWrite(path, body, method);
       saved = body;
-      return new Promise((resolve) => { completeSave = () => resolve(saved); });
+      if (delay === "credential check") return Promise.resolve(saved);
+      return new Promise((resolve) => { completePending = () => resolve(saved); });
     });
     try {
       const { result } = renderHook(useChat);
       await waitFor(() => expect(result.current.machinesReady).toBe(true));
       let sending;
       act(() => { sending = result.current.send({ text: "第一条消息" }); });
-      await waitFor(() => expect(completeSave).toBeTypeOf("function"));
+      await waitFor(() => expect(completePending).toBeTypeOf("function"));
       act(() => result.current.setModel("m2"));
       act(() => result.current.setEffort("high"));
       await act(async () => {
-        completeSave();
+        completePending();
         await sending;
       });
       expect(writeMock).toHaveBeenCalledWith("/api/assistant/generations", expect.objectContaining({
@@ -188,9 +195,50 @@ describe("conversation hooks", () => {
       await waitFor(() => expect(result.current.session?.id).toBe("new-session"));
       expect(result.current).toMatchObject({ model: "m2", effort: "high" });
     } finally {
-      completeSave?.();
+      completePending?.();
       apiMock.mockImplementation(originalAPI);
       writeMock.mockImplementation(originalWrite);
+    }
+  });
+
+  test("sends a draft to its own conversation when navigation happens during a credential check", async () => {
+    const original = apiMock.getMockImplementation();
+    let userReads = 0, completeCheck;
+    apiMock.mockImplementation((path, options) => {
+      if (path === "/api/assistant/models") return Promise.resolve({
+        default: "m1", models: [{ id: "m1" }],
+      });
+      if (path === "/api/users") {
+        if (userReads++ === 0) return Promise.resolve([{ id: 1, loginName: "tester" }]);
+        return new Promise((resolve) => {
+          completeCheck = () => resolve([{ id: 1, loginName: "tester", codeBuddyApiKeyConfigured: true }]);
+        });
+      }
+      return original(path, options);
+    });
+    try {
+      const { result } = renderHook(useChat);
+      await waitFor(() => expect(result.current.machinesReady).toBe(true));
+      let sending;
+      act(() => { sending = result.current.send({ text: "原草稿", approvalMode: "auto" }); });
+      await waitFor(() => expect(completeCheck).toBeTypeOf("function"));
+      act(() => result.current.open("s1"));
+      await waitFor(() => expect(result.current.session?.id).toBe("s1"));
+      await act(async () => {
+        completeCheck();
+        expect(await sending).toBe(true);
+      });
+      const requests = writeMock.mock.calls.filter(([path]) => path === "/api/assistant/generations");
+      expect(requests).toHaveLength(1);
+      expect(requests[0][1]).toMatchObject({
+        sessionId: "new-session", approvalMode: "auto", messages: [expect.objectContaining({ content: "原草稿" })],
+      });
+      expect(result.current).toMatchObject({
+        activeId: "s1", session: { id: "s1", messages: [expect.objectContaining({ content: "原消息" })] },
+      });
+    } finally {
+      completeCheck?.();
+      apiMock.mockImplementation(original);
     }
   });
 
@@ -304,6 +352,68 @@ describe("conversation hooks", () => {
       localStorage.removeItem("loopforge.assistant.executor");
       localStorage.removeItem("loopforge.assistant.model.agy");
       localStorage.removeItem("loopforge.assistant.effort.agy.gemini-3.8-flash-low");
+    }
+  });
+
+  test.each([
+    { action: "send" },
+    { action: "send", slowMachines: true },
+    { action: "regenerate" },
+  ])("validates the saved effort against the target runner catalog before $action ($slowMachines)", async ({ action, slowMachines }) => {
+    const originalAPI = apiMock.getMockImplementation();
+    const originalWrite = writeMock.getMockImplementation();
+    const model = "agy:gemini-3.8-flash-low";
+    const stored = {
+      id: "agy-session", executor: "agy", model,
+      executionTarget: { pool: "runner", runnerId: "mac" },
+      messages: [{ role: "user", content: "原消息" }],
+    };
+    const runners = [{
+      id: "mac", status: "online", ownerUserId: 1,
+      runtimes: [{ provider: "agy", authMode: "local" }],
+    }];
+    const catalog = { models: [{
+      id: "gemini-3.8-flash-low", name: "Gemini 3.8 Flash",
+      discoveredReasoningEfforts: ["low", "high"],
+      efforts: { low: "gemini-3.8-flash-low", high: "gemini-3.8-flash-high" },
+    }] };
+    let completeMachines, completeCatalog;
+    const machines = slowMachines
+      ? new Promise((resolve) => { completeMachines = () => resolve(runners); })
+      : Promise.resolve(runners);
+    apiMock.mockImplementation((path, options) => {
+      if (path === "/api/runners?mine=1") return machines;
+      if (path === "/api/assistant/sessions/agy-session") return Promise.resolve(stored);
+      return originalAPI(path, options);
+    });
+    writeMock.mockImplementation((path, body, method) => {
+      if (path !== "/api/runners/mac/models/probe") return originalWrite(path, body, method);
+      return new Promise((resolve) => { completeCatalog = () => resolve(catalog); });
+    });
+    writeComposerPreference("conversation.1.model.agy-session", JSON.stringify({ executor: "agy", model, effort: "high" }));
+    try {
+      history.replaceState({}, "", action === "send" ? "/?session=agy-session" : "/?session=s1");
+      const { result } = renderHook(useChat);
+      await waitFor(() => expect(result.current.session?.id).toBe(action === "send" ? stored.id : "s1"));
+      if (!slowMachines) await waitFor(() => expect(result.current.machinesReady).toBe(true));
+      let request;
+      act(() => { request = action === "send" ? result.current.send({ text: "继续" }) : result.current.regenerate(stored); });
+      if (completeMachines) await act(async () => completeMachines());
+      await waitFor(() => expect(completeCatalog).toBeTypeOf("function"));
+      expect(writeMock).not.toHaveBeenCalledWith("/api/assistant/generations", expect.anything());
+      await act(async () => {
+        completeCatalog();
+        expect(await request).toBe(true);
+      });
+      expect(writeMock).toHaveBeenCalledWith("/api/assistant/generations", expect.objectContaining({
+        sessionId: stored.id, executor: "agy", model, effort: "high",
+      }));
+      expect(writeMock.mock.calls.filter(([path]) => path === "/api/runners/mac/models/probe")).toHaveLength(1);
+    } finally {
+      completeMachines?.();
+      completeCatalog?.();
+      apiMock.mockImplementation(originalAPI);
+      writeMock.mockImplementation(originalWrite);
     }
   });
 

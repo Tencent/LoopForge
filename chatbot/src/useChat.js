@@ -50,12 +50,6 @@ function storedExecutor() {
   return knownExecutor(readComposerPreference("executor"));
 }
 
-function executorModelList(models, executor, providerCatalogs) {
-  const listed = engineModels(models, executor);
-  if (listed.length || executor === "codebuddy") return listed;
-  return (providerCatalogs?.[executor]?.models || []).filter((model) => concreteModel(model, executor));
-}
-
 // A CLI's fallback list uses bare model IDs, while the personal catalog
 // prefixes them with the CLI. Both spellings share the same preference.
 function unprefixedModel(executor, model) {
@@ -166,6 +160,7 @@ export function useChat() {
     globalProject = useRef(initialProject),
     submittingRef = useRef(false),
     savingDraft = useRef(null),
+    catalogRequests = useRef(new Map()),
     sandboxBusyRef = useRef(false),
     applyingRef = useRef(new Set()),
     dispatchingRef = useRef(false),
@@ -605,20 +600,27 @@ export function useChat() {
   // Without their own key users chat on the platform's shared key, limited to
   // the models the administrator allowed (the first is the default).
   const sponsoredModel = sponsoredModels[0] || "";
-  function resolveComposerModel({ executor, model, effort }, conversation, draft) {
+  function resolveComposerModel(
+    { executor, model, effort }, conversation, draft,
+    catalogs = providerCatalogs, machines = executionMachines.machines,
+  ) {
     const personalMachineId = executionLocked(conversation)
       ? (conversation.executionTarget?.pool === "runner" ? conversation.executionTarget.runnerId : "")
       : executionMachines.defaultRunnerId;
-    const personalMachine = executionMachines.machines.find(
+    const personalMachine = machines.find(
       (machine) => machine.id === personalMachineId && machine.ownerUserId === user?.id,
     );
     const agyRuntime = personalMachine?.runtimes?.find((runtime) => runtime.provider === "agy");
     const agyAccountKey = executor === "agy" && agyRuntime && agyRuntime.authMode !== "personal"
       ? `agy-account:${user.id}:${personalMachine.id}` : "";
-    const agyAccountCatalog = providerCatalogs[agyAccountKey];
+    const providerCatalog = catalogs[agyAccountKey || executor];
     const codeBuddy = executor === "codebuddy";
-    const executorModels = agyAccountKey ? agyAccountCatalog?.models || [] :
-      executorModelList(models, executor, providerCatalogs);
+    const listed = engineModels(models, executor);
+    const usesProviderCatalog = !codeBuddy && (!!agyAccountKey || !listed.length);
+    const catalogToLoad = usesProviderCatalog && !providerCatalog ? agyAccountKey || executor : "";
+    const executorModels = usesProviderCatalog
+      ? (providerCatalog?.models || []).filter((model) => concreteModel(model, executor))
+      : listed;
     const sponsored = codeBuddy && missingKey && !user.isGuest && !!sponsoredModel;
     const listedModel = findExecutorModel(executorModels, executor, model);
     const hasSelectedModel = model !== null && !listedModel?.disabled && !listedModel?.unavailable &&
@@ -632,7 +634,7 @@ export function useChat() {
       (codeBuddy && availableModel === codeBuddyDefault.id ? codeBuddyDefault : undefined);
     const activeModel = activeModelEntry?.id ?? availableModel;
     const requestedModelId = unprefixedModel(executor, availableModel);
-    const unavailableAgyVariant = agyAccountCatalog && !activeModelEntry &&
+    const unavailableAgyVariant = agyAccountKey && providerCatalog && !activeModelEntry &&
       /-(?:low|medium|high|xhigh|max)$/.test(requestedModelId || "");
     // Older sessions and preferences stored the ID of the selected effort variant.
     const legacyEffort = requestedModelId !== unprefixedModel(executor, activeModel)
@@ -643,27 +645,26 @@ export function useChat() {
       (draft ? readComposerPreference(effortPreference(executor, availableModel)) : null);
     const activeEffort = modelEffort(activeModelEntry, preferredEffort || legacyEffort);
     return {
-      personalMachineId, personalMachine, agyAccountKey, codeBuddy, executorModels,
+      personalMachineId, personalMachine, agyAccountKey, catalogToLoad, codeBuddy, executorModels,
       sponsored, activeModelEntry, activeModel, activeEffort, unavailableAgyVariant,
     };
   }
+  const composerModel = resolveComposerModel({ executor, model, effort }, session, !activeId);
   const {
-    personalMachineId, personalMachine, agyAccountKey, codeBuddy, executorModels,
-    sponsored, activeModelEntry, activeModel, activeEffort, unavailableAgyVariant,
-  } = resolveComposerModel({ executor, model, effort }, session, !activeId);
-  const listedForEngine = engineModels(models, executor);
-  useEffect(() => {
-    const key = agyAccountKey || executor;
-    if (codeBuddy || providerCatalogs[key] || (!agyAccountKey && listedForEngine.length)) return;
-    let current = true;
-    const request = agyAccountKey
-      ? write(`/api/runners/${encodeURIComponent(personalMachineId)}/models/probe`, { provider: "agy", useSaved: true })
+    personalMachineId, personalMachine, agyAccountKey, catalogToLoad, codeBuddy, executorModels,
+    sponsored, activeModelEntry, activeModel, activeEffort,
+  } = composerModel;
+  const loadProviderCatalog = useCallback((key, executor, runnerId) => {
+    const existing = catalogRequests.current.get(key);
+    if (existing) return existing;
+    const request = runnerId
+      ? write(`/api/runners/${encodeURIComponent(runnerId)}/models/probe`, { provider: "agy", useSaved: true })
       : api(`/api/assistant/models?executor=${encodeURIComponent(executor)}`);
-    request
+    const loading = request
       .then((catalog) => {
-        if (!current) return;
+        if (catalogRequests.current.get(key) !== loading) throw Error("模型目录已更新，请重新发送。");
         if (catalog.error) throw new Error(catalog.error);
-        const result = agyAccountKey ? {
+        const result = runnerId ? {
           models: (catalog.models || []).filter((model) => concreteModel(model, "agy")).map((model) => ({
             id: `agy:${model.id}`,
             engine: "agy",
@@ -673,15 +674,47 @@ export function useChat() {
           })),
         } : catalog;
         setProviderCatalogs((old) => ({ ...old, [key]: result }));
+        return result;
       })
-      .catch((e) => {
-        if (!current) return;
-        setError(e.message);
+      .catch((error) => {
+        if (catalogRequests.current.get(key) === loading) catalogRequests.current.delete(key);
+        throw error;
       });
+    catalogRequests.current.set(key, loading);
+    return loading;
+  }, []);
+  useEffect(() => {
+    if (!catalogToLoad) return;
+    let current = true;
+    void loadProviderCatalog(catalogToLoad, executor, agyAccountKey ? personalMachineId : "")
+      .catch((e) => { if (current) setError(e.message); });
     return () => {
       current = false;
     };
-  }, [agyAccountKey, codeBuddy, executor, listedForEngine.length, personalMachineId, providerCatalogs]);
+  }, [agyAccountKey, catalogToLoad, executor, personalMachineId, providerCatalogs, loadProviderCatalog]);
+
+  function composerModelError(resolved) {
+    if (resolved.unavailableAgyVariant) return "当前模型已不在该执行机器的账号目录，请重新选择模型。";
+    if (!resolved.activeModel) return "当前 CLI 暂无可用模型，请在个人配置中获取或添加模型。";
+    return "";
+  }
+  async function modelForRequest(selection, conversation, resolved) {
+    let machines = executionMachines.machines;
+    if (selection.executor === "agy" && resolved.personalMachineId && !executionMachines.machinesReady) {
+      const rows = await api("/api/runners?mine=1");
+      machines = Array.isArray(rows) ? rows : [];
+      resolved = resolveComposerModel(selection, conversation, false, providerCatalogs, machines);
+    }
+    const key = resolved.catalogToLoad;
+    if (key) {
+      const runnerId = resolved.agyAccountKey ? resolved.personalMachineId : "";
+      const catalog = await loadProviderCatalog(key, selection.executor, runnerId);
+      resolved = resolveComposerModel(selection, conversation, false, { ...providerCatalogs, [key]: catalog }, machines);
+    }
+    const error = composerModelError(resolved);
+    if (error) throw Error(error);
+    return { model: resolved.activeModel, effort: resolved.activeEffort };
+  }
   function chooseExecutor(id) {
     if (id === "claude") id = "claude-code";
     if (submittingRef.current || !EXECUTORS.some((item) => item.id === id) || id === executor) return;
@@ -761,6 +794,7 @@ export function useChat() {
         e.origin === location.origin &&
         e.data?.type === "agentflow-credentials-changed"
       ) {
+        catalogRequests.current.clear();
         setProviderCatalogs({});
         requestModelCatalogRefresh((revision) => revision + 1);
       }
@@ -887,14 +921,14 @@ export function useChat() {
     setQueues((old) => removeQueued(old, id, item.id));
     setError("");
     try {
+      const chosen = await modelForRequest({ executor, model, effort }, sessionRef.current, composerModel);
       await write(
         `${sessionPath(id)}/generation/steer?generationId=${encodeURIComponent(from)}`,
         {
           content: item.text || "请阅读本轮附件并回答。",
           attachments: item.attachments || [],
           references: item.references || [],
-          model: activeModel,
-          effort: activeEffort,
+          ...chosen,
           ...queuedApproval(item, user?.id),
         },
       );
@@ -925,12 +959,9 @@ export function useChat() {
     fromQueue = false,
   }) {
     if (!text.trim() && !attachments.length) return false;
-    if (unavailableAgyVariant) {
-      setError("当前模型已不在该执行机器的账号目录，请重新选择模型。");
-      return false;
-    }
-    if (!activeModel) {
-      setError("当前 CLI 暂无可用模型，请在个人配置中获取或添加模型。");
+    const modelError = composerModelError(composerModel);
+    if (modelError) {
+      setError(modelError);
       return false;
     }
     const approval = fromQueue
@@ -970,38 +1001,39 @@ export function useChat() {
       setError(executionMachines.machineError || "执行机器仍在加载，请稍后发送。");
       return false;
     }
-    // Without a key (and no sponsored model) the server rejects every message.
-    // Say so before creating an empty conversation that would swallow the
-    // typed question. Re-check first in case the key was saved elsewhere since
-    // this page loaded.
-    if (
-      codeBuddy &&
-      !sponsoredModel &&
-      users.find((u) => u.id === user?.id)?.codeBuddyApiKeyConfigured ===
-        undefined &&
-      user &&
-      !user.isGuest
-    ) {
-      const rows = await api("/api/users").catch(() => null);
-      if (rows) setUsers(rows);
-      const fresh = rows?.find((u) => u.id === user.id);
-      if (fresh && !fresh.codeBuddyApiKeyConfigured) {
-        setError("请先在个人配置中配置自己的 CodeBuddy API Key");
-        return false;
-      }
-    }
+    // Claim the send and its target before a credential check can yield.
+    let s = sessionRef.current?.id === currentId.current ? sessionRef.current : null;
+    const draft = s ? null : { projectId: projectRef.current, issueId: draftIssueId, choice: null };
+    savingDraft.current = draft;
+    const viewingDraft = () => draft && savingDraft.current === draft &&
+      !currentId.current && projectRef.current === draft.projectId;
+    const viewingTarget = () => s ? currentId.current === s.id : viewingDraft();
     submittingRef.current = true;
     setSubmitting(true);
     setError("");
-    let s = sessionRef.current;
-    let draft;
     const previousGeneration = generation?.id;
     setGeneration(null);
     try {
+      // Recheck credentials before creating the session in case the user
+      // configured a key elsewhere after this tab loaded.
+      if (
+        codeBuddy &&
+        !sponsoredModel &&
+        users.find((u) => u.id === user?.id)?.codeBuddyApiKeyConfigured === undefined &&
+        user &&
+        !user.isGuest
+      ) {
+        const rows = await api("/api/users").catch(() => null);
+        if (rows) setUsers(rows);
+        const fresh = rows?.find((u) => u.id === user.id);
+        if (fresh && !fresh.codeBuddyApiKeyConfigured) {
+          if (viewingTarget()) setError("请先在个人配置中配置自己的 CodeBuddy API Key");
+          return false;
+        }
+      }
+      const chosen = await modelForRequest({ executor, model, effort }, s, composerModel);
       if (!s) {
         const id = newId();
-        draft = { projectId: projectRef.current, issueId: draftIssueId, choice: null };
-        savingDraft.current = draft;
         s = await write(
           sessionPath(id),
           {
@@ -1010,8 +1042,7 @@ export function useChat() {
             issueId: draft.issueId,
             sandboxProfileId,
             executionTarget: {pool: executionMachines.defaultRunnerId ? "runner" : "cloud", runnerId: executionMachines.defaultRunnerId || ""},
-            model: activeModel,
-            effort: activeEffort,
+            ...chosen,
             executor,
             title: text.trim().slice(0, 36) || "图片与文件",
             approvalUserId: approval.approvalUserId,
@@ -1021,13 +1052,14 @@ export function useChat() {
         );
         onSessionCreated?.(s.id);
         if (draft.choice) saveOptions(`model.${s.id}`, draft.choice);
-        setSession(s);
-        setExecutorState(executor);
-        setModel(draft.choice?.model ?? activeModel);
-        setEffort(draft.choice?.effort ?? activeEffort);
-        currentId.current = id;
-        setActiveId(id);
-        changeURL(id);
+        if (viewingDraft()) {
+          setExecutorState(executor);
+          setModel(draft.choice?.model ?? chosen.model);
+          setEffort(draft.choice?.effort ?? chosen.effort);
+          currentId.current = s.id;
+          setActiveId(s.id);
+          changeURL(s.id);
+        }
       }
       const content = text.trim() || "请阅读本轮附件并回答。";
       const pending = {
@@ -1041,17 +1073,19 @@ export function useChat() {
         ...(references.length ? { references } : {}),
       };
       const messages = [...(messagesOverride || s.messages || []), pending];
-      setSession({
-        ...s,
-        messages,
-        participants:
-          user &&
-          !confirmationCaption(pending, messages.at(-2)) &&
-          !s.participants?.some((p) => p.id === user.id)
-            ? [...(s.participants || []), { id: user.id, name: user.loginName }]
-            : s.participants,
-      });
-      setLive({ answer: "", thinking: "", tools: [] });
+      if (viewingTarget()) {
+        setSession({
+          ...s,
+          messages,
+          participants:
+            user &&
+            !confirmationCaption(pending, messages.at(-2)) &&
+            !s.participants?.some((p) => p.id === user.id)
+              ? [...(s.participants || []), { id: user.id, name: user.loginName }]
+              : s.participants,
+        });
+        setLive({ answer: "", thinking: "", tools: [] });
+      }
       const executionTarget = executionLocked(s) ? s.executionTarget : {
         pool: executionMachines.defaultRunnerId ? "runner" : "cloud",
         runnerId: executionMachines.defaultRunnerId || "",
@@ -1061,8 +1095,7 @@ export function useChat() {
         projectId: s.projectId || "",
         runId: s.runId || "",
         executor,
-        model: activeModel,
-        effort: activeEffort,
+        ...chosen,
         ...approval,
         executionTarget,
         messages,
@@ -1092,7 +1125,7 @@ export function useChat() {
           }
         } catch {}
       }
-      setError(e.message);
+      if (viewingTarget()) setError(e.message);
       return false;
     } finally {
       if (savingDraft.current === draft) savingDraft.current = null;
@@ -1177,24 +1210,22 @@ export function useChat() {
       setSession(stored);
       const selection = restoreConversationModel(stored);
       const resolved = resolveComposerModel(selection, stored, false);
-      if (resolved.unavailableAgyVariant) throw Error("当前模型已不在该执行机器的账号目录，请重新选择模型。");
-      if (!resolved.activeModel) throw Error("当前 CLI 暂无可用模型，请在个人配置中获取或添加模型。");
+      const chosen = await modelForRequest(selection, stored, resolved);
       const g = await write("/api/assistant/generations", {
         sessionId: stored.id,
         projectId: stored.projectId || "",
         runId: stored.runId || "",
         executor: selection.executor,
-        model: resolved.activeModel,
-        effort: resolved.activeEffort,
+        ...chosen,
         messages: stored.messages,
         approvalMode: ["confirm", "assisted", "auto"].includes(approvalMode) ? approvalMode : "confirm",
         approvalUserId: user?.id,
       });
-      setGeneration(g);
+      if (currentId.current === stored.id) setGeneration(g);
       await refreshSessions();
       return true;
     } catch (e) {
-      setError(e.message);
+      if (currentId.current === stored.id) setError(e.message);
       return false;
     } finally {
       submittingRef.current = false;
