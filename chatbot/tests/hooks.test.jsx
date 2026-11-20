@@ -107,6 +107,41 @@ describe("conversation hooks", () => {
     await waitFor(() => expect(result.current.model).toBe("gpt-5"));
   });
 
+  test.each([
+    { status: "running", accepted: false },
+    { status: "running", accepted: true },
+    { status: "completed", accepted: true },
+  ])("recovers a lost send response only for its own request when generation is $status ($accepted)", async ({ status, accepted }) => {
+    const originalAPI = apiMock.getMockImplementation();
+    const originalWrite = writeMock.getMockImplementation();
+    let submitted;
+    apiMock.mockImplementation((path, options) => path === "/api/assistant/sessions/s1/generation"
+      ? Promise.resolve({
+        id: "concurrent-generation", status, events: [],
+        clientRequestId: accepted ? submitted.clientRequestId : "another-members-request",
+      })
+      : originalAPI(path, options));
+    writeMock.mockImplementation((path, body, method) => {
+      if (path !== "/api/assistant/generations") return originalWrite(path, body, method);
+      submitted = body;
+      return Promise.reject(new TypeError("发送响应丢失"));
+    });
+    try {
+      const { result } = renderHook(useChat);
+      await waitFor(() => expect(result.current.ready).toBe(true));
+      act(() => result.current.open("s1"));
+      await waitFor(() => expect(result.current).toMatchObject({
+        session: expect.objectContaining({ id: "s1" }), replyStatePending: false,
+      }));
+      await act(async () => expect(await result.current.send({ text: "这条消息必须正确确认" })).toBe(accepted));
+      expect(submitted.clientRequestId).toBeTruthy();
+      if (!accepted) expect(result.current.error).toBe("发送响应丢失");
+    } finally {
+      apiMock.mockImplementation(originalAPI);
+      writeMock.mockImplementation(originalWrite);
+    }
+  });
+
   test("restores the conversation's unsent choices even after choosing a stronger model elsewhere", async () => {
     const original = apiMock.getMockImplementation();
     apiMock.mockImplementation(async (path, options) => {

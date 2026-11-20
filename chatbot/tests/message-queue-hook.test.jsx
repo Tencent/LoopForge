@@ -273,6 +273,40 @@ describe("sending while a reply runs", () => {
     },
   );
 
+  test("waits for the transcript when a new shared generation starts in an already open session", async () => {
+    const original = apiMock.getMockImplementation();
+    let started = false, resolveTranscript;
+    state.preferences = { steerOnSend: true };
+    state.sessionSettings = { titleGenerated: true, shared: true, model: "m1", executor: "codebuddy" };
+    apiMock.mockImplementation((path, options) => {
+      if (path.includes("/sessions/s1/generation") && !started)
+        return Promise.reject(Object.assign(Error("生成不存在"), { status: 404 }));
+      if (path === "/api/assistant/sessions/s1" && started && !resolveTranscript)
+        return new Promise((resolve) => { resolveTranscript = resolve; });
+      return original(path, options);
+    });
+    try {
+      const { result } = renderHook(useChat);
+      await waitFor(() => expect(result.current.ready).toBe(true));
+      act(() => result.current.open("s1"));
+      await waitFor(() => expect(result.current).toMatchObject({
+        session: expect.objectContaining({ id: "s1" }), replyStatePending: false, executor: "codebuddy",
+      }));
+      started = true;
+      await waitFor(() => expect(resolveTranscript).toBeTypeOf("function"), { timeout: 3500 });
+      await act(async () => expect(await result.current.send({ text: "先等待会话同步" })).toBe(false));
+      expect(generationPosts()).toHaveLength(0);
+      expect(steerPosts()).toHaveLength(0);
+      state.sessionSettings = { ...state.sessionSettings, model: "codex:gpt-5", executor: "codex", effort: "high" };
+      await act(async () => resolveTranscript(await original("/api/assistant/sessions/s1")));
+      expect(result.current).toMatchObject({ replyStatePending: false, busy: true, executor: "codex" });
+      await act(async () => expect(await result.current.send({ text: "继续任务" })).toBe(true));
+      expect(steerPosts()[0][1]).toMatchObject({ model: "codex:gpt-5", effort: "high" });
+    } finally {
+      apiMock.mockImplementation(original);
+    }
+  });
+
   test.each([
     [400, "请先配置 API Key"],
     [409, "这个对话由 Codex 回复，不能中途切换 CLI"],

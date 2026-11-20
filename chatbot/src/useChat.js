@@ -142,11 +142,16 @@ export function useChat() {
     // The conversation whose reply status has been fetched since it was
     // opened. Until then a reply may still be running there, so queued
     // messages must not go out (they would be rejected and get lost).
-    [generationKnown, setGenerationKnown] = useState(null),
+    [generationKnown, setGenerationKnownState] = useState(null),
     // A queued message sent with "send now": it interrupts the running reply
     // and stays on screen until the server's follow-up turn has started.
     [steering, setSteering] = useState(null);
   const { executor, model, effort } = selection;
+  const generationKnownRef = useRef(null);
+  const setGenerationKnown = useCallback((id) => {
+    generationKnownRef.current = id;
+    setGenerationKnownState(id);
+  }, []);
   const { readOptions, saveOptions } = useComposerOptions(user?.isGuest ? "guest" : user?.id);
   const executionMachines = useExecutionMachines(
     user?.isGuest ? null : user?.id,
@@ -222,7 +227,7 @@ export function useChat() {
       if (id) setRevealId(id);
       changeURL(id);
     },
-    [changeURL, executionMachines.resetMachine],
+    [changeURL, executionMachines.resetMachine, setGenerationKnown],
   );
   const newChat = useCallback(() => {
     setDraftIssueId("");
@@ -417,14 +422,25 @@ export function useChat() {
         connectionError = "";
         setError((current) => (current === recovered ? "" : current));
       }
-      if (genId !== g.id) {
-        // A new turn can come from steering or from another member. Load its
-        // saved transcript and CLI before the live turn can be steered.
-        if (g.status === "running") {
-          const latest = await api(sessionPath(activeId));
-          if (cancelled || currentId.current !== activeId) return;
-          receiveSession(latest, true);
+      const running = g.status === "running";
+      const needsTranscript = running ? genId !== g.id : loaded !== g.id;
+      if (needsTranscript) {
+        // Pause sends until the transcript and CLI for this turn are loaded.
+        // A new turn can come from steering or from another member.
+        setGenerationKnown(null);
+        if (!running) {
+          source?.close();
+          source = null;
         }
+        const stored = await api(sessionPath(activeId));
+        if (cancelled || currentId.current !== activeId) return;
+        receiveSession(stored, running);
+        if (!running) {
+          loaded = g.id;
+          setSettledId(g.id);
+        }
+      }
+      if (genId !== g.id) {
         genId = g.id;
         cursor = 0;
         accumulated = { answer: "", thinking: "", tools: [] };
@@ -441,18 +457,11 @@ export function useChat() {
       setLive(accumulated);
       setGeneration(g);
       setGenerationKnown(activeId);
-      if (g.status !== "running") setStopRequest((old) => old?.generationId === g.id ? null : old);
-      if (g.status === "running" && ["platform", "workspace"].includes(g.runtimeMode)) {
+      if (!running) setStopRequest((old) => old?.generationId === g.id ? null : old);
+      if (running && ["platform", "workspace"].includes(g.runtimeMode)) {
         setSession((stored) => stored?.id === activeId && stored.runtimeMode !== g.runtimeMode ? { ...stored, runtimeMode: g.runtimeMode } : stored);
       }
-      if (g.status !== "running" && loaded !== g.id) {
-        source?.close();
-        source = null;
-        const stored = await api(sessionPath(activeId));
-        if (cancelled || currentId.current !== activeId) return;
-        loaded = g.id;
-        receiveSession(stored);
-        setSettledId(g.id);
+      if (!running && needsTranscript) {
         await refreshSessions();
         if (g.error && !["canceled", "cancelled"].includes(g.status))
           setError(g.error);
@@ -492,6 +501,7 @@ export function useChat() {
       return true;
     };
     const poll = async () => {
+      let generationFound = false;
       try {
         if (submittingRef.current) {
           timer = setTimeout(poll, 500);
@@ -501,6 +511,7 @@ export function useChat() {
           `${sessionPath(activeId)}/generation?after=${cursor}`,
         );
         if (cancelled) return;
+        generationFound = true;
         await consume(g);
         if (cancelled) return;
         if (g.status === "running" && connect()) return;
@@ -508,7 +519,7 @@ export function useChat() {
       } catch (e) {
         if (cancelled) return;
         // No reply was ever started here: nothing can be running.
-        if (e.status === 404) setGenerationKnown(activeId);
+        if (e.status === 404 && !generationFound) setGenerationKnown(activeId);
         else {
           connectionError = e.status ? e.message : "连接暂时中断，正在重连…";
           setError(connectionError);
@@ -522,7 +533,7 @@ export function useChat() {
       clearTimeout(timer);
       source?.close();
     };
-  }, [activeId, ready, refreshSessions]);
+  }, [activeId, ready, refreshSessions, setGenerationKnown]);
   const selectProject = useCallback(
     async (id, { external = false } = {}) => {
       const current = sessionRef.current;
@@ -753,7 +764,7 @@ export function useChat() {
   function replyStatePending() {
     const id = currentId.current;
     if (!id) return false;
-    return generationKnown !== id ||
+    return generationKnown !== id || generationKnownRef.current !== id ||
       (!!generation && generation.status !== "running" && settledId !== generation.id);
   }
 
@@ -1058,7 +1069,7 @@ export function useChat() {
     setSubmitting(true);
     setError("");
     const previousGeneration = generation?.id;
-    let generationRequested = false;
+    let clientRequestId;
     setGeneration(null);
     try {
       // Recheck credentials before creating the session in case the user
@@ -1135,7 +1146,9 @@ export function useChat() {
         pool: executionMachines.defaultRunnerId ? "runner" : "cloud",
         runnerId: executionMachines.defaultRunnerId || "",
       };
-      const request = write("/api/assistant/generations", {
+      clientRequestId = newId();
+      const g = await write("/api/assistant/generations", {
+        clientRequestId,
         sessionId: s.id,
         projectId: s.projectId || "",
         runId: s.runId || "",
@@ -1145,18 +1158,16 @@ export function useChat() {
         executionTarget,
         messages,
       });
-      generationRequested = true;
-      const g = await request;
       if (currentId.current === s.id) {
         setSession((old) => old?.id === s.id ? { ...old, executionTargetLocked: true,
           executionTarget: g.executionTarget || executionTarget } : old);
         setGeneration(g);
         setGenerationKnown(s.id);
       }
-      await refreshSessions();
+      await refreshSessions().catch(() => {});
       return true;
     } catch (e) {
-      if (generationRequested) {
+      if (clientRequestId) {
         try {
           const g = await api(`${sessionPath(s.id)}/generation`).catch(() => null);
           const stored = await api(sessionPath(s.id));
@@ -1166,12 +1177,10 @@ export function useChat() {
               setGeneration(g);
               setGenerationKnown(s.id);
             }
-            // Only a lost response may hide an accepted turn. A clear
-            // rejection (e.g. 409 while another reply runs) means this
-            // message was not taken, so a queued one goes back instead of
-            // being dropped.
-            if (!e.status || e.status >= 500) return true;
           }
+          // Another client can win this slot while our request is lost.
+          // Only a generation bearing this request's ID confirms delivery.
+          if ((!e.status || e.status >= 500) && g?.clientRequestId === clientRequestId) return true;
         } catch {}
       }
       if (viewingTarget()) setError(e.message);

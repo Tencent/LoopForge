@@ -11,6 +11,7 @@ type AssistantGeneration struct {
 	Trigger          string                     `json:"trigger,omitempty"`
 	TriggerID        string                     `json:"triggerId,omitempty"`
 	ID               string                     `json:"id"`
+	ClientRequestID  string                     `json:"clientRequestId,omitempty"`
 	SessionID        string                     `json:"sessionId"`
 	ActorID          int64                      `json:"actorId,omitempty"`
 	ActorName        string                     `json:"actorName,omitempty"`

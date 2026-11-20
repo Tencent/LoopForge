@@ -125,7 +125,7 @@ func TestGenerationCompletedReplyAndSnapshot(t *testing.T) {
 	h.generate = func(context.Context, string, domain.User) (string, error) {
 		return `{"message":"已分析登录需求","drafts":[]}`, nil
 	}
-	c, rec := workbenchContext(u, "POST", "/api/assistant/generations", bytes.NewBufferString(`{"projectId":"workbench","sessionId":"completed-chat","messages":[{"role":"user","content":"分析登录需求"}]}`))
+	c, rec := workbenchContext(u, "POST", "/api/assistant/generations", bytes.NewBufferString(`{"projectId":"workbench","sessionId":"completed-chat","clientRequestId":"completion-request","messages":[{"role":"user","content":"分析登录需求"}]}`))
 	h.startGeneration(c)
 	if rec.Code != 202 {
 		t.Fatalf("start: %s", rec.Body.String())
@@ -146,7 +146,8 @@ func TestGenerationCompletedReplyAndSnapshot(t *testing.T) {
 			h.generation(c)
 			var snapshot domain.AssistantGeneration
 			json.Unmarshal(rec.Body.Bytes(), &snapshot)
-			if rec.Code != 200 || snapshot.Status != "completed" || len(snapshot.Events) != 0 || len(snapshot.Reply) == 0 {
+			if rec.Code != 200 || snapshot.Status != "completed" || len(snapshot.Events) != 0 ||
+				len(snapshot.Reply) == 0 || snapshot.ClientRequestID != "completion-request" {
 				t.Fatalf("snapshot: %s", rec.Body.String())
 			}
 			break

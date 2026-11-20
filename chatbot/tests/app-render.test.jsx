@@ -179,6 +179,35 @@ describe("App", () => {
       Object.assign(chat, original);
     }
   });
+  test("keeps a newer draft in the submitted slot when the first message is accepted", async () => {
+    const original = { activeId: chat.activeId, session: chat.session, projectId: chat.projectId };
+    const user = userEvent.setup();
+    const saved = { id: "new-session", projectId: "p1", messages: [] };
+    let create, accept;
+    chat.send.mockImplementationOnce(({ onSessionCreated }) => new Promise((resolve) => {
+      create = () => onSessionCreated(saved);
+      accept = () => resolve(true);
+    }));
+    const input = () => screen.getByRole("textbox", { name: "消息" });
+    try {
+      chat.projectId = "p1";
+      const view = render(<App />);
+      await user.type(input(), "原草稿");
+      await user.click(screen.getByRole("button", { name: "发送消息" }));
+      await act(async () => create());
+      Object.assign(chat, { activeId: saved.id, session: saved });
+      view.rerender(<App />);
+      Object.assign(chat, { activeId: null, session: null });
+      view.rerender(<App />);
+      await user.clear(input());
+      await user.type(input(), "另一份新草稿");
+      await act(async () => accept());
+      expect(input()).toHaveValue("另一份新草稿");
+      expect(JSON.parse(localStorage.getItem("agentflow.native-chat.draft.u1.new:p1")).text).toBe("另一份新草稿");
+    } finally {
+      Object.assign(chat, original);
+    }
+  });
   test("restores full permission only for the conversation and account that picked it", async () => {
     const original = { activeId: chat.activeId, session: chat.session, user: chat.user };
     const user = userEvent.setup();
@@ -239,7 +268,8 @@ describe("App", () => {
     { phase: "independently edited original", edited: true },
     { phase: "return to the original during retry", returnDuringRetry: true },
     { phase: "a different prompt in the saved session", differentPrompt: true },
-  ])("retains the first draft on failure and reconciles it after $phase", async ({ away, edited, returnDuringRetry, differentPrompt }) => {
+    { phase: "replacing the restored copy", replacesCopy: true },
+  ])("retains the first draft on failure and reconciles it after $phase", async ({ away, edited, returnDuringRetry, differentPrompt, replacesCopy }) => {
     const original = { activeId: chat.activeId, session: chat.session, projectId: chat.projectId };
     const user = userEvent.setup();
     const saved = { id: "new-session", messages: [], projectId: "p1" };
@@ -278,12 +308,18 @@ describe("App", () => {
       }
       expect(screen.getByRole("button", { name: "操作确认方式" })).toHaveTextContent("帮我批准");
       expect(screen.getByRole("textbox", { name: "消息" })).toHaveValue(differentPrompt ? nextPrompt : failedDraft.text);
+      if (replacesCopy) {
+        const input = screen.getByRole("textbox", { name: "消息" });
+        await user.clear(input);
+        await user.type(input, nextPrompt);
+      }
       let acceptRetry;
       if (returnDuringRetry) chat.send.mockImplementationOnce(() => new Promise((resolve) => {
         acceptRetry = () => resolve(true);
       }));
       await user.click(screen.getByRole("button", { name: "发送消息" }));
-      const submitted = differentPrompt ? { text: nextPrompt, attachments: [], references: [] } : failedDraft;
+      const submitted = differentPrompt ? { text: nextPrompt, attachments: [], references: [] }
+        : replacesCopy ? { text: nextPrompt, attachments: failedDraft.attachments } : failedDraft;
       expect(chat.send).toHaveBeenLastCalledWith(expect.objectContaining({ ...submitted, approvalMode: "assisted" }));
       if (!away) {
         Object.assign(chat, { activeId: null, session: null });
@@ -292,7 +328,7 @@ describe("App", () => {
           expect(screen.getByRole("textbox", { name: "消息" })).toHaveValue(failedDraft.text);
           await act(async () => acceptRetry());
         }
-        const remaining = edited ? "另一份草稿" : differentPrompt ? failedDraft.text : "";
+        const remaining = edited ? "另一份草稿" : (differentPrompt || replacesCopy) ? failedDraft.text : "";
         expect(screen.getByRole("textbox", { name: "消息" })).toHaveValue(remaining);
         expect(screen.getByRole("button", { name: "操作确认方式" })).toHaveTextContent(remaining ? "帮我批准" : "请求批准");
       }

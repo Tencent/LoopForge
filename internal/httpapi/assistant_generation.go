@@ -31,8 +31,16 @@ func (h *assistantHandlers) startGeneration(c *gin.Context) {
 		c.JSON(400, gin.H{"error": "请先配置个人 CodeBuddy API Key"})
 		return
 	}
-	var req assistantRequest
-	if !decodeLimit(c, &req, assistantRequestBodyLimit) {
+	var body struct {
+		assistantRequest
+		ClientRequestID string `json:"clientRequestId"`
+	}
+	if !decodeLimit(c, &body, assistantRequestBodyLimit) {
+		return
+	}
+	req := body.assistantRequest
+	if id := body.ClientRequestID; id != "" && (len(id) > 64 || assistantRecordID(id) != id) {
+		c.JSON(400, gin.H{"error": "发送请求 ID 无效"})
 		return
 	}
 	if !requireAssistantApprovalUser(c, current.ID, req.ApprovalUserID) {
@@ -159,7 +167,7 @@ func (h *assistantHandlers) startGeneration(c *gin.Context) {
 			req.Messages[i].CreatedAt = sentAt
 		}
 	}
-	g := domain.AssistantGeneration{StartedAt: time.Now().UTC(), ActorID: user.ID, ActorName: user.LoginName, ID: newAssistantSessionID(), SessionID: req.SessionID, UserID: ownerID, ProjectID: req.ProjectID, Status: "running", Events: []domain.AssistantGenerationEvent{}, MessageCount: len(req.Messages)}
+	g := domain.AssistantGeneration{StartedAt: time.Now().UTC(), ActorID: user.ID, ActorName: user.LoginName, ID: newAssistantSessionID(), ClientRequestID: body.ClientRequestID, SessionID: req.SessionID, UserID: ownerID, ProjectID: req.ProjectID, Status: "running", Events: []domain.AssistantGenerationEvent{}, MessageCount: len(req.Messages)}
 	// The issue this turn linked from its @-mention is the conversation's
 	// issue now; any other change since old was read is still refused.
 	issueID := old.IssueID
