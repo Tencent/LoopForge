@@ -45,7 +45,7 @@ type ScheduleJobExecution struct {
 // RecordUsage stores the prompt's model and usage on the execution, priced
 // like conversation turns in analytics. Empty usage is not recorded.
 func (e *ScheduleJobExecution) RecordUsage(model string, usage *TokenUsage) {
-	if usage == nil || usageTotalTokens(*usage) == 0 && usage.CostUSD == 0 {
+	if usage == nil || usageTotalTokens(*usage) == 0 && usage.InputTokens == 0 && usage.OutputTokens == 0 && usage.CacheReadTokens == 0 && usage.CacheWriteTokens == 0 && usage.ReasoningTokens == 0 && usage.CostUSD == 0 {
 		return
 	}
 	priced := PriceScheduleExecutionUsage(model, *usage)
@@ -56,10 +56,16 @@ func (e *ScheduleJobExecution) RecordUsage(model string, usage *TokenUsage) {
 	}
 }
 
-// PriceScheduleExecutionUsage prices an AI prompt's usage the way analytics
-// prices conversation turns: GPT models report input including caches.
+// PriceScheduleExecutionUsage resolves CLI routing before looking up a tariff.
+// Codex input includes caches; Claude Code input excludes them, even when a
+// custom endpoint names an OpenAI model. Unprefixed GPT usage stays inclusive.
 func PriceScheduleExecutionUsage(model string, usage TokenUsage) TokenUsage {
-	inclusive := strings.HasPrefix(strings.ToLower(strings.TrimSpace(model)), "gpt-")
+	model = strings.ToLower(strings.TrimSpace(model))
+	engine := ""
+	if prefix, rest, ok := strings.Cut(model, ":"); ok && (prefix == "codex" || prefix == "claude-code" || prefix == "codebuddy" || IsAgentCLIKind(prefix)) {
+		engine, model = prefix, strings.TrimSpace(rest)
+	}
+	inclusive := engine == "codex" || engine != "claude-code" && strings.HasPrefix(pricingModel(model), "gpt-")
 	return AnalyticsPricedUsage(model, usage, inclusive)
 }
 
