@@ -316,6 +316,33 @@ class InstallerTests(unittest.TestCase):
                 self.assertTrue(hook.is_file(), relative)
                 self.assertTrue(hook.stat().st_mode & stat.S_IXUSR, relative)
 
+    @unittest.skipIf(os.name == "nt", "POSIX permission contract")
+    def test_state_replace_preserves_existing_mode(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            project = self.project(temporary)
+            apply_install(project, "codex", "classic")
+            path = project / ".devflow/install-state.json"
+            path.chmod(0o640)
+            save_state(project, load_state(project))
+            self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o640)
+
+    @unittest.skipIf(os.name == "nt", "POSIX permission contract")
+    def test_new_state_respects_creation_umask(self):
+        script = (
+            "import os,sys; from pathlib import Path; "
+            "from devflow_cli.core import save_state; "
+            "os.umask(int(sys.argv[2], 8)); "
+            "save_state(Path(sys.argv[1]), {'version': 1, 'installations': {}})"
+        )
+        for mask, expected in (("022", 0o644), ("027", 0o640), ("077", 0o600)):
+            with self.subTest(mask=mask), tempfile.TemporaryDirectory() as temporary:
+                project = Path(temporary) / "project"
+                environment = dict(os.environ, PYTHONPATH=str(ROOT / "src"))
+                subprocess.run([sys.executable, "-c", script, str(project), mask],
+                               env=environment, check=True)
+                path = project / ".devflow/install-state.json"
+                self.assertEqual(stat.S_IMODE(path.stat().st_mode), expected)
+
     def test_failed_state_replace_preserves_previous_records(self):
         with tempfile.TemporaryDirectory() as temporary:
             project = self.project(temporary)
