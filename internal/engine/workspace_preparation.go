@@ -106,7 +106,7 @@ func (e *Engine) prepareLocalEnvironment(ctx context.Context, run domain.Run, en
 			return runtime.WorkspacePreparationStatus{Status: "failed", Error: err.Error(), Steps: []runtime.WorkspacePreparationStep{}}, err
 		}
 	}
-	assets := e.resolveScriptMCPAssets(run.ExecutionContext.ProjectID, run.ExecutionContext.ResponsibleUserID)
+	assets := e.resolveRunScriptMCPAssets(run)
 	if len(runtime.PreparationNodes(workspacePreparationPlan(run))) > 0 {
 		if err := runtime.ProvisionMCPAssets(ctx, env, env.Workspace(), assets, nil); err != nil {
 			return runtime.WorkspacePreparationStatus{Status: "failed", Error: err.Error(), Steps: []runtime.WorkspacePreparationStep{}}, err
@@ -165,7 +165,7 @@ func (e *Engine) preparedWorkspaceRequest(run domain.Run, request domain.RunnerW
 	bindRunnerRepositories(invocation, run, credentials.GitUserName, credentials.GitUserEmail)
 	invocation.GitSSHUserID = 0
 	invocation.GitHTTPUserID = 0
-	assets := e.resolveScriptMCPAssets(run.ExecutionContext.ProjectID, run.ExecutionContext.ResponsibleUserID)
+	assets := e.resolveRunScriptMCPAssets(run)
 	invocation.Assets = assets
 	invocation.MCPCallServers = assets.MCPServers
 	request.PreparationInvocation = invocation

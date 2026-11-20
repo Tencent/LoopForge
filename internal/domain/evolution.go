@@ -469,17 +469,18 @@ type EvoSample struct {
 
 // EvoAssetHealth summarises recent runs that used one asset.
 type EvoAssetHealth struct {
-	AssetKind     string  `json:"assetKind"`
-	AssetID       string  `json:"assetId"`
-	AssetName     string  `json:"assetName"`
-	Runs          int     `json:"runs"`
-	Succeeded     int     `json:"succeeded"`
-	Failed        int     `json:"failed"`
-	Reworked      int     `json:"reworked"`
-	SuccessRate   float64 `json:"successRate"`
-	Level         int     `json:"level"`
-	LatestVersion int     `json:"latestVersion,omitempty"`
-	OpenFindings  int     `json:"openFindings,omitempty"`
+	AssetKind      string  `json:"assetKind"`
+	AssetID        string  `json:"assetId"`
+	AssetName      string  `json:"assetName"`
+	Runs           int     `json:"runs"`
+	Succeeded      int     `json:"succeeded"`
+	Failed         int     `json:"failed"`
+	Reworked       int     `json:"reworked"`
+	SuccessRate    float64 `json:"successRate"`
+	Level          int     `json:"level"`
+	LatestVersion  int     `json:"latestVersion,omitempty"`
+	OpenFindings   int     `json:"openFindings,omitempty"`
+	ReadOnlyReason string  `json:"readOnlyReason,omitempty"`
 }
 
 // EvoOverview is the 进化中心 dashboard payload.
@@ -497,6 +498,7 @@ type EvoOverview struct {
 	Policies    []EvoPolicy      `json:"policies"`
 	WindowDays  int              `json:"windowDays"`
 	GeneratedAt time.Time        `json:"generatedAt"`
+	AutoEnabled bool             `json:"autoEnabled"`
 }
 
 // NormalizeEvoLevel clamps unknown levels into the supported range.

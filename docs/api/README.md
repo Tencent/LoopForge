@@ -4,6 +4,7 @@
 
 - [协作与需求](collaboration.md)：项目、仓库、Issue、评论、澄清和任务
 - [能力注册表](registry.md)：Agent、规则、Skill、MCP、执行器、环境与沙箱配置
+- [资产进化](evolution.md)：问题诊断、候选回放、项目内灰度、版本与回滚
 - [编排与运行](orchestration.md)：SOP、运行、审批、日志、制品、分析和定时任务
 - [共享 AI 定时任务与订阅](shared-schedules.md)：发布版本、业务参数、独立执行与手动升级
 - [外部同步](sync.md)：工蜂/TAPD 同步

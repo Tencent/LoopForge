@@ -26,9 +26,9 @@ function evoKindLabel(kind){return EVO_KINDS[kind]||kind||'-'}
 function evoStatusBadge(map,key){const [label,tone]=map[key]||[key||'-',''];return kbBadge(escapeHTML(label),tone)}
 function evoLevelOf(kind,id){
   const h=(evo.overview?.health||[]).find(x=>x.assetKind===kind&&x.assetId===id);
-  if(h)return h.level;
+  if(h)return Math.min(h.level,h.readOnlyReason?1:evo.overview?.autoEnabled?3:2);
   const p=(evo.overview?.policies||[]).find(x=>x.assetKind===kind&&x.assetId===id);
-  return p?p.level:2;
+  return Math.min(p?p.level:2,evo.overview?.autoEnabled?3:2);
 }
 function evoScoreLabel(score){return score>=0&&score<EVO_SCORES.length?EVO_SCORES[score]:'进行中'}
 function evoResultText(text){return String(text||'').replaceAll('修好','已修复')}
@@ -456,14 +456,14 @@ function evoProposalsHTML(){
 // ---------- 资产与策略 ----------
 function evoAssetsHTML(){
   const items=evo.overview.health||[];
-  const levelSeg=h=>`<div class="kb-seg evo-level" aria-label="${escapeHTML((h.assetName||h.assetId)+' 自治级别')}">${EVO_LEVELS.map(([v,t,title])=>`<button type="button" data-evo-level="${v}" data-kind="${escapeHTML(h.assetKind)}" data-id="${escapeHTML(h.assetId)}" class="${h.level===v?'active':''}" title="${escapeHTML(title)}"${evo.busy.has(evoAssetKey(h.assetKind,h.assetId))?' disabled':''}>${t.split(' ')[0]}</button>`).join('')}</div>`;
+  const levelSeg=h=>`<div class="kb-seg evo-level" aria-label="${escapeHTML((h.assetName||h.assetId)+' 自治级别')}">${EVO_LEVELS.map(([v,t,title])=>`<button type="button" data-evo-level="${v}" data-kind="${escapeHTML(h.assetKind)}" data-id="${escapeHTML(h.assetId)}" class="${evoLevelOf(h.assetKind,h.assetId)===v?'active':''}" title="${escapeHTML(h.readOnlyReason&&v>=2?h.readOnlyReason:v===3&&!evo.overview.autoEnabled?'自动进化尚未启用':title)}"${evo.busy.has(evoAssetKey(h.assetKind,h.assetId))||(v>=2&&h.readOnlyReason)||(v===3&&!evo.overview.autoEnabled)?' disabled':''}>${t.split(' ')[0]}</button>`).join('')}</div>`;
   const rows=items.map(h=>{
     const rate=h.runs?`${Math.round((h.successRate||0)*100)}%`:'—';
     const desc=`${evoKindLabel(h.assetKind)} · ${h.runs||0} 次运行 · 失败 ${h.failed||0} · 返工 ${h.reworked||0}${h.latestVersion?` · v${h.latestVersion}`:''}`;
     const key=`asset:${evoAssetKey(h.assetKind,h.assetId)}`;
-    return `<div class="kb-row evo-asset-row"><div class="kb-row-main evo-asset-main kb-go" role="button" tabindex="0" data-evo-asset="${escapeHTML(h.assetKind)}" data-id="${escapeHTML(h.assetId)}" data-evo-key="${escapeHTML(key)}">${kbText(escapeHTML(h.assetName||h.assetId),desc)}</div>${h.openFindings?kbBadge(`${h.openFindings} 个问题`,'warn'):''}${kbValue(rate,'evo-rate','近期成功率')}${levelSeg(h)}</div>`;
+    return `<div class="kb-row evo-asset-row"><div class="kb-row-main evo-asset-main kb-go" role="button" tabindex="0" data-evo-asset="${escapeHTML(h.assetKind)}" data-id="${escapeHTML(h.assetId)}" data-evo-key="${escapeHTML(key)}">${kbText(escapeHTML(h.assetName||h.assetId),desc+(h.readOnlyReason?` · ${h.readOnlyReason}`:''))}</div>${h.openFindings?kbBadge(`${h.openFindings} 个问题`,'warn'):''}${kbValue(rate,'evo-rate','近期成功率')}${levelSeg(h)}</div>`;
   });
-  const note=kbCaption('L0 关闭不诊断；L1 只报告问题；L2（默认）生成修改稿并回放验证，试用、发布、回滚都由人确认；L3 回放通过后自动小范围试用，试用不差于线上则自动全量，发布后变差自动回滚。点资产名查看版本时间线与回滚。');
+  const note=kbCaption('L0 关闭不诊断；L1 只报告问题；L2（默认）生成修改稿并回放验证，试用、发布、回滚都由人确认；L3 回放通过后自动小范围试用，试用不差于线上则自动全量，发布后变差自动回滚。自动进化需要管理员启用；共享与平台资产仅供诊断。点资产名查看版本时间线与回滚。');
   return kbPanel(kbPanelTitle('角色与规则的进化方式',`近 ${evo.overview.windowDays||14} 天`),note+(rows.join('')||'<div class="kb-empty">近期没有运行用到可进化的角色或规则</div>'),{label:'角色与规则的进化方式'})+`<details class="evo-detail-more"><summary>查看诊断趋势与统计口径</summary>${evoTrendHTML(evoIssueRows())}<p>趋势按 UTC 日期与运行 ID 去重，仅统计已载入诊断中的运行；不是执行检查的次数。</p></details>`;
 }
 

@@ -98,6 +98,11 @@ func (e *Engine) startWorkflowDefinition(wf domain.WorkflowDefinition, input str
 // startWorkflowDefinitionSeeded lets seed adjust the new run (node states,
 // artifacts) after every node is initialized and before it is persisted.
 func (e *Engine) startWorkflowDefinitionSeeded(wf domain.WorkflowDefinition, input string, repositories []domain.RepositoryContext, executionContext domain.TelemetryContext, workspace bool, seed func(*domain.Run)) (domain.Run, error) {
+	if executionContext.IsEvolutionReplay() {
+		if err := e.validateEvolutionReplayDefinition(wf, repositories); err != nil {
+			return domain.Run{}, err
+		}
+	}
 	workflowID := wf.ID
 	repositories = normalizeRepositories(repositories)
 	if executionContext.ParentRunID == "" || !executionContext.ExecutionPinned || executionContext.WorkspaceRunID == "" {

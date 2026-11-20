@@ -11,6 +11,50 @@ import (
 	"agentflow/internal/repo"
 )
 
+// ValidateEvolutionReplay fails closed for workflows whose external effects
+// cannot yet be isolated. Check the current definition, not just the historic
+// snapshot: an operator may have added a script or delivery step since then.
+func (e *Engine) ValidateEvolutionReplay(source domain.Run) error {
+	if len(normalizeRepositories(source.RepositoryContexts())) > 0 {
+		return fmt.Errorf("当前仅支持未绑定代码仓库的历史回放，Git / MR 流程暂不支持")
+	}
+	wf, ok := e.repo.Workflow(source.WorkflowID)
+	if !ok {
+		return fmt.Errorf("workflow not found")
+	}
+	return e.validateEvolutionReplayDefinition(wf, nil)
+}
+
+func (e *Engine) validateEvolutionReplayDefinition(wf domain.WorkflowDefinition, repositories []domain.RepositoryContext) error {
+	if len(normalizeRepositories(repositories)) > 0 {
+		return fmt.Errorf("当前仅支持未绑定代码仓库的历史回放，Git / MR 流程暂不支持")
+	}
+	for _, node := range wf.Nodes {
+		if len(node.CredentialEnv) > 0 {
+			return fmt.Errorf("进化回放不允许节点「%s」使用外部凭据", node.ID)
+		}
+		if node.Type == "approval" {
+			continue
+		}
+		if node.Type != "agent" && node.Type != "" {
+			return fmt.Errorf("进化回放暂不支持节点「%s」的 %s 类型（脚本、命令和子 SOP 不在首版范围内）", node.ID, node.Type)
+		}
+		agent, ok := workflowAgent(e.repo, wf, node.AgentID)
+		if !ok {
+			return fmt.Errorf("agent %q not found", node.AgentID)
+		}
+		if len(agent.Hooks) > 0 {
+			return fmt.Errorf("进化回放暂不支持角色「%s」的生命周期脚本", agent.ID)
+		}
+		for _, gate := range agent.Verification {
+			if gate.Mode == domain.VerificationModeMR || len(gate.Commands) > 0 {
+				return fmt.Errorf("进化回放暂不支持角色「%s」的命令或 MR 验证", agent.ID)
+			}
+		}
+	}
+	return nil
+}
+
 // Evolution replay runs execute a historical input with candidate asset
 // bodies injected. The catalog is never touched: overrides live on the replay
 // row and apply only while this run (and its child SOPs) resolves assets.
@@ -23,6 +67,12 @@ import (
 // upstream randomness, human gates and tokens are not replayed. It returns the
 // reused node ids (empty for a full replay).
 func (e *Engine) StartEvolutionReplay(source domain.Run, repositories []domain.RepositoryContext, exec domain.TelemetryContext, startNodes map[string]bool) (domain.Run, []string, error) {
+	if err := e.ValidateEvolutionReplay(source); err != nil {
+		return domain.Run{}, nil, err
+	}
+	// The replay API always creates a replay, even if its caller omitted the
+	// marker. Otherwise it could acquire business credentials and notifications.
+	exec.Purpose = domain.RunPurposeEvolutionReplay
 	wf, ok := e.repo.Workflow(source.WorkflowID)
 	if !ok {
 		return domain.Run{}, nil, fmt.Errorf("workflow not found")
@@ -147,6 +197,10 @@ func replayOverrides(st *repo.Store, run domain.Run) (domain.EvoAssetOverride, b
 // applyReplayAgent swaps in the candidate prompt for a replay run or a
 // business run in a trial's canary arm.
 func applyReplayAgent(st *repo.Store, agent domain.AgentDefinition, run domain.Run) domain.AgentDefinition {
+	if run.ExecutionContext.IsEvolutionReplay() {
+		agent.PlatformMCP, agent.KnowledgeBase = false, false
+		agent.MCPServers = nil
+	}
 	ov, ok := runAssetOverrides(st, run)
 	if !ok {
 		return agent
@@ -158,21 +212,14 @@ func applyReplayAgent(st *repo.Store, agent domain.AgentDefinition, run domain.R
 }
 
 // applyReplayAssets swaps candidate rule bodies into the bundle. Replay runs
-// additionally lose the platform MCP so they cannot write issues, runs or
-// projects; trial runs are real business runs and keep it.
+// lose every external MCP and its files, including inline authenticated MCPs.
+// Trial runs are real business runs and keep their ordinary capabilities.
 func applyReplayAssets(st *repo.Store, bundle *domain.AgentAssetBundle, run domain.Run) {
 	if bundle == nil {
 		return
 	}
 	if run.ExecutionContext.IsEvolutionReplay() {
-		servers := bundle.MCPServers[:0]
-		for _, server := range bundle.MCPServers {
-			if server.ID == domain.PlatformMCPServerID {
-				continue
-			}
-			servers = append(servers, server)
-		}
-		bundle.MCPServers = servers
+		bundle.MCPServers, bundle.MCPFiles = nil, nil
 	}
 	ov, ok := runAssetOverrides(st, run)
 	if !ok {
@@ -183,6 +230,13 @@ func applyReplayAssets(st *repo.Store, bundle *domain.AgentAssetBundle, run doma
 			bundle.Rules[i].Content = content
 		}
 	}
+}
+
+func (e *Engine) resolveRunScriptMCPAssets(run domain.Run) domain.AgentAssetBundle {
+	if run.ExecutionContext.IsEvolutionReplay() {
+		return domain.AgentAssetBundle{}
+	}
+	return e.resolveScriptMCPAssets(run.ExecutionContext.ProjectID, run.ExecutionContext.ResponsibleUserID)
 }
 
 // recordRunAssetPins freezes which role prompts and rule bodies a run started

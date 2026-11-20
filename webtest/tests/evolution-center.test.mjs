@@ -323,3 +323,27 @@ test('evolution center asks for a project and decorates run details', async (t) 
   assert.equal(replay.querySelector('[data-evo-pin]'), null);
   assert.equal(app.evaluate(`evoLineDiff('a\\nb','a\\nc').map(x=>x[0]).join(',')`), 'ctx,del,add');
 });
+
+
+test('evolution settings keep shared assets report-only and L3 disabled until deployment opt-in', async (t) => {
+  const app = await loadApp({ routes: [
+    { method: 'GET', path: '/api/evolution/overview?projectId=project-1', body: { ...overview, autoEnabled: false, health: [
+      { assetKind: 'agent', assetId: 'private', assetName: 'Private', level: 3 },
+      { assetKind: 'rule', assetId: 'shared', assetName: 'Shared', level: 2, readOnlyReason: '共享规则仅供诊断' },
+    ] } },
+    { method: 'GET', path: '/api/evolution/findings?projectId=project-1', body: [] },
+    { method: 'GET', path: '/api/evolution/samples?projectId=project-1', body: [] },
+  ] });
+  t.after(app.close);
+  await app.evaluate(`(async()=>{state.projectFilter='project-1';switchView('evolution');await renderEvolutionView();evo.tab='assets';evoRender()})()`);
+  await settle(4);
+  const button = (id, level) => app.document.querySelector(`[data-evo-level="${level}"][data-id="${id}"]`);
+  assert.equal(button('private', 3).disabled, true);
+  assert.equal(button('private', 2).disabled, false);
+  assert.equal(button('private', 2).classList.contains('active'), true);
+  assert.equal(button('shared', 2).disabled, true);
+  assert.match(button('shared', 2).title, /仅供诊断/);
+  await app.evaluate(`evo.overview.autoEnabled=true;evoRender()`);
+  assert.equal(button('private', 3).disabled, false);
+  assert.equal(button('shared', 3).disabled, true);
+});
