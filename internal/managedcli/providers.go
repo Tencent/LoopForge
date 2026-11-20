@@ -69,20 +69,23 @@ var providerSpecs = map[string]providerSpec{
 	},
 }
 
-// EnabledProviders returns the deployment's update allowlist. Existing
-// installations and rollback remain accessible when a provider is excluded.
+// EnabledProviders returns the deployment's update allowlist, ignoring empty
+// entries. A list with no names uses the defaults. Existing installations and
+// rollback remain accessible when a provider is excluded.
 func EnabledProviders() ([]string, error) {
-	configured := strings.TrimSpace(os.Getenv(providerAllowlistEnv))
-	if configured == "" {
-		return []string{"claude-code", "codebuddy", "codex"}, nil
-	}
 	selected := map[string]struct{}{}
-	for _, item := range strings.Split(configured, ",") {
+	for _, item := range strings.Split(os.Getenv(providerAllowlistEnv), ",") {
 		name := strings.TrimSpace(item)
+		if name == "" {
+			continue
+		}
 		if !Supports(name) {
 			return nil, fmt.Errorf("%s contains unsupported CLI %q", providerAllowlistEnv, name)
 		}
 		selected[name] = struct{}{}
+	}
+	if len(selected) == 0 {
+		return []string{"claude-code", "codebuddy", "codex"}, nil
 	}
 	providers := make([]string, 0, len(selected))
 	for name := range selected {

@@ -74,8 +74,9 @@ func (m *Manager) observeVendorReleases(state *State, provider string, latest re
 		if !ok || !isUpgrade(seen) || !newerRelease(provider, latest, seen.Version, &seen.Published) {
 			continue
 		}
-		// Keep older observations until activation or a channel retreat
-		// supersedes them. Reserve slots for the selection and latest.
+		// At capacity, keep the earlier observations first so they can reach
+		// the 24-hour gate during bursts of releases. Reserve slots for the
+		// selected candidate and the latest release.
 		if len(retained) < maxVendorObservations-2 {
 			retained = append(retained, observation)
 		}

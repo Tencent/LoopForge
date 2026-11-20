@@ -65,10 +65,23 @@ func TestDefaultProvidersIgnoreLegacyConfiguration(t *testing.T) {
 	}
 }
 
+func TestEnabledProvidersSkipsEmptyEntries(t *testing.T) {
+	for setting, want := range map[string][]string{
+		"codex,": {"codex"},
+		", ,":    {"claude-code", "codebuddy", "codex"},
+	} {
+		t.Setenv(providerAllowlistEnv, setting)
+		got, err := EnabledProviders()
+		if err != nil || !reflect.DeepEqual(got, want) {
+			t.Errorf("%s=%q: got %v and %v, want %v", providerAllowlistEnv, setting, got, err, want)
+		}
+	}
+}
+
 func TestEnabledProvidersRestrictsScheduledAndManualUpdates(t *testing.T) {
 	f := newUpdaterFixture(t)
 	ctx := context.Background()
-	t.Setenv(providerAllowlistEnv, " pi,opencode,pi ")
+	t.Setenv(providerAllowlistEnv, " ,pi,,opencode,pi, ")
 	report, err := f.manager.Check(ctx)
 	must(t, err)
 	if len(report.Results) != 2 || report.Results[0].Provider != "opencode" || report.Results[1].Provider != "pi" {
@@ -95,7 +108,7 @@ func TestEnabledProvidersRestrictsScheduledAndManualUpdates(t *testing.T) {
 
 func TestInvalidProviderAllowlistRejectsUpdates(t *testing.T) {
 	f := newUpdaterFixture(t)
-	t.Setenv(providerAllowlistEnv, "pi,zcode")
+	t.Setenv(providerAllowlistEnv, "pi,,zcode,")
 	if _, err := f.manager.Update(context.Background()); err == nil || !strings.Contains(err.Error(), "zcode") {
 		t.Fatalf("unexpected configuration error: %v", err)
 	}

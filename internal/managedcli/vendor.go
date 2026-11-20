@@ -232,6 +232,9 @@ func (m *Manager) installVendorArtifact(ctx context.Context, provider string, ca
 	}
 	// Pinned versions stay immutable when the upstream CLI would normally
 	// perform its own updates during a request.
+	// Invoke each launcher directly by its absolute installation path.
+	// ${0%/*} locates artifact/ beside $0, so a symlink entry point in a
+	// different directory would look for the payload in the wrong place.
 	launcher := "#!/bin/sh\nAGY_CLI_DISABLE_AUTO_UPDATE=true exec \"${0%/*}/artifact/agy\" \"$@\"\n"
 	if provider == "cursor" {
 		launcher = "#!/bin/sh\nexec \"${0%/*}/artifact/cursor-agent\" --disable-auto-update \"$@\"\n"

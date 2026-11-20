@@ -104,7 +104,7 @@ func TestManagedDetectionReportsRealVersionAndRespectsExplicitBinary(t *testing.
 }
 
 func TestManagedDetectionHonorsProviderAllowlist(t *testing.T) {
-	t.Setenv("AGENTFLOW_MANAGED_CLIS", "pi")
+	t.Setenv("AGENTFLOW_MANAGED_CLIS", "pi,")
 	root := t.TempDir()
 	inventory := managedcli.Inventory{
 		"pi":     {Version: "1.0.0", Binary: managedTestBinary(t, root, "pi", "1.0.0")},
