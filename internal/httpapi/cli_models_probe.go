@@ -169,7 +169,10 @@ func (h *usersHandlers) probeCLIModels(c *gin.Context) {
 }
 
 func discoverGeminiModels(ctx context.Context, key, baseURL string) ([]assistantDiscoveredModel, error) {
-	baseURL = strings.TrimSuffix(strings.TrimRight(baseURL, "/"), "/v1beta")
+	baseURL, err := domain.NormalizeGeminiBaseURL(baseURL)
+	if err != nil {
+		return nil, err
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/v1beta/models?pageSize=1000", nil)
 	if err != nil {
 		return nil, err

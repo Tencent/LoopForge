@@ -387,6 +387,13 @@ func ApplyAgentCLICredential(kind string, cred ProviderCredential, options Agent
 	}
 	baseURL := strings.TrimRight(strings.TrimSpace(cred.BaseURL), "/")
 	protocol := AgentCLIProtocol(kind, cred.Protocol)
+	if kind == AgentCLIAntigravity && protocol == AgentCLIProtocolGemini {
+		var err error
+		baseURL, err = domain.NormalizeGeminiBaseURL(baseURL)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
 	if baseURL == "" && AgentCLINeedsBaseURL(kind, protocol) {
 		return nil, nil, fmt.Errorf("%s 需要在个人配置中填写 Base URL", AgentCLILabel(kind))
 	}
