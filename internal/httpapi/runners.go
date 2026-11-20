@@ -826,10 +826,11 @@ func (h *runnersHandlers) runnerTaskClaim(c *gin.Context) {
 		return
 	}
 	var input struct {
-		AvailableRuntimes []string `json:"availableRuntimes"`
-		Capacity          int      `json:"capacity"`
-		Preflight         bool     `json:"preflight"`
-		NoWait            bool     `json:"noWait"`
+		AvailableRuntimes        []string `json:"availableRuntimes"`
+		Capacity                 int      `json:"capacity"`
+		Preflight                bool     `json:"preflight"`
+		NoWait                   bool     `json:"noWait"`
+		SupportsGitSSHKnownHosts bool     `json:"supportsGitSshKnownHosts"`
 	}
 	if !decode(c, &input) {
 		return
@@ -855,7 +856,9 @@ func (h *runnersHandlers) runnerTaskClaim(c *gin.Context) {
 		}
 		if task.Invocation != nil && task.Invocation.GitSSHUserID > 0 && runner.SupportsGitSSH() && len(task.Invocation.GitSSHRemotes()) > 0 {
 			task.Invocation.GitSSHKeys = h.repo.GitSSHKeysForRemotes(task.Invocation.GitSSHUserID, task.Invocation.GitSSHRemotes())
-			task.GitSSHKnownHosts = gitwork.SSHKnownHostsForKeys(task.Invocation.GitSSHKeys)
+			if input.SupportsGitSSHKnownHosts {
+				task.GitSSHKnownHosts = gitwork.SSHKnownHostsForKeys(task.Invocation.GitSSHKeys)
+			}
 			task.Invocation.GitSSHUserID = 0
 			c.Header("Cache-Control", "no-store")
 		}

@@ -3,6 +3,7 @@ package gitwork
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"maps"
 	"os"
@@ -57,7 +58,13 @@ func SSHKnownHostsForKeys(keySets ...map[string]string) *domain.GitSSHKnownHosts
 		entries.Write(pins.revocations)
 		entries.Write(pins.keys)
 	}
-	return &domain.GitSSHKnownHosts{Entries: entries.String()}
+	pins := &domain.GitSSHKnownHosts{Entries: entries.String()}
+	encoded, _ := json.Marshal(pins)
+	const claimFieldPrefix = len(`,"gitSshKnownHosts":`)
+	if len(encoded)+claimFieldPrefix > domain.RunnerSSHKnownHostsWireLimit {
+		return &domain.GitSSHKnownHosts{TooLarge: true}
+	}
+	return pins
 }
 
 func readConfiguredSSHKnownHosts() ([]byte, error) {
@@ -77,6 +84,9 @@ func sshHostKeys(ctx context.Context, remotes []SSHRemote) ([]byte, error) {
 	if platform, _ := ctx.Value(sshKnownHostsContext{}).(*domain.GitSSHKnownHosts); platform != nil {
 		if platform.ReadFailed {
 			return nil, fmt.Errorf("无法读取平台 %s 指定的主机密钥文件", SSHKnownHostsEnv)
+		}
+		if platform.TooLarge {
+			return nil, fmt.Errorf("平台下发的 SSH 主机密钥超过大小上限，请检查 %s 中匹配的条目", SSHKnownHostsEnv)
 		}
 		platformEntries = []byte(platform.Entries)
 	}

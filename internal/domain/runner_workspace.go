@@ -36,12 +36,17 @@ const (
 	RunnerWorkspaceOperationConversationCLI   = "conversation_process"
 )
 
+// RunnerSSHKnownHostsWireLimit is the encoded allowance for the optional
+// known_hosts field in a runner task claim.
+const RunnerSSHKnownHostsWireLimit = 1 << 20
+
 // GitSSHKnownHosts carries the platform's scoped SSH host keys over an
-// authenticated runner transport. ReadFailed distinguishes an unreadable
-// administrator file from an absent configuration.
+// authenticated runner transport. Configuration errors are also sent so the
+// runner can fail closed when the platform cannot supply the configured pins.
 type GitSSHKnownHosts struct {
 	Entries    string `json:"entries,omitempty"`
 	ReadFailed bool   `json:"readFailed,omitempty"`
+	TooLarge   bool   `json:"tooLarge,omitempty"`
 }
 
 // RunnerWorkspaceRequest is a bounded workspace request sent over the

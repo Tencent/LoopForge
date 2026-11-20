@@ -264,7 +264,12 @@ func TestGitSSHRunnerClaimUsesTaskActorCredential(t *testing.T) {
 	if err := f.s.PutRunnerTask(task); err != nil {
 		t.Fatal(err)
 	}
-	resp := requestWithHeaders(t, f.h, http.MethodPost, "/api/runners/tasks/claim", map[string]any{"availableRuntimes": []string{"mock"}, "noWait": true}, map[string]string{"Authorization": "Bearer " + session})
+	auth := map[string]string{"Authorization": "Bearer " + session}
+	resp := requestWithHeaders(t, f.h, http.MethodPost, "/api/runners/tasks/claim", map[string]any{
+		"availableRuntimes":        []string{"mock"},
+		"noWait":                   true,
+		"supportsGitSshKnownHosts": true,
+	}, auth)
 	var result struct{ Task domain.RunnerTask }
 	if err := json.Unmarshal(resp.Body.Bytes(), &result); err != nil || resp.Code != http.StatusOK || result.Task.ID != task.ID || result.Task.Invocation == nil || result.Task.Invocation.GitSSHKeys[gitlabRepo] != gitlabKey || result.Task.Invocation.GitSSHKeys[otherHostRepo] != key || result.Task.Invocation.GitSSHUserID != 0 {
 		t.Fatalf("authenticated claim did not hydrate the task actor's keys (HTTP %d)", resp.Code)
@@ -277,9 +282,26 @@ func TestGitSSHRunnerClaimUsesTaskActorCredential(t *testing.T) {
 	if stored.Invocation == nil || len(stored.Invocation.GitSSHKeys) != 0 || stored.GitSSHKnownHosts != nil {
 		t.Fatal("claimed Git credentials or host pins were persisted")
 	}
-	if resp := requestWithHeaders(t, f.h, http.MethodGet, "/api/runners/tasks/"+task.ID, nil, map[string]string{"Authorization": "Bearer " + session}); resp.Code != http.StatusOK || strings.Contains(resp.Body.String(), "gitSsh") || strings.Contains(resp.Body.String(), key) {
+	if resp := requestWithHeaders(t, f.h, http.MethodGet, "/api/runners/tasks/"+task.ID, nil, auth); resp.Code != http.StatusOK || strings.Contains(resp.Body.String(), "gitSsh") || strings.Contains(resp.Body.String(), key) {
 		t.Fatalf("runner status response must omit credential fields (HTTP %d)", resp.Code)
 	}
+
+	// A claim from an older client carries no capability flag, even if the
+	// persisted runner version was reported by a different process.
+	task.ID = "legacy-ssh-task"
+	if err := f.s.PutRunnerTask(task); err != nil {
+		t.Fatal(err)
+	}
+	legacy := requestWithHeaders(t, f.h, http.MethodPost, "/api/runners/tasks/claim", map[string]any{
+		"availableRuntimes": []string{"mock"},
+		"noWait":            true,
+	}, auth)
+	var legacyResult struct{ Task domain.RunnerTask }
+	if err := json.Unmarshal(legacy.Body.Bytes(), &legacyResult); err != nil || legacy.Code != http.StatusOK || legacyResult.Task.ID != task.ID ||
+		legacyResult.Task.GitSSHKnownHosts != nil || legacyResult.Task.Invocation == nil || legacyResult.Task.Invocation.GitSSHKeys[gitlabRepo] != gitlabKey {
+		t.Fatalf("legacy claim did not preserve the existing SSH payload (HTTP %d)", legacy.Code)
+	}
+
 	t.Setenv(gitwork.SSHKnownHostsEnv, "")
 	ctx := gitwork.WithSSHKnownHosts(t.Context(), pins)
 	ctx = gitwork.WithSSHRemote(gitwork.WithSSHKeys(ctx, result.Task.Invocation.GitSSHKeys), gitlabRepo)

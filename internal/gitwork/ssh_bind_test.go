@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 
+	"agentflow/internal/domain"
+
 	"golang.org/x/crypto/ssh"
 )
 
@@ -209,5 +211,36 @@ func TestUnreadablePlatformSSHKnownHostsFailsClosed(t *testing.T) {
 	ctx := WithSSHKnownHosts(t.Context(), platform)
 	if _, err := sshHostKeys(ctx, []SSHRemote{{Host: "github.com", Port: "22"}}); err == nil || !strings.Contains(err.Error(), "无法读取平台") {
 		t.Fatalf("platform read failure was hidden: %v", err)
+	}
+}
+
+func TestOversizedPlatformSSHKnownHostsFailsClosed(t *testing.T) {
+	_, _, publicKey, _, _, err := ssh.ParseKnownHosts([]byte(builtinKnownHosts))
+	if err != nil {
+		t.Fatal(err)
+	}
+	const host = "gitlab.example.org"
+	line := host + " " + string(ssh.MarshalAuthorizedKey(publicKey))
+	// A line's newline takes two bytes in JSON. The unencoded file fits in the
+	// allowance, but the matching entries do not fit after escaping.
+	lines := domain.RunnerSSHKnownHostsWireLimit/(len(line)+1) + 1
+	path := filepath.Join(t.TempDir(), "known_hosts")
+	if err := os.WriteFile(path, []byte(strings.Repeat(line, lines)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(SSHKnownHostsEnv, path)
+	platform := SSHKnownHostsForKeys(map[string]string{host + ":22": "identity"})
+	if platform == nil {
+		t.Fatal("oversized platform config was omitted")
+	}
+	if !platform.TooLarge || platform.ReadFailed || platform.Entries != "" {
+		t.Fatalf("oversized platform config has %d entry bytes, tooLarge = %v, readFailed = %v", len(platform.Entries), platform.TooLarge, platform.ReadFailed)
+	}
+	if err := os.WriteFile(path, []byte(line), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ctx := WithSSHKnownHosts(t.Context(), platform)
+	if _, err := sshHostKeys(ctx, []SSHRemote{{Host: host, Port: "22"}}); err == nil || !strings.Contains(err.Error(), "超过大小上限") {
+		t.Fatalf("oversized platform pins were silently bypassed: %v", err)
 	}
 }
