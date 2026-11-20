@@ -87,8 +87,27 @@ func TestCursorPreventsSameDayDowngrades(t *testing.T) {
 	now := time.Now().UTC()
 	v := "2026.11.19-0123456"
 	older := release{Version: "2026.11.19-abcdef0", Published: now.Add(-time.Hour)}
-	if !olderRelease("cursor", older, v, &now) {
+	if newerRelease("cursor", older, v, &now) {
 		t.Fatal("an older Cursor artifact with the same build date was accepted")
+	}
+}
+
+func TestCursorRefusesAmbiguousSameDayUpgrade(t *testing.T) {
+	f := newUpdaterFixture(t)
+	ctx := context.Background()
+	first, second := "2025.12.15-abcdef0", "2025.12.15-0123456"
+	f.mu.Lock()
+	f.versions["cursor"] = first
+	f.mu.Unlock()
+	_, err := f.manager.UpdateProvider(ctx, "cursor")
+	must(t, err)
+	f.mu.Lock()
+	f.versions["cursor"] = second
+	f.mu.Unlock()
+	report, err := f.manager.UpdateProvider(ctx, "cursor")
+	must(t, err)
+	if len(report.Results) != 1 || report.Results[0].Status != "skipped" || f.state(t).Current["cursor"].Version != first {
+		t.Fatalf("Cursor switched between distinct builds with the same publication time: %+v", report)
 	}
 }
 

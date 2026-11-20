@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"agentflow/internal/domain"
@@ -81,16 +82,24 @@ func withBwrapManagedCLI(command CommandSpec, driver string) CommandSpec {
 		return command
 	}
 	releaseDir, _, _ := strings.Cut(relative, string(filepath.Separator))
-	install := filepath.Join(resolvedRoot, "providers", command.Provider, releaseDir)
-	if !strings.HasPrefix(install, "/tmp/") {
-		return command
-	}
+	providerDir := filepath.Join(resolvedRoot, "providers", command.Provider)
+	install := filepath.Join(providerDir, releaseDir)
 	binary, err := filepath.EvalSymlinks(command.Argv[0])
 	if err != nil {
 		return command
 	}
-	relative, err = filepath.Rel(install, binary)
-	if err == nil && filepath.IsLocal(relative) {
+	resolvedRelative, err := filepath.Rel(install, binary)
+	if err != nil || !filepath.IsLocal(resolvedRelative) {
+		return command
+	}
+	// A symlinked ancestor in /tmp can be hidden even when its target is
+	// visible. Resolve the root prefix without changing an npm bin symlink.
+	if path := filepath.Join(providerDir, relative); path != command.Argv[0] {
+		command.Argv = slices.Clone(command.Argv)
+		command.Argv[0] = path
+	}
+	privateTmp, err := filepath.EvalSymlinks("/tmp")
+	if err == nil && strings.HasPrefix(install, privateTmp+string(filepath.Separator)) {
 		command.managedCLIInstall = install
 	}
 	return command

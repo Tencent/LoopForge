@@ -109,3 +109,38 @@ func TestBwrapMountsManagedInstallationUnderPrivateTmp(t *testing.T) {
 		t.Fatal("bwrap exposed the entire updater directory")
 	}
 }
+
+func TestBwrapUsesCanonicalManagedPathWhenTemporarySymlinkIsHidden(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("bwrap is available on Linux")
+	}
+	storage, err := os.MkdirTemp("/var/tmp", "loopforge-managed-cli-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(storage) })
+	t.Setenv("TMPDIR", "/tmp")
+	alias := filepath.Join(t.TempDir(), "storage")
+	if err := os.Symlink(storage, alias); err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Join(alias, "managed")
+	t.Setenv("AGENTFLOW_MANAGED_CLI_ROOT", root)
+	relative := filepath.Join("providers", "pi", "1.5.2-test", "pi")
+	binary := filepath.Join(root, relative)
+	if err := os.MkdirAll(filepath.Dir(binary), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(binary, []byte("#!/bin/sh\nexit 0\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	args := []string{binary, "--version"}
+	command := withBwrapManagedCLI(CommandSpec{Provider: "pi", Argv: args}, "bwrap")
+	want := filepath.Join(storage, "managed", relative)
+	if command.Argv[0] != want || command.managedCLIInstall != "" {
+		t.Fatalf("expected the visible path %s without another mount, got %q and %q", want, command.Argv[0], command.managedCLIInstall)
+	}
+	if args[0] != binary {
+		t.Fatal("managed CLI path normalization changed the caller's arguments")
+	}
+}

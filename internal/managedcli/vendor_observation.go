@@ -52,8 +52,8 @@ func (o vendorObservation) release(provider string) (release, bool) {
 func (m *Manager) observeVendorReleases(state *State, provider string, latest release) (release, error) {
 	installed := state.Current[provider]
 	isUpgrade := func(candidate release) bool {
-		return candidate.Version != installed.Version && candidate.Version != state.Rejected[provider] &&
-			(installed.Version == "" || !olderRelease(provider, candidate, installed.Version, installed.PublishedAt))
+		return candidate.Version != state.Rejected[provider] &&
+			(installed.Version == "" || newerRelease(provider, candidate, installed.Version, installed.PublishedAt))
 	}
 	previous := state.VendorObservations[provider]
 	if !isUpgrade(latest) {
@@ -71,8 +71,7 @@ func (m *Manager) observeVendorReleases(state *State, provider string, latest re
 	cutoff := m.Now().Add(-observationWindow)
 	for _, observation := range previous {
 		seen, ok := observation.release(provider)
-		if !ok || seen.Version == latest.Version || !isUpgrade(seen) ||
-			olderRelease(provider, latest, seen.Version, &seen.Published) {
+		if !ok || !isUpgrade(seen) || !newerRelease(provider, latest, seen.Version, &seen.Published) {
 			continue
 		}
 		// Keep older observations until activation or a channel retreat
@@ -81,7 +80,7 @@ func (m *Manager) observeVendorReleases(state *State, provider string, latest re
 			retained = append(retained, observation)
 		}
 		if latest.Published.After(cutoff) && !seen.Published.After(cutoff) &&
-			(selected.Version == latest.Version || olderRelease(provider, selected, seen.Version, &seen.Published)) {
+			(selected.Version == latest.Version || newerRelease(provider, seen, selected.Version, &selected.Published)) {
 			selected = seen
 		}
 	}

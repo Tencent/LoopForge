@@ -186,7 +186,7 @@ func (m *Manager) releaseGate(state *State, provider, from string, candidate rel
 	switch {
 	case candidate.Version == from:
 		return "unchanged", ""
-	case from != "" && olderRelease(provider, candidate, from, state.Current[provider].PublishedAt):
+	case from != "" && !newerRelease(provider, candidate, from, state.Current[provider].PublishedAt):
 		return "skipped", "automatic downgrade refused"
 	case state.Rejected[provider] == candidate.Version:
 		return "skipped", "this release was rolled back; waiting for a newer release"
@@ -196,14 +196,20 @@ func (m *Manager) releaseGate(state *State, provider, from string, candidate rel
 	return "", ""
 }
 
-func olderRelease(provider string, candidate release, from string, published *time.Time) bool {
+func newerRelease(provider string, candidate release, from string, published *time.Time) bool {
+	if candidate.Version == from {
+		return false
+	}
 	if provider == "cursor" {
 		// Build hashes have no ordering within a day. The artifact's
-		// timestamp orders multiple releases stamped with the same date.
+		// timestamp must establish a strictly newer same-day release.
 		candidateDate, currentDate := candidate.Version[:10], from[:10]
-		return candidateDate < currentDate || (candidateDate == currentDate && published != nil && candidate.Published.Before(*published))
+		if candidateDate != currentDate {
+			return candidateDate > currentDate
+		}
+		return published != nil && candidate.Published.After(*published)
 	}
-	return compareVersions(candidate.Version, from) < 0
+	return compareVersions(candidate.Version, from) > 0
 }
 
 // stageCandidate reuses the cached candidate installation when it still matches
