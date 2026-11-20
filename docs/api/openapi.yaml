@@ -182,6 +182,16 @@ paths:
                 required: [default, models]
                 properties:
                   default: {type: string}
+                  engines:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: {type: string}
+                        name: {type: string}
+                        configured: {type: boolean}
+                        personal: {type: boolean}
+                        credential: {type: string, description: Configuration field name}
                   models:
                     type: array
                     items:
@@ -191,6 +201,7 @@ paths:
                         id: {type: string}
                         name: {type: string}
                         family: {type: string}
+                        engine: {type: string}
                         credits: {type: string, example: x0.79}
         "401":
           $ref: "#/components/responses/Unauthorized"
@@ -1426,6 +1437,28 @@ paths:
           $ref: "#/components/responses/RunList"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/issues/{issueId}/clarify-models:
+    parameters:
+      - $ref: "#/components/parameters/IssueId"
+    get:
+      tags: [Issues]
+      operationId: listIssueClarificationModels
+      description: List model choices for the issue assignee or project owner who runs the clarification. Requires project write access.
+      responses:
+        "200":
+          description: Executors and models available for issue clarification
+          content:
+            application/json:
+              schema:
+                $ref: "#/paths/~1api~1assistant~1models/get/responses/200/content/application~1json/schema"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
   /api/issues/{issueId}/chat-clarify:

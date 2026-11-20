@@ -1278,11 +1278,6 @@ function defaultRunEval(){return{enabled:true,version:1,threshold:70,dimensions:
   {id:'recovery',name:'错误恢复',question:'相同错误是否反复出现？',weight:10},
   {id:'delivery',name:'交付完整',question:'终态、产物和验证信号是否齐全？',weight:10}
 ]}}
-function runEvalModel(){
-  const selected=state.runEvalModel||localStorage.getItem('agentflow.runEvalModel');
-  return window.AgentFlowAssistantModels?.concreteModelId(selected)||'';
-}
-function setRunEvalModel(id){state.runEvalModel=id;localStorage.setItem('agentflow.runEvalModel',id)}
 function runEvalApplyable(rec){if(!rec||rec.status==='applied')return false;const action=((rec.target||'')+'.'+(rec.action||'')).replace(/^\./,'').toLowerCase();const full=rec.action&&rec.action.includes('.')?rec.action.toLowerCase():action;return ['workflow.update_node','agent.upsert_gate','agent.remove_gate','agent.append_instructions','agent.append_task_prompt'].includes(full)}
 function runEvalPaneHTML(run){
   const rec=state.runEval?.runId===run.id?state.runEval:null,busy=!!state.runEvalBusy,thoughts=state.runEvalThoughts||[];
@@ -1301,16 +1296,10 @@ function runEvalPaneHTML(run){
       </div>
     </div>
     <div class="run-eval-hero-action-card">
-      <div class="eval-control-label">评测大模型</div>
+      <div class="eval-control-label">评测执行器与模型</div>
       <div class="run-eval-toolbar-row">
-        <div class="schedule-model-field run-eval-model" id="runEvalModelPicker">
-          <input type="hidden" name="runEvalModel" value="${escapeHTML(runEvalModel())}">
-          <button type="button" class="ai-model-toggle" data-model-toggle aria-haspopup="listbox" aria-expanded="false">
-            <span class="ai-model-icon" data-family="glm">智</span>
-            <span data-model-label>选择模型</span>
-            <span class="ai-model-caret" aria-hidden="true"></span>
-          </button>
-          <div class="ai-model-menu" hidden role="listbox"></div>
+        <div class="feature-model-picker run-eval-picker" id="runEvalModelPicker">
+          ${window.AgentFlowAssistantModels?.featurePickerHTML()||''}
         </div>
         <button type="button" class="button primary run-eval-launch-btn" data-start-run-eval ${isTerminal?'':'disabled'}>
           <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 2l2.4 7.2L21.6 12l-7.2 2.4L12 21.6l-2.4-7.2L2.4 12l7.2-2.4L12 2z"/></svg>
@@ -1367,22 +1356,10 @@ function bindRunEvalPane(run,host){
   host.querySelectorAll('[data-open-eval-target]').forEach(b=>b.onclick=()=>openRunEvalTarget(b.dataset.openEvalTarget,b.dataset.openEvalId));
 }
 function bindRunEvalModelPicker(host){
-  if(!host)return;
-  const api=window.AgentFlowAssistantModels,toggle=host.querySelector('[data-model-toggle]'),menu=host.querySelector('.ai-model-menu');
-  if(!api||!toggle||!menu)return;
-  const paint=()=>{const keep=runEvalModel();const inp=host.querySelector('[name=runEvalModel]');if(inp)inp.value=keep;api.paintFeature(toggle,keep)};
-  paint();
-  api.load?.().then(paint).catch(paint);
-  if(host.dataset.bound)return;
-  host.dataset.bound='1';
-  toggle.onclick=e=>{
-    e.stopPropagation();
-    const open=menu.hidden;
-    menu.hidden=!open;
-    toggle.setAttribute('aria-expanded',open?'true':'false');
-    if(open)api.renderFeatureList(menu,runEvalModel(),id=>{setRunEvalModel(id);paint();menu.hidden=true;toggle.setAttribute('aria-expanded','false')});
-  };
-  document.addEventListener('click',e=>{if(host.contains(e.target))return;menu.hidden=true;toggle.setAttribute('aria-expanded','false')});
+  window.AgentFlowAssistantModels?.bindFeaturePicker(host,{
+    model:localStorage.getItem('agentflow.runEvalModel'),
+    onChange:id=>localStorage.setItem('agentflow.runEvalModel',id)
+  });
 }
 async function loadRunEval(runId,background){
   try{
@@ -1399,7 +1376,10 @@ async function loadRunEval(runId,background){
 }
 async function startRunEval(run){
   if(!['succeeded','failed','cancelled'].includes(run.status))return toast('请等 SOP 跑完后再评测');
-  const model=runEvalModel();
+  const picker=$('#runEvalModelPicker');
+  await picker?.modelPickerReady;
+  if(!picker?.isConnected||state.runEvalBusy)return;
+  const model=picker.querySelector('[data-feature-model]')?.value;
   if(!model)return toast('请先选择模型');
   state.runEvalBusy=true;state.runEvalThoughts=['正在提交评测…'];
   const host=$('#runDetail'),pane=host?.querySelector('[data-run-pane="eval"]');

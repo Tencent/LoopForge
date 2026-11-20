@@ -39,9 +39,9 @@ func TestClarifyModelPickerAndMCPPrompt(t *testing.T) {
 	}
 	for _, want := range []string{
 		"agentflow.clarifyModel",
-		"selectedClarifyModel",
 		"data-clarify-model",
-		"const model=selectedClarifyModel()",
+		"/clarify-models",
+		"picker.querySelector('[data-feature-model]')?.value",
 		"JSON.stringify({message:msg,history,model})",
 	} {
 		if !strings.Contains(string(app), want) {

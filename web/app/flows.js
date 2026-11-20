@@ -10,13 +10,20 @@ function workflowPreviewModel(wf){
   const model=String(workflowPreviewContract(wf)?.model||'').trim();
   return model==='default'||(model==='default-model'&&workflowPreviewExecutor(wf)===PREVIEW_DEFAULT_EXECUTOR)?'':model;
 }
+function previewModelOptions(executorId){
+  return (executorModelCatalogs()[executorId]?.models||[]).filter(m=>m.id!=='default'&&(executorId!==PREVIEW_DEFAULT_EXECUTOR||m.id!=='default-model'));
+}
+function defaultPreviewModel(executorId, items=previewModelOptions(executorId)){
+  const preferred=executorModelCatalogs()[executorId]?.default;
+  return items.find(item=>item.id===preferred)?.id||items[0]?.id||'';
+}
 function fillPreviewModelSelect(sel, selected, executorId){
-  if(!sel)return;
-  const catalog=executorModelCatalogs()[executorId];
-  const items=(catalog?.models||[]).filter(m=>m.id!=='default'&&(executorId!==PREVIEW_DEFAULT_EXECUTOR||m.id!=='default-model'));
-  if(selected&&!items.some(m=>m.id===selected))items.push({id:selected,name:selected});
-  sel.innerHTML=`<option value="" disabled ${selected?'':'selected'}>选择模型</option>`+items.map(m=>`<option value="${escapeHTML(m.id)}" ${m.id===selected?'selected':''}>${escapeHTML(m.name||m.id)}</option>`).join('');
-  sel.disabled=flowReadOnly();
+  const items=previewModelOptions(executorId);
+  const model=selected||defaultPreviewModel(executorId,items);
+  if(model&&!items.some(m=>m.id===model))items.push({id:model,name:model});
+  sel.innerHTML=items.length?items.map(m=>`<option value="${escapeHTML(m.id)}" ${m.id===model?'selected':''}>${escapeHTML(m.name||m.id)}</option>`).join(''):'<option value="">暂无可选模型</option>';
+  sel.disabled=flowReadOnly()||!items.length;
+  return model;
 }
 function ensurePreviewContract(){
   const wf=state.workflow;if(!wf)return null;
@@ -974,14 +981,20 @@ function renderPreviewBuildProperties(host,n){
     <div class="fd-db">
       <section class="fd-sec"><div class="fd-sec-h"><span class="fd-sec-t">主配置</span></div><div class="fd-sec-b">
         <p class="prop-hint">运行到该节点时用所选模型构建静态站点，不必再手写脚本节点；Run 成功后平台归档预览。它只有成功出口。</p>
-        <div class="fd-field"><label for="previewNodeExecutor">CLI</label><select class="select" id="previewNodeExecutor">${executorOptions(workflowPreviewExecutor(state.workflow))}</select></div>
+        <div class="fd-field"><label for="previewNodeExecutor">执行器</label><select class="select" id="previewNodeExecutor">${executorOptions(workflowPreviewExecutor(state.workflow))}</select></div>
         <div class="fd-field"><label for="previewNodeModel">模型</label><select class="select" id="previewNodeModel"></select></div>
         <label class="fd-check"><input type="checkbox" id="previewNodeSpa" ${spa?'checked':''}><span>单页应用回退（找不到路径时返回入口 HTML）</span></label>
       </div></section>
     </div>
     <div class="fd-df"><span class="fd-df-hint">从左侧「成功」出口连到下一步；预览节点没有失败出口</span></div>`;
   const executor=$('#previewNodeExecutor'),sel=$('#previewNodeModel');
-  const fill=()=>fillPreviewModelSelect(sel,workflowPreviewModel(state.workflow),executor.value);
+  const fill=()=>{
+    const model=fillPreviewModelSelect(sel,workflowPreviewModel(state.workflow),executor.value);
+    if(!sel.disabled&&model&&state.workflow.preview?.model===''){
+      updatePreviewContract({model});
+      renderCanvas();
+    }
+  };
   fill();
   loadExecutorModelCatalogs().then(()=>{if(executor.isConnected)fill()});
   executor.onchange=()=>{
@@ -1097,9 +1110,15 @@ async function saveWorkflow(){
   if(catalogGeneric(state.workflow)&&!isPlatformAdmin()){toast('通用模板为只读，请先「复制到本项目」再修改');throw new Error('generic sop is read-only')}
   if(catalogForeign(state.workflow?.projectId)){toast('这是其他项目的共享 SOP，请先复制到本项目再改');throw new Error('shared sop is read-only')}
   if(state.workflow?.preview?.enabled&&state.workflow.preview.model===''){
-    const message='请选择构建静态站点的模型';
-    toast(message);
-    throw new Error(message);
+    const workflow=state.workflow;
+    await loadExecutorModelCatalogs();
+    if(state.workflow!==workflow)throw new Error('SOP 已切换，请重新保存');
+    if(!workflow.preview.model)workflow.preview.model=defaultPreviewModel(workflowPreviewExecutor(workflow));
+    if(!workflow.preview.model){
+      const message='请选择构建静态站点的模型';
+      toast(message);
+      throw new Error(message);
+    }
   }
   try{const saved=await api('/api/workflows',{method:'PUT',body:JSON.stringify(state.workflow)});state.workflow=clone(saved);const i=state.data.workflows.findIndex(w=>w.id===saved.id);if(i>=0)state.data.workflows[i]=clone(saved);else state.data.workflows.unshift(clone(saved));markWorkflowClean();renderWorkflowMeta();renderSOPCatalog();renderCanvas();renderProperties();toast('SOP 草稿已保存');return saved}catch(e){if(e.message.includes('revision conflict')){toast('保存冲突：其他人已更新该 SOP，请重新选择后合并')}else if(e.message!=='shared sop is read-only'&&e.message!=='generic sop is read-only')toast(e.message);throw e}}
 function sopSandboxChoices(){

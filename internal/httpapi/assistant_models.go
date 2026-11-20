@@ -238,14 +238,7 @@ func (h *assistantHandlers) models(c *gin.Context) {
 	case signedIn && strings.TrimSpace(user.CodeBuddyAPIKey) != "":
 		// A user's own key keeps their environment's models and default: the
 		// shared key's default may not exist in that environment.
-		refreshCLIModels(c.Request.Context(), user.CodeBuddyInternetEnvironment, user.CodeBuddyAPIKey)
-		catalog = assistantChatCatalog(c.Request.Context(), user.CodeBuddyInternetEnvironment, nil)
-		if saved := codeBuddyPersonalModels(user); len(saved) > 0 {
-			catalog.Default = saved[0].ID
-			if listed := selectableCodeBuddyModels(saved); len(listed) > 0 {
-				catalog.Models = listed
-			}
-		}
+		catalog = personalCodeBuddyCatalog(c.Request.Context(), user)
 	case signedIn:
 		// Do not probe a CLI the user has not configured.
 		catalog.Default = assistantDefaultModel
@@ -283,6 +276,21 @@ func (h *assistantHandlers) models(c *gin.Context) {
 		h.saveCursorCatalog(user)
 	}
 	c.JSON(200, catalog)
+}
+
+func personalCodeBuddyCatalog(ctx context.Context, user domain.User) assistantModelCatalog {
+	if strings.TrimSpace(user.CodeBuddyAPIKey) == "" {
+		return assistantModelCatalog{Default: assistantDefaultModel}
+	}
+	refreshCLIModels(ctx, user.CodeBuddyInternetEnvironment, user.CodeBuddyAPIKey)
+	catalog := assistantChatCatalog(ctx, user.CodeBuddyInternetEnvironment, nil)
+	if saved := codeBuddyPersonalModels(user); len(saved) > 0 {
+		catalog.Default = saved[0].ID
+		if listed := selectableCodeBuddyModels(saved); len(listed) > 0 {
+			catalog.Models = listed
+		}
+	}
+	return catalog
 }
 
 // Keep the CLI default as an execution fallback and for older saved records.

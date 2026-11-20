@@ -223,7 +223,7 @@ function renderIssueDetailTab(){
       if(!wasSelected)b.classList.add('selected');
     }
   });
-  host.querySelectorAll('[data-clarify-model]').forEach(bindClarifyModelPicker);
+  host.querySelectorAll('[data-clarify-model]').forEach(picker=>bindClarifyModelPicker(picker,issue));
   bindWaitingActions(host);
   if(state.issueDetailTab==='clarify'&&issueClarifying(issue.id))restoreIssueClarifyThinking(issue.id);
   if(clarifyDraft)restoreIssueClarifyDraft(host,clarifyDraft);
@@ -408,7 +408,10 @@ async function sendIssueClarification(initialMessage=''){
     attachIssueClarifyStream(issueId);
     return;
   }
-  const model=selectedClarifyModel();
+  const picker=$('#issueDetailBody [data-clarify-model]');
+  await picker?.modelPickerReady;
+  if(!picker?.isConnected||state.issueDetailData?.issue?.id!==issueId||issueClarifyJobs.get(issueId)?.attached)return;
+  const model=picker.querySelector('[data-feature-model]')?.value;
   if(!model)return toast('请先选择模型');
   const msg=initialMessage||collectIssueClarifyReply();
   if(!msg)return toast('请先选择或填写答案');

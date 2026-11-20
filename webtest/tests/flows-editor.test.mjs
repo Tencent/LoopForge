@@ -73,7 +73,7 @@ test('flow preview properties persist the CLI, model and SPA fallback', async (t
   t.after(app.close);
   app.router.get('/api/executor-models', {
     codebuddy: {models:[{id:'deepseek-v4.1-flash',name:'DeepSeek Flash'}]},
-    codex: {models:[{id:'preview-model',name:'Preview model'}]},
+    codex: {models:[{id:'preview-model',name:'Preview model'},{id:'preview-other',name:'Other model'}]},
     claude: {models:[]},
   });
   app.evaluate(`state.data.executors=[{id:'codebuddy',name:'CodeBuddy'},{id:'codex',name:'Codex'}];switchView('flow');addNode('preview',{at:{x:200,y:100}});renderProperties()`);
@@ -81,13 +81,12 @@ test('flow preview properties persist the CLI, model and SPA fallback', async (t
   const executor = app.document.querySelector('#previewNodeExecutor');
   assert.equal(executor.value, 'codebuddy');
   assert.equal(app.evaluate('state.workflow.preview.executorId'), 'codebuddy');
+  assert.equal(app.document.querySelector('#previewNodeModel').value, 'deepseek-v4.1-flash');
   executor.value = 'codex';
   executor.dispatchEvent(new app.window.Event('change'));
   const model = app.document.querySelector('#previewNodeModel');
-  assert.equal(model.value, '');
-  assert.deepEqual([...model.options].map(option => option.value), ['', 'preview-model']);
-  assert.equal(model.options[0].disabled, true);
-  await assert.rejects(app.evaluate('saveWorkflow()'), /请选择构建静态站点的模型/);
+  assert.equal(model.value, 'preview-model');
+  assert.deepEqual([...model.options].map(option => option.value), ['preview-model', 'preview-other']);
   model.value = model.options[model.options.length - 1].value;
   model.dispatchEvent(new app.window.Event('change'));
   const spa = app.document.querySelector('#previewNodeSpa');
@@ -97,7 +96,7 @@ test('flow preview properties persist the CLI, model and SPA fallback', async (t
   assert.equal(app.evaluate(`state.workflow.preview.spaFallback`), false);
   assert.equal(app.evaluate(`state.workflow.preview.executorId`), 'codex');
   assert.equal(app.evaluate(`state.workflow.nodes.find(n=>isPreviewBuildNode(n.id)).executorId`), 'codex');
-  assert.equal(model.value, 'preview-model');
+  assert.equal(model.value, 'preview-other');
 });
 
 test('SOP wizard creates a workflow and publish/delete actions send expected requests', async (t) => {

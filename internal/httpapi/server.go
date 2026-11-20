@@ -386,6 +386,7 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.Any("/api/issues/:id/runs", api.issues.issue)
 	g.Any("/api/issues/:id/clarification", api.issues.issue)
 	g.Any("/api/issues/:id/chat-clarify", api.issues.issue)
+	g.GET("/api/issues/:id/clarify-models", api.issues.issue)
 	g.Any("/api/issues/:id/chat-clarify/cancel", api.issues.issue)
 	g.Any("/api/issues/:id/reopen", api.issues.issue)
 	g.Any("/api/issues/:id/close", api.issues.issue)

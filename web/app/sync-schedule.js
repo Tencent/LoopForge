@@ -98,53 +98,17 @@ function scheduleIssueStatusValues(job){
   return ['backlog','todo'];
 }
 function scheduleModelAPI(){return window.AgentFlowAssistantModels}
-function selectedClarifyModel(){
-  return window.AgentFlowAssistantModels?.concreteModelId(localStorage.getItem('agentflow.clarifyModel'))||'';
-}
-function setClarifyModel(id){
-  if(!id)return;
-  localStorage.setItem('agentflow.clarifyModel',id);
-  $$('[data-clarify-model-value]').forEach(el=>{el.value=id});
-}
 function clarifyModelPickerHTML(disabled){
-  const id=escapeHTML(selectedClarifyModel());
-  return `<div class="clarify-model-field" data-clarify-model><input type="hidden" data-clarify-model-value value="${id}"><button type="button" class="ai-model-toggle" data-model-toggle aria-haspopup="listbox" aria-expanded="false"${disabled?' disabled':''}><span class="ai-model-icon" data-family="glm">智</span><span data-model-label>选择模型</span><span class="ai-model-caret" aria-hidden="true"></span></button><div class="ai-model-menu" hidden role="listbox"></div></div>`;
+  return `<div class="feature-model-picker clarify-model-picker" data-clarify-model ${disabled?'data-picker-readonly':''}>${scheduleModelAPI()?.featurePickerHTML()||''}</div>`;
 }
-function bindClarifyModelPicker(host){
-  if(!host)return;
-  const api=window.AgentFlowAssistantModels,toggle=host.querySelector('[data-model-toggle]'),menu=host.querySelector('.ai-model-menu');
-  if(!api||!toggle||!menu)return;
-  const paint=()=>{const keep=selectedClarifyModel();const hidden=host.querySelector('[data-clarify-model-value]');if(hidden)hidden.value=keep;api.paintFeature(toggle,keep)};
-  paint();
-  api.load?.().then(paint).catch(paint);
-  if(!bindClarifyModelPicker.docBound){
-    bindClarifyModelPicker.docBound=true;
-    document.addEventListener('click',e=>{
-      $$('[data-clarify-model]').forEach(el=>{
-        if(el.contains(e.target))return;
-        const m=el.querySelector('.ai-model-menu'),t=el.querySelector('[data-model-toggle]');
-        if(m)m.hidden=true;
-        if(t)t.setAttribute('aria-expanded','false');
-      });
-    });
-  }
-  if(host.dataset.bound)return;
-  host.dataset.bound='1';
-  toggle.onclick=e=>{
-    e.stopPropagation();
-    if(toggle.disabled)return;
-    const open=menu.hidden;
-    menu.hidden=!open;
-    toggle.setAttribute('aria-expanded',open?'true':'false');
-    if(open){
-      api.renderFeatureList(menu, selectedClarifyModel(), id=>{
-        setClarifyModel(id);
-        paint();
-        menu.hidden=true;
-        toggle.setAttribute('aria-expanded','false');
-      });
-    }
-  };
+function bindClarifyModelPicker(host, issue){
+  const models=scheduleModelAPI();
+  return models?.bindFeaturePicker(host,{
+    model:localStorage.getItem('agentflow.clarifyModel'),
+    readOnly:host.hasAttribute('data-picker-readonly'),
+    onChange:id=>localStorage.setItem('agentflow.clarifyModel',id),
+    loadCatalog:()=>models.fetchCatalog(`/api/issues/${encodeURIComponent(issue.id)}/clarify-models`)
+  });
 }
 // The AI 定时任务 model picker: a CLI select narrows the model list to that
 // CLI, like the chat composer's CLI switch. The menu is fixed-positioned so the
@@ -155,6 +119,11 @@ function scheduleModelCatalog(){
 }
 function scheduleEngineModels(engine){
   return (scheduleModelCatalog().models||[]).filter(m=>(m.engine||'codebuddy')===engine);
+}
+function scheduleDefaultModel(engine){
+  const models=scheduleEngineModels(engine);
+  const preferred=engine==='codebuddy'&&models.find(item=>item.id===scheduleModelCatalog().default);
+  return preferred?.id||models[0]?.id||'';
 }
 function scheduleModelEngine(id){
   return scheduleModelAPI()?.engineOf?.(id,scheduleModelCatalog())||'codebuddy';
@@ -224,8 +193,7 @@ function bindScheduleModelPicker(){
   const engine=$('#scheduleEngine');
   if(engine)engine.onchange=()=>{
     const api=scheduleModelAPI();
-    const models=scheduleEngineModels(engine.value);
-    const next=models[0]?.id||(engine.value==='codebuddy'?(scheduleModelCatalog().default||api?.DEFAULT):'');
+    const next=scheduleDefaultModel(engine.value)||(engine.value==='codebuddy'?(scheduleModelCatalog().default||api?.DEFAULT):'');
     if(next)paintScheduleModel(next);
   };
   document.addEventListener('click',e=>{if(!host.contains(e.target))closeScheduleModelMenu()});
@@ -237,12 +205,21 @@ function bindScheduleModelPicker(){
 async function loadScheduleModels(){
   const picker=scheduleModelAPI();
   if(!picker)return;
+  const version=scheduleModalVersion;
+  let catalog;
   try{
-    scheduleCatalog=await api('/api/assistant/models?schedule=1',{silent:true});
+    catalog=await api('/api/assistant/models?schedule=1',{silent:true});
   }catch{
-    scheduleCatalog=await picker.load();
+    catalog=await picker.load();
   }
-  paintScheduleModel($('#scheduleJobForm')?.elements.assistantModel.value||picker.DEFAULT);
+  if(version!==scheduleModalVersion)return;
+  scheduleCatalog=catalog;
+  const form=$('#scheduleJobForm');
+  const selected=form.elements.assistantModel.value;
+  const fallback=!form.elements.id.value&&!picker.concreteModelId(selected)
+    ?(catalog?.engines||[]).filter(engine=>engine.configured).map(engine=>scheduleDefaultModel(engine.id)).find(Boolean)
+    :'';
+  paintScheduleModel(fallback||selected||picker.DEFAULT);
 }
 function paintScheduleModel(selected){
   const api=scheduleModelAPI();
@@ -367,6 +344,7 @@ async function openScheduleJobModal(kind='dispatch',job){
   scheduleModalOpener=document.activeElement;
   if(scheduleModalOpener?.closest('#issueHeadingMenu'))scheduleModalOpener=$('#issueHeadingMore');
   const f=$('#scheduleJobForm');
+  f.modelPickerReady=null;
   f.inert=false;
   f.querySelector('[type="submit"]').disabled=false;
   if(scheduleEditorKind==='assistant')fillScheduleJobForm(job||{});
@@ -374,7 +352,8 @@ async function openScheduleJobModal(kind='dispatch',job){
   $('#scheduleModal').classList.add('open');
   if(scheduleEditorKind==='assistant'){
     f.elements.name.focus();
-    await Promise.all([refreshAISchedules(),loadScheduleModels(),loadSharedScheduleEditor(job||{},version,projectId)]);
+    f.modelPickerReady=loadScheduleModels();
+    await Promise.all([refreshAISchedules(),f.modelPickerReady,loadSharedScheduleEditor(job||{},version,projectId)]);
   }else{
     // Load the saved project config before allowing edits or a first save.
     f.inert=true;
@@ -592,6 +571,11 @@ function renderScheduleJobList(list,jobs,kind,canRun){
 async function saveScheduleJob(e){
   e.preventDefault();
   const f=e.currentTarget,cron=f.elements.scheduleMode.value==='cron',assistant=f.elements.jobKind.value==='assistant';
+  const version=scheduleModalVersion;
+  if(assistant&&f.modelPickerReady){
+    await f.modelPickerReady;
+    if(version!==scheduleModalVersion)return;
+  }
   const payload={
     id:f.elements.id.value,
     name:f.elements.name.value.trim()||(assistant?'':'触发配置'),
@@ -618,7 +602,7 @@ async function saveScheduleJob(e){
   if(!assistant&&!payload.issueStatuses.length)return toast('请至少选择一个触发状态');
   if(!assistant&&payload.maxDispatch!==undefined&&(!Number.isInteger(payload.maxDispatch)||payload.maxDispatch<1||payload.maxDispatch>10))return toast('单次最多触发需求数必须为 1–10，或留空使用默认值 10');
   if(cron&&!payload.cron)return toast('请填写 Cron 表达式');
-  const version=scheduleModalVersion,projectId=state.projectFilter,button=f.querySelector?.('[type="submit"]'),label=button?.textContent;
+  const projectId=state.projectFilter,button=f.querySelector?.('[type="submit"]'),label=button?.textContent;
   if(button?.disabled)return;
   if(button){button.disabled=true;button.textContent='保存中…'}
   try{

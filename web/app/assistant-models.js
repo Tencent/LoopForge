@@ -121,10 +121,6 @@
     const credits = creditLabel(item);
     toggle.title = credits ? `${item?.name || id} ${credits}` : (item?.name || id || '');
   }
-  function paintFeature(toggle, selectedId) {
-    const selected = concreteModelId(selectedId);
-    paintItem(toggle, selected ? modelMeta(selected) : null);
-  }
   // renderOptions renders any {id,name,family,credits,icon} list; icon:false
   // skips the icon slot (effort levels, custom model entry).
   function renderOptions(menu, items, selectedId, onPick) {
@@ -164,28 +160,79 @@
   function renderList(menu, selectedId, onPick) {
     renderOptions(menu, catalog.models || [], selectedId, onPick);
   }
-  function renderFeatureList(menu, selectedId, onPick) {
-    const selected = concreteModelId(selectedId);
-    const items = [];
-    for (const model of catalog.models) {
-      const engine = catalog.engines?.find(item => item.id === engineOf(model.id));
-      if (engine && !(engine.personal ?? engine.configured)) continue;
-      const id = !model.engine && selected === 'codebuddy:' + model.id ? selected : model.id;
-      items.push({...model, id, name: engine ? model.name + ' · ' + engine.name : model.name});
-    }
-    if (selected && !items.some(item => item.id === selected)) {
-      items.push(modelMeta(selected));
-    }
-    renderOptions(menu, items, selected, onPick);
-    if (!items.length) {
-      const empty = document.createElement('div');
-      empty.className = 'ai-model-empty';
-      empty.textContent = '暂无可选模型';
-      menu.append(empty);
-    }
+  function featurePickerHTML(modelName = '') {
+    return `<select class="select" data-feature-executor aria-label="选择执行器" disabled><option value="">执行器</option></select>
+      <select class="select" data-feature-model ${modelName ? 'name="' + modelName + '"' : ''} aria-label="选择模型" disabled><option value="">模型</option></select>`;
   }
-  async function fetchCatalog() {
-    const resp = await fetch('/api/assistant/models', {headers: {Accept: 'application/json'}, credentials: 'same-origin'});
+  function qualifiedModel(engine, id) {
+    return id.startsWith(engine + ':') ? id : engine + ':' + id;
+  }
+  function featureExecutors(source) {
+    const engines = (source.engines || []).map(engine => ({
+      ...engine, available: engine.personal ?? engine.configured, models: []
+    }));
+    for (const model of source.models || []) {
+      if (!concreteModelId(model.id)) continue;
+      const engine = engines.find(engine => engine.id === engineOf(model.id, source));
+      if (engine?.available) engine.models.push({...model, id: qualifiedModel(engine.id, model.id)});
+    }
+    return engines;
+  }
+  function bindFeaturePicker(host, {model = '', readOnly = false, keepSaved = false, onChange, loadCatalog = load} = {}) {
+    if (!host || host.modelPickerReady) return host?.modelPickerReady;
+    const executor = host.querySelector('[data-feature-executor]');
+    const models = host.querySelector('[data-feature-model]');
+    if (!executor || !models) return;
+    host.modelPickerReady = loadCatalog().then(source => {
+      if (!host.isConnected) return;
+      const engines = featureExecutors(source);
+      let selected = concreteModelId(model);
+      let engine = selected ? engines.find(engine => engine.id === engineOf(selected, source)) : undefined;
+      if (engine) selected = qualifiedModel(engine.id, selected);
+      if (keepSaved && selected && engine && !engine.models.some(item => item.id === selected)) {
+        engine.models.push({id: selected, name: modelMeta(selected).name});
+      }
+      if (!engine?.models.some(item => item.id === selected)) {
+        selected = '';
+        engine = engines.find(item => item.models.length) || engines.find(item => item.available);
+      }
+      executor.replaceChildren(...engines.map(item => {
+        const option = new Option(item.name, item.id);
+        option.disabled = !item.models.length;
+        return option;
+      }));
+      if (!engine) executor.prepend(new Option('暂无可用执行器', ''));
+      executor.value = engine?.id || '';
+      executor.disabled = readOnly || !engines.some(item => item.models.length);
+
+      const remembered = new Map();
+      const paintModels = (current, value) => {
+        const items = current?.models || [];
+        const configured = current?.id === 'codebuddy' && concreteModelId(source.default);
+        const preferred = configured && qualifiedModel(current.id, configured);
+        const next = value || items.find(item => item.id === preferred)?.id || items[0]?.id || '';
+        models.replaceChildren(...items.map(item => new Option(item.name || item.id, item.id)));
+        if (!items.length) models.append(new Option('暂无可选模型', ''));
+        models.value = next;
+        models.disabled = readOnly || !items.length;
+      };
+      paintModels(engine, selected);
+      executor.onchange = () => {
+        if (engine) remembered.set(engine.id, models.value);
+        engine = engines.find(item => item.id === executor.value);
+        paintModels(engine, remembered.get(engine?.id));
+        onChange?.(models.value);
+      };
+      models.onchange = () => onChange?.(models.value);
+    }).catch(() => {
+      if (!host.isConnected) return;
+      executor.options[0].text = '暂无可用执行器';
+      models.options[0].text = '暂无可选模型';
+    });
+    return host.modelPickerReady;
+  }
+  async function fetchCatalog(path = '/api/assistant/models') {
+    const resp = await fetch(path, {headers: {Accept: 'application/json'}, credentials: 'same-origin'});
     if (!resp.ok) throw new Error(`模型列表加载失败（${resp.status}）`);
     return resp.json();
   }
@@ -206,13 +253,14 @@
     DEFAULT: DEFAULT_MODEL,
     catalog: () => catalog,
     cliIcon: id => Object.hasOwn(CLI_ICON, id) ? '/images/credentials/' + CLI_ICON[id] : '',
+    bindFeaturePicker,
     concreteModelId,
     engineOf,
+    featurePickerHTML,
+    fetchCatalog,
     load,
     paint,
-    paintFeature,
     paintItem,
-    renderFeatureList,
     renderList,
     renderOptions
   };

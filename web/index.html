@@ -1139,7 +1139,7 @@
               <p class="schedule-field-hint">可填写 1–10，留空默认 10；其余需求在后续执行时继续触发。</p>
             </div>
             <div data-schedule-kind="assistant" hidden>
-              <label for="scheduleEngine">CLI 与模型</label>
+              <label for="scheduleEngine">执行器与模型</label>
               <div class="schedule-model-row">
                 <select id="scheduleEngine" class="select" name="assistantEngine" aria-label="执行 CLI">
                   <option value="codebuddy">CodeBuddy</option>
@@ -1147,13 +1147,12 @@
                 <div class="schedule-model-field" id="scheduleModelPicker">
                   <button type="button" class="ai-model-toggle" data-model-toggle aria-haspopup="listbox" aria-expanded="false" aria-label="模型">
                     <span class="ai-model-icon" data-family="glm">智</span>
-                    <span data-model-label>GLM-5.3-Flash</span>
+                    <span data-model-label>模型</span>
                     <span class="ai-model-caret" aria-hidden="true"></span>
                   </button>
                   <div class="ai-model-menu" hidden role="listbox" aria-label="模型"></div>
                 </div>
               </div>
-              <p class="schedule-field-hint" id="scheduleModelHint">Codex 和 Claude Code 优先使用保存人默认执行机器的账号登录。机器离线时改用个人 API Key，Key 缺失或不可用时任务失败。CodeBuddy 缺少个人 Key 时可使用平台共享 Key。</p>
             </div>
             <div data-schedule-kind="assistant" hidden>
               <label for="scheduleSessionMode">会话</label>
