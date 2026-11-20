@@ -6,6 +6,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import uuid
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -91,7 +92,31 @@ def save_state(project: Path, state: dict) -> None:
     path = project / STATE_PATH
     path.parent.mkdir(parents=True, exist_ok=True)
     state["installer_version"] = __version__
-    path.write_text(json.dumps(state, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    payload = json.dumps(state, ensure_ascii=False, indent=2) + "\n"
+    try:
+        previous_mode = stat.S_IMODE(path.stat().st_mode)
+    except FileNotFoundError:
+        previous_mode = None
+    temporary = path.parent / f".install-state-{uuid.uuid4().hex}"
+    creation_mode = 0o600 if previous_mode is not None else 0o666
+    descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, creation_mode)
+    try:
+        handle = os.fdopen(descriptor, "w", encoding="utf-8")
+        descriptor = None
+        with handle:
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        if previous_mode is not None:
+            temporary.chmod(previous_mode)
+        os.replace(temporary, path)
+    finally:
+        if descriptor is not None:
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
+        temporary.unlink(missing_ok=True)
 
 
 def snapshot(root: Path) -> Dict[str, Tuple[bytes, int]]:
