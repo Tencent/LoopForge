@@ -136,7 +136,11 @@ func AgentCLICommand(kind string, o AgentCLICommandOptions) CommandSpec {
 			argv = append(argv, "--variant", effort)
 		}
 		options.SystemPromptFile = o.SystemPromptFile
-		argv = append(append(argv, extra...), prompt)
+		// `opencode run [message..]` takes the prompt as a positional message.
+		// End option parsing first so a prompt that starts with "-" stays a
+		// message, and so PromptOnStdin below can hand an oversized one to
+		// the CLI's stdin instead of argv.
+		argv = append(append(argv, extra...), "--", prompt)
 	case AgentCLICursor:
 		// Chat relies on the deny rules of .cursor/cli-config.json; --force
 		// still approves the MCP tools.
@@ -229,7 +233,15 @@ func AgentCLICommand(kind string, o AgentCLICommandOptions) CommandSpec {
 		}
 		argv = append(argv, extra...)
 	}
-	return CommandSpec{Argv: argv, Provider: kind, AgentCLI: options}
+	spec := CommandSpec{Argv: argv, Provider: kind, AgentCLI: options}
+	if kind == AgentCLIOpenCode {
+		// OpenCode reads a non-TTY stdin to EOF and uses it as the message when
+		// no positional message follows `--` (resolveRunInput, cli/cmd/run.ts).
+		// Linux rejects a single argument above MAX_ARG_STRLEN (128KiB) with
+		// E2BIG, and a chat turn embeds the whole conversation in its prompt.
+		return PromptOnStdin(spec, prompt)
+	}
+	return spec
 }
 
 // AgyModelEfforts returns the separate effort choices for Gemini API models.
