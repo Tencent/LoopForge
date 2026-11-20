@@ -39,6 +39,7 @@ func (env *evoTestEnv) seedArmRun(t *testing.T, id, hash string, at time.Time, n
 }
 
 func TestEvolutionCanaryPromoteThenWatchDegradesAndAutoRollsBack(t *testing.T) {
+	t.Setenv("AGENTFLOW_EVOLUTION_AUTO_ENABLED", "true")
 	env := newEvoTestEnv(t)
 	p := env.seedPendingProposal(t, "evp-trial")
 	candidateHash := domain.ContentHash(p.CandidateContent)
@@ -206,6 +207,7 @@ func TestEvolutionPlansOnlySameProjectSamples(t *testing.T) {
 }
 
 func TestEvolutionL3StartsTrialAndReleasesItself(t *testing.T) {
+	t.Setenv("AGENTFLOW_EVOLUTION_AUTO_ENABLED", "true")
 	env := newEvoTestEnv(t)
 	if err := env.store.PutEvoPolicy(domain.EvoPolicy{AssetKind: domain.EvoAssetAgent, AssetID: env.agent.ID, ProjectID: "evo-p", Level: domain.EvoLevelAuto}); err != nil {
 		t.Fatal(err)

@@ -492,6 +492,7 @@ type RunnerInvocation struct {
 	InvocationID    string                  `json:"invocationId,omitempty"`
 	ResumeSessionID string                  `json:"resumeSessionId,omitempty"`
 	GateResultPath  string                  `json:"gateResultPath,omitempty"`
+	DisableBrowser  bool                    `json:"disableBrowser,omitempty"`
 	Executor        ExecutorDefinition      `json:"executor"`
 	Agent           AgentDefinition         `json:"agent"`
 	Assets          AgentAssetBundle        `json:"assets"`

@@ -410,12 +410,14 @@ func TestEvolutionQueuePermissionsAndCrossProjectIsolation(t *testing.T) {
 		t.Fatal(err)
 	}
 	requestJSONAuthed[map[string]any](t, env.router, viewer, http.MethodPost, "/api/evolution/proposals", map[string]any{"findingId": f.ID}, http.StatusForbidden)
-	queued := requestJSONAuthed[struct {
-		QueueID string `json:"queueId"`
-	}](t, env.router, env.user, http.MethodPost, "/api/evolution/proposals", map[string]any{"findingId": f.ID}, http.StatusAccepted)
-	if queued.QueueID == "" {
-		t.Fatal("cross-project shared asset must queue")
+	requestJSONAuthed[map[string]any](t, env.router, env.user, http.MethodPost, "/api/evolution/proposals", map[string]any{"findingId": f.ID}, http.StatusConflict)
+	// Existing shared-asset queues remain cancellable after the scope is
+	// narrowed; new API requests must no longer add shared-asset work.
+	_, legacy, _, err := env.store.SubmitEvoProposal(domain.EvoProposal{ID: "legacy-shared", ProjectID: "evo-p", FindingID: f.ID, AssetKind: "agent", AssetID: env.agent.ID}, "legacy-queue", "")
+	if err != nil || legacy == nil {
+		t.Fatalf("legacy queue: %+v %v", legacy, err)
 	}
+	queued := struct{ QueueID string }{legacy.ID}
 	requestJSONAuthed[map[string]any](t, env.router, viewer, http.MethodPost, "/api/evolution/queue/"+queued.QueueID+"/start", nil, http.StatusForbidden)
 	requestJSONAuthed[map[string]any](t, env.router, viewer, http.MethodPost, "/api/evolution/queue/"+queued.QueueID+"/reject", nil, http.StatusForbidden)
 	overview := requestJSONAuthed[domain.EvoOverview](t, env.router, env.user, http.MethodGet, "/api/evolution/overview?projectId=evo-p", nil, http.StatusOK)

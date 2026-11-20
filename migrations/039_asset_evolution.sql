@@ -1,4 +1,4 @@
--- 027 asset evolution (进化中心 P0 + P1).
+-- 039 asset evolution (进化中心 P0 + P1).
 -- Optional manual additive DDL: startup AutoMigrate creates the same tables.
 -- No data migration and no seed. Existing runs keep no asset pins; new runs
 -- pin role prompts / rule bodies at start. Existing agents and rules get a

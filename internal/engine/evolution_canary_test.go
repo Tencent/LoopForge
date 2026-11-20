@@ -22,6 +22,7 @@ func TestEvolutionCanarySplitsNewRuns(t *testing.T) {
 	t.Cleanup(func() { s.Close() })
 	developer, _ := s.Agent("developer")
 	developer.ExecutorID, developer.Prompt = "mock", "LIVE {{input}}"
+	developer.ProjectID, developer.Shared = "welcome", false
 	if err := s.PutAgent(developer); err != nil {
 		t.Fatal(err)
 	}

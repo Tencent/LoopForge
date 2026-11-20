@@ -26,6 +26,20 @@ func (e *Engine) assignEvolutionCanaries(runID string, wf domain.WorkflowDefinit
 	}
 	var ids, names []string
 	for _, p := range e.repo.ActiveEvoCanaries() {
+		if p.ProjectID == "" || p.ProjectID != ctx.ProjectID {
+			continue
+		}
+		if p.AssetKind == domain.EvoAssetAgent {
+			asset, ok := e.repo.Agent(p.AssetID)
+			if !ok || asset.Shared || asset.ProjectID != ctx.ProjectID {
+				continue
+			}
+		} else {
+			asset, ok := e.repo.Rule(p.AssetID)
+			if !ok || asset.Shared || asset.ProjectID != ctx.ProjectID {
+				continue
+			}
+		}
 		if !workflowUsesEvoAsset(e.repo, wf, ctx.ProjectID, p.AssetKind, p.AssetID) {
 			continue
 		}

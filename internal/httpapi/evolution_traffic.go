@@ -33,6 +33,10 @@ func (h *evolutionHandlers) adjustCanaryTraffic(c *gin.Context) {
 	if !h.requireAssetWriter(c, asset) {
 		return
 	}
+	if err := privateEvolutionAsset(asset, p.ProjectID); err != nil {
+		respondEvoError(c, err)
+		return
+	}
 	out, err := h.repo.AdjustEvoCanaryTraffic(p, req.Percent)
 	if err != nil {
 		respondEvoError(c, err)

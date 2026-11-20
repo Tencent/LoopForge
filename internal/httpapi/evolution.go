@@ -173,7 +173,7 @@ func (h *evolutionHandlers) overview(c *gin.Context) {
 		return
 	}
 	days := evoWindowDays(c.Query("days"))
-	out := domain.EvoOverview{ProjectID: projectID, WindowDays: days, GeneratedAt: time.Now().UTC()}
+	out := domain.EvoOverview{ProjectID: projectID, WindowDays: days, GeneratedAt: time.Now().UTC(), AutoEnabled: evolutionAutoEnabled()}
 	out.Findings = h.repo.EvoFindings(projectID, domain.EvoFindingOpen)
 	out.Queue = h.repo.EvoQueue(projectID)
 	out.Validating = evoProposalListView(h.repo.EvoProposals(projectID, 50, domain.EvoProposalDrafting, domain.EvoProposalValidating))
@@ -510,6 +510,9 @@ func computeEvoHealth(runs []domain.Run, agentOf func(domain.WorkflowDefinition,
 				continue
 			}
 			item := touch(domain.EvoAssetAgent, agent.ID, agent.Name)
+			if agent.Shared || agent.ProjectID == "" {
+				item.ReadOnlyReason = "共享或平台角色仅供诊断，请先复制为项目私有角色"
+			}
 			key := domain.EvoAssetAgent + ":" + agent.ID
 			if !seen[key] {
 				seen[key] = true
@@ -530,6 +533,9 @@ func computeEvoHealth(runs []domain.Run, agentOf func(domain.WorkflowDefinition,
 					continue
 				}
 				ruleItem := touch(domain.EvoAssetRule, rule.ID, rule.Name)
+				if rule.Shared || rule.ProjectID == "" {
+					ruleItem.ReadOnlyReason = "共享或平台规则仅供诊断，请先复制为项目私有规则"
+				}
 				ruleKey := domain.EvoAssetRule + ":" + rule.ID
 				if !seen[ruleKey] {
 					seen[ruleKey] = true
@@ -656,6 +662,10 @@ func (h *evolutionHandlers) createProposal(c *gin.Context) {
 	}
 	if !asset.Global && asset.ProjectID != req.ProjectID {
 		c.JSON(http.StatusForbidden, gin.H{"error": "该资产不属于当前项目"})
+		return
+	}
+	if err := privateEvolutionAsset(asset, req.ProjectID); err != nil {
+		respondEvoError(c, err)
 		return
 	}
 	if level := h.repo.EvoLevel(asset.Kind, asset.ID); level < domain.EvoLevelPropose {
@@ -848,6 +858,16 @@ func (h *evolutionHandlers) putPolicy(c *gin.Context) {
 		return
 	}
 	if !h.requireAssetWriter(c, asset) {
+		return
+	}
+	if req.Level >= domain.EvoLevelPropose {
+		if err := privateEvolutionAsset(asset, asset.ProjectID); err != nil {
+			respondEvoError(c, err)
+			return
+		}
+	}
+	if req.Level >= domain.EvoLevelAuto && !evolutionAutoEnabled() {
+		c.JSON(http.StatusConflict, gin.H{"error": "自动进化尚未启用，当前可使用 L0–L2"})
 		return
 	}
 	policy := domain.EvoPolicy{AssetKind: asset.Kind, AssetID: asset.ID, ProjectID: asset.ProjectID, Level: req.Level, UpdatedBy: h.currentUserID(c), UpdatedAt: time.Now().UTC()}

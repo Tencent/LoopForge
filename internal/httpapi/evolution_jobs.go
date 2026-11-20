@@ -161,6 +161,12 @@ func (h *evolutionHandlers) runProposalJob(p domain.EvoProposal, finding domain.
 		return
 	}
 	plans := h.planReplays(p, finding, asset)
+	for _, plan := range plans {
+		if err := h.engine.ValidateEvolutionReplay(plan.Run); err != nil {
+			h.failProposal(p, "样本 "+plan.Run.ID+" 不可回放："+err.Error())
+			return
+		}
+	}
 	evidence := []evolution.Evidence{}
 	for _, plan := range plans {
 		if plan.Group == domain.EvoGroupDiagnosis {
@@ -619,7 +625,7 @@ func (h *evolutionHandlers) sweepProposal(p domain.EvoProposal, now time.Time) d
 			return stored
 		}
 		p, _ = h.repo.EvoProposal(p.ID)
-		if p.Status == domain.EvoProposalPending && assetOK && h.repo.EvoLevel(asset.Kind, asset.ID) >= domain.EvoLevelAuto {
+		if p.Status == domain.EvoProposalPending && assetOK && h.autoEvolution(asset) {
 			if started, err := h.startCanary(p, asset, 0, 0, 0, "L3 自动开始试用", true); err == nil {
 				started.Replays = replays
 				return started
@@ -649,6 +655,9 @@ func (h *evolutionHandlers) cancelReplays(p domain.EvoProposal) {
 // ---------- release ----------
 
 func (h *evolutionHandlers) releaseProposal(p domain.EvoProposal, asset evoAsset, userID int64, note string, force bool) (domain.EvoProposal, error) {
+	if err := privateEvolutionAsset(asset, p.ProjectID); err != nil {
+		return p, err
+	}
 	if p.Status == domain.EvoProposalCanary && (p.Canary == nil || p.Canary.Status != domain.EvoCanaryPassed) {
 		return p, evoConflict("灰度尚未通过，不能发布")
 	}
