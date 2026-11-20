@@ -368,6 +368,19 @@ class LifecycleTests(unittest.TestCase):
         self.assertIn("cleanup_team.py", adapter)
         self.assertIn("不得读取 Team 配置、成员、inbox 或状态", adapter)
 
+    def test_hermes_adapter_documents_sub_agent_boundaries(self):
+        manifest = json.loads(
+            (SKILL_ROOT / "adapters/hermes/manifest.json").read_text(encoding="utf-8")
+        )
+        adapter = (SKILL_ROOT / "adapters/hermes/adapter.md").read_text(encoding="utf-8")
+        self.assertEqual("spawn", manifest["topology"])
+        self.assertEqual("delegate_task", manifest["dispatch_tool"])
+        self.assertIn("子 Agent 能力边界", adapter)
+        self.assertIn("不继承\n   `delegate_task`、`clarify`、`memory`、`send_message`、`cronjob_manage`", adapter)
+        self.assertIn("子 Agent 没有 `memory` 工具", adapter)
+        self.assertIn("不得以默认身份继续写", adapter)
+        self.assertIn("不得在阶段内再扇出多层 delegation", adapter)
+
     def fill_stage_artifacts(self, state_path, stage):
         state = json.loads(state_path.read_text(encoding="utf-8"))
         artifact_root = Path(state["artifacts_dir"])

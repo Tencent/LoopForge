@@ -26,6 +26,21 @@ Hermes 时，需要按宿主的信任提示执行 `hermes skills trust`，之后
 REQUIREMENT 和 SUMMARY 仍由协调者执行。每个 DESIGN、IMPLEMENT、REVIEW、TEST
 阶段必须新建独立 delegation；子 Agent 只能通过完整阶段提示和允许的上游产物获得上下文。
 
+## 子 Agent 能力边界
+
+1. 子 Agent 是全新独立会话，只继承父级 toolset 中未被禁用的工具，不继承
+   `delegate_task`、`clarify`、`memory`、`send_message`、`cronjob_manage`（以宿主实际
+   返回为准）。阶段 Agent 不能再派生子 Agent，也不能用 `send_message` 回传中间结果，
+   只能在 delegation 完成时一次性返回；需要并行或重试时，由协调者在当前会话重新调用
+   `delegate_task` 并登记新的 `delegation_id`。
+2. 子 Agent 没有 `memory` 工具，跨阶段记忆只能靠完整阶段提示、允许的上游产物和
+   `artifacts/<task_slug>/workflow-state.json`；不得假设子 Agent 记得上一阶段的口头约定
+   或本会话的中间结论。
+3. MCP 工具虽可随 toolset 继承，但每个 MCP server 的身份由宿主侧静态配置决定，
+   阶段 Agent 不能假设自己带上了调用者的 per-user 身份。涉及写操作或审批时，先确认
+   身份；缺身份就 fail-closed，记录原因并停在当前阶段，不得以默认身份继续写。
+4. 宿主对 delegation 的深度与并发有上限，协调者不得在阶段内再扇出多层 delegation。
+
 ## 安装和入口
 
 在项目根目录执行：
