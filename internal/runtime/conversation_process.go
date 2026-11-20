@@ -643,7 +643,7 @@ func (p *ConversationProcessPool) start(ctx context.Context, root, workspace str
 		}
 	}
 	nativeArgv := append([]string(nil), command.Argv...)
-	command, err = bindCommand(bindSandbox, bindWorkspace, command, req.Command.Credentials)
+	command, err = bindCommand(procCtx, bindSandbox, bindWorkspace, command, req.Command.Credentials)
 	if err != nil {
 		return ConversationProcessResult{}, err
 	}

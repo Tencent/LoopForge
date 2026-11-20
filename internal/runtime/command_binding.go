@@ -4,6 +4,7 @@ import (
 	"agentflow/internal/domain"
 	"agentflow/internal/gitwork"
 	"agentflow/internal/observability"
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -32,7 +33,7 @@ func upsertEnv(env []string, key, value string) []string {
 	return out
 }
 
-func bindCommand(sandbox Sandbox, workspace string, command CommandSpec, credentials RunCredentials) (CommandSpec, error) {
+func bindCommand(ctx context.Context, sandbox Sandbox, workspace string, command CommandSpec, credentials RunCredentials) (CommandSpec, error) {
 	if command.bindingsPrepared {
 		return command, nil
 	}
@@ -114,11 +115,11 @@ func bindCommand(sandbox Sandbox, workspace string, command CommandSpec, credent
 			}
 			bound.environment["CODEBUDDY_INTERNET_ENVIRONMENT"] = strings.TrimSpace(credentials.CodeBuddy.InternetEnvironment)
 		case BindGit:
-			if err := bindWorkspaceGitEnvironment(sandbox, workspace, bound.environment, credentials); err != nil {
+			if err := bindWorkspaceGitEnvironment(ctx, sandbox, workspace, bound.environment, credentials); err != nil {
 				return CommandSpec{}, err
 			}
 		case BindGitWorkspace:
-			if err := bindWorkspaceGitEnvironment(sandbox, workspace, bound.environment, credentials); err != nil {
+			if err := bindWorkspaceGitEnvironment(ctx, sandbox, workspace, bound.environment, credentials); err != nil {
 				return CommandSpec{}, err
 			}
 		case BindExtra:
@@ -130,7 +131,7 @@ func bindCommand(sandbox Sandbox, workspace string, command CommandSpec, credent
 				bound.credentialEnvKeys = append(bound.credentialEnvKeys, envName)
 			}
 		case BindMCP:
-			if err := bindMCPCallEnvironment(sandbox, workspace, bound.environment, credentials.MCPServers); err != nil {
+			if err := bindMCPCallEnvironment(ctx, sandbox, workspace, bound.environment, credentials.MCPServers); err != nil {
 				return CommandSpec{}, err
 			}
 			bound.Argv = BindMCPCallArgv(sandbox, bound.Argv)
@@ -302,7 +303,7 @@ func privateHomePaths(sandbox Sandbox, workspace string, command CommandSpec) (h
 
 // bindWorkspaceGitEnvironment installs the standard host-scoped helper.
 // It requests credentials through a live relay rather than writing tokens.
-func bindWorkspaceGitEnvironment(sandbox Sandbox, workspace string, environment map[string]string, credentials RunCredentials) error {
+func bindWorkspaceGitEnvironment(ctx context.Context, sandbox Sandbox, workspace string, environment map[string]string, credentials RunCredentials) error {
 	environment["GIT_TERMINAL_PROMPT"] = "0"
 	if _, err := EnsureControlDirectory(workspace, "runtime"); err != nil {
 		return fmt.Errorf("create git runtime dir: %w", err)
@@ -346,7 +347,7 @@ func bindWorkspaceGitEnvironment(sandbox Sandbox, workspace string, environment 
 	if _, err := EnsureControlDirectory(workspace, "runtime", "bin"); err != nil {
 		return fmt.Errorf("create git helper dir: %w", err)
 	}
-	if err := installMCPCallHelperForSandbox(sandbox, workspace, filepath.Join(hostBin, "agentflow-helper")); err != nil {
+	if err := installMCPCallHelperForSandbox(ctx, sandbox, workspace, filepath.Join(hostBin, "agentflow-helper")); err != nil {
 		return fmt.Errorf("install git credential helper: %w", err)
 	}
 	helper := runtimePath("bin/agentflow-helper")
