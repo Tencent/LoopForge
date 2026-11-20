@@ -151,7 +151,7 @@ func classifyAssistantFailureText(f domain.AssistantFailure, err error, text str
 	case has("rate limit", "rate_limit", "too many requests", "http 429", "status 429", "status code 429", "status=429"):
 		f.Code, f.Phase, f.Message, f.Suggestion = "RATE_LIMITED", "provider", "模型服务请求过于频繁（429）", "请稍后再试，或检查模型服务的限流配置。"
 	case errors.Is(err, errAssistantCredentialRejected), has("unauthorized", "invalid api key", "invalid_api_key", "invalid token", "api key expired", "invalid credential", "http 401", "status 401", "status code 401", "status=401", "authentication_error"):
-		f.Code, f.Phase, f.Message, f.Suggestion = "AUTHENTICATION_FAILED", "provider", "CodeBuddy 凭据无效或已过期，请检查个人配置后重试", "请检查所用 CLI 的 API Key 和 Base URL。"
+		f.Code, f.Phase, f.Message, f.Suggestion = "AUTHENTICATION_FAILED", "provider", "模型服务凭据无效或已过期，请检查个人配置后重试", "请检查所用 CLI 的 API Key 和 Base URL。"
 		var credential assistantCredentialError
 		if errors.As(err, &credential) {
 			f.Message = credential.Error()

@@ -94,6 +94,7 @@ test('agent catalog search, presets, validation, persistence, clone, and delete 
   const form = app.document.querySelector('#agentForm');
   form.elements.executorId.append(new app.window.Option('CodeBuddy', 'codebuddy'));
   form.elements.executorId.value = 'codebuddy';
+  form.elements.executorId.dispatchEvent(new app.window.Event('change', { bubbles: true }));
   assert.equal(form.elements.name.value, '研发工程师');
   assert.match(form.elements.id.value, /^role-/);
   app.evaluate(`setAgentCreateStep(3)`);
@@ -138,15 +139,15 @@ test('role model picker reloads the editor catalog and preserves a CLI change wh
   complete(catalog([{ id: 'private/second', name: 'Second' }, { id: 'private/first', name: 'First' }]));
   await settle();
   const menu = () => [...app.document.querySelectorAll('#agentModelPicker [role=option]')];
-  assert.deepEqual(menu().map(row => row.dataset.id), ['private/second', 'private/first', '__custom__']);
-  assert.equal(menu()[0].querySelector('.ai-model-name').textContent, 'Second');
+  assert.deepEqual(menu().map(row => row.dataset.id), ['', 'private/second', 'private/first', '__custom__']);
+  assert.equal(menu()[1].querySelector('.ai-model-name').textContent, 'Second');
   assert.equal(f.elements.executorId.value, 'codex');
   assert.equal(app.evaluate(`agentEffectiveModel($('#agentForm'))`), 'private/second');
 
   app.router.get('/api/executor-models', () => catalog([{ id: 'private/second', name: 'Renamed model' }]));
   app.evaluate(`openAgentWizard({id:'role-review',name:'Review',prompt:'Review changes',executorId:'codex',model:'private/second'})`);
   await settle();
-  assert.deepEqual(menu().map(row => row.dataset.id), ['private/second', '__custom__']);
+  assert.deepEqual(menu().map(row => row.dataset.id), ['', 'private/second', '__custom__']);
   assert.equal(app.document.querySelector('#agentModelPicker [data-model-label]').textContent, 'Renamed model');
 
   let refresh;
@@ -161,32 +162,23 @@ test('role model picker reloads the editor catalog and preserves a CLI change wh
   assert.equal(app.evaluate(`agentEffectiveModel($('#agentForm'))`), 'private/second');
 });
 
-test('a new role saves the first model from the refreshed catalog', async (t) => {
+test('a new role inherits its executor across model catalog refreshes', async (t) => {
   const app = await loadApp();
   t.after(app.close);
   const catalog = id => ({ codebuddy: { models: [{ id }] }, codex: { models: [] }, claude: { models: [] } });
   app.router.get('/api/executor-models', catalog('retired-model'));
   app.router.put('/api/agents', call => ({ status: 200, body: call.body }));
-  app.evaluate(`openAgentWizard()`);
+  app.evaluate("openAgentWizard(); applyAgentPreset('developer')");
   await settle();
-  const model = () => app.evaluate(`agentEffectiveModel($('#agentForm'))`);
-  assert.equal(model(), 'retired-model');
-  app.document.querySelector('#agentModal .modal-close').click();
+  assert.equal(app.evaluate("currentAgentExecutorId()"), '');
+  assert.equal(app.evaluate("agentEffectiveModel($('#agentForm'))"), '');
 
-  let complete;
-  app.router.get('/api/executor-models', () => new Promise(resolve => { complete = resolve; }));
-  app.evaluate(`openAgentWizard(); applyAgentPreset('developer')`);
-  await settle();
-  assert.equal(model(), '');
-  await app.evaluate(`persistAgent($('#agentForm'))`);
-  assert.equal(app.router.calls.some(call => call.path === '/api/agents' && call.method === 'PUT'), false);
-  app.evaluate(`setAgentCreateStep(3)`);
-  complete(catalog('current-model'));
-  await settle();
-  assert.equal(model(), 'current-model');
-  assert.match(app.document.querySelector('#agentCreateReview').textContent, /current-model/);
-  await app.evaluate(`persistAgent($('#agentForm'))`);
-  assert.equal(app.router.calls.find(call => call.path === '/api/agents' && call.method === 'PUT').body.model, 'current-model');
+  app.router.get('/api/executor-models', catalog('current-model'));
+  await app.evaluate("loadExecutorModelCatalogs()");
+  await app.evaluate("persistAgent($('#agentForm'))");
+  const created = app.router.calls.find(call => call.path === '/api/agents' && call.method === 'PUT');
+  assert.equal(created.body.executorId, '');
+  assert.equal(created.body.model, '');
 });
 
 test('role effort picker follows each model and resets an unsupported level on model changes', async (t) => {

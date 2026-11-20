@@ -65,7 +65,7 @@ paths:
       operationId: chatAssistant
       summary: Ask the Studio AI assistant or generate platform resource drafts
       description: |
-        Uses the signed-in user's personal CodeBuddy API key. The model can
+        Uses the signed-in user's credential for the selected CLI. The model can
         request bounded source lookups and project HTTP MCP calls (`mcpCalls`).
         The CLI itself cannot call MCP, modify the source snapshot, push, or
         deploy. The server invokes TAPD/Gongfeng-style HTTP MCP that the user
@@ -403,7 +403,7 @@ paths:
         These tasks make the Studio assistant run a user-written prompt on an
         interval, scoped to one Studio project. They persist in MySQL
         `assistant_tasks` and are not TAPD/Gongfeng SOP schedule jobs. Each run
-        starts a fresh CodeBuddy session and does not resume the previous run.
+        starts a fresh session on the selected CLI.
         During execution the server may invoke that project's HTTP MCP servers
         (for example TAPD) on the model's `mcpCalls`.
       parameters:
@@ -436,7 +436,7 @@ paths:
                 intervalSec: {type: integer, minimum: 60, description: Used when cron is empty. Minimum 60 seconds.}
                 cron: {type: string, description: Optional 5-field cron (minute hour day month weekday) in Asia/Shanghai. When set, intervalSec is ignored.}
                 enabled: {type: boolean}
-                model: {type: string, description: CodeBuddy model id used when the task runs}
+                model: {type: string, description: Model ID on the selected CLI. Prefix non-CodeBuddy models with the CLI ID.}
                 projectId: {type: string, description: Studio project that owns this assistant task}
       responses:
         "200":
@@ -3048,6 +3048,7 @@ paths:
     post:
       tags: [Runs]
       operationId: startRunEval
+      description: Evaluates a finished run using the requesting account's personal CLI credentials.
       requestBody:
         required: false
         content:

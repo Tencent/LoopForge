@@ -4,15 +4,18 @@ let aiAbort = null;
 const aiHistory = {};
 
 function aiOrchestratorEngine(model) {
-  const listed = window.AgentFlowAssistantModels?.catalog().models.find(item => item.id === model);
-  return listed?.engine || (String(model || '').includes(':') ? model.split(':')[0] : 'codebuddy');
+  return window.AgentFlowAssistantModels?.engineOf(model) || '';
 }
 
 function selectedAIOrchestratorModel() {
-  const api = window.AgentFlowAssistantModels;
+  const catalog = window.AgentFlowAssistantModels?.catalog();
   const remembered = localStorage.getItem('agentflow.orchestratorModel') || localStorage.getItem('agentflow.assistantModel');
-  if (remembered && remembered !== api?.DEFAULT) return remembered;
-  return api?.codeBuddyModels()[0]?.id || api?.catalog().default || remembered || '';
+  if (remembered && remembered !== 'default') {
+    const engine = aiOrchestratorEngine(remembered);
+    if (!catalog?.engines?.length || catalog.engines.some(item => item.id === engine && item.configured)) return remembered;
+  }
+  const model = catalog?.models?.find(item => catalog.engines?.some(engine => engine.id === aiOrchestratorEngine(item.id) && engine.configured));
+  return model?.id || '';
 }
 
 function aiOrchestratorModels(engine = aiOrchestratorEngine(selectedAIOrchestratorModel())) {

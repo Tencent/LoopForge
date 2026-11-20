@@ -523,11 +523,11 @@ func (e *Engine) validateExecutionReconnect(run domain.Run, nodeID string) error
 		}
 		provider := "terminal"
 		if node.Type != "script" && node.Type != "command" && node.Type != "approval" {
-			agent, found := e.repo.Agent(node.AgentID)
+			agent, found := workflowAgent(e.repo, run.WorkflowSnapshot, node.AgentID)
 			if !found {
 				return fmt.Errorf("无法重连原执行环境：agent %s 不存在", node.AgentID)
 			}
-			executor, err := resolveNodeExecutor(e.repo, node, agent)
+			executor, err := resolveNodeExecutor(e.repo, node, agent, run.WorkflowSnapshot.DefaultExecutorID)
 			if err != nil {
 				return fmt.Errorf("无法重连原执行环境：%w", err)
 			}

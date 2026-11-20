@@ -307,6 +307,24 @@ func (h *catalogHandlers) repository(c *gin.Context) {
 	c.JSON(http.StatusOK, domain.PublicRepository(repository))
 }
 
+func validateCatalogAgentCLI(agent *domain.AgentDefinition) error {
+	agent.ExecutorID = strings.TrimSpace(agent.ExecutorID)
+	if agent.ExecutorID == "" {
+		if strings.TrimSpace(agent.Model) == assistantDefaultModel {
+			agent.Model = ""
+		}
+		if strings.TrimSpace(agent.Model) != "" || strings.TrimSpace(agent.Effort) != "" {
+			return fmt.Errorf("指定模型或思考强度前请先选择 CLI")
+		}
+		return nil
+	}
+	executor, ok := repo.BuiltInExecutor(agent.ExecutorID)
+	if !ok {
+		return fmt.Errorf("不支持的 CLI：%s", agent.ExecutorID)
+	}
+	return domain.ValidateAgentEffort(agent.Effort, executor.Kind)
+}
+
 func (h *catalogHandlers) agents(c *gin.Context) {
 	if c.Request.Method == http.MethodGet {
 		agents := h.repo.Agents()
@@ -340,15 +358,7 @@ func (h *catalogHandlers) agents(c *gin.Context) {
 			if !h.requireProjectWriter(c, v.ProjectID) {
 				return
 			}
-			if strings.TrimSpace(v.ExecutorID) == "" {
-				v.ExecutorID = "codebuddy"
-			}
-			builtIn, ok := repo.BuiltInExecutor(v.ExecutorID)
-			if !ok {
-				c.JSON(http.StatusBadRequest, map[string]string{"error": "不支持的 CLI：" + v.ExecutorID})
-				return
-			}
-			if err := domain.ValidateAgentEffort(v.Effort, builtIn.Kind); err != nil {
+			if err := validateCatalogAgentCLI(&v); err != nil {
 				c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
 				return
 			}
@@ -1064,6 +1074,13 @@ func (h *catalogHandlers) workflows(c *gin.Context) {
 				return
 			}
 
+			v.DefaultExecutorID = ""
+			if id := v.Preview.Executor(); v.Preview.Static() && id != "" {
+				if _, supported := repo.BuiltInExecutor(id); !supported {
+					c.JSON(http.StatusBadRequest, gin.H{"error": "前端预览使用了不支持的 CLI：" + id})
+					return
+				}
+			}
 			if err := domain.ValidateWorkflowPreparation(v); err != nil {
 				c.JSON(400, gin.H{"error": err.Error()})
 				return
@@ -1258,15 +1275,7 @@ func (h *catalogHandlers) workflow(c *gin.Context) {
 		if !decode(c, &agent) {
 			return
 		}
-		if strings.TrimSpace(agent.ExecutorID) == "" {
-			agent.ExecutorID = "codebuddy"
-		}
-		builtIn, ok := repo.BuiltInExecutor(agent.ExecutorID)
-		if !ok {
-			c.JSON(http.StatusBadRequest, map[string]string{"error": "不支持的 CLI：" + agent.ExecutorID})
-			return
-		}
-		if err := domain.ValidateAgentEffort(agent.Effort, builtIn.Kind); err != nil {
+		if err := validateCatalogAgentCLI(&agent); err != nil {
 			c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}

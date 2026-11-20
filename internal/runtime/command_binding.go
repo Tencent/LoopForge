@@ -185,27 +185,37 @@ func bindCommand(ctx context.Context, sandbox Sandbox, workspace string, command
 	if command.HookOutput != "" {
 		bound.environment["AGENTFLOW_HOOK_OUTPUT"] = command.HookOutput
 	}
-	bindTelemetryEnvironment(bound.environment, command.Telemetry)
+	bindTelemetryEnvironment(bound.environment, command.Telemetry, command.Provider)
 	return bound, nil
 }
 
 // bindTelemetryEnvironment points the child CLI's OpenTelemetry exporter at
 // the AgentFlow collector and tags its spans with the run and node. A nil
 // telemetry leaves env untouched.
-func bindTelemetryEnvironment(env map[string]string, telemetry *InvocationOptions) {
+func bindTelemetryEnvironment(env map[string]string, telemetry *InvocationOptions, provider string) {
 	if telemetry == nil {
 		return
 	}
 	runID, nodeID := telemetry.RunID, telemetry.NodeID
 	env["AGENTFLOW_RUN_ID"] = runID
 	env["AGENTFLOW_NODE_ID"] = nodeID
-	env["CODEBUDDY_CODE_ENABLE_TELEMETRY"] = "1"
-	env["CLAUDE_CODE_ENABLE_TELEMETRY"] = "1"
+	switch provider {
+	case "codebuddy":
+		env["CODEBUDDY_CODE_ENABLE_TELEMETRY"] = "1"
+	case "claude-code":
+		env["CLAUDE_CODE_ENABLE_TELEMETRY"] = "1"
+	}
 	env["OTEL_TRACES_EXPORTER"] = "otlp"
 	env["OTEL_EXPORTER_OTLP_PROTOCOL"] = "http/protobuf"
 	env["OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"] = observability.CollectorTracesURL()
 	env["OTEL_LOG_TOOL_DETAILS"] = "1"
-	env["OTEL_RESOURCE_ATTRIBUTES"] = fmt.Sprintf("agentflow.run_id=%s,agentflow.node_id=%s,service.name=agentflow-codebuddy", runID, nodeID)
+	attributes := fmt.Sprintf("agentflow.run_id=%s,agentflow.node_id=%s", runID, nodeID)
+	if provider == "" {
+		attributes += ",service.name=agentflow"
+	} else {
+		attributes += fmt.Sprintf(",agentflow.executor_kind=%s,service.name=agentflow-%s", provider, provider)
+	}
+	env["OTEL_RESOURCE_ATTRIBUTES"] = attributes
 }
 
 // CodexUserProviderArgv inserts a dedicated "agentflow_user" model provider

@@ -2,6 +2,7 @@ package engine
 
 import (
 	"agentflow/internal/domain"
+	"agentflow/internal/repo"
 	"context"
 	"fmt"
 	"strings"
@@ -110,9 +111,6 @@ func (e *Engine) startWorkflowDefinition(wf domain.WorkflowDefinition, input str
 	if err != nil {
 		return domain.Run{}, err
 	}
-	if _, err := workflowSandboxRequirements(e.repo, wf); err != nil {
-		return domain.Run{}, err
-	}
 	now := time.Now().UTC()
 	id := fmt.Sprintf("run-%d", now.UnixNano())
 	assignWorkBranches(repositories, func() string {
@@ -147,6 +145,12 @@ func (e *Engine) startWorkflowDefinition(wf domain.WorkflowDefinition, input str
 		executionContext.RunnerWorkspaceLayout = domain.RunnerWorkspaceLayoutShared
 	} else {
 		executionContext.ExecutionMode = domain.ExecutionModeCloud
+	}
+	responsible, _ := e.repo.User(executionContext.ResponsibleUserID)
+	runner, _ := e.repo.Runner(executionContext.ExecutionRunnerID)
+	wf.DefaultExecutorID = repo.DefaultExecutorID(responsible, runner)
+	if _, err := workflowSandboxRequirements(e.repo, wf); err != nil {
+		return domain.Run{}, err
 	}
 	if err := e.requireWorkBranchCapabilities(executionContext.ExecutionRunnerID, repositories); err != nil {
 		return domain.Run{}, err

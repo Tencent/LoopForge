@@ -111,11 +111,11 @@ GitLab、Gitea、Gogs 等托管可[配置 Git SSH](docs/deployment.md#git-reposi
 
 <br>
 
-- **执行器。** 在首页输入框旁从 10 种 CLI 中选择一种，再选择模型。每个 SOP 角色都可以独立选择执行器（内置角色默认 CodeBuddy）。需求澄清、通知 AI 汇总、Bot 回复和运行评测目前使用 CodeBuddy，这些入口的模型列表只列 CodeBuddy 模型，服务端收到其他 CLI 的模型会直接拒绝并说明原因，不会悄悄换成 CodeBuddy；定时助手任务使用任务所选的执行器。
+- **执行器。** 首页对话、需求澄清、Bot 回复、通知汇报、运行评测和静态预览均可选择 CLI 与模型。SOP 角色可以指定执行器，也可以继承责任人或部署配置的默认执行器。定时提示词使用任务所选的 CLI。平台可以在未安装 CodeBuddy、未配置其 Key 的环境中运行。详见[部署与升级说明](docs/deployment.md#choosing-an-executor)。
 
   | 执行器 | 凭据 | 安装方式 |
   | --- | --- | --- |
-  | **CodeBuddy** | 个人 Key，或管理员配置的平台共享 Key（覆盖对话和 SOP 运行） | Docker 镜像内置 |
+  | **CodeBuddy** | 个人 Key，或管理员配置的平台共享 Key（覆盖对话和 SOP 运行） | 默认内置，源码构建时可省略 |
   | **Codex** | 个人 Key；已连接的执行机器可使用本机登录 | Docker 镜像内置 |
   | **Claude Code** | 个人 Key；已连接的执行机器可使用本机登录 | 首次使用时从 npm 安装并缓存 |
   | **OpenCode · Kimi Code · Pi** | 仅个人 Key | 首次使用时从 npm 安装并缓存 |

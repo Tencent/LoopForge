@@ -16,7 +16,7 @@ import { cliFailureSettles } from "./cli-install.jsx";
 import { useExecutionMachines } from "./useExecutionMachines.js";
 import { executionLocked } from "./execution-target.js";
 import { knownEffort, modelEffort } from "./effort.js";
-import { EXECUTORS, concreteModel, conversationEngine, engineModels, engineOfModel } from "./engines.js";
+import { personalEngineConfigured, EXECUTORS, concreteModel, conversationEngine, engineModels, engineOfModel } from "./engines.js";
 import { readComposerPreference, useComposerOptions, writeComposerPreference } from "./composer-preferences.js";
 import {
   enqueue,
@@ -100,6 +100,7 @@ export function useChat() {
       new URLSearchParams(location.search).get("issueId") || "",
     ),
     [models, setModels] = useState([]),
+    [catalogEngines, setCatalogEngines] = useState([]),
     [modelCatalogRefresh, requestModelCatalogRefresh] = useState(0),
     [sessions, setSessions] = useState([]),
     [session, setSession] = useState(null),
@@ -251,6 +252,7 @@ export function useChat() {
   }
   const applyModelCatalog = useCallback((catalog) => {
     setModels(catalog.models || []);
+    setCatalogEngines(catalog.engines || []);
     setCodeBuddyDefault({ id: catalog.default || "default", name: "默认", efforts: catalog.defaultEfforts });
     setSponsoredModels(sponsoredModelList(catalog));
   }, []);
@@ -630,6 +632,17 @@ export function useChat() {
   // Without their own key users chat on the platform's shared key, limited to
   // the models the administrator allowed (the first is the default).
   const sponsoredModel = sponsoredModels[0] || "";
+  useEffect(() => {
+    if (!user || user.isGuest || activeId || submitting || !catalogEngines.length ||
+        readComposerPreference("executor")) return;
+    const choices = catalogEngines.filter(engine => engine.configured);
+    // Account-authenticated runners advertise their runtime independently of
+    // the personal API catalog. Keep a selected CLI if that machine can run it.
+    const machine = executionMachines.machines.find(item => item.id === executionMachines.defaultRunnerId);
+    if (machine?.runtimes?.some(runtime => runtime.provider === executor && runtime.authMode !== "personal")) return;
+    const next = choices.find(engine => personalEngineConfigured(user, engine.id)) || choices[0];
+    if (next && next.id !== executor) setSelection({ executor: next.id, model: null, effort: null });
+  }, [user, activeId, submitting, catalogEngines, executor, executionMachines.machines, executionMachines.defaultRunnerId]);
   function resolveComposerModel(
     { executor, model, effort }, conversation, draft,
     catalogs = providerCatalogs, machines = executionMachines.machines,

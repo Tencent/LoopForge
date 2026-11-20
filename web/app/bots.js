@@ -1,5 +1,5 @@
 function loadBotModels(){return window.AgentFlowAssistantModels?.load?.()||Promise.resolve()}
-function botModelPickerHTML(bot){return `<div class="schedule-model-field bot-model-field" id="botModelPicker"><input type="hidden" name="model" value="${escapeHTML(bot.model||'default')}"><button type="button" class="ai-model-toggle" data-model-toggle aria-label="AI 模型（CodeBuddy）" aria-haspopup="listbox" aria-expanded="false"><span class="ai-model-icon" data-family="glm">智</span><span data-model-label>选择模型</span><span class="ai-model-caret" aria-hidden="true"></span></button><div class="ai-model-menu" hidden role="listbox" aria-label="CodeBuddy 模型"></div></div>`}
+function botModelPickerHTML(bot){return `<div class="schedule-model-field bot-model-field" id="botModelPicker"><input type="hidden" name="model" value="${escapeHTML(bot.model||'default')}"><button type="button" class="ai-model-toggle" data-model-toggle aria-label="AI 模型（CodeBuddy）" aria-haspopup="listbox" aria-expanded="false"><span class="ai-model-icon" data-family="glm">智</span><span data-model-label>选择模型</span><span class="ai-model-caret" aria-hidden="true"></span></button><div class="ai-model-menu" hidden role="listbox" aria-label="CLI 模型"></div></div>`}
 function closeBotModelPicker(){const picker=document.querySelector('#botModelPicker');if(!picker)return;picker.querySelector('.ai-model-menu').hidden=true;picker.querySelector('[data-model-toggle]').setAttribute('aria-expanded','false')}
 function bindBotModelPicker(host){
  const picker=host.querySelector('#botModelPicker'),models=window.AgentFlowAssistantModels;
@@ -9,7 +9,7 @@ function bindBotModelPicker(host){
  toggle.onclick=event=>{
   event.stopPropagation();if(toggle.disabled||toggle.closest('fieldset')?.disabled)return;
   const open=menu.hidden;closeBotModelPicker();if(!open)return;
-  models.renderCodeBuddyList(menu,value.value,id=>{value.value=id;models.paint(toggle,id);captureBotDraft(host);closeBotModelPicker()});
+  models.renderFeatureList(menu,value.value,id=>{value.value=id;models.paint(toggle,id);captureBotDraft(host);closeBotModelPicker()});
   const rect=toggle.getBoundingClientRect(),width=Math.min(Math.max(rect.width,320),window.innerWidth-24),height=Math.min(320,window.innerHeight-24),below=window.innerHeight-rect.bottom-12,above=rect.top-12;
   menu.style.width=width+'px';menu.style.left=Math.max(12,Math.min(rect.left,window.innerWidth-width-12))+'px';
   const down=below>=Math.min(height,above);const available=down?below:above;
@@ -119,7 +119,7 @@ function botRecordsHTML(){
  const deliveries=botUI.recordsTab!=='interactions';
  return `<div class="bot-subbar">${botRecordTabsHTML(botUI.recordsTab)}${deliveries?'<span class="bot-subbar-hint">保留最近 100 条</span>':''}</div><div class="bot-record-pane">${deliveries?botDeliveryHTML():botInteractionPanelHTML()}</div>`;
 }
-function botDeliveryExtraHTML(item){return `${item.reportModel?`<small class="bot-source-label">CodeBuddy · ${escapeHTML(item.reportModel)}</small>`:''}${item.reportError?`<small class="bot-record-error">${escapeHTML(item.reportError)}</small>`:''}${item.lastError?`<small class="bot-record-error">${escapeHTML(item.lastError)}</small>`:''}`}
+function botDeliveryExtraHTML(item){return `${item.reportModel?`<small class="bot-source-label">${escapeHTML(item.reportModel)}</small>`:''}${item.reportError?`<small class="bot-record-error">${escapeHTML(item.reportError)}</small>`:''}${item.lastError?`<small class="bot-record-error">${escapeHTML(item.lastError)}</small>`:''}`}
 function botDeliveryActionHTML(item){const bot=botUI.items.find(b=>b.id===item.botId);return ['failed','awaiting_authorization','target_unavailable'].includes(item.status)&&item.contentSource!=='invalid'&&bot&&canManageBot(bot)?`<button type="button" class="button small hui-btn-soft" data-delivery-retry="${escapeHTML(item.id)}">${botIcon('refresh')}重试</button>`:''}
 function botDeliveryHTML(){
  if(!botUI.deliveries.length)return '<p class="bot-empty">暂无发送记录。Agent 节点触发通知后，会在这里展示发送状态。</p>';

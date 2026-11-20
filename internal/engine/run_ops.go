@@ -844,6 +844,7 @@ func (e *Engine) RefreshRunSOP(runID string) error {
 	// an existing workspace. A new Run will pick up the latest sandbox asset.
 	latest.SandboxProfileID = r.WorkflowSnapshot.SandboxProfileID
 	latest.SandboxSnapshot = r.WorkflowSnapshot.SandboxSnapshot
+	latest.DefaultExecutorID = r.WorkflowSnapshot.DefaultExecutorID
 	var err error
 	latest, err = domain.AttachPreviewBuild(latest)
 	if err != nil {

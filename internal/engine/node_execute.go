@@ -186,12 +186,16 @@ func (e *Engine) execute(ctx context.Context, runID string) {
 	}
 }
 
-func resolveNodeExecutor(st *repo.Store, node domain.WorkflowNode, agent domain.AgentDefinition) (domain.ExecutorDefinition, error) {
-	executorID := agent.ExecutorID
+func resolveNodeExecutor(st *repo.Store, node domain.WorkflowNode, agent domain.AgentDefinition, defaultExecutorID string) (domain.ExecutorDefinition, error) {
+	executorID := strings.TrimSpace(agent.ExecutorID)
 	if executorID == "" {
-		executorID = node.ExecutorID
+		executorID = strings.TrimSpace(node.ExecutorID)
 	}
 	if executorID == "" {
+		executorID = defaultExecutorID
+	}
+	if executorID == "" {
+		// Runs created before the inherited executor was frozen used CodeBuddy.
 		executorID = "codebuddy"
 	}
 	ex, found := repo.BuiltInExecutor(executorID)
@@ -233,7 +237,7 @@ func workflowSandboxRequirements(st *repo.Store, wf domain.WorkflowDefinition) (
 		if !ok {
 			return runtime.SandboxRequirements{}, fmt.Errorf("agent %q not found", node.AgentID)
 		}
-		executor, err := resolveNodeExecutor(st, node, agent)
+		executor, err := resolveNodeExecutor(st, node, agent, wf.DefaultExecutorID)
 		if err != nil {
 			return runtime.SandboxRequirements{}, err
 		}
@@ -689,7 +693,7 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 			err = fmt.Errorf("agent %q not found", node.AgentID)
 			break
 		}
-		ex, errResolve := resolveNodeExecutor(e.repo, node, agent)
+		ex, errResolve := resolveNodeExecutor(e.repo, node, agent, wf.DefaultExecutorID)
 		if errResolve != nil {
 			err = errResolve
 			break

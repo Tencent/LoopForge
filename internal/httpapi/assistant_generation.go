@@ -46,7 +46,6 @@ func (h *assistantHandlers) startGeneration(c *gin.Context) {
 	if !requireAssistantApprovalUser(c, current.ID, req.ApprovalUserID) {
 		return
 	}
-	req.Model = assistantRequestModel(req.Executor, req.Model)
 	if len(req.Messages) == 0 || req.Messages[len(req.Messages)-1].Role != "user" {
 		c.JSON(400, gin.H{"error": "请提供用户消息"})
 		return
@@ -85,6 +84,7 @@ func (h *assistantHandlers) startGeneration(c *gin.Context) {
 			return
 		}
 	}
+	req.Model = assistantChatRequestModel(req, old, stored)
 	cliEngine, _ := assistantModelEngine(req.Model)
 	loginRunner := h.assistantLoginRunner(stored.ID, req.ExecutionTarget, cliEngine)
 	runnerLogin := loginRunner.ID != ""
@@ -123,9 +123,10 @@ func (h *assistantHandlers) startGeneration(c *gin.Context) {
 		return
 	}
 	catalogEngine, _ := assistantModelEngine(req.Model)
-	catalog := assistantChatCatalog(c.Request.Context(), user.CodeBuddyInternetEnvironment, nil)
+	var catalog assistantModelCatalog
 	if catalogEngine == assistantEngineCodeBuddy {
-		catalog = h.turnCatalog(c.Request.Context(), user, req.Model)
+		_, modelID := assistantModelEngine(req.Model)
+		catalog = h.turnCatalog(c.Request.Context(), user, modelID)
 	}
 	if !runnerLogin {
 		selected, err := assistantTurnCatalogModel(req.Model, catalog, user, req.RequireExactModel)

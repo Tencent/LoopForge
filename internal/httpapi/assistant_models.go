@@ -180,9 +180,8 @@ func cachedCLIModels(environment string) []string {
 	return models
 }
 
-// models returns the chat model catalog for the caller's CodeBuddy
-// environment. Guests get the configured models only; actually chatting still
-// requires login plus a configured or sponsored CodeBuddy key.
+// models returns the available CLIs and the caller's models. Public catalog
+// reads require no credential. Running a model requires a configured identity.
 func (h *assistantHandlers) models(c *gin.Context) {
 	if raw := strings.TrimSpace(c.Query("executor")); raw != "" && assistantExecutor(raw) != "codebuddy" {
 		engine := assistantExecutor(raw)
@@ -236,7 +235,7 @@ func (h *assistantHandlers) models(c *gin.Context) {
 		// Chat runs on the shared key, so list what that key's environment offers.
 		refreshCLIModels(c.Request.Context(), key.InternetEnvironment, key.APIKey)
 		catalog = restrictAssistantCatalog(assistantChatCatalog(c.Request.Context(), key.InternetEnvironment, key.Models), key.Models)
-	case signedIn:
+	case signedIn && strings.TrimSpace(user.CodeBuddyAPIKey) != "":
 		// A user's own key keeps their environment's models and default: the
 		// shared key's default may not exist in that environment.
 		refreshCLIModels(c.Request.Context(), user.CodeBuddyInternetEnvironment, user.CodeBuddyAPIKey)
@@ -247,6 +246,9 @@ func (h *assistantHandlers) models(c *gin.Context) {
 				catalog.Models = listed
 			}
 		}
+	case signedIn:
+		// Do not probe a CLI the user has not configured.
+		catalog.Default = assistantDefaultModel
 	default:
 		catalog = assistantChatCatalog(c.Request.Context(), "", nil)
 	}

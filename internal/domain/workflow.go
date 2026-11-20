@@ -56,27 +56,27 @@ type WorkflowNode struct {
 	// SOPWorkflowID is the referenced workflow when Type is "sop".
 	SOPWorkflowID string `json:"sopWorkflowId,omitempty"`
 	// RunOnWorkspaceRebuild replays this script when restoring an already-used environment.
-	RunOnWorkspaceRebuild bool               `json:"runOnWorkspaceRebuild,omitempty"`
-	ScriptLanguage        string             `json:"scriptLanguage,omitempty"` // shell, python
-	Script                string             `json:"script,omitempty"`
+	RunOnWorkspaceRebuild bool   `json:"runOnWorkspaceRebuild,omitempty"`
+	ScriptLanguage        string `json:"scriptLanguage,omitempty"` // shell, python
+	Script                string `json:"script,omitempty"`
 	// CredentialEnv requests platform-managed credentials as environment
 	// variables for script and verification commands: each entry maps an
 	// environment variable name to a credential kind (a RunCredentials.Extra
 	// key registered by the deployment). A declared credential the
 	// responsible user has not saved fails the node up front; the secret
 	// itself never appears in workflow definitions, node configs or logs.
-	CredentialEnv  map[string]string `json:"credentialEnv,omitempty"`
-	ExecutionScope string            `json:"executionScope,omitempty"` // run, repositories; empty = run
-	Command               string             `json:"command,omitempty"`        // legacy command-node payload
-	ArtifactOutputs       []ArtifactContract `json:"artifactOutputs,omitempty"`
-	RejectTo              string             `json:"rejectTo,omitempty"`
-	OnFailure             string             `json:"onFailure,omitempty"`     // fail, reject
-	RetryStrategy         string             `json:"retryStrategy,omitempty"` // targeted_fix, full_redo
-	CarryOver             []string           `json:"carryOver,omitempty"`
-	MaxAttempts           int                `json:"maxAttempts"`
-	MaxReworks            int                `json:"maxReworks"`
-	Notifications         []NodeNotification `json:"notifications,omitempty"`
-	Position              Position           `json:"position"`
+	CredentialEnv   map[string]string  `json:"credentialEnv,omitempty"`
+	ExecutionScope  string             `json:"executionScope,omitempty"` // run, repositories; empty = run
+	Command         string             `json:"command,omitempty"`        // legacy command-node payload
+	ArtifactOutputs []ArtifactContract `json:"artifactOutputs,omitempty"`
+	RejectTo        string             `json:"rejectTo,omitempty"`
+	OnFailure       string             `json:"onFailure,omitempty"`     // fail, reject
+	RetryStrategy   string             `json:"retryStrategy,omitempty"` // targeted_fix, full_redo
+	CarryOver       []string           `json:"carryOver,omitempty"`
+	MaxAttempts     int                `json:"maxAttempts"`
+	MaxReworks      int                `json:"maxReworks"`
+	Notifications   []NodeNotification `json:"notifications,omitempty"`
+	Position        Position           `json:"position"`
 }
 
 // ValidateWorkflowMetricStages prevents silently dropping a mistyped stage.
@@ -177,6 +177,9 @@ type WorkflowDefinition struct {
 	// the resolved profile plus Dockerfile/environment payload so retries can
 	// reconstruct the original environment after catalog definitions change.
 	SandboxSnapshot *RunnerSandboxSpec `json:"sandboxSnapshot,omitempty"`
+	// DefaultExecutorID freezes the executor inherited by unconfigured SOP
+	// roles. It is assigned by the engine when creating a run snapshot.
+	DefaultExecutorID string `json:"defaultExecutorId,omitempty"`
 	// Preview is the optional frontend delivery contract. It is frozen into
 	// the run snapshot so later SOP edits cannot change an in-flight archive.
 	Preview   *PreviewContract `json:"preview,omitempty"`

@@ -93,6 +93,7 @@ type AgentToolSession struct {
 	Final            chan AgentTerminalResult
 
 	mu           sync.Mutex
+	clarifyRepos map[string]string // read-only analysis checkouts for this turn
 	catalog      []agentToolDescriptor
 	terminalOnly bool
 	runIDs       []string

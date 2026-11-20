@@ -75,7 +75,7 @@ const ctx = {
         { id: 'model-b', name: 'Model B', family: 'glm', credits: 'x0.06' },
         { id: 'codex:gpt-5.5', name: 'GPT-5.5', family: 'gpt', engine: 'codex' },
       ],
-      engines: [{ id: 'codebuddy', name: 'CodeBuddy' }, { id: 'codex', name: 'Codex' }],
+      engines: [{ id: 'codebuddy', name: 'CodeBuddy', configured: true, personal: true }, { id: 'codex', name: 'Codex', configured: true, personal: true }],
     }),
   }),
 };
@@ -125,21 +125,14 @@ vm.runInContext(moduleSource, ctx);
   }
   // Pickers keep painting before the catalog lands, so the built-in fallback
   // must already render a usable label.
-  assert.equal(api.codeBuddyModel('codex:gpt-5.5'), 'default', 'codex ids fall back before the catalog loads');
+  assert.equal(api.engineOf('codex:gpt-5.5'), 'codex');
   api.paint(toggle, api.DEFAULT);
-  assert.equal(label.textContent, '默认');
+  assert.equal(label.textContent, '按执行身份自动选择');
   assert.equal(icon.dataset.family, 'other');
-  assert.equal(api.codeBuddyModels().length, 0, 'the placeholder is not selectable before loading');
 
   await api.load();
   assert.equal(api.catalog().default, 'model-b');
   assert.equal(api.catalog().models.length, 3, 'catalog adopts /api/assistant/models');
-  // Issue #228: clarification runs on CodeBuddy only, so CodeBuddy-only
-  // pickers hide other CLIs and a saved "codex:…" id falls back.
-  assert.deepEqual(api.codeBuddyModels().map(m => m.id), ['model-a', 'model-b']);
-  assert.equal(api.codeBuddyModel('codex:gpt-5.5'), 'default');
-  assert.equal(api.codeBuddyModel(''), 'default');
-  assert.equal(api.codeBuddyModel('model-a'), 'model-a');
 
   // Pull the real picker helpers out of the bundle and bind them to the stub host.
   for (const name of ['selectedClarifyModel', 'setClarifyModel', 'bindClarifyModelPicker']) {
@@ -154,18 +147,14 @@ vm.runInContext(moduleSource, ctx);
 
   toggle.onclick({ stopPropagation() {} });
   assert.equal(menu.hidden, false, 'clicking 选择模型 must open the menu');
-  assert.equal(menu.children.length, 2, 'menu lists only CodeBuddy models');
-  assert.ok(!menu.children.some(opt => opt.dataset.id.startsWith('codex:')), 'clarify menu hides Codex models');
-  assert.ok(menu.children[0].className.includes('is-active'), 'stored model is marked active');
+  assert.equal(menu.children.length, 4, 'menu lists the neutral default and personal models');
+  assert.ok(menu.children[1].className.includes('is-active'), 'stored model is marked active');
 
-  menu.children[1].onclick();
-  assert.equal(store.get('agentflow.clarifyModel'), 'model-b');
-  assert.equal(input.value, 'model-b');
+  menu.children.find(opt => opt.dataset.id === 'codex:gpt-5.5').onclick();
+  assert.equal(store.get('agentflow.clarifyModel'), 'codex:gpt-5.5');
+  assert.equal(input.value, 'codex:gpt-5.5');
   assert.equal(menu.hidden, true);
-  assert.equal(label.textContent, 'Model B');
-
-  // A Codex id saved before this fix must not reach chat-clarify.
-  store.set('agentflow.clarifyModel', 'codex:gpt-5.5');
-  assert.equal(ctx.selectedClarifyModel(), 'default');
+  assert.equal(label.textContent, 'GPT-5.5');
+  assert.equal(ctx.selectedClarifyModel(), 'codex:gpt-5.5');
   console.log('assistant models ok');
 })().catch(err => { console.error(err); process.exit(1); });

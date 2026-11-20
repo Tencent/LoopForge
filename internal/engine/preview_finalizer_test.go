@@ -208,7 +208,7 @@ func TestStartInjectsPreviewBuildNode(t *testing.T) {
 		t.Fatalf("catalog SOP must stay without the injected node: %+v", stored.Nodes)
 	}
 	agent, ok := workflowAgent(store, run.WorkflowSnapshot, domain.PreviewBuildAgentID)
-	if !ok || agent.ExecutorID != domain.PreviewBuildExecutor || agent.Model != "gpt-5.6-terra" {
+	if !ok || agent.ExecutorID != "" || agent.Model != "gpt-5.6-terra" {
 		t.Fatalf("synthetic agent = %+v ok=%v", agent, ok)
 	}
 }

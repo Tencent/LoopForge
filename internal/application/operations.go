@@ -95,7 +95,7 @@ func PublicOperations() []Operation {
 		{Name: "runs_start", Description: "Start an SOP Run", Method: "POST", Path: "/api/runs"},
 		{Name: "runs_get", Description: "Get one Run", Method: "GET", Path: "/api/runs/{id}", ReadOnly: true},
 		{Name: "runs_delete", Description: "Delete a finished Run", Method: "DELETE", Path: "/api/runs/{id}"},
-		{Name: "runs_eval_start", Description: "Manually start an LLM quality evaluation of a finished SOP run. Body: {model}. Uses the current user's CodeBuddy key and assistant model catalog.", Method: "POST", Path: "/api/runs/{id}/eval"},
+		{Name: "runs_eval_start", Description: "Manually start an LLM quality evaluation of a finished SOP run. Body: {model}. Uses the current user's credentials for the selected CLI. Use a CLI-prefixed model ID, or omit model to use a configured CLI default.", Method: "POST", Path: "/api/runs/{id}/eval"},
 		{Name: "runs_eval_get", Description: "Get the latest SOP run evaluation", Method: "GET", Path: "/api/runs/{id}/eval", ReadOnly: true},
 		{Name: "runs_eval_apply", Description: "Apply selected evaluation recommendations to the current SOP or agent after user confirmation. Body: {evalId, recommendationIds}", Method: "POST", Path: "/api/runs/{id}/eval/apply"},
 		{Name: "runs_telemetry_list", Description: "Page through Run telemetry", Method: "GET", Path: "/api/runs/{id}/telemetry", ReadOnly: true},

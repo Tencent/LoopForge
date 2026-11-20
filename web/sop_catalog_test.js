@@ -19,6 +19,7 @@ const ctx = {
   percent: n => `${Math.round(n || 0)}%`,
   formatTimestamp: v => (v ? 'T' : ''),
   catalogGeneric: item => !!item?.generic,
+  isPreviewBuildNode: id => id === "af-preview-build",
   catalogOwned: projectId => !!ctx.state.projectFilter && projectId === ctx.state.projectFilter,
   isPlatformAdmin: () => ctx.admin,
   lfT: zh => zh,

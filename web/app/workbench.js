@@ -73,7 +73,7 @@ const CREDENTIAL_KINDS=[
     placeholder:'请输入个人 ck_ key',
     extra:{name:'codeBuddyInternetEnvironment',label:'网络环境',options:CODEBUDDY_ENVIRONMENTS},
     models:{name:'codeBuddyModels',engine:'codebuddy'},
-    impact:'AI 对话将只能使用默认模型，CodeBuddy 执行器节点会失败。'},
+    impact:'CodeBuddy 会使用可用的共享配置。其他 CLI 继续使用各自的凭据。'},
   {key:'codexApiKey',group:'model',name:'Codex',short:'Codex API Key',logo:'codex',monochrome:true,
     use:'AI 对话选择 Codex 执行器，以及以 Codex 运行的 SOP 节点',
     description:'AI 对话切换到 Codex 后可选用模型目录里的模型，SOP 在执行机器上以 Codex 运行的节点也使用它。目录为空时，未填 Base URL 使用 Codex 自带模型，填写后跟随服务发布的模型；也可以自己挑选、排序和命名。',

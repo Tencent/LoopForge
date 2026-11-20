@@ -45,6 +45,20 @@ type User struct {
 	UpdatedAt                    time.Time  `json:"updatedAt"`
 }
 
+// CLIAPIKey returns the personal credential for a CLI provider kind.
+func (u User) CLIAPIKey(kind string) string {
+	switch kind {
+	case "codebuddy":
+		return strings.TrimSpace(u.CodeBuddyAPIKey)
+	case "codex":
+		return strings.TrimSpace(u.CodexAPIKey)
+	case "claude-code":
+		return strings.TrimSpace(u.ClaudeCodeAPIKey)
+	default:
+		return strings.TrimSpace(u.AgentCLICredentials[kind].APIKey)
+	}
+}
+
 const PlatformRoleAdmin = "admin"
 
 // GitSSHKey is the public description of a personal SSH credential.

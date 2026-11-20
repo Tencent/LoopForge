@@ -1,7 +1,6 @@
 // Shared AI model catalog for the classic SPA. The SOP preview, role, Bot,
 // scheduler, run-eval and requirement-clarification pickers all read
 // window.AgentFlowAssistantModels, so this file must load before them.
-// Pickers for entries that only run on CodeBuddy use renderCodeBuddyList.
 // Only the picker chrome lives here; per-feature selections stay in the
 // callers (localStorage keys, hidden inputs, form fields).
 (() => {
@@ -66,11 +65,11 @@
     if (listed) return listed.engine || 'codebuddy';
     const value = String(id || '');
     const prefix = value.slice(0, Math.max(0, value.indexOf(':')));
-    return (source.engines || []).some(e => e.id === prefix) ? prefix : 'codebuddy';
+    return Object.hasOwn(CLI_ICON, prefix) ? prefix : 'codebuddy';
   }
   function modelMeta(id) {
     const value = id || DEFAULT_MODEL;
-    return catalog.models.find(m => m.id === value) || {id: value, family: familyOf(value), name: value === DEFAULT_MODEL ? '默认' : value};
+    return catalog.models.find(m => m.id === value) || {id: value, family: familyOf(value), name: value === DEFAULT_MODEL ? '按执行身份自动选择' : value};
   }
   function fillModelIcon(el, family, id) {
     if (!el) return;
@@ -149,22 +148,18 @@
   function renderList(menu, selectedId, onPick) {
     renderOptions(menu, catalog.models || [], selectedId, onPick);
   }
-  // Requirement clarification, Bot replies, run evals and the SOP preview
-  // build run on CodeBuddy only, so their pickers list CodeBuddy models and
-  // never offer a "codex:…" id the server would have to refuse.
-  function codeBuddyModels() {
-    return (catalog.models || []).filter(m => (m.engine || 'codebuddy') === 'codebuddy');
-  }
-  function renderCodeBuddyList(menu, selectedId, onPick) {
-    renderOptions(menu, codeBuddyModels(), selectedId, onPick);
-  }
-  // codeBuddyModel keeps a CodeBuddy id and turns an empty id, or a saved id
-  // of another CLI, into the CLI default the server resolves itself.
-  function codeBuddyModel(id) {
-    const value = String(id || '').trim();
-    // The catalog may not have landed yet; the built-in CLI prefixes still count.
-    if (!value || /^(codex|claude-code):/.test(value) || engineOf(value) !== 'codebuddy') return DEFAULT_MODEL;
-    return value;
+  // A neutral default is resolved using the credentials of the executing account.
+  function renderFeatureList(menu, selectedId, onPick) {
+    const items = [{id: DEFAULT_MODEL, name: '按执行身份自动选择', icon: false}];
+    for (const model of catalog.models) {
+      const engine = catalog.engines?.find(item => item.id === engineOf(model.id));
+      if (engine && !(engine.personal ?? engine.configured)) continue;
+      items.push({...model, name: engine ? model.name + ' · ' + engine.name : model.name});
+    }
+    if (selectedId && !items.some(item => item.id === selectedId)) {
+      items.push(modelMeta(selectedId));
+    }
+    renderOptions(menu, items, selectedId, onPick);
   }
   async function fetchCatalog() {
     const resp = await fetch('/api/assistant/models', {headers: {Accept: 'application/json'}, credentials: 'same-origin'});
@@ -188,13 +183,11 @@
     DEFAULT: DEFAULT_MODEL,
     catalog: () => catalog,
     cliIcon: id => Object.hasOwn(CLI_ICON, id) ? '/images/credentials/' + CLI_ICON[id] : '',
-    codeBuddyModel,
-    codeBuddyModels,
     engineOf,
     load,
     paint,
     paintItem,
-    renderCodeBuddyList,
+    renderFeatureList,
     renderList,
     renderOptions
   };

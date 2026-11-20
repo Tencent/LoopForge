@@ -132,7 +132,7 @@ func TestBotMissingSubmissionRetriesOnlyTerminalStep(t *testing.T) {
 	h.generate = func(ctx context.Context, prompt string, user domain.User) (string, error) {
 		calls++
 		if calls == 1 {
-			return "查询结果已经准备好，但未提交终态", nil
+			return "请稍等，我正在查询项目的运行记录。", nil
 		}
 		if strings.Contains(prompt, "原始查询标记") || !strings.Contains(prompt, "不要重新查询") {
 			t.Fatal("retry restarted task", prompt)

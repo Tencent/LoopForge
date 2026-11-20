@@ -111,11 +111,11 @@ New accounts join the **LoopForge demo project**, which includes an SOP made onl
 
 <br>
 
-- **Executors.** Pick one of ten CLIs beside the home composer, then a model. Every SOP role can choose its executor independently (built-in roles default to CodeBuddy). Requirement clarification, AI notification summaries, Bot replies and run evals currently use CodeBuddy, so their model pickers list CodeBuddy models only and the server refuses a model of another CLI instead of switching it to CodeBuddy; scheduled assistant tasks run on the CLI the task selects.
+- **Executors.** Choose a CLI and model for chat, requirement clarification, Bot replies, notification reports, run evaluation, or static preview. SOP roles can pin an executor or inherit the default selected for the responsible account. Scheduled prompts use the CLI selected on the schedule. The platform can run without a CodeBuddy installation or key. [Deployment and upgrade](docs/deployment.md#choosing-an-executor)
 
   | Executor | Credentials | Installation |
   | --- | --- | --- |
-  | **CodeBuddy** | Personal key, or a shared key an administrator configures for chat and SOP runs | In the Docker image |
+  | **CodeBuddy** | Personal key, or a shared key an administrator configures for chat and SOP runs | Bundled by default, optional on source builds |
   | **Codex** | Personal key; a connected execution machine can use its local login | In the Docker image |
   | **Claude Code** | Personal key; a connected execution machine can use its local login | Installed from npm on first use, then cached |
   | **OpenCode · Kimi Code · Pi** | Personal key only | Installed from npm on first use, then cached |

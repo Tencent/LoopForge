@@ -22,6 +22,7 @@ import {
   codeBuddyKeyWarning,
   openCredentialSettings,
 } from "./credentials";
+import { EXECUTORS, personalEngineConfigured } from "./engines.js";
 import "./quick-access-wizard.css";
 
 const DEFAULT_SOP_ID = "generic-backend-delivery";
@@ -700,7 +701,6 @@ async function provisionFallbackProjectSOP(projectId, workflowId, owner) {
         name: role.name,
         projectId,
         version: 1,
-        executorId: "codebuddy",
         description: role.description,
         prompt: role.prompt,
         artifactOutputs: [
@@ -1209,6 +1209,9 @@ export default function QuickAccessWizard({
   const codeBuddyEnvInfo =
     codeBuddyEnvironment(codeBuddyEnv) || CODEBUDDY_ENVIRONMENTS[0];
   const codeBuddyWarning = codeBuddyKeyWarning(codeBuddyApiKey);
+  const readyCLIs = EXECUTORS.filter(cli => personalEngineConfigured(storedUser, cli.id) ||
+    (cli.id === "codebuddy" && codeBuddyReady));
+  const cliReady = readyCLIs.length > 0 || Boolean(sponsoredModel);
   const nodes =
     activeWorkflow?.nodes?.filter((node) => node.type === "agent") ||
     FALLBACK_NODES;
@@ -1287,10 +1290,6 @@ export default function QuickAccessWizard({
     if (saving) return;
     setError("");
     if (activeStep.id === "auth") {
-      if (!gitReady && !hasSSHKeys && !codeBuddyReady && !sponsoredModel) {
-        setError("请先配置 GitHub Git Token、Git SSH 密钥或 CodeBuddy API Key。");
-        return;
-      }
       setSaving(true);
       try {
         await saveTypedCredentials();
@@ -1519,10 +1518,7 @@ export default function QuickAccessWizard({
         workflow: provisionedWorkflow || activeWorkflow,
         rolesCount: roles.length,
         gitReady: Boolean(boundRepo?.provider === "ssh" ? hasSSHKey(parseGongfengRepo(boundRepo.cloneUrl)) : latestUser?.gitHubCredentialConfigured),
-        codeBuddyReady: Boolean(
-          latestUser?.codeBuddyApiKeyConfigured ||
-            storedUser?.codeBuddyApiKeyConfigured,
-        ),
+        cliNames: EXECUTORS.filter(cli => personalEngineConfigured(latestUser || storedUser, cli.id)).map(cli => cli.label),
       });
       setPhase("success");
       await onCompleted?.(targetProject?.id || "");
@@ -1699,28 +1695,13 @@ export default function QuickAccessWizard({
                               : "未配置，克隆/推送私有仓库前可在个人配置补齐"}
                           </span>
                         </li>
-                        <li
-                          className={
-                            completedSummary?.codeBuddyReady || sponsoredModel
-                              ? "is-ok"
-                              : "is-warn"
-                          }
-                        >
-                          <HarnessIcon
-                            name={
-                              completedSummary?.codeBuddyReady
-                                ? "check"
-                                : "info"
-                            }
-                            size={14}
-                          />
+                        <li className={completedSummary?.cliNames?.length || sponsoredModel ? "is-ok" : "is-warn"}>
+                          <HarnessIcon name={completedSummary?.cliNames?.length ? "check" : "info"} size={14} />
                           <span>
-                            CodeBuddy API Key：
-                            {completedSummary?.codeBuddyReady
-                              ? "已配置"
-                              : sponsoredModel
-                                ? `未配置。对话和 SOP 都会使用平台共享 Key（可用模型：${sharedModelNames(sponsoredModels, sponsoredModel)}），可以直接开始；配置自己的 Key 后可选用任意模型`
-                                : "未配置。对话可用平台默认模型，但运行 SOP 时节点需要它调模型，请先在个人配置补齐"}
+                            模型 CLI · {completedSummary?.cliNames?.join("、") ||
+                              (sponsoredModel
+                                ? `平台共享模型（${sharedModelNames(sponsoredModels, sponsoredModel)}）`
+                                : "可在个人配置或执行机器设置中准备")}
                           </span>
                         </li>
                         <li className="is-ok">
@@ -1897,7 +1878,22 @@ export default function QuickAccessWizard({
                       <section className="qa-cred-card">
                         <header className="qa-cred-head">
                           <div>
-                            <strong>CodeBuddy API Key</strong>
+                            <strong>模型 CLI</strong>
+                            <span>{readyCLIs.length ? readyCLIs.map(cli => cli.label).join("、") : "可在个人配置中选择 CLI 或在执行机器上登录"}</span>
+                          </div>
+                          <StatusPill ok={cliReady} />
+                        </header>
+                        <div className="qa-cred-body">
+                          <button type="button" className="qa-btn qa-btn-secondary" onClick={() => {
+                            onClose?.();
+                            onOpenView?.("settings");
+                          }}>打开个人配置</button>
+                        </div>
+                      </section>
+                      <section className="qa-cred-card">
+                        <header className="qa-cred-head">
+                          <div>
+                            <strong>CodeBuddy API Key（可选）</strong>
                             <span>
                               {sponsoredModel
                                 ? "可选：未配置时对话和 SOP 使用平台共享模型，配置后可选用其他模型"
@@ -2346,16 +2342,12 @@ export default function QuickAccessWizard({
                             <dt>凭据</dt>
                             <dd>
                               <span
-                                className={`qa-dot ${(sshRepository ? sshReady : gitReady) && (codeBuddyReady || sponsoredModel) ? "is-ok" : ""}`}
+                                className={`qa-dot ${(sshRepository ? sshReady : gitReady) && cliReady ? "is-ok" : ""}`}
                               />
                               <span>
                                 {sshRepository ? "Git SSH" : "GitHub"} {(sshRepository ? sshReady : gitReady) ? "已配置" : "未配置"} ·
-                                CodeBuddy{" "}
-                                {codeBuddyReady
-                                  ? "已配置"
-                                  : sponsoredModel
-                                    ? "使用平台共享模型"
-                                    : "未配置"}
+                                CLI · {readyCLIs.length ? readyCLIs.map(cli => cli.label).join("、") :
+                                  sponsoredModel ? "使用平台共享模型" : "未配置"}
                               </span>
                             </dd>
                           </div>

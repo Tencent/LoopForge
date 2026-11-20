@@ -320,7 +320,7 @@ func scheduleMissingKeyError(engine string) string {
 		return fmt.Sprintf("你还没有可用的 %s 凭据，请在默认执行机器启用账号登录（Runner %s 及以上），或在个人配置填写 API Key", assistantEngineLabel(engine), domain.RunnerVersionCLISettings)
 	}
 	if engine != assistantEngineCodeBuddy {
-		return fmt.Sprintf("你还没有配置 %s API Key，平台共享 Key 只支持 CodeBuddy 模型：请先在个人配置中填写，或改选 CodeBuddy 模型", assistantEngineLabel(engine))
+		return assistantEngineMissingKey(engine)
 	}
 	return "你还没有配置 CodeBuddy API Key，平台也没有配置共享 Key，定时任务无法执行：请先在个人配置中填写自己的 Key，或联系平台管理员配置共享 Key"
 }
@@ -607,8 +607,8 @@ fi
 echo "校验通过：HEAD 为合并提交，无未解决冲突与残留标记"`
 
 func (h *scheduleHandlers) ensureBaselineAlignAgent() bool {
-	if err := h.repo.PutAgent(repo.BaselineAlignResolverAgent()); err != nil {
-		log.Printf("baseline align agent upsert failed: %v", err)
+	if err := h.repo.CreateBaselineAlignResolver(); err != nil {
+		log.Printf("baseline align agent creation failed: %v", err)
 		return false
 	}
 	return true
