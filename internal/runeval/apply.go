@@ -2,6 +2,7 @@ package runeval
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"agentflow/internal/domain"
@@ -75,13 +76,17 @@ func updateWorkflowNode(wf *domain.WorkflowDefinition, rec domain.RunEvalRecomme
 	if rec.Set == nil {
 		return fmt.Errorf("update_node requires set")
 	}
-	if v, ok := intFrom(rec.Set, "maxAttempts"); ok {
+	if v, present, err := intFrom(rec.Set, "maxAttempts"); err != nil {
+		return err
+	} else if present {
 		if v < 1 {
 			return fmt.Errorf("maxAttempts must be >= 1")
 		}
 		node.MaxAttempts = v
 	}
-	if v, ok := intFrom(rec.Set, "maxReworks"); ok {
+	if v, present, err := intFrom(rec.Set, "maxReworks"); err != nil {
+		return err
+	} else if present {
 		if v < 0 {
 			return fmt.Errorf("maxReworks must be >= 0")
 		}
@@ -183,25 +188,27 @@ func findNode(wf *domain.WorkflowDefinition, id string) (domain.WorkflowNode, in
 	return domain.WorkflowNode{}, -1, false
 }
 
-func intFrom(set map[string]any, key string) (int, bool) {
-	raw, ok := set[key]
-	if !ok {
-		return 0, false
+func intFrom(set map[string]any, key string) (int, bool, error) {
+	raw, present := set[key]
+	if !present {
+		return 0, false, nil
 	}
+	var text string
 	switch v := raw.(type) {
 	case int:
-		return v, true
+		return v, true, nil
 	case int64:
-		return int(v), true
+		text = strconv.FormatInt(v, 10)
 	case float64:
-		return int(v), true
+		text = strconv.FormatFloat(v, 'f', -1, 64)
 	case string:
-		var n int
-		if _, err := fmt.Sscanf(strings.TrimSpace(v), "%d", &n); err == nil {
-			return n, true
-		}
+		text = strings.TrimSpace(v)
 	}
-	return 0, false
+	n, err := strconv.Atoi(text)
+	if err != nil {
+		return 0, true, fmt.Errorf("%s must be an integer", key)
+	}
+	return n, true, nil
 }
 
 func stringFrom(set map[string]any, key string) (string, bool) {
