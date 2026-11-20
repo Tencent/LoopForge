@@ -9,7 +9,13 @@ function bindBotModelPicker(host){
  toggle.onclick=event=>{
   event.stopPropagation();if(toggle.disabled||toggle.closest('fieldset')?.disabled)return;
   const open=menu.hidden;closeBotModelPicker();if(!open)return;
-  models.renderFeatureList(menu,value.value,id=>{value.value=id;models.paint(toggle,id);captureBotDraft(host);closeBotModelPicker()});
+  models.renderFeatureList(menu,value.value,id=>{
+    const qualified=id!==models.DEFAULT&&models.engineOf(id)==='codebuddy'&&!id.startsWith('codebuddy:')?'codebuddy:'+id:id;
+    value.value=qualified;
+    models.paint(toggle,qualified);
+    captureBotDraft(host);
+    closeBotModelPicker();
+  });
   const rect=toggle.getBoundingClientRect(),width=Math.min(Math.max(rect.width,320),window.innerWidth-24),height=Math.min(320,window.innerHeight-24),below=window.innerHeight-rect.bottom-12,above=rect.top-12;
   menu.style.width=width+'px';menu.style.left=Math.max(12,Math.min(rect.left,window.innerWidth-width-12))+'px';
   const down=below>=Math.min(height,above);const available=down?below:above;

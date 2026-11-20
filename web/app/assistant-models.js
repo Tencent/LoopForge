@@ -69,7 +69,9 @@
   }
   function modelMeta(id) {
     const value = id || DEFAULT_MODEL;
-    return catalog.models.find(m => m.id === value) || {id: value, family: familyOf(value), name: value === DEFAULT_MODEL ? '按执行身份自动选择' : value};
+    const listed = catalog.models.find(m => m.id === value || ('codebuddy:' + m.id === value && !m.engine));
+    if (listed) return {...listed, id: value};
+    return {id: value, family: familyOf(value), name: value === DEFAULT_MODEL ? '按执行身份自动选择' : value};
   }
   function fillModelIcon(el, family, id) {
     if (!el) return;

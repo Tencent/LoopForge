@@ -158,6 +158,13 @@ func (h *notificationHandlers) save(c *gin.Context, old *domain.NotificationBot)
 			c.JSON(400, gin.H{"error": err.Error()})
 			return
 		}
+		// Preserve validation on the legacy, unqualified CodeBuddy field.
+		// Explicit CLI IDs are checked by their own model service at runtime.
+		if !assistantModelHasEnginePrefix(model) && !codeBuddyIsDefaultModel(model) &&
+			(old == nil || old.Model != model) && !assistantCatalogLists(assistantKnownCatalog(), model) {
+			c.JSON(400, gin.H{"error": errFeatureModel.Error()})
+			return
+		}
 		bot.Model = model
 	}
 	if bot.Model == "" {
