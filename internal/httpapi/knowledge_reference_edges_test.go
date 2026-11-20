@@ -135,31 +135,6 @@ func TestValueOr(t *testing.T) {
 	}
 }
 
-func TestFilterSourcesText(t *testing.T) {
-	payload := `{"sources":[{"id":"dns","name":"DNS"},{"id":"api","name":"API"},{"name":"no-id"}]}`
-	out, n, err := filterSourcesText(payload, []string{"dns"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if n != 1 {
-		t.Fatalf("kept count = %d, want 1", n)
-	}
-	var parsed struct {
-		Sources []struct {
-			ID string `json:"id"`
-		} `json:"sources"`
-	}
-	if err := json.Unmarshal([]byte(out), &parsed); err != nil {
-		t.Fatalf("output not valid JSON: %v", err)
-	}
-	if len(parsed.Sources) != 1 || parsed.Sources[0].ID != "dns" {
-		t.Fatalf("filtered sources = %+v, want only dns", parsed.Sources)
-	}
-	if _, _, err := filterSourcesText("not json", []string{"dns"}); err == nil {
-		t.Fatal("invalid JSON must fail")
-	}
-}
-
 func TestKnowledgeToolDescription(t *testing.T) {
 	got := knowledgeToolDescription("团队档案库", "包含成员技术背景与排障手册", "weknora-1", "search_knowledge", "Search docs")
 	for _, want := range []string{"[用户已绑定知识库：团队档案库（包含成员技术背景与排障手册）]", "Search docs", "优先调用"} {

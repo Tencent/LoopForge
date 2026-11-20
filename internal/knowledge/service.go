@@ -266,82 +266,16 @@ func (s *Service) Sources(ctx context.Context, projectID string) ([]SourceView, 
 
 type SearchOutput struct {
 	Result    SearchResult `json:"result"`
+	Status    string       `json:"status,omitempty"`
+	Warning   string       `json:"warning,omitempty"`
 	Sources   []string     `json:"sources"`
 	LatencyMs int64        `json:"latencyMs"`
 }
 
 // Search runs a trial search limited to the sources projectID may read.
 func (s *Service) Search(ctx context.Context, projectID, query string, sources []string) (SearchOutput, error) {
-	query = strings.TrimSpace(query)
-	if query == "" {
-		return SearchOutput{}, apperr.New(apperr.Invalid, "请输入要检索的问题或关键词")
-	}
-	settings := s.store.KnowledgeSettings()
-	conns := settings.ActiveConnections()
-	if len(conns) == 0 {
-		return SearchOutput{}, apperr.New(apperr.Unavailable, ErrNotConfigured.Error())
-	}
-	scoped, err := ScopeSources(settings.SourcesForProject(projectID), sources)
-	if err != nil {
-		return SearchOutput{}, apperr.New(apperr.Invalid, err.Error())
-	}
-	grouped := map[string][]string{}
-	if len(scoped) == 0 {
-		for _, c := range conns {
-			grouped[c.ID] = nil
-		}
-	} else {
-		for _, sid := range scoped {
-			conn, rawID, ok := DecodeScopedSourceID(settings, sid)
-			if ok {
-				grouped[conn.ID] = append(grouped[conn.ID], rawID)
-			}
-		}
-		if len(grouped) == 0 {
-			return SearchOutput{}, apperr.New(apperr.Unavailable, "知识库不可用：所选知识库所属连接已删除或停用")
-		}
-	}
-	started := s.now()
-	var merged []SearchHit
-	var firstErr error
-	for _, conn := range conns {
-		rawIDs, want := grouped[conn.ID]
-		if !want {
-			continue
-		}
-		client, err := s.connect(settingsForConnection(settings, conn))
-		if err != nil {
-			if firstErr == nil {
-				firstErr = err
-			}
-			continue
-		}
-		cctx, cancel := context.WithTimeout(ctx, CallTimeout)
-		res, err := client.Search(cctx, query, rawIDs)
-		cancel()
-		if err != nil {
-			if firstErr == nil {
-				firstErr = err
-			}
-			continue
-		}
-		for _, h := range res.Results {
-			h.Source = EncodeScopedSourceID(settings, conn.ID, h.Source)
-			merged = append(merged, h)
-		}
-	}
-	if len(merged) == 0 && firstErr != nil {
-		return SearchOutput{}, apperr.New(apperr.Upstream, "检索失败："+firstErr.Error())
-	}
-	sort.Slice(merged, func(i, j int) bool { return merged[i].Score > merged[j].Score })
-	if merged == nil {
-		merged = []SearchHit{}
-	}
-	return SearchOutput{
-		Result:    SearchResult{Query: query, Mode: "hybrid", Results: merged},
-		Sources:   scoped,
-		LatencyMs: s.now().Sub(started).Milliseconds(),
-	}, nil
+	out, _, err := s.ExecuteSearch(ctx, projectID, query, sources, 10, ExecuteOptions{})
+	return out, err
 }
 
 // Document fetches a source document (optionally a line range) if the

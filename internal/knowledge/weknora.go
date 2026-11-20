@@ -146,34 +146,40 @@ func NewWeKnoraClient(settings domain.KnowledgeSettings) (*WeKnoraClient, error)
 	}, nil
 }
 
-func (c *WeKnoraClient) Tools(_ context.Context) ([]mcpclient.Tool, error) {
+// WeKnoraReadOnlyToolDefinitions returns the 4 standard read-only MCP tool
+// definitions exposed when any WeKnora connection (or mixed setup) is active.
+func WeKnoraReadOnlyToolDefinitions() []mcpclient.Tool {
 	readOnlyAnn := json.RawMessage(`{"readOnlyHint":true,"destructiveHint":false,"idempotentHint":true,"openWorldHint":false}`)
 	return []mcpclient.Tool{
 		{
 			Name:        WeKnoraToolListKnowledgeBases,
-			Description: "List accessible WeKnora knowledge bases with id, name, description and document count.",
+			Description: "List accessible knowledge bases with id, name, description and document count.",
 			InputSchema: json.RawMessage(`{"type":"object","properties":{}}`),
 			Annotations: readOnlyAnn,
 		},
 		{
 			Name:        WeKnoraToolSearchKnowledge,
-			Description: "Hybrid search across authorized WeKnora knowledge bases and return matching passages with document ids and titles.",
+			Description: "Hybrid search across authorized knowledge bases and return matching passages with document ids and titles.",
 			InputSchema: json.RawMessage(`{"type":"object","properties":{"query":{"type":"string","description":"Search question or keywords"},"knowledge_base_ids":{"type":"array","items":{"type":"string"},"description":"Optional knowledge base IDs to restrict search"},"limit":{"type":"integer","description":"Maximum passages to return (default 10, max 30)"}},"required":["query"]}`),
 			Annotations: readOnlyAnn,
 		},
 		{
 			Name:        WeKnoraToolListDocuments,
-			Description: "List documents inside one authorized WeKnora knowledge base.",
+			Description: "List documents inside one authorized knowledge base.",
 			InputSchema: json.RawMessage(`{"type":"object","properties":{"knowledge_base_id":{"type":"string","description":"Knowledge base ID"},"keyword":{"type":"string","description":"Optional title filter"},"page":{"type":"integer"},"page_size":{"type":"integer"}},"required":["knowledge_base_id"]}`),
 			Annotations: readOnlyAnn,
 		},
 		{
 			Name:        WeKnoraToolReadDocument,
-			Description: "Read a document's text chunks in order by knowledge_id.",
-			InputSchema: json.RawMessage(`{"type":"object","properties":{"knowledge_id":{"type":"string","description":"Document ID"},"offset":{"type":"integer","description":"0-based chunk offset"},"limit":{"type":"integer","description":"Chunks per page (default 20, max 100)"},"query":{"type":"string","description":"Optional case-insensitive keywords to filter chunks"}},"required":["knowledge_id"]}`),
+			Description: "Read a document's text chunks in order by knowledge_id (or LightCloud source+path).",
+			InputSchema: json.RawMessage(`{"type":"object","properties":{"knowledge_id":{"type":"string","description":"Document ID or file path"},"source":{"type":"string","description":"Optional source ID when reading a LightCloud document"},"offset":{"type":"integer","description":"0-based chunk offset"},"limit":{"type":"integer","description":"Chunks per page (default 20, max 100)"},"query":{"type":"string","description":"Optional case-insensitive keywords to filter chunks"}},"required":["knowledge_id"]}`),
 			Annotations: readOnlyAnn,
 		},
-	}, nil
+	}
+}
+
+func (c *WeKnoraClient) Tools(_ context.Context) ([]mcpclient.Tool, error) {
+	return WeKnoraReadOnlyToolDefinitions(), nil
 }
 
 func (c *WeKnoraClient) ListSources(ctx context.Context) ([]Source, error) {
@@ -242,19 +248,35 @@ type weKnoraScopedHit struct {
 	SourceKBID string `json:"knowledge_base_id"`
 }
 
+const weKnoraSearchConcurrency = 4
+
 func (c *WeKnoraClient) HybridSearch(ctx context.Context, query string, kbIDs []string, limit int) ([]weKnoraScopedHit, error) {
+	hits, partialErrs, err := c.HybridSearchDetailed(ctx, query, kbIDs, limit)
+	if err != nil {
+		return nil, err
+	}
+	if len(hits) == 0 && len(partialErrs) > 0 {
+		return nil, partialErrs[0]
+	}
+	return hits, nil
+}
+
+// HybridSearchDetailed fans out hybrid-search across kbIDs with a 4-way bounded
+// semaphore, respects ctx.Done() for queued requests, and returns both merged
+// hits and per-KB errors so callers can distinguish partial vs unavailable.
+func (c *WeKnoraClient) HybridSearchDetailed(ctx context.Context, query string, kbIDs []string, limit int) ([]weKnoraScopedHit, []error, error) {
 	kbIDs = cleanList(kbIDs)
 	if len(kbIDs) == 0 {
 		kbs, err := c.ListKnowledgeBases(ctx)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		for _, kb := range kbs {
 			kbIDs = append(kbIDs, kb.ID)
 		}
 	}
 	if len(kbIDs) == 0 {
-		return []weKnoraScopedHit{}, nil
+		return []weKnoraScopedHit{}, nil, nil
 	}
 	if limit <= 0 || limit > 30 {
 		limit = 10
@@ -265,11 +287,19 @@ func (c *WeKnoraClient) HybridSearch(ctx context.Context, query string, kbIDs []
 		err  error
 	}
 	ch := make(chan kbRes, len(kbIDs))
+	sem := make(chan struct{}, weKnoraSearchConcurrency)
 	var wg sync.WaitGroup
 	for _, kbID := range kbIDs {
 		wg.Add(1)
 		go func(id string) {
 			defer wg.Done()
+			select {
+			case sem <- struct{}{}:
+				defer func() { <-sem }()
+			case <-ctx.Done():
+				ch <- kbRes{err: fmt.Errorf("kb %s: %w", id, ctx.Err())}
+				return
+			}
 			payload := map[string]any{
 				"query_text":  query,
 				"match_count": limit,
@@ -280,7 +310,7 @@ func (c *WeKnoraClient) HybridSearch(ctx context.Context, query string, kbIDs []
 			}
 			err := c.doJSON(ctx, http.MethodPost, "/api/v1/knowledge-bases/"+url.PathEscape(id)+"/hybrid-search", payload, &env)
 			if err != nil {
-				ch <- kbRes{err: err}
+				ch <- kbRes{err: fmt.Errorf("kb %s: %w", id, err)}
 				return
 			}
 			out := make([]weKnoraScopedHit, 0, len(env.Data))
@@ -294,24 +324,30 @@ func (c *WeKnoraClient) HybridSearch(ctx context.Context, query string, kbIDs []
 	close(ch)
 
 	var all []weKnoraScopedHit
-	var firstErr error
+	var partialErrs []error
 	for r := range ch {
 		if r.err != nil {
-			if firstErr == nil {
-				firstErr = r.err
-			}
+			partialErrs = append(partialErrs, r.err)
 			continue
 		}
 		all = append(all, r.hits...)
 	}
-	if len(all) == 0 && firstErr != nil {
-		return nil, firstErr
-	}
-	sort.Slice(all, func(i, j int) bool { return all[i].Score > all[j].Score })
+	sort.SliceStable(all, func(i, j int) bool {
+		if all[i].Score != all[j].Score {
+			return all[i].Score > all[j].Score
+		}
+		if all[i].SourceKBID != all[j].SourceKBID {
+			return all[i].SourceKBID < all[j].SourceKBID
+		}
+		if all[i].KnowledgeID != all[j].KnowledgeID {
+			return all[i].KnowledgeID < all[j].KnowledgeID
+		}
+		return all[i].ChunkIndex < all[j].ChunkIndex
+	})
 	if len(all) > limit {
 		all = all[:limit]
 	}
-	return all, nil
+	return all, partialErrs, nil
 }
 
 func (c *WeKnoraClient) Fetch(ctx context.Context, source, docPath string, start, end int) (Document, error) {

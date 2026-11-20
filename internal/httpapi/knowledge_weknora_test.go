@@ -145,6 +145,113 @@ func TestKnowledgeProxy_WeKnoraAllowlistAndAntiBypass(t *testing.T) {
 	}
 }
 
+func TestKnowledgeProxy_MixedProvidersAndDeletedRefUnavailable(t *testing.T) {
+	lcSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Method string `json:"method"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		w.Header().Set("Content-Type", "application/json")
+		switch req.Method {
+		case "initialize":
+			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2024-11-05","capabilities":{},"serverInfo":{"name":"lc","version":"1.0"}}}`))
+		case "tools/list":
+			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"kb_search","description":"search"}]}}`))
+		case "tools/call":
+			payload := `{"query":"q","mode":"hybrid","results":[{"source":"lc-kb","path":"lc.md","title":"LC-Result","snippet":"from lc","score":0.92}]}`
+			resp, _ := json.Marshal(map[string]any{
+				"jsonrpc": "2.0", "id": 1,
+				"result": map[string]any{"content": []map[string]any{{"type": "text", "text": payload}}},
+			})
+			_, _ = w.Write(resp)
+		}
+	}))
+	defer lcSrv.Close()
+
+	wkSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/api/v1/knowledge-bases":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"success": true,
+				"data":    []map[string]any{{"id": "wk-kb", "name": "WK KB"}},
+			})
+		case strings.HasSuffix(r.URL.Path, "/hybrid-search"):
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"success": true,
+				"data":    []map[string]any{{"id": "c1", "knowledge_id": "d1", "knowledge_title": "WK-Result", "content": "from wk", "score": 0.88}},
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer wkSrv.Close()
+
+	store, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	settings := domain.KnowledgeSettings{
+		Enabled: true,
+		Connections: []domain.KnowledgeConnection{
+			{ID: "lc-1", Name: "LightCloud", Provider: domain.KnowledgeProviderLightCloud, URL: lcSrv.URL, Token: "t1", Enabled: true},
+			{ID: "wk-1", Name: "WeKnora", Provider: domain.KnowledgeProviderWeKnora, URL: wkSrv.URL, Token: "t2", Enabled: true},
+		},
+	}
+	if err := store.PutKnowledgeSettings(settings); err != nil {
+		t.Fatal(err)
+	}
+
+	h := &knowledgeHandlers{
+		deps:     &deps{repo: store},
+		svc:      knowledge.NewService(store, func() string { return "id-1" }),
+		activity: &knowledgeActivityLog{},
+	}
+
+	callProxy := func(claims knowledge.ProxyClaims, method string, params any) map[string]any {
+		resp := h.handleProxyRPC(t.Context(), settings, claims, agentToolRPCRequest{
+			JSONRPC: "2.0",
+			ID:      1,
+			Method:  method,
+			Params:  mustMarshalJSON(params),
+		})
+		raw, _ := json.Marshal(resp)
+		var out map[string]any
+		_ = json.Unmarshal(raw, &out)
+		return out
+	}
+
+	// 1. SOP proxy (no Ref) exposes search_knowledge and recalls from both LightCloud and WeKnora
+	searchResp := callProxy(
+		knowledge.ProxyClaims{RunID: "run-mix", NodeID: "n1", ProjectID: "proj-mix", AgentID: "a1", UserID: 1},
+		"tools/call",
+		map[string]any{"name": "search_knowledge", "arguments": map[string]any{"query": "q"}},
+	)
+	searchRaw, _ := json.Marshal(searchResp)
+	if !strings.Contains(string(searchRaw), "LC-Result") || !strings.Contains(string(searchRaw), "WK-Result") {
+		t.Fatalf("expected mixed results from both LightCloud and WeKnora: %s", searchRaw)
+	}
+
+	// 2. Bound ref pointing to deleted connection on a project with NO allowlist must return isError (unavailable), NOT {"results":[]}
+	delResp := callProxy(
+		knowledge.ProxyClaims{
+			RunID: "run-del", NodeID: "n1", ProjectID: "proj-mix", AgentID: "a1", UserID: 1,
+			Ref: &domain.KnowledgeRef{
+				ServerID: domain.KnowledgeMCPServerID,
+				Mode:     "allowlist",
+				Sources:  []string{"conn-deleted::kb-1"},
+			},
+		},
+		"tools/call",
+		map[string]any{"name": "search_knowledge", "arguments": map[string]any{"query": "q"}},
+	)
+	delRaw, _ := json.Marshal(delResp)
+	if !strings.Contains(string(delRaw), `"isError":true`) {
+		t.Fatalf("expected isError:true for deleted connection ref, got: %s", delRaw)
+	}
+}
+
 func mustMarshalJSON(v any) json.RawMessage {
 	b, _ := json.Marshal(v)
 	return b

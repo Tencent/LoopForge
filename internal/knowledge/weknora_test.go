@@ -4,12 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"agentflow/internal/apperr"
 	"agentflow/internal/domain"
@@ -469,5 +472,261 @@ func TestWeKnora_DualConnectionsManagementRouting(t *testing.T) {
 	}
 	if len(seenPaths) < 8 {
 		t.Fatalf("expected all management calls routed to connection 2, got %#v", seenPaths)
+	}
+}
+
+func TestWeKnora_HybridSearchBoundedConcurrencyAndCancel(t *testing.T) {
+	var inFlight atomic.Int32
+	var maxInFlight atomic.Int32
+	var totalStarted atomic.Int32
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		cur := inFlight.Add(1)
+		totalStarted.Add(1)
+		for {
+			prev := maxInFlight.Load()
+			if cur <= prev || maxInFlight.CompareAndSwap(prev, cur) {
+				break
+			}
+		}
+		time.Sleep(40 * time.Millisecond)
+		inFlight.Add(-1)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"success": true,
+			"data":    []map[string]any{{"id": "c1", "knowledge_id": "d1", "content": "ok", "score": 0.8}},
+		})
+	}))
+	defer srv.Close()
+
+	wc, err := NewWeKnoraClient(domain.KnowledgeSettings{URL: srv.URL, Token: "tok"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	kbs := make([]string, 10)
+	for i := range kbs {
+		kbs[i] = fmt.Sprintf("kb-%d", i)
+	}
+	hits, partialErrs, err := wc.HybridSearchDetailed(context.Background(), "q", kbs, 10)
+	if err != nil || len(partialErrs) != 0 || len(hits) == 0 {
+		t.Fatalf("HybridSearchDetailed failed: hits=%d partial=%v err=%v", len(hits), partialErrs, err)
+	}
+	if max := maxInFlight.Load(); max > weKnoraSearchConcurrency || max < 2 {
+		t.Fatalf("expected maxInFlight in [2, %d], got %d", weKnoraSearchConcurrency, max)
+	}
+
+	// Cancel context mid-flight: queued KBs must abort without running.
+	totalStarted.Store(0)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	_, partialErrs, _ = wc.HybridSearchDetailed(ctx, "q", kbs, 10)
+	if len(partialErrs) == 0 {
+		t.Fatal("expected cancellation errors in partialErrs")
+	}
+	if started := totalStarted.Load(); started >= 10 {
+		t.Fatalf("expected queued requests to cancel before all 10 started, got %d", started)
+	}
+}
+
+func TestExecuteReadDocument_InPageOffsetAndCrossPageFill(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasPrefix(r.URL.Path, "/api/v1/chunks/doc-1") {
+			http.NotFound(w, r)
+			return
+		}
+		page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+		pageSize, _ := strconv.Atoi(r.URL.Query().Get("page_size"))
+		if page <= 0 {
+			page = 1
+		}
+		if pageSize <= 0 {
+			pageSize = 20
+		}
+		const total = 50
+		start := (page - 1) * pageSize
+		end := start + pageSize
+		if end > total {
+			end = total
+		}
+		chunks := make([]map[string]any, 0, max(0, end-start))
+		for idx := start; idx < end; idx++ {
+			chunks = append(chunks, map[string]any{
+				"id":          fmt.Sprintf("chunk-%d", idx),
+				"chunk_index": idx,
+				"content":     fmt.Sprintf("body-%d", idx),
+			})
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"success": true,
+			"total":   total,
+			"data":    chunks,
+		})
+	}))
+	defer srv.Close()
+
+	store := newFakeStore()
+	store.settings = domain.KnowledgeSettings{
+		Enabled: true,
+		Connections: []domain.KnowledgeConnection{{
+			ID: "wk-1", Name: "WK", Provider: domain.KnowledgeProviderWeKnora, URL: srv.URL, Token: "tok", Enabled: true,
+		}},
+	}
+	svc := NewService(store, nil)
+
+	res, err := svc.ExecuteReadDocument(context.Background(), "p1", "wk-1::doc-1", "", 19, 20, 0, 0, "", false, ExecuteOptions{})
+	if err != nil {
+		t.Fatalf("ExecuteReadDocument: %v", err)
+	}
+	if res.Status != domain.KnowledgeStatusHit || res.Hits != 20 {
+		t.Fatalf("expected 20 hits with status %q, got status=%q hits=%d", domain.KnowledgeStatusHit, res.Status, res.Hits)
+	}
+	var parsed struct {
+		Chunks []struct {
+			ID         string `json:"id"`
+			ChunkIndex int    `json:"chunk_index"`
+		} `json:"chunks"`
+	}
+	if err := json.Unmarshal([]byte(res.Text), &parsed); err != nil {
+		t.Fatal(err)
+	}
+	if len(parsed.Chunks) != 20 || parsed.Chunks[0].ChunkIndex != 19 || parsed.Chunks[19].ChunkIndex != 38 {
+		t.Fatalf("expected chunk indices [19..38], got len=%d first=%d last=%d", len(parsed.Chunks), parsed.Chunks[0].ChunkIndex, parsed.Chunks[len(parsed.Chunks)-1].ChunkIndex)
+	}
+}
+
+func TestExecuteSearch_MixedProvidersGlobalScoreSortAndLimit(t *testing.T) {
+	// LightCloud MCP server (JSON-RPC)
+	lcSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Method string `json:"method"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		w.Header().Set("Content-Type", "application/json")
+		switch req.Method {
+		case "initialize":
+			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2024-11-05","capabilities":{},"serverInfo":{"name":"lc","version":"1.0"}}}`))
+		case "tools/call":
+			payload := `{"query":"q","mode":"hybrid","results":[{"source":"lc-kb","path":"a.md","title":"LC-Top","snippet":"s1","score":0.95},{"source":"lc-kb","path":"b.md","title":"LC-Low","snippet":"s2","score":0.40}]}`
+			resp, _ := json.Marshal(map[string]any{
+				"jsonrpc": "2.0", "id": 1,
+				"result": map[string]any{"content": []map[string]any{{"type": "text", "text": payload}}},
+			})
+			_, _ = w.Write(resp)
+		}
+	}))
+	defer lcSrv.Close()
+
+	// WeKnora REST server
+	wkSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/api/v1/knowledge-bases":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"success": true,
+				"data":    []map[string]any{{"id": "wk-kb", "name": "WK KB"}},
+			})
+		case strings.HasSuffix(r.URL.Path, "/hybrid-search"):
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"success": true,
+				"data": []map[string]any{
+					{"id": "c1", "knowledge_id": "d1", "knowledge_title": "WK-High", "content": "w1", "score": 0.85},
+					{"id": "c2", "knowledge_id": "d2", "knowledge_title": "WK-Mid", "content": "w2", "score": 0.70},
+				},
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer wkSrv.Close()
+
+	store := newFakeStore()
+	store.settings = domain.KnowledgeSettings{
+		Enabled: true,
+		Connections: []domain.KnowledgeConnection{
+			{ID: "lc-1", Name: "LightCloud", Provider: domain.KnowledgeProviderLightCloud, URL: lcSrv.URL, Token: "tok1", Enabled: true},
+			{ID: "wk-1", Name: "WeKnora", Provider: domain.KnowledgeProviderWeKnora, URL: wkSrv.URL, Token: "tok2", Enabled: true},
+		},
+	}
+	svc := NewService(store, nil)
+
+	out, execRes, err := svc.ExecuteSearch(context.Background(), "p1", "q", nil, 3, ExecuteOptions{})
+	if err != nil {
+		t.Fatalf("ExecuteSearch: %v", err)
+	}
+	if execRes.Status != domain.KnowledgeStatusHit || out.Status != domain.KnowledgeStatusHit {
+		t.Fatalf("expected status %q, got exec=%q out=%q", domain.KnowledgeStatusHit, execRes.Status, out.Status)
+	}
+	if len(out.Result.Results) != 3 {
+		t.Fatalf("expected limit=3 results, got %d", len(out.Result.Results))
+	}
+	gotTitles := []string{out.Result.Results[0].Title, out.Result.Results[1].Title, out.Result.Results[2].Title}
+	wantTitles := []string{"LC-Top", "WK-High", "WK-Mid"}
+	for i := range wantTitles {
+		if gotTitles[i] != wantTitles[i] {
+			t.Fatalf("sorted titles = %v, want %v", gotTitles, wantTitles)
+		}
+	}
+}
+
+func TestExecuteSearch_FourStatesConsistency(t *testing.T) {
+	okEmptySrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "data": []any{}})
+	}))
+	defer okEmptySrv.Close()
+
+	okHitSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"success": true,
+			"data":    []map[string]any{{"id": "c1", "knowledge_id": "d1", "knowledge_title": "Hit", "content": "ok", "score": 0.9}},
+		})
+	}))
+	defer okHitSrv.Close()
+
+	failSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "upstream down", http.StatusBadGateway)
+	}))
+	defer failSrv.Close()
+
+	// 1. True empty set -> 无匹配
+	s1 := newFakeStore()
+	s1.settings = domain.KnowledgeSettings{
+		Enabled:     true,
+		Connections: []domain.KnowledgeConnection{{ID: "wk-1", Provider: domain.KnowledgeProviderWeKnora, URL: okEmptySrv.URL, Token: "t", Enabled: true}},
+	}
+	svcEmpty := NewService(s1, nil)
+	out, res, err := svcEmpty.ExecuteSearch(context.Background(), "p1", "q", []string{"wk-1::kb1"}, 10, ExecuteOptions{})
+	if err != nil || res.Status != domain.KnowledgeStatusEmpty || out.Status != domain.KnowledgeStatusEmpty {
+		t.Fatalf("empty state mismatch: out=%q res=%q err=%v", out.Status, res.Status, err)
+	}
+
+	// 2. Partial failure (1 ok + 1 fail) -> 部分完成
+	s2 := newFakeStore()
+	s2.settings = domain.KnowledgeSettings{
+		Enabled: true,
+		Connections: []domain.KnowledgeConnection{
+			{ID: "wk-1", Name: "OK", Provider: domain.KnowledgeProviderWeKnora, URL: okHitSrv.URL, Token: "t", Enabled: true},
+			{ID: "wk-2", Name: "Fail", Provider: domain.KnowledgeProviderWeKnora, URL: failSrv.URL, Token: "t", Enabled: true},
+		},
+	}
+	svcPartial := NewService(s2, nil)
+	out, res, err = svcPartial.ExecuteSearch(context.Background(), "p1", "q", []string{"wk-1::kb1", "wk-2::kb2"}, 10, ExecuteOptions{})
+	if err != nil || res.Status != domain.KnowledgeStatusPartial || !out.Result.Degraded || res.Warning == "" {
+		t.Fatalf("partial state mismatch: out=%+v res=%+v err=%v", out, res, err)
+	}
+
+	// 3. All fail -> 不可用
+	s3 := newFakeStore()
+	s3.settings = domain.KnowledgeSettings{
+		Enabled:     true,
+		Connections: []domain.KnowledgeConnection{{ID: "wk-2", Name: "Fail", Provider: domain.KnowledgeProviderWeKnora, URL: failSrv.URL, Token: "t", Enabled: true}},
+	}
+	svcFail := NewService(s3, nil)
+	_, res, err = svcFail.ExecuteSearch(context.Background(), "p1", "q", []string{"wk-2::kb2"}, 10, ExecuteOptions{})
+	if err == nil || res.Status != domain.KnowledgeStatusUnavailable {
+		t.Fatalf("all-fail state mismatch: res=%+v err=%v", res, err)
+	}
+
+	// 4. Bound to deleted connection (even with no project allowlist) -> 不可用 (never empty results)
+	_, res, err = svcEmpty.ExecuteSearch(context.Background(), "p1", "q", []string{"wk-deleted::kb1"}, 10, ExecuteOptions{})
+	if err == nil || res.Status != domain.KnowledgeStatusUnavailable {
+		t.Fatalf("deleted-connection state mismatch: res=%+v err=%v", res, err)
 	}
 }

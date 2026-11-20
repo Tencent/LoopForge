@@ -35,19 +35,11 @@ func referenceTools(ctx context.Context, d *deps, project string, uid int64, ref
 		if !s.Ready() {
 			return nil, nil, knowledge.ErrNotConfigured
 		}
-		c, err := knowledge.NewUpstream(s)
+		tools, err := knowledge.ReadOnlyToolsForSettings(ctx, s)
 		if err != nil {
 			return nil, nil, err
 		}
-		tools, err := c.Tools(ctx)
-		isWeKnora := s.EffectiveProvider() == domain.KnowledgeProviderWeKnora
-		out := []mcpclient.Tool{}
-		for _, tool := range tools {
-			if (isWeKnora && knowledge.IsWeKnoraReadOnlyTool(tool.Name)) || (!isWeKnora && knowledge.IsReadOnlyTool(tool.Name)) {
-				out = append(out, tool)
-			}
-		}
-		return out, nil, err
+		return tools, nil, nil
 	}
 	server, ok := d.repo.MCPServer(ref.ServerID)
 	if !ok || len(assistantOutboundMCPServers([]domain.MCPServerDefinition{server}, project, uid)) != 1 || server.Transport != "http" {
@@ -103,20 +95,17 @@ func callKnowledgeReference(ctx context.Context, d *deps, project string, uid in
 		if !settings.Ready() {
 			return "", 0, knowledge.ErrNotConfigured
 		}
-		if len(ref.Sources) > 0 {
-			scoped, err := knowledge.ScopeSources(settings.SourcesForProject(project), ref.Sources)
-			if err != nil || len(scoped) == 0 {
-				return "", 0, fmt.Errorf("所选知识库范围已失效")
-			}
-			settings.ProjectSources = map[string][]string{project: scoped}
+		res, err := knowledge.NewService(d.repo, nil).ExecuteTool(ctx, project, name, args, knowledge.ExecuteOptions{ScopeOverride: ref.Sources})
+		if err != nil {
+			return "", 0, err
 		}
-		text, hits, err := (&knowledgeHandlers{deps: d}).callScoped(ctx, settings, project, name, args)
-		if err == nil && hits == 0 {
-			if _, parsedHits := extractKnowledgeResultMeta(text); parsedHits > 0 {
+		hits := res.Hits
+		if hits == 0 {
+			if _, parsedHits := extractKnowledgeResultMeta(res.Text); parsedHits > 0 {
 				hits = parsedHits
 			}
 		}
-		return text, hits, err
+		return res.Text, hits, nil
 	}
 	return "", 0, fmt.Errorf("知识服务未开放该只读工具")
 }
