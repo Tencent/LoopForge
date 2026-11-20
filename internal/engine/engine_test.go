@@ -2974,6 +2974,16 @@ func TestShouldRecordLogSkipsModelGeneration(t *testing.T) {
 	}
 }
 
+func TestConfiguredIsolatedImageDoesNotAnnounceABuild(t *testing.T) {
+	t.Setenv("AGENTFLOW_ISOLATED_IMAGE", "loopforge.test/isolated:missing")
+	snap := &domain.RunnerSandboxSpec{Dockerfile: &domain.DockerfileDefinition{
+		Content: runtime.IsolatedDockerfile,
+	}}
+	if dockerImageNeedsBuild(context.Background(), snap) {
+		t.Fatal("the configured isolated image is inspected, so it cannot start a build")
+	}
+}
+
 func TestDockerImageBuildNotice(t *testing.T) {
 	t.Parallel()
 	if dockerImageBuildLabel(nil) != "沙箱镜像" {
