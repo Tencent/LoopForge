@@ -1997,7 +1997,7 @@ func TestAgentPageListAndTabbedModal(t *testing.T) {
 		"function persistAgent(",
 		"function openAgentWizard(",
 		"state.genericTemplateAgents",
-		"openAgentWizard(agent,2)",
+		"function applyAgentRoute(",
 	} {
 		if !strings.Contains(app, want) {
 			t.Fatalf("app bundle is missing agent page wiring %q", want)
