@@ -52,10 +52,8 @@ func countingBool(b bool) int {
 	return 0
 }
 
-// Reproduces the hypothesis: a finished execution is counted, then pruned from
-// the 200-row history, then the same terminal state is replayed for the same
-// execution ID. The prior status is gone with the row, so PutScheduleJobExecution
-// treats it as a brand-new execution and increments the hourly bucket again.
+// A finished execution's counting key survives the 200-row history cap, so
+// replaying its terminal record cannot increment counts, usage or cost again.
 func TestScheduleExecutionPrunedTerminalReplayCountsOnce(t *testing.T) {
 	for _, status := range []string{"failed", "success"} {
 		t.Run(status, func(t *testing.T) {
@@ -67,6 +65,9 @@ func TestScheduleExecutionPrunedTerminalReplayCountsOnce(t *testing.T) {
 			jobID := newExecutionCountingJob(t, st, "audit-replay")
 			now := time.Now().UTC()
 			target := putCountingExecution(t, st, jobID, "target", now.Add(-2*time.Hour))
+			target.Usage = &domain.TokenUsage{InputTokens: 80, OutputTokens: 20, TotalTokens: 100, CacheReadTokens: 6, CacheWriteTokens: 1, CostUSD: 0.5}
+			costCNY := 0.5 * domain.AnalyticsUSDToCNY
+			target.CostCNY = &costCNY
 			finishCountingExecution(t, st, target, status)
 
 			if cur, _ := st.ScheduleJobExecutionOverview([]string{jobID}, now); cur.Finished != 1 {
@@ -97,6 +98,9 @@ func TestScheduleExecutionPrunedTerminalReplayCountsOnce(t *testing.T) {
 			wantFailed, wantSuccess := countingBool(status == "failed"), countingBool(status == "success")
 			if cur.Finished != 1 || cur.Failed != wantFailed || cur.Success != wantSuccess {
 				t.Fatalf("REPRODUCED double count: replayed pruned %s execution counted twice: stat.Finished=%d stat.Failed=%d stat.Success=%d overview=%+v", status, stat.Finished, stat.Failed, stat.Success, cur)
+			}
+			if stat.Metered != 1 || stat.TokensTotal != 100 || stat.TokensInput != 80 || stat.TokensOutput != 20 || stat.TokensCacheRead != 6 || stat.TokensCacheWrite != 1 || stat.Priced != 1 || stat.CostUSD != 0.5 {
+				t.Fatalf("terminal replay duplicated usage/cost: %+v", stat)
 			}
 		})
 	}
