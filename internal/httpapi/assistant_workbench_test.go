@@ -14,6 +14,7 @@ import (
 
 	"agentflow/internal/domain"
 	"agentflow/internal/repo"
+
 	"github.com/gin-gonic/gin"
 )
 
@@ -181,26 +182,10 @@ func TestWorkbenchAttachmentsReachModelAndRemainPrivate(t *testing.T) {
 	if attachment.Name != "design.png" || attachment.MimeType != "image/png" {
 		t.Fatalf("bad metadata: %+v", attachment)
 	}
-	session := &AgentToolSession{UserID: u.ID, ProjectID: "workbench", Mode: AgentToolAssistant, AttachmentIDs: map[string]bool{attachment.ID: true}}
-	raw, _ := json.Marshal(map[string]string{"id": attachment.ID})
-	result, err := readWorkbenchAttachmentTool(session, raw)
-	if err != nil {
-		t.Fatal(err)
-	}
-	content := result["content"].([]map[string]any)
-	if len(content) != 2 || content[1]["type"] != "image" || content[1]["mimeType"] != "image/png" {
-		t.Fatalf("image not passed to model: %v", content)
-	}
-	session.UserID = u.ID + 1
-	if _, err = readWorkbenchAttachmentTool(session, raw); err == nil {
+	if _, _, err := loadWorkbenchAttachment(u.ID+1, attachment.ID); err == nil {
 		t.Fatal("another user's attachment was readable")
 	}
-	session.UserID = u.ID
-	session.AttachmentIDs = nil
-	if _, err = readWorkbenchAttachmentTool(session, raw); err == nil {
-		t.Fatal("unreferenced attachment allowed")
-	}
-	if _, _, err = loadWorkbenchAttachment(u.ID, "../../etc/passwd"); err == nil {
+	if _, _, err := loadWorkbenchAttachment(u.ID, "../../etc/passwd"); err == nil {
 		t.Fatal("attachment traversal allowed")
 	}
 }

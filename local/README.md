@@ -1,5 +1,9 @@
 # LoopForge Local
 
+> **旧版（Legacy）。** 已发布的 `loopforge-cli` 版本仍可安装。平台项目和 SOP 可通过 [LoopForge MCP](https://github.com/Tencent/LoopForge/blob/main/docs/local/usage.zh-CN.md#通过-mcp-连接-loopforge) 接入。
+>
+> **Legacy.** Previously published versions of `loopforge-cli` remain available. To work with platform projects and SOPs, [connect to LoopForge over MCP](https://github.com/Tencent/LoopForge/blob/main/docs/local/usage.md#connect-to-loopforge-with-mcp).
+
 LoopForge 的本地工作流组件，在 CodeBuddy、Codex、Cursor、Claude Code、Pi、DeepSeek Harness 或 Hermes Agent 中使用，无需启动平台。
 
 Local workflows for LoopForge, running inside an existing coding assistant without the platform server.
@@ -15,8 +19,10 @@ Classic 工作流会配置 Agent 执行权限与 Hook。使用前请检查安装
 ```bash
 # Run in the project where you want to install the workflow.
 # 在需要使用工作流的目标项目中运行。
-npx -y loopforge-cli@latest install claude
-npx -y loopforge-cli@latest status claude
+# Replace X.Y.Z with the published version for your setup.
+# 将 X.Y.Z 替换为与你的环境匹配的已发布版本。
+npx -y loopforge-cli@X.Y.Z install claude
+npx -y loopforge-cli@X.Y.Z status claude
 ```
 
 Start with `/start-devflow "<request>"` in Claude Code. Replace `claude` with `codebuddy`, `codex`, or `cursor` when installing for another host; use `skills install pi`, `skills install dsh`, or `skills install hermes` for Portable hosts. DSH uses `/devflow "<request>"` after installing the Skill, and the optional DSH plugin adds `/loopforge` task controls. Hermes loads the project skill after `hermes skills trust .`; its optional native plugin adds the same `/loopforge` controls.
@@ -27,8 +33,8 @@ Start with `/start-devflow "<request>"` in Claude Code. Replace `claude` with `c
 - [Classic / Portable](https://github.com/Tencent/LoopForge/blob/main/docs/local/editions.md)
 - [项目首页 / Project](https://github.com/Tencent/LoopForge) · [贡献 / Contributing](https://github.com/Tencent/LoopForge/blob/main/CONTRIBUTING.md)
 
-当前运行内置的本地工作流，平台 SOP 导入与独立执行属于后续能力。已有包名 `loopforge-cli`、`devflow-workflow` 和 `loopforge` 命令保持兼容。
+已有包名 `loopforge-cli`、`devflow-workflow` 和 `loopforge` 命令保持兼容。
 
-Platform SOP import and standalone execution are planned. Existing package names and commands remain compatible.
+Existing package names and commands remain compatible.
 
 Third-party notices are maintained at the repository root. Packaging generates a local notice and includes it with `LICENSE` in npm, Python and release archives. Project policies and release history are shared at the repository root.

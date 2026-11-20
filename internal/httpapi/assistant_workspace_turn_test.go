@@ -20,6 +20,7 @@ import (
 	"agentflow/internal/repo"
 	"agentflow/internal/runtime"
 	"agentflow/internal/tracker"
+
 	"github.com/go-sql-driver/mysql"
 )
 
@@ -177,6 +178,14 @@ func TestAssistantWorkspaceTurnRetriesTransientRenewFailure(t *testing.T) {
 	}
 }
 
+// turnSandbox is the environment of a workspaceTurnFixture workspace.
+func turnSandbox(runID string) string {
+	if strings.HasSuffix(runID, "-second") {
+		return runID + "-sandbox"
+	}
+	return strings.TrimSuffix(runID, "-first") + "-sandbox"
+}
+
 func workspaceTurnFixture(t *testing.T) (*assistantHandlers, domain.User, *AgentToolSession, *agentToolGateway, []string) {
 	t.Helper()
 	t.Setenv("AGENTFLOW_ASSISTANT_SESSION_DIR", t.TempDir())
@@ -210,9 +219,14 @@ func workspaceTurnFixture(t *testing.T) (*assistantHandlers, domain.User, *Agent
 	if err := st.PutSandbox(profile); err != nil {
 		t.Fatal(err)
 	}
+	// Each workspace runs in its own environment: the conversation switches
+	// between them by environment.
+	if err := st.PutSandbox(domain.SandboxProfile{ID: id + "-second-sandbox", ProjectID: id, Name: "Workspace turn test 2", Driver: "local"}); err != nil {
+		t.Fatal(err)
+	}
 	ids := []string{id + "-first", id + "-second"}
 	for _, rid := range ids {
-		run := domain.Run{ID: rid, Kind: domain.RunKindWorkspace, Status: "waiting", WorkflowSnapshot: domain.WorkflowDefinition{SandboxProfileID: profile.ID}, ExecutionContext: domain.TelemetryContext{ProjectID: id}, Nodes: map[string]*domain.NodeRun{}}
+		run := domain.Run{ID: rid, Kind: domain.RunKindWorkspace, Status: "waiting", WorkflowSnapshot: domain.WorkflowDefinition{SandboxProfileID: turnSandbox(rid)}, ExecutionContext: domain.TelemetryContext{ProjectID: id}, Nodes: map[string]*domain.NodeRun{}}
 		if err := st.PutRun(run); err != nil {
 			t.Fatal(err)
 		}
@@ -227,7 +241,7 @@ func workspaceTurnFixture(t *testing.T) (*assistantHandlers, domain.User, *Agent
 		t.Fatal(err)
 	}
 	for _, rid := range []string{ids[1], ids[0]} {
-		if err := st.SetAssistantSessionWorkspaceRun(user.ID, id, rid, true); err != nil {
+		if err := st.SetAssistantSessionWorkspaceRun(user.ID, id, id, rid, true); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -254,6 +268,20 @@ func workspaceTurnFixture(t *testing.T) (*assistantHandlers, domain.User, *Agent
 	gateway := &agentToolGateway{deps: h.deps}
 	gateway.api = New(st, en, tracker.NewService(), "", "")
 	return h, user, s, gateway, ids
+}
+
+// workspaceTestEdit edits a file the way a workspace CLI does: within the
+// turn's lease on the bound workspace, straight on disk.
+func workspaceTestEdit(ctx context.Context, gateway *agentToolGateway, s *AgentToolSession, path, content string) error {
+	if _, err := gateway.callMainBotWorkspace(ctx, s, "workbench_workspace_tree", map[string]any{}); err != nil {
+		return err
+	}
+	run, _ := gateway.repo.RunState(s.workspaceRun())
+	root, reason := gateway.engine.LocalRunWorkspace(run)
+	if reason != "" {
+		return errors.New(reason)
+	}
+	return os.WriteFile(filepath.Join(root, path), []byte(content), 0o600)
 }
 
 func workspaceTurnCheckpointText(t *testing.T, h *assistantHandlers, id string) string {
@@ -292,11 +320,11 @@ func TestAssistantWorkspaceTurnCheckpointsOnlyOnSwitchAndEnd(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	before := "before"
 	for _, text := range []string{"edit-one", "edit-two", "final-first"} {
-		call("read", map[string]any{"path": "note.txt"})
-		call("write", map[string]any{"path": "note.txt", "content": text, "expectedSha256": runtime.WorkspaceContentSHA(before)})
-		before = text
+		call("tree", map[string]any{})
+		if err := workspaceTestEdit(context.Background(), gateway, s, "note.txt", text); err != nil {
+			t.Fatal(err)
+		}
 		meta, _ := h.repo.WorkspaceCheckpoint(ids[0])
 		if meta.LeaseToken == "" || meta.SavedAt != nil {
 			t.Fatalf("tool released its lease or took a checkpoint: %+v", meta)
@@ -306,7 +334,7 @@ func TestAssistantWorkspaceTurnCheckpointsOnlyOnSwitchAndEnd(t *testing.T) {
 	release := s.workspaceTurn.lockOperation()
 	switched := make(chan error, 1)
 	go func() {
-		_, err := gateway.bindConversationWorkspace(context.Background(), s, workspaceOpenChoice{WorkspaceRunID: ids[1]})
+		_, err := gateway.bindConversationWorkspace(context.Background(), s, workspaceOpenChoice{SandboxID: turnSandbox(ids[1])})
 		switched <- err
 	}()
 	select {
@@ -325,12 +353,14 @@ func TestAssistantWorkspaceTurnCheckpointsOnlyOnSwitchAndEnd(t *testing.T) {
 	if _, err := gateway.callMainBotWorkspace(oldScope, s, "workbench_workspace_tree", nil); err == nil {
 		t.Fatal("an open racing another switch read the wrong workspace")
 	}
-	call("write", map[string]any{"path": "note.txt", "content": "final-second", "expectedSha256": runtime.WorkspaceContentSHA("before")})
+	if err := workspaceTestEdit(context.Background(), gateway, s, "note.txt", "final-second"); err != nil {
+		t.Fatal(err)
+	}
 	meta, _ := h.repo.WorkspaceCheckpoint(ids[1])
 	if meta.SavedAt != nil {
 		t.Fatal("tool in the new workspace took a premature checkpoint")
 	}
-	if _, err := gateway.bindConversationWorkspace(context.Background(), s, workspaceOpenChoice{WorkspaceRunID: ids[1]}); err != nil {
+	if _, err := gateway.bindConversationWorkspace(context.Background(), s, workspaceOpenChoice{SandboxID: turnSandbox(ids[1])}); err != nil {
 		t.Fatal(err)
 	}
 	meta, _ = h.repo.WorkspaceCheckpoint(ids[1])
@@ -365,7 +395,7 @@ func TestAssistantWorkspaceTurnGenerationAlwaysCheckpoints(t *testing.T) {
 				if session == nil || session.workspaceTurn == nil {
 					return "", errors.New("generation did not own its workspace lifetime")
 				}
-				if _, err := gateway.callMainBotWorkspace(ctx, session, "workbench_workspace_write", map[string]any{"path": "note.txt", "content": outcome, "expectedSha256": runtime.WorkspaceContentSHA("before")}); err != nil {
+				if err := workspaceTestEdit(ctx, gateway, session, "note.txt", outcome); err != nil {
 					return "", err
 				}
 				meta, _ := h.repo.WorkspaceCheckpoint(ids[0])
@@ -450,13 +480,13 @@ func (e *workspaceTurnCheckpointBarrier) EndConversationWorkspaceUseAsync(ctx co
 // workspace keeps its files for the idle sweep, which saves before reclaiming.
 func TestAssistantWorkspaceTurnSwitchesDespiteFailedCheckpoint(t *testing.T) {
 	h, _, s, gateway, ids := workspaceTurnFixture(t)
-	if _, err := gateway.callMainBotWorkspace(context.Background(), s, "workbench_workspace_read", map[string]any{"path": "note.txt"}); err != nil {
+	if _, err := gateway.callMainBotWorkspace(context.Background(), s, "workbench_workspace_tree", map[string]any{}); err != nil {
 		t.Fatal(err)
 	}
 	s.workspaceTurn.mu.Lock()
 	s.workspaceTurn.engine = &workspaceTurnCheckpointBarrier{assistantWorkspaceLeaseEngine: h.engine, err: errors.New("checkpoint exceeds size limit")}
 	s.workspaceTurn.mu.Unlock()
-	bound, err := gateway.bindConversationWorkspace(context.Background(), s, workspaceOpenChoice{WorkspaceRunID: ids[1]})
+	bound, err := gateway.bindConversationWorkspace(context.Background(), s, workspaceOpenChoice{SandboxID: turnSandbox(ids[1])})
 	if err != nil || bound.Previous != ids[0] || !strings.Contains(bound.CheckpointError, "exceeds size limit") {
 		t.Fatalf("a failed save blocked or hid the switch: %+v %v", bound, err)
 	}
@@ -475,14 +505,14 @@ func TestAssistantWorkspaceTurnSwitchesDespiteFailedCheckpoint(t *testing.T) {
 	if !pending {
 		t.Fatal("the unsaved old workspace would not be reported at turn end")
 	}
-	if _, err := gateway.callMainBotWorkspace(context.Background(), s, "workbench_workspace_read", map[string]any{"path": "note.txt"}); err != nil {
+	if _, err := gateway.callMainBotWorkspace(context.Background(), s, "workbench_workspace_tree", map[string]any{}); err != nil {
 		t.Fatalf("the new workspace is unusable after the switch: %v", err)
 	}
 	// Switching back and saving it successfully resolves that warning.
-	if _, err := gateway.bindConversationWorkspace(context.Background(), s, workspaceOpenChoice{WorkspaceRunID: ids[0]}); err != nil {
+	if _, err := gateway.bindConversationWorkspace(context.Background(), s, workspaceOpenChoice{SandboxID: turnSandbox(ids[0])}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := gateway.callMainBotWorkspace(context.Background(), s, "workbench_workspace_read", map[string]any{"path": "note.txt"}); err != nil {
+	if _, err := gateway.callMainBotWorkspace(context.Background(), s, "workbench_workspace_tree", map[string]any{}); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.workspaceTurn.close(context.Background()); err != nil {
@@ -508,14 +538,14 @@ func TestAssistantWorkspaceTurnNewWorkspaceSurvivesFailedSave(t *testing.T) {
 		}
 		return ids
 	}
-	first, err := gateway.bindConversationWorkspace(context.Background(), s, workspaceOpenChoice{Goal: "first"})
+	first, err := gateway.bindConversationWorkspace(context.Background(), s, workspaceOpenChoice{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.workspaceTurn.lease(context.Background(), first.Run.ID); err != nil {
 		t.Fatal(err)
 	}
-	second, err := gateway.bindConversationWorkspace(context.Background(), s, workspaceOpenChoice{Goal: "second", New: true})
+	second, err := gateway.bindConversationWorkspace(context.Background(), s, workspaceOpenChoice{SandboxID: "business"})
 	if err != nil || !second.Created || second.Previous != first.Run.ID || !strings.Contains(second.CheckpointError, "exceeds size limit") {
 		t.Fatalf("a failed save blocked opening a new workspace: %+v %v", second, err)
 	}
@@ -532,7 +562,7 @@ func TestAssistantWorkspaceTurnNewWorkspaceSurvivesFailedSave(t *testing.T) {
 	if err := s.workspaceTurn.close(context.Background()); err == nil || !strings.Contains(err.Error(), first.Run.ID) {
 		t.Fatalf("the unsaved workspace was not reported at turn end: %v", err)
 	}
-	if _, err := gateway.bindConversationWorkspace(context.Background(), s, workspaceOpenChoice{Goal: "late", New: true}); !errors.Is(err, errAssistantTurnClosed) {
+	if _, err := gateway.bindConversationWorkspace(context.Background(), s, workspaceOpenChoice{SandboxID: "shared"}); !errors.Is(err, errAssistantTurnClosed) {
 		t.Fatalf("a finished turn opened a workspace: %v", err)
 	}
 	if runs := workspaceRuns(); len(runs) != 2 {
@@ -545,7 +575,7 @@ func TestAssistantWorkspaceTurnClosedRefusesSwitch(t *testing.T) {
 	if err := s.workspaceTurn.close(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := gateway.bindConversationWorkspace(context.Background(), s, workspaceOpenChoice{WorkspaceRunID: ids[1]}); !errors.Is(err, errAssistantTurnClosed) {
+	if _, err := gateway.bindConversationWorkspace(context.Background(), s, workspaceOpenChoice{SandboxID: turnSandbox(ids[1])}); !errors.Is(err, errAssistantTurnClosed) {
 		t.Fatalf("a finished turn switched workspaces: %v", err)
 	}
 	conv, _ := h.repo.AssistantSession(s.ChatOwnerID, s.ChatSessionID)
@@ -575,7 +605,7 @@ func TestAssistantWorkspaceTurnGenerationDoesNotWaitForCheckpoint(t *testing.T) 
 		session.workspaceTurn.mu.Lock()
 		session.workspaceTurn.engine = barrier
 		session.workspaceTurn.mu.Unlock()
-		_, err := gateway.callMainBotWorkspace(ctx, session, "workbench_workspace_write", map[string]any{"path": "note.txt", "content": "latest edit", "expectedSha256": runtime.WorkspaceContentSHA("before")})
+		err := workspaceTestEdit(ctx, gateway, session, "note.txt", "latest edit")
 		return "done", err
 	}
 	body, _ := json.Marshal(assistantRequest{SessionID: fixtureSession.ChatSessionID, ProjectID: fixtureSession.ProjectID, Messages: []assistantMessage{{Role: "user", Content: "edit"}}})
@@ -638,7 +668,7 @@ func TestAssistantCancelledGenerationDoesNotWaitForCheckpoint(t *testing.T) {
 		session.workspaceTurn.mu.Lock()
 		session.workspaceTurn.engine = barrier
 		session.workspaceTurn.mu.Unlock()
-		if _, err := gateway.callMainBotWorkspace(ctx, session, "workbench_workspace_write", map[string]any{"path": "note.txt", "content": "edit before stop", "expectedSha256": runtime.WorkspaceContentSHA("before")}); err != nil {
+		if err := workspaceTestEdit(ctx, gateway, session, "note.txt", "edit before stop"); err != nil {
 			return "", err
 		}
 		close(edited)

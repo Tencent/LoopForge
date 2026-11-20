@@ -15,6 +15,7 @@ import (
 	"agentflow/internal/domain"
 	"agentflow/internal/engine"
 	"agentflow/internal/runtime"
+
 	"github.com/gin-gonic/gin"
 )
 
@@ -48,14 +49,14 @@ func TestConversationSandboxSelectionFreezesIndependentWorkspace(t *testing.T) {
 	h, user, s := chatSandboxFixture(t)
 	gateway := agentToolGateway{deps: h.deps}
 	open := func(sandbox string) (domain.Run, bool, error) {
-		bound, err := gateway.bindConversationWorkspace(context.Background(), s, workspaceOpenChoice{Goal: "fix code", SandboxID: sandbox})
+		bound, err := gateway.bindConversationWorkspace(context.Background(), s, workspaceOpenChoice{SandboxID: sandbox})
 		return bound.Run, bound.Reused, err
 	}
 	if _, _, err := open("private"); err == nil || len(h.repo.Runs()) != 0 {
 		t.Fatalf("another project's private sandbox accepted: %v", err)
 	}
 	description := gateway.workspaceOpenDescriptorFor(s).Description
-	if !strings.Contains(description, "business：Business") || !strings.Contains(description, "shared：Shared") || strings.Contains(description, "private") || !strings.Contains(description, "- web") {
+	if !strings.Contains(description, "business：Business") || !strings.Contains(description, "shared：Shared") || strings.Contains(description, "private") || !strings.Contains(description, `"name":"web"`) {
 		t.Fatalf("choices not offered to the model: %s", description)
 	}
 	run, reused, err := open("business")
@@ -72,7 +73,7 @@ func TestConversationSandboxSelectionFreezesIndependentWorkspace(t *testing.T) {
 	df, _ := h.repo.Dockerfile("chat-df")
 	df.Content = "FROM busybox:1.36\n"
 	_ = h.repo.PutDockerfile(df)
-	again, reused, err := open("shared")
+	again, reused, err := open("")
 	if err != nil || !reused || again.ID != run.ID || again.WorkflowSnapshot.SandboxProfileID != "business" || again.WorkflowSnapshot.SandboxSnapshot.Dockerfile.Content != frozen {
 		t.Fatalf("frozen environment changed: %+v %v", again, err)
 	}
@@ -91,40 +92,6 @@ func TestConversationSandboxSelectionFreezesIndependentWorkspace(t *testing.T) {
 	override, _, err := open("shared")
 	if err != nil || override.WorkflowSnapshot.SandboxProfileID != "business" {
 		t.Fatalf("user selection ignored: %v", err)
-	}
-}
-
-func TestSelectConversationRepositories(t *testing.T) {
-	project := domain.Project{ID: "p", Name: "P", DefaultRepositoryID: "r2"}
-	all := []domain.Repository{
-		{ID: "r1", ProjectID: "p", Name: "web", GongfengProjectID: "team/web"},
-		{ID: "r2", ProjectID: "p", Name: "api", GongfengProjectID: "team/api-server"},
-		{ID: "other", ProjectID: "q", Name: "web"},
-	}
-	if _, err := selectConversationRepositories(domain.Project{ID: "none"}, all, nil, false); err == nil || !strings.Contains(err.Error(), "还没有配置代码仓库") {
-		t.Fatalf("no repository: %v", err)
-	}
-	ids := func(rcs []domain.RepositoryContext) string {
-		out := []string{}
-		for _, rc := range rcs {
-			out = append(out, rc.RepositoryID)
-		}
-		return strings.Join(out, ",")
-	}
-	if got, err := selectConversationRepositories(project, all, nil, false); err != nil || ids(got) != "r2,r1" {
-		t.Fatalf("all repositories, default first: %s %v", ids(got), err)
-	}
-	for want, id := range map[string]string{"WEB": "r1", "r2": "r2", "team/api-server": "r2", "api-server": "r2"} {
-		if got, err := selectConversationRepositories(project, all, []string{want}, false); err != nil || ids(got) != id {
-			t.Fatalf("%q => %s %v", want, ids(got), err)
-		}
-	}
-	if _, err := selectConversationRepositories(project, all, []string{"web", "missing"}, false); err == nil || !strings.Contains(err.Error(), "可选：web、api") {
-		t.Fatalf("unknown repository: %v", err)
-	}
-	run := domain.Run{Repositories: []domain.RepositoryContext{{RepositoryID: "r1", Name: "web"}}}
-	if got := missingRepositories(run, []string{"web", "api"}); len(got) != 1 || got[0] != "api" {
-		t.Fatalf("missing = %v", got)
 	}
 }
 
@@ -237,23 +204,12 @@ func TestStoredTriggerMessagesMayOnlyBeResentUnchanged(t *testing.T) {
 	}
 }
 
+// A conversation workspace is chosen by environment only: the same (or no)
+// environment keeps the bound workspace, another one switches to the
+// conversation's own workspace there or opens a new empty one.
 func TestMainBotSwitchesConversationWorkspaces(t *testing.T) {
 	h, user, s := chatSandboxFixture(t)
 	gateway := agentToolGateway{deps: h.deps}
-	for _, issue := range []domain.Issue{{ID: "chat-issue", ProjectID: "workbench", Title: "改首页"}, {ID: "idle-issue", ProjectID: "workbench", Title: "新需求"}} {
-		if err := h.repo.PutIssue(issue); err != nil {
-			t.Fatal(err)
-		}
-	}
-	web := domain.RepositoryContext{RepositoryID: "chat-repo", Name: "web", BaseBranch: "main", WorkBranch: "feature/issue-web"}
-	sop := domain.Run{ID: "issue-sop", Status: "succeeded", CreatedAt: time.Now().UTC(), Repository: web, Repositories: []domain.RepositoryContext{web}, ExecutionContext: domain.TelemetryContext{ProjectID: "workbench", IssueID: "chat-issue"}, Nodes: map[string]*domain.NodeRun{}}
-	older := sop
-	older.ID, older.CreatedAt = "issue-sop-old", sop.CreatedAt.Add(-time.Hour)
-	for _, run := range []domain.Run{older, sop} {
-		if err := h.repo.PutRun(run); err != nil {
-			t.Fatal(err)
-		}
-	}
 	bind := func(choice workspaceOpenChoice) conversationWorkspaceBinding {
 		t.Helper()
 		bound, err := gateway.bindConversationWorkspace(context.Background(), s, choice)
@@ -267,48 +223,36 @@ func TestMainBotSwitchesConversationWorkspaces(t *testing.T) {
 		return conv
 	}
 
-	// Nothing bound yet: the first open creates the conversation's own workspace.
-	first := bind(workspaceOpenChoice{Goal: "fix", SandboxID: "business"})
-	if !first.Created || !first.Run.IsWorkspace() || first.Previous != "" || stored().WorkspaceRunID != first.Run.ID || strings.Join(stored().OwnWorkspaceRunIDs, ",") != first.Run.ID {
+	// Nothing bound yet: the first open creates the conversation's own empty
+	// workspace; no repository is checked out for it.
+	first := bind(workspaceOpenChoice{SandboxID: "business"})
+	if !first.Created || !first.Run.IsWorkspace() || first.Previous != "" || len(first.Run.RepositoryContexts()) != 0 || stored().WorkspaceRunID != first.Run.ID || strings.Join(stored().OwnWorkspaceRunIDs, ",") != first.Run.ID {
 		t.Fatalf("first workspace = %+v, stored %+v", first, stored())
 	}
-	if again := bind(workspaceOpenChoice{Goal: "fix more"}); !again.Reused || again.Run.ID != first.Run.ID {
-		t.Fatalf("open without a target left the bound workspace: %+v", again)
+	if again := bind(workspaceOpenChoice{}); !again.Reused || again.Run.ID != first.Run.ID {
+		t.Fatalf("open without an environment left the bound workspace: %+v", again)
+	}
+	if again := bind(workspaceOpenChoice{SandboxID: "business"}); !again.Reused || again.Run.ID != first.Run.ID {
+		t.Fatalf("open in the same environment left the bound workspace: %+v", again)
 	}
 
-	// Switching to an issue that ran binds its newest SOP run, even after it
-	// succeeded, and releases the workspace it leaves.
-	onIssue := bind(workspaceOpenChoice{Goal: "改首页", IssueID: "chat-issue"})
-	if onIssue.Run.ID != sop.ID || onIssue.Previous != first.Run.ID || onIssue.Created || len(h.repo.Runs()) != 3 {
-		t.Fatalf("issue switch = %+v", onIssue)
+	// Another environment opens a new workspace and releases the one it leaves.
+	second := bind(workspaceOpenChoice{SandboxID: "shared"})
+	if !second.Created || second.Run.ID == first.Run.ID || second.Previous != first.Run.ID || second.Run.WorkflowSnapshot.SandboxProfileID != "shared" {
+		t.Fatalf("second workspace = %+v", second)
 	}
 	if meta, ok := h.repo.WorkspaceCheckpoint(first.Run.ID); !ok || !meta.Released() {
 		t.Fatalf("left workspace not released: %+v %v", meta, ok)
 	}
-	if conv := stored(); conv.WorkspaceRunID != sop.ID || len(conv.OwnWorkspaceRunIDs) != 1 {
-		t.Fatalf("issue binding not saved: %+v", conv)
-	}
-	if _, err := gateway.workspaceSubmitMR(context.Background(), s, map[string]any{"title": "fix"}); err == nil || !strings.Contains(err.Error(), "Git Token") {
-		t.Fatalf("a finished SOP workspace should reach delivery: %v", err)
-	}
 	// A later turn starts in the workspace the conversation was left on.
 	s.workspaceRunID = ""
 	loadTurnWorkspace(h.deps, s, stored())
-	if s.workspaceRun() != sop.ID {
+	if s.workspaceRun() != second.Run.ID {
 		t.Fatalf("next turn workspace = %q", s.workspaceRun())
 	}
 
-	if _, err := gateway.bindConversationWorkspace(context.Background(), s, workspaceOpenChoice{Goal: "x", IssueID: "idle-issue"}); err == nil || !strings.Contains(err.Error(), "还没跑过 SOP") {
-		t.Fatalf("an issue that never ran lent a workspace: %v", err)
-	}
-
-	// A different requirement may get a workspace of its own environment, and
-	// the conversation can switch back to the first one.
-	second := bind(workspaceOpenChoice{Goal: "新需求", New: true, SandboxID: "shared"})
-	if !second.Created || second.Run.ID == first.Run.ID || second.Previous != sop.ID || second.Run.WorkflowSnapshot.SandboxProfileID != "shared" {
-		t.Fatalf("second workspace = %+v", second)
-	}
-	back := bind(workspaceOpenChoice{Goal: "回到首页", WorkspaceRunID: first.Run.ID})
+	// Coming back to the first environment resumes its workspace.
+	back := bind(workspaceOpenChoice{SandboxID: "business"})
 	if back.Run.ID != first.Run.ID || back.Created || back.Reused || back.Previous != second.Run.ID {
 		t.Fatalf("switch back = %+v", back)
 	}
@@ -322,16 +266,21 @@ func TestMainBotSwitchesConversationWorkspaces(t *testing.T) {
 		t.Fatal("a workspace used again stays released")
 	}
 
-	// Another conversation's workspace cannot be bound by its id.
+	// Another conversation never resumes this conversation's workspaces.
 	if err := h.repo.PutAssistantSession(user.ID, domain.AssistantSession{ID: "other-chat", ProjectID: "workbench"}); err != nil {
 		t.Fatal(err)
 	}
 	other := &AgentToolSession{Mode: AgentToolAssistant, ProjectID: "workbench", UserID: user.ID, User: user, ChatSessionID: "other-chat", ChatOwnerID: user.ID}
-	if _, err := gateway.bindConversationWorkspace(context.Background(), other, workspaceOpenChoice{Goal: "x", WorkspaceRunID: first.Run.ID}); err == nil {
-		t.Fatal("bound another conversation's workspace")
+	if bound, err := gateway.bindConversationWorkspace(context.Background(), other, workspaceOpenChoice{SandboxID: "business"}); err != nil || !bound.Created || bound.Run.ID == first.Run.ID {
+		t.Fatalf("another conversation reused this workspace: %+v %v", bound, err)
 	}
-	if _, err := parseWorkspaceOpenChoice(map[string]any{"goal": "x", "issueId": "chat-issue", "new": true}); err == nil {
-		t.Fatal("two workspace targets accepted")
+	for _, args := range []map[string]any{{"goal": "x"}, {"issueId": "chat-issue"}, {"new": true}, {"repositories": []any{"web"}}, {"sandboxProfileId": 3}} {
+		if _, err := parseWorkspaceOpenChoice(args); err == nil {
+			t.Fatalf("open accepted %v", args)
+		}
+	}
+	if choice, err := parseWorkspaceOpenChoice(map[string]any{"sandboxProfileId": " shared "}); err != nil || choice.SandboxID != "shared" {
+		t.Fatalf("choice = %+v %v", choice, err)
 	}
 }
 
@@ -377,23 +326,24 @@ func TestTurnContextOffersWorkspacesAndLinksIssue(t *testing.T) {
 	}
 
 	note := h.workspaceTurnContext(req, user)
-	for _, want := range []string{"idle-issue「idle-issue」：没跑过 SOP", "old-running-sop（running）", "new-done-sop（succeeded）", "issueId", "new"} {
+	for _, want := range []string{"idle-issue「idle-issue」：没跑过 SOP", "old-running-sop（running）", "new-done-sop（succeeded）", "sandboxProfileId", "git clone"} {
 		if !strings.Contains(note, want) {
 			t.Fatalf("turn context lacks %q: %s", want, note)
 		}
 	}
-	if strings.Contains(note, "当前绑定") {
+	if strings.Contains(note, "当前绑定") || strings.Contains(note, "issueId") {
 		t.Fatalf("an unbound conversation reported a workspace: %s", note)
 	}
-	own, err := gateway.bindConversationWorkspace(context.Background(), s, workspaceOpenChoice{Goal: "改按钮"})
+	own, err := gateway.bindConversationWorkspace(context.Background(), s, workspaceOpenChoice{SandboxID: "business"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := gateway.bindConversationWorkspace(context.Background(), s, workspaceOpenChoice{Goal: "看运行", IssueID: "old-running"}); err != nil {
+	second, err := gateway.bindConversationWorkspace(context.Background(), s, workspaceOpenChoice{SandboxID: "shared"})
+	if err != nil {
 		t.Fatal(err)
 	}
 	note = h.workspaceTurnContext(&assistantRequest{ProjectID: "workbench", SessionID: "sandbox-chat", Messages: []assistantMessage{{Role: "user"}}}, user)
-	for _, want := range []string{"当前绑定的工作区：需求 old-running 的 SOP 运行 old-running-sop", "workbench_workspace_sop", own.Run.ID + "「改按钮」", "new-done-sop"} {
+	for _, want := range []string{"当前绑定的工作区：对话工作区 " + second.Run.ID + "（运行环境 shared", own.Run.ID + "（运行环境 business", "new-done-sop"} {
 		if !strings.Contains(note, want) {
 			t.Fatalf("turn context lacks %q: %s", want, note)
 		}
@@ -431,57 +381,6 @@ func TestDispatchFromConversationLinksIssue(t *testing.T) {
 	}
 }
 
-func TestMainBotPausesAndTakesOverIssueSOP(t *testing.T) {
-	h, _, s := chatSandboxFixture(t)
-	calls := []string{}
-	h.deps.api = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		calls = append(calls, r.Method+" "+r.URL.Path)
-		if strings.HasSuffix(r.URL.Path, "/pause") {
-			run, _ := h.repo.RunState("borrowed-sop")
-			run.Status = "waiting"
-			_ = h.repo.PutRun(run)
-			_, _ = h.repo.RequestRunPause(run.ID)
-		}
-		if strings.HasSuffix(r.URL.Path, "/cancel") {
-			run, _ := h.repo.RunState("borrowed-sop")
-			run.Status = "cancelled"
-			_ = h.repo.PutRun(run)
-		}
-		_, _ = w.Write([]byte(`{}`))
-	})
-	gateway := agentToolGateway{deps: h.deps}
-	web := domain.RepositoryContext{RepositoryID: "chat-repo", Name: "web", BaseBranch: "main", WorkBranch: "feature/sop-web"}
-	sop := domain.Run{ID: "borrowed-sop", Status: "running", Repository: web, Repositories: []domain.RepositoryContext{web}, ExecutionContext: domain.TelemetryContext{ProjectID: "workbench"}, Nodes: map[string]*domain.NodeRun{}}
-	if err := h.repo.PutRun(sop); err != nil {
-		t.Fatal(err)
-	}
-	s.workspaceRunID = sop.ID
-	ctx := context.Background()
-
-	if _, err := gateway.workspaceSubmitMR(ctx, s, map[string]any{"title": "fix"}); err == nil || !strings.Contains(err.Error(), "takeover") {
-		t.Fatalf("MR submitted from a running SOP workspace: %v", err)
-	}
-	if _, err := gateway.callMainBotWorkspace(ctx, s, "workbench_workspace_sop", map[string]any{"action": "resume"}); err == nil {
-		t.Fatal("resumed an SOP that was not paused")
-	}
-	if out, err := gateway.callMainBotWorkspace(ctx, s, "workbench_workspace_sop", map[string]any{"action": "pause"}); err != nil || !strings.Contains(out, `"handoff":true`) || !strings.Contains(out, assistantHandoffNotice) || s.requestedMode() != domain.AssistantModeWorkspace {
-		t.Fatalf("pause must hand off after the SOP stops: %s %v", out, err)
-	}
-	out, err := gateway.callMainBotWorkspace(ctx, s, "workbench_workspace_sop", map[string]any{"action": "takeover"})
-	if err != nil || !strings.Contains(out, "已结束") || !strings.Contains(out, `"handoff":true`) || !strings.Contains(out, assistantHandoffNotice) {
-		t.Fatalf("takeover = %s %v", out, err)
-	}
-	if want := []string{"POST /api/runs/borrowed-sop/pause", "POST /api/runs/borrowed-sop/cancel"}; strings.Join(calls, ",") != strings.Join(want, ",") {
-		t.Fatalf("run control calls = %v", calls)
-	}
-	if bound, err := gateway.bindConversationWorkspace(context.Background(), s, workspaceOpenChoice{Goal: "接着改"}); err != nil || !bound.Reused || bound.Run.ID != sop.ID || len(h.repo.Runs()) != 1 {
-		t.Fatalf("taken-over SOP workspace not kept: %+v %v", bound, err)
-	}
-	if _, err := gateway.workspaceSubmitMR(ctx, s, map[string]any{"title": "fix"}); err == nil || !strings.Contains(err.Error(), "Git Token") {
-		t.Fatalf("taken-over workspace should reach delivery: %v", err)
-	}
-}
-
 func TestOpeningSOPWorkspaceOnlyHandsOffWhenStopped(t *testing.T) {
 	for _, stopped := range []bool{false, true} {
 		t.Run(fmt.Sprint(stopped), func(t *testing.T) {
@@ -504,7 +403,7 @@ func TestOpeningSOPWorkspaceOnlyHandsOffWhenStopped(t *testing.T) {
 			}
 			s.workspaceRunID = run.ID
 			g := agentToolGateway{deps: h.deps}
-			out, err := g.openConversationWorkspace(context.Background(), s, map[string]any{"goal": "查看当前 SOP"})
+			out, err := g.openConversationWorkspace(context.Background(), s, map[string]any{})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -516,27 +415,5 @@ func TestOpeningSOPWorkspaceOnlyHandsOffWhenStopped(t *testing.T) {
 				t.Fatalf("SOP handoff notice and pending mode disagree: %s", out)
 			}
 		})
-	}
-}
-
-func TestWorkspaceSOPResumeHandsOffBeforeResuming(t *testing.T) {
-	h, _, s := chatSandboxFixture(t)
-	called := false
-	h.deps.api = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		called = true
-		_, _ = w.Write([]byte(`{}`))
-	})
-	run := domain.Run{ID: "resume-after-exit", Status: "waiting", PauseRequested: true, ExecutionContext: domain.TelemetryContext{ProjectID: s.ProjectID}}
-	if err := h.repo.PutRun(run); err != nil {
-		t.Fatal(err)
-	}
-	s.RuntimeMode, s.workspaceRunID = domain.AssistantModeWorkspace, run.ID
-	g := agentToolGateway{deps: h.deps}
-	out, err := g.controlConversationSOP(context.Background(), s, map[string]any{"action": "resume", "context": "已修改"})
-	if err != nil || called || !strings.Contains(out, `"handoff":true`) || !strings.Contains(out, assistantHandoffNotice) || s.requestedMode() != domain.AssistantModePlatform || s.modeAction == nil {
-		t.Fatalf("SOP resumed before CLI exit or omitted handoff: %s %v", out, err)
-	}
-	if err := s.modeAction(context.Background()); err != nil || !called {
-		t.Fatalf("deferred SOP resume failed: %v", err)
 	}
 }

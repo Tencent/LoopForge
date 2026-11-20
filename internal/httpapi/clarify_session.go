@@ -240,7 +240,7 @@ func prepareClarifyCommandWith(opts clarifyCommandOpts) (runtime.CommandSpec, er
 	if strings.TrimSpace(opts.MCPConfig) != "" {
 		command = command.WithMCPStartupWait(agentToolSessionMCPStartupWait)
 	}
-	return command, nil
+	return runtime.PromptOnStdin(command, opts.Prompt), nil
 }
 
 func appendDisallowedTools(argv []string, extra string) []string {

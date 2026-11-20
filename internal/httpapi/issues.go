@@ -389,6 +389,9 @@ func mergeIssueEdit(v, existing domain.Issue) domain.Issue {
 	if v.Kind == "" {
 		v.Kind = existing.Kind
 	}
+	if strings.TrimSpace(v.SOPMode) == "" {
+		v.SOPMode = existing.SOPMode
+	}
 	if v.AssigneeID == "" {
 		v.AssigneeID = existing.AssigneeID
 	}
@@ -791,7 +794,7 @@ func normalizeSOPBindings(store *repo.Store, projectID string, in []domain.Issue
 }
 
 func (h issuesHandlers) bindRequirementPlaybook(issue *domain.Issue) {
-	if issue == nil || !domain.IsRequirementWorkItem(*issue) {
+	if issue == nil || !domain.IsRequirementWorkItem(*issue) || issue.WithoutSOP() {
 		return
 	}
 	project, ok := h.repo.Project(issue.ProjectID)

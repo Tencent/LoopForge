@@ -19,10 +19,15 @@ assert.match(html, /maxlength="4000"/);
 assert.match(html, />先给结论 &lt;b&gt;&amp;<\/textarea>/, 'rules must be escaped inside the textarea');
 assert.match(html, /9 \/ 4000/);
 assert.match(html, /id="assistantPrefsSave" disabled/);
+assert.match(html, /<option value="queue" selected>排队<\/option>/, 'queue remains the default');
+assert.match(mb.assistantPrefsFormHTML({ steerOnSend: true }), /<option value="steer" selected>立即发送<\/option>/);
 
-const form = { proactiveRoles: { checked: true }, proactiveSops: { checked: false }, instructions: { value: '  先给结论  ' } };
+const form = { proactiveRoles: { checked: true }, proactiveSops: { checked: false }, messageDuringGeneration: { value: 'queue' }, instructions: { value: '  先给结论  ' } };
 mb.assistantPrefsUI.saved = { proactiveRoles: true, proactiveSops: false, instructions: '先给结论' };
 assert.equal(mb.assistantPrefsDirty(form), false, 'surrounding whitespace is not a change');
+form.messageDuringGeneration.value = 'steer';
+assert.equal(mb.assistantPrefsDirty(form), true, 'send behavior changes must be saved');
+form.messageDuringGeneration.value = 'queue';
 form.proactiveSops.checked = true;
 assert.equal(mb.assistantPrefsDirty(form), true);
 form.proactiveSops.checked = false;

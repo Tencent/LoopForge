@@ -4,6 +4,7 @@ import (
 	"agentflow/internal/domain"
 	"agentflow/internal/gitwork"
 	"agentflow/internal/procwatch"
+	"agentflow/internal/runtime"
 	"bytes"
 	"context"
 	"crypto/rand"
@@ -57,8 +58,8 @@ func repositoryWorkspaceDirs(workspace string, repositories []domain.RepositoryC
 // prepareRepositories checks out every run repository into its WorkspaceDir
 // (a first-level sub-directory of the run workspace).
 func prepareRepositories(ctx context.Context, workspace string, repositories []domain.RepositoryContext) error {
-	if len(repositories) == 0 {
-		return nil
+	if err := runtime.RestoreLegacyWorkspaceAgentConfig(ctx, workspace, repositories); err != nil {
+		return err
 	}
 	for _, rc := range repositories {
 		if err := prepareRepository(ctx, repositoryWorkspacePath(workspace, rc), rc); err != nil {

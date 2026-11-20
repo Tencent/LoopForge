@@ -99,6 +99,14 @@ func (h *agentToolGateway) handleRPC(ctx context.Context, session *AgentToolSess
 	if request.Method != "tools/call" && !validAgentToolToken(ctx, session) {
 		return &agentToolRPCResponse{JSONRPC: "2.0", ID: request.ID, Error: &agentToolRPCError{Code: -32602, Message: errAgentToolInvalidSession.Error()}}
 	}
+	if request.Method == "notifications/cancelled" {
+		// Streamable HTTP does not treat a dropped stream as cancellation;
+		// the CLI gives up on a call (e.g. its own tool timeout) with this
+		// notification. A call waiting for approval then ends and its card
+		// expires, so a late approval cannot write anymore.
+		session.cancelToolCall(cancelledRequestID(request.Params))
+		return nil
+	}
 	if strings.HasPrefix(request.Method, "notifications/") {
 		return nil
 	}
@@ -121,7 +129,11 @@ func (h *agentToolGateway) handleRPC(ctx context.Context, session *AgentToolSess
 	case "agentflow/nativeApproval":
 		result := h.approveNativeTool(ctx, session, request.Params)
 		return &agentToolRPCResponse{JSONRPC: "2.0", ID: request.ID, Result: result}
+	case agentGitCredentialMethod:
+		return &agentToolRPCResponse{JSONRPC: "2.0", ID: request.ID, Result: h.gitCredential(ctx, session, request.Params)}
 	case "tools/call":
+		ctx, done := session.trackToolCall(ctx, request.ID)
+		defer done()
 		result, err := h.callTool(ctx, session, request.Params)
 		if err != nil {
 			return &agentToolRPCResponse{JSONRPC: "2.0", ID: request.ID, Error: &agentToolRPCError{Code: -32602, Message: err.Error()}}
@@ -152,7 +164,7 @@ func agentToolInstructions(mode AgentToolMode) string {
 	case AgentToolClarify:
 		return "只读查询 LoopForge 及当前项目已安装的外部 MCP。本轮结束时调用 submit_clarification。"
 	case AgentToolAssistant:
-		return "只读查询平台和外部 MCP。写入放进 submit_assistant_reply 的草稿，用户确认后才保存。普通问答和只读查询直接用自然语言回复，无需调用提交工具。"
+		return "查询平台和当前项目已安装的外部 MCP。平台写入可通过 submit_assistant_reply 提交草稿。外部 MCP 写入直接调用，由网关按本轮审批模式处理。普通问答和只读查询直接用自然语言回复，无需调用提交工具。"
 	case AgentToolScheduled:
 		return "使用当前项目和个人已安装的 MCP 以及 agentflow__* 直接读写，写入立即生效。完成后用自然语言汇报。"
 	default:
@@ -267,11 +279,8 @@ func (h *agentToolGateway) callTool(ctx context.Context, session *AgentToolSessi
 		body, _ := json.Marshal(map[string]any{"name": op.Name, "description": op.Description, "inputSchema": mcpserver.ToolInputSchema(op)})
 		return map[string]any{"content": []map[string]any{{"type": "text", "text": string(body)}}}, nil
 	}
-	if name == "workbench_attachment_read" {
-		return readWorkbenchAttachmentTool(session, params.Arguments)
-	}
 	if name == "workbench_publish_artifact" {
-		return h.publishWorkbenchArtifact(session, params.Arguments)
+		return h.publishArtifact(ctx, session, params.Arguments)
 	}
 	catalog := h.buildCatalog(ctx, session)
 	tool, ok := lookupAgentTool(catalog, name)
@@ -358,12 +367,6 @@ func (h *agentToolGateway) dispatch(ctx context.Context, session *AgentToolSessi
 	if tool.Kind == "workspace" {
 		return h.callMainBotWorkspace(ctx, session, tool.Name, args)
 	}
-	// 轻量 GitHub 工具（agent_tool_github.go）：用请求人自己的 Git Token 直连
-	// GitHub，范围限定在当前项目已绑定的仓库。与 workspace 工具一样不走 drafts，
-	// 「帮我批准」时写操作在 callMainBotGitHub 里逐项过审查。
-	if tool.Kind == "github" {
-		return h.callMainBotGitHub(ctx, session, tool.Name, args)
-	}
 	if tool.Kind == "agentflow" {
 		if session.Mode == AgentToolClarify && !agentToolNameAllowed(AgentToolClarify, "agentflow", tool.UpstreamName) {
 			return "", errAgentToolForbidden
@@ -440,14 +443,15 @@ func (h *agentToolGateway) dispatch(ctx context.Context, session *AgentToolSessi
 		return "", errAgentToolForbidden
 	}
 	if session.Mode == AgentToolAssistant && mcpCallMayWrite(kind, call) {
-		// A write to an external MCP follows the conversation's approval
-		// mode like a platform write. It has no draft to confirm, so the
-		// confirm mode cannot run it.
 		name := mcpCallName(kind, call)
 		if !session.ExecMode.AutoWrite {
-			return "", fmt.Errorf("%s 会写入外部系统，当前审批模式需要逐项确认，而外部 MCP 写入没有待确认草稿。请让用户把审批模式切到「完全权限」或「帮我批准」后再试，或告诉用户要做的改动由其手动完成", name)
-		}
-		if session.ExecMode.ReviewWrites {
+			if err := h.waitForMCPWriteApproval(ctx, session, name, call); err != nil {
+				return "", err
+			}
+			if !h.nativeToolTurnActive(ctx, session) {
+				return "", errMCPApprovalExpired
+			}
+		} else if session.ExecMode.ReviewWrites {
 			review := reviewAssistantAction(ctx, name, mcpServerName(h, session, call.Server)+" MCP 写入外部系统", map[string]any{"server": call.Server, "tool": call.Tool, "arguments": call.Arguments})
 			if !review.allows() {
 				return "", assistantReviewRefusal(name, review)
@@ -471,7 +475,7 @@ func (h *agentToolGateway) dispatch(ctx context.Context, session *AgentToolSessi
 		}
 		return redactAgentToolResult(text, session.User), nil
 	}
-	text, err := asst.callAssistantMCP(session.User, session.ProjectID, call)
+	text, err := asst.callAssistantMCPContext(ctx, session.User, session.ProjectID, call)
 	if err != nil {
 		return "", err
 	}

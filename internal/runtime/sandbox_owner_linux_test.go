@@ -30,7 +30,6 @@ func TestDockerSandboxNativeOwner(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer sandbox.Close(context.Background())
-	defer os.RemoveAll(dockerIsolationMaskRoot(workspace))
 	want := fmt.Sprintf("%d:%d", os.Geteuid(), os.Getegid())
 	for _, provider := range []string{"", "script"} {
 		command := fmt.Sprintf(`test "$(id -u):$(id -g)" = %s && printf owner-ok > result.txt && grep -q '^CapEff:[[:space:]]*0000000000000000$' /proc/self/status && grep -q '^NoNewPrivs:[[:space:]]*1$' /proc/self/status`, want)

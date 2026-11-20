@@ -133,7 +133,7 @@ func (h *assistantHandlers) runTaskNow(c *gin.Context) {
 	user, ok := h.repo.User(current.ID)
 	task, err := loadAssistantTask(h.repo, current.ID, c.Param("id"))
 	engine, _ := assistantModelEngine(task.Model)
-	if key, _ := assistantEngineCredential(user, engine); !ok || key == "" {
+	if !ok || !scheduleHasPersonalCredential(h.repo, user, engine) {
 		msg := "请先在个人配置中配置自己的 CodeBuddy API Key"
 		if engine != assistantEngineCodeBuddy {
 			msg = assistantEngineMissingKey(engine)
@@ -222,49 +222,91 @@ func (h *assistantHandlers) executeAssistantTask(ctx context.Context, user domai
 	if strings.TrimSpace(task.ID) != "" {
 		_ = saveAssistantTask(h.repo, user.ID, *task)
 	}
+	engine, _ := assistantModelEngine(task.Model)
+	machine := scheduleLoginRunner(h.repo, user.ID, engine)
+	machineOffline := machine.ID != "" && machine.Status != domain.RunnerStatusOnline
 	fail := func(msg string) error {
+		if machineOffline {
+			msg = fmt.Sprintf("默认执行机器 %s 已离线。%s", firstNonEmpty(machine.Name, machine.ID), msg)
+		}
 		task.LastStatus, task.LastError = "error", msg
 		return errors.New(msg)
 	}
 
-	// The task's model picks the CLI; a scheduled run needs the runner's own
-	// key for it (no sponsor), checked before a conversation is opened.
-	engine, _ := assistantModelEngine(task.Model)
-	if key, _ := assistantEngineCredential(user, engine); key == "" {
-		if engine != assistantEngineCodeBuddy {
-			return fail(assistantEngineMissingKey(engine))
+	// Select the credential and machine before creating the conversation.
+	model := strings.TrimSpace(task.Model)
+	var target *domain.AssistantExecutionTarget
+	if machine.ID != "" && !machineOffline {
+		target = &domain.AssistantExecutionTarget{Pool: domain.ExecutionModeRunner, RunnerID: machine.ID}
+	} else {
+		if key, _ := assistantEngineCredential(user, engine); key == "" {
+			if machineOffline {
+				return fail(fmt.Sprintf("未配置 %s API Key。请启动 Runner，或在个人配置中填写 Key 后重试", assistantEngineLabel(engine)))
+			}
+			if engine != assistantEngineCodeBuddy {
+				return fail(assistantEngineMissingKey(engine))
+			}
+			return fail("未配置 CodeBuddy API Key")
 		}
-		return fail("未配置 CodeBuddy API Key")
-	}
-	model, err := scheduledRunModel(ctx, task.Model, user)
-	if err != nil {
-		return fail(err.Error())
+		var err error
+		if model, err = scheduledRunModel(ctx, model, user); err != nil {
+			return fail(err.Error())
+		}
 	}
 	cliEngine, _ := assistantModelEngine(model)
+	policy := scheduledSessionPolicyFrom(ctx)
 	prevSession := strings.TrimSpace(task.SessionID)
 	sessionID := newAssistantSessionID()
 	now := time.Now().UTC()
+	prompt := assistantMessage{Role: "user", Content: scheduledAssistantPrompt(*task, mode), AuthorID: user.ID, AuthorName: user.LoginName, CreatedAt: now}
+	pending := assistantConversation{ID: sessionID, Title: "定时 · " + task.Name, ProjectID: task.ProjectID, Model: model, Executor: cliEngine, ExecutionTarget: target, Source: origin.Source, TaskID: origin.TaskID, Messages: []assistantMessage{prompt}}
+	// A pinned conversation continues as long as it is still this job's
+	// conversation in this project; otherwise the run opens a new one, which
+	// becomes the pinned conversation.
+	if id := policy.Continue; id != "" {
+		if prev, ok := h.repo.AssistantSession(user.ID, id); ok && prev.Source == origin.Source && prev.TaskID == origin.TaskID && prev.ProjectID == task.ProjectID {
+			pending = prev
+			pending.Model, pending.Executor, pending.ExecutionTarget = model, cliEngine, target
+			pending.Messages = append(append([]assistantMessage{}, prev.Messages...), prompt)
+			sessionID = prev.ID
+		}
+	}
 	req := assistantRequest{
-		ApprovalMode: AssistantApprovalAuto,
-		ProjectID:    task.ProjectID,
-		SessionID:    sessionID,
-		Model:        model,
-		Executor:     cliEngine,
-		Messages:     []assistantMessage{{Role: "user", Content: scheduledAssistantPrompt(*task, mode), AuthorID: user.ID, AuthorName: user.LoginName, CreatedAt: now}},
+		ApprovalMode:    AssistantApprovalAuto,
+		ProjectID:       task.ProjectID,
+		SessionID:       sessionID,
+		Model:           model,
+		Executor:        cliEngine,
+		ExecutionTarget: target,
+		Messages:        pending.Messages,
 	}
 	g := domain.AssistantGeneration{StartedAt: now, ActorID: user.ID, ActorName: user.LoginName, ID: newAssistantSessionID(), SessionID: sessionID, UserID: user.ID, ProjectID: task.ProjectID, Status: "running", Events: []domain.AssistantGenerationEvent{}, MessageCount: len(req.Messages)}
-	pending := assistantConversation{ID: sessionID, Title: "定时 · " + task.Name, ProjectID: task.ProjectID, Model: model, Executor: cliEngine, Source: origin.Source, TaskID: origin.TaskID, Messages: req.Messages}
 	if err := h.repo.BeginAssistantGeneration(g, pending); err != nil {
-		_ = fail("无法创建定时任务会话")
+		if policy.Continue == sessionID {
+			_ = fail("固定会话正在使用中或已更新：" + err.Error())
+		} else {
+			_ = fail("无法创建定时任务会话")
+		}
 		return err
 	}
 	task.SessionID = sessionID
 	task.Model = model
-
+	if policy.Opened != nil {
+		policy.Opened(sessionID)
+	}
 	// Like a chat turn, a scheduled run has no time limit: it ends when the
 	// CLI finishes or someone stops it from the conversation page.
 	h.executeGeneration(ctx, req, g, domainUserToAuth(user))
-	return h.readScheduledTurn(user, task, g, len(req.Messages), prevSession, origin.TaskID)
+	if policy.KeepHistory {
+		// Schedule jobs keep every run's conversation for their execution
+		// records; the session janitor trims old ones.
+		prevSession, origin.TaskID = "", ""
+	}
+	err := h.readScheduledTurn(user, task, g, len(req.Messages), prevSession, origin.TaskID)
+	if err != nil && machineOffline {
+		return fail("使用个人 API Key 执行失败。" + err.Error())
+	}
+	return err
 }
 
 // readScheduledTurn reports the finished turn back onto the task. The reply
@@ -334,7 +376,7 @@ func scheduledAssistantPrompt(task assistantTask, mode assistantExecMode) string
 	prefix := "这是当前项目「" + task.ProjectID + "」下的无人值守定时任务「" + task.Name + "」。直接调用当前项目和个人已安装的 MCP，以及 agentflow__* 平台工具，读写立即生效。issues_save 把需求 id 放在 body.id（也可同时放 path.id）。" +
 		"运行期间没有人回答问题或确认操作：不要向用户提问或等待确认，有歧义时按最合理、影响最小的理解执行并在汇报里写明假设；某项条件不满足时跳过该项并说明原因，继续处理其余项。" +
 		"除非提示词明确要求，不要为完成任务新建或修改沙箱、角色、SOP、项目等平台配置。" +
-		"GitHub 的查看、审查、合并 PR 和关闭 Issue 使用 workbench_github_* 工具，不要在终端里读取令牌直接调用 GitHub API。" +
+		"要查看、审查、合并 GitHub 的 PR 或关闭 Issue 时，先调用 workbench_workspace_open 进入工作区，直接用 gh（平台按主机提供令牌），其他 API 用 git credential fill 按主机取令牌；不要在输出里打印令牌。" +
 		"全部完成后用自然语言汇报结果。"
 	if mode.DeferSOP {
 		prefix += " 不要调用 issues_dispatch、runs_start、schedule_jobs_run、schedule_jobs_save；需要派发 SOP 时请单独创建触发任务。"
@@ -435,7 +477,8 @@ func firstNonEmpty(values ...string) string {
 func scheduledRunModel(ctx context.Context, requested string, user domain.User) (string, error) {
 	requested = strings.TrimSpace(requested)
 	env := user.CodeBuddyInternetEnvironment
-	model := assistantAllowedUserModel(requested, loadAssistantModels(ctx, env), user)
+	catalog := withCodeBuddyPersonalModels(loadAssistantModels(ctx, env), user)
+	model := assistantAllowedUserModel(requested, catalog, user)
 	if requested == "" || model == requested {
 		return model, nil
 	}

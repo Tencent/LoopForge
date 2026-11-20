@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -159,5 +160,38 @@ func TestGateMCPHelperUpdatesWhileRunnerIdle(t *testing.T) {
 		if err != nil || string(got) != string(payload) {
 			t.Fatalf("helper %s = %q, %v", targetOS, got, err)
 		}
+	}
+}
+
+func TestRunnerUpdateDefersWhileWorkspaceRequestIsActive(t *testing.T) {
+	const updated = "new runner"
+	hash := sha256.Sum256([]byte(updated))
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("metadata") == "1" {
+			fmt.Fprintf(w, `{"sha256":%q}`, hex.EncodeToString(hash[:]))
+			return
+		}
+		_, _ = w.Write([]byte(updated))
+	}))
+	defer server.Close()
+	d, err := New(Config{ServerURL: server.URL, BootstrapToken: "fixture"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	binary := filepath.Join(t.TempDir(), "agentflow-runner")
+	if err := os.WriteFile(binary, []byte("old runner"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	d.updateMu.RLock()
+	installed, err := d.installRunnerUpdate(context.Background(), binary)
+	d.updateMu.RUnlock()
+	if installed || !errors.Is(err, errRunnerUpdateBusy) || d.updateReady.Load() {
+		t.Fatalf("update while workspace is active: installed=%t err=%v", installed, err)
+	}
+	if data, err := os.ReadFile(binary); err != nil || string(data) != "old runner" {
+		t.Fatalf("old executable was not preserved: %v", err)
+	}
+	if installed, err = d.installRunnerUpdate(context.Background(), binary); err != nil || !installed {
+		t.Fatalf("idle update: installed=%t err=%v", installed, err)
 	}
 }

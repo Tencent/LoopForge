@@ -142,6 +142,10 @@ func classifyAssistantFailureText(f domain.AssistantFailure, err error, text str
 		return false
 	}
 	switch {
+	case has("本机登录态"):
+		f.Code, f.Phase, f.Message, f.Suggestion = "RUNNER_LOGIN_REQUIRED", "setup", "执行机器上的 CLI 本机登录态不可用，请检查执行机器上的 CLI 登录", "请在运行 Runner 的系统账户下检查 CLI 登录，或切换到个人凭证。"
+	case has("执行机器需升级至"):
+		f.Code, f.Phase, f.Message, f.Suggestion = "EXECUTION_MACHINE_UPDATE_REQUIRED", "setup", "执行机器版本过低，请升级 Runner 后重试", "请升级执行机器上的 Runner 后重试。"
 	case has("insufficient_quota", "quota exceeded", "credit balance", "billing", "额度不足", "余额不足"):
 		f.Code, f.Phase, f.Message, f.Suggestion = "QUOTA_EXCEEDED", "provider", "模型服务额度不足，无法继续生成", "请检查模型服务的余额或额度。"
 	case has("rate limit", "rate_limit", "too many requests", "http 429", "status 429", "status code 429", "status=429"):

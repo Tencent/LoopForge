@@ -194,9 +194,12 @@ func (h *assistantHandlers) approvalReviewer(req assistantRequest, user domain.U
 			result = assistantApprovalReview{Outcome: "unavailable", Rationale: "自动审批已取消或超时，请手动确认后执行"}
 		}
 		if notify != nil {
-			state := "待确认"
-			if result.allows() {
+			state := "未通过"
+			switch {
+			case result.allows():
 				state = "已批准"
+			case result.Outcome != "allow" && result.Outcome != "deny":
+				state = "审查不可用"
 			}
 			notify(assistantStreamEvent{Kind: "status", Text: "帮我批准：" + state, Detail: result.Model + " · " + result.Rationale})
 		}

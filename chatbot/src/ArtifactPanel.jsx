@@ -206,6 +206,7 @@ export default function ArtifactPanel({
   const subagents = collectSubagents(
     chat?.session?.messages || [],
     live ? chat?.live?.activity || [] : [],
+    chat?.model || "",
   );
   // A new subagent is keyed by its dispatch until its agent ID arrives, so
   // an opened one is found by either.
@@ -344,6 +345,9 @@ export default function ArtifactPanel({
       subagentName(agent),
       agent.subagent,
       agent.agentId,
+      // Every dispatch's model: a resumed agent may have run on several.
+      ...Object.values(agent.models || {}),
+      agent.model,
       subagentStatus(agent, live).label,
       ...agent.dispatches.map((step) => step.detail),
       "子 Agent",
@@ -530,8 +534,8 @@ export default function ArtifactPanel({
             {selectedAgent ? (
               <>
                 <span className="artifact-node-title">{subagentName(selectedAgent)}</span>
-                <small className="node-header-meta" title={[selectedAgent.subagent, selectedAgent.agentId].filter(Boolean).join(" · ")}>
-                  {subagentStatus(selectedAgent, live).label}
+                <small className="node-header-meta" title={[selectedAgent.subagent, selectedAgent.agentId, selectedAgent.model].filter(Boolean).join(" · ")}>
+                  {[subagentStatus(selectedAgent, live).label, selectedAgent.model].filter(Boolean).join(" · ")}
                 </small>
               </>
             ) : null}
@@ -776,6 +780,7 @@ export default function ArtifactPanel({
                           <small>
                             <i className={`artifact-run-dot status-${{ done: "succeeded", running: "running", failed: "failed" }[status.tone] || "canceled"}`} />
                             {status.label}
+                            {agent.model ? ` · 模型 ${agent.model}` : ""}
                             {count > 1 ? ` · 派发 ${count} 次` : ""}
                             {agent.dispatches.at(-1)?.detail
                               ? ` · ${agent.dispatches.at(-1).detail}`

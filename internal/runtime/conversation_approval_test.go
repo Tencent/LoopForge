@@ -69,7 +69,7 @@ func TestConversationSupportsEveryRegisteredCLI(t *testing.T) {
 			if _, err := InstallConversationApproval(root, kind, command); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := conversationCLISetup(kind, conversationBinary(kind)); err != nil {
+			if _, err := dockerCLISetup(kind, conversationBinary(kind)); err != nil {
 				t.Fatal(err)
 			}
 		})
@@ -77,7 +77,7 @@ func TestConversationSupportsEveryRegisteredCLI(t *testing.T) {
 }
 
 func TestZCodeConversationSetupRequiresOfficialPreinstallation(t *testing.T) {
-	setup, err := conversationCLISetup(AgentCLIZCode, conversationBinary(AgentCLIZCode))
+	setup, err := dockerCLISetup(AgentCLIZCode, conversationBinary(AgentCLIZCode))
 	if err != nil || strings.Contains(setup, "npm install") || !strings.Contains(setup, "预装官方 ZCode CLI") {
 		t.Fatalf("ZCode must use its official preinstalled binary: %s: %v", setup, err)
 	}
@@ -181,20 +181,26 @@ func TestNativeHookDeniesWhenGatewayStaysUnavailable(t *testing.T) {
 	if _, err := exec.LookPath("python3"); err != nil {
 		t.Skip("python3 unavailable")
 	}
-	for name, respond := range map[string]http.HandlerFunc{
-		"unreachable": func(w http.ResponseWriter, r *http.Request) { http.Error(w, "relay down", http.StatusBadGateway) },
-		"pending": func(w http.ResponseWriter, r *http.Request) {
+	// An unreachable gateway ends after the retry budget; a pending approval
+	// keeps the gateway reachable and runs until the hard limit.
+	for name, tc := range map[string]struct {
+		respond http.HandlerFunc
+		atLeast time.Duration
+	}{
+		"unreachable": {respond: func(w http.ResponseWriter, r *http.Request) { http.Error(w, "relay down", http.StatusBadGateway) }},
+		"pending": {respond: func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{"result":{"pending":true}}`))
-		},
+		}, atLeast: 2500 * time.Millisecond},
 	} {
 		t.Run(name, func(t *testing.T) {
-			server := httptest.NewServer(respond)
+			server := httptest.NewServer(tc.respond)
 			defer server.Close()
 			script := filepath.Join(t.TempDir(), "hook.py")
-			short := strings.Replace(conversationApprovalPython, "time.monotonic()+"+conversationApprovalRetrySeconds, "time.monotonic()+1", 1)
-			if short == conversationApprovalPython {
-				t.Fatal("retry budget not found in hook")
+			short := strings.ReplaceAll(conversationApprovalPython, "time.monotonic()+"+conversationApprovalRetrySeconds, "time.monotonic()+2")
+			short = strings.ReplaceAll(short, "time.monotonic()+"+conversationApprovalLimitSeconds, "time.monotonic()+3")
+			if !strings.Contains(short, "time.monotonic()+2") || !strings.Contains(short, "time.monotonic()+3") {
+				t.Fatal("retry budget or limit not found in hook")
 			}
 			if err := os.WriteFile(script, []byte(short), 0600); err != nil {
 				t.Fatal(err)
@@ -208,8 +214,8 @@ func TestNativeHookDeniesWhenGatewayStaysUnavailable(t *testing.T) {
 			if !errors.As(err, &exit) || exit.ExitCode() != 2 || !strings.Contains(string(output), `"permissionDecision": "deny"`) {
 				t.Fatalf("hook did not deny after its budget: %s %v", output, err)
 			}
-			if elapsed := time.Since(began); elapsed > 5*time.Second {
-				t.Fatalf("hook outlived its retry budget: %s", elapsed)
+			if elapsed := time.Since(began); elapsed > 5*time.Second || elapsed < tc.atLeast {
+				t.Fatalf("hook ran %s", elapsed)
 			}
 		})
 	}
