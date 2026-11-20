@@ -567,6 +567,7 @@ describe("App", () => {
     const original = { projectId: chat.projectId, projects: chat.projects };
     const fetchBefore = globalThis.fetch;
     const user = userEvent.setup();
+    vi.useFakeTimers({ toFake: ["requestAnimationFrame", "cancelAnimationFrame"] });
     globalThis.fetch = vi.fn(async () => ({
       ok: true,
       status: 200,
@@ -579,6 +580,8 @@ describe("App", () => {
       const first = render(<App />);
       await waitFor(() => expect(screen.getByRole("textbox", { name: "消息" })).toHaveValue("@迁移需求 "));
       await user.click(screen.getByRole("button", { name: "操作确认方式" }));
+      // The handoff's focus request can run after the user opens the menu.
+      act(() => { vi.advanceTimersToNextFrame(); });
       await user.click(screen.getByRole("menuitemradio", { name: "完全权限" }));
       first.unmount();
 
@@ -590,6 +593,7 @@ describe("App", () => {
       await user.click(screen.getByRole("button", { name: "发送消息" }));
       expect(chat.send).toHaveBeenLastCalledWith(expect.objectContaining({ approvalMode: "confirm" }));
     } finally {
+      vi.useRealTimers();
       globalThis.fetch = fetchBefore;
       Object.assign(chat, original);
       history.replaceState({}, "", "/");
