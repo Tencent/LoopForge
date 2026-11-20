@@ -1,14 +1,17 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
-const state = vi.hoisted(() => ({ transcript: [], generation: null, generationGate: null, preferences: {} }));
+const state = vi.hoisted(() => ({ transcript: [], sessionSettings: {}, generation: null, generationGate: null, preferences: {} }));
 const { apiMock, writeMock } = vi.hoisted(() => {
   const apiMock = vi.fn(async (path) => {
     if (path === "/api/auth/current")
       return { user: { id: 1, loginName: "tester", codeBuddyApiKeyConfigured: true } };
     if (path === "/api/projects") return [{ id: "p1", name: "项目一", ownerId: 1, members: [1] }];
     if (path === "/api/assistant/models")
-      return { default: "m1", sponsoredModel: "m1", models: [{ id: "m1", name: "模型一" }] };
+      return { default: "m1", sponsoredModel: "m1", models: [
+        { id: "m1", name: "模型一" },
+        { id: "codex:gpt-5", engine: "codex", name: "GPT-5", efforts: ["high"] },
+      ] };
     if (path === "/api/assistant/preferences") return structuredClone(state.preferences);
     if (path === "/api/users") return [{ id: 1, loginName: "tester", codeBuddyApiKeyConfigured: true }];
     if (path === "/api/assistant/sessions") return [];
@@ -21,7 +24,8 @@ const { apiMock, writeMock } = vi.hoisted(() => {
       return structuredClone(state.generation);
     }
     if (path.startsWith("/api/assistant/sessions/"))
-      return { id: "s1", title: "排队", projectId: "p1", model: "m1", messages: structuredClone(state.transcript) };
+      return { id: "s1", title: "排队", projectId: "p1", model: "m1",
+        ...state.sessionSettings, messages: structuredClone(state.transcript) };
     return [];
   });
   const writeMock = vi.fn(async (path) => {
@@ -61,7 +65,7 @@ const steerPosts = () =>
 const emit = async (g) => {
   state.generation = g;
   await act(async () => {
-    sources[0].generation({ data: JSON.stringify(g) });
+    sources.at(-1).generation({ data: JSON.stringify(g) });
   });
 };
 const generationPosts = () =>
@@ -90,6 +94,7 @@ describe("sending while a reply runs", () => {
     localStorage.clear();
     history.replaceState({}, "", "/");
     state.transcript = [{ role: "user", content: "查失败节点" }];
+    state.sessionSettings = {};
     state.generation = { id: "g-running", status: "running", events: [{ sequence: 1, data: { kind: "tool", tool: "runs_get" } }] };
     state.generationGate = null;
     state.preferences = {};
@@ -142,6 +147,28 @@ describe("sending while a reply runs", () => {
     unmount();
   });
 
+  test("an explicitly resumed queue uses request approval after binding its conversation to a project", async () => {
+    state.sessionSettings = { projectId: "" };
+    const { result, unmount } = await openRunning();
+    await act(async () => result.current.send({ text: "稍后继续", approvalMode: "auto" }));
+    await act(async () => result.current.stop());
+    await finish("cancelled");
+    await waitFor(() => expect(result.current.replyStatePending).toBe(false));
+    expect(result.current.queueHeld).toBe(true);
+    writeMock.mockImplementationOnce(async (path, body, method) => {
+      expect([path, method]).toEqual(["/api/assistant/sessions/s1", "PUT"]);
+      state.sessionSettings = { projectId: body.projectId };
+      return body;
+    });
+    await act(async () => result.current.selectProject("p1"));
+    expect(result.current.session.projectId).toBe("p1");
+    await act(async () => expect(await result.current.sendNow(result.current.queue[0].id)).toBe(true));
+    expect(generationPosts()[0][1]).toMatchObject({
+      sessionId: "s1", projectId: "p1", approvalMode: "confirm", approvalUserId: 1,
+    });
+    unmount();
+  });
+
   test("the saved immediate-send preference steers with attachments and queues later sends during handoff", async () => {
     state.preferences = { steerOnSend: true };
     const { result, unmount } = await openRunning();
@@ -160,6 +187,124 @@ describe("sending while a reply runs", () => {
     expect(result.current.queue.map((m) => m.text)).toEqual(["下一条补充"]);
     expect(generationPosts()).toHaveLength(0);
     unmount();
+  });
+
+  test("holds an immediate send when the runner catalog invalidates the chosen effort", async () => {
+    const originalAPI = apiMock.getMockImplementation();
+    const originalWrite = writeMock.getMockImplementation();
+    state.preferences = { steerOnSend: true };
+    state.sessionSettings = {
+      executor: "agy", model: "agy:gemini-thinking", effort: "high",
+      executionTarget: { pool: "runner", runnerId: "runner-a" },
+    };
+    let completeProbe;
+    apiMock.mockImplementation((path, options) => path === "/api/runners?mine=1"
+      ? Promise.resolve([{ id: "runner-a", ownerUserId: 1, runtimes: [{ provider: "agy", authMode: "local" }] }])
+      : originalAPI(path, options));
+    writeMock.mockImplementation((path, body, method) => path === "/api/runners/runner-a/models/probe"
+      ? new Promise((resolve) => { completeProbe = () => resolve({
+        models: [{ id: "gemini-thinking", discoveredReasoningEfforts: ["low"] }],
+      }); })
+      : originalWrite(path, body, method));
+    try {
+      const { result, unmount } = await openRunning();
+      await waitFor(() => expect(completeProbe).toBeTypeOf("function"));
+      expect(result.current.effort).toBe("high");
+      let request;
+      act(() => { request = result.current.send({ text: "保留这条补充" }); });
+      await act(async () => {
+        completeProbe();
+        expect(await request).toBe(true);
+      });
+      expect(result.current.error).toContain("请重新选择");
+      expect(result.current.queueHeld).toBe(true);
+      expect(result.current.queue.map((item) => item.text)).toEqual(["保留这条补充"]);
+      expect(steerPosts()).toHaveLength(0);
+      await finish("completed");
+      expect(generationPosts()).toHaveLength(0);
+      expect(result.current.queue).toHaveLength(1);
+      unmount();
+    } finally {
+      apiMock.mockImplementation(originalAPI);
+      writeMock.mockImplementation(originalWrite);
+    }
+  });
+
+  test.each(["already running", "starts while opening", "finishes while opening"])(
+    "follows the shared session's first CLI when another member's reply %s",
+    async (phase) => {
+      localStorage.setItem("loopforge.assistant.conversation.1.model.s1",
+        JSON.stringify({ executor: "codebuddy", model: "m1" }));
+      state.preferences = { steerOnSend: true };
+      const actualChoice = { shared: true, executor: "codex", model: "codex:gpt-5", effort: "high" };
+      let reportGeneration;
+      if (phase === "already running") state.sessionSettings = actualChoice;
+      else {
+        state.sessionSettings = { shared: true, executor: "codebuddy" };
+        state.generationGate = new Promise((resolve) => { reportGeneration = resolve; });
+      }
+      const { result, unmount } = renderHook(useChat);
+      await waitFor(() => expect(result.current.ready).toBe(true));
+      act(() => result.current.open("s1"));
+      if (reportGeneration) {
+        await waitFor(() => expect(result.current.session?.id).toBe("s1"));
+        expect(result.current.executor).toBe("codebuddy");
+        expect(result.current.replyStatePending).toBe(true);
+        await act(async () => expect(await result.current.send({ text: "等待恢复会话" })).toBe(false));
+        expect(generationPosts()).toHaveLength(0);
+        expect(steerPosts()).toHaveLength(0);
+        state.sessionSettings = actualChoice;
+        if (phase === "finishes while opening") {
+          state.transcript.push({ ...unfinished, model: actualChoice.model });
+          state.generation = { ...state.generation, status: "completed" };
+        }
+        state.generationGate = null;
+        await act(async () => reportGeneration());
+      }
+      await waitFor(() => expect(result.current).toMatchObject({
+        executor: actualChoice.executor, model: actualChoice.model, effort: actualChoice.effort,
+        busy: phase !== "finishes while opening",
+      }));
+      await act(async () => expect(await result.current.send({ text: "请继续" })).toBe(true));
+      const requests = phase === "finishes while opening" ? generationPosts() : steerPosts();
+      expect(requests).toHaveLength(1);
+      expect(requests[0][1]).toMatchObject({ model: actualChoice.model, effort: actualChoice.effort });
+      unmount();
+    },
+  );
+
+  test("waits for the transcript when a new shared generation starts in an already open session", async () => {
+    const original = apiMock.getMockImplementation();
+    let started = false, resolveTranscript;
+    state.preferences = { steerOnSend: true };
+    state.sessionSettings = { titleGenerated: true, shared: true, model: "m1", executor: "codebuddy" };
+    apiMock.mockImplementation((path, options) => {
+      if (path.includes("/sessions/s1/generation") && !started)
+        return Promise.reject(Object.assign(Error("生成不存在"), { status: 404 }));
+      if (path === "/api/assistant/sessions/s1" && started && !resolveTranscript)
+        return new Promise((resolve) => { resolveTranscript = resolve; });
+      return original(path, options);
+    });
+    try {
+      const { result } = renderHook(useChat);
+      await waitFor(() => expect(result.current.ready).toBe(true));
+      act(() => result.current.open("s1"));
+      await waitFor(() => expect(result.current).toMatchObject({
+        session: expect.objectContaining({ id: "s1" }), replyStatePending: false, executor: "codebuddy",
+      }));
+      started = true;
+      await waitFor(() => expect(resolveTranscript).toBeTypeOf("function"), { timeout: 3500 });
+      await act(async () => expect(await result.current.send({ text: "先等待会话同步" })).toBe(false));
+      expect(generationPosts()).toHaveLength(0);
+      expect(steerPosts()).toHaveLength(0);
+      state.sessionSettings = { ...state.sessionSettings, model: "codex:gpt-5", executor: "codex", effort: "high" };
+      await act(async () => resolveTranscript(await original("/api/assistant/sessions/s1")));
+      expect(result.current).toMatchObject({ replyStatePending: false, busy: true, executor: "codex" });
+      await act(async () => expect(await result.current.send({ text: "继续任务" })).toBe(true));
+      expect(steerPosts()[0][1]).toMatchObject({ model: "codex:gpt-5", effort: "high" });
+    } finally {
+      apiMock.mockImplementation(original);
+    }
   });
 
   test.each([
@@ -334,7 +479,8 @@ describe("sending while a reply runs", () => {
     expect(generationPosts()).toHaveLength(0);
     expect(result.current.steering?.text).toBe("先看 CI");
 
-    await emit({ id: "g-follow", status: "running", events: [] });
+    state.generation = { id: "g-follow", status: "running", events: [] };
+    await waitFor(() => expect(sources).toHaveLength(2), { timeout: 3500 });
     await waitFor(() => expect(result.current.steering).toBe(null));
     expect(generationPosts()).toHaveLength(0);
     expect(result.current.queue.map((m) => m.text)).toEqual(["然后整理结论"]);
@@ -447,5 +593,56 @@ describe("sending while a reply runs", () => {
     // The rejected message is not left on screen as if it had been sent.
     await waitFor(() => expect(result.current.session?.messages.map((m) => m.content)).toEqual(["查失败节点", unfinished.content]));
     unmount();
+  });
+
+  test("waits for the admitted reply when only a stored receipt confirms a queued send", async () => {
+    const originalAPI = apiMock.getMockImplementation();
+    const originalWrite = writeMock.getMockImplementation();
+    state.sessionSettings = { titleGenerated: true };
+    let admit, acceptedId, replyFinished = false;
+    const holdFirstResponse = new Promise((resolve) => { admit = resolve; });
+    apiMock.mockImplementation(async (path, options) => {
+      if (path === "/api/assistant/sessions/s1/generation" && acceptedId)
+        throw Object.assign(Error("回复状态暂不可用"), { status: 503 });
+      return originalAPI(path, options);
+    });
+    writeMock.mockImplementation(async (path, body, method) => {
+      if (path !== "/api/assistant/generations") return originalWrite(path, body, method);
+      if (replyFinished) return { id: "second-reply", status: "running", events: [] };
+      if (acceptedId) throw Object.assign(Error("此会话正在生成，请等待完成或停止"), { status: 409 });
+      await holdFirstResponse;
+      acceptedId = body.clientRequestId;
+      state.transcript = body.messages;
+      state.sessionSettings.recentClientRequestIds = [acceptedId];
+      state.generation = { id: "accepted", status: "running", events: [], clientRequestId: acceptedId };
+      throw new TypeError("连接在确认发送后断开");
+    });
+    try {
+      const { result, unmount } = await openRunning();
+      await act(async () => {
+        await result.current.send({ text: "排队第一条" });
+        await result.current.send({ text: "排队第二条" });
+      });
+      await finish("completed");
+      await waitFor(() => expect(generationPosts()).toHaveLength(1));
+      await act(async () => admit());
+      expect(result.current.replyStatePending).toBe(true);
+      expect(generationPosts()).toHaveLength(1);
+      expect(result.current.queueHeld).toBe(false);
+      expect(result.current.queue.map((entry) => entry.text)).toEqual(["排队第二条"]);
+      await waitFor(() => expect(sources).toHaveLength(2), { timeout: 3500 });
+      expect(result.current.generation?.id).toBe("accepted");
+      expect(generationPosts()).toHaveLength(1);
+      state.transcript = [...state.transcript, { role: "assistant", content: "回复第一条" }];
+      replyFinished = true;
+      await emit({ id: "accepted", status: "completed", events: [], clientRequestId: acceptedId });
+      await waitFor(() => expect(generationPosts()).toHaveLength(2));
+      expect(generationPosts()[1][1].messages.at(-1)?.content).toBe("排队第二条");
+      expect(result.current.queueHeld).toBe(false);
+      unmount();
+    } finally {
+      apiMock.mockImplementation(originalAPI);
+      writeMock.mockImplementation(originalWrite);
+    }
   });
 });

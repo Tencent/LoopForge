@@ -69,7 +69,7 @@ func (h *assistantHandlers) conversationExecutor(s *AgentToolSession, root strin
 		}()
 		sum := sha256.Sum256([]byte(fmt.Sprintf("%d/%s", s.ChatOwnerID, s.ChatSessionID)))
 		key := hex.EncodeToString(sum[:])
-		request := domain.RunnerWorkspaceRequest{Operation: "conversation_process"}
+		request := domain.RunnerWorkspaceRequest{Operation: domain.RunnerWorkspaceOperationConversationCLI}
 		workspace := ""
 		if s.RuntimeMode == domain.AssistantModeWorkspace {
 			runID := s.workspaceRun()

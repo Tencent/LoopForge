@@ -15,9 +15,13 @@ export function modelEffort(model, value) {
   return model?.efforts?.includes(value) ? value : "";
 }
 
+export function knownEffort(value) {
+  return typeof value === "string" && Object.hasOwn(levels, value) ? value : "";
+}
+
 export function effortOptions(model) {
   return [
     { id: "", label: "默认", icon: "sparkles", detail: "使用当前模型的默认思考强度。" },
-    ...(model?.efforts || []).filter((id) => levels[id]).map((id) => ({ id, ...levels[id] })),
+    ...(model?.efforts || []).filter(knownEffort).map((id) => ({ id, ...levels[id] })),
   ];
 }

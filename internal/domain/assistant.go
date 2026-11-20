@@ -186,6 +186,8 @@ type AssistantSession struct {
 	Shared           bool   `json:"shared,omitempty"`
 	GenerationStatus string `json:"generationStatus,omitempty"`
 	GenerationID     string `json:"generationId,omitempty"`
+	// RecentClientRequestIDs confirms admitted sends after another turn starts.
+	RecentClientRequestIDs []string `json:"recentClientRequestIds,omitempty"`
 	// Unread marks, for the listing reader, a reply that completed after they
 	// last opened the conversation. Listing only; never stored.
 	Unread      bool   `json:"unread,omitempty"`

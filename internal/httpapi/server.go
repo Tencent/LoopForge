@@ -654,7 +654,7 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	d.api = g
 	if d.schedule != nil {
 		d.schedule.SetAssistantPrep(asst.prepareScheduleJob)
-		d.schedule.SetAssistantSessionPrep(asst.runScheduleJobPromptReporting)
+		d.schedule.SetAssistantSessionPrep(asst.runScheduleJobPromptResult)
 	}
 	static, _ := fs.Sub(webassets.Files, ".")
 	g.NoRoute(func(c *gin.Context) {
