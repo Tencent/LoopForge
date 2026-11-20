@@ -147,6 +147,28 @@ describe("sending while a reply runs", () => {
     unmount();
   });
 
+  test("an explicitly resumed queue uses request approval after binding its conversation to a project", async () => {
+    state.sessionSettings = { projectId: "" };
+    const { result, unmount } = await openRunning();
+    await act(async () => result.current.send({ text: "稍后继续", approvalMode: "auto" }));
+    await act(async () => result.current.stop());
+    await finish("cancelled");
+    await waitFor(() => expect(result.current.replyStatePending).toBe(false));
+    expect(result.current.queueHeld).toBe(true);
+    writeMock.mockImplementationOnce(async (path, body, method) => {
+      expect([path, method]).toEqual(["/api/assistant/sessions/s1", "PUT"]);
+      state.sessionSettings = { projectId: body.projectId };
+      return body;
+    });
+    await act(async () => result.current.selectProject("p1"));
+    expect(result.current.session.projectId).toBe("p1");
+    await act(async () => expect(await result.current.sendNow(result.current.queue[0].id)).toBe(true));
+    expect(generationPosts()[0][1]).toMatchObject({
+      sessionId: "s1", projectId: "p1", approvalMode: "confirm", approvalUserId: 1,
+    });
+    unmount();
+  });
+
   test("the saved immediate-send preference steers with attachments and queues later sends during handoff", async () => {
     state.preferences = { steerOnSend: true };
     const { result, unmount } = await openRunning();
@@ -186,6 +208,10 @@ describe("sending while a reply runs", () => {
       if (reportGeneration) {
         await waitFor(() => expect(result.current.session?.id).toBe("s1"));
         expect(result.current.executor).toBe("codebuddy");
+        expect(result.current.replyStatePending).toBe(true);
+        await act(async () => expect(await result.current.send({ text: "等待恢复会话" })).toBe(false));
+        expect(generationPosts()).toHaveLength(0);
+        expect(steerPosts()).toHaveLength(0);
         state.sessionSettings = actualChoice;
         if (phase === "finishes while opening") {
           state.transcript.push({ ...unfinished, model: actualChoice.model });

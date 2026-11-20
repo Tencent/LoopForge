@@ -266,6 +266,9 @@ func (h *assistantHandlers) editSession(c *gin.Context) {
 			edited.Attachments[i] = copy
 		}
 	}
+	// Resolve a legacy branch's executor while its inherited replies are still
+	// available. A replacement can remove the reply that identifies its CLI.
+	source.Executor = h.forkExecutor(c, source, user.ID)
 	var target []domain.AssistantSession
 	resultOwner, resultID := owner, source.ID
 	if source.Shared && source.ParentSessionID != "" {
@@ -276,7 +279,7 @@ func (h *assistantHandlers) editSession(c *gin.Context) {
 		}
 		// The copied prefix has to be resumable using the main conversation's
 		// CLI. Refuse an incompatible edit before replacing its transcript.
-		inherited := assistantConversationEngine(source.Messages[:*body.MessageIndex], h.forkExecutor(c, source, user.ID))
+		inherited := assistantConversationEngine(source.Messages[:*body.MessageIndex], source.Executor)
 		mainExecutor := h.forkExecutor(c, main, user.ID)
 		mainEngine := assistantConversationEngine(main.Messages, mainExecutor)
 		if mainEngine == "" && (mainExecutor != "" || main.Model != "") {

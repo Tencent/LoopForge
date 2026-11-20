@@ -207,6 +207,7 @@ export function useChat() {
       setError("");
       setGeneration(null);
       setGenerationKnown(null);
+      setSettledId(null);
       setLive({ answer: "", thinking: "", tools: [] });
       sessionRef.current = null;
       setSession(null);
@@ -746,10 +747,16 @@ export function useChat() {
   function sessionLoading() {
     return !!currentId.current && sessionRef.current?.id !== currentId.current;
   }
+  function replyStatePending() {
+    const id = currentId.current;
+    if (!id) return false;
+    return generationKnown !== id ||
+      (!!generation && generation.status !== "running" && settledId !== generation.id);
+  }
 
   function chooseExecutor(id) {
     if (id === "claude") id = "claude-code";
-    if (sessionLoading() || submittingRef.current || generation?.status === "running" ||
+    if (sessionLoading() || replyStatePending() || submittingRef.current || generation?.status === "running" ||
         !EXECUTORS.some((item) => item.id === id) || id === executor) return;
     const current = sessionRef.current;
     const locked = conversationEngine(current?.messages, models, current?.executor);
@@ -776,7 +783,7 @@ export function useChat() {
   }
 
   function chooseModel(id) {
-    if (sessionLoading()) return false;
+    if (sessionLoading() || replyStatePending()) return false;
     if (sponsored && !sponsoredModels.includes(id)) {
       setError(sponsoredModelMessage(sponsoredModels));
       return false;
@@ -791,7 +798,7 @@ export function useChat() {
   }
 
   function chooseEffort(value) {
-    if (sessionLoading()) return;
+    if (sessionLoading() || replyStatePending()) return;
     const level = modelEffort(activeModelEntry, value);
     setSelection({ executor, model: activeModelEntry ? activeModel : model, effort: level });
     if (activeModelEntry) {
@@ -900,11 +907,7 @@ export function useChat() {
     if (!next || dispatchingRef.current || submittingRef.current) return;
     if (steeringRef.current) return;
     if (generation?.status === "running" || sessionRef.current?.id !== id) return;
-    // Wait until this conversation's reply status is known: right after
-    // switching back the transcript can arrive before the running reply does.
-    if (generationKnown !== id) return;
-    // Wait until the ended turn's transcript (with its reply) is loaded.
-    if (generation && settledId !== generation.id) return;
+    if (replyStatePending()) return;
     dispatchingRef.current = true;
     setQueues((old) => removeQueued(old, id, next.id));
     void send({ ...next, fromQueue: true })
@@ -931,9 +934,9 @@ export function useChat() {
   async function sendNow(itemId) {
     const id = currentId.current;
     const item = id ? queues[id]?.items.find((m) => m.id === itemId) : null;
-    if (!item || steeringRef.current || dispatchingRef.current) return false;
+    if (!item || replyStatePending() || steeringRef.current || dispatchingRef.current) return false;
     if (generation?.status !== "running" || !generation.id) {
-      if (submittingRef.current || generationKnown !== id) return false;
+      if (submittingRef.current) return false;
       dispatchingRef.current = true;
       setQueues((old) => removeQueued(old, id, item.id));
       try {
@@ -951,13 +954,14 @@ export function useChat() {
   }
   async function steerMessage(id, item) {
     const from = generation.id;
+    const conversation = sessionRef.current;
     const request = { sessionId: id, generationId: from, item, pending: true };
     steeringRef.current = request;
     setSteering({ sessionId: id, item });
     setQueues((old) => removeQueued(old, id, item.id));
     setError("");
     try {
-      const chosen = await modelForRequest({ executor, model, effort }, sessionRef.current, composerModel);
+      const chosen = await modelForRequest({ executor, model, effort }, conversation, composerModel);
       await write(
         `${sessionPath(id)}/generation/steer?generationId=${encodeURIComponent(from)}`,
         {
@@ -965,7 +969,7 @@ export function useChat() {
           attachments: item.attachments || [],
           references: item.references || [],
           ...chosen,
-          ...queuedApproval(item, user?.id),
+          ...queuedApproval(item, user?.id, conversation?.projectId || ""),
         },
       );
       request.pending = false;
@@ -990,24 +994,26 @@ export function useChat() {
     references = [],
     approvalMode = "confirm",
     approvalUserId,
+    approvalProjectId,
     onSessionCreated,
     isDraftActive,
     messagesOverride = null,
     fromQueue = false,
   }) {
     if (!text.trim() && !attachments.length) return false;
+    if (sessionLoading() || replyStatePending()) {
+      setError("会话仍在加载，请稍候再发送。");
+      return false;
+    }
     const modelError = composerModelError(composerModel);
     if (modelError) {
       setError(modelError);
       return false;
     }
+    const currentProjectId = sessionRef.current?.projectId || "";
     const approval = fromQueue
-      ? queuedApproval({ approvalMode, approvalUserId }, user?.id)
+      ? queuedApproval({ approvalMode, approvalUserId, approvalProjectId }, user?.id, currentProjectId)
       : { approvalMode, approvalUserId: user?.id };
-    if (sessionLoading()) {
-      setError("会话仍在加载，请稍候再发送。");
-      return false;
-    }
     if (
       submittingRef.current ||
       generation?.status === "running" ||
@@ -1019,7 +1025,7 @@ export function useChat() {
         return false;
       }
       const id = currentId.current;
-      const item = queuedMessage({ text, attachments, references, ...approval });
+      const item = queuedMessage({ text, attachments, references, ...approval, approvalProjectId: currentProjectId });
       if (steerOnSend && generation?.status === "running" && generation.id &&
           !submittingRef.current && !steeringRef.current && !dispatchingRef.current &&
           !stopRequestRef.current) {
@@ -1088,7 +1094,7 @@ export function useChat() {
           },
           "PUT",
         );
-        onSessionCreated?.(s.id);
+        onSessionCreated?.(s);
         if (draft.choice) saveOptions(`model.${s.id}`, draft.choice);
         if (isDraftVisible(draft)) {
           setSelection(draft.choice ?? { executor, ...chosen });
@@ -1142,6 +1148,7 @@ export function useChat() {
         setSession((old) => old?.id === s.id ? { ...old, executionTargetLocked: true,
           executionTarget: g.executionTarget || executionTarget } : old);
         setGeneration(g);
+        setGenerationKnown(s.id);
       }
       await refreshSessions();
       return true;
@@ -1152,7 +1159,10 @@ export function useChat() {
           const stored = await api(sessionPath(s.id));
           receiveSession(stored, g?.status === "running");
           if (g?.id !== previousGeneration && g?.status === "running") {
-            if (currentId.current === s.id) setGeneration(g);
+            if (currentId.current === s.id) {
+              setGeneration(g);
+              setGenerationKnown(s.id);
+            }
             // Only a lost response may hide an accepted turn. A clear
             // rejection (e.g. 409 while another reply runs) means this
             // message was not taken, so a queued one goes back instead of
@@ -1257,7 +1267,10 @@ export function useChat() {
         approvalMode: ["confirm", "assisted", "auto"].includes(approvalMode) ? approvalMode : "confirm",
         approvalUserId: user?.id,
       });
-      if (currentId.current === stored.id) setGeneration(g);
+      if (currentId.current === stored.id) {
+        setGeneration(g);
+        setGenerationKnown(stored.id);
+      }
       await refreshSessions();
       return true;
     } catch (e) {
@@ -1562,6 +1575,7 @@ export function useChat() {
     live,
     error,
     ready,
+    replyStatePending: replyStatePending(),
     submitting,
     busy: submitting || generation?.status === "running",
     stopping: generation?.status === "running" && (generation.cancelRequested ||

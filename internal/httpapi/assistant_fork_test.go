@@ -132,6 +132,56 @@ func TestSharedConversationLegacyForkIgnoresLaterParentCLISwitch(t *testing.T) {
 	}
 }
 
+func TestAssistantLegacyForkEditPreservesResolvedExecutor(t *testing.T) {
+	h, user, _, _, _ := sharedWorkbenchFixture(t)
+	parent := domain.AssistantSession{
+		ID: "legacy-codex-parent", UserID: user.ID, Model: "gpt-5", Executor: assistantEngineCodex,
+		Messages: []domain.AssistantMessage{
+			{Role: "user", Content: "第一条问题"},
+			{Role: "assistant", Content: "第一条回复", Model: "gpt-5", GenerationID: "legacy-codex-reply"},
+			{Role: "user", Content: "后续问题"},
+		},
+	}
+	if err := h.repo.PutAssistantSession(user.ID, parent); err != nil {
+		t.Fatal(err)
+	}
+	parent, _ = h.repo.AssistantSession(user.ID, parent.ID)
+	branch := domain.AssistantSession{
+		ID: "legacy-codex-fork", UserID: user.ID, Model: parent.Model, Effort: "high",
+		Messages: append([]domain.AssistantMessage(nil), parent.Messages...), ForkMessageIndex: 2,
+		ParentSessionID: parent.ID, RootSessionID: parent.ID,
+	}
+	if err := h.repo.CreateAssistantSessionBranch(parent, branch); err != nil {
+		t.Fatal(err)
+	}
+	parent.Model = "codex:gpt-5.4"
+	if err := h.repo.PutAssistantSession(user.ID, parent); err != nil {
+		t.Fatal(err)
+	}
+	branch, _ = h.repo.AssistantSession(user.ID, branch.ID)
+	c, w := workbenchContext(user, "GET", "/", bytes.NewBuffer(nil))
+	c.Params = gin.Params{{Key: "id", Value: branch.ID}}
+	h.session(c)
+	var reopened domain.AssistantSession
+	if err := json.Unmarshal(w.Body.Bytes(), &reopened); w.Code != 200 || err != nil || reopened.Executor != assistantEngineCodex {
+		t.Fatal("GET could not resolve the old executor", w.Code, w.Body.String(), err)
+	}
+
+	body, _ := json.Marshal(gin.H{"messageIndex": 0, "content": "编辑第一条问题", "updatedAt": branch.UpdatedAt})
+	c, w = workbenchContext(user, "POST", "/", bytes.NewBuffer(body))
+	c.Params = gin.Params{{Key: "id", Value: branch.ID}}
+	h.editSession(c)
+	var edited domain.AssistantSession
+	if err := json.Unmarshal(w.Body.Bytes(), &edited); w.Code != 200 || err != nil ||
+		edited.Executor != assistantEngineCodex || edited.Model != branch.Model || edited.Effort != branch.Effort {
+		t.Fatal("edit lost the resolved composer options", w.Code, w.Body.String(), err)
+	}
+	saved, _ := h.repo.AssistantSession(user.ID, branch.ID)
+	if len(saved.Messages) != 1 || saved.Executor != assistantEngineCodex {
+		t.Fatal("edit must retain the executor after dropping the inherited reply", saved)
+	}
+}
+
 func TestEditSharedMessageReplacesSameConversationAndRejectsStale(t *testing.T) {
 	h, a, b, out, s := sharedWorkbenchFixture(t)
 	s.Messages = append(s.Messages, domain.AssistantMessage{Role: "assistant", Content: "旧回复"}, domain.AssistantMessage{Role: "user", Content: "原问题"}, domain.AssistantMessage{Role: "assistant", Content: "随后回复"})

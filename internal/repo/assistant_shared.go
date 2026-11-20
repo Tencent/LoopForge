@@ -219,6 +219,9 @@ func (r *AssistantRepo) ReplaceAssistantTurn(source domain.AssistantSession, ind
 		if active > 0 {
 			return fmt.Errorf("请先停止生成再编辑消息")
 		}
+		if old.ParentSessionID != "" && old.Executor == "" {
+			old.Executor = source.Executor
+		}
 		prefix := append([]domain.AssistantMessage(nil), old.Messages[:index]...)
 		if len(target) > 0 {
 			if !source.Shared || source.RunID != target[0].RunID || source.RootSessionID != target[0].ID {

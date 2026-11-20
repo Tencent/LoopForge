@@ -104,7 +104,7 @@ describe("App", () => {
     try {
       expect(screen.getByRole("button", { name: "操作确认方式" })).toHaveTextContent("帮我批准");
       chat.send.mockImplementationOnce(async ({ onSessionCreated }) => {
-        onSessionCreated("new-session");
+        onSessionCreated({ id: "new-session" });
         return true;
       });
       await user.type(screen.getByRole("textbox", { name: /消息|输入/ }), "你好");
@@ -135,7 +135,7 @@ describe("App", () => {
       let finish;
       chat.send.mockImplementationOnce(({ onSessionCreated }) => new Promise((resolve) => {
         finish = () => {
-          onSessionCreated?.("new-session");
+          onSessionCreated?.({ id: "new-session" });
           resolve(true);
         };
       }));
@@ -162,7 +162,7 @@ describe("App", () => {
     let finish;
     chat.send.mockImplementationOnce(({ onSessionCreated }) => new Promise((resolve) => {
       finish = () => {
-        onSessionCreated("new-session");
+        onSessionCreated({ id: "new-session" });
         resolve(true);
       };
     }));
@@ -212,6 +212,66 @@ describe("App", () => {
       Object.assign(chat, original);
     }
   });
+  test("starts at request approval when the same conversation is bound to a project", async () => {
+    const original = { activeId: chat.activeId, session: chat.session, projectId: chat.projectId };
+    const user = userEvent.setup();
+    const session = { id: "personal-chat", messages: [] };
+    try {
+      Object.assign(chat, { activeId: session.id, session });
+      const view = render(<App />);
+      await user.click(screen.getByRole("button", { name: "操作确认方式" }));
+      await user.click(screen.getByRole("menuitemradio", { name: "完全权限" }));
+      chat.session = { ...session, projectId: "p1" };
+      chat.projectId = "p1";
+      view.rerender(<App />);
+      expect(screen.getByRole("button", { name: "操作确认方式" })).toHaveTextContent("请求批准");
+      await user.type(screen.getByRole("textbox", { name: "消息" }), "项目内继续");
+      await user.click(screen.getByRole("button", { name: "发送消息" }));
+      expect(chat.send).toHaveBeenLastCalledWith(expect.objectContaining({ approvalMode: "confirm" }));
+    } finally {
+      Object.assign(chat, original);
+    }
+  });
+
+  test.each([true, false])("retains all of the first draft if generation is rejected (navigation: %s)", async (away) => {
+    const original = { activeId: chat.activeId, session: chat.session, projectId: chat.projectId };
+    const user = userEvent.setup();
+    const saved = { id: "new-session", messages: [], projectId: "p1" };
+    const failedDraft = {
+      text: "@订单导出 请继续",
+      attachments: [{ id: "upload-1", name: "说明.txt", mimeType: "text/plain" }],
+      references: [{ type: "issue", id: "i1", name: "订单导出", projectId: "p1" }],
+    };
+    localStorage.setItem("agentflow.native-chat.draft.u1.new:p1", JSON.stringify(failedDraft));
+    let create, rejectGeneration;
+    chat.send.mockImplementationOnce(({ onSessionCreated }) => new Promise((resolve) => {
+      create = () => onSessionCreated(saved);
+      rejectGeneration = () => resolve(false);
+    }));
+    try {
+      chat.projectId = "p1";
+      const view = render(<App />);
+      await user.click(screen.getByRole("button", { name: "操作确认方式" }));
+      await user.click(screen.getByRole("menuitemradio", { name: "帮我批准" }));
+      await user.click(screen.getByRole("button", { name: "发送消息" }));
+      await act(async () => create());
+      chat.session = away ? { id: "other-session", messages: [], projectId: "p1" } : saved;
+      chat.activeId = chat.session.id;
+      view.rerender(<App />);
+      await act(async () => rejectGeneration());
+      if (away) {
+        Object.assign(chat, { activeId: null, session: null });
+        view.rerender(<App />);
+      }
+      expect(screen.getByRole("button", { name: "操作确认方式" })).toHaveTextContent("帮我批准");
+      expect(screen.getByRole("textbox", { name: "消息" })).toHaveValue(failedDraft.text);
+      await user.click(screen.getByRole("button", { name: "发送消息" }));
+      expect(chat.send).toHaveBeenLastCalledWith(expect.objectContaining({ ...failedDraft, approvalMode: "assisted" }));
+    } finally {
+      Object.assign(chat, original);
+    }
+  });
+
   test("labels a historical model by its ID when it has no catalog entry", () => {
     const original = chat.model;
     try {

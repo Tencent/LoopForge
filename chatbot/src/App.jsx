@@ -97,7 +97,7 @@ const THEME_OPTIONS = [
   { value: "system", label: "跟随系统" },
 ];
 const environmentVisibilityKey = "agentflow.native-chat.environmentVisibility.v1";
-const sessionApprovalScope = (id) => `approval.session:${id}`;
+const sessionApprovalScope = ({ id, projectId }) => `approval.session:${JSON.stringify([id, projectId || ""])}`;
 const sidebarWidthKey = "agentflow.sidebarWidth";
 const sidebarLayoutKey = "agentflow.sidebarLayoutVersion";
 const sidebarLayoutVersion = "grasp-reference-v3";
@@ -384,9 +384,12 @@ export default function App() {
   visibleDraftKey.current = draftKey;
   const approvalOwner = realChat.user?.isGuest ? "guest" : realChat.user?.id;
   const { readOptions: readApproval, saveOptions: saveApproval } = useComposerOptions(approvalOwner);
-  const approvalScope = chat.activeId ? sessionApprovalScope(chat.activeId) : `approval.${newDraftSlot}`;
-  const approval = normalizeApprovalMode(readApproval(approvalScope).mode);
+  const approvalScope = chat.activeId
+    ? chat.session?.id === chat.activeId && sessionApprovalScope(chat.session)
+    : `approval.${newDraftSlot}`;
+  const approval = normalizeApprovalMode(approvalScope && readApproval(approvalScope).mode);
   function setApproval(value) {
+    if (!approvalScope) return;
     const mode = normalizeApprovalMode(value);
     const saving = savingDraftApproval.current;
     if (saving?.scope === approvalScope && saving.owner === approvalOwner) saving.mode = mode;
@@ -472,6 +475,7 @@ export default function App() {
     (chat.projectId && (chat.session?.projectName || chat.projectId)) ||
     "个人对话";
   const sessionLoading = !!chat.activeId && chat.session?.id !== chat.activeId;
+  const composerLoading = sessionLoading || chat.replyStatePending;
   const selectedModel = chat.models.find((m) => m.id === chat.model) || (!chat.local ? chat.modelDetails : null);
   const modelLabel =
     (selectedModel?.name || chat.model)?.replace(/^Claude-/, "").replace(/^GPT-/, "") || "模型";
@@ -781,12 +785,11 @@ export default function App() {
     follow.current = true;
     const draftApproval = chat.activeId ? null : { owner: approvalOwner, scope: approvalScope, mode: approval };
     if (draftApproval) savingDraftApproval.current = draftApproval;
-    let savedDraftKey;
-    const onSessionCreated = draftApproval ? (id) => {
-      savedDraftKey = draftKeyPrefix + id;
-      const { scope, mode } = draftApproval;
-      saveApproval(sessionApprovalScope(id), { mode });
-      if (readApproval(scope).mode === mode) saveApproval(scope, null);
+    let savedDraftKey, savedApprovalMode;
+    const onSessionCreated = draftApproval ? (saved) => {
+      savedDraftKey = draftKeyPrefix + saved.id;
+      savedApprovalMode = draftApproval.mode;
+      saveApproval(sessionApprovalScope(saved), { mode: savedApprovalMode });
     } : undefined;
     const ok = await chat.send({
       text,
@@ -798,20 +801,30 @@ export default function App() {
     }).finally(() => {
       if (savingDraftApproval.current === draftApproval) savingDraftApproval.current = null;
     });
-    const viewingSentDraft = visibleDraftKey.current === draftKey || visibleDraftKey.current === savedDraftKey;
     if (ok) {
+      if (savedDraftKey && readApproval(draftApproval.scope).mode === savedApprovalMode) {
+        saveApproval(draftApproval.scope, null);
+      }
       for (const a of attachments) releaseComposerPreview(a.id);
       localStorage.removeItem(draftKey);
-      if (!viewingSentDraft) return;
+      if (visibleDraftKey.current !== draftKey) return;
       setMention(null);
       setText("");
       setAttachments([]);
       setReferences([]);
       if (input.current) input.current.style.height = "";
-    } else if (viewingSentDraft) {
-      // A failed first message may already have opened a new conversation,
-      // which loads that conversation's (empty) draft. Keep what was typed.
+    } else if (visibleDraftKey.current === savedDraftKey) {
+      // The session was saved but the first message was rejected. Keep its
+      // content in the visible conversation so the user can retry.
       setText((current) => current || text);
+      setAttachments((current) => [
+        ...attachments.filter((item) => !current.some((other) => other.id === item.id)),
+        ...current,
+      ]);
+      setReferences((current) => [
+        ...references.filter((item) => !current.some((other) => other.id === item.id && other.type === item.type)),
+        ...current,
+      ]);
     }
   }
   function editQueued(item) {
@@ -2156,7 +2169,7 @@ export default function App() {
                     {chat.executors.length > 1 && !pinnedExecutor && !chat.submitting ? (
                       <PermissionPicker
                         label="CLI"
-                        disabled={sessionLoading}
+                        disabled={composerLoading}
                         options={chat.executors.map((executor) => {
                           const brand = engineBrand(executor.id);
                           return {
@@ -2177,7 +2190,7 @@ export default function App() {
                     ) : null}
                     <ModelPicker
                       models={chat.models}
-                      disabled={sessionLoading}
+                      disabled={composerLoading}
                       value={chat.model}
                       label={modelLabel}
                       open={menu?.type === "model"}
@@ -2189,7 +2202,7 @@ export default function App() {
                     />
                     <PermissionPicker
                       label="思考强度"
-                      disabled={sessionLoading}
+                      disabled={composerLoading}
                       options={effortOptions(selectedModel)}
                       value={chat.effort}
                       onSelect={chat.setEffort}
@@ -2197,6 +2210,7 @@ export default function App() {
                       onOpenChange={(open) => setMenu(open ? { type: "effort" } : null)}
                     />
                     <PermissionPicker
+                      disabled={sessionLoading}
                       value={approval}
                       onSelect={setApproval}
                       open={menu?.type === "approval"}
@@ -2228,7 +2242,7 @@ export default function App() {
                           !chat.ready ||
                           chat.submitting ||
                           chat.machineSaving ||
-                          sessionLoading ||
+                          composerLoading ||
                           (!text.trim() && !attachments.length) ||
                           uploading
                         }
@@ -2359,7 +2373,7 @@ export default function App() {
                       );
                       if (stored) {
                         closeDialog();
-                        const mode = normalizeApprovalMode(readApproval(sessionApprovalScope(stored.id)).mode);
+                        const mode = normalizeApprovalMode(readApproval(sessionApprovalScope(stored)).mode);
                         await chat.regenerate(stored, mode);
                       }
                     }
