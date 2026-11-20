@@ -149,8 +149,16 @@ func (s *Service) Stop() {
 }
 
 func (s *Service) recoverInterruptedJobs() {
+	s.mu.Lock()
+	cutoff := s.startedAt
+	s.mu.Unlock()
+	if cutoff.IsZero() {
+		cutoff = time.Now().UTC()
+	}
 	for _, job := range s.repo.ScheduleJobs() {
-		if job.LastStatus != "running" {
+		// Recovery can be deferred while this process starts new jobs. Only
+		// occurrences predating this process belong to its predecessor.
+		if job.LastStatus != "running" || !job.LastRunAt.Before(cutoff) {
 			continue
 		}
 		job.LastStatus = "failed"
@@ -160,12 +168,6 @@ func (s *Service) recoverInterruptedJobs() {
 	}
 	// Executions started before this process cannot still be running here;
 	// executions this process already started are left alone.
-	s.mu.Lock()
-	cutoff := s.startedAt
-	s.mu.Unlock()
-	if cutoff.IsZero() {
-		cutoff = time.Now().UTC()
-	}
 	if err := s.repo.FailRunningScheduleJobExecutions(cutoff, interruptedReason); err != nil {
 		log.Printf("schedule executions recover: %v", err)
 	}
