@@ -2,6 +2,7 @@ package tracker
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
@@ -33,9 +34,7 @@ func (s *Service) githubClient(project string) (*githubClient, error) {
 				continue
 			}
 			if p, found := s.projectAuth.Project(repo.ProjectID); found {
-				if u, exists := s.projectAuth.User(p.OwnerID); exists {
-					token = u.GitToken
-				}
+				token = s.githubTokenForUser(p.OwnerID)
 			}
 			break
 		}
@@ -69,13 +68,20 @@ func (s *Service) githubClientForRun(project, localProjectID, gitToken string) (
 		}
 		g.token = ""
 		if p, found := s.projectAuth.Project(local); found {
-			if u, exists := s.projectAuth.User(p.OwnerID); exists {
-				g.token = u.GitToken
-			}
+			g.token = s.githubTokenForUser(p.OwnerID)
 		}
 		return g, "项目 " + local + " Owner 的 Git Token", nil
 	}
 	return g, "首个绑定该仓库的项目 Owner 的 Git Token", nil
+}
+
+func (s *Service) githubTokenForUser(userID int64) string {
+	if credentials, ok := s.projectAuth.(GitHTTPCredentialStore); ok {
+		if credential, ok := credentials.GitHTTPCredentialForHost(context.Background(), userID, "github.com"); ok {
+			return credential.Token
+		}
+	}
+	return ""
 }
 
 func (g *githubClient) request(method, suffix string, input, output any) error {

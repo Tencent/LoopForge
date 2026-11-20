@@ -59,13 +59,14 @@ test('issue list helpers filter, format, parse repositories, and persist edits',
   assert.equal(result.parsed[0].cloneUrl, 'git@git.example.com:team/service.git');
   assert.equal(result.parsed[1].project, 'team/service');
   assert.equal(result.parsed[2].name, 'repo');
-  assert.equal(result.parsed[3], null);
+  assert.equal(result.parsed[3].provider, 'https');
+  assert.equal(result.parsed[3].cloneUrl, 'https://evil.example/team/repo');
   assert.equal(result.parsed[4], null);
-  // GitHub SSH-style addresses stay GitHub repositories, as on the server.
+  // Explicit SSH addresses keep their transport, including GitHub.
   for (const github of result.parsed.slice(5)) {
-    assert.equal(github.provider, 'github');
-    assert.equal(github.project, 'github:octo/widgets');
-    assert.equal(github.cloneUrl, 'https://github.com/octo/widgets.git');
+    assert.equal(github.provider, 'ssh');
+    assert.equal(github.project, 'github.com/octo/widgets.git');
+    assert.match(github.cloneUrl, /(?:git@github.com:|ssh:\/\/git@github.com(?::22)?\/)octo\/widgets\.git/);
   }
   assert.equal(result.filled, true);
   assert.deepEqual(result.fill, {

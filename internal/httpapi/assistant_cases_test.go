@@ -224,7 +224,7 @@ func TestAssistantAcceptanceAndDraftWarnings(t *testing.T) {
 	seeded, err := SeedAssistantAcceptance(st, AssistantAcceptanceIdentity{
 		LoginName: "accept-user", CodeBuddyAPIKey: "cb", GitToken: "git",
 	})
-	if err != nil || seeded.ChineseName != "accept-user" || seeded.GitToken != "git" {
+	if err != nil || seeded.ChineseName != "accept-user" || !seeded.GitHubCredentialConfigured || seeded.GitToken != "" {
 		t.Fatalf("seeded = %+v, %v", seeded, err)
 	}
 	if _, ok := st.Project(assistantAcceptanceProjectID); !ok {

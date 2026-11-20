@@ -32,10 +32,9 @@ func (h *assistantHandlers) assistantSharedKey() (repo.SharedCodeBuddyKey, bool)
 }
 
 // assistantChatUser returns the identity a chat turn runs as. Users with
-// their own key are returned unchanged. Otherwise the shared key and its
-// network environment are substituted and shared lists the models the turn
-// may use; everything else (ID, permissions, Git credentials) stays the
-// caller's own.
+// their own key are returned unchanged. Other turns use the shared key,
+// its environment and catalog while keeping the caller's identity,
+// permissions and Git credentials.
 func (h *assistantHandlers) assistantChatUser(user domain.User) (chatUser domain.User, shared []string, ok bool) {
 	if strings.TrimSpace(user.CodeBuddyAPIKey) != "" {
 		return user, nil, true
@@ -46,6 +45,7 @@ func (h *assistantHandlers) assistantChatUser(user domain.User) (chatUser domain
 	}
 	user.CodeBuddyAPIKey = key.APIKey
 	user.CodeBuddyInternetEnvironment = key.InternetEnvironment
+	user.CodeBuddyModels = nil
 	return user, key.Models, true
 }
 
@@ -90,9 +90,7 @@ func (h *assistantHandlers) turnCatalog(ctx context.Context, user domain.User, m
 	refreshCLIModels(ctx, user.CodeBuddyInternetEnvironment, user.CodeBuddyAPIKey)
 	catalog = h.chatCatalog(ctx, user)
 	if !assistantCatalogLists(catalog, model) {
-		// The list is fresh (or discovery failed) and still lacks the model:
-		// the turn falls back to the default, so leave a trace of why.
-		log.Printf("assistant model %q is not offered to user %d; the turn runs on %q", model, user.ID, catalog.Default)
+		log.Printf("assistant model %q is not offered to user %d after catalog refresh", model, user.ID)
 	}
 	return catalog
 }

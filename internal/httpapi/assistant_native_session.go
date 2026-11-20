@@ -23,12 +23,13 @@ var (
 // This is a local continuation cache, not the authoritative chat transcript.
 // A ready checkpoint is written only after the corresponding reply is saved.
 type assistantNativeCheckpoint struct {
-	SessionID       string   `json:"sessionId"`
-	Ready           bool     `json:"ready"`
-	HistoryRevision int      `json:"historyRevision"`
-	ContextHash     string   `json:"contextHash"`
-	MessageHashes   []string `json:"messageHashes"`
-	Unstarted       bool     `json:"unstarted,omitempty"`
+	SessionID               string   `json:"sessionId"`
+	Ready                   bool     `json:"ready"`
+	HistoryRevision         int      `json:"historyRevision"`
+	ContextHash             string   `json:"contextHash"`
+	MessageHashes           []string `json:"messageHashes"`
+	Unstarted               bool     `json:"unstarted,omitempty"`
+	WorkspaceRepositoryHash string   `json:"workspaceRepositoryHash,omitempty"`
 }
 
 type assistantNativeSession struct {
@@ -154,6 +155,7 @@ func (n *assistantNativeSession) restart() error {
 	n.resume = false
 	n.checkpoint.SessionID = newAssistantSessionID()
 	n.checkpoint.Unstarted = true
+	n.checkpoint.WorkspaceRepositoryHash = ""
 	return n.begin()
 }
 

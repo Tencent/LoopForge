@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -27,12 +28,22 @@ func DiscoverRunnerLoginModels(ctx context.Context, provider, binary string) ([]
 		return nil, fmt.Errorf("无法创建模型查询目录")
 	}
 	defer os.RemoveAll(root)
-	_, loginEnv, err := prepareConversationRunnerLogin(root, login, true)
+	cleanup, loginEnv, err := prepareConversationRunnerLogin(root, login, true)
 	if err != nil {
 		return nil, err
 	}
+	if cleanup != nil {
+		defer func() {
+			if err := cleanup(); err != nil {
+				log.Printf("runner login models: cleanup %s: %v", login.label, err)
+			}
+		}()
+	}
 	home := filepath.Join(root, "home")
-	env := map[string]string{login.configEnv: filepath.Join(home, login.dir), "NO_COLOR": "1", "CI": "1"}
+	env := map[string]string{"NO_COLOR": "1", "CI": "1"}
+	if login.configEnv != "" {
+		env[login.configEnv] = filepath.Join(home, login.dir)
+	}
 	for _, key := range []string{"HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "all_proxy", "no_proxy", "SSL_CERT_FILE", "SSL_CERT_DIR", "NODE_EXTRA_CA_CERTS"} {
 		if value, ok := os.LookupEnv(key); ok {
 			env[key] = value
@@ -47,6 +58,19 @@ func DiscoverRunnerLoginModels(ctx context.Context, provider, binary string) ([]
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	environment := appendEnvironment(terminalBaseEnvironment(home), env, loginEnv)
+	if provider == AgentCLIAntigravity {
+		cmd := exec.CommandContext(ctx, binary, "models")
+		cmd.Dir, cmd.Env, cmd.WaitDelay = root, environment, time.Second
+		output, err := cmd.Output()
+		if err != nil || len(output) > 2<<20 {
+			return nil, fmt.Errorf("Antigravity 无法返回账号模型，请检查执行机器上的 CLI 版本和登录状态")
+		}
+		models := antigravityLoginModels(string(output))
+		if len(models) == 0 {
+			return nil, fmt.Errorf("Antigravity 未返回可用的账号模型")
+		}
+		return models, nil
+	}
 	if login.binding == BindClaudeCode {
 		status := exec.CommandContext(ctx, binary, "auth", "status")
 		status.Dir, status.Env, status.WaitDelay = root, environment, time.Second
@@ -93,6 +117,20 @@ func DiscoverRunnerLoginModels(ctx context.Context, provider, binary string) ([]
 	return models, nil
 }
 
+func antigravityLoginModels(output string) []domain.CLIModel {
+	var models []domain.CLIModel
+	seen := map[string]bool{}
+	for _, line := range strings.Split(output, "\n") {
+		id, name, found := strings.Cut(strings.TrimSpace(line), "\t")
+		if !found || id == "" || strings.ContainsAny(id, " \r\n") || seen[id] {
+			continue
+		}
+		seen[id] = true
+		models = append(models, domain.CLIModel{ID: id, Name: strings.TrimSpace(name)})
+	}
+	return models
+}
+
 func codexLoginModels(send *json.Encoder, scanner *bufio.Scanner) []domain.CLIModel {
 	if send.Encode(map[string]any{
 		"id": 1, "method": "initialize",
@@ -117,6 +155,9 @@ func codexLoginModels(send *json.Encoder, scanner *bufio.Scanner) []domain.CLIMo
 		Data []struct {
 			Model       string `json:"model"`
 			DisplayName string `json:"displayName"`
+			Efforts     *[]struct {
+				Value string `json:"reasoningEffort"`
+			} `json:"supportedReasoningEfforts"`
 		} `json:"data"`
 	}
 	if json.Unmarshal(codexLoginResult(scanner, 3), &result) != nil || result.Data == nil {
@@ -125,7 +166,15 @@ func codexLoginModels(send *json.Encoder, scanner *bufio.Scanner) []domain.CLIMo
 	models := make([]domain.CLIModel, 0, len(result.Data))
 	for _, item := range result.Data {
 		if id := strings.TrimSpace(item.Model); id != "" {
-			models = append(models, domain.CLIModel{ID: id, Name: item.DisplayName})
+			model := domain.CLIModel{ID: id, Name: item.DisplayName}
+			if item.Efforts != nil {
+				levels := make([]string, 0, len(*item.Efforts))
+				for _, level := range *item.Efforts {
+					levels = append(levels, level.Value)
+				}
+				model.DiscoveredReasoningEfforts = &levels
+			}
+			models = append(models, model)
 		}
 	}
 	return models
@@ -160,8 +209,10 @@ func claudeLoginModels(send *json.Encoder, scanner *bufio.Scanner) []domain.CLIM
 				Subtype   string `json:"subtype"`
 				Response  struct {
 					Models []struct {
-						Value       string `json:"value"`
-						DisplayName string `json:"displayName"`
+						Value          string    `json:"value"`
+						DisplayName    string    `json:"displayName"`
+						SupportsEffort *bool     `json:"supportsEffort"`
+						EffortLevels   *[]string `json:"supportedEffortLevels"`
 					} `json:"models"`
 				} `json:"response"`
 			} `json:"response"`
@@ -175,7 +226,11 @@ func claudeLoginModels(send *json.Encoder, scanner *bufio.Scanner) []domain.CLIM
 		models := make([]domain.CLIModel, 0, len(message.Response.Response.Models))
 		for _, item := range message.Response.Response.Models {
 			if id := strings.TrimSpace(item.Value); id != "" {
-				models = append(models, domain.CLIModel{ID: id, Name: item.DisplayName})
+				levels := item.EffortLevels
+				if item.SupportsEffort != nil && !*item.SupportsEffort {
+					levels = &[]string{}
+				}
+				models = append(models, domain.CLIModel{ID: id, Name: item.DisplayName, DiscoveredReasoningEfforts: levels})
 			}
 		}
 		return models

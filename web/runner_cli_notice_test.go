@@ -18,7 +18,7 @@ func TestRunnerUsesPerCLIMaintenanceControls(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"data-runner-runtime-menu", "data-runner-check-update", "/images/credentials/", "runtime.version||runtime.binaryPath"} {
+	for _, want := range []string{"data-runner-runtime-menu", "data-runner-check-update", "AgentFlowAssistantModels?.cliIcon(provider)", "runtime.version||runtime.binaryPath"} {
 		if !bytes.Contains(app, []byte(want)) {
 			t.Errorf("missing runner card control or status: %s", want)
 		}

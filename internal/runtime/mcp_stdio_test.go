@@ -20,7 +20,7 @@ read initialized
 read request
 printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"content":[{"type":"text","text":"stdio-ok"}]}}'`
 	servers := []domain.MCPServerDefinition{{ID: "local", Name: "Local", Transport: "stdio", Command: "sh", Args: []string{"-c", serverScript}, TimeoutSec: 5}}
-	env, err := ScriptMCPEnvironment(sb, workspace, servers)
+	env, err := ScriptMCPEnvironment(t.Context(), sb, workspace, servers)
 	if err != nil {
 		t.Fatal(err)
 	}
