@@ -187,7 +187,9 @@ for arg in "$@"; do
   prev=$arg
   url=$arg
 done
+mode=ok
 case "$url" in
+  https://cdn.example.test/*) spec="${MOCK_MIRROR_GHCR:?}"; host=cdn.example.test ;;
   https://ghcr.nju.edu.cn/*) spec="${MOCK_MIRROR_NJU:?}"; host=ghcr.nju.edu.cn ;;
   https://ghcr.io/*) spec="${MOCK_MIRROR_GHCR:?}"; host=ghcr.io ;;
   *) printf 'unexpected %s\n' "$url" >&2; exit 1 ;;
@@ -195,6 +197,8 @@ esac
 case "$spec" in
   timeout) exit 28 ;;
   fail) exit 22 ;;
+  redirect:*) mode=redirect; spec=${spec#redirect:} ;;
+  blobtimeout:*) mode=blobtimeout; spec=${spec#blobtimeout:} ;;
 esac
 digest=${spec#ok:}
 seconds=${digest##*:}
@@ -205,7 +209,14 @@ case "$url" in
     printf 'HTTP/1.1 200 OK\r\n\r\n' > "$header_file"
     printf '200 %s 0.01\n' "$(wc -c < "$body")"
     ;;
-  */blobs/*)
+  */blobs/*|https://cdn.example.test/*)
+    if [[ "$mode" == blobtimeout && "$url" != https://cdn.example.test/* ]]; then exit 28; fi
+    if [[ "$mode" == redirect && "$url" != https://cdn.example.test/* ]]; then
+      : > "$body"
+      printf 'HTTP/1.1 307 Temporary Redirect\r\nLocation: https://cdn.example.test/v2/blob\r\n\r\n' > "$header_file"
+      printf '307 0 0.01\n'
+      exit 0
+    fi
     printf 'x' > "$body"
     printf 'HTTP/1.1 206 Partial Content\r\n\r\n' > "$header_file"
     printf '206 262144 %s\n' "$seconds"
@@ -227,12 +238,18 @@ case "$url" in
 esac
 ''')
 
+    DIGEST = 'sha256:' + ('ab' * 32)
+    OTHER = 'sha256:' + ('cd' * 32)
+
     def probe_env(self, ghcr, nju):
         return {
             'MOCK_CURL_LOG': str(self.root / 'curl.log'),
             'MOCK_MIRROR_GHCR': ghcr,
             'MOCK_MIRROR_NJU': nju,
         }
+
+    def timed(self, digest, seconds):
+        return f'ok:{digest}:{seconds}'
 
     def test_explicit_mirror_does_not_probe(self):
         self.use_compose_file()
@@ -247,12 +264,13 @@ esac
     def test_faster_nju_mirror_is_pulled_and_tagged(self):
         self.use_compose_file()
         self.mirror_probe_curl()
-        result = self.install(**self.probe_env('ok:sha256:same:0.40', 'ok:sha256:same:0.10'))
+        result = self.install(**self.probe_env(self.timed(self.DIGEST, '0.40'), self.timed(self.DIGEST, '0.10')))
         self.assert_success(result)
         image = self.pinned_image()
-        mirror = 'ghcr.nju.edu.cn/' + image[len('ghcr.io/'):]
+        mirror = 'ghcr.nju.edu.cn/tencent/loopforge@' + self.DIGEST
         log = (self.root / 'docker.log').read_text()
         self.assertLess(log.index(f'pull {mirror}'), log.index(f'tag {mirror} {image}'))
+        self.assertNotIn('pull ghcr.nju.edu.cn/tencent/loopforge:', log)
         self.assertIn('Fastest registry is ghcr.nju.edu.cn', result.stdout)
         self.assertIn('ghcr.io was', result.stdout)
         self.assertNotIn('MIRROR=', (self.root / '.env').read_text())
@@ -260,7 +278,7 @@ esac
     def test_faster_ghcr_keeps_the_direct_pull(self):
         self.use_compose_file()
         self.mirror_probe_curl()
-        result = self.install(**self.probe_env('ok:sha256:same:0.10', 'ok:sha256:same:0.40'))
+        result = self.install(**self.probe_env(self.timed(self.DIGEST, '0.10'), self.timed(self.DIGEST, '0.40')))
         self.assert_success(result)
         log = (self.root / 'docker.log').read_text()
         self.assertIn('pull --policy missing platform mysql', log)
@@ -270,7 +288,7 @@ esac
     def test_digest_mismatch_keeps_the_direct_pull(self):
         self.use_compose_file()
         self.mirror_probe_curl()
-        result = self.install(**self.probe_env('ok:sha256:upstream:0.40', 'ok:sha256:cached:0.05'))
+        result = self.install(**self.probe_env(self.timed(self.DIGEST, '0.40'), self.timed(self.OTHER, '0.05')))
         self.assert_success(result)
         log = (self.root / 'docker.log').read_text()
         self.assertIn('pull --policy missing platform mysql', log)
@@ -285,15 +303,51 @@ esac
         log = (self.root / 'docker.log').read_text()
         self.assertIn('pull --policy missing platform mysql', log)
         self.assertNotIn('ghcr.nju.edu.cn', log)
-        self.assertIn('Could not time either registry; using ghcr.io', result.stdout)
+        self.assertIn('Could not verify the ghcr.io digest; using ghcr.io', result.stdout)
 
-    def test_nju_wins_when_ghcr_times_out(self):
+    def test_missing_official_digest_keeps_the_direct_pull(self):
         self.use_compose_file()
         self.mirror_probe_curl()
-        result = self.install(**self.probe_env('timeout', 'ok:sha256:same:0.20'))
+        result = self.install(**self.probe_env('timeout', self.timed(self.DIGEST, '0.20')))
         self.assert_success(result)
-        self.assertIn('pull ghcr.nju.edu.cn/tencent/loopforge:', (self.root / 'docker.log').read_text())
+        log = (self.root / 'docker.log').read_text()
+        self.assertIn('pull --policy missing platform mysql', log)
+        self.assertNotIn('ghcr.nju.edu.cn', log)
+        self.assertIn('Could not verify the ghcr.io digest', result.stdout)
+
+    def test_verified_mirror_wins_when_the_ghcr_sample_times_out(self):
+        self.use_compose_file()
+        self.mirror_probe_curl()
+        result = self.install(**self.probe_env('blobtimeout:' + self.timed(self.DIGEST, '0.40'), self.timed(self.DIGEST, '0.10')))
+        self.assert_success(result)
+        self.assertIn('pull ghcr.nju.edu.cn/tencent/loopforge@' + self.DIGEST, (self.root / 'docker.log').read_text())
         self.assertIn('ghcr.io timed out', result.stdout)
+
+    def test_ghcr_blob_redirect_is_timed_without_sending_the_token(self):
+        self.use_compose_file()
+        self.mirror_probe_curl()
+        result = self.install(**self.probe_env('redirect:' + self.timed(self.DIGEST, '0.10'), self.timed(self.DIGEST, '0.40')))
+        self.assert_success(result)
+        log = (self.root / 'docker.log').read_text()
+        curl_log = (self.root / 'curl.log').read_text()
+        self.assertIn('pull --policy missing platform mysql', log)
+        self.assertNotIn('ghcr.nju.edu.cn', log)
+        self.assertIn('Fastest registry is ghcr.io', result.stdout)
+        cdn = [line for line in curl_log.splitlines() if 'https://cdn.example.test/' in line]
+        self.assertTrue(cdn, curl_log)
+        self.assertNotIn('Authorization:', cdn[0])
+        self.assertTrue(any('Authorization:' in line and '/blobs/' in line for line in curl_log.splitlines()))
+
+    def test_auto_mirror_pull_failure_uses_ghcr(self):
+        self.use_compose_file()
+        self.mirror_probe_curl()
+        result = self.install(**self.probe_env(self.timed(self.DIGEST, '0.40'), self.timed(self.DIGEST, '0.10')), MOCK_PULL_FAIL='1')
+        self.assert_success(result)
+        log = (self.root / 'docker.log').read_text()
+        self.assertIn('pull ghcr.nju.edu.cn/tencent/loopforge@' + self.DIGEST, log)
+        self.assertNotIn(' tag ', log)
+        self.assertIn('pull --policy missing platform mysql', log)
+        self.assertIn('Could not pull', result.stdout)
 
     def test_local_image_skips_the_speed_test(self):
         self.use_compose_file()
@@ -314,17 +368,17 @@ esac
         (self.root / 'docker.log').unlink()
         result = subprocess.run(
             ['bash', 'start.sh', 'pull'], cwd=self.root,
-            env=dict(self.environ, **self.probe_env('timeout', 'ok:sha256:same:0.20')),
+            env=dict(self.environ, **self.probe_env(self.timed(self.DIGEST, '0.40'), self.timed(self.DIGEST, '0.10'))),
             text=True, capture_output=True, stdin=subprocess.DEVNULL, timeout=15)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         image = self.pinned_image()
-        mirror = 'ghcr.nju.edu.cn/' + image[len('ghcr.io/'):]
+        mirror = 'ghcr.nju.edu.cn/tencent/loopforge@' + self.DIGEST
         log = (self.root / 'docker.log').read_text()
         self.assertIn(f'pull {mirror}', log)
         self.assertIn(f'tag {mirror} {image}', log)
         self.assertIn('pull --policy always mysql', log)
         self.assertNotIn('pull --ignore-buildable --policy always', log)
-        self.assertIn('ghcr.io timed out', result.stdout)
+        self.assertIn('Fastest registry is ghcr.nju.edu.cn', result.stdout)
 
     def test_invalid_mirror_fails_before_pull(self):
         self.use_compose_file()

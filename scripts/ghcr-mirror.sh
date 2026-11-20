@@ -105,6 +105,7 @@ PY
     return 0
   fi
 
+  local mirror_digest=""
   if [[ "$auto" == 1 ]]; then
     local probe_line=""
     if ! probe_line=$(python3 - "$image" <<'PY'
@@ -142,7 +143,8 @@ def curl(url, headers, timeout, body, header_file):
     for header in headers:
         cmd.extend(['-H', header])
     cmd.append(url)
-    proc = subprocess.run(cmd, capture_output=True, text=True)
+    # stdout/stderr/universal_newlines are the names available on Python 3.6.
+    proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
     parts = proc.stdout.split()
     code = size = elapsed = None
     if len(parts) >= 3:
@@ -164,6 +166,13 @@ def header_value(headers, name):
     match = re.search(r'(?im)^%s:\s*(\S+)' % re.escape(name), headers)
     return match.group(1).strip() if match else ''
 
+def host_of(url):
+    match = re.match(r'https://([^/?#]+)', url or '')
+    return match.group(1).lower() if match else ''
+
+def trusted_digest(value):
+    return re.fullmatch(r'sha256:[a-f0-9]{64}', value or '') is not None
+
 def probe(host):
     result = Result()
     started = time.monotonic()
@@ -179,7 +188,7 @@ def probe_host(host, result, started, work, token):
     def remaining():
         return deadline - (time.monotonic() - started)
 
-    def request(url, headers):
+    def request(url, headers, redirects=0):
         if remaining() < 0.3:
             result.timed_out = True
             return None
@@ -191,6 +200,18 @@ def probe_host(host, result, started, work, token):
             return None
         if status != 0 or code is None:
             return None
+        # GHCR answers a layer range with 307 and an empty body, then the CDN
+        # returns 206. Follow only HTTPS, and do not send the registry token to
+        # another host. The sample is the final response.
+        if code in (301, 302, 303, 307, 308):
+            location = header_value(text, 'Location')
+            if redirects >= 3 or not location.startswith('https://'):
+                return None
+            next_headers = [
+                header for header in headers
+                if host_of(location) == host_of(url) or not header.lower().startswith('authorization:')
+            ]
+            return request(location, next_headers, redirects + 1)
         payload = body.read_bytes() if body.is_file() else b''
         return code, size, elapsed, text, payload
 
@@ -317,41 +338,65 @@ def side(result):
         return 'timed out'
     return 'failed'
 
-if ghcr.digest and nju.digest and ghcr.digest != nju.digest:
-    print('ghcr.io\tRegistry digests differ; using ghcr.io')
+# The official manifest digest is the only trusted identity. Without it, or
+# when the mirror disagrees, keep the ghcr.io pull. A faster mirror is pulled
+# by that digest, not by the mutable tag.
+official = ghcr.digest if trusted_digest(ghcr.digest) else ''
+
+def emit(host, digest, message):
+    print('%s\t%s\t%s' % (host, digest, message))
+
+if not official:
+    emit('ghcr.io', '-', 'Could not verify the ghcr.io digest; using ghcr.io')
     raise SystemExit(0)
-if ghcr.speed_ok and nju.speed_ok:
-    if nju.bps >= ghcr.bps * 1.5:
-        print(f'ghcr.nju.edu.cn\tFastest registry is ghcr.nju.edu.cn ({rate(nju.bps)}); ghcr.io {side(ghcr)}')
-    else:
-        print(f'ghcr.io\tFastest registry is ghcr.io ({rate(ghcr.bps)}); ghcr.nju.edu.cn {side(nju)}')
+if trusted_digest(nju.digest) and nju.digest != official:
+    emit('ghcr.io', '-', 'Registry digests differ; using ghcr.io')
     raise SystemExit(0)
-if nju.speed_ok:
-    print(f'ghcr.nju.edu.cn\tFastest registry is ghcr.nju.edu.cn ({rate(nju.bps)}); ghcr.io {side(ghcr)}')
+nju_verified = nju.speed_ok and nju.digest == official
+if nju_verified and (not ghcr.speed_ok or nju.bps >= ghcr.bps * 1.5):
+    emit('ghcr.nju.edu.cn', official, 'Fastest registry is ghcr.nju.edu.cn (%s); ghcr.io %s' % (rate(nju.bps), side(ghcr)))
     raise SystemExit(0)
 if ghcr.speed_ok:
-    print(f'ghcr.io\tFastest registry is ghcr.io ({rate(ghcr.bps)}); ghcr.nju.edu.cn {side(nju)}')
+    emit('ghcr.io', '-', 'Fastest registry is ghcr.io (%s); ghcr.nju.edu.cn %s' % (rate(ghcr.bps), side(nju)))
     raise SystemExit(0)
-print('ghcr.io\tCould not time either registry; using ghcr.io')
+if nju.speed_ok:
+    emit('ghcr.io', '-', 'Could not verify the mirror digest; using ghcr.io')
+    raise SystemExit(0)
+emit('ghcr.io', '-', 'Could not time either registry; using ghcr.io')
 PY
     ); then
-      probe_line=$'ghcr.io\tCould not time either registry; using ghcr.io'
+      probe_line=$'ghcr.io\t-\tCould not time either registry; using ghcr.io'
     fi
-    if [[ "$probe_line" != *$'\t'* ]]; then
-      probe_line=$'ghcr.io\tCould not time either registry; using ghcr.io'
+    if [[ "$probe_line" != *$'\t'*$'\t'* ]]; then
+      probe_line=$'ghcr.io\t-\tCould not time either registry; using ghcr.io'
     fi
-    printf '\n▸ %s\n' "${probe_line#*$'\t'}"
+    printf '\n▸ %s\n' "${probe_line##*$'\t'}"
     mirror_host=${probe_line%%$'\t'*}
+    mirror_digest=${probe_line#*$'\t'}
+    mirror_digest=${mirror_digest%%$'\t'*}
     if [[ "$mirror_host" != ghcr.nju.edu.cn ]]; then
+      return 1
+    fi
+    if [[ ! "$mirror_digest" =~ ^sha256:[a-f0-9]{64}$ ]]; then
+      printf '\n▸ Mirror digest is not the ghcr.io digest; using ghcr.io\n'
       return 1
     fi
   fi
 
   local mirror_image="${mirror_host}/${image#ghcr.io/}"
+  if [[ -n "$mirror_digest" ]]; then
+    local repo="${image#ghcr.io/}"
+    repo="${repo%:*}"
+    mirror_image="${mirror_host}/${repo}@${mirror_digest}"
+  fi
   printf '\n▸ Pulling %s and tagging it %s\n' "$mirror_image" "$image"
   # Called from `if`, so a failing docker command does not exit on its own.
-  # Exit rather than return: a return would make the caller pull ghcr.io directly.
+  # An explicit mirror stops here. Automatic selection falls back to ghcr.io.
   if ! docker_access pull "$mirror_image"; then
+    if [[ "$auto" == 1 ]]; then
+      printf '\n▸ Could not pull %s; using ghcr.io\n' "$mirror_image"
+      return 1
+    fi
     printf '\n✗ Could not pull %s. Stopped without retagging the previous image.\n' "$mirror_image" >&2
     exit 1
   fi

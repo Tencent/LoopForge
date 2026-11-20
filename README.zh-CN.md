@@ -80,7 +80,7 @@ cd LoopForge
 
 `./start.sh` 直接拉取 `compose.yaml` 中 pin 的 GHCR 发布镜像，不在本地构建（`bash scripts/install.sh` 效果相同）。安装流程会创建 MySQL 和平台服务，生成配置与会话密钥，并导入内置沙箱、通用 SOP 和体验项目；无需在宿主机安装 Go 或 Node.js。模型 API Key 和 GitHub 授权在启动后由用户配置。用 `./start.sh logs`、`stop`、`restart`、`pull` 管理服务；需要从源码构建时用 `./start.sh dev`。
 
-国内拉取 `ghcr.io` 经常中断。`./start.sh` 和 `./start.sh pull` 会并行探测 `ghcr.io` 与南京大学镜像 [ghcr.nju.edu.cn](https://doc.nju.edu.cn/books/e1654/page/ghcr)，对同一个 tag 抽样比较下载速度，走更快的一边。选中南京时，脚本从该主机拉取，再改回 `compose.yaml` 里的原名；这表示信任该主机，因为下载结果会被标成官方镜像名。两边 manifest 的 digest 不一致时仍走 `ghcr.io`。`MIRROR=ghcr.io` 固定走官方源，`MIRROR=ghcr.nju.edu.cn` 固定走南京，选择不会写入 `.env`。发布说明里有 digest，可用 `docker image inspect --format '{{index .RepoDigests 0}}' ghcr.io/tencent/loopforge:<pin>` 核对，`@` 后面的摘要应一致。`compose.yaml` 不用改。Docker 引擎里的 `registry-mirrors`（包括 `https://docker.nju.edu.cn`）只加速 Docker Hub，不能填在 `MIRROR` 里。
+国内拉取 `ghcr.io` 经常中断。`./start.sh` 和 `./start.sh pull` 会并行探测 `ghcr.io` 与南京大学镜像 [ghcr.nju.edu.cn](https://doc.nju.edu.cn/books/e1654/page/ghcr)。只有先从 ghcr.io 拿到 manifest 摘要，且南京返回同一摘要时，才按这个摘要拉取并改回 `compose.yaml` 里的原名；这表示信任该主机，因为下载结果会被标成官方镜像名。拿不到官方摘要、摘要不一致，或镜像拉取失败时，仍走 `ghcr.io`。`MIRROR=ghcr.io` 固定走官方源，`MIRROR=ghcr.nju.edu.cn` 固定走南京，选择不会写入 `.env`。发布说明里有 digest，可用 `docker image inspect --format '{{index .RepoDigests 0}}' ghcr.io/tencent/loopforge:<pin>` 核对，`@` 后面的摘要应一致。`compose.yaml` 不用改。Docker 引擎里的 `registry-mirrors`（包括 `https://docker.nju.edu.cn`）只加速 Docker Hub，不能填在 `MIRROR` 里。
 
 ```bash
 ./start.sh
