@@ -4,11 +4,23 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"agentflow/internal/domain"
 	"agentflow/internal/managedcli"
 )
+
+func explicitNativeCLIPath(provider string) string {
+	override := "AGENTFLOW_" + strings.ToUpper(strings.ReplaceAll(provider, "-", "_")) + "_BIN"
+	if provider == "claude-code" {
+		override = "AGENTFLOW_CLAUDE_BIN"
+	}
+	if binary := strings.TrimSpace(os.Getenv(override)); binary != "" && fileIsExecutable(binary) {
+		return binary
+	}
+	return ""
+}
 
 // Pin host executables for platform-owned workflow runs. Docker sandboxes and
 // connected runners resolve the CLI on their own execution machines.
@@ -25,6 +37,9 @@ func pinNativeExecutorCLI(ctx context.Context, driver, runID string, executor do
 	}
 	if binary := strings.TrimSpace(executor.Binary); binary != "" && binary != conversationBinary(kind) {
 		return "", nil, nil
+	}
+	if path := explicitNativeCLIPath(kind); path != "" {
+		return path, nil, nil
 	}
 	lease, err := managedcli.BeginClaim(ctx, root)
 	if err != nil {
@@ -44,4 +59,39 @@ func pinNativeExecutorCLI(ctx context.Context, driver, runID string, executor do
 		return binary, lease, nil
 	}
 	return "", nil, lease.Close()
+}
+
+// bwrap overlays a private /tmp. Restore only the selected installation, as a
+// read-only bind, when the managed executable lives beneath that directory.
+func withBwrapManagedCLI(command CommandSpec, driver string) CommandSpec {
+	if driver != "bwrap" || !managedcli.Supports(command.Provider) || len(command.Argv) == 0 || !filepath.IsAbs(command.Argv[0]) {
+		return command
+	}
+	root := strings.TrimSpace(os.Getenv("AGENTFLOW_MANAGED_CLI_ROOT"))
+	if !filepath.IsAbs(root) || filepath.Clean(root) != root || root == "/" {
+		return command
+	}
+	base := filepath.Join(root, "providers", command.Provider)
+	relative, err := filepath.Rel(base, command.Argv[0])
+	if err != nil || relative == "." || !filepath.IsLocal(relative) {
+		return command
+	}
+	resolvedRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return command
+	}
+	releaseDir, _, _ := strings.Cut(relative, string(filepath.Separator))
+	install := filepath.Join(resolvedRoot, "providers", command.Provider, releaseDir)
+	if !strings.HasPrefix(install, "/tmp/") {
+		return command
+	}
+	binary, err := filepath.EvalSymlinks(command.Argv[0])
+	if err != nil {
+		return command
+	}
+	relative, err = filepath.Rel(install, binary)
+	if err == nil && filepath.IsLocal(relative) {
+		command.managedCLIInstall = install
+	}
+	return command
 }

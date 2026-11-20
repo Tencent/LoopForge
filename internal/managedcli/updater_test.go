@@ -20,16 +20,17 @@ import (
 )
 
 type updaterFixture struct {
-	manager      *Manager
-	mu           sync.Mutex
-	versions     map[string]string
-	published    time.Time
-	installs     map[string]int
-	failHelp     string
-	badIntegrity bool
-	tamperLock   bool
-	environments [][]string
-	rebuildCalls int
+	manager              *Manager
+	mu                   sync.Mutex
+	versions             map[string]string
+	published            time.Time
+	installs             map[string]int
+	failHelp             string
+	badIntegrity         bool
+	tamperLock           bool
+	environments         [][]string
+	rebuildCalls         int
+	missingVendorVersion string
 }
 
 func newUpdaterFixture(t *testing.T) *updaterFixture {

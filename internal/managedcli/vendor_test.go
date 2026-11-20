@@ -50,6 +50,10 @@ func (f *updaterFixture) serveVendorRelease(t *testing.T, w http.ResponseWriter,
 		}
 		w.Header().Set("Last-Modified", f.published.Format(http.TimeFormat))
 		if r.Method == http.MethodGet {
+			if version == f.missingVendorVersion {
+				http.NotFound(w, r)
+				return true
+			}
 			f.installs[provider]++
 			_, _ = w.Write(vendorFixtureArchive(t, provider, version))
 		}
@@ -146,5 +150,37 @@ func TestVendorObservationsSurviveDailyChannelChanges(t *testing.T) {
 			fresh("4.0.0")
 			check(restarted, "updated", third)
 		})
+	}
+}
+
+func TestVendorObservationRetainedAfterFailedInstallAndChannelRetreat(t *testing.T) {
+	f := newUpdaterFixture(t)
+	now := f.manager.Now()
+	f.manager.Now = func() time.Time { return now }
+	update := func(version string) (Report, error) {
+		t.Helper()
+		f.setVersion(version)
+		f.mu.Lock()
+		f.published = now.Add(-time.Minute)
+		f.mu.Unlock()
+		return f.manager.UpdateProvider(context.Background(), "agy")
+	}
+	_, err := update("1.1.0")
+	must(t, err)
+	now = now.Add(time.Hour)
+	_, err = update("1.3.0")
+	must(t, err)
+	now = now.Add(25 * time.Hour)
+	f.mu.Lock()
+	f.missingVendorVersion = "1.3.0"
+	f.mu.Unlock()
+	report, err := update("1.4.0")
+	if err == nil || len(report.Results) != 1 || report.Results[0].To != "1.3.0" {
+		t.Fatalf("expected a failed attempt to install the newest mature archive: %+v, %v", report, err)
+	}
+	report, err = update("1.2.0")
+	must(t, err)
+	if len(report.Results) != 1 || report.Results[0].To != "1.1.0" || report.Results[0].Status != "updated" {
+		t.Fatalf("older eligible observation lost after the release channel retreated: %+v", report)
 	}
 }

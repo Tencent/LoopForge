@@ -23,13 +23,15 @@ func (r *ExecutorRunner) Run(ctx context.Context, sb Sandbox, invocationID strin
 		return "", err
 	}
 	driver := sandboxDriver(sb)
-	managedBinary, cliLease, err := pinNativeExecutorCLI(ctx, driver, options.RunID, ex)
+	binary, cliLease, err := pinNativeExecutorCLI(ctx, driver, options.RunID, ex)
 	if err != nil {
 		return "", err
 	}
 	if cliLease != nil {
 		defer cliLease.Close()
-		ex.Binary = managedBinary
+	}
+	if binary != "" {
+		ex.Binary = binary
 	}
 	if options.BrowserMCP == nil && BrowserWantedForExecutor(ex.Kind) {
 		options.BrowserMCP = EnsureSandboxBrowser(ctx, sb, sb.Workspace(), options.RunID, sink)
@@ -70,6 +72,7 @@ func (r *ExecutorRunner) Run(ctx context.Context, sb Sandbox, invocationID strin
 	if err != nil {
 		return "", err
 	}
+	command = withBwrapManagedCLI(command, driver)
 	if cliLease != nil && (command.Provider == "claude-code" || command.Provider == "codebuddy") {
 		command = WithCommandEnvironment(command, map[string]string{"DISABLE_AUTOUPDATER": "1", "DISABLE_UPDATES": "1"})
 	}
@@ -221,7 +224,7 @@ func (r *ExecutorRunner) PrepareRemote(workspace string, inv RemoteInvocation) (
 		command.HookOutput = compiled.HookOutput
 	}
 	command = WithCommandEnvironment(command, hookExecutionEnvironment(inv.Options.Repositories))
-	return &PreparedRemote{Command: command}, nil
+	return &PreparedRemote{Command: withBwrapManagedCLI(command, driver)}, nil
 }
 
 func mockShouldSubmitGate(workspace string, agent domain.AgentDefinition, options InvocationOptions) bool {

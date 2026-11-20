@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 
 	"agentflow/internal/domain"
@@ -14,6 +16,7 @@ import (
 func TestExecutorRunnerPinsManagedNativeCLI(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("AGENTFLOW_MANAGED_CLI_ROOT", root)
+	t.Setenv("AGENTFLOW_PI_BIN", "")
 	publish := func(version string) string {
 		t.Helper()
 		binary := filepath.Join(root, "providers", "pi", version, "pi")
@@ -54,6 +57,55 @@ func TestExecutorRunnerPinsManagedNativeCLI(t *testing.T) {
 	check("local", "run1", "pi", first)
 	check("seatbelt", "run2", "", second)
 	check("bwrap", "run3", "pi", second)
+	override := filepath.Join(t.TempDir(), "pi")
+	if err := os.WriteFile(override, []byte("#!/bin/sh\nexit 0\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("AGENTFLOW_PI_BIN", override)
 	check("docker", "run4", "pi", "pi")
 	check("local", "run5", "/custom/bin/pi", "/custom/bin/pi")
+	check("local", "run6", "pi", override)
+}
+
+func TestBwrapMountsManagedInstallationUnderPrivateTmp(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("bwrap is available on Linux")
+	}
+	t.Setenv("TMPDIR", "/tmp")
+	root := t.TempDir()
+	t.Setenv("AGENTFLOW_MANAGED_CLI_ROOT", root)
+	installation := filepath.Join(root, "providers", "pi", "1.5.2-test")
+	binary := filepath.Join(installation, "node_modules", ".bin", "pi")
+	if err := os.MkdirAll(filepath.Dir(binary), 0700); err != nil {
+		t.Fatal(err)
+	}
+	payload := filepath.Join(installation, "pi.cjs")
+	if err := os.WriteFile(payload, []byte("#!/bin/sh\nexit 0\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("../../pi.cjs", binary); err != nil {
+		t.Fatal(err)
+	}
+	workspace := t.TempDir()
+	prepared, err := NewExecutorRunner().PrepareRemote(workspace, RemoteInvocation{
+		InvocationID: "invocation", Executor: domain.ExecutorDefinition{Kind: "pi", Binary: binary},
+		Agent: domain.AgentDefinition{ID: "agent"}, Driver: "bwrap", Prompt: "hello",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sandbox := &processSandbox{workspace: workspace, driver: "bwrap", binary: "bwrap"}
+	command, err := sandbox.command(context.Background(), prepared.Command, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	args := strings.Join(command.Args, "\x00")
+	privateTmp := strings.Index(args, "\x00--tmpfs\x00/tmp\x00")
+	bind := "\x00--ro-bind\x00" + installation + "\x00" + installation + "\x00"
+	if index := strings.Index(args, bind); privateTmp < 0 || index <= privateTmp {
+		t.Fatalf("expected a read-only installation bind after the private /tmp mount: %q", command.Args)
+	}
+	if strings.Contains(args, "\x00--ro-bind\x00"+root+"\x00") {
+		t.Fatal("bwrap exposed the entire updater directory")
+	}
 }

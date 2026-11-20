@@ -55,38 +55,40 @@ func (m *Manager) observeVendorReleases(state *State, provider string, latest re
 		return candidate.Version != installed.Version && candidate.Version != state.Rejected[provider] &&
 			(installed.Version == "" || !olderRelease(provider, candidate, installed.Version, installed.PublishedAt))
 	}
+	previous := state.VendorObservations[provider]
 	if !isUpgrade(latest) {
+		// A channel retreat removes observations above the advertised
+		// version. Wait for a newly advertised upgrade.
+		if len(previous) > 0 {
+			delete(state.VendorObservations, provider)
+			return latest, m.save(*state)
+		}
 		return latest, nil
 	}
 
-	previous := state.VendorObservations[provider]
 	retained := make([]vendorObservation, 0, maxVendorObservations)
 	selected := latest
 	cutoff := m.Now().Add(-observationWindow)
-	if latest.Published.After(cutoff) {
-		var mature release
-		for _, observation := range previous {
-			seen, ok := observation.release(provider)
-			if !ok || seen.Version == latest.Version || !isUpgrade(seen) ||
-				olderRelease(provider, latest, seen.Version, &seen.Published) {
-				continue
-			}
-			if seen.Published.After(cutoff) {
-				// Retain the oldest pending observations if checks happen
-				// frequently, so at least one survives long enough to mature.
-				if len(retained) < maxVendorObservations-2 {
-					retained = append(retained, observation)
-				}
-				continue
-			}
-			if mature.Version == "" || olderRelease(provider, mature, seen.Version, &seen.Published) {
-				mature = seen
-			}
+	for _, observation := range previous {
+		seen, ok := observation.release(provider)
+		if !ok || seen.Version == latest.Version || !isUpgrade(seen) ||
+			olderRelease(provider, latest, seen.Version, &seen.Published) {
+			continue
 		}
-		if mature.Version != "" {
-			selected = mature
-			retained = append(retained, observeVendorRelease(mature))
+		// Keep older observations until activation or a channel retreat
+		// supersedes them. Reserve slots for the selection and latest.
+		if len(retained) < maxVendorObservations-2 {
+			retained = append(retained, observation)
 		}
+		if latest.Published.After(cutoff) && !seen.Published.After(cutoff) &&
+			(selected.Version == latest.Version || olderRelease(provider, selected, seen.Version, &seen.Published)) {
+			selected = seen
+		}
+	}
+	if selected.Version != latest.Version && !slices.ContainsFunc(retained, func(o vendorObservation) bool {
+		return o.Version == selected.Version
+	}) {
+		retained = append(retained, observeVendorRelease(selected))
 	}
 	retained = append(retained, observeVendorRelease(latest))
 	if !slices.Equal(previous, retained) {
