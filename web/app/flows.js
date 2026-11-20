@@ -7,31 +7,26 @@ const PREVIEW_DEFAULT_EXECUTOR='codebuddy';
 function isPreviewBuildNode(id){return id===PREVIEW_BUILD_NODE_ID}
 function workflowPreviewExecutor(wf){return workflowPreviewContract(wf)?.executorId?.trim()||PREVIEW_DEFAULT_EXECUTOR}
 function workflowPreviewModel(wf){
-  const api=window.AgentFlowAssistantModels;
-  const fallback=(api&&api.DEFAULT)||'default';
-  const model=(workflowPreviewContract(wf)||{}).model;
-  return (model&&String(model).trim())||fallback;
+  const model=String(workflowPreviewContract(wf)?.model||'').trim();
+  return model==='default'||(model==='default-model'&&workflowPreviewExecutor(wf)===PREVIEW_DEFAULT_EXECUTOR)?'':model;
 }
 function fillPreviewModelSelect(sel, selected, executorId){
   if(!sel)return;
   const catalog=executorModelCatalogs()[executorId];
-  const items=[{id:'default',name:'默认模型'},...(catalog?.models||[]).filter(m=>m.id!=='default')];
-  const keep=selected||'default';
-  if(!items.some(m=>m.id===keep))items.push({id:keep,name:keep});
-  sel.innerHTML=items.map(m=>`<option value="${escapeHTML(m.id)}" ${m.id===keep?'selected':''}>${escapeHTML(m.name||m.id)}</option>`).join('');
+  const items=(catalog?.models||[]).filter(m=>m.id!=='default'&&(executorId!==PREVIEW_DEFAULT_EXECUTOR||m.id!=='default-model'));
+  if(selected&&!items.some(m=>m.id===selected))items.push({id:selected,name:selected});
+  sel.innerHTML=`<option value="" disabled ${selected?'':'selected'}>选择模型</option>`+items.map(m=>`<option value="${escapeHTML(m.id)}" ${m.id===selected?'selected':''}>${escapeHTML(m.name||m.id)}</option>`).join('');
   sel.disabled=flowReadOnly();
 }
 function ensurePreviewContract(){
   const wf=state.workflow;if(!wf)return null;
   const prev=workflowPreviewContract(wf)||{};
-  const api=window.AgentFlowAssistantModels;
-  const model=(prev.model&&String(prev.model).trim())||(api&&api.DEFAULT)||'default';
   wf.preview={
     ...prev,
     enabled:true,
     kind:'static',
     executorId:workflowPreviewExecutor(wf),
-    model,
+    model:prev.model??(prev.enabled?'default':''),
     sourcePath:prev.sourcePath||'dist',
     indexFile:prev.indexFile||'index.html',
     spaFallback:prev.spaFallback!==false,
@@ -271,7 +266,10 @@ function flowNodeTint(n){
 }
 function flowNodeEl(id){return document.querySelector(`#nodes .flow-node[data-id="${CSS.escape(id)}"]`)}
 function nodeMeta(n){
-  if(isPreviewBuildNode(n.id))return {kind:'preview',subtitle:'静态站点构建',tags:[{text:workflowPreviewModel(state.workflow)}]};
+  if(isPreviewBuildNode(n.id)){
+    const model=workflowPreviewModel(state.workflow);
+    return {kind:'preview',subtitle:'静态站点构建',tags:model?[{text:model}]:[]};
+  }
   if(n.type==='agent'){
     const a=workflowAgent(n.agentId),generic=catalogGeneric(state.workflow);
     const e=(state.data.executors||[]).find(x=>x.id===(a?.executorId||n.executorId));
@@ -988,7 +986,7 @@ function renderPreviewBuildProperties(host,n){
   loadExecutorModelCatalogs().then(()=>{if(executor.isConnected)fill()});
   executor.onchange=()=>{
     flowHistory.record();
-    updatePreviewContract({executorId:executor.value,model:'default'});
+    updatePreviewContract({executorId:executor.value,model:''});
     n.executorId=executor.value;
     fill();
     dirty();
@@ -1098,6 +1096,11 @@ async function discardWorkflow(){
 async function saveWorkflow(){
   if(catalogGeneric(state.workflow)&&!isPlatformAdmin()){toast('通用模板为只读，请先「复制到本项目」再修改');throw new Error('generic sop is read-only')}
   if(catalogForeign(state.workflow?.projectId)){toast('这是其他项目的共享 SOP，请先复制到本项目再改');throw new Error('shared sop is read-only')}
+  if(state.workflow?.preview?.enabled&&state.workflow.preview.model===''){
+    const message='请选择构建静态站点的模型';
+    toast(message);
+    throw new Error(message);
+  }
   try{const saved=await api('/api/workflows',{method:'PUT',body:JSON.stringify(state.workflow)});state.workflow=clone(saved);const i=state.data.workflows.findIndex(w=>w.id===saved.id);if(i>=0)state.data.workflows[i]=clone(saved);else state.data.workflows.unshift(clone(saved));markWorkflowClean();renderWorkflowMeta();renderSOPCatalog();renderCanvas();renderProperties();toast('SOP 草稿已保存');return saved}catch(e){if(e.message.includes('revision conflict')){toast('保存冲突：其他人已更新该 SOP，请重新选择后合并')}else if(e.message!=='shared sop is read-only'&&e.message!=='generic sop is read-only')toast(e.message);throw e}}
 function sopSandboxChoices(){
   return (state.data.sandboxes||[]).filter(s=>s.id&&catalogVisible(s.projectId,s.shared));

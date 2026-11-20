@@ -41,7 +41,8 @@ func TestClarifyModelPickerAndMCPPrompt(t *testing.T) {
 		"agentflow.clarifyModel",
 		"selectedClarifyModel",
 		"data-clarify-model",
-		"model:selectedClarifyModel()",
+		"const model=selectedClarifyModel()",
+		"JSON.stringify({message:msg,history,model})",
 	} {
 		if !strings.Contains(string(app), want) {
 			t.Fatalf("clarify model picker is missing %q", want)

@@ -71,7 +71,16 @@
     const value = id || DEFAULT_MODEL;
     const listed = catalog.models.find(m => m.id === value || ('codebuddy:' + m.id === value && !m.engine));
     if (listed) return {...listed, id: value};
-    return {id: value, family: familyOf(value), name: value === DEFAULT_MODEL ? '默认模型' : value};
+    return {id: value, family: familyOf(value), name: value === DEFAULT_MODEL ? '默认' : value};
+  }
+  function concreteModelId(id) {
+    const value = String(id || '').trim();
+    const separator = value.indexOf(':');
+    const prefix = value.slice(0, Math.max(0, separator));
+    const qualified = Object.hasOwn(CLI_ICON, prefix);
+    const engine = qualified ? prefix : 'codebuddy';
+    const model = qualified ? value.slice(separator + 1) : value;
+    return model === DEFAULT_MODEL || (engine === 'codebuddy' && model === 'default-model') || !model ? '' : value;
   }
   function fillModelIcon(el, family, id) {
     if (!el) return;
@@ -90,7 +99,7 @@
     return credits.endsWith('credits') ? credits : credits + ' credits';
   }
   // paint draws a catalog entry into a <button class="ai-model-toggle">.
-  function paint(toggle, selectedId, defaultDescription) {
+  function paint(toggle, selectedId) {
     if (!toggle) return;
     const meta = modelMeta(selectedId);
     const icon = toggle.querySelector('.ai-model-icon');
@@ -98,8 +107,7 @@
     const label = toggle.querySelector('[data-model-label]');
     if (label) label.textContent = meta.name || meta.id;
     const credits = creditLabel(meta);
-    toggle.title = (meta.id === DEFAULT_MODEL && defaultDescription) ||
-      (credits ? `${meta.name || meta.id} ${credits}` : (meta.id || ''));
+    toggle.title = credits ? `${meta.name || meta.id} ${credits}` : (meta.id || '');
   }
   // paintItem draws an arbitrary {id,name,family,credits} item (agent efforts,
   // executor models) into the same toggle chrome.
@@ -112,6 +120,10 @@
     if (label) label.textContent = item?.name || id || '选择模型';
     const credits = creditLabel(item);
     toggle.title = credits ? `${item?.name || id} ${credits}` : (item?.name || id || '');
+  }
+  function paintFeature(toggle, selectedId) {
+    const selected = concreteModelId(selectedId);
+    paintItem(toggle, selected ? modelMeta(selected) : null);
   }
   // renderOptions renders any {id,name,family,credits,icon} list; icon:false
   // skips the icon slot (effort levels, custom model entry).
@@ -134,14 +146,7 @@
       const label = document.createElement('span');
       label.className = 'ai-model-name';
       label.textContent = item.name || item.id;
-      if (item.description) {
-        const description = document.createElement('small');
-        description.className = 'ai-model-description';
-        description.textContent = item.description;
-        label.append(description);
-      } else {
-        label.title = item.name ? `${item.name} (${item.id})` : item.id;
-      }
+      label.title = item.name ? `${item.name} (${item.id})` : item.id;
       const credits = document.createElement('span');
       credits.className = 'ai-model-credits';
       credits.textContent = creditLabel(item);
@@ -159,17 +164,25 @@
   function renderList(menu, selectedId, onPick) {
     renderOptions(menu, catalog.models || [], selectedId, onPick);
   }
-  function renderFeatureList(menu, selectedId, onPick, defaultDescription) {
-    const items = [{...modelMeta(DEFAULT_MODEL), icon: false, description: defaultDescription}];
+  function renderFeatureList(menu, selectedId, onPick) {
+    const selected = concreteModelId(selectedId);
+    const items = [];
     for (const model of catalog.models) {
       const engine = catalog.engines?.find(item => item.id === engineOf(model.id));
       if (engine && !(engine.personal ?? engine.configured)) continue;
-      items.push({...model, name: engine ? model.name + ' · ' + engine.name : model.name});
+      const id = !model.engine && selected === 'codebuddy:' + model.id ? selected : model.id;
+      items.push({...model, id, name: engine ? model.name + ' · ' + engine.name : model.name});
     }
-    if (selectedId && !items.some(item => item.id === selectedId)) {
-      items.push(modelMeta(selectedId));
+    if (selected && !items.some(item => item.id === selected)) {
+      items.push(modelMeta(selected));
     }
-    renderOptions(menu, items, selectedId, onPick);
+    renderOptions(menu, items, selected, onPick);
+    if (!items.length) {
+      const empty = document.createElement('div');
+      empty.className = 'ai-model-empty';
+      empty.textContent = '暂无可选模型';
+      menu.append(empty);
+    }
   }
   async function fetchCatalog() {
     const resp = await fetch('/api/assistant/models', {headers: {Accept: 'application/json'}, credentials: 'same-origin'});
@@ -181,7 +194,7 @@
     if (!loading) {
       loading = fetchCatalog().then(data => {
         if (Array.isArray(data?.models)) {
-          const models = data.models.filter(m => m.id !== DEFAULT_MODEL && m.id !== `${m.engine}:default`);
+          const models = data.models.filter(m => concreteModelId(m.id));
           catalog = {default: data.default || DEFAULT_MODEL, models, engines: data.engines || []};
         }
         return catalog;
@@ -193,9 +206,11 @@
     DEFAULT: DEFAULT_MODEL,
     catalog: () => catalog,
     cliIcon: id => Object.hasOwn(CLI_ICON, id) ? '/images/credentials/' + CLI_ICON[id] : '',
+    concreteModelId,
     engineOf,
     load,
     paint,
+    paintFeature,
     paintItem,
     renderFeatureList,
     renderList,

@@ -71,6 +71,8 @@ const ctx = {
       default: 'model-b',
       models: [
         { id: 'default', name: 'CLI 默认模型', family: 'other' },
+        { id: 'default-model', name: '旧版默认', family: 'other' },
+        { id: 'codex:default', name: 'Codex 默认', engine: 'codex' },
         { id: 'model-a', name: 'Model A', family: 'claude', credits: 'x1.00' },
         { id: 'model-b', name: 'Model B', family: 'glm', credits: 'x0.06' },
         { id: 'codex:gpt-5.5', name: 'GPT-5.5', family: 'gpt', engine: 'codex' },
@@ -126,8 +128,9 @@ vm.runInContext(moduleSource, ctx);
   // Pickers keep painting before the catalog lands, so the built-in fallback
   // must already render a usable label.
   assert.equal(api.engineOf('codex:gpt-5.5'), 'codex');
-  api.paint(toggle, api.DEFAULT);
-  assert.equal(label.textContent, '默认模型');
+  api.paintFeature(toggle, api.DEFAULT);
+  assert.equal(label.textContent, '选择模型');
+  assert.equal(toggle.title, '');
   assert.equal(icon.dataset.family, 'other');
 
   await api.load();
@@ -147,10 +150,8 @@ vm.runInContext(moduleSource, ctx);
 
   toggle.onclick({ stopPropagation() {} });
   assert.equal(menu.hidden, false, 'clicking 选择模型 must open the menu');
-  assert.equal(menu.children.length, 4, 'menu lists the default and personal models');
-  assert.equal(menu.children[0].querySelector('.ai-model-name').textContent, '默认模型');
-  assert.match(menu.children[0].querySelector('.ai-model-description').textContent, /需求负责人.*CodeBuddy/);
-  assert.ok(menu.children[1].className.includes('is-active'), 'stored model is marked active');
+  assert.equal(menu.children.length, 3, 'menu only lists concrete personal models');
+  assert.ok(menu.children[0].className.includes('is-active'), 'stored model is marked active');
 
   menu.children.find(opt => opt.dataset.id === 'codex:gpt-5.5').onclick();
   assert.equal(store.get('agentflow.clarifyModel'), 'codex:gpt-5.5');
@@ -158,10 +159,12 @@ vm.runInContext(moduleSource, ctx);
   assert.equal(menu.hidden, true);
   assert.equal(label.textContent, 'GPT-5.5');
   assert.equal(ctx.selectedClarifyModel(), 'codex:gpt-5.5');
+  store.set('agentflow.clarifyModel', 'codebuddy:default-model');
+  ctx.bindClarifyModelPicker(host);
+  assert.equal(input.value, '');
+  assert.equal(label.textContent, '选择模型');
   toggle.onclick({ stopPropagation() {} });
-  menu.children[0].onclick();
-  assert.equal(input.value, 'default');
-  assert.equal(label.textContent, '默认模型');
-  assert.match(toggle.title, /未指派需求使用项目负责人/);
+  assert.equal(menu.children.length, 3);
+  assert.equal(menu.children.some(item => item.getAttribute('aria-selected') === 'true'), false);
   console.log('assistant models ok');
 })().catch(err => { console.error(err); process.exit(1); });

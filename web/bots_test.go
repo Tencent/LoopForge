@@ -44,7 +44,7 @@ assert.match(list,/<span class="bot-chip">群聊<\/span><span class="bot-target-
 assert.match(list,/已启用/);assert.match(list,/已停用/);assert.match(list,/消息权限可用/);
 assert.match(list,/&lt;夜间&gt;/);
 assert.equal((list.match(/class="bot-glyph"><span class="bot-icon" data-bot-icon="robot"/g)||[]).length,2,'each row leads with a robot glyph');
-assert.match(list,/class="bot-row-sub">glm-5.3-flash-ioa</,'model falls back to the default');
+assert.match(list,/class="bot-row-sub"><\/small>/,'a bot without a model has no model label');
 assert.equal((list.match(/data-bot-delete=/g)||[]).length,2);
 assert.match(list,/class="hui-icon-btn" data-bot-edit="b1" aria-label="编辑 研发通知" title="编辑"/);
 assert.match(list,/class="hui-icon-btn is-danger" data-bot-delete="b1" aria-label="删除 研发通知" title="删除"/);

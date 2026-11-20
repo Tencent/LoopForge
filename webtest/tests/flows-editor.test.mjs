@@ -84,6 +84,10 @@ test('flow preview properties persist the CLI, model and SPA fallback', async (t
   executor.value = 'codex';
   executor.dispatchEvent(new app.window.Event('change'));
   const model = app.document.querySelector('#previewNodeModel');
+  assert.equal(model.value, '');
+  assert.deepEqual([...model.options].map(option => option.value), ['', 'preview-model']);
+  assert.equal(model.options[0].disabled, true);
+  await assert.rejects(app.evaluate('saveWorkflow()'), /请选择构建静态站点的模型/);
   model.value = model.options[model.options.length - 1].value;
   model.dispatchEvent(new app.window.Event('change'));
   const spa = app.document.querySelector('#previewNodeSpa');

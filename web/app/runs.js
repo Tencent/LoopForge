@@ -1279,7 +1279,8 @@ function defaultRunEval(){return{enabled:true,version:1,threshold:70,dimensions:
   {id:'delivery',name:'交付完整',question:'终态、产物和验证信号是否齐全？',weight:10}
 ]}}
 function runEvalModel(){
-  return state.runEvalModel||localStorage.getItem('agentflow.runEvalModel')||window.AgentFlowAssistantModels?.DEFAULT||'default';
+  const selected=state.runEvalModel||localStorage.getItem('agentflow.runEvalModel');
+  return window.AgentFlowAssistantModels?.concreteModelId(selected)||'';
 }
 function setRunEvalModel(id){state.runEvalModel=id;localStorage.setItem('agentflow.runEvalModel',id)}
 function runEvalApplyable(rec){if(!rec||rec.status==='applied')return false;const action=((rec.target||'')+'.'+(rec.action||'')).replace(/^\./,'').toLowerCase();const full=rec.action&&rec.action.includes('.')?rec.action.toLowerCase():action;return ['workflow.update_node','agent.upsert_gate','agent.remove_gate','agent.append_instructions','agent.append_task_prompt'].includes(full)}
@@ -1369,8 +1370,7 @@ function bindRunEvalModelPicker(host){
   if(!host)return;
   const api=window.AgentFlowAssistantModels,toggle=host.querySelector('[data-model-toggle]'),menu=host.querySelector('.ai-model-menu');
   if(!api||!toggle||!menu)return;
-  const defaultDescription='优先使用你配置的 CodeBuddy。未配置时使用你在个人配置中添加的其他 CLI。';
-  const paint=()=>{const keep=runEvalModel();const inp=host.querySelector('[name=runEvalModel]');if(inp)inp.value=keep;api.paint(toggle,keep,defaultDescription)};
+  const paint=()=>{const keep=runEvalModel();const inp=host.querySelector('[name=runEvalModel]');if(inp)inp.value=keep;api.paintFeature(toggle,keep)};
   paint();
   api.load?.().then(paint).catch(paint);
   if(host.dataset.bound)return;
@@ -1380,7 +1380,7 @@ function bindRunEvalModelPicker(host){
     const open=menu.hidden;
     menu.hidden=!open;
     toggle.setAttribute('aria-expanded',open?'true':'false');
-    if(open)api.renderFeatureList(menu,runEvalModel(),id=>{setRunEvalModel(id);paint();menu.hidden=true;toggle.setAttribute('aria-expanded','false')},defaultDescription);
+    if(open)api.renderFeatureList(menu,runEvalModel(),id=>{setRunEvalModel(id);paint();menu.hidden=true;toggle.setAttribute('aria-expanded','false')});
   };
   document.addEventListener('click',e=>{if(host.contains(e.target))return;menu.hidden=true;toggle.setAttribute('aria-expanded','false')});
 }
@@ -1389,7 +1389,6 @@ async function loadRunEval(runId,background){
     const rec=await api(`/api/runs/${encodeURIComponent(runId)}/eval`,{silent:true});
     if((state.activeRun?.id||state.selectedRun)!==runId&&state.activeRun?.id!==runId)return;
     state.runEval={...rec,runId};
-    if(rec?.model)setRunEvalModel(rec.model);
     if(rec?.status==='running'&&!state.runEvalStream)attachRunEvalStream(runId);
     if(!background){
       const host=$('#runDetail');
@@ -1400,11 +1399,13 @@ async function loadRunEval(runId,background){
 }
 async function startRunEval(run){
   if(!['succeeded','failed','cancelled'].includes(run.status))return toast('请等 SOP 跑完后再评测');
+  const model=runEvalModel();
+  if(!model)return toast('请先选择模型');
   state.runEvalBusy=true;state.runEvalThoughts=['正在提交评测…'];
   const host=$('#runDetail'),pane=host?.querySelector('[data-run-pane="eval"]');
   if(pane){pane.innerHTML=runEvalPaneHTML(run);bindRunEvalPane(run,host)}
   try{
-    const rec=await api(`/api/runs/${encodeURIComponent(run.id)}/eval`,{method:'POST',body:JSON.stringify({model:runEvalModel()})});
+    const rec=await api(`/api/runs/${encodeURIComponent(run.id)}/eval`,{method:'POST',body:JSON.stringify({model})});
     state.runEval={...rec,runId:run.id};
     attachRunEvalStream(run.id);
   }catch(e){state.runEvalBusy=false;toast(e.message,'err');if(pane){pane.innerHTML=runEvalPaneHTML(run);bindRunEvalPane(run,host)}}

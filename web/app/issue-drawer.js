@@ -289,7 +289,6 @@ function collectIssueClarifyReply(){
 }
 function retryIssueClarifyTurn(){
   const issue=state.issueDetailData?.issue;if(!issue)return;
-  if(issue.clarification)issue.clarification.lastError='';
   const last=(issue.clarification?.history||[]).filter(h=>h.role==='user').pop();
   sendIssueClarification(last?.content||CLARIFY_AUTO_PROMPTS[0]);
 }
@@ -409,6 +408,8 @@ async function sendIssueClarification(initialMessage=''){
     attachIssueClarifyStream(issueId);
     return;
   }
+  const model=selectedClarifyModel();
+  if(!model)return toast('请先选择模型');
   const msg=initialMessage||collectIssueClarifyReply();
   if(!msg)return toast('请先选择或填写答案');
   const c=issue.clarification||(issue.clarification={});
@@ -425,7 +426,7 @@ async function sendIssueClarification(initialMessage=''){
   renderIssueDetailTab();
   renderIssues();
   try{
-    const resp=await fetch(`/api/issues/${encodeURIComponent(issueId)}/chat-clarify`,{method:'POST',headers:{'Content-Type':'application/json','Accept':'text/event-stream'},body:JSON.stringify({message:msg,history,model:selectedClarifyModel()}),signal:abort.signal});
+    const resp=await fetch(`/api/issues/${encodeURIComponent(issueId)}/chat-clarify`,{method:'POST',headers:{'Content-Type':'application/json','Accept':'text/event-stream'},body:JSON.stringify({message:msg,history,model}),signal:abort.signal});
     if(!resp.ok){let em=`HTTP ${resp.status}`;try{const d=await resp.json();em=d.error||em}catch{}throw new Error(em)}
     const data=(resp.headers.get('Content-Type')||'').includes('text/event-stream')?await consumeIssueClarifyStream(resp,issueId):await resp.json();
     await applyIssueClarifyDone(issueId,data);

@@ -99,9 +99,7 @@ function scheduleIssueStatusValues(job){
 }
 function scheduleModelAPI(){return window.AgentFlowAssistantModels}
 function selectedClarifyModel(){
-  const api=window.AgentFlowAssistantModels;
-  const stored=localStorage.getItem('agentflow.clarifyModel')||'';
-  return stored||(api&&api.DEFAULT)||'default';
+  return window.AgentFlowAssistantModels?.concreteModelId(localStorage.getItem('agentflow.clarifyModel'))||'';
 }
 function setClarifyModel(id){
   if(!id)return;
@@ -116,8 +114,7 @@ function bindClarifyModelPicker(host){
   if(!host)return;
   const api=window.AgentFlowAssistantModels,toggle=host.querySelector('[data-model-toggle]'),menu=host.querySelector('.ai-model-menu');
   if(!api||!toggle||!menu)return;
-  const defaultDescription='优先使用需求负责人的 CodeBuddy。未配置时使用负责人配置的其他 CLI，未指派需求使用项目负责人的配置。';
-  const paint=()=>{const keep=selectedClarifyModel();const hidden=host.querySelector('[data-clarify-model-value]');if(hidden)hidden.value=keep;api.paint(toggle,keep,defaultDescription)};
+  const paint=()=>{const keep=selectedClarifyModel();const hidden=host.querySelector('[data-clarify-model-value]');if(hidden)hidden.value=keep;api.paintFeature(toggle,keep)};
   paint();
   api.load?.().then(paint).catch(paint);
   if(!bindClarifyModelPicker.docBound){
@@ -142,10 +139,10 @@ function bindClarifyModelPicker(host){
     if(open){
       api.renderFeatureList(menu, selectedClarifyModel(), id=>{
         setClarifyModel(id);
-        api.paint(toggle, id, defaultDescription);
+        paint();
         menu.hidden=true;
         toggle.setAttribute('aria-expanded','false');
-      }, defaultDescription);
+      });
     }
   };
 }

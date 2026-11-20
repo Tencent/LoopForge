@@ -41,7 +41,7 @@
 }
 .ai-model-option{padding:8px 10px;gap:8px}
 .ai-model-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.ai-model-description{display:block;margin-top:3px;color:var(--muted-2);font-size:11px;font-weight:400;line-height:1.45;white-space:normal}
+.ai-model-empty{padding:8px 10px;color:var(--muted-2);font-size:12px}
 .ai-model-credits{flex-shrink:0;color:var(--muted-2);font-size:11px;font-variant-numeric:tabular-nums;font-weight:500}
 .ai-model-credits:empty{display:none!important}
 .ai-model-option.is-active{background:var(--blue-soft);color:var(--blue)}
