@@ -175,3 +175,52 @@ func TestDockerfileBundlesTheOnDemandDeepSeekHarnessRelease(t *testing.T) {
 		t.Fatalf("Dockerfile must install @deepseek-ai/dsh@%s", DeepSeekHarnessVersion)
 	}
 }
+
+func TestEnsureClaudeCodeRepairsIncompleteVersionDirectory(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("AGENTFLOW_RUNTIME_CLI_DIR", root)
+	t.Setenv("NPM_TEST_LOG", filepath.Join(t.TempDir(), "npm.log"))
+	useFakeCommands(t, map[string]string{"npm": fakeNPM})
+	want := claudeCodeBinary(root)
+	if err := os.MkdirAll(filepath.Dir(want), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// The pinned version's cache exists, but postinstall's executable no
+	// longer does. Keep a package file so the target is nonempty.
+	stale := filepath.Join(filepath.Dir(want), "package-marker")
+	if err := os.WriteFile(stale, []byte("original cache"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("NPM_TEST_FAIL", "1")
+	if _, err := EnsureClaudeCode(context.Background()); err == nil {
+		t.Fatal("failed download was treated as successful")
+	}
+	if got, err := os.ReadFile(stale); err != nil || string(got) != "original cache" {
+		t.Fatalf("failed download damaged the existing cache: %q (%v)", got, err)
+	}
+
+	t.Setenv("NPM_TEST_FAIL", "")
+	binary, err := EnsureClaudeCode(context.Background())
+	if err != nil || binary != want || !fileIsExecutable(binary) {
+		t.Fatalf("repair = %q (%v), want executable %q", binary, err, want)
+	}
+}
+
+func TestActivateClaudeCodeStageRestoresCacheOnRenameFailure(t *testing.T) {
+	parent := t.TempDir()
+	target := filepath.Join(parent, ClaudeCodeVersion)
+	if err := os.MkdirAll(target, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(target, "package-marker")
+	if err := os.WriteFile(marker, []byte("original cache"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := activateClaudeCodeStage(filepath.Join(parent, "missing-stage"), target); err == nil {
+		t.Fatal("activation of the missing stage succeeded")
+	}
+	if got, err := os.ReadFile(marker); err != nil || string(got) != "original cache" {
+		t.Fatalf("failed activation did not restore the cache: %q (%v)", got, err)
+	}
+}
