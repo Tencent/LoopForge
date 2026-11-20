@@ -172,8 +172,8 @@ For an external MySQL deployment, review that migration and check column existen
 | Kind | Example | What an operator does |
 | --- | --- | --- |
 | Already applied by the installer and `./start.sh pull` | `001_run_obs_generated_columns.sql`, `migrations/seed/*.sql`, `031_generic_backend_openssh.sql` | Nothing; the script above covers it |
-| Must run once when upgrading | `009_bot_interactions_utf8mb4.sql` (`CONVERT TO` an existing table), new tables and columns added by hand | Run it on the database after reviewing prerequisites |
-| Backfills and one-time rewrites of existing rows | `016_public_optional_repositories.sql`, `021_assistant_session_sources.sql` | Run it if the history matters; skipping it changes no schema but leaves old rows unconverted |
+| Required upgrade migrations | `009_bot_interactions_utf8mb4.sql`, `036_git_http_credentials.sql` | Follow each migration's timing and prerequisites. [Migrating existing GitHub credentials](#migrating-existing-github-credentials) |
+| Optional backfills and rewrites of existing rows | `016_public_optional_repositories.sql`, `021_assistant_session_sources.sql` | Run them if the installation needs the converted rows |
 
 ## Updating existing public SOPs
 
@@ -208,6 +208,18 @@ The flow requests the OAuth `repo` scope so private cloning, pushes, Issues and 
 GitHub Issue import and PR status synchronization use the project owner's Git token. Git operations and the optional GitHub MCP integration use the responsible user's token. Public reads may work without a token; private repositories and writes require repository access. GitHub MCP must be installed explicitly and sends credentials only to its official HTTPS endpoint.
 
 Git commits created by the platform use the responsible local account name and a non-deliverable `@users.noreply.loopforge.invalid` email. A local account does not establish a corporate email or a verified GitHub identity.
+
+### Migrating existing GitHub credentials
+
+When upgrading from v0.4.0 to a version that reads HTTPS credentials by host, stop the old API and workers and keep MySQL running. Apply the target release's `036_git_http_credentials.sql` manually before starting the upgraded platform or running `./start.sh pull`. For Compose, use:
+
+```bash
+docker compose exec -T mysql sh -c 'MYSQL_PWD="$MYSQL_PASSWORD" mysql -u loopforge loopforge' < migrations/036_git_http_credentials.sql
+```
+
+The backfill copies existing GitHub personal access tokens and device-flow grants into `github.com` entries. If an installation already upgraded and a user's token is still in the legacy column, applying the backfill restores the missing entry. An existing `github.com` entry takes precedence.
+
+Verify the credentials after upgrading. After the rollback window, run `037_retire_plain_git_token.sql` manually using the same command with the cleanup filename. It clears a legacy token only when the corresponding `github.com` entry holds the same value. If the values differ, both are kept.
 
 ## CodeBuddy authentication environment
 
