@@ -1561,6 +1561,8 @@ textarea.pa-input{height:auto;min-height:76px;padding:9px 11px;resize:vertical;l
 .platform-field-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px}
 .platform-ssh-host-form[hidden]{display:none}
 .platform-ssh-host-form textarea{resize:vertical;font-family:monospace}
+.platform-ssh-host-manual summary{cursor:pointer;color:var(--text);font-size:13px}
+.platform-ssh-host-manual .platform-field,.platform-ssh-host-manual button{margin-top:12px}
 .platform-ssh-host-info code{overflow-wrap:anywhere}
 .platform-field-head small{color:var(--muted-2);font-size:12px}
 .platform-field-hint{color:var(--muted-2);font-size:12px;line-height:1.5}

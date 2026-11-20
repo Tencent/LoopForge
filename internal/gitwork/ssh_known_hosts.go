@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"maps"
 	"os"
 	"slices"
@@ -113,9 +114,12 @@ func readConfiguredSSHKnownHosts(ctx context.Context, scopes []string) ([]byte, 
 	if lookup, _ := ctx.Value(sshKnownHostsLookupContext{}).(SSHKnownHostsLookup); lookup != nil {
 		managed, err := lookup(ctx, scopes)
 		if err != nil {
-			return nil, fmt.Errorf("无法读取平台 Git SSH 主机信任")
+			// The registry contributes positive keys. The deployment file
+			// and its revocations remain authoritative during an outage.
+			log.Printf("read platform Git SSH host trust registry: %v", err)
+		} else if len(managed) > 0 {
+			content = append(append(content, '\n'), managed...)
 		}
-		content = append(append(content, '\n'), managed...)
 	}
 	return content, nil
 }
@@ -131,7 +135,7 @@ func sshHostKeys(ctx context.Context, remotes []SSHRemote) ([]byte, error) {
 	var platformEntries []byte
 	if platform, _ := ctx.Value(sshKnownHostsContext{}).(*domain.GitSSHKnownHosts); platform != nil {
 		if platform.ReadFailed {
-			return nil, fmt.Errorf("无法读取平台 Git SSH 主机信任配置，请检查平台设置和 %s", SSHKnownHostsEnv)
+			return nil, fmt.Errorf("无法读取平台 %s 指定的主机密钥文件", SSHKnownHostsEnv)
 		}
 		if platform.TooLarge {
 			return nil, fmt.Errorf("平台下发的 SSH 主机密钥超过大小上限，请检查平台设置和 %s", SSHKnownHostsEnv)

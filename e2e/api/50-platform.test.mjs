@@ -254,7 +254,7 @@ test('platform: Git SSH host trust previews, registers, rotates and removes a ho
   assert.equal((await del(path, stale)).code, 'ssh_host_trust_changed');
   assert.deepEqual(await findHost(), rotated);
 
-  await del(path, { expect: 204, headers: revisionHeader(rotated.revision) });
+  await del(`${base}?host=${encodeURIComponent(host)}`, { expect: 204, headers: revisionHeader(rotated.revision) });
   assert.equal(await findHost(), undefined);
 });
 

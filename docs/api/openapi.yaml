@@ -850,25 +850,63 @@ paths:
         "400": {description: Invalid SSH host or public keys}
         "403": {$ref: "#/components/responses/Forbidden"}
         "409": {description: The host and port are already registered}
+    delete:
+      tags: [Repositories]
+      operationId: deleteStoredPlatformGitSSHHost
+      summary: Remove a Git SSH host registration by its stored hostname
+      description: Platform administrators can remove a record marked invalid in the list by supplying its stored hostname and revision. Browser requests must be same-origin.
+      parameters:
+        - name: host
+          in: query
+          required: true
+          allowEmptyValue: true
+          schema: {type: string}
+          description: The host field as returned by the list, including any invalid characters in a corrupt record.
+        - name: If-Match
+          in: header
+          required: true
+          schema: {type: string}
+          description: Quote the revision returned when the registration was read.
+      responses:
+        "204": {description: Registration removed}
+        "400": {description: Invalid host parameter or revision}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "412": {description: The registration has changed or been removed}
+        "428": {description: The current registration revision is required}
   /api/platform/git-ssh-hosts/preview:
     post:
       tags: [Repositories]
       operationId: previewPlatformGitSSHHost
       summary: Read SHA256 fingerprints for proposed Git SSH host keys
-      description: Platform administrators only. The supplied public keys are parsed locally to compute fingerprints.
+      description: Platform administrators can preview supplied keys or read a single key presented by an SSH host. Preview leaves the registry unchanged. Verify the fingerprint with the Git provider before saving the returned public key.
       requestBody:
         required: true
         content:
           application/json:
-            schema: {$ref: "#/components/schemas/PlatformGitSSHHost"}
+            schema:
+              oneOf:
+                - $ref: "#/components/schemas/PlatformGitSSHHost"
+                - type: object
+                  required: [host, probe]
+                  properties:
+                    host: {type: string, example: "git.example.org:2222"}
+                    probe:
+                      type: object
+                      properties:
+                        runnerId: {type: string, description: Use an online Runner owned by the requesting administrator. Omit to use the platform server.}
       responses:
         "200":
-          description: Normalized host and proposed fingerprints
+          description: Normalized host, public keys, and proposed fingerprints
           content:
             application/json:
               schema: {$ref: "#/components/schemas/PlatformGitSSHHost"}
-        "400": {description: Invalid SSH host or public keys}
+        "400": {description: Invalid host or keys or multiple preview sources}
         "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {description: Runner not found}
+        "409": {description: Runner cannot read an SSH host public key at this time}
+        "502": {description: Unable to read a valid public key from the SSH host}
+        "503": {description: Runner unavailable}
+        "504": {description: Runner did not respond in time}
   /api/platform/git-ssh-hosts/{host}:
     parameters:
       - {name: host, in: path, required: true, schema: {type: string}, example: "git.example.org:2222"}
@@ -4431,6 +4469,8 @@ components:
           type: array
           readOnly: true
           items: {type: string}
+        invalid: {type: boolean, readOnly: true, description: Set on a stored record with an invalid hostname or public keys. The list omits its key contents.}
+        invalidHost: {type: boolean, readOnly: true, description: The stored hostname does not identify a canonical SSH endpoint. Remove this record before registering the correct host.}
         revision: {type: string, readOnly: true, description: Opaque revision for conditional updates and removals.}
     PlatformCodeBuddyKey:
       type: object

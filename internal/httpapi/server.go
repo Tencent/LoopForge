@@ -156,7 +156,7 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 		auth:            &authHandlers{deps: d},
 		github:          newGitHubHandlers(d),
 		users:           &usersHandlers{deps: d},
-		sshHostTrust:    &sshHostTrustHandlers{deps: d, hosts: s.SSHHostTrustRepo},
+		sshHostTrust:    &sshHostTrustHandlers{deps: d, hosts: s.SSHHostTrustRepo, runnerControls: runnerControls},
 		catalog:         &catalogHandlers{deps: d},
 		businessDomains: &businessDomainsHandlers{deps: d},
 		insights:        &insightsHandlers{deps: d},
@@ -272,6 +272,7 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.DELETE("/api/platform/codebuddy-key", api.users.platformCodeBuddyKey)
 	g.GET("/api/platform/git-ssh-hosts", api.sshHostTrust.list)
 	g.POST("/api/platform/git-ssh-hosts", api.sshHostTrust.save)
+	g.DELETE("/api/platform/git-ssh-hosts", api.sshHostTrust.remove)
 	g.POST("/api/platform/git-ssh-hosts/preview", api.sshHostTrust.preview)
 	g.PUT("/api/platform/git-ssh-hosts/:host", api.sshHostTrust.save)
 	g.DELETE("/api/platform/git-ssh-hosts/:host", api.sshHostTrust.remove)
