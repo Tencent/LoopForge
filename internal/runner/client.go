@@ -82,8 +82,11 @@ func (c *Client) do(ctx context.Context, method, path string, body any, out any)
 	if resp.StatusCode == http.StatusNoContent {
 		return nil
 	}
-	payload, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
-	if resp.StatusCode >= 400 {
+	payload, err := readControlResponse(resp.Body, 8<<20)
+	if err != nil {
+		return fmt.Errorf("read %s %s response: %w", method, path, err)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		var detail struct {
 			Error string `json:"error"`
 		}
@@ -98,6 +101,19 @@ func (c *Client) do(ctx context.Context, method, path string, body any, out any)
 		}
 	}
 	return nil
+}
+
+// readControlResponse distinguishes a complete response from a truncated
+// transport read or an oversized body, even when its prefix is valid JSON.
+func readControlResponse(body io.Reader, limit int64) ([]byte, error) {
+	payload, err := io.ReadAll(io.LimitReader(body, limit+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(payload)) > limit {
+		return nil, fmt.Errorf("response body exceeds %d bytes", limit)
+	}
+	return payload, nil
 }
 
 // ---------- endpoints ----------
@@ -140,7 +156,10 @@ func (c *Client) Register(ctx context.Context, bootstrapToken string, req Regist
 		return nil, err
 	}
 	defer resp.Body.Close()
-	payload, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	payload, err := readControlResponse(resp.Body, 1<<20)
+	if err != nil {
+		return nil, fmt.Errorf("read register response: %w", err)
+	}
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("register: %s", strings.TrimSpace(string(payload)))
 	}
@@ -315,8 +334,11 @@ func (c *Client) UploadPreview(ctx context.Context, previewID, token string, bod
 		return err
 	}
 	defer resp.Body.Close()
-	payload, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
-	if resp.StatusCode >= 400 {
+	payload, err := readControlResponse(resp.Body, 64<<10)
+	if err != nil {
+		return fmt.Errorf("read upload preview response: %w", err)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return fmt.Errorf("upload preview: %s", strings.TrimSpace(string(payload)))
 	}
 	return nil
