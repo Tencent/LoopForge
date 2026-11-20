@@ -156,6 +156,11 @@ func bindCommand(ctx context.Context, sandbox Sandbox, workspace string, command
 			}
 			bound.environment["ANTHROPIC_BASE_URL"] = baseURL
 		case BindAgentCLI:
+			if command.Provider == AgentCLIAtomCode {
+				if err := checkAtomCodeProjectHooks(workspace); err != nil {
+					return CommandSpec{}, err
+				}
+			}
 			var home AgentCLIHome
 			homeEnv := bound.environment["HOME"]
 			if command.PrivateHome {
@@ -260,6 +265,11 @@ func AgentCLIPrivateHomeKey(kind, agentID string) string {
 // the environment (HOME and TMPDIR included) to run it with. Agent CLIs always
 // run in that HOME, sandboxed or not, because their MCP configuration is there.
 func BindAgentCLICommand(sandbox Sandbox, workspace string, command CommandSpec, cred ProviderCredential, argv []string) ([]string, map[string]string, error) {
+	if command.Provider == AgentCLIAtomCode {
+		if err := checkAtomCodeProjectHooks(workspace); err != nil {
+			return nil, nil, err
+		}
+	}
 	name := PrivateHomeName(command)
 	_, homeEnv := privateHomePaths(sandbox, workspace, command)
 	// Every level is Lstat-checked: the workspace is writable from the sandbox,

@@ -68,6 +68,7 @@ var conversationManagedFiles = []string{
 	"home/.gemini/config/mcp_config.json", "home/.gemini/antigravity-cli/settings.json",
 	"home/.kimi-code/mcp.json", "home/.pi/agent/mcp.json", "home/.pi/agent/models.json",
 	"home/.dsh/agentflow-mcp.json", "home/.dsh/agentflow-model.json",
+	"home/" + atomCodeConfigPath, "home/" + atomCodeHooksPath,
 	"home/.zcode/v2", "home/.codex/auth.json", "home/.claude/.credentials.json",
 }
 
@@ -84,7 +85,7 @@ var conversationAssetTrees = []string{
 var conversationAssetFiles = []string{
 	"current-mcp.json", "current-settings.json", "claude-mcp.json", "claude-settings.json", "mcp.json", "codex-native-guard.py", "kimi-agent.md",
 	"home/.config/opencode/opencode.json", "home/.cursor/mcp.json", "home/.cursor/cli-config.json", "home/.gemini/config/mcp_config.json", "home/.kimi-code/mcp.json", "home/.pi/agent/mcp.json", "home/.dsh/agentflow-mcp.json",
-	"home/.zcode/cli/config.json",
+	"home/.zcode/cli/config.json", "home/" + atomCodeMCPPath,
 }
 
 // ConversationAssetDirectory permits only ancestors of generated inputs and
@@ -117,6 +118,9 @@ func ConversationAsset(rel string) (allowed, rewrite bool) {
 		if rel == path {
 			return true, true
 		}
+	}
+	if rel == "atomcode-prompt.md" {
+		return true, false
 	}
 	if !strings.Contains(rel, "/") && strings.HasSuffix(rel, "-system.md") {
 		return true, true

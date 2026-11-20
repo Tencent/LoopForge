@@ -148,8 +148,7 @@ func executorModelCatalogs(kimiBaseURL string) map[string]executorModelCatalog {
 			CustomModel: true,
 			Efforts:     effortOptions(domain.ExecutorEffortLevels["claude-code"]),
 		},
-		// Official-endpoint catalogs. OpenCode and Pi have none, so their
-		// models come from the Base URL.
+		// OpenCode, Pi and AtomCode use the configured endpoint for models.
 		"opencode": {CustomModel: true, Efforts: effortOptions(domain.ExecutorEffortLevels["opencode"])},
 		"cursor": {
 			CustomModel: true,
@@ -172,10 +171,11 @@ func executorModelCatalogs(kimiBaseURL string) map[string]executorModelCatalog {
 			},
 			Efforts: effortOptions(domain.ExecutorEffortLevels["agy"]),
 		},
-		"kimi":  {CustomModel: true, Efforts: effortOptions(domain.ExecutorEffortLevels["kimi"])},
-		"pi":    {CustomModel: true, Efforts: effortOptions(domain.ExecutorEffortLevels["pi"])},
-		"dsh":   {CustomModel: true, Efforts: effortOptions(domain.ExecutorEffortLevels["dsh"])},
-		"zcode": {CustomModel: true, Efforts: effortOptions(domain.ExecutorEffortLevels["zcode"])},
+		"kimi":     {CustomModel: true, Efforts: effortOptions(domain.ExecutorEffortLevels["kimi"])},
+		"pi":       {CustomModel: true, Efforts: effortOptions(domain.ExecutorEffortLevels["pi"])},
+		"dsh":      {CustomModel: true, Efforts: effortOptions(domain.ExecutorEffortLevels["dsh"])},
+		"atomcode": {CustomModel: true},
+		"zcode":    {CustomModel: true, Efforts: effortOptions(domain.ExecutorEffortLevels["zcode"])},
 	}
 	for engine, catalog := range catalogs {
 		modelEngine := engine

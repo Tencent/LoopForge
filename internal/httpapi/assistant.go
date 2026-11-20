@@ -1671,6 +1671,8 @@ func runAssistantCLI(ctx context.Context, req assistantCLIRequest, user domain.U
 	if inv.finish != nil {
 		inv.finish(err == nil && !resultError && final != "")
 	}
+	// A workspace-bound provider can reject a resume before starting the CLI.
+	missingSession = missingSession || (inv.sessionRef != "" && err != nil && strings.Contains(err.Error(), missingText))
 	if req.Resume && missingSession && !modelStarted && final == "" && ctx.Err() == nil {
 		return "", sessionID, errAssistantSessionMissing
 	}

@@ -39,7 +39,7 @@
 
   function familyOf(id) {
     const raw = String(id || '').toLowerCase();
-    const v = raw.replace(/^(?:codebuddy|codex|claude-code|opencode|cursor|agy|kimi|pi|dsh|zcode):/, '').split('/').at(-1);
+    const v = raw.replace(/^(?:codebuddy|codex|claude-code|opencode|cursor|agy|kimi|pi|dsh|zcode|atomcode):/, '').split('/').at(-1);
     if (/^(?:claude|anthropic|opus|sonnet|haiku|fable)(?:$|[-_.\s:\d])/.test(v)) return 'claude';
     if (/^composer(?:$|[-_.\s:\d])/.test(v) || (raw.startsWith('cursor:') && /^auto(?:-smart)?$/.test(v))) return 'cursor';
     if (v.startsWith('gpt') || v.includes('codex')) return 'gpt';

@@ -72,7 +72,10 @@ func resolveAssistantEngineBin(engine string) (string, error) {
 	} else if runtime.IsAgentCLI(engine) {
 		binary, override, managed = runtime.AgentCLIBinary(engine), "AGENTFLOW_"+strings.ToUpper(strings.ReplaceAll(engine, "-", "_"))+"_BIN", ""
 	}
-	if path := strings.TrimSpace(os.Getenv(override)); path != "" && fileExecutable(path) {
+	compatible := func(path string) bool {
+		return fileExecutable(path) && (engine != runtime.AgentCLIAtomCode || runtime.AtomCodeHeadlessAvailable(path))
+	}
+	if path := strings.TrimSpace(os.Getenv(override)); path != "" && compatible(path) {
 		return path, nil
 	}
 	if root := strings.TrimSpace(os.Getenv("AGENTFLOW_MANAGED_CLI_ROOT")); root != "" && managed != "" {
@@ -82,7 +85,7 @@ func resolveAssistantEngineBin(engine string) (string, error) {
 			}
 		}
 	}
-	if path, err := exec.LookPath(binary); err == nil {
+	if path, err := exec.LookPath(binary); err == nil && compatible(path) {
 		return path, nil
 	}
 	home, _ := os.UserHomeDir()
@@ -90,7 +93,7 @@ func resolveAssistantEngineBin(engine string) (string, error) {
 		home = "/root"
 	}
 	for _, candidate := range []string{filepath.Join(home, ".local", "bin", binary), "/usr/local/bin/" + binary, "/usr/bin/" + binary} {
-		if fileExecutable(candidate) {
+		if compatible(candidate) {
 			return candidate, nil
 		}
 	}

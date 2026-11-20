@@ -236,6 +236,7 @@ var AgentCLIProtocolOptions = map[string][]string{
 	"kimi":     {AgentCLIProtocolChat, AgentCLIProtocolResponses, AgentCLIProtocolMessages},
 	"pi":       {AgentCLIProtocolChat, AgentCLIProtocolResponses, AgentCLIProtocolMessages},
 	"dsh":      {AgentCLIProtocolChat, AgentCLIProtocolResponses, AgentCLIProtocolMessages},
+	"atomcode": {AgentCLIProtocolChat, AgentCLIProtocolMessages},
 	"zcode":    {AgentCLIProtocolMessages, AgentCLIProtocolChat, AgentCLIProtocolResponses},
 	"agy":      {AgentCLIProtocolGemini, AgentCLIProtocolChat},
 }

@@ -40,6 +40,7 @@ export const EXECUTORS = [
   { id: "kimi", icon: "sparkles", label: "Kimi Code", detail: "使用 Kimi Code 与个人 API Key。" },
   { id: "pi", icon: "terminal", label: "Pi", detail: "使用 Pi 与个人 API Key。" },
   { id: "dsh", icon: "terminal", label: "DeepSeek Harness", detail: "使用 DeepSeek Harness 与个人 API Key。" },
+  { id: "atomcode", icon: "terminal", label: "AtomCode", detail: "使用 AtomCode 与个人模型服务。" },
   { id: "zcode", icon: "terminal", label: "ZCode", detail: "使用 ZCode 与个人 API Key。" },
 ];
 function knownExecutor(id) {

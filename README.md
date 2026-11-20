@@ -36,7 +36,7 @@ https://github.com/user-attachments/assets/8af401d9-1aae-427c-b4bc-455c12d17beb
 
 **LoopForge** is a self-hosted workspace where your team ships software with coding agents. Describe what you need to **Main Bot** in chat: it opens a Docker sandbox, checks out your repositories, delegates to project roles, and opens the PR. When a way of working proves itself, save it as an **SOP** (a standard workflow of agents, scripts and human gates) so the next requirement is delivered the same way, with review and approval built in.
 
-Coding-agent CLIs do the work: CodeBuddy, Codex, Claude Code, OpenCode, Cursor CLI, Antigravity, Kimi Code, Pi, DeepSeek Harness and ZCode. LoopForge adds the roles, sandboxes, checkpoints and history around them, all on your own infrastructure under the MIT license.
+Coding-agent CLIs do the work: CodeBuddy, Codex, Claude Code, OpenCode, Cursor CLI, Antigravity, Kimi Code, Pi, DeepSeek Harness, ZCode and AtomCode. LoopForge adds the roles, sandboxes, checkpoints and history around them, all on your own infrastructure under the MIT license.
 
 ## Two ways to work
 
@@ -111,7 +111,7 @@ New accounts join the **LoopForge demo project**, which includes an SOP made onl
 
 <br>
 
-- **Executors.** Pick one of ten CLIs beside the home composer, then a model. Every SOP role can choose its executor independently (built-in roles default to CodeBuddy). Requirement clarification, AI notification summaries, Bot replies and run evals currently use CodeBuddy, so their model pickers list CodeBuddy models only and the server refuses a model of another CLI instead of switching it to CodeBuddy; scheduled assistant tasks run on the CLI the task selects.
+- **Executors.** Pick one of eleven CLIs beside the home composer, then a model. Every SOP role can choose its executor independently (built-in roles default to CodeBuddy). Requirement clarification, AI notification summaries, Bot replies and run evals currently use CodeBuddy, so their model pickers list CodeBuddy models only and the server refuses a model of another CLI instead of switching it to CodeBuddy; scheduled assistant tasks run on the CLI the task selects.
 
   | Executor | Credentials | Installation |
   | --- | --- | --- |
@@ -119,12 +119,15 @@ New accounts join the **LoopForge demo project**, which includes an SOP made onl
   | **Codex** | Personal key; a connected execution machine can use its local login | In the Docker image |
   | **Claude Code** | Personal key; a connected execution machine can use its local login | Installed from npm on first use, then cached |
   | **OpenCode · Kimi Code · Pi** | Personal key only | Installed from npm on first use, then cached |
+  | **AtomCode** | Personal API key, Base URL and model | npm on first use, then cached. Native execution machines need AtomCode 5.2.7 or later on PATH |
   | **DeepSeek Harness** | Personal key only | In the Docker image |
   | **Cursor CLI** | Personal key only | Provider installer on first chat use; not installed into SOP sandboxes |
   | **Antigravity** | Personal key, or the connected execution machine owner's existing account login | Install the official CLI on the execution machine and in Docker images used for SOP runs |
   | **ZCode** | Personal key only | Not bundled; install it on the service or execution machine PATH |
 
-  The seven agent CLIs after Claude Code keep their model and MCP configuration in a private home directory per run. Antigravity can reuse the execution machine owner's account login in conversation workspaces and native or Docker SOP sandboxes. Its official CLI refreshes the credential copy, and the Runner saves the refreshed login back to its original local store. Gemini API keys use separate API billing. The other agent CLIs use the responsible user's own key and Base URL from personal settings, including on a connected execution machine. First-use installs need npm or provider access; [native deployments](docs/deployment.md#workers-and-runners) need the CLI for the executor you choose.
+  In **Personal settings → AtomCode**, set your model provider’s API key and Base URL, select Chat Completions or Anthropic Messages, and add or discover a model. You can then select AtomCode in chat or for an SOP role. Entering a native conversation workspace requires an AtomCode build that supports `--require-approval-hook` on the execution machine. LoopForge stops before launching AtomCode when its working directory contains a project-level `.hooks.json`, because those scripts run outside tool approval.
+
+  The eight agent CLIs after Claude Code keep their model and MCP configuration in a private home directory per run. Antigravity can reuse the execution machine owner's account login in conversation workspaces and native or Docker SOP sandboxes. Its official CLI refreshes the credential copy, and the Runner saves the refreshed login back to its original local store. Gemini API keys use separate API billing. The other agent CLIs use the responsible user's own key and Base URL from personal settings, including on a connected execution machine. First-use installs need npm or provider access; [native deployments](docs/deployment.md#workers-and-runners) need the CLI for the executor you choose.
 - **GitHub is optional.** All built-in generic SOPs run without a repository: product SOPs deliver documents, and new frontend/backend projects deliver source files in the task workspace. Bug fixes still need source code and reproduction details. Connect a repository when you work on existing code or want PRs.
 - **Delivering to a repository.** Choose **Connect GitHub** in personal settings, approve the device code on GitHub and pick your repository (the LoopForge OAuth App is built in; no PAT required, manual PAT entry still works). Set executor credentials (or bind a local execution machine), then either run a project SOP or ask Main Bot to change the code and submit a PR/MR.
 - **Sandboxes.** In the default Compose installation, SOP runs and conversation workspaces both use Docker sandbox containers started through the host Docker socket. Default sandboxes reuse the installed runtime image, so nothing extra is built after installation; custom Dockerfiles still build their own images. Docker socket access grants control of the host daemon, so this setup is for trusted teams, not untrusted multi-tenant isolation. See [deployment boundaries](docs/deployment.md#accounts). Re-running the installer keeps your data.

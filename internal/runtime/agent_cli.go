@@ -26,6 +26,7 @@ const (
 	AgentCLIPi          = "pi"
 	AgentCLIDeepSeek    = "dsh"
 	AgentCLIZCode       = "zcode"
+	AgentCLIAtomCode    = "atomcode"
 )
 
 // AgentCLIKinds is the display order of the agent CLIs.
@@ -53,7 +54,7 @@ func AgentCLIProtocol(kind, protocol string) string {
 // Antigravity only reaches an OpenAI-compatible gateway through one.
 func AgentCLINeedsBaseURL(kind, protocol string) bool {
 	switch kind {
-	case AgentCLIOpenCode, AgentCLIPi:
+	case AgentCLIOpenCode, AgentCLIPi, AgentCLIAtomCode:
 		return true
 	case AgentCLIAntigravity:
 		return AgentCLIProtocol(kind, protocol) == AgentCLIProtocolChat
@@ -104,6 +105,7 @@ var agentCLIHostEnv = append([]string{
 	"KIMI_MODEL_NAME", "KIMI_MODEL_API_KEY", "KIMI_MODEL_BASE_URL", "KIMI_MODEL_PROVIDER_TYPE", kimiThinkingEffortEnv,
 	"OPENCODE_CONFIG", "OPENCODE_CONFIG_CONTENT", "OPENCODE_CONFIG_DIR", "PI_CODING_AGENT_DIR",
 	"ZCODE_DATA_BASE_DIR", zcodePersonalFileEnv,
+	"ATOMCODE_HOME", "ATOMCODE_SEED_CONFIG",
 }, zcodeHostEnv...)
 
 // agentCLIConfigPaths are the HOME-relative files an agent CLI reads its MCP
@@ -116,6 +118,7 @@ var agentCLIMCPPaths = map[string]string{
 	AgentCLIPi:          ".pi/agent/mcp.json",
 	AgentCLIDeepSeek:    ".dsh/agentflow-mcp.json",
 	AgentCLIZCode:       zcodeConfigPath,
+	AgentCLIAtomCode:    atomCodeMCPPath,
 }
 
 // AgentCLIMCPOptions shapes the MCP configuration of one invocation.
@@ -175,6 +178,11 @@ func WriteAgentCLIMCPConfig(kind string, home AgentCLIHome, entries map[string]a
 				}
 			}
 			servers[id] = server
+		}
+		if kind == AgentCLIAtomCode {
+			if server, ok := servers[id].(map[string]any); ok {
+				server["timeout_ms"] = 600000
+			}
 		}
 		if kind == AgentCLIKimi {
 			// Kimi gives up on an MCP call after 60s by default; the gateway
@@ -507,6 +515,8 @@ func ApplyAgentCLICredential(kind string, cred ProviderCredential, options Agent
 		env["PI_CODING_AGENT_DIR"] = homeEnv + "/.pi/agent"
 	case AgentCLIDeepSeek:
 		return applyDeepSeekCredential(home, homeEnv, key, baseURL, protocol, model, strings.TrimSpace(options.Effort), argv)
+	case AgentCLIAtomCode:
+		return applyAtomCodeCredential(home, homeEnv, key, baseURL, protocol, model, options, argv)
 	case AgentCLIZCode:
 		return applyZCodeCredential(home, homeEnv, key, baseURL, protocol, model, strings.TrimSpace(options.Effort), argv)
 	default:
@@ -639,6 +649,8 @@ func AgentCLILabel(kind string) string {
 		return "Pi"
 	case AgentCLIDeepSeek:
 		return "DeepSeek Harness"
+	case AgentCLIAtomCode:
+		return "AtomCode"
 	case AgentCLIZCode:
 		return "ZCode"
 	}

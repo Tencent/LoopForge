@@ -44,6 +44,7 @@ var defaultProviders = []providerSpec{
 	{Kind: "kimi", Binary: "kimi"},
 	{Kind: "pi", Binary: "pi"},
 	{Kind: "dsh", Binary: "dsh"},
+	{Kind: "atomcode", Binary: "atomcode", VersionFlags: []string{"--output-format", "jsonl", "--no-review"}},
 	// The official ZCode has no npm package and its --help omits
 	// --output-format, so compatibility is probed with the flags we pass.
 	{Kind: "zcode", Binary: "zcode", VersionFlags: []string{"--output-format", "stream-json", "--mode", "yolo"}},
