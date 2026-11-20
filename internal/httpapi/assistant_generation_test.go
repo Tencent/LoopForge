@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"github.com/gin-gonic/gin"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -159,6 +160,46 @@ func TestGenerationCompletedReplyAndSnapshot(t *testing.T) {
 			t.Fatal("completion timed out")
 		}
 		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+func TestAssistantGenerationKeepsAcceptanceAfterNextTurn(t *testing.T) {
+	h, user := workbenchFixture(t)
+	h.generate = func(context.Context, string, domain.User) (string, error) {
+		return `{"message":"回复","drafts":[]}`, nil
+	}
+	const sessionID = "receipt-chat"
+	var messages []assistantMessage
+	for _, requestID := range []string{"first-request", "second-request"} {
+		messages = append(messages, assistantMessage{Role: "user", Content: "继续"})
+		body, err := json.Marshal(gin.H{
+			"projectId": "workbench", "sessionId": sessionID,
+			"clientRequestId": requestID, "messages": messages,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		c, rec := workbenchContext(user, http.MethodPost, "/api/assistant/generations", bytes.NewBuffer(body))
+		h.startGeneration(c)
+		if rec.Code != http.StatusAccepted {
+			t.Fatalf("start %s: %d %s", requestID, rec.Code, rec.Body)
+		}
+		messages = waitForCompletedGeneration(t, h, user.ID, sessionID).Messages
+	}
+	generation, _ := h.repo.AssistantGeneration(user.ID, sessionID)
+	if generation.ClientRequestID != "second-request" {
+		t.Fatal("latest generation did not replace the first", generation.ClientRequestID)
+	}
+	c, rec := workbenchContext(user, http.MethodGet, "/", bytes.NewBuffer(nil))
+	c.Params = gin.Params{{Key: "id", Value: sessionID}}
+	h.session(c)
+	var session domain.AssistantSession
+	if err := json.Unmarshal(rec.Body.Bytes(), &session); err != nil || rec.Code != http.StatusOK {
+		t.Fatal("could not load acceptance receipts", rec.Code, rec.Body.String(), err)
+	}
+	receipts := session.RecentClientRequestIDs
+	if len(receipts) != 2 || receipts[0] != "first-request" || receipts[1] != "second-request" {
+		t.Fatal("the first send lost its receipt", receipts)
 	}
 }
 

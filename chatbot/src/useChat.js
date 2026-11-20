@@ -148,6 +148,7 @@ export function useChat() {
     [steering, setSteering] = useState(null);
   const { executor, model, effort } = selection;
   const generationKnownRef = useRef(null);
+  const generationRevision = useRef(0);
   const setGenerationKnown = useCallback((id) => {
     generationKnownRef.current = id;
     setGenerationKnownState(id);
@@ -213,6 +214,7 @@ export function useChat() {
     (id) => {
       if (id === currentId.current && sessionRef.current?.id === id) return;
       setError("");
+      generationRevision.current++;
       setGeneration(null);
       setGenerationKnown(null);
       setSettledId(null);
@@ -415,8 +417,15 @@ export function useChat() {
       loaded = null,
       connectionError = "";
     let accumulated = { answer: "", thinking: "", tools: [] };
-    const consume = async (g) => {
+    const isCurrent = (revision) =>
+      !cancelled && currentId.current === activeId && generationRevision.current === revision;
+    const schedulePoll = (delay) => {
       if (cancelled || currentId.current !== activeId) return;
+      clearTimeout(timer);
+      timer = setTimeout(poll, delay);
+    };
+    const consume = async (g, revision) => {
+      if (!isCurrent(revision)) return;
       if (connectionError) {
         const recovered = connectionError;
         connectionError = "";
@@ -433,7 +442,7 @@ export function useChat() {
           source = null;
         }
         const stored = await api(sessionPath(activeId));
-        if (cancelled || currentId.current !== activeId) return;
+        if (!isCurrent(revision)) return;
         receiveSession(stored, running);
         if (!running) {
           loaded = g.id;
@@ -463,68 +472,75 @@ export function useChat() {
       }
       if (!running && needsTranscript) {
         await refreshSessions();
-        if (g.error && !["canceled", "cancelled"].includes(g.status))
+        if (isCurrent(revision) && g.error && !["canceled", "cancelled"].includes(g.status))
           setError(g.error);
       }
     };
-    const connect = () => {
+    const connect = (revision) => {
       if (source || cancelled || typeof EventSource === "undefined")
         return false;
       source = new EventSource(`${sessionPath(activeId)}/generation?stream=1`);
       const stream = source;
+      const close = () => {
+        if (source !== stream) return;
+        stream.close();
+        source = null;
+      };
       let updates = Promise.resolve();
       stream.addEventListener("generation", (e) => {
         const g = JSON.parse(e.data);
         updates = updates
           .then(async () => {
             if (cancelled || source !== stream) return;
-            await consume(g);
-            if (!cancelled && g.status !== "running")
-              timer = setTimeout(poll, 2000);
+            await consume(g, revision);
+            if (!isCurrent(revision)) {
+              close();
+              schedulePoll(200);
+            } else if (g.status !== "running") schedulePoll(2000);
           })
           .catch((error) => {
             if (cancelled || (source && source !== stream)) return;
-            stream.close();
-            source = null;
-            setError(error.message);
-            timer = setTimeout(poll, 2000);
+            close();
+            if (isCurrent(revision)) setError(error.message);
+            schedulePoll(2000);
           });
       });
       stream.onerror = () => {
         stream.close();
         void updates.then(() => {
           if (cancelled || source !== stream) return;
-          source = null;
-          timer = setTimeout(poll, 500);
+          close();
+          schedulePoll(500);
         });
       };
       return true;
     };
     const poll = async () => {
       let generationFound = false;
+      const revision = generationRevision.current;
       try {
         if (submittingRef.current) {
-          timer = setTimeout(poll, 500);
+          schedulePoll(500);
           return;
         }
         const g = await api(
           `${sessionPath(activeId)}/generation?after=${cursor}`,
         );
-        if (cancelled) return;
+        if (!isCurrent(revision)) return schedulePoll(200);
         generationFound = true;
-        await consume(g);
-        if (cancelled) return;
-        if (g.status === "running" && connect()) return;
-        timer = setTimeout(poll, g.status === "running" ? 200 : 2000);
+        await consume(g, revision);
+        if (!isCurrent(revision)) return schedulePoll(200);
+        if (g.status === "running" && connect(revision)) return;
+        schedulePoll(g.status === "running" ? 200 : 2000);
       } catch (e) {
-        if (cancelled) return;
+        if (!isCurrent(revision)) return schedulePoll(200);
         // No reply was ever started here: nothing can be running.
         if (e.status === 404 && !generationFound) setGenerationKnown(activeId);
         else {
           connectionError = e.status ? e.message : "连接暂时中断，正在重连…";
           setError(connectionError);
         }
-        timer = setTimeout(poll, 2000);
+        schedulePoll(2000);
       }
     };
     void poll();
@@ -1065,6 +1081,7 @@ export function useChat() {
     };
     savingDraft.current = draft;
     const viewingTarget = () => s ? currentId.current === s.id : isDraftVisible(draft);
+    generationRevision.current++;
     submittingRef.current = true;
     setSubmitting(true);
     setError("");
@@ -1168,19 +1185,20 @@ export function useChat() {
       return true;
     } catch (e) {
       if (clientRequestId) {
+        const mayHaveReachedServer = !e.status || e.status >= 500;
+        const g = await api(`${sessionPath(s.id)}/generation`).catch(() => null);
+        if (g && g.id !== previousGeneration && currentId.current === s.id) {
+          setGeneration(g);
+          setGenerationKnown(null);
+        }
+        // The generation itself can acknowledge the send even when loading
+        // the transcript fails. The session keeps receipts for earlier turns.
+        if (mayHaveReachedServer && g?.clientRequestId === clientRequestId) return true;
         try {
-          const g = await api(`${sessionPath(s.id)}/generation`).catch(() => null);
           const stored = await api(sessionPath(s.id));
           receiveSession(stored, g?.status === "running");
-          if (g?.id !== previousGeneration && g?.status === "running") {
-            if (currentId.current === s.id) {
-              setGeneration(g);
-              setGenerationKnown(s.id);
-            }
-          }
-          // Another client can win this slot while our request is lost.
-          // Only a generation bearing this request's ID confirms delivery.
-          if ((!e.status || e.status >= 500) && g?.clientRequestId === clientRequestId) return true;
+          if (g?.status === "running" && currentId.current === s.id) setGenerationKnown(s.id);
+          if (mayHaveReachedServer && stored?.recentClientRequestIds?.includes(clientRequestId)) return true;
         } catch {}
       }
       if (viewingTarget()) setError(e.message);
@@ -1262,6 +1280,7 @@ export function useChat() {
   // the generation from that session even before React renders it.
   async function regenerate(stored, approvalMode = "confirm") {
     try {
+      generationRevision.current++;
       submittingRef.current = true;
       setSubmitting(true);
       open(stored.id);

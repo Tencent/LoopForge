@@ -394,7 +394,8 @@ export default function App() {
     if (!approvalScope) return;
     const mode = normalizeApprovalMode(value);
     const saving = savingDraftApproval.current;
-    if (saving?.scope === approvalScope && saving.owner === approvalOwner) saving.mode = mode;
+    if (saving?.scope === approvalScope && saving.owner === approvalOwner &&
+        draftSnapshot(visibleDraft.current) === saving.snapshot) saving.mode = mode;
     saveApproval(approvalScope, { mode });
   }
   function clearDraftApproval(scope, mode) {
@@ -810,9 +811,9 @@ export default function App() {
     if (uploading || composerLoading || draftReady.current !== draftKey ||
         (!chat.activeId && savingDraftApproval.current)) return;
     follow.current = true;
-    const draftApproval = chat.activeId ? null : { owner: approvalOwner, scope: approvalScope, mode: approval };
-    const copiedFrom = draftOrigin.current;
     const snapshot = draftSnapshot({ text, attachments, references });
+    const draftApproval = chat.activeId ? null : { owner: approvalOwner, scope: approvalScope, mode: approval, snapshot };
+    const copiedFrom = draftOrigin.current;
     if (draftApproval) savingDraftApproval.current = draftApproval;
     let savedDraftKey, savedApprovalMode;
     const onSessionCreated = draftApproval ? (saved) => {
@@ -826,7 +827,8 @@ export default function App() {
       references,
       approvalMode: approval,
       onSessionCreated,
-      isDraftActive: draftApproval ? () => visibleDraft.current.key === draftKey : undefined,
+      isDraftActive: draftApproval ? () => visibleDraft.current.key === draftKey &&
+        draftSnapshot(visibleDraft.current) === snapshot : undefined,
     }).finally(() => {
       if (savingDraftApproval.current === draftApproval) savingDraftApproval.current = null;
     });

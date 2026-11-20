@@ -111,16 +111,23 @@ describe("conversation hooks", () => {
     { status: "running", accepted: false },
     { status: "running", accepted: true },
     { status: "completed", accepted: true },
-  ])("recovers a lost send response only for its own request when generation is $status ($accepted)", async ({ status, accepted }) => {
+    { status: "running", accepted: true, transcriptUnavailable: true },
+    { status: "running", accepted: true, superseded: true },
+  ])("recovers a lost send response only for its own request ($status, accepted: $accepted, unavailable: $transcriptUnavailable, superseded: $superseded)", async ({ status, accepted, transcriptUnavailable, superseded }) => {
     const originalAPI = apiMock.getMockImplementation();
     const originalWrite = writeMock.getMockImplementation();
     let submitted;
-    apiMock.mockImplementation((path, options) => path === "/api/assistant/sessions/s1/generation"
-      ? Promise.resolve({
+    apiMock.mockImplementation(async (path, options) => {
+      if (path === "/api/assistant/sessions/s1/generation") return {
         id: "concurrent-generation", status, events: [],
-        clientRequestId: accepted ? submitted.clientRequestId : "another-members-request",
-      })
-      : originalAPI(path, options));
+        clientRequestId: accepted && !superseded ? submitted.clientRequestId : "another-members-request",
+      };
+      if (submitted && path === "/api/assistant/sessions/s1") {
+        if (transcriptUnavailable) throw Object.assign(Error("记录暂不可用"), { status: 503 });
+        if (superseded) return { ...(await originalAPI(path, options)), recentClientRequestIds: [submitted.clientRequestId] };
+      }
+      return originalAPI(path, options);
+    });
     writeMock.mockImplementation((path, body, method) => {
       if (path !== "/api/assistant/generations") return originalWrite(path, body, method);
       submitted = body;
@@ -136,6 +143,39 @@ describe("conversation hooks", () => {
       await act(async () => expect(await result.current.send({ text: "这条消息必须正确确认" })).toBe(accepted));
       expect(submitted.clientRequestId).toBeTruthy();
       if (!accepted) expect(result.current.error).toBe("发送响应丢失");
+    } finally {
+      apiMock.mockImplementation(originalAPI);
+      writeMock.mockImplementation(originalWrite);
+    }
+  });
+
+  test("an earlier generation poll cannot replace a newly accepted running generation", async () => {
+    const originalAPI = apiMock.getMockImplementation();
+    const originalWrite = writeMock.getMockImplementation();
+    const previous = { id: "previous", status: "completed", events: [] };
+    const running = { id: "new-reply", status: "running", events: [] };
+    let reads = 0, reportPrevious;
+    apiMock.mockImplementation((path, options) => {
+      if (path.includes("/sessions/s1/generation?")) {
+        reads++;
+        if (reads === 2) return new Promise((resolve) => { reportPrevious = () => resolve(previous); });
+        return Promise.resolve(reads === 1 ? previous : running);
+      }
+      return originalAPI(path, options);
+    });
+    writeMock.mockImplementation((path, body, method) => path === "/api/assistant/generations"
+      ? Promise.resolve(running) : originalWrite(path, body, method));
+    try {
+      const { result } = renderHook(useChat);
+      await waitFor(() => expect(result.current.ready).toBe(true));
+      act(() => result.current.open("s1"));
+      await waitFor(() => expect(reportPrevious).toBeTypeOf("function"), { timeout: 3500 });
+      await act(async () => expect(await result.current.send({ text: "新的问题" })).toBe(true));
+      expect(result.current.generation?.id).toBe(running.id);
+      await act(async () => reportPrevious());
+      expect(result.current).toMatchObject({ generation: running, busy: true });
+      await waitFor(() => expect(reads).toBeGreaterThan(2));
+      expect(result.current.generation?.id).toBe(running.id);
     } finally {
       apiMock.mockImplementation(originalAPI);
       writeMock.mockImplementation(originalWrite);

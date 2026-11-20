@@ -179,14 +179,15 @@ describe("App", () => {
       Object.assign(chat, original);
     }
   });
-  test("keeps a newer draft in the submitted slot when the first message is accepted", async () => {
+  test.each([false, true])("keeps a newer draft and its approval distinct from the first send (before save: %s)", async (beforeSave) => {
     const original = { activeId: chat.activeId, session: chat.session, projectId: chat.projectId };
     const user = userEvent.setup();
     const saved = { id: "new-session", projectId: "p1", messages: [] };
-    let create, accept;
-    chat.send.mockImplementationOnce(({ onSessionCreated }) => new Promise((resolve) => {
+    let create, accept, wasSubmittedDraft;
+    chat.send.mockImplementationOnce(({ onSessionCreated, isDraftActive }) => new Promise((resolve) => {
       create = () => onSessionCreated(saved);
       accept = () => resolve(true);
+      wasSubmittedDraft = isDraftActive;
     }));
     const input = () => screen.getByRole("textbox", { name: "消息" });
     try {
@@ -194,16 +195,26 @@ describe("App", () => {
       const view = render(<App />);
       await user.type(input(), "原草稿");
       await user.click(screen.getByRole("button", { name: "发送消息" }));
-      await act(async () => create());
-      Object.assign(chat, { activeId: saved.id, session: saved });
-      view.rerender(<App />);
-      Object.assign(chat, { activeId: null, session: null });
-      view.rerender(<App />);
+      if (!beforeSave) {
+        await act(async () => create());
+        Object.assign(chat, { activeId: saved.id, session: saved });
+        view.rerender(<App />);
+        Object.assign(chat, { activeId: null, session: null });
+        view.rerender(<App />);
+      }
       await user.clear(input());
       await user.type(input(), "另一份新草稿");
+      expect(wasSubmittedDraft()).toBe(false);
+      await user.click(screen.getByRole("button", { name: "操作确认方式" }));
+      await user.click(screen.getByRole("menuitemradio", { name: "完全权限" }));
+      if (beforeSave) await act(async () => create());
       await act(async () => accept());
       expect(input()).toHaveValue("另一份新草稿");
       expect(JSON.parse(localStorage.getItem("agentflow.native-chat.draft.u1.new:p1")).text).toBe("另一份新草稿");
+      expect(screen.getByRole("button", { name: "操作确认方式" })).toHaveTextContent("完全权限");
+      Object.assign(chat, { activeId: saved.id, session: saved });
+      view.rerender(<App />);
+      expect(screen.getByRole("button", { name: "操作确认方式" })).toHaveTextContent("请求批准");
     } finally {
       Object.assign(chat, original);
     }
