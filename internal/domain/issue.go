@@ -384,11 +384,21 @@ type HumanDecision struct {
 	NodeID   string                   `json:"nodeId"`
 	Reason   string                   `json:"reason,omitempty"`
 	Context  string                   `json:"context,omitempty"`
+	// Override lets /pass through a node marked verificationStep:true. The
+	// request is still audited with its operator; without it the pass is
+	// refused. The field is shared with approve/retry/resume bodies, which
+	// ignore it.
+	Override bool `json:"override,omitempty"`
 }
 
 // NodeDecisionExpectation binds a workbench action to the attempt being viewed.
+// artifactName/artifactSha256 additionally bind an approval to the artifact the
+// operator reviewed: the action is rejected with 409 when the newest artifact
+// of that name no longer carries that hash.
 type NodeDecisionExpectation struct {
-	Status      string `json:"status"`
-	Attempt     int    `json:"attempt"`
-	ReworkCount int    `json:"reworkCount"`
+	Status         string `json:"status"`
+	Attempt        int    `json:"attempt"`
+	ReworkCount    int    `json:"reworkCount"`
+	ArtifactName   string `json:"artifactName,omitempty"`
+	ArtifactSHA256 string `json:"artifactSha256,omitempty"`
 }

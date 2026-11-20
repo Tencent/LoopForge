@@ -312,7 +312,7 @@ func (h *runsHandlers) run(c *gin.Context) {
 			if rejectBlockedIssueRun(h.deps, c, id) {
 				return
 			}
-			respond(c, h.engine.Pass(id, req.NodeID, req.Context))
+			respond(c, h.engine.PassWithOptions(id, req.NodeID, req.Context, engine.PassOptions{Override: req.Override, Actor: requestActor(h.deps, c.Request)}))
 		}
 	default:
 		c.Status(http.StatusNotFound)
@@ -506,5 +506,5 @@ func decisionExpectation(nodeID string, expected *domain.NodeDecisionExpectation
 	if expected == nil {
 		return nil
 	}
-	return []engine.NodeExpectation{{NodeID: nodeID, Status: expected.Status, Attempt: expected.Attempt, ReworkCount: expected.ReworkCount}}
+	return []engine.NodeExpectation{{NodeID: nodeID, Status: expected.Status, Attempt: expected.Attempt, ReworkCount: expected.ReworkCount, ArtifactName: expected.ArtifactName, ArtifactSHA256: expected.ArtifactSHA256}}
 }

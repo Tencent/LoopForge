@@ -69,14 +69,26 @@ type WorkflowNode struct {
 	ExecutionScope string            `json:"executionScope,omitempty"` // run, repositories; empty = run
 	Command               string             `json:"command,omitempty"`        // legacy command-node payload
 	ArtifactOutputs       []ArtifactContract `json:"artifactOutputs,omitempty"`
-	RejectTo              string             `json:"rejectTo,omitempty"`
-	OnFailure             string             `json:"onFailure,omitempty"`     // fail, reject
-	RetryStrategy         string             `json:"retryStrategy,omitempty"` // targeted_fix, full_redo
-	CarryOver             []string           `json:"carryOver,omitempty"`
-	MaxAttempts           int                `json:"maxAttempts"`
-	MaxReworks            int                `json:"maxReworks"`
-	Notifications         []NodeNotification `json:"notifications,omitempty"`
-	Position              Position           `json:"position"`
+	// Requires lists preconditions checked before the node executes. Supported
+	// forms: "artifact:<name>@<sha256>" (the run must carry that artifact with
+	// that content hash) and "verdict:<PASS|FAIL>@<diffHash>" (the verdict
+	// artifact must carry that verdict bound to that diff). An unmet
+	// precondition fails the node with the expected and actual values instead
+	// of silently skipping it.
+	Requires []string `json:"requires,omitempty"`
+	// VerificationStep marks the node as a verification step: /pass refuses it
+	// by default and only an explicit override, recorded with its operator, may
+	// let the run continue past it. The JSON name avoids `verification`, which
+	// is the removed legacy gate-array field the API strips on save.
+	VerificationStep bool               `json:"verificationStep,omitempty"`
+	RejectTo         string             `json:"rejectTo,omitempty"`
+	OnFailure        string             `json:"onFailure,omitempty"`     // fail, reject
+	RetryStrategy    string             `json:"retryStrategy,omitempty"` // targeted_fix, full_redo
+	CarryOver        []string           `json:"carryOver,omitempty"`
+	MaxAttempts      int                `json:"maxAttempts"`
+	MaxReworks       int                `json:"maxReworks"`
+	Notifications    []NodeNotification `json:"notifications,omitempty"`
+	Position         Position           `json:"position"`
 }
 
 // ValidateWorkflowMetricStages prevents silently dropping a mistyped stage.

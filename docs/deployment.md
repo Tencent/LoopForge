@@ -31,8 +31,11 @@ Use `AGENTFLOW_MYSQL_DSN` for your own MySQL deployment. A fresh account command
 ./start.sh pull        # refresh images and recreate changed containers
 MIRROR=ghcr.nju.edu.cn ./start.sh  # same install; replace the ghcr.io host with this registry
 ./start.sh dev         # build this checkout instead (compose.dev.yaml)
+NPM_REGISTRY=https://registry.npmmirror.com ./start.sh dev  # source build behind an npm mirror
 ./start.sh release     # switch a source build back to the published image
 ```
+
+`start.sh dev` builds the chatbot bundle and the platform image in Docker. On networks where the container cannot reach `registry.npmjs.org`, set `NPM_REGISTRY` (environment or `.env`) to a reachable npm registry; it is passed to both the chatbot and the runtime `npm install -g` steps. Likewise set `GOPROXY` (for example `https://goproxy.cn`) when `proxy.golang.org` is unreachable. Empty keeps each tool's default. `MIRROR` only redirects GHCR image pulls and does not affect npm or Go modules.
 
 The installer checks Docker, Compose, Python 3 and curl. It offers to install missing Python/curl packages using apt, dnf or yum on Linux (Homebrew on macOS), Docker using its official installer, and the missing Linux x86_64/arm64 Compose plugin using the pinned official release with SHA-256 verification. A plugin is installed for the active Docker user, or system-wide when Docker requires sudo. macOS Compose comes from Docker Desktop. Set `LOOPFORGE_YES=1` to accept installation prompts; internet access and package-manager/administrator permissions are still required. The installer generates `.env` with unique secrets, pulls and starts the containers, installs the observability columns and applies `migrations/seed/*.sql`. It is safe to re-run. Set `AGENTFLOW_HTTP_PORT` or `LOOPFORGE_MYSQL_PORT` in the environment before the first run (or edit `.env` later) when the default ports are taken.
 

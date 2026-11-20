@@ -163,8 +163,20 @@ func (e *Engine) execute(ctx context.Context, runID string) {
 			time.Sleep(80 * time.Millisecond)
 			continue
 		}
+		deferred, spawned := false, false
 		for _, node := range ready {
 			node := node
+			if err := checkNodeRequires(r, node); err != nil {
+				if running > 0 {
+					// A parallel sibling may still be producing the artifact; its
+					// result wakes the scheduler and the check runs again then.
+					deferred = true
+					continue
+				}
+				e.nodeRequirementFailed(runID, node, generation, err)
+				continue
+			}
+			spawned = true
 			inflightMu.Lock()
 			inflight[node.ID] = true
 			inflightMu.Unlock()
@@ -182,6 +194,15 @@ func (e *Engine) execute(ctx context.Context, runID string) {
 				}()
 				e.executeNode(ctx, runID, wf, node)
 			}()
+		}
+		if deferred && !spawned && running > 0 {
+			// Nothing was started this pass; wait for the in-flight sibling
+			// instead of spinning on the deferred node.
+			select {
+			case <-wake:
+			case <-ctx.Done():
+			case <-time.After(500 * time.Millisecond):
+			}
 		}
 	}
 }

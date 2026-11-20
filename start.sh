@@ -14,6 +14,8 @@
 #   ./start.sh release    switch a source-built installation back to GHCR
 #   MIRROR=ghcr.nju.edu.cn ./start.sh
 #                         pull ghcr.io images from that host and tag them back
+#   NPM_REGISTRY=https://registry.npmmirror.com ./start.sh dev
+#                         build this checkout with that npm registry
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
 source scripts/docker-access.sh
