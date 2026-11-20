@@ -1591,8 +1591,9 @@ func runAssistantCLI(ctx context.Context, req assistantCLIRequest, user domain.U
 	if req.ReportOnly {
 		workspace = reportRoot
 	}
-	var final string
+	var final, lastClaudeText, claudeResultText string
 	var resultError bool
+	captureClaudeText := engine == assistantEngineClaude && req.Native
 	var streamError error
 	var streamFilter assistantStreamFilter
 	var stderrTail []string
@@ -1641,13 +1642,17 @@ func runAssistantCLI(ctx context.Context, req assistantCLIRequest, user domain.U
 			}
 		}
 		var result struct {
-			Type    string `json:"type"`
-			Result  string `json:"result"`
-			IsError bool   `json:"is_error"`
-			Error   string `json:"error"`
-			Usage   any    `json:"usage"`
-			Message struct {
+			Type            string `json:"type"`
+			Subtype         string `json:"subtype"`
+			Result          string `json:"result"`
+			IsError         bool   `json:"is_error"`
+			StopReason      string `json:"stop_reason"`
+			ParentToolUseID string `json:"parent_tool_use_id"`
+			Error           string `json:"error"`
+			Usage           any    `json:"usage"`
+			Message         struct {
 				Content []struct {
+					Type string `json:"type"`
 					Text string `json:"text"`
 				} `json:"content"`
 			} `json:"message"`
@@ -1656,6 +1661,14 @@ func runAssistantCLI(ctx context.Context, req assistantCLIRequest, user domain.U
 			switch result.Type {
 			case "result":
 				final, resultError = result.Result, result.IsError
+				claudeResultText = ""
+				if captureClaudeText && result.ParentToolUseID == "" {
+					if result.Subtype == "success" && !result.IsError &&
+						(result.StopReason == "" || result.StopReason == "end_turn" || result.StopReason == "stop_sequence") {
+						claudeResultText = lastClaudeText
+					}
+					lastClaudeText = ""
+				}
 			case "error":
 				missingSession = missingSession || strings.Contains(result.Error, missingText)
 			case "assistant", "user", "stream_event":
@@ -1663,6 +1676,11 @@ func runAssistantCLI(ctx context.Context, req assistantCLIRequest, user domain.U
 				if result.Type == "assistant" {
 					for _, c := range result.Message.Content {
 						credentialRejected = credentialRejected || isCredentialRejection(c.Text)
+						if captureClaudeText && result.ParentToolUseID == "" && c.Type == "text" {
+							if text := strings.TrimSpace(c.Text); text != "" && !assistantCLINoticeText(text) {
+								lastClaudeText = text
+							}
+						}
 					}
 				}
 			}
@@ -1699,8 +1717,14 @@ func runAssistantCLI(ctx context.Context, req assistantCLIRequest, user domain.U
 	}
 	if ctx.Err() != nil {
 		err = ctx.Err()
-	} else if streamError != nil && (final == "" || resultError) {
+	} else if streamError != nil && (strings.TrimSpace(final) == "" || resultError) {
 		err = streamError
+	}
+	// Claude can close successfully with an empty result after earlier complete
+	// text blocks. Use that text only on explicit success and a clean exit.
+	if err == nil && strings.TrimSpace(final) == "" && claudeResultText != "" {
+		final = claudeResultText
+		assistantDiagnosticsFrom(ctx).platform("protocol.result_text_recovered", "Claude Code 本轮成功但结果正文为空，采用已收到的回复", user)
 	}
 	out, err := decodeAssistantCLIResult(final, resultError, err, stderrTail)
 	if err != nil && req.RunnerLogin && ctx.Err() == nil && !errors.Is(err, runtime.ErrConversationNotStarted) {
