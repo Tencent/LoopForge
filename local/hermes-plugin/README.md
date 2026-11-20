@@ -7,8 +7,14 @@ already has the LoopForge Hermes Skill installed:
 /loopforge start <request>
 /loopforge status [slug]
 /loopforge result [slug]
-/loopforge approve [REQUIREMENT|DESIGN|REVIEW|TEST]
+/loopforge approve [REQUIREMENT|DESIGN|REVIEW|TEST] [reason]
 ```
+
+An approval reason is recorded in `artifacts/<slug>/workflow-state.json`
+under `approvals`, alongside the stage, approver, time, and stage executor.
+Approvals are append-only: approving a stage adds a record, it never rewrites
+an earlier one. Omitting the reason still approves, for backward compatibility
+with older callers.
 
 The plugin calls the project's `.hermes/skills/devflow/scripts/workflow_state.py`
 contract. It stores state under `artifacts/<slug>/` and does not read or modify

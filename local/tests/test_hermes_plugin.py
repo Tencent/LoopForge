@@ -31,7 +31,7 @@ class HermesPluginTests(unittest.TestCase):
         module.register(Context())
         self.assertEqual("loopforge", calls[0][0])
         self.assertIn("LoopForge", calls[0][2])
-        self.assertEqual("[start <request>|status [slug]|result [slug]|approve [stage]|help]", calls[0][3])
+        self.assertEqual("[start <request>|status [slug]|result [slug]|approve [stage] [reason]|help]", calls[0][3])
 
     def test_commands_use_project_state_and_leave_profile_unmodified(self):
         module = load_plugin()
@@ -62,6 +62,56 @@ class HermesPluginTests(unittest.TestCase):
             )
             self.assertEqual("hermes", state["host_adapter"])
             self.assertEqual("isolated", state["execution_mode"])
+
+    def test_approve_with_reason_records_approval(self):
+        import re
+        import subprocess
+
+        module = load_plugin()
+        with tempfile.TemporaryDirectory() as temporary:
+            project = Path(temporary)
+            skill_root = project / ".hermes/skills/devflow"
+            source = ROOT / "skills"
+            shutil.copytree(source, skill_root.parent)
+            script = skill_root / "scripts/workflow_state.py"
+            old_root = os.environ.get("LOOPFORGE_PROJECT_ROOT")
+            os.environ["LOOPFORGE_PROJECT_ROOT"] = str(project)
+            try:
+                module._handle("start add tests")
+                state_path = project / "artifacts/add-tests/workflow-state.json"
+                for args in (
+                    ["prepare", "--state", str(state_path), "--stage", "REQUIREMENT"],
+                    ["start", "--state", str(state_path), "--stage", "REQUIREMENT"],
+                ):
+                    subprocess.run(
+                        [sys.executable, str(script), *args], check=True,
+                        capture_output=True, text=True,
+                    )
+                report = project / "artifacts/add-tests/01-requirement/requirement-report.md"
+                report.write_text(
+                    re.sub(r"\{\{[^{}]+\}\}", "confirmed", report.read_text(encoding="utf-8")),
+                    encoding="utf-8",
+                )
+                subprocess.run(
+                    [sys.executable, str(script), "finish", "--state", str(state_path),
+                     "--stage", "REQUIREMENT", "--result", "completed"],
+                    check=True, capture_output=True, text=True,
+                )
+                approved = module._handle("approve REQUIREMENT scope confirmed")
+                self.assertIn("Approved REQUIREMENT", approved)
+                status = module._handle("status")
+                self.assertIn("Approvals: 1; last: REQUIREMENT by user", status)
+            finally:
+                if old_root is None:
+                    os.environ.pop("LOOPFORGE_PROJECT_ROOT", None)
+                else:
+                    os.environ["LOOPFORGE_PROJECT_ROOT"] = old_root
+            state = json.loads(
+                (project / "artifacts/add-tests/workflow-state.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(1, len(state["approvals"]))
+            self.assertEqual("scope confirmed", state["approvals"][0]["reason"])
+            self.assertEqual("user", state["approvals"][0]["approver"])
 
 
 if __name__ == "__main__":

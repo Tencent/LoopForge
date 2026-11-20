@@ -32,5 +32,6 @@
     "KNOWLEDGE": {"status": "pending", "retry_count": 0, "prepared_at": null, "artifact_baseline": null, "started_at": null, "completed_at": null, "artifacts": [], "executor_role": null, "executor_type": null, "executor_id": null, "helpers": [], "decision": null, "decision_reason": null},
     "SUMMARY": {"status": "pending", "retry_count": 0, "prepared_at": null, "artifact_baseline": null, "started_at": null, "completed_at": null, "artifacts": [], "executor_role": null, "executor_type": null, "executor_id": null, "helpers": []}
   },
+  "approvals": [],
   "events": []
 }

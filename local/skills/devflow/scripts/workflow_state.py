@@ -181,6 +181,14 @@ def state_errors(data: dict, check_files: bool = False) -> List[str]:
     }
     if data.get("awaiting_approval") not in {None, *approval_gates}:
         errors.append("invalid awaiting_approval")
+    approvals = data.get("approvals", [])
+    if not isinstance(approvals, list):
+        errors.append("approvals must be a list")
+    else:
+        for approval in approvals:
+            if not isinstance(approval, dict) or not approval.get("stage") or not approval.get("at"):
+                errors.append("invalid approval record")
+                break
     if data.get("current_stage") not in {"PHASE-0", *expected_route}:
         errors.append("current_stage is outside route")
     for name, stage in stages.items():
@@ -796,7 +804,28 @@ def command_approve(args: argparse.Namespace) -> int:
             f"{args.stage} requires explicit user confirmation; rerun with --user-confirmed "
             "only after the user approves the requirement report"
         )
+    reason = (args.reason or "").strip()
+    approver = (args.approver or "user").strip()
+    if not approver:
+        raise SystemExit("approver must be non-empty")
+    if args.reason is not None and not reason:
+        raise SystemExit("reason must be non-empty when provided")
     stamp = now()
+    stage = data["stages"][args.stage]
+    approval = {
+        "at": stamp,
+        "stage": args.stage,
+        "approver": approver,
+        "reason": reason,
+        "user_confirmed": bool(args.user_confirmed),
+        "executor_id": stage.get("executor_id"),
+        "next_stage": data.get("next_stage"),
+    }
+    approvals = data.get("approvals")
+    if not isinstance(approvals, list):
+        approvals = []
+    approvals.append(approval)
+    data["approvals"] = approvals
     data["awaiting_approval"] = None
     data["status"] = "completed" if data.get("next_stage") is None else "in_progress"
     data["updated_at"] = stamp
@@ -805,9 +834,12 @@ def command_approve(args: argparse.Namespace) -> int:
         "event": "stage_approved",
         "stage": args.stage,
         "user_confirmed": bool(args.user_confirmed),
+        "approver": approver,
+        "reason": reason,
+        "executor_id": stage.get("executor_id"),
     })
     atomic_write(args.state, data)
-    print(f"{args.stage} approved; next={data.get('next_stage')}")
+    print(f"{args.stage} approved by {approver}; next={data.get('next_stage')}")
     return 0
 
 
@@ -822,12 +854,20 @@ def command_validate(args: argparse.Namespace) -> int:
 
 def command_status(args: argparse.Namespace) -> int:
     data = load(args.state)
+    approvals = data.get("approvals") or []
     print(
         f"task={data['task_slug']} size={data['size_class']} status={data['status']} "
         f"next={data['next_stage']} execution={data.get('execution_mode', 'legacy')} "
         f"adapter={data.get('host_adapter', 'none')} "
-        f"topology={data.get('executor_topology', 'legacy')} team={data.get('team_name') or 'none'}"
+        f"topology={data.get('executor_topology', 'legacy')} team={data.get('team_name') or 'none'} "
+        f"approvals={len(approvals)}"
     )
+    if approvals:
+        last = approvals[-1]
+        print(
+            f"last approval: {last.get('stage')} by {last.get('approver')} at {last.get('at')}"
+            + (f" reason={last.get('reason')}" if last.get("reason") else "")
+        )
     for name in ("PHASE-0", *data["route"]):
         stage = data["stages"][name]
         executor = stage.get("executor_id") or "unassigned"
@@ -1199,6 +1239,8 @@ def main() -> int:
     item.add_argument("--state", type=Path, required=True)
     item.add_argument("--stage", required=True)
     item.add_argument("--user-confirmed", action="store_true")
+    item.add_argument("--reason", default=None, help="why this stage is approved; recorded in approvals")
+    item.add_argument("--approver", default=None, help="who approved; defaults to user")
     item.set_defaults(func=command_approve)
     for name, func in (
         ("validate", command_validate), ("status", command_status),
