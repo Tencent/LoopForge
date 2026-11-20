@@ -283,7 +283,7 @@ func parseSpan(msg []byte) otlpSpan {
 			span.TraceID = hex.EncodeToString(val)
 		case num == 2 && wire == 2:
 			span.SpanID = hex.EncodeToString(val)
-		case num == 3 && wire == 2:
+		case num == 4 && wire == 2:
 			span.ParentSpanID = hex.EncodeToString(val)
 		case num == 5 && wire == 2:
 			span.Name = string(val)
