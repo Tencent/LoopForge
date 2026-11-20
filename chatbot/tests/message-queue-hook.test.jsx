@@ -594,4 +594,54 @@ describe("sending while a reply runs", () => {
     await waitFor(() => expect(result.current.session?.messages.map((m) => m.content)).toEqual(["查失败节点", unfinished.content]));
     unmount();
   });
+
+  test("waits for the admitted reply when only a stored receipt confirms a queued send", async () => {
+    const originalAPI = apiMock.getMockImplementation();
+    const originalWrite = writeMock.getMockImplementation();
+    state.sessionSettings = { titleGenerated: true };
+    let admit, acceptedId, replyFinished = false;
+    const holdFirstResponse = new Promise((resolve) => { admit = resolve; });
+    apiMock.mockImplementation(async (path, options) => {
+      if (path === "/api/assistant/sessions/s1/generation" && acceptedId)
+        throw Object.assign(Error("回复状态暂不可用"), { status: 503 });
+      return originalAPI(path, options);
+    });
+    writeMock.mockImplementation(async (path, body, method) => {
+      if (path !== "/api/assistant/generations" || replyFinished) return originalWrite(path, body, method);
+      if (acceptedId) throw Object.assign(Error("此会话正在生成，请等待完成或停止"), { status: 409 });
+      await holdFirstResponse;
+      acceptedId = body.clientRequestId;
+      state.transcript = body.messages;
+      state.sessionSettings.recentClientRequestIds = [acceptedId];
+      state.generation = { id: "accepted", status: "running", events: [], clientRequestId: acceptedId };
+      throw new TypeError("连接在确认发送后断开");
+    });
+    try {
+      const { result, unmount } = await openRunning();
+      await act(async () => {
+        await result.current.send({ text: "排队第一条" });
+        await result.current.send({ text: "排队第二条" });
+      });
+      await finish("completed");
+      await waitFor(() => expect(generationPosts()).toHaveLength(1));
+      await act(async () => admit());
+      expect(result.current.replyStatePending).toBe(true);
+      expect(generationPosts()).toHaveLength(1);
+      expect(result.current.queueHeld).toBe(false);
+      expect(result.current.queue.map((entry) => entry.text)).toEqual(["排队第二条"]);
+      await waitFor(() => expect(sources).toHaveLength(2), { timeout: 3500 });
+      expect(result.current.generation?.id).toBe("accepted");
+      expect(generationPosts()).toHaveLength(1);
+      state.transcript = [...state.transcript, { role: "assistant", content: "回复第一条" }];
+      replyFinished = true;
+      await emit({ id: "accepted", status: "completed", events: [], clientRequestId: acceptedId });
+      await waitFor(() => expect(generationPosts()).toHaveLength(2));
+      expect(generationPosts()[1][1].messages.at(-1)?.content).toBe("排队第二条");
+      expect(result.current.queueHeld).toBe(false);
+      unmount();
+    } finally {
+      apiMock.mockImplementation(originalAPI);
+      writeMock.mockImplementation(originalWrite);
+    }
+  });
 });

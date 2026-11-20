@@ -711,7 +711,8 @@ export function useChat() {
       : api(`/api/assistant/models?executor=${encodeURIComponent(executor)}`);
     const loading = request
       .then((catalog) => {
-        if (catalogRequests.current.get(key) !== loading) throw Error("模型目录已更新，请重新发送。");
+        if (catalogRequests.current.get(key) !== loading)
+          throw new ComposerModelError("模型目录已更新，请重新发送。");
         if (catalog.error) throw new Error(catalog.error);
         const result = runnerId ? {
           models: (catalog.models || []).filter((model) => concreteModel(model, "agy")).map((model) => ({
@@ -762,12 +763,12 @@ export function useChat() {
       const catalog = await loadProviderCatalog(key, selection.executor, runnerId);
       resolved = resolveComposerModel(selection, conversation, false, { ...providerCatalogs, [key]: catalog }, machines);
     }
-    if (resolved.agyAccountKey && visibleModel) {
+    if (visibleModel) {
       const catalogModel = findExecutorModel(resolved.executorModels, selection.executor, visibleModel);
       if (unprefixedModel(selection.executor, catalogModel?.id ?? visibleModel) !==
           unprefixedModel(selection.executor, resolved.activeModel) ||
           (visibleEffort && visibleEffort !== resolved.activeEffort)) {
-        throw new ComposerModelError("当前模型或思考强度已不在该执行机器的账号目录，请重新选择。");
+        throw new ComposerModelError("当前执行环境不支持所选的模型或思考强度，请重新选择。");
       }
     }
     const error = composerModelError(resolved);
@@ -1164,6 +1165,7 @@ export function useChat() {
         runnerId: executionMachines.defaultRunnerId || "",
       };
       clientRequestId = newId();
+      if (currentId.current === s.id) setGenerationKnown(null);
       const g = await write("/api/assistant/generations", {
         clientRequestId,
         sessionId: s.id,
@@ -1288,6 +1290,7 @@ export function useChat() {
       const selection = restoreConversationModel(stored);
       const resolved = resolveComposerModel(selection, stored, false);
       const chosen = await modelForRequest(selection, stored, resolved);
+      if (currentId.current === stored.id) setGenerationKnown(null);
       const g = await write("/api/assistant/generations", {
         sessionId: stored.id,
         projectId: stored.projectId || "",

@@ -182,6 +182,50 @@ describe("conversation hooks", () => {
     }
   });
 
+  test("pauses a send if the late Codex runner catalog no longer supports the displayed effort", async () => {
+    const original = apiMock.getMockImplementation();
+    const session = {
+      id: "s1", titleGenerated: true, model: "codex:gpt-5.5", executor: "codex", effort: "max",
+      executionTarget: { pool: "runner", runnerId: "codex-runner" },
+      messages: [{ role: "user", content: "原消息" }],
+    };
+    let loadCatalog;
+    apiMock.mockImplementation(async (path, options) => {
+      if (path === "/api/assistant/sessions/s1") return session;
+      if (path === "/api/runners?mine=1") return [
+        { id: "codex-runner", ownerUserId: 1, runtimes: [{ provider: "codex", authMode: "local" }] },
+      ];
+      if (path === "/api/assistant/models?executor=codex") return new Promise((resolve) => {
+        loadCatalog = () => resolve({ models: [{ id: "gpt-5.5", efforts: ["low", "medium", "high", "xhigh"] }] });
+      });
+      return original(path, options);
+    });
+    try {
+      history.replaceState({}, "", "/?session=s1");
+      const { result } = renderHook(useChat);
+      await waitFor(() => expect(result.current).toMatchObject({
+        session: expect.objectContaining({ id: "s1" }), replyStatePending: false,
+        model: session.model, effort: session.effort, machinesReady: true,
+      }));
+      await waitFor(() => expect(loadCatalog).toBeTypeOf("function"));
+      let request;
+      act(() => { request = result.current.send({ text: "保留我的思考强度" }); });
+      await act(async () => {
+        loadCatalog();
+        expect(await request).toBe(false);
+      });
+      expect(result.current.error).toContain("请重新选择");
+      expect(writeMock).not.toHaveBeenCalledWith("/api/assistant/generations", expect.anything());
+      act(() => result.current.setEffort("high"));
+      await act(async () => expect(await result.current.send({ text: "保留我的思考强度" })).toBe(true));
+      expect(writeMock).toHaveBeenCalledWith("/api/assistant/generations", expect.objectContaining({
+        executor: "codex", model: "gpt-5.5", effort: "high",
+      }));
+    } finally {
+      apiMock.mockImplementation(original);
+    }
+  });
+
   test("restores the conversation's unsent choices even after choosing a stronger model elsewhere", async () => {
     const original = apiMock.getMockImplementation();
     apiMock.mockImplementation(async (path, options) => {
