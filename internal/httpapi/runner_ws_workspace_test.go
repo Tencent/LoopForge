@@ -19,6 +19,7 @@ import (
 	"agentflow/internal/runtime"
 
 	"github.com/gin-gonic/gin"
+	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/knownhosts"
 )
 
@@ -285,7 +286,13 @@ func TestRunnerWorkspaceRPCIsTransient(t *testing.T) {
 }
 
 func TestRunnerWorkspaceSendsScopedPlatformSSHKnownHosts(t *testing.T) {
+	store, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
 	hub := quietRunnerHub()
+	hub.sshHostLookup = store.PlatformSSHKnownHosts
 	conn := testRunnerConn("runner-a")
 	registerTestConn(hub, conn)
 	_, hostKey := sshTestIdentity(t)
@@ -293,7 +300,12 @@ func TestRunnerWorkspaceSendsScopedPlatformSSHKnownHosts(t *testing.T) {
 	terminalPin := knownhosts.Line([]string{"terminal.example.org:22"}, hostKey) + "\n"
 	otherPin := knownhosts.Line([]string{"other.example.org:22"}, hostKey) + "\n"
 	path := filepath.Join(t.TempDir(), "known_hosts")
-	if err := os.WriteFile(path, []byte(preparationPin+terminalPin+otherPin), 0o600); err != nil {
+	if err := store.CreatePlatformGitSSHHost(t.Context(), &repo.PlatformGitSSHHost{
+		Host: "gitlab.example.org:2222", PublicKeys: strings.TrimSpace(string(ssh.MarshalAuthorizedKey(hostKey))),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(terminalPin+otherPin), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv(gitwork.SSHKnownHostsEnv, path)

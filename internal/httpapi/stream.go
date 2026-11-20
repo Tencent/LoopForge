@@ -317,6 +317,7 @@ func (h *streamHandlers) prepareClarifyRepo(ctx context.Context, repo domain.Rep
 		if key == "" {
 			return "", false, gitwork.ErrSSHKeyRequired.Error()
 		}
+		ctx = gitwork.WithSSHKnownHostsLookup(ctx, h.repo.PlatformSSHKnownHosts)
 		ctx = gitwork.WithSSHKeys(ctx, keys)
 		// A private SSH checkout is never shared across users, changed
 		// repository bindings, or a removed or replaced key.

@@ -43,7 +43,7 @@ test('platform admin panel loads metrics, searches, filters, grants, revokes, an
   assert.equal(app.evaluate(`state.currentView`), 'agents');
 });
 
-test('platform admin page splits accounts, admins and the shared key into tabs', async (t) => {
+test('platform admin page separates accounts, admins, shared keys and SSH host trust', async (t) => {
   const app = await loadApp();
   t.after(app.close);
   app.evaluate(`state.currentUser={...state.data.users[0],isGuest:false,isPlatformAdmin:true}`);
@@ -55,7 +55,7 @@ test('platform admin page splits accounts, admins and the shared key into tabs',
   const host = app.document.querySelector('#platformAdminPanel');
   const panel = (id) => host.querySelector(`[data-platform-panel="${id}"]`);
   const tab = (id) => host.querySelector(`[data-platform-tab="${id}"]`);
-  const shown = () => ['accounts', 'admins', 'sharedKey'].filter((id) => !panel(id).hidden);
+  const shown = () => ['accounts', 'admins', 'sharedKey', 'sshTrust'].filter((id) => !panel(id).hidden);
 
   assert.deepEqual(shown(), ['accounts'], 'accounts open first');
   assert.equal(tab('accounts').getAttribute('aria-selected'), 'true');
@@ -68,6 +68,9 @@ test('platform admin page splits accounts, admins and the shared key into tabs',
   tab('sharedKey').click();
   assert.deepEqual(shown(), ['sharedKey']);
   assert.equal(tab('accounts').getAttribute('aria-selected'), 'false');
+  host.querySelector('#platformTabs').dispatchEvent(new app.window.KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+  assert.deepEqual(shown(), ['sshTrust']);
+  assert.ok(panel('sshTrust').querySelector('#platformSSHHostTrustCard'));
   host.querySelector('#platformTabs').dispatchEvent(new app.window.KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
   assert.deepEqual(shown(), ['accounts'], 'arrow keys wrap around');
   host.querySelector('#platformTabs').dispatchEvent(new app.window.KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));

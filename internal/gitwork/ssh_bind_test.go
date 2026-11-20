@@ -131,7 +131,7 @@ func TestPlatformSSHKnownHostsAreScopedAndTakePrecedence(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv(SSHKnownHostsEnv, platformFile)
-	platform := SSHKnownHostsForKeys(map[string]string{remote: "identity", "git@unassigned.example.org:group/repo": ""})
+	platform := SSHKnownHostsForKeys(t.Context(), map[string]string{remote: "identity", "git@unassigned.example.org:group/repo": ""})
 	if platform == nil || platform.Entries != host+" "+key || platform.ReadFailed {
 		t.Fatalf("scoped platform pins = %+v", platform)
 	}
@@ -159,7 +159,7 @@ func TestPlatformSSHKnownHostsAreScopedAndTakePrecedence(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv(SSHKnownHostsEnv, platformFile)
-	revoked := SSHKnownHostsForKeys(map[string]string{repo.Endpoint(): "identity"})
+	revoked := SSHKnownHostsForKeys(t.Context(), map[string]string{repo.Endpoint(): "identity"})
 	if revoked == nil || revoked.Entries != "@revoked "+platform.Entries {
 		t.Fatalf("revocation was lost on dispatch: %+v", revoked)
 	}
@@ -183,7 +183,7 @@ func TestRunnerSSHRevocationSurvivesPlatformKnownHosts(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv(SSHKnownHostsEnv, path)
-	platform := SSHKnownHostsForKeys(map[string]string{"github.com:22": "identity"})
+	platform := SSHKnownHostsForKeys(t.Context(), map[string]string{"github.com:22": "identity"})
 	if platform == nil {
 		t.Fatal("platform host pin is missing")
 	}
@@ -203,7 +203,7 @@ func TestRunnerSSHRevocationSurvivesPlatformKnownHosts(t *testing.T) {
 
 func TestUnreadablePlatformSSHKnownHostsFailsClosed(t *testing.T) {
 	t.Setenv(SSHKnownHostsEnv, filepath.Join(t.TempDir(), "missing"))
-	platform := SSHKnownHostsForKeys(map[string]string{"github.com:22": "identity"})
+	platform := SSHKnownHostsForKeys(t.Context(), map[string]string{"github.com:22": "identity"})
 	if platform == nil || !platform.ReadFailed {
 		t.Fatalf("platform read failure = %+v", platform)
 	}
@@ -229,7 +229,7 @@ func TestOversizedPlatformSSHKnownHostsFailsClosed(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv(SSHKnownHostsEnv, path)
-	platform := SSHKnownHostsForKeys(map[string]string{host + ":22": "identity"})
+	platform := SSHKnownHostsForKeys(t.Context(), map[string]string{host + ":22": "identity"})
 	if platform == nil {
 		t.Fatal("oversized platform config was omitted")
 	}

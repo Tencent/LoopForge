@@ -763,6 +763,6 @@ func allModels() []any {
 		requirementSpaceRow{}, spaceMemberRow{}, spaceArtifactRow{}, spaceArtifactRevisionRow{}, spaceThreadRow{},
 		engineInstanceRow{},
 		knowledgeSettingsRow{}, knowledgeSubmissionRow{},
-		pageFeedbackRow{}, pageFeedbackImageRow{},
+		pageFeedbackRow{}, pageFeedbackImageRow{}, PlatformGitSSHHost{},
 	}
 }

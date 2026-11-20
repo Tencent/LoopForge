@@ -1559,10 +1559,13 @@ textarea.pa-input{height:auto;min-height:76px;padding:9px 11px;resize:vertical;l
 .platform-field{display:flex;flex-direction:column;gap:6px;margin:0;font-size:12.5px;color:var(--muted)}
 .platform-field>span,.platform-field-head>span{font-weight:650;color:var(--text)}
 .platform-field-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px}
+.platform-ssh-host-form[hidden]{display:none}
+.platform-ssh-host-form textarea{resize:vertical;font-family:monospace}
+.platform-ssh-host-info code{overflow-wrap:anywhere}
 .platform-field-head small{color:var(--muted-2);font-size:12px}
 .platform-field-hint{color:var(--muted-2);font-size:12px;line-height:1.5}
-.platform-field input,.platform-field select{width:100%;box-sizing:border-box;padding:9px 12px;border:1px solid var(--line-strong);border-radius:10px;background:var(--panel);color:var(--text);font-size:13px}
-.platform-field input:focus,.platform-field select:focus{outline:none;border-color:var(--blue);box-shadow:0 0 0 3px color-mix(in srgb,var(--blue) 18%,transparent)}
+.platform-field input,.platform-field select,.platform-ssh-host-form textarea{width:100%;box-sizing:border-box;padding:9px 12px;border:1px solid var(--line-strong);border-radius:10px;background:var(--panel);color:var(--text);font-size:13px}
+.platform-field input:focus,.platform-field select:focus,.platform-ssh-host-form textarea:focus{outline:none;border-color:var(--blue);box-shadow:0 0 0 3px color-mix(in srgb,var(--blue) 18%,transparent)}
 .platform-shared-key-link{align-self:flex-start;font-size:12px;color:var(--blue);text-decoration:none}
 .platform-shared-key-link:hover{text-decoration:underline}
 .platform-model-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:2px 12px;max-height:288px;overflow:auto;padding:8px;border:1px solid var(--line);border-radius:10px;background:var(--bg-soft)}
@@ -2194,7 +2197,7 @@ html[data-theme="light"] body{color-scheme:light}html[data-theme="light"] .platf
 .confirm-icon-wrap.info{background:rgba(91,140,255,.12);border-color:rgba(91,140,255,.28);color:var(--blue)}
 .confirm-header-text{min-width:0;flex:1}
 .confirm-header-text h3{margin:0 0 6px;font-size:16px;font-weight:700;line-height:1.35;color:var(--text)}
-.confirm-header-text p{margin:0;font-size:12.5px;line-height:1.55;color:var(--muted);word-break:break-word}
+.confirm-header-text p{margin:0;font-size:12.5px;line-height:1.55;color:var(--muted);word-break:break-word;white-space:pre-line}
 .confirm-prompt-wrap{margin-top:16px}
 .confirm-prompt-wrap label{display:block;font-size:11.5px;color:var(--muted-2);margin-bottom:6px;font-weight:600}
 .confirm-prompt-wrap input,.confirm-prompt-wrap select{width:100%;height:38px;padding:0 12px;font-size:13px}

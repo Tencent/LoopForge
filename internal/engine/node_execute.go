@@ -471,7 +471,7 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 	gitCredentials := sb.credentialSnapshot()
 	gitTok := gitCredentials.GitHTTPCredentials["github.com"].Token
 	ctx = withRunGitCredentials(ctx, sb.credentialSnapshot())
-	ctx = gitwork.WithSSHKeys(ctx, gitCredentials.GitSSHKeys)
+	ctx = gitwork.WithSSHKeys(e.withSSHKnownHosts(ctx), gitCredentials.GitSSHKeys)
 	ctx = withGitIdentity(ctx, sb.credentialSnapshot().GitUserName, sb.credentialSnapshot().GitUserEmail)
 	// Share the checkout between nodes. A reconstructed run environment
 	// revalidates the persisted checkout after restart or lease takeover.

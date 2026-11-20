@@ -3,6 +3,7 @@ package httpapi
 import (
 	"agentflow/internal/config"
 	"agentflow/internal/domain"
+	"agentflow/internal/gitwork"
 	"agentflow/internal/runtime"
 	"bufio"
 	"context"
@@ -137,6 +138,7 @@ func (h *assistantHandlers) conversationExecutor(s *AgentToolSession, root strin
 						return h.engine.AcquireConversationCLI(envCtx, request.RunID, nativeRoot)
 					}
 				}
+				callCtx = gitwork.WithSSHKnownHostsLookup(callCtx, h.repo.PlatformSSHKnownHosts)
 				result, err := h.conversationProcesses.Handle(callCtx, root, workspace, request.Sandbox, req, forward, factory)
 				if err != nil && req.Operation == "start" {
 					err = fmt.Errorf("%w: %w", runtime.ErrConversationNotStarted, err)

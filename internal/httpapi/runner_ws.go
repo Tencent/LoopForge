@@ -79,6 +79,7 @@ type runnerControlHub struct {
 	reconnectGrace time.Duration
 	startupGrace   time.Duration
 	handoverDrain  time.Duration
+	sshHostLookup  gitwork.SSHKnownHostsLookup
 }
 
 type runnerControlConn struct {
@@ -205,7 +206,7 @@ func (h *runnerControlHub) reconnectExpectedLocked(runnerID string, now time.Tim
 
 // Resolve pins on the platform serving the socket, including requests relayed
 // by a predecessor during handover.
-func runnerWorkspaceSSHKnownHosts(request domain.RunnerWorkspaceRequest) *domain.GitSSHKnownHosts {
+func runnerWorkspaceSSHKnownHosts(ctx context.Context, request domain.RunnerWorkspaceRequest) *domain.GitSSHKnownHosts {
 	var preparationKeys, conversationKeys map[string]string
 	if request.PreparationInvocation != nil {
 		preparationKeys = request.PreparationInvocation.GitSSHKeys
@@ -220,13 +221,13 @@ func runnerWorkspaceSSHKnownHosts(request domain.RunnerWorkspaceRequest) *domain
 			conversationKeys = conversation.Command.Credentials.GitSSHHostKeys
 		}
 	}
-	return gitwork.SSHKnownHostsForKeys(preparationKeys, request.TerminalGitSSHKeys, conversationKeys)
+	return gitwork.SSHKnownHostsForKeys(ctx, preparationKeys, request.TerminalGitSSHKeys, conversationKeys)
 }
 
 // send delivers one request; sent reports whether it reached the socket's
 // queue, after which it must not be retried elsewhere.
 func (h *runnerControlHub) send(ctx context.Context, conn *runnerControlConn, request domain.RunnerWorkspaceRequest) (domain.RunnerWorkspaceResponse, bool, error) {
-	request.GitSSHKnownHosts = runnerWorkspaceSSHKnownHosts(request)
+	request.GitSSHKnownHosts = runnerWorkspaceSSHKnownHosts(gitwork.WithSSHKnownHostsLookup(ctx, h.sshHostLookup), request)
 	h.mu.Lock()
 	h.nextID++
 	requestID := fmt.Sprintf("workspace-%d", h.nextID)
