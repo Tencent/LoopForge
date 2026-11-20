@@ -376,10 +376,21 @@ func (s *Service) executeJob(job domain.ScheduleJob, triggerOrigin string, exec 
 			job.Blockers = nil
 			return finish(job, err)
 		}
+		dispatched++
 		if exec != nil {
 			exec.Runs = append(exec.Runs, domain.ScheduleJobExecutionRun{IssueID: issue.ID, IssueTitle: issue.Title, RunID: runID})
+			exec.Pulled, exec.Dispatched = job.LastPulled, dispatched
+			// The downstream run already exists. Save its attribution before the
+			// next dispatch can block or the process can be interrupted.
+			if err := s.repo.PutScheduleJobExecution(*exec); err != nil {
+				log.Printf("schedule job %s trace=%s: record dispatched run: %v", job.ID, exec.TraceID, err)
+				job.LastStatus = "failed"
+				job.LastError = "保存已派发运行记录失败"
+				job.LastDispatched = dispatched
+				job.Blockers = nil
+				return finish(job, errors.New(job.LastError))
+			}
 		}
-		dispatched++
 	}
 	job.LastDispatched = dispatched
 	if len(blocked) > 0 {
