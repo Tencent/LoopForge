@@ -61,6 +61,13 @@ func TestStoppedGenerationKeepsTraceAndNextTurnSeesIt(t *testing.T) {
 		t.Fatal("generation never started")
 	}
 	g, _ := h.repo.AssistantGeneration(u.ID, "stopped-chat")
+	var accepted struct {
+		ID           string `json:"id"`
+		MessageCount int    `json:"messageCount"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &accepted); err != nil || accepted.ID != g.ID || accepted.MessageCount != 1 {
+		t.Fatalf("accept response did not identify the submitted message: %s (err=%v)", rec.Body, err)
+	}
 	if g.MessageCount != 1 {
 		t.Fatalf("message count: %d", g.MessageCount)
 	}
