@@ -203,6 +203,72 @@ func TestAssistantGenerationKeepsAcceptanceAfterNextTurn(t *testing.T) {
 	}
 }
 
+func TestAssistantComposerModelRefusesCatalogSubstitution(t *testing.T) {
+	t.Setenv("AGENTFLOW_ASSISTANT_MODEL", "available-model")
+	t.Setenv("AGENTFLOW_ASSISTANT_MODELS", "available-model")
+	h, user := workbenchFixture(t)
+	stubCLIModelDiscovery(t)
+	h.generate = func(context.Context, string, domain.User) (string, error) {
+		return `{"message":"回复","drafts":[]}`, nil
+	}
+	send := func(id, model string, exact bool, handler func(*gin.Context)) *httptest.ResponseRecorder {
+		t.Helper()
+		body, err := json.Marshal(assistantRequest{
+			SessionID: id, ProjectID: "workbench", Model: model, RequireExactModel: exact,
+			Messages: []assistantMessage{{Role: "user", Content: "继续"}},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		c, rec := workbenchContext(user, http.MethodPost, "/", bytes.NewBuffer(body))
+		handler(c)
+		return rec
+	}
+	for _, handler := range []func(*gin.Context){h.startGeneration, h.chat} {
+		rec := send("explicit-model", "retired-model", true, handler)
+		if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "请重新选择模型") {
+			t.Fatal("the explicit model was silently replaced", rec.Code, rec.Body.String())
+		}
+	}
+	if _, ok := h.repo.AssistantGeneration(user.ID, "explicit-model"); ok {
+		t.Fatal("the unavailable model admitted a generation")
+	}
+	for _, tc := range []struct {
+		id, model string
+		exact     bool
+	}{
+		{id: "legacy-model", model: "retired-model"},
+		{id: "default-alias", model: assistantDefaultModel, exact: true},
+		{id: "listed-model", model: "available-model", exact: true},
+	} {
+		rec := send(tc.id, tc.model, tc.exact, h.startGeneration)
+		if rec.Code != http.StatusAccepted {
+			t.Fatal("could not use the current model", tc.id, rec.Code, rec.Body.String())
+		}
+		if saved := waitForCompletedGeneration(t, h, user.ID, tc.id); saved.Model != "available-model" {
+			t.Fatal("unexpected selected model", tc.id, saved.Model)
+		}
+	}
+
+	const runningID = "running-model"
+	running := domain.AssistantGeneration{ID: "running-turn", SessionID: runningID, UserID: user.ID, Status: "running"}
+	pending := domain.AssistantSession{ID: runningID, ProjectID: "workbench", Model: "available-model",
+		Messages: []assistantMessage{{Role: "user", Content: "第一条"}}}
+	if err := h.repo.BeginAssistantGeneration(running, pending); err != nil {
+		t.Fatal(err)
+	}
+	c, rec := workbenchContext(user, http.MethodPost, "/?generationId="+running.ID, bytes.NewBufferString(
+		`{"content":"请修改方向","model":"retired-model","requireExactModel":true}`))
+	c.Params = gin.Params{{Key: "id", Value: runningID}}
+	h.steerGeneration(c)
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "请重新选择模型") {
+		t.Fatal("steering silently changed the requested model", rec.Code, rec.Body.String())
+	}
+	if g, _ := h.repo.PeekAssistantGeneration(user.ID, runningID); g.CancelRequested || g.Steer != nil {
+		t.Fatal("rejected model interrupted the original reply", g)
+	}
+}
+
 func TestStartGenerationAcceptsLargeRequestBody(t *testing.T) {
 	h, u := workbenchFixture(t)
 	h.generate = func(ctx context.Context, _ string, _ domain.User) (string, error) {

@@ -999,6 +999,7 @@ export function useChat() {
           content: item.text || "请阅读本轮附件并回答。",
           attachments: item.attachments || [],
           references: item.references || [],
+          requireExactModel: true,
           ...chosen,
           ...queuedApproval(item, user?.id, conversation?.projectId || ""),
         },
@@ -1168,6 +1169,7 @@ export function useChat() {
       if (currentId.current === s.id) setGenerationKnown(null);
       const g = await write("/api/assistant/generations", {
         clientRequestId,
+        requireExactModel: true,
         sessionId: s.id,
         projectId: s.projectId || "",
         runId: s.runId || "",
@@ -1293,6 +1295,7 @@ export function useChat() {
       if (currentId.current === stored.id) setGenerationKnown(null);
       const g = await write("/api/assistant/generations", {
         sessionId: stored.id,
+        requireExactModel: true,
         projectId: stored.projectId || "",
         runId: stored.runId || "",
         executor: selection.executor,

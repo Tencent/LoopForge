@@ -98,6 +98,8 @@ const THEME_OPTIONS = [
 ];
 const environmentVisibilityKey = "agentflow.native-chat.environmentVisibility.v1";
 const sessionApprovalScope = ({ id, projectId }) => `approval.session:${JSON.stringify([id, projectId || ""])}`;
+const draftApprovalScope = (slot, projectId) =>
+  slot.startsWith("issue:") ? `approval.${JSON.stringify([slot, projectId])}` : `approval.${slot}`;
 const draftSnapshot = ({ text, attachments, references }) => JSON.stringify({ text, attachments, references });
 const sidebarWidthKey = "agentflow.sidebarWidth";
 const sidebarLayoutKey = "agentflow.sidebarLayoutVersion";
@@ -388,7 +390,7 @@ export default function App() {
   const { readOptions: readApproval, saveOptions: saveApproval } = useComposerOptions(approvalOwner);
   const approvalScope = chat.activeId
     ? chat.session?.id === chat.activeId && sessionApprovalScope(chat.session)
-    : `approval.${newDraftSlot}`;
+    : draftApprovalScope(newDraftSlot, chat.projectId);
   const approval = normalizeApprovalMode(approvalScope && readApproval(approvalScope).mode);
   function setApproval(value) {
     if (!approvalScope) return;
@@ -840,7 +842,7 @@ export default function App() {
       if (copiedFrom?.snapshot === snapshot && /^(new|issue):/.test(copiedFrom.slot)) {
         const originKey = draftKeyPrefix + copiedFrom.slot;
         if (clearDraftIfUnchanged(originKey, snapshot)) {
-          clearDraftApproval(`approval.${copiedFrom.slot}`, copiedFrom.mode);
+          if (copiedFrom.approvalScope) clearDraftApproval(copiedFrom.approvalScope, copiedFrom.mode);
           clearedVisible ||= visible.key === originKey;
         }
       }
@@ -866,6 +868,7 @@ export default function App() {
       // content in the visible conversation so the user can retry.
       draftOrigin.current = {
         slot: newDraftSlot,
+        approvalScope: draftApproval.scope,
         mode: savedApprovalMode,
         snapshot,
       };

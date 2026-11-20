@@ -128,7 +128,12 @@ func (h *assistantHandlers) startGeneration(c *gin.Context) {
 		catalog = h.turnCatalog(c.Request.Context(), user, req.Model)
 	}
 	if !runnerLogin {
-		req.Model = assistantAllowedUserModel(req.Model, catalog, user)
+		selected, err := assistantTurnCatalogModel(req.Model, catalog, user, req.RequireExactModel)
+		if err != nil {
+			c.JSON(400, gin.H{"error": err.Error()})
+			return
+		}
+		req.Model = selected
 	}
 	cliEngine, _ = assistantModelEngine(req.Model)
 	req.Executor = cliEngine
@@ -557,7 +562,12 @@ func (h *assistantHandlers) steerGeneration(c *gin.Context) {
 		catalog = h.turnCatalog(c.Request.Context(), user, model)
 	}
 	if !runnerLogin {
-		model = assistantAllowedUserModel(model, catalog, user)
+		selected, err := assistantTurnCatalogModel(model, catalog, user, body.RequireExactModel)
+		if err != nil {
+			c.JSON(400, gin.H{"error": err.Error()})
+			return
+		}
+		model = selected
 	}
 	// The catalog can substitute a configured default. Check that model too.
 	if refusal := assistantEngineSwitchRefusal(cliEngine, model); refusal != "" {
@@ -575,15 +585,16 @@ func (h *assistantHandlers) steerGeneration(c *gin.Context) {
 	}
 	message := probe.Messages[0]
 	steer := domain.AssistantSteer{
-		Content:      message.Content,
-		Attachments:  message.Attachments,
-		References:   message.References,
-		Model:        model,
-		Effort:       body.Effort,
-		ApprovalMode: normalizeAssistantApprovalMode(body.ApprovalMode),
-		ActorID:      user.ID,
-		ActorName:    user.LoginName,
-		TriggerID:    rand.Text(),
+		Content:           message.Content,
+		Attachments:       message.Attachments,
+		References:        message.References,
+		Model:             model,
+		RequireExactModel: body.RequireExactModel,
+		Effort:            body.Effort,
+		ApprovalMode:      normalizeAssistantApprovalMode(body.ApprovalMode),
+		ActorID:           user.ID,
+		ActorName:         user.LoginName,
+		TriggerID:         rand.Text(),
 	}
 	if err := h.repo.SteerAssistantGeneration(ownerID, g.SessionID, g.ID, steer); err != nil {
 		c.JSON(409, gin.H{"error": err.Error()})
@@ -660,15 +671,16 @@ func (h *assistantHandlers) followSteer(parent context.Context, prev domain.Assi
 	// Empty effort selects the follow-up model's default.
 	session.Effort = steer.Effort
 	req := assistantRequest{
-		ProjectID:       session.ProjectID,
-		SessionID:       session.ID,
-		RunID:           session.RunID,
-		Executor:        session.Executor,
-		ExecutionTarget: session.ExecutionTarget,
-		Model:           session.Model,
-		Effort:          session.Effort,
-		ApprovalMode:    steer.ApprovalMode,
-		Messages:        session.Messages,
+		ProjectID:         session.ProjectID,
+		SessionID:         session.ID,
+		RunID:             session.RunID,
+		Executor:          session.Executor,
+		ExecutionTarget:   session.ExecutionTarget,
+		Model:             session.Model,
+		RequireExactModel: steer.RequireExactModel,
+		Effort:            session.Effort,
+		ApprovalMode:      steer.ApprovalMode,
+		Messages:          session.Messages,
 	}
 	if req.RunID != "" && h.engine != nil {
 		token, err := h.engine.BeginConversationWorkspaceUse(req.RunID)

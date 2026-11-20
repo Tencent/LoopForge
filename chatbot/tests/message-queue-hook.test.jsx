@@ -607,7 +607,8 @@ describe("sending while a reply runs", () => {
       return originalAPI(path, options);
     });
     writeMock.mockImplementation(async (path, body, method) => {
-      if (path !== "/api/assistant/generations" || replyFinished) return originalWrite(path, body, method);
+      if (path !== "/api/assistant/generations") return originalWrite(path, body, method);
+      if (replyFinished) return { id: "second-reply", status: "running", events: [] };
       if (acceptedId) throw Object.assign(Error("此会话正在生成，请等待完成或停止"), { status: 409 });
       await holdFirstResponse;
       acceptedId = body.clientRequestId;

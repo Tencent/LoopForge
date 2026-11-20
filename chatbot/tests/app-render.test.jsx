@@ -563,6 +563,39 @@ describe("App", () => {
     }
   });
 
+  test("a requirement moved to another project starts with request approval", async () => {
+    const original = { projectId: chat.projectId, projects: chat.projects };
+    const fetchBefore = globalThis.fetch;
+    const user = userEvent.setup();
+    globalThis.fetch = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ issue: { id: "moved-issue", title: "迁移需求", projectId: chat.projectId } }),
+    }));
+    try {
+      chat.projects = original.projects.map((project) => ({ ...project, members: ["u1"] }));
+      chat.projectId = "p1";
+      history.replaceState({}, "", "/?projectId=p1&mentionIssue=moved-issue");
+      const first = render(<App />);
+      await waitFor(() => expect(screen.getByRole("textbox", { name: "消息" })).toHaveValue("@迁移需求 "));
+      await user.click(screen.getByRole("button", { name: "操作确认方式" }));
+      await user.click(screen.getByRole("menuitemradio", { name: "完全权限" }));
+      first.unmount();
+
+      chat.projectId = "p2";
+      history.replaceState({}, "", "/?projectId=p2&mentionIssue=moved-issue");
+      render(<App />);
+      await waitFor(() => expect(screen.getByRole("textbox", { name: "消息" })).toHaveValue("@迁移需求 "));
+      expect(screen.getByRole("button", { name: "操作确认方式" })).toHaveTextContent("请求批准");
+      await user.click(screen.getByRole("button", { name: "发送消息" }));
+      expect(chat.send).toHaveBeenLastCalledWith(expect.objectContaining({ approvalMode: "confirm" }));
+    } finally {
+      globalThis.fetch = fetchBefore;
+      Object.assign(chat, original);
+      history.replaceState({}, "", "/");
+    }
+  });
+
   test("leaving a requirement handoff before its details load cancels the mention", async () => {
     const previous = { ...chat };
     const originalFetch = globalThis.fetch;
