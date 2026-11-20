@@ -1,6 +1,7 @@
 package repo
 
 import (
+	"encoding/json"
 	"strings"
 
 	"agentflow/internal/domain"
@@ -15,58 +16,59 @@ func (r *RunsRepo) KnowledgeArtifacts(projectID string, limit int) []domain.Know
 		limit = 100
 	}
 	base := domain.KnowledgeArtifactBasename
-	var rows []runArtifactRow
-	// Over-fetch so project filtering below still fills the page.
-	fetch := limit
-	if strings.TrimSpace(projectID) != "" {
-		fetch = limit * 4
-	}
-	if err := r.DB.Select("id", "run_id", "node_id", "attempt", "name", "path", "media_type", "size_bytes", "sha256", "repository_dir", "created_at").
+	query := r.DB.Table("run_artifacts").
+		Select("run_artifacts.id, run_id, node_id, attempt, name, path, media_type, size_bytes, sha256, repository_dir, run_artifacts.created_at, runs.kind, runs.workflow_id, runs.status, runs.execution_context").
+		Joins("JOIN runs ON runs.id = run_artifacts.run_id").
 		Where("name = ? OR path = ? OR path LIKE ?", base, base, "%/"+base).
-		Order("created_at DESC").Limit(fetch).Find(&rows).Error; err != nil || len(rows) == 0 {
-		return out
+		Order("run_artifacts.created_at DESC").Order("run_artifacts.id DESC")
+	if projectID = strings.TrimSpace(projectID); projectID != "" {
+		query = query.Where(r.sqlExecutionContextJSONText("projectId")+" = ?", projectID)
 	}
-	runIDs := make([]string, 0, len(rows))
-	seen := map[string]bool{}
-	for _, row := range rows {
-		if !seen[row.RunID] {
-			seen[row.RunID] = true
-			runIDs = append(runIDs, row.RunID)
-		}
+	type candidateRow struct {
+		Artifact         runArtifactRow `gorm:"embedded"`
+		Kind             string
+		WorkflowID       string
+		Status           string
+		ExecutionContext []byte
 	}
-	var runs []runRow
-	if err := r.DB.Select("id", "kind", "workflow_id", "status", "execution_context").Where("id IN ?", runIDs).Find(&runs).Error; err != nil {
-		return out
-	}
-	meta := make(map[string]domain.Run, len(runs))
-	for _, row := range runs {
-		run := runFromRow(row)
-		if !run.IsPersonalWorkspace() {
-			meta[run.ID] = run
-		}
-	}
-	// Retries emit one artifact per attempt; only the latest per run/node/path
-	// is a meaningful candidate.
+	// Retries emit one artifact per attempt. Continue scanning bounded batches
+	// until the requested number of distinct run/node/path candidates is found.
+	// Project filtering must happen before the database limit.
 	latest := map[string]bool{}
-	for _, row := range rows {
-		m, ok := meta[row.RunID]
-		if !ok {
-			continue
+	batchSize := max(limit, 100)
+	for offset := 0; ; offset += batchSize {
+		var rows []candidateRow
+		if err := query.Offset(offset).Limit(batchSize).Find(&rows).Error; err != nil {
+			return out
 		}
-		if projectID != "" && m.ExecutionContext.ProjectID != projectID {
-			continue
+		for _, candidate := range rows {
+			row := candidate.Artifact
+			var ctx domain.TelemetryContext
+			if json.Unmarshal(candidate.ExecutionContext, &ctx) != nil {
+				continue
+			}
+			run := domain.Run{Kind: candidate.Kind, ExecutionContext: ctx}
+			if run.IsPersonalWorkspace() {
+				continue
+			}
+			if projectID != "" && ctx.ProjectID != projectID {
+				continue
+			}
+			key := row.RunID + "\x00" + row.NodeID + "\x00" + row.Path
+			if latest[key] {
+				continue
+			}
+			latest[key] = true
+			out = append(out, domain.KnowledgeCandidate{
+				Artifact:  artifactFromRow(row, false),
+				ProjectID: ctx.ProjectID, IssueID: ctx.IssueID,
+				WorkflowID: candidate.WorkflowID, RunStatus: candidate.Status,
+			})
+			if len(out) >= limit {
+				return out
+			}
 		}
-		key := row.RunID + "\x00" + row.NodeID + "\x00" + row.Path
-		if latest[key] {
-			continue
-		}
-		latest[key] = true
-		out = append(out, domain.KnowledgeCandidate{
-			Artifact:  artifactFromRow(row, false),
-			ProjectID: m.ExecutionContext.ProjectID, IssueID: m.ExecutionContext.IssueID,
-			WorkflowID: m.WorkflowID, RunStatus: m.Status,
-		})
-		if len(out) >= limit {
+		if len(rows) < batchSize {
 			break
 		}
 	}
