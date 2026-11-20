@@ -43,7 +43,8 @@ vi.mock("../src/api.js", async (original) => ({
   newId: () => "new-session",
 }));
 
-import { EXECUTORS, useChat } from "../src/useChat.js";
+import { EXECUTORS } from "../src/engines.js";
+import { useChat } from "../src/useChat.js";
 import { writeComposerPreference } from "../src/composer-preferences.js";
 import {
   isLocalConversation,
