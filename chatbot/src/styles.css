@@ -1306,6 +1306,16 @@ small {
 [data-theme="dark"] .chat-shell button.permission-selector {
   --permission-trigger-hover: rgb(237 237 240 / 0.055);
 }
+/* A locked selector stays visible but reads as non-interactive. */
+.chat-shell button.permission-selector:disabled {
+  cursor: not-allowed;
+  opacity: .55;
+  color: var(--muted);
+}
+.chat-shell button.permission-selector:disabled:is(:hover, [aria-expanded="true"]) {
+  background: transparent;
+  color: var(--muted);
+}
 .permission-selector > .harness-icon[data-icon="chevron-down"] {
   transition: rotate 160ms ease;
 }

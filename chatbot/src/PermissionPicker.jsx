@@ -24,14 +24,16 @@ export function rememberApprovalMode(userId, value) {
 }
 
 // `glyph` is a rendered brand mark. Options that only set `icon` keep the Harness icon.
-export default function PermissionPicker({ value, onSelect, open, onOpenChange, label = "操作确认方式", icon, options = modes }) {
+export default function PermissionPicker({ value, onSelect, open, onOpenChange, label = "操作确认方式", icon, options = modes, disabled = false, title }) {
   const trigger = useRef(null);
   const panel = useRef(null);
   const initialFocus = useRef(null);
   const callbacks = useRef(null);
   callbacks.current = { onSelect, onOpenChange };
   const identity = `permission-picker-${useId().replaceAll(":", "")}`;
-  const presence = usePanelPresence(open, 160);
+  // A disabled picker keeps its current value visible but must never open its menu.
+  const effectiveOpen = disabled ? false : open;
+  const presence = usePanelPresence(effectiveOpen, 160);
   const [position, setPosition] = useState({ top: 0, left: 0, width: 260, maxHeight: 360, placement: "top" });
   const current = options.find((mode) => mode.id === value) || options[0];
 
@@ -65,7 +67,7 @@ export default function PermissionPicker({ value, onSelect, open, onOpenChange, 
   }, [presence.mounted, options.length, place]);
 
   useEffect(() => {
-    if (!open || !presence.mounted) return;
+    if (!effectiveOpen || !presence.mounted) return;
     const frame = requestAnimationFrame(() => {
       const items = [...(panel.current?.querySelectorAll('[role="menuitemradio"]') || [])];
       const selected = initialFocus.current === "first" ? items[0] :
@@ -99,7 +101,7 @@ export default function PermissionPicker({ value, onSelect, open, onOpenChange, 
   }, [presence.mounted, place]);
 
   useEffect(() => {
-    if (!open) return;
+    if (!effectiveOpen) return;
     const inside = (target) => trigger.current?.contains(target) || panel.current?.contains(target);
     const outside = (event) => {
       if (!inside(event.target)) callbacks.current.onOpenChange(false);
@@ -169,10 +171,13 @@ export default function PermissionPicker({ value, onSelect, open, onOpenChange, 
         className="permission-selector"
         data-tone={current.tone}
         aria-label={label}
+        aria-disabled={disabled || undefined}
         aria-haspopup="menu"
-        aria-expanded={open}
+        aria-expanded={effectiveOpen}
         aria-controls={identity}
-        onClick={() => onOpenChange(!open)}
+        title={title}
+        disabled={disabled}
+        onClick={() => onOpenChange(!effectiveOpen)}
         onKeyDown={(event) => {
           if (["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) {
             if (open && presence.mounted) keyDown(event);

@@ -2130,7 +2130,7 @@ export default function App() {
                         e.target.value = "";
                       }}
                     />
-                    {chat.executors.length > 1 && !pinnedExecutor ? (
+                    {chat.executors.length > 1 ? (
                       <PermissionPicker
                         label="CLI"
                         options={chat.executors.map((executor) => {
@@ -2142,7 +2142,11 @@ export default function App() {
                               : null,
                           };
                         })}
-                        value={chat.executor}
+                        value={pinnedExecutor ? pinnedExecutor.id : chat.executor}
+                        disabled={Boolean(pinnedExecutor)}
+                        title={pinnedExecutor
+                          ? `当前对话已绑定 ${pinnedExecutor.label}，对话开始后不能切换 CLI；换 CLI 请新建对话`
+                          : undefined}
                         onSelect={(id) => {
                           chat.setExecutor(id);
                           input.current?.focus();

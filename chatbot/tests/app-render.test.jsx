@@ -577,7 +577,8 @@ describe("App", () => {
       },
     });
     view.rerender(<App />);
-    expect(screen.queryByRole("button", { name: "CLI" })).not.toBeInTheDocument();
+    const lockedCli = screen.getByRole("button", { name: "CLI" });
+    expect(lockedCli).toBeDisabled();
     expect(document.querySelector(".conversation-engine")).toHaveTextContent("Codex");
     // The first reply, still running, locks it the same way.
     Object.assign(chat, {
@@ -586,8 +587,39 @@ describe("App", () => {
       session: { id: "s2", title: "生成中", executor: "codebuddy", messages: [] },
     });
     view.rerender(<App />);
-    expect(screen.queryByRole("button", { name: "CLI" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "CLI" })).toBeDisabled();
     expect(document.querySelector(".conversation-engine")).toHaveTextContent("CodeBuddy");
+    Object.assign(chat, previous);
+  });
+
+  test("a locked CLI selector stays visible, disabled, and cannot open", async () => {
+    const user = userEvent.setup();
+    const previous = { ...chat };
+    chat.executors = [
+      ...previous.executors,
+      { id: "pi", icon: "terminal", label: "Pi", detail: "Pi" },
+    ];
+    Object.assign(chat, {
+      executor: "pi",
+      session: {
+        id: "s1",
+        title: "已开始",
+        executor: "pi",
+        messages: [{ id: "a1", role: "assistant", model: "m1", content: "hi" }],
+      },
+    });
+    const view = render(<App />);
+    const cli = screen.getByRole("button", { name: "CLI" });
+    expect(cli).toBeDisabled();
+    expect(cli).toHaveAttribute(
+      "title",
+      "当前对话已绑定 Pi，对话开始后不能切换 CLI；换 CLI 请新建对话",
+    );
+    // The disabled selector never opens its menu.
+    await user.click(cli);
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+    expect(screen.queryByRole("menuitemradio", { name: "Pi" })).not.toBeInTheDocument();
+    view.unmount();
     Object.assign(chat, previous);
   });
 
