@@ -71,6 +71,47 @@ vi.mock("mermaid", () => ({
 import App from "../src/App.jsx";
 
 describe("App", () => {
+  test("pages the transcript without losing the reading position or original message indexes", () => {
+    const original = { activeId: chat.activeId, session: chat.session };
+    const messages = Array.from({ length: 85 }, (_, index) => ({
+      role: "user", content: "Message " + index,
+    }));
+    const open = (id, rows) => Object.assign(chat, { activeId: id, session: { id, messages: rows } });
+    const more = () => screen.queryByRole("button", { name: "显示更早的消息" });
+    open("long", messages.slice(0, 39));
+    try {
+      const view = render(<App />);
+      const rows = () => [...view.container.querySelectorAll("[data-message-index]")];
+      expect(rows()).toHaveLength(39);
+      expect(more()).toBeNull();
+      open("long", messages);
+      view.rerender(<App />);
+      expect(rows()).toHaveLength(40);
+      expect(rows()[0].dataset.messageIndex).toBe("45");
+      const scroller = view.container.querySelector(".message-scroll");
+      Object.defineProperty(scroller, "scrollHeight", { value: 2000 });
+      fireEvent.scroll(scroller, { target: { scrollTop: 100 } });
+      open("long", [...messages, { role: "assistant", content: "New reply" }]);
+      view.rerender(<App />);
+      expect(rows()[0].dataset.messageIndex).toBe("45");
+      expect(rows().at(-1)).toHaveTextContent("New reply");
+      fireEvent.click(more());
+      expect(rows()[0].dataset.messageIndex).toBe("5");
+      fireEvent.click(within(rows()[0]).getByRole("button", { name: "编辑消息" }));
+      expect(within(screen.getByRole("dialog")).getByRole("textbox")).toHaveValue("Message 5");
+      fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "关闭" }));
+      fireEvent.click(more());
+      expect(rows()).toHaveLength(86);
+      expect(more()).toBeNull();
+      open("other", messages);
+      view.rerender(<App />);
+      expect(rows()).toHaveLength(40);
+      expect(rows()[0].dataset.messageIndex).toBe("45");
+    } finally {
+      Object.assign(chat, original);
+    }
+  });
+
   test("pauses without showing an intermediate stopping state", () => {
     const previous = { ...chat };
     Object.assign(chat, { activeId: "stopping-chat", busy: true, stopping: true,

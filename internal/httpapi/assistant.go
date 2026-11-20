@@ -272,8 +272,6 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 		req.workspaceMode = false
 	}
 	sourceRoot := h.resolvedSourceRoot()
-	fullPrompt := h.turnPrompt(req, sourceRoot, false)
-	turn := fullPrompt
 	ctx, cancel := context.WithCancel(c.Request.Context())
 	defer cancel()
 	var emit func(string, any)
@@ -462,6 +460,7 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 	if report, ok := modelCtx.Value(scheduledUsageReportKey{}).(scheduledUsageReport); ok && report.GenerationID == assistantControlScopeFrom(modelCtx).GenerationID && report.Report != nil {
 		defer func() { report.Report(replyModel, turnUsage.snapshot()) }()
 	}
+	var turn string
 	generate := h.generate
 	if generate == nil {
 		resume := false
@@ -474,12 +473,10 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 		}
 		if saved, err := loadAssistantConversation(h.repo, user.ID, req.SessionID); err == nil && saved.ParentSessionID == "" && len(req.Messages) > 1 && !shared && !rewritten {
 			resume = true
-			turn = h.turnPrompt(req, sourceRoot, true)
 		}
 		cliSessionID := req.SessionID
 		if shared || branch || rewritten || c.Request.Context().Value(assistantFreshCLIKey{}) == true {
 			resume = false
-			turn = fullPrompt
 			cliSessionID = newAssistantSessionID()
 		}
 		if shared {
@@ -500,6 +497,8 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 			workspaceRepositoryHash = nativeSession.checkpoint.WorkspaceRepositoryHash
 			if resume {
 				turn = assistantIncrementalPrompt(req, nativeSession.checkpoint)
+			} else {
+				turn = h.turnPrompt(req, sourceRoot, false)
 			}
 			if err = nativeSession.begin(); err != nil {
 				fail(500, "无法保存共享会话缓存")
@@ -512,21 +511,14 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 		turnEngine, _ := assistantModelEngine(req.Model)
 		if nativeSession == nil {
 			if state := readAssistantEngineState(cliRoot); state.Engine != turnEngine || state.HistoryRevision != savedConversation.HistoryRevision {
-				if resume {
-					resume = false
-					turn = fullPrompt
-				}
+				resume = false
 				cliSessionID = newAssistantSessionID()
 			} else if state.SessionID != "" {
 				cliSessionID = state.SessionID
 				resume = !state.Unstarted
 				workspaceRepositoryHash = state.WorkspaceRepositoryHash
-				if resume {
-					turn = h.turnPrompt(req, sourceRoot, true)
-				} else {
-					turn = fullPrompt
-				}
 			}
+			turn = h.turnPrompt(req, sourceRoot, resume)
 		}
 		generate = func(ctx context.Context, prompt string, u domain.User) (string, error) {
 			// A mode request completes its CLI phase normally. Waiting for exit
@@ -678,6 +670,8 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 			}
 			return "", fmt.Errorf("本轮模式切换次数过多，请继续下一轮")
 		}
+	} else {
+		turn = h.turnPrompt(req, sourceRoot, false)
 	}
 	sources := []assistantSource{}
 

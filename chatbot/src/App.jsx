@@ -11,6 +11,7 @@ import NativeApprovalPanel from "./NativeApprovalPanel";
 import { AgentBrowserLinks } from "./agent-browser-links.js";
 import ActivityTrace, { ReplyTimeline } from "./ActivityTrace";
 import MessageInfo from "./MessageInfo";
+import MessageHistory from "./MessageHistory";
 import GenerationDiagnostics from "./GenerationDiagnostics";
 import { fullTime, messageSentAt, messageTimeLabel } from "./message-info.js";
 import {
@@ -486,15 +487,17 @@ export default function App() {
     [],
   );
   useEffect(() => setIssueContextOpen(false), [chat.activeId, chat.projectId]);
+  const historyReferences = useMemo(
+    () => chat.session?.messages?.flatMap((message) => message.references || []) || [],
+    [chat.session?.messages],
+  );
   const operationContext = {
     projects: chat.projects,
     projectId: chat.projectId,
     issueId: chat.issueId,
     runId: chat.session?.runId,
     onLinkIssue: chat.linkIssue,
-    references:
-      chat.session?.messages?.flatMap((message) => message.references || []) ||
-      [],
+    references: historyReferences,
     repositorySelections,
     onRepositorySelection: (id, ids, projectId) =>
       setRepositorySelections((old) => ({ ...old, [id]: { ids, projectId } })),
@@ -741,6 +744,7 @@ export default function App() {
     if (follow.current && scroll.current)
       scroll.current.scrollTop = scroll.current.scrollHeight;
   }, [
+    chat.activeId,
     chat.session?.messages?.length,
     chat.live.answer,
     chat.live.thinking,
@@ -1644,20 +1648,13 @@ export default function App() {
         className={`conversation-main ${!chat.activeId ? "empty-conversation" : ""}`}
       >
         {chat.activeId ? (
-          <div
-            className="message-scroll"
-            ref={scroll}
-            onScroll={(e) => {
-              const el = e.currentTarget;
-              follow.current =
-                el.scrollHeight - el.scrollTop - el.clientHeight < 110;
-            }}
-          >
-            <div className="message-column">
-              {!chat.session && !chat.error ? (
-                <div className="loading-session">正在恢复对话…</div>
-              ) : null}
-              {messages.map((message, index) =>
+          <MessageHistory
+            key={chat.activeId}
+            messages={messages}
+            scroll={scroll}
+            follow={follow}
+            loading={!chat.session && !chat.error}
+            renderMessage={(message, index) =>
                 isProposalTimeout(message, messages[index - 1]) ? null : confirmationCaption(message, messages[index - 1]) ? (
                   <div
                     key={index}
@@ -1816,8 +1813,9 @@ export default function App() {
                       </>
                     ) : null}
                   </article>
-                ),
-              )}
+                )
+            }
+          >
               {/* The live reply belongs right under its question. Alerts stay
                   last, so a finished reply does not jump above them. */}
               {chat.busy ? (
@@ -1865,8 +1863,7 @@ export default function App() {
                     ?.focus();
                 }}
               />
-            </div>
-          </div>
+          </MessageHistory>
         ) : (
           <HomeWelcome />
         )}
