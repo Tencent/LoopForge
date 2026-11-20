@@ -1,7 +1,9 @@
 package gitwork
 
 import (
+	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -131,7 +133,7 @@ func TestPlatformSSHKnownHostsAreScopedAndTakePrecedence(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv(SSHKnownHostsEnv, platformFile)
-	platform := SSHKnownHostsForKeys(map[string]string{remote: "identity", "git@unassigned.example.org:group/repo": ""})
+	platform := SSHKnownHostsForKeys(t.Context(), map[string]string{remote: "identity", "git@unassigned.example.org:group/repo": ""})
 	if platform == nil || platform.Entries != host+" "+key || platform.ReadFailed {
 		t.Fatalf("scoped platform pins = %+v", platform)
 	}
@@ -159,7 +161,7 @@ func TestPlatformSSHKnownHostsAreScopedAndTakePrecedence(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv(SSHKnownHostsEnv, platformFile)
-	revoked := SSHKnownHostsForKeys(map[string]string{repo.Endpoint(): "identity"})
+	revoked := SSHKnownHostsForKeys(t.Context(), map[string]string{repo.Endpoint(): "identity"})
 	if revoked == nil || revoked.Entries != "@revoked "+platform.Entries {
 		t.Fatalf("revocation was lost on dispatch: %+v", revoked)
 	}
@@ -183,7 +185,7 @@ func TestRunnerSSHRevocationSurvivesPlatformKnownHosts(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv(SSHKnownHostsEnv, path)
-	platform := SSHKnownHostsForKeys(map[string]string{"github.com:22": "identity"})
+	platform := SSHKnownHostsForKeys(t.Context(), map[string]string{"github.com:22": "identity"})
 	if platform == nil {
 		t.Fatal("platform host pin is missing")
 	}
@@ -203,7 +205,7 @@ func TestRunnerSSHRevocationSurvivesPlatformKnownHosts(t *testing.T) {
 
 func TestUnreadablePlatformSSHKnownHostsFailsClosed(t *testing.T) {
 	t.Setenv(SSHKnownHostsEnv, filepath.Join(t.TempDir(), "missing"))
-	platform := SSHKnownHostsForKeys(map[string]string{"github.com:22": "identity"})
+	platform := SSHKnownHostsForKeys(t.Context(), map[string]string{"github.com:22": "identity"})
 	if platform == nil || !platform.ReadFailed {
 		t.Fatalf("platform read failure = %+v", platform)
 	}
@@ -211,6 +213,48 @@ func TestUnreadablePlatformSSHKnownHostsFailsClosed(t *testing.T) {
 	ctx := WithSSHKnownHosts(t.Context(), platform)
 	if _, err := sshHostKeys(ctx, []SSHRemote{{Host: "github.com", Port: "22"}}); err == nil || !strings.Contains(err.Error(), "无法读取平台") {
 		t.Fatalf("platform read failure was hidden: %v", err)
+	}
+}
+
+func TestSSHHostTrustRegistryReadFailureUsesKnownHostsFallbacks(t *testing.T) {
+	_, _, key, _, _, err := ssh.ParseKnownHosts([]byte(builtinKnownHosts))
+	if err != nil {
+		t.Fatal(err)
+	}
+	const host = "git.example.org"
+	publicKey := string(ssh.MarshalAuthorizedKey(key))
+	configured := "@revoked github.com " + publicKey + host + " " + publicKey
+	path := filepath.Join(t.TempDir(), "known_hosts")
+	if err := os.WriteFile(path, []byte(configured), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(SSHKnownHostsEnv, path)
+	keys := map[string]string{"github.com:22": "identity", host + ":22": "identity"}
+	ctx := WithSSHKnownHostsLookup(t.Context(), func(context.Context, []string) ([]byte, error) {
+		return []byte("registry.example.org " + publicKey), errors.New("registry unavailable")
+	})
+	platform := SSHKnownHostsForKeys(ctx, keys)
+	if platform == nil || platform.ReadFailed || !strings.Contains(platform.Entries, "@revoked github.com "+publicKey) ||
+		!strings.Contains(platform.Entries, host+" "+publicKey) {
+		t.Fatalf("fallback pins sent to Runner: %+v", platform)
+	}
+
+	remotes := []SSHRemote{{Host: "github.com", Port: "22"}, {Host: host, Port: "22"}}
+	pins, err := sshHostKeys(SnapshotSSHKnownHostsLookup(ctx, keys), remotes)
+	if err != nil || !strings.Contains(string(pins), "github.com ssh-rsa ") || !strings.Contains(string(pins), "@revoked github.com "+publicKey) ||
+		!strings.Contains(string(pins), host+" "+publicKey) {
+		t.Fatalf("local fallback pins: %s, %v", pins, err)
+	}
+	if _, err := sshHostKeys(ctx, []SSHRemote{{Host: "registry.example.org", Port: "22"}}); err == nil {
+		t.Fatal("accepted a pin returned by a failed registry read")
+	}
+	t.Setenv(SSHKnownHostsEnv, "")
+	runnerPins, err := sshHostKeys(WithSSHKnownHosts(t.Context(), platform), remotes)
+	if err != nil || string(runnerPins) != string(pins) {
+		t.Fatalf("Runner fallback pins: %s, %v", runnerPins, err)
+	}
+	if platform := SSHKnownHostsForKeys(ctx, keys); platform != nil {
+		t.Fatalf("registry-only read failure was sent to the Runner: %+v", platform)
 	}
 }
 
@@ -229,7 +273,7 @@ func TestOversizedPlatformSSHKnownHostsFailsClosed(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv(SSHKnownHostsEnv, path)
-	platform := SSHKnownHostsForKeys(map[string]string{host + ":22": "identity"})
+	platform := SSHKnownHostsForKeys(t.Context(), map[string]string{host + ":22": "identity"})
 	if platform == nil {
 		t.Fatal("oversized platform config was omitted")
 	}

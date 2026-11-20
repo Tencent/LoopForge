@@ -23,6 +23,10 @@ type gitIdentity struct {
 	email string
 }
 
+func (e *Engine) withSSHKnownHosts(ctx context.Context) context.Context {
+	return gitwork.WithSSHKnownHostsLookup(ctx, e.repo.PlatformSSHKnownHosts)
+}
+
 func withRepositoryGit(ctx context.Context, repository domain.RepositoryContext) context.Context {
 	if repository.Provider == domain.RepositoryProviderSSH || gitwork.IsSSHReference(repository.CloneURL) {
 		return gitwork.WithSSHRemote(ctx, repository.CloneURL)
