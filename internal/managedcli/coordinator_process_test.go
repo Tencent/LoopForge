@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -156,7 +157,7 @@ func TestDailyClaimAcrossProcessesAndCrash(t *testing.T) {
 		}
 		data, err := os.ReadFile(filepath.Join(root, "attempts"))
 		must(t, err)
-		want := "attempt\nattempt\nattempt\n" // One check visits all three providers.
+		want := strings.Repeat("attempt\n", len(providerNames())) // One check visits every provider.
 		if crash {
 			want = "attempt\n" // The first request was interrupted after the claim.
 		}

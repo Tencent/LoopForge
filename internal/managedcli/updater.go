@@ -64,7 +64,7 @@ func (m *Manager) Update(ctx context.Context) (Report, error) {
 
 // UpdateProvider updates a single CLI already selected by the runner.
 func (m *Manager) UpdateProvider(ctx context.Context, provider string) (Report, error) {
-	if _, ok := providerSpecs[provider]; !ok {
+	if !Supports(provider) {
 		return Report{}, fmt.Errorf("unsupported managed CLI %q", provider)
 	}
 	return m.run(ctx, "update", provider)
@@ -130,7 +130,9 @@ func (m *Manager) updateProvidersLocked(ctx context.Context, state *State, repor
 			result.Status, result.Message = m.releaseGate(state, provider, result.From, candidate)
 		}
 		if err == nil && result.Status == "" {
-			if !toolsReady {
+			if candidate.Artifact != nil {
+				err = m.prepareCommandDirectories()
+			} else if !toolsReady {
 				err = m.prepareTools(ctx)
 				toolsReady = err == nil
 			}
@@ -181,7 +183,7 @@ func (m *Manager) releaseGate(state *State, provider, from string, candidate rel
 	switch {
 	case candidate.Version == from:
 		return "unchanged", ""
-	case from != "" && compareVersions(candidate.Version, from) < 0:
+	case from != "" && olderRelease(provider, candidate, from, state.Current[provider].PublishedAt):
 		return "skipped", "automatic downgrade refused"
 	case state.Rejected[provider] == candidate.Version:
 		return "skipped", "this release was rolled back; waiting for a newer release"
@@ -191,11 +193,21 @@ func (m *Manager) releaseGate(state *State, provider, from string, candidate rel
 	return "", ""
 }
 
+func olderRelease(provider string, candidate release, from string, published *time.Time) bool {
+	if provider == "cursor" {
+		// Build hashes have no ordering within a day. The artifact's
+		// timestamp orders multiple releases stamped with the same date.
+		candidateDate, currentDate := candidate.Version[:10], from[:10]
+		return candidateDate < currentDate || (candidateDate == currentDate && published != nil && candidate.Published.Before(*published))
+	}
+	return compareVersions(candidate.Version, from) < 0
+}
+
 // stageCandidate reuses the cached candidate installation when it still matches
 // the release, otherwise installs it, then smoke-validates the result.
 func (m *Manager) stageCandidate(ctx context.Context, state *State, provider string, candidate release) (Installation, error) {
 	installed := state.Candidates[provider]
-	if installed.Version != candidate.Version || installed.Integrity != candidate.Dist.Integrity || validateInventory(m.Root, Inventory{provider: installed}) != nil {
+	if installed.Version != candidate.Version || installed.Integrity != candidate.identity() || validateInventory(m.Root, Inventory{provider: installed}) != nil {
 		var err error
 		if installed, err = m.install(ctx, provider, candidate); err != nil {
 			return Installation{}, err
@@ -214,7 +226,7 @@ func (m *Manager) stageCandidate(ctx context.Context, state *State, provider str
 }
 
 func (m *Manager) rollbackLocked(ctx context.Context, provider string, state *State, report *Report) error {
-	if _, ok := providerSpecs[provider]; !ok {
+	if !Supports(provider) {
 		return errors.New("rollback requires a known provider")
 	}
 	previous, ok := state.Previous[provider]
@@ -222,7 +234,13 @@ func (m *Manager) rollbackLocked(ctx context.Context, provider string, state *St
 		return errors.New("no previous managed version available; global installations were not modified")
 	}
 	report.Results = append(report.Results, ProviderResult{Provider: provider, From: state.Current[provider].Version, To: previous.Version, Status: "failed"})
-	if err := m.prepareTools(ctx); err != nil {
+	var err error
+	if providerSpecs[provider].Package == "" {
+		err = m.prepareCommandDirectories()
+	} else {
+		err = m.prepareTools(ctx)
+	}
+	if err != nil {
 		return err
 	}
 	if err := m.validate(ctx, provider, previous); err != nil {

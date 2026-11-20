@@ -29,7 +29,7 @@ func TestDefaultProvidersIgnoreLegacyConfiguration(t *testing.T) {
 					report, err = f.manager.Update(context.Background())
 				}
 				must(t, err)
-				if len(report.Results) != 3 || len(f.state(t).Current) != 3 || len(f.installs) != 3 {
+				if len(report.Results) != len(providerNames()) || len(f.state(t).Current) != len(providerNames()) || len(f.installs) != len(providerNames()) {
 					t.Fatalf("default providers missing: %+v", report)
 				}
 				for _, result := range report.Results {
@@ -70,8 +70,14 @@ func TestFixedProvidersAndSafetyBounds(t *testing.T) {
 			Flags: []string{"--print", "--output-format", "--verbose", "--permission-mode", "--setting-sources", "--system-prompt-file", "--mcp-config", "--settings", "--resume", "--plugin-dir"},
 		},
 	}
-	if !reflect.DeepEqual(providerSpecs, want) || !reflect.DeepEqual(providerNames(), []string{"claude-code", "codebuddy", "codex"}) {
-		t.Fatal("official packages or required compatibility arguments changed")
+	for provider, spec := range want {
+		if !reflect.DeepEqual(providerSpecs[provider], spec) {
+			t.Fatalf("official package or compatibility arguments changed for %s", provider)
+		}
+	}
+	all := []string{"agy", "claude-code", "codebuddy", "codex", "cursor", "dsh", "kimi", "opencode", "pi"}
+	if !reflect.DeepEqual(providerNames(), all) || Supports("zcode") {
+		t.Fatal("managed CLI scope changed")
 	}
 	for _, root := range []string{"", "/", "relative", "/tmp/../tmp/cli"} {
 		if _, err := NewManager(root); err == nil {

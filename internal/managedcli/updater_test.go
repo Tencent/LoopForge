@@ -38,11 +38,15 @@ func newUpdaterFixture(t *testing.T) *updaterFixture {
 	for _, provider := range providerNames() {
 		f.versions[provider] = "1.0.0"
 	}
+	f.versions["cursor"] = cursorFixtureVersion("1.0.0")
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
 		defer f.mu.Unlock()
+		if f.serveVendorRelease(t, w, r) {
+			return
+		}
 		for provider, spec := range providerSpecs {
-			if r.URL.Path != "/"+spec.Package {
+			if spec.Package == "" || r.URL.Path != "/"+spec.Package {
 				continue
 			}
 			version := f.versions[provider]
@@ -104,14 +108,21 @@ func (f *updaterFixture) run(ctx context.Context, name string, args []string, di
 		}
 		specArg := args[len(args)-1]
 		for provider, spec := range providerSpecs {
+			if spec.Package == "" {
+				continue
+			}
 			prefix := spec.Package + "@"
 			if !strings.HasPrefix(specArg, prefix) {
 				continue
 			}
 			version := strings.TrimPrefix(specArg, prefix)
-			want := []string{"install", "--prefix", dir, "--registry", "https://registry.npmjs.org", "--no-audit", "--no-fund", "--engine-strict", "--ignore-scripts", "--include=optional", "--save-exact", spec.Package + "@" + version}
-			if !reflect.DeepEqual(args, want) || !releaseVersion.MatchString(version) {
-				return nil, errors.New("install bypassed exact stable version, fixed registry or safety arguments")
+			engines := "--engine-strict"
+			if provider == "dsh" {
+				engines = "--engine-strict=false"
+			}
+			want := []string{"install", "--prefix", dir, "--registry", "https://registry.npmjs.org", "--no-audit", "--no-fund", engines, "--ignore-scripts", "--include=optional", "--save-exact", spec.Package + "@" + version}
+			if !reflect.DeepEqual(args, want) || !validProviderVersion(provider, version) {
+				return nil, errors.New("install bypassed exact version, fixed registry or safety arguments")
 			}
 			f.installs[provider]++
 			binDir := filepath.Join(dir, "node_modules", ".bin")
@@ -135,6 +146,9 @@ func (f *updaterFixture) run(ctx context.Context, name string, args []string, di
 		if !strings.Contains(name, string(filepath.Separator)+provider+string(filepath.Separator)) {
 			continue
 		}
+		if spec.Package == "" {
+			return executeCommand(ctx, name, args, dir, env)
+		}
 		if len(args) == 1 && args[0] == "--version" {
 			data, err := os.ReadFile(name)
 			if err != nil {
@@ -156,6 +170,7 @@ func (f *updaterFixture) setVersion(version string) {
 	for provider := range f.versions {
 		f.versions[provider] = version
 	}
+	f.versions["cursor"] = cursorFixtureVersion(version)
 }
 
 func (f *updaterFixture) state(t *testing.T) State {
@@ -278,7 +293,7 @@ func TestUpdateFailuresAndCandidateReuse(t *testing.T) {
 					t.Fatal("complete candidate was downloaded again")
 				}
 			}
-			if mode == "integrity-before-hook" && f.rebuildCalls != 3 {
+			if mode == "integrity-before-hook" && f.rebuildCalls != 7 {
 				t.Fatal("hooks executed before integrity check")
 			}
 		})
@@ -295,7 +310,7 @@ func TestActivationCancellationBeforePublication(t *testing.T) {
 	err := WithUpdateLock(ctx, f.manager.Root, func() error {
 		return f.manager.activate(ctx, State{Current: Inventory{}})
 	})
-	if !errors.Is(err, context.Canceled) || len(f.state(t).Current) != 3 {
+	if !errors.Is(err, context.Canceled) || len(f.state(t).Current) != len(providerNames()) {
 		t.Fatalf("canceled activation published state: %v", err)
 	}
 }
@@ -368,10 +383,17 @@ func fixtureClient(t *testing.T, server *httptest.Server) *http.Client {
 	client := server.Client()
 	transport := client.Transport
 	client.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
-		if req.URL.Scheme != "https" || req.URL.Host != "registry.npmjs.org" {
+		if req.URL.Scheme != "https" {
+			return nil, fmt.Errorf("unexpected production registry URL: %s", req.URL)
+		}
+		switch req.URL.Host {
+		case "registry.npmjs.org", "cursor.com", "downloads.cursor.com", "storage.googleapis.com",
+			"antigravity-cli-auto-updater-974169037036.us-central1.run.app":
+		default:
 			return nil, fmt.Errorf("unexpected production registry URL: %s", req.URL)
 		}
 		local := req.Clone(req.Context())
+		local.Host = req.URL.Host
 		local.URL.Scheme, local.URL.Host = endpoint.Scheme, endpoint.Host
 		return transport.RoundTrip(local)
 	})
