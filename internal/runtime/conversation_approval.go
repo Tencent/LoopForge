@@ -42,6 +42,18 @@ func InstallConversationApproval(root, provider string, command CommandSpec) (Co
 			return command, err
 		}
 		command.Argv = conversationReplaceFlag(command.Argv, "--settings", path)
+	case AgentCLIAtomCode:
+		data, err := json.Marshal(map[string]any{"hooks": map[string]any{
+			"loopforge-approval": map[string]any{
+				"event": "PreToolUse", "command": "exec " + launch, "timeout_ms": 600000, "required_approval": true,
+			},
+		}})
+		if err != nil {
+			return command, err
+		}
+		if err := writeAgentCLIFile(home, atomCodeHooksPath, data); err != nil {
+			return command, err
+		}
 	case AgentCLIZCode:
 		if err := os.WriteFile(filepath.Join(root, "zcode-resume-model.py"), conversationZCodeResumeScript(), 0600); err != nil {
 			return command, err

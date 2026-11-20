@@ -40,7 +40,7 @@ func (p agentCLIProvider) Materialize(ctx *providerMaterializeContext) error {
 // agentCLINativeSystemPrompt marks CLIs that load the system prompt file
 // themselves; the others receive it ahead of the task.
 func agentCLINativeSystemPrompt(kind string) bool {
-	return kind == AgentCLIOpenCode || kind == AgentCLIPi
+	return kind == AgentCLIOpenCode || kind == AgentCLIPi || kind == AgentCLIAtomCode
 }
 
 // AgentCLITaskPrompt prefixes the system prompt for CLIs without a system
@@ -98,6 +98,8 @@ type AgentCLICommandOptions struct {
 	Chat        bool
 	Workspace   bool
 	RunnerLogin bool
+	// PromptFile is a managed long-prompt file when the provider supports it.
+	PromptFile string
 	// AgentFile is Kimi Code's chat agent definition (WriteKimiChatAgent).
 	AgentFile string
 }
@@ -218,6 +220,30 @@ func AgentCLICommand(kind string, o AgentCLICommandOptions) CommandSpec {
 			argv = append(argv, "--session-id", resume)
 		}
 		argv = append(append(argv, extra...), prompt)
+	case AgentCLIAtomCode:
+		argv = []string{binary, "--dev", "--no-telemetry", "--no-review", "--output-format", "jsonl"}
+		if !o.Chat {
+			argv = append(argv, "--dangerously-skip-permissions")
+		} else if o.Workspace {
+			// Older binaries must reject workspace startup rather than ignore
+			// the required approval policy in hooks.json.
+			argv = append(argv, "--require-approval-hook")
+		}
+		if resume != "" {
+			argv = append(argv, "--resume", resume)
+		}
+		if o.SystemPromptFile != "" {
+			argv = append(argv, "--append-system-prompt-file", o.SystemPromptFile)
+		} else if o.SystemPrompt != "" {
+			argv = append(argv, "--append-system-prompt", o.SystemPrompt)
+		}
+		argv = append(argv, extra...)
+		if o.PromptFile != "" {
+			argv = append(argv, "--prompt-file", o.PromptFile)
+		} else {
+			// Equals keeps a leading hyphen from being parsed as a flag.
+			argv = append(argv, "--prompt="+prompt)
+		}
 	case AgentCLIZCode:
 		disallowed := zcodeSOPDisallowedTools
 		if readOnly {

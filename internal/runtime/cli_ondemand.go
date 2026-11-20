@@ -51,6 +51,7 @@ func onDemandCLICatalog() map[string]onDemandCLI {
 		"agy":         {Engine: "agy", Binary: "agy", Script: agyInstallScript},
 		"kimi":        {Engine: "kimi", Binary: "kimi", Package: "@moonshot-ai/kimi-code"},
 		"pi":          {Engine: "pi", Binary: "pi", Package: "@earendil-works/pi-coding-agent"},
+		"atomcode":    {Engine: "atomcode", Binary: "atomcode", Package: "@atomgit.com/atomcode@5.2.7"},
 		"dsh":         {Engine: "dsh", Binary: "dsh", Package: "@deepseek-ai/dsh@" + DeepSeekHarnessVersion, RelaxEngines: true, Bundled: true},
 	}
 }

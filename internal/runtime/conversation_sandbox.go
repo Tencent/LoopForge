@@ -71,6 +71,7 @@ var conversationGuardFiles = []string{
 	"home/.config/opencode/plugins/loopforge-approval.js",
 	"home/.pi/agent/extensions/loopforge-approval.ts",
 	"home/.zcode/cli/config.json",
+	"home/" + atomCodeHooksPath, "home/" + atomCodeConfigPath, "home/" + atomCodeMCPPath,
 }
 
 func conversationGuardMounts(root string) ([]string, error) {
@@ -125,33 +126,39 @@ func resolveNativeConversationBinary(provider string) (string, error) {
 	if provider == "claude-code" {
 		override = "AGENTFLOW_CLAUDE_BIN"
 	}
-	if path := strings.TrimSpace(os.Getenv(override)); path != "" && fileIsExecutable(path) {
+	compatible := func(path string) bool {
+		return fileIsExecutable(path) && (provider != AgentCLIAtomCode || atomCodeProbe(path, true))
+	}
+	if path := strings.TrimSpace(os.Getenv(override)); path != "" && compatible(path) {
 		return path, nil
 	}
 	if root := strings.TrimSpace(os.Getenv("AGENTFLOW_MANAGED_CLI_ROOT")); root != "" {
 		if inventory, err := managedcli.ReadInventory(root); err == nil {
-			if path, ok := inventory.BinaryFor(provider); ok {
+			if path, ok := inventory.BinaryFor(provider); ok && compatible(path) {
 				return path, nil
 			}
 		}
 	}
 	path, err := exec.LookPath(binary)
-	if err == nil {
+	if err == nil && compatible(path) {
 		return path, nil
 	}
 	home, _ := os.UserHomeDir()
 	if strings.TrimSpace(home) != "" {
-		if candidate := filepath.Join(home, ".local", "bin", binary); fileIsExecutable(candidate) {
+		if candidate := filepath.Join(home, ".local", "bin", binary); compatible(candidate) {
 			return candidate, nil
 		}
 	}
 	for _, candidate := range []string{"/usr/local/bin/" + binary, "/usr/bin/" + binary} {
-		if fileIsExecutable(candidate) {
+		if compatible(candidate) {
 			return candidate, nil
 		}
 	}
-	if onDemand, ok := OnDemandCLIPath(provider); ok {
+	if onDemand, ok := OnDemandCLIPath(provider); ok && compatible(onDemand) {
 		return onDemand, nil
+	}
+	if provider == AgentCLIAtomCode {
+		return "", fmt.Errorf("对话工作区需要支持 --require-approval-hook 的 AtomCode，请在执行机器上安装该构建")
 	}
 	return "", fmt.Errorf("执行机器未安装 CLI %s：%w", provider, err)
 }
@@ -168,7 +175,7 @@ func ensureConversationCLI(ctx context.Context, sandbox Sandbox, provider, home 
 	}
 	s.execGate.RLock()
 	defer s.execGate.RUnlock()
-	return s.ensureDockerCLI(ctx, provider, home)
+	return s.ensureDockerCLI(ctx, provider, home, true)
 }
 
 const dockerCLISharedPath = "/opt/loopforge/conversation-cli/bin:/opt/loopforge/conversation-cli/.local/bin"
@@ -179,9 +186,30 @@ const dockerCLIProbe = `cli_path=$(command -v "$1") || exit 127
 printf '%s\n' "$cli_path"
 `
 
+func dockerCLIProbeFor(provider string, requireApproval bool) string {
+	if provider != AgentCLIAtomCode {
+		return dockerCLIProbe
+	}
+	approvalFlag := ""
+	if requireApproval {
+		approvalFlag = " --require-approval-hook"
+	}
+	return `IFS=:
+for dir in /opt/loopforge/conversation-cli/bin:$PATH; do
+  cli_path="$dir/$1"
+  if [ -f "$cli_path" ] && [ -x "$cli_path" ] &&
+     "$cli_path" --output-format jsonl --no-review` + approvalFlag + ` --version >/dev/null 2>&1; then
+    printf '%s\n' "$cli_path"
+    exit 0
+  fi
+done
+exit 127
+`
+}
+
 // ensureDockerCLI prepares a provider in an existing container. SOP and chat
 // callers hold the execution gate so preparation cannot race recreation.
-func (s *dockerSandbox) ensureDockerCLI(ctx context.Context, provider, home string) (string, error) {
+func (s *dockerSandbox) ensureDockerCLI(ctx context.Context, provider, home string, requireApproval bool) (string, error) {
 	binary := conversationBinary(provider)
 	setup, err := dockerCLISetup(provider, binary)
 	if err != nil {
@@ -223,11 +251,14 @@ func (s *dockerSandbox) ensureDockerCLI(ctx context.Context, provider, home stri
 	// The root login shell may see a private copy the task cannot execute.
 	taskArgs := append(append([]string{"exec", "--workdir", "/"}, toolchain...), s.name, "sh", "-lc")
 	taskPathSetup := dockerCLISharedPathSetup + toolchainPathSetup
-	probe, err := exec.CommandContext(ctx, "docker", append(taskArgs, taskPathSetup+dockerCLIProbe, "loopforge-cli-available", binary)...).CombinedOutput()
+	probe, err := exec.CommandContext(ctx, "docker", append(taskArgs, taskPathSetup+dockerCLIProbeFor(provider, requireApproval), "loopforge-cli-available", binary)...).CombinedOutput()
 	installMode := "reuse"
 	if err != nil {
 		if !isDockerCLIMissing(err) {
 			return "", fmt.Errorf("探测工作区 CLI %s 失败：%w: %s", binary, err, conversationSetupOutput(probe))
+		}
+		if provider == AgentCLIAtomCode && requireApproval {
+			return "", fmt.Errorf("对话工作区需要支持 --require-approval-hook 的 AtomCode，请在工作区镜像中预装该构建")
 		}
 		installMode = "install"
 	}
@@ -245,12 +276,16 @@ func (s *dockerSandbox) ensureDockerCLI(ctx context.Context, provider, home stri
 	if err != nil {
 		return "", fmt.Errorf("准备 %s 原生CLI失败（工作区镜像需支持 Node.js/npm 和 Python3）：%w: %s", provider, err, conversationSetupOutput(output))
 	}
-	check := taskPathSetup + "python3 -c 'import os,pwd; pwd.getpwuid(os.geteuid())' || exit\n" + dockerCLIProbe
+	check := taskPathSetup + "python3 -c 'import os,pwd; pwd.getpwuid(os.geteuid())' || exit\n" + dockerCLIProbeFor(provider, requireApproval)
 	checkArgs := append(taskArgs, check, "loopforge-cli-verify", binary)
 	output, err = exec.CommandContext(ctx, "docker", checkArgs...).CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("验证工作区执行用户可使用 CLI %s 失败：%w: %s", binary, err, conversationSetupOutput(output))
 	}
+	return dockerCLIExecutablePath(output, binary)
+}
+
+func dockerCLIExecutablePath(output []byte, binary string) (string, error) {
 	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
 	path := strings.TrimSpace(lines[len(lines)-1])
 	if !strings.HasPrefix(path, "/") || strings.ContainsAny(path, "\r\n\x00") {

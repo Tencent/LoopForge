@@ -250,9 +250,16 @@ func (s *dockerSandbox) prepareSOPCLI(ctx context.Context, command CommandSpec) 
 		args = append(args, "-e", "PATH="+path)
 	}
 	args = append(append(args, s.toolchainExecEnv()...), s.name)
-	args = append(args, dockerWorkspaceExecArgv([]string{"sh", "-c", dockerCLIProbe, "loopforge-cli-probe", spec.Binary})...)
+	args = append(args, dockerWorkspaceExecArgv([]string{"sh", "-c", dockerCLIProbeFor(command.Provider, false), "loopforge-cli-probe", spec.Binary})...)
 	output, err := exec.CommandContext(ctx, "docker", args...).CombinedOutput()
 	if err == nil {
+		if command.Provider == AgentCLIAtomCode {
+			binary, pathErr := dockerCLIExecutablePath(output, spec.Binary)
+			if pathErr != nil {
+				return command, "", pathErr
+			}
+			command.Argv = append([]string{binary}, command.Argv[1:]...)
+		}
 		return command, "", nil
 	}
 	if !isDockerCLIMissing(err) {
@@ -261,10 +268,16 @@ func (s *dockerSandbox) prepareSOPCLI(ctx context.Context, command CommandSpec) 
 	// The published image can use the existing, shared host installations.
 	// Other sandboxes prepare the official CLI in the current container.
 	cliPath, err := s.onDemandCLIPath(ctx, command)
-	if err != nil || cliPath != "" {
-		return command, cliPath, err
+	if err != nil {
+		return command, "", err
 	}
-	binary, err := s.ensureDockerCLI(ctx, command.Provider, "/workspace")
+	if cliPath != "" {
+		if command.Provider == AgentCLIAtomCode {
+			command.Argv = append([]string{filepath.Join(cliPath, spec.Binary)}, command.Argv[1:]...)
+		}
+		return command, cliPath, nil
+	}
+	binary, err := s.ensureDockerCLI(ctx, command.Provider, "/workspace", false)
 	if err != nil {
 		return command, "", err
 	}

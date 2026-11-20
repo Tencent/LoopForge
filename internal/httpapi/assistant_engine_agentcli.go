@@ -54,8 +54,21 @@ func prepareAssistantAgentCLIInvocation(kind string, o assistantEngineInvocation
 			return assistantCLIInvocation{}, err
 		}
 	}
+	var extra []string
+	promptFile := ""
+	if kind == runtime.AgentCLIAtomCode {
+		if o.ReviewOnly {
+			extra = []string{"--ephemeral", "--no-tools"}
+		}
+		if !runtime.PromptFitsArgv(len(o.Prompt)) {
+			promptFile = filepath.Join(o.Root, "atomcode-prompt.md")
+			if err := os.WriteFile(promptFile, []byte(o.Prompt), 0o600); err != nil {
+				return assistantCLIInvocation{}, err
+			}
+		}
+	}
 	command := runtime.AgentCLICommand(kind, runtime.AgentCLICommandOptions{
-		Binary: o.Bin, Model: o.Model, Effort: o.Effort, Resume: resume, Prompt: o.Prompt,
+		Binary: o.Bin, Model: o.Model, Effort: o.Effort, Resume: resume, Prompt: o.Prompt, PromptFile: promptFile, Extra: extra,
 		SystemPrompt: o.SystemPrompt, SystemPromptFile: systemFile, Chat: true, Workspace: o.Workspace, AgentFile: agentFile,
 		RunnerLogin: o.RunnerLogin,
 	})
