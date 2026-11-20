@@ -39,9 +39,20 @@ type BaselineGuard func(job domain.ScheduleJob, issues []domain.Issue) (blocked 
 type AssistantPrep func(job domain.ScheduleJob) (message string, err error)
 
 // AssistantSessionPrep is an AssistantPrep that also reports the Studio
-// conversation the prompt ran in (empty when none was opened). It calls
-// opened as soon as the conversation exists, before the prompt finishes.
-type AssistantSessionPrep func(job domain.ScheduleJob, opened func(sessionID string)) (message, sessionID string, err error)
+// conversation the prompt ran in (empty when none was opened) and what the
+// prompt consumed. It calls opened as soon as the conversation exists,
+// before the prompt finishes.
+type AssistantSessionPrep func(job domain.ScheduleJob, opened func(sessionID string)) (AssistantRunResult, error)
+
+// AssistantRunResult is the outcome of one AI prompt run. Usage sums the
+// replies the run added (nil when it reached no model); Model is the model
+// that produced them.
+type AssistantRunResult struct {
+	Message   string
+	SessionID string
+	Model     string
+	Usage     *domain.TokenUsage
+}
 
 type Service struct {
 	repo           *repo.Store
@@ -297,9 +308,13 @@ func (s *Service) executeJob(job domain.ScheduleJob, triggerOrigin string, exec 
 		return s.saveResult(result), err
 	}
 	if (s.assistant != nil || s.assistantRun != nil) && (strings.TrimSpace(job.AssistantPrompt) != "" || job.SharedTaskID != "") {
-		msg, sessionID, prepErr := s.runAssistant(job, exec)
+		run, prepErr := s.runAssistant(job, exec)
+		msg, sessionID := run.Message, run.SessionID
 		if sessionID == "" && exec != nil {
 			sessionID = exec.SessionID
+		}
+		if exec != nil {
+			exec.RecordUsage(run.Model, run.Usage)
 		}
 		job.LastSessionID = sessionID
 		if sessionID != "" && job.UsesFixedSession() {
@@ -379,12 +394,12 @@ func (s *Service) executeJob(job domain.ScheduleJob, triggerOrigin string, exec 
 	return finish(job, nil)
 }
 
-func (s *Service) runAssistant(job domain.ScheduleJob, exec *domain.ScheduleJobExecution) (string, string, error) {
+func (s *Service) runAssistant(job domain.ScheduleJob, exec *domain.ScheduleJobExecution) (AssistantRunResult, error) {
 	if s.assistantRun != nil {
 		return s.assistantRun(job, func(sessionID string) { s.recordOpenedSession(job, exec, sessionID) })
 	}
 	msg, err := s.assistant(job)
-	return msg, "", err
+	return AssistantRunResult{Message: msg}, err
 }
 
 // recordOpenedSession stores the conversation while the prompt still runs,

@@ -439,12 +439,12 @@ func (s *managedSandbox) Exec(ctx context.Context, command CommandSpec, sink Eve
 	// Binding writes the credential helpers into the workspace; parallel
 	// branches then run their commands concurrently.
 	s.execMu.Lock()
-	bound, err := bindCommand(s.Sandbox, s.workspace, command, credentials)
+	bound, err := bindCommand(ctx, s.Sandbox, s.workspace, command, credentials)
 	s.execMu.Unlock()
 	if err != nil {
 		return "", err
 	}
-	cleanup, err := bindCommandGitSSH(s.Sandbox, s.workspace, bound, credentials)
+	cleanup, err := bindCommandGitSSH(ctx, s.Sandbox, s.workspace, bound, credentials)
 	if err != nil {
 		return "", err
 	}

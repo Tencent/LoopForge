@@ -31,8 +31,16 @@ func (h *assistantHandlers) startGeneration(c *gin.Context) {
 		c.JSON(400, gin.H{"error": "请先配置个人 CodeBuddy API Key"})
 		return
 	}
-	var req assistantRequest
-	if !decodeLimit(c, &req, assistantRequestBodyLimit) {
+	var body struct {
+		assistantRequest
+		ClientRequestID string `json:"clientRequestId"`
+	}
+	if !decodeLimit(c, &body, assistantRequestBodyLimit) {
+		return
+	}
+	req := body.assistantRequest
+	if id := body.ClientRequestID; id != "" && (len(id) > 64 || assistantRecordID(id) != id) {
+		c.JSON(400, gin.H{"error": "发送请求 ID 无效"})
 		return
 	}
 	if !requireAssistantApprovalUser(c, current.ID, req.ApprovalUserID) {
@@ -110,7 +118,7 @@ func (h *assistantHandlers) startGeneration(c *gin.Context) {
 			}
 		}
 	}
-	if err := h.prepareWorkbenchContext(c, &req, user); err != nil {
+	if err := h.authorizeWorkbenchTurn(c, &req, user.ID); err != nil {
 		c.JSON(403, gin.H{"error": err.Error()})
 		return
 	}
@@ -120,7 +128,12 @@ func (h *assistantHandlers) startGeneration(c *gin.Context) {
 		catalog = h.turnCatalog(c.Request.Context(), user, req.Model)
 	}
 	if !runnerLogin {
-		req.Model = assistantAllowedUserModel(req.Model, catalog, user)
+		selected, err := assistantTurnCatalogModel(req.Model, catalog, user, req.RequireExactModel)
+		if err != nil {
+			c.JSON(400, gin.H{"error": err.Error()})
+			return
+		}
+		req.Model = selected
 	}
 	cliEngine, _ = assistantModelEngine(req.Model)
 	req.Executor = cliEngine
@@ -129,11 +142,16 @@ func (h *assistantHandlers) startGeneration(c *gin.Context) {
 		c.JSON(400, gin.H{"error": err.Error()})
 		return
 	}
-	if refusal := assistantEngineSwitchRefusal(assistantConversationEngine(req.Messages, old.Executor), req.Model); refusal != "" {
+	executor := h.forkExecutor(c, old, user.ID)
+	if refusal := assistantEngineSwitchRefusal(assistantConversationEngine(req.Messages, executor), req.Model); refusal != "" {
 		c.JSON(409, gin.H{"error": refusal})
 		return
 	}
-	freshCLI := old.ID != "" && assistantConversationEngine(old.Messages, old.Executor) != cliEngine
+	if err := h.buildWorkbenchContext(c, &req, user); err != nil {
+		c.JSON(403, gin.H{"error": err.Error()})
+		return
+	}
+	freshCLI := old.ID != "" && assistantConversationEngine(old.Messages, executor) != cliEngine
 	if old.ID != "" {
 		if len(req.Messages) < len(old.Messages) {
 			c.JSON(409, gin.H{"error": "会话已更新，请重新打开后发送"})
@@ -158,7 +176,7 @@ func (h *assistantHandlers) startGeneration(c *gin.Context) {
 			req.Messages[i].CreatedAt = sentAt
 		}
 	}
-	g := domain.AssistantGeneration{StartedAt: time.Now().UTC(), ActorID: user.ID, ActorName: user.LoginName, ID: newAssistantSessionID(), SessionID: req.SessionID, UserID: ownerID, ProjectID: req.ProjectID, Status: "running", Events: []domain.AssistantGenerationEvent{}, MessageCount: len(req.Messages)}
+	g := domain.AssistantGeneration{StartedAt: time.Now().UTC(), ActorID: user.ID, ActorName: user.LoginName, ID: newAssistantSessionID(), ClientRequestID: body.ClientRequestID, SessionID: req.SessionID, UserID: ownerID, ProjectID: req.ProjectID, Status: "running", Events: []domain.AssistantGenerationEvent{}, MessageCount: len(req.Messages)}
 	// The issue this turn linked from its @-mention is the conversation's
 	// issue now; any other change since old was read is still refused.
 	issueID := old.IssueID
@@ -512,9 +530,10 @@ func (h *assistantHandlers) steerGeneration(c *gin.Context) {
 	}
 	// The saved conversation selects the CLI for steering. Bare model IDs
 	// use that CLI, and an explicit CLI prefix must match it.
-	cliEngine := assistantConversationEngine(session.Messages, session.Executor)
+	executor := h.forkExecutor(c, session, stored.ID)
+	cliEngine := assistantConversationEngine(session.Messages, executor)
 	if cliEngine == "" {
-		cliEngine, _ = assistantModelEngine(assistantRequestModel(session.Executor, session.Model))
+		cliEngine, _ = assistantModelEngine(assistantRequestModel(executor, session.Model))
 	}
 	model := strings.TrimSpace(firstNonEmpty(body.Model, session.Model))
 	if !assistantModelHasEnginePrefix(model) {
@@ -547,7 +566,12 @@ func (h *assistantHandlers) steerGeneration(c *gin.Context) {
 		catalog = h.turnCatalog(c.Request.Context(), user, model)
 	}
 	if !runnerLogin {
-		model = assistantAllowedUserModel(model, catalog, user)
+		selected, err := assistantTurnCatalogModel(model, catalog, user, body.RequireExactModel)
+		if err != nil {
+			c.JSON(400, gin.H{"error": err.Error()})
+			return
+		}
+		model = selected
 	}
 	// The catalog can substitute a configured default. Check that model too.
 	if refusal := assistantEngineSwitchRefusal(cliEngine, model); refusal != "" {
@@ -565,15 +589,16 @@ func (h *assistantHandlers) steerGeneration(c *gin.Context) {
 	}
 	message := probe.Messages[0]
 	steer := domain.AssistantSteer{
-		Content:      message.Content,
-		Attachments:  message.Attachments,
-		References:   message.References,
-		Model:        model,
-		Effort:       body.Effort,
-		ApprovalMode: normalizeAssistantApprovalMode(body.ApprovalMode),
-		ActorID:      user.ID,
-		ActorName:    user.LoginName,
-		TriggerID:    rand.Text(),
+		Content:           message.Content,
+		Attachments:       message.Attachments,
+		References:        message.References,
+		Model:             model,
+		RequireExactModel: body.RequireExactModel,
+		Effort:            body.Effort,
+		ApprovalMode:      normalizeAssistantApprovalMode(body.ApprovalMode),
+		ActorID:           user.ID,
+		ActorName:         user.LoginName,
+		TriggerID:         rand.Text(),
 	}
 	if err := h.repo.SteerAssistantGeneration(ownerID, g.SessionID, g.ID, steer); err != nil {
 		c.JSON(409, gin.H{"error": err.Error()})
@@ -650,15 +675,16 @@ func (h *assistantHandlers) followSteer(parent context.Context, prev domain.Assi
 	// Empty effort selects the follow-up model's default.
 	session.Effort = steer.Effort
 	req := assistantRequest{
-		ProjectID:       session.ProjectID,
-		SessionID:       session.ID,
-		RunID:           session.RunID,
-		Executor:        session.Executor,
-		ExecutionTarget: session.ExecutionTarget,
-		Model:           session.Model,
-		Effort:          session.Effort,
-		ApprovalMode:    steer.ApprovalMode,
-		Messages:        session.Messages,
+		ProjectID:         session.ProjectID,
+		SessionID:         session.ID,
+		RunID:             session.RunID,
+		Executor:          session.Executor,
+		ExecutionTarget:   session.ExecutionTarget,
+		Model:             session.Model,
+		RequireExactModel: steer.RequireExactModel,
+		Effort:            session.Effort,
+		ApprovalMode:      steer.ApprovalMode,
+		Messages:          session.Messages,
 	}
 	if req.RunID != "" && h.engine != nil {
 		token, err := h.engine.BeginConversationWorkspaceUse(req.RunID)

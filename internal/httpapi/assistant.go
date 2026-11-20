@@ -54,18 +54,19 @@ type assistantReply struct {
 	SessionID      string                       `json:"sessionId,omitempty"`
 }
 type assistantRequest struct {
-	ExecutionTarget *domain.AssistantExecutionTarget `json:"executionTarget,omitempty"`
-	ProjectID       string                           `json:"projectId"`
-	SessionID       string                           `json:"sessionId"`
-	Model           string                           `json:"model"`
-	Effort          string                           `json:"effort"`
-	Executor        string                           `json:"executor,omitempty"`
-	ApprovalMode    string                           `json:"approvalMode"`
-	ApprovalUserID  int64                            `json:"approvalUserId,omitempty"`
-	RunID           string                           `json:"runId,omitempty"`
-	SpaceID         string                           `json:"spaceId,omitempty"`
-	workspaceToken  string
-	contextText     string
+	ExecutionTarget   *domain.AssistantExecutionTarget `json:"executionTarget,omitempty"`
+	ProjectID         string                           `json:"projectId"`
+	SessionID         string                           `json:"sessionId"`
+	Model             string                           `json:"model"`
+	Effort            string                           `json:"effort"`
+	RequireExactModel bool                             `json:"requireExactModel,omitempty"`
+	Executor          string                           `json:"executor,omitempty"`
+	ApprovalMode      string                           `json:"approvalMode"`
+	ApprovalUserID    int64                            `json:"approvalUserId,omitempty"`
+	RunID             string                           `json:"runId,omitempty"`
+	SpaceID           string                           `json:"spaceId,omitempty"`
+	workspaceToken    string
+	contextText       string
 	// linkedIssueID is the issue this turn itself linked to the conversation
 	// while preparing its context (an @-mentioned issue), so starting the
 	// turn does not mistake that link for a concurrent rebinding.
@@ -213,7 +214,7 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 			}
 		}
 	}
-	if err := h.prepareWorkbenchContext(c, &req, user); err != nil {
+	if err := h.authorizeWorkbenchTurn(c, &req, user.ID); err != nil {
 		c.JSON(400, gin.H{"error": err.Error()})
 		return
 	}
@@ -223,7 +224,12 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 		catalog = h.turnCatalog(c.Request.Context(), user, req.Model)
 	}
 	if !runnerLogin {
-		req.Model = assistantAllowedUserModel(req.Model, catalog, user)
+		selected, err := assistantTurnCatalogModel(req.Model, catalog, user, req.RequireExactModel)
+		if err != nil {
+			c.JSON(400, gin.H{"error": err.Error()})
+			return
+		}
+		req.Model = selected
 	}
 	cliEngine, _ = assistantModelEngine(req.Model)
 	req.Executor = cliEngine
@@ -232,7 +238,7 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 		c.JSON(400, gin.H{"error": err.Error()})
 		return
 	}
-	if refusal := assistantEngineSwitchRefusal(assistantConversationEngine(req.Messages, old.Executor), req.Model); refusal != "" {
+	if refusal := assistantEngineSwitchRefusal(assistantConversationEngine(req.Messages, h.forkExecutor(c, old, user.ID)), req.Model); refusal != "" {
 		c.JSON(409, gin.H{"error": refusal})
 		return
 	}
@@ -242,6 +248,10 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 			c.JSON(409, gin.H{"error": "此会话正在后台生成"})
 			return
 		}
+	}
+	if err := h.buildWorkbenchContext(c, &req, user); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
 	}
 	streaming := sink != nil || strings.Contains(strings.ToLower(c.GetHeader("Accept")), "text/event-stream")
 	approvalMode := assistantRequestApprovalMode(req)
@@ -448,6 +458,9 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 	replyModel := strings.TrimSpace(req.Model)
 	if replyModel == "" {
 		replyModel = assistantDefaultModel
+	}
+	if report, ok := modelCtx.Value(scheduledUsageReportKey{}).(scheduledUsageReport); ok && report.GenerationID == assistantControlScopeFrom(modelCtx).GenerationID && report.Report != nil {
+		defer func() { report.Report(replyModel, turnUsage.snapshot()) }()
 	}
 	generate := h.generate
 	if generate == nil {
@@ -1584,7 +1597,7 @@ func runAssistantCLI(ctx context.Context, req assistantCLIRequest, user domain.U
 	var streamFilter assistantStreamFilter
 	var stderrTail []string
 	var missingSession, modelStarted, credentialRejected bool
-	var usage domain.TokenUsage
+	var usageCollector assistantCLIUsage
 	missingText := "No conversation found with session ID: " + inv.sessionRef
 	var handle func(string)
 	sink := func(event domain.TelemetryEvent) {
@@ -1614,6 +1627,7 @@ func runAssistantCLI(ctx context.Context, req assistantCLIRequest, user domain.U
 	}
 	handle = func(line string) {
 		line = strings.TrimSpace(line)
+		usageCollector.consume(line)
 		attempt.tools(line)
 		if failure := assistantCLIStreamFailure(line); failure != nil {
 			streamError = failure
@@ -1642,7 +1656,6 @@ func runAssistantCLI(ctx context.Context, req assistantCLIRequest, user domain.U
 			switch result.Type {
 			case "result":
 				final, resultError = result.Result, result.IsError
-				usage = runtime.ParseTokenUsage(result.Usage)
 			case "error":
 				missingSession = missingSession || strings.Contains(result.Error, missingText)
 			case "assistant", "user", "stream_event":
@@ -1658,6 +1671,9 @@ func runAssistantCLI(ctx context.Context, req assistantCLIRequest, user domain.U
 	execute := req.Execute
 	if execute == nil {
 		execute = runtime.ExecuteLocalCommand
+		if attempt != nil {
+			defer runtime.ObserveCLIVersion(ctx, nil, engine, bin, attempt.recordCLIVersion)()
+		}
 	}
 	attempt.phase("execution")
 	_, err = execute(ctx, workspace, command, inv.credentials, sink)
@@ -1665,7 +1681,7 @@ func runAssistantCLI(ctx context.Context, req assistantCLIRequest, user domain.U
 	if err == nil {
 		attempt.phase("protocol")
 	}
-	if req.OnUsage != nil && assistantUsageReported(usage) {
+	if usage := usageCollector.snapshot(); req.OnUsage != nil && assistantUsageReported(usage) {
 		req.OnUsage(usage)
 	}
 	if inv.finish != nil {
@@ -1708,7 +1724,7 @@ func runAssistantCLI(ctx context.Context, req assistantCLIRequest, user domain.U
 }
 
 func assistantUsageReported(u domain.TokenUsage) bool {
-	return u.InputTokens+u.OutputTokens+u.CacheReadTokens+u.CacheWriteTokens > 0
+	return u.InputTokens > 0 || u.OutputTokens > 0 || u.CacheReadTokens > 0 || u.CacheWriteTokens > 0 || u.TotalTokens > 0 || u.ReasoningTokens > 0 || u.CostUSD > 0
 }
 
 // assistantTurnUsage sums the usage of every CLI invocation behind one reply

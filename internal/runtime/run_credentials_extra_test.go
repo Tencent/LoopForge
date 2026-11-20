@@ -50,7 +50,7 @@ func TestBindExtraCredentialEnv(t *testing.T) {
 	}
 	credentials := RunCredentials{Extra: map[string]string{"gateway": "tok-1"}}
 
-	bound, err := bindCommand(sb, sb.workspace, command, credentials)
+	bound, err := bindCommand(t.Context(), sb, sb.workspace, command, credentials)
 	if err != nil {
 		t.Fatalf("bindCommand: %v", err)
 	}
@@ -66,7 +66,7 @@ func TestBindExtraCredentialEnv(t *testing.T) {
 	// Without the binding the mapping is inert.
 	plain := command
 	plain.CredentialBindings = nil
-	bound, err = bindCommand(sb, sb.workspace, plain, credentials)
+	bound, err = bindCommand(t.Context(), sb, sb.workspace, plain, credentials)
 	if err != nil {
 		t.Fatalf("bindCommand without binding: %v", err)
 	}
@@ -110,7 +110,7 @@ func TestBindExtraMarksCredentialEnvKeysForRedaction(t *testing.T) {
 		CredentialBindings: []CredentialBinding{BindExtra},
 		ExtraCredentialEnv: map[string]string{"AWS_SECRET_ACCESS_KEY": "gateway"},
 	}
-	bound, err := bindCommand(sb, sb.workspace, command, RunCredentials{Extra: map[string]string{"gateway": "tok-1"}})
+	bound, err := bindCommand(t.Context(), sb, sb.workspace, command, RunCredentials{Extra: map[string]string{"gateway": "tok-1"}})
 	if err != nil {
 		t.Fatalf("bindCommand: %v", err)
 	}
@@ -152,7 +152,7 @@ func TestConversationPathBindsExtraCredentialEnv(t *testing.T) {
 		CredentialBindings: wire.Bindings,
 		ExtraCredentialEnv: wire.ExtraCredentialEnv,
 	}
-	bound, err := bindCommand(sb, sb.workspace, rebuilt, wire.Credentials)
+	bound, err := bindCommand(t.Context(), sb, sb.workspace, rebuilt, wire.Credentials)
 	if err != nil {
 		t.Fatalf("bindCommand: %v", err)
 	}
