@@ -57,12 +57,10 @@ function runnerStatusLabel(status,lastSeen){
   return `<span class="runner-status${style}" title="${escapeHTML(runnerLastSeen(lastSeen))}"><i></i>${escapeHTML(label)}</span>`;
 }
 const runnerCLILabels={'claude-code':'Claude Code','codex':'Codex','codebuddy':'CodeBuddy',opencode:'OpenCode',cursor:'Cursor CLI',agy:'Antigravity',kimi:'Kimi Code',pi:'Pi',dsh:'DeepSeek Harness',zcode:'ZCode'};
-const runnerCLIIcons={'claude-code':'claude',codex:'codex',codebuddy:'codebuddy',opencode:'opencode',cursor:'cursor',agy:'gemini',kimi:'kimi',pi:'pi',dsh:'deepseek',zcode:'glm'};
 const runnerAuthLabel={local:'账号登录',personal:'API Key'};
-const runnerAuthDescription={local:'Claude Code 和 Codex 可以使用运行 Runner 的系统账号在这台机器上的已有登录。共享对话中，只有机器所有者发言时会使用此登录。',personal:'读取「个人配置」中保存的 API Key。对话使用当前发言人的 Key，SOP 使用运行责任人的 Key。'};
+const runnerAuthDescription={local:'Claude Code、Codex 和 Antigravity 可以使用运行 Runner 的系统账号在这台机器上的已有登录，对话与 SOP 的 native、Docker 沙箱均可复用。共享对话中，只有机器所有者发言时会使用此登录。',personal:'读取「个人配置」中保存的 API Key。对话使用当前发言人的 Key，SOP 使用运行责任人的 Key。Antigravity 的 Gemini API Key 按 API 单独计费。'};
 const runnerOSLabels={darwin:'macOS',linux:'Linux',windows:'Windows'};
 function runnerKeyDescription(provider){
-  if(provider==='agy')return 'LoopForge 沙箱目前无法复用 Antigravity 保存在系统凭据库中的登录。请在「个人配置」中填写 Gemini API Key。用量按 Gemini API 单独计费。';
   if(provider==='zcode')return 'GLM Coding Plan 的 API Key 配合套餐专用地址可使用订阅额度，请在「个人配置」中填写。Start Plan 额度需要登录 ZCode 账号，无法通过 API Key 使用。';
   return '该 CLI 支持 API Key。使用服务商订阅套餐提供的 Key，执行用量会计入对应的套餐额度。请在「个人配置」中填写 API Key。';
 }
@@ -74,7 +72,7 @@ function runnerPersonalCredentialConfigured(provider){
   return !!user.agentCliCredentials?.[provider]?.apiKeyConfigured;
 }
 function runnerRuntimeSupportsLogin(runtime){
-  return runtime.provider==='codex'||runtime.provider==='claude-code';
+  return runtime.provider==='codex'||runtime.provider==='claude-code'||runtime.provider==='agy';
 }
 function runnerRuntimeAuthMode(runtime){
   return runnerRuntimeSupportsLogin(runtime)&&runtime.authMode!=='personal'?'local':'personal';
@@ -97,10 +95,11 @@ function runnerRuntimeHTML(runner,runtime,shared){
   const testing=runnerRuntimeTests.has(key),updating=runnerMaintenancePending.has(key);
   const busy=testing||updating||runnerAuthChanges.has(key);
   const disabled=runtime.status==='disabled';
+  const icon=window.AgentFlowAssistantModels?.cliIcon(provider);
   return `<div class="runner-runtime-row ${disabled?'off':''}">
     <label class="runner-runtime-label">
       <input type="checkbox" data-runner-cli="${safeKey}" ${disabled?'':'checked'} ${shared?'disabled':''} aria-label="启用 ${label}">
-      <span class="runner-runtime-icon ${provider}" aria-hidden="true"><img src="/images/credentials/${runnerCLIIcons[provider]}.svg" alt=""></span>
+      <span class="runner-runtime-icon ${provider}" aria-hidden="true">${icon?`<img src="${icon}" alt="">`:''}</span>
       <span class="runner-runtime-name"><b>${label}</b><small title="${escapeHTML(runtime.binaryPath||'')}">${escapeHTML(runtime.version||runtime.binaryPath||'已发现')}</small></span>
     </label>
     ${runnerAuthHTML(runtime,key,busy,shared)}
@@ -383,6 +382,7 @@ function showRunnerModels(runner,runtime){
     modal.querySelector('.confirm-modal-footer').before(panel);
     card.classList.add('runner-model-card');
     const catalog=panel.querySelector('[data-credential-catalog]');
+    loadCredentialEffortCatalogs().then(()=>refreshCredentialCatalogEfforts(catalog));
     if(local){
       catalog.probeModels=()=>api(`/api/runners/${encodeURIComponent(runner.id)}/models/probe`,{
         method:'POST',body:JSON.stringify({provider}),silent:true
@@ -397,6 +397,7 @@ function showRunnerModels(runner,runtime){
     catalog.oninput=event=>{
       if(event.target.closest('[data-catalog-probe]'))return syncCredentialCatalogProbe(catalog);
       event.target.closest('.credential-input')?.classList.remove('is-bad');
+      syncCredentialCatalogEfforts(event.target.closest('[data-catalog-row]'));
       syncSave();
     };
     catalog.onclick=event=>{

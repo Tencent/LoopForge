@@ -42,6 +42,8 @@ func TestPutAgentValidatesEffortLevel(t *testing.T) {
 }
 
 func TestExecutorModelsCatalogListsPerCLI(t *testing.T) {
+	t.Setenv("AGENTFLOW_ASSISTANT_MODEL", "")
+	t.Setenv("AGENTFLOW_ASSISTANT_MODELS", "fast-model,test-model")
 	s, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -57,11 +59,32 @@ func TestExecutorModelsCatalogListsPerCLI(t *testing.T) {
 	if cb.Models[0].Credits != "" {
 		t.Fatal("unconfigured public model must not claim a private price")
 	}
+	for _, model := range cb.Models {
+		if model.ID == assistantDefaultModel {
+			t.Fatal("the CodeBuddy CLI default must not be listed as a model")
+		}
+	}
+	if cb.Models[0].ID != "fast-model" || cb.Models[0].Family != "codebuddy" {
+		t.Fatalf("CodeBuddy routing model = %+v", cb.Models[0])
+	}
 	codex := catalogs["codex"]
 	if len(codex.Models) < 2 || codex.Models[0].ID != "gpt-6.1-sol" || codex.Models[1].ID != "gpt-6.1-terra" || codex.Models[1].Name != "GPT-6.1 Terra" {
 		t.Fatalf("codex catalog = %+v", codex.Models)
 	}
+	codexNames := make(map[string]string, len(codex.Models))
+	for _, model := range codex.Models {
+		codexNames[model.ID] = model.Name
+	}
+	for id, name := range map[string]string{"gpt-6.2-sol": "GPT-6.2 Sol", "gpt-6.2-astra": "GPT-6.2 Astra"} {
+		if got := codexNames[id]; got != name {
+			t.Errorf("Codex model %s has name %q, want %q", id, got, name)
+		}
+	}
 	claude := catalogs["claude"]
+	if len(claude.Models) < 2 || claude.Models[0].ID != "claude-fable-5-1" ||
+		claude.Models[1].ID != "claude-fable-5-2" || claude.Models[1].Name != "Claude Fable 5.2" {
+		t.Fatalf("claude catalog = %+v", claude.Models)
+	}
 	haiku := -1
 	for i, model := range claude.Models {
 		if model.ID == "claude-haiku-5-5" {
@@ -674,7 +697,7 @@ func TestRepositoryOneLinkSetup(t *testing.T) {
 		"name":          "存储",
 		"defaultBranch": "release",
 	}, http.StatusOK)
-	if updated.GongfengProjectID != "infra/storage" || updated.Name != "存储" || updated.DefaultBranch != "release" {
+	if updated.Provider != domain.RepositoryProviderSSH || updated.GongfengProjectID != "" || updated.Name != "存储" || updated.DefaultBranch != "release" {
 		t.Fatalf("unexpected scp parse / field priority: %+v", updated)
 	}
 	if updated.CloneURL != "git@git.example.com:infra/storage.git" {
@@ -685,7 +708,7 @@ func TestRepositoryOneLinkSetup(t *testing.T) {
 		"projectId": "linkproj",
 		"repoUrl":   "git clone git@git.example.com:infra/dns.git",
 	}, http.StatusOK)
-	if cloned.GongfengProjectID != "infra/dns" || cloned.CloneURL != "git@git.example.com:infra/dns.git" {
+	if cloned.Provider != domain.RepositoryProviderSSH || cloned.GongfengProjectID != "" || cloned.CloneURL != "git@git.example.com:infra/dns.git" {
 		t.Fatalf("git clone prefix was not parsed: %+v", cloned)
 	}
 
@@ -798,7 +821,7 @@ func TestExecutorModelsCatalogUsesOnlyTheEditorsSavedModels(t *testing.T) {
 		CodexModels:      []domain.CLIModel{{ID: "gateway/second", Name: "Second"}, {ID: "gateway/first"}},
 		ClaudeCodeModels: []domain.CLIModel{{ID: "custom-sonnet", Name: "Personal Sonnet"}},
 		AgentCLICredentials: map[string]domain.AgentCLICredential{
-			"opencode": {Models: []domain.CLIModel{{ID: "open/model", Name: "Open Model"}}},
+			"opencode": {Models: []domain.CLIModel{{ID: "alibaba/qwen3.7-plus", Name: "Qwen3.7 Plus"}}},
 		},
 	}
 	if err := assistant.repo.PutUser(user); err != nil {
@@ -821,7 +844,7 @@ func TestExecutorModelsCatalogUsesOnlyTheEditorsSavedModels(t *testing.T) {
 	if models := catalogs["claude"].Models; len(models) != 1 || models[0].Name != "Personal Sonnet" {
 		t.Fatalf("Claude models = %+v", models)
 	}
-	if models := catalogs["opencode"].Models; len(models) != 1 || models[0].Name != "Open Model" {
+	if models := catalogs["opencode"].Models; len(models) != 1 || models[0].Name != "Qwen3.7 Plus" || models[0].Family != "qwen" {
 		t.Fatalf("OpenCode models = %+v", models)
 	}
 	if !catalogs["codex"].CustomModel || len(catalogs["codex"].Efforts) == 0 {

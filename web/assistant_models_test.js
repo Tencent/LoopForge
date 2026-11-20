@@ -33,6 +33,7 @@ Object.assign(win, {
     json: async () => ({
       default: 'model-b',
       models: [
+        { id: 'default', name: 'CLI 默认模型', family: 'other' },
         { id: 'model-a', name: 'Model A', family: 'claude', credits: 'x1.00' },
         { id: 'model-b', name: 'Model B', family: 'glm', credits: 'x0.06' },
         { id: 'codex:gpt-5.5', name: 'GPT-5.5', family: 'gpt', engine: 'codex' },
@@ -84,19 +85,54 @@ const key = (target, name) => {
   assert.equal(api.engineBrand('codebuddy'), 'codebuddy');
   assert.equal(api.engineBrand('deepseek'), 'deepseek', 'the DeepSeek executor keeps its logo');
 
+  const brandToggle = dom.html('<button><span class="ai-model-icon"></span></button>');
+  const icon = brandToggle.querySelector('.ai-model-icon');
+  assert.equal(api.cliIcon('agy'), '/images/credentials/antigravity.svg');
+  assert.equal(api.cliIcon('kimi'), '/images/credentials/kimi-code.png');
+  assert.equal(api.cliIcon('pi'), '/images/credentials/pi.svg');
+  api.paintItem(brandToggle, {id: 'kimi:k3.1-pro', family: 'other'});
+  assert.match(icon.querySelector('img')?.getAttribute('src'), /\/images\/credentials\/kimi\.svg/);
+  api.paintItem(brandToggle, {id: 'agy:gemini-4-neon-high'});
+  assert.match(icon.querySelector('img')?.getAttribute('src'), /\/images\/credentials\/gemini\.svg/);
+  api.paintItem(brandToggle, {id: 'claude-code:opus'});
+  assert.match(icon.querySelector('img')?.getAttribute('src'), /\/images\/credentials\/claude\.svg/);
+  api.paintItem(brandToggle, {id: 'cursor:composer-2.5'});
+  assert.match(icon.querySelector('img')?.getAttribute('src'), /\/images\/credentials\/cursor\.svg/);
+  api.paintItem(brandToggle, {id: 'cursor:cursor-grok-4.6', family: 'other'});
+  assert.equal(icon.dataset.family, 'grok');
+  assert.match(icon.querySelector('img')?.getAttribute('src'), /\/images\/credentials\/xai\.svg/);
+  api.paintItem(brandToggle, {id: 'cursor:muse-wonder-1.0'});
+  assert.equal(icon.dataset.family, 'muse');
+  assert.match(icon.querySelector('img')?.getAttribute('src'), /\/images\/credentials\/meta\.svg/);
+  api.paintItem(brandToggle, {id: 'auto', family: 'cursor'});
+  assert.match(icon.querySelector('img')?.getAttribute('src'), /\/images\/credentials\/cursor\.svg/);
+  api.paintItem(brandToggle, {id: 'primary-model', family: 'codebuddy'});
+  assert.match(icon.querySelector('img')?.getAttribute('src'), /\/images\/credentials\/codebuddy\.svg/);
+  for (const [id, family] of [
+    ['opencode:alibaba/qwen3.7-plus', 'qwen'],
+    ['opencode:doubao-seed-2-0-lite-260428', 'doubao'],
+    ['pi:ernie-5.1', 'qianfan'],
+    ['pi:moonshot-v1-8k', 'moonshot'],
+  ]) {
+    api.paintItem(brandToggle, {id, family: 'other'});
+    assert.equal(icon.dataset.family, family);
+    assert.ok(icon.querySelector('img')?.getAttribute('src').includes(`/images/credentials/${family}.svg`));
+  }
+  brandToggle.remove();
   // Pickers keep painting before the catalog lands, so the built-in fallback
   // must already render a usable label, and an unknown brand shows the
   // neutral glyph instead of a lettered "AI" badge.
   assert.equal(api.codeBuddyModel('codex:gpt-5.5'), 'default', 'codex ids fall back before the catalog loads');
   const probe = dom.html('<button><span class="ai-model-icon"></span><span data-model-label></span></button>');
   api.paint(probe, api.DEFAULT);
-  assert.equal(probe.querySelector('[data-model-label]').textContent, 'CLI 默认模型');
+  assert.equal(probe.querySelector('[data-model-label]').textContent, '默认');
   const probeIcon = probe.querySelector('.ai-model-icon');
   assert.equal(probeIcon.dataset.family, 'other');
   assert.equal(probeIcon.dataset.brand, 'unknown');
   assert.ok(probeIcon.querySelector('svg[data-icon="brain"]'), 'unknown brands use the Harness brain glyph');
   assert.ok(!/AI/.test(probeIcon.textContent), 'no lettered badge');
   probe.remove();
+  assert.equal(api.codeBuddyModels().length, 0, 'the placeholder is not selectable before loading');
 
   await api.load();
   assert.equal(api.catalog().default, 'model-b');
@@ -217,12 +253,12 @@ const key = (target, name) => {
     claude: { models: [] },
   };
   for (const name of ['executorOptions', 'AGENT_CUSTOM_MODEL', 'agentPickerBindings', 'executorModelCatalogs', 'agentModelAPI', 'currentAgentExecutorId',
-    'agentModelItems', 'agentEffortItems', 'paintAgentPicker', 'agentDefaultModelItem', 'agentExecutorItems', 'agentModelChoices',
+    'agentModelItems', 'agentEffortItems', 'paintAgentPicker', 'agentExecutorItems', 'agentModelChoices',
     'renderAgentExecutorPicker', 'renderAgentModelPicker', 'syncAgentModelCustomField', 'renderAgentEffortPicker',
     'applyAgentModelUI', 'bindAgentPickers']) extract(name);
   select.innerHTML = win.executorOptions('codebuddy');
   let changes = 0;
-  select.addEventListener('change', event => { changes++; win.applyAgentModelUI(event.target.value, '', ''); });
+  select.addEventListener('change', event => { changes++; win.applyAgentModelUI(event.target.value, '', '', true); });
   win.bindAgentPickers();
   win.bindAgentPickers(); // Rebinding must not duplicate trigger/change listeners.
   win.applyAgentModelUI('codebuddy', 'glm-5', 'high');
@@ -261,17 +297,16 @@ const key = (target, name) => {
   modelSearch.value = 'glm';
   modelSearch.dispatchEvent(new win.Event('input', { bubbles: true }));
   key(modelSearch, 'ArrowDown');
-  key(document.activeElement, 'ArrowDown');
   win.AgentFlowExecutorModels.codebuddy.models = [
     { id: 'glm-6', name: 'GLM-6' }, { id: 'glm-5', name: 'GLM-5 renamed' }, { id: 'glm-7', name: 'GLM-7' },
   ];
   win.renderAgentModelPicker();
   assert.ok(menus()[0] === menu, 'catalog refresh does not reopen the menu');
   assert.equal(modelSearch.value, 'glm', 'catalog refresh keeps the search query');
-  assert.deepEqual(options(menu).map(row => row.dataset.id), ['', 'glm-6', 'glm-5', 'glm-7']);
-  assert.ok(document.activeElement === options(menu)[2], 'focus follows the model ID when rows reorder');
+  assert.deepEqual(options(menu).map(row => row.dataset.id), ['glm-6', 'glm-5', 'glm-7']);
+  assert.ok(document.activeElement === options(menu)[1], 'focus follows the model ID when rows reorder');
   assert.equal(form.elements.modelChoice.value, 'glm-5', 'refresh preserves the selected model');
-  assert.equal(options(menu)[2].getAttribute('aria-checked'), 'true');
+  assert.equal(options(menu)[1].getAttribute('aria-checked'), 'true');
   assert.equal(form.elements.effort.value, 'high', 'refresh preserves the selected effort');
   win.AgentFlowExecutorModels.codebuddy.models = [{ id: 'glm-7', name: 'GLM-7' }];
   // A filtered, unselected focused option can disappear from the new catalog.
@@ -297,7 +332,7 @@ const key = (target, name) => {
   assert.equal(select.value, 'codex');
   assert.equal(changes, 1, 'picking a CLI fires change exactly once');
   assert.equal(label(cliToggle), 'Codex');
-  assert.equal(label(modelToggle), '默认模型');
+  assert.equal(label(modelToggle), 'GPT-5.5');
   assert.equal(label(effortToggle), '默认');
   dom.advance(200);
 
@@ -305,10 +340,10 @@ const key = (target, name) => {
   [menu] = menus();
   assert.ok(menu.querySelector('.lf-picker-search input'), 'model menu is searchable');
   rows = options(menu);
-  assert.deepEqual(rows.map(row => row.dataset.id), ['', 'gpt-5.5', '__custom__']);
-  assert.ok(rows[0].querySelector('.ai-model-icon.is-empty'), 'entries without a logo keep the column aligned');
-  assert.equal(rows[1].querySelector('.ai-model-icon').dataset.brand, 'gpt');
-  rows[2].click();
+  assert.deepEqual(rows.map(row => row.dataset.id), ['gpt-5.5', '__custom__']);
+  assert.ok(rows[1].querySelector('.ai-model-icon.is-empty'), 'entries without a logo keep the column aligned');
+  assert.equal(rows[0].querySelector('.ai-model-icon').dataset.brand, 'gpt');
+  rows[1].click();
   assert.equal(form.elements.modelChoice.value, '__custom__');
   assert.equal(form.querySelector('#agentModelCustomField').hidden, false, 'manual model id field appears');
   dom.advance(200);

@@ -93,7 +93,7 @@ func runLiveSOP(t *testing.T, root, kind, driver string, item liveCLIConfig) {
 	out = redactLive(out)
 	if err != nil {
 		shown := command.Argv
-		if bound, berr := bindCommand(sb, workspace, command, creds); berr == nil {
+		if bound, berr := bindCommand(t.Context(), sb, workspace, command, creds); berr == nil {
 			shown = bound.Argv
 		}
 		t.Fatalf("执行失败: %s\nargv=%q\n%s", redactLive(err.Error()), shown, clipLive(out))

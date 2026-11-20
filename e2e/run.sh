@@ -2,6 +2,7 @@
 # Runs the live e2e suite against AGENTFLOW_E2E_BASE (default: the test env).
 #   ./run.sh           frontend unit checks, API scenarios, then the Playwright UI specs
 #   ./run.sh unit      frontend unit checks only (no deployment needed)
+#   ./run.sh layout    isolated browser layout checks (no deployment needed)
 #   ./run.sh api       API only
 #   ./run.sh ui        UI only
 # A final sweep removes anything an interrupted scenario left behind.
@@ -17,8 +18,12 @@ if [ "$what" = all ] || [ "$what" = unit ]; then
   node --test --test-reporter=spec 'unit/*.test.mjs' || status=1
   [ "$what" = unit ] && exit $status
 fi
-[ -d node_modules/@playwright/test ] || npm install --no-audit --no-fund
+[ -d node_modules/@playwright/test ] || npm install --no-audit --no-fund || exit $?
 
+if [ "$what" = all ] || [ "$what" = layout ]; then
+  node --test --test-reporter=spec 'layout/*.test.mjs' || status=1
+  [ "$what" = layout ] && exit $status
+fi
 if [ "$what" = all ] || [ "$what" = api ]; then
   node --test --test-concurrency=1 --test-reporter=spec 'api/*.test.mjs' || status=1
 fi

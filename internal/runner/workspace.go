@@ -120,7 +120,9 @@ func (d *Daemon) readRunnerWorkspace(ctx context.Context, request domain.RunnerW
 	if d.updateReady.Load() {
 		return domain.RunnerWorkspaceResponse{Status: http.StatusConflict, Error: "Runner 即将重启，请稍后重试"}
 	}
-	if request.Operation == "conversation_process" {
+	ctx = d.withDockerRunnerHelperWait(ctx)
+	ctx = gitwork.WithSSHKnownHosts(ctx, request.GitSSHKnownHosts)
+	if request.Operation == domain.RunnerWorkspaceOperationConversationCLI {
 		return d.conversationProcess(ctx, request)
 	}
 	if request.Operation == domain.RunnerWorkspaceOperationLoginModels {

@@ -414,7 +414,9 @@ curl -u "$AGENTFLOW_USER:$AGENTFLOW_PASS" \
 - `overview.current` / `overview.previous`：最近 7×24 小时（含当前小时）与再往前 7×24 小时的 `total`、`finished`、`success`、`failed`、`running`、`avgMs`，只随 `jobId` 变化。已结束的执行来自按小时累计的统计表 `schedule_job_execution_stats`（保留 30 天，删除任务时一并删除），不受每个任务只保留 200 条记录的影响；进行中的执行从记录里数；
 - `records`：该项目保留的记录总数；`recentFailed`：该项目最近 7 天的失败次数（标签角标用）。
 
-缺 `projectId` 或 `since` 格式不对返回 400；`jobId` 属于无权访问的项目返回 403。统计表从部署后开始累计，部署前的执行不计入概览。
+缺 `projectId` 或 `since` 格式不对返回 400；`jobId` 属于无权访问的项目返回 403。统计表从部署后开始累计。升级时可备份并停止平台后，手动执行 `migrations/039_schedule_execution_legacy_stats.sql`，将仍保留的旧执行补入缺失的小时桶；脚本不覆盖已有桶，发现部分重叠时拒绝回补，不重建已清理的记录，也不推算旧 Token。
+
+AI 执行记录的可选 `model`、`usage`、`costCny` 保存本次 generation 的消耗与费用估计，包含重试及失败前已上报的调用，不含同一固定会话的前次执行或下游 SOP。`usage` 缺失表示未上报。`overview.current` / `overview.previous` 另外返回 `metered`、`tokens`（`total`、`input`、`output`、`cacheRead`、`cacheWrite`）、`avgTokens`、`priced`、`costCny`。`tokens.total` 优先使用模型上报总量，否则为输入加输出；缓存明细不再相加。`avgTokens` 仅对已上报执行取平均，`priced` 仅计入可估价执行。
 
 ```bash
 curl -u "$AGENTFLOW_USER:$AGENTFLOW_PASS" \

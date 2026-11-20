@@ -143,14 +143,16 @@ function loadExecutorModelCatalogs(){
 function agentModelAPI(){return window.AgentFlowAssistantModels}
 function currentAgentExecutorId(){return $('#agentForm')?.elements?.executorId?.value||'codebuddy'}
 function agentModelItems(executorId,current){
-  const cat=executorModelCatalogs()[executorId]||{},items=(cat.models||[]).slice();
-  if(current&&current!==AGENT_CUSTOM_MODEL&&!items.some(m=>m.id===current))items.push({id:current,name:`${current}（历史模型）`,family:'other'});
+  const cat=executorModelCatalogs()[executorId]||{},items=(cat.models||[]).filter(item=>item.id!=='default');
+  if(current&&current!=='default'&&current!==AGENT_CUSTOM_MODEL&&!items.some(m=>m.id===current))items.push({id:current,name:`${current}（历史模型）`,family:'other'});
   if(cat.customModel)items.push({id:AGENT_CUSTOM_MODEL,name:'手动输入模型 ID…',icon:false});
   return items;
 }
 function agentEffortItems(executorId){
   const cat=executorModelCatalogs()[executorId]||{};
-  return [{id:'',name:'默认',icon:false}].concat((cat.efforts||[]).map(e=>({id:e.value,name:e.label,icon:false})));
+  const choice=$('#agentModelPicker [name="modelChoice"]')?.value,model=choice===AGENT_CUSTOM_MODEL?$('#agentModelCustomField input[name="model"]')?.value:choice;
+  const selected=(cat.models||[]).find(item=>item.id===model),efforts=Array.isArray(selected?.efforts)?selected.efforts:(cat.efforts||[]);
+  return [{id:'',name:'默认',icon:false}].concat(efforts.map(e=>({id:e.value,name:e.label,icon:false})));
 }
 function paintAgentPicker(pickerId,item){
   const picker=$(pickerId);if(!picker)return;
@@ -161,12 +163,6 @@ function paintAgentPicker(pickerId,item){
   const label=toggle?.querySelector('[data-model-label]');
   if(toggle&&label&&label.scrollWidth<=label.clientWidth){toggle.removeAttribute('title');toggle.removeAttribute('data-hui-title')}
   agentPickerBindings.get(toggle)?.refresh();
-}
-// The empty choice runs the CLI's own default model; name it instead of
-// showing an unset 「选择模型」.
-function agentDefaultModelItem(executorId){
-  const exec=(state.data?.executors||[]).find(x=>x.id===executorId);
-  return {id:'',name:exec?.model?`默认 · ${exec.model}`:'默认模型',icon:false};
 }
 // The CLI list comes from the hidden <select name="executorId">, which keeps
 // the value, the legacy-executor option and the change event for the form.
@@ -179,7 +175,7 @@ function agentExecutorItems(){
 }
 function agentModelChoices(){
   const current=$('#agentModelPicker')?.querySelector('[name="modelChoice"]')?.value||'';
-  return [agentDefaultModelItem(currentAgentExecutorId())].concat(agentModelItems(currentAgentExecutorId(),current));
+  return agentModelItems(currentAgentExecutorId(),current);
 }
 function renderAgentExecutorPicker(){
   const select=$('#agentForm')?.elements?.executorId;if(!select)return;
@@ -197,24 +193,26 @@ function syncAgentModelCustomField(){
   if(!picker||!field)return;
   field.hidden=picker.querySelector('[name="modelChoice"]').value!==AGENT_CUSTOM_MODEL;
 }
-function renderAgentEffortPicker(){
+function renderAgentEffortPicker(modelChanged=false){
   const picker=$('#agentEffortPicker');if(!picker)return;
   const items=agentEffortItems(currentAgentExecutorId());
-  const current=picker.querySelector('[name="effort"]').value;
-  paintAgentPicker('#agentEffortPicker',items.find(x=>x.id===current)||items[0]);
+  const field=picker.querySelector('[name="effort"]');
+  if(modelChanged&&executorModelCatalogs()[currentAgentExecutorId()]&&!items.some(item=>item.id===field.value))field.value='';
+  const current=field.value;
+  paintAgentPicker('#agentEffortPicker',items.find(x=>x.id===current)||{id:current,name:current,icon:false});
 }
-function applyAgentModelUI(executorId,model,effort){
+function applyAgentModelUI(executorId,model,effort,pickFirst=false){
   const picker=$('#agentModelPicker');if(!picker||!$('#agentEffortPicker'))return;
   const cat=executorModelCatalogs()[executorId]||{};
-  let choice=model||'';
-  if(choice&&!(cat.models||[]).some(m=>m.id===choice)&&cat.customModel)choice=AGENT_CUSTOM_MODEL;
+  // Keep cached models available for manual picks while the catalog refreshes.
+  let choice=model||(pickFirst&&!executorModelCatalogRequest?(cat.models||[]).find(item=>item.id!=='default')?.id:'')||'';
+  if(choice&&choice!=='default'&&!(cat.models||[]).some(m=>m.id===choice)&&cat.customModel)choice=AGENT_CUSTOM_MODEL;
   picker.querySelector('[name="modelChoice"]').value=choice;
   const customInput=$('#agentModelCustomField')?.querySelector('input[name="model"]');
   if(customInput&&choice===AGENT_CUSTOM_MODEL)customInput.value=model||'';
   renderAgentExecutorPicker();
   renderAgentModelPicker();
-  const efforts=cat.efforts||[];
-  $('#agentEffortPicker').querySelector('[name="effort"]').value=(!cat.efforts||efforts.some(e=>e.value===effort))?(effort||''):'';
+  $('#agentEffortPicker').querySelector('[name="effort"]').value=effort||'';
   renderAgentEffortPicker();
 }
 // CLI, model and effort open the same menu as the chat composer
@@ -241,7 +239,13 @@ function bindAgentPickers(){
     label:'模型',searchPlaceholder:'搜索模型',emptyText:'没有匹配的模型',
     items:agentModelChoices,
     value:()=>field('#agentModelPicker','modelChoice')?.value||'',
-    onPick:id=>{commit(field('#agentModelPicker','modelChoice'),id);renderAgentModelPicker()},
+    onPick:id=>{
+      const choice=field('#agentModelPicker','modelChoice');
+      const changed=choice.value!==id;
+      commit(choice,id);
+      renderAgentModelPicker();
+      renderAgentEffortPicker(changed);
+    },
   });
   bind('#agentEffortPicker',{
     label:'思考强度',search:false,
@@ -263,17 +267,19 @@ function selectAgent(a,rerender=true){
   if(f.elements.executorId)f.elements.executorId.innerHTML=executorOptions(a.executorId||'codebuddy');
   const modelRevision=++agentModelRevision;
   const modelUser=state.currentUser?.id;
-  applyAgentModelUI(currentAgentExecutorId(),a.model||'',a.effort||'');
-  loadExecutorModelCatalogs().then(()=>{
+  const refreshModels=loadExecutorModelCatalogs();
+  applyAgentModelUI(currentAgentExecutorId(),a.model||'',a.effort||'',!a.id);
+  refreshModels.then(()=>{
     if(modelRevision!==agentModelRevision||modelUser!==state.currentUser?.id)return;
     const model=agentEffectiveModel(f);
     if(!model&&f.elements.modelChoice?.value===AGENT_CUSTOM_MODEL){
       renderAgentExecutorPicker();
       renderAgentModelPicker();
       renderAgentEffortPicker();
-      return;
+    }else{
+      applyAgentModelUI(currentAgentExecutorId(),model,f.elements.effort?.value,!a.id||currentAgentExecutorId()!==(a.executorId||'codebuddy'));
     }
-    applyAgentModelUI(currentAgentExecutorId(),model,f.elements.effort?.value);
+    if(state.agentModalMode==='create'&&state.agentCreateStep===3)renderAgentCreateReview();
   });
   if(f.elements.id)f.elements.id.readOnly=!!a.id;
   renderAgentPresets();renderAgentTaskBook(a);renderAgentGovernance(a);renderAgentAssetsPanel(a);renderAgentSummary();
@@ -442,6 +448,14 @@ function saveAgent(e){
 }
 async function persistAgent(f){
   const creating=state.agentModalMode==='create';
+  const changedExecutor=currentAgentExecutorId()!==(agentWizardSubject()?.executorId||'codebuddy');
+  const model=agentEffectiveModel(f);
+  if((creating||changedExecutor||f.elements.modelChoice?.value===AGENT_CUSTOM_MODEL)&&(!model||model==='default')){
+    toast('请选择模型或填写模型 ID','err');
+    if(creating)setAgentCreateStep(2);
+    else setAgentTab('identity');
+    return null;
+  }
   if(state.agentSaving)return null;
   state.agentSaving=true;
   try{return await persistAgentRequest(f,creating)}finally{state.agentSaving=false}

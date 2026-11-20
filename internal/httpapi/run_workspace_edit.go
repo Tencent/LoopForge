@@ -134,6 +134,9 @@ func (h *runsHandlers) workspaceWrite(c *gin.Context) {
 // from the task panel: platform admins, the project owner, anyone on an
 // unowned project without members, and non-viewer project members.
 func (h *runsHandlers) workspaceEditAllowed(r *http.Request, run domain.Run, userID int64) bool {
+	if run.IsPersonalWorkspace() {
+		return userID > 0 && userID == run.ExecutionContext.ResponsibleUserID
+	}
 	if h.isPlatformAdmin(r) {
 		return true
 	}
@@ -190,6 +193,10 @@ func (h *runsHandlers) workspaceTerminal(c *gin.Context) {
 	}
 	var result any
 	launch := func() error {
+		var credentials runtime.TerminalGitCredentials
+		if runnerID == "" && !remoteHost && req.Operation == "open" {
+			credentials = h.engine.WorkspaceTerminalGitCredentials(c.Request.Context(), run, user)
+		}
 		return h.withWorkspaceWriter(c, run.ID, user, func(locked domain.Run) error {
 			req.ExpiresAt = locked.WorkspaceEditUntil
 			trustedRequest.RunID = runnerWorkspaceRunID(locked)
@@ -230,7 +237,7 @@ func (h *runsHandlers) workspaceTerminal(c *gin.Context) {
 				result = json.RawMessage(response.Payload)
 				return nil
 			}
-			r, err := h.engine.HandlePreparedWorkspaceTerminal(c.Request.Context(), run, &h.terminals, fmt.Sprintf("%s:%d", run.ID, user), req, user)
+			r, err := h.engine.HandlePreparedWorkspaceTerminal(c.Request.Context(), run, &h.terminals, fmt.Sprintf("%s:%d", run.ID, user), req, credentials)
 			result = r
 			return err
 		})

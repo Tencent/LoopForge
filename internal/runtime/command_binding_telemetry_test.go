@@ -38,14 +38,14 @@ func TestBindTelemetryEnvironmentSetsCollectorAndRunTags(t *testing.T) {
 func TestBindCommandAppliesTelemetryEnvironment(t *testing.T) {
 	t.Setenv("AGENTFLOW_OTEL_TRACES_ENDPOINT", "http://collector.test/v1/traces")
 	workspace := t.TempDir()
-	plain, err := bindCommand(&localSandbox{workspace: workspace}, workspace, CommandSpec{Argv: []string{"true"}}, RunCredentials{})
+	plain, err := bindCommand(t.Context(), &localSandbox{workspace: workspace}, workspace, CommandSpec{Argv: []string{"true"}}, RunCredentials{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := plain.environment["AGENTFLOW_RUN_ID"]; ok {
 		t.Fatalf("command without telemetry got telemetry env: %#v", plain.environment)
 	}
-	traced, err := bindCommand(&localSandbox{workspace: workspace}, workspace, CommandSpec{Argv: []string{"true"}, Telemetry: &InvocationOptions{RunID: "run-2", NodeID: "node-b"}}, RunCredentials{})
+	traced, err := bindCommand(t.Context(), &localSandbox{workspace: workspace}, workspace, CommandSpec{Argv: []string{"true"}, Telemetry: &InvocationOptions{RunID: "run-2", NodeID: "node-b"}}, RunCredentials{})
 	if err != nil {
 		t.Fatal(err)
 	}

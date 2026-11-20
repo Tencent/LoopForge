@@ -3,15 +3,16 @@ let aiBuild = null;
 let aiAbort = null;
 const aiHistory = {};
 
-const aiOrchestratorCLIBrands = {codebuddy:'codebuddy', codex:'codex', 'claude-code':'claude', opencode:'opencode', cursor:'cursor', agy:'gemini', kimi:'kimi', pi:'pi', dsh:'deepseek', zcode:'glm'};
-
 function aiOrchestratorEngine(model) {
   const listed = window.AgentFlowAssistantModels?.catalog().models.find(item => item.id === model);
   return listed?.engine || (String(model || '').includes(':') ? model.split(':')[0] : 'codebuddy');
 }
 
 function selectedAIOrchestratorModel() {
-  return localStorage.getItem('agentflow.orchestratorModel') || localStorage.getItem('agentflow.assistantModel') || window.AgentFlowAssistantModels?.catalog().default || '';
+  const api = window.AgentFlowAssistantModels;
+  const remembered = localStorage.getItem('agentflow.orchestratorModel') || localStorage.getItem('agentflow.assistantModel');
+  if (remembered && remembered !== api?.DEFAULT) return remembered;
+  return api?.codeBuddyModels()[0]?.id || api?.catalog().default || remembered || '';
 }
 
 function aiOrchestratorModels(engine = aiOrchestratorEngine(selectedAIOrchestratorModel())) {
@@ -41,9 +42,9 @@ function bindAIOrchestratorModelPicker() {
   const painters = [];
   const paintAll = () => painters.forEach(paint => paint());
   const paintCLIIcon = (icon, engine) => {
-    const brand = aiOrchestratorCLIBrands[engine];
+    const src = api.cliIcon(engine);
     icon.dataset.cli = engine;
-    if (brand) icon.innerHTML = `<img src="/images/credentials/${brand}.svg" alt="">`;
+    if (src) icon.innerHTML = `<img src="${src}" alt="">`;
     else icon.textContent = engine.slice(0, 1).toUpperCase();
   };
 
@@ -53,10 +54,14 @@ function bindAIOrchestratorModelPicker() {
     const search = host.querySelector('[data-model-search]');
     const list = host.querySelector('[role="listbox"]');
     const selected = () => cli ? aiOrchestratorEngine(selectedAIOrchestratorModel()) : selectedAIOrchestratorModel();
-    const items = () => cli ? aiOrchestratorEngines().map(engine => ({...engine, icon: false, disabled: engine.configured === false || !aiOrchestratorModels(engine.id).length})) : aiOrchestratorModels();
+    const items = () => cli ? aiOrchestratorEngines().map(engine => ({
+      ...engine,
+      icon: false,
+      disabled: engine.configured === false || (engine.id !== 'codebuddy' && !aiOrchestratorModels(engine.id).length),
+    })) : aiOrchestratorModels();
     const paint = () => {
       const id = selected();
-      const item = items().find(item => item.id === id) || {id, name: id};
+      const item = items().find(item => item.id === id) || {id, name: !cli && id === api.DEFAULT ? '默认' : id};
       api.paintItem(toggle, item);
       if (cli) paintCLIIcon(toggle.querySelector('.ai-model-icon'), id);
     };
@@ -79,7 +84,9 @@ function bindAIOrchestratorModelPicker() {
         if (cli) {
           const models = aiOrchestratorModels(id);
           const remembered = localStorage.getItem('agentflow.orchestratorModel.' + id);
-          model = models.find(item => item.id === (id === selected() ? selectedAIOrchestratorModel() : remembered))?.id || models.find(item => item.id === api.catalog().default)?.id || models[0]?.id;
+          const preference = id === selected() ? selectedAIOrchestratorModel() : remembered;
+          const fallback = models[0]?.id || (id === 'codebuddy' ? api.catalog().default || api.DEFAULT : '');
+          model = models.find(item => item.id === preference)?.id || fallback;
         }
         if (!model) return;
         selectAIOrchestratorModel(model);
