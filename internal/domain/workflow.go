@@ -59,7 +59,14 @@ type WorkflowNode struct {
 	RunOnWorkspaceRebuild bool               `json:"runOnWorkspaceRebuild,omitempty"`
 	ScriptLanguage        string             `json:"scriptLanguage,omitempty"` // shell, python
 	Script                string             `json:"script,omitempty"`
-	ExecutionScope        string             `json:"executionScope,omitempty"` // run, repositories; empty = run
+	// CredentialEnv requests platform-managed credentials as environment
+	// variables for script and verification commands: each entry maps an
+	// environment variable name to a credential kind (a RunCredentials.Extra
+	// key registered by the deployment). A declared credential the
+	// responsible user has not saved fails the node up front; the secret
+	// itself never appears in workflow definitions, node configs or logs.
+	CredentialEnv  map[string]string `json:"credentialEnv,omitempty"`
+	ExecutionScope string            `json:"executionScope,omitempty"` // run, repositories; empty = run
 	Command               string             `json:"command,omitempty"`        // legacy command-node payload
 	ArtifactOutputs       []ArtifactContract `json:"artifactOutputs,omitempty"`
 	RejectTo              string             `json:"rejectTo,omitempty"`

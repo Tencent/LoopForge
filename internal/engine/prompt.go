@@ -40,7 +40,7 @@ func applyPromptPlaceholders(st *repo.Store, wf domain.WorkflowDefinition, node 
 	prompt = strings.ReplaceAll(prompt, "{{pipelineUrl}}", pipelineURL)
 	if !strings.Contains(prompt, "{{existingMR}}") {
 		if hint := sshDeliveryHint(run); hint != "" {
-			prompt += "\n\n## Git SSH 仓库交付\n\n" + hint
+			prompt += "\n\n## Git 仓库交付\n\n" + hint
 		}
 	}
 	prompt = strings.ReplaceAll(prompt, "{{existingMR}}", existingMRBlurb(st, run))
@@ -103,6 +103,9 @@ func promptRepositoryLine(run domain.Run) string {
 	if run.Repository.Provider == domain.RepositoryProviderSSH {
 		identity = "Git SSH"
 	}
+	if run.Repository.Provider == domain.RepositoryProviderHTTPS {
+		identity = "Git HTTPS"
+	}
 	return fmt.Sprintf("%s (%s), 最新远端基线 %s, 本次工作分支 %s", run.Repository.Name, identity, run.Repository.BaseBranch, run.Repository.WorkBranch)
 }
 
@@ -124,14 +127,14 @@ func upstreamNodeOutputs(wf domain.WorkflowDefinition, node domain.WorkflowNode,
 func sshDeliveryHint(run domain.Run) string {
 	var sshRepos []string
 	for _, repository := range run.RepositoryContexts() {
-		if repository.Provider == domain.RepositoryProviderSSH {
+		if domain.GitOnlyRepositoryProvider(repository.Provider) {
 			sshRepos = append(sshRepos, repository.Name)
 		}
 	}
 	if len(sshRepos) == 0 {
 		return ""
 	}
-	return "Git SSH 仓库（" + strings.Join(sshRepos, "、") + "）：负责交付的节点在用户要求推送时只推本轮工作分支，并报告分支名和提交 SHA。需要 PR/MR 时，可使用另行配置的托管平台 MCP，或请用户到托管平台手动创建。"
+	return "Git 仓库（" + strings.Join(sshRepos, "、") + "）：只推本轮工作分支，并报告分支名和提交 SHA。SSH 密钥用于 Git 传输，HTTPS 凭据通过标准 credential helper 获取。需要 PR/MR 时，由负责交付的 Agent 自行查询托管平台官方 API，使用该主机访问令牌在内存中调用，不打印或保存令牌；也可使用已配置的托管平台 MCP。"
 }
 
 func existingMRBlurb(st *repo.Store, run domain.Run) string {
@@ -140,7 +143,7 @@ func existingMRBlurb(st *repo.Store, run domain.Run) string {
 		return hostedMRBlurb(st, run)
 	}
 	for _, repository := range run.RepositoryContexts() {
-		if repository.Provider != domain.RepositoryProviderSSH {
+		if !domain.GitOnlyRepositoryProvider(repository.Provider) {
 			return hint + "\n其它仓库：" + hostedMRBlurb(st, run)
 		}
 	}
@@ -150,7 +153,7 @@ func existingMRBlurb(st *repo.Store, run domain.Run) string {
 func hostedMRBlurb(st *repo.Store, run domain.Run) string {
 	var continued []string
 	for _, repository := range run.RepositoryContexts() {
-		if repository.Provider != domain.RepositoryProviderSSH && repository.RequireExistingWorkBranch {
+		if !domain.GitOnlyRepositoryProvider(repository.Provider) && repository.RequireExistingWorkBranch {
 			continued = append(continued, fmt.Sprintf("%s：继续已有分支 %s，MR 目标主分支 %s", repository.Name, repository.WorkBranch, repositoryBaseBranch(repository)))
 		}
 	}

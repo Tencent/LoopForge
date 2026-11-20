@@ -219,7 +219,11 @@ func (e *Engine) HandleWorkspaceCheckpoint(w http.ResponseWriter, r *http.Reques
 				result.Payload = json.RawMessage(`{"ok":true}`)
 				break
 			}
-			value, err := e.HandlePreparedWorkspaceTerminal(r.Context(), run, &e.workspaceTerminals, scope, *request.Terminal, request.TerminalOwner)
+			var credentials runtime.TerminalGitCredentials
+			if request.Terminal.Operation == "open" {
+				credentials = e.WorkspaceTerminalGitCredentials(r.Context(), run, request.TerminalOwner)
+			}
+			value, err := e.HandlePreparedWorkspaceTerminal(r.Context(), run, &e.workspaceTerminals, scope, *request.Terminal, credentials)
 			result.Payload, _ = json.Marshal(value)
 			if err != nil {
 				result.Error = err.Error()

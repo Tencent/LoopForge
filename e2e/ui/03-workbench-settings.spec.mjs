@@ -133,7 +133,7 @@ test('personal credentials: the add wizard validates, saves write-only, and the 
 
 test('personal credentials: the 代码仓库 row opens read-only and swaps in the token form on demand', async ({ page, identity }) => {
   const me = identity.user;
-  test.skip(!(await userById(me.id))?.gitTokenConfigured, 'the token owner has no 工蜂 Git Token configured');
+  test.skip(!(await userById(me.id))?.gitHubCredentialConfigured, 'the token owner has no 工蜂 Git Token configured');
 
   const errors = watchErrors(page);
   await openView(page, 'settings');
@@ -165,7 +165,7 @@ test('personal credentials: the 代码仓库 row opens read-only and swaps in th
   await expect(replace).toBeVisible();
   await row.locator('.credential-row-main').click();
   await expect(row).not.toHaveClass(/is-open/);
-  expect((await userById(me.id)).gitTokenConfigured).toBe(true);
+  expect((await userById(me.id)).gitHubCredentialConfigured).toBe(true);
   expect(errors).toEqual([]);
 });
 

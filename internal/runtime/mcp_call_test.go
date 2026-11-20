@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	goruntime "runtime"
 	"strings"
 	"testing"
 
@@ -15,7 +16,7 @@ import (
 )
 
 func TestMain(m *testing.M) {
-	if RunMCPCallCLI(os.Args[1:]) {
+	if RunMCPCallCLI(os.Args[1:]) || RunGitHelperCLI(os.Args[1:]) {
 		return
 	}
 	os.Exit(m.Run())
@@ -74,7 +75,7 @@ func TestMCPCallCLIInvokesBoundHTTPServer(t *testing.T) {
 		ID: "mcp-2214-project-dns", Name: "Config Center MCP", MarketID: "2214", Transport: "http",
 		URL: gateway.URL, Headers: map[string]string{"Authorization": "Bearer mcp-token"},
 	}}}
-	env, err := ScriptMCPEnvironment(sb, workspace, assets.MCPServers)
+	env, err := ScriptMCPEnvironment(t.Context(), sb, workspace, assets.MCPServers)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,7 +100,7 @@ func TestMCPCallRequiresPersonalCredentialAtCallTime(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	env, err := ScriptMCPEnvironment(sb, workspace, assets.MCPServers)
+	env, err := ScriptMCPEnvironment(t.Context(), sb, workspace, assets.MCPServers)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,7 +117,7 @@ func TestBindMCPWritesWorkspaceBinWithoutPATH(t *testing.T) {
 	workspace := t.TempDir()
 	sb := &localSandbox{workspace: workspace, environment: map[string]string{"PATH": "/usr/bin"}}
 	command := CommandSpec{Argv: []string{"sh", "-lc", "agentflow mcp list"}, CredentialBindings: []CredentialBinding{BindMCP}}
-	bound, err := bindCommand(sb, workspace, command, RunCredentials{MCPServers: []domain.MCPServerDefinition{{
+	bound, err := bindCommand(t.Context(), sb, workspace, command, RunCredentials{MCPServers: []domain.MCPServerDefinition{{
 		ID: "tapd", Name: "TAPD", Transport: "http", URL: "https://example.com/tapd",
 	}}})
 	if err != nil {
@@ -148,9 +149,10 @@ func TestBindMCPWritesWorkspaceBinWithoutPATH(t *testing.T) {
 }
 
 func TestDockerMCPCallPointsAtWorkspaceBin(t *testing.T) {
+	provideDockerHelperFixture(t)
 	workspace := t.TempDir()
 	sb := &localSandbox{workspace: workspace, driver: "docker"}
-	env, err := ScriptMCPEnvironment(sb, workspace, []domain.MCPServerDefinition{{
+	env, err := ScriptMCPEnvironment(t.Context(), sb, workspace, []domain.MCPServerDefinition{{
 		ID: "tapd", Name: "TAPD", Transport: "http", URL: "https://example.com/tapd",
 	}})
 	if err != nil {
@@ -183,10 +185,58 @@ func TestDockerMCPCallPointsAtWorkspaceBin(t *testing.T) {
 	}
 }
 
+func provideDockerHelperFixture(t *testing.T) {
+	t.Helper()
+	if goruntime.GOOS == "linux" {
+		return
+	}
+	pattern := filepath.Join(t.TempDir(), "helper-{os}-{arch}")
+	path := strings.NewReplacer("{os}", "linux", "{arch}", goruntime.GOARCH).Replace(pattern)
+	if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("AGENTFLOW_RUNNER_BINARY", pattern)
+}
+
+func TestDockerHelperBindingWaitsForTheRunnerArtifact(t *testing.T) {
+	if goruntime.GOOS == "linux" {
+		t.Skip("a Linux Runner uses its own executable")
+	}
+	for _, use := range []string{"git", "mcp"} {
+		t.Run(use, func(t *testing.T) {
+			root := t.TempDir()
+			t.Setenv("AGENTFLOW_RUNNER_BINARY", filepath.Join(root, "runner-{os}-{arch}"))
+			helper := filepath.Join(root, "runner-linux-"+goruntime.GOARCH)
+			workspace := t.TempDir()
+			sb := &localSandbox{workspace: workspace, driver: "docker"}
+			const payload = "#!/bin/sh\nexit 0\n"
+			ctx := WithDockerRunnerHelperWait(t.Context(), func(ctx context.Context, path string) error {
+				if path != helper {
+					t.Fatalf("waited for %q, want %q", path, helper)
+				}
+				return os.WriteFile(path, []byte(payload), 0o755)
+			})
+			var err error
+			if use == "git" {
+				env := map[string]string{SessionGatewayEnv: "http://fixture.invalid"}
+				err = bindWorkspaceGitEnvironment(ctx, sb, workspace, env, RunCredentials{GitHTTPHosts: map[string]string{"git.fixture.invalid": "other"}})
+			} else {
+				_, err = PrepareMCPCall(ctx, sb, workspace, nil)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got, err := os.ReadFile(filepath.Join(mcpCallHostDir(workspace), "bin", "agentflow-helper")); err != nil || string(got) != payload {
+				t.Fatalf("workspace helper = %q, %v", got, err)
+			}
+		})
+	}
+}
+
 func TestProcessSandboxMCPCallUsesAbsoluteManagedLauncher(t *testing.T) {
 	workspace := t.TempDir()
 	sb := &localSandbox{workspace: workspace, driver: "bwrap"}
-	env, err := PrepareMCPCall(sb, workspace, []domain.MCPServerDefinition{{
+	env, err := PrepareMCPCall(t.Context(), sb, workspace, []domain.MCPServerDefinition{{
 		ID: "replace-batch", Name: "Replace Batch", Transport: "stdio", Command: "python3", Args: []string{"server.py"}, FileRefs: []domain.MCPFileRef{{Path: "server.py"}},
 	}})
 	if err != nil {
@@ -248,7 +298,7 @@ func TestHookScriptCanCallMCP(t *testing.T) {
 	}
 	sb := &localSandbox{workspace: workspace}
 	command := CommandSpec{Argv: []string{"sh", "-lc", compiled[0].Command}, CredentialBindings: []CredentialBinding{BindMCP}}
-	bound, err := bindCommand(sb, workspace, command, RunCredentials{MCPServers: []domain.MCPServerDefinition{{
+	bound, err := bindCommand(t.Context(), sb, workspace, command, RunCredentials{MCPServers: []domain.MCPServerDefinition{{
 		ID: "tapd", Name: "TAPD", MarketID: "70", Transport: "http", URL: "https://example.com/tapd",
 	}}})
 	if err != nil {

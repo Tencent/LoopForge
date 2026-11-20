@@ -165,6 +165,9 @@ func clearLegacyProjectAgentGitIndex(ctx context.Context, workspace string) erro
 		return cmd.CombinedOutput()
 	}
 	output, err := run()
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
 	if err == nil {
 		return nil
 	}
@@ -194,6 +197,9 @@ func clearLegacyProjectAgentGitIndex(ctx context.Context, workspace string) erro
 			}
 		}
 		inUse, confirmed, inspectErr = gitIndexLockInUse(ctx, lockPath)
+	}
+	if ctx.Err() != nil {
+		return ctx.Err()
 	}
 	if inspectErr != nil || !confirmed {
 		return fmt.Errorf("git update-index %s: %w: %s (cannot safely inspect index lock: %v)", mode, err, strings.TrimSpace(string(output)), inspectErr)

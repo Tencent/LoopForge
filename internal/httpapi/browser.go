@@ -134,6 +134,9 @@ func (h *browserHandlers) touchWorkspace(runID string) {
 }
 
 func (h *browserHandlers) canControl(r *http.Request, run domain.Run, userID int64) bool {
+	if run.IsPersonalWorkspace() {
+		return userID > 0 && userID == run.ExecutionContext.ResponsibleUserID
+	}
 	if mainBotWorkspaceRun(r.Context()) == run.ID {
 		return true
 	}

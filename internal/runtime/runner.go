@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"agentflow/internal/domain"
+	"agentflow/internal/managedcli"
 	"context"
 	"errors"
 	"fmt"
@@ -23,6 +24,16 @@ func (r *ExecutorRunner) Run(ctx context.Context, sb Sandbox, invocationID strin
 		return "", err
 	}
 	driver := sandboxDriver(sb)
+	binary, cliLease, err := pinNativeExecutorCLI(ctx, driver, options.RunID, ex)
+	if err != nil {
+		return "", err
+	}
+	if cliLease != nil {
+		defer cliLease.Close()
+	}
+	if binary != "" {
+		ex.Binary = binary
+	}
 	if options.BrowserMCP == nil && BrowserWantedForExecutor(ex.Kind) {
 		options.BrowserMCP = EnsureSandboxBrowser(ctx, sb, sb.Workspace(), options.RunID, sink)
 	}
@@ -61,6 +72,10 @@ func (r *ExecutorRunner) Run(ctx context.Context, sb Sandbox, invocationID strin
 	command, err := provider.Prepare(providerInvocation{Executor: ex, Compiled: compiled, Prompt: prompt, PromptFile: promptRel, Driver: driver, Options: options})
 	if err != nil {
 		return "", err
+	}
+	command = withBwrapManagedCLI(command, driver)
+	if cliLease != nil {
+		command = WithCommandEnvironment(command, managedcli.AutoUpdateEnvironment(command.Provider))
 	}
 	if strings.EqualFold(command.Provider, "codex") {
 		overlay := map[string]string{}
@@ -210,7 +225,7 @@ func (r *ExecutorRunner) PrepareRemote(workspace string, inv RemoteInvocation) (
 		command.HookOutput = compiled.HookOutput
 	}
 	command = WithCommandEnvironment(command, hookExecutionEnvironment(inv.Options.Repositories))
-	return &PreparedRemote{Command: command}, nil
+	return &PreparedRemote{Command: withBwrapManagedCLI(command, driver)}, nil
 }
 
 func mockShouldSubmitGate(workspace string, agent domain.AgentDefinition, options InvocationOptions) bool {

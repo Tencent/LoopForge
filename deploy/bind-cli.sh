@@ -25,7 +25,7 @@
 #   --uninstall            卸载：通知平台注销机器、停止服务、删除全部文件和配置
 #
 # 默认直接从平台下载对应 OS/架构的二进制（由服务端 /runners/agentflow-runner 分发）。
-# 脚本安装 agentflow-runner 和跨沙箱 Gate MCP helper、写配置并启动
+# 脚本安装 agentflow-runner 和跨沙箱 Git/MCP、Gate MCP helper、写配置并启动
 # daemon。Runner 仅向平台发起出站 HTTPS，不开放任何入站端口。
 
 set -euo pipefail
@@ -38,6 +38,7 @@ BIN_DIR="${HOME}/.local/bin"
 LOCAL_BINARY=""
 DOWNLOAD_URL=""
 SOURCE_DIR=""
+RUNNER_BUILD_SOURCE=""
 INSTALL_SERVICE=0
 NO_START=0
 UNINSTALL=0
@@ -339,6 +340,51 @@ case "$ARCH" in
 esac
 [[ "$OS" == "darwin" || "$OS" == "linux" ]] || fail "不支持的系统: ${OS}（Windows 请使用 PowerShell 安装方式）"
 
+# Use the Mach-O slices instead of uname. A universal Runner installed under
+# Rosetta can later be launched natively by launchd. List the native slice first.
+macos_runner_arches() {
+  local header="" entry_size little=0 arches
+  if [[ -f "$1" ]]; then
+    header="$(LC_ALL=C od -An -v -t x1 -N 8 "$1" | tr -d '[:space:]')"
+  fi
+  case "$header" in
+    cffaedfe07000001) printf '%s\n' amd64; return ;;
+    cffaedfe0c000001) printf '%s\n' arm64; return ;;
+    cafebabe*) entry_size=20 ;;
+    cafebabf*) entry_size=32 ;;
+    bebafeca*) entry_size=20; little=1 ;;
+    bfbafeca*) entry_size=32; little=1 ;;
+    *) printf '%s\n' "$ARCH"; return ;;
+  esac
+  # A fat header is eight bytes. Bound the read to the architecture table
+  # and accept only the CPU types for which we distribute Linux companions.
+  arches=$(LC_ALL=C od -An -v -t u1 -N 4104 "$1" |
+    awk -v stride="$entry_size" -v little="$little" '
+      { for (i = 1; i <= NF; i++) bytes[count++] = $i }
+      function word(offset,   i, value) {
+        for (i = 0; i < 4; i++) value = 256 * value + bytes[offset + (little ? 3-i : i)]
+        return value
+      }
+      END {
+        slices = word(4)
+        if (slices < 1 || 8 + slices * stride > count) exit 1
+        for (slice = 0; slice < slices; slice++) {
+          cpu = word(8 + slice * stride)
+          if (cpu == 16777223) amd64 = 1
+          if (cpu == 16777228) arm64 = 1
+        }
+        if (amd64 && arm64) print "arm64 amd64"
+        else if (amd64) print "amd64"
+        else if (arm64) print "arm64"
+      }') || arches=""
+  # uname reports x86_64 under Rosetta too. Intel Macs can use only amd64.
+  if [[ "$arches" == "arm64 amd64" && "$ARCH" == "amd64" &&
+        "$(PATH="$PATH:/usr/sbin" sysctl -n hw.optional.arm64 2>/dev/null || true)" != "1" ]]; then
+    arches="amd64"
+  fi
+  printf '%s\n' "${arches:-$ARCH}"
+}
+
 RUNNER_HOME="${HOME}/.agentflow-runner"
 ENV_FILE="${RUNNER_HOME}/env"
 STATE_FILE="${RUNNER_HOME}/state.json"
@@ -419,6 +465,12 @@ if [[ "$UNINSTALL" == "1" ]]; then
       docker rmi -f "$image" >/dev/null 2>&1 || true
     done < <(docker images --format '{{.Repository}}' 2>/dev/null | awk '/^agentflow-tmp-rt-/' || true)
     info "已清理 runner Docker 沙箱和临时镜像"
+  fi
+  if [[ "$OS" == "darwin" ]]; then
+    read -r -a runner_arches <<< "$(macos_runner_arches "$BINARY")"
+    for runner_arch in "${runner_arches[@]}"; do
+      rm -f "${BIN_DIR}/agentflow-runner-linux-${runner_arch}"
+    done
   fi
   rm -f "$BINARY"
   rm -f "${BIN_DIR}"/agentflow-gate-mcp-darwin-amd64 \
@@ -537,75 +589,343 @@ case "$(printf '%s' "${AGENTFLOW_BROWSER:-}" | tr '[:upper:]' '[:lower:]')" in
 esac
 
 # ---------- 1. 安装二进制 ----------
-install_binary() {
+download_runner_binary() {
+  local target_os="$1" url
+  if [[ -n "$DOWNLOAD_URL" && ( "$target_os" == "$OS" || "$DOWNLOAD_URL" == *"{os}"* ) ]]; then
+    url="${DOWNLOAD_URL//\{os\}/$target_os}"
+    url="${url//\{arch\}/$ARCH}"
+  else
+    url="${SERVER}/runners/agentflow-runner?os=${target_os}&arch=${ARCH}"
+  fi
+  info "从 ${url} 下载 agentflow-runner（${target_os}/${ARCH}）..."
+  curl -fsSL "$url" -o "$TEMP_BINARY" && [[ -s "$TEMP_BINARY" ]]
+}
+
+build_runner_binary() {
+  local target_os="$1" source="$2" command="${3:-agentflow-runner}" output="$TEMP_BINARY"
+  [[ "$output" == /* ]] || output="$PWD/$output"
+  info "从源码 ${source} 构建 ${command}（${target_os}/${ARCH}）..."
+  (cd "$source" && CGO_ENABLED=0 GOOS="$target_os" GOARCH="$ARCH" go build -o "$output" "./cmd/$command")
+}
+
+publish_runner_binary() {
+  [[ -s "$TEMP_BINARY" ]] || fail "下载或构建的 runner 二进制为空"
+  chmod +x "$TEMP_BINARY"
+  mv -f "$TEMP_BINARY" "$1"
+  TEMP_BINARY=""
+}
+
+stage_runner_binary() {
   mkdir -p "$BIN_DIR"
   TEMP_BINARY=$(mktemp "${BIN_DIR}/.agentflow-runner.XXXXXX")
   if [[ -n "$LOCAL_BINARY" ]]; then
     [[ -f "$LOCAL_BINARY" ]] || fail "本地二进制不存在: $LOCAL_BINARY"
     cp "$LOCAL_BINARY" "$TEMP_BINARY"
   elif [[ -n "$DOWNLOAD_URL" ]]; then
-    URL="${DOWNLOAD_URL//\{os\}/$OS}"
-    URL="${URL//\{arch\}/$ARCH}"
-    info "从 ${URL} 下载二进制..."
-    curl -fsSL "$URL" -o "$TEMP_BINARY"
+    download_runner_binary "$OS"
   else
     # 默认：平台直接分发对应 OS/架构的二进制，无需本机 Go 工具链。
-    info "从 ${SERVER} 下载 agentflow-runner（${OS}/${ARCH}）..."
-    if curl -fsSL "${SERVER}/runners/agentflow-runner?os=${OS}&arch=${ARCH}" -o "$TEMP_BINARY"; then
+    if download_runner_binary "$OS"; then
       :
     else
       # 平台未配置分发：回退到本地源码构建（--source 或当前目录为源码 checkout）。
       AUTO_UPDATE=0
-      SRC="${SOURCE_DIR:-$PWD}"
-      if [[ ! -d "$SRC/cmd/agentflow-runner" ]]; then
+      RUNNER_BUILD_SOURCE="${SOURCE_DIR:-$PWD}"
+      if [[ ! -d "$RUNNER_BUILD_SOURCE/cmd/agentflow-runner" ]]; then
         fail "平台未提供二进制且未找到源码。解决方式任选其一：
   1) 平台管理员设置 AGENTFLOW_SOURCE_ROOT（源码目录）或 AGENTFLOW_RUNNER_BINARY（预编译产物）后重启服务
   2) 本命令追加 --source <AgentFlow 源码目录>（需要本机安装 Go）
   3) 本命令追加 --from <已编译的 agentflow-runner 二进制路径>"
       fi
       command -v go >/dev/null 2>&1 || fail "本机未安装 Go，无法从源码构建；请使用 --from 提供二进制"
-      info "从源码 ${SRC} 构建（${OS}/${ARCH}）..."
-      (cd "$SRC" && CGO_ENABLED=0 GOOS="$OS" GOARCH="$ARCH" go build -o "$TEMP_BINARY" ./cmd/agentflow-runner) \
+      build_runner_binary "$OS" "$RUNNER_BUILD_SOURCE" \
         || fail "源码构建失败；请检查 Go 版本（需 1.22+）或改用 --from"
     fi
   fi
   [[ -s "$TEMP_BINARY" ]] || fail "下载或构建的 runner 二进制为空"
-  chmod +x "$TEMP_BINARY"
-  mv -f "$TEMP_BINARY" "$BINARY"
+}
+
+is_linux_runner_binary() {
+  local binary="$1" machine size layout offset table_size
+  case "${2:-$ARCH}" in
+    amd64) machine=62 ;;
+    arm64) machine=183 ;;
+    *) return 1 ;;
+  esac
+  size=$(wc -c < "$binary") || return 1
+  local decode_bytes='
+    { for (i = 1; i <= NF; i++) bytes[count++] = $i }
+    function little_endian(offset, width,   i, value) {
+      for (i = width - 1; i >= 0; i--) value = 256 * value + bytes[offset + i]
+      return value
+    }'
+  # ELF64 starts with 64 bytes, followed by a table of 56-byte program headers.
+  layout=$(LC_ALL=C od -An -v -t u1 -N 64 "$binary" |
+    awk -v machine="$machine" -v size="$size" "$decode_bytes"'
+      END {
+        if (count != 64 || bytes[0] != 127 || bytes[1] != 69 ||
+            bytes[2] != 76 || bytes[3] != 70 || bytes[4] != 2 ||
+            bytes[5] != 1 || bytes[6] != 1 || (bytes[7] != 0 && bytes[7] != 3)) exit 1
+        type = little_endian(16, 2)
+        offset = little_endian(32, 8)
+        num = little_endian(56, 2)
+        if ((type != 2 && type != 3) || little_endian(18, 2) != machine ||
+            little_endian(54, 2) != 56 || num == 0 || num * 56 > 65536 ||
+            offset < 64 || num * 56 > size - offset) exit 1
+        printf "%.0f %d\n", offset, num * 56
+      }') || return 1
+  read -r offset table_size <<< "$layout"
+  # The header can be valid even when the server only has part of the file.
+  LC_ALL=C od -An -v -t u1 -j "$offset" -N "$table_size" "$binary" |
+    awk -v size="$size" -v table_size="$table_size" "$decode_bytes"'
+      END {
+        if (count != table_size) exit 1
+        for (header = 0; header < count; header += 56) {
+          type = little_endian(header, 4)
+          flags = little_endian(header + 4, 4)
+          offset = little_endian(header + 8, 8)
+          file_size = little_endian(header + 32, 8)
+          if (type != 0 && file_size > 0 && (offset > size || file_size > size - offset)) exit 1
+          if (type != 1) continue
+          if (file_size > little_endian(header + 40, 8)) exit 1
+          if (file_size > 0 && flags % 2 == 1) executable = 1
+        }
+        if (!executable) exit 1
+      }'
+}
+
+is_usable_docker_runner_helper() {
+  # The runtime copies the source into the sandbox with executable mode.
+  [[ -r "$1" && -f "$1" ]] || return 1
+  # A custom installer may also provide an executable script wrapper.
+  [[ "$(LC_ALL=C od -An -v -t x1 -N 2 "$1" | tr -d '[:space:]')" == 2321 ]] ||
+    is_linux_runner_binary "$1" "${2:-$ARCH}"
+}
+
+stage_docker_runner_binary() {
+  local source="${SOURCE_DIR:-$PWD}"
+  if [[ -n "$RUNNER_BUILD_SOURCE" ]]; then
+    build_runner_binary linux "$RUNNER_BUILD_SOURCE" && is_linux_runner_binary "$TEMP_BINARY"
+    return
+  fi
+  if download_runner_binary linux && is_linux_runner_binary "$TEMP_BINARY"; then
+    return 0
+  fi
+  [[ -d "$source/cmd/agentflow-runner" ]] && command -v go >/dev/null 2>&1 &&
+    build_runner_binary linux "$source" && is_linux_runner_binary "$TEMP_BINARY"
+}
+
+install_docker_runner_binary() {
+  # A custom host runner may have a matching helper managed by its installer.
+  # A per-OS download URL can replace the helper when it is the selected source.
+  if [[ -n "$LOCAL_BINARY" || -n "$RUNNER_BUILD_SOURCE" ||
+        ( "$DOWNLOAD_URL" != *"{os}"* && ( -n "$DOWNLOAD_URL" || -n "$SOURCE_DIR" ) ) ]] &&
+      is_usable_docker_runner_helper "$DOCKER_RUNNER_BINARY"; then
+    info "保留自定义 Runner 的 Linux Git/MCP helper：${DOCKER_RUNNER_BINARY}"
+    return
+  fi
+  local helper_dir
+  helper_dir=$(dirname "$DOCKER_RUNNER_BINARY")
+  if [[ -d "$DOCKER_RUNNER_BINARY" || "$DOCKER_RUNNER_BINARY" -ef "$BINARY" ]] ||
+     ! mkdir -p "$helper_dir" || ! TEMP_BINARY=$(mktemp "${helper_dir}/.agentflow-runner.XXXXXX"); then
+    warn "无法准备 Linux Git/MCP helper 的安装位置：${DOCKER_RUNNER_BINARY}"
+    return
+  fi
+  if stage_docker_runner_binary; then
+    publish_runner_binary "$DOCKER_RUNNER_BINARY"
+    return
+  fi
+  rm -f "$TEMP_BINARY"
   TEMP_BINARY=""
+  warn "无法获取有效的 Linux/${ARCH} Git/MCP helper，Docker 工作区需要该文件：${DOCKER_RUNNER_BINARY}"
 }
 
 TEMP_BINARY=""
-trap '[[ -z "$TEMP_BINARY" ]] || rm -f "$TEMP_BINARY"' EXIT
-install_binary
+STAGED_RUNNER=""
+trap '[[ -z "$TEMP_BINARY" ]] || rm -f "$TEMP_BINARY"; [[ -z "$STAGED_RUNNER" ]] || rm -f "$STAGED_RUNNER"' EXIT
+stage_runner_binary
+STAGED_RUNNER="$TEMP_BINARY"
+TEMP_BINARY=""
+
+saved_runner_binary_pattern() {
+  awk 'sub(/^AGENTFLOW_RUNNER_BINARY=/, "") { print; exit }' "$ENV_FILE"
+}
+
+normalize_runner_binary_pattern() {
+  local pattern="$1" working_dir="$2"
+  # Keep the template expansion in sync with runtime.DockerRunnerHelperPath.
+  pattern="${pattern#"${pattern%%[![:space:]]*}"}"
+  pattern="${pattern%"${pattern##*[![:space:]]}"}"
+  if [[ "$pattern" == *"{os}"* && "$pattern" != /* ]]; then
+    pattern="${working_dir%/}/$pattern"
+  fi
+  printf '%s\n' "$pattern"
+}
+
+installed_macos_runner_binary_pattern() {
+  local pattern working_dir
+  if [[ -f "$PLIST" ]] &&
+     pattern=$(/usr/bin/plutil -extract EnvironmentVariables.AGENTFLOW_RUNNER_BINARY raw "$PLIST" 2>/dev/null); then
+    working_dir=$(/usr/bin/plutil -extract WorkingDirectory raw "$PLIST" 2>/dev/null) || working_dir="/"
+    normalize_runner_binary_pattern "$pattern" "${working_dir:-/}"
+  else
+    pattern=$(saved_runner_binary_pattern)
+    normalize_runner_binary_pattern "$pattern" "$PWD"
+  fi
+}
+
+configure_macos_docker_runner_helper() {
+  local pattern
+  pattern=$(normalize_runner_binary_pattern "${AGENTFLOW_RUNNER_BINARY-$1}" "$PWD")
+  if [[ "${#runner_arches[@]}" -gt 1 && "$pattern" == *"{os}"* && "$pattern" != *"{arch}"* ]]; then
+    fail "通用 macOS Runner 需要为每种架构安装 Linux Git/MCP helper，请在 AGENTFLOW_RUNNER_BINARY 中添加 {arch}"
+  fi
+  export AGENTFLOW_RUNNER_BINARY="$pattern"
+}
+
+macos_docker_runner_helper_path() {
+  local target_arch="$1" pattern="$2" target="${BIN_DIR}/agentflow-runner-linux-${1}"
+  if [[ "$pattern" == *"{os}"* ]]; then
+    target="${pattern//\{os\}/linux}"
+    target="${target//\{arch\}/$target_arch}"
+  fi
+  printf '%s\n' "$target"
+}
+
+canonical_helper_target() {
+  local target="$1" dir
+  dir=$(dirname "$target")
+  (mkdir -p "$dir" && cd -P "$dir" && printf '%s/%s\n' "$PWD" "${target##*/}")
+}
+
+check_macos_helper_paths() {
+  local host_target target resolved runner_arch previous_target="" previous_resolved=""
+  host_target=$(canonical_helper_target "$BINARY")
+  for runner_arch in "${runner_arches[@]}"; do
+    target=$(macos_docker_runner_helper_path "$runner_arch" "$AGENTFLOW_RUNNER_BINARY")
+    # Compare physical parents even on fresh installs, where -ef cannot
+    # compare inodes yet. Unavailable helper destinations are warned about
+    # by the installer when it tries to stage the companion.
+    resolved=$(canonical_helper_target "$target" 2>/dev/null) || resolved=""
+    if [[ "$target" -ef "$BINARY" ]] || [[ -n "$resolved" && "$resolved" == "$host_target" ]]; then
+      fail "Linux Git/MCP helper 路径与 macOS Runner 相同：${target}"
+    fi
+    if [[ -n "$previous_target" && "$target" -ef "$previous_target" ]] ||
+       [[ -n "$resolved" && "$resolved" == "$previous_resolved" ]]; then
+      fail "两种架构的 Linux Git/MCP helper 路径相同，请使用独立的架构目录"
+    fi
+    previous_target="$target"
+    previous_resolved="$resolved"
+  done
+}
+
+save_runner_binary_pattern() {
+  [[ "$(saved_runner_binary_pattern)" != "$AGENTFLOW_RUNNER_BINARY" ]] || return 0
+  local tmp
+  tmp=$(mktemp "${RUNNER_HOME}/.env.XXXXXX")
+  if ! { sed '/^AGENTFLOW_RUNNER_BINARY=/d' "$ENV_FILE" &&
+         printf 'AGENTFLOW_RUNNER_BINARY=%s\n' "$AGENTFLOW_RUNNER_BINARY"; } > "$tmp" ||
+     ! mv -f "$tmp" "$ENV_FILE"; then
+    rm -f "$tmp"
+    fail "无法保存 Git/MCP helper 路径配置"
+  fi
+}
+
+if [[ "$OS" == "darwin" ]]; then
+  read -r -a runner_arches <<< "$(macos_runner_arches "$STAGED_RUNNER")"
+  required_arch="${runner_arches[0]}"
+  previous_pattern=""
+  require_replacement_helper=0
+  if [[ "$UPGRADE" == "1" ]]; then
+    previous_pattern=$(installed_macos_runner_binary_pattern)
+    read -r -a previous_arches <<< "$(macos_runner_arches "$BINARY")"
+    # The old universal binary may be running its Intel slice under Rosetta.
+    for previous_arch in "${previous_arches[@]}"; do
+      previous_helper=$(macos_docker_runner_helper_path "$previous_arch" "$previous_pattern")
+      if [[ ! "$previous_helper" -ef "$BINARY" ]] &&
+         is_usable_docker_runner_helper "$previous_helper" "$previous_arch"; then
+        require_replacement_helper=1
+        break
+      fi
+    done
+  fi
+  configure_macos_docker_runner_helper "$previous_pattern"
+  check_macos_helper_paths
+fi
 
 install_gate_binary() {
-  local target_os="$1" target_arch="$2" target
+  local target_os="$1" target_arch="$ARCH" optional="${2:-0}" target
+  local src="${SOURCE_DIR:-$PWD}" error
   target="${GATE_BINARY_PATTERN//\{os\}/$target_os}"
   target="${target//\{arch\}/$target_arch}"
   info "从 ${SERVER} 下载 Gate MCP（${target_os}/${target_arch}）..."
-  if curl -fsSL "${SERVER}/runners/agentflow-gate-mcp?os=${target_os}&arch=${target_arch}" -o "$target"; then
-    chmod +x "$target"
+  TEMP_BINARY=$(mktemp "${BIN_DIR}/.agentflow-gate-mcp.XXXXXX")
+  if curl -fsSL "${SERVER}/runners/agentflow-gate-mcp?os=${target_os}&arch=${target_arch}" -o "$TEMP_BINARY" &&
+     [[ -s "$TEMP_BINARY" ]]; then
+    publish_runner_binary "$target"
     return
   fi
-  local src="${SOURCE_DIR:-$PWD}"
-  [[ -d "$src/cmd/agentflow-gate-mcp" ]] || fail "平台未提供 Gate MCP ${target_os}/${target_arch} 二进制，且未找到本地源码"
-  command -v go >/dev/null 2>&1 || fail "本机未安装 Go，无法构建 Gate MCP；请让平台配置 AGENTFLOW_GATE_MCP_BINARY"
-  info "从源码 ${src} 构建 Gate MCP（${target_os}/${target_arch}）..."
-  (cd "$src" && CGO_ENABLED=0 GOOS="$target_os" GOARCH="$target_arch" go build -o "$target" ./cmd/agentflow-gate-mcp) \
-    || fail "Gate MCP 源码构建失败"
-  chmod +x "$target"
+  if [[ ! -d "$src/cmd/agentflow-gate-mcp" ]]; then
+    error="平台未提供 Gate MCP ${target_os}/${target_arch} 二进制，且未找到本地源码"
+  elif ! command -v go >/dev/null 2>&1; then
+    error="本机未安装 Go，无法构建 Gate MCP；请让平台配置 AGENTFLOW_GATE_MCP_BINARY"
+  elif build_runner_binary "$target_os" "$src" agentflow-gate-mcp && [[ -s "$TEMP_BINARY" ]]; then
+    publish_runner_binary "$target"
+    return
+  else
+    error="Gate MCP ${target_os}/${target_arch} 源码构建失败"
+  fi
+  rm -f "$TEMP_BINARY"
+  TEMP_BINARY=""
+  if [[ "$optional" == "1" ]]; then
+    warn "$error"
+  else
+    fail "$error"
+  fi
 }
 
-# Host sandbox uses the native helper. Docker always uses Linux; on a macOS
-# runner both artifacts are therefore required.
-install_gate_binary "$OS" "$ARCH"
-if [[ "$OS" != "linux" ]]; then
-  install_gate_binary linux "$ARCH"
+# Install the primary slice's companions before touching the optional slice.
+if [[ "$OS" == "darwin" ]]; then
+  for ARCH in "${runner_arches[@]}"; do
+    DOCKER_RUNNER_BINARY=$(macos_docker_runner_helper_path "$ARCH" "$AGENTFLOW_RUNNER_BINARY")
+    optional_gate=0
+    [[ "$ARCH" == "$required_arch" ]] || optional_gate=1
+    install_gate_binary darwin "$optional_gate"
+    install_gate_binary linux "$optional_gate"
+    install_docker_runner_binary
+    if [[ "$ARCH" == "$required_arch" && "$require_replacement_helper" == "1" ]] &&
+       ! is_usable_docker_runner_helper "$DOCKER_RUNNER_BINARY"; then
+      fail "缺少升级所需的 Linux/${ARCH} Git/MCP helper（${DOCKER_RUNNER_BINARY}），已保留当前 Runner 和服务"
+    fi
+  done
+else
+  install_gate_binary "$OS"
 fi
 
+TEMP_BINARY="$STAGED_RUNNER"
+STAGED_RUNNER=""
+publish_runner_binary "$BINARY"
+
 if [[ "$UPGRADE" == "1" ]]; then
+  if [[ "$OS" == "darwin" ]]; then
+    save_runner_binary_pattern
+  fi
   if [[ "$OS" == "darwin" && -f "$PLIST" ]]; then
+    if [[ "$AUTO_UPDATE" == "0" ]]; then
+      arg_count=$(/usr/bin/plutil -extract ProgramArguments raw -expect array "$PLIST")
+      if [[ "$arg_count" -eq 0 ]] ||
+         [[ "$(/usr/bin/plutil -extract "ProgramArguments.$((arg_count - 1))" raw "$PLIST")" != "-auto-update=false" ]]; then
+        /usr/bin/plutil -insert ProgramArguments -string -auto-update=false -append "$PLIST"
+      fi
+    fi
+    if [[ "$AGENTFLOW_RUNNER_BINARY" == *"{os}"* ]]; then
+      if ! /usr/bin/plutil -type EnvironmentVariables "$PLIST" >/dev/null 2>&1; then
+        /usr/bin/plutil -insert EnvironmentVariables -dictionary "$PLIST"
+      fi
+      /usr/bin/plutil -replace EnvironmentVariables.AGENTFLOW_RUNNER_BINARY -string "$AGENTFLOW_RUNNER_BINARY" "$PLIST"
+    elif /usr/bin/plutil -type EnvironmentVariables.AGENTFLOW_RUNNER_BINARY "$PLIST" >/dev/null 2>&1; then
+      /usr/bin/plutil -remove EnvironmentVariables.AGENTFLOW_RUNNER_BINARY "$PLIST"
+    fi
     launchctl unload "$PLIST"
     launchctl load "$PLIST"
     info "已原地升级并重启 launchd 服务；机器绑定和工作区保持不变"
@@ -630,6 +950,7 @@ AGENTFLOW_RUNNER_BOOTSTRAP_TOKEN=${TOKEN}
 AGENTFLOW_RUNNER_NAME=${NAME:-$(hostname)}
 AGENTFLOW_RUNNER_CONCURRENCY=${CONCURRENCY}
 AGENTFLOW_GATE_MCP_BINARY=${GATE_BINARY_PATTERN}
+AGENTFLOW_RUNNER_BINARY=${AGENTFLOW_RUNNER_BINARY:-}
 EOF
 chmod 600 "$ENV_FILE"
 info "配置已写入 ${ENV_FILE}（权限 600）"
@@ -640,6 +961,12 @@ RUN_ARGS=(-server "$SERVER" -token "$TOKEN" -name "${NAME:-$(hostname)}" -concur
 if [[ "$AUTO_UPDATE" == "0" ]]; then
   RUN_ARGS+=(-auto-update=false)
 fi
+RUNNER_LAUNCH=("$BINARY")
+if [[ "$OS" == "darwin" && "${#runner_arches[@]}" -gt 1 ]]; then
+  # Use the required native slice for foreground and manual starts, even
+  # when the shell runs under Rosetta and the optional amd64 files are absent.
+  RUNNER_LAUNCH=(/usr/bin/arch -arm64 "$BINARY")
+fi
 
 # 用户当前 PATH：launchd/systemd 的服务环境只有 /usr/bin:/bin，不含
 # ~/.local/bin、Homebrew、nvm 等 CLI 安装目录，必须显式带入。
@@ -647,7 +974,14 @@ USER_PATH="${PATH}"
 
 if [[ "$NO_START" == "1" ]]; then
   info "已完成安装与配置（--no-start，未启动）。手动启动："
-  info "  $BINARY ${RUN_ARGS[*]}"
+  runner_command=""
+  if [[ "${AGENTFLOW_RUNNER_BINARY:-}" == *"{os}"* ]]; then
+    runner_command="AGENTFLOW_RUNNER_BINARY=$(shell_quote "$AGENTFLOW_RUNNER_BINARY") "
+  fi
+  for arg in "${RUNNER_LAUNCH[@]}" "${RUN_ARGS[@]}"; do
+    runner_command+="$(shell_quote "$arg") "
+  done
+  info "  ${runner_command% }"
   info "常驻方式：追加 --service 重新执行本脚本；卸载：追加 --uninstall（--purge 删除全部配置）"
 elif [[ "$INSTALL_SERVICE" == "1" ]]; then
   if [[ "$OS" == "darwin" ]]; then
@@ -663,11 +997,13 @@ EOF
     # plist 值需要 XML 转义（& 等）
     ESCAPED_PATH=$(printf '%s' "$USER_PATH" | sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g')
     ESCAPED_GATE_PATTERN=$(printf '%s' "$GATE_BINARY_PATTERN" | sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g')
+    ESCAPED_RUNNER_PATTERN=$(printf '%s' "$AGENTFLOW_RUNNER_BINARY" | sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g')
     cat >> "$PLIST" <<EOF
   </array>
   <key>EnvironmentVariables</key><dict>
     <key>PATH</key><string>${ESCAPED_PATH}</string>
     <key>AGENTFLOW_GATE_MCP_BINARY</key><string>${ESCAPED_GATE_PATTERN}</string>
+    <key>AGENTFLOW_RUNNER_BINARY</key><string>${ESCAPED_RUNNER_PATTERN}</string>
   </dict>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
@@ -708,5 +1044,5 @@ EOF
   info "卸载方式：curl -fsSL ${SERVER}/runners/install.sh | bash -s -- --uninstall"
 else
   info "前台启动 agentflow-runner（Ctrl+C 停止；常驻请加 --service）..."
-  exec "$BINARY" "${RUN_ARGS[@]}"
+  exec "${RUNNER_LAUNCH[@]}" "${RUN_ARGS[@]}"
 fi

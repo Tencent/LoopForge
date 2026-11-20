@@ -84,7 +84,7 @@ func LookupCodeBuddyCredentialReadOnly(ctx context.Context, dsn, login string) (
 SELECT COALESCE(u.staff_id, 0), COALESCE(u.chinese_name, ''), COALESCE(u.dept_id, 0), COALESCE(u.dept_name, ''),
        COALESCE(c.codebuddy_api_key, ''),
        COALESCE(c.codebuddy_internet_environment, ''),
-       COALESCE(c.git_token, '')
+       COALESCE((SELECT token FROM user_git_http_credentials h WHERE h.user_id=u.id AND h.host='github.com'), '')
   FROM users u
   LEFT JOIN user_configs c ON c.user_id = u.id
  WHERE u.login_name = ?
@@ -135,9 +135,23 @@ func SeedAssistantAcceptance(st *repo.Store, ident AssistantAcceptanceIdentity) 
 	if _, err := st.UpdateUserCredentials(user.ID, repo.UserCredentialUpdate{
 		CodeBuddyAPIKey:              ident.CodeBuddyAPIKey,
 		CodeBuddyInternetEnvironment: &env,
-		GitToken:                     ident.GitToken,
 	}); err != nil {
 		return domain.User{}, err
+	}
+	if ident.GitToken != "" {
+		existingID := ""
+		listed, err := st.GitHTTPCredentials(user.ID)
+		if err != nil {
+			return domain.User{}, err
+		}
+		for _, credential := range listed {
+			if credential.Host == "github.com" {
+				existingID = credential.ID
+			}
+		}
+		if err := st.SaveGitHTTPCredential(user.ID, existingID, domain.GitHTTPCredentialSecret{GitHTTPCredential: domain.GitHTTPCredential{Name: "GitHub", Host: "github.com", Platform: domain.GitPlatformGitHub}, Token: ident.GitToken}); err != nil {
+			return domain.User{}, err
+		}
 	}
 	user, ok = st.UserByLoginName(ident.LoginName)
 	if !ok || strings.TrimSpace(user.CodeBuddyAPIKey) == "" {

@@ -4,6 +4,7 @@ import {
   enqueue,
   holdQueue,
   nextQueued,
+  queuedApproval,
   queuedMessage,
   readQueues,
   removeQueued,
@@ -22,6 +23,14 @@ function memoryStorage() {
 }
 
 describe("message queue", () => {
+  test("keeps the approving account and requires confirmation when approval has no matching project", () => {
+    const message = queuedMessage({ text: "继续", approvalMode: "auto", approvalUserId: 1, approvalProjectId: "" });
+    expect(queuedApproval(message, 2, "")).toEqual({ approvalMode: "auto", approvalUserId: 1 });
+    expect(queuedApproval(message, 1, "p1")).toEqual({ approvalMode: "confirm", approvalUserId: 1 });
+    expect(queuedApproval({ approvalMode: "auto", approvalUserId: 1 }, 1, "")).toEqual({ approvalMode: "confirm", approvalUserId: 1 });
+    expect(queuedApproval({ approvalMode: "auto" }, 2, "")).toEqual({ approvalMode: "confirm", approvalUserId: 2 });
+  });
+
   test("keeps messages per conversation in order", () => {
     const a = queuedMessage({ text: " 先看 CI " });
     const b = queuedMessage({ text: "再看日志", attachments: [{ id: "f1" }] });

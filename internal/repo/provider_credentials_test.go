@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -94,8 +95,9 @@ func TestProviderUserCredentials(t *testing.T) {
 			}
 			u, _ := st.UserByLoginName(login)
 			codexURL, claudeURL := "https://codex.example/v1", "https://claude.example"
-			codexModels := []domain.CLIModel{{ID: "gpt-5.5", Name: "gpt-5.5"}}
-			claudeModels := []domain.CLIModel{{ID: "claude-sonnet", Name: "Sonnet"}}
+			levels, defaultOnly := []string{" low ", "xhigh", "low"}, []string{}
+			codexModels := []domain.CLIModel{{ID: "gpt-5.5", Name: "gpt-5.5", ReasoningEfforts: &levels}}
+			claudeModels := []domain.CLIModel{{ID: "claude-sonnet", Name: "Sonnet", ReasoningEfforts: &defaultOnly}}
 			_, err = st.UpdateUserCredentials(u.ID, UserCredentialUpdate{CodexAPIKey: "codex-secret", CodexBaseURL: &codexURL, CodexModels: &codexModels, ClaudeCodeAPIKey: "claude-secret", ClaudeCodeBaseURL: &claudeURL, ClaudeCodeModels: &claudeModels})
 			if err != nil {
 				t.Fatal(err)
@@ -104,13 +106,19 @@ func TestProviderUserCredentials(t *testing.T) {
 			if err := st.PutUser(domain.User{ID: u.ID, LoginName: login, ChineseName: "更新姓名"}); err != nil {
 				t.Fatal(err)
 			}
-			_, err = st.UpdateUserCredentials(u.ID, UserCredentialUpdate{GitToken: "git-secret"})
+			err = st.SaveGitHTTPCredential(u.ID, "", domain.GitHTTPCredentialSecret{GitHTTPCredential: domain.GitHTTPCredential{Host: "github.com", Name: "GitHub", Platform: domain.GitPlatformGitHub}, Token: "git-secret"})
 			if err != nil {
 				t.Fatal(err)
 			}
 			got, ok := st.User(u.ID)
 			if !ok || got.CodexAPIKey != "codex-secret" || got.ClaudeCodeAPIKey != "claude-secret" || got.CodexBaseURL != codexURL || got.ClaudeCodeBaseURL != claudeURL || len(got.CodexModels) != 1 || got.CodexModels[0].ID != "gpt-5.5" || got.CodexModels[0].Name != "" || len(got.ClaudeCodeModels) != 1 || got.ClaudeCodeModels[0].Name != "Sonnet" {
 				t.Fatalf("credentials did not survive refresh and partial update: %+v %+v", got.CodexModels, got.ClaudeCodeModels)
+			}
+			if efforts := got.CodexModels[0].ReasoningEfforts; efforts == nil || !slices.Equal(*efforts, []string{"low", "xhigh"}) {
+				t.Fatalf("reasoning levels lost on refresh: %+v", got.CodexModels)
+			}
+			if efforts := got.ClaudeCodeModels[0].ReasoningEfforts; efforts == nil || len(*efforts) != 0 {
+				t.Fatal("explicit default-only model reverted to automatic reasoning levels")
 			}
 			{
 				var configRows int
@@ -142,7 +150,7 @@ func TestProviderUserCredentials(t *testing.T) {
 				t.Fatal(err)
 			}
 			cleared, _ := st.User(u.ID)
-			if cleared.CodexAPIKey != "" || cleared.ClaudeCodeAPIKey != "" || cleared.CodexBaseURL != "" || cleared.ClaudeCodeBaseURL != "" || len(cleared.CodexModels) != 0 || len(cleared.ClaudeCodeModels) != 0 || cleared.GitToken != "git-secret" {
+			if cleared.CodexAPIKey != "" || cleared.ClaudeCodeAPIKey != "" || cleared.CodexBaseURL != "" || cleared.ClaudeCodeBaseURL != "" || len(cleared.CodexModels) != 0 || len(cleared.ClaudeCodeModels) != 0 || !cleared.GitHubCredentialConfigured {
 				t.Fatal("clear operation did not isolate providers")
 			}
 		})
@@ -192,8 +200,9 @@ func TestCursorFamilyEffortsRoundTrip(t *testing.T) {
 		t.Fatalf("new key kept the old catalog: %+v", got.AgentCLICredentials["cursor"])
 	}
 	for name, bad := range map[string]domain.CLIModel{
-		"unknown effort": {ID: "widget", Efforts: map[string]string{"turbo": "widget-turbo"}},
-		"bad target":     {ID: "widget", Efforts: map[string]string{"low": "widget low"}},
+		"unknown effort":          {ID: "widget", Efforts: map[string]string{"turbo": "widget-turbo"}},
+		"bad target":              {ID: "widget", Efforts: map[string]string{"low": "widget low"}},
+		"unknown reasoning level": {ID: "widget", ReasoningEfforts: &[]string{"turbo"}},
 	} {
 		if _, err := st.UpdateUserCredentials(user.ID, UserCredentialUpdate{AgentCLICredentials: map[string]AgentCLICredentialUpdate{
 			"cursor": {Models: &[]domain.CLIModel{bad}},

@@ -5,13 +5,15 @@ import { loadApp, settle } from '../lib/load-app.mjs';
 test('token management renders client specs, revealed prompts, and credential hints', async (t) => {
   const app = await loadApp();
   t.after(app.close);
+  app.router.get('/api/users/1/git-http-credentials', [{id:'github',host:'github.com'}]);
+  app.router.delete('/api/users/1/git-http-credentials/github', []);
   app.router.put('/api/users/1/credentials', {
     id: 1, loginName: 'alice', chineseName: 'Alice', isGuest: false,
-    gitTokenConfigured: true, codeBuddyApiKeyConfigured: true,
+    gitHubCredentialConfigured: true, codeBuddyApiKeyConfigured: true,
   });
   app.router.get('/api/users', [{
     id: 1, loginName: 'alice', chineseName: 'Alice', isGuest: false,
-    gitTokenConfigured: true, gitTokenOAuth: true, codeBuddyApiKeyConfigured: true,
+    gitHubCredentialConfigured: true, gitTokenOAuth: true, codeBuddyApiKeyConfigured: true,
   }]);
   app.router.post('/api/users/1/git-token/verify', {
     valid: false, missing: ['write_repository'],
@@ -47,7 +49,7 @@ test('token management renders client specs, revealed prompts, and credential hi
     url:credentialExtraError(credentialKind('codexApiKey'),'ftp://bad'),
     save:credentialSavePayload(credentialKind('codeBuddyApiKey'),{secret:' ck_x ',extra:'ioa'}),
     clear:credentialClearPayload(credentialKind('codexApiKey')),
-    next:credentialNextKind({gitTokenConfigured:true}).key,
+    next:credentialNextKind({gitHubCredentialConfigured:true}).key,
     badge:credentialBadgeHTML('err')
   })`);
   assert.equal(credential.pat, '');
@@ -58,7 +60,7 @@ test('token management renders client specs, revealed prompts, and credential hi
   assert.match(credential.badge, /有错误/);
 
   app.evaluate(`
-    state.data.users=[{...state.currentUser,id:1,gitTokenConfigured:true,codeBuddyApiKeyConfigured:true}];
+    state.data.users=[{...state.currentUser,id:1,gitHubCredentialConfigured:true,codeBuddyApiKeyConfigured:true}];
     state.currentUser=state.data.users[0];
     renderPersonalSettings();
   `);
@@ -91,7 +93,7 @@ test('token management renders client specs, revealed prompts, and credential hi
   gitRow.querySelector('[data-credential-act="delete"]').click();
   gitRow.querySelector('[data-credential-act="confirm-delete"]').click();
   await settle(6);
-  assert.ok(app.router.calls.some(c => c.path === '/api/users/1/credentials' && c.body.gitTokenClear));
+  assert.ok(app.router.calls.some(c => c.method === 'DELETE' && c.path === '/api/users/1/git-http-credentials/github'));
   await app.evaluate(`refreshGongfengGrant()`);
   assert.equal(app.evaluate(`state.data.users[0].gitTokenOAuth`), true);
 
@@ -111,7 +113,7 @@ test('token management renders client specs, revealed prompts, and credential hi
 
   app.evaluate(`
     state.currentUser={id:1,loginName:'alice',chineseName:'Alice',isGuest:false};
-    state.data.users=[{...state.currentUser,gitTokenConfigured:true,codeBuddyApiKeyConfigured:false}];
+    state.data.users=[{...state.currentUser,gitHubCredentialConfigured:true,codeBuddyApiKeyConfigured:false}];
     renderPersonalSettings();openCredentialWizard('codexApiKey');
   `);
   await settle(3);
