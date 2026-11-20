@@ -242,6 +242,9 @@ func AgentCLICommand(kind string, o AgentCLICommandOptions) CommandSpec {
 		if resume != "" {
 			argv = append(argv, "--resume", resume)
 		}
+		if options.Effort != "" {
+			argv = append(argv, "--reasoning-effort", options.Effort)
+		}
 		argv = append(argv, extra...)
 	}
 	return CommandSpec{Argv: argv, Provider: kind, AgentCLI: options}

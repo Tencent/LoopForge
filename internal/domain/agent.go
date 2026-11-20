@@ -16,6 +16,7 @@ var ExecutorEffortLevels = map[string][]string{
 	"opencode":    {"low", "medium", "high"},
 	"cursor":      {"none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"},
 	"agy":         {"low", "medium", "high", "xhigh", "max"},
+	"qodercn":     {"low", "medium", "high", "xhigh", "max"},
 	"kimi":        {"none", "thinking", "low", "high", "max"},
 	"pi":          {"minimal", "low", "medium", "high", "xhigh", "max"},
 	"dsh":         {"none", "low", "high", "max"},

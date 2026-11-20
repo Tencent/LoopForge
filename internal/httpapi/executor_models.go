@@ -180,9 +180,22 @@ func executorModelCatalogs(kimiBaseURL string) map[string]executorModelCatalog {
 		// keeps that choice, and a custom ID is passed through QODERCN_MODEL.
 		"qodercn": {
 			CustomModel: true,
+			// Qoder CN's Default tab only offers Auto routing; the New tab lists
+			// frontier models. Names per docs.qoder.cn/cli/models; the live set
+			// is whatever `qodercn --list-models` reports for the account.
 			Models: []executorModelInfo{
-				{ID: "default", Name: "CLI 默认"},
+				{ID: "auto", Name: "Auto 智能路由"},
+				{ID: "Qwen3.8-Max", Name: "Qwen3.8-Max"},
+				{ID: "Qwen3.7-Max", Name: "Qwen3.7-Max"},
+				{ID: "Qwen3.7-Plus", Name: "Qwen3.7-Plus"},
+				{ID: "Qwen3.6-Flash", Name: "Qwen3.6-Flash"},
+				{ID: "DeepSeek-V4-Pro", Name: "DeepSeek-V4-Pro"},
+				{ID: "DeepSeek-V4-Flash", Name: "DeepSeek-V4-Flash"},
+				{ID: "GLM-5.2", Name: "GLM-5.2"},
+				{ID: "Kimi-K2.7-Code", Name: "Kimi-K2.7-Code"},
+				{ID: "MiniMax-M2.7", Name: "MiniMax-M2.7"},
 			},
+			Efforts: effortOptions(domain.ExecutorEffortLevels["qodercn"]),
 		},
 	}
 	for engine, catalog := range catalogs {
