@@ -340,6 +340,11 @@ func assistantTurnCatalogModel(ctx context.Context, requested string, catalog as
 // the owner's account when it runs (see scheduledRunModel).
 func assistantScheduledModel(id string, catalog assistantModelCatalog) string {
 	engine, model := assistantModelEngine(id)
+	if engine != assistantEngineCodeBuddy && domain.ChosenModel(model) == "" {
+		// Existing jobs may select a runner login without a concrete model.
+		// Keep the selected CLI until the run-as account is known.
+		return engine + ":" + assistantDefaultModel
+	}
 	model = domain.ChosenModel(model)
 	if engine != assistantEngineCodeBuddy && assistantValidEngineModel(model) {
 		return engine + ":" + model

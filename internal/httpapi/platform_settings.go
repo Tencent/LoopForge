@@ -204,11 +204,12 @@ func (h *usersHandlers) platformCodeBuddyKey(c *gin.Context) {
 			environment = normalized
 		}
 		apiKey := ""
+		var saved []string
 		if key, ok := h.repo.SharedCodeBuddyKey(); ok && key.SponsorID == 0 && key.InternetEnvironment == environment {
-			apiKey = key.APIKey
+			apiKey, saved = key.APIKey, key.Models
 		}
 		refreshCLIModels(c.Request.Context(), environment, apiKey)
-		catalog := loadAssistantModels(c.Request.Context(), environment, apiKey).Models
+		catalog := selectableCodeBuddyModels(assistantChatCatalog(c.Request.Context(), environment, apiKey, saved).Models)
 		c.JSON(http.StatusOK, platformCodeBuddyKeyResponse{PlatformCodeBuddyKeyStatus: status, Catalog: catalog})
 	case http.MethodPut:
 		h.savePlatformCodeBuddyKey(c)

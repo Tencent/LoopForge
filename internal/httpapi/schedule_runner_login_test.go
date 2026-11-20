@@ -29,6 +29,9 @@ func testScheduleJobUsesSaversDefaultRunnerLogin(t *testing.T, cliEngine string)
 	t.Setenv("TMPDIR", t.TempDir())
 	t.Setenv("AGENTFLOW_AUTH_REQUIRED", "true")
 	t.Setenv("AGENTFLOW_SESSION_SECRET", "schedule-runner-login-test")
+	// The test drives each run explicitly and controls the runner connection.
+	t.Setenv("AGENTFLOW_SCHEDULER_ENABLED", "false")
+	stubCLIModelDiscovery(t)
 	h, owner := workbenchFixture(t)
 	st := h.repo
 	if err := st.PutUser(domain.User{LoginName: "schedule-runner-saver"}); err != nil {
@@ -144,7 +147,10 @@ func testScheduleJobUsesSaversDefaultRunnerLogin(t *testing.T, cliEngine string)
 
 	sessions := st.ListAssistantSessionsByTask(domain.AssistantSourceScheduled, saved.ID)
 	if len(sessions) != 1 || sessions[0].UserID != saver.ID || sessions[0].Execution().RunnerID != machine.ID || !sessions[0].ExecutionLocked() {
-		t.Fatal("scheduled session did not retain the saver and their machine")
+		if len(sessions) != 1 {
+			t.Fatalf("expected one scheduled runner session, got %d", len(sessions))
+		}
+		t.Fatalf("scheduled runner session owner=%d target=%v locked=%t, want owner=%d runner=%s", sessions[0].UserID, sessions[0].Execution(), sessions[0].ExecutionLocked(), saver.ID, machine.ID)
 	}
 	machine.Status = domain.RunnerStatusOffline
 	if err := st.PutRunner(machine); err != nil {
@@ -168,9 +174,11 @@ func testScheduleJobUsesSaversDefaultRunnerLogin(t *testing.T, cliEngine string)
 		t.Fatalf("offline runner without a key = %v, attempts = %d", err, keyAttempts)
 	}
 
-	update := repo.UserCredentialUpdate{ClaudeCodeAPIKey: saverKey}
+	savedModels := []domain.CLIModel{{ID: "sonnet"}}
+	update := repo.UserCredentialUpdate{ClaudeCodeAPIKey: saverKey, ClaudeCodeModels: &savedModels}
 	if cliEngine == runtime.AgentCLIAntigravity {
-		update = repo.UserCredentialUpdate{AgentCLICredentials: map[string]repo.AgentCLICredentialUpdate{cliEngine: {APIKey: saverKey}}}
+		savedModels = []domain.CLIModel{{ID: "gemini-4-hydrogen-high"}}
+		update = repo.UserCredentialUpdate{AgentCLICredentials: map[string]repo.AgentCLICredentialUpdate{cliEngine: {APIKey: saverKey, Models: &savedModels}}}
 	}
 	if _, err := st.UpdateUserCredentials(saver.ID, update); err != nil {
 		t.Fatal(err)
@@ -184,8 +192,8 @@ func testScheduleJobUsesSaversDefaultRunnerLogin(t *testing.T, cliEngine string)
 	sessions = st.ListAssistantSessionsByTask(domain.AssistantSourceScheduled, saved.ID)
 	cloud := slices.IndexFunc(sessions, func(s domain.AssistantSession) bool { return s.ID != runnerSession })
 	if len(sessions) != 2 || cloud < 0 || sessions[cloud].UserID != saver.ID ||
-		sessions[cloud].Execution().Pool != domain.ExecutionModeCloud || sessions[cloud].Model != saved.AssistantModel {
-		t.Fatal("offline fallback did not run the same model and user in the cloud")
+		sessions[cloud].Execution().Pool != domain.ExecutionModeCloud || sessions[cloud].Model != cliEngine+":"+savedModels[0].ID {
+		t.Fatalf("expected two sessions and a cloud session using %s:%s for user %d, got %d sessions (cloud index %d)", cliEngine, savedModels[0].ID, saver.ID, len(sessions), cloud)
 	}
 
 	keyError = assistantCredentialError{engine: cliEngine}

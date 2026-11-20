@@ -457,7 +457,9 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 	var turnUsage assistantTurnUsage
 	replyModel := strings.TrimSpace(req.Model)
 	if report, ok := modelCtx.Value(scheduledUsageReportKey{}).(scheduledUsageReport); ok && report.GenerationID == assistantControlScopeFrom(modelCtx).GenerationID && report.Report != nil {
-		defer func() { report.Report(replyModel, turnUsage.snapshot()) }()
+		// Preserve the usage record for CLIs that use their own default and
+		// do not report a concrete model.
+		defer func() { report.Report(firstNonEmpty(replyModel, assistantDefaultModel), turnUsage.snapshot()) }()
 	}
 	generate := h.generate
 	if generate == nil {

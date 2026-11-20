@@ -61,6 +61,10 @@ if [ "$1" = "--version" ]; then
   echo 2.185.0
   exit 0
 fi
+if [ "$1" = "--help" ]; then
+  echo 'Currently supported: (fixture-model)'
+  exit 0
+fi
 previous=''
 config=''
 sid=''
