@@ -15,7 +15,7 @@ import (
 	"agentflow/internal/runtime"
 )
 
-var errAssistantMissingResult = errors.New("CodeBuddy did not emit type=result")
+var errAssistantMissingResult = errors.New("CLI did not return a non-empty answer in type=result")
 var errAssistantExecutionUnavailable = errors.New("conversation execution machine unavailable")
 
 func assistantCLIMaxTurns(text string) bool {
