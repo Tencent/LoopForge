@@ -55,7 +55,11 @@ func setDraftBodyField(body json.RawMessage, key string, value any) json.RawMess
 	if len(body) > 0 {
 		_ = json.Unmarshal(body, &obj)
 	}
-	obj[key] = value
+	if value == nil {
+		delete(obj, key)
+	} else {
+		obj[key] = value
+	}
 	out, err := json.Marshal(obj)
 	if err != nil {
 		return body
@@ -138,8 +142,11 @@ func (h *assistantHandlers) confirmBotDrafts(ctx context.Context, bot domain.Not
 	newIssues := 0
 	for i, d := range drafts {
 		sop := ""
-		if wf, ok := h.botDraftIssueWorkflow(bot.ProjectID, d); ok {
-			sop = h.botWorkflowName(wf)
+		if explicit, def, ok := h.botDraftIssueSOP(bot.ProjectID, d); ok {
+			sop = h.botWorkflowName(explicit)
+			if explicit == "" {
+				sop = "项目默认 · " + h.botWorkflowName(def)
+			}
 			newIssues++
 		}
 		line := fmt.Sprintf("%d. %s", i+1, botDraftSummaryLineSOP(d, sop))
@@ -179,9 +186,13 @@ type botDraftView struct {
 }
 
 type botDraftIssue struct {
-	Index      int    `json:"index"`
-	Title      string `json:"title"`
-	WorkflowID string `json:"workflowId"`
+	Index int    `json:"index"`
+	Title string `json:"title"`
+	// WorkflowID is the SOP the model named; empty means the project
+	// default, which is DefaultWorkflowID / DefaultWorkflowName.
+	WorkflowID          string `json:"workflowId"`
+	DefaultWorkflowID   string `json:"defaultWorkflowId"`
+	DefaultWorkflowName string `json:"defaultWorkflowName"`
 }
 
 type botDraftWorkflow struct {
@@ -189,7 +200,8 @@ type botDraftWorkflow struct {
 	Name string `json:"name"`
 }
 
-// botDraftChoice is the user's SOP choice for one new requirement.
+// botDraftChoice is the user's SOP choice for one new requirement; an empty
+// workflowId selects the project default SOP.
 type botDraftChoice struct {
 	Index      int    `json:"index"`
 	WorkflowID string `json:"workflowId"`
@@ -200,24 +212,32 @@ type botDraftChoice struct {
 // binds to: the workflowId the model set, else the project default. Drafts
 // that update an existing issue are not new requirements.
 func (h *assistantHandlers) botDraftIssueWorkflow(projectID string, d assistantDraft) (string, bool) {
+	explicit, def, ok := h.botDraftIssueSOP(projectID, d)
+	if explicit != "" {
+		return explicit, ok
+	}
+	return def, ok
+}
+
+// botDraftIssueSOP returns the SOP the model named for a new requirement
+// (empty when none) and the project default it would otherwise get.
+func (h *assistantHandlers) botDraftIssueSOP(projectID string, d assistantDraft) (string, string, bool) {
 	if strings.TrimSpace(d.Tool) != "issues_save" {
-		return "", false
+		return "", "", false
 	}
 	var body map[string]any
 	if len(d.Body) > 0 && json.Unmarshal(d.Body, &body) != nil {
-		return "", false
+		return "", "", false
 	}
 	if id, _ := body["id"].(string); strings.TrimSpace(id) != "" {
 		if _, exists := h.repo.Issue(strings.TrimSpace(id)); exists {
-			return "", false
+			return "", "", false
 		}
-	}
-	if wf, _ := body["workflowId"].(string); strings.TrimSpace(wf) != "" {
-		return strings.TrimSpace(wf), true
 	}
 	source, _ := body["source"].(string)
 	kind, _ := body["kind"].(string)
-	return h.repo.DefaultIssueWorkflow(projectID, source, kind), true
+	explicit, _ := body["workflowId"].(string)
+	return strings.TrimSpace(explicit), h.repo.DefaultIssueWorkflow(projectID, source, kind), true
 }
 
 func (h *assistantHandlers) botWorkflowName(id string) string {
@@ -231,7 +251,9 @@ func (h *assistantHandlers) botWorkflowName(id string) string {
 }
 
 // botDraftWorkflows lists the SOPs a requirement of the project may be bound
-// to: the project's own and shared published SOPs, plus the current choices.
+// to, like the requirement form on the platform: the project's own SOPs,
+// shared SOPs and the platform generic templates (archived ones excluded),
+// plus the current choices. The project default is offered separately.
 func (h *assistantHandlers) botDraftWorkflows(projectID string, include ...string) []botDraftWorkflow {
 	seen := map[string]bool{}
 	out := []botDraftWorkflow{}
@@ -242,11 +264,15 @@ func (h *assistantHandlers) botDraftWorkflows(projectID string, include ...strin
 		seen[id] = true
 		out = append(out, botDraftWorkflow{ID: id, Name: name})
 	}
+	generic := []domain.WorkflowDefinition{}
 	for _, wf := range h.repo.Workflows() {
-		if wf.Status == "archived" || wf.Status == "draft" && wf.PublishedRevision == 0 {
+		if wf.Status == "archived" {
 			continue
 		}
-		if wf.ProjectID == projectID || (wf.Shared && wf.ProjectID != "") {
+		switch {
+		case wf.Generic:
+			generic = append(generic, wf)
+		case wf.ProjectID == projectID || wf.ProjectID == "" || wf.Shared:
 			add(wf.ID, wf.Name)
 		}
 	}
@@ -254,17 +280,20 @@ func (h *assistantHandlers) botDraftWorkflows(projectID string, include ...strin
 		add(id, h.botWorkflowName(id))
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	for _, wf := range generic {
+		add(wf.ID, "通用 · "+wf.Name)
+	}
 	return out
 }
 
 func (h *assistantHandlers) botDraftNewIssues(projectID string, drafts []assistantDraft) []botDraftIssue {
 	out := []botDraftIssue{}
 	for i, d := range drafts {
-		wf, ok := h.botDraftIssueWorkflow(projectID, d)
+		explicit, def, ok := h.botDraftIssueSOP(projectID, d)
 		if !ok {
 			continue
 		}
-		out = append(out, botDraftIssue{Index: i, Title: botDraftSummaryText(d), WorkflowID: wf})
+		out = append(out, botDraftIssue{Index: i, Title: botDraftSummaryText(d), WorkflowID: explicit, DefaultWorkflowID: def, DefaultWorkflowName: h.botWorkflowName(def)})
 	}
 	return out
 }
@@ -418,8 +447,13 @@ func (h *assistantHandlers) executeBotDraft(ctx context.Context, user domain.Use
 	start := map[int]bool{}
 	sops := map[int]string{}
 	newIssues := h.botDraftNewIssues(draft.ProjectID, drafts)
+	defaults := map[int]string{}
 	for _, issue := range newIssues {
 		sops[issue.Index] = issue.WorkflowID
+		if issue.WorkflowID == "" {
+			sops[issue.Index] = issue.DefaultWorkflowID
+		}
+		defaults[issue.Index] = issue.DefaultWorkflowID
 		if startAll != nil {
 			start[issue.Index] = *startAll
 		}
@@ -440,12 +474,15 @@ func (h *assistantHandlers) executeBotDraft(ctx context.Context, user domain.Use
 			}
 			wf := strings.TrimSpace(choice.WorkflowID)
 			if wf == "" {
-				wf = current
-			}
-			if !allowed[wf] {
+				// The project default: drop any SOP the model named so the
+				// platform binds the requirement the usual way.
+				wf = defaults[choice.Index]
+				if wf != current {
+					drafts[choice.Index].Body = setDraftBodyField(drafts[choice.Index].Body, "workflowId", nil)
+				}
+			} else if !allowed[wf] {
 				return finish(repo.BotDraftFailed, "所选 SOP 不可用于当前项目，没有执行")
-			}
-			if wf != current {
+			} else if wf != current {
 				drafts[choice.Index].Body = setDraftBodyField(drafts[choice.Index].Body, "workflowId", wf)
 			}
 			sops[choice.Index] = wf

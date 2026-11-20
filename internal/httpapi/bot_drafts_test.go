@@ -295,12 +295,12 @@ func TestBotDraftChoosesSOPAndStartsIt(t *testing.T) {
 	project.WorkflowID = "wf-dev"
 	s.PutProject(project)
 	id := ask()
-	if !strings.Contains(*last, "（SOP：研发交付）") || !strings.Contains(*last, "确认页可以更换 SOP") {
+	if !strings.Contains(*last, "（SOP：项目默认 · 研发交付）") || !strings.Contains(*last, "确认页可以更换 SOP") {
 		t.Fatalf("summary without SOP: %q", *last)
 	}
 	_, view := draftCall(t, h, member, "GET", "/api/bot-drafts/"+id, false)
 	issues, _ := view["newIssues"].([]any)
-	if len(issues) != 1 || issues[0].(map[string]any)["workflowId"] != "wf-dev" {
+	if len(issues) != 1 || issues[0].(map[string]any)["workflowId"] != "" || issues[0].(map[string]any)["defaultWorkflowId"] != "wf-dev" || issues[0].(map[string]any)["defaultWorkflowName"] != "研发交付" {
 		t.Fatalf("new issues = %v", view["newIssues"])
 	}
 	names := []string{}
@@ -420,4 +420,53 @@ func TestFeishuDraftCardButtons(t *testing.T) {
 	if reply := click("new-wecom-user", botinteraction.DraftActionConfirm, second); !strings.Contains(reply, "已取消") || len(s.Issues()) != before+1 {
 		t.Fatalf("confirm after cancel = %q", reply)
 	}
+}
+
+// The model named an SOP; the user switches back to the project default on
+// the page, so the requirement is saved without workflowId and gets the
+// project default. Generic templates are offered too.
+func TestBotDraftDefaultSOPOption(t *testing.T) {
+	s, h, _, _, _ := confirmModeFixtureFor(t, domain.BotChannelFeishu)
+	member, _ := s.User(43)
+	for _, wf := range []domain.WorkflowDefinition{
+		{ID: "wf-dev", Name: "研发交付", ProjectID: "p", Status: "published"},
+		{ID: "wf-fix", Name: "缺陷修复", ProjectID: "p", Status: "draft"},
+	} {
+		if err := s.PutWorkflow(wf); err != nil {
+			t.Fatal(err)
+		}
+	}
+	project, _ := s.Project("p")
+	project.WorkflowID = "wf-dev"
+	s.PutProject(project)
+	body, _ := json.Marshal(map[string]any{"projectId": "p", "title": "点名 SOP 的需求", "workflowId": "wf-fix"})
+	raw, _ := json.Marshal([]assistantDraft{{Tool: "issues_save", Body: body}})
+	draft, err := s.CreateBotPendingDraft(domain.BotPendingDraft{ConfigID: "b-feishu", ProjectID: "p", UserID: 43, SenderID: "new-wecom-user", Summary: "1. 保存需求：点名 SOP 的需求（SOP：缺陷修复）", Drafts: string(raw)}, time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, view := draftCall(t, h, member, "GET", "/api/bot-drafts/"+draft.ID, false)
+	issue := view["newIssues"].([]any)[0].(map[string]any)
+	if issue["workflowId"] != "wf-fix" || issue["defaultWorkflowName"] != "研发交付" {
+		t.Fatalf("issue = %v", issue)
+	}
+	ids := []string{}
+	for _, wf := range view["workflows"].([]any) {
+		ids = append(ids, wf.(map[string]any)["id"].(string))
+	}
+	if !strings.Contains(strings.Join(ids, ","), "wf-fix") {
+		t.Fatalf("draft SOP not offered: %v", ids)
+	}
+	if code, out := draftChoice(t, h, member, draft.ID, `{"choices":[{"index":0,"workflowId":""}]}`); code != 200 || out["status"] != repo.BotDraftExecuted {
+		t.Fatalf("confirm default = %d %v", code, out)
+	}
+	for _, issue := range s.Issues() {
+		if issue.Title == "点名 SOP 的需求" {
+			if issue.WorkflowID != "wf-dev" {
+				t.Fatalf("bound to %q, want the project default", issue.WorkflowID)
+			}
+			return
+		}
+	}
+	t.Fatal("requirement not created")
 }

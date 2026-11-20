@@ -16,8 +16,10 @@
   const notice=d.notice?`<p class="error">${escape(d.notice)}</p>`:d.reason?`<p class="${d.status==='needs_review'?'error':''}">${escape(d.reason)}</p>`:'';
   if(d.status==='pending'){
    // New requirements: pick the SOP and whether to start it right away.
-   const options=wf=>(d.workflows||[]).map(w=>`<option value="${escape(w.id)}" ${w.id===wf?'selected':''}>${escape(w.name)}</option>`).join('');
-   const sops=(d.newIssues||[]).length?`<p>新需求使用的 SOP</p>${d.newIssues.map(i=>`<div class="sop" data-index="${i.index}"><label>${escape(i.title)}<br><select>${options(i.workflowId)}</select></label><label><input type="checkbox"> 创建后立即启动这个 SOP</label></div>`).join('')}`:'';
+   // The first option is the project default (empty value), like the
+   // requirement form on the platform.
+   const options=i=>`<option value="" ${i.workflowId?'':'selected'}>项目默认 SOP（${escape(i.defaultWorkflowName||'按来源默认')}）</option>`+(d.workflows||[]).map(w=>`<option value="${escape(w.id)}" ${w.id===i.workflowId?'selected':''}>${escape(w.name)}</option>`).join('');
+   const sops=(d.newIssues||[]).length?`<p>新需求使用的 SOP</p>${d.newIssues.map(i=>`<div class="sop" data-index="${i.index}"><label>${escape(i.title)}<br><select>${options(i)}</select></label><label><input type="checkbox"> 创建后立即启动这个 SOP</label></div>`).join('')}`:'';
    content.innerHTML=`${meta(d)}<p>Bot 将使用你的平台账号和项目权限执行以下操作：</p>${ops}${sops}${notice}<p><button id="confirm">确认执行</button> <button class="secondary" id="cancel">取消</button></p><small>每个确认链接只能执行一次；重复点击不会重复执行。</small>`;
    document.getElementById('confirm').onclick=()=>act('confirm',{choices:[...content.querySelectorAll('.sop')].map(el=>({index:Number(el.dataset.index),workflowId:el.querySelector('select').value,start:el.querySelector('input[type=checkbox]').checked}))});
    document.getElementById('cancel').onclick=()=>act('cancel');

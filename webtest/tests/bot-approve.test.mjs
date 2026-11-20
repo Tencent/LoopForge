@@ -63,7 +63,7 @@ test('approval page shows invalidation and login requirements', async () => {
 });
 
 test('approval page lets the user pick the SOP of a new requirement and start it', async () => {
-  const draft = { ...pending, newIssues: [{ index: 0, title: '保存需求：登录优化', workflowId: 'wf-dev' }], workflows: [{ id: 'wf-dev', name: '研发交付' }, { id: 'wf-fix', name: '缺陷修复' }] };
+  const draft = { ...pending, newIssues: [{ index: 0, title: '保存需求：登录优化', workflowId: '', defaultWorkflowId: 'wf-dev', defaultWorkflowName: '研发交付' }], workflows: [{ id: 'wf-dev', name: '研发交付' }, { id: 'wf-fix', name: '缺陷修复' }, { id: 'tpl', name: '通用 · 后端交付' }] };
   const p = page({
     'GET /api/auth/current': [200, { user: { id: 43 } }],
     [`GET /api/bot-drafts/${id}`]: [200, draft],
@@ -71,7 +71,9 @@ test('approval page lets the user pick the SOP of a new requirement and start it
   });
   await settle();
   const select = p.$('.sop select');
-  assert.equal(select.value, 'wf-dev');
+  assert.equal(select.value, '', 'project default selected');
+  assert.equal(select.options[0].textContent, '项目默认 SOP（研发交付）');
+  assert.equal(select.options.length, 4);
   select.value = 'wf-fix';
   p.$('.sop input[type=checkbox]').checked = true;
   p.$('#confirm').click();
