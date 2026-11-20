@@ -74,8 +74,10 @@ test('executor selection has independent models, credentials and a persistent ch
     expect(models.ok()).toBe(true);
     const catalog=await models.json();
     expect(Array.isArray(catalog.models)).toBe(true);
-    if(id==='codebuddy')expect(catalog.default).toBeTruthy();
-    else expect(catalog.models.length).toBeGreaterThan(0);
+    if(id==='codebuddy'){
+      const first=catalog.models.find(model=>!model.engine||model.engine==='codebuddy');
+      expect(catalog.default).toBe(first?.id??'');
+    }else expect(catalog.models.length).toBeGreaterThan(0);
   }
   await choose('Codex');
   await page.reload();

@@ -713,6 +713,30 @@ describe("conversation hooks", () => {
     }
   });
 
+  test.each([
+    [false, "请先在个人配置中配置自己的 CodeBuddy API Key"],
+    [true, "当前 CLI 暂无可用模型"],
+  ])("explains how to send with an empty catalog (key configured: %s)", async (configured, reason) => {
+    localStorage.removeItem("loopforge.assistant.executor");
+    const original = apiMock.getMockImplementation();
+    const user = { id: 1, loginName: "tester", codeBuddyApiKeyConfigured: configured };
+    apiMock.mockImplementation(async (path, options) => {
+      if (path === "/api/auth/current") return { user };
+      if (path === "/api/users") return [user];
+      if (path === "/api/assistant/models") return { default: "", models: [] };
+      return original(path, options);
+    });
+    try {
+      const { result } = renderHook(() => useChat());
+      await waitFor(() => expect(result.current.ready).toBe(true));
+      await act(async () => expect(await result.current.send({ text: "草稿" })).toBe(false));
+      expect(result.current.error).toContain(reason);
+      expect(writeMock).not.toHaveBeenCalled();
+    } finally {
+      apiMock.mockImplementation(original);
+    }
+  });
+
   test("without an own key chat is limited to the administrator's shared models", async () => {
     localStorage.removeItem("loopforge.assistant.executor");
     const original = apiMock.getMockImplementation();

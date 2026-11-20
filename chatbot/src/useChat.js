@@ -1024,11 +1024,6 @@ export function useChat() {
       setError("会话仍在加载，请稍候再发送。");
       return false;
     }
-    const modelError = composerModelError(composerModel);
-    if (modelError) {
-      setError(modelError);
-      return false;
-    }
     const currentProjectId = sessionRef.current?.projectId || "";
     const approval = fromQueue
       ? queuedApproval({ approvalMode, approvalUserId, approvalProjectId }, user?.id, currentProjectId)
@@ -1038,6 +1033,11 @@ export function useChat() {
       generation?.status === "running" ||
       steeringRef.current?.sessionId === currentId.current
     ) {
+      const modelError = composerModelError(composerModel);
+      if (modelError) {
+        setError(modelError);
+        return false;
+      }
       // Internal follow-ups (confirmed drafts) never queue or interrupt.
       if (messagesOverride || fromQueue || !currentId.current) {
         setError("当前回复仍在生成，请稍后再试。");
@@ -1080,18 +1080,18 @@ export function useChat() {
     try {
       // Recheck credentials before creating the session in case the user
       // configured a key elsewhere after this tab loaded.
-      if (
-        codeBuddy &&
-        !sponsoredModel &&
-        users.find((u) => u.id === user?.id)?.codeBuddyApiKeyConfigured === undefined &&
-        user &&
-        !user.isGuest
-      ) {
+      const account = users.find((member) => member.id === user?.id);
+      if (codeBuddy && user && !user.isGuest && !sponsoredModel && !account?.codeBuddyApiKeyConfigured) {
         const rows = await api("/api/users").catch(() => null);
         if (rows) setUsers(rows);
-        const fresh = rows?.find((u) => u.id === user.id);
-        if (fresh && !fresh.codeBuddyApiKeyConfigured) {
+        const fresh = rows?.find((u) => u.id === user.id) ?? user;
+        if (!fresh.codeBuddyApiKeyConfigured) {
           if (viewingTarget()) setError("请先在个人配置中配置自己的 CodeBuddy API Key");
+          return false;
+        }
+        if (missingKey || !composerModel.activeModel) requestModelCatalogRefresh((revision) => revision + 1);
+        if (!composerModel.activeModel) {
+          if (viewingTarget()) setError("CodeBuddy 凭证已更新，正在刷新模型列表，请稍后重试。");
           return false;
         }
       }
