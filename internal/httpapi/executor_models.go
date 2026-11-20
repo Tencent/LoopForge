@@ -180,20 +180,25 @@ func executorModelCatalogs(kimiBaseURL string) map[string]executorModelCatalog {
 		// keeps that choice, and a custom ID is passed through QODERCN_MODEL.
 		"qodercn": {
 			CustomModel: true,
-			// Qoder CN's Default tab only offers Auto routing; the New tab lists
-			// frontier models. Names per docs.qoder.cn/cli/models; the live set
-			// is whatever `qodercn --list-models` reports for the account.
+			// Live account model set from `qodercn --list-models`; Auto is the
+			// CLI's smart-routing default. CustomModel lets users add ids the
+			// server-side list does not cover yet.
 			Models: []executorModelInfo{
-				{ID: "auto", Name: "Auto 智能路由"},
+				{ID: "Auto", Name: "Auto 智能路由"},
+				{ID: "Fast", Name: "Fast"},
+				{ID: "Qwen4-Max", Name: "Qwen4-Max"},
+				{ID: "Qwen4-Max-Preview", Name: "Qwen4-Max-Preview"},
 				{ID: "Qwen3.8-Max", Name: "Qwen3.8-Max"},
-				{ID: "Qwen3.7-Max", Name: "Qwen3.7-Max"},
-				{ID: "Qwen3.7-Plus", Name: "Qwen3.7-Plus"},
-				{ID: "Qwen3.6-Flash", Name: "Qwen3.6-Flash"},
+				{ID: "Qwen3.8-Flash", Name: "Qwen3.8-Flash"},
 				{ID: "DeepSeek-V4-Pro", Name: "DeepSeek-V4-Pro"},
-				{ID: "DeepSeek-V4-Flash", Name: "DeepSeek-V4-Flash"},
-				{ID: "GLM-5.2", Name: "GLM-5.2"},
-				{ID: "Kimi-K2.7-Code", Name: "Kimi-K2.7-Code"},
-				{ID: "MiniMax-M2.7", Name: "MiniMax-M2.7"},
+				{ID: "DeepSeek-Flash", Name: "DeepSeek-Flash"},
+				{ID: "GLM-5.3", Name: "GLM-5.3"},
+				{ID: "GLM-5.3-Flash", Name: "GLM-5.3-Flash"},
+				{ID: "Kimi-K3.1-Pro", Name: "Kimi-K3.1-Pro"},
+				{ID: "Kimi-K2.8-Preview", Name: "Kimi-K2.8-Preview"},
+				{ID: "Step-5-Preview", Name: "Step-5-Preview"},
+				{ID: "MiniMax-M3.1-Flash", Name: "MiniMax-M3.1-Flash"},
+				{ID: "Qwen-4.0-Max", Name: "Qwen-4.0-Max"},
 			},
 			Efforts: effortOptions(domain.ExecutorEffortLevels["qodercn"]),
 		},
