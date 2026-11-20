@@ -98,6 +98,7 @@ func (d *Daemon) executeSandboxProcess(ctx context.Context, task domain.RunnerTa
 				return result
 			}
 			result.exitCode = exitCode(completed.err)
+			result.ran = processRan(completed.err)
 			if completed.err != nil {
 				result.status = domain.RunnerTaskFailed
 				result.errMsg = completed.err.Error()
@@ -258,9 +259,13 @@ func (b *eventBatcher) taskResult(rawFallback string) string {
 type execResult struct {
 	status   string
 	exitCode int
-	result   string
-	errMsg   string
-	outputs  *domain.RunnerTaskOutputs
+	// ran reports that the executor actually spawned. A pre-flight failure
+	// (missing CLI, unusable credentials, missing image) never produced a
+	// process, so it has no exit status to report.
+	ran     bool
+	result  string
+	errMsg  string
+	outputs *domain.RunnerTaskOutputs
 }
 
 // executeProcess spawns the Agent CLI in its own process group so a cancel
@@ -372,6 +377,7 @@ func (d *Daemon) executeProcess(ctx context.Context, task domain.RunnerTask, arg
 				return result
 			}
 			result.exitCode = code
+			result.ran = processRan(err)
 			if err != nil {
 				result.status = domain.RunnerTaskFailed
 				result.errMsg = err.Error()
@@ -442,6 +448,17 @@ func isBenignStreamClose(err error) bool {
 	}
 	msg := err.Error()
 	return strings.Contains(msg, "file already closed") || strings.Contains(msg, "use of closed file")
+}
+
+// processRan reports whether err came from a process that actually ran: nil for
+// a clean exit, *exec.ExitError for a non-zero one. Anything else (exec not
+// found, permission denied, an aborted start) never produced an exit status.
+func processRan(err error) bool {
+	if err == nil {
+		return true
+	}
+	var exitErr *exec.ExitError
+	return asExitError(err, &exitErr)
 }
 
 func exitCode(err error) int {
