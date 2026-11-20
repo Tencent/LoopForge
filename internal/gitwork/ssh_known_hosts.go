@@ -53,7 +53,9 @@ func SSHKnownHostsForKeys(keySets ...map[string]string) *domain.GitSSHKnownHosts
 	}
 	var entries strings.Builder
 	for _, endpoint := range slices.Sorted(maps.Keys(matches)) {
-		entries.Write(matches[endpoint].lines)
+		pins := matches[endpoint]
+		entries.Write(pins.revocations)
+		entries.Write(pins.keys)
 	}
 	return &domain.GitSSHKnownHosts{Entries: entries.String()}
 }
@@ -78,36 +80,37 @@ func sshHostKeys(ctx context.Context, remotes []SSHRemote) ([]byte, error) {
 		}
 		platformEntries = []byte(platform.Entries)
 	}
-	configured := matchingSSHKnownHosts(platformEntries, endpoints)
-	// A platform entry takes precedence for its exact host and port, including
-	// an entry that only revokes a key. Local pins cover the remaining hosts.
-	if len(configured) < len(endpoints) {
-		localEndpoints := maps.Clone(endpoints)
-		for endpoint := range configured {
-			delete(localEndpoints, endpoint)
-		}
-		content, err := readConfiguredSSHKnownHosts()
-		if err != nil {
-			return nil, fmt.Errorf("无法读取 %s 指定的主机密钥文件", SSHKnownHostsEnv)
-		}
-		maps.Copy(configured, matchingSSHKnownHosts(content, localEndpoints))
+	localEntries, err := readConfiguredSSHKnownHosts()
+	if err != nil {
+		return nil, fmt.Errorf("无法读取 %s 指定的主机密钥文件", SSHKnownHostsEnv)
 	}
+	platform := matchingSSHKnownHosts(platformEntries, endpoints)
+	local := matchingSSHKnownHosts(localEntries, endpoints)
 	builtin := matchingSSHKnownHosts([]byte(builtinKnownHosts), endpoints)
 	var pinned, bundled []byte
 	for _, endpoint := range slices.Sorted(maps.Keys(endpoints)) {
-		pins, defaults := configured[endpoint], builtin[endpoint]
-		if !pins.hasKey && !defaults.hasKey {
+		localPins, defaults := local[endpoint], builtin[endpoint]
+		// Platform entries take precedence for trusted keys at their exact
+		// endpoint. Revocations from both configurations always apply.
+		pinned = append(pinned, localPins.revocations...)
+		keys := localPins.keys
+		if platformPins, ok := platform[endpoint]; ok {
+			pinned = append(pinned, platformPins.revocations...)
+			keys = platformPins.keys
+		}
+		if len(keys) == 0 && len(defaults.keys) == 0 {
 			return nil, fmt.Errorf("SSH 主机 %s 未获信任：平台只内置了 github.com 的公钥，其他主机请管理员在 %s 中添加并核对该主机和端口的公钥", endpoint, SSHKnownHostsEnv)
 		}
-		pinned = append(pinned, pins.lines...)
-		bundled = append(bundled, defaults.lines...)
+		pinned = append(pinned, keys...)
+		bundled = append(bundled, defaults.revocations...)
+		bundled = append(bundled, defaults.keys...)
 	}
 	return append(pinned, bundled...), nil
 }
 
 type sshHostPins struct {
-	lines  []byte
-	hasKey bool
+	keys        []byte
+	revocations []byte
 }
 
 func matchingSSHKnownHosts(content []byte, endpoints map[string]struct{}) map[string]sshHostPins {
@@ -123,11 +126,14 @@ func matchingSSHKnownHosts(content []byte, endpoints map[string]struct{}) map[st
 				continue
 			}
 			pins := matches[host]
-			if marker != "" {
-				pins.lines = fmt.Appendf(pins.lines, "@%s ", marker)
+			if marker == "revoked" {
+				pins.revocations = fmt.Appendf(pins.revocations, "@revoked %s %s", host, ssh.MarshalAuthorizedKey(key))
+			} else {
+				if marker == "cert-authority" {
+					pins.keys = append(pins.keys, "@cert-authority "...)
+				}
+				pins.keys = fmt.Appendf(pins.keys, "%s %s", host, ssh.MarshalAuthorizedKey(key))
 			}
-			pins.lines = fmt.Appendf(pins.lines, "%s %s", host, ssh.MarshalAuthorizedKey(key))
-			pins.hasKey = pins.hasKey || marker != "revoked"
 			matches[host] = pins
 		}
 	}

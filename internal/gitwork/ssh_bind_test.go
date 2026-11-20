@@ -167,6 +167,38 @@ func TestPlatformSSHKnownHostsAreScopedAndTakePrecedence(t *testing.T) {
 	}
 }
 
+func TestRunnerSSHRevocationSurvivesPlatformKnownHosts(t *testing.T) {
+	_, _, builtinKey, _, remaining, err := ssh.ParseKnownHosts([]byte(builtinKnownHosts))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, platformKey, _, _, err := ssh.ParseKnownHosts(remaining)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "known_hosts")
+	if err := os.WriteFile(path, []byte("github.com "+string(ssh.MarshalAuthorizedKey(platformKey))), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(SSHKnownHostsEnv, path)
+	platform := SSHKnownHostsForKeys(map[string]string{"github.com:22": "identity"})
+	if platform == nil {
+		t.Fatal("platform host pin is missing")
+	}
+	revoked := "@revoked github.com " + string(ssh.MarshalAuthorizedKey(builtinKey))
+	if err := os.WriteFile(path, []byte(revoked), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ctx := WithSSHKnownHosts(t.Context(), platform)
+	pinned, err := sshHostKeys(ctx, []SSHRemote{{Host: "github.com", Port: "22"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(pinned), revoked) {
+		t.Fatal("the platform host pin displaced the runner-local revocation")
+	}
+}
+
 func TestUnreadablePlatformSSHKnownHostsFailsClosed(t *testing.T) {
 	t.Setenv(SSHKnownHostsEnv, filepath.Join(t.TempDir(), "missing"))
 	platform := SSHKnownHostsForKeys(map[string]string{"github.com:22": "identity"})

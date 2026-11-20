@@ -315,6 +315,42 @@ func TestRunnerWorkspaceSendsScopedPlatformSSHKnownHosts(t *testing.T) {
 	}
 }
 
+func TestRunnerWorkspaceRelayHydratesConversationSSHKnownHosts(t *testing.T) {
+	predecessor, successor := quietRunnerHub(), quietRunnerHub()
+	predecessor.successor = successor.requestRelayed
+	predecessor.handOver()
+	conn := testRunnerConn("runner-a")
+	registerTestConn(successor, conn)
+
+	_, hostKey := sshTestIdentity(t)
+	pin := knownhosts.Line([]string{"gitlab.example.org:2222"}, hostKey) + "\n"
+	path := filepath.Join(t.TempDir(), "known_hosts")
+	if err := os.WriteFile(path, []byte(pin), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(gitwork.SSHKnownHostsEnv, path)
+	conversation, err := json.Marshal(runtime.ConversationProcessRequest{
+		Operation: "start",
+		Command: &runtime.ConversationCommand{
+			Credentials: runtime.RunCredentials{GitSSHHostKeys: map[string]string{"gitlab.example.org:2222": "identity"}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := requestAsync(predecessor, conn.runnerID, domain.RunnerWorkspaceRequest{
+		Operation:    domain.RunnerWorkspaceOperationConversationCLI,
+		Conversation: conversation,
+	})
+	got := answerOnce(t, successor, conn, domain.RunnerWorkspaceResponse{Status: http.StatusOK})
+	if pins := got.GitSSHKnownHosts; pins == nil || pins.Entries != pin || pins.ReadFailed {
+		t.Fatalf("relayed conversation pins = %+v", pins)
+	}
+	if result := <-done; result.err != nil || result.response.Status != http.StatusOK {
+		t.Fatalf("relayed conversation response = %+v", result)
+	}
+}
+
 func waitClosed(t *testing.T, conn *runnerControlConn) {
 	t.Helper()
 	select {

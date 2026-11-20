@@ -3,7 +3,6 @@ package httpapi
 import (
 	"agentflow/internal/config"
 	"agentflow/internal/domain"
-	"agentflow/internal/gitwork"
 	"agentflow/internal/runtime"
 	"bufio"
 	"context"
@@ -163,9 +162,6 @@ func (h *assistantHandlers) conversationExecutor(s *AgentToolSession, root strin
 			}
 			envelope := request
 			envelope.Conversation = raw
-			if req.Operation == "start" && req.Command != nil {
-				envelope.GitSSHKnownHosts = gitwork.SSHKnownHostsForKeys(req.Command.Credentials.GitSSHHostKeys)
-			}
 			response, err := h.runnerControls.requestWorkspace(callCtx, s.ExecutionRunnerID, envelope)
 			// A 429 means the runner's request slots were full and it rejected
 			// the request before handling it, so every operation (including a
