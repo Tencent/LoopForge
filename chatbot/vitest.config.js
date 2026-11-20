@@ -6,6 +6,10 @@ export default mergeConfig(
   defineConfig({
     test: {
       environment: "jsdom",
+      // Let jsdom supply browser storage when Node also provides Web Storage.
+      execArgv: process.allowedNodeEnvironmentFlags.has("--no-experimental-webstorage")
+        ? ["--no-experimental-webstorage"]
+        : [],
       include: ["tests/**/*.test.{mjs,js,jsx}"],
       setupFiles: ["tests/setup.js"],
       maxWorkers: 2,
