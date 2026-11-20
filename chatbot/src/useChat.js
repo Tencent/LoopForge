@@ -120,11 +120,9 @@ export function useChat() {
     // the header reveals that conversation's title once it has loaded.
     [revealId, setRevealId] = useState(activeId),
     [projectId, setProjectId] = useState(initialProject),
-    [model, setModel] = useState(null),
+    [selection, setSelection] = useState(() => ({ executor: storedExecutor(), model: null, effort: null })),
     [codeBuddyDefault, setCodeBuddyDefault] = useState({ id: "default", name: "默认" }),
-    [effort, setEffort] = useState(null),
     [sponsoredModels, setSponsoredModels] = useState([]),
-    [executor, setExecutorState] = useState(storedExecutor),
     [providerCatalogs, setProviderCatalogs] = useState({}),
     [generation, setGeneration] = useState(null),
     [stopRequest, setStopRequest] = useState(null),
@@ -145,6 +143,7 @@ export function useChat() {
     // A queued message sent with "send now": it interrupts the running reply
     // and stays on screen until the server's follow-up turn has started.
     [steering, setSteering] = useState(null);
+  const { executor, model, effort } = selection;
   const { readOptions, saveOptions } = useComposerOptions(user?.isGuest ? "guest" : user?.id);
   const executionMachines = useExecutionMachines(
     user?.isGuest ? null : user?.id,
@@ -209,11 +208,10 @@ export function useChat() {
       setGeneration(null);
       setGenerationKnown(null);
       setLive({ answer: "", thinking: "", tools: [] });
+      sessionRef.current = null;
       setSession(null);
       executionMachines.resetMachine();
-      if (!id) setExecutorState(storedExecutor());
-      setModel(null);
-      setEffort(null);
+      setSelection((options) => ({ executor: id ? options.executor : storedExecutor(), model: null, effort: null }));
       setSandboxProfileId("");
       currentId.current = id;
       setActiveId(id);
@@ -226,27 +224,26 @@ export function useChat() {
     setDraftIssueId("");
     open(null);
   }, [open]);
-  function restoreConversationModel(stored) {
+  function restoreConversationModel(stored, { running = false, preserveChoice = false } = {}) {
     const picked = readOptions(`model.${stored.id}`);
-    const modelEngine = engineOfModel(stored.model, models);
-    // Fork responses can omit the executor for old, unprefixed model IDs.
-    const parent = stored.parentSessionId && (stored.parentSessionId === session?.id
-      ? session : sessions.find((item) => item.id === stored.parentSessionId));
-    const parentExecutor = parent?.executor || (parent && engineOfModel(parent.model, models));
-    const recordedExecutor = stored.executor || (modelEngine === "codebuddy" && parentExecutor) || modelEngine;
-    const locked = conversationEngine(stored.messages, models, recordedExecutor);
+    const recordedExecutor = knownExecutor(stored.executor || engineOfModel(stored.model, models));
+    const locked = conversationEngine(stored.messages, models, recordedExecutor) ||
+      (running ? recordedExecutor : "");
     const engine = knownExecutor(locked || picked.executor || recordedExecutor);
     const selection = picked.executor === engine ? picked : stored;
     const choice = { executor: engine, model: selection.model || null, effort: selection.effort ?? "" };
-    setExecutorState(engine);
-    setModel(choice.model);
-    setEffort(choice.effort);
+    setSelection((current) => {
+      if (!preserveChoice || (locked && current.executor !== engine) ||
+          (current.executor === engine && picked.executor !== engine)) return choice;
+      return current;
+    });
     return choice;
   }
-  function receiveSession(stored) {
+  function receiveSession(stored, running = false) {
     if (!stored || currentId.current !== stored.id) return;
-    if (sessionRef.current?.id !== stored.id) {
-      restoreConversationModel(stored);
+    const opening = sessionRef.current?.id !== stored.id;
+    restoreConversationModel(stored, { running, preserveChoice: !opening });
+    if (opening) {
       changeURL(stored.id);
       setProjectId(stored.projectId || "");
       syncProject(stored.projectId || "");
@@ -410,28 +407,23 @@ export function useChat() {
       connectionError = "";
     let accumulated = { answer: "", thinking: "", tools: [] };
     const consume = async (g) => {
-      if (cancelled) return;
+      if (cancelled || currentId.current !== activeId) return;
       if (connectionError) {
         const recovered = connectionError;
         connectionError = "";
         setError((current) => (current === recovered ? "" : current));
       }
       if (genId !== g.id) {
-        const previous = genId;
+        // A new turn can come from steering or from another member. Load its
+        // saved transcript and CLI before the live turn can be steered.
+        if (g.status === "running") {
+          const latest = await api(sessionPath(activeId));
+          if (cancelled || currentId.current !== activeId) return;
+          receiveSession(latest, true);
+        }
         genId = g.id;
         cursor = 0;
         accumulated = { answer: "", thinking: "", tools: [] };
-        // Steering starts a new generation. The interrupted paragraphs are
-        // already saved; load them before the new turn replaces the live view.
-        if (previous) {
-          try {
-            const stored = await api(sessionPath(activeId));
-            if (cancelled || currentId.current !== activeId) return;
-            receiveSession(stored);
-          } catch {
-            // The next poll retries. The live turn can still proceed.
-          }
-        }
       }
       if (g.stream) {
         accumulated = restoreStream(g.stream);
@@ -466,21 +458,32 @@ export function useChat() {
       if (source || cancelled || typeof EventSource === "undefined")
         return false;
       source = new EventSource(`${sessionPath(activeId)}/generation?stream=1`);
-      source.addEventListener("generation", (e) => {
+      const stream = source;
+      let updates = Promise.resolve();
+      stream.addEventListener("generation", (e) => {
         const g = JSON.parse(e.data);
-        void consume(g)
-          .then(() => {
+        updates = updates
+          .then(async () => {
+            if (cancelled || source !== stream) return;
+            await consume(g);
             if (!cancelled && g.status !== "running")
               timer = setTimeout(poll, 2000);
           })
           .catch((error) => {
-            if (!cancelled) setError(error.message);
+            if (cancelled || (source && source !== stream)) return;
+            stream.close();
+            source = null;
+            setError(error.message);
+            timer = setTimeout(poll, 2000);
           });
       });
-      source.onerror = () => {
-        source?.close();
-        source = null;
-        if (!cancelled) timer = setTimeout(poll, 500);
+      stream.onerror = () => {
+        stream.close();
+        void updates.then(() => {
+          if (cancelled || source !== stream) return;
+          source = null;
+          timer = setTimeout(poll, 500);
+        });
       };
       return true;
     };
@@ -495,6 +498,7 @@ export function useChat() {
         );
         if (cancelled) return;
         await consume(g);
+        if (cancelled) return;
         if (g.status === "running" && connect()) return;
         timer = setTimeout(poll, g.status === "running" ? 200 : 2000);
       } catch (e) {
@@ -713,6 +717,8 @@ export function useChat() {
     return "";
   }
   async function modelForRequest(selection, conversation, resolved) {
+    const visibleModel = resolved.activeModel;
+    const visibleEffort = resolved.activeEffort;
     let machines = executionMachines.machines;
     if (selection.executor === "agy" && resolved.personalMachineId && !executionMachines.machinesReady) {
       const rows = await api("/api/runners?mine=1");
@@ -725,6 +731,14 @@ export function useChat() {
       const catalog = await loadProviderCatalog(key, selection.executor, runnerId);
       resolved = resolveComposerModel(selection, conversation, false, { ...providerCatalogs, [key]: catalog }, machines);
     }
+    if (resolved.agyAccountKey && visibleModel) {
+      const catalogModel = findExecutorModel(resolved.executorModels, selection.executor, visibleModel);
+      if (unprefixedModel(selection.executor, catalogModel?.id ?? visibleModel) !==
+          unprefixedModel(selection.executor, resolved.activeModel) ||
+          (visibleEffort && visibleEffort !== resolved.activeEffort)) {
+        throw Error("当前模型或思考强度已不在该执行机器的账号目录，请重新选择。");
+      }
+    }
     const error = composerModelError(resolved);
     if (error) throw Error(error);
     return { model: resolved.activeModel, effort: resolved.activeEffort };
@@ -735,15 +749,14 @@ export function useChat() {
 
   function chooseExecutor(id) {
     if (id === "claude") id = "claude-code";
-    if (sessionLoading() || submittingRef.current || !EXECUTORS.some((item) => item.id === id) || id === executor) return;
+    if (sessionLoading() || submittingRef.current || generation?.status === "running" ||
+        !EXECUTORS.some((item) => item.id === id) || id === executor) return;
     const current = sessionRef.current;
     const locked = conversationEngine(current?.messages, models, current?.executor);
     writeComposerPreference("executor", id);
     if (locked && locked !== id) open(null);
     else if (current?.id === activeId) saveOptions(`model.${activeId}`, { executor: id });
-    setExecutorState(id);
-    setModel(null);
-    setEffort(null);
+    setSelection({ executor: id, model: null, effort: null });
   }
 
   function isDraftVisible(draft) {
@@ -772,8 +785,7 @@ export function useChat() {
     if (!entry || entry.disabled || entry.unavailable) return false;
     const savedLevel = readComposerPreference(effortPreference(executor, id));
     const level = id === activeModel ? activeEffort : modelEffort(entry, savedLevel ?? activeEffort);
-    setModel(id);
-    setEffort(level);
+    setSelection({ executor, model: id, effort: level });
     rememberModelChoice(id, level);
     return true;
   }
@@ -781,9 +793,8 @@ export function useChat() {
   function chooseEffort(value) {
     if (sessionLoading()) return;
     const level = modelEffort(activeModelEntry, value);
-    setEffort(level);
+    setSelection({ executor, model: activeModelEntry ? activeModel : model, effort: level });
     if (activeModelEntry) {
-      setModel(activeModel);
       rememberModelChoice(activeModel, level);
     }
   }
@@ -1080,9 +1091,7 @@ export function useChat() {
         onSessionCreated?.(s.id);
         if (draft.choice) saveOptions(`model.${s.id}`, draft.choice);
         if (isDraftVisible(draft)) {
-          setExecutorState(executor);
-          setModel(draft.choice?.model ?? chosen.model);
-          setEffort(draft.choice?.effort ?? chosen.effort);
+          setSelection(draft.choice ?? { executor, ...chosen });
           currentId.current = s.id;
           setActiveId(s.id);
           changeURL(s.id);
@@ -1139,11 +1148,9 @@ export function useChat() {
     } catch (e) {
       if (generationRequested) {
         try {
-          const [stored, g] = await Promise.all([
-            api(sessionPath(s.id)),
-            api(`${sessionPath(s.id)}/generation`).catch(() => null),
-          ]);
-          if (currentId.current === s.id) setSession(stored);
+          const g = await api(`${sessionPath(s.id)}/generation`).catch(() => null);
+          const stored = await api(sessionPath(s.id));
+          receiveSession(stored, g?.status === "running");
           if (g?.id !== previousGeneration && g?.status === "running") {
             if (currentId.current === s.id) setGeneration(g);
             // Only a lost response may hide an accepted turn. A clear

@@ -1,14 +1,17 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
-const state = vi.hoisted(() => ({ transcript: [], generation: null, generationGate: null, preferences: {} }));
+const state = vi.hoisted(() => ({ transcript: [], sessionSettings: {}, generation: null, generationGate: null, preferences: {} }));
 const { apiMock, writeMock } = vi.hoisted(() => {
   const apiMock = vi.fn(async (path) => {
     if (path === "/api/auth/current")
       return { user: { id: 1, loginName: "tester", codeBuddyApiKeyConfigured: true } };
     if (path === "/api/projects") return [{ id: "p1", name: "项目一", ownerId: 1, members: [1] }];
     if (path === "/api/assistant/models")
-      return { default: "m1", sponsoredModel: "m1", models: [{ id: "m1", name: "模型一" }] };
+      return { default: "m1", sponsoredModel: "m1", models: [
+        { id: "m1", name: "模型一" },
+        { id: "codex:gpt-5", engine: "codex", name: "GPT-5", efforts: ["high"] },
+      ] };
     if (path === "/api/assistant/preferences") return structuredClone(state.preferences);
     if (path === "/api/users") return [{ id: 1, loginName: "tester", codeBuddyApiKeyConfigured: true }];
     if (path === "/api/assistant/sessions") return [];
@@ -21,7 +24,8 @@ const { apiMock, writeMock } = vi.hoisted(() => {
       return structuredClone(state.generation);
     }
     if (path.startsWith("/api/assistant/sessions/"))
-      return { id: "s1", title: "排队", projectId: "p1", model: "m1", messages: structuredClone(state.transcript) };
+      return { id: "s1", title: "排队", projectId: "p1", model: "m1",
+        ...state.sessionSettings, messages: structuredClone(state.transcript) };
     return [];
   });
   const writeMock = vi.fn(async (path) => {
@@ -61,7 +65,7 @@ const steerPosts = () =>
 const emit = async (g) => {
   state.generation = g;
   await act(async () => {
-    sources[0].generation({ data: JSON.stringify(g) });
+    sources.at(-1).generation({ data: JSON.stringify(g) });
   });
 };
 const generationPosts = () =>
@@ -90,6 +94,7 @@ describe("sending while a reply runs", () => {
     localStorage.clear();
     history.replaceState({}, "", "/");
     state.transcript = [{ role: "user", content: "查失败节点" }];
+    state.sessionSettings = {};
     state.generation = { id: "g-running", status: "running", events: [{ sequence: 1, data: { kind: "tool", tool: "runs_get" } }] };
     state.generationGate = null;
     state.preferences = {};
@@ -161,6 +166,45 @@ describe("sending while a reply runs", () => {
     expect(generationPosts()).toHaveLength(0);
     unmount();
   });
+
+  test.each(["already running", "starts while opening", "finishes while opening"])(
+    "follows the shared session's first CLI when another member's reply %s",
+    async (phase) => {
+      localStorage.setItem("loopforge.assistant.conversation.1.model.s1",
+        JSON.stringify({ executor: "codebuddy", model: "m1" }));
+      state.preferences = { steerOnSend: true };
+      const actualChoice = { shared: true, executor: "codex", model: "codex:gpt-5", effort: "high" };
+      let reportGeneration;
+      if (phase === "already running") state.sessionSettings = actualChoice;
+      else {
+        state.sessionSettings = { shared: true, executor: "codebuddy" };
+        state.generationGate = new Promise((resolve) => { reportGeneration = resolve; });
+      }
+      const { result, unmount } = renderHook(useChat);
+      await waitFor(() => expect(result.current.ready).toBe(true));
+      act(() => result.current.open("s1"));
+      if (reportGeneration) {
+        await waitFor(() => expect(result.current.session?.id).toBe("s1"));
+        expect(result.current.executor).toBe("codebuddy");
+        state.sessionSettings = actualChoice;
+        if (phase === "finishes while opening") {
+          state.transcript.push({ ...unfinished, model: actualChoice.model });
+          state.generation = { ...state.generation, status: "completed" };
+        }
+        state.generationGate = null;
+        await act(async () => reportGeneration());
+      }
+      await waitFor(() => expect(result.current).toMatchObject({
+        executor: actualChoice.executor, model: actualChoice.model, effort: actualChoice.effort,
+        busy: phase !== "finishes while opening",
+      }));
+      await act(async () => expect(await result.current.send({ text: "请继续" })).toBe(true));
+      const requests = phase === "finishes while opening" ? generationPosts() : steerPosts();
+      expect(requests).toHaveLength(1);
+      expect(requests[0][1]).toMatchObject({ model: actualChoice.model, effort: actualChoice.effort });
+      unmount();
+    },
+  );
 
   test.each([
     [400, "请先配置 API Key"],
@@ -334,7 +378,8 @@ describe("sending while a reply runs", () => {
     expect(generationPosts()).toHaveLength(0);
     expect(result.current.steering?.text).toBe("先看 CI");
 
-    await emit({ id: "g-follow", status: "running", events: [] });
+    state.generation = { id: "g-follow", status: "running", events: [] };
+    await waitFor(() => expect(sources).toHaveLength(2), { timeout: 3500 });
     await waitFor(() => expect(result.current.steering).toBe(null));
     expect(generationPosts()).toHaveLength(0);
     expect(result.current.queue.map((m) => m.text)).toEqual(["然后整理结论"]);

@@ -98,7 +98,11 @@ func (h *assistantHandlers) forkSession(c *gin.Context) {
 			prefix[i].Content = string(raw)
 		}
 	}
-	branch := domain.AssistantSession{ID: newAssistantSessionID(), UserID: user.ID, ProjectID: source.ProjectID, IssueID: source.IssueID, Model: source.Model, Effort: source.Effort, Executor: h.forkExecutor(c, source, user.ID), Messages: append(prefix, edited), Shared: source.Shared, RunID: source.RunID, ParentSessionID: source.ID, RootSessionID: source.RootSessionID, ForkMessageIndex: index, Title: "分支 · " + truncateRunes(edited.Content, 28)}
+	executor := h.forkExecutor(c, source, user.ID)
+	if executor == "" && source.Model != "" {
+		executor, _ = assistantModelEngine(source.Model)
+	}
+	branch := domain.AssistantSession{ID: newAssistantSessionID(), UserID: user.ID, ProjectID: source.ProjectID, IssueID: source.IssueID, Model: source.Model, Effort: source.Effort, Executor: executor, Messages: append(prefix, edited), Shared: source.Shared, RunID: source.RunID, ParentSessionID: source.ID, RootSessionID: source.RootSessionID, ForkMessageIndex: index, Title: "分支 · " + truncateRunes(edited.Content, 28)}
 	if branch.RootSessionID == "" {
 		branch.RootSessionID = source.ID
 	}
@@ -114,7 +118,7 @@ func (h *assistantHandlers) forkSession(c *gin.Context) {
 }
 
 // Older forks stored the model and transcript without the source executor.
-// Inherit it only from a readable conversation in the same project and run.
+// A readable ancestor can supply it if it still describes the forked turn.
 func (h *assistantHandlers) forkExecutor(c *gin.Context, session domain.AssistantSession, userID int64) string {
 	if session.Executor != "" || session.ParentSessionID == "" {
 		return session.Executor
@@ -135,6 +139,9 @@ func (h *assistantHandlers) forkExecutor(c *gin.Context, session domain.Assistan
 		if !ok || parent.ProjectID != session.ProjectID || parent.RunID != session.RunID || parent.Shared != session.Shared {
 			continue
 		}
+		if !matchesForkHistory(session, parent) {
+			continue
+		}
 		if parent.Executor != "" {
 			return parent.Executor
 		}
@@ -144,6 +151,32 @@ func (h *assistantHandlers) forkExecutor(c *gin.Context, session domain.Assistan
 		}
 	}
 	return ""
+}
+
+func matchesForkHistory(fork, parent domain.AssistantSession) bool {
+	if parent.Model == fork.Model && !fork.CreatedAt.IsZero() && !parent.UpdatedAt.After(fork.CreatedAt) {
+		return true
+	}
+	// A parent can change CLI after an edit removes its earlier replies.
+	// The latest inherited reply identifies the CLI's surviving history.
+	for i := min(fork.ForkMessageIndex, len(fork.Messages)) - 1; i >= 0; i-- {
+		message := fork.Messages[i]
+		if message.Role != "assistant" || message.SpeakerAgentID != "" || message.Model == "" {
+			continue
+		}
+		if i >= len(parent.Messages) {
+			return false
+		}
+		other := parent.Messages[i]
+		if other.Role != message.Role || other.SpeakerAgentID != "" || other.Model != message.Model {
+			return false
+		}
+		if message.GenerationID != "" {
+			return message.GenerationID == other.GenerationID
+		}
+		return !message.CreatedAt.IsZero() && message.CreatedAt.Equal(other.CreatedAt)
+	}
+	return false
 }
 
 func copyForkAttachment(from, to int64, id, project string) (domain.AssistantAttachment, error) {

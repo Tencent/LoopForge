@@ -11,7 +11,7 @@ import (
 func TestSharedConversationForkPreservesOriginalAndVisibility(t *testing.T) {
 	h, a, b, out, s := sharedWorkbenchFixture(t)
 	s.Model, s.Effort, s.Executor = "gpt-5", "high", assistantEngineCodex
-	s.Messages = append(s.Messages, domain.AssistantMessage{Role: "assistant", Model: s.Model, Content: `{"message":"草稿","drafts":[{"tool":"issues_save","body":{"title":"旧"}}]}`}, domain.AssistantMessage{Role: "user", Content: "原消息"})
+	s.Messages = append(s.Messages, domain.AssistantMessage{Role: "assistant", Model: s.Model, GenerationID: "forked-reply", Content: `{"message":"草稿","drafts":[{"tool":"issues_save","body":{"title":"旧"}}]}`}, domain.AssistantMessage{Role: "user", Content: "原消息"})
 	if err := h.repo.PutAssistantSession(a.ID, s); err != nil {
 		t.Fatal(err)
 	}
@@ -64,11 +64,15 @@ func TestSharedConversationForkPreservesOriginalAndVisibility(t *testing.T) {
 		}
 	}
 
-	// Reopening a branch stored by the old fork endpoint still presents the
-	// executor from the shared parent, without requiring a data migration.
+	// An old branch that inherited a legacy reply keeps its executor even
+	// after the parent continues with a different model on the same CLI.
 	legacy := branch
 	legacy.Executor = ""
 	if err := h.repo.PutAssistantSession(b.ID, legacy); err != nil {
+		t.Fatal(err)
+	}
+	original.Model = "codex:gpt-5.4"
+	if err := h.repo.PutAssistantSession(a.ID, original); err != nil {
 		t.Fatal(err)
 	}
 	c, w = workbenchContext(b, "GET", "/", bytes.NewBuffer(nil))
@@ -84,6 +88,47 @@ func TestSharedConversationForkPreservesOriginalAndVisibility(t *testing.T) {
 	}
 	if persisted, _ := h.repo.AssistantSession(b.ID, legacy.ID); persisted.Executor != "" {
 		t.Fatal("GET changed the stored executor", persisted.Executor)
+	}
+}
+
+func TestSharedConversationLegacyForkIgnoresLaterParentCLISwitch(t *testing.T) {
+	h, a, b, _, main := sharedWorkbenchFixture(t)
+	main.Model, main.Executor = "claude-opus-5.5", assistantEngineCodeBuddy
+	main.Messages = append(main.Messages, domain.AssistantMessage{
+		Role: "assistant", Model: main.Model, GenerationID: "old-codebuddy-turn", Content: "旧回复",
+	}, domain.AssistantMessage{Role: "user", Content: "准备分支的问题"})
+	if err := h.repo.PutAssistantSession(a.ID, main); err != nil {
+		t.Fatal(err)
+	}
+	main, _ = h.repo.AssistantSession(a.ID, main.ID)
+	branch := domain.AssistantSession{
+		ID: "sop-branch-legacy-codebuddy", UserID: b.ID, ProjectID: main.ProjectID,
+		RunID: main.RunID, Shared: true, ParentSessionID: main.ID, RootSessionID: main.ID,
+		ForkMessageIndex: 2, Model: main.Model, Messages: append([]domain.AssistantMessage(nil), main.Messages...),
+	}
+	if err := h.repo.CreateAssistantSessionBranch(main, branch); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.repo.ReplaceAssistantTurn(main, 0, domain.AssistantMessage{Role: "user", Content: "重新开始主讨论"}); err != nil {
+		t.Fatal(err)
+	}
+	main, _ = h.repo.AssistantSession(a.ID, main.ID)
+	main.Model, main.Executor = "codex:gpt-5", assistantEngineCodex
+	main.Messages = append(main.Messages, domain.AssistantMessage{
+		Role: "assistant", Model: main.Model, GenerationID: "new-codex-turn", Content: "新回复",
+	})
+	if err := h.repo.PutAssistantSession(a.ID, main); err != nil {
+		t.Fatal(err)
+	}
+	c, w := workbenchContext(b, "GET", "/", bytes.NewBuffer(nil))
+	c.Params = gin.Params{{Key: "id", Value: branch.ID}}
+	h.session(c)
+	var reopened domain.AssistantSession
+	if err := json.Unmarshal(w.Body.Bytes(), &reopened); err != nil || w.Code != 200 {
+		t.Fatal(w.Code, w.Body.String(), err)
+	}
+	if reopened.Model != branch.Model || assistantConversationEngine(reopened.Messages, reopened.Executor) != assistantEngineCodeBuddy {
+		t.Fatal("legacy branch inherited the parent's later CLI", reopened)
 	}
 }
 

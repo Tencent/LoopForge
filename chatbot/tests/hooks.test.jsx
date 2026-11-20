@@ -431,6 +431,59 @@ describe("conversation hooks", () => {
     }
   });
 
+  test("keeps the draft unsent when the new runner does not list the visible Antigravity model", async () => {
+    const originalAPI = apiMock.getMockImplementation();
+    const originalWrite = writeMock.getMockImplementation();
+    const gemini = "agy:gemini-a-high", claude = "agy:claude-b-medium";
+    const runners = ["runner-a", "runner-b"].map((id) => ({
+      id, status: "online", ownerUserId: 1, runtimes: [{ provider: "agy", authMode: "local" }],
+    }));
+    let completeProbe;
+    apiMock.mockImplementation(async (path, options) => {
+      if (path === "/api/runners?mine=1") return runners;
+      if (path === "/api/runners/default") return { runnerId: "runner-a" };
+      return originalAPI(path, options);
+    });
+    writeMock.mockImplementation((path, body, method) => {
+      if (path === "/api/runners/runner-a/models/probe")
+        return Promise.resolve({ models: [{ id: "gemini-a-high" }] });
+      if (path === "/api/runners/runner-b/models/probe")
+        return new Promise((resolve) => { completeProbe = () => resolve({ models: [{ id: "claude-b-medium" }] }); });
+      return originalWrite(path, body, method);
+    });
+    try {
+      const { result } = renderHook(useChat);
+      await waitFor(() => expect(result.current.defaultRunnerId).toBe("runner-a"));
+      act(() => result.current.setExecutor("agy"));
+      await waitFor(() => expect(result.current.model).toBe(gemini));
+      act(() => result.current.setModel(gemini));
+      await act(async () => result.current.selectMachine("runner-b"));
+      await waitFor(() => expect(completeProbe).toBeTypeOf("function"));
+      expect(result.current.model).toBe(gemini);
+      let request;
+      act(() => { request = result.current.send({ text: "不要换模型" }); });
+      await act(async () => {
+        completeProbe();
+        expect(await request).toBe(false);
+      });
+      expect(result.current.error).toContain("请重新选择");
+      expect(writeMock).not.toHaveBeenCalledWith("/api/assistant/sessions/new-session", expect.anything(), "PUT");
+      expect(writeMock).not.toHaveBeenCalledWith("/api/assistant/generations", expect.anything());
+      act(() => result.current.setModel(claude));
+      await act(async () => expect(await result.current.send({ text: "确认新模型" })).toBe(true));
+      expect(writeMock).toHaveBeenCalledWith("/api/assistant/generations", expect.objectContaining({
+        model: claude, executionTarget: { pool: "runner", runnerId: "runner-b" },
+      }));
+    } finally {
+      apiMock.mockImplementation(originalAPI);
+      writeMock.mockImplementation(originalWrite);
+      localStorage.removeItem("loopforge.assistant.executor");
+      localStorage.removeItem("loopforge.assistant.model.agy");
+      localStorage.removeItem("loopforge.assistant.effort.agy.gemini-a-high");
+      localStorage.removeItem("loopforge.assistant.effort.agy.claude-b-medium");
+    }
+  });
+
   test.each([
     { action: "send" },
     { action: "send", slowMachines: true },
@@ -704,10 +757,10 @@ describe("conversation hooks", () => {
     }
   });
 
-  test("regenerates and reopens a fork with its parent's CLI when the legacy model is unprefixed", async () => {
+  test("regenerates and reopens a fork using its server-resolved CLI for an unprefixed model", async () => {
     const original = apiMock.getMockImplementation();
     const fork = {
-      id: "fork", parentSessionId: "s1", model: "gpt-5", effort: "high",
+      id: "fork", parentSessionId: "s1", executor: "codex", model: "gpt-5", effort: "high",
       messages: [{ role: "user", content: "修改" }],
     };
     const parent = { ...fork, id: "s1", parentSessionId: undefined, executor: "codex" };
