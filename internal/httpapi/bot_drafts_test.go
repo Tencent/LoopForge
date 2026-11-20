@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"agentflow/internal/botinteraction"
 	"agentflow/internal/domain"
 	"agentflow/internal/repo"
 	"agentflow/internal/tracker"
@@ -366,4 +367,57 @@ func toStrings(v any) []string {
 		out = append(out, s)
 	}
 	return out
+}
+
+// The Feishu confirmation card: "确认并启动 SOP" creates the requirement and
+// starts its SOP once; other people's clicks and later clicks do nothing;
+// "取消" cancels.
+func TestFeishuDraftCardButtons(t *testing.T) {
+	s, h, bot, ask, _ := confirmModeFixtureFor(t, domain.BotChannelFeishu)
+	if err := s.PutAgent(domain.AgentDefinition{ID: "dev-agent", Name: "开发"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.PutWorkflow(domain.WorkflowDefinition{ID: "wf-dev", Name: "研发交付", ProjectID: "p", Status: "published", Nodes: []domain.WorkflowNode{{ID: "n1", Name: "开发", Type: "agent", AgentID: "dev-agent"}}}); err != nil {
+		t.Fatal(err)
+	}
+	project, _ := s.Project("p")
+	project.WorkflowID = "wf-dev"
+	s.PutProject(project)
+	bindBotTestUser(t, s, bot, "ou-stranger", 42)
+	click := func(sender, action, id string) string {
+		t.Helper()
+		reply, err := h.handleBotCardAction(context.Background(), bot, domain.BotInteraction{SenderID: sender, Action: action, DeliveryID: id}, domain.BotConversation{ChatID: sender, ChatType: "single"})
+		if err != nil {
+			t.Fatal(reply, err)
+		}
+		return reply
+	}
+	before := len(s.Issues())
+	id := ask()
+	if reply := click("ou-stranger", botinteraction.DraftActionConfirm, id); !strings.Contains(reply, "不是你发起的") || len(s.Issues()) != before {
+		t.Fatalf("stranger = %q", reply)
+	}
+	reply := click("new-wecom-user", botinteraction.DraftActionConfirmStart, id)
+	if !strings.Contains(reply, "操作已执行") || !strings.Contains(reply, "已启动：研发交付") || len(s.Issues()) != before+1 {
+		t.Fatalf("confirm and start = %q", reply)
+	}
+	started := 0
+	for _, task := range s.Tasks() {
+		if task.WorkflowID == "wf-dev" {
+			started++
+		}
+	}
+	if started != 1 {
+		t.Fatalf("tasks = %d", started)
+	}
+	if again := click("new-wecom-user", botinteraction.DraftActionConfirm, id); !strings.Contains(again, "操作已执行") || len(s.Issues()) != before+1 {
+		t.Fatalf("repeat = %q", again)
+	}
+	second := ask()
+	if reply := click("new-wecom-user", botinteraction.DraftActionCancel, second); !strings.Contains(reply, "已取消") {
+		t.Fatalf("cancel = %q", reply)
+	}
+	if reply := click("new-wecom-user", botinteraction.DraftActionConfirm, second); !strings.Contains(reply, "已取消") || len(s.Issues()) != before+1 {
+		t.Fatalf("confirm after cancel = %q", reply)
+	}
 }

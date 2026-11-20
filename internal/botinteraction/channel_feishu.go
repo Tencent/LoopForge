@@ -201,8 +201,38 @@ func feishuEvent(ev *larkim.P2MessageReceiveV1) (InboundEvent, bool) {
 			out.Text = content.Text
 		}
 	}
+	// Group messages count only when they @ a bot (without the "all group
+	// messages" permission Feishu delivers nothing else). The @ placeholders
+	// (@_user_1 …) are removed from the text.
+	mentionedBot := false
+	for _, m := range msg.Mentions {
+		if m == nil {
+			continue
+		}
+		if deref(m.MentionedType) == "bot" {
+			mentionedBot = true
+		}
+		if key := deref(m.Key); key != "" {
+			out.Text = strings.ReplaceAll(out.Text, key, "")
+		}
+	}
+	out.Text = strings.TrimSpace(out.Text)
+	if out.ChatType == "group" {
+		out.Mentioned = mentionedBot || (len(msg.Mentions) > 0 && !feishuMentionTypesKnown(msg.Mentions))
+	}
 	out.Route.MessageID = out.MessageID
 	return out, true
+}
+
+// feishuMentionTypesKnown reports whether the event carries mentioned_type
+// (older events do not); without it any mention counts as an @ of the Bot.
+func feishuMentionTypesKnown(mentions []*larkim.MentionEvent) bool {
+	for _, m := range mentions {
+		if m != nil && m.MentionedType != nil {
+			return true
+		}
+	}
+	return false
 }
 
 // feishuCardEvent maps a card button click (card.action.trigger) to an
@@ -214,6 +244,10 @@ func feishuCardEvent(ev *callback.CardActionTriggerEvent) (InboundEvent, bool) {
 	}
 	action, _ := ev.Event.Action.Value["af_action"].(string)
 	delivery, _ := ev.Event.Action.Value["af_delivery"].(string)
+	if DraftAction(action) {
+		// Draft confirmation cards carry the draft ID instead.
+		delivery, _ = ev.Event.Action.Value["af_draft"].(string)
+	}
 	if !pushCardKey(action) || delivery == "" || ev.Event.Operator.OpenID == "" || ev.EventV2Base.Header.EventID == "" {
 		return InboundEvent{}, false
 	}
@@ -276,8 +310,14 @@ func (c *feishuConn) Reply(ctx context.Context, msg OutboundMessage) SendResult 
 	if msg.Route.MessageID == "" {
 		return SendResult{Outcome: Rejected, Code: "route_missing", SafeDetail: "缺少飞书原消息标识，无法在原会话回复"}
 	}
-	content, _ := json.Marshal(map[string]string{"text": msg.Text})
-	body := larkim.NewReplyMessageReqBodyBuilder().MsgType("text").Content(string(content))
+	msgType, content := "text", []byte(nil)
+	if msg.Card != nil {
+		// Write confirmations go out as a card with buttons.
+		msgType, content = "interactive", feishuCardJSON(msg.Card)
+	} else {
+		content, _ = json.Marshal(map[string]string{"text": msg.Text})
+	}
+	body := larkim.NewReplyMessageReqBodyBuilder().MsgType(msgType).Content(string(content))
 	if msg.SendKey != "" {
 		body = body.Uuid(msg.SendKey)
 	}

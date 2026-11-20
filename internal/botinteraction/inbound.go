@@ -89,9 +89,10 @@ func (s *Service) accept(ctx context.Context, connected domain.NotificationBot, 
 		}
 	}
 	if bot.ChannelKind() != domain.BotChannelWeCom {
-		s.Store.NoteBotConnectionEvent(bot.LeaseKey(), ev.ChatType == "group")
-		if ev.ChatType != "single" {
-			return s.ignore(ev, "group_not_supported"), nil
+		s.Store.NoteBotConnectionEvent(bot.LeaseKey(), ev.ChatType == "group" && !ev.Mentioned && ev.Action == "")
+		if ev.ChatType == "group" && !ev.Mentioned && ev.Action == "" {
+			// Group chats: only messages that @ the Bot.
+			return s.ignore(ev, "group_not_mentioned"), nil
 		}
 		notice, gated, err := s.tenantGate(bot, ev)
 		if err != nil {

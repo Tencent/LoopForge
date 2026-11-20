@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"agentflow/internal/botinteraction"
 	"agentflow/internal/domain"
 	"agentflow/internal/repo"
 
@@ -355,35 +356,59 @@ func (h *assistantHandlers) botDraft(c *gin.Context) {
 	if c.Request.ContentLength != 0 && !decodeLimit(c, &req, 64<<10) {
 		return
 	}
+	current, invalid, err := h.executeBotDraft(c.Request.Context(), user, draft, req.Choices, nil)
+	switch {
+	case err != nil:
+		respond(c, err)
+	case invalid != "":
+		c.JSON(409, gin.H{"error": "操作已失效：" + invalid, "code": "draft_invalidated", "draft": h.botDraftView(current)})
+	default:
+		c.JSON(200, h.botDraftView(current))
+	}
+}
+
+// executeBotDraft re-checks and runs a pending draft for user (the platform
+// page and the Feishu confirmation card share it). choices set the SOP of
+// new requirements; startAll, when set, starts every new requirement's SOP.
+// A failed re-check cancels the draft and returns the reason in invalid.
+func (h *assistantHandlers) executeBotDraft(ctx context.Context, user domain.User, draft domain.BotPendingDraft, choices []botDraftChoice, startAll *bool) (domain.BotPendingDraft, string, error) {
+	id := draft.ID
+	now := time.Now().UTC()
+	invalidate := func(reason string) (domain.BotPendingDraft, string, error) {
+		if err := h.repo.CancelBotPendingDraft(id, user.ID, reason, now); err != nil && !errors.Is(err, repo.ErrBotDraftNotPending) && !errors.Is(err, gorm.ErrRecordNotFound) {
+			return draft, "", err
+		}
+		current, _ := h.repo.BotPendingDraft(id, now)
+		return current, reason, nil
+	}
 	bot, err := h.repo.NotificationBot(draft.ConfigID)
 	if err != nil || !bot.Enabled || !bot.InteractionEnabled || bot.EffectiveWriteApproval() != domain.BotWriteConfirm {
-		h.invalidateBotDraft(c, draft, user, "机器人已停用、删除或不再使用网页确认")
-		return
+		return invalidate("机器人已停用、删除或不再使用网页确认")
 	}
 	binding, err := h.repo.BotUserBinding(bot.IdentityScope(), draft.SenderID)
 	if err != nil || binding.UserID != user.ID {
-		h.invalidateBotDraft(c, draft, user, "聊天账号的绑定已解除或已变化")
-		return
+		return invalidate("聊天账号的绑定已解除或已变化")
 	}
 	if _, err := h.botExecutionUser(bot, draft.SenderID); err != nil {
-		h.invalidateBotDraft(c, draft, user, err.Error())
-		return
+		return invalidate(err.Error())
 	}
 	begun, err := h.repo.BeginBotPendingDraft(id, user.ID, now)
 	if errors.Is(err, repo.ErrBotDraftNotPending) {
-		c.JSON(200, h.botDraftView(begun))
-		return
+		return begun, "", nil
 	}
 	if err != nil {
-		respond(c, err)
-		return
+		return draft, "", err
+	}
+	finish := func(status, result string) (domain.BotPendingDraft, string, error) {
+		if err := h.repo.FinishBotPendingDraft(id, status, result, time.Now().UTC()); err != nil {
+			return begun, "", err
+		}
+		current, _ := h.repo.BotPendingDraft(id, time.Now().UTC())
+		return current, "", nil
 	}
 	var drafts []assistantDraft
 	if err := json.Unmarshal([]byte(begun.Drafts), &drafts); err != nil {
-		_ = h.repo.FinishBotPendingDraft(id, repo.BotDraftFailed, "草稿内容无法读取，没有执行", time.Now().UTC())
-		draft, _ = h.repo.BotPendingDraft(id, time.Now().UTC())
-		c.JSON(200, h.botDraftView(draft))
-		return
+		return finish(repo.BotDraftFailed, "草稿内容无法读取，没有执行")
 	}
 	for i := range drafts {
 		drafts[i].Saved, drafts[i].Auto, drafts[i].SaveError = false, false, ""
@@ -395,8 +420,11 @@ func (h *assistantHandlers) botDraft(c *gin.Context) {
 	newIssues := h.botDraftNewIssues(draft.ProjectID, drafts)
 	for _, issue := range newIssues {
 		sops[issue.Index] = issue.WorkflowID
+		if startAll != nil {
+			start[issue.Index] = *startAll
+		}
 	}
-	if len(req.Choices) > 0 {
+	if len(choices) > 0 {
 		ids := []string{}
 		for _, issue := range newIssues {
 			ids = append(ids, issue.WorkflowID)
@@ -405,7 +433,7 @@ func (h *assistantHandlers) botDraft(c *gin.Context) {
 		for _, wf := range h.botDraftWorkflows(draft.ProjectID, ids...) {
 			allowed[wf.ID] = true
 		}
-		for _, choice := range req.Choices {
+		for _, choice := range choices {
 			current, ok := sops[choice.Index]
 			if !ok {
 				continue
@@ -415,10 +443,7 @@ func (h *assistantHandlers) botDraft(c *gin.Context) {
 				wf = current
 			}
 			if !allowed[wf] {
-				_ = h.repo.FinishBotPendingDraft(id, repo.BotDraftFailed, "所选 SOP 不可用于当前项目，没有执行", time.Now().UTC())
-				draft, _ = h.repo.BotPendingDraft(id, time.Now().UTC())
-				c.JSON(200, h.botDraftView(draft))
-				return
+				return finish(repo.BotDraftFailed, "所选 SOP 不可用于当前项目，没有执行")
 			}
 			if wf != current {
 				drafts[choice.Index].Body = setDraftBodyField(drafts[choice.Index].Body, "workflowId", wf)
@@ -428,9 +453,9 @@ func (h *assistantHandlers) botDraft(c *gin.Context) {
 		}
 	}
 	// Same preflight and execution as the web assistant: drafts with
-	// warnings are not executed. The request context is detached so a
-	// closed tab cannot interrupt the writes halfway.
-	execCtx, cancel := context.WithTimeout(context.WithoutCancel(c.Request.Context()), 5*time.Minute)
+	// warnings are not executed. The context is detached so a closed tab or
+	// a dropped connection cannot interrupt the writes halfway.
+	execCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Minute)
 	defer cancel()
 	applied := h.resolveAssistantDrafts(execCtx, user, draft.ProjectID, drafts, AssistantApprovalAuto)
 	results := make([]string, 0, len(applied))
@@ -460,20 +485,53 @@ func (h *assistantHandlers) botDraft(c *gin.Context) {
 			results = append(results, "未执行："+line+"（"+strings.Join(d.Warnings, "；")+"）")
 		}
 	}
-	if err := h.repo.FinishBotPendingDraft(id, status, strings.Join(results, "\n"), time.Now().UTC()); err != nil {
-		respond(c, err)
-		return
-	}
-	draft, _ = h.repo.BotPendingDraft(id, time.Now().UTC())
-	c.JSON(200, h.botDraftView(draft))
+	return finish(status, strings.Join(results, "\n"))
 }
 
-func (h *assistantHandlers) invalidateBotDraft(c *gin.Context, draft domain.BotPendingDraft, user domain.User, reason string) {
-	now := time.Now().UTC()
-	if err := h.repo.CancelBotPendingDraft(draft.ID, user.ID, reason, now); err != nil && !errors.Is(err, repo.ErrBotDraftNotPending) && !errors.Is(err, gorm.ErrRecordNotFound) {
-		respond(c, err)
-		return
+// botDraftCardAction handles the buttons of a Feishu confirmation card. Only
+// the platform user bound to the sender who asked can use them; the result
+// is the chat reply.
+func (h *assistantHandlers) botDraftCardAction(ctx context.Context, bot domain.NotificationBot, item domain.BotInteraction) (string, error) {
+	user, err := h.botExecutionUser(bot, item.SenderID)
+	if err != nil {
+		return err.Error(), botinteraction.ErrCardActionDeferred
 	}
-	current, _ := h.repo.BotPendingDraft(draft.ID, now)
-	c.JSON(409, gin.H{"error": "操作已失效：" + reason, "code": "draft_invalidated", "draft": h.botDraftView(current)})
+	now := time.Now().UTC()
+	draft, err := h.repo.BotPendingDraft(strings.TrimSpace(item.DeliveryID), now)
+	if err != nil || draft.UserID != user.ID || draft.ConfigID != bot.ID || draft.SenderID != item.SenderID {
+		return "这份操作不存在、已过期，或不是你发起的，没有执行。", nil
+	}
+	if draft.Status != repo.BotDraftPending {
+		return botDraftStateReply(draft), nil
+	}
+	if item.Action == botinteraction.DraftActionCancel {
+		if err := h.repo.CancelBotPendingDraft(draft.ID, user.ID, "用户在聊天卡片中取消", now); err != nil && !errors.Is(err, repo.ErrBotDraftNotPending) {
+			return "", err
+		}
+		return "已取消，这些操作不会执行。", nil
+	}
+	startAll := item.Action == botinteraction.DraftActionConfirmStart
+	current, invalid, err := h.executeBotDraft(ctx, user, draft, nil, &startAll)
+	if err != nil {
+		return "", err
+	}
+	if invalid != "" {
+		return "操作已失效：" + invalid + "。没有执行。", nil
+	}
+	return botDraftStateReply(current), nil
+}
+
+// botDraftStateReply describes a draft that is no longer pending.
+func botDraftStateReply(d domain.BotPendingDraft) string {
+	head := map[string]string{repo.BotDraftExecuted: "操作已执行：", repo.BotDraftFailed: "操作部分或全部未完成：", repo.BotDraftExecuting: "这份操作正在执行，请稍后在平台查看结果。", repo.BotDraftNeedsReview: "这份操作执行中断，结果待核对，平台不会自动重新执行。", repo.BotDraftExpired: "这份操作已过期，没有执行。请重新发起。", repo.BotDraftCancelled: "这份操作已取消，没有执行。"}[d.Status]
+	if head == "" {
+		head = "这份操作的状态：" + d.Status
+	}
+	if d.Result != "" && (d.Status == repo.BotDraftExecuted || d.Status == repo.BotDraftFailed) {
+		return head + "\n" + d.Result
+	}
+	if d.Reason != "" && d.Status == repo.BotDraftCancelled {
+		return head + "（" + d.Reason + "）"
+	}
+	return head
 }

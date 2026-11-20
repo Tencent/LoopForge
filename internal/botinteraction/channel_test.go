@@ -466,12 +466,22 @@ func TestFeishuPrivateChatLoopWithTenantConfirmation(t *testing.T) {
 	if ack := conn.push(t, event("e2-retry", "om_2", "tenant-1", "single", "text", "项目状态")); ack.Accepted {
 		t.Fatal("redelivered message accepted twice")
 	}
-	// Another enterprise, a group chat: dropped without a reply.
+	// Another enterprise, a group message without @: dropped without a reply.
 	if ack := conn.push(t, event("e3", "om_3", "tenant-x", "single", "text", "越权")); ack.Accepted || ack.Ignored != "tenant_mismatch" {
 		t.Fatalf("foreign tenant = %+v", ack)
 	}
-	if ack := conn.push(t, event("e4", "om_4", "tenant-1", "group", "text", "群聊")); ack.Accepted || ack.Ignored != "group_not_supported" {
+	if ack := conn.push(t, event("e4", "om_4", "tenant-1", "group", "text", "群聊")); ack.Accepted || ack.Ignored != "group_not_mentioned" {
 		t.Fatalf("group = %+v", ack)
+	}
+	// A group message that @ the Bot is answered in the group, in a
+	// conversation of its own.
+	mentioned := event("e4b", "om_4b", "tenant-1", "group", "text", "群里问进度")
+	mentioned.ChatID, mentioned.Mentioned = "oc_group", true
+	if ack := conn.push(t, mentioned); !ack.Accepted {
+		t.Fatalf("mentioned group = %+v", ack)
+	}
+	if msg := waitReplyMsg(t, conn); msg.Text != "答复：群里问进度" || msg.ChatID != "oc_group" || msg.ChatType != "group" || msg.Route.MessageID != "om_4b" {
+		t.Fatalf("group reply = %+v", msg)
 	}
 	// Non-text: a notice, the content never reaches the model.
 	conn.push(t, event("e5", "om_5", "tenant-1", "single", "image", ""))
@@ -485,7 +495,7 @@ func TestFeishuPrivateChatLoopWithTenantConfirmation(t *testing.T) {
 	}
 	mu.Lock()
 	defer mu.Unlock()
-	if len(generated) != 1 || generated["项目状态"] != 1 {
+	if len(generated) != 2 || generated["项目状态"] != 1 || generated["群里问进度"] != 1 {
 		t.Fatalf("model calls = %v", generated)
 	}
 	// Records use the configuration as identity scope.

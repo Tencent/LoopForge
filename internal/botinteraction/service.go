@@ -29,11 +29,13 @@ type Service struct {
 	// nil disables the cleanup. NativeLogs removes native CLI logs.
 	Retention  *repo.BotRetentionPolicy
 	NativeLogs NativeLogCleaner
-	mu         sync.Mutex
-	running    map[string]*connection
-	channels   map[string]Channel
-	Done       chan struct{}
-	start      sync.Once
+	// PublicURL returns the platform address for links in cards.
+	PublicURL func() string
+	mu        sync.Mutex
+	running   map[string]*connection
+	channels  map[string]Channel
+	Done      chan struct{}
+	start     sync.Once
 }
 type connection struct {
 	bot    domain.NotificationBot
@@ -329,7 +331,12 @@ func (s *Service) process(ctx context.Context, bot domain.NotificationBot, lease
 				// a proactive private message to the original sender.
 				return s.Push(ctx, current, OutboundMessage{InteractionID: sending.ID, ChatID: sending.SenderID, ChatType: "single", Text: sending.Reply, SendKey: sending.SendKey})
 			}
-			return conn.Reply(ctx, OutboundMessage{InteractionID: sending.ID, Action: sending.Action, ChatID: conv.ChatID, ChatType: conv.ChatType, Text: sending.Reply, SendKey: sending.SendKey, Route: s.replyRoute(sending)})
+			out := OutboundMessage{InteractionID: sending.ID, Action: sending.Action, ChatID: conv.ChatID, ChatType: conv.ChatType, Text: sending.Reply, SendKey: sending.SendKey, Route: s.replyRoute(sending)}
+			if sending.Action == "" && current.ChannelKind() == domain.BotChannelFeishu {
+				// A reply with write drafts becomes a confirmation card.
+				out.Card = s.DraftCardFor(sending, s.publicURL())
+			}
+			return conn.Reply(ctx, out)
 		})
 		if err != nil {
 			return err

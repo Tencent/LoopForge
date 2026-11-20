@@ -2,11 +2,14 @@ package botinteraction
 
 import (
 	"agentflow/internal/domain"
+	"agentflow/internal/repo"
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 )
@@ -22,13 +25,18 @@ import (
 // PushCard is the channel-neutral content of an action card.
 type PushCard struct {
 	DeliveryID string
-	Title      string
-	Tag        string // 待人工确认 or 执行失败
-	Reason     string
-	Required   string
-	Rows       [][2]string
-	Actions    []PushCardAction
-	DetailsURL string
+	// DraftID marks a write-confirmation card: buttons carry the draft
+	// instead of a delivery. Body is free text shown above the rows.
+	DraftID      string
+	Body         string
+	DetailsLabel string
+	Title        string
+	Tag          string // 待人工确认 or 执行失败
+	Reason       string
+	Required     string
+	Rows         [][2]string
+	Actions      []PushCardAction
+	DetailsURL   string
 }
 
 // PushCardAction is one button.
@@ -40,6 +48,18 @@ type PushCardAction struct {
 
 // PushCardKeys are the action keys a card button may carry.
 var PushCardKeys = []string{"approve", "retry", "reject", "pass", "resume", "decline"}
+
+// Draft confirmation card actions.
+const (
+	DraftActionConfirm      = "draft_confirm"
+	DraftActionConfirmStart = "draft_confirm_start"
+	DraftActionCancel       = "draft_cancel"
+)
+
+// DraftAction reports whether key is a draft confirmation action.
+func DraftAction(key string) bool {
+	return key == DraftActionConfirm || key == DraftActionConfirmStart || key == DraftActionCancel
+}
 
 // PushCardFor builds the action card of a waiting or failed node delivery,
 // or nil when the node no longer offers an action.
@@ -77,6 +97,9 @@ func (s *Service) PushCardFor(item domain.NotificationDelivery, content, details
 
 // pushCardKey reports whether key is a card action.
 func pushCardKey(key string) bool {
+	if DraftAction(key) {
+		return true
+	}
 	for _, k := range PushCardKeys {
 		if k == key {
 			return true
@@ -105,7 +128,13 @@ func (c *PushCard) PlainText() string {
 // delivery in value; clicks arrive as card.action.trigger callbacks.
 func feishuCardJSON(c *PushCard) []byte {
 	plain := func(text string) map[string]any { return map[string]any{"tag": "plain_text", "content": text} }
-	elements := []any{map[string]any{"tag": "div", "text": plain("原因：" + c.Reason)}}
+	elements := []any{}
+	if c.Body != "" {
+		elements = append(elements, map[string]any{"tag": "div", "text": plain(c.Body)})
+	}
+	if c.Reason != "" {
+		elements = append(elements, map[string]any{"tag": "div", "text": plain("原因：" + c.Reason)})
+	}
 	if c.Required != "" {
 		elements = append(elements, map[string]any{"tag": "div", "text": plain("待处理：" + c.Required)})
 	}
@@ -113,22 +142,35 @@ func feishuCardJSON(c *PushCard) []byte {
 	for _, row := range c.Rows {
 		fields = append(fields, map[string]any{"is_short": true, "text": plain(row[0] + "：" + row[1])})
 	}
-	elements = append(elements, map[string]any{"tag": "div", "fields": fields})
+	if len(fields) > 0 {
+		elements = append(elements, map[string]any{"tag": "div", "fields": fields})
+	}
 	buttons := []any{}
 	for _, a := range c.Actions {
 		kind := "primary"
 		if a.Danger {
 			kind = "danger"
 		}
-		buttons = append(buttons, map[string]any{"tag": "button", "text": plain(a.Text), "type": kind, "value": map[string]string{"af_action": a.Key, "af_delivery": c.DeliveryID}})
+		value := map[string]string{"af_action": a.Key, "af_delivery": c.DeliveryID}
+		if c.DraftID != "" {
+			value = map[string]string{"af_action": a.Key, "af_draft": c.DraftID}
+		}
+		buttons = append(buttons, map[string]any{"tag": "button", "text": plain(a.Text), "type": kind, "value": value})
 	}
 	if c.DetailsURL != "" {
-		buttons = append(buttons, map[string]any{"tag": "button", "text": plain("查看详情"), "type": "default", "url": c.DetailsURL})
+		label := c.DetailsLabel
+		if label == "" {
+			label = "查看详情"
+		}
+		buttons = append(buttons, map[string]any{"tag": "button", "text": plain(label), "type": "default", "url": c.DetailsURL})
 	}
 	elements = append(elements, map[string]any{"tag": "action", "actions": buttons})
 	template := "orange"
-	if c.Tag == "执行失败" {
+	switch {
+	case c.Tag == "执行失败":
 		template = "red"
+	case c.DraftID != "":
+		template = "blue"
 	}
 	card := map[string]any{
 		"config":   map[string]any{"wide_screen_mode": true},
@@ -256,4 +298,51 @@ func classifyDingTalkCard(status int, data []byte) SendResult {
 		return SendResult{Outcome: Rejected, Code: "deliver_failed", SafeDetail: "钉钉未能投放卡片：" + truncate(first.ErrorMsg, 120)}
 	}
 	return SendResult{Outcome: Delivered, PlatformMessageID: truncate(first.CarrierID, 191)}
+}
+
+// draftConfirmMarker starts the confirmation section the platform appends to
+// a chat reply with write drafts (see httpapi.confirmBotDrafts).
+const draftConfirmMarker = "\n\n以下操作需要你在平台确认后才会执行"
+
+// DraftCardFor builds the write-confirmation card of a chat reply: the
+// model's explanation, the frozen operations, confirm / confirm-and-start /
+// cancel buttons and a link to the confirmation page (to change the SOP).
+// It returns nil when the reply produced no pending draft.
+func (s *Service) DraftCardFor(item domain.BotInteraction, publicURL string) *PushCard {
+	draft, ok := s.Store.BotPendingDraftForInteraction(item.ID)
+	if !ok {
+		return nil
+	}
+	body := item.Reply
+	if i := strings.Index(body, draftConfirmMarker); i >= 0 {
+		body = body[:i]
+	}
+	ops := strings.Split(strings.TrimSpace(draft.Summary), "\n")
+	card := &PushCard{DraftID: draft.ID, Tag: "待你确认", Title: fmt.Sprintf("%d 项操作", len(ops)), Body: strings.TrimSpace(body)}
+	for _, op := range ops {
+		if op = strings.TrimSpace(op); op != "" {
+			card.Rows = append(card.Rows, [2]string{"操作", op})
+		}
+	}
+	card.Required = fmt.Sprintf("%d 分钟内有效，只有你本人可以确认；每份操作只执行一次", int(repo.BotDraftTTL.Minutes()))
+	card.Actions = []PushCardAction{{Key: DraftActionConfirm, Text: "确认执行"}}
+	if strings.Contains(draft.Summary, "（SOP：") {
+		card.Actions = append(card.Actions, PushCardAction{Key: DraftActionConfirmStart, Text: "确认并启动 SOP"})
+	}
+	card.Actions = append(card.Actions, PushCardAction{Key: DraftActionCancel, Text: "取消", Danger: true})
+	if base := strings.TrimRight(publicURL, "/"); base != "" {
+		card.DetailsURL, card.DetailsLabel = base+"/bot-approve.html#draft="+draft.ID, "在平台确认（可更换 SOP）"
+	}
+	return card
+}
+
+func (s *Service) publicURL() string {
+	if s.PublicURL == nil {
+		return ""
+	}
+	raw := strings.TrimSpace(s.PublicURL())
+	if u, err := url.Parse(raw); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return ""
+	}
+	return raw
 }

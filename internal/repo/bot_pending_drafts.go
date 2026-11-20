@@ -103,6 +103,16 @@ func (r *AssistantRepo) BotPendingDraft(id string, now time.Time) (domain.BotPen
 	return row.draft(), nil
 }
 
+// BotPendingDraftForInteraction returns the pending draft a chat turn
+// produced, if any (used to send the confirmation as a card).
+func (r *AssistantRepo) BotPendingDraftForInteraction(interactionID string) (domain.BotPendingDraft, bool) {
+	var row botPendingDraftRow
+	if interactionID == "" || r.DB.Where("interaction_id = ? AND status = ?", interactionID, BotDraftPending).Order("created_at DESC").First(&row).Error != nil {
+		return domain.BotPendingDraft{}, false
+	}
+	return row.draft(), true
+}
+
 // BeginBotPendingDraft moves a pending, unexpired draft of userID to
 // executing and verifies the frozen parameters. Any other state returns the
 // current draft with ErrBotDraftNotPending.

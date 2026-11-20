@@ -312,3 +312,41 @@ func TestFeishuAckBoundedWhenPersistenceBlocks(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestFeishuGroupMentionMapping(t *testing.T) {
+	raw := func(mentions []map[string]any) string {
+		b, _ := json.Marshal(map[string]any{
+			"schema": "2.0",
+			"header": map[string]any{"event_id": "evt-g", "event_type": "im.message.receive_v1", "app_id": "cli_app", "tenant_key": "tk"},
+			"event": map[string]any{
+				"sender":  map[string]any{"sender_id": map[string]any{"open_id": "ou_sender"}, "sender_type": "user"},
+				"message": map[string]any{"message_id": "om_g", "chat_id": "oc_group", "chat_type": "group", "message_type": "text", "content": `{"text":"@_user_1 帮我建个需求 @_user_2"}`, "mentions": mentions},
+			},
+		})
+		return string(b)
+	}
+	parse := func(mentions []map[string]any) InboundEvent {
+		var ev larkim.P2MessageReceiveV1
+		if err := json.Unmarshal([]byte(raw(mentions)), &ev); err != nil {
+			t.Fatal(err)
+		}
+		got, ok := feishuEvent(&ev)
+		if !ok {
+			t.Fatal("not mapped")
+		}
+		return got
+	}
+	got := parse([]map[string]any{{"key": "@_user_1", "name": "LoopForge", "mentioned_type": "bot"}, {"key": "@_user_2", "name": "张三", "mentioned_type": "user"}})
+	if !got.Mentioned || got.Text != "帮我建个需求" || got.ChatType != "group" || got.ChatID != "oc_group" {
+		t.Fatalf("bot mention = %+v", got)
+	}
+	if got := parse([]map[string]any{{"key": "@_user_1", "name": "张三", "mentioned_type": "user"}}); got.Mentioned {
+		t.Fatal("user mention counted as @ Bot")
+	}
+	if got := parse(nil); got.Mentioned {
+		t.Fatal("no mention counted")
+	}
+	if got := parse([]map[string]any{{"key": "@_user_1", "name": "LoopForge"}}); !got.Mentioned {
+		t.Fatal("mention without type not counted")
+	}
+}

@@ -56,6 +56,9 @@ type InboundEvent struct {
 	MsgType  string
 	Text     string
 	Quote    string
+	// Mentioned is set for group messages that @ the Bot (Feishu,
+	// DingTalk); other group messages are ignored.
+	Mentioned bool
 
 	// WeCom card callbacks.
 	Action     string

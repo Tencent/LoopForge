@@ -460,7 +460,10 @@ func dingtalkEvent(bot domain.NotificationBot, raw, frameID string, webhookAllow
 	case "1":
 		ev.ChatType = "single"
 	case "2":
+		// DingTalk delivers group messages to the robot only when it is @;
+		// isInAtList confirms it when present.
 		ev.ChatType = "group"
+		ev.Mentioned = m.IsInAtList || !strings.Contains(raw, `"isInAtList"`)
 	default:
 		ev.ChatType = m.ConversationType
 	}

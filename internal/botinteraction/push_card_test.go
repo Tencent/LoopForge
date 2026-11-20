@@ -250,3 +250,78 @@ func TestDingTalkCardCallbackFrameAnswersWithStatus(t *testing.T) {
 		t.Fatalf("event %+v resp %+v", got, resp)
 	}
 }
+
+func TestDraftCardForReplyWithPendingDraft(t *testing.T) {
+	store, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	svc := New(store)
+	item := domain.BotInteraction{ID: "turn-1", Reply: "我会创建这个需求。\n\n以下操作需要你在平台确认后才会执行（30 分钟内有效）：\n1. 保存需求：登录优化（SOP：研发交付）\n在平台确认这些操作：\nhttps://p.example/bot-approve.html#draft=x"}
+	if svc.DraftCardFor(item, "https://p.example") != nil {
+		t.Fatal("card without a draft")
+	}
+	d, err := store.CreateBotPendingDraft(domain.BotPendingDraft{ConfigID: "c", UserID: 7, InteractionID: "turn-1", Summary: "1. 保存需求：登录优化（SOP：研发交付）", Drafts: "[]"}, time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	card := svc.DraftCardFor(item, "https://p.example")
+	if card == nil || card.DraftID != d.ID || card.Body != "我会创建这个需求。" || len(card.Rows) != 1 || card.DetailsURL != "https://p.example/bot-approve.html#draft="+d.ID {
+		t.Fatalf("card = %+v", card)
+	}
+	keys := []string{}
+	for _, a := range card.Actions {
+		keys = append(keys, a.Key)
+	}
+	if strings.Join(keys, ",") != "draft_confirm,draft_confirm_start,draft_cancel" {
+		t.Fatalf("actions = %v", keys)
+	}
+	raw := string(feishuCardJSON(card))
+	if !strings.Contains(raw, `"af_draft":"`+d.ID+`"`) || strings.Contains(raw, "af_delivery") || !strings.Contains(raw, "在平台确认（可更换 SOP）") {
+		t.Fatalf("card json = %s", raw)
+	}
+	// A cancelled draft falls back to the text reply.
+	store.CancelBotPendingDraft(d.ID, 7, "x", time.Now().UTC())
+	if svc.DraftCardFor(item, "") != nil {
+		t.Fatal("card for a cancelled draft")
+	}
+	ev := &callback.CardActionTriggerEvent{EventV2Base: &larkevent.EventV2Base{Header: &larkevent.EventHeader{EventID: "e9", AppID: "cli"}}, Event: &callback.CardActionTriggerRequest{Operator: &callback.Operator{OpenID: "ou_1"}, Action: &callback.CallBackAction{Value: map[string]any{"af_action": "draft_confirm_start", "af_draft": d.ID}}}}
+	if got, ok := feishuCardEvent(ev); !ok || got.Action != DraftActionConfirmStart || got.DeliveryID != d.ID {
+		t.Fatalf("draft click = %+v", got)
+	}
+}
+
+func TestFeishuReplySendsCardWhenGiven(t *testing.T) {
+	var mu sync.Mutex
+	var msgType string
+	mux := http.NewServeMux()
+	mux.HandleFunc("/open-apis/auth/v3/tenant_access_token/internal", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{"code": 0, "tenant_access_token": "t", "expire": 7200})
+	})
+	mux.HandleFunc("/open-apis/im/v1/messages/om_1/reply", func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			MsgType string `json:"msg_type"`
+		}
+		json.NewDecoder(r.Body).Decode(&body)
+		mu.Lock()
+		msgType = body.MsgType
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{"code": 0, "data": map[string]any{"message_id": "om_r"}})
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	ch := newFeishuChannel()
+	ch.base = srv.URL
+	bot := domain.NotificationBot{ID: "cfg", Channel: domain.BotChannelFeishu, BotID: "cli"}
+	conn := &feishuConn{channel: ch, bot: bot, api: ch.client(bot, Credential{Secret: "s"})}
+	card := &PushCard{DraftID: "d", Tag: "待你确认", Title: "1 项操作", Body: "x", Actions: []PushCardAction{{Key: DraftActionConfirm, Text: "确认执行"}}}
+	if res := conn.Reply(context.Background(), OutboundMessage{Text: "t", Route: ReplyRoute{MessageID: "om_1"}, Card: card}); res.Outcome != Delivered || msgType != "interactive" {
+		t.Fatalf("card reply = %+v %s", res, msgType)
+	}
+	if res := conn.Reply(context.Background(), OutboundMessage{Text: "t", Route: ReplyRoute{MessageID: "om_1"}}); res.Outcome != Delivered || msgType != "text" {
+		t.Fatalf("text reply = %+v %s", res, msgType)
+	}
+}

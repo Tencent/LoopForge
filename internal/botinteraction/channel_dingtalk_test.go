@@ -49,8 +49,14 @@ func TestDingTalkEventMapping(t *testing.T) {
 		ev.Route.Webhook != dingtalkWebhook || !ev.Route.ExpiresAt.Equal(time.UnixMilli(1_900_000_000_000).UTC()) {
 		t.Fatalf("event = %+v %s", ev, reason)
 	}
-	if ev, _ := dingtalkEvent(bot, dingtalkCallbackJSON("m", "2", "text", "@bot hi", nil), "f", officialDingTalkWebhook); ev.ChatType != "group" {
+	if ev, _ := dingtalkEvent(bot, dingtalkCallbackJSON("m", "2", "text", "@bot hi", nil), "f", officialDingTalkWebhook); ev.ChatType != "group" || !ev.Mentioned {
 		t.Fatalf("group = %+v", ev)
+	}
+	if ev, _ := dingtalkEvent(bot, dingtalkCallbackJSON("m", "2", "text", "hi", map[string]any{"isInAtList": false}), "f", officialDingTalkWebhook); ev.Mentioned {
+		t.Fatalf("group without @ = %+v", ev)
+	}
+	if ev, _ := dingtalkEvent(bot, dingtalkCallbackJSON("m", "2", "text", "hi", map[string]any{"isInAtList": true}), "f", officialDingTalkWebhook); !ev.Mentioned {
+		t.Fatalf("group with @ = %+v", ev)
 	}
 	if ev, _ := dingtalkEvent(bot, dingtalkCallbackJSON("m", "1", "picture", "", nil), "f", officialDingTalkWebhook); ev.MsgType != "picture" || ev.Text != "" {
 		t.Fatalf("picture = %+v", ev)

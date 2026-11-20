@@ -28,6 +28,7 @@ func New(s *repo.Store) *Service {
 	base := strings.TrimRight(os.Getenv("AGENTFLOW_PUBLIC_URL"), "/")
 	provider := NewCLIProvider()
 	svc := &Service{Store: s, Provider: provider, PublicURL: base, Interactions: botinteraction.New(s)}
+	svc.Interactions.PublicURL = func() string { return svc.PublicURL }
 	// The WeCom channel verifies credentials through the signed bootstrap and
 	// pushes through the current Provider (replaceable in tests). WeCom
 	// notification delivery keeps calling Provider directly (cards and the
