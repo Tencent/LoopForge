@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -30,16 +31,8 @@ func archivedWorkspaceFiles(run domain.Run, executingNode string) []domain.Works
 		if !excluded[n.ID] {
 			continue
 		}
-		for _, out := range n.ArtifactOutputs {
-			if normalizeExecutionScope(n.ExecutionScope) == domain.ExecutionScopeRepositories {
-				for _, rc := range run.RepositoryContexts() {
-					if p, ok := artifactRelPath(rc.WorkspaceDir, out.Path); ok {
-						excludedPaths[p] = true
-					}
-				}
-			} else if p, ok := artifactRelPath("", out.Path); ok {
-				excludedPaths[p] = true
-			}
+		for _, p := range artifactOutputFiles(run, n) {
+			excludedPaths[p] = true
 		}
 	}
 	latest := map[string]domain.Artifact{}
@@ -62,13 +55,7 @@ func archivedWorkspaceFiles(run domain.Run, executingNode string) []domain.Works
 		if rel == "." || filepath.IsAbs(rel) || rel == ".." || strings.HasPrefix(rel, "../") {
 			continue
 		}
-		hidden := false
-		for _, part := range strings.Split(rel, "/") {
-			if strings.HasPrefix(part, ".") {
-				hidden = true
-			}
-		}
-		if hidden {
+		if hasHiddenPathSegment(rel) {
 			continue
 		}
 		old, exists := latest[rel]
@@ -91,6 +78,14 @@ func archivedWorkspaceFiles(run domain.Run, executingNode string) []domain.Works
 		files = append(files, domain.WorkspaceArtifactFile{Path: p, Content: a.Content, SHA256: sha})
 	}
 	return files
+}
+
+// hasHiddenPathSegment reports whether any slash-separated segment of rel
+// starts with "." (dotfiles and dot-directories are never refilled).
+func hasHiddenPathSegment(rel string) bool {
+	return slices.ContainsFunc(strings.Split(rel, "/"), func(part string) bool {
+		return strings.HasPrefix(part, ".")
+	})
 }
 
 func (e *Engine) restoreArchivedWorkspaceFiles(ctx context.Context, run domain.Run) ([]string, error) {

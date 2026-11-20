@@ -117,6 +117,7 @@ func NewWithNotificationsAndBackground(ctx context.Context, s *repo.Store, e *en
 	bg := &Background{recoveryGate: opts.RecoveryGate}
 	router := newWithNotifications(s, e, syncSvc, basicUser, basicPass, notifications, bg, func(h *assistantHandlers, runs *runsHandlers) {
 		h.startSessionJanitor(ctx)
+		h.startAttachmentSweeper(ctx)
 	})
 	return router, bg
 }
@@ -179,6 +180,7 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	if syncSvc != nil {
 		e.MergeIntoBranch = syncSvc.EnsureAndMergeBranchMR
 		e.FindBranchMR = syncSvc.FindBranchMR
+		e.FindBranchMRsInto = syncSvc.FindBranchMRsInto
 	}
 	// Wake long-polling CLI runners the moment the engine queues a task.
 	e.SetRunnerDispatchNotify(func(provider string) { api.runners.runnerWaiters.notify([]string{provider}) })
@@ -186,6 +188,7 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	e.SetRunnerControlNotify(api.runners.runnerControls.sendControl)
 	sched := schedule.New(s, syncSvc, api.schedule.dispatchScheduled)
 	sched.SetBaselineGuard(api.schedule.guardScheduledBaseline)
+	sched.SetRunDispatcher(api.schedule.dispatchScheduledRun)
 	// deps 由所有领域共享，schedule 服务就绪后回填一次即全局可见。
 	d.schedule = sched
 	if schedulerEnabled() {
@@ -279,14 +282,19 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.GET("/api/users/:id/git-ssh-keys", api.users.gitSSHKeys)
 	g.PUT("/api/users/:id/git-ssh-keys", api.users.gitSSHKeys)
 	g.DELETE("/api/users/:id/git-ssh-keys/:keyID", api.users.gitSSHKeys)
+	g.GET("/api/users/:id/git-http-credentials", api.users.gitHTTPCredentials)
+	g.PUT("/api/users/:id/git-http-credentials", api.users.gitHTTPCredentials)
+	g.DELETE("/api/users/:id/git-http-credentials/:credID", api.users.gitHTTPCredentials)
+	g.POST("/api/users/:id/git-http-credentials/:credID/verify", api.users.verifyGitHTTPCredential)
 	g.POST("/api/users/:id/cli-models/probe", api.users.probeCLIModels)
 	g.Any("/api/users/:id", func(c *gin.Context) {
 		c.JSON(http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 	})
 
 	api.botIdentities = &botIdentityHandlers{deps: d, publicURL: api.notifications.service.PublicURL}
-	asst := &assistantHandlers{deps: d, sourceRoot: assistantSourceRoot(), notifications: api.notifications, identities: api.botIdentities}
+	asst := &assistantHandlers{deps: d, runnerControls: runnerControls, sourceRoot: assistantSourceRoot(), notifications: api.notifications, identities: api.botIdentities, attachmentSweepWake: make(chan struct{}, 1)}
 	api.runs.assistant = asst
+	api.runners.assistant = asst
 	api.schedule.assistant = asst
 	api.notifications.service.GenerateReport = asst.generateSOPReport
 	if api.notifications.service.Interactions != nil {
@@ -302,6 +310,7 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.POST("/api/assistant/chat", asst.chat)
 	g.POST("/api/assistant/generations", asst.startGeneration)
 	g.GET("/api/assistant/sessions/:id/generation", asst.generation)
+	g.GET("/api/assistant/sessions/:id/generations/:generationId/diagnostics", asst.generationDiagnostics)
 	g.POST("/api/assistant/sessions/:id/generation/cancel", asst.generation)
 	g.POST("/api/assistant/sessions/:id/generation/steer", asst.steerGeneration)
 	g.POST("/api/assistant/sessions/:id/proposals", asst.decideProposal)
@@ -324,6 +333,9 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.POST("/api/assistant/sessions/:id/fork", asst.forkSession)
 	g.GET("/api/assistant/sessions/:id", asst.session)
 	g.PUT("/api/assistant/sessions/:id/sandbox", asst.sessionSandbox)
+	g.PUT("/api/assistant/sessions/:id/mode", asst.sessionMode)
+	g.GET("/api/assistant/sessions/:id/native-approvals", asst.nativeApprovals)
+	g.POST("/api/assistant/sessions/:id/native-approvals/:approvalId", asst.nativeApprovals)
 	g.PUT("/api/assistant/sessions/:id", asst.session)
 	g.DELETE("/api/assistant/sessions/:id", asst.session)
 	g.GET("/api/assistant/tasks", asst.listTasks)
@@ -572,6 +584,9 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	// http.NotFound（404 text），由 handler 内方法分派实现。
 	g.Any("/api/schedule-jobs/:id", api.schedule.scheduleJob)
 	g.POST("/api/schedule-jobs/:id/run", api.schedule.scheduleJobRun)
+	g.POST("/api/schedule-jobs/:id/enabled", api.schedule.scheduleJobEnabled)
+	g.GET("/api/schedule-job-executions", api.schedule.scheduleJobExecutions)
+	g.GET("/api/schedule-job-executions/dashboard", api.schedule.scheduleJobExecutionDashboard)
 
 	// --- runner management plane ---
 	g.GET("/api/runners", api.runners.runners)
@@ -583,6 +598,9 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.PUT("/api/runners/default", api.runners.runnerDefaultSet)
 	g.DELETE("/api/runners/:id", api.runners.runnerRemove)
 	g.PUT("/api/runners/:id/run-limit", api.runners.runnerRunLimitSet)
+	g.GET("/api/runners/:id/maintenance", api.runners.runnerMaintenance)
+	g.POST("/api/runners/:id/maintenance", api.runners.runnerMaintenance)
+	g.POST("/api/runners/:id/models/probe", api.runners.probeRunnerModels)
 	g.POST("/api/runners/heartbeat", api.runners.runnerHeartbeat)
 	g.GET("/api/runners/tasks", api.runners.runnerTasksCollection)
 	g.POST("/api/runners/tasks", api.runners.runnerTasksCollection)
@@ -597,6 +615,7 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.GET("/api/runners/tasks/:id/control", api.runners.runnerTaskControl)
 	g.PUT("/api/runners/runtimes", api.runners.runnerRuntimeStatus)
 	g.POST("/api/runners/runtimes", api.runners.runnerRuntimeStatus)
+	g.POST("/api/runners/runtimes/test", api.runners.runnerRuntimeTest)
 
 	// Machine plane: this prefix is safe to exempt from gateway interactive
 	// login. Public install assets are read-only; daemon APIs authenticate with
@@ -635,6 +654,7 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	d.api = g
 	if d.schedule != nil {
 		d.schedule.SetAssistantPrep(asst.prepareScheduleJob)
+		d.schedule.SetAssistantSessionPrep(asst.runScheduleJobPromptReporting)
 	}
 	static, _ := fs.Sub(webassets.Files, ".")
 	g.NoRoute(func(c *gin.Context) {

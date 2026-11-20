@@ -123,6 +123,17 @@ func nestedRunUsage(runID string, nested map[string][]domain.Run, depth int) (in
 	return tokens, cost
 }
 
+// withSOPBinding copies the binding-owned fields of an issue SOP binding onto
+// a requirement lane, leaving every other lane field untouched.
+func withSOPBinding(lane domain.RequirementLane, binding domain.IssueSOPBinding) domain.RequirementLane {
+	lane.BindingID = binding.ID
+	lane.AssigneeUserID = binding.AssigneeUserID
+	lane.Order = binding.Order
+	lane.DependsOn = binding.DependsOn
+	lane.Handoff = binding.Handoff
+	return lane
+}
+
 func buildRequirementLanes(issue domain.Issue, project domain.Project, runs []domain.Run, nested map[string][]domain.Run, tasks []domain.Task, workflows map[string]domain.WorkflowDefinition, now time.Time) []domain.RequirementLane {
 	type wfAcc struct {
 		lane      domain.RequirementLane
@@ -137,14 +148,9 @@ func buildRequirementLanes(issue domain.Issue, project domain.Project, runs []do
 		}
 		acc := byWF[workflowID]
 		if acc == nil {
-			if workflow.ID == "" {
-				workflow = workflows[workflowID]
-			}
+			workflow = resolvedRequirementWorkflow(workflows, workflowID, workflow)
 			lane := domain.InferSOPLane(workflow)
-			name := workflow.Name
-			if name == "" {
-				name = workflowID
-			}
+			name := requirementLaneName(workflow, workflowID)
 			acc = &wfAcc{lane: domain.RequirementLane{
 				Lane: lane, Label: name, WorkflowID: workflowID, WorkflowName: name,
 			}}
@@ -153,10 +159,7 @@ func buildRequirementLanes(issue domain.Issue, project domain.Project, runs []do
 		return acc
 	}
 	for _, run := range runs {
-		workflow := run.WorkflowSnapshot
-		if workflow.ID == "" {
-			workflow = workflows[run.WorkflowID]
-		}
+		workflow := resolvedRequirementWorkflow(workflows, run.WorkflowID, run.WorkflowSnapshot)
 		acc := accumulate(run.WorkflowID, workflow)
 		if acc == nil {
 			continue
@@ -222,28 +225,16 @@ func buildRequirementLanes(issue domain.Issue, project domain.Project, runs []do
 	bound := map[string]bool{}
 	for _, binding := range bindings {
 		bound[binding.WorkflowID] = true
-		lane := domain.RequirementLane{
-			BindingID: binding.ID, WorkflowID: binding.WorkflowID, Status: "not_started",
-			AssigneeUserID: binding.AssigneeUserID, Order: binding.Order,
-			DependsOn: binding.DependsOn, Handoff: binding.Handoff,
-		}
+		lane := withSOPBinding(domain.RequirementLane{WorkflowID: binding.WorkflowID, Status: "not_started"}, binding)
 		workflow := workflows[binding.WorkflowID]
 		lane.Lane = domain.InferSOPLane(workflow)
 		if workflow.ID == "" {
 			lane.Lane = domain.InferSOPLane(domain.WorkflowDefinition{ID: binding.WorkflowID})
 		}
-		lane.WorkflowName = workflow.Name
-		if lane.WorkflowName == "" {
-			lane.WorkflowName = binding.WorkflowID
-		}
+		lane.WorkflowName = requirementLaneName(workflow, binding.WorkflowID)
 		lane.Label = lane.WorkflowName
 		if acc := byWF[binding.WorkflowID]; acc != nil {
-			copied := acc.lane
-			copied.BindingID = binding.ID
-			copied.AssigneeUserID = binding.AssigneeUserID
-			copied.Order = binding.Order
-			copied.DependsOn = binding.DependsOn
-			copied.Handoff = binding.Handoff
+			copied := withSOPBinding(acc.lane, binding)
 			if copied.Label == "" {
 				copied.Label = lane.Label
 			}
@@ -275,13 +266,8 @@ func buildRequirementLanes(issue domain.Issue, project domain.Project, runs []do
 			if latest.lane.WorkflowID == bindings[0].WorkflowID {
 				return out
 			}
-			lane := latest.lane
+			lane := withSOPBinding(latest.lane, bindings[0])
 			lane.Orphan = false
-			lane.BindingID = bindings[0].ID
-			lane.AssigneeUserID = bindings[0].AssigneeUserID
-			lane.Order = bindings[0].Order
-			lane.DependsOn = bindings[0].DependsOn
-			lane.Handoff = bindings[0].Handoff
 			return []domain.RequirementLane{lane}
 		}
 	}
@@ -297,6 +283,25 @@ func buildRequirementLanes(issue domain.Issue, project domain.Project, runs []do
 	sort.Slice(orphans, func(i, j int) bool { return orphans[i].WorkflowName < orphans[j].WorkflowName })
 	out = append(out, orphans...)
 	return out
+}
+
+// resolvedRequirementWorkflow prefers the workflow definition frozen into a run
+// snapshot and falls back to the catalog entry when the snapshot is missing, so
+// a lane still gets a name and lane after its workflow leaves the catalog.
+func resolvedRequirementWorkflow(workflows map[string]domain.WorkflowDefinition, workflowID string, snapshot domain.WorkflowDefinition) domain.WorkflowDefinition {
+	if snapshot.ID != "" {
+		return snapshot
+	}
+	return workflows[workflowID]
+}
+
+// requirementLaneName is the lane display name: the workflow name, or the bare
+// id when the catalog entry is unknown.
+func requirementLaneName(workflow domain.WorkflowDefinition, workflowID string) string {
+	if workflow.Name != "" {
+		return workflow.Name
+	}
+	return workflowID
 }
 
 func laneStatusFromRun(run domain.Run) string {

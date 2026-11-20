@@ -46,7 +46,7 @@ async function main() {
   const control={state:{selectedRun:run.id,activeRun:run,data:{runs:[run],issues:[]},issueDetailData:{run}},api:async(path,opts)=>{calls.push([path,opts?.method||'GET']);return{id:run.id,status:'queued',pauseRequested:false,admissionState:'queued'};},toast:m=>messages.push(m),readHumanContext:()=>'',refreshIssues:async()=>{},refreshRuns:async()=>{},startLiveRun:id=>calls.push(['stream',id]),stopLiveRun:()=>{},renderRunDetail:()=>{},renderRuns:()=>{},renderIssueDetailTab:()=>{}};
   load(control,['cachedRun','queuedRunActionBlocked','patchCachedRun','paintRunControl','runStatus','runDisplayStatus','runControlToast','sortRunsDescending','syncRunControlState','resumePausedRun']);
   control.$=()=>null;
-  vm.runInContext('const runActivationRequests=new Map(); const runRestoreWatchers=new Map();',control);
+  vm.runInContext('const runActivationRequests=new Map();',control);
   load(control,['paintRunActivationProgress','requestRunActivation']);
   await control.resumePausedRun(run.id);
   assert.deepEqual(calls.slice(0,2),[['/api/runs/run%2F1/resume','POST'],['/api/runs/run%2F1','GET']]);
@@ -85,7 +85,7 @@ async function main() {
 
   for (const name of ['showRunDetail','selectRun']) {
     const streams=[],context={state:{data:{runs:[]}},$:()=>({hidden:false,classList:{add:()=>{}},dataset:{}}),document:{querySelector:()=>({setAttribute:()=>{}})},stopQueuedRunRefresh:()=>{},stopLiveRun:()=>{},stopPreviewPoll:()=>{},syncRunHash:()=>{},api:async()=>({id:'r',status:'queued'}),shouldPatchRunLive:()=>false,renderRunDetail:()=>{},renderRuns:()=>{},startLiveRun:id=>streams.push(id),toast:()=>{}};
-    load(context,[name]);context[name]('r');await flush();assert.deepEqual(streams,['r'],name);
+    load(context,['loadRunMachineMetadata',name]);context[name]('r');await flush();assert.deepEqual(streams,['r'],name);
   }
   const liveState={selectedRun:'r',data:{runs:[]}},intervals=new Map();let timer=0,status='queued',applied=[];
   const polling={state:liveState,api:async()=>({id:'r',status}),setInterval:fn=>{intervals.set(++timer,fn);return timer},clearInterval:id=>intervals.delete(id),patchCachedRun:()=>{},applyRunPayload:r=>applied.push(r.status),refreshRunPagesDelta:async()=>{},renderRuns:()=>{},renderIssueDetailTab:()=>{}};

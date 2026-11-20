@@ -21,43 +21,9 @@ func ApprovalWaitReason(run Run, nodeID string) string {
 		return ""
 	}
 	node := wf.Nodes[index]
-	name := func(id string) string {
-		for _, n := range wf.Nodes {
-			if n.ID == id {
-				if strings.TrimSpace(n.Name) != "" {
-					return "「" + n.Name + "」"
-				}
-				return "「" + id + "」"
-			}
-		}
-		return "「" + id + "」"
-	}
-	var upstream, downstream []string
-	for _, edge := range wf.Edges {
-		if edge.Target == nodeID && edge.Source != "" {
-			upstream = append(upstream, name(edge.Source))
-		}
-		if edge.Source == nodeID && edge.Target != "" {
-			downstream = append(downstream, name(edge.Target))
-		}
-	}
-	// Workflows without edges run in list order.
-	if len(wf.Edges) == 0 {
-		if index > 0 {
-			upstream = []string{name(wf.Nodes[index-1].ID)}
-		}
-		if index+1 < len(wf.Nodes) {
-			downstream = []string{name(wf.Nodes[index+1].ID)}
-		}
-	}
+	upstream, downstream := approvalNeighbors(wf, index)
 	var b strings.Builder
-	sop := strings.TrimSpace(wf.Name)
-	if sop == "" {
-		sop = "该 SOP"
-	} else {
-		sop = "SOP「" + sop + "」"
-	}
-	b.WriteString(sop + "在这一步设置了人工门禁")
+	b.WriteString(approvalSOPLabel(wf.Name) + "在这一步设置了人工门禁")
 	if len(upstream) > 0 {
 		b.WriteString("：" + strings.Join(upstream, "、") + "已完成，需要有权限的成员检查结果后确认")
 	} else {
@@ -69,11 +35,56 @@ func ApprovalWaitReason(run Run, nodeID string) string {
 		b.WriteString("，确认后运行结束")
 	}
 	if node.RejectTo != "" {
-		b.WriteString("；不通过可打回到" + name(node.RejectTo) + "重做")
+		b.WriteString("；不通过可打回到" + approvalNodeLabel(wf, node.RejectTo) + "重做")
 	}
 	b.WriteString("。")
 	if instructions := strings.TrimSpace(node.TaskPrompt); instructions != "" {
 		b.WriteString("确认要求：" + instructions)
 	}
 	return b.String()
+}
+
+// approvalNeighbors returns the labels of the steps feeding into and
+// following wf.Nodes[index]. Workflows without edges run in list order.
+func approvalNeighbors(wf WorkflowDefinition, index int) (upstream, downstream []string) {
+	nodeID := wf.Nodes[index].ID
+	for _, edge := range wf.Edges {
+		if edge.Target == nodeID && edge.Source != "" {
+			upstream = append(upstream, approvalNodeLabel(wf, edge.Source))
+		}
+		if edge.Source == nodeID && edge.Target != "" {
+			downstream = append(downstream, approvalNodeLabel(wf, edge.Target))
+		}
+	}
+	if len(wf.Edges) == 0 {
+		if index > 0 {
+			upstream = []string{approvalNodeLabel(wf, wf.Nodes[index-1].ID)}
+		}
+		if index+1 < len(wf.Nodes) {
+			downstream = []string{approvalNodeLabel(wf, wf.Nodes[index+1].ID)}
+		}
+	}
+	return upstream, downstream
+}
+
+// approvalNodeLabel quotes a node's display name, falling back to its ID when
+// the node is unnamed or missing from the snapshot.
+func approvalNodeLabel(wf WorkflowDefinition, id string) string {
+	for _, n := range wf.Nodes {
+		if n.ID == id {
+			if strings.TrimSpace(n.Name) != "" {
+				return "「" + n.Name + "」"
+			}
+			break
+		}
+	}
+	return "「" + id + "」"
+}
+
+// approvalSOPLabel names the workflow in the reason, or "该 SOP" when unnamed.
+func approvalSOPLabel(name string) string {
+	if name = strings.TrimSpace(name); name != "" {
+		return "SOP「" + name + "」"
+	}
+	return "该 SOP"
 }

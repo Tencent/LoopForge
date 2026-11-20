@@ -18,6 +18,37 @@ import (
 	"github.com/gorilla/websocket"
 )
 
+func TestClaimSSHKnownHostsFitsAfterLegacyPayload(t *testing.T) {
+	response := struct {
+		Task domain.RunnerTask `json:"task"`
+	}{Task: domain.RunnerTask{ID: "large-ssh-task"}}
+	empty, err := json.Marshal(response)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Task.Prompt = strings.Repeat("x", (8<<20)-len(empty)-32)
+	const pin = "[gitlab.example.org]:2222 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl\n"
+	response.Task.GitSSHKnownHosts = &domain.GitSSHKnownHosts{Entries: pin}
+	body, err := json.Marshal(response)
+	if err != nil || len(body) <= 8<<20 {
+		t.Fatalf("claim response is %d bytes: %v", len(body), err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			SupportsGitSSHKnownHosts bool `json:"supportsGitSshKnownHosts"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || !req.SupportsGitSSHKnownHosts {
+			t.Errorf("claim did not advertise SSH host pin support: %v", err)
+		}
+		_, _ = w.Write(body)
+	}))
+	defer server.Close()
+	task, claimed, err := NewClient(server.URL).Claim(t.Context(), ClaimRequest{AvailableRuntimes: []string{"mock"}})
+	if err != nil || !claimed || task.GitSSHKnownHosts == nil || task.GitSSHKnownHosts.Entries != pin {
+		t.Fatalf("claim did not decode the extended response, claimed = %v, err = %v", claimed, err)
+	}
+}
+
 func TestPreviewArchiveSuccessAndFailures(t *testing.T) {
 	var uploaded []byte
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -182,8 +213,8 @@ func TestRunnerCredentialArtifactAndRepositoryHelpers(t *testing.T) {
 		t.Fatalf("artifacts=%v", artifacts)
 	}
 	contexts := invocationRepositoryContexts(inv)
-	if len(contexts) != 1 || contexts[0].WorkspaceDir != "repo" || invocationGitToken(inv) != "token" {
-		t.Fatalf("contexts=%+v token=%q", contexts, invocationGitToken(inv))
+	if len(contexts) != 1 || contexts[0].WorkspaceDir != "repo" || len(invocationGitCredentials(inv).GitHTTPCredentials) != 0 {
+		t.Fatalf("contexts=%+v credentials=%v", contexts, invocationGitCredentials(inv).GitHTTPCredentials)
 	}
 	legacy := &domain.RunnerInvocation{Repository: &domain.RunnerRepository{RepositoryID: "legacy", Dir: "."}}
 	if len(invocationRepositoryContexts(legacy)) != 1 {
@@ -212,9 +243,6 @@ func TestRunnerCredentialArtifactAndRepositoryHelpers(t *testing.T) {
 		if (err != nil) != tc.wantErr {
 			t.Fatalf("binding=%v err=%v wantErr=%v", tc.binding, err, tc.wantErr)
 		}
-	}
-	if !hasCredentialBinding([]flowruntime.CredentialBinding{flowruntime.BindGit}, flowruntime.BindGit) || hasCredentialBinding(nil, flowruntime.BindGit) {
-		t.Fatal("binding lookup")
 	}
 }
 

@@ -54,23 +54,52 @@ func (e *Engine) cloudPoolRunner(projectID string) (domain.Runner, bool) {
 	e.mu.Lock()
 	pool := e.cloudPool
 	e.mu.Unlock()
-	if pool.Label == "" || !cloudPoolServes(pool.Projects, projectID) {
+	if !pool.serves(projectID) {
 		return domain.Runner{}, false
 	}
 	return e.pickPoolRunner(pool.Label)
 }
 
-func (e *Engine) pickPoolRunner(label string) (domain.Runner, bool) {
-	var candidates []domain.Runner
+// ConversationCloudRunner allocates once. Later turns use the conversation's
+// stored target and never pick another runner after an outage.
+func (e *Engine) ConversationCloudRunner(projectID string) (string, error) {
+	e.mu.Lock()
+	pool := e.cloudPool
+	e.mu.Unlock()
+	if !pool.serves(projectID) {
+		return "", nil
+	}
 	for _, runner := range e.repo.Runners() {
-		if poolRunnerEligible(runner, label) {
-			candidates = append(candidates, runner)
+		if poolRunnerEligible(runner, pool.Label) && runner.SupportsConversationCLI() {
+			return runner.ID, nil
 		}
 	}
+	return "", fmt.Errorf("云端暂无支持对话的在线执行机器，请升级 Runner 后重试")
+}
+
+// serves reports whether the pool is enabled and covers projectID.
+func (pool CloudRunnerPool) serves(projectID string) bool {
+	return pool.Label != "" && cloudPoolServes(pool.Projects, projectID)
+}
+
+func (e *Engine) pickPoolRunner(label string) (domain.Runner, bool) {
+	candidates := e.eligiblePoolRunners(label)
 	if len(candidates) == 0 {
 		return domain.Runner{}, false
 	}
 	return candidates[rand.Intn(len(candidates))], true
+}
+
+// eligiblePoolRunners lists the registered runners that can take pool work
+// for label right now.
+func (e *Engine) eligiblePoolRunners(label string) []domain.Runner {
+	var out []domain.Runner
+	for _, runner := range e.repo.Runners() {
+		if poolRunnerEligible(runner, label) {
+			out = append(out, runner)
+		}
+	}
+	return out
 }
 
 func poolRunnerEligible(runner domain.Runner, label string) bool {
@@ -104,7 +133,7 @@ func (e *Engine) cloudPoolRequired(projectID string) bool {
 	e.mu.Lock()
 	pool := e.cloudPool
 	e.mu.Unlock()
-	return pool.Required && pool.Label != "" && cloudPoolServes(pool.Projects, projectID)
+	return pool.Required && pool.serves(projectID)
 }
 
 // CloudPoolStatus reports whether the cloud runner pool is configured and
@@ -114,12 +143,7 @@ func (e *Engine) CloudPoolStatus() (configured bool, online int) {
 	if label == "" {
 		return false, 0
 	}
-	for _, runner := range e.repo.Runners() {
-		if poolRunnerEligible(runner, label) {
-			online++
-		}
-	}
-	return true, online
+	return true, len(e.eligiblePoolRunners(label))
 }
 
 func (e *Engine) cloudPoolLabel() string {
@@ -140,6 +164,14 @@ func isPoolRun(run domain.Run) bool {
 // machine to return before continuing. Runs on a user's own machine are left
 // alone.
 func (e *Engine) bindPoolRunner(ctx context.Context, run domain.Run, nodeID string) (domain.Run, error) {
+	if run.ExecutionContext.ExecutionPinned {
+		if id := run.ExecutionContext.ExecutionRunnerID; id != "" {
+			if r, ok := e.repo.Runner(id); !ok || r.Status != domain.RunnerStatusOnline {
+				return run, fmt.Errorf("会话绑定的执行机器暂不可用，请等待原机器恢复")
+			}
+		}
+		return run, nil
+	}
 	// Parallel first nodes bind together: the first picks the machine, the
 	// others re-read the run and follow it.
 	release := e.lockPoolBinding(run.ID)

@@ -142,16 +142,7 @@ func (r *IssuesRepo) issueDeletionStates(db *gorm.DB, issues []domain.Issue) (ma
 		if state == nil {
 			return nil, fmt.Errorf("执行任务 %s 的需求编号与记录不一致", task.ID)
 		}
-		state.hasHistory = true
-		switch task.Status {
-		case "completed", "succeeded":
-			state.successful = true
-		case "failed", "cancelled":
-		default:
-			if state.Block == nil {
-				state.Block = &IssueDeletionBlock{Code: "active", Reason: "仍有未结束的任务，请先处理或停止后再删除", TaskID: task.ID}
-			}
-		}
+		state.addTask(task.ID, task.Status)
 		if task.RunID != "" {
 			if runIssues[task.RunID] == nil {
 				runIssues[task.RunID] = map[string]bool{}
@@ -161,46 +152,63 @@ func (r *IssuesRepo) issueDeletionStates(db *gorm.DB, issues []domain.Issue) (ma
 		}
 	}
 
-	expr := "json_extract(execution_context, '$.issueId')"
-	if r.isMySQL() {
-		expr = "JSON_UNQUOTE(JSON_EXTRACT(execution_context, '$.issueId'))"
-	}
-	type linkedRun struct {
-		ID, Status, IssueID string
-		ActiveNodes         bool
-	}
+	expr := r.sqlExecutionContextJSONText("issueId")
 	q := db.Table("runs").Select("id, status, "+expr+" AS issue_id, "+
 		"EXISTS (SELECT 1 FROM run_nodes WHERE run_id = runs.id AND status IN ('running', 'pending_input')) AS active_nodes").
 		Where(expr+" IN ?", ids)
 	if len(runIDs) > 0 {
 		q = q.Or("id IN ?", runIDs)
 	}
-	var runs []linkedRun
+	var runs []issueDeletionRun
 	if err := q.Find(&runs).Error; err != nil {
 		return nil, err
-	}
-	addRun := func(state *IssueDeletionState, run linkedRun) {
-		state.hasHistory = true
-		state.successful = state.successful || run.Status == "succeeded"
-		state.runIDs = append(state.runIDs, run.ID)
-		if domain.TerminalRunStatus(run.Status) && !run.ActiveNodes {
-			return
-		}
-		// Prefer linking to the active run when the earlier reason was a task.
-		if state.Block == nil || (state.Block.Code == "active" && state.Block.RunID == "") {
-			state.Block = &IssueDeletionBlock{Code: "active", Reason: "仍有未结束的运行，请先处理或停止后再删除", RunID: run.ID}
-		}
 	}
 	for _, run := range runs {
 		linked := runIssues[run.ID]
 		for id := range linked {
-			addRun(states[id], run)
+			states[id].addRun(run)
 		}
 		if state := states[run.IssueID]; state != nil && !linked[run.IssueID] {
-			addRun(state, run)
+			state.addRun(run)
 		}
 	}
 	return states, nil
+}
+
+// issueDeletionRun is a run linked to an issue, either through its execution
+// context or through a legacy task RunID.
+type issueDeletionRun struct {
+	ID, Status, IssueID string
+	ActiveNodes         bool
+}
+
+// addTask records one linked task: any task is history, a completed task
+// counts as success, and an unfinished task blocks deletion.
+func (s *IssueDeletionState) addTask(taskID, status string) {
+	s.hasHistory = true
+	switch status {
+	case "completed", "succeeded":
+		s.successful = true
+	case "failed", "cancelled":
+	default:
+		if s.Block == nil {
+			s.Block = &IssueDeletionBlock{Code: "active", Reason: "仍有未结束的任务，请先处理或停止后再删除", TaskID: taskID}
+		}
+	}
+}
+
+// addRun records one linked run and blocks deletion while it is still active.
+func (s *IssueDeletionState) addRun(run issueDeletionRun) {
+	s.hasHistory = true
+	s.successful = s.successful || run.Status == "succeeded"
+	s.runIDs = append(s.runIDs, run.ID)
+	if domain.TerminalRunStatus(run.Status) && !run.ActiveNodes {
+		return
+	}
+	// Prefer linking to the active run when the earlier reason was a task.
+	if s.Block == nil || (s.Block.Code == "active" && s.Block.RunID == "") {
+		s.Block = &IssueDeletionBlock{Code: "active", Reason: "仍有未结束的运行，请先处理或停止后再删除", RunID: run.ID}
+	}
 }
 
 // IssueClosureAllowed permits settled execution history, but no active work.

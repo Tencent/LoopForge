@@ -1,6 +1,7 @@
 package runeval
 
 import (
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -37,16 +38,7 @@ func BuildFacts(run domain.Run, catalog domain.RunEvalCatalog) domain.RunEvalFac
 	if facts.ArtifactCount == 0 {
 		facts.ArtifactCount = run.ArtifactCount
 	}
-	if !run.CreatedAt.IsZero() {
-		end := run.UpdatedAt
-		if end.IsZero() {
-			end = time.Now().UTC()
-		}
-		facts.WallDurationMs = end.Sub(run.CreatedAt).Milliseconds()
-		if facts.WallDurationMs < 0 {
-			facts.WallDurationMs = 0
-		}
-	}
+	facts.WallDurationMs = elapsedMs(run.CreatedAt, run.UpdatedAt)
 	nodeMeta := map[string]domain.WorkflowNode{}
 	for _, node := range run.WorkflowSnapshot.Nodes {
 		nodeMeta[node.ID] = node
@@ -69,25 +61,7 @@ func BuildFacts(run domain.Run, catalog domain.RunEvalCatalog) domain.RunEvalFac
 		case "verification":
 			verification[ev.NodeID]++
 		case "tool":
-			name := ev.Name
-			if ev.Tool != nil && ev.Tool.Name != "" {
-				name = ev.Tool.Name
-			}
-			if name == "" {
-				name = "tool"
-			}
-			key := ev.NodeID + "\x00" + name
-			item := toolCounts[key]
-			if item == nil {
-				item = &domain.RunEvalToolRepeat{NodeID: ev.NodeID, Tool: name}
-				toolCounts[key] = item
-			}
-			if ev.Phase == "" || ev.Phase == "start" || ev.Phase == "finish" {
-				item.Count++
-			}
-			if ev.Error != nil || ev.Phase == "error" || ev.Level == "error" {
-				item.Failed++
-			}
+			bumpToolRepeat(toolCounts, ev)
 		case "error":
 			text := ev.Message
 			if ev.Error != nil && ev.Error.Message != "" {
@@ -110,18 +84,7 @@ func BuildFacts(run domain.Run, catalog domain.RunEvalCatalog) domain.RunEvalFac
 			bumpError(errorCounts, ev.NodeID, ev.Message)
 		}
 	}
-	ids := make([]string, 0, len(run.Nodes)+len(nodeMeta))
-	seen := map[string]bool{}
-	for _, node := range run.WorkflowSnapshot.Nodes {
-		ids = append(ids, node.ID)
-		seen[node.ID] = true
-	}
-	for id := range run.Nodes {
-		if !seen[id] {
-			ids = append(ids, id)
-		}
-	}
-	for _, id := range ids {
+	for _, id := range orderedNodeIDs(run) {
 		nr := run.Nodes[id]
 		meta := nodeMeta[id]
 		fact := domain.RunEvalNodeFact{
@@ -142,17 +105,8 @@ func BuildFacts(run domain.Run, catalog domain.RunEvalCatalog) domain.RunEvalFac
 			fact.ToolCalls = nr.ToolCalls
 			fact.Usage = nr.Usage
 			fact.Error = clip(nr.Error, maxErrorText)
-			if !nr.StartedAt.IsZero() {
-				end := nr.FinishedAt
-				if end.IsZero() {
-					end = time.Now().UTC()
-				}
-				fact.DurationMs = end.Sub(nr.StartedAt).Milliseconds()
-				if fact.DurationMs < 0 {
-					fact.DurationMs = 0
-				}
-				facts.ExecDurationMs += fact.DurationMs
-			}
+			fact.DurationMs = elapsedMs(nr.StartedAt, nr.FinishedAt)
+			facts.ExecDurationMs += fact.DurationMs
 		}
 		facts.Nodes = append(facts.Nodes, fact)
 	}
@@ -160,6 +114,40 @@ func BuildFacts(run domain.Run, catalog domain.RunEvalCatalog) domain.RunEvalFac
 	facts.Errors = rankedErrors(errorCounts)
 	facts.Digest = digest
 	return facts
+}
+
+// elapsedMs returns the non-negative milliseconds between start and end.
+// A zero start yields 0; a zero end means the span is still open and is
+// measured up to now.
+func elapsedMs(start, end time.Time) int64 {
+	if start.IsZero() {
+		return 0
+	}
+	if end.IsZero() {
+		end = time.Now().UTC()
+	}
+	ms := end.Sub(start).Milliseconds()
+	if ms < 0 {
+		return 0
+	}
+	return ms
+}
+
+// orderedNodeIDs lists the workflow snapshot nodes in declaration order,
+// followed by any node that only exists in the run's runtime state.
+func orderedNodeIDs(run domain.Run) []string {
+	ids := make([]string, 0, len(run.Nodes)+len(run.WorkflowSnapshot.Nodes))
+	seen := map[string]bool{}
+	for _, node := range run.WorkflowSnapshot.Nodes {
+		ids = append(ids, node.ID)
+		seen[node.ID] = true
+	}
+	for id := range run.Nodes {
+		if !seen[id] {
+			ids = append(ids, id)
+		}
+	}
+	return ids
 }
 
 func keepDigest(ev domain.TelemetryEvent) bool {
@@ -206,6 +194,31 @@ func bumpError(bag map[string]*domain.RunEvalErrorFact, nodeID, text string) {
 	item.Count++
 }
 
+// bumpToolRepeat accumulates one tool telemetry event into bag, keyed by node
+// and tool name. Count grows on phase-less, start and finish events; Failed
+// grows on any error signal.
+func bumpToolRepeat(bag map[string]*domain.RunEvalToolRepeat, ev domain.TelemetryEvent) {
+	name := ev.Name
+	if ev.Tool != nil && ev.Tool.Name != "" {
+		name = ev.Tool.Name
+	}
+	if name == "" {
+		name = "tool"
+	}
+	key := ev.NodeID + "\x00" + name
+	item := bag[key]
+	if item == nil {
+		item = &domain.RunEvalToolRepeat{NodeID: ev.NodeID, Tool: name}
+		bag[key] = item
+	}
+	if ev.Phase == "" || ev.Phase == "start" || ev.Phase == "finish" {
+		item.Count++
+	}
+	if ev.Error != nil || ev.Phase == "error" || ev.Level == "error" {
+		item.Failed++
+	}
+}
+
 func rankedTools(bag map[string]*domain.RunEvalToolRepeat) []domain.RunEvalToolRepeat {
 	out := make([]domain.RunEvalToolRepeat, 0, len(bag))
 	for _, item := range bag {
@@ -239,10 +252,8 @@ func rankedErrors(bag map[string]*domain.RunEvalErrorFact) []domain.RunEvalError
 }
 
 func appendUnique(list []string, value string) []string {
-	for _, item := range list {
-		if item == value {
-			return list
-		}
+	if slices.Contains(list, value) {
+		return list
 	}
 	return append(list, value)
 }

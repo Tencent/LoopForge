@@ -1,7 +1,7 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
-const state = vi.hoisted(() => ({ transcript: [], generation: null }));
+const state = vi.hoisted(() => ({ transcript: [], generation: null, generationGate: null, preferences: {} }));
 const { apiMock, writeMock } = vi.hoisted(() => {
   const apiMock = vi.fn(async (path) => {
     if (path === "/api/auth/current")
@@ -9,9 +9,17 @@ const { apiMock, writeMock } = vi.hoisted(() => {
     if (path === "/api/projects") return [{ id: "p1", name: "项目一", ownerId: 1, members: [1] }];
     if (path === "/api/assistant/models")
       return { default: "m1", sponsoredModel: "m1", models: [{ id: "m1", name: "模型一" }] };
+    if (path === "/api/assistant/preferences") return structuredClone(state.preferences);
     if (path === "/api/users") return [{ id: 1, loginName: "tester", codeBuddyApiKeyConfigured: true }];
     if (path === "/api/assistant/sessions") return [];
-    if (path.includes("/generation")) return structuredClone(state.generation);
+    if (path.startsWith("/api/assistant/sessions/s2")) {
+      if (path.includes("/generation")) throw Object.assign(new Error("not found"), { status: 404 });
+      return { id: "s2", title: "别的会话", projectId: "p1", model: "m1", messages: [] };
+    }
+    if (path.includes("/generation")) {
+      if (state.generationGate) await state.generationGate;
+      return structuredClone(state.generation);
+    }
     if (path.startsWith("/api/assistant/sessions/"))
       return { id: "s1", title: "排队", projectId: "p1", model: "m1", messages: structuredClone(state.transcript) };
     return [];
@@ -83,6 +91,8 @@ describe("sending while a reply runs", () => {
     history.replaceState({}, "", "/");
     state.transcript = [{ role: "user", content: "查失败节点" }];
     state.generation = { id: "g-running", status: "running", events: [{ sequence: 1, data: { kind: "tool", tool: "runs_get" } }] };
+    state.generationGate = null;
+    state.preferences = {};
     globalThis.EventSource = FakeEventSource;
   });
   afterEach(() => {
@@ -93,7 +103,7 @@ describe("sending while a reply runs", () => {
     const { result, unmount } = await openRunning();
     let ok;
     await act(async () => {
-      ok = await result.current.send({ text: "应该看 CI 而不是 lint" });
+      ok = await result.current.send({ text: "应该看 CI 而不是 lint", approvalMode: "auto" });
     });
     expect(ok).toBe(true);
     expect(result.current.error).toBe("");
@@ -105,6 +115,7 @@ describe("sending while a reply runs", () => {
     await finish("failed");
     await waitFor(() => expect(generationPosts()).toHaveLength(1));
     const body = generationPosts()[0][1];
+    expect(body).toMatchObject({ approvalMode: "auto", approvalUserId: 1 });
     // The queued question follows the stored unfinished reply.
     expect(body.messages.map((m) => m.role)).toEqual(["user", "assistant", "user"]);
     expect(body.messages[1].unfinished).toBe("生成已停止");
@@ -128,6 +139,157 @@ describe("sending while a reply runs", () => {
     act(() => result.current.resumeQueue());
     await waitFor(() => expect(generationPosts()).toHaveLength(1));
     expect(generationPosts()[0][1].messages.at(-1).content).toBe("排队的消息");
+    unmount();
+  });
+
+  test("the saved immediate-send preference steers with attachments and queues later sends during handoff", async () => {
+    state.preferences = { steerOnSend: true };
+    const { result, unmount } = await openRunning();
+    const attachments = [{ id: "screenshot", name: "image.png", mimeType: "image/png" }];
+    const references = [{ type: "issue", id: "issue-1" }];
+    await act(async () => {
+      expect(await result.current.send({ text: "立即看这里", attachments, references, approvalMode: "assisted" })).toBe(true);
+      expect(await result.current.send({ text: "下一条补充" })).toBe(true);
+    });
+    expect(steerPosts()).toHaveLength(1);
+    expect(steerPosts()[0][1]).toMatchObject({
+      content: "立即看这里", model: "m1", attachments, references,
+      approvalMode: "assisted", approvalUserId: 1,
+    });
+    expect(result.current.steering?.text).toBe("立即看这里");
+    expect(result.current.queue.map((m) => m.text)).toEqual(["下一条补充"]);
+    expect(generationPosts()).toHaveLength(0);
+    unmount();
+  });
+
+  test.each([
+    [400, "请先配置 API Key"],
+    [409, "这个对话由 Codex 回复，不能中途切换 CLI"],
+  ])("an immediate send rejected with %i holds the queue", async (status, error) => {
+    state.preferences = { steerOnSend: true };
+    const { result, unmount } = await openRunning();
+    writeMock.mockRejectedValueOnce(Object.assign(new Error(error), { status }));
+    await act(async () => {
+      expect(await result.current.send({ text: "不能丢失" })).toBe(true);
+    });
+    expect(steerPosts()).toHaveLength(1);
+    expect(result.current.steering).toBe(null);
+    expect(result.current.queue.map((m) => m.text)).toEqual(["不能丢失"]);
+    expect(result.current.error).toBe(error);
+    expect(result.current.queueHeld).toBe(true);
+    await finish("completed");
+    await waitFor(() => expect(result.current.session?.messages).toHaveLength(2));
+    expect(generationPosts()).toHaveLength(0);
+    expect(result.current.queue.map((m) => m.text)).toEqual(["不能丢失"]);
+    unmount();
+  });
+
+  test("a reply ending before the steer response does not retry a rejected message", async () => {
+    state.preferences = { steerOnSend: true };
+    const { result, unmount } = await openRunning();
+    let rejectSteer;
+    writeMock.mockImplementationOnce(() => new Promise((_, reject) => { rejectSteer = reject; }));
+    let sent;
+    act(() => { sent = result.current.send({ text: "等待引导结果" }); });
+
+    await finish("completed");
+    await waitFor(() => expect(result.current.session?.messages).toHaveLength(2));
+    expect(generationPosts()).toHaveLength(0);
+    await act(async () => {
+      rejectSteer(Object.assign(new Error("请先配置 API Key"), { status: 400 }));
+      expect(await sent).toBe(true);
+    });
+    expect(result.current.queueHeld).toBe(true);
+    expect(result.current.queue.map((m) => m.text)).toEqual(["等待引导结果"]);
+    expect(generationPosts()).toHaveLength(0);
+    unmount();
+  });
+
+  test("saving the setting updates an already open chat", async () => {
+    const { result, unmount } = await openRunning();
+    state.preferences = { steerOnSend: true };
+    await act(async () => {
+      window.dispatchEvent(new MessageEvent("message", {
+        source: window.parent, origin: location.origin,
+        data: { type: "agentflow-assistant-preferences-changed" },
+      }));
+    });
+    await act(async () => { await result.current.send({ text: "使用新设置" }); });
+    expect(steerPosts()).toHaveLength(1);
+    expect(result.current.queue).toHaveLength(0);
+    expect(result.current.steering?.text).toBe("使用新设置");
+    unmount();
+  });
+
+  test("a slow initial preferences read cannot overwrite a newly saved setting", async () => {
+    let release;
+    const original = apiMock.getMockImplementation();
+    apiMock.mockImplementation((path) => path === "/api/assistant/preferences"
+      ? new Promise((resolve) => { release = resolve; }) : original(path));
+    const { result, unmount } = await openRunning();
+    apiMock.mockImplementation(original);
+    state.preferences = { steerOnSend: true };
+    await act(async () => {
+      window.dispatchEvent(new MessageEvent("message", {
+        source: window.parent, origin: location.origin,
+        data: { type: "agentflow-assistant-preferences-changed" },
+      }));
+    });
+    await act(async () => { release({ steerOnSend: false }); });
+    await act(async () => { await result.current.send({ text: "按最新设置发送" }); });
+    expect(steerPosts()).toHaveLength(1);
+    unmount();
+  });
+
+  test("returning to a hidden tab picks up the saved send preference", async () => {
+    const { result, unmount } = await openRunning();
+    const visibility = vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+    const preferenceReads = () => apiMock.mock.calls.filter(([path]) => path === "/api/assistant/preferences").length;
+    const initialReads = preferenceReads();
+    try {
+      await act(async () => { document.dispatchEvent(new Event("visibilitychange")); });
+      expect(preferenceReads()).toBe(initialReads);
+      state.preferences = { steerOnSend: true };
+      visibility.mockReturnValue("visible");
+      await act(async () => { document.dispatchEvent(new Event("visibilitychange")); });
+      await act(async () => { await result.current.send({ text: "切回后使用新设置" }); });
+      expect(steerPosts()).toHaveLength(1);
+    } finally {
+      visibility.mockRestore();
+      unmount();
+    }
+  });
+
+  test("prevents repeated stop requests and waits for actual process exit", async () => {
+    const { result, unmount } = await openRunning();
+    let resolve;
+    writeMock.mockImplementationOnce(() => new Promise((done) => { resolve = done; }));
+    let request;
+    act(() => { request = result.current.stop(); });
+    expect(result.current.stopping).toBe(true);
+    expect(result.current.busy).toBe(true);
+    await act(() => result.current.stop());
+    expect(writeMock.mock.calls.filter(([path]) => path.includes("/generation/cancel"))).toHaveLength(1);
+    await act(async () => { resolve({}); await request; });
+    expect(result.current.stopping).toBe(true);
+    expect(result.current.busy).toBe(true);
+    await finish("cancelled");
+    await waitFor(() => expect(result.current.busy).toBe(false));
+    expect(result.current.stopping).toBe(false);
+    unmount();
+  });
+
+  test("reflects a stop requested from another client and allows retry after a failed request", async () => {
+    const { result, unmount } = await openRunning();
+    writeMock.mockRejectedValueOnce(new Error("cancel unavailable"));
+    await act(() => result.current.stop());
+    expect(result.current.stopping).toBe(false);
+    expect(result.current.busy).toBe(true);
+    expect(result.current.error).toBe("cancel unavailable");
+    await emit({ ...state.generation, cancelRequested: true });
+    expect(result.current.stopping).toBe(true);
+    await act(() => result.current.stop());
+    expect(writeMock.mock.calls.filter(([path]) => path.includes("/generation/cancel"))).toHaveLength(1);
     unmount();
   });
 
@@ -212,7 +374,7 @@ describe("sending while a reply runs", () => {
       await result.current.send({ text: "补充一句" });
     });
     writeMock.mockImplementationOnce(async () => {
-      throw new Error("生成已结束或不存在");
+      throw Object.assign(new Error("生成已结束或不存在"), { status: 409 });
     });
     await act(async () => {
       await result.current.sendNow(result.current.queue[0].id);
@@ -223,6 +385,67 @@ describe("sending while a reply runs", () => {
     await finish("completed");
     await waitFor(() => expect(generationPosts()).toHaveLength(1));
     expect(generationPosts()[0][1].messages.at(-1).content).toBe("补充一句");
+    unmount();
+  });
+
+  test("switching away and back keeps the queue while the reply still runs", async () => {
+    const { result, unmount } = await openRunning();
+    await act(async () => {
+      await result.current.send({ text: "切走前排队的消息" });
+    });
+    expect(result.current.queue.map((m) => m.text)).toEqual(["切走前排队的消息"]);
+
+    act(() => result.current.open("s2"));
+    await waitFor(() => expect(result.current.session?.id).toBe("s2"));
+    expect(result.current.queue).toHaveLength(0);
+
+    // Coming back, the conversation loads before its running generation does.
+    // The server rejects a new turn while one runs (409).
+    let release;
+    state.generationGate = new Promise((done) => { release = done; });
+    writeMock.mockImplementation(async (path) => {
+      if (path === "/api/assistant/generations")
+        throw Object.assign(new Error("此会话正在后台生成"), { status: 409 });
+      return {};
+    });
+    act(() => result.current.open("s1"));
+    await waitFor(() => expect(result.current.session?.id).toBe("s1"));
+    await act(async () => { await new Promise((done) => setTimeout(done, 50)); });
+    expect(generationPosts()).toHaveLength(0);
+    expect(result.current.queue.map((m) => m.text)).toEqual(["切走前排队的消息"]);
+
+    state.generationGate = null;
+    await act(async () => { release(); });
+    await waitFor(() => expect(result.current.busy).toBe(true));
+    expect(generationPosts()).toHaveLength(0);
+    expect(result.current.queue.map((m) => m.text)).toEqual(["切走前排队的消息"]);
+    expect(result.current.queueHeld).toBe(false);
+    unmount();
+  });
+
+  test("a rejected queued send is never mistaken for an accepted one", async () => {
+    const { result, unmount } = await openRunning();
+    await act(async () => {
+      await result.current.send({ text: "不能丢" });
+    });
+    act(() => result.current.open("s2"));
+    await waitFor(() => expect(result.current.session?.id).toBe("s2"));
+    act(() => result.current.open("s1"));
+    await waitFor(() => expect(result.current.busy).toBe(true));
+    // The reply finishes but another one is already running there; the
+    // server rejects the queued send with 409. The message must come back, not disappear.
+    writeMock.mockImplementationOnce(async () => {
+      throw Object.assign(new Error("此会话正在后台生成"), { status: 409 });
+    });
+    state.generation = { id: "g-other", status: "running", events: [] };
+    state.transcript = [{ role: "user", content: "查失败节点" }, unfinished];
+    await act(async () => {
+      sources.at(-1).generation({ data: JSON.stringify({ id: "g-running", status: "completed", events: [] }) });
+    });
+    await waitFor(() => expect(generationPosts()).toHaveLength(1));
+    await waitFor(() => expect(result.current.queue.map((m) => m.text)).toEqual(["不能丢"]));
+    // The rejected message is not left on screen as if it had been sent.
+    await waitFor(() => expect(result.current.session?.messages.map((m) => m.content)).toEqual(["查失败节点", unfinished.content]));
     unmount();
   });
 });

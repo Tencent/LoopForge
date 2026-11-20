@@ -208,7 +208,7 @@ func TestRunnerChildUsesParentCheckoutWithoutBranchSync(t *testing.T) {
 		t.Fatalf("child workspace = %s", got)
 	}
 	invocation := &domain.RunnerInvocation{}
-	bindRunnerRepositories(invocation, child, "tok", "", "")
+	bindRunnerRepositories(invocation, child, "", "")
 	for _, repository := range invocation.Repositories {
 		if repository.SyncWorkBranch {
 			t.Fatalf("repository %s still asks the runner to sync its work branch", repository.Name)

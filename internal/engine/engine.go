@@ -28,6 +28,7 @@ type Engine struct {
 	workspaceTerminals runtime.TerminalPool
 
 	checkpointTransfers runtime.CheckpointTransfers
+	conversationSaves   sync.Map // background save token -> context.CancelFunc
 	// workspaceFacts are the latest facts an execution machine reported
 	// per run, read where the engine used to inspect its own workspace copy.
 	workspaceFacts map[string]domain.RunnerWorkspaceFacts
@@ -55,6 +56,10 @@ type Engine struct {
 	// FindBranchMR resolves the Gongfeng MR whose source is a run repository's
 	// work branch. Nil (local/dev) falls back to MR links in run artifacts.
 	FindBranchMR func(projectID, sourceBranch string) (domain.DeliveryMR, bool, error)
+
+	// FindBranchMRsInto lists the MRs from a work branch into one target
+	// branch with their head commits, for mode=mr gates. Nil cannot verify.
+	FindBranchMRsInto func(domain.BranchMRQuery) ([]domain.DeliveryMR, error)
 
 	// runnerDispatchNotify wakes long-polling CLI runners when the engine
 	// queues a runner task. Wired via SetRunnerDispatchNotify (httpapi.New);

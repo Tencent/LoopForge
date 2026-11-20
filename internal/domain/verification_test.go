@@ -19,6 +19,12 @@ func TestValidateVerificationGateRequiresScopeForCommands(t *testing.T) {
 	if err := ValidateVerificationGate(VerificationGate{ID: "verdict", Mode: "submit", Required: true}); err == nil {
 		t.Fatal("submit is an engine-owned terminal protocol, not a configurable gate")
 	}
+	if err := ValidateVerificationGate(VerificationGate{ID: "mr-opened", Mode: VerificationModeMR, Required: true}); err != nil {
+		t.Fatalf("mr gate without scope or commands: %v", err)
+	}
+	if err := ValidateVerificationGate(VerificationGate{ID: "mr-opened", Mode: VerificationModeMR, Commands: []string{"true"}, ExecutionScope: ExecutionScopeRun}); err == nil {
+		t.Fatal("an mr gate is checked by the engine and takes no commands")
+	}
 }
 
 func TestSplitVerificationGatesSeparatesGitFromDeliverables(t *testing.T) {
@@ -76,5 +82,33 @@ func TestCommandNeedsRepository(t *testing.T) {
 	}
 	if !CommandNeedsRepository(`! git ls-files --others --exclude-standard | grep -Eq '_e2e_test\.go$'`) {
 		t.Fatal("negated git commands must be repository-scoped")
+	}
+}
+
+func TestPartitionGateCommandsSkipsBlankAndRewritesRepoCommands(t *testing.T) {
+	runCmds, repoCmds := partitionGateCommands([]string{"", "   ", "test -f report.md", `git log -1 && test -s fix-report.md`})
+	if len(runCmds) != 1 || runCmds[0] != "test -f report.md" {
+		t.Fatalf("run commands = %#v", runCmds)
+	}
+	if len(repoCmds) != 1 || repoCmds[0] != "git log -1 && test -s $AGENTFLOW_WORKSPACE/fix-report.md" {
+		t.Fatalf("repo commands = %#v", repoCmds)
+	}
+	if runCmds, repoCmds := partitionGateCommands(nil); runCmds != nil || repoCmds != nil {
+		t.Fatalf("empty input = %#v %#v", runCmds, repoCmds)
+	}
+}
+
+func TestRepositoryGitGateReservesUniqueIDAndFallsBack(t *testing.T) {
+	used := map[string]bool{"fix-git": true}
+	gate := repositoryGitGate(VerificationGate{ID: " fix ", Name: " 修复 ", Required: true, ExecutionScope: ""}, []string{"git status"}, used)
+	if gate.ID != "fix-git-2" || !used["fix-git-2"] || gate.Name != "修复 · Git 检查" || !gate.Required {
+		t.Fatalf("gate = %#v used = %#v", gate, used)
+	}
+	if gate.ExecutionScope != ExecutionScopeRepositories || len(gate.Commands) != 1 || gate.Commands[0] != "git status" {
+		t.Fatalf("gate scope/commands = %#v", gate)
+	}
+	blank := repositoryGitGate(VerificationGate{}, []string{"git status"}, used)
+	if blank.ID != "gate-git" || blank.Name != "Git 检查" || !used["gate-git"] {
+		t.Fatalf("blank gate = %#v", blank)
 	}
 }

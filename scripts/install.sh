@@ -192,8 +192,7 @@ else
   docker_access compose --profile platform up -d --no-build --wait --wait-timeout 180
 fi
 step 'Installing the schema extensions and the starter catalog'
-bash scripts/install-observability-schema.sh
-cat migrations/seed/*.sql | docker_access compose exec -T mysql sh -c 'MYSQL_PWD="$MYSQL_PASSWORD" mysql -u loopforge loopforge'
+bash scripts/install-schema-extensions.sh
 
 python3 scripts/install-address.py "$port"
 users=$(docker_access compose exec -T mysql sh -c 'MYSQL_PWD="$MYSQL_PASSWORD" mysql -N -u loopforge loopforge -e "select count(*) from users"' 2>/dev/null || echo 0)
@@ -202,6 +201,5 @@ if [[ "${users//[^0-9]/}" == 0 ]]; then
 else
   printf '  Open it in your browser and sign in.\n'
 fi
-printf '  Open “一键体验” on the home page to run a real SOP without an API key.\n'
 printf '  Default sandboxes reuse the installed runtime image; no second CLI image build is needed.\n'
 printf '  Stop: ./start.sh stop   ·   Logs: ./start.sh logs   ·   Update images: ./start.sh pull\n'

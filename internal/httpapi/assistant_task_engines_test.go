@@ -19,14 +19,46 @@ func TestAssistantScheduledModelKeepsCLIModels(t *testing.T) {
 		"codex:gpt-6-sol":    "codex:gpt-6-sol",
 		" claude-code:opus ": "claude-code:opus",
 		catalog.Default:      catalog.Default,
-		"glm-5.3-ioa":        catalog.Default,
-		"unknown-model":      catalog.Default,
+		"glm-5.3-ioa":        "glm-5.3-ioa",
+		" unknown-model ":    "unknown-model",
+		"bad model":          catalog.Default,
 		"codex:bad model":    catalog.Default,
 		"":                   catalog.Default,
 	} {
 		if got := assistantScheduledModel(in, catalog); got != want {
 			t.Errorf("assistantScheduledModel(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+// The CodeBuddy model list is empty after a restart: a scheduled run refreshes
+// it with the owner's key and never swaps an unavailable model for the default.
+func TestScheduledRunModelRefreshesAndNeverFallsBack(t *testing.T) {
+	old := discoverCLIModels
+	discoverCLIModels = func(_ context.Context, environment, apiKey string) []string {
+		if environment == "internal" && apiKey == "owner-key" {
+			return []string{"deepseek-v4.1-flash"}
+		}
+		return nil
+	}
+	cliModelMu.Lock()
+	cliModelCache = map[string]cliModelEntry{}
+	cliModelMu.Unlock()
+	t.Cleanup(func() {
+		discoverCLIModels = old
+		cliModelMu.Lock()
+		cliModelCache = map[string]cliModelEntry{}
+		cliModelMu.Unlock()
+	})
+	owner := domain.User{CodeBuddyAPIKey: "owner-key", CodeBuddyInternetEnvironment: "internal"}
+	if got, err := scheduledRunModel(context.Background(), "deepseek-v4.1-flash", owner); err != nil || got != "deepseek-v4.1-flash" {
+		t.Fatalf("model = %q, %v", got, err)
+	}
+	if got, err := scheduledRunModel(context.Background(), "", owner); err != nil || got != assistantFixedCatalog().Default {
+		t.Fatalf("empty model = %q, %v", got, err)
+	}
+	if got, err := scheduledRunModel(context.Background(), "gone-model", owner); err == nil || !strings.Contains(err.Error(), "gone-model") {
+		t.Fatalf("unavailable model = %q, %v", got, err)
 	}
 }
 
@@ -68,20 +100,30 @@ func TestScheduleJobAssistantUserNeedsModelCLIKey(t *testing.T) {
 	_ = st.PutProject(domain.Project{ID: "owner-project", Name: "Owner", OwnerID: owner.ID})
 	h := &assistantHandlers{deps: &deps{repo: st}}
 	job := domain.ScheduleJob{ProjectID: "owner-project"}
-	if got, err := h.scheduleJobAssistantUser(job, "codex:gpt-6-sol"); err != nil || got.ID != owner.ID {
-		t.Fatalf("codex owner = %+v %v", got, err)
+	if got, shared, err := h.scheduleJobAssistantUser(job, "codex:gpt-6-sol"); err != nil || got.ID != owner.ID || shared != nil {
+		t.Fatalf("codex owner = %+v %v %v", got, shared, err)
 	}
-	if _, err := h.scheduleJobAssistantUser(job, "glm-5.3-ioa"); err == nil || !strings.Contains(err.Error(), "CodeBuddy") {
+	if _, _, err := h.scheduleJobAssistantUser(job, "glm-5.3-ioa"); err == nil || !strings.Contains(err.Error(), "CodeBuddy") {
 		t.Fatalf("codebuddy without key = %v", err)
 	}
 }
 
-// A scheduled run sees the project's skills in its CLI home, as a chat turn
-// does, so the CLI's skill tool can load them.
+// A scheduled run sees the project's skills and every shared skill in its CLI
+// home, as a chat turn does, so the CLI's skill tool can load them. Another
+// project's private skill stays out.
 func TestScheduledTaskWritesProjectSkills(t *testing.T) {
 	h, user := workbenchFixture(t)
-	if err := h.repo.PutSkill(domain.SkillDefinition{ID: "repo-reader", Name: "repo-reader", ProjectID: "workbench", Description: "读取仓库", Content: "# repo-reader\n读取仓库内容"}); err != nil {
+	if err := h.repo.PutProject(domain.Project{ID: "other", Name: "Other"}); err != nil {
 		t.Fatal(err)
+	}
+	for _, skill := range []domain.SkillDefinition{
+		{ID: "repo-reader", Name: "repo-reader", ProjectID: "workbench", Description: "读取仓库", Content: "# repo-reader\n读取仓库内容"},
+		{ID: "golang-defect-scanner", Name: "golang静态扫描", ProjectID: "other", Shared: true, Content: "# scan\n扫描"},
+		{ID: "private-scanner", Name: "私有扫描", ProjectID: "other", Content: "# private\n不可见"},
+	} {
+		if err := h.repo.PutSkill(skill); err != nil {
+			t.Fatal(err)
+		}
 	}
 	bin := filepath.Join(t.TempDir(), "codebuddy")
 	script := `#!/bin/sh
@@ -96,8 +138,8 @@ printf '{"type":"result","result":"skills: %s"}\n' "$skills"
 	if err := h.executeAssistantTask(context.Background(), user, &task); err != nil {
 		t.Fatalf("run = %v %+v", err, task)
 	}
-	if !strings.Contains(task.LastMessage, "repo-reader") {
-		t.Fatalf("CLI home lacks the project skill: %q", task.LastMessage)
+	if !strings.Contains(task.LastMessage, "repo-reader") || !strings.Contains(task.LastMessage, "golang-defect-scanner") || strings.Contains(task.LastMessage, "private-scanner") {
+		t.Fatalf("CLI home skills = %q", task.LastMessage)
 	}
 }
 

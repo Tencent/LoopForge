@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -13,10 +14,12 @@ import (
 
 	"agentflow/internal/domain"
 	"agentflow/internal/engine"
+	"agentflow/internal/gitwork"
 	"agentflow/internal/repo"
 	"agentflow/internal/runtime"
 
 	"github.com/gin-gonic/gin"
+	"golang.org/x/crypto/ssh/knownhosts"
 )
 
 func quietRunnerHub() *runnerControlHub {
@@ -281,6 +284,73 @@ func TestRunnerWorkspaceRPCIsTransient(t *testing.T) {
 	}
 }
 
+func TestRunnerWorkspaceSendsScopedPlatformSSHKnownHosts(t *testing.T) {
+	hub := quietRunnerHub()
+	conn := testRunnerConn("runner-a")
+	registerTestConn(hub, conn)
+	_, hostKey := sshTestIdentity(t)
+	preparationPin := knownhosts.Line([]string{"gitlab.example.org:2222"}, hostKey) + "\n"
+	terminalPin := knownhosts.Line([]string{"terminal.example.org:22"}, hostKey) + "\n"
+	otherPin := knownhosts.Line([]string{"other.example.org:22"}, hostKey) + "\n"
+	path := filepath.Join(t.TempDir(), "known_hosts")
+	if err := os.WriteFile(path, []byte(preparationPin+terminalPin+otherPin), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(gitwork.SSHKnownHostsEnv, path)
+	done := requestAsync(hub, conn.runnerID, domain.RunnerWorkspaceRequest{
+		RunID:     "run-a",
+		Operation: domain.RunnerWorkspaceOperationTerminal,
+		Terminal:  &domain.WorkspaceTerminalRequest{Operation: "open"},
+		PreparationInvocation: &domain.RunnerInvocation{
+			GitSSHKeys: map[string]string{"ssh://git@gitlab.example.org:2222/group/repo.git": "checkout-identity"},
+		},
+		TerminalGitSSHKeys: map[string]string{"git@terminal.example.org:group/repo.git": "terminal-identity"},
+	})
+	got := answerOnce(t, hub, conn, domain.RunnerWorkspaceResponse{Status: http.StatusOK})
+	if pins := got.GitSSHKnownHosts; pins == nil || pins.Entries != preparationPin+terminalPin || pins.ReadFailed {
+		t.Fatalf("workspace platform pins = %+v", pins)
+	}
+	if result := <-done; result.err != nil || result.response.Status != http.StatusOK {
+		t.Fatalf("workspace response = %+v", result)
+	}
+}
+
+func TestRunnerWorkspaceRelayHydratesConversationSSHKnownHosts(t *testing.T) {
+	predecessor, successor := quietRunnerHub(), quietRunnerHub()
+	predecessor.successor = successor.requestRelayed
+	predecessor.handOver()
+	conn := testRunnerConn("runner-a")
+	registerTestConn(successor, conn)
+
+	_, hostKey := sshTestIdentity(t)
+	pin := knownhosts.Line([]string{"gitlab.example.org:2222"}, hostKey) + "\n"
+	path := filepath.Join(t.TempDir(), "known_hosts")
+	if err := os.WriteFile(path, []byte(pin), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(gitwork.SSHKnownHostsEnv, path)
+	conversation, err := json.Marshal(runtime.ConversationProcessRequest{
+		Operation: "start",
+		Command: &runtime.ConversationCommand{
+			Credentials: runtime.RunCredentials{GitSSHHostKeys: map[string]string{"gitlab.example.org:2222": "identity"}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := requestAsync(predecessor, conn.runnerID, domain.RunnerWorkspaceRequest{
+		Operation:    domain.RunnerWorkspaceOperationConversationCLI,
+		Conversation: conversation,
+	})
+	got := answerOnce(t, successor, conn, domain.RunnerWorkspaceResponse{Status: http.StatusOK})
+	if pins := got.GitSSHKnownHosts; pins == nil || pins.Entries != pin || pins.ReadFailed {
+		t.Fatalf("relayed conversation pins = %+v", pins)
+	}
+	if result := <-done; result.err != nil || result.response.Status != http.StatusOK {
+		t.Fatalf("relayed conversation response = %+v", result)
+	}
+}
+
 func waitClosed(t *testing.T, conn *runnerControlConn) {
 	t.Helper()
 	select {
@@ -344,5 +414,47 @@ func TestRunnerWorkspaceHandoverDrainIsBounded(t *testing.T) {
 	waitClosed(t, conn)
 	if got := <-stuck; !errors.Is(got.err, errRunnerWorkspaceUnavailable) {
 		t.Fatalf("stuck request: %v", got.err)
+	}
+}
+
+func TestRunnerCheckpointCancellationReachesExecutorOnlyForOneShotRequests(t *testing.T) {
+	for _, operation := range []string{domain.RunnerWorkspaceOperationCheckpointExport, "conversation_process"} {
+		t.Run(operation, func(t *testing.T) {
+			hub := quietRunnerHub()
+			conn := testRunnerConn("runner-cancel")
+			registerTestConn(hub, conn)
+			ctx, cancel := context.WithCancel(context.Background())
+			done := make(chan error, 1)
+			go func() {
+				_, err := hub.requestWorkspace(ctx, conn.runnerID, domain.RunnerWorkspaceRequest{Operation: operation})
+				done <- err
+			}()
+			request := <-conn.send
+			cancel()
+			select {
+			case err := <-done:
+				if !errors.Is(err, context.Canceled) {
+					t.Fatal(err)
+				}
+			case <-time.After(time.Second):
+				t.Fatal("request cancellation blocked")
+			}
+			if operation == "conversation_process" {
+				select {
+				case unexpected := <-conn.send:
+					t.Fatalf("persistent CLI lifecycle cancelled by RPC: %+v", unexpected)
+				default:
+				}
+			} else {
+				select {
+				case stop := <-conn.send:
+					if stop.Type != "workspace.cancel" || stop.RequestID != request.RequestID {
+						t.Fatalf("wrong cancellation: %+v", stop)
+					}
+				case <-time.After(time.Second):
+					t.Fatal("export cancellation not sent")
+				}
+			}
+		})
 	}
 }

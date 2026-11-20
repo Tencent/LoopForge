@@ -7,9 +7,11 @@ import React, {
   useState,
 } from "react";
 import { useChat } from "./useChat";
+import NativeApprovalPanel from "./NativeApprovalPanel";
 import { AgentBrowserLinks } from "./agent-browser-links.js";
 import ActivityTrace, { ReplyTimeline } from "./ActivityTrace";
 import MessageInfo from "./MessageInfo";
+import GenerationDiagnostics from "./GenerationDiagnostics";
 import { fullTime, messageSentAt, messageTimeLabel } from "./message-info.js";
 import {
   activityForReply,
@@ -73,12 +75,13 @@ import { usePanelPresence } from "./usePanelPresence";
 import HomeWelcome from "./HomeWelcome";
 import ModelPicker from "./ModelPicker";
 import ModelProviderIcon, { hasProviderLogo } from "./ModelProviderIcon";
-import PermissionPicker from "./PermissionPicker";
-import { engineBrand } from "./engines.js";
+import PermissionPicker, { rememberApprovalMode, storedApprovalMode } from "./PermissionPicker";
+import { conversationEngine, engineBrand } from "./engines.js";
 import { effortOptions } from "./effort.js";
 import QuickAccessWizard from "./QuickAccessWizard";
 import HarnessSelect from "./HarnessSelect";
 import SandboxPicker from "./SandboxPicker";
+import ExecutionMachinePicker from "./ExecutionMachinePicker";
 import { shouldRevealTitle, titleRevealTiming } from "./title-reveal.js";
 import {
   THEME_KEY,
@@ -146,14 +149,6 @@ function useTitleReveal(sessionId, title, revealId) {
 }
 
 const homeStarters = [
-  {
-    id: "welcome-demo",
-    icon: "workflow",
-    tone: "green",
-    title: "一键体验",
-    description: "无需 API Key 或 GitHub，运行真实脚本，体验人工审批和产物交付。",
-    steps: ["运行脚本", "人工审批", "查看产物"],
-  },
   {
     id: "quick-access",
     icon: "sparkles",
@@ -224,7 +219,7 @@ function ReplyHeading({ message, steps }) {
     </div>
   );
 }
-function AssistantTurn({ message, steps, assets, projectId }) {
+function AssistantTurn({ message, steps, assets, projectId, sessionId, local, readOnly, onCLIInstall }) {
   const reply = parseReply(message);
   const answer = hasTextSegments(steps)
     ? finalReply(reply.message, steps)
@@ -243,7 +238,9 @@ function AssistantTurn({ message, steps, assets, projectId }) {
       <div className="message-body">
         <RichContent message={answer} assets={assets} projectId={projectId} />
       </div>
-      {message.unfinished ? (
+      {message.failure && message.generationId && !local ? (
+        <GenerationDiagnostics sessionId={sessionId} generationId={message.generationId} failure={message.failure} onCLIInstall={onCLIInstall} readOnly={readOnly} />
+      ) : message.unfinished ? (
         <p className="reply-stopped">本轮未完成 · {message.unfinished}</p>
       ) : reply.stopped ? (
         <p className="reply-stopped">已停止，以上是停止前的内容。</p>
@@ -251,7 +248,7 @@ function AssistantTurn({ message, steps, assets, projectId }) {
     </>
   );
 }
-function LiveMessage({ live, generation, finished = false }) {
+function LiveMessage({ live, generation, finished = false, local = false, readOnly = false }) {
   const steps = live.activity || [];
   const textual = hasTextSegments(steps);
   // A streamed paragraph followed by tool calls stays in the process above;
@@ -288,6 +285,7 @@ function LiveMessage({ live, generation, finished = false }) {
         </div>
       )}
       {answer ? <RichContent message={answer} /> : null}
+      {!finished && !local && !readOnly && generation?.id ? <GenerationDiagnostics sessionId={generation.sessionId} generationId={generation.id} compact /> : null}
       {finished ? (
         <p className="reply-stopped">
           {generation?.status === "failed" && generation?.error
@@ -297,6 +295,12 @@ function LiveMessage({ live, generation, finished = false }) {
       ) : null}
     </div>
   );
+}
+
+function readIssueMention() {
+  const params = new URLSearchParams(location.search);
+  const issueId = params.get("mentionIssue") || "";
+  return issueId ? { issueId, projectId: params.get("projectId") || "" } : null;
 }
 
 export default function App() {
@@ -332,16 +336,26 @@ export default function App() {
     [pendingAttachments, setPendingAttachments] = useState([]),
     [imagePreview, setImagePreview] = useState(null),
     [references, setReferences] = useState([]),
+    [issueMention, setIssueMention] = useState(readIssueMention),
+    [issueDraft, setIssueDraft] = useState(readIssueMention),
     [mention, setMention] = useState(null),
     [repositorySelections, setRepositorySelections] = useState({}),
     [uploading, setUploading] = useState(false),
     [runsRefresh, setRunsRefresh] = useState(0),
-    [approval, setApproval] = useState("confirm"),
+    [approvalSelection, setApprovalSelection] = useState(null),
     [quickAccessOpen, setQuickAccessOpen] = useState(
       () => new URLSearchParams(location.search).get("quickAccess") === "1",
     ),
     [theme, setTheme] = useState(() => readThemePreference(localStorage)),
     [environmentVisibility, setEnvironmentVisibility] = useState(() => readJSON(environmentVisibilityKey, {}));
+  const approvalUserId = realChat.user?.isGuest ? null : realChat.user?.id ?? null;
+  const approval = approvalSelection?.userId === approvalUserId
+    ? approvalSelection.value
+    : storedApprovalMode(approvalUserId);
+  function setApproval(value) {
+    setApprovalSelection({ userId: approvalUserId, value });
+    rememberApprovalMode(approvalUserId, value);
+  }
   const environmentPreferenceOwner = String(chat.user?.id || "guest");
   const showEnvironmentPicker = environmentVisibility[environmentPreferenceOwner] === true;
   function changeEnvironmentVisibility(visible) {
@@ -350,6 +364,8 @@ export default function App() {
     try { localStorage.setItem(environmentVisibilityKey, JSON.stringify(next)); } catch {}
   }
   function startNewChat() {
+    setIssueDraft(null);
+    setIssueMention(null);
     chat.newChat();
   }
   const input = useRef(),
@@ -365,7 +381,15 @@ export default function App() {
     previousArtifacts = useRef({ id: null, ids: new Set(), baselined: false }),
     dialogInput = useRef(),
     composerPreviews = useRef(new Map());
-  const draftKey = `agentflow.native-chat.draft.${chat.user?.id || "guest"}.${chat.activeId || "new:" + chat.projectId}`;
+  // A requirement handed over by the workbench drafts in its own slot so the
+  // project's unsent new-conversation draft and attachments stay untouched.
+  const newDraftSlot = issueDraft && issueDraft.projectId === chat.projectId ? "issue:" + issueDraft.issueId : "new:" + chat.projectId;
+  const draftKey = `agentflow.native-chat.draft.${chat.user?.id || "guest"}.${chat.activeId || newDraftSlot}`;
+  useEffect(() => {
+    if (!chat.activeId) return;
+    setIssueDraft(null);
+    setIssueMention(null);
+  }, [chat.activeId]);
   useEffect(() => setMention(null), [draftKey]);
   // The open conversation's reply is reported read; the history list dots
   // the replies the server still counts as unread.
@@ -440,9 +464,18 @@ export default function App() {
     chat.projects.find((p) => p.id === chat.projectId)?.name ||
     (chat.projectId && (chat.session?.projectName || chat.projectId)) ||
     "个人对话";
-  const selectedModel = chat.models.find((m) => m.id === chat.model);
+  const selectedModel = chat.models.find((m) => m.id === chat.model) || (!chat.local ? chat.modelDetails : null);
   const modelLabel =
     selectedModel?.name?.replace(/^Claude-/, "").replace(/^GPT-/, "") || "模型";
+  // The CLI switch is only for a conversation that has not started. A reply
+  // in flight, or one already saved, keeps that CLI; another CLI needs a new chat.
+  const lockedExecutorId = chat.session
+    ? conversationEngine(chat.session.messages, chat.models, chat.session.executor) ||
+      (chat.busy ? chat.executor : "")
+    : "";
+  const pinnedExecutor = lockedExecutorId
+    ? (chat.executors || []).find((item) => item.id === lockedExecutorId)
+    : undefined;
   const projectOptions = projectPickerOptions(
     chat.projects,
     chat.user,
@@ -478,14 +511,6 @@ export default function App() {
     });
   }
   function handleStarter(starter) {
-    if (starter.id === "welcome-demo") {
-      if (window.parent !== window) {
-        window.parent.postMessage({ type: "agentflow-welcome-demo" }, location.origin);
-      } else {
-        location.href = "/#/sops";
-      }
-      return;
-    }
     if (starter.id === "quick-access") {
       setQuickAccessOpen(true);
       return;
@@ -555,6 +580,68 @@ export default function App() {
       chat.setError("浏览器存储空间不足，草稿仍保留在当前页面。请移除较大的附件后重试。");
     }
   }, [text, attachments, references, draftKey, chat.user?.id]);
+  // A requirement handed over by the workbench ("创建并去对话澄清") opens a
+  // new conversation with the requirement already @-mentioned. It waits for
+  // the new conversation's draft to load so the draft does not overwrite it.
+  useEffect(() => {
+    const listener = (event) => {
+      if (
+        event.source !== window.parent ||
+        event.origin !== location.origin ||
+        event.data?.type !== "agentflow-chat-mention-issue"
+      ) return;
+      const issueId = String(event.data.issueId || "");
+      const projectId = String(event.data.projectId || "");
+      if (!issueId || !projectId) return;
+      chat.startProjectDraft(projectId);
+      setIssueDraft({ issueId, projectId });
+      setIssueMention({ issueId, projectId });
+    };
+    window.addEventListener("message", listener);
+    return () => window.removeEventListener("message", listener);
+  }, [chat.startProjectDraft]);
+  useEffect(() => {
+    if (
+      !issueMention ||
+      !chat.user ||
+      chat.activeId ||
+      chat.projectId !== issueMention.projectId ||
+      newDraftSlot !== "issue:" + issueMention.issueId ||
+      draftReady.current !== draftKey
+    ) return;
+    let current = true;
+    api(`/api/issues/${encodeURIComponent(issueMention.issueId)}`)
+      .then((data) => {
+        if (!current) return;
+        const issue = data.issue || data;
+        if ((readJSON(draftKey, {}).references || []).some((r) => r.type === "issue" && r.id === issue.id)) return;
+        const ref = {
+          type: "issue",
+          id: issue.id,
+          name: issue.title || issue.id,
+          projectId: issue.projectId,
+        };
+        const value = insertMention("", { start: 0, end: 0 }, ref);
+        setText(value.text);
+        setReferences([ref]);
+        setMention(null);
+        requestAnimationFrame(() => {
+          input.current?.focus();
+          input.current?.setSelectionRange(value.caret, value.caret);
+        });
+      })
+      .catch((e) => current && chat.setError(e.message))
+      .finally(() => {
+        if (!current) return;
+        setIssueMention(null);
+        const url = new URL(location.href);
+        url.searchParams.delete("mentionIssue");
+        history.replaceState({}, "", url);
+      });
+    return () => {
+      current = false;
+    };
+  }, [issueMention, chat.user, chat.activeId, chat.projectId, newDraftSlot, draftKey]);
   useEffect(() => {
     let previous = previousArtifacts.current;
     if (previous.id !== chat.activeId) {
@@ -1165,6 +1252,18 @@ export default function App() {
                   <HarnessIcon name="edit" size={13} />
                 </IconButton>
               ) : null}
+              {pinnedExecutor ? (
+                <span
+                  className="conversation-engine"
+                  title={`本对话使用 ${pinnedExecutor.label}，对话开始后不能切换 CLI；换 CLI 请新建对话`}
+                >
+                  <ModelProviderIcon
+                    brand={engineBrand(pinnedExecutor.id)}
+                    size={12}
+                  />
+                  {pinnedExecutor.label}
+                </span>
+              ) : null}
               {chat.local ? <span className="preview-badge">示例</span> : null}
             </>
           ) : null}
@@ -1172,6 +1271,7 @@ export default function App() {
         <div className="header-actions">
           {chat.session ? (
             <>
+              {conversationStarted ? <ExecutionMachinePicker chat={chat} onManage={() => navigate("runners")} /> : null}
               {projectName ? (
                 <div className="menu-anchor conversation-project-anchor">
                   {/* The conversation's project; picking another one opens a
@@ -1497,6 +1597,10 @@ export default function App() {
                         )}
                         assets={artifactList}
                         projectId={chat.session?.projectId}
+                        sessionId={chat.session?.id}
+                        local={chat.local}
+                        readOnly={chat.readOnly}
+                        onCLIInstall={chat.adoptCLIInstall}
                       />
                     ) : null}
                     {message.role === "user" ? (
@@ -1621,6 +1725,7 @@ export default function App() {
                             label="复制回复"
                           />
                           <MessageInfo message={message} />
+                          {!chat.local && !chat.readOnly && message.generationId && !message.failure ? <GenerationDiagnostics sessionId={chat.session.id} generationId={message.generationId} compact /> : null}
                         </div>
                       </>
                     ) : null}
@@ -1630,7 +1735,7 @@ export default function App() {
               {/* The live reply belongs right under its question. Alerts stay
                   last, so a finished reply does not jump above them. */}
               {chat.busy ? (
-                <LiveMessage live={chat.live} generation={chat.generation} />
+                <LiveMessage live={chat.live} generation={chat.generation} local={chat.local} readOnly={chat.readOnly} />
               ) : chat.generation &&
                 !generationStored(messages, chat.generation) &&
                 !["completed", "running"].includes(chat.generation.status) &&
@@ -1640,8 +1745,16 @@ export default function App() {
                   live={chat.live}
                   generation={chat.generation}
                   finished
+                  local={chat.local}
+                  readOnly={chat.readOnly}
                 />
               ) : null}
+              <NativeApprovalPanel chat={chat} onChange={() => {
+                if (follow.current && scroll.current)
+                  scroll.current.scrollTop = scroll.current.scrollHeight;
+              }} />
+              {!chat.local && !chat.busy && chat.generation?.failure && !messages.some((m) => m.generationId === chat.generation.id && m.failure) ? <GenerationDiagnostics sessionId={chat.session?.id} generationId={chat.generation.id} failure={chat.generation.failure} onCLIInstall={chat.adoptCLIInstall} readOnly={chat.readOnly} /> : null}
+              {!chat.local && !chat.readOnly && !chat.busy && chat.generation?.id && chat.generation.status === "cancelled" && !chat.generation.failure && !messages.some((m) => m.generationId === chat.generation.id) ? <GenerationDiagnostics sessionId={chat.session?.id} generationId={chat.generation.id} compact /> : null}
               <RunAlerts
                 runs={conversationRuns}
                 user={chat.user}
@@ -1673,7 +1786,7 @@ export default function App() {
         )}
         <div className="composer-region">
           <div className="composer-column">
-            {chat.error ? (
+            {chat.error && !(chat.generation?.failure && chat.error === chat.generation.error) ? (
               <div role="alert" className="chat-error">
                 <span>{chat.error}</span>
                 <CredentialAction text={chat.error} />
@@ -1728,16 +1841,7 @@ export default function App() {
               >
                 {!conversationStarted ? (
                 <div className="composer-context">
-                  <span
-                    className="context-pill host-status"
-                    title="对话在 LoopForge 云端运行"
-                  >
-                    <HarnessIcon name="server" size={13} interactive={false} />
-                    <span>LoopForge 云端</span>
-                    <i
-                      className={`connection-dot ${chat.ready ? "online" : ""}`}
-                    />
-                  </span>
+                  <ExecutionMachinePicker chat={chat} onManage={() => navigate("runners")} />
                   <ChevronRightSmall />
                   <div className="menu-anchor">
                     <button
@@ -2026,25 +2130,27 @@ export default function App() {
                         e.target.value = "";
                       }}
                     />
-                    <PermissionPicker
-                      label="CLI"
-                      options={chat.executors.map((executor) => {
-                        const brand = engineBrand(executor.id);
-                        return {
-                          ...executor,
-                          glyph: hasProviderLogo(brand)
-                            ? <ModelProviderIcon brand={brand} size={16} />
-                            : null,
-                        };
-                      })}
-                      value={chat.executor}
-                      onSelect={(id) => {
-                        chat.setExecutor(id);
-                        input.current?.focus();
-                      }}
-                      open={menu?.type === "executor"}
-                      onOpenChange={(open) => setMenu(open ? { type: "executor" } : null)}
-                    />
+                    {chat.executors.length > 1 && !pinnedExecutor ? (
+                      <PermissionPicker
+                        label="CLI"
+                        options={chat.executors.map((executor) => {
+                          const brand = engineBrand(executor.id);
+                          return {
+                            ...executor,
+                            glyph: hasProviderLogo(brand)
+                              ? <ModelProviderIcon brand={brand} size={16} />
+                              : null,
+                          };
+                        })}
+                        value={chat.executor}
+                        onSelect={(id) => {
+                          chat.setExecutor(id);
+                          input.current?.focus();
+                        }}
+                        open={menu?.type === "executor"}
+                        onOpenChange={(open) => setMenu(open ? { type: "executor" } : null)}
+                      />
+                    ) : null}
                     <ModelPicker
                       models={chat.models}
                       value={chat.model}
@@ -2080,7 +2186,7 @@ export default function App() {
                         aria-label="停止生成"
                         title="停止并保留已经生成的内容；排队的消息会暂停发送"
                         disabled={
-                          chat.submitting || chat.generation?.status !== "running"
+                          chat.submitting || chat.stopping || chat.generation?.status !== "running"
                         }
                         onClick={chat.stop}
                       >
@@ -2095,6 +2201,7 @@ export default function App() {
                         disabled={
                           !chat.ready ||
                           chat.submitting ||
+                          chat.machineSaving ||
                           (chat.activeId && chat.session?.id !== chat.activeId) ||
                           (!text.trim() && !attachments.length) ||
                           uploading
@@ -2226,7 +2333,7 @@ export default function App() {
                       );
                       if (stored) {
                         closeDialog();
-                        await chat.regenerate(stored);
+                        await chat.regenerate(stored, approval);
                       }
                     }
                   }}

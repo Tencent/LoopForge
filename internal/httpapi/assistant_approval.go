@@ -4,15 +4,18 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"regexp"
 	"strings"
 
 	"agentflow/internal/domain"
 	"agentflow/internal/repo"
+
+	"github.com/gin-gonic/gin"
 )
 
-// 助手审批模式（对齐 Codex 的审批策略选择）：
-// confirm  每次确认：全部草稿逐个展示，用户点击保存后才执行（默认）。
+// 平台写入与沙箱外写入（外部 MCP、git push 等命令）的审批模式；工作区沙箱内的开发操作默认执行。
+// confirm  请求批准：平台草稿由用户确认后执行（默认）。
 // assisted 帮我批准：独立模型审查具体操作和对话授权，通过后执行；
 // 未通过或审查不可用时交给用户确认。
 //
@@ -32,6 +35,16 @@ func normalizeAssistantApprovalMode(mode string) string {
 	default:
 		return AssistantApprovalConfirm
 	}
+}
+
+// Check the account attached by the browser against the account that
+// authenticated this request. Existing API clients may omit the field.
+func requireAssistantApprovalUser(c *gin.Context, currentID, approvalUserID int64) bool {
+	if approvalUserID != 0 && approvalUserID != currentID {
+		c.JSON(http.StatusConflict, gin.H{"error": "登录账号已变更，请刷新页面后重试"})
+		return false
+	}
+	return true
 }
 
 var assistantRiskyToolPattern = regexp.MustCompile(`(_delete|_publish|_dispatch|_start|_cancel|_reject|_run|_restore|_pass|_retry|_pause|_resume|_reopen)$`)
@@ -296,36 +309,42 @@ func (h *assistantHandlers) assistantDraftWarnings(d assistantDraft) []string {
 		}
 		return sharedAssetWarnings("沙箱", item.Shared, h.workflowNamesReferencingSandbox(id), "流程")
 	case "workflows_delete":
-		workflow, ok := h.repo.Workflow(id)
-		if !ok {
-			return []string{fmt.Sprintf("SOP %s 不存在，执行将失败", id)}
-		}
-		out := []string{}
-		if workflow.Generic {
-			out = append(out, "通用模板不可删除，如需修改请直接保存新版本")
-		}
-		running := 0
-		for _, run := range h.repo.Runs() {
-			if run.WorkflowID == id && (run.Status == "running" || run.Status == "waiting") {
-				running++
-			}
-		}
-		if running > 0 {
-			out = append(out, fmt.Sprintf("该 SOP 还有 %d 个进行中的运行，请先终止后再删除", running))
-		}
-		var boundIssues []string
-		for _, issue := range h.repo.Issues() {
-			if issue.WorkflowID == id && issue.Status != "closed" {
-				boundIssues = append(boundIssues, issue.ID)
-			}
-		}
-		if len(boundIssues) > 0 {
-			out = append(out, fmt.Sprintf("该 SOP 仍被 %d 个未关闭的 Issue 绑定（%s），请先改绑", len(boundIssues), strings.Join(boundIssues, "、")))
-		}
-		return out
+		return h.workflowDeleteWarnings(id)
 	default:
 		return nil
 	}
+}
+
+// workflowDeleteWarnings 汇总删除 SOP 前的冲突：通用模板不可删、仍有进行中的
+// 运行、仍被未关闭的 Issue 绑定。
+func (h *assistantHandlers) workflowDeleteWarnings(id string) []string {
+	workflow, ok := h.repo.Workflow(id)
+	if !ok {
+		return []string{fmt.Sprintf("SOP %s 不存在，执行将失败", id)}
+	}
+	out := []string{}
+	if workflow.Generic {
+		out = append(out, "通用模板不可删除，如需修改请直接保存新版本")
+	}
+	running := 0
+	for _, run := range h.repo.Runs() {
+		if run.WorkflowID == id && (run.Status == "running" || run.Status == "waiting") {
+			running++
+		}
+	}
+	if running > 0 {
+		out = append(out, fmt.Sprintf("该 SOP 还有 %d 个进行中的运行，请先终止后再删除", running))
+	}
+	var boundIssues []string
+	for _, issue := range h.repo.Issues() {
+		if issue.WorkflowID == id && issue.Status != "closed" {
+			boundIssues = append(boundIssues, issue.ID)
+		}
+	}
+	if len(boundIssues) > 0 {
+		out = append(out, fmt.Sprintf("该 SOP 仍被 %d 个未关闭的 Issue 绑定（%s），请先改绑", len(boundIssues), strings.Join(boundIssues, "、")))
+	}
+	return out
 }
 
 func sharedAssetWarnings(kind string, shared bool, refNames []string, refKind string) []string {

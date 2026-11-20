@@ -13,6 +13,7 @@ import (
 	"agentflow/internal/domain"
 	"agentflow/internal/mcpclient"
 	"agentflow/internal/mcpserver"
+	"agentflow/internal/repo"
 	"agentflow/internal/runtime"
 )
 
@@ -321,6 +322,10 @@ func assistantRejectForeignProjectValue(projectID string, value map[string]any) 
 }
 
 func (h *assistantHandlers) callAssistantMCP(user domain.User, projectID string, call assistantMCPCall) (string, error) {
+	return h.callAssistantMCPContext(context.Background(), user, projectID, call)
+}
+
+func (h *assistantHandlers) callAssistantMCPContext(ctx context.Context, user domain.User, projectID string, call assistantMCPCall) (string, error) {
 	if h == nil || h.repo == nil {
 		return "", fmt.Errorf("未连接数据源")
 	}
@@ -338,7 +343,7 @@ func (h *assistantHandlers) callAssistantMCP(user domain.User, projectID string,
 	if transport != "http" && transport != "sse" {
 		return "", fmt.Errorf("%s 是 %s MCP，助手只代调当前项目的 HTTP MCP（如项目安装的 GitHub HTTP MCP），不能启动 stdio 命令", server.Name, transport)
 	}
-	bound, err := bindAssistantMCP(server, user)
+	bound, err := bindAssistantMCP(h.repo, server, user)
 	if err != nil {
 		return "", err
 	}
@@ -349,14 +354,14 @@ func (h *assistantHandlers) callAssistantMCP(user domain.User, projectID string,
 	client := mcpclient.New(bound.URL, bound.Headers).WithTimeout(assistantMCPCallTimeout)
 	tool := strings.TrimSpace(call.Tool)
 	if tool == "" || tool == "tools/list" {
-		tools, err := client.ListTools()
+		tools, err := client.ListToolsContext(ctx)
 		if err != nil {
 			return "", fmt.Errorf("列出 %s 工具失败: %w", server.Name, err)
 		}
 		raw, _ := json.Marshal(ginH{"server": server.ID, "name": server.Name, "tools": tools})
 		return redactAssistantSecrets(string(raw), user), nil
 	}
-	text, err := client.CallTool(tool, call.Arguments)
+	text, err := client.CallToolContext(ctx, tool, call.Arguments)
 	if err != nil {
 		return "", err
 	}
@@ -376,12 +381,28 @@ func (h *assistantHandlers) lookupAssistantMCP(projectID string, userID int64, r
 	return domain.MCPServerDefinition{}, false
 }
 
-func bindAssistantMCP(server domain.MCPServerDefinition, user domain.User) (domain.MCPServerDefinition, error) {
+func bindAssistantMCP(st *repo.Store, server domain.MCPServerDefinition, user domain.User) (domain.MCPServerDefinition, error) {
 	bundle := domain.AgentAssetBundle{MCPServers: []domain.MCPServerDefinition{server}}
 	var githubErr error
-	bundle, githubErr = runtime.BindGitHubMCPHeaders(bundle, user.GitToken, true)
+	githubToken := ""
+	if st != nil {
+		if credential, ok := st.GitHTTPCredentialForHost(context.Background(), user.ID, "github.com"); ok {
+			githubToken = credential.Token
+		}
+	}
+	bundle, githubErr = runtime.BindGitHubMCPHeaders(bundle, githubToken, true)
 	if githubErr != nil {
 		return domain.MCPServerDefinition{}, githubErr
+	}
+	// Credential-authenticated MCP servers resolve the responsible user's
+	// saved credential (RunCredentials.Extra) here — this entry point serves
+	// both tool discovery and actual calls.
+	bundle, _, credErr := runtime.BindCredentialMCPHeaders(bundle, runtime.ExtraRunCredentials(user.ID), true)
+	if credErr != nil {
+		return domain.MCPServerDefinition{}, credErr
+	}
+	if len(bundle.MCPServers) == 0 {
+		return domain.MCPServerDefinition{}, fmt.Errorf("MCP %s 未绑定任何凭证", server.Name)
 	}
 	server = bundle.MCPServers[0]
 	headers, err := runtime.ResolveMCPHeaders(server)
@@ -399,7 +420,7 @@ func redactAssistantSecrets(text string, user domain.User) string {
 			text = strings.ReplaceAll(text, secret, "[redacted]")
 		}
 	}
-	return text
+	return gitSecretRedactions.redact(text, "[redacted]")
 }
 
 // assistantSessionReadOperation marks read-only platform tools that return

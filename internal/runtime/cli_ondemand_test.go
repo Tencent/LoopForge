@@ -66,7 +66,7 @@ func TestInstallOnDemandCLIKeepsDeepSeekEngineRelaxation(t *testing.T) {
 		t.Fatal(err)
 	}
 	calls, _ := os.ReadFile(log)
-	if !strings.Contains(string(calls), "@deepseek-ai/dsh") || !strings.Contains(string(calls), "--engine-strict=false") {
+	if !strings.Contains(string(calls), "@deepseek-ai/dsh@"+DeepSeekHarnessVersion) || !strings.Contains(string(calls), "--engine-strict=false") {
 		t.Fatalf("npm calls: %s", calls)
 	}
 }

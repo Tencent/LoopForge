@@ -15,6 +15,8 @@ import (
 
 	"agentflow/internal/domain"
 	"agentflow/internal/engine"
+	"agentflow/internal/gitwork"
+	"agentflow/internal/runtime"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
@@ -45,6 +47,8 @@ var (
 )
 
 type runnerControlMessage struct {
+	ToolRequest       *domain.RunnerToolRequest       `json:"toolRequest,omitempty"`
+	ToolResponse      *domain.RunnerToolResponse      `json:"toolResponse,omitempty"`
 	Type              string                          `json:"type"`
 	TaskID            string                          `json:"taskId,omitempty"`
 	DesiredState      string                          `json:"desiredState,omitempty"`
@@ -199,9 +203,31 @@ func (h *runnerControlHub) reconnectExpectedLocked(runnerID string, now time.Tim
 	return ok && now.Sub(dropped) < h.reconnectGrace
 }
 
+// Resolve pins on the platform serving the socket, including requests relayed
+// by a predecessor during handover.
+func runnerWorkspaceSSHKnownHosts(request domain.RunnerWorkspaceRequest) *domain.GitSSHKnownHosts {
+	var preparationKeys, conversationKeys map[string]string
+	if request.PreparationInvocation != nil {
+		preparationKeys = request.PreparationInvocation.GitSSHKeys
+	}
+	if request.Operation == domain.RunnerWorkspaceOperationConversationCLI {
+		// Only starts need pins. Skip decoding asset transfers and stdin data.
+		var conversation struct {
+			Operation string                       `json:"operation"`
+			Command   *runtime.ConversationCommand `json:"command"`
+		}
+		if json.Unmarshal(request.Conversation, &conversation) == nil && conversation.Operation == "start" && conversation.Command != nil {
+			conversationKeys = conversation.Command.Credentials.GitSSHHostKeys
+		}
+	}
+	return gitwork.SSHKnownHostsForKeys(preparationKeys, request.TerminalGitSSHKeys, conversationKeys)
+}
+
 // send delivers one request; sent reports whether it reached the socket's
 // queue, after which it must not be retried elsewhere.
 func (h *runnerControlHub) send(ctx context.Context, conn *runnerControlConn, request domain.RunnerWorkspaceRequest) (domain.RunnerWorkspaceResponse, bool, error) {
+	// Older runners ignore the optional workspace field when decoding JSON.
+	request.GitSSHKnownHosts = runnerWorkspaceSSHKnownHosts(request)
 	h.mu.Lock()
 	h.nextID++
 	requestID := fmt.Sprintf("workspace-%d", h.nextID)
@@ -232,6 +258,17 @@ func (h *runnerControlHub) send(ctx context.Context, conn *runnerControlConn, re
 	case <-conn.done:
 		return domain.RunnerWorkspaceResponse{}, true, errRunnerWorkspaceUnavailable
 	case <-ctx.Done():
+		// Chunked exports hold the runner's workspace fence. End the remote
+		// request too; cancelling only our waiter would strand the next turn.
+		if domain.IsWorkspaceCheckpointTransferOperation(request.Operation) || request.Operation == domain.RunnerWorkspaceOperationCheckpoint {
+			timer := time.NewTimer(time.Second)
+			select {
+			case conn.send <- runnerControlMessage{Type: "workspace.cancel", RequestID: requestID}:
+			case <-conn.done:
+			case <-timer.C:
+			}
+			timer.Stop()
+		}
 		return domain.RunnerWorkspaceResponse{}, true, ctx.Err()
 	}
 }
@@ -476,6 +513,8 @@ var runnerWSUpgrader = websocket.Upgrader{
 	WriteBufferSize:  1024,
 }
 
+type legacyRunnerToolRequestKey struct{}
+
 // runnerControlConnect 升级 /runners/ws 连接并进入控制消息循环。
 // 路由: g.GET("/runners/ws", h.runnerControlConnect)
 func (h *runnersHandlers) runnerControlConnect(c *gin.Context) {
@@ -489,6 +528,9 @@ func (h *runnersHandlers) runnerControlConnect(c *gin.Context) {
 	}
 	conn := h.runnerControls.register(runner.ID, ws)
 	defer h.runnerControls.unregister(conn)
+	connCtx, cancel := context.WithCancel(c.Request.Context())
+	defer cancel()
+	var toolCancels sync.Map // request ID -> context.CancelFunc
 	go conn.writeLoop()
 	ws.SetReadLimit(20 << 20)
 	_ = ws.SetReadDeadline(time.Now().Add(runnerWSReadTimeout))
@@ -501,6 +543,48 @@ func (h *runnersHandlers) runnerControlConnect(c *gin.Context) {
 			return
 		}
 		_ = ws.SetReadDeadline(time.Now().Add(runnerWSReadTimeout))
+		if input.Type == "agent_tool.cancel" {
+			if stop, ok := toolCancels.Load(input.RequestID); ok {
+				stop.(context.CancelFunc)()
+			}
+			continue
+		}
+		if input.Type == "agent_tool.request" && input.ToolRequest != nil {
+			toolCtx, stop := context.WithCancel(connCtx)
+			if _, duplicate := toolCancels.LoadOrStore(input.RequestID, stop); duplicate {
+				stop()
+				continue
+			}
+			go func(input runnerControlMessage) {
+				defer toolCancels.Delete(input.RequestID)
+				defer stop()
+				result := domain.RunnerToolResponse{}
+				session, ok := agentToolSessions.get(input.ToolRequest.Token)
+				if !ok || session.ExecutionRunnerID != runner.ID {
+					result.Error = "invalid conversation gateway"
+				} else {
+					var request agentToolRPCRequest
+					if err := json.Unmarshal(input.ToolRequest.Body, &request); err != nil {
+						result.Error = "invalid tool request"
+					} else {
+						ctx := withAgentToolToken(toolCtx, input.ToolRequest.Token)
+						if !input.ToolRequest.SupportsCancel {
+							ctx = context.WithValue(ctx, legacyRunnerToolRequestKey{}, true)
+						}
+						response := (&agentToolGateway{deps: h.deps}).handleRPC(ctx, session, request)
+						if response != nil {
+							result.Body, _ = json.Marshal(response)
+						}
+					}
+				}
+				select {
+				case conn.send <- runnerControlMessage{Type: "agent_tool.response", RequestID: input.RequestID, ToolResponse: &result}:
+				case <-toolCtx.Done():
+				case <-conn.done:
+				}
+			}(input)
+			continue
+		}
 		if input.Type == "workspace.response" && input.WorkspaceResponse != nil {
 			h.runnerControls.resolveWorkspace(input.RequestID, *input.WorkspaceResponse)
 			continue

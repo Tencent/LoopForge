@@ -44,6 +44,7 @@ export function cliFailureSettles(text) {
   const value = String(text || "").trim();
   return (
     value === "AI 助手生成失败，请稍后重试" ||
+    value === "AI 助手生成失败，具体原因见诊断信息" ||
     /（[a-z0-9-]+）没有安装在当前服务器上/.test(value)
   );
 }

@@ -88,7 +88,11 @@ func (h *assistantHandlers) runConversation(c *gin.Context) {
 	if title == "" {
 		title = r.WorkflowID
 	}
-	session, err := h.repo.EnsureRunAssistantSession(r.ID, project, title, user.ID)
+	target := domain.AssistantExecutionTarget{Pool: r.ExecutionContext.ExecutionMode, RunnerID: r.ExecutionContext.ExecutionRunnerID}
+	if target.Pool != domain.ExecutionModeRunner {
+		target.Pool = domain.ExecutionModeCloud
+	}
+	session, err := h.repo.EnsureRunAssistantSession(r.ID, project, title, user.ID, target)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "读取共享会话失败"})
 		return

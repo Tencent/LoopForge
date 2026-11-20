@@ -164,6 +164,9 @@ func preparationFingerprint(node domain.WorkflowNode, repositories []domain.Repo
 }
 func preparationQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", "'\"'\"'") + "'" }
 
+// preparationOutputLimit bounds the script output kept in a preparation step.
+const preparationOutputLimit = 32 << 10
+
 var preparationANSI = regexp.MustCompile(`\x1b\[[0-?]*[ -/]*[@-~]`)
 var preparationSecretKey = regexp.MustCompile(`(?i)(api[_-]?key|token|secret|password|passwd|authorization|credential)`)
 var preparationSecretAssignment = regexp.MustCompile(`(?i)(\b[\w.-]*(?:api[_-]?key|token|secret|password|passwd|authorization)[\w.-]*["']?\s*[=:]\s*)(?:"[^"]*"|'[^']*'|(?:Bearer\s+)?[^\s,;]+)`)
@@ -175,7 +178,13 @@ func redactPreparationOutput(sb Sandbox, output string) string {
 		managed.credentialsMu.RLock()
 		credentials := managed.credentials
 		managed.credentialsMu.RUnlock()
-		secrets = append(secrets, credentials.GitToken, credentials.CodeBuddy.APIKey, credentials.Codex.APIKey, credentials.ClaudeCode.APIKey)
+		secrets = append(secrets, credentials.CodeBuddy.APIKey, credentials.Codex.APIKey, credentials.ClaudeCode.APIKey)
+		for _, credential := range credentials.GitHTTPCredentials {
+			secrets = append(secrets, credential.Token)
+		}
+		for _, secret := range credentials.Extra {
+			secrets = append(secrets, secret)
+		}
 		for _, server := range credentials.MCPServers {
 			for _, value := range server.Headers {
 				secrets = append(secrets, value)
@@ -233,13 +242,23 @@ func preparationFailureDetail(output string) string {
 	output = strings.Join(lines, "\n")
 	const limit = 2 << 10
 	if len(output) > limit {
-		start := len(output) - limit + len("…\n")
-		for start < len(output) && !utf8.RuneStart(output[start]) {
-			start++
-		}
-		output = "…\n" + output[start:]
+		output = "…\n" + tailAtRuneBoundary(output, limit-len("…\n"))
 	}
 	return output
+}
+
+// tailAtRuneBoundary returns at most the last limit bytes of s. When the cut
+// falls inside a multi-byte UTF-8 sequence it moves forward to the next rune
+// start, so the result never begins with a partial character.
+func tailAtRuneBoundary(s string, limit int) string {
+	if len(s) <= limit {
+		return s
+	}
+	start := len(s) - limit
+	for start < len(s) && !utf8.RuneStart(s[start]) {
+		start++
+	}
+	return s[start:]
 }
 
 func preparationCommand(node domain.WorkflowNode, repo *domain.RepositoryContext) string {
@@ -276,6 +295,9 @@ func EnsureWorkspacePreparation(ctx context.Context, sb Sandbox, wf domain.Workf
 	}
 	epoch, err := SandboxEnvironmentIdentity(ctx, sb)
 	if err != nil {
+		return WorkspacePreparationStatus{Status: "failed", Error: err.Error(), Steps: []WorkspacePreparationStep{}}, err
+	}
+	if err := RestoreLegacyWorkspaceAgentConfig(ctx, sb.Workspace(), repositories); err != nil {
 		return WorkspacePreparationStatus{Status: "failed", Error: err.Error(), Steps: []WorkspacePreparationStep{}}, err
 	}
 	old := ReadWorkspacePreparationStatus(sb.Workspace(), sb.ID())
@@ -338,15 +360,26 @@ func EnsureWorkspacePreparation(ctx context.Context, sb Sandbox, wf domain.Workf
 		emit(node, "started", "正在恢复工作区环境："+node.Name)
 		var output string
 		execute := func(repo *domain.RepositoryContext) error {
-			raw, execErr := sb.Exec(ctx, CommandSpec{Argv: []string{"sh", "-lc", preparationCommand(node, repo)}, Provider: "script", CredentialBindings: []CredentialBinding{BindGit, BindMCP}}, nil)
-			output += redactPreparationOutput(sb, raw)
-			if len(output) > 32<<10 {
-				start := len(output) - (32 << 10)
-				for start < len(output) && !utf8.RuneStart(output[start]) {
-					start++
+			spec := CommandSpec{Argv: []string{"sh", "-lc", preparationCommand(node, repo)}, Provider: "script", CredentialBindings: []CredentialBinding{BindGit, BindMCP}}
+			// A rebuilt environment binds exactly what a normal execution
+			// bound: the node's declared credentials are validated up front
+			// (where the sandbox exposes its snapshot) and injected through
+			// the same BindExtra path, so a replay never falls back to the
+			// host process's own variables.
+			if len(node.CredentialEnv) > 0 {
+				if snapshot, ok := sb.(sandboxCredentialSnapshot); ok {
+					var err error
+					spec, err = CommandSpecWithCredentialEnv(spec, node.CredentialEnv, snapshot.CredentialSnapshot())
+					if err != nil {
+						return err
+					}
+				} else {
+					spec.CredentialBindings = append(append([]CredentialBinding(nil), spec.CredentialBindings...), BindExtra)
+					spec.ExtraCredentialEnv = node.CredentialEnv
 				}
-				output = output[start:]
 			}
+			raw, execErr := sb.Exec(ctx, spec, nil)
+			output = tailAtRuneBoundary(output+redactPreparationOutput(sb, raw), preparationOutputLimit)
 			return execErr
 		}
 		if node.ExecutionScope == domain.ExecutionScopeRepositories {
@@ -413,8 +446,8 @@ func RecordWorkspacePreparation(ctx context.Context, sb Sandbox, wf domain.Workf
 	if state.Environment != epoch {
 		state = WorkspacePreparationStatus{Steps: []WorkspacePreparationStep{}, Environment: epoch}
 	}
-	if len(output) > 32<<10 {
-		output = output[:32<<10]
+	if len(output) > preparationOutputLimit {
+		output = output[:preparationOutputLimit]
 	}
 	step := WorkspacePreparationStep{NodeID: nodeID, Name: selected.Name, Status: "ready", Output: output, Fingerprint: preparationFingerprint(*selected, repositories, wf.SandboxSnapshot), FinishedAt: time.Now().UTC()}
 	replaced := false

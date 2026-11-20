@@ -25,7 +25,7 @@ func (r *AssistantRepo) SharedAssistantSession(id string) (domain.AssistantSessi
 	item := decodeAssistantSession(row)
 	return item, validSharedAssistantSession(item)
 }
-func (r *AssistantRepo) EnsureRunAssistantSession(runID, projectID, title string, userID int64) (domain.AssistantSession, error) {
+func (r *AssistantRepo) EnsureRunAssistantSession(runID, projectID, title string, userID int64, execution ...domain.AssistantExecutionTarget) (domain.AssistantSession, error) {
 	id := RunAssistantSessionID(runID)
 	if item, ok := r.SharedAssistantSession(id); ok {
 		return item, nil
@@ -52,6 +52,12 @@ func (r *AssistantRepo) EnsureRunAssistantSession(runID, projectID, title string
 			}
 			item.Messages = append(item.Messages, message)
 		}
+	}
+	// Legacy transcripts keep the cloud binding. Only a newly opened run
+	// conversation inherits the already frozen execution target of its run.
+	if len(rows) == 0 && len(execution) > 0 {
+		target := execution[0]
+		item.ExecutionTarget = &target
 	}
 	deriveAssistantParticipants(&item, item.Messages)
 	row := assistantSessionRow{ID: id, UserID: userID, ProjectID: projectID, Title: title, Source: item.Source, TaskID: item.TaskID, Payload: mustJSON(item), Created: &now, Updated: &now}
@@ -185,6 +191,8 @@ func (r *AssistantRepo) CreateAssistantSessionBranch(source domain.AssistantSess
 		base := *r.deps
 		base.DB = tx
 		scoped.deps = &base
+		target := old.Execution()
+		branch.ExecutionTarget = &target
 		return scoped.putAssistantSession(branch.UserID, branch)
 	})
 }

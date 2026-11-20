@@ -817,7 +817,7 @@ function currentProject(){return (state.data.projects||[]).find(p=>p.id===state.
 // Newcomers (no project in the URL or saved from an earlier visit) start in a
 // project they belong to, then the welcome project, then the first project.
 const DEFAULT_PROJECT_ID='welcome';
-function defaultProjectId(projects,userId=globalThis.state?.currentUser?.id){const list=projects||[];const mine=userId?list.find(p=>p.ownerId===userId||(p.members||[]).some(m=>m.userId===userId)):null;return (mine||list.find(p=>p.id===DEFAULT_PROJECT_ID)||list[0])?.id||''}
+function defaultProjectId(projects,userId){const list=projects||[];const mine=userId?list.find(p=>p.ownerId===userId||(p.members||[]).some(m=>m.userId===userId)):null;return (mine||list.find(p=>p.id===DEFAULT_PROJECT_ID)||list[0])?.id||''}
 function currentRepository(project=currentProject()){const id=project?.defaultRepositoryId;return (state.data.repositories||[]).find(r=>r.id===id)}
 function userById(id){return (state.data.users||[]).find(u=>Number(u.id)===Number(id))}
 function userDisplay(user){return user?(user.chineseName&&user.loginName?`${user.loginName}(${user.chineseName})`:user.loginName||user.chineseName||`用户 ${user.id}`):''}
@@ -913,7 +913,7 @@ async function boot(){
   const shell = await api('/api/bootstrap', {silent: view==='runs'});
   state.data = Object.assign(state.data, shell);
   const savedProject=urlParams.get('projectId')||localStorage.getItem('agentflow.activeProject');
-  state.projectFilter=(state.data.projects||[]).some(p=>p.id===savedProject)?savedProject:defaultProjectId(state.data.projects);
+  state.projectFilter=(state.data.projects||[]).some(p=>p.id===savedProject)?savedProject:defaultProjectId(state.data.projects,state.currentUser?.id);
   state.workflow = clone(restoreOpenWorkflow());
   state.workflowSaved = clone(state.workflow);
   state.workflowDirty = false;
@@ -1092,7 +1092,7 @@ function bind(){
   $('#runGenericTemplateDirect')&&($('#runGenericTemplateDirect').onclick=()=>{const id=state.genericTemplateId;$('#genericTemplateModal').classList.remove('open');if(!id)return toast('请先选择通用模板');openRunModal(id)});
   $('#confirmRun').onclick=startRun; $('#newAgent').onclick=()=>openAgentWizard();
   $('#agentForm').onsubmit=saveAgent;
-  $('#agentForm').elements.executorId?.addEventListener('change',e=>applyAgentModelUI(e.target.value,'',''));
+  $('#agentForm').elements.executorId?.addEventListener('change',e=>applyAgentModelUI(e.target.value,'','',true));
   bindAgentPicker('#agentModelPicker',renderAgentModelPicker);
   bindAgentPicker('#agentEffortPicker',renderAgentEffortPicker);
   $('#agentClone')&&($('#agentClone').onclick=()=>cloneAgent(state.selectedAgent));
@@ -1228,27 +1228,21 @@ function bind(){
   $('#newAISchedule').onclick=()=>{selectAIScheduleTab('project');openScheduleJobModal('assistant')};
   $('#refreshAISchedules').onclick=refreshAISchedules;
   bindSharedScheduleUI();
+  bindScheduleExecutionUI();
   bindProjectAdmin();bindRepoDrawer();
   $$('.requirement-close').forEach(b=>b.onclick=()=>closeRequirementComposer());
-  $('#reqNext').onclick=()=>startReqClarify();
-  $('#reqSkip').onclick=()=>skipReqClarify();
-  $('#reqBack').onclick=()=>backReqStep();
-  $('#reqGoCreate').onclick=()=>goReqStep(3);
   $('#reqCreate').onclick=()=>createIssueFromChat();
-  $('#chatStop').onclick=()=>abortChatClarify();
-  $('#reqReclarify').onclick=()=>reclarifyRequirement();
-  $('#reqTraceToggle').onclick=()=>toggleReqTrace();
+  $('#reqCreateChat').onclick=()=>createIssueFromChat(undefined,'chat');
   $('#reqRepoChipToggle').onclick=e=>{e.stopPropagation();toggleReqRepoPopover()};
-  $$('#reqSteps [data-req-step]').forEach(b=>b.onclick=()=>openReqStep(Number(b.dataset.reqStep)));
   $$('#reqTarget [data-req-target]').forEach(b=>b.onclick=()=>setReqTarget(b.dataset.reqTarget));
+  $$('#reqDelivery [data-req-delivery]').forEach(b=>b.onclick=()=>setReqDelivery(b.dataset.reqDelivery));
   document.addEventListener('pointerdown',e=>{
     const pop=$('#reqRepoPopover');
     if(pop&&!pop.hidden&&!e.target.closest?.('#reqRepoChip, .hui-select-panel'))toggleReqRepoPopover(false);
   });
-  $('#chatInput').addEventListener('keydown',e=>{if(e.key==='Enter'&&(e.metaKey||e.ctrlKey)){e.preventDefault();startReqClarify()}});
+  $('#chatInput').addEventListener('keydown',e=>{if(e.key==='Enter'&&(e.metaKey||e.ctrlKey)){e.preventDefault();createIssueFromChat(undefined,'chat')}});
   $('#reqWorkflow')&&($('#reqWorkflow').onchange=()=>{renderReqFooter();persistRequirementComposer()});
   $('#reqBaseBranch')?.addEventListener('input',onReqBaseBranchInput);
-  $('#reqTitle').addEventListener('input',onReqTitleInput);
   $('#chatInput').addEventListener('input',onReqDescriptionInput);
   window.addEventListener('beforeunload',()=>persistRequirementComposer());
   if($('#sopCreateForm')){$('#sopCreateForm').onsubmit=createSOPFromWizard;$('#sopPrev').onclick=()=>setSOPWizardStep(state.sopWizardStep-1);$('#sopNext').onclick=()=>setSOPWizardStep(state.sopWizardStep+1);$$('[data-wizard-steps="sop"] [data-step-target]').forEach(b=>b.onclick=()=>setSOPWizardStep(Number(b.dataset.stepTarget)));$$('.sop-create-close').forEach(b=>b.onclick=()=>$('#sopCreateModal').classList.remove('open'))}
@@ -1279,7 +1273,6 @@ function bind(){
     else f.elements.intervalSec.focus();
   });
   bindScheduleModelPicker();
-  bindClarifyModelPicker($('#reqClarifyModelPicker'));
   $('#pushToGongfeng').onclick=()=>pushIssue('gongfeng');
   $('#pushToTAPD').onclick=()=>pushIssue('tapd');
   $('#openSyncModal').onclick=()=>{$('#syncModal').classList.add('open');refreshSyncStatus()};
@@ -1485,6 +1478,27 @@ function postNativeChatProject(frame){
   frame.contentWindow?.postMessage({type:'agentflow-project-context',projectId:nativeChatProjectId()},location.origin);
   frame.contentWindow?.postMessage({type:'agentflow-environments-changed'},location.origin);
 }
+// A requirement handed to the chat opens a new conversation with the
+// requirement already @-mentioned. It waits here until the chat frame can
+// take it: in the frame URL on first mount, otherwise once the chat is ready.
+let pendingChatIssueMention=null;
+function postPendingChatIssueMention(frame){
+  if(!pendingChatIssueMention||!nativeChatReady||frame?.dataset.src!=='native')return;
+  frame.contentWindow?.postMessage({type:'agentflow-chat-mention-issue',...pendingChatIssueMention},location.origin);
+  pendingChatIssueMention=null;
+}
+function openIssueInChat(issue){
+  if(!issue?.id||!issue.projectId)return;
+  pendingChatIssueMention={issueId:issue.id,projectId:issue.projectId};
+  localStorage.setItem('agentflow.activeProject',issue.projectId);
+  const url=new URL(location.href);
+  ['chatSession','chatIssue'].forEach(key=>url.searchParams.delete(key));
+  history.replaceState({},'',url.pathname+url.search+'#/collaboration');
+  // The mention goes first: it moves the chat to the requirement's project,
+  // so the project context posted by switchView no longer rebinds anything.
+  postPendingChatIssueMention($('#chatNextFrame'));
+  switchView('collaboration');
+}
 // A project created, deleted or restored from the chat must reach the project
 // switcher without a page refresh.
 function reloadShellProjects(){
@@ -1501,6 +1515,7 @@ function mountNativeChat(){
       const message=event.data||{};
       if(message.type==='agentflow-chat-ready'){
         nativeChatReady=true;
+        postPendingChatIssueMention(frame);
         postNativeChatProject(frame);
         finishBootLoader();
       }
@@ -1529,12 +1544,6 @@ function mountNativeChat(){
         else reloadShellProjects().then(follow).catch(()=>{});
       }
       if(message.type==='agentflow-projects-changed')reloadShellProjects().catch(()=>{});
-      if(message.type==='agentflow-welcome-demo'&&!frame.dataset.demoBusy){
-        frame.dataset.demoBusy='true';
-        api('/api/runs',{method:'POST',body:JSON.stringify({workflowId:'welcome-workflow',projectId:'welcome',input:'首次体验：运行脚本、审批并交付产物'})}).then(run=>{
-          location.hash='#/runs/'+encodeURIComponent(run.id);
-        }).catch(error=>toast(error.message)).finally(()=>{delete frame.dataset.demoBusy});
-      }
       if(message.type==='agentflow-quick-access-completed'){
         api('/api/bootstrap',{silent:true}).then(shell=>{
           Object.assign(state.data,shell);
@@ -1569,7 +1578,11 @@ function mountNativeChat(){
       const clean=topParams.toString();
       history.replaceState({},'',location.pathname+(clean?'?'+clean:'')+location.hash);
     }
-    frame.src='/chatbot/?projectId='+encodeURIComponent(projectId)+(sessionId?'&session='+encodeURIComponent(sessionId):issueId?'&issueId='+encodeURIComponent(issueId):'')+(quickAccess?'&quickAccess=1':'');
+    const mention=pendingChatIssueMention;
+    pendingChatIssueMention=null;
+    frame.src=mention
+      ?'/chatbot/?projectId='+encodeURIComponent(mention.projectId)+'&mentionIssue='+encodeURIComponent(mention.issueId)
+      :'/chatbot/?projectId='+encodeURIComponent(projectId)+(sessionId?'&session='+encodeURIComponent(sessionId):issueId?'&issueId='+encodeURIComponent(issueId):'')+(quickAccess?'&quickAccess=1':'');
   }
   postNativeChatProject(frame);
 }

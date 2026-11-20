@@ -193,7 +193,8 @@ func TestGitHubDeviceFlowStoresOnlyCurrentUsersGrant(t *testing.T) {
 		t.Fatalf("public result=%s", recorder.Body.String())
 	}
 	user, _ := handler.repo.User(userID)
-	if user.GitToken != "test-private-token" || user.GongfengRefreshToken != "" {
+	credential, ok := handler.repo.GitHTTPCredentialForHost(context.Background(), userID, "github.com")
+	if !ok || credential.Token != "test-private-token" || user.GitToken != "" || user.GongfengRefreshToken != "" {
 		t.Fatal("grant not stored correctly")
 	}
 	if handler.grants[userID] != nil {
@@ -325,7 +326,7 @@ func TestGitHubDeviceFlowRejectsInvalidRequests(t *testing.T) {
 
 func TestGitHubRepositoryPickerUsesCurrentUsersTokenAndPages(t *testing.T) {
 	handler, userID := githubTestHandler(t)
-	_, err := handler.repo.UpdateUserCredentials(userID, repo.UserCredentialUpdate{GitToken: "oauth2:owner-only-token"})
+	err := handler.repo.SaveGitHTTPCredential(userID, "", domain.GitHTTPCredentialSecret{GitHTTPCredential: domain.GitHTTPCredential{Host: "github.com", Name: "GitHub", Platform: domain.GitPlatformGitHub}, Token: "owner-only-token"})
 	if err != nil {
 		t.Fatal(err)
 	}

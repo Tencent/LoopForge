@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -19,6 +20,19 @@ import (
 
 type agentToolGateway struct {
 	*deps
+}
+
+type agentToolTokenKey struct{}
+
+func withAgentToolToken(ctx context.Context, token string) context.Context {
+	return context.WithValue(ctx, agentToolTokenKey{}, token)
+}
+
+// Resolve the capability again under the mode fence. A request may have
+// obtained its session pointer immediately before a mode rotation revoked it.
+func validAgentToolToken(ctx context.Context, session *AgentToolSession) bool {
+	token, _ := ctx.Value(agentToolTokenKey{}).(string)
+	return (token == "" || token == session.Token) && !session.closed.Load() && !session.expired(time.Now())
 }
 
 type agentToolRPCRequest struct {
@@ -53,7 +67,7 @@ func (h *agentToolGateway) ServeHTTP(c *gin.Context) {
 		return
 	}
 	if c.Request.Method == http.MethodDelete {
-		session.Close()
+		agentToolSessions.delete(token)
 		c.Status(http.StatusNoContent)
 		return
 	}
@@ -69,7 +83,7 @@ func (h *agentToolGateway) ServeHTTP(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, agentToolRPCResponse{JSONRPC: "2.0", Error: &agentToolRPCError{Code: -32700, Message: "parse error", Data: err.Error()}})
 		return
 	}
-	response := h.handleRPC(c.Request.Context(), session, request)
+	response := h.handleRPC(withAgentToolToken(c.Request.Context(), token), session, request)
 	if response == nil {
 		c.Status(http.StatusAccepted)
 		return
@@ -78,22 +92,48 @@ func (h *agentToolGateway) ServeHTTP(c *gin.Context) {
 }
 
 func (h *agentToolGateway) handleRPC(ctx context.Context, session *AgentToolSession, request agentToolRPCRequest) *agentToolRPCResponse {
+	if request.Method != "tools/call" {
+		session.toolsMu.RLock()
+		defer session.toolsMu.RUnlock()
+	}
+	if request.Method != "tools/call" && !validAgentToolToken(ctx, session) {
+		return &agentToolRPCResponse{JSONRPC: "2.0", ID: request.ID, Error: &agentToolRPCError{Code: -32602, Message: errAgentToolInvalidSession.Error()}}
+	}
+	if request.Method == "notifications/cancelled" {
+		// Streamable HTTP does not treat a dropped stream as cancellation;
+		// the CLI gives up on a call (e.g. its own tool timeout) with this
+		// notification. A call waiting for approval then ends and its card
+		// expires, so a late approval cannot write anymore.
+		session.cancelToolCall(cancelledRequestID(request.Params))
+		return nil
+	}
 	if strings.HasPrefix(request.Method, "notifications/") {
 		return nil
 	}
 	switch request.Method {
 	case "initialize":
+		session.diagnostics().platform("mcp.gateway_initialized", "CLI 已连接平台会话 MCP 网关", session.User)
 		return &agentToolRPCResponse{JSONRPC: "2.0", ID: request.ID, Result: map[string]any{
 			"protocolVersion": agentToolProtocolVersion(request.Params),
 			"capabilities":    map[string]any{"tools": map[string]any{"listChanged": false}},
 			"serverInfo":      map[string]string{"name": agentToolSessionMCPName, "version": "1.0.0"},
-			"instructions":    agentToolInstructions(session.Mode) + spaceDeliverableSuffix(session),
+			"instructions":    agentToolSessionInstructions(session),
 		}}
 	case "ping":
 		return &agentToolRPCResponse{JSONRPC: "2.0", ID: request.ID, Result: map[string]any{}}
 	case "tools/list":
-		return &agentToolRPCResponse{JSONRPC: "2.0", ID: request.ID, Result: map[string]any{"tools": h.toolList(ctx, session)}}
+		started := time.Now()
+		tools := h.toolList(ctx, session)
+		session.diagnostics().platform("mcp.tools_listed", fmt.Sprintf("平台网关返回 %d 个工具（耗时 %dms）", len(tools), time.Since(started).Milliseconds()), session.User)
+		return &agentToolRPCResponse{JSONRPC: "2.0", ID: request.ID, Result: map[string]any{"tools": tools}}
+	case "agentflow/nativeApproval":
+		result := h.approveNativeTool(ctx, session, request.Params)
+		return &agentToolRPCResponse{JSONRPC: "2.0", ID: request.ID, Result: result}
+	case agentGitCredentialMethod:
+		return &agentToolRPCResponse{JSONRPC: "2.0", ID: request.ID, Result: h.gitCredential(ctx, session, request.Params)}
 	case "tools/call":
+		ctx, done := session.trackToolCall(ctx, request.ID)
+		defer done()
 		result, err := h.callTool(ctx, session, request.Params)
 		if err != nil {
 			return &agentToolRPCResponse{JSONRPC: "2.0", ID: request.ID, Error: &agentToolRPCError{Code: -32602, Message: err.Error()}}
@@ -124,7 +164,7 @@ func agentToolInstructions(mode AgentToolMode) string {
 	case AgentToolClarify:
 		return "只读查询 LoopForge 及当前项目已安装的外部 MCP。本轮结束时调用 submit_clarification。"
 	case AgentToolAssistant:
-		return "只读查询平台和外部 MCP。写入放进 submit_assistant_reply 的草稿，用户确认后才保存。普通问答和只读查询直接用自然语言回复，无需调用提交工具。"
+		return "查询平台和当前项目已安装的外部 MCP。平台写入可通过 submit_assistant_reply 提交草稿。外部 MCP 写入直接调用，由网关按本轮审批模式处理。普通问答和只读查询直接用自然语言回复，无需调用提交工具。"
 	case AgentToolScheduled:
 		return "使用当前项目和个人已安装的 MCP 以及 agentflow__* 直接读写，写入立即生效。完成后用自然语言汇报。"
 	default:
@@ -152,11 +192,13 @@ func (h *agentToolGateway) toolList(ctx context.Context, session *AgentToolSessi
 	return out
 }
 
-func (h *agentToolGateway) callTool(ctx context.Context, session *AgentToolSession, raw json.RawMessage) (map[string]any, error) {
+func (h *agentToolGateway) callTool(ctx context.Context, session *AgentToolSession, raw json.RawMessage) (res map[string]any, retErr error) {
+	session.toolsMu.RLock()
+	defer session.toolsMu.RUnlock()
 	if session.finished() {
 		return nil, errAgentToolTerminalCommitted
 	}
-	if session.closed.Load() || session.expired(time.Now()) {
+	if !validAgentToolToken(ctx, session) {
 		return nil, errAgentToolInvalidSession
 	}
 	if session.ctx != nil {
@@ -176,6 +218,46 @@ func (h *agentToolGateway) callTool(ctx context.Context, session *AgentToolSessi
 		return nil, err
 	}
 	name := stripAgentToolServerPrefix(params.Name)
+	diag := session.diagnostics()
+	attemptID := diag.currentAttemptID()
+	diagToolID := diag.toolStart("gateway", "", name, "", attemptID, session.User)
+	defer func() {
+		if diagToolID == "" {
+			return
+		}
+		failed := retErr != nil || (res != nil && res["isError"] == true)
+		errMsg := ""
+		if retErr != nil {
+			errMsg = retErr.Error()
+		} else if failed {
+			if data, err := json.Marshal(res["content"]); err == nil {
+				errMsg = diagnosticErrorText(data)
+			}
+		}
+		diag.toolEnd("gateway", diagToolID, attemptID, errMsg, failed, nil, session.User)
+	}()
+	if session.requestedMode() != "" {
+		return mcpToolTextResult(assistantHandoffNotice, true), nil
+	}
+	if session.RuntimeMode == domain.AssistantModeWorkspace {
+		if _, ok := lookupAgentTool(h.buildCatalog(ctx, session), name); !ok {
+			return nil, fmt.Errorf("%w: %s", errAgentToolForbidden, name)
+		}
+	}
+	// Some CLI/provider combinations encode function arguments as a JSON
+	// string before forwarding them to MCP. Accept one encoded object, while
+	// retaining the same token, mode, catalog and write checks.
+	if rawArgs := bytes.TrimSpace(params.Arguments); len(rawArgs) > 0 && rawArgs[0] == '"' {
+		var encoded string
+		if err := json.Unmarshal(rawArgs, &encoded); err != nil {
+			return nil, err
+		}
+		object := bytes.TrimSpace([]byte(encoded))
+		if len(object) == 0 || object[0] != '{' || !json.Valid(object) {
+			return nil, fmt.Errorf("tool arguments must be a JSON object")
+		}
+		params.Arguments = object
+	}
 	logAgentToolEvent("call-start", "mode="+string(session.Mode), "tool="+name)
 	if name == submitClarificationTool || name == submitAssistantReplyTool || name == submitNotificationReportTool {
 		return h.callTerminal(session, name, params.Arguments)
@@ -197,11 +279,8 @@ func (h *agentToolGateway) callTool(ctx context.Context, session *AgentToolSessi
 		body, _ := json.Marshal(map[string]any{"name": op.Name, "description": op.Description, "inputSchema": mcpserver.ToolInputSchema(op)})
 		return map[string]any{"content": []map[string]any{{"type": "text", "text": string(body)}}}, nil
 	}
-	if name == "workbench_attachment_read" {
-		return readWorkbenchAttachmentTool(session, params.Arguments)
-	}
 	if name == "workbench_publish_artifact" {
-		return h.publishWorkbenchArtifact(session, params.Arguments)
+		return h.publishArtifact(ctx, session, params.Arguments)
 	}
 	catalog := h.buildCatalog(ctx, session)
 	tool, ok := lookupAgentTool(catalog, name)
@@ -288,12 +367,6 @@ func (h *agentToolGateway) dispatch(ctx context.Context, session *AgentToolSessi
 	if tool.Kind == "workspace" {
 		return h.callMainBotWorkspace(ctx, session, tool.Name, args)
 	}
-	// 轻量 GitHub 工具（agent_tool_github.go）：用请求人自己的 Git Token 直连
-	// GitHub，范围限定在当前项目已绑定的仓库。与 workspace 工具一样不走 drafts，
-	// 「帮我批准」时写操作在 callMainBotGitHub 里逐项过审查。
-	if tool.Kind == "github" {
-		return h.callMainBotGitHub(ctx, session, tool.Name, args)
-	}
 	if tool.Kind == "agentflow" {
 		if session.Mode == AgentToolClarify && !agentToolNameAllowed(AgentToolClarify, "agentflow", tool.UpstreamName) {
 			return "", errAgentToolForbidden
@@ -370,14 +443,15 @@ func (h *agentToolGateway) dispatch(ctx context.Context, session *AgentToolSessi
 		return "", errAgentToolForbidden
 	}
 	if session.Mode == AgentToolAssistant && mcpCallMayWrite(kind, call) {
-		// A write to an external MCP follows the conversation's approval
-		// mode like a platform write. It has no draft to confirm, so the
-		// confirm mode cannot run it.
 		name := mcpCallName(kind, call)
 		if !session.ExecMode.AutoWrite {
-			return "", fmt.Errorf("%s 会写入外部系统，当前审批模式需要逐项确认，而外部 MCP 写入没有待确认草稿。请让用户把审批模式切到「自动」或「辅助」后再试，或告诉用户要做的改动由其手动完成", name)
-		}
-		if session.ExecMode.ReviewWrites {
+			if err := h.waitForMCPWriteApproval(ctx, session, name, call); err != nil {
+				return "", err
+			}
+			if !h.nativeToolTurnActive(ctx, session) {
+				return "", errMCPApprovalExpired
+			}
+		} else if session.ExecMode.ReviewWrites {
 			review := reviewAssistantAction(ctx, name, mcpServerName(h, session, call.Server)+" MCP 写入外部系统", map[string]any{"server": call.Server, "tool": call.Tool, "arguments": call.Arguments})
 			if !review.allows() {
 				return "", assistantReviewRefusal(name, review)
@@ -401,7 +475,7 @@ func (h *agentToolGateway) dispatch(ctx context.Context, session *AgentToolSessi
 		}
 		return redactAgentToolResult(text, session.User), nil
 	}
-	text, err := asst.callAssistantMCP(session.User, session.ProjectID, call)
+	text, err := asst.callAssistantMCPContext(ctx, session.User, session.ProjectID, call)
 	if err != nil {
 		return "", err
 	}
@@ -452,6 +526,13 @@ func mcpCallName(kind string, call assistantMCPCall) string {
 	return strings.TrimSpace(call.Tool)
 }
 
+// mcpWriteVerbs mark a write when one is a whole _/-/. separated segment of
+// the tool name.
+var mcpWriteVerbs = []string{"add", "merge", "upload", "transition", "close", "reopen", "approve", "assign", "set", "remove", "publish", "send", "post", "submit", "comment"}
+
+// mcpReadWords mark a read when one appears anywhere in the tool name.
+var mcpReadWords = []string{"get", "list", "search", "query", "count", "lookup", "read", "fetch", "describe", "show", "info", "detail", "tree", "blame", "compare", "schema", "reference", "find", "view"}
+
 // mcpCallMayWrite treats a call as a write unless its name reads as a read.
 // The approval review is the safety net, so an unknown name such as
 // merge_merge_request is reviewed instead of passing as a read.
@@ -460,17 +541,9 @@ func mcpCallMayWrite(kind string, call assistantMCPCall) bool {
 	if name == "" || clarifyMCPWriteName(name) {
 		return name != ""
 	}
-	for _, word := range []string{"add", "merge", "upload", "transition", "close", "reopen", "approve", "assign", "set", "remove", "publish", "send", "post", "submit", "comment"} {
-		for _, part := range strings.FieldsFunc(name, func(r rune) bool { return r == '_' || r == '-' || r == '.' }) {
-			if part == word {
-				return true
-			}
-		}
+	parts := strings.FieldsFunc(name, func(r rune) bool { return r == '_' || r == '-' || r == '.' })
+	if slices.ContainsFunc(parts, func(part string) bool { return slices.Contains(mcpWriteVerbs, part) }) {
+		return true
 	}
-	for _, word := range []string{"get", "list", "search", "query", "count", "lookup", "read", "fetch", "describe", "show", "info", "detail", "tree", "blame", "compare", "schema", "reference", "find", "view"} {
-		if strings.Contains(name, word) {
-			return false
-		}
-	}
-	return true
+	return !slices.ContainsFunc(mcpReadWords, func(word string) bool { return strings.Contains(name, word) })
 }

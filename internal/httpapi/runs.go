@@ -85,7 +85,15 @@ func (h *runsHandlers) runs(c *gin.Context) {
 			respond(c, err)
 			return
 		}
-		c.JSON(200, runSummaries(runs))
+		user, authenticated := h.requestUser(r, true)
+		visible := runs[:0]
+		for _, run := range runs {
+			if run.IsPersonalWorkspace() && (!authenticated || user.ID <= 0 || user.ID != run.ExecutionContext.ResponsibleUserID) {
+				continue
+			}
+			visible = append(visible, run)
+		}
+		c.JSON(200, runSummaries(visible))
 		return
 	}
 	if r.Method == http.MethodPost {
@@ -132,12 +140,7 @@ func (h *runsHandlers) runs(c *gin.Context) {
 				c.JSON(http.StatusConflict, map[string]string{"error": "项目默认代码仓库无效，请重新绑定", "code": "repository_required"})
 				return
 			}
-			repositories = []domain.RepositoryContext{{
-				RepositoryID: repoDef.ID, Provider: repoDef.Provider, Name: repoDef.Name,
-				GongfengProjectID: repoDef.GongfengProjectID, WebURL: repoDef.WebURL, CloneURL: repoDef.CloneURL,
-				BaseBranch: repoDef.DefaultBranch, DefaultBranch: repoDef.DefaultBranch, LocalPath: repoDef.LocalPath,
-				PipelineProjectID: repoDef.PipelineProjectID, PipelineDefID: repoDef.PipelineDefID, PipelineURLPattern: repoDef.PipelineURLPattern,
-			}}
+			repositories = []domain.RepositoryContext{repositoryRunContext(repoDef)}
 		}
 		v, err := h.engine.StartWithRepositoriesContext(req.WorkflowID, req.Input, repositories, domain.TelemetryContext{ProjectID: req.ProjectID, ResponsibleUserID: responsibleUserID})
 		if err != nil {

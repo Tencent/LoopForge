@@ -117,6 +117,15 @@ func (s *Service) Start(ctx context.Context) {
 		}
 	}()
 }
+
+// waitingNodeStale reports whether the node a waiting notification refers to
+// is no longer waiting for the same approval round (run finished, node gone,
+// status changed, or a newer attempt/rework has started).
+func waitingNodeStale(run domain.Run, item domain.NotificationDelivery) bool {
+	node := run.Nodes[item.NodeID]
+	return domain.TerminalRunStatus(run.Status) || node == nil || node.Status != "waiting_approval" || node.Attempt != item.Attempt || node.ReworkCount != item.ReworkCount
+}
+
 func (s *Service) ProcessOne(ctx context.Context) (bool, error) {
 	token := make([]byte, 16)
 	if _, err := rand.Read(token); err != nil {
@@ -157,15 +166,13 @@ func (s *Service) ProcessOne(ctx context.Context) (bool, error) {
 		if !ok {
 			return finish("expired", "运行已删除")
 		}
-		node := run.Nodes[item.NodeID]
-		if item.EventType == "waiting" && item.WaitingPolicy != "event" && (domain.TerminalRunStatus(run.Status) || node == nil || node.Status != "waiting_approval" || node.Attempt != item.Attempt || node.ReworkCount != item.ReworkCount) {
+		if item.EventType == "waiting" && item.WaitingPolicy != "event" && waitingNodeStale(run, *item) {
 			return finish("expired", "节点已无需人工处理")
 		}
 	}
 	if item.EventType == "waiting" && item.WaitingPolicy == "event" {
 		run, _ := s.Store.RunState(item.RunID)
-		node := run.Nodes[item.NodeID]
-		if domain.TerminalRunStatus(run.Status) || node == nil || node.Status != "waiting_approval" || node.Attempt != item.Attempt || node.ReworkCount != item.ReworkCount {
+		if waitingNodeStale(run, *item) {
 			item.Content += "\n\n此消息记录进入等待的状态；当前该次等待已结束，无需按旧提醒操作。"
 		}
 	}
@@ -201,8 +208,7 @@ func (s *Service) ProcessOne(ctx context.Context) (bool, error) {
 		if !ok {
 			return errNotificationExpired
 		}
-		node := run.Nodes[item.NodeID]
-		if domain.TerminalRunStatus(run.Status) || node == nil || node.Status != "waiting_approval" || node.Attempt != item.Attempt || node.ReworkCount != item.ReworkCount {
+		if waitingNodeStale(run, *item) {
 			return errNotificationExpired
 		}
 		return nil

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -198,7 +199,7 @@ func TestNativeClarifyCommandKeepsReadAndSessionMCP(t *testing.T) {
 	if !ok || !strings.Contains(denied, "Bash") || !strings.Contains(denied, "Write") || !strings.Contains(denied, "Edit") {
 		t.Fatalf("dangerous tools not denied: %q argv=%v", denied, command.Argv)
 	}
-	if !argvHasFlag(command.Argv, "--strict-mcp-config") {
+	if !slices.Contains(command.Argv, "--strict-mcp-config") {
 		t.Fatal("missing --strict-mcp-config")
 	}
 	if src, _ := argvFlagValue(command.Argv, "--setting-sources"); src != "none" {

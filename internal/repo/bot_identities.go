@@ -4,7 +4,6 @@ import (
 	"agentflow/internal/domain"
 	"context"
 	"crypto/rand"
-	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
 	"errors"
@@ -19,10 +18,6 @@ var ErrBotBindingChallenge = errors.New("绑定请求已失效，请回到企业
 var ErrBotBindingCode = errors.New("确认码无效、已过期或不属于当前发送者，请重新确认")
 
 func botIdentityID(bot, sender string) string { return BotMessageID(bot, sender) }
-func botBindingHash(value string) string {
-	sum := sha256.Sum256([]byte(value))
-	return hex.EncodeToString(sum[:])
-}
 func botBindingNonce(n int) (string, error) {
 	b := make([]byte, n)
 	if _, err := rand.Read(b); err != nil {
@@ -67,13 +62,13 @@ func (r *UsersRepo) NewBotBindingChallenge(bot, sender string, now time.Time) (s
 		if err := tx.Model(&domain.BotBindingChallenge{}).Where("binding_id = ? AND status IN ?", id, []string{"pending", "claimed"}).Update("status", "expired").Error; err != nil {
 			return err
 		}
-		return tx.Create(&domain.BotBindingChallenge{ID: botBindingHash(token), BindingID: id, Status: "pending", ExpiresAt: now.Add(15 * time.Minute), CreatedAt: now}).Error
+		return tx.Create(&domain.BotBindingChallenge{ID: hexSHA256(token), BindingID: id, Status: "pending", ExpiresAt: now.Add(15 * time.Minute), CreatedAt: now}).Error
 	})
 	return token, err
 }
 func (r *UsersRepo) BotBindingChallengeStatus(token string, userID int64, now time.Time) (string, error) {
 	var out domain.BotBindingChallenge
-	if err := r.DB.First(&out, "id = ?", botBindingHash(token)).Error; err != nil {
+	if err := r.DB.First(&out, "id = ?", hexSHA256(token)).Error; err != nil {
 		return "", ErrBotBindingChallenge
 	}
 	if !out.ExpiresAt.After(now) || out.Status == "expired" {
@@ -90,10 +85,10 @@ func (r *UsersRepo) ClaimBotBindingChallenge(token string, userID int64, now tim
 	}
 	// Derive a stable 80-bit code from the browser-only random nonce and account.
 	// Only its hash is stored; reopening a request does not rotate the code.
-	code := botBindingHash(token + "\x00" + strconv.FormatInt(userID, 10))[:20]
+	code := hexSHA256(token + "\x00" + strconv.FormatInt(userID, 10))[:20]
 	err := r.DB.Transaction(func(tx *gorm.DB) error {
 		var challenge domain.BotBindingChallenge
-		if err := tx.First(&challenge, "id = ?", botBindingHash(token)).Error; err != nil {
+		if err := tx.First(&challenge, "id = ?", hexSHA256(token)).Error; err != nil {
 			return ErrBotBindingChallenge
 		}
 		binding, err := r.botBindingRow(tx, challenge.BindingID)
@@ -112,7 +107,7 @@ func (r *UsersRepo) ClaimBotBindingChallenge(token string, userID int64, now tim
 		if challenge.Status == "claimed" {
 			return nil
 		}
-		return tx.Model(&challenge).Updates(map[string]any{"user_id": userID, "code_hash": botBindingHash(code), "status": "claimed", "attempts": 0}).Error
+		return tx.Model(&challenge).Updates(map[string]any{"user_id": userID, "code_hash": hexSHA256(code), "status": "claimed", "attempts": 0}).Error
 	})
 	return strings.ToUpper(code), err
 }
@@ -135,7 +130,7 @@ func (r *UsersRepo) ConfirmBotUserBinding(bot, sender, code string, now time.Tim
 		if !challenge.ExpiresAt.After(now) || challenge.Attempts >= 5 {
 			return ErrBotBindingCode
 		}
-		if subtle.ConstantTimeCompare([]byte(challenge.CodeHash), []byte(botBindingHash(strings.ToLower(strings.TrimSpace(code))))) != 1 {
+		if subtle.ConstantTimeCompare([]byte(challenge.CodeHash), []byte(hexSHA256(strings.ToLower(strings.TrimSpace(code))))) != 1 {
 			denied = true
 			updates := map[string]any{"attempts": challenge.Attempts + 1}
 			if challenge.Attempts+1 >= 5 {

@@ -178,6 +178,10 @@ function renderIssueDetailTab(){
   host.querySelectorAll('[data-edit-issue]').forEach(b=>b.onclick=()=>{closeIssueDrawer();openIssue(issue)});
   host.querySelectorAll('[data-dispatch-issue]').forEach(b=>b.onclick=()=>triggerIssue(b.dataset.dispatchIssue,b.dataset.workflow));
   host.querySelectorAll('[data-retrigger-issue]').forEach(b=>b.onclick=()=>retriggerIssue(b.dataset.retriggerIssue,b.dataset.workflow));
+  host.querySelectorAll('[data-chat-issue]').forEach(b=>b.onclick=()=>openIssueInChatById(b.dataset.chatIssue));
+  const noSOPWorkflow=()=>host.querySelector('[data-no-sop-workflow]')?.value||'';
+  host.querySelectorAll('[data-no-sop-bind]').forEach(b=>b.onclick=()=>addIssueSOP(b.dataset.noSopBind,noSOPWorkflow()));
+  host.querySelectorAll('[data-no-sop-run]').forEach(b=>b.onclick=()=>triggerIssue(b.dataset.noSopRun,noSOPWorkflow()));
   host.querySelectorAll('[data-rerun-from-here]').forEach(b=>b.onclick=()=>openRerunFromNode((b.dataset.run&&(state.data.runs||[]).find(r=>r.id===b.dataset.run))||data.run,b.dataset.rerunFromHere));
   host.querySelectorAll('[data-toggle-sop-row]').forEach(el=>el.onclick=e=>{
     if(e.target.closest('button,a,select,input,.user-combobox'))return;
@@ -538,7 +542,7 @@ function overviewPane(issue,data){
   const ch=convo?conversationHeadState(issue):null;
   const banner=ch?`<div class="issue-outcome conv-outcome ${escapeHTML(ch.tone)}"><span class="conv-outcome-kicker">对话交付</span><b>${escapeHTML(ch.label)}</b><p>${escapeHTML(ch.hint||'')}</p><div class="issue-outcome-actions">${actions}</div></div>`
     :`<div class="issue-outcome ${out.key}"><b>${escapeHTML(out.title)}</b><p>${escapeHTML(out.body)}</p><div class="issue-outcome-actions">${actions}</div></div>`;
-  const facts=`<div class="detail-grid">${drawerFact('责任人',issueAssigneeName(issue)||'未指定')}${drawerFact('优先级',issuePriorityLabel(issue.priority))}${drawerFact('来源',issueSourceLabel(issue))}${metricsIssueSource(issue)==='local'?drawerFact('统计关联 TAPD',escapeHTML(issue.tapdId||'未绑定（仍参与统计）')):''}${drawerFact('触发方式',convo?'对话工作区':escapeHTML(taskTriggerInfo(data.task).label))}${drawerFact('关联 SOP',convo?'无 · 对话里直接改代码':escapeHTML(workflow?.name||'未关联'))}${drawerFact('代码仓库',escapeHTML(repo?.name||'未绑定'))}${convo?drawerFact('工作分支',escapeHTML(conversationWorkBranchNames(issue,data)||'—')):drawerFact('继续开发分支',escapeHTML(storedIssueWorkBranch(issue)||'自动新建'))}</div>`;
+  const facts=`<div class="detail-grid">${drawerFact('责任人',issueAssigneeName(issue)||'未指定')}${drawerFact('优先级',issuePriorityLabel(issue.priority))}${drawerFact('来源',issueSourceLabel(issue))}${metricsIssueSource(issue)==='local'?drawerFact('统计关联 TAPD',escapeHTML(issue.tapdId||'未绑定（仍参与统计）')):''}${drawerFact('触发方式',convo?'对话工作区':escapeHTML(taskTriggerInfo(data.task).label))}${drawerFact('关联 SOP',convo?'无 · 对话里直接改代码':(issueWithoutSOP(issue)?'不使用 SOP':escapeHTML(workflow?.name||'未关联')))}${drawerFact('代码仓库',escapeHTML(repo?.name||'未绑定'))}${convo?drawerFact('工作分支',escapeHTML(conversationWorkBranchNames(issue,data)||'—')):drawerFact('继续开发分支',escapeHTML(storedIssueWorkBranch(issue)||'自动新建'))}</div>`;
   return `<div class="detail-section">${banner}${facts}${issue.description?`<div class="detail-desc" style="margin-top:12px">${escapeHTML(issue.description)}</div>`:''}${clarificationOverviewCard(issue)}</div>`;
 }
 function clarifyHistoryHTML(c){
@@ -761,8 +765,17 @@ function deliveryPane(issue,data){
   if(!conversationWorkspaceIssue(issue,data.run))return sopDeliveryPane(issue,data);
   return `<div class="detail-section"><h3>代码仓库与分支<span class="sub">对话工作区检出的仓库</span></h3>${conversationRepoCards(issue,data)}</div><div class="detail-section"><h3>交付方式<span class="sub">在对话工作区里直接改代码，没有 SOP 运行</span></h3><div class="issue-outcome-actions">${conversationSessionButton(issue,data)||'<span class="muted">没有关联的会话</span>'}</div></div>`;
 }
+function noSOPPaneHTML(issue){
+  const opts=runnableWorkflowOptions();
+  const blocked=issueExecutionBlocked(issue);
+  const picker=opts.length
+    ?`<div class="no-sop-switch"><select class="select" data-no-sop-workflow aria-label="选择 SOP">${opts.map(w=>`<option value="${escapeHTML(w.id)}">${escapeHTML(w.name)}</option>`).join('')}</select><button class="button ghost small" data-no-sop-bind="${escapeHTML(issue.id)}">只绑定</button>${blocked?'':`<button class="button ghost small" data-no-sop-run="${escapeHTML(issue.id)}">绑定并触发</button>`}</div>`
+    :'<p class="muted">当前项目还没有可运行的 SOP。</p>';
+  return `<div class="detail-section"><div class="issue-outcome conv-outcome"><span class="conv-outcome-kicker">不使用 SOP</span><b>这条需求不走 SOP</b><p>在对话里澄清需求、直接改代码；定时任务不会自动认领它。</p><div class="issue-outcome-actions"><button class="button primary small" data-chat-issue="${escapeHTML(issue.id)}">去对话处理</button></div></div></div><div class="detail-section"><h3>改为按 SOP 交付<span class="sub">绑定后这条需求按 SOP 跟进，也会参与定时触发</span></h3>${picker}</div>`;
+}
 function sopPane(issue,data){
   if(conversationWorkspaceIssue(issue,data.run))return conversationDeliveryHTML(issue,data);
+  if(issueWithoutSOP(issue))return noSOPPaneHTML(issue);
   const snap=data.requirement||{};
   const lanes=snap.lanes||clientIssueLanes(issue);
   const overall=snap.overall||{};
@@ -848,6 +861,29 @@ function sopDeliveryPane(issue,data){
   const runFacts=`<div class="detail-grid">${drawerFact('Run ID',run?run.id.slice(-14):'—')}${drawerFact('Task ID',data.task?data.task.id.slice(-10):'—')}${drawerFact('触发方式',escapeHTML(taskTriggerInfo(data.task).label))}${drawerFact('状态',run?`<span class="status ${runDisplayStatusClass(run)}">${runDisplayStatus(run)}</span>`:'—')}${drawerFact('执行仓库',escapeHTML(frozen.map(r=>r.name).filter(Boolean).join('、')||'—'))}${drawerFact('冻结目标主分支',escapeHTML(frozenBranches.join('、')||'—'))}${drawerFact('Trace ID',ctx?.traceId?ctx.traceId.slice(-14):'—')}</div>`;
   return `<div class="detail-section"><h3>代码仓库与分支${repos.length>1?`<span class="sub">${repos.length} 个仓库</span>`:''}</h3>${repoFacts}</div><div class="detail-section"><h3>交付运行上下文<span class="sub">发起时冻结的仓库与 Trace 关联</span></h3>${run?runFacts+'<div style="margin-top:10px"><button class="button ghost small" data-open-run="'+escapeHTML(run.id)+'">查看运行详情与产物 →</button></div>':'<div class="detail-empty">尚未发起交付运行</div>'}</div>${run?.input?`<div class="detail-section"><h3>任务输入</h3><div class="detail-desc">${escapeHTML(run.input)}</div></div>`:''}`;
 }
+// Execution order of a SOP's nodes, same rule as orderNodesByEdges in
+// internal/repo/requirement.go: stable topological sort over the edges, array
+// order breaks ties, cycles fall back to array order. The editor appends a node
+// added in a later SOP version to the end of the array, so without this a gate
+// inserted mid-flow is listed after the last node.
+function nodesInExecutionOrder(wf){
+  const nodes=wf?.nodes||[],edges=wf?.edges||[];
+  if(nodes.length<2||!edges.length||nodes.some(n=>!n?.id))return nodes;
+  const known=new Set(nodes.map(n=>n.id)),indegree=new Map(),children=new Map();
+  for(const e of edges){
+    if(e.source===e.target||!known.has(e.source)||!known.has(e.target))continue;
+    indegree.set(e.target,(indegree.get(e.target)||0)+1);
+    children.set(e.source,[...(children.get(e.source)||[]),e.target]);
+  }
+  const placed=new Set(),out=[];
+  while(out.length<nodes.length){
+    const next=nodes.find(n=>!placed.has(n.id)&&!(indegree.get(n.id)>0));
+    if(!next){for(const n of nodes)if(!placed.has(n.id)){out.push(n);placed.add(n.id)}break}
+    out.push(next);placed.add(next.id);
+    for(const c of children.get(next.id)||[])indegree.set(c,indegree.get(c)-1);
+  }
+  return out;
+}
 function acceptancePane(issue,data){
   const run=data.run;
   if(conversationWorkspaceIssue(issue,run)){
@@ -857,7 +893,7 @@ function acceptancePane(issue,data){
   if(!run)return '<div class="detail-empty">尚未执行，暂无验收信息。</div>';
   const wf=run.workflowSnapshot||(state.data.workflows||[]).find(w=>w.id===run.workflowId);
   const nodes=wf?.nodes||[];
-  const gates=nodes.map(n=>{const nr=run.nodes?.[n.id]||{},agent=(state.data.agents||[]).find(a=>a.id===n.agentId),verif=roleGates(agent);const isApproval=n.type==='approval';const manual=verif.some(g=>g.mode==='manual');const commands=verif.filter(g=>g.mode==='command');let verdict='—';
+  const gates=nodesInExecutionOrder(wf).map(n=>{const nr=run.nodes?.[n.id]||{},agent=(state.data.agents||[]).find(a=>a.id===n.agentId),verif=roleGates(agent);const isApproval=n.type==='approval';const manual=verif.some(g=>g.mode==='manual');const commands=verif.filter(g=>g.mode==='command');let verdict='—';
     if(nr.status==='succeeded')verdict=isApproval?'已批准':(commands.length||manual)?'门禁通过':'完成';
     if(nr.status==='waiting_approval')verdict=turnsExhausted(nr)?'等待确认是否重试':(isApproval?'等待人工判断':'等待人工验收');
     if(nr.status==='failed')verdict='门禁失败';

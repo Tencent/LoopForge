@@ -25,7 +25,7 @@ func TestProviderCredentialBindingIsolation(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			bound, err := bindCommand(sb, workspace, command, creds)
+			bound, err := bindCommand(t.Context(), sb, workspace, command, creds)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -38,6 +38,9 @@ func TestProviderCredentialBindingIsolation(t *testing.T) {
 			home := bound.environment["HOME"]
 			if !strings.HasPrefix(home, workspace+string(os.PathSeparator)) {
 				t.Fatal("provider home not isolated")
+			}
+			if skip := bound.environment["CODEBUDDY_SKIP_BUILTIN_MARKETPLACE"]; (kind == "codebuddy") != (skip == "1") {
+				t.Fatalf("CODEBUDDY_SKIP_BUILTIN_MARKETPLACE = %q for %s", skip, kind)
 			}
 			if kind == "codebuddy" {
 				if bound.environment["CODEBUDDY_API_KEY"] != "codebuddy-user-secret" || bound.environment["CODEBUDDY_INTERNET_ENVIRONMENT"] != "ioa" || bound.environment["CODEX_API_KEY"] != "" || bound.environment["ANTHROPIC_API_KEY"] != "" {
@@ -63,13 +66,13 @@ func TestProviderCredentialBindingIsolation(t *testing.T) {
 				t.Fatalf("subprocess environment failed: %v", err)
 			}
 			// Without a responsible user's key, no host credential may be reused.
-			_, err = bindCommand(sb, workspace, command, RunCredentials{})
+			_, err = bindCommand(t.Context(), sb, workspace, command, RunCredentials{})
 			if err == nil || !strings.Contains(err.Error(), "未配置") {
 				t.Fatal("missing user key must fail before any CLI can reuse host login")
 			}
 		})
 	}
-	plain, err := bindCommand(&localSandbox{workspace: t.TempDir()}, t.TempDir(), CommandSpec{Argv: []string{"true"}}, creds)
+	plain, err := bindCommand(t.Context(), &localSandbox{workspace: t.TempDir()}, t.TempDir(), CommandSpec{Argv: []string{"true"}}, creds)
 	if err != nil {
 		t.Fatal(err)
 	}

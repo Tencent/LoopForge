@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"fmt"
 	"path"
 	"strconv"
 	"strings"
@@ -75,8 +76,47 @@ const RunnerVersionWorkspaceOwnerPreparation = "0.7.1"
 
 const RunnerVersionConversationWorkspace = "0.8.0"
 
+// Conversation CLI execution includes cancellation of preemptible workspace
+// exports and addressable startup cancellation, so stopping cannot strand a
+// queued CLI or block a following turn behind a previous background save.
+const RunnerVersionConversationCLI = "0.10.1"
+
+// RunnerVersionCLISettings adds chat account login, CLI tests, model discovery
+// and updates from the machine card.
+const RunnerVersionCLISettings = "0.10.2"
+
+func (r Runner) SupportsCLISettings() bool {
+	return versionAtLeast(r.RunnerVersion, RunnerVersionCLISettings)
+}
+
+func (r Runner) SupportsConversationCLI() bool {
+	return versionAtLeast(r.RunnerVersion, RunnerVersionConversationCLI)
+}
+
 func (r Runner) SupportsConversationWorkspace() bool {
 	return versionAtLeast(r.RunnerVersion, RunnerVersionConversationWorkspace)
+}
+
+// RunnerVersionDefaultSelection is the oldest runner a user may pick as the
+// default execution machine. Older daemons cannot open conversation
+// workspaces, so new tasks routed to them would fail.
+const RunnerVersionDefaultSelection = RunnerVersionConversationWorkspace
+
+// DefaultSelectionBlocker explains why the runner cannot become a user's
+// default execution machine, or returns "" when it can. The runners page
+// disables「设为默认」with the same rules.
+func (r Runner) DefaultSelectionBlocker() string {
+	if r.Status != RunnerStatusOnline {
+		return "机器离线，不能设为默认执行机器，请先在该机器上启动执行机器服务"
+	}
+	if !versionAtLeast(r.RunnerVersion, RunnerVersionDefaultSelection) {
+		version := strings.TrimSpace(r.RunnerVersion)
+		if version == "" {
+			version = "未知"
+		}
+		return fmt.Sprintf("执行机器版本 %s 过低，需升级至 %s 及以上才能设为默认", version, RunnerVersionDefaultSelection)
+	}
+	return ""
 }
 
 // RunnerVersionSharedPush is the first runner that merges the work branch into
@@ -89,6 +129,17 @@ const RunnerVersionGitSSH = "0.9.3"
 func (r Runner) SupportsGitSSH() bool {
 	return versionAtLeast(r.RunnerVersion, RunnerVersionGitSSH)
 }
+
+// RunnerVersionGitHTTP is the first runner whose workspace helper answers
+// Git credential and gh/glab requests through the session gateway.
+const RunnerVersionGitHTTP = "0.11.0"
+
+func (r Runner) SupportsGitHTTP() bool {
+	return versionAtLeast(r.RunnerVersion, RunnerVersionGitHTTP)
+}
+
+// RunnerVersionGitSSHKnownHosts is the first runner to accept platform SSH pins.
+const RunnerVersionGitSSHKnownHosts = "0.11.1"
 
 func (r Runner) SupportsSharedPush() bool {
 	return versionAtLeast(r.RunnerVersion, RunnerVersionSharedPush)
@@ -237,11 +288,10 @@ func (r Runner) SupportsProvider(provider string) bool {
 }
 
 // RuntimeAuthMode returns the configured credential source for a provider.
-// CodeBuddy and the extra agent CLIs have no reusable local-login flow, so
-// they always use the responsible user's personal credential. Codex and
-// Claude Code default to local login.
+// CLIs with reusable account authentication default to local login. Other
+// CLIs always use the responsible user's personal credential.
 func (r Runner) RuntimeAuthMode(provider string) string {
-	if IsAgentCLIKind(provider) {
+	if IsAgentCLIKind(provider) && !SupportsRunnerLogin(provider) {
 		return RuntimeAuthPersonal
 	}
 	provider = strings.TrimSpace(provider)
@@ -262,13 +312,33 @@ func (r Runner) RuntimeAuthMode(provider string) string {
 	return RuntimeAuthLocal
 }
 
+func SupportsRunnerLogin(provider string) bool {
+	switch strings.ToLower(strings.TrimSpace(provider)) {
+	case "codex", "claude-code", "agy":
+		return true
+	default:
+		return false
+	}
+}
+
 const (
-	RuntimeStatusOnline   = "online"
-	RuntimeStatusOffline  = "offline"
-	RuntimeStatusDisabled = "disabled"
-	RuntimeAuthLocal      = "local"
-	RuntimeAuthPersonal   = "personal"
+	RuntimeStatusOnline            = "online"
+	RuntimeStatusOffline           = "offline"
+	RuntimeStatusDisabled          = "disabled"
+	RuntimeAuthLocal               = "local"
+	RuntimeAuthPersonal            = "personal"
+	RuntimeCapabilityManagedUpdate = "managed_update"
+	RuntimeCapabilityNativeUpdate  = "native_update"
 )
+
+func (rt RunnerRuntime) SupportsCLIUpdate() bool {
+	for _, capability := range rt.Capabilities {
+		if capability == RuntimeCapabilityManagedUpdate || capability == RuntimeCapabilityNativeUpdate {
+			return true
+		}
+	}
+	return false
+}
 
 // RunnerRuntime is one discovered Agent CLI on the runner machine. Credentials
 // for the CLI stay on that machine; the control plane only learns the binary
@@ -309,6 +379,8 @@ type RunnerTask struct {
 	RunID      string            `json:"runId,omitempty"`
 	NodeID     string            `json:"nodeId,omitempty"`
 	Invocation *RunnerInvocation `json:"invocation,omitempty"`
+	// GitSSHKnownHosts is attached on authenticated claim and is never queued.
+	GitSSHKnownHosts *GitSSHKnownHosts `json:"gitSshKnownHosts,omitempty"`
 	// Sandbox is the workflow sandbox definition resolved by the control
 	// plane. The runner creates it locally so Docker/seatbelt/bwrap isolation
 	// lives on the same machine that executes the Agent CLI.
@@ -348,9 +420,10 @@ type RunnerTask struct {
 // RunnerSandboxRequirements freezes the union needed by every run node, so
 // interactive terminals and script/agent tasks use the same sandbox identity.
 type RunnerSandboxRequirements struct {
-	CLIStates   []RunnerCLIStateRequirement `json:"cliStates,omitempty"`
-	PrivateHome bool                        `json:"privateHome,omitempty"`
-	BunFS       bool                        `json:"bunFS,omitempty"`
+	CLIStates        []RunnerCLIStateRequirement `json:"cliStates,omitempty"`
+	PrivateHome      bool                        `json:"privateHome,omitempty"`
+	BunFS            bool                        `json:"bunFS,omitempty"`
+	RunnerLoginRelay bool                        `json:"runnerLoginRelay,omitempty"`
 }
 type RunnerCLIStateRequirement struct {
 	Directory string   `json:"directory"`
@@ -367,6 +440,7 @@ type RunnerSandboxSpec struct {
 // PublicRunnerTask strips task-scoped credentials from management responses.
 // The authenticated claiming runner receives the original task payload.
 func PublicRunnerTask(task RunnerTask) RunnerTask {
+	task.GitSSHKnownHosts = nil
 	if task.PreviewArchive != nil {
 		copySpec := *task.PreviewArchive
 		copySpec.UploadToken = ""
@@ -385,25 +459,32 @@ func PublicRunnerTask(task RunnerTask) RunnerTask {
 	copyInvocation.AgentCLIAPIKey = ""
 	copyInvocation.AgentCLIBaseURL = ""
 	copyInvocation.AgentCLIProtocol = ""
+	copyInvocation.AgentCLIModels = nil
 	copyInvocation.GitSSHUserID = 0
 	copyInvocation.GitSSHKeys = nil
+	copyInvocation.GitHTTPUserID = 0
+	copyInvocation.GitHTTPCredentials = nil
 	if copyInvocation.Repository != nil {
-		copyRepository := *copyInvocation.Repository
-		copyRepository.GitToken = ""
-		copyRepository.CloneURL = StripURLCredentials(copyRepository.CloneURL)
+		copyRepository := publicRunnerRepository(*copyInvocation.Repository)
 		copyInvocation.Repository = &copyRepository
 	}
 	if len(copyInvocation.Repositories) > 0 {
 		copyRepositories := make([]RunnerRepository, len(copyInvocation.Repositories))
 		for i, repository := range copyInvocation.Repositories {
-			repository.GitToken = ""
-			repository.CloneURL = StripURLCredentials(repository.CloneURL)
-			copyRepositories[i] = repository
+			copyRepositories[i] = publicRunnerRepository(repository)
 		}
 		copyInvocation.Repositories = copyRepositories
 	}
 	task.Invocation = &copyInvocation
 	return task
+}
+
+// publicRunnerRepository returns a copy of one checkout spec with its Git
+// credentials removed: the token field and any userinfo in the clone URL.
+func publicRunnerRepository(repository RunnerRepository) RunnerRepository {
+	repository.GitToken = ""
+	repository.CloneURL = StripURLCredentials(repository.CloneURL)
+	return repository
 }
 
 // RunnerInvocation is the self-contained package a runner daemon needs to
@@ -448,6 +529,9 @@ type RunnerInvocation struct {
 	AgentCLIAPIKey               string   `json:"agentCliApiKey,omitempty"`
 	AgentCLIBaseURL              string   `json:"agentCliBaseUrl,omitempty"`
 	AgentCLIProtocol             string   `json:"agentCliProtocol,omitempty"`
+	// AgentCLIModels is the responsible user's saved catalog for the agent
+	// CLI; Cursor resolves the model's effort to an ID from it.
+	AgentCLIModels []CLIModel `json:"agentCliModels,omitempty"`
 	// MCPCallServers is the project/personal HTTP MCP set for `agentflow mcp call`
 	// in scripts, verification gates, and Agent hooks. It is unbound; personal
 	// credentials are applied in memory on the runner. Agent Assets stay
@@ -465,6 +549,13 @@ type RunnerInvocation struct {
 	// authenticated claim or on the outbound workspace control connection.
 	GitSSHUserID int64             `json:"gitSshUserId,omitempty"`
 	GitSSHKeys   map[string]string `json:"gitSshKeys,omitempty"` // clone URL to private key
+	// Only the responsible user id is queued; HTTPS secrets are hydrated on
+	// authenticated claim/control dispatch and never persisted in the task.
+	GitHTTPUserID      int64                                 `json:"gitHttpUserId,omitempty"`
+	GitHTTPCredentials map[string]GitHTTPExecutionCredential `json:"gitHttpCredentials,omitempty"`
+	// The first SOP Agent may recover a failed automatic checkout. The runner
+	// validates the frozen repository and branch before reporting success.
+	RepositoryPreparationFallback bool `json:"repositoryPreparationFallback,omitempty"`
 	// Repositories lists every repository the run touches (multi-repository
 	// support). Each entry checks out into its Dir under the task workspace.
 	Repositories []RunnerRepository `json:"repositories,omitempty"`

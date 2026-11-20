@@ -1,6 +1,7 @@
 package domain
 
 import (
+	neturl "net/url"
 	"regexp"
 	"sort"
 	"strconv"
@@ -13,6 +14,83 @@ import (
 var githubPRURL = regexp.MustCompile(`https?://github\.com/([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)/pull/(\d+)`)
 
 var gongfengMRURL = regexp.MustCompile(`https?://git\.example\.com/([^\s"'<>#]+)/merge_requests/(\d+)`)
+
+var githubPRLink = regexp.MustCompile(`^https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/pull/\d+/?$`)
+
+// IsGitHubPRURL reports whether text is exactly one GitHub pull request link.
+func IsGitHubPRURL(text string) bool {
+	return githubPRLink.MatchString(strings.TrimSpace(text))
+}
+
+// MR project keys of PRs/MRs on hosts other than github.com and the managed
+// Gongfeng host: "ghe:<host>/<owner>/<repo>" and "gitlab:<host>/<path>".
+const (
+	MRProjectGHE    = "ghe:"
+	MRProjectGitLab = "gitlab:"
+)
+
+var (
+	externalMRHost   = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+(:[1-9][0-9]{0,4})?$`)
+	externalPRPath   = regexp.MustCompile(`^/([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)/pull/([1-9][0-9]*)/?$`)
+	externalMRPath   = regexp.MustCompile(`^/((?:[A-Za-z0-9_.-]+/)+[A-Za-z0-9_.-]+)/-/merge_requests/([1-9][0-9]*)/?$`)
+	externalPathPart = regexp.MustCompile(`^[A-Za-z0-9_.-]+$`)
+)
+
+// ExternalMRProject splits a ghe: or gitlab: MR project key into its
+// platform, host and repository path.
+func ExternalMRProject(project string) (platform, host, path string, ok bool) {
+	rest := ""
+	switch {
+	case strings.HasPrefix(project, MRProjectGHE):
+		platform, rest = GitPlatformGitHub, strings.TrimPrefix(project, MRProjectGHE)
+	case strings.HasPrefix(project, MRProjectGitLab):
+		platform, rest = GitPlatformGitLab, strings.TrimPrefix(project, MRProjectGitLab)
+	default:
+		return "", "", "", false
+	}
+	host, path, found := strings.Cut(rest, "/")
+	if !found || !externalMRHost.MatchString(host) || host == "github.com" {
+		return "", "", "", false
+	}
+	parts := strings.Split(path, "/")
+	if len(parts) < 2 || (platform == GitPlatformGitHub && len(parts) != 2) {
+		return "", "", "", false
+	}
+	for _, part := range parts {
+		if !externalPathPart.MatchString(part) || part == "." || part == ".." {
+			return "", "", "", false
+		}
+	}
+	return platform, host, path, true
+}
+
+// ParseDeliveryMRURL reads one stored PR/MR link: a github.com PR or managed
+// Gongfeng MR as ParseGongfengMR does, a GitHub Enterprise PR
+// (https://host/owner/repo/pull/N) or a GitLab MR
+// (https://host/group/repo/-/merge_requests/N). Unlike ParseGongfengMRs it
+// does not search free text, so a link merely quoted in an artifact never
+// names an MR on another host.
+func ParseDeliveryMRURL(text string) (project string, iid int, url string, ok bool) {
+	if project, iid, url, ok = ParseGongfengMR(text); ok {
+		return project, iid, url, true
+	}
+	u, err := neturl.Parse(strings.TrimSpace(text))
+	if err != nil || u.Scheme != "https" || u.User != nil || u.RawPath != "" {
+		return "", 0, "", false
+	}
+	host := strings.TrimSuffix(strings.ToLower(u.Host), ":443")
+	if match := externalPRPath.FindStringSubmatch(u.Path); match != nil {
+		project = MRProjectGHE + host + "/" + match[1]
+		iid, _ = strconv.Atoi(match[2])
+	} else if match := externalMRPath.FindStringSubmatch(u.Path); match != nil {
+		project = MRProjectGitLab + host + "/" + match[1]
+		iid, _ = strconv.Atoi(match[2])
+	}
+	if _, _, _, valid := ExternalMRProject(project); !valid || iid <= 0 {
+		return "", 0, "", false
+	}
+	return project, iid, GongfengMRURL(project, iid), true
+}
 
 // GongfengMRRef is one merge request URL extracted from free text.
 type GongfengMRRef struct {
@@ -47,7 +125,7 @@ func ParseGongfengMRs(text string) []GongfengMRRef {
 		if project == "" || iid <= 0 {
 			continue
 		}
-		key := strings.ToLower(project) + "#" + strconv.Itoa(iid)
+		key := gongfengMRKey(project, iid)
 		if _, ok := seen[key]; ok {
 			continue
 		}
@@ -133,25 +211,7 @@ func SummarizeDeliveries(items []AnalyticsDelivery) AnalyticsDeliverySummary {
 				out.DirectDelivered++
 			}
 		}
-		merged := false
-		for _, mr := range list {
-			key := strings.TrimSpace(mr.URL)
-			project, iid := mr.Project, mr.IID
-			if p, n, _, ok := ParseGongfengMR(mr.URL); ok {
-				project, iid = p, n
-			}
-			if project != "" && iid > 0 {
-				key = strings.ToLower(project) + "#" + strconv.Itoa(iid)
-			}
-			if key == "" {
-				continue
-			}
-			if state, ok := mrs[key]; !ok || AnalyticsMRRank(mr.State) > AnalyticsMRRank(state) {
-				mrs[key] = mr.State
-			}
-			merged = merged || mr.State == "merged"
-		}
-		if merged {
+		if recordDeliveryMRs(mrs, list) {
 			out.IssuesWithMergedMR++
 		}
 		if item.Delivered {
@@ -165,14 +225,7 @@ func SummarizeDeliveries(items []AnalyticsDelivery) AnalyticsDeliverySummary {
 		}
 	}
 	out.TotalMRs = len(mrs)
-	for _, state := range mrs {
-		switch state {
-		case "merged":
-			out.MRMerged++
-		case "integrated":
-			out.MRIntegrated++
-		}
-	}
+	out.MRMerged, out.MRIntegrated = countDeliveryMRStates(mrs)
 	if durationN > 0 {
 		out.AverageDurationMs = durationSum / durationN
 	}
@@ -182,6 +235,57 @@ func SummarizeDeliveries(items []AnalyticsDelivery) AnalyticsDeliverySummary {
 		out.P95ExecutionDurationMs = analyticsPercentile(execValues, 95)
 	}
 	return out
+}
+
+// recordDeliveryMRs folds one issue's MRs into mrs, the deduplicated
+// identity→best-state table, keeping the higher-ranked state for each MR. MRs
+// without a recognizable identity are skipped. It reports whether any
+// recorded MR of this issue is merged.
+func recordDeliveryMRs(mrs map[string]string, list []DeliveryMR) bool {
+	merged := false
+	for _, mr := range list {
+		key := analyticsMRKey(mr)
+		if key == "" {
+			continue
+		}
+		if state, ok := mrs[key]; !ok || AnalyticsMRRank(mr.State) > AnalyticsMRRank(state) {
+			mrs[key] = mr.State
+		}
+		merged = merged || mr.State == "merged"
+	}
+	return merged
+}
+
+// countDeliveryMRStates counts the merged and integrated MRs in the
+// deduplicated identity→state table built by recordDeliveryMRs.
+func countDeliveryMRStates(mrs map[string]string) (merged, integrated int) {
+	for _, state := range mrs {
+		switch state {
+		case "merged":
+			merged++
+		case "integrated":
+			integrated++
+		}
+	}
+	return merged, integrated
+}
+
+// gongfengMRKey is the case-insensitive identity of a Gongfeng MR.
+func gongfengMRKey(project string, iid int) string {
+	return strings.ToLower(project) + "#" + strconv.Itoa(iid)
+}
+
+// analyticsMRKey dedups one delivery MR across URL forms: a parseable URL wins
+// over the stored project/iid, and the trimmed URL is the last resort.
+func analyticsMRKey(mr DeliveryMR) string {
+	project, iid := mr.Project, mr.IID
+	if p, n, _, ok := ParseDeliveryMRURL(mr.URL); ok {
+		project, iid = p, n
+	}
+	if project != "" && iid > 0 {
+		return gongfengMRKey(project, iid)
+	}
+	return strings.TrimSpace(mr.URL)
 }
 
 // analyticsPercentile 取最近邻分位数，输入允许无序（内部排序副本）。
@@ -246,8 +350,8 @@ func SameGitBranch(a, b string) bool {
 // SameGongfengMR reports whether two free-text URLs refer to the same
 // Gongfeng merge request (project + IID), ignoring /- vs non-/- URL forms.
 func SameGongfengMR(a, b string) bool {
-	pa, ia, _, oka := ParseGongfengMR(a)
-	pb, ib, _, okb := ParseGongfengMR(b)
+	pa, ia, _, oka := ParseDeliveryMRURL(a)
+	pb, ib, _, okb := ParseDeliveryMRURL(b)
 	if !oka || !okb {
 		left, right := strings.TrimSpace(a), strings.TrimSpace(b)
 		return left != "" && strings.EqualFold(left, right)

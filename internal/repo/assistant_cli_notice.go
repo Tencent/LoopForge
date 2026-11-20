@@ -50,10 +50,15 @@ func (r *AssistantRepo) replaceGenerationCLIFailure(engine, missing, generic, ne
 				return err
 			}
 			g := decodeGeneration(row)
-			if !cliFailureMatches(g.Error, missing, generic, sameEngine) {
+			msg := g.Error
+			if msg == "" && g.Failure != nil {
+				msg = g.Failure.Message
+			}
+			if !cliFailureMatches(msg, missing, generic, sameEngine) && !(sameEngine && g.Failure != nil && g.Failure.Code == "GENERATION_FAILED") {
 				return nil
 			}
 			g.Error = next
+			g.Failure = nil
 			return tx.Model(&assistantGenerationRow{}).Where("session_id = ? AND generation_id = ?", row.SessionID, row.GenerationID).Update("payload", mustJSON(g)).Error
 		})
 		if err != nil {
@@ -135,10 +140,14 @@ func cliFailureMatches(text, missing, generic string, sameEngine bool) bool {
 func rewriteCLIFailureMessages(item *domain.AssistantSession, missing, generic, next string, sameEngine bool) bool {
 	changed := false
 	for i := range item.Messages {
-		if !cliFailureMatches(item.Messages[i].Unfinished, missing, generic, sameEngine) {
+		m := &item.Messages[i]
+		matched := cliFailureMatches(m.Unfinished, missing, generic, sameEngine) ||
+			(m.Failure != nil && (cliFailureMatches(m.Failure.Message, missing, generic, sameEngine) || (sameEngine && m.Failure.Code == "GENERATION_FAILED")))
+		if !matched {
 			continue
 		}
-		item.Messages[i].Unfinished = next
+		m.Unfinished = next
+		m.Failure = nil
 		changed = true
 	}
 	return changed

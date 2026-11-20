@@ -52,7 +52,7 @@ func (h *tasksHandlers) settleIssueTasks(issueID string) {
 			continue
 		}
 		run, ok := h.repo.RunView(task.RunID)
-		if !ok || runHasActiveNode(run) {
+		if !ok || run.HasActiveNode() {
 			continue
 		}
 		status := taskStatusFromRun(run.Status)
@@ -99,6 +99,12 @@ func (h *tasksHandlers) syncTasks() {
 		_ = h.repo.UpdateTaskStatus(task, status)
 		tasks[i].Status = status
 	}
+	h.syncIssuesToLatestTask(latestTaskByIssue(tasks))
+}
+
+// latestTaskByIssue picks each issue's newest task: the later CreatedAt wins,
+// and on a tie the larger ID wins. Tasks without an IssueID are skipped.
+func latestTaskByIssue(tasks []domain.Task) map[string]domain.Task {
 	latest := map[string]domain.Task{}
 	for _, task := range tasks {
 		if task.IssueID == "" {
@@ -109,6 +115,12 @@ func (h *tasksHandlers) syncTasks() {
 			latest[task.IssueID] = task
 		}
 	}
+	return latest
+}
+
+// syncIssuesToLatestTask points every issue at its latest task and derives the
+// issue status from it, patching only issues whose linkage or status changed.
+func (h *tasksHandlers) syncIssuesToLatestTask(latest map[string]domain.Task) {
 	for _, issue := range h.repo.Issues() {
 		task, ok := latest[issue.ID]
 		if !ok {
@@ -152,15 +164,6 @@ func rejectBlockedIssueRun(d *deps, c *gin.Context, runID string) bool {
 
 func taskStatusFromRun(runStatus string) string {
 	return map[string]string{"queued": "queued", "running": "running", "waiting": "running", "succeeded": "completed", "failed": "failed", "cancelled": "cancelled"}[runStatus]
-}
-
-func runHasActiveNode(run domain.Run) bool {
-	for _, nr := range run.Nodes {
-		if nr != nil && (nr.Status == "running" || nr.Status == "pending_input") {
-			return true
-		}
-	}
-	return false
 }
 
 func issueStatusFromLatestTask(issue domain.Issue, taskStatus string) string {

@@ -101,8 +101,10 @@ func (e *Engine) startWorkflowDefinition(wf domain.WorkflowDefinition, input str
 	if !ok {
 		return domain.Run{}, fmt.Errorf("sandbox profile %q not found", wf.SandboxProfileID)
 	}
-	if workspace && (profile.Driver != "docker" || profile.DockerfileID == "" || !(profile.ProjectID == executionContext.ProjectID || profile.Shared)) {
-		return domain.Run{}, fmt.Errorf("对话工作区必须选择本项目或共享的 Docker 沙箱")
+	if workspace {
+		if _, err := e.repo.ConversationSandbox(executionContext.ProjectID, profile.ID); err != nil {
+			return domain.Run{}, err
+		}
 	}
 	resources, err := resolveSandboxResources(e.repo, profile)
 	if err != nil {
@@ -127,11 +129,11 @@ func (e *Engine) startWorkflowDefinition(wf domain.WorkflowDefinition, input str
 		firstRepository = repositories[0]
 	}
 	executionContext.RunID, executionContext.TraceID, executionContext.WorkflowID, executionContext.WorkflowVersion = id, id, workflowID, wf.Version
-	if executionContext.ParentRunID == "" {
+	if executionContext.ParentRunID == "" && !executionContext.ExecutionPinned {
 		executionContext.ExecutionRunnerID = e.repo.DefaultRunner(executionContext.ResponsibleUserID)
 		executionContext.WorkspaceRunID = ""
 	}
-	if executionContext.ExecutionRunnerID == "" {
+	if executionContext.ExecutionRunnerID == "" && !executionContext.ExecutionPinned {
 		if runner, ok := e.cloudPoolRunner(executionContext.ProjectID); ok {
 			executionContext.ExecutionRunnerID = runner.ID
 			executionContext.ExecutionPool = domain.ExecutionModeCloud

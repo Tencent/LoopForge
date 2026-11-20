@@ -116,6 +116,12 @@ func (h *runsHandlers) startRunEval(c *gin.Context) {
 	if c.Request.ContentLength > 0 && !decode(c, &req) {
 		return
 	}
+	// Run evals run on CodeBuddy only: refuse a "codex:…" id instead of
+	// silently evaluating with the CodeBuddy default.
+	if engine, _ := assistantModelEngine(req.Model); engine != assistantEngineCodeBuddy {
+		c.JSON(http.StatusBadRequest, map[string]string{"error": "运行评测目前只支持 CodeBuddy 模型，请改选 CodeBuddy 模型"})
+		return
+	}
 	catalog := loadAssistantModels(c.Request.Context(), user.CodeBuddyInternetEnvironment)
 	model := assistantAllowedModel(req.Model, catalog)
 	project, _ := h.repo.Project(run.ExecutionContext.ProjectID)

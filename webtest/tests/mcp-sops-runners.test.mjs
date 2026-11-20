@@ -49,7 +49,7 @@ test('generic SOP requirements reflect credentials and installed MCPs, then clon
   }));
   app.evaluate(`
     state.currentUser={id:1,loginName:'owner',isPlatformAdmin:false};
-    state.data.users=[{id:1,loginName:'owner',gitTokenConfigured:true}];
+    state.data.users=[{id:1,loginName:'owner',gitHttpCredentialsConfigured:true}];
     state.mcpMarket=[{id:'market-gf',name:'Gongfeng',aliases:['gongfeng'],url:'https://gongfeng'}];
     state.data.mcpServers=[{id:'gf',scope:'project',projectId:'project-1',marketId:'market-gf'}];
     state.data.workflows=[${JSON.stringify(generic)}];
@@ -57,7 +57,7 @@ test('generic SOP requirements reflect credentials and installed MCPs, then clon
     openGenericTemplateModal('generic-delivery');
   `);
   const rows = app.document.querySelector('#genericTemplateRequirements').textContent;
-  assert.match(rows, /工蜂 Git Token.*已配置/s);
+  assert.match(rows, /Git 访问令牌.*已配置/s);
   assert.match(rows, /TAPD MCP.*未配置/s);
   assert.match(rows, /工蜂 MCP.*已配置/s);
   const sopHTML = app.evaluate(`({
@@ -68,7 +68,7 @@ test('generic SOP requirements reflect credentials and installed MCPs, then clon
     node:workflowNodeName(state.data.workflows[0],'mr')
   })`);
   assert.match(sopHTML.card, /平台维护/);
-  assert.match(sopHTML.chips, /sop-badge tone-success[^>]*>.*工蜂 Git Token/);
+  assert.match(sopHTML.chips, /sop-badge tone-success[^>]*>.*Git 访问令牌/);
   assert.match(sopHTML.chips, /sop-badge tone-warn[^>]*>.*TAPD MCP/);
   assert.equal(sopHTML.gongfeng, true);
   assert.equal(sopHTML.tapd, false);

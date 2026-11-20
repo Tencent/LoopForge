@@ -92,3 +92,63 @@ func TestDefaultSandboxDoesNotMaskCorruptConfigurationOrDatabaseFailure(t *testi
 		t.Fatalf("database failure reported available sandboxes: %+v", profiles)
 	}
 }
+
+// The public catalog seed stored generic-docker without the shared flag; it is
+// still the platform fallback for conversation workspaces in every project.
+func TestSeededGenericDockerSandboxIsSharedForConversations(t *testing.T) {
+	s, err := OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { s.Close() })
+	seeded := `{"id":"generic-docker","name":"Docker 隔离沙箱","driver":"docker","dockerfileId":"generic-backend","readOnlyRootFS":false}`
+	if err := s.DB.Table("sandboxes").Where("id = ?", GenericDockerSandboxID).Update("payload", seeded).Error; err != nil {
+		t.Fatal(err)
+	}
+	profile, ok := s.Sandbox(GenericDockerSandboxID)
+	if !ok || !profile.Shared {
+		t.Fatalf("seeded generic-docker is not shared: %+v", profile)
+	}
+	if got, err := s.ResolveConversationSandbox("any-project", ""); err != nil || got.ID != GenericDockerSandboxID {
+		t.Fatalf("default conversation sandbox = %+v, %v", got, err)
+	}
+	found := false
+	for _, candidate := range s.ConversationSandboxes("any-project") {
+		found = found || candidate.ID == GenericDockerSandboxID
+	}
+	if !found {
+		t.Fatal("generic-docker missing from the project's conversation sandboxes")
+	}
+}
+
+// Conversation workspaces run in Docker or in the execution machine's native
+// lightweight sandbox; local (no isolation) is never offered.
+func TestConversationSandboxAcceptsDockerAndNative(t *testing.T) {
+	s, err := OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { s.Close() })
+	for _, profile := range []domain.SandboxProfile{
+		{ID: "cs-native", Name: "Native", ProjectID: "p", Driver: domain.SandboxDriverNative},
+		{ID: "cs-bwrap", Name: "Bwrap", ProjectID: "p", Driver: domain.SandboxDriverBwrap},
+		{ID: "cs-local", Name: "Local", ProjectID: "p", Driver: domain.SandboxDriverLocal},
+		{ID: "cs-other", Name: "Other", ProjectID: "q", Driver: domain.SandboxDriverNative},
+	} {
+		if err := s.PutSandbox(profile); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for id, ok := range map[string]bool{"cs-native": true, "cs-bwrap": true, GenericDockerSandboxID: true, "cs-local": false, "cs-other": false} {
+		if _, err := s.ConversationSandbox("p", id); (err == nil) != ok {
+			t.Fatalf("ConversationSandbox(%s) err=%v, want ok=%v", id, err, ok)
+		}
+	}
+	listed := map[string]bool{}
+	for _, profile := range s.ConversationSandboxes("p") {
+		listed[profile.ID] = true
+	}
+	if !listed["cs-native"] || listed["cs-local"] || listed["cs-other"] {
+		t.Fatalf("conversation sandboxes = %v", listed)
+	}
+}

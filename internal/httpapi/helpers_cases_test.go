@@ -209,9 +209,6 @@ func TestServerAuthBinaryAndSSEHelpers(t *testing.T) {
 
 func TestTrailingSlashAndMiddlewareBranches(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	if !containsMethod([]string{"GET", "POST"}, "POST") || containsMethod([]string{"GET"}, "DELETE") {
-		t.Fatal("containsMethod")
-	}
 	for _, tc := range []struct {
 		method string
 		path   string
@@ -366,9 +363,9 @@ func TestRunAndTaskPureBranches(t *testing.T) {
 			t.Errorf("task status %q=%q", status, got)
 		}
 	}
-	if !runHasActiveNode(domain.Run{Nodes: map[string]*domain.NodeRun{"n": {Status: "running"}}}) ||
-		!runHasActiveNode(domain.Run{Nodes: map[string]*domain.NodeRun{"n": {Status: "pending_input"}}}) ||
-		runHasActiveNode(domain.Run{Nodes: map[string]*domain.NodeRun{"n": {Status: "succeeded"}}}) {
+	if !(domain.Run{Nodes: map[string]*domain.NodeRun{"n": {Status: "running"}}}).HasActiveNode() ||
+		!(domain.Run{Nodes: map[string]*domain.NodeRun{"n": {Status: "pending_input"}}}).HasActiveNode() ||
+		(domain.Run{Nodes: map[string]*domain.NodeRun{"n": {Status: "succeeded"}}}).HasActiveNode() {
 		t.Fatal("active node detection")
 	}
 	issue := domain.Issue{Status: "todo"}

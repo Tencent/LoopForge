@@ -6,11 +6,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/url"
 	"os"
 	"os/exec"
 	"path"
 	"path/filepath"
+	goruntime "runtime"
 	"strings"
 	"time"
 
@@ -28,19 +30,20 @@ type mcpCallConfigFile struct {
 }
 
 type mcpCallServer struct {
-	ID          string            `json:"id"`
-	Name        string            `json:"name"`
-	MarketID    string            `json:"marketId,omitempty"`
-	URL         string            `json:"url"`
-	Command     string            `json:"command,omitempty"`
-	Args        []string          `json:"args,omitempty"`
-	CWD         string            `json:"cwd,omitempty"`
-	Environment map[string]string `json:"environment,omitempty"`
-	Transport   string            `json:"transport"`
-	AuthType    string            `json:"authType,omitempty"`
-	Headers     map[string]string `json:"headers,omitempty"`
-	TimeoutSec  int               `json:"timeoutSec,omitempty"`
-	Aliases     []string          `json:"aliases,omitempty"`
+	ID             string            `json:"id"`
+	Name           string            `json:"name"`
+	MarketID       string            `json:"marketId,omitempty"`
+	URL            string            `json:"url"`
+	Command        string            `json:"command,omitempty"`
+	Args           []string          `json:"args,omitempty"`
+	CWD            string            `json:"cwd,omitempty"`
+	Environment    map[string]string `json:"environment,omitempty"`
+	Transport      string            `json:"transport"`
+	AuthType       string            `json:"authType,omitempty"`
+	CredentialKind string            `json:"credentialKind,omitempty"`
+	Headers        map[string]string `json:"headers,omitempty"`
+	TimeoutSec     int               `json:"timeoutSec,omitempty"`
+	Aliases        []string          `json:"aliases,omitempty"`
 }
 
 func mcpCallHostDir(workspace string) string {
@@ -54,7 +57,7 @@ func mcpCallGuestPath(rel string) string {
 // PrepareMCPCall writes the script-node helper (`agentflow mcp call`) and bound
 // MCP server list into the workspace. Tokens stay in a 0600 file; they are not
 // exported as environment variables.
-func PrepareMCPCall(sandbox Sandbox, workspace string, servers []domain.MCPServerDefinition) (map[string]string, error) {
+func PrepareMCPCall(ctx context.Context, sandbox Sandbox, workspace string, servers []domain.MCPServerDefinition) (map[string]string, error) {
 	hostRoot := mcpCallHostDir(workspace)
 	hostBin := filepath.Join(hostRoot, "bin")
 	if _, err := EnsureControlDirectory(workspace, "runtime", "bin"); err != nil {
@@ -67,32 +70,7 @@ func PrepareMCPCall(sandbox Sandbox, workspace string, servers []domain.MCPServe
 			runtimeServers[i].Command = filepath.Join(workspace, filepath.FromSlash(runtimeServers[i].Command))
 		}
 	}
-	cfg := mcpCallConfigFile{Servers: make([]mcpCallServer, 0, len(runtimeServers))}
-	for _, server := range runtimeServers {
-		transport := strings.ToLower(strings.TrimSpace(server.Transport))
-		if transport == "" {
-			transport = "stdio"
-		}
-		if transport == "http" && strings.TrimSpace(server.URL) == "" {
-			continue
-		}
-		if transport == "stdio" && strings.TrimSpace(server.Command) == "" {
-			continue
-		}
-		cfg.Servers = append(cfg.Servers, mcpCallServer{
-			ID:        server.ID,
-			Name:      server.Name,
-			MarketID:  server.MarketID,
-			URL:       server.URL,
-			Transport: transport,
-			Command:   server.Command, Args: append([]string(nil), server.Args...),
-			CWD: MCPRuntimeWorkingDirectory(server), Environment: resolveMap(server.Environment),
-			AuthType:   server.AuthType,
-			Headers:    cloneHeaders(server.Headers),
-			TimeoutSec: server.TimeoutSec,
-			Aliases:    mcpCallAliases(server),
-		})
-	}
+	cfg := mcpCallConfigFile{Servers: mcpCallConfigServers(runtimeServers)}
 	raw, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
 		return nil, err
@@ -102,7 +80,7 @@ func PrepareMCPCall(sandbox Sandbox, workspace string, servers []domain.MCPServe
 		return nil, fmt.Errorf("write mcp call config: %w", err)
 	}
 	helperHost := filepath.Join(hostBin, "agentflow-helper")
-	if err := installMCPCallHelper(workspace, helperHost); err != nil {
+	if err := installMCPCallHelperForSandbox(ctx, sandbox, workspace, helperHost); err != nil {
 		return nil, err
 	}
 	wrapperHost := filepath.Join(hostBin, "agentflow")
@@ -128,6 +106,42 @@ func PrepareMCPCall(sandbox Sandbox, workspace string, servers []domain.MCPServe
 	}, nil
 }
 
+// mcpCallConfigServers converts runtime MCP server definitions into the
+// entries written to mcp-servers.json. The transport defaults to stdio, and
+// servers missing the URL (http) or command (stdio) they need are skipped.
+func mcpCallConfigServers(servers []domain.MCPServerDefinition) []mcpCallServer {
+	out := make([]mcpCallServer, 0, len(servers))
+	for _, server := range servers {
+		transport := strings.ToLower(strings.TrimSpace(server.Transport))
+		if transport == "" {
+			transport = "stdio"
+		}
+		if transport == "http" && strings.TrimSpace(server.URL) == "" {
+			continue
+		}
+		if transport == "stdio" && strings.TrimSpace(server.Command) == "" {
+			continue
+		}
+		out = append(out, mcpCallServer{
+			ID:             server.ID,
+			Name:           server.Name,
+			MarketID:       server.MarketID,
+			URL:            server.URL,
+			Transport:      transport,
+			Command:        server.Command,
+			Args:           append([]string(nil), server.Args...),
+			CWD:            MCPRuntimeWorkingDirectory(server),
+			Environment:    resolveMap(server.Environment),
+			AuthType:       server.AuthType,
+			CredentialKind: server.CredentialKind,
+			Headers:        cloneHeaders(server.Headers),
+			TimeoutSec:     server.TimeoutSec,
+			Aliases:        mcpCallAliases(server),
+		})
+	}
+	return out
+}
+
 func mcpCallWrapperScript(helperPath, fallback string) string {
 	var b strings.Builder
 	b.WriteString("#!/bin/sh\n")
@@ -151,6 +165,57 @@ func installMCPCallHelper(workspace, dest string) error {
 	if err != nil {
 		return err
 	}
+	return installMCPCallHelperFrom(workspace, src, dest)
+}
+
+type dockerRunnerHelperWaitKey struct{}
+
+// WithDockerRunnerHelperWait lets a personal Runner wait for its background
+// download when a command actually needs the Linux Git/MCP executable.
+func WithDockerRunnerHelperWait(ctx context.Context, wait func(context.Context, string) error) context.Context {
+	return context.WithValue(ctx, dockerRunnerHelperWaitKey{}, wait)
+}
+
+func installMCPCallHelperForSandbox(ctx context.Context, sandbox Sandbox, workspace, dest string) error {
+	if sandboxDriver(sandbox) != "docker" || goruntime.GOOS == "linux" {
+		return installMCPCallHelper(workspace, dest)
+	}
+	src, err := DockerRunnerHelperPath()
+	if err != nil {
+		return err
+	}
+	if wait, ok := ctx.Value(dockerRunnerHelperWaitKey{}).(func(context.Context, string) error); ok {
+		if err := wait(ctx, src); err != nil {
+			return err
+		}
+	}
+	if _, err := os.Stat(src); err != nil {
+		return fmt.Errorf("Docker Git/MCP helper requires a Linux runner binary: set AGENTFLOW_RUNNER_BINARY with {os} and {arch}: %w", err)
+	}
+	return installMCPCallHelperFrom(workspace, src, dest)
+}
+
+// DockerRunnerHelperPath is the Linux runner artifact used for Git and MCP
+// inside Docker on a non-Linux runner. Keep installation and lookup in sync.
+func DockerRunnerHelperPath() (string, error) {
+	self, err := os.Executable()
+	if err != nil {
+		return "", err
+	}
+	pattern := strings.TrimSpace(os.Getenv("AGENTFLOW_RUNNER_BINARY"))
+	if !strings.Contains(pattern, "{os}") {
+		pattern = filepath.Join(filepath.Dir(self), "agentflow-runner-{os}-{arch}")
+	}
+	path := strings.NewReplacer("{os}", "linux", "{arch}", goruntime.GOARCH).Replace(pattern)
+	if helper, err := os.Stat(path); err == nil {
+		if host, err := os.Stat(self); err == nil && os.SameFile(helper, host) {
+			return "", fmt.Errorf("Docker Git/MCP helper path aliases the host Runner: %s", path)
+		}
+	}
+	return path, nil
+}
+
+func installMCPCallHelperFrom(workspace, src, dest string) error {
 	srcInfo, err := os.Stat(src)
 	if err != nil {
 		return err
@@ -208,8 +273,8 @@ func mcpCallAliases(server domain.MCPServerDefinition) []string {
 	return out
 }
 
-func bindMCPCallEnvironment(sandbox Sandbox, workspace string, environment map[string]string, servers []domain.MCPServerDefinition) error {
-	prepared, err := PrepareMCPCall(sandbox, workspace, servers)
+func bindMCPCallEnvironment(ctx context.Context, sandbox Sandbox, workspace string, environment map[string]string, servers []domain.MCPServerDefinition) error {
+	prepared, err := PrepareMCPCall(ctx, sandbox, workspace, servers)
 	if err != nil {
 		return err
 	}
@@ -298,9 +363,9 @@ func wrapIsolatedMCPCallExec(argv []string) []string {
 
 // ScriptMCPEnvironment materializes agentflow mcp call and returns AGENTFLOW_BIN
 // plus the config path. It does not rewrite PATH for local/unisolated processes.
-func ScriptMCPEnvironment(sandbox Sandbox, workspace string, servers []domain.MCPServerDefinition) (map[string]string, error) {
+func ScriptMCPEnvironment(ctx context.Context, sandbox Sandbox, workspace string, servers []domain.MCPServerDefinition) (map[string]string, error) {
 	env := map[string]string{}
-	if err := bindMCPCallEnvironment(sandbox, workspace, env, servers); err != nil {
+	if err := bindMCPCallEnvironment(ctx, sandbox, workspace, env, servers); err != nil {
 		return nil, err
 	}
 	return env, nil
@@ -426,6 +491,9 @@ func mcpCallInvoke(args []string) error {
 		return err
 	}
 	if strings.EqualFold(strings.TrimSpace(server.Transport), "http") && strings.TrimSpace(server.AuthType) != "" && authorizationHeader(server.Headers) == "" {
+		if strings.EqualFold(strings.TrimSpace(server.AuthType), MCPAuthCredential) {
+			return fmt.Errorf("MCP %s 需要凭证 %q：请先在个人凭证中配置", server.Name, server.CredentialKind)
+		}
 		return fmt.Errorf("MCP %s 需要 GitHub Git Token：请先在个人凭证中配置", server.Name)
 	}
 	tool := strings.TrimSpace(args[1])
@@ -499,6 +567,9 @@ func mcpCallTools(args []string) error {
 		return err
 	}
 	if strings.EqualFold(strings.TrimSpace(server.Transport), "http") && strings.TrimSpace(server.AuthType) != "" && authorizationHeader(server.Headers) == "" {
+		if strings.EqualFold(strings.TrimSpace(server.AuthType), MCPAuthCredential) {
+			return fmt.Errorf("MCP %s 需要凭证 %q：请先在个人凭证中配置", server.Name, server.CredentialKind)
+		}
 		return fmt.Errorf("MCP %s 需要 GitHub Git Token：请先在个人凭证中配置", server.Name)
 	}
 	var names []string
@@ -621,41 +692,46 @@ func runStdioMCP(server mcpCallServer, method string, params any) (json.RawMessa
 	}()
 	scanner := bufio.NewScanner(stdout)
 	scanner.Buffer(make([]byte, 64<<10), 4<<20)
-	write := func(value any) error {
-		raw, err := json.Marshal(value)
-		if err != nil {
-			return err
-		}
-		_, err = fmt.Fprintf(stdin, "%s\n", raw)
-		return err
-	}
-	read := func(id int64) (json.RawMessage, error) {
-		for scanner.Scan() {
-			var resp stdioRPCResponse
-			if json.Unmarshal(scanner.Bytes(), &resp) != nil || resp.ID != id {
-				continue
-			}
-			if resp.Error != nil {
-				return nil, fmt.Errorf("mcp error [%d]: %s", resp.Error.Code, resp.Error.Message)
-			}
-			return resp.Result, nil
-		}
-		if ctx.Err() != nil {
-			return nil, ctx.Err()
-		}
-		return nil, fmt.Errorf("stdio MCP exited before response: %s", strings.TrimSpace(stderr.String()))
-	}
-	if err := write(map[string]any{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": map[string]any{"protocolVersion": "2024-11-05", "capabilities": map[string]any{}, "clientInfo": map[string]any{"name": "agentflow-script", "version": "1"}}}); err != nil {
+	if err := writeStdioRPC(stdin, map[string]any{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": map[string]any{"protocolVersion": "2024-11-05", "capabilities": map[string]any{}, "clientInfo": map[string]any{"name": "agentflow-script", "version": "1"}}}); err != nil {
 		return nil, err
 	}
-	if _, err := read(1); err != nil {
+	if _, err := readStdioRPCResult(ctx, scanner, &stderr, 1); err != nil {
 		return nil, fmt.Errorf("mcp init: %w", err)
 	}
-	if err := write(map[string]any{"jsonrpc": "2.0", "method": "notifications/initialized", "params": map[string]any{}}); err != nil {
+	if err := writeStdioRPC(stdin, map[string]any{"jsonrpc": "2.0", "method": "notifications/initialized", "params": map[string]any{}}); err != nil {
 		return nil, err
 	}
-	if err := write(map[string]any{"jsonrpc": "2.0", "id": 2, "method": method, "params": params}); err != nil {
+	if err := writeStdioRPC(stdin, map[string]any{"jsonrpc": "2.0", "id": 2, "method": method, "params": params}); err != nil {
 		return nil, err
 	}
-	return read(2)
+	return readStdioRPCResult(ctx, scanner, &stderr, 2)
+}
+
+// writeStdioRPC writes one newline-delimited JSON-RPC message.
+func writeStdioRPC(w io.Writer, value any) error {
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return err
+	}
+	_, err = fmt.Fprintf(w, "%s\n", raw)
+	return err
+}
+
+// readStdioRPCResult scans stdout lines until the response with id arrives,
+// skipping notifications, unparsable lines and responses to other requests.
+func readStdioRPCResult(ctx context.Context, scanner *bufio.Scanner, stderr *bytes.Buffer, id int64) (json.RawMessage, error) {
+	for scanner.Scan() {
+		var resp stdioRPCResponse
+		if json.Unmarshal(scanner.Bytes(), &resp) != nil || resp.ID != id {
+			continue
+		}
+		if resp.Error != nil {
+			return nil, fmt.Errorf("mcp error [%d]: %s", resp.Error.Code, resp.Error.Message)
+		}
+		return resp.Result, nil
+	}
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
+	return nil, fmt.Errorf("stdio MCP exited before response: %s", strings.TrimSpace(stderr.String()))
 }

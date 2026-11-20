@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -25,7 +27,7 @@ func TestAgentCLICommandChatRestrictions(t *testing.T) {
 		want []string
 	}{
 		{AgentCLICursor, AgentCLICommandOptions{}, []string{"--force", "--approve-mcps", "--model", "m1"}},
-		{AgentCLIPi, AgentCLICommandOptions{SystemPromptFile: "/s.md"}, []string{"--exclude-tools", "bash,edit,write", "--append-system-prompt", "/s.md"}},
+		{AgentCLIPi, AgentCLICommandOptions{SystemPromptFile: "/s.md"}, []string{"--exclude-tools", "bash,edit,write", "--tools", "read,codemode", "--append-system-prompt", "/s.md"}},
 		{AgentCLIDeepSeek, AgentCLICommandOptions{}, []string{"--permission-mode", "read-only"}},
 		{AgentCLIKimi, AgentCLICommandOptions{AgentFile: "/a.md"}, []string{"--agent-file", "/a.md"}},
 		{AgentCLIOpenCode, AgentCLICommandOptions{Resume: "ses_1"}, []string{"-s", "ses_1", "-m", "agentflow/m1"}},
@@ -61,17 +63,63 @@ func TestAgentCLICommandChatRestrictions(t *testing.T) {
 	if argv := AgentCLICommand(AgentCLIDeepSeek, AgentCLICommandOptions{Prompt: "x"}).Argv; !slices.Contains(argv, "danger-full-access") {
 		t.Errorf("SOP dsh argv: %q", argv)
 	}
+	for _, resume := range []string{"", "native-session"} {
+		command := chat(AgentCLIPi, AgentCLICommandOptions{Workspace: true, Resume: resume})
+		if command.AgentCLI.ReadOnly || !slices.Contains(command.Argv, "read,bash,edit,write,codemode") || slices.Contains(command.Argv, "--exclude-tools") {
+			t.Fatalf("Pi workspace must reset the old read-only loadout on creation and resume: %q", command.Argv)
+		}
+	}
+}
+
+func TestKimiThinkingConfiguration(t *testing.T) {
+	home := t.TempDir()
+	for _, tc := range []struct {
+		effort   string
+		thinking string
+	}{
+		{"none", "off"},
+		{"thinking", "on"},
+		{"max", "max"},
+		{"", ""},
+	} {
+		command := AgentCLICommand(AgentCLIKimi, AgentCLICommandOptions{Model: "fixture-model", Effort: tc.effort, Resume: "session", Prompt: "test"})
+		_, env, err := ApplyAgentCLICredential(AgentCLIKimi, ProviderCredential{APIKey: "fixture-key"},
+			command.AgentCLI, HostAgentCLIHome(home), home, command.Argv)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := env[kimiThinkingEffortEnv]; got != tc.thinking {
+			t.Errorf("effort %q yields per-turn override %q, want %q", tc.effort, got, tc.thinking)
+		}
+		config, err := os.ReadFile(filepath.Join(home, ".kimi-code", "config.toml"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(config), "[thinking]") {
+			t.Errorf("effort %q was written into the Kimi session defaults:\n%s", tc.effort, config)
+		}
+	}
 }
 
 func TestAgentCLICommandAgyEffortSuffix(t *testing.T) {
-	for _, tc := range []struct{ model, effort, want string }{
-		{"gemini-3.8-flash-medium", "low", "gemini-3.8-flash-low"},
-		{"gemini-3.8-flash-medium", "", "gemini-3.8-flash-medium"},
-		{"gemini-3.8-flash", "low", "gemini-3.8-flash"},
-		{"gemini-4-argon-xhigh", "max", "gemini-4-argon-max"},
-		{"gateway-model", "low", "gateway-model"},
+	for _, tc := range []struct {
+		model, effort, want string
+		runnerLogin         bool
+	}{
+		{"gemini-3.8-flash-medium", "low", "gemini-3.8-flash-low", false},
+		{"gemini-3.8-flash-medium", "", "gemini-3.8-flash-medium", false},
+		{"gemini-3.8-flash", "low", "gemini-3.8-flash", false},
+		{"gemini-4-argon-xhigh", "max", "gemini-4-argon-max", false},
+		{"gateway-model", "low", "gateway-model", false},
+		{"claude-opus-5-5-medium", "high", "claude-opus-5-5-high", true},
+		{"claude-sonnet-5-5-medium", "low", "claude-sonnet-5-5-low", true},
+		{"claude-sonnet-5-5-medium", "", "claude-sonnet-5-5-medium", true},
+		{"claude-opus-5-5-high", "", "claude-opus-5-5-high", true},
+		{"claude-opus-5-5-medium", "high", "claude-opus-5-5-medium", false},
 	} {
-		argv := AgentCLICommand(AgentCLIAntigravity, AgentCLICommandOptions{Model: tc.model, Effort: tc.effort, Prompt: "p"}).Argv
+		argv := AgentCLICommand(AgentCLIAntigravity, AgentCLICommandOptions{
+			Model: tc.model, Effort: tc.effort, Prompt: "p", RunnerLogin: tc.runnerLogin,
+		}).Argv
 		if i := slices.Index(argv, "--model"); i < 0 || argv[i+1] != tc.want {
 			t.Errorf("%s at %q: %q", tc.model, tc.effort, argv)
 		}
@@ -219,9 +267,62 @@ func TestAgentCLITranslatorPiNestedTools(t *testing.T) {
 	}
 }
 
+func TestAgentCLITranslatorDeepSeekReplacesTruncatedTextWithFinal(t *testing.T) {
+	texts := func(lines []string) []string {
+		var out []string
+		for _, line := range lines {
+			var event struct {
+				Type    string
+				Message struct{ Content []struct{ Type, Text string } }
+			}
+			if json.Unmarshal([]byte(line), &event) == nil && event.Type == "assistant" {
+				for _, block := range event.Message.Content {
+					if block.Type == "text" {
+						out = append(out, block.Text)
+					}
+				}
+			}
+		}
+		return out
+	}
+	full := strings.Repeat("长篇正文", 1000) + "（全文完）"
+	preview := full[:8190]
+	translate := NewAgentCLITranslator(AgentCLIDeepSeek)
+	var lines []string
+	for _, raw := range []string{
+		`{"type":"session","sessionId":"s-1"}`,
+		`{"type":"text","truncated":true,"text":` + strconv.Quote(preview) + `}`,
+		`{"type":"status","phase":"step_end","usage":{"inputTokens":1,"outputTokens":2}}`,
+		`{"type":"status","phase":"turn_end","reason":{"kind":"completed"}}`,
+		`{"type":"final","sessionId":"s-1","reason":{"kind":"completed"},"text":` + strconv.Quote(full) + `}`,
+	} {
+		lines = append(lines, translate(raw)...)
+	}
+	if got := texts(lines); len(got) != 1 || got[0] != full {
+		t.Fatalf("answer blocks %d, first %d bytes; want the whole final text once", len(got), len(got[0]))
+	}
+	if last := lines[len(lines)-1]; !strings.Contains(last, `"type":"result"`) || !strings.Contains(last, "（全文完）") {
+		t.Fatalf("result: %.200s", last)
+	}
+
+	translate = NewAgentCLITranslator(AgentCLIDeepSeek)
+	lines = nil
+	for _, raw := range []string{
+		`{"type":"text","text":"短回复"}`,
+		`{"type":"text","truncated":true,"text":"被截断的说明"}`,
+		`{"type":"tool_call","callId":"c1","tool":"read","input":{}}`,
+	} {
+		lines = append(lines, translate(raw)...)
+	}
+	if got := texts(lines); !slices.Equal(got, []string{"短回复", "被截断的说明"}) || !strings.Contains(lines[len(lines)-1], `"tool_use"`) {
+		t.Fatalf("texts before a tool call: %q\n%s", got, strings.Join(lines, "\n"))
+	}
+}
+
 func TestAgentCLIUserCredentials(t *testing.T) {
-	creds := AgentCLIUserCredentials(domain.User{AgentCLICredentials: map[string]domain.AgentCLICredential{"kimi": {APIKey: "k", BaseURL: "u", Protocol: "messages"}}})
-	if creds["kimi"] != (ProviderCredential{APIKey: "k", BaseURL: "u", Protocol: "messages"}) {
+	models := []domain.CLIModel{{ID: "widget", Efforts: map[string]string{"low": "widget-low"}}}
+	creds := AgentCLIUserCredentials(domain.User{AgentCLICredentials: map[string]domain.AgentCLICredential{"kimi": {APIKey: "k", BaseURL: "u", Protocol: "messages", Models: models}}})
+	if !reflect.DeepEqual(creds["kimi"], ProviderCredential{APIKey: "k", BaseURL: "u", Protocol: "messages", Models: models}) {
 		t.Fatalf("credentials: %+v", creds)
 	}
 	if AgentCLIUserCredentials(domain.User{}) != nil {
@@ -295,7 +396,7 @@ func TestBindCommandRejectsSymlinkedParentsBeforeWritingCredentials(t *testing.T
 				credentials := RunCredentials{AgentCLI: map[string]ProviderCredential{
 					kind: {APIKey: "fake-test-key", BaseURL: "https://example.test"},
 				}}
-				if _, err := bindCommand(sb, workspace, command, credentials); err == nil {
+				if _, err := bindCommand(t.Context(), sb, workspace, command, credentials); err == nil {
 					t.Fatal("symlinked private-home component was accepted")
 				}
 				entries, err := os.ReadDir(outside)
@@ -327,7 +428,7 @@ func TestBindAgentCLICommandRejectsSymlinkedPrivateHome(t *testing.T) {
 			if _, _, err := BindAgentCLICommand(sb, workspace, command, ProviderCredential{APIKey: "secret-key", BaseURL: "https://example.test"}, command.Argv); err == nil {
 				t.Fatal("symlinked private home was accepted")
 			}
-			if _, err := bindCommand(sb, workspace, command, RunCredentials{}); err == nil {
+			if _, err := bindCommand(t.Context(), sb, workspace, command, RunCredentials{}); err == nil {
 				t.Fatal("bindCommand accepted a symlinked private home")
 			}
 			if entries, _ := os.ReadDir(outside); len(entries) != 0 {

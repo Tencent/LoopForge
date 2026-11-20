@@ -69,9 +69,6 @@ func TestWorkflowGraphValidationAndTraversal(t *testing.T) {
 	if !hasFailed(valid, run) {
 		t.Fatal("failure not found")
 	}
-	if max(2, 1) != 2 || max(1, 2) != 2 {
-		t.Fatal("max")
-	}
 
 	cases := []domain.WorkflowDefinition{
 		{ID: "x", Nodes: valid.Nodes},
@@ -173,6 +170,29 @@ func TestExecutionTargetsAndTelemetryHelpers(t *testing.T) {
 	}
 	command := bindExecutionTarget("pwd", targets[0])
 	if !strings.Contains(command, "AGENTFLOW_REPOSITORY_ID='one'") || !strings.Contains(command, "cd -- 'repos/one'") {
+		t.Fatal(command)
+	}
+	branched := domain.Run{Repositories: []domain.RepositoryContext{
+		{RepositoryID: "one", WorkspaceDir: "one", WorkBranch: "feat", BaseBranch: "release/1.2", DefaultBranch: "main"},
+		{RepositoryID: "two", WorkspaceDir: "two", WorkBranch: "feat", ReadOnly: true},
+		{RepositoryID: "three", WorkspaceDir: "three"},
+		{RepositoryID: "legacy", WorkBranch: "feat", DefaultBranch: "trunk"},
+	}}
+	runTargets, err := executionTargets(branched, domain.ExecutionScopeRun)
+	if err != nil || len(runTargets) != 1 {
+		t.Fatalf("run targets = %+v %v", runTargets, err)
+	}
+	if command := bindExecutionTarget("true", runTargets[0]); !strings.Contains(command, "export AGENTFLOW_WORK_BRANCHES='one\tfeat\trelease/1.2\n.\tfeat\ttrunk'\n") {
+		t.Fatal(command)
+	}
+	repoTargets, err := executionTargets(branched, domain.ExecutionScopeRepositories)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if command := bindExecutionTarget("true", repoTargets[0]); !strings.Contains(command, "AGENTFLOW_WORK_BRANCH='feat'") || !strings.Contains(command, "AGENTFLOW_BASE_BRANCH='release/1.2'") {
+		t.Fatal(command)
+	}
+	if command := bindExecutionTarget("true", repoTargets[1]); !strings.Contains(command, "AGENTFLOW_WORK_BRANCH=''") {
 		t.Fatal(command)
 	}
 	got, err := executeForTargets(run, domain.ExecutionScopeRepositories, func(target executionTarget) (string, error) {

@@ -45,18 +45,14 @@ func ActionsForDelivery(store *repo.Store, item domain.NotificationDelivery) []m
 			if run.Status != "running" {
 				button("重试", "retry")
 			}
-			for _, n := range run.WorkflowSnapshot.Nodes {
-				if n.ID == item.NodeID && n.RejectTo != "" {
-					button("退回", "reject")
-				}
+			if n, ok := snapshotNode(run, item.NodeID); ok && n.RejectTo != "" {
+				button("退回", "reject")
 			}
 		}
 	case "failed":
 		button("重试", "retry")
-		for _, n := range run.WorkflowSnapshot.Nodes {
-			if n.ID == item.NodeID && n.Type == "script" {
-				button("手动通过", "pass")
-			}
+		if n, ok := snapshotNode(run, item.NodeID); ok && n.Type == "script" {
+			button("手动通过", "pass")
 		}
 	default:
 		return nil
@@ -317,19 +313,24 @@ func notificationCardActions(actions []map[string]any) ([]map[string]any, map[st
 	return buttons, nil
 }
 func cardReworkTarget(run domain.Run, nodeID string) string {
-	target := ""
-	for _, node := range run.WorkflowSnapshot.Nodes {
-		if node.ID == nodeID {
-			target = node.RejectTo
-			break
-		}
+	node, ok := snapshotNode(run, nodeID)
+	if !ok || node.RejectTo == "" {
+		return ""
 	}
-	if target != "" {
-		for _, node := range run.WorkflowSnapshot.Nodes {
-			if node.ID == target {
-				return node.Name
-			}
-		}
+	if target, ok := snapshotNode(run, node.RejectTo); ok {
+		return target.Name
 	}
 	return ""
+}
+
+// snapshotNode returns the definition of node id frozen in the run's workflow
+// snapshot. Node IDs are unique per workflow (enforced on save), so the first
+// match is the only one.
+func snapshotNode(run domain.Run, id string) (domain.WorkflowNode, bool) {
+	for _, node := range run.WorkflowSnapshot.Nodes {
+		if node.ID == id {
+			return node, true
+		}
+	}
+	return domain.WorkflowNode{}, false
 }

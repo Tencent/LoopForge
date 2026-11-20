@@ -30,9 +30,7 @@ func agentIndexRepo(t *testing.T) (workspace, lockPath string) {
 	}
 	testRuntimeGit(t, workspace, "add", "AGENTS.md")
 	testRuntimeGit(t, workspace, "commit", "-m", "baseline")
-	if err := ProtectProjectAgentGitIndex(context.Background(), workspace, "docker"); err != nil {
-		t.Fatal(err)
-	}
+	markLegacyProjectAgentConfig(t, workspace)
 	return workspace, filepath.Join(workspace, ".git", "index.lock")
 }
 
@@ -78,7 +76,7 @@ func TestRestoreProjectAgentGitIndexKeepsAlternatePathLock(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer holder.Close()
-	err = RestoreProjectAgentGitIndex(context.Background(), workspace, "docker")
+	err = RestoreLegacyProjectAgentConfig(context.Background(), workspace)
 	if err == nil || !strings.Contains(err.Error(), "held by a live process") {
 		t.Fatalf("restore error = %v, want live-process protection", err)
 	}

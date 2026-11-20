@@ -374,7 +374,7 @@ func (h *assistantHandlers) decideProposal(c *gin.Context) {
 		c.JSON(400, gin.H{"error": "未知的处理方式"})
 		return
 	}
-	if job, ok := h.repo.AssistantGeneration(ownerID, id); ok && job.Status == "running" {
+	if job, ok := h.readGeneration(ownerID, id); ok && job.Status == "running" {
 		c.JSON(409, gin.H{"error": "请等待回复结束后再处理建议"})
 		return
 	}

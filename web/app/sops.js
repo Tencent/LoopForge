@@ -29,6 +29,12 @@ async function toggleShare(kind,id){
   try{
     const full=await catalogItemFull(kind,id);
     if(!catalogOwned(full.projectId))return toast('只能共享本项目的内容');
+    // Sharing a role also shares the project's skills bound to it, and a
+    // shared skill is installed into every conversation, so name them first.
+    // The list is reloaded: a skill may have been added since the page loaded.
+    if(kind==='agent'&&!full.shared&&(full.skills||[]).length)state.data.skills=await api('/api/skills',{silent:true});
+    const newlyShared=kind==='agent'&&!full.shared?(state.data.skills||[]).filter(s=>(full.skills||[]).includes(s.id)&&s.projectId===full.projectId&&!s.shared):[];
+    if(newlyShared.length&&!(await afConfirm({title:'共享角色',message:`共享这个角色会同时共享它绑定的技能：${newlyShared.map(s=>s.name||s.id).join('、')}。${SHARED_SKILL_NOTICE}`,confirmText:'共享'})))return;
     const saved=await api(kind==='workflow'?'/api/workflows':'/api/agents',{method:'PUT',body:JSON.stringify({...full,shared:!full.shared})});
     replaceCatalogItem(kind,saved);
     if(kind==='agent'&&saved.shared){(state.data.rules||[]).forEach(item=>{if((saved.rules||[]).includes(item.id)&&item.projectId===saved.projectId)item.shared=true});(state.data.skills||[]).forEach(item=>{if((saved.skills||[]).includes(item.id)&&item.projectId===saved.projectId)item.shared=true})}
@@ -41,7 +47,7 @@ async function toggleShare(kind,id){
 // Token to push and a 工蜂 MCP to create the merge
 // request, so the catalog surfaces that dependency before adoption.
 const GENERIC_REQUIREMENT_CHECKS={
-  'gongfeng-git-token':{label:'工蜂 Git Token',hint:'推送工作分支到工蜂。',fix:'settings',fixLabel:'去个人配置配置',check:()=>!!(userById(state.currentUser?.id)||{}).gitTokenConfigured},
+  'gongfeng-git-token':{label:'Git 访问令牌',hint:'按主机认证并推送工作分支。',fix:'settings',fixLabel:'去个人配置配置',check:()=>!!(userById(state.currentUser?.id)||{}).gitHttpCredentialsConfigured},
   'gongfeng-mcp':{label:'工蜂 MCP',hint:'调用工蜂接口创建 MR；未安装时复制出的 SOP 需安装后为「交付工程师」角色绑定。',fix:'mcp',fixLabel:'去能力资产添加',check:()=>gongfengMCPInstalled()},
   'tapd-mcp':{label:'TAPD MCP',hint:'把验收结论回写 TAPD；未安装时只产出待人工粘贴的说明。',fix:'mcp',fixLabel:'去能力资产添加',check:()=>tapdMCPInstalled()}
 };
@@ -422,7 +428,7 @@ function openGenericRequirementTarget(key){
     const row=sopRunRequirements(w).find(r=>r.key===key);
     $('#genericTemplateModal').classList.remove('open');
     if(row?.fix==='repository')return openRepositoryModal();
-    gotoCredential(row?.field||(key==='run-key'?'codeBuddyApiKey':'gitToken'));
+    gotoCredential(row?.field||(key==='run-key'?'codeBuddyApiKey':'gitHttpCredentials'));
     return;
   }
   const meta=GENERIC_REQUIREMENT_CHECKS[key];if(!meta)return;

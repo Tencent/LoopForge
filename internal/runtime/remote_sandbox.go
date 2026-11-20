@@ -28,26 +28,8 @@ func OpenRemoteSandbox(ctx context.Context, id, workspace string, profile domain
 	if err != nil {
 		return nil, err
 	}
-	if len(activated.Overlay) > 0 {
-		path := activated.Overlay["PATH"]
-		profile.Environment = mergeEnvironmentMaps(activated.Overlay, profile.Environment)
-		if path != "" {
-			profile.Environment["PATH"] = path
-		}
-	}
-	var sandbox Sandbox
-	switch strings.TrimSpace(profile.Driver) {
-	case "", "local":
-		sandbox = &localSandbox{id: id, workspace: workspace, environment: profile.Environment}
-	case "seatbelt":
-		sandbox, err = createSeatbelt(id, workspace, profile, requirements)
-	case "bwrap":
-		sandbox, err = createBwrap(id, workspace, profile, requirements)
-	case "docker":
-		sandbox, err = createDocker(ctx, id, workspace, profile, requirements, resources.Dockerfile)
-	default:
-		return nil, fmt.Errorf("unsupported runner sandbox driver %q", profile.Driver)
-	}
+	profile.Environment = overlayEnvironment(profile.Environment, activated.Overlay)
+	sandbox, err := createDriverSandbox(ctx, "runner sandbox", id, workspace, profile, requirements, resources.Dockerfile)
 	if err != nil {
 		return nil, err
 	}
@@ -63,7 +45,7 @@ func OpenRemoteSandbox(ctx context.Context, id, workspace string, profile domain
 func WithCommandEnvironment(command CommandSpec, values map[string]string) CommandSpec {
 	bound := command
 	bound.environment = mergeEnvironmentMaps(command.environment, values)
-	return bound
+	return bindRunnerLoginLease(bound)
 }
 
 // CommandEnvironment returns a copy of the closed task-scoped environment for

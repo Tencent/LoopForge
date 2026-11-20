@@ -43,6 +43,7 @@ func cvBMiscContext(method, path string) (*gin.Context, *httptest.ResponseRecord
 
 func TestMiscScheduleRemainingHelpersAndHTTP(t *testing.T) {
 	f := cvBNewHTTPFixture(t)
+	cvBGiveCodeBuddyKey(t, &f)
 	if err := f.s.PutWorkflow(domain.WorkflowDefinition{
 		ID: "cvb-misc-wf", Name: "misc workflow", ProjectID: "platform",
 		Status: "published", Version: 1, SandboxProfileID: "local",

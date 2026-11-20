@@ -12,6 +12,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"syscall"
@@ -58,36 +59,45 @@ func ArchiveDir(workspace, sourcePath, indexFile string, limits Limits, dst io.W
 		return Result{}, fmt.Errorf("%w: %s", ErrMissingIndex, indexFile)
 	}
 
+	sum, compressed, err := writeTarZst(dst, entries, limits.MaxCompressed)
+	if err != nil {
+		return Result{}, err
+	}
+	return Result{
+		StorageKey:     ContentKey(sum),
+		SHA256:         sum,
+		CompressedSize: compressed,
+		ExpandedSize:   expanded,
+		FileCount:      len(entries),
+		EntryFile:      indexFile,
+	}, nil
+}
+
+// writeTarZst streams entries as a tar.zst into dst and returns the hex SHA-256
+// and byte count of the compressed stream. maxCompressed > 0 caps that count.
+func writeTarZst(dst io.Writer, entries []fileEntry, maxCompressed int64) (string, int64, error) {
 	hash := sha256.New()
-	counter := &countWriter{w: io.MultiWriter(dst, hash), limit: limits.MaxCompressed}
+	counter := &countWriter{w: io.MultiWriter(dst, hash), limit: maxCompressed}
 	enc, err := zstd.NewWriter(counter, zstd.WithEncoderLevel(zstd.SpeedDefault))
 	if err != nil {
-		return Result{}, fmt.Errorf("zstd encoder: %w", err)
+		return "", 0, fmt.Errorf("zstd encoder: %w", err)
 	}
 	tw := tar.NewWriter(enc)
 	for _, item := range entries {
 		if err := writeTarFile(tw, item); err != nil {
 			_ = tw.Close()
 			_ = enc.Close()
-			return Result{}, err
+			return "", 0, err
 		}
 	}
 	if err := tw.Close(); err != nil {
 		_ = enc.Close()
-		return Result{}, err
+		return "", 0, err
 	}
 	if err := enc.Close(); err != nil {
-		return Result{}, err
+		return "", 0, err
 	}
-	sum := hex.EncodeToString(hash.Sum(nil))
-	return Result{
-		StorageKey:     ContentKey(sum),
-		SHA256:         sum,
-		CompressedSize: counter.n,
-		ExpandedSize:   expanded,
-		FileCount:      len(entries),
-		EntryFile:      indexFile,
-	}, nil
+	return hex.EncodeToString(hash.Sum(nil)), counter.n, nil
 }
 
 type fileEntry struct {
@@ -130,12 +140,12 @@ func collectRegularFiles(workspace, root string, limits Limits) ([]fileEntry, in
 		if !info.Mode().IsRegular() {
 			return fmt.Errorf("%w: %s", ErrUnsupportedEntry, rel)
 		}
-		if limits.MaxFiles > 0 && len(entries)+1 > limits.MaxFiles {
-			return fmt.Errorf("%w: more than %d files", ErrLimitExceeded, limits.MaxFiles)
+		if err := checkTarFileCount(len(entries)+1, limits); err != nil {
+			return err
 		}
 		expanded += info.Size()
-		if limits.MaxExpanded > 0 && expanded > limits.MaxExpanded {
-			return fmt.Errorf("%w: expanded size", ErrLimitExceeded)
+		if err := checkExpandedSize(expanded, limits); err != nil {
+			return err
 		}
 		if _, err := filepath.Rel(workspace, abs); err != nil {
 			return fmt.Errorf("%w: %s", ErrUnsafePath, rel)
@@ -151,12 +161,7 @@ func collectRegularFiles(workspace, root string, limits Limits) ([]fileEntry, in
 }
 
 func containsIndex(entries []fileEntry, indexFile string) bool {
-	for _, item := range entries {
-		if item.name == indexFile {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(entries, func(item fileEntry) bool { return item.name == indexFile })
 }
 
 func writeTarFile(tw *tar.Writer, item fileEntry) error {
@@ -257,27 +262,23 @@ func InspectTarZst(src io.Reader, indexFile string, limits Limits) (Result, erro
 		if err != nil {
 			return Result{}, fmt.Errorf("read preview tar: %w", err)
 		}
-		switch hdr.Typeflag {
-		case tar.TypeDir:
-			continue
-		case tar.TypeReg, tar.TypeRegA:
-		default:
-			return Result{}, fmt.Errorf("%w: tar type %v", ErrUnsupportedEntry, hdr.Typeflag)
-		}
-		name, err := SanitizeArchiveMember(hdr.Name)
+		name, skip, err := tarRegularMember(hdr)
 		if err != nil {
 			return Result{}, err
+		}
+		if skip {
+			continue
 		}
 		if hdr.Linkname != "" {
 			return Result{}, fmt.Errorf("%w: link %s", ErrUnsupportedEntry, name)
 		}
 		files++
-		if limits.MaxFiles > 0 && files > limits.MaxFiles {
-			return Result{}, fmt.Errorf("%w: more than %d files", ErrLimitExceeded, limits.MaxFiles)
+		if err := checkTarFileCount(files, limits); err != nil {
+			return Result{}, err
 		}
 		expanded += hdr.Size
-		if limits.MaxExpanded > 0 && expanded > limits.MaxExpanded {
-			return Result{}, fmt.Errorf("%w: expanded size", ErrLimitExceeded)
+		if err := checkExpandedSize(expanded, limits); err != nil {
+			return Result{}, err
 		}
 		copied, err := io.Copy(io.Discard, io.LimitReader(tr, hdr.Size+1))
 		if err != nil {
@@ -337,47 +338,90 @@ func ExtractTarZst(src io.Reader, dest string, limits Limits) error {
 		if err != nil {
 			return err
 		}
-		if hdr.Typeflag == tar.TypeDir {
+		name, skip, err := tarRegularMember(hdr)
+		if err != nil {
+			return err
+		}
+		if skip {
 			continue
 		}
-		if hdr.Typeflag != tar.TypeReg && hdr.Typeflag != tar.TypeRegA {
-			return fmt.Errorf("%w: tar type %v", ErrUnsupportedEntry, hdr.Typeflag)
-		}
-		name, err := SanitizeArchiveMember(hdr.Name)
-		if err != nil {
-			return err
-		}
 		files++
-		if limits.MaxFiles > 0 && files > limits.MaxFiles {
-			return fmt.Errorf("%w: more than %d files", ErrLimitExceeded, limits.MaxFiles)
+		if err := checkTarFileCount(files, limits); err != nil {
+			return err
 		}
 		expanded += hdr.Size
-		if limits.MaxExpanded > 0 && expanded > limits.MaxExpanded {
-			return fmt.Errorf("%w: expanded size", ErrLimitExceeded)
-		}
-		full := filepath.Join(tmp, filepath.FromSlash(name))
-		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+		if err := checkExpandedSize(expanded, limits); err != nil {
 			return err
 		}
-		out, err := os.OpenFile(full, os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0o644)
-		if err != nil {
+		if err := extractTarMember(tr, tmp, name, hdr.Size); err != nil {
 			return err
-		}
-		copied, copyErr := io.Copy(out, io.LimitReader(tr, hdr.Size))
-		closeErr := out.Close()
-		if copyErr != nil {
-			return copyErr
-		}
-		if closeErr != nil {
-			return closeErr
-		}
-		if copied != hdr.Size {
-			return fmt.Errorf("extracted %s size mismatch", name)
 		}
 	}
 	_ = os.RemoveAll(dest)
 	if err := os.Rename(tmp, dest); err != nil {
 		return err
+	}
+	return nil
+}
+
+// extractTarMember writes one sanitized regular member of size bytes from r to
+// root/name, creating parent directories. The file must not already exist, and
+// a short body is reported as a size mismatch.
+func extractTarMember(r io.Reader, root, name string, size int64) error {
+	full := filepath.Join(root, filepath.FromSlash(name))
+	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+		return err
+	}
+	out, err := os.OpenFile(full, os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0o644)
+	if err != nil {
+		return err
+	}
+	copied, copyErr := io.Copy(out, io.LimitReader(r, size))
+	closeErr := out.Close()
+	if copyErr != nil {
+		return copyErr
+	}
+	if closeErr != nil {
+		return closeErr
+	}
+	if copied != size {
+		return fmt.Errorf("extracted %s size mismatch", name)
+	}
+	return nil
+}
+
+// tarRegularMember validates one entry read from a preview tar. Directories are
+// reported as skip; anything other than a regular file is rejected with
+// ErrUnsupportedEntry. For regular files it returns the sanitized member name.
+func tarRegularMember(hdr *tar.Header) (name string, skip bool, err error) {
+	switch hdr.Typeflag {
+	case tar.TypeDir:
+		return "", true, nil
+	case tar.TypeReg, tar.TypeRegA:
+	default:
+		return "", false, fmt.Errorf("%w: tar type %v", ErrUnsupportedEntry, hdr.Typeflag)
+	}
+	name, err = SanitizeArchiveMember(hdr.Name)
+	if err != nil {
+		return "", false, err
+	}
+	return name, false, nil
+}
+
+// checkTarFileCount enforces limits.MaxFiles (0 means unlimited) after files
+// regular members have been seen.
+func checkTarFileCount(files int, limits Limits) error {
+	if limits.MaxFiles > 0 && files > limits.MaxFiles {
+		return fmt.Errorf("%w: more than %d files", ErrLimitExceeded, limits.MaxFiles)
+	}
+	return nil
+}
+
+// checkExpandedSize enforces limits.MaxExpanded (0 means unlimited) against the
+// uncompressed byte total seen so far.
+func checkExpandedSize(expanded int64, limits Limits) error {
+	if limits.MaxExpanded > 0 && expanded > limits.MaxExpanded {
+		return fmt.Errorf("%w: expanded size", ErrLimitExceeded)
 	}
 	return nil
 }
@@ -404,19 +448,16 @@ func ReadTarZstMember(src io.Reader, name string, limits Limits) ([]byte, error)
 		if err != nil {
 			return nil, err
 		}
-		if hdr.Typeflag == tar.TypeDir {
-			continue
-		}
-		if hdr.Typeflag != tar.TypeReg && hdr.Typeflag != tar.TypeRegA {
-			return nil, fmt.Errorf("%w: tar type %v", ErrUnsupportedEntry, hdr.Typeflag)
-		}
-		member, err := SanitizeArchiveMember(hdr.Name)
+		member, skip, err := tarRegularMember(hdr)
 		if err != nil {
 			return nil, err
 		}
+		if skip {
+			continue
+		}
 		files++
-		if limits.MaxFiles > 0 && files > limits.MaxFiles {
-			return nil, fmt.Errorf("%w: more than %d files", ErrLimitExceeded, limits.MaxFiles)
+		if err := checkTarFileCount(files, limits); err != nil {
+			return nil, err
 		}
 		if member != want {
 			if _, err := io.Copy(io.Discard, io.LimitReader(tr, hdr.Size+1)); err != nil {
@@ -424,8 +465,8 @@ func ReadTarZstMember(src io.Reader, name string, limits Limits) ([]byte, error)
 			}
 			continue
 		}
-		if limits.MaxExpanded > 0 && hdr.Size > limits.MaxExpanded {
-			return nil, fmt.Errorf("%w: expanded size", ErrLimitExceeded)
+		if err := checkExpandedSize(hdr.Size, limits); err != nil {
+			return nil, err
 		}
 		body, err := io.ReadAll(io.LimitReader(tr, hdr.Size+1))
 		if err != nil {
@@ -463,8 +504,8 @@ func UsesHistoryAPI(src io.Reader, limits Limits) (bool, error) {
 			continue
 		}
 		files++
-		if limits.MaxFiles > 0 && files > limits.MaxFiles {
-			return false, fmt.Errorf("%w: more than %d files", ErrLimitExceeded, limits.MaxFiles)
+		if err := checkTarFileCount(files, limits); err != nil {
+			return false, err
 		}
 		switch strings.ToLower(path.Ext(hdr.Name)) {
 		case ".js", ".mjs", ".cjs", ".html", ".htm":

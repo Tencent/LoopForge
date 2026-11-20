@@ -1,0 +1,60 @@
+.machine-context {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 220px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.machine-context > svg,
+.machine-picker > svg,
+.machine-picker > .connection-dot {
+  flex: none;
+}
+.machine-context .machine-picker {
+  min-width: 0;
+  max-width: 100%;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.machine-picker > span,
+.machine-fixed > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.machine-context .machine-picker:hover,
+.machine-context .machine-picker[aria-expanded="true"] {
+  background: var(--hover);
+  color: var(--text);
+}
+.machine-picker:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.machine-picker:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+}
+.header-actions .machine-context {
+  max-width: 160px;
+  margin-right: 6px;
+  font-size: 11px;
+}
+.composer-context > .machine-context {
+  flex-shrink: 1;
+  min-width: 65px;
+}
+@media (max-width: 640px) {
+  .machine-context {
+    max-width: 145px;
+  }
+  .header-actions .machine-context {
+    max-width: 110px;
+  }
+}

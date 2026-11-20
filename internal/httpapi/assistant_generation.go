@@ -4,9 +4,11 @@ import (
 	"agentflow/internal/auth"
 	"agentflow/internal/domain"
 	"agentflow/internal/engine"
+	"agentflow/internal/runtime"
 
 	"bytes"
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"github.com/gin-gonic/gin"
@@ -29,20 +31,14 @@ func (h *assistantHandlers) startGeneration(c *gin.Context) {
 		c.JSON(400, gin.H{"error": "请先配置个人 CodeBuddy API Key"})
 		return
 	}
-	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 4<<20)
 	var req assistantRequest
-	if !decode(c, &req) {
+	if !decodeLimit(c, &req, assistantRequestBodyLimit) {
+		return
+	}
+	if !requireAssistantApprovalUser(c, current.ID, req.ApprovalUserID) {
 		return
 	}
 	req.Model = assistantRequestModel(req.Executor, req.Model)
-	user, model, refusal := h.assistantTurnUser(stored, req.Model)
-	if refusal != "" {
-		c.JSON(400, gin.H{"error": refusal})
-		return
-	}
-	req.Model = model
-	cliEngine, _ := assistantModelEngine(req.Model)
-	req.Executor = cliEngine
 	if len(req.Messages) == 0 || req.Messages[len(req.Messages)-1].Role != "user" {
 		c.JSON(400, gin.H{"error": "请提供用户消息"})
 		return
@@ -60,17 +56,42 @@ func (h *assistantHandlers) startGeneration(c *gin.Context) {
 		c.JSON(400, gin.H{"error": "会话 ID 无效"})
 		return
 	}
-	ownerID, shared, err := h.conversationScope(c, req.SessionID, req.RunID, req.ProjectID, user.ID)
+	ownerID, shared, err := h.conversationScope(c, req.SessionID, req.RunID, req.ProjectID, stored.ID)
 	if err != nil {
 		c.JSON(403, gin.H{"error": err.Error()})
 		return
 	}
+	old, _ := h.repo.AssistantSession(ownerID, req.SessionID)
+	if old.ID != "" && old.ExecutionLocked() {
+		if req.ExecutionTarget != nil && *req.ExecutionTarget != old.Execution() {
+			c.JSON(409, gin.H{"error": "会话执行机器已固定，不能更换"})
+			return
+		}
+		target := old.Execution()
+		req.ExecutionTarget = &target
+	} else {
+		var targetErr error
+		req.ExecutionTarget, targetErr = h.newExecutionTarget(stored.ID, req.ProjectID, draftExecutionTarget(old, req.ExecutionTarget))
+		if targetErr != nil {
+			c.JSON(400, gin.H{"error": targetErr.Error()})
+			return
+		}
+	}
+	cliEngine, _ := assistantModelEngine(req.Model)
+	loginRunner := h.assistantLoginRunner(stored.ID, req.ExecutionTarget, cliEngine)
+	runnerLogin := loginRunner.ID != ""
+	user, model, refusal := h.assistantTurnUser(stored, req.Model, runnerLogin)
+	if refusal != "" {
+		c.JSON(400, gin.H{"error": refusal})
+		return
+	}
+	req.Model = model
 	if err := h.validateAssistantTriggerHistory(ownerID, req); err != nil {
 		c.JSON(400, gin.H{"error": err.Error()})
 		return
 	}
 	if shared {
-		if old, ok := h.repo.AssistantSession(ownerID, req.SessionID); ok {
+		if old.ID != "" {
 			if !sharedTranscriptPrefix(old.Messages, req.Messages) {
 				c.JSON(409, gin.H{"error": "共享会话已更新，请重新打开后发送"})
 				return
@@ -96,28 +117,24 @@ func (h *assistantHandlers) startGeneration(c *gin.Context) {
 	catalogEngine, _ := assistantModelEngine(req.Model)
 	catalog := assistantChatCatalog(c.Request.Context(), user.CodeBuddyInternetEnvironment, nil)
 	if catalogEngine == assistantEngineCodeBuddy {
-		catalog = h.chatCatalog(c.Request.Context(), user)
+		catalog = h.turnCatalog(c.Request.Context(), user, req.Model)
 	}
-	req.Model = assistantAllowedUserModel(req.Model, catalog, user)
+	if !runnerLogin {
+		req.Model = assistantAllowedUserModel(req.Model, catalog, user)
+	}
 	cliEngine, _ = assistantModelEngine(req.Model)
 	req.Executor = cliEngine
-	if err := validateAssistantEffort(req.Model, req.Effort); err != nil {
+	cliModel, err := h.resolveAssistantTurnModel(c.Request.Context(), user, req.Model, req.Effort, loginRunner)
+	if err != nil {
 		c.JSON(400, gin.H{"error": err.Error()})
 		return
 	}
-	legacyExecutor := ""
-	if old, ok := h.repo.AssistantSession(ownerID, req.SessionID); ok {
-		legacyExecutor = old.Executor
-	}
-	if refusal := assistantEngineSwitchRefusal(assistantConversationEngine(req.Messages, legacyExecutor), req.Model); refusal != "" {
+	if refusal := assistantEngineSwitchRefusal(assistantConversationEngine(req.Messages, old.Executor), req.Model); refusal != "" {
 		c.JSON(409, gin.H{"error": refusal})
 		return
 	}
-	freshCLI := false
-	if old, ok := h.repo.AssistantSession(ownerID, req.SessionID); ok {
-		freshCLI = assistantConversationEngine(old.Messages, old.Executor) != cliEngine
-	}
-	if old, ok := h.repo.AssistantSession(ownerID, req.SessionID); ok {
+	freshCLI := old.ID != "" && assistantConversationEngine(old.Messages, old.Executor) != cliEngine
+	if old.ID != "" {
 		if len(req.Messages) < len(old.Messages) {
 			c.JSON(409, gin.H{"error": "会话已更新，请重新打开后发送"})
 			return
@@ -131,7 +148,6 @@ func (h *assistantHandlers) startGeneration(c *gin.Context) {
 			}
 		}
 	}
-	old, _ := h.repo.AssistantSession(ownerID, req.SessionID)
 	// Every message shows when it was sent. The server clock stamps the new
 	// question, so a skewed or missing browser clock cannot misdate it.
 	sentAt := time.Now().UTC()
@@ -143,7 +159,13 @@ func (h *assistantHandlers) startGeneration(c *gin.Context) {
 		}
 	}
 	g := domain.AssistantGeneration{StartedAt: time.Now().UTC(), ActorID: user.ID, ActorName: user.LoginName, ID: newAssistantSessionID(), SessionID: req.SessionID, UserID: ownerID, ProjectID: req.ProjectID, Status: "running", Events: []domain.AssistantGenerationEvent{}, MessageCount: len(req.Messages)}
-	pending := assistantConversation{ID: req.SessionID, Shared: old.Shared, ProjectID: req.ProjectID, IssueID: old.IssueID, Model: req.Model, Effort: req.Effort, Executor: req.Executor, RunID: req.RunID, Messages: req.Messages, TitleEdited: old.TitleEdited, TitleGenerated: old.TitleGenerated}
+	// The issue this turn linked from its @-mention is the conversation's
+	// issue now; any other change since old was read is still refused.
+	issueID := old.IssueID
+	if issueID == "" && req.linkedIssueID != "" {
+		issueID = req.linkedIssueID
+	}
+	pending := assistantConversation{ExecutionTarget: req.ExecutionTarget, ID: req.SessionID, Shared: old.Shared, ProjectID: req.ProjectID, IssueID: issueID, Model: req.Model, Effort: req.Effort, Executor: req.Executor, RunID: req.RunID, Messages: req.Messages, TitleEdited: old.TitleEdited, TitleGenerated: old.TitleGenerated}
 	if old.TitleEdited || old.TitleGenerated {
 		pending.Title = old.Title
 	} else {
@@ -169,22 +191,28 @@ func (h *assistantHandlers) startGeneration(c *gin.Context) {
 	beginErr := h.repo.BeginAssistantGeneration(g, pending)
 	if err := beginErr; err != nil {
 		if req.workspaceToken != "" {
-			_ = h.engine.EndConversationWorkspaceUse(c.Request.Context(), req.RunID, req.workspaceToken)
+			_ = h.repo.FinishWorkspaceUse(req.RunID, req.workspaceToken, time.Now().UTC(), nil, "")
 		}
 		c.JSON(409, gin.H{"error": err.Error()})
 		return
 	}
+	h.recordGenerationWorkspaceLease(g, req.RunID, req.workspaceToken)
 	// Keep the authenticated identity, but disconnect model execution from the
 	// lifetime of the browser request. Only explicit cancellation stops a turn.
 	parent := context.WithValue(context.WithoutCancel(c.Request.Context()), assistantFreshCLIKey{}, freshCLI)
+	if runnerLogin && cliEngine == runtime.AgentCLIAntigravity {
+		parent = context.WithValue(parent, assistantRunnerTurnModelKey{}, assistantRunnerTurnModel{
+			runnerID: loginRunner.ID, model: req.Model, effort: req.Effort, resolved: cliModel,
+		})
+	}
 	_, sharedModels, _ := h.assistantChatUser(stored)
-	h.scheduleAssistantTitle(parent, ownerID, user, old, req.SessionID, req.Messages, req.Model, sharedModels)
+	h.scheduleAssistantTitle(h.helperExecutionContext(parent, ownerID, req.ExecutionTarget), ownerID, user, old, req.SessionID, req.Messages, req.Model, sharedModels)
 	done := inflightTasks.Add()
 	go func() {
 		defer done()
 		h.executeGeneration(parent, req, g, current)
 	}()
-	c.JSON(http.StatusAccepted, gin.H{"id": g.ID, "sessionId": g.SessionID, "status": g.Status})
+	c.JSON(http.StatusAccepted, gin.H{"id": g.ID, "sessionId": g.SessionID, "status": g.Status, "executionTarget": req.ExecutionTarget})
 }
 func (h *assistantHandlers) generation(c *gin.Context) {
 	user, ok := h.requestUser(c.Request, true)
@@ -212,6 +240,11 @@ func (h *assistantHandlers) generation(c *gin.Context) {
 		if err := h.repo.CancelAssistantGeneration(ownerID, g.SessionID, c.Query("generationId")); err != nil {
 			c.JSON(409, gin.H{"error": err.Error()})
 			return
+		}
+		if value, ok := assistantLiveGenerations.Load(g.ID); ok {
+			if stop := value.(*assistantLiveGeneration).cancel; stop != nil {
+				stop()
+			}
 		}
 		c.JSON(200, gin.H{"ok": true})
 		return
@@ -256,11 +289,42 @@ func (w *generationHTTPWriter) Flush() {}
 func (h *assistantHandlers) executeGeneration(parent context.Context, req assistantRequest, g domain.AssistantGeneration, actor *auth.User) {
 	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
-	rec := newAssistantGenerationRecorder(g)
+	rec := newAssistantGenerationRecorder(g, cancel)
 	defer rec.close()
+	ctx = context.WithValue(ctx, assistantDiagnosticsKey{}, rec.diagnostics)
+	diagUser, _ := h.repo.User(g.UserID)
+	if actor != nil && actor.ID != 0 && actor.ID != g.UserID {
+		if u, ok := h.repo.User(actor.ID); ok {
+			diagUser = u
+		}
+	}
 	sink := rec.sink
 	stopped := make(chan struct{})
 	done := make(chan struct{})
+	renewed := make(chan struct{})
+	// The lease renews on its own ticker. A heartbeat commit that stalls on the
+	// generation row must not also stop the renewal: a replica that reaps this
+	// turn meanwhile releases its lease only once renewal has stopped for 45s.
+	go func() {
+		defer close(renewed)
+		if req.workspaceToken == "" {
+			return
+		}
+		ticker := time.NewTicker(500 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-stopped:
+				return
+			case <-ticker.C:
+				if err := h.engine.RenewConversationWorkspaceUse(req.RunID, req.workspaceToken); err != nil {
+					rec.diagnostics.terminate("WORKSPACE_LEASE_LOST", "会话工作区续租失败："+err.Error(), diagUser)
+					cancel()
+					return
+				}
+			}
+		}
+	}()
 	go func() {
 		defer close(done)
 		ticker := time.NewTicker(500 * time.Millisecond)
@@ -270,21 +334,29 @@ func (h *assistantHandlers) executeGeneration(parent context.Context, req assist
 			case <-stopped:
 				return
 			case <-ticker.C:
-				if req.workspaceToken != "" {
-					if err := h.engine.RenewConversationWorkspaceUse(req.RunID, req.workspaceToken); err != nil {
-						cancel()
-					}
-				}
-				old, ok := h.repo.AssistantGeneration(g.UserID, g.SessionID)
+				old, ok := h.repo.PeekAssistantGeneration(g.UserID, g.SessionID)
 				if ok && old.ID == g.ID && old.Steer != nil {
 					rec.mu.Lock()
 					rec.g.Steer = old.Steer
 					rec.mu.Unlock()
 				}
-				if !ok || old.ID != g.ID || old.Status != "running" || old.CancelRequested {
-					cancel()
+				if !ok || old.ID != g.ID {
+					rec.diagnostics.terminate("GENERATION_SUPERSEDED", "当前生成记录已被替换或移除", diagUser)
+					rec.live.cancel()
+				} else if old.Status != "running" {
+					rec.diagnostics.terminate("GENERATION_STATUS_CHANGED", "生成状态已变更为 "+old.Status, diagUser)
+					rec.live.cancel()
+				} else if old.CancelRequested {
+					if old.Steer != nil {
+						rec.diagnostics.terminate("USER_STEER", "用户在生成途中发送新指令转向下一轮", diagUser)
+					} else {
+						rec.diagnostics.terminate("USER_CANCELLED", "用户主动停止了本轮生成", diagUser)
+					}
+					rec.live.cancel()
 				}
-				if err := h.repo.CheckpointAssistantGeneration(rec.snapshot()); err != nil {
+				snapshot := rec.snapshot()
+				if err := h.checkpointRunningGeneration(snapshot, rec.diagnostics); err != nil {
+					rec.diagnostics.terminate("CHECKPOINT_FAILED", "保存生成检查点失败："+err.Error(), diagUser)
 					cancel()
 				}
 			}
@@ -294,7 +366,9 @@ func (h *assistantHandlers) executeGeneration(parent context.Context, req assist
 	func() {
 		defer func() {
 			if recover() != nil {
-				sink("error", gin.H{"error": "生成异常中断，请重试"})
+				rec.diagnostics.terminate("SERVER_PANIC", "服务端处理生成时发生未捕获异常", diagUser)
+				failure := &domain.AssistantFailure{Code: "INTERNAL_ERROR", Phase: "server", Message: "生成异常中断，请重试", Suggestion: "请携带诊断编号联系管理员排查服务端日志。"}
+				sink("error", gin.H{"error": failure.Message, "failure": failure})
 			}
 		}()
 		body, _ := json.Marshal(req)
@@ -310,23 +384,31 @@ func (h *assistantHandlers) executeGeneration(parent context.Context, req assist
 		router.POST("/api/assistant/chat", h.chat)
 		router.ServeHTTP(writer, request)
 	}()
+	// Stop renewal before handing the use lease to the asynchronous save.
+	// The turn is complete once its execution has exited, without archive I/O.
 	close(stopped)
 	<-done
-	rec.mu.Lock()
-	g = rec.g
+	<-renewed
+	workspaceWarning := ""
 	if req.workspaceToken != "" {
-		saveCtx, stop := context.WithTimeout(context.WithoutCancel(parent), 30*time.Second)
-		if err := h.engine.EndConversationWorkspaceUse(saveCtx, req.RunID, req.workspaceToken); err != nil {
-			g.WorkspaceWarning = "工作区保存未完成，暂缓回收：" + err.Error()
+		if result, err := h.engine.EndConversationWorkspaceUseAsync(ctx, req.RunID, req.workspaceToken); err != nil {
+			workspaceWarning = "工作区保存未完成，暂缓回收：" + err.Error()
+		} else {
+			trackAssistantWorkspaceSave(req.RunID, result)
 		}
-		stop()
+	}
+	g = rec.snapshot()
+	if workspaceWarning != "" {
+		g.WorkspaceWarning = workspaceWarning
 	}
 	if writer.status >= 400 && g.Error == "" {
 		var result struct {
-			Error string `json:"error"`
+			Error   string                   `json:"error"`
+			Failure *domain.AssistantFailure `json:"failure"`
 		}
 		_ = json.Unmarshal(writer.body.Bytes(), &result)
 		g.Error = result.Error
+		g.Failure = result.Failure
 	}
 	if len(g.Reply) > 0 {
 		g.Status = "completed"
@@ -336,34 +418,46 @@ func (h *assistantHandlers) executeGeneration(parent context.Context, req assist
 			g.Error = "生成未完成，请重试"
 		}
 		if ctx.Err() != nil {
-			g.Status = "cancelled"
-			g.Error = "生成已停止"
+			if term := rec.diagnostics.termination(); term != nil && term.Code == "WORKSPACE_LEASE_LOST" {
+				g.Status = "failed"
+				g.Error = "会话工作区续租失败，生成已中断"
+				g.Failure = &domain.AssistantFailure{Code: "WORKSPACE_LEASE_LOST", Phase: "server", Message: g.Error, Suggestion: "检查已执行操作及工作区状态后再重试；可下载诊断信息排查。"}
+			} else {
+				g.Status = "cancelled"
+				g.Error = "生成已停止"
+				g.Failure = nil
+			}
 		}
 	}
+	if g.Status == "failed" && g.Failure == nil {
+		g.Failure = rec.diagnostics.failureForMessage(g.Error)
+	}
+	steer, finishErr := h.repo.CloseAssistantGenerationSteering(g.UserID, g.SessionID, g.ID)
+	if finishErr != nil {
+		fmt.Printf("assistant generation steering close failed: %T\n", finishErr)
+	} else {
+		g.Steer = steer
+		g.CancelRequested = g.CancelRequested || steer != nil
+		// A stop or a mid-turn redirect keeps the paragraphs and tool rows
+		// written so far. The completed path already stored its own reply.
+		if g.Status != "completed" || steer != nil {
+			if err := h.commitTurnTranscript(g, steer, g.Status != "completed" && steer == nil); err != nil {
+				fmt.Printf("assistant transcript keep failed: %T\n", err)
+				steer = nil
+			}
+		}
+		finishErr = h.repo.CheckpointAssistantGeneration(g, rec.diagnostics.snapshot(g))
+		if finishErr != nil {
+			fmt.Printf("assistant generation checkpoint failed: %T\n", finishErr)
+		}
+	}
+	rec.mu.Lock()
 	rec.g = g
-	g = rec.snapshotLocked()
-	steer := g.Steer
 	rec.mu.Unlock()
-	if steer == nil {
-		if latest, ok := h.repo.AssistantGeneration(g.UserID, g.SessionID); ok && latest.ID == g.ID && latest.Steer != nil {
-			rec.mu.Lock()
-			g.Steer = latest.Steer
-			steer = latest.Steer
-			rec.mu.Unlock()
-		}
-	}
-	// A stop or a mid-turn redirect keeps the paragraphs and tool rows written
-	// so far. The completed path already stored its own reply.
-	if g.Status != "completed" || steer != nil {
-		if err := h.commitTurnTranscript(g, steer, g.Status != "completed" && steer == nil); err != nil {
-			fmt.Printf("assistant transcript keep failed: %T\n", err)
-			steer = nil
-		}
-	}
-	if err := h.repo.CheckpointAssistantGeneration(g); err != nil {
-		fmt.Printf("assistant generation checkpoint failed: %T\n", err)
-	}
 	rec.live.publish()
+	if finishErr != nil {
+		return
+	}
 	if steer != nil {
 		h.followSteer(parent, g, steer, actor)
 	} else if g.Status == "completed" {
@@ -377,23 +471,21 @@ func (h *assistantHandlers) steerGeneration(c *gin.Context) {
 		c.JSON(401, gin.H{"error": "请先登录"})
 		return
 	}
+	var body struct {
+		domain.AssistantSteer
+		ApprovalUserID int64 `json:"approvalUserId"`
+	}
+	if !decode(c, &body) || !requireAssistantApprovalUser(c, current.ID, body.ApprovalUserID) {
+		return
+	}
 	stored, ok := h.repo.User(current.ID)
 	if !ok {
 		c.JSON(400, gin.H{"error": "请先配置个人 CodeBuddy API Key"})
 		return
 	}
-	user, sharedModels, ok := h.assistantChatUser(stored)
-	if !ok {
-		c.JSON(400, gin.H{"error": "请先配置个人 CodeBuddy API Key"})
-		return
-	}
-	ownerID, _, err := h.conversationScope(c, c.Param("id"), "", "", user.ID)
+	ownerID, _, err := h.conversationScope(c, c.Param("id"), "", "", stored.ID)
 	if err != nil {
 		c.JSON(403, gin.H{"error": err.Error()})
-		return
-	}
-	var body domain.AssistantSteer
-	if !decode(c, &body) {
 		return
 	}
 	content := strings.TrimSpace(body.Content)
@@ -404,7 +496,7 @@ func (h *assistantHandlers) steerGeneration(c *gin.Context) {
 	if content == "" {
 		content = "请阅读本轮附件并回答。"
 	}
-	g, ok := h.repo.AssistantGeneration(ownerID, c.Param("id"))
+	g, ok := h.readGeneration(ownerID, c.Param("id"))
 	if !ok || g.Status != "running" {
 		c.JSON(409, gin.H{"error": "当前没有进行中的回复"})
 		return
@@ -418,17 +510,51 @@ func (h *assistantHandlers) steerGeneration(c *gin.Context) {
 		c.JSON(404, gin.H{"error": "会话不存在"})
 		return
 	}
-	model := body.Model
-	if sharedModels != nil {
-		forced, allowed := assistantSponsoredModelFor(sharedModels, model)
-		if !allowed {
-			c.JSON(400, gin.H{"error": errAssistantSponsoredModel(sharedModels)})
-			return
-		}
-		model = forced
+	// The saved conversation selects the CLI for steering. Bare model IDs
+	// use that CLI, and an explicit CLI prefix must match it.
+	cliEngine := assistantConversationEngine(session.Messages, session.Executor)
+	if cliEngine == "" {
+		cliEngine, _ = assistantModelEngine(assistantRequestModel(session.Executor, session.Model))
 	}
-	model = assistantAllowedModel(model, h.chatCatalog(c.Request.Context(), user))
-	if err := validateAssistantEffort(model, body.Effort); err != nil {
+	model := strings.TrimSpace(firstNonEmpty(body.Model, session.Model))
+	if !assistantModelHasEnginePrefix(model) {
+		model = assistantRequestModel(cliEngine, model)
+	} else if id, explicit := strings.CutPrefix(model, assistantEngineCodeBuddy+":"); explicit {
+		model = strings.TrimSpace(id)
+	}
+	// Refuse a switch before recording cancellation, even without credentials
+	// for the requested CLI. The current reply must keep running on refusal.
+	if refusal := assistantEngineSwitchRefusal(cliEngine, model); refusal != "" {
+		c.JSON(409, gin.H{"error": refusal})
+		return
+	}
+	target := session.Execution()
+	loginRunner := h.assistantLoginRunner(stored.ID, &target, cliEngine)
+	runnerLogin := loginRunner.ID != ""
+	user, model, refusal := h.assistantTurnUser(stored, model, runnerLogin)
+	if refusal != "" {
+		c.JSON(400, gin.H{"error": refusal})
+		return
+	}
+	if engine, id := assistantModelEngine(model); engine != assistantEngineCodeBuddy && !assistantValidEngineModel(id) {
+		c.JSON(400, gin.H{"error": "模型 ID 无效"})
+		return
+	}
+	// A CodeBuddy model this instance has not listed yet refreshes the list
+	// first, like a new turn, instead of silently becoming the default.
+	catalog := assistantChatCatalog(c.Request.Context(), user.CodeBuddyInternetEnvironment, nil)
+	if engine, _ := assistantModelEngine(model); engine == assistantEngineCodeBuddy {
+		catalog = h.turnCatalog(c.Request.Context(), user, model)
+	}
+	if !runnerLogin {
+		model = assistantAllowedUserModel(model, catalog, user)
+	}
+	// The catalog can substitute a configured default. Check that model too.
+	if refusal := assistantEngineSwitchRefusal(cliEngine, model); refusal != "" {
+		c.JSON(409, gin.H{"error": refusal})
+		return
+	}
+	if _, err := h.resolveAssistantTurnModel(c.Request.Context(), user, model, body.Effort, loginRunner); err != nil {
 		c.JSON(400, gin.H{"error": err.Error()})
 		return
 	}
@@ -438,7 +564,17 @@ func (h *assistantHandlers) steerGeneration(c *gin.Context) {
 		return
 	}
 	message := probe.Messages[0]
-	steer := domain.AssistantSteer{Content: message.Content, Attachments: message.Attachments, References: message.References, Model: model, Effort: body.Effort, ApprovalMode: normalizeAssistantApprovalMode(body.ApprovalMode), ActorID: user.ID, ActorName: user.LoginName}
+	steer := domain.AssistantSteer{
+		Content:      message.Content,
+		Attachments:  message.Attachments,
+		References:   message.References,
+		Model:        model,
+		Effort:       body.Effort,
+		ApprovalMode: normalizeAssistantApprovalMode(body.ApprovalMode),
+		ActorID:      user.ID,
+		ActorName:    user.LoginName,
+		TriggerID:    rand.Text(),
+	}
 	if err := h.repo.SteerAssistantGeneration(ownerID, g.SessionID, g.ID, steer); err != nil {
 		c.JSON(409, gin.H{"error": err.Error()})
 		return
@@ -451,6 +587,17 @@ func (h *assistantHandlers) commitTurnTranscript(g domain.AssistantGeneration, s
 	if !ok {
 		return fmt.Errorf("会话不存在")
 	}
+	var trigger, triggerID string
+	if steer != nil {
+		trigger = firstNonEmpty(steer.Trigger, "steer")
+		// Generations written before steers had an ID still have a stable ID.
+		triggerID = firstNonEmpty(steer.TriggerID, g.ID)
+		for _, message := range session.Messages {
+			if triggerID != "" && message.Role == "user" && message.Trigger == trigger && message.TriggerID == triggerID {
+				return nil
+			}
+		}
+	}
 	changed := false
 	if message, worth := turnTranscriptMessage(g, session.Model, stopped); worth && (len(session.Messages) == 0 || session.Messages[len(session.Messages)-1].Role != "assistant") {
 		session.Messages = append(session.Messages, message)
@@ -461,11 +608,18 @@ func (h *assistantHandlers) commitTurnTranscript(g domain.AssistantGeneration, s
 		if content == "" {
 			content = "请阅读本轮附件并回答。"
 		}
-		last := len(session.Messages) - 1
-		if last < 0 || session.Messages[last].Role != "user" || session.Messages[last].Content != content {
-			session.Messages = append(session.Messages, domain.AssistantMessage{Role: "user", Content: content, AuthorID: steer.ActorID, AuthorName: steer.ActorName, CreatedAt: time.Now().UTC(), Attachments: steer.Attachments, References: steer.References, Trigger: firstNonEmpty(steer.Trigger, "steer")})
-			changed = true
-		}
+		session.Messages = append(session.Messages, domain.AssistantMessage{
+			Role:        "user",
+			Content:     content,
+			AuthorID:    steer.ActorID,
+			AuthorName:  steer.ActorName,
+			CreatedAt:   time.Now().UTC(),
+			Attachments: steer.Attachments,
+			References:  steer.References,
+			Trigger:     trigger,
+			TriggerID:   triggerID,
+		})
+		changed = true
 	}
 	if !changed {
 		return nil
@@ -478,7 +632,11 @@ func (h *assistantHandlers) commitTurnTranscript(g domain.AssistantGeneration, s
 
 func (h *assistantHandlers) followSteer(parent context.Context, prev domain.AssistantGeneration, steer *domain.AssistantSteer, actor *auth.User) {
 	session, ok := h.repo.AssistantSession(prev.UserID, prev.SessionID)
-	if !ok || len(session.Messages) == 0 || session.Messages[len(session.Messages)-1].Role != "user" {
+	if !ok || len(session.Messages) == 0 {
+		return
+	}
+	last := session.Messages[len(session.Messages)-1]
+	if last.Role != "user" || (steer.TriggerID != "" && last.TriggerID != steer.TriggerID) {
 		return
 	}
 	if steer.ActorID != 0 {
@@ -489,10 +647,19 @@ func (h *assistantHandlers) followSteer(parent context.Context, prev domain.Assi
 	if strings.TrimSpace(steer.Model) != "" {
 		session.Model = steer.Model
 	}
-	if strings.TrimSpace(steer.Effort) != "" {
-		session.Effort = steer.Effort
+	// Empty effort selects the follow-up model's default.
+	session.Effort = steer.Effort
+	req := assistantRequest{
+		ProjectID:       session.ProjectID,
+		SessionID:       session.ID,
+		RunID:           session.RunID,
+		Executor:        session.Executor,
+		ExecutionTarget: session.ExecutionTarget,
+		Model:           session.Model,
+		Effort:          session.Effort,
+		ApprovalMode:    steer.ApprovalMode,
+		Messages:        session.Messages,
 	}
-	req := assistantRequest{ProjectID: session.ProjectID, SessionID: session.ID, RunID: session.RunID, Model: firstNonEmpty(steer.Model, session.Model), Effort: firstNonEmpty(steer.Effort, session.Effort), ApprovalMode: steer.ApprovalMode, Messages: session.Messages}
 	if req.RunID != "" && h.engine != nil {
 		token, err := h.engine.BeginConversationWorkspaceUse(req.RunID)
 		if err != nil {
@@ -503,9 +670,10 @@ func (h *assistantHandlers) followSteer(parent context.Context, prev domain.Assi
 	next := domain.AssistantGeneration{StartedAt: time.Now().UTC(), ActorID: steer.ActorID, ActorName: steer.ActorName, ID: newAssistantSessionID(), SessionID: req.SessionID, UserID: prev.UserID, ProjectID: req.ProjectID, Status: "running", Events: []domain.AssistantGenerationEvent{}, MessageCount: len(req.Messages)}
 	if err := h.repo.BeginAssistantGeneration(next, session); err != nil {
 		if req.workspaceToken != "" && h.engine != nil {
-			_ = h.engine.EndConversationWorkspaceUse(parent, req.RunID, req.workspaceToken)
+			_ = h.repo.FinishWorkspaceUse(req.RunID, req.workspaceToken, time.Now().UTC(), nil, "")
 		}
 		return
 	}
+	h.recordGenerationWorkspaceLease(next, req.RunID, req.workspaceToken)
 	h.executeGeneration(parent, req, next, actor)
 }

@@ -8,18 +8,36 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
 
 const processWaitDelay = time.Second
 
-func runCommand(cmd *exec.Cmd, sink EventSink) (string, error) {
+var errProcessNotStarted = errors.New("process was not started")
+
+// runCommand streams process telemetry, coordinating the Claude login callback
+// and redacting bound credential environment values from process.started.
+func runCommand(cmd *exec.Cmd, sink EventSink, commands ...CommandSpec) (string, error) {
+	var command CommandSpec
+	if len(commands) > 0 {
+		command = commands[0]
+	}
+	var bridge *claudeLoginBridge
+	if isManagedClaude(command) {
+		var err error
+		bridge, err = newClaudeLoginBridge(cmd, command)
+		if err != nil {
+			return "", fmt.Errorf("%w: %w", errProcessNotStarted, err)
+		}
+		defer bridge.close()
+	}
 	var buf bytes.Buffer
 	var mu sync.Mutex
-	if sink != nil {
-		sink(domain.TelemetryEvent{Category: "process", Name: "process.started", Phase: "start", Message: compactCommand(cmd.Args)})
-	}
 	stdout := &processWriter{output: &buf, mu: &mu, sink: sink, name: "process.stdout", level: "info"}
+	if bridge != nil {
+		stdout.filter = bridge.filter
+	}
 	stderr := &processWriter{output: &buf, mu: &mu, sink: sink, name: "process.stderr", level: "error"}
 	cmd.Stdout, cmd.Stderr = stdout, stderr
 	// When hooks spawn detached children that inherit stdout/stderr, bound how
@@ -28,23 +46,66 @@ func runCommand(cmd *exec.Cmd, sink EventSink) (string, error) {
 	// at 100ms a busy host (CI running Go and JS tests together) dropped the
 	// tail of a 50KB failure log, which is the part users need.
 	cmd.WaitDelay = processWaitDelay
-	err := cmd.Run()
+	// Start launches the stdout/stderr copy goroutines. Hold the writers' lock
+	// until process.started is delivered so the sink stays serialized and the
+	// event always precedes the first output line.
+	mu.Lock()
+	err := cmd.Start()
+	if err == nil && sink != nil {
+		sink(domain.TelemetryEvent{Category: "process", Name: "process.started", Timestamp: time.Now().UTC(), Phase: "start", Message: compactCommand(cmd.Args, command.credentialEnvKeys...), Attributes: map[string]any{"pid": cmd.Process.Pid}})
+	}
+	mu.Unlock()
+	if err == nil {
+		if bridge != nil {
+			bridge.start()
+		}
+		err = cmd.Wait()
+	} else if sink != nil {
+		sink(domain.TelemetryEvent{Category: "process", Name: "process.start_failed", Timestamp: time.Now().UTC(), Phase: "start", Level: "error", Message: err.Error()})
+	}
+	if err != nil && cmd.Process == nil {
+		if errors.Is(err, syscall.E2BIG) {
+			// Retrying with the same input fails again; name the limit so the
+			// diagnostic points at the oversized argument, not the CLI.
+			err = fmt.Errorf("%w (a single argument exceeds the ~128KiB kernel limit; pass long prompts on stdin or in a file)", err)
+		}
+		err = fmt.Errorf("%w: %w", errProcessNotStarted, err)
+	}
+	if cmd.Process != nil && cmd.SysProcAttr != nil && cmd.SysProcAttr.Setpgid {
+		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+	}
+	outputIncomplete := errors.Is(err, exec.ErrWaitDelay)
 	if errors.Is(err, exec.ErrWaitDelay) {
 		err = nil
 	}
 	stdout.flush()
 	stderr.flush()
+	if bridge != nil && bridge.result() != nil {
+		err = bridge.result()
+	}
 	if sink != nil {
 		phase, level := "finish", "info"
 		if err != nil {
 			level = "error"
 		}
-		sink(domain.TelemetryEvent{Category: "process", Name: "process.finished", Phase: phase, Level: level, Message: commandResult(err)})
+		attrs := map[string]any{"outputIncomplete": outputIncomplete}
+		if state := cmd.ProcessState; state != nil {
+			attrs["pid"], attrs["exitCode"] = state.Pid(), state.ExitCode()
+			attrs["userCpuMs"], attrs["systemCpuMs"] = state.UserTime().Milliseconds(), state.SystemTime().Milliseconds()
+			if status, ok := state.Sys().(interface {
+				Signaled() bool
+				Signal() syscall.Signal
+			}); ok && status.Signaled() {
+				attrs["signal"] = status.Signal().String()
+			}
+		}
+		sink(domain.TelemetryEvent{Category: "process", Name: "process.finished", Timestamp: time.Now().UTC(), Phase: phase, Level: level, Message: commandResult(err), Attributes: attrs})
 	}
 	return buf.String(), err
 }
 
 type processWriter struct {
+	filter  func(string) bool
 	output  *bytes.Buffer
 	mu      *sync.Mutex
 	sink    EventSink
@@ -86,6 +147,9 @@ func (w *processWriter) emitLines(includePartial bool) {
 }
 
 func (w *processWriter) emit(line string) {
+	if w.filter != nil && !w.filter(line) {
+		return
+	}
 	w.output.WriteString(line)
 	w.output.WriteByte('\n')
 	if w.sink != nil {
@@ -93,18 +157,25 @@ func (w *processWriter) emit(line string) {
 	}
 }
 
-func compactCommand(args []string) string {
+func compactCommand(args []string, credentialEnvKeys ...string) string {
+	credentialKeys := make(map[string]bool, len(credentialEnvKeys))
+	for _, key := range credentialEnvKeys {
+		credentialKeys[strings.ToUpper(key)] = true
+	}
+	redact := func(key string) bool {
+		return sensitiveProcessEnvironmentKey(key) || credentialKeys[strings.ToUpper(key)]
+	}
 	safe := append([]string(nil), args...)
 	for index := 0; index < len(safe); index++ {
 		value := safe[index]
 		if value == "-e" && index+1 < len(safe) {
-			if key, _, found := strings.Cut(safe[index+1], "="); found && sensitiveProcessEnvironmentKey(key) {
+			if key, _, found := strings.Cut(safe[index+1], "="); found && redact(key) {
 				safe[index+1] = key + "=<redacted>"
 			}
 			index++
 			continue
 		}
-		if key, _, found := strings.Cut(value, "="); found && sensitiveProcessEnvironmentKey(key) {
+		if key, _, found := strings.Cut(value, "="); found && redact(key) {
 			safe[index] = key + "=<redacted>"
 		}
 	}
@@ -117,12 +188,19 @@ func compactCommand(args []string) string {
 	return string(runes[:maxRunes]) + fmt.Sprintf(" … [arguments truncated, %d chars]", len(runes))
 }
 
+// sensitiveProcessEnvironmentKey matches by suffix so the key variable of a
+// newly added agent CLI is redacted without being listed here.
 func sensitiveProcessEnvironmentKey(key string) bool {
-	return key == "CODEBUDDY_API_KEY" ||
-		key == "OPENAI_API_KEY" || key == "CODEX_API_KEY" ||
-		key == "ANTHROPIC_API_KEY" || key == "ANTHROPIC_AUTH_TOKEN" || key == "CLAUDE_CODE_OAUTH_TOKEN" ||
-		key == "AGENTFLOW_GIT_TOKEN" ||
-		strings.HasPrefix(key, "GIT_CONFIG_KEY_")
+	key = strings.ToUpper(key)
+	if key == "CODEX_REFRESH_TOKEN_URL_OVERRIDE" {
+		return true
+	}
+	for _, suffix := range []string{"_API_KEY", "_TOKEN", "_SECRET", "_PASSWORD"} {
+		if strings.HasSuffix(key, suffix) {
+			return true
+		}
+	}
+	return strings.HasPrefix(key, "GIT_CONFIG_KEY_")
 }
 
 func commandResult(err error) string {

@@ -30,13 +30,33 @@ const (
 	RunnerWorkspaceOperationLog               = "log"
 	RunnerWorkspaceOperationCommit            = "commit"
 	RunnerWorkspaceOperationBrowser           = "browser"
+	RunnerWorkspaceOperationCheckouts         = "checkouts"
+	RunnerWorkspaceOperationMaintenance       = "maintenance"
+	RunnerWorkspaceOperationLoginModels       = "login_models"
+	RunnerWorkspaceOperationConversationCLI   = "conversation_process"
 )
+
+// RunnerSSHKnownHostsWireLimit is the encoded allowance for the optional
+// known_hosts field in a runner task claim.
+const RunnerSSHKnownHostsWireLimit = 1 << 20
+
+// GitSSHKnownHosts carries the platform's scoped SSH host keys over an
+// authenticated runner transport. Configuration errors are also sent so the
+// runner can fail closed when the platform cannot supply the configured pins.
+type GitSSHKnownHosts struct {
+	Entries    string `json:"entries,omitempty"`
+	ReadFailed bool   `json:"readFailed,omitempty"`
+	TooLarge   bool   `json:"tooLarge,omitempty"`
+}
 
 // RunnerWorkspaceRequest is a bounded workspace request sent over the
 // runner's outbound control socket. Responses are transient and are never
 // persisted in runner_tasks or the run record.
 type RunnerWorkspaceRequest struct {
-	RunKind string `json:"runKind,omitempty"`
+	Maintenance   *RunnerMaintenanceRequest `json:"maintenance,omitempty"`
+	ModelProvider string                    `json:"modelProvider,omitempty"`
+	Conversation  json.RawMessage           `json:"conversation,omitempty"`
+	RunKind       string                    `json:"runKind,omitempty"`
 	// ConcurrentEdit marks a person editing from the IDE: the runner writes and
 	// opens terminals beside running tasks instead of waiting for their fence.
 	ConcurrentEdit     bool                         `json:"concurrentEdit,omitempty"`
@@ -57,6 +77,9 @@ type RunnerWorkspaceRequest struct {
 	Terminal              *WorkspaceTerminalRequest `json:"terminal,omitempty"`
 	TerminalOwner         int64                     `json:"terminalOwner,omitempty"`
 	TerminalGitSSHKeys    map[string]string         `json:"terminalGitSshKeys,omitempty"`
+	GitSSHKnownHosts      *GitSSHKnownHosts         `json:"gitSshKnownHosts,omitempty"`
+	// TerminalGitHTTPCredentials belongs to TerminalOwner and is sent only on open.
+	TerminalGitHTTPCredentials map[string]GitHTTPExecutionCredential `json:"terminalGitHttpCredentials,omitempty"`
 	// WorkspaceRunID selects the shared checkout owner; RunID continues to
 	// identify this run's independent sandbox, terminal scope and locks.
 	Browser         *BrowserRequest     `json:"browser,omitempty"`
@@ -71,6 +94,32 @@ type RunnerWorkspaceRequest struct {
 	Query           string              `json:"query,omitempty"`
 	Ref             string              `json:"ref,omitempty"`
 	Repositories    []RepositoryContext `json:"repositories,omitempty"`
+}
+
+type RunnerMaintenanceRequest struct {
+	Provider   string `json:"provider,omitempty"` // Empty selects the Runner binary.
+	Apply      bool   `json:"apply,omitempty"`
+	StatusOnly bool   `json:"statusOnly,omitempty"`
+}
+
+type RunnerMaintenanceResult struct {
+	Status    string `json:"status"`
+	Current   string `json:"current,omitempty"`
+	Version   string `json:"version,omitempty"`
+	Message   string `json:"message,omitempty"`
+	CanUpdate bool   `json:"canUpdate,omitempty"`
+}
+
+// RunnerToolRequest is forwarded over the same instance-owned control socket
+// as the conversation process, avoiding loopback and load-balancer affinity.
+type RunnerToolRequest struct {
+	SupportsCancel bool            `json:"supportsCancel,omitempty"`
+	Token          string          `json:"token"`
+	Body           json.RawMessage `json:"body"`
+}
+type RunnerToolResponse struct {
+	Body  json.RawMessage `json:"body,omitempty"`
+	Error string          `json:"error,omitempty"`
 }
 
 type WorkspaceCheckpointTransfer struct {

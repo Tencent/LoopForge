@@ -1,0 +1,393 @@
+package httpapi
+
+import (
+	"encoding/json"
+	"time"
+
+	"bytes"
+	"context"
+	"errors"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"agentflow/internal/domain"
+	"agentflow/internal/runtime"
+)
+
+func TestConversationRemoteSyncPreservesCompleteSkillTrees(t *testing.T) {
+	source, destination := t.TempDir(), t.TempDir()
+	skillDir := filepath.Join(source, "home", ".agents", "skills")
+	assets := map[string][]byte{
+		"projects/example.txt":  []byte("project asset"),
+		"tmp/check.sh":          []byte("#!/bin/sh\nprintf skill-ok\\n"),
+		"node_modules/data.bin": {0, 255, 42},
+		"sessions/nested.txt":   []byte("session example"),
+	}
+	refs := []domain.SkillFileRef{}
+	for path, data := range assets {
+		refs = append(refs, domain.SkillFileRef{Path: path, Size: int64(len(data)), Mode: 0755})
+	}
+	if _, err := runtime.WriteSkillTree(skillDir, []domain.SkillDefinition{{ID: "sessions", Name: "Sessions", Content: "Use the included assets", FileRefs: refs}}, map[string]map[string][]byte{"sessions": assets}); err != nil {
+		t.Fatal(err)
+	}
+	// Native journal/cache trees with the same names must remain excluded.
+	native := filepath.Join(source, "home", ".claude", "projects", "native-journal.jsonl")
+	if err := os.MkdirAll(filepath.Dir(native), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(native, []byte("native journal"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	files, err := conversationInputFiles(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pool := &runtime.ConversationProcessPool{}
+	if _, err := pool.Handle(context.Background(), destination, "", nil, runtime.ConversationProcessRequest{Operation: "sync", SourceRoot: source, Files: files}, nil); err != nil {
+		t.Fatal(err)
+	}
+	for path, want := range assets {
+		target := filepath.Join(destination, "home", ".agents", "skills", "sessions", path)
+		got, err := os.ReadFile(target)
+		if err != nil || !bytes.Equal(got, want) {
+			t.Fatalf("skill asset %s was not preserved: %v", path, err)
+		}
+		if info, err := os.Stat(target); err != nil || info.Mode().Perm() != 0755 {
+			t.Fatalf("skill asset %s lost executable mode: %v", path, err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(destination, "home", ".agents", "skills", "sessions", "SKILL.md")); err != nil {
+		t.Fatal("skill named sessions lost its entry point", err)
+	}
+	if _, err := os.Stat(filepath.Join(destination, "home", ".claude", "projects", "native-journal.jsonl")); !os.IsNotExist(err) {
+		t.Fatal("native journal was synchronized", err)
+	}
+}
+
+func TestConversationClaudeGeneratedInvocationSurvivesRemoteSync(t *testing.T) {
+	for _, workspace := range []bool{false, true} {
+		t.Run(map[bool]string{false: "platform", true: "workspace"}[workspace], func(t *testing.T) {
+			source, destination := t.TempDir(), t.TempDir()
+			config := filepath.Join(source, "current-mcp.json")
+			if err := os.WriteFile(config, []byte(`{"mcpServers":{"session":{"command":"`+source+`/gateway"}}}`), 0600); err != nil {
+				t.Fatal(err)
+			}
+			invocation, err := prepareAssistantClaudeInvocation(assistantEngineInvocationOpts{
+				Root: source, Config: config, Bin: "claude", Model: "fixture", SessionID: "remote-claude", Workspace: workspace,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			files, err := conversationInputFiles(source)
+			if err != nil {
+				t.Fatal(err)
+			}
+			pool := &runtime.ConversationProcessPool{}
+			if _, err := pool.Handle(context.Background(), destination, "", nil, runtime.ConversationProcessRequest{Operation: "sync", SourceRoot: source, Files: files}, nil); err != nil {
+				t.Fatal(err)
+			}
+			for _, flag := range []string{"--mcp-config", "--settings"} {
+				found := false
+				for i, arg := range invocation.command.Argv[:len(invocation.command.Argv)-1] {
+					if arg != flag {
+						continue
+					}
+					found = true
+					sourcePath := invocation.command.Argv[i+1]
+					data, err := os.ReadFile(strings.ReplaceAll(sourcePath, source, destination))
+					if err != nil {
+						t.Fatalf("remote Claude invocation cannot load %s: %v", flag, err)
+					}
+					original, err := os.ReadFile(sourcePath)
+					if err != nil || string(data) != strings.ReplaceAll(string(original), source, destination) {
+						t.Fatalf("remote Claude %s was not preserved with remapped paths: %v", flag, err)
+					}
+				}
+				if !found {
+					t.Fatalf("fixture omitted %s", flag)
+				}
+			}
+		})
+	}
+}
+
+func TestConversationExecutorDistinguishesPreparationFromProcessFailure(t *testing.T) {
+	h, _ := workbenchFixture(t)
+	s := &AgentToolSession{ChatOwnerID: 1, ChatSessionID: "first-attempt", RuntimeMode: domain.AssistantModePlatform}
+	execute := h.conversationExecutor(s, t.TempDir())
+	if _, err := execute(context.Background(), "", runtime.CommandSpec{Argv: []string{"/missing/native-cli"}}, runtime.RunCredentials{}, nil); !errors.Is(err, runtime.ErrConversationNotStarted) {
+		t.Fatalf("confirmed missing CLI was not safe to retry: %v", err)
+	}
+	if _, err := execute(context.Background(), "", runtime.CommandSpec{Argv: []string{"sh", "-c", "exit 1"}}, runtime.RunCredentials{}, nil); err == nil || errors.Is(err, runtime.ErrConversationNotStarted) {
+		t.Fatalf("a launched process was considered safe to restart: %v", err)
+	}
+}
+
+func TestConversationCredentialFailureCanBeRepairedBeforeFirstLaunch(t *testing.T) {
+	h, _ := workbenchFixture(t)
+	root := t.TempDir()
+	s := &AgentToolSession{ChatOwnerID: 1, ChatSessionID: "credential-prestart", RuntimeMode: domain.AssistantModePlatform}
+	execute := h.conversationExecutor(s, root)
+	command := runtime.CommandSpec{Argv: []string{"sh", "-c", "touch launched"}, Provider: runtime.AgentCLIPi, CredentialBindings: []runtime.CredentialBinding{runtime.BindAgentCLI}, AgentCLI: runtime.AgentCLIOptions{Model: "fixture"}}
+	credential := runtime.ProviderCredential{APIKey: "test-only"}
+	credentials := runtime.RunCredentials{AgentCLI: map[string]runtime.ProviderCredential{runtime.AgentCLIPi: credential}}
+	if _, err := execute(context.Background(), "", command, credentials, nil); !errors.Is(err, runtime.ErrConversationNotStarted) {
+		t.Fatalf("credential preparation failure was not safe to retry: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "ws", "launched")); !os.IsNotExist(err) {
+		t.Fatal("CLI launched before credentials were ready")
+	}
+	credential.BaseURL = "http://fixture.invalid/v1"
+	credentials.AgentCLI[runtime.AgentCLIPi] = credential
+	if _, err := execute(context.Background(), "", command, credentials, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "ws", "launched")); err != nil {
+		t.Fatal("fixed credentials did not release native session", err)
+	}
+}
+
+func TestUnstartedSharedSessionRetainsIdentityAndUsesFullPrompt(t *testing.T) {
+	_, a, _, _, saved := sharedWorkbenchFixture(t)
+	req := assistantRequest{SessionID: saved.ID, Messages: saved.Messages}
+	first, err := openAssistantNativeSession(req, saved, a, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := first.checkpoint.SessionID
+	if !first.checkpoint.Unstarted || first.resume {
+		t.Fatal("new native identity was marked started")
+	}
+	if err := first.begin(); err != nil {
+		t.Fatal(err)
+	}
+	first.Close()
+	retry, err := openAssistantNativeSession(req, saved, a, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if retry.resume || retry.checkpoint.SessionID != id {
+		t.Fatal("preparation failure changed identity or tried to resume a missing journal")
+	}
+	retry.checkpoint.Unstarted = false // persisted before the start RPC
+	if err := retry.writeCheckpoint(); err != nil {
+		t.Fatal(err)
+	}
+	retry.Close()
+	uncertain, err := openAssistantNativeSession(req, saved, a, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer uncertain.Close()
+	if !uncertain.resume || uncertain.checkpoint.SessionID != id {
+		t.Fatal("uncertain start discarded its native session")
+	}
+}
+
+func TestConversationStopWaitsForConfirmedExit(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	attempts, notices := 0, []bool{}
+	call := func(ctx context.Context, req runtime.ConversationProcessRequest) (runtime.ConversationProcessResult, error) {
+		if ctx.Err() != nil {
+			t.Fatal("cleanup inherited cancelled turn")
+		}
+		if req.Operation != "stop" {
+			t.Fatal("only an addressable stop can rule out queued starts", req.Operation)
+		}
+		attempts++
+		if attempts == 1 {
+			return runtime.ConversationProcessResult{}, context.DeadlineExceeded
+		}
+		return runtime.ConversationProcessResult{Done: true}, nil
+	}
+	if err := waitConversationProcessStop(ctx, "process", call, func(waiting bool) { notices = append(notices, waiting) }); err != nil {
+		t.Fatal(err)
+	}
+	if attempts != 2 || len(notices) != 2 || !notices[0] || notices[1] {
+		t.Fatalf("lost reply was treated as exit: %d %v", attempts, notices)
+	}
+}
+
+func TestConversationStopBeforeRemoteStartReplyConfirmsExit(t *testing.T) {
+	h, user := workbenchFixture(t)
+	const runnerID = "cancel-start-reply"
+	if err := h.repo.PutRunner(domain.Runner{ID: runnerID, OwnerUserID: user.ID, Status: domain.RunnerStatusOnline, RunnerVersion: domain.RunnerVersionConversationCLI}); err != nil {
+		t.Fatal(err)
+	}
+	hub := quietRunnerHub()
+	h.runnerControls = hub
+	conn := testRunnerConn(runnerID)
+	registerTestConn(hub, conn)
+	s := &AgentToolSession{ChatOwnerID: user.ID, ChatSessionID: "lost-start", ExecutionRunnerID: runnerID, RuntimeMode: domain.AssistantModePlatform}
+	execute := h.conversationExecutor(s, t.TempDir())
+	remoteRoot := t.TempDir()
+	pool := &runtime.ConversationProcessPool{}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		_, err := execute(ctx, "", runtime.CommandSpec{Argv: []string{"sh", "-c", "sleep 30"}, Provider: "codebuddy"}, runtime.RunCredentials{}, nil)
+		done <- err
+	}()
+	deadline := time.After(3 * time.Second)
+	var processID string
+	for {
+		var message runnerControlMessage
+		select {
+		case message = <-conn.send:
+		case err := <-done:
+			if processID == "" {
+				t.Fatal("executor exited before start", err)
+			}
+			result, pollErr := pool.Handle(context.Background(), remoteRoot, "", nil, runtime.ConversationProcessRequest{Operation: "poll", ID: processID}, nil)
+			if pollErr != nil || !result.Done {
+				t.Fatalf("executor returned with unacknowledged CLI still alive: %+v %v", result, pollErr)
+			}
+			return
+		case <-deadline:
+			t.Fatal("cancel did not promptly confirm process exit")
+		}
+		var req runtime.ConversationProcessRequest
+		if err := json.Unmarshal(message.WorkspaceRequest.Conversation, &req); err != nil {
+			t.Fatal(err)
+		}
+		if req.Command != nil {
+			req.Command.Argv[0] = "sh"
+		}
+		result, err := pool.Handle(context.Background(), remoteRoot, "", nil, req, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if req.Operation == "start" {
+			processID = result.ID
+			defer pool.Handle(context.Background(), remoteRoot, "", nil, runtime.ConversationProcessRequest{Operation: "stop", ID: processID}, nil)
+			cancel() // lose the response after Runner accepted the start
+			continue
+		}
+		payload, _ := json.Marshal(result)
+		hub.resolveWorkspace(message.RequestID, domain.RunnerWorkspaceResponse{Status: 200, Payload: payload})
+	}
+}
+
+// A runner that disappears after the CLI started must not pin the turn in
+// stop retries forever: the stop gives up after its bound.
+func TestConversationStopGivesUpWhenRunnerStaysOffline(t *testing.T) {
+	previous := conversationProcessStopTimeout
+	conversationProcessStopTimeout = 300 * time.Millisecond
+	t.Cleanup(func() { conversationProcessStopTimeout = previous })
+	h, user := workbenchFixture(t)
+	const runnerID = "offline-after-start"
+	runner := domain.Runner{ID: runnerID, OwnerUserID: user.ID, Status: domain.RunnerStatusOnline, RunnerVersion: domain.RunnerVersionConversationCLI}
+	if err := h.repo.PutRunner(runner); err != nil {
+		t.Fatal(err)
+	}
+	hub := quietRunnerHub()
+	h.runnerControls = hub
+	conn := testRunnerConn(runnerID)
+	registerTestConn(hub, conn)
+	s := &AgentToolSession{ChatOwnerID: user.ID, ChatSessionID: "offline-stop", ExecutionRunnerID: runnerID, RuntimeMode: domain.AssistantModePlatform}
+	execute := h.conversationExecutor(s, t.TempDir())
+	remoteRoot := t.TempDir()
+	pool := &runtime.ConversationProcessPool{}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		_, err := execute(ctx, "", runtime.CommandSpec{Argv: []string{"sh", "-c", "sleep 30"}, Provider: "codebuddy"}, runtime.RunCredentials{}, nil)
+		done <- err
+	}()
+	deadline := time.After(5 * time.Second)
+	for {
+		select {
+		case message := <-conn.send:
+			var req runtime.ConversationProcessRequest
+			if err := json.Unmarshal(message.WorkspaceRequest.Conversation, &req); err != nil {
+				t.Fatal(err)
+			}
+			if req.Command != nil {
+				req.Command.Argv[0] = "sh"
+			}
+			result, err := pool.Handle(context.Background(), remoteRoot, "", nil, req, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if req.Operation == "start" {
+				defer pool.Handle(context.Background(), remoteRoot, "", nil, runtime.ConversationProcessRequest{Operation: "stop", ID: result.ID}, nil)
+			}
+			payload, _ := json.Marshal(result)
+			hub.resolveWorkspace(message.RequestID, domain.RunnerWorkspaceResponse{Status: 200, Payload: payload})
+			if req.Operation == "start" {
+				runner.Status = domain.RunnerStatusOffline
+				if err := h.repo.PutRunner(runner); err != nil {
+					t.Fatal(err)
+				}
+				cancel()
+			}
+		case err := <-done:
+			if err == nil {
+				t.Fatal("cancelled turn reported success")
+			}
+			return
+		case <-deadline:
+			t.Fatal("stop kept retrying an offline runner")
+		}
+	}
+}
+
+// A runner whose request slots are full answers 429 without handling the
+// request; the turn backs off and continues instead of failing.
+func TestConversationProcessRetriesBusyRunner(t *testing.T) {
+	h, user := workbenchFixture(t)
+	const runnerID = "busy-runner"
+	if err := h.repo.PutRunner(domain.Runner{ID: runnerID, OwnerUserID: user.ID, Status: domain.RunnerStatusOnline, RunnerVersion: domain.RunnerVersionConversationCLI}); err != nil {
+		t.Fatal(err)
+	}
+	hub := quietRunnerHub()
+	h.runnerControls = hub
+	conn := testRunnerConn(runnerID)
+	registerTestConn(hub, conn)
+	s := &AgentToolSession{ChatOwnerID: user.ID, ChatSessionID: "busy", ExecutionRunnerID: runnerID, RuntimeMode: domain.AssistantModePlatform}
+	execute := h.conversationExecutor(s, t.TempDir())
+	remoteRoot := t.TempDir()
+	pool := &runtime.ConversationProcessPool{}
+	done := make(chan error, 1)
+	go func() {
+		_, err := execute(context.Background(), "", runtime.CommandSpec{Argv: []string{"sh", "-c", "echo ok"}, Provider: "codebuddy"}, runtime.RunCredentials{}, nil)
+		done <- err
+	}()
+	busy := 0
+	deadline := time.After(10 * time.Second)
+	for {
+		select {
+		case message := <-conn.send:
+			var req runtime.ConversationProcessRequest
+			if err := json.Unmarshal(message.WorkspaceRequest.Conversation, &req); err != nil {
+				t.Fatal(err)
+			}
+			if req.Operation == "poll" && busy < 3 {
+				busy++
+				hub.resolveWorkspace(message.RequestID, domain.RunnerWorkspaceResponse{Status: 429, Error: "too many workspace requests"})
+				continue
+			}
+			if req.Command != nil {
+				req.Command.Argv[0] = "sh"
+			}
+			result, err := pool.Handle(context.Background(), remoteRoot, "", nil, req, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			payload, _ := json.Marshal(result)
+			hub.resolveWorkspace(message.RequestID, domain.RunnerWorkspaceResponse{Status: 200, Payload: payload})
+		case err := <-done:
+			if err != nil || busy != 3 {
+				t.Fatalf("busy runner failed the turn: busy=%d err=%v", busy, err)
+			}
+			return
+		case <-deadline:
+			t.Fatal("busy runner never recovered")
+		}
+	}
+}

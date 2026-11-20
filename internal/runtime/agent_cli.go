@@ -15,9 +15,9 @@ import (
 )
 
 // Agent CLIs beyond CodeBuddy / Codex / Claude Code. Each one runs with the
-// responsible user's own key from 个人配置 inside a private HOME that also
-// holds the CLI's MCP and model configuration, so neither the host login nor
-// the host configuration leaks into a run.
+// responsible user's credential inside a private HOME that also holds MCP
+// and model configuration. Antigravity may explicitly reuse the machine
+// owner's account login; other agent CLIs use a key from 个人配置.
 const (
 	AgentCLIOpenCode    = "opencode"
 	AgentCLICursor      = "cursor"
@@ -78,7 +78,10 @@ func agentCLIModelOptional(kind, baseURL string) bool {
 // AgentCLIOptions carries the per-invocation facts the credential binding
 // needs to render a CLI's model configuration.
 type AgentCLIOptions struct {
-	Model string
+	ApprovalCommand string
+	Model           string
+	// Effort is the reasoning effort chosen for Model.
+	Effort string
 	// SystemPromptFile is the system prompt path as the process sees it
 	// (relative paths resolve against the working directory).
 	SystemPromptFile string
@@ -89,14 +92,16 @@ type AgentCLIOptions struct {
 // agentCLIKeyEnv holds the user's key for CLIs whose configuration names
 // the variable instead of the secret.
 const agentCLIKeyEnv = "AGENTFLOW_CLI_API_KEY"
+const kimiThinkingEffortEnv = "KIMI_MODEL_THINKING_EFFORT"
 
 // agentCLIHostEnv is cleared for every child: these variables would select
 // the host's own login, key, gateway or configuration directory.
 var agentCLIHostEnv = append([]string{
 	agentCLIKeyEnv, "CURSOR_API_KEY", "CURSOR_AUTH_TOKEN", "GEMINI_API_KEY", "GOOGLE_API_KEY", "GOOGLE_GEMINI_BASE_URL", "GEMINI_BASE_URL",
+	"AGY_ADC_AUTH", "GOOGLE_APPLICATION_CREDENTIALS", "GOOGLE_GENAI_USE_VERTEXAI", "GEMINI_HOME", "AGY_ACP_FORCE_FILE_STORAGE",
 	"AGY_LLM_GATEWAY_URL", "AGY_LLM_GATEWAY_API_KEY", "AGY_LLM_GATEWAY_WIRE_PROTOCOL", "AGY_LLM_GATEWAY_MODELS",
 	"DEEPSEEK_API_KEY", "DSH_HOME", "MOONSHOT_API_KEY", "KIMI_API_KEY", "KIMI_BASE_URL", "KIMI_CODE_HOME",
-	"KIMI_MODEL_NAME", "KIMI_MODEL_API_KEY", "KIMI_MODEL_BASE_URL", "KIMI_MODEL_PROVIDER_TYPE",
+	"KIMI_MODEL_NAME", "KIMI_MODEL_API_KEY", "KIMI_MODEL_BASE_URL", "KIMI_MODEL_PROVIDER_TYPE", kimiThinkingEffortEnv,
 	"OPENCODE_CONFIG", "OPENCODE_CONFIG_CONTENT", "OPENCODE_CONFIG_DIR", "PI_CODING_AGENT_DIR",
 	"ZCODE_DATA_BASE_DIR", zcodePersonalFileEnv,
 }, zcodeHostEnv...)
@@ -146,48 +151,12 @@ func WriteAgentCLIMCPConfig(kind string, home AgentCLIHome, entries map[string]a
 		command, _ := entry["command"].(string)
 		headers := entry["headers"]
 		switch {
-		case kind == AgentCLIOpenCode && url != "":
-			server := map[string]any{"type": "remote", "url": url, "enabled": true, "timeout": 600000}
-			if headers != nil {
-				server["headers"] = headers
-			}
-			servers[id] = server
-		case kind == AgentCLIOpenCode && command != "":
-			argv := []any{command}
-			if args, ok := entry["args"].([]string); ok {
-				for _, arg := range args {
-					argv = append(argv, arg)
-				}
-			} else if args, ok := entry["args"].([]any); ok {
-				argv = append(argv, args...)
-			}
-			server := map[string]any{"type": "local", "command": argv, "enabled": true, "timeout": 600000}
-			if env := entry["env"]; env != nil {
-				server["environment"] = env
-			}
-			servers[id] = server
+		case kind == AgentCLIOpenCode && (url != "" || command != ""):
+			servers[id] = openCodeMCPServer(entry)
 		case kind == AgentCLIZCode && (url != "" || command != ""):
 			servers[id] = zcodeMCPServer(entry)
 		case kind == AgentCLIDeepSeek && (url != "" || command != ""):
-			name := dshServerNameRe.ReplaceAllString(id, "_")
-			if len(name) > 32 {
-				name = name[:32]
-			}
-			config := map[string]any{"serverName": name, "toolCallTimeoutMs": 600000}
-			if url != "" {
-				config["transport"], config["url"] = "streamable-http", url
-				if headers != nil {
-					config["headers"] = headers
-				}
-			} else {
-				config["transport"], config["command"] = "stdio", command
-				for _, key := range []string{"args", "env", "cwd"} {
-					if value := entry[key]; value != nil {
-						config[key] = value
-					}
-				}
-			}
-			dshInserts = append(dshInserts, map[string]any{"id": "agentflow-mcp-" + name, "name": "@deepseek-ai/dsh-mcp-client", "config": config})
+			dshInserts = append(dshInserts, deepSeekMCPInsert(id, entry))
 		case url != "":
 			key := "url"
 			if kind == AgentCLIAntigravity {
@@ -206,6 +175,14 @@ func WriteAgentCLIMCPConfig(kind string, home AgentCLIHome, entries map[string]a
 				}
 			}
 			servers[id] = server
+		}
+		if kind == AgentCLIKimi {
+			// Kimi gives up on an MCP call after 60s by default; the gateway
+			// may wait up to 9 minutes for a write approval. A per-server
+			// toolTimeoutMs wins over KIMI_MCP_TOOL_TIMEOUT_MS and config.toml.
+			if server, ok := servers[id].(map[string]any); ok {
+				server["toolTimeoutMs"] = 600000
+			}
 		}
 	}
 	var document any
@@ -243,6 +220,57 @@ func WriteAgentCLIMCPConfig(kind string, home AgentCLIHome, entries map[string]a
 		}
 	}
 	return writeAgentCLIFile(home, rel, data)
+}
+
+// openCodeMCPServer renders one MCP entry for OpenCode: a remote server for
+// a URL entry, otherwise a local server whose command is the argv array.
+func openCodeMCPServer(entry map[string]any) map[string]any {
+	if url, _ := entry["url"].(string); url != "" {
+		server := map[string]any{"type": "remote", "url": url, "enabled": true, "timeout": 600000}
+		if headers := entry["headers"]; headers != nil {
+			server["headers"] = headers
+		}
+		return server
+	}
+	command, _ := entry["command"].(string)
+	argv := []any{command}
+	if args, ok := entry["args"].([]string); ok {
+		for _, arg := range args {
+			argv = append(argv, arg)
+		}
+	} else if args, ok := entry["args"].([]any); ok {
+		argv = append(argv, args...)
+	}
+	server := map[string]any{"type": "local", "command": argv, "enabled": true, "timeout": 600000}
+	if env := entry["env"]; env != nil {
+		server["environment"] = env
+	}
+	return server
+}
+
+// deepSeekMCPInsert renders one MCP entry as a dsh-mcp-client plugin insert;
+// the server name is the sanitized id capped at 32 characters.
+func deepSeekMCPInsert(id string, entry map[string]any) map[string]any {
+	name := dshServerNameRe.ReplaceAllString(id, "_")
+	if len(name) > 32 {
+		name = name[:32]
+	}
+	config := map[string]any{"serverName": name, "toolCallTimeoutMs": 600000}
+	if url, _ := entry["url"].(string); url != "" {
+		config["transport"], config["url"] = "streamable-http", url
+		if headers := entry["headers"]; headers != nil {
+			config["headers"] = headers
+		}
+	} else {
+		command, _ := entry["command"].(string)
+		config["transport"], config["command"] = "stdio", command
+		for _, key := range []string{"args", "env", "cwd"} {
+			if value := entry[key]; value != nil {
+				config[key] = value
+			}
+		}
+	}
+	return map[string]any{"id": "agentflow-mcp-" + name, "name": "@deepseek-ai/dsh-mcp-client", "config": config}
 }
 
 // agyChatPermissions are the Antigravity deny rules of AI 对话.
@@ -348,6 +376,14 @@ func ApplyAgentCLICredential(kind string, cred ProviderCredential, options Agent
 	if key == "" {
 		return nil, nil, fmt.Errorf("需求责任人未配置 %s API Key，请在个人配置中配置", AgentCLILabel(kind))
 	}
+	if kind == AgentCLIAntigravity {
+		// A crashed account-login invocation may leave a credential copy.
+		// API-key execution must not retain or inherit that account.
+		login, _ := runnerLoginSpec(kind)
+		if _, _, err := prepareRunnerLogin(home, login, false); err != nil {
+			return nil, nil, err
+		}
+	}
 	baseURL := strings.TrimRight(strings.TrimSpace(cred.BaseURL), "/")
 	protocol := AgentCLIProtocol(kind, cred.Protocol)
 	if baseURL == "" && AgentCLINeedsBaseURL(kind, protocol) {
@@ -387,6 +423,9 @@ func ApplyAgentCLICredential(kind string, cred ProviderCredential, options Agent
 		env["OPENCODE_DISABLE_AUTOUPDATE"] = "1"
 	case AgentCLICursor:
 		env["CURSOR_API_KEY"] = key
+		if model != "" {
+			argv = withCursorModelArg(argv, CursorModelID(model, options.Effort, cred.Models))
+		}
 	case AgentCLIAntigravity:
 		settings := map[string]any{}
 		if protocol == AgentCLIProtocolChat {
@@ -423,7 +462,32 @@ func ApplyAgentCLICredential(kind string, cred ProviderCredential, options Agent
 		}
 		lines = append(lines, "api_key_env = "+strconv.Quote(agentCLIKeyEnv), "",
 			"[models.agentflow]", `provider = "agentflow"`, "model = "+strconv.Quote(model),
-			"max_context_size = 262144", `capabilities = ["thinking", "tool_use"]`, "")
+			"max_context_size = 262144")
+		effort := strings.TrimSpace(options.Effort)
+		if err := domain.ValidateAgentEffort(effort, kind); err != nil {
+			return nil, nil, err
+		}
+		if effort != "" {
+			if baseURL != "" {
+				return nil, nil, fmt.Errorf("%s 的第三方网关使用默认思考强度", AgentCLILabel(kind))
+			}
+			// Kimi's native provider applies this override on every turn,
+			// including resumes, without changing the session's saved default.
+			nativeEffort := effort
+			switch effort {
+			case "none":
+				nativeEffort = "off"
+			case "thinking":
+				nativeEffort = "on"
+			}
+			env[kimiThinkingEffortEnv] = nativeEffort
+		}
+		lines = append(lines, `capabilities = ["thinking", "tool_use"]`, "")
+		if hook := options.ApprovalCommand; hook != "" {
+			// Kimi validates 1–600 seconds and allows the tool on timeout; the
+			// hook's own retry budget ends well before that.
+			lines = append(lines, "[[hooks]]", `event = "PreToolUse"`, "command = "+strconv.Quote(hook), "timeout = 600", "")
+		}
 		if err := writeAgentCLIFile(home, ".kimi-code/config.toml", []byte(strings.Join(lines, "\n"))); err != nil {
 			return nil, nil, err
 		}
@@ -431,7 +495,7 @@ func ApplyAgentCLICredential(kind string, cred ProviderCredential, options Agent
 		env["KIMI_CODE_HOME"] = homeEnv + "/.kimi-code"
 		env["KIMI_DISABLE_TELEMETRY"] = "1"
 	case AgentCLIPi:
-		api := map[string]string{AgentCLIProtocolChat: "openai-completions", AgentCLIProtocolResponses: "openai-responses", AgentCLIProtocolMessages: "anthropic-messages"}[protocol]
+		api := agentCLIPiAPI(protocol)
 		models, _ := json.MarshalIndent(map[string]any{"providers": map[string]any{"agentflow": map[string]any{
 			"baseUrl": baseURL, "api": api, "apiKey": "$" + agentCLIKeyEnv,
 			"models": []map[string]any{{"id": model, "reasoning": true}},
@@ -442,49 +506,96 @@ func ApplyAgentCLICredential(kind string, cred ProviderCredential, options Agent
 		env[agentCLIKeyEnv] = key
 		env["PI_CODING_AGENT_DIR"] = homeEnv + "/.pi/agent"
 	case AgentCLIDeepSeek:
-		patch := []any{}
-		if baseURL == "" {
-			env["DEEPSEEK_API_KEY"] = key
-			if model != "" {
-				patch = append(patch, map[string]any{"id": "agent-default-model", "config": map[string]any{"provider": "deepseek-official", "model": model}})
-			}
-		} else {
-			api := map[string]string{AgentCLIProtocolChat: "openai-completions", AgentCLIProtocolResponses: "openai-responses", AgentCLIProtocolMessages: "anthropic-messages"}[protocol]
-			env[agentCLIKeyEnv] = key
-			patch = []any{
-				map[string]any{"id": "llm-pi-ai", "config": map[string]any{"providers": map[string]any{"agentflow": map[string]any{
-					"displayName": "AgentFlow", "apiKeyEnv": agentCLIKeyEnv, "api": api, "baseURL": baseURL,
-					"models": []map[string]any{{"id": model}},
-				}}}},
-				map[string]any{"id": "agent-default-model", "config": map[string]any{"provider": "agentflow", "model": model}},
-			}
-		}
-		data, _ := json.MarshalIndent(patch, "", "  ")
-		if err := writeAgentCLIFile(home, ".dsh/agentflow-model.json", data); err != nil {
-			return nil, nil, err
-		}
-		env["DSH_HOME"] = homeEnv + "/.dsh"
-		// Launcher flags precede the profile's own arguments: dsh --profile <name> --patch … app-args.
-		if len(argv) < 3 {
-			return nil, nil, errors.New("invalid DeepSeek Harness invocation")
-		}
-		patches := []string{"--patch", homeEnv + "/.dsh/agentflow-model.json"}
-		root, err := openAgentCLIHome(home)
-		if err != nil {
-			return nil, nil, err
-		}
-		_, err = root.Stat(filepath.Join(".dsh", "agentflow-mcp.json"))
-		root.Close()
-		if err == nil {
-			patches = append(patches, "--patch", homeEnv+"/.dsh/agentflow-mcp.json")
-		}
-		head := append([]string{}, argv[:3]...)
-		argv = append(append(head, patches...), argv[3:]...)
+		return applyDeepSeekCredential(home, homeEnv, key, baseURL, protocol, model, strings.TrimSpace(options.Effort), argv)
 	case AgentCLIZCode:
-		return applyZCodeCredential(home, homeEnv, key, baseURL, protocol, model, argv)
+		return applyZCodeCredential(home, homeEnv, key, baseURL, protocol, model, strings.TrimSpace(options.Effort), argv)
 	default:
 		return nil, nil, fmt.Errorf("unknown agent CLI %q", kind)
 	}
+	return argv, env, nil
+}
+
+// agentCLIPiAPI maps a wire protocol to the pi-ai api name shared by Pi and
+// DeepSeek Harness provider configs.
+func agentCLIPiAPI(protocol string) string {
+	return map[string]string{AgentCLIProtocolChat: "openai-completions", AgentCLIProtocolResponses: "openai-responses", AgentCLIProtocolMessages: "anthropic-messages"}[protocol]
+}
+
+// applyDeepSeekCredential writes the DeepSeek Harness model patch and puts the
+// launcher --patch flags ahead of the profile's own arguments.
+func applyDeepSeekCredential(home AgentCLIHome, homeEnv, key, baseURL, protocol, model, effort string, argv []string) ([]string, map[string]string, error) {
+	env := map[string]string{}
+	patch := []any{}
+	selection := map[string]any{}
+	deepSeekModel := model == "deepseek-flash" || model == "deepseek-v4-pro"
+	if baseURL == "" && (deepSeekModel || model == "") && effort == "" {
+		// Headless resumes reuse the saved selection unless the patch names
+		// an effort. Restore the built-in route's default for a blank choice.
+		effort = "high"
+	}
+	if effort != "" {
+		if err := domain.ValidateAgentEffort(effort, AgentCLIDeepSeek); err != nil {
+			return nil, nil, err
+		}
+		if effort == "none" {
+			effort = "off"
+		}
+		selection["reasoningEffort"] = effort
+	}
+	if baseURL == "" || (deepSeekModel && protocol == AgentCLIProtocolMessages && effort != "") {
+		env["DEEPSEEK_API_KEY"] = key
+		if baseURL != "" {
+			patch = append(patch, map[string]any{"id": "llm-deepseek", "config": map[string]any{"baseURL": baseURL}})
+		}
+		if model != "" {
+			selection["provider"] = "deepseek-official"
+			selection["model"] = model
+		}
+	} else {
+		api := agentCLIPiAPI(protocol)
+		env[agentCLIKeyEnv] = key
+		provider := "agentflow"
+		modelConfig := map[string]any{"id": model}
+		if effort != "" {
+			// Keep the gateway's unconfigured route distinct so reverting to
+			// it on resume does not inherit the explicitly selected effort.
+			provider = "agentflow-reasoning"
+			modelConfig["reasoningEfforts"] = map[string]any{"off": nil, "low": "low", "high": "high", "max": "max"}
+			if api == "openai-completions" && deepSeekModel {
+				modelConfig["compat"] = map[string]any{"thinkingFormat": "deepseek"}
+			}
+		}
+		patch = append(patch, map[string]any{"id": "llm-pi-ai", "config": map[string]any{"providers": map[string]any{provider: map[string]any{
+			"displayName": "AgentFlow", "apiKeyEnv": agentCLIKeyEnv, "api": api, "baseURL": baseURL,
+			"models": []map[string]any{modelConfig},
+		}}}})
+		selection["provider"] = provider
+		selection["model"] = model
+	}
+	if len(selection) > 0 {
+		patch = append(patch, map[string]any{"id": "agent-default-model", "config": selection})
+	}
+	data, _ := json.MarshalIndent(patch, "", "  ")
+	if err := writeAgentCLIFile(home, ".dsh/agentflow-model.json", data); err != nil {
+		return nil, nil, err
+	}
+	env["DSH_HOME"] = homeEnv + "/.dsh"
+	// Launcher flags precede the profile's own arguments: dsh --profile <name> --patch … app-args.
+	if len(argv) < 3 {
+		return nil, nil, errors.New("invalid DeepSeek Harness invocation")
+	}
+	patches := []string{"--patch", homeEnv + "/.dsh/agentflow-model.json"}
+	root, err := openAgentCLIHome(home)
+	if err != nil {
+		return nil, nil, err
+	}
+	_, err = root.Stat(filepath.Join(".dsh", "agentflow-mcp.json"))
+	root.Close()
+	if err == nil {
+		patches = append(patches, "--patch", homeEnv+"/.dsh/agentflow-mcp.json")
+	}
+	head := append([]string{}, argv[:3]...)
+	argv = append(append(head, patches...), argv[3:]...)
 	return argv, env, nil
 }
 
@@ -508,7 +619,7 @@ func AgentCLIUserCredentials(user domain.User) map[string]ProviderCredential {
 	}
 	out := make(map[string]ProviderCredential, len(user.AgentCLICredentials))
 	for kind, cred := range user.AgentCLICredentials {
-		out[kind] = ProviderCredential{APIKey: cred.APIKey, BaseURL: cred.BaseURL, Protocol: cred.Protocol}
+		out[kind] = ProviderCredential{APIKey: cred.APIKey, BaseURL: cred.BaseURL, Protocol: cred.Protocol, Models: cred.Models}
 	}
 	return out
 }
@@ -541,4 +652,19 @@ func AgentCLIBinary(kind string) string {
 		return "cursor-agent"
 	}
 	return kind
+}
+
+// withCursorModelArg replaces the value of the first --model option.
+func withCursorModelArg(argv []string, id string) []string {
+	for i := 0; i+1 < len(argv); i++ {
+		if argv[i] == "--model" {
+			if argv[i+1] == id {
+				return argv
+			}
+			out := append([]string{}, argv...)
+			out[i+1] = id
+			return out
+		}
+	}
+	return argv
 }

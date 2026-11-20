@@ -10,11 +10,13 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"slices"
 	"strings"
 	stdsync "sync"
 	"time"
 
 	"agentflow/internal/domain"
+	"agentflow/internal/gitwork"
 	"agentflow/internal/repo"
 
 	"github.com/gin-gonic/gin"
@@ -87,6 +89,7 @@ type runnersHandlers struct {
 	*deps
 	runnerWaiters   *runnerWaiterRegistry
 	runnerControls  *runnerControlHub
+	assistant       *assistantHandlers
 	runnerBindMu    stdsync.Mutex
 	runnerBindCodes map[string]runnerBindCode
 }
@@ -131,25 +134,22 @@ func (r *runnerWaiterRegistry) notify(providers []string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	for _, w := range r.waiters {
-		for _, p := range providers {
-			if containsStringFold(w.providers, p) {
-				select {
-				case w.ch <- struct{}{}:
-				default:
-				}
-				break
-			}
+		if !w.accepts(providers) {
+			continue
+		}
+		select {
+		case w.ch <- struct{}{}:
+		default:
 		}
 	}
 }
 
-func containsStringFold(values []string, want string) bool {
-	for _, v := range values {
-		if strings.EqualFold(v, want) {
-			return true
-		}
-	}
-	return false
+// accepts reports whether any of providers matches one the waiter is polling
+// for, compared case-insensitively.
+func (w *runnerWaiter) accepts(providers []string) bool {
+	return slices.ContainsFunc(providers, func(p string) bool {
+		return slices.ContainsFunc(w.providers, func(v string) bool { return strings.EqualFold(v, p) })
+	})
 }
 
 // ---------- background sweeper ----------
@@ -259,6 +259,9 @@ func (h *runnersHandlers) runnerDefault(c *gin.Context) {
 		"runner":    runner,
 		"online":    found && runner.Status == domain.RunnerStatusOnline,
 		"cloudPool": map[string]any{"configured": poolConfigured, "online": poolOnline},
+		// minRunnerVersion lets the runners page disable「设为默认」with the
+		// same rule PUT /api/runners/default enforces.
+		"minRunnerVersion": domain.RunnerVersionDefaultSelection,
 	})
 }
 
@@ -332,7 +335,8 @@ func (h *runnersHandlers) runnerRunLimitSet(c *gin.Context) {
 }
 
 // runnerDefaultSet selects or clears the user's default execution machine.
-// Only machines bound to the requesting user can be selected.
+// Only online machines bound to the requesting user, at or above
+// RunnerVersionDefaultSelection, can be selected.
 // 路由: g.PUT("/api/runners/default", h.runnerDefaultSet)
 func (h *runnersHandlers) runnerDefaultSet(c *gin.Context) {
 	user, ok := h.requestUser(c.Request, true)
@@ -357,6 +361,10 @@ func (h *runnersHandlers) runnerDefaultSet(c *gin.Context) {
 			c.JSON(http.StatusForbidden, map[string]string{"error": "只能选择自己绑定的执行机器"})
 			return
 		}
+		if reason := runner.DefaultSelectionBlocker(); reason != "" {
+			c.JSON(http.StatusConflict, map[string]string{"error": reason})
+			return
+		}
 	}
 	if err := h.repo.SetDefaultRunner(user.ID, runnerID, time.Now().UTC()); err != nil {
 		if err == repo.ErrRunnerNotFound {
@@ -367,7 +375,7 @@ func (h *runnersHandlers) runnerDefaultSet(c *gin.Context) {
 		return
 	}
 	if runnerID == "" {
-		c.JSON(http.StatusOK, map[string]any{"runnerId": "", "message": "已恢复云端 API Key 模式"})
+		c.JSON(http.StatusOK, map[string]any{"runnerId": "", "message": "已切回云端执行"})
 	} else {
 		c.JSON(http.StatusOK, map[string]any{"runnerId": runnerID, "message": "已设为默认执行机器，你的任务和沙箱将在这台机器上执行"})
 	}
@@ -677,7 +685,7 @@ func normalizeRunnerRuntimes(reported, existing []domain.RunnerRuntime) []domain
 		if previous.Status == domain.RuntimeStatusDisabled {
 			out[i].Status = domain.RuntimeStatusDisabled
 		}
-		if domain.IsAgentCLIKind(out[i].Provider) {
+		if domain.IsAgentCLIKind(out[i].Provider) && !domain.SupportsRunnerLogin(out[i].Provider) {
 			out[i].AuthMode = domain.RuntimeAuthPersonal
 		} else if previous.AuthMode == domain.RuntimeAuthLocal || previous.AuthMode == domain.RuntimeAuthPersonal {
 			out[i].AuthMode = previous.AuthMode
@@ -818,10 +826,11 @@ func (h *runnersHandlers) runnerTaskClaim(c *gin.Context) {
 		return
 	}
 	var input struct {
-		AvailableRuntimes []string `json:"availableRuntimes"`
-		Capacity          int      `json:"capacity"`
-		Preflight         bool     `json:"preflight"`
-		NoWait            bool     `json:"noWait"`
+		AvailableRuntimes        []string `json:"availableRuntimes"`
+		Capacity                 int      `json:"capacity"`
+		Preflight                bool     `json:"preflight"`
+		NoWait                   bool     `json:"noWait"`
+		SupportsGitSSHKnownHosts bool     `json:"supportsGitSshKnownHosts"`
 	}
 	if !decode(c, &input) {
 		return
@@ -847,7 +856,15 @@ func (h *runnersHandlers) runnerTaskClaim(c *gin.Context) {
 		}
 		if task.Invocation != nil && task.Invocation.GitSSHUserID > 0 && runner.SupportsGitSSH() && len(task.Invocation.GitSSHRemotes()) > 0 {
 			task.Invocation.GitSSHKeys = h.repo.GitSSHKeysForRemotes(task.Invocation.GitSSHUserID, task.Invocation.GitSSHRemotes())
+			if input.SupportsGitSSHKnownHosts {
+				task.GitSSHKnownHosts = gitwork.SSHKnownHostsForKeys(task.Invocation.GitSSHKeys)
+			}
 			task.Invocation.GitSSHUserID = 0
+			c.Header("Cache-Control", "no-store")
+		}
+		if task.Invocation != nil && task.Invocation.GitHTTPUserID > 0 && runner.SupportsGitHTTP() {
+			task.Invocation.GitHTTPCredentials = h.repo.GitHTTPCredentialSecrets(c.Request.Context(), task.Invocation.GitHTTPUserID)
+			task.Invocation.GitHTTPUserID = 0
 			c.Header("Cache-Control", "no-store")
 		}
 		c.JSON(http.StatusOK, map[string]any{"task": resolveRunnerTaskSandbox(task, runner.OS)})

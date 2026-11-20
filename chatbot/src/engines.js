@@ -5,9 +5,9 @@ export const defaultEngine = "codebuddy";
 // Bundled logo per CLI; an unknown CLI falls back to its model's brand.
 const brands = {
   codebuddy: "codebuddy", codex: "codex", "claude-code": "claude",
-  opencode: "opencode", cursor: "cursor", agy: "gemini", kimi: "kimi", pi: "pi", dsh: "deepseek", zcode: "zhipu",
+  opencode: "opencode", cursor: "cursor", agy: "antigravity", kimi: "kimi-code", pi: "pi", dsh: "deepseek", zcode: "zhipu",
 };
-export const engineBrand = (id) => brands[id] || "";
+export const engineBrand = (id) => Object.hasOwn(brands, id) ? brands[id] : "";
 
 export const modelEngine = (model) => model?.engine || defaultEngine;
 
@@ -19,8 +19,11 @@ export function engineOfModel(id, models = []) {
   return prefix || defaultEngine;
 }
 
+export const concreteModel = (model, engine = modelEngine(model)) =>
+  !!model?.id && model.id !== "default" && model.id !== `${engine}:default`;
+
 export const engineModels = (models, engine) =>
-  (models || []).filter((m) => modelEngine(m) === engine);
+  (models || []).filter((m) => modelEngine(m) === engine && concreteModel(m, engine));
 
 // Mirrors assistantEngineMissingKey in internal/httpapi/assistant_engines.go;
 // credentialHint turns it into a "去配置" button.

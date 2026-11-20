@@ -186,7 +186,7 @@ func TestRunnerDeregisterRemovesMachineAndSelections(t *testing.T) {
 		t.Fatalf("bind code response: %s", rec.Body.String())
 	}
 	rec = requestWithHeaders(t, h, http.MethodPost, "/api/runners/register", map[string]any{
-		"name": "dereg-mac", "os": "darwin", "arch": "arm64", "maxConcurrency": 1,
+		"name": "dereg-mac", "os": "darwin", "arch": "arm64", "version": domain.RunnerVersionDefaultSelection, "maxConcurrency": 1,
 	}, map[string]string{"X-Bootstrap-Token": issued.Code})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("register: %d %s", rec.Code, rec.Body.String())

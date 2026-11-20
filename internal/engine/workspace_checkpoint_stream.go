@@ -38,7 +38,7 @@ func (e *Engine) saveConversationWorkspace(ctx context.Context, run domain.Run, 
 		if reason != "" {
 			return fmt.Errorf("%s", reason)
 		}
-		err = runtime.CreateWorkspaceCheckpointTo(root, workspaceCheckpointContextWriter{ctx, file})
+		err = runtime.CreateWorkspaceCheckpointToContext(ctx, root, workspaceCheckpointContextWriter{ctx, file})
 		if os.IsNotExist(err) && run.WorkspaceHost == "" {
 			if err = file.Truncate(0); err != nil {
 				return err
@@ -62,7 +62,11 @@ func (e *Engine) closeCheckpointTransfer(ctx context.Context, run domain.Run, id
 	if id == "" {
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	budget := 5 * time.Second
+	if ctx.Err() != nil {
+		budget = time.Second
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), budget)
 	defer cancel()
 	_, _ = e.requestWorkspaceCheckpoint(ctx, run, domain.RunnerWorkspaceRequest{RunID: run.ID, WorkspaceLayout: run.ExecutionContext.RunnerWorkspaceLayout, Operation: domain.RunnerWorkspaceOperationCheckpointClose, CheckpointTransfer: &domain.WorkspaceCheckpointTransfer{ID: id}})
 }
@@ -212,6 +216,14 @@ func (e *Engine) restoreOrReuseRemoteConversationCheckpoint(ctx context.Context,
 		}
 	} else {
 		err = workspaceCheckpointResponseError(probe)
+		if err == nil {
+			var status struct {
+				Empty bool `json:"empty"`
+			}
+			if len(probe.Payload) > 0 && json.Unmarshal(probe.Payload, &status) == nil && status.Empty {
+				err = os.ErrNotExist
+			}
+		}
 	}
 	if err == nil {
 		return e.verifyStoredCheckpoint(ctx, run.ID)

@@ -3,6 +3,7 @@ package knowledge
 import (
 	"context"
 	"net/url"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -25,7 +26,7 @@ type Store interface {
 	DeleteKnowledgeSubmission(id string) error
 	KnowledgeArtifacts(projectID string, limit int) []domain.KnowledgeCandidate
 	Artifact(runID, artifactID string) (domain.Artifact, bool)
-	Run(id string) (domain.Run, bool)
+	RunHeader(id string) (domain.Run, error)
 	Agents() []domain.AgentDefinition
 	Workflows() []domain.WorkflowDefinition
 }
@@ -82,21 +83,9 @@ func (s *Service) UpdateSettings(input SettingsInput, actor string) (domain.Know
 	}
 	next := domain.KnowledgeSettings{
 		Enabled: input.Enabled, URL: rawURL, WriteEnabled: input.WriteEnabled,
-		DefaultSources: cleanSources(input.DefaultSources), UpdatedBy: actor,
-	}
-	if input.ProjectSources != nil {
-		next.ProjectSources = map[string][]string{}
-		for project, list := range input.ProjectSources {
-			if project = strings.TrimSpace(project); project != "" {
-				next.ProjectSources[project] = cleanSources(list)
-			}
-		}
-	}
-	switch token := strings.TrimSpace(input.Token); {
-	case token != "":
-		next.Token = stripBearer(token)
-	case !input.ClearToken:
-		next.Token = current.Token
+		Token:          resolveSettingsToken(input, current.Token),
+		DefaultSources: cleanSources(input.DefaultSources),
+		ProjectSources: cleanProjectSources(input.ProjectSources), UpdatedBy: actor,
 	}
 	if next.Enabled && (next.URL == "" || next.Token == "") {
 		return current, apperr.New(apperr.Invalid, "启用前需要填写知识库地址和 Token")
@@ -105,6 +94,33 @@ func (s *Service) UpdateSettings(input SettingsInput, actor string) (domain.Know
 		return current, err
 	}
 	return s.store.KnowledgeSettings(), nil
+}
+
+// cleanProjectSources normalizes the per-project source lists, dropping
+// blank project keys. A nil map stays nil so "no overrides" is preserved.
+func cleanProjectSources(in map[string][]string) map[string][]string {
+	if in == nil {
+		return nil
+	}
+	out := map[string][]string{}
+	for project, list := range in {
+		if project = strings.TrimSpace(project); project != "" {
+			out[project] = cleanSources(list)
+		}
+	}
+	return out
+}
+
+// resolveSettingsToken picks the token to save: a new token (without its
+// Bearer prefix), else the current one unless the input asks to clear it.
+func resolveSettingsToken(input SettingsInput, current string) string {
+	switch token := strings.TrimSpace(input.Token); {
+	case token != "":
+		return stripBearer(token)
+	case !input.ClearToken:
+		return current
+	}
+	return ""
 }
 
 type CheckResult struct {
@@ -316,6 +332,16 @@ func (s *Service) Submit(input SubmissionInput, actor string) (domain.KnowledgeS
 	}
 	content := input.Content
 	if input.ArtifactID != "" {
+		run, err := s.store.RunHeader(input.RunID)
+		if err != nil {
+			return item, err
+		}
+		if run.IsPersonalWorkspace() {
+			return item, apperr.New(apperr.Forbidden, "个人工作区产物不能提交到共享知识库")
+		}
+		if run.ID == "" {
+			return item, apperr.New(apperr.NotFound, "运行产物不存在")
+		}
 		if existing := s.store.KnowledgeSubmissionIDsByArtifact([]string{input.ArtifactID})[input.ArtifactID]; existing != "" {
 			return item, apperr.New(apperr.Conflict, "该产物已加入沉淀队列").With("id", existing)
 		}
@@ -325,9 +351,7 @@ func (s *Service) Submit(input SubmissionInput, actor string) (domain.KnowledgeS
 		}
 		item.RunID, item.NodeID, item.ArtifactID = art.RunID, art.NodeID, art.ID
 		content = art.Content
-		if run, ok := s.store.Run(art.RunID); ok {
-			item.ProjectID, item.IssueID, item.WorkflowID = run.ExecutionContext.ProjectID, run.ExecutionContext.IssueID, run.WorkflowID
-		}
+		item.ProjectID, item.IssueID, item.WorkflowID = run.ExecutionContext.ProjectID, run.ExecutionContext.IssueID, run.WorkflowID
 	}
 	parsed := ParseDistilled(content)
 	item.Content = parsed.Body
@@ -476,10 +500,8 @@ func cleanSources(in []string) []string {
 }
 
 func appendUnique(list []string, v string) []string {
-	for _, existing := range list {
-		if existing == v {
-			return list
-		}
+	if slices.Contains(list, v) {
+		return list
 	}
 	return append(list, v)
 }
