@@ -14,6 +14,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	goruntime "runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -29,6 +30,7 @@ var ErrConversationNotStarted = errors.New("conversation process was not started
 // ConversationProcessRequest travels only over the authenticated runner
 // control connection. Keys and process input never enter durable task rows.
 type ConversationProcessRequest struct {
+	Transient  bool                 `json:"transient,omitempty"`
 	Operation  string               `json:"operation"`
 	ID         string               `json:"id,omitempty"`
 	SessionKey string               `json:"sessionKey"`
@@ -40,6 +42,8 @@ type ConversationProcessRequest struct {
 	After      int64                `json:"after,omitempty"`
 	Gateway    string               `json:"gateway,omitempty"`
 	Token      string               `json:"token,omitempty"`
+
+	ReportVersion bool `json:"reportVersion,omitempty"`
 }
 
 type ConversationFile struct {
@@ -50,27 +54,34 @@ type ConversationFile struct {
 }
 
 type ConversationCommand struct {
-	Argv        []string
-	Provider    string
-	Bindings    []CredentialBinding
-	Environment map[string]string
-	AgentCLI    AgentCLIOptions
-	Credentials RunCredentials
-	Interactive bool
+	RunnerLogin        bool `json:",omitempty"`
+	Argv               []string
+	Provider           string
+	Bindings           []CredentialBinding
+	Environment        map[string]string
+	ExtraCredentialEnv map[string]string
+	AgentCLI           AgentCLIOptions
+	Credentials        RunCredentials
+	Interactive        bool
 }
 
 func ConversationCommandFor(command CommandSpec, credentials RunCredentials) *ConversationCommand {
-	return &ConversationCommand{Argv: command.Argv, Provider: command.Provider, Bindings: command.CredentialBindings, Environment: CommandEnvironment(command), AgentCLI: command.AgentCLI, Credentials: credentials, Interactive: command.Stdin != nil}
+	return &ConversationCommand{Argv: command.Argv, Provider: command.Provider, Bindings: command.CredentialBindings, Environment: CommandEnvironment(command), ExtraCredentialEnv: command.ExtraCredentialEnv, AgentCLI: command.AgentCLI, Credentials: credentials, Interactive: command.Stdin != nil}
 }
 
 type ConversationProcessResult struct {
-	Root       string                  `json:"root,omitempty"`
-	ID         string                  `json:"id,omitempty"`
-	Events     []domain.TelemetryEvent `json:"events,omitempty"`
-	Sequence   int64                   `json:"sequence,omitempty"`
-	Done       bool                    `json:"done,omitempty"`
-	Error      string                  `json:"error,omitempty"`
-	NotStarted bool                    `json:"notStarted,omitempty"`
+	Root          string                  `json:"root,omitempty"`
+	ID            string                  `json:"id,omitempty"`
+	Events        []domain.TelemetryEvent `json:"events,omitempty"`
+	Sequence      int64                   `json:"sequence,omitempty"`
+	Done          bool                    `json:"done,omitempty"`
+	Error         string                  `json:"error,omitempty"`
+	NotStarted    bool                    `json:"notStarted,omitempty"`
+	CLIVersion    string                  `json:"cliVersion,omitempty"`
+	VersionSource string                  `json:"versionSource,omitempty"`
+	// GitScrubbed names the Git credentials the agent wrote by hand that were
+	// removed when a workspace CLI finished; it never holds their values.
+	GitScrubbed []string `json:"gitScrubbed,omitempty"`
 }
 
 type ConversationSandboxFactory func(context.Context, string) (Sandbox, func(), error)
@@ -86,6 +97,12 @@ type ConversationProcessPool struct {
 type conversationAssetFence struct {
 	mu    sync.Mutex
 	users int
+}
+
+func (p *ConversationProcessPool) Active() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return len(p.roots) != 0
 }
 
 func (p *ConversationProcessPool) lockAssets(ctx context.Context, root string) (func(), error) {
@@ -126,20 +143,24 @@ func (p *ConversationProcessPool) lockAssets(ctx context.Context, root string) (
 }
 
 type conversationProcess struct {
-	mu         sync.Mutex
-	cancel     context.CancelFunc
-	input      *os.File
-	events     []domain.TelemetryEvent
-	base       int64
-	done       bool
-	err        string
-	wake       chan struct{}
-	lastPoll   time.Time
-	closeRelay func()
-	finished   chan struct{}
-	root       string
-	bytes      int
-	notStarted bool
+	mu            sync.Mutex
+	cancel        context.CancelFunc
+	input         *os.File
+	events        []domain.TelemetryEvent
+	base          int64
+	done          bool
+	err           string
+	wake          chan struct{}
+	lastPoll      time.Time
+	closeRelay    func()
+	finished      chan struct{}
+	root          string
+	bytes         int
+	notStarted    bool
+	cliVersion    string
+	versionSource string
+	// gitScrubbed is set with done, under mu.
+	gitScrubbed []string
 }
 
 // Handle owns the stable native HOME on the executing machine. Only generated
@@ -152,7 +173,7 @@ func (p *ConversationProcessPool) Handle(ctx context.Context, root, workspace st
 	if req.Operation == "start" {
 		return p.start(ctx, root, workspace, sandbox, req, forward, factories...)
 	}
-	if req.Operation == "prepare" || req.Operation == "sync" || req.Operation == "resetAssets" {
+	if req.Operation == "prepare" || req.Operation == "sync" || req.Operation == "resetAssets" || req.Operation == "discard" {
 		// Serialize asset writes with reservation of a new process. Checking
 		// roots and releasing the fence before a write allows start to race it.
 		unlock, lockErr := p.lockAssets(ctx, root)
@@ -168,6 +189,12 @@ func (p *ConversationProcessPool) Handle(ctx context.Context, root, workspace st
 		}
 		if err = ValidateConversationRoot(root); err != nil {
 			return ConversationProcessResult{}, err
+		}
+		if req.Operation == "discard" {
+			if !req.Transient {
+				return ConversationProcessResult{}, fmt.Errorf("only transient conversations can be discarded")
+			}
+			return ConversationProcessResult{}, os.RemoveAll(root)
 		}
 		if err = os.MkdirAll(filepath.Join(root, "home", "tmp"), 0700); err != nil {
 			return ConversationProcessResult{}, err
@@ -307,7 +334,14 @@ func (p *ConversationProcessPool) Handle(ctx context.Context, root, workspace st
 		proc.events = proc.events[ack:]
 		proc.base = req.After
 		n := min(len(proc.events), 256)
-		result := ConversationProcessResult{ID: req.ID, Events: append([]domain.TelemetryEvent(nil), proc.events[:n]...), Sequence: proc.base + int64(n), Done: proc.done && n == len(proc.events), Error: proc.err, NotStarted: proc.notStarted}
+		result := ConversationProcessResult{
+			ID: req.ID, Events: append([]domain.TelemetryEvent(nil), proc.events[:n]...), Sequence: proc.base + int64(n),
+			Done: proc.done && n == len(proc.events), Error: proc.err, NotStarted: proc.notStarted,
+			CLIVersion: proc.cliVersion, VersionSource: proc.versionSource,
+		}
+		if result.Done {
+			result.GitScrubbed = append([]string(nil), proc.gitScrubbed...)
+		}
 		return result, nil
 	default:
 		return ConversationProcessResult{}, fmt.Errorf("invalid conversation process operation")
@@ -410,11 +444,19 @@ func (p *ConversationProcessPool) start(ctx context.Context, root, workspace str
 	var sb Sandbox
 	var release func()
 	var stdin io.Closer
+	var cleanupLogin func() error
 	finish := func(runErr error, notStarted bool) {
 		cancel()
 		// Cancellation can skip the shell EXIT trap. Clean ephemeral ZCode
 		// credentials before publishing completion or releasing this root.
 		credentialCleanupErr := cleanupConversationCredentialFiles(root, req.Command.Provider)
+		if cleanupLogin != nil {
+			credentialCleanupErr = errors.Join(credentialCleanupErr, cleanupLogin())
+		}
+		var gitScrubbed []string
+		if slices.Contains(req.Command.Bindings, BindGitWorkspace) {
+			gitScrubbed = scrubConversationGitSecrets(root, sb)
+		}
 		if stdin != nil {
 			_ = stdin.Close()
 		}
@@ -432,6 +474,7 @@ func (p *ConversationProcessPool) start(ctx context.Context, root, workspace str
 			proc.err = "清理 CLI 临时凭证失败"
 			proc.notStarted = notStarted
 		}
+		proc.gitScrubbed = gitScrubbed
 		if runErr != nil && proc.err == "" {
 			proc.err = runErr.Error()
 			proc.notStarted = notStarted
@@ -509,7 +552,7 @@ func (p *ConversationProcessPool) start(ctx context.Context, root, workspace str
 			return ConversationProcessResult{}, err
 		}
 	}
-	command := CommandSpec{Argv: append([]string(nil), req.Command.Argv...), Provider: req.Command.Provider, CredentialBindings: req.Command.Bindings, AgentCLI: req.Command.AgentCLI}
+	command := CommandSpec{Argv: append([]string(nil), req.Command.Argv...), Provider: req.Command.Provider, CredentialBindings: req.Command.Bindings, ExtraCredentialEnv: req.Command.ExtraCredentialEnv, AgentCLI: req.Command.AgentCLI}
 	for i, arg := range command.Argv {
 		command.Argv[i] = conversationRemap(arg, req.SourceRoot, root)
 	}
@@ -582,6 +625,7 @@ func (p *ConversationProcessPool) start(ctx context.Context, root, workspace str
 		}
 		command.Argv[0] = binary
 	}
+	cliBinary := command.Argv[0]
 	bindSandbox := sb
 	bindWorkspace := filepath.Join(root, "ws")
 	if bindSandbox == nil {
@@ -589,11 +633,33 @@ func (p *ConversationProcessPool) start(ctx context.Context, root, workspace str
 	} else {
 		bindWorkspace = bindSandbox.Workspace()
 	}
+	var localEnv map[string]string
+	login, supported := runnerLoginSpec(command.Provider)
+	if req.Command.RunnerLogin && !supported {
+		return ConversationProcessResult{}, fmt.Errorf("该 CLI 不支持使用执行机器的本机登录")
+	}
+	if supported {
+		cleanupLogin, localEnv, err = prepareConversationRunnerLogin(root, login, req.Command.RunnerLogin, spec != nil && spec.Profile.Driver == domain.SandboxDriverDocker)
+		if err != nil {
+			return ConversationProcessResult{}, err
+		}
+		if req.Command.RunnerLogin {
+			command.CredentialBindings = slices.DeleteFunc(slices.Clone(command.CredentialBindings), func(binding CredentialBinding) bool {
+				return binding == login.binding
+			})
+			if command.Provider == AgentCLIAntigravity && command.AgentCLI.ReadOnly {
+				settings, _ := json.Marshal(map[string]any{"permissions": agyChatPermissions})
+				command.Argv = insertBeforeFlag(command.Argv, "-p", "--settings", string(settings))
+			}
+		}
+	}
 	nativeArgv := append([]string(nil), command.Argv...)
-	command, err = bindCommand(bindSandbox, bindWorkspace, command, req.Command.Credentials)
+	command = withBwrapManagedCLI(command, sandboxDriver(bindSandbox))
+	command, err = bindCommand(procCtx, bindSandbox, bindWorkspace, command, req.Command.Credentials)
 	if err != nil {
 		return ConversationProcessResult{}, err
 	}
+	command = WithCommandEnvironment(command, localEnv)
 	if command.Provider == AgentCLIZCode {
 		command.Argv = conversationZCodeResumeArgv(root, nativeArgv, command.Argv)
 	}
@@ -656,6 +722,19 @@ func (p *ConversationProcessPool) start(ctx context.Context, root, workspace str
 			default:
 			}
 		}
+		if req.ReportVersion {
+			defer ObserveCLIVersion(procCtx, sb, command.Provider, cliBinary, func(version, source string) {
+				proc.mu.Lock()
+				if !proc.done {
+					proc.cliVersion, proc.versionSource = version, source
+				}
+				proc.mu.Unlock()
+				select {
+				case proc.wake <- struct{}{}:
+				default:
+				}
+			})()
+		}
 		if sb != nil {
 			_, runErr = WithSandboxCredentials(sb, req.Command.Credentials).Exec(procCtx, command, sink)
 		} else {
@@ -663,6 +742,26 @@ func (p *ConversationProcessPool) start(ctx context.Context, root, workspace str
 		}
 	}()
 	return ConversationProcessResult{Root: root, ID: id}, nil
+}
+
+// scrubConversationGitSecrets cleans the HOMEs a workspace CLI used (the
+// conversation's, and the private ones bindCommand gives docker commands) and
+// the checkouts in the workspace it worked in.
+func scrubConversationGitSecrets(root string, sb Sandbox) []string {
+	workspace := filepath.Join(root, "ws")
+	if sb != nil && strings.TrimSpace(sb.Workspace()) != "" {
+		workspace = sb.Workspace()
+	}
+	homes := []string{filepath.Join(root, "home")}
+	privateHomes := filepath.Join(workspace, ".agentflow", "private-home")
+	if entries, err := os.ReadDir(privateHomes); err == nil {
+		for _, entry := range entries {
+			if entry.IsDir() {
+				homes = append(homes, filepath.Join(privateHomes, entry.Name()))
+			}
+		}
+	}
+	return ScrubWorkspaceGitSecrets(context.Background(), homes, workspace)
 }
 
 func cleanupConversationCredentialFiles(root, provider string) error {

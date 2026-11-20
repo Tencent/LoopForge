@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"path/filepath"
+	"slices"
 	"time"
 )
 
@@ -62,6 +63,14 @@ func (m *Manager) Update(ctx context.Context) (Report, error) {
 	return m.run(ctx, "update", "")
 }
 
+// UpdateProvider updates a single CLI already selected by the runner.
+func (m *Manager) UpdateProvider(ctx context.Context, provider string) (Report, error) {
+	if !Supports(provider) {
+		return Report{}, fmt.Errorf("unsupported managed CLI %q", provider)
+	}
+	return m.run(ctx, "update", provider)
+}
+
 // Rollback is explicit, never triggered by task/model errors. Existing run pins
 // stay immutable and automatic updates never retry the rejected version.
 func (m *Manager) Rollback(ctx context.Context, provider string) (Report, error) {
@@ -69,6 +78,19 @@ func (m *Manager) Rollback(ctx context.Context, provider string) (Report, error)
 }
 
 func (m *Manager) run(ctx context.Context, action, provider string) (report Report, err error) {
+	var providers []string
+	if action != "rollback" {
+		providers, err = EnabledProviders()
+		if err != nil {
+			return Report{}, err
+		}
+		if provider != "" {
+			if !slices.Contains(providers, provider) {
+				return Report{}, fmt.Errorf("managed CLI %q is not enabled by %s", provider, providerAllowlistEnv)
+			}
+			providers = []string{provider}
+		}
+	}
 	err = WithUpdateLock(ctx, m.Root, func() (operationErr error) {
 		now := m.Now().UTC()
 		if action == "check" && now.Before(scheduledAt(m.Root, now)) {
@@ -101,24 +123,29 @@ func (m *Manager) run(ctx context.Context, action, provider string) (report Repo
 		if action == "rollback" {
 			return m.rollbackLocked(ctx, provider, &state, &report)
 		}
-		return m.updateLocked(ctx, &state, &report)
+		return m.updateProvidersLocked(ctx, &state, &report, providers)
 	})
 	return report, err
 }
 
-func (m *Manager) updateLocked(ctx context.Context, state *State, report *Report) error {
+func (m *Manager) updateProvidersLocked(ctx context.Context, state *State, report *Report, providers []string) error {
 	candidates := Inventory{}
 	var failures []error
 	toolsReady := false
-	for _, provider := range providerNames() {
+	for _, provider := range providers {
 		result := ProviderResult{Provider: provider, From: state.Current[provider].Version}
 		candidate, err := m.candidate(ctx, provider)
+		if err == nil && candidate.Artifact != nil {
+			candidate, err = m.observeVendorReleases(state, provider, candidate)
+		}
 		if err == nil {
 			result.To = candidate.Version
 			result.Status, result.Message = m.releaseGate(state, provider, result.From, candidate)
 		}
 		if err == nil && result.Status == "" {
-			if !toolsReady {
+			if candidate.Artifact != nil {
+				err = m.prepareCommandDirectories()
+			} else if !toolsReady {
 				err = m.prepareTools(ctx)
 				toolsReady = err == nil
 			}
@@ -169,21 +196,57 @@ func (m *Manager) releaseGate(state *State, provider, from string, candidate rel
 	switch {
 	case candidate.Version == from:
 		return "unchanged", ""
-	case from != "" && compareVersions(candidate.Version, from) < 0:
+	case from != "" && !newerRelease(provider, candidate, from, state.Current[provider].PublishedAt):
 		return "skipped", "automatic downgrade refused"
-	case state.Rejected[provider] == candidate.Version:
-		return "skipped", "this release was rolled back; waiting for a newer release"
+	case blockedByRollback(state, provider, candidate):
+		if state.Rejected[provider] == candidate.Version {
+			return "skipped", "this release was rolled back; waiting for a newer release"
+		}
+		return "skipped", "waiting for a release newer than the rolled-back version"
 	case m.Now().Before(candidate.Published.Add(observationWindow)):
 		return "skipped", "release is still in the observation window"
 	}
 	return "", ""
 }
 
+func blockedByRollback(state *State, provider string, candidate release) bool {
+	rejected := state.Rejected[provider]
+	if rejected == "" {
+		return false
+	}
+	// An intermediate release could otherwise activate and clear the
+	// rejection, allowing the rolled-back version to return later.
+	if !validProviderVersion(provider, rejected) {
+		return true
+	}
+	var published *time.Time
+	if previous := state.Previous[provider]; previous.Version == rejected {
+		published = previous.PublishedAt
+	}
+	return !newerRelease(provider, candidate, rejected, published)
+}
+
+func newerRelease(provider string, candidate release, from string, published *time.Time) bool {
+	if candidate.Version == from {
+		return false
+	}
+	if provider == "cursor" {
+		// Build hashes have no ordering within a day. The artifact's
+		// timestamp must establish a strictly newer same-day release.
+		candidateDate, currentDate := candidate.Version[:10], from[:10]
+		if candidateDate != currentDate {
+			return candidateDate > currentDate
+		}
+		return published != nil && candidate.Published.After(*published)
+	}
+	return compareVersions(candidate.Version, from) > 0
+}
+
 // stageCandidate reuses the cached candidate installation when it still matches
 // the release, otherwise installs it, then smoke-validates the result.
 func (m *Manager) stageCandidate(ctx context.Context, state *State, provider string, candidate release) (Installation, error) {
 	installed := state.Candidates[provider]
-	if installed.Version != candidate.Version || installed.Integrity != candidate.Dist.Integrity || validateInventory(m.Root, Inventory{provider: installed}) != nil {
+	if installed.Version != candidate.Version || installed.Integrity != candidate.identity() || validateInventory(m.Root, Inventory{provider: installed}) != nil {
 		var err error
 		if installed, err = m.install(ctx, provider, candidate); err != nil {
 			return Installation{}, err
@@ -202,7 +265,7 @@ func (m *Manager) stageCandidate(ctx context.Context, state *State, provider str
 }
 
 func (m *Manager) rollbackLocked(ctx context.Context, provider string, state *State, report *Report) error {
-	if _, ok := providerSpecs[provider]; !ok {
+	if !Supports(provider) {
 		return errors.New("rollback requires a known provider")
 	}
 	previous, ok := state.Previous[provider]
@@ -210,7 +273,13 @@ func (m *Manager) rollbackLocked(ctx context.Context, provider string, state *St
 		return errors.New("no previous managed version available; global installations were not modified")
 	}
 	report.Results = append(report.Results, ProviderResult{Provider: provider, From: state.Current[provider].Version, To: previous.Version, Status: "failed"})
-	if err := m.prepareTools(ctx); err != nil {
+	var err error
+	if providerSpecs[provider].Package == "" {
+		err = m.prepareCommandDirectories()
+	} else {
+		err = m.prepareTools(ctx)
+	}
+	if err != nil {
 		return err
 	}
 	if err := m.validate(ctx, provider, previous); err != nil {

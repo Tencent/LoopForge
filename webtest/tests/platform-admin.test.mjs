@@ -43,7 +43,7 @@ test('platform admin panel loads metrics, searches, filters, grants, revokes, an
   assert.equal(app.evaluate(`state.currentView`), 'agents');
 });
 
-test('platform admin page splits accounts, admins and the shared key into tabs', async (t) => {
+test('platform admin page separates accounts, admins, shared keys and SSH host trust', async (t) => {
   const app = await loadApp();
   t.after(app.close);
   app.evaluate(`state.currentUser={...state.data.users[0],isGuest:false,isPlatformAdmin:true}`);
@@ -55,7 +55,7 @@ test('platform admin page splits accounts, admins and the shared key into tabs',
   const host = app.document.querySelector('#platformAdminPanel');
   const panel = (id) => host.querySelector(`[data-platform-panel="${id}"]`);
   const tab = (id) => host.querySelector(`[data-platform-tab="${id}"]`);
-  const shown = () => ['accounts', 'admins', 'sharedKey'].filter((id) => !panel(id).hidden);
+  const shown = () => ['accounts', 'admins', 'sharedKey', 'sshTrust'].filter((id) => !panel(id).hidden);
 
   assert.deepEqual(shown(), ['accounts'], 'accounts open first');
   assert.equal(tab('accounts').getAttribute('aria-selected'), 'true');
@@ -69,6 +69,9 @@ test('platform admin page splits accounts, admins and the shared key into tabs',
   assert.deepEqual(shown(), ['sharedKey']);
   assert.equal(tab('accounts').getAttribute('aria-selected'), 'false');
   host.querySelector('#platformTabs').dispatchEvent(new app.window.KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+  assert.deepEqual(shown(), ['sshTrust']);
+  assert.ok(panel('sshTrust').querySelector('#platformSSHHostTrustCard'));
+  host.querySelector('#platformTabs').dispatchEvent(new app.window.KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
   assert.deepEqual(shown(), ['accounts'], 'arrow keys wrap around');
   host.querySelector('#platformTabs').dispatchEvent(new app.window.KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
   assert.deepEqual(shown(), ['admins']);
@@ -77,6 +80,88 @@ test('platform admin page splits accounts, admins and the shared key into tabs',
   app.evaluate(`renderPlatformAdminPanel()`);
   await settle(6);
   assert.deepEqual(shown(), ['admins'], 'the open tab survives a re-render');
+});
+
+test('platform admins can read a host key and save it only after confirming its fingerprint', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  app.evaluate(`state.currentUser={...state.data.users[0],isGuest:false,isPlatformAdmin:true}`);
+  const endpoint = '/api/platform/git-ssh-hosts';
+  const candidate = {
+    host: 'git.example.org:2222',
+    publicKeys: 'ssh-ed25519 example-key',
+    fingerprints: ['SHA256:example-fingerprint'],
+  };
+  const broken = { host: 'broken.example.org:22', invalid: true, fingerprints: [], publicKeys: '', revision: '' };
+  const invalidHost = {
+    ...broken,
+    host: 'bad/endpoint\r',
+    invalidHost: true,
+    revision: '~' + Buffer.from('旧登记修订号').toString('base64url'),
+  };
+  const brokenEndpoint = `${endpoint}?host=${encodeURIComponent(broken.host)}`;
+  const invalidEndpoint = `${endpoint}?host=${encodeURIComponent(invalidHost.host)}`;
+  app.router.get(endpoint, [broken, invalidHost]);
+  app.router.get('/api/runners?mine=1', [
+    { id: 'office', name: 'Office Runner', status: 'online' },
+    { id: 'offline', name: 'Offline Runner', status: 'offline' },
+  ]);
+  app.router.post(`${endpoint}/preview`, candidate);
+  app.router.post(endpoint, { ...candidate, revision: 'saved' }, 201);
+  app.router.delete(brokenEndpoint, null, 204);
+  app.router.delete(invalidEndpoint, null, 204);
+  app.evaluate(`renderPlatformAdminPanel()`);
+  const card = app.document.querySelector('#platformSSHHostTrustCard');
+  app.document.querySelector('[data-platform-tab="sshTrust"]').click();
+  await settle(8);
+
+  const row = host => [...card.querySelectorAll('.platform-admin-row')].find(item => item.textContent.includes(host));
+  assert.match(row(broken.host).querySelector('[data-ssh-host-edit]').textContent, /修复公钥/);
+  assert.match(card.textContent, /公钥格式无效/);
+  assert.match(card.textContent, /主机格式无效/);
+  assert.ok(!row('bad/endpoint').querySelector('[data-ssh-host-edit]'));
+  const form = card.querySelector('form');
+  card.querySelector('[data-ssh-host-add]').click();
+  await settle();
+  assert.deepEqual([...form.elements.runnerId.options].map((option) => option.value), ['', 'office']);
+  form.elements.host.value = 'GIT.EXAMPLE.ORG:2222';
+  form.elements.runnerId.value = 'office';
+  assert.equal(form.elements.publicKeys.value, '');
+
+  const read = form.querySelector('[data-ssh-host-probe]');
+  read.click();
+  await settle();
+  const preview = app.router.calls.find((call) => call.path === `${endpoint}/preview`);
+  assert.deepEqual(preview.body, { host: 'GIT.EXAMPLE.ORG:2222', probe: { runnerId: 'office' } });
+  assert.match(app.document.querySelector('#confirmMessage').textContent, /SHA256:example-fingerprint/);
+  app.document.querySelector('#confirmCancelBtn').click();
+  await settle();
+  assert.equal(app.router.calls.filter((call) => call.path === endpoint && call.method === 'POST').length, 0);
+
+  read.click();
+  await settle();
+  app.document.querySelector('#confirmOkBtn').click();
+  await settle();
+  assert.deepEqual(app.router.calls.find((call) => call.path === endpoint && call.method === 'POST').body, {
+    host: candidate.host,
+    publicKeys: candidate.publicKeys,
+  });
+  assert.match(card.textContent, /SHA256:example-fingerprint/);
+
+  row(broken.host).querySelector('[data-ssh-host-remove]').click();
+  await settle();
+  app.document.querySelector('#confirmOkBtn').click();
+  await settle();
+  assert.equal(app.router.calls.find((call) => call.path + call.search === brokenEndpoint && call.method === 'DELETE').options.headers['If-Match'], '""');
+  assert.ok(!row(broken.host));
+
+  row('bad/endpoint').querySelector('[data-ssh-host-remove]').click();
+  await settle();
+  app.document.querySelector('#confirmOkBtn').click();
+  await settle();
+  const invalidDelete = app.router.calls.find((call) => call.method === 'DELETE' && call.url.searchParams.get('host') === invalidHost.host);
+  assert.equal(invalidDelete.options.headers['If-Match'], JSON.stringify(invalidHost.revision));
+  assert.ok(!row('bad/endpoint'));
 });
 
 test('platform admins create accounts and reset passwords from the page', async (t) => {

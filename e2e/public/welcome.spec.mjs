@@ -160,16 +160,30 @@ for(const variant of [
       const response=await saved;expect(response.ok()).toBe(true);repositoryId=(await response.json()).id;
       await expect.poll(async()=>(await page.request.get(`/api/projects/${projectId}`).then(r=>r.json())).defaultRepositoryId).toBe(repositoryId);
       await expect(modal.locator('#repositoryCredentialHint')).toHaveAttribute('data-configured','false');
-      // The token link leaves the modal for the GitHub token step of the credential wizard.
+      // The token link opens credentials for any HTTPS host.
+      // first-run also runs this journey against the pinned published release.
+      const hostCredentials=await page.evaluate(()=>typeof openGitHTTPCredentials==='function');
       await modal.locator('[data-repository-configure-token]').click();
       await expect(modal).not.toHaveClass(/open/);
-      await expect(page).toHaveURL(/#\/settings/);
-      const wizard=page.locator('#credentialWizard');
-      await expect(wizard.getByRole('tab',{name:'GitHub 授权'})).toHaveAttribute('aria-selected','true');
-      await expect(wizard.locator('input[name="secret"]')).toHaveCount(0);
-      await wizard.getByRole('tab',{name:'访问令牌'}).click();
-      await expect(wizard.locator('.credential-pane:not(.is-leaving) input[name="secret"]')).toBeFocused();
-      await expect(wizard).toContainText('GitHub');
+      if(hostCredentials){
+        const credentials=page.locator('#gitHTTPCredentialDialog');
+        await expect(credentials).toBeVisible();
+        await credentials.locator('[data-http-cred-add]').click();
+        await expect(credentials.locator('input[name="host"]')).toBeFocused();
+        await expect(credentials.locator('input[name="token"]')).toBeVisible();
+        await expect(credentials.locator('[name="exposeToWorkspace"]')).toHaveCount(0);
+        await expect(credentials.locator('#gitHTTPCredentialPlatformHint')).toContainText(variant.lang==='en'?'merge status':'合并状态');
+        const platform=credentials.locator('select[name="platform"]');
+        await platform.click();
+        const options=credentials.getByRole('listbox');
+        await options.getByRole('option',{name:'GitLab',exact:true}).click();
+        await expect(platform).toHaveValue('gitlab');
+        await expect(credentials.locator('input[name="username"]')).toHaveAttribute('placeholder','oauth2');
+        await platform.press('ArrowDown');
+        await page.keyboard.press('End');
+        await page.keyboard.press('Enter');
+        await expect(platform).toHaveValue('other');
+      }else await expect(page.locator('#credentialWizard')).toBeVisible();
       await page.keyboard.press('Escape');
     }finally{
       const restore=await page.request.put('/api/projects',{data:project});expect(restore.ok()).toBe(true);

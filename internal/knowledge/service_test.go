@@ -70,9 +70,8 @@ func (f *fakeStore) Artifact(runID, id string) (domain.Artifact, bool) {
 	art, ok := f.artifacts[id]
 	return art, ok && art.RunID == runID
 }
-func (f *fakeStore) Run(id string) (domain.Run, bool) {
-	run, ok := f.runs[id]
-	return run, ok
+func (f *fakeStore) RunHeader(id string) (domain.Run, error) {
+	return f.runs[id], nil
 }
 func (f *fakeStore) Agents() []domain.AgentDefinition       { return f.agents }
 func (f *fakeStore) Workflows() []domain.WorkflowDefinition { return f.workflows }

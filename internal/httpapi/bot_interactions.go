@@ -74,7 +74,7 @@ func (h *assistantHandlers) generateBotReply(ctx context.Context, bot domain.Not
 	if strings.TrimSpace(user.CodeBuddyAPIKey) == "" {
 		return "你的平台账号尚未配置 CodeBuddy Key，请在平台个人配置中配置。", nil
 	}
-	catalog := loadAssistantModels(ctx, user.CodeBuddyInternetEnvironment)
+	catalog := loadAssistantModels(ctx, user.CodeBuddyInternetEnvironment, user.CodeBuddyAPIKey)
 	model := domain.ChosenModel(bot.Model)
 	if model == "" {
 		model = catalog.Default

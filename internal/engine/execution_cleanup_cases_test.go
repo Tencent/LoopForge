@@ -245,7 +245,7 @@ func TestWorkspacePreparationDirectValidationAndRemoteStates(t *testing.T) {
 	if plan.CollaborationMode != "" || plan.Nodes[0].RunOnWorkspaceRebuild {
 		t.Fatalf("preparation plan=%+v", plan)
 	}
-	if requirements, err := workspaceConversationRequirements(st, domain.WorkflowDefinition{Nodes: []domain.WorkflowNode{{Type: "agent", AgentID: "missing"}}}); err != nil || len(requirements.CLIStates) != 0 {
+	if requirements, err := workspaceConversationRequirements(st, domain.WorkflowDefinition{Nodes: []domain.WorkflowNode{{Type: "agent", AgentID: "missing"}}}, false); err != nil || len(requirements.CLIStates) != 0 {
 		t.Fatalf("conversation requirements=%+v err=%v", requirements, err)
 	}
 	if _, err := e.WorkspacePreparationStatus(context.Background(), "missing"); err == nil {
@@ -257,7 +257,7 @@ func TestWorkspacePreparationDirectValidationAndRemoteStates(t *testing.T) {
 	if _, err := e.TrustedWorkspaceRequest("missing", domain.RunnerWorkspaceRequest{}); err == nil {
 		t.Fatal("missing trusted request succeeded")
 	}
-	if _, err := e.HandlePreparedWorkspaceTerminal(context.Background(), domain.Run{ID: "missing"}, &runtime.TerminalPool{}, "scope", domain.WorkspaceTerminalRequest{Operation: "open"}, 0); err == nil {
+	if _, err := e.HandlePreparedWorkspaceTerminal(context.Background(), domain.Run{ID: "missing"}, &runtime.TerminalPool{}, "scope", domain.WorkspaceTerminalRequest{Operation: "open"}, runtime.TerminalGitCredentials{}); err == nil {
 		t.Fatal("unprepared terminal opened")
 	}
 	if state, err := e.PrepareNodeWorkspace(context.Background(), domain.Run{}, &runEnvironment{}); err != nil || state.Status != "ready" {

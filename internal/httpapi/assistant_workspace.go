@@ -1,7 +1,6 @@
 package httpapi
 
 import (
-	"agentflow/internal/domain"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -9,6 +8,7 @@ import (
 	"strings"
 
 	"agentflow/internal/application"
+	"agentflow/internal/domain"
 	"agentflow/internal/engine"
 	"agentflow/internal/mcpserver"
 )
@@ -42,10 +42,25 @@ func (s *AgentToolSession) conversationWorkspace() string {
 	return s.workspaceRunID
 }
 
-// Project access is checked at the conversation entry point. The storage owner
-// does not limit which participants can use the conversation workspace.
+// Project participants share one workspace binding. A personal conversation
+// uses its owner's binding.
 func (s *AgentToolSession) canOpenConversationWorkspace() bool {
-	return s.RunID == "" && strings.TrimSpace(s.ProjectID) != "" && s.ChatSessionID != ""
+	return s.RunID == "" && s.ChatSessionID != "" &&
+		(s.ProjectID != "" || s.UserID > 0 && s.ChatOwnerID == s.UserID)
+}
+
+func (h *agentToolGateway) mayUseWorkspace(s *AgentToolSession, run domain.Run) bool {
+	if run.ExecutionContext.ProjectID != s.ProjectID || s.User.ID != s.UserID {
+		return false
+	}
+	if !run.IsPersonalWorkspace() {
+		return true
+	}
+	if !s.canOpenConversationWorkspace() {
+		return false
+	}
+	conv, ok := h.repo.AssistantSession(s.UserID, s.ChatSessionID)
+	return ok && conv.WorkspaceRunID == run.ID && conversationMayBind(conv, run, s.ProjectID)
 }
 
 func mainBotWorkspaceTools(s *AgentToolSession) []agentToolDescriptor {
@@ -90,7 +105,7 @@ func (h *agentToolGateway) callMainBotWorkspace(ctx context.Context, s *AgentToo
 		return "", fmt.Errorf("本对话还没有工作区：先调用 workbench_workspace_open 打开一个")
 	}
 	run, ok := h.repo.RunState(runID)
-	if !ok || run.ExecutionContext.ProjectID != s.ProjectID || s.User.ID != s.UserID {
+	if !ok || !h.mayUseWorkspace(s, run) {
 		return "", errAgentToolForbidden
 	}
 	if engine.WorkspaceRunID(run) != run.ID {

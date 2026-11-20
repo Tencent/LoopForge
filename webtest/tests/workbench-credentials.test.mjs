@@ -152,13 +152,13 @@ test('credential panel filters, expands, validates, reveals secrets, and confirm
   t.after(app.close);
   app.evaluate(`
     state.data.users[0].id=1;
-    state.currentUser={...state.data.users[0],id:1,isGuest:false,gitTokenConfigured:true,codeBuddyApiKeyConfigured:true};
+    state.currentUser={...state.data.users[0],id:1,isGuest:false,gitHubCredentialConfigured:true,codeBuddyApiKeyConfigured:true};
     state.data.users[0]=state.currentUser;
   `);
   app.router.get('/api/auth/gongfeng', { enabled: true });
   app.router.get('/api/users/1/git-token/verify', { valid: true, username: 'tester', scopes: ['repo'] });
   app.router.put('/api/users/1/credentials', {
-    id: 1, name: 'Test User', username: 'tester', gitTokenConfigured: false, codeBuddyApiKeyConfigured: true,
+    id: 1, name: 'Test User', username: 'tester', gitHubCredentialConfigured: false, codeBuddyApiKeyConfigured: true,
   });
   await app.evaluate(`renderPersonalSettings()`);
   const panel = app.document.querySelector('#credentialPanel');
@@ -185,9 +185,8 @@ test('Git token verification rejects invalid tokens before save and accepts vali
     call.body.token === 'valid-token'
       ? { valid: true, username: 'tester', scopes: ['repo'] }
       : { valid: false, error: 'invalid token' });
-  app.router.put('/api/users/1/credentials', {
-    id: 1, username: 'tester', gitTokenConfigured: true,
-  });
+  app.router.get('/api/users/1/git-http-credentials', []);
+  app.router.put('/api/users/1/git-http-credentials', [{id:'github',host:'github.com'}]);
   const invalid = await app.evaluate(`verifyAndSaveGitToken('bad')`);
   const valid = await app.evaluate(`verifyAndSaveGitToken('valid-token')`);
   assert.equal(invalid.saved, false);

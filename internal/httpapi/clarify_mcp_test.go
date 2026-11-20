@@ -14,15 +14,16 @@ import (
 )
 
 func TestClarifyAllowedModelFallsBackToCatalog(t *testing.T) {
+	stubCLIModelDiscovery(t)
 	t.Setenv("AGENTFLOW_ASSISTANT_MODELS", "first-model,public-model")
 	// No model, an unknown one and the retired "default" placeholder all
 	// run on the first listed model.
 	for _, requested := range []string{"", "not-a-model", "default"} {
-		if got := clarifyAllowedModel(requested); got != "first-model" {
+		if got := codeBuddyAccountModel(context.Background(), domain.User{}, requested); got != "first-model" {
 			t.Fatalf("%q = %q", requested, got)
 		}
 	}
-	if got := clarifyAllowedModel("public-model"); got != "public-model" {
+	if got := codeBuddyAccountModel(context.Background(), domain.User{}, "public-model"); got != "public-model" {
 		t.Fatalf("listed model = %q", got)
 	}
 }

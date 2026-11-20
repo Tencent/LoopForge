@@ -19,8 +19,10 @@ var (
 	gongfengIssueURLRe = regexp.MustCompile(`(?i)https?://git\.example\.com/[^\s<>"'）】\]]+/issues/\d+`)
 )
 
-func clarifyAllowedModel(id string) string {
-	return assistantAllowedModel(id, assistantKnownCatalog())
+func codeBuddyAccountModel(ctx context.Context, user domain.User, id string) string {
+	refreshCLIModels(ctx, user.CodeBuddyInternetEnvironment, user.CodeBuddyAPIKey)
+	catalog := withCodeBuddyPersonalModels(loadAssistantModels(ctx, user.CodeBuddyInternetEnvironment, user.CodeBuddyAPIKey), user)
+	return assistantAllowedModel(id, catalog)
 }
 
 // errClarifyNeedsCodeBuddy is returned when a clarification asks for a model of
@@ -511,7 +513,7 @@ func (h *streamHandlers) clarifyMCPUser(issue domain.Issue, responsible domain.U
 		return responsible
 	}
 	owner, ok := h.repo.User(project.OwnerID)
-	if !ok || strings.TrimSpace(owner.GitToken) == "" {
+	if !ok || len(h.repo.GitHTTPWorkspaceHosts(owner.ID)) == 0 {
 		return responsible
 	}
 	return owner

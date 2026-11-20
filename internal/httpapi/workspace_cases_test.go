@@ -198,20 +198,20 @@ func TestWorkspaceMoreRemoteProxyMatrix(t *testing.T) {
 			request := message.WorkspaceRequest
 			switch request.Query {
 			case "error404":
-				hub.resolveWorkspace(message.RequestID, domain.RunnerWorkspaceResponse{Status: http.StatusNotFound, Error: "missing"})
+				hub.resolveWorkspace(conn, message.RequestID, domain.RunnerWorkspaceResponse{Status: http.StatusNotFound, Error: "missing"})
 				continue
 			case "badstatus":
-				hub.resolveWorkspace(message.RequestID, domain.RunnerWorkspaceResponse{Status: http.StatusOK, Error: "bad"})
+				hub.resolveWorkspace(conn, message.RequestID, domain.RunnerWorkspaceResponse{Status: http.StatusOK, Error: "bad"})
 				continue
 			case "empty":
-				hub.resolveWorkspace(message.RequestID, domain.RunnerWorkspaceResponse{})
+				hub.resolveWorkspace(conn, message.RequestID, domain.RunnerWorkspaceResponse{})
 				continue
 			case "invalidjson":
-				hub.resolveWorkspace(message.RequestID, domain.RunnerWorkspaceResponse{Payload: []byte("{")})
+				hub.resolveWorkspace(conn, message.RequestID, domain.RunnerWorkspaceResponse{Payload: []byte("{")})
 				continue
 			}
 			payload, _ := json.Marshal(gin.H{"available": true, "operation": request.Operation})
-			hub.resolveWorkspace(message.RequestID, domain.RunnerWorkspaceResponse{Payload: payload})
+			hub.resolveWorkspace(conn, message.RequestID, domain.RunnerWorkspaceResponse{Payload: payload})
 		}
 	}()
 	t.Cleanup(func() {

@@ -143,7 +143,7 @@ func TestAssistantPromptsNameCallableMCPSubmissionTool(t *testing.T) {
 	}
 	h := &assistantHandlers{}
 	prompt := h.turnPrompt(assistantRequest{Messages: []assistantMessage{{Role: "user", Content: "save"}}}, t.TempDir(), true)
-	if !strings.Contains(prompt, "待确认写入仍须通过 "+name) {
+	if !strings.Contains(prompt, "待确认的平台写入仍须通过 "+name) {
 		t.Fatal("resumed turns must refresh the qualified submission name")
 	}
 }
