@@ -169,6 +169,8 @@ func classifyAssistantFailureText(f domain.AssistantFailure, err error, text str
 		f.Code, f.Phase, f.Message, f.Suggestion = "UPSTREAM_UNAVAILABLE", "provider", "模型服务暂时不可用", "请稍后再试，或切换模型服务。"
 	case has("connection refused", "connection reset", "connection closed", "network interrupted", "network error", "network_error", "no such host", "dial tcp", "tls handshake", "tls: ", "i/o timeout", "broken pipe", "stream disconnected", "econnreset", "econnrefused", "unexpected eof"):
 		f.Code, f.Phase, f.Message, f.Suggestion = "NETWORK_ERROR", "connection", "CLI 与模型服务连接失败或连接中断", "请检查模型服务地址、网络与代理配置。"
+	case has("unrecognized flag: --variant in command opencode run"):
+		f.Code, f.Phase, f.Message, f.Suggestion = "OPENCODE_VARIANT_UNSUPPORTED", "setup", "当前 OpenCode CLI 不支持所需的推理等级参数", "请管理员在执行环境中使用兼容的 OpenCode 1.x，然后重试。"
 	default:
 		var exit *exec.ExitError
 		var path *os.PathError
