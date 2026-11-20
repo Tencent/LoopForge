@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"math"
 	"regexp"
 	"strconv"
 	"strings"
@@ -91,7 +92,8 @@ func (a *assistantDiagnosticAttempt) process(event domain.TelemetryEvent) {
 		p := attempt.Process
 		switch event.Name {
 		case "process.started":
-			p.PID, _ = event.Attributes["pid"].(int)
+			pid, _ := diagnosticProcessInt64(event.Attributes["pid"])
+			p.PID = int(pid)
 			p.State, p.StartedAt = "running", &now
 		case "process.start_failed":
 			p.State, p.FinishedAt = "start_failed", &now
@@ -101,9 +103,10 @@ func (a *assistantDiagnosticAttempt) process(event domain.TelemetryEvent) {
 			}
 			p.FinishedAt = &now
 			p.Signal, _ = event.Attributes["signal"].(string)
-			p.UserCPUMs, _ = event.Attributes["userCpuMs"].(int64)
-			p.SystemCPUMs, _ = event.Attributes["systemCpuMs"].(int64)
-			if code, ok := event.Attributes["exitCode"].(int); ok {
+			p.UserCPUMs, _ = diagnosticProcessInt64(event.Attributes["userCpuMs"])
+			p.SystemCPUMs, _ = diagnosticProcessInt64(event.Attributes["systemCpuMs"])
+			if value, ok := diagnosticProcessInt64(event.Attributes["exitCode"]); ok {
+				code := int(value)
 				attempt.ExitCode = &code
 			}
 			if incomplete, _ := event.Attributes["outputIncomplete"].(bool); incomplete {
@@ -152,6 +155,25 @@ func (a *assistantDiagnosticAttempt) recordCLIVersion(version, source string) {
 			}
 		})
 	}
+}
+
+// In-process events use Go integers; the runner JSON transport decodes map
+// values as float64 (or json.Number when UseNumber is enabled).
+func diagnosticProcessInt64(value any) (int64, bool) {
+	switch v := value.(type) {
+	case int:
+		return int64(v), true
+	case int64:
+		return v, true
+	case float64:
+		if v >= -0x1p63 && v < 0x1p63 && math.Trunc(v) == v {
+			return int64(v), true
+		}
+	case json.Number:
+		n, err := v.Int64()
+		return n, err == nil
+	}
+	return 0, false
 }
 
 var (

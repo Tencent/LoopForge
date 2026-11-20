@@ -234,6 +234,7 @@ func (h *assistantHandlers) conversationExecutor(s *AgentToolSession, root strin
 		if err != nil {
 			return "", err
 		}
+		after := int64(0)
 		var stopOnce sync.Once
 		stopProcess := func() {
 			stopOnce.Do(func() {
@@ -247,6 +248,26 @@ func (h *assistantHandlers) conversationExecutor(s *AgentToolSession, root strin
 				defer cancel()
 				if err := waitConversationProcessStop(stopCtx, id, call, nil); err != nil {
 					assistantDiagnosticsFrom(ctx).platform("cli.stop_abandoned", fmt.Sprintf("停止原生进程超过 %s 仍未确认（%v），放弃等待", conversationProcessStopTimeout, err), s.User)
+					return
+				}
+				// Cancellation ends the normal poll loop before the process exits.
+				// Drain remaining lifecycle evidence with the same bounded cleanup
+				// context, without replaying protocol output after the turn stopped.
+				for sink != nil {
+					result, err := call(stopCtx, runtime.ConversationProcessRequest{Operation: "poll", ID: id, After: after})
+					if err != nil {
+						assistantDiagnosticsFrom(ctx).platform("cli.exit_evidence_unavailable", "停止后读取进程退出证据失败："+err.Error(), s.User)
+						return
+					}
+					for _, event := range result.Events {
+						if event.Name == "process.started" || event.Name == "process.start_failed" || event.Name == "process.finished" {
+							sink(event)
+						}
+					}
+					after = result.Sequence
+					if result.Done {
+						return
+					}
 				}
 			})
 		}
@@ -300,7 +321,6 @@ func (h *assistantHandlers) conversationExecutor(s *AgentToolSession, root strin
 				}
 			}()
 		}
-		after := int64(0)
 		versionReported := false
 		for {
 			if err := ioCtx.Err(); err != nil {
@@ -314,6 +334,16 @@ func (h *assistantHandlers) conversationExecutor(s *AgentToolSession, root strin
 			}
 			select {
 			case inputErr := <-inputErrors:
+				// A final poll may race a trailing stdin error. Keep its exit
+				// evidence even when Done has already disabled stop cleanup.
+				if pollErr == nil {
+					for _, event := range result.Events {
+						if sink != nil && (event.Name == "process.started" || event.Name == "process.start_failed" || event.Name == "process.finished") {
+							sink(event)
+						}
+					}
+					after = result.Sequence
+				}
 				return "", inputErr
 			default:
 			}
