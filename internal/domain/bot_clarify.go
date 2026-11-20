@@ -77,6 +77,10 @@ type BotClarifySession struct {
 	Pending []BotClarifyPending `json:"pending,omitempty"`
 	Summary string              `json:"summary,omitempty"`
 	Error   string              `json:"error,omitempty"`
+	// StartOnSave: the clarification was opened because an SOP start from
+	// the chat had to wait for it; saving the conclusion starts the SOP
+	// (once, as the saver).
+	StartOnSave bool `json:"startOnSave,omitempty"`
 	// LastAnswerAt is the latest answer of the current round; the next
 	// round starts automatically some minutes after it.
 	LastAnswerAt   *time.Time `json:"lastAnswerAt,omitempty"`

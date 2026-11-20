@@ -514,6 +514,9 @@ func (r *CatalogRepo) putWorkflow(v domain.WorkflowDefinition, publishing bool) 
 	if err := domain.ValidateWorkflowMetricStages(v); err != nil {
 		return err
 	}
+	if err := domain.ValidateClarifyBeforeStart(v.ClarifyBeforeStart); err != nil {
+		return err
+	}
 	v = normalizeWorkflowDefinition(v)
 	if strings.TrimSpace(v.SandboxProfileID) == "" {
 		v.SandboxProfileID = "local"

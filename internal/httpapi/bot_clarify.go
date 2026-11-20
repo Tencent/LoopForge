@@ -220,35 +220,60 @@ func (h *assistantHandlers) startBotClarify(bot domain.NotificationBot, conv dom
 	if refusal != "" {
 		return refusal, true
 	}
-	return h.openBotClarify(bot, conv, item, user, issue), true
+	return h.openBotClarify(bot, conv, item, user, issue, false), true
 }
 
-func (h *assistantHandlers) openBotClarify(bot domain.NotificationBot, conv domain.BotConversation, item domain.BotInteraction, user domain.User, issue domain.Issue) string {
-	if h.clarify != nil && h.clarify.jobRunning(issue.ID) {
-		return "需求 " + h.botIssueTitle(issue) + " 正在平台上澄清，请等这一轮结束后再试。"
+// openBotClarify opens a session and runs its first round. startOnSave
+// marks a clarification an SOP start is waiting for: the SOP has not been
+// started, and saving the conclusion starts it.
+func (h *assistantHandlers) openBotClarify(bot domain.NotificationBot, conv domain.BotConversation, item domain.BotInteraction, user domain.User, issue domain.Issue, startOnSave bool) string {
+	title := h.botIssueTitle(issue)
+	notStarted := ""
+	if startOnSave {
+		notStarted = "SOP 没有启动："
 	}
-	sess, err := h.repo.CreateBotClarifySession(domain.BotClarifySession{ConfigID: bot.ID, ProjectID: bot.ProjectID, ConversationID: conv.ID, ChatType: conv.ChatType, ChatID: conv.ChatID, IssueID: issue.ID, StarterSender: item.SenderID, StarterUserID: user.ID, Status: domain.BotClarifyAnalyzing, Round: 0, RoundMessage: domain.ClarificationKickoff})
+	if h.clarify != nil && h.clarify.jobRunning(issue.ID) {
+		return notStarted + "需求 " + title + " 正在平台上澄清，请等这一轮结束后再试。"
+	}
+	sess, err := h.repo.CreateBotClarifySession(domain.BotClarifySession{ConfigID: bot.ID, ProjectID: bot.ProjectID, ConversationID: conv.ID, ChatType: conv.ChatType, ChatID: conv.ChatID, IssueID: issue.ID, StarterSender: item.SenderID, StarterUserID: user.ID, Status: domain.BotClarifyAnalyzing, Round: 0, RoundMessage: domain.ClarificationKickoff, StartOnSave: startOnSave})
 	if errors.Is(err, repo.ErrBotClarifyActive) {
 		if sess.ConversationID == conv.ID {
-			if sess.IssueID == issue.ID {
-				return "这个会话已经在澄清 " + h.botIssueTitle(issue) + "。发「澄清进度」查看进度，或「结束澄清」退出。"
+			if sess.IssueID != issue.ID {
+				return notStarted + "这个会话正在澄清另一个需求，请先发「结束澄清」。"
 			}
-			return "这个会话正在澄清另一个需求，请先发「结束澄清」。"
+			if !startOnSave {
+				return "这个会话已经在澄清 " + title + "。发「澄清进度」查看进度，或「结束澄清」退出。"
+			}
+			// The start waits for the clarification already running here.
+			_, err := h.repo.UpdateBotClarifySession(sess.ID, func(s *domain.BotClarifySession) error {
+				if !domain.BotClarifyActive(s.Status) || s.Status == domain.BotClarifySaving {
+					return errors.New("澄清结果正在保存或这次澄清已结束，请稍后再启动")
+				}
+				s.StartOnSave = true
+				return nil
+			})
+			if err != nil {
+				return notStarted + err.Error() + "。"
+			}
+			return "需求 " + title + " 正在这个会话里澄清，SOP 先不启动；澄清结论保存后会自动启动 SOP。"
 		}
-		return "需求 " + h.botIssueTitle(issue) + " 正在另一个会话里澄清。"
+		return notStarted + "需求 " + title + " 正在另一个会话里澄清。"
 	}
 	if err != nil {
-		return "澄清没有开始：" + err.Error()
+		return notStarted + "澄清没有开始：" + err.Error()
 	}
 	if err := h.runBotClarifyRound(bot, sess, domain.ClarificationKickoff); err != nil {
 		h.endBotClarify(sess.ID, "")
-		return "澄清没有开始：" + err.Error()
+		return notStarted + "澄清没有开始：" + err.Error()
 	}
 	who := "直接回复即可"
 	if conv.ChatType == "group" {
 		who = "群里绑定了平台账号的项目成员都可以 @我 回答"
 	}
-	return "已开始澄清 " + h.botIssueTitle(issue) + "。AI 正在阅读需求和代码，通常需要几分钟，问题出来后会发在这里，" + who + "。"
+	if startOnSave {
+		return "需求 " + title + " 需要先澄清再启动 SOP，已在这个会话开始澄清。AI 正在阅读需求和代码，问题出来后会发在这里，" + who + "。澄清结论保存后会自动启动 SOP。"
+	}
+	return "已开始澄清 " + title + "。AI 正在阅读需求和代码，通常需要几分钟，问题出来后会发在这里，" + who + "。"
 }
 
 // botClarifyModel is the model of the clarification analysis: the Bot's
@@ -316,7 +341,7 @@ func (h *assistantHandlers) finishBotClarifyRound(id string, model clarifyModelR
 	case runErr != nil:
 		h.postBotClarify(bot, sess, botinteraction.ClarifyPostNotice, "第 "+strconv.Itoa(sess.Round+1)+" 轮澄清分析没有完成："+sess.Error+"\n发「下一轮」重试，或发「结束澄清」退出。")
 	case sess.Status == domain.BotClarifyConcluded:
-		h.postBotClarify(bot, sess, botinteraction.ClarifyPostConclusion, h.botClarifyConclusionText(bot, sess))
+		h.postBotClarify(bot, sess, botClarifyConclusionKind(sess), h.botClarifyConclusionText(bot, sess))
 	default:
 		h.postBotClarify(bot, sess, botinteraction.ClarifyPostQuestions, h.botClarifyQuestionsText(bot, sess))
 	}
@@ -377,13 +402,31 @@ func (h *assistantHandlers) botClarifyConclusionText(bot domain.NotificationBot,
 	b.WriteString(h.botClarifyIssueTitle(sess) + " · 澄清结论\n")
 	b.WriteString(truncateRunes(sess.Summary, 3000))
 	b.WriteString("\n\n")
-	if botClarifyCards(bot) {
+	switch {
+	case sess.StartOnSave && botClarifyCards(bot):
+		b.WriteString("SOP 在等这次澄清：需求负责人、发起澄清的人或项目维护者点卡片上的「确认结论并启动 SOP」后写入需求（来自 TAPD、工蜂的需求同时写回原单）并启动 SOP。")
+	case sess.StartOnSave:
+		b.WriteString("SOP 在等这次澄清：需求负责人、发起澄清的人或项目维护者发「保存澄清」后写入需求（来自 TAPD、工蜂的需求同时写回原单）并启动 SOP。")
+	case botClarifyCards(bot):
 		b.WriteString("需求负责人、发起澄清的人或项目维护者可以点卡片上的「保存澄清结果」写入需求（来自 TAPD、工蜂的需求同时写回原单），或点「保存并启动 SOP」。")
-	} else {
+	default:
 		b.WriteString("需求负责人、发起澄清的人或项目维护者可以发「保存澄清」写入需求（来自 TAPD、工蜂的需求同时写回原单），或发「保存并启动」同时启动 SOP。")
 	}
-	b.WriteString("\n还要补充，直接说补充内容再发「下一轮」；不保存就发「结束澄清」。")
+	b.WriteString("\n还要补充，直接说补充内容再发「下一轮」；不保存就发「结束澄清」")
+	if sess.StartOnSave {
+		b.WriteString("，SOP 也不会启动")
+	}
+	b.WriteString("。")
 	return b.String()
+}
+
+// botClarifyConclusionKind is the conclusion card: one that starts the SOP
+// on saving when a start waits for it.
+func botClarifyConclusionKind(sess domain.BotClarifySession) string {
+	if sess.StartOnSave {
+		return botinteraction.ClarifyPostConclusionStart
+	}
+	return botinteraction.ClarifyPostConclusion
 }
 
 // botClarifyInSession handles a message of a conversation with an active
@@ -729,7 +772,7 @@ func (h *assistantHandlers) botClarifyResume(bot domain.NotificationBot, sess do
 		h.postBotClarify(bot, updated, botinteraction.ClarifyPostQuestions, h.botClarifyQuestionsText(bot, updated))
 		return "已恢复澄清，问题重新发在下面。"
 	case domain.BotClarifyConcluded:
-		h.postBotClarify(bot, updated, botinteraction.ClarifyPostConclusion, h.botClarifyConclusionText(bot, updated))
+		h.postBotClarify(bot, updated, botClarifyConclusionKind(updated), h.botClarifyConclusionText(bot, updated))
 		return "澄清结论重新发在下面。"
 	}
 	return h.botClarifyStatus(updated)
@@ -741,6 +784,9 @@ func (h *assistantHandlers) botClarifyStatus(sess domain.BotClarifySession) stri
 	case domain.BotClarifyAnalyzing:
 		return title + "：AI 正在分析第 " + strconv.Itoa(sess.Round+1) + " 轮。"
 	case domain.BotClarifyConcluded:
+		if sess.StartOnSave {
+			return title + "：已经得出结论，等待需求负责人、发起人或项目维护者保存；保存后会启动 SOP。"
+		}
 		return title + "：已经得出结论，等待需求负责人、发起人或项目维护者保存。"
 	case domain.BotClarifySaving:
 		return title + "：正在保存澄清结果。"
@@ -828,6 +874,9 @@ func (h *assistantHandlers) botClarifySave(ctx context.Context, bot domain.Notif
 	if err != nil {
 		return err.Error()
 	}
+	// The claim above lets one save through; a start waiting for this
+	// clarification is made by that save only.
+	start = start || claimed.StartOnSave
 	restore := func(reason string) string {
 		_, _ = h.repo.UpdateBotClarifySession(sess.ID, func(s *domain.BotClarifySession) error {
 			if s.Status != domain.BotClarifySaving {

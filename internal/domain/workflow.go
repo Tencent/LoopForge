@@ -173,6 +173,9 @@ type WorkflowDefinition struct {
 	SOPLane      string                `json:"sopLane,omitempty"`
 	Generic      bool                  `json:"generic,omitempty"`
 	Requirements []WorkflowRequirement `json:"requirements,omitempty"`
+	// ClarifyBeforeStart overrides the project's setting for this SOP:
+	// "required", "skip", or empty to follow the project.
+	ClarifyBeforeStart string `json:"clarifyBeforeStart,omitempty"`
 	// SandboxSnapshot is populated only on Run.WorkflowSnapshot. It freezes
 	// the resolved profile plus Dockerfile/environment payload so retries can
 	// reconstruct the original environment after catalog definitions change.

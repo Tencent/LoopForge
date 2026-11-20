@@ -89,6 +89,10 @@ type AgentToolSession struct {
 	AttachmentIDs    map[string]bool
 	AttachmentOwners map[string]int64
 	ExecMode         assistantExecMode
+	// HoldDispatch, when set (chat Bots with full access), may keep an
+	// issues_dispatch from starting the SOP: held=true returns reply as the
+	// tool result instead (see botHoldDispatch).
+	HoldDispatch     func(issueID, workflowID string) (reply string, held bool)
 	approvalReviewer assistantApprovalReviewer
 	Final            chan AgentTerminalResult
 

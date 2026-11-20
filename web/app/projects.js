@@ -185,6 +185,7 @@ function projectAdminFormHTML(d,ctx){
       ${creating&&!Number(state.currentUser?.id)?paRow('项目 Owner','项目的默认责任人，创建后可在「项目成员」中调整。',userCombobox('ownerId',d.ownerId,'请选择项目 Owner'),{required:true}):''}
       ${paRow('默认 SOP','用于新需求的默认流程；已关联 SOP 的需求保留原绑定。',projectDefaultSOPField(d),{required:true})}
       ${paRow('默认代码仓库',repoDesc,`<select name="defaultRepositoryId" class="select" ${repos.length?'':'disabled'}><option value="">暂未绑定</option>${repoOptions}</select>`)}
+      ${paRow('启动前澄清','在企业微信、飞书、钉钉聊天里启动 SOP 时，未澄清的需求先在原会话澄清，结论保存后再启动；SOP 可单独设置。',projectClarifyBeforeStartField(d))}
     </div>`);
   const owner=userById(d.ownerId);
   const members=(d.members||[]).map((m,i)=>{const u=userById(m.userId);return `<div class="member-row pa-member-row" data-member-row="${i}"><span class="member-avatar">${userAvatarHTML(u,48)}</span><span class="member-kind">成员</span>${userCombobox(`member-${i}`,m.userId,'请选择项目成员','data-m="userId"')}<button type="button" data-remove-member="${i}" title="移除成员" aria-label="移除成员">×</button></div>`}).join('');
@@ -492,6 +493,10 @@ function projectDefaultSOPField(project){
   const options=choices.map(w=>`<option value="${escapeHTML(w.id)}" ${w.id===current?'selected':''}>${w.generic?'通用 · ':''}${escapeHTML(w.name)}</option>`).join('');
   return `<select name="workflowId" class="select" required><option value="">请选择默认 SOP</option>${missing?`<option value="${escapeHTML(current)}" selected disabled>已失效：${escapeHTML(current)}（请重新选择）</option>`:''}${options}</select>`;
 }
+function projectClarifyBeforeStartField(project){
+  const v=project.clarifyBeforeStart==='required'?'required':'';
+  return `<select name="clarifyBeforeStart" class="select"><option value="" ${v?'':'selected'}>不需要，直接启动</option><option value="required" ${v?'selected':''}>需要，先澄清再启动</option></select>`;
+}
 function applyProjectDefaultSOP(project,workflowId){
   project.workflowId=workflowId;
   if(Array.isArray(project.sopPlaybooks)&&project.sopPlaybooks.length){
@@ -507,7 +512,7 @@ function applyProjectDefaultSOP(project,workflowId){
 function buildProjectPayload(base,fields={}){
   base=base||{};
   const ownerId=Number(fields.ownerId??base.ownerId)||0,id=String(fields.id??base.id??'').trim(),rawDefault=String(fields.defaultRepositoryId??base.defaultRepositoryId??'');
-  const value={...base,id,key:String(fields.key??base.key??'').trim().toUpperCase(),name:String(fields.name??base.name??'').trim(),description:fields.description??base.description??'',color:fields.color||base.color||PROJECT_SWATCHES[0],ownerId,workflowId:fields.workflowId??base.workflowId??'',defaultRepositoryId:rawDefault&&(state.data.repositories||[]).some(r=>r.id===rawDefault&&r.projectId===id)?rawDefault:'',members:(fields.members??base.members??[]).map(m=>({userId:Number(m.userId)||0,role:'member'})).filter(m=>m.userId!==ownerId),runEval:base.runEval,tapdWorkspaceId:String(fields.tapdWorkspaceId??base.tapdWorkspaceId??'').trim(),tapdIterationId:String(fields.tapdIterationId??base.tapdIterationId??'').trim()};
+  const value={...base,id,key:String(fields.key??base.key??'').trim().toUpperCase(),name:String(fields.name??base.name??'').trim(),description:fields.description??base.description??'',color:fields.color||base.color||PROJECT_SWATCHES[0],ownerId,workflowId:fields.workflowId??base.workflowId??'',clarifyBeforeStart:String(fields.clarifyBeforeStart??base.clarifyBeforeStart??''),defaultRepositoryId:rawDefault&&(state.data.repositories||[]).some(r=>r.id===rawDefault&&r.projectId===id)?rawDefault:'',members:(fields.members??base.members??[]).map(m=>({userId:Number(m.userId)||0,role:'member'})).filter(m=>m.userId!==ownerId),runEval:base.runEval,tapdWorkspaceId:String(fields.tapdWorkspaceId??base.tapdWorkspaceId??'').trim(),tapdIterationId:String(fields.tapdIterationId??base.tapdIterationId??'').trim()};
   applyProjectDefaultSOP(value,value.workflowId);
   for(const k of ['businessDomainId','tapdClear','repoRows','repoDrafts','gitToken','codeBuddyApiKey','codeBuddyInternetEnvironment'])delete value[k];
   if(fields.tapdClear)value.tapdClear=true;
@@ -536,7 +541,7 @@ async function saveProjectAdmin(e){
   const f=e.currentTarget,el=f.elements,projects=state.data.projects||[],creating=state.projectAdminDetailId==='new';
   const projectId=String(el.id?.value||'').trim(),saved=projects.find(p=>p.id===projectId);
   const base=clone(state.projectDraft||saved||{});
-  const value=buildProjectPayload(base,{id:projectId,key:el.key?.value||'',name:el.name?.value||'',description:el.description?.value,color:el.color?.value,ownerId:el.ownerId?el.ownerId.value:undefined,workflowId:el.workflowId?.value,defaultRepositoryId:el.defaultRepositoryId?.value||'',tapdWorkspaceId:el.tapdWorkspaceId?.value,tapdIterationId:el.tapdIterationId?.value,tapdClear:!!el.tapdClear?.checked});
+  const value=buildProjectPayload(base,{id:projectId,key:el.key?.value||'',name:el.name?.value||'',description:el.description?.value,color:el.color?.value,ownerId:el.ownerId?el.ownerId.value:undefined,workflowId:el.workflowId?.value,clarifyBeforeStart:el.clarifyBeforeStart?.value,defaultRepositoryId:el.defaultRepositoryId?.value||'',tapdWorkspaceId:el.tapdWorkspaceId?.value,tapdIterationId:el.tapdIterationId?.value,tapdClear:!!el.tapdClear?.checked});
   const invalid=validateProjectPayload(value,{creating,projects,workflows:state.data.workflows||[],saved});
   if(invalid)return invalid.field?projectAdminFail(f,invalid.field,invalid.message):toast(invalid.message,'err');
   const submit=f.querySelector?.('[data-pa-submit]');if(submit)submit.disabled=true;

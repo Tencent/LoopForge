@@ -24,6 +24,10 @@ type Project struct {
 	OwnerID             int64             `json:"ownerId,omitempty"`
 	Members             []ProjectMember   `json:"members,omitempty"`
 	RunEval             RunEvalPolicy     `json:"runEval,omitempty"`
+	// ClarifyBeforeStart "required" holds SOP starts from chats until the
+	// requirement's clarification is saved (see ClarifyRequiredBeforeStart);
+	// SOPs may override it.
+	ClarifyBeforeStart string `json:"clarifyBeforeStart,omitempty"`
 	// Deprecated project-level credential fields are kept only so old payloads
 	// can be decoded and scrubbed by the schema migration.
 	GitToken                     string    `json:"-"`

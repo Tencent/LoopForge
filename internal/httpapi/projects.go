@@ -120,6 +120,11 @@ func (h *projectsHandlers) projects(c *gin.Context) {
 				return
 			}
 		}
+		v.ClarifyBeforeStart = strings.TrimSpace(v.ClarifyBeforeStart)
+		if err := domain.ValidateClarifyBeforeStart(v.ClarifyBeforeStart); err != nil {
+			c.JSON(400, map[string]string{"error": err.Error()})
+			return
+		}
 		if v.Key == "" {
 			v.Key = strings.ToUpper(v.ID)
 		}

@@ -148,7 +148,7 @@ function renderWorkflowMeta(){
   $('#workflowSelect').innerHTML=options.map(w=>`<option value="${escapeHTML(w.id)}" ${wf&&w.id===wf.id?'selected':''}>${escapeHTML(w.name)}</option>`).join('');
   if(!wf){
     $('#workflowName').value='';$('#workflowDescription').value='';$('#workflowOwner').value='';$('#workflowSandbox').innerHTML='';
-    $('#workflowStatus').value='draft';$('#workflowTags').value='';$('#workflowMetricCategory').value='';$('#workflowSOPLane').value='';
+    $('#workflowStatus').value='draft';$('#workflowTags').value='';$('#workflowMetricCategory').value='';$('#workflowSOPLane').value='';$('#workflowClarifyBeforeStart').value='';
     const pill=$('#flowSettingsPill');if(pill)pill.textContent='未选择流程';
     renderFlowHeader();
     if(typeof flowPalette!=='undefined')flowPalette.render();
@@ -157,7 +157,7 @@ function renderWorkflowMeta(){
   normalizeWorkflowNotifications(wf);
  const notificationHost=$('#workflowNotificationEditor');if(notificationHost)mountNotificationEditor(notificationHost,wf.notifications,{sourceType:'run',kind:'sop',projectId:wf.projectId||state.projectFilter},()=>dirty());
  $('#workflowName').value=wf.name;$('#workflowDescription').value=wf.description||'';
-  $('#workflowOwner').value=wf.owner||'';$('#workflowStatus').value=wf.status||'draft';$('#workflowTags').value=(wf.tags||[]).join(', ');$('#workflowMetricCategory').value=wf.metricCategory||'';$('#workflowSOPLane').value=wf.sopLane||'';
+  $('#workflowOwner').value=wf.owner||'';$('#workflowStatus').value=wf.status||'draft';$('#workflowTags').value=(wf.tags||[]).join(', ');$('#workflowMetricCategory').value=wf.metricCategory||'';$('#workflowSOPLane').value=wf.sopLane||'';$('#workflowClarifyBeforeStart').value=wf.clarifyBeforeStart||'';
   const previewOn=!!wf.preview?.enabled, hasPreviewNode=(wf.nodes||[]).some(n=>isPreviewBuildNode(n.id));
   if(previewOn!==hasPreviewNode)syncPreviewBuildGraph();
   $('#workflowSandbox').innerHTML=(state.data.sandboxes||[]).filter(s=>catalogVisible(s.projectId,s.shared)).map(s=>`<option value="${escapeHTML(s.id)}" ${s.id===wf.sandboxProfileId?'selected':''}>${escapeHTML(s.name)}${catalogForeign(s.projectId)?' · 共享':''}</option>`).join('');

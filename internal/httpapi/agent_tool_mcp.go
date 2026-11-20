@@ -388,6 +388,11 @@ func (h *agentToolGateway) dispatch(ctx context.Context, session *AgentToolSessi
 		if session.Mode == AgentToolScheduled {
 			ctx = withAssistantExecMode(ctx, session.ExecMode)
 		}
+		if session.HoldDispatch != nil && tool.UpstreamName == "issues_dispatch" {
+			if reply, held := session.HoldDispatch(botDispatchCallArgs(args)); held {
+				return reply, nil
+			}
+		}
 		call := assistantMCPCall{Server: "agentflow", Tool: tool.UpstreamName, Arguments: args}
 		if session.canOpenConversationWorkspace() {
 			ctx = withConversationSession(ctx, session.ChatSessionID)

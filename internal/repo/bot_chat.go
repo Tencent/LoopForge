@@ -119,19 +119,20 @@ type botClarifyPayload struct {
 	Pending      []domain.BotClarifyPending  `json:"pending,omitempty"`
 	Summary      string                      `json:"summary,omitempty"`
 	Error        string                      `json:"error,omitempty"`
+	StartOnSave  bool                        `json:"startOnSave,omitempty"`
 }
 
 func (row botClarifySessionRow) session() domain.BotClarifySession {
 	s := domain.BotClarifySession{ID: row.ID, ConfigID: row.ConfigID, ProjectID: row.ProjectID, ConversationID: row.ConversationID, ChatType: row.ChatType, ChatID: row.ChatID, IssueID: row.IssueID, StarterSender: row.StarterSender, StarterUserID: row.StarterUserID, Status: row.Status, Round: row.Round, LastAnswerAt: row.LastAnswerAt, LastActivityAt: row.LastActivityAt, Version: row.Version, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}
 	var p botClarifyPayload
 	if json.Unmarshal([]byte(row.Payload), &p) == nil {
-		s.RoundMessage, s.Questions, s.General, s.Pending, s.Summary, s.Error = p.RoundMessage, p.Questions, p.General, p.Pending, p.Summary, p.Error
+		s.RoundMessage, s.Questions, s.General, s.Pending, s.Summary, s.Error, s.StartOnSave = p.RoundMessage, p.Questions, p.General, p.Pending, p.Summary, p.Error, p.StartOnSave
 	}
 	return s
 }
 
 func clarifySessionRow(s domain.BotClarifySession) botClarifySessionRow {
-	payload, _ := json.Marshal(botClarifyPayload{RoundMessage: s.RoundMessage, Questions: s.Questions, General: s.General, Pending: s.Pending, Summary: s.Summary, Error: s.Error})
+	payload, _ := json.Marshal(botClarifyPayload{RoundMessage: s.RoundMessage, Questions: s.Questions, General: s.General, Pending: s.Pending, Summary: s.Summary, Error: s.Error, StartOnSave: s.StartOnSave})
 	return botClarifySessionRow{ID: s.ID, ConfigID: s.ConfigID, ProjectID: s.ProjectID, ConversationID: s.ConversationID, IssueID: s.IssueID, ChatType: s.ChatType, ChatID: s.ChatID, StarterSender: s.StarterSender, StarterUserID: s.StarterUserID, Status: s.Status, Round: s.Round, Payload: string(payload), LastAnswerAt: s.LastAnswerAt, LastActivityAt: s.LastActivityAt, Version: s.Version, CreatedAt: s.CreatedAt, UpdatedAt: s.UpdatedAt}
 }
 
