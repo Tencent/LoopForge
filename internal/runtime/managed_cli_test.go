@@ -14,7 +14,10 @@ import (
 )
 
 func TestExecutorRunnerPinsManagedNativeCLI(t *testing.T) {
-	root := t.TempDir()
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	t.Setenv("AGENTFLOW_MANAGED_CLI_ROOT", root)
 	t.Setenv("AGENTFLOW_PI_BIN", "")
 	publish := func(version string) string {
