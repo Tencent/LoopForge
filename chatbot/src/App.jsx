@@ -97,6 +97,7 @@ const THEME_OPTIONS = [
   { value: "system", label: "跟随系统" },
 ];
 const environmentVisibilityKey = "agentflow.native-chat.environmentVisibility.v1";
+const sessionApprovalScope = (id) => `approval.session:${id}`;
 const sidebarWidthKey = "agentflow.sidebarWidth";
 const sidebarLayoutKey = "agentflow.sidebarLayoutVersion";
 const sidebarLayoutVersion = "grasp-reference-v3";
@@ -370,6 +371,7 @@ export default function App() {
     scroll = useRef(),
     follow = useRef(true),
     draftReady = useRef(null),
+    savingDraftApproval = useRef(null),
     previousArtifacts = useRef({ id: null, ids: new Set(), baselined: false }),
     dialogInput = useRef(),
     composerPreviews = useRef(new Map());
@@ -379,10 +381,13 @@ export default function App() {
   const draftKey = `agentflow.native-chat.draft.${chat.user?.id || "guest"}.${chat.activeId || newDraftSlot}`;
   const approvalOwner = realChat.user?.isGuest ? "guest" : realChat.user?.id;
   const { readOptions: readApproval, saveOptions: saveApproval } = useComposerOptions(approvalOwner);
-  const approvalScope = `approval.${chat.activeId ? `session:${chat.activeId}` : newDraftSlot}`;
+  const approvalScope = chat.activeId ? sessionApprovalScope(chat.activeId) : `approval.${newDraftSlot}`;
   const approval = normalizeApprovalMode(readApproval(approvalScope).mode);
   function setApproval(value) {
-    saveApproval(approvalScope, { mode: normalizeApprovalMode(value) });
+    const mode = normalizeApprovalMode(value);
+    const saving = savingDraftApproval.current;
+    if (saving?.scope === approvalScope && saving.owner === approvalOwner) saving.mode = mode;
+    saveApproval(approvalScope, { mode });
   }
   useEffect(() => {
     if (!chat.activeId) return;
@@ -768,11 +773,14 @@ export default function App() {
     closeMenu();
   }
   async function submit() {
-    if (uploading) return;
+    if (uploading || (!chat.activeId && savingDraftApproval.current)) return;
     follow.current = true;
-    const onSessionCreated = !chat.activeId && approval !== "confirm" ? (id) => {
-      saveApproval(`approval.session:${id}`, { mode: approval });
-      if (readApproval(approvalScope).mode === approval) saveApproval(approvalScope, null);
+    const draftApproval = chat.activeId ? null : { owner: approvalOwner, scope: approvalScope, mode: approval };
+    if (draftApproval) savingDraftApproval.current = draftApproval;
+    const onSessionCreated = draftApproval ? (id) => {
+      const { scope, mode } = draftApproval;
+      saveApproval(sessionApprovalScope(id), { mode });
+      if (readApproval(scope).mode === mode) saveApproval(scope, null);
     } : undefined;
     const ok = await chat.send({
       text,
@@ -780,6 +788,8 @@ export default function App() {
       references,
       approvalMode: approval,
       onSessionCreated,
+    }).finally(() => {
+      if (savingDraftApproval.current === draftApproval) savingDraftApproval.current = null;
     });
     if (ok) {
       setMention(null);
@@ -2134,7 +2144,7 @@ export default function App() {
                         e.target.value = "";
                       }}
                     />
-                    {chat.executors.length > 1 && !pinnedExecutor ? (
+                    {chat.executors.length > 1 && !pinnedExecutor && !chat.submitting ? (
                       <PermissionPicker
                         label="CLI"
                         options={chat.executors.map((executor) => {
@@ -2337,7 +2347,8 @@ export default function App() {
                       );
                       if (stored) {
                         closeDialog();
-                        await chat.regenerate(stored, dialog.fork ? "confirm" : approval);
+                        const mode = normalizeApprovalMode(readApproval(sessionApprovalScope(stored.id)).mode);
+                        await chat.regenerate(stored, mode);
                       }
                     }
                   }}

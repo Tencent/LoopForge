@@ -1,5 +1,5 @@
 import React from "react";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import { modelProviderFor } from "../src/ModelProviderIcon";
@@ -118,6 +118,43 @@ describe("App", () => {
       Object.assign(chat, original);
     }
   });
+  test.each([
+    { name: "moves a downgrade", submitted: "auto", changed: "请求批准", saved: "请求批准" },
+    { name: "moves an upgrade", submitted: "confirm", changed: "完全权限", saved: "完全权限" },
+    { name: "keeps the current tab's approval", submitted: "confirm", otherTab: true, changed: "完全权限", saved: "请求批准" },
+  ])("$name while the first session saves", async ({ submitted, changed, saved, otherTab }) => {
+    const original = { activeId: chat.activeId, session: chat.session };
+    const user = userEvent.setup();
+    const view = render(<App />);
+    const select = async (name) => {
+      await user.click(screen.getByRole("button", { name: "操作确认方式" }));
+      await user.click(screen.getByRole("menuitemradio", { name }));
+    };
+    try {
+      if (submitted === "auto") await select("完全权限");
+      let finish;
+      chat.send.mockImplementationOnce(({ onSessionCreated }) => new Promise((resolve) => {
+        finish = () => {
+          onSessionCreated?.("new-session");
+          resolve(true);
+        };
+      }));
+      await user.type(screen.getByRole("textbox", { name: "消息" }), "你好");
+      await user.click(screen.getByRole("button", { name: "发送消息" }));
+      expect(chat.send).toHaveBeenLastCalledWith(expect.objectContaining({ approvalMode: submitted }));
+      if (otherTab)
+        localStorage.setItem("loopforge.assistant.conversation.u1.approval.new:", JSON.stringify({ mode: "auto" }));
+      else
+        await select(changed);
+      await act(async () => finish());
+      expect(screen.getByRole("button", { name: "操作确认方式" })).toHaveTextContent(otherTab ? changed : "请求批准");
+      Object.assign(chat, { activeId: "new-session", session: { id: "new-session", messages: [] } });
+      view.rerender(<App />);
+      expect(screen.getByRole("button", { name: "操作确认方式" })).toHaveTextContent(saved);
+    } finally {
+      Object.assign(chat, original);
+    }
+  });
   test("restores full permission only for the conversation and account that picked it", async () => {
     const original = { activeId: chat.activeId, session: chat.session, user: chat.user };
     const user = userEvent.setup();
@@ -159,6 +196,33 @@ describe("App", () => {
       expect(screen.getByRole("button", { name: "选择模型" })).toHaveTextContent("codex:retired-model");
     } finally {
       chat.model = original;
+    }
+  });
+  test("regenerates an edited shared branch with the returned main conversation's approval mode", async () => {
+    const original = { activeId: chat.activeId, session: chat.session };
+    const user = userEvent.setup();
+    const main = { id: "sop-main", shared: true, messages: [{ role: "user", content: "原消息" }] };
+    const branch = { ...main, id: "sop-branch", parentSessionId: main.id, rootSessionId: main.id };
+    const select = async (name) => {
+      await user.click(screen.getByRole("button", { name: "操作确认方式" }));
+      await user.click(screen.getByRole("menuitemradio", { name }));
+    };
+    try {
+      Object.assign(chat, { activeId: main.id, session: main });
+      const view = render(<App />);
+      await select("帮我批准");
+      Object.assign(chat, { activeId: branch.id, session: branch });
+      view.rerender(<App />);
+      await select("完全权限");
+      await user.click(screen.getByLabelText("编辑消息"));
+      const edit = within(screen.getByRole("dialog")).getByRole("textbox");
+      await user.clear(edit);
+      await user.type(edit, "修改后的消息");
+      chat.edit.mockResolvedValueOnce(main);
+      await user.click(screen.getByText("保存并重新生成"));
+      expect(chat.regenerate).toHaveBeenLastCalledWith(main, "assisted");
+    } finally {
+      Object.assign(chat, original);
     }
   });
   test("does not ask for per-command native approval in a working conversation", () => {

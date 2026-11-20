@@ -165,6 +165,7 @@ export function useChat() {
     projectRef = useRef(projectId),
     globalProject = useRef(initialProject),
     submittingRef = useRef(false),
+    savingDraft = useRef(null),
     sandboxBusyRef = useRef(false),
     applyingRef = useRef(new Set()),
     dispatchingRef = useRef(false),
@@ -214,6 +215,7 @@ export function useChat() {
       setGenerationKnown(null);
       setLive({ answer: "", thinking: "", tools: [] });
       setSession(null);
+      savingDraft.current = null;
       executionMachines.resetMachine();
       if (!id) setExecutorState(storedExecutor());
       setModel(null);
@@ -232,12 +234,18 @@ export function useChat() {
   }, [open]);
   function restoreConversationModel(stored) {
     const picked = readOptions(`model.${stored.id}`);
-    const locked = conversationEngine(stored.messages, models, stored.executor);
-    const engine = knownExecutor(locked || picked.executor || stored.executor || engineOfModel(stored.model, models));
+    const modelEngine = engineOfModel(stored.model, models);
+    // Fork responses can omit the executor for old, unprefixed model IDs.
+    const parentExecutor = stored.parentSessionId && stored.parentSessionId === session?.id ? session.executor : "";
+    const recordedExecutor = stored.executor || (modelEngine === "codebuddy" && parentExecutor) || modelEngine;
+    const locked = conversationEngine(stored.messages, models, recordedExecutor);
+    const engine = knownExecutor(locked || picked.executor || recordedExecutor);
     const selection = picked.executor === engine ? picked : stored;
+    const choice = { executor: engine, model: selection.model || null, effort: selection.effort ?? "" };
     setExecutorState(engine);
-    setModel(selection.model || null);
-    setEffort(selection.effort ?? "");
+    setModel(choice.model);
+    setEffort(choice.effort);
+    return choice;
   }
   const applyModelCatalog = useCallback((catalog) => {
     setModels(catalog.models || []);
@@ -593,51 +601,57 @@ export function useChat() {
         );
     return () => window.removeEventListener("message", listener);
   }, [ready]);
-  const personalMachineId = executionLocked(session)
-    ? (session.executionTarget?.pool === "runner" ? session.executionTarget.runnerId : "")
-    : executionMachines.defaultRunnerId;
-  const personalMachine = executionMachines.machines.find(
-    (machine) => machine.id === personalMachineId && machine.ownerUserId === user?.id,
-  );
-  const agyRuntime = personalMachine?.runtimes?.find((runtime) => runtime.provider === "agy");
-  const agyAccountKey = executor === "agy" && agyRuntime && agyRuntime.authMode !== "personal"
-    ? `agy-account:${user.id}:${personalMachine.id}` : "";
-  const agyAccountCatalog = providerCatalogs[agyAccountKey];
-  const codeBuddy = executor === "codebuddy";
-  const listedForEngine = engineModels(models, executor);
-  const executorModels = agyAccountKey ? agyAccountCatalog?.models || [] :
-    executorModelList(models, executor, providerCatalogs);
   const missingKey = !!user && !user.codeBuddyApiKeyConfigured;
   // Without their own key users chat on the platform's shared key, limited to
   // the models the administrator allowed (the first is the default).
   const sponsoredModel = sponsoredModels[0] || "";
-  const sponsored = codeBuddy && missingKey && !user.isGuest && !!sponsoredModel;
-  const sharedModelFor = (id) => (sponsoredModels.includes(id) ? id : sponsoredModel);
-  function modelEntry(id) {
-    return findExecutorModel(executorModels, executor, id) ??
-      (codeBuddy && id === codeBuddyDefault.id ? codeBuddyDefault : undefined);
+  function resolveComposerModel({ executor, model, effort }, conversation, draft) {
+    const personalMachineId = executionLocked(conversation)
+      ? (conversation.executionTarget?.pool === "runner" ? conversation.executionTarget.runnerId : "")
+      : executionMachines.defaultRunnerId;
+    const personalMachine = executionMachines.machines.find(
+      (machine) => machine.id === personalMachineId && machine.ownerUserId === user?.id,
+    );
+    const agyRuntime = personalMachine?.runtimes?.find((runtime) => runtime.provider === "agy");
+    const agyAccountKey = executor === "agy" && agyRuntime && agyRuntime.authMode !== "personal"
+      ? `agy-account:${user.id}:${personalMachine.id}` : "";
+    const agyAccountCatalog = providerCatalogs[agyAccountKey];
+    const codeBuddy = executor === "codebuddy";
+    const executorModels = agyAccountKey ? agyAccountCatalog?.models || [] :
+      executorModelList(models, executor, providerCatalogs);
+    const sponsored = codeBuddy && missingKey && !user.isGuest && !!sponsoredModel;
+    const listedModel = findExecutorModel(executorModels, executor, model);
+    const hasSelectedModel = model !== null && !listedModel?.disabled && !listedModel?.unavailable &&
+      (conversation || !executorModels.length || listedModel);
+    const selectedModel = hasSelectedModel ? model : preferredModel(
+      executorModels, executor, codeBuddyDefault.id,
+      draft ? readComposerPreference(`model.${executor}`) : null,
+    );
+    const availableModel = sponsored && !sponsoredModels.includes(selectedModel) ? sponsoredModel : selectedModel;
+    const activeModelEntry = findExecutorModel(executorModels, executor, availableModel) ??
+      (codeBuddy && availableModel === codeBuddyDefault.id ? codeBuddyDefault : undefined);
+    const activeModel = activeModelEntry?.id ?? availableModel;
+    const requestedModelId = unprefixedModel(executor, availableModel);
+    const unavailableAgyVariant = agyAccountCatalog && !activeModelEntry &&
+      /-(?:low|medium|high|xhigh|max)$/.test(requestedModelId || "");
+    // Older sessions and preferences stored the ID of the selected effort variant.
+    const legacyEffort = requestedModelId !== unprefixedModel(executor, activeModel)
+      ? activeModelEntry?.efforts?.find((level) => activeModelEntry.effortModelIds?.[level] === requestedModelId)
+      : undefined;
+    // null follows the browser preference, while "" is the CLI's default level.
+    const preferredEffort = ((model === null || hasSelectedModel) ? effort : null) ??
+      (draft ? readComposerPreference(effortPreference(executor, availableModel)) : null);
+    const activeEffort = modelEffort(activeModelEntry, preferredEffort || legacyEffort);
+    return {
+      personalMachineId, personalMachine, agyAccountKey, codeBuddy, executorModels,
+      sponsored, activeModelEntry, activeModel, activeEffort, unavailableAgyVariant,
+    };
   }
-  const listedModel = findExecutorModel(executorModels, executor, model);
-  const hasSelectedModel = model !== null && !listedModel?.disabled && !listedModel?.unavailable &&
-    (session || !executorModels.length || listedModel);
-  const selectedModel = hasSelectedModel ? model : preferredModel(
-    executorModels, executor, codeBuddyDefault.id,
-    activeId ? null : readComposerPreference(`model.${executor}`),
-  );
-  const availableModel = sponsored ? sharedModelFor(selectedModel) : selectedModel;
-  const activeModelEntry = modelEntry(availableModel);
-  const activeModel = activeModelEntry?.id ?? availableModel;
-  const requestedModelId = unprefixedModel(executor, availableModel);
-  const unavailableAgyVariant = agyAccountCatalog && !activeModelEntry &&
-    /-(?:low|medium|high|xhigh|max)$/.test(requestedModelId || "");
-  // Older sessions and preferences stored the ID of the selected effort variant.
-  const legacyEffort = requestedModelId !== unprefixedModel(executor, activeModel)
-    ? activeModelEntry?.efforts?.find((level) => activeModelEntry.effortModelIds?.[level] === requestedModelId)
-    : undefined;
-  // null follows the browser preference, while "" is the CLI's default level.
-  const preferredEffort = ((model === null || hasSelectedModel) ? effort : null) ??
-    (activeId ? null : readComposerPreference(effortPreference(executor, availableModel)));
-  const activeEffort = modelEffort(activeModelEntry, preferredEffort || legacyEffort);
+  const {
+    personalMachineId, personalMachine, agyAccountKey, codeBuddy, executorModels,
+    sponsored, activeModelEntry, activeModel, activeEffort, unavailableAgyVariant,
+  } = resolveComposerModel({ executor, model, effort }, session, !activeId);
+  const listedForEngine = engineModels(models, executor);
   useEffect(() => {
     const key = agyAccountKey || executor;
     if (codeBuddy || providerCatalogs[key] || (!agyAccountKey && listedForEngine.length)) return;
@@ -670,7 +684,7 @@ export function useChat() {
   }, [agyAccountKey, codeBuddy, executor, listedForEngine.length, personalMachineId, providerCatalogs]);
   function chooseExecutor(id) {
     if (id === "claude") id = "claude-code";
-    if (!EXECUTORS.some((item) => item.id === id) || id === executor) return;
+    if (submittingRef.current || !EXECUTORS.some((item) => item.id === id) || id === executor) return;
     const current = sessionRef.current;
     const locked = conversationEngine(current?.messages, models, current?.executor);
     writeComposerPreference("executor", id);
@@ -685,8 +699,11 @@ export function useChat() {
     writeComposerPreference("executor", executor);
     writeComposerPreference(`model.${executor}`, id);
     writeComposerPreference(effortPreference(executor, id), level);
-    if (sessionRef.current?.id === activeId)
-      saveOptions(`model.${activeId}`, { executor, model: id, effort: level });
+    const choice = { executor, model: id, effort: level };
+    const draft = savingDraft.current;
+    if (sessionRef.current?.id === activeId) saveOptions(`model.${activeId}`, choice);
+    else if (!activeId && draft && draft.projectId === projectId && draft.issueId === draftIssueId)
+      draft.choice = choice;
   }
 
   function chooseModel(id) {
@@ -977,17 +994,20 @@ export function useChat() {
     setSubmitting(true);
     setError("");
     let s = sessionRef.current;
+    let draft;
     const previousGeneration = generation?.id;
     setGeneration(null);
     try {
       if (!s) {
         const id = newId();
+        draft = { projectId: projectRef.current, issueId: draftIssueId, choice: null };
+        savingDraft.current = draft;
         s = await write(
           sessionPath(id),
           {
             id,
-            projectId: projectRef.current,
-            issueId: draftIssueId,
+            projectId: draft.projectId,
+            issueId: draft.issueId,
             sandboxProfileId,
             executionTarget: {pool: executionMachines.defaultRunnerId ? "runner" : "cloud", runnerId: executionMachines.defaultRunnerId || ""},
             model: activeModel,
@@ -1000,9 +1020,11 @@ export function useChat() {
           "PUT",
         );
         onSessionCreated?.(s.id);
+        if (draft.choice) saveOptions(`model.${s.id}`, draft.choice);
         setSession(s);
-        setModel(activeModel);
-        setEffort(activeEffort);
+        setExecutorState(executor);
+        setModel(draft.choice?.model ?? activeModel);
+        setEffort(draft.choice?.effort ?? activeEffort);
         currentId.current = id;
         setActiveId(id);
         changeURL(id);
@@ -1073,6 +1095,7 @@ export function useChat() {
       setError(e.message);
       return false;
     } finally {
+      if (savingDraft.current === draft) savingDraft.current = null;
       submittingRef.current = false;
       setSubmitting(false);
     }
@@ -1144,26 +1167,25 @@ export function useChat() {
       return null;
     }
   }
-  // approvalMode is the composer's current choice, so a regenerated reply
-  // follows it like a new message does.
+  // An edit to a shared branch can return its main conversation. Resolve
+  // the generation from that session even before React renders it.
   async function regenerate(stored, approvalMode = "confirm") {
     try {
       submittingRef.current = true;
       setSubmitting(true);
       open(stored.id);
       setSession(stored);
-      const savedModel = sponsored ? sharedModelFor(stored.model || activeModel) : stored.model || activeModel;
-      const chosen = stored.id === activeId ? activeModel : modelEntry(savedModel)?.id || savedModel;
-      const level = stored.id === activeId ? activeEffort : modelEffort(modelEntry(chosen), stored.effort || "");
-      setModel(chosen);
-      setEffort(level);
+      const selection = restoreConversationModel(stored);
+      const resolved = resolveComposerModel(selection, stored, false);
+      if (resolved.unavailableAgyVariant) throw Error("当前模型已不在该执行机器的账号目录，请重新选择模型。");
+      if (!resolved.activeModel) throw Error("当前 CLI 暂无可用模型，请在个人配置中获取或添加模型。");
       const g = await write("/api/assistant/generations", {
         sessionId: stored.id,
         projectId: stored.projectId || "",
         runId: stored.runId || "",
-        executor,
-        model: chosen,
-        effort: level,
+        executor: selection.executor,
+        model: resolved.activeModel,
+        effort: resolved.activeEffort,
         messages: stored.messages,
         approvalMode: ["confirm", "assisted", "auto"].includes(approvalMode) ? approvalMode : "confirm",
         approvalUserId: user?.id,

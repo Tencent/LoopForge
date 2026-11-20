@@ -151,6 +151,49 @@ describe("conversation hooks", () => {
     }
   });
 
+  test("keeps a model picked during the first save for later messages", async () => {
+    const originalAPI = apiMock.getMockImplementation();
+    const originalWrite = writeMock.getMockImplementation();
+    let saved, completeSave;
+    apiMock.mockImplementation((path, options) => {
+      if (path === "/api/assistant/models") return Promise.resolve({
+        default: "m1", models: [{ id: "m1" }, { id: "m2", efforts: ["high"] }],
+      });
+      if (path === "/api/assistant/sessions/new-session") return Promise.resolve(saved);
+      return originalAPI(path, options);
+    });
+    writeMock.mockImplementation((path, body, method) => {
+      if (path !== "/api/assistant/sessions/new-session" || method !== "PUT") return originalWrite(path, body, method);
+      saved = body;
+      return new Promise((resolve) => { completeSave = () => resolve(saved); });
+    });
+    try {
+      const { result } = renderHook(useChat);
+      await waitFor(() => expect(result.current.machinesReady).toBe(true));
+      let sending;
+      act(() => { sending = result.current.send({ text: "第一条消息" }); });
+      await waitFor(() => expect(completeSave).toBeTypeOf("function"));
+      act(() => result.current.setModel("m2"));
+      act(() => result.current.setEffort("high"));
+      await act(async () => {
+        completeSave();
+        await sending;
+      });
+      expect(writeMock).toHaveBeenCalledWith("/api/assistant/generations", expect.objectContaining({
+        model: "m1", effort: "",
+      }));
+      expect(result.current).toMatchObject({ activeId: "new-session", model: "m2", effort: "high" });
+      act(() => result.current.newChat());
+      act(() => result.current.open("new-session"));
+      await waitFor(() => expect(result.current.session?.id).toBe("new-session"));
+      expect(result.current).toMatchObject({ model: "m2", effort: "high" });
+    } finally {
+      completeSave?.();
+      apiMock.mockImplementation(originalAPI);
+      writeMock.mockImplementation(originalWrite);
+    }
+  });
+
   test("does not create a chat without a concrete model on Pi", async () => {
     const view = renderHook(() => useChat());
     try {
@@ -431,6 +474,72 @@ describe("conversation hooks", () => {
     expect(writeMock).toHaveBeenLastCalledWith("/api/assistant/generations", expect.objectContaining({ approvalMode: "assisted" }));
     await act(() => result.current.regenerate(stored, "bogus"));
     expect(writeMock).toHaveBeenLastCalledWith("/api/assistant/generations", expect.objectContaining({ approvalMode: "confirm" }));
+  });
+
+  test("regenerates using the model and CLI of the conversation returned by an edit", async () => {
+    const originalAPI = apiMock.getMockImplementation();
+    const originalWrite = writeMock.getMockImplementation();
+    const main = {
+      id: "main", executor: "codex", model: "codex:gpt-main",
+      messages: [{ role: "user", content: "修改" }],
+    };
+    apiMock.mockImplementation((path, options) => {
+      if (path === "/api/assistant/models") return Promise.resolve({
+        default: "m1", models: [
+          { id: "m1" },
+          { id: "codex:gpt-main", engine: "codex" },
+          { id: "codex:gpt-alternate", engine: "codex", efforts: ["high"] },
+        ],
+      });
+      if (path === "/api/assistant/sessions/main") return Promise.resolve(main);
+      return originalAPI(path, options);
+    });
+    writeMock.mockImplementation((path, body, method) =>
+      path === "/api/assistant/sessions/s1/edit" ? Promise.resolve(main) : originalWrite(path, body, method));
+    try {
+      const { result } = renderHook(useChat);
+      await waitFor(() => expect(result.current.ready).toBe(true));
+      act(() => result.current.open(main.id));
+      await waitFor(() => expect(result.current.model).toBe("codex:gpt-main"));
+      act(() => result.current.setModel("codex:gpt-alternate"));
+      act(() => result.current.setEffort("high"));
+      act(() => result.current.open("s1"));
+      await waitFor(() => expect(result.current.session?.id).toBe("s1"));
+
+      const { edit, regenerate } = result.current;
+      await act(async () => regenerate(await edit(0, "修改"), "assisted"));
+      expect(writeMock).toHaveBeenCalledWith("/api/assistant/generations", expect.objectContaining({
+        sessionId: main.id, executor: "codex", model: "codex:gpt-alternate", effort: "high",
+        approvalMode: "assisted",
+      }));
+    } finally {
+      apiMock.mockImplementation(originalAPI);
+      writeMock.mockImplementation(originalWrite);
+    }
+  });
+
+  test("regenerates a new fork with its parent's CLI when the legacy model is unprefixed", async () => {
+    const original = apiMock.getMockImplementation();
+    const fork = {
+      id: "fork", parentSessionId: "s1", model: "gpt-5", effort: "high",
+      messages: [{ role: "user", content: "修改" }],
+    };
+    apiMock.mockImplementation((path, options) => {
+      if (path === "/api/assistant/sessions/s1") return Promise.resolve({ ...fork, id: "s1", executor: "codex" });
+      if (path === "/api/assistant/sessions/fork") return Promise.resolve(fork);
+      return original(path, options);
+    });
+    try {
+      history.replaceState({}, "", "/?session=s1");
+      const { result } = renderHook(useChat);
+      await waitFor(() => expect(result.current.effort).toBe("high"));
+      await act(() => result.current.regenerate(fork));
+      expect(writeMock).toHaveBeenCalledWith("/api/assistant/generations", expect.objectContaining({
+        sessionId: fork.id, executor: "codex", model: "gpt-5", effort: "high",
+      }));
+    } finally {
+      apiMock.mockImplementation(original);
+    }
   });
 
   test("an open conversation on a CLI without a key keeps its model", async () => {
