@@ -6,6 +6,11 @@
   min-width: 0;
 }
 
+.chat-shell button.permission-selector:disabled {
+  cursor: default;
+  opacity: 1;
+}
+
 /* The portal defines its own colors outside the workbench's theme scope. */
 .permission-menu {
   --permission-surface: #fff;

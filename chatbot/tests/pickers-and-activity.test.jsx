@@ -81,6 +81,30 @@ describe("pickers and activity", () => {
     expect(selectPermission).toHaveBeenCalledWith("auto");
   });
 
+  test("shows a locked CLI as a disabled, readable selector", async () => {
+    const onOpenChange = vi.fn();
+    const onSelect = vi.fn();
+    render(
+      <PermissionPicker
+        label="CLI"
+        options={[{ id: "codex", label: "Codex", icon: "terminal" }]}
+        value="codex"
+        disabled
+        title="当前对话已绑定该 CLI，切换请新建对话"
+        open={false}
+        onOpenChange={onOpenChange}
+        onSelect={onSelect}
+      />,
+    );
+    const selector = screen.getByRole("button", { name: "CLI" });
+    expect(selector).toBeDisabled();
+    expect(selector).toHaveAttribute("title", "当前对话已绑定该 CLI，切换请新建对话");
+    await userEvent.click(selector);
+    expect(onOpenChange).not.toHaveBeenCalled();
+    expect(onSelect).not.toHaveBeenCalled();
+    expect(document.querySelector(".permission-menu")).not.toBeInTheDocument();
+  });
+
   test("remembers the approval mode and ignores unknown values", () => {
     expect(storedApprovalMode(1)).toBe("confirm");
     rememberApprovalMode(1, "assisted");
