@@ -71,13 +71,11 @@ func (h *streamHandlers) streamRun(c *gin.Context) {
 					delta = append(delta, slimTelemetryEvent(event))
 				}
 			}
-			after = run.TelemetrySequence
 			for _, record := range run.Logs {
 				if record.Sequence > logsAfter {
 					logDelta = append(logDelta, slimLogRecord(record))
 				}
 			}
-			logsAfter = run.LogSequence
 			if len(delta) > 80 {
 				delta = delta[len(delta)-80:]
 			}
@@ -88,6 +86,14 @@ func (h *streamHandlers) streamRun(c *gin.Context) {
 			raw, _ := json.Marshal(map[string]any{"run": run, "telemetryDelta": delta, "logDelta": logDelta})
 			_, _ = fmt.Fprintf(w, "id: %d\nevent: run\ndata: %s\n\n", run.Revision, raw)
 			c.Writer.Flush()
+			// Preserve reconnect cursors when a snapshot contains no new
+			// records. Advance only through the deltas sent to this client.
+			for _, event := range delta {
+				after = max(after, event.Sequence)
+			}
+			for _, record := range logDelta {
+				logsAfter = max(logsAfter, record.Sequence)
+			}
 		case <-ping.C:
 			_, _ = fmt.Fprint(w, ": heartbeat\n\n")
 			c.Writer.Flush()
