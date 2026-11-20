@@ -18,7 +18,8 @@ Usage:
   curl -fsSL <install.sh URL> | sh -s -- <host> [options]
 
 Hosts:
-  codebuddy | codex | cursor | claude
+  Classic:  codebuddy | codex | cursor | claude
+  Portable: codebuddy | codex | cursor | claude | pi | dsh | hermes
 
 Options:
   --edition <classic|portable>  Workflow edition (default: classic)
@@ -46,7 +47,7 @@ FORCE=0
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
-    codebuddy|codex|cursor|claude)
+    codebuddy|codex|cursor|claude|pi|dsh|hermes)
       [ -z "$HOST" ] || fail "host was provided more than once"
       HOST="$1"
       shift
@@ -97,6 +98,9 @@ done
 case "$EDITION" in
   classic|portable) ;;
   *) fail "unsupported edition: $EDITION" ;;
+esac
+case "$HOST:$EDITION" in
+  pi:classic|dsh:classic|hermes:classic) fail "$HOST requires --edition portable" ;;
 esac
 [ -d "$PROJECT_ROOT" ] || fail "project directory does not exist: $PROJECT_ROOT"
 
