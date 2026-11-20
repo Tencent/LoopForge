@@ -295,7 +295,7 @@ func TestBotDraftChoosesSOPAndStartsIt(t *testing.T) {
 	project.WorkflowID = "wf-dev"
 	s.PutProject(project)
 	id := ask()
-	if !strings.Contains(*last, "（SOP：项目默认 · 研发交付）") || !strings.Contains(*last, "确认页可以更换 SOP") {
+	if !strings.Contains(*last, "（SOP：项目默认 · 研发交付）") || !strings.Contains(*last, "确认页可以更换仓库和 SOP") {
 		t.Fatalf("summary without SOP: %q", *last)
 	}
 	_, view := draftCall(t, h, member, "GET", "/api/bot-drafts/"+id, false)
@@ -510,5 +510,100 @@ func TestFeishuDraftCardUsesPickedSOP(t *testing.T) {
 		if strings.HasPrefix(issue.Title, "网页确认的需求") && issue.WorkflowID != "wf-fix" {
 			t.Fatalf("bound to %s", issue.WorkflowID)
 		}
+	}
+}
+
+// The repository of a requirement created from chat: the summary names it
+// (the project default when nobody named one), the card and the page offer
+// the project's repositories, and the pick binds the requirement.
+func TestBotDraftChoosesRepository(t *testing.T) {
+	s, h, bot, ask, last := confirmModeFixtureFor(t, domain.BotChannelFeishu)
+	member, _ := s.User(43)
+	s.PutProject(domain.Project{ID: "q", OwnerID: 42})
+	for _, r := range []domain.Repository{
+		{ID: "repo-main", ProjectID: "p", Name: "lf-loop-sandbox", DefaultBranch: "main"},
+		{ID: "repo-web", ProjectID: "p", Name: "web-console", DefaultBranch: "main"},
+		{ID: "repo-other", ProjectID: "q", Name: "其他项目仓库", DefaultBranch: "main"},
+	} {
+		if err := s.PutRepository(r); err != nil {
+			t.Fatal(err)
+		}
+	}
+	project, _ := s.Project("p")
+	project.DefaultRepositoryID = "repo-main"
+	s.PutProject(project)
+	created := func(prefix string) domain.Issue {
+		for _, issue := range s.Issues() {
+			if issue.Title == prefix {
+				return issue
+			}
+		}
+		return domain.Issue{}
+	}
+
+	// Page: the default is preselected and another repository is chosen.
+	id := ask()
+	if !strings.Contains(*last, "（仓库：项目默认 · lf-loop-sandbox）") {
+		t.Fatalf("summary without repository: %q", *last)
+	}
+	_, view := draftCall(t, h, member, "GET", "/api/bot-drafts/"+id, false)
+	issue := view["newIssues"].([]any)[0].(map[string]any)
+	if issue["repositoryId"] != "" || issue["defaultRepositoryName"] != "lf-loop-sandbox" {
+		t.Fatalf("new issue = %v", issue)
+	}
+	repos := []string{}
+	for _, r := range view["repositories"].([]any) {
+		repos = append(repos, r.(map[string]any)["name"].(string))
+	}
+	if strings.Join(repos, ",") != "lf-loop-sandbox,web-console" {
+		t.Fatalf("repositories = %v", repos)
+	}
+	if _, out := draftChoice(t, h, member, id, `{"choices":[{"index":0,"workflowId":"","repositoryId":"repo-web"}]}`); out["status"] != repo.BotDraftExecuted || !strings.Contains(strings.Join(toStrings(out["results"]), "\n"), "（仓库：web-console）") {
+		t.Fatalf("confirm = %v", out)
+	}
+	if got := created("网页确认的需求!"); got.RepositoryID != "repo-web" || len(got.RepositoryIDs) != 1 {
+		t.Fatalf("bound to %q %v", got.RepositoryID, got.RepositoryIDs)
+	}
+	// Another project's repository is refused.
+	other := ask()
+	if _, out := draftChoice(t, h, member, other, `{"choices":[{"index":0,"workflowId":"","repositoryId":"repo-other"}]}`); out["status"] != repo.BotDraftFailed || created("网页确认的需求!!").ID != "" {
+		t.Fatalf("foreign repository = %v", out)
+	}
+
+	// Card: a repository drop-down before the SOP; the pick is stored,
+	// foreign repositories are refused, and confirming binds it.
+	id = ask()
+	draft, _ := s.BotPendingDraft(id, time.Now().UTC())
+	if draft.SOP == nil || draft.SOP.DefaultRepositoryName != "lf-loop-sandbox" || !draft.SOP.AllowsRepository("repo-web") || draft.SOP.AllowsRepository("repo-other") {
+		t.Fatalf("repository options = %+v", draft.SOP)
+	}
+	if _, err := s.SetBotPendingDraftRepository(id, bot.ID, "new-wecom-user", "repo-other", time.Now().UTC()); err != repo.ErrBotDraftNotPending {
+		t.Fatalf("foreign pick = %v", err)
+	}
+	if _, err := s.SetBotPendingDraftRepository(id, bot.ID, "someone-else", "repo-web", time.Now().UTC()); err != repo.ErrBotDraftNotPending {
+		t.Fatalf("other sender = %v", err)
+	}
+	if _, err := s.SetBotPendingDraftRepository(id, bot.ID, "new-wecom-user", "repo-web", time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	_, view = draftCall(t, h, member, "GET", "/api/bot-drafts/"+id, false)
+	if issue := view["newIssues"].([]any)[0].(map[string]any); issue["repositoryId"] != "repo-web" || issue["workflowId"] != "" {
+		t.Fatalf("page does not start from the card pick: %v", issue)
+	}
+	reply, err := h.handleBotCardAction(context.Background(), bot, domain.BotInteraction{SenderID: "new-wecom-user", Action: botinteraction.DraftActionConfirm, DeliveryID: id}, domain.BotConversation{})
+	if err != nil || !strings.Contains(reply, "（仓库：web-console）") {
+		t.Fatalf("confirm = %q %v", reply, err)
+	}
+	if got := created("网页确认的需求!!!"); got.RepositoryID != "repo-web" {
+		t.Fatalf("card pick not applied: %q", got.RepositoryID)
+	}
+	// Choosing the default again keeps the project default repository.
+	id = ask()
+	s.SetBotPendingDraftRepository(id, bot.ID, "new-wecom-user", domain.BotDraftDefaultSOP, time.Now().UTC())
+	if reply, _ := h.handleBotCardAction(context.Background(), bot, domain.BotInteraction{SenderID: "new-wecom-user", Action: botinteraction.DraftActionConfirm, DeliveryID: id}, domain.BotConversation{}); !strings.Contains(reply, "（仓库：项目默认 · lf-loop-sandbox）") {
+		t.Fatalf("default = %q", reply)
+	}
+	if got := created("网页确认的需求!!!!"); got.RepositoryID != "repo-main" {
+		t.Fatalf("default repository = %q", got.RepositoryID)
 	}
 }

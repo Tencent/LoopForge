@@ -353,8 +353,8 @@ func TestDraftCardSOPSelectionAndGroupClick(t *testing.T) {
 	}
 	svc := New(store)
 	card := svc.draftCardByID(draft)
-	if card.Select == nil || card.Select.Initial != domain.BotDraftDefaultSOP || len(card.Select.Options) != 3 || card.Rows[0][1] != "1. 保存需求：登录优化" {
-		t.Fatalf("card = %+v select %+v", card, card.Select)
+	if len(card.Selects) != 1 || card.Selects[0].Label != "SOP" || card.Selects[0].Initial != domain.BotDraftDefaultSOP || len(card.Selects[0].Options) != 3 || card.Rows[0][1] != "1. 保存需求：登录优化" {
+		t.Fatalf("card = %+v selects %+v", card, card.Selects)
 	}
 	raw := string(feishuCardJSON(card))
 	if !strings.Contains(raw, `"tag":"select_static"`) || !strings.Contains(raw, `"initial_option":"__default__"`) || !strings.Contains(raw, `"af_action":"draft_sop"`) {
@@ -373,7 +373,7 @@ func TestDraftCardSOPSelectionAndGroupClick(t *testing.T) {
 		t.Fatalf("foreign = %+v", ack)
 	}
 	ack, err = svc.accept(context.Background(), bot, event("ou_req", DraftActionSOP, "wf-fix", "e3"))
-	if err != nil || ack.Card == nil || ack.Card.Select.Initial != "wf-fix" || ack.Accepted {
+	if err != nil || ack.Card == nil || ack.Card.Selects[0].Initial != "wf-fix" || ack.Accepted {
 		t.Fatalf("pick = %+v %v", ack, err)
 	}
 	if stored, _ := store.BotPendingDraft(draft.ID, now); stored.Choice != "wf-fix" {
@@ -382,7 +382,7 @@ func TestDraftCardSOPSelectionAndGroupClick(t *testing.T) {
 	// Confirm: queued in the group conversation, threaded under the card,
 	// and the answer card has no buttons left.
 	ack, err = svc.accept(context.Background(), bot, event("ou_req", DraftActionConfirmStart, "", "e4"))
-	if err != nil || !ack.Accepted || ack.Card == nil || len(ack.Card.Actions) != 0 || ack.Card.Select != nil || !strings.Contains(ack.Card.Status, "确认并启动 SOP") {
+	if err != nil || !ack.Accepted || ack.Card == nil || len(ack.Card.Actions) != 0 || len(ack.Card.Selects) != 0 || !strings.Contains(ack.Card.Status, "确认并启动 SOP") {
 		t.Fatalf("confirm = %+v %v", ack, err)
 	}
 	item, _ := store.BotInteraction(ack.InteractionID)
@@ -396,5 +396,62 @@ func TestDraftCardSOPSelectionAndGroupClick(t *testing.T) {
 	resp := feishuCardAnswer(ack)
 	if resp.Card == nil || resp.Card.Type != "raw" || resp.Toast == nil {
 		t.Fatalf("answer = %+v", resp)
+	}
+}
+
+// A draft creating one requirement in a project with repositories shows a
+// repository drop-down before the SOP; only the requester can pick, only
+// offered repositories are accepted.
+func TestDraftCardRepositorySelection(t *testing.T) {
+	store, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	bot := domain.NotificationBot{ID: "cfg-draft-repo", Channel: domain.BotChannelFeishu, BotID: "cli_r", ProjectID: "p", OwnerID: 42, Enabled: true, InteractionEnabled: true, TenantKey: "tk", TenantState: domain.BotTenantLocked}
+	if _, err := store.SaveNotificationBotChecked(bot, "secret", nil); err != nil {
+		t.Fatal(err)
+	}
+	origin := domain.BotInteraction{ID: "ask-repo", BotID: bot.ID, SenderID: "ou_req", Content: "建个需求", ReplyRoute: "om_ask"}
+	store.EnqueueBotInteraction(origin, "single", "oc_p2p")
+	now := time.Now().UTC()
+	sop := &domain.BotDraftSOP{DefaultName: "研发交付", DefaultRepositoryName: "lf-loop-sandbox", Repositories: []domain.BotDraftSOPOption{{ID: "repo-main", Name: "lf-loop-sandbox"}, {ID: "repo-web", Name: "web-console"}}}
+	draft, err := store.CreateBotPendingDraft(domain.BotPendingDraft{ConfigID: bot.ID, SenderID: "ou_req", UserID: 7, InteractionID: origin.ID, Summary: "1. 保存需求：登录优化（仓库：项目默认 · lf-loop-sandbox）（SOP：项目默认 · 研发交付）", Drafts: "[]", SOP: sop}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := New(store)
+	card := svc.draftCardByID(draft)
+	if len(card.Selects) != 2 || card.Selects[0].Key != DraftActionRepo || card.Selects[0].Label != "仓库" || card.Selects[0].Options[0].Text != "项目默认仓库（lf-loop-sandbox）" || card.Selects[0].Initial != domain.BotDraftDefaultSOP || card.Rows[0][1] != "1. 保存需求：登录优化" {
+		t.Fatalf("card = %+v selects %+v", card, card.Selects)
+	}
+	raw := string(feishuCardJSON(card))
+	if !strings.Contains(raw, `"af_action":"draft_repo"`) || !strings.Contains(raw, `"content":"仓库"`) {
+		t.Fatalf("json = %s", raw)
+	}
+	event := func(sender, option, id string) InboundEvent {
+		return InboundEvent{Channel: ChannelFeishu, AppID: "cli_r", TenantKey: "tk", EventID: id, MessageID: "card:" + id, SenderID: sender, ChatID: sender, ChatType: "single", MsgType: "card_action", Action: DraftActionRepo, DeliveryID: draft.ID, Option: option, Route: ReplyRoute{MessageID: "om_card"}}
+	}
+	if ack, _ := svc.accept(context.Background(), bot, event("ou_other", "repo-web", "r1")); !strings.Contains(ack.Toast, "只有发起人") {
+		t.Fatalf("other = %+v", ack)
+	}
+	if ack, _ := svc.accept(context.Background(), bot, event("ou_req", "repo-foreign", "r2")); !strings.Contains(ack.Toast, "不可选") {
+		t.Fatalf("foreign = %+v", ack)
+	}
+	ack, err := svc.accept(context.Background(), bot, event("ou_req", "repo-web", "r3"))
+	if err != nil || ack.Card == nil || ack.Card.Selects[0].Initial != "repo-web" || ack.Toast != "已选择仓库" {
+		t.Fatalf("pick = %+v %v", ack, err)
+	}
+	if stored, _ := store.BotPendingDraft(draft.ID, now); stored.RepoChoice != "repo-web" || stored.SelectedRepository() != "repo-web" {
+		t.Fatalf("stored = %+v", stored)
+	}
+	tenant := "tk"
+	cb := &callback.CardActionTriggerEvent{EventV2Base: &larkevent.EventV2Base{Header: &larkevent.EventHeader{EventID: "e9", AppID: "cli_r", TenantKey: "tk"}}, Event: &callback.CardActionTriggerRequest{Operator: &callback.Operator{OpenID: "ou_req", TenantKey: &tenant}, Action: &callback.CallBackAction{Value: map[string]any{"af_action": DraftActionRepo, "af_draft": draft.ID}, Option: "repo-main"}}}
+	if mapped, ok := feishuCardEvent(cb); !ok || mapped.Action != DraftActionRepo || mapped.Option != "repo-main" || mapped.DeliveryID != draft.ID {
+		t.Fatalf("callback = %+v %v", mapped, ok)
+	}
+	cb.Event.Action.Option = ""
+	if _, ok := feishuCardEvent(cb); ok {
+		t.Fatal("empty repository pick accepted")
 	}
 }

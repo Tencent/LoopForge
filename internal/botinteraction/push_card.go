@@ -38,8 +38,9 @@ type PushCard struct {
 	Rows         [][2]string
 	Actions      []PushCardAction
 	DetailsURL   string
-	// Select is an optional drop-down (the SOP of a new requirement).
-	Select *PushCardSelect
+	// Selects are optional drop-downs (the repository and the SOP of a
+	// new requirement).
+	Selects []*PushCardSelect
 	// Status, when set, marks the card as handled: it is shown instead of
 	// the buttons and the selection.
 	Status string
@@ -51,6 +52,7 @@ type PushCard struct {
 // PushCardSelect is a drop-down whose change comes back as Key.
 type PushCardSelect struct {
 	Key         string
+	Label       string
 	Placeholder string
 	Initial     string
 	Options     []PushCardOption
@@ -81,11 +83,18 @@ const (
 	DraftActionCancel       = "draft_cancel"
 	// DraftActionSOP picks the SOP of the draft's new requirement.
 	DraftActionSOP = "draft_sop"
+	// DraftActionRepo picks the repository of the draft's new requirement.
+	DraftActionRepo = "draft_repo"
 )
 
 // DraftAction reports whether key is a draft confirmation action.
 func DraftAction(key string) bool {
-	return key == DraftActionConfirm || key == DraftActionConfirmStart || key == DraftActionCancel || key == DraftActionSOP
+	return key == DraftActionConfirm || key == DraftActionConfirmStart || key == DraftActionCancel || key == DraftActionSOP || key == DraftActionRepo
+}
+
+// DraftSelectAction reports whether key is a drop-down of a draft card.
+func DraftSelectAction(key string) bool {
+	return key == DraftActionSOP || key == DraftActionRepo
 }
 
 // PushCardFor builds the action card of a waiting or failed node delivery,
@@ -181,16 +190,16 @@ func feishuCardJSON(c *PushCard) []byte {
 		}
 		return map[string]string{"af_action": key, "af_delivery": c.DeliveryID}
 	}
-	if c.Select != nil {
+	for _, choice := range c.Selects {
 		options := []any{}
-		for _, o := range c.Select.Options {
+		for _, o := range choice.Options {
 			options = append(options, map[string]any{"text": plain(o.Text), "value": o.Value})
 		}
-		sel := map[string]any{"tag": "select_static", "placeholder": plain(c.Select.Placeholder), "options": options, "value": value(c.Select.Key, "")}
-		if c.Select.Initial != "" {
-			sel["initial_option"] = c.Select.Initial
+		sel := map[string]any{"tag": "select_static", "placeholder": plain(choice.Placeholder), "options": options, "value": value(choice.Key, "")}
+		if choice.Initial != "" {
+			sel["initial_option"] = choice.Initial
 		}
-		elements = append(elements, map[string]any{"tag": "div", "text": plain("SOP")}, map[string]any{"tag": "action", "actions": []any{sel}})
+		elements = append(elements, map[string]any{"tag": "div", "text": plain(choice.Label)}, map[string]any{"tag": "action", "actions": []any{sel}})
 	}
 	if c.Status != "" {
 		elements = append(elements, map[string]any{"tag": "note", "elements": []any{plain(c.Status)}})
@@ -382,7 +391,9 @@ func (s *Service) draftCardByID(draft domain.BotPendingDraft) *PushCard {
 	return draftCard(draft, reply, s.publicURL())
 }
 
-var draftSOPSuffix = regexp.MustCompile(`（SOP：[^）]*）$`)
+// draftChoiceSuffix is the repository and SOP note of a new requirement in
+// the summary; on the card they are chosen in the drop-downs instead.
+var draftChoiceSuffix = regexp.MustCompile(`(（仓库：[^）]*）)?（SOP：[^）]*）$`)
 
 // draftCard is the model's explanation, the frozen operations, an SOP
 // selection when the draft creates one requirement, confirm /
@@ -400,17 +411,29 @@ func draftCard(draft domain.BotPendingDraft, reply, publicURL string) *PushCard 
 		}
 		if draft.SOP != nil && i == draft.SOP.Index {
 			// The SOP is chosen in the selection below.
-			op = draftSOPSuffix.ReplaceAllString(op, "")
+			op = draftChoiceSuffix.ReplaceAllString(op, "")
 		}
 		card.Rows = append(card.Rows, [2]string{"操作", op})
 	}
 	if draft.SOP != nil {
-		sel := &PushCardSelect{Key: DraftActionSOP, Initial: draft.Selected(), Placeholder: "选择 SOP"}
+		if len(draft.SOP.Repositories) > 0 {
+			def := "不绑定仓库（项目未设默认仓库）"
+			if draft.SOP.DefaultRepositoryName != "" {
+				def = "项目默认仓库（" + draft.SOP.DefaultRepositoryName + "）"
+			}
+			repo := &PushCardSelect{Key: DraftActionRepo, Label: "仓库", Initial: draft.SelectedRepository(), Placeholder: "选择仓库"}
+			repo.Options = append(repo.Options, PushCardOption{Value: domain.BotDraftDefaultSOP, Text: def})
+			for _, r := range draft.SOP.Repositories {
+				repo.Options = append(repo.Options, PushCardOption{Value: r.ID, Text: r.Name})
+			}
+			card.Selects = append(card.Selects, repo)
+		}
+		sel := &PushCardSelect{Key: DraftActionSOP, Label: "SOP", Initial: draft.Selected(), Placeholder: "选择 SOP"}
 		sel.Options = append(sel.Options, PushCardOption{Value: domain.BotDraftDefaultSOP, Text: "项目默认 SOP（" + draft.SOP.DefaultName + "）"})
 		for _, wf := range draft.SOP.Workflows {
 			sel.Options = append(sel.Options, PushCardOption{Value: wf.ID, Text: wf.Name})
 		}
-		card.Select = sel
+		card.Selects = append(card.Selects, sel)
 	}
 	card.Required = fmt.Sprintf("%d 分钟内有效，只有发起人可以确认；每份操作只执行一次", int(repo.BotDraftTTL.Minutes()))
 	card.Actions = []PushCardAction{{Key: DraftActionConfirm, Text: "确认执行"}}
@@ -447,7 +470,7 @@ func draftStatusLine(d domain.BotPendingDraft) string {
 // Done turns the card into its handled state: the status line replaces the
 // buttons and the selection, so a second click is not possible.
 func (c *PushCard) Done(status string) {
-	c.Status, c.Actions, c.Select = status, nil, nil
+	c.Status, c.Actions, c.Selects = status, nil, nil
 }
 
 func (s *Service) publicURL() string {

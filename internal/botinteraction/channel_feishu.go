@@ -279,7 +279,7 @@ func feishuCardEvent(ev *callback.CardActionTriggerEvent) (InboundEvent, bool) {
 		delivery, _ = ev.Event.Action.Value["af_clarify"].(string)
 		option, _ = ev.Event.Action.Value["af_ref"].(string)
 	}
-	if (action == DraftActionSOP || ClarifyAction(action)) && strings.TrimSpace(option) == "" {
+	if (DraftSelectAction(action) || ClarifyAction(action)) && strings.TrimSpace(option) == "" {
 		return InboundEvent{}, false
 	}
 

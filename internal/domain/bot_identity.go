@@ -68,6 +68,9 @@ type BotPendingDraft struct {
 	// when nothing was picked.
 	SOP    *BotDraftSOP `json:"-"`
 	Choice string       `json:"-"`
+	// RepoChoice is the repository picked on the chat card: a repository
+	// ID, BotDraftDefaultSOP (the project default), or empty.
+	RepoChoice string `json:"-"`
 }
 
 // BotDraftDefaultSOP is the card choice "project default SOP".
@@ -79,6 +82,41 @@ type BotDraftSOP struct {
 	WorkflowID  string              `json:"workflowId,omitempty"` // named by the model
 	DefaultName string              `json:"defaultName"`
 	Workflows   []BotDraftSOPOption `json:"workflows"`
+	// The repository of the new requirement: the one the model named, the
+	// project default's name (empty when the project has none) and the
+	// project's repositories.
+	RepositoryID          string              `json:"repositoryId,omitempty"`
+	DefaultRepositoryName string              `json:"defaultRepositoryName,omitempty"`
+	Repositories          []BotDraftSOPOption `json:"repositories,omitempty"`
+}
+
+// AllowsRepository reports whether a repository may be chosen (the
+// project default always may).
+func (s *BotDraftSOP) AllowsRepository(id string) bool {
+	if s == nil {
+		return false
+	}
+	if id == BotDraftDefaultSOP {
+		return true
+	}
+	for _, r := range s.Repositories {
+		if r.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
+// SelectedRepository is the effective repository selection of the card:
+// the pick, else the repository the model named, else the project default.
+func (d BotPendingDraft) SelectedRepository() string {
+	switch {
+	case d.RepoChoice != "":
+		return d.RepoChoice
+	case d.SOP != nil && d.SOP.RepositoryID != "":
+		return d.SOP.RepositoryID
+	}
+	return BotDraftDefaultSOP
 }
 
 // BotDraftSOPOption is one selectable SOP.

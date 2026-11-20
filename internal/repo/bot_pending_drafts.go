@@ -66,12 +66,14 @@ type botPendingDraftRow struct {
 	// the chat card for the draft's new requirement.
 	SOPOptions string `gorm:"type:text"`
 	SOPChoice  string `gorm:"size:191"`
+	// RepoChoice: the repository picked on the chat card.
+	RepoChoice string `gorm:"size:191"`
 }
 
 func (botPendingDraftRow) TableName() string { return "bot_pending_drafts" }
 
 func (row botPendingDraftRow) draft() domain.BotPendingDraft {
-	d := domain.BotPendingDraft{ID: row.ID, ConfigID: row.ConfigID, IdentityScope: row.IdentityScope, SenderID: row.SenderID, ProjectID: row.ProjectID, UserID: row.UserID, InteractionID: row.InteractionID, Summary: row.Summary, Drafts: row.Drafts, Status: row.Status, ExecKey: row.ExecKey, Result: row.Result, Reason: row.Reason, ExpiresAt: row.ExpiresAt, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt, ExecutedAt: row.ExecutedAt, Choice: row.SOPChoice}
+	d := domain.BotPendingDraft{ID: row.ID, ConfigID: row.ConfigID, IdentityScope: row.IdentityScope, SenderID: row.SenderID, ProjectID: row.ProjectID, UserID: row.UserID, InteractionID: row.InteractionID, Summary: row.Summary, Drafts: row.Drafts, Status: row.Status, ExecKey: row.ExecKey, Result: row.Result, Reason: row.Reason, ExpiresAt: row.ExpiresAt, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt, ExecutedAt: row.ExecutedAt, Choice: row.SOPChoice, RepoChoice: row.RepoChoice}
 	if row.SOPOptions != "" {
 		var sop domain.BotDraftSOP
 		if json.Unmarshal([]byte(row.SOPOptions), &sop) == nil {
@@ -97,6 +99,24 @@ func (r *AssistantRepo) SetBotPendingDraftChoice(id, configID, sender, choice st
 		return d, err
 	}
 	d.Choice = choice
+	return d, nil
+}
+
+// SetBotPendingDraftRepository records the repository the requester picked
+// on the chat card; only an offered repository is accepted.
+func (r *AssistantRepo) SetBotPendingDraftRepository(id, configID, sender, choice string, now time.Time) (domain.BotPendingDraft, error) {
+	var row botPendingDraftRow
+	if err := r.DB.First(&row, "id = ?", id).Error; err != nil {
+		return domain.BotPendingDraft{}, err
+	}
+	d := row.draft()
+	if d.ConfigID != configID || d.SenderID != sender || d.Status != BotDraftPending || !now.Before(d.ExpiresAt) || !d.SOP.AllowsRepository(choice) {
+		return d, ErrBotDraftNotPending
+	}
+	if err := r.DB.Model(&botPendingDraftRow{}).Where("id = ? AND status = ?", id, BotDraftPending).Update("repo_choice", choice).Error; err != nil {
+		return d, err
+	}
+	d.RepoChoice = choice
 	return d, nil
 }
 

@@ -70,7 +70,8 @@ test('approval page lets the user pick the SOP of a new requirement and start it
     [`POST /api/bot-drafts/${id}/confirm`]: [200, { ...pending, status: 'executed', results: ['已完成：保存需求：登录优化（SOP：缺陷修复）', '已启动：缺陷修复（运行 run-1）'] }],
   });
   await settle();
-  const select = p.$('.sop select');
+  const select = p.$('.sop select.wf');
+  assert.equal(p.$('.sop select.repo'), null, 'no repository field without repositories');
   assert.equal(select.value, '', 'project default selected');
   assert.equal(select.options[0].textContent, '项目默认 SOP（研发交付）');
   assert.equal(select.options.length, 4);
@@ -82,4 +83,34 @@ test('approval page lets the user pick the SOP of a new requirement and start it
   assert.deepEqual(post.body, { choices: [{ index: 0, workflowId: 'wf-fix', start: true }] });
   assert.match(p.text(), /已启动：缺陷修复/);
   assert.equal(p.dom.window.document.querySelectorAll('li.ok').length, 2);
+});
+
+test('approval page lets the user pick the repository of a new requirement', async () => {
+  const draft = { ...pending, newIssues: [{ index: 0, title: '保存需求：登录优化', workflowId: '', defaultWorkflowName: '研发交付', repositoryId: '', defaultRepositoryName: 'lf-loop-sandbox' }], workflows: [{ id: 'wf-dev', name: '研发交付' }], repositories: [{ id: 'repo-main', name: 'lf-loop-sandbox' }, { id: 'repo-web', name: 'web-console' }] };
+  const p = page({
+    'GET /api/auth/current': [200, { user: { id: 43 } }],
+    [`GET /api/bot-drafts/${id}`]: [200, draft],
+    [`POST /api/bot-drafts/${id}/confirm`]: [200, { ...pending, status: 'executed', results: ['已完成：保存需求：登录优化（仓库：web-console）（SOP：研发交付）'] }],
+  });
+  await settle();
+  assert.match(p.text(), /新需求使用的仓库和 SOP/);
+  const repo = p.$('.sop select.repo');
+  assert.equal(repo.value, '', 'project default repository selected');
+  assert.equal(repo.options[0].textContent, '项目默认仓库（lf-loop-sandbox）');
+  assert.equal(repo.options.length, 3);
+  repo.value = 'repo-web';
+  p.$('#confirm').click();
+  await settle();
+  const post = p.calls.find((c) => c.method === 'POST');
+  assert.deepEqual(post.body, { choices: [{ index: 0, workflowId: '', start: false, repositoryId: 'repo-web' }] });
+  assert.match(p.text(), /仓库：web-console/);
+});
+
+test('approval page offers no default repository when the project has none', async () => {
+  const draft = { ...pending, newIssues: [{ index: 0, title: '保存需求：登录优化', workflowId: '', defaultWorkflowName: '研发交付', repositoryId: 'repo-web' }], repositories: [{ id: 'repo-web', name: 'web-console' }] };
+  const p = page({ 'GET /api/auth/current': [200, { user: { id: 43 } }], [`GET /api/bot-drafts/${id}`]: [200, draft] });
+  await settle();
+  const repo = p.$('.sop select.repo');
+  assert.equal(repo.options[0].textContent, '不绑定仓库（项目未设默认仓库）');
+  assert.equal(repo.value, 'repo-web', 'repository named in chat preselected');
 });

@@ -236,6 +236,16 @@ func (s *Service) acceptDraftAction(bot domain.NotificationBot, item domain.BotI
 		}
 		return InboundAck{Toast: "已选择 SOP", Card: s.draftCardByID(picked)}, nil
 	}
+	if ev.Action == DraftActionRepo {
+		picked, err := s.Store.SetBotPendingDraftRepository(draft.ID, bot.ID, ev.SenderID, strings.TrimSpace(ev.Option), now)
+		if errors.Is(err, repo.ErrBotDraftNotPending) {
+			return InboundAck{Ignored: "repo_refused", Toast: "这个仓库不可选", Card: s.draftCardByID(draft)}, nil
+		}
+		if err != nil {
+			return InboundAck{}, err
+		}
+		return InboundAck{Toast: "已选择仓库", Card: s.draftCardByID(picked)}, nil
+	}
 	// Answer where the request was made: its conversation, threaded under
 	// the card (or the request when the card's message is unknown).
 	kind, chat := "single", ev.SenderID

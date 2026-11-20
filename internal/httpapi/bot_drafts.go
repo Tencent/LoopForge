@@ -158,7 +158,16 @@ func botDraftSummaryLine(d assistantDraft) string {
 
 // botDraftSummaryLineSOP adds the SOP a new requirement will be bound to.
 func botDraftSummaryLineSOP(d assistantDraft, sop string) string {
+	return botDraftSummaryLineFor(d, "", sop)
+}
+
+// botDraftSummaryLineFor adds the repository and the SOP of a new
+// requirement.
+func botDraftSummaryLineFor(d assistantDraft, repository, sop string) string {
 	line := botDraftSummaryText(d)
+	if repository != "" {
+		line += "（仓库：" + repository + "）"
+	}
 	if sop != "" {
 		line += "（SOP：" + sop + "）"
 	}
@@ -204,15 +213,16 @@ func (h *assistantHandlers) confirmBotDrafts(ctx context.Context, bot domain.Not
 	lines := make([]string, 0, len(drafts))
 	newIssues := 0
 	for i, d := range drafts {
-		sop := ""
+		sop, repository := "", ""
 		if explicit, def, ok := h.botDraftIssueSOP(bot.ProjectID, d); ok {
 			sop = h.botWorkflowName(explicit)
 			if explicit == "" {
 				sop = "项目默认 · " + h.botWorkflowName(def)
 			}
+			repository = h.botDraftRepositoryLabel(bot.ProjectID, botDraftIssueRepository(d))
 			newIssues++
 		}
-		line := fmt.Sprintf("%d. %s", i+1, botDraftSummaryLineSOP(d, sop))
+		line := fmt.Sprintf("%d. %s", i+1, botDraftSummaryLineFor(d, repository, sop))
 		if len(d.Warnings) > 0 {
 			line += "（注意：" + truncateRunes(strings.Join(d.Warnings, "；"), 120) + "）"
 		}
@@ -222,7 +232,13 @@ func (h *assistantHandlers) confirmBotDrafts(ctx context.Context, bot domain.Not
 	pending := domain.BotPendingDraft{ConfigID: bot.ID, IdentityScope: bot.IdentityScope(), SenderID: item.SenderID, ProjectID: bot.ProjectID, UserID: user.ID, InteractionID: item.ID, Summary: summary, Drafts: string(raw)}
 	if issues := h.botDraftNewIssues(bot.ProjectID, drafts); len(issues) == 1 {
 		// One new requirement: the chat card offers its SOP as a selection.
-		sop := &domain.BotDraftSOP{Index: issues[0].Index, WorkflowID: issues[0].WorkflowID, DefaultName: issues[0].DefaultWorkflowName}
+		sop := &domain.BotDraftSOP{Index: issues[0].Index, WorkflowID: issues[0].WorkflowID, DefaultName: issues[0].DefaultWorkflowName, RepositoryID: issues[0].RepositoryID, DefaultRepositoryName: issues[0].DefaultRepositoryName}
+		for _, r := range h.botDraftRepositories(bot.ProjectID) {
+			if len(sop.Repositories) == botDraftCardSOPLimit {
+				break
+			}
+			sop.Repositories = append(sop.Repositories, domain.BotDraftSOPOption{ID: r.ID, Name: r.Name})
+		}
 		for _, wf := range h.botDraftWorkflows(bot.ProjectID, issues[0].WorkflowID) {
 			if len(sop.Workflows) == botDraftCardSOPLimit {
 				break
@@ -238,7 +254,7 @@ func (h *assistantHandlers) confirmBotDrafts(ctx context.Context, bot domain.Not
 	link := base + "/bot-approve.html#draft=" + saved.ID
 	head := "\n\n以下操作需要你在平台确认后才会执行（" + fmt.Sprint(int(repo.BotDraftTTL.Minutes())) + " 分钟内有效）：\n" + summary
 	if newIssues > 0 {
-		head += "\n确认页可以更换 SOP，并选择创建后立即启动。"
+		head += "\n确认页可以更换仓库和 SOP，并选择创建后立即启动。"
 	}
 	if bot.ChannelKind() != domain.BotChannelWeCom {
 		// Feishu and DingTalk replies are plain text: the URL stands on
@@ -252,17 +268,21 @@ func (h *assistantHandlers) confirmBotDrafts(ctx context.Context, bot domain.Not
 // platform page lists all of them.
 const botDraftCardSOPLimit = 60
 
-// botDraftCardChoices turns the SOP picked on the chat card into the
-// confirmation choices; nil when nothing was picked there.
+// botDraftCardChoices turns the repository and SOP picked on the chat card
+// into the confirmation choices; nil when nothing was picked there. What
+// was not picked keeps the model's choice (or the project default).
 func botDraftCardChoices(d domain.BotPendingDraft, start bool) []botDraftChoice {
-	if d.SOP == nil || d.Choice == "" {
+	if d.SOP == nil || (d.Choice == "" && d.RepoChoice == "") {
 		return nil
 	}
-	wf := d.Choice
-	if wf == domain.BotDraftDefaultSOP {
-		wf = ""
+	pick := func(v string) string {
+		if v == domain.BotDraftDefaultSOP {
+			return ""
+		}
+		return v
 	}
-	return []botDraftChoice{{Index: d.SOP.Index, WorkflowID: wf, Start: start}}
+	repository := pick(d.SelectedRepository())
+	return []botDraftChoice{{Index: d.SOP.Index, WorkflowID: pick(d.Selected()), RepositoryID: &repository, Start: start}}
 }
 
 type botDraftView struct {
@@ -275,6 +295,9 @@ type botDraftView struct {
 	// their SOP and whether to start it right after creation.
 	NewIssues []botDraftIssue    `json:"newIssues,omitempty"`
 	Workflows []botDraftWorkflow `json:"workflows,omitempty"`
+	// Repositories are the project's repositories a new requirement may
+	// be bound to (the project default is offered separately).
+	Repositories []botDraftWorkflow `json:"repositories,omitempty"`
 }
 
 type botDraftIssue struct {
@@ -285,6 +308,12 @@ type botDraftIssue struct {
 	WorkflowID          string `json:"workflowId"`
 	DefaultWorkflowID   string `json:"defaultWorkflowId"`
 	DefaultWorkflowName string `json:"defaultWorkflowName"`
+	// RepositoryID is the repository the model named; empty means the
+	// project default repository (DefaultRepositoryName, empty when the
+	// project has none).
+	RepositoryID          string `json:"repositoryId"`
+	DefaultRepositoryID   string `json:"defaultRepositoryId,omitempty"`
+	DefaultRepositoryName string `json:"defaultRepositoryName,omitempty"`
 }
 
 type botDraftWorkflow struct {
@@ -297,7 +326,10 @@ type botDraftWorkflow struct {
 type botDraftChoice struct {
 	Index      int    `json:"index"`
 	WorkflowID string `json:"workflowId"`
-	Start      bool   `json:"start"`
+	// RepositoryID: "" is the project default repository; absent keeps
+	// the draft's repository.
+	RepositoryID *string `json:"repositoryId,omitempty"`
+	Start        bool    `json:"start"`
 }
 
 // botDraftIssueWorkflow reports the SOP a draft creating a new requirement
@@ -380,13 +412,81 @@ func (h *assistantHandlers) botDraftWorkflows(projectID string, include ...strin
 
 func (h *assistantHandlers) botDraftNewIssues(projectID string, drafts []assistantDraft) []botDraftIssue {
 	out := []botDraftIssue{}
+	defRepo, defRepoName := h.botDefaultRepository(projectID)
 	for i, d := range drafts {
 		explicit, def, ok := h.botDraftIssueSOP(projectID, d)
 		if !ok {
 			continue
 		}
-		out = append(out, botDraftIssue{Index: i, Title: botDraftSummaryText(d), WorkflowID: explicit, DefaultWorkflowID: def, DefaultWorkflowName: h.botWorkflowName(def)})
+		out = append(out, botDraftIssue{Index: i, Title: botDraftSummaryText(d), WorkflowID: explicit, DefaultWorkflowID: def, DefaultWorkflowName: h.botWorkflowName(def), RepositoryID: botDraftIssueRepository(d), DefaultRepositoryID: defRepo, DefaultRepositoryName: defRepoName})
 	}
+	return out
+}
+
+// botDraftIssueRepository is the repository the model set on a new
+// requirement draft (repositoryIds first, then repositoryId), or "".
+func botDraftIssueRepository(d assistantDraft) string {
+	var body map[string]any
+	if len(d.Body) == 0 || json.Unmarshal(d.Body, &body) != nil {
+		return ""
+	}
+	if ids, ok := body["repositoryIds"].([]any); ok {
+		for _, id := range ids {
+			if v, ok := id.(string); ok && strings.TrimSpace(v) != "" {
+				return strings.TrimSpace(v)
+			}
+		}
+	}
+	v, _ := body["repositoryId"].(string)
+	return strings.TrimSpace(v)
+}
+
+// botDefaultRepository is the project's default repository and its name.
+func (h *assistantHandlers) botDefaultRepository(projectID string) (string, string) {
+	project, ok := h.repo.Project(projectID)
+	if !ok || strings.TrimSpace(project.DefaultRepositoryID) == "" {
+		return "", ""
+	}
+	id := strings.TrimSpace(project.DefaultRepositoryID)
+	return id, h.botRepositoryName(id)
+}
+
+func (h *assistantHandlers) botRepositoryName(id string) string {
+	if r, ok := h.repo.Repository(id); ok && strings.TrimSpace(r.Name) != "" {
+		return r.Name
+	}
+	return id
+}
+
+// botDraftRepositoryLabel describes the repository a new requirement will
+// be bound to: the named one, else "项目默认 · name", else "不绑定"; empty
+// when the project has no repository at all.
+func (h *assistantHandlers) botDraftRepositoryLabel(projectID, explicit string) string {
+	if explicit != "" {
+		return h.botRepositoryName(explicit)
+	}
+	if _, name := h.botDefaultRepository(projectID); name != "" {
+		return "项目默认 · " + name
+	}
+	if len(h.botDraftRepositories(projectID)) == 0 {
+		return ""
+	}
+	return "不绑定"
+}
+
+// botDraftRepositories lists the repositories of the project, by name.
+func (h *assistantHandlers) botDraftRepositories(projectID string) []botDraftWorkflow {
+	out := []botDraftWorkflow{}
+	for _, r := range h.repo.Repositories() {
+		if r.ProjectID == projectID {
+			name := strings.TrimSpace(r.Name)
+			if name == "" {
+				name = r.ID
+			}
+			out = append(out, botDraftWorkflow{ID: r.ID, Name: name})
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out
 }
 
@@ -428,10 +528,14 @@ func (h *assistantHandlers) botDraftView(d domain.BotPendingDraft) botDraftView 
 				for i := range view.NewIssues {
 					if view.NewIssues[i].Index == choice.Index {
 						view.NewIssues[i].WorkflowID = choice.WorkflowID
+						if choice.RepositoryID != nil {
+							view.NewIssues[i].RepositoryID = *choice.RepositoryID
+						}
 					}
 				}
 			}
 			if len(view.NewIssues) > 0 {
+				view.Repositories = h.botDraftRepositories(d.ProjectID)
 				ids := make([]string, 0, len(view.NewIssues))
 				for _, issue := range view.NewIssues {
 					ids = append(ids, issue.WorkflowID)
@@ -546,6 +650,7 @@ func (h *assistantHandlers) executeBotDraft(ctx context.Context, user domain.Use
 	// page are accepted; the frozen draft itself is unchanged.
 	start := map[int]bool{}
 	sops := map[int]string{}
+	repos := map[int]string{}
 	newIssues := h.botDraftNewIssues(draft.ProjectID, drafts)
 	defaults := map[int]string{}
 	for _, issue := range newIssues {
@@ -553,6 +658,7 @@ func (h *assistantHandlers) executeBotDraft(ctx context.Context, user domain.Use
 		if issue.WorkflowID == "" {
 			sops[issue.Index] = issue.DefaultWorkflowID
 		}
+		repos[issue.Index] = issue.RepositoryID
 		defaults[issue.Index] = issue.DefaultWorkflowID
 		if startAll != nil {
 			start[issue.Index] = *startAll
@@ -587,6 +693,28 @@ func (h *assistantHandlers) executeBotDraft(ctx context.Context, user domain.Use
 			}
 			sops[choice.Index] = wf
 			start[choice.Index] = choice.Start
+			if choice.RepositoryID == nil {
+				continue
+			}
+			// The repository: "" is the project default (drop what the
+			// model set), otherwise one of the project's repositories.
+			repository := strings.TrimSpace(*choice.RepositoryID)
+			if repository != "" {
+				if r, ok := h.repo.Repository(repository); !ok || r.ProjectID != draft.ProjectID {
+					return finish(repo.BotDraftFailed, "所选仓库不属于当前项目，没有执行")
+				}
+			}
+			if repository != repos[choice.Index] {
+				body := setDraftBodyField(drafts[choice.Index].Body, "repositoryIds", nil)
+				body = setDraftBodyField(body, "repositoryId", nil)
+				body = setDraftBodyField(body, "repositoryBranches", nil)
+				if repository != "" {
+					body = setDraftBodyField(body, "repositoryIds", []string{repository})
+					body = setDraftBodyField(body, "repositoryId", repository)
+				}
+				drafts[choice.Index].Body = body
+			}
+			repos[choice.Index] = repository
 		}
 	}
 	// Same preflight and execution as the web assistant: drafts with
@@ -605,11 +733,12 @@ func (h *assistantHandlers) executeBotDraft(ctx context.Context, user domain.Use
 	results := make([]string, 0, len(applied))
 	status := repo.BotDraftExecuted
 	for i, d := range applied {
-		sop := ""
+		sop, repository := "", ""
 		if wf, ok := sops[i]; ok {
 			sop = h.botWorkflowName(wf)
+			repository = h.botDraftRepositoryLabel(draft.ProjectID, repos[i])
 		}
-		line := botDraftSummaryLineSOP(d, sop)
+		line := botDraftSummaryLineFor(d, repository, sop)
 		switch {
 		case d.Saved:
 			results = append(results, "已完成："+line)
