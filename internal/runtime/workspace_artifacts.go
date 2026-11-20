@@ -121,3 +121,46 @@ func stageArchivedArtifact(base *os.Root, parent, content string) (string, error
 }
 
 var artifactTempSequence atomic.Uint64
+
+// FindUniqueOutputFile locates a misplaced output by its base name. Recovery is
+// only safe when exactly one regular file matches within the search depth.
+func FindUniqueOutputFile(root, name string, maxDepth int) string {
+	if strings.TrimSpace(root) == "" || name == "" {
+		return ""
+	}
+	var found string
+	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() {
+			if path == root {
+				return nil
+			}
+			switch entry.Name() {
+			case ".git", "node_modules", ".agentflow":
+				return filepath.SkipDir
+			}
+			rel, err := filepath.Rel(root, path)
+			if err != nil {
+				return err
+			}
+			if strings.Count(rel, string(os.PathSeparator))+1 >= maxDepth {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if entry.Name() == name && entry.Type().IsRegular() {
+			if found != "" {
+				found = ""
+				return filepath.SkipAll
+			}
+			found = path
+		}
+		return nil
+	})
+	if err != nil {
+		return ""
+	}
+	return found
+}
