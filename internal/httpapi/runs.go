@@ -85,7 +85,15 @@ func (h *runsHandlers) runs(c *gin.Context) {
 			respond(c, err)
 			return
 		}
-		c.JSON(200, runSummaries(runs))
+		user, authenticated := h.requestUser(r, true)
+		visible := runs[:0]
+		for _, run := range runs {
+			if run.IsPersonalWorkspace() && (!authenticated || user.ID <= 0 || user.ID != run.ExecutionContext.ResponsibleUserID) {
+				continue
+			}
+			visible = append(visible, run)
+		}
+		c.JSON(200, runSummaries(visible))
 		return
 	}
 	if r.Method == http.MethodPost {

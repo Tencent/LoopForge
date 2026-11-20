@@ -69,7 +69,7 @@ func TestConversationSupportsEveryRegisteredCLI(t *testing.T) {
 			if _, err := InstallConversationApproval(root, kind, command); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := conversationCLISetup(kind, conversationBinary(kind)); err != nil {
+			if _, err := dockerCLISetup(kind, conversationBinary(kind)); err != nil {
 				t.Fatal(err)
 			}
 		})
@@ -77,7 +77,7 @@ func TestConversationSupportsEveryRegisteredCLI(t *testing.T) {
 }
 
 func TestZCodeConversationSetupRequiresOfficialPreinstallation(t *testing.T) {
-	setup, err := conversationCLISetup(AgentCLIZCode, conversationBinary(AgentCLIZCode))
+	setup, err := dockerCLISetup(AgentCLIZCode, conversationBinary(AgentCLIZCode))
 	if err != nil || strings.Contains(setup, "npm install") || !strings.Contains(setup, "预装官方 ZCode CLI") {
 		t.Fatalf("ZCode must use its official preinstalled binary: %s: %v", setup, err)
 	}

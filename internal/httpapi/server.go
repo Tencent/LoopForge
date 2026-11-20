@@ -283,6 +283,10 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.GET("/api/users/:id/git-ssh-keys", api.users.gitSSHKeys)
 	g.PUT("/api/users/:id/git-ssh-keys", api.users.gitSSHKeys)
 	g.DELETE("/api/users/:id/git-ssh-keys/:keyID", api.users.gitSSHKeys)
+	g.GET("/api/users/:id/git-http-credentials", api.users.gitHTTPCredentials)
+	g.PUT("/api/users/:id/git-http-credentials", api.users.gitHTTPCredentials)
+	g.DELETE("/api/users/:id/git-http-credentials/:credID", api.users.gitHTTPCredentials)
+	g.POST("/api/users/:id/git-http-credentials/:credID/verify", api.users.verifyGitHTTPCredential)
 	g.POST("/api/users/:id/cli-models/probe", api.users.probeCLIModels)
 	g.Any("/api/users/:id", func(c *gin.Context) {
 		c.JSON(http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
@@ -651,7 +655,7 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	d.api = g
 	if d.schedule != nil {
 		d.schedule.SetAssistantPrep(asst.prepareScheduleJob)
-		d.schedule.SetAssistantSessionPrep(asst.runScheduleJobPromptReporting)
+		d.schedule.SetAssistantSessionPrep(asst.runScheduleJobPromptResult)
 	}
 	static, _ := fs.Sub(webassets.Files, ".")
 	g.NoRoute(func(c *gin.Context) {

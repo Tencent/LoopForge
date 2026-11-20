@@ -13,15 +13,8 @@ import (
 	"gorm.io/gorm/clause"
 )
 
-// Approvals are transient control state in the existing generation payload.
-// Any API instance can answer the browser or CLI without a separate queue.
-// This envelope is absent from the public generation DTO: raw tool arguments
-// must only leave through the redacted approvals endpoint.
-type assistantGenerationPayload struct {
-	domain.AssistantGeneration
-	NativeApprovals []assistantNativeApprovalState `json:"nativeApprovals,omitempty"`
-}
-
+// Approval state is stored in the private generation payload, so any API
+// instance can answer without exposing raw tool arguments in the generation DTO.
 type assistantNativeApprovalState struct {
 	domain.AssistantNativeApproval
 	Phase       string `json:"phase"`
@@ -32,12 +25,6 @@ func nativeApprovalState(item assistantNativeApprovalState) domain.AssistantNati
 	out := item.AssistantNativeApproval
 	out.InputDigest = item.InputDigest
 	return out
-}
-
-func generationPayload(row assistantGenerationRow) assistantGenerationPayload {
-	var payload assistantGenerationPayload
-	_ = json.Unmarshal(row.Payload, &payload)
-	return payload
 }
 
 // nativeApprovalGenerationActive measures the heartbeat on the same clock that

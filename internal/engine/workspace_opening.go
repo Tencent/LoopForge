@@ -18,9 +18,12 @@ func (e *Engine) RecordWorkspaceOpening(runID string, progress domain.WorkspaceO
 	if !ok || !run.IsWorkspace() {
 		return
 	}
-	token := e.resolveRunCredentials(run).GitToken
-	progress.Message = workspaceprep.Sanitize(gitwork.Redact(progress.Message, token))
-	progress.Output = workspaceprep.Sanitize(gitwork.Redact(progress.Output, token))
+	var tokens []string
+	for _, credential := range e.resolveRunCredentials(run).GitHTTPCredentials {
+		tokens = append(tokens, credential.Token)
+	}
+	progress.Message = workspaceprep.Sanitize(gitwork.Redact(progress.Message, tokens...))
+	progress.Output = workspaceprep.Sanitize(gitwork.Redact(progress.Output, tokens...))
 	e.updateRun(runID, func(r *domain.Run) {
 		now := time.Now().UTC()
 		progress.StartedAt = now

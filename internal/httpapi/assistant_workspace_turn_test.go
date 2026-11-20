@@ -241,7 +241,7 @@ func workspaceTurnFixture(t *testing.T) (*assistantHandlers, domain.User, *Agent
 		t.Fatal(err)
 	}
 	for _, rid := range []string{ids[1], ids[0]} {
-		if err := st.SetAssistantSessionWorkspaceRun(user.ID, id, rid, true); err != nil {
+		if err := st.SetAssistantSessionWorkspaceRun(user.ID, id, id, rid, true); err != nil {
 			t.Fatal(err)
 		}
 	}

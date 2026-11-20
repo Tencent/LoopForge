@@ -33,7 +33,21 @@ const (
 	RunnerWorkspaceOperationCheckouts         = "checkouts"
 	RunnerWorkspaceOperationMaintenance       = "maintenance"
 	RunnerWorkspaceOperationLoginModels       = "login_models"
+	RunnerWorkspaceOperationConversationCLI   = "conversation_process"
 )
+
+// RunnerSSHKnownHostsWireLimit is the encoded allowance for the optional
+// known_hosts field in a runner task claim.
+const RunnerSSHKnownHostsWireLimit = 1 << 20
+
+// GitSSHKnownHosts carries the platform's scoped SSH host keys over an
+// authenticated runner transport. Configuration errors are also sent so the
+// runner can fail closed when the platform cannot supply the configured pins.
+type GitSSHKnownHosts struct {
+	Entries    string `json:"entries,omitempty"`
+	ReadFailed bool   `json:"readFailed,omitempty"`
+	TooLarge   bool   `json:"tooLarge,omitempty"`
+}
 
 // RunnerWorkspaceRequest is a bounded workspace request sent over the
 // runner's outbound control socket. Responses are transient and are never
@@ -63,6 +77,9 @@ type RunnerWorkspaceRequest struct {
 	Terminal              *WorkspaceTerminalRequest `json:"terminal,omitempty"`
 	TerminalOwner         int64                     `json:"terminalOwner,omitempty"`
 	TerminalGitSSHKeys    map[string]string         `json:"terminalGitSshKeys,omitempty"`
+	GitSSHKnownHosts      *GitSSHKnownHosts         `json:"gitSshKnownHosts,omitempty"`
+	// TerminalGitHTTPCredentials belongs to TerminalOwner and is sent only on open.
+	TerminalGitHTTPCredentials map[string]GitHTTPExecutionCredential `json:"terminalGitHttpCredentials,omitempty"`
 	// WorkspaceRunID selects the shared checkout owner; RunID continues to
 	// identify this run's independent sandbox, terminal scope and locks.
 	Browser         *BrowserRequest     `json:"browser,omitempty"`

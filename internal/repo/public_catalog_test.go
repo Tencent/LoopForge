@@ -103,6 +103,9 @@ func TestPublicCodeSOPsOpenMRBeforeDeliver(t *testing.T) {
 			if !strings.Contains(agent.Prompt, "{{existingMR}}") {
 				t.Errorf("%s: mr role drops the existing MR context", id)
 			}
+			if !strings.Contains(agent.Prompt, "git credential fill") || strings.Contains(agent.Prompt, "$AGENTFLOW_GIT_TOKEN") {
+				t.Errorf("%s: mr role must use per-host Git credentials", id)
+			}
 		}
 		if !found {
 			t.Errorf("%s: mr node references missing role %q", id, mrAgentID)

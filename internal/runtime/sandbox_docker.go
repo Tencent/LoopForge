@@ -29,6 +29,8 @@ type dockerSandbox struct {
 	mu                  sync.Mutex
 	browserMu           sync.Mutex
 	started             bool
+	cliSetupOnce        sync.Once
+	cliSetupGate        chan struct{}
 	// execGate lets parallel branches exec concurrently (read side) while a
 	// cwd-recovery Recreate (write side) waits for them instead of docker
 	// rm-ing the container under a sibling's running command.
@@ -165,16 +167,16 @@ func (s *dockerSandbox) Exec(ctx context.Context, command CommandSpec, sink Even
 }
 
 func (s *dockerSandbox) execOnce(ctx context.Context, command CommandSpec, sink EventSink) (out string, err error) {
+	command, cliPath, err := s.prepareSOPCLI(ctx, command)
+	if err != nil {
+		return "", err
+	}
 	args := []string{"exec"}
-	if command.Stdin != nil {
+	if command.Stdin != nil || isManagedClaude(command) {
 		args = append(args, "-i")
 	}
 	for _, environment := range appendEnvironment(nil, s.profile.Environment, command.environment) {
 		args = append(args, "-e", environment)
-	}
-	cliPath, err := s.onDemandCLIPath(ctx, command)
-	if err != nil {
-		return "", err
 	}
 	if cliPath != "" {
 		args = append(args, "-e", "AGENTFLOW_RUNTIME_CLI_PATH="+cliPath)
@@ -184,8 +186,8 @@ func (s *dockerSandbox) execOnce(ctx context.Context, command CommandSpec, sink 
 	args = append(args, s.name)
 	argv := dockerWorkspaceExecArgv(command.Argv)
 	if command.WorkingDir != "" {
-		argv = append([]string{"sh", "-lc", dockerMCPCallLaunch + `PATH=/opt/loopforge/conversation-cli/bin:/opt/loopforge/conversation-cli/.local/bin:$PATH; export PATH
-cd "$1" && shift && exec "$@"`, "conversation", command.WorkingDir}, dropShellLoginFlag(command.Argv)...)
+		argv = append([]string{"sh", "-lc", dockerMCPCallLaunch + dockerCLISharedPathSetup +
+			`cd "$1" && shift && exec "$@"`, "conversation", command.WorkingDir}, dropShellLoginFlag(command.Argv)...)
 	}
 	processFile := ""
 	if command.OwnProcessGroup {
@@ -203,7 +205,7 @@ cd "$1" && shift && exec "$@"`, "conversation", command.WorkingDir}, dropShellLo
 	args = append(args, argv...)
 	cmd := exec.CommandContext(ctx, "docker", args...)
 	cmd.Stdin = command.Stdin
-	return runCommand(cmd, sink)
+	return runCommand(cmd, sink, command)
 }
 
 // dockerWorkspaceExecArgv runs argv inside /workspace without docker exec -w.
@@ -212,7 +214,7 @@ cd "$1" && shift && exec "$@"`, "conversation", command.WorkingDir}, dropShellLo
 // PATH; helper bin is prepended after that, and an inner `sh -lc` is demoted
 // to `sh -c` so a second login does not wipe the workspace bin.
 func dockerWorkspaceExecArgv(argv []string) []string {
-	launch := dockerMCPCallLaunch
+	launch := dockerMCPCallLaunch + "PATH=$PATH:" + dockerCLISharedPath + "\nexport PATH\n"
 	if len(argv) == 0 {
 		return []string{"sh", "-lc", launch + "pwd"}
 	}
@@ -220,7 +222,7 @@ func dockerWorkspaceExecArgv(argv []string) []string {
 }
 
 const dockerMCPCallLaunch = `cd /workspace || exit
-if [ -x /workspace/.agentflow/runtime/bin/agentflow ]; then
+if [ -x /workspace/.agentflow/runtime/bin/agentflow-helper ]; then
   PATH=/workspace/.agentflow/runtime/bin:$PATH
   export PATH
 fi
@@ -229,6 +231,52 @@ if [ -n "${AGENTFLOW_RUNTIME_CLI_PATH:-}" ] && [ -d "$AGENTFLOW_RUNTIME_CLI_PATH
   export PATH
 fi
 ` + toolchainPathSetup
+
+// prepareSOPCLI is limited to the default binaries of registered providers.
+// Explicit executable paths, shell tasks and already prepared chat commands
+// retain their original argv.
+func (s *dockerSandbox) prepareSOPCLI(ctx context.Context, command CommandSpec) (CommandSpec, string, error) {
+	spec, ok := onDemandCLICatalog()[command.Provider]
+	if !ok || len(command.Argv) == 0 || command.Argv[0] != spec.Binary {
+		return command, "", nil
+	}
+	// Probe with the normal command user's PATH. This also finds installs
+	// from earlier nodes without running the privileged preparation again.
+	args := []string{"exec"}
+	path, hasPath := command.environment["PATH"]
+	if !hasPath {
+		path, hasPath = s.profile.Environment["PATH"]
+	}
+	if hasPath {
+		args = append(args, "-e", "PATH="+path)
+	}
+	args = append(append(args, s.toolchainExecEnv()...), s.name)
+	args = append(args, dockerWorkspaceExecArgv([]string{"sh", "-c", dockerCLIProbe, "loopforge-cli-probe", spec.Binary})...)
+	output, err := exec.CommandContext(ctx, "docker", args...).CombinedOutput()
+	if err == nil {
+		return command, "", nil
+	}
+	if !isDockerCLIMissing(err) {
+		return command, "", fmt.Errorf("探测沙箱 CLI %s 失败：%w: %s", spec.Binary, err, conversationSetupOutput(output))
+	}
+	// The published image can use the existing, shared host installations.
+	// Other sandboxes prepare the official CLI in the current container.
+	cliPath, err := s.onDemandCLIPath(ctx, command)
+	if err != nil || cliPath != "" {
+		return command, cliPath, err
+	}
+	binary, err := s.ensureDockerCLI(ctx, command.Provider, "/workspace")
+	if err != nil {
+		return command, "", err
+	}
+	command.Argv = append([]string{binary}, command.Argv[1:]...)
+	return command, "", nil
+}
+
+func isDockerCLIMissing(err error) bool {
+	var exit *exec.ExitError
+	return errors.As(err, &exit) && exit.ExitCode() == 127
+}
 
 // onDemandCLIPath installs a CLI the published runtime image does not bundle
 // (Claude Code and the npm agent CLIs) for sandboxes of that image, and returns
@@ -718,18 +766,22 @@ func (s *dockerSandbox) start(ctx context.Context, recreate bool) error {
 			args = append(args, "--user", fmt.Sprintf("%d:%d", os.Geteuid(), os.Getegid()))
 		}
 	}
-	if network := strings.TrimSpace(os.Getenv("AGENTFLOW_DOCKER_NETWORK")); network != "" && s.requirements.ConversationRoot == "" {
-		args = append(args, "--network", network)
-	}
-	if root := s.requirements.ConversationRoot; root != "" {
-		_, network, err := conversationDockerAccess(ctx)
+	network := strings.TrimSpace(os.Getenv("AGENTFLOW_DOCKER_NETWORK"))
+	if s.requirements.ConversationRoot != "" || s.requirements.RunnerLoginRelay {
+		_, relayNetwork, err := conversationDockerAccess(ctx)
 		if err != nil {
 			return err
 		}
-		if network != "" {
-			args = append(args, "--network", network)
+		if relayNetwork != "" {
+			network = relayNetwork
 		}
-		args = append(args, "--add-host", "host.docker.internal:host-gateway", "-v", root+":"+root+":ro", "-v", filepath.Join(root, "home")+":"+filepath.Join(root, "home"), "-v", workspace+":"+filepath.Join(root, "ws"))
+		args = append(args, "--add-host", "host.docker.internal:host-gateway")
+	}
+	if network != "" {
+		args = append(args, "--network", network)
+	}
+	if root := s.requirements.ConversationRoot; root != "" {
+		args = append(args, "-v", root+":"+root+":ro", "-v", filepath.Join(root, "home")+":"+filepath.Join(root, "home"), "-v", workspace+":"+filepath.Join(root, "ws"))
 		guards, err := conversationGuardMounts(root)
 		if err != nil {
 			return err
