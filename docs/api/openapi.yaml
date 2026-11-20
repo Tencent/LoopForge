@@ -166,10 +166,12 @@ paths:
     get:
       tags: [Assistant]
       operationId: listAssistantModels
-      summary: List CodeBuddy models available to the Studio assistant
-      description: |
-        Hardcoded iOA assistant catalog with display names and credit
-        multipliers. Defaults to default.
+      summary: List models available to the Studio assistant
+      parameters:
+        - name: schedule
+          in: query
+          schema: {type: integer, enum: [1]}
+          description: Include built-in models for CLIs configured to use account login on the signed-in user's default execution machine.
       responses:
         "200":
           description: Model catalog
@@ -184,7 +186,7 @@ paths:
                     type: array
                     items:
                       type: object
-                      required: [id, name, family, credits]
+                      required: [id, name, family]
                       properties:
                         id: {type: string}
                         name: {type: string}
@@ -659,7 +661,8 @@ paths:
     put:
       tags: [Users]
       operationId: updateOwnCredentials
-      summary: Update credentials for the current authenticated user
+      summary: Update model credentials for the current authenticated user
+      description: Git access tokens are managed through /api/users/{id}/git-http-credentials.
       parameters:
         - name: id
           in: path
@@ -672,8 +675,6 @@ paths:
             schema:
               type: object
               properties:
-                gitToken: {type: string, writeOnly: true}
-                gitTokenClear: {type: boolean}
                 codeBuddyApiKey: {type: string, writeOnly: true}
                 codeBuddyApiKeyClear: {type: boolean}
                 codeBuddyInternetEnvironment: {type: string, description: "Edition that issued the CodeBuddy key: empty for International, \"internal\" for China, \"ioa\" for iOA (\"public\" and \"China\" are also accepted). Any other value is rejected with 400."}
@@ -3294,6 +3295,116 @@ paths:
           $ref: "#/components/responses/NotFound"
         "409":
           $ref: "#/components/responses/Conflict"
+  /api/schedule-jobs/{jobId}/enabled:
+    parameters:
+      - $ref: "#/components/parameters/JobId"
+    post:
+      tags: [Scheduling]
+      operationId: setScheduleJobEnabled
+      description: |
+        Starts or stops the job's schedule. Only `enabled` changes: the prompt,
+        key binding (runAsUserId) and session mode stay as saved, and a run in
+        progress finishes either way. Requires write access to the job's project.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [enabled]
+              properties:
+                enabled: { type: boolean }
+      responses:
+        "200":
+          $ref: "#/components/responses/ScheduleJob"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/schedule-job-executions:
+    get:
+      tags: [Scheduling]
+      operationId: listScheduleJobExecutions
+      description: |
+        Execution history of the schedule jobs the caller may read, newest first.
+      parameters:
+        - { name: projectId, in: query, schema: { type: string } }
+        - { name: jobId, in: query, schema: { type: string } }
+        - { name: status, in: query, schema: { type: string, enum: [running, success, failed, waiting] } }
+        - { name: traceId, in: query, schema: { type: string } }
+        - { name: limit, in: query, schema: { type: integer, default: 100, maximum: 500 } }
+      responses:
+        "200":
+          description: Executions
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ScheduleJobExecution"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: jobId belongs to a project the caller cannot read
+  /api/schedule-job-executions/dashboard:
+    get:
+      tags: [Scheduling]
+      operationId: scheduleJobExecutionDashboard
+      description: |
+        One page of a project's execution dashboard, filtered, counted and paged on the server.
+        `total` counts the executions matching the filters. `overview` follows the job filter
+        only and compares the last 7×24 hours (the current hour included) with the 7×24 hours
+        before, counted by the hour an execution started. Finished executions come from hourly
+        statistics kept 30 days, independent of the 200 executions a job keeps; running ones
+        are counted from the history. `records` and `recentFailed` cover the whole project.
+      parameters:
+        - { name: projectId, in: query, required: true, schema: { type: string } }
+        - { name: jobId, in: query, schema: { type: string } }
+        - { name: status, in: query, schema: { type: string, enum: [running, success, failed, waiting] } }
+        - { name: since, in: query, description: Only executions started at or after this time, schema: { type: string, format: date-time } }
+        - { name: q, in: query, description: Case-insensitive search in job name and ID, trace ID, error, AI reply and dispatched runs, schema: { type: string } }
+        - { name: offset, in: query, schema: { type: integer, default: 0 } }
+        - { name: limit, in: query, schema: { type: integer, default: 20, maximum: 100 } }
+      responses:
+        "200":
+          description: Dashboard page
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/ScheduleJobExecution"
+                  total:
+                    type: integer
+                  overview:
+                    type: object
+                    properties:
+                      current:
+                        $ref: "#/components/schemas/ScheduleExecutionWindow"
+                      previous:
+                        $ref: "#/components/schemas/ScheduleExecutionWindow"
+                      since:
+                        type: string
+                        format: date-time
+                  records:
+                    type: integer
+                    description: Executions kept for the project
+                  recentFailed:
+                    type: integer
+                    description: Failed executions of the project in the current window
+        "400":
+          description: projectId missing or since is not RFC 3339
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: jobId belongs to a project the caller cannot read
   /api/page-feedback:
     post:
       tags: [Feedback]
@@ -4249,7 +4360,7 @@ components:
         deptId: {type: integer}
         deptName: {type: string}
         avatarUrl: {type: string}
-        gitTokenConfigured: {type: boolean, readOnly: true}
+        gitHubCredentialConfigured: {type: boolean, readOnly: true}
         codeBuddyApiKeyConfigured: {type: boolean, readOnly: true}
         codexApiKeyConfigured: {type: boolean, readOnly: true}
         codexBaseUrl: {type: string}
@@ -4289,7 +4400,7 @@ components:
           type: string
         provider:
           type: string
-          description: GitHub for public repositories; inferred from the repository URL
+          description: "Inferred from the repository URL: github, gongfeng, https, or ssh. Unknown HTTPS hosts use Git transport without a hosting API adapter."
           example: github
         name:
           type: string
@@ -4304,12 +4415,6 @@ components:
           type: string
         localPath:
           type: string
-        gitToken:
-          type: string
-          writeOnly: true
-        gitTokenConfigured:
-          type: boolean
-          readOnly: true
         pipelineProjectId:
           type: integer
         pipelineDefId:
@@ -5234,14 +5339,31 @@ components:
           description: Optional 5-field cron (minute hour day month weekday) in Asia/Shanghai. When set, intervalSec is ignored.
         assistantPrompt:
           type: string
-          description: User-written CodeBuddy prompt executed at schedule time. Required for independent AI jobs; subscriptions resolve their pinned shared version instead. Cleared on trigger jobs.
+          description: User-written prompt executed at schedule time. Required for independent AI jobs. Subscriptions resolve their pinned shared version. Cleared on trigger jobs.
         assistantModel:
           type: string
-          description: CodeBuddy model id from GET /api/assistant/models.
+          description: Model id from GET /api/assistant/models?schedule=1.
         ownerUserId:
           type: integer
           format: int64
-          description: Project owner whose CodeBuddy key runs assistantPrompt
+          description: Project owner recorded for jobs saved without a run-as identity.
+        runAsUserId:
+          type: integer
+          format: int64
+          readOnly: true
+          description: User bound by the server to the last saver. Codex and Claude Code use configured account login on their online default personal Runner. Other configurations and offline Runners use the saver's personal API Key. CodeBuddy can use the shared key for allowed models if the personal key is missing. A bound user must retain write access to the project. Zero uses legacy owner selection.
+        runAsName:
+          type: string
+          readOnly: true
+          description: Display name of runAsUserId.
+        sessionMode:
+          type: string
+          enum: ["", fixed]
+          description: AI jobs only. Empty opens a new Studio conversation per execution; "fixed" keeps continuing one pinned conversation (fixedSessionId, server-managed).
+        sessionKeep:
+          type: integer
+          enum: [10, 50, 100, -1]
+          description: AI jobs that open a conversation per execution keep only their newest sessionKeep conversations; older ones are deleted after each execution (the execution records stay). -1 keeps all. Omitted or 0 saves the default 50; other values are rejected with 400. Ignored in fixed mode.
         lastRunAt:
           type: string
           format: date-time
@@ -5264,6 +5386,10 @@ components:
         lastAssistantMessage:
           type: string
           readOnly: true
+        lastTraceId:
+          type: string
+          description: Trace ID of the latest execution; matches ScheduleJobExecution.traceId and the scheduler log lines.
+          readOnly: true
         createdAt:
           type: string
           format: date-time
@@ -5272,6 +5398,73 @@ components:
           type: string
           format: date-time
           readOnly: true
+    ScheduleExecutionWindow:
+      type: object
+      description: Executions started in one window. total = finished + running; avgMs averages finished executions with a duration.
+      properties:
+        total: { type: integer }
+        finished: { type: integer }
+        success: { type: integer }
+        failed: { type: integer }
+        running: { type: integer }
+        avgMs: { type: integer, format: int64 }
+    ScheduleJobExecution:
+      type: object
+      description: One execution of a schedule job. Each job keeps its latest 200 executions.
+      properties:
+        id:
+          type: string
+        jobId:
+          type: string
+        jobName:
+          type: string
+        jobKind:
+          type: string
+          enum: [assistant, trigger]
+        projectId:
+          type: string
+        traceId:
+          type: string
+          description: 32-hex trace ID, also written to every scheduler log line of this execution.
+        triggerOrigin:
+          type: string
+          enum: [timer, manual_run]
+        status:
+          type: string
+          enum: [running, success, failed, waiting]
+        error:
+          type: string
+        pulled:
+          type: integer
+        dispatched:
+          type: integer
+        assistantMessage:
+          type: string
+        sessionId:
+          type: string
+          description: Studio conversation an AI execution ran in.
+        sessionGone:
+          type: boolean
+          description: Computed on each read, never stored. True when sessionId names a conversation that no longer exists (trimmed by the job's sessionKeep or the retention period, or deleted by hand). Running executions are never marked.
+        runs:
+          type: array
+          items:
+            type: object
+            properties:
+              issueId:
+                type: string
+              issueTitle:
+                type: string
+              runId:
+                type: string
+        startedAt:
+          type: string
+          format: date-time
+        finishedAt:
+          type: string
+          format: date-time
+        durationMs:
+          type: integer
     WorkflowMetrics:
       type: object
       additionalProperties: true

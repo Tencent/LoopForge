@@ -7,6 +7,7 @@ import React, {
   useState,
 } from "react";
 import { useChat } from "./useChat";
+import NativeApprovalPanel from "./NativeApprovalPanel";
 import { AgentBrowserLinks } from "./agent-browser-links.js";
 import ActivityTrace, { ReplyTimeline } from "./ActivityTrace";
 import MessageInfo from "./MessageInfo";
@@ -74,7 +75,7 @@ import { usePanelPresence } from "./usePanelPresence";
 import HomeWelcome from "./HomeWelcome";
 import ModelPicker from "./ModelPicker";
 import ModelProviderIcon, { hasProviderLogo } from "./ModelProviderIcon";
-import PermissionPicker from "./PermissionPicker";
+import PermissionPicker, { rememberApprovalMode, storedApprovalMode } from "./PermissionPicker";
 import { conversationEngine, engineBrand } from "./engines.js";
 import { effortOptions } from "./effort.js";
 import QuickAccessWizard from "./QuickAccessWizard";
@@ -148,14 +149,6 @@ function useTitleReveal(sessionId, title, revealId) {
 }
 
 const homeStarters = [
-  {
-    id: "welcome-demo",
-    icon: "workflow",
-    tone: "green",
-    title: "一键体验",
-    description: "无需 API Key 或 GitHub，运行真实脚本，体验人工审批和产物交付。",
-    steps: ["运行脚本", "人工审批", "查看产物"],
-  },
   {
     id: "quick-access",
     icon: "sparkles",
@@ -304,6 +297,12 @@ function LiveMessage({ live, generation, finished = false, local = false, readOn
   );
 }
 
+function readIssueMention() {
+  const params = new URLSearchParams(location.search);
+  const issueId = params.get("mentionIssue") || "";
+  return issueId ? { issueId, projectId: params.get("projectId") || "" } : null;
+}
+
 export default function App() {
   const realChat = useChat();
   const chat = useLocalConversations(realChat);
@@ -337,16 +336,26 @@ export default function App() {
     [pendingAttachments, setPendingAttachments] = useState([]),
     [imagePreview, setImagePreview] = useState(null),
     [references, setReferences] = useState([]),
+    [issueMention, setIssueMention] = useState(readIssueMention),
+    [issueDraft, setIssueDraft] = useState(readIssueMention),
     [mention, setMention] = useState(null),
     [repositorySelections, setRepositorySelections] = useState({}),
     [uploading, setUploading] = useState(false),
     [runsRefresh, setRunsRefresh] = useState(0),
-    [approval, setApproval] = useState("confirm"),
+    [approvalSelection, setApprovalSelection] = useState(null),
     [quickAccessOpen, setQuickAccessOpen] = useState(
       () => new URLSearchParams(location.search).get("quickAccess") === "1",
     ),
     [theme, setTheme] = useState(() => readThemePreference(localStorage)),
     [environmentVisibility, setEnvironmentVisibility] = useState(() => readJSON(environmentVisibilityKey, {}));
+  const approvalUserId = realChat.user?.isGuest ? null : realChat.user?.id ?? null;
+  const approval = approvalSelection?.userId === approvalUserId
+    ? approvalSelection.value
+    : storedApprovalMode(approvalUserId);
+  function setApproval(value) {
+    setApprovalSelection({ userId: approvalUserId, value });
+    rememberApprovalMode(approvalUserId, value);
+  }
   const environmentPreferenceOwner = String(chat.user?.id || "guest");
   const showEnvironmentPicker = environmentVisibility[environmentPreferenceOwner] === true;
   function changeEnvironmentVisibility(visible) {
@@ -355,6 +364,8 @@ export default function App() {
     try { localStorage.setItem(environmentVisibilityKey, JSON.stringify(next)); } catch {}
   }
   function startNewChat() {
+    setIssueDraft(null);
+    setIssueMention(null);
     chat.newChat();
   }
   const input = useRef(),
@@ -370,7 +381,15 @@ export default function App() {
     previousArtifacts = useRef({ id: null, ids: new Set(), baselined: false }),
     dialogInput = useRef(),
     composerPreviews = useRef(new Map());
-  const draftKey = `agentflow.native-chat.draft.${chat.user?.id || "guest"}.${chat.activeId || "new:" + chat.projectId}`;
+  // A requirement handed over by the workbench drafts in its own slot so the
+  // project's unsent new-conversation draft and attachments stay untouched.
+  const newDraftSlot = issueDraft && issueDraft.projectId === chat.projectId ? "issue:" + issueDraft.issueId : "new:" + chat.projectId;
+  const draftKey = `agentflow.native-chat.draft.${chat.user?.id || "guest"}.${chat.activeId || newDraftSlot}`;
+  useEffect(() => {
+    if (!chat.activeId) return;
+    setIssueDraft(null);
+    setIssueMention(null);
+  }, [chat.activeId]);
   useEffect(() => setMention(null), [draftKey]);
   // The open conversation's reply is reported read; the history list dots
   // the replies the server still counts as unread.
@@ -445,7 +464,7 @@ export default function App() {
     chat.projects.find((p) => p.id === chat.projectId)?.name ||
     (chat.projectId && (chat.session?.projectName || chat.projectId)) ||
     "个人对话";
-  const selectedModel = chat.models.find((m) => m.id === chat.model);
+  const selectedModel = chat.models.find((m) => m.id === chat.model) || (!chat.local ? chat.modelDetails : null);
   const modelLabel =
     selectedModel?.name?.replace(/^Claude-/, "").replace(/^GPT-/, "") || "模型";
   // The CLI switch is only for a conversation that has not started. A reply
@@ -492,14 +511,6 @@ export default function App() {
     });
   }
   function handleStarter(starter) {
-    if (starter.id === "welcome-demo") {
-      if (window.parent !== window) {
-        window.parent.postMessage({ type: "agentflow-welcome-demo" }, location.origin);
-      } else {
-        location.href = "/#/sops";
-      }
-      return;
-    }
     if (starter.id === "quick-access") {
       setQuickAccessOpen(true);
       return;
@@ -569,6 +580,68 @@ export default function App() {
       chat.setError("浏览器存储空间不足，草稿仍保留在当前页面。请移除较大的附件后重试。");
     }
   }, [text, attachments, references, draftKey, chat.user?.id]);
+  // A requirement handed over by the workbench ("创建并去对话澄清") opens a
+  // new conversation with the requirement already @-mentioned. It waits for
+  // the new conversation's draft to load so the draft does not overwrite it.
+  useEffect(() => {
+    const listener = (event) => {
+      if (
+        event.source !== window.parent ||
+        event.origin !== location.origin ||
+        event.data?.type !== "agentflow-chat-mention-issue"
+      ) return;
+      const issueId = String(event.data.issueId || "");
+      const projectId = String(event.data.projectId || "");
+      if (!issueId || !projectId) return;
+      chat.startProjectDraft(projectId);
+      setIssueDraft({ issueId, projectId });
+      setIssueMention({ issueId, projectId });
+    };
+    window.addEventListener("message", listener);
+    return () => window.removeEventListener("message", listener);
+  }, [chat.startProjectDraft]);
+  useEffect(() => {
+    if (
+      !issueMention ||
+      !chat.user ||
+      chat.activeId ||
+      chat.projectId !== issueMention.projectId ||
+      newDraftSlot !== "issue:" + issueMention.issueId ||
+      draftReady.current !== draftKey
+    ) return;
+    let current = true;
+    api(`/api/issues/${encodeURIComponent(issueMention.issueId)}`)
+      .then((data) => {
+        if (!current) return;
+        const issue = data.issue || data;
+        if ((readJSON(draftKey, {}).references || []).some((r) => r.type === "issue" && r.id === issue.id)) return;
+        const ref = {
+          type: "issue",
+          id: issue.id,
+          name: issue.title || issue.id,
+          projectId: issue.projectId,
+        };
+        const value = insertMention("", { start: 0, end: 0 }, ref);
+        setText(value.text);
+        setReferences([ref]);
+        setMention(null);
+        requestAnimationFrame(() => {
+          input.current?.focus();
+          input.current?.setSelectionRange(value.caret, value.caret);
+        });
+      })
+      .catch((e) => current && chat.setError(e.message))
+      .finally(() => {
+        if (!current) return;
+        setIssueMention(null);
+        const url = new URL(location.href);
+        url.searchParams.delete("mentionIssue");
+        history.replaceState({}, "", url);
+      });
+    return () => {
+      current = false;
+    };
+  }, [issueMention, chat.user, chat.activeId, chat.projectId, newDraftSlot, draftKey]);
   useEffect(() => {
     let previous = previousArtifacts.current;
     if (previous.id !== chat.activeId) {
@@ -1676,6 +1749,10 @@ export default function App() {
                   readOnly={chat.readOnly}
                 />
               ) : null}
+              <NativeApprovalPanel chat={chat} onChange={() => {
+                if (follow.current && scroll.current)
+                  scroll.current.scrollTop = scroll.current.scrollHeight;
+              }} />
               {!chat.local && !chat.busy && chat.generation?.failure && !messages.some((m) => m.generationId === chat.generation.id && m.failure) ? <GenerationDiagnostics sessionId={chat.session?.id} generationId={chat.generation.id} failure={chat.generation.failure} onCLIInstall={chat.adoptCLIInstall} readOnly={chat.readOnly} /> : null}
               {!chat.local && !chat.readOnly && !chat.busy && chat.generation?.id && chat.generation.status === "cancelled" && !chat.generation.failure && !messages.some((m) => m.generationId === chat.generation.id) ? <GenerationDiagnostics sessionId={chat.session?.id} generationId={chat.generation.id} compact /> : null}
               <RunAlerts
@@ -2256,7 +2333,7 @@ export default function App() {
                       );
                       if (stored) {
                         closeDialog();
-                        await chat.regenerate(stored);
+                        await chat.regenerate(stored, approval);
                       }
                     }
                   }}

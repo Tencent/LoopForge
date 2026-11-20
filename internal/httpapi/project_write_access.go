@@ -39,6 +39,22 @@ func (d deps) projectWriterAllowed(c *gin.Context, projectID string, userID int6
 	if !authRequired() || projectID == "" || d.isPlatformAdmin(c.Request) {
 		return true
 	}
+	return d.projectMemberWrites(projectID, userID)
+}
+
+// speakerProjectWriter applies projectWriterAllowed to the speaker of an agent
+// tool session, which carries the user instead of an HTTP request.
+func (d deps) speakerProjectWriter(projectID string, user domain.User, userID int64) bool {
+	if !authRequired() || projectID == "" {
+		return true
+	}
+	if login := strings.TrimSpace(user.LoginName); login != "" && d.repo.IsPlatformAdmin(login) {
+		return true
+	}
+	return d.projectMemberWrites(projectID, userID)
+}
+
+func (d deps) projectMemberWrites(projectID string, userID int64) bool {
 	p, found := d.repo.Project(projectID)
 	if !found || p.OwnerID == 0 || p.OwnerID == userID {
 		return true
@@ -73,17 +89,29 @@ var guardedRunWrites = map[string]bool{
 	"/api/runs/:id/preview":            true,
 }
 
-// runWriteGuard applies requireProjectWriter to run controls, workspace edits
-// and terminals. Worker signals, group chat and preview viewing keep their own
-// access rules.
+// runWriteGuard limits personal workspace routes to their owner and applies
+// project write access to run controls, workspace edits and terminals.
 func (d deps) runWriteGuard() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		if c.Request.Method == http.MethodGet || !guardedRunWrites[c.FullPath()] {
+		id, path := c.Param("id"), c.FullPath()
+		if id == "" || !strings.HasPrefix(path, "/api/runs/:id") {
 			c.Next()
 			return
 		}
-		run, ok := d.repo.Run(c.Param("id"))
-		if !ok {
+		run, err := d.repo.RunHeader(id)
+		if err != nil {
+			respond(c, err)
+			c.Abort()
+			return
+		}
+		if run.IsPersonalWorkspace() {
+			user, ok := d.requestUser(c.Request, true)
+			if !ok || user.ID <= 0 || user.ID != run.ExecutionContext.ResponsibleUserID {
+				c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "无权访问个人工作区"})
+				return
+			}
+		}
+		if run.ID == "" || c.Request.Method == http.MethodGet || !guardedRunWrites[path] {
 			c.Next()
 			return
 		}

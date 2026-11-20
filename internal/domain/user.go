@@ -29,18 +29,20 @@ type User struct {
 	DeptName            string                        `json:"deptName"`
 	// PlatformRole is a platform-wide role, independent of project membership.
 	// "admin" may edit generic SOP templates; empty is a regular user.
-	PlatformRole                 string    `json:"platformRole,omitempty"`
-	GitToken                     string    `json:"gitToken,omitempty"`
-	GitTokenConfigured           bool      `json:"gitTokenConfigured,omitempty"`
-	GitTokenOAuth                bool      `json:"gitTokenOAuth,omitempty"`
-	GitSSHKeyConfigured          bool      `json:"gitSshKeyConfigured,omitempty"`
-	GongfengRefreshToken         string    `json:"-"`
-	GongfengTokenExpiresAt       time.Time `json:"-"`
-	CodeBuddyAPIKey              string    `json:"codeBuddyApiKey,omitempty"`
-	CodeBuddyAPIKeyConfigured    bool      `json:"codeBuddyApiKeyConfigured,omitempty"`
-	CodeBuddyInternetEnvironment string    `json:"codeBuddyInternetEnvironment,omitempty"`
-	CreatedAt                    time.Time `json:"createdAt"`
-	UpdatedAt                    time.Time `json:"updatedAt"`
+	PlatformRole                 string     `json:"platformRole,omitempty"`
+	GitToken                     string     `json:"gitToken,omitempty"`
+	GitHubCredentialConfigured   bool       `json:"gitHubCredentialConfigured,omitempty"`
+	GitTokenOAuth                bool       `json:"gitTokenOAuth,omitempty"`
+	GitSSHKeyConfigured          bool       `json:"gitSshKeyConfigured,omitempty"`
+	GitHTTPCredentialsConfigured bool       `json:"gitHttpCredentialsConfigured,omitempty"`
+	GongfengRefreshToken         string     `json:"-"`
+	GongfengTokenExpiresAt       time.Time  `json:"-"`
+	CodeBuddyAPIKey              string     `json:"codeBuddyApiKey,omitempty"`
+	CodeBuddyAPIKeyConfigured    bool       `json:"codeBuddyApiKeyConfigured,omitempty"`
+	CodeBuddyInternetEnvironment string     `json:"codeBuddyInternetEnvironment,omitempty"`
+	CodeBuddyModels              []CLIModel `json:"codeBuddyModels,omitempty"`
+	CreatedAt                    time.Time  `json:"createdAt"`
+	UpdatedAt                    time.Time  `json:"updatedAt"`
 }
 
 const PlatformRoleAdmin = "admin"
@@ -50,6 +52,96 @@ type GitSSHKey struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
 	Host string `json:"host"`
+}
+
+// Platforms of a personal HTTPS Git credential. Git authentication does not
+// depend on the platform; it only selects the CLI conveniences, PR discovery
+// and delivery polling. "other" makes no API calls.
+const (
+	GitPlatformGitHub = "github"
+	GitPlatformGitLab = "gitlab"
+	GitPlatformOther  = "other"
+)
+
+// GitTokenHTTPUser is the Basic-auth user when a credential names none; the
+// GitHub and Gitea families accept any user with a token password.
+const GitTokenHTTPUser = "x-access-token"
+
+// ManagedGitHTTPCredentialID identifies the read-only credential the internal
+// adapter keeps (and refreshes) in user_configs.
+const ManagedGitHTTPCredentialID = "managed-internal"
+
+// GitHTTPCredential is the public description of a personal HTTPS Git
+// credential bound to one host[:port]. It never carries the token.
+type GitHTTPCredential struct {
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	Platform string `json:"platform"`
+	Host     string `json:"host"`
+	Username string `json:"username,omitempty"`
+	Managed  bool   `json:"managed,omitempty"`
+}
+
+// GitUsername is the Basic-auth user Git sends with the token.
+func (c GitHTTPCredential) GitUsername() string {
+	if user := strings.TrimSpace(c.Username); user != "" {
+		return user
+	}
+	return GitTokenHTTPUser
+}
+
+// APIBase is the REST API root the control plane uses for the credential's
+// host, or "" for platforms it does not call.
+func (c GitHTTPCredential) APIBase() string {
+	switch c.Platform {
+	case GitPlatformGitHub:
+		if c.Host == "github.com" {
+			return "https://api.github.com"
+		}
+		return "https://" + c.Host + "/api/v3"
+	case GitPlatformGitLab:
+		return "https://" + c.Host + "/api/v4"
+	default:
+		return ""
+	}
+}
+
+// APIAuthHeader is the header that authenticates the token against APIBase:
+// a bearer token for GitHub and GitLab OAuth tokens, PRIVATE-TOKEN for other
+// GitLab tokens.
+func (c GitHTTPCredentialSecret) APIAuthHeader() (string, string) {
+	if c.Platform == GitPlatformGitLab && c.Username != "oauth2" {
+		return "PRIVATE-TOKEN", c.Token
+	}
+	return "Authorization", "Bearer " + c.Token
+}
+
+// GitHTTPCredentialSecret is a credential with its token; it exists in memory
+// only and never serializes the token.
+type GitHTTPCredentialSecret struct {
+	GitHTTPCredential
+	Token string `json:"-"`
+	// ExpiresAt is set for managed OAuth tokens; zero means no known expiry.
+	ExpiresAt time.Time `json:"-"`
+}
+
+// GitHTTPExecutionCredential is only for authenticated, transient execution
+// dispatch. Unlike the settings secret, it must carry the token over the wire.
+// Queued tasks and public management responses always remove these values.
+type GitHTTPExecutionCredential struct {
+	GitHTTPCredential
+	Token     string    `json:"token"`
+	ExpiresAt time.Time `json:"expiresAt,omitempty"`
+}
+
+// NormalizeGitPlatform reports ok=false for a platform outside the three kinds.
+func NormalizeGitPlatform(raw string) (string, bool) {
+	switch p := strings.ToLower(strings.TrimSpace(raw)); p {
+	case GitPlatformGitHub, GitPlatformGitLab, GitPlatformOther:
+		return p, true
+	default:
+		return "", false
+	}
 }
 
 // NormalizeCodeBuddyInternetEnvironment maps a network environment chosen in
@@ -80,7 +172,6 @@ func PublicUser(u User) User {
 	u.CodexAPIKey = ""
 	u.ClaudeCodeAPIKeyConfigured = strings.TrimSpace(u.ClaudeCodeAPIKey) != ""
 	u.ClaudeCodeAPIKey = ""
-	u.GitTokenConfigured = strings.TrimSpace(u.GitToken) != ""
 	u.GitTokenOAuth = strings.TrimSpace(u.GongfengRefreshToken) != ""
 	u.GitToken = ""
 	u.GongfengRefreshToken = ""
@@ -102,8 +193,8 @@ func PublicUser(u User) User {
 // CLIModel is one entry of a CLI model catalog. ID is passed to the CLI
 // as-is; an empty Name shows the ID.
 //
-// Efforts is set on a Cursor model family folded out of the CLI's own model
-// list: it maps each reasoning effort onto the model ID cursor-agent printed
+// Efforts is set on a model family folded out of the CLI's own model
+// list: it maps each reasoning effort onto the model ID the CLI printed
 // for it, and DefaultEffort is the effort an empty choice runs. They are
 // saved with the catalog so the family resolves for its owner on any
 // instance and after a restart.
@@ -112,6 +203,10 @@ type CLIModel struct {
 	Name          string            `json:"name,omitempty"`
 	Efforts       map[string]string `json:"efforts,omitempty"`
 	DefaultEffort string            `json:"defaultEffort,omitempty"`
+	// ReasoningEfforts is the user's override. An empty list permits only the native default.
+	ReasoningEfforts *[]string `json:"reasoningEfforts,omitempty"`
+	// DiscoveredReasoningEfforts is supplied by model discovery and used in automatic mode.
+	DiscoveredReasoningEfforts *[]string `json:"discoveredReasoningEfforts,omitempty"`
 }
 
 // AgentCLICredential is the personal configuration of one agent CLI. An
@@ -123,6 +218,7 @@ type AgentCLICredential struct {
 	BaseURL          string     `json:"baseUrl,omitempty"`
 	Protocol         string     `json:"protocol,omitempty"`
 	Models           []CLIModel `json:"models,omitempty"`
+	ModelsCustomized bool       `json:"modelsCustomized,omitempty"` // Cursor: preserve explicit edits across discovery.
 }
 
 // Wire protocols an agent CLI can speak to a user Base URL.

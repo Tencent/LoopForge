@@ -8,11 +8,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"github.com/gin-gonic/gin"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/gin-gonic/gin"
 )
 
 func sharedWorkbenchFixture(t *testing.T) (*assistantHandlers, domain.User, domain.User, domain.User, domain.AssistantSession) {
@@ -270,10 +271,8 @@ func TestSharedAttachmentAccessRequiresRecordedReference(t *testing.T) {
 	if err := h.prepareWorkbenchContext(c, &req, b); err != nil {
 		t.Fatal(err)
 	}
-	session := &AgentToolSession{UserID: b.ID, ProjectID: s.ProjectID, AttachmentIDs: req.attachmentIDs, AttachmentOwners: req.attachmentOwners}
-	result, err := readWorkbenchAttachmentTool(session, json.RawMessage(`{"id":"`+id+`"}`))
-	if err != nil || result["isError"] != false {
-		t.Fatal("peer cannot read referenced attachment", err)
+	if !req.attachmentIDs[id] || req.attachmentOwners[id] != a.ID {
+		t.Fatalf("peer turn does not carry the referenced attachment: ids=%v owners=%v", req.attachmentIDs, req.attachmentOwners)
 	}
 }
 

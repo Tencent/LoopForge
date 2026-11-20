@@ -178,6 +178,10 @@ function renderIssueDetailTab(){
   host.querySelectorAll('[data-edit-issue]').forEach(b=>b.onclick=()=>{closeIssueDrawer();openIssue(issue)});
   host.querySelectorAll('[data-dispatch-issue]').forEach(b=>b.onclick=()=>triggerIssue(b.dataset.dispatchIssue,b.dataset.workflow));
   host.querySelectorAll('[data-retrigger-issue]').forEach(b=>b.onclick=()=>retriggerIssue(b.dataset.retriggerIssue,b.dataset.workflow));
+  host.querySelectorAll('[data-chat-issue]').forEach(b=>b.onclick=()=>openIssueInChatById(b.dataset.chatIssue));
+  const noSOPWorkflow=()=>host.querySelector('[data-no-sop-workflow]')?.value||'';
+  host.querySelectorAll('[data-no-sop-bind]').forEach(b=>b.onclick=()=>addIssueSOP(b.dataset.noSopBind,noSOPWorkflow()));
+  host.querySelectorAll('[data-no-sop-run]').forEach(b=>b.onclick=()=>triggerIssue(b.dataset.noSopRun,noSOPWorkflow()));
   host.querySelectorAll('[data-rerun-from-here]').forEach(b=>b.onclick=()=>openRerunFromNode((b.dataset.run&&(state.data.runs||[]).find(r=>r.id===b.dataset.run))||data.run,b.dataset.rerunFromHere));
   host.querySelectorAll('[data-toggle-sop-row]').forEach(el=>el.onclick=e=>{
     if(e.target.closest('button,a,select,input,.user-combobox'))return;
@@ -538,7 +542,7 @@ function overviewPane(issue,data){
   const ch=convo?conversationHeadState(issue):null;
   const banner=ch?`<div class="issue-outcome conv-outcome ${escapeHTML(ch.tone)}"><span class="conv-outcome-kicker">对话交付</span><b>${escapeHTML(ch.label)}</b><p>${escapeHTML(ch.hint||'')}</p><div class="issue-outcome-actions">${actions}</div></div>`
     :`<div class="issue-outcome ${out.key}"><b>${escapeHTML(out.title)}</b><p>${escapeHTML(out.body)}</p><div class="issue-outcome-actions">${actions}</div></div>`;
-  const facts=`<div class="detail-grid">${drawerFact('责任人',issueAssigneeName(issue)||'未指定')}${drawerFact('优先级',issuePriorityLabel(issue.priority))}${drawerFact('来源',issueSourceLabel(issue))}${metricsIssueSource(issue)==='local'?drawerFact('统计关联 TAPD',escapeHTML(issue.tapdId||'未绑定（仍参与统计）')):''}${drawerFact('触发方式',convo?'对话工作区':escapeHTML(taskTriggerInfo(data.task).label))}${drawerFact('关联 SOP',convo?'无 · 对话里直接改代码':escapeHTML(workflow?.name||'未关联'))}${drawerFact('代码仓库',escapeHTML(repo?.name||'未绑定'))}${convo?drawerFact('工作分支',escapeHTML(conversationWorkBranchNames(issue,data)||'—')):drawerFact('继续开发分支',escapeHTML(storedIssueWorkBranch(issue)||'自动新建'))}</div>`;
+  const facts=`<div class="detail-grid">${drawerFact('责任人',issueAssigneeName(issue)||'未指定')}${drawerFact('优先级',issuePriorityLabel(issue.priority))}${drawerFact('来源',issueSourceLabel(issue))}${metricsIssueSource(issue)==='local'?drawerFact('统计关联 TAPD',escapeHTML(issue.tapdId||'未绑定（仍参与统计）')):''}${drawerFact('触发方式',convo?'对话工作区':escapeHTML(taskTriggerInfo(data.task).label))}${drawerFact('关联 SOP',convo?'无 · 对话里直接改代码':(issueWithoutSOP(issue)?'不使用 SOP':escapeHTML(workflow?.name||'未关联')))}${drawerFact('代码仓库',escapeHTML(repo?.name||'未绑定'))}${convo?drawerFact('工作分支',escapeHTML(conversationWorkBranchNames(issue,data)||'—')):drawerFact('继续开发分支',escapeHTML(storedIssueWorkBranch(issue)||'自动新建'))}</div>`;
   return `<div class="detail-section">${banner}${facts}${issue.description?`<div class="detail-desc" style="margin-top:12px">${escapeHTML(issue.description)}</div>`:''}${clarificationOverviewCard(issue)}</div>`;
 }
 function clarifyHistoryHTML(c){
@@ -761,8 +765,17 @@ function deliveryPane(issue,data){
   if(!conversationWorkspaceIssue(issue,data.run))return sopDeliveryPane(issue,data);
   return `<div class="detail-section"><h3>代码仓库与分支<span class="sub">对话工作区检出的仓库</span></h3>${conversationRepoCards(issue,data)}</div><div class="detail-section"><h3>交付方式<span class="sub">在对话工作区里直接改代码，没有 SOP 运行</span></h3><div class="issue-outcome-actions">${conversationSessionButton(issue,data)||'<span class="muted">没有关联的会话</span>'}</div></div>`;
 }
+function noSOPPaneHTML(issue){
+  const opts=runnableWorkflowOptions();
+  const blocked=issueExecutionBlocked(issue);
+  const picker=opts.length
+    ?`<div class="no-sop-switch"><select class="select" data-no-sop-workflow aria-label="选择 SOP">${opts.map(w=>`<option value="${escapeHTML(w.id)}">${escapeHTML(w.name)}</option>`).join('')}</select><button class="button ghost small" data-no-sop-bind="${escapeHTML(issue.id)}">只绑定</button>${blocked?'':`<button class="button ghost small" data-no-sop-run="${escapeHTML(issue.id)}">绑定并触发</button>`}</div>`
+    :'<p class="muted">当前项目还没有可运行的 SOP。</p>';
+  return `<div class="detail-section"><div class="issue-outcome conv-outcome"><span class="conv-outcome-kicker">不使用 SOP</span><b>这条需求不走 SOP</b><p>在对话里澄清需求、直接改代码；定时任务不会自动认领它。</p><div class="issue-outcome-actions"><button class="button primary small" data-chat-issue="${escapeHTML(issue.id)}">去对话处理</button></div></div></div><div class="detail-section"><h3>改为按 SOP 交付<span class="sub">绑定后这条需求按 SOP 跟进，也会参与定时触发</span></h3>${picker}</div>`;
+}
 function sopPane(issue,data){
   if(conversationWorkspaceIssue(issue,data.run))return conversationDeliveryHTML(issue,data);
+  if(issueWithoutSOP(issue))return noSOPPaneHTML(issue);
   const snap=data.requirement||{};
   const lanes=snap.lanes||clientIssueLanes(issue);
   const overall=snap.overall||{};

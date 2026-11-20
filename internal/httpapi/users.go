@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -36,7 +37,11 @@ func (h *usersHandlers) user(c *gin.Context) {
 		return
 	}
 	var body repo.UserCredentialUpdate
-	if !decode(c, &body) {
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 2<<20)
+	decoder := json.NewDecoder(c.Request.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&body); err != nil {
+		c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
 	if raw := body.CodeBuddyInternetEnvironment; raw != nil {

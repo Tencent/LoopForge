@@ -1,8 +1,10 @@
 package httpapi
 
 import (
-	"agentflow/internal/domain"
 	"fmt"
+
+	"agentflow/internal/domain"
+
 	"github.com/gin-gonic/gin"
 )
 
@@ -49,6 +51,31 @@ func (h *assistantHandlers) newExecutionTarget(userID int64, projectID string, r
 	return &target, nil
 }
 
+// Use a machine's login only for its owner on a personal execution target.
+func (h *assistantHandlers) assistantUsesRunnerLogin(userID int64, target *domain.AssistantExecutionTarget, engine string) bool {
+	return h.assistantLoginRunner(userID, target, engine).ID != ""
+}
+
+func (h *assistantHandlers) assistantLoginRunner(userID int64, target *domain.AssistantExecutionTarget, engine string) domain.Runner {
+	if target == nil || target.Pool != domain.ExecutionModeRunner {
+		return domain.Runner{}
+	}
+	runner, ok := h.repo.Runner(target.RunnerID)
+	if ok && runner.OwnerUserID == userID && runnerUsesLocalLogin(runner, engine) {
+		return runner
+	}
+	return domain.Runner{}
+}
+
+func runnerUsesLocalLogin(runner domain.Runner, engine string) bool {
+	return assistantSupportsRunnerLogin(engine) &&
+		runner.RuntimeAuthMode(engine) == domain.RuntimeAuthLocal
+}
+
+func assistantSupportsRunnerLogin(engine string) bool {
+	return domain.SupportsRunnerLogin(engine)
+}
+
 func (h *assistantHandlers) sessionMode(c *gin.Context) {
 	user, ok := h.requestUser(c.Request, true)
 	if !ok {
@@ -85,6 +112,10 @@ func (h *assistantHandlers) sessionMode(c *gin.Context) {
 			c.JSON(409, gin.H{"error": "工作区与会话不在同一执行机器"})
 			return
 		}
+		if run.IsPersonalWorkspace() && (user.ID != saved.UserID || !conversationMayBind(saved, run, saved.ProjectID)) {
+			c.JSON(403, gin.H{"error": "无权访问个人工作区"})
+			return
+		}
 		if !run.IsWorkspace() && !sopStopped(run) {
 			c.JSON(409, gin.H{"error": "请先暂停或接管 SOP，再进入工作区模式"})
 			return
@@ -94,8 +125,8 @@ func (h *assistantHandlers) sessionMode(c *gin.Context) {
 			return
 		}
 		request, err := h.engine.TrustedWorkspaceRequest(runID, domain.RunnerWorkspaceRequest{})
-		if err != nil || request.Sandbox == nil || request.Sandbox.Profile.Driver != "docker" {
-			c.JSON(409, gin.H{"error": "对话工作区仅支持 Docker"})
+		if err != nil || request.Sandbox == nil || !domain.ConversationSandboxDriver(request.Sandbox.Profile.Driver) {
+			c.JSON(409, gin.H{"error": "对话工作区只支持 Docker 或 native 沙箱"})
 			return
 		}
 	}

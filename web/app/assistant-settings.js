@@ -1,14 +1,14 @@
-// AI 助手设置：没有 @ 时是否更主动地派角色、走 SOP（默认都关），以及每轮都带上的自定义规则。只对当前用户生效。
+// AI 助手设置：生成中消息的发送方式、主动派发与每轮自定义规则。只对当前用户生效。
 const ASSISTANT_RULES_MAX=4000;
 const assistantPrefsUI={saved:null,loading:false,saving:false,error:''};
 
 function assistantPrefsSignedIn(){return !!state.currentUser&&!state.currentUser.isGuest}
 function assistantPrefsForm(){return document.querySelector('#assistantPrefsForm')}
-function assistantPrefsDraft(form){return {proactiveRoles:form.proactiveRoles.checked,proactiveSops:form.proactiveSops.checked,instructions:form.instructions.value.trim()}}
+function assistantPrefsDraft(form){return {proactiveRoles:form.proactiveRoles.checked,proactiveSops:form.proactiveSops.checked,steerOnSend:form.messageDuringGeneration.value==='steer',instructions:form.instructions.value.trim()}}
 function assistantPrefsDirty(form){
  const saved=assistantPrefsUI.saved;if(!saved||!form)return false;
  const draft=assistantPrefsDraft(form);
- return draft.proactiveRoles!==!!saved.proactiveRoles||draft.proactiveSops!==!!saved.proactiveSops||draft.instructions!==(saved.instructions||'');
+ return draft.proactiveRoles!==!!saved.proactiveRoles||draft.proactiveSops!==!!saved.proactiveSops||draft.steerOnSend!==!!saved.steerOnSend||draft.instructions!==(saved.instructions||'');
 }
 function assistantPrefsSwitchRow(name,title,help,on){
  return `<label class="asst-switch-row"><span><b>${title}</b><small>${help}</small></span><input type="checkbox" role="switch" name="${name}" ${on?'checked':''}></label>`;
@@ -16,6 +16,10 @@ function assistantPrefsSwitchRow(name,title,help,on){
 function assistantPrefsFormHTML(p){
  const rules=p.instructions||'';
  return `<form id="assistantPrefsForm" class="asst-form" novalidate><fieldset ${assistantPrefsUI.saving?'disabled':''}>
+  <section class="asst-panel"><header class="asst-panel-head"><h2>消息发送</h2></header>
+   <div class="asst-rows"><label class="asst-switch-row" for="assistantPrefsMessageDuringGeneration"><span><b>生成中发送消息</b><small>排队会等当前回复结束；立即发送会打断当前回复，保留已输出内容并继续处理新消息。</small></span>
+    <select id="assistantPrefsMessageDuringGeneration" class="input" name="messageDuringGeneration"><option value="queue" ${p.steerOnSend?'':'selected'}>排队</option><option value="steer" ${p.steerOnSend?'selected':''}>立即发送</option></select>
+   </label></div></section>
   <section class="asst-panel"><header class="asst-panel-head"><h2>主动派发</h2><p>打开后 AI 助手会更主动地把事情交给角色或 SOP。派角色不需要确认；走 SOP 仍按审批模式先征求同意，完全权限下直接启动。</p></header>
    <div class="asst-rows">
     ${assistantPrefsSwitchRow('proactiveRoles','主动派角色','整件事是某个角色的本职（如独立评审、整套测试），或改了高风险代码需要复核时，直接交给这个角色。',p.proactiveRoles)}
@@ -45,6 +49,7 @@ function renderAssistantSettings(){
   assistantPrefsUI.saving=true;save.disabled=true;save.textContent='保存中…';
   try{
    assistantPrefsUI.saved=await api('/api/assistant/preferences',{method:'PUT',body:JSON.stringify(draft)});
+   document.querySelector('#chatNextFrame')?.contentWindow?.postMessage({type:'agentflow-assistant-preferences-changed'},location.origin);
    toast('AI 助手设置已保存');
   }catch(err){toast(err.message||'保存失败，请重试')}
   finally{assistantPrefsUI.saving=false;save.textContent='保存';refresh()}

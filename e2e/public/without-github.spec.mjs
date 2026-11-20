@@ -11,7 +11,7 @@ async function setup(page){
   const identity=(await page.request.get('/api/auth/current').then(r=>r.json())).user;
   const users=await page.request.get('/api/users').then(r=>r.json());
   const user=users.find(u=>u.id===identity.id);
-  expect(!!user.gitTokenConfigured).toBe(false);
+  expect(!!user.gitHubCredentialConfigured).toBe(false);
   expect(!!user.codeBuddyApiKeyConfigured).toBe(false);
   const projectId='e2e-onboarding';
   let response=await page.request.get(`/api/projects/${projectId}`);
@@ -119,7 +119,7 @@ test('a real Agent generates a document with a model key and no GitHub repositor
     const content=await page.request.get(`/api/runs/${runId}/artifacts/${encodeURIComponent(artifact.id)}`);
     expect(content.ok()).toBe(true);expect(await content.text()).toContain(marker);
     const currentUsers=await page.request.get('/api/users').then(r=>r.json());
-    expect(!!currentUsers.find(u=>u.id===user.id).gitTokenConfigured).toBe(false);
+    expect(!!currentUsers.find(u=>u.id===user.id).gitHubCredentialConfigured).toBe(false);
   }finally{
     try{
       await removeRun(page,runId);

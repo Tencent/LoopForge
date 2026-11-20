@@ -46,13 +46,13 @@ func TestGongfengOAuthCompletionRefreshesSettingsCardInPlace(t *testing.T) {
 	script := `
 const assert=require('node:assert/strict');
 const code=require('node:fs').readFileSync('` + appBundlePath(t) + `','utf8');
-const state={currentUser:{id:1},data:{users:[{id:1,gitTokenConfigured:false}]}};
+const state={currentUser:{id:1},data:{users:[{id:1,gitHubCredentialConfigured:false}]}};
 const userById=id=>state.data.users.find(u=>u.id===id);
 const escapeHTML=v=>String(v),userAvatarHTML=()=>'',userDisplay=()=>'Alice',loadPersonalBotBindings=()=>{};
 const toasts=[];const toast=(message,kind)=>toasts.push({message,kind});
 let view='runs';const activeViewName=()=>view;
 const calls=[];
-const api=async(path)=>{calls.push(path);if(path==='/api/users')return [{id:1,gitTokenConfigured:true,gitTokenOAuth:true}];if(path.endsWith('/git-token/verify'))return {valid:true,scopes:['read_repository','write_repository']};return {}};
+const api=async(path)=>{calls.push(path);if(path==='/api/users')return [{id:1,gitHubCredentialConfigured:true,gitTokenOAuth:true}];if(path.endsWith('/git-token/verify'))return {valid:true,scopes:['read_repository','write_repository']};return {}};
 const channels=[];
 class BroadcastChannel{constructor(name){this.name=name;channels.push(this)}close(){}}
 let panelRenders=0,replacedRow='',progress='',filter='';

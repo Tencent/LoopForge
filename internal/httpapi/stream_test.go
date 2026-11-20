@@ -30,6 +30,13 @@ func TestRunStreamDeliversLiveSnapshots(t *testing.T) {
 		t.Fatal(err)
 	}
 	e := engine.New(s, runtime.NewManager(filepath.Join(dir, "workspaces")))
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := e.Drain(ctx); err != nil {
+			t.Error(err)
+		}
+	})
 	run, err := e.Start(wf.ID, "")
 	if err != nil {
 		t.Fatal(err)

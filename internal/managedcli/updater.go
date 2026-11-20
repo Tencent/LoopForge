@@ -62,6 +62,14 @@ func (m *Manager) Update(ctx context.Context) (Report, error) {
 	return m.run(ctx, "update", "")
 }
 
+// UpdateProvider updates a single CLI already selected by the runner.
+func (m *Manager) UpdateProvider(ctx context.Context, provider string) (Report, error) {
+	if _, ok := providerSpecs[provider]; !ok {
+		return Report{}, fmt.Errorf("unsupported managed CLI %q", provider)
+	}
+	return m.run(ctx, "update", provider)
+}
+
 // Rollback is explicit, never triggered by task/model errors. Existing run pins
 // stay immutable and automatic updates never retry the rejected version.
 func (m *Manager) Rollback(ctx context.Context, provider string) (Report, error) {
@@ -101,16 +109,20 @@ func (m *Manager) run(ctx context.Context, action, provider string) (report Repo
 		if action == "rollback" {
 			return m.rollbackLocked(ctx, provider, &state, &report)
 		}
-		return m.updateLocked(ctx, &state, &report)
+		providers := providerNames()
+		if provider != "" {
+			providers = []string{provider}
+		}
+		return m.updateProvidersLocked(ctx, &state, &report, providers)
 	})
 	return report, err
 }
 
-func (m *Manager) updateLocked(ctx context.Context, state *State, report *Report) error {
+func (m *Manager) updateProvidersLocked(ctx context.Context, state *State, report *Report, providers []string) error {
 	candidates := Inventory{}
 	var failures []error
 	toolsReady := false
-	for _, provider := range providerNames() {
+	for _, provider := range providers {
 		result := ProviderResult{Provider: provider, From: state.Current[provider].Version}
 		candidate, err := m.candidate(ctx, provider)
 		if err == nil {

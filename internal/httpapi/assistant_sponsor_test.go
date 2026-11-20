@@ -1,11 +1,13 @@
 package httpapi
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -17,6 +19,56 @@ import (
 
 	"github.com/gin-gonic/gin"
 )
+
+func TestSharedCodeBuddyEffortsIgnoreAnOldPersonalOverride(t *testing.T) {
+	st, member := sponsorFixture(t)
+	stubCLIModelDiscovery(t)
+	h := &assistantHandlers{
+		deps: &deps{repo: st},
+		generate: func(_ context.Context, _ string, user domain.User) (string, error) {
+			if len(user.CodeBuddyModels) != 0 || user.ID != member.ID {
+				t.Error("shared-key turn must use its own catalog and keep the caller's identity")
+			}
+			return `{"message":"ok","drafts":[]}`, nil
+		},
+		titleSummary: func(context.Context, domain.User, string) (string, error) { return "", context.Canceled },
+	}
+	const model = "deepseek-v4.1-flash"
+	defaultOnly := []string{}
+	models := []domain.CLIModel{{ID: model, ReasoningEfforts: &defaultOnly}}
+	if err := st.SetPlatformCodeBuddyKey(repo.PlatformCodeBuddyKeyUpdate{APIKey: "shared-fixture", Models: []string{model}}, 0); err != nil {
+		t.Fatal(err)
+	}
+	personal, err := st.UpdateUserCredentials(member.ID, repo.UserCredentialUpdate{CodeBuddyAPIKey: "own-fixture", CodeBuddyModels: &models})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := validateAssistantEffort(context.Background(), personal, model, "low"); err == nil {
+		t.Fatal("the personal key must still use its explicit override")
+	}
+	afterClear, err := st.UpdateUserCredentials(member.ID, repo.UserCredentialUpdate{CodeBuddyAPIKeyClear: true})
+	if err != nil || len(afterClear.CodeBuddyModels) != 1 {
+		t.Fatalf("expected the personal model catalog to remain saved after clearing its key: %v", err)
+	}
+	c, rec := workbenchContext(afterClear, http.MethodGet, "/api/assistant/models", &bytes.Buffer{})
+	h.models(c)
+	var catalog assistantModelCatalog
+	if err := json.Unmarshal(rec.Body.Bytes(), &catalog); rec.Code != http.StatusOK || err != nil ||
+		len(catalog.Models) != 1 || catalog.Models[0].ID != model || !slices.Contains(catalog.Models[0].Efforts, "low") {
+		t.Fatalf("shared catalog: %d %s", rec.Code, rec.Body)
+	}
+	c, rec = workbenchContext(afterClear, http.MethodPut, "/api/assistant/sessions/shared-effort", bytes.NewBufferString(`{"model":"deepseek-v4.1-flash","effort":"low","executor":"codebuddy"}`))
+	c.Params = gin.Params{{Key: "id", Value: "shared-effort"}}
+	h.session(c)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("session rejected the shared effort: %d %s", rec.Code, rec.Body)
+	}
+	c, rec = workbenchContext(afterClear, http.MethodPost, "/api/assistant/chat", bytes.NewBufferString(`{"sessionId":"shared-effort","model":"deepseek-v4.1-flash","effort":"low","messages":[{"role":"user","content":"Continue"}]}`))
+	h.chat(c)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("turn rejected the shared effort: %d %s", rec.Code, rec.Body)
+	}
+}
 
 func sponsorFixture(t *testing.T) (*repo.Store, domain.User) {
 	t.Helper()
@@ -286,21 +338,81 @@ func TestAssistantModelsPerExecutor(t *testing.T) {
 		_ = json.Unmarshal(rec.Body.Bytes(), &catalog)
 		return rec, catalog
 	}
-	for executor, family := range map[string]string{"codex": "gpt", "claude": "claude"} {
+	for executor, family := range map[string]string{"codex": "gpt", "claude": "claude", "claude-code": "claude"} {
 		rec, catalog := get(executor)
-		if rec.Code != 200 || catalog.Default != "default" || len(catalog.Models) < 2 || catalog.Models[0].ID != "default" {
+		if rec.Code != 200 || len(catalog.Models) < 2 || catalog.Default != catalog.Models[0].ID {
 			t.Fatalf("%s catalog: %d %s", executor, rec.Code, rec.Body.String())
 		}
 		for _, model := range catalog.Models {
-			if model.Family != family {
+			if model.ID == "default" || model.Family != family {
 				t.Fatalf("%s model %s family = %q", executor, model.ID, model.Family)
+			}
+			if len(model.Efforts) == 0 {
+				t.Fatalf("%s model %s lost reasoning efforts", executor, model.ID)
 			}
 		}
 		if catalog.SponsoredModel != "" {
 			t.Fatalf("%s must not offer the CodeBuddy sponsored model", executor)
 		}
 	}
+	for _, executor := range []string{"opencode", "pi"} {
+		if rec, catalog := get(executor); rec.Code != 200 || len(catalog.Models) != 0 || catalog.Default != "" {
+			t.Fatalf("%s without a configured catalog: %d %s", executor, rec.Code, rec.Body.String())
+		}
+	}
 	if rec, _ := get("bogus"); rec.Code != 400 || !strings.Contains(rec.Body.String(), "不支持的执行器") {
 		t.Fatalf("unknown executor: %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+// The model list is cached per instance. A turn on a model this instance has
+// not listed yet (another instance served the picker, or it just restarted)
+// refreshes the list instead of silently running on the default model.
+func TestTurnCatalogRefreshesBeforeFallingBackToTheDefault(t *testing.T) {
+	st, member := sponsorFixture(t)
+	stubCLIModelDiscovery(t)
+	calls := 0
+	discoverCLIModels = func(_ context.Context, _, apiKey string) []string {
+		calls++
+		if apiKey == "own-secret" {
+			return []string{"claude-opus-5.5"}
+		}
+		return nil
+	}
+	if _, err := st.UpdateUserCredentials(member.ID, repo.UserCredentialUpdate{CodeBuddyAPIKey: "own-secret"}); err != nil {
+		t.Fatal(err)
+	}
+	stored, _ := st.User(member.ID)
+	h := &assistantHandlers{deps: &deps{repo: st}}
+	if got := assistantAllowedModel("claude-opus-5.5", h.chatCatalog(context.Background(), stored)); got == "claude-opus-5.5" {
+		t.Fatalf("precondition: a cold cache must not list the model yet")
+	}
+	if got := assistantAllowedModel("claude-opus-5.5", h.turnCatalog(context.Background(), stored, "claude-opus-5.5")); got != "claude-opus-5.5" {
+		t.Fatalf("picked claude-opus-5.5, turn runs on %q", got)
+	}
+	if calls != 1 {
+		t.Fatalf("a missing model must refresh the list once, got %d discoveries", calls)
+	}
+	h.turnCatalog(context.Background(), stored, "claude-opus-5.5")
+	h.turnCatalog(context.Background(), stored, "")
+	if calls != 1 {
+		t.Fatalf("a listed or empty model must not run discovery again, got %d", calls)
+	}
+}
+
+// The chat picker starts a person with nothing remembered on the first listed
+// model, so every chat catalog must list its default first.
+func TestChatCatalogsListTheDefaultFirst(t *testing.T) {
+	t.Setenv("AGENTFLOW_ASSISTANT_MODEL", "glm-5.3-flash-ioa")
+	t.Setenv("AGENTFLOW_ASSISTANT_MODELS", "claude-opus-5.5,glm-5.3-flash-ioa")
+	ctx := context.Background()
+	shared := []string{"deepseek-v4.1-flash", "glm-5.3-flash-ioa"}
+	for name, catalog := range map[string]assistantModelCatalog{
+		"own key":    assistantChatCatalog(ctx, "", nil),
+		"shared key": restrictAssistantCatalog(assistantChatCatalog(ctx, "", shared), shared),
+	} {
+		if len(catalog.Models) == 0 || catalog.Models[0].ID != catalog.Default {
+			t.Fatalf("%s: default %q is not listed first in %+v", name, catalog.Default, catalog.Models)
+		}
 	}
 }

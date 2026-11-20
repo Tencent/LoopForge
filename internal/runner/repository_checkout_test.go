@@ -94,20 +94,20 @@ func TestCheckoutRepositoryPreservesDamagedCheckoutWithLocalWork(t *testing.T) {
 func TestPreparationRefreshesCleanCheckoutAndBaseline(t *testing.T) {
 	remote, workspace := bareRemoteWithBaseline(t), t.TempDir()
 	inv := &domain.RunnerInvocation{Repositories: []domain.RunnerRepository{{CloneURL: remote, Ref: "master", WorkBranch: "feature/retry"}}}
-	if err := checkoutInvocationRepositories(context.Background(), workspace, inv, "local"); err != nil {
+	if err := checkoutInvocationRepositories(context.Background(), workspace, inv); err != nil {
 		t.Fatal(err)
 	}
 	before, _ := os.Stat(workspace)
 	oldHead := runGitT(t, workspace, "rev-parse", "HEAD")
 	want := advanceCheckoutRemote(t, remote)
 	// Ordinary nodes keep the frozen checkout, even when its tree is clean.
-	if err := checkoutInvocationRepositories(context.Background(), workspace, inv, "local"); err != nil {
+	if err := checkoutInvocationRepositories(context.Background(), workspace, inv); err != nil {
 		t.Fatal(err)
 	}
 	if got := runGitT(t, workspace, "rev-parse", "HEAD"); got != oldHead {
 		t.Fatal("ordinary node changed the run baseline")
 	}
-	if err := checkoutInvocationRepositories(context.Background(), workspace, inv, "local", true); err != nil {
+	if err := checkoutInvocationRepositories(context.Background(), workspace, inv, true); err != nil {
 		t.Fatal(err)
 	}
 	if got := runGitT(t, workspace, "rev-parse", "HEAD"); got != want {
@@ -127,7 +127,7 @@ func TestRepositoryCanRefreshRejectsSymlinkEscape(t *testing.T) {
 		t.Run(kind, func(t *testing.T) {
 			remote, workspace := bareRemoteWithBaseline(t), t.TempDir()
 			inv := &domain.RunnerInvocation{Repositories: []domain.RunnerRepository{{CloneURL: remote, Ref: "master"}}}
-			if err := checkoutInvocationRepositories(context.Background(), workspace, inv, "local"); err != nil {
+			if err := checkoutInvocationRepositories(context.Background(), workspace, inv); err != nil {
 				t.Fatal(err)
 			}
 			path := filepath.Join(workspace, ".git")
@@ -179,7 +179,7 @@ func TestPreparationRefreshPreservesLocalChangesAndCommits(t *testing.T) {
 		t.Run(kind, func(t *testing.T) {
 			remote, workspace := bareRemoteWithBaseline(t), t.TempDir()
 			inv := &domain.RunnerInvocation{Repositories: []domain.RunnerRepository{{CloneURL: remote, Ref: "master", WorkBranch: "feature/keep"}}}
-			if err := checkoutInvocationRepositories(context.Background(), workspace, inv, "local"); err != nil {
+			if err := checkoutInvocationRepositories(context.Background(), workspace, inv); err != nil {
 				t.Fatal(err)
 			}
 			file := "local.txt"
@@ -207,7 +207,7 @@ func TestPreparationRefreshPreservesLocalChangesAndCommits(t *testing.T) {
 			refs := runGitT(t, workspace, "show-ref")
 			status := runGitT(t, workspace, "status", "--porcelain=v1", "--ignored=matching")
 			advanceCheckoutRemote(t, remote)
-			if err := checkoutInvocationRepositories(context.Background(), workspace, inv, "local", true); err != nil {
+			if err := checkoutInvocationRepositories(context.Background(), workspace, inv, true); err != nil {
 				t.Fatal(err)
 			}
 			if got := runGitT(t, workspace, "rev-parse", "HEAD"); got != head {
@@ -226,12 +226,12 @@ func TestPreparationRefreshPreservesLocalChangesAndCommits(t *testing.T) {
 func TestPreparationRefreshKeepsCheckoutWhenCloneFails(t *testing.T) {
 	remote, workspace := bareRemoteWithBaseline(t), t.TempDir()
 	inv := &domain.RunnerInvocation{Repositories: []domain.RunnerRepository{{CloneURL: remote, Ref: "master"}}}
-	if err := checkoutInvocationRepositories(context.Background(), workspace, inv, "local"); err != nil {
+	if err := checkoutInvocationRepositories(context.Background(), workspace, inv); err != nil {
 		t.Fatal(err)
 	}
 	head := runGitT(t, workspace, "rev-parse", "HEAD")
 	inv.Repositories[0].CloneURL = filepath.Join(t.TempDir(), "missing-remote.git")
-	if err := checkoutInvocationRepositories(context.Background(), workspace, inv, "local", true); err == nil {
+	if err := checkoutInvocationRepositories(context.Background(), workspace, inv, true); err == nil {
 		t.Fatal("missing remote unexpectedly cloned")
 	}
 	if got := runGitT(t, workspace, "rev-parse", "HEAD"); got != head {

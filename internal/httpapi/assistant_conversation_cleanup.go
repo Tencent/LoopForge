@@ -19,6 +19,7 @@ func (h *assistantHandlers) deleteConversation(userID int64, id string) error {
 	}
 	if found {
 		h.settleDeletedConversation(conv)
+		h.queueConversationAttachments(conv)
 	}
 	return nil
 }

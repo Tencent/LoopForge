@@ -78,6 +78,9 @@ func main() {
 	if runtime.RunMCPCallCLI(os.Args[1:]) {
 		return
 	}
+	if runtime.RunGitHelperCLI(os.Args[1:]) {
+		return
+	}
 	addr := flag.String("addr", "", "HTTP listen address; overrides AGENTFLOW_HTTP_PORT")
 	workspaces := flag.String("workspaces", "", "sandbox workspace root")
 	workerConcurrency := flag.Int("worker-concurrency", 8, "maximum concurrent node sandboxes for this worker")
