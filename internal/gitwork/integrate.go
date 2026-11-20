@@ -141,14 +141,13 @@ func FinishMergeAfterExcludedConflicts(ctx context.Context, w, msg string) ([]st
 
 // UnmergedFiles lists the paths git still reports as conflicted.
 func UnmergedFiles(ctx context.Context, w string) []string {
-	out, _ := C(ctx, w, "diff", "--name-only", "--diff-filter=U")
-	var files []string
-	for _, x := range strings.Split(out, "\n") {
-		if x = strings.TrimSpace(x); x != "" {
-			files = append(files, x)
-		}
+	cmd := command(ctx, w, "", nil, []string{"diff", "--name-only", "--diff-filter=U", "-z"})
+	cmd.Dir = w
+	out, err := cmd.Output()
+	if err != nil || len(out) == 0 {
+		return nil
 	}
-	return files
+	return strings.Split(strings.TrimSuffix(string(out), "\x00"), "\x00")
 }
 
 // DropSOPDeliverablesFromIndex unstages SOP report files so they never reach
