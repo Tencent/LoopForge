@@ -13,7 +13,7 @@ function page(routes, hash = `#draft=${id})`) {
   const calls = [];
   dom.window.fetch = async (path, options = {}) => {
     const method = options.method || 'GET';
-    calls.push({ path, method });
+    calls.push({ path, method, body: options.body ? JSON.parse(options.body) : undefined });
     const key = `${method} ${String(path).split('?')[0]}`;
     const [status, body] = routes[key] || [404, { error: 'not found' }];
     return { ok: status < 300, status, json: async () => structuredClone(typeof body === 'function' ? body() : body) };
@@ -60,4 +60,24 @@ test('approval page shows invalidation and login requirements', async () => {
   const bad = page({}, '#draft=xyz');
   await settle();
   assert.match(bad.text(), /确认链接无效/);
+});
+
+test('approval page lets the user pick the SOP of a new requirement and start it', async () => {
+  const draft = { ...pending, newIssues: [{ index: 0, title: '保存需求：登录优化', workflowId: 'wf-dev' }], workflows: [{ id: 'wf-dev', name: '研发交付' }, { id: 'wf-fix', name: '缺陷修复' }] };
+  const p = page({
+    'GET /api/auth/current': [200, { user: { id: 43 } }],
+    [`GET /api/bot-drafts/${id}`]: [200, draft],
+    [`POST /api/bot-drafts/${id}/confirm`]: [200, { ...pending, status: 'executed', results: ['已完成：保存需求：登录优化（SOP：缺陷修复）', '已启动：缺陷修复（运行 run-1）'] }],
+  });
+  await settle();
+  const select = p.$('.sop select');
+  assert.equal(select.value, 'wf-dev');
+  select.value = 'wf-fix';
+  p.$('.sop input[type=checkbox]').checked = true;
+  p.$('#confirm').click();
+  await settle();
+  const post = p.calls.find((c) => c.method === 'POST');
+  assert.deepEqual(post.body, { choices: [{ index: 0, workflowId: 'wf-fix', start: true }] });
+  assert.match(p.text(), /已启动：缺陷修复/);
+  assert.equal(p.dom.window.document.querySelectorAll('li.ok').length, 2);
 });

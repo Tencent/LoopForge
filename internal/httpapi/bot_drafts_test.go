@@ -134,7 +134,7 @@ func TestWeComConfirmModeExecutesConfirmedDraftOnce(t *testing.T) {
 		t.Fatalf("other user can read the draft: %d", code)
 	}
 	code, view := draftCall(t, h, member, "GET", "/api/bot-drafts/"+id, false)
-	if code != 200 || view["status"] != repo.BotDraftPending || len(view["operations"].([]any)) != 1 || view["operations"].([]any)[0] != "1. 保存需求：网页确认的需求!" {
+	if code != 200 || view["status"] != repo.BotDraftPending || len(view["operations"].([]any)) != 1 || !strings.HasPrefix(view["operations"].([]any)[0].(string), "1. 保存需求：网页确认的需求!（SOP：") {
 		t.Fatalf("view = %d %v", code, view)
 	}
 	if _, ok := view["drafts"]; ok {
@@ -272,3 +272,98 @@ func TestBotPendingDraftStateMachine(t *testing.T) {
 }
 
 var _ = http.MethodGet
+
+// New requirements from chat show their SOP; the confirmation page can
+// switch to another SOP of the project and start it right away.
+func TestBotDraftChoosesSOPAndStartsIt(t *testing.T) {
+	s, h, _, ask, last := confirmModeFixtureFor(t, domain.BotChannelFeishu)
+	member, _ := s.User(43)
+	if err := s.PutAgent(domain.AgentDefinition{ID: "dev-agent", Name: "开发"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, wf := range []domain.WorkflowDefinition{
+		{ID: "wf-dev", Name: "研发交付", ProjectID: "p", Status: "published", Nodes: []domain.WorkflowNode{{ID: "n1", Name: "开发", Type: "agent", AgentID: "dev-agent"}}},
+		{ID: "wf-fix", Name: "缺陷修复", ProjectID: "p", Status: "published", Nodes: []domain.WorkflowNode{{ID: "n1", Name: "修复", Type: "agent", AgentID: "dev-agent"}}},
+		{ID: "wf-other", Name: "别的项目", ProjectID: "q", Status: "published"},
+	} {
+		if err := s.PutWorkflow(wf); err != nil {
+			t.Fatal(err)
+		}
+	}
+	project, _ := s.Project("p")
+	project.WorkflowID = "wf-dev"
+	s.PutProject(project)
+	id := ask()
+	if !strings.Contains(*last, "（SOP：研发交付）") || !strings.Contains(*last, "确认页可以更换 SOP") {
+		t.Fatalf("summary without SOP: %q", *last)
+	}
+	_, view := draftCall(t, h, member, "GET", "/api/bot-drafts/"+id, false)
+	issues, _ := view["newIssues"].([]any)
+	if len(issues) != 1 || issues[0].(map[string]any)["workflowId"] != "wf-dev" {
+		t.Fatalf("new issues = %v", view["newIssues"])
+	}
+	names := []string{}
+	for _, wf := range view["workflows"].([]any) {
+		names = append(names, wf.(map[string]any)["id"].(string))
+	}
+	if strings.Contains(strings.Join(names, ","), "wf-other") || !strings.Contains(strings.Join(names, ","), "wf-fix") {
+		t.Fatalf("workflows offered = %v", names)
+	}
+	// A foreign SOP is refused and nothing is created.
+	before := len(s.Issues())
+	other := ask()
+	if _, out := draftChoice(t, h, member, other, `{"choices":[{"index":0,"workflowId":"wf-other","start":true}]}`); out["status"] != repo.BotDraftFailed || len(s.Issues()) != before {
+		t.Fatalf("foreign SOP = %v", out)
+	}
+	code, out := draftChoice(t, h, member, id, `{"choices":[{"index":0,"workflowId":"wf-fix","start":true}]}`)
+	if code != 200 {
+		t.Fatalf("confirm = %d %v", code, out)
+	}
+	var created domain.Issue
+	for _, issue := range s.Issues() {
+		if strings.HasPrefix(issue.Title, "网页确认的需求") && issue.WorkflowID == "wf-fix" {
+			created = issue
+		}
+	}
+	if created.ID == "" {
+		t.Fatalf("issue not bound to the chosen SOP: %v", out)
+	}
+	results := strings.Join(toStrings(out["results"]), "\n")
+	if !strings.Contains(results, "已完成：保存需求：网页确认的需求") || !strings.Contains(results, "缺陷修复") {
+		t.Fatalf("results = %q", results)
+	}
+	started := false
+	for _, task := range s.Tasks() {
+		if task.IssueID == created.ID && task.WorkflowID == "wf-fix" {
+			started = true
+		}
+	}
+	if !started || !strings.Contains(results, "已启动：缺陷修复") {
+		t.Fatalf("SOP not started: %q", results)
+	}
+}
+
+func draftChoice(t *testing.T, h *assistantHandlers, user domain.User, id, body string) (int, map[string]any) {
+	t.Helper()
+	req := httptest.NewRequest("POST", "/api/bot-drafts/"+id+"/confirm", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req = authedRequest(t, req, user)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = req
+	c.Params = gin.Params{{Key: "id", Value: id}}
+	h.botDraft(c)
+	out := map[string]any{}
+	json.Unmarshal(w.Body.Bytes(), &out)
+	return w.Code, out
+}
+
+func toStrings(v any) []string {
+	list, _ := v.([]any)
+	out := make([]string, 0, len(list))
+	for _, item := range list {
+		s, _ := item.(string)
+		out = append(out, s)
+	}
+	return out
+}

@@ -30,15 +30,17 @@ type assistantConversation = domain.AssistantSession
 const assistantRequestBodyLimit = 32 << 20
 
 type assistantDraft struct {
-	Tool      string                   `json:"tool"`
-	Path      map[string]any           `json:"path,omitempty"`
-	Query     map[string]any           `json:"query,omitempty"`
-	Body      json.RawMessage          `json:"body,omitempty"`
-	Saved     bool                     `json:"saved,omitempty"`
-	Auto      bool                     `json:"auto,omitempty"`
-	Warnings  []string                 `json:"warnings,omitempty"`
-	SaveError string                   `json:"saveError,omitempty"`
-	Review    *assistantApprovalReview `json:"review,omitempty"`
+	Tool      string          `json:"tool"`
+	Path      map[string]any  `json:"path,omitempty"`
+	Query     map[string]any  `json:"query,omitempty"`
+	Body      json.RawMessage `json:"body,omitempty"`
+	Saved     bool            `json:"saved,omitempty"`
+	Auto      bool            `json:"auto,omitempty"`
+	Warnings  []string        `json:"warnings,omitempty"`
+	SaveError string          `json:"saveError,omitempty"`
+	// Result is the response body of an executed draft (not persisted).
+	Result string                   `json:"-"`
+	Review *assistantApprovalReview `json:"review,omitempty"`
 	// Proposal marks a draft the assistant offers on its own to hand work to a
 	// SOP; Decision is the server-recorded answer to it.
 	Proposal *assistantProposal `json:"proposal,omitempty"`

@@ -138,8 +138,9 @@ func (h *assistantHandlers) applyAssistantDrafts(ctx context.Context, user domai
 				args["body"] = body
 			}
 		}
-		if _, err := h.dispatchAssistantMCPCall(ctx, user, projectID, assistantMCPCall{Server: "agentflow", Tool: draft.Tool, Arguments: args}); err == nil {
+		if result, err := h.dispatchAssistantMCPCall(ctx, user, projectID, assistantMCPCall{Server: "agentflow", Tool: draft.Tool, Arguments: args}); err == nil {
 			applied.Saved = true
+			applied.Result = result
 		} else if assistantExecModeFrom(ctx).DeferSOP && assistantDeferredSOPTool(draft.Tool) {
 			applied.Saved = true
 		} else {

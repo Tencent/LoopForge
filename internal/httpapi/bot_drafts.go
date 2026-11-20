@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"sort"
 	"strings"
 	"time"
 
@@ -47,8 +48,56 @@ func botDraftLabel(tool string) string {
 	return tool
 }
 
+// setDraftBodyField returns body with key set to value.
+func setDraftBodyField(body json.RawMessage, key string, value any) json.RawMessage {
+	obj := map[string]any{}
+	if len(body) > 0 {
+		_ = json.Unmarshal(body, &obj)
+	}
+	obj[key] = value
+	out, err := json.Marshal(obj)
+	if err != nil {
+		return body
+	}
+	return out
+}
+
+// startBotDraftIssue dispatches the SOP of a requirement the draft created.
+func (h *assistantHandlers) startBotDraftIssue(ctx context.Context, user domain.User, projectID string, d assistantDraft) (string, error) {
+	var created struct {
+		ID string `json:"id"`
+	}
+	if json.Unmarshal([]byte(d.Result), &created) != nil || strings.TrimSpace(created.ID) == "" {
+		return "", errors.New("没有拿到新需求的编号，请在平台手动启动")
+	}
+	result, err := h.dispatchAssistantMCPCall(withAssistantExecMode(ctx, assistantExecMode{AutoWrite: true}), user, projectID, assistantMCPCall{Server: "agentflow", Tool: "issues_dispatch", Arguments: map[string]any{"path": map[string]any{"id": created.ID}, "body": map[string]any{}}})
+	if err != nil {
+		return "", err
+	}
+	var task struct {
+		RunID string `json:"runId"`
+	}
+	if json.Unmarshal([]byte(result), &task) == nil && task.RunID != "" {
+		return "（运行 " + task.RunID + "）", nil
+	}
+	return "", nil
+}
+
 // botDraftSummaryLine describes one draft for the chat and the page.
 func botDraftSummaryLine(d assistantDraft) string {
+	return botDraftSummaryLineSOP(d, "")
+}
+
+// botDraftSummaryLineSOP adds the SOP a new requirement will be bound to.
+func botDraftSummaryLineSOP(d assistantDraft, sop string) string {
+	line := botDraftSummaryText(d)
+	if sop != "" {
+		line += "（SOP：" + sop + "）"
+	}
+	return line
+}
+
+func botDraftSummaryText(d assistantDraft) string {
 	label := botDraftLabel(d.Tool)
 	target := ""
 	var body map[string]any
@@ -85,8 +134,14 @@ func (h *assistantHandlers) confirmBotDrafts(ctx context.Context, bot domain.Not
 		return "\n\n操作草稿无法保存，没有执行。请到平台页面完成。"
 	}
 	lines := make([]string, 0, len(drafts))
+	newIssues := 0
 	for i, d := range drafts {
-		line := fmt.Sprintf("%d. %s", i+1, botDraftSummaryLine(d))
+		sop := ""
+		if wf, ok := h.botDraftIssueWorkflow(bot.ProjectID, d); ok {
+			sop = h.botWorkflowName(wf)
+			newIssues++
+		}
+		line := fmt.Sprintf("%d. %s", i+1, botDraftSummaryLineSOP(d, sop))
 		if len(d.Warnings) > 0 {
 			line += "（注意：" + truncateRunes(strings.Join(d.Warnings, "；"), 120) + "）"
 		}
@@ -99,6 +154,9 @@ func (h *assistantHandlers) confirmBotDrafts(ctx context.Context, bot domain.Not
 	}
 	link := base + "/bot-approve.html#draft=" + saved.ID
 	head := "\n\n以下操作需要你在平台确认后才会执行（" + fmt.Sprint(int(repo.BotDraftTTL.Minutes())) + " 分钟内有效）：\n" + summary
+	if newIssues > 0 {
+		head += "\n确认页可以更换 SOP，并选择创建后立即启动。"
+	}
 	if bot.ChannelKind() != domain.BotChannelWeCom {
 		// Feishu and DingTalk replies are plain text: the URL stands on
 		// its own line so auto-linking does not swallow other characters.
@@ -113,6 +171,101 @@ type botDraftView struct {
 	ProjectName string   `json:"projectName,omitempty"`
 	Operations  []string `json:"operations"`
 	Results     []string `json:"results,omitempty"`
+	// NewIssues are the requirements this draft creates; the user picks
+	// their SOP and whether to start it right after creation.
+	NewIssues []botDraftIssue    `json:"newIssues,omitempty"`
+	Workflows []botDraftWorkflow `json:"workflows,omitempty"`
+}
+
+type botDraftIssue struct {
+	Index      int    `json:"index"`
+	Title      string `json:"title"`
+	WorkflowID string `json:"workflowId"`
+}
+
+type botDraftWorkflow struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+// botDraftChoice is the user's SOP choice for one new requirement.
+type botDraftChoice struct {
+	Index      int    `json:"index"`
+	WorkflowID string `json:"workflowId"`
+	Start      bool   `json:"start"`
+}
+
+// botDraftIssueWorkflow reports the SOP a draft creating a new requirement
+// binds to: the workflowId the model set, else the project default. Drafts
+// that update an existing issue are not new requirements.
+func (h *assistantHandlers) botDraftIssueWorkflow(projectID string, d assistantDraft) (string, bool) {
+	if strings.TrimSpace(d.Tool) != "issues_save" {
+		return "", false
+	}
+	var body map[string]any
+	if len(d.Body) > 0 && json.Unmarshal(d.Body, &body) != nil {
+		return "", false
+	}
+	if id, _ := body["id"].(string); strings.TrimSpace(id) != "" {
+		if _, exists := h.repo.Issue(strings.TrimSpace(id)); exists {
+			return "", false
+		}
+	}
+	if wf, _ := body["workflowId"].(string); strings.TrimSpace(wf) != "" {
+		return strings.TrimSpace(wf), true
+	}
+	source, _ := body["source"].(string)
+	kind, _ := body["kind"].(string)
+	return h.repo.DefaultIssueWorkflow(projectID, source, kind), true
+}
+
+func (h *assistantHandlers) botWorkflowName(id string) string {
+	if wf, ok := h.repo.Workflow(id); ok && strings.TrimSpace(wf.Name) != "" {
+		return wf.Name
+	}
+	if id == "" {
+		return "未绑定"
+	}
+	return id
+}
+
+// botDraftWorkflows lists the SOPs a requirement of the project may be bound
+// to: the project's own and shared published SOPs, plus the current choices.
+func (h *assistantHandlers) botDraftWorkflows(projectID string, include ...string) []botDraftWorkflow {
+	seen := map[string]bool{}
+	out := []botDraftWorkflow{}
+	add := func(id, name string) {
+		if id == "" || seen[id] {
+			return
+		}
+		seen[id] = true
+		out = append(out, botDraftWorkflow{ID: id, Name: name})
+	}
+	for _, wf := range h.repo.Workflows() {
+		if wf.Status == "archived" || wf.Status == "draft" && wf.PublishedRevision == 0 {
+			continue
+		}
+		if wf.ProjectID == projectID || (wf.Shared && wf.ProjectID != "") {
+			add(wf.ID, wf.Name)
+		}
+	}
+	for _, id := range include {
+		add(id, h.botWorkflowName(id))
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
+}
+
+func (h *assistantHandlers) botDraftNewIssues(projectID string, drafts []assistantDraft) []botDraftIssue {
+	out := []botDraftIssue{}
+	for i, d := range drafts {
+		wf, ok := h.botDraftIssueWorkflow(projectID, d)
+		if !ok {
+			continue
+		}
+		out = append(out, botDraftIssue{Index: i, Title: botDraftSummaryText(d), WorkflowID: wf})
+	}
+	return out
 }
 
 func (h *assistantHandlers) botDraftUser(c *gin.Context) (domain.User, bool) {
@@ -143,6 +296,19 @@ func (h *assistantHandlers) botDraftView(d domain.BotPendingDraft) botDraftView 
 	}
 	if d.Result != "" {
 		view.Results = strings.Split(d.Result, "\n")
+	}
+	if d.Status == repo.BotDraftPending {
+		var drafts []assistantDraft
+		if json.Unmarshal([]byte(d.Drafts), &drafts) == nil {
+			view.NewIssues = h.botDraftNewIssues(d.ProjectID, drafts)
+			if len(view.NewIssues) > 0 {
+				ids := make([]string, 0, len(view.NewIssues))
+				for _, issue := range view.NewIssues {
+					ids = append(ids, issue.WorkflowID)
+				}
+				view.Workflows = h.botDraftWorkflows(d.ProjectID, ids...)
+			}
+		}
 	}
 	return view
 }
@@ -183,6 +349,12 @@ func (h *assistantHandlers) botDraft(c *gin.Context) {
 		c.JSON(200, h.botDraftView(draft))
 		return
 	}
+	var req struct {
+		Choices []botDraftChoice `json:"choices"`
+	}
+	if c.Request.ContentLength != 0 && !decodeLimit(c, &req, 64<<10) {
+		return
+	}
 	bot, err := h.repo.NotificationBot(draft.ConfigID)
 	if err != nil || !bot.Enabled || !bot.InteractionEnabled || bot.EffectiveWriteApproval() != domain.BotWriteConfirm {
 		h.invalidateBotDraft(c, draft, user, "机器人已停用、删除或不再使用网页确认")
@@ -216,6 +388,45 @@ func (h *assistantHandlers) botDraft(c *gin.Context) {
 	for i := range drafts {
 		drafts[i].Saved, drafts[i].Auto, drafts[i].SaveError = false, false, ""
 	}
+	// Apply the SOP choices of new requirements. Only SOPs offered on the
+	// page are accepted; the frozen draft itself is unchanged.
+	start := map[int]bool{}
+	sops := map[int]string{}
+	newIssues := h.botDraftNewIssues(draft.ProjectID, drafts)
+	for _, issue := range newIssues {
+		sops[issue.Index] = issue.WorkflowID
+	}
+	if len(req.Choices) > 0 {
+		ids := []string{}
+		for _, issue := range newIssues {
+			ids = append(ids, issue.WorkflowID)
+		}
+		allowed := map[string]bool{}
+		for _, wf := range h.botDraftWorkflows(draft.ProjectID, ids...) {
+			allowed[wf.ID] = true
+		}
+		for _, choice := range req.Choices {
+			current, ok := sops[choice.Index]
+			if !ok {
+				continue
+			}
+			wf := strings.TrimSpace(choice.WorkflowID)
+			if wf == "" {
+				wf = current
+			}
+			if !allowed[wf] {
+				_ = h.repo.FinishBotPendingDraft(id, repo.BotDraftFailed, "所选 SOP 不可用于当前项目，没有执行", time.Now().UTC())
+				draft, _ = h.repo.BotPendingDraft(id, time.Now().UTC())
+				c.JSON(200, h.botDraftView(draft))
+				return
+			}
+			if wf != current {
+				drafts[choice.Index].Body = setDraftBodyField(drafts[choice.Index].Body, "workflowId", wf)
+			}
+			sops[choice.Index] = wf
+			start[choice.Index] = choice.Start
+		}
+	}
 	// Same preflight and execution as the web assistant: drafts with
 	// warnings are not executed. The request context is detached so a
 	// closed tab cannot interrupt the writes halfway.
@@ -224,11 +435,23 @@ func (h *assistantHandlers) botDraft(c *gin.Context) {
 	applied := h.resolveAssistantDrafts(execCtx, user, draft.ProjectID, drafts, AssistantApprovalAuto)
 	results := make([]string, 0, len(applied))
 	status := repo.BotDraftExecuted
-	for _, d := range applied {
-		line := botDraftSummaryLine(d)
+	for i, d := range applied {
+		sop := ""
+		if wf, ok := sops[i]; ok {
+			sop = h.botWorkflowName(wf)
+		}
+		line := botDraftSummaryLineSOP(d, sop)
 		switch {
 		case d.Saved:
 			results = append(results, "已完成："+line)
+			if start[i] {
+				if started, err := h.startBotDraftIssue(execCtx, user, draft.ProjectID, d); err != nil {
+					status = repo.BotDraftFailed
+					results = append(results, "未启动："+sop+"（"+truncateRunes(err.Error(), 200)+"）")
+				} else {
+					results = append(results, "已启动："+sop+started)
+				}
+			}
 		case d.SaveError != "":
 			status = repo.BotDraftFailed
 			results = append(results, "未完成："+line+"（"+d.SaveError+"）")
