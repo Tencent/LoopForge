@@ -143,6 +143,34 @@ func TestAssistantReplyKeepsMarkdownSpacing(t *testing.T) {
 	}
 }
 
+func TestAssistantVisibleReplyPreservesIndentedCode(t *testing.T) {
+	const intro = "Minimal example:"
+	const code = "    first()\n    second()"
+	const final = intro + "\n\n" + code
+	reply, ok := recoverNativeAssistantReply(final, "")
+	if !ok {
+		t.Fatal("native reply was rejected")
+	}
+	if got := assistantVisibleReply(reply.Message, nil); got != final {
+		t.Fatalf("saved reply lost indentation: %q", got)
+	}
+	var activity assistantActivityLog
+	activity.add(assistantStreamEvent{Kind: "answer", Text: "Earlier progress."})
+	activity.add(assistantStreamEvent{Kind: "tool", ID: "t1"})
+	activity.add(assistantStreamEvent{Kind: "answer", Text: intro})
+	if got := assistantVisibleReply(reply.Message, activity.snapshot()); got != "Earlier progress.\n\n"+final {
+		t.Fatalf("appending the unstreamed code altered the reply: %q", got)
+	}
+	activity.add(assistantStreamEvent{Kind: "tool", ID: "t2"})
+	line := `{"type":"assistant","message":{"content":[{"type":"text","text":"    first()\n    second()"}]}}`
+	for _, event := range assistantStreamEvents(line) {
+		activity.add(event)
+	}
+	if got := assistantVisibleReply(reply.Message, activity.snapshot()); got != "Earlier progress.\n\n"+final {
+		t.Fatalf("merging streamed text altered the reply: %q", got)
+	}
+}
+
 func TestStoppedGenerationKeepsPartialTranscript(t *testing.T) {
 	h, user := workbenchFixture(t)
 	started := make(chan struct{})
