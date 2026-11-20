@@ -684,6 +684,11 @@ var ErrBotPushTargetUnverified = errors.New("push_target_unverified")
 // BotSendRoutePush marks replies delivered as proactive private messages.
 const BotSendRoutePush = "push"
 
+// BotSendRoutePushChat marks messages sent into their conversation as a
+// new proactive message (a group, or the sender's private chat) instead of
+// a reply to an inbound message.
+const BotSendRoutePushChat = "push_chat"
+
 // PushResendBotInteraction switches a DingTalk reply whose session webhook
 // expired to a proactive private message to the original sender. Under the
 // configuration and interaction locks it re-checks that the reply failed

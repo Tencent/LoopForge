@@ -334,11 +334,20 @@ func (c *dingtalkConn) handleCardCallback(frame *payload.DataFrame) *payload.Dat
 	if reason != "" {
 		log.Printf("dingtalk card callback ignored reason=%s", reason)
 		status = "这张卡片已失效，请到平台查看运行状态"
-	} else if err := c.acknowledge(ev); err != nil {
+	} else if ack, err := c.acknowledgeAck(ev); err != nil {
 		status = "暂时无法处理，请稍后再点一次"
+	} else if ack.Ignored != "" && ack.Toast != "" {
+		// Refused (for example a group member without a bound account):
+		// keep the buttons for the others.
+		status = ack.Toast
 	} else {
 		// Taken: hide the buttons so the card cannot be clicked again.
 		status = "已提交「" + pushCardActionLabel(ev.Action) + "」，处理结果会以消息发给你"
+		if ack.Card != nil && ack.Card.Status != "" {
+			status = ack.Card.Status
+		} else if ack.Toast != "" && ack.Accepted {
+			status = ack.Toast
+		}
 		for _, key := range PushCardKeys {
 			params["show_"+key] = "false"
 		}
@@ -405,18 +414,28 @@ func dingtalkCardEvent(bot domain.NotificationBot, raw, frameID string) (Inbound
 // context, so a slow database answers with a failure at the deadline; the
 // redelivered message is de-duplicated by its msgId.
 func (c *dingtalkConn) acknowledge(ev InboundEvent) error {
+	_, err := c.acknowledgeAck(ev)
+	return err
+}
+
+// acknowledgeAck is acknowledge returning the sink's answer (card clicks).
+func (c *dingtalkConn) acknowledgeAck(ev InboundEvent) (InboundAck, error) {
 	ackCtx, cancel := context.WithTimeout(c.ctx, c.channel.ackTimeout)
 	defer cancel()
-	done := make(chan error, 1)
+	type result struct {
+		ack InboundAck
+		err error
+	}
+	done := make(chan result, 1)
 	go func() {
-		_, err := c.sink(ackCtx, ev)
-		done <- err
+		ack, err := c.sink(ackCtx, ev)
+		done <- result{ack, err}
 	}()
 	select {
-	case err := <-done:
-		return err
+	case r := <-done:
+		return r.ack, r.err
 	case <-ackCtx.Done():
-		return errDingTalkAckTimeout
+		return InboundAck{}, errDingTalkAckTimeout
 	}
 }
 

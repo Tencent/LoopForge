@@ -39,10 +39,13 @@ type BotRetentionResult struct {
 	DraftsExpired                   int64
 	DraftBodies, Drafts             int64
 	NativeMappings                  int64
+	// Chat clarifications (answers) and chat origins of runs.
+	ClarifyBodies, ClarifySessions int64
+	ChatOrigins                    int64
 }
 
 func (r BotRetentionResult) Total() int64 {
-	return r.InteractionBodies + r.Interactions + r.DeliveryBodies + r.Deliveries + r.DraftsExpired + r.DraftBodies + r.Drafts + r.NativeMappings
+	return r.InteractionBodies + r.Interactions + r.DeliveryBodies + r.Deliveries + r.DraftsExpired + r.DraftBodies + r.Drafts + r.NativeMappings + r.ClarifyBodies + r.ClarifySessions + r.ChatOrigins
 }
 
 var (
@@ -50,6 +53,7 @@ var (
 	notificationTerminal    = []string{"sent", "failed", "cancelled", "expired", "target_unavailable"}
 	botDraftTerminal        = []string{BotDraftExecuted, BotDraftFailed, BotDraftExpired, BotDraftCancelled}
 	botNativeFinished       = []string{"completed", "failed", "interrupted"}
+	botClarifyTerminal      = []string{domain.BotClarifySaved, domain.BotClarifyEnded}
 	botNativeCleanupSettled = []string{BotNativeCleanupRemoved, BotNativeCleanupMissing}
 )
 
@@ -139,6 +143,14 @@ func (s *Store) PurgeBotRetention(ctx context.Context, now time.Time, policy Bot
 			res := db.Model(&botPendingDraftRow{}).Where("id IN ? AND status IN ? AND updated_at < ? AND body_purged_at IS NULL", ids, botDraftTerminal, cut).UpdateColumns(map[string]any{"drafts": "", "summary": "", "result": "", "sop_options": "", "body_purged_at": now})
 			return res.RowsAffected, res.Error
 		})
+		// Finished chat clarifications keep their state, not the answers.
+		step(&out.ClarifyBodies, func(limit int) ([]string, error) {
+			var ids []string
+			return ids, db.Model(&botClarifySessionRow{}).Where("status IN ? AND updated_at < ? AND payload <> ''", botClarifyTerminal, cut).Order("updated_at").Limit(limit).Pluck("id", &ids).Error
+		}, func(ids []string) (int64, error) {
+			res := db.Model(&botClarifySessionRow{}).Where("id IN ? AND status IN ? AND updated_at < ? AND payload <> ''", ids, botClarifyTerminal, cut).UpdateColumns(map[string]any{"payload": ""})
+			return res.RowsAffected, res.Error
+		})
 	}
 	if p.Record > 0 {
 		cut := now.Add(-p.Record)
@@ -161,6 +173,20 @@ func (s *Store) PurgeBotRetention(ctx context.Context, now time.Time, policy Bot
 			return ids, db.Model(&botPendingDraftRow{}).Where("status IN ? AND updated_at < ?", botDraftTerminal, cut).Order("updated_at").Limit(limit).Pluck("id", &ids).Error
 		}, func(ids []string) (int64, error) {
 			res := db.Where("id IN ? AND status IN ? AND updated_at < ?", ids, botDraftTerminal, cut).Delete(&botPendingDraftRow{})
+			return res.RowsAffected, res.Error
+		})
+		step(&out.ClarifySessions, func(limit int) ([]string, error) {
+			var ids []string
+			return ids, db.Model(&botClarifySessionRow{}).Where("status IN ? AND updated_at < ?", botClarifyTerminal, cut).Order("updated_at").Limit(limit).Pluck("id", &ids).Error
+		}, func(ids []string) (int64, error) {
+			res := db.Where("id IN ? AND status IN ? AND updated_at < ?", ids, botClarifyTerminal, cut).Delete(&botClarifySessionRow{})
+			return res.RowsAffected, res.Error
+		})
+		step(&out.ChatOrigins, func(limit int) ([]string, error) {
+			var ids []string
+			return ids, db.Model(&botChatOriginRow{}).Where("created_at < ?", cut).Order("created_at").Limit(limit).Pluck("id", &ids).Error
+		}, func(ids []string) (int64, error) {
+			res := db.Where("id IN ? AND created_at < ?", ids, cut).Delete(&botChatOriginRow{})
 			return res.RowsAffected, res.Error
 		})
 		// A mapping goes only after its native log is settled (removed or

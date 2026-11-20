@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/url"
 	"sort"
 	"strings"
@@ -67,25 +68,87 @@ func setDraftBodyField(body json.RawMessage, key string, value any) json.RawMess
 	return out
 }
 
-// startBotDraftIssue dispatches the SOP of a requirement the draft created.
-func (h *assistantHandlers) startBotDraftIssue(ctx context.Context, user domain.User, projectID string, d assistantDraft) (string, error) {
+// botDraftCreatedIssue is the ID of the requirement an executed draft
+// created, or "".
+func botDraftCreatedIssue(d assistantDraft) string {
 	var created struct {
 		ID string `json:"id"`
 	}
-	if json.Unmarshal([]byte(d.Result), &created) != nil || strings.TrimSpace(created.ID) == "" {
+	if strings.TrimSpace(d.Tool) != "issues_save" || json.Unmarshal([]byte(d.Result), &created) != nil {
+		return ""
+	}
+	return strings.TrimSpace(created.ID)
+}
+
+// startBotDraftIssue dispatches the SOP of a requirement the draft created
+// and returns the run.
+func (h *assistantHandlers) startBotDraftIssue(ctx context.Context, user domain.User, projectID string, d assistantDraft) (string, error) {
+	id := botDraftCreatedIssue(d)
+	if id == "" {
 		return "", errors.New("没有拿到新需求的编号，请在平台手动启动")
 	}
-	result, err := h.dispatchAssistantMCPCall(withAssistantExecMode(ctx, assistantExecMode{AutoWrite: true}), user, projectID, assistantMCPCall{Server: "agentflow", Tool: "issues_dispatch", Arguments: map[string]any{"path": map[string]any{"id": created.ID}, "body": map[string]any{}}})
+	return h.dispatchBotIssue(ctx, user, projectID, id)
+}
+
+// dispatchBotIssue starts the SOP of a requirement as user and returns the
+// run ID (empty when the answer names none).
+func (h *assistantHandlers) dispatchBotIssue(ctx context.Context, user domain.User, projectID, issueID string) (string, error) {
+	result, err := h.dispatchAssistantMCPCall(withAssistantExecMode(ctx, assistantExecMode{AutoWrite: true}), user, projectID, assistantMCPCall{Server: "agentflow", Tool: "issues_dispatch", Arguments: map[string]any{"path": map[string]any{"id": issueID}, "body": map[string]any{}}})
 	if err != nil {
 		return "", err
 	}
+	return botResultRunID(result), nil
+}
+
+// botResultRunID reads the run ID from an operation result.
+func botResultRunID(result string) string {
 	var task struct {
 		RunID string `json:"runId"`
 	}
-	if json.Unmarshal([]byte(result), &task) == nil && task.RunID != "" {
-		return "（运行 " + task.RunID + "）", nil
+	if json.Unmarshal([]byte(result), &task) == nil {
+		return strings.TrimSpace(task.RunID)
 	}
-	return "", nil
+	return ""
+}
+
+func botRunLabel(runID string) string {
+	if runID == "" {
+		return ""
+	}
+	return "（运行 " + runID + "）"
+}
+
+// botDraftOrigin is the chat a draft was requested in.
+func (h *assistantHandlers) botDraftOrigin(draft domain.BotPendingDraft) (domain.BotChatOrigin, bool) {
+	item, err := h.repo.BotInteraction(draft.InteractionID)
+	if err != nil {
+		return domain.BotChatOrigin{}, false
+	}
+	conv, err := h.repo.BotConversation(item.ConversationID)
+	if err != nil || conv.BotID != draft.ConfigID {
+		return domain.BotChatOrigin{}, false
+	}
+	return domain.BotChatOrigin{ConfigID: draft.ConfigID, ProjectID: draft.ProjectID, ConversationID: conv.ID, ChatType: conv.ChatType, ChatID: conv.ChatID, SenderID: draft.SenderID}, true
+}
+
+// recordBotOrigin remembers that a requirement or run came from a chat, so
+// the run's progress is sent back there. Failures only lose the messages.
+func (h *assistantHandlers) recordBotOrigin(origin domain.BotChatOrigin, ok bool, issueID, runID string) {
+	if !ok || (issueID == "" && runID == "") {
+		return
+	}
+	origin.IssueID, origin.RunID = issueID, ""
+	if issueID != "" {
+		if err := h.repo.RecordBotChatOrigin(origin); err != nil {
+			log.Printf("bot chat origin of issue not recorded: %v", err)
+		}
+	}
+	if runID != "" {
+		origin.RunID = runID
+		if err := h.repo.RecordBotChatOrigin(origin); err != nil {
+			log.Printf("bot chat origin of run not recorded: %v", err)
+		}
+	}
 }
 
 // botDraftSummaryLine describes one draft for the chat and the page.
@@ -531,6 +594,13 @@ func (h *assistantHandlers) executeBotDraft(ctx context.Context, user domain.Use
 	// a dropped connection cannot interrupt the writes halfway.
 	execCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Minute)
 	defer cancel()
+	origin, hasOrigin := h.botDraftOrigin(draft)
+	for _, d := range drafts {
+		if strings.TrimSpace(d.Tool) == "issues_dispatch" {
+			// The run starts during execution: remember the chat first.
+			h.recordBotOrigin(origin, hasOrigin, assistantDraftRefID(d), "")
+		}
+	}
 	applied := h.resolveAssistantDrafts(execCtx, user, draft.ProjectID, drafts, AssistantApprovalAuto)
 	results := make([]string, 0, len(applied))
 	status := repo.BotDraftExecuted
@@ -543,12 +613,22 @@ func (h *assistantHandlers) executeBotDraft(ctx context.Context, user domain.Use
 		switch {
 		case d.Saved:
 			results = append(results, "已完成："+line)
+			created := botDraftCreatedIssue(d)
+			if strings.TrimSpace(d.Tool) == "issues_dispatch" {
+				// Starting an existing requirement: its run reports back.
+				h.recordBotOrigin(origin, hasOrigin, "", botResultRunID(d.Result))
+			} else if created != "" {
+				// Recorded before the start, so the first events of the
+				// run already find the chat.
+				h.recordBotOrigin(origin, hasOrigin, created, "")
+			}
 			if start[i] {
-				if started, err := h.startBotDraftIssue(execCtx, user, draft.ProjectID, d); err != nil {
+				if runID, err := h.startBotDraftIssue(execCtx, user, draft.ProjectID, d); err != nil {
 					status = repo.BotDraftFailed
 					results = append(results, "未启动："+sop+"（"+truncateRunes(err.Error(), 200)+"）")
 				} else {
-					results = append(results, "已启动："+sop+started)
+					h.recordBotOrigin(origin, hasOrigin, "", runID)
+					results = append(results, "已启动："+sop+botRunLabel(runID))
 				}
 			}
 		case d.SaveError != "":

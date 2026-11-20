@@ -244,6 +244,8 @@ func feishuEvent(ev *larkim.P2MessageReceiveV1) (InboundEvent, bool) {
 		out.Mentioned = mentionedBot || (len(msg.Mentions) > 0 && !feishuMentionTypesKnown(msg.Mentions))
 	}
 	out.Route.MessageID = out.MessageID
+	// A reply (quote) of an earlier message, e.g. a clarification card.
+	out.ParentID = deref(msg.ParentId)
 	return out, true
 }
 
@@ -267,13 +269,20 @@ func feishuCardEvent(ev *callback.CardActionTriggerEvent) (InboundEvent, bool) {
 	}
 	action, _ := ev.Event.Action.Value["af_action"].(string)
 	delivery, _ := ev.Event.Action.Value["af_delivery"].(string)
-	if DraftAction(action) {
+	option := strings.TrimSpace(ev.Event.Action.Option)
+	switch {
+	case DraftAction(action):
 		// Draft confirmation cards carry the draft ID instead.
 		delivery, _ = ev.Event.Action.Value["af_draft"].(string)
+	case ClarifyAction(action):
+		// Clarification cards carry the session and the button reference.
+		delivery, _ = ev.Event.Action.Value["af_clarify"].(string)
+		option, _ = ev.Event.Action.Value["af_ref"].(string)
 	}
-	if action == DraftActionSOP && strings.TrimSpace(ev.Event.Action.Option) == "" {
+	if (action == DraftActionSOP || ClarifyAction(action)) && strings.TrimSpace(option) == "" {
 		return InboundEvent{}, false
 	}
+
 	if !pushCardKey(action) || delivery == "" || ev.Event.Operator.OpenID == "" || ev.EventV2Base.Header.EventID == "" {
 		return InboundEvent{}, false
 	}
@@ -289,11 +298,12 @@ func feishuCardEvent(ev *callback.CardActionTriggerEvent) (InboundEvent, bool) {
 		MsgType:    "card_action",
 		Action:     action,
 		DeliveryID: delivery,
-		Option:     strings.TrimSpace(ev.Event.Action.Option),
+		Option:     strings.TrimSpace(option),
 	}
 	if ev.Event.Context != nil {
 		// Replies to a click are threaded under the card.
 		out.Route.MessageID = ev.Event.Context.OpenMessageID
+		out.CardChatID = ev.Event.Context.OpenChatID
 	}
 	if out.TenantKey == "" && ev.Event.Operator.TenantKey != nil {
 		out.TenantKey = *ev.Event.Operator.TenantKey

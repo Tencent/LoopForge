@@ -93,6 +93,10 @@ func (h *assistantHandlers) generateBotReply(ctx context.Context, bot domain.Not
 	if strings.TrimSpace(user.CodeBuddyAPIKey) == "" {
 		return "你的平台账号尚未配置 CodeBuddy Key，请在平台个人配置中配置。", nil
 	}
+	if reply, handled := h.botClarifyMessage(ctx, bot, conv, item, user); handled {
+		// Chat clarification: start, commands and answers.
+		return reply, nil
+	}
 	model := bot.Model
 	if model == "" {
 		model = domain.DefaultNotificationReportModel
@@ -224,6 +228,9 @@ func (h *assistantHandlers) handleBotCardAction(ctx context.Context, bot domain.
 	if botinteraction.DraftAction(item.Action) {
 		return h.botDraftCardAction(ctx, bot, item)
 	}
+	if botinteraction.ClarifyAction(item.Action) {
+		return h.botClarifyCardAction(ctx, bot, item)
+	}
 	user, err := h.botExecutionUser(bot, item.SenderID)
 	if err != nil {
 		return err.Error(), botinteraction.ErrCardActionDeferred
@@ -267,7 +274,11 @@ func (h *assistantHandlers) handleBotCardAction(ctx context.Context, bot domain.
 	if err != nil {
 		return "操作未完成，请在平台查看当前运行状态。", nil
 	}
-	return fmt.Sprintf("「%s」操作已完成：%s。", delivery.SourceName, map[string]string{"approve": "确认通过，继续流程", "retry": "重试当前节点", "pass": "手动通过节点", "decline": "不再重试", "resume": "继续运行", "reject": "退回上游"}[item.Action]), nil
+	done := fmt.Sprintf("「%s」操作已完成：%s。", delivery.SourceName, map[string]string{"approve": "确认通过，继续流程", "retry": "重试当前节点", "pass": "手动通过节点", "decline": "不再重试", "resume": "继续运行", "reject": "退回上游"}[item.Action])
+	if conv.ChatType == "group" {
+		done += "操作人：" + botinteraction.DisplayName(user) + "。"
+	}
+	return done, nil
 }
 
 // botNativeTracker maps a Bot turn to the native CLI sessions it runs in.

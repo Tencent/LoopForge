@@ -326,16 +326,33 @@ func (s *Service) process(ctx context.Context, bot domain.NotificationBot, lease
 			}
 		}
 		err = s.deliver(ctx, item.ID, lease, policy, func(ctx context.Context, sending domain.BotInteraction) SendResult {
-			if sending.SendRoute == repo.BotSendRoutePush {
+			var card *PushCard
+			if current.ChannelKind() == domain.BotChannelFeishu {
+				if sending.Action == "" {
+					// A reply with write drafts becomes a confirmation card.
+					card = s.DraftCardFor(sending, s.publicURL())
+				}
+				if card == nil {
+					// Clarification questions, conclusions and "is this an
+					// answer?" confirmations.
+					card = s.clarifyCardFor(sending)
+				}
+			}
+			switch sending.SendRoute {
+			case repo.BotSendRoutePush:
 				// An expired DingTalk reply the administrator switched to
 				// a proactive private message to the original sender.
 				return s.Push(ctx, current, OutboundMessage{InteractionID: sending.ID, ChatID: sending.SenderID, ChatType: "single", Text: sending.Reply, SendKey: sending.SendKey})
+			case repo.BotSendRoutePushChat:
+				// A new message into the conversation: the group itself, or
+				// the private chat of the sender.
+				msg := OutboundMessage{InteractionID: sending.ID, ChatID: sending.SenderID, ChatType: "single", Text: sending.Reply, SendKey: sending.SendKey, Card: card}
+				if conv.ChatType == "group" {
+					msg.ChatID, msg.ChatType = conv.ChatID, "group"
+				}
+				return s.Push(ctx, current, msg)
 			}
-			out := OutboundMessage{InteractionID: sending.ID, Action: sending.Action, ChatID: conv.ChatID, ChatType: conv.ChatType, Text: sending.Reply, SendKey: sending.SendKey, Route: s.replyRoute(sending)}
-			if sending.Action == "" && current.ChannelKind() == domain.BotChannelFeishu {
-				// A reply with write drafts becomes a confirmation card.
-				out.Card = s.DraftCardFor(sending, s.publicURL())
-			}
+			out := OutboundMessage{InteractionID: sending.ID, Action: sending.Action, ChatID: conv.ChatID, ChatType: conv.ChatType, Text: sending.Reply, SendKey: sending.SendKey, Route: s.replyRoute(sending), Card: card}
 			return conn.Reply(ctx, out)
 		})
 		if err != nil {
@@ -348,7 +365,8 @@ func (s *Service) process(ctx context.Context, bot domain.NotificationBot, lease
 func (s *Service) runTurn(ctx context.Context, bot domain.NotificationBot, item *domain.BotInteraction, lease repo.BotLease, conn Conn, conv domain.BotConversation) error {
 	reply, detail := "", ""
 	var err error
-	if item.Action == "notification_details" {
+	if item.Action == "notification_details" || item.Action == ActionClarifyPost {
+		// Prepared by the platform; sent as is.
 		reply = item.Content
 	} else if time.Since(item.CreatedAt) > 10*time.Minute {
 		reply = "这条消息等待处理的时间较长，已停止自动执行。请重新发送当前请求。"

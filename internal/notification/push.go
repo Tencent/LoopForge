@@ -153,7 +153,7 @@ func (s *Service) processPush(ctx context.Context, item *domain.NotificationDeli
 		}
 		return true, s.Store.FinishNotificationPush(*item, res)
 	}
-	if _, err := s.checkPushTarget(bot, item.TargetID, true); err != nil {
+	if _, err := s.checkDeliveryTarget(bot, *item); err != nil {
 		return done(repo.NotificationPushResult{Status: "target_unavailable", Detail: err.Error()})
 	}
 	if beforeSend != nil {
@@ -172,6 +172,9 @@ func (s *Service) processPush(ctx context.Context, item *domain.NotificationDeli
 		return done(repo.NotificationPushResult{Status: "send_unknown", Detail: "上一次发送中断，无法确认是否送达，请核对后确认收到或再次发送"})
 	}
 	msg := botinteraction.OutboundMessage{InteractionID: item.ID, ChatID: item.TargetID, ChatType: "single", Text: plainNotificationText(content), SendKey: begun.SendKey}
+	if item.TargetType == "group" {
+		msg.ChatType = "group"
+	}
 	// Waiting and failed nodes get an action card when the Bot receives
 	// messages (the click comes back on its connection).
 	if bot.InteractionEnabled && item.NodeID != "" && (item.EventType == "waiting" || item.EventType == "failed") {
@@ -199,6 +202,24 @@ func (s *Service) processPush(ctx context.Context, item *domain.NotificationDeli
 		}
 		return done(repo.NotificationPushResult{Status: "send_unknown", Detail: res.SafeDetail})
 	}
+}
+
+// checkDeliveryTarget checks the receiver of a delivery before each send.
+// SOP notifications go to the configured, trial-verified member. Messages
+// back to the chat a run was started from need no trial send: a private
+// origin must still be a bound sender with access to the project; a group
+// origin needs the confirmed enterprise.
+func (s *Service) checkDeliveryTarget(bot domain.NotificationBot, item domain.NotificationDelivery) (domain.BotUserBinding, error) {
+	if item.Origin != domain.NotificationOriginChat {
+		return s.checkPushTarget(bot, item.TargetID, true)
+	}
+	if item.TargetType == "group" {
+		if bot.TenantState != domain.BotTenantLocked {
+			return domain.BotUserBinding{}, errors.New("企业尚未确认")
+		}
+		return domain.BotUserBinding{}, nil
+	}
+	return s.checkPushTarget(bot, item.TargetID, false)
 }
 
 func notificationBackoff(attempts int) time.Duration {

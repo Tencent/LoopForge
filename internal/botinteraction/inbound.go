@@ -54,6 +54,7 @@ func interactionFromEvent(bot domain.NotificationBot, ev InboundEvent) (domain.B
 		MsgType:         truncate(ev.MsgType, 32),
 		ContentLength:   utf8.RuneCountInString(ev.Text),
 		ReplyRoute:      ev.Route.MessageID,
+		ReplyTo:         truncate(ev.ParentID, 191),
 	}, ""
 }
 
@@ -150,9 +151,16 @@ func (s *Service) acceptCardAction(bot domain.NotificationBot, item domain.BotIn
 	if DraftAction(ev.Action) {
 		return s.acceptDraftAction(bot, item, ev)
 	}
+	if ClarifyAction(ev.Action) {
+		return s.acceptClarifyAction(bot, item, ev)
+	}
 	delivery, err := s.Store.NotificationDelivery(ev.DeliveryID)
+	own := err == nil && delivery.BotID == bot.ID && delivery.ProjectID == bot.ProjectID
+	if own && delivery.TargetType == "group" && (ev.CardChatID == "" || ev.CardChatID == delivery.TargetID) {
+		return s.acceptGroupCardAction(bot, item, ev, delivery)
+	}
 	chat := ev.SenderID
-	if err == nil && delivery.BotID == bot.ID && delivery.ProjectID == bot.ProjectID && delivery.TargetType == "single" && delivery.TargetID == ev.SenderID {
+	if own && delivery.TargetType == "single" && delivery.TargetID == ev.SenderID {
 		chat = delivery.TargetID
 	}
 	item.Content, item.Quote, item.ContentLength = "", "", 0
@@ -164,6 +172,34 @@ func (s *Service) acceptCardAction(bot domain.NotificationBot, item domain.BotIn
 	ack := InboundAck{Accepted: inserted, InteractionID: item.ID, Toast: "已收到，处理结果会以消息发给你"}
 	if card := s.PushCardFor(delivery, delivery.Content, ""); card != nil {
 		card.Done("已提交「" + pushCardActionLabel(ev.Action) + "」，处理结果会以消息发给你")
+		ack.Card = card
+	}
+	return ack, nil
+}
+
+// acceptGroupCardAction handles a notification card sent to a group (a run
+// started from that group). Any member bound to a platform account with
+// access to the project may click; the action runs as that member. The
+// click is queued in the group conversation and answered there (threaded
+// under the card on Feishu), and the card shows who handled it.
+func (s *Service) acceptGroupCardAction(bot domain.NotificationBot, item domain.BotInteraction, ev InboundEvent, delivery domain.NotificationDelivery) (InboundAck, error) {
+	user, refusal := s.chatMember(bot, ev.SenderID)
+	if refusal != "" {
+		return InboundAck{Ignored: "not_member", Toast: refusal}, nil
+	}
+	item.Content, item.Quote, item.ContentLength = "", "", 0
+	item.ReplyRoute = ev.Route.MessageID
+	if item.ReplyRoute == "" {
+		item.SendRoute = repo.BotSendRoutePushChat
+	}
+	inserted, err := s.Store.EnqueueBotInteraction(item, "group", delivery.TargetID)
+	if err != nil {
+		return InboundAck{}, err
+	}
+	status := DisplayName(user) + " 已提交「" + pushCardActionLabel(ev.Action) + "」，结果会发在群里"
+	ack := InboundAck{Accepted: inserted, InteractionID: item.ID, Toast: status}
+	if card := s.PushCardFor(delivery, delivery.Content, ""); card != nil {
+		card.Done(status)
 		ack.Card = card
 	}
 	return ack, nil

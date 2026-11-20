@@ -294,7 +294,7 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	})
 
 	api.botIdentities = &botIdentityHandlers{deps: d, publicURL: api.notifications.service.PublicURL}
-	asst := &assistantHandlers{deps: d, runnerControls: runnerControls, sourceRoot: assistantSourceRoot(), notifications: api.notifications, identities: api.botIdentities, attachmentSweepWake: make(chan struct{}, 1)}
+	asst := &assistantHandlers{deps: d, runnerControls: runnerControls, sourceRoot: assistantSourceRoot(), notifications: api.notifications, identities: api.botIdentities, attachmentSweepWake: make(chan struct{}, 1), clarify: stream}
 	api.runs.assistant = asst
 	api.runners.assistant = asst
 	api.schedule.assistant = asst
@@ -303,6 +303,10 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 		api.notifications.service.Interactions.Generate = asst.generateBotReply
 		api.notifications.service.Interactions.Action = asst.handleBotCardAction
 		api.notifications.service.Interactions.NativeLogs = cleanBotNativeLogs
+	}
+	if flag.Lookup("test.v") == nil && notification.BotWorkersEnabled() {
+		// Timers of chat clarifications (next round, pause, rerun).
+		runAfterGate(bg.gate(), asst.startBotClarifyLoop)
 	}
 	api.botInteractions = &botInteractionHandlers{deps: d, notifications: api.notifications}
 	g.GET("/api/notification-bots/:id/interactions", api.botInteractions.records)

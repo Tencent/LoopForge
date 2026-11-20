@@ -46,8 +46,8 @@ func PushIdempotent(bot domain.NotificationBot) bool {
 	return bot.ChannelKind() == domain.BotChannelFeishu
 }
 
-// Push creates a private message to an open_id with the persisted key as
-// uuid; Feishu drops a repeated uuid within one hour.
+// Push creates a message (private to an open_id, or to a group chat_id) with
+// the persisted key as uuid; Feishu drops a repeated uuid within one hour.
 func (f *feishuChannel) Push(ctx context.Context, bot domain.NotificationBot, cred Credential, msg OutboundMessage) SendResult {
 	if strings.TrimSpace(msg.ChatID) == "" {
 		return SendResult{Outcome: Rejected, Code: "target_missing", SafeDetail: "缺少飞书接收成员"}
@@ -62,7 +62,13 @@ func (f *feishuChannel) Push(ctx context.Context, bot domain.NotificationBot, cr
 	if msg.SendKey != "" {
 		body = body.Uuid(msg.SendKey)
 	}
-	req := larkim.NewCreateMessageReqBuilder().ReceiveIdType("open_id").Body(body.Build()).Build()
+	// Private messages go to the member's open_id; group messages (and
+	// conversation pushes) to the chat_id.
+	receiveType := "open_id"
+	if msg.ChatType == "group" {
+		receiveType = "chat_id"
+	}
+	req := larkim.NewCreateMessageReqBuilder().ReceiveIdType(receiveType).Body(body.Build()).Build()
 	resp, err := f.client(bot, cred).Im.V1.Message.Create(ctx, req)
 	if err != nil {
 		return classifyFeishuTransport(err)
@@ -136,8 +142,9 @@ func forgetDingTalkToken(bot domain.NotificationBot) {
 	dingtalkTokens.Unlock()
 }
 
-// Push sends a private message to a staff ID through the robot batch API
-// (robotCode is the Client ID of the enterprise internal application). The
+// Push sends a private message to a staff ID through the robot batch API, or
+// a group message to an open conversation ID (ChatType "group"); robotCode
+// is the Client ID of the enterprise internal application. The
 // API has no idempotency key: an unknown outcome is never retried
 // automatically.
 func (d *dingtalkChannel) Push(ctx context.Context, bot domain.NotificationBot, cred Credential, msg OutboundMessage) SendResult {
@@ -156,8 +163,15 @@ func (d *dingtalkChannel) Push(ctx context.Context, bot domain.NotificationBot, 
 		return out
 	}
 	param, _ := json.Marshal(map[string]string{"content": msg.Text})
+	endpoint := "/v1.0/robot/oToMessages/batchSend"
 	raw, _ := json.Marshal(map[string]any{"robotCode": bot.BotID, "userIds": []string{msg.ChatID}, "msgKey": "sampleText", "msgParam": string(param)})
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, d.api+"/v1.0/robot/oToMessages/batchSend", bytes.NewReader(raw))
+	if msg.ChatType == "group" {
+		// Group chats: the robot group message API with the open
+		// conversation ID of the group.
+		endpoint = "/v1.0/robot/groupMessages/send"
+		raw, _ = json.Marshal(map[string]any{"robotCode": bot.BotID, "openConversationId": msg.ChatID, "msgKey": "sampleText", "msgParam": string(param)})
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, d.api+endpoint, bytes.NewReader(raw))
 	if err != nil {
 		return SendResult{Outcome: NotDelivered, Code: "request", SafeDetail: "钉钉请求无法构造"}
 	}

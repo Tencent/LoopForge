@@ -59,8 +59,14 @@ type InboundEvent struct {
 	// Mentioned is set for group messages that @ the Bot (Feishu,
 	// DingTalk); other group messages are ignored.
 	Mentioned bool
-	// Option is the value picked in a card drop-down (Feishu).
+	// Option is the value picked in a card drop-down (Feishu), or the
+	// reference carried by a clarification card button.
 	Option string
+	// CardChatID is the chat a card was clicked in (Feishu open_chat_id),
+	// when the platform reports it.
+	CardChatID string
+	// ParentID is the message a text message replies to (Feishu quote).
+	ParentID string
 
 	// WeCom card callbacks.
 	Action     string

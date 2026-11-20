@@ -217,6 +217,10 @@ type NotificationDelivery struct {
 	ConfirmedBy        int64      `json:"confirmedBy,omitempty"`
 	ConfirmedAt        *time.Time `json:"confirmedAt,omitempty"`
 	ReceiptSource      string     `json:"receiptSource,omitempty" gorm:"size:16"`
+	// Origin is "chat" for deliveries sent back to the conversation a run
+	// was started from (no SOP binding needed); TargetType is then "group"
+	// for a group chat.
+	Origin string `json:"origin,omitempty" gorm:"size:16"`
 }
 
 func (NotificationDelivery) TableName() string { return "notification_deliveries" }

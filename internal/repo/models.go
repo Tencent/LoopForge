@@ -746,7 +746,7 @@ func (knowledgeSubmissionRow) TableName() string { return "knowledge_submissions
 
 // allModels lists every table for the sqlite test schema (AutoMigrate).
 func allModels() []any {
-	return []any{domain.BotUserBinding{}, domain.BotBindingChallenge{}, domain.BotConnection{}, domain.BotConversation{}, domain.BotInteraction{}, notificationBotRow{}, botCredentialRow{}, botNativeSessionRow{}, botPendingDraftRow{}, domain.NotificationDelivery{},
+	return []any{domain.BotUserBinding{}, domain.BotBindingChallenge{}, domain.BotConnection{}, domain.BotConversation{}, domain.BotInteraction{}, notificationBotRow{}, botCredentialRow{}, botNativeSessionRow{}, botPendingDraftRow{}, botChatOriginRow{}, botClarifySessionRow{}, domain.NotificationDelivery{},
 		userRow{}, localAccountRow{}, userConfigRow{}, gitSSHKeyRow{}, gitHTTPCredentialRow{}, authIntegrationRow{}, platformCodeBuddyKeyRow{}, apiTokenRow{}, genericTemplateRow{},
 		insightSourceRow{}, insightExecutionRow{},
 		projectRow{}, projectMemberRow{}, repositoryRow{}, businessDomainRow{}, businessDomainAssignmentRow{},

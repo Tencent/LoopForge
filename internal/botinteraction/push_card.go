@@ -43,6 +43,9 @@ type PushCard struct {
 	// Status, when set, marks the card as handled: it is shown instead of
 	// the buttons and the selection.
 	Status string
+	// ClarifyID marks a chat clarification card: buttons carry the
+	// session and their own reference (PushCardAction.Ref).
+	ClarifyID string
 }
 
 // PushCardSelect is a drop-down whose change comes back as Key.
@@ -64,6 +67,8 @@ type PushCardAction struct {
 	Key    string
 	Text   string
 	Danger bool
+	// Ref is passed back with the click (clarification cards).
+	Ref string
 }
 
 // PushCardKeys are the action keys a card button may carry.
@@ -119,7 +124,7 @@ func (s *Service) PushCardFor(item domain.NotificationDelivery, content, details
 
 // pushCardKey reports whether key is a card action.
 func pushCardKey(key string) bool {
-	if DraftAction(key) {
+	if DraftAction(key) || ClarifyAction(key) {
 		return true
 	}
 	for _, k := range PushCardKeys {
@@ -167,8 +172,11 @@ func feishuCardJSON(c *PushCard) []byte {
 	if len(fields) > 0 {
 		elements = append(elements, map[string]any{"tag": "div", "fields": fields})
 	}
-	value := func(key string) map[string]string {
-		if c.DraftID != "" {
+	value := func(key, ref string) map[string]string {
+		switch {
+		case c.ClarifyID != "":
+			return map[string]string{"af_action": key, "af_clarify": c.ClarifyID, "af_ref": ref}
+		case c.DraftID != "":
 			return map[string]string{"af_action": key, "af_draft": c.DraftID}
 		}
 		return map[string]string{"af_action": key, "af_delivery": c.DeliveryID}
@@ -178,7 +186,7 @@ func feishuCardJSON(c *PushCard) []byte {
 		for _, o := range c.Select.Options {
 			options = append(options, map[string]any{"text": plain(o.Text), "value": o.Value})
 		}
-		sel := map[string]any{"tag": "select_static", "placeholder": plain(c.Select.Placeholder), "options": options, "value": value(c.Select.Key)}
+		sel := map[string]any{"tag": "select_static", "placeholder": plain(c.Select.Placeholder), "options": options, "value": value(c.Select.Key, "")}
 		if c.Select.Initial != "" {
 			sel["initial_option"] = c.Select.Initial
 		}
@@ -193,7 +201,7 @@ func feishuCardJSON(c *PushCard) []byte {
 		if a.Danger {
 			kind = "danger"
 		}
-		buttons = append(buttons, map[string]any{"tag": "button", "text": plain(a.Text), "type": kind, "value": value(a.Key)})
+		buttons = append(buttons, map[string]any{"tag": "button", "text": plain(a.Text), "type": kind, "value": value(a.Key, a.Ref)})
 	}
 	if c.DetailsURL != "" {
 		label := c.DetailsLabel
@@ -211,7 +219,7 @@ func feishuCardJSON(c *PushCard) []byte {
 		template = "grey"
 	case c.Tag == "执行失败":
 		template = "red"
-	case c.DraftID != "":
+	case c.DraftID != "" || c.ClarifyID != "":
 		template = "blue"
 	}
 	card := map[string]any{
@@ -269,7 +277,8 @@ func dingtalkCardDelivery(track string) string {
 }
 
 // deliverCard creates the card instance and delivers it to the robot private
-// chat of the staff ID, with Stream callbacks.
+// chat of the staff ID, or into a group (ChatType "group"), with Stream
+// callbacks.
 func (d *dingtalkChannel) deliverCard(ctx context.Context, bot domain.NotificationBot, token string, msg OutboundMessage) SendResult {
 	body := map[string]any{
 		"cardTemplateId":          strings.TrimSpace(bot.CardTemplateID),
@@ -280,6 +289,14 @@ func (d *dingtalkChannel) deliverCard(ctx context.Context, bot domain.Notificati
 		"imRobotOpenSpaceModel":   map[string]any{"supportForward": false, "lastMessageI18n": map[string]string{"ZH_CN": cardText(msg.Card.Tag+"："+msg.Card.Title, 60)}},
 		"imRobotOpenDeliverModel": map[string]any{"spaceType": "IM_ROBOT", "robotCode": bot.BotID},
 		"userIdType":              1,
+	}
+	if msg.ChatType == "group" {
+		// A group card is delivered into the group by the robot.
+		delete(body, "imRobotOpenSpaceModel")
+		delete(body, "imRobotOpenDeliverModel")
+		body["openSpaceId"] = "dtv1.card//IM_GROUP." + msg.ChatID
+		body["imGroupOpenSpaceModel"] = map[string]any{"supportForward": false, "lastMessageI18n": map[string]string{"ZH_CN": cardText(msg.Card.Tag+"："+msg.Card.Title, 60)}}
+		body["imGroupOpenDeliverModel"] = map[string]any{"robotCode": bot.BotID}
 	}
 	raw, _ := json.Marshal(body)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, d.api+"/v1.0/card/instances/createAndDeliver", bytes.NewReader(raw))

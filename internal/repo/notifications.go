@@ -8,6 +8,7 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 	"slices"
+	"strings"
 	"time"
 )
 
@@ -575,7 +576,105 @@ func (r *NotificationsRepo) enqueueRunNotifications(tx *gorm.DB, run domain.Run,
 			}
 		}
 	}
-	return nil
+	return r.enqueueOriginNotification(tx, run, event, seq, nodeTrigger, runTrigger)
+}
+
+// Templates of the messages sent back to the chat a run was started from.
+var originTemplates = map[string]string{
+	"waiting":       "### 需要人工处理\n需求：{{issue.title}}\nSOP：{{workflow}}\n节点：{{node}}\n查看详情：{{url}}",
+	"failed":        "### 节点失败\n需求：{{issue.title}}\nSOP：{{workflow}}\n节点：{{node}}\n原因：{{error}}\n查看详情：{{url}}",
+	"run.succeeded": "### SOP 已完成\n需求：{{issue.title}}\nSOP：{{workflow}}\n查看详情：{{url}}",
+	"run.failed":    "### SOP 失败\n需求：{{issue.title}}\nSOP：{{workflow}}\n原因：{{error}}\n查看详情：{{url}}",
+}
+
+// enqueueOriginNotification sends the key events of a run started from a
+// Feishu or DingTalk chat back to that conversation (group or private),
+// whatever the SOP's notification bindings are: a waiting or failed node
+// (with an action card when the Bot receives messages) and the end of the
+// run. A run failure already explained by a node failure is not repeated.
+// When the SOP itself notifies the same person through the same Bot the
+// delivery key is shared, so only one message goes out.
+func (r *NotificationsRepo) enqueueOriginNotification(tx *gorm.DB, run domain.Run, event domain.RunEvent, seq int64, nodeTrigger, runTrigger string) error {
+	kind := ""
+	switch {
+	case event.NodeID != "" && (nodeTrigger == "waiting" || nodeTrigger == "failed"):
+		kind = nodeTrigger
+	case runTrigger == "succeeded":
+		kind = "run.succeeded"
+	case runTrigger == "failed" && !runHasNodeFailureEvent(run.Events):
+		kind = "run.failed"
+	default:
+		return nil
+	}
+	origin, ok := botRunOrigin(tx, run.ID)
+	if !ok {
+		origin, ok = botRecentIssueOrigin(tx, run.ExecutionContext.IssueID, time.Now().UTC())
+	}
+	if !ok {
+		return nil
+	}
+	var row notificationBotRow
+	if err := tx.Where("id = ?", origin.ConfigID).Limit(1).Find(&row).Error; err != nil || row.ID == "" {
+		return err
+	}
+	bot, err := row.bot()
+	if err != nil {
+		return err
+	}
+	projectID := notificationRunProject(run)
+	if !bot.Enabled || bot.ProjectID != projectID || bot.ChannelKind() == domain.BotChannelWeCom {
+		return nil
+	}
+	target, targetType, targetName := origin.SenderID, "single", "发起人（单聊）"
+	if origin.ChatType == "group" {
+		target, targetType, targetName = origin.ChatID, "group", "发起的群聊"
+	}
+	if target == "" {
+		return nil
+	}
+	node := domain.WorkflowNode{Name: "全部节点"}
+	for _, n := range run.WorkflowSnapshot.Nodes {
+		if n.ID == event.NodeID {
+			node = n
+		}
+	}
+	trigger := kind
+	if kind == "run.succeeded" || kind == "run.failed" {
+		trigger = runTrigger
+	}
+	values := map[string]string{"project": r.notificationProjectName(tx, projectID), "workflow": run.WorkflowSnapshot.Name, "node": node.Name, "input": run.Input, "status": notificationStatus(trigger, "节点"), "issue.title": "未关联需求", "error": event.Message}
+	if run.ExecutionContext.IssueID != "" {
+		if issue, ok := r.issues.issueInTx(tx, run.ExecutionContext.IssueID); ok && issue.ProjectID == projectID {
+			values["issue.title"], values["issue.id"] = issue.Title, issue.ID
+		}
+	}
+	item := domain.NotificationDelivery{ProjectID: projectID, BotID: bot.ID, RunID: run.ID, EventType: trigger, SourceType: "run", SourceID: run.ID, SourceName: run.WorkflowSnapshot.Name, Origin: domain.NotificationOriginChat, TargetID: target, TargetType: targetType, TargetName: targetName, WaitingPolicy: "actionable"}
+	if event.NodeID != "" {
+		item.NodeID, item.SourceName = event.NodeID, node.Name
+		if nr := run.Nodes[event.NodeID]; nr != nil {
+			item.Attempt, item.ReworkCount = nr.Attempt, nr.ReworkCount
+			if nr.Error != "" {
+				values["error"] = nr.Error
+			}
+		}
+	}
+	if strings.TrimSpace(values["error"]) == "" {
+		values["error"] = "请在平台查看运行详情"
+	}
+	key := fmt.Sprintf("origin:%s:%d:%s", run.ID, seq, bot.ID)
+	if bot.Target != nil && bot.Target.ID == target && kind != "run.succeeded" && kind != "run.failed" {
+		// Same Bot and receiver as the SOP's node reminders: share the key.
+		key = fmt.Sprintf("run:%s:%d:%s", run.ID, seq, bot.ID)
+	}
+	content, source, renderErr := domain.RenderNotification(domain.NotificationBinding{BotID: bot.ID, Events: []string{trigger}, Template: originTemplates[kind]}, domain.NotificationContext{Values: values, SourceType: "run"})
+	if renderErr != nil {
+		return nil
+	}
+	item.ID = hexSHA256(key)
+	item.Content, item.ContentSource, item.Status = content, source, "pending"
+	item.CreatedAt = time.Now().UTC()
+	item.NextAttemptAt = item.CreatedAt
+	return tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&item).Error
 }
 
 // runNotificationBindings selects the bindings evaluated for one node of a run.

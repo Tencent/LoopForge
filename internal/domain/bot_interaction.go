@@ -91,10 +91,15 @@ type BotInteraction struct {
 	ConfirmedAt    *time.Time `json:"confirmedAt,omitempty"`
 	ReceiptSource  string     `json:"receiptSource,omitempty" gorm:"size:16"`
 	TerminalReason string     `json:"terminalReason,omitempty" gorm:"size:64"`
-	// SendRoute is empty for replies in the original conversation and
+	// SendRoute is empty for replies in the original conversation,
 	// "push" after an administrator switched an expired DingTalk reply to
-	// a proactive private message (stage G).
+	// a proactive private message (stage G), and "push_chat" for messages
+	// the platform sends into the conversation on its own (group results
+	// of card clicks, clarification questions).
 	SendRoute string `json:"sendRoute,omitempty" gorm:"size:16"`
+	// ReplyTo is the platform message this message replies to (Feishu
+	// quote), used to recognise answers to clarification cards.
+	ReplyTo string `json:"-" gorm:"size:191"`
 	// PushResendAvailable is computed for the records page: the reply
 	// expired and the original sender is a verified push target.
 	PushResendAvailable bool   `json:"pushResendAvailable,omitempty" gorm:"-"`

@@ -97,6 +97,11 @@ type assistantHandlers struct {
 	review        func(context.Context, assistantApprovalInput, domain.User, string) (assistantApprovalReview, error)
 	reviewCatalog func(string) assistantModelCatalog
 	titleSummary  func(context.Context, domain.User, string) (string, error)
+	// clarify runs chat clarification rounds on the platform's
+	// clarification jobs; clarifyClassify replaces the answer classifier
+	// in tests.
+	clarify         *streamHandlers
+	clarifyClassify func(context.Context, domain.User, string) (string, error)
 	// attachmentSweepWake nudges the background sweep after a deletion
 	// queues files; nil when no sweeper runs (tests sweep directly).
 	attachmentSweepWake chan struct{}
