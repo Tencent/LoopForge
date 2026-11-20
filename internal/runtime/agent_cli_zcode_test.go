@@ -290,7 +290,7 @@ func TestZCodeBindCommandComposition(t *testing.T) {
 			command.CredentialBindings = []CredentialBinding{BindAgentCLI, BindGit, BindMCP}
 			command.PrivateHome = true
 			command.PrivateHomeKey = "zcode-a"
-			bound, err := bindCommand(sb, workspace, command, RunCredentials{AgentCLI: map[string]ProviderCredential{AgentCLIZCode: {APIKey: "k"}}})
+			bound, err := bindCommand(t.Context(), sb, workspace, command, RunCredentials{AgentCLI: map[string]ProviderCredential{AgentCLIZCode: {APIKey: "k"}}})
 			if err != nil {
 				t.Fatal(err)
 			}
