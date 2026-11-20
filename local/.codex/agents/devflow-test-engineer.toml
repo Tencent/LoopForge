@@ -1,4 +1,0 @@
-name = "devflow-test-engineer"
-description = "DevFlow test engineer：补充并运行验证，产出测试报告。"
-instructions = ".codex/agents/test-engineer.md"
-

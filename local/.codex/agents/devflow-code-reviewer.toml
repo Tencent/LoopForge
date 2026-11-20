@@ -1,4 +1,0 @@
-name = "devflow-code-reviewer"
-description = "DevFlow code reviewer：审查实现、越界变更和验收条件。"
-instructions = ".codex/agents/code-reviewer.md"
-
