@@ -1,6 +1,12 @@
 # Verification record
 
-The results below describe historical review candidates from 2026-10-16. Source and running-preview freshness are checked independently; external-service coverage is separate from local protocol/adapter tests. Historical results are not certification of later revisions. Use the checks on the exact public commit for current CI status. Detailed source manifests remain local to the maintainers.
+Each entry describes the candidate and scope checked on that date. Source and running-preview freshness are checked independently; external-service coverage is separate from local protocol/adapter tests. Historical results are not certification of later revisions. Use the checks on the exact public commit for current CI status. Detailed source manifests remain local to the maintainers.
+
+## Release upgrade gate — 2026-11-11
+
+- Installer regression tests: **26 passed**, including adopting the hostname of a legacy container, filling an empty hostname setting and keeping it on subsequent installations. Release-baseline selection: **6 passed**, including numeric version order, Local/prerelease exclusion, republishing a tag and missing-baseline failure. Shell/Node syntax, GitHub Actions validation and the public-content check passed.
+- Real Compose acceptance installed the official `v0.3.3` image through its own `bash scripts/install.sh`, created user data and a waiting script/approval SOP, then upgraded using the working tree's installer and Compose configuration with the official `0.3.4` image. The image config matched the published manifest. Existing settings, hostname, MySQL volume, login/password and administration, project, requirement/comment, customized seeded rule, conversation, attachment and workspace survived. The old SOP resumed, a new SOP completed, and repeated installation passed. Fixture containers, sandboxes, volumes and files were removed.
+- The unmodified `v0.3.3` → `v0.3.4` path first reproduced HTTP 409 when reading the old run's workspace: replacing the container changed its hostname and made the retained workspace appear foreign. The deployment fix preserves the existing hostname without rewriting run bindings. This local acceptance verifies the deployment changes against released binaries; the tag workflow separately checks the newly built release digest before promoting mutable image tags or creating a GitHub Release. No model key was used.
 
 ## Hosted CI follow-up — 2026-10-16
 

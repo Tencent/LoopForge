@@ -117,6 +117,23 @@ docker_access compose version >/dev/null 2>&1 || fail 'Docker Compose is still u
 
 requested_public_url="${LOOPFORGE_PUBLIC_URL:-}"
 [[ ! -e .env || -r .env ]] || fail 'The existing .env is not readable by this user. Use the installation owner or ask an administrator to correct its ownership.'
+# Legacy containers used their random Docker hostname as the workspace host.
+# Adopt that hostname before replacing the container, including stopped ones;
+# changing it makes persistent workspaces look as if they belong to another host.
+if [[ -r .env ]]; then
+  workspace_host=$(
+    set -a; source .env; set +a
+    if [[ -n "${LOOPFORGE_WORKSPACE_HOST:-}" ]]; then
+      printf '%s' "$LOOPFORGE_WORKSPACE_HOST"
+    else
+      previous_container=$(docker_access compose --profile platform ps --all --quiet platform)
+      if [[ -n "$previous_container" ]]; then
+        docker_access inspect --format '{{.Config.Hostname}}' "$previous_container"
+      fi
+    fi
+  )
+  if [[ -n "$workspace_host" ]]; then export LOOPFORGE_WORKSPACE_HOST="$workspace_host"; fi
+fi
 bash scripts/configure.sh
 [[ -r .env ]] || fail 'The existing .env is not readable by this user. Use the installation owner or ask an administrator to correct its ownership.'
 set -a; source .env; set +a
