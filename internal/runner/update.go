@@ -79,7 +79,7 @@ func (d *Daemon) checkDockerRunnerHelperUpdate(ctx context.Context, repairOnly b
 		return err
 	}
 	validateInstalled := func(path string) error {
-		return validateDockerRunnerHelper(path, true)
+		return validateDockerRunnerHelper(path, false)
 	}
 	if repairOnly && validateInstalled(path) == nil {
 		return nil
@@ -106,7 +106,7 @@ func (d *Daemon) waitForDockerRunnerHelper(ctx context.Context, path string) err
 	default:
 	}
 	// A workspace copy gets its own executable permissions.
-	if validateDockerRunnerHelper(path, false) == nil {
+	if validateDockerRunnerHelper(path, true) == nil {
 		return nil
 	}
 	// A workspace request can give up while the download continues. It never
@@ -121,7 +121,7 @@ func (d *Daemon) waitForDockerRunnerHelper(ctx context.Context, path string) err
 	}
 }
 
-func validateDockerRunnerHelper(path string, requireExecutable bool) error {
+func validateDockerRunnerHelper(path string, forWorkspace bool) error {
 	var machine elf.Machine
 	switch runtime.GOARCH {
 	case "arm64":
@@ -138,14 +138,25 @@ func validateDockerRunnerHelper(path string, requireExecutable bool) error {
 	if !info.Mode().IsRegular() {
 		return fmt.Errorf("expected regular Linux/%s helper file", runtime.GOARCH)
 	}
-	if requireExecutable && info.Mode().Perm()&0o111 == 0 {
+	if !forWorkspace && info.Mode().Perm()&0o111 == 0 {
 		return fmt.Errorf("expected executable Linux/%s helper", runtime.GOARCH)
 	}
-	file, err := elf.Open(path)
+	source, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer source.Close()
+	if forWorkspace {
+		// Match the installer for local custom wrappers. Platform artifacts must be ELF.
+		var header [2]byte
+		if _, err := source.ReadAt(header[:], 0); err == nil && header == [2]byte{'#', '!'} {
+			return nil
+		}
+	}
+	file, err := elf.NewFile(source)
 	if err != nil {
 		return fmt.Errorf("expected Linux/%s ELF helper: %w", runtime.GOARCH, err)
 	}
-	defer file.Close()
 	if file.Class != elf.ELFCLASS64 || file.Data != elf.ELFDATA2LSB || file.Machine != machine ||
 		(file.OSABI != elf.ELFOSABI_NONE && file.OSABI != elf.ELFOSABI_LINUX) ||
 		(file.Type != elf.ET_EXEC && file.Type != elf.ET_DYN) {

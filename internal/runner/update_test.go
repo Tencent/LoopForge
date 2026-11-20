@@ -291,6 +291,7 @@ func TestDockerRunnerHelperUpdateRejectsIncompatibleBinary(t *testing.T) {
 	for _, tc := range []struct{ name, payload string }{
 		{name: "macOS_binary", payload: "\xcf\xfa\xed\xfemacOS runner"},
 		{name: "wrong_Linux_architecture", payload: dockerRunnerFixtureLinuxBinary(otherArch, "wrong architecture")},
+		{name: "script_wrapper", payload: "#!/bin/sh\nexit 0\n"},
 		{name: "only_ELF_header", payload: complete[:64]},
 		{name: "truncated_load_segment", payload: complete[:len(complete)-1]},
 	} {
@@ -331,13 +332,22 @@ func TestDockerRunnerHelperDownloadDoesNotBlockMacOSStartup(t *testing.T) {
 	if runtime.GOOS != "darwin" {
 		t.Skip("macOS Runner downloads the Linux helper at startup")
 	}
+	t.Run("readable_ELF", func(t *testing.T) {
+		testDockerRunnerHelperDuringStartup(t, dockerRunnerFixtureLinuxBinary(runtime.GOARCH, "working helper"), 0o644)
+	})
+	t.Run("local_script_wrapper", func(t *testing.T) {
+		testDockerRunnerHelperDuringStartup(t, "#!/bin/sh\nexec /usr/local/bin/agentflow-runner \"$@\"\n", 0o755)
+	})
+}
+
+func testDockerRunnerHelperDuringStartup(t *testing.T, original string, mode os.FileMode) {
+	t.Helper()
 	root := t.TempDir()
 	t.Setenv("HOME", root)
 	t.Setenv("PATH", "/usr/bin:/bin")
 	t.Setenv("AGENTFLOW_RUNNER_BINARY", filepath.Join(root, "agentflow-runner-{os}-{arch}"))
 	helper := filepath.Join(root, "agentflow-runner-linux-"+runtime.GOARCH)
-	original := dockerRunnerFixtureLinuxBinary(runtime.GOARCH, "working helper")
-	if err := os.WriteFile(helper, []byte(original), 0o644); err != nil {
+	if err := os.WriteFile(helper, []byte(original), mode); err != nil {
 		t.Fatal(err)
 	}
 	updated := dockerRunnerFixtureLinuxBinary(runtime.GOARCH, "updated helper")
