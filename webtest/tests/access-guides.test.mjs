@@ -31,7 +31,9 @@ test('token management renders client specs, revealed prompts, and credential hi
   assert.match(body.textContent, /我的访问密钥/);
   assert.doesNotMatch(body.textContent, /Token/);
   assert.match(body.textContent, /Claude Code/);
-  assert.match(body.textContent, /复制 Claude Code 配置提示词/);
+  assert.match(body.textContent, /连接 LoopForge 平台 MCP/);
+  assert.match(body.querySelector('[data-copy-revealed-prompt]').textContent, /复制 MCP 接入提示词/);
+  assert.match(body.querySelector('[role="tabpanel"]').textContent, /粘贴到你自己的 Claude Code 对话中并发送/);
   assert.equal(body.querySelector('[data-access-tab]'), null, '访问密钥 has no MCP/能力/API tabs');
   const spec = app.evaluate(`accessMcpClientSpec('codex','http://example.test','abc')`);
   assert.match(spec.code, /mcp_servers\.agentflow/);
@@ -42,7 +44,7 @@ test('token management renders client specs, revealed prompts, and credential hi
 
   body.querySelector('[data-revealed-client="codex"]').click();
   assert.equal(app.evaluate(`state.accessClient`), 'codex');
-  assert.match(body.textContent, /复制 Codex 配置提示词/);
+  assert.match(body.querySelector('[role="tabpanel"]').textContent, /粘贴到你自己的 Codex 对话中并发送/);
 
   const credential = app.evaluate(`({
     pat:credentialSecretError(credentialKind('codexApiKey'),'any-key'),
@@ -156,10 +158,16 @@ test('personal token UI creates and revokes tokens through the API', async (t) =
   assert.deepEqual(create.body, { name: 'Automation', expiresInDays: 180 });
   assert.equal(app.evaluate(`state.revealedToken`), 'af_secret');
   app.evaluate(`renderAccessTokens()`);
-  assert.match(app.document.querySelector('#accessBody').textContent, /af_secret/);
+  const details = app.document.querySelector('.token-key-info details');
+  assert.equal(details.open, false);
+  details.querySelector('summary').click();
+  assert.equal(details.open, true);
+  assert.equal(details.querySelector('code').textContent, 'af_secret');
   assert.ok(app.document.querySelector('#accessBody [data-copy-revealed-prompt]'), 'the one-time reveal offers the client prompt');
 
-  app.evaluate(`renderAccessTokens()`);
+  app.document.querySelector('[data-close-revealed]').click();
+  assert.equal(app.evaluate('state.revealedToken'), '');
+  assert.equal(app.document.querySelector('.token-reveal'), null);
   app.document.querySelector('[data-revoke-token="token-1"]').click();
   await settle(2);
   app.document.querySelector('#confirmOkBtn').click();
@@ -195,9 +203,12 @@ test('token-bearing access base never downgrades a secure deployment', async (t)
   assert.equal(base('ftp://studio.example', 'http:'), 'http://page.example');
 });
 
-test('access snippets copied from an https studio use https endpoints', async (t) => {
+test('each MCP setup button copies the selected client, HTTPS endpoint and new key', async (t) => {
   const app = await loadApp({ origin: 'https://studio.example' });
   t.after(app.close);
+  Object.defineProperty(app.window, 'isSecureContext', { value: true });
+  let copied;
+  app.window.navigator.clipboard.writeText = async value => { copied = value; };
   app.router.post('/api/auth/tokens', { token: 'af_live_secret' });
   app.router.get('/api/auth/tokens', []);
   app.evaluate(`
@@ -212,16 +223,19 @@ test('access snippets copied from an https studio use https endpoints', async (t
   form.dispatchEvent(new app.window.Event('submit', { bubbles: true, cancelable: true }));
   await settle(8);
   assert.equal(app.evaluate(`state.revealedToken`), 'af_live_secret');
-  for (const client of ['cursor', 'claude', 'codebuddy', 'codex']) {
-    app.evaluate(`state.accessClient='${client}';renderAccessTokens()`);
-    const button = app.document.querySelector('#accessBody [data-copy-revealed-prompt]');
-    assert.ok(button, `${client} reveal offers the client prompt`);
-    const prompt = decodeURIComponent(button.dataset.copyRevealedPrompt);
-    assert.match(prompt, /af_live_secret/);
-    assert.match(prompt, /ENDPOINT = https:\/\/studio\.example\/mcp/);
-    assert.match(prompt, /https:\/\/studio\.example\/mcp-setup\.txt/);
-    assert.doesNotMatch(prompt + app.evaluate(`accessMcpClientSpec('${client}',getPublicBaseURL(),'t').code`), /http:\/\/studio\.example/, `${client} snippet downgraded the endpoint`);
+  for (const tab of app.document.querySelectorAll('[data-revealed-client]')) {
+    tab.click();
+    assert.equal(tab.getAttribute('aria-selected'), 'true');
+    app.document.querySelector('[data-copy-revealed-prompt]').click();
+    assert.ok(copied.includes(tab.textContent), 'the prompt identifies the selected client');
+    assert.match(copied, /API_TOKEN = af_live_secret/);
+    assert.match(copied, /ENDPOINT = https:\/\/studio\.example\/mcp/);
+    assert.match(copied, /https:\/\/studio\.example\/mcp-setup\.txt/);
+    assert.match(copied, /tools\/list/);
+    assert.doesNotMatch(copied + app.evaluate(`accessMcpClientSpec('${tab.dataset.revealedClient}',getPublicBaseURL(),'t').code`), /http:\/\/studio\.example/);
   }
+  app.document.querySelector('[data-copy-revealed]').click();
+  assert.equal(copied, 'af_live_secret');
 });
 
 // renderAll() repaints every page; only the 访问密钥 page may ask for the token

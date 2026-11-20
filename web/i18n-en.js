@@ -216,6 +216,17 @@ Object.assign(window.LF_I18N_EN,{
   "管理 Git 访问令牌":"Manage Git access tokens"
 });
 Object.assign(window.LF_I18N_EN,{
+  "使用访问密钥将 AI 客户端接入 LoopForge 平台 MCP，或在脚本中调用 REST API。":"Use an access key to connect your AI client to the LoopForge MCP server or call the REST API from a script.",
+  "访问密钥已创建":"Access key created",
+  "连接 LoopForge 平台 MCP":"Connect to the LoopForge MCP server",
+  "连接后，你可以让助手查询需求和运行进度。试着问它「我能访问哪些项目？」":"Once connected, your assistant can look up requirements and check run progress. Try asking “Which projects can I access?”",
+  "选择 AI 客户端":"Choose your AI client",
+  "复制 MCP 接入提示词":"Copy MCP setup prompt",
+  "查看访问密钥":"Show access key",
+  "手动配置或调用 REST API 时可单独复制密钥。关闭后无法再次查看。":"Copy the key by itself for manual setup or REST API calls. You can only view it here until you close this panel.",
+  "已保存，关闭":"Done"
+});
+Object.assign(window.LF_I18N_EN,{
   "强制删除":"Force delete",
   "强制删除需求":"Force-delete requirement",
   "强制删除所选":"Force-delete selected",
