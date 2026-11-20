@@ -665,32 +665,43 @@ func TestConversationWorkspaceRefusesLiveForeignBind(t *testing.T) {
 
 func TestConversationWorkspaceRestoresSnapshotWhenBoundHostIsGone(t *testing.T) {
 	t.Parallel()
-	e, id := checkpointFixture(t)
-	token, err := e.BeginConversationWorkspaceUse(id)
-	if err != nil {
-		t.Fatal(err)
-	}
-	archive, err := runtime.CreateWorkspaceCheckpoint(e.RunWorkspace(id))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = e.repo.SaveWorkspaceCheckpoint(id, token, time.Now().UTC(), archive); err != nil {
-		t.Fatal(err)
-	}
-	if err = os.RemoveAll(e.RunWorkspace(id)); err != nil {
-		t.Fatal(err)
-	}
-	bindConversationWorkspaceHost(t, e, id, "dead-host", "/gone")
-	if err = e.EnsureConversationWorkspace(context.Background(), id, token); err != nil {
-		t.Fatal(err)
-	}
-	body, err := os.ReadFile(filepath.Join(e.RunWorkspace(id), "README.md"))
-	if err != nil || string(body) != "uncommitted" {
-		t.Fatalf("snapshot not restored: %q %v", body, err)
-	}
-	run, _ := e.repo.RunState(id)
-	if run.WorkspaceHost != e.workspaceHost || run.WorkspaceRoot != e.sandboxes.Root() {
-		t.Fatalf("snapshot restore left host=%s root=%s", run.WorkspaceHost, run.WorkspaceRoot)
+	for name, sameRoot := range map[string]bool{"different root": false, "same root with empty checkout": true} {
+		t.Run(name, func(t *testing.T) {
+			e, id := checkpointFixture(t)
+			token, err := e.BeginConversationWorkspaceUse(id)
+			if err != nil {
+				t.Fatal(err)
+			}
+			archive, err := runtime.CreateWorkspaceCheckpoint(e.RunWorkspace(id))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err = e.repo.SaveWorkspaceCheckpoint(id, token, time.Now().UTC(), archive); err != nil {
+				t.Fatal(err)
+			}
+			if err = os.RemoveAll(e.RunWorkspace(id)); err != nil {
+				t.Fatal(err)
+			}
+			boundRoot := "/gone"
+			if sameRoot {
+				boundRoot = e.sandboxes.Root()
+				if err := os.MkdirAll(filepath.Join(e.RunWorkspace(id), ".agentflow"), 0o700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			bindConversationWorkspaceHost(t, e, id, "dead-host", boundRoot)
+			if err = e.EnsureConversationWorkspace(context.Background(), id, token); err != nil {
+				t.Fatal(err)
+			}
+			body, err := os.ReadFile(filepath.Join(e.RunWorkspace(id), "README.md"))
+			if err != nil || string(body) != "uncommitted" {
+				t.Fatalf("snapshot not restored: %q %v", body, err)
+			}
+			run, _ := e.repo.RunState(id)
+			if run.WorkspaceHost != e.workspaceHost || run.WorkspaceRoot != e.sandboxes.Root() {
+				t.Fatalf("snapshot restore left host=%s root=%s", run.WorkspaceHost, run.WorkspaceRoot)
+			}
+		})
 	}
 }
 
