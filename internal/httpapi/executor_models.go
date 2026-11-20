@@ -14,6 +14,7 @@ import (
 type executorModelInfo struct {
 	ID      string                 `json:"id"`
 	Name    string                 `json:"name"`
+	Family  string                 `json:"family"`
 	Credits string                 `json:"credits,omitempty"`
 	Efforts []executorEffortOption `json:"efforts"`
 }
@@ -157,9 +158,17 @@ func executorModelCatalogs(kimiBaseURL string) map[string]executorModelCatalog {
 		},
 		"agy": {
 			CustomModel: true,
+			// Slugs from agy models in Gemini API mode. Account-login models
+			// are queried from the user's runner because they vary by plan.
 			Models: []executorModelInfo{
 				{ID: "gemini-3.8-flash-medium", Name: "Gemini 3.8 Flash"},
+				{ID: "gemini-4-neon-high", Name: "Gemini 4 Neon"},
+				{ID: "gemini-4-carbon-medium", Name: "Gemini 4 Carbon"},
 				{ID: "gemini-4-argon-medium", Name: "Gemini 4 Argon"},
+				{ID: "gemini-4-hydrogen-high", Name: "Gemini 4 Hydrogen"},
+				{ID: "gemini-3.7-flash-medium", Name: "Gemini 3.7 Flash"},
+				{ID: "gemini-3.6-flash-medium", Name: "Gemini 3.6 Flash"},
+				{ID: "gemini-3.1-pro-high", Name: "Gemini 3.1 Pro"},
 			},
 			Efforts: effortOptions(domain.ExecutorEffortLevels["agy"]),
 		},
@@ -181,6 +190,7 @@ func executorModelCatalogs(kimiBaseURL string) map[string]executorModelCatalog {
 		}
 		for i := range catalog.Models {
 			id := catalog.Models[i].ID
+			catalog.Models[i].Family = assistantModelFamily(id, modelEngine)
 			if modelEngine != assistantEngineCodeBuddy {
 				id = modelEngine + ":" + id
 			}
@@ -216,6 +226,11 @@ func (h *catalogHandlers) executorModels(c *gin.Context) {
 	}
 	_, kimiBaseURL := assistantEngineCredential(user, runtime.AgentCLIKimi)
 	catalogs := executorModelCatalogs(kimiBaseURL)
+	if antigravityUsesCustomEndpoint(user) {
+		catalog := catalogs[runtime.AgentCLIAntigravity]
+		catalog.Models = []executorModelInfo{}
+		catalogs[runtime.AgentCLIAntigravity] = catalog
+	}
 	for _, engine := range append([]string{assistantEngineCodeBuddy}, assistantCLIEngines()...) {
 		models, _ := assistantDiscoveredModelsFor(c.Request.Context(), user, engine)
 		if len(models) == 0 {
@@ -230,7 +245,7 @@ func (h *catalogHandlers) executorModels(c *gin.Context) {
 		catalog.Models = make([]executorModelInfo, 0, len(models))
 		personal := cliModelsOf(models)
 		for _, model := range models {
-			if engine == assistantEngineCodeBuddy && model.ID == assistantDefaultModel {
+			if model.ID == assistantDefaultModel || (engine == assistantEngineCodeBuddy && codeBuddyIsDefaultModel(model.ID)) {
 				continue
 			}
 			name := strings.TrimSpace(model.Name)
@@ -241,7 +256,12 @@ func (h *catalogHandlers) executorModels(c *gin.Context) {
 			if engine != assistantEngineCodeBuddy {
 				modelID = engine + ":" + modelID
 			}
-			catalog.Models = append(catalog.Models, executorModelInfo{ID: model.ID, Name: name, Efforts: effortOptions(assistantModelEffortsForBaseURL(modelID, personal, kimiBaseURL))})
+			catalog.Models = append(catalog.Models, executorModelInfo{
+				ID:      model.ID,
+				Name:    name,
+				Family:  assistantModelFamily(model.ID, engine),
+				Efforts: effortOptions(assistantModelEffortsForBaseURL(modelID, personal, kimiBaseURL)),
+			})
 		}
 		if len(catalog.Models) > 0 {
 			catalogs[id] = catalog

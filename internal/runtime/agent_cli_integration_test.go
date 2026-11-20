@@ -23,7 +23,7 @@ type credentialSandbox struct {
 }
 
 func (s credentialSandbox) Exec(ctx context.Context, command CommandSpec, sink EventSink) (string, error) {
-	bound, err := bindCommand(s.localSandbox, s.workspace, command, s.credentials)
+	bound, err := bindCommand(ctx, s.localSandbox, s.workspace, command, s.credentials)
 	if err != nil {
 		return "", err
 	}

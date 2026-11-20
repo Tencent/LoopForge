@@ -37,6 +37,10 @@ func assistantModelEffortsForBaseURL(model string, catalog []domain.CLIModel, ba
 // The CodeBuddy fallback mirrors CodeBuddy Code 2.180.0's model capabilities.
 // Unknown CodeBuddy, Codex and Claude Code models fall back to low/medium/high.
 func assistantModelEffortsIn(model string, catalog []domain.CLIModel) []string {
+	return assistantModelEffortsInCatalog(model, catalog, false)
+}
+
+func assistantModelEffortsInCatalog(model string, catalog []domain.CLIModel, runnerLogin bool) []string {
 	engine, id := assistantModelEngine(model)
 	supported := domain.ExecutorEffortLevels[engine]
 	builtins := builtinExecutorModels[engine]
@@ -55,6 +59,17 @@ func assistantModelEffortsIn(model string, catalog []domain.CLIModel) []string {
 		configured := item.ReasoningEfforts
 		if configured == nil {
 			configured = item.DiscoveredReasoningEfforts
+		}
+		if runnerLogin && engine == runtime.AgentCLIAntigravity && len(item.Efforts) > 0 {
+			supported = nil
+			for _, level := range runtime.AgyAccountModelEfforts(id) {
+				if item.Efforts[level] != "" {
+					supported = append(supported, level)
+				}
+			}
+			if configured == nil {
+				return supported
+			}
 		}
 		if configured == nil {
 			continue
@@ -112,7 +127,54 @@ func validateAssistantEffort(ctx context.Context, user domain.User, model, effor
 	if effort == "" {
 		return nil
 	}
-	efforts := assistantModelEfforts(ctx, user, model)
+	return validateAssistantModelEffort(model, effort, assistantModelEfforts(ctx, user, model))
+}
+
+type assistantRunnerTurnModelKey struct{}
+
+// Carry the admitted selection into the internal chat request of this turn.
+type assistantRunnerTurnModel struct {
+	runnerID string
+	model    string
+	effort   string
+	resolved string
+}
+
+func (h *assistantHandlers) resolveAssistantTurnModel(ctx context.Context, user domain.User, model, effort string, runner domain.Runner) (string, error) {
+	engine, id := assistantModelEngine(model)
+	if runner.ID == "" || engine != runtime.AgentCLIAntigravity {
+		return model, validateAssistantEffort(ctx, user, model, effort)
+	}
+	// Legacy sessions can carry an explicit variant in the ID alone.
+	_, variantEffort := runtime.SplitAgyModelEffort(id)
+	if effort == "" && variantEffort == "" {
+		return model, nil
+	}
+	if admitted, ok := ctx.Value(assistantRunnerTurnModelKey{}).(assistantRunnerTurnModel); ok &&
+		admitted.runnerID == runner.ID && admitted.model == model && admitted.effort == effort {
+		return admitted.resolved, nil
+	}
+	_, catalog := runnerLoginModelCatalog(ctx, h.runnerControls, runner, engine, assistantEngineCustomModels(user, engine))
+	if catalog.Error != "" {
+		return "", fmt.Errorf("无法验证模型 %s 的思考强度：%s", model, catalog.Error)
+	}
+	for _, item := range catalog.Models {
+		if item.ID != id && (variantEffort == "" || item.Efforts[variantEffort] != id) {
+			continue
+		}
+		if effort == "" {
+			return model, nil
+		}
+		efforts := assistantModelEffortsInCatalog(engine+":"+item.ID, catalog.Models, true)
+		if err := validateAssistantModelEffort(model, effort, efforts); err != nil {
+			return "", err
+		}
+		return engine + ":" + firstNonEmpty(item.Efforts[effort], id), nil
+	}
+	return "", fmt.Errorf("模型 %s 已不在该执行机器的账号目录，请重新选择模型", model)
+}
+
+func validateAssistantModelEffort(model, effort string, efforts []string) error {
 	if !slices.Contains(efforts, effort) {
 		if len(efforts) == 0 {
 			return fmt.Errorf("模型 %s 仅支持默认思考强度", model)

@@ -89,7 +89,7 @@ func RunGitEnvironment(ctx context.Context, sandbox Sandbox, workspace string, c
 	for _, key := range workspaceGitSecretEnvironment {
 		env[key] = ""
 	}
-	if err := bindWorkspaceGitEnvironment(sandbox, workspace, env, credentials); err != nil {
+	if err := bindWorkspaceGitEnvironment(ctx, sandbox, workspace, env, credentials); err != nil {
 		closeRelay()
 		return nil, func() {}, err
 	}

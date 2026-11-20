@@ -132,6 +132,11 @@ func assistantEngineAnthropicModels(engine, protocol string) bool {
 	return engine == assistantEngineClaude || protocol == runtime.AgentCLIProtocolMessages
 }
 
+func antigravityUsesCustomEndpoint(user domain.User) bool {
+	_, baseURL := assistantEngineCredential(user, runtime.AgentCLIAntigravity)
+	return baseURL != "" || assistantEngineProtocol(user, runtime.AgentCLIAntigravity) == runtime.AgentCLIProtocolChat
+}
+
 func assistantEngineCustomModels(user domain.User, engine string) []domain.CLIModel {
 	switch engine {
 	case assistantEngineCodeBuddy:
@@ -315,8 +320,11 @@ func assistantDiscoveredModelsFor(ctx context.Context, user domain.User, engine 
 	key, baseURL := assistantEngineCredential(user, engine)
 	protocol := assistantEngineProtocol(user, engine)
 	listed := assistantSavedModels(user, engine)
-	if len(listed) == 0 && key != "" && baseURL != "" && protocol != runtime.AgentCLIProtocolGemini {
-		listed = cachedAssistantEngineDiscovery(ctx, assistantEngineAnthropicModels(engine, protocol), key, baseURL)
+	if len(listed) == 0 && key != "" && baseURL != "" {
+		if assistantEngineAnthropicModels(engine, protocol) {
+			protocol = runtime.AgentCLIProtocolMessages
+		}
+		listed = cachedAssistantEngineDiscovery(ctx, protocol, key, baseURL)
 	}
 	if engine == runtime.AgentCLICursor && key != "" && !user.AgentCLICredentials[engine].ModelsCustomized {
 		fresh, pending := cachedCursorModels(key)
@@ -331,7 +339,7 @@ func assistantDiscoveredModelsFor(ctx context.Context, user domain.User, engine 
 func assistantSavedModels(user domain.User, engine string) []assistantDiscoveredModel {
 	var listed []assistantDiscoveredModel
 	for _, model := range assistantEngineCustomModels(user, engine) {
-		if assistantValidEngineModel(model.ID) {
+		if model.ID != assistantDefaultModel && assistantValidEngineModel(model.ID) {
 			listed = append(listed, assistantDiscoveredModel{
 				ID: model.ID, Name: model.Name, Efforts: model.Efforts, DefaultEffort: model.DefaultEffort,
 				ReasoningEfforts: model.ReasoningEfforts, DiscoveredReasoningEfforts: model.DiscoveredReasoningEfforts,
@@ -353,11 +361,14 @@ func assistantEngineModels(ctx context.Context, user domain.User, runnerLogin ma
 			listed, pending = assistantDiscoveredModelsFor(ctx, user, engine)
 			cursorModelsPending = cursorModelsPending || pending
 		}
-		if len(listed) == 0 {
+		if len(listed) == 0 && (engine != runtime.AgentCLIAntigravity || runnerLogin[engine] || !antigravityUsesCustomEndpoint(user)) {
 			listed = assistantEngineBuiltinModels(engine)
 		}
 		catalog := cliModelsOf(listed)
 		for _, model := range listed {
+			if model.ID == assistantDefaultModel {
+				continue
+			}
 			name := strings.TrimSpace(model.Name)
 			if name == "" {
 				name = model.ID
@@ -366,7 +377,7 @@ func assistantEngineModels(ctx context.Context, user domain.User, runnerLogin ma
 			models = append(models, assistantModel{
 				ID:      id,
 				Name:    name,
-				Family:  assistantModelFamily(model.ID),
+				Family:  assistantModelFamily(model.ID, engine),
 				Engine:  engine,
 				Efforts: assistantModelEffortsForBaseURL(id, catalog, baseURL),
 			})
@@ -404,13 +415,13 @@ var (
 	assistantEngineDiscover = discoverAssistantEngineModels
 )
 
-func assistantDiscoveryKey(anthropic bool, apiKey, baseURL string) string {
-	sum := sha256.Sum256([]byte(fmt.Sprint(anthropic) + "\x00" + baseURL + "\x00" + apiKey))
+func assistantDiscoveryKey(protocol, apiKey, baseURL string) string {
+	sum := sha256.Sum256([]byte(protocol + "\x00" + baseURL + "\x00" + apiKey))
 	return hex.EncodeToString(sum[:])
 }
 
-func cachedAssistantEngineDiscovery(ctx context.Context, anthropic bool, apiKey, baseURL string) []assistantDiscoveredModel {
-	cacheKey := assistantDiscoveryKey(anthropic, apiKey, baseURL)
+func cachedAssistantEngineDiscovery(ctx context.Context, protocol, apiKey, baseURL string) []assistantDiscoveredModel {
+	cacheKey := assistantDiscoveryKey(protocol, apiKey, baseURL)
 	now := time.Now()
 	if cached, ok := assistantDiscoveryCache.Load(cacheKey); ok {
 		if entry := cached.(assistantDiscoveryEntry); now.Before(entry.expires) {
@@ -419,7 +430,13 @@ func cachedAssistantEngineDiscovery(ctx context.Context, anthropic bool, apiKey,
 	}
 	ctx, cancel := context.WithTimeout(ctx, assistantDiscoveryTimeout)
 	defer cancel()
-	models, err := assistantEngineDiscover(ctx, anthropic, apiKey, baseURL)
+	var models []assistantDiscoveredModel
+	var err error
+	if protocol == runtime.AgentCLIProtocolGemini {
+		models, err = discoverGeminiModels(ctx, apiKey, baseURL)
+	} else {
+		models, err = assistantEngineDiscover(ctx, protocol == runtime.AgentCLIProtocolMessages, apiKey, baseURL)
+	}
 	ttl := assistantDiscoveryTTL
 	if err != nil || len(models) == 0 {
 		models, ttl = nil, assistantDiscoveryFailureTTL
@@ -608,10 +625,11 @@ func discoverAssistantEngineModels(ctx context.Context, anthropic bool, apiKey, 
 // transcript that misses the turns in between.
 type assistantEngineState struct {
 	// Edited history starts a new journal once; errors resume that revision.
-	HistoryRevision int    `json:"historyRevision,omitempty"`
-	Engine          string `json:"engine"`
-	SessionID       string `json:"sessionId"`
-	Unstarted       bool   `json:"unstarted,omitempty"`
+	HistoryRevision         int    `json:"historyRevision,omitempty"`
+	Engine                  string `json:"engine"`
+	SessionID               string `json:"sessionId"`
+	Unstarted               bool   `json:"unstarted,omitempty"`
+	WorkspaceRepositoryHash string `json:"workspaceRepositoryHash,omitempty"`
 }
 
 func readAssistantEngineState(root string) assistantEngineState {

@@ -43,7 +43,7 @@ func TestPutAgentValidatesEffortLevel(t *testing.T) {
 
 func TestExecutorModelsCatalogListsPerCLI(t *testing.T) {
 	t.Setenv("AGENTFLOW_ASSISTANT_MODEL", "")
-	t.Setenv("AGENTFLOW_ASSISTANT_MODELS", "test-model")
+	t.Setenv("AGENTFLOW_ASSISTANT_MODELS", "fast-model,test-model")
 	s, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -63,6 +63,9 @@ func TestExecutorModelsCatalogListsPerCLI(t *testing.T) {
 		if model.ID == assistantDefaultModel {
 			t.Fatal("the CodeBuddy CLI default must not be listed as a model")
 		}
+	}
+	if cb.Models[0].ID != "fast-model" || cb.Models[0].Family != "codebuddy" {
+		t.Fatalf("CodeBuddy routing model = %+v", cb.Models[0])
 	}
 	codex := catalogs["codex"]
 	if len(codex.Models) < 2 || codex.Models[0].ID != "gpt-6.1-sol" || codex.Models[1].ID != "gpt-6.1-terra" || codex.Models[1].Name != "GPT-6.1 Terra" {
@@ -818,7 +821,7 @@ func TestExecutorModelsCatalogUsesOnlyTheEditorsSavedModels(t *testing.T) {
 		CodexModels:      []domain.CLIModel{{ID: "gateway/second", Name: "Second"}, {ID: "gateway/first"}},
 		ClaudeCodeModels: []domain.CLIModel{{ID: "custom-sonnet", Name: "Personal Sonnet"}},
 		AgentCLICredentials: map[string]domain.AgentCLICredential{
-			"opencode": {Models: []domain.CLIModel{{ID: "open/model", Name: "Open Model"}}},
+			"opencode": {Models: []domain.CLIModel{{ID: "alibaba/qwen3.7-plus", Name: "Qwen3.7 Plus"}}},
 		},
 	}
 	if err := assistant.repo.PutUser(user); err != nil {
@@ -841,7 +844,7 @@ func TestExecutorModelsCatalogUsesOnlyTheEditorsSavedModels(t *testing.T) {
 	if models := catalogs["claude"].Models; len(models) != 1 || models[0].Name != "Personal Sonnet" {
 		t.Fatalf("Claude models = %+v", models)
 	}
-	if models := catalogs["opencode"].Models; len(models) != 1 || models[0].Name != "Open Model" {
+	if models := catalogs["opencode"].Models; len(models) != 1 || models[0].Name != "Qwen3.7 Plus" || models[0].Family != "qwen" {
 		t.Fatalf("OpenCode models = %+v", models)
 	}
 	if !catalogs["codex"].CustomModel || len(catalogs["codex"].Efforts) == 0 {
