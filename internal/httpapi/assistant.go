@@ -449,6 +449,9 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 	if replyModel == "" {
 		replyModel = assistantDefaultModel
 	}
+	if report, ok := modelCtx.Value(scheduledUsageReportKey{}).(scheduledUsageReport); ok && report.GenerationID == assistantControlScopeFrom(modelCtx).GenerationID && report.Report != nil {
+		defer func() { report.Report(replyModel, turnUsage.snapshot()) }()
+	}
 	generate := h.generate
 	if generate == nil {
 		resume := false
@@ -1584,7 +1587,7 @@ func runAssistantCLI(ctx context.Context, req assistantCLIRequest, user domain.U
 	var streamFilter assistantStreamFilter
 	var stderrTail []string
 	var missingSession, modelStarted, credentialRejected bool
-	var usage domain.TokenUsage
+	var usageCollector assistantCLIUsage
 	missingText := "No conversation found with session ID: " + inv.sessionRef
 	var handle func(string)
 	sink := func(event domain.TelemetryEvent) {
@@ -1614,6 +1617,7 @@ func runAssistantCLI(ctx context.Context, req assistantCLIRequest, user domain.U
 	}
 	handle = func(line string) {
 		line = strings.TrimSpace(line)
+		usageCollector.consume(line)
 		attempt.tools(line)
 		if failure := assistantCLIStreamFailure(line); failure != nil {
 			streamError = failure
@@ -1642,7 +1646,6 @@ func runAssistantCLI(ctx context.Context, req assistantCLIRequest, user domain.U
 			switch result.Type {
 			case "result":
 				final, resultError = result.Result, result.IsError
-				usage = runtime.ParseTokenUsage(result.Usage)
 			case "error":
 				missingSession = missingSession || strings.Contains(result.Error, missingText)
 			case "assistant", "user", "stream_event":
@@ -1665,7 +1668,7 @@ func runAssistantCLI(ctx context.Context, req assistantCLIRequest, user domain.U
 	if err == nil {
 		attempt.phase("protocol")
 	}
-	if req.OnUsage != nil && assistantUsageReported(usage) {
+	if usage := usageCollector.snapshot(); req.OnUsage != nil && assistantUsageReported(usage) {
 		req.OnUsage(usage)
 	}
 	if inv.finish != nil {
@@ -1708,7 +1711,7 @@ func runAssistantCLI(ctx context.Context, req assistantCLIRequest, user domain.U
 }
 
 func assistantUsageReported(u domain.TokenUsage) bool {
-	return u.InputTokens+u.OutputTokens+u.CacheReadTokens+u.CacheWriteTokens > 0
+	return u.InputTokens > 0 || u.OutputTokens > 0 || u.CacheReadTokens > 0 || u.CacheWriteTokens > 0 || u.TotalTokens > 0 || u.ReasoningTokens > 0 || u.CostUSD > 0
 }
 
 // assistantTurnUsage sums the usage of every CLI invocation behind one reply

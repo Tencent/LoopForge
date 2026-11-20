@@ -279,6 +279,16 @@ type scheduleJobExecutionStatRow struct {
 	Failed     int       `gorm:"column:failed;not null;default:0"`
 	Timed      int       `gorm:"column:timed;not null;default:0"`
 	DurationMs int64     `gorm:"column:duration_ms;not null;default:0"`
+	// Token usage of the AI prompts, priced when each execution finished
+	// (the hour mixes models, so it cannot be priced afterwards).
+	Metered          int     `gorm:"column:metered;not null;default:0"`
+	TokensTotal      int64   `gorm:"column:tokens_total;not null;default:0"`
+	TokensInput      int64   `gorm:"column:tokens_input;not null;default:0"`
+	TokensOutput     int64   `gorm:"column:tokens_output;not null;default:0"`
+	TokensCacheRead  int64   `gorm:"column:tokens_cache_read;not null;default:0"`
+	TokensCacheWrite int64   `gorm:"column:tokens_cache_write;not null;default:0"`
+	Priced           int     `gorm:"column:priced;not null;default:0"`
+	CostUSD          float64 `gorm:"column:cost_usd;not null;default:0"`
 }
 
 func (scheduleJobExecutionStatRow) TableName() string { return "schedule_job_execution_stats" }

@@ -5408,6 +5408,21 @@ components:
         failed: { type: integer }
         running: { type: integer }
         avgMs: { type: integer, format: int64 }
+        metered:
+          type: integer
+          description: Finished executions that reported usage; missing usage is not counted as zero.
+        tokens:
+          type: object
+          description: Sum of each execution's reported total (or input plus output); cache details are not added again.
+          properties:
+            total: { type: integer, format: int64 }
+            input: { type: integer, format: int64 }
+            output: { type: integer, format: int64 }
+            cacheRead: { type: integer, format: int64 }
+            cacheWrite: { type: integer, format: int64 }
+        avgTokens: { type: integer, format: int64, description: Average tokens over metered executions only. }
+        priced: { type: integer, description: Executions whose cost could be estimated. }
+        costCny: { type: number, format: double, description: Sum of estimated costs in CNY. }
     ScheduleJobExecution:
       type: object
       description: One execution of a schedule job. Each job keeps its latest 200 executions.
@@ -5440,6 +5455,16 @@ components:
           type: integer
         assistantMessage:
           type: string
+        model:
+          type: string
+          description: Model used by this execution's AI generation.
+        usage:
+          $ref: "#/components/schemas/TokenUsage"
+          description: Optional usage for this execution including retries and usage before failure, excluding prior turns and downstream SOPs. Absence means unreported.
+        costCny:
+          type: number
+          format: double
+          description: Optional estimated cost in CNY, only present when pricing is known.
         sessionId:
           type: string
           description: Studio conversation an AI execution ran in.
