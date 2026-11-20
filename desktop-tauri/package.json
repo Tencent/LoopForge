@@ -1,0 +1,26 @@
+{
+  "name": "loopforge-desktop",
+  "version": "1.0.0",
+  "description": "LoopForge Windows Desktop App",
+  "type": "module",
+  "scripts": {
+    "dev": "tauri dev",
+    "tauri": "tauri",
+    "build:frontend": "vite build",
+    "build:backend": "bash scripts/build-backend.sh || powershell -File scripts/build-backend.ps1",
+    "build:tauri": "tauri build",
+    "build": "npm run build:backend && npm run build:tauri",
+    "build:dev": "npm run build:backend && tauri dev",
+    "clean": "rm -rf dist node_modules && cargo clean",
+    "lint": "echo 'Add linting later'",
+    "preview": "tauri preview",
+    "info": "tauri info"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.0.0"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.0.0",
+    "vite": "^6.0.0"
+  }
+}

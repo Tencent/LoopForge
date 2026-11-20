@@ -1,0 +1,34 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+build/
+target/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Tauri
+desktop-tauri/src-tauri/target/
+desktop-tauri/src-tauri/.cargo/
+
+# Go backend build artifacts
+loopforge-backend
+loopforge-backend.exe
