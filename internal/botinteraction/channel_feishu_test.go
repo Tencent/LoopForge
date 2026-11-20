@@ -127,7 +127,7 @@ func TestFeishuVerifyAndReplyClassification(t *testing.T) {
 	api.tokenCode = 0
 
 	conn := &feishuConn{channel: ch, bot: bot, api: ch.client(bot, Credential{Secret: "s"})}
-	msg := OutboundMessage{InteractionID: "i", Text: "答复", SendKey: "0123456789abcdef0123456789abcdef", Route: ReplyRoute{MessageID: "om_1"}}
+	msg := OutboundMessage{InteractionID: "i", Text: "答复", SendKey: "send-key-for-test", Route: ReplyRoute{MessageID: "om_1"}}
 	if got := conn.Reply(context.Background(), msg); got.Outcome != Delivered || got.PlatformMessageID != "om_reply" {
 		t.Fatalf("reply = %+v", got)
 	}

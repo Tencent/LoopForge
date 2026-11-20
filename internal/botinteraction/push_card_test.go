@@ -101,7 +101,7 @@ func TestDingTalkPushCardNeedsTemplate(t *testing.T) {
 	ch.api = srv.URL
 	bot := domain.NotificationBot{ID: "cfg-card", Channel: domain.BotChannelDingTalk, BotID: "ding-app", CredentialVersion: 1}
 	forgetDingTalkToken(bot)
-	msg := OutboundMessage{ChatID: "staff-1", Text: "文字", SendKey: "0123456789abcdef", Card: testCard()}
+	msg := OutboundMessage{ChatID: "staff-1", Text: "文字", SendKey: "generation-one-key", Card: testCard()}
 	if res := ch.Push(context.Background(), bot, Credential{Secret: "s"}, msg); res.Outcome != Delivered || paths[len(paths)-1] != "/v1.0/robot/oToMessages/batchSend" {
 		t.Fatalf("without template = %+v %v", res, paths)
 	}
@@ -110,7 +110,7 @@ func TestDingTalkPushCardNeedsTemplate(t *testing.T) {
 	if res.Outcome != Delivered || res.PlatformMessageID != "car-1" || paths[len(paths)-1] != "/v1.0/card/instances/createAndDeliver" {
 		t.Fatalf("card = %+v %v", res, paths)
 	}
-	if cardBody["cardTemplateId"] != "tpl-1.schema" || cardBody["outTrackId"] != "d-1.0123456789ab" || cardBody["callbackType"] != "STREAM" || cardBody["openSpaceId"] != "dtv1.card//IM_ROBOT.staff-1" {
+	if cardBody["cardTemplateId"] != "tpl-1.schema" || cardBody["outTrackId"] != "d-1.generation-o" || cardBody["callbackType"] != "STREAM" || cardBody["openSpaceId"] != "dtv1.card//IM_ROBOT.staff-1" {
 		t.Fatalf("body = %v", cardBody)
 	}
 	if deliver := cardBody["imRobotOpenDeliverModel"].(map[string]any); deliver["robotCode"] != "ding-app" || deliver["spaceType"] != "IM_ROBOT" {
@@ -123,7 +123,7 @@ func TestDingTalkPushCardNeedsTemplate(t *testing.T) {
 	if !strings.Contains(params["content"].(string), "请确认 ＊＊方案＊＊") {
 		t.Fatalf("markdown not neutralized: %v", params["content"])
 	}
-	if dingtalkCardDelivery("d-1.0123456789ab") != "d-1" {
+	if dingtalkCardDelivery("d-1.generation-o") != "d-1" {
 		t.Fatal("delivery from track")
 	}
 	cases := []struct {

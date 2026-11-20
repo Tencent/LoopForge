@@ -50,7 +50,7 @@ func TestFeishuPushCreatesOpenIDMessageWithUUID(t *testing.T) {
 	ch := newFeishuChannel()
 	ch.base = srv.URL
 	bot := domain.NotificationBot{ID: "cfg", Channel: domain.BotChannelFeishu, BotID: "cli_app"}
-	msg := OutboundMessage{ChatID: "ou_target", Text: "SOP 已完成", SendKey: "0123456789abcdef0123456789abcdef"}
+	msg := OutboundMessage{ChatID: "ou_target", Text: "SOP 已完成", SendKey: "send-key-for-test"}
 	res := ch.Push(context.Background(), bot, Credential{Secret: "s"}, msg)
 	if res.Outcome != Delivered || res.PlatformMessageID != "om_push" {
 		t.Fatalf("push = %+v", res)
