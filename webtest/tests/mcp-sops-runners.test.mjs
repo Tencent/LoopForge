@@ -126,3 +126,24 @@ test('runner cards expose runtime controls and persist limits, defaults, and aut
   await app.evaluate(`window.__removeRunner`);
   assert.ok(app.router.calls.some(c => c.method === 'DELETE' && c.path === '/api/runners/runner-local'));
 });
+
+test('runner cards distinguish compatible metadata, prereleases, and unknown versions', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  const runners = [
+    {id:'metadata',runnerVersion:'0.8.0+internal',status:'online'},
+    {id:'prerelease',runnerVersion:'0.8.0-rc.1',status:'online'},
+    {id:'unknown',runnerVersion:'dev',status:'online'},
+    {id:'offline',runnerVersion:'0.9.0+internal',status:'offline'},
+  ].map(r=>({...r,name:r.id,ownerUserId:1,os:'linux',arch:'amd64',runtimes:[]}));
+  app.evaluate(`state.currentUser={id:1,loginName:'owner'};state.data.users=[state.currentUser];state.minRunnerVersion='0.8.0';state.runners=${JSON.stringify(runners)};state.defaultRunnerId='';renderRunnersView()`);
+  const button = id => app.document.querySelector(`[data-set-default="${id}"]`);
+  assert.equal(button('metadata').disabled, false);
+  assert.equal(button('prerelease').disabled, true);
+  assert.match(button('prerelease').title, /过低/);
+  assert.equal(button('unknown').disabled, true);
+  assert.match(button('unknown').title, /无法判断.*兼容性/);
+  assert.doesNotMatch(button('unknown').title, /过低/);
+  assert.equal(button('offline').disabled, true);
+  assert.match(button('offline').title, /离线/);
+});
