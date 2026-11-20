@@ -6,15 +6,17 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 )
 
 // Coalesce token deltas while retaining the order of thinking, tools and status.
 // Bound transcript metadata independently of the live generation event window.
 type assistantActivityLog struct {
-	mu        sync.Mutex
-	events    []domain.AssistantActivityEvent
-	bytes     int
-	truncated bool
+	mu           sync.Mutex
+	events       []domain.AssistantActivityEvent
+	leadingSpace string
+	bytes        int
+	truncated    bool
 }
 
 func (l *assistantActivityLog) add(event assistantStreamEvent) {
@@ -35,6 +37,7 @@ func (l *assistantActivityLog) add(event assistantStreamEvent) {
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	l.leadingSpace = ""
 	starting := event.Kind == "thinkingStart"
 	if starting {
 		event.Kind = "thinking"
@@ -83,47 +86,45 @@ func (l *assistantActivityLog) appendTextLocked(event assistantStreamEvent) {
 	if text == "" {
 		return
 	}
-	// A token that is only a space or a newline is still Markdown. Dropping it
-	// turns "## 标题" into "##标题" and glues a table to the heading.
-	if strings.TrimSpace(text) == "" {
-		if len(l.events) == 0 || l.events[len(l.events)-1].Kind != "text" {
-			return
+	continues := len(l.events) > 0 && l.events[len(l.events)-1].Kind == "text"
+	trimmed := strings.TrimSpace(text)
+	// The first delta may contain only the indentation of a code block.
+	// Keep it until there is text to record. A complete block has its own indentation.
+	if !continues && trimmed == "" {
+		if !event.Full && len(l.leadingSpace)+len(text) <= 32000 {
+			l.leadingSpace += text
 		}
-		last := &l.events[len(l.events)-1]
-		if len(last.Text)+len(text) > 32000 || l.bytes+len(text) > 512<<10 {
-			l.truncated = true
-			return
-		}
-		last.Text += text
-		l.bytes += len(text)
 		return
 	}
+	if !event.Full {
+		text = l.leadingSpace + text
+	}
+	l.leadingSpace = ""
 	// The CLI sends the finished block again after the tool that followed it.
 	// That copy is already on screen; appending it would place the paragraph
 	// twice, once on each side of the tool.
-	if event.Full {
-		trimmed := strings.TrimSpace(text)
+	if event.Full && trimmed != "" {
 		for _, existing := range l.events {
 			if existing.Kind == "text" && strings.Contains(existing.Text, trimmed) {
 				return
 			}
 		}
-	}
-	if len(l.events) > 0 && l.events[len(l.events)-1].Kind == "text" {
-		last := &l.events[len(l.events)-1]
-		trimmed := strings.TrimSpace(text)
-		if event.Full && strings.Contains(last.Text, trimmed) {
-			return
-		}
-		if event.Full && strings.TrimSpace(last.Text) != "" && (strings.HasPrefix(trimmed, strings.TrimSpace(last.Text)) || strings.HasPrefix(replyCompact(trimmed), replyCompact(last.Text))) {
-			if len(text) > 32000 || l.bytes-len(last.Text)+len(text) > 512<<10 {
-				l.truncated = true
+		if continues {
+			last := &l.events[len(l.events)-1]
+			previous := strings.TrimSpace(last.Text)
+			if previous != "" && (strings.HasPrefix(trimmed, previous) || strings.HasPrefix(replyCompact(trimmed), replyCompact(previous))) {
+				if len(text) > 32000 || l.bytes-len(last.Text)+len(text) > 512<<10 {
+					l.truncated = true
+					return
+				}
+				l.bytes += len(text) - len(last.Text)
+				last.Text = text
 				return
 			}
-			l.bytes += len(text) - len(last.Text)
-			last.Text = text
-			return
 		}
+	}
+	if continues {
+		last := &l.events[len(l.events)-1]
 		if len(last.Text)+len(text) > 32000 || l.bytes+len(text) > 512<<10 {
 			l.truncated = true
 			return
@@ -160,6 +161,20 @@ func (l *assistantActivityLog) dropTextLocked() {
 	}
 	l.events = kept
 	l.bytes = used
+	l.leadingSpace = ""
+}
+
+// Remove blank outer lines and trailing space while preserving indentation
+// on the first nonblank line, which can start a Markdown code block.
+func trimAssistantReplyText(text string) string {
+	text = strings.TrimRightFunc(text, unicode.IsSpace)
+	for {
+		line, rest, ok := strings.Cut(text, "\n")
+		if !ok || strings.TrimSpace(line) != "" {
+			return text
+		}
+		text = rest
+	}
 }
 
 func replyCompact(text string) string {
@@ -221,7 +236,7 @@ func assistantVisibleReply(final string, events []domain.AssistantActivityEvent)
 		}
 	}
 	joined := strings.Join(parts, "\n\n")
-	final = strings.TrimSpace(final)
+	final = trimAssistantReplyText(final)
 	if joined == "" {
 		return dropRepeatedReply(final)
 	}
@@ -251,7 +266,7 @@ func assistantVisibleReply(final string, events []domain.AssistantActivityEvent)
 		return joined
 	}
 	if strings.HasPrefix(final, last) {
-		suffix := strings.TrimSpace(strings.TrimPrefix(final, last))
+		suffix := trimAssistantReplyText(strings.TrimPrefix(final, last))
 		if suffix == "" || replyCompact(suffix) == replyCompact(last) {
 			return joined
 		}
@@ -274,7 +289,7 @@ func stripAssistantCLINotices(text string) string {
 			kept = append(kept, line)
 		}
 	}
-	stripped := strings.TrimSpace(strings.Join(kept, "\n"))
+	stripped := trimAssistantReplyText(strings.Join(kept, "\n"))
 	if stripped == "" {
 		return text
 	}

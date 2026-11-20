@@ -158,6 +158,9 @@ func TestAssistantVisibleReplyPreservesIndentedCode(t *testing.T) {
 	activity.add(assistantStreamEvent{Kind: "answer", Text: "Earlier progress."})
 	activity.add(assistantStreamEvent{Kind: "tool", ID: "t1"})
 	activity.add(assistantStreamEvent{Kind: "answer", Text: intro})
+	if got := assistantVisibleReply(reply.Message, activity.snapshot()); got != "Earlier progress.\n\n"+final {
+		t.Fatalf("appending the unstreamed code altered the reply: %q", got)
+	}
 	activity.add(assistantStreamEvent{Kind: "tool", ID: "t2"})
 	line := `{"type":"assistant","message":{"content":[{"type":"text","text":"    first()\n    second()"}]}}`
 	for _, event := range assistantStreamEvents(line) {

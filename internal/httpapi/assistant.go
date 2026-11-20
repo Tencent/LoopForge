@@ -811,10 +811,10 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 			stampProposalDeadlines(reply.Drafts, deadline)
 		}
 		if note := h.registerTurnDeliveries(ctx, toolSession); note != "" {
-			reply.Message = strings.TrimSpace(reply.Message + "\n\n" + note)
+			reply.Message = trimAssistantReplyText(reply.Message + "\n\n" + note)
 		}
 		if note := toolSession.gitScrubNote(); note != "" {
-			reply.Message = strings.TrimSpace(reply.Message + "\n\n" + note)
+			reply.Message = trimAssistantReplyText(reply.Message + "\n\n" + note)
 		}
 		{
 			stored := append([]assistantMessage{}, req.Messages...)
@@ -1005,7 +1005,7 @@ func assistantProgressOnly(message string, messages []assistantMessage) bool {
 }
 
 func recoverNativeAssistantReply(raw, projectID string) (assistantReply, bool) {
-	raw = strings.TrimSpace(raw)
+	raw = trimAssistantReplyText(raw)
 	if raw == "" {
 		return assistantReply{}, false
 	}
@@ -1833,7 +1833,7 @@ func decodeAssistantCLIResult(final string, resultError bool, processErr error, 
 		}
 		return "", processErr
 	}
-	final = strings.TrimSpace(final)
+	final = trimAssistantReplyText(final)
 	if final == "" {
 		msg := ""
 		if len(stderr) > 0 {

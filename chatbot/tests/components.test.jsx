@@ -71,7 +71,7 @@ import {
   Menu,
   SelectMenu,
 } from "../src/ui.jsx";
-import { finalReply } from "../src/activity.js";
+import { finalReply, mergeActivity, savedActivity } from "../src/activity.js";
 
 const chat = {
   user: { id: 1 },
@@ -105,9 +105,32 @@ const run = {
 };
 
 describe("content and panels", () => {
+  const indentedCode = "    first()\n    second()";
+
+  test.each([
+    ["one delta", [indentedCode]],
+    ["split indentation", ["    ", "first()\n    second()"]],
+  ])("renders a code-only reply from %s", (_, deltas) => {
+    const steps = mergeActivity(
+      [],
+      deltas.map((text, sequence) => ({
+        data: { kind: "answer", text },
+        sequence,
+      })),
+    );
+    expect(finalReply("", steps)).toBe(indentedCode);
+    const answer = finalReply(indentedCode, savedActivity({ activity: steps }));
+    expect(answer).toBe(indentedCode);
+    const { container } = render(<RichContent message={answer} />);
+    expect(container.querySelector("pre code")?.textContent).toBe(
+      "first()\nsecond()",
+    );
+    expect(screen.getByRole("button", { name: "复制代码" })).toBeInTheDocument();
+  });
+
   test("renders recovered indented code as the final answer after tool activity", () => {
     const intro = "Minimal example:";
-    const code = "    first()\n    second()";
+    const code = indentedCode;
     const full = `${intro}\n\n${code}`;
     const steps = [
       { kind: "text", text: intro },
