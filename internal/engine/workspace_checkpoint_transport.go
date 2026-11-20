@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -218,7 +219,11 @@ func (e *Engine) HandleWorkspaceCheckpoint(w http.ResponseWriter, r *http.Reques
 				result.Payload = json.RawMessage(`{"ok":true}`)
 				break
 			}
-			value, err := e.HandlePreparedWorkspaceTerminal(r.Context(), run, &e.workspaceTerminals, scope, *request.Terminal, request.TerminalOwner)
+			var credentials runtime.TerminalGitCredentials
+			if request.Terminal.Operation == "open" {
+				credentials = e.WorkspaceTerminalGitCredentials(r.Context(), run, request.TerminalOwner)
+			}
+			value, err := e.HandlePreparedWorkspaceTerminal(r.Context(), run, &e.workspaceTerminals, scope, *request.Terminal, credentials)
 			result.Payload, _ = json.Marshal(value)
 			if err != nil {
 				result.Error = err.Error()
@@ -238,7 +243,14 @@ func (e *Engine) HandleWorkspaceCheckpoint(w http.ResponseWriter, r *http.Reques
 				result = runtime.WorkspaceCheckpointStatus(root)
 			}
 		} else if transfer {
-			result = e.checkpointTransfers.Handle(r.Context(), root, request)
+			if request.Operation == domain.RunnerWorkspaceOperationCheckpointCommit {
+				if err := e.discardEmptyWorkspaceContainer(r.Context(), run.ID, root); err != nil {
+					result.Error = err.Error()
+				}
+			}
+			if result.Error == "" {
+				result = e.checkpointTransfers.Handle(r.Context(), root, request)
+			}
 		} else if request.Operation == domain.RunnerWorkspaceOperationReclaim {
 			meta, saved := e.repo.WorkspaceCheckpoint(run.ID)
 			if !saved || meta.SavedAt == nil || meta.Error != "" || run.WorkspaceCleanedAt.IsZero() || request.CheckpointLease == "" || meta.LeaseToken != request.CheckpointLease || meta.LeaseUntil == nil || !meta.LeaseUntil.After(time.Now()) {
@@ -258,12 +270,14 @@ func (e *Engine) HandleWorkspaceCheckpoint(w http.ResponseWriter, r *http.Reques
 				result.Payload, _ = json.Marshal(map[string]any{"restoredArtifacts": restored})
 			}
 		} else if request.Operation == domain.RunnerWorkspaceOperationCheckpoint {
-			archive, err := runtime.CreateWorkspaceCheckpoint(root)
+			archive, err := runtime.CreateWorkspaceCheckpointContext(r.Context(), root)
 			if err != nil {
 				result.Error = err.Error()
 			} else {
 				result.Payload, _ = json.Marshal(map[string]any{"checkpoint": archive})
 			}
+		} else if err := e.discardEmptyWorkspaceContainer(r.Context(), run.ID, root); err != nil {
+			result.Error = err.Error()
 		} else if err := runtime.RestoreWorkspaceCheckpoint(root, request.Checkpoint); err != nil {
 			result.Error = err.Error()
 		} else {
@@ -272,4 +286,20 @@ func (e *Engine) HandleWorkspaceCheckpoint(w http.ResponseWriter, r *http.Reques
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(result)
+}
+
+func (e *Engine) discardEmptyWorkspaceContainer(ctx context.Context, runID, root string) error {
+	info, err := os.Lstat(root)
+	if err != nil || !info.IsDir() {
+		return nil
+	}
+	hasContent, err := runtime.WorkspaceDirHasContent(root)
+	if err != nil || hasContent {
+		return nil
+	}
+	if err := e.releaseRunEnvironment(runID, false); err != nil {
+		return err
+	}
+	e.sandboxes.DiscardRunContainer(ctx, runID)
+	return nil
 }

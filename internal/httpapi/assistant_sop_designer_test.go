@@ -119,6 +119,17 @@ func TestSOPDesignerConversationIsPrivateAndServerOwned(t *testing.T) {
 	if !containsString(listedSessionIDs(t, h, user, "?surface=sop-designer&workflowId=sop-a"), "designer-chat") {
 		t.Fatal("designer conversation is not listed for its SOP")
 	}
+	second := saved
+	second.ID, second.ProjectID = "designer-second", "second"
+	if err := h.repo.PutAssistantSession(user.ID, second); err != nil {
+		t.Fatal(err)
+	}
+	for project, want := range map[string]string{"workbench": "designer-chat", "second": "designer-second"} {
+		ids := listedSessionIDs(t, h, user, "?surface=sop-designer&workflowId=sop-a&projectId="+project)
+		if len(ids) != 1 || ids[0] != want {
+			t.Fatalf("project %s: got %v, want %s", project, ids, want)
+		}
+	}
 	if containsString(listedSessionIDs(t, h, user, "?surface=sop-designer&workflowId=sop-b"), "designer-chat") {
 		t.Fatal("designer conversation listed for another SOP")
 	}

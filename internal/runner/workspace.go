@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -115,8 +116,26 @@ func (d *Daemon) handleRunnerWorkspaceBrowser(ctx context.Context, request domai
 }
 
 func (d *Daemon) readRunnerWorkspace(ctx context.Context, request domain.RunnerWorkspaceRequest) domain.RunnerWorkspaceResponse {
-	if request.Operation == "conversation_process" {
+	d.updateMu.RLock()
+	defer d.updateMu.RUnlock()
+	if d.updateReady.Load() {
+		return domain.RunnerWorkspaceResponse{Status: http.StatusConflict, Error: "Runner 即将重启，请稍后重试"}
+	}
+	ctx = d.withDockerRunnerHelperWait(ctx)
+	ctx = gitwork.WithSSHKnownHosts(ctx, request.GitSSHKnownHosts)
+	if request.Operation == domain.RunnerWorkspaceOperationConversationCLI {
 		return d.conversationProcess(ctx, request)
+	}
+	if request.Operation == domain.RunnerWorkspaceOperationLoginModels {
+		return d.runnerLoginModels(ctx, request.ModelProvider)
+	}
+	if request.Operation == domain.RunnerWorkspaceOperationSSHHostKeyProbe {
+		dialer := &net.Dialer{}
+		key, err := gitwork.ProbeSSHHostPublicKey(ctx, request.SSHHostKeyAddress, dialer.DialContext)
+		if err != nil {
+			return domain.RunnerWorkspaceResponse{Status: http.StatusBadGateway, Error: err.Error()}
+		}
+		return runnerWorkspacePayload(key)
 	}
 	if request.Operation == domain.RunnerWorkspaceOperationBrowser {
 		return d.handleRunnerWorkspaceBrowser(ctx, request)
@@ -143,6 +162,11 @@ func (d *Daemon) readRunnerWorkspace(ctx context.Context, request domain.RunnerW
 				return workspaceBusyResponse("workspace is still in use")
 			}
 			defer gate.Unlock()
+			if request.Operation == domain.RunnerWorkspaceOperationCheckpointCommit {
+				if hasContent, err := runtime.WorkspaceDirHasContent(root); err == nil && !hasContent {
+					d.closeRunSandboxes(ctx, request.RunID)
+				}
+			}
 		}
 		return d.checkpointTransfers.Handle(ctx, root, request)
 	}
@@ -155,6 +179,9 @@ func (d *Daemon) readRunnerWorkspace(ctx context.Context, request domain.RunnerW
 			return workspaceBusyResponse("workspace is still in use")
 		}
 		defer gate.Unlock()
+		if hasContent, err := runtime.WorkspaceDirHasContent(root); err == nil && !hasContent {
+			d.closeRunSandboxes(ctx, request.RunID)
+		}
 		if err := runtime.RestoreWorkspaceCheckpoint(root, request.Checkpoint); err != nil {
 			return runnerWorkspaceError(err)
 		}
@@ -213,7 +240,7 @@ func (d *Daemon) readRunnerWorkspace(ctx context.Context, request domain.RunnerW
 			return workspaceBusyResponse("workspace is still in use")
 		}
 		defer gate.Unlock()
-		archive, err := runtime.CreateWorkspaceCheckpoint(root)
+		archive, err := runtime.CreateWorkspaceCheckpointContext(ctx, root)
 		if err != nil {
 			return runnerWorkspaceError(err)
 		}

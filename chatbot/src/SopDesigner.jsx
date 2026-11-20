@@ -74,6 +74,7 @@ function DraftNote({ draft, onPlace }) {
 export default function SopDesigner({ search = location.search, canvas = window.parent }) {
   const initial = useMemo(() => designerParams(search), [search]);
   const [context, setContext] = useState({ projectId: initial.projectId, workflowId: initial.workflowId });
+  const currentContext = useRef(context);
   const [catalog, setCatalog] = useState({ models: [], engines: [] });
   const [model, setModel] = useState(readModel);
   const [menu, setMenu] = useState(null);
@@ -106,8 +107,12 @@ export default function SopDesigner({ search = location.search, canvas = window.
     const onMessage = (event) => {
       if (event.source !== canvas || event.origin !== location.origin) return;
       if (event.data?.type === CONTEXT) {
-        setContext((old) => old.projectId === (event.data.projectId || "") && old.workflowId === (event.data.workflowId || "")
-          ? old : { projectId: event.data.projectId || "", workflowId: event.data.workflowId || "" });
+        const next = { projectId: event.data.projectId || "", workflowId: event.data.workflowId || "" };
+        const old = currentContext.current;
+        if (old.projectId !== next.projectId || old.workflowId !== next.workflowId) {
+          currentContext.current = next;
+          setContext(next);
+        }
       }
       if (event.data?.type === NEW_CONVERSATION) startOver();
     };
@@ -141,18 +146,21 @@ export default function SopDesigner({ search = location.search, canvas = window.
     setSessionId("");
     setGeneration(null);
     setLive(empty);
-    if (!context.workflowId) return;
-    const query = `?surface=${SURFACE}&workflowId=${encodeURIComponent(context.workflowId)}`;
+    setStarting(false);
+    setError("");
+    owned.current.clear();
+    if (!context.projectId || !context.workflowId) return;
+    const query = `?surface=${SURFACE}&workflowId=${encodeURIComponent(context.workflowId)}&projectId=${encodeURIComponent(context.projectId)}`;
     api(`/api/assistant/sessions${query}`)
       .then((rows) => {
-        const latest = current && latestSession(rows, context.workflowId);
+        const latest = current && latestSession(rows, context.projectId, context.workflowId);
         if (latest) setSessionId(latest.id);
       })
       .catch((e) => current && setError(e.message));
     return () => {
       current = false;
     };
-  }, [context.workflowId]);
+  }, [context.projectId, context.workflowId]);
 
   useEffect(() => {
     if (!sessionId) return;
@@ -277,6 +285,7 @@ export default function SopDesigner({ search = location.search, canvas = window.
     setStarting(true);
     try {
       const begun = await beginOnCanvas(canvas);
+      if (currentContext.current !== context) return;
       if (!begun.ok) throw new Error(begun.error || "画布暂时不能编排");
       // A conversation stays on one CLI; another CLI starts a new one and
       // keeps the canvas.
@@ -294,6 +303,7 @@ export default function SopDesigner({ search = location.search, canvas = window.
         canvas: begun.canvas ?? null,
         messages: [message],
       });
+      if (currentContext.current !== context) return;
       owned.current.add(g.id);
       setText("");
       setSession({ ...(base || { id, messages: [] }), messages: [...(base?.messages || []), message] });
@@ -301,10 +311,11 @@ export default function SopDesigner({ search = location.search, canvas = window.
       setGeneration(g);
       if (id !== sessionId) setSessionId(id);
     } catch (e) {
+      if (currentContext.current !== context) return;
       setError(e.message);
       postToCanvas(END, { error: e.message }, canvas);
     } finally {
-      setStarting(false);
+      if (currentContext.current === context) setStarting(false);
     }
   }
 

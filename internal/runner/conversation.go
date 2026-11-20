@@ -22,6 +22,12 @@ func (d *Daemon) conversationProcess(ctx context.Context, request domain.RunnerW
 		return domain.RunnerWorkspaceResponse{Status: 400, Error: "invalid conversation process request"}
 	}
 	root := filepath.Join(d.cfg.DefaultWorkspaceRoot, ".conversations", req.SessionKey)
+	if req.Transient {
+		if request.RunID != "" {
+			return domain.RunnerWorkspaceResponse{Status: 400, Error: "transient processes cannot use a run workspace"}
+		}
+		root = filepath.Join(d.cfg.DefaultWorkspaceRoot, ".conversations", ".transient", req.SessionKey)
+	}
 	workspace := ""
 	if request.RunID != "" {
 		var err error

@@ -29,12 +29,13 @@ describe("sop-designer helpers", () => {
 
   test("pick the newest conversation of the SOP", () => {
     const rows = [
-      { id: "old", workflowId: "w", updatedAt: "2026-11-01T00:00:00Z" },
-      { id: "other", workflowId: "x", updatedAt: "2026-11-09T00:00:00Z" },
-      { id: "new", workflowId: "w", updatedAt: "2026-11-05T00:00:00Z" },
+      { id: "old", projectId: "p1", workflowId: "w", updatedAt: "2026-11-01T00:00:00Z" },
+      { id: "other-project", projectId: "p2", workflowId: "w", updatedAt: "2026-11-09T00:00:00Z" },
+      { id: "other", projectId: "p1", workflowId: "x", updatedAt: "2026-11-09T00:00:00Z" },
+      { id: "new", projectId: "p1", workflowId: "w", updatedAt: "2026-11-05T00:00:00Z" },
     ];
-    expect(latestSession(rows, "w").id).toBe("new");
-    expect(latestSession([], "w")).toBe(null);
+    expect(latestSession(rows, "p1", "w").id).toBe("new");
+    expect(latestSession([], "p1", "w")).toBe(null);
   });
 
   test("read the workflows_save draft of a reply", () => {
@@ -101,7 +102,7 @@ describe("SopDesigner", () => {
     send.mockReset();
     read.mockImplementation(async (path) => {
       if (path === "/api/assistant/models") return { default: "cb-model", models: [{ id: "cb-model", name: "CB model" }, { id: "codex:gpt", name: "GPT", engine: "codex" }], engines: [{ id: "codebuddy", name: "CodeBuddy", configured: true }, { id: "codex", name: "Codex", configured: true }] };
-      if (path.startsWith("/api/assistant/sessions?")) return stored ? [{ id: stored.id, workflowId: "sop-a", updatedAt: "2026-11-17T08:00:00Z" }] : [];
+      if (path.startsWith("/api/assistant/sessions?")) return stored ? [{ id: stored.id, projectId: stored.projectId, workflowId: stored.workflowId, updatedAt: "2026-11-17T08:00:00Z" }] : [];
       if (path.includes("/generation")) {
         if (!generation) throw Object.assign(new Error("not found"), { status: 404 });
         return generation;
@@ -162,21 +163,38 @@ describe("SopDesigner", () => {
 
   test("reopening the panel shows the conversation without replaying its draft", async () => {
     const body = { id: "sop-a", name: "交付", nodes: [], edges: [] };
-    stored = { id: "chat-old", workflowId: "sop-a", messages: [{ role: "user", content: "搭一条流程" }, draftReply(body)] };
+    stored = { id: "chat-old", projectId: "p1", workflowId: "sop-a", messages: [{ role: "user", content: "搭一条流程" }, draftReply(body)] };
     generation = { id: "g-old", status: "completed", events: [] };
     render(<SopDesigner search="?surface=sop-designer&projectId=p1&workflowId=sop-a" canvas={canvas} />);
     expect(await screen.findByText("搭一条流程")).toBeTruthy();
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(posted.some((m) => m.type === REPLY)).toBe(false);
-    expect(read).toHaveBeenCalledWith("/api/assistant/sessions?surface=sop-designer&workflowId=sop-a");
+    expect(read).toHaveBeenCalledWith("/api/assistant/sessions?surface=sop-designer&workflowId=sop-a&projectId=p1");
 
+    reply({ type: CONTEXT, projectId: "p2", workflowId: "sop-a" });
+    await waitFor(() => expect(read).toHaveBeenCalledWith("/api/assistant/sessions?surface=sop-designer&workflowId=sop-a&projectId=p2"));
+    expect(screen.queryByText("搭一条流程")).toBeNull();
     reply({ type: NEW_CONVERSATION });
     expect(await screen.findByText("需求交付 · 澄清到放行")).toBeTruthy();
     expect(posted.at(-1).type).toBe(RESET);
 
     stored = null;
     reply({ type: CONTEXT, projectId: "p1", workflowId: "sop-b" });
-    await waitFor(() => expect(read).toHaveBeenCalledWith("/api/assistant/sessions?surface=sop-designer&workflowId=sop-b"));
+    await waitFor(() => expect(read).toHaveBeenCalledWith("/api/assistant/sessions?surface=sop-designer&workflowId=sop-b&projectId=p1"));
+  });
+
+  test("a delayed generation response stays with the project that sent it", async () => {
+    let finish;
+    send.mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
+    render(<SopDesigner search="?surface=sop-designer&projectId=p1&workflowId=sop-a" canvas={canvas} />);
+    fireEvent.change(await screen.findByLabelText("描述要编排的流程"), { target: { value: "只给项目一的消息" } });
+    fireEvent.click(screen.getByLabelText("发送编排要求"));
+    await waitFor(() => expect(send).toHaveBeenCalled());
+    reply({ type: CONTEXT, projectId: "p2", workflowId: "sop-a" });
+    await waitFor(() => expect(read).toHaveBeenCalledWith("/api/assistant/sessions?surface=sop-designer&workflowId=sop-a&projectId=p2"));
+    const oldId = send.mock.calls[0][1].sessionId;
+    await act(async () => finish({ id: "previous-generation", sessionId: oldId, status: "running" }));
+    expect(read.mock.calls.some(([url]) => url.includes("/sessions/" + oldId))).toBe(false);
   });
 
   test("a refused or failed turn is reported and the canvas is told to restore", async () => {
@@ -202,7 +220,7 @@ describe("SopDesigner", () => {
 
   test("another CLI starts a new conversation and keeps the choice", async () => {
     const body = { id: "sop-a", name: "交付", nodes: [], edges: [] };
-    stored = { id: "chat-old", workflowId: "sop-a", messages: [{ role: "user", content: "搭一条流程" }, draftReply(body)] };
+    stored = { id: "chat-old", projectId: "p1", workflowId: "sop-a", messages: [{ role: "user", content: "搭一条流程" }, draftReply(body)] };
     send.mockImplementation(async (path, request) => ({ id: "g2", status: "running", events: [], sessionId: request.sessionId }));
     render(<SopDesigner search="?surface=sop-designer&projectId=p1&workflowId=sop-a" canvas={canvas} />);
     await screen.findByText("搭一条流程");

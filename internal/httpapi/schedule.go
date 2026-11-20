@@ -171,6 +171,31 @@ func (h *scheduleHandlers) scheduleJobs(c *gin.Context) {
 		job.LastPulled = prior.LastPulled
 		job.LastDispatched = prior.LastDispatched
 		job.LastAssistantMessage = prior.LastAssistantMessage
+		job.LastTraceID = prior.LastTraceID
+		job.LastSessionID = prior.LastSessionID
+		// The pinned conversation is chosen by the first fixed-mode run, never
+		// by a save; leaving fixed mode unpins it, so re-enabling starts fresh.
+		job.FixedSessionID = ""
+		if job.SkipDispatch && strings.TrimSpace(job.SessionMode) == domain.ScheduleSessionFixed {
+			job.SessionMode = domain.ScheduleSessionFixed
+			if prior.UsesFixedSession() && prior.ProjectID == job.ProjectID {
+				job.FixedSessionID = prior.FixedSessionID
+			}
+		} else {
+			job.SessionMode = ""
+		}
+		// SessionKeep only limits jobs that open a conversation per execution;
+		// a fixed-mode job keeps its choice for when it leaves fixed mode.
+		if job.SkipDispatch {
+			keep, err := domain.NormalizeScheduleSessionKeep(job.SessionKeep)
+			if err != nil {
+				c.JSON(400, gin.H{"error": err.Error()})
+				return
+			}
+			job.SessionKeep = keep
+		} else {
+			job.SessionKeep = 0
+		}
 		job.NotificationSnapshot = prior.NotificationSnapshot
 		job.NotificationResult = prior.NotificationResult
 		var saveErr error
@@ -194,8 +219,8 @@ func (h *scheduleHandlers) scheduleJobs(c *gin.Context) {
 
 // bindScheduleRunAs binds an AI job to the user who saves it: the creator, and
 // later whoever edits it, so nobody can make a prompt run with another
-// member's keys. The binding is never taken from the request. The saver's own
-// key for the job's CLI is used, else the platform's shared CodeBuddy key
+// member's credentials. The binding is never taken from the request. The saver's
+// default machine login or own key is used, else the platform's shared CodeBuddy key
 // (limited to the models it allows, its default when requestedModel is empty);
 // with neither the save is refused, since the job could not run. Without a
 // signed-in user the job stays on the project owner's keys. A saver without
@@ -237,7 +262,7 @@ func (h *scheduleHandlers) bindScheduleRunAs(c *gin.Context, job *domain.Schedul
 		c.JSON(200, stored)
 		return true
 	}
-	_, shared, ok := scheduleKeyUser(h.repo, self, engine)
+	_, shared, ok := scheduleCredentialUser(h.repo, self, engine)
 	if !ok {
 		if stopOnly() {
 			return false
@@ -291,6 +316,9 @@ func scheduleSharedRequestedModel(model string) string {
 }
 
 func scheduleMissingKeyError(engine string) string {
+	if assistantSupportsRunnerLogin(engine) {
+		return fmt.Sprintf("你还没有可用的 %s 凭据，请在默认执行机器启用账号登录（Runner %s 及以上），或在个人配置填写 API Key", assistantEngineLabel(engine), domain.RunnerVersionCLISettings)
+	}
 	if engine != assistantEngineCodeBuddy {
 		return fmt.Sprintf("你还没有配置 %s API Key，平台共享 Key 只支持 CodeBuddy 模型：请先在个人配置中填写，或改选 CodeBuddy 模型", assistantEngineLabel(engine))
 	}
@@ -322,6 +350,37 @@ func (h *scheduleHandlers) scheduleJob(c *gin.Context) {
 	c.JSON(200, map[string]bool{"ok": true})
 }
 
+// scheduleJobEnabled starts or stops a job's schedule without a full save, so
+// toggling never rewrites its prompt, key binding or session. A run already
+// in progress finishes either way.
+// 路由: g.POST("/api/schedule-jobs/:id/enabled", h.scheduleJobEnabled)
+func (h *scheduleHandlers) scheduleJobEnabled(c *gin.Context) {
+	var body struct {
+		Enabled *bool `json:"enabled"`
+	}
+	if !decode(c, &body) {
+		return
+	}
+	if body.Enabled == nil {
+		c.JSON(400, gin.H{"error": "enabled is required"})
+		return
+	}
+	job, ok := h.repo.ScheduleJob(c.Param("id"))
+	if !ok {
+		c.JSON(404, gin.H{"error": "schedule job not found"})
+		return
+	}
+	if !h.requireScheduleJob(c, job, true) {
+		return
+	}
+	saved, err := h.repo.SetScheduleJobEnabled(job.ID, *body.Enabled)
+	if err != nil {
+		respond(c, err)
+		return
+	}
+	c.JSON(200, saved)
+}
+
 // scheduleJobRun starts a scheduled job on the server and returns 202 with
 // lastStatus=running. Closing the client does not cancel the run; poll GET
 // /api/schedule-jobs until lastStatus leaves running.
@@ -351,8 +410,15 @@ func (h *scheduleHandlers) scheduleJobRun(c *gin.Context) {
 }
 
 func (h *scheduleHandlers) dispatchScheduled(job domain.ScheduleJob, issue domain.Issue, triggerOrigin string) error {
-	_, err := dispatchIssue(h.deps, dispatchRequest{IssueID: issue.ID, WorkflowID: job.ResolveWorkflow(issue), ScheduleJobID: job.ID, TriggerOrigin: triggerOrigin})
+	_, err := h.dispatchScheduledRun(job, issue, triggerOrigin)
 	return err
+}
+
+// dispatchScheduledRun is dispatchScheduled reporting the started run ID for
+// the execution record.
+func (h *scheduleHandlers) dispatchScheduledRun(job domain.ScheduleJob, issue domain.Issue, triggerOrigin string) (string, error) {
+	task, err := dispatchIssue(h.deps, dispatchRequest{IssueID: issue.ID, WorkflowID: job.ResolveWorkflow(issue), ScheduleJobID: job.ID, TriggerOrigin: triggerOrigin})
+	return task.RunID, err
 }
 
 func (h *scheduleHandlers) guardScheduledBaseline(job domain.ScheduleJob, issues []domain.Issue) (map[string]domain.ScheduleJobBlocker, error) {

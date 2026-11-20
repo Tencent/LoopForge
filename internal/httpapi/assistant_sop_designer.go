@@ -442,7 +442,7 @@ func workflowDraftGraphWarnings(body json.RawMessage) []string {
 // assistantSessionsForSurface keeps designer conversations out of the
 // workbench history. ?surface=sop-designer lists only the caller's own
 // designer conversations, optionally for one SOP (?workflowId=).
-func assistantSessionsForSurface(items []assistantConversation, surface, workflowID string, userID int64) []assistantConversation {
+func assistantSessionsForSurface(items []assistantConversation, surface, workflowID, projectID string, userID int64) []assistantConversation {
 	out := make([]assistantConversation, 0, len(items))
 	for _, item := range items {
 		designer := item.Source == domain.AssistantSourceSOPDesigner
@@ -452,7 +452,7 @@ func assistantSessionsForSurface(items []assistantConversation, surface, workflo
 			}
 			continue
 		}
-		if designer && item.UserID == userID && (workflowID == "" || item.WorkflowID == workflowID) {
+		if designer && item.UserID == userID && (projectID == "" || item.ProjectID == projectID) && (workflowID == "" || item.WorkflowID == workflowID) {
 			out = append(out, item)
 		}
 	}

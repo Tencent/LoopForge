@@ -1559,10 +1559,15 @@ textarea.pa-input{height:auto;min-height:76px;padding:9px 11px;resize:vertical;l
 .platform-field{display:flex;flex-direction:column;gap:6px;margin:0;font-size:12.5px;color:var(--muted)}
 .platform-field>span,.platform-field-head>span{font-weight:650;color:var(--text)}
 .platform-field-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px}
+.platform-ssh-host-form[hidden]{display:none}
+.platform-ssh-host-form textarea{resize:vertical;font-family:monospace}
+.platform-ssh-host-manual summary{cursor:pointer;color:var(--text);font-size:13px}
+.platform-ssh-host-manual .platform-field,.platform-ssh-host-manual button{margin-top:12px}
+.platform-ssh-host-info code{overflow-wrap:anywhere}
 .platform-field-head small{color:var(--muted-2);font-size:12px}
 .platform-field-hint{color:var(--muted-2);font-size:12px;line-height:1.5}
-.platform-field input,.platform-field select{width:100%;box-sizing:border-box;padding:9px 12px;border:1px solid var(--line-strong);border-radius:10px;background:var(--panel);color:var(--text);font-size:13px}
-.platform-field input:focus,.platform-field select:focus{outline:none;border-color:var(--blue);box-shadow:0 0 0 3px color-mix(in srgb,var(--blue) 18%,transparent)}
+.platform-field input,.platform-field select,.platform-ssh-host-form textarea{width:100%;box-sizing:border-box;padding:9px 12px;border:1px solid var(--line-strong);border-radius:10px;background:var(--panel);color:var(--text);font-size:13px}
+.platform-field input:focus,.platform-field select:focus,.platform-ssh-host-form textarea:focus{outline:none;border-color:var(--blue);box-shadow:0 0 0 3px color-mix(in srgb,var(--blue) 18%,transparent)}
 .platform-shared-key-link{align-self:flex-start;font-size:12px;color:var(--blue);text-decoration:none}
 .platform-shared-key-link:hover{text-decoration:underline}
 .platform-model-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:2px 12px;max-height:288px;overflow:auto;padding:8px;border:1px solid var(--line);border-radius:10px;background:var(--bg-soft)}
@@ -2194,7 +2199,7 @@ html[data-theme="light"] body{color-scheme:light}html[data-theme="light"] .platf
 .confirm-icon-wrap.info{background:rgba(91,140,255,.12);border-color:rgba(91,140,255,.28);color:var(--blue)}
 .confirm-header-text{min-width:0;flex:1}
 .confirm-header-text h3{margin:0 0 6px;font-size:16px;font-weight:700;line-height:1.35;color:var(--text)}
-.confirm-header-text p{margin:0;font-size:12.5px;line-height:1.55;color:var(--muted);word-break:break-word}
+.confirm-header-text p{margin:0;font-size:12.5px;line-height:1.55;color:var(--muted);word-break:break-word;white-space:pre-line}
 .confirm-prompt-wrap{margin-top:16px}
 .confirm-prompt-wrap label{display:block;font-size:11.5px;color:var(--muted-2);margin-bottom:6px;font-weight:600}
 .confirm-prompt-wrap input,.confirm-prompt-wrap select{width:100%;height:38px;padding:0 12px;font-size:13px}
@@ -2236,7 +2241,7 @@ html[data-theme="light"] body{color-scheme:light}html[data-theme="light"] .platf
 .obs-card>.pager{margin:10px 0 2px;border:0;background:transparent;padding:8px 0 0}
 
 /* ================= 个人凭证（harness-ui 设计语言） ================= */
-#personalSettingsContent,.credential-scrim,.github-connect,.git-ssh-dialog{
+#personalSettingsContent,.credential-scrim,.github-connect,.git-ssh-dialog,.runner-model-editor{
   --cr-accent:var(--hui-accent);--cr-accent-hover:var(--hui-accent-hover);
   --cr-surface:var(--hui-surface);--cr-canvas:var(--hui-canvas);--cr-elevated:var(--hui-soft);
   --cr-text:var(--hui-text);--cr-text-2:var(--hui-secondary);--cr-muted:var(--hui-muted);--cr-tertiary:var(--hui-tertiary);
@@ -2408,6 +2413,8 @@ html[data-theme="dark"] .credential-logo.monochrome img{filter:invert(1)}
 .git-ssh-missing{margin:8px 0 0;color:var(--hui-error);font-size:12px;line-height:1.6}
 .git-ssh-form-actions{justify-content:flex-end}
 .git-ssh-dialog textarea{padding:8px 11px;border:1px solid var(--hui-border);border-radius:8px;background:var(--hui-surface);color:var(--hui-text);font-size:12px}
+.git-http-warning{margin:0 0 12px}
+.git-http-select{width:100%;min-height:32px;padding:0 8px;border:0;background:transparent;color:var(--hui-text);font:inherit;font-size:13px}
 .credential-input.is-plain input{padding-right:11px}
 .credential-input input::placeholder{color:var(--cr-tertiary)}
 .credential-input input:hover{border-color:var(--cr-line-strong)}
@@ -2437,6 +2444,11 @@ html[data-theme="dark"] .credential-logo.monochrome img{filter:invert(1)}
 .credential-note>svg{flex:none;margin-top:3px}
 .credential-note.is-warn{border-color:color-mix(in srgb,#d99a2b 25%,transparent);background:var(--cr-warn-fill);color:var(--cr-warn)}
 .credential-note b{font-weight:600}
+.credential-subscription-note{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:10px;margin-top:14px;padding:10px 12px;font-size:13px}
+.credential-subscription-note>svg{align-self:start;color:var(--cr-accent)}
+.credential-subscription-note strong{display:block;color:var(--cr-text);font-weight:600}
+.credential-subscription-note p{margin:2px 0 0}
+.credential-subscription-note .button{white-space:nowrap}
 .credential-vline{display:flex;align-items:center;gap:7px;margin:0;color:var(--cr-muted);font-size:12px}
 .credential-vline:empty{display:none}
 .credential-vline.is-err{color:var(--cr-err)}.credential-vline.is-info{color:var(--cr-info)}.credential-vline.is-warn{color:var(--cr-warn)}
@@ -2465,6 +2477,15 @@ html[data-theme="dark"] .credential-logo.monochrome img{filter:invert(1)}
 .credential-catalog-row:hover{border-color:var(--cr-line)}
 .credential-catalog-row .credential-input input{height:32px;font-size:12.5px}
 .credential-catalog-row .credential-input input.credential-mono{font-size:12px}
+.credential-catalog-effort{grid-column:2/4;min-width:0;padding:0 2px 5px;color:var(--cr-muted);font-size:11.5px}
+.credential-catalog-effort summary{cursor:pointer;line-height:24px}
+.credential-catalog-effort summary span{margin-left:8px;color:var(--cr-tertiary);overflow-wrap:anywhere}
+.credential-catalog-effort-mode{display:flex;align-items:center;gap:10px;margin:4px 0 8px}
+.credential-catalog-effort-mode select{padding:4px 8px;border:1px solid var(--cr-line);border-radius:6px;background:var(--cr-surface);color:var(--cr-text);font:inherit}
+.credential-catalog-effort-levels{display:flex;flex-wrap:wrap;gap:8px 14px;padding-bottom:4px}
+.credential-catalog-effort-levels label{display:flex;align-items:center;gap:5px;cursor:pointer;color:var(--cr-text-2)}
+.credential-catalog-effort-levels input{margin:0;accent-color:var(--cr-accent)}
+.credential-catalog-effort-levels small{flex-basis:100%;color:var(--cr-tertiary);font-size:11px;line-height:1.5}
 .credential-catalog-grip{display:grid;place-items:center;width:24px;height:30px;margin:0;padding:0;border:0;border-radius:6px;background:transparent;color:var(--cr-tertiary);cursor:grab;touch-action:none}
 .credential-catalog-grip:hover{background:var(--cr-hover);color:var(--cr-text)}
 .credential-catalog-grip:focus-visible{outline:2px solid color-mix(in srgb,var(--cr-accent) 65%,transparent);outline-offset:1px;color:var(--cr-text)}
@@ -2615,6 +2636,8 @@ html[data-theme="dark"] .credential-scrim::before{background:rgb(0 0 0 / .55)}
   .credential-account{flex-wrap:wrap}
   .credential-account-note{margin-left:52px;white-space:normal}
   .credential-section-head{flex-direction:column;align-items:flex-start}
+  .credential-subscription-note{grid-template-columns:auto minmax(0,1fr)}
+  .credential-subscription-note .button{grid-column:2;justify-self:start}
   .credential-next,.credential-ready{width:100%;margin-left:0}
   .credential-row-main{flex-wrap:wrap}
   .credential-row-who{flex-basis:calc(100% - 60px)}

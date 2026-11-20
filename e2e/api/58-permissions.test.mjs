@@ -31,7 +31,7 @@ test('separate account cannot access private conversations, edit workspaces or i
   await put(`/api/assistant/sessions/${id}`,{title:'E2E private',messages:[{role:'user',content:'Private acceptance fixture'}]});
   track('private session',()=>del(`/api/assistant/sessions/${id}`));
   await second('GET',`/api/assistant/sessions/${id}`,undefined,[403,404]);
-  await second('PUT',`/api/users/${owner.id}/credentials`,{gitTokenClear:true},403);
+  await second('PUT',`/api/users/${owner.id}/credentials`,{codeBuddyApiKeyClear:true},403);
   await second('PUT','/api/platform/admins',{loginName:identity.loginName,role:'admin'},403);
   await second('GET',`/api/assistant/references?projectId=${cfg.projectId}`,undefined,403);
   const wf=await createWorkflow('permissions',[script('seed','echo isolated > note.txt'),approval('gate','seed')]);

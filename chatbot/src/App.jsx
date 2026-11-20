@@ -75,7 +75,8 @@ import { usePanelPresence } from "./usePanelPresence";
 import HomeWelcome from "./HomeWelcome";
 import ModelPicker from "./ModelPicker";
 import ModelProviderIcon, { hasProviderLogo } from "./ModelProviderIcon";
-import PermissionPicker from "./PermissionPicker";
+import PermissionPicker, { normalizeApprovalMode } from "./PermissionPicker";
+import { useComposerOptions } from "./composer-preferences.js";
 import { conversationEngine, engineBrand } from "./engines.js";
 import { effortOptions } from "./effort.js";
 import QuickAccessWizard from "./QuickAccessWizard";
@@ -96,6 +97,10 @@ const THEME_OPTIONS = [
   { value: "system", label: "跟随系统" },
 ];
 const environmentVisibilityKey = "agentflow.native-chat.environmentVisibility.v1";
+const sessionApprovalScope = ({ id, projectId }) => `approval.session:${JSON.stringify([id, projectId || ""])}`;
+const draftApprovalScope = (slot, projectId) =>
+  slot.startsWith("issue:") ? `approval.${JSON.stringify([slot, projectId])}` : `approval.${slot}`;
+const draftSnapshot = ({ text, attachments, references }) => JSON.stringify({ text, attachments, references });
 const sidebarWidthKey = "agentflow.sidebarWidth";
 const sidebarLayoutKey = "agentflow.sidebarLayoutVersion";
 const sidebarLayoutVersion = "grasp-reference-v3";
@@ -342,7 +347,6 @@ export default function App() {
     [repositorySelections, setRepositorySelections] = useState({}),
     [uploading, setUploading] = useState(false),
     [runsRefresh, setRunsRefresh] = useState(0),
-    [approval, setApproval] = useState("confirm"),
     [quickAccessOpen, setQuickAccessOpen] = useState(
       () => new URLSearchParams(location.search).get("quickAccess") === "1",
     ),
@@ -370,13 +374,59 @@ export default function App() {
     scroll = useRef(),
     follow = useRef(true),
     draftReady = useRef(null),
+    draftOrigin = useRef(null),
+    savingDraftApproval = useRef(null),
     previousArtifacts = useRef({ id: null, ids: new Set(), baselined: false }),
     dialogInput = useRef(),
     composerPreviews = useRef(new Map());
   // A requirement handed over by the workbench drafts in its own slot so the
   // project's unsent new-conversation draft and attachments stay untouched.
   const newDraftSlot = issueDraft && issueDraft.projectId === chat.projectId ? "issue:" + issueDraft.issueId : "new:" + chat.projectId;
-  const draftKey = `agentflow.native-chat.draft.${chat.user?.id || "guest"}.${chat.activeId || newDraftSlot}`;
+  const draftKeyPrefix = `agentflow.native-chat.draft.${chat.user?.id || "guest"}.`;
+  const draftKey = draftKeyPrefix + (chat.activeId || newDraftSlot);
+  const visibleDraft = useRef(null);
+  visibleDraft.current = { key: draftKey, text, attachments, references };
+  const approvalOwner = realChat.user?.isGuest ? "guest" : realChat.user?.id;
+  const { readOptions: readApproval, saveOptions: saveApproval } = useComposerOptions(approvalOwner);
+  const approvalScope = chat.activeId
+    ? chat.session?.id === chat.activeId && sessionApprovalScope(chat.session)
+    : draftApprovalScope(newDraftSlot, chat.projectId);
+  const approval = normalizeApprovalMode(approvalScope && readApproval(approvalScope).mode);
+  function setApproval(value) {
+    if (!approvalScope) return;
+    const mode = normalizeApprovalMode(value);
+    const saving = savingDraftApproval.current;
+    if (saving?.scope === approvalScope && saving.owner === approvalOwner &&
+        draftSnapshot(visibleDraft.current) === saving.snapshot) saving.mode = mode;
+    saveApproval(approvalScope, { mode });
+  }
+  function clearDraftApproval(scope, mode) {
+    if (readApproval(scope).mode === mode) saveApproval(scope, null);
+  }
+  function persistDraft(key, draft) {
+    try {
+      localStorage.setItem(key, JSON.stringify(draft));
+    } catch {
+      chat.setError("浏览器存储空间不足，草稿仍保留在当前页面。请移除较大的附件后重试。");
+    }
+  }
+  function clearDraftIfUnchanged(key, snapshot) {
+    const visible = visibleDraft.current;
+    const inComposer = visible.key === key && draftReady.current === key;
+    const stored = readJSON(key, null);
+    if ((inComposer && draftSnapshot(visible) !== snapshot) ||
+        (stored && draftSnapshot(stored) !== snapshot)) return false;
+    try { localStorage.removeItem(key); } catch {}
+    if (inComposer) {
+      draftOrigin.current = null;
+      setMention(null);
+      setText("");
+      setAttachments([]);
+      setReferences([]);
+      if (input.current) input.current.style.height = "";
+    }
+    return true;
+  }
   useEffect(() => {
     if (!chat.activeId) return;
     setIssueDraft(null);
@@ -456,9 +506,11 @@ export default function App() {
     chat.projects.find((p) => p.id === chat.projectId)?.name ||
     (chat.projectId && (chat.session?.projectName || chat.projectId)) ||
     "个人对话";
-  const selectedModel = chat.models.find((m) => m.id === chat.model);
+  const sessionLoading = !!chat.activeId && chat.session?.id !== chat.activeId;
+  const composerLoading = sessionLoading || chat.replyStatePending;
+  const selectedModel = chat.models.find((m) => m.id === chat.model) || (!chat.local ? chat.modelDetails : null);
   const modelLabel =
-    selectedModel?.name?.replace(/^Claude-/, "").replace(/^GPT-/, "") || "模型";
+    (selectedModel?.name || chat.model)?.replace(/^Claude-/, "").replace(/^GPT-/, "") || "模型";
   // The CLI switch is only for a conversation that has not started. A reply
   // in flight, or one already saved, keeps that CLI; another CLI needs a new chat.
   const lockedExecutorId = chat.session
@@ -559,18 +611,15 @@ export default function App() {
     setText(value.text || "");
     setAttachments(value.attachments || []);
     setReferences(value.references || []);
+    draftOrigin.current = value.copiedFrom || null;
     draftReady.current = draftKey;
   }, [draftKey, chat.user?.id]);
   useEffect(() => {
     if (!chat.user || draftReady.current !== draftKey) return;
-    try {
-      localStorage.setItem(
-        draftKey,
-        JSON.stringify({ text, attachments, references }),
-      );
-    } catch {
-      chat.setError("浏览器存储空间不足，草稿仍保留在当前页面。请移除较大的附件后重试。");
-    }
+    persistDraft(draftKey, {
+      text, attachments, references,
+      ...(draftOrigin.current && { copiedFrom: draftOrigin.current }),
+    });
   }, [text, attachments, references, draftKey, chat.user?.id]);
   // A requirement handed over by the workbench ("创建并去对话澄清") opens a
   // new conversation with the requirement already @-mentioned. It waits for
@@ -761,26 +810,71 @@ export default function App() {
     closeMenu();
   }
   async function submit() {
-    if (uploading) return;
+    if (uploading || composerLoading || draftReady.current !== draftKey ||
+        (!chat.activeId && savingDraftApproval.current)) return;
     follow.current = true;
+    const snapshot = draftSnapshot({ text, attachments, references });
+    const draftApproval = chat.activeId ? null : { owner: approvalOwner, scope: approvalScope, mode: approval, snapshot };
+    const copiedFrom = draftOrigin.current;
+    if (draftApproval) savingDraftApproval.current = draftApproval;
+    let savedDraftKey, savedApprovalMode;
+    const onSessionCreated = draftApproval ? (saved) => {
+      savedDraftKey = draftKeyPrefix + saved.id;
+      savedApprovalMode = draftApproval.mode;
+      saveApproval(sessionApprovalScope(saved), { mode: savedApprovalMode });
+    } : undefined;
     const ok = await chat.send({
       text,
       attachments,
       references,
       approvalMode: approval,
+      onSessionCreated,
+      isDraftActive: draftApproval ? () => visibleDraft.current.key === draftKey &&
+        draftSnapshot(visibleDraft.current) === snapshot : undefined,
+    }).finally(() => {
+      if (savingDraftApproval.current === draftApproval) savingDraftApproval.current = null;
     });
+    const visible = visibleDraft.current;
     if (ok) {
-      setMention(null);
-      setText("");
-      setAttachments([]);
-      for (const a of attachments) releaseComposerPreview(a.id);
-      setReferences([]);
-      localStorage.removeItem(draftKey);
-      if (input.current) input.current.style.height = "";
-    } else {
-      // A failed first message may already have opened a new conversation,
-      // which loads that conversation's (empty) draft. Keep what was typed.
-      setText((current) => current || text);
+      const clearedDraft = clearDraftIfUnchanged(draftKey, snapshot);
+      if (clearedDraft && savedDraftKey) clearDraftApproval(draftApproval.scope, savedApprovalMode);
+      let clearedVisible = clearedDraft && visible.key === draftKey;
+      if (copiedFrom?.snapshot === snapshot && /^(new|issue):/.test(copiedFrom.slot)) {
+        const originKey = draftKeyPrefix + copiedFrom.slot;
+        if (clearDraftIfUnchanged(originKey, snapshot)) {
+          if (copiedFrom.approvalScope) clearDraftApproval(copiedFrom.approvalScope, copiedFrom.mode);
+          clearedVisible ||= visible.key === originKey;
+        }
+      }
+      if (!clearedDraft && copiedFrom) {
+        // A newer draft can share this slot. Retire the consumed copy's
+        // linkage while keeping the newer draft itself.
+        const origin = JSON.stringify(copiedFrom);
+        if (visible.key === draftKey && JSON.stringify(draftOrigin.current) === origin)
+          draftOrigin.current = null;
+        const stored = readJSON(draftKey, null);
+        if (stored && JSON.stringify(stored.copiedFrom) === origin) {
+          const { text, attachments, references } = stored;
+          persistDraft(draftKey, { text, attachments, references });
+        }
+      }
+      for (const attachment of attachments) {
+        if (clearedVisible || !visible.attachments.some((current) => current.id === attachment.id))
+          releaseComposerPreview(attachment.id);
+      }
+    } else if (visible.key === savedDraftKey && draftReady.current === savedDraftKey &&
+        !visible.text && !visible.attachments.length && !visible.references.length) {
+      // The session was saved but the first message was rejected. Keep its
+      // content in the visible conversation so the user can retry.
+      draftOrigin.current = {
+        slot: newDraftSlot,
+        approvalScope: draftApproval.scope,
+        mode: savedApprovalMode,
+        snapshot,
+      };
+      setText(text);
+      setAttachments(attachments);
+      setReferences(references);
     }
   }
   function editQueued(item) {
@@ -1716,7 +1810,7 @@ export default function App() {
                             )}
                             label="复制回复"
                           />
-                          <MessageInfo message={message} />
+                          <MessageInfo message={message} sessionExecutor={chat.session?.executor} />
                           {!chat.local && !chat.readOnly && message.generationId && !message.failure ? <GenerationDiagnostics sessionId={chat.session.id} generationId={message.generationId} compact /> : null}
                         </div>
                       </>
@@ -2122,9 +2216,10 @@ export default function App() {
                         e.target.value = "";
                       }}
                     />
-                    {chat.executors.length > 1 && !pinnedExecutor ? (
+                    {chat.executors.length > 1 && !pinnedExecutor && !chat.submitting ? (
                       <PermissionPicker
                         label="CLI"
+                        disabled={composerLoading}
                         options={chat.executors.map((executor) => {
                           const brand = engineBrand(executor.id);
                           return {
@@ -2145,6 +2240,7 @@ export default function App() {
                     ) : null}
                     <ModelPicker
                       models={chat.models}
+                      disabled={composerLoading}
                       value={chat.model}
                       label={modelLabel}
                       open={menu?.type === "model"}
@@ -2156,6 +2252,7 @@ export default function App() {
                     />
                     <PermissionPicker
                       label="思考强度"
+                      disabled={composerLoading}
                       options={effortOptions(selectedModel)}
                       value={chat.effort}
                       onSelect={chat.setEffort}
@@ -2163,6 +2260,7 @@ export default function App() {
                       onOpenChange={(open) => setMenu(open ? { type: "effort" } : null)}
                     />
                     <PermissionPicker
+                      disabled={sessionLoading}
                       value={approval}
                       onSelect={setApproval}
                       open={menu?.type === "approval"}
@@ -2194,7 +2292,7 @@ export default function App() {
                           !chat.ready ||
                           chat.submitting ||
                           chat.machineSaving ||
-                          (chat.activeId && chat.session?.id !== chat.activeId) ||
+                          composerLoading ||
                           (!text.trim() && !attachments.length) ||
                           uploading
                         }
@@ -2325,7 +2423,8 @@ export default function App() {
                       );
                       if (stored) {
                         closeDialog();
-                        await chat.regenerate(stored);
+                        const mode = normalizeApprovalMode(readApproval(sessionApprovalScope(stored)).mode);
+                        await chat.regenerate(stored, mode);
                       }
                     }
                   }}

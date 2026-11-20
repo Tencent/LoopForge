@@ -6,12 +6,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"agentflow/internal/domain"
 	"agentflow/internal/gitwork"
 	"agentflow/internal/repo"
+	"agentflow/internal/runtime"
 )
 
 const ConversationWorkspaceIdleTTL = time.Hour
@@ -156,12 +156,12 @@ func (e *Engine) MaterializeConversationWorkspace(ctx context.Context, id string
 	// Same checkout as an SOP node: the responsible user's Git Token, the
 	// frozen base branch, and a fresh work branch.
 	credentials := env.credentialSnapshot()
-	gitToken := credentials.GitToken
-	ctx = withGitToken(e.withPreparationProgress(ctx, run.ID), gitToken)
-	ctx = gitwork.WithSSHKeys(ctx, credentials.GitSSHKeys)
+	ctx = e.withPreparationProgress(ctx, run.ID)
+	ctx = withRunGitCredentials(ctx, credentials)
+	ctx = gitwork.WithSSHKeys(e.withSSHKnownHosts(ctx), credentials.GitSSHKeys)
 	return env.prepareRepositoriesOnce(func() error {
 		if err := prepareRepositories(ctx, env.Workspace(), run.RepositoryContexts()); err != nil {
-			return explainGitAuthFailure(fmt.Errorf("repository checkout: %w", err), strings.TrimSpace(gitToken) != "")
+			return explainGitAuthFailure(fmt.Errorf("repository checkout: %w", err), len(credentials.GitHTTPCredentials) > 0)
 		}
 		return nil
 	})
@@ -190,7 +190,7 @@ func (e *Engine) materializeRunnerConversationWorkspace(ctx context.Context, run
 			return nil
 		}
 		if !runnerWorkspaceBusy(response) || time.Now().After(deadline) {
-			return explainGitAuthFailure(fmt.Errorf("%s", response.Error), strings.TrimSpace(e.resolveRunCredentials(run).GitToken) != "")
+			return explainGitAuthFailure(fmt.Errorf("%s", response.Error), len(e.resolveRunCredentials(run).GitHTTPCredentials) > 0)
 		}
 		select {
 		case <-ctx.Done():
@@ -285,10 +285,24 @@ func (e *Engine) ensureConversationWorkspace(ctx context.Context, id, token stri
 	}
 	root := e.sandboxes.RunWorkspace(id)
 	if info, statErr := os.Lstat(root); statErr == nil && info.IsDir() && !e.foreignWorkspaceBind(run) {
-		if err = e.verifyStoredCheckpoint(ctx, id); err != nil {
+		hasContent, contentErr := runtime.WorkspaceDirHasContent(root)
+		if contentErr != nil {
+			return contentErr
+		}
+		if hasContent {
+			if err = e.verifyStoredCheckpoint(ctx, id); err != nil {
+				return err
+			}
+			return e.repo.RestoreCheckpointWorkspaceBinding(id, token, e.workspaceHost, e.sandboxes.Root(), time.Now().UTC())
+		}
+		// An empty or .agentflow-only directory created before restoration
+		// holds no user files; tear down any container bound to its old inode
+		// so restoreConversationCheckpoint can atomically replace it and the
+		// next container bind sees the restored files.
+		if err = e.releaseRunEnvironment(id, false); err != nil {
 			return err
 		}
-		return e.repo.RestoreCheckpointWorkspaceBinding(id, token, e.workspaceHost, e.sandboxes.Root(), time.Now().UTC())
+		e.sandboxes.DiscardRunContainer(ctx, id)
 	}
 	if err = e.restoreConversationCheckpoint(ctx, run, root); err != nil {
 		return err

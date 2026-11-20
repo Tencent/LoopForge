@@ -7,7 +7,6 @@
 
 <p align="center">
   <a href="https://github.com/Tencent/LoopForge/actions/workflows/platform.yml"><img src="https://img.shields.io/github/actions/workflow/status/Tencent/LoopForge/platform.yml?branch=main&label=CI&style=flat-square" alt="CI"></a>
-  <a href="https://www.npmjs.com/package/loopforge-cli"><img src="https://img.shields.io/npm/v/loopforge-cli?label=loopforge-cli&color=7b61ff&style=flat-square" alt="npm loopforge-cli"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-7b61ff?style=flat-square" alt="MIT License"></a>
   <img src="https://img.shields.io/badge/自主部署-Docker-526ce8?style=flat-square&logo=docker&logoColor=white" alt="Docker 自主部署">
   <a href="https://github.com/Tencent/LoopForge/stargazers"><img src="https://img.shields.io/github/stars/Tencent/LoopForge?style=flat-square&color=f59e0b" alt="GitHub stars"></a>
@@ -26,7 +25,7 @@
   <a href="#快速开始">快速开始</a> ·
   <a href="#sop-如何运行">SOP</a> ·
   <a href="#功能一览">功能</a> ·
-  <a href="#loopforge-local">本地版</a> ·
+  <a href="#loopforge-local">本地版（旧版）</a> ·
   <a href="#常见问题">FAQ</a> ·
   <a href="#文档">文档</a>
 </p>
@@ -65,7 +64,7 @@ https://github.com/user-attachments/assets/10b8ae2e-d7e7-4b78-8876-c45818d4a08f
 
 - **可重复。** 同一条 SOP、同样的阶段、同样的检查，每个需求都一样。内置后端、前端、缺陷修复、产品方案四类 SOP 可直接起步。
 - **角色分离。** 方案、实现、评审、测试各有独立的角色提示词、执行器、模型、规则、Skills 和 MCP 工具；同一个角色既能做 SOP 节点，也能在对话中作为子 Agent 调用。
-- **人在回路。** 在关键节点设置人工审批：看完报告再放行，或打回到指定环节返工。
+- **人在回路之上。** Agent 自主运行，你负责监督：随时暂停、引导或接管；需要人拍板的地方由人工关口拦下，看完报告再放行，或打回到指定环节返工。
 - **可观测、可续跑。** 节点状态、工具轨迹、日志和产物集中呈现；支持暂停、重试失败步骤、从任意节点重跑。
 - **技术栈和服务器都是你的。** 执行器支持 10 种编程 Agent CLI，从 CodeBuddy、Codex、Claude Code 到 OpenCode、Cursor CLI 等；工具接入 GitHub、Skills、MCP；运行环境可选 Docker 沙箱或你自己的机器。
 
@@ -192,23 +191,11 @@ GitLab、Gitea、Gogs 等托管可[配置 Git SSH](docs/deployment.md#git-reposi
 
 ## LoopForge Local
 
-不想部署服务端？**LoopForge Local** 把内置交付工作流直接带进你正在用的编程助手：
+> **旧版（Legacy）。** 已发布的 LoopForge Local（`loopforge-cli`）版本仍可安装。[Local 使用指南](docs/local/usage.zh-CN.md)介绍如何安装固定版本、继续使用既有工作流并保留产物。
 
-```bash
-# 在目标项目目录中执行，例如安装到 Claude Code
-npx -y loopforge-cli@latest install claude
-```
+要在编码 Agent 中使用平台项目和 SOP，请[通过 MCP 将 CodeBuddy 接入 LoopForge 实例](docs/local/usage.zh-CN.md#通过-mcp-连接-loopforge)。Local 仍可在编码 Agent 中独立运行内置工作流，无需启动 LoopForge 服务端。
 
-然后在 Claude Code 中运行 `/start-devflow "<你的需求>"`。
-
-| 宿主 | 支持情况 |
-| --- | --- |
-| Claude Code · CodeBuddy · Codex · Cursor | Classic（默认）与 Portable 版 |
-| Pi | Portable 版 |
-
-各宿主的入口见[本地使用指南](docs/local/usage.zh-CN.md)，版本差异见[版本说明](docs/local/editions.md)，源码位于 [`local/`](local/)。Local 目前运行内置工作流；平台 SOP 导出后在本地独立执行是后续方向，尚未实现。
-
-| | 平台版 | Local |
+| | 平台版 | Local（旧版） |
 | --- | --- | --- |
 | 适合 | 团队共享对话工作区、SOP、审批与运行记录 | 个人开发者在 IDE / CLI 中使用 |
 | 依赖 | Docker + Python 3 | Node.js 20+、Python 3.8+ 和一个编程助手 |
@@ -241,7 +228,7 @@ LoopForge 不替代它们，而是编排它们。每个 Agent 步骤和每轮对
 | --- | --- |
 | 部署、账号、执行机器与凭据 | [部署指南](docs/deployment.md) |
 | 对话工作区、AI 定时任务与 Token 成本口径 | [对话工作区](docs/conversation-workspaces.md) · [AI 定时任务](docs/ai-scheduled-task-capabilities.md) · [Token 成本统计](docs/token-pricing.md) |
-| 本地工作流的安装、使用与版本选择 | [LoopForge Local](docs/local/usage.zh-CN.md) · [版本差异](docs/local/editions.md) |
+| 继续使用 Local 旧版工作流 | [LoopForge Local](docs/local/usage.zh-CN.md) · [版本差异](docs/local/editions.md) |
 | 扩展平台或接入 HTTP / MCP API | [架构](docs/architecture.md) · [API 参考](docs/api/README.md) · [共享定时任务 API](docs/api/shared-schedules.md) |
 | 参与前端开发 | [前端设计约定](design.md) |
 | 功能覆盖与发布就绪情况 | [实测记录](docs/validation.md) · [验收矩阵](docs/testing/acceptance-matrix.md) · [发布评审](docs/release-readiness.md) |

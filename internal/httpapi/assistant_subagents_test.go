@@ -14,12 +14,21 @@ import (
 	"testing"
 
 	"agentflow/internal/domain"
+	"agentflow/internal/repo"
 )
 
 func TestPersonalConversationRunsInItsOwnRootWithProjectSkills(t *testing.T) {
 	h, u := workbenchFixture(t)
-	if err := h.repo.PutSkill(domain.SkillDefinition{ID: "notes", Name: "notes", ProjectID: "workbench", Content: "记录要点"}); err != nil {
+	if err := h.repo.PutProject(domain.Project{ID: "other", Name: "Other", OwnerID: u.ID}); err != nil {
 		t.Fatal(err)
+	}
+	for _, skill := range []domain.SkillDefinition{
+		{ID: "notes", Name: "notes", ProjectID: "workbench", Content: "记录要点"},
+		{ID: "shared-notes", Name: "shared-notes", ProjectID: "other", Shared: true, Content: "共享要点"},
+	} {
+		if err := h.repo.PutSkill(skill); err != nil {
+			t.Fatal(err)
+		}
 	}
 	root := t.TempDir()
 	bin := filepath.Join(root, "codebuddy")
@@ -53,8 +62,11 @@ printf '%s\n' '{"type":"result","result":"好"}'
 	if other == home || strings.HasPrefix(other, assistantCLIHome(u.ID)) {
 		t.Fatalf("conversations share a CLI home: %s", other)
 	}
-	if entries, _ := os.ReadDir(filepath.Join(other, ".codebuddy", "skills")); len(entries) != 0 {
-		t.Fatal("a conversation without a project received project skills")
+	if _, err := os.Stat(filepath.Join(other, ".codebuddy", "skills", "notes", "SKILL.md")); !os.IsNotExist(err) {
+		t.Fatal("a conversation without a project received a project skill", err)
+	}
+	if _, err := os.Stat(filepath.Join(other, ".codebuddy", "skills", "shared-notes", "SKILL.md")); err != nil {
+		t.Fatal("a conversation without a project did not receive the shared skill", err)
 	}
 	if assistantConversationRoot(u.ID, "same") == assistantConversationRoot(u.ID+1, "same") {
 		t.Fatal("a reused session ID reaches another user's root")
@@ -174,13 +186,18 @@ func TestSkillMentionsAreScopedHintedAndWrittenToHome(t *testing.T) {
 		t.Fatalf("skill hint missing: %s", req.contextText)
 	}
 	root := t.TempDir()
-	if err := h.writeConversationAssets(root, req); err != nil {
+	// Sharing installs the skill on a project turn that never mentions it.
+	plain := assistantRequest{ProjectID: "workbench", Messages: []assistantMessage{{Role: "user", Content: "写一下"}}}
+	if err := h.writeConversationAssets(root, plain); err != nil {
 		t.Fatal(err)
 	}
 	for _, name := range []string{"lint", "shareddoc"} {
 		if _, err := os.Stat(filepath.Join(root, "home", ".codebuddy", "skills", name, "SKILL.md")); err != nil {
 			t.Fatalf("skill %s not written: %v", name, err)
 		}
+	}
+	if _, err := os.Stat(filepath.Join(root, "home", ".codebuddy", "skills", "deploy", "SKILL.md")); !os.IsNotExist(err) {
+		t.Fatalf("another project's private skill was installed: %v", err)
 	}
 	req.Messages[0].References = []domain.AssistantReference{{Type: "skill", ID: "deploy"}}
 	if err := h.prepareWorkbenchContext(c, &req, u); err != errForeignReference {
@@ -193,10 +210,171 @@ func TestSkillMentionsAreScopedHintedAndWrittenToHome(t *testing.T) {
 	}
 }
 
+// Every shared skill on the platform reaches the CLI home, whichever project
+// owns it, while private skills of other projects stay out; a conversation
+// without a project gets the same shared set. A shared skill nobody mentioned
+// brings only its SKILL.md; mentioning it installs its other files too.
+func TestEverySharedSkillIsInstalledWithItsSkillMD(t *testing.T) {
+	h, u := workbenchFixture(t)
+	for _, project := range []string{"docs", "ops"} {
+		if err := h.repo.PutProject(domain.Project{ID: project, Name: project, OwnerID: u.ID}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	runbook := domain.SkillDefinition{ID: "ops-runbook", Name: "ops-runbook", ProjectID: "ops", Shared: true, Content: "runbook", Files: map[string]string{"scripts/check.sh": "echo ok"}}
+	for _, skill := range []domain.SkillDefinition{
+		{ID: "own", Name: "own", ProjectID: "workbench", Content: "own"},
+		{ID: "docs-writer", Name: "docs-writer", ProjectID: "docs", Shared: true, Content: "write"},
+		{ID: "docs-draft", Name: "docs-draft", ProjectID: "docs", Content: "draft"},
+		runbook,
+		{ID: "ops-secret", Name: "ops-secret", ProjectID: "ops", Content: "secret"},
+	} {
+		if err := h.repo.PutSkill(skill); err != nil {
+			t.Fatal(err)
+		}
+	}
+	asset := []byte{0, 1, 2, 255}
+	skillMD := []byte("---\nname: ops-runbook\ndescription: run the ops checks\n---\nRun scripts/check.sh.\n")
+	if err := h.repo.PutSkillFiles("ops-runbook", []repo.SkillFileInput{
+		{Path: "SKILL.md", Content: skillMD, Mode: 0o644},
+		{Path: "assets/check.bin", Content: asset, Mode: 0o644},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	stored, ok := h.repo.Skill("ops-runbook")
+	if !ok {
+		t.Fatal("ops-runbook not stored")
+	}
+	// The test store also seeds the platform's shared skills; they must be
+	// installed too, so only the skills created here are pinned.
+	for project, want := range map[string]map[string]bool{
+		"workbench": {"own": true, "docs-writer": true, "ops-runbook": true, "repository-navigation": true, "docs-draft": false, "ops-secret": false},
+		"":          {"own": false, "docs-writer": true, "ops-runbook": true, "repository-navigation": true, "docs-draft": false, "ops-secret": false},
+	} {
+		for _, mentioned := range []bool{false, true} {
+			req := assistantRequest{ProjectID: project}
+			if mentioned {
+				req.skills = []domain.SkillDefinition{stored}
+			}
+			root := t.TempDir()
+			if err := h.writeConversationAssets(root, req); err != nil {
+				t.Fatal(err)
+			}
+			dir := filepath.Join(root, "home", ".codebuddy", "skills")
+			entries, err := os.ReadDir(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := map[string]bool{}
+			for _, entry := range entries {
+				got[entry.Name()] = true
+			}
+			for name, installed := range want {
+				if got[name] != installed {
+					t.Fatalf("project %q skill %s installed=%v, want %v (all: %v)", project, name, got[name], installed, got)
+				}
+			}
+			if data, err := os.ReadFile(filepath.Join(dir, "ops-runbook", "SKILL.md")); err != nil || !bytes.Contains(data, []byte("Run scripts/check.sh.")) {
+				t.Fatalf("project %q mentioned=%v shared SKILL.md = %q %v", project, mentioned, data, err)
+			}
+			for path, content := range map[string][]byte{"assets/check.bin": asset, "scripts/check.sh": []byte("echo ok")} {
+				data, err := os.ReadFile(filepath.Join(dir, "ops-runbook", filepath.FromSlash(path)))
+				if mentioned && (err != nil || !bytes.Equal(data, content)) {
+					t.Fatalf("project %q mentioned shared skill file %s = %v %v", project, path, data, err)
+				}
+				if !mentioned && !os.IsNotExist(err) {
+					t.Fatalf("project %q unmentioned shared skill file %s was installed: %v", project, path, err)
+				}
+			}
+		}
+	}
+}
+
+func TestEverySharedSkillIsInstalledHoweverManyAreShared(t *testing.T) {
+	h, u := workbenchFixture(t)
+	if err := h.repo.PutProject(domain.Project{ID: "docs", Name: "docs", OwnerID: u.ID}); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.repo.PutSkill(domain.SkillDefinition{ID: "own", Name: "own", ProjectID: "workbench", Content: "own"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.repo.PutSkill(domain.SkillDefinition{ID: "docs-private", Name: "docs-private", ProjectID: "docs", Content: "private"}); err != nil {
+		t.Fatal(err)
+	}
+	// More shared skills than the 50 an earlier revision installed, so a
+	// skill late in id order (the one a scheduled task needs) is still there.
+	for i := 0; i < 120; i++ {
+		id := fmt.Sprintf("zz-shared-%03d", i)
+		if err := h.repo.PutSkill(domain.SkillDefinition{ID: id, Name: id, ProjectID: "docs", Shared: true, Content: id}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var shared []string
+	for _, skill := range h.repo.Skills() {
+		if skill.Shared && skill.ProjectID != "workbench" {
+			shared = append(shared, skill.ID)
+		}
+	}
+	if len(shared) < 120 {
+		t.Fatalf("fixture has %d shared skills, want at least 120", len(shared))
+	}
+	for _, project := range []string{"workbench", ""} {
+		root := t.TempDir()
+		if err := h.writeConversationAssets(root, assistantRequest{ProjectID: project}); err != nil {
+			t.Fatal(err)
+		}
+		entries, err := os.ReadDir(filepath.Join(root, "home", ".codebuddy", "skills"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := map[string]bool{}
+		for _, entry := range entries {
+			got[entry.Name()] = true
+		}
+		if got["own"] != (project == "workbench") {
+			t.Fatalf("project %q own skill installed=%v", project, got["own"])
+		}
+		if got["docs-private"] {
+			t.Fatalf("project %q installed another project's private skill", project)
+		}
+		for _, id := range shared {
+			if !got[id] {
+				t.Fatalf("project %q shared skill %s not installed (installed %d of %d)", project, id, len(got), len(shared))
+			}
+		}
+	}
+}
+
 func TestSubagentStreamEventsCarryTheirDispatch(t *testing.T) {
 	dispatch := assistantStreamEvents(`{"type":"assistant","message":{"content":[{"type":"tool_use","id":"call-1","name":"Agent","input":{"subagent_type":"role-qa","description":"补单测","prompt":"x"}}]}}`)
-	if len(dispatch) != 1 || dispatch[0].Subagent != "role-qa" || dispatch[0].Parent != "" || dispatch[0].Input != "x" {
+	if len(dispatch) != 1 || dispatch[0].Subagent != "role-qa" || dispatch[0].Parent != "" || dispatch[0].Input != "x" || dispatch[0].Model != "" {
 		t.Fatalf("dispatch=%+v", dispatch)
+	}
+	// A dispatch that names a model keeps it; one that only inherits does not.
+	for input, want := range map[string]string{
+		`"model":"claude-sonnet-4-5"`: "claude-sonnet-4-5",
+		`"model":" lite "`:            "lite",
+		`"model":"default"`:           "",
+		`"model":"inherit"`:           "",
+		`"model":"<synthetic>"`:       "",
+	} {
+		got := assistantStreamEvents(`{"type":"assistant","message":{"content":[{"type":"tool_use","id":"call-m","name":"Agent","input":{"subagent_type":"Explore","prompt":"x",` + input + `}}]}}`)
+		if len(got) != 1 || got[0].Model != want {
+			t.Fatalf("%s: dispatch=%+v, want model %q", input, got, want)
+		}
+	}
+	// A subagent's line reports the model it actually runs on, under its
+	// dispatch; Main Bot's own lines do not.
+	ran := assistantStreamEvents(`{"type":"assistant","parent_tool_use_id":"call-1","message":{"model":"deepseek-v4.1-flash-ioa","content":[{"type":"text","text":"ok"}]}}`)
+	if len(ran) != 2 || ran[0].Kind != "agentModel" || ran[0].Model != "deepseek-v4.1-flash-ioa" || ran[0].Parent != "call-1" {
+		t.Fatalf("subagent line=%+v", ran)
+	}
+	// A synthesized line names no real model.
+	if synthetic := assistantStreamEvents(`{"type":"assistant","parent_tool_use_id":"call-1","message":{"model":"<synthetic>","content":[{"type":"text","text":"ok"}]}}`); len(synthetic) != 1 || synthetic[0].Kind != "agentText" {
+		t.Fatalf("synthetic line=%+v", synthetic)
+	}
+	if main := assistantStreamEvents(`{"type":"assistant","message":{"model":"deepseek-v4.1-flash-ioa","content":[{"type":"text","text":"ok"}]}}`); len(main) != 1 || main[0].Kind != "answer" {
+		t.Fatalf("main line=%+v", main)
 	}
 	if got := labelRoleSubagent(dispatch[0], []roleSubagent{{Role: domain.AgentDefinition{ID: "qa", Name: "测试工程师"}}}); got.Role != "测试工程师" {
 		t.Fatalf("role label=%q", got.Role)

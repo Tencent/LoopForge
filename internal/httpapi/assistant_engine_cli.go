@@ -37,7 +37,7 @@ type assistantCLIInvocation struct {
 
 type assistantEngineInvocationOpts struct {
 	Bin, Root, Config, Prompt, Model, Effort, SessionID, SystemPrompt string
-	Resume, Workspace                                                 bool
+	Resume, Workspace, RunnerLogin                                    bool
 	// ReviewOnly is a one-shot call without MCP servers or session history,
 	// such as a title summary.
 	ReviewOnly bool
@@ -70,12 +70,12 @@ func resolveAssistantEngineBin(engine string) (string, error) {
 	if engine == assistantEngineClaude {
 		binary, override, managed = "claude", "AGENTFLOW_CLAUDE_BIN", "claude-code"
 	} else if runtime.IsAgentCLI(engine) {
-		binary, override, managed = runtime.AgentCLIBinary(engine), "AGENTFLOW_"+strings.ToUpper(strings.ReplaceAll(engine, "-", "_"))+"_BIN", ""
+		binary, override, managed = runtime.AgentCLIBinary(engine), "AGENTFLOW_"+strings.ToUpper(strings.ReplaceAll(engine, "-", "_"))+"_BIN", engine
 	}
 	if path := strings.TrimSpace(os.Getenv(override)); path != "" && fileExecutable(path) {
 		return path, nil
 	}
-	if root := strings.TrimSpace(os.Getenv("AGENTFLOW_MANAGED_CLI_ROOT")); root != "" && managed != "" {
+	if root := strings.TrimSpace(os.Getenv("AGENTFLOW_MANAGED_CLI_ROOT")); root != "" && managedcli.Supports(managed) {
 		if inventory, err := managedcli.ReadInventory(root); err == nil {
 			if path, ok := inventory.BinaryFor(managed); ok {
 				return path, nil
@@ -129,6 +129,10 @@ func (e assistantCredentialError) Error() string {
 
 func (e assistantCredentialError) Is(target error) bool {
 	return target == errAssistantCredentialRejected
+}
+
+func assistantRunnerLoginError(engine string) error {
+	return fmt.Errorf("执行机器上的 %s 本机登录态无效或已过期，请检查 Runner 账户的 CLI 登录", assistantEngineLabel(engine))
 }
 
 var assistantAuthFailureRe = regexp.MustCompile(`(?i)\b(401|403)\b|unauthorized|invalid api key|invalid x-api-key|authentication_error|incorrect api key`)
@@ -194,8 +198,10 @@ func prepareAssistantClaudeInvocation(o assistantEngineInvocationOpts) (assistan
 	argv := []string{o.Bin, "-p", "--verbose", "--output-format", "stream-json", "--include-partial-messages",
 		"--max-turns", nativeAssistantUnlimitedTurns, "--system-prompt", o.SystemPrompt,
 		"--mcp-config", mcpPath, "--strict-mcp-config", "--settings", settingsPath, "--setting-sources", "user",
-		"--permission-mode", "bypassPermissions",
-		"--model", o.Model}
+		"--permission-mode", "bypassPermissions"}
+	if o.Model != "" {
+		argv = append(argv, "--model", o.Model)
+	}
 	if !o.Workspace {
 		argv = append(argv, "--disallowedTools", claudeAssistantDisallowedTools)
 	}
@@ -213,6 +219,7 @@ func prepareAssistantClaudeInvocation(o assistantEngineInvocationOpts) (assistan
 	// --disallowedTools is variadic: end option parsing before the prompt.
 	argv = append(argv, "--", o.Prompt)
 	command := runtime.CommandSpec{Argv: argv, Provider: "claude-code", CredentialBindings: []runtime.CredentialBinding{runtime.BindClaudeCode}}
+	command = runtime.PromptOnStdin(command, o.Prompt)
 	return assistantCLIInvocation{
 		command:     command.WithClaudeBypassAccepted(),
 		credentials: runtime.RunCredentials{ClaudeCode: o.User},

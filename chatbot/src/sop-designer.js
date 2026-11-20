@@ -50,9 +50,9 @@ export const isDesignerSurface = (search) => designerParams(search).surface === 
 
 // The newest conversation of this SOP continues; the list is sorted by the
 // server, newest first, but sort again so a cached list cannot reorder it.
-export function latestSession(rows, workflowId) {
+export function latestSession(rows, projectId, workflowId) {
   return (rows || [])
-    .filter((row) => !workflowId || row.workflowId === workflowId)
+    .filter((row) => row.projectId === projectId && row.workflowId === workflowId)
     .sort((a, b) => Date.parse(b.updatedAt || 0) - Date.parse(a.updatedAt || 0))[0] || null;
 }
 

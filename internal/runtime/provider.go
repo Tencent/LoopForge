@@ -15,6 +15,8 @@ type SandboxRequirements struct {
 	CLIStates        []CLIStateRequirement
 	PrivateHome      bool
 	BunFS            bool
+	// RunnerLoginRelay allows Docker Codex account login to reach the host refresh listener.
+	RunnerLoginRelay bool `json:",omitempty"`
 }
 
 type CLIStateRequirement struct {
@@ -98,11 +100,39 @@ func appendEffortArgs(argv []string, effort string) []string {
 // Ordinary node task books stay on argv so existing SOP behavior is unchanged.
 const maxArgvPromptBytes = 96 << 10
 
+// PromptFitsArgv reports whether a prompt leaves headroom under the platform's
+// single-argument limit.
+func PromptFitsArgv(bytes int) bool {
+	return bytes <= maxArgvPromptBytes
+}
+
 func positionalPrompt(in providerInvocation) string {
 	if rel := strings.TrimSpace(in.PromptFile); rel != "" && len(in.Prompt) > maxArgvPromptBytes {
 		return "执行系统提示中的「本次节点任务书」（完整正文也在 `" + rel + "`）。不要等待更多输入。"
 	}
 	return in.Prompt
+}
+
+// PromptOnStdin moves an oversized trailing positional prompt to stdin.
+//
+// Linux rejects any single argv string above MAX_ARG_STRLEN (128KiB) with
+// E2BIG, so the CLI never starts ("fork/exec ...: argument list too long").
+// Chat prompts embed the whole conversation on a fresh native session and
+// have no prompt file to point at. CodeBuddy and Claude Code in print mode
+// read the prompt from stdin when no positional prompt is given; stdin is
+// forwarded by local, Docker and remote conversation execution.
+//
+// Only a command ending in "--", prompt is rewritten. The "--" terminator
+// stays so flags appended later by callers remain before it. Short prompts
+// keep the existing argv form.
+func PromptOnStdin(command CommandSpec, prompt string) CommandSpec {
+	n := len(command.Argv)
+	if PromptFitsArgv(len(prompt)) || command.Stdin != nil || n < 3 || command.Argv[n-1] != prompt || command.Argv[n-2] != "--" {
+		return command
+	}
+	command.Argv = append([]string(nil), command.Argv[:n-1]...)
+	command.Stdin = strings.NewReader(prompt)
+	return command
 }
 
 func (p baseProvider) Protocol(ex domain.ExecutorDefinition, sink EventSink) *protocolAdapter {
@@ -146,6 +176,7 @@ func MergeSandboxRequirements(values ...SandboxRequirements) SandboxRequirements
 	seen := map[string]bool{}
 	for _, value := range values {
 		merged.BunFS = merged.BunFS || value.BunFS
+		merged.RunnerLoginRelay = merged.RunnerLoginRelay || value.RunnerLoginRelay
 		states := append([]CLIStateRequirement(nil), value.CLIStates...)
 		for _, state := range states {
 			if state.Directory == "" || seen[state.Directory] {
