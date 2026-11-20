@@ -106,12 +106,16 @@ test('personal credentials: the add wizard validates, saves write-only, and the 
   await baseURL.fill('not-a-url');
   await expect(pane.locator('[data-credential-hint="extra"]')).toContainText('http://');
   await expect(next).toBeDisabled();
-  await baseURL.fill('https://gateway.example.com/v1');
+  const longBaseURL = `https://gateway.example.com/${'a'.repeat(100)}/v1`;
+  await baseURL.fill(longBaseURL);
   await expect(next).toBeEnabled();
   await next.click();
 
   await expect(wizard.locator('[data-wizard-step]')).toHaveText('3 / 3');
   await expect(pane).not.toContainText(key);
+  const summary = pane.locator('.credential-summary');
+  await expect(summary.getByText(longBaseURL, { exact: true })).toBeVisible();
+  await expect.poll(() => summary.evaluate(card => card.scrollWidth - card.clientWidth)).toBe(0);
   await next.click();
   await expect(wizard.locator('[data-wizard-done]')).toBeVisible({ timeout: 20_000 });
   const saved = await userById(me.id);

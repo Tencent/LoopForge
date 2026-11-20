@@ -2617,9 +2617,9 @@ html[data-theme="dark"] .credential-scrim::before{background:rgb(0 0 0 / .55)}
 .credential-fields{display:grid;gap:12px}
 .credential-summary{width:fit-content;max-width:92%;margin:4px 0 6px auto;padding:12px 16px;border-radius:18px 18px 7px 18px;background:color-mix(in srgb,var(--cr-elevated) 80%,transparent)}
 .credential-summary>div{display:flex;align-items:center;gap:7px;margin-bottom:8px;color:var(--cr-muted);font-size:12px;font-weight:500}
-.credential-summary dl{display:grid;grid-template-columns:auto auto;gap:4px 18px;margin:0;font-size:13px}
+.credential-summary dl{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:4px 18px;margin:0;font-size:13px}
 .credential-summary dt{color:var(--cr-muted)}
-.credential-summary dd{margin:0;text-align:right}
+.credential-summary dd{margin:0;text-align:right;overflow-wrap:anywhere}
 .credential-mask{color:var(--cr-muted);letter-spacing:1px}
 .credential-pane>.credential-vline{margin-top:10px}
 .credential-saved{padding:6px 0 4px}
