@@ -125,12 +125,6 @@ func (h *assistantHandlers) generateBotReply(ctx context.Context, bot domain.Not
 	}
 	defer session.Close()
 	defer files.Cleanup()
-	origin := domain.BotChatOrigin{ConfigID: bot.ID, ProjectID: bot.ProjectID, ConversationID: conv.ID, ChatType: conv.ChatType, ChatID: conv.ChatID, SenderID: item.SenderID}
-	if !readOnly && !confirmWrites {
-		session.HoldDispatch = func(issueID, workflowID string) (string, bool) {
-			return h.botHoldDispatch(bot, origin, user, issueID, workflowID)
-		}
-	}
 	messages := botReplyMessages(history, item)
 	req := assistantRequest{ProjectID: bot.ProjectID, Model: model, SessionID: conv.SessionID, ApprovalMode: approval, Messages: messages}
 	policy := "直接完成明确的操作，目标不明确时询问。完成后用自然语言回复结果。"
@@ -200,19 +194,6 @@ func (h *assistantHandlers) generateBotReply(ctx context.Context, bot domain.Not
 			if len(reply.Drafts) > 0 && confirmWrites {
 				reply.Message = strings.TrimSpace(reply.Message) + h.confirmBotDrafts(ctx, bot, user, item, reply.Drafts)
 				reply.Drafts = nil
-			}
-			if len(reply.Drafts) > 0 {
-				kept := reply.Drafts[:0]
-				for _, d := range reply.Drafts {
-					if strings.TrimSpace(d.Tool) == "issues_dispatch" {
-						if note, held := h.botHoldDispatch(bot, origin, user, assistantDraftRefID(d), botDraftDispatchWorkflow(d)); held {
-							reply.Message += "\n" + note
-							continue
-						}
-					}
-					kept = append(kept, d)
-				}
-				reply.Drafts = kept
 			}
 			if len(reply.Drafts) > 0 {
 				reply.Drafts = h.resolveAssistantDrafts(ctx, user, bot.ProjectID, reply.Drafts, AssistantApprovalAuto)

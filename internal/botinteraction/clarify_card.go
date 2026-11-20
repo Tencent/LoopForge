@@ -33,9 +33,6 @@ const (
 	ClarifyPostQuestions  = "questions"
 	ClarifyPostConclusion = "conclusion"
 	ClarifyPostNotice     = "notice"
-	// ClarifyPostConclusionStart is the conclusion an SOP start waits
-	// for: saving it starts the SOP.
-	ClarifyPostConclusionStart = "conclusion_start"
 )
 
 // ClarifyAction reports whether key is a clarification card action.
@@ -65,10 +62,6 @@ func clarifyPostCard(item domain.BotInteraction, text string) *PushCard {
 		card.Tag = "澄清结论"
 		card.Required = "需求负责人、发起人或项目维护者可以保存；同一份结论只保存一次"
 		card.Actions = []PushCardAction{{Key: ClarifyActionSave, Text: "保存澄清结果", Ref: item.ID}, {Key: ClarifyActionSaveStart, Text: "保存并启动 SOP", Ref: item.ID}, {Key: ClarifyActionEnd, Text: "结束澄清", Danger: true, Ref: item.ID}}
-	case ClarifyPostConclusionStart:
-		card.Tag = "澄清结论"
-		card.Required = "需求负责人、发起人或项目维护者确认；同一份结论只保存一次，SOP 只启动一次"
-		card.Actions = []PushCardAction{{Key: ClarifyActionSaveStart, Text: "确认结论并启动 SOP", Ref: item.ID}, {Key: ClarifyActionEnd, Text: "结束澄清", Danger: true, Ref: item.ID}}
 	default:
 		return nil
 	}

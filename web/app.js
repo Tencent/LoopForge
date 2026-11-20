@@ -1019,7 +1019,6 @@ function bind(){
   $('#workflowTags').oninput=e=>{if(!state.workflow)return;state.workflow.tags=e.target.value.split(',').map(x=>x.trim()).filter(Boolean);dirty()};
   $('#workflowMetricCategory').onchange=e=>{if(!state.workflow)return;state.workflow.metricCategory=e.target.value;dirty()};
   $('#workflowSOPLane').onchange=e=>{if(!state.workflow)return;state.workflow.sopLane=e.target.value;dirty()};
-  $('#workflowClarifyBeforeStart').onchange=e=>{if(!state.workflow)return;state.workflow.clarifyBeforeStart=e.target.value;dirty()};
   $('#workflowDescription').oninput=e=>{if(!state.workflow)return;state.workflow.description=e.target.value;dirty()};
   $('#saveWorkflow').onclick=saveWorkflow; $('#discardWorkflow').onclick=discardWorkflow; $('#publishWorkflow').onclick=publishWorkflow;
   $('#flowHistory')&&($('#flowHistory').onclick=()=>openRevisionHistory('workflow', state.workflow?.id, state.workflow?.name));

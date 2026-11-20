@@ -43,18 +43,6 @@ func newClarifyChatFixture(t *testing.T, channel string) *clarifyChatFixture {
 		t.Fatal(err)
 	}
 	f := &clarifyChatFixture{s: s, h: h, bot: bot}
-	f.stubClarify(t)
-	h.generate = func(context.Context, string, domain.User) (string, error) {
-		return "普通聊天回复", nil
-	}
-	return f
-}
-
-// stubClarify scripts the clarification rounds (f.rounds) and the group
-// answer judgements (f.classes) of f.h.
-func (f *clarifyChatFixture) stubClarify(t *testing.T) {
-	t.Helper()
-	h := f.h
 	stream := &streamHandlers{deps: h.deps}
 	stream.jobs = newClarifyHub(stream)
 	stream.clarifyRun = func(ctx context.Context, issue domain.Issue, request chatClarifyRequest, emit func(string, any)) (any, string, map[string]any, error) {
@@ -82,6 +70,10 @@ func (f *clarifyChatFixture) stubClarify(t *testing.T) {
 		f.classes = f.classes[1:]
 		return out, nil
 	}
+	h.generate = func(context.Context, string, domain.User) (string, error) {
+		return "普通聊天回复", nil
+	}
+	return f
 }
 
 var clarifyQuestionsRound = map[string]any{"summary": "需要确认验收和短信", "ready": false, "questions": []any{

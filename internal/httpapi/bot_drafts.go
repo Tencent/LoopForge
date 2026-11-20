@@ -211,19 +211,16 @@ func (h *assistantHandlers) confirmBotDrafts(ctx context.Context, bot domain.Not
 		return "\n\n操作草稿无法保存，没有执行。请到平台页面完成。"
 	}
 	lines := make([]string, 0, len(drafts))
-	newIssues, clarifyFirst := 0, false
+	newIssues := 0
 	for i, d := range drafts {
 		sop, repository := "", ""
 		if explicit, def, ok := h.botDraftIssueSOP(bot.ProjectID, d); ok {
 			sop = h.botWorkflowName(explicit)
-			wf := explicit
 			if explicit == "" {
 				sop = "项目默认 · " + h.botWorkflowName(def)
-				wf = def
 			}
 			repository = h.botDraftRepositoryLabel(bot.ProjectID, botDraftIssueRepository(d))
 			newIssues++
-			clarifyFirst = clarifyFirst || h.botClarifyBeforeStart(domain.Issue{ProjectID: bot.ProjectID}, wf)
 		}
 		line := fmt.Sprintf("%d. %s", i+1, botDraftSummaryLineFor(d, repository, sop))
 		if len(d.Warnings) > 0 {
@@ -258,9 +255,6 @@ func (h *assistantHandlers) confirmBotDrafts(ctx context.Context, bot domain.Not
 	head := "\n\n以下操作需要你在平台确认后才会执行（" + fmt.Sprint(int(repo.BotDraftTTL.Minutes())) + " 分钟内有效）：\n" + summary
 	if newIssues > 0 {
 		head += "\n确认页可以更换仓库和 SOP，并选择创建后立即启动。"
-		if clarifyFirst {
-			head += "按项目／SOP 的澄清配置，选择启动后会先在这个会话澄清需求，结论保存后再启动 SOP。"
-		}
 	}
 	if bot.ChannelKind() != domain.BotChannelWeCom {
 		// Feishu and DingTalk replies are plain text: the URL stands on
@@ -729,24 +723,6 @@ func (h *assistantHandlers) executeBotDraft(ctx context.Context, user domain.Use
 	execCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Minute)
 	defer cancel()
 	origin, hasOrigin := h.botDraftOrigin(draft)
-	// Starts of requirements that must be clarified first are taken out;
-	// their clarification opens after the other writes.
-	held := []domain.Issue{}
-	kept := make([]assistantDraft, 0, len(drafts))
-	remap := map[int]int{}
-	for i, d := range drafts {
-		if strings.TrimSpace(d.Tool) == "issues_dispatch" {
-			if issue, ok := h.repo.Issue(assistantDraftRefID(d)); ok && issue.ProjectID == draft.ProjectID && h.botClarifyBeforeStart(issue, botDraftDispatchWorkflow(d)) {
-				held = append(held, issue)
-				continue
-			}
-		}
-		remap[i] = len(kept)
-		kept = append(kept, d)
-	}
-	if len(held) > 0 {
-		drafts, sops, repos, start = kept, remapDraftIndex(sops, remap), remapDraftIndex(repos, remap), remapDraftIndex(start, remap)
-	}
 	for _, d := range drafts {
 		if strings.TrimSpace(d.Tool) == "issues_dispatch" {
 			// The run starts during execution: remember the chat first.
@@ -754,7 +730,7 @@ func (h *assistantHandlers) executeBotDraft(ctx context.Context, user domain.Use
 		}
 	}
 	applied := h.resolveAssistantDrafts(execCtx, user, draft.ProjectID, drafts, AssistantApprovalAuto)
-	results := make([]string, 0, len(applied)+len(held))
+	results := make([]string, 0, len(applied))
 	status := repo.BotDraftExecuted
 	for i, d := range applied {
 		sop, repository := "", ""
@@ -776,9 +752,7 @@ func (h *assistantHandlers) executeBotDraft(ctx context.Context, user domain.Use
 				h.recordBotOrigin(origin, hasOrigin, created, "")
 			}
 			if start[i] {
-				if issue, ok := h.repo.Issue(created); ok && h.botClarifyBeforeStart(issue, "") {
-					results = append(results, "待澄清："+h.holdBotStart(bot, origin, hasOrigin, user, issue))
-				} else if runID, err := h.startBotDraftIssue(execCtx, user, draft.ProjectID, d); err != nil {
+				if runID, err := h.startBotDraftIssue(execCtx, user, draft.ProjectID, d); err != nil {
 					status = repo.BotDraftFailed
 					results = append(results, "未启动："+sop+"（"+truncateRunes(err.Error(), 200)+"）")
 				} else {
@@ -793,9 +767,6 @@ func (h *assistantHandlers) executeBotDraft(ctx context.Context, user domain.Use
 			status = repo.BotDraftFailed
 			results = append(results, "未执行："+line+"（"+strings.Join(d.Warnings, "；")+"）")
 		}
-	}
-	for _, issue := range held {
-		results = append(results, "待澄清："+h.holdBotStart(bot, origin, hasOrigin, user, issue))
 	}
 	return finish(status, strings.Join(results, "\n"))
 }

@@ -1072,10 +1072,6 @@ func (h *catalogHandlers) workflows(c *gin.Context) {
 				c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
 				return
 			}
-			if err := domain.ValidateClarifyBeforeStart(v.ClarifyBeforeStart); err != nil {
-				c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
-				return
-			}
 			if _, generic := h.repo.GenericTemplateByWorkflow(v.ID); generic {
 				if !h.isPlatformAdmin(c.Request) {
 					c.JSON(http.StatusConflict, map[string]string{"error": "通用模板为只读，请先复制到本项目再修改"})
