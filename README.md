@@ -64,7 +64,7 @@ Ask a coding agent to "fix this bug" and the result depends on that run. It migh
 
 - **Repeatable.** Same SOP, same stages, same checks for every requirement. Start from built-in backend, frontend, bug-fix and product SOPs.
 - **Separated roles.** Planning, implementation, review and testing each get their own prompt, executor, model, rules, Skills and MCP tools. A role works as an SOP node or as a subagent in chat.
-- **Human in the loop.** Approval gates where they matter. Read the report, approve, or send the work back to a chosen step.
+- **Human on the loop.** Agents run on their own while you supervise. Pause, steer or take over anytime, and approval gates stop the run where a human must decide: approve, or send the work back to a chosen step.
 - **Observable and resumable.** Node status, tool traces, logs and artifacts in one place. Pause, retry a failed step, or rerun from any node.
 - **Your stack, your servers.** Ten coding-agent CLIs as executors, from CodeBuddy, Codex and Claude Code to OpenCode, Cursor CLI and more. GitHub, Skills and MCP as tools. Docker sandboxes or your own machine as the runtime.
 

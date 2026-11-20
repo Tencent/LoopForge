@@ -160,7 +160,7 @@ func (s *processSandbox) command(ctx context.Context, command CommandSpec, base 
 		if err != nil {
 			return nil, err
 		}
-		args = bwrapPrivateBinds(args, command.privateBinds)
+		args = bwrapPrivateBinds(args, command.privateBinds, command.managedCLIInstall)
 		if command.runnerLogin != nil {
 			// Hide host sources and the private journal after all other binds.
 			// The managed CLI uses only its own private HOME and host callback.
@@ -467,13 +467,16 @@ func ensureBunFSMountPoint() bool {
 // bwrapPrivateBinds adds per-process binds before the "--" that ends the
 // bwrap options. They come after --tmpfs /tmp, so a directory under the host
 // /tmp is visible to this process only.
-func bwrapPrivateBinds(args, binds []string) []string {
-	if len(binds) == 0 || len(args) == 0 || args[len(args)-1] != "--" {
+func bwrapPrivateBinds(args, binds []string, managedInstall string) []string {
+	if (len(binds) == 0 && managedInstall == "") || len(args) == 0 || args[len(args)-1] != "--" {
 		return args
 	}
 	out := append([]string{}, args[:len(args)-1]...)
 	for _, dir := range binds {
 		out = append(out, "--bind", dir, dir)
+	}
+	if managedInstall != "" {
+		out = append(out, "--ro-bind", managedInstall, managedInstall)
 	}
 	return append(out, "--")
 }
@@ -509,6 +512,9 @@ func bwrapArgsCommand(workspace string, requirements SandboxRequirements) ([]str
 		// Same layout as the Docker workspace: the native CLI keeps its HOME
 		// and cwd (<root>/ws, here the run workspace) across both modes.
 		args = append(args, "--bind", filepath.Join(conversation, "home"), filepath.Join(conversation, "home"), "--bind", root, filepath.Join(conversation, "ws"))
+		// The private /tmp can hide generated attachments under a conversation root.
+		attachments := filepath.Join(conversation, "attachments")
+		args = append(args, "--ro-bind-try", attachments, attachments)
 		// The approval hooks stay read-only, as in the Docker workspace.
 		parents, files, err := conversationGuardPaths(conversation)
 		if err != nil {

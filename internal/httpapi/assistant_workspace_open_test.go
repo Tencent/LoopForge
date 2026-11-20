@@ -127,7 +127,7 @@ func TestConversationWorkspaceOpensBindsAndIsReused(t *testing.T) {
 	if result, _ := gateway.publishArtifact(context.Background(), s, json.RawMessage(`{"path":"README.md"}`)); result["isError"] != true || !strings.Contains(fmt.Sprint(result["content"]), "workbench_workspace_open") {
 		t.Fatalf("publishing a path before open must point to workbench_workspace_open: %v", result)
 	}
-	if hints := gateway.workspaceOpenDescriptorFor(s).Description; !strings.Contains(hints, "- web") || !strings.Contains(hints, "- api") {
+	if hints := gateway.workspaceOpenDescriptorFor(s).Description; !strings.Contains(hints, `"name":"web"`) || !strings.Contains(hints, `"name":"api"`) {
 		t.Fatalf("open description must list the project's repositories to clone: %s", hints)
 	}
 	raw, err := gateway.callMainBotWorkspace(context.Background(), s, "workbench_workspace_open", map[string]any{})
@@ -197,7 +197,7 @@ func fakeRunnerConnection(t *testing.T, hub *runnerControlHub, runnerID string, 
 			select {
 			case message := <-conn.send:
 				if message.Type == "workspace.request" && message.WorkspaceRequest != nil {
-					hub.resolveWorkspace(message.RequestID, answer(*message.WorkspaceRequest))
+					hub.resolveWorkspace(conn, message.RequestID, answer(*message.WorkspaceRequest))
 				}
 			case <-conn.done:
 				return

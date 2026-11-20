@@ -60,6 +60,77 @@ func TestConversationProcessBidirectionalAndRootFence(t *testing.T) {
 	}
 }
 
+func TestConversationCLIVersionPreservesOutputQuota(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	root, install := t.TempDir(), t.TempDir()
+	bin := filepath.Join(install, "codebuddy")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\nexec awk 'BEGIN { for (i=0; i<32768; i++) print \"line\" }'\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(install, "package.json"), []byte(`{"name":"@tencent-ai/codebuddy-code","version":"1.2.3"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	pool := &ConversationProcessPool{}
+	start, err := pool.Handle(ctx, root, "", nil, ConversationProcessRequest{
+		Operation: "start", ReportVersion: true, Command: &ConversationCommand{Provider: "codebuddy", Argv: []string{bin}},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pool.mu.Lock()
+	finished := pool.entries[start.ID].finished
+	pool.mu.Unlock()
+	// Leave every line unacknowledged until the buffer has filled.
+	select {
+	case <-finished:
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+	var after int64
+	for {
+		result, err := pool.Handle(ctx, root, "", nil, ConversationProcessRequest{Operation: "poll", ID: start.ID, After: after}, nil)
+		if err != nil || result.Error != "" {
+			t.Fatalf("poll: %+v %v", result, err)
+		}
+		after = result.Sequence
+		if result.Done {
+			if after != 32768 || result.CLIVersion != "1.2.3" || result.VersionSource != "package_metadata" {
+				t.Fatalf("completion: lines=%d version=%q source=%q", after, result.CLIVersion, result.VersionSource)
+			}
+			return
+		}
+	}
+}
+
+func TestConversationProcessCompletesDuringSlowVersionProbe(t *testing.T) {
+	root := t.TempDir()
+	bin := filepath.Join(t.TempDir(), "codebuddy")
+	script := `#!/bin/sh
+if [ "$1" = "--version" ]; then
+  touch "$0.version-started"
+  exec sleep 30
+fi
+until [ -e "$0.version-started" ]; do sleep 0.02; done
+printf 'actual result\n'
+`
+	if err := os.WriteFile(bin, []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+	defer cancel()
+	pool := &ConversationProcessPool{}
+	start, err := pool.Handle(ctx, root, "", nil, ConversationProcessRequest{
+		Operation: "start", ReportVersion: true, Command: &ConversationCommand{Provider: "codebuddy", Argv: []string{bin}},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if output := conversationPoll(t, pool, ctx, root, start.ID); output != "actual result" {
+		t.Fatalf("output = %q", output)
+	}
+}
+
 func TestConversationPlatformRefreshesPersistentApprovalExtensions(t *testing.T) {
 	if _, err := exec.LookPath("python3"); err != nil {
 		t.Skip("python3 unavailable")

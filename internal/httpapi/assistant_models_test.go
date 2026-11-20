@@ -11,7 +11,7 @@ import (
 
 func TestAssistantModelPickerOmitsCodeBuddyCLIDefault(t *testing.T) {
 	t.Setenv("AGENTFLOW_ASSISTANT_MODEL", "")
-	t.Setenv("AGENTFLOW_ASSISTANT_MODELS", "model-a,model-b")
+	t.Setenv("AGENTFLOW_ASSISTANT_MODELS", "default-model,model-a,model-b")
 	h, user := workbenchFixture(t)
 	stubCLIModelDiscovery(t)
 
@@ -22,7 +22,7 @@ func TestAssistantModelPickerOmitsCodeBuddyCLIDefault(t *testing.T) {
 		t.Fatalf("model picker: %d %s", rec.Code, rec.Body)
 	}
 	if catalog.Default != assistantDefaultModel || len(catalog.DefaultEfforts) == 0 ||
-		assistantCatalogLists(catalog, assistantDefaultModel) || !assistantCatalogLists(catalog, "model-b") {
+		assistantCatalogLists(catalog, assistantDefaultModel) || assistantCatalogLists(catalog, "default-model") || !assistantCatalogLists(catalog, "model-b") {
 		t.Fatalf("model picker shows the wrong choices: %+v", catalog)
 	}
 	if got := assistantAllowedModel("", h.chatCatalog(context.Background(), user)); got != assistantDefaultModel {

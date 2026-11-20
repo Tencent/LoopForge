@@ -86,7 +86,7 @@ func TestRunWorkspaceRemoteNotFoundReportsRunnerError(t *testing.T) {
 	go func() {
 		defer close(done)
 		for message := range conn.send {
-			hub.resolveWorkspace(message.RequestID, domain.RunnerWorkspaceResponse{Status: http.StatusNotFound, Error: "执行机器上的运行目录不存在"})
+			hub.resolveWorkspace(conn, message.RequestID, domain.RunnerWorkspaceResponse{Status: http.StatusNotFound, Error: "执行机器上的运行目录不存在"})
 		}
 	}()
 	t.Cleanup(func() {

@@ -110,16 +110,9 @@ func (d *Daemon) taskProviderBinary(task domain.RunnerTask) (string, bool) {
 	return providerBinaryPath(d.currentRuntimes(), task.Provider)
 }
 
-func managedCLIEnvironment(provider string) map[string]string {
-	if provider == "claude-code" || provider == "codebuddy" {
-		return map[string]string{"DISABLE_AUTOUPDATER": "1", "DISABLE_UPDATES": "1"}
-	}
-	return nil
-}
-
 func (d *Daemon) taskManagedEnvironment(task domain.RunnerTask) map[string]string {
 	if _, managed := d.managedBinary(task); managed {
-		return managedCLIEnvironment(task.Provider)
+		return managedcli.AutoUpdateEnvironment(task.Provider)
 	}
 	return nil
 }
