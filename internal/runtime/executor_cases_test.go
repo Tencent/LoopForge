@@ -175,8 +175,16 @@ func TestCheckpointValidationStatusAndBounds(t *testing.T) {
 		t.Fatal("invalid checkpoint accepted")
 	}
 	root := t.TempDir()
-	if response := WorkspaceCheckpointStatus(root); response.Status != 200 {
-		t.Fatalf("status=%+v", response)
+	if response := WorkspaceCheckpointStatus(root); response.Status != 200 || !strings.Contains(string(response.Payload), `"empty":true`) {
+		t.Fatalf("empty status=%+v payload=%s", response, response.Payload)
+	}
+	_ = os.MkdirAll(filepath.Join(root, ".agentflow", "hooks"), 0o700)
+	if response := WorkspaceCheckpointStatus(root); response.Status != 200 || !strings.Contains(string(response.Payload), `"empty":true`) {
+		t.Fatalf("runtime-only status=%+v payload=%s", response, response.Payload)
+	}
+	_ = os.WriteFile(filepath.Join(root, "real.txt"), []byte("x"), 0o600)
+	if response := WorkspaceCheckpointStatus(root); response.Status != 200 || !strings.Contains(string(response.Payload), `"empty":false`) {
+		t.Fatalf("populated status=%+v payload=%s", response, response.Payload)
 	}
 	missing := filepath.Join(root, "missing")
 	if response := WorkspaceCheckpointStatus(missing); response.Status != 404 {
@@ -217,17 +225,30 @@ func TestEnvironmentIdentityGitAndMCPHeaders(t *testing.T) {
 	if _, err := ReadSandboxEnvironmentIdentity(context.Background(), &capturingSandbox{workspace: workspace}); err == nil {
 		t.Fatal("unsupported identity accepted")
 	}
-	env, err := GitEnvironment(local, workspace, "oauth2: secret")
-	if err != nil || env["AGENTFLOW_GIT_USER"] != "oauth2" || env["AGENTFLOW_GIT_TOKEN"] != "secret" {
-		t.Fatalf("git env=%v err=%v", env, err)
+	provideDockerHelperFixture(t)
+	env, closeGit, err := RunGitEnvironment(context.Background(), local, workspace, RunCredentials{GitHTTPCredentials: testHTTPSCredentials("secret")})
+	if err != nil {
+		t.Fatal(err)
 	}
-	env, err = GitEnvironment(&dockerSandbox{}, workspace, "private: token")
-	if err != nil || !strings.HasPrefix(env["GIT_ASKPASS"], "/workspace/") {
-		t.Fatalf("docker git env=%v err=%v", env, err)
+	defer closeGit()
+	if env["AGENTFLOW_GIT_TOKEN"] != "" || env[SessionGatewayEnv] == "" {
+		t.Fatal("tokens must be fetched through the relay")
 	}
-	env, err = GitEnvironment(nil, workspace, "")
-	if err != nil || env["GIT_TERMINAL_PROMPT"] != "0" {
-		t.Fatalf("empty git env=%v err=%v", env, err)
+	env, closeDocker, err := RunGitEnvironment(context.Background(), &dockerSandbox{}, workspace, RunCredentials{GitHTTPCredentials: testHTTPSCredentials("token")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeDocker()
+	if !strings.Contains(env["GIT_CONFIG_VALUE_1"], "/workspace/") {
+		t.Fatal("Docker helper must be inside the workspace")
+	}
+	env, closeEmpty, err := RunGitEnvironment(context.Background(), nil, workspace, RunCredentials{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeEmpty()
+	if env["GIT_TERMINAL_PROMPT"] != "0" || env[SessionGatewayEnv] != "" {
+		t.Fatal("missing credentials must not create a relay")
 	}
 	t.Setenv("CVR_SECRET", "secret")
 	headers, err := ResolveMCPHeaders(domain.MCPServerDefinition{ID: "m", Headers: map[string]string{"Authorization": "Bearer ${secret:CVR_SECRET}"}})

@@ -104,3 +104,23 @@ func (r *UsersRepo) GitSSHKeysForRemotes(userID int64, urls []string) map[string
 	}
 	return keys
 }
+
+// GitSSHKeysByHost returns every SSH key of the user keyed by its "host:port"
+// endpoint. A conversation workspace does not know in advance which
+// repositories its agent clones, so the agent gets each configured host.
+func (r *UsersRepo) GitSSHKeysByHost(userID int64) map[string]string {
+	if userID <= 0 {
+		return nil
+	}
+	var rows []gitSSHKeyRow
+	if err := r.DB.Select("host", "private_key").Where("user_id = ?", userID).Find(&rows).Error; err != nil {
+		return nil
+	}
+	keys := make(map[string]string, len(rows))
+	for _, row := range rows {
+		if row.Host != "" && row.PrivateKey != "" {
+			keys[row.Host] = row.PrivateKey
+		}
+	}
+	return keys
+}

@@ -57,6 +57,10 @@ type Engine struct {
 	// work branch. Nil (local/dev) falls back to MR links in run artifacts.
 	FindBranchMR func(projectID, sourceBranch string) (domain.DeliveryMR, bool, error)
 
+	// FindBranchMRsInto lists the MRs from a work branch into one target
+	// branch with their head commits, for mode=mr gates. Nil cannot verify.
+	FindBranchMRsInto func(domain.BranchMRQuery) ([]domain.DeliveryMR, error)
+
 	// runnerDispatchNotify wakes long-polling CLI runners when the engine
 	// queues a runner task. Wired via SetRunnerDispatchNotify (httpapi.New);
 	// nil falls back to the runner claim retry interval.

@@ -688,11 +688,76 @@ func (r *CatalogRepo) PutScheduleJob(v domain.ScheduleJob) error {
 	})
 }
 
+// SetScheduleJobEnabled flips only a job's enabled flag, leaving its
+// configuration and the outcome of a run in progress untouched.
+func (r *CatalogRepo) SetScheduleJobEnabled(id string, enabled bool) (domain.ScheduleJob, error) {
+	var out domain.ScheduleJob
+	err := r.DB.Transaction(func(tx *gorm.DB) error {
+		var row scheduleJobRow
+		if err := r.locking(tx).Where("id = ?", id).First(&row).Error; err != nil {
+			return err
+		}
+		if err := json.Unmarshal(row.Payload, &out); err != nil {
+			return err
+		}
+		out.Enabled = enabled
+		out.UpdatedAt = time.Now().UTC()
+		flag := 0
+		if enabled {
+			flag = 1
+		}
+		return tx.Model(&row).Updates(map[string]any{"enabled": flag, "payload": mustJSON(out), "updated_at": timePtr(out.UpdatedAt)}).Error
+	})
+	return out, err
+}
+
+// ErrScheduleJobChanged reports that the stored job no longer matches what
+// the caller checked, e.g. it was edited or moved to another project.
+var ErrScheduleJobChanged = errors.New("任务已被其他人修改或移动，请刷新后重试")
+
+// DisableScheduleJob turns the job off only if unchanged accepts the row as
+// it is stored now, checked under the row lock, and returns the stored job.
+// Nothing else in the row is touched.
+func (r *CatalogRepo) DisableScheduleJob(id string, unchanged func(current domain.ScheduleJob) bool) (domain.ScheduleJob, error) {
+	var current domain.ScheduleJob
+	err := r.DB.Transaction(func(tx *gorm.DB) error {
+		var row scheduleJobRow
+		err := r.locking(tx).Where("id = ?", id).First(&row).Error
+		if err == gorm.ErrRecordNotFound {
+			return ErrScheduleJobChanged
+		}
+		if err != nil {
+			return err
+		}
+		if err := json.Unmarshal(row.Payload, &current); err != nil {
+			return err
+		}
+		if !unchanged(current) {
+			return ErrScheduleJobChanged
+		}
+		current.Enabled = false
+		current.UpdatedAt = time.Now().UTC()
+		return tx.Model(&row).Updates(map[string]any{"enabled": 0, "payload": mustJSON(current), "updated_at": timePtr(current.UpdatedAt)}).Error
+	})
+	if err != nil {
+		return domain.ScheduleJob{}, err
+	}
+	return current, nil
+}
+
 func (r *CatalogRepo) DeleteScheduleJob(id string) error {
 	if _, ok := r.ScheduleJob(id); !ok {
 		return fmt.Errorf("schedule job not found")
 	}
-	return r.DB.Table("schedule_jobs").Where("id = ?", id).Delete(nil).Error
+	return r.DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Table("schedule_job_executions").Where("job_id = ?", id).Delete(nil).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("job_id = ?", id).Delete(&scheduleJobExecutionStatRow{}).Error; err != nil {
+			return err
+		}
+		return tx.Table("schedule_jobs").Where("id = ?", id).Delete(nil).Error
+	})
 }
 
 // ---------- Definition revisions ----------

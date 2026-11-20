@@ -10,14 +10,14 @@ const { project, user, apiMock, writeMock, mockState } = vi.hoisted(() => {
   };
   const user = {
     id: 1, loginName: "tester", chineseName: "测试",
-    gitTokenConfigured: true, codeBuddyApiKeyConfigured: true,
+    gitHubCredentialConfigured: true, codeBuddyApiKeyConfigured: true,
   };
   const apiMock = vi.fn(async (path) => {
   if (path === "/api/users" && mockState.users) return mockState.users();
   if (path === "/api/users")
     return [mockState.unconfigured ? {
       id: 1, loginName: "tester", chineseName: "测试",
-      gitTokenConfigured: false, codeBuddyApiKeyConfigured: false,
+      gitHubCredentialConfigured: false, codeBuddyApiKeyConfigured: false,
     } : user];
   if (path === "/api/projects") return [project];
   if (path === "/api/repositories") return [];
@@ -79,9 +79,9 @@ describe("QuickAccessWizard", () => {
       webUrl: "https://github.com/acme/widgets",
       cloneUrl: "https://github.com/acme/widgets.git",
     });
-    // GitHub SSH-style addresses stay GitHub repositories (token + automatic PRs).
+    // Preserve explicit SSH transport for GitHub as for other hosts.
     for (const address of ["git@github.com:acme/widgets.git", "ssh://git@github.com/acme/widgets.git"]) {
-      expect(parseGongfengRepo(address)).toMatchObject({ provider: "github", project: "github:acme/widgets" });
+      expect(parseGongfengRepo(address)).toMatchObject({ provider: "ssh", host: "github.com:22" });
     }
     expect(parseGongfengRepo("ssh://git@github.com:2222/acme/widgets.git")?.provider).toBe("ssh");
     expect(parseGongfengRepo("git clone ssh://git@gitlab.example.org:2222/team/sub/app.git")).toMatchObject({
@@ -93,7 +93,7 @@ describe("QuickAccessWizard", () => {
     expect(parseGongfengRepo("https://github.com/acme")).toBeNull();
     expect(parseGongfengRepo("git@git.example.com:team/repo.git")?.provider).toBe("ssh");
     expect(parseGongfengRepo("https://git.example.com/team/repo/-/tree/main")?.name).toBe("repo");
-    expect(parseGongfengRepo("https://example.com/team/repo")).toBeNull();
+    expect(parseGongfengRepo("https://example.com/team/repo")).toMatchObject({provider:"https",cloneUrl:"https://example.com/team/repo"});
     expect(parseGongfengRepo("")).toBeNull();
   });
 
@@ -212,8 +212,8 @@ describe("QuickAccessWizard", () => {
     );
     await userAction.click(screen.getByRole("button", { name: "校验" }));
     await waitFor(() => expect(writeMock).toHaveBeenCalledWith(
-      "/api/users/1/credentials",
-      expect.objectContaining({ gitToken: "token-value" }),
+      "/api/users/1/git-http-credentials",
+      expect.objectContaining({ host:"github.com", token: "token-value" }),
       "PUT",
     ));
     mockState.unconfigured = false;

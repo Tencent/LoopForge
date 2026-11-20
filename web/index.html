@@ -12,7 +12,7 @@
   <link rel="stylesheet" href="/app/hui-controls.css">
   <link rel="stylesheet" href="/styles.css?v=20261031v1">
   <link rel="stylesheet" href="/assets.css?v=20260823v1">
-  <link rel="stylesheet" href="/platform.css?v=20261031req1">
+  <link rel="stylesheet" href="/platform.css?v=20261116nosop">
   <link rel="stylesheet" href="/observability.css?v=20261031metrics2">
   <link rel="stylesheet" href="/artifacts.css?v=20260914r3">
   <link rel="stylesheet" href="/sops.css?v=20261030cards1">
@@ -36,7 +36,7 @@
   <link rel="stylesheet" href="/app/assistant-settings.css">
   <link rel="stylesheet" href="/preferences.css">
   <link rel="stylesheet" href="/app/issues-list.css">
-  <link rel="stylesheet" href="/app/requirement-wizard.css?v=20261031req1">
+  <link rel="stylesheet" href="/app/requirement-wizard.css?v=20261116nosop">
   <link rel="stylesheet" href="/app/assets-harness.css">
   <link rel="stylesheet" href="/app/sops-harness.css">
   <link rel="stylesheet" href="/app/sop-catalog.css">
@@ -244,6 +244,7 @@
           <button id="aiScheduleProjectTab" class="active" type="button" role="tab" aria-selected="true" aria-controls="aiScheduleProjectPanel" data-ai-schedule-tab="project">提示词任务<span id="aiScheduleProjectCount" class="mcp-tab-count">0</span></button>
           <button id="aiScheduleTriggerTab" type="button" role="tab" aria-selected="false" aria-controls="aiScheduleTriggerPanel" data-ai-schedule-tab="trigger">SOP 触发<span id="scheduleJobCount" class="schedule-job-count">未配置</span></button>
           <button id="aiScheduleMarketTab" type="button" role="tab" aria-selected="false" aria-controls="aiScheduleMarketPanel" data-ai-schedule-tab="market">共享任务市场<span id="sharedScheduleMarketCount" class="mcp-tab-count">0</span></button>
+          <button id="aiScheduleExecTab" type="button" role="tab" aria-selected="false" aria-controls="aiScheduleExecPanel" data-ai-schedule-tab="executions">执行记录<span id="aiScheduleExecCount" class="mcp-tab-count" hidden></span></button>
         </div>
         <label id="sharedScheduleSearchField" class="mcp-search" hidden><svg class="agent-icon harness-icon" data-icon="search" width="14" height="14" aria-hidden="true" focusable="false"></svg><input id="sharedScheduleSearch" type="search" aria-label="搜索共享任务" placeholder="搜索名称、用途或来源项目"></label>
       </div>
@@ -261,6 +262,27 @@
         <p id="sharedScheduleMarketHint" class="mcp-scope-hint"></p>
         <div id="sharedScheduleMarketStatus" role="status"></div>
         <div id="sharedScheduleLibrary" class="mcp-market-grid" aria-live="polite"></div>
+      </section>
+      <section id="aiScheduleExecPanel" class="sched-exec-panel" role="tabpanel" aria-labelledby="aiScheduleExecTab" hidden>
+        <div class="sched-exec-card sched-exec-overview">
+          <div class="sched-exec-overview-main">
+            <h2 class="sched-exec-card-title">执行概览<span id="scheduleExecOverviewScope" class="muted">（最近 7 天）</span><span class="sched-exec-th-hint" title="按开始时间统计最近 7×24 小时的执行，与之前 7×24 小时对比"><svg class="agent-icon harness-icon" data-icon="info" width="13" height="13" aria-hidden="true" focusable="false"></svg></span></h2>
+            <div id="scheduleExecMetrics" class="sched-exec-metrics"></div>
+          </div>
+        </div>
+        <div class="sched-exec-filters" role="search" aria-label="筛选执行记录">
+          <label class="sched-exec-search"><svg class="agent-icon harness-icon" data-icon="search" width="15" height="15" aria-hidden="true" focusable="false"></svg><input id="scheduleExecSearch" type="search" autocomplete="off" aria-label="搜索执行记录" placeholder="搜索任务名称 / Trace ID / 关键词"></label>
+          <label class="sched-exec-select"><svg class="agent-icon harness-icon" data-icon="calendar" width="15" height="15" aria-hidden="true" focusable="false"></svg><select id="scheduleExecRange" aria-label="按时间筛选"><option value="">全部时间</option><option value="today">今天</option><option value="7d">最近 7 天</option><option value="30d">最近 30 天</option></select></label>
+          <label class="sched-exec-select"><svg class="agent-icon harness-icon" data-icon="layers" width="15" height="15" aria-hidden="true" focusable="false"></svg><select id="scheduleExecJob" aria-label="按任务筛选"><option value="">全部任务</option></select></label>
+          <label class="sched-exec-select"><svg class="agent-icon harness-icon" data-icon="filter" width="15" height="15" aria-hidden="true" focusable="false"></svg><select id="scheduleExecStatus" aria-label="按状态筛选"><option value="">全部状态</option><option value="failed">失败</option><option value="success">成功</option><option value="running">进行中</option><option value="waiting">待对齐基线</option></select></label>
+          <button id="scheduleExecReset" class="button ghost small sched-exec-reset" type="button" disabled><svg class="agent-icon harness-icon" data-icon="refresh" width="14" height="14" aria-hidden="true" focusable="false"></svg>重置</button>
+        </div>
+        <div class="sched-exec-card">
+          <h2 class="sched-exec-card-title">执行记录<span id="scheduleExecTotal" class="muted"></span></h2>
+          <div id="scheduleExecList" class="sched-exec-list" aria-live="polite"></div>
+          <div id="scheduleExecPager" class="sched-exec-pager" hidden></div>
+          <p id="scheduleExecFootnote" class="sched-exec-footnote"></p>
+        </div>
       </section>
     </section>
 
@@ -313,7 +335,7 @@
     </section>
     <section id="assistantView" class="view page-view">
       <div class="page-heading">
-        <div><h1>AI 助手</h1><p>AI 工作台里和你对话、帮你动手的助手。设置它什么时候主动把事情交给角色或 SOP，以及每次对话都要遵守的规则；只对你自己生效。</p></div>
+        <div><h1>AI 助手</h1><p>AI 工作台里和你对话、帮你动手的助手。设置消息发送方式、角色与 SOP 的主动派发，以及每次对话都要遵守的规则；只对你自己生效。</p></div>
       </div>
       <div id="assistantContent"></div>
     </section>
@@ -752,7 +774,7 @@
         <ol class="runner-steps">
           <li><span class="runner-step-no">1</span><div><b>安装 CLI</b><small>claude / codex 等</small></div></li>
           <li><span class="runner-step-no">2</span><div><b>执行接入命令</b><small>绑定码 10 分钟有效</small></div></li>
-          <li><span class="runner-step-no">3</span><div><b>选择认证来源</b><small>本机登录或个人凭证</small></div></li>
+          <li><span class="runner-step-no">3</span><div><b>选择认证来源</b><small>Claude Code、Codex 和 Antigravity 可用账号登录</small></div></li>
         </ol>
         <div class="runner-command-box">
           <pre id="bindCliCommand" class="mono">(curl -fsSL --connect-timeout 5 <span id="bindHttpsOrigin">https://</span>/runners/install.sh || curl -fsSL <span id="bindHttpOrigin">http://</span>/runners/install.sh) | bash -s -- --server <span id="bindServerHost"></span> --token <span id="bindToken">生成中…</span> --service</pre>
@@ -771,7 +793,6 @@
       </div>
 
       <div class="runner-list-heading"><h2>我的机器</h2><span class="runner-count" id="runnerCount">0</span><p class="runner-pool-status" id="runnerPoolStatus" aria-live="polite"></p></div>
-      <aside id="runnerCLIUpdateNotice" class="runner-cli-update-notice" aria-labelledby="runnerCLIUpdateNoticeTitle"><b id="runnerCLIUpdateNoticeTitle">Agent CLI 需自行升级：</b>平台不会代为升级，版本过旧或无模型权限会导致任务失败。</aside>
       <div id="runnersList" class="runner-grid"></div>
     </section>
 
@@ -871,7 +892,7 @@
                 </div>
               </div>
               <label class="as-field" id="agentModelCustomField" hidden><span>自定义模型 ID <small>使用自定义 Base URL 时，填服务商提供的模型名</small></span><input name="model" placeholder="例如：gpt-5.6-terra"></label>
-              <label class="as-switch-row agent-edit-only"><span><b>共享给其他项目</b><small>其他项目可在「共享角色」里选用</small></span><input name="shared" type="checkbox" role="switch"></label>
+              <label class="as-switch-row agent-edit-only"><span><b>共享给其他项目</b><small>其他项目可在「共享角色」里选用；绑定的本项目技能会一起共享，并自动装入所有对话</small></span><input name="shared" type="checkbox" role="switch"></label>
             </div>
           </section>
           <section class="as-pane wizard-pane" data-agent-pane="create-review">
@@ -905,21 +926,16 @@
     <div class="modal-card req-composer req-wizard" role="dialog" aria-modal="true" aria-labelledby="reqWizardTitle">
       <header class="req-wizard-head">
         <h2 id="reqWizardTitle">新建需求</h2>
-        <div id="reqSteps" class="req-steps" role="tablist" aria-label="创建步骤">
-          <button type="button" role="tab" data-req-step="1" aria-selected="true"><span class="req-step-n">1</span>描述<span class="req-step-more">需求</span></button>
-          <button type="button" role="tab" data-req-step="2" aria-selected="false" disabled><span class="req-step-n">2</span>澄清<span id="reqStepSkipTag" class="req-step-skip"></span></button>
-          <button type="button" role="tab" data-req-step="3" aria-selected="false" disabled><span class="req-step-n">3</span>确认<span class="req-step-more">创建</span></button>
-        </div>
         <button type="button" class="hui-icon-btn requirement-close" aria-label="关闭"><svg class="agent-icon harness-icon" data-icon="close" width="16" height="16" aria-hidden="true"></svg></button>
       </header>
       <div class="req-wizard-body">
-        <section id="reqStepDescribe" class="req-pane" data-req-pane="1" aria-label="描述需求">
+        <section id="reqStepDescribe" class="req-pane" aria-label="描述需求">
           <div class="req-chat-composer">
             <textarea id="chatInput" aria-label="需求描述" placeholder="要做什么？例如：个人主页增加徽章，需要兼容现有成就体系。" rows="6"></textarea>
             <div class="req-composer-toolbar">
               <div id="reqRepoChip" class="req-ghost-sel">
                 <button type="button" id="reqRepoChipToggle" class="req-ghost-trigger" aria-haspopup="dialog" aria-expanded="false" aria-controls="reqRepoPopover"><svg class="agent-icon harness-icon" data-icon="folder" width="13" height="13" aria-hidden="true"></svg><span id="reqRepoChipLabel" class="req-ghost-value"></span><svg class="agent-icon harness-icon req-chev" data-icon="chevron-down" width="13" height="13" aria-hidden="true"></svg></button>
-                <div id="reqRepoPopover" class="req-popover" role="dialog" aria-label="分析仓库与分支" hidden>
+                <div id="reqRepoPopover" class="req-popover" role="dialog" aria-label="代码仓库与分支" hidden>
                   <div id="reqRepoFields" class="req-repo-fields">
                     <div class="req-field req-field-repo">
                       <div class="req-f-label"><svg class="agent-icon harness-icon" data-icon="folder" width="13" height="13" aria-hidden="true"></svg>代码仓库</div>
@@ -933,40 +949,19 @@
                   </div>
                 </div>
               </div>
-              <div class="clarify-model-field" id="reqClarifyModelPicker" data-clarify-model>
-                <input type="hidden" data-clarify-model-value value="glm-5.3-flash-ioa">
-                <button type="button" class="ai-model-toggle" data-model-toggle aria-haspopup="listbox" aria-expanded="false">
-                  <span class="ai-model-icon" data-family="glm">智</span>
-                  <span data-model-label>GLM-5.3-Flash</span>
-                  <span class="ai-model-caret" aria-hidden="true"></span>
-                </button>
-                <div class="ai-model-menu" hidden role="listbox"></div>
-              </div>
               <span class="req-toolbar-sp"></span>
               <span id="reqCharCount" class="req-count"></span>
             </div>
           </div>
-        </section>
-        <section id="reqStepClarify" class="req-pane" data-req-pane="2" aria-label="澄清" hidden>
-          <div id="reqAnswerHistory" class="req-history"></div>
-          <div id="reqThinking" class="req-thinking" hidden>
-            <div class="req-thinking-line"><span class="req-thinking-lamp" aria-hidden="true"><i></i><i></i></span><span id="reqThinkingLabel" class="req-thinking-label">分析师正在读代码</span></div>
-            <button type="button" id="reqTraceToggle" class="req-fold" aria-expanded="false" aria-controls="reqThinkingStream" hidden><svg class="agent-icon harness-icon req-chev" data-icon="chevron-down" width="13" height="13" aria-hidden="true"></svg><span id="reqTraceLabel">已用 0 个工具</span></button>
-            <div id="reqThinkingStream" class="req-trace" hidden></div>
-          </div>
-          <div id="reqClarifyPanel" class="req-clarify-panel" hidden></div>
-        </section>
-        <section id="reqStepConfirm" class="req-pane" data-req-pane="3" aria-label="确认并创建" hidden>
-          <div id="reqRepoChangedAlert" class="req-warn-bar" role="status" hidden>
-            <svg class="agent-icon harness-icon" data-icon="warning" width="16" height="16" aria-hidden="true"></svg>
-            <div class="req-warn-text"><span id="reqRepoChangedText"></span><br><small>仓库或分支已改动，结论仍保留；如需按新仓库重新分析，点「重新澄清」。</small></div>
-            <button type="button" id="reqReclarify" class="button small"><svg class="agent-icon harness-icon" data-icon="refresh" width="13" height="13" aria-hidden="true"></svg>重新澄清</button>
-          </div>
           <div class="req-form">
-            <div class="req-field req-wide"><label class="req-f-label" for="reqTitle">标题</label><input id="reqTitle" class="input" autocomplete="off" placeholder="一句话说明这个需求"></div>
-            <div class="req-field req-wide"><div id="reqSummaryLabel" class="req-f-label">需求结论</div><div id="reqSummary" class="req-summary-box"></div></div>
-            <div id="reqConfirmRepoSlot" class="req-repo-slot"></div>
-            <div class="req-field req-wide"><label class="req-f-label" for="reqWorkflow"><svg class="agent-icon harness-icon" data-icon="workflow" width="13" height="13" aria-hidden="true"></svg>SOP 流程</label><select id="reqWorkflow" class="select"></select></div>
+            <div class="req-field req-wide">
+              <div class="req-f-label" id="reqDeliveryLabel">交付方式</div>
+              <div id="reqDelivery" class="req-dest" role="radiogroup" aria-labelledby="reqDeliveryLabel">
+                <button type="button" class="req-choice" role="radio" aria-checked="true" data-req-delivery="sop"><span class="req-choice-ind" aria-hidden="true"></span><span class="req-choice-body"><b>按 SOP 交付</b><span id="reqDeliverySOPHint">按选定的 SOP 流程跑，可手动或定时触发</span></span></button>
+                <button type="button" class="req-choice" role="radio" aria-checked="false" data-req-delivery="none"><span class="req-choice-ind" aria-hidden="true"></span><span class="req-choice-body"><b>不使用 SOP</b><span>只建单，在对话里澄清、直接改代码</span></span></button>
+              </div>
+            </div>
+            <div id="reqWorkflowField" class="req-field req-wide"><label class="req-f-label" for="reqWorkflow"><svg class="agent-icon harness-icon" data-icon="workflow" width="13" height="13" aria-hidden="true"></svg>SOP 流程</label><select id="reqWorkflow" class="select"></select></div>
             <div class="req-field req-wide">
               <div class="req-f-label" id="reqTargetLabel">建到哪里</div>
               <div id="reqTarget" class="req-dest" role="radiogroup" aria-labelledby="reqTargetLabel">
@@ -974,18 +969,13 @@
                 <button type="button" class="req-choice" role="radio" aria-checked="false" data-req-target="tapd"><span class="req-choice-ind" aria-hidden="true"></span><span class="req-choice-body"><b>TAPD 需求</b><span id="reqTargetTAPDHint">先在平台建单，再同步到 TAPD</span></span></button>
               </div>
             </div>
-            <div id="reqOutcome" class="req-outcome req-wide"></div>
           </div>
         </section>
       </div>
       <footer id="reqFooter" class="req-wizard-foot">
-        <button id="reqBack" type="button" class="button quiet" hidden><svg class="agent-icon harness-icon" data-icon="chevron-left" width="13" height="13" aria-hidden="true"></svg>上一步</button>
         <span id="reqComposerHint" class="req-foot-note" aria-live="polite"></span>
-        <button id="chatStop" type="button" class="button" hidden>停止</button>
-        <button id="reqSkip" type="button" class="button quiet" title="先写一句需求">跳过澄清</button>
-        <button id="reqNext" type="button" class="button primary" title="先写一句需求">开始澄清<svg class="agent-icon harness-icon" data-icon="chevron-right" width="13" height="13" aria-hidden="true"></svg></button>
-        <button id="reqGoCreate" type="button" class="button" hidden>直接去创建</button>
-        <button id="reqCreate" type="button" class="button primary" hidden>创建需求</button>
+        <button id="reqCreate" type="button" class="button" title="先写一句需求">创建需求</button>
+        <button id="reqCreateChat" type="button" class="button primary" title="先写一句需求"><svg class="agent-icon harness-icon" data-icon="chat" width="13" height="13" aria-hidden="true"></svg>创建并去对话澄清</button>
       </footer>
     </div>
   </div>
@@ -1008,7 +998,7 @@
         <div class="pa-fs">
           <h5>仓库地址</h5>
           <div data-github-repositories></div>
-          <label class="pa-field"><span class="pa-field-l">GitHub 链接或 Git SSH 地址</span>
+          <label class="pa-field"><span class="pa-field-l">Git HTTPS 链接或 Git SSH 地址</span>
             <input class="pa-input mono" name="repoUrl" spellcheck="false" placeholder="https://github.com/owner/repo">
             <span class="pa-fmt"><code>https://github.com/owner/repo</code><code>git@gitlab.com:group/repo.git</code></span>
             <span class="pa-field-e" id="repoDrawerUrlError" hidden>请输入有效的 GitHub 链接或 Git SSH 克隆地址。CNB 只支持 HTTPS + 访问令牌。</span>
@@ -1163,7 +1153,25 @@
                   <div class="ai-model-menu" hidden role="listbox" aria-label="模型"></div>
                 </div>
               </div>
-              <p class="schedule-field-hint" id="scheduleModelHint">与 AI 助手相同的 CLI 与模型，到点用项目 Owner 在所选 CLI 上配置的 Key 执行。</p>
+              <p class="schedule-field-hint" id="scheduleModelHint">Codex 和 Claude Code 优先使用保存人默认执行机器的账号登录。机器离线时改用个人 API Key，Key 缺失或不可用时任务失败。CodeBuddy 缺少个人 Key 时可使用平台共享 Key。</p>
+            </div>
+            <div data-schedule-kind="assistant" hidden>
+              <label for="scheduleSessionMode">会话</label>
+              <select id="scheduleSessionMode" class="select" name="sessionMode">
+                <option value="">每次新开会话</option>
+                <option value="fixed">始终在同一个会话里继续</option>
+              </select>
+              <p class="schedule-field-hint" id="scheduleSessionHint">每次执行各开一个会话，可在执行记录里打开。</p>
+              <div id="scheduleSessionKeepField" class="schedule-session-keep">
+                <label for="scheduleSessionKeep">保留会话数</label>
+                <select id="scheduleSessionKeep" class="select" name="sessionKeep">
+                  <option value="10">最近 10 个</option>
+                  <option value="50" selected>最近 50 个</option>
+                  <option value="100">最近 100 个</option>
+                  <option value="-1">不限</option>
+                </select>
+                <p class="schedule-field-hint" id="scheduleSessionKeepHint">超过后每次执行结束时自动删除最早的会话，执行记录仍保留，但打不开已删除的会话。</p>
+              </div>
             </div>
             <div data-schedule-kind="assistant" data-schedule-prompt hidden>
               <label>提示词</label>
@@ -1310,6 +1318,7 @@
   <script src="/app/issue-bulk-delete.js"></script>
   <script src="/app/sync-schedule.js"></script>
   <script src="/app/shared-schedules.js"></script>
+  <script src="/app/schedule-executions.js"></script>
   <script src="/app/notification-editor.js"></script>
   <script src="/app/bots.js"></script>
   <script src="/app/assistant-settings.js"></script>
@@ -1326,6 +1335,7 @@
   <script src="/app/run-activation.js"></script>
   <script src="/app/workbench.js?v=20261030theme1"></script>
   <script src="/app/git-ssh-keys.js"></script>
+  <script src="/app/git-http-credentials.js"></script>
   <script src="/app/approvals.js"></script>
   <script src="/app/obs-charts.js"></script>
   <script src="/app/observability.js"></script>

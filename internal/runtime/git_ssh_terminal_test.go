@@ -52,7 +52,7 @@ func TestTerminalGitSSHAgentStaysOutOfWorkspace(t *testing.T) {
 				sb = &processSandbox{workspace: workspace, driver: "bwrap"}
 			}
 			command := CommandSpec{environment: map[string]string{}}
-			stop, err := BindTerminalGitSSH(sb, &command, keys)
+			stop, err := BindTerminalGitSSH(t.Context(), sb, &command, keys)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -101,7 +101,7 @@ func TestTerminalGitSSHAgentStaysOutOfWorkspace(t *testing.T) {
 // every other bwrap process of the workspace sees an empty tmpfs there.
 func TestBwrapPrivateBindsReachOnlyTheirProcess(t *testing.T) {
 	workspace := t.TempDir()
-	base, err := bwrapArgsCommand(workspace, SandboxRequirements{}, false)
+	base, err := bwrapArgsCommand(workspace, SandboxRequirements{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -125,7 +125,7 @@ func TestTerminalGitSSHWithoutPrivateFilesystemOffersNoKey(t *testing.T) {
 	for _, sb := range []Sandbox{&dockerSandbox{workspace: t.TempDir()}, &processSandbox{workspace: t.TempDir(), driver: "seatbelt"}} {
 		before, _ := filepath.Glob("/tmp/lf-term-ssh-*")
 		command := CommandSpec{environment: map[string]string{}}
-		stop, err := BindTerminalGitSSH(sb, &command, keys)
+		stop, err := BindTerminalGitSSH(t.Context(), sb, &command, keys)
 		if err != nil {
 			t.Fatal(err)
 		}

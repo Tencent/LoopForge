@@ -7,20 +7,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
+	"time"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
 
-// Approvals are transient control state in the existing generation payload.
-// Any API instance can answer the browser or CLI without a separate queue.
-// This envelope is absent from the public generation DTO: raw tool arguments
-// must only leave through the redacted approvals endpoint.
-type assistantGenerationPayload struct {
-	domain.AssistantGeneration
-	NativeApprovals []assistantNativeApprovalState `json:"nativeApprovals,omitempty"`
-}
-
+// Approval state is stored in the private generation payload, so any API
+// instance can answer without exposing raw tool arguments in the generation DTO.
 type assistantNativeApprovalState struct {
 	domain.AssistantNativeApproval
 	Phase       string `json:"phase"`
@@ -31,12 +25,6 @@ func nativeApprovalState(item assistantNativeApprovalState) domain.AssistantNati
 	out := item.AssistantNativeApproval
 	out.InputDigest = item.InputDigest
 	return out
-}
-
-func generationPayload(row assistantGenerationRow) assistantGenerationPayload {
-	var payload assistantGenerationPayload
-	_ = json.Unmarshal(row.Payload, &payload)
-	return payload
 }
 
 // nativeApprovalGenerationActive measures the heartbeat on the same clock that
@@ -81,6 +69,9 @@ func (r *AssistantRepo) CreateNativeApproval(owner int64, session, phase string,
 			return nil // A transport retry is still the same invocation.
 		}
 		item.Decision = "pending"
+		if item.CreatedAt.IsZero() {
+			item.CreatedAt = time.Now().UTC()
+		}
 		payload.NativeApprovals = append(payload.NativeApprovals, assistantNativeApprovalState{AssistantNativeApproval: item, Phase: phase, InputDigest: inputDigest})
 		return nil
 	})
@@ -137,6 +128,17 @@ func (r *AssistantRepo) DecideNativeApproval(owner, actor int64, session, id, de
 			return nil
 		}
 		return fmt.Errorf("审批已失效或不属于当前发起人")
+	})
+}
+
+// ReleaseNativeApproval removes the card for a single finished or cancelled
+// gateway call. Other calls waiting in the same phase retain their approvals.
+func (r *AssistantRepo) ReleaseNativeApproval(owner int64, session, generation, phase, id string) error {
+	return r.updateNativeApprovals(owner, session, generation, false, func(payload *assistantGenerationPayload) error {
+		payload.NativeApprovals = slices.DeleteFunc(payload.NativeApprovals, func(item assistantNativeApprovalState) bool {
+			return item.Phase == phase && item.ID == id
+		})
+		return nil
 	})
 }
 

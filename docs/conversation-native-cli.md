@@ -2,25 +2,47 @@
 
 发送首条消息、实际开始生成时固定执行机器，之后不能修改。发送前选择机器只保存在本地草稿，不创建空会话；机器列表刷新保留草稿选择，个人默认机器未加载时不能首发。历史上因选择机器产生的空草稿可以重新选择，也不常驻会话侧栏。未记录执行机器的存量会话归属云端，不使用用户后来修改的默认机器。新会话选择远程 Runner 后，平台模式、工作区模式、标题生成和独立审批模型都由该 Runner 执行；机器不可用时返回错误，等待原机器恢复。
 
-平台模式保留平台管理工具，并限制原生写入和命令。打开 Docker 工作区后，当前 CLI 阶段退出并保存原生日志；平台轮换工具令牌，在同一机器、同一原生会话中重新启动 CLI，启用原生文件、补丁与命令工具。CLI 复用工作区现有容器，浏览器、准备脚本与交付操作使用相同环境。native 沙箱不在本次支持范围。
+平台模式保留平台管理工具，并限制原生写入和命令。用 `workbench_workspace_open` 选一个运行环境（Docker 或 native：Linux bwrap / macOS seatbelt 沙箱）打开工作区后，当前 CLI 阶段退出并保存原生日志；平台轮换工具令牌，在同一机器上续接原生会话重新启动 CLI，启用原生文件、补丁与命令工具。Docker 与 bwrap 模式下 cwd 都是 `<会话根>/ws`（工作区模式下它挂的就是运行工作区），按 cwd 归档会话的 CLI（Claude Code、CodeBuddy 等）跨模式、换运行环境都能续接。macOS seatbelt 没有每进程挂载命名空间，工作区模式保持 HOME 为 `<会话根>/home`（审批钩子与父目录在沙箱规则中写保护，宿主机其余路径只读），cwd 直接指向运行工作区路径。续接仍然失败时（包括 seatbelt 跨模式 cwd 变化，或原生日志丢失、被服务商拒绝），每个阶段可以用完整对话上下文新建一次原生会话，模式切换后的新会话会被告知已处于哪个模式，不会为重做切换再切一次。Docker 工作区里 CLI 复用工作区现有容器，浏览器与准备脚本使用相同环境；native 工作区使用执行机器上已安装的 CLI。工作区模式的 CLI 按本轮发言人注入 Git Token（只对 github.com 应答的 askpass）、`GH_TOKEN` 与按主机绑定的 SSH 密钥，git 克隆、提交、推送和开 PR 都由 Agent 自己完成，详见 conversation-workspaces.md 的「Git 凭据」。
 
-工作区只提供模式切换、交付、产物、浏览器及任务明确选择的 MCP 集成。平台管理和旧的文件操作工具既不出现在目录中，也不能通过直接调用执行。模式切换令牌在旧进程退出后更新，旧令牌失效；交接期间拒绝继续调用工具。切回平台模式保留工作区和原生会话，关闭文件侧栏只改变界面。
+工作区只提供模式切换、产物、浏览器及任务明确选择的 MCP 集成；开出的 GitHub PR 由平台在每轮结束时自动登记，不需要工具。平台管理和旧的文件操作工具既不出现在目录中，也不能通过直接调用执行。模式切换令牌在旧进程退出后更新，旧令牌失效；交接期间拒绝继续调用工具。切回平台模式保留工作区和原生会话，关闭文件侧栏只改变界面。
 
-模式切换由 Agent 按任务自动处理，界面不提供切换入口；内部控制静默完成；交接阶段的模型文字不写入展示流，不要求用户理解或确认进程重启。原生开发操作不产生逐项审批卡。
+模式切换由 Agent 按任务自动处理，界面不提供切换入口；内部控制静默完成；交接阶段的模型文字不写入展示流，不要求用户理解或确认进程重启。沙箱内的原生开发操作不产生审批卡，只有写入沙箱外系统的命令按审批模式处理（见下文）。
 
 原生 HOME 和工作目录路径在模式间保持稳定。配置、技能、可执行资产与二进制附件由平台准备；原生会话日志保留在执行机器，错误或取消后继续原会话。远程 Runner 通过已认证的控制连接同步资产、运行 CLI 和转发会话工具请求，不在持久任务行中保存进程输入或密钥。
 
 ZCode 恢复时通过官方会话协议应用当前选择的模型，再启动原生 prompt 命令；保留同一 session 和历史，不直接改写 CLI 数据库。协议不兼容或模型不可用时中止，保留日志供重试。
 
-Docker 工作区内的原生文件、补丁和命令在三种审批模式下均直接执行，不再进行逐项人工确认或独立模型审查。「请求批准 / 帮我批准 / 完全权限」只控制平台与外部操作，例如平台配置写入、提交 MR 和外部 MCP 写入。开启工作区与切回平台模式本身不触发独立审批。各 CLI 的 hook 只检查本轮是否仍有效及平台模式限制；取消、CLI 退出或模式交接后拒绝旧阶段调用。平台网关连续 120 秒不可用时 hook 拒绝本次操作，不等待 CLI 自身的 hook 超时（部分 CLI 超时即放行）；Kimi 使用其原生 hook 配置，hook 的非 2 退出码统一转为拒绝。配置与 hook 文件在 Docker 中只读挂载。
+工作区是独立沙箱，沙箱内的原生文件、补丁和命令（编辑、构建、测试等）在三种审批模式下都直接执行，不做人工确认或独立模型审查。越过沙箱、写入外部系统的命令才按审批模式处理：`git push`；`gh pr|issue|release|repo|… create/merge/close/comment/edit/review/delete…`；`gh api` 带写方法或 `-f/-F/--input`；`curl` 带 `-X POST/PUT/PATCH/DELETE`、`-d/--data*`、`-F/--form`、`-T`、`--json`，`wget --post-*`；`npm/pnpm/yarn/bun/poetry/cargo publish`、`twine upload`、`gem push`；`docker/podman push`；`kubectl apply/delete/…`、`helm install/upgrade/…`、`terraform apply/destroy`。识别看工具输入里的 `command/cmd/args/script` 等字段，与 CLI 的工具名无关。这是防误操作的护栏，不是安全边界：脚本自己联网写入不会被识别。
+
+- 完全权限：直接执行。
+- 帮我批准：只有批准和拒绝两种结果，不出审批卡，也不转人工批准。hook 第一次轮询时平台在后台启动独立审查模型，按本次命令和对话授权判断（审查预算 60 秒，每次 hook 请求最多等 10 秒，没出结果就返回 pending 继续轮询，同一调用只审查一次）；通过即执行，审查拒绝、审查不可用或超时都直接拒绝，Agent 收到原因（「操作未执行，不要换一种方式重试」）并告诉用户。
+- 请求批准：命令暂停，对话里出现「批准外部写入」卡片（显示识别出的类型与完整命令），只有本轮发言人能批准或拒绝；批准只对这一次调用有效。拒绝后 Agent 收到「用户拒绝了本次外部写入」，提示词要求它不换方式重试。停止回复、CLI 退出或模式交接时卡片失效；等待超过 9 分钟由平台自动拒绝（Kimi 的 hook 上限 600 秒，超时会放行，hook 自身也在 570 秒时拒绝）。
+
+批准状态记在本轮 generation 的 payload 里（`nativeApprovals`），任一 API 实例都能读写，不新增表。卡片通过 `GET /api/assistant/sessions/{id}/native-approvals` 每秒轮询，决定走 `POST …/native-approvals/{approvalId}`。平台配置写入沿用草稿审批：请求批准下提交草稿由用户确认，帮我批准经独立审查，完全权限直接执行。外部 MCP 写入指对话选中的、经平台网关代理的第三方 MCP 服务器（如 TAPD、自定义 MCP）的写工具，在 `agent_tool_mcp.go` 的网关分发处按读写分类处理：完全权限直接执行；帮我批准经独立审查，未通过即拒绝；请求批准下在同一轮显示「批准外部写入」卡片，包含 MCP 服务、工具和脱敏后的实际参数。本轮发言人批准时，网关执行该次调用并把结果返回给 CLI。拒绝、停止、切换模式或调用超时后，待批准的写入失效。系统最多等 9 分钟，CLI 可提前结束等待：CLI 断开请求，或按 MCP 规范发送 `notifications/cancelled`（例如它自己的工具调用超时），网关都会取消该次调用，卡片随之失效，之后再批准也不会写入；CLI 重试会生成新的卡片。Kimi 的 MCP 工具超时默认 60 秒，平台写入的 `mcp.json` 为每个服务配置 `toolTimeoutMs: 600000`（OpenCode、DeepSeek 同为 600 秒）。卡片参数按字段名（归一化后匹配 `*token`、`*secret`、`*password`、`*apikey`、`*credential(s)`、`authorization`、`cookie` 等后缀，`max_tokens` 这类计数不算）和常见密钥格式（Bearer、GitHub/GitLab/Slack/OpenAI/AWS 密钥、JWT、PEM 私钥）脱敏；`headers`、`credentials` 等对象只隐藏其中的密钥字段，其余内容照常显示，标题会注明「N 个字段已隐藏」及字段路径。远程执行机器需要支持取消单次 MCP 请求的 Runner。推送主分支、强推和合并 PR 另由提示词约束为只在用户明确要求时做。开启工作区与切回平台模式本身不触发审批。各 CLI 的 hook 同时检查本轮是否仍有效及平台模式限制；取消、CLI 退出或模式交接后拒绝旧阶段调用。平台网关连续 120 秒不可用时 hook 拒绝本次操作（等待批准期间网关可达，不计入），不等待 CLI 自身的 hook 超时（部分 CLI 超时即放行）；Kimi 使用其原生 hook 配置，hook 的非 2 退出码统一转为拒绝。配置与 hook 文件在 Docker、bwrap 中只读挂载，在 macOS seatbelt 中同样保持只读保护。
 
 Runner 需要 0.10.1 或以上版本，该版本支持取消后台导出并释放工作区锁。Docker 镜像优先使用已安装的 CLI；支持官方安装器的 CLI 缺失时自动安装。ZCode 没有独立 npm 包，须在执行机器及工作区镜像内预装官方 CLI 并加入 PATH，缺失时明确报错。原生工具调用围栏与进程生命周期管理依赖 Python3。每个 Docker 会话阶段使用独立的 Linux 子进程收养进程，结束或取消时回收其全部后代，包含另建进程组的原生命令；不影响容器里的其他命令。平台会在启动前检查依赖，固定安装步骤以容器 root 用户在 `/` 中运行，实际 CLI 保留工作区的容器用户；无法准备时中止，不降级绕过调用围栏。建议在受控工作区镜像中预安装 CLI 和依赖。
 
-原生会话的工具回调在执行机器上中继。宿主进程使用 Docker host gateway；通过 docker.sock 管理工作区的容器进程自动识别自身容器网络，工作区加入相同网络并访问该地址。自定义路由可通过 `AGENTFLOW_CONVERSATION_RELAY_HOST` 和 `AGENTFLOW_CONVERSATION_DOCKER_NETWORK` 显式指定工作区能访问的执行进程地址与 Docker 网络。会话目录会以相同路径挂进工作区，而 docker.sock 背后的 Docker 守护进程按自己所在主机解析挂载源，因此容器内的平台进程须把 `AGENTFLOW_CONVERSATION_DIR` 设在与宿主机同路径挂载的目录中；`compose.yaml` 将其设为 `${LOOPFORGE_DATA_DIR}/conversations`。Runner 不读该变量，原生会话目录固定在其工作区根目录的 `.conversations` 下，容器内运行 Runner 时须同路径挂载该工作区目录。未设置时会话目录位于 `AGENTFLOW_ASSISTANT_SESSION_DIR` 下，该目录在命名卷里时打开工作区会报 `mkdirat ... read-only file system`。附件等按用户保存的助手数据仍在 `AGENTFLOW_ASSISTANT_SESSION_DIR`，不挂进工作区。Docker 工作区需要工作区脚本视图辅助程序：部署时设置 `AGENTFLOW_GATE_MCP_BINARY`（指向已构建的辅助二进制）或 `AGENTFLOW_SOURCE_ROOT`（源码目录，按需构建），两者都缺失时打开工作区会报 `script view helper unavailable`。
+个人执行机器可为 Codex、Claude Code 和 Antigravity 选择「账号登录」，对话按所绑定机器的认证设置启动 CLI。在运行 Runner 的系统账户下登录后，Codex 读取 `CODEX_HOME` 下的 `auth.json`，Claude Code 读取 `CLAUDE_CONFIG_DIR` 下的 `.credentials.json` 或 Runner 环境中的 `CLAUDE_CODE_OAUTH_TOKEN`。Codex、Claude Code 仅存于系统钥匙串的登录需要改用 CLI 支持的文件式登录或 API Key；Antigravity 的凭据库支持见下文。
+
+登录状态仅在该执行机器上使用。每次运行把登录文件复制进隔离的 CLI HOME，结束后删除；CLI 刷新 token 后，Runner 在源内容未改变时保存回原来源。当前格式与账号字段比较属于本地检查，不能证明整套 token 的服务端归属；完整的写回归属验证另行加固。设置页在 CLI 行的「更多」菜单提供「测试」，按当前认证方式在该机器上发送一次短模型请求。
+
+SOP 的 native 和 Docker 沙箱也使用所选 Runner 的认证设置。每次 CLI 调用都在节点的独立 HOME 中使用临时登录文件，结束后清理该文件，会话可在同一节点续接。
+
+Runner 0.10.2 起，机器卡片可检查并手动安装平台提供的 Runner 构建。更新在机器空闲时应用。自行安装的 CLI 如提供非交互更新命令，可以在 CLI 菜单中直接执行更新。托管安装使用托管更新。如果 CLI 无法自更新，界面会提示按原安装方式更新。
+
+CLI 菜单中的「模型列表」与个人配置共用当前用户的模型目录。可以获取、筛选、添加、重命名和排序模型。保存后，AI 对话和角色编辑器使用该目录。API Key 模式通过个人配置里的 Key 与服务地址获取模型，留空地址时使用 CLI 的官方服务。Codex、Claude Code 和 Antigravity 的账号登录模式从所选机器查询。
+
+Antigravity 的账号登录读取运行 Runner 的系统账号已有的凭据库或远程会话认证文件。对话工作区和 SOP 的 native、Docker 沙箱使用私有 HOME 中的认证副本，由官方 CLI 自动刷新，结束时保存回原来源并清理副本。Docker 镜像需要安装官方 agy CLI。共享对话中，只有机器所有者发言时使用该登录。实测版本为 agy 1.5.10。
+
+其他 CLI 使用个人配置中保存的 API Key。Antigravity 也可切换为 API Key，读取个人配置里的 Gemini API Key，用量按 Gemini API 单独计费。详见 [Antigravity CLI 认证](https://antigravity.google/docs/install?tab=cli)和 [Gemini API 计费](https://ai.google.dev/gemini-api/docs/billing)。
+
+ZCode 可通过 GLM Coding Plan 的 API Key 和套餐专用端点使用订阅额度。Start Plan 的额度需要登录 ZCode 账号，无法通过 API Key 使用。详见 [ZCode 模型配置](https://zcode.z.ai/cn/docs/configuration)。
+
+原生会话的工具回调在执行机器上中继。宿主进程使用 Docker host gateway；通过 docker.sock 管理工作区的容器进程自动识别自身容器网络，工作区加入相同网络并访问该地址。自定义路由可通过 `AGENTFLOW_CONVERSATION_RELAY_HOST` 和 `AGENTFLOW_CONVERSATION_DOCKER_NETWORK` 显式指定工作区能访问的执行进程地址与 Docker 网络。会话目录会以相同路径挂进工作区，而 docker.sock 背后的 Docker 守护进程按自己所在主机解析挂载源，因此容器内的平台进程须把 `AGENTFLOW_CONVERSATION_DIR` 设在与宿主机同路径挂载的目录中；`compose.yaml` 将其设为 `${LOOPFORGE_DATA_DIR}/conversations`。Runner 不读该变量，原生会话目录固定在其工作区根目录的 `.conversations` 下，容器内运行 Runner 时须同路径挂载该工作区目录。未设置时会话目录位于 `AGENTFLOW_ASSISTANT_SESSION_DIR` 下，该目录在命名卷里时打开工作区会报 `mkdirat ... read-only file system`。附件等按用户保存的助手数据仍在 `AGENTFLOW_ASSISTANT_SESSION_DIR`，不挂进工作区。Docker 工作区直接在主容器中运行 SOP 脚本和 CLI。历史容器存在指令遮蔽挂载时，工作区下次取得执行权后会重建容器并保留工作区文件。标记为重建时运行的准备脚本随后在新容器补跑。
 
 模式交接时，交接工具要求模型只回复一句「好的。」再结束旧阶段，交接之后的展示由平台隐藏；不要求“不输出任何内容”，否则模型可能只产出推理、没有正文的回合，该回合写入原生日志后，续接时会被模型服务拒绝（如 `the conversation must end with a user message`）。交接工具成功后，旧阶段即使未输出 `type=result` 或异常退出，也继续完成交接。续接原生会话时，如果原生日志缺失，或模型服务在本阶段产生任何输出或工具调用之前就拒绝了续接（400/422、会话结构无效、无结果退出），平台用完整对话上下文新建一次原生会话重试；已有输出或工具调用的中断，以及鉴权、限流、额度、网络、执行机器不可用等原因，仍续接原会话或直接报错，不重复执行副作用。
 
-执行机器与运行模式记录在会话 payload 中，存量会话无需回填 SQL；不新增审批表或迁移。保留旧审批 RPC 与 payload 的兼容处理，以便滚动部署时结束旧阶段。
+执行机器与运行模式记录在会话 payload 中，存量会话无需回填 SQL；不新增审批表或迁移。
 
 停止先写入持久取消状态，并立即通知本机执行上下文；跨实例通过心跳转发。立即中断原生进程及其后代，不展示「正在停止」中间态；确认退出后结束本轮并恢复发送。启动前分配进程编号，取消同时阻止迟到的启动请求；停止响应丢失时重试并确认实际退出，不把 RPC 超时当成成功退出；执行机器长时间不可达时，停止重试最多持续 30 秒，之后结束本轮并在诊断中记录 `cli.stop_abandoned`，由执行机器在控制连接或会话租约结束时回收进程。执行机器的请求槽位已满（429）时，平台按指数退避重发本次请求（共约 6 秒），不直接判定本轮失败。完成或取消时只将工作区租约移交后台存档，不等待压缩上传；下一轮可抢占存档，旧存档通过 token CAS 禁止覆盖新快照或释放新租约。后台失败保留原文件，记录补存重试，进程中断留下的待保存状态也由维护任务恢复。
 

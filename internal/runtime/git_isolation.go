@@ -14,9 +14,11 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"agentflow/internal/domain"
 )
 
-const projectAgentGitExcludeBlock = `# AgentFlow managed sandbox: repository Agent configuration
+const legacyProjectAgentGitExcludeBlock = `# AgentFlow managed sandbox: repository Agent configuration
 AGENTS.md
 AGENTS.override.md
 CLAUDE.md
@@ -33,52 +35,78 @@ const agentFlowGitExcludeBlock = `# AgentFlow managed runtime (hooks, bindings, 
 .agentflow/
 `
 
-// UsesProjectAgentConfigIsolation reports whether a sandbox hides repository
-// Agent CLI configuration from commands running inside it. Local execution
-// deliberately keeps its historical, unisolated Git behavior.
-func UsesProjectAgentConfigIsolation(driver string) bool {
-	switch strings.TrimSpace(driver) {
-	case "seatbelt", "bwrap", "docker":
-		return true
-	default:
-		return false
-	}
-}
-
-// RestoreProjectAgentGitIndex clears the temporary skip-worktree bits before
-// AgentFlow refreshes or checks out the run branch. The workspace is a private
-// clone, so these index bits can only have been set by AgentFlow.
-func RestoreProjectAgentGitIndex(ctx context.Context, workspace, driver string) error {
-	return updateProjectAgentGitIndex(ctx, workspace, driver, "--no-skip-worktree")
-}
-
-// ProtectProjectAgentGitIndex prevents sandbox masks and read denials from
-// looking like repository changes to Git. Tracked paths use skip-worktree;
-// untracked paths use the private clone's .git/info/exclude. Neither mechanism
-// changes the source repository or its committed .gitignore.
-func ProtectProjectAgentGitIndex(ctx context.Context, workspace, driver string) error {
-	if !UsesProjectAgentConfigIsolation(driver) {
-		return nil
-	}
-	if err := ensureProjectAgentGitExcludes(workspace); err != nil {
+// RestoreLegacyWorkspaceAgentConfig clears the Git settings installed by the
+// old instruction masks in private checkouts, including legacy root checkouts.
+func RestoreLegacyWorkspaceAgentConfig(ctx context.Context, workspace string, repositories []domain.RepositoryContext) error {
+	if err := RestoreLegacyProjectAgentConfig(ctx, workspace); err != nil {
 		return err
 	}
-	return updateProjectAgentGitIndex(ctx, workspace, driver, "--skip-worktree")
+	for _, repo := range repositories {
+		dir := strings.TrimSpace(repo.WorkspaceDir)
+		if dir == "" || dir == "." {
+			continue
+		}
+		if !filepath.IsLocal(dir) || filepath.Base(dir) != dir {
+			continue
+		}
+		target := filepath.Join(workspace, dir)
+		if info, err := os.Lstat(target); err == nil && info.IsDir() {
+			if err := RestoreLegacyProjectAgentConfig(ctx, target); err != nil {
+				return err
+			}
+		} else if err != nil && !os.IsNotExist(err) {
+			return err
+		}
+	}
+	return nil
 }
 
-func ensureProjectAgentGitExcludes(workspace string) error {
-	return appendGitExcludeBlock(workspace, projectAgentGitExcludeBlock, "project Agent Git excludes")
-}
+// RestoreLegacyProjectAgentConfig only updates clones tagged by the old masks.
+// Keep their marker until the index is restored so an interrupted upgrade can
+// retry without touching unmarked repositories or unrelated Git excludes.
+func RestoreLegacyProjectAgentConfig(ctx context.Context, workspace string) error {
+	git, err := os.Lstat(filepath.Join(workspace, ".git"))
+	if os.IsNotExist(err) || err == nil && !git.IsDir() {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	gitExcludeMu.Lock()
+	defer gitExcludeMu.Unlock()
 
-// EnsureAgentFlowGitExcludes marks .agentflow/ ignored in the private clone so
-// agent git stash -u does not remove runtime hook files mid-session.
-func EnsureAgentFlowGitExcludes(workspace string) error {
-	return appendGitExcludeBlock(workspace, agentFlowGitExcludeBlock, "AgentFlow runtime excludes")
+	target := filepath.Join(workspace, ".git", "info", "exclude")
+	root, rel, err := openWorkspacePath(workspace, target)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	info, err := root.Lstat(rel)
+	if os.IsNotExist(err) || err == nil && !info.Mode().IsRegular() {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	content, err := root.ReadFile(rel)
+	if err != nil {
+		return err
+	}
+	block := []byte(legacyProjectAgentGitExcludeBlock)
+	if !bytes.Contains(content, block) {
+		return nil
+	}
+	if err := clearLegacyProjectAgentGitIndex(ctx, workspace); err != nil {
+		return err
+	}
+	return writeManagedFile(workspace, target, bytes.ReplaceAll(content, block, nil), info.Mode().Perm())
 }
 
 var gitExcludeMu sync.Mutex
 
-func appendGitExcludeBlock(workspace, block, label string) error {
+// EnsureAgentFlowGitExcludes marks .agentflow/ ignored in the private clone so
+// agent git stash -u does not remove runtime hook files mid-session.
+func EnsureAgentFlowGitExcludes(workspace string) error {
 	// Parallel branches prepare the same checkout; check-then-append must not
 	// interleave or the block is appended twice.
 	gitExcludeMu.Lock()
@@ -98,14 +126,12 @@ func appendGitExcludeBlock(workspace, block, label string) error {
 	if err != nil && !os.IsNotExist(err) {
 		return err
 	}
-	if bytes.Contains(existing, []byte(block)) {
+	if bytes.Contains(existing, []byte(agentFlowGitExcludeBlock)) {
 		return nil
 	}
 	if err := root.MkdirAll(filepath.Dir(excludePath), 0o700); err != nil {
 		return err
 	}
-	// Keep append semantics: separate preparation paths may add different
-	// managed blocks concurrently. The held root confines the open operation.
 	file, err := root.OpenFile(excludePath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
 	if err != nil {
 		return err
@@ -116,23 +142,15 @@ func appendGitExcludeBlock(workspace, block, label string) error {
 			return err
 		}
 	}
-	if _, err := file.WriteString(block); err != nil {
-		return fmt.Errorf("write %s: %w", label, err)
+	if _, err := file.WriteString(agentFlowGitExcludeBlock); err != nil {
+		return fmt.Errorf("write AgentFlow runtime excludes: %w", err)
 	}
 	return nil
 }
 
-func updateProjectAgentGitIndex(ctx context.Context, workspace, driver, mode string) error {
-	if !UsesProjectAgentConfigIsolation(driver) {
-		return nil
-	}
-	if _, err := os.Stat(filepath.Join(workspace, ".git")); err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		return err
-	}
-	paths, err := trackedProjectAgentConfigPathsForMode(ctx, workspace, mode)
+func clearLegacyProjectAgentGitIndex(ctx context.Context, workspace string) error {
+	const mode = "--no-skip-worktree"
+	paths, err := trackedSkippedProjectAgentConfigPaths(ctx, workspace)
 	if err != nil || len(paths) == 0 {
 		return err
 	}
@@ -147,6 +165,9 @@ func updateProjectAgentGitIndex(ctx context.Context, workspace, driver, mode str
 		return cmd.CombinedOutput()
 	}
 	output, err := run()
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
 	if err == nil {
 		return nil
 	}
@@ -176,6 +197,9 @@ func updateProjectAgentGitIndex(ctx context.Context, workspace, driver, mode str
 			}
 		}
 		inUse, confirmed, inspectErr = gitIndexLockInUse(ctx, lockPath)
+	}
+	if ctx.Err() != nil {
+		return ctx.Err()
 	}
 	if inspectErr != nil || !confirmed {
 		return fmt.Errorf("git update-index %s: %w: %s (cannot safely inspect index lock: %v)", mode, err, strings.TrimSpace(string(output)), inspectErr)
@@ -363,7 +387,7 @@ func procMayOwnFile(procDir string, uid uint32) bool {
 	return true
 }
 
-func trackedProjectAgentConfigPathsForMode(ctx context.Context, workspace, mode string) ([]string, error) {
+func trackedSkippedProjectAgentConfigPaths(ctx context.Context, workspace string) ([]string, error) {
 	cmd := exec.CommandContext(ctx, "git", "-C", workspace, "ls-files", "-v", "-z")
 	output, err := cmd.Output()
 	if err != nil {
@@ -379,25 +403,33 @@ func trackedProjectAgentConfigPathsForMode(ctx context.Context, workspace, mode 
 			continue
 		}
 		path := string(entry[2:])
-		isProtected := entry[0] == 'S'
-		needsUpdate := mode == "--skip-worktree" && !isProtected || mode == "--no-skip-worktree" && isProtected
-		if needsUpdate && isProjectAgentConfigPath(path) {
+		if (entry[0] == 'S' || entry[0] == 's') && isLegacyProjectAgentConfigPath(path) {
 			paths = append(paths, path)
 		}
 	}
 	return paths, nil
 }
 
-func isProjectAgentConfigPath(path string) bool {
+var legacyProjectAgentDirNames = map[string]bool{
+	".agents": true, ".codex": true, ".claude": true, ".codebuddy": true,
+}
+
+var legacyProjectAgentFileNames = map[string]bool{
+	"AGENTS.md": true, "AGENTS.override.md": true,
+	"CLAUDE.md": true, "CLAUDE.local.md": true,
+	"CODEBUDDY.md": true, ".mcp.json": true,
+}
+
+func isLegacyProjectAgentConfigPath(path string) bool {
 	clean := filepath.ToSlash(filepath.Clean(path))
 	if clean == "." || clean == ".." || strings.HasPrefix(clean, "../") || strings.HasPrefix(clean, "/") {
 		return false
 	}
 	parts := strings.Split(clean, "/")
 	for _, part := range parts[:len(parts)-1] {
-		if projectAgentDirNames[part] {
+		if legacyProjectAgentDirNames[part] {
 			return true
 		}
 	}
-	return projectAgentDirNames[parts[len(parts)-1]] || projectAgentFileNames[parts[len(parts)-1]]
+	return legacyProjectAgentDirNames[parts[len(parts)-1]] || legacyProjectAgentFileNames[parts[len(parts)-1]]
 }
