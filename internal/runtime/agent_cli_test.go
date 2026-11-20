@@ -102,14 +102,24 @@ func TestKimiThinkingConfiguration(t *testing.T) {
 }
 
 func TestAgentCLICommandAgyEffortSuffix(t *testing.T) {
-	for _, tc := range []struct{ model, effort, want string }{
-		{"gemini-3.8-flash-medium", "low", "gemini-3.8-flash-low"},
-		{"gemini-3.8-flash-medium", "", "gemini-3.8-flash-medium"},
-		{"gemini-3.8-flash", "low", "gemini-3.8-flash"},
-		{"gemini-4-argon-xhigh", "max", "gemini-4-argon-max"},
-		{"gateway-model", "low", "gateway-model"},
+	for _, tc := range []struct {
+		model, effort, want string
+		runnerLogin         bool
+	}{
+		{"gemini-3.8-flash-medium", "low", "gemini-3.8-flash-low", false},
+		{"gemini-3.8-flash-medium", "", "gemini-3.8-flash-medium", false},
+		{"gemini-3.8-flash", "low", "gemini-3.8-flash", false},
+		{"gemini-4-argon-xhigh", "max", "gemini-4-argon-max", false},
+		{"gateway-model", "low", "gateway-model", false},
+		{"claude-opus-5-5-medium", "high", "claude-opus-5-5-high", true},
+		{"claude-sonnet-5-5-medium", "low", "claude-sonnet-5-5-low", true},
+		{"claude-sonnet-5-5-medium", "", "claude-sonnet-5-5-medium", true},
+		{"claude-opus-5-5-high", "", "claude-opus-5-5-high", true},
+		{"claude-opus-5-5-medium", "high", "claude-opus-5-5-medium", false},
 	} {
-		argv := AgentCLICommand(AgentCLIAntigravity, AgentCLICommandOptions{Model: tc.model, Effort: tc.effort, Prompt: "p"}).Argv
+		argv := AgentCLICommand(AgentCLIAntigravity, AgentCLICommandOptions{
+			Model: tc.model, Effort: tc.effort, Prompt: "p", RunnerLogin: tc.runnerLogin,
+		}).Argv
 		if i := slices.Index(argv, "--model"); i < 0 || argv[i+1] != tc.want {
 			t.Errorf("%s at %q: %q", tc.model, tc.effort, argv)
 		}

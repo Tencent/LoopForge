@@ -57,7 +57,6 @@ function runnerStatusLabel(status,lastSeen){
   return `<span class="runner-status${style}" title="${escapeHTML(runnerLastSeen(lastSeen))}"><i></i>${escapeHTML(label)}</span>`;
 }
 const runnerCLILabels={'claude-code':'Claude Code','codex':'Codex','codebuddy':'CodeBuddy',opencode:'OpenCode',cursor:'Cursor CLI',agy:'Antigravity',kimi:'Kimi Code',pi:'Pi',dsh:'DeepSeek Harness',zcode:'ZCode'};
-const runnerCLIIcons={'claude-code':'claude',codex:'codex',codebuddy:'codebuddy',opencode:'opencode',cursor:'cursor',agy:'gemini',kimi:'kimi',pi:'pi',dsh:'deepseek',zcode:'glm'};
 const runnerAuthLabel={local:'账号登录',personal:'API Key'};
 const runnerAuthDescription={local:'Claude Code、Codex 和 Antigravity 可以使用运行 Runner 的系统账号在这台机器上的已有登录，对话与 SOP 的 native、Docker 沙箱均可复用。共享对话中，只有机器所有者发言时会使用此登录。',personal:'读取「个人配置」中保存的 API Key。对话使用当前发言人的 Key，SOP 使用运行责任人的 Key。Antigravity 的 Gemini API Key 按 API 单独计费。'};
 const runnerOSLabels={darwin:'macOS',linux:'Linux',windows:'Windows'};
@@ -96,10 +95,11 @@ function runnerRuntimeHTML(runner,runtime,shared){
   const testing=runnerRuntimeTests.has(key),updating=runnerMaintenancePending.has(key);
   const busy=testing||updating||runnerAuthChanges.has(key);
   const disabled=runtime.status==='disabled';
+  const icon=window.AgentFlowAssistantModels?.cliIcon(provider);
   return `<div class="runner-runtime-row ${disabled?'off':''}">
     <label class="runner-runtime-label">
       <input type="checkbox" data-runner-cli="${safeKey}" ${disabled?'':'checked'} ${shared?'disabled':''} aria-label="启用 ${label}">
-      <span class="runner-runtime-icon ${provider}" aria-hidden="true"><img src="/images/credentials/${runnerCLIIcons[provider]}.svg" alt=""></span>
+      <span class="runner-runtime-icon ${provider}" aria-hidden="true">${icon?`<img src="${icon}" alt="">`:''}</span>
       <span class="runner-runtime-name"><b>${label}</b><small title="${escapeHTML(runtime.binaryPath||'')}">${escapeHTML(runtime.version||runtime.binaryPath||'已发现')}</small></span>
     </label>
     ${runnerAuthHTML(runtime,key,busy,shared)}

@@ -4,6 +4,7 @@ import (
 	"agentflow/internal/auth"
 	"agentflow/internal/domain"
 	"agentflow/internal/engine"
+	"agentflow/internal/runtime"
 
 	"bytes"
 	"context"
@@ -77,7 +78,8 @@ func (h *assistantHandlers) startGeneration(c *gin.Context) {
 		}
 	}
 	cliEngine, _ := assistantModelEngine(req.Model)
-	runnerLogin := h.assistantUsesRunnerLogin(stored.ID, req.ExecutionTarget, cliEngine)
+	loginRunner := h.assistantLoginRunner(stored.ID, req.ExecutionTarget, cliEngine)
+	runnerLogin := loginRunner.ID != ""
 	user, model, refusal := h.assistantTurnUser(stored, req.Model, runnerLogin)
 	if refusal != "" {
 		c.JSON(400, gin.H{"error": refusal})
@@ -122,7 +124,8 @@ func (h *assistantHandlers) startGeneration(c *gin.Context) {
 	}
 	cliEngine, _ = assistantModelEngine(req.Model)
 	req.Executor = cliEngine
-	if err := validateAssistantEffort(c.Request.Context(), user, req.Model, req.Effort); err != nil {
+	cliModel, err := h.resolveAssistantTurnModel(c.Request.Context(), user, req.Model, req.Effort, loginRunner)
+	if err != nil {
 		c.JSON(400, gin.H{"error": err.Error()})
 		return
 	}
@@ -197,6 +200,11 @@ func (h *assistantHandlers) startGeneration(c *gin.Context) {
 	// Keep the authenticated identity, but disconnect model execution from the
 	// lifetime of the browser request. Only explicit cancellation stops a turn.
 	parent := context.WithValue(context.WithoutCancel(c.Request.Context()), assistantFreshCLIKey{}, freshCLI)
+	if runnerLogin && cliEngine == runtime.AgentCLIAntigravity {
+		parent = context.WithValue(parent, assistantRunnerTurnModelKey{}, assistantRunnerTurnModel{
+			runnerID: loginRunner.ID, model: req.Model, effort: req.Effort, resolved: cliModel,
+		})
+	}
 	_, sharedModels, _ := h.assistantChatUser(stored)
 	h.scheduleAssistantTitle(h.helperExecutionContext(parent, ownerID, req.ExecutionTarget), ownerID, user, old, req.SessionID, req.Messages, req.Model, sharedModels)
 	done := inflightTasks.Add()
@@ -521,7 +529,8 @@ func (h *assistantHandlers) steerGeneration(c *gin.Context) {
 		return
 	}
 	target := session.Execution()
-	runnerLogin := h.assistantUsesRunnerLogin(stored.ID, &target, cliEngine)
+	loginRunner := h.assistantLoginRunner(stored.ID, &target, cliEngine)
+	runnerLogin := loginRunner.ID != ""
 	user, model, refusal := h.assistantTurnUser(stored, model, runnerLogin)
 	if refusal != "" {
 		c.JSON(400, gin.H{"error": refusal})
@@ -545,7 +554,7 @@ func (h *assistantHandlers) steerGeneration(c *gin.Context) {
 		c.JSON(409, gin.H{"error": refusal})
 		return
 	}
-	if err := validateAssistantEffort(c.Request.Context(), user, model, body.Effort); err != nil {
+	if _, err := h.resolveAssistantTurnModel(c.Request.Context(), user, model, body.Effort, loginRunner); err != nil {
 		c.JSON(400, gin.H{"error": err.Error()})
 		return
 	}

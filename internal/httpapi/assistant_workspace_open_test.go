@@ -127,7 +127,7 @@ func TestConversationWorkspaceOpensBindsAndIsReused(t *testing.T) {
 	if result, _ := gateway.publishArtifact(context.Background(), s, json.RawMessage(`{"path":"README.md"}`)); result["isError"] != true || !strings.Contains(fmt.Sprint(result["content"]), "workbench_workspace_open") {
 		t.Fatalf("publishing a path before open must point to workbench_workspace_open: %v", result)
 	}
-	if hints := gateway.workspaceOpenDescriptorFor(s).Description; !strings.Contains(hints, "- web") || !strings.Contains(hints, "- api") {
+	if hints := gateway.workspaceOpenDescriptorFor(s).Description; !strings.Contains(hints, `"name":"web"`) || !strings.Contains(hints, `"name":"api"`) {
 		t.Fatalf("open description must list the project's repositories to clone: %s", hints)
 	}
 	raw, err := gateway.callMainBotWorkspace(context.Background(), s, "workbench_workspace_open", map[string]any{})

@@ -340,11 +340,11 @@ func TestAssistantModelsPerExecutor(t *testing.T) {
 	}
 	for executor, family := range map[string]string{"codex": "gpt", "claude": "claude", "claude-code": "claude"} {
 		rec, catalog := get(executor)
-		if rec.Code != 200 || catalog.Default != "default" || len(catalog.Models) < 2 || catalog.Models[0].ID != "default" {
+		if rec.Code != 200 || len(catalog.Models) < 2 || catalog.Default != catalog.Models[0].ID {
 			t.Fatalf("%s catalog: %d %s", executor, rec.Code, rec.Body.String())
 		}
 		for _, model := range catalog.Models {
-			if model.Family != family {
+			if model.ID == "default" || model.Family != family {
 				t.Fatalf("%s model %s family = %q", executor, model.ID, model.Family)
 			}
 			if len(model.Efforts) == 0 {
@@ -353,6 +353,11 @@ func TestAssistantModelsPerExecutor(t *testing.T) {
 		}
 		if catalog.SponsoredModel != "" {
 			t.Fatalf("%s must not offer the CodeBuddy sponsored model", executor)
+		}
+	}
+	for _, executor := range []string{"opencode", "pi"} {
+		if rec, catalog := get(executor); rec.Code != 200 || len(catalog.Models) != 0 || catalog.Default != "" {
+			t.Fatalf("%s without a configured catalog: %d %s", executor, rec.Code, rec.Body.String())
 		}
 	}
 	if rec, _ := get("bogus"); rec.Code != 400 || !strings.Contains(rec.Body.String(), "不支持的执行器") {

@@ -22,6 +22,11 @@ widget-extra-high - Widget Extra High
 nova-medium - Nova Medium (NO ZDR)
 nova-high - Nova High (NO ZDR)
 grok-5-code - Grok 5 Code
+cursor-grok-4.6-high - Grok 4.6 High
+muse-wonder-1.0-medium - Muse Wonder Medium
+muse-spark-1.3-high - Muse Spark 1.3 High
+composer-2.5 - Composer 2.5
+auto - Auto (default)
 `
 
 // TestCursorFamiliesSurviveRestart covers a family folded out of the CLI's
@@ -132,6 +137,18 @@ func TestCursorFamiliesSurviveRestart(t *testing.T) {
 	}
 	if got := names["cursor:nova"]; got.Name != "Nova (NO ZDR)" || !slices.Equal(got.Efforts, []string{"medium", "high"}) {
 		t.Fatalf("nova after restart: %+v", got)
+	}
+	for id, want := range map[string]string{
+		"cursor:grok-5-code":     "grok",
+		"cursor:cursor-grok-4.6": "grok",
+		"cursor:muse-wonder-1.0": "muse",
+		"cursor:muse-spark-1.3":  "muse",
+		"cursor:composer-2.5":    "cursor",
+		"cursor:auto":            "cursor",
+	} {
+		if got := names[id].Family; got != want {
+			t.Errorf("%s family = %q, want %q", id, got, want)
+		}
 	}
 
 	for _, c := range []struct {

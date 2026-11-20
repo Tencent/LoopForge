@@ -91,6 +91,7 @@ type InvocationOptions struct {
 	ResumeSessionID string
 	GateResultPath  string
 	Repositories    []domain.RepositoryContext
+	RunnerLogin     bool
 	// BrowserMCP is resolved on the executing host, never sent to a runner.
 	BrowserMCP *domain.MCPServerDefinition `json:"-"`
 }

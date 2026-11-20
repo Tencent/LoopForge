@@ -3,8 +3,6 @@ let aiBuild = null;
 let aiAbort = null;
 const aiHistory = {};
 
-const aiOrchestratorCLIBrands = {codebuddy:'codebuddy', codex:'codex', 'claude-code':'claude', opencode:'opencode', cursor:'cursor', agy:'gemini', kimi:'kimi', pi:'pi', dsh:'deepseek', zcode:'glm'};
-
 function aiOrchestratorEngine(model) {
   const listed = window.AgentFlowAssistantModels?.catalog().models.find(item => item.id === model);
   return listed?.engine || (String(model || '').includes(':') ? model.split(':')[0] : 'codebuddy');
@@ -44,9 +42,9 @@ function bindAIOrchestratorModelPicker() {
   const painters = [];
   const paintAll = () => painters.forEach(paint => paint());
   const paintCLIIcon = (icon, engine) => {
-    const brand = aiOrchestratorCLIBrands[engine];
+    const src = api.cliIcon(engine);
     icon.dataset.cli = engine;
-    if (brand) icon.innerHTML = `<img src="/images/credentials/${brand}.svg" alt="">`;
+    if (src) icon.innerHTML = `<img src="${src}" alt="">`;
     else icon.textContent = engine.slice(0, 1).toUpperCase();
   };
 
