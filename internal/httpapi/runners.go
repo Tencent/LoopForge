@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"agentflow/internal/domain"
+	"agentflow/internal/gitwork"
 	"agentflow/internal/repo"
 
 	"github.com/gin-gonic/gin"
@@ -854,6 +855,7 @@ func (h *runnersHandlers) runnerTaskClaim(c *gin.Context) {
 		}
 		if task.Invocation != nil && task.Invocation.GitSSHUserID > 0 && runner.SupportsGitSSH() && len(task.Invocation.GitSSHRemotes()) > 0 {
 			task.Invocation.GitSSHKeys = h.repo.GitSSHKeysForRemotes(task.Invocation.GitSSHUserID, task.Invocation.GitSSHRemotes())
+			task.GitSSHKnownHosts = gitwork.SSHKnownHostsForKeys(task.Invocation.GitSSHKeys)
 			task.Invocation.GitSSHUserID = 0
 			c.Header("Cache-Control", "no-store")
 		}

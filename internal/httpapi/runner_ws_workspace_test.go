@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -13,10 +14,12 @@ import (
 
 	"agentflow/internal/domain"
 	"agentflow/internal/engine"
+	"agentflow/internal/gitwork"
 	"agentflow/internal/repo"
 	"agentflow/internal/runtime"
 
 	"github.com/gin-gonic/gin"
+	"golang.org/x/crypto/ssh/knownhosts"
 )
 
 func quietRunnerHub() *runnerControlHub {
@@ -278,6 +281,37 @@ func TestRunnerWorkspaceRPCIsTransient(t *testing.T) {
 	}
 	if len(hub.pending) != 0 {
 		t.Fatalf("completed transient requests retained in memory: %d", len(hub.pending))
+	}
+}
+
+func TestRunnerWorkspaceSendsScopedPlatformSSHKnownHosts(t *testing.T) {
+	hub := quietRunnerHub()
+	conn := testRunnerConn("runner-a")
+	registerTestConn(hub, conn)
+	_, hostKey := sshTestIdentity(t)
+	preparationPin := knownhosts.Line([]string{"gitlab.example.org:2222"}, hostKey) + "\n"
+	terminalPin := knownhosts.Line([]string{"terminal.example.org:22"}, hostKey) + "\n"
+	otherPin := knownhosts.Line([]string{"other.example.org:22"}, hostKey) + "\n"
+	path := filepath.Join(t.TempDir(), "known_hosts")
+	if err := os.WriteFile(path, []byte(preparationPin+terminalPin+otherPin), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(gitwork.SSHKnownHostsEnv, path)
+	done := requestAsync(hub, conn.runnerID, domain.RunnerWorkspaceRequest{
+		RunID:     "run-a",
+		Operation: domain.RunnerWorkspaceOperationTerminal,
+		Terminal:  &domain.WorkspaceTerminalRequest{Operation: "open"},
+		PreparationInvocation: &domain.RunnerInvocation{
+			GitSSHKeys: map[string]string{"ssh://git@gitlab.example.org:2222/group/repo.git": "checkout-identity"},
+		},
+		TerminalGitSSHKeys: map[string]string{"git@terminal.example.org:group/repo.git": "terminal-identity"},
+	})
+	got := answerOnce(t, hub, conn, domain.RunnerWorkspaceResponse{Status: http.StatusOK})
+	if pins := got.GitSSHKnownHosts; pins == nil || pins.Entries != preparationPin+terminalPin || pins.ReadFailed {
+		t.Fatalf("workspace platform pins = %+v", pins)
+	}
+	if result := <-done; result.err != nil || result.response.Status != http.StatusOK {
+		t.Fatalf("workspace response = %+v", result)
 	}
 }
 

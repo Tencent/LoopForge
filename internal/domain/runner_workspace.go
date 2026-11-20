@@ -33,7 +33,16 @@ const (
 	RunnerWorkspaceOperationCheckouts         = "checkouts"
 	RunnerWorkspaceOperationMaintenance       = "maintenance"
 	RunnerWorkspaceOperationLoginModels       = "login_models"
+	RunnerWorkspaceOperationConversationCLI   = "conversation_process"
 )
+
+// GitSSHKnownHosts carries the platform's scoped SSH host keys over an
+// authenticated runner transport. ReadFailed distinguishes an unreadable
+// administrator file from an absent configuration.
+type GitSSHKnownHosts struct {
+	Entries    string `json:"entries,omitempty"`
+	ReadFailed bool   `json:"readFailed,omitempty"`
+}
 
 // RunnerWorkspaceRequest is a bounded workspace request sent over the
 // runner's outbound control socket. Responses are transient and are never
@@ -63,6 +72,7 @@ type RunnerWorkspaceRequest struct {
 	Terminal              *WorkspaceTerminalRequest `json:"terminal,omitempty"`
 	TerminalOwner         int64                     `json:"terminalOwner,omitempty"`
 	TerminalGitSSHKeys    map[string]string         `json:"terminalGitSshKeys,omitempty"`
+	GitSSHKnownHosts      *GitSSHKnownHosts         `json:"gitSshKnownHosts,omitempty"`
 	// TerminalGitHTTPCredentials belongs to TerminalOwner and is sent only on open.
 	TerminalGitHTTPCredentials map[string]GitHTTPExecutionCredential `json:"terminalGitHttpCredentials,omitempty"`
 	// WorkspaceRunID selects the shared checkout owner; RunID continues to

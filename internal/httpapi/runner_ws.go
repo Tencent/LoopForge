@@ -15,6 +15,7 @@ import (
 
 	"agentflow/internal/domain"
 	"agentflow/internal/engine"
+	"agentflow/internal/gitwork"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
@@ -204,6 +205,15 @@ func (h *runnerControlHub) reconnectExpectedLocked(runnerID string, now time.Tim
 // send delivers one request; sent reports whether it reached the socket's
 // queue, after which it must not be retried elsewhere.
 func (h *runnerControlHub) send(ctx context.Context, conn *runnerControlConn, request domain.RunnerWorkspaceRequest) (domain.RunnerWorkspaceResponse, bool, error) {
+	// Resolve runner-only pins on the platform serving the socket. Conversation
+	// starts bind their host-scoped credentials before encoding Conversation.
+	if request.Operation != domain.RunnerWorkspaceOperationConversationCLI {
+		var preparationKeys map[string]string
+		if request.PreparationInvocation != nil {
+			preparationKeys = request.PreparationInvocation.GitSSHKeys
+		}
+		request.GitSSHKnownHosts = gitwork.SSHKnownHostsForKeys(preparationKeys, request.TerminalGitSSHKeys)
+	}
 	h.mu.Lock()
 	h.nextID++
 	requestID := fmt.Sprintf("workspace-%d", h.nextID)
