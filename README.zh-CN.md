@@ -111,7 +111,7 @@ GitLab、Gitea、Gogs 等托管可[配置 Git SSH](docs/deployment.md#git-reposi
 
 <br>
 
-- **执行器。** 首页对话、需求澄清、Bot 回复、通知汇报、运行评测和静态预览均可选择 CLI 与模型。SOP 角色可以指定执行器，也可以继承责任人或部署配置的默认执行器。定时提示词使用任务所选的 CLI。平台可以在未安装 CodeBuddy、未配置其 Key 的环境中运行。详见[部署与升级说明](docs/deployment.md#choosing-an-executor)。
+- **执行器。** 首页对话、需求澄清、Bot 回复、通知汇报、运行评测和静态预览均可选择 CLI 与模型。每个 SOP 角色可以独立选择 CLI，内置模板仍默认使用 CodeBuddy。定时提示词使用任务所选的 CLI。将使用中的流程配置为其他 CLI 后，平台可在未安装 CodeBuddy、未配置其 Key 的环境中运行。[部署与升级说明](docs/deployment.md#choosing-an-executor)
 
   | 执行器 | 凭据 | 安装方式 |
   | --- | --- | --- |

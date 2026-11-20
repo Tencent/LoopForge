@@ -16,7 +16,7 @@ import { cliFailureSettles } from "./cli-install.jsx";
 import { useExecutionMachines } from "./useExecutionMachines.js";
 import { executionLocked } from "./execution-target.js";
 import { knownEffort, modelEffort } from "./effort.js";
-import { personalEngineConfigured, EXECUTORS, concreteModel, conversationEngine, engineModels, engineOfModel } from "./engines.js";
+import { EXECUTORS, concreteModel, conversationEngine, engineModels, engineOfModel } from "./engines.js";
 import { readComposerPreference, useComposerOptions, writeComposerPreference } from "./composer-preferences.js";
 import {
   enqueue,
@@ -635,12 +635,11 @@ export function useChat() {
   useEffect(() => {
     if (!user || user.isGuest || activeId || submitting || !catalogEngines.length ||
         readComposerPreference("executor")) return;
-    const choices = catalogEngines.filter(engine => engine.configured);
     // Account-authenticated runners advertise their runtime independently of
     // the personal API catalog. Keep a selected CLI if that machine can run it.
     const machine = executionMachines.machines.find(item => item.id === executionMachines.defaultRunnerId);
     if (machine?.runtimes?.some(runtime => runtime.provider === executor && runtime.authMode !== "personal")) return;
-    const next = choices.find(engine => personalEngineConfigured(user, engine.id)) || choices[0];
+    const next = catalogEngines.find(engine => engine.configured);
     if (next && next.id !== executor) setSelection({ executor: next.id, model: null, effort: null });
   }, [user, activeId, submitting, catalogEngines, executor, executionMachines.machines, executionMachines.defaultRunnerId]);
   function resolveComposerModel(

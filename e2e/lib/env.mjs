@@ -38,7 +38,7 @@ export const cfg = {
   projectId: process.env.AGENTFLOW_E2E_PROJECT || 'e2e-auto',
   // Real-model scenarios are opt-in because they consume model credits.
   model: flag('AGENTFLOW_E2E_MODEL', false),
-  executor: process.env.AGENTFLOW_E2E_EXECUTOR || 'codex',
+  executor: process.env.AGENTFLOW_E2E_EXECUTOR || 'codebuddy',
   modelID: process.env.AGENTFLOW_E2E_MODEL_ID || '',
   sandbox: process.env.AGENTFLOW_E2E_SANDBOX || 'local',
   keep: flag('AGENTFLOW_E2E_KEEP', false),

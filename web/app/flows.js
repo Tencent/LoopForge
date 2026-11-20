@@ -3,7 +3,9 @@ function workflowPreviewContract(wf){
 }
 const PREVIEW_BUILD_NODE_ID='af-preview-build';
 const PREVIEW_BUILD_AGENT_ID='af-preview-builder';
+const PREVIEW_DEFAULT_EXECUTOR='codebuddy';
 function isPreviewBuildNode(id){return id===PREVIEW_BUILD_NODE_ID}
+function workflowPreviewExecutor(wf){return workflowPreviewContract(wf)?.executorId?.trim()||PREVIEW_DEFAULT_EXECUTOR}
 function workflowPreviewModel(wf){
   const api=window.AgentFlowAssistantModels;
   const fallback=(api&&api.DEFAULT)||'default';
@@ -13,11 +15,11 @@ function workflowPreviewModel(wf){
 function fillPreviewModelSelect(sel, selected, executorId){
   if(!sel)return;
   const catalog=executorModelCatalogs()[executorId];
-  const items=[{id:'default',name:executorId?'CLI 默认模型':'随执行器选择'},...(catalog?.models||[]).filter(m=>m.id!=='default')];
+  const items=[{id:'default',name:'默认模型'},...(catalog?.models||[]).filter(m=>m.id!=='default')];
   const keep=selected||'default';
   if(!items.some(m=>m.id===keep))items.push({id:keep,name:keep});
   sel.innerHTML=items.map(m=>`<option value="${escapeHTML(m.id)}" ${m.id===keep?'selected':''}>${escapeHTML(m.name||m.id)}</option>`).join('');
-  sel.disabled=!executorId||flowReadOnly();
+  sel.disabled=flowReadOnly();
 }
 function ensurePreviewContract(){
   const wf=state.workflow;if(!wf)return null;
@@ -28,7 +30,7 @@ function ensurePreviewContract(){
     ...prev,
     enabled:true,
     kind:'static',
-    executorId:prev.executorId||'',
+    executorId:workflowPreviewExecutor(wf),
     model,
     sourcePath:prev.sourcePath||'dist',
     indexFile:prev.indexFile||'index.html',
@@ -66,7 +68,7 @@ function syncPreviewBuildGraph(){
     name:'构建静态站点',
     type:'agent',
     agentId:PREVIEW_BUILD_AGENT_ID,
-    executorId:wf.preview.executorId||'',
+    executorId:workflowPreviewExecutor(wf),
     executionScope:'run',
     onFailure:'fail',
     retryStrategy:'targeted_fix',
@@ -181,7 +183,7 @@ function addNode(type,opts={}){
     if(existing){state.selectedNode=existing.id;renderCanvas();renderProperties();return toast('预览节点已存在，可拖拽连线调整它的位置')}
     flowHistory.record();
     ensurePreviewContract();
-    state.workflow.nodes.push({id:PREVIEW_BUILD_NODE_ID,name:'构建静态站点',type:'agent',agentId:PREVIEW_BUILD_AGENT_ID,executorId:state.workflow.preview.executorId||'',executionScope:'run',onFailure:'fail',retryStrategy:'targeted_fix',maxAttempts:2,maxReworks:1,position:at,artifactOutputs:[{name:'frontend-preview',path:'dist/index.html',required:true}]});
+    state.workflow.nodes.push({id:PREVIEW_BUILD_NODE_ID,name:'构建静态站点',type:'agent',agentId:PREVIEW_BUILD_AGENT_ID,executorId:workflowPreviewExecutor(state.workflow),executionScope:'run',onFailure:'fail',retryStrategy:'targeted_fix',maxAttempts:2,maxReworks:1,position:at,artifactOutputs:[{name:'frontend-preview',path:'dist/index.html',required:true}]});
     state.selectedNode=PREVIEW_BUILD_NODE_ID;
     dirty();renderCanvas();renderProperties();
     return;
@@ -375,7 +377,7 @@ function flowDiagnostics(){
   const nodes=state.workflow.nodes||[],edges=state.workflow.edges||[],incoming=new Map(nodes.map(n=>[n.id,0])),items=[];edges.forEach(e=>incoming.has(e.target)&&incoming.set(e.target,incoming.get(e.target)+1));
   const starts=nodes.filter(n=>incoming.get(n.id)===0);items.push({level:!nodes.length?'error':starts.length===1?'ok':'warn',title:'流程入口',detail:!nodes.length?'至少添加一个节点':starts.length===1?`从「${starts[0].name}」开始`:`检测到 ${starts.length} 个入口；这些节点会并行启动`});
   items.push({level:state.data.sandboxes?.some(s=>s.id===state.workflow.sandboxProfileId)?'ok':'error',title:'运行沙箱',detail:state.workflow.sandboxProfileId?`整条流程使用 ${state.workflow.sandboxProfileId}`:'尚未选择 Workflow 运行沙箱'});
-  nodes.forEach(n=>{if(isPreviewBuildNode(n.id)){const inDeg=edges.filter(e=>e.target===n.id).length;items.push({level:inDeg?'ok':'warn',title:n.name,detail:inDeg?`插在流程中间：${workflowPreviewModel(state.workflow)} 构建静态站点，运行成功后归档预览`:'还没有前序依赖，会作为流程入口直接运行；请从上游节点连线到此'});return}if(n.type==='agent'){const missing=[];const agent=workflowAgent(n.agentId);const generic=catalogGeneric(state.workflow);if(!n.agentId)missing.push('角色');else if(!agent)missing.push(generic?'通用模板角色未加载':'角色不属于当前项目或未共享');if(!(n.artifactOutputs||[]).length&&!(agent?.artifactOutputs||[]).length)missing.push('角色产物契约');items.push({level:missing.length?'warn':'ok',title:n.name,detail:missing.length?`尚未配置：${missing.join('、')}`:generic?'已绑定通用模板角色；任务书与门禁在角色定义中':'已绑定角色；任务书与门禁在角色定义中'})}if(n.type==='sop'){const missing=[];const wf=sopWorkflowChoices(state.workflow.id).find(w=>w.id===n.sopWorkflowId)||(state.data.workflows||[]).find(w=>w.id===n.sopWorkflowId);if(!n.sopWorkflowId)missing.push('要跑的 SOP');else if(!wf)missing.push('引用的 SOP 不存在');if(n.sopWorkflowId===state.workflow.id)missing.push('不能引用自己');items.push({level:missing.length?'error':'ok',title:n.name,detail:missing.length?`尚未配置：${missing.join('、')}`:`引用「${wf.name}」，产物交给下一步`})}if(n.rejectTo&&!nodes.some(x=>x.id===n.rejectTo))items.push({level:'error',title:n.name,detail:'失败打回目标不存在'})});
+  nodes.forEach(n=>{if(isPreviewBuildNode(n.id)){const inDeg=edges.filter(e=>e.target===n.id).length;items.push({level:inDeg?'ok':'warn',title:n.name,detail:inDeg?`插在流程中间：${workflowPreviewModel(state.workflow)} 构建静态站点，运行成功后归档预览`:'还没有前序依赖，会作为流程入口直接运行；请从上游节点连线到此'});return}if(n.type==='agent'){const missing=[];const agent=workflowAgent(n.agentId);const generic=catalogGeneric(state.workflow);if(!n.agentId)missing.push('角色');else if(!agent)missing.push(generic?'通用模板角色未加载':'角色不属于当前项目或未共享');else if(!generic&&!(agent.executorId||n.executorId))missing.push('角色未选模型');if(!(n.artifactOutputs||[]).length&&!(agent?.artifactOutputs||[]).length)missing.push('角色产物契约');items.push({level:missing.length?'warn':'ok',title:n.name,detail:missing.length?`尚未配置：${missing.join('、')}`:generic?'已绑定通用模板角色；任务书与门禁在角色定义中':'已绑定角色；任务书与门禁在角色定义中'})}if(n.type==='sop'){const missing=[];const wf=sopWorkflowChoices(state.workflow.id).find(w=>w.id===n.sopWorkflowId)||(state.data.workflows||[]).find(w=>w.id===n.sopWorkflowId);if(!n.sopWorkflowId)missing.push('要跑的 SOP');else if(!wf)missing.push('引用的 SOP 不存在');if(n.sopWorkflowId===state.workflow.id)missing.push('不能引用自己');items.push({level:missing.length?'error':'ok',title:n.name,detail:missing.length?`尚未配置：${missing.join('、')}`:`引用「${wf.name}」，产物交给下一步`})}if(n.rejectTo&&!nodes.some(x=>x.id===n.rejectTo))items.push({level:'error',title:n.name,detail:'失败打回目标不存在'})});
   if(nodes.length>1&&edges.length===0)items.push({level:'warn',title:'成功路径',detail:'多个节点之间没有依赖关系，将同时启动'});if(!items.some(x=>x.level==='error'))items.push({level:'ok',title:'结构校验',detail:'未发现阻止保存或试运行的结构错误'});return items;
 }
 function setFlowView(mode){$$('.canvas-view-toggle button').forEach(b=>b.classList.toggle('active',b.dataset.flowView===mode));$('#canvas').hidden=mode!=='canvas';$('#flowCheckPanel').hidden=mode!=='check';$('#flowStageWrap')?.classList.toggle('check-mode',mode==='check');if(mode==='check')$('#flowCheckPanel').innerHTML=`<div class="page-heading" style="margin-bottom:14px"><div><h1 style="font-size:17px">配置检查</h1><p>运行前检查入口、CLI、产物契约和返工路径。</p></div></div><div class="flow-check-grid">${flowDiagnostics().map(x=>`<div class="flow-check-item ${x.level}"><b>${escapeHTML(x.title)}</b><p>${escapeHTML(x.detail)}</p></div>`).join('')}</div>`;else flowViewport.renderMinimap()}
@@ -974,7 +976,7 @@ function renderPreviewBuildProperties(host,n){
     <div class="fd-db">
       <section class="fd-sec"><div class="fd-sec-h"><span class="fd-sec-t">主配置</span></div><div class="fd-sec-b">
         <p class="prop-hint">运行到该节点时用所选模型构建静态站点，不必再手写脚本节点；Run 成功后平台归档预览。它只有成功出口。</p>
-        <div class="fd-field"><label for="previewNodeExecutor">CLI</label><select class="select" id="previewNodeExecutor">${executorOptions(state.workflow.preview?.executorId||'')}</select></div>
+        <div class="fd-field"><label for="previewNodeExecutor">CLI</label><select class="select" id="previewNodeExecutor">${executorOptions(workflowPreviewExecutor(state.workflow))}</select></div>
         <div class="fd-field"><label for="previewNodeModel">模型</label><select class="select" id="previewNodeModel"></select></div>
         <label class="fd-check"><input type="checkbox" id="previewNodeSpa" ${spa?'checked':''}><span>单页应用回退（找不到路径时返回入口 HTML）</span></label>
       </div></section>

@@ -6,7 +6,6 @@ import (
 	"log"
 	"maps"
 	"net/url"
-	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -92,7 +91,7 @@ func NewService() *Service {
 
 // Configure updates the sync config and recreates MCP clients.
 // Prefer catalog HTTP MCP Headers (the same assets Agent steps use). Fall back
-// to AGENTFLOW_MCP_TOKEN. Legacy host CodeBuddy OAuth is opt-in.
+// to AGENTFLOW_MCP_TOKEN, then legacy host CodeBuddy OAuth.
 func (s *Service) Configure(cfg domain.SyncConfig) {
 	s.ConfigureWithCatalog(cfg, nil)
 }
@@ -102,9 +101,10 @@ func (s *Service) ConfigureWithCatalog(cfg domain.SyncConfig, servers []domain.M
 	s.cfg.Set(cfg)
 	bind := func(kind string) mcpBinding {
 		binding := bindTrackerMCP(kind, cfg, servers, s.authToken, "")
-		if binding.URL != "" && !headerHas(binding.Headers, "Authorization") &&
-			os.Getenv("AGENTFLOW_TRACKER_CODEBUDDY_AUTH") == "1" {
-			binding = bindTrackerMCP(kind, cfg, servers, "", LoadAuthFromCodeBuddy(kind))
+		if binding.URL != "" && !headerHas(binding.Headers, "Authorization") {
+			if auth := LoadAuthFromCodeBuddy(kind); auth != "" {
+				binding = bindTrackerMCP(kind, cfg, servers, "", auth)
+			}
 		}
 		return binding
 	}

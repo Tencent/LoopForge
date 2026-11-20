@@ -667,13 +667,15 @@ func writeAssistantEngineState(root string, state assistantEngineState) error {
 
 // assistantChatRequestModel keeps an existing conversation's model when
 // omitted, or chooses a personal CLI for a new conversation with no selection.
-func assistantChatRequestModel(req assistantRequest, saved domain.AssistantSession, user domain.User) string {
+func (h *assistantHandlers) assistantChatRequestModel(req assistantRequest, saved domain.AssistantSession, user domain.User) string {
 	if strings.TrimSpace(req.Executor) == "" && (strings.TrimSpace(req.Model) == "" || req.Model == assistantDefaultModel) {
 		if saved.Model != "" || saved.Executor != "" {
 			return assistantRequestModel(saved.Executor, saved.Model)
 		}
-		if model, err := resolveFeatureModel(user, ""); err == nil {
-			return model
+		if _, _, codeBuddyAvailable := h.assistantChatUser(user); !codeBuddyAvailable {
+			if model, err := resolveFeatureModel(user, ""); err == nil {
+				return model
+			}
 		}
 	}
 	return assistantRequestModel(req.Executor, req.Model)

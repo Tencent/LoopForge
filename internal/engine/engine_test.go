@@ -2804,46 +2804,6 @@ func TestRecoverMisplacedArtifactsCopiesHostLeakIntoSandbox(t *testing.T) {
 	}
 }
 
-func TestRunFreezesInheritedExecutorForRolesAndPreview(t *testing.T) {
-	t.Setenv("AGENTFLOW_DEFAULT_EXECUTOR", "")
-	store, err := repo.OpenTest()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
-	responsible := domain.User{ID: 701, LoginName: "codex-worker", CodexAPIKey: "test-only"}
-	if err := store.PutUser(responsible); err != nil {
-		t.Fatal(err)
-	}
-	role := domain.AgentDefinition{ID: "inherited-role", Name: "Inherited role"}
-	if err := store.PutAgent(role); err != nil {
-		t.Fatal(err)
-	}
-	eng := New(store, runtime.NewManager(t.TempDir()))
-	eng.ConfigureExecution("", "", 0, false)
-	wf := domain.WorkflowDefinition{
-		ID: "inherit-executor", Name: "Inherited executor", SandboxProfileID: "local",
-		Nodes:   []domain.WorkflowNode{{ID: "work", Name: "Work", Type: "agent", AgentID: role.ID}},
-		Preview: &domain.PreviewContract{Enabled: true},
-	}
-	run, err := eng.startWorkflowDefinition(wf, "", nil, domain.TelemetryContext{ProjectID: "platform", ResponsibleUserID: responsible.ID}, false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("AGENTFLOW_DEFAULT_EXECUTOR", "claude")
-	snapshot := run.WorkflowSnapshot
-	if snapshot.DefaultExecutorID != "codex" {
-		t.Fatalf("stored default = %q", snapshot.DefaultExecutorID)
-	}
-	for _, node := range snapshot.Nodes {
-		agent, _ := workflowAgent(store, snapshot, node.AgentID)
-		ex, err := resolveNodeExecutor(store, node, agent, snapshot.DefaultExecutorID)
-		if err != nil || ex.Kind != "codex" {
-			t.Fatalf("node %s resolved to %q: %v", node.ID, ex.Kind, err)
-		}
-	}
-}
-
 func TestResolveNodeExecutorPrefersAgentModel(t *testing.T) {
 	t.Parallel()
 	s, err := repo.OpenTest()
@@ -2852,7 +2812,7 @@ func TestResolveNodeExecutorPrefersAgentModel(t *testing.T) {
 	}
 	defer s.Close()
 	agent := domain.AgentDefinition{ID: "analyst", Name: "Analyst", ExecutorID: "codebuddy", Model: "agent-model"}
-	got, err := resolveNodeExecutor(s, domain.WorkflowNode{AgentID: "analyst", ExecutorID: "mock"}, agent, "")
+	got, err := resolveNodeExecutor(s, domain.WorkflowNode{AgentID: "analyst", ExecutorID: "mock"}, agent)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2863,7 +2823,7 @@ func TestResolveNodeExecutorPrefersAgentModel(t *testing.T) {
 		t.Fatalf("model = %s, want agent override", got.Model)
 	}
 	agentEffort := domain.AgentDefinition{ID: "analyst", Name: "Analyst", ExecutorID: "codex", Effort: "xhigh"}
-	withEffort, err := resolveNodeExecutor(s, domain.WorkflowNode{AgentID: "analyst"}, agentEffort, "")
+	withEffort, err := resolveNodeExecutor(s, domain.WorkflowNode{AgentID: "analyst"}, agentEffort)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2873,14 +2833,14 @@ func TestResolveNodeExecutorPrefersAgentModel(t *testing.T) {
 	if err := s.PutExecutor(domain.ExecutorDefinition{ID: "legacy-codex", Name: "Legacy Codex", Kind: "codex", Binary: "custom-codex", Args: []string{"unsafe"}, Model: "legacy-model"}); err != nil {
 		t.Fatal(err)
 	}
-	legacy, err := resolveNodeExecutor(s, domain.WorkflowNode{ExecutorID: "legacy-codex"}, domain.AgentDefinition{ID: "legacy"}, "")
+	legacy, err := resolveNodeExecutor(s, domain.WorkflowNode{ExecutorID: "legacy-codex"}, domain.AgentDefinition{ID: "legacy"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if legacy.ID != "codex" || legacy.Binary != "codex" || legacy.Model != "legacy-model" {
 		t.Fatalf("legacy executor was not safely mapped to the built-in CLI: %+v", legacy)
 	}
-	_, err = resolveNodeExecutor(s, domain.WorkflowNode{ExecutorID: "custom"}, domain.AgentDefinition{ID: "legacy"}, "")
+	_, err = resolveNodeExecutor(s, domain.WorkflowNode{ExecutorID: "custom"}, domain.AgentDefinition{ID: "legacy"})
 	if err == nil || !strings.Contains(err.Error(), "not found") {
 		t.Fatalf("custom executor must be rejected: %v", err)
 	}

@@ -10,9 +10,9 @@ function aiOrchestratorEngine(model) {
 function selectedAIOrchestratorModel() {
   const catalog = window.AgentFlowAssistantModels?.catalog();
   const remembered = localStorage.getItem('agentflow.orchestratorModel') || localStorage.getItem('agentflow.assistantModel');
-  if (remembered && remembered !== 'default') {
-    const engine = aiOrchestratorEngine(remembered);
-    if (!catalog?.engines?.length || catalog.engines.some(item => item.id === engine && item.configured)) return remembered;
+  if (remembered && remembered !== 'default') return remembered;
+  if (!catalog?.engines?.length || catalog.engines.some(engine => engine.id === 'codebuddy' && engine.configured)) {
+    return aiOrchestratorModels('codebuddy')[0]?.id || catalog?.default || 'default';
   }
   const model = catalog?.models?.find(item => catalog.engines?.some(engine => engine.id === aiOrchestratorEngine(item.id) && engine.configured));
   return model?.id || '';

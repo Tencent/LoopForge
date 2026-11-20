@@ -23,6 +23,9 @@ func TestFeatureModelPreservesExplicitChoice(t *testing.T) {
 	t.Setenv("AGENTFLOW_ASSISTANT_MODEL", "deployment-default")
 	codexUser := domain.User{CodexAPIKey: "test-only", CodexModels: []domain.CLIModel{{ID: "personal-model"}}}
 	codeBuddyUser := domain.User{CodeBuddyAPIKey: "test-only", CodeBuddyInternetEnvironment: "ioa"}
+	multiCLI := codeBuddyUser
+	multiCLI.CodexAPIKey = codexUser.CodexAPIKey
+	multiCLI.CodeBuddyModels = []domain.CLIModel{{ID: "personal-codebuddy-model"}}
 	for _, tc := range []struct {
 		user domain.User
 		in   string
@@ -31,6 +34,9 @@ func TestFeatureModelPreservesExplicitChoice(t *testing.T) {
 		{codexUser, "", "codex:personal-model"},
 		{codexUser, "codex:default", "codex:personal-model"},
 		{codexUser, "codex:custom-model", "codex:custom-model"},
+		{multiCLI, "", "codebuddy:deployment-default"},
+		{multiCLI, "default", "codebuddy:deployment-default"},
+		{multiCLI, "codex:custom-model", "codex:custom-model"},
 		{codeBuddyUser, "deepseek-v4.1-flash", "deepseek-v4.1-flash"},
 		{codeBuddyUser, "codebuddy:deepseek-v4.1-flash", "codebuddy:deepseek-v4.1-flash"},
 	} {

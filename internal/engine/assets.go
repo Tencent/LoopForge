@@ -208,6 +208,16 @@ func workflowAgent(st *repo.Store, wf domain.WorkflowDefinition, id string) (dom
 		if st.AgentShadowsTemplateOutside(agent, wf.ProjectID) {
 			return st.GenericAgentByID(id)
 		}
+		if wf.ID == BaselineAlignWorkflowID && id == BaselineAlignAgentID {
+			for _, node := range wf.Nodes {
+				if node.Type == "agent" && node.AgentID == id && node.ExecutorID != "" {
+					if agent.ExecutorID != node.ExecutorID {
+						agent.ExecutorID, agent.Model, agent.Effort = node.ExecutorID, "", ""
+					}
+					break
+				}
+			}
+		}
 		return agent, true
 	}
 	return st.GenericAgentByID(id)

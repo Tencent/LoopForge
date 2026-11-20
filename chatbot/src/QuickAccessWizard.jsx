@@ -701,6 +701,7 @@ async function provisionFallbackProjectSOP(projectId, workflowId, owner) {
         name: role.name,
         projectId,
         version: 1,
+        executorId: "codebuddy",
         description: role.description,
         prompt: role.prompt,
         artifactOutputs: [
@@ -1290,6 +1291,10 @@ export default function QuickAccessWizard({
     if (saving) return;
     setError("");
     if (activeStep.id === "auth") {
+      if (!gitReady && !hasSSHKeys && !cliReady) {
+        setError("请先配置 GitHub Git Token、Git SSH 密钥或一种模型 CLI 的凭据。");
+        return;
+      }
       setSaving(true);
       try {
         await saveTypedCredentials();

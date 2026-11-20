@@ -1369,7 +1369,8 @@ function bindRunEvalModelPicker(host){
   if(!host)return;
   const api=window.AgentFlowAssistantModels,toggle=host.querySelector('[data-model-toggle]'),menu=host.querySelector('.ai-model-menu');
   if(!api||!toggle||!menu)return;
-  const paint=()=>{const keep=runEvalModel();const inp=host.querySelector('[name=runEvalModel]');if(inp)inp.value=keep;api.paint(toggle,keep)};
+  const defaultDescription='优先使用你配置的 CodeBuddy。未配置时使用你在个人配置中添加的其他 CLI。';
+  const paint=()=>{const keep=runEvalModel();const inp=host.querySelector('[name=runEvalModel]');if(inp)inp.value=keep;api.paint(toggle,keep,defaultDescription)};
   paint();
   api.load?.().then(paint).catch(paint);
   if(host.dataset.bound)return;
@@ -1379,7 +1380,7 @@ function bindRunEvalModelPicker(host){
     const open=menu.hidden;
     menu.hidden=!open;
     toggle.setAttribute('aria-expanded',open?'true':'false');
-    if(open)api.renderFeatureList(menu,runEvalModel(),id=>{setRunEvalModel(id);paint();menu.hidden=true;toggle.setAttribute('aria-expanded','false')});
+    if(open)api.renderFeatureList(menu,runEvalModel(),id=>{setRunEvalModel(id);paint();menu.hidden=true;toggle.setAttribute('aria-expanded','false')},defaultDescription);
   };
   document.addEventListener('click',e=>{if(host.contains(e.target))return;menu.hidden=true;toggle.setAttribute('aria-expanded','false')});
 }

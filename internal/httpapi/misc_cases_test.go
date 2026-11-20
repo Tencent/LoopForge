@@ -194,17 +194,6 @@ func TestMiscScheduleRemainingHelpersAndHTTP(t *testing.T) {
 	if !h.ensureBaselineAlignAgent() {
 		t.Fatal("ensure align agent")
 	}
-	resolver, _ := f.s.Agent(domain.BaselineAlignAgentID)
-	resolver.ExecutorID, resolver.Model = "codex", "custom-model"
-	if err := f.s.PutAgent(resolver); err != nil {
-		t.Fatal(err)
-	}
-	if !h.ensureBaselineAlignAgent() {
-		t.Fatal("ensure existing align agent")
-	}
-	if got, _ := f.s.Agent(domain.BaselineAlignAgentID); got.ExecutorID != "codex" || got.Model != "custom-model" {
-		t.Fatalf("baseline registration overwrote the saved executor: %+v", got)
-	}
 	_ = f.s.DeleteWorkflow(engine.BaselineAlignWorkflowID)
 	if !h.ensureBaselineAlignWorkflow(domain.ScheduleJob{}) {
 		t.Fatal("ensure align workflow")

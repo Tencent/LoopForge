@@ -140,9 +140,9 @@ func approvalReviewInput(req assistantRequest, user domain.User) assistantApprov
 func (h *assistantHandlers) approvalReviewer(req assistantRequest, user domain.User, notify func(assistantStreamEvent)) assistantApprovalReviewer {
 	input := approvalReviewInput(req, user)
 	selected := assistantRequestModel(req.Executor, req.Model)
-	engine, id := assistantModelEngine(selected)
+	engine, _ := assistantModelEngine(selected)
 	var models []string
-	if id != "" && !codeBuddyIsDefaultModel(id) || engine != assistantEngineCodeBuddy {
+	if engine != assistantEngineCodeBuddy || (req.RequireExactModel && selected != "") {
 		models = []string{selected}
 	} else if h.reviewCatalog != nil {
 		models = assistantApprovalReviewModels(h.reviewCatalog(user.CodeBuddyInternetEnvironment))

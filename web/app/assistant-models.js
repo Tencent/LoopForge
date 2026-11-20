@@ -71,7 +71,7 @@
     const value = id || DEFAULT_MODEL;
     const listed = catalog.models.find(m => m.id === value || ('codebuddy:' + m.id === value && !m.engine));
     if (listed) return {...listed, id: value};
-    return {id: value, family: familyOf(value), name: value === DEFAULT_MODEL ? '按执行身份自动选择' : value};
+    return {id: value, family: familyOf(value), name: value === DEFAULT_MODEL ? '默认模型' : value};
   }
   function fillModelIcon(el, family, id) {
     if (!el) return;
@@ -90,7 +90,7 @@
     return credits.endsWith('credits') ? credits : credits + ' credits';
   }
   // paint draws a catalog entry into a <button class="ai-model-toggle">.
-  function paint(toggle, selectedId) {
+  function paint(toggle, selectedId, defaultDescription) {
     if (!toggle) return;
     const meta = modelMeta(selectedId);
     const icon = toggle.querySelector('.ai-model-icon');
@@ -98,7 +98,8 @@
     const label = toggle.querySelector('[data-model-label]');
     if (label) label.textContent = meta.name || meta.id;
     const credits = creditLabel(meta);
-    toggle.title = credits ? `${meta.name || meta.id} ${credits}` : (meta.id || '');
+    toggle.title = (meta.id === DEFAULT_MODEL && defaultDescription) ||
+      (credits ? `${meta.name || meta.id} ${credits}` : (meta.id || ''));
   }
   // paintItem draws an arbitrary {id,name,family,credits} item (agent efforts,
   // executor models) into the same toggle chrome.
@@ -121,6 +122,7 @@
       const opt = document.createElement('button');
       opt.type = 'button';
       opt.setAttribute('role', 'option');
+      opt.setAttribute('aria-selected', String(item.id === selectedId));
       opt.className = 'ai-model-option' + (item.id === selectedId ? ' is-active' : '');
       opt.dataset.id = item.id;
       if (item.icon !== false) {
@@ -132,7 +134,14 @@
       const label = document.createElement('span');
       label.className = 'ai-model-name';
       label.textContent = item.name || item.id;
-      label.title = item.name ? `${item.name} (${item.id})` : item.id;
+      if (item.description) {
+        const description = document.createElement('small');
+        description.className = 'ai-model-description';
+        description.textContent = item.description;
+        label.append(description);
+      } else {
+        label.title = item.name ? `${item.name} (${item.id})` : item.id;
+      }
       const credits = document.createElement('span');
       credits.className = 'ai-model-credits';
       credits.textContent = creditLabel(item);
@@ -150,9 +159,8 @@
   function renderList(menu, selectedId, onPick) {
     renderOptions(menu, catalog.models || [], selectedId, onPick);
   }
-  // A neutral default is resolved using the credentials of the executing account.
-  function renderFeatureList(menu, selectedId, onPick) {
-    const items = [{id: DEFAULT_MODEL, name: '按执行身份自动选择', icon: false}];
+  function renderFeatureList(menu, selectedId, onPick, defaultDescription) {
+    const items = [{...modelMeta(DEFAULT_MODEL), icon: false, description: defaultDescription}];
     for (const model of catalog.models) {
       const engine = catalog.engines?.find(item => item.id === engineOf(model.id));
       if (engine && !(engine.personal ?? engine.configured)) continue;

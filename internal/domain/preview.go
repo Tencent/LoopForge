@@ -35,6 +35,7 @@ const (
 
 	PreviewBuildNodeID     = "af-preview-build"
 	PreviewBuildAgentID    = "af-preview-builder"
+	PreviewBuildExecutor   = "codebuddy"
 	PreviewDefaultModel    = "default"
 	PreviewDefaultSource   = "dist"
 	PreviewBuildEdgeID     = "af-preview-build-edge"
@@ -48,7 +49,7 @@ const (
 type PreviewContract struct {
 	Enabled      bool   `json:"enabled"`
 	Kind         string `json:"kind"`                 // static; later service/environment
-	ExecutorID   string `json:"executorId,omitempty"` // optional CLI executor; empty inherits the workflow default
+	ExecutorID   string `json:"executorId,omitempty"` // CLI executor; defaults to CodeBuddy
 	Model        string `json:"model,omitempty"`      // model ID on the selected CLI
 	SourcePath   string `json:"sourcePath,omitempty"` // relative to the run workspace; default dist
 	IndexFile    string `json:"indexFile,omitempty"`  // default index.html
@@ -94,11 +95,13 @@ func (c *PreviewContract) SourceOrDist() string {
 	return PreviewDefaultSource
 }
 
-func (c *PreviewContract) Executor() string {
-	if c == nil {
-		return ""
+func (c *PreviewContract) ExecutorOrCodeBuddy() string {
+	if c != nil {
+		if id := strings.TrimSpace(c.ExecutorID); id != "" {
+			return id
+		}
 	}
-	return strings.TrimSpace(c.ExecutorID)
+	return PreviewBuildExecutor
 }
 
 func (c *PreviewContract) ModelOrDefault() string {
@@ -131,7 +134,7 @@ func (c *PreviewContract) Normalize() {
 		return
 	}
 	c.Kind = c.KindOrStatic()
-	c.ExecutorID = c.Executor()
+	c.ExecutorID = c.ExecutorOrCodeBuddy()
 	c.Model = c.ModelOrDefault()
 	c.SourcePath = c.SourceOrDist()
 	c.IndexFile = c.Index()

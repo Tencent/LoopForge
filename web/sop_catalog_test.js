@@ -20,6 +20,7 @@ const ctx = {
   formatTimestamp: v => (v ? 'T' : ''),
   catalogGeneric: item => !!item?.generic,
   isPreviewBuildNode: id => id === "af-preview-build",
+  workflowPreviewExecutor: wf => wf?.preview?.executorId || 'codebuddy',
   catalogOwned: projectId => !!ctx.state.projectFilter && projectId === ctx.state.projectFilter,
   isPlatformAdmin: () => ctx.admin,
   lfT: zh => zh,

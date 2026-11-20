@@ -170,7 +170,7 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 		}
 		req.ExecutionTarget = target
 	}
-	req.Model = assistantChatRequestModel(req, old, stored)
+	req.Model = h.assistantChatRequestModel(req, old, stored)
 	cliEngine, _ := assistantModelEngine(req.Model)
 	loginRunner := h.assistantLoginRunner(stored.ID, req.ExecutionTarget, cliEngine)
 	runnerLogin := loginRunner.ID != ""

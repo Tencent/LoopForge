@@ -116,7 +116,9 @@ function bindClarifyModelPicker(host){
   if(!host)return;
   const api=window.AgentFlowAssistantModels,toggle=host.querySelector('[data-model-toggle]'),menu=host.querySelector('.ai-model-menu');
   if(!api||!toggle||!menu)return;
-  const paint=()=>{const keep=selectedClarifyModel();const hidden=host.querySelector('[data-clarify-model-value]');if(hidden)hidden.value=keep;api.paint(toggle,keep)};
+  const defaultDescription='优先使用需求负责人的 CodeBuddy。未配置时使用负责人配置的其他 CLI，未指派需求使用项目负责人的配置。';
+  const paint=()=>{const keep=selectedClarifyModel();const hidden=host.querySelector('[data-clarify-model-value]');if(hidden)hidden.value=keep;api.paint(toggle,keep,defaultDescription)};
+  paint();
   api.load?.().then(paint).catch(paint);
   if(!bindClarifyModelPicker.docBound){
     bindClarifyModelPicker.docBound=true;
@@ -140,10 +142,10 @@ function bindClarifyModelPicker(host){
     if(open){
       api.renderFeatureList(menu, selectedClarifyModel(), id=>{
         setClarifyModel(id);
-        api.paint(toggle, id);
+        api.paint(toggle, id, defaultDescription);
         menu.hidden=true;
         toggle.setAttribute('aria-expanded','false');
-      });
+      }, defaultDescription);
     }
   };
 }

@@ -11,7 +11,7 @@
 # for the repository-bound scenarios, and removes all of it afterwards.
 #
 # Optional environment:
-#   AGENTFLOW_E2E_EXECUTOR           CLI executor ID (default codex)
+#   AGENTFLOW_E2E_EXECUTOR           CLI executor ID (default codebuddy)
 #   AGENTFLOW_E2E_CLI_KEY            enables real-model scenarios for that CLI
 #   AGENTFLOW_E2E_CLI_BASE_URL       optional custom model gateway
 #   AGENTFLOW_E2E_CODEBUDDY_API_KEY  legacy CodeBuddy credential input
@@ -112,10 +112,7 @@ INSERT INTO api_tokens (id, user_id, name, prefix, token_hash, expires_at, creat
   VALUES ('tok-e2e-local', 900001, 'e2e-local', '${TOKEN:0:12}', '$HASH', DATE_ADD(NOW(3), INTERVAL 1 DAY), NOW(3)),
          ('tok-e2e-local-b', 900002, 'e2e-local-b', '${TOKEN_B:0:12}', '$HASH_B', DATE_ADD(NOW(3), INTERVAL 1 DAY), NOW(3));
 SQL
-if [ -z "${AGENTFLOW_E2E_EXECUTOR:-}" ] && [ -n "${AGENTFLOW_E2E_CODEBUDDY_API_KEY:-}" ]; then
-  export AGENTFLOW_E2E_EXECUTOR=codebuddy
-fi
-export AGENTFLOW_E2E_EXECUTOR=${AGENTFLOW_E2E_EXECUTOR:-codex}
+export AGENTFLOW_E2E_EXECUTOR=${AGENTFLOW_E2E_EXECUTOR:-codebuddy}
 if [ -n "${AGENTFLOW_E2E_CLI_KEY:-}" ] || { [ "$AGENTFLOW_E2E_EXECUTOR" = codebuddy ] && [ -n "${AGENTFLOW_E2E_CODEBUDDY_API_KEY:-}" ]; }; then
   # Seed disposable credentials over stdin. Hex literals preserve the exact
   # key and URL without passing either to the MySQL client as an argument.

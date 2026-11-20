@@ -2,7 +2,6 @@ package engine
 
 import (
 	"agentflow/internal/domain"
-	"agentflow/internal/repo"
 	"context"
 	"fmt"
 	"strings"
@@ -91,7 +90,11 @@ func (e *Engine) startWorkflowDefinition(wf domain.WorkflowDefinition, input str
 		}
 	}
 	wf = defaultWorkflowSandboxProfile(wf)
-	wf, err := domain.AttachPreviewBuild(wf)
+	wf, err := configureBaselineAlignCLI(wf)
+	if err != nil {
+		return domain.Run{}, err
+	}
+	wf, err = domain.AttachPreviewBuild(wf)
 	if err != nil {
 		return domain.Run{}, err
 	}
@@ -109,6 +112,9 @@ func (e *Engine) startWorkflowDefinition(wf domain.WorkflowDefinition, input str
 	}
 	resources, err := resolveSandboxResources(e.repo, profile)
 	if err != nil {
+		return domain.Run{}, err
+	}
+	if _, err := workflowSandboxRequirements(e.repo, wf); err != nil {
 		return domain.Run{}, err
 	}
 	now := time.Now().UTC()
@@ -145,12 +151,6 @@ func (e *Engine) startWorkflowDefinition(wf domain.WorkflowDefinition, input str
 		executionContext.RunnerWorkspaceLayout = domain.RunnerWorkspaceLayoutShared
 	} else {
 		executionContext.ExecutionMode = domain.ExecutionModeCloud
-	}
-	responsible, _ := e.repo.User(executionContext.ResponsibleUserID)
-	runner, _ := e.repo.Runner(executionContext.ExecutionRunnerID)
-	wf.DefaultExecutorID = repo.DefaultExecutorID(responsible, runner)
-	if _, err := workflowSandboxRequirements(e.repo, wf); err != nil {
-		return domain.Run{}, err
 	}
 	if err := e.requireWorkBranchCapabilities(executionContext.ExecutionRunnerID, repositories); err != nil {
 		return domain.Run{}, err

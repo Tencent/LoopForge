@@ -127,7 +127,7 @@ vm.runInContext(moduleSource, ctx);
   // must already render a usable label.
   assert.equal(api.engineOf('codex:gpt-5.5'), 'codex');
   api.paint(toggle, api.DEFAULT);
-  assert.equal(label.textContent, '按执行身份自动选择');
+  assert.equal(label.textContent, '默认模型');
   assert.equal(icon.dataset.family, 'other');
 
   await api.load();
@@ -147,7 +147,9 @@ vm.runInContext(moduleSource, ctx);
 
   toggle.onclick({ stopPropagation() {} });
   assert.equal(menu.hidden, false, 'clicking 选择模型 must open the menu');
-  assert.equal(menu.children.length, 4, 'menu lists the neutral default and personal models');
+  assert.equal(menu.children.length, 4, 'menu lists the default and personal models');
+  assert.equal(menu.children[0].querySelector('.ai-model-name').textContent, '默认模型');
+  assert.match(menu.children[0].querySelector('.ai-model-description').textContent, /需求负责人.*CodeBuddy/);
   assert.ok(menu.children[1].className.includes('is-active'), 'stored model is marked active');
 
   menu.children.find(opt => opt.dataset.id === 'codex:gpt-5.5').onclick();
@@ -156,5 +158,10 @@ vm.runInContext(moduleSource, ctx);
   assert.equal(menu.hidden, true);
   assert.equal(label.textContent, 'GPT-5.5');
   assert.equal(ctx.selectedClarifyModel(), 'codex:gpt-5.5');
+  toggle.onclick({ stopPropagation() {} });
+  menu.children[0].onclick();
+  assert.equal(input.value, 'default');
+  assert.equal(label.textContent, '默认模型');
+  assert.match(toggle.title, /未指派需求使用项目负责人/);
   console.log('assistant models ok');
 })().catch(err => { console.error(err); process.exit(1); });

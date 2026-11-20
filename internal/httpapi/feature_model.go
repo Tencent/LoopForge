@@ -53,11 +53,12 @@ func resolveFeatureModel(user domain.User, requested string) (string, error) {
 }
 
 func featureDefaultModel(user domain.User, engine string) string {
+	if engine == assistantEngineCodeBuddy {
+		// These features previously used the deployment's CodeBuddy default.
+		return engine + ":" + assistantFixedCatalog().Default
+	}
 	if models := assistantSavedModels(user, engine); len(models) > 0 {
 		return engine + ":" + models[0].ID
-	}
-	if engine == assistantEngineCodeBuddy {
-		return engine + ":" + assistantFixedCatalog().Default
 	}
 	if models := assistantEngineBuiltinModels(engine); len(models) > 0 {
 		return engine + ":" + models[0].ID

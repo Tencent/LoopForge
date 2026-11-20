@@ -28,7 +28,7 @@ func (h *assistantHandlers) startGeneration(c *gin.Context) {
 	}
 	stored, ok := h.repo.User(current.ID)
 	if !ok {
-		c.JSON(400, gin.H{"error": "请先配置个人 CodeBuddy API Key"})
+		c.JSON(400, gin.H{"error": "当前用户不可用"})
 		return
 	}
 	var body struct {
@@ -84,7 +84,7 @@ func (h *assistantHandlers) startGeneration(c *gin.Context) {
 			return
 		}
 	}
-	req.Model = assistantChatRequestModel(req, old, stored)
+	req.Model = h.assistantChatRequestModel(req, old, stored)
 	cliEngine, _ := assistantModelEngine(req.Model)
 	loginRunner := h.assistantLoginRunner(stored.ID, req.ExecutionTarget, cliEngine)
 	runnerLogin := loginRunner.ID != ""
@@ -499,7 +499,7 @@ func (h *assistantHandlers) steerGeneration(c *gin.Context) {
 	}
 	stored, ok := h.repo.User(current.ID)
 	if !ok {
-		c.JSON(400, gin.H{"error": "请先配置个人 CodeBuddy API Key"})
+		c.JSON(400, gin.H{"error": "当前用户不可用"})
 		return
 	}
 	ownerID, _, err := h.conversationScope(c, c.Param("id"), "", "", stored.ID)
@@ -562,7 +562,7 @@ func (h *assistantHandlers) steerGeneration(c *gin.Context) {
 	}
 	// A CodeBuddy model this instance has not listed yet refreshes the list
 	// first, like a new turn, instead of silently becoming the default.
-	catalog := assistantChatCatalog(c.Request.Context(), user.CodeBuddyInternetEnvironment, nil)
+	var catalog assistantModelCatalog
 	if engine, _ := assistantModelEngine(model); engine == assistantEngineCodeBuddy {
 		catalog = h.turnCatalog(c.Request.Context(), user, model)
 	}

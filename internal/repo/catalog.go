@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -14,7 +13,6 @@ import (
 	"agentflow/internal/domain"
 
 	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 )
 
 // BaselineAlignResolverAgent is the shared platform role for scheduled
@@ -28,17 +26,8 @@ func BaselineAlignResolverAgent() domain.AgentDefinition {
 		Shared:      true,
 		Description: "全平台共用：把默认分支合入集成分支并解决冲突。不跑项目测试，不写修复报告，不发 MR。",
 		Prompt:      "你只做基线对齐，不是需求修复。\n1. 在当前工作分支执行 git fetch 并 merge 默认分支\n2. 逐块解决冲突，保留双方有效实现；拿不准时选对业务影响更小的一侧并在提交说明里写清\n3. git add 冲突文件并创建合并提交，提交说明列出冲突文件与取舍\n4. 不要 push，不要改默认分支，不要跑项目单测或 E2E，不要写 fix-plan.md / fix-report.md / review-report.md\n5. 结束后用几句话说明每个冲突文件的取舍即可",
+		ExecutorID:  "codebuddy",
 	}
-}
-
-// CreateBaselineAlignResolver stores the built-in role on first use. A
-// concurrent scheduler or an operator-edited resolver wins on conflict.
-func (r *CatalogRepo) CreateBaselineAlignResolver() error {
-	agent := BaselineAlignResolverAgent()
-	agent.UpdatedAt = time.Now().UTC()
-	return r.DB.Table("agents").Clauses(clause.OnConflict{DoNothing: true}).Create(map[string]any{
-		"id": agent.ID, "name": agent.Name, "payload": mustJSON(agent), "updated_at": timePtr(agent.UpdatedAt),
-	}).Error
 }
 
 // ---------- Agents ----------
@@ -256,26 +245,6 @@ func BuiltInExecutors() []domain.ExecutorDefinition {
 		{ID: "dsh", Name: "DeepSeek Harness", Kind: "dsh", Binary: "dsh", Protocol: "stream-json"},
 		{ID: "zcode", Name: "ZCode", Kind: "zcode", Binary: "zcode", Protocol: "stream-json"},
 	}
-}
-
-// DefaultExecutorID is resolved when a run starts. A personal machine can
-// supply the CLI's local login only for its owner. The legacy default covers
-// deployments that rely on a shared CodeBuddy credential.
-func DefaultExecutorID(user domain.User, runner domain.Runner) string {
-	if id := strings.TrimSpace(os.Getenv("AGENTFLOW_DEFAULT_EXECUTOR")); id != "" {
-		return id
-	}
-	for _, executor := range BuiltInExecutors() {
-		if runner.ID != "" && !runner.SupportsProvider(executor.Kind) {
-			continue
-		}
-		login := runner.ID != "" && runner.OwnerUserID == user.ID && domain.SupportsRunnerLogin(executor.Kind) &&
-			runner.RuntimeAuthMode(executor.Kind) == domain.RuntimeAuthLocal
-		if login || user.CLIAPIKey(executor.Kind) != "" {
-			return executor.ID
-		}
-	}
-	return "codebuddy"
 }
 
 func BuiltInExecutor(id string) (domain.ExecutorDefinition, bool) {

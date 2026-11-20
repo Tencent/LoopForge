@@ -203,7 +203,7 @@ describe("QuickAccessWizard", () => {
     );
     await screen.findByRole("dialog");
     await userAction.click(screen.getByRole("button", { name: "下一步" }));
-    expect(screen.getByRole("alert")).toHaveTextContent("请先配置 GitHub Git Token、Git SSH 密钥或 CodeBuddy API Key");
+    expect(screen.getByRole("alert")).toHaveTextContent("请先配置 GitHub Git Token、Git SSH 密钥或一种模型 CLI 的凭据");
     expect(screen.queryByText(/工蜂/)).toBeNull();
     await userAction.click(screen.getByText("使用访问令牌（高级）"));
     await userAction.type(

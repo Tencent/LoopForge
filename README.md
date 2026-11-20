@@ -111,7 +111,7 @@ New accounts join the **LoopForge demo project**, which includes an SOP made onl
 
 <br>
 
-- **Executors.** Choose a CLI and model for chat, requirement clarification, Bot replies, notification reports, run evaluation, or static preview. SOP roles can pin an executor or inherit the default selected for the responsible account. Scheduled prompts use the CLI selected on the schedule. The platform can run without a CodeBuddy installation or key. [Deployment and upgrade](docs/deployment.md#choosing-an-executor)
+- **Executors.** Choose a CLI and model for chat, requirement clarification, Bot replies, notification reports, run evaluation, or static preview. Each SOP role can select its own CLI, and built-in templates still default to CodeBuddy. Scheduled prompts use the CLI selected on the schedule. The platform can run without a CodeBuddy installation or key once its workflows use other CLIs. [Deployment and upgrade](docs/deployment.md#choosing-an-executor)
 
   | Executor | Credentials | Installation |
   | --- | --- | --- |

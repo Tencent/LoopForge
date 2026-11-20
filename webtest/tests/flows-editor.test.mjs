@@ -71,10 +71,16 @@ test('flow editor handles artifact/list editors and saves workflow changes', asy
 test('flow preview properties persist the CLI, model and SPA fallback', async (t) => {
   const app = await loadApp();
   t.after(app.close);
-  app.router.get('/api/executor-models', {codex: {models:[{id:'preview-model',name:'Preview model'}]}});
-  app.evaluate(`state.data.executors=[{id:'codex',name:'Codex'}];switchView('flow');addNode('preview',{at:{x:200,y:100}});renderProperties()`);
+  app.router.get('/api/executor-models', {
+    codebuddy: {models:[{id:'deepseek-v4.1-flash',name:'DeepSeek Flash'}]},
+    codex: {models:[{id:'preview-model',name:'Preview model'}]},
+    claude: {models:[]},
+  });
+  app.evaluate(`state.data.executors=[{id:'codebuddy',name:'CodeBuddy'},{id:'codex',name:'Codex'}];switchView('flow');addNode('preview',{at:{x:200,y:100}});renderProperties()`);
   await app.evaluate('loadExecutorModelCatalogs()');
   const executor = app.document.querySelector('#previewNodeExecutor');
+  assert.equal(executor.value, 'codebuddy');
+  assert.equal(app.evaluate('state.workflow.preview.executorId'), 'codebuddy');
   executor.value = 'codex';
   executor.dispatchEvent(new app.window.Event('change'));
   const model = app.document.querySelector('#previewNodeModel');
