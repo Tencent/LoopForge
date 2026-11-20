@@ -20,8 +20,8 @@ import (
 
 // platformAdminWrite admits a platform administrator's change: an API token,
 // or a same-origin browser request (the session cookie alone is not enough).
-func (h *usersHandlers) platformAdminWrite(c *gin.Context) bool {
-	if !h.isPlatformAdmin(c.Request) {
+func (d deps) platformAdminWrite(c *gin.Context) bool {
+	if !d.isPlatformAdmin(c.Request) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "只有平台管理员可以执行该操作"})
 		return false
 	}

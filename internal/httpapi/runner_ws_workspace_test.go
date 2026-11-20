@@ -19,6 +19,7 @@ import (
 	"agentflow/internal/runtime"
 
 	"github.com/gin-gonic/gin"
+	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/knownhosts"
 )
 
@@ -55,7 +56,7 @@ func answerOnce(t *testing.T, hub *runnerControlHub, conn *runnerControlConn, re
 		if message.Type != "workspace.request" || message.WorkspaceRequest == nil {
 			t.Fatalf("unexpected message %+v", message)
 		}
-		hub.resolveWorkspace(message.RequestID, response)
+		hub.resolveWorkspace(conn, message.RequestID, response)
 		return *message.WorkspaceRequest
 	case <-time.After(3 * time.Second):
 		t.Fatal("runner never received the request")
@@ -274,7 +275,7 @@ func TestRunnerWorkspaceRPCIsTransient(t *testing.T) {
 		t.Fatalf("unexpected workspace request: %+v", message)
 	}
 	payload := json.RawMessage(`{"entries":[],"truncated":false}`)
-	hub.resolveWorkspace(message.RequestID, domain.RunnerWorkspaceResponse{Payload: payload, Status: 200})
+	hub.resolveWorkspace(conn, message.RequestID, domain.RunnerWorkspaceResponse{Payload: payload, Status: 200})
 	got := <-completed
 	if got.err != nil || string(got.response.Payload) != string(payload) {
 		t.Fatalf("unexpected response: %+v err=%v", got.response, got.err)
@@ -285,7 +286,13 @@ func TestRunnerWorkspaceRPCIsTransient(t *testing.T) {
 }
 
 func TestRunnerWorkspaceSendsScopedPlatformSSHKnownHosts(t *testing.T) {
+	store, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
 	hub := quietRunnerHub()
+	hub.sshHostLookup = store.PlatformSSHKnownHosts
 	conn := testRunnerConn("runner-a")
 	registerTestConn(hub, conn)
 	_, hostKey := sshTestIdentity(t)
@@ -293,7 +300,12 @@ func TestRunnerWorkspaceSendsScopedPlatformSSHKnownHosts(t *testing.T) {
 	terminalPin := knownhosts.Line([]string{"terminal.example.org:22"}, hostKey) + "\n"
 	otherPin := knownhosts.Line([]string{"other.example.org:22"}, hostKey) + "\n"
 	path := filepath.Join(t.TempDir(), "known_hosts")
-	if err := os.WriteFile(path, []byte(preparationPin+terminalPin+otherPin), 0o600); err != nil {
+	if err := store.CreatePlatformGitSSHHost(t.Context(), &repo.PlatformGitSSHHost{
+		Host: "gitlab.example.org:2222", PublicKeys: strings.TrimSpace(string(ssh.MarshalAuthorizedKey(hostKey))),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(terminalPin+otherPin), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv(gitwork.SSHKnownHostsEnv, path)
@@ -388,7 +400,7 @@ func TestRunnerWorkspaceHandoverDrainsInFlightRequests(t *testing.T) {
 		t.Fatalf("a request after the handover used the draining socket: %+v", message)
 	default:
 	}
-	predecessor.resolveWorkspace(delivered.RequestID, domain.RunnerWorkspaceResponse{Status: 200, Payload: json.RawMessage(`"step-4"`)})
+	predecessor.resolveWorkspace(old, delivered.RequestID, domain.RunnerWorkspaceResponse{Status: 200, Payload: json.RawMessage(`"step-4"`)})
 	if got := <-inFlight; got.err != nil || string(got.response.Payload) != `"step-4"` {
 		t.Fatalf("in-flight request across handover: %+v err=%v", got.response, got.err)
 	}
