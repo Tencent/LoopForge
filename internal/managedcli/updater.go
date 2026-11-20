@@ -204,11 +204,8 @@ func blockedByRollback(state *State, provider string, candidate release) bool {
 	if rejected == "" {
 		return false
 	}
-	if candidate.Artifact == nil {
-		return candidate.Version == rejected
-	}
-	// An older observed vendor release could otherwise activate and clear
-	// the rejection, allowing the rolled-back version to return later.
+	// An intermediate release could otherwise activate and clear the
+	// rejection, allowing the rolled-back version to return later.
 	if !validProviderVersion(provider, rejected) {
 		return true
 	}

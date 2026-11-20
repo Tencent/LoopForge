@@ -242,6 +242,35 @@ func TestUpdatePinsRollbackAndIdempotence(t *testing.T) {
 	must(t, err)
 }
 
+func TestNPMWaitsPastRollbackWhenRegistryTagRetreats(t *testing.T) {
+	f := newUpdaterFixture(t)
+	ctx := context.Background()
+	update := func(version, status string) {
+		t.Helper()
+		f.setVersion(version)
+		report, err := f.manager.UpdateProvider(ctx, "pi")
+		must(t, err)
+		if len(report.Results) != 1 || report.Results[0].To != version || report.Results[0].Status != status {
+			t.Fatalf("update %s got %+v, want %s", version, report.Results, status)
+		}
+	}
+	update("1.0.0", "updated")
+	update("3.0.0", "updated")
+	_, err := f.manager.Rollback(ctx, "pi")
+	must(t, err)
+
+	update("2.0.0", "skipped")
+	update("3.0.0", "skipped")
+	state := f.state(t)
+	if state.Current["pi"].Version != "1.0.0" || state.Rejected["pi"] != "3.0.0" {
+		t.Fatalf("the registry tag retreat undid the rollback: %+v", state)
+	}
+	update("4.0.0", "updated")
+	if f.state(t).Rejected["pi"] != "" {
+		t.Fatal("a newer release did not clear the rollback marker")
+	}
+}
+
 func TestUpdateFailuresAndCandidateReuse(t *testing.T) {
 	for _, mode := range []string{"help", "integrity-before-hook", "integrity-after-hook", "offline", "maintenance"} {
 		t.Run(mode, func(t *testing.T) {
