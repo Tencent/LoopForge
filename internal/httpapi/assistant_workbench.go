@@ -1342,7 +1342,9 @@ func (h *assistantHandlers) linkMentionedIssue(req *assistantRequest, user domai
 	}
 	ownerID := assistantStorageOwner(h.repo, req.SessionID, user.ID)
 	session, ok := h.repo.AssistantSession(ownerID, req.SessionID)
-	if !ok || session.Shared || session.RunID != "" || session.IssueID != "" {
+	// Scheduled references belong to each execution and must not become a
+	// persistent issue binding when a fixed session is reused.
+	if !ok || session.Shared || session.Source == domain.AssistantSourceScheduled || session.RunID != "" || session.IssueID != "" {
 		return ""
 	}
 	issueID := ""

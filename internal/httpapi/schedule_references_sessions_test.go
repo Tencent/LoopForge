@@ -9,6 +9,50 @@ import (
 	"agentflow/internal/repo"
 )
 
+func TestScheduleFixedSessionContinuesAfterRemovingAndDeletingIssueReference(t *testing.T) {
+	stubCLIModelDiscovery(t)
+	discoverCLIModels = func(context.Context, string, string) []string { return []string{"glm-5.1"} }
+	h, user, job := scheduleSessionFixture(t)
+	job.SessionMode = domain.ScheduleSessionFixed
+	job.AssistantModel = "glm-5.1"
+	issue := domain.Issue{ID: "removed-session-reference", ProjectID: job.ProjectID, Title: "Referenced issue"}
+	if err := h.repo.PutIssue(issue); err != nil {
+		t.Fatal(err)
+	}
+	job.References = []domain.AssistantReference{{Type: "issue", ID: issue.ID}}
+	calls := 0
+	h.generate = func(_ context.Context, prompt string, _ domain.User) (string, error) {
+		calls++
+		if calls == 1 && !strings.Contains(prompt, issue.Title) {
+			t.Fatal("first execution did not resolve the issue reference")
+		}
+		if calls > 1 && strings.Contains(prompt, "当前会话关联的主需求（每轮从平台读取的最新数据）") {
+			t.Fatal("removed reference was injected as the session's linked issue")
+		}
+		return "done", nil
+	}
+	_, sessionID, err := h.runScheduleJobPrompt(job)
+	if err != nil || sessionID == "" {
+		t.Fatalf("first execution: session=%q err=%v", sessionID, err)
+	}
+	job.FixedSessionID = sessionID
+	job.References = nil
+	if err := h.repo.DeleteIssue(issue.ID); err != nil {
+		t.Fatal(err)
+	}
+	_, nextSessionID, err := h.runScheduleJobPrompt(job)
+	if err != nil || nextSessionID != sessionID {
+		t.Fatalf("execution after removing and deleting the reference: session=%q want=%q err=%v", nextSessionID, sessionID, err)
+	}
+	session, ok := h.repo.AssistantSession(user.ID, sessionID)
+	if !ok || session.IssueID != "" || len(session.Messages) != 4 || calls != 2 {
+		t.Fatalf("fixed session: found=%v issue=%q messages=%d calls=%d", ok, session.IssueID, len(session.Messages), calls)
+	}
+	if refs := session.Messages[2].References; len(refs) != 0 {
+		t.Fatalf("removed reference persisted in the new message: %+v", refs)
+	}
+}
+
 func TestScheduleReferencesWithSessionModesAndSharedKey(t *testing.T) {
 	stubCLIModelDiscovery(t)
 	discoverCLIModels = func(context.Context, string, string) []string { return []string{"glm-5.1"} }
