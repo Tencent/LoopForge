@@ -204,6 +204,8 @@ func (c *Client) ListTools() ([]Tool, error) {
 	return c.ListToolsContext(context.Background())
 }
 
+const maxToolPages = 100
+
 // ListToolsContext is ListTools with a caller-supplied deadline/cancellation.
 func (c *Client) ListToolsContext(ctx context.Context) ([]Tool, error) {
 	if err := c.ensureInit(ctx); err != nil {
@@ -212,7 +214,7 @@ func (c *Client) ListToolsContext(ctx context.Context) ([]Tool, error) {
 	var tools []Tool
 	seen := make(map[string]bool)
 	cursor := ""
-	for {
+	for pageNumber := 0; pageNumber < maxToolPages; pageNumber++ {
 		page, next, err := c.listToolsPage(ctx, cursor)
 		if err != nil {
 			return nil, err
@@ -227,6 +229,7 @@ func (c *Client) ListToolsContext(ctx context.Context) ([]Tool, error) {
 		seen[next] = true
 		cursor = next
 	}
+	return nil, fmt.Errorf("mcp tools/list exceeded %d pages", maxToolPages)
 }
 
 func (c *Client) listToolsPage(ctx context.Context, cursor string) ([]Tool, string, error) {
