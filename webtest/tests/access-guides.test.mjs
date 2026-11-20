@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import { loadApp, settle } from '../lib/load-app.mjs';
 
 test('token management renders client specs, revealed prompts, and credential hints', async (t) => {
@@ -236,6 +237,22 @@ test('each MCP setup button copies the selected client, HTTPS endpoint and new k
   }
   app.document.querySelector('[data-copy-revealed]').click();
   assert.equal(copied, 'af_live_secret');
+});
+
+test('Cursor and CodeBuddy setup snippets use URL-based remote server configs', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  const guide = await readFile(new URL('../../web/mcp-setup.txt', import.meta.url), 'utf8');
+  const expected = { mcpServers: { agentflow: {
+    url: 'https://studio.example/mcp', headers: { Authorization: 'Bearer <API_TOKEN>' },
+  } } };
+  for (const client of ['cursor', 'codebuddy']) {
+    const spec = app.evaluate(`accessMcpClientSpec('${client}','https://studio.example','<API_TOKEN>')`);
+    assert.deepEqual(JSON.parse(spec.code), expected);
+    const section = guide.split(`### ${spec.label}\n`)[1].split('\n### ')[0];
+    const json = section.match(/```json\n([\s\S]*?)\n```/)[1];
+    assert.deepEqual(JSON.parse(json.replace('<ENDPOINT>', expected.mcpServers.agentflow.url)), expected);
+  }
 });
 
 // renderAll() repaints every page; only the 访问密钥 page may ask for the token
