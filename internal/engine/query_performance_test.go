@@ -59,3 +59,48 @@ func TestSubscriptionSkipsUnchangedRunPayloads(t *testing.T) {
 		t.Fatal("subscription did not observe revision change")
 	}
 }
+
+func TestRunPublicationKeepsLiveLogAndTelemetryDeltas(t *testing.T) {
+	s, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	const id = "publish-stream-deltas"
+	run := domain.Run{ID: id, Status: "waiting", Nodes: map[string]*domain.NodeRun{}}
+	if err := s.PutRun(run); err != nil {
+		t.Fatal(err)
+	}
+	e := New(s, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces")))
+	updates, cancel, err := e.Subscribe(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cancel()
+	initial := <-updates
+
+	run.Revision = initial.Revision
+	run.LogSequence = 1
+	run.TelemetrySequence = 1
+	run.Logs = []domain.LogRecord{{Sequence: 1, Body: "approval requested"}}
+	run.Telemetry = []domain.TelemetryEvent{{Sequence: 1, Name: "approval.waiting"}}
+	if err := s.PutRun(run); err != nil {
+		t.Fatal(err)
+	}
+	e.publish(id)
+	select {
+	case next := <-updates:
+		if next.Revision != initial.Revision+1 || next.LogSequence != 1 || next.TelemetrySequence != 1 {
+			t.Fatalf("unexpected revision/cursor values: revision=%d log=%d telemetry=%d", next.Revision, next.LogSequence, next.TelemetrySequence)
+		}
+		if len(next.Logs) != 1 || next.Logs[0].Body != "approval requested" {
+			t.Fatalf("logs at cursor 1 = %+v, want the record that advanced the cursor", next.Logs)
+		}
+		if len(next.Telemetry) != 1 || next.Telemetry[0].Name != "approval.waiting" {
+			t.Fatalf("telemetry at cursor 1 = %+v, want the event that advanced the cursor", next.Telemetry)
+		}
+	default:
+		t.Fatal("explicit publication did not produce a snapshot")
+	}
+}
