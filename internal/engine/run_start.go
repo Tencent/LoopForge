@@ -65,6 +65,17 @@ func (e *Engine) startWorkflow(workflowID, input string, repositories []domain.R
 // startWorkflowDefinition also accepts a run-only conversation workspace definition.
 // It never writes a template to the catalog.
 func (e *Engine) startWorkflowDefinition(wf domain.WorkflowDefinition, input string, repositories []domain.RepositoryContext, executionContext domain.TelemetryContext, workspace bool) (domain.Run, error) {
+	return e.startWorkflowDefinitionSeeded(wf, input, repositories, executionContext, workspace, nil)
+}
+
+// startWorkflowDefinitionSeeded lets seed adjust the new run (node states,
+// artifacts) after every node is initialized and before it is persisted.
+func (e *Engine) startWorkflowDefinitionSeeded(wf domain.WorkflowDefinition, input string, repositories []domain.RepositoryContext, executionContext domain.TelemetryContext, workspace bool, seed func(*domain.Run)) (domain.Run, error) {
+	if executionContext.IsEvolutionReplay() {
+		if err := e.validateEvolutionReplayDefinition(wf, repositories); err != nil {
+			return domain.Run{}, err
+		}
+	}
 	workflowID := wf.ID
 	repositories = normalizeRepositories(repositories)
 	domain.AssignRepositoryDirs(repositories)
@@ -152,6 +163,10 @@ func (e *Engine) startWorkflowDefinition(wf domain.WorkflowDefinition, input str
 		return domain.Run{}, err
 	}
 	wf.SandboxSnapshot = resolvedSandboxSnapshot(profile, resources)
+	var canaryNames []string
+	if !workspace {
+		executionContext.EvolutionCanaryIDs, canaryNames = e.assignEvolutionCanaries(id, wf, executionContext)
+	}
 	r := domain.Run{
 		ID: id, WorkflowID: workflowID, WorkflowSnapshot: wf, Status: "running", Input: input,
 		Repository: firstRepository, ExecutionContext: executionContext, Nodes: map[string]*domain.NodeRun{},
@@ -181,6 +196,12 @@ func (e *Engine) startWorkflowDefinition(wf domain.WorkflowDefinition, input str
 	} else {
 		e.event(&r, "", "run.started", "流水线开始执行")
 	}
+	if len(canaryNames) > 0 {
+		e.event(&r, "", "evolution.canary", "本次运行参与进化试用，使用「"+strings.Join(canaryNames, "、")+"」的候选正文")
+	}
+	if seed != nil {
+		seed(&r)
+	}
 	if executeRuns && !workspace {
 		if strings.TrimSpace(instanceID) == "" || ttl <= 0 {
 			return domain.Run{}, ErrExecutionDisabled
@@ -195,6 +216,9 @@ func (e *Engine) startWorkflowDefinition(wf domain.WorkflowDefinition, input str
 	}
 	if current, ok := e.repo.RunState(r.ID); ok {
 		r = current
+	}
+	if !workspace {
+		e.recordRunAssetPins(r)
 	}
 	e.publish(r.ID)
 	if !executeRuns || r.Status == "queued" || workspace {

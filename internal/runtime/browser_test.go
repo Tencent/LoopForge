@@ -58,6 +58,51 @@ func TestBrowserWantedForExecutor(t *testing.T) {
 	}
 }
 
+func TestRestrictedInvocationDoesNotMaterializeBrowser(t *testing.T) {
+	t.Setenv("AGENTFLOW_BROWSER", "always")
+	for _, remote := range []bool{false, true} {
+		workspace := t.TempDir()
+		browser := domain.MCPServerDefinition{ID: BrowserMCPServerID, Name: "Browser", Transport: "http", URL: "http://browser.example.test/mcp"}
+		options := InvocationOptions{RunID: "restricted", DisableBrowser: true, BrowserMCP: &browser}
+		runner := NewExecutorRunner()
+		agent := domain.AgentDefinition{ID: "restricted", Name: "Restricted"}
+		ex := domain.ExecutorDefinition{Kind: "mock"}
+		var err error
+		if remote {
+			_, err = runner.PrepareRemote(workspace, RemoteInvocation{InvocationID: "restricted", Executor: ex, Agent: agent, Options: options})
+		} else {
+			_, err = runner.Run(context.Background(), &capturingSandbox{workspace: workspace}, "restricted", ex, agent, domain.AgentAssetBundle{}, "test", options, nil)
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := filepath.WalkDir(workspace, func(path string, entry fs.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if !entry.IsDir() {
+				info, err := os.Stat(path)
+				if err != nil {
+					return err
+				}
+				if info.IsDir() {
+					return nil
+				}
+				body, err := os.ReadFile(path)
+				if err != nil {
+					return err
+				}
+				if strings.Contains(string(body), browser.URL) {
+					t.Fatalf("browser MCP survived restriction: %s", path)
+				}
+			}
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
 type testSandboxWrapper struct {
 	Sandbox
 }

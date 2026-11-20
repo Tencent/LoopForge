@@ -27,6 +27,13 @@ func (e *Engine) execute(ctx context.Context, runID string) {
 		e.clearRunning(runID)
 		return
 	}
+	if r.ExecutionContext.IsEvolutionReplay() {
+		if err := e.validateEvolutionReplayDefinition(workflowForRun(e.repo, r), r.RepositoryContexts()); err != nil {
+			e.finishAt(runID, r.Generation, "failed", err.Error())
+			e.clearRunning(runID)
+			return
+		}
+	}
 	generation := r.Generation
 	ctx, cancel := context.WithCancel(ctx)
 	heartbeatDone := make(chan struct{})
@@ -365,6 +372,12 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 		}
 		e.nodeFailedAt(runID, node, executionAttempt, executionGeneration, err, allowReject)
 	}
+	if currentLease.ExecutionContext.IsEvolutionReplay() {
+		if err := e.validateEvolutionReplayDefinition(wf, currentLease.RepositoryContexts()); err != nil {
+			failNode(err, false)
+			return
+		}
+	}
 	if node.Type == "sop" {
 		e.executeSOPNode(ctx, runID, wf, node, executionAttempt, executionGeneration)
 		return
@@ -641,7 +654,7 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 			rawOutput, runErr := executeForTargets(current, node.ExecutionScope, func(target executionTarget) (string, error) {
 				bound := bindExecutionTarget(command, target)
 				targetSink := executionTargetSink(sink, target)
-				scriptAssets := e.resolveScriptMCPAssets(current.ExecutionContext.ProjectID, current.ExecutionContext.ResponsibleUserID)
+				scriptAssets := e.resolveRunScriptMCPAssets(current)
 				if execMachine := e.defaultExecutionRunner(current); execMachine != "" {
 					workspace := runnerWorkspaceRel(current, node.ID)
 					return e.dispatchRunnerScript(ctx, execMachine, current, node.ID, workspace, "shell", bound, target.directory(), effectiveNode.ArtifactOutputs, sb, sb.credentialSnapshot().GitHTTPCredentials["github.com"].Token, sb.credentialSnapshot().GitUserName, sb.credentialSnapshot().GitUserEmail, scriptAssets, targetSink)
@@ -689,6 +702,7 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 			err = fmt.Errorf("agent %q not found", node.AgentID)
 			break
 		}
+		agent = applyReplayAgent(e.repo, agent, current)
 		ex, errResolve := resolveNodeExecutor(e.repo, node, agent)
 		if errResolve != nil {
 			err = errResolve
@@ -760,6 +774,7 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 				prompt = runtime.GitPreparationFallbackPrompt(current.RepositoryContexts(), repositoryFallback) + prompt
 			}
 			assets := e.resolveAssets(agent, current.ExecutionContext.ProjectID, wf.ID, current.ExecutionContext.ResponsibleUserID)
+			applyReplayAssets(e.repo, &assets, current)
 			warnMCPSkipped := func(message string) {
 				sink(domain.TelemetryEvent{Category: "mcp", Name: "mcp.skipped", Phase: "start", Level: "warn", Message: message})
 			}
@@ -767,6 +782,7 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 				warnMCPSkipped(warning)
 			}
 			options := runtime.InvocationOptions{RunID: runID, NodeID: node.ID, ResumeSessionID: resumeSessionID, Repositories: current.RepositoryContexts()}
+			options.DisableBrowser = current.ExecutionContext.IsEvolutionReplay()
 			if requiresSubmit {
 				options.GateResultPath = gateResultPath(nodeControlKey(current, node.ID), attempt)
 			}

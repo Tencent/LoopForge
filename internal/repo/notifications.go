@@ -180,6 +180,10 @@ func (r *NotificationsRepo) RetryNotification(projectID, id string) error {
 
 // enqueueRunNotifications shares the run write transaction and freezes rendered content.
 func (r *NotificationsRepo) enqueueRunNotifications(tx *gorm.DB, run domain.Run, event domain.RunEvent, seq int64) error {
+	// Evolution replays validate an asset candidate; nobody should be paged.
+	if run.ExecutionContext.IsEvolutionReplay() {
+		return nil
+	}
 	projectID := notificationRunProject(run)
 	nodeTrigger := notificationTrigger(event.Type)
 	runTrigger := map[string]string{"run.succeeded": "succeeded", "run.failed": "failed"}[event.Type]

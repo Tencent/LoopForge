@@ -866,7 +866,7 @@ func (d *Daemon) executeInvocation(ctx context.Context, task domain.RunnerTask) 
 	}
 	executor := d.invocationExecutor(task)
 	var browserMCP *domain.MCPServerDefinition
-	if runtime.BrowserWantedForExecutor(executor.Kind) {
+	if !inv.DisableBrowser && runtime.BrowserWantedForExecutor(executor.Kind) {
 		browserMCP = runtime.EnsureSandboxBrowser(ctx, sandbox, workspace, inv.RunID, nil)
 	}
 	prepared, err := d.executor.PrepareRemote(workspace, runtime.RemoteInvocation{
@@ -879,6 +879,7 @@ func (d *Daemon) executeInvocation(ctx context.Context, task domain.RunnerTask) 
 			RunID: inv.RunID, NodeID: inv.NodeID, ResumeSessionID: inv.ResumeSessionID,
 			GateResultPath: inv.GateResultPath, Repositories: invocationRepositoryContexts(inv),
 			BrowserMCP: browserMCP, RunnerLogin: inv.CredentialSource == domain.RuntimeAuthLocal,
+			DisableBrowser: inv.DisableBrowser,
 		},
 		Driver: driver,
 	})

@@ -181,6 +181,9 @@ func (r *RunsRepo) runSummariesFor(filter domain.AnalyticsFilter, issueID string
 	candidates := make([]domain.Run, 0, len(rows))
 	for _, row := range rows {
 		run := runFromRow(row)
+		if run.ExecutionContext.IsEvolutionReplay() && !filter.IncludeEvolutionReplays {
+			continue
+		}
 		if issueID != "" && run.ExecutionContext.IssueID != issueID {
 			continue
 		}

@@ -1151,7 +1151,7 @@
     settings: "settings", bots: "robot", assistant: "sparkles", projects: "users", flow: "workflow",
     agents: "user", mcp: "connector", rules: "doc", skills: "skills",
     dockerfiles: "layers", environments: "terminal", sandboxes: "server",
-    observability: "token", guide: "key", platform: "gate",
+    evolution: "sparkles", observability: "token", guide: "key", platform: "gate",
   };
   const controls = {
     collabNew: "plus", collabRefresh: "refresh", collabSearchToggle: "search",

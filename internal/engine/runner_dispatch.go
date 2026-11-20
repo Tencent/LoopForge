@@ -192,6 +192,9 @@ func (e *Engine) dispatchRunnerTask(ctx context.Context, runnerID string, run do
 	}
 	runner, _ := e.repo.Runner(runnerID)
 	authMode := runner.RuntimeAuthMode(ex.Kind)
+	if run.ExecutionContext.IsEvolutionReplay() && authMode != domain.RuntimeAuthPersonal {
+		return "", errors.New("进化回放只允许个人模型 Key，不能使用执行机器的本机登录凭据")
+	}
 	resumeSessionID := resolveRunnerResumeSessionID(run, node.ID, options)
 	invocation := &domain.RunnerInvocation{
 		ArchivedFiles:                 e.legacyArchivedWorkspaceFiles(run, node.ID),
@@ -206,6 +209,7 @@ func (e *Engine) dispatchRunnerTask(ctx context.Context, runnerID string, run do
 		HumanContext:                  run.HumanContext,
 		CredentialSource:              authMode,
 		GateResultPath:                options.GateResultPath,
+		DisableBrowser:                run.ExecutionContext.IsEvolutionReplay(),
 		RepositoryPreparationFallback: firstRepositoryAgent(run.WorkflowSnapshot, node),
 	}
 	if strings.TrimSpace(options.GateResultPath) != "" {
@@ -256,7 +260,7 @@ func (e *Engine) dispatchRunnerTask(ctx context.Context, runnerID string, run do
 		}
 		invocation.RecoverOutputs = normalizeExecutionScope(node.ExecutionScope) != domain.ExecutionScopeRepositories
 	}
-	invocation.MCPCallServers = e.resolveScriptMCPAssets(run.ExecutionContext.ProjectID, run.ExecutionContext.ResponsibleUserID).MCPServers
+	invocation.MCPCallServers = e.resolveRunScriptMCPAssets(run).MCPServers
 	task := domain.RunnerTask{
 		ID:          fmt.Sprintf("rt-%d-%s", time.Now().UnixNano(), safeRunnerPath(node.ID)),
 		RunnerID:    runnerID,
@@ -344,6 +348,9 @@ func resolveRunnerResumeSessionID(run domain.Run, nodeID string, options runtime
 }
 
 func bindRunnerRepositories(invocation *domain.RunnerInvocation, run domain.Run, gitUserName, gitUserEmail string) {
+	if run.ExecutionContext.IsEvolutionReplay() {
+		return
+	}
 	if invocation == nil {
 		return
 	}
@@ -676,7 +683,7 @@ func (e *Engine) dispatchRunnerCommand(ctx context.Context, runnerID, runID, nod
 // existing checkout is left in place, and the runner only uses the token to
 // authenticate that command.
 func (e *Engine) gateCommandInvocation(run domain.Run, nodeID string) *domain.RunnerInvocation {
-	assets := e.resolveScriptMCPAssets(run.ExecutionContext.ProjectID, run.ExecutionContext.ResponsibleUserID)
+	assets := e.resolveRunScriptMCPAssets(run)
 	invocation := &domain.RunnerInvocation{
 		RunID: run.ID, NodeID: nodeID, Assets: assets, MCPCallServers: assets.MCPServers}
 	identity := resolveGitIdentity(e.repo, run.ExecutionContext.ResponsibleUserID)
