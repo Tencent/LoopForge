@@ -98,6 +98,7 @@ const THEME_OPTIONS = [
 ];
 const environmentVisibilityKey = "agentflow.native-chat.environmentVisibility.v1";
 const sessionApprovalScope = ({ id, projectId }) => `approval.session:${JSON.stringify([id, projectId || ""])}`;
+const draftSnapshot = ({ text, attachments, references }) => JSON.stringify({ text, attachments, references });
 const sidebarWidthKey = "agentflow.sidebarWidth";
 const sidebarLayoutKey = "agentflow.sidebarLayoutVersion";
 const sidebarLayoutVersion = "grasp-reference-v3";
@@ -381,8 +382,8 @@ export default function App() {
   const newDraftSlot = issueDraft && issueDraft.projectId === chat.projectId ? "issue:" + issueDraft.issueId : "new:" + chat.projectId;
   const draftKeyPrefix = `agentflow.native-chat.draft.${chat.user?.id || "guest"}.`;
   const draftKey = draftKeyPrefix + (chat.activeId || newDraftSlot);
-  const visibleDraftKey = useRef(draftKey);
-  visibleDraftKey.current = draftKey;
+  const visibleDraft = useRef(null);
+  visibleDraft.current = { key: draftKey, text, attachments, references };
   const approvalOwner = realChat.user?.isGuest ? "guest" : realChat.user?.id;
   const { readOptions: readApproval, saveOptions: saveApproval } = useComposerOptions(approvalOwner);
   const approvalScope = chat.activeId
@@ -807,45 +808,44 @@ export default function App() {
       references,
       approvalMode: approval,
       onSessionCreated,
-      isDraftActive: draftApproval ? () => visibleDraftKey.current === draftKey : undefined,
+      isDraftActive: draftApproval ? () => visibleDraft.current.key === draftKey : undefined,
     }).finally(() => {
       if (savingDraftApproval.current === draftApproval) savingDraftApproval.current = null;
     });
+    const visible = visibleDraft.current;
     if (ok) {
       if (savedDraftKey) clearDraftApproval(draftApproval.scope, savedApprovalMode);
+      let clearedOriginKey;
       if (copiedFrom && /^(new|issue):/.test(copiedFrom.slot)) {
         const originKey = draftKeyPrefix + copiedFrom.slot;
-        if (JSON.stringify(readJSON(originKey, null)) === copiedFrom.snapshot) {
+        const matchesVisible = visible.key !== originKey || draftSnapshot(visible) === copiedFrom.snapshot;
+        if (matchesVisible && JSON.stringify(readJSON(originKey, null)) === copiedFrom.snapshot) {
           localStorage.removeItem(originKey);
           clearDraftApproval(`approval.${copiedFrom.slot}`, copiedFrom.mode);
+          clearedOriginKey = originKey;
         }
       }
       for (const a of attachments) releaseComposerPreview(a.id);
       localStorage.removeItem(draftKey);
-      if (visibleDraftKey.current !== draftKey) return;
+      if (visible.key !== draftKey && visible.key !== clearedOriginKey) return;
       draftOrigin.current = null;
       setMention(null);
       setText("");
       setAttachments([]);
       setReferences([]);
       if (input.current) input.current.style.height = "";
-    } else if (visibleDraftKey.current === savedDraftKey) {
+    } else if (visible.key === savedDraftKey && draftReady.current === savedDraftKey &&
+        !visible.text && !visible.attachments.length && !visible.references.length) {
       // The session was saved but the first message was rejected. Keep its
       // content in the visible conversation so the user can retry.
       draftOrigin.current = {
         slot: newDraftSlot,
         mode: savedApprovalMode,
-        snapshot: JSON.stringify({ text, attachments, references }),
+        snapshot: draftSnapshot({ text, attachments, references }),
       };
-      setText((current) => current || text);
-      setAttachments((current) => [
-        ...attachments.filter((item) => !current.some((other) => other.id === item.id)),
-        ...current,
-      ]);
-      setReferences((current) => [
-        ...references.filter((item) => !current.some((other) => other.id === item.id && other.type === item.type)),
-        ...current,
-      ]);
+      setText(text);
+      setAttachments(attachments);
+      setReferences(references);
     }
   }
   function editQueued(item) {

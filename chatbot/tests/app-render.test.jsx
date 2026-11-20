@@ -237,7 +237,9 @@ describe("App", () => {
     { phase: "navigation", away: true },
     { phase: "in-session retry after reload" },
     { phase: "independently edited original", edited: true },
-  ])("retains the first draft on failure and reconciles it after $phase", async ({ away, edited }) => {
+    { phase: "return to the original during retry", returnDuringRetry: true },
+    { phase: "a different prompt in the saved session", differentPrompt: true },
+  ])("retains the first draft on failure and reconciles it after $phase", async ({ away, edited, returnDuringRetry, differentPrompt }) => {
     const original = { activeId: chat.activeId, session: chat.session, projectId: chat.projectId };
     const user = userEvent.setup();
     const saved = { id: "new-session", messages: [], projectId: "p1" };
@@ -263,6 +265,8 @@ describe("App", () => {
       chat.session = away ? { id: "other-session", messages: [], projectId: "p1" } : saved;
       chat.activeId = chat.session.id;
       view.rerender(<App />);
+      const nextPrompt = "会话里另写的一条消息";
+      if (differentPrompt) await user.type(screen.getByRole("textbox", { name: "消息" }), nextPrompt);
       await act(async () => rejectGeneration());
       if (away) {
         Object.assign(chat, { activeId: null, session: null });
@@ -273,14 +277,24 @@ describe("App", () => {
         view = render(<App />);
       }
       expect(screen.getByRole("button", { name: "操作确认方式" })).toHaveTextContent("帮我批准");
-      expect(screen.getByRole("textbox", { name: "消息" })).toHaveValue(failedDraft.text);
+      expect(screen.getByRole("textbox", { name: "消息" })).toHaveValue(differentPrompt ? nextPrompt : failedDraft.text);
+      let acceptRetry;
+      if (returnDuringRetry) chat.send.mockImplementationOnce(() => new Promise((resolve) => {
+        acceptRetry = () => resolve(true);
+      }));
       await user.click(screen.getByRole("button", { name: "发送消息" }));
-      expect(chat.send).toHaveBeenLastCalledWith(expect.objectContaining({ ...failedDraft, approvalMode: "assisted" }));
+      const submitted = differentPrompt ? { text: nextPrompt, attachments: [], references: [] } : failedDraft;
+      expect(chat.send).toHaveBeenLastCalledWith(expect.objectContaining({ ...submitted, approvalMode: "assisted" }));
       if (!away) {
         Object.assign(chat, { activeId: null, session: null });
         view.rerender(<App />);
-        expect(screen.getByRole("textbox", { name: "消息" })).toHaveValue(edited ? "另一份草稿" : "");
-        expect(screen.getByRole("button", { name: "操作确认方式" })).toHaveTextContent(edited ? "帮我批准" : "请求批准");
+        if (acceptRetry) {
+          expect(screen.getByRole("textbox", { name: "消息" })).toHaveValue(failedDraft.text);
+          await act(async () => acceptRetry());
+        }
+        const remaining = edited ? "另一份草稿" : differentPrompt ? failedDraft.text : "";
+        expect(screen.getByRole("textbox", { name: "消息" })).toHaveValue(remaining);
+        expect(screen.getByRole("button", { name: "操作确认方式" })).toHaveTextContent(remaining ? "帮我批准" : "请求批准");
       }
     } finally {
       Object.assign(chat, original);
