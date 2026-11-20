@@ -91,6 +91,7 @@ type InvocationOptions struct {
 	ResumeSessionID string
 	GateResultPath  string
 	Repositories    []domain.RepositoryContext
+	RunnerLogin     bool
 	// BrowserMCP is resolved on the executing host, never sent to a runner.
 	BrowserMCP *domain.MCPServerDefinition `json:"-"`
 }
@@ -130,6 +131,8 @@ type CommandSpec struct {
 	// privateBinds are host directories bwrap binds into this one process
 	// only (for example a terminal's own SSH agent).
 	privateBinds []string
+	// Only the selected managed installation is exposed beneath bwrap's /tmp.
+	managedCLIInstall string
 	// Conversation preparation binds credentials before acknowledging start.
 	bindingsPrepared bool
 	// Runner-owned authentication state never enters serialized invocations.

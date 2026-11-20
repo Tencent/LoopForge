@@ -31,7 +31,17 @@ func TestAntigravityRunnerLoginRequiresMachineOwner(t *testing.T) {
 	request := assistantRequest{SessionID: "agy-login", Executor: "agy", Model: "gemini-4-hydrogen-high", Messages: []assistantMessage{{Role: "user", Content: "hello"}}, ExecutionTarget: &target}
 	body, _ := json.Marshal(request)
 	c, rec := workbenchContext(owner, http.MethodPost, "/api/assistant/chat", bytes.NewBuffer(body))
-	h.chat(c)
+	h.runnerControls = quietRunnerHub()
+	conn := testRunnerConn(row.ID)
+	registerTestConn(h.runnerControls, conn)
+	defer conn.close()
+	done := make(chan struct{})
+	go func() { h.chat(c); close(done) }()
+	lookup := answerOnce(t, h.runnerControls, conn, domain.RunnerWorkspaceResponse{Status: 200, Payload: []byte(`[{"id":"gemini-4-hydrogen-high"}]`)})
+	<-done
+	if lookup.Operation != domain.RunnerWorkspaceOperationLoginModels || lookup.ModelProvider != "agy" {
+		t.Fatalf("unexpected account discovery: %+v", lookup)
+	}
 	if rec.Code != http.StatusOK || !called {
 		t.Fatalf("account login was blocked by the API-key preflight: %d %s", rec.Code, rec.Body)
 	}

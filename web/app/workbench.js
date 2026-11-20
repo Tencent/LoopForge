@@ -95,13 +95,13 @@ const CREDENTIAL_KINDS=[
   agentCliCredentialKind('cursor',{name:'Cursor CLI',logo:'cursor',monochrome:true,
     note:'Cursor CLI 连接 Cursor 官方服务，可按账号获取模型。',
     guide:[['登录 Cursor 控制台，在「Integrations → User API Keys」新建 Key','https://cursor.com/dashboard?tab=integrations','前往 Cursor 创建 API Key'],['复制以 <code>crsr_</code> 开头的 Key'],['粘贴到下方保存']]}),
-  agentCliCredentialKind('agy',{name:'Antigravity',logo:'gemini',baseUrl:'https://gateway.example.com/v1',required:protocol=>protocol==='chat',
+  agentCliCredentialKind('agy',{name:'Antigravity',logo:'antigravity',baseUrl:'https://gateway.example.com/v1',required:protocol=>protocol==='chat',
     note:'默认连接 Gemini 官方服务；选择 OpenAI 兼容网关时需要填写 Base URL。',extraNote:'OpenAI 兼容网关必填',
     guide:[['在 Google AI Studio 创建 Gemini API Key，或准备 OpenAI 兼容网关的 Key','https://aistudio.google.com/apikey','前往 Google AI Studio'],['走网关时记下网关地址'],['粘贴 Key，选择协议；保存后可在模型目录里挑选 AI 对话的模型']],
     protocols:[['gemini','Gemini 官方 API'],['chat','OpenAI 兼容网关（Chat Completions）']]}),
-  agentCliCredentialKind('kimi',{name:'Kimi Code',logo:'kimi',baseUrl:'https://api.kimi.com/coding/v1',
+  agentCliCredentialKind('kimi',{name:'Kimi Code',logo:'kimi-code.png',baseUrl:'https://api.kimi.com/coding/v1',
     note:'未填写 Base URL 时连接 Kimi Code 官方服务。',protocols:[['chat','Chat Completions'],['responses','Responses'],['messages','Messages（Anthropic）']]}),
-  agentCliCredentialKind('pi',{name:'Pi',logo:'pi',monochrome:true,baseUrl:'https://api.example.com/v1',required:()=>true,
+  agentCliCredentialKind('pi',{name:'Pi',logo:'pi',baseUrl:'https://api.example.com/v1',required:()=>true,
     note:'Pi 没有自己的模型服务，需要填写 Base URL。',protocols:[['chat','Chat Completions'],['responses','Responses'],['messages','Messages（Anthropic）']]}),
   agentCliCredentialKind('dsh',{name:'DeepSeek Harness',logo:'deepseek',baseUrl:'https://api.deepseek.com',
     note:'未填写 Base URL 时连接 DeepSeek 官方服务。',protocols:[['chat','Chat Completions'],['responses','Responses'],['messages','Messages（Anthropic）']]}),
@@ -140,7 +140,7 @@ function credentialModelsEndpoint(kind,protocol){
 // ---- 模型目录（Codex / Claude Code / 可配置 Agent CLI） ----
 // A saved catalog is the chat list on the official endpoint and behind a Base URL.
 // An empty catalog follows the CLI's built-in models when there is no Base URL
-// (or the protocol is Gemini), and the Base URL's published models otherwise.
+// and the Base URL's published models otherwise.
 // Edits stay in the DOM until 保存.
 const CREDENTIAL_CATALOG_MAX=100;
 let credentialEffortCatalogs,credentialEffortCatalogRequest;
@@ -226,7 +226,7 @@ function credentialCatalogRowHTML(model={},engine=''){
 }
 function credentialCatalogCopy(mode,kind){
   const name=kind?.name||'该 CLI';
-  if(mode==='runner')return {title:'使用 CLI 默认模型',detail:'获取这台机器的账号模型，或手动添加。',reset:'清空自定义列表',restored:'已恢复默认，保存后生效'};
+  if(mode==='runner')return {title:'使用执行机器的账号模型',detail:'获取这台机器的账号模型，或手动添加。',reset:'清空自定义列表',restored:'已清空目录，保存后生效'};
   return mode==='official'
     ?{title:`使用 ${name} 自带的模型`,detail:`目录为空时，AI 对话列出 ${name} 支持的模型。获取可用模型可以改成自己的目录，也可以手动添加。`,reset:'清空目录，改回使用自带的模型',restored:'已恢复默认，保存后使用自带的模型'}
     :{title:'跟随服务发布的模型',reset:'清空目录，改回跟随服务发布的模型',restored:'已恢复默认，保存后跟随服务发布的模型'};
@@ -239,7 +239,7 @@ function credentialCatalogHTML(kind,user,{runnerLogin=false,label='模型目录'
   const baseUrl=kind.extra?.url?credentialValue(user,kind.extra.name):'',protocol=credentialProtocol(kind,user);
   const cursorAutomatic=kind.agentCli==='cursor'&&!user?.agentCliCredentials?.cursor?.modelsCustomized;
   const models=credentialCatalogModels(cursorAutomatic?[]:credentialValue(user,kind.models.name)),empty=!models.length;
-  const mode=runnerLogin?'runner':!String(baseUrl||'').trim()||protocol==='gemini'?'official':'remote';
+  const mode=runnerLogin?'runner':!String(baseUrl||'').trim()?'official':'remote';
   const copy=credentialCatalogCopy(mode,kind);
   return `<section class="credential-catalog" data-credential-catalog data-catalog-engine="${escapeHTML(kind.models.engine)}" data-catalog-mode="${mode}" data-catalog-protocol="${escapeHTML(protocol)}" data-original-key="${escapeHTML(credentialCatalogKey(models))}" data-catalog-source="${escapeHTML(credentialCatalogSource(baseUrl))}" aria-label="模型目录">
     <div class="credential-catalog-body" data-catalog-body>
@@ -269,8 +269,8 @@ function credentialCatalogFilledRows(catalog){return credentialCatalogRows(catal
 function readCredentialCatalog(catalog){return credentialCatalogModels(credentialCatalogRows(catalog).map(credentialCatalogRowModel))}
 function credentialCatalogMode(catalog){
   const form=catalog?.closest('.credential-editor-form'),extra=form?.querySelector('input[name="extra"]');
-  if(!extra)return catalog.dataset.catalogMode;
-  return !extra.value.trim()||form.querySelector('select[name="protocol"]')?.value==='gemini'?'official':'remote';
+  if(!extra||catalog.dataset.catalogMode==='runner')return catalog.dataset.catalogMode;
+  return extra.value.trim()?'remote':'official';
 }
 function credentialCatalogDirty(catalog){return !!catalog&&credentialCatalogKey(readCredentialCatalog(catalog))!==catalog.dataset.originalKey}
 function credentialCatalogPayload(catalog){
@@ -497,7 +497,10 @@ function credentialUser(){return userById(state.currentUser?.id)||{}}
 function credentialUI(){return state.credentialUI||(state.credentialUI={open:null,filter:'all',closed:{}})}
 function credentialGlyph(name,size=16,cls=''){return `<svg class="agent-icon harness-icon${cls?' '+cls:''}" data-icon="${name}" width="${size}" height="${size}" aria-hidden="true" focusable="false"></svg>`}
 function credentialSpinner(size=14){return credentialGlyph('arc-spinner',size,'credential-spin')}
-function credentialLogo(kind,cls=''){return `<span class="credential-logo${kind.monochrome?' monochrome':''}${cls?' '+cls:''}">${kind.icon?credentialGlyph(kind.icon,18):`<img src="/images/credentials/${kind.logo}.svg" alt="">`}</span>`}
+function credentialLogo(kind,cls=''){
+  const file=kind.logo?.endsWith('.png')?kind.logo:kind.logo+'.svg';
+  return `<span class="credential-logo${kind.monochrome?' monochrome':''}${cls?' '+cls:''}">${kind.icon?credentialGlyph(kind.icon,18):`<img src="/images/credentials/${file}" alt="">`}</span>`;
+}
 function hydrateCredentialIcons(root){if(root)window.AgentFlowHarnessIcons?.hydrate?.(root)}
 function credentialNextKind(user){return CREDENTIAL_RECOMMENDED.map(credentialKind).find(kind=>!credentialConfigured(kind,user))||null}
 function credentialSecretError(kind,value){
@@ -1320,11 +1323,11 @@ function renderPlatformNav(){
   const group=$('#platformNavGroup');if(!group)return;
   group.hidden=!isPlatformAdmin();
 }
-// 平台管理分成三个 tab：成员账号、平台管理员、共享 CodeBuddy Key。
 const PLATFORM_TABS=[
   {id:'accounts',zh:'成员账号',en:'Accounts'},
   {id:'admins',zh:'平台管理员',en:'Admins'},
   {id:'sharedKey',zh:'共享 CodeBuddy Key',en:'Shared CodeBuddy Key'},
+  {id:'sshTrust',zh:'Git SSH 主机信任',en:'Git SSH Host Trust'},
 ];
 function platformTabsHTML(active){
   return `<div class="pa-tabs-wrap platform-tabs-wrap"><div class="pa-tabs platform-tabs" id="platformTabs" role="tablist" aria-label="平台管理分区">${PLATFORM_TABS.map(t=>{
@@ -1493,10 +1496,12 @@ function renderPlatformAdminPanel(){
     </div>
     `)}
     ${platformTabPanel('sharedKey',tab,platformSharedKeyHTML())}
+    ${platformTabPanel('sshTrust',tab,platformSSHHostTrustHTML())}
   `;
   bindPlatformTabs(host);
   loadPlatformAccounts(host);
   loadPlatformSharedKey(host);
+  loadPlatformSSHHosts(host);
   loadPlatformAdmins(host);
 }
 

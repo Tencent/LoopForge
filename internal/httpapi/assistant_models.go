@@ -192,26 +192,33 @@ func (h *assistantHandlers) models(c *gin.Context) {
 		} else if id == "claude" {
 			engine = assistantEngineClaude
 		}
-		var kimiBaseURL string
-		if engine == runtime.AgentCLIKimi {
+		var user domain.User
+		if h.repo != nil && (engine == runtime.AgentCLIKimi || engine == runtime.AgentCLIAntigravity) {
 			if current, signedIn := h.requestUser(c.Request, true); signedIn {
-				if stored, found := h.repo.User(current.ID); found {
-					_, kimiBaseURL = assistantEngineCredential(stored, engine)
-				}
+				user, _ = h.repo.User(current.ID)
 			}
 		}
+		_, kimiBaseURL := assistantEngineCredential(user, runtime.AgentCLIKimi)
 		catalog, ok := executorModelCatalogs(kimiBaseURL)[id]
 		if !ok {
 			c.JSON(400, gin.H{"error": "不支持的执行器"})
 			return
 		}
-		result := assistantModelCatalog{Default: "default", Models: []assistantModel{{ID: "default", Name: "CLI default", Family: map[string]string{"codex": "gpt", "claude": "claude"}[id], Efforts: assistantModelEffortsIn(engine+":default", nil)}}}
+		result := assistantModelCatalog{Models: make([]assistantModel, 0, len(catalog.Models))}
+		if engine == runtime.AgentCLIAntigravity && antigravityUsesCustomEndpoint(user) {
+			c.Header("Cache-Control", "private, no-store")
+			c.JSON(200, result)
+			return
+		}
 		for _, item := range catalog.Models {
 			levels := make([]string, 0, len(item.Efforts))
 			for _, option := range item.Efforts {
 				levels = append(levels, option.Value)
 			}
-			result.Models = append(result.Models, assistantModel{ID: item.ID, Name: item.Name, Family: map[string]string{"codex": "gpt", "claude": "claude"}[id], Efforts: levels})
+			result.Models = append(result.Models, assistantModel{ID: item.ID, Name: item.Name, Family: item.Family, Engine: engine, Efforts: levels})
+		}
+		if len(result.Models) > 0 {
+			result.Default = result.Models[0].ID
 		}
 		c.JSON(200, result)
 		return
@@ -281,11 +288,15 @@ func (h *assistantHandlers) models(c *gin.Context) {
 func selectableCodeBuddyModels(models []assistantModel) []assistantModel {
 	listed := make([]assistantModel, 0, len(models))
 	for _, model := range models {
-		if model.ID != assistantDefaultModel {
+		if !codeBuddyIsDefaultModel(model.ID) {
 			listed = append(listed, model)
 		}
 	}
 	return listed
+}
+
+func codeBuddyIsDefaultModel(id string) bool {
+	return id == assistantDefaultModel || id == "default-model"
 }
 
 // withCodeBuddyPersonalModels accepts the user's saved CodeBuddy models and
@@ -388,11 +399,18 @@ func assistantFixedCatalog() assistantModelCatalog {
 }
 
 func assistantListedModel(id, name, credits string) assistantModel {
-	return assistantModel{ID: id, Name: name, Family: assistantModelFamily(id), Credits: credits, Efforts: assistantModelEffortsIn(id, nil)}
+	return assistantModel{ID: id, Name: name, Family: assistantModelFamily(id, assistantEngineCodeBuddy), Credits: credits, Efforts: assistantModelEffortsIn(id, nil)}
 }
 
-func assistantModelFamily(id string) string {
-	id = strings.ToLower(id)
+func assistantModelFamily(id, engine string) string {
+	id = strings.ToLower(strings.TrimSpace(id))
+	if engine == assistantEngineCodeBuddy {
+		switch id {
+		case "fast-model", "balanced-model", "primary-model", "deep-model":
+			return "codebuddy"
+		}
+	}
+	id = id[strings.LastIndexByte(id, '/')+1:]
 	switch {
 	case strings.HasPrefix(id, "claude"):
 		return "claude"
@@ -402,8 +420,22 @@ func assistantModelFamily(id string) string {
 		return "glm"
 	case strings.HasPrefix(id, "gemini"):
 		return "gemini"
-	case strings.HasPrefix(id, "kimi"):
+	case id == "grok" || strings.HasPrefix(id, "grok-") || strings.HasPrefix(id, "cursor-grok-"):
+		return "grok"
+	case id == "muse" || strings.HasPrefix(id, "muse-"):
+		return "muse"
+	case id == "composer" || strings.HasPrefix(id, "composer-") || (engine == runtime.AgentCLICursor && (id == "auto" || id == "auto-smart")):
+		return "cursor"
+	case strings.HasPrefix(id, "kimi") || id == "k3" || strings.HasPrefix(id, "k3-") || strings.HasPrefix(id, "k3."):
 		return "kimi"
+	case strings.HasPrefix(id, "moonshot"):
+		return "moonshot"
+	case strings.HasPrefix(id, "qwen") || strings.HasPrefix(id, "qvq"):
+		return "qwen"
+	case strings.HasPrefix(id, "doubao") || strings.HasPrefix(id, "seed-") || strings.HasPrefix(id, "seedream"):
+		return "doubao"
+	case strings.HasPrefix(id, "ernie") || strings.HasPrefix(id, "wenxin") || strings.HasPrefix(id, "qianfan"):
+		return "qianfan"
 	case strings.HasPrefix(id, "deepseek"):
 		return "deepseek"
 	case strings.HasPrefix(id, "minimax"):

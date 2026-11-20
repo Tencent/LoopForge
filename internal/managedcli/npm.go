@@ -48,13 +48,14 @@ func (m *Manager) commandEnvironment() []string {
 	return append(env,
 		"PATH="+path, "HOME="+home, "TMPDIR="+filepath.Join(m.Root, "tmp"),
 		"CODEX_HOME="+filepath.Join(home, ".codex"), "CLAUDE_CONFIG_DIR="+filepath.Join(home, ".claude"), "CODEBUDDY_CONFIG_DIR="+filepath.Join(home, ".codebuddy"),
-		"DISABLE_AUTOUPDATER=1", "DISABLE_UPDATES=1", "CI=1", "NO_COLOR=1",
+		"DISABLE_AUTOUPDATER=1", "DISABLE_UPDATES=1", "OPENCODE_DISABLE_AUTOUPDATE=1", "KIMI_CODE_NO_AUTO_UPDATE=1",
+		"CI=1", "NO_COLOR=1",
 		"NPM_CONFIG_USERCONFIG="+filepath.Join(home, "npmrc-user"), "NPM_CONFIG_GLOBALCONFIG="+filepath.Join(home, "npmrc-global"),
 		"NPM_CONFIG_CACHE="+filepath.Join(m.Root, "npm-cache"),
 	)
 }
 
-func (m *Manager) prepareTools(ctx context.Context) error {
+func (m *Manager) prepareCommandDirectories() error {
 	for _, rel := range []string{"updater-home", "tmp", "npm-cache", "providers"} {
 		if err := prepareDirectory(m.Root, rel); err != nil {
 			return err
@@ -64,6 +65,13 @@ func (m *Manager) prepareTools(ctx context.Context) error {
 		if err := emptyNPMConfig(filepath.Join(m.Root, "updater-home", name)); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+func (m *Manager) prepareTools(ctx context.Context) error {
+	if err := m.prepareCommandDirectories(); err != nil {
+		return err
 	}
 	for name, target := range map[string]*string{"node": &m.nodeBinary, "npm": &m.npmBinary} {
 		if *target == "" {
@@ -112,33 +120,23 @@ func (m *Manager) install(ctx context.Context, provider string, candidate releas
 			}
 		}
 	}()
-	if err := os.WriteFile(filepath.Join(stage, "package.json"), []byte("{\"private\":true}\n"), 0o600); err != nil {
+	var executable string
+	if candidate.Artifact != nil {
+		executable = spec.Binary
+		err = m.installVendorArtifact(ctx, provider, candidate, stage)
+	} else {
+		executable = filepath.Join("node_modules", ".bin", spec.Binary)
+		err = m.installPackage(ctx, provider, spec, candidate, stage)
+	}
+	if err != nil {
 		return Installation{}, err
 	}
-	args := []string{"install", "--prefix", stage, "--registry", npmRegistry, "--no-audit", "--no-fund", "--engine-strict", "--ignore-scripts", "--include=optional", "--save-exact", spec.Package + "@" + candidate.Version}
-	if _, err := m.command(ctx, m.npmBinary, args, stage); err != nil {
-		return Installation{}, fmt.Errorf("install %s: %w", provider, err)
-	}
-	if err := verifyPackageLock(stage, spec.Package, candidate); err != nil {
-		return Installation{}, err
-	}
-	// Some native optional dependencies need lifecycle hooks. Defer them until
-	// npm has fetched the exact candidate and its SRI has been checked. Commands
-	// use the updater's isolated home and credential-free environment; they run
-	// with the worker's OS permissions, not in a separate security sandbox.
-	rebuild := []string{"rebuild", "--prefix", stage, "--registry", npmRegistry, "--no-audit", "--no-fund"}
-	if _, err := m.command(ctx, m.npmBinary, rebuild, stage); err != nil {
-		return Installation{}, fmt.Errorf("build verified CLI dependencies: %w", err)
-	}
-	if err := verifyPackageLock(stage, spec.Package, candidate); err != nil {
-		return Installation{}, err
-	}
-	staged := Installation{Version: candidate.Version, Binary: filepath.Join(stage, "node_modules", ".bin", spec.Binary)}
+	staged := Installation{Version: candidate.Version, Binary: filepath.Join(stage, executable)}
 	if err := validateInventory(m.Root, Inventory{provider: staged}); err != nil {
 		return Installation{}, err
 	}
 	// Rename a unique complete directory, never an existing installation.
-	// npm's .bin links are relative and remain valid after this rename.
+	// Executable links and launchers are relative to the installation.
 	final := filepath.Join(base, candidate.Version+"-"+strings.TrimPrefix(filepath.Base(stage), ".staging-"))
 	if _, err := os.Lstat(final); err == nil || !os.IsNotExist(err) {
 		return Installation{}, errors.New("candidate installation target already exists or is inaccessible")
@@ -146,11 +144,46 @@ func (m *Manager) install(ctx context.Context, provider string, candidate releas
 	if err := os.Rename(stage, final); err != nil {
 		return Installation{}, err
 	}
-	installed := Installation{Version: candidate.Version, Binary: filepath.Join(final, "node_modules", ".bin", spec.Binary), Integrity: candidate.Dist.Integrity, InstalledAt: m.Now().UTC()}
+	installed := Installation{
+		Version: candidate.Version, Binary: filepath.Join(final, executable),
+		Integrity: candidate.identity(), InstalledAt: m.Now().UTC(),
+	}
+	if provider == "cursor" {
+		installed.PublishedAt = &candidate.Published
+	}
 	if err := validateInventory(m.Root, Inventory{provider: installed}); err != nil {
 		return Installation{}, err
 	}
 	return installed, nil
+}
+
+func (m *Manager) installPackage(ctx context.Context, provider string, spec providerSpec, candidate release, stage string) error {
+	if err := os.WriteFile(filepath.Join(stage, "package.json"), []byte("{\"private\":true}\n"), 0o600); err != nil {
+		return err
+	}
+	engines := "--engine-strict"
+	if spec.RelaxEngines {
+		engines = "--engine-strict=false"
+	}
+	args := []string{"install", "--prefix", stage, "--registry", npmRegistry, "--no-audit", "--no-fund", engines, "--ignore-scripts", "--include=optional", "--save-exact", spec.Package + "@" + candidate.Version}
+	if _, err := m.command(ctx, m.npmBinary, args, stage); err != nil {
+		return fmt.Errorf("install %s: %w", provider, err)
+	}
+	if err := verifyPackageLock(stage, spec.Package, candidate); err != nil {
+		return err
+	}
+	// Some native optional dependencies need lifecycle hooks. Defer them until
+	// npm has fetched the exact candidate and its SRI has been checked. Commands
+	// use the updater's isolated home and credential-free environment; they run
+	// with the worker's OS permissions, not in a separate security sandbox.
+	rebuild := []string{"rebuild", "--prefix", stage, "--registry", npmRegistry, "--no-audit", "--no-fund"}
+	if _, err := m.command(ctx, m.npmBinary, rebuild, stage); err != nil {
+		return fmt.Errorf("build verified CLI dependencies: %w", err)
+	}
+	if err := verifyPackageLock(stage, spec.Package, candidate); err != nil {
+		return err
+	}
+	return nil
 }
 
 func verifyPackageLock(dir, packageName string, candidate release) error {
@@ -180,7 +213,7 @@ func verifyPackageLock(dir, packageName string, candidate release) error {
 	return nil
 }
 
-var outputVersion = regexp.MustCompile(`(?:^|[^0-9.])([0-9]+\.[0-9]+\.[0-9]+)(?:$|[^0-9.A-Za-z+-])`)
+var outputVersion = regexp.MustCompile(`(?:^|[^0-9.])([0-9]+\.[0-9]+\.[0-9]+(?:-(?:rc\.[0-9]+|[a-f0-9]{7,40}))?)(?:$|[^0-9.A-Za-z+-])`)
 
 func (m *Manager) validate(ctx context.Context, provider string, installed Installation) error {
 	if err := validateInventory(m.Root, Inventory{provider: installed}); err != nil {

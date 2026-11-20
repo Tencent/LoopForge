@@ -131,7 +131,7 @@ func testScheduleJobUsesSaversDefaultRunnerLogin(t *testing.T, cliEngine string)
 				result.Done = true
 			}
 			raw, _ := json.Marshal(result)
-			h.runnerControls.resolveWorkspace(msg.RequestID, domain.RunnerWorkspaceResponse{Status: http.StatusOK, Payload: raw})
+			h.runnerControls.resolveWorkspace(conn, msg.RequestID, domain.RunnerWorkspaceResponse{Status: http.StatusOK, Payload: raw})
 		case result := <-done:
 			if result.err != nil || result.message != "巡检完成" || !launched {
 				t.Fatalf("scheduled run = %q, %v, launched = %v", result.message, result.err, launched)

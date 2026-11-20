@@ -138,6 +138,9 @@ func (r Runner) SupportsGitHTTP() bool {
 	return versionAtLeast(r.RunnerVersion, RunnerVersionGitHTTP)
 }
 
+// RunnerVersionGitSSHKnownHosts is the first runner to accept platform SSH pins.
+const RunnerVersionGitSSHKnownHosts = "0.11.1"
+
 func (r Runner) SupportsSharedPush() bool {
 	return versionAtLeast(r.RunnerVersion, RunnerVersionSharedPush)
 }
@@ -376,6 +379,8 @@ type RunnerTask struct {
 	RunID      string            `json:"runId,omitempty"`
 	NodeID     string            `json:"nodeId,omitempty"`
 	Invocation *RunnerInvocation `json:"invocation,omitempty"`
+	// GitSSHKnownHosts is attached on authenticated claim and is never queued.
+	GitSSHKnownHosts *GitSSHKnownHosts `json:"gitSshKnownHosts,omitempty"`
 	// Sandbox is the workflow sandbox definition resolved by the control
 	// plane. The runner creates it locally so Docker/seatbelt/bwrap isolation
 	// lives on the same machine that executes the Agent CLI.
@@ -435,6 +440,7 @@ type RunnerSandboxSpec struct {
 // PublicRunnerTask strips task-scoped credentials from management responses.
 // The authenticated claiming runner receives the original task payload.
 func PublicRunnerTask(task RunnerTask) RunnerTask {
+	task.GitSSHKnownHosts = nil
 	if task.PreviewArchive != nil {
 		copySpec := *task.PreviewArchive
 		copySpec.UploadToken = ""

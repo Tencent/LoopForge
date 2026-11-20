@@ -563,8 +563,13 @@ const officialCatalog = credentialCatalogHTML(cred.kind('codexApiKey'), {codexMo
 assert.ok(officialCatalog.includes('value="hy4"') && officialCatalog.includes('data-catalog-act="probe"') && officialCatalog.includes('改回使用自带的模型') && !officialCatalog.includes('data-catalog-body hidden'), 'an official key keeps its custom catalog editable');
 const officialEmpty = credentialCatalogHTML(cred.kind('codexApiKey'), {});
 assert.ok(officialEmpty.includes('使用 Codex 自带的模型') && officialEmpty.includes('data-catalog-act="add"') && !officialEmpty.includes('data-catalog-body hidden'));
-const geminiCatalog = credentialCatalogHTML(cred.kind('agentCli.agy'), {agentCliCredentials: {agy: {baseUrl: 'https://gw.example/v1', protocol: 'gemini'}}});
-assert.ok(geminiCatalog.includes('使用 Antigravity 自带的模型') && geminiCatalog.includes('data-catalog-act="probe"') && !geminiCatalog.includes('data-catalog-body hidden'), 'Gemini official API can still keep a custom catalog');
+const agyKind = cred.kind('agentCli.agy');
+const geminiOfficial = credentialCatalogHTML(agyKind, {agentCliCredentials: {agy: {protocol: 'gemini', models: [{id: 'gemini-4-neon-high'}]}}});
+assert.match(geminiOfficial, /data-catalog-mode="official"/);
+assert.ok(geminiOfficial.includes('value="gemini-4-neon-high"') && geminiOfficial.includes('使用 Antigravity 自带的模型') && !geminiOfficial.includes('data-catalog-body hidden'), 'a saved catalog stays editable on the official endpoint');
+const geminiGateway = credentialCatalogHTML(agyKind, {agentCliCredentials: {agy: {baseUrl: 'https://gw.example/v1', protocol: 'gemini'}}});
+assert.match(geminiGateway, /data-catalog-mode="remote"/);
+assert.ok(geminiGateway.includes('跟随服务发布的模型') && geminiGateway.includes('data-catalog-endpoint>/v1beta/models') && geminiGateway.includes('data-catalog-act="probe"'), 'a Gemini gateway uses its own model listing');
 assert.ok(credentialEditorHTML(cred.kind('codexApiKey'), catalogUser).includes('data-credential-catalog') && credentialEditorHTML(cred.kind('codexApiKey'), catalogUser).includes('has-catalog'));
 assert.ok(credentialEditorHTML(cred.kind('agentCli.cursor'), {agentCliCredentials: {cursor: {apiKeyConfigured: true}}}).includes('data-credential-catalog'), 'Cursor can fetch the models of its account');
 assert.equal(credentialCatalogKey([{id: 'a', name: 'a'}, {id: '', name: ''}]), credentialCatalogKey([{id: 'a'}]));

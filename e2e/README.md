@@ -6,6 +6,8 @@
 cd e2e
 npm ci
 npx playwright install chromium
+./run.sh unit     # 纯 Node 单元检查，无浏览器、平台或 webtest 依赖
+./run.sh layout   # 隔离 Chromium 布局检查，无平台、登录或 webtest 依赖
 # 先在平台个人设置创建 API Token，通过当前终端环境安全传入。
 export AGENTFLOW_E2E_BASE=http://127.0.0.1:8090
 ./run.sh api

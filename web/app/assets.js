@@ -336,7 +336,17 @@ function assetBasicFieldsHTML(a,{creating}){
   const kind=assetKindLabel();
   let html=`<label class="asset-field-label" for="assetFieldName">名称</label><input id="assetFieldName" name="name" class="asset-input" value="${escapeHTML(a.name||'')}" required placeholder="给${escapeHTML(kind)}起个名字"><label class="asset-field-label" for="assetFieldId">标识</label><input id="assetFieldId" name="id" class="asset-input is-mono" value="${escapeHTML(a.id||'')}" required ${creating?'placeholder="如 loopforge-core"':'readonly aria-readonly="true"'}><div class="asset-field-hint">${creating?'创建后不可修改，用于资产引用。':'标识用于资产引用，创建后不可修改。'}</div><label class="asset-field-label" for="assetFieldDesc">描述</label><input id="assetFieldDesc" name="description" class="asset-input" value="${escapeHTML(a.description||'')}" placeholder="一句话说明用途">`;
   if(state.assetType==='rules')html+=`<label class="asset-field-label" for="assetFieldPriority">优先级</label><input id="assetFieldPriority" name="priority" class="asset-input" type="number" value="${a.priority||100}"><div class="asset-field-hint">数值越大越先注入。</div>${ruleGlobalFields(a)}`;
-  if(state.assetType==='sandboxes')html+=`<label class="asset-field-label">隔离方式</label><select name="driver" class="asset-select" aria-label="隔离方式"><option value="local" ${sandboxDriverOption(a.driver)==='local'?'selected':''}>local（本机直接执行）</option><option value="native" ${sandboxDriverOption(a.driver)==='native'?'selected':''}>native（系统轻量隔离）</option><option value="docker" ${sandboxDriverOption(a.driver)==='docker'?'selected':''}>docker（OCI 容器）</option></select><div data-sandbox-drivers="local" class="json-help">直接在本机 workspace 执行，并继承受控的宿主进程环境。</div><div data-sandbox-drivers="native" class="json-help">按执行机器的系统自动选择：macOS 用 seatbelt，Linux 用 bwrap。</div><div data-sandbox-drivers="native"><label class="asset-field-label">执行环境</label><select name="environmentId" class="asset-select" aria-label="执行环境">${environmentOptions(a.environmentId)}</select><div class="json-help">选中后沙箱会执行该环境的 <code>install.sh</code>，把工具装进隔离的 <code>$PREFIX</code>，再用 PATH 切换。未选择时，若 workspace 存在 <code>agentflow-environment/</code> 也会自动启用。</div></div><div data-sandbox-drivers="docker"><label class="asset-field-label">Dockerfile</label><select name="dockerfileId" class="asset-select" aria-label="Dockerfile">${dockerfileOptions(a.dockerfileId)}</select><div class="json-help">沙箱只引用这条目录资产；初始化时用库里的内容构建临时镜像，结束后删除容器和镜像。</div><label class="asset-switch-row"><span><b>容器根文件系统只读</b><small>仅限制镜像自身的 /usr、/etc 等目录；/workspace 仍可写，/tmp 使用临时内存盘。部分工具可能不兼容，默认建议关闭。</small></span><input name="readOnlyRootFS" type="checkbox" class="asset-switch" role="switch" ${a.readOnlyRootFS?'checked':''}></label></div>`;
+  if(state.assetType==='sandboxes')html+=`<label class="asset-field-label">隔离方式</label><select name="driver" class="asset-select" aria-label="隔离方式"><option value="local" ${sandboxDriverOption(a.driver)==='local'?'selected':''}>local（本机直接执行）</option><option value="native" ${sandboxDriverOption(a.driver)==='native'?'selected':''}>native（系统轻量隔离）</option><option value="docker" ${sandboxDriverOption(a.driver)==='docker'?'selected':''}>docker（OCI 容器）</option></select><div data-sandbox-drivers="local" class="json-help">直接在本机 workspace 执行，并继承受控的宿主进程环境。</div><div data-sandbox-drivers="native" class="json-help">按执行机器的系统自动选择：macOS 用 seatbelt，Linux 用 bwrap。</div><div data-sandbox-drivers="native"><label class="asset-field-label">执行环境</label><select name="environmentId" class="asset-select" aria-label="执行环境">${environmentOptions(a.environmentId)}</select><div class="json-help">选中后沙箱会执行该环境的 <code>install.sh</code>，把工具装进隔离的 <code>$PREFIX</code>，再用 PATH 切换。未选择时，若 workspace 存在 <code>agentflow-environment/</code> 也会自动启用。</div></div><div data-sandbox-drivers="docker"><label class="asset-field-label">Dockerfile</label><select name="dockerfileId" class="asset-select" aria-label="Dockerfile">${dockerfileOptions(a.dockerfileId)}</select><div class="json-help">沙箱只引用这条目录资产；初始化时用库里的内容构建临时镜像，结束后删除容器和镜像。</div>
+    <div class="asset-switch-row">
+      <label for="assetReadOnlyRootFS">
+        <b>容器根文件系统只读</b>
+        <small>开启后，/usr、/etc 等系统目录只读，/tmp 使用临时内存盘。默认建议关闭。</small>
+      </label>
+      <span class="asset-switch-controls">
+        <input id="assetReadOnlyRootFS" name="readOnlyRootFS" type="checkbox" class="asset-switch" role="switch" ${a.readOnlyRootFS?'checked':''}>
+        <button id="assetReadOnlyRootFSHelp" type="button" class="field-help" aria-label="容器根文件系统只读说明" title="开启后，缺少的 CLI 无法在容器内自动安装。工作区 /workspace 仍可写。">?</button>
+      </span>
+    </div></div>`;
   return html;
 }
 function assetAsideHTML(a,{creating}){
@@ -360,7 +370,13 @@ function renderAssetForm(a){
   f.querySelectorAll('[data-asset-tab]').forEach(b=>b.onclick=()=>setAssetTab(b.dataset.assetTab));
   setAssetTab(state.assetTab||tabs[0][0]);
   if(state.assetType==='rules')bindRuleGlobalPicker(a);
-  if(state.assetType==='sandboxes'){f.elements.driver.onchange=()=>syncSandboxDriverFields(f.elements.driver);syncSandboxDriverFields(f.elements.driver)}
+  if(state.assetType==='sandboxes'){
+    f.elements.driver.onchange=()=>syncSandboxDriverFields(f.elements.driver);
+    syncSandboxDriverFields(f.elements.driver);
+    f.querySelector('#assetReadOnlyRootFSHelp')?.addEventListener('click',event=>{
+      window.HuiTooltip?.show(event.currentTarget);
+    });
+  }
   f.querySelectorAll('select.asset-select').forEach(sel=>window.enhanceSelect?.(sel));
   if(readonly)f.querySelectorAll('input,textarea,select,.repo-picker-tag').forEach(el=>{if(el.type!=='file')el.disabled=true});
   if(state.assetType==='skills'&&!creating){skillUploadButtons(readonly||!!assetSkillSource(a));bindAssetSourceActions(a)}

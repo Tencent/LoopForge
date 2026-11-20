@@ -106,11 +106,11 @@ func ExecuteLocalCommand(ctx context.Context, workspace string, command CommandS
 	if cleanup != nil {
 		defer cleanup()
 	}
-	bound, err := bindCommand(sandbox, workspace, command, credentials)
+	bound, err := bindCommand(ctx, sandbox, workspace, command, credentials)
 	if err != nil {
 		return "", err
 	}
-	stopSSH, err := bindCommandGitSSH(sandbox, workspace, bound, credentials)
+	stopSSH, err := bindCommandGitSSH(ctx, sandbox, workspace, bound, credentials)
 	if err != nil {
 		return "", err
 	}

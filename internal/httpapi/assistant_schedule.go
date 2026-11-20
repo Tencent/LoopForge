@@ -9,7 +9,15 @@ import (
 
 	"agentflow/internal/domain"
 	"agentflow/internal/repo"
+	"agentflow/internal/schedule"
 )
+
+type scheduledUsageReportKey struct{}
+
+type scheduledUsageReport struct {
+	GenerationID string
+	Report       func(string, *domain.TokenUsage)
+}
 
 // scheduledSessionPolicy carries how a schedule job's AI run uses Studio
 // conversations; legacy assistant tasks run without one.
@@ -24,7 +32,8 @@ type scheduledSessionPolicy struct {
 	Timeout time.Duration
 	// Opened, when set, learns the conversation as soon as it is created,
 	// before the prompt finishes.
-	Opened func(sessionID string)
+	Opened      func(sessionID string)
+	ReportUsage func(string, *domain.TokenUsage)
 }
 
 type scheduledSessionPolicyKey struct{}
@@ -67,26 +76,31 @@ func (h *assistantHandlers) runScheduleJobPrompt(job domain.ScheduleJob) (messag
 // runScheduleJobPromptReporting is runScheduleJobPrompt that also tells
 // opened about the conversation the moment it is created.
 func (h *assistantHandlers) runScheduleJobPromptReporting(job domain.ScheduleJob, opened func(sessionID string)) (message, sessionID string, err error) {
+	result, err := h.runScheduleJobPromptResult(job, opened)
+	return result.Message, result.SessionID, err
+}
+
+func (h *assistantHandlers) runScheduleJobPromptResult(job domain.ScheduleJob, opened func(sessionID string)) (result schedule.AssistantRunResult, err error) {
 	if h == nil || h.repo == nil {
-		return "", "", fmt.Errorf("未连接数据源")
+		return result, fmt.Errorf("未连接数据源")
 	}
 	prompt := strings.TrimSpace(job.AssistantPrompt)
 	if job.SharedTaskID != "" {
 		version, verr := h.repo.SharedScheduleVersion(job.SharedTaskID, job.SharedTaskVersion)
 		if verr != nil {
-			return "", "", fmt.Errorf("读取订阅版本失败：%w", verr)
+			return result, fmt.Errorf("读取订阅版本失败：%w", verr)
 		}
 		prompt, _, err = version.Render(job.ParameterValues)
 		if err != nil {
-			return "", "", err
+			return result, err
 		}
 	}
 	if prompt == "" {
-		return "", "", nil
+		return result, nil
 	}
 	user, shared, err := h.scheduleJobAssistantUser(job, job.AssistantModel)
 	if err != nil {
-		return "", "", err
+		return result, err
 	}
 	model := strings.TrimSpace(job.AssistantModel)
 	if shared != nil {
@@ -94,7 +108,7 @@ func (h *assistantHandlers) runScheduleJobPromptReporting(job domain.ScheduleJob
 		// allows, and never silently switches to another one.
 		allowed, ok := assistantSponsoredModelFor(shared, scheduleSharedRequestedModel(model))
 		if !ok {
-			return "", "", fmt.Errorf("定时任务使用平台共享 Key 执行，只能用平台管理员允许的模型（%s），任务指定的 %s 不在其中，本次没有运行；请在定时任务里改选允许的模型，或在个人配置中填写自己的 Key", strings.Join(shared, "、"), model)
+			return result, fmt.Errorf("定时任务使用平台共享 Key 执行，只能用平台管理员允许的模型（%s），任务指定的 %s 不在其中，本次没有运行；请在定时任务里改选允许的模型，或在个人配置中填写自己的 Key", strings.Join(shared, "、"), model)
 		}
 		model = allowed
 	}
@@ -107,23 +121,27 @@ func (h *assistantHandlers) runScheduleJobPromptReporting(job domain.ScheduleJob
 	}
 	ctx := withAssistantExecMode(context.Background(), assistantExecModeForApproval(AssistantApprovalAuto))
 	ctx = withAssistantSessionOrigin(ctx, domain.AssistantSourceScheduled, job.ID)
-	policy := scheduledSessionPolicy{KeepHistory: true, Timeout: job.ExecutionTimeout(), Opened: opened}
+	policy := scheduledSessionPolicy{KeepHistory: true, Timeout: job.ExecutionTimeout(), Opened: opened, ReportUsage: func(model string, usage *domain.TokenUsage) {
+		result.Model, result.Usage = model, usage
+	}}
 	if job.UsesFixedSession() {
 		policy.Continue = strings.TrimSpace(job.FixedSessionID)
 	}
 	ctx = withScheduledSessionPolicy(ctx, policy)
 	err = h.executeAssistantTask(ctx, user, &task)
 	h.pruneScheduledTaskSessions(job)
+	result.Message, result.SessionID = task.LastMessage, task.SessionID
 	if err != nil {
 		if msg := strings.TrimSpace(task.LastError); msg != "" {
-			return task.LastMessage, task.SessionID, fmt.Errorf("%s", msg)
+			return result, fmt.Errorf("%s", msg)
 		}
 		if errors.Is(err, context.Canceled) {
-			return task.LastMessage, task.SessionID, fmt.Errorf("生成已停止")
+			return result, fmt.Errorf("生成已停止")
 		}
-		return task.LastMessage, task.SessionID, err
+		return result, err
 	}
-	return firstNonEmpty(task.NotificationResult, task.LastMessage), task.SessionID, nil
+	result.Message = firstNonEmpty(task.NotificationResult, task.LastMessage)
+	return result, nil
 }
 
 // scheduleJobAssistantUser picks the saved run-as member, or the project or

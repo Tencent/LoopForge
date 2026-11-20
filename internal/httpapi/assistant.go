@@ -54,18 +54,19 @@ type assistantReply struct {
 	SessionID      string                       `json:"sessionId,omitempty"`
 }
 type assistantRequest struct {
-	ExecutionTarget *domain.AssistantExecutionTarget `json:"executionTarget,omitempty"`
-	ProjectID       string                           `json:"projectId"`
-	SessionID       string                           `json:"sessionId"`
-	Model           string                           `json:"model"`
-	Effort          string                           `json:"effort"`
-	Executor        string                           `json:"executor,omitempty"`
-	ApprovalMode    string                           `json:"approvalMode"`
-	ApprovalUserID  int64                            `json:"approvalUserId,omitempty"`
-	RunID           string                           `json:"runId,omitempty"`
-	SpaceID         string                           `json:"spaceId,omitempty"`
-	workspaceToken  string
-	contextText     string
+	ExecutionTarget   *domain.AssistantExecutionTarget `json:"executionTarget,omitempty"`
+	ProjectID         string                           `json:"projectId"`
+	SessionID         string                           `json:"sessionId"`
+	Model             string                           `json:"model"`
+	Effort            string                           `json:"effort"`
+	RequireExactModel bool                             `json:"requireExactModel,omitempty"`
+	Executor          string                           `json:"executor,omitempty"`
+	ApprovalMode      string                           `json:"approvalMode"`
+	ApprovalUserID    int64                            `json:"approvalUserId,omitempty"`
+	RunID             string                           `json:"runId,omitempty"`
+	SpaceID           string                           `json:"spaceId,omitempty"`
+	workspaceToken    string
+	contextText       string
 	// linkedIssueID is the issue this turn itself linked to the conversation
 	// while preparing its context (an @-mentioned issue), so starting the
 	// turn does not mistake that link for a concurrent rebinding.
@@ -172,7 +173,8 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 		req.ExecutionTarget = target
 	}
 	cliEngine, _ := assistantModelEngine(req.Model)
-	runnerLogin := h.assistantUsesRunnerLogin(stored.ID, req.ExecutionTarget, cliEngine)
+	loginRunner := h.assistantLoginRunner(stored.ID, req.ExecutionTarget, cliEngine)
+	runnerLogin := loginRunner.ID != ""
 	user, model, refusal := h.assistantTurnUser(stored, req.Model, runnerLogin)
 	if refusal != "" {
 		c.JSON(400, gin.H{"error": refusal})
@@ -212,7 +214,7 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 			}
 		}
 	}
-	if err := h.prepareWorkbenchContext(c, &req, user); err != nil {
+	if err := h.authorizeWorkbenchTurn(c, &req, user.ID); err != nil {
 		c.JSON(400, gin.H{"error": err.Error()})
 		return
 	}
@@ -222,15 +224,21 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 		catalog = h.turnCatalog(c.Request.Context(), user, req.Model)
 	}
 	if !runnerLogin {
-		req.Model = assistantAllowedUserModel(req.Model, catalog, user)
+		selected, err := assistantTurnCatalogModel(req.Model, catalog, user, req.RequireExactModel)
+		if err != nil {
+			c.JSON(400, gin.H{"error": err.Error()})
+			return
+		}
+		req.Model = selected
 	}
 	cliEngine, _ = assistantModelEngine(req.Model)
 	req.Executor = cliEngine
-	if err := validateAssistantEffort(c.Request.Context(), user, req.Model, req.Effort); err != nil {
+	cliModel, err := h.resolveAssistantTurnModel(c.Request.Context(), user, req.Model, req.Effort, loginRunner)
+	if err != nil {
 		c.JSON(400, gin.H{"error": err.Error()})
 		return
 	}
-	if refusal := assistantEngineSwitchRefusal(assistantConversationEngine(req.Messages, old.Executor), req.Model); refusal != "" {
+	if refusal := assistantEngineSwitchRefusal(assistantConversationEngine(req.Messages, h.forkExecutor(c, old, user.ID)), req.Model); refusal != "" {
 		c.JSON(409, gin.H{"error": refusal})
 		return
 	}
@@ -240,6 +248,10 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 			c.JSON(409, gin.H{"error": "此会话正在后台生成"})
 			return
 		}
+	}
+	if err := h.buildWorkbenchContext(c, &req, user); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
 	}
 	streaming := sink != nil || strings.Contains(strings.ToLower(c.GetHeader("Accept")), "text/event-stream")
 	approvalMode := assistantRequestApprovalMode(req)
@@ -447,9 +459,13 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 	if replyModel == "" {
 		replyModel = assistantDefaultModel
 	}
+	if report, ok := modelCtx.Value(scheduledUsageReportKey{}).(scheduledUsageReport); ok && report.GenerationID == assistantControlScopeFrom(modelCtx).GenerationID && report.Report != nil {
+		defer func() { report.Report(replyModel, turnUsage.snapshot()) }()
+	}
 	generate := h.generate
 	if generate == nil {
 		resume := false
+		var workspaceRepositoryHash string
 		branch := false
 		rewritten := false
 		if saved, err := loadAssistantConversation(h.repo, assistantStorageOwner(h.repo, req.SessionID, user.ID), req.SessionID); err == nil {
@@ -481,6 +497,7 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 			defer nativeSession.Close()
 			resume = nativeSession.resume
 			cliSessionID = nativeSession.checkpoint.SessionID
+			workspaceRepositoryHash = nativeSession.checkpoint.WorkspaceRepositoryHash
 			if resume {
 				turn = assistantIncrementalPrompt(req, nativeSession.checkpoint)
 			}
@@ -503,6 +520,7 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 			} else if state.SessionID != "" {
 				cliSessionID = state.SessionID
 				resume = !state.Unstarted
+				workspaceRepositoryHash = state.WorkspaceRepositoryHash
 				if resume {
 					turn = h.turnPrompt(req, sourceRoot, true)
 				} else {
@@ -516,6 +534,9 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 			// journal before the next process is allowed to resume that journal.
 			restarted := false
 			for switches := 0; switches < 8; switches++ {
+				if !resume {
+					workspaceRepositoryHash = ""
+				}
 				req.workspaceMode = toolSession.RuntimeMode == domain.AssistantModeWorkspace
 				if err := h.writeConversationAssets(cliRoot, req); err != nil {
 					return "", err
@@ -525,20 +546,35 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 					return "", err
 				}
 				system := assistantSystemPromptForRequest(req, approvalMode)
+				prompt += conversationAttachmentNote(cliRoot, req)
+				var sentRepositoryHash string
 				if req.workspaceMode {
 					system = assistantWorkspaceSystemPrompt
-					prompt = assistantWorkspaceSystemPrompt + "\n审批模式：" + approvalMode + "。\n" + prompt
+					prefix := assistantWorkspaceSystemPrompt + "\n审批模式：" + approvalMode + "。\n"
+					var repositoryPrompt string
+					repositoryPrompt, sentRepositoryHash, err = h.workspaceRepositoryPrompt(toolSession, cliRoot, workspaceRepositoryHash, len(prefix)+len(prompt))
+					if err != nil {
+						return "", err
+					}
+					if sentRepositoryHash != "" {
+						// The journal's catalogue is uncertain until the phase completes.
+						workspaceRepositoryHash = ""
+					}
+					prompt = prefix + repositoryPrompt + prompt
 				} else {
 					prompt = assistantPlatformExecutionReminder + "\n" + prompt
 				}
-				prompt += conversationAttachmentNote(cliRoot, req)
-				cliReq := assistantCLIRequest{Executor: req.Executor, Prompt: prompt, Model: req.Model, Effort: req.Effort, SessionID: cliSessionID, Resume: resume, UserID: u.ID, Native: true, MCPConfig: mcp, Settings: settings, SystemPrompt: system, SessionRoot: cliRoot, RunnerLogin: runnerLogin, OnUsage: turnUsage.add, Workspace: req.workspaceMode, RemoteBinary: req.workspaceMode || toolSession.ExecutionRunnerID != "", Execute: h.conversationExecutor(toolSession, cliRoot)}
+				cliReq := assistantCLIRequest{Executor: req.Executor, Prompt: prompt, Model: cliModel, Effort: req.Effort, SessionID: cliSessionID, Resume: resume, UserID: u.ID, Native: true, MCPConfig: mcp, Settings: settings, SystemPrompt: system, SessionRoot: cliRoot, RunnerLogin: runnerLogin, OnUsage: turnUsage.add, Workspace: req.workspaceMode, RemoteBinary: req.workspaceMode || toolSession.ExecutionRunnerID != "", Execute: h.conversationExecutor(toolSession, cliRoot)}
 				persistAttempt := func(unstarted bool) error {
 					if nativeSession != nil {
 						nativeSession.checkpoint.Unstarted = unstarted
+						nativeSession.checkpoint.WorkspaceRepositoryHash = workspaceRepositoryHash
 						return nativeSession.writeCheckpoint()
 					}
-					return writeAssistantEngineState(cliRoot, assistantEngineState{Engine: turnEngine, SessionID: cliSessionID, Unstarted: unstarted, HistoryRevision: savedConversation.HistoryRevision})
+					return writeAssistantEngineState(cliRoot, assistantEngineState{
+						Engine: turnEngine, SessionID: cliSessionID, Unstarted: unstarted,
+						HistoryRevision: savedConversation.HistoryRevision, WorkspaceRepositoryHash: workspaceRepositoryHash,
+					})
 				}
 				if err = persistAttempt(!resume); err != nil {
 					return "", err
@@ -573,6 +609,12 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 					}
 				}
 				raw, _, err := runAssistantCLI(ctx, cliReq, u, relay)
+				if err == nil && ctx.Err() == nil && sentRepositoryHash != "" {
+					workspaceRepositoryHash = sentRepositoryHash
+					if saveErr := persistAttempt(false); saveErr != nil {
+						log.Printf("assistant save workspace repository context session=%s: %v", req.SessionID, saveErr)
+					}
+				}
 				if assistantHandoffOutlivesPhaseError(ctx, toolSession, err) {
 					// The handoff tool already succeeded; how the old phase ended
 					// (for example without a type=result line) must not strand the
@@ -1513,7 +1555,7 @@ func runAssistantCLI(ctx context.Context, req assistantCLIRequest, user domain.U
 		sessionID = newAssistantSessionID()
 	}
 	var inv assistantCLIInvocation
-	engineOpts := assistantEngineInvocationOpts{Bin: bin, Root: root, Config: config, Prompt: req.Prompt, Model: engineModel, Effort: req.Effort, SessionID: sessionID, Resume: req.Resume, SystemPrompt: req.SystemPrompt, ReviewOnly: req.ReviewOnly, Workspace: req.Workspace}
+	engineOpts := assistantEngineInvocationOpts{Bin: bin, Root: root, Config: config, Prompt: req.Prompt, Model: engineModel, Effort: req.Effort, SessionID: sessionID, Resume: req.Resume, SystemPrompt: req.SystemPrompt, ReviewOnly: req.ReviewOnly, Workspace: req.Workspace, RunnerLogin: req.RunnerLogin}
 	switch engine {
 	case assistantEngineClaude:
 		if !req.RunnerLogin {
@@ -1559,7 +1601,7 @@ func runAssistantCLI(ctx context.Context, req assistantCLIRequest, user domain.U
 	var streamFilter assistantStreamFilter
 	var stderrTail []string
 	var missingSession, modelStarted, credentialRejected bool
-	var usage domain.TokenUsage
+	var usageCollector assistantCLIUsage
 	missingText := "No conversation found with session ID: " + inv.sessionRef
 	var handle func(string)
 	sink := func(event domain.TelemetryEvent) {
@@ -1589,6 +1631,7 @@ func runAssistantCLI(ctx context.Context, req assistantCLIRequest, user domain.U
 	}
 	handle = func(line string) {
 		line = strings.TrimSpace(line)
+		usageCollector.consume(line)
 		attempt.tools(line)
 		if failure := assistantCLIStreamFailure(line); failure != nil {
 			streamError = failure
@@ -1617,7 +1660,6 @@ func runAssistantCLI(ctx context.Context, req assistantCLIRequest, user domain.U
 			switch result.Type {
 			case "result":
 				final, resultError = result.Result, result.IsError
-				usage = runtime.ParseTokenUsage(result.Usage)
 			case "error":
 				missingSession = missingSession || strings.Contains(result.Error, missingText)
 			case "assistant", "user", "stream_event":
@@ -1633,6 +1675,9 @@ func runAssistantCLI(ctx context.Context, req assistantCLIRequest, user domain.U
 	execute := req.Execute
 	if execute == nil {
 		execute = runtime.ExecuteLocalCommand
+		if attempt != nil {
+			defer runtime.ObserveCLIVersion(ctx, nil, engine, bin, attempt.recordCLIVersion)()
+		}
 	}
 	attempt.phase("execution")
 	_, err = execute(ctx, workspace, command, inv.credentials, sink)
@@ -1640,7 +1685,7 @@ func runAssistantCLI(ctx context.Context, req assistantCLIRequest, user domain.U
 	if err == nil {
 		attempt.phase("protocol")
 	}
-	if req.OnUsage != nil && assistantUsageReported(usage) {
+	if usage := usageCollector.snapshot(); req.OnUsage != nil && assistantUsageReported(usage) {
 		req.OnUsage(usage)
 	}
 	if inv.finish != nil {
@@ -1683,7 +1728,7 @@ func runAssistantCLI(ctx context.Context, req assistantCLIRequest, user domain.U
 }
 
 func assistantUsageReported(u domain.TokenUsage) bool {
-	return u.InputTokens+u.OutputTokens+u.CacheReadTokens+u.CacheWriteTokens > 0
+	return u.InputTokens > 0 || u.OutputTokens > 0 || u.CacheReadTokens > 0 || u.CacheWriteTokens > 0 || u.TotalTokens > 0 || u.ReasoningTokens > 0 || u.CostUSD > 0
 }
 
 // assistantTurnUsage sums the usage of every CLI invocation behind one reply
