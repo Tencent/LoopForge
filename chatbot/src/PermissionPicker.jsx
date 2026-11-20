@@ -77,7 +77,7 @@ export default function PermissionPicker({ value, onSelect, open, onOpenChange, 
       selected?.focus({ preventScroll: true });
     });
     return () => cancelAnimationFrame(frame);
-  }, [open, presence.mounted]);
+  }, [effectiveOpen, presence.mounted]);
 
   useEffect(() => {
     if (!presence.mounted) return;
@@ -127,13 +127,20 @@ export default function PermissionPicker({ value, onSelect, open, onOpenChange, 
       parentDocument?.removeEventListener("pointerdown", parentOutside, true);
       parentDocument?.removeEventListener("focusin", parentOutside, true);
     };
-  }, [open]);
+  }, [effectiveOpen]);
+
+  // A picker that becomes disabled while its menu is open must close it, so
+  // re-enabling later cannot reopen a menu the user did not ask for.
+  useEffect(() => {
+    if (disabled && open) callbacks.current.onOpenChange(false);
+  }, [disabled, open]);
 
   function close(returnFocus = false) {
     if (returnFocus) trigger.current?.focus({ preventScroll: true });
     callbacks.current.onOpenChange(false);
   }
   function choose(id) {
+    if (disabled) return;
     callbacks.current.onSelect(id);
     close(true);
   }
@@ -180,13 +187,13 @@ export default function PermissionPicker({ value, onSelect, open, onOpenChange, 
         onClick={() => onOpenChange(!effectiveOpen)}
         onKeyDown={(event) => {
           if (["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) {
-            if (open && presence.mounted) keyDown(event);
+            if (effectiveOpen && presence.mounted) keyDown(event);
             else {
               event.preventDefault();
               initialFocus.current = ["ArrowUp", "End"].includes(event.key) ? "last" : "first";
               onOpenChange(true);
             }
-          } else if (open && ["Escape", "Tab"].includes(event.key)) keyDown(event);
+          } else if (effectiveOpen && ["Escape", "Tab"].includes(event.key)) keyDown(event);
         }}
       >
         {current.glyph || <HarnessIcon name={icon || current.icon} size={16} aria-hidden="true" />}
@@ -200,8 +207,8 @@ export default function PermissionPicker({ value, onSelect, open, onOpenChange, 
           className="permission-menu"
           role="menu"
           aria-label={label}
-          aria-hidden={!open || undefined}
-          inert={!open}
+          aria-hidden={!effectiveOpen || undefined}
+          inert={!effectiveOpen}
           data-phase={presence.phase}
           data-placement={position.placement}
           style={{ top: position.top, left: position.left, width: position.width, maxHeight: position.maxHeight }}
