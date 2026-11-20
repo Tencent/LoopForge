@@ -213,7 +213,7 @@ func (r *AssistantRepo) BeginAssistantGeneration(g domain.AssistantGeneration, p
 				base := *r.deps
 				base.DB = tx
 				scoped.deps = &base
-				if err := scoped.putAssistantSession(g.UserID, next); err != nil {
+				if err := scoped.putAssistantSession(g.UserID, next, g.ClientRequestID); err != nil {
 					return err
 				}
 			} else if session.ID != "" {

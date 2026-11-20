@@ -21,6 +21,7 @@ export function queuedMessage({
   references = [],
   approvalMode = "confirm",
   approvalUserId,
+  approvalProjectId,
 }) {
   return {
     id: localId("queued"),
@@ -29,14 +30,16 @@ export function queuedMessage({
     references,
     approvalMode,
     approvalUserId,
+    approvalProjectId,
     queuedAt: new Date().toISOString(),
   };
 }
 
-export function queuedApproval({ approvalMode, approvalUserId }, userId) {
+export function queuedApproval({ approvalMode, approvalUserId, approvalProjectId }, userId, projectId = "") {
   return {
-    // Queues saved before account binding require confirmation when resumed.
-    approvalMode: approvalUserId ? approvalMode || "confirm" : "confirm",
+    // A message queued before its approval scope was recorded, or before
+    // the conversation changed projects, needs confirmation when resumed.
+    approvalMode: approvalUserId && approvalProjectId === projectId ? approvalMode || "confirm" : "confirm",
     approvalUserId: approvalUserId ?? userId,
   };
 }

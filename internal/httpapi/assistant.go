@@ -54,18 +54,19 @@ type assistantReply struct {
 	SessionID      string                       `json:"sessionId,omitempty"`
 }
 type assistantRequest struct {
-	ExecutionTarget *domain.AssistantExecutionTarget `json:"executionTarget,omitempty"`
-	ProjectID       string                           `json:"projectId"`
-	SessionID       string                           `json:"sessionId"`
-	Model           string                           `json:"model"`
-	Effort          string                           `json:"effort"`
-	Executor        string                           `json:"executor,omitempty"`
-	ApprovalMode    string                           `json:"approvalMode"`
-	ApprovalUserID  int64                            `json:"approvalUserId,omitempty"`
-	RunID           string                           `json:"runId,omitempty"`
-	SpaceID         string                           `json:"spaceId,omitempty"`
-	workspaceToken  string
-	contextText     string
+	ExecutionTarget   *domain.AssistantExecutionTarget `json:"executionTarget,omitempty"`
+	ProjectID         string                           `json:"projectId"`
+	SessionID         string                           `json:"sessionId"`
+	Model             string                           `json:"model"`
+	Effort            string                           `json:"effort"`
+	RequireExactModel bool                             `json:"requireExactModel,omitempty"`
+	Executor          string                           `json:"executor,omitempty"`
+	ApprovalMode      string                           `json:"approvalMode"`
+	ApprovalUserID    int64                            `json:"approvalUserId,omitempty"`
+	RunID             string                           `json:"runId,omitempty"`
+	SpaceID           string                           `json:"spaceId,omitempty"`
+	workspaceToken    string
+	contextText       string
 	// linkedIssueID is the issue this turn itself linked to the conversation
 	// while preparing its context (an @-mentioned issue), so starting the
 	// turn does not mistake that link for a concurrent rebinding.
@@ -213,7 +214,7 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 			}
 		}
 	}
-	if err := h.prepareWorkbenchContext(c, &req, user); err != nil {
+	if err := h.authorizeWorkbenchTurn(c, &req, user.ID); err != nil {
 		c.JSON(400, gin.H{"error": err.Error()})
 		return
 	}
@@ -223,7 +224,12 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 		catalog = h.turnCatalog(c.Request.Context(), user, req.Model)
 	}
 	if !runnerLogin {
-		req.Model = assistantAllowedUserModel(req.Model, catalog, user)
+		selected, err := assistantTurnCatalogModel(req.Model, catalog, user, req.RequireExactModel)
+		if err != nil {
+			c.JSON(400, gin.H{"error": err.Error()})
+			return
+		}
+		req.Model = selected
 	}
 	cliEngine, _ = assistantModelEngine(req.Model)
 	req.Executor = cliEngine
@@ -232,7 +238,7 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 		c.JSON(400, gin.H{"error": err.Error()})
 		return
 	}
-	if refusal := assistantEngineSwitchRefusal(assistantConversationEngine(req.Messages, old.Executor), req.Model); refusal != "" {
+	if refusal := assistantEngineSwitchRefusal(assistantConversationEngine(req.Messages, h.forkExecutor(c, old, user.ID)), req.Model); refusal != "" {
 		c.JSON(409, gin.H{"error": refusal})
 		return
 	}
@@ -242,6 +248,10 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 			c.JSON(409, gin.H{"error": "此会话正在后台生成"})
 			return
 		}
+	}
+	if err := h.buildWorkbenchContext(c, &req, user); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
 	}
 	streaming := sink != nil || strings.Contains(strings.ToLower(c.GetHeader("Accept")), "text/event-stream")
 	approvalMode := assistantRequestApprovalMode(req)
