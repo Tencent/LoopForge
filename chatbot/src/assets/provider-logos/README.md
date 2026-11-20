@@ -1,7 +1,6 @@
 # Provider logo sources
 
-These SVGs are bundled locally so the credentials UI does not make runtime
-requests to an image host.
+The interface uses these bundled assets in both chat and configuration.
 
 - `claude.svg`, `codebuddy.svg`, `cursor.svg`, `trae.svg`, `opencode.svg`,
   `github.svg`, `gitlab.svg`, `deepseek.svg`, `openrouter.svg`, `google.svg`
@@ -10,9 +9,9 @@ requests to an image host.
   [Simple Icons repository](https://github.com/simple-icons/simple-icons),
   and the pinned assets were downloaded from the corresponding
   `cdn.jsdelivr.net/npm/simple-icons@v16/icons/<slug>.svg` URLs.
-- `pi.svg` is a plain π glyph drawn locally, not from Grasp. It is the same
-  mark as `web/images/credentials/pi.svg`, bundled here for the chat CLI
-  selector.
+- `pi.svg` is the official primary color mark from the [Pi press kit](https://pi.dev/press-kit).
+- `antigravity.svg` is the full-color icon from the [Google Antigravity press assets](https://antigravity.google/press).
+- `kimi-code.png` is the icon published by Moonshot AI for the [Kimi Code extension](https://marketplace.visualstudio.com/items?itemName=moonshot-ai.kimi-code).
 - `openai.svg` comes from the [OpenAI 2025 logo package](https://cdn.openai.com/brand/OpenAI-Logos-2025.zip).
   `codex.svg` uses the same official OpenAI blossom because OpenAI does not
   publish a separate Codex mark in that package or in the official Codex CLI
@@ -37,6 +36,7 @@ requests to an image host.
   | `zhipu.svg` | [zhipu-color.svg](https://github.com/lobehub/lobe-icons/blob/7d7d0379f18b114a4009dc5cb85a7c375284f31b/packages/static-svg/icons/zhipu-color.svg) |
   | `zai.svg` | [zai.svg](https://github.com/lobehub/lobe-icons/blob/7d7d0379f18b114a4009dc5cb85a7c375284f31b/packages/static-svg/icons/zai.svg) |
   | `gemini.svg` | [gemini-color.svg](https://github.com/lobehub/lobe-icons/blob/7d7d0379f18b114a4009dc5cb85a7c375284f31b/packages/static-svg/icons/gemini-color.svg) |
+  | `meta.svg` | [meta-color.svg](https://github.com/lobehub/lobe-icons/blob/7d7d0379f18b114a4009dc5cb85a7c375284f31b/packages/static-svg/icons/meta-color.svg) |
   | `hunyuan.svg` | [hunyuan-color.svg](https://github.com/lobehub/lobe-icons/blob/7d7d0379f18b114a4009dc5cb85a7c375284f31b/packages/static-svg/icons/hunyuan-color.svg) |
   | `qianfan.svg` | [baiducloud-color.svg](https://github.com/lobehub/lobe-icons/blob/7d7d0379f18b114a4009dc5cb85a7c375284f31b/packages/static-svg/icons/baiducloud-color.svg) |
   | `xiaomimimo.svg` | [xiaomimimo.svg](https://github.com/lobehub/lobe-icons/blob/7d7d0379f18b114a4009dc5cb85a7c375284f31b/packages/static-svg/icons/xiaomimimo.svg)；经典 SPA 同一文件复制为 `web/images/credentials/mimo.svg` |

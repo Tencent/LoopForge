@@ -18,6 +18,8 @@ import (
 	"gorm.io/gorm/clause"
 )
 
+var ErrAssistantPersonalWorkspaceProject = errors.New("此会话已有个人工作区，请在项目中新建对话")
+
 func assistantRecordID(id string) string {
 	id = filepath.Base(strings.TrimSpace(id))
 	if id == "" || id == "." || id == ".." {
@@ -296,7 +298,7 @@ func (r *AssistantRepo) SetAssistantSessionGeneratedTitle(userID int64, id, titl
 	})
 }
 
-func (r *AssistantRepo) putAssistantSession(userID int64, v domain.AssistantSession) error {
+func (r *AssistantRepo) putAssistantSession(userID int64, v domain.AssistantSession, acceptedRequest ...string) error {
 	if userID <= 0 {
 		return errors.New("assistant session user is required")
 	}
@@ -309,6 +311,9 @@ func (r *AssistantRepo) putAssistantSession(userID int64, v domain.AssistantSess
 	}
 	old, exists := r.AssistantSession(userID, v.ID)
 	if exists {
+		if old.ProjectID == "" && strings.TrimSpace(v.ProjectID) != "" && (old.WorkspaceRunID != "" || len(old.OwnWorkspaceRunIDs) != 0) {
+			return ErrAssistantPersonalWorkspaceProject
+		}
 		target := old.Execution()
 		if old.ExecutionLocked() && v.ExecutionTarget != nil && *v.ExecutionTarget != target {
 			return ErrAssistantExecutionLocked
@@ -397,6 +402,16 @@ func (r *AssistantRepo) putAssistantSession(userID int64, v domain.AssistantSess
 			v.Source = domain.AssistantSourceChat
 		}
 	}
+	// Admission receipts are server-owned and survive later transcript writes.
+	v.RecentClientRequestIDs = old.RecentClientRequestIDs
+	if len(acceptedRequest) > 0 && acceptedRequest[0] != "" {
+		const maxReceipts = 32
+		receipts := v.RecentClientRequestIDs
+		if len(receipts) >= maxReceipts {
+			receipts = receipts[len(receipts)-maxReceipts+1:]
+		}
+		v.RecentClientRequestIDs = append(receipts, acceptedRequest[0])
+	}
 	v.UserID = userID
 	// The latest reply and its read state are projections for the history
 	// list, recomputed on every listing; a saved transcript never stores them.
@@ -433,20 +448,49 @@ func (r *AssistantRepo) SetAssistantSessionArchived(userID int64, id string, arc
 // ordinary conversation, recording it among the conversation's own when the
 // conversation opened it. Like archiving it leaves updated_at alone, so a
 // generation that is still writing this session does not see a conflict.
-func (r *AssistantRepo) SetAssistantSessionWorkspaceRun(userID int64, id, runID string, own bool) error {
+// projectID is checked under the lock to keep a workspace in its own scope.
+func (r *AssistantRepo) SetAssistantSessionWorkspaceRun(userID int64, id, projectID, runID string, own bool) error {
+	return r.updateAssistantSessionWorkspace(userID, id, projectID, func(item *domain.AssistantSession) {
+		item.WorkspaceRunID = strings.TrimSpace(runID)
+		if own && item.WorkspaceRunID != "" && !slices.Contains(item.OwnWorkspaceRunIDs, item.WorkspaceRunID) {
+			item.OwnWorkspaceRunIDs = append(item.OwnWorkspaceRunIDs, item.WorkspaceRunID)
+		}
+	})
+}
+
+// RollbackAssistantSessionWorkspaceRun restores the previous binding if the
+// failed workspace is still active, and removes it from history if it was
+// created by this failed attempt. The two changes share one session lock.
+func (r *AssistantRepo) RollbackAssistantSessionWorkspaceRun(userID int64, id, projectID, failedRunID, previousRunID string, discardFailedRun bool) (string, error) {
+	var activeRunID string
+	err := r.updateAssistantSessionWorkspace(userID, id, projectID, func(item *domain.AssistantSession) {
+		if item.WorkspaceRunID == failedRunID {
+			item.WorkspaceRunID = previousRunID
+		}
+		if discardFailedRun {
+			item.OwnWorkspaceRunIDs = slices.DeleteFunc(item.OwnWorkspaceRunIDs, func(runID string) bool {
+				return runID == failedRunID
+			})
+		}
+		activeRunID = item.WorkspaceRunID
+	})
+	return activeRunID, err
+}
+
+func (r *AssistantRepo) updateAssistantSessionWorkspace(userID int64, id, projectID string, update func(*domain.AssistantSession)) error {
 	return r.DB.Transaction(func(tx *gorm.DB) error {
 		var row assistantSessionRow
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ? AND user_id = ?", assistantRecordID(id), userID).Take(&row).Error; err != nil {
 			return fmt.Errorf("会话不存在")
 		}
 		item := decodeAssistantSession(row)
-		if item.Shared && item.RunID != "" {
+		if item.ProjectID != projectID {
+			return ErrAssistantSessionProjectChanged
+		}
+		if item.RunID != "" {
 			return fmt.Errorf("任务会话直接使用任务工作区")
 		}
-		item.WorkspaceRunID = strings.TrimSpace(runID)
-		if own && item.WorkspaceRunID != "" && !slices.Contains(item.OwnWorkspaceRunIDs, item.WorkspaceRunID) {
-			item.OwnWorkspaceRunIDs = append(item.OwnWorkspaceRunIDs, item.WorkspaceRunID)
-		}
+		update(&item)
 		return tx.Model(&assistantSessionRow{}).Where("id = ? AND user_id = ?", row.ID, userID).Update("payload", mustJSON(item)).Error
 	})
 }

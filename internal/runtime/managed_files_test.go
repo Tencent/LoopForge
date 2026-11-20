@@ -169,7 +169,7 @@ func TestPrepareMCPCallRejectsSymlinks(t *testing.T) {
 			if err := os.Symlink(victim, target); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := PrepareMCPCall(nil, workspace, nil); err == nil {
+			if _, err := PrepareMCPCall(t.Context(), nil, workspace, nil); err == nil {
 				t.Fatal("symlink accepted")
 			}
 			if victim != outside {

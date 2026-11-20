@@ -30,9 +30,18 @@ type assistantGenerationRow struct {
 	WorkspaceLease string `gorm:"size:64"`
 }
 
+// Keep private control state alongside the public generation snapshot.
+type assistantGenerationPayload struct {
+	domain.AssistantGeneration
+	NativeApprovals []assistantNativeApprovalState `json:"nativeApprovals,omitempty"`
+	SteeringClosed  bool                           `json:"steeringClosed,omitempty"`
+}
+
 // assistantHeartbeatTimeout is how long a running turn may go without a
 // durable heartbeat before a reader that does not own it declares it dead.
 const assistantHeartbeatTimeout = 45 * time.Second
+
+var errAssistantGenerationEnded = errors.New("生成已结束或不存在")
 
 // AssistantGenerationLease is the workspace lease a reaped turn held.
 type AssistantGenerationLease struct {
@@ -41,6 +50,13 @@ type AssistantGenerationLease struct {
 }
 
 func (assistantGenerationRow) TableName() string { return "assistant_generations" }
+
+func generationPayload(row assistantGenerationRow) assistantGenerationPayload {
+	var payload assistantGenerationPayload
+	_ = json.Unmarshal(row.Payload, &payload)
+	return payload
+}
+
 func decodeGeneration(row assistantGenerationRow) domain.AssistantGeneration {
 	var g domain.AssistantGeneration
 	_ = json.Unmarshal(row.Payload, &g)
@@ -197,7 +213,7 @@ func (r *AssistantRepo) BeginAssistantGeneration(g domain.AssistantGeneration, p
 				base := *r.deps
 				base.DB = tx
 				scoped.deps = &base
-				if err := scoped.putAssistantSession(g.UserID, next); err != nil {
+				if err := scoped.putAssistantSession(g.UserID, next, g.ClientRequestID); err != nil {
 					return err
 				}
 			} else if session.ID != "" {
@@ -251,8 +267,7 @@ func (r *AssistantRepo) HeartbeatAssistantGeneration(g domain.AssistantGeneratio
 
 func (r *AssistantRepo) checkpointAssistantGeneration(g domain.AssistantGeneration, withDiagnostics bool, diagnostics []domain.AssistantDiagnostics) error {
 	return r.DB.Transaction(func(tx *gorm.DB) error {
-		var row assistantGenerationRow
-		err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("session_id = ? AND user_id = ? AND generation_id = ? AND status = ?", g.SessionID, g.UserID, g.ID, "running").Take(&row).Error
+		row, err := lockRunningAssistantGeneration(tx, g.UserID, g.SessionID, g.ID)
 		if err != nil {
 			return fmt.Errorf("生成状态已变化")
 		}
@@ -292,16 +307,49 @@ func (r *AssistantRepo) checkpointAssistantGeneration(g domain.AssistantGenerati
 	})
 }
 
+func lockRunningAssistantGeneration(tx *gorm.DB, userID int64, sessionID, id string) (assistantGenerationRow, error) {
+	var row assistantGenerationRow
+	err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("session_id = ? AND user_id = ? AND generation_id = ? AND status = ?", sessionID, userID, id, "running").Take(&row).Error
+	return row, err
+}
+
+// CloseAssistantGenerationSteering hands the worker any accepted steer and
+// prevents new steers while the worker saves the transcript. The generation
+// stays running until that transcript is available to readers.
+func (r *AssistantRepo) CloseAssistantGenerationSteering(userID int64, sessionID, id string) (*domain.AssistantSteer, error) {
+	var steer *domain.AssistantSteer
+	err := r.DB.Transaction(func(tx *gorm.DB) error {
+		row, err := lockRunningAssistantGeneration(tx, userID, sessionID, id)
+		if err != nil {
+			return err
+		}
+		payload := generationPayload(row)
+		steer = payload.Steer
+		if steer != nil || payload.SteeringClosed {
+			return nil
+		}
+		payload.SteeringClosed = true
+		return tx.Model(&row).Updates(map[string]any{"payload": mustJSON(payload), "updated_at": r.generationClock()}).Error
+	})
+	return steer, err
+}
+
 func (r *AssistantRepo) SteerAssistantGeneration(userID int64, sessionID, id string, steer domain.AssistantSteer) error {
 	return r.DB.Transaction(func(tx *gorm.DB) error {
-		var row assistantGenerationRow
-		err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("session_id = ? AND user_id = ? AND generation_id = ? AND status = ?", sessionID, userID, id, "running").Take(&row).Error
+		row, err := lockRunningAssistantGeneration(tx, userID, sessionID, id)
 		if err != nil {
-			return fmt.Errorf("生成已结束或不存在")
+			return errAssistantGenerationEnded
 		}
-		g := decodeGeneration(row)
-		g.Steer = &steer
-		return tx.Model(&row).Updates(map[string]any{"cancel_requested": true, "payload": mustJSON(g), "updated_at": r.generationClock()}).Error
+		payload := generationPayload(row)
+		if payload.Steer != nil {
+			return errors.New("本轮已有待处理的引导，请稍后重试")
+		}
+		if payload.SteeringClosed {
+			return errAssistantGenerationEnded
+		}
+		payload.Steer = &steer
+		payload.NativeApprovals = nil
+		return tx.Model(&row).Updates(map[string]any{"cancel_requested": true, "payload": mustJSON(payload), "updated_at": r.generationClock()}).Error
 	})
 }
 func (r *AssistantRepo) CancelAssistantGeneration(userID int64, sessionID, id string) error {
@@ -310,7 +358,7 @@ func (r *AssistantRepo) CancelAssistantGeneration(userID int64, sessionID, id st
 		return res.Error
 	}
 	if res.RowsAffected != 1 {
-		return fmt.Errorf("生成已结束或不存在")
+		return errAssistantGenerationEnded
 	}
 	return nil
 }

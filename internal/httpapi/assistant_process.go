@@ -3,6 +3,7 @@ package httpapi
 import (
 	"agentflow/internal/config"
 	"agentflow/internal/domain"
+	"agentflow/internal/gitwork"
 	"agentflow/internal/runtime"
 	"bufio"
 	"context"
@@ -69,7 +70,7 @@ func (h *assistantHandlers) conversationExecutor(s *AgentToolSession, root strin
 		}()
 		sum := sha256.Sum256([]byte(fmt.Sprintf("%d/%s", s.ChatOwnerID, s.ChatSessionID)))
 		key := hex.EncodeToString(sum[:])
-		request := domain.RunnerWorkspaceRequest{Operation: "conversation_process"}
+		request := domain.RunnerWorkspaceRequest{Operation: domain.RunnerWorkspaceOperationConversationCLI}
 		workspace := ""
 		if s.RuntimeMode == domain.AssistantModeWorkspace {
 			runID := s.workspaceRun()
@@ -137,6 +138,7 @@ func (h *assistantHandlers) conversationExecutor(s *AgentToolSession, root strin
 						return h.engine.AcquireConversationCLI(envCtx, request.RunID, nativeRoot)
 					}
 				}
+				callCtx = gitwork.WithSSHKnownHostsLookup(callCtx, h.repo.PlatformSSHKnownHosts)
 				result, err := h.conversationProcesses.Handle(callCtx, root, workspace, request.Sandbox, req, forward, factory)
 				if err != nil && req.Operation == "start" {
 					err = fmt.Errorf("%w: %w", runtime.ErrConversationNotStarted, err)
@@ -250,7 +252,7 @@ func (h *assistantHandlers) conversationExecutor(s *AgentToolSession, root strin
 		}
 		defer stopProcess()
 		preparing = false
-		started, err := call(ctx, runtime.ConversationProcessRequest{Operation: "start", ID: id, Command: wire, Token: s.Token, Gateway: config.Current().AgentToolGateway})
+		started, err := call(ctx, runtime.ConversationProcessRequest{Operation: "start", ID: id, Command: wire, Token: s.Token, Gateway: config.Current().AgentToolGateway, ReportVersion: assistantDiagnosticsFrom(ctx) != nil})
 		if err != nil {
 			if errors.Is(err, runtime.ErrConversationNotStarted) {
 				stopOnce.Do(func() {}) // confirmed failure before process execution
@@ -299,6 +301,7 @@ func (h *assistantHandlers) conversationExecutor(s *AgentToolSession, root strin
 			}()
 		}
 		after := int64(0)
+		versionReported := false
 		for {
 			if err := ioCtx.Err(); err != nil {
 				return "", err
@@ -317,6 +320,12 @@ func (h *assistantHandlers) conversationExecutor(s *AgentToolSession, root strin
 			if pollErr != nil {
 				return "", pollErr
 			}
+			if sink != nil && !versionReported && result.CLIVersion != "" {
+				sink(domain.TelemetryEvent{Name: runtime.CLIVersionEvent, Attributes: map[string]any{
+					"version": result.CLIVersion, "source": result.VersionSource,
+				}})
+				versionReported = true
+			}
 			for _, event := range result.Events {
 				if sink != nil {
 					sink(event)
@@ -324,6 +333,7 @@ func (h *assistantHandlers) conversationExecutor(s *AgentToolSession, root strin
 			}
 			after = result.Sequence
 			if result.Done {
+				s.noteGitScrubbed(result.GitScrubbed)
 				if result.Error != "" {
 					if result.NotStarted {
 						return "", fmt.Errorf("%w: %s", runtime.ErrConversationNotStarted, result.Error)
@@ -448,16 +458,25 @@ func waitConversationProcessStop(ctx context.Context, id string, call func(conte
 }
 
 // bindWorkspaceGit gives the workspace CLI this turn's requester's Git
-// credentials, so the agent clones, pushes and calls GitHub itself.
+// credentials, so the agent clones, pushes and calls the Git host itself.
 // Each turn starts its CLI again, so a shared conversation always runs with
-// the identity of whoever sent the current message, and a cleared token stops
-// working from the next turn on.
+// the identity of whoever sent the current message. HTTPS tokens never travel
+// with the command: the helper fetches them from this turn's session, so a
+// removed token stops working at once.
 func (h *assistantHandlers) bindWorkspaceGit(ctx context.Context, s *AgentToolSession, command runtime.CommandSpec, credentials runtime.RunCredentials) (runtime.CommandSpec, runtime.RunCredentials) {
+	credentials.GitHTTPCredentials = nil
 	if s.User.ID <= 0 || h.repo == nil {
 		return command, credentials
 	}
-	credentials.GitToken = strings.TrimSpace(h.repo.GitCredential(ctx, s.User.ID))
 	credentials.GitSSHHostKeys = h.repo.GitSSHKeysByHost(s.User.ID)
+	if hosts := h.repo.GitHTTPWorkspaceHosts(s.User.ID); len(hosts) > 0 {
+		if runner, ok := h.repo.Runner(s.ExecutionRunnerID); s.ExecutionRunnerID != "" && (!ok || !runner.SupportsGitHTTP()) {
+			assistantDiagnosticsFrom(ctx).platform("git.http_unavailable", fmt.Sprintf("执行机器需升级至 %s 才能在工作区使用 HTTPS Git 访问令牌", domain.RunnerVersionGitHTTP), s.User)
+		} else {
+			credentials.GitHTTPHosts = hosts
+			command = runtime.WithCommandEnvironment(command, map[string]string{runtime.SessionGatewayEnv: agentToolMCPURL(s.Token)})
+		}
+	}
 	if user, ok := h.repo.User(s.User.ID); ok {
 		if login := strings.TrimSpace(user.LoginName); login != "" {
 			credentials.GitUserName = login
@@ -480,7 +499,7 @@ func (h *assistantHandlers) testRunnerCLI(ctx context.Context, runnerID, provide
 	if provider == assistantEngineCodeBuddy {
 		model = loadAssistantModels(ctx, user.CodeBuddyInternetEnvironment).Default
 	} else if !runnerLogin {
-		models := assistantDiscoveredModelsFor(ctx, user, provider)
+		models, _ := assistantDiscoveredModelsFor(ctx, user, provider)
 		if len(models) == 0 {
 			models = assistantEngineBuiltinModels(provider)
 		}

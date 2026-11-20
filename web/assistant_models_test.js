@@ -70,6 +70,7 @@ const ctx = {
     json: async () => ({
       default: 'model-b',
       models: [
+        { id: 'default', name: 'CLI 默认模型', family: 'other' },
         { id: 'model-a', name: 'Model A', family: 'claude', credits: 'x1.00' },
         { id: 'model-b', name: 'Model B', family: 'glm', credits: 'x0.06' },
         { id: 'codex:gpt-5.5', name: 'GPT-5.5', family: 'gpt', engine: 'codex' },
@@ -91,12 +92,44 @@ vm.runInContext(moduleSource, ctx);
     assert.equal(typeof api[name], 'function', `AgentFlowAssistantModels.${name}`);
   }
   assert.equal(api.DEFAULT, 'default');
+  assert.equal(api.cliIcon('agy'), '/images/credentials/antigravity.svg');
+  assert.equal(api.cliIcon('kimi'), '/images/credentials/kimi-code.png');
+  assert.equal(api.cliIcon('pi'), '/images/credentials/pi.svg');
+  api.paintItem(toggle, {id: 'kimi:k3.1-pro', family: 'other'});
+  assert.match(icon.innerHTML, /\/images\/credentials\/kimi\.svg/);
+  api.paintItem(toggle, {id: 'agy:gemini-4-neon-high'});
+  assert.match(icon.innerHTML, /\/images\/credentials\/gemini\.svg/);
+  api.paintItem(toggle, {id: 'claude-code:opus'});
+  assert.match(icon.innerHTML, /\/images\/credentials\/claude\.svg/);
+  api.paintItem(toggle, {id: 'cursor:composer-2.5'});
+  assert.match(icon.innerHTML, /\/images\/credentials\/cursor\.svg/);
+  api.paintItem(toggle, {id: 'cursor:cursor-grok-4.6', family: 'other'});
+  assert.equal(icon.dataset.family, 'grok');
+  assert.match(icon.innerHTML, /\/images\/credentials\/xai\.svg/);
+  api.paintItem(toggle, {id: 'cursor:muse-wonder-1.0'});
+  assert.equal(icon.dataset.family, 'muse');
+  assert.match(icon.innerHTML, /\/images\/credentials\/meta\.svg/);
+  api.paintItem(toggle, {id: 'auto', family: 'cursor'});
+  assert.match(icon.innerHTML, /\/images\/credentials\/cursor\.svg/);
+  api.paintItem(toggle, {id: 'primary-model', family: 'codebuddy'});
+  assert.match(icon.innerHTML, /\/images\/credentials\/codebuddy\.svg/);
+  for (const [id, family] of [
+    ['opencode:alibaba/qwen3.7-plus', 'qwen'],
+    ['opencode:doubao-seed-2-0-lite-260428', 'doubao'],
+    ['pi:ernie-5.1', 'qianfan'],
+    ['pi:moonshot-v1-8k', 'moonshot'],
+  ]) {
+    api.paintItem(toggle, {id, family: 'other'});
+    assert.equal(icon.dataset.family, family);
+    assert.ok(icon.innerHTML.includes(`/images/credentials/${family}.svg`));
+  }
   // Pickers keep painting before the catalog lands, so the built-in fallback
   // must already render a usable label.
   assert.equal(api.codeBuddyModel('codex:gpt-5.5'), 'default', 'codex ids fall back before the catalog loads');
   api.paint(toggle, api.DEFAULT);
-  assert.equal(label.textContent, 'CLI 默认模型');
+  assert.equal(label.textContent, '默认');
   assert.equal(icon.dataset.family, 'other');
+  assert.equal(api.codeBuddyModels().length, 0, 'the placeholder is not selectable before loading');
 
   await api.load();
   assert.equal(api.catalog().default, 'model-b');

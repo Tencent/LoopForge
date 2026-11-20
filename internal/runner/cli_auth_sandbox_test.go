@@ -201,6 +201,11 @@ func TestRunnerSOPCLIAuthentication(t *testing.T) {
 			}
 			user, _ := st.UserByLoginName("cli-auth-test")
 			row.OwnerUserID = user.ID
+			for i := range row.Runtimes {
+				if runtime.IsAgentCLI(row.Runtimes[i].Provider) {
+					row.Runtimes[i].AuthMode = domain.RuntimeAuthPersonal
+				}
+			}
 			if err := st.PutRunner(row); err != nil {
 				t.Fatal(err)
 			}

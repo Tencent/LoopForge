@@ -262,11 +262,6 @@ func (h *assistantHandlers) session(c *gin.Context) {
 			c.JSON(404, gin.H{"error": "对话不存在"})
 			return
 		}
-		if readOnly {
-			project, _ := h.repo.Project(item.ProjectID)
-			c.JSON(200, readOnlyConversation{AssistantSession: item, ReadOnly: true, ProjectName: project.Name})
-			return
-		}
 		if !item.Shared && !readOnly {
 			if job, ok := h.readGeneration(ownerID, id); !ok || job.Status != "running" {
 				if materializeWorkspaceImages(ownerID, &item) {
@@ -277,6 +272,12 @@ func (h *assistantHandlers) session(c *gin.Context) {
 					}
 				}
 			}
+		}
+		item.Executor = h.forkExecutor(c, item, current.ID)
+		if readOnly {
+			project, _ := h.repo.Project(item.ProjectID)
+			c.JSON(200, readOnlyConversation{AssistantSession: item, ReadOnly: true, ProjectName: project.Name})
+			return
 		}
 		if shared {
 			if run, ok := h.repo.RunState(item.RunID); ok {
@@ -292,9 +293,10 @@ func (h *assistantHandlers) session(c *gin.Context) {
 		existing, _ := loadAssistantConversation(h.repo, ownerID, id)
 		var body struct {
 			assistantConversation
-			Effort *string `json:"effort"`
+			Effort         *string `json:"effort"`
+			ApprovalUserID int64   `json:"approvalUserId"`
 		}
-		if !decodeLimit(c, &body, assistantRequestBodyLimit) {
+		if !decodeLimit(c, &body, assistantRequestBodyLimit) || !requireAssistantApprovalUser(c, current.ID, body.ApprovalUserID) {
 			return
 		}
 		conv := body.assistantConversation
@@ -378,8 +380,9 @@ func (h *assistantHandlers) session(c *gin.Context) {
 		if conv.RunID == "" {
 			conv.RunID = existing.RunID
 		}
+		oldExecutor := h.forkExecutor(c, existing, current.ID)
 		if conv.Executor == "" {
-			conv.Executor = existing.Executor
+			conv.Executor = oldExecutor
 		}
 		if existing.ID != "" {
 			conv.IssueID = existing.IssueID
@@ -401,10 +404,20 @@ func (h *assistantHandlers) session(c *gin.Context) {
 		if conv.Model == "" {
 			conv.Model = existing.Model
 		}
-		editor, _ := h.repo.User(current.ID)
-		if err := validateAssistantEffort(editor, conv.Model, conv.Effort); err != nil {
-			c.JSON(400, gin.H{"error": err.Error()})
-			return
+		model := assistantRequestModel(conv.Executor, conv.Model)
+		engine, modelID := assistantModelEngine(model)
+		oldEngine, oldModelID := assistantModelEngine(assistantRequestModel(oldExecutor, existing.Model))
+		// Metadata edits can keep historical settings after the model catalog changes.
+		if engine != oldEngine || modelID != oldModelID || conv.Effort != existing.Effort {
+			editor, _ := h.repo.User(current.ID)
+			if engine == assistantEngineCodeBuddy {
+				editor, _, _ = h.assistantChatUser(editor)
+			}
+			loginRunner := h.assistantLoginRunner(current.ID, conv.ExecutionTarget, engine)
+			if _, err := h.resolveAssistantTurnModel(c.Request.Context(), editor, model, conv.Effort, loginRunner); err != nil {
+				c.JSON(400, gin.H{"error": err.Error()})
+				return
+			}
 		}
 		var saveErr error
 		if shared {
@@ -413,7 +426,7 @@ func (h *assistantHandlers) session(c *gin.Context) {
 			saveErr = saveAssistantConversation(h.repo, ownerID, conv)
 		}
 		if saveErr != nil {
-			if errors.Is(saveErr, repo.ErrAssistantExecutionLocked) {
+			if errors.Is(saveErr, repo.ErrAssistantExecutionLocked) || errors.Is(saveErr, repo.ErrAssistantPersonalWorkspaceProject) {
 				c.JSON(409, gin.H{"error": saveErr.Error()})
 				return
 			}

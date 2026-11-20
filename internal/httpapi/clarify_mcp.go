@@ -515,7 +515,7 @@ func (h *streamHandlers) clarifyMCPUser(issue domain.Issue, responsible domain.U
 		return responsible
 	}
 	owner, ok := h.repo.User(project.OwnerID)
-	if !ok || strings.TrimSpace(owner.GitToken) == "" {
+	if !ok || len(h.repo.GitHTTPWorkspaceHosts(owner.ID)) == 0 {
 		return responsible
 	}
 	return owner

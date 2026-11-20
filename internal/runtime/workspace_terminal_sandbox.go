@@ -14,7 +14,11 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"agentflow/internal/domain"
 )
+
+var terminalGitRelays sync.Map
 
 func terminalBaseEnvironment(home string) []string {
 	return []string{"PATH=" + os.Getenv("PATH"), "HOME=" + home, "TERM=xterm-256color", "LANG=C.UTF-8"}
@@ -44,10 +48,10 @@ exec "$SHELL" -i
 // sandboxTerminalCommand deliberately supports only concrete platform drivers.
 // An unknown Sandbox must fail closed instead of silently opening a host shell.
 func sandboxTerminalCommand(ctx context.Context, sandbox Sandbox) (*exec.Cmd, string, error) {
-	return sandboxTerminalCommandWithBinding(ctx, sandbox, nil)
+	return sandboxTerminalCommandWithBinding(ctx, sandbox, nil, nil)
 }
 
-func sandboxTerminalCommandWithBinding(ctx context.Context, sandbox Sandbox, bind func(*CommandSpec) error) (*exec.Cmd, string, error) {
+func sandboxTerminalCommandWithBinding(ctx context.Context, sandbox Sandbox, https map[string]domain.GitHTTPExecutionCredential, bind func(*CommandSpec) error) (*exec.Cmd, string, error) {
 	if sandbox == nil {
 		return nil, "", fmt.Errorf("工作区执行环境不可用")
 	}
@@ -82,7 +86,7 @@ func sandboxTerminalCommandWithBinding(ctx context.Context, sandbox Sandbox, bin
 printf '%s\n' "$$" > "$HOME/.terminal-pid" || exit
 ` + terminalShellLaunch
 	}
-	cmd, err := sandboxTerminalCommandBound(ctx, sandbox, command, terminalBaseEnvironment(home), bind)
+	cmd, err := sandboxTerminalCommandBound(ctx, sandbox, command, terminalBaseEnvironment(home), https, bind)
 	if err != nil {
 		_ = removeTerminalHome(home)
 		return nil, "", err
@@ -94,20 +98,31 @@ printf '%s\n' "$$" > "$HOME/.terminal-pid" || exit
 	return cmd, home, nil
 }
 
-func sandboxTerminalCommandBound(ctx context.Context, sandbox Sandbox, command CommandSpec, base []string, bind func(*CommandSpec) error) (*exec.Cmd, error) {
-	// A terminal is user-directed and needs the run's Git binding, never its model
-	// provider keys. Overlay variables are the same explicit sandbox configuration
-	// that SOP commands receive; unrelated server environment is not inherited.
-	if s, ok := sandbox.(*managedSandbox); ok {
-		s.credentialsMu.RLock()
-		credentials := s.credentials
-		s.credentialsMu.RUnlock()
+func sandboxTerminalCommandBound(ctx context.Context, sandbox Sandbox, command CommandSpec, base []string, https map[string]domain.GitHTTPExecutionCredential, bind func(*CommandSpec) error) (*exec.Cmd, error) {
+	// Share the run's environment and Git author defaults. Authentication comes
+	// from the terminal caller, independently of the shared sandbox credentials.
+	credentials := RunCredentials{GitHTTPCredentials: https}
+	managed, isManaged := sandbox.(*managedSandbox)
+	if isManaged {
+		managed.credentialsMu.RLock()
+		credentials.GitUserName = managed.credentials.GitUserName
+		credentials.GitUserEmail = managed.credentials.GitUserEmail
+		managed.credentialsMu.RUnlock()
+		sandbox = managed.Sandbox
+	}
+	if isManaged || len(https) > 0 {
 		command.CredentialBindings = []CredentialBinding{BindGit}
-		bound, err := bindCommand(s.Sandbox, s.workspace, command, credentials)
+		prepared, closeGit, err := prepareRunGitBinding(context.Background(), sandbox, command, credentials)
 		if err != nil {
 			return nil, err
 		}
-		return sandboxTerminalCommandBound(ctx, s.Sandbox, bound, base, bind)
+		credentials.GitHTTPHosts = runGitHosts(credentials)
+		command, err = bindCommand(ctx, sandbox, sandbox.Workspace(), prepared, credentials)
+		if err != nil {
+			closeGit()
+			return nil, err
+		}
+		terminalGitRelays.Store(command.environment["AGENTFLOW_TERMINAL_ID"], closeGit)
 	}
 	if bind != nil {
 		if err := bind(&command); err != nil {
@@ -232,6 +247,9 @@ func filesystemEnvironmentIdentity(workspace, driver string, environment map[str
 // Root-scoped deletion prevents a workspace shell from replacing .agentflow or
 // private-home with a symlink and turning terminal cleanup into a host deletion.
 func removeTerminalHome(home string) error {
+	if closeGit, ok := terminalGitRelays.LoadAndDelete(filepath.Base(home)); ok {
+		closeGit.(func())()
+	}
 	if home == "" {
 		return nil
 	}
