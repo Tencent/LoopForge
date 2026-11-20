@@ -243,3 +243,47 @@ func TestRetryFailsBeforeMutationWhenFrozenRunnerIsOffline(t *testing.T) {
 		t.Fatalf("failed reconnect mutated run: %+v", current)
 	}
 }
+
+// A SOP built on a generic template binds template role ids, which live in
+// generic_templates rather than the agents table. Retrying such a node used to
+// fail with "无法重连原执行环境：agent ... 不存在" even though the run itself
+// was executable, because this validation looked the role up with Agent()
+// instead of resolving it the way execution does.
+func TestReconnectResolvesGenericTemplateAgentRole(t *testing.T) {
+	t.Parallel()
+	s, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if err := repo.SeedTestGenericTemplates(s); err != nil {
+		t.Fatal(err)
+	}
+	runner := domain.Runner{
+		ID: "runner-template", Name: "template host", Status: domain.RunnerStatusOnline,
+		Runtimes: []domain.RunnerRuntime{{Provider: "codebuddy", Status: domain.RuntimeStatusOnline}},
+	}
+	if err := s.PutRunner(runner); err != nil {
+		t.Fatal(err)
+	}
+	run := domain.Run{
+		ID: "run-template-retry", WorkflowID: repo.GenericProductDeliveryWorkflowID, Status: "failed",
+		WorkflowSnapshot: domain.WorkflowDefinition{
+			ID: repo.GenericProductDeliveryWorkflowID, SandboxProfileID: "local",
+			Nodes: []domain.WorkflowNode{{ID: "work", Type: "agent", AgentID: repo.GenericAgentProductPRD, MaxAttempts: 1}},
+		},
+		ExecutionContext: domain.TelemetryContext{ExecutionMode: domain.ExecutionModeRunner, ExecutionRunnerID: runner.ID},
+	}
+	e := New(s, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces")))
+	e.ConfigureExecution("", "", 0, false)
+	if _, stored := s.Agent(repo.GenericAgentProductPRD); stored {
+		t.Fatalf("%s must stay a template role, not an agents-table row", repo.GenericAgentProductPRD)
+	}
+	if err := e.validateExecutionReconnect(run, "work"); err != nil {
+		t.Fatalf("reconnect rejected a generic template role: %v", err)
+	}
+	run.WorkflowSnapshot.Nodes[0].AgentID = "missing-role"
+	if err := e.validateExecutionReconnect(run, "work"); err == nil || !strings.Contains(err.Error(), "agent missing-role 不存在") {
+		t.Fatalf("missing role error = %v", err)
+	}
+}

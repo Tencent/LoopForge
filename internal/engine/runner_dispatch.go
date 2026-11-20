@@ -523,7 +523,12 @@ func (e *Engine) validateExecutionReconnect(run domain.Run, nodeID string) error
 		}
 		provider := "terminal"
 		if node.Type != "script" && node.Type != "command" && node.Type != "approval" {
-			agent, found := e.repo.Agent(node.AgentID)
+			// Resolve the role the same way execution does: a SOP built on a
+			// generic template binds template role ids, which live in
+			// generic_templates rather than the agents table. Looking them up
+			// with Agent() alone failed a retry of every built-in SOP with
+			// "agent ... 不存在" even though the run itself is executable.
+			agent, found := workflowAgent(e.repo, run.WorkflowSnapshot, node.AgentID)
 			if !found {
 				return fmt.Errorf("无法重连原执行环境：agent %s 不存在", node.AgentID)
 			}
