@@ -901,7 +901,7 @@ func prepareDockerfileBuildContext(workspace string, dockerfile domain.Dockerfil
 func ensureDockerImage(ctx context.Context, workspace string, dockerfile domain.DockerfileDefinition) (string, error) {
 	if image := isolatedRuntimeImage(dockerfile); image != "" {
 		if !dockerImageExists(ctx, image) {
-			return "", fmt.Errorf("isolated runtime image %q is not available in the sandbox Docker daemon", image)
+			return "", fmt.Errorf("isolated runtime image %q is not available in the sandbox Docker daemon; verify the daemon is reachable, pull the exact image tag there if missing, and check AGENTFLOW_ISOLATED_IMAGE in the running service environment", image)
 		}
 		return image, nil
 	}
