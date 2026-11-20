@@ -210,7 +210,6 @@ export function useChat() {
       setGenerationKnown(null);
       setLive({ answer: "", thinking: "", tools: [] });
       setSession(null);
-      savingDraft.current = null;
       executionMachines.resetMachine();
       if (!id) setExecutorState(storedExecutor());
       setModel(null);
@@ -728,6 +727,11 @@ export function useChat() {
     setEffort(null);
   }
 
+  function isDraftVisible(draft) {
+    return draft && !currentId.current && projectRef.current === draft.projectId &&
+      (!draft.isActive || draft.isActive());
+  }
+
   function rememberModelChoice(id, level) {
     writeComposerPreference("executor", executor);
     writeComposerPreference(`model.${executor}`, id);
@@ -735,7 +739,7 @@ export function useChat() {
     const choice = { executor, model: id, effort: level };
     const draft = savingDraft.current;
     if (sessionRef.current?.id === activeId) saveOptions(`model.${activeId}`, choice);
-    else if (!activeId && draft && draft.projectId === projectId && draft.issueId === draftIssueId)
+    else if (isDraftVisible(draft) && draft.issueId === draftIssueId)
       draft.choice = choice;
   }
 
@@ -955,6 +959,7 @@ export function useChat() {
     approvalMode = "confirm",
     approvalUserId,
     onSessionCreated,
+    isDraftActive,
     messagesOverride = null,
     fromQueue = false,
   }) {
@@ -1003,15 +1008,16 @@ export function useChat() {
     }
     // Claim the send and its target before a credential check can yield.
     let s = sessionRef.current?.id === currentId.current ? sessionRef.current : null;
-    const draft = s ? null : { projectId: projectRef.current, issueId: draftIssueId, choice: null };
+    const draft = s ? null : {
+      projectId: projectRef.current, issueId: draftIssueId, isActive: isDraftActive, choice: null,
+    };
     savingDraft.current = draft;
-    const viewingDraft = () => draft && savingDraft.current === draft &&
-      !currentId.current && projectRef.current === draft.projectId;
-    const viewingTarget = () => s ? currentId.current === s.id : viewingDraft();
+    const viewingTarget = () => s ? currentId.current === s.id : isDraftVisible(draft);
     submittingRef.current = true;
     setSubmitting(true);
     setError("");
     const previousGeneration = generation?.id;
+    let generationRequested = false;
     setGeneration(null);
     try {
       // Recheck credentials before creating the session in case the user
@@ -1052,7 +1058,7 @@ export function useChat() {
         );
         onSessionCreated?.(s.id);
         if (draft.choice) saveOptions(`model.${s.id}`, draft.choice);
-        if (viewingDraft()) {
+        if (isDraftVisible(draft)) {
           setExecutorState(executor);
           setModel(draft.choice?.model ?? chosen.model);
           setEffort(draft.choice?.effort ?? chosen.effort);
@@ -1090,7 +1096,7 @@ export function useChat() {
         pool: executionMachines.defaultRunnerId ? "runner" : "cloud",
         runnerId: executionMachines.defaultRunnerId || "",
       };
-      const g = await write("/api/assistant/generations", {
+      const request = write("/api/assistant/generations", {
         sessionId: s.id,
         projectId: s.projectId || "",
         runId: s.runId || "",
@@ -1100,6 +1106,8 @@ export function useChat() {
         executionTarget,
         messages,
       });
+      generationRequested = true;
+      const g = await request;
       if (currentId.current === s.id) {
         setSession((old) => old?.id === s.id ? { ...old, executionTargetLocked: true,
           executionTarget: g.executionTarget || executionTarget } : old);
@@ -1108,7 +1116,7 @@ export function useChat() {
       await refreshSessions();
       return true;
     } catch (e) {
-      if (s) {
+      if (generationRequested) {
         try {
           const [stored, g] = await Promise.all([
             api(sessionPath(s.id)),

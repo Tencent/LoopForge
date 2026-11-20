@@ -151,7 +151,9 @@ describe("conversation hooks", () => {
     }
   });
 
-  test.each(["credential check", "first save"])("keeps a model picked during the %s for later messages", async (delay) => {
+  test.each([
+    "credential check", "first save", "first save after reopening the draft",
+  ])("keeps a model picked during the %s for later messages", async (delay) => {
     const originalAPI = apiMock.getMockImplementation();
     const originalWrite = writeMock.getMockImplementation();
     let saved, completePending, userReads = 0;
@@ -177,9 +179,15 @@ describe("conversation hooks", () => {
     try {
       const { result } = renderHook(useChat);
       await waitFor(() => expect(result.current.machinesReady).toBe(true));
+      await act(() => result.current.selectProject("p1"));
       let sending;
       act(() => { sending = result.current.send({ text: "第一条消息" }); });
       await waitFor(() => expect(completePending).toBeTypeOf("function"));
+      if (delay === "first save after reopening the draft") {
+        act(() => result.current.open("s1"));
+        await waitFor(() => expect(result.current.session?.id).toBe("s1"));
+        act(() => result.current.newChat());
+      }
       act(() => result.current.setModel("m2"));
       act(() => result.current.setEffort("high"));
       await act(async () => {
@@ -238,6 +246,38 @@ describe("conversation hooks", () => {
       });
     } finally {
       completeCheck?.();
+      apiMock.mockImplementation(original);
+    }
+  });
+
+  test("reports an unsent message when the catalog fails before the generation request", async () => {
+    const original = apiMock.getMockImplementation();
+    let rejectCatalog;
+    apiMock.mockImplementation((path, options) => {
+      if (path === "/api/assistant/models?executor=codex")
+        return new Promise((_, reject) => { rejectCatalog = reject; });
+      if (path === "/api/assistant/sessions/s1")
+        return Promise.resolve({ id: "s1", executor: "codex", model: "codex:historical", messages: [{ role: "user", content: "原消息" }] });
+      if (path === "/api/assistant/sessions/s1/generation")
+        return Promise.resolve({ id: "another-turn", status: "running" });
+      return original(path, options);
+    });
+    try {
+      history.replaceState({}, "", "/?session=s1");
+      const { result } = renderHook(useChat);
+      await waitFor(() => expect(result.current.model).toBe("codex:historical"));
+      await waitFor(() => expect(rejectCatalog).toBeTypeOf("function"));
+      let sending;
+      act(() => { sending = result.current.send({ text: "继续" }); });
+      await act(async () => {
+        rejectCatalog(Error("目录加载失败"));
+        expect(await sending).toBe(false);
+      });
+      expect(result.current.error).toBe("目录加载失败");
+      expect(writeMock).not.toHaveBeenCalledWith("/api/assistant/generations", expect.anything());
+      expect(apiMock).not.toHaveBeenCalledWith("/api/assistant/sessions/s1/generation");
+    } finally {
+      rejectCatalog?.(Error("目录加载失败"));
       apiMock.mockImplementation(original);
     }
   });

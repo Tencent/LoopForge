@@ -793,6 +793,7 @@ export default function App() {
       references,
       approvalMode: approval,
       onSessionCreated,
+      isDraftActive: draftApproval ? () => visibleDraftKey.current === draftKey : undefined,
     }).finally(() => {
       if (savingDraftApproval.current === draftApproval) savingDraftApproval.current = null;
     });
