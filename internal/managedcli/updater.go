@@ -188,12 +188,35 @@ func (m *Manager) releaseGate(state *State, provider, from string, candidate rel
 		return "unchanged", ""
 	case from != "" && !newerRelease(provider, candidate, from, state.Current[provider].PublishedAt):
 		return "skipped", "automatic downgrade refused"
-	case state.Rejected[provider] == candidate.Version:
-		return "skipped", "this release was rolled back; waiting for a newer release"
+	case blockedByRollback(state, provider, candidate):
+		if state.Rejected[provider] == candidate.Version {
+			return "skipped", "this release was rolled back; waiting for a newer release"
+		}
+		return "skipped", "waiting for a release newer than the rolled-back version"
 	case m.Now().Before(candidate.Published.Add(observationWindow)):
 		return "skipped", "release is still in the observation window"
 	}
 	return "", ""
+}
+
+func blockedByRollback(state *State, provider string, candidate release) bool {
+	rejected := state.Rejected[provider]
+	if rejected == "" {
+		return false
+	}
+	if candidate.Artifact == nil {
+		return candidate.Version == rejected
+	}
+	// An older observed vendor release could otherwise activate and clear
+	// the rejection, allowing the rolled-back version to return later.
+	if !validProviderVersion(provider, rejected) {
+		return true
+	}
+	var published *time.Time
+	if previous := state.Previous[provider]; previous.Version == rejected {
+		published = previous.PublishedAt
+	}
+	return !newerRelease(provider, candidate, rejected, published)
 }
 
 func newerRelease(provider string, candidate release, from string, published *time.Time) bool {

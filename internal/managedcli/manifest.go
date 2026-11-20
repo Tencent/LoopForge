@@ -79,8 +79,8 @@ func ReadInventory(root string) (Inventory, error) {
 	return state.Current, err
 }
 
-// PinInventory fixes the complete inventory for a run, including an empty one
-// before initial provisioning. Pins live outside agent-controlled workspaces.
+// PinInventory fixes the complete inventory for a run in this root, including
+// an empty one before provisioning. Pins live outside agent-controlled workspaces.
 // Publishing via link makes concurrent first claims observe a complete file.
 // Old versions and pins are not automatically deleted: suspended/resumable runs
 // may still reference them after the runner or updater restarts.

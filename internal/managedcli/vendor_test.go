@@ -203,3 +203,46 @@ func TestVendorObservationRetainedAfterFailedInstallAndChannelRetreat(t *testing
 		t.Fatalf("older eligible observation lost after the release channel retreated: %+v", report)
 	}
 }
+
+func TestVendorWaitsForNewerReleaseAfterRollback(t *testing.T) {
+	for _, provider := range []string{"cursor", "agy"} {
+		t.Run(provider, func(t *testing.T) {
+			f := newUpdaterFixture(t)
+			now := f.manager.Now()
+			f.manager.Now = func() time.Time { return now }
+			ctx := context.Background()
+			update := func(version string, age time.Duration, status string) {
+				t.Helper()
+				f.setVersion(version)
+				f.mu.Lock()
+				f.published = now.Add(-age)
+				f.mu.Unlock()
+				report, err := f.manager.UpdateProvider(ctx, provider)
+				must(t, err)
+				if len(report.Results) != 1 || report.Results[0].To != f.versions[provider] || report.Results[0].Status != status {
+					t.Fatalf("update %s got %+v, want %s", version, report.Results, status)
+				}
+			}
+			update("1.0.0", 48*time.Hour, "updated")
+			first := f.versions[provider]
+			update("2.0.0", time.Minute, "skipped")
+			now = now.Add(48 * time.Hour)
+			update("3.0.0", 25*time.Hour, "updated")
+			rejected := f.versions[provider]
+			_, err := f.manager.Rollback(ctx, provider)
+			must(t, err)
+
+			update("4.0.0", time.Minute, "skipped")
+			update("3.0.0", 25*time.Hour, "skipped")
+			state := f.state(t)
+			if state.Current[provider].Version != first || state.Rejected[provider] != rejected {
+				t.Fatalf("an older observation undid the rollback: %+v", state)
+			}
+			now = now.Add(48 * time.Hour)
+			update("4.0.0", 48*time.Hour, "updated")
+			if f.state(t).Rejected[provider] != "" {
+				t.Fatal("a newer release did not clear the rollback marker")
+			}
+		})
+	}
+}

@@ -52,7 +52,7 @@ func (o vendorObservation) release(provider string) (release, bool) {
 func (m *Manager) observeVendorReleases(state *State, provider string, latest release) (release, error) {
 	installed := state.Current[provider]
 	isUpgrade := func(candidate release) bool {
-		return candidate.Version != state.Rejected[provider] &&
+		return !blockedByRollback(state, provider, candidate) &&
 			(installed.Version == "" || newerRelease(provider, candidate, installed.Version, installed.PublishedAt))
 	}
 	previous := state.VendorObservations[provider]
