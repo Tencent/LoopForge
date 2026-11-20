@@ -1,6 +1,8 @@
 package managedcli
 
 import (
+	"fmt"
+	"os"
 	"regexp"
 	"sort"
 	"strings"
@@ -10,10 +12,11 @@ import (
 // Update safety bounds are fixed; no task, local policy or environment may
 // change the registry, supported packages, or observation and timeout windows.
 const (
-	npmRegistry        = "https://registry.npmjs.org"
-	observationWindow  = 24 * time.Hour
-	maintenanceTimeout = 30 * time.Minute
-	commandTimeout     = 10 * time.Minute
+	npmRegistry          = "https://registry.npmjs.org"
+	observationWindow    = 24 * time.Hour
+	maintenanceTimeout   = 30 * time.Minute
+	commandTimeout       = 10 * time.Minute
+	providerAllowlistEnv = "AGENTFLOW_MANAGED_CLIS"
 )
 
 type providerSpec struct {
@@ -66,13 +69,40 @@ var providerSpecs = map[string]providerSpec{
 	},
 }
 
-func providerNames() []string {
-	names := make([]string, 0, len(providerSpecs))
-	for name := range providerSpecs {
-		names = append(names, name)
+// EnabledProviders returns the deployment's update allowlist. Existing
+// installations and rollback remain accessible when a provider is excluded.
+func EnabledProviders() ([]string, error) {
+	configured := strings.TrimSpace(os.Getenv(providerAllowlistEnv))
+	if configured == "" {
+		return []string{"claude-code", "codebuddy", "codex"}, nil
 	}
-	sort.Strings(names)
-	return names
+	selected := map[string]struct{}{}
+	for _, item := range strings.Split(configured, ",") {
+		name := strings.TrimSpace(item)
+		if !Supports(name) {
+			return nil, fmt.Errorf("%s contains unsupported CLI %q", providerAllowlistEnv, name)
+		}
+		selected[name] = struct{}{}
+	}
+	providers := make([]string, 0, len(selected))
+	for name := range selected {
+		providers = append(providers, name)
+	}
+	sort.Strings(providers)
+	return providers, nil
+}
+
+// AutoUpdateEnvironment disables a provider's built-in updater during managed execution.
+func AutoUpdateEnvironment(provider string) map[string]string {
+	switch provider {
+	case "claude-code", "codebuddy":
+		return map[string]string{"DISABLE_AUTOUPDATER": "1", "DISABLE_UPDATES": "1"}
+	case "opencode":
+		return map[string]string{"OPENCODE_DISABLE_AUTOUPDATE": "1"}
+	case "kimi":
+		return map[string]string{"KIMI_CODE_NO_AUTO_UPDATE": "1"}
+	}
+	return nil
 }
 
 var cursorBuild = regexp.MustCompile(`^[0-9]{4}\.[0-9]{2}\.[0-9]{2}-[a-f0-9]{7,40}$`)

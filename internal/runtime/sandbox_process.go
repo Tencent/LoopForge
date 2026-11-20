@@ -160,10 +160,7 @@ func (s *processSandbox) command(ctx context.Context, command CommandSpec, base 
 		if err != nil {
 			return nil, err
 		}
-		args = bwrapPrivateBinds(args, command.privateBinds)
-		if install := command.managedCLIInstall; install != "" {
-			args = append(args[:len(args)-1], "--ro-bind", install, install, "--")
-		}
+		args = bwrapPrivateBinds(args, command.privateBinds, command.managedCLIInstall)
 		if command.runnerLogin != nil {
 			// Hide host sources and the private journal after all other binds.
 			// The managed CLI uses only its own private HOME and host callback.
@@ -470,13 +467,16 @@ func ensureBunFSMountPoint() bool {
 // bwrapPrivateBinds adds per-process binds before the "--" that ends the
 // bwrap options. They come after --tmpfs /tmp, so a directory under the host
 // /tmp is visible to this process only.
-func bwrapPrivateBinds(args, binds []string) []string {
-	if len(binds) == 0 || len(args) == 0 || args[len(args)-1] != "--" {
+func bwrapPrivateBinds(args, binds []string, managedInstall string) []string {
+	if (len(binds) == 0 && managedInstall == "") || len(args) == 0 || args[len(args)-1] != "--" {
 		return args
 	}
 	out := append([]string{}, args[:len(args)-1]...)
 	for _, dir := range binds {
 		out = append(out, "--bind", dir, dir)
+	}
+	if managedInstall != "" {
+		out = append(out, "--ro-bind", managedInstall, managedInstall)
 	}
 	return append(out, "--")
 }

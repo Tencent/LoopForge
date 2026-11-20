@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"path/filepath"
+	"slices"
 	"time"
 )
 
@@ -77,6 +78,19 @@ func (m *Manager) Rollback(ctx context.Context, provider string) (Report, error)
 }
 
 func (m *Manager) run(ctx context.Context, action, provider string) (report Report, err error) {
+	var providers []string
+	if action != "rollback" {
+		providers, err = EnabledProviders()
+		if err != nil {
+			return Report{}, err
+		}
+		if provider != "" {
+			if !slices.Contains(providers, provider) {
+				return Report{}, fmt.Errorf("managed CLI %q is not enabled by %s", provider, providerAllowlistEnv)
+			}
+			providers = []string{provider}
+		}
+	}
 	err = WithUpdateLock(ctx, m.Root, func() (operationErr error) {
 		now := m.Now().UTC()
 		if action == "check" && now.Before(scheduledAt(m.Root, now)) {
@@ -108,10 +122,6 @@ func (m *Manager) run(ctx context.Context, action, provider string) (report Repo
 		}()
 		if action == "rollback" {
 			return m.rollbackLocked(ctx, provider, &state, &report)
-		}
-		providers := providerNames()
-		if provider != "" {
-			providers = []string{provider}
 		}
 		return m.updateProvidersLocked(ctx, &state, &report, providers)
 	})

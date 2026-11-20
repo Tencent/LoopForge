@@ -5,15 +5,28 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"sort"
+	"strings"
 	"testing"
 	"time"
 )
 
+func providerNames() []string {
+	names := make([]string, 0, len(providerSpecs))
+	for name := range providerSpecs {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
 func TestDefaultProvidersIgnoreLegacyConfiguration(t *testing.T) {
+	wantProviders := []string{"claude-code", "codebuddy", "codex"}
 	for _, action := range []string{"check", "update"} {
 		for _, input := range []string{"", "invalid-json", `{"enabled":false,"providers":{"codex":{"enabled":false},"codebuddy":{"enabled":false},"claude-code":{"enabled":false}},"registry":"https://not-the-registry.invalid","minimumAgeHours":0}`} {
 			t.Run(action+"/"+input, func(t *testing.T) {
 				f := newUpdaterFixture(t)
+				t.Setenv(providerAllowlistEnv, "")
 				path := filepath.Join(f.manager.Root, "config.json")
 				envPath := filepath.Join(t.TempDir(), "legacy.json")
 				t.Setenv("AGENTFLOW_MANAGED_CLI_CONFIG", envPath)
@@ -29,11 +42,11 @@ func TestDefaultProvidersIgnoreLegacyConfiguration(t *testing.T) {
 					report, err = f.manager.Update(context.Background())
 				}
 				must(t, err)
-				if len(report.Results) != len(providerNames()) || len(f.state(t).Current) != len(providerNames()) || len(f.installs) != len(providerNames()) {
+				if len(report.Results) != len(wantProviders) || len(f.state(t).Current) != len(wantProviders) || len(f.installs) != len(wantProviders) {
 					t.Fatalf("default providers missing: %+v", report)
 				}
-				for _, result := range report.Results {
-					if result.Status != "updated" {
+				for i, result := range report.Results {
+					if result.Provider != wantProviders[i] || result.Status != "updated" {
 						t.Fatalf("legacy policy affected %s: %+v", action, result)
 					}
 				}
@@ -49,6 +62,45 @@ func TestDefaultProvidersIgnoreLegacyConfiguration(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestEnabledProvidersRestrictsScheduledAndManualUpdates(t *testing.T) {
+	f := newUpdaterFixture(t)
+	ctx := context.Background()
+	t.Setenv(providerAllowlistEnv, " pi,opencode,pi ")
+	report, err := f.manager.Check(ctx)
+	must(t, err)
+	if len(report.Results) != 2 || report.Results[0].Provider != "opencode" || report.Results[1].Provider != "pi" {
+		t.Fatalf("unexpected scheduled providers: %+v", report.Results)
+	}
+	if _, err := f.manager.UpdateProvider(ctx, "cursor"); err == nil || !strings.Contains(err.Error(), "not enabled") {
+		t.Fatalf("manual update bypassed the allowlist: %v", err)
+	}
+	f.setVersion("2.0.0")
+	_, err = f.manager.UpdateProvider(ctx, "pi")
+	must(t, err)
+	t.Setenv(providerAllowlistEnv, "opencode")
+	report, err = f.manager.Update(ctx)
+	must(t, err)
+	if len(report.Results) != 1 || report.Results[0].Provider != "opencode" || f.state(t).Current["pi"].Version != "2.0.0" {
+		t.Fatalf("bulk update altered the excluded installation: %+v", report.Results)
+	}
+	_, err = f.manager.Rollback(ctx, "pi")
+	must(t, err)
+	if f.state(t).Current["pi"].Version != "1.0.0" {
+		t.Fatal("the allowlist blocked rollback of an existing installation")
+	}
+}
+
+func TestInvalidProviderAllowlistRejectsUpdates(t *testing.T) {
+	f := newUpdaterFixture(t)
+	t.Setenv(providerAllowlistEnv, "pi,zcode")
+	if _, err := f.manager.Update(context.Background()); err == nil || !strings.Contains(err.Error(), "zcode") {
+		t.Fatalf("unexpected configuration error: %v", err)
+	}
+	if len(f.installs) != 0 || len(f.state(t).Current) != 0 {
+		t.Fatal("invalid allowlist applied a partial update")
 	}
 }
 

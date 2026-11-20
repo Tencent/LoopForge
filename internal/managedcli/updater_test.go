@@ -35,6 +35,7 @@ type updaterFixture struct {
 
 func newUpdaterFixture(t *testing.T) *updaterFixture {
 	t.Helper()
+	t.Setenv(providerAllowlistEnv, strings.Join(providerNames(), ","))
 	f := &updaterFixture{versions: map[string]string{}, installs: map[string]int{}, published: time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)}
 	for _, provider := range providerNames() {
 		f.versions[provider] = "1.0.0"
@@ -396,7 +397,10 @@ func TestUpdaterEnvironment(t *testing.T) {
 		if strings.Contains(joined, "not-for-updater") {
 			t.Fatal("task/host environment leaked")
 		}
-		for _, required := range []string{"HOME=" + filepath.Join(f.manager.Root, "updater-home"), "DISABLE_AUTOUPDATER=1", "DISABLE_UPDATES=1"} {
+		for _, required := range []string{
+			"HOME=" + filepath.Join(f.manager.Root, "updater-home"),
+			"DISABLE_AUTOUPDATER=1", "DISABLE_UPDATES=1", "OPENCODE_DISABLE_AUTOUPDATE=1", "KIMI_CODE_NO_AUTO_UPDATE=1",
+		} {
 			if !strings.Contains(joined, required) {
 				t.Fatalf("missing isolated environment %s", required)
 			}

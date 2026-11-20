@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"agentflow/internal/domain"
+	"agentflow/internal/managedcli"
 	"context"
 	"errors"
 	"fmt"
@@ -73,8 +74,8 @@ func (r *ExecutorRunner) Run(ctx context.Context, sb Sandbox, invocationID strin
 		return "", err
 	}
 	command = withBwrapManagedCLI(command, driver)
-	if cliLease != nil && (command.Provider == "claude-code" || command.Provider == "codebuddy") {
-		command = WithCommandEnvironment(command, map[string]string{"DISABLE_AUTOUPDATER": "1", "DISABLE_UPDATES": "1"})
+	if cliLease != nil {
+		command = WithCommandEnvironment(command, managedcli.AutoUpdateEnvironment(command.Provider))
 	}
 	if strings.EqualFold(command.Provider, "codex") {
 		overlay := map[string]string{}

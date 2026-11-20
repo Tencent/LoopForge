@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -96,5 +97,29 @@ func TestManagedDetectionReportsRealVersionAndRespectsExplicitBinary(t *testing.
 		if rt.Provider == "claude-code" && (rt.BinaryPath != explicit || rt.Version != "actual-9.0.0|user-auto|user-updates") {
 			t.Fatalf("explicit probe overridden: %+v", rt)
 		}
+	}
+}
+
+func TestManagedDetectionHonorsProviderAllowlist(t *testing.T) {
+	t.Setenv("AGENTFLOW_MANAGED_CLIS", "pi")
+	root := t.TempDir()
+	inventory := managedcli.Inventory{
+		"pi":     {Version: "1.0.0", Binary: managedTestBinary(t, root, "pi", "1.0.0")},
+		"cursor": {Version: "2026.01.01-abcdef0", Binary: managedTestBinary(t, root, "cursor", "2026.01.01-abcdef0")},
+	}
+	seen := map[string]bool{}
+	for _, rt := range detectRuntimes(context.Background(), nil, inventory) {
+		install, managed := inventory[rt.Provider]
+		if !managed {
+			continue
+		}
+		seen[rt.Provider] = true
+		if rt.BinaryPath != install.Binary || slices.Contains(rt.Capabilities, domain.RuntimeCapabilityManagedUpdate) != (rt.Provider == "pi") ||
+			slices.Contains(rt.Capabilities, domain.RuntimeCapabilityNativeUpdate) {
+			t.Fatalf("unexpected managed runtime: %+v", rt)
+		}
+	}
+	if len(seen) != len(inventory) {
+		t.Fatalf("provider selection hid installed runtimes: %+v", seen)
 	}
 }

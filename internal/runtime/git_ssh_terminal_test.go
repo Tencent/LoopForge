@@ -105,16 +105,20 @@ func TestBwrapPrivateBindsReachOnlyTheirProcess(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	owner := bwrapPrivateBinds(base, []string{"/tmp/lf-term-ssh-1"})
+	owner := bwrapPrivateBinds(base, []string{"/tmp/lf-term-ssh-1"}, "")
 	if owner[len(owner)-1] != "--" || !slices.Equal(owner[len(owner)-4:len(owner)-1], []string{"--bind", "/tmp/lf-term-ssh-1", "/tmp/lf-term-ssh-1"}) {
 		t.Fatalf("owner args: %q", owner)
 	}
 	if tmpfs, bind := slices.Index(owner, "/tmp"), slices.Index(owner, "/tmp/lf-term-ssh-1"); tmpfs < 0 || bind < tmpfs {
 		t.Fatalf("private bind must follow --tmpfs /tmp: %q", owner)
 	}
-	other := bwrapPrivateBinds(base, nil)
+	other := bwrapPrivateBinds(base, nil, "")
 	if slices.Contains(other, "/tmp/lf-term-ssh-1") {
 		t.Fatalf("another process got the terminal's agent: %q", other)
+	}
+	args := []string{"--tmpfs", "/tmp"}
+	if got := bwrapPrivateBinds(args, nil, "/tmp/managed"); !slices.Equal(got, args) {
+		t.Fatalf("managed install binding changed args without a separator: %q", got)
 	}
 }
 
