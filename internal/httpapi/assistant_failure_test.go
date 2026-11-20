@@ -57,6 +57,9 @@ func TestAssistantClaudeRecoversReplyFromEmptySuccessfulResult(t *testing.T) {
 	const skillDenied = `{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"skill-call","is_error":true,"content":"disable-model-invocation"}]}}`
 	const child = `{"type":"assistant","parent_tool_use_id":"agent-call","message":{"content":[{"type":"text","text":"child report"}]}}`
 	const later = `{"type":"assistant","message":{"content":[{"type":"text","text":"later message"}]}}`
+	const earlierMessage = `{"type":"assistant","message":{"id":"msg_earlier","content":[{"type":"text","text":"Earlier message."}]}}`
+	const firstParagraph = `{"type":"assistant","message":{"id":"msg_reply","content":[{"type":"text","text":"First complete paragraph."}]}}`
+	const secondParagraph = `{"type":"assistant","message":{"id":"msg_reply","content":[{"type":"text","text":"Second complete paragraph."}]}}`
 	const success = `{"type":"result","subtype":"success","is_error":false,"stop_reason":"end_turn","result":""}`
 	missingResult := errAssistantMissingResult.Error()
 	processErr := errors.New("exit status 1")
@@ -68,6 +71,12 @@ func TestAssistantClaudeRecoversReplyFromEmptySuccessfulResult(t *testing.T) {
 		wantErr    string
 	}{
 		{name: "keep main reply after rejected skill", lines: []string{answer, skillCall, skillDenied, child, success}, want: reply},
+		{
+			name:  "keep every complete paragraph of the latest main message",
+			lines: []string{earlierMessage, firstParagraph, child, secondParagraph, success},
+			want:  "First complete paragraph.\n\nSecond complete paragraph.",
+		},
+		{name: "keep latest message without an ID", lines: []string{answer, later, success}, want: "later message"},
 		{name: "keep text from the completed turn", lines: []string{answer, success, later}, want: reply},
 		{name: "prefer explicit result", lines: []string{answer, `{"type":"result","subtype":"success","result":"final answer"}`}, want: "final answer"},
 		{name: "no result event", lines: []string{answer}, wantErr: missingResult},

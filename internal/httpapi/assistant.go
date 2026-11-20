@@ -1591,7 +1591,8 @@ func runAssistantCLI(ctx context.Context, req assistantCLIRequest, user domain.U
 	if req.ReportOnly {
 		workspace = reportRoot
 	}
-	var final, lastClaudeText, claudeResultText string
+	var final, claudeResultText, claudeMessageID string
+	var claudeTextBlocks []string
 	var resultError bool
 	captureClaudeText := engine == assistantEngineClaude && req.Native
 	var streamError error
@@ -1651,6 +1652,7 @@ func runAssistantCLI(ctx context.Context, req assistantCLIRequest, user domain.U
 			Error           string `json:"error"`
 			Usage           any    `json:"usage"`
 			Message         struct {
+				ID      string `json:"id"`
 				Content []struct {
 					Type string `json:"type"`
 					Text string `json:"text"`
@@ -1663,26 +1665,35 @@ func runAssistantCLI(ctx context.Context, req assistantCLIRequest, user domain.U
 				final, resultError = result.Result, result.IsError
 				claudeResultText = ""
 				if captureClaudeText && result.ParentToolUseID == "" {
-					if result.Subtype == "success" && !result.IsError &&
+					if result.Subtype == "success" && !result.IsError && strings.TrimSpace(final) == "" &&
 						(result.StopReason == "" || result.StopReason == "end_turn" || result.StopReason == "stop_sequence") {
-						claudeResultText = lastClaudeText
+						claudeResultText = strings.Join(claudeTextBlocks, "\n\n")
 					}
-					lastClaudeText = ""
+					claudeMessageID, claudeTextBlocks = "", nil
 				}
 			case "error":
 				missingSession = missingSession || strings.Contains(result.Error, missingText)
-			case "assistant", "user", "stream_event":
+			case "assistant":
 				modelStarted = true
-				if result.Type == "assistant" {
-					for _, c := range result.Message.Content {
-						credentialRejected = credentialRejected || isCredentialRejection(c.Text)
-						if captureClaudeText && result.ParentToolUseID == "" && c.Type == "text" {
-							if text := strings.TrimSpace(c.Text); text != "" && !assistantCLINoticeText(text) {
-								lastClaudeText = text
-							}
-						}
+				// Claude can emit several complete text blocks with the same message ID.
+				resetClaudeText := result.Message.ID == "" || result.Message.ID != claudeMessageID
+				for _, block := range result.Message.Content {
+					credentialRejected = credentialRejected || isCredentialRejection(block.Text)
+					if !captureClaudeText || result.ParentToolUseID != "" || block.Type != "text" {
+						continue
 					}
+					text := strings.TrimSpace(block.Text)
+					if text == "" || assistantCLINoticeText(text) {
+						continue
+					}
+					if resetClaudeText {
+						claudeMessageID, claudeTextBlocks = result.Message.ID, nil
+						resetClaudeText = false
+					}
+					claudeTextBlocks = append(claudeTextBlocks, text)
 				}
+			case "user", "stream_event":
+				modelStarted = true
 			}
 		}
 	}
@@ -1722,7 +1733,7 @@ func runAssistantCLI(ctx context.Context, req assistantCLIRequest, user domain.U
 	}
 	// Claude can close successfully with an empty result after earlier complete
 	// text blocks. Use that text only on explicit success and a clean exit.
-	if err == nil && strings.TrimSpace(final) == "" && claudeResultText != "" {
+	if err == nil && claudeResultText != "" {
 		final = claudeResultText
 		assistantDiagnosticsFrom(ctx).platform("protocol.result_text_recovered", "Claude Code 本轮成功但结果正文为空，采用已收到的回复", user)
 	}
