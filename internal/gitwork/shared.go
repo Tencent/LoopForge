@@ -34,7 +34,8 @@ func MergeWorkIntoSharedBranch(ctx context.Context, workspace, workBranch, targe
 	if _, err := os.Stat(filepath.Join(workspace, ".git")); err != nil {
 		return "", nil, fmt.Errorf("%s 不是 git 检出", workspace)
 	}
-	if _, err := C(ctx, workspace, "rev-parse", "--verify", "refs/heads/"+workBranch); err != nil {
+	workRef := "refs/heads/" + workBranch
+	if _, err := C(ctx, workspace, "rev-parse", "--verify", workRef); err != nil {
 		return "", nil, fmt.Errorf("本地没有工作分支 %s", workBranch)
 	}
 	ref := "+refs/heads/" + targetBranch + ":refs/remotes/origin/" + targetBranch
@@ -58,7 +59,7 @@ func MergeWorkIntoSharedBranch(ctx context.Context, workspace, workBranch, targe
 		_, _ = C(context.Background(), workspace, "worktree", "remove", "--force", tmp)
 	}()
 	message := fmt.Sprintf("Merge branch '%s' into %s", workBranch, targetBranch)
-	if out, err := C(ctx, tmp, "merge", "--no-ff", "--no-edit", "-m", message, workBranch); err != nil {
+	if out, err := C(ctx, tmp, "merge", "--no-ff", "--no-edit", "-m", message, workRef); err != nil {
 		conflicts := UnmergedFiles(ctx, tmp)
 		_, _ = C(ctx, tmp, "merge", "--abort")
 		if len(conflicts) > 0 {
