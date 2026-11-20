@@ -107,6 +107,50 @@ describe("conversation hooks", () => {
     await waitFor(() => expect(result.current.model).toBe("gpt-5"));
   });
 
+  test("restores the conversation's unsent choices even after choosing a stronger model elsewhere", async () => {
+    const original = apiMock.getMockImplementation();
+    apiMock.mockImplementation(async (path, options) => {
+      if (path === "/api/assistant/models") return {
+        default: "m1",
+        models: [{ id: "m1" }, { id: "m2", efforts: ["high"] }, { id: "m3", efforts: ["max"] }],
+      };
+      if (path === "/api/assistant/sessions/s2") return { id: "s2", model: "m1", messages: [] };
+      return original(path, options);
+    });
+    try {
+      const first = renderHook(useChat);
+      await waitFor(() => expect(first.result.current.ready).toBe(true));
+      act(() => first.result.current.open("s1"));
+      await waitFor(() => expect(first.result.current.session?.id).toBe("s1"));
+      act(() => first.result.current.setModel("m2"));
+      act(() => first.result.current.setEffort("high"));
+
+      act(() => first.result.current.open("s2"));
+      await waitFor(() => expect(first.result.current.session?.id).toBe("s2"));
+      expect(first.result.current).toMatchObject({ model: "m1", effort: "" });
+      act(() => first.result.current.setModel("m3"));
+      act(() => first.result.current.setEffort("max"));
+
+      act(() => first.result.current.newChat());
+      expect(first.result.current).toMatchObject({ model: "m3", effort: "max" });
+      act(() => first.result.current.open("s1"));
+      await waitFor(() => expect(first.result.current.session?.id).toBe("s1"));
+      expect(first.result.current).toMatchObject({ model: "m2", effort: "high" });
+      expect(writeMock).not.toHaveBeenCalled();
+
+      first.unmount();
+      const reloaded = renderHook(useChat);
+      await waitFor(() => expect(reloaded.result.current.session?.id).toBe("s1"));
+      expect(reloaded.result.current).toMatchObject({ model: "m2", effort: "high" });
+      await act(() => reloaded.result.current.send({ text: "继续原会话" }));
+      expect(writeMock).toHaveBeenCalledWith("/api/assistant/generations", expect.objectContaining({
+        sessionId: "s1", model: "m2", effort: "high",
+      }));
+    } finally {
+      apiMock.mockImplementation(original);
+    }
+  });
+
   test("does not create a chat without a concrete model on Pi", async () => {
     const view = renderHook(() => useChat());
     try {

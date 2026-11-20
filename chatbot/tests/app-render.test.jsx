@@ -92,34 +92,55 @@ describe("App", () => {
       Object.assign(chat, previous);
     }
   });
-  test("keeps the picked approval mode after a reload", async () => {
+  test("keeps draft approval across a reload and moves it to the saved conversation", async () => {
+    const original = { activeId: chat.activeId, session: chat.session };
     const user = userEvent.setup();
     const first = render(<App />);
     await user.click(screen.getByRole("button", { name: "操作确认方式" }));
     await user.click(screen.getByRole("menuitemradio", { name: "帮我批准" }));
     expect(screen.getByRole("button", { name: "操作确认方式" })).toHaveTextContent("帮我批准");
     first.unmount();
-    render(<App />);
-    expect(screen.getByRole("button", { name: "操作确认方式" })).toHaveTextContent("帮我批准");
-    await user.type(screen.getByRole("textbox", { name: /消息|输入/ }), "你好");
-    await user.click(screen.getByRole("button", { name: "发送消息" }));
-    expect(chat.send).toHaveBeenLastCalledWith(expect.objectContaining({ approvalMode: "assisted" }));
-  });
-  test("restores full permission after a reload and resets it for another account", async () => {
-    const user = userEvent.setup();
-    const first = render(<App />);
-    await user.click(screen.getByRole("button", { name: "操作确认方式" }));
-    await user.click(screen.getByRole("menuitemradio", { name: "完全权限" }));
-    first.unmount();
     const reloaded = render(<App />);
-    fireEvent.keyDown(window, { key: "O", ctrlKey: true, shiftKey: true });
-    expect(chat.newChat).toHaveBeenCalled();
-    expect(screen.getByRole("button", { name: "操作确认方式" })).toHaveTextContent("完全权限");
-    await user.type(screen.getByRole("textbox", { name: /消息|输入/ }), "你好");
-    await user.click(screen.getByRole("button", { name: "发送消息" }));
-    expect(chat.send).toHaveBeenLastCalledWith(expect.objectContaining({ approvalMode: "auto" }));
-    const originalUser = chat.user;
     try {
+      expect(screen.getByRole("button", { name: "操作确认方式" })).toHaveTextContent("帮我批准");
+      chat.send.mockImplementationOnce(async ({ onSessionCreated }) => {
+        onSessionCreated("new-session");
+        return true;
+      });
+      await user.type(screen.getByRole("textbox", { name: /消息|输入/ }), "你好");
+      await user.click(screen.getByRole("button", { name: "发送消息" }));
+      expect(chat.send).toHaveBeenLastCalledWith(expect.objectContaining({ approvalMode: "assisted" }));
+      expect(screen.getByRole("button", { name: "操作确认方式" })).toHaveTextContent("请求批准");
+      Object.assign(chat, { activeId: "new-session", session: { id: "new-session", messages: [] } });
+      reloaded.rerender(<App />);
+      expect(screen.getByRole("button", { name: "操作确认方式" })).toHaveTextContent("帮我批准");
+    } finally {
+      Object.assign(chat, original);
+    }
+  });
+  test("restores full permission only for the conversation and account that picked it", async () => {
+    const original = { activeId: chat.activeId, session: chat.session, user: chat.user };
+    const user = userEvent.setup();
+    const open = (id) => Object.assign(chat, { activeId: id, session: id && { id, messages: [] } });
+    try {
+      open("s1");
+      const first = render(<App />);
+      await user.click(screen.getByRole("button", { name: "操作确认方式" }));
+      await user.click(screen.getByRole("menuitemradio", { name: "完全权限" }));
+      open("s2");
+      first.rerender(<App />);
+      expect(screen.getByRole("button", { name: "操作确认方式" })).toHaveTextContent("请求批准");
+      open(null);
+      first.rerender(<App />);
+      expect(screen.getByRole("button", { name: "操作确认方式" })).toHaveTextContent("请求批准");
+      first.unmount();
+
+      open("s1");
+      const reloaded = render(<App />);
+      expect(screen.getByRole("button", { name: "操作确认方式" })).toHaveTextContent("完全权限");
+      await user.type(screen.getByRole("textbox", { name: "消息" }), "你好");
+      await user.click(screen.getByRole("button", { name: "发送消息" }));
+      expect(chat.send).toHaveBeenLastCalledWith(expect.objectContaining({ approvalMode: "auto" }));
       chat.user = { id: "u2", loginName: "another-user" };
       reloaded.rerender(<App />);
       expect(screen.getByRole("button", { name: "操作确认方式" })).toHaveTextContent("请求批准");
@@ -127,7 +148,17 @@ describe("App", () => {
       await user.click(screen.getByRole("button", { name: "发送消息" }));
       expect(chat.send).toHaveBeenLastCalledWith(expect.objectContaining({ approvalMode: "confirm" }));
     } finally {
-      chat.user = originalUser;
+      Object.assign(chat, original);
+    }
+  });
+  test("labels a historical model by its ID when it has no catalog entry", () => {
+    const original = chat.model;
+    try {
+      chat.model = "codex:retired-model";
+      render(<App />);
+      expect(screen.getByRole("button", { name: "选择模型" })).toHaveTextContent("codex:retired-model");
+    } finally {
+      chat.model = original;
     }
   });
   test("does not ask for per-command native approval in a working conversation", () => {

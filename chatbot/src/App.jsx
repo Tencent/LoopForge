@@ -75,7 +75,8 @@ import { usePanelPresence } from "./usePanelPresence";
 import HomeWelcome from "./HomeWelcome";
 import ModelPicker from "./ModelPicker";
 import ModelProviderIcon, { hasProviderLogo } from "./ModelProviderIcon";
-import PermissionPicker, { rememberApprovalMode, storedApprovalMode } from "./PermissionPicker";
+import PermissionPicker, { normalizeApprovalMode } from "./PermissionPicker";
+import { useComposerOptions } from "./composer-preferences.js";
 import { conversationEngine, engineBrand } from "./engines.js";
 import { effortOptions } from "./effort.js";
 import QuickAccessWizard from "./QuickAccessWizard";
@@ -342,20 +343,11 @@ export default function App() {
     [repositorySelections, setRepositorySelections] = useState({}),
     [uploading, setUploading] = useState(false),
     [runsRefresh, setRunsRefresh] = useState(0),
-    [approvalSelection, setApprovalSelection] = useState(null),
     [quickAccessOpen, setQuickAccessOpen] = useState(
       () => new URLSearchParams(location.search).get("quickAccess") === "1",
     ),
     [theme, setTheme] = useState(() => readThemePreference(localStorage)),
     [environmentVisibility, setEnvironmentVisibility] = useState(() => readJSON(environmentVisibilityKey, {}));
-  const approvalUserId = realChat.user?.isGuest ? null : realChat.user?.id ?? null;
-  const approval = approvalSelection?.userId === approvalUserId
-    ? approvalSelection.value
-    : storedApprovalMode(approvalUserId);
-  function setApproval(value) {
-    setApprovalSelection({ userId: approvalUserId, value });
-    rememberApprovalMode(approvalUserId, value);
-  }
   const environmentPreferenceOwner = String(chat.user?.id || "guest");
   const showEnvironmentPicker = environmentVisibility[environmentPreferenceOwner] === true;
   function changeEnvironmentVisibility(visible) {
@@ -385,6 +377,13 @@ export default function App() {
   // project's unsent new-conversation draft and attachments stay untouched.
   const newDraftSlot = issueDraft && issueDraft.projectId === chat.projectId ? "issue:" + issueDraft.issueId : "new:" + chat.projectId;
   const draftKey = `agentflow.native-chat.draft.${chat.user?.id || "guest"}.${chat.activeId || newDraftSlot}`;
+  const approvalOwner = realChat.user?.isGuest ? "guest" : realChat.user?.id;
+  const { readOptions: readApproval, saveOptions: saveApproval } = useComposerOptions(approvalOwner);
+  const approvalScope = `approval.${chat.activeId ? `session:${chat.activeId}` : newDraftSlot}`;
+  const approval = normalizeApprovalMode(readApproval(approvalScope).mode);
+  function setApproval(value) {
+    saveApproval(approvalScope, { mode: normalizeApprovalMode(value) });
+  }
   useEffect(() => {
     if (!chat.activeId) return;
     setIssueDraft(null);
@@ -466,7 +465,7 @@ export default function App() {
     "个人对话";
   const selectedModel = chat.models.find((m) => m.id === chat.model) || (!chat.local ? chat.modelDetails : null);
   const modelLabel =
-    selectedModel?.name?.replace(/^Claude-/, "").replace(/^GPT-/, "") || "模型";
+    (selectedModel?.name || chat.model)?.replace(/^Claude-/, "").replace(/^GPT-/, "") || "模型";
   // The CLI switch is only for a conversation that has not started. A reply
   // in flight, or one already saved, keeps that CLI; another CLI needs a new chat.
   const lockedExecutorId = chat.session
@@ -771,11 +770,16 @@ export default function App() {
   async function submit() {
     if (uploading) return;
     follow.current = true;
+    const onSessionCreated = !chat.activeId && approval !== "confirm" ? (id) => {
+      saveApproval(`approval.session:${id}`, { mode: approval });
+      if (readApproval(approvalScope).mode === approval) saveApproval(approvalScope, null);
+    } : undefined;
     const ok = await chat.send({
       text,
       attachments,
       references,
       approvalMode: approval,
+      onSessionCreated,
     });
     if (ok) {
       setMention(null);
@@ -2333,7 +2337,7 @@ export default function App() {
                       );
                       if (stored) {
                         closeDialog();
-                        await chat.regenerate(stored, approval);
+                        await chat.regenerate(stored, dialog.fork ? "confirm" : approval);
                       }
                     }
                   }}
