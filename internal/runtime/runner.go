@@ -23,6 +23,14 @@ func (r *ExecutorRunner) Run(ctx context.Context, sb Sandbox, invocationID strin
 		return "", err
 	}
 	driver := sandboxDriver(sb)
+	managedBinary, cliLease, err := pinNativeExecutorCLI(ctx, driver, options.RunID, ex)
+	if err != nil {
+		return "", err
+	}
+	if cliLease != nil {
+		defer cliLease.Close()
+		ex.Binary = managedBinary
+	}
 	if options.BrowserMCP == nil && BrowserWantedForExecutor(ex.Kind) {
 		options.BrowserMCP = EnsureSandboxBrowser(ctx, sb, sb.Workspace(), options.RunID, sink)
 	}
@@ -61,6 +69,9 @@ func (r *ExecutorRunner) Run(ctx context.Context, sb Sandbox, invocationID strin
 	command, err := provider.Prepare(providerInvocation{Executor: ex, Compiled: compiled, Prompt: prompt, PromptFile: promptRel, Driver: driver, Options: options})
 	if err != nil {
 		return "", err
+	}
+	if cliLease != nil && (command.Provider == "claude-code" || command.Provider == "codebuddy") {
+		command = WithCommandEnvironment(command, map[string]string{"DISABLE_AUTOUPDATER": "1", "DISABLE_UPDATES": "1"})
 	}
 	if strings.EqualFold(command.Provider, "codex") {
 		overlay := map[string]string{}

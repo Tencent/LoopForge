@@ -125,6 +125,9 @@ func (m *Manager) updateProvidersLocked(ctx context.Context, state *State, repor
 	for _, provider := range providers {
 		result := ProviderResult{Provider: provider, From: state.Current[provider].Version}
 		candidate, err := m.candidate(ctx, provider)
+		if err == nil && candidate.Artifact != nil {
+			candidate, err = m.observeVendorReleases(state, provider, candidate)
+		}
 		if err == nil {
 			result.To = candidate.Version
 			result.Status, result.Message = m.releaseGate(state, provider, result.From, candidate)

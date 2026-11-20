@@ -27,17 +27,21 @@ func (f *updaterFixture) serveVendorRelease(t *testing.T, w http.ResponseWriter,
 	case "cursor.com":
 		_, _ = fmt.Fprintf(w, "DOWNLOAD_URL=\"https://downloads.cursor.com/lab/%s/${OS}/${ARCH}/agent-cli-package.tar.gz\"\n", f.versions["cursor"])
 	case "antigravity-cli-auto-updater-974169037036.us-central1.run.app":
-		sum := sha512.Sum512(f.vendorArchive(t, "agy"))
-		artifactPath := strings.Replace(agyArtifactPath, "1.0.0", f.versions["agy"], 1)
+		version := f.versions["agy"]
+		sum := sha512.Sum512(vendorFixtureArchive(t, "agy", version))
+		artifactPath := strings.Replace(agyArtifactPath, "1.0.0", version, 1)
 		_ = json.NewEncoder(w).Encode(map[string]string{
-			"version": f.versions["agy"], "url": "https://storage.googleapis.com" + artifactPath,
+			"version": version, "url": "https://storage.googleapis.com" + artifactPath,
 			"sha512": hex.EncodeToString(sum[:]),
 		})
 	case "storage.googleapis.com", "downloads.cursor.com":
 		provider := "agy"
+		segment, _, _ := strings.Cut(strings.TrimPrefix(r.URL.Path, agyStoragePrefix), "/")
+		version := strings.TrimSuffix(segment, "-test")
 		if r.Host == "downloads.cursor.com" {
 			provider = "cursor"
-			etag := fmt.Sprintf("%q", f.versions[provider])
+			version, _, _ = strings.Cut(strings.TrimPrefix(r.URL.Path, "/lab/"), "/")
+			etag := fmt.Sprintf("%q", version)
 			if r.Method == http.MethodGet && r.Header.Get("If-Match") != etag {
 				w.WriteHeader(http.StatusPreconditionFailed)
 				return true
@@ -47,7 +51,7 @@ func (f *updaterFixture) serveVendorRelease(t *testing.T, w http.ResponseWriter,
 		w.Header().Set("Last-Modified", f.published.Format(http.TimeFormat))
 		if r.Method == http.MethodGet {
 			f.installs[provider]++
-			_, _ = w.Write(f.vendorArchive(t, provider))
+			_, _ = w.Write(vendorFixtureArchive(t, provider, version))
 		}
 	default:
 		return false
@@ -55,7 +59,7 @@ func (f *updaterFixture) serveVendorRelease(t *testing.T, w http.ResponseWriter,
 	return true
 }
 
-func (f *updaterFixture) vendorArchive(t *testing.T, provider string) []byte {
+func vendorFixtureArchive(t *testing.T, provider, version string) []byte {
 	var data bytes.Buffer
 	compressed := gzip.NewWriter(&data)
 	tw := tar.NewWriter(compressed)
@@ -66,7 +70,7 @@ func (f *updaterFixture) vendorArchive(t *testing.T, provider string) []byte {
 		member = "dist-package/cursor-agent"
 		probe = "[ \"$1\" = --disable-auto-update ] || exit 9\nshift\n"
 	}
-	body := fmt.Sprintf("#!/bin/sh\n%sif [ \"$1\" = --version ]; then echo %s; else echo '%s'; fi\n", probe, f.versions[provider], strings.Join(spec.Flags, " "))
+	body := fmt.Sprintf("#!/bin/sh\n%sif [ \"$1\" = --version ]; then echo %s; else echo '%s'; fi\n", probe, version, strings.Join(spec.Flags, " "))
 	must(t, tw.WriteHeader(&tar.Header{Name: member, Mode: 0700, Size: int64(len(body))}))
 	_, err := tw.Write([]byte(body))
 	must(t, err)
@@ -99,5 +103,48 @@ func TestVendorRollbackWithoutNode(t *testing.T) {
 	must(t, err)
 	if len(report.Results) != 1 || report.Results[0].Status != "rolled-back" || f.state(t).Current["cursor"].Binary != first.Binary {
 		t.Fatalf("rollback did not restore the prior Cursor binary: %+v", report)
+	}
+}
+
+func TestVendorObservationsSurviveDailyChannelChanges(t *testing.T) {
+	for _, provider := range []string{"cursor", "agy"} {
+		t.Run(provider, func(t *testing.T) {
+			f := newUpdaterFixture(t)
+			now := f.manager.Now()
+			f.manager.Now = func() time.Time { return now }
+			fresh := func(version string) {
+				f.setVersion(version)
+				f.mu.Lock()
+				f.published = now.Add(-time.Minute)
+				f.mu.Unlock()
+			}
+			check := func(manager *Manager, status, version string) {
+				t.Helper()
+				report, err := manager.UpdateProvider(context.Background(), provider)
+				must(t, err)
+				if len(report.Results) != 1 || report.Results[0].Status != status || report.Results[0].To != version {
+					t.Fatalf("got %+v, want %s %s", report.Results, status, version)
+				}
+			}
+			fresh("1.0.0")
+			first := f.versions[provider]
+			check(f.manager, "skipped", first)
+
+			restarted, err := NewManager(f.manager.Root)
+			must(t, err)
+			restarted.Client, restarted.RunCommand, restarted.Now = f.manager.Client, f.manager.RunCommand, f.manager.Now
+			now = now.Add(23*time.Hour + 50*time.Minute)
+			fresh("2.0.0")
+			check(restarted, "skipped", f.versions[provider])
+
+			now = now.Add(23*time.Hour + 55*time.Minute)
+			fresh("3.0.0")
+			third := f.versions[provider]
+			check(restarted, "updated", first)
+
+			now = now.Add(24 * time.Hour)
+			fresh("4.0.0")
+			check(restarted, "updated", third)
+		})
 	}
 }

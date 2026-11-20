@@ -36,12 +36,13 @@ func (i Inventory) BinaryFor(provider string) (string, bool) {
 }
 
 type State struct {
-	LastCheck  time.Time         `json:"lastCheck"`
-	Candidates Inventory         `json:"candidates"`
-	Current    Inventory         `json:"current"`
-	Previous   Inventory         `json:"previous"`
-	Rejected   map[string]string `json:"rejected,omitempty"`
-	UpdatedAt  time.Time         `json:"updatedAt,omitempty"`
+	LastCheck          time.Time                      `json:"lastCheck"`
+	Candidates         Inventory                      `json:"candidates"`
+	Current            Inventory                      `json:"current"`
+	Previous           Inventory                      `json:"previous"`
+	Rejected           map[string]string              `json:"rejected,omitempty"`
+	VendorObservations map[string][]vendorObservation `json:"vendorObservations,omitempty"`
+	UpdatedAt          time.Time                      `json:"updatedAt,omitempty"`
 }
 
 // State and its rollback pointers are committed in one atomic rename.
@@ -63,6 +64,9 @@ func ReadState(root string) (State, error) {
 	}
 	if state.Rejected == nil {
 		state.Rejected = map[string]string{}
+	}
+	if state.VendorObservations == nil {
+		state.VendorObservations = map[string][]vendorObservation{}
 	}
 	if err := validateInventory(root, state.Current); err != nil {
 		return State{}, fmt.Errorf("current inventory: %w", err)

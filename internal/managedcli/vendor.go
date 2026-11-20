@@ -40,6 +40,29 @@ func (r release) identity() string {
 
 var cursorDownloadLine = regexp.MustCompile(`(?m)^DOWNLOAD_URL="https://downloads\.cursor\.com/lab/([^/"\r\n]+)/\$\{OS\}/\$\{ARCH\}/agent-cli-package\.tar\.gz"\r?$`)
 
+func cursorArchiveURL(version string) string {
+	arch := runtime.GOARCH
+	if arch == "amd64" {
+		arch = "x64"
+	}
+	return fmt.Sprintf("https://downloads.cursor.com/lab/%s/%s/%s/agent-cli-package.tar.gz", version, runtime.GOOS, arch)
+}
+
+func validCursorETag(tag string) bool {
+	return len(tag) >= 3 && len(tag) <= 128 && strings.HasPrefix(tag, `"`) && strings.HasSuffix(tag, `"`)
+}
+
+func agyArchiveURL(raw, version string) (*url.URL, error) {
+	artifact, err := url.Parse(raw)
+	if err != nil || artifact.Scheme != "https" || artifact.Host != "storage.googleapis.com" ||
+		artifact.User != nil || artifact.RawQuery != "" || artifact.Fragment != "" ||
+		artifact.Path != path.Clean(artifact.Path) || !strings.HasSuffix(artifact.Path, ".tar.gz") ||
+		!strings.HasPrefix(artifact.Path, agyStoragePrefix+version+"-") {
+		return nil, errors.New("invalid Antigravity release archive URL")
+	}
+	return artifact, nil
+}
+
 func (m *Manager) vendorCandidate(ctx context.Context, provider string) (release, error) {
 	if (runtime.GOOS != "linux" && runtime.GOOS != "darwin") ||
 		(runtime.GOARCH != "amd64" && runtime.GOARCH != "arm64") {
@@ -57,14 +80,7 @@ func (m *Manager) vendorCandidate(ctx context.Context, provider string) (release
 			return release{}, errors.New("Cursor installer did not identify a supported release")
 		}
 		candidate.Version = string(match[1])
-		arch := runtime.GOARCH
-		if arch == "amd64" {
-			arch = "x64"
-		}
-		candidate.Artifact = &vendorArtifact{url: fmt.Sprintf(
-			"https://downloads.cursor.com/lab/%s/%s/%s/agent-cli-package.tar.gz",
-			candidate.Version, runtime.GOOS, arch,
-		)}
+		candidate.Artifact = &vendorArtifact{url: cursorArchiveURL(candidate.Version)}
 	case "agy":
 		data, err := m.vendorMetadata(ctx, agyReleaseOrigin+"/manifests/"+agyVendorPlatform()+".json")
 		if err != nil {
@@ -78,12 +94,9 @@ func (m *Manager) vendorCandidate(ctx context.Context, provider string) (release
 		if err := json.Unmarshal(data, &manifest); err != nil || !validProviderVersion(provider, manifest.Version) {
 			return release{}, errors.New("invalid Antigravity release manifest")
 		}
-		artifact, err := url.Parse(manifest.URL)
-		if err != nil || artifact.Scheme != "https" || artifact.Host != "storage.googleapis.com" ||
-			artifact.User != nil || artifact.RawQuery != "" || artifact.Fragment != "" ||
-			artifact.Path != path.Clean(artifact.Path) || !strings.HasSuffix(artifact.Path, ".tar.gz") ||
-			!strings.HasPrefix(artifact.Path, agyStoragePrefix+manifest.Version+"-") {
-			return release{}, errors.New("invalid Antigravity release archive URL")
+		artifact, err := agyArchiveURL(manifest.URL, manifest.Version)
+		if err != nil {
+			return release{}, err
 		}
 		hash, err := hex.DecodeString(manifest.SHA512)
 		if err != nil || len(hash) != sha512.Size {
@@ -108,7 +121,7 @@ func (m *Manager) vendorCandidate(ctx context.Context, provider string) (release
 	if provider == "cursor" {
 		// Pin the official build URL and ETag before downloading the archive.
 		tag := resp.Header.Get("ETag")
-		if len(tag) < 3 || len(tag) > 128 || !strings.HasPrefix(tag, `"`) || !strings.HasSuffix(tag, `"`) {
+		if !validCursorETag(tag) {
 			return release{}, errors.New("Cursor release has no strong ETag")
 		}
 		candidate.Artifact.etag = tag
