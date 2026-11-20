@@ -6,6 +6,7 @@ import (
 	"log"
 	"maps"
 	"net/url"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -1861,6 +1862,9 @@ func applyExistingIssue(dst *domain.Issue, existing domain.Issue) {
 	dst.AssigneeID = existing.AssigneeID
 	dst.AssigneeUserID = existing.AssigneeUserID
 	dst.WorkflowID = existing.WorkflowID
+	dst.PlaybookID = existing.PlaybookID
+	dst.SOPBindings = slices.Clone(existing.SOPBindings)
+	dst.SOPMode = existing.SOPMode
 	dst.LatestTaskID = existing.LatestTaskID
 	dst.AutomationState = existing.AutomationState
 	dst.DeliveryState = existing.DeliveryState
