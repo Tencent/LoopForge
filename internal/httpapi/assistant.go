@@ -810,10 +810,10 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 			stampProposalDeadlines(reply.Drafts, deadline)
 		}
 		if note := h.registerTurnDeliveries(ctx, toolSession); note != "" {
-			reply.Message = strings.TrimSpace(reply.Message + "\n\n" + note)
+			reply.Message = trimAssistantReplyText(reply.Message + "\n\n" + note)
 		}
 		if note := toolSession.gitScrubNote(); note != "" {
-			reply.Message = strings.TrimSpace(reply.Message + "\n\n" + note)
+			reply.Message = trimAssistantReplyText(reply.Message + "\n\n" + note)
 		}
 		{
 			stored := append([]assistantMessage{}, req.Messages...)
@@ -1004,7 +1004,7 @@ func assistantProgressOnly(message string, messages []assistantMessage) bool {
 }
 
 func recoverNativeAssistantReply(raw, projectID string) (assistantReply, bool) {
-	raw = strings.TrimSpace(raw)
+	raw = trimAssistantReplyText(raw)
 	if raw == "" {
 		return assistantReply{}, false
 	}
@@ -1590,8 +1590,10 @@ func runAssistantCLI(ctx context.Context, req assistantCLIRequest, user domain.U
 	if req.ReportOnly {
 		workspace = reportRoot
 	}
-	var final string
+	var final, claudeResultText, claudeMessageID string
+	var claudeTextBlocks []string
 	var resultError bool
+	captureClaudeText := engine == assistantEngineClaude && req.Native
 	var streamError error
 	var streamFilter assistantStreamFilter
 	var stderrTail []string
@@ -1640,13 +1642,18 @@ func runAssistantCLI(ctx context.Context, req assistantCLIRequest, user domain.U
 			}
 		}
 		var result struct {
-			Type    string `json:"type"`
-			Result  string `json:"result"`
-			IsError bool   `json:"is_error"`
-			Error   string `json:"error"`
-			Usage   any    `json:"usage"`
-			Message struct {
+			Type            string `json:"type"`
+			Subtype         string `json:"subtype"`
+			Result          string `json:"result"`
+			IsError         bool   `json:"is_error"`
+			StopReason      string `json:"stop_reason"`
+			ParentToolUseID string `json:"parent_tool_use_id"`
+			Error           string `json:"error"`
+			Usage           any    `json:"usage"`
+			Message         struct {
+				ID      string `json:"id"`
 				Content []struct {
+					Type string `json:"type"`
 					Text string `json:"text"`
 				} `json:"content"`
 			} `json:"message"`
@@ -1655,15 +1662,37 @@ func runAssistantCLI(ctx context.Context, req assistantCLIRequest, user domain.U
 			switch result.Type {
 			case "result":
 				final, resultError = result.Result, result.IsError
+				claudeResultText = ""
+				if captureClaudeText && result.ParentToolUseID == "" {
+					if result.Subtype == "success" && !result.IsError && strings.TrimSpace(final) == "" &&
+						(result.StopReason == "" || result.StopReason == "end_turn" || result.StopReason == "stop_sequence") {
+						claudeResultText = joinClaudeTextBlocks(claudeTextBlocks)
+					}
+					claudeMessageID, claudeTextBlocks = "", nil
+				}
 			case "error":
 				missingSession = missingSession || strings.Contains(result.Error, missingText)
-			case "assistant", "user", "stream_event":
+			case "assistant":
 				modelStarted = true
-				if result.Type == "assistant" {
-					for _, c := range result.Message.Content {
-						credentialRejected = credentialRejected || isCredentialRejection(c.Text)
+				// Claude can emit several complete text blocks with the same message ID.
+				resetClaudeText := result.Message.ID == "" || result.Message.ID != claudeMessageID
+				for _, block := range result.Message.Content {
+					credentialRejected = credentialRejected || isCredentialRejection(block.Text)
+					if !captureClaudeText || result.ParentToolUseID != "" || block.Type != "text" {
+						continue
 					}
+					text := strings.TrimSpace(block.Text)
+					if text == "" || assistantCLINoticeText(text) {
+						continue
+					}
+					if resetClaudeText {
+						claudeMessageID, claudeTextBlocks = result.Message.ID, nil
+						resetClaudeText = false
+					}
+					claudeTextBlocks = append(claudeTextBlocks, block.Text)
 				}
+			case "user", "stream_event":
+				modelStarted = true
 			}
 		}
 	}
@@ -1701,8 +1730,14 @@ func runAssistantCLI(ctx context.Context, req assistantCLIRequest, user domain.U
 	}
 	if ctx.Err() != nil {
 		err = ctx.Err()
-	} else if streamError != nil && (final == "" || resultError) {
+	} else if streamError != nil && (strings.TrimSpace(final) == "" || resultError) {
 		err = streamError
+	}
+	// Claude can close successfully with an empty result after earlier complete
+	// text blocks. Use that text only on explicit success and a clean exit.
+	if err == nil && claudeResultText != "" {
+		final = claudeResultText
+		assistantDiagnosticsFrom(ctx).platform("protocol.result_text_recovered", "Claude Code 本轮成功但结果正文为空，采用已收到的回复", user)
 	}
 	out, err := decodeAssistantCLIResult(final, resultError, err, stderrTail)
 	if err != nil && req.RunnerLogin && ctx.Err() == nil && !errors.Is(err, runtime.ErrConversationNotStarted) {
@@ -1720,6 +1755,24 @@ func runAssistantCLI(ctx context.Context, req assistantCLIRequest, user domain.U
 		return "", sessionID, err
 	}
 	return out, sessionID, nil
+}
+
+// Claude supplies text blocks with their own whitespace. Separate blocks
+// with a paragraph break when neither side supplies a line ending.
+func joinClaudeTextBlocks(blocks []string) string {
+	var reply strings.Builder
+	for i, block := range blocks {
+		if i > 0 {
+			left := strings.TrimRight(blocks[i-1], " \t")
+			right := strings.TrimLeft(block, " \t")
+			if !strings.HasSuffix(left, "\n") && !strings.HasSuffix(left, "\r") &&
+				!strings.HasPrefix(right, "\n") && !strings.HasPrefix(right, "\r") {
+				reply.WriteString("\n\n")
+			}
+		}
+		reply.WriteString(block)
+	}
+	return reply.String()
 }
 
 func assistantUsageReported(u domain.TokenUsage) bool {
@@ -1779,7 +1832,7 @@ func decodeAssistantCLIResult(final string, resultError bool, processErr error, 
 		}
 		return "", processErr
 	}
-	final = strings.TrimSpace(final)
+	final = trimAssistantReplyText(final)
 	if final == "" {
 		msg := ""
 		if len(stderr) > 0 {

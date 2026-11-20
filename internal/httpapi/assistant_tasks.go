@@ -496,7 +496,11 @@ func scheduledRunModel(ctx context.Context, requested string, user domain.User) 
 }
 
 func truncateRunes(text string, max int) string {
-	runes := []rune(strings.TrimSpace(text))
+	return limitRunes(strings.TrimSpace(text), max)
+}
+
+func limitRunes(text string, max int) string {
+	runes := []rune(text)
 	if len(runes) <= max {
 		return string(runes)
 	}
