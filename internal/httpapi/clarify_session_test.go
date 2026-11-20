@@ -179,6 +179,7 @@ func TestRunClarifyTurnDetectsMissingSessionWithZeroExitCode(t *testing.T) {
 }
 
 func TestExecuteClarifyRebuildsSessionFromHistory(t *testing.T) {
+	stubCLIModelDiscovery(t)
 	for _, tc := range []struct {
 		name        string
 		owner       int64
