@@ -66,6 +66,28 @@ func currentRunEvalExec() runEvalExecFunc {
 	return nil
 }
 
+type runEvalCLIFunc func(ctx context.Context, req assistantCLIRequest, user domain.User, onEvent func(assistantStreamEvent)) (string, string, error)
+
+var (
+	runEvalCLIMu       sync.Mutex
+	runEvalCLIOverride runEvalCLIFunc
+)
+
+func setRunEvalCLIForTest(fn runEvalCLIFunc) {
+	runEvalCLIMu.Lock()
+	runEvalCLIOverride = fn
+	runEvalCLIMu.Unlock()
+}
+
+func currentRunEvalCLI() runEvalCLIFunc {
+	runEvalCLIMu.Lock()
+	defer runEvalCLIMu.Unlock()
+	if runEvalCLIOverride != nil {
+		return runEvalCLIOverride
+	}
+	return runAssistantCLI
+}
+
 func newRunEvalHub() *runEvalHub {
 	return &runEvalHub{jobs: map[string]*runEvalJob{}, tokens: make(chan struct{}, runEvalMaxInflight)}
 }
@@ -93,10 +115,41 @@ func (h *runsHandlers) startRunEval(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, map[string]string{"error": "请先登录后评测"})
 		return
 	}
+	var req struct {
+		Model string `json:"model"`
+	}
+	if c.Request.ContentLength > 0 && !decode(c, &req) {
+		return
+	}
 	user, ok := h.repo.User(current.ID)
-	if !ok || strings.TrimSpace(user.CodeBuddyAPIKey) == "" {
+	if !ok {
 		c.JSON(http.StatusBadRequest, map[string]string{"error": "请先在个人配置中配置自己的 CodeBuddy API Key"})
 		return
+	}
+	// The evaluator runtime is the CLI named by the model prefix, resolved by
+	// the same helper chat uses. A run can mix CLIs, so never guess one from
+	// its nodes; an unprefixed id stays CodeBuddy for backwards compatibility.
+	engine, engineModel := assistantModelEngine(req.Model)
+	var model string
+	if engine == assistantEngineCodeBuddy {
+		if strings.TrimSpace(user.CodeBuddyAPIKey) == "" {
+			c.JSON(http.StatusBadRequest, map[string]string{"error": "请先在个人配置中配置自己的 CodeBuddy API Key"})
+			return
+		}
+		catalog := loadAssistantModels(c.Request.Context(), user.CodeBuddyInternetEnvironment)
+		model = assistantAllowedModel(req.Model, catalog)
+	} else {
+		// Evaluations run on the control plane. A default runner's local
+		// login cannot authorize this call without binding that runner target.
+		if key, _ := assistantEngineCredential(user, engine); key == "" {
+			c.JSON(http.StatusBadRequest, map[string]string{"error": assistantEngineMissingKey(engine)})
+			return
+		}
+		if !assistantValidEngineModel(engineModel) {
+			c.JSON(http.StatusBadRequest, map[string]string{"error": "模型 ID 无效"})
+			return
+		}
+		model = engine + ":" + engineModel
 	}
 	if rec, busy := h.repo.ActiveRunEval(id); busy {
 		hub := h.evalHub()
@@ -110,20 +163,6 @@ func (h *runsHandlers) startRunEval(c *gin.Context) {
 		// The row was saved as running, then startup failed before a job existed.
 		h.failRunEval(rec, "上次评测没有真正启动")
 	}
-	var req struct {
-		Model string `json:"model"`
-	}
-	if c.Request.ContentLength > 0 && !decode(c, &req) {
-		return
-	}
-	// Run evals run on CodeBuddy only: refuse a "codex:…" id instead of
-	// silently evaluating with the CodeBuddy default.
-	if engine, _ := assistantModelEngine(req.Model); engine != assistantEngineCodeBuddy {
-		c.JSON(http.StatusBadRequest, map[string]string{"error": "运行评测目前只支持 CodeBuddy 模型，请改选 CodeBuddy 模型"})
-		return
-	}
-	catalog := loadAssistantModels(c.Request.Context(), user.CodeBuddyInternetEnvironment)
-	model := assistantAllowedModel(req.Model, catalog)
 	project, _ := h.repo.Project(run.ExecutionContext.ProjectID)
 	rec := domain.RunEvalRecord{
 		ID:        "eval-" + randomID(),
@@ -487,7 +526,13 @@ func (h *runsHandlers) executeRunEval(ctx context.Context, rec domain.RunEvalRec
 	_ = h.repo.PutRunEval(rec)
 	emit("thought", map[string]string{"kind": "thinking", "text": "正在用 " + rec.Model + " 评测…"})
 	system, prompt := runeval.BuildPrompt(rec.Policy, facts)
-	raw, _, err := runAssistantCLI(ctx, assistantCLIRequest{Prompt: prompt, Model: rec.Model, SystemPrompt: system, UserID: user.ID}, user, func(ev assistantStreamEvent) {
+	cliReq := assistantCLIRequest{Prompt: prompt, Model: rec.Model, SystemPrompt: system, UserID: user.ID}
+	// One-shot calls on another CLI need the same review-only shape as title
+	// summaries; otherwise runAssistantCLI refuses the engine outright.
+	if engine, _ := assistantModelEngine(rec.Model); engine != assistantEngineCodeBuddy {
+		cliReq.ReviewOnly = true
+	}
+	raw, _, err := currentRunEvalCLI()(ctx, cliReq, user, func(ev assistantStreamEvent) {
 		if emit == nil {
 			return
 		}

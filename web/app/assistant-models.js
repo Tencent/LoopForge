@@ -149,9 +149,10 @@
   function renderList(menu, selectedId, onPick) {
     renderOptions(menu, catalog.models || [], selectedId, onPick);
   }
-  // Requirement clarification, Bot replies, run evals and the SOP preview
-  // build run on CodeBuddy only, so their pickers list CodeBuddy models and
-  // never offer a "codex:…" id the server would have to refuse.
+  // Requirement clarification, Bot replies and the SOP preview build run on
+  // CodeBuddy only, so their pickers list CodeBuddy models and never offer a
+  // "codex:…" id the server would have to refuse. Run evals use renderList:
+  // the server resolves the chosen CLI's own credential.
   function codeBuddyModels() {
     return (catalog.models || []).filter(m => (m.engine || 'codebuddy') === 'codebuddy');
   }
