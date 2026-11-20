@@ -33,6 +33,34 @@ func upsertEnv(env []string, key, value string) []string {
 	return out
 }
 
+// BindClaudeCodeEnvironment passes a personal Claude Code credential to the
+// CLI. The official Anthropic endpoint keeps using x-api-key. Custom gateways
+// get the same value in ANTHROPIC_AUTH_TOKEN as well, because an Anthropic-
+// compatible gateway may accept only Bearer authentication.
+func BindClaudeCodeEnvironment(env map[string]string, apiKey, baseURL string) error {
+	apiKey = strings.TrimSpace(apiKey)
+	if apiKey == "" {
+		return fmt.Errorf("需求责任人未配置 Claude Code API Key，请在个人配置中配置")
+	}
+	baseURL = strings.TrimSpace(baseURL)
+	if baseURL == "" {
+		baseURL = "https://api.anthropic.com"
+	}
+	env["ANTHROPIC_API_KEY"] = apiKey
+	env["ANTHROPIC_BASE_URL"] = baseURL
+	if isOfficialAnthropicEndpoint(baseURL) {
+		env["ANTHROPIC_AUTH_TOKEN"] = ""
+	} else {
+		env["ANTHROPIC_AUTH_TOKEN"] = apiKey
+	}
+	return nil
+}
+
+func isOfficialAnthropicEndpoint(baseURL string) bool {
+	parsed, err := url.Parse(baseURL)
+	return err == nil && strings.EqualFold(parsed.Hostname(), "api.anthropic.com")
+}
+
 func bindCommand(ctx context.Context, sandbox Sandbox, workspace string, command CommandSpec, credentials RunCredentials) (CommandSpec, error) {
 	if command.bindingsPrepared {
 		return command, nil
@@ -146,15 +174,9 @@ func bindCommand(ctx context.Context, sandbox Sandbox, workspace string, command
 			}
 			bound.Argv = argv
 		case BindClaudeCode:
-			bound.environment["ANTHROPIC_API_KEY"] = strings.TrimSpace(credentials.ClaudeCode.APIKey)
-			if bound.environment["ANTHROPIC_API_KEY"] == "" {
-				return CommandSpec{}, fmt.Errorf("需求责任人未配置 Claude Code API Key，请在个人配置中配置")
+			if err := BindClaudeCodeEnvironment(bound.environment, credentials.ClaudeCode.APIKey, credentials.ClaudeCode.BaseURL); err != nil {
+				return CommandSpec{}, err
 			}
-			baseURL := strings.TrimSpace(credentials.ClaudeCode.BaseURL)
-			if baseURL == "" {
-				baseURL = "https://api.anthropic.com"
-			}
-			bound.environment["ANTHROPIC_BASE_URL"] = baseURL
 		case BindAgentCLI:
 			var home AgentCLIHome
 			homeEnv := bound.environment["HOME"]
