@@ -76,6 +76,7 @@ type Server struct {
 	insights        *insightsHandlers
 	businessDomains *businessDomainsHandlers
 	catalog         *catalogHandlers  // catalog.go
+	metrics         *metricsHandlers
 	mcp             *mcpHandlers      // mcp.go
 	market          *marketHandlers   // mcp_market.go
 	skillhub        *skillhubHandlers // skillhub_market.go
@@ -161,6 +162,7 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 		businessDomains: &businessDomainsHandlers{deps: d},
 		insights:        &insightsHandlers{deps: d},
 		projects:        &projectsHandlers{deps: d},
+		metrics:         &metricsHandlers{deps: d},
 		mcp:             &mcpHandlers{deps: d},
 		market:          &marketHandlers{deps: d},
 		skillhub:        &skillhubHandlers{deps: d, client: newSkillhubClientFromEnv()},
@@ -238,6 +240,9 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.POST("/api/notification-deliveries/:deliveryId/retry", api.notifications.retry)
 
 	// --- auth & users ---
+	// Prometheus 抓取端点（可选 Bearer Token，见 AGENTFLOW_METRICS_TOKEN）
+	g.GET("/metrics", api.metrics.metrics)
+
 	g.GET("/api/health", api.health)
 	g.GET("/api/auth/current", api.auth.authCurrent)
 	g.POST("/api/auth/password", api.auth.authPassword)
