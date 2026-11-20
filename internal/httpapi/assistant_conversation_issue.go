@@ -131,7 +131,7 @@ func (h *agentToolGateway) recordConversationMRs(issueID string, delivered []del
 	}
 	mrs := []domain.DeliveryMR{}
 	for _, r := range delivered {
-		project, iid, url, ok := domain.ParseGongfengMR(r.URL)
+		project, iid, url, ok := domain.ParseDeliveryMRURL(r.URL)
 		if !ok {
 			continue
 		}
@@ -146,6 +146,9 @@ func (h *agentToolGateway) recordConversationMRs(issueID string, delivered []del
 			mr.Repository = project
 		}
 		if err := h.repo.EnsureMRDeliveryState(project, iid, url, issueID); err != nil {
+			return err
+		}
+		if err := h.repo.SetMRDeliveryRegisteredBy(project, iid, r.RegisteredBy); err != nil {
 			return err
 		}
 		mrs = append(mrs, mr)

@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	stdsync "sync"
@@ -188,10 +189,9 @@ func statDir(path string) bool {
 }
 
 // resolveCodeBuddyBin locates the codebuddy executable. It first honors an
-// explicit override (AGENTFLOW_CODEBUDDY_BIN), then the managed inventory if
-// configured (read-only), otherwise consults PATH, and finally
-// probes well-known install locations. The service PATH may not include the
-// user's ~/.local/bin, so relying on PATH alone is not enough.
+// explicit override (AGENTFLOW_CODEBUDDY_BIN), then the managed inventory.
+// When CodeBuddy is not managed, it checks PATH and well-known install
+// locations because the service PATH may omit the user's ~/.local/bin.
 func resolveCodeBuddyBin() (string, error) {
 	if override := strings.TrimSpace(os.Getenv("AGENTFLOW_CODEBUDDY_BIN")); override != "" {
 		if fileExecutable(override) {
@@ -206,7 +206,13 @@ func resolveCodeBuddyBin() (string, error) {
 		if binary, ok := inventory.BinaryFor("codebuddy"); ok {
 			return binary, nil
 		}
-		return "", fmt.Errorf("托管 CodeBuddy 尚未安装，请检查 worker 的 CLI 安装状态")
+		providers, err := managedcli.EnabledProviders()
+		if err != nil {
+			return "", fmt.Errorf("读取托管 CLI 配置失败: %w", err)
+		}
+		if slices.Contains(providers, "codebuddy") {
+			return "", fmt.Errorf("托管 CodeBuddy 尚未安装，请检查 worker 的 CLI 安装状态")
+		}
 	}
 	if p, err := exec.LookPath("codebuddy"); err == nil {
 		return p, nil
@@ -317,6 +323,7 @@ func (h *streamHandlers) prepareClarifyRepo(ctx context.Context, repo domain.Rep
 		if key == "" {
 			return "", false, gitwork.ErrSSHKeyRequired.Error()
 		}
+		ctx = gitwork.WithSSHKnownHostsLookup(ctx, h.repo.PlatformSSHKnownHosts)
 		ctx = gitwork.WithSSHKeys(ctx, keys)
 		// A private SSH checkout is never shared across users, changed
 		// repository bindings, or a removed or replaced key.
@@ -337,11 +344,11 @@ func (h *streamHandlers) prepareClarifyRepo(ctx context.Context, repo domain.Rep
 		return cacheDir, true, ""
 	}
 
-	token := engine.ResolveClarifyGitToken(h.repo, responsibleUserID)
+	credentials := engine.ResolveClarifyGitCredentials(h.repo, responsibleUserID)
 	prepCtx, cancel := context.WithTimeout(ctx, 3*time.Minute)
 	defer cancel()
 
-	if _, err := engine.PrepareClarifyWorkspaceAtBranch(prepCtx, cacheDir, repo, baseBranch, token); err != nil {
+	if _, err := engine.PrepareClarifyWorkspaceAtBranch(prepCtx, cacheDir, repo, baseBranch, credentials); err != nil {
 		if hadCheckout && baseBranch == "" && !ssh {
 			// Degrade to the previous (possibly stale) checkout.
 			return cacheDir, true, ""
@@ -644,8 +651,8 @@ func (h *streamHandlers) executeClarify(ctx context.Context, issue domain.Issue,
 	clarifyID := fmt.Sprintf("clarify-%d", time.Now().UnixNano())
 	modelID := clarifyAllowedModel(request.Model)
 	credentials := runtime.RunCredentials{
-		CodeBuddy: runtime.CodeBuddyCredential{APIKey: strings.TrimSpace(responsible.CodeBuddyAPIKey), InternetEnvironment: strings.TrimSpace(responsible.CodeBuddyInternetEnvironment)},
-		GitToken:  strings.TrimSpace(h.repo.GitCredential(ctx, responsible.ID)),
+		CodeBuddy:          runtime.CodeBuddyCredential{APIKey: strings.TrimSpace(responsible.CodeBuddyAPIKey), InternetEnvironment: strings.TrimSpace(responsible.CodeBuddyInternetEnvironment)},
+		GitHTTPCredentials: h.repo.GitHTTPCredentialSecrets(ctx, responsible.ID),
 	}
 	turnPrompt := userMsg
 	if resume {

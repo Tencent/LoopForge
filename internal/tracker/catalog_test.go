@@ -1,6 +1,7 @@
 package tracker
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -8,10 +9,11 @@ import (
 )
 
 type projectAuthFixture struct {
-	projects map[string]domain.Project
-	users    map[int64]domain.User
-	servers  []domain.MCPServerDefinition
-	repos    []domain.Repository
+	credentials map[int64]map[string]domain.GitHTTPCredentialSecret
+	projects    map[string]domain.Project
+	users       map[int64]domain.User
+	servers     []domain.MCPServerDefinition
+	repos       []domain.Repository
 }
 
 func (f projectAuthFixture) Projects() []domain.Project {
@@ -176,4 +178,9 @@ func TestServiceResolvesDifferentCredentialPerProject(t *testing.T) {
 	if clientA.Header("Authorization") != "Bearer token-a" || clientB.Header("Authorization") != "Bearer token-b" {
 		t.Fatalf("unexpected project auth: a=%q b=%q", clientA.Header("Authorization"), clientB.Header("Authorization"))
 	}
+}
+
+func (f projectAuthFixture) GitHTTPCredentialForHost(ctx context.Context, userID int64, host string) (domain.GitHTTPCredentialSecret, bool) {
+	c, ok := f.credentials[userID][host]
+	return c, ok
 }

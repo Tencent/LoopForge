@@ -21,7 +21,7 @@ import ActivityTrace from "../src/ActivityTrace.jsx";
 import MentionPicker from "../src/MentionPicker.jsx";
 import ModelPicker from "../src/ModelPicker.jsx";
 import Participants, { Avatar, authorFor, peopleFor } from "../src/Participants.jsx";
-import PermissionPicker, { rememberApprovalMode, storedApprovalMode } from "../src/PermissionPicker.jsx";
+import PermissionPicker, { normalizeApprovalMode } from "../src/PermissionPicker.jsx";
 import { SidebarSection } from "../src/SidebarPreview.jsx";
 
 describe("pickers and activity", () => {
@@ -81,23 +81,10 @@ describe("pickers and activity", () => {
     expect(selectPermission).toHaveBeenCalledWith("auto");
   });
 
-  test("remembers the approval mode and ignores unknown values", () => {
-    expect(storedApprovalMode()).toBe("confirm");
-    rememberApprovalMode("assisted");
-    expect(storedApprovalMode()).toBe("assisted");
-    rememberApprovalMode("bogus");
-    expect(storedApprovalMode()).toBe("assisted");
-    localStorage.setItem("loopforge.assistant.approvalMode", "bogus");
-    expect(storedApprovalMode()).toBe("confirm");
-  });
-
-  test("never remembers full permission across reloads", () => {
-    rememberApprovalMode("assisted");
-    rememberApprovalMode("auto");
-    expect(storedApprovalMode()).toBe("assisted");
-    // A value stored by an older build does not come back either.
-    localStorage.setItem("loopforge.assistant.approvalMode", "auto");
-    expect(storedApprovalMode()).toBe("confirm");
+  test("uses request approval for an unknown mode", () => {
+    expect(normalizeApprovalMode("auto")).toBe("auto");
+    expect(normalizeApprovalMode("bogus")).toBe("confirm");
+    expect(normalizeApprovalMode(undefined)).toBe("confirm");
   });
 
   test("expands detailed activity including failures", async () => {

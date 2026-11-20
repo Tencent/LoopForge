@@ -2,11 +2,55 @@ package runner
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
 	"agentflow/internal/domain"
 )
+
+func TestQueuedTaskWithLegacyRequirementsKeepsCodexLoginRelay(t *testing.T) {
+	const queued = `{
+		"id": "rt-queued", "runId": "run-queued", "workspace": "runs/run-queued/workspace",
+		"provider": "codex", "invocation": {"credentialSource": "local"},
+		"sandbox": {"profile": {"driver": "docker"}, "requirements": {"privateHome": true}}
+	}`
+	for _, tc := range []struct {
+		name, provider, driver, authMode string
+		wantRelay                        bool
+	}{
+		{name: "Docker Codex account login", provider: "codex", driver: "docker", authMode: domain.RuntimeAuthLocal, wantRelay: true},
+		{name: "Docker Codex API key", provider: "codex", driver: "docker", authMode: domain.RuntimeAuthPersonal},
+		{name: "native Codex account login", provider: "codex", driver: "native", authMode: domain.RuntimeAuthLocal},
+		{name: "Docker Claude account login", provider: "claude-code", driver: "docker", authMode: domain.RuntimeAuthLocal},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var task domain.RunnerTask
+			if err := json.Unmarshal([]byte(queued), &task); err != nil {
+				t.Fatal(err)
+			}
+			task.Provider = tc.provider
+			task.Sandbox.Profile.Driver = tc.driver
+			task.Invocation.CredentialSource = tc.authMode
+
+			requirements, resources := taskSandboxSpec(task)
+			if !requirements.PrivateHome || requirements.RunnerLoginRelay != tc.wantRelay {
+				t.Fatalf("sandbox requirements = %+v, want private HOME and login relay %v", requirements, tc.wantRelay)
+			}
+			if task.Sandbox.Requirements.RunnerLoginRelay {
+				t.Fatal("loading a task changed its saved requirements")
+			}
+			if tc.wantRelay {
+				_, withRelay, _ := runSandboxKey(task, requirements, resources)
+				requirements.RunnerLoginRelay = false
+				_, withoutRelay, _ := runSandboxKey(task, requirements, resources)
+				if withRelay == withoutRelay {
+					t.Fatal("Codex login would reuse the container without the relay network")
+				}
+			}
+		})
+	}
+}
 
 func TestSharedRunTasksReuseOneSandboxUntilCleanup(t *testing.T) {
 	d := &Daemon{cfg: Config{DefaultWorkspaceRoot: t.TempDir()}}

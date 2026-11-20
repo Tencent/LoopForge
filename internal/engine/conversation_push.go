@@ -10,6 +10,7 @@ import (
 
 	"agentflow/internal/domain"
 	"agentflow/internal/gitwork"
+	"agentflow/internal/runtime"
 )
 
 const (
@@ -23,7 +24,7 @@ const (
 // repositories are left out of the returned heads. Callers
 // hold the conversation workspace lease and supply the requesting user's Git
 // identity, so the push is attributed to whoever asked for it.
-func (e *Engine) PushConversationWorkspace(ctx context.Context, runID string, requesterID int64, gitToken, gitUserName, gitUserEmail, message, sharedTarget string) ([]domain.RunnerWorkBranchHead, error) {
+func (e *Engine) PushConversationWorkspace(ctx context.Context, runID string, requesterID int64, gitUserName, gitUserEmail, message, sharedTarget string) ([]domain.RunnerWorkBranchHead, error) {
 	run, ok := e.repo.RunState(runID)
 	if !ok {
 		return nil, fmt.Errorf("运行不存在")
@@ -35,9 +36,6 @@ func (e *Engine) PushConversationWorkspace(ctx context.Context, runID string, re
 	for _, rc := range run.RepositoryContexts() {
 		if rc.ReadOnly || strings.TrimSpace(rc.CloneURL) == "" || strings.TrimSpace(rc.WorkBranch) == "" {
 			continue
-		}
-		if rc.Provider != domain.RepositoryProviderSSH && strings.TrimSpace(gitToken) == "" {
-			return nil, fmt.Errorf("%s: 未配置 Git Token，无法推送工作分支。%s", rc.Name, gitTokenFixHint)
 		}
 		repositories = append(repositories, rc)
 	}
@@ -58,10 +56,10 @@ func (e *Engine) PushConversationWorkspace(ctx context.Context, runID string, re
 	sharedTarget = strings.TrimSpace(sharedTarget)
 	ctx, cancel := context.WithTimeout(ctx, conversationPushTimeout)
 	defer cancel()
-	ctx = withGitIdentity(withGitToken(ctx, gitToken), gitUserName, gitUserEmail)
-	ctx = gitwork.WithSSHKeys(ctx, sshKeys)
+	ctx = withGitIdentity(withRunGitCredentials(ctx, runtime.RunCredentials{GitHTTPCredentials: e.repo.GitHTTPCredentialSecrets(ctx, requesterID)}), gitUserName, gitUserEmail)
+	ctx = gitwork.WithSSHKeys(e.withSSHKnownHosts(ctx), sshKeys)
 	if runnerID := e.defaultExecutionRunner(run); runnerID != "" {
-		return e.pushConversationOnRunner(ctx, runnerID, run, repositories, requesterID, gitToken, gitUserName, gitUserEmail, message, sharedTarget)
+		return e.pushConversationOnRunner(ctx, runnerID, run, repositories, requesterID, gitUserName, gitUserEmail, message, sharedTarget)
 	}
 	root, reason := e.LocalRunWorkspace(run)
 	if reason != "" {
@@ -114,7 +112,7 @@ func (e *Engine) PushConversationWorkspace(ctx context.Context, runID string, re
 	return heads, nil
 }
 
-func (e *Engine) pushConversationOnRunner(ctx context.Context, runnerID string, run domain.Run, repositories []domain.RepositoryContext, requesterID int64, gitToken, gitUserName, gitUserEmail, message, sharedTarget string) ([]domain.RunnerWorkBranchHead, error) {
+func (e *Engine) pushConversationOnRunner(ctx context.Context, runnerID string, run domain.Run, repositories []domain.RepositoryContext, requesterID int64, gitUserName, gitUserEmail, message, sharedTarget string) ([]domain.RunnerWorkBranchHead, error) {
 	if run.ExecutionContext.RunnerWorkspaceLayout != domain.RunnerWorkspaceLayoutShared {
 		return nil, fmt.Errorf("该任务的执行机器工作区不是共享布局，暂不支持直接提交 MR")
 	}
@@ -129,7 +127,8 @@ func (e *Engine) pushConversationOnRunner(ctx context.Context, runnerID string, 
 		return nil, fmt.Errorf("执行机器 %s 的 runner 版本是 %s，还不支持直推共享分支（需要 %s 及以上）；请先升级 runner，或改用 MR 提交", runnerID, strings.TrimSpace(runner.RunnerVersion), domain.RunnerVersionSharedPush)
 	}
 	invocation := &domain.RunnerInvocation{RunID: run.ID, NodeID: conversationPushNode}
-	bindRunnerRepositories(invocation, run, gitToken, gitUserName, gitUserEmail)
+	bindRunnerRepositories(invocation, run, gitUserName, gitUserEmail)
+	invocation.GitHTTPUserID = requesterID
 	invocation.Repository = nil
 	wanted := map[string]bool{}
 	for _, rc := range repositories {

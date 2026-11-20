@@ -35,6 +35,7 @@ func alignBaseline(ctx context.Context, dir string, inv *domain.RunnerInvocation
 	}
 	repo := inv.Repositories[0]
 	ctx = gitwork.WithSSHKeys(ctx, inv.GitSSHKeys)
+	ctx = invocationGitHTTPContext(ctx, inv)
 	integrate, def := strings.TrimSpace(repo.IntegrateBranch), strings.TrimSpace(repo.DefaultBranch)
 	if integrate == "" || def == "" {
 		return domain.RunnerAlignResult{}, errors.New("align_baseline needs integrate and default branches")

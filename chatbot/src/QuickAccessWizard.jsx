@@ -581,6 +581,8 @@ function parseGitHubRepo(raw) {
 // SSH preview first (it leaves github.com to the GitHub parser, matching the
 // server); self-hosted legacy repositories keep the git.example.com form.
 export function parseGongfengRepo(raw) {
+  const httpsInfo = globalThis.LoopForgeGitHTTPS(raw);
+  if (httpsInfo) return httpsInfo;
   const sshInfo = globalThis.LoopForgeGitSSH(raw);
   if (sshInfo) return sshInfo;
   const github = parseGitHubRepo(raw);
@@ -996,7 +998,7 @@ export default function QuickAccessWizard({
             (item) => Number(item.id) === Number(user?.id),
           ) || user;
         setStoredUser(mergeFreshUser(user, freshUser));
-        if (freshUser?.gitTokenConfigured && freshUser?.id) {
+        if (freshUser?.gitHubCredentialConfigured && freshUser?.id) {
           void verifyStoredGitToken(freshUser.id);
         }
         const nextProjects = Array.isArray(projectsRes)
@@ -1107,7 +1109,7 @@ export default function QuickAccessWizard({
           );
           if (fresh) {
             setStoredUser((prev) => mergeFreshUser(prev, fresh));
-            if (fresh.gitTokenConfigured) {
+            if (fresh.gitHubCredentialConfigured) {
               void verifyStoredGitToken(fresh.id);
             }
           }
@@ -1183,7 +1185,7 @@ export default function QuickAccessWizard({
   const activeStepIndex = phase === "success" ? STEPS.length - 1 : step;
   const activeStep = STEPS[activeStepIndex] || STEPS[0];
   const wizardStepCount = STEPS.length - 1;
-  const gitReady = Boolean(storedUser?.gitTokenConfigured || gitToken.trim());
+  const gitReady = Boolean(storedUser?.gitHubCredentialConfigured || gitToken.trim());
   const hasSSHKeys = Boolean(storedUser?.gitSshKeyConfigured);
   const selectedSSHRepo = parsedRepo || parseGongfengRepo(defaultRepo?.cloneUrl);
   const sshKeysLoaded = sshCredentials.userId === user?.id && sshCredentials.keys !== null;
@@ -1220,13 +1222,20 @@ export default function QuickAccessWizard({
   async function saveTypedCredentials() {
     if (!user?.id) return storedUser;
     const payload = {};
-    if (gitToken.trim()) payload.gitToken = gitToken.trim();
+    let savedGit = false;
+    if (gitToken.trim()) {
+      const endpoint = `/api/users/${encodeURIComponent(user.id)}/git-http-credentials`;
+      const credentials = await api(endpoint);
+      const existing = credentials.find(credential => credential.host === "github.com");
+      await write(endpoint, { ...(existing ? {id:existing.id} : {}), host:"github.com", platform:"github", name:"GitHub", username:"x-access-token", token:gitToken.trim() }, "PUT");
+      savedGit = true;
+    }
     if (codeBuddyApiKey.trim())
       payload.codeBuddyApiKey = codeBuddyApiKey.trim();
     // A key is always saved with the environment it was issued for.
     if (codeBuddyApiKey.trim() || codeBuddyEnv !== storedCodeBuddyEnvRaw)
       payload.codeBuddyInternetEnvironment = codeBuddyEnv;
-    if (!Object.keys(payload).length) return storedUser;
+    if (!Object.keys(payload).length && !savedGit) return storedUser;
     const saved = await write(
       `/api/users/${encodeURIComponent(user.id)}/credentials`,
       payload,
@@ -1320,7 +1329,7 @@ export default function QuickAccessWizard({
       }
       if (bindRepoNow && repoUrl.trim() && !parsedRepo) {
         setError(
-          "请输入 GitHub 仓库链接或 Git SSH 克隆地址。CNB 只支持 HTTPS + 访问令牌。",
+          "请输入 Git HTTPS 仓库链接或 Git SSH 克隆地址。",
         );
         return;
       }
@@ -1379,7 +1388,7 @@ export default function QuickAccessWizard({
         const existingRepo = (repositories || []).find(
           (repo) =>
             repo.projectId === targetProject.id &&
-            (parsedRepo.provider === "ssh"
+            (["ssh", "https"].includes(parsedRepo.provider)
               ? repo.cloneUrl === parsedRepo.cloneUrl
               : repo.gongfengProjectId === parsedRepo.project ||
                 repo.webUrl === parsedRepo.webUrl),
@@ -1509,7 +1518,7 @@ export default function QuickAccessWizard({
         repository: boundRepo,
         workflow: provisionedWorkflow || activeWorkflow,
         rolesCount: roles.length,
-        gitReady: Boolean(boundRepo?.provider === "ssh" ? hasSSHKey(parseGongfengRepo(boundRepo.cloneUrl)) : latestUser?.gitTokenConfigured),
+        gitReady: Boolean(boundRepo?.provider === "ssh" ? hasSSHKey(parseGongfengRepo(boundRepo.cloneUrl)) : latestUser?.gitHubCredentialConfigured),
         codeBuddyReady: Boolean(
           latestUser?.codeBuddyApiKeyConfigured ||
             storedUser?.codeBuddyApiKeyConfigured,
@@ -1826,10 +1835,11 @@ export default function QuickAccessWizard({
                         </header>
                         <div className="qa-cred-body">
                           <button type="button" className="qa-btn qa-btn-primary qa-btn-sm" onClick={() => openCredentialSettings("gitToken")}>
-                            {storedUser?.gitTokenConfigured ? "管理 GitHub 授权" : "连接 GitHub"}
+                            {storedUser?.gitHubCredentialConfigured ? "管理 GitHub 授权" : "连接 GitHub"}
                           </button>
                           <p className="qa-hint">在个人配置中完成授权，返回后继续；无需手动复制令牌。</p>
                           <p className="qa-hint">GitLab 等 SSH 仓库：<button type="button" className="qa-link-btn" onClick={() => openCredentialSettings("gitSshKey")}>{hasSSHKeys ? "管理 Git SSH 密钥" : "配置 Git SSH 密钥"}</button></p>
+                          <p className="qa-hint">工作区访问 GitLab、GitHub Enterprise 等 HTTPS 主机：<button type="button" className="qa-link-btn" onClick={() => openCredentialSettings("gitHttpCredentials")}>{storedUser?.gitHttpCredentialsConfigured ? "管理 Git 访问令牌" : "配置 Git 访问令牌"}</button></p>
                           <details>
                             <summary>使用访问令牌（高级）</summary>
                           <div className="qa-input-row">
@@ -1839,7 +1849,7 @@ export default function QuickAccessWizard({
                               value={gitToken}
                               onChange={(e) => setGitToken(e.target.value)}
                               placeholder={
-                                storedUser?.gitTokenConfigured
+                                storedUser?.gitHubCredentialConfigured
                                   ? "已配置，留空保持不变"
                                   : "GitHub personal access token（授予 Contents 与 Pull requests 读写权限）"
                               }
@@ -1853,7 +1863,7 @@ export default function QuickAccessWizard({
                               disabled={
                                 !verifyingGit &&
                                 !gitToken.trim() &&
-                                !storedUser?.gitTokenConfigured
+                                !storedUser?.gitHubCredentialConfigured
                               }
                               onClick={verifyGit}
                             >
@@ -2100,7 +2110,7 @@ export default function QuickAccessWizard({
                                   ? "旧项目可直接追加新仓库，复用已有流程与角色；留空则沿用现有仓库"
                                   : "沿用项目现有仓库与流程"
                                 : bindRepoNow
-                                  ? "粘贴 GitHub 链接或 Git SSH 地址，自动设为项目默认仓库"
+                                  ? "粘贴 Git HTTPS 链接或 Git SSH 地址，自动设为项目默认仓库"
                                   : "已跳过，可在派发需求或项目配置中再绑定"}
                             </span>
                           </div>
@@ -2157,7 +2167,7 @@ export default function QuickAccessWizard({
                                     {projectMode === "existing" &&
                                     projectRepos.length
                                       ? "新增仓库地址（可选）"
-                                      : "GitHub 链接或 Git SSH 地址"}
+                                      : "Git HTTPS 链接或 Git SSH 地址"}
                                   </span>
                                   <input
                                     className="qa-input qa-mono"
@@ -2204,7 +2214,7 @@ export default function QuickAccessWizard({
                                 </p>
                               ) : (
                                 <p key="help" className="qa-hint">
-                                  支持 GitHub 链接或 Git SSH 地址，例如 <code>git@gitlab.com:group/repo.git</code>。
+                                  支持 Git HTTPS 链接或 Git SSH 地址，例如 <code>git@gitlab.com:group/repo.git</code>。
                                 </p>
                               )}
                               {selectedSSHRepo?.provider === "ssh" && sshKeysLoaded && !sshReady ? (

@@ -863,22 +863,22 @@ func TestRemoteWorkspaceEditing(t *testing.T) {
 		for message := range conn.send {
 			req := message.WorkspaceRequest
 			if req.Path == "remote-error.txt" {
-				hub.resolveWorkspace(message.RequestID, domain.RunnerWorkspaceResponse{Error: "remote rejected"})
+				hub.resolveWorkspace(conn, message.RequestID, domain.RunnerWorkspaceResponse{Error: "remote rejected"})
 				continue
 			}
 			if req.Path == "invalid-response.txt" {
-				hub.resolveWorkspace(message.RequestID, domain.RunnerWorkspaceResponse{Payload: []byte(`{`)})
+				hub.resolveWorkspace(conn, message.RequestID, domain.RunnerWorkspaceResponse{Payload: []byte(`{`)})
 				continue
 			}
 			if req.Terminal != nil && req.Terminal.Data == "fail" {
-				hub.resolveWorkspace(message.RequestID, domain.RunnerWorkspaceResponse{Error: "terminal rejected"})
+				hub.resolveWorkspace(conn, message.RequestID, domain.RunnerWorkspaceResponse{Error: "terminal rejected"})
 				continue
 			}
 			payload := []byte(`{"sha256":"remote-sha"}`)
 			if req.Operation == domain.RunnerWorkspaceOperationTerminal {
 				payload = []byte(`{"id":"terminal-one","ok":true}`)
 			}
-			hub.resolveWorkspace(message.RequestID, domain.RunnerWorkspaceResponse{Payload: payload})
+			hub.resolveWorkspace(conn, message.RequestID, domain.RunnerWorkspaceResponse{Payload: payload})
 		}
 	}()
 	t.Cleanup(func() {
@@ -1170,7 +1170,7 @@ func TestCloseRemoteWorkspaceResponseErrors(t *testing.T) {
 	h := &runsHandlers{deps: &deps{repo: f.s, engine: f.e}, runnerControls: hub}
 	go func() {
 		message := <-conn.send
-		hub.resolveWorkspace(message.RequestID, domain.RunnerWorkspaceResponse{Error: "cannot close"})
+		hub.resolveWorkspace(conn, message.RequestID, domain.RunnerWorkspaceResponse{Error: "cannot close"})
 	}()
 	if err := h.closeWorkspaceTerminals(context.Background(), run, f.user.ID); err == nil {
 		t.Fatal("runner close response error accepted")

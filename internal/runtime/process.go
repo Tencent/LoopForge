@@ -16,10 +16,28 @@ const processWaitDelay = time.Second
 
 var errProcessNotStarted = errors.New("process was not started")
 
-func runCommand(cmd *exec.Cmd, sink EventSink) (string, error) {
+// runCommand streams process telemetry, coordinating the Claude login callback
+// and redacting bound credential environment values from process.started.
+func runCommand(cmd *exec.Cmd, sink EventSink, commands ...CommandSpec) (string, error) {
+	var command CommandSpec
+	if len(commands) > 0 {
+		command = commands[0]
+	}
+	var bridge *claudeLoginBridge
+	if isManagedClaude(command) {
+		var err error
+		bridge, err = newClaudeLoginBridge(cmd, command)
+		if err != nil {
+			return "", fmt.Errorf("%w: %w", errProcessNotStarted, err)
+		}
+		defer bridge.close()
+	}
 	var buf bytes.Buffer
 	var mu sync.Mutex
 	stdout := &processWriter{output: &buf, mu: &mu, sink: sink, name: "process.stdout", level: "info"}
+	if bridge != nil {
+		stdout.filter = bridge.filter
+	}
 	stderr := &processWriter{output: &buf, mu: &mu, sink: sink, name: "process.stderr", level: "error"}
 	cmd.Stdout, cmd.Stderr = stdout, stderr
 	// When hooks spawn detached children that inherit stdout/stderr, bound how
@@ -34,10 +52,13 @@ func runCommand(cmd *exec.Cmd, sink EventSink) (string, error) {
 	mu.Lock()
 	err := cmd.Start()
 	if err == nil && sink != nil {
-		sink(domain.TelemetryEvent{Category: "process", Name: "process.started", Timestamp: time.Now().UTC(), Phase: "start", Message: compactCommand(cmd.Args), Attributes: map[string]any{"pid": cmd.Process.Pid}})
+		sink(domain.TelemetryEvent{Category: "process", Name: "process.started", Timestamp: time.Now().UTC(), Phase: "start", Message: compactCommand(cmd.Args, command.credentialEnvKeys...), Attributes: map[string]any{"pid": cmd.Process.Pid}})
 	}
 	mu.Unlock()
 	if err == nil {
+		if bridge != nil {
+			bridge.start()
+		}
 		err = cmd.Wait()
 	} else if sink != nil {
 		sink(domain.TelemetryEvent{Category: "process", Name: "process.start_failed", Timestamp: time.Now().UTC(), Phase: "start", Level: "error", Message: err.Error()})
@@ -59,6 +80,9 @@ func runCommand(cmd *exec.Cmd, sink EventSink) (string, error) {
 	}
 	stdout.flush()
 	stderr.flush()
+	if bridge != nil && bridge.result() != nil {
+		err = bridge.result()
+	}
 	if sink != nil {
 		phase, level := "finish", "info"
 		if err != nil {
@@ -81,6 +105,7 @@ func runCommand(cmd *exec.Cmd, sink EventSink) (string, error) {
 }
 
 type processWriter struct {
+	filter  func(string) bool
 	output  *bytes.Buffer
 	mu      *sync.Mutex
 	sink    EventSink
@@ -122,6 +147,9 @@ func (w *processWriter) emitLines(includePartial bool) {
 }
 
 func (w *processWriter) emit(line string) {
+	if w.filter != nil && !w.filter(line) {
+		return
+	}
 	w.output.WriteString(line)
 	w.output.WriteByte('\n')
 	if w.sink != nil {
@@ -129,18 +157,25 @@ func (w *processWriter) emit(line string) {
 	}
 }
 
-func compactCommand(args []string) string {
+func compactCommand(args []string, credentialEnvKeys ...string) string {
+	credentialKeys := make(map[string]bool, len(credentialEnvKeys))
+	for _, key := range credentialEnvKeys {
+		credentialKeys[strings.ToUpper(key)] = true
+	}
+	redact := func(key string) bool {
+		return sensitiveProcessEnvironmentKey(key) || credentialKeys[strings.ToUpper(key)]
+	}
 	safe := append([]string(nil), args...)
 	for index := 0; index < len(safe); index++ {
 		value := safe[index]
 		if value == "-e" && index+1 < len(safe) {
-			if key, _, found := strings.Cut(safe[index+1], "="); found && sensitiveProcessEnvironmentKey(key) {
+			if key, _, found := strings.Cut(safe[index+1], "="); found && redact(key) {
 				safe[index+1] = key + "=<redacted>"
 			}
 			index++
 			continue
 		}
-		if key, _, found := strings.Cut(value, "="); found && sensitiveProcessEnvironmentKey(key) {
+		if key, _, found := strings.Cut(value, "="); found && redact(key) {
 			safe[index] = key + "=<redacted>"
 		}
 	}
@@ -157,6 +192,9 @@ func compactCommand(args []string) string {
 // newly added agent CLI is redacted without being listed here.
 func sensitiveProcessEnvironmentKey(key string) bool {
 	key = strings.ToUpper(key)
+	if key == "CODEX_REFRESH_TOKEN_URL_OVERRIDE" {
+		return true
+	}
 	for _, suffix := range []string{"_API_KEY", "_TOKEN", "_SECRET", "_PASSWORD"} {
 		if strings.HasSuffix(key, suffix) {
 			return true
