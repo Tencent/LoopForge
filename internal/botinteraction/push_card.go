@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 )
@@ -37,6 +38,25 @@ type PushCard struct {
 	Rows         [][2]string
 	Actions      []PushCardAction
 	DetailsURL   string
+	// Select is an optional drop-down (the SOP of a new requirement).
+	Select *PushCardSelect
+	// Status, when set, marks the card as handled: it is shown instead of
+	// the buttons and the selection.
+	Status string
+}
+
+// PushCardSelect is a drop-down whose change comes back as Key.
+type PushCardSelect struct {
+	Key         string
+	Placeholder string
+	Initial     string
+	Options     []PushCardOption
+}
+
+// PushCardOption is one drop-down entry.
+type PushCardOption struct {
+	Value string
+	Text  string
 }
 
 // PushCardAction is one button.
@@ -54,11 +74,13 @@ const (
 	DraftActionConfirm      = "draft_confirm"
 	DraftActionConfirmStart = "draft_confirm_start"
 	DraftActionCancel       = "draft_cancel"
+	// DraftActionSOP picks the SOP of the draft's new requirement.
+	DraftActionSOP = "draft_sop"
 )
 
 // DraftAction reports whether key is a draft confirmation action.
 func DraftAction(key string) bool {
-	return key == DraftActionConfirm || key == DraftActionConfirmStart || key == DraftActionCancel
+	return key == DraftActionConfirm || key == DraftActionConfirmStart || key == DraftActionCancel || key == DraftActionSOP
 }
 
 // PushCardFor builds the action card of a waiting or failed node delivery,
@@ -145,17 +167,33 @@ func feishuCardJSON(c *PushCard) []byte {
 	if len(fields) > 0 {
 		elements = append(elements, map[string]any{"tag": "div", "fields": fields})
 	}
+	value := func(key string) map[string]string {
+		if c.DraftID != "" {
+			return map[string]string{"af_action": key, "af_draft": c.DraftID}
+		}
+		return map[string]string{"af_action": key, "af_delivery": c.DeliveryID}
+	}
+	if c.Select != nil {
+		options := []any{}
+		for _, o := range c.Select.Options {
+			options = append(options, map[string]any{"text": plain(o.Text), "value": o.Value})
+		}
+		sel := map[string]any{"tag": "select_static", "placeholder": plain(c.Select.Placeholder), "options": options, "value": value(c.Select.Key)}
+		if c.Select.Initial != "" {
+			sel["initial_option"] = c.Select.Initial
+		}
+		elements = append(elements, map[string]any{"tag": "div", "text": plain("SOP")}, map[string]any{"tag": "action", "actions": []any{sel}})
+	}
+	if c.Status != "" {
+		elements = append(elements, map[string]any{"tag": "note", "elements": []any{plain(c.Status)}})
+	}
 	buttons := []any{}
 	for _, a := range c.Actions {
 		kind := "primary"
 		if a.Danger {
 			kind = "danger"
 		}
-		value := map[string]string{"af_action": a.Key, "af_delivery": c.DeliveryID}
-		if c.DraftID != "" {
-			value = map[string]string{"af_action": a.Key, "af_draft": c.DraftID}
-		}
-		buttons = append(buttons, map[string]any{"tag": "button", "text": plain(a.Text), "type": kind, "value": value})
+		buttons = append(buttons, map[string]any{"tag": "button", "text": plain(a.Text), "type": kind, "value": value(a.Key)})
 	}
 	if c.DetailsURL != "" {
 		label := c.DetailsLabel
@@ -164,9 +202,13 @@ func feishuCardJSON(c *PushCard) []byte {
 		}
 		buttons = append(buttons, map[string]any{"tag": "button", "text": plain(label), "type": "default", "url": c.DetailsURL})
 	}
-	elements = append(elements, map[string]any{"tag": "action", "actions": buttons})
+	if len(buttons) > 0 {
+		elements = append(elements, map[string]any{"tag": "action", "actions": buttons})
+	}
 	template := "orange"
 	switch {
+	case c.Status != "":
+		template = "grey"
 	case c.Tag == "执行失败":
 		template = "red"
 	case c.DraftID != "":
@@ -174,7 +216,7 @@ func feishuCardJSON(c *PushCard) []byte {
 	}
 	card := map[string]any{
 		"config":   map[string]any{"wide_screen_mode": true},
-		"header":   map[string]any{"template": template, "title": plain(c.Tag + "：" + c.Title)},
+		"header":   map[string]any{"template": template, "title": plain(c.headerTitle())},
 		"elements": elements,
 	}
 	out, _ := json.Marshal(card)
@@ -304,36 +346,91 @@ func classifyDingTalkCard(status int, data []byte) SendResult {
 // a chat reply with write drafts (see httpapi.confirmBotDrafts).
 const draftConfirmMarker = "\n\n以下操作需要你在平台确认后才会执行"
 
-// DraftCardFor builds the write-confirmation card of a chat reply: the
-// model's explanation, the frozen operations, confirm / confirm-and-start /
-// cancel buttons and a link to the confirmation page (to change the SOP).
-// It returns nil when the reply produced no pending draft.
+// DraftCardFor builds the write-confirmation card of a chat reply, or nil
+// when the reply produced no pending draft.
 func (s *Service) DraftCardFor(item domain.BotInteraction, publicURL string) *PushCard {
 	draft, ok := s.Store.BotPendingDraftForInteraction(item.ID)
 	if !ok {
 		return nil
 	}
-	body := item.Reply
+	return draftCard(draft, item.Reply, publicURL)
+}
+
+// draftCardByID rebuilds the card of a draft (after a click or a choice).
+func (s *Service) draftCardByID(draft domain.BotPendingDraft) *PushCard {
+	reply := ""
+	if item, err := s.Store.BotInteraction(draft.InteractionID); err == nil {
+		reply = item.Reply
+	}
+	return draftCard(draft, reply, s.publicURL())
+}
+
+var draftSOPSuffix = regexp.MustCompile(`（SOP：[^）]*）$`)
+
+// draftCard is the model's explanation, the frozen operations, an SOP
+// selection when the draft creates one requirement, confirm /
+// confirm-and-start / cancel buttons and a link to the confirmation page.
+func draftCard(draft domain.BotPendingDraft, reply, publicURL string) *PushCard {
+	body := reply
 	if i := strings.Index(body, draftConfirmMarker); i >= 0 {
 		body = body[:i]
 	}
 	ops := strings.Split(strings.TrimSpace(draft.Summary), "\n")
 	card := &PushCard{DraftID: draft.ID, Tag: "待你确认", Title: fmt.Sprintf("%d 项操作", len(ops)), Body: strings.TrimSpace(body)}
-	for _, op := range ops {
-		if op = strings.TrimSpace(op); op != "" {
-			card.Rows = append(card.Rows, [2]string{"操作", op})
+	for i, op := range ops {
+		if op = strings.TrimSpace(op); op == "" {
+			continue
 		}
+		if draft.SOP != nil && i == draft.SOP.Index {
+			// The SOP is chosen in the selection below.
+			op = draftSOPSuffix.ReplaceAllString(op, "")
+		}
+		card.Rows = append(card.Rows, [2]string{"操作", op})
 	}
-	card.Required = fmt.Sprintf("%d 分钟内有效，只有你本人可以确认；每份操作只执行一次", int(repo.BotDraftTTL.Minutes()))
+	if draft.SOP != nil {
+		sel := &PushCardSelect{Key: DraftActionSOP, Initial: draft.Selected(), Placeholder: "选择 SOP"}
+		sel.Options = append(sel.Options, PushCardOption{Value: domain.BotDraftDefaultSOP, Text: "项目默认 SOP（" + draft.SOP.DefaultName + "）"})
+		for _, wf := range draft.SOP.Workflows {
+			sel.Options = append(sel.Options, PushCardOption{Value: wf.ID, Text: wf.Name})
+		}
+		card.Select = sel
+	}
+	card.Required = fmt.Sprintf("%d 分钟内有效，只有发起人可以确认；每份操作只执行一次", int(repo.BotDraftTTL.Minutes()))
 	card.Actions = []PushCardAction{{Key: DraftActionConfirm, Text: "确认执行"}}
 	if strings.Contains(draft.Summary, "（SOP：") {
 		card.Actions = append(card.Actions, PushCardAction{Key: DraftActionConfirmStart, Text: "确认并启动 SOP"})
 	}
 	card.Actions = append(card.Actions, PushCardAction{Key: DraftActionCancel, Text: "取消", Danger: true})
 	if base := strings.TrimRight(publicURL, "/"); base != "" {
-		card.DetailsURL, card.DetailsLabel = base+"/bot-approve.html#draft="+draft.ID, "在平台确认（可更换 SOP）"
+		card.DetailsURL, card.DetailsLabel = base+"/bot-approve.html#draft="+draft.ID, "在平台确认"
+	}
+	if draft.Status != repo.BotDraftPending {
+		card.Done(draftStatusLine(draft))
 	}
 	return card
+}
+
+// draftStatusLine is the card status of a draft that is no longer pending.
+func draftStatusLine(d domain.BotPendingDraft) string {
+	switch d.Status {
+	case repo.BotDraftExecuting:
+		return "正在执行，结果会回复在会话里"
+	case repo.BotDraftExecuted:
+		return "已执行，结果见会话里的回复"
+	case repo.BotDraftFailed:
+		return "已处理，部分或全部未完成，详情见会话里的回复"
+	case repo.BotDraftCancelled:
+		return "已取消，没有执行"
+	case repo.BotDraftExpired:
+		return "已过期，没有执行"
+	}
+	return "这份操作已处理"
+}
+
+// Done turns the card into its handled state: the status line replaces the
+// buttons and the selection, so a second click is not possible.
+func (c *PushCard) Done(status string) {
+	c.Status, c.Actions, c.Select = status, nil, nil
 }
 
 func (s *Service) publicURL() string {
@@ -345,4 +442,19 @@ func (s *Service) publicURL() string {
 		return ""
 	}
 	return raw
+}
+
+func (c *PushCard) headerTitle() string {
+	tag := c.Tag
+	if c.Status != "" {
+		tag = "已处理"
+	}
+	return tag + "：" + c.Title
+}
+
+// feishuCardObject is the card as a JSON object (callback responses).
+func feishuCardObject(c *PushCard) map[string]any {
+	out := map[string]any{}
+	_ = json.Unmarshal(feishuCardJSON(c), &out)
+	return out
 }

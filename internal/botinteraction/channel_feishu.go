@@ -96,16 +96,18 @@ func (f *feishuChannel) Connect(ctx context.Context, bot domain.NotificationBot,
 		if !ok {
 			return nil
 		}
-		return f.acknowledge(ctx, inbound, sink)
+		_, err := f.acknowledge(ctx, inbound, sink)
+		return err
 	}).OnP2CardActionTrigger(func(evCtx context.Context, ev *callback.CardActionTriggerEvent) (*callback.CardActionTriggerResponse, error) {
 		inbound, ok := feishuCardEvent(ev)
 		if !ok {
 			return feishuToast("error", "这张卡片已失效，请到平台查看运行状态"), nil
 		}
-		if err := f.acknowledge(ctx, inbound, sink); err != nil {
+		ack, err := f.acknowledge(ctx, inbound, sink)
+		if err != nil {
 			return feishuToast("error", "暂时无法处理，请稍后再点一次"), nil
 		}
-		return feishuToast("info", "已收到，处理结果会以消息发给你"), nil
+		return feishuCardAnswer(ack), nil
 	})
 	ready := make(chan struct{})
 	var readyOnce sync.Once
@@ -151,20 +153,41 @@ var errFeishuAckTimeout = errors.New("飞书事件入库超时，等待平台重
 // The write may still complete afterwards; the redelivered event is then a
 // duplicate of the same business message and is acknowledged without a second
 // interaction.
-func (f *feishuChannel) acknowledge(ctx context.Context, inbound InboundEvent, sink InboundSink) error {
+func (f *feishuChannel) acknowledge(ctx context.Context, inbound InboundEvent, sink InboundSink) (InboundAck, error) {
 	ackCtx, cancel := context.WithTimeout(ctx, f.ackTimeout)
 	defer cancel()
-	done := make(chan error, 1)
+	type result struct {
+		ack InboundAck
+		err error
+	}
+	done := make(chan result, 1)
 	go func() {
-		_, err := sink(ackCtx, inbound)
-		done <- err
+		ack, err := sink(ackCtx, inbound)
+		done <- result{ack, err}
 	}()
 	select {
-	case err := <-done:
-		return err
+	case r := <-done:
+		return r.ack, r.err
 	case <-ackCtx.Done():
-		return errFeishuAckTimeout
+		return InboundAck{}, errFeishuAckTimeout
 	}
+}
+
+// feishuCardAnswer answers a card callback: a toast, and the updated card
+// when there is one (so handled buttons disappear at once).
+func feishuCardAnswer(ack InboundAck) *callback.CardActionTriggerResponse {
+	kind, text := "info", ack.Toast
+	if text == "" {
+		text = "已收到"
+	}
+	if ack.Ignored != "" && ack.Card == nil {
+		kind = "warning"
+	}
+	resp := feishuToast(kind, text)
+	if ack.Card != nil {
+		resp.Card = &callback.Card{Type: "raw", Data: feishuCardObject(ack.Card)}
+	}
+	return resp
 }
 
 // feishuEvent maps a receive event to the channel-neutral event. Text
@@ -248,6 +271,9 @@ func feishuCardEvent(ev *callback.CardActionTriggerEvent) (InboundEvent, bool) {
 		// Draft confirmation cards carry the draft ID instead.
 		delivery, _ = ev.Event.Action.Value["af_draft"].(string)
 	}
+	if action == DraftActionSOP && strings.TrimSpace(ev.Event.Action.Option) == "" {
+		return InboundEvent{}, false
+	}
 	if !pushCardKey(action) || delivery == "" || ev.Event.Operator.OpenID == "" || ev.EventV2Base.Header.EventID == "" {
 		return InboundEvent{}, false
 	}
@@ -263,6 +289,11 @@ func feishuCardEvent(ev *callback.CardActionTriggerEvent) (InboundEvent, bool) {
 		MsgType:    "card_action",
 		Action:     action,
 		DeliveryID: delivery,
+		Option:     strings.TrimSpace(ev.Event.Action.Option),
+	}
+	if ev.Event.Context != nil {
+		// Replies to a click are threaded under the card.
+		out.Route.MessageID = ev.Event.Context.OpenMessageID
 	}
 	if out.TenantKey == "" && ev.Event.Operator.TenantKey != nil {
 		out.TenantKey = *ev.Event.Operator.TenantKey

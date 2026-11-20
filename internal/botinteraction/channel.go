@@ -59,6 +59,8 @@ type InboundEvent struct {
 	// Mentioned is set for group messages that @ the Bot (Feishu,
 	// DingTalk); other group messages are ignored.
 	Mentioned bool
+	// Option is the value picked in a card drop-down (Feishu).
+	Option string
 
 	// WeCom card callbacks.
 	Action     string
@@ -75,6 +77,10 @@ type InboundAck struct {
 	Accepted      bool
 	InteractionID string
 	Ignored       string // reason when the event was dropped as invalid
+	// Card and Toast answer a card callback: the updated card (buttons
+	// replaced by a status, or the new selection) and a short notice.
+	Card  *PushCard
+	Toast string
 }
 
 // InboundSink persists an event. A non-nil error means the event was not

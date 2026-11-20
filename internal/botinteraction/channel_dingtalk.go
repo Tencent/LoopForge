@@ -329,16 +329,24 @@ func (c *dingtalkConn) handleCallback(frame *payload.DataFrame) *payload.DataFra
 // the result follows as a private message.
 func (c *dingtalkConn) handleCardCallback(frame *payload.DataFrame) *payload.DataFrameResponse {
 	status := "已收到，处理结果会以消息发给你"
+	params := map[string]string{}
 	ev, reason := dingtalkCardEvent(c.bot, frame.Data, frame.GetMessageId())
 	if reason != "" {
 		log.Printf("dingtalk card callback ignored reason=%s", reason)
 		status = "这张卡片已失效，请到平台查看运行状态"
 	} else if err := c.acknowledge(ev); err != nil {
 		status = "暂时无法处理，请稍后再点一次"
+	} else {
+		// Taken: hide the buttons so the card cannot be clicked again.
+		status = "已提交「" + pushCardActionLabel(ev.Action) + "」，处理结果会以消息发给你"
+		for _, key := range PushCardKeys {
+			params["show_"+key] = "false"
+		}
 	}
+	params["status"] = status
 	resp := payload.NewSuccessDataFrameResponse()
 	_ = resp.SetJson(map[string]any{"response": map[string]any{
-		"cardData":          map[string]any{"cardParamMap": map[string]string{"status": status}},
+		"cardData":          map[string]any{"cardParamMap": params},
 		"cardUpdateOptions": map[string]bool{"updateCardDataByKey": true},
 	}})
 	resp.SetHeader(payload.DataFrameHeaderKMessageId, frame.GetMessageId())

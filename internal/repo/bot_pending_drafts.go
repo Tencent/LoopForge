@@ -4,6 +4,7 @@ import (
 	"agentflow/internal/domain"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"time"
 
@@ -61,12 +62,42 @@ type botPendingDraftRow struct {
 	// BodyPurgedAt: the retention cleanup removed the drafts, summary and
 	// result (stage H).
 	BodyPurgedAt *time.Time
+	// SOPOptions (JSON domain.BotDraftSOP) and SOPChoice: the SOP picked on
+	// the chat card for the draft's new requirement.
+	SOPOptions string `gorm:"type:text"`
+	SOPChoice  string `gorm:"size:191"`
 }
 
 func (botPendingDraftRow) TableName() string { return "bot_pending_drafts" }
 
 func (row botPendingDraftRow) draft() domain.BotPendingDraft {
-	return domain.BotPendingDraft{ID: row.ID, ConfigID: row.ConfigID, IdentityScope: row.IdentityScope, SenderID: row.SenderID, ProjectID: row.ProjectID, UserID: row.UserID, InteractionID: row.InteractionID, Summary: row.Summary, Drafts: row.Drafts, Status: row.Status, ExecKey: row.ExecKey, Result: row.Result, Reason: row.Reason, ExpiresAt: row.ExpiresAt, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt, ExecutedAt: row.ExecutedAt}
+	d := domain.BotPendingDraft{ID: row.ID, ConfigID: row.ConfigID, IdentityScope: row.IdentityScope, SenderID: row.SenderID, ProjectID: row.ProjectID, UserID: row.UserID, InteractionID: row.InteractionID, Summary: row.Summary, Drafts: row.Drafts, Status: row.Status, ExecKey: row.ExecKey, Result: row.Result, Reason: row.Reason, ExpiresAt: row.ExpiresAt, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt, ExecutedAt: row.ExecutedAt, Choice: row.SOPChoice}
+	if row.SOPOptions != "" {
+		var sop domain.BotDraftSOP
+		if json.Unmarshal([]byte(row.SOPOptions), &sop) == nil {
+			d.SOP = &sop
+		}
+	}
+	return d
+}
+
+// SetBotPendingDraftChoice records the SOP the requester picked on the chat
+// card. Only a pending draft of that sender and configuration, and only an
+// offered SOP, is accepted.
+func (r *AssistantRepo) SetBotPendingDraftChoice(id, configID, sender, choice string, now time.Time) (domain.BotPendingDraft, error) {
+	var row botPendingDraftRow
+	if err := r.DB.First(&row, "id = ?", id).Error; err != nil {
+		return domain.BotPendingDraft{}, err
+	}
+	d := row.draft()
+	if d.ConfigID != configID || d.SenderID != sender || d.Status != BotDraftPending || !now.Before(d.ExpiresAt) || !d.SOP.Allows(choice) {
+		return d, ErrBotDraftNotPending
+	}
+	if err := r.DB.Model(&botPendingDraftRow{}).Where("id = ? AND status = ?", id, BotDraftPending).Update("sop_choice", choice).Error; err != nil {
+		return d, err
+	}
+	d.Choice = choice
+	return d, nil
 }
 
 func botDraftHash(drafts string) string {
@@ -77,7 +108,15 @@ func botDraftHash(drafts string) string {
 // CreateBotPendingDraft freezes drafts for confirmation and returns the
 // random draft ID used in the link.
 func (r *AssistantRepo) CreateBotPendingDraft(d domain.BotPendingDraft, now time.Time) (domain.BotPendingDraft, error) {
-	row := botPendingDraftRow{ID: randomHex(16), ConfigID: d.ConfigID, IdentityScope: d.IdentityScope, SenderID: d.SenderID, ProjectID: d.ProjectID, UserID: d.UserID, InteractionID: d.InteractionID, Summary: d.Summary, Drafts: d.Drafts, ParamsHash: botDraftHash(d.Drafts), Status: BotDraftPending, ExecKey: randomHex(16), ExpiresAt: now.Add(BotDraftTTL), CreatedAt: now, UpdatedAt: now}
+	options := ""
+	if d.SOP != nil {
+		raw, err := json.Marshal(d.SOP)
+		if err != nil {
+			return domain.BotPendingDraft{}, err
+		}
+		options = string(raw)
+	}
+	row := botPendingDraftRow{SOPOptions: options, ID: randomHex(16), ConfigID: d.ConfigID, IdentityScope: d.IdentityScope, SenderID: d.SenderID, ProjectID: d.ProjectID, UserID: d.UserID, InteractionID: d.InteractionID, Summary: d.Summary, Drafts: d.Drafts, ParamsHash: botDraftHash(d.Drafts), Status: BotDraftPending, ExecKey: randomHex(16), ExpiresAt: now.Add(BotDraftTTL), CreatedAt: now, UpdatedAt: now}
 	if err := r.DB.Create(&row).Error; err != nil {
 		return domain.BotPendingDraft{}, err
 	}

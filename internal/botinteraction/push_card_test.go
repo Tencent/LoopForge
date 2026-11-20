@@ -246,7 +246,7 @@ func TestDingTalkCardCallbackFrameAnswersWithStatus(t *testing.T) {
 	}}
 	frame := &payload.DataFrame{Type: "CALLBACK", Headers: payload.DataFrameHeader{payload.DataFrameHeaderKTopic: payload.CardInstanceCallbackTopic, payload.DataFrameHeaderKMessageId: "m1"}, Data: `{"outTrackId":"d-9.k","userId":"u","corpId":"c","content":"{\"cardPrivateData\":{\"params\":{\"action\":\"pass\"}}}"}`}
 	resp := c.handleCardCallback(frame)
-	if got.Action != "pass" || got.DeliveryID != "d-9" || resp.Code != payload.DataFrameResponseStatusCodeKOK || !strings.Contains(resp.Data, "已收到") || !strings.Contains(resp.Data, "updateCardDataByKey") {
+	if got.Action != "pass" || got.DeliveryID != "d-9" || resp.Code != payload.DataFrameResponseStatusCodeKOK || !strings.Contains(resp.Data, "已提交") || !strings.Contains(resp.Data, `"show_pass":"false"`) || !strings.Contains(resp.Data, "updateCardDataByKey") {
 		t.Fatalf("event %+v resp %+v", got, resp)
 	}
 }
@@ -278,7 +278,7 @@ func TestDraftCardForReplyWithPendingDraft(t *testing.T) {
 		t.Fatalf("actions = %v", keys)
 	}
 	raw := string(feishuCardJSON(card))
-	if !strings.Contains(raw, `"af_draft":"`+d.ID+`"`) || strings.Contains(raw, "af_delivery") || !strings.Contains(raw, "在平台确认（可更换 SOP）") {
+	if !strings.Contains(raw, `"af_draft":"`+d.ID+`"`) || strings.Contains(raw, "af_delivery") || !strings.Contains(raw, "在平台确认") {
 		t.Fatalf("card json = %s", raw)
 	}
 	// A cancelled draft falls back to the text reply.
@@ -323,5 +323,78 @@ func TestFeishuReplySendsCardWhenGiven(t *testing.T) {
 	}
 	if res := conn.Reply(context.Background(), OutboundMessage{Text: "t", Route: ReplyRoute{MessageID: "om_1"}}); res.Outcome != Delivered || msgType != "text" {
 		t.Fatalf("text reply = %+v %s", res, msgType)
+	}
+}
+
+// The write-confirmation card of a draft creating one requirement carries a
+// SOP drop-down; the requester's pick is stored and shown, others are
+// refused, and a click replaces the buttons with a status and is answered
+// in the conversation the request came from (a group here).
+func TestDraftCardSOPSelectionAndGroupClick(t *testing.T) {
+	store, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	bot := domain.NotificationBot{ID: "cfg-draft-card", Channel: domain.BotChannelFeishu, BotID: "cli_d", ProjectID: "p", OwnerID: 42, Enabled: true, InteractionEnabled: true, TenantKey: "tk", TenantState: domain.BotTenantLocked}
+	if _, err := store.SaveNotificationBotChecked(bot, "secret", nil); err != nil {
+		t.Fatal(err)
+	}
+	// The request was made in a group.
+	origin := domain.BotInteraction{ID: repo.BotMessageID(bot.IdentityScope(), "om_ask"), BotID: bot.ID, SenderID: "ou_req", Content: "建个需求", ReplyRoute: "om_ask"}
+	if _, err := store.EnqueueBotInteraction(origin, "group", "oc_group"); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	sop := &domain.BotDraftSOP{Index: 0, DefaultName: "研发交付", Workflows: []domain.BotDraftSOPOption{{ID: "wf-dev", Name: "研发交付"}, {ID: "wf-fix", Name: "缺陷修复"}}}
+	draft, err := store.CreateBotPendingDraft(domain.BotPendingDraft{ConfigID: bot.ID, SenderID: "ou_req", UserID: 7, InteractionID: origin.ID, Summary: "1. 保存需求：登录优化（SOP：项目默认 · 研发交付）", Drafts: "[]", SOP: sop}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := New(store)
+	card := svc.draftCardByID(draft)
+	if card.Select == nil || card.Select.Initial != domain.BotDraftDefaultSOP || len(card.Select.Options) != 3 || card.Rows[0][1] != "1. 保存需求：登录优化" {
+		t.Fatalf("card = %+v select %+v", card, card.Select)
+	}
+	raw := string(feishuCardJSON(card))
+	if !strings.Contains(raw, `"tag":"select_static"`) || !strings.Contains(raw, `"initial_option":"__default__"`) || !strings.Contains(raw, `"af_action":"draft_sop"`) {
+		t.Fatalf("select json = %s", raw)
+	}
+	event := func(sender, action, option, id string) InboundEvent {
+		return InboundEvent{Channel: ChannelFeishu, AppID: "cli_d", TenantKey: "tk", EventID: id, MessageID: "card:" + id, SenderID: sender, ChatID: sender, ChatType: "single", MsgType: "card_action", Action: action, DeliveryID: draft.ID, Option: option, Route: ReplyRoute{MessageID: "om_card"}}
+	}
+	// Someone else cannot pick or confirm.
+	ack, err := svc.accept(context.Background(), bot, event("ou_other", DraftActionSOP, "wf-fix", "e1"))
+	if err != nil || ack.Accepted || !strings.Contains(ack.Toast, "只有发起人") {
+		t.Fatalf("other = %+v %v", ack, err)
+	}
+	// An unknown SOP is refused, a listed one is stored.
+	if ack, _ := svc.accept(context.Background(), bot, event("ou_req", DraftActionSOP, "wf-foreign", "e2")); !strings.Contains(ack.Toast, "不可选") {
+		t.Fatalf("foreign = %+v", ack)
+	}
+	ack, err = svc.accept(context.Background(), bot, event("ou_req", DraftActionSOP, "wf-fix", "e3"))
+	if err != nil || ack.Card == nil || ack.Card.Select.Initial != "wf-fix" || ack.Accepted {
+		t.Fatalf("pick = %+v %v", ack, err)
+	}
+	if stored, _ := store.BotPendingDraft(draft.ID, now); stored.Choice != "wf-fix" {
+		t.Fatalf("choice = %q", stored.Choice)
+	}
+	// Confirm: queued in the group conversation, threaded under the card,
+	// and the answer card has no buttons left.
+	ack, err = svc.accept(context.Background(), bot, event("ou_req", DraftActionConfirmStart, "", "e4"))
+	if err != nil || !ack.Accepted || ack.Card == nil || len(ack.Card.Actions) != 0 || ack.Card.Select != nil || !strings.Contains(ack.Card.Status, "确认并启动 SOP") {
+		t.Fatalf("confirm = %+v %v", ack, err)
+	}
+	item, _ := store.BotInteraction(ack.InteractionID)
+	conv, _ := store.BotConversation(item.ConversationID)
+	if conv.ChatType != "group" || conv.ChatID != "oc_group" || item.ReplyRoute != "om_card" || item.SendRoute != "" || item.Action != DraftActionConfirmStart {
+		t.Fatalf("queued = %+v in %+v", item, conv)
+	}
+	if out := string(feishuCardJSON(ack.Card)); strings.Contains(out, `"tag":"button","text":{"content":"确认执行"`) || !strings.Contains(out, `"tag":"note"`) {
+		t.Fatalf("handled card = %s", out)
+	}
+	resp := feishuCardAnswer(ack)
+	if resp.Card == nil || resp.Card.Type != "raw" || resp.Toast == nil {
+		t.Fatalf("answer = %+v", resp)
 	}
 }

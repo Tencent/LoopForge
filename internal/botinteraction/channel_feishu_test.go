@@ -301,14 +301,14 @@ func TestFeishuAckBoundedWhenPersistenceBlocks(t *testing.T) {
 	release := make(chan struct{})
 	defer close(release)
 	start := time.Now()
-	err := ch.acknowledge(context.Background(), InboundEvent{MessageID: "om_1"}, func(context.Context, InboundEvent) (InboundAck, error) {
+	_, err := ch.acknowledge(context.Background(), InboundEvent{MessageID: "om_1"}, func(context.Context, InboundEvent) (InboundAck, error) {
 		<-release
 		return InboundAck{Accepted: true}, nil
 	})
 	if !errors.Is(err, errFeishuAckTimeout) || time.Since(start) > time.Second {
 		t.Fatalf("blocked sink = %v after %s", err, time.Since(start))
 	}
-	if err := ch.acknowledge(context.Background(), InboundEvent{}, func(context.Context, InboundEvent) (InboundAck, error) { return InboundAck{}, nil }); err != nil {
+	if _, err := ch.acknowledge(context.Background(), InboundEvent{}, func(context.Context, InboundEvent) (InboundAck, error) { return InboundAck{}, nil }); err != nil {
 		t.Fatal(err)
 	}
 }

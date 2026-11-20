@@ -1,11 +1,14 @@
 package botinteraction
 
 import (
+	"agentflow/internal/credcrypt"
 	"agentflow/internal/domain"
 	"agentflow/internal/repo"
 	"context"
+	"errors"
 	"log"
 	"strings"
+	"time"
 	"unicode/utf8"
 )
 
@@ -124,17 +127,32 @@ func (s *Service) accept(ctx context.Context, connected domain.NotificationBot, 
 	return InboundAck{Accepted: inserted, InteractionID: item.ID}, nil
 }
 
-// acceptCardAction queues a Feishu or DingTalk action card click. Only the
-// recipient of the notification is placed in its conversation; anyone else
-// lands in a conversation of their own and the action is refused as expired
+// acceptCardAction handles a Feishu or DingTalk card click.
+//
+// Notification cards (approve, retry, …): only the recipient of the
+// notification is placed in its conversation; anyone else lands in a
+// conversation of their own and the action is refused as expired
 // (NotificationCardTask checks the conversation against the delivery). The
 // result goes out as a private message to the clicker.
+//
+// Write-confirmation cards (draft_*): only the requester may use them. The
+// click is queued in the conversation the request came from, so a group
+// request is answered in the group and a private one privately, threaded
+// under the card. A SOP pick is stored right away.
+//
+// The answer carries the updated card: after a click the buttons are
+// replaced by a status line, so the user sees it was taken and cannot
+// click again.
 func (s *Service) acceptCardAction(bot domain.NotificationBot, item domain.BotInteraction, ev InboundEvent) (InboundAck, error) {
 	if !pushCardKey(ev.Action) || ev.DeliveryID == "" {
 		return s.ignore(ev, "unknown_action"), nil
 	}
+	if DraftAction(ev.Action) {
+		return s.acceptDraftAction(bot, item, ev)
+	}
+	delivery, err := s.Store.NotificationDelivery(ev.DeliveryID)
 	chat := ev.SenderID
-	if delivery, err := s.Store.NotificationDelivery(ev.DeliveryID); err == nil && delivery.BotID == bot.ID && delivery.ProjectID == bot.ProjectID && delivery.TargetType == "single" && delivery.TargetID == ev.SenderID {
+	if err == nil && delivery.BotID == bot.ID && delivery.ProjectID == bot.ProjectID && delivery.TargetType == "single" && delivery.TargetID == ev.SenderID {
 		chat = delivery.TargetID
 	}
 	item.Content, item.Quote, item.ContentLength = "", "", 0
@@ -143,7 +161,75 @@ func (s *Service) acceptCardAction(bot domain.NotificationBot, item domain.BotIn
 	if err != nil {
 		return InboundAck{}, err
 	}
-	return InboundAck{Accepted: inserted, InteractionID: item.ID}, nil
+	ack := InboundAck{Accepted: inserted, InteractionID: item.ID, Toast: "已收到，处理结果会以消息发给你"}
+	if card := s.PushCardFor(delivery, delivery.Content, ""); card != nil {
+		card.Done("已提交「" + pushCardActionLabel(ev.Action) + "」，处理结果会以消息发给你")
+		ack.Card = card
+	}
+	return ack, nil
+}
+
+func pushCardActionLabel(key string) string {
+	if label := map[string]string{"approve": "通过", "retry": "重试", "reject": "返工", "pass": "手动通过", "resume": "继续", "decline": "不重试"}[key]; label != "" {
+		return label
+	}
+	return key
+}
+
+// acceptDraftAction handles the buttons and the SOP selection of a write
+// confirmation card.
+func (s *Service) acceptDraftAction(bot domain.NotificationBot, item domain.BotInteraction, ev InboundEvent) (InboundAck, error) {
+	now := time.Now().UTC()
+	draft, err := s.Store.BotPendingDraft(ev.DeliveryID, now)
+	if err != nil || draft.ConfigID != bot.ID {
+		return InboundAck{Ignored: "draft_unknown", Toast: "这张卡片已失效，请重新发起"}, nil
+	}
+	if draft.SenderID != ev.SenderID {
+		return InboundAck{Ignored: "not_requester", Toast: "只有发起人可以确认这份操作"}, nil
+	}
+	if draft.Status != repo.BotDraftPending {
+		return InboundAck{Ignored: "draft_settled", Toast: draftStatusLine(draft), Card: s.draftCardByID(draft)}, nil
+	}
+	if ev.Action == DraftActionSOP {
+		picked, err := s.Store.SetBotPendingDraftChoice(draft.ID, bot.ID, ev.SenderID, strings.TrimSpace(ev.Option), now)
+		if errors.Is(err, repo.ErrBotDraftNotPending) {
+			return InboundAck{Ignored: "sop_refused", Toast: "这个 SOP 不可选", Card: s.draftCardByID(draft)}, nil
+		}
+		if err != nil {
+			return InboundAck{}, err
+		}
+		return InboundAck{Toast: "已选择 SOP", Card: s.draftCardByID(picked)}, nil
+	}
+	// Answer where the request was made: its conversation, threaded under
+	// the card (or the request when the card's message is unknown).
+	kind, chat := "single", ev.SenderID
+	route := ev.Route.MessageID
+	if origin, err := s.Store.BotInteraction(draft.InteractionID); err == nil {
+		if conv, err := s.Store.BotConversation(origin.ConversationID); err == nil && conv.BotID == bot.ID {
+			kind, chat = conv.ChatType, conv.ChatID
+		}
+		if route == "" {
+			route = origin.ReplyRoute
+		}
+	}
+	item.Content, item.Quote, item.ContentLength = "", "", 0
+	if credcrypt.IsSealed(route) {
+		// A sealed session webhook belongs to the original interaction.
+		route = ""
+	}
+	item.ReplyRoute = route
+	if route == "" {
+		item.SendRoute = repo.BotSendRoutePush
+		kind, chat = "single", ev.SenderID
+	}
+	inserted, err := s.Store.EnqueueBotInteraction(item, kind, chat)
+	if err != nil {
+		return InboundAck{}, err
+	}
+	status := map[string]string{DraftActionConfirm: "已提交「确认执行」，正在执行，结果会回复在会话里", DraftActionConfirmStart: "已提交「确认并启动 SOP」，正在执行，结果会回复在会话里", DraftActionCancel: "已取消，没有执行"}[ev.Action]
+	card := s.draftCardByID(draft)
+	card.Done(status)
+	return InboundAck{Accepted: inserted, InteractionID: item.ID, Toast: "已收到", Card: card}, nil
 }
 
 // tenantGate enforces the enterprise scope of new channels. A locked scope

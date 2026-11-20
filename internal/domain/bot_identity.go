@@ -62,4 +62,55 @@ type BotPendingDraft struct {
 	CreatedAt     time.Time  `json:"createdAt"`
 	UpdatedAt     time.Time  `json:"updatedAt"`
 	ExecutedAt    *time.Time `json:"executedAt,omitempty"`
+	// SOP is the SOP choice offered on the chat card when the draft
+	// creates exactly one requirement (nil otherwise); Choice is what the
+	// requester picked there: a workflow ID, BotDraftDefaultSOP, or empty
+	// when nothing was picked.
+	SOP    *BotDraftSOP `json:"-"`
+	Choice string       `json:"-"`
+}
+
+// BotDraftDefaultSOP is the card choice "project default SOP".
+const BotDraftDefaultSOP = "__default__"
+
+// BotDraftSOP is the SOP selection of a new requirement in a draft.
+type BotDraftSOP struct {
+	Index       int                 `json:"index"`
+	WorkflowID  string              `json:"workflowId,omitempty"` // named by the model
+	DefaultName string              `json:"defaultName"`
+	Workflows   []BotDraftSOPOption `json:"workflows"`
+}
+
+// BotDraftSOPOption is one selectable SOP.
+type BotDraftSOPOption struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+// Allows reports whether id may be chosen (the default always may).
+func (s *BotDraftSOP) Allows(id string) bool {
+	if s == nil {
+		return false
+	}
+	if id == BotDraftDefaultSOP {
+		return true
+	}
+	for _, w := range s.Workflows {
+		if w.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
+// Selected is the effective card selection: the pick, else the SOP the
+// model named, else the project default.
+func (d BotPendingDraft) Selected() string {
+	switch {
+	case d.Choice != "":
+		return d.Choice
+	case d.SOP != nil && d.SOP.WorkflowID != "":
+		return d.SOP.WorkflowID
+	}
+	return BotDraftDefaultSOP
 }

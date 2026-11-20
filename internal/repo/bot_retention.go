@@ -136,7 +136,7 @@ func (s *Store) PurgeBotRetention(ctx context.Context, now time.Time, policy Bot
 			var ids []string
 			return ids, db.Model(&botPendingDraftRow{}).Where("status IN ? AND updated_at < ? AND body_purged_at IS NULL", botDraftTerminal, cut).Order("updated_at").Limit(limit).Pluck("id", &ids).Error
 		}, func(ids []string) (int64, error) {
-			res := db.Model(&botPendingDraftRow{}).Where("id IN ? AND status IN ? AND updated_at < ? AND body_purged_at IS NULL", ids, botDraftTerminal, cut).UpdateColumns(map[string]any{"drafts": "", "summary": "", "result": "", "body_purged_at": now})
+			res := db.Model(&botPendingDraftRow{}).Where("id IN ? AND status IN ? AND updated_at < ? AND body_purged_at IS NULL", ids, botDraftTerminal, cut).UpdateColumns(map[string]any{"drafts": "", "summary": "", "result": "", "sop_options": "", "body_purged_at": now})
 			return res.RowsAffected, res.Error
 		})
 	}

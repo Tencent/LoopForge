@@ -470,3 +470,45 @@ func TestBotDraftDefaultSOPOption(t *testing.T) {
 	}
 	t.Fatal("requirement not created")
 }
+
+// The SOP picked on the chat card is offered from the project's SOPs, used
+// by the card's confirm button and preselected on the platform page.
+func TestFeishuDraftCardUsesPickedSOP(t *testing.T) {
+	s, h, bot, ask, _ := confirmModeFixtureFor(t, domain.BotChannelFeishu)
+	member, _ := s.User(43)
+	if err := s.PutAgent(domain.AgentDefinition{ID: "dev-agent", Name: "开发"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, wf := range []domain.WorkflowDefinition{
+		{ID: "wf-dev", Name: "研发交付", ProjectID: "p", Status: "published", Nodes: []domain.WorkflowNode{{ID: "n1", Name: "开发", Type: "agent", AgentID: "dev-agent"}}},
+		{ID: "wf-fix", Name: "缺陷修复", ProjectID: "p", Status: "published", Nodes: []domain.WorkflowNode{{ID: "n1", Name: "修复", Type: "agent", AgentID: "dev-agent"}}},
+	} {
+		if err := s.PutWorkflow(wf); err != nil {
+			t.Fatal(err)
+		}
+	}
+	project, _ := s.Project("p")
+	project.WorkflowID = "wf-dev"
+	s.PutProject(project)
+	id := ask()
+	draft, _ := s.BotPendingDraft(id, time.Now().UTC())
+	if draft.SOP == nil || draft.SOP.DefaultName != "研发交付" || !draft.SOP.Allows("wf-fix") || draft.SOP.Allows("wf-other") {
+		t.Fatalf("sop options = %+v", draft.SOP)
+	}
+	if _, err := s.SetBotPendingDraftChoice(id, bot.ID, "new-wecom-user", "wf-fix", time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	_, view := draftCall(t, h, member, "GET", "/api/bot-drafts/"+id, false)
+	if issue := view["newIssues"].([]any)[0].(map[string]any); issue["workflowId"] != "wf-fix" {
+		t.Fatalf("page does not start from the card pick: %v", issue)
+	}
+	reply, err := h.handleBotCardAction(context.Background(), bot, domain.BotInteraction{SenderID: "new-wecom-user", Action: botinteraction.DraftActionConfirmStart, DeliveryID: id}, domain.BotConversation{})
+	if err != nil || !strings.Contains(reply, "已启动：缺陷修复") {
+		t.Fatalf("confirm = %q %v", reply, err)
+	}
+	for _, issue := range s.Issues() {
+		if strings.HasPrefix(issue.Title, "网页确认的需求") && issue.WorkflowID != "wf-fix" {
+			t.Fatalf("bound to %s", issue.WorkflowID)
+		}
+	}
+}

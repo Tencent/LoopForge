@@ -156,7 +156,19 @@ func (h *assistantHandlers) confirmBotDrafts(ctx context.Context, bot domain.Not
 		lines = append(lines, line)
 	}
 	summary := strings.Join(lines, "\n")
-	saved, err := h.repo.CreateBotPendingDraft(domain.BotPendingDraft{ConfigID: bot.ID, IdentityScope: bot.IdentityScope(), SenderID: item.SenderID, ProjectID: bot.ProjectID, UserID: user.ID, InteractionID: item.ID, Summary: summary, Drafts: string(raw)}, time.Now().UTC())
+	pending := domain.BotPendingDraft{ConfigID: bot.ID, IdentityScope: bot.IdentityScope(), SenderID: item.SenderID, ProjectID: bot.ProjectID, UserID: user.ID, InteractionID: item.ID, Summary: summary, Drafts: string(raw)}
+	if issues := h.botDraftNewIssues(bot.ProjectID, drafts); len(issues) == 1 {
+		// One new requirement: the chat card offers its SOP as a selection.
+		sop := &domain.BotDraftSOP{Index: issues[0].Index, WorkflowID: issues[0].WorkflowID, DefaultName: issues[0].DefaultWorkflowName}
+		for _, wf := range h.botDraftWorkflows(bot.ProjectID, issues[0].WorkflowID) {
+			if len(sop.Workflows) == botDraftCardSOPLimit {
+				break
+			}
+			sop.Workflows = append(sop.Workflows, domain.BotDraftSOPOption{ID: wf.ID, Name: wf.Name})
+		}
+		pending.SOP = sop
+	}
+	saved, err := h.repo.CreateBotPendingDraft(pending, time.Now().UTC())
 	if err != nil {
 		return "\n\n操作草稿无法保存，没有执行。请稍后重试或到平台页面完成。"
 	}
@@ -171,6 +183,23 @@ func (h *assistantHandlers) confirmBotDrafts(ctx context.Context, bot domain.Not
 		return head + "\n在平台确认这些操作：\n" + link
 	}
 	return head + "\n[在平台确认这些操作](" + link + ")"
+}
+
+// botDraftCardSOPLimit caps the SOPs listed in a chat card selection; the
+// platform page lists all of them.
+const botDraftCardSOPLimit = 60
+
+// botDraftCardChoices turns the SOP picked on the chat card into the
+// confirmation choices; nil when nothing was picked there.
+func botDraftCardChoices(d domain.BotPendingDraft, start bool) []botDraftChoice {
+	if d.SOP == nil || d.Choice == "" {
+		return nil
+	}
+	wf := d.Choice
+	if wf == domain.BotDraftDefaultSOP {
+		wf = ""
+	}
+	return []botDraftChoice{{Index: d.SOP.Index, WorkflowID: wf, Start: start}}
 }
 
 type botDraftView struct {
@@ -331,6 +360,14 @@ func (h *assistantHandlers) botDraftView(d domain.BotPendingDraft) botDraftView 
 		var drafts []assistantDraft
 		if json.Unmarshal([]byte(d.Drafts), &drafts) == nil {
 			view.NewIssues = h.botDraftNewIssues(d.ProjectID, drafts)
+			// Start from the SOP already picked on the chat card.
+			for _, choice := range botDraftCardChoices(d, false) {
+				for i := range view.NewIssues {
+					if view.NewIssues[i].Index == choice.Index {
+						view.NewIssues[i].WorkflowID = choice.WorkflowID
+					}
+				}
+			}
 			if len(view.NewIssues) > 0 {
 				ids := make([]string, 0, len(view.NewIssues))
 				for _, issue := range view.NewIssues {
@@ -548,7 +585,7 @@ func (h *assistantHandlers) botDraftCardAction(ctx context.Context, bot domain.N
 		return "已取消，这些操作不会执行。", nil
 	}
 	startAll := item.Action == botinteraction.DraftActionConfirmStart
-	current, invalid, err := h.executeBotDraft(ctx, user, draft, nil, &startAll)
+	current, invalid, err := h.executeBotDraft(ctx, user, draft, botDraftCardChoices(draft, startAll), &startAll)
 	if err != nil {
 		return "", err
 	}
