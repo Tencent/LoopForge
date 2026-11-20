@@ -214,7 +214,7 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 			}
 		}
 	}
-	if err := h.prepareWorkbenchContext(c, &req, user); err != nil {
+	if err := h.authorizeWorkbenchTurn(c, &req, user.ID); err != nil {
 		c.JSON(400, gin.H{"error": err.Error()})
 		return
 	}
@@ -248,6 +248,10 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 			c.JSON(409, gin.H{"error": "此会话正在后台生成"})
 			return
 		}
+	}
+	if err := h.buildWorkbenchContext(c, &req, user); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
 	}
 	streaming := sink != nil || strings.Contains(strings.ToLower(c.GetHeader("Accept")), "text/event-stream")
 	approvalMode := assistantRequestApprovalMode(req)

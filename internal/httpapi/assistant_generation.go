@@ -118,7 +118,7 @@ func (h *assistantHandlers) startGeneration(c *gin.Context) {
 			}
 		}
 	}
-	if err := h.prepareWorkbenchContext(c, &req, user); err != nil {
+	if err := h.authorizeWorkbenchTurn(c, &req, user.ID); err != nil {
 		c.JSON(403, gin.H{"error": err.Error()})
 		return
 	}
@@ -145,6 +145,10 @@ func (h *assistantHandlers) startGeneration(c *gin.Context) {
 	executor := h.forkExecutor(c, old, user.ID)
 	if refusal := assistantEngineSwitchRefusal(assistantConversationEngine(req.Messages, executor), req.Model); refusal != "" {
 		c.JSON(409, gin.H{"error": refusal})
+		return
+	}
+	if err := h.buildWorkbenchContext(c, &req, user); err != nil {
+		c.JSON(403, gin.H{"error": err.Error()})
 		return
 	}
 	freshCLI := old.ID != "" && assistantConversationEngine(old.Messages, executor) != cliEngine

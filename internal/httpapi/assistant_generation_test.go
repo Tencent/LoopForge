@@ -211,11 +211,11 @@ func TestAssistantComposerModelRefusesCatalogSubstitution(t *testing.T) {
 	h.generate = func(context.Context, string, domain.User) (string, error) {
 		return `{"message":"回复","drafts":[]}`, nil
 	}
-	send := func(id, model string, exact bool, handler func(*gin.Context)) *httptest.ResponseRecorder {
+	send := func(id, model string, exact bool, handler func(*gin.Context), refs ...domain.AssistantReference) *httptest.ResponseRecorder {
 		t.Helper()
 		body, err := json.Marshal(assistantRequest{
 			SessionID: id, ProjectID: "workbench", Model: model, RequireExactModel: exact,
-			Messages: []assistantMessage{{Role: "user", Content: "继续"}},
+			Messages: []assistantMessage{{Role: "user", Content: "继续", References: refs}},
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -224,13 +224,25 @@ func TestAssistantComposerModelRefusesCatalogSubstitution(t *testing.T) {
 		handler(c)
 		return rec
 	}
+	const explicitID = "explicit-model"
+	issue := domain.Issue{ID: "model-issue", ProjectID: "workbench", Title: "待讨论需求"}
+	if err := h.repo.PutIssue(issue); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.repo.PutAssistantSession(user.ID, domain.AssistantSession{ID: explicitID, ProjectID: issue.ProjectID}); err != nil {
+		t.Fatal(err)
+	}
+	ref := domain.AssistantReference{Type: "issue", ID: issue.ID, Name: issue.Title, ProjectID: issue.ProjectID}
 	for _, handler := range []func(*gin.Context){h.startGeneration, h.chat} {
-		rec := send("explicit-model", "retired-model", true, handler)
+		rec := send(explicitID, "retired-model", true, handler, ref)
 		if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "请重新选择模型") {
 			t.Fatal("the explicit model was silently replaced", rec.Code, rec.Body.String())
 		}
+		if saved, _ := h.repo.AssistantSession(user.ID, explicitID); saved.IssueID != "" {
+			t.Fatal("the rejected send changed the conversation's linked issue", saved.IssueID)
+		}
 	}
-	if _, ok := h.repo.AssistantGeneration(user.ID, "explicit-model"); ok {
+	if _, ok := h.repo.AssistantGeneration(user.ID, explicitID); ok {
 		t.Fatal("the unavailable model admitted a generation")
 	}
 	for _, tc := range []struct {
