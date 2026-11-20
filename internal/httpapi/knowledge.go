@@ -183,7 +183,7 @@ func (h *knowledgeHandlers) requireKnowledgeWriter(c *gin.Context) (string, bool
 
 // 路由: g.GET("/api/knowledge/models", h.models)
 func (h *knowledgeHandlers) models(c *gin.Context) {
-	list, err := h.svc.WeKnoraModels(c.Request.Context())
+	list, err := h.svc.WeKnoraModels(c.Request.Context(), c.Query("connectionId"))
 	render(c, list, err)
 }
 

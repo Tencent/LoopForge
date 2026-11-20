@@ -21,7 +21,7 @@ else:
  print('Created .env with unique local secrets')
 if os.environ.get('LOOPFORGE_WITH_WEKNORA')=='1':
  cur=p.read_text()
- wk={'LOOPFORGE_WITH_WEKNORA':'1','WEKNORA_DB_USER':'weknora','WEKNORA_DB_NAME':'weknora','WEKNORA_DB_PASSWORD':secrets.token_hex(24),'WEKNORA_REDIS_PASSWORD':secrets.token_hex(24),'WEKNORA_SYSTEM_AES_KEY':secrets.token_hex(16),'WEKNORA_JWT_SECRET':secrets.token_hex(32)}
+ wk={'LOOPFORGE_WITH_WEKNORA':'1','WEKNORA_DB_USER':'weknora','WEKNORA_DB_NAME':'weknora','WEKNORA_DB_PASSWORD':secrets.token_hex(24),'WEKNORA_REDIS_PASSWORD':secrets.token_hex(24),'WEKNORA_SYSTEM_AES_KEY':secrets.token_hex(16),'WEKNORA_JWT_SECRET':secrets.token_hex(32),'LOOPFORGE_WEKNORA_ADMIN_PASSWORD':'Lf!'+secrets.token_hex(12)}
  added=[]
  for k,v in wk.items():
   if f'{k}=' not in cur:

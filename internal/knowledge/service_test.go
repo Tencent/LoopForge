@@ -13,13 +13,15 @@ import (
 )
 
 type fakeStore struct {
-	settings    domain.KnowledgeSettings
-	submissions map[string]domain.KnowledgeSubmission
-	artifacts   map[string]domain.Artifact
-	runs        map[string]domain.Run
-	agents      []domain.AgentDefinition
-	workflows   []domain.WorkflowDefinition
-	candidates  []domain.KnowledgeCandidate
+	settings        domain.KnowledgeSettings
+	submissions     map[string]domain.KnowledgeSubmission
+	artifacts       map[string]domain.Artifact
+	runs            map[string]domain.Run
+	agents          []domain.AgentDefinition
+	workflows       []domain.WorkflowDefinition
+	candidates      []domain.KnowledgeCandidate
+	deletedConnToks []string
+	managedPass     string
 }
 
 func newFakeStore() *fakeStore {
@@ -29,6 +31,15 @@ func newFakeStore() *fakeStore {
 func (f *fakeStore) KnowledgeSettings() domain.KnowledgeSettings { return f.settings }
 func (f *fakeStore) PutKnowledgeSettings(s domain.KnowledgeSettings) error {
 	f.settings = s
+	return nil
+}
+func (f *fakeStore) DeleteKnowledgeConnectionToken(connID string) error {
+	f.deletedConnToks = append(f.deletedConnToks, connID)
+	return nil
+}
+func (f *fakeStore) ManagedWeKnoraAdminPassword() string { return f.managedPass }
+func (f *fakeStore) PutManagedWeKnoraAdminPassword(p string) error {
+	f.managedPass = p
 	return nil
 }
 func (f *fakeStore) KnowledgeSubmissions(projectID, status string, limit int) []domain.KnowledgeSubmission {

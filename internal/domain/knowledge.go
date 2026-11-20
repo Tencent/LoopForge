@@ -60,6 +60,17 @@ type KnowledgeSettings struct {
 
 // EffectiveProvider returns the normalized provider name, defaulting to
 // lightcloud for backward compatibility with existing stored settings.
+func (c KnowledgeConnection) EffectiveProvider() string {
+	switch strings.ToLower(strings.TrimSpace(c.Provider)) {
+	case KnowledgeProviderWeKnora:
+		return KnowledgeProviderWeKnora
+	default:
+		return KnowledgeProviderLightCloud
+	}
+}
+
+// EffectiveProvider returns the normalized provider name, defaulting to
+// lightcloud for backward compatibility with existing stored settings.
 func (s KnowledgeSettings) EffectiveProvider() string {
 	switch strings.ToLower(strings.TrimSpace(s.Provider)) {
 	case KnowledgeProviderWeKnora:
@@ -85,7 +96,9 @@ func (s KnowledgeSettings) Public() KnowledgeSettings {
 }
 
 // ActiveConnections returns all enabled connections with valid URL and Token.
-// If Connections is empty, it falls back to the primary URL/Token fields.
+// When Connections is non-empty, it returns only enabled connections (even if
+// empty, so disabling all connections makes Ready() == false) and never falls
+// back to legacy top-level URL/Token fields.
 func (s KnowledgeSettings) ActiveConnections() []KnowledgeConnection {
 	if !s.Enabled {
 		return nil
@@ -97,9 +110,7 @@ func (s KnowledgeSettings) ActiveConnections() []KnowledgeConnection {
 				out = append(out, c)
 			}
 		}
-		if len(out) > 0 {
-			return out
-		}
+		return out
 	}
 	if strings.TrimSpace(s.URL) != "" && strings.TrimSpace(s.Token) != "" {
 		return []KnowledgeConnection{{

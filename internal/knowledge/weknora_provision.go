@@ -63,7 +63,19 @@ func (s *Service) ProvisionWeKnora(ctx context.Context, input WeKnoraProvisionIn
 			return WeKnoraProvisionResult{}, apperr.New(apperr.Upstream, err.Error())
 		}
 		email := firstNonEmpty(strings.TrimSpace(input.Email), "admin@loopforge.local")
-		password := firstNonEmpty(strings.TrimSpace(input.Password), "LoopForge@2026!")
+		password := strings.TrimSpace(input.Password)
+		if password == "" {
+			password = strings.TrimSpace(os.Getenv("LOOPFORGE_WEKNORA_ADMIN_PASSWORD"))
+		}
+		if password == "" {
+			password = strings.TrimSpace(s.store.ManagedWeKnoraAdminPassword())
+		}
+		if password == "" {
+			password = generateManagedWeKnoraPassword()
+			if err := s.store.PutManagedWeKnoraAdminPassword(password); err != nil {
+				return WeKnoraProvisionResult{}, err
+			}
+		}
 		key, err := BootstrapWeKnoraAPIKey(ctx, baseURL, email, password, "loopforge")
 		if err != nil {
 			return WeKnoraProvisionResult{}, apperr.New(apperr.Upstream, "自动初始化 WeKnora API Key 失败："+err.Error())
@@ -115,11 +127,13 @@ func (s *Service) ProvisionWeKnora(ctx context.Context, input WeKnoraProvisionIn
 
 	current := s.store.KnowledgeSettings()
 	conns := make([]domain.KnowledgeConnection, 0, len(current.Connections)+1)
+	migratedLegacyConnID := ""
 	if len(current.Connections) > 0 {
 		conns = append(conns, current.Connections...)
 	} else if strings.TrimSpace(current.URL) != "" && strings.TrimSpace(current.Token) != "" {
+		migratedLegacyConnID = "conn-" + randomHex(4)
 		conns = append(conns, domain.KnowledgeConnection{
-			ID:       "conn-" + randomHex(4),
+			ID:       migratedLegacyConnID,
 			Name:     firstNonEmpty(current.URL, "默认连接"),
 			Provider: current.EffectiveProvider(),
 			URL:      current.URL,
@@ -151,6 +165,13 @@ func (s *Service) ProvisionWeKnora(ctx context.Context, input WeKnoraProvisionIn
 		})
 	}
 
+	defaultSources := current.DefaultSources
+	projectSources := current.ProjectSources
+	if migratedLegacyConnID != "" {
+		defaultSources = prefixBareSources(defaultSources, migratedLegacyConnID)
+		projectSources = prefixBareProjectSources(projectSources, migratedLegacyConnID)
+	}
+
 	next := domain.KnowledgeSettings{
 		Provider:       domain.KnowledgeProviderWeKnora,
 		Enabled:        true,
@@ -158,12 +179,15 @@ func (s *Service) ProvisionWeKnora(ctx context.Context, input WeKnoraProvisionIn
 		URL:            conns[0].URL,
 		Token:          conns[0].Token,
 		Connections:    conns,
-		DefaultSources: current.DefaultSources,
-		ProjectSources: current.ProjectSources,
+		DefaultSources: defaultSources,
+		ProjectSources: projectSources,
 		UpdatedBy:      actor,
 	}
 	if err := s.store.PutKnowledgeSettings(next); err != nil {
 		return WeKnoraProvisionResult{}, err
+	}
+	if migratedLegacyConnID != "" {
+		s.migrateLegacySubmissionSources(migratedLegacyConnID)
 	}
 	saved := s.store.KnowledgeSettings()
 	return WeKnoraProvisionResult{
@@ -197,26 +221,38 @@ func (s *Service) DeleteConnection(connID, actor string) (domain.KnowledgeSettin
 	if err := s.store.PutKnowledgeSettings(current); err != nil {
 		return current, err
 	}
+	if err := s.store.DeleteKnowledgeConnectionToken(connID); err != nil {
+		return current, err
+	}
 	return s.store.KnowledgeSettings(), nil
 }
 
-// EncodeScopedSourceID namespaces a KB/document ID with its connection ID when
-// multiple connections are configured.
-func EncodeScopedSourceID(settings domain.KnowledgeSettings, connID, rawID string) string {
-	conns := settings.ActiveConnections()
-	if len(conns) <= 1 || connID == "" || connID == "default" {
+// EncodeScopedSourceID namespaces a KB/document ID with its connection ID.
+// It always prefixes with connID:: unless connID is empty or "default", and is
+// idempotent if rawID already carries the same prefix.
+func EncodeScopedSourceID(_ domain.KnowledgeSettings, connID, rawID string) string {
+	rawID = strings.TrimSpace(rawID)
+	connID = strings.TrimSpace(connID)
+	if rawID == "" || connID == "" || connID == "default" {
 		return rawID
 	}
-	return connID + "::" + rawID
+	prefix := connID + "::"
+	if strings.HasPrefix(rawID, prefix) {
+		return rawID
+	}
+	return prefix + rawID
 }
 
 // DecodeScopedSourceID extracts the target connection and raw KB/document ID.
+// Prefixed IDs must match an active connection by ID; bare IDs are only valid
+// in pure legacy single-connection mode (len(settings.Connections) == 0).
 func DecodeScopedSourceID(settings domain.KnowledgeSettings, scopedID string) (domain.KnowledgeConnection, string, bool) {
 	conns := settings.ActiveConnections()
 	if len(conns) == 0 {
 		return domain.KnowledgeConnection{}, scopedID, false
 	}
-	if connID, raw, ok := strings.Cut(strings.TrimSpace(scopedID), "::"); ok {
+	trimmed := strings.TrimSpace(scopedID)
+	if connID, raw, ok := strings.Cut(trimmed, "::"); ok {
 		for _, c := range conns {
 			if c.ID == connID {
 				return c, raw, true
@@ -224,7 +260,57 @@ func DecodeScopedSourceID(settings domain.KnowledgeSettings, scopedID string) (d
 		}
 		return domain.KnowledgeConnection{}, raw, false
 	}
-	return conns[0], strings.TrimSpace(scopedID), true
+	if len(settings.Connections) > 0 {
+		return domain.KnowledgeConnection{}, trimmed, false
+	}
+	return conns[0], trimmed, true
+}
+
+func prefixBareSources(sources []string, connID string) []string {
+	if len(sources) == 0 {
+		return sources
+	}
+	out := make([]string, len(sources))
+	for i, src := range sources {
+		trimmed := strings.TrimSpace(src)
+		if trimmed != "" && !strings.Contains(trimmed, "::") {
+			out[i] = connID + "::" + trimmed
+		} else {
+			out[i] = trimmed
+		}
+	}
+	return out
+}
+
+func prefixBareProjectSources(m map[string][]string, connID string) map[string][]string {
+	if len(m) == 0 {
+		return m
+	}
+	out := make(map[string][]string, len(m))
+	for k, v := range m {
+		out[k] = prefixBareSources(v, connID)
+	}
+	return out
+}
+
+func (s *Service) migrateLegacySubmissionSources(connID string) {
+	for _, status := range []string{domain.KnowledgeSubmissionPending, domain.KnowledgeSubmissionRejected} {
+		subs := s.store.KnowledgeSubmissions("", status, 500)
+		for _, sub := range subs {
+			src := strings.TrimSpace(sub.Source)
+			if src == "" || strings.Contains(src, "::") {
+				continue
+			}
+			if full, ok := s.store.KnowledgeSubmission(sub.ID); ok {
+				full.Source = connID + "::" + strings.TrimSpace(full.Source)
+				_ = s.store.PutKnowledgeSubmission(full)
+			}
+		}
+	}
+}
+
+func generateManagedWeKnoraPassword() string {
+	return "Lf!" + randomHex(12)
 }
 
 func settingsForConnection(base domain.KnowledgeSettings, conn domain.KnowledgeConnection) domain.KnowledgeSettings {

@@ -12,7 +12,10 @@ import (
 	"gorm.io/gorm/clause"
 )
 
-const knowledgeSettingsID = "default"
+const (
+	knowledgeSettingsID         = "default"
+	knowledgeManagedBootstrapID = "kbbootstrap:managed"
+)
 
 // KnowledgeRepo owns the upstream knowledge base connection and the review
 // queue of distilled documents waiting to be written back.
@@ -94,6 +97,36 @@ func (r *KnowledgeRepo) PutKnowledgeSettings(settings domain.KnowledgeSettings) 
 		}
 	}
 	return nil
+}
+
+// DeleteKnowledgeConnectionToken removes the stored token row for a deleted connection.
+func (r *KnowledgeRepo) DeleteKnowledgeConnectionToken(connID string) error {
+	connID = strings.TrimSpace(connID)
+	if connID == "" {
+		return nil
+	}
+	return r.DB.Where("id = ?", "kbconn:"+connID).Delete(&knowledgeSettingsRow{}).Error
+}
+
+// ManagedWeKnoraAdminPassword returns the internally generated admin password
+// for managed WeKnora instances, if one has been persisted.
+func (r *KnowledgeRepo) ManagedWeKnoraAdminPassword() string {
+	var row knowledgeSettingsRow
+	if err := r.DB.Where("id = ?", knowledgeManagedBootstrapID).Take(&row).Error; err != nil || row.Token == nil {
+		return ""
+	}
+	return *row.Token
+}
+
+// PutManagedWeKnoraAdminPassword persists the internally generated admin password
+// for managed WeKnora instances without exposing it via KnowledgeSettings().
+func (r *KnowledgeRepo) PutManagedWeKnoraAdminPassword(password string) error {
+	now := time.Now().UTC()
+	row := knowledgeSettingsRow{ID: knowledgeManagedBootstrapID, Token: &password, Updated: &now}
+	return r.DB.Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "id"}},
+		DoUpdates: clause.AssignmentColumns([]string{"token", "updated_at"}),
+	}).Create(&row).Error
 }
 
 // KnowledgeSubmissions lists submissions newest first. Empty filters match

@@ -88,6 +88,7 @@ type WeKnoraModel struct {
 }
 
 type WeKnoraCreateKBInput struct {
+	ConnectionID     string `json:"connectionId,omitempty"`
 	Name             string `json:"name"`
 	Description      string `json:"description"`
 	EmbeddingModelID string `json:"embedding_model_id"`
