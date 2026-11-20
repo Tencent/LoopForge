@@ -99,14 +99,15 @@ func sshHostKeys(ctx context.Context, remotes []SSHRemote) ([]byte, error) {
 	builtin := matchingSSHKnownHosts([]byte(builtinKnownHosts), endpoints)
 	var pinned, bundled []byte
 	for _, endpoint := range slices.Sorted(maps.Keys(endpoints)) {
+		platformPins := platform[endpoint]
 		localPins, defaults := local[endpoint], builtin[endpoint]
-		// Platform entries take precedence for trusted keys at their exact
-		// endpoint. Revocations from both configurations always apply.
+		// Use platform trust when supplied for this endpoint. Revocations from
+		// both configurations apply regardless of the source of the trusted keys.
 		pinned = append(pinned, localPins.revocations...)
-		keys := localPins.keys
-		if platformPins, ok := platform[endpoint]; ok {
-			pinned = append(pinned, platformPins.revocations...)
-			keys = platformPins.keys
+		pinned = append(pinned, platformPins.revocations...)
+		keys := platformPins.keys
+		if len(keys) == 0 {
+			keys = localPins.keys
 		}
 		if len(keys) == 0 && len(defaults.keys) == 0 {
 			return nil, fmt.Errorf("SSH 主机 %s 未获信任：平台只内置了 github.com 的公钥，其他主机请管理员在 %s 中添加并核对该主机和端口的公钥", endpoint, SSHKnownHostsEnv)
