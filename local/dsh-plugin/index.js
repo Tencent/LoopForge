@@ -3,7 +3,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 
 export const name = 'loopforge-dsh'
-export const inject = ['commands', 'tools']
+export const inject = ['commands', 'tools', 'workingDirectory']
 
 const SKILL_ROOT = '.dsh/skills/devflow'
 const WORKFLOW = 'scripts/workflow_state.py'
@@ -11,19 +11,14 @@ const SAFE_SLUG = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/u
 const APPROVAL_STAGES = new Set(['REQUIREMENT', 'DESIGN', 'REVIEW', 'TEST'])
 const MAX_RESULT_FILES = 40
 
-function cwdOf(owner) {
-  const agent = owner?.agent
-  const session = agent?.session
-  const service = agent?.ctx?.workingDirectory
-    ?? agent?.ctx?.get?.('workingDirectory')
-    ?? owner?.ctx?.workingDirectory
-    ?? owner?.ctx?.get?.('workingDirectory')
-  const candidate = typeof service?.get === 'function' && session
-    ? service.get(session)
-    : session?.header?.cwd
-    ?? process.env.DSH_PROJECT_ROOT
-    ?? process.cwd()
-  return resolve(candidate)
+async function cwdOf(ctx, invocation) {
+  const service = ctx.workingDirectory
+  const agent = invocation?.agent
+  if (agent && typeof service?.ensure === 'function') {
+    const directory = await service.ensure(agent)
+    if (directory) return resolve(directory)
+  }
+  return resolve(process.env.DSH_PROJECT_ROOT ?? service?.defaultDirectory ?? process.cwd())
 }
 
 function run(argv, cwd, signal) {
@@ -128,11 +123,11 @@ function parseInput(rawInput) {
 }
 
 async function handle(invocation, ctx) {
-  const cwd = cwdOf(invocation)
   const { command, value } = parseInput(invocation.rawInput)
   if (command === 'help') {
     return { kind: 'success', text: 'Usage: /loopforge start <request> | status [slug] | result [slug] | approve [stage] | help' }
   }
+  const cwd = await cwdOf(ctx, invocation)
   if (command === 'status') return { kind: 'success', text: renderState(readState(cwd, value || undefined)) }
   if (command === 'result') {
     const record = readState(cwd, value || undefined)
@@ -214,7 +209,7 @@ export function apply(ctx) {
       render: (_args, value) => [{ type: 'text', text: JSON.stringify(value) }],
     },
     execute: async (args, exec) => {
-      const record = readState(cwdOf(exec), args?.slug)
+      const record = readState(await cwdOf(ctx, exec), args?.slug)
       if (!record) return { found: false }
       return {
         found: true,
