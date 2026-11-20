@@ -8,6 +8,28 @@ import (
 	"time"
 )
 
+func TestActiveInsightSourceChecksExpiryAcrossTimeZones(t *testing.T) {
+	s, err := OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(s.Close)
+
+	expires := time.Date(2026, 11, 15, 19, 0, 0, 0, time.FixedZone("UTC-05", -5*60*60))
+	source := domain.InsightSource{ID: "offset-source", ExpiresAt: expires}
+	if err := s.CreateInsightSource(source, "offset-hash"); err != nil {
+		t.Fatal(err)
+	}
+	east := time.FixedZone("UTC+08", 8*60*60)
+	got, err := s.ActiveInsightSource("offset-hash", expires.Add(-time.Second).In(east))
+	if err != nil || got.ID != source.ID {
+		t.Fatalf("active lookup = %q (%v), want %q", got.ID, err, source.ID)
+	}
+	if _, err := s.ActiveInsightSource("offset-hash", expires.In(east)); err == nil {
+		t.Fatal("lookup succeeded at the expiry instant")
+	}
+}
+
 func TestInsightIdempotencyAndAnalytics(t *testing.T) {
 	s, err := OpenTest()
 	if err != nil {
@@ -15,7 +37,7 @@ func TestInsightIdempotencyAndAnalytics(t *testing.T) {
 	}
 	t.Cleanup(s.Close)
 	now := time.Date(2026, 10, 8, 0, 0, 0, 0, time.UTC)
-	source := domain.InsightSource{ID: "s1", ProjectID: "alpha", UserMappings: map[string]int64{"alice": 7}, ExpiresAt: time.Now().Add(time.Hour)}
+	source := domain.InsightSource{ID: "s1", ProjectID: "alpha", UserMappings: map[string]int64{"alice": 7}, ExpiresAt: time.Now().Add(time.Hour).In(time.FixedZone("UTC-05", -5*60*60))}
 	if err := s.CreateInsightSource(source, "hash1"); err != nil {
 		t.Fatal(err)
 	}
