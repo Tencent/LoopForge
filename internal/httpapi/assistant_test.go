@@ -22,7 +22,7 @@ func TestDecodeAssistantCLIResult(t *testing.T) {
 	if err != nil || !strings.Contains(out, `"message":"ok"`) {
 		t.Fatalf("is_error with body should still return result: out=%q err=%v", out, err)
 	}
-	if _, err := decodeAssistantCLIResult("", false, nil, []string{"boom"}); err == nil || !strings.Contains(err.Error(), "did not emit type=result") {
+	if _, err := decodeAssistantCLIResult("", false, nil, []string{"boom"}); !errors.Is(err, errAssistantMissingResult) {
 		t.Fatalf("empty result should fail: %v", err)
 	}
 	if _, err := decodeAssistantCLIResult("ok", false, errors.New("signal: killed"), []string{"x"}); err == nil || !strings.Contains(err.Error(), "signal: killed") {
