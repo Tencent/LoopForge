@@ -13,9 +13,9 @@ import (
 	"agentflow/internal/repo"
 )
 
-// Issue #228: clarification and run evals run on CodeBuddy only. A model of
-// another CLI ("codex:…") must be refused up front, not silently swapped for
-// the CodeBuddy default.
+// Issue #228: clarification runs on CodeBuddy only. A model of another CLI
+// ("codex:…") must be refused up front, not silently swapped for the
+// CodeBuddy default.
 func TestClarifyModelEngineError(t *testing.T) {
 	for _, id := range []string{"", "default", "glm-5.1", "public-model"} {
 		if err := clarifyModelEngineError(id); err != nil {
@@ -54,7 +54,7 @@ func TestChatClarifyRefusesOtherCLIModel(t *testing.T) {
 	}
 }
 
-func TestRunEvalRefusesOtherCLIModel(t *testing.T) {
+func TestRunEvalNamesMissingCLICredential(t *testing.T) {
 	f := cvBNewHTTPFixture(t)
 	if _, err := f.s.UpdateUserCredentials(f.user.ID, repo.UserCredentialUpdate{CodeBuddyAPIKey: "eval-key"}); err != nil {
 		t.Fatal(err)
@@ -65,10 +65,13 @@ func TestRunEvalRefusesOtherCLIModel(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec := cvBRequest(t, f, http.MethodPost, "/api/runs/eval-codex-run/eval", map[string]any{"model": "codex:gpt-5.5"}, true)
-	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "只支持 CodeBuddy") {
-		t.Fatalf("status = %d body = %s, want 400 explaining the CodeBuddy limit", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "Codex API Key") {
+		t.Fatalf("status = %d body = %s, want 400 naming the missing Codex key", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "CodeBuddy") {
+		t.Fatalf("unrelated CodeBuddy key must not be requested: %s", rec.Body.String())
 	}
 	if _, busy := f.s.ActiveRunEval(done.ID); busy {
-		t.Fatal("a Codex model must not start a run eval")
+		t.Fatal("an unconfigured Codex model must not start a run eval")
 	}
 }

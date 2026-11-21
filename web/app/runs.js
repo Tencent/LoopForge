@@ -1277,10 +1277,32 @@ function defaultRunEval(){return{enabled:true,version:1,threshold:70,dimensions:
   {id:'recovery',name:'错误恢复',question:'相同错误是否反复出现？',weight:10},
   {id:'delivery',name:'交付完整',question:'终态、产物和验证信号是否齐全？',weight:10}
 ]}}
-// Run evals run on CodeBuddy only; a saved "codex:…" id falls back.
-function runEvalModel(){const api=window.AgentFlowAssistantModels,stored=state.runEvalModel||localStorage.getItem('agentflow.runEvalModel')||'';if(api?.codeBuddyModel)return api.codeBuddyModel(stored);return stored||(api&&api.DEFAULT)||'default'}
+const RUN_EVAL_ENGINES=['codebuddy','codex','claude-code','opencode','cursor','agy','kimi','pi','dsh','zcode'];
+function storedRunEvalModel(){return state.runEvalModel||localStorage.getItem('agentflow.runEvalModel')||''}
+// Only reuse a single concrete runtime/model actually recorded by the run.
+// Mixed or incomplete model evidence needs an explicit evaluator choice.
+function runEvalRecordedModel(){
+  const models=new Set();
+  for(const node of Object.values(state.activeRun?.nodes||{})){
+    const model=String(node?.model||'').trim(),provider=String(node?.provider||'').trim().toLowerCase();
+    if(!model)continue;
+    const prefix=RUN_EVAL_ENGINES.find(id=>model.startsWith(id+':'));
+    if(model==='default'||model===provider+':default')return null;
+    if(prefix){
+      if(RUN_EVAL_ENGINES.includes(provider)&&provider!==prefix)return null;
+      models.add(prefix==='codebuddy'?model.slice('codebuddy:'.length):model);
+    }else if(RUN_EVAL_ENGINES.includes(provider))models.add(provider==='codebuddy'?model:provider+':'+model);
+    else return null;
+  }
+  return models.size===1?[...models][0]:null;
+}
+function runEvalModel(){return storedRunEvalModel()||runEvalRecordedModel()||window.AgentFlowAssistantModels?.DEFAULT||'default'}
 function setRunEvalModel(id){state.runEvalModel=id;localStorage.setItem('agentflow.runEvalModel',id)}
-function runEvalHasKey(){return !!(userById(state.currentUser?.id)||state.currentUser||{}).codeBuddyApiKeyConfigured}
+// Resolve the CLI from the model prefix without waiting for the catalog.
+function runEvalEngine(id){const api=window.AgentFlowAssistantModels;if(!api?.engineOf)return 'codebuddy';return api.engineOf(id,{models:[],engines:RUN_EVAL_ENGINES.map(kind=>({id:kind}))})}
+// CodeBuddy keeps its client-side gate; other CLIs are checked by the server,
+// which names the missing runtime key instead of asking for a CodeBuddy one.
+function runEvalHasKey(){const api=window.AgentFlowAssistantModels,engine=runEvalEngine(runEvalModel());if(engine!=='codebuddy')return true;const engines=api?.catalog?.()?.engines||[],found=engines.find(e=>e.id==='codebuddy');return found?!!found.configured:!!(userById(state.currentUser?.id)||state.currentUser||{}).codeBuddyApiKeyConfigured}
 function runEvalApplyable(rec){if(!rec||rec.status==='applied')return false;const action=((rec.target||'')+'.'+(rec.action||'')).replace(/^\./,'').toLowerCase();const full=rec.action&&rec.action.includes('.')?rec.action.toLowerCase():action;return ['workflow.update_node','agent.upsert_gate','agent.remove_gate','agent.append_instructions','agent.append_task_prompt'].includes(full)}
 function runEvalPaneHTML(run){
   const rec=state.runEval?.runId===run.id?state.runEval:null,busy=!!state.runEvalBusy,thoughts=state.runEvalThoughts||[];
@@ -1328,7 +1350,7 @@ function runEvalPaneHTML(run){
   }
 
   if(rec?.status==='failed'){
-    return `<section class="run-eval-section">${heroCard}<div class="run-eval-error-card"><div class="error-head"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg><b>评测执行失败</b></div><pre>${escapeHTML(rec.error||'模型未返回结果')}</pre><p class="error-tip">请检查个人配置中的 CodeBuddy API Key 配置或网络状态后重新评测。</p></div></section>`;
+    return `<section class="run-eval-section">${heroCard}<div class="run-eval-error-card"><div class="error-head"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg><b>评测执行失败</b></div><pre>${escapeHTML(rec.error||'模型未返回结果')}</pre><p class="error-tip">请检查所选评测模型的凭据配置或网络状态后重新评测。</p></div></section>`;
   }
 
   if(!rec||!rec.status){
@@ -1368,7 +1390,7 @@ function bindRunEvalModelPicker(host){
   if(!host)return;
   const api=window.AgentFlowAssistantModels,toggle=host.querySelector('[data-model-toggle]'),menu=host.querySelector('.ai-model-menu');
   if(!api||!toggle||!menu)return;
-  const paint=()=>{const keep=runEvalModel();const inp=host.querySelector('[name=runEvalModel]');if(inp)inp.value=keep;api.paint(toggle,keep)};
+  const paint=()=>{const keep=runEvalModel();const inp=host.querySelector('[name=runEvalModel]');if(inp)inp.value=keep;api.paint(toggle,keep);if(!storedRunEvalModel()&&runEvalRecordedModel()===null){const label=toggle.querySelector('[data-model-label]');if(label)label.textContent='选择评测模型';toggle.title='请选择评测模型'}};
   paint();
   api.load?.().then(paint).catch(paint);
   if(host.dataset.bound)return;
@@ -1378,7 +1400,7 @@ function bindRunEvalModelPicker(host){
     const open=menu.hidden;
     menu.hidden=!open;
     toggle.setAttribute('aria-expanded',open?'true':'false');
-    if(open)api.renderCodeBuddyList(menu,runEvalModel(),id=>{setRunEvalModel(id);paint();menu.hidden=true;toggle.setAttribute('aria-expanded','false')});
+    if(open)api.renderList(menu,runEvalModel(),id=>{setRunEvalModel(id);paint();menu.hidden=true;toggle.setAttribute('aria-expanded','false')});
   };
   document.addEventListener('click',e=>{if(host.contains(e.target))return;menu.hidden=true;toggle.setAttribute('aria-expanded','false')});
 }
@@ -1398,6 +1420,7 @@ async function loadRunEval(runId,background){
 }
 async function startRunEval(run){
   if(!['succeeded','failed','cancelled'].includes(run.status))return toast('请等 SOP 跑完后再评测');
+  if(!storedRunEvalModel()&&runEvalRecordedModel()===null)return toast('此运行的模型无法唯一确定，请选择评测模型');
   if(!runEvalHasKey()){toast('请先在个人配置中配置自己的 CodeBuddy API Key','err');switchView('settings');return}
   state.runEvalBusy=true;state.runEvalThoughts=['正在提交评测…'];
   const host=$('#runDetail'),pane=host?.querySelector('[data-run-pane="eval"]');
