@@ -132,11 +132,12 @@ func (h *assistantHandlers) runTaskNow(c *gin.Context) {
 	}
 	user, ok := h.repo.User(current.ID)
 	task, err := loadAssistantTask(h.repo, current.ID, c.Param("id"))
-	engine, _ := assistantModelEngine(task.Model)
+	model := scheduledAssistantDefault(h.repo, user, task.Model)
+	engine, _ := assistantModelEngine(model)
 	if !ok || !scheduleHasPersonalCredential(h.repo, user, engine) {
-		msg := "请先在个人配置中配置自己的 CodeBuddy API Key"
-		if engine != assistantEngineCodeBuddy {
-			msg = assistantEngineMissingKey(engine)
+		msg := assistantEngineMissingKey(engine)
+		if assistantModelUnspecified(model) {
+			msg = errFeatureCredentials.Error()
 		}
 		c.JSON(400, gin.H{"error": msg})
 		return
@@ -230,7 +231,8 @@ func (h *assistantHandlers) executeAssistantTask(ctx context.Context, user domai
 	if strings.TrimSpace(task.ID) != "" {
 		_ = saveAssistantTask(h.repo, user.ID, *task)
 	}
-	engine, _ := assistantModelEngine(task.Model)
+	model := scheduledAssistantDefault(h.repo, user, task.Model)
+	engine, _ := assistantModelEngine(model)
 	machine := scheduleLoginRunner(h.repo, user.ID, engine)
 	machineOffline := machine.ID != "" && machine.Status != domain.RunnerStatusOnline
 	fail := func(msg string) error {
@@ -246,7 +248,6 @@ func (h *assistantHandlers) executeAssistantTask(ctx context.Context, user domai
 	}
 
 	// Select the credential and machine before creating the conversation.
-	model := strings.TrimSpace(task.Model)
 	var target *domain.AssistantExecutionTarget
 	if machine.ID != "" && !machineOffline {
 		target = &domain.AssistantExecutionTarget{Pool: domain.ExecutionModeRunner, RunnerID: machine.ID}
@@ -255,10 +256,10 @@ func (h *assistantHandlers) executeAssistantTask(ctx context.Context, user domai
 			if machineOffline {
 				return fail(fmt.Sprintf("未配置 %s API Key。请启动 Runner，或在个人配置中填写 Key 后重试", assistantEngineLabel(engine)))
 			}
-			if engine != assistantEngineCodeBuddy {
-				return fail(assistantEngineMissingKey(engine))
+			if assistantModelUnspecified(model) {
+				return fail(errFeatureCredentials.Error())
 			}
-			return fail("未配置 CodeBuddy API Key")
+			return fail(assistantEngineMissingKey(engine))
 		}
 		var err error
 		if model, err = scheduledRunModel(ctx, model, user); err != nil {
@@ -493,17 +494,22 @@ func firstNonEmpty(values ...string) string {
 // silently switches to another, possibly more expensive, model.
 func scheduledRunModel(ctx context.Context, requested string, user domain.User) (string, error) {
 	requested = strings.TrimSpace(requested)
-	env := user.CodeBuddyInternetEnvironment
-	catalog := withCodeBuddyPersonalModels(loadAssistantModels(env, user.CodeBuddyAPIKey), user)
-	model := assistantAllowedUserModel(requested, catalog, user)
-	if requested == "" || model == requested {
-		return model, nil
-	}
-	if engine, _ := assistantModelEngine(requested); engine == assistantEngineCodeBuddy {
-		refreshCLIModels(ctx, env, user.CodeBuddyAPIKey)
-		if model = assistantAllowedUserModel(requested, loadAssistantModels(env, user.CodeBuddyAPIKey), user); model == requested {
+	engine, id := assistantModelEngine(requested)
+	if engine == assistantEngineCodeBuddy {
+		env := user.CodeBuddyInternetEnvironment
+		catalog := withCodeBuddyPersonalModels(ctx, loadAssistantModels(env, user.CodeBuddyAPIKey), user)
+		if id == "" || codeBuddyIsDefaultModel(id) {
+			return catalog.Default, nil
+		}
+		if model := assistantAllowedModel(id, catalog); model == id {
 			return model, nil
 		}
+		refreshOfficialCodeBuddyModels(ctx, user)
+		if model := assistantAllowedModel(id, loadAssistantModels(env, user.CodeBuddyAPIKey)); model == id {
+			return model, nil
+		}
+	} else if model := assistantAllowedUserModel(requested, assistantModelCatalog{}, user); model == requested {
+		return model, nil
 	}
 	return "", fmt.Errorf("定时任务指定的模型 %s 在负责人的账号下不可用，本次没有运行；请在定时任务里改选可用的模型", requested)
 }

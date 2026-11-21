@@ -5,6 +5,8 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
+
+	"agentflow/internal/config"
 )
 
 // TAPDStoryRef is a TAPD record identified from a pasted web URL.
@@ -18,11 +20,20 @@ type TAPDStoryRef struct {
 var (
 	// Capture complete URLs before looking for bare TAPD hosts, so a TAPD URL
 	// inside another host's path or query cannot pass the host check.
-	tapdPastedURLRe     = regexp.MustCompile("(?i)(?:[a-z][a-z0-9+.-]*://|//|(?:tapd\\.example\\.com|(?:www\\.)?tapd\\.cn)/)[^\\s\\p{Z}<>\\[\\](){}\"'`，。；：！？、（）【】《》「」『』]+")
+	tapdPastedURLRe     = tapdURLPattern("www.tapd.cn")
 	tapdWorkspacePathRe = regexp.MustCompile(`^/(?:tapd_fe/)?(\d{2,12})(?:/|$)`)
 	tapdDetailPathRe    = regexp.MustCompile(`/(story/detail|stories/view|bug/detail|bugs/view|task/detail|tasks/view)/(\d+)/?$`)
 	tapdPreviewIDRe     = regexp.MustCompile(`^(story|bug|task)_(\d+)$`)
 )
+
+func tapdURLPattern(host string) *regexp.Regexp {
+	return regexp.MustCompile("(?i)(?:[a-z][a-z0-9+.-]*://|//|(?:tapd\\.example\\.com|(?:www\\.)?tapd\\.cn|" +
+		regexp.QuoteMeta(host) + ")/)[^\\s\\p{Z}<>\\[\\](){}\"'`，。；：！？、（）【】《》「」『』]+")
+}
+
+func tapdWorkItemURL(workspace, kind, id string) string {
+	return fmt.Sprintf("https://%s/tapd_fe/%s/%s/detail/%s", config.TAPDWebHost(), workspace, kind, id)
+}
 
 // ParseTAPDStoryURL extracts one TAPD record from a URL or pasted title and
 // link. Repeated links to the same record are harmless; different records must
@@ -34,7 +45,11 @@ func ParseTAPDStoryURL(raw string) (TAPDStoryRef, error) {
 	}
 	var found TAPDStoryRef
 	var firstErr error
-	for _, match := range tapdPastedURLRe.FindAllStringIndex(raw, -1) {
+	pattern := tapdPastedURLRe
+	if host := config.TAPDWebHost(); host != "www.tapd.cn" {
+		pattern = tapdURLPattern(host)
+	}
+	for _, match := range pattern.FindAllStringIndex(raw, -1) {
 		candidate := raw[match[0]:match[1]]
 		// A bare host must stand on its own, rather than be a suffix of a
 		// foreign hostname or e-mail address.
@@ -74,8 +89,10 @@ func parseTAPDStoryLink(raw string) (TAPDStoryRef, error) {
 		return TAPDStoryRef{}, fmt.Errorf("无法识别 TAPD 链接")
 	}
 	host := strings.ToLower(parsed.Hostname())
-	if (parsed.Scheme != "https" && parsed.Scheme != "http") || (host != "tapd.example.com" && host != "www.tapd.cn" && host != "tapd.cn") {
-		return TAPDStoryRef{}, fmt.Errorf("请粘贴 tapd.example.com 或 tapd.cn 的需求详情链接")
+	configuredHost := config.TAPDWebHost()
+	if (parsed.Scheme != "https" && parsed.Scheme != "http") || parsed.User != nil ||
+		(host != "tapd.example.com" && host != "www.tapd.cn" && host != "tapd.cn" && !strings.EqualFold(parsed.Host, configuredHost)) {
+		return TAPDStoryRef{}, fmt.Errorf("请粘贴 %s 的 TAPD 工作项详情链接", configuredHost)
 	}
 	path := parsed.Path
 	ref := TAPDStoryRef{Kind: "story"}

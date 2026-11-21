@@ -51,7 +51,8 @@ test('Git HTTPS credentials are managed per host with write-only tokens and veri
   form.elements.host.value = 'https://gitlab.corp.example/';
   form.elements.host.dispatchEvent(new app.window.Event('change', { bubbles: true }));
   assert.equal(form.elements.platform.value, 'gitlab');
-  assert.equal(form.elements.name.value, 'gitlab.corp.example');
+  assert.equal(form.elements.name.value, '');
+  assert.equal(form.elements.name.placeholder, 'gitlab.corp.example');
   form.elements.token.value = 'glpat-test-only';
   form.dispatchEvent(new app.window.Event('submit', { bubbles: true, cancelable: true }));
   await settle(6);

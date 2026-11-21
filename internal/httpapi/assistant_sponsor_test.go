@@ -26,8 +26,8 @@ func TestSharedCodeBuddyEffortsIgnoreAnOldPersonalOverride(t *testing.T) {
 	h := &assistantHandlers{
 		deps: &deps{repo: st},
 		generate: func(_ context.Context, _ string, user domain.User) (string, error) {
-			if len(user.CodeBuddyModels) != 0 || user.ID != member.ID {
-				t.Error("shared-key turn must use its own catalog and keep the caller's identity")
+			if len(user.CodeBuddyModels) != 0 || user.CodeBuddyBaseURL != "" || user.ID != member.ID {
+				t.Error("shared-key turn must use its own endpoint and catalog while keeping the caller's identity")
 			}
 			return `{"message":"ok","drafts":[]}`, nil
 		},
@@ -49,6 +49,14 @@ func TestSharedCodeBuddyEffortsIgnoreAnOldPersonalOverride(t *testing.T) {
 	afterClear, err := st.UpdateUserCredentials(member.ID, repo.UserCredentialUpdate{CodeBuddyAPIKeyClear: true})
 	if err != nil || len(afterClear.CodeBuddyModels) != 1 {
 		t.Fatalf("expected the personal model catalog to remain saved after clearing its key: %v", err)
+	}
+	baseURL := "https://personal.example/v1"
+	member, err = st.UpdateUserCredentials(member.ID, repo.UserCredentialUpdate{CodeBuddyBaseURL: &baseURL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if scheduled, _, ok := scheduleCredentialUser(st, member, assistantEngineCodeBuddy); !ok || scheduled.CodeBuddyBaseURL != "" {
+		t.Fatal("a scheduled run on the shared key must not use the caller's personal endpoint")
 	}
 	c, rec := workbenchContext(afterClear, http.MethodGet, "/api/assistant/models", &bytes.Buffer{})
 	h.models(c)
@@ -200,7 +208,7 @@ func TestOwnKeyKeepsItsEnvironmentDefaultWhileAKeyIsShared(t *testing.T) {
 		t.Fatalf("own-key catalog must list the user's environment only: %s", mrec.Body.String())
 	}
 
-	chat := h.chatCatalog(stored)
+	chat := h.chatCatalog(context.Background(), stored)
 	if got := assistantAllowedModel("", chat); got != operatorDefault {
 		t.Fatalf("a new own-key conversation resolves to %q, want %q", got, operatorDefault)
 	}
@@ -217,7 +225,7 @@ func TestOwnKeyKeepsItsEnvironmentDefaultWhileAKeyIsShared(t *testing.T) {
 	}
 	stored, _ = st.User(member.ID)
 	borrowed, _, _ := h.assistantChatUser(stored)
-	if got := assistantAllowedModel("", h.chatCatalog(borrowed)); got != "glm-5.1" {
+	if got := assistantAllowedModel("", h.chatCatalog(context.Background(), borrowed)); got != "glm-5.1" {
 		t.Fatalf("a shared-key conversation resolves to %q, want glm-5.1", got)
 	}
 }
@@ -302,7 +310,7 @@ func TestPlatformSharedKeyLimitsChatToAllowedModels(t *testing.T) {
 		if rec.Code != 200 || used.CodeBuddyAPIKey != "platform-secret" || used.CodeBuddyInternetEnvironment != "ioa" {
 			t.Fatalf("model %q: %d %s used=%+v", model, rec.Code, rec.Body.String(), used)
 		}
-		if got := assistantAllowedModel(model, h.chatCatalog(used)); got != want {
+		if got := assistantAllowedModel(model, h.chatCatalog(context.Background(), used)); got != want {
 			t.Fatalf("model %q resolves to %q, want %q", model, got, want)
 		}
 	}
@@ -384,7 +392,7 @@ func TestTurnCatalogRefreshesBeforeFallingBackToTheDefault(t *testing.T) {
 	}
 	stored, _ := st.User(member.ID)
 	h := &assistantHandlers{deps: &deps{repo: st}}
-	if got := assistantAllowedModel("claude-opus-5.5", h.chatCatalog(stored)); got == "claude-opus-5.5" {
+	if got := assistantAllowedModel("claude-opus-5.5", h.chatCatalog(context.Background(), stored)); got == "claude-opus-5.5" {
 		t.Fatalf("precondition: a cold cache must not list the model yet")
 	}
 	if got := assistantAllowedModel("claude-opus-5.5", h.turnCatalog(context.Background(), stored, "claude-opus-5.5")); got != "claude-opus-5.5" {

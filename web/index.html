@@ -12,7 +12,7 @@
   <link rel="stylesheet" href="/app/hui-controls.css">
   <link rel="stylesheet" href="/styles.css?v=20261031v1">
   <link rel="stylesheet" href="/assets.css?v=20260823v1">
-  <link rel="stylesheet" href="/platform.css?v=20261120sshhostprobe">
+  <link rel="stylesheet" href="/platform.css?v=20261121settingsrows">
   <link rel="stylesheet" href="/observability.css?v=20261031metrics2">
   <link rel="stylesheet" href="/artifacts.css?v=20260914r3">
   <link rel="stylesheet" href="/sops.css?v=20261030cards1">
@@ -185,10 +185,17 @@
       </div>
     </section>
     <section id="settingsView" class="view page-view">
-      <div class="page-heading">
-        <div><p class="eyebrow">个人中心</p><h1>个人配置</h1><p>管理个人账号与执行凭据。</p></div>
+      <div class="personal-settings">
+        <button id="returnToQuickAccess" class="button ghost small personal-settings-return" type="button" hidden>
+          <svg class="agent-icon harness-icon" data-icon="arrow-left" width="14" height="14" aria-hidden="true"></svg>
+          返回快速接入
+        </button>
+        <div class="page-heading personal-settings-heading">
+          <h1>个人配置</h1>
+          <div id="personalSettingsAccount" class="credential-account" hidden></div>
+        </div>
+        <div id="personalSettingsContent"></div>
       </div>
-      <div class="personal-settings"><div id="personalSettingsContent"></div></div>
     </section>
     <section id="platformView" class="view page-view">
       <div class="page-heading">
@@ -939,7 +946,7 @@
     </div>
   </div>
 
-  <div id="importTAPDModal" class="modal"><form id="importTAPDForm" class="modal-card"><button type="button" class="modal-close import-tapd-close">×</button><p class="eyebrow">外部需求</p><h2>导入 TAPD 工作项</h2><p class="modal-hint">支持 TAPD 需求、缺陷或任务链接，也可以粘贴「标题 + 链接」。导入时将读取 TAPD 最新标题和描述并写入当前项目。</p><label for="importTAPDURL">TAPD 链接或分享文本</label><textarea id="importTAPDURL" class="input" required rows="3" placeholder="【工作项标题】&#10;https://tapd.example.com/tapd_fe/…/story/detail/…"></textarea><label>SOP 流程</label><select id="importTAPDWorkflow" class="select"></select><label>代码仓库（可多选）</label><div id="importTAPDRepository" class="repo-picker"></div><p class="modal-hint">从下拉框添加仓库，点击标签可移除。导入前必须至少选择一个仓库。</p><label for="importTAPDBaseBranch">继续开发分支（可选）</label><input id="importTAPDBaseBranch" class="input" placeholder="留空从配置主分支新建工作分支" aria-describedby="importTAPDBaseBranchHint" autocomplete="off"><div id="importTAPDRepositoryBranches" class="repository-branches" hidden></div><p id="importTAPDBaseBranchHint" class="modal-hint">留空从配置主分支新建工作分支；填写时直接继续该已有分支，不新建。</p><div class="modal-actions"><button type="button" class="button ghost import-tapd-close">取消</button><button id="confirmImportTAPD" type="submit" class="button primary">导入</button></div></form></div>
+  <div id="importTAPDModal" class="modal"><form id="importTAPDForm" class="modal-card"><button type="button" class="modal-close import-tapd-close">×</button><p class="eyebrow">外部需求</p><h2>导入 TAPD 工作项</h2><p class="modal-hint">支持 TAPD 需求、缺陷或任务链接，也可以粘贴「标题 + 链接」。导入时将读取 TAPD 最新标题和描述并写入当前项目。</p><label for="importTAPDURL">TAPD 链接或分享文本</label><textarea id="importTAPDURL" class="input" required rows="3" placeholder="【工作项标题】&#10;https://www.tapd.cn/tapd_fe/…/story/detail/…"></textarea><label>SOP 流程</label><select id="importTAPDWorkflow" class="select"></select><label>代码仓库（可多选）</label><div id="importTAPDRepository" class="repo-picker"></div><p class="modal-hint">从下拉框添加仓库，点击标签可移除。导入前必须至少选择一个仓库。</p><label for="importTAPDBaseBranch">继续开发分支（可选）</label><input id="importTAPDBaseBranch" class="input" placeholder="留空从配置主分支新建工作分支" aria-describedby="importTAPDBaseBranchHint" autocomplete="off"><div id="importTAPDRepositoryBranches" class="repository-branches" hidden></div><p id="importTAPDBaseBranchHint" class="modal-hint">留空从配置主分支新建工作分支；填写时直接继续该已有分支，不新建。</p><div class="modal-actions"><button type="button" class="button ghost import-tapd-close">取消</button><button id="confirmImportTAPD" type="submit" class="button primary">导入</button></div></form></div>
 
   <div id="runModal" class="modal"><div class="modal-card"><button class="modal-close">×</button><p class="eyebrow">手动运行</p><h2>发起流程运行</h2><p>选择 SOP 并提供任务输入，内容会注入使用 <code>{{input}}</code> 的 Agent 节点。</p><label class="modal-label" for="runWorkflowChoice">SOP 流程</label><select id="runWorkflowChoice" class="select"></select><label class="modal-label" for="runInput">任务输入</label><textarea id="runInput" placeholder="例如：实现用户登录接口，并补充单元测试"></textarea><div class="modal-actions"><button class="button ghost modal-close">取消</button><button id="confirmRun" class="button primary">开始运行</button></div></div></div>
 
@@ -1098,21 +1105,20 @@
               <p class="schedule-field-hint">可填写 1–10，留空默认 10；其余需求在后续执行时继续触发。</p>
             </div>
             <div data-schedule-kind="assistant" hidden>
-              <label for="scheduleEngine">CLI 与模型</label>
+              <label for="scheduleEngine">执行器与模型</label>
               <div class="schedule-model-row">
                 <select id="scheduleEngine" class="select" name="assistantEngine" aria-label="执行 CLI">
-                  <option value="codebuddy">CodeBuddy</option>
+                  <option value="" disabled>选择执行器</option>
                 </select>
                 <div class="schedule-model-field" id="scheduleModelPicker">
                   <button type="button" class="ai-model-toggle" data-model-toggle aria-haspopup="listbox" aria-expanded="false" aria-label="模型">
                     <span class="ai-model-icon" data-family="glm">智</span>
-                    <span data-model-label>GLM-5.3-Flash</span>
+                    <span data-model-label>模型</span>
                     <span class="ai-model-caret" aria-hidden="true"></span>
                   </button>
                   <div class="ai-model-menu" hidden role="listbox" aria-label="模型"></div>
                 </div>
               </div>
-              <p class="schedule-field-hint" id="scheduleModelHint">Codex 和 Claude Code 优先使用保存人默认执行机器的账号登录。机器离线时改用个人 API Key，Key 缺失或不可用时任务失败。CodeBuddy 缺少个人 Key 时可使用平台共享 Key。</p>
             </div>
             <div data-schedule-kind="assistant" hidden>
               <label for="scheduleTimeoutMinutes">执行超时（分钟）</label>
@@ -1298,9 +1304,9 @@
   <script src="/app/runs.js"></script>
   <script src="/app/run-activation.js"></script>
   <script src="/app/platform-ssh-hosts.js"></script>
-  <script src="/app/workbench.js?v=20261120sshhosttrust"></script>
-  <script src="/app/git-ssh-keys.js"></script>
-  <script src="/app/git-http-credentials.js"></script>
+  <script src="/app/workbench.js?v=20261121settingsrows"></script>
+  <script src="/app/git-ssh-keys.js?v=20261121settings"></script>
+  <script src="/app/git-http-credentials.js?v=20261121settings"></script>
   <script src="/app/approvals.js"></script>
   <script src="/app/obs-charts.js"></script>
   <script src="/app/observability.js"></script>

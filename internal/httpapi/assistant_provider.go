@@ -57,7 +57,7 @@ func validateAssistantProvider(req *assistantRequest, user domain.User) error {
 
 func assistantProviderCredentials(user domain.User) runtime.RunCredentials {
 	return runtime.RunCredentials{
-		CodeBuddy:  runtime.CodeBuddyCredential{APIKey: user.CodeBuddyAPIKey, InternetEnvironment: user.CodeBuddyInternetEnvironment},
+		CodeBuddy:  runtime.CodeBuddyUserCredential(user),
 		Codex:      runtime.ProviderCredential{APIKey: user.CodexAPIKey, BaseURL: user.CodexBaseURL},
 		ClaudeCode: runtime.ProviderCredential{APIKey: user.ClaudeCodeAPIKey, BaseURL: user.ClaudeCodeBaseURL},
 		Extra:      runtime.ExtraRunCredentials(user.ID),

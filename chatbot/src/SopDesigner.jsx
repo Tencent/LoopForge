@@ -142,7 +142,12 @@ export default function SopDesigner({ search = location.search, canvas = window.
   // Fall back to the catalog default once it loads.
   useEffect(() => {
     if (!catalog.models?.length || catalog.models.some((m) => m.id === model)) return;
-    setModel(catalog.default || catalog.models[0]?.id || "");
+    const preferredEngine = catalog.preferences?.executor;
+    const preferredModel = catalog.preferences?.model;
+    const preferred = modelsFor(catalog, preferredEngine).find((m) =>
+      m.id === preferredModel || m.id === preferredEngine + ":" + preferredModel);
+    const configured = new Set(enginesOf(catalog).filter((item) => item.configured !== false).map((item) => item.id));
+    setModel(preferred?.id || catalog.models.find((m) => configured.has(m.engine || defaultEngine))?.id || catalog.models[0].id);
   }, [catalog, model]);
 
   useEffect(() => {
@@ -323,6 +328,7 @@ export default function SopDesigner({ search = location.search, canvas = window.
         sessionId: id,
         model,
         approvalMode: "confirm",
+        requireExactModel: !!model,
         workflowId: begun.workflowId ?? context.workflowId,
         canvas: begun.canvas ?? null,
         messages: [message],

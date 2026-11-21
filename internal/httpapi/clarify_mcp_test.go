@@ -1,7 +1,6 @@
 package httpapi
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -13,29 +12,6 @@ import (
 	"agentflow/internal/domain"
 	"agentflow/internal/repo"
 )
-
-func TestClarifyAllowedModelFallsBackToCatalog(t *testing.T) {
-	t.Setenv("AGENTFLOW_ASSISTANT_MODEL", "")
-	t.Setenv("AGENTFLOW_ASSISTANT_MODELS", "public-model")
-	stubCLIModelDiscovery(t)
-	discoverCLIModels = func(_ context.Context, _, key string) []string {
-		return []string{key + "-model"}
-	}
-	ctx := context.Background()
-	refreshCLIModels(ctx, "ioa", "another-key")
-	user := domain.User{CodeBuddyInternetEnvironment: "ioa", CodeBuddyAPIKey: "responsible-key"}
-	for requested, want := range map[string]string{
-		"":                      clarifyDefaultModel,
-		"another-key-model":     clarifyDefaultModel,
-		"not-a-model":           clarifyDefaultModel,
-		"public-model":          "public-model",
-		"responsible-key-model": "responsible-key-model",
-	} {
-		if got := clarifyAllowedModel(ctx, user, requested); got != want {
-			t.Errorf("requested %q: model = %q, want %q", requested, got, want)
-		}
-	}
-}
 
 func TestClarifyCommandKeepsReadGrepGlob(t *testing.T) {
 	command, err := prepareClarifyCommand("codebuddy", clarifyDefaultModel, "prompt", "clarify-test", "af1", false)

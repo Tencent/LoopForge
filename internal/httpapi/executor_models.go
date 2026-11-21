@@ -220,7 +220,7 @@ func (h *catalogHandlers) executorModels(c *gin.Context) {
 	if current, ok := h.requestUser(c.Request, true); ok {
 		if stored, found := h.repo.User(current.ID); found {
 			user = stored
-			refreshCLIModels(c.Request.Context(), user.CodeBuddyInternetEnvironment, user.CodeBuddyAPIKey)
+			refreshOfficialCodeBuddyModels(c.Request.Context(), user)
 		}
 	}
 	_, kimiBaseURL := assistantEngineCredential(user, runtime.AgentCLIKimi)

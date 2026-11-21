@@ -117,7 +117,17 @@ function syncAgentTabIndicators(){$$('#agentsView .agent-tabs, #agentModal .agen
 if(typeof document!=='undefined'&&document.fonts?.ready)document.fonts.ready.then(()=>syncAgentTabIndicators()).catch(()=>{});
 function pickerHTML(items,selected,prefix){return `<input class="input picker-filter" data-picker-filter="${prefix}" placeholder="筛选名称或说明…">${(items||[]).map(x=>`<label class="asset-check"><input type="checkbox" name="${prefix}" value="${x.id}" ${(selected||[]).includes(x.id)?'checked':''}><span>${escapeHTML(x.name)}<small>${escapeHTML(x.description||x.id)}</small></span></label>`).join('')||'<span class="type-label">暂无可用资产，请先到对应的资产管理页面添加</span>'}`}
 function bindPickerFilters(root){(root||document).querySelectorAll('[data-picker-filter]').forEach(input=>input.oninput=()=>{const q=input.value.trim().toLowerCase();input.parentElement.querySelectorAll('.asset-check').forEach(row=>row.hidden=!!q&&!row.textContent.toLowerCase().includes(q))})}
-function executorOptions(selected){const allowed=new Set(['codebuddy','codex','claude','opencode','cursor','agy','kimi','pi','dsh','zcode']),items=(state.data.executors||[]).filter(x=>allowed.has(x.id)),legacy=selected&&!allowed.has(selected)?`<option value="${escapeHTML(selected)}" selected disabled>历史执行器 ${escapeHTML(selected)}（请重新选择 CLI）</option>`:'';return legacy+items.map(x=>`<option value="${escapeHTML(x.id)}" ${x.id===selected?'selected':''}>${escapeHTML(x.name||x.id)}</option>`).join('')}
+function executorOptions(selected){
+  const allowed=new Set(['codebuddy','codex','claude','opencode','cursor','agy','kimi','pi','dsh','zcode']);
+  const items=(state.data.executors||[]).filter(executor=>allowed.has(executor.id));
+  const inherited=`<option value="" ${selected?'':'selected'}>跟随责任人默认执行器</option>`;
+  const legacy=selected&&!allowed.has(selected)
+    ?`<option value="${escapeHTML(selected)}" selected disabled>历史执行器 ${escapeHTML(selected)}（请重新选择 CLI）</option>`:'';
+  return inherited+legacy+items.map(executor=>`<option value="${escapeHTML(executor.id)}" ${executor.id===selected?'selected':''}>${escapeHTML(executor.name||executor.id)}</option>`).join('');
+}
+function storedAgentExecutorId(agent){
+  return agent?.executorId||(agent?.model||agent?.effort?'codebuddy':'');
+}
 const AGENT_CUSTOM_MODEL='__custom__';
 let executorModelCatalogUser, executorModelCatalogRequest, agentModelRevision=0;
 function executorModelCatalogs(){
@@ -140,7 +150,7 @@ function loadExecutorModelCatalogs(){
   return request.pending;
 }
 function agentModelAPI(){return window.AgentFlowAssistantModels}
-function currentAgentExecutorId(){return $('#agentForm')?.elements?.executorId?.value||'codebuddy'}
+function currentAgentExecutorId(){return $('#agentForm')?.elements?.executorId?.value||''}
 function agentModelItems(executorId,current){
   const cat=executorModelCatalogs()[executorId]||{},items=(cat.models||[]).filter(item=>item.id!=='default');
   if(current&&current!=='default'&&current!==AGENT_CUSTOM_MODEL&&!items.some(m=>m.id===current))items.push({id:current,name:`${current}（历史模型）`,family:'other'});
@@ -197,16 +207,25 @@ function renderAgentEffortPicker(modelChanged=false){
   paintAgentPicker('#agentEffortPicker',items.find(x=>x.id===current)||{id:current,name:current,icon:false});
 }
 function applyAgentModelUI(executorId,model,effort,pickFirst=false){
-  const picker=$('#agentModelPicker');if(!picker||!$('#agentEffortPicker'))return;
+  const picker=$('#agentModelPicker'),effortPicker=$('#agentEffortPicker');if(!picker||!effortPicker)return;
+  for(const control of [picker,effortPicker]){
+    const toggle=control.querySelector('[data-model-toggle]');
+    if(!toggle)continue;
+    toggle.disabled=!executorId;
+    if(!executorId){
+      control.querySelector('.ai-model-menu').hidden=true;
+      toggle.setAttribute('aria-expanded','false');
+    }
+  }
   const cat=executorModelCatalogs()[executorId]||{};
   // Keep cached models available for manual picks while the catalog refreshes.
-  let choice=model||(pickFirst&&!executorModelCatalogRequest?(cat.models||[]).find(item=>item.id!=='default')?.id:'')||'';
+  let choice=executorId?(model||(pickFirst&&!executorModelCatalogRequest?(cat.models||[]).find(item=>item.id!=='default')?.id:'')||''):'';
   if(choice&&choice!=='default'&&!(cat.models||[]).some(m=>m.id===choice)&&cat.customModel)choice=AGENT_CUSTOM_MODEL;
   picker.querySelector('[name="modelChoice"]').value=choice;
   const customInput=$('#agentModelCustomField')?.querySelector('input[name="model"]');
   if(customInput&&choice===AGENT_CUSTOM_MODEL)customInput.value=model||'';
   renderAgentModelPicker();
-  $('#agentEffortPicker').querySelector('[name="effort"]').value=effort||'';
+  effortPicker.querySelector('[name="effort"]').value=executorId?effort||'':'';
   renderAgentEffortPicker();
 }
 function bindAgentPicker(pickerId,render){
@@ -242,11 +261,15 @@ function selectAgent(a,rerender=true){
   const f=$('#agentForm');
   ['id','name','description'].forEach(k=>{if(f.elements[k])f.elements[k].value=a[k]||''});
   if(f.elements.shared)f.elements.shared.checked=!!a.shared;
-  if(f.elements.executorId)f.elements.executorId.innerHTML=executorOptions(a.executorId||'codebuddy');
+  const prefs=state.data.assistantDefaults;
+  const preferredId=prefs?.executor==='claude-code'?'claude':prefs?.executor;
+  const selectedId=storedAgentExecutorId(a)||(!a.id?preferredId:'')||'';
+  if(f.elements.executorId)f.elements.executorId.innerHTML=executorOptions(selectedId);
   const modelRevision=++agentModelRevision;
   const modelUser=state.currentUser?.id;
   const refreshModels=loadExecutorModelCatalogs();
-  applyAgentModelUI(currentAgentExecutorId(),a.model||'',a.effort||'',!a.id);
+  const personalModel=!a.id&&preferredId===selectedId&&!a.model?prefs?.model:'';
+  applyAgentModelUI(currentAgentExecutorId(),a.model||personalModel||'',a.effort||(personalModel?prefs.effort:''),!a.id);
   refreshModels.then(()=>{
     if(modelRevision!==agentModelRevision||modelUser!==state.currentUser?.id)return;
     const model=agentEffectiveModel(f);
@@ -254,7 +277,7 @@ function selectAgent(a,rerender=true){
       renderAgentModelPicker();
       renderAgentEffortPicker();
     }else{
-      applyAgentModelUI(currentAgentExecutorId(),model,f.elements.effort?.value,!a.id||currentAgentExecutorId()!==(a.executorId||'codebuddy'));
+      applyAgentModelUI(currentAgentExecutorId(),model,f.elements.effort?.value,!a.id||currentAgentExecutorId()!==storedAgentExecutorId(a));
     }
     if(state.agentModalMode==='create'&&state.agentCreateStep===3)renderAgentCreateReview();
   });
@@ -291,7 +314,9 @@ function openAgentWizard(agent=null,initialStep=1,{loaded=false}={}){
     const presetHost=$('#agentPresetHost');if(presetHost)presetHost.dataset.ready='';
     setAgentModalMode(a?.id?'edit':'create');
     if(state.agentModalMode==='create'){state.agentCreatePreset='blank';state.agentIdAuto=true;state.agentIdSuffix=agentSlugSuffix()}
-    selectAgent(a||{id:'',name:'',version:1,projectId:state.projectFilter||'',shared:false,description:'',prompt:'',rules:[],skills:[],mcpServers:[],hooks:[],loop:{enabled:false,maxIterations:3,onExhausted:'fail'},interventions:[],artifactOutputs:[],verification:[]},false);
+    const preference=state.data.assistantDefaults||{};
+    const executorId=preference.executor==='claude-code'?'claude':preference.executor;
+    selectAgent(a||{id:'',name:'',version:1,projectId:state.projectFilter||'',shared:false,description:'',prompt:'',executorId,model:preference.model,effort:preference.effort,rules:[],skills:[],mcpServers:[],hooks:[],loop:{enabled:false,maxIterations:3,onExhausted:'fail'},interventions:[],artifactOutputs:[],verification:[]},false);
     resetAgentIdentityErrors();
     if(state.agentModalMode==='create'){syncAgentSlug();setAgentCreateStep(1)}
     else setAgentTab(AGENT_TABS[Math.max(1,Math.min(4,Number(initialStep)||1))-1]);
@@ -429,9 +454,10 @@ function saveAgent(e){
 }
 async function persistAgent(f){
   const creating=state.agentModalMode==='create';
-  const changedExecutor=currentAgentExecutorId()!==(agentWizardSubject()?.executorId||'codebuddy');
+  const executorId=currentAgentExecutorId();
+  const changedExecutor=executorId!==storedAgentExecutorId(agentWizardSubject());
   const model=agentEffectiveModel(f);
-  if((creating||changedExecutor||f.elements.modelChoice?.value===AGENT_CUSTOM_MODEL)&&(!model||model==='default')){
+  if(executorId&&(creating||changedExecutor||f.elements.modelChoice?.value===AGENT_CUSTOM_MODEL)&&(!model||model==='default')){
     toast('请选择模型或填写模型 ID','err');
     if(creating)setAgentCreateStep(2);
     else setAgentTab('identity');

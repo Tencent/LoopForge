@@ -49,7 +49,7 @@ func (r *UsersRepo) managedGitCredential(ctx context.Context, id int64) string {
 		return formatManagedGitCredential(user)
 	}
 	cfg := gongfeng.ConfigFromEnv()
-	if !cfg.Enabled() {
+	if !cfg.RefreshEnabled() {
 		return formatManagedGitCredential(user)
 	}
 	// Other callers for this user wait on the gate, and some pass

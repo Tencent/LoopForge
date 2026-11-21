@@ -371,9 +371,10 @@ function logLineHTML(l){
   const repository=l.attributes?.repositoryName||l.attributes?.repositoryDir||l.attributes?.repositoryId||'';
   return `<div class="worker-log-line ${escapeHTML(l.level||'info')}"><time>${new Date(l.timestamp).toLocaleTimeString()}</time><span>${escapeHTML(l.stream||'worker')}</span><b>${escapeHTML(l.context?.nodeId||'run')}${repository?` · ${escapeHTML(repository)}`:''}</b><pre>${escapeHTML(body)}</pre></div>`;
 }
+function isOTLPAdapter(adapter){return adapter==='otlp-v1'||adapter==='codebuddy-otel-v1'}
 function isHookAdapter(adapter){return adapter==='agent-hooks-v1'||adapter==='codebuddy-hooks-v1'}
 function hookTraceDetails(e){const a=e.attributes||{},facts=[["ID",a.hookId],["事件",a.hook],["仓库",a.repositoryName||a.repositoryDir||a.repositoryId],["阶段",a.executionPhase],["语言",a.language],["Matcher",a.matcher],["耗时",a.durationMs!=null?`${a.durationMs} ms`:""],["退出码",a.exitCode!=null?String(a.exitCode):""]].filter(x=>x[1]!==''&&x[1]!=null);return `${facts.length?`<dl class="hook-trace-facts">${facts.map(([k,v])=>`<div><dt>${k}</dt><dd>${escapeHTML(v)}</dd></div>`).join('')}</dl>`:''}${a.stdout?`<details class="hook-trace-output"><summary>stdout</summary><pre>${escapeHTML(a.stdout)}</pre></details>`:''}${a.stderr?`<details class="hook-trace-output error"><summary>stderr</summary><pre>${escapeHTML(a.stderr)}</pre></details>`:''}`}
-function telemetryItemHTML(e){const hook=isHookAdapter(e.source?.adapter),tag=hook?'Hook':e.source?.adapter==='codebuddy-otel-v1'?'OTEL':'',title=hook?(e.attributes?.hookName||e.attributes?.hookId||e.name):e.name,repository=e.attributes?.repositoryName||e.attributes?.repositoryDir||e.attributes?.repositoryId||'';return `<article class="telemetry-event ${e.category}"><time>${new Date(e.timestamp).toLocaleTimeString()}</time><span class="telemetry-category">${telemetryLabel(e)}${tag?`<em class="adapter-tag">${tag}</em>`:''}</span><div><b>${escapeHTML(title)}</b><p>${escapeHTML(e.message||'')}</p>${hook?hookTraceDetails(e):''}<small>${escapeHTML(e.nodeId||'run')}${repository?` · ${escapeHTML(repository)}`:''}${hook&&e.source?.provider?` · ${escapeHTML(e.source.provider)}`:''}${e.model?` · ${escapeHTML(e.model)}`:''}${e.toolCallId?` · ${escapeHTML(e.toolCallId)}`:''}</small></div></article>`}
+function telemetryItemHTML(e){const hook=isHookAdapter(e.source?.adapter),tag=hook?'Hook':isOTLPAdapter(e.source?.adapter)?'OTEL':'',title=hook?(e.attributes?.hookName||e.attributes?.hookId||e.name):e.name,repository=e.attributes?.repositoryName||e.attributes?.repositoryDir||e.attributes?.repositoryId||'';return `<article class="telemetry-event ${e.category}"><time>${new Date(e.timestamp).toLocaleTimeString()}</time><span class="telemetry-category">${telemetryLabel(e)}${tag?`<em class="adapter-tag">${tag}</em>`:''}</span><div><b>${escapeHTML(title)}</b><p>${escapeHTML(e.message||'')}</p>${hook?hookTraceDetails(e):''}<small>${escapeHTML(e.nodeId||'run')}${repository?` · ${escapeHTML(repository)}`:''}${hook&&e.source?.provider?` · ${escapeHTML(e.source.provider)}`:''}${e.model?` · ${escapeHTML(e.model)}`:''}${e.toolCallId?` · ${escapeHTML(e.toolCallId)}`:''}</small></div></article>`}
 async function loadRunLogs(runId,nodeId,more=false){
   if(!more&&state.runLogs?.runId===runId&&state.runLogs?.nodeId===nodeId&&state.runLogs.loading)return;
   const params=new URLSearchParams({limit:'100'});
@@ -419,12 +420,12 @@ function matchTelemetryAdapter(e,view){
   const a=e?.source?.adapter||'';
   if(!view||view==='all')return true;
   if(view==='hooks')return isHookAdapter(a);
-  if(view==='otel')return a==='codebuddy-otel-v1';
-  if(view==='live')return !isHookAdapter(a)&&a!=='codebuddy-otel-v1';
+  if(view==='otel')return isOTLPAdapter(a);
+  if(view==='live')return !isHookAdapter(a)&&!isOTLPAdapter(a);
   return a===view;
 }
 function telemetrySectionTitle(adapter){return ({live:'节点实时轨迹',hooks:'Hook 轨迹',otel:'OTEL 轨迹'})[adapter]||'节点轨迹'}
-function telemetryEmptyHint(adapter){return ({live:'该节点没有实时轨迹',hooks:'还没有 Hook 事件。角色级 Hook 在 Claude Code、Codex 或 CodeBuddy 触发后会写到这里。',otel:'还没有 OTEL span。需要 CodeBuddy 打开原生 OTLP 导出。'})[adapter]||'该节点没有轨迹'}
+function telemetryEmptyHint(adapter){return ({live:'该节点没有实时轨迹',hooks:'还没有 Hook 事件。角色级 Hook 在 Claude Code、Codex 或 CodeBuddy 触发后会写到这里。',otel:'还没有 OTEL span。请检查所用 CLI 的 OTLP 导出配置。'})[adapter]||'该节点没有轨迹'}
 function telemetrySourceTabs(adapter,attr){
   return `<div class="trace-source-tabs">${[['live','实时'],['hooks','Hook'],['otel','OTEL']].map(([id,label])=>`<button type="button" class="${adapter===id?'active':''}" ${attr}="${id}">${label}</button>`).join('')}</div>`;
 }
@@ -1277,10 +1278,6 @@ function defaultRunEval(){return{enabled:true,version:1,threshold:70,dimensions:
   {id:'recovery',name:'错误恢复',question:'相同错误是否反复出现？',weight:10},
   {id:'delivery',name:'交付完整',question:'终态、产物和验证信号是否齐全？',weight:10}
 ]}}
-// Run evals run on CodeBuddy only; a saved "codex:…" id falls back.
-function runEvalModel(){const api=window.AgentFlowAssistantModels,stored=state.runEvalModel||localStorage.getItem('agentflow.runEvalModel')||'';if(api?.codeBuddyModel)return api.codeBuddyModel(stored);return stored||(api&&api.DEFAULT)||'default'}
-function setRunEvalModel(id){state.runEvalModel=id;localStorage.setItem('agentflow.runEvalModel',id)}
-function runEvalHasKey(){return !!(userById(state.currentUser?.id)||state.currentUser||{}).codeBuddyApiKeyConfigured}
 function runEvalApplyable(rec){if(!rec||rec.status==='applied')return false;const action=((rec.target||'')+'.'+(rec.action||'')).replace(/^\./,'').toLowerCase();const full=rec.action&&rec.action.includes('.')?rec.action.toLowerCase():action;return ['workflow.update_node','agent.upsert_gate','agent.remove_gate','agent.append_instructions','agent.append_task_prompt'].includes(full)}
 function runEvalPaneHTML(run){
   const rec=state.runEval?.runId===run.id?state.runEval:null,busy=!!state.runEvalBusy,thoughts=state.runEvalThoughts||[];
@@ -1299,16 +1296,10 @@ function runEvalPaneHTML(run){
       </div>
     </div>
     <div class="run-eval-hero-action-card">
-      <div class="eval-control-label">评测大模型</div>
+      <div class="eval-control-label">评测执行器与模型</div>
       <div class="run-eval-toolbar-row">
-        <div class="schedule-model-field run-eval-model" id="runEvalModelPicker">
-          <input type="hidden" name="runEvalModel" value="${escapeHTML(runEvalModel())}">
-          <button type="button" class="ai-model-toggle" data-model-toggle aria-haspopup="listbox" aria-expanded="false">
-            <span class="ai-model-icon" data-family="glm">智</span>
-            <span data-model-label>选择模型</span>
-            <span class="ai-model-caret" aria-hidden="true"></span>
-          </button>
-          <div class="ai-model-menu" hidden role="listbox"></div>
+        <div class="feature-model-picker run-eval-picker" id="runEvalModelPicker">
+          ${window.AgentFlowAssistantModels?.featurePickerHTML()||''}
         </div>
         <button type="button" class="button primary run-eval-launch-btn" data-start-run-eval ${isTerminal?'':'disabled'}>
           <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 2l2.4 7.2L21.6 12l-7.2 2.4L12 21.6l-2.4-7.2L2.4 12l7.2-2.4L12 2z"/></svg>
@@ -1328,7 +1319,7 @@ function runEvalPaneHTML(run){
   }
 
   if(rec?.status==='failed'){
-    return `<section class="run-eval-section">${heroCard}<div class="run-eval-error-card"><div class="error-head"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg><b>评测执行失败</b></div><pre>${escapeHTML(rec.error||'模型未返回结果')}</pre><p class="error-tip">请检查个人配置中的 CodeBuddy API Key 配置或网络状态后重新评测。</p></div></section>`;
+    return `<section class="run-eval-section">${heroCard}<div class="run-eval-error-card"><div class="error-head"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg><b>评测执行失败</b></div><pre>${escapeHTML(rec.error||'模型未返回结果')}</pre><p class="error-tip">请检查所选 CLI 的凭据、安装状态或网络后重新评测。</p></div></section>`;
   }
 
   if(!rec||!rec.status){
@@ -1353,7 +1344,7 @@ function runEvalRecHTML(item){
   return `<article class="run-eval-rec ${applied?'is-applied':''}"><div><b>${escapeHTML(item.title||item.action||'建议')}</b><p>${escapeHTML(item.rationale||'')}</p><small>${escapeHTML(item.target||'')} ${escapeHTML(item.action||'')} ${item.nodeId?('· '+escapeHTML(item.nodeId)):''}</small>${patch?`<details><summary>预览补丁</summary><pre>${escapeHTML(JSON.stringify(patch,null,2))}</pre></details>`:''}${item.applyError?`<small class="danger">${escapeHTML(item.applyError)}</small>`:''}</div>${applied?`<button type="button" class="button ghost small" data-open-eval-target="${escapeHTML(item.target||'')}" data-open-eval-id="${escapeHTML(item.appliedTargetId||item.targetId||'')}">打开</button>`:(can?`<button type="button" class="button primary small" data-apply-eval="${escapeHTML(item.id)}">应用此修改</button>`:'<small>仅建议</small>')}</article>`;
 }
 function bindRunEvalPane(run,host){
-  bindRunEvalModelPicker(host.querySelector('#runEvalModelPicker'));
+  bindRunEvalModelPicker(host.querySelector('#runEvalModelPicker'),run.id);
   host.querySelectorAll('[data-run-eval]').forEach(b=>b.onclick=()=>{
     state.runDetailTab='eval';
     host.querySelectorAll('[data-run-tab]').forEach(x=>x.classList.toggle('active',x.dataset.runTab==='eval'));
@@ -1364,30 +1355,19 @@ function bindRunEvalPane(run,host){
   host.querySelectorAll('[data-apply-eval]').forEach(b=>b.onclick=()=>applyRunEvalRec(run,b.dataset.applyEval));
   host.querySelectorAll('[data-open-eval-target]').forEach(b=>b.onclick=()=>openRunEvalTarget(b.dataset.openEvalTarget,b.dataset.openEvalId));
 }
-function bindRunEvalModelPicker(host){
-  if(!host)return;
-  const api=window.AgentFlowAssistantModels,toggle=host.querySelector('[data-model-toggle]'),menu=host.querySelector('.ai-model-menu');
-  if(!api||!toggle||!menu)return;
-  const paint=()=>{const keep=runEvalModel();const inp=host.querySelector('[name=runEvalModel]');if(inp)inp.value=keep;api.paint(toggle,keep)};
-  paint();
-  api.load?.().then(paint).catch(paint);
-  if(host.dataset.bound)return;
-  host.dataset.bound='1';
-  toggle.onclick=e=>{
-    e.stopPropagation();
-    const open=menu.hidden;
-    menu.hidden=!open;
-    toggle.setAttribute('aria-expanded',open?'true':'false');
-    if(open)api.renderCodeBuddyList(menu,runEvalModel(),id=>{setRunEvalModel(id);paint();menu.hidden=true;toggle.setAttribute('aria-expanded','false')});
-  };
-  document.addEventListener('click',e=>{if(host.contains(e.target))return;menu.hidden=true;toggle.setAttribute('aria-expanded','false')});
+let runEvalModelChoice;
+function bindRunEvalModelPicker(host,runId){
+  window.AgentFlowAssistantModels?.bindFeaturePicker(host,{
+    model:runEvalModelChoice?.runId===runId?runEvalModelChoice.model:'',
+    legacyModel:localStorage.getItem('agentflow.runEvalModel'),
+    onChange:model=>{runEvalModelChoice={runId,model}}
+  });
 }
 async function loadRunEval(runId,background){
   try{
     const rec=await api(`/api/runs/${encodeURIComponent(runId)}/eval`,{silent:true});
     if((state.activeRun?.id||state.selectedRun)!==runId&&state.activeRun?.id!==runId)return;
     state.runEval={...rec,runId};
-    if(rec?.model)setRunEvalModel(rec.model);
     if(rec?.status==='running'&&!state.runEvalStream)attachRunEvalStream(runId);
     if(!background){
       const host=$('#runDetail');
@@ -1398,12 +1378,21 @@ async function loadRunEval(runId,background){
 }
 async function startRunEval(run){
   if(!['succeeded','failed','cancelled'].includes(run.status))return toast('请等 SOP 跑完后再评测');
-  if(!runEvalHasKey()){toast('请先在个人配置中配置自己的 CodeBuddy API Key','err');switchView('settings');return}
+  let picker=$('#runEvalModelPicker');
+  await picker?.modelPickerReady;
+  if(picker&&!picker.isConnected&&state.activeRun?.id===run.id){
+    // Loading the last evaluation can replace the picker while its catalog is loading.
+    picker=$('#runEvalModelPicker');
+    await picker?.modelPickerReady;
+  }
+  if(!picker?.isConnected||state.runEvalBusy)return;
+  const model=picker.querySelector('[data-feature-model]')?.value;
+  if(!model)return toast('暂无可选模型，请检查个人配置中的执行器');
   state.runEvalBusy=true;state.runEvalThoughts=['正在提交评测…'];
   const host=$('#runDetail'),pane=host?.querySelector('[data-run-pane="eval"]');
   if(pane){pane.innerHTML=runEvalPaneHTML(run);bindRunEvalPane(run,host)}
   try{
-    const rec=await api(`/api/runs/${encodeURIComponent(run.id)}/eval`,{method:'POST',body:JSON.stringify({model:runEvalModel()})});
+    const rec=await api(`/api/runs/${encodeURIComponent(run.id)}/eval`,{method:'POST',body:JSON.stringify({model})});
     state.runEval={...rec,runId:run.id};
     attachRunEvalStream(run.id);
   }catch(e){state.runEvalBusy=false;toast(e.message,'err');if(pane){pane.innerHTML=runEvalPaneHTML(run);bindRunEvalPane(run,host)}}

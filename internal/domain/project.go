@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"agentflow/internal/config"
 )
 
 type Project struct {
@@ -156,9 +158,19 @@ type RepositoryContext struct {
 	WorkspaceDir string `json:"workspaceDir,omitempty"`
 }
 
-// GongfengRepoHost is the hostname of the optional legacy GitLab-compatible
-// hosting service. Repository links pasted by users are normalized against it.
+// GongfengRepoHost identifies links in older repository and run records.
 const GongfengRepoHost = "git.example.com"
+
+func GongfengRepositoryHost() string {
+	if host := config.GongfengHost(); host != "" {
+		return host
+	}
+	return GongfengRepoHost
+}
+
+func IsGongfengHost(host string) bool {
+	return strings.EqualFold(host, GongfengRepositoryHost()) || strings.EqualFold(host, GongfengRepoHost)
+}
 
 // GongfengRepoInfo carries the repository identity parsed out of a pasted
 // Gongfeng link, so a repository can be configured with a single URL.
@@ -210,26 +222,30 @@ func ParseGongfengRepoURL(raw string) (GongfengRepoInfo, bool) {
 	if i := strings.LastIndex(pathSource, "@"); i >= 0 {
 		pathSource = pathSource[i+1:]
 	}
-	var path string
-	if !strings.Contains(s, "://") && !strings.Contains(s, "@") && !strings.Contains(pathSource, ":") {
-		// Bare project path (group/repository) pasted without URL decoration.
-		path = pathSource
-	} else if strings.Contains(pathSource, "/") {
-		host := pathSource[:strings.IndexAny(pathSource, "/:")]
-		if !strings.EqualFold(host, GongfengRepoHost) {
-			return GongfengRepoInfo{}, false
+	path := ""
+	for _, host := range []string{GongfengRepositoryHost(), GongfengRepoHost} {
+		if len(pathSource) <= len(host) || !strings.EqualFold(pathSource[:len(host)], host) {
+			continue
 		}
-		if pathSource[len(host)] == ':' {
-			// git.example.com:group/repo.git (scp) or git.example.com:22/group/repo.git
-			path = pathSource[len(host)+1:]
+		tail := pathSource[len(host):]
+		switch tail[0] {
+		case '/':
+			path = tail[1:]
+		case ':':
+			path = tail[1:]
 			if j := strings.Index(path, "/"); j >= 0 && isAllDigits(path[:j]) {
 				path = path[j+1:]
 			}
-		} else {
-			path = pathSource[len(host)+1:]
 		}
-	} else {
-		// bare host without path is not a repository reference
+		if path != "" {
+			break
+		}
+	}
+	if path == "" && !strings.ContainsAny(s, ":@") {
+		// Trusted callers can still normalize saved project IDs.
+		path = pathSource
+	}
+	if path == "" {
 		return GongfengRepoInfo{}, false
 	}
 	project := normalizeGongfengProjectPath(path)
@@ -238,10 +254,11 @@ func ParseGongfengRepoURL(raw string) (GongfengRepoInfo, bool) {
 	}
 	info := GongfengRepoInfo{Project: project}
 	info.Name = project[strings.LastIndex(project, "/")+1:]
-	info.WebURL = "https://" + GongfengRepoHost + "/" + project
+	host := GongfengRepositoryHost()
+	info.WebURL = "https://" + host + "/" + project
 	info.CloneURL = info.WebURL + ".git"
-	if sshClone {
-		info.CloneURL = "git@" + GongfengRepoHost + ":" + project + ".git"
+	if sshClone && !strings.Contains(host, ":") {
+		info.CloneURL = "git@" + host + ":" + project + ".git"
 	}
 	return info, true
 }
@@ -254,7 +271,6 @@ func normalizeGongfengProjectPath(path string) string {
 		// absolute local paths are never repository paths
 		return ""
 	}
-	p = strings.TrimPrefix(p, GongfengRepoHost+"/")
 	if strings.HasSuffix(strings.ToLower(p), ".git") {
 		p = p[:len(p)-4]
 	}
