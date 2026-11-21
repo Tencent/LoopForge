@@ -88,6 +88,8 @@ type AgentCLIOptions struct {
 	SystemPromptFile string
 	// ReadOnly is AgentCLICommandOptions.Chat.
 	ReadOnly bool
+	// ImageInput enables multimodal serialization for custom providers.
+	ImageInput bool `json:",omitempty"`
 }
 
 // agentCLIKeyEnv holds the user's key for CLIs whose configuration names
@@ -407,12 +409,17 @@ func ApplyAgentCLICredential(kind string, cred ProviderCredential, options Agent
 			// Base URLs follow the Claude Code convention; the AI SDK wants /v1.
 			endpoint += "/v1"
 		}
+		modelConfig := map[string]any{"name": model}
+		if options.ImageInput {
+			modelConfig["attachment"] = true
+			modelConfig["modalities"] = map[string][]string{"input": {"text", "image"}, "output": {"text"}}
+		}
 		config := map[string]any{
 			"provider": map[string]any{"agentflow": map[string]any{
 				"npm":     npm,
 				"name":    "AgentFlow",
 				"options": map[string]any{"baseURL": endpoint, "apiKey": "{env:" + agentCLIKeyEnv + "}"},
-				"models":  map[string]any{model: map[string]any{"name": model}},
+				"models":  map[string]any{model: modelConfig},
 			}},
 			"model":      "agentflow/" + model,
 			"autoupdate": false,
@@ -499,9 +506,13 @@ func ApplyAgentCLICredential(kind string, cred ProviderCredential, options Agent
 		env["KIMI_DISABLE_TELEMETRY"] = "1"
 	case AgentCLIPi:
 		api := agentCLIPiAPI(protocol)
+		modelConfig := map[string]any{"id": model, "reasoning": true}
+		if options.ImageInput {
+			modelConfig["input"] = []string{"text", "image"}
+		}
 		models, _ := json.MarshalIndent(map[string]any{"providers": map[string]any{"agentflow": map[string]any{
 			"baseUrl": baseURL, "api": api, "apiKey": "$" + agentCLIKeyEnv,
-			"models": []map[string]any{{"id": model, "reasoning": true}},
+			"models": []map[string]any{modelConfig},
 		}}}, "", "  ")
 		if err := writeAgentCLIFile(home, ".pi/agent/models.json", models); err != nil {
 			return nil, nil, err

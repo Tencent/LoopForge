@@ -88,6 +88,8 @@ type AgentCLICommandOptions struct {
 	// Resume is the CLI's own session ID to continue; empty starts one.
 	Resume string
 	Prompt string
+	// ImagePaths are already staged in the conversation's attachment directory.
+	ImagePaths []string
 	// SystemPrompt is the system prompt body; SystemPromptFile is the same
 	// text as a path the process can read.
 	SystemPrompt, SystemPromptFile string
@@ -136,7 +138,16 @@ func AgentCLICommand(kind string, o AgentCLICommandOptions) CommandSpec {
 			argv = append(argv, "--variant", effort)
 		}
 		options.SystemPromptFile = o.SystemPromptFile
-		argv = append(append(argv, extra...), prompt)
+		argv = append(argv, extra...)
+		if len(o.ImagePaths) > 0 {
+			options.ImageInput = true
+			for _, path := range o.ImagePaths {
+				argv = append(argv, "--file", path)
+			}
+			// --file accepts an array. Keep the prompt out of that array.
+			argv = append(argv, "--")
+		}
+		argv = append(argv, prompt)
 	case AgentCLICursor:
 		// Chat relies on the deny rules of .cursor/cli-config.json; --force
 		// still approves the MCP tools.
@@ -207,7 +218,14 @@ func AgentCLICommand(kind string, o AgentCLICommandOptions) CommandSpec {
 		if readOnly {
 			argv = append(argv, "--exclude-tools", "bash,edit,write")
 		}
-		argv = append(append(argv, extra...), prompt)
+		argv = append(argv, extra...)
+		if len(o.ImagePaths) > 0 {
+			options.ImageInput = true
+			for _, path := range o.ImagePaths {
+				argv = append(argv, "@"+path)
+			}
+		}
+		argv = append(argv, prompt)
 	case AgentCLIDeepSeek:
 		mode := "danger-full-access"
 		if readOnly {

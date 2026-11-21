@@ -37,6 +37,7 @@ type assistantCLIInvocation struct {
 
 type assistantEngineInvocationOpts struct {
 	Bin, Root, Config, Prompt, Model, Effort, SessionID, SystemPrompt string
+	ImagePaths                                                        []string
 	Resume, Workspace, RunnerLogin                                    bool
 	// ReviewOnly is a one-shot call without MCP servers or session history,
 	// such as a title summary.
@@ -219,12 +220,30 @@ func prepareAssistantClaudeInvocation(o assistantEngineInvocationOpts) (assistan
 	// --disallowedTools is variadic: end option parsing before the prompt.
 	argv = append(argv, "--", o.Prompt)
 	command := runtime.CommandSpec{Argv: argv, Provider: "claude-code", CredentialBindings: []runtime.CredentialBinding{runtime.BindClaudeCode}}
+	if len(o.ImagePaths) > 0 {
+		command, err = withAssistantStreamImageInput(command, o.Prompt, o.ImagePaths)
+		if err != nil {
+			return assistantCLIInvocation{}, err
+		}
+	}
 	command = runtime.PromptOnStdin(command, o.Prompt)
 	return assistantCLIInvocation{
 		command:     command.WithClaudeBypassAccepted(),
 		credentials: runtime.RunCredentials{ClaudeCode: o.User},
 		sessionRef:  sessionID,
 	}, nil
+}
+
+func withAssistantStreamImageInput(command runtime.CommandSpec, prompt string, imagePaths []string) (runtime.CommandSpec, error) {
+	input, err := assistantStreamImageInput(prompt, imagePaths)
+	if err != nil {
+		return runtime.CommandSpec{}, err
+	}
+	// The invocations above terminate with "--", prompt. The structured
+	// message replaces the positional prompt while preserving the delimiter.
+	command.Argv = appendNativeArgs(command.Argv[:len(command.Argv)-1], "--input-format", "stream-json")
+	command.Stdin = input
+	return command, nil
 }
 
 // Codex tools that act outside the platform gateway. The chat runs on the
