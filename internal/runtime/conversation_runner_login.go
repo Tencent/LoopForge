@@ -86,6 +86,12 @@ func PrepareRunnerAgentCLILogin(sandbox Sandbox, command CommandSpec) (map[strin
 		}
 		return nil, nil, err
 	}
+	// The generic tail of prepareRunnerLogin returns a nil env map; the
+	// OAuth and Antigravity branches build their own. Any future login spec
+	// that takes the generic path panics here without the guard.
+	if env == nil {
+		env = map[string]string{}
+	}
 	_, homeEnv := privateHomePaths(sandbox, sandbox.Workspace(), command)
 	env["HOME"] = homeEnv
 	tmp, err := EnsureControlDirectory(sandbox.Workspace(), "tmp", PrivateHomeName(command))
