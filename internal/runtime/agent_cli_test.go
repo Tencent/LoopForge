@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -520,5 +521,35 @@ func TestOpenAgentCLIHomeTrustsBase(t *testing.T) {
 		if _, err := openAgentCLIHome(AgentCLIHome{Base: base, Rel: rel}); err == nil {
 			t.Errorf("rel %q was accepted", rel)
 		}
+	}
+}
+
+// A chat turn embeds the whole conversation in the prompt. Pi reads it from
+// stdin when no positional prompt is given, so an oversized prompt must leave
+// argv instead of making fork/exec fail with E2BIG before the CLI starts.
+func TestAgentCLIPiOversizedChatPromptUsesStdin(t *testing.T) {
+	prompt := strings.Repeat("长对话", maxArgvPromptBytes/9+100)
+	command := AgentCLICommand(AgentCLIPi, AgentCLICommandOptions{Chat: true, Prompt: prompt})
+	for _, arg := range command.Argv {
+		if len(arg) >= len(prompt) {
+			t.Fatalf("argv still carries the %d-byte prompt: %q", len(arg), arg[:40])
+		}
+	}
+	if command.Stdin == nil {
+		t.Fatal("oversized chat prompt was not moved to stdin")
+	}
+	data, err := io.ReadAll(command.Stdin)
+	if err != nil || string(data) != prompt {
+		t.Fatalf("stdin carries %d bytes (err=%v), want %d", len(data), err, len(prompt))
+	}
+}
+
+// SOP invocations point at the task prompt file when the text is too long, so
+// their argv shape must not change.
+func TestAgentCLIPiSOPPromptStaysOnArgv(t *testing.T) {
+	prompt := strings.Repeat("任务", maxArgvPromptBytes/6+100)
+	command := AgentCLICommand(AgentCLIPi, AgentCLICommandOptions{Prompt: prompt})
+	if command.Stdin != nil || command.Argv[len(command.Argv)-1] != prompt {
+		t.Fatalf("SOP prompt should stay positional: stdin=%v", command.Stdin != nil)
 	}
 }
