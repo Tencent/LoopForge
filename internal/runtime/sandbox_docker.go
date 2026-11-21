@@ -766,6 +766,11 @@ func (s *dockerSandbox) start(ctx context.Context, recreate bool) error {
 		}
 	}
 	network := strings.TrimSpace(os.Getenv("AGENTFLOW_DOCKER_NETWORK"))
+	// Sandboxes reach a native platform through the host-gateway alias:
+	// AGENTFLOW_SESSION_GATEWAY hands them a host.docker.internal URL, and
+	// Linux daemons only resolve that name when the container carries the
+	// mapping. Add it for every sandbox, not only conversation relays.
+	args = append(args, "--add-host", "host.docker.internal:host-gateway")
 	if s.requirements.ConversationRoot != "" || s.requirements.RunnerLoginRelay {
 		_, relayNetwork, err := conversationDockerAccess(ctx)
 		if err != nil {
@@ -774,7 +779,6 @@ func (s *dockerSandbox) start(ctx context.Context, recreate bool) error {
 		if relayNetwork != "" {
 			network = relayNetwork
 		}
-		args = append(args, "--add-host", "host.docker.internal:host-gateway")
 	}
 	if network != "" {
 		args = append(args, "--network", network)

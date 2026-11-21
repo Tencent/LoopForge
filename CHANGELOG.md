@@ -6,6 +6,7 @@ Platform releases use `vX.Y.Z` tags and publish `ghcr.io/tencent/loopforge`. Loo
 
 - On macOS `/bin/bash` 3.2, a missing local image or a failed automatic mirror pull no longer aborts `./start.sh` before the official image pull.
 - `./start.sh` and `./start.sh pull` time `ghcr.io` and `ghcr.nju.edu.cn`. Nanjing is used only when the ghcr.io manifest digest was verified and the mirror returned the same digest; the pull is that digest, then tagged back to the name pinned in `compose.yaml`. A missing official digest, a digest mismatch, or a failed mirror pull stays on `ghcr.io`. `MIRROR=ghcr.io` forces the upstream registry; `MIRROR=<host>` still forces that host and does not fall back. Accepting Nanjing, or setting `MIRROR`, trusts that host. The choice is not saved in `.env`. `registry-mirrors` such as `https://docker.nju.edu.cn` only accelerates Docker Hub.
+- Docker sandboxes always get `--add-host host.docker.internal:host-gateway`. A native install hands every sandbox an `AGENTFLOW_SESSION_GATEWAY` URL on `host.docker.internal`, but the mapping was only added for conversation and runner-login containers, so `git credential fill` in an SOP run sandbox failed with `lookup host.docker.internal ... no such host` and the 发起 MR agent had to rediscover the docker bridge gateway on every run. The mapping now applies to all sandboxes.
 
 ## 0.4.0 — scheduled task history, an MR node in delivery SOPs and agent CLIs in conversation workspaces
 
