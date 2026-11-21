@@ -55,19 +55,21 @@ describe("message image attachments", () => {
   });
 
   test("renders no filename caption bar under the image", () => {
+    const onOpen = vi.fn();
     const { container } = render(
-      <Attachment attachment={image} sessionId="s1" onOpen={vi.fn()} />,
+      <Attachment attachment={image} sessionId="s1" onOpen={onOpen} />,
     );
     expect(container.querySelector(".image-caption")).toBeNull();
     // The file name moves to the hover title.
     expect(container.querySelector(".message-image").getAttribute("title")).toBe(
-      "shot.png\n单击在产物栏打开，双击查看大图",
+      "shot.png\n单击查看大图",
     );
-    // The image itself stays accessible; double-click still opens the viewer.
+    // A single click opens the image viewer instead of the artifact panel.
     expect(screen.getByAltText("shot.png")).toBeInTheDocument();
-    fireEvent.doubleClick(screen.getByAltText("shot.png"));
+    fireEvent.click(screen.getByAltText("shot.png"));
     expect(
       screen.getByRole("dialog", { name: "查看大图 shot.png" }),
     ).toBeInTheDocument();
+    expect(onOpen).not.toHaveBeenCalled();
   });
 });

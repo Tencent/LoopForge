@@ -38,7 +38,7 @@ test('Chinese/English and light/dark preferences persist across reloads',async({
   await expect(page.locator('#userProfilePopover [data-theme-pref="dark"]')).toHaveAttribute('aria-checked','true');
   await page.keyboard.press('Escape');
   await page.mouse.move(800,500);
-  await page.locator('#langToggle').click();
+  await page.locator('#langToggle [data-lang-value="en"]').click();
   await expect(page.locator('html')).toHaveAttribute('lang','en');
   await expect(page.locator('.nav[data-view="issues"]')).toHaveAttribute('aria-label','Requirements');
   await expect(page.locator('.nav[data-view="issues"]')).toHaveAttribute('data-tooltip','Requirements');
