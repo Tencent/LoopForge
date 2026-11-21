@@ -100,7 +100,7 @@ func (h *assistantHandlers) generateBotReply(ctx context.Context, bot domain.Not
 		cliSessionID := newAssistantSessionID()
 		resume := false
 		generate = func(callCtx context.Context, prompt string, u domain.User) (string, error) {
-			raw, _, err := runAssistantCLI(callCtx, assistantCLIRequest{Prompt: prompt, Model: model, SessionID: cliSessionID, Resume: resume, UserID: u.ID, Native: true, MCPConfig: files.MCPConfig, Settings: files.Settings, SystemPrompt: assistantSystemPromptForMode(AssistantApprovalAuto)}, u, func(ev assistantStreamEvent) {
+			raw, _, err := runAssistantCLI(callCtx, assistantCLIRequest{Prompt: prompt, Model: model, SessionID: cliSessionID, Resume: resume, UserID: u.ID, Native: true, MCPConfig: files.MCPConfig, Settings: files.Settings, SystemPrompt: assistantSystemPromptForMode(AssistantApprovalAuto), TerminalSession: session}, u, func(ev assistantStreamEvent) {
 				switch ev.Kind {
 				case "tool":
 					if strings.Contains(ev.Tool, "submit_assistant_reply") {

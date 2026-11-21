@@ -575,7 +575,7 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 				} else if !req.sopDesigner() {
 					prompt = assistantPlatformExecutionReminder + "\n" + prompt
 				}
-				cliReq := assistantCLIRequest{Executor: req.Executor, Prompt: prompt, Model: cliModel, Effort: req.Effort, SessionID: cliSessionID, Resume: resume, UserID: u.ID, Native: true, MCPConfig: mcp, Settings: settings, SystemPrompt: system, SessionRoot: cliRoot, RunnerLogin: runnerLogin, OnUsage: turnUsage.add, Workspace: req.workspaceMode, RemoteBinary: req.workspaceMode || toolSession.ExecutionRunnerID != "", Execute: h.conversationExecutor(toolSession, cliRoot)}
+				cliReq := assistantCLIRequest{Executor: req.Executor, Prompt: prompt, Model: cliModel, Effort: req.Effort, SessionID: cliSessionID, Resume: resume, UserID: u.ID, Native: true, MCPConfig: mcp, Settings: settings, SystemPrompt: system, SessionRoot: cliRoot, RunnerLogin: runnerLogin, OnUsage: turnUsage.add, Workspace: req.workspaceMode, RemoteBinary: req.workspaceMode || toolSession.ExecutionRunnerID != "", Execute: h.conversationExecutor(toolSession, cliRoot), TerminalSession: toolSession}
 				persistAttempt := func(unstarted bool) error {
 					if nativeSession != nil {
 						nativeSession.checkpoint.Unstarted = unstarted
@@ -1504,6 +1504,9 @@ type assistantCLIRequest struct {
 	ReviewOnly                                     bool
 	Native                                         bool
 	MCPConfig, Settings                            string
+	// TerminalSession owns the reply whose commit deliberately stops this CLI.
+	// Review and helper invocations must leave it nil.
+	TerminalSession *AgentToolSession
 	// OnUsage receives the usage of this CLI invocation once its result event
 	// reports one; the result event covers only this process, not the session.
 	OnUsage func(domain.TokenUsage)
@@ -1523,6 +1526,9 @@ func runAssistantCLI(ctx context.Context, req assistantCLIRequest, user domain.U
 		engineModel = ""
 	}
 	attempt := assistantDiagnosticsFrom(ctx).begin(engine, engineModel, req.Resume, user)
+	if attempt != nil {
+		attempt.terminalSession = req.TerminalSession
+	}
 	defer func() { attempt.finish(returnedErr) }()
 	if engine != assistantEngineCodeBuddy && (req.ReportOnly || (!req.Native && !req.ReviewOnly)) {
 		return "", "", errAssistantEngineUnsupported

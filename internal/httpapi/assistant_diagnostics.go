@@ -162,6 +162,9 @@ type assistantDiagnosticAttempt struct {
 	d    *assistantDiagnosticsCollector
 	id   string
 	user domain.User
+	// Only the CLI serving this session may treat its terminal cancellation
+	// as completion. Concurrent approval-review attempts have no such owner.
+	terminalSession *AgentToolSession
 }
 
 func (d *assistantDiagnosticsCollector) termination() *domain.AssistantDiagnosticTermination {
@@ -231,6 +234,12 @@ func (a *assistantDiagnosticAttempt) phase(phase string) {
 
 func (a *assistantDiagnosticAttempt) finish(err error) {
 	a.update(func(attempt *domain.AssistantCLIAttempt) {
+		if errors.Is(err, context.Canceled) && a.terminalSession.finished() {
+			// The accepted terminal result ends the model process by design.
+			// Other attempts and non-cancellation failures keep their outcome.
+			a.d.appendTimelineLocked(domain.AssistantDiagnosticEvent{Source: "platform", Kind: "cli.terminal_committed", AttemptID: a.id, Phase: attempt.Phase})
+			err = nil
+		}
 		now := time.Now().UTC()
 		attempt.FinishedAt = &now
 		attempt.Status = "completed"
