@@ -2466,6 +2466,12 @@ paths:
       tags: [Analytics]
       operationId: getAnalytics
       parameters:
+        - name: projectScope
+          in: query
+          description: Restrict analytics to records without a project. Mutually exclusive with a non-empty projectId; omitting it preserves the existing project selection.
+          schema:
+            type: string
+            enum: [unassigned]
         - name: projectId
           in: query
           schema:

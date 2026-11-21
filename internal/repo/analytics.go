@@ -139,6 +139,16 @@ func (r *AnalyticsRepo) analyticsWithRuns(filter domain.AnalyticsFilter, prefetc
 	for _, issue := range issueList {
 		issuesByID[issue.ID] = issue
 	}
+	if filter.ProjectScope == "unassigned" {
+		filtered := make([]domain.Run, 0, len(runList))
+		for _, run := range runList {
+			issue := issuesByID[strings.TrimSpace(run.ExecutionContext.IssueID)]
+			if filter.MatchesProject(domain.RunProjectID(run, issue.ProjectID)) {
+				filtered = append(filtered, run)
+			}
+		}
+		runList = filtered
+	}
 	// RunSummaries intentionally omits workflow snapshots on MySQL list paths.
 	// Full scans need the frozen name/version/category/node bindings; overview
 	// uses the live workflow catalog instead so the page does not hydrate every snapshot.
@@ -194,6 +204,9 @@ func (r *AnalyticsRepo) analyticsWithRuns(filter domain.AnalyticsFilter, prefetc
 
 	for _, run := range runList {
 		external, isExternal := externalMetadata[run.ID]
+		if filter.ProjectScope == "unassigned" && !filter.MatchesProject(domain.RunProjectID(run, issuesByID[strings.TrimSpace(run.ExecutionContext.IssueID)].ProjectID)) {
+			continue
+		}
 		if filter.WorkflowID != "" && run.WorkflowID != filter.WorkflowID {
 			continue
 		}
