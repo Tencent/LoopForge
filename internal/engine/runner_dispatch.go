@@ -214,8 +214,19 @@ func (e *Engine) dispatchRunnerTask(ctx context.Context, runnerID string, run do
 	if authMode == domain.RuntimeAuthPersonal {
 		switch ex.Kind {
 		case "codex":
+			auth, problem := e.codexChatGPTAuth(run.ExecutionContext.ResponsibleUserID)
+			if auth != "" {
+				if !runner.SupportsCodexChatGPT() {
+					return "", fmt.Errorf("使用 Codex ChatGPT 登录需要执行机器升级至 %s 或更新版本，请先更新 Runner", domain.RunnerVersionCodexChatGPT)
+				}
+				invocation.CodexChatGPTAuth = auth
+				break
+			}
 			if strings.TrimSpace(sb.credentialSnapshot().Codex.APIKey) == "" {
-				return "", errors.New("当前责任人未配置 Codex API Key：请先在个人配置中配置，或将执行机器认证方式切回本机登录")
+				if problem != "" {
+					return "", errors.New(problem)
+				}
+				return "", errors.New("当前责任人未配置 Codex API Key 或 ChatGPT 登录：请先在个人配置中配置，或将执行机器认证方式切回本机登录")
 			}
 			invocation.CodexAPIKey = sb.credentialSnapshot().Codex.APIKey
 			invocation.CodexBaseURL = sb.credentialSnapshot().Codex.BaseURL

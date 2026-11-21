@@ -80,6 +80,11 @@ type ProviderCredential struct {
 	APIKey   string
 	BaseURL  string
 	Protocol string
+	// ChatGPTAuth is a Codex ChatGPT login without its refresh token. When
+	// set it replaces APIKey; ChatGPTProblem explains a login that exists
+	// but cannot be used.
+	ChatGPTAuth    string `json:"-"`
+	ChatGPTProblem string `json:"-"`
 	// Models is the user's saved model catalog for an agent CLI; Cursor
 	// resolves folded families from it (CursorModelID).
 	Models []domain.CLIModel

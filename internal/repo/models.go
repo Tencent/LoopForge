@@ -43,6 +43,9 @@ type userConfigRow struct {
 	CodexAPIKey                  *string    `gorm:"column:codex_api_key;type:text"`
 	CodexBaseURL                 *string    `gorm:"column:codex_base_url;type:text"`
 	CodexModels                  *string    `gorm:"column:codex_models;type:text"`
+	CodexChatGPTLogin            *string    `gorm:"column:codex_chatgpt_login;type:text"`
+	CodexChatGPTLoginStatus      string     `gorm:"column:codex_chatgpt_login_status;size:32"`
+	CodexChatGPTRefreshLease     *time.Time `gorm:"column:codex_chatgpt_refresh_lease"`
 	ClaudeCodeAPIKey             *string    `gorm:"column:claude_code_api_key;type:text"`
 	ClaudeCodeBaseURL            *string    `gorm:"column:claude_code_base_url;type:text"`
 	ClaudeCodeModels             *string    `gorm:"column:claude_code_models;type:text"`

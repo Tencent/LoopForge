@@ -37,6 +37,8 @@ type userWithConfig struct {
 	CodexAPIKey                  *string    `gorm:"column:codex_api_key"`
 	CodexBaseURL                 *string    `gorm:"column:codex_base_url"`
 	CodexModels                  *string    `gorm:"column:codex_models"`
+	CodexChatGPTLogin            *string    `gorm:"column:codex_chatgpt_login"`
+	CodexChatGPTLoginStatus      string     `gorm:"column:codex_chatgpt_login_status"`
 	ClaudeCodeAPIKey             *string    `gorm:"column:claude_code_api_key"`
 	ClaudeCodeBaseURL            *string    `gorm:"column:claude_code_base_url"`
 	ClaudeCodeModels             *string    `gorm:"column:claude_code_models"`
@@ -51,7 +53,8 @@ const userSelectColumns = `u.id, u.staff_id, u.login_name, u.chinese_name, u.dep
 	EXISTS (SELECT 1 FROM user_git_http_credentials h WHERE h.user_id = u.id) AS git_http_credentials_configured,
 	EXISTS (SELECT 1 FROM user_git_http_credentials h WHERE h.user_id = u.id AND h.host = 'github.com') AS github_credential_configured,
 	c.gongfeng_refresh_token, c.gongfeng_token_expires_at, c.codebuddy_api_key, COALESCE(c.codebuddy_internet_environment, '') AS codebuddy_internet_environment, c.codebuddy_models,
-	c.codex_api_key, c.codex_base_url, c.codex_models, c.claude_code_api_key, c.claude_code_base_url, c.claude_code_models,
+	c.codex_api_key, c.codex_base_url, c.codex_models,
+	c.codex_chatgpt_login, COALESCE(c.codex_chatgpt_login_status, '') AS codex_chatgpt_login_status, c.claude_code_api_key, c.claude_code_base_url, c.claude_code_models,
 	c.agent_cli_credentials,
 	u.created_at, u.updated_at`
 
@@ -84,6 +87,10 @@ func (r userWithConfig) toDomain() domain.User {
 		u.CodexBaseURL = *r.CodexBaseURL
 	}
 	u.CodexModels = decodeCLIModels(r.CodexModels)
+	if r.CodexChatGPTLogin != nil && strings.TrimSpace(*r.CodexChatGPTLogin) != "" {
+		u.CodexChatGPTLogin = *r.CodexChatGPTLogin
+		u.CodexChatGPTLoginStatus = r.CodexChatGPTLoginStatus
+	}
 	if r.ClaudeCodeAPIKey != nil {
 		u.ClaudeCodeAPIKey = *r.ClaudeCodeAPIKey
 	}

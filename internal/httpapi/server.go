@@ -70,6 +70,7 @@ type Server struct {
 	*deps
 	auth            *authHandlers // auth.go
 	github          *githubHandlers
+	codexLogin      *codexLoginHandlers
 	users           *usersHandlers // users.go
 	sshHostTrust    *sshHostTrustHandlers
 	projects        *projectsHandlers
@@ -154,6 +155,7 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 		notifications:   &notificationHandlers{deps: d, service: notifications},
 		auth:            &authHandlers{deps: d},
 		github:          newGitHubHandlers(d),
+		codexLogin:      newCodexLoginHandlers(d),
 		users:           &usersHandlers{deps: d},
 		sshHostTrust:    &sshHostTrustHandlers{deps: d, hosts: s.SSHHostTrustRepo, runnerControls: runnerControls},
 		catalog:         &catalogHandlers{deps: d},
@@ -251,6 +253,12 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.POST("/api/auth/github/device", api.github.start)
 	g.POST("/api/auth/github/poll", api.github.poll)
 	g.GET("/api/auth/github/repositories", api.github.repositories)
+	g.GET("/api/auth/codex", api.codexLogin.status)
+	g.PUT("/api/auth/codex", api.codexLogin.paste)
+	g.DELETE("/api/auth/codex", api.codexLogin.signOut)
+	g.POST("/api/auth/codex/device", api.codexLogin.start)
+	g.POST("/api/auth/codex/poll", api.codexLogin.poll)
+	g.DELETE("/api/auth/codex/device", api.codexLogin.cancel)
 	g.GET("/api/auth/exchange", api.auth.authExchange)
 	g.POST("/api/auth/exchange", api.auth.authExchange)
 	g.POST("/api/auth/logout", api.auth.authLogout)

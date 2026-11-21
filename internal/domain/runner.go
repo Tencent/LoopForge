@@ -141,6 +141,14 @@ func (r Runner) SupportsGitHTTP() bool {
 // RunnerVersionGitSSHKnownHosts is the first runner to accept platform SSH pins.
 const RunnerVersionGitSSHKnownHosts = "0.11.1"
 
+// RunnerVersionCodexChatGPT is the first runner that installs a personal
+// Codex ChatGPT login (RunnerInvocation.CodexChatGPTAuth).
+const RunnerVersionCodexChatGPT = "0.12.0"
+
+func (r Runner) SupportsCodexChatGPT() bool {
+	return versionAtLeast(r.RunnerVersion, RunnerVersionCodexChatGPT)
+}
+
 func (r Runner) SupportsSharedPush() bool {
 	return versionAtLeast(r.RunnerVersion, RunnerVersionSharedPush)
 }
@@ -454,6 +462,7 @@ func PublicRunnerTask(task RunnerTask) RunnerTask {
 	copyInvocation.CodeBuddyInternetEnvironment = ""
 	copyInvocation.CodexAPIKey = ""
 	copyInvocation.CodexBaseURL = ""
+	copyInvocation.CodexChatGPTAuth = ""
 	copyInvocation.ClaudeCodeAPIKey = ""
 	copyInvocation.ClaudeCodeBaseURL = ""
 	copyInvocation.AgentCLIAPIKey = ""
@@ -524,11 +533,14 @@ type RunnerInvocation struct {
 	CodeBuddyInternetEnvironment string   `json:"codebuddyInternetEnvironment,omitempty"`
 	CodexAPIKey                  string   `json:"codexApiKey,omitempty"`
 	CodexBaseURL                 string   `json:"codexBaseUrl,omitempty"`
-	ClaudeCodeAPIKey             string   `json:"claudeCodeApiKey,omitempty"`
-	ClaudeCodeBaseURL            string   `json:"claudeCodeBaseUrl,omitempty"`
-	AgentCLIAPIKey               string   `json:"agentCliApiKey,omitempty"`
-	AgentCLIBaseURL              string   `json:"agentCliBaseUrl,omitempty"`
-	AgentCLIProtocol             string   `json:"agentCliProtocol,omitempty"`
+	// CodexChatGPTAuth is the responsible user's Codex ChatGPT login without
+	// its refresh token; when set it replaces CodexAPIKey.
+	CodexChatGPTAuth  string `json:"codexChatGptAuth,omitempty"`
+	ClaudeCodeAPIKey  string `json:"claudeCodeApiKey,omitempty"`
+	ClaudeCodeBaseURL string `json:"claudeCodeBaseUrl,omitempty"`
+	AgentCLIAPIKey    string `json:"agentCliApiKey,omitempty"`
+	AgentCLIBaseURL   string `json:"agentCliBaseUrl,omitempty"`
+	AgentCLIProtocol  string `json:"agentCliProtocol,omitempty"`
 	// AgentCLIModels is the responsible user's saved catalog for the agent
 	// CLI; Cursor resolves the model's effort to an ID from it.
 	AgentCLIModels []CLIModel `json:"agentCliModels,omitempty"`

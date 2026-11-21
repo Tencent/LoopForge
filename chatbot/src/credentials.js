@@ -4,6 +4,7 @@
 export const CREDENTIALS = {
   codeBuddyApiKey: "CodeBuddy API Key",
   codexApiKey: "Codex API Key",
+  codexChatGptLogin: "Codex ChatGPT 登录",
   claudeCodeApiKey: "Claude Code API Key",
   gitToken: "GitHub Git Token",
   gitSshKey: "Git SSH 密钥",
@@ -122,7 +123,13 @@ export const CREDENTIAL_GUIDES = {
   },
   codexApiKey: {
     steps: [
-      "到「个人配置 → Codex API Key」填写 Key（及 Base URL）并保存，或把执行机器的认证方式切回本机登录",
+      "到「个人配置 → Codex API Key」填写 Key（及 Base URL）并保存，或在「个人配置 → ChatGPT 登录」登录 ChatGPT，或把执行机器的认证方式切回本机登录",
+      "回到这里点「重试节点」",
+    ],
+  },
+  codexChatGptLogin: {
+    steps: [
+      "到「个人配置 → ChatGPT 登录」重新登录 ChatGPT，或粘贴新的 ~/.codex/auth.json",
       "回到这里点「重试节点」",
     ],
   },
@@ -146,6 +153,7 @@ export function credentialGuide(field, owner) {
 }
 
 const RULES = [
+  ["codexChatGptLogin", /ChatGPT 登录(?:已失效|续期)/i],
   ["codexApiKey", /Codex[^。\n]{0,16}API Key/i],
   ["claudeCodeApiKey", /Claude Code[^。\n]{0,16}API Key/i],
   [

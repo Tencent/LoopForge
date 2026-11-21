@@ -58,7 +58,7 @@ function runnerStatusLabel(status,lastSeen){
 }
 const runnerCLILabels={'claude-code':'Claude Code','codex':'Codex','codebuddy':'CodeBuddy',opencode:'OpenCode',cursor:'Cursor CLI',agy:'Antigravity',kimi:'Kimi Code',pi:'Pi',dsh:'DeepSeek Harness',zcode:'ZCode'};
 const runnerAuthLabel={local:'账号登录',personal:'API Key'};
-const runnerAuthDescription={local:'Claude Code、Codex 和 Antigravity 可以使用运行 Runner 的系统账号在这台机器上的已有登录，对话与 SOP 的 native、Docker 沙箱均可复用。共享对话中，只有机器所有者发言时会使用此登录。',personal:'读取「个人配置」中保存的 API Key。对话使用当前发言人的 Key，SOP 使用运行责任人的 Key。Antigravity 的 Gemini API Key 按 API 单独计费。'};
+const runnerAuthDescription={local:'Claude Code、Codex 和 Antigravity 可以使用运行 Runner 的系统账号在这台机器上的已有登录，对话与 SOP 的 native、Docker 沙箱均可复用。共享对话中，只有机器所有者发言时会使用此登录。',personal:'读取「个人配置」中保存的 API Key；Codex 也可以使用个人配置中的 ChatGPT 登录。对话使用当前发言人的 Key，SOP 使用运行责任人的 Key。Antigravity 的 Gemini API Key 按 API 单独计费。'};
 const runnerOSLabels={darwin:'macOS',linux:'Linux',windows:'Windows'};
 function runnerKeyDescription(provider){
   if(provider==='zcode')return 'GLM Coding Plan 的 API Key 配合套餐专用地址可使用订阅额度，请在「个人配置」中填写。Start Plan 额度需要登录 ZCode 账号，无法通过 API Key 使用。';
@@ -66,7 +66,7 @@ function runnerKeyDescription(provider){
 }
 function runnerPersonalCredentialConfigured(provider){
   const user=userById(state.currentUser?.id)||{};
-  if(provider==='codex')return !!user.codexApiKeyConfigured;
+  if(provider==='codex')return !!(user.codexApiKeyConfigured||user.codexChatGptLoginConfigured);
   if(provider==='claude-code')return !!user.claudeCodeApiKeyConfigured;
   if(provider==='codebuddy')return !!user.codeBuddyApiKeyConfigured;
   return !!user.agentCliCredentials?.[provider]?.apiKeyConfigured;

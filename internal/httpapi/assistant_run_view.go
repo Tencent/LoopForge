@@ -104,8 +104,12 @@ var assistantCredentialRules = []struct {
 	help         string
 	steps        []string
 }{
+	{"codexChatGptLogin", "Codex ChatGPT 登录", regexp.MustCompile(`ChatGPT 登录(已失效|续期)`), "", []string{
+		"到 LoopForge「个人配置 → ChatGPT 登录」重新登录 ChatGPT，或粘贴新的 ~/.codex/auth.json",
+		"回到运行重试失败节点",
+	}},
 	{"codexApiKey", "Codex API Key", regexp.MustCompile(`(?i)Codex[^。\n]{0,16}API Key`), "", []string{
-		"到 LoopForge「个人配置 → Codex API Key」填写 Key（及 Base URL）并保存，或把执行机器的认证方式切回本机登录",
+		"到 LoopForge「个人配置 → Codex API Key」填写 Key（及 Base URL）并保存，或在「个人配置 → ChatGPT 登录」登录 ChatGPT，或把执行机器的认证方式切回本机登录",
 		"回到运行重试失败节点",
 	}},
 	{"claudeCodeApiKey", "Claude Code API Key", regexp.MustCompile(`(?i)Claude Code[^。\n]{0,16}API Key`), "", []string{

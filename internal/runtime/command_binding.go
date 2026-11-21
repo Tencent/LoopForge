@@ -5,6 +5,7 @@ import (
 	"agentflow/internal/gitwork"
 	"agentflow/internal/observability"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -136,9 +137,24 @@ func bindCommand(ctx context.Context, sandbox Sandbox, workspace string, command
 			}
 			bound.Argv = BindMCPCallArgv(sandbox, bound.Argv)
 		case BindCodex:
+			if command.PrivateHome && strings.TrimSpace(credentials.Codex.ChatGPTAuth) != "" {
+				if _, err := InstallCodexChatGPTLogin(workspace, PrivateHomeName(command), credentials.Codex.ChatGPTAuth); err != nil {
+					return CommandSpec{}, err
+				}
+				continue
+			}
+			if command.PrivateHome {
+				// A login from an earlier turn must not outlive its removal.
+				if err := RemoveCodexChatGPTLogin(workspace, PrivateHomeName(command)); err != nil {
+					return CommandSpec{}, err
+				}
+			}
 			bound.environment["CODEX_API_KEY"] = strings.TrimSpace(credentials.Codex.APIKey)
 			if bound.environment["CODEX_API_KEY"] == "" {
-				return CommandSpec{}, fmt.Errorf("需求责任人未配置 Codex API Key，请在个人配置中配置")
+				if problem := strings.TrimSpace(credentials.Codex.ChatGPTProblem); problem != "" {
+					return CommandSpec{}, errors.New(problem)
+				}
+				return CommandSpec{}, fmt.Errorf("需求责任人未配置 Codex API Key 或 ChatGPT 登录，请在个人配置中配置")
 			}
 			argv, err := CodexUserProviderArgv(bound.Argv, credentials.Codex.BaseURL)
 			if err != nil {
