@@ -124,18 +124,44 @@ export LOOPFORGE_BIND="${LOOPFORGE_BIND:-0.0.0.0}"
 if [[ -n "$requested_public_url" ]]; then export LOOPFORGE_PUBLIC_URL="$requested_public_url"; fi
 python3 scripts/install-address.py --prepare "${AGENTFLOW_HTTP_PORT:-8090}"
 set -a; source .env; set +a
-if [[ -z "${LOOPFORGE_DOCKER_SOCKET:-}" ]]; then
+save_docker_socket() {
+  python3 - <<'PY'
+import os,pathlib,re,shlex
+p=pathlib.Path('.env')
+text=re.sub(r'(?m)^LOOPFORGE_DOCKER_SOCKET=.*\n?','',p.read_text())
+p.write_text(text.rstrip('\n')+'\n\nLOOPFORGE_DOCKER_SOCKET='+shlex.quote(os.environ['LOOPFORGE_DOCKER_SOCKET'])+'\n')
+PY
+}
+# The socket is the platform container's bind mount source, and the daemon
+# resolves it on its own host. On macOS that host is a Linux VM (Docker
+# Desktop, colima, OrbStack, Rancher Desktop): the context endpoint is the
+# Mac-side forward of the socket, which the VM cannot mount, while the daemon
+# itself listens on /var/run/docker.sock inside the VM.
+vm_docker_socket=/var/run/docker.sock
+docker_host=
+if [[ -z "${LOOPFORGE_DOCKER_SOCKET:-}" || $(uname -s) == Darwin ]]; then
   docker_host="${DOCKER_HOST:-$(docker_access context inspect --format '{{(index .Endpoints "docker").Host}}' 2>/dev/null || true)}"
+fi
+if [[ -z "${LOOPFORGE_DOCKER_SOCKET:-}" ]]; then
   case "$docker_host" in
-    unix://*) export LOOPFORGE_DOCKER_SOCKET="${docker_host#unix://}" ;;
+    unix://*)
+      if [[ $(uname -s) == Darwin ]]; then
+        export LOOPFORGE_DOCKER_SOCKET="$vm_docker_socket"
+      else
+        export LOOPFORGE_DOCKER_SOCKET="${docker_host#unix://}"
+      fi
+      ;;
     '') export LOOPFORGE_DOCKER_SOCKET=/var/run/docker.sock ;;
     *) fail 'This installer requires a local Docker socket for sandbox bind mounts. Select a local/rootless Docker context or configure remote workers manually.' ;;
   esac
-  python3 - <<'PY'
-import os,pathlib,shlex
-with pathlib.Path('.env').open('a') as config:
-    config.write('\nLOOPFORGE_DOCKER_SOCKET='+shlex.quote(os.environ['LOOPFORGE_DOCKER_SOCKET'])+'\n')
-PY
+  save_docker_socket
+elif [[ $(uname -s) == Darwin && "$docker_host" == unix://* \
+  && "$LOOPFORGE_DOCKER_SOCKET" == "${docker_host#unix://}" && "$LOOPFORGE_DOCKER_SOCKET" != "$vm_docker_socket" ]]; then
+  # Earlier installers saved the Mac-side path, and the platform container
+  # could not start with it. Replace that value; any other setting is kept.
+  printf '  Using %s inside the Docker VM instead of %s.\n' "$vm_docker_socket" "$LOOPFORGE_DOCKER_SOCKET"
+  export LOOPFORGE_DOCKER_SOCKET="$vm_docker_socket"
+  save_docker_socket
 fi
 python3 - <<'PY'
 import runpy
