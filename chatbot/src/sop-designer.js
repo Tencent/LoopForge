@@ -17,6 +17,7 @@ export const BEGIN = "agentflow-sop-designer-begin"; // {requestId}
 export const DRAFT = "agentflow-sop-designer-draft"; // {buffer}
 export const REPLY = "agentflow-sop-designer-reply"; // {generationId, message, draft}
 export const END = "agentflow-sop-designer-end"; // {error}
+export const CONFIGURE_ROLE = "agentflow-sop-designer-role";
 export const PLACE = "agentflow-sop-designer-place"; // {draft}
 export const RESET = "agentflow-sop-designer-reset";
 
@@ -56,10 +57,10 @@ export function latestSession(rows, projectId, workflowId) {
     .sort((a, b) => Date.parse(b.updatedAt || 0) - Date.parse(a.updatedAt || 0))[0] || null;
 }
 
-// The workflows_save draft of a reply, with its body as an object.
+// The SOP or role draft, with its body as an object.
 export function replyDraft(message) {
   const reply = parseReply(message || { content: "" });
-  const draft = (reply.drafts || []).find((item) => item?.tool === "workflows_save" && item.body);
+  const draft = (reply.drafts || []).find((item) => ["workflows_save", "agents_save"].includes(item?.tool) && item.body);
   if (!draft) return null;
   let body = draft.body;
   if (typeof body === "string") {
@@ -70,10 +71,11 @@ export function replyDraft(message) {
     }
   }
   if (!body || typeof body !== "object") return null;
-  return { body, warnings: draft.warnings || [] };
+  return { tool: draft.tool, body, warnings: draft.warnings || [] };
 }
 
 export function draftSummary(draft) {
+  if (draft.tool === "agents_save") return "角色草稿 · " + draft.body.name;
   const nodes = Array.isArray(draft?.body?.nodes) ? draft.body.nodes.length : 0;
   const edges = Array.isArray(draft?.body?.edges) ? draft.body.edges.length : 0;
   return `${draft?.body?.name || "SOP 草稿"} · ${nodes} 个节点 · ${edges} 条连线`;
