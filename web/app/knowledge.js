@@ -251,7 +251,7 @@
     kbConnections().forEach(c => {
       if (!c || !c.id || kbCapabilityProbed[c.id] || kbCapabilityFetching[c.id]) return;
       loadConnectionCapabilities(c.id).then(() => {
-        if (kbState.tab === 'settings') scheduleKBRender();
+        if (kbState.tab === 'settings' || kbState.tab === 'sources') scheduleKBRender();
       });
     });
   }
@@ -369,7 +369,7 @@
     const reveal = () => drawer.classList.add('open');
     if (typeof requestAnimationFrame === 'function') requestAnimationFrame(reveal);
     else reveal();
-    drawer.querySelector('[data-kb-drawer-close]')?.addEventListener('click', closeKBDrawer);
+    drawer.querySelectorAll('[data-kb-drawer-close]').forEach(el => el.addEventListener('click', closeKBDrawer));
     const first = kbDrawerFocusables(drawer)[0];
     if (first && typeof first.focus === 'function') first.focus();
   }
@@ -383,8 +383,10 @@
       const pid = encodeURIComponent(kbProjectId());
       kbState.settings = await kbAPI('/api/knowledge/settings');
       if (kbState.settings.ready) {
+        const sourcesPath = '/api/knowledge/sources?projectId=' + pid
+          + (kbState.connectionFilter ? '&connectionId=' + encodeURIComponent(kbState.connectionFilter) : '');
         const [sources, usage, candidates, submissions] = await Promise.all([
-          kbAPI('/api/knowledge/sources?projectId=' + pid).catch(() => []),
+          kbAPI(sourcesPath).catch(() => []),
           kbAPI('/api/knowledge/usage?projectId=' + pid).catch(() => ({ agents: [], totalAgents: 0, activity: [] })),
           kbAPI('/api/knowledge/candidates?projectId=' + pid).catch(() => []),
           kbAPI('/api/knowledge/submissions?projectId=' + pid).catch(() => [])
@@ -420,13 +422,14 @@
       kbState.docs = null;
       return;
     }
-    const pid = encodeURIComponent(kbProjectId());
     const q = new URLSearchParams({
       projectId: kbProjectId(),
       keyword: kbState.docKeyword,
       page: String(kbState.docPage),
       pageSize: '20'
     });
+    const connId = resolveExplicitConnectionId(kbState.selectedSourceId);
+    if (connId) q.set('connectionId', connId);
     try {
       kbState.docs = await kbAPI(`/api/knowledge/sources/${encodeURIComponent(kbState.selectedSourceId)}/documents?${q.toString()}`);
     } catch (err) {
@@ -505,11 +508,493 @@
     else renderSettingsTab(body);
   }
 
+  // ---- 知识库与文档管理（连接筛选 / 库 CRUD / 三模式导入 / 文档行操作） ----
+
+  function kbActiveConnId() {
+    if (kbState.connectionFilter) return kbState.connectionFilter;
+    const selected = kbState.sources.find(s => s.id === kbState.selectedSourceId);
+    if (selected) return resolveExplicitConnectionId(selected.id);
+    const conns = kbConnections();
+    return conns.length === 1 ? (conns[0].id || '') : '';
+  }
+
+  function kbConnLabel(conn) {
+    const name = (conn && (conn.name || conn.id)) || '';
+    return conn && conn.enabled === false ? name + '（已停用）' : name;
+  }
+
+  // 仅多连接或存在停用连接时展示筛选，避免单连接场景增加噪音。
+  function kbConnFilterHTML() {
+    const conns = kbConnections();
+    if (!conns.length) return '';
+    if (conns.length < 2 && !conns.some(c => c.enabled === false)) return '';
+    const opts = ['<option value="">全部连接</option>'].concat(conns.map(c => (
+      `<option value="${kbEsc(c.id)}" ${c.id === kbState.connectionFilter ? 'selected' : ''}>${kbEsc(kbConnLabel(c))}</option>`
+    ))).join('');
+    return `<div class="kb-field" style="margin-bottom:10px">
+      <label for="kbConnFilter">连接筛选</label>
+      <select class="kb-input" id="kbConnFilter">${opts}</select>
+    </div>`;
+  }
+
+  // 能力门禁：available / 未探测时放行，只有后端明确声明 unavailable 才禁用。
+  function kbGate(connId, cap, what) {
+    if (kbCapabilityAllowed(connId, cap)) return { disabled: false, reason: '' };
+    const reason = kbCapabilityReason(connId, cap) || ('当前连接缺少' + what + '能力');
+    return { disabled: true, reason };
+  }
+
+  function kbGateAttrs(gate) {
+    return gate.disabled ? ` disabled title="${kbEsc(gate.reason)}"` : '';
+  }
+
+  function kbModelFieldHTML(id, label, manualHint) {
+    return `<div class="kb-field">
+      <label for="${id}">${label}</label>
+      <select class="kb-input" id="${id}"><option value="">使用上游默认</option></select>
+      <input class="kb-input" id="${id}Manual" placeholder="${kbEsc(manualHint)}" hidden>
+    </div>`;
+  }
+
+  // 按 WeKnora 模型类型（Embedding / KnowledgeQA）拆分下拉；空列表时回退到手工输入。
+  function kbFillModelSelect(select, manual, models, type) {
+    const list = (models || []).filter(m => String(m.type || '').toLowerCase() === type.toLowerCase());
+    if (select) {
+      select.innerHTML = '<option value="">使用上游默认</option>' + list.map(m =>
+        `<option value="${kbEsc(m.id)}">${kbEsc(m.name || m.id)}</option>`).join('');
+    }
+    if (manual) {
+      manual.hidden = list.length > 0;
+      manual.value = '';
+    }
+    return list.length;
+  }
+
+  function kbPickModel(manual, select) {
+    const manualVal = manual && !manual.hidden ? String(manual.value || '').trim() : '';
+    if (manualVal) return manualVal;
+    return select ? String(select.value || '').trim() : '';
+  }
+
+  async function kbLoadModels(connId) {
+    if (!connId) return { models: [], error: '请选择连接' };
+    if (Object.prototype.hasOwnProperty.call(kbState.modelsByConn, connId)) {
+      return { models: kbState.modelsByConn[connId], error: '' };
+    }
+    try {
+      const list = await kbAPI('/api/knowledge/models?connectionId=' + encodeURIComponent(connId));
+      kbState.modelsByConn[connId] = Array.isArray(list) ? list : [];
+      return { models: kbState.modelsByConn[connId], error: '' };
+    } catch (err) {
+      return { models: [], error: err.message };
+    }
+  }
+
+  function openKBCreateDrawer() {
+    const conns = kbConnections();
+    if (!conns.length) {
+      kbToast('请先在「接入配置与用量」中添加知识库连接', true);
+      return;
+    }
+    const connId = kbActiveConnId() || conns[0].id || '';
+    const options = conns.map(c => (
+      `<option value="${kbEsc(c.id)}" ${c.id === connId ? 'selected' : ''}>${kbEsc(kbConnLabel(c))}</option>`
+    )).join('');
+    openKBDrawer('新建知识库', `
+      <div class="kb-field">
+        <label for="kbCreateConn">目标连接</label>
+        <select class="kb-input" id="kbCreateConn">${options}</select>
+      </div>
+      <div class="kb-field">
+        <label for="kbCreateName">知识库名称</label>
+        <input class="kb-input" id="kbCreateName" maxlength="120" placeholder="例如：产品手册">
+      </div>
+      <div class="kb-field">
+        <label for="kbCreateDesc">描述</label>
+        <input class="kb-input" id="kbCreateDesc" maxlength="400" placeholder="可选，说明该知识库的用途">
+      </div>
+      ${kbModelFieldHTML('kbCreateEmbedding', '向量模型（Embedding）', '手动填写 Embedding 模型 ID')}
+      ${kbModelFieldHTML('kbCreateSummary', '摘要模型（KnowledgeQA）', '手动填写 KnowledgeQA 模型 ID')}
+      <p class="kb-muted" id="kbCreateModelNote">正在加载该连接的模型列表…</p>
+    `, `<button type="button" class="kb-btn" data-kb-drawer-close>取消</button>
+        <button type="button" class="kb-btn primary" id="kbCreateSubmit">创建知识库</button>`);
+    const drawer = document.getElementById('kbDrawer');
+    if (!drawer) return;
+    const connSelect = drawer.querySelector('#kbCreateConn');
+    const note = drawer.querySelector('#kbCreateModelNote');
+    const embSelect = drawer.querySelector('#kbCreateEmbedding');
+    const embManual = drawer.querySelector('#kbCreateEmbeddingManual');
+    const sumSelect = drawer.querySelector('#kbCreateSummary');
+    const sumManual = drawer.querySelector('#kbCreateSummaryManual');
+    let modelSeq = 0;
+    const syncModels = async () => {
+      const mine = ++modelSeq;
+      const cid = connSelect ? connSelect.value : '';
+      if (note) note.textContent = '正在加载该连接的模型列表…';
+      const res = await kbLoadModels(cid);
+      if (mine !== modelSeq || !document.contains(drawer)) return;
+      const embCount = kbFillModelSelect(embSelect, embManual, res.models, 'Embedding');
+      const sumCount = kbFillModelSelect(sumSelect, sumManual, res.models, 'KnowledgeQA');
+      if (!note) return;
+      if (res.error) {
+        note.textContent = '模型列表加载失败：' + res.error + '，可直接填写模型 ID。';
+        if (embManual) embManual.hidden = false;
+        if (sumManual) sumManual.hidden = false;
+      } else if (!embCount && !sumCount) {
+        note.textContent = '该连接未返回可用模型，可手动填写模型 ID（留空则使用上游默认）。';
+      } else {
+        note.textContent = `已加载模型：Embedding ${embCount} 个 · KnowledgeQA ${sumCount} 个，可留空使用上游默认。`;
+      }
+    };
+    connSelect?.addEventListener('change', syncModels);
+    syncModels();
+
+    const submit = drawer.querySelector('#kbCreateSubmit');
+    submit?.addEventListener('click', async () => {
+      const cid = connSelect ? String(connSelect.value || '').trim() : '';
+      const name = String(drawer.querySelector('#kbCreateName')?.value || '').trim();
+      const description = String(drawer.querySelector('#kbCreateDesc')?.value || '').trim();
+      if (!cid) { kbToast('请选择目标连接', true); return; }
+      if (!name) { kbToast('请填写知识库名称', true); return; }
+      if (!kbCapabilityAllowed(cid, 'kb_manage')) {
+        kbToast(kbCapabilityReason(cid, 'kb_manage') || '当前连接缺少库管理能力', true);
+        return;
+      }
+      submit.disabled = true;
+      try {
+        const created = await kbAPI('/api/knowledge/sources?projectId=' + encodeURIComponent(kbProjectId()), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            connectionId: cid,
+            name: name,
+            description: description,
+            embedding_model_id: kbPickModel(embManual, embSelect),
+            summary_model_id: kbPickModel(sumManual, sumSelect)
+          })
+        });
+        if (created && created.id) kbState.selectedSourceId = created.id;
+        closeKBDrawer();
+        kbToast('知识库已创建');
+        await loadKnowledgeView();
+      } catch (err) {
+        kbToastError(err);
+      } finally {
+        submit.disabled = false;
+      }
+    });
+  }
+
+  async function openKBEditDrawer(src) {
+    const connId = resolveExplicitConnectionId(src.id);
+    let detail = null;
+    try {
+      detail = await kbAPI('/api/knowledge/sources/' + encodeURIComponent(src.id) + '?' + kbConnQuery(connId));
+    } catch (err) {
+      // 后端详情路由尚未合入时退回列表数据，保存阶段再对 404/405 回退 PUT。
+      if (!err.notFound) { kbToastError(err); return; }
+    }
+    const name = String((detail && (detail.name || detail.title)) || cleanSourceName(src.name || src.id));
+    const description = String((detail && detail.description) || '');
+    openKBDrawer('编辑知识库', `
+      <div class="kb-field">
+        <label for="kbEditName">名称</label>
+        <input class="kb-input" id="kbEditName" maxlength="120" value="${kbEsc(name)}">
+      </div>
+      <div class="kb-field">
+        <label for="kbEditDesc">描述</label>
+        <input class="kb-input" id="kbEditDesc" maxlength="400" value="${kbEsc(description)}" placeholder="可选">
+      </div>
+      <p class="kb-muted">仅更新名称与描述，不修改分块与索引配置。</p>
+    `, `<button type="button" class="kb-btn" data-kb-drawer-close>取消</button>
+        <button type="button" class="kb-btn primary" id="kbEditSubmit">保存</button>`);
+    const drawer = document.getElementById('kbDrawer');
+    if (!drawer) return;
+    const submit = drawer.querySelector('#kbEditSubmit');
+    submit?.addEventListener('click', async () => {
+      const nextName = String(drawer.querySelector('#kbEditName')?.value || '').trim();
+      if (!nextName) { kbToast('请填写知识库名称', true); return; }
+      const payload = JSON.stringify({
+        name: nextName,
+        description: String(drawer.querySelector('#kbEditDesc')?.value || '').trim()
+      });
+      const path = '/api/knowledge/sources/' + encodeURIComponent(src.id) + '?' + kbConnQuery(connId);
+      submit.disabled = true;
+      try {
+        try {
+          await kbAPI(path, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: payload });
+        } catch (err) {
+          if (err.httpStatus !== 404 && err.httpStatus !== 405) throw err;
+          await kbAPI(path, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: payload });
+        }
+        closeKBDrawer();
+        kbToast('知识库已更新');
+        await loadKnowledgeView();
+      } catch (err) {
+        kbToastError(err);
+      } finally {
+        submit.disabled = false;
+      }
+    });
+  }
+
+  async function kbDeleteSource(src) {
+    const connId = resolveExplicitConnectionId(src.id);
+    if (!kbCapabilityAllowed(connId, 'kb_manage')) {
+      kbToast(kbCapabilityReason(connId, 'kb_manage') || '当前连接缺少库管理能力', true);
+      return;
+    }
+    const name = cleanSourceName(src.name || src.id);
+    const confirmed = typeof afConfirm === 'function'
+      ? await afConfirm({
+        title: '删除知识库',
+        message: `确定删除知识库「${name}」吗？其全部文档与索引将一并删除，且不可恢复。`,
+        danger: true,
+        confirmText: '删除知识库'
+      })
+      : false;
+    if (!confirmed) return;
+    try {
+      await kbAPI('/api/knowledge/sources/' + encodeURIComponent(src.id) + '?' + kbConnQuery(connId), { method: 'DELETE' });
+      kbState.selectedSourceId = '';
+      kbState.docs = null;
+      kbToast('知识库已删除');
+      await loadKnowledgeView();
+    } catch (err) {
+      kbToastError(err);
+    }
+  }
+
+  async function kbDeleteDoc(docId, title) {
+    const connId = resolveExplicitConnectionId(docId);
+    if (!kbCapabilityAllowed(connId, 'doc_write')) {
+      kbToast(kbCapabilityReason(connId, 'doc_write') || '当前连接缺少文档写入能力', true);
+      return;
+    }
+    const confirmed = typeof afConfirm === 'function'
+      ? await afConfirm({
+        title: '删除文档',
+        message: `确定删除「${title}」吗？该操作不可恢复。`,
+        danger: true,
+        confirmText: '删除文档'
+      })
+      : false;
+    if (!confirmed) return;
+    try {
+      await kbAPI('/api/knowledge/documents/' + encodeURIComponent(docId) + '?' + kbConnQuery(connId), { method: 'DELETE' });
+      if (kbState.docPage > 1 && (kbState.docs?.documents || []).length <= 1) kbState.docPage -= 1;
+      kbToast('文档已删除');
+      await loadSelectedDocuments();
+      renderKnowledgeShell();
+    } catch (err) {
+      kbToastError(err);
+    }
+  }
+
+  async function kbReparseDoc(docId) {
+    const connId = resolveExplicitConnectionId(docId);
+    if (!kbCapabilityAllowed(connId, 'reparse')) {
+      kbToast(kbCapabilityReason(connId, 'reparse') || '当前连接缺少重解析能力', true);
+      return;
+    }
+    try {
+      await kbAPI('/api/knowledge/documents/' + encodeURIComponent(docId) + '/reparse?' + kbConnQuery(connId), { method: 'POST' });
+      kbToast('已触发重解析');
+      await loadSelectedDocuments();
+      renderKnowledgeShell();
+    } catch (err) {
+      kbToastError(err);
+    }
+  }
+
+  function openKBImportDrawer(src) {
+    const connId = resolveExplicitConnectionId(src.id);
+    if (!kbCapabilityAllowed(connId, 'doc_write')) {
+      kbToast(kbCapabilityReason(connId, 'doc_write') || '当前连接缺少文档写入能力', true);
+      return;
+    }
+    const q = kbConnQuery(connId);
+    const sourcePath = '/api/knowledge/sources/' + encodeURIComponent(src.id);
+    const title = cleanSourceName(src.name || src.id);
+    openKBDrawer('导入文档 · ' + title, `
+      <div class="kb-seg" role="tablist">
+        <button type="button" class="active" data-kb-import-mode="file">本地上传</button>
+        <button type="button" data-kb-import-mode="url">在线链接</button>
+        <button type="button" data-kb-import-mode="manual">手工录入</button>
+      </div>
+      <div data-kb-import-pane="file">
+        <div class="kb-field">
+          <label for="kbImportFiles">选择文件</label>
+          <input type="file" id="kbImportFiles" multiple>
+          <small>单文件不超过 50 MiB，支持多选后按顺序上传。</small>
+          <div class="kb-toolbar"><button type="button" class="kb-btn primary" id="kbImportUploadBtn">开始上传</button></div>
+        </div>
+      </div>
+      <div data-kb-import-pane="url" hidden>
+        <div class="kb-field">
+          <label for="kbImportUrl">文档链接</label>
+          <input type="url" class="kb-input" id="kbImportUrl" placeholder="https://example.com/doc.html">
+          <small>仅支持 http/https 页面，由上游抓取并解析。</small>
+          <div class="kb-toolbar"><button type="button" class="kb-btn primary" id="kbImportUrlBtn">导入链接</button></div>
+        </div>
+      </div>
+      <div data-kb-import-pane="manual" hidden>
+        <div class="kb-field">
+          <label for="kbImportTitle">标题</label>
+          <input class="kb-input" id="kbImportTitle" maxlength="200">
+          <label for="kbImportContent">Markdown 正文</label>
+          <textarea class="kb-input" id="kbImportContent" placeholder="# 标题&#10;正文…"></textarea>
+          <label class="kb-check-chip">
+            <input type="checkbox" role="switch" id="kbImportPublish" checked>
+            <span>创建后立即发布</span>
+          </label>
+          <div class="kb-toolbar"><button type="button" class="kb-btn primary" id="kbImportManualBtn">创建文档</button></div>
+        </div>
+      </div>
+      <p class="kb-muted" id="kbImportStatus" role="status"></p>
+    `);
+    const drawer = document.getElementById('kbDrawer');
+    if (!drawer) return;
+    const status = drawer.querySelector('#kbImportStatus');
+    const setStatus = (text, isError) => {
+      if (!status) return;
+      status.textContent = text;
+      status.style.color = isError ? 'var(--hui-error)' : 'var(--hui-success)';
+    };
+
+    drawer.querySelectorAll('[data-kb-import-mode]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        drawer.querySelectorAll('[data-kb-import-mode]').forEach(b => b.classList.toggle('active', b === btn));
+        drawer.querySelectorAll('[data-kb-import-pane]').forEach(pane => {
+          pane.hidden = pane.dataset.kbImportPane !== btn.dataset.kbImportMode;
+        });
+      });
+    });
+
+    const uploadBtn = drawer.querySelector('#kbImportUploadBtn');
+    uploadBtn?.addEventListener('click', async () => {
+      const files = Array.from(drawer.querySelector('#kbImportFiles')?.files || []);
+      if (!files.length) { setStatus('请选择要上传的文件', true); return; }
+      const tooLarge = files.filter(f => f.size > 50 * 1024 * 1024);
+      if (tooLarge.length) {
+        setStatus('以下文件超过 50 MiB：' + tooLarge.map(f => f.name).join('、'), true);
+        return;
+      }
+      uploadBtn.disabled = true;
+      let done = 0;
+      const failed = [];
+      for (let i = 0; i < files.length; i += 1) {
+        const file = files[i];
+        setStatus(`正在上传 ${i + 1}/${files.length}：${file.name}`);
+        const form = new FormData();
+        form.append('file', file);
+        try {
+          await kbAPI(`${sourcePath}/upload?${q}`, { method: 'POST', body: form });
+          done += 1;
+        } catch (err) {
+          failed.push(file.name);
+          if (err.code === 'capability_unavailable') {
+            handleCapabilityError(err);
+            break;
+          }
+        }
+      }
+      uploadBtn.disabled = false;
+      const summary = `上传完成：成功 ${done} 个` + (failed.length ? `，失败 ${failed.length} 个（${failed.join('、')}）` : '');
+      setStatus(summary, failed.length > 0);
+      kbToast(summary, failed.length > 0);
+      if (done > 0) {
+        closeKBDrawer();
+        await loadSelectedDocuments();
+        renderKnowledgeShell();
+      }
+    });
+
+    const urlBtn = drawer.querySelector('#kbImportUrlBtn');
+    urlBtn?.addEventListener('click', async () => {
+      const raw = String(drawer.querySelector('#kbImportUrl')?.value || '').trim();
+      let parsed = null;
+      try { parsed = new URL(raw); } catch { parsed = null; }
+      if (!parsed || !/^https?:$/.test(parsed.protocol)) {
+        setStatus('请输入合法的 http/https 链接', true);
+        return;
+      }
+      urlBtn.disabled = true;
+      try {
+        await kbAPI(`${sourcePath}/url?${q}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url: raw })
+        });
+        closeKBDrawer();
+        kbToast('链接已提交导入');
+        await loadSelectedDocuments();
+        renderKnowledgeShell();
+      } catch (err) {
+        kbToastError(err);
+        setStatus(err.message, true);
+      } finally {
+        urlBtn.disabled = false;
+      }
+    });
+
+    const manualBtn = drawer.querySelector('#kbImportManualBtn');
+    manualBtn?.addEventListener('click', async () => {
+      const manualTitle = String(drawer.querySelector('#kbImportTitle')?.value || '').trim();
+      const content = String(drawer.querySelector('#kbImportContent')?.value || '');
+      if (!manualTitle) { setStatus('请填写文档标题', true); return; }
+      if (!content.trim()) { setStatus('请填写 Markdown 正文', true); return; }
+      manualBtn.disabled = true;
+      try {
+        await kbAPI(`${sourcePath}/manual?${q}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            title: manualTitle,
+            content: content,
+            publish: !!drawer.querySelector('#kbImportPublish')?.checked
+          })
+        });
+        closeKBDrawer();
+        kbToast('手工文档已创建');
+        await loadSelectedDocuments();
+        renderKnowledgeShell();
+      } catch (err) {
+        kbToastError(err);
+        setStatus(err.message, true);
+      } finally {
+        manualBtn.disabled = false;
+      }
+    });
+  }
+
+  async function kbPreviewDocLegacy(docId, title) {
+    try {
+      const doc = await kbAPI(`/api/knowledge/document?projectId=${encodeURIComponent(kbProjectId())}&source=${encodeURIComponent(kbState.selectedSourceId)}&path=${encodeURIComponent(docId)}`);
+      const text = (doc.lines || []).map(l => l.text).join('\n\n---\n\n') || '暂无文本分块';
+      openKBDrawer(title, `<pre class="kb-doc-pre">${kbEsc(text)}</pre>`);
+    } catch (err) {
+      kbToast(err.message, true);
+    }
+  }
+
   function renderSourcesTab(container) {
     if (!kbState.settings?.ready) {
       container.innerHTML = `<div class="kb-panel"><p class="kb-muted">尚未完成知识库接入配置。请前往「接入配置与用量」填写服务地址与 API Key / Token。</p></div>`;
       return;
     }
+    kbEnsureConnectionCapabilities();
+    const activeConnId = kbActiveConnId();
+    const activeConn = kbConnections().find(c => c.id === activeConnId) || null;
+    const capsHTML = activeConnId
+      ? `<div style="margin-bottom:12px">
+          <div class="kb-muted" style="margin-bottom:6px">${kbEsc(activeConn ? kbConnLabel(activeConn) : activeConnId)} · 连接能力</div>
+          ${kbCapabilityBadges(activeConnId)}
+        </div>`
+      : '';
+    const createGate = kbGate(activeConnId, 'kb_manage', '库管理');
+    const createDenied = !kbState.settings.canManage || createGate.disabled;
+    const createReason = !kbState.settings.canManage ? '仅平台管理员或项目写成员可新建知识库' : createGate.reason;
     const sourcesHTML = kbState.sources.length
       ? kbState.sources.map(src => {
         const conn = resolveConnectionForSource(src.id);
@@ -536,36 +1021,71 @@
     if (selected && !isWeKnora()) {
       rightHTML = `<p class="kb-muted">当前为 LightCloud KB 引擎，请使用「排障调试」按路径检索并查看原文。</p>`;
     } else if (selected && isWeKnora()) {
+      const connId = resolveExplicitConnectionId(selected.id);
       const docs = kbState.docs?.documents || [];
-      const rows = docs.length ? docs.map(d => `
+      const page = Math.max(1, kbState.docPage || 1);
+      const pageSize = 20;
+      const total = Number(kbState.docs?.total || docs.length || 0);
+      const pages = Math.max(1, Math.ceil(total / pageSize));
+      const docGate = kbGate(connId, 'doc_write', '文档写入');
+      const manageGate = kbGate(connId, 'kb_manage', '库管理');
+      const reparseGate = kbGate(connId, 'reparse', '重解析');
+      const downloadGate = kbGate(connId, 'preview_download', '预览下载');
+      const rows = docs.length ? docs.map(d => {
+        const docTitle = d.title || d.file_name || d.id;
+        const downloadHref = '/api/knowledge/documents/' + encodeURIComponent(d.id) + '/download?' + kbConnQuery(connId);
+        const downloadAction = downloadGate.disabled
+          ? `<span class="kb-btn xs" aria-disabled="true" title="${kbEsc(downloadGate.reason)}" style="opacity:.55;cursor:not-allowed">下载</span>`
+          : `<a class="kb-btn xs" href="${kbEsc(downloadHref)}" target="_blank" rel="noopener" download>下载</a>`;
+        return `
         <tr>
-          <td><button type="button" class="kb-btn" data-kb-preview-doc="${kbEsc(d.id)}" data-kb-doc-title="${kbEsc(d.title || d.file_name || d.id)}">${kbEsc(d.title || d.file_name || d.id)}</button></td>
+          <td>${kbEsc(docTitle)}</td>
           <td>${kbEsc(d.file_type || d.type || '-')}</td>
           <td>${parseStatusBadge(d.parse_status, d.error_message)}</td>
           <td class="kb-muted">${kbEsc((d.updated_at || d.created_at || '').slice(0, 19).replace('T', ' '))}</td>
+          <td>
+            <div class="kb-row-actions">
+              <button type="button" class="kb-btn xs" data-kb-preview-doc="${kbEsc(d.id)}" data-kb-doc-title="${kbEsc(docTitle)}">查看</button>
+              <button type="button" class="kb-btn xs" data-kb-reparse-doc="${kbEsc(d.id)}"${kbGateAttrs(reparseGate)}>重解析</button>
+              ${downloadAction}
+              <button type="button" class="kb-btn xs danger-outline" data-kb-delete-doc="${kbEsc(d.id)}" data-kb-doc-title="${kbEsc(docTitle)}"${kbGateAttrs(docGate)}>删除</button>
+            </div>
+          </td>
         </tr>
-      `).join('') : `<tr><td colspan="4" class="kb-muted">${kbState.docs?.error ? kbEsc(kbState.docs.error) : '暂无文档'}</td></tr>`;
+      `;
+      }).join('') : `<tr><td colspan="5" class="kb-muted">${kbState.docs?.error ? kbEsc(kbState.docs.error) : '暂无文档'}</td></tr>`;
 
-      const activeConn = resolveConnectionForSource(selected.id);
-      const consoleHref = resolveWeKnoraConsoleURL(kbState.settings, activeConn);
-      const connAccount = activeConn?.account ? ` · 登录邮箱：${activeConn.account}` : '';
+      const consoleHref = resolveWeKnoraConsoleURL(kbState.settings, resolveConnectionForSource(selected.id));
+      const connAccount = resolveConnectionForSource(selected.id)?.account
+        ? ` · 登录邮箱：${resolveConnectionForSource(selected.id).account}` : '';
       const selectedTitle = cleanSourceName(selected.name || selected.id);
       rightHTML = `
         <div class="kb-panel-head">
           <div>
             <h2>${kbEsc(selectedTitle)}</h2>
-            <span class="kb-muted">共 ${kbState.docs?.total || 0} 篇文档${kbEsc(connAccount)}</span>
+            <span class="kb-muted">共 ${total} 篇文档${kbEsc(connAccount)}</span>
           </div>
           <div class="kb-toolbar">
-            <input type="search" class="kb-input" id="kbDocSearchInput" placeholder="搜索文档标题…" value="${kbEsc(kbState.docKeyword)}">
-            <button type="button" class="kb-btn" id="kbDocSearchBtn">搜索</button>
-            ${consoleHref ? `<a class="kb-btn" href="${kbEsc(consoleHref)}" target="_blank" rel="noopener">管理此知识库 ↗</a>` : ''}
+            <button type="button" class="kb-btn primary" id="kbImportDocBtn"${kbGateAttrs(docGate)}>导入文档</button>
+            <button type="button" class="kb-btn" id="kbEditSourceBtn"${kbGateAttrs(manageGate)}>编辑知识库</button>
+            <button type="button" class="kb-btn danger-outline" id="kbDeleteSourceBtn"${kbGateAttrs(manageGate)}>删除知识库</button>
+            ${consoleHref ? `<a class="kb-btn" href="${kbEsc(consoleHref)}" target="_blank" rel="noopener">高级配置 ↗</a>` : ''}
           </div>
         </div>
+        <div class="kb-toolbar" style="margin-bottom:12px">
+          <input type="search" class="kb-input" id="kbDocSearchInput" placeholder="搜索文档标题…" value="${kbEsc(kbState.docKeyword)}">
+          <button type="button" class="kb-btn" id="kbDocSearchBtn">搜索</button>
+          <button type="button" class="kb-btn" id="kbDocRefreshBtn">刷新</button>
+        </div>
         <table class="kb-table">
-          <thead><tr><th>标题 / 文件名</th><th>类型</th><th>解析状态</th><th>更新时间</th></tr></thead>
+          <thead><tr><th>标题 / 文件名</th><th>类型</th><th>解析状态</th><th>更新时间</th><th>操作</th></tr></thead>
           <tbody>${rows}</tbody>
         </table>
+        <div class="kb-toolbar" style="margin-top:12px;justify-content:flex-end">
+          <span class="kb-muted">第 ${page} / ${pages} 页 · 共 ${total} 篇</span>
+          <button type="button" class="kb-btn xs" id="kbDocPrevBtn" ${page <= 1 ? 'disabled' : ''}>上一页</button>
+          <button type="button" class="kb-btn xs" id="kbDocNextBtn" ${page >= pages ? 'disabled' : ''}>下一页</button>
+        </div>
       `;
     }
 
@@ -575,11 +1095,24 @@
           <div class="kb-panel-head">
             <h2>知识库列表</h2>
           </div>
+          ${kbConnFilterHTML()}
+          ${capsHTML}
+          <div class="kb-toolbar" style="margin-bottom:12px">
+            <button type="button" class="kb-btn primary" id="kbCreateSourceBtn" ${createDenied ? `disabled title="${kbEsc(createReason)}"` : ''}>新建知识库</button>
+          </div>
           <div class="kb-source-list">${sourcesHTML}</div>
         </div>
         <div class="kb-panel">${rightHTML}</div>
       </div>
     `;
+
+    container.querySelector('#kbCreateSourceBtn')?.addEventListener('click', openKBCreateDrawer);
+    container.querySelector('#kbConnFilter')?.addEventListener('change', async e => {
+      kbState.connectionFilter = e.target.value || '';
+      kbState.docKeyword = '';
+      kbState.docPage = 1;
+      await loadKnowledgeView();
+    });
 
     container.querySelectorAll('[data-kb-pick]').forEach(btn => {
       btn.addEventListener('click', async () => {
@@ -589,6 +1122,12 @@
         renderKnowledgeShell();
       });
     });
+
+    if (selected) {
+      container.querySelector('#kbImportDocBtn')?.addEventListener('click', () => openKBImportDrawer(selected));
+      container.querySelector('#kbEditSourceBtn')?.addEventListener('click', () => openKBEditDrawer(selected));
+      container.querySelector('#kbDeleteSourceBtn')?.addEventListener('click', () => kbDeleteSource(selected));
+    }
 
     const runDocSearch = async () => {
       kbState.docKeyword = container.querySelector('#kbDocSearchInput')?.value || '';
@@ -600,24 +1139,34 @@
     container.querySelector('#kbDocSearchInput')?.addEventListener('keydown', e => {
       if (e.key === 'Enter') { e.preventDefault(); runDocSearch(); }
     });
+    container.querySelector('#kbDocRefreshBtn')?.addEventListener('click', async () => {
+      await loadSelectedDocuments();
+      renderKnowledgeShell();
+    });
+
+    const goDocPage = async page => {
+      kbState.docPage = Math.max(1, page);
+      await loadSelectedDocuments();
+      renderKnowledgeShell();
+    };
+    container.querySelector('#kbDocPrevBtn')?.addEventListener('click', () => goDocPage((kbState.docPage || 1) - 1));
+    container.querySelector('#kbDocNextBtn')?.addEventListener('click', () => goDocPage((kbState.docPage || 1) + 1));
+
     container.querySelectorAll('[data-kb-err-msg]').forEach(btn => {
       btn.addEventListener('click', () => {
         openKBDrawer('文档解析失败原因', `<pre class="kb-doc-pre">${kbEsc(btn.dataset.kbErrMsg)}</pre>`);
       });
     });
 
+    // 「查看」当前复用原文分块预览；文档详情抽屉（分块分页 / 预览 / 手工编辑）由后续步骤接入。
     container.querySelectorAll('[data-kb-preview-doc]').forEach(btn => {
-      btn.addEventListener('click', async () => {
-        const docId = btn.dataset.kbPreviewDoc;
-        const title = btn.dataset.kbDocTitle;
-        try {
-          const doc = await kbAPI(`/api/knowledge/document?projectId=${encodeURIComponent(kbProjectId())}&source=${encodeURIComponent(kbState.selectedSourceId)}&path=${encodeURIComponent(docId)}`);
-          const text = (doc.lines || []).map(l => l.text).join('\n\n---\n\n') || '暂无文本分块';
-          openKBDrawer(title, `<pre class="kb-doc-pre">${kbEsc(text)}</pre>`);
-        } catch (err) {
-          kbToast(err.message, true);
-        }
-      });
+      btn.addEventListener('click', () => kbPreviewDocLegacy(btn.dataset.kbPreviewDoc, btn.dataset.kbDocTitle));
+    });
+    container.querySelectorAll('[data-kb-reparse-doc]').forEach(btn => {
+      btn.addEventListener('click', () => kbReparseDoc(btn.dataset.kbReparseDoc));
+    });
+    container.querySelectorAll('[data-kb-delete-doc]').forEach(btn => {
+      btn.addEventListener('click', () => kbDeleteDoc(btn.dataset.kbDeleteDoc, btn.dataset.kbDocTitle));
     });
   }
 
