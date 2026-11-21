@@ -126,3 +126,30 @@ test('the chat learns when the canvas switches to another SOP', async (t) => {
   app.evaluate('renderCanvas()');
   assert.equal(posted.length, count, 'an unchanged SOP is not announced again');
 });
+
+test('orchestration refreshes project roles and restores the canvas for an unavailable role', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  app.evaluate(`
+    switchView('flow');
+    state.workflow = {...state.workflow, nodes: [], edges: []};
+    state.workflowDirty = false;
+    state.data.agents.push({id:'private', name:'Private role', projectId:'other'});
+    renderAll();
+  `);
+  const workflowName = app.evaluate('state.workflow.name');
+  app.router.get('/api/agents?projectId=project-1', [{id:'new-role', name:'New role', projectId:'project-1'}]);
+  app.router.post('/api/assistant/chat', call => {
+    assert.match(call.body.messages.at(-1).content, /new-role：New role/);
+    assert.doesNotMatch(call.body.messages.at(-1).content, /private：Private role/);
+    return {drafts: [{tool:'workflows_save', body:{
+      name:'Unavailable draft', nodes:[{id:'bad', name:'Review', type:'agent', agentId:'private'}], edges:[],
+    }}]};
+  });
+  app.document.querySelector('#aiOrchestratorInput').value = 'Create a review workflow';
+  await app.evaluate('runAIOrchestrator()');
+  assert.equal(app.evaluate('state.workflow.name'), workflowName);
+  assert.equal(app.evaluate('state.workflow.nodes.length'), 0);
+  assert.equal(app.evaluate('state.workflowDirty'), false);
+  assert.match(app.document.querySelector('#aiOrchestratorLog').textContent, /Review（private）/);
+});

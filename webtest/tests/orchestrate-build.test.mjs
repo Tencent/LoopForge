@@ -61,3 +61,45 @@ test('streaming parser handles partial drafts', async (t) => {
   assert.deepEqual(values.partial.nodes.map((node) => node.id), ['a'], 'an unfinished node waits for its closing brace');
   assert.match(values.body, /"name":"X"/);
 });
+
+test('AI edit keeps streamed node positions and applies only the final graph', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  const result = await app.evaluate(`
+    (async () => {
+      const build = await beginAIOrchestration('add two approvals');
+      const streamedNode = {id: 'first-approval', name: 'First approval', type: 'approval'};
+      ingestStreamingWorkflow({nodes: [streamedNode], edges: []});
+      await drainAIBuild();
+      const placed = state.workflow.nodes.find(node => node.id === streamedNode.id).position;
+
+      const finalNode = {id: 'final-approval', name: 'Final approval', type: 'approval'};
+      const finalEdge = {id: 'to-final', source: streamedNode.id, target: finalNode.id, when: 'success'};
+      ingestStreamingWorkflow({
+        nodes: [{...finalNode, name: 'Preview label'}, {id: 'extra', name: 'Extra', type: 'approval'}],
+        edges: [{id: 'to-extra', source: finalNode.id, target: 'extra'}],
+      });
+      const completed = await completeAIEdit(build, {
+        nodes: [...build.base.nodes, streamedNode, finalNode],
+        edges: [...build.base.edges, finalEdge],
+      });
+      const {nodes, edges} = state.workflow;
+      const final = nodes.find(node => node.id === finalNode.id);
+      const first = nodes.find(node => node.id === streamedNode.id);
+      return {
+        completed,
+        keptPosition: first.position.x === placed.x && first.position.y === placed.y,
+        finalName: final.name,
+        finalPositioned: Number.isFinite(final.position.x) && Number.isFinite(final.position.y),
+        hasFinalEdge: edges.some(edge => edge.id === finalEdge.id),
+        hasExtra: nodes.some(node => node.id === 'extra') || edges.some(edge => edge.id === 'to-extra'),
+      };
+    })()
+  `);
+  assert.equal(result.completed, true);
+  assert.equal(result.keptPosition, true);
+  assert.equal(result.finalName, 'Final approval');
+  assert.equal(result.finalPositioned, true);
+  assert.equal(result.hasFinalEdge, true);
+  assert.equal(result.hasExtra, false);
+});
