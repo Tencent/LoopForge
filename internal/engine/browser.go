@@ -3,7 +3,7 @@ package engine
 import (
 	"context"
 	"encoding/json"
-	"errors"
+	"fmt"
 	"time"
 
 	"agentflow/internal/domain"
@@ -70,7 +70,7 @@ func (e *Engine) BrowserWorkspaceRequest(run domain.Run, req *domain.BrowserRequ
 // and the stage agents drive the same browser the user watches.
 func (e *Engine) ensureRunBrowser(ctx context.Context, run domain.Run) error {
 	if !runtime.BrowserEnabled() {
-		return errors.New("平台已关闭 Agent 浏览器")
+		return runtime.ErrBrowserDisabled
 	}
 	// Starting from the panel counts as conversation use: it restores a
 	// reclaimed workspace and leaves the run to the idle conversation cleanup,
@@ -97,8 +97,8 @@ func (e *Engine) ensureRunBrowser(ctx context.Context, run domain.Run) error {
 	if err != nil {
 		return err
 	}
-	if runtime.EnsureSandboxBrowser(ctx, env.sandbox, env.Workspace(), run.ID, nil) == nil {
-		return errors.New("Agent 浏览器启动失败：当前运行环境不支持，或 Chromium 不可用")
+	if _, err := runtime.EnsureSandboxBrowserWithError(ctx, env.sandbox, env.Workspace(), run.ID, nil); err != nil {
+		return fmt.Errorf("Agent 浏览器启动失败：%w", err)
 	}
 	return nil
 }
