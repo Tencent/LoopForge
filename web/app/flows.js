@@ -193,12 +193,11 @@ function addNode(type,opts={}){
   const at=opts.at?{x:Math.round(opts.at.x/10)*10,y:Math.round(opts.at.y/10)*10}:flowViewport.freeSpot();
   if(type==='preview'){
     const existing=state.workflow.nodes.find(n=>isPreviewBuildNode(n.id));
-    if(existing){state.selectedNode=existing.id;renderCanvas();renderProperties();return toast('预览节点已存在，可拖拽连线调整它的位置')}
+    if(existing){openNodeDrawer(existing.id);return toast('预览节点已存在，可拖拽连线调整它的位置')}
     flowHistory.record();
     ensurePreviewContract();
     state.workflow.nodes.push({id:PREVIEW_BUILD_NODE_ID,name:'构建静态站点',type:'agent',agentId:PREVIEW_BUILD_AGENT_ID,executorId:workflowPreviewExecutor(state.workflow),executionScope:'run',onFailure:'fail',retryStrategy:'targeted_fix',maxAttempts:2,maxReworks:1,position:at,artifactOutputs:[{name:'frontend-preview',path:'dist/index.html',required:true}]});
-    state.selectedNode=PREVIEW_BUILD_NODE_ID;
-    dirty();renderCanvas();renderProperties();
+    dirty();openNodeDrawer(PREVIEW_BUILD_NODE_ID);
     return;
   }
   flowHistory.record();
@@ -207,8 +206,8 @@ function addNode(type,opts={}){
   const agentId=type==='agent'?(opts.agentId||workflowAgents()[0]?.id||''):'';
   const agent=agentId?workflowAgent(agentId):null;
   const node={id:uid(type),name:firstSOP?.name||(opts.agentId&&agent?.name)||labels[type]||'新节点',type,agentId,sopWorkflowId:firstSOP?.id||'',scriptLanguage:type==='script'?'shell':'',script:type==='script'?"printf 'passed\\n'":'',executionScope:'run',artifactOutputs:firstSOP?sopDeclaredArtifacts(firstSOP):[],rejectTo:'',onFailure:'fail',retryStrategy:'targeted_fix',carryOver:['failed_checks','last_error','upstream_artifacts'],maxAttempts:1,maxReworks:3,position:at};
-  state.workflow.nodes.push(node);state.selectedNode=node.id;
-  dirty();renderCanvas();renderProperties();
+  state.workflow.nodes.push(node);
+  dirty();openNodeDrawer(node.id);
 }
 // Removes a node with its edges and any reject routes pointing at it.
 function removeNode(id){
@@ -235,8 +234,8 @@ function duplicateNode(id){
   const copy=clone(n);
   Object.assign(copy,{id:uid(n.type||'node'),name:`${n.name} 副本`,position:{x:(n.position?.x||0)+40,y:(n.position?.y||0)+40},rejectTo:''});
   if(copy.onFailure==='reject')copy.onFailure='fail';
-  wf.nodes.push(copy);state.selectedNode=copy.id;
-  dirty();renderCanvas();renderProperties();
+  wf.nodes.push(copy);
+  dirty();openNodeDrawer(copy.id);
   flowToast('已复制（不含连线）',{undo:true});
   return copy;
 }
@@ -596,6 +595,7 @@ function flowToast(message,opts={}){
 }
 function openNodeDrawer(id){
   if(!state.workflow?.nodes.some(n=>n.id===id))return;
+  if($('#aiOrchestrator')?.hidden===false)setAIOrchestratorOpen(false);
   if(state.selectedNode!==id)state.flowWantReject=null;
   state.selectedNode=id;renderCanvas();renderProperties();
 }
@@ -854,6 +854,14 @@ function effectiveNodeArtifacts(node,agent){
 function roleGates(agent){
   return [...(agent?.verification||[])].filter(g=>g.mode!=='submit');
 }
+function boundRoleLink(agent,validation=false){
+  if(!agent)return '';
+  const id=validation?'openBoundAgentValidation':'openBoundAgent';
+  const label=validation?'去角色定义编辑校验清单':'角色配置';
+  if(catalogGeneric(state.workflow))return `<button type="button" class="fd-btn ghost sm" id="${id}">${label}</button>`;
+  const href='#/agents/'+encodeURIComponent(agent.id)+(validation?'/gov':'');
+  return `<a class="fd-btn ghost sm" id="${id}" href="${escapeHTML(href)}">${label}</a>`;
+}
 function nodeGatePane(n){
   const agent=workflowAgent(n.agentId);
   const artifacts=effectiveNodeArtifacts(n,agent);
@@ -863,7 +871,7 @@ function nodeGatePane(n){
   const gateRows=gates.length?gates.map(g=>{const cmds=(g.commands||[]).filter(Boolean);return `<div class="fd-tl-row"><span class="fd-tl-ic">${flowPalette.icon('terminal',13)}</span><span class="fd-tl-main"><b>${escapeHTML(g.name||g.id||'未命名门禁')}</b><code>${escapeHTML(cmds.join(' && ')||'人工确认')}</code><small>${g.executionScope==='repositories'?'每个代码仓库':'Run 工作区'} · 失败后 ${escapeHTML({loop:'本节点自修正',reject:'打回上游',human:'转人工确认',fail:'本节点失败'}[g.onFailure]||'按节点策略')}</small></span></div>`}).join(''):'<div class="fd-tl-none">这个节点没有额外门禁命令。</div>';
   const terminal=n.type==='agent'?step(1,'先提交结构化终态','平台内建',`<div class="fd-tl-row"><span class="fd-tl-ic">${flowPalette.icon('check',13)}</span><span class="fd-tl-main"><code>pass | rework | fail | human</code><small>Agent 完成任务后必须先调用 submit_gate_result 提交终态；缺失时自动恢复同一会话重试。</small></span></div>`):'';
   const base=n.type==='agent'?1:0;
-  return `<p class="prop-hint">执行时 Agent 节点先提交结构化终态，随后校验产物，最后执行可选门禁命令。</p><ol class="fd-tl">${terminal}${step(base+1,'再校验产物',`${artifacts.length} 项`,artifactRows)}${step(base+2,'最后触发额外门禁',`${gates.length} 项`,gateRows)}</ol>${agent?'<button type="button" class="fd-btn ghost sm" id="openBoundAgentValidation">去角色定义编辑校验清单</button>':''}`;
+  return `<p class="prop-hint">执行时 Agent 节点先提交结构化终态，随后校验产物，最后执行可选门禁命令。</p><ol class="fd-tl">${terminal}${step(base+1,'再校验产物',`${artifacts.length} 项`,artifactRows)}${step(base+2,'最后触发额外门禁',`${gates.length} 项`,gateRows)}</ol>${boundRoleLink(agent,true)}`;
 }
 
 function renderAgentAssetsPanel(a){
@@ -974,11 +982,12 @@ function agentBindCard(n){
   const source=(state.workflow?.tags||[]).find(tag=>tag.startsWith('generic-source:'))?.slice('generic-source:'.length);
   const template=(state.data.workflows||[]).find(w=>w.id===source&&catalogGeneric(w));
   const fromTemplate=generic||template?.nodes?.some(node=>node.agentId&&(node.agentId===agent.id||`${node.agentId}-${projectId}`===agent.id));
-  const inheritsExecutor=fromTemplate&&(agent.projectId||'')===(state.workflow?.projectId||'')&&!n.executorId&&
-    (!agent.executorId||agent.executorId==='codebuddy')&&!String(agent.model||'').trim()&&!String(agent.effort||'').trim();
+  const legacyTemplate=fromTemplate&&(agent.projectId||'')===(state.workflow?.projectId||'')&&agent.executorId==='codebuddy';
+  const inheritsExecutor=!n.executorId&&(!agent.executorId||legacyTemplate)&&
+    !String(agent.model||'').trim()&&!String(agent.effort||'').trim();
   const model=inheritsExecutor?'跟随责任人':agent.model||exec?.model||exec?.name||'未选模型';
   return `<div class="fd-field"><label>这个步骤用哪个角色</label><select class="select" data-p="agentId">${opts}</select><p class="prop-hint">${hint}</p></div>
-    <div class="fd-role"><div class="fd-role-h"><span class="fd-tile" style="--tint:${flowPalette.roleTint(agent.id)}">${escapeHTML(flowPalette.initial(agent.name))}</span><span class="fd-role-t"><b>${escapeHTML(agent.name)}</b><small>${escapeHTML(taskHint)}</small></span><button type="button" class="fd-btn ghost sm" id="openBoundAgent">编辑角色 prompt</button></div><div class="fd-stats"><div title="${escapeHTML(model)}"><b class="txt">${escapeHTML(model)}</b><small>模型</small></div><div><b>${arts.length}</b><small>产物</small></div><div><b>${gates.length}</b><small>门禁</small></div><div><b>${agent.loop?.enabled?`${agent.loop.maxIterations||1} 轮`:'单轮'}</b><small>Loop</small></div></div></div>`;
+    <div class="fd-role"><div class="fd-role-h"><span class="fd-tile" style="--tint:${flowPalette.roleTint(agent.id)}">${escapeHTML(flowPalette.initial(agent.name))}</span><span class="fd-role-t"><b>${escapeHTML(agent.name)}</b><small>${escapeHTML(taskHint)}</small></span>${boundRoleLink(agent)}</div><div class="fd-stats"><div title="${escapeHTML(model)}"><b class="txt">${escapeHTML(model)}</b><small>模型</small></div><div><b>${arts.length}</b><small>产物</small></div><div><b>${gates.length}</b><small>门禁</small></div><div><b>${agent.loop?.enabled?`${agent.loop.maxIterations||1} 轮`:'单轮'}</b><small>Loop</small></div></div></div>`;
 }
 function flowDrawerHead(n,kind,label){
   const agent=kind==='agent'?workflowAgent(n.agentId):null;
@@ -1087,8 +1096,11 @@ function bindNodeProperties(host,n){
   };
   host.querySelector('#addSOPHandoff')?.addEventListener('click',()=>{flowHistory.record();n.artifactOutputs=n.artifactOutputs||[];n.artifactOutputs.push({name:'',path:'',mediaType:'text/markdown',required:true});renderProperties();dirty()});
   if(n.type==='sop')bindArtifactRows(host,n);
-  const openBound=$('#openBoundAgent');if(openBound)openBound.onclick=()=>{const agent=workflowAgent(n.agentId);if(!agent)return;if(!catalogGeneric(state.workflow))switchView('agents');openAgentWizard(agent,2)};
-  const openBoundValidation=$('#openBoundAgentValidation');if(openBoundValidation)openBoundValidation.onclick=()=>{const agent=workflowAgent(n.agentId);if(!agent)return;if(!catalogGeneric(state.workflow))switchView('agents');openAgentWizard(agent,3)};
+  if(catalogGeneric(state.workflow)){
+    const agent=workflowAgent(n.agentId);
+    host.querySelector('#openBoundAgent')?.addEventListener('click',()=>openAgentWizard(agent));
+    host.querySelector('#openBoundAgentValidation')?.addEventListener('click',()=>openAgentWizard(agent,3));
+  }
   host.querySelectorAll('[data-fail]').forEach(b=>b.onclick=()=>{
     if(b.dataset.fail==='fail'){state.flowWantReject=false;if(!setRejectTo(n.id,'')&&n.onFailure==='reject'){n.onFailure='fail';dirty()}renderProperties();return}
     state.flowWantReject=true;renderProperties();host.querySelector('#rejectTarget')?.focus();
