@@ -103,6 +103,28 @@ func TestConversationCLIVersionPreservesOutputQuota(t *testing.T) {
 	}
 }
 
+func TestConversationProcessStopsAfterTerminalResult(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 8*time.Second)
+	defer cancel()
+	root := t.TempDir()
+	pool := &ConversationProcessPool{}
+	script := `printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"result":"done"}'; exec sleep 60`
+	start := time.Now()
+	started, err := pool.Handle(ctx, root, "", nil, ConversationProcessRequest{
+		Operation: "start", Command: &ConversationCommand{Argv: []string{"sh", "-c", script}},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	output := conversationPoll(t, pool, ctx, root, started.ID)
+	if !strings.Contains(output, `"result":"done"`) {
+		t.Fatalf("output = %q", output)
+	}
+	if elapsed := time.Since(start); elapsed > 6*time.Second {
+		t.Fatalf("turn stayed running for %s after the terminal result", elapsed)
+	}
+}
+
 func TestConversationProcessCompletesDuringSlowVersionProbe(t *testing.T) {
 	root := t.TempDir()
 	bin := filepath.Join(t.TempDir(), "codebuddy")
