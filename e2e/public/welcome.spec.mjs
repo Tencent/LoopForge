@@ -81,11 +81,18 @@ test('sending without a model key is refused before any request, with a way to c
   const send=frame.locator('.send-button');
   const notice=frame.locator('.credential-notice');
   await expect(notice).toBeVisible();
-  if(await notice.getByRole('button',{name:'新增执行器',exact:true}).isVisible())await expect(send).toBeDisabled();
+  const chooser=await notice.getByRole('button',{name:'新增执行器',exact:true}).isVisible();
+  if(chooser)await expect(send).toBeDisabled();
   else await send.click();
   await expect(input).toHaveValue(text);
   expect(writes).toBe(0);
-  await openExecutorSetup(page);
+  if(chooser){
+    await openExecutorSetup(page);
+  }else{
+    await frame.getByRole('button',{name:'去配置 CodeBuddy API Key',exact:true}).click();
+    await expect(page).toHaveURL(/#\/settings/);
+    await expect(page.locator('#credentialWizard .credential-pane:not(.is-leaving) input[name="secret"]')).toBeFocused();
+  }
   await page.keyboard.press('Escape');
 });
 
