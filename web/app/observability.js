@@ -1387,7 +1387,7 @@ function obsDeliveryMatches(it,filter){
 }
 function obsDeliveryStages(){
   const d=state.analytics?.delivery||{};
-  return [{key:'all',name:'有执行的单',value:d.issues||0},{key:'done',name:d.directIssues?'SOP 成功 / 对话已提 PR':'SOP 成功',value:(d.sopSucceeded||0)+(d.directWithMr||0)},{key:'withmr',name:'有 PR 的单',value:d.withMr||0},{key:'mr',name:'有 PR 合入的单',value:d.issuesWithMergedMr??d.mrMerged??0},{key:'delivered',name:'已交付',value:d.delivered||0}];
+  return [{key:'all',name:'有执行的单',value:d.issues||0},{key:'done',name:d.directIssues?'最近一次 SOP 成功 / 对话已提 PR':'最近一次 SOP 成功',value:(d.sopSucceeded||0)+(d.directWithMr||0)},{key:'withmr',name:'有 PR 的单',value:d.withMr||0},{key:'mr',name:'有 PR 合入的单',value:d.issuesWithMergedMr??d.mrMerged??0},{key:'delivered',name:'已交付',value:d.delivered||0}];
 }
 function obsSetDeliveryFilter(filter,scroll){
   state.obsDeliveryFilter=filter||'all';
@@ -1428,7 +1428,7 @@ function obsFunnelCard(){
     fallback:()=>{const st=obsFunnelStats(stages);const max=Math.max(1,...st.stages.map(s=>s.value));return `<div class="obs-funnel-fallback">${st.stages.map(s=>`<button type="button" data-obs-funnel="${s.key}"><span>${escapeHTML(s.name)}</span>${obsMeter(s.value*100/max)}<b>${s.value}</b><em class="${s.worst?'bad':''}">${s.conv==null?'':Math.round(s.conv)+'%'}</em></button>`).join('')}</div>`},
     on:{click:p=>obsSetDeliveryFilter(stages[p.dataIndex]?.key||'all',true)}
   },210);
-  return obsCard('funnel','交付漏斗','点一层筛选下方明细；红字为最大流失',filter!=='all'?`<button type="button" class="obs-btn ghost" data-obs-delivery="all">清除筛选</button>`:'',chart,{expand:true});
+  return obsCard('funnel','交付漏斗','按需求去重，SOP 成功只看每单最近一次执行；点一层筛选下方明细，红字为最大流失',filter!=='all'?`<button type="button" class="obs-btn ghost" data-obs-delivery="all">清除筛选</button>`:'',chart,{expand:true});
 }
 function obsOwnerRows(){
   const bag=new Map();

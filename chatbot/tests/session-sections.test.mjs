@@ -105,7 +105,7 @@ describe("splitSidebarSections with SOP run conversations", () => {
     session(id, { shared: true, runId: `run-${id}`, messageCount: 0, runStatus: "succeeded", ...extra });
   const ids = (sections) => sections.groups.flatMap((g) => g.sessions.map((s) => s.id)).sort();
 
-  test("finished runs nobody talked in leave the history; the rest stay as rows", () => {
+  test("runs nobody talked in leave the history unless they wait for a person", () => {
     const sections = split(
       [
         session("chat"),
@@ -120,7 +120,7 @@ describe("splitSidebarSections with SOP run conversations", () => {
       { hideIdleRuns: true },
     );
 
-    expect(ids(sections)).toEqual(["chat", "failed", "running", "talked", "uncounted", "waiting"]);
+    expect(ids(sections)).toEqual(["chat", "talked", "uncounted", "waiting"]);
     expect(sections.groups[0]).not.toHaveProperty("runSessions");
   });
 
@@ -152,6 +152,29 @@ describe("splitSidebarSections with SOP run conversations", () => {
     expect(ids(split(all, { hideIdleRuns: true }))).toEqual(["other"]);
     expect(ids(split(all, { hideIdleRuns: true, query: "登录失败" }))).toEqual(["r1"]);
     expect(ids(split(all, { hideIdleRuns: true, query: "后端交付" }))).toEqual(["r1"]);
+  });
+});
+
+describe("splitSidebarSections with scheduled task conversations", () => {
+  const scheduled = (id, updatedAt, extra = {}) =>
+    session(id, { source: "scheduled", title: "定时 · 仓库&SOP分类", updatedAt, ...extra });
+  const ids = (sections) => sections.groups.flatMap((g) => g.sessions.map((s) => s.id)).sort();
+  const rows = [
+    scheduled("old", "2026-11-20T01:00:00Z"),
+    scheduled("new", "2026-11-21T01:00:00Z"),
+    scheduled("mid", "2026-11-20T12:00:00Z"),
+    scheduled("other-job", "2026-11-19T01:00:00Z", { title: "定时 · 代码扫描" }),
+    session("chat"),
+  ];
+
+  test("only the latest execution of each job stays in the history", () => {
+    expect(ids(split(rows, { hideIdleRuns: true }))).toEqual(["chat", "new", "other-job"]);
+  });
+
+  test("older executions stay reachable by search, pin or opening them", () => {
+    expect(ids(split(rows, { hideIdleRuns: true, query: "仓库" }))).toEqual(["mid", "new", "old"]);
+    expect(ids(split(rows, { hideIdleRuns: true, activeId: "old" }))).toEqual(["chat", "new", "old", "other-job"]);
+    expect(split(rows, { hideIdleRuns: true, pinned: ["mid"] }).pinnedSessions.map((s) => s.id)).toEqual(["mid"]);
   });
 });
 

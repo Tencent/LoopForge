@@ -65,6 +65,11 @@ function preferredModel(list, executor, codeBuddyDefault, remembered) {
 
 // Mirrors errAssistantSponsoredModel in internal/httpapi/assistant_sponsor.go;
 // credentialHint turns it into a "去配置" button.
+// The server refuses a send whose transcript no longer matches the stored one.
+export function staleTranscriptError(e) {
+  return e?.status === 409 && /^(共享)?会话已更新，请重新打开后发送$/.test(String(e.message || ""));
+}
+
 export function sponsoredModelMessage(models = []) {
   return `未配置个人 CodeBuddy API Key 时只能使用平台管理员允许的模型（${models.join("、")}）。要使用其他模型，请先在个人配置中配置自己的 CodeBuddy API Key`;
 }
@@ -1152,20 +1157,38 @@ export function useChat() {
         pool: executionMachines.defaultRunnerId ? "runner" : "cloud",
         runnerId: executionMachines.defaultRunnerId || "",
       };
-      clientRequestId = newId();
+      const startGeneration = (transcript) => {
+        clientRequestId = newId();
+        return write("/api/assistant/generations", {
+          clientRequestId,
+          requireExactModel: true,
+          sessionId: s.id,
+          projectId: s.projectId || "",
+          runId: s.runId || "",
+          executor,
+          ...chosen,
+          ...approval,
+          executionTarget,
+          messages: transcript,
+        });
+      };
       if (currentId.current === s.id) setGenerationKnown(null);
-      const g = await write("/api/assistant/generations", {
-        clientRequestId,
-        requireExactModel: true,
-        sessionId: s.id,
-        projectId: s.projectId || "",
-        runId: s.runId || "",
-        executor,
-        ...chosen,
-        ...approval,
-        executionTarget,
-        messages,
-      });
+      let g;
+      try {
+        g = await startGeneration(messages);
+      } catch (e) {
+        // Someone else (or this tab's last reply) changed the stored
+        // transcript: resend once on top of the stored one instead of
+        // stranding the message until the page is reopened.
+        if (messagesOverride || !staleTranscriptError(e)) throw e;
+        const running = await api(`${sessionPath(s.id)}/generation`).catch(() => null);
+        if (running?.status === "running") throw e;
+        const stored = await api(sessionPath(s.id));
+        s = stored;
+        const rebased = [...(stored.messages || []), pending];
+        if (viewingTarget()) setSession({ ...stored, messages: rebased });
+        g = await startGeneration(rebased);
+      }
       if (currentId.current === s.id) {
         setSession((old) => old?.id === s.id ? { ...old, executionTargetLocked: true,
           executionTarget: g.executionTarget || executionTarget } : old);

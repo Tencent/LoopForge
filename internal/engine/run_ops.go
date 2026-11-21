@@ -69,7 +69,14 @@ func (e *Engine) Cancel(runID string) error {
 		return err
 	}
 	full, _ := e.repo.RunState(runID)
-	for _, childID := range childRunIDs(full) {
+	children := childRunIDs(full)
+	children = append(children, e.repo.LiveChildRunIDs(runID)...)
+	seen := map[string]bool{}
+	for _, childID := range children {
+		if seen[childID] {
+			continue
+		}
+		seen[childID] = true
 		if child, ok := e.repo.RunState(childID); ok && isLiveStatus(child.Status) {
 			_ = e.Cancel(childID)
 		}
@@ -214,6 +221,9 @@ func (e *Engine) pass(runID, nodeID, humanContext string, expected ...NodeExpect
 	if err := forbidClosedGongfengIssue(e.repo, r); err != nil {
 		return err
 	}
+	if err := e.forbidAbandonedChildRun(r); err != nil {
+		return err
+	}
 	if nodeID == "" {
 		nodeID = resumeNodeID(r)
 	}
@@ -330,6 +340,7 @@ func (e *Engine) Reject(runID string, req domain.RejectRequest, expected ...Node
 			nr.Error = ""
 			nr.Output = ""
 			nr.ChildRunID = ""
+			nr.StartedAt = time.Time{}
 			nr.FinishedAt = time.Time{}
 			if id == target {
 				nr.ReworkCount++
@@ -390,6 +401,39 @@ func (e *Engine) cancelLiveChildRuns(ids []string) {
 			}
 		}
 	}()
+}
+
+// forbidAbandonedChildRun refuses to resume a child SOP run its parent no
+// longer follows: the parent node was reset or re-pointed and starts (or has
+// started) a fresh child in the same shared workspace, so reviving this one
+// would run the SOP twice side by side.
+func (e *Engine) forbidAbandonedChildRun(r domain.Run) error {
+	parentID := strings.TrimSpace(r.ExecutionContext.ParentRunID)
+	nodeID := strings.TrimSpace(r.ExecutionContext.ParentNodeID)
+	if parentID == "" || nodeID == "" {
+		return nil
+	}
+	parent, ok := e.repo.RunState(parentID)
+	if !ok {
+		return nil
+	}
+	if nr := parent.Nodes[nodeID]; nr != nil && nr.ChildRunID == r.ID {
+		return nil
+	}
+	return fmt.Errorf("父流程 %s 的 SOP 节点已打回或重跑，不再跟随这条子 SOP 运行；请在父流程上重试，避免同一子 SOP 并行跑两份", parentID)
+}
+
+// resetTouchesActiveNode reports whether rerunning nodeID would reset a node
+// that is still executing.
+func resetTouchesActiveNode(r domain.Run, nodeID string) bool {
+	reset := descendants(r.WorkflowSnapshot, nodeID)
+	reset[nodeID] = true
+	for id := range reset {
+		if nr := r.Nodes[id]; nr != nil && (nr.Status == "running" || nr.Status == "pending_input") {
+			return true
+		}
+	}
+	return false
 }
 
 // resumeParentAfterChildRecovery lets a parent that failed because of this
@@ -457,6 +501,9 @@ func (e *Engine) retryContext(ctx context.Context, runID, nodeID, reason, humanC
 	if err := forbidClosedGongfengIssue(e.repo, r); err != nil {
 		return err
 	}
+	if err := e.forbidAbandonedChildRun(r); err != nil {
+		return err
+	}
 	explicitNode := nodeID != ""
 	if nodeID == "" {
 		nodeID = resumeNodeID(r)
@@ -479,10 +526,14 @@ func (e *Engine) retryContext(ctx context.Context, runID, nodeID, reason, humanC
 	nodeStatus := r.Nodes[nodeID].Status
 	waitingRetry := r.Status == "waiting" && nodeStatus == "waiting_approval"
 	replaySucceeded := r.Status == "succeeded"
-	if r.Status == "running" || r.HasActiveNode() {
+	// A node waiting for a human decision can be rerun while a parallel
+	// branch keeps running, as long as the rerun does not reset that branch.
+	gateBesideActiveBranch := nodeStatus == "waiting_approval" && (r.Status == "running" || r.Status == "waiting") &&
+		!resetTouchesActiveNode(r, nodeID)
+	if (r.Status == "running" || r.HasActiveNode()) && !gateBesideActiveBranch {
 		return fmt.Errorf("run is still active")
 	}
-	if r.Status != "waiting" && r.Status != "failed" && r.Status != "cancelled" && !replaySucceeded {
+	if r.Status != "waiting" && r.Status != "failed" && r.Status != "cancelled" && !replaySucceeded && !gateBesideActiveBranch {
 		return fmt.Errorf("only failed, cancelled, waiting, or succeeded replay decisions can be resumed")
 	}
 	if explicitNode && !replayUpstreamSucceeded(r, nodeID) {
@@ -591,6 +642,7 @@ func (e *Engine) retryContext(ctx context.Context, runID, nodeID, reason, humanC
 			if id == nodeID {
 				nr.ChildRunID = keepChildRunID
 			}
+			nr.StartedAt = time.Time{}
 			nr.FinishedAt = time.Time{}
 			if id == nodeID {
 				nr.Feedback = note
@@ -791,6 +843,7 @@ func (e *Engine) resumePaused(runID, humanContext string, expected ...NodeExpect
 		nr.Status = "pending"
 		nr.Error = ""
 		nr.Activity = ""
+		nr.StartedAt = time.Time{}
 		nr.FinishedAt = time.Time{}
 		nr.Feedback = ""
 		nr.ResumeSessionID = ""
