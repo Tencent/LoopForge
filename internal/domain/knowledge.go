@@ -195,6 +195,78 @@ type KnowledgeSubmission struct {
 	PublishedAt time.Time `json:"publishedAt,omitempty"`
 }
 
+// KnowledgeCapability enumerates the WeKnora REST management capabilities a
+// connection may expose. Probes use sentinel ids so the set can be discovered
+// without touching real knowledge bases or documents.
+type KnowledgeCapability string
+
+const (
+	CapKBManage        KnowledgeCapability = "kb_manage"        // 库创建/改名/删除
+	CapDocWrite        KnowledgeCapability = "doc_write"        // 文档上传/URL/手工创建/更新/删除
+	CapChunkRead       KnowledgeCapability = "chunk_read"       // 分块列表读取
+	CapPreviewDownload KnowledgeCapability = "preview_download" // 原文流式预览与下载
+	CapReparse         KnowledgeCapability = "reparse"          // 文档重解析
+)
+
+// KnowledgeCapabilities is the full probe order exposed to consoles.
+var KnowledgeCapabilities = []KnowledgeCapability{
+	CapKBManage, CapDocWrite, CapChunkRead, CapPreviewDownload, CapReparse,
+}
+
+// CapabilityState is the tri-state result of one capability probe. Unknown
+// means the probe itself was inconclusive (timeout/5xx) and must never be
+// treated as a hard failure of the connection.
+type CapabilityState string
+
+const (
+	CapabilityAvailable   CapabilityState = "available"
+	CapabilityUnavailable CapabilityState = "unavailable"
+	CapabilityUnknown     CapabilityState = "unknown"
+)
+
+// CapabilityStatus carries the probe verdict and a credential-free reason.
+type CapabilityStatus struct {
+	Status CapabilityState `json:"status"`
+	Reason string          `json:"reason,omitempty"`
+}
+
+// ConnectionCapabilities is the cached capability set of one connection.
+type ConnectionCapabilities struct {
+	CheckedAt    string                                   `json:"checkedAt"`
+	Capabilities map[KnowledgeCapability]CapabilityStatus `json:"capabilities"`
+}
+
+// KnowledgeDocumentDetail is the management view of one upstream document.
+type KnowledgeDocumentDetail struct {
+	ID              string `json:"id"`
+	KnowledgeBaseID string `json:"knowledgeBaseId"`
+	Title           string `json:"title"`
+	Type            string `json:"type,omitempty"`
+	FileName        string `json:"fileName,omitempty"`
+	FileType        string `json:"fileType,omitempty"`
+	ParseStatus     string `json:"parseStatus,omitempty"`
+	ErrorMessage    string `json:"errorMessage,omitempty"`
+	CreatedAt       string `json:"createdAt,omitempty"`
+	UpdatedAt       string `json:"updatedAt,omitempty"`
+}
+
+// KnowledgeChunk is one parsed passage of a document.
+type KnowledgeChunk struct {
+	ID         string `json:"id"`
+	Content    string `json:"content"`
+	ChunkIndex int    `json:"chunkIndex"`
+	StartAt    int    `json:"startAt"`
+	EndAt      int    `json:"endAt"`
+}
+
+// KnowledgeChunkList is a page of document chunks.
+type KnowledgeChunkList struct {
+	Chunks   []KnowledgeChunk `json:"chunks"`
+	Total    int64            `json:"total"`
+	Page     int              `json:"page"`
+	PageSize int              `json:"pageSize"`
+}
+
 // KnowledgeCandidate is a run artifact that looks like a distilled knowledge
 // document and can be turned into a submission.
 type KnowledgeCandidate struct {

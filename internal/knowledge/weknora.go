@@ -4,9 +4,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"log/slog"
+	"mime"
 	"mime/multipart"
+	"net"
 	"net/http"
 	"net/url"
 	"path"
@@ -43,12 +47,71 @@ func IsWeKnoraReadOnlyTool(name string) bool {
 	return false
 }
 
+const (
+	// weknoraRequestTimeout bounds ordinary JSON calls.
+	weknoraRequestTimeout = 60 * time.Second
+	// weknoraStreamTimeout bounds streaming uploads and preview/download flows.
+	weknoraStreamTimeout = 10 * time.Minute
+	// weknoraMaxErrorBytes caps how much of an upstream error body is parsed.
+	weknoraMaxErrorBytes = 1 << 20
+	// weknoraMaxResponseBytes caps ordinary JSON success bodies.
+	weknoraMaxResponseBytes = 8 << 20
+	// weknoraLogPathMax keeps request paths readable in logs and errors.
+	weknoraLogPathMax = 160
+	// weknoraMaxRedirects limits redirect hops for outbound requests.
+	weknoraMaxRedirects = 5
+)
+
 // NormalizeWeKnoraBaseURL strips trailing slashes and an optional /api/v1 suffix
 // so admins can paste either http://weknora-app:8080 or http://.../api/v1.
 func NormalizeWeKnoraBaseURL(raw string) string {
 	s := strings.TrimRight(strings.TrimSpace(raw), "/")
 	s = strings.TrimSuffix(s, "/api/v1")
 	return strings.TrimRight(s, "/")
+}
+
+// ValidateOutboundWeKnoraURL normalizes and validates an admin-supplied WeKnora
+// base URL. Private/container hosts stay reachable on purpose (managed mode
+// points at http://weknora-app:8080), but credentials embedded in the URL,
+// non-http(s) schemes and control characters are rejected.
+func ValidateOutboundWeKnoraURL(raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", ErrNotConfigured
+	}
+	for _, r := range raw {
+		if r < 0x20 || r == 0x7f {
+			return "", errors.New("WeKnora 地址包含非法控制字符")
+		}
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return "", fmt.Errorf("WeKnora 地址无法解析：%w", err)
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return "", errors.New("WeKnora 地址必须是 http(s)://host 形式")
+	}
+	if strings.TrimSpace(u.Host) == "" {
+		return "", errors.New("WeKnora 地址缺少主机名")
+	}
+	if u.User != nil {
+		return "", errors.New("WeKnora 地址不能内嵌账号密码")
+	}
+	u.Fragment = ""
+	out := NormalizeWeKnoraBaseURL(u.String())
+	if out == "" {
+		return "", ErrNotConfigured
+	}
+	return out, nil
+}
+
+// truncateLogPath shortens a request path before it reaches logs or errors.
+func truncateLogPath(p string) string {
+	r := []rune(strings.TrimSpace(p))
+	if len(r) <= weknoraLogPathMax {
+		return string(r)
+	}
+	return string(r[:weknoraLogPathMax]) + "..."
 }
 
 type WeKnoraDocument struct {
@@ -79,6 +142,8 @@ type weKnoraKB struct {
 	KnowledgeCount   int    `json:"knowledge_count"`
 	EmbeddingModelID string `json:"embedding_model_id,omitempty"`
 	SummaryModelID   string `json:"summary_model_id,omitempty"`
+	CreatedAt        string `json:"created_at,omitempty"`
+	UpdatedAt        string `json:"updated_at,omitempty"`
 }
 
 type WeKnoraModel struct {
@@ -116,12 +181,49 @@ type weKnoraChunk struct {
 	EndAt      int    `json:"end_at"`
 }
 
+// UpstreamError is a WeKnora REST failure. Structured reports whether the body
+// matched a JSON error envelope, which is what separates a real WeKnora 404
+// (router hit, AppError handled) from a bare gateway/Gin 404 (route missing).
+type UpstreamError struct {
+	Status     int
+	Code       string
+	Message    string
+	Structured bool
+}
+
+func (e *UpstreamError) Error() string {
+	return fmt.Sprintf("WeKnora HTTP %d: %s", e.Status, e.Message)
+}
+
+// StreamResponse is an unbuffered upstream body for preview/download.
+type StreamResponse struct {
+	Body               io.ReadCloser
+	ContentType        string
+	ContentDisposition string
+	ContentLength      int64
+	StatusCode         int
+}
+
+// WeKnoraClientConfig builds a client explicitly; the domain settings path uses
+// NewWeKnoraClient. Transport/HTTPClient are injection points for tests.
+type WeKnoraClientConfig struct {
+	BaseURL     string
+	APIKey      string
+	TenantID    string
+	BearerToken string
+	Transport   http.RoundTripper
+	HTTPClient  *http.Client
+}
+
 // WeKnoraClient talks to a WeKnora server over its REST API (/api/v1/*) using
 // X-API-Key authentication.
 type WeKnoraClient struct {
-	baseURL string
-	apiKey  string
-	http    *http.Client
+	baseURL     string
+	apiKey      string
+	tenantID    string
+	bearerToken string
+	http        *http.Client
+	stream      *http.Client
 
 	docKBMu sync.Mutex
 	docKB   map[string]docKBCacheEntry
@@ -132,17 +234,83 @@ type docKBCacheEntry struct {
 	expiresAt time.Time
 }
 
+func newWeKnoraTransport() *http.Transport {
+	return &http.Transport{
+		Proxy:                 http.ProxyFromEnvironment,
+		DialContext:           (&net.Dialer{Timeout: 15 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
+		ForceAttemptHTTP2:     true,
+		MaxIdleConns:          100,
+		MaxIdleConnsPerHost:   16,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+	}
+}
+
+// checkWeKnoraRedirect refuses cross-origin redirects so a semi-trusted
+// connection URL cannot bounce credentials to a third party.
+func checkWeKnoraRedirect(req *http.Request, via []*http.Request) error {
+	if len(via) == 0 {
+		return nil
+	}
+	if len(via) > weknoraMaxRedirects {
+		return fmt.Errorf("WeKnora 重定向次数超过 %d 次", weknoraMaxRedirects)
+	}
+	origin := via[0].URL
+	if origin == nil || !strings.EqualFold(req.URL.Scheme, origin.Scheme) || !strings.EqualFold(req.URL.Host, origin.Host) {
+		return errors.New("WeKnora 拒绝跨源重定向，避免凭据泄露")
+	}
+	return nil
+}
+
+// NewWeKnoraClient builds a client from stored settings. It fails with
+// ErrNotConfigured when URL or token is missing.
 func NewWeKnoraClient(settings domain.KnowledgeSettings) (*WeKnoraClient, error) {
-	base := NormalizeWeKnoraBaseURL(settings.URL)
 	key := strings.TrimSpace(settings.Token)
-	if base == "" || key == "" {
+	if key == "" {
 		return nil, ErrNotConfigured
 	}
+	return NewWeKnoraClientWithConfig(WeKnoraClientConfig{BaseURL: settings.URL, APIKey: key})
+}
+
+// NewWeKnoraClientWithConfig builds a client with explicit credentials and
+// optional transport injection. The JSON client and the streaming client share
+// one Transport and differ only in Timeout (60s vs 10m).
+func NewWeKnoraClientWithConfig(cfg WeKnoraClientConfig) (*WeKnoraClient, error) {
+	base, err := ValidateOutboundWeKnoraURL(cfg.BaseURL)
+	if err != nil {
+		return nil, err
+	}
+	apiKey := strings.TrimSpace(cfg.APIKey)
+	bearer := strings.TrimSpace(cfg.BearerToken)
+	if apiKey == "" && bearer == "" {
+		return nil, ErrNotConfigured
+	}
+
+	baseClient := http.Client{}
+	if cfg.HTTPClient != nil {
+		baseClient = *cfg.HTTPClient
+	}
+	if cfg.Transport != nil {
+		baseClient.Transport = cfg.Transport
+	}
+	if baseClient.Transport == nil {
+		baseClient.Transport = newWeKnoraTransport()
+	}
+	baseClient.Timeout = weknoraRequestTimeout
+	baseClient.CheckRedirect = checkWeKnoraRedirect
+
+	streamClient := baseClient
+	streamClient.Timeout = weknoraStreamTimeout
+
 	return &WeKnoraClient{
-		baseURL: base,
-		apiKey:  key,
-		http:    &http.Client{Timeout: 30 * time.Second},
-		docKB:   map[string]docKBCacheEntry{},
+		baseURL:     base,
+		apiKey:      apiKey,
+		tenantID:    strings.TrimSpace(cfg.TenantID),
+		bearerToken: bearer,
+		http:        &baseClient,
+		stream:      &streamClient,
+		docKB:       map[string]docKBCacheEntry{},
 	}, nil
 }
 
@@ -213,6 +381,18 @@ func (c *WeKnoraClient) ListKnowledgeBases(ctx context.Context) ([]weKnoraKB, er
 	}
 	if env.Data == nil {
 		return []weKnoraKB{}, nil
+	}
+	return env.Data, nil
+}
+
+func (c *WeKnoraClient) GetKnowledgeBase(ctx context.Context, kbID string) (weKnoraKB, error) {
+	var env struct {
+		Success bool      `json:"success"`
+		Data    weKnoraKB `json:"data"`
+	}
+	endpoint := "/api/v1/knowledge-bases/" + url.PathEscape(strings.TrimSpace(kbID))
+	if err := c.doJSON(ctx, http.MethodGet, endpoint, nil, &env); err != nil {
+		return weKnoraKB{}, err
 	}
 	return env.Data, nil
 }
@@ -425,6 +605,20 @@ func (c *WeKnoraClient) ListDocuments(ctx context.Context, kbID, keyword string,
 	}, nil
 }
 
+// GetKnowledge fetches one document's metadata (including its parent
+// knowledge_base_id) from the upstream instance.
+func (c *WeKnoraClient) GetKnowledge(ctx context.Context, docID string) (WeKnoraDocument, error) {
+	var env struct {
+		Success bool            `json:"success"`
+		Data    WeKnoraDocument `json:"data"`
+	}
+	endpoint := "/api/v1/knowledge/" + url.PathEscape(strings.TrimSpace(docID))
+	if err := c.doJSON(ctx, http.MethodGet, endpoint, nil, &env); err != nil {
+		return WeKnoraDocument{}, err
+	}
+	return env.Data, nil
+}
+
 func (c *WeKnoraClient) GetDocumentKBID(ctx context.Context, knowledgeID string) (string, error) {
 	knowledgeID = strings.TrimSpace(knowledgeID)
 	if knowledgeID == "" {
@@ -438,14 +632,11 @@ func (c *WeKnoraClient) GetDocumentKBID(ctx context.Context, knowledgeID string)
 	}
 	c.docKBMu.Unlock()
 
-	var env struct {
-		Success bool            `json:"success"`
-		Data    WeKnoraDocument `json:"data"`
-	}
-	if err := c.doJSON(ctx, http.MethodGet, "/api/v1/knowledge/"+url.PathEscape(knowledgeID), nil, &env); err != nil {
+	doc, err := c.GetKnowledge(ctx, knowledgeID)
+	if err != nil {
 		return "", err
 	}
-	kbID := strings.TrimSpace(env.Data.KnowledgeBaseID)
+	kbID := strings.TrimSpace(doc.KnowledgeBaseID)
 	if kbID != "" {
 		c.docKBMu.Lock()
 		c.docKB[knowledgeID] = docKBCacheEntry{kbID: kbID, expiresAt: now.Add(60 * time.Second)}
@@ -482,43 +673,88 @@ func (c *WeKnoraClient) WriteDocument(ctx context.Context, source, docPath, cont
 	}, nil
 }
 
-func (c *WeKnoraClient) UploadDocument(ctx context.Context, kbID, filename string, r io.Reader) (WeKnoraDocument, error) {
-	var body bytes.Buffer
-	writer := multipart.NewWriter(&body)
-	part, err := writer.CreateFormFile("file", filename)
+// PostFile streams a multipart upload without buffering the whole file. The
+// write side runs in one goroutine feeding an io.Pipe; closing the read end as
+// soon as Do returns unblocks that goroutine when upstream answers early
+// (401/403/413) without consuming the body.
+func (c *WeKnoraClient) PostFile(ctx context.Context, endpoint string, fields map[string]string, fileField, filename string, file io.Reader, out any) error {
+	pr, pw := io.Pipe()
+	writer := multipart.NewWriter(pw)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+endpoint, pr)
 	if err != nil {
-		return WeKnoraDocument{}, err
+		_ = pr.Close()
+		_ = pw.Close()
+		return err
 	}
-	if _, err := io.Copy(part, r); err != nil {
-		return WeKnoraDocument{}, err
+	if c.apiKey != "" {
+		req.Header.Set("X-API-Key", c.apiKey)
 	}
-	if err := writer.Close(); err != nil {
-		return WeKnoraDocument{}, err
+	if c.tenantID != "" {
+		req.Header.Set("X-Tenant-ID", c.tenantID)
 	}
-
-	endpoint := c.baseURL + "/api/v1/knowledge-bases/" + url.PathEscape(strings.TrimSpace(kbID)) + "/knowledge/file"
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, &body)
-	if err != nil {
-		return WeKnoraDocument{}, err
+	if c.bearerToken != "" {
+		req.Header.Set("Authorization", "Bearer "+c.bearerToken)
 	}
-	req.Header.Set("X-API-Key", c.apiKey)
+	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Content-Type", writer.FormDataContentType())
 
-	resp, err := c.http.Do(req)
+	go writeMultipart(pw, writer, fields, fileField, filename, file)
+
+	defer func() { _ = pr.Close() }()
+	resp, err := c.stream.Do(req)
 	if err != nil {
-		return WeKnoraDocument{}, err
+		slog.DebugContext(ctx, "weknora upload failed", "path", truncateLogPath(endpoint), "error", err)
+		return err
 	}
 	defer resp.Body.Close()
-	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return WeKnoraDocument{}, parseWeKnoraError(resp.StatusCode, raw)
+		raw, _ := io.ReadAll(io.LimitReader(resp.Body, weknoraMaxErrorBytes))
+		_, _ = io.Copy(io.Discard, resp.Body)
+		return parseUpstreamError(resp.StatusCode, raw)
 	}
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, weknoraMaxResponseBytes))
+	if err != nil {
+		return fmt.Errorf("WeKnora %s 响应读取失败：%w", truncateLogPath(endpoint), err)
+	}
+	if out == nil {
+		return nil
+	}
+	if err := json.Unmarshal(raw, out); err != nil {
+		return fmt.Errorf("WeKnora %s 返回无法解析：%s", truncateLogPath(endpoint), clip(string(raw), 200))
+	}
+	return nil
+}
+
+func writeMultipart(pw *io.PipeWriter, writer *multipart.Writer, fields map[string]string, fileField, filename string, file io.Reader) {
+	var err error
+	defer func() { _ = pw.CloseWithError(err) }()
+	for k, v := range fields {
+		if strings.TrimSpace(k) == "" {
+			continue
+		}
+		if err = writer.WriteField(k, v); err != nil {
+			return
+		}
+	}
+	part, partErr := writer.CreateFormFile(fileField, filename)
+	if partErr != nil {
+		err = partErr
+		return
+	}
+	if _, err = io.Copy(part, file); err != nil {
+		return
+	}
+	err = writer.Close()
+}
+
+func (c *WeKnoraClient) UploadDocument(ctx context.Context, kbID, filename string, r io.Reader) (WeKnoraDocument, error) {
+	endpoint := "/api/v1/knowledge-bases/" + url.PathEscape(strings.TrimSpace(kbID)) + "/knowledge/file"
 	var env struct {
 		Success bool            `json:"success"`
 		Data    WeKnoraDocument `json:"data"`
 	}
-	if err := json.Unmarshal(raw, &env); err != nil {
-		return WeKnoraDocument{}, fmt.Errorf("WeKnora 返回无法解析：%s", clip(string(raw), 200))
+	if err := c.PostFile(ctx, endpoint, nil, "file", filename, r, &env); err != nil {
+		return WeKnoraDocument{}, err
 	}
 	return env.Data, nil
 }
@@ -548,7 +784,9 @@ func (c *WeKnoraClient) CreateKnowledgeBase(ctx context.Context, input WeKnoraCr
 	return env.Data, nil
 }
 
-func (c *WeKnoraClient) UpdateKnowledgeBase(ctx context.Context, kbID, name, description string) (weKnoraKB, error) {
+// PatchKnowledgeBase updates only name/description, leaving chunking, VLM and
+// index configuration untouched (PUT would overwrite them with zero values).
+func (c *WeKnoraClient) PatchKnowledgeBase(ctx context.Context, kbID, name, description string) (weKnoraKB, error) {
 	payload := map[string]any{
 		"name":        strings.TrimSpace(name),
 		"description": strings.TrimSpace(description),
@@ -557,10 +795,15 @@ func (c *WeKnoraClient) UpdateKnowledgeBase(ctx context.Context, kbID, name, des
 		Success bool      `json:"success"`
 		Data    weKnoraKB `json:"data"`
 	}
-	if err := c.doJSON(ctx, http.MethodPut, "/api/v1/knowledge-bases/"+url.PathEscape(strings.TrimSpace(kbID)), payload, &env); err != nil {
+	if err := c.doJSON(ctx, http.MethodPatch, "/api/v1/knowledge-bases/"+url.PathEscape(strings.TrimSpace(kbID)), payload, &env); err != nil {
 		return weKnoraKB{}, err
 	}
 	return env.Data, nil
+}
+
+// UpdateKnowledgeBase is kept for callers that still use the old name.
+func (c *WeKnoraClient) UpdateKnowledgeBase(ctx context.Context, kbID, name, description string) (weKnoraKB, error) {
+	return c.PatchKnowledgeBase(ctx, kbID, name, description)
 }
 
 func (c *WeKnoraClient) DeleteKnowledgeBase(ctx context.Context, kbID string) error {
@@ -630,6 +873,91 @@ func (c *WeKnoraClient) DeleteDocument(ctx context.Context, docID string) error 
 	return c.doJSON(ctx, http.MethodDelete, "/api/v1/knowledge/"+url.PathEscape(strings.TrimSpace(docID)), nil, nil)
 }
 
+// OpenPreview streams the parsed/original document preview. The upstream MIME
+// is sanitized so embedding it in the console cannot execute active content.
+func (c *WeKnoraClient) OpenPreview(ctx context.Context, docID string) (*StreamResponse, error) {
+	return c.open(ctx, "/api/v1/knowledge/"+url.PathEscape(strings.TrimSpace(docID))+"/preview", nil, false)
+}
+
+// OpenDownload streams the original document as an attachment.
+func (c *WeKnoraClient) OpenDownload(ctx context.Context, docID string) (*StreamResponse, error) {
+	resp, err := c.open(ctx, "/api/v1/knowledge/"+url.PathEscape(strings.TrimSpace(docID))+"/download", nil, true)
+	if err != nil {
+		return nil, err
+	}
+	if !strings.HasPrefix(strings.ToLower(strings.TrimSpace(resp.ContentDisposition)), "attachment") {
+		resp.ContentDisposition = "attachment"
+	}
+	return resp, nil
+}
+
+// Open issues a GET on the streaming client and returns the untouched body so
+// callers can forward previews/downloads without buffering them in memory.
+func (c *WeKnoraClient) Open(ctx context.Context, pathStr string, query url.Values) (*StreamResponse, error) {
+	return c.open(ctx, pathStr, query, false)
+}
+
+func (c *WeKnoraClient) open(ctx context.Context, pathStr string, query url.Values, forceAttachment bool) (*StreamResponse, error) {
+	target := c.baseURL + pathStr
+	if len(query) > 0 {
+		target += "?" + query.Encode()
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
+	if err != nil {
+		return nil, err
+	}
+	if c.apiKey != "" {
+		req.Header.Set("X-API-Key", c.apiKey)
+	}
+	if c.tenantID != "" {
+		req.Header.Set("X-Tenant-ID", c.tenantID)
+	}
+	if c.bearerToken != "" {
+		req.Header.Set("Authorization", "Bearer "+c.bearerToken)
+	}
+	req.Header.Set("Accept", "*/*")
+
+	resp, err := c.stream.Do(req)
+	if err != nil {
+		slog.DebugContext(ctx, "weknora open failed", "path", truncateLogPath(pathStr), "error", err)
+		return nil, err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		raw, _ := io.ReadAll(io.LimitReader(resp.Body, weknoraMaxErrorBytes))
+		_, _ = io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+		return nil, parseUpstreamError(resp.StatusCode, raw)
+	}
+	return &StreamResponse{
+		Body:               resp.Body,
+		ContentType:        SanitizeStreamContentType(resp.Header.Get("Content-Type"), forceAttachment),
+		ContentDisposition: resp.Header.Get("Content-Disposition"),
+		ContentLength:      resp.ContentLength,
+		StatusCode:         resp.StatusCode,
+	}, nil
+}
+
+// SanitizeStreamContentType downgrades active content to plain text. Browsers
+// must never render upstream HTML/SVG/XML/JS inside the console origin, even
+// when the file was uploaded by a trusted admin.
+func SanitizeStreamContentType(raw string, forceAttachment bool) string {
+	raw = strings.TrimSpace(raw)
+	mediaType, _, err := mime.ParseMediaType(raw)
+	if err != nil || mediaType == "" {
+		if forceAttachment {
+			return "application/octet-stream"
+		}
+		return "text/plain; charset=utf-8"
+	}
+	switch strings.ToLower(mediaType) {
+	case "text/html", "application/xhtml+xml", "image/svg+xml",
+		"text/xml", "application/xml",
+		"text/javascript", "application/javascript", "application/x-javascript":
+		return "text/plain; charset=utf-8"
+	}
+	return mediaType
+}
+
 func (c *WeKnoraClient) doJSON(ctx context.Context, method, pathStr string, payload any, out any) error {
 	var bodyReader io.Reader
 	if payload != nil {
@@ -643,49 +971,118 @@ func (c *WeKnoraClient) doJSON(ctx context.Context, method, pathStr string, payl
 	if err != nil {
 		return err
 	}
-	req.Header.Set("X-API-Key", c.apiKey)
+	if c.apiKey != "" {
+		req.Header.Set("X-API-Key", c.apiKey)
+	}
+	if c.tenantID != "" {
+		req.Header.Set("X-Tenant-ID", c.tenantID)
+	}
+	if c.bearerToken != "" {
+		req.Header.Set("Authorization", "Bearer "+c.bearerToken)
+	}
 	req.Header.Set("Accept", "application/json")
 	if payload != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {
+		slog.DebugContext(ctx, "weknora request failed", "method", method, "path", truncateLogPath(pathStr), "error", err)
 		return err
 	}
 	defer resp.Body.Close()
-	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return parseWeKnoraError(resp.StatusCode, raw)
+		raw, _ := io.ReadAll(io.LimitReader(resp.Body, weknoraMaxErrorBytes))
+		_, _ = io.Copy(io.Discard, resp.Body)
+		return parseUpstreamError(resp.StatusCode, raw)
+	}
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, weknoraMaxResponseBytes))
+	if err != nil {
+		return fmt.Errorf("WeKnora %s 响应读取失败：%w", truncateLogPath(pathStr), err)
 	}
 	if out == nil {
 		return nil
 	}
 	if err := json.Unmarshal(raw, out); err != nil {
-		return fmt.Errorf("WeKnora %s 返回无法解析：%s", pathStr, clip(string(raw), 200))
+		return fmt.Errorf("WeKnora %s 返回无法解析：%s", truncateLogPath(pathStr), clip(string(raw), 200))
 	}
 	return nil
 }
 
+// parseUpstreamError recognizes the three WeKnora error envelopes:
+//
+//	{"error":"message"}                    (api_key_gate)
+//	{"error":{"code":...,"message":"..."}} (error_handler AppError)
+//	{"message":"..."}                      (generic gateway)
+//
+// Anything else (plain "404 page not found") stays unstructured, which is how
+// capability probes tell a real route 404 from a missing endpoint.
+func parseUpstreamError(status int, raw []byte) *UpstreamError {
+	e := &UpstreamError{Status: status}
+	text := strings.TrimSpace(string(raw))
+	if text != "" {
+		var env struct {
+			Error   json.RawMessage `json:"error"`
+			Message string          `json:"message"`
+		}
+		if json.Unmarshal([]byte(text), &env) == nil {
+			if len(env.Error) > 0 && !bytes.Equal(bytes.TrimSpace(env.Error), []byte("null")) {
+				var str string
+				if json.Unmarshal(env.Error, &str) == nil {
+					if msg := strings.TrimSpace(str); msg != "" {
+						e.Message, e.Structured = msg, true
+					}
+				} else {
+					var obj struct {
+						Code    any    `json:"code"`
+						Message string `json:"message"`
+					}
+					if json.Unmarshal(env.Error, &obj) == nil {
+						e.Message = strings.TrimSpace(obj.Message)
+						e.Code = upstreamErrorCode(obj.Code)
+						e.Structured = e.Message != "" || e.Code != ""
+					}
+				}
+			}
+			if !e.Structured {
+				if msg := strings.TrimSpace(env.Message); msg != "" {
+					e.Message, e.Structured = msg, true
+				}
+			}
+		}
+	}
+	e.Message = clip(e.Message, 500)
+	if e.Message == "" {
+		// A structured envelope without any message (or a JSON body with no
+		// recognized field) falls back to the status text; only non-JSON bodies
+		// keep their raw text so "404 page not found" stays recognizable.
+		if e.Structured || json.Valid([]byte(text)) || text == "" {
+			e.Message = http.StatusText(status)
+		} else {
+			e.Message = clip(text, 200)
+		}
+	}
+	return e
+}
+
+func upstreamErrorCode(v any) string {
+	switch code := v.(type) {
+	case nil:
+		return ""
+	case string:
+		return strings.TrimSpace(code)
+	case float64:
+		if code == float64(int64(code)) {
+			return strconv.FormatInt(int64(code), 10)
+		}
+		return strconv.FormatFloat(code, 'f', -1, 64)
+	default:
+		return strings.TrimSpace(fmt.Sprint(code))
+	}
+}
+
+// parseWeKnoraError keeps the historical helper shape used by provisioning.
 func parseWeKnoraError(status int, raw []byte) error {
-	var parsed struct {
-		Error *struct {
-			Message string `json:"message"`
-		} `json:"error"`
-		Message string `json:"message"`
-	}
-	if json.Unmarshal(raw, &parsed) == nil {
-		if parsed.Error != nil && strings.TrimSpace(parsed.Error.Message) != "" {
-			return fmt.Errorf("WeKnora HTTP %d: %s", status, strings.TrimSpace(parsed.Error.Message))
-		}
-		if strings.TrimSpace(parsed.Message) != "" {
-			return fmt.Errorf("WeKnora HTTP %d: %s", status, strings.TrimSpace(parsed.Message))
-		}
-	}
-	msg := clip(string(raw), 200)
-	if msg == "" {
-		msg = http.StatusText(status)
-	}
-	return fmt.Errorf("WeKnora HTTP %d: %s", status, msg)
+	return parseUpstreamError(status, raw)
 }
 
 func extractMarkdownTitle(content string) string {

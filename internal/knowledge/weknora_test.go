@@ -8,8 +8,10 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -32,12 +34,16 @@ func TestNormalizeWeKnoraBaseURL(t *testing.T) {
 }
 
 func TestWeKnoraClient_SearchFetchAndWrite(t *testing.T) {
+	// Search fans out to both knowledge bases, so handlers run concurrently.
+	var seenMu sync.Mutex
 	var seenAPIKey string
 	var seenManualBody map[string]any
 	var seenUploadFilename string
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seenMu.Lock()
 		seenAPIKey = r.Header.Get("X-API-Key")
+		seenMu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/knowledge-bases":
@@ -71,10 +77,14 @@ func TestWeKnoraClient_SearchFetchAndWrite(t *testing.T) {
 				},
 			})
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/knowledge-bases/kb-1/knowledge/manual":
-			_ = json.NewDecoder(r.Body).Decode(&seenManualBody)
+			var body map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			seenMu.Lock()
+			seenManualBody = body
+			seenMu.Unlock()
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"success": true,
-				"data":    map[string]any{"id": "doc-new", "title": seenManualBody["title"], "parse_status": "completed"},
+				"data":    map[string]any{"id": "doc-new", "title": body["title"], "parse_status": "completed"},
 			})
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/knowledge-bases/kb-1/knowledge/file":
 			mr, err := r.MultipartReader()
@@ -82,18 +92,27 @@ func TestWeKnoraClient_SearchFetchAndWrite(t *testing.T) {
 				http.Error(w, err.Error(), 400)
 				return
 			}
+			var filename string
 			for {
 				p, err := mr.NextPart()
 				if err == io.EOF {
 					break
 				}
-				if p.FormName() == "file" {
-					seenUploadFilename = p.FileName()
+				if err != nil {
+					http.Error(w, err.Error(), 400)
+					return
 				}
+				if p.FormName() == "file" {
+					filename = p.FileName()
+				}
+				_ = p.Close()
 			}
+			seenMu.Lock()
+			seenUploadFilename = filename
+			seenMu.Unlock()
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"success": true,
-				"data":    map[string]any{"id": "doc-upload", "title": seenUploadFilename, "parse_status": "pending"},
+				"data":    map[string]any{"id": "doc-upload", "title": filename, "parse_status": "pending"},
 			})
 		default:
 			http.NotFound(w, r)
@@ -116,8 +135,11 @@ func TestWeKnoraClient_SearchFetchAndWrite(t *testing.T) {
 	if err != nil || len(sources) != 2 {
 		t.Fatalf("ListSources = %#v, %v", sources, err)
 	}
-	if seenAPIKey != "sk-weknora-secret" {
-		t.Fatalf("expected X-API-Key header, got %q", seenAPIKey)
+	seenMu.Lock()
+	apiKey := seenAPIKey
+	seenMu.Unlock()
+	if apiKey != "sk-weknora-secret" {
+		t.Fatalf("expected X-API-Key header, got %q", apiKey)
 	}
 
 	res, err := client.Search(context.Background(), "排障", nil)
@@ -137,13 +159,19 @@ func TestWeKnoraClient_SearchFetchAndWrite(t *testing.T) {
 	if err != nil || wr.Commit != "doc-new" {
 		t.Fatalf("WriteDocument = %#v, %v", wr, err)
 	}
-	if seenManualBody["status"] != "publish" || seenManualBody["title"] != "新经验" {
-		t.Fatalf("unexpected manual payload: %#v", seenManualBody)
+	seenMu.Lock()
+	manualBody := seenManualBody
+	seenMu.Unlock()
+	if manualBody["status"] != "publish" || manualBody["title"] != "新经验" {
+		t.Fatalf("unexpected manual payload: %#v", manualBody)
 	}
 
 	uploaded, err := client.UploadDocument(context.Background(), "kb-1", "guide.md", strings.NewReader("# hello"))
-	if err != nil || uploaded.ID != "doc-upload" || seenUploadFilename != "guide.md" {
-		t.Fatalf("UploadDocument = %#v, %v (file=%q)", uploaded, err, seenUploadFilename)
+	seenMu.Lock()
+	uploadedName := seenUploadFilename
+	seenMu.Unlock()
+	if err != nil || uploaded.ID != "doc-upload" || uploadedName != "guide.md" {
+		t.Fatalf("UploadDocument = %#v, %v (file=%q)", uploaded, err, uploadedName)
 	}
 }
 
@@ -728,5 +756,463 @@ func TestExecuteSearch_FourStatesConsistency(t *testing.T) {
 	_, res, err = svcEmpty.ExecuteSearch(context.Background(), "p1", "q", []string{"wk-deleted::kb1"}, 10, ExecuteOptions{})
 	if err == nil || res.Status != domain.KnowledgeStatusUnavailable {
 		t.Fatalf("deleted-connection state mismatch: res=%+v err=%v", res, err)
+	}
+}
+
+// ---------- REST transport rewrite (Step 1) ----------
+
+// repeatReader streams n bytes without allocating the whole payload, standing
+// in for a multi-megabyte upload body.
+type repeatReader struct{ remaining int }
+
+func (r *repeatReader) Read(p []byte) (int, error) {
+	if r.remaining <= 0 {
+		return 0, io.EOF
+	}
+	n := len(p)
+	if n > r.remaining {
+		n = r.remaining
+	}
+	for i := 0; i < n; i++ {
+		p[i] = 'a'
+	}
+	r.remaining -= n
+	return n, nil
+}
+
+func TestWeKnoraClientTimeoutsAndSharedTransport(t *testing.T) {
+	var gotMu sync.Mutex
+	var gotHeaders http.Header
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMu.Lock()
+		gotHeaders = r.Header.Clone()
+		gotMu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"success":true,"data":[{"id":"kb-1","name":"库","type":"document","knowledge_count":2}]}`)
+	}))
+	defer srv.Close()
+
+	c, err := NewWeKnoraClientWithConfig(WeKnoraClientConfig{
+		BaseURL:     srv.URL + "/api/v1",
+		APIKey:      "key-1",
+		TenantID:    "42",
+		BearerToken: "bearer-1",
+	})
+	if err != nil {
+		t.Fatalf("NewWeKnoraClientWithConfig: %v", err)
+	}
+	if c.http.Timeout != weknoraRequestTimeout || c.stream.Timeout != weknoraStreamTimeout {
+		t.Fatalf("timeouts = %v/%v, want %v/%v", c.http.Timeout, c.stream.Timeout, weknoraRequestTimeout, weknoraStreamTimeout)
+	}
+	if c.http.Transport != c.stream.Transport {
+		t.Fatal("json and stream clients must share one Transport pointer")
+	}
+	tr, ok := c.http.Transport.(*http.Transport)
+	if !ok || tr.MaxIdleConnsPerHost < 8 {
+		t.Fatalf("custom transport pool not configured: %#v", c.http.Transport)
+	}
+
+	kbs, err := c.ListKnowledgeBases(context.Background())
+	if err != nil || len(kbs) != 1 || kbs[0].ID != "kb-1" {
+		t.Fatalf("ListKnowledgeBases = %+v, %v", kbs, err)
+	}
+	gotMu.Lock()
+	headers := gotHeaders
+	gotMu.Unlock()
+	if headers.Get("X-API-Key") != "key-1" || headers.Get("X-Tenant-ID") != "42" || headers.Get("Authorization") != "Bearer bearer-1" {
+		t.Fatalf("auth headers = %v", headers)
+	}
+	if headers.Get("Accept") != "application/json" {
+		t.Fatalf("Accept = %q", headers.Get("Accept"))
+	}
+
+	if _, err := NewWeKnoraClient(domain.KnowledgeSettings{URL: srv.URL}); !errors.Is(err, ErrNotConfigured) {
+		t.Fatalf("missing token error = %v, want ErrNotConfigured", err)
+	}
+}
+
+func TestWeKnoraBearerOnlyOmitsAPIKeyHeader(t *testing.T) {
+	var mu sync.Mutex
+	var headers http.Header
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		headers = r.Header.Clone()
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"success":true,"data":[]}`)
+	}))
+	defer srv.Close()
+
+	c, err := NewWeKnoraClientWithConfig(WeKnoraClientConfig{BaseURL: srv.URL, BearerToken: "bearer-only"})
+	if err != nil {
+		t.Fatalf("NewWeKnoraClientWithConfig: %v", err)
+	}
+	if _, err := c.ListKnowledgeBases(context.Background()); err != nil {
+		t.Fatalf("ListKnowledgeBases: %v", err)
+	}
+	mu.Lock()
+	got := headers
+	mu.Unlock()
+	if key := got.Get("X-API-Key"); key != "" {
+		t.Fatalf("bearer-only client must not send X-API-Key, got %q", key)
+	}
+	if auth := got.Get("Authorization"); auth != "Bearer bearer-only" {
+		t.Fatalf("Authorization = %q", auth)
+	}
+	if _, err := NewWeKnoraClientWithConfig(WeKnoraClientConfig{BaseURL: srv.URL}); !errors.Is(err, ErrNotConfigured) {
+		t.Fatalf("no credentials error = %v, want ErrNotConfigured", err)
+	}
+}
+
+func TestWeKnoraValidateOutboundURL(t *testing.T) {
+	valid := map[string]string{
+		"http://weknora-app:8080/":           "http://weknora-app:8080",
+		"https://wk.example.com/api/v1":      "https://wk.example.com",
+		"http://10.1.2.3:8080/prefix/api/v1": "http://10.1.2.3:8080/prefix",
+		"http://wk.local#fragment":           "http://wk.local",
+	}
+	for in, want := range valid {
+		got, err := ValidateOutboundWeKnoraURL(in)
+		if err != nil || got != want {
+			t.Fatalf("ValidateOutboundWeKnoraURL(%q) = %q, %v; want %q", in, got, err, want)
+		}
+	}
+	invalid := []string{
+		"",
+		"ftp://wk.example.com",
+		"http://user:pass@wk.example.com",
+		"http://",
+		"wk.example.com/api/v1",
+		"http://wk.example.com/\x7f",
+		"http://wk.example.com/\x01",
+	}
+	for _, in := range invalid {
+		if got, err := ValidateOutboundWeKnoraURL(in); err == nil {
+			t.Fatalf("ValidateOutboundWeKnoraURL(%q) = %q, want error", in, got)
+		}
+	}
+	if _, err := ValidateOutboundWeKnoraURL(" "); !errors.Is(err, ErrNotConfigured) {
+		t.Fatalf("blank url error = %v, want ErrNotConfigured", err)
+	}
+}
+
+func TestWeKnoraParseUpstreamError(t *testing.T) {
+	cases := []struct {
+		name       string
+		status     int
+		body       string
+		wantMsg    string
+		wantCode   string
+		structured bool
+	}{
+		{"gate string", 403, `{"error":"invalid api key"}`, "invalid api key", "", true},
+		{"app error object", 404, `{"error":{"code":"not_found","message":"knowledge base not found"}}`, "knowledge base not found", "not_found", true},
+		{"numeric code", 400, `{"error":{"code":40001,"message":"bad payload"}}`, "bad payload", "40001", true},
+		{"code only", 409, `{"error":{"code":"conflict"}}`, http.StatusText(http.StatusConflict), "conflict", true},
+		{"gateway message", 502, `{"message":"bad gateway"}`, "bad gateway", "", true},
+		{"bare 404", 404, "404 page not found", "404 page not found", "", false},
+		{"empty body", 500, "", http.StatusText(http.StatusInternalServerError), "", false},
+		{"empty object", 500, `{}`, http.StatusText(http.StatusInternalServerError), "", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ue := parseUpstreamError(tc.status, []byte(tc.body))
+			if ue.Status != tc.status || ue.Message != tc.wantMsg || ue.Code != tc.wantCode || ue.Structured != tc.structured {
+				t.Fatalf("parseUpstreamError(%d, %q) = %+v", tc.status, tc.body, ue)
+			}
+			if !strings.Contains(ue.Error(), strconv.Itoa(tc.status)) {
+				t.Fatalf("Error() = %q", ue.Error())
+			}
+		})
+	}
+
+	huge := strings.Repeat("x", 900<<10)
+	ue := parseUpstreamError(500, []byte(`{"error":"`+huge+`"}`))
+	if !ue.Structured || len([]rune(ue.Message)) > 600 {
+		t.Fatalf("oversized message not clipped: structured=%v len=%d", ue.Structured, len([]rune(ue.Message)))
+	}
+}
+
+// TestWeKnoraUpstreamErrorBodyCappedAtOneMiB proves the 1 MiB read cap through
+// a real request: the JSON envelope closes past the cap, so a truncated body
+// can no longer parse as a structured error.
+func TestWeKnoraUpstreamErrorBodyCappedAtOneMiB(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadGateway)
+		_, _ = io.WriteString(w, `{"error":"`+strings.Repeat("x", 2<<20)+`"}`)
+	}))
+	defer srv.Close()
+
+	c, err := NewWeKnoraClient(domain.KnowledgeSettings{URL: srv.URL, Token: "tok"})
+	if err != nil {
+		t.Fatalf("client: %v", err)
+	}
+	_, err = c.ListKnowledgeBases(context.Background())
+	var ue *UpstreamError
+	if !errors.As(err, &ue) || ue.Status != http.StatusBadGateway {
+		t.Fatalf("ListKnowledgeBases error = %#v", err)
+	}
+	if ue.Structured {
+		t.Fatalf("error body over 1 MiB must be truncated before its envelope closes: %+v", ue)
+	}
+	if n := len([]rune(ue.Message)); n == 0 || n > 600 {
+		t.Fatalf("truncated message length = %d", n)
+	}
+}
+
+func TestWeKnoraSameOriginRedirectLimit(t *testing.T) {
+	var hops int32 = weknoraMaxRedirects
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n, _ := strconv.Atoi(strings.TrimPrefix(r.URL.Path, "/hop/"))
+		if n < int(atomic.LoadInt32(&hops)) {
+			http.Redirect(w, r, fmt.Sprintf("/hop/%d", n+1), http.StatusFound)
+			return
+		}
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		_, _ = io.WriteString(w, "ok")
+	}))
+	defer srv.Close()
+
+	c, err := NewWeKnoraClient(domain.KnowledgeSettings{URL: srv.URL, Token: "tok"})
+	if err != nil {
+		t.Fatalf("client: %v", err)
+	}
+	resp, err := c.Open(context.Background(), "/hop/0", nil)
+	if err != nil {
+		t.Fatalf("%d same-origin redirects should be allowed: %v", weknoraMaxRedirects, err)
+	}
+	_ = resp.Body.Close()
+
+	atomic.StoreInt32(&hops, weknoraMaxRedirects+1)
+	if _, err := c.Open(context.Background(), "/hop/0", nil); err == nil || !strings.Contains(err.Error(), "重定向次数") {
+		t.Fatalf("redirect %d error = %v", weknoraMaxRedirects+1, err)
+	}
+}
+
+func TestWeKnoraRejectsCrossOriginRedirect(t *testing.T) {
+	var targetHits int32
+	var leakMu sync.Mutex
+	var leakedKey string
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&targetHits, 1)
+		leakMu.Lock()
+		leakedKey = r.Header.Get("X-API-Key")
+		leakMu.Unlock()
+		_, _ = io.WriteString(w, `{"success":true,"data":[]}`)
+	}))
+	defer target.Close()
+
+	sameOrigin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/knowledge-bases" {
+			http.Redirect(w, r, target.URL+"/steal", http.StatusFound)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer sameOrigin.Close()
+
+	c, err := NewWeKnoraClient(domain.KnowledgeSettings{URL: sameOrigin.URL, Token: "secret-key"})
+	if err != nil {
+		t.Fatalf("client: %v", err)
+	}
+	_, err = c.ListKnowledgeBases(context.Background())
+	if err == nil {
+		t.Fatal("cross-origin redirect must fail")
+	}
+	if !strings.Contains(err.Error(), "跨源重定向") {
+		t.Fatalf("redirect error = %v", err)
+	}
+	if hits := atomic.LoadInt32(&targetHits); hits != 0 {
+		leakMu.Lock()
+		key := leakedKey
+		leakMu.Unlock()
+		t.Fatalf("third party received %d requests, api key %q", hits, key)
+	}
+}
+
+func TestWeKnoraStreamSanitizesActiveContent(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/preview"):
+			w.Header().Set("Content-Type", "image/svg+xml")
+			w.Header().Set("Content-Length", "11")
+			_, _ = io.WriteString(w, "<svg></svg>")
+		case strings.HasSuffix(r.URL.Path, "/download"):
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			_, _ = io.WriteString(w, "<html></html>")
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = io.WriteString(w, "404 page not found")
+		}
+	}))
+	defer srv.Close()
+
+	c, err := NewWeKnoraClient(domain.KnowledgeSettings{URL: srv.URL, Token: "tok"})
+	if err != nil {
+		t.Fatalf("client: %v", err)
+	}
+	preview, err := c.OpenPreview(context.Background(), "doc-1")
+	if err != nil {
+		t.Fatalf("OpenPreview: %v", err)
+	}
+	defer preview.Body.Close()
+	if preview.ContentType != "text/plain; charset=utf-8" {
+		t.Fatalf("preview content type = %q", preview.ContentType)
+	}
+	if preview.ContentLength != 11 {
+		t.Fatalf("preview content length = %d", preview.ContentLength)
+	}
+	body, _ := io.ReadAll(preview.Body)
+	if string(body) != "<svg></svg>" {
+		t.Fatalf("preview body = %q", body)
+	}
+
+	download, err := c.OpenDownload(context.Background(), "doc-1")
+	if err != nil {
+		t.Fatalf("OpenDownload: %v", err)
+	}
+	defer download.Body.Close()
+	if download.ContentType != "text/plain; charset=utf-8" {
+		t.Fatalf("download content type = %q", download.ContentType)
+	}
+	if !strings.HasPrefix(download.ContentDisposition, "attachment") {
+		t.Fatalf("download disposition = %q", download.ContentDisposition)
+	}
+}
+
+func TestWeKnoraSanitizeStreamContentType(t *testing.T) {
+	active := []string{
+		"text/html",
+		"text/html; charset=utf-8",
+		"application/xhtml+xml",
+		"image/svg+xml",
+		"text/xml",
+		"application/xml",
+		"text/javascript",
+		"application/javascript",
+		"application/x-javascript",
+		"not a media type",
+		"",
+	}
+	for _, in := range active {
+		if got := SanitizeStreamContentType(in, false); got != "text/plain; charset=utf-8" {
+			t.Fatalf("SanitizeStreamContentType(%q) = %q", in, got)
+		}
+	}
+	if got := SanitizeStreamContentType("", true); got != "application/octet-stream" {
+		t.Fatalf("attachment fallback = %q", got)
+	}
+	if got := SanitizeStreamContentType("application/pdf", false); got != "application/pdf" {
+		t.Fatalf("safe type = %q", got)
+	}
+	if got := SanitizeStreamContentType("image/png; name=a.png", false); got != "image/png" {
+		t.Fatalf("image png = %q", got)
+	}
+}
+
+func TestWeKnoraTruncateLogPath(t *testing.T) {
+	short := "/api/v1/knowledge-bases/kb-1/knowledge/file"
+	if got := truncateLogPath(short); got != short {
+		t.Fatalf("short path = %q", got)
+	}
+	long := "/api/v1/" + strings.Repeat("a", 400)
+	got := truncateLogPath(long)
+	if !strings.HasSuffix(got, "...") || len([]rune(got)) != weknoraLogPathMax+3 {
+		t.Fatalf("long path = %q (len %d)", got, len([]rune(got)))
+	}
+}
+
+func TestWeKnoraPostFileUnblocksOnEarlyUpstreamError(t *testing.T) {
+	var hits int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&hits, 1)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusRequestEntityTooLarge)
+		_, _ = io.WriteString(w, `{"error":{"code":"file_too_large","message":"too large"}}`)
+	}))
+	defer srv.Close()
+
+	c, err := NewWeKnoraClient(domain.KnowledgeSettings{URL: srv.URL, Token: "tok"})
+	if err != nil {
+		t.Fatalf("client: %v", err)
+	}
+	baseline := runtime.NumGoroutine()
+	start := time.Now()
+	postErr := c.PostFile(context.Background(), "/api/v1/knowledge-bases/kb-1/knowledge/file", map[string]string{"mode": "publish"}, "file", "big.bin", &repeatReader{remaining: 8 << 20}, nil)
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Fatalf("PostFile blocked for %v after early 413", elapsed)
+	}
+	var ue *UpstreamError
+	if !errors.As(postErr, &ue) || ue.Status != http.StatusRequestEntityTooLarge || !ue.Structured || ue.Code != "file_too_large" {
+		t.Fatalf("PostFile error = %#v", postErr)
+	}
+	if got := atomic.LoadInt32(&hits); got != 1 {
+		t.Fatalf("upstream hits = %d", got)
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for runtime.NumGoroutine() > baseline+1 {
+		if time.Now().After(deadline) {
+			t.Fatalf("upload goroutine leaked: baseline=%d now=%d", baseline, runtime.NumGoroutine())
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+func TestWeKnoraPatchKnowledgeBaseAndGetKnowledge(t *testing.T) {
+	var patchMu sync.Mutex
+	var patchMethod string
+	var patchBody map[string]any
+	var docHits int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodPatch && r.URL.Path == "/api/v1/knowledge-bases/kb-1":
+			var body map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			patchMu.Lock()
+			patchMethod, patchBody = r.Method, body
+			patchMu.Unlock()
+			_, _ = io.WriteString(w, `{"success":true,"data":{"id":"kb-1","name":"renamed","description":"desc"}}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/knowledge/doc-1":
+			atomic.AddInt32(&docHits, 1)
+			_, _ = io.WriteString(w, `{"success":true,"data":{"id":"doc-1","knowledge_base_id":"kb-1","title":"t"}}`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = io.WriteString(w, "404 page not found")
+		}
+	}))
+	defer srv.Close()
+
+	c, err := NewWeKnoraClient(domain.KnowledgeSettings{URL: srv.URL, Token: "tok"})
+	if err != nil {
+		t.Fatalf("client: %v", err)
+	}
+	kb, err := c.PatchKnowledgeBase(context.Background(), "kb-1", " renamed ", "desc")
+	if err != nil || kb.Name != "renamed" {
+		t.Fatalf("PatchKnowledgeBase = %+v, %v", kb, err)
+	}
+	patchMu.Lock()
+	method, body := patchMethod, patchBody
+	patchMu.Unlock()
+	if method != http.MethodPatch || body["name"] != "renamed" || body["description"] != "desc" {
+		t.Fatalf("patch method/body = %s %#v", method, body)
+	}
+	if _, err := c.UpdateKnowledgeBase(context.Background(), "kb-1", "renamed", "desc"); err != nil {
+		t.Fatalf("UpdateKnowledgeBase alias: %v", err)
+	}
+
+	doc, err := c.GetKnowledge(context.Background(), "doc-1")
+	if err != nil || doc.KnowledgeBaseID != "kb-1" {
+		t.Fatalf("GetKnowledge = %+v, %v", doc, err)
+	}
+	if kbID, err := c.GetDocumentKBID(context.Background(), "doc-1"); err != nil || kbID != "kb-1" {
+		t.Fatalf("GetDocumentKBID = %q, %v", kbID, err)
+	}
+	if kbID, err := c.GetDocumentKBID(context.Background(), "doc-1"); err != nil || kbID != "kb-1" {
+		t.Fatalf("cached GetDocumentKBID = %q, %v", kbID, err)
+	}
+	if got := atomic.LoadInt32(&docHits); got != 2 {
+		t.Fatalf("document lookups = %d, want 2 (one direct, one uncached reverse lookup)", got)
 	}
 }
