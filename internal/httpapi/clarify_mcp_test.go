@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -14,15 +15,25 @@ import (
 )
 
 func TestClarifyAllowedModelFallsBackToCatalog(t *testing.T) {
+	t.Setenv("AGENTFLOW_ASSISTANT_MODEL", "")
 	t.Setenv("AGENTFLOW_ASSISTANT_MODELS", "public-model")
-	if got := clarifyAllowedModel(""); got != clarifyDefaultModel {
-		t.Fatalf("empty model = %q", got)
+	stubCLIModelDiscovery(t)
+	discoverCLIModels = func(_ context.Context, _, key string) []string {
+		return []string{key + "-model"}
 	}
-	if got := clarifyAllowedModel("not-a-model"); got != clarifyDefaultModel {
-		t.Fatalf("unknown model = %q", got)
-	}
-	if got := clarifyAllowedModel("public-model"); got != "public-model" {
-		t.Fatalf("listed model = %q", got)
+	ctx := context.Background()
+	refreshCLIModels(ctx, "ioa", "another-key")
+	user := domain.User{CodeBuddyInternetEnvironment: "ioa", CodeBuddyAPIKey: "responsible-key"}
+	for requested, want := range map[string]string{
+		"":                      clarifyDefaultModel,
+		"another-key-model":     clarifyDefaultModel,
+		"not-a-model":           clarifyDefaultModel,
+		"public-model":          "public-model",
+		"responsible-key-model": "responsible-key-model",
+	} {
+		if got := clarifyAllowedModel(ctx, user, requested); got != want {
+			t.Errorf("requested %q: model = %q, want %q", requested, got, want)
+		}
 	}
 }
 

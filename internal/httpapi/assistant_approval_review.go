@@ -143,7 +143,7 @@ func (h *assistantHandlers) approvalReviewer(req assistantRequest, user domain.U
 	if h.reviewCatalog != nil {
 		catalog = h.reviewCatalog(user.CodeBuddyInternetEnvironment)
 	} else {
-		catalog = h.chatCatalog(context.Background(), user)
+		catalog = h.chatCatalog(user)
 	}
 	models := assistantApprovalReviewModels(catalog)
 	var modelMu sync.Mutex

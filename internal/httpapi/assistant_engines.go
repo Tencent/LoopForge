@@ -157,7 +157,7 @@ func assistantEngineBuiltinModels(engine string) []assistantDiscoveredModel {
 		catalogKey = "claude"
 	}
 	var out []assistantDiscoveredModel
-	for _, model := range executorModelCatalogs("")[catalogKey].Models {
+	for _, model := range executorModelCatalogs("", assistantFixedCatalog())[catalogKey].Models {
 		out = append(out, assistantDiscoveredModel{ID: model.ID, Name: model.Name})
 	}
 	return out

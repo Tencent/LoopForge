@@ -131,7 +131,7 @@ func (h *assistantHandlers) startGeneration(c *gin.Context) {
 		return
 	}
 	catalogEngine, _ := assistantModelEngine(req.Model)
-	catalog := assistantChatCatalog(c.Request.Context(), user.CodeBuddyInternetEnvironment, nil)
+	catalog := loadAssistantModels(user.CodeBuddyInternetEnvironment, user.CodeBuddyAPIKey)
 	if catalogEngine == assistantEngineCodeBuddy {
 		catalog = h.turnCatalog(c.Request.Context(), user, req.Model)
 	}
@@ -577,7 +577,7 @@ func (h *assistantHandlers) steerGeneration(c *gin.Context) {
 	}
 	// A CodeBuddy model this instance has not listed yet refreshes the list
 	// first, like a new turn, instead of silently becoming the default.
-	catalog := assistantChatCatalog(c.Request.Context(), user.CodeBuddyInternetEnvironment, nil)
+	catalog := loadAssistantModels(user.CodeBuddyInternetEnvironment, user.CodeBuddyAPIKey)
 	if engine, _ := assistantModelEngine(model); engine == assistantEngineCodeBuddy {
 		catalog = h.turnCatalog(c.Request.Context(), user, model)
 	}

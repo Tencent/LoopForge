@@ -63,9 +63,8 @@ var (
 const cliModelTTL = time.Hour
 
 type cliModelEntry struct {
-	environment string
-	models      []string
-	at          time.Time
+	models []string
+	at     time.Time
 }
 
 // cliModelCacheKey separates accounts within one environment: without a key
@@ -134,7 +133,7 @@ func refreshCLIModels(ctx context.Context, environment, apiKey string) {
 	models := discoverCLIModels(ctx, environment, apiKey)
 	cliModelMu.Lock()
 	if models != nil || !ok {
-		cliModelCache[cacheKey] = cliModelEntry{environment: environment, models: models, at: time.Now()}
+		cliModelCache[cacheKey] = cliModelEntry{models: models, at: time.Now()}
 	}
 	cliModelMu.Unlock()
 }
@@ -160,24 +159,11 @@ func assistantKnownCatalog() assistantModelCatalog {
 	return catalog
 }
 
-func cachedCLIModels(environment string) []string {
+func cachedCLIModels(environment, apiKey string) []string {
+	cacheKey := cliModelCacheKey(strings.TrimSpace(environment), apiKey)
 	cliModelMu.Lock()
 	defer cliModelMu.Unlock()
-	environment = strings.TrimSpace(environment)
-	var models []string
-	seen := map[string]bool{}
-	for _, entry := range cliModelCache {
-		if entry.environment != environment {
-			continue
-		}
-		for _, id := range entry.models {
-			if !seen[id] {
-				models = append(models, id)
-				seen[id] = true
-			}
-		}
-	}
-	return models
+	return cliModelCache[cacheKey].models
 }
 
 // models returns the chat model catalog for the caller's CodeBuddy
@@ -199,7 +185,7 @@ func (h *assistantHandlers) models(c *gin.Context) {
 			}
 		}
 		_, kimiBaseURL := assistantEngineCredential(user, runtime.AgentCLIKimi)
-		catalog, ok := executorModelCatalogs(kimiBaseURL)[id]
+		catalog, ok := executorModelCatalogs(kimiBaseURL, assistantFixedCatalog())[id]
 		if !ok {
 			c.JSON(400, gin.H{"error": "不支持的执行器"})
 			return
@@ -235,12 +221,12 @@ func (h *assistantHandlers) models(c *gin.Context) {
 	case usingSharedKey:
 		// Chat runs on the shared key, so list what that key's environment offers.
 		refreshCLIModels(c.Request.Context(), key.InternetEnvironment, key.APIKey)
-		catalog = restrictAssistantCatalog(assistantChatCatalog(c.Request.Context(), key.InternetEnvironment, key.Models), key.Models)
+		catalog = restrictAssistantCatalog(assistantChatCatalog(key.InternetEnvironment, key.APIKey, key.Models), key.Models)
 	case signedIn:
 		// A user's own key keeps their environment's models and default: the
 		// shared key's default may not exist in that environment.
 		refreshCLIModels(c.Request.Context(), user.CodeBuddyInternetEnvironment, user.CodeBuddyAPIKey)
-		catalog = assistantChatCatalog(c.Request.Context(), user.CodeBuddyInternetEnvironment, nil)
+		catalog = loadAssistantModels(user.CodeBuddyInternetEnvironment, user.CodeBuddyAPIKey)
 		if saved := codeBuddyPersonalModels(user); len(saved) > 0 {
 			catalog.Default = saved[0].ID
 			if listed := selectableCodeBuddyModels(saved); len(listed) > 0 {
@@ -248,7 +234,7 @@ func (h *assistantHandlers) models(c *gin.Context) {
 			}
 		}
 	default:
-		catalog = assistantChatCatalog(c.Request.Context(), "", nil)
+		catalog = loadAssistantModels("", "")
 	}
 	if catalog.Default == assistantDefaultModel {
 		models := user.CodeBuddyModels
@@ -332,8 +318,8 @@ func codeBuddyPersonalModels(user domain.User) []assistantModel {
 // assistantChatCatalog is the catalog used by chat conversations: the same
 // models, with the shared key's models listed and its default preselected.
 // Pass shared only for turns that run on the shared key (see chatCatalog).
-func assistantChatCatalog(ctx context.Context, env string, shared []string) assistantModelCatalog {
-	catalog := loadAssistantModels(ctx, env)
+func assistantChatCatalog(environment, apiKey string, shared []string) assistantModelCatalog {
+	catalog := loadAssistantModels(environment, apiKey)
 	if len(shared) == 0 {
 		return catalog
 	}
@@ -355,21 +341,42 @@ func assistantChatCatalog(ctx context.Context, env string, shared []string) assi
 	return catalog
 }
 
-// loadAssistantModels never blocks on discovery; validation accepts models the
-// caller's environment has advertised.
-func loadAssistantModels(_ context.Context, environment string) assistantModelCatalog {
+// loadAssistantModels combines configured models with the discovery cache for
+// this credential and network environment.
+func loadAssistantModels(environment, apiKey string) assistantModelCatalog {
 	catalog := assistantFixedCatalog()
 	seen := map[string]bool{}
 	for _, model := range catalog.Models {
 		seen[model.ID] = true
 	}
-	for _, id := range cachedCLIModels(environment) {
+	for _, id := range cachedCLIModels(environment, apiKey) {
 		if !seen[id] {
 			catalog.Models = append(catalog.Models, assistantListedModel(id, id, ""))
 			seen[id] = true
 		}
 	}
 	return catalog
+}
+
+// assistantModelsForRequest refreshes an execution account's catalog when a
+// selected model is missing, including after a process restart.
+func assistantModelsForRequest(ctx context.Context, user domain.User, model string) assistantModelCatalog {
+	environment, apiKey := user.CodeBuddyInternetEnvironment, user.CodeBuddyAPIKey
+	catalog := loadAssistantModels(environment, apiKey)
+	if model = strings.TrimSpace(model); model != "" && !assistantCatalogLists(catalog, model) {
+		refreshCLIModels(ctx, environment, apiKey)
+		catalog = loadAssistantModels(environment, apiKey)
+	}
+	return catalog
+}
+
+func assistantCatalogLists(catalog assistantModelCatalog, id string) bool {
+	for _, model := range catalog.Models {
+		if model.ID == id {
+			return true
+		}
+	}
+	return false
 }
 
 // assistantFixedCatalog mirrors `codebuddy --help` (CodeBuddy Code 2.180.0)
