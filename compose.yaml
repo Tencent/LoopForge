@@ -7,7 +7,15 @@ services:
       MYSQL_USER: loopforge
       MYSQL_PASSWORD: ${LOOPFORGE_DB_PASSWORD:?Run scripts/configure.sh first}
       MYSQL_ROOT_PASSWORD: ${LOOPFORGE_DB_ROOT_PASSWORD:?Run scripts/configure.sh first}
-    command: ["--character-set-server=utf8mb4", "--collation-server=utf8mb4_unicode_ci"]
+    # The platform keeps writing checkpoint, telemetry and log rows, and every
+    # write is logged; bound the binary log so a runaway writer cannot fill the
+    # data volume. Raise or drop these flags when point-in-time recovery or
+    # replication is required.
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --binlog-expire-logs-seconds=86400
+      - --max-binlog-size=67108864
     ports:
       - "127.0.0.1:${LOOPFORGE_MYSQL_PORT:-33315}:3306"
     volumes:

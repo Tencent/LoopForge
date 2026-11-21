@@ -65,6 +65,13 @@ Run it as the installation owner, including an ordinary Linux user. If that user
 
 `compose.yaml` is the published-image stack and never builds: `./start.sh`, `scripts/install.sh` and a plain `docker compose --profile platform up` all pull the GHCR release pinned there (currently `ghcr.io/tencent/loopforge:0.4.0`). The pin matches the checkout's migrations and seeds, so check out a release tag when you install. Set `LOOPFORGE_IMAGE` (for example to an `@sha256:` digest) only to override it; a value saved in `.env` takes precedence over later pin changes.
 
+The bundled `mysql:8.4` keeps its binary log bounded: `compose.yaml` starts it with `--binlog-expire-logs-seconds=86400` and `--max-binlog-size=67108864`, so an unexpected write storm cannot fill `loopforge_mysql-data` with binary logs (the platform writes checkpoint, telemetry and log rows continuously, and every write is logged). Deployments that need point-in-time recovery or replication can raise those values or remove the two flags; single-node evaluation installations that need no recovery can pass `--skip-log-bin` to stop binary logging entirely. To reclaim logs already written by an older Compose stack, run:
+
+```bash
+docker compose exec -T mysql sh -c 'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql -u root -e "PURGE BINARY LOGS BEFORE NOW()"'
+docker compose exec -T mysql sh -c 'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql -u root -e "SET PERSIST binlog_expire_logs_seconds=86400"'
+```
+
 To upgrade, update the checkout first, then refresh the containers:
 
 ```bash
