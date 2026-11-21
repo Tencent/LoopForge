@@ -149,6 +149,8 @@ Use `-admin` only when granting platform administration. Running the command aga
 
 ## Workers and runners
 
+Runner capabilities and default-machine selection use semantic-version precedence. A custom build based on a release can append build metadata, for example `0.11.0+internal.42`; metadata does not change compatibility. A prerelease such as `0.11.0-rc.1` sorts below `0.11.0`, so it does not satisfy a capability introduced in that release. Numeric `v1` and `v1.2` shorthand remains accepted. Unknown or malformed versions (for example `dev`) do not enable version-gated capabilities; the default-machine selector asks you to confirm the version rather than reporting it as an older release. This comparison does not certify compatibility of custom protocol changes.
+
 The upstream process roles remain `-role api`, `-role worker` and `-role all`. API and worker instances must share the MySQL database and configuration appropriate to their deployment. Set `AGENTFLOW_CONTROL_TOKEN`, `AGENTFLOW_CONTROL_URL` and `AGENTFLOW_WORKER_URL` when separating control and execution. Set `AGENTFLOW_PLATFORM_MCP_URL` to the actual platform URL reachable from execution containers.
 
 Personal runners are connected from the execution-machine page with a short-lived binding code. The installer is served at `/runners/install.sh`. `AGENTFLOW_RUNNER_BINARY` can point to binaries with `{os}` and `{arch}` substitutions. Container images bundle Linux/macOS amd64/arm64 runner and gate binaries. Native source installations can build on demand with Go.
