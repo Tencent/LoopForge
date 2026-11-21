@@ -1344,7 +1344,7 @@ function runEvalRecHTML(item){
   return `<article class="run-eval-rec ${applied?'is-applied':''}"><div><b>${escapeHTML(item.title||item.action||'建议')}</b><p>${escapeHTML(item.rationale||'')}</p><small>${escapeHTML(item.target||'')} ${escapeHTML(item.action||'')} ${item.nodeId?('· '+escapeHTML(item.nodeId)):''}</small>${patch?`<details><summary>预览补丁</summary><pre>${escapeHTML(JSON.stringify(patch,null,2))}</pre></details>`:''}${item.applyError?`<small class="danger">${escapeHTML(item.applyError)}</small>`:''}</div>${applied?`<button type="button" class="button ghost small" data-open-eval-target="${escapeHTML(item.target||'')}" data-open-eval-id="${escapeHTML(item.appliedTargetId||item.targetId||'')}">打开</button>`:(can?`<button type="button" class="button primary small" data-apply-eval="${escapeHTML(item.id)}">应用此修改</button>`:'<small>仅建议</small>')}</article>`;
 }
 function bindRunEvalPane(run,host){
-  bindRunEvalModelPicker(host.querySelector('#runEvalModelPicker'));
+  bindRunEvalModelPicker(host.querySelector('#runEvalModelPicker'),run.id);
   host.querySelectorAll('[data-run-eval]').forEach(b=>b.onclick=()=>{
     state.runDetailTab='eval';
     host.querySelectorAll('[data-run-tab]').forEach(x=>x.classList.toggle('active',x.dataset.runTab==='eval'));
@@ -1355,10 +1355,12 @@ function bindRunEvalPane(run,host){
   host.querySelectorAll('[data-apply-eval]').forEach(b=>b.onclick=()=>applyRunEvalRec(run,b.dataset.applyEval));
   host.querySelectorAll('[data-open-eval-target]').forEach(b=>b.onclick=()=>openRunEvalTarget(b.dataset.openEvalTarget,b.dataset.openEvalId));
 }
-function bindRunEvalModelPicker(host){
+let runEvalModelChoice;
+function bindRunEvalModelPicker(host,runId){
   window.AgentFlowAssistantModels?.bindFeaturePicker(host,{
-    model:localStorage.getItem('agentflow.runEvalModel'),
-    onChange:id=>localStorage.setItem('agentflow.runEvalModel',id)
+    model:runEvalModelChoice?.runId===runId?runEvalModelChoice.model:'',
+    legacyModel:localStorage.getItem('agentflow.runEvalModel'),
+    onChange:model=>{runEvalModelChoice={runId,model}}
   });
 }
 async function loadRunEval(runId,background){

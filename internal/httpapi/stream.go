@@ -688,7 +688,7 @@ func (h *streamHandlers) executeClarify(ctx context.Context, issue domain.Issue,
 	var credentials runtime.RunCredentials
 	if useCodeBuddy {
 		credentials = runtime.RunCredentials{
-			CodeBuddy:          runtime.CodeBuddyCredential{APIKey: responsible.CodeBuddyAPIKey, InternetEnvironment: responsible.CodeBuddyInternetEnvironment},
+			CodeBuddy:          runtime.CodeBuddyUserCredential(responsible),
 			GitHTTPCredentials: h.repo.GitHTTPCredentialSecrets(ctx, responsible.ID),
 		}
 	}

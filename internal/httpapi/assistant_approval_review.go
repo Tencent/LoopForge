@@ -142,7 +142,7 @@ func (h *assistantHandlers) approvalReviewer(req assistantRequest, user domain.U
 	selected := assistantRequestModel(req.Executor, req.Model)
 	engine, _ := assistantModelEngine(selected)
 	var models []string
-	if engine != assistantEngineCodeBuddy || (req.RequireExactModel && selected != "") {
+	if engine != assistantEngineCodeBuddy || user.CodeBuddyBaseURL != "" || (req.RequireExactModel && selected != "") {
 		models = []string{selected}
 	} else if h.reviewCatalog != nil {
 		models = assistantApprovalReviewModels(h.reviewCatalog(user.CodeBuddyInternetEnvironment))

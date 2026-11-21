@@ -179,11 +179,11 @@ export function credentialHint(text) {
 }
 
 export function openCredentialSettings(field, sshRemote) {
-  const credential = CREDENTIALS[field] ? field : "";
+  const credential = field === "executors" || Object.hasOwn(CREDENTIALS, field) ? field : "";
   if (window.parent !== window)
     window.parent.postMessage(
       { type: "agentflow-chat-open-view", view: "settings", credential, ...(credential === "gitSshKey" && sshRemote ? { sshRemote } : {}) },
       location.origin,
     );
-  else location.href = "/#/settings";
+  else location.href = credential === "executors" ? "/#/settings/executors" : "/#/settings";
 }

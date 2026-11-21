@@ -14,6 +14,9 @@ function previewModelOptions(executorId){
   return (executorModelCatalogs()[executorId]?.models||[]).filter(m=>m.id!=='default'&&(executorId!==PREVIEW_DEFAULT_EXECUTOR||m.id!=='default-model'));
 }
 function defaultPreviewModel(executorId, items=previewModelOptions(executorId)){
+  const prefs=state.data.assistantDefaults;
+  const preferenceExecutor=prefs?.executor==='claude-code'?'claude':prefs?.executor;
+  if(preferenceExecutor===executorId&&items.some(item=>item.id===prefs.model))return prefs.model;
   const preferred=executorModelCatalogs()[executorId]?.default;
   return items.find(item=>item.id===preferred)?.id||items[0]?.id||'';
 }
@@ -28,11 +31,12 @@ function fillPreviewModelSelect(sel, selected, executorId){
 function ensurePreviewContract(){
   const wf=state.workflow;if(!wf)return null;
   const prev=workflowPreviewContract(wf)||{};
+  const preferred=state.data.assistantDefaults?.executor;
   wf.preview={
     ...prev,
     enabled:true,
     kind:'static',
-    executorId:workflowPreviewExecutor(wf),
+    executorId:prev.executorId||(preferred==='claude-code'?'claude':preferred)||PREVIEW_DEFAULT_EXECUTOR,
     model:prev.model??(prev.enabled?'default':''),
     sourcePath:prev.sourcePath||'dist',
     indexFile:prev.indexFile||'index.html',

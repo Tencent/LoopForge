@@ -26,6 +26,8 @@ func TestFeatureModelPreservesExplicitChoice(t *testing.T) {
 	multiCLI := codeBuddyUser
 	multiCLI.CodexAPIKey = codexUser.CodexAPIKey
 	multiCLI.CodeBuddyModels = []domain.CLIModel{{ID: "personal-codebuddy-model"}}
+	preferredCLI := multiCLI
+	preferredCLI.AssistantDefaults = domain.AssistantDefaults{Executor: "codex", Model: "preferred-model"}
 	for _, tc := range []struct {
 		user domain.User
 		in   string
@@ -37,6 +39,10 @@ func TestFeatureModelPreservesExplicitChoice(t *testing.T) {
 		{multiCLI, "", "codebuddy:deployment-default"},
 		{multiCLI, "default", "codebuddy:deployment-default"},
 		{multiCLI, "codex:custom-model", "codex:custom-model"},
+		{preferredCLI, "default", "codex:preferred-model"},
+		{preferredCLI, "codex:default", "codex:preferred-model"},
+		{preferredCLI, "codebuddy:default", "codebuddy:deployment-default"},
+		{preferredCLI, "deepseek-v4.1-flash", "deepseek-v4.1-flash"},
 		{codeBuddyUser, "deepseek-v4.1-flash", "deepseek-v4.1-flash"},
 		{codeBuddyUser, "codebuddy:deepseek-v4.1-flash", "codebuddy:deepseek-v4.1-flash"},
 	} {
@@ -46,6 +52,13 @@ func TestFeatureModelPreservesExplicitChoice(t *testing.T) {
 	}
 	if _, err := resolveFeatureModel(codeBuddyUser, "codex:custom-model"); err == nil {
 		t.Fatal("accepted an explicit CLI without its own credential")
+	}
+	h := &assistantHandlers{}
+	if got := h.assistantChatRequestModel(assistantRequest{}, domain.AssistantSession{}, preferredCLI); got != "codex:preferred-model" {
+		t.Errorf("new chat default = %q", got)
+	}
+	if got := h.assistantChatRequestModel(assistantRequest{}, domain.AssistantSession{Executor: "codebuddy", Model: "deepseek-v4.1-flash"}, preferredCLI); got != "deepseek-v4.1-flash" {
+		t.Errorf("existing chat choice = %q", got)
 	}
 }
 

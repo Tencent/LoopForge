@@ -29,12 +29,30 @@ var (
 	errFeatureCredentials = errors.New("请先在个人配置中配置至少一个 CLI 的凭据")
 )
 
+func assistantModelUnspecified(model string) bool {
+	model = strings.TrimSpace(model)
+	return model == "" || model == assistantDefaultModel
+}
+
+func personalDefaultModel(user domain.User) string {
+	engine := user.AssistantDefaults.Executor
+	if engine != "" {
+		if key, _ := assistantEngineCredential(user, engine); key != "" {
+			return featureDefaultModel(user, engine)
+		}
+	}
+	return ""
+}
+
 func resolveFeatureModel(user domain.User, requested string) (string, error) {
 	model, err := normalizeFeatureModel(requested)
 	if err != nil {
 		return "", err
 	}
 	if model == assistantDefaultModel {
+		if preferred := personalDefaultModel(user); preferred != "" {
+			return preferred, nil
+		}
 		for _, option := range assistantEngineOptions(user, false) {
 			if option.Configured {
 				return featureDefaultModel(user, option.ID), nil
@@ -53,6 +71,9 @@ func resolveFeatureModel(user domain.User, requested string) (string, error) {
 }
 
 func featureDefaultModel(user domain.User, engine string) string {
+	if defaults := user.AssistantDefaults; defaults.Executor == engine && defaults.Model != "" {
+		return engine + ":" + defaults.Model
+	}
 	if engine == assistantEngineCodeBuddy {
 		// These features previously used the deployment's CodeBuddy default.
 		return engine + ":" + assistantFixedCatalog().Default

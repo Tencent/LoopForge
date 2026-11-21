@@ -39,7 +39,7 @@ function accessViewActive(){return !!$('#guideView')?.classList.contains('active
 let credentialFocusRequest=0;
 function gotoCredential(name,sshRemote){
   const request=++credentialFocusRequest;
-  if(!CREDENTIAL_FIELDS[name]){switchView('settings');return}
+  if(name!=='executors'&&!Object.hasOwn(CREDENTIAL_FIELDS,name)){switchView('settings');return}
   if(name==='gitSshKey')return openGitSSHKeys(sshRemote);
   if(name==='gitHttpCredentials')return openGitHTTPCredentials();
   switchView('settings');
@@ -57,9 +57,17 @@ function gotoCredential(name,sshRemote){
     }
     if(performance.now()<focusAfter){requestAnimationFrame(focusCredential);return}
     const panel=document.querySelector('#personalSettingsContent #credentialPanel'),row=panel?.querySelector(`[data-credential-row="${name}"]`);
-    if(!row||!panel.getClientRects().length)return;
+    if(!panel?.getClientRects().length)return;
+    if(name==='executors'){
+      const group=panel.querySelector('[data-credential-group="model"]');
+      if(matchMedia('(max-width:1000px)').matches)setSettingsSidebarExpanded(false);
+      group?.scrollIntoView({block:'nearest',behavior:'instant'});
+      const select=group?.querySelector('[data-credential-add-menu]');
+      if(select)window.HuiSelect?.enhance(select)?.open();
+      return;
+    }
     // Missing credentials open the wizard on its fill-in step; configured ones expand in place.
-    if(row.classList.contains('is-configured'))revealCredentialRow(name);
+    if(row?.classList.contains('is-configured'))revealCredentialRow(name);
     else openCredentialWizard(name);
   };
   requestAnimationFrame(focusCredential);

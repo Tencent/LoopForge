@@ -45,6 +45,7 @@ func bindCommand(ctx context.Context, sandbox Sandbox, workspace string, command
 	// Known host credentials are cleared for every child by default. A provider
 	// receives them only by explicitly requesting a controlled binding.
 	bound.environment["CODEBUDDY_API_KEY"] = ""
+	bound.environment["CODEBUDDY_BASE_URL"] = ""
 	bound.environment["CODEBUDDY_INTERNET_ENVIRONMENT"] = ""
 	bound.environment["AGENTFLOW_GIT_TOKEN"] = ""
 	bound.environment["GH_TOKEN"] = ""
@@ -107,13 +108,13 @@ func bindCommand(ctx context.Context, sandbox Sandbox, workspace string, command
 	for _, binding := range command.CredentialBindings {
 		switch binding {
 		case BindCodeBuddy:
-			// Empty values are intentional: a responsible user without credentials must
-			// not inherit either variable from the AgentFlow host process.
+			// Clearing an endpoint restores CodeBuddy's official address for this edition.
 			bound.environment["CODEBUDDY_API_KEY"] = strings.TrimSpace(credentials.CodeBuddy.APIKey)
 			if bound.environment["CODEBUDDY_API_KEY"] == "" {
 				return CommandSpec{}, fmt.Errorf("需求责任人未配置 CodeBuddy API Key，请在个人配置中配置")
 			}
 			bound.environment["CODEBUDDY_INTERNET_ENVIRONMENT"] = strings.TrimSpace(credentials.CodeBuddy.InternetEnvironment)
+			bound.environment["CODEBUDDY_BASE_URL"] = strings.TrimSpace(credentials.CodeBuddy.BaseURL)
 		case BindGit:
 			if err := bindWorkspaceGitEnvironment(ctx, sandbox, workspace, bound.environment, credentials); err != nil {
 				return CommandSpec{}, err

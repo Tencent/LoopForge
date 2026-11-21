@@ -562,8 +562,7 @@ test('AI schedule model picker includes account login CLI models and keeps a sav
   const doc = app.document;
   const form = doc.querySelector('#scheduleJobForm');
   const engine = doc.querySelector('#scheduleEngine');
-  assert.deepEqual([...engine.options].map(o => [o.value, o.disabled]), [['codebuddy', false], ['codex', false], ['claude-code', true]]);
-  assert.match(engine.options[2].textContent, /缺少凭据/);
+  assert.deepEqual([...engine.options].map(o => [o.value, o.disabled]), [['codebuddy', false], ['codex', false]]);
   assert.equal(engine.value, 'codebuddy');
   assert.equal(form.elements.assistantModel.value, 'glm-test');
 

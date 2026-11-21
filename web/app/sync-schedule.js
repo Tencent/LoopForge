@@ -101,12 +101,14 @@ function scheduleModelAPI(){return window.AgentFlowAssistantModels}
 function clarifyModelPickerHTML(disabled){
   return `<div class="feature-model-picker clarify-model-picker" data-clarify-model ${disabled?'data-picker-readonly':''}>${scheduleModelAPI()?.featurePickerHTML()||''}</div>`;
 }
+let clarifyModelChoice;
 function bindClarifyModelPicker(host, issue){
   const models=scheduleModelAPI();
   return models?.bindFeaturePicker(host,{
-    model:localStorage.getItem('agentflow.clarifyModel'),
+    model:clarifyModelChoice?.issueId===issue.id?clarifyModelChoice.model:'',
+    legacyModel:localStorage.getItem('agentflow.clarifyModel'),
     readOnly:host.hasAttribute('data-picker-readonly'),
-    onChange:id=>localStorage.setItem('agentflow.clarifyModel',id),
+    onChange:model=>{clarifyModelChoice={issueId:issue.id,model}},
     loadCatalog:()=>models.fetchCatalog(`/api/issues/${encodeURIComponent(issue.id)}/clarify-models`)
   });
 }
@@ -122,8 +124,10 @@ function scheduleEngineModels(engine){
 }
 function scheduleDefaultModel(engine){
   const models=scheduleEngineModels(engine);
+  const prefs=scheduleModelCatalog().preferences;
+  const saved=prefs?.executor===engine&&models.find(item=>item.id===prefs.model||item.id===engine+':'+prefs.model);
   const preferred=engine==='codebuddy'&&models.find(item=>item.id===scheduleModelCatalog().default);
-  return preferred?.id||models[0]?.id||'';
+  return saved?.id||preferred?.id||models[0]?.id||'';
 }
 function scheduleModelEngine(id){
   return scheduleModelAPI()?.engineOf?.(id,scheduleModelCatalog())||'codebuddy';
@@ -133,8 +137,10 @@ function paintScheduleEngines(selected){
   if(!select)return;
   const current=scheduleModelEngine(selected);
   const engines=scheduleModelCatalog().engines||[];
-  const list=engines.length?[...engines]:[{id:'codebuddy',name:'CodeBuddy'}];
-  if(!list.some(e=>e.id===current))list.push({id:current,name:current});
+  const list=engines.filter(engine=>engine.configured||scheduleEngineModels(engine.id).length);
+  if(!list.some(e=>e.id===current)&&(scheduleModelAPI()?.concreteModelId(selected)||$('#scheduleJobForm')?.elements.id.value)){
+    list.push(engines.find(e=>e.id===current)||{id:current,name:current});
+  }
   // CodeBuddy can run on its native default with no concrete model in the
   // list. A saved task keeps its CLI selectable during edits.
   select.replaceChildren(...list.map(e=>{
@@ -143,7 +149,9 @@ function paintScheduleEngines(selected){
     option.disabled=!usable;
     return option;
   }));
-  select.value=current;
+  if(!list.length)select.add(new Option('暂无可用执行器',''));
+  select.value=list.some(item=>item.id===current)?current:list[0]?.id||'';
+  select.disabled=!list.length;
 }
 function closeScheduleModelMenu(){
   const host=$('#scheduleModelPicker');
@@ -216,8 +224,10 @@ async function loadScheduleModels(){
   scheduleCatalog=catalog;
   const form=$('#scheduleJobForm');
   const selected=form.elements.assistantModel.value;
+  const configured=(catalog?.engines||[]).filter(engine=>engine.configured);
+  const preferred=configured.find(engine=>engine.id===catalog.preferences?.executor);
   const fallback=!form.elements.id.value&&!picker.concreteModelId(selected)
-    ?(catalog?.engines||[]).filter(engine=>engine.configured).map(engine=>scheduleDefaultModel(engine.id)).find(Boolean)
+    ?(preferred&&scheduleDefaultModel(preferred.id))||configured.map(engine=>scheduleDefaultModel(engine.id)).find(Boolean)
     :'';
   paintScheduleModel(fallback||selected||picker.DEFAULT);
 }
@@ -441,7 +451,7 @@ function renderScheduleJobs(){
   const disabled='本实例不执行定时任务；任务可在主实例自动运行。';
   $('#scheduleRuntimeHint').textContent=canRun?'每个项目使用一份触发配置，修改后保存即可生效。立即运行在服务端执行，关闭页面不会中断。':disabled;
   const triggerHint=$('#aiScheduleTriggerHint');if(triggerHint)triggerHint.textContent=canRun?'按计划扫描本项目选定状态、尚未跑过 SOP 的需求，通过基线门禁后派发 SOP。每个项目使用一份触发配置。':disabled;
-  $('#aiScheduleRuntimeHint').textContent=!state.projectFilter?'请先在顶栏选择项目，再管理 AI 定时任务。':canRun?'以最后保存任务的人的身份和完全权限执行。默认执行机器离线时使用该用户的 API Key。CodeBuddy 缺少个人 Key 时可使用平台共享 Key。关闭页面不会中断执行。':disabled;
+  $('#aiScheduleRuntimeHint').textContent=!state.projectFilter?'请先在顶栏选择项目，再管理 AI 定时任务。':canRun?'任务以最后保存人的身份和完全权限执行。关闭页面后，任务会继续运行。':disabled;
   $('#aiScheduleProjectName').textContent=currentProject()?.name||'当前项目';
   $('#aiScheduleCount').textContent=`${assistant.length} 个任务`;
   $('#newAISchedule').disabled=!state.projectFilter;

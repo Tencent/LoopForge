@@ -77,8 +77,7 @@ dom.run(`
   assert.equal(model.list.children.length, 1, 'model picker only shows selected CLI models');
   open(cli);
   assert.equal(model.menu.hidden, true, 'CLI and model menus are mutually exclusive');
-  assert.equal(cli.list.children.length, 5);
-  assert.equal(cli.list.children[4].disabled, true, 'unconfigured CLIs are visible and disabled');
+  assert.equal(cli.list.children.length, 4, 'only configured CLIs are offered');
   cli.search.value = 'Codex'; cli.search.oninput();
   assert.equal(cli.list.children.length, 1, 'CLI search is independent of models');
   cli.search.dispatchEvent(dom.event('keydown', {key: 'Escape', bubbles: true}));

@@ -1567,7 +1567,7 @@ func runAssistantCLI(ctx context.Context, req assistantCLIRequest, user domain.U
 			break
 		}
 		inv.command, err = prepareAssistantCommand(assistantCommandOpts{Bin: bin, Config: config, Prompt: req.Prompt, Model: engineModel, Effort: req.Effort, SessionID: sessionID, Resume: req.Resume, SystemPrompt: req.SystemPrompt, Native: req.Native, Settings: req.Settings, ReportOnly: req.ReportOnly, ReviewOnly: req.ReviewOnly, Workspace: req.Workspace})
-		inv.credentials = runtime.RunCredentials{CodeBuddy: runtime.CodeBuddyCredential{APIKey: user.CodeBuddyAPIKey, InternetEnvironment: user.CodeBuddyInternetEnvironment}}
+		inv.credentials = runtime.RunCredentials{CodeBuddy: runtime.CodeBuddyUserCredential(user)}
 		inv.sessionRef = sessionID
 	}
 	if err != nil {
@@ -1719,6 +1719,9 @@ func runAssistantCLI(ctx context.Context, req assistantCLIRequest, user domain.U
 		return "", sessionID, assistantCredentialError{engine: engine}
 	}
 	if credentialRejected && strings.TrimSpace(final) == "" && err == nil && ctx.Err() == nil {
+		if user.CodeBuddyBaseURL != "" {
+			return "", sessionID, assistantCredentialError{engine: assistantEngineCodeBuddy}
+		}
 		return "", sessionID, errAssistantCredentialRejected
 	}
 	if ctx.Err() != nil {

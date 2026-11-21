@@ -775,6 +775,13 @@ func (s *Server) bootstrap(c *gin.Context) {
 	if current, ok := s.requestUser(c.Request, true); ok {
 		currentUserID = current.ID
 	}
+	var assistantDefaults domain.AssistantDefaults
+	for _, user := range users {
+		if user.ID == currentUserID {
+			assistantDefaults = user.AssistantDefaults
+			break
+		}
+	}
 	mcpServers = domain.PublicMCPServers(withMarketIcons(visibleMCPServersForUser(mcpServers, currentUserID)))
 	sharedModels := s.repo.SharedCodeBuddyModels()
 	sponsoredModel := ""
@@ -792,8 +799,9 @@ func (s *Server) bootstrap(c *gin.Context) {
 		// Set when users without their own CodeBuddy API Key can still chat
 		// and run SOPs on the platform's shared key, limited to these models
 		// (sponsoredModel is the default).
-		"sponsoredModel":  sponsoredModel,
-		"sponsoredModels": sharedModels,
+		"sponsoredModel":    sponsoredModel,
+		"sponsoredModels":   sharedModels,
+		"assistantDefaults": assistantDefaults,
 	})
 }
 

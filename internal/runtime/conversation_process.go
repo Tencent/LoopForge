@@ -285,6 +285,10 @@ func (p *ConversationProcessPool) Handle(ctx context.Context, root, workspace st
 		defer stopWrite()
 		if req.EOF {
 			err = input.Close()
+			// A short-lived CLI can exit before the client relays its final EOF.
+			if errors.Is(err, os.ErrClosed) || errors.Is(err, io.ErrClosedPipe) {
+				err = nil
+			}
 		} else {
 			_, err = io.WriteString(input, conversationRemap(req.Data, req.SourceRoot, root))
 		}

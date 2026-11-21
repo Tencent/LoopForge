@@ -1126,6 +1126,7 @@ func bindInvocationCredentials(inv *domain.RunnerInvocation, bindings []runtime.
 				return nil, nil, errors.New("CodeBuddy 个人 API Key 未配置")
 			}
 			env["CODEBUDDY_API_KEY"] = key
+			env["CODEBUDDY_BASE_URL"] = strings.TrimSpace(inv.CodeBuddyBaseURL)
 			if net := strings.TrimSpace(inv.CodeBuddyInternetEnvironment); net != "" {
 				env["CODEBUDDY_INTERNET_ENVIRONMENT"] = net
 			}
@@ -1447,7 +1448,7 @@ func (d *Daemon) defaultWorkspace(taskID string) string {
 }
 
 // runnerVersion is reported at registration; it matches the module build.
-var runnerVersion = domain.RunnerVersionGitSSHKnownHosts
+var runnerVersion = domain.RunnerVersionCodeBuddyBaseURL
 
 // Version returns the runner build version reported at registration.
 func Version() string { return runnerVersion }

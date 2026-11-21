@@ -168,17 +168,25 @@
     return id.startsWith(engine + ':') ? id : engine + ':' + id;
   }
   function featureExecutors(source) {
-    const engines = (source.engines || []).map(engine => ({
-      ...engine, available: engine.personal ?? engine.configured, models: []
-    }));
+    const engines = (source.engines || []).filter(engine => engine.personal ?? engine.configured)
+      .map(engine => ({...engine, models: []}));
     for (const model of source.models || []) {
       if (!concreteModelId(model.id)) continue;
       const engine = engines.find(engine => engine.id === engineOf(model.id, source));
-      if (engine?.available) engine.models.push({...model, id: qualifiedModel(engine.id, model.id)});
+      if (engine) engine.models.push({...model, id: qualifiedModel(engine.id, model.id)});
     }
     return engines;
   }
-  function bindFeaturePicker(host, {model = '', readOnly = false, keepSaved = false, onChange, loadCatalog = load} = {}) {
+  function preferredFeatureModel(source, executor, models) {
+    if (!executor) return '';
+    const preferred = source.preferences?.executor === executor && concreteModelId(source.preferences.model);
+    const providerDefault = executor === 'codebuddy' && concreteModelId(source.default);
+    for (const id of [preferred, providerDefault]) {
+      if (id && models.some(item => item.id === qualifiedModel(executor,id))) return qualifiedModel(executor,id);
+    }
+    return models[0]?.id || '';
+  }
+  function bindFeaturePicker(host, {model = '', legacyModel = '', readOnly = false, keepSaved = false, onChange, loadCatalog = load} = {}) {
     if (!host || host.modelPickerReady) return host?.modelPickerReady;
     const executor = host.querySelector('[data-feature-executor]');
     const models = host.querySelector('[data-feature-model]');
@@ -186,15 +194,24 @@
     host.modelPickerReady = loadCatalog().then(source => {
       if (!host.isConnected) return;
       const engines = featureExecutors(source);
-      let selected = concreteModelId(model);
-      let engine = selected ? engines.find(engine => engine.id === engineOf(selected, source)) : undefined;
+      let selected = concreteModelId(model || (!source.preferences?.executor && legacyModel));
+      const savedExecutor = selected && engineOf(selected, source);
+      let engine = engines.find(item => item.id === savedExecutor);
+      if (keepSaved && savedExecutor && !engine) {
+        const saved = source.engines?.find(item => item.id === savedExecutor);
+        if (saved) {
+          engine = {...saved, models: []};
+          engines.push(engine);
+        }
+      }
       if (engine) selected = qualifiedModel(engine.id, selected);
       if (keepSaved && selected && engine && !engine.models.some(item => item.id === selected)) {
         engine.models.push({id: selected, name: modelMeta(selected).name});
       }
       if (!engine?.models.some(item => item.id === selected)) {
         selected = '';
-        engine = engines.find(item => item.models.length) || engines.find(item => item.available);
+        engine = engines.find(item => item.id === source.preferences?.executor && item.models.length) ||
+          engines.find(item => item.models.length) || engines[0];
       }
       executor.replaceChildren(...engines.map(item => {
         const option = new Option(item.name, item.id);
@@ -208,9 +225,7 @@
       const remembered = new Map();
       const paintModels = (current, value) => {
         const items = current?.models || [];
-        const configured = current?.id === 'codebuddy' && concreteModelId(source.default);
-        const preferred = configured && qualifiedModel(current.id, configured);
-        const next = value || items.find(item => item.id === preferred)?.id || items[0]?.id || '';
+        const next = value || preferredFeatureModel(source, current?.id, items);
         models.replaceChildren(...items.map(item => new Option(item.name || item.id, item.id)));
         if (!items.length) models.append(new Option('暂无可选模型', ''));
         models.value = next;
@@ -242,7 +257,7 @@
       loading = fetchCatalog().then(data => {
         if (Array.isArray(data?.models)) {
           const models = data.models.filter(m => concreteModelId(m.id));
-          catalog = {default: data.default || DEFAULT_MODEL, models, engines: data.engines || []};
+          catalog = {default: data.default || DEFAULT_MODEL, models, engines: data.engines || [], preferences: data.preferences};
         }
         return catalog;
       }).catch(() => catalog).finally(() => { loading = null; });
@@ -256,11 +271,13 @@
     bindFeaturePicker,
     concreteModelId,
     engineOf,
+    featureExecutors,
     featurePickerHTML,
     fetchCatalog,
     load,
     paint,
     paintItem,
+    preferredFeatureModel,
     renderList,
     renderOptions
   };

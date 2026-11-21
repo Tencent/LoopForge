@@ -182,6 +182,8 @@ paths:
                 required: [default, models]
                 properties:
                   default: {type: string}
+                  preferences:
+                    $ref: "#/components/schemas/AssistantDefaults"
                   engines:
                     type: array
                     items:
@@ -686,8 +688,11 @@ paths:
             schema:
               type: object
               properties:
+                assistantDefaults:
+                  $ref: "#/components/schemas/AssistantDefaults"
                 codeBuddyApiKey: {type: string, writeOnly: true}
                 codeBuddyApiKeyClear: {type: boolean}
+                codeBuddyBaseUrl: {type: string, description: "HTTP(S) CodeBuddy gateway base URL. Omitted preserves the value; empty uses the official endpoint for the selected edition."}
                 codeBuddyInternetEnvironment: {type: string, description: "Edition that issued the CodeBuddy key: empty for International, \"internal\" for China, \"ioa\" for iOA (\"public\" and \"China\" are also accepted). Any other value is rejected with 400."}
                 codexApiKey: {type: string, writeOnly: true, description: "Blank preserves the stored key."}
                 codexApiKeyClear: {type: boolean}
@@ -4143,6 +4148,13 @@ components:
             items:
               $ref: "#/components/schemas/ScheduleJob"
   schemas:
+    AssistantDefaults:
+      type: object
+      properties:
+        executor: {type: string, description: A configured personal executor.}
+        model: {type: string, description: Concrete model ID on the executor.}
+        effort: {type: string, description: The selected model's reasoning effort.}
+        approval: {type: string, enum: [confirm, assisted, auto], description: Initial confirmation mode for new conversations.}
     OpenObject:
       type: object
       additionalProperties: true
@@ -4539,6 +4551,7 @@ components:
         avatarUrl: {type: string}
         gitHubCredentialConfigured: {type: boolean, readOnly: true}
         codeBuddyApiKeyConfigured: {type: boolean, readOnly: true}
+        codeBuddyBaseUrl: {type: string}
         codexApiKeyConfigured: {type: boolean, readOnly: true}
         codexBaseUrl: {type: string}
         claudeCodeApiKeyConfigured: {type: boolean, readOnly: true}

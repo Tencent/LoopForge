@@ -111,7 +111,7 @@ func assistantEngineCredential(user domain.User, engine string) (apiKey, baseURL
 	case assistantEngineClaude:
 		return strings.TrimSpace(user.ClaudeCodeAPIKey), strings.TrimSpace(user.ClaudeCodeBaseURL)
 	case assistantEngineCodeBuddy:
-		return strings.TrimSpace(user.CodeBuddyAPIKey), ""
+		return strings.TrimSpace(user.CodeBuddyAPIKey), strings.TrimSpace(user.CodeBuddyBaseURL)
 	}
 	cred := user.AgentCLICredentials[engine]
 	if runtime.IsAgentCLI(engine) && engine != runtime.AgentCLICursor {
@@ -311,16 +311,14 @@ func assistantTurnCatalogModel(requested string, catalog assistantModelCatalog, 
 	return model, nil
 }
 
-// assistantScheduledModel normalizes the model of an AI scheduled task on
-// save. The run uses the project owner's keys and CodeBuddy environment, not
-// the editor's, so a well-formed model is kept as-is; it is checked against
-// the owner's account when it runs (see scheduledRunModel).
+// assistantScheduledModel normalizes a scheduled model without replacing a
+// well-formed selection. The account bound to the task validates it at run time.
 func assistantScheduledModel(id string, catalog assistantModelCatalog) string {
 	engine, model := assistantModelEngine(id)
-	if engine != assistantEngineCodeBuddy && assistantValidEngineModel(model) {
-		return engine + ":" + model
-	}
-	if engine == assistantEngineCodeBuddy && assistantValidEngineModel(model) {
+	if assistantValidEngineModel(model) {
+		if engine != assistantEngineCodeBuddy || model == assistantDefaultModel && assistantModelHasEnginePrefix(id) {
+			return engine + ":" + model
+		}
 		return model
 	}
 	return assistantAllowedModel(id, catalog)
@@ -668,9 +666,12 @@ func writeAssistantEngineState(root string, state assistantEngineState) error {
 // assistantChatRequestModel keeps an existing conversation's model when
 // omitted, or chooses a personal CLI for a new conversation with no selection.
 func (h *assistantHandlers) assistantChatRequestModel(req assistantRequest, saved domain.AssistantSession, user domain.User) string {
-	if strings.TrimSpace(req.Executor) == "" && (strings.TrimSpace(req.Model) == "" || req.Model == assistantDefaultModel) {
+	if strings.TrimSpace(req.Executor) == "" && assistantModelUnspecified(req.Model) {
 		if saved.Model != "" || saved.Executor != "" {
 			return assistantRequestModel(saved.Executor, saved.Model)
+		}
+		if preferred := personalDefaultModel(user); preferred != "" {
+			return preferred
 		}
 		if _, _, codeBuddyAvailable := h.assistantChatUser(user); !codeBuddyAvailable {
 			if model, err := resolveFeatureModel(user, ""); err == nil {

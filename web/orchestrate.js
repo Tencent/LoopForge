@@ -1,6 +1,7 @@
 let aiBuildToken = 0;
 let aiBuild = null;
 let aiAbort = null;
+let aiModelOverride = '';
 const aiHistory = {};
 
 function aiOrchestratorEngine(model) {
@@ -9,6 +10,13 @@ function aiOrchestratorEngine(model) {
 
 function selectedAIOrchestratorModel() {
   const catalog = window.AgentFlowAssistantModels?.catalog();
+  const preferred = catalog?.preferences || state.data?.assistantDefaults;
+  if (aiModelOverride) return aiModelOverride;
+  if (preferred?.executor) {
+    const models = aiOrchestratorModels(preferred.executor);
+    const match = models.find(model => model.id === preferred.model || model.id === preferred.executor + ':' + preferred.model);
+    if (models.length) return match?.id || models[0].id;
+  }
   const remembered = localStorage.getItem('agentflow.orchestratorModel') || localStorage.getItem('agentflow.assistantModel');
   if (remembered && remembered !== 'default') return remembered;
   if (!catalog?.engines?.length || catalog.engines.some(engine => engine.id === 'codebuddy' && engine.configured)) {
@@ -24,7 +32,7 @@ function aiOrchestratorModels(engine = aiOrchestratorEngine(selectedAIOrchestrat
 
 function aiOrchestratorEngines() {
   const catalog = window.AgentFlowAssistantModels?.catalog() || {};
-  if (catalog.engines?.length) return catalog.engines;
+  if (catalog.engines?.length) return catalog.engines.filter(engine => engine.configured || engine.id === aiOrchestratorEngine(selectedAIOrchestratorModel()));
   return [...new Set((catalog.models || []).map(model => aiOrchestratorEngine(model.id)))].map(id => ({id, name: id === 'codebuddy' ? 'CodeBuddy' : id, configured: true}));
 }
 
@@ -33,6 +41,7 @@ function selectAIOrchestratorModel(id) {
   const engine = aiOrchestratorEngine(id);
   localStorage.setItem('agentflow.orchestratorModel.' + aiOrchestratorEngine(previous), previous);
   if (engine !== aiOrchestratorEngine(previous)) resetAIOrchestrator();
+  aiModelOverride = id;
   localStorage.setItem('agentflow.orchestratorModel', id);
   localStorage.setItem('agentflow.orchestratorModel.' + engine, id);
 }

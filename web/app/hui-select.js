@@ -202,7 +202,19 @@
         button.disabled = !!(option.disabled || group?.disabled);
         button.huiIndex = i;
         button.searchText = optionSearch(option);
-        button.appendChild(el('span', 'hui-select-option-label', option.text));
+        const label = el('span', 'hui-select-option-label', option.text);
+        const brand = option.getAttribute('data-brand');
+        if (brand && /^[-a-z0-9]+\.(svg|png)$/.test(brand)) {
+          const logo = el('img', 'hui-select-option-brand');
+          logo.src = '/images/credentials/' + brand;
+          logo.alt = '';
+          if (option.hasAttribute('data-brand-monochrome')) logo.classList.add('is-monochrome');
+          label.prepend(logo);
+        } else {
+          const glyph = option.getAttribute('data-option-icon');
+          if (glyph) label.prepend(icon(glyph, 'hui-select-option-brand is-glyph'));
+        }
+        button.appendChild(label);
         const meta = el('span', 'hui-select-option-meta', optionMeta(option));
         if (i === index) meta.appendChild(icon('check', 'hui-select-check'));
         button.appendChild(meta);
@@ -247,7 +259,7 @@
       panel.classList.add('is-open');
       anchor.setAttribute('aria-expanded', 'true');
       anchor.setAttribute('aria-controls', panel.id);
-      place(anchor, panel);
+      place(anchor, panel, {align: select.getAttribute('data-align'), minWidth: Number(select.getAttribute('data-min-width')) || undefined});
       if (mode === 'inline') {
         watcher = new MutationObserver(() => {
           if (select.disabled || !connected(select)) close(false);

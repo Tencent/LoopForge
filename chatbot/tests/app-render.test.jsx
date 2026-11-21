@@ -893,10 +893,13 @@ describe("App", () => {
     Object.assign(chat, previous);
   });
 
-  test("covers credential, local upload, read-only, and interrupted states", async () => {
+  test("offers executor setup before the first chat, along with local upload and read-only states", async () => {
     const previous = { ...chat };
     Object.assign(chat, {
-      user: { id: "u1", loginName: "tester", codexApiKeyConfigured: true },
+      user: { id: "u1", loginName: "tester" },
+      executor: "",
+      executors: [],
+      machinesReady: true,
       activeId: null,
       session: null,
       sessions: [],
@@ -909,11 +912,14 @@ describe("App", () => {
       error: "",
     });
     const view = render(<App />);
-    expect(screen.getByText(/当前执行器 CodeBuddy 需要先配置 CodeBuddy API Key/)).toBeInTheDocument();
-    expect(screen.getByText(/也可以在输入框下方把执行器切换过去/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "新增执行器" })).toBeInTheDocument();
+    expect(screen.queryByText(/CodeBuddy API Key/)).toBeNull();
+    expect(screen.getByRole("button", { name: "选择模型" })).toBeDisabled();
     chat.executor = "codex";
+    chat.executors = previous.executors.filter(item => item.id === "codex");
     view.rerender(<App />);
-    expect(screen.queryByText(/当前执行器 CodeBuddy/)).toBeNull();
+    expect(screen.queryByRole("button", { name: "新增执行器" })).toBeNull();
+    expect(screen.getByRole("button", { name: "CLI" })).toHaveTextContent("Codex");
     chat.executor = "codebuddy";
     chat.local = true;
     view.rerender(<App />);

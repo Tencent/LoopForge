@@ -928,6 +928,7 @@ async function boot(){
       history.pushState({assetFrom:assetViewHash(state.assetType)},'',assetDetailHash);
       return;
     }
+    if(name==='settings'&&routePart(1)==='executors'){gotoCredential('executors');return}
     if(activeViewName()!==name){
       if(name==='flow')await applyFlowRoute();
       if(name==='projects')syncProjectAdminRouteState();
@@ -951,7 +952,8 @@ async function boot(){
   });
   if(view==='projects')syncProjectAdminRouteState();
   renderAll();
-  switchView(view);
+  if(view==='settings'&&routePart(1)==='executors')gotoCredential('executors');
+  else switchView(view);
   settleBootLoader();
   if(!['approvals','issues','runs','sops'].includes(state.currentView))preloadApprovalBadge();
   restoreRequirementComposer();
@@ -1556,7 +1558,7 @@ function mountNativeChat(){
         }).catch(()=>{});
       }
       if(message.type==='agentflow-chat-open-view'&&['settings','runners','sops','projects','runs','agents','environments','dockerfiles','sandboxes','flow','mcp'].includes(message.view)){
-        if(message.view==='settings'&&CREDENTIAL_FIELDS[message.credential])gotoCredential(message.credential,message.sshRemote);
+        if(message.view==='settings'&&message.credential)gotoCredential(message.credential,message.sshRemote);
         else if(message.view==='sandboxes'&&message.action==='create')createConversationSandbox(message.projectId).catch(error=>toast(error.message));
         else if(message.view==='runs'&&/^run-[\w-]+$/.test(message.runId||''))location.hash='#/runs/'+encodeURIComponent(message.runId);
         else switchView(message.view);

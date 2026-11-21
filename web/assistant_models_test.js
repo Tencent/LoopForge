@@ -155,7 +155,7 @@ vm.runInContext(moduleSource, ctx);
     }),
   });
   assert.equal(codexOnly.executor.value, 'codex');
-  assert.equal(codexOnly.executor.options[0].disabled, true);
+  assert.deepEqual(codexOnly.executor.options.map(item => item.value), ['codex']);
   assert.equal(codexOnly.model.value, 'codex:gpt-5.5');
 
   const saved = pickerFixture();

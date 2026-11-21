@@ -13,15 +13,7 @@ import HarnessIcon from "./HarnessIcon";
 import SlidingTabs from "./SlidingTabs";
 import { api, canChatInProject, canManageProjectRepos, write } from "./api";
 import { usePanelPresence } from "./usePanelPresence";
-import {
-  CODEBUDDY_ENVIRONMENTS,
-  codeBuddyEnvironment,
-  codeBuddyEnvironmentIntent,
-  codeBuddyEnvironmentLegacy,
-  codeBuddyKeyURL,
-  codeBuddyKeyWarning,
-  openCredentialSettings,
-} from "./credentials";
+import { openCredentialSettings } from "./credentials";
 import { EXECUTORS, personalEngineConfigured } from "./engines.js";
 import "./quick-access-wizard.css";
 
@@ -35,26 +27,16 @@ export function sharedModelNames(models, fallback = "") {
     .join("、");
 }
 
-// The users API omits an empty (国际站) environment, so a full user response
-// must clear one that was switched to 国际站 elsewhere instead of keeping it.
-export function mergeFreshUser(prev, fresh) {
-  return {
-    ...prev,
-    ...fresh,
-    codeBuddyInternetEnvironment: fresh?.codeBuddyInternetEnvironment || "",
-  };
-}
-
 const STEPS = [
   {
     id: "auth",
     title: "凭据与授权",
-    desc: "GitHub 访问与模型密钥",
+    desc: "仓库访问与执行器",
   },
   {
     id: "project",
     title: "项目与仓库",
-    desc: "选择或新建项目，绑定 GitHub 仓库",
+    desc: "选择或新建项目，绑定 Git 仓库",
   },
   {
     id: "workflow",
@@ -794,9 +776,6 @@ export default function QuickAccessWizard({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [gitToken, setGitToken] = useState("");
-  const [codeBuddyApiKey, setCodeBuddyApiKey] = useState("");
-  // null follows the saved setting until the user picks an environment here.
-  const [codeBuddyEnvChoice, setCodeBuddyEnvChoice] = useState(null);
   const [verifyingGit, setVerifyingGit] = useState(false);
   const [gitVerify, setGitVerify] = useState(null);
   const [projectMode, setProjectMode] = useState("existing");
@@ -948,8 +927,6 @@ export default function QuickAccessWizard({
     setPhase("wizard");
     setError("");
     setGitToken("");
-    setCodeBuddyApiKey("");
-    setCodeBuddyEnvChoice(null);
     setGitVerify(null);
     setCompletedSummary(null);
     setBindRepoNow(true);
@@ -998,7 +975,7 @@ export default function QuickAccessWizard({
           (usersRes || []).find(
             (item) => Number(item.id) === Number(user?.id),
           ) || user;
-        setStoredUser(mergeFreshUser(user, freshUser));
+        setStoredUser(freshUser);
         if (freshUser?.gitHubCredentialConfigured && freshUser?.id) {
           void verifyStoredGitToken(freshUser.id);
         }
@@ -1109,7 +1086,7 @@ export default function QuickAccessWizard({
             (item) => Number(item.id) === Number(user?.id),
           );
           if (fresh) {
-            setStoredUser((prev) => mergeFreshUser(prev, fresh));
+            setStoredUser(fresh);
             if (fresh.gitHubCredentialConfigured) {
               void verifyStoredGitToken(fresh.id);
             }
@@ -1195,23 +1172,7 @@ export default function QuickAccessWizard({
   );
   const sshReady = hasSSHKey(selectedSSHRepo);
   const sshRepository = (parsedRepo || defaultRepo)?.provider === "ssh";
-  const codeBuddyReady = Boolean(
-    storedUser?.codeBuddyApiKeyConfigured || codeBuddyApiKey.trim(),
-  );
-  // The CLI gets the stored text as-is: an old value such as china preselects
-  // what it meant, and still differs from it, so 下一步 rewrites it.
-  const storedCodeBuddyEnvRaw = String(
-    storedUser?.codeBuddyInternetEnvironment || "",
-  ).trim();
-  const storedCodeBuddyEnv =
-    codeBuddyEnvironmentIntent(storedCodeBuddyEnvRaw)?.value ?? "";
-  const codeBuddyEnvLegacy = codeBuddyEnvironmentLegacy(storedCodeBuddyEnvRaw);
-  const codeBuddyEnv = codeBuddyEnvChoice ?? storedCodeBuddyEnv;
-  const codeBuddyEnvInfo =
-    codeBuddyEnvironment(codeBuddyEnv) || CODEBUDDY_ENVIRONMENTS[0];
-  const codeBuddyWarning = codeBuddyKeyWarning(codeBuddyApiKey);
-  const readyCLIs = EXECUTORS.filter(cli => personalEngineConfigured(storedUser, cli.id) ||
-    (cli.id === "codebuddy" && codeBuddyReady));
+  const readyCLIs = EXECUTORS.filter(cli => personalEngineConfigured(storedUser, cli.id));
   const cliReady = readyCLIs.length > 0 || Boolean(sponsoredModel);
   const nodes =
     activeWorkflow?.nodes?.filter((node) => node.type === "agent") ||
@@ -1223,37 +1184,16 @@ export default function QuickAccessWizard({
     setStep(next);
   }
 
-  async function saveTypedCredentials() {
-    if (!user?.id) return storedUser;
-    const payload = {};
-    let savedGit = false;
-    if (gitToken.trim()) {
-      const endpoint = `/api/users/${encodeURIComponent(user.id)}/git-http-credentials`;
-      const credentials = await api(endpoint);
-      const existing = credentials.find(credential => credential.host === "github.com");
-      await write(endpoint, { ...(existing ? {id:existing.id} : {}), host:"github.com", platform:"github", name:"GitHub", username:"x-access-token", token:gitToken.trim() }, "PUT");
-      savedGit = true;
-    }
-    if (codeBuddyApiKey.trim())
-      payload.codeBuddyApiKey = codeBuddyApiKey.trim();
-    // A key is always saved with the environment it was issued for.
-    if (codeBuddyApiKey.trim() || codeBuddyEnv !== storedCodeBuddyEnvRaw)
-      payload.codeBuddyInternetEnvironment = codeBuddyEnv;
-    if (!Object.keys(payload).length && !savedGit) return storedUser;
-    const saved = await write(
-      `/api/users/${encodeURIComponent(user.id)}/credentials`,
-      payload,
-      "PUT",
-    );
-    const merged = { ...storedUser, ...saved };
-    // The server omits an empty environment, so 国际站 must overwrite the old value here.
-    if ("codeBuddyInternetEnvironment" in payload)
-      merged.codeBuddyInternetEnvironment =
-        saved?.codeBuddyInternetEnvironment || "";
+  async function saveTypedGitToken() {
+    const token = gitToken.trim();
+    if (!user?.id || !token) return storedUser;
+    const endpoint = `/api/users/${encodeURIComponent(user.id)}/git-http-credentials`;
+    const credentials = await api(endpoint);
+    const existing = credentials.find(credential => credential.host === "github.com");
+    await write(endpoint, { ...(existing && { id: existing.id }), host: "github.com", platform: "github", name: "GitHub", username: "x-access-token", token }, "PUT");
+    const merged = { ...storedUser, gitHubCredentialConfigured: true, gitHttpCredentialsConfigured: true };
     setStoredUser(merged);
     setGitToken("");
-    setCodeBuddyApiKey("");
-    setCodeBuddyEnvChoice(null);
     void onCredentialsSaved?.();
     window.parent !== window &&
       window.parent.postMessage(
@@ -1279,7 +1219,7 @@ export default function QuickAccessWizard({
             `/api/users/${encodeURIComponent(user.id)}/git-token/verify`,
           );
       setGitVerify(result);
-      if (result?.valid && typed) await saveTypedCredentials();
+      if (result?.valid && typed) await saveTypedGitToken();
     } catch (err) {
       setGitVerify({ valid: false, error: err.message });
     } finally {
@@ -1291,13 +1231,13 @@ export default function QuickAccessWizard({
     if (saving) return;
     setError("");
     if (activeStep.id === "auth") {
-      if (!gitReady && !hasSSHKeys && !cliReady) {
-        setError("请先配置 GitHub Git Token、Git SSH 密钥或一种模型 CLI 的凭据。");
+      if (!gitReady && !hasSSHKeys && !storedUser?.gitHttpCredentialsConfigured && !cliReady) {
+        setError("请先添加一个 Git 凭据或执行器。");
         return;
       }
       setSaving(true);
       try {
-        await saveTypedCredentials();
+        await saveTypedGitToken();
         goToStep(1);
       } catch (err) {
         setError(err.message);
@@ -1349,7 +1289,7 @@ export default function QuickAccessWizard({
     setSaving(true);
     setError("");
     try {
-      const latestUser = await saveTypedCredentials();
+      const latestUser = await saveTypedGitToken();
       let targetProject = currentProject;
       // Save the SOP the page shows; a stale id hidden by the current
       // filter must never be bound to the project.
@@ -1883,77 +1823,16 @@ export default function QuickAccessWizard({
                       <section className="qa-cred-card">
                         <header className="qa-cred-head">
                           <div>
-                            <strong>模型 CLI</strong>
-                            <span>{readyCLIs.length ? readyCLIs.map(cli => cli.label).join("、") : "可在个人配置中选择 CLI 或在执行机器上登录"}</span>
+                            <strong>执行器</strong>
+                            <span>{readyCLIs.length ? readyCLIs.map(cli => cli.label).join("、") : sponsoredModel ? "可使用平台共享模型" : "尚未配置执行器"}</span>
                           </div>
                           <StatusPill ok={cliReady} />
                         </header>
                         <div className="qa-cred-body">
                           <button type="button" className="qa-btn qa-btn-secondary" onClick={() => {
                             onClose?.();
-                            onOpenView?.("settings");
-                          }}>打开个人配置</button>
-                        </div>
-                      </section>
-                      <section className="qa-cred-card">
-                        <header className="qa-cred-head">
-                          <div>
-                            <strong>CodeBuddy API Key（可选）</strong>
-                            <span>
-                              {sponsoredModel
-                                ? "可选：未配置时对话和 SOP 使用平台共享模型，配置后可选用其他模型"
-                                : "AI 对话与 SOP 节点调用模型时使用"}
-                            </span>
-                          </div>
-                          <StatusPill ok={codeBuddyReady} />
-                        </header>
-                        <div className="qa-cred-body">
-                          <div className="qa-field">
-                            <span className="qa-label">网络环境</span>
-                            <HarnessSelect
-                              value={codeBuddyEnv}
-                              options={CODEBUDDY_ENVIRONMENTS.map((env) => ({
-                                value: env.value,
-                                label: env.label,
-                                hint: env.site,
-                              }))}
-                              onChange={setCodeBuddyEnvChoice}
-                              ariaLabel="CodeBuddy 网络环境"
-                            />
-                          </div>
-                          <div className="qa-input-row">
-                            <input
-                              type="password"
-                              className="qa-input"
-                              value={codeBuddyApiKey}
-                              onChange={(e) =>
-                                setCodeBuddyApiKey(e.target.value)
-                              }
-                              placeholder={
-                                storedUser?.codeBuddyApiKeyConfigured
-                                  ? "已配置，留空保持不变"
-                                  : "粘贴 CodeBuddy API Key"
-                              }
-                              aria-label="CodeBuddy API Key"
-                              autoComplete="new-password"
-                            />
-                            <a
-                              className="qa-link"
-                              data-hover-ink-control=""
-                              href={codeBuddyKeyURL(codeBuddyEnv)}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                            >
-                              获取 API Key ↗
-                            </a>
-                          </div>
-                          <p
-                            className={`qa-hint${codeBuddyWarning ? " is-warn" : ""}`}
-                            role="status"
-                          >
-                            {codeBuddyWarning ||
-                              `${codeBuddyEnvLegacy && codeBuddyEnvChoice === null ? `原来填写的「${storedCodeBuddyEnvRaw}」无法识别，CodeBuddy 实际按国际站连接，点下一步改为当前选择。` : ""}Key 只能在创建它的站点使用：当前选择${codeBuddyEnvInfo.label}（${codeBuddyEnvInfo.site}），「获取 API Key」会打开该站点的密钥页。`}
-                          </p>
+                            openCredentialSettings("executors");
+                          }}>执行器配置</button>
                         </div>
                       </section>
                     </div>

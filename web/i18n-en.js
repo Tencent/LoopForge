@@ -229,6 +229,15 @@ Object.assign(window.LF_I18N_EN,{
 
 Object.assign(window.LF_I18N_EN,{
   "使用已有订阅":"Use your existing subscription",
+  "Claude Code、Codex 和 Antigravity 可用「账号登录」运行对话和 SOP。":"Use Account login for Claude Code, Codex, or Antigravity to run chats and SOPs.",
+  "Git 配置":"Git credentials",
+  "执行器配置":"Executors",
+  "新增 Git 配置":"Add Git credential",
+  "新增执行器":"Add executor",
+  "按仓库地址的协议、主机和端口匹配":"Matched by repository protocol, host, and port",
+  "AI 默认设置":"AI defaults",
+  "默认执行器":"Default executor",
+  "操作确认方式":"Approval mode",
   "绑定已登录 Claude Code、Codex 或 Antigravity 的机器，选「账号登录」即可用订阅额度运行对话和 SOP，无需 API Key。":"Connect a machine where you are signed in to Claude Code, Codex, or Antigravity. Select Account login to use your subscription for chats and SOPs without an API key.",
   "配置执行机器":"Configure runners",
   "Claude Code、Codex 和 Antigravity 可用账号登录":"Account login for Claude Code, Codex and Antigravity",

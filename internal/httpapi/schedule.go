@@ -243,6 +243,10 @@ func (h *scheduleHandlers) bindScheduleRunAs(c *gin.Context, job *domain.Schedul
 	if !ok {
 		return true
 	}
+	model := scheduledAssistantDefault(h.repo, self, requestedModel)
+	if model != requestedModel && !scheduleRunConfigUnchanged(prior, *job) {
+		job.AssistantModel = model
+	}
 	engine, _ := assistantModelEngine(job.AssistantModel)
 	stopOnly := func() bool {
 		if job.Enabled || !scheduleRunConfigUnchanged(prior, *job) {
@@ -265,6 +269,10 @@ func (h *scheduleHandlers) bindScheduleRunAs(c *gin.Context, job *domain.Schedul
 	_, shared, ok := scheduleCredentialUser(h.repo, self, engine)
 	if !ok {
 		if stopOnly() {
+			return false
+		}
+		if assistantModelUnspecified(model) {
+			c.JSON(400, gin.H{"error": errFeatureCredentials.Error()})
 			return false
 		}
 		c.JSON(400, gin.H{"error": scheduleMissingKeyError(engine)})
@@ -309,10 +317,14 @@ func scheduleRunConfigUnchanged(prior, job domain.ScheduleJob) bool {
 // scheduleSharedRequestedModel treats the CLI-default placeholder as "no
 // model chosen", which the shared key resolves to its own default.
 func scheduleSharedRequestedModel(model string) string {
-	if model = strings.TrimSpace(model); model == assistantDefaultModel {
-		return ""
+	engine, id := assistantModelEngine(model)
+	if engine == assistantEngineCodeBuddy {
+		if codeBuddyIsDefaultModel(id) {
+			return ""
+		}
+		return id
 	}
-	return model
+	return strings.TrimSpace(model)
 }
 
 func scheduleMissingKeyError(engine string) string {
