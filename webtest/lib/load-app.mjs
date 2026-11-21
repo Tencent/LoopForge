@@ -92,6 +92,10 @@ function defaultPayload(pathname, method) {
     defaultSources: ['handbook'], projectSources: {},
   };
   if (/^\/api\/knowledge\/(submissions|candidates|sources)$/.test(pathname)) return [];
+  // 连接能力探测的默认空安全响应：不声明任何能力，前端沿用「未知 → 乐观放行」的旧行为。
+  if (/^\/api\/knowledge\/connections\/[^/]+\/capabilities$/.test(pathname)) {
+    return { checkedAt: null, capabilities: null };
+  }
   if (pathname === '/api/knowledge/usage') return { searches: 3, fetches: 2, agents: 1 };
   if (/^\/api\/(projects|issues|tasks|runs|flows|workflows|sops|agents|runners|assets|bots|rooms|users|notifications|revisions|approvals|business-domains|rules|skills|mcp|mcp-servers|executors|dockerfiles|environments|sandboxes|schedule-jobs)$/.test(pathname)) {
     const key = pathname.split('/').at(-1).replace('flows', 'workflows').replace('mcp-servers', 'mcpServers').replace('schedule-jobs', 'scheduleJobs');
