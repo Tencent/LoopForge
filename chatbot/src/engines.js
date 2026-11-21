@@ -14,12 +14,13 @@ export const EXECUTORS = [
   { id: "pi", icon: "terminal", label: "Pi", detail: "使用 Pi 与个人 API Key。" },
   { id: "dsh", icon: "terminal", label: "DeepSeek Harness", detail: "使用 DeepSeek Harness 与个人 API Key。" },
   { id: "zcode", icon: "terminal", label: "ZCode", detail: "使用 ZCode 与个人 API Key。" },
+  { id: "traecli", icon: "terminal", label: "TRAE CLI", detail: "使用 TRAE CLI 与个人 API Key。" },
 ];
 
 // Bundled logo per CLI; an unknown CLI falls back to its model's brand.
 const brands = {
   codebuddy: "codebuddy", codex: "codex", "claude-code": "claude",
-  opencode: "opencode", cursor: "cursor", agy: "antigravity", kimi: "kimi-code", pi: "pi", dsh: "deepseek", zcode: "zhipu",
+  opencode: "opencode", cursor: "cursor", agy: "antigravity", kimi: "kimi-code", pi: "pi", dsh: "deepseek", zcode: "zhipu", traecli: "trae",
 };
 export const engineBrand = (id) => Object.hasOwn(brands, id) ? brands[id] : "";
 

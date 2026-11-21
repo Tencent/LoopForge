@@ -56,7 +56,7 @@ function runnerStatusLabel(status,lastSeen){
   const style=status==='online'?' online':status==='offline'?' offline':'';
   return `<span class="runner-status${style}" title="${escapeHTML(runnerLastSeen(lastSeen))}"><i></i>${escapeHTML(label)}</span>`;
 }
-const runnerCLILabels={'claude-code':'Claude Code','codex':'Codex','codebuddy':'CodeBuddy',opencode:'OpenCode',cursor:'Cursor CLI',agy:'Antigravity',kimi:'Kimi Code',pi:'Pi',dsh:'DeepSeek Harness',zcode:'ZCode'};
+const runnerCLILabels={'claude-code':'Claude Code','codex':'Codex','codebuddy':'CodeBuddy',opencode:'OpenCode',cursor:'Cursor CLI',agy:'Antigravity',kimi:'Kimi Code',pi:'Pi',dsh:'DeepSeek Harness',zcode:'ZCode',traecli:'TRAE CLI'};
 const runnerAuthLabel={local:'账号登录',personal:'API Key'};
 const runnerAuthDescription={local:'Claude Code、Codex 和 Antigravity 可以使用运行 Runner 的系统账号在这台机器上的已有登录，对话与 SOP 的 native、Docker 沙箱均可复用。共享对话中，只有机器所有者发言时会使用此登录。',personal:'读取「个人配置」中保存的 API Key。对话使用当前发言人的 Key，SOP 使用运行责任人的 Key。Antigravity 的 Gemini API Key 按 API 单独计费。'};
 const runnerOSLabels={darwin:'macOS',linux:'Linux',windows:'Windows'};
@@ -72,7 +72,7 @@ function runnerPersonalCredentialConfigured(provider){
   return !!user.agentCliCredentials?.[provider]?.apiKeyConfigured;
 }
 function runnerRuntimeSupportsLogin(runtime){
-  return runtime.provider==='codex'||runtime.provider==='claude-code'||runtime.provider==='agy';
+  return runtime.provider==='codex'||runtime.provider==='claude-code'||runtime.provider==='agy'||runtime.provider==='traecli';
 }
 function runnerRuntimeAuthMode(runtime){
   return runnerRuntimeSupportsLogin(runtime)&&runtime.authMode!=='personal'?'local':'personal';
