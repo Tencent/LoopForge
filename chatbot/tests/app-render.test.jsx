@@ -71,6 +71,47 @@ vi.mock("mermaid", () => ({
 import App from "../src/App.jsx";
 
 describe("App", () => {
+  test("pages the transcript without losing the reading position or original message indexes", () => {
+    const original = { activeId: chat.activeId, session: chat.session };
+    const messages = Array.from({ length: 85 }, (_, index) => ({
+      role: "user", content: "Message " + index,
+    }));
+    const open = (id, rows) => Object.assign(chat, { activeId: id, session: { id, messages: rows } });
+    const more = () => screen.queryByRole("button", { name: "显示更早的消息" });
+    open("long", messages.slice(0, 39));
+    try {
+      const view = render(<App />);
+      const rows = () => [...view.container.querySelectorAll("[data-message-index]")];
+      expect(rows()).toHaveLength(39);
+      expect(more()).toBeNull();
+      open("long", messages);
+      view.rerender(<App />);
+      expect(rows()).toHaveLength(40);
+      expect(rows()[0].dataset.messageIndex).toBe("45");
+      const scroller = view.container.querySelector(".message-scroll");
+      Object.defineProperty(scroller, "scrollHeight", { value: 2000 });
+      fireEvent.scroll(scroller, { target: { scrollTop: 100 } });
+      open("long", [...messages, { role: "assistant", content: "New reply" }]);
+      view.rerender(<App />);
+      expect(rows()[0].dataset.messageIndex).toBe("45");
+      expect(rows().at(-1)).toHaveTextContent("New reply");
+      fireEvent.click(more());
+      expect(rows()[0].dataset.messageIndex).toBe("5");
+      fireEvent.click(within(rows()[0]).getByRole("button", { name: "编辑消息" }));
+      expect(within(screen.getByRole("dialog")).getByRole("textbox")).toHaveValue("Message 5");
+      fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "关闭" }));
+      fireEvent.click(more());
+      expect(rows()).toHaveLength(86);
+      expect(more()).toBeNull();
+      open("other", messages);
+      view.rerender(<App />);
+      expect(rows()).toHaveLength(40);
+      expect(rows()[0].dataset.messageIndex).toBe("45");
+    } finally {
+      Object.assign(chat, original);
+    }
+  });
+
   test("pauses without showing an intermediate stopping state", () => {
     const previous = { ...chat };
     Object.assign(chat, { activeId: "stopping-chat", busy: true, stopping: true,
@@ -567,6 +608,7 @@ describe("App", () => {
     const original = { projectId: chat.projectId, projects: chat.projects };
     const fetchBefore = globalThis.fetch;
     const user = userEvent.setup();
+    vi.useFakeTimers({ toFake: ["requestAnimationFrame", "cancelAnimationFrame"] });
     globalThis.fetch = vi.fn(async () => ({
       ok: true,
       status: 200,
@@ -579,6 +621,8 @@ describe("App", () => {
       const first = render(<App />);
       await waitFor(() => expect(screen.getByRole("textbox", { name: "消息" })).toHaveValue("@迁移需求 "));
       await user.click(screen.getByRole("button", { name: "操作确认方式" }));
+      // The handoff's focus request can run after the user opens the menu.
+      act(() => { vi.advanceTimersToNextFrame(); });
       await user.click(screen.getByRole("menuitemradio", { name: "完全权限" }));
       first.unmount();
 
@@ -590,6 +634,7 @@ describe("App", () => {
       await user.click(screen.getByRole("button", { name: "发送消息" }));
       expect(chat.send).toHaveBeenLastCalledWith(expect.objectContaining({ approvalMode: "confirm" }));
     } finally {
+      vi.useRealTimers();
       globalThis.fetch = fetchBefore;
       Object.assign(chat, original);
       history.replaceState({}, "", "/");

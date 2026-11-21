@@ -65,8 +65,15 @@ type assistantRequest struct {
 	ApprovalUserID    int64                            `json:"approvalUserId,omitempty"`
 	RunID             string                           `json:"runId,omitempty"`
 	SpaceID           string                           `json:"spaceId,omitempty"`
-	workspaceToken    string
-	contextText       string
+	// Surface names the entry that sends the turn. Empty is the workbench;
+	// assistantSurfaceSOPDesigner is the SOP canvas, which also sends the
+	// SOP it edits, its canvas snapshot and the SOPs the user named.
+	Surface              string          `json:"surface,omitempty"`
+	WorkflowID           string          `json:"workflowId,omitempty"`
+	Canvas               json.RawMessage `json:"canvas,omitempty"`
+	ReferenceWorkflowIDs []string        `json:"referenceWorkflowIds,omitempty"`
+	workspaceToken       string
+	contextText          string
 	// linkedIssueID is the issue this turn itself linked to the conversation
 	// while preparing its context (an @-mentioned issue), so starting the
 	// turn does not mistake that link for a concurrent rebinding.
@@ -117,6 +124,10 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 	if !decodeLimit(c, &req, assistantRequestBodyLimit) {
 		return
 	}
+	if err := normalizeAssistantSurface(&req); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
 	if !requireAssistantApprovalUser(c, current.ID, req.ApprovalUserID) {
 		return
 	}
@@ -156,6 +167,10 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 		return
 	}
 	defer h.active.Delete(fmt.Sprintf("%d/%s", ownerID, req.SessionID))
+	if err := h.bindSOPDesignerTranscript(ownerID, &req); err != nil {
+		c.JSON(409, gin.H{"error": err.Error()})
+		return
+	}
 	old, exists := h.repo.AssistantSession(ownerID, req.SessionID)
 	if exists {
 		target := old.Execution()
@@ -260,6 +275,9 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 	savedConversation := old
 	if !exists {
 		savedConversation = assistantConversation{ID: req.SessionID, ProjectID: req.ProjectID, RunID: req.RunID, Model: req.Model, Effort: req.Effort, ExecutionTarget: req.ExecutionTarget, Messages: req.Messages}
+		if req.sopDesigner() {
+			savedConversation.Source, savedConversation.WorkflowID = domain.AssistantSourceSOPDesigner, req.WorkflowID
+		}
 		if err := h.repo.PutAssistantSession(ownerID, savedConversation); err != nil {
 			c.JSON(409, gin.H{"error": err.Error()})
 			return
@@ -272,8 +290,6 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 		req.workspaceMode = false
 	}
 	sourceRoot := h.resolvedSourceRoot()
-	fullPrompt := h.turnPrompt(req, sourceRoot, false)
-	turn := fullPrompt
 	ctx, cancel := context.WithCancel(c.Request.Context())
 	defer cancel()
 	var emit func(string, any)
@@ -356,6 +372,7 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 				loadTurnWorkspace(h.deps, sess, conv)
 			}
 		}
+		sess.Surface, sess.DesignerCanvas = req.Surface, req.Canvas
 		sess.SpaceID = strings.TrimSpace(req.SpaceID)
 		if sess.SpaceID != "" {
 			sess.mu.Lock()
@@ -461,6 +478,7 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 		// do not report a concrete model.
 		defer func() { report.Report(firstNonEmpty(replyModel, assistantDefaultModel), turnUsage.snapshot()) }()
 	}
+	var turn string
 	generate := h.generate
 	if generate == nil {
 		resume := false
@@ -473,12 +491,10 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 		}
 		if saved, err := loadAssistantConversation(h.repo, user.ID, req.SessionID); err == nil && saved.ParentSessionID == "" && len(req.Messages) > 1 && !shared && !rewritten {
 			resume = true
-			turn = h.turnPrompt(req, sourceRoot, true)
 		}
 		cliSessionID := req.SessionID
 		if shared || branch || rewritten || c.Request.Context().Value(assistantFreshCLIKey{}) == true {
 			resume = false
-			turn = fullPrompt
 			cliSessionID = newAssistantSessionID()
 		}
 		if shared {
@@ -499,6 +515,8 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 			workspaceRepositoryHash = nativeSession.checkpoint.WorkspaceRepositoryHash
 			if resume {
 				turn = assistantIncrementalPrompt(req, nativeSession.checkpoint)
+			} else {
+				turn = h.turnPrompt(req, sourceRoot, false)
 			}
 			if err = nativeSession.begin(); err != nil {
 				fail(500, "无法保存共享会话缓存")
@@ -511,21 +529,14 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 		turnEngine, _ := assistantModelEngine(req.Model)
 		if nativeSession == nil {
 			if state := readAssistantEngineState(cliRoot); state.Engine != turnEngine || state.HistoryRevision != savedConversation.HistoryRevision {
-				if resume {
-					resume = false
-					turn = fullPrompt
-				}
+				resume = false
 				cliSessionID = newAssistantSessionID()
 			} else if state.SessionID != "" {
 				cliSessionID = state.SessionID
 				resume = !state.Unstarted
 				workspaceRepositoryHash = state.WorkspaceRepositoryHash
-				if resume {
-					turn = h.turnPrompt(req, sourceRoot, true)
-				} else {
-					turn = fullPrompt
-				}
 			}
+			turn = h.turnPrompt(req, sourceRoot, resume)
 		}
 		generate = func(ctx context.Context, prompt string, u domain.User) (string, error) {
 			// A mode request completes its CLI phase normally. Waiting for exit
@@ -560,7 +571,7 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 						workspaceRepositoryHash = ""
 					}
 					prompt = prefix + repositoryPrompt + prompt
-				} else {
+				} else if !req.sopDesigner() {
 					prompt = assistantPlatformExecutionReminder + "\n" + prompt
 				}
 				cliReq := assistantCLIRequest{Executor: req.Executor, Prompt: prompt, Model: cliModel, Effort: req.Effort, SessionID: cliSessionID, Resume: resume, UserID: u.ID, Native: true, MCPConfig: mcp, Settings: settings, SystemPrompt: system, SessionRoot: cliRoot, RunnerLogin: runnerLogin, OnUsage: turnUsage.add, Workspace: req.workspaceMode, RemoteBinary: req.workspaceMode || toolSession.ExecutionRunnerID != "", Execute: h.conversationExecutor(toolSession, cliRoot)}
@@ -677,6 +688,8 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 			}
 			return "", fmt.Errorf("本轮模式切换次数过多，请继续下一轮")
 		}
+	} else {
+		turn = h.turnPrompt(req, sourceRoot, false)
 	}
 	sources := []assistantSource{}
 
@@ -797,6 +810,9 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 		reply.SessionID = req.SessionID
 		reply.SpeakerName = ""
 		reply.SpeakerAgentID = ""
+		if req.sopDesigner() {
+			reply.Drafts = sopDesignerDrafts(req, reply.Drafts)
+		}
 		if len(reply.Drafts) > 0 {
 			draftCtx := ctx
 			if req.RunID == "" {
@@ -827,6 +843,9 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 			}
 			stored = append(stored, assistantMessage{Assets: assets, RunIDs: runIDs, Activity: activityEvents, StartedAt: &startedAt, CreatedAt: time.Now().UTC(), SpeakerName: reply.SpeakerName, SpeakerAgentID: reply.SpeakerAgentID, Model: replyModel, Usage: turnUsage.snapshot(), Role: "assistant", Content: jsonObject(gin.H{"message": reply.Message, "drafts": reply.Drafts}), Attachments: reply.Images, GenerationID: assistantControlScopeFrom(modelCtx).GenerationID})
 			conversation := assistantConversation{Shared: shared, ID: req.SessionID, ProjectID: req.ProjectID, Model: req.Model, Effort: req.Effort, Executor: req.Executor, RunID: req.RunID, Messages: stored}
+			if req.sopDesigner() {
+				conversation.Source, conversation.WorkflowID = domain.AssistantSourceSOPDesigner, req.WorkflowID
+			}
 			if toolSession != nil {
 				conversation.WorkspaceRunID = toolSession.conversationWorkspace()
 			}
@@ -885,6 +904,9 @@ func assistantModeTurnReminder(mode string) string {
 }
 
 func (h *assistantHandlers) turnPrompt(req assistantRequest, sourceRoot string, resume bool) string {
+	if req.sopDesigner() {
+		return h.sopDesignerTurnPrompt(req, resume)
+	}
 	context := assistantTurnContext(req)
 	if resume {
 		return context + assistantUnfinishedTurnNote(req.Messages) + "\n用户：\n" + assistantSteerPrefix(req.Messages) + lastAssistantUserContent(req.Messages)

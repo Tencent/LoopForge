@@ -1104,27 +1104,27 @@ async function saveWorkflow(){
 function sopSandboxChoices(){
   return (state.data.sandboxes||[]).filter(s=>s.id&&catalogVisible(s.projectId,s.shared));
 }
-function defaultSOPSandbox(choices=sopSandboxChoices()){
-  return choices.find(s=>s.id==='local')||choices.find(s=>catalogOwned(s.projectId)&&s.driver==='docker')||choices.find(s=>s.driver==='docker')||choices[0];
+function defaultSOPSandbox(choices=sopSandboxChoices(),preferredId){
+  const isolated=choices.filter(s=>sandboxDriverOption(s.driver)!=='local');
+  return isolated.find(s=>s.id===preferredId)||isolated.find(s=>catalogOwned(s.projectId))||isolated[0];
 }
 function syncSOPSandboxSelection(){
   const select=$('#sopCreateSandbox'),template=(state.data.workflows||[]).find(w=>w.id===state.sopTemplate);
   const choices=sopSandboxChoices(),sameSource=select.dataset.source===state.sopTemplate&&select.dataset.project===state.projectFilter;
-  const preferred=sameSource?select.value:(template?.sandboxProfileId||defaultSOPSandbox(choices)?.id||'');
-  // Generic adoption already selects a project/shared fallback on the server.
-  const selected=catalogGeneric(template)
-    ?choices.find(s=>s.id===template.sandboxProfileId)||choices.find(s=>catalogOwned(s.projectId))||choices[0]
-    :choices.find(s=>s.id===preferred);
+  const missingTemplateSandbox=template?.sandboxProfileId&&!catalogGeneric(template)&&!choices.some(s=>s.id===template.sandboxProfileId);
+  let selected;
+  if(sameSource)selected=choices.find(s=>s.id===select.value);
+  else if(!missingTemplateSandbox)selected=defaultSOPSandbox(choices,template?.sandboxProfileId);
   select.innerHTML=`<option value="">${escapeHTML(lfT('请选择运行沙箱','Select a sandbox'))}</option>`+choices.map(s=>`<option value="${escapeHTML(s.id)}">${escapeHTML(s.name||s.id)}${catalogForeign(s.projectId)?lfT(' · 共享',' · Shared'):''}</option>`).join('');
   select.value=selected?.id||'';
   select.dataset.source=state.sopTemplate;select.dataset.project=state.projectFilter;
-  select.disabled=catalogGeneric(template)||!choices.length;
+  select.disabled=!choices.length;
   select.onchange=()=>syncSOPSandboxSelection();
   $('#sopFinish').disabled=!selected;
   $('#sopSandboxHint').textContent=!choices.length
     ?lfT('当前项目没有可用的运行沙箱，请先配置或请管理员共享一个沙箱，再点击「刷新沙箱」。','No sandbox is available for this project. Configure one or ask an administrator to share one, then refresh sandboxes.')
-    :!selected?lfT('模板原有沙箱不可用，请重新选择运行沙箱。','The template sandbox is unavailable. Select a replacement sandbox.')
-    :catalogGeneric(template)?lfT('通用模板优先使用原有沙箱，不可用时自动选择本项目可用沙箱。复制后可在流程设置中修改。','Starter templates prefer their original sandbox and otherwise use an available project sandbox. You can change it in SOP settings after copying.')
+    :!selected&&missingTemplateSandbox?lfT('模板原有沙箱不可用，请重新选择运行沙箱。','The template sandbox is unavailable. Select a replacement sandbox.')
+    :!selected?lfT('请选择运行沙箱。如需本地执行，请确认流程中的任务均可信。','Select a sandbox. Choose local execution only if you trust every task in this SOP.')
     :lfT('选择此 SOP 使用的运行环境，创建后仍可在流程设置中修改。','Choose the execution environment for this SOP. You can change it in SOP settings later.');
 }
 async function refreshSOPSandboxes(){
@@ -1133,13 +1133,13 @@ async function refreshSOPSandboxes(){
     state.data.sandboxes=await api('/api/sandboxes');
     // Empty installations can acquire a first sandbox without losing form input.
     const select=$('#sopCreateSandbox');
-    if(!select.value&&!state.data.workflows.some(w=>w.id===state.sopTemplate))delete select.dataset.source;
+    if(!select.value)delete select.dataset.source;
     syncSOPSandboxSelection();
   }catch(err){toast(err.message)}finally{button.disabled=false}
 }
 function newWorkflow(){
   const sandbox=defaultSOPSandbox();
-  if(!sandbox)return toast(lfT('当前项目没有可用的运行沙箱，请先到「设置 → 沙箱」配置。','No sandbox is available for this project. Configure one in Settings → Sandboxes first.'));
+  if(!sandbox)return openSOPWizard();
   state.workflow={id:uid('sop'),name:'未命名 SOP',version:1,revision:0,status:'draft',projectId:state.projectFilter||'',shared:false,owner:'',tags:[],description:'',sandboxProfileId:sandbox.id,nodes:[],edges:[]};state.selectedNode=null;rememberOpenWorkflow();renderAll();dirty();
 }
 function openSOPWizard(){
@@ -1169,7 +1169,7 @@ async function createSOPFromWizard(e){
       // A generic template brings its own roles, so it must be adopted through
       // the clone endpoint instead of being written as a bare workflow.
       if(!state.projectFilter)return toast('请先在顶部选择一个项目');
-      saved=await api(`/api/workflows/${encodeURIComponent(template.id)}/clone`,{method:'POST',body:JSON.stringify({id:uid('sop'),name,owner,projectId:state.projectFilter})});
+      saved=await api(`/api/workflows/${encodeURIComponent(template.id)}/clone`,{method:'POST',body:JSON.stringify({id:uid('sop'),name,owner,projectId:state.projectFilter,sandboxProfileId:sandboxId})});
       if(description||owner||tags.length)saved=await api('/api/workflows',{method:'PUT',body:JSON.stringify({...saved,name,description:description||saved.description,owner:owner||saved.owner,tags:tags.length?tags:saved.tags})});
     }else{
       const workflow=template?clone(template):{nodes:[],edges:[]};

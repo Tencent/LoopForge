@@ -90,6 +90,12 @@ func (h *assistantHandlers) conversationExecutor(s *AgentToolSession, root strin
 				if err != nil {
 					return "", err
 				}
+				// The lease may rebind a workspace whose previous instance is
+				// gone. The run loaded above would still look foreign.
+				run, ok = h.repo.RunState(runID)
+				if !ok {
+					return "", fmt.Errorf("工作区不存在")
+				}
 			}
 			request, err = h.engine.TrustedWorkspaceRequest(runID, request)
 			if err != nil {

@@ -46,6 +46,10 @@ func (h *assistantHandlers) startGeneration(c *gin.Context) {
 	if !requireAssistantApprovalUser(c, current.ID, req.ApprovalUserID) {
 		return
 	}
+	if err := normalizeAssistantSurface(&req); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
 	req.Model = assistantRequestModel(req.Executor, req.Model)
 	if len(req.Messages) == 0 || req.Messages[len(req.Messages)-1].Role != "user" {
 		c.JSON(400, gin.H{"error": "请提供用户消息"})
@@ -67,6 +71,10 @@ func (h *assistantHandlers) startGeneration(c *gin.Context) {
 	ownerID, shared, err := h.conversationScope(c, req.SessionID, req.RunID, req.ProjectID, stored.ID)
 	if err != nil {
 		c.JSON(403, gin.H{"error": err.Error()})
+		return
+	}
+	if err := h.bindSOPDesignerTranscript(ownerID, &req); err != nil {
+		c.JSON(409, gin.H{"error": err.Error()})
 		return
 	}
 	old, _ := h.repo.AssistantSession(ownerID, req.SessionID)
@@ -184,6 +192,9 @@ func (h *assistantHandlers) startGeneration(c *gin.Context) {
 		issueID = req.linkedIssueID
 	}
 	pending := assistantConversation{ExecutionTarget: req.ExecutionTarget, ID: req.SessionID, Shared: old.Shared, ProjectID: req.ProjectID, IssueID: issueID, Model: req.Model, Effort: req.Effort, Executor: req.Executor, RunID: req.RunID, Messages: req.Messages, TitleEdited: old.TitleEdited, TitleGenerated: old.TitleGenerated}
+	if req.sopDesigner() {
+		pending.Source, pending.WorkflowID = domain.AssistantSourceSOPDesigner, req.WorkflowID
+	}
 	if old.TitleEdited || old.TitleGenerated {
 		pending.Title = old.Title
 	} else {
