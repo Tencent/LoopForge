@@ -159,6 +159,9 @@ func (s *Service) acceptCardAction(bot domain.NotificationBot, item domain.BotIn
 	if ClarifyAction(ev.Action) {
 		return s.acceptClarifyAction(bot, item, ev)
 	}
+	if ev.Action == "answer" && strings.TrimSpace(ev.Text) == "" {
+		return InboundAck{Ignored: "empty_answer", Toast: "请先填写答案"}, nil
+	}
 	delivery, err := s.Store.NotificationDelivery(ev.DeliveryID)
 	own := err == nil && delivery.BotID == bot.ID && delivery.ProjectID == bot.ProjectID
 	if own && delivery.TargetType == "group" && (ev.CardChatID == "" || ev.CardChatID == delivery.TargetID) {
@@ -168,7 +171,7 @@ func (s *Service) acceptCardAction(bot domain.NotificationBot, item domain.BotIn
 	if own && delivery.TargetType == "single" && delivery.TargetID == ev.SenderID {
 		chat = delivery.TargetID
 	}
-	item.Content, item.Quote, item.ContentLength = "", "", 0
+	clearCardContent(&item)
 	item.SendRoute = repo.BotSendRoutePush
 	inserted, err := s.Store.EnqueueBotInteraction(item, "single", chat)
 	if err != nil {
@@ -176,7 +179,7 @@ func (s *Service) acceptCardAction(bot domain.NotificationBot, item domain.BotIn
 	}
 	ack := InboundAck{Accepted: inserted, InteractionID: item.ID, Toast: "已收到，处理结果会以消息发给你"}
 	if card := s.PushCardFor(delivery, delivery.Content, ""); card != nil {
-		card.Done("已提交「" + pushCardActionLabel(ev.Action) + "」，处理结果会以消息发给你")
+		card.Done(cardActionStatus("", ev) + "，处理结果会以消息发给你")
 		ack.Card = card
 	}
 	return ack, nil
@@ -192,7 +195,7 @@ func (s *Service) acceptGroupCardAction(bot domain.NotificationBot, item domain.
 	if refusal != "" {
 		return InboundAck{Ignored: "not_member", Toast: refusal}, nil
 	}
-	item.Content, item.Quote, item.ContentLength = "", "", 0
+	clearCardContent(&item)
 	item.ReplyRoute = ev.Route.MessageID
 	if item.ReplyRoute == "" {
 		item.SendRoute = repo.BotSendRoutePushChat
@@ -201,7 +204,7 @@ func (s *Service) acceptGroupCardAction(bot domain.NotificationBot, item domain.
 	if err != nil {
 		return InboundAck{}, err
 	}
-	status := DisplayName(user) + " 已提交「" + pushCardActionLabel(ev.Action) + "」，结果会发在群里"
+	status := cardActionStatus(DisplayName(user)+" ", ev) + "，结果会发在群里"
 	ack := InboundAck{Accepted: inserted, InteractionID: item.ID, Toast: status}
 	if card := s.PushCardFor(delivery, delivery.Content, ""); card != nil {
 		card.Done(status)
@@ -210,8 +213,24 @@ func (s *Service) acceptGroupCardAction(bot domain.NotificationBot, item domain.
 	return ack, nil
 }
 
+// clearCardContent drops the text of a card click; an answer keeps it.
+func clearCardContent(item *domain.BotInteraction) {
+	if item.Action != "answer" {
+		item.Content, item.ContentLength = "", 0
+	}
+	item.Quote = ""
+}
+
+// cardActionStatus is the status line of a clicked notification card.
+func cardActionStatus(who string, ev InboundEvent) string {
+	if ev.Action == "answer" {
+		return who + "已提交答案：" + cardText(ev.Text, 100)
+	}
+	return who + "已提交「" + pushCardActionLabel(ev.Action) + "」"
+}
+
 func pushCardActionLabel(key string) string {
-	if label := map[string]string{"approve": "通过", "retry": "重试", "reject": "返工", "pass": "手动通过", "resume": "继续", "decline": "不重试"}[key]; label != "" {
+	if label := map[string]string{"answer": "提交答案", "approve": "通过", "retry": "重试", "reject": "返工", "pass": "手动通过", "resume": "继续", "decline": "不重试"}[key]; label != "" {
 		return label
 	}
 	return key

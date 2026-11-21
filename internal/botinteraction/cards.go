@@ -39,7 +39,10 @@ func ActionsForDelivery(store *repo.Store, item domain.NotificationDelivery) []m
 		if domain.TerminalRunStatus(run.Status) {
 			return nil
 		}
-		if strings.Contains(node.Activity, "用户暂停") {
+		if node.Question() != "" {
+			// A question wants an answer, not approve or a bare retry.
+			button("提交答案", "answer")
+		} else if strings.Contains(node.Activity, "用户暂停") {
 			button("继续", "resume")
 		} else if strings.Contains(node.Activity, "轮次用尽") || strings.Contains(node.Activity, "是否重试") || strings.Contains(strings.ToLower(node.Error), "max turns") {
 			button("重试", "retry")
@@ -66,6 +69,37 @@ func ActionsForDelivery(store *repo.Store, item domain.NotificationDelivery) []m
 func handledCard(id, text string) map[string]any {
 	return map[string]any{"card_type": "button_interaction", "task_id": id, "main_title": map[string]string{"title": text}, "button_list": []map[string]any{{"text": "已收到", "key": "handled", "style": 3}}}
 }
+
+// NodeQuestion returns the question of a waiting-node delivery whose node
+// still asks it at the notified attempt, or "".
+func (s *Service) NodeQuestion(item domain.NotificationDelivery) string {
+	if item.EventType != "waiting" || item.NodeID == "" {
+		return ""
+	}
+	run, ok := s.Store.RunState(item.RunID)
+	if !ok {
+		return ""
+	}
+	nr := run.Nodes[item.NodeID]
+	if nr == nil || nr.Attempt != item.Attempt || nr.ReworkCount != item.ReworkCount {
+		return ""
+	}
+	return nr.Question()
+}
+
+// WithNodeQuestion adds the question and how to answer it to a WeCom
+// message: template cards have no text input, so a node question is sent as
+// text that can be quoted.
+func WithNodeQuestion(content, question, chatType string) string {
+	if !strings.Contains(content, question) {
+		content = strings.TrimRight(content, "\n") + "\n问题：" + domain.NotificationText(question, 1200)
+	}
+	if !strings.Contains(content, "回答方式：") {
+		content += "\n" + domain.NodeAnswerHint(domain.BotChannelWeCom, chatType)
+	}
+	return content
+}
+
 func (s *Service) QueueNotificationCard(ctx context.Context, bot domain.NotificationBot, item domain.NotificationDelivery, content string, detailsURL ...string) error {
 	actions := ActionsForDelivery(s.Store, item)
 	if len(actions) == 0 {
@@ -308,9 +342,9 @@ func (s *socket) updateActionCard(ctx context.Context, item domain.BotInteractio
 // Keep every available operation visible. Three-column cards need short
 // labels; the card's context row explicitly identifies the rework target.
 func notificationCardActions(actions []map[string]any) ([]map[string]any, map[string]any) {
-	labels := map[string]string{"approve": "通过并继续", "retry": "重新执行", "reject": "返工", "pass": "手动通过", "resume": "继续运行", "decline": "不再重试"}
+	labels := map[string]string{"answer": "提交答案", "approve": "通过并继续", "retry": "重新执行", "reject": "返工", "pass": "手动通过", "resume": "继续运行", "decline": "不再重试"}
 	if len(actions) > 2 {
-		labels = map[string]string{"approve": "通过", "retry": "重试", "reject": "返工", "pass": "放行", "resume": "继续", "decline": "不重试"}
+		labels = map[string]string{"answer": "提交答案", "approve": "通过", "retry": "重试", "reject": "返工", "pass": "放行", "resume": "继续", "decline": "不重试"}
 	}
 	buttons := []map[string]any{}
 	for _, action := range actions {

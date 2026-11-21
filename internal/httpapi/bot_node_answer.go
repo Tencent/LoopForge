@@ -123,7 +123,7 @@ func (h *assistantHandlers) botQuotedNodeQuestion(bot domain.NotificationBot, co
 		return domain.NotificationDelivery{}, false
 	}
 	for _, q := range h.botOpenNodeQuestions(bot, conv, item.SenderID) {
-		if strings.Contains(quote, truncateRunes(q.question, 15)) {
+		if prefix := []rune(strings.TrimSpace(q.question)); strings.Contains(quote, string(prefix[:min(len(prefix), 15)])) {
 			return q.delivery, true
 		}
 	}

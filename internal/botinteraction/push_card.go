@@ -49,6 +49,8 @@ type PushCard struct {
 	ClarifyID string
 	// Hint is shown below the rows (how to answer a node question).
 	Hint string
+	// RequiredLabel replaces "待处理" before Required.
+	RequiredLabel string
 	// lockedSelects are the drop-downs of a handled card (Done).
 	lockedSelects []*PushCardSelect
 }
@@ -78,7 +80,12 @@ type PushCardAction struct {
 }
 
 // PushCardKeys are the action keys a card button may carry.
-var PushCardKeys = []string{"approve", "retry", "reject", "pass", "resume", "decline"}
+// "answer" submits the card's answer input (Feishu node questions).
+var PushCardKeys = []string{"approve", "retry", "reject", "pass", "resume", "decline", "answer"}
+
+// PushCardAnswerField is the name of the answer input of a node question
+// card.
+const PushCardAnswerField = "answer"
 
 // Draft confirmation card actions.
 const (
@@ -121,9 +128,12 @@ func (s *Service) PushCardFor(item domain.NotificationDelivery, content, details
 	card := &PushCard{DeliveryID: item.ID, Title: cardText(title, 60), Tag: map[string]string{"waiting": "待人工确认", "failed": "执行失败"}[item.EventType], Reason: cardText(reason, 300), Required: cardText(required, 120), DetailsURL: detailsURL}
 	card.Rows = [][2]string{{"需求", cardText(issue, 60)}, {"节点", cardText(item.SourceName, 60)}, {"SOP", cardText(run.WorkflowSnapshot.Name, 60)}}
 	if question := run.Nodes[item.NodeID].Question(); question != "" && item.EventType == "waiting" {
-		card.Tag, card.Required = "需要补充信息", cardText(question, 300)
+		card.Tag, card.Required, card.RequiredLabel = "需要补充信息", cardText(question, 300), "问题"
 		if bot, err := s.Store.NotificationBot(item.BotID); err == nil {
 			card.Hint = domain.NodeAnswerHint(bot.ChannelKind(), item.TargetType)
+			if bot.ChannelKind() == domain.BotChannelFeishu {
+				card.Hint = "在下方填写答案并提交，答案会提交给这个节点，节点按流程继续。"
+			}
 		}
 	}
 	buttons, _ := notificationCardActions(actions)
@@ -154,11 +164,18 @@ func pushCardKey(key string) bool {
 	return false
 }
 
+func (c *PushCard) requiredLabel() string {
+	if c.RequiredLabel != "" {
+		return c.RequiredLabel
+	}
+	return "待处理"
+}
+
 // PlainText is the card as plain text, used where cards are unavailable.
 func (c *PushCard) PlainText() string {
 	lines := []string{c.Tag + "：" + c.Title, "原因：" + c.Reason}
 	if c.Required != "" {
-		lines = append(lines, "待处理："+c.Required)
+		lines = append(lines, c.requiredLabel()+"："+c.Required)
 	}
 	for _, row := range c.Rows {
 		lines = append(lines, row[0]+"："+row[1])
@@ -185,7 +202,7 @@ func feishuCardJSON(c *PushCard) []byte {
 		elements = append(elements, map[string]any{"tag": "div", "text": plain("原因：" + c.Reason)})
 	}
 	if c.Required != "" {
-		elements = append(elements, map[string]any{"tag": "div", "text": plain("待处理：" + c.Required)})
+		elements = append(elements, map[string]any{"tag": "div", "text": plain(c.requiredLabel() + "：" + c.Required)})
 	}
 	fields := []any{}
 	for _, row := range c.Rows {
@@ -222,6 +239,14 @@ func feishuCardJSON(c *PushCard) []byte {
 	}
 	buttons := []any{}
 	for _, a := range c.Actions {
+		if a.Key == "answer" {
+			// Card JSON 1.0 form: the input comes back as form_value.
+			elements = append(elements, map[string]any{"tag": "form", "name": "af_answer_form", "elements": []any{
+				map[string]any{"tag": "input", "name": PushCardAnswerField, "placeholder": plain("填写答案"), "max_length": 1000, "width": "fill"},
+				map[string]any{"tag": "button", "text": plain(a.Text), "type": "primary", "action_type": "form_submit", "name": "af_answer_submit", "value": value(a.Key, a.Ref)},
+			}})
+			continue
+		}
 		kind := "primary"
 		if a.Danger {
 			kind = "danger"
@@ -262,7 +287,7 @@ func feishuCardJSON(c *PushCard) []byte {
 func dingtalkCardParams(c *PushCard) map[string]string {
 	lines := []string{"**原因**：" + dingtalkMarkdownText(c.Reason)}
 	if c.Required != "" {
-		lines = append(lines, "**待处理**："+dingtalkMarkdownText(c.Required))
+		lines = append(lines, "**"+c.requiredLabel()+"**："+dingtalkMarkdownText(c.Required))
 	}
 	for _, row := range c.Rows {
 		lines = append(lines, "**"+row[0]+"**："+dingtalkMarkdownText(row[1]))

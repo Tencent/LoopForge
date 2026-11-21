@@ -168,9 +168,11 @@ type NodeRun struct {
 }
 
 // Question is what the node asks a human to supply: the actionRequired of
-// a "human" decision while the node waits for it. Empty otherwise.
+// a "human" decision while the node waits for it. Empty otherwise, also
+// for a paused or turn-exhausted node that still carries an earlier
+// decision.
 func (n *NodeRun) Question() string {
-	if n == nil || n.Status != "waiting_approval" || n.GateResult == nil || n.GateResult.Decision != "human" {
+	if n == nil || n.Status != "waiting_approval" || n.Activity != "等待人工确认" || n.GateResult == nil || n.GateResult.Decision != "human" {
 		return ""
 	}
 	return strings.TrimSpace(n.GateResult.ActionRequired)

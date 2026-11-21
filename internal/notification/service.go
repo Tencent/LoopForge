@@ -129,6 +129,11 @@ func (s *Service) send(ctx context.Context, bot domain.NotificationBot, targetID
 			return err
 		}
 	}
+	if len(delivery) > 0 && s.Interactions != nil {
+		if question := s.Interactions.NodeQuestion(delivery[0]); question != "" {
+			return s.Provider.Send(ctx, bot.BotID, secret, targetID, botinteraction.WithNodeQuestion(content, question, delivery[0].TargetType))
+		}
+	}
 	if len(delivery) > 0 && bot.InteractionEnabled && s.Interactions != nil && delivery[0].NodeID != "" && delivery[0].TargetType != "" && (delivery[0].EventType == "waiting" || delivery[0].EventType == "failed") {
 		detailURL := ""
 		if base, err := url.Parse(s.PublicURL); err == nil && (base.Scheme == "https" || base.Scheme == "http") && base.Host != "" {
@@ -153,6 +158,9 @@ func (s *Service) sendWeComOrigin(ctx context.Context, bot domain.NotificationBo
 	}
 	ctx, cancel := context.WithTimeout(ctx, 90*time.Second)
 	defer cancel()
+	if question := s.Interactions.NodeQuestion(item); question != "" {
+		return s.Interactions.QueueChatPost(bot, item.TargetType, item.TargetID, item.ID, botinteraction.WithNodeQuestion(content, question, item.TargetType))
+	}
 	if item.NodeID != "" && (item.EventType == "waiting" || item.EventType == "failed") {
 		return s.Interactions.QueueNotificationCard(ctx, bot, item, content, s.runURL(item.RunID))
 	}

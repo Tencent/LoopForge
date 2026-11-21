@@ -242,7 +242,13 @@ func (h *assistantHandlers) handleBotCardAction(ctx context.Context, bot domain.
 	service := h.notifications.service.Interactions
 	delivery, err := service.NotificationCardTask(bot, item, conv)
 	if err != nil {
+		if item.Action == "answer" {
+			return "这个问题已经回答过，或节点已结束、运行已取消，答案未提交。请在平台查看运行状态。", nil
+		}
 		return "这条提醒已经过期或已处理，请查看最新运行状态。", nil
+	}
+	if item.Action == "answer" {
+		return h.submitBotNodeAnswer(ctx, bot, conv, item, delivery, strings.TrimSpace(item.Content)), nil
 	}
 	run, ok := h.repo.RunState(delivery.RunID)
 	if !ok || run.ExecutionContext.ProjectID != bot.ProjectID {

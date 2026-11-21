@@ -122,8 +122,11 @@ func TestGroupAnswersNodeQuestionOnTheSameRun(t *testing.T) {
 				t.Fatalf("quote hint on %s = %v: %q", channel, quote, sent.Content)
 			}
 			card := f.h.notifications.service.Interactions.PushCardFor(sent, sent.Content, "")
-			if card == nil || card.Tag != "需要补充信息" || card.Required != nodeQuestionText || !strings.Contains(card.Hint, "@我") {
+			if card == nil || card.Tag != "需要补充信息" || card.Required != nodeQuestionText || len(card.Actions) != 1 || card.Actions[0].Key != "answer" {
 				t.Fatalf("card = %+v", card)
+			}
+			if wantHint := map[string]string{domain.BotChannelFeishu: "在下方填写答案", domain.BotChannelDingTalk: "@我 发送「回答：你的答案」"}[channel]; !strings.Contains(card.Hint, wantHint) {
+				t.Fatalf("hint = %q", card.Hint)
 			}
 			before := f.runs()
 
@@ -257,6 +260,50 @@ func TestPrivateChatAnswersNodeQuestion(t *testing.T) {
 		t.Fatalf("private = %q", reply)
 	}
 	if node := f.node("run-q"); node.Status != "pending" || !strings.Contains(node.Feedback, "都要") {
+		t.Fatalf("node = %+v", node)
+	}
+}
+
+// The answer input of the Feishu card reaches the node like a chat answer;
+// a second submit of the same card is refused.
+func TestFeishuCardAnswerReachesTheNode(t *testing.T) {
+	f := newNodeQuestionFixture(t, domain.BotChannelFeishu)
+	f.ask("run-q", nodeQuestionText)
+	sent := f.question("run-q")
+	before := f.runs()
+	submit := func(answer string) string {
+		reply, err := f.h.handleBotCardAction(context.Background(), f.bot, domain.BotInteraction{DeliveryID: sent.ID, Action: "answer", SenderID: "ou-member", Content: answer}, f.conv)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return reply
+	}
+	if reply := submit("手机号和邮箱都要"); !strings.Contains(reply, "已把答案提交给「需求定型」") || !strings.Contains(reply, "回答人") {
+		t.Fatalf("submit = %q", reply)
+	}
+	if node := f.node("run-q"); node.Status != "pending" || !strings.Contains(node.Feedback, "手机号和邮箱都要") {
+		t.Fatalf("node = %+v", node)
+	}
+	if reply := submit("只要手机号"); !strings.Contains(reply, "已经回答过") {
+		t.Fatalf("second = %q", reply)
+	}
+	if strings.Contains(f.node("run-q").Feedback, "只要手机号") || f.runs() != before {
+		t.Fatal("second submit reached the node")
+	}
+}
+
+// A WeCom quote carries only the quoted text: a quote of the question
+// message (longer than the matched prefix) answers it.
+func TestWeComQuoteAnswersNodeQuestion(t *testing.T) {
+	f := newNodeQuestionFixture(t, domain.BotChannelWeCom)
+	f.ask("run-q", nodeQuestionText)
+	sent := f.question("run-q")
+	item := domain.BotInteraction{ID: "msg-wecom-quote", BotID: f.bot.ID, ConversationID: f.conv.ID, SenderID: "ou-member", Content: "@Bot 都要", Quote: sent.Content}
+	reply, err := f.h.generateBotReply(context.Background(), f.bot, f.conv, nil, item)
+	if err != nil || !strings.Contains(reply, "已把答案提交") {
+		t.Fatalf("reply = %q %v", reply, err)
+	}
+	if node := f.node("run-q"); !strings.Contains(node.Feedback, "都要") {
 		t.Fatalf("node = %+v", node)
 	}
 }

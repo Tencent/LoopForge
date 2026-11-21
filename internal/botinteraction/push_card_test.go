@@ -455,3 +455,70 @@ func TestDraftCardRepositorySelection(t *testing.T) {
 		t.Fatal("empty repository pick accepted")
 	}
 }
+
+// A node question card on Feishu has an answer input and a submit button
+// instead of approve and retry; the submitted text is kept with the click,
+// an empty answer is refused on the card.
+func TestFeishuQuestionCardTakesTheAnswer(t *testing.T) {
+	store, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	bot := domain.NotificationBot{ID: "cfg-q", Channel: domain.BotChannelFeishu, BotID: "cli_q", ProjectID: "p", OwnerID: 42, Enabled: true, InteractionEnabled: true, TenantKey: "tk", TenantState: domain.BotTenantLocked}
+	if _, err := store.SaveNotificationBotChecked(bot, "secret", nil); err != nil {
+		t.Fatal(err)
+	}
+	run := domain.Run{ID: "r-q", Status: "waiting", WorkflowID: "wf", ExecutionContext: domain.TelemetryContext{ProjectID: "p"}, WorkflowSnapshot: domain.WorkflowDefinition{ID: "wf", Name: "交付", Nodes: []domain.WorkflowNode{{ID: "n", Name: "需求定型", Type: "agent"}}},
+		Nodes: map[string]*domain.NodeRun{"n": {NodeID: "n", Status: "waiting_approval", Attempt: 1, Activity: "等待人工确认", GateResult: &domain.GateResult{Decision: "human", Reason: "缺登录方式", ActionRequired: "登录要不要支持邮箱？"}}}}
+	if err := store.PutRun(run); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	delivery := domain.NotificationDelivery{ID: "d-q", ProjectID: "p", BotID: bot.ID, RunID: run.ID, NodeID: "n", Attempt: 1, EventType: "waiting", TargetID: "ou_1", TargetType: "single", Content: "需求：登录优化", Status: "sent", CreatedAt: now, NextAttemptAt: now}
+	if err := store.CreateNotificationDelivery(delivery); err != nil {
+		t.Fatal(err)
+	}
+	service := New(store)
+	card := service.PushCardFor(delivery, delivery.Content, "https://platform.example/#/runs/r-q")
+	if card == nil || card.Tag != "需要补充信息" || len(card.Actions) != 1 || card.Actions[0].Key != "answer" || !strings.Contains(card.Hint, "在下方填写答案") {
+		t.Fatalf("card = %+v", card)
+	}
+	content := string(feishuCardJSON(card))
+	for _, want := range []string{`"tag":"form"`, `"tag":"input"`, `"name":"answer"`, `"action_type":"form_submit"`, `"af_action":"answer"`, `"af_delivery":"d-q"`, "问题：登录要不要支持邮箱？", "查看详情"} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("missing %s in %s", want, content)
+		}
+	}
+	if strings.Contains(content, `"af_action":"approve"`) || strings.Contains(content, `"af_action":"retry"`) || strings.Contains(content, "待处理") {
+		t.Fatalf("question card offers approve/retry: %s", content)
+	}
+
+	tenant := "tk"
+	click := func(id, answer string) InboundEvent {
+		ev := &callback.CardActionTriggerEvent{EventV2Base: &larkevent.EventV2Base{Header: &larkevent.EventHeader{EventID: id, AppID: "cli_q", TenantKey: "tk"}}, Event: &callback.CardActionTriggerRequest{Operator: &callback.Operator{OpenID: "ou_1", TenantKey: &tenant}, Action: &callback.CallBackAction{Value: map[string]any{"af_action": "answer", "af_delivery": "d-q"}, FormValue: map[string]any{"answer": answer}}}}
+		mapped, ok := feishuCardEvent(ev)
+		if !ok {
+			t.Fatal("answer click not mapped")
+		}
+		return mapped
+	}
+	if ev := click("e0", "  都要  "); ev.Action != "answer" || ev.Text != "都要" {
+		t.Fatalf("mapped = %+v", ev)
+	}
+	ack, err := service.accept(context.Background(), bot, click("e1", " "))
+	if err != nil || ack.Accepted || ack.Toast != "请先填写答案" {
+		t.Fatalf("empty = %+v %v", ack, err)
+	}
+	ack, err = service.accept(context.Background(), bot, click("e2", "手机号和邮箱都要"))
+	if err != nil || !ack.Accepted || ack.Card == nil || !strings.Contains(ack.Card.Status, "已提交答案：手机号和邮箱都要") {
+		t.Fatalf("answer = %+v %v", ack, err)
+	}
+	if done := string(feishuCardJSON(ack.Card)); strings.Contains(done, `"tag":"form"`) {
+		t.Fatalf("handled card keeps the form: %s", done)
+	}
+	stored, err := store.BotInteraction(ack.InteractionID)
+	if err != nil || stored.Action != "answer" || stored.Content != "手机号和邮箱都要" || stored.DeliveryID != "d-q" {
+		t.Fatalf("stored = %+v %v", stored, err)
+	}
+}

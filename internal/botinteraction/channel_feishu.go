@@ -300,6 +300,11 @@ func feishuCardEvent(ev *callback.CardActionTriggerEvent) (InboundEvent, bool) {
 		DeliveryID: delivery,
 		Option:     strings.TrimSpace(option),
 	}
+	if action == "answer" {
+		// The node question card submits its answer input as a form.
+		out.Text, _ = ev.Event.Action.FormValue[PushCardAnswerField].(string)
+		out.Text = strings.TrimSpace(out.Text)
+	}
 	if ev.Event.Context != nil {
 		// Replies to a click are threaded under the card.
 		out.Route.MessageID = ev.Event.Context.OpenMessageID

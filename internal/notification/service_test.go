@@ -373,3 +373,41 @@ func TestWeComOriginDeliveryUsesTheLiveConnection(t *testing.T) {
 		t.Fatalf("queued = %+v in %+v", post, conv)
 	}
 }
+
+// WeCom template cards have no text input: a node question goes out as
+// text with the question and how to answer, on the SOP notification and on
+// the message back to the conversation the run came from.
+func TestWeComNodeQuestionIsSentAsText(t *testing.T) {
+	svc, provider, bot, run := serviceFixture(t)
+	bot.InteractionEnabled = true
+	if err := svc.Store.SaveNotificationBot(bot, ""); err != nil {
+		t.Fatal(err)
+	}
+	run.Nodes["n"].Activity = "等待人工确认"
+	run.Nodes["n"].GateResult = &domain.GateResult{Decision: "human", Reason: "缺登录方式", ActionRequired: "登录要不要支持邮箱？"}
+	run.Events = nil
+	if err := svc.Store.PutRun(run); err != nil {
+		t.Fatal(err)
+	}
+	ok, err := svc.ProcessOne(context.Background())
+	if err != nil || !ok || provider.sent != 1 || !strings.Contains(provider.content, "问题：登录要不要支持邮箱？") || !strings.Contains(provider.content, "回答方式：@我 发送「回答：你的答案」，或引用本条消息回复") {
+		t.Fatalf("binding %v %v sent=%d %q", ok, err, provider.sent, provider.content)
+	}
+	items, _ := svc.Store.NotificationDeliveries("p")
+	if _, err := svc.Store.BotInteraction(repo.BotMessageID(bot.ID, "notification:"+items[0].ID)); err == nil {
+		t.Fatal("a card was queued for the question")
+	}
+
+	now := time.Now().UTC()
+	origin := domain.NotificationDelivery{ID: "origin-q", ProjectID: "p", BotID: bot.ID, RunID: run.ID, NodeID: "n", Attempt: 1, EventType: "waiting", SourceType: "run", SourceID: run.ID, Origin: domain.NotificationOriginChat, TargetID: "wr_group", TargetType: "group", Content: "### 节点需要补充信息\n节点：开发", Status: "pending", CreatedAt: now, NextAttemptAt: now}
+	if err := svc.Store.CreateNotificationDelivery(origin); err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := svc.ProcessOne(context.Background()); err != nil || !ok {
+		t.Fatalf("origin %v %v", ok, err)
+	}
+	post, err := svc.Store.BotInteraction(repo.BotMessageID(bot.ID, "chat-post:"+origin.ID))
+	if err != nil || post.Action != botinteraction.ActionChatPost || !strings.Contains(post.Content, "问题：登录要不要支持邮箱？") {
+		t.Fatalf("origin post = %+v %v", post, err)
+	}
+}
