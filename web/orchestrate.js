@@ -904,8 +904,11 @@ async function completeAIEdit(build, finalRaw) {
   }
   const merged = mergeAIEdit(build.base, finalRaw, build.goal, build.referenced);
   const oldIds = new Set((build.base.nodes || []).map(node => node.id));
-  const onCanvas = new Set((state.workflow.nodes || []).map(node => node.id));
+  const onCanvas = new Map((state.workflow.nodes || []).map(node => [node.id, node]));
   const kept = merged.nodes.filter(node => oldIds.has(node.id) || onCanvas.has(node.id));
+  for (const node of kept) {
+    node.position ??= onCanvas.get(node.id)?.position;
+  }
   const keptIds = new Set(kept.map(node => node.id));
   const newcomers = merged.nodes.filter(node => !keptIds.has(node.id));
   const immediateEdges = merged.edges.filter(edge => keptIds.has(edge.source) && keptIds.has(edge.target));
@@ -913,6 +916,9 @@ async function completeAIEdit(build, finalRaw) {
   state.workflow = {...merged, nodes: kept.slice(), edges: immediateEdges.slice()};
   build.placed = new Map(kept.map(node => [node.id, node]));
   build.wired = new Set(immediateEdges.map(edge => edge.source + '→' + edge.target));
+  // Replace pending streamed edits with the final draft's nodes and edges.
+  build.queue.length = 0;
+  build.pendingEdges.length = 0;
   renderWorkflowMeta();
   renderCanvas();
   renderProperties();
