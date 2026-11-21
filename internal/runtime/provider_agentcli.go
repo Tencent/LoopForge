@@ -3,6 +3,7 @@ package runtime
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"io"
 	"os"
 	"path/filepath"
 	"slices"
@@ -121,6 +122,7 @@ func AgentCLICommand(kind string, o AgentCLICommandOptions) CommandSpec {
 	}
 	extra := append([]string{}, o.Extra...)
 	var argv []string
+	var stdin io.Reader
 	readOnly := o.Chat && !o.Workspace
 	options := AgentCLIOptions{Model: model, Effort: effort, ReadOnly: readOnly}
 	switch kind {
@@ -207,7 +209,16 @@ func AgentCLICommand(kind string, o AgentCLICommandOptions) CommandSpec {
 		if readOnly {
 			argv = append(argv, "--exclude-tools", "bash,edit,write")
 		}
-		argv = append(append(argv, extra...), prompt)
+		argv = append(argv, extra...)
+		if PromptFitsArgv(len(prompt)) {
+			argv = append(argv, prompt)
+		} else {
+			// Pi reads the prompt from stdin when the positional argument is
+			// omitted. A chat prompt embeds the whole conversation and can
+			// exceed Linux's MAX_ARG_STRLEN, which fails the fork with E2BIG
+			// ("argument list too long") before the CLI starts.
+			stdin = strings.NewReader(prompt)
+		}
 	case AgentCLIDeepSeek:
 		mode := "danger-full-access"
 		if readOnly {
@@ -229,7 +240,7 @@ func AgentCLICommand(kind string, o AgentCLICommandOptions) CommandSpec {
 		}
 		argv = append(argv, extra...)
 	}
-	return CommandSpec{Argv: argv, Provider: kind, AgentCLI: options}
+	return CommandSpec{Argv: argv, Provider: kind, AgentCLI: options, Stdin: stdin}
 }
 
 // AgyModelEfforts returns the separate effort choices for Gemini API models.

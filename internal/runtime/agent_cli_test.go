@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -68,6 +69,32 @@ func TestAgentCLICommandChatRestrictions(t *testing.T) {
 		if command.AgentCLI.ReadOnly || !slices.Contains(command.Argv, "read,bash,edit,write,codemode") || slices.Contains(command.Argv, "--exclude-tools") {
 			t.Fatalf("Pi workspace must reset the old read-only loadout on creation and resume: %q", command.Argv)
 		}
+	}
+}
+
+func TestPiOversizedPromptGoesToStdin(t *testing.T) {
+	// Linux rejects any single argv string above MAX_ARG_STRLEN (128KiB), so a
+	// chat prompt that embeds a long conversation must reach pi on stdin.
+	prompt := strings.Repeat("长对话", maxArgvPromptBytes/9+100)
+	command := AgentCLICommand(AgentCLIPi, AgentCLICommandOptions{
+		Prompt: prompt, SystemPromptFile: "/s.md", Chat: true, Workspace: true,
+	})
+	for _, arg := range command.Argv {
+		if !PromptFitsArgv(len(arg)) {
+			t.Fatalf("argv still carries an oversized argument (%d bytes)", len(arg))
+		}
+	}
+	if command.Stdin == nil {
+		t.Fatal("oversized prompt must be sent on stdin")
+	}
+	data, err := io.ReadAll(command.Stdin)
+	if err != nil || string(data) != prompt {
+		t.Fatalf("stdin prompt mismatch: %d bytes, err=%v", len(data), err)
+	}
+	// Short turns keep the existing positional form.
+	short := AgentCLICommand(AgentCLIPi, AgentCLICommandOptions{Prompt: "hello"})
+	if short.Stdin != nil || short.Argv[len(short.Argv)-1] != "hello" {
+		t.Fatalf("short pi turn changed: argv=%q stdin=%v", short.Argv, short.Stdin != nil)
 	}
 }
 
