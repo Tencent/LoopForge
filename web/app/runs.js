@@ -1281,7 +1281,42 @@ function defaultRunEval(){return{enabled:true,version:1,threshold:70,dimensions:
 function runEvalModel(){const api=window.AgentFlowAssistantModels,stored=state.runEvalModel||localStorage.getItem('agentflow.runEvalModel')||'';if(api?.codeBuddyModel)return api.codeBuddyModel(stored);return stored||(api&&api.DEFAULT)||'default'}
 function setRunEvalModel(id){state.runEvalModel=id;localStorage.setItem('agentflow.runEvalModel',id)}
 function runEvalHasKey(){return !!(userById(state.currentUser?.id)||state.currentUser||{}).codeBuddyApiKeyConfigured}
-function runEvalApplyable(rec){if(!rec||rec.status==='applied')return false;const action=((rec.target||'')+'.'+(rec.action||'')).replace(/^\./,'').toLowerCase();const full=rec.action&&rec.action.includes('.')?rec.action.toLowerCase():action;return ['workflow.update_node','agent.upsert_gate','agent.remove_gate','agent.append_instructions','agent.append_task_prompt'].includes(full)}
+function runEvalAction(rec){
+  const target=String(rec?.target||'').trim().toLowerCase();
+  const action=String(rec?.action||'').trim().toLowerCase();
+  if(!action)return '';
+  if(action.includes('.'))return action;
+  return target?`${target}.${action}`:action;
+}
+function runEvalAppendText(rec){
+  if(!rec)return '';
+  for(const raw of [rec.text,rec.set?.text,rec.set?.instructionsDelta]){
+    if(raw===undefined||raw===null)continue;
+    const text=String(raw).trim();
+    if(text)return text;
+  }
+  return '';
+}
+function runEvalHasTarget(rec){
+  return !!(String(rec?.targetId||'').trim()||String(rec?.nodeId||'').trim());
+}
+function runEvalUnapplyableReason(rec){
+  if(!rec||rec.status==='applied')return '';
+  const full=runEvalAction(rec);
+  if(full==='agent.append_instructions'||full==='agent.append_task_prompt'){
+    if(!runEvalAppendText(rec))return '缺少可追加的任务书文本（text / set.text / set.instructionsDelta），无法一键应用';
+    if(!runEvalHasTarget(rec))return '缺少目标角色（targetId / nodeId），无法一键应用';
+  }
+  return '';
+}
+function runEvalApplyable(rec){
+  if(!rec||rec.status==='applied')return false;
+  const full=runEvalAction(rec);
+  if(full==='agent.append_instructions'||full==='agent.append_task_prompt'){
+    return runEvalAppendText(rec)!==''&&runEvalHasTarget(rec);
+  }
+  return ['workflow.update_node','agent.upsert_gate','agent.remove_gate'].includes(full);
+}
 function runEvalPaneHTML(run){
   const rec=state.runEval?.runId===run.id?state.runEval:null,busy=!!state.runEvalBusy,thoughts=state.runEvalThoughts||[];
   const dims=rec?.policy?.dimensions||defaultRunEval().dimensions;
@@ -1349,8 +1384,11 @@ function runEvalPaneHTML(run){
 }
 function runEvalRecHTML(item){
   const applied=item.status==='applied',can=runEvalApplyable(item);
-  const patch=item.gate||item.set||(item.text?{text:item.text}:null);
-  return `<article class="run-eval-rec ${applied?'is-applied':''}"><div><b>${escapeHTML(item.title||item.action||'建议')}</b><p>${escapeHTML(item.rationale||'')}</p><small>${escapeHTML(item.target||'')} ${escapeHTML(item.action||'')} ${item.nodeId?('· '+escapeHTML(item.nodeId)):''}</small>${patch?`<details><summary>预览补丁</summary><pre>${escapeHTML(JSON.stringify(patch,null,2))}</pre></details>`:''}${item.applyError?`<small class="danger">${escapeHTML(item.applyError)}</small>`:''}</div>${applied?`<button type="button" class="button ghost small" data-open-eval-target="${escapeHTML(item.target||'')}" data-open-eval-id="${escapeHTML(item.appliedTargetId||item.targetId||'')}">打开</button>`:(can?`<button type="button" class="button primary small" data-apply-eval="${escapeHTML(item.id)}">应用此修改</button>`:'<small>仅建议</small>')}</article>`;
+  const full=runEvalAction(item),isAppend=full==='agent.append_instructions'||full==='agent.append_task_prompt';
+  const appendText=isAppend?runEvalAppendText(item):'';
+  const patch=isAppend?(appendText?{text:appendText}:null):(item.gate||item.set||(String(item.text||'').trim()?{text:String(item.text).trim()}:null));
+  const reason=!applied&&!can&&!item.applyError?runEvalUnapplyableReason(item):'';
+  return `<article class="run-eval-rec ${applied?'is-applied':''}"><div><b>${escapeHTML(item.title||item.action||'建议')}</b><p>${escapeHTML(item.rationale||'')}</p><small>${escapeHTML(item.target||'')} ${escapeHTML(item.action||'')} ${item.nodeId?('· '+escapeHTML(item.nodeId)):''}</small>${patch?`<details><summary>预览补丁</summary><pre>${escapeHTML(JSON.stringify(patch,null,2))}</pre></details>`:''}${reason?`<small class="muted">${escapeHTML(reason)}</small>`:''}${item.applyError?`<small class="danger">${escapeHTML(item.applyError)}</small>`:''}</div>${applied?`<button type="button" class="button ghost small" data-open-eval-target="${escapeHTML(item.target||'')}" data-open-eval-id="${escapeHTML(item.appliedTargetId||item.targetId||'')}">打开</button>`:(can?`<button type="button" class="button primary small" data-apply-eval="${escapeHTML(item.id)}">应用此修改</button>`:'<small>仅建议</small>')}</article>`;
 }
 function bindRunEvalPane(run,host){
   bindRunEvalModelPicker(host.querySelector('#runEvalModelPicker'));
@@ -1425,7 +1463,8 @@ async function applyRunEvalRec(run,recId){
     state.runEval={...rec,runId:run.id};
     const [workflows,agents]=await Promise.all([api('/api/workflows',{silent:true}),api('/api/agents',{silent:true})]);
     state.data.workflows=workflows;state.data.agents=agents;
-    toast('已写回当前定义','ok');
+    const updated=(rec?.result?.recommendations||[]).find(item=>item.id===recId);
+    if(updated?.applyError){toast(updated.applyError,'err')}else{toast('已写回当前定义','ok')}
     const host=$('#runDetail'),pane=host?.querySelector('[data-run-pane="eval"]');
     if(pane){pane.innerHTML=runEvalPaneHTML(run);bindRunEvalPane(run,host)}
   }catch(e){toast(e.message,'err')}

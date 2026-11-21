@@ -47,8 +47,15 @@ func TestAgentTextAndGateBranches(t *testing.T) {
 	if err := ApplyRecommendation(appendRec, nil, &agent); err != nil || agent.Prompt != "constraint" {
 		t.Fatalf("duplicate prompt append: %q, %v", agent.Prompt, err)
 	}
-	if err := ApplyRecommendation(domain.RunEvalRecommendation{Target: "agent", Action: "append_task_prompt"}, nil, &agent); err == nil {
-		t.Fatal("empty task prompt accepted")
+	for _, emptyRec := range []domain.RunEvalRecommendation{
+		{Target: "agent", Action: "append_task_prompt"},
+		{Target: "agent", Action: "append_task_prompt", Text: "   \n\t  "},
+		{Target: "agent", Action: "append_task_prompt", Set: map[string]any{"text": "  "}},
+		{Target: "agent", Action: "append_task_prompt", Set: map[string]any{"instructionsDelta": "\t"}},
+	} {
+		if err := ApplyRecommendation(emptyRec, nil, &agent); err == nil {
+			t.Fatalf("empty task prompt accepted: %#v", emptyRec)
+		}
 	}
 	if err := appendAgentText(&agent.Prompt, domain.RunEvalRecommendation{Text: "first"}); err != nil {
 		t.Fatal(err)
@@ -84,7 +91,7 @@ func TestAgentTextAndGateBranches(t *testing.T) {
 
 func TestPromptParsingCatalogAndHelpers(t *testing.T) {
 	system, user := BuildPrompt(domain.RunEvalPolicy{}, domain.RunEvalFacts{RunID: "r"})
-	if !strings.Contains(system, "recommendations") || !strings.Contains(user, `"runId":"r"`) {
+	if !strings.Contains(system, "recommendations") || !strings.Contains(system, "append_task_prompt") || !strings.Contains(system, "非空 text") || !strings.Contains(user, `"runId":"r"`) {
 		t.Fatalf("prompt = %q / %q", system, user)
 	}
 	for _, raw := range []string{"", "none", "```json\n{}\n```", `{"summary":""}`, `{"summary":"x","dimensions":{}}`} {

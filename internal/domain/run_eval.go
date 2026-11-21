@@ -183,14 +183,34 @@ type RunEvalRecommendation struct {
 	ApplyError      string            `json:"applyError,omitempty"`
 }
 
+func (r RunEvalRecommendation) AppendText() string {
+	if text := strings.TrimSpace(r.Text); text != "" {
+		return text
+	}
+	for _, key := range []string{"text", "instructionsDelta"} {
+		raw, ok := r.Set[key]
+		if !ok || raw == nil {
+			continue
+		}
+		if text := strings.TrimSpace(fmt.Sprint(raw)); text != "" && text != "<nil>" {
+			return text
+		}
+	}
+	return ""
+}
+
 func (r RunEvalRecommendation) Applyable() bool {
 	if r.Status == RunEvalRecApplied {
 		return false
 	}
+	if strings.TrimSpace(r.TargetID) == "" && strings.TrimSpace(r.NodeID) == "" {
+		return false
+	}
 	switch NormalizeRunEvalAction(r.Target, r.Action) {
-	case "workflow.update_node", "agent.upsert_gate", "agent.remove_gate",
-		"agent.append_instructions", "agent.append_task_prompt":
-		return strings.TrimSpace(r.TargetID) != "" || strings.TrimSpace(r.NodeID) != ""
+	case "workflow.update_node", "agent.upsert_gate", "agent.remove_gate":
+		return true
+	case "agent.append_instructions", "agent.append_task_prompt":
+		return r.AppendText() != ""
 	default:
 		return false
 	}
