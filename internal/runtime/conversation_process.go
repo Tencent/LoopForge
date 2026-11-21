@@ -285,6 +285,10 @@ func (p *ConversationProcessPool) Handle(ctx context.Context, root, workspace st
 		defer stopWrite()
 		if req.EOF {
 			err = input.Close()
+			// Process teardown can close stdin before the caller sends EOF.
+			if errors.Is(err, os.ErrClosed) {
+				err = nil
+			}
 		} else {
 			_, err = io.WriteString(input, conversationRemap(req.Data, req.SourceRoot, root))
 		}
