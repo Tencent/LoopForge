@@ -84,7 +84,10 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Install validation dependencies
-        run: python3 -m pip install pyyaml==6.0.3
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ripgrep
+          python3 -m pip install pyyaml==6.0.3
 
       - name: Validate release contents
         run: |
