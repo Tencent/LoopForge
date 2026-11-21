@@ -1,5 +1,6 @@
 -- Run after 033_generic_sop_mr_node.sql and the Git credential cutover.
 -- Replace the shipped authentication instruction in the built-in MR roles.
+-- Compare catalog IDs byte-for-byte across JSON and table collations.
 SET NAMES utf8mb4;
 
 SET @old_mr_auth = 'GitHub 仓库优先用已配置的 GitHub MCP，没有时用 curl 调 GitHub API，令牌取 $AGENTFLOW_GIT_TOKEN；其它托管平台用已配置的对应 MCP。';
@@ -10,7 +11,7 @@ JOIN JSON_TABLE(t.payload, '$.Agents[*]' COLUMNS (
     agent_order FOR ORDINALITY,
     agent_id VARCHAR(64) PATH '$.id',
     agent_prompt TEXT PATH '$.prompt'
-)) a ON a.agent_id = CONCAT(t.id, '-mr')
+)) a ON CAST(a.agent_id AS BINARY) = CAST(CONCAT(t.id, '-mr') AS BINARY)
 SET t.payload = JSON_SET(t.payload, CONCAT('$.Agents[', a.agent_order - 1, '].prompt'),
     REPLACE(a.agent_prompt, @old_mr_auth, @new_mr_auth)),
     t.updated_at = UTC_TIMESTAMP()

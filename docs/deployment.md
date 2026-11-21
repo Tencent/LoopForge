@@ -15,6 +15,8 @@ npm install --global @openai/codex@0.162.1 @anthropic-ai/claude-code@2.1.326
 
 Ensure the service can find `codebuddy` and Node.js on its PATH, or set `AGENTFLOW_CODEBUDDY_BIN` to the installed executable. Configure the model key and its network environment in personal settings. The no-key script demo does not need the CLI. The production Docker image includes CodeBuddy, Codex and DeepSeek Harness (`dsh`). Claude Code and the other agent CLIs are not bundled. When a conversation fails because one is missing, the error says it is not installed and offers an install button. That downloads the pinned `@anthropic-ai/claude-code` release, or the public package for OpenCode, Kimi Code and Pi, into `$LOOPFORGE_DATA_DIR/cli`; an installation outside the image gets the pinned `@deepseek-ai/dsh` release the same way. Cursor CLI and Antigravity use their providers' installers and land in the service user's `~/.local/bin`. Closing or reloading the browser does not stop an install that has already started, and the button stays on “自动安装” until it finishes. A finished install replaces the earlier generation failure with a prompt to send the message again. The next message reuses the installation. An SOP sandbox of the published image that selects Claude Code, OpenCode, Kimi Code or Pi installs the same package on first use and shares it with conversations. Cursor CLI and Antigravity are not installed into SOP sandboxes. Connected runners keep their own CLI requirements.
 
+WeCom notifications require `wecom-cli` on the platform service's PATH. The platform image built from this Dockerfile includes `@wecom/cli@1.3.4`; published images gain it with the next release. For a native installation, install it separately with `npm install --global @wecom/cli@1.3.4`, ensure system CA certificates are installed, and verify `wecom-cli --version` as the service user. Configuring a WeCom bot is still required to send notifications.
+
 Set `AGENTFLOW_MANAGED_CLI_ROOT` to a persistent absolute directory to enable the daily CLI updater on platform processes that execute runs (`worker` or `all`). By default it checks Claude Code, CodeBuddy, and Codex. Set `AGENTFLOW_MANAGED_CLIS` to the full comma-separated list you want to update, for example `claude-code,codebuddy,codex,pi`. The additional provider IDs are `agy`, `cursor`, `dsh`, `kimi`, `opencode`, and `pi`. The updater ignores empty entries, including trailing commas. A list with no names uses the default, and any unknown ID rejects the update. This list applies to scheduled checks, the bulk CLI update command, and managed CLI updates on Runners. Existing installations and rollback remain available. Set the same list on API and worker processes that share a managed root. The API uses the list when resolving CodeBuddy and workers claim the daily check once per root.
 
 The updater checks upstream metadata daily and downloads an eligible release when needed. It verifies npm package integrity using Subresource Integrity (SRI) before running npm lifecycle scripts. Antigravity archives are checked against the official manifest's SHA512. The official Cursor installer supplies a versioned URL without a content checksum. Cursor download integrity relies on TLS and a matching strong ETag, an opaque identifier from the archive server. [Cursor install script](https://cursor.com/install)
@@ -36,14 +38,15 @@ Use `AGENTFLOW_MYSQL_DSN` for your own MySQL deployment. A fresh account command
 ## Container installation
 
 ```bash
-./start.sh             # install or start in the background (same as bash scripts/install.sh)
-./start.sh logs        # follow platform logs
-./start.sh stop        # stop; ./start.sh down removes containers but keeps data volumes
-./start.sh restart     # restart the platform container
-./start.sh pull        # refresh images and recreate changed containers
-MIRROR=ghcr.nju.edu.cn ./start.sh  # same install; replace the ghcr.io host with this registry
-./start.sh dev         # build this checkout instead (compose.dev.yaml)
-./start.sh release     # switch a source build back to the published image
+./start.sh                        # install or start in the background (same as bash scripts/install.sh)
+./start.sh logs                   # follow platform logs
+./start.sh stop                   # stop; ./start.sh down removes containers but keeps data volumes
+./start.sh restart                # restart the platform container
+./start.sh pull                   # refresh images; times ghcr.io against ghcr.nju.edu.cn
+MIRROR=ghcr.io ./start.sh         # install from ghcr.io without the speed test
+MIRROR=ghcr.nju.edu.cn ./start.sh # force that host instead of the speed test
+./start.sh dev                    # build this checkout instead (compose.dev.yaml)
+./start.sh release                # switch a source build back to the published image
 ```
 
 The installer checks Docker, Compose, Python 3 and curl. It offers to install missing Python/curl packages using apt, dnf or yum on Linux (Homebrew on macOS), Docker using its official installer, and the missing Linux x86_64/arm64 Compose plugin using the pinned official release with SHA-256 verification. A plugin is installed for the active Docker user, or system-wide when Docker requires sudo. macOS Compose comes from Docker Desktop. Set `LOOPFORGE_YES=1` to accept installation prompts; internet access and package-manager/administrator permissions are still required. The installer generates `.env` with unique secrets, pulls and starts the containers, installs the observability columns and applies `migrations/seed/*.sql`. It is safe to re-run. Set `AGENTFLOW_HTTP_PORT` or `LOOPFORGE_MYSQL_PORT` in the environment before the first run (or edit `.env` later) when the default ports are taken.
@@ -61,10 +64,11 @@ git fetch --tags && git checkout vX.Y.Z
 
 The new `compose.yaml` brings the image pin and any new platform settings together, and `./start.sh pull` recreates the platform container when either changes. A source build from `./start.sh dev` is not rebuilt by `./start.sh pull`; run `./start.sh dev` again after updating the checkout. Running `./start.sh pull` alone keeps the pinned version. With `LOOPFORGE_IMAGE` saved in `.env`, change it to the checked-out release as well; a newer image with an older `compose.yaml` can miss settings that release needs.
 
-Where `ghcr.io` downloads stall, set `MIRROR` to the registry host that replaces `ghcr.io`. `./start.sh` and `./start.sh pull` pull that reference and tag it back to the name in `compose.yaml`. Setting `MIRROR` trusts that host, because the result is tagged with the official name. The GitHub Release records the image digest; `docker image inspect --format '{{index .RepoDigests 0}}' ghcr.io/tencent/loopforge:<pin>` should show the same digest after `@`. The pull policy stays `missing` on install, so a local image is kept; `./start.sh pull` refreshes it from the same host. Leaving `MIRROR` unset preserves the direct `ghcr.io` pull. [ghcr.nju.edu.cn](https://doc.nju.edu.cn/books/e1654/page/ghcr) is one compatible host. Docker's `registry-mirrors` setting, including `https://docker.nju.edu.cn`, only applies to Docker Hub and cannot be used as `MIRROR`. A `LOOPFORGE_IMAGE` value that is not a `ghcr.io` name:tag is left unchanged.
+Where `ghcr.io` downloads stall, `./start.sh` and `./start.sh pull` time `ghcr.io` against [ghcr.nju.edu.cn](https://doc.nju.edu.cn/books/e1654/page/ghcr). Nanjing is used only when its manifest digest matches the digest just read from ghcr.io; that digest is what gets pulled, then tagged back to the name in `compose.yaml`, which trusts that host. A missing official digest, a mismatch, or a failed mirror pull stays on `ghcr.io`. `MIRROR=ghcr.io` forces the upstream registry; any other `MIRROR` host forces that registry, skips the speed test, and does not fall back. The choice is not written to `.env`. The pull policy stays `missing` on install, so a local image is kept and is not timed again; `./start.sh pull` times the registries and refreshes from the winner. The GitHub Release records the image digest; `docker image inspect --format '{{index .RepoDigests 0}}' ghcr.io/tencent/loopforge:<pin>` should show the same digest after `@`. Docker's `registry-mirrors` setting, including `https://docker.nju.edu.cn`, only applies to Docker Hub and cannot be used as `MIRROR`. A `LOOPFORGE_IMAGE` value that is not a `ghcr.io` name:tag is left unchanged.
 
 ```bash
-MIRROR=ghcr.nju.edu.cn ./start.sh
+./start.sh
+MIRROR=ghcr.io ./start.sh pull
 MIRROR=ghcr.nju.edu.cn ./start.sh pull
 ```
 
@@ -161,7 +165,7 @@ Configure provider credentials in the platform UI, not the host's global CLI con
 
 ## Observability schema
 
-After the base tables have been created, run `bash scripts/install-schema-extensions.sh` for the Compose database. It installs absent `run_telemetry.adapter` and `run_logs.level` columns and their indexes from upstream migration `001_run_obs_generated_columns.sql`, then replays the `INSERT IGNORE` starter catalog and the built-in catalog rewrites from `031_generic_backend_openssh.sql` and `033_generic_sop_mr_node.sql`. Every step can be repeated without touching existing rows. The installer runs it before printing the address, and `./start.sh pull` runs it again after recreating containers, so an older data volume upgraded to a newer image picks up the columns the new code reads and the built-in SOP graphs the new code ships. Application startup does not run data migrations.
+After the base tables have been created, run `bash scripts/install-schema-extensions.sh` for the Compose database. It installs absent `run_telemetry.adapter` and `run_logs.level` columns and their indexes from upstream migration `001_run_obs_generated_columns.sql`, then replays the `INSERT IGNORE` starter catalog and the built-in catalog rewrites from `031_generic_backend_openssh.sql`, `033_generic_sop_mr_node.sql`, and `038_generic_sop_host_credentials.sql` in that order. The rewrites are repeatable and apply only to matching defaults. The installer runs it before printing the address, and `./start.sh pull` runs it again after recreating containers, so an older data volume upgraded to a newer image picks up the columns the new code reads and the built-in SOP graphs the new code ships. Application startup does not run data migrations.
 
 For an external MySQL deployment, review that migration and check column existence before applying its corresponding statements. Stored generated columns can rebuild large existing tables; schedule the operation accordingly.
 
@@ -171,9 +175,9 @@ For an external MySQL deployment, review that migration and check column existen
 
 | Kind | Example | What an operator does |
 | --- | --- | --- |
-| Already applied by the installer and `./start.sh pull` | `001_run_obs_generated_columns.sql`, `migrations/seed/*.sql`, `031_generic_backend_openssh.sql`, `033_generic_sop_mr_node.sql` | Nothing; the script above covers it |
-| Must run once when upgrading | `009_bot_interactions_utf8mb4.sql` (`CONVERT TO` an existing table), new tables and columns added by hand | Run it on the database after reviewing prerequisites |
-| Backfills and one-time rewrites of existing rows | `016_public_optional_repositories.sql`, `021_assistant_session_sources.sql` | Run it if the history matters; skipping it changes no schema but leaves old rows unconverted |
+| Already applied by the installer and `./start.sh pull` | `001_run_obs_generated_columns.sql`, `migrations/seed/*.sql`, `031_generic_backend_openssh.sql`, `033_generic_sop_mr_node.sql`, `038_generic_sop_host_credentials.sql` | Nothing; the script above covers it |
+| Required upgrade migrations | `009_bot_interactions_utf8mb4.sql`, `036_git_http_credentials.sql` | Follow each migration's timing and prerequisites. [Migrating existing GitHub credentials](#migrating-existing-github-credentials) |
+| Optional backfills and rewrites of existing rows | `016_public_optional_repositories.sql`, `021_assistant_session_sources.sql` | Run them if the installation needs the converted rows |
 
 ## Updating existing public SOPs
 
@@ -185,15 +189,14 @@ docker compose exec -T mysql sh -c 'MYSQL_PWD="$MYSQL_PASSWORD" mysql -u loopfor
 
 This repeatable SQL changes only instruction fields that still match the original public seed. It preserves operator edits and project copies. New installations already receive these instructions from the public catalog seed; application startup does not migrate data.
 
-The 「发起 MR」 node of the built-in backend, frontend and defect-fix SOPs comes with `033_generic_sop_mr_node.sql`, which `scripts/install-schema-extensions.sh` replays on install and on `./start.sh pull`, so an upgrade needs no manual step. To apply it to an installation already running a newer image (or after editing the graph back to the shipped one), run it by hand:
+On Compose installs, the installer and `./start.sh pull` add the 「发起 MR」 node to the built-in backend, frontend, and defect-fix SOPs. They apply `033_generic_sop_mr_node.sql` to add the step, then `038_generic_sop_host_credentials.sql` to update the original MR role instructions. To apply the SQL manually, run both migrations in the same order.
 
 ```bash
-docker compose exec -T mysql sh -c 'MYSQL_PWD="$MYSQL_PASSWORD" mysql -u loopforge loopforge' < migrations/033_generic_sop_mr_node.sql
+cat migrations/033_generic_sop_mr_node.sql migrations/038_generic_sop_host_credentials.sql \
+  | docker compose exec -T mysql sh -c 'MYSQL_PWD="$MYSQL_PASSWORD" mysql -u loopforge loopforge'
 ```
 
-After it, a run of these SOPs commits and pushes its work branch and opens an MR/PR before 交付汇总, so the Git credentials of the run's responsible user need push access: without them the run stops at 发起 MR for a person instead of succeeding. It rewrites a template only while its node graph and 交付汇总 position are the shipped original, and the 交付汇总 prompt only while unedited; it is safe to repeat. Project SOPs adopted from these templates are copies and are not changed.
-
-After migrating personal Git credentials, apply `038_generic_sop_host_credentials.sql` to update the original authentication instruction in the three built-in MR roles. The roles can use a hosting CLI, a configured MCP, or the host's API with a token obtained through `git credential fill`.
+Migration 033 checks that the node graph and 交付汇总 position still match the shipped template. It updates the 交付汇总 prompt only when it is unedited. Migration 038 replaces the original Git authentication instruction with guidance to use a hosting CLI, a configured MCP, or `git credential fill` for API access. Both migrations preserve project copies and can be repeated. The Git credentials of the run's responsible user need push access for the new step to complete.
 
 ## GitHub credentials
 
@@ -208,6 +211,18 @@ The flow requests the OAuth `repo` scope so private cloning, pushes, Issues and 
 GitHub Issue import and PR status synchronization use the project owner's Git token. Git operations and the optional GitHub MCP integration use the responsible user's token. Public reads may work without a token; private repositories and writes require repository access. GitHub MCP must be installed explicitly and sends credentials only to its official HTTPS endpoint.
 
 Git commits created by the platform use the responsible local account name and a non-deliverable `@users.noreply.loopforge.invalid` email. A local account does not establish a corporate email or a verified GitHub identity.
+
+### Migrating existing GitHub credentials
+
+When upgrading from v0.4.0 to a version that reads HTTPS credentials by host, stop the old API and workers and keep MySQL running. Apply the target release's `036_git_http_credentials.sql` manually before starting the upgraded platform or running `./start.sh pull`. For Compose, use:
+
+```bash
+docker compose exec -T mysql sh -c 'MYSQL_PWD="$MYSQL_PASSWORD" mysql -u loopforge loopforge' < migrations/036_git_http_credentials.sql
+```
+
+The backfill copies existing GitHub personal access tokens and device-flow grants into `github.com` entries. If an installation already upgraded and a user's token is still in the legacy column, applying the backfill restores the missing entry. An existing `github.com` entry takes precedence.
+
+Verify the credentials after upgrading. After the rollback window, run `037_retire_plain_git_token.sql` manually using the same command with the cleanup filename. It clears a legacy token only when the corresponding `github.com` entry holds the same value. If the values differ, both are kept.
 
 ## CodeBuddy authentication environment
 
