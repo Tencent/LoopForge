@@ -107,6 +107,8 @@ const CREDENTIAL_KINDS=[
     note:'未填写 Base URL 时连接 DeepSeek 官方服务。',protocols:[['chat','Chat Completions'],['responses','Responses'],['messages','Messages（Anthropic）']]}),
   agentCliCredentialKind('zcode',{name:'ZCode',logo:'glm',baseUrl:'https://open.bigmodel.cn/api/anthropic',
     note:'未填写 Base URL 时连接智谱 BigModel 的 Anthropic 兼容服务（Messages）。',protocols:[['messages','Messages（Anthropic）'],['chat','Chat Completions'],['responses','Responses']]}),
+  agentCliCredentialKind('traecli',{name:'TRAE CLI',logo:'trae',baseUrl:'https://api.openai.com/v1',
+    note:'未填写 Base URL 时默认使用 OpenAI 兼容端点；也可在个人执行机器上选「账号登录」复用本地登录态。',protocols:[['responses','Responses'],['chat','Chat Completions']]}),
 ];
 function agentCliCredentialKind(cli,o){
   const field=`agentCli.${cli}.`,configurable=!!o.protocols;

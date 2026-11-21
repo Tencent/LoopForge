@@ -29,7 +29,7 @@
   const CLI_ICON = {
     codebuddy:'codebuddy.svg', codex:'codex.svg', 'claude-code':'claude.svg',
     opencode:'opencode.svg', cursor:'cursor.svg', agy:'antigravity.svg',
-    kimi:'kimi-code.png', pi:'pi.svg', dsh:'deepseek.svg', zcode:'glm.svg'
+    kimi:'kimi-code.png', pi:'pi.svg', dsh:'deepseek.svg', zcode:'glm.svg', traecli:'trae.svg'
   };
   let catalog = {
     default: DEFAULT_MODEL,
@@ -39,7 +39,7 @@
 
   function familyOf(id) {
     const raw = String(id || '').toLowerCase();
-    const v = raw.replace(/^(?:codebuddy|codex|claude-code|opencode|cursor|agy|kimi|pi|dsh|zcode):/, '').split('/').at(-1);
+    const v = raw.replace(/^(?:codebuddy|codex|claude-code|opencode|cursor|agy|kimi|pi|dsh|zcode|traecli):/, '').split('/').at(-1);
     if (/^(?:claude|anthropic|opus|sonnet|haiku|fable)(?:$|[-_.\s:\d])/.test(v)) return 'claude';
     if (/^composer(?:$|[-_.\s:\d])/.test(v) || (raw.startsWith('cursor:') && /^auto(?:-smart)?$/.test(v))) return 'cursor';
     if (v.startsWith('gpt') || v.includes('codex')) return 'gpt';

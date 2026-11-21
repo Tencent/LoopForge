@@ -78,9 +78,9 @@ func InstallConversationApproval(root, provider string, command CommandSpec) (Co
 		if err := writeAgentCLIFile(home, zcodeConfigPath, data); err != nil {
 			return command, err
 		}
-	case "codex":
+	case "codex", AgentCLITraeCLI:
 		entry := "hooks.PreToolUse=[{hooks=[{type=\"command\",command=" + strconv.Quote(launch) + ",timeout=" + strconv.Itoa(conversationApprovalHookWatchdog) + "}]}]"
-		command.Argv = append(command.Argv[:len(command.Argv)-1], "-c", "features.hooks=true", "-c", entry, command.Argv[len(command.Argv)-1])
+		command.Argv = insertTraeCLIConfigArgs(command.Argv, "-c", "features.hooks=true", "-c", entry)
 	case AgentCLIKimi:
 		// Kimi blocks only on exit code 2 and allows any other exit,
 		// including an interpreter that is missing or crashed.
