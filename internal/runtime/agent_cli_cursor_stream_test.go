@@ -94,6 +94,42 @@ func TestCursorStreamKeepsRepeatedTokensThatAreNotAToolFlush(t *testing.T) {
 	}
 }
 
+func TestCursorStreamKeepsIncrementsThatStartWithTheBuffer(t *testing.T) {
+	lines := translateCursor(
+		cursorPartial("哈", 1),
+		cursorPartial("哈哈", 2),
+		cursorPartial("！", 3),
+	)
+	deltas, _, _ := cursorVisibleText(lines)
+	if strings.Join(deltas, "") != "哈哈哈！" {
+		t.Fatalf("deltas = %#v", deltas)
+	}
+}
+
+func TestCursorStreamKeepsRepeatedLinesAwayFromAutoRouteNotice(t *testing.T) {
+	text := "输出如下：\n```\nOK\nOK\n```\n日志里如果看到 `Auto routed to` 只是普通说明。"
+	lines := translateCursor(
+		cursorPartial("输出如下：\n```\nOK\n", 1),
+		cursorPartial("OK\n```\n", 2),
+		cursorPartial("日志里如果看到 `Auto routed to` 只是普通说明。", 3),
+		fmt.Sprintf(`{"type":"result","is_error":false,"result":%q}`, text),
+	)
+	deltas, _, result := cursorVisibleText(lines)
+	if strings.Join(deltas, "") != text {
+		t.Fatalf("deltas = %#v", deltas)
+	}
+	if result != text {
+		t.Fatalf("result = %q", result)
+	}
+}
+
+func TestCursorStreamKeepsRepeatedLinesAfterTheRouteRepeat(t *testing.T) {
+	text := "进度。> Auto routed to GPT-5.6 Luna\n进度。\nOK\nOK"
+	if got := stripCursorAutoRoute(text); got != "进度。\nOK\nOK" {
+		t.Fatalf("strip = %q", got)
+	}
+}
+
 func TestCursorStreamKeepsProseThatMentionsAutoRoute(t *testing.T) {
 	text := "请解释 Auto routed to 这句提示是什么意思"
 	lines := translateCursor(cursorPartial(text, 1))

@@ -50,6 +50,10 @@ test('Chinese/English and light/dark preferences persist across reloads',async({
   await page.reload();
   await expect(page.locator('html')).toHaveAttribute('data-theme','dark');
   await expect(page.locator('html')).toHaveAttribute('lang','en');
+  if (await english.count()) {
+    await expect(page.locator('#langToggle').getByRole('radio',{name:'EN'})).toBeChecked();
+    await expect(page.locator('#langToggle').getByRole('radio',{name:'中'})).not.toBeChecked();
+  }
   // Translation must leave source code, editable content and user-marked text intact.
   await page.evaluate(()=>{
     for(const tag of ['pre','textarea']){const el=document.createElement(tag);el.id='test-'+tag;el.textContent='需求列表';document.body.append(el)}

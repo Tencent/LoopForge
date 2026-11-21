@@ -328,16 +328,11 @@ func (c *cursorStream) releaseHold(discard bool) string {
 	return c.appendPartial(text)
 }
 
-// acceptPartial returns the newly visible text. A timestamped chunk that
-// extends the buffer is a snapshot and only its new tail is shown. A chunk
-// identical to the buffer is held until the next event.
+// acceptPartial returns the newly visible text. A chunk identical to the
+// buffer is held until the next event; every other chunk is an increment,
+// even when it happens to start with the buffered text.
 func (c *cursorStream) acceptPartial(text string) string {
 	accumulated := c.partial.String()
-	if accumulated != "" && strings.HasPrefix(text, accumulated) && len(text) > len(accumulated) {
-		c.partial.Reset()
-		c.partial.WriteString(text)
-		return visiblePartial(accumulated, text[len(accumulated):])
-	}
 	if accumulated != "" && text == accumulated {
 		c.hold = text
 		c.held = true
@@ -464,63 +459,76 @@ func (c *cursorStream) translateEvent(s *ClaudeStream, raw map[string]any) []str
 }
 
 var (
-	cursorAutoRouteSuffix = regexp.MustCompile(`(?m)[ \t]*>[ \t]*Auto routed to [^\n]*`)
-	cursorAutoRouteLine   = regexp.MustCompile(`(?m)^[ \t]*Auto routed to [^\n]*\n?`)
+	cursorAutoRouteSuffix = regexp.MustCompile(`[ \t]*>[ \t]*Auto routed to .*$`)
+	cursorAutoRouteLine   = regexp.MustCompile(`^[ \t]*Auto routed to `)
 )
 
 // stripCursorAutoRoute drops Cursor Auto's routing notice from assistant
 // text. The notice is either glued on with ">" ("回复。> Auto routed to
-// GPT-5.6 Luna") or a line by itself. A progress sentence repeated on the
-// next line after that notice is the same paragraph.
+// GPT-5.6 Luna") or a line by itself. Only the first non-empty line after a
+// notice is compared with the line before it; a repeat there is the same
+// progress sentence and is dropped. Repeated lines elsewhere stay.
 func stripCursorAutoRoute(text string) string {
 	if !strings.Contains(text, "Auto routed to ") {
 		return text
 	}
-	text = cursorAutoRouteSuffix.ReplaceAllString(text, "")
-	text = cursorAutoRouteLine.ReplaceAllString(text, "")
 	lines := strings.Split(text, "\n")
 	out := make([]string, 0, len(lines))
-	var previous string
+	var anchor string
+	var blanks []string
+	pending := false
+	lastLine := func() string {
+		for i := len(out) - 1; i >= 0; i-- {
+			if trimmed := strings.TrimSpace(out[i]); trimmed != "" {
+				return trimmed
+			}
+		}
+		return ""
+	}
 	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if trimmed != "" && trimmed == previous {
+		if cursorAutoRouteLine.MatchString(line) {
+			anchor, pending, blanks = lastLine(), true, nil
 			continue
 		}
-		out = append(out, line)
-		if trimmed != "" {
-			previous = trimmed
+		if loc := cursorAutoRouteSuffix.FindStringIndex(line); loc != nil {
+			if line = line[:loc[0]]; strings.TrimSpace(line) != "" {
+				out = append(out, line)
+			}
+			anchor, pending, blanks = lastLine(), true, nil
+			continue
 		}
+		trimmed := strings.TrimSpace(line)
+		if !pending {
+			out = append(out, line)
+			continue
+		}
+		if trimmed == "" {
+			blanks = append(blanks, line)
+			continue
+		}
+		pending = false
+		if anchor != "" && trimmed == anchor {
+			blanks = nil
+			continue
+		}
+		out = append(append(out, blanks...), line)
+		blanks = nil
 	}
 	return strings.Join(out, "\n")
 }
 
-func lastNonEmptyLine(text string) string {
-	var last string
-	for _, line := range strings.Split(text, "\n") {
-		if trimmed := strings.TrimSpace(line); trimmed != "" {
-			last = trimmed
-		}
-	}
-	return last
-}
-
-// visiblePartial removes a routing notice from a new chunk. When that notice
-// is what separated two copies of the same progress sentence, the second copy
-// is dropped.
+// visiblePartial returns what a new chunk adds to the cleaned buffer, so a
+// routing notice and the repeat that follows it never reach the client.
 func visiblePartial(accumulated, raw string) string {
-	visible := stripCursorAutoRoute(raw)
 	if !strings.Contains(accumulated, "Auto routed to ") && !strings.Contains(raw, "Auto routed to ") {
-		return visible
+		return raw
 	}
-	if strings.TrimSpace(visible) == "" {
-		return ""
+	before := stripCursorAutoRoute(accumulated)
+	after := stripCursorAutoRoute(accumulated + raw)
+	if strings.HasPrefix(after, before) {
+		return after[len(before):]
 	}
-	paragraph := strings.TrimSpace(visible)
-	previous := lastNonEmptyLine(stripCursorAutoRoute(accumulated))
-	if paragraph != "" && previous != "" && paragraph == previous {
-		return ""
-	}
-	return visible
+	return stripCursorAutoRoute(raw)
 }
 
 // antigravityStream: `agy -p --output-format stream-json`.
