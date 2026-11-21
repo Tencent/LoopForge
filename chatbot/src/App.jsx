@@ -651,6 +651,7 @@ export default function App() {
       draftReady.current !== draftKey
     ) return;
     let current = true;
+    const focusBeforeHandoff = document.activeElement;
     api(`/api/issues/${encodeURIComponent(issueMention.issueId)}`)
       .then((data) => {
         if (!current) return;
@@ -668,8 +669,9 @@ export default function App() {
         setMention(null);
         const editor = input.current;
         requestAnimationFrame(() => {
-          if (!editor?.isConnected || editor.value !== value.text) return;
-          if (document.activeElement !== document.body && document.activeElement !== editor) return;
+          // Preserve the user’s focus if they interacted during the handoff.
+          if (draftReady.current !== draftKey || !editor?.isConnected || editor.value !== value.text) return;
+          if (document.activeElement !== focusBeforeHandoff) return;
           editor.focus();
           editor.setSelectionRange(value.caret, value.caret);
         });
