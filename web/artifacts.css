@@ -32,6 +32,33 @@
 .artifact-content{margin:0;padding:0;white-space:pre-wrap;word-break:break-word;font:12px/1.7 var(--mono);color:var(--text)}
 .artifact-loading{padding:60px 0;text-align:center;color:var(--muted-2);font-size:13px}
 
+/* Read-only workspace file preview */
+.run-file-browser{display:flex;flex-direction:column;flex:1;min-height:0;overflow:hidden}
+.run-file-browser>.artifact-preview-head{padding-right:60px}
+.run-file-layout{display:grid;grid-template-columns:250px minmax(0,1fr);flex:1;min-height:0;overflow:hidden}
+.run-file-sidebar{display:flex;flex-direction:column;min-height:0;min-width:0;border-right:1px solid var(--line);background:var(--bg-soft)}
+.run-file-navigation{display:flex;align-items:center;gap:8px;padding:10px;min-width:0}
+.run-file-navigation>span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;color:var(--muted)}
+.run-file-search{display:grid;gap:6px;padding:0 10px 10px;font-size:11px;color:var(--muted)}
+.run-file-search input{width:100%;min-width:0}
+.run-file-list{overflow:auto;min-height:0;padding:0 6px 8px;overscroll-behavior:contain}
+.run-file-entry{display:flex;align-items:center;gap:8px;width:100%;min-width:0;padding:9px 7px;border:0;border-radius:6px;background:transparent;text-align:left;color:var(--text);cursor:pointer;font-size:12px}
+.run-file-entry>span:last-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.run-file-entry:hover,.run-file-entry[aria-current]{background:var(--hover)}
+.run-file-entry:focus-visible{outline:2px solid var(--blue);outline-offset:-2px}
+.run-file-kind{flex-shrink:0;color:var(--muted);font-size:10px}
+.run-file-notice{padding:6px;font-size:11px;color:var(--muted)}
+.run-file-document{display:flex;flex-direction:column;min-width:0;min-height:0;overflow:hidden}
+.run-file-toolbar{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 16px;border-bottom:1px solid var(--line);font-size:12px}
+.run-file-toolbar>b{min-width:0;overflow-wrap:anywhere}
+.run-file-toolbar>.artifact-view-mode{flex-shrink:0}
+.run-file-document .empty-properties{overflow:auto;padding:24px;overflow-wrap:anywhere}
+@media(max-width:650px){
+  .run-file-layout{grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(140px,30%) minmax(0,1fr)}
+  .run-file-sidebar{border-right:0;border-bottom:1px solid var(--line)}
+  .run-file-document .artifact-body{padding:16px}
+}
+
 /* Markdown 渲染样式体系 */
 .markdown-body{font-size:13px;line-height:1.75;color:var(--text);word-break:break-word}
 .markdown-body>*:first-child{margin-top:0!important}
