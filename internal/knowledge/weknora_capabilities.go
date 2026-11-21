@@ -1,0 +1,343 @@
+package knowledge
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
+	"fmt"
+	"net/http"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+
+	"agentflow/internal/apperr"
+	"agentflow/internal/domain"
+)
+
+const (
+	// weknoraSentinelID is a well-formed but zero knowledge base/document id.
+	// Every capability probe targets it so a probe can never mutate real data.
+	weknoraSentinelID = "00000000-0000-0000-0000-000000000000"
+	// weknoraCapabilityTTL is how long one probed capability set stays fresh.
+	weknoraCapabilityTTL = 5 * time.Minute
+	// weknoraCapabilityProbeTimeout bounds a single dry-run request.
+	weknoraCapabilityProbeTimeout = 10 * time.Second
+	// capabilityUnsupportedProviderReason is returned for MCP-only providers.
+	capabilityUnsupportedProviderReason = "provider does not support WeKnora REST management"
+)
+
+// capabilityProbe is one zero-side-effect request against a sentinel id. A
+// structured 4xx proves the route exists and the credential passed its gate.
+type capabilityProbe struct {
+	capability domain.KnowledgeCapability
+	method     string
+	path       string
+	payload    any
+}
+
+func weKnoraCapabilityProbes() []capabilityProbe {
+	id := weknoraSentinelID
+	return []capabilityProbe{
+		{domain.CapKBManage, http.MethodPatch, "/api/v1/knowledge-bases/" + id, map[string]any{}},
+		{domain.CapDocWrite, http.MethodPut, "/api/v1/knowledge/manual/" + id, map[string]any{}},
+		{domain.CapReparse, http.MethodPost, "/api/v1/knowledge/" + id + "/reparse", map[string]any{}},
+		{domain.CapChunkRead, http.MethodGet, "/api/v1/chunks/" + id + "?page=1&page_size=1", nil},
+		{domain.CapPreviewDownload, http.MethodGet, "/api/v1/knowledge/" + id + "/preview", nil},
+	}
+}
+
+// probeConnectionCapabilities discovers the five management capabilities of one
+// connection. Probes run concurrently with an individual timeout, and a failed
+// probe only yields unknown/unavailable for that capability: it never turns the
+// connection itself into a failure.
+func probeConnectionCapabilities(ctx context.Context, conn domain.KnowledgeConnection, client *WeKnoraClient) domain.ConnectionCapabilities {
+	return probeConnectionCapabilitiesWithin(ctx, conn, client, weknoraCapabilityProbeTimeout)
+}
+
+func probeConnectionCapabilitiesWithin(ctx context.Context, conn domain.KnowledgeConnection, client *WeKnoraClient, timeout time.Duration) domain.ConnectionCapabilities {
+	if conn.EffectiveProvider() != domain.KnowledgeProviderWeKnora {
+		return capabilitiesWithReason(domain.CapabilityUnavailable, capabilityUnsupportedProviderReason)
+	}
+	if client == nil {
+		return capabilitiesWithReason(domain.CapabilityUnknown, "未配置 WeKnora 客户端，无法探测")
+	}
+	out := domain.ConnectionCapabilities{
+		CheckedAt:    time.Now().UTC().Format(time.RFC3339),
+		Capabilities: make(map[domain.KnowledgeCapability]domain.CapabilityStatus, len(domain.KnowledgeCapabilities)),
+	}
+	probes := weKnoraCapabilityProbes()
+	results := make(chan capabilityProbeResult, len(probes))
+	for _, probe := range probes {
+		go func(probe capabilityProbe) {
+			results <- capabilityProbeResult{
+				capability: probe.capability,
+				status:     runCapabilityProbe(ctx, client, probe, timeout),
+			}
+		}(probe)
+	}
+	for range probes {
+		result := <-results
+		out.Capabilities[result.capability] = result.status
+	}
+	return out
+}
+
+type capabilityProbeResult struct {
+	capability domain.KnowledgeCapability
+	status     domain.CapabilityStatus
+}
+
+func runCapabilityProbe(ctx context.Context, client *WeKnoraClient, probe capabilityProbe, timeout time.Duration) domain.CapabilityStatus {
+	probeCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	return classifyCapabilityProbe(client.doJSON(probeCtx, probe.method, probe.path, probe.payload, nil))
+}
+
+// classifyCapabilityProbe maps a probe outcome to a tri-state verdict:
+//
+//	2xx, 400, structured 404, other handled 4xx -> available
+//	401/403, bare 404, 405, 501                  -> unavailable (route/scope missing)
+//	5xx, timeout, transport failure              -> unknown (probe inconclusive)
+func classifyCapabilityProbe(err error) domain.CapabilityStatus {
+	if err == nil {
+		return availableStatus()
+	}
+	if status, denied := capabilityDenialStatus(err); denied {
+		return status
+	}
+	var upstream *UpstreamError
+	if errors.As(err, &upstream) {
+		switch {
+		case upstream.Status >= 500:
+			return unknownStatus(fmt.Sprintf("探测请求上游异常（HTTP %d），结果未知", upstream.Status))
+		case upstream.Status >= 400:
+			return availableStatus()
+		default:
+			return unknownStatus(fmt.Sprintf("探测请求返回异常状态（HTTP %d），结果未知", upstream.Status))
+		}
+	}
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+		return unknownStatus("探测请求超时，结果未知")
+	}
+	return unknownStatus("探测请求失败，结果未知")
+}
+
+// capabilityDenialStatus recognizes failures that prove the capability is not
+// usable: missing credential scope (401/403), a route the upstream does not
+// serve (bare 404/405/501). A structured 404 is a real missing resource and
+// must not be treated as a denial.
+func capabilityDenialStatus(err error) (domain.CapabilityStatus, bool) {
+	var upstream *UpstreamError
+	if !errors.As(err, &upstream) {
+		return domain.CapabilityStatus{}, false
+	}
+	switch {
+	case upstream.Status == http.StatusUnauthorized || upstream.Status == http.StatusForbidden:
+		return unavailableStatus(fmt.Sprintf("上游拒绝该操作（HTTP %d），连接凭据缺少对应权限", upstream.Status)), true
+	case upstream.Status == http.StatusNotFound && !upstream.Structured:
+		return unavailableStatus("上游未提供该管理接口（HTTP 404），探测路由缺失"), true
+	case upstream.Status == http.StatusMethodNotAllowed || upstream.Status == http.StatusNotImplemented:
+		return unavailableStatus(fmt.Sprintf("上游未提供该管理接口（HTTP %d）", upstream.Status)), true
+	default:
+		return domain.CapabilityStatus{}, false
+	}
+}
+
+// capabilityUnavailableError is the structured 503 contract returned when a
+// management action targets a capability the connection does not expose.
+func capabilityUnavailableError(connectionID string, capability domain.KnowledgeCapability, status domain.CapabilityStatus) *apperr.Error {
+	reason := strings.TrimSpace(status.Reason)
+	message := "当前知识库连接不支持该管理操作：" + string(capability)
+	if reason != "" {
+		message += "（" + reason + "）"
+	}
+	return apperr.New(apperr.Unavailable, message).
+		With("code", "capability_unavailable").
+		With("capability", string(capability)).
+		With("connectionId", connectionID).
+		With("status", string(status.Status)).
+		With("reason", reason)
+}
+
+func availableStatus() domain.CapabilityStatus {
+	return domain.CapabilityStatus{Status: domain.CapabilityAvailable}
+}
+
+func unavailableStatus(reason string) domain.CapabilityStatus {
+	return domain.CapabilityStatus{Status: domain.CapabilityUnavailable, Reason: reason}
+}
+
+func unknownStatus(reason string) domain.CapabilityStatus {
+	return domain.CapabilityStatus{Status: domain.CapabilityUnknown, Reason: reason}
+}
+
+// capabilitiesWithReason builds a full five-entry set with one verdict, used
+// when a probe cannot run at all.
+func capabilitiesWithReason(state domain.CapabilityState, reason string) domain.ConnectionCapabilities {
+	caps := domain.ConnectionCapabilities{
+		CheckedAt:    time.Now().UTC().Format(time.RFC3339),
+		Capabilities: make(map[domain.KnowledgeCapability]domain.CapabilityStatus, len(domain.KnowledgeCapabilities)),
+	}
+	for _, capability := range domain.KnowledgeCapabilities {
+		caps.Capabilities[capability] = domain.CapabilityStatus{Status: state, Reason: reason}
+	}
+	return caps
+}
+
+func cloneCapabilitySet(in domain.ConnectionCapabilities) domain.ConnectionCapabilities {
+	out := domain.ConnectionCapabilities{CheckedAt: in.CheckedAt}
+	out.Capabilities = make(map[domain.KnowledgeCapability]domain.CapabilityStatus, len(in.Capabilities))
+	for capability, status := range in.Capabilities {
+		out.Capabilities[capability] = status
+	}
+	return out
+}
+
+// capabilityFingerprint invalidates a cached set as soon as any connection
+// field that can change the upstream identity is edited.
+func capabilityFingerprint(conn domain.KnowledgeConnection) string {
+	raw := strings.Join([]string{
+		conn.EffectiveProvider(),
+		NormalizeWeKnoraBaseURL(conn.URL),
+		strings.TrimSpace(conn.Token),
+		strconv.FormatBool(conn.Enabled),
+	}, "|")
+	sum := sha256.Sum256([]byte(raw))
+	return hex.EncodeToString(sum[:])
+}
+
+type capabilityCacheEntry struct {
+	fingerprint string
+	expiresAt   time.Time
+	caps        domain.ConnectionCapabilities
+}
+
+type capabilityFlight struct {
+	done chan struct{}
+	caps domain.ConnectionCapabilities
+}
+
+// capabilityCache is the in-process capability cache mounted on Service.
+// Entries are keyed by connection id and invalidated by TTL or fingerprint, and
+// concurrent callers share a single in-flight probe per connection/config.
+type capabilityCache struct {
+	mu       sync.RWMutex
+	items    map[string]capabilityCacheEntry
+	inflight map[string]*capabilityFlight
+	ttl      time.Duration
+	now      func() time.Time
+}
+
+func newCapabilityCache() *capabilityCache {
+	return &capabilityCache{
+		items:    map[string]capabilityCacheEntry{},
+		inflight: map[string]*capabilityFlight{},
+		ttl:      weknoraCapabilityTTL,
+		now:      time.Now,
+	}
+}
+
+// get returns the cached capability set for conn, probing once when the entry
+// is missing, expired or bound to a stale configuration fingerprint.
+func (c *capabilityCache) get(ctx context.Context, conn domain.KnowledgeConnection, probe func(context.Context) domain.ConnectionCapabilities) domain.ConnectionCapabilities {
+	key := connectionCacheKey(conn)
+	fingerprint := capabilityFingerprint(conn)
+	flightKey := key + "|" + fingerprint
+
+	c.mu.RLock()
+	if entry, ok := c.items[key]; ok && entry.fingerprint == fingerprint && c.now().Before(entry.expiresAt) {
+		caps := cloneCapabilitySet(entry.caps)
+		c.mu.RUnlock()
+		return caps
+	}
+	flight, running := c.inflight[flightKey]
+	c.mu.RUnlock()
+	if running {
+		return c.await(ctx, flight)
+	}
+
+	c.mu.Lock()
+	if flight, running := c.inflight[flightKey]; running {
+		c.mu.Unlock()
+		return c.await(ctx, flight)
+	}
+	flight = &capabilityFlight{done: make(chan struct{})}
+	c.inflight[flightKey] = flight
+	c.mu.Unlock()
+
+	caps := probe(ctx)
+
+	c.mu.Lock()
+	delete(c.inflight, flightKey)
+	c.rememberLocked(key, fingerprint, caps)
+	flight.caps = cloneCapabilitySet(caps)
+	close(flight.done)
+	c.mu.Unlock()
+	return cloneCapabilitySet(caps)
+}
+
+func (c *capabilityCache) await(ctx context.Context, flight *capabilityFlight) domain.ConnectionCapabilities {
+	select {
+	case <-flight.done:
+		return cloneCapabilitySet(flight.caps)
+	case <-ctx.Done():
+		return capabilitiesWithReason(domain.CapabilityUnknown, "等待能力探测结果超时")
+	}
+}
+
+func (c *capabilityCache) rememberLocked(key, fingerprint string, caps domain.ConnectionCapabilities) {
+	c.items[key] = capabilityCacheEntry{
+		fingerprint: fingerprint,
+		expiresAt:   c.now().Add(c.ttl),
+		caps:        cloneCapabilitySet(caps),
+	}
+}
+
+// invalidate drops the cached set of one connection, e.g. after settings are
+// saved or the connection is deleted.
+func (c *capabilityCache) invalidate(connectionID string) {
+	connectionID = strings.TrimSpace(connectionID)
+	if connectionID == "" {
+		connectionID = "default"
+	}
+	c.mu.Lock()
+	delete(c.items, connectionID)
+	c.mu.Unlock()
+}
+
+// demoteDenied rewrites one cached capability to unavailable after a live
+// management call was refused even though the cache said available. It reports
+// a denial for any recognizable refusal, whether or not an entry was cached.
+func (c *capabilityCache) demoteDenied(conn domain.KnowledgeConnection, capability domain.KnowledgeCapability, err error) (domain.CapabilityStatus, bool) {
+	status, denied := capabilityDenialStatus(err)
+	if !denied {
+		return domain.CapabilityStatus{}, false
+	}
+	c.demote(conn, capability, status)
+	return status, true
+}
+
+func (c *capabilityCache) demote(conn domain.KnowledgeConnection, capability domain.KnowledgeCapability, status domain.CapabilityStatus) bool {
+	key := connectionCacheKey(conn)
+	fingerprint := capabilityFingerprint(conn)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	entry, ok := c.items[key]
+	if !ok || entry.fingerprint != fingerprint {
+		return false
+	}
+	caps := cloneCapabilitySet(entry.caps)
+	caps.Capabilities[capability] = status
+	entry.caps = caps
+	c.items[key] = entry
+	return true
+}
+
+func connectionCacheKey(conn domain.KnowledgeConnection) string {
+	if key := strings.TrimSpace(conn.ID); key != "" {
+		return key
+	}
+	return "default"
+}
