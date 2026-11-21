@@ -568,7 +568,7 @@ func (h *scheduleHandlers) startBaselineAlignRun(job domain.ScheduleJob, repo do
 	input := fmt.Sprintf(`对齐仓库 %s 的集成分支 %s 与默认分支 %s。冲突文件：%s。
 
 ## 执行要求（严格，禁止只输出计划）
-1. 在当前工作分支执行 git fetch origin %s && git merge origin/%s
+1. 进入本次对齐仓库的检出目录，在当前工作分支执行 git fetch origin %s && git merge origin/%s
 2. 逐个解决下方列出的冲突块：原则是保留双方有效实现；不确定取舍时选择对业务影响最小的方案并在提交说明里标注
 3. 全部解决后 git add 并 git commit，提交说明必须列出冲突文件与每个文件的取舍
 4. 不要 push（平台在校验通过后自动推送并创建基线 MR）；不要改动默认分支 %s
@@ -590,7 +590,7 @@ func (h *scheduleHandlers) startBaselineAlignRun(job domain.ScheduleJob, repo do
 	return run.ID, nil
 }
 
-const baselineAlignWorkflowVersion = 7
+const baselineAlignWorkflowVersion = 8
 
 func alignWorkflowUsesPlatformAgent(wf domain.WorkflowDefinition) bool {
 	for _, n := range wf.Nodes {
@@ -655,7 +655,11 @@ func (h *scheduleHandlers) ensureBaselineAlignWorkflow(_ domain.ScheduleJob) boo
 		SandboxProfileID: "local",
 		Nodes: []domain.WorkflowNode{
 			{ID: "resolve", Name: "解决冲突", Type: "agent", AgentID: engine.BaselineAlignAgentID, MaxAttempts: 2, MaxReworks: 2, RejectTo: "resolve", Position: domain.Position{X: 80, Y: 80}},
-			{ID: "verify", Name: "校验真实合并", Type: "script", ScriptLanguage: "shell", Script: baselineAlignVerifyScript, MaxAttempts: 1, MaxReworks: 2, OnFailure: "reject", RejectTo: "resolve", Position: domain.Position{X: 360, Y: 80}},
+			{
+				ID: "verify", Name: "校验真实合并", Type: "script",
+				ScriptLanguage: "shell", Script: baselineAlignVerifyScript, ExecutionScope: domain.ExecutionScopeRepositories,
+				MaxAttempts: 1, MaxReworks: 2, OnFailure: "reject", RejectTo: "resolve", Position: domain.Position{X: 360, Y: 80},
+			},
 		},
 		Edges: []domain.WorkflowEdge{
 			{ID: "e-align-1", Source: "resolve", Target: "verify"},
