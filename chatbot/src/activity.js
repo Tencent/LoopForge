@@ -580,7 +580,9 @@ export function activityTarget(step) {
   }
   if (typeof detail !== "string") return "";
   detail = detail.split("\n")[0].trim();
-  if (/mcp__|agentflow__/.test(detail)) return "";
+  // Docker build progress already carries a display label from the runtime.
+  if (step.tool !== "workspace_docker_build" && /mcp__|agentflow__/.test(detail))
+    return "";
   const kind = activityFace(step).kind;
   if (["read", "edit"].includes(kind) && !/\s/.test(detail))
     return detail.split(/[\\/]/).filter(Boolean).at(-1) || detail;
