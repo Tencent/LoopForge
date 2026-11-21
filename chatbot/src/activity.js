@@ -467,6 +467,8 @@ export function activityFace(step) {
     return { kind: "verify", busy: "正在提交节点结果", done: "已提交节点结果" };
   if (/workbench_workspace_open/.test(name))
     return { kind: "workflow", busy: "正在打开工作区", done: "已打开工作区" };
+  if (name === "workspace_docker_build")
+    return { kind: "workflow", busy: "正在构建 Docker 镜像", done: "已构建 Docker 镜像" };
   if (/workbench_delivery_register/.test(name))
     return { kind: "workflow", busy: "正在登记交付", done: "已登记交付" };
   if (/workbench_publish_artifact/.test(name))
@@ -578,7 +580,9 @@ export function activityTarget(step) {
   }
   if (typeof detail !== "string") return "";
   detail = detail.split("\n")[0].trim();
-  if (/mcp__|agentflow__/.test(detail)) return "";
+  // Docker build progress already carries a display label from the runtime.
+  if (step.tool !== "workspace_docker_build" && /mcp__|agentflow__/.test(detail))
+    return "";
   const kind = activityFace(step).kind;
   if (["read", "edit"].includes(kind) && !/\s/.test(detail))
     return detail.split(/[\\/]/).filter(Boolean).at(-1) || detail;
