@@ -3,6 +3,7 @@ import React, {
   useContext,
   useEffect,
   useId,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -348,19 +349,22 @@ const markdownComponents = {
     </div>
   ),
 };
-export function RichContent({ message, assets = [], projectId = "" }) {
+const emptyAssets = [];
+export function RichContent({ message, assets = emptyAssets, projectId = "" }) {
   const text = typeof message === "string" ? message : visibleText(message);
+  const context = useMemo(() => ({ assets, projectId }), [assets, projectId]);
+  const markdown = useMemo(() => (
+    <Markdown
+      remarkPlugins={[remarkGfm, remarkWorkspaceLinks]}
+      components={markdownComponents}
+      urlTransform={markdownURL}
+    >
+      {text}
+    </Markdown>
+  ), [text]);
   return (
-    <MarkdownAssets.Provider value={{ assets, projectId }}>
-      <div className="markdown">
-        <Markdown
-          remarkPlugins={[remarkGfm, remarkWorkspaceLinks]}
-          components={markdownComponents}
-          urlTransform={markdownURL}
-        >
-          {text}
-        </Markdown>
-      </div>
+    <MarkdownAssets.Provider value={context}>
+      <div className="markdown">{markdown}</div>
     </MarkdownAssets.Provider>
   );
 }
