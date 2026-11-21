@@ -18,6 +18,11 @@ import (
 
 const maxArtifactBytes = 1 << 20
 
+// ArtifactSizeLimit reports the largest artifact body the engine accepts. The
+// runner upload limit matches it (maxArtifactUploadBytes), and the platform
+// diagnostics page compares it with the run_artifacts.content column capacity.
+func ArtifactSizeLimit() int { return maxArtifactBytes }
+
 // artifactSeq keeps IDs unique when parallel branches publish in the same
 // clock tick.
 var artifactSeq atomic.Uint64

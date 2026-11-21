@@ -617,6 +617,12 @@ func dockerImageExists(ctx context.Context, image string) bool {
 	return exec.CommandContext(ctx, "docker", "image", "inspect", image).Run() == nil
 }
 
+// DockerImageExists reports whether a Docker image reference already exists in
+// the local image store. Platform diagnostics use it for runtime images.
+func DockerImageExists(ctx context.Context, image string) bool {
+	return dockerImageExists(ctx, image)
+}
+
 // DockerImageCached reports whether this Dockerfile already has a local cache
 // tag. Used by the engine to tell first-run users that a long image build is
 // about to start, instead of looking like the node never began.
