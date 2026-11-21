@@ -146,9 +146,11 @@ func validSharedAssistantSession(s domain.AssistantSession) bool {
 
 // ProjectSharedAssistantSession reports whether an ordinary conversation is
 // shared with its project's members. SOP run sessions keep their own rules;
-// legacy per-user run discussions stay private.
+// legacy per-user run discussions stay private. A SOP designer conversation
+// stays private to its author too: it edits one person's unsaved canvas and
+// is not a project discussion.
 func ProjectSharedAssistantSession(s domain.AssistantSession) bool {
-	return !s.Shared && s.RunID == "" && strings.TrimSpace(s.ProjectID) != "" && !strings.HasPrefix(s.ID, "sop-")
+	return !s.Shared && s.RunID == "" && strings.TrimSpace(s.ProjectID) != "" && !strings.HasPrefix(s.ID, "sop-") && s.Source != domain.AssistantSourceSOPDesigner
 }
 
 const assistantSessionMetadataColumns = "id, user_id, project_id, title, model, source, task_id, created_at, updated_at, JSON_REMOVE(payload, '$.messages') AS payload"

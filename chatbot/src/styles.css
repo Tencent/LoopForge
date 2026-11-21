@@ -604,6 +604,21 @@ small {
   margin: auto;
   padding: 42px 24px 50px;
 }
+.message-history-more {
+  display: block;
+  margin: 0 auto 16px;
+  padding: 6px 12px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+.message-history-more:hover,
+.message-history-more:focus-visible {
+  background: var(--hover);
+  color: var(--text);
+}
 .message {
   position: relative;
   margin: 0 0 35px;

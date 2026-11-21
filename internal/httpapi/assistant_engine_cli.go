@@ -91,7 +91,11 @@ func resolveAssistantEngineBin(engine string) (string, error) {
 	if strings.TrimSpace(home) == "" {
 		home = "/root"
 	}
-	for _, candidate := range []string{filepath.Join(home, ".local", "bin", binary), "/usr/local/bin/" + binary, "/usr/bin/" + binary} {
+	candidates := []string{filepath.Join(home, ".local", "bin", binary)}
+	for _, dir := range assistantCLIGlobalDirs {
+		candidates = append(candidates, filepath.Join(dir, binary))
+	}
+	for _, candidate := range candidates {
 		if fileExecutable(candidate) {
 			return candidate, nil
 		}
@@ -101,6 +105,11 @@ func resolveAssistantEngineBin(engine string) (string, error) {
 	}
 	return "", assistantCLIMissingError{engine: engine, binary: binary}
 }
+
+// assistantCLIGlobalDirs are the global install locations checked after PATH
+// and ~/.local/bin. Tests that model a host without a CLI clear it, because
+// the platform image installs some CLIs (dsh, codex, ...) into /usr/local/bin.
+var assistantCLIGlobalDirs = []string{"/usr/local/bin", "/usr/bin"}
 
 var errAssistantCLIMissing = errors.New("assistant CLI not installed")
 

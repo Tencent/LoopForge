@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"agentflow/internal/domain"
+	"agentflow/internal/engine"
 	"agentflow/internal/runtime"
 	"github.com/gin-gonic/gin"
 )
@@ -138,6 +139,27 @@ func TestAssistantGenerationFailurePreservesCancellationAndDeadline(t *testing.T
 		if status != http.StatusGatewayTimeout || !strings.Contains(message, "取消或超时") {
 			t.Fatalf("status=%d message=%q", status, message)
 		}
+	}
+}
+
+func TestAssistantWorkspaceBindFailuresStaySpecific(t *testing.T) {
+	for _, tc := range []struct {
+		name, code string
+		err        error
+	}{
+		{"live foreign bind", "WORKSPACE_BOUND_ELSEWHERE", fmt.Errorf("%w: %w", runtime.ErrConversationNotStarted, engine.ErrConversationWorkspaceBound)},
+		{"dead host without snapshot", "WORKSPACE_REBOUND", fmt.Errorf("%w: %w", runtime.ErrConversationNotStarted, engine.ErrConversationWorkspaceLost)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			status, message := assistantGenerationFailure(context.Background(), tc.err)
+			if status != http.StatusServiceUnavailable || !strings.Contains(message, "工作区") || strings.Contains(message, "诊断信息") {
+				t.Fatalf("status=%d message=%q", status, message)
+			}
+			failure := classifyAssistantFailure(context.Background(), tc.err)
+			if failure.Code != tc.code {
+				t.Fatalf("code=%s", failure.Code)
+			}
+		})
 	}
 }
 

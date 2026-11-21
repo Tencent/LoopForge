@@ -170,7 +170,8 @@ func (h *assistantHandlers) workflowDraftNodeWarnings(d assistantDraft) []string
 		return nil
 	}
 	var wf struct {
-		Nodes []domain.WorkflowNode `json:"nodes"`
+		ProjectID string                `json:"projectId"`
+		Nodes     []domain.WorkflowNode `json:"nodes"`
 	}
 	if json.Unmarshal(d.Body, &wf) != nil {
 		return nil
@@ -187,8 +188,16 @@ func (h *assistantHandlers) workflowDraftNodeWarnings(d assistantDraft) []string
 				warns = append(warns, fmt.Sprintf("节点 %s 是 agent 节点但未绑定角色（缺少 agentId），保存后该节点无法执行", name))
 				continue
 			}
-			if _, ok := h.repo.Agent(strings.TrimSpace(node.AgentID)); !ok {
+			// The static-site build node binds a platform role that has no
+			// catalog row; the engine injects it when preview is enabled.
+			if domain.IsPreviewBuildNode(node.ID) && domain.IsPreviewBuildAgent(node.AgentID) {
+				continue
+			}
+			role, ok := h.repo.Agent(strings.TrimSpace(node.AgentID))
+			if !ok {
 				warns = append(warns, fmt.Sprintf("节点 %s 绑定的角色 %s 不存在，请先创建该角色或改用现有角色", name, node.AgentID))
+			} else if strings.TrimSpace(wf.ProjectID) != "" && !workflowCanUseRole(role, wf.ProjectID) {
+				warns = append(warns, fmt.Sprintf("节点 %s 绑定的角色「%s」不属于当前项目也未共享，保存会失败；请换成本项目的角色，或先把它复制到本项目", name, role.Name))
 			}
 		case "script":
 			if strings.TrimSpace(node.Script) == "" {
@@ -237,7 +246,7 @@ func (h *assistantHandlers) assistantDraftWarnings(d assistantDraft) []string {
 		return nil
 	}
 	if tool := strings.TrimSpace(d.Tool); tool == "workflows_save" {
-		if warns := h.workflowDraftNodeWarnings(d); len(warns) > 0 {
+		if warns := append(h.workflowDraftNodeWarnings(d), workflowDraftGraphWarnings(d.Body)...); len(warns) > 0 {
 			return warns
 		}
 	}

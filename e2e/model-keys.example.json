@@ -1,0 +1,27 @@
+{
+  "accounts": [
+    {
+      "login": "e2e-models",
+      "passwordEnv": "LOOPFORGE_TEST_PASSWORD",
+      "codeBuddyInternetEnvironment": "ioa",
+      "gitToken": "",
+      "apiKeys": {
+        "dsh": "",
+        "codebuddy": "",
+        "cursor": "",
+        "kimi": "",
+        "zcode": "",
+        "codex": "",
+        "claude-code": ""
+      }
+    },
+    {
+      "login": "e2e-codebuddy-cn",
+      "passwordEnv": "LOOPFORGE_TEST_CN_PASSWORD",
+      "codeBuddyInternetEnvironment": "internal",
+      "apiKeys": {
+        "codebuddy": ""
+      }
+    }
+  ]
+}
