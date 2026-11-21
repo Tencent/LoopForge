@@ -142,6 +142,35 @@ func TestAdoptedTemplateRolesAreDeletableOnceTheCopyIsGone(t *testing.T) {
 	}
 }
 
+func TestGenericTemplateCloneUsesSelectedSandbox(t *testing.T) {
+	h, s := newGenericTemplateServer(t)
+	for _, profile := range []domain.SandboxProfile{
+		{ID: "project-native", Name: "Native", Driver: "native", ProjectID: "alpha"},
+		{ID: "shared-native", Name: "Shared native", Driver: "native", ProjectID: "beta", Shared: true},
+		{ID: "private-native", Name: "Private native", Driver: "native", ProjectID: "beta"},
+	} {
+		if err := s.PutSandbox(profile); err != nil {
+			t.Fatal(err)
+		}
+	}
+	path := "/api/workflows/" + repo.GenericBackendDeliveryWorkflowID + "/clone"
+	for _, sandbox := range []string{"missing", "private-native", "project-native", "shared-native", "local"} {
+		id := "copy-" + sandbox
+		body := map[string]string{"id": id, "name": id, "projectId": "alpha", "sandboxProfileId": sandbox}
+		if sandbox == "missing" || sandbox == "private-native" {
+			requestJSON[map[string]string](t, h, http.MethodPost, path, body, http.StatusBadRequest)
+			if workflowRowExists(t, s, id) {
+				t.Fatalf("created a draft for unavailable sandbox %q", sandbox)
+			}
+			continue
+		}
+		copy := requestJSON[domain.WorkflowDefinition](t, h, http.MethodPost, path, body, http.StatusCreated)
+		if copy.SandboxProfileID != sandbox {
+			t.Fatalf("cloned with %q, want %q", copy.SandboxProfileID, sandbox)
+		}
+	}
+}
+
 func TestGenericTemplateCloneCreatesProjectRolesAndRemapsNodes(t *testing.T) {
 	h, s := newGenericTemplateServer(t)
 	gongfeng := domain.MCPServerDefinition{

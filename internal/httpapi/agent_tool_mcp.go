@@ -265,6 +265,12 @@ func (h *agentToolGateway) callTool(ctx context.Context, session *AgentToolSessi
 	if session.terminalToolsOnly() {
 		return nil, errAgentToolForbidden
 	}
+	if session.sopDesigner() {
+		// The designer catalog is the allowlist; nothing outside it runs.
+		if _, ok := lookupAgentTool(h.buildCatalog(ctx, session), name); !ok {
+			return nil, fmt.Errorf("%w: %s", errAgentToolForbidden, name)
+		}
+	}
 	if name == "workbench_tool_schema" && session.Mode == AgentToolAssistant {
 		var input struct {
 			Name string `json:"name"`
@@ -335,6 +341,14 @@ func (h *agentToolGateway) callTerminal(session *AgentToolSession, name string, 
 		}
 		return mcpToolTextResult("提交成功，本轮结束。", false), nil
 	case name == submitAssistantReplyTool && session.Mode == AgentToolAssistant:
+		if session.sopDesigner() {
+			expanded, err := expandSOPDesignerReply(raw, session.DesignerCanvas)
+			if err != nil {
+				logAgentToolEvent("terminal-invalid", "mode="+string(session.Mode), "tool="+name, "err="+truncateRunes(err.Error(), 160))
+				return mcpToolTextResult("草稿未提交，本轮继续；请修正后重新提交："+err.Error(), true), nil
+			}
+			raw = expanded
+		}
 		reply, err := parseSubmitAssistantReplyArgs(raw, session.ProjectID)
 		if err != nil {
 			logAgentToolEvent("terminal-invalid", "mode="+string(session.Mode), "tool="+name, "err="+truncateRunes(err.Error(), 160))
@@ -342,6 +356,12 @@ func (h *agentToolGateway) callTerminal(session *AgentToolSession, name string, 
 		}
 		if err := validateScheduledRunDrafts(session.ctx, reply.Drafts); err != nil {
 			return mcpToolTextResult(err.Error(), true), nil
+		}
+		if session.sopDesigner() {
+			if err := vetSOPDesignerReply(&reply); err != nil {
+				logAgentToolEvent("terminal-invalid", "mode="+string(session.Mode), "tool="+name, "err="+truncateRunes(err.Error(), 160))
+				return mcpToolTextResult("草稿未提交，本轮继续："+err.Error(), true), nil
+			}
 		}
 		if h.deps != nil && h.repo != nil {
 			if err := h.assistant().vetProposalDrafts(session, &reply); err != nil {

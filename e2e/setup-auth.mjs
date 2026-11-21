@@ -2,6 +2,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
+if (process.env.AGENTFLOW_E2E_MODEL_KEYS_FILE?.trim()) {
+  const { setupModelKeys } = await import('./setup-model-keys.mjs');
+  await setupModelKeys();
+}
 const root=path.dirname(fileURLToPath(import.meta.url));
 const base=(process.env.AGENTFLOW_E2E_BASE||'http://127.0.0.1:8090').replace(/\/$/,'');
 const password=process.env.LOOPFORGE_TEST_PASSWORD||fs.readFileSync(process.env.LOOPFORGE_TEST_PASSWORD_FILE||path.join(root,'../.local/admin-password'),'utf8').trim();

@@ -77,6 +77,7 @@ func (h *assistantHandlers) listSessions(c *gin.Context) {
 		}
 	}
 	out := visibleAssistantConversations(append(append(items, shared...), projectChats...), current.ID, sharedIDs, runProjects, allowedProjects)
+	out = assistantSessionsForSurface(out, strings.TrimSpace(c.Query("surface")), strings.TrimSpace(c.Query("workflowId")), strings.TrimSpace(c.Query("projectId")), current.ID)
 	ids := make([]string, 0, len(out))
 	for _, item := range out {
 		ids = append(ids, item.ID)

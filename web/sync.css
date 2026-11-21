@@ -138,7 +138,7 @@
 #aiSchedulesView .heading-actions { display:flex;gap:8px;flex-shrink:0; }
 #aiSchedulesView .ai-schedule-panel { border:1px solid var(--hui-border);border-radius:14px;background:var(--hui-surface);box-shadow:var(--hui-panel-shadow);overflow:hidden; }
 #aiSchedulesView .ai-schedule-panel-head { display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 16px;border-bottom:1px solid var(--hui-border);font-size:13px; }
-#aiSchedulesView #aiScheduleRuntimeHint { padding:12px 16px;margin:0;color:var(--hui-secondary);font-size:12px;line-height:1.6; }
+#aiSchedulesView :is(#aiScheduleRuntimeHint, #aiScheduleTriggerHint) { padding:12px 16px;margin:0;color:var(--hui-secondary);font-size:12px;line-height:1.6; }
 #aiSchedulesView .schedule-job-list { max-height:none;overflow:visible;margin:0;gap:0; }
 #aiSchedulesView .schedule-job-item { border-top:1px solid var(--hui-border-soft); }
 #aiSchedulesView .schedule-job-row { padding:14px 16px;border:0;border-radius:0;background:transparent; }
@@ -303,13 +303,24 @@
   #aiSchedulesView .schedule-job-main { flex-basis:100%; }
 }
 
-/* 项目触发配置直接编辑。 */
+/* 项目触发摘要同时用于页面与编辑弹窗。 */
 #scheduleModal #scheduleJobList[hidden] { display:none; }
-#scheduleModal .schedule-config-runtime { display:flex;align-items:center;justify-content:space-between;gap:14px;padding:12px 0;color:var(--hui-secondary); }
-#scheduleModal .schedule-config-runtime>div { display:flex;flex-direction:column;gap:5px;min-width:0; }
-#scheduleModal .schedule-config-runtime b { color:var(--hui-text);font-size:13px;font-weight:500; }
-#scheduleModal .schedule-config-runtime :is(span,small) { font-size:12px;line-height:1.5;overflow-wrap:anywhere; }
-#scheduleModal .schedule-config-runtime button { flex:none; }
+:is(#aiScheduleTriggerList, #scheduleModal) .schedule-config-runtime { display:flex;align-items:center;justify-content:space-between;gap:14px;padding:12px 0;color:var(--hui-secondary); }
+:is(#aiScheduleTriggerList, #scheduleModal) .schedule-config-runtime>div { display:flex;flex-direction:column;gap:5px;min-width:0; }
+:is(#aiScheduleTriggerList, #scheduleModal) .schedule-config-runtime b { color:var(--hui-text);font-size:13px;font-weight:500;overflow-wrap:anywhere; }
+:is(#aiScheduleTriggerList, #scheduleModal) .schedule-config-runtime :is(span,small) { font-size:12px;line-height:1.5;overflow-wrap:anywhere; }
+:is(#aiScheduleTriggerList, #scheduleModal) .schedule-config-runtime button { flex:none; }
+#aiScheduleTriggerList .schedule-config-runtime {
+  flex-wrap:wrap;
+  justify-content:flex-start;
+  gap:8px;
+  padding:0 16px 14px;
+}
+#aiScheduleTriggerList .schedule-config-runtime>div { flex:1 1 220px; }
+#aiScheduleTriggerList .schedule-blocker-card { margin:0 16px 14px; }
+@media(max-width:700px) {
+  #aiScheduleTriggerList .schedule-config-runtime>div { flex-basis:100%; }
+}
 
 #scheduleModal .schedule-head small { font-size:12px;line-height:1.5; }
 
