@@ -202,7 +202,11 @@ test('new roles can use the personal default or follow the responsible user', as
     codex: {models: [{id: 'preferred-role-model', name: 'Preferred role model'}]},
   });
   app.router.put('/api/agents', call => ({status: 200, body: call.body}));
-  app.evaluate(`state.data.assistantDefaults={executor:"codex",model:"preferred-role-model"};openAgentWizard()`);
+  app.evaluate(`
+    state.data.executors=[{id:"codex",name:"Codex"}];
+    state.data.assistantDefaults={executor:"codex",model:"preferred-role-model"};
+    openAgentWizard();
+  `);
   await settle();
   const form = app.document.querySelector('#agentForm');
   assert.equal(form.elements.executorId.value, 'codex');
