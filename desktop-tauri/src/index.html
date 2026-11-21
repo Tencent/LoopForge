@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="agentflow-app-domain" content="">
+  <title>LoopForge · Agent 编排平台</title>
+  
+  <!-- Tauri compatibility layer MUST load first -->
+  <script>
+    // Set backend URL immediately
+    window.__TAURI_BACKEND_URL__ = 'http://127.0.0.1:8090';
+    window.__TAURI_ENV__ = true;
+    
+    // Prevent Tauri-specific issues
+    if (typeof window.__TAURI__ !== 'undefined') {
+      // Tauri-specific initialization
+      window.__TAURI_READY__ = true;
+    }
+  </script>
+  
+  <!-- Load compatibility layer -->
+  <script src="tauri-compat.js"></script>
+  
+  <!-- Load Tauri interface -->
+  <script type="module">
+    import { invoke } from '@tauri-apps/api';
+    
+    // Initialize backend URL
+    async function init() {
+      try {
+        const backendUrl = await invoke('get_backend_url_cmd').catch(() => 'http://127.0.0.1:8090');
+        window.__TAURI_BACKEND_URL__ = backendUrl;
+        
+        // Ensure backend is running
+        const isRunning = await invoke('get_backend_status').catch(() => false);
+        if (!isRunning) {
+          await invoke('start_backend');
+        }
+      } catch (e) {
+        console.warn('Backend initialization error:', e);
+      }
+    }
+    
+    init();
+  </script>
+  
+  <!-- Original web app stylesheets -->
+  <script src="/boot-theme.js?v=20261031boot1"></script>
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg?v=2">
+  <link rel="icon" type="image/png" sizes="32x32" href="/favicon.png?v=2">
+  <link rel="icon" href="/favicon.ico?v=2" sizes="any">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png?v=2">
+  <link rel="stylesheet" href="/app/hui-controls.css">
+  <link rel="stylesheet" href="/styles.css?v=20261031v1">
+  <link rel="stylesheet" href="/assets.css?v=20260823v1">
+  <link rel="stylesheet" href="/platform.css?v=20261116nosop">
+  <link rel="stylesheet" href="/observability.css?v=20261031metrics2">
+  <link rel="stylesheet" href="/artifacts.css?v=20260914r3">
+  <link rel="stylesheet" href="/sops.css?v=20261030cards1">
+  <link rel="stylesheet" href="/sync.css?v=20261021schedule1">
+  <link rel="stylesheet" href="/access.css?v=20261031v1">
+  <link rel="stylesheet" href="/product-v3.css?v=20261030runs1">
+  <link rel="stylesheet" href="/product-v4.css?v=20261031req2">
+  <link rel="stylesheet" href="/app/harness-ui.css?v=20261031req1">
+  <link rel="stylesheet" href="/assistant-models.css">
+  <link rel="stylesheet" href="/bots.css">
+  <link rel="stylesheet" href="/app/frame.css">
+  <link rel="stylesheet" href="/chat-codex.css?v=20261031drawer">
+  <link rel="stylesheet" href="/app/harness-icons.css">
+  <link rel="stylesheet" href="/app/navigation.css">
+  <link rel="stylesheet" href="/app/hover-ink.css">
+  <link rel="stylesheet" href="/app/harness-motion.css">
+  <link rel="stylesheet" href="/app/sliding-tabs.css">
+  <link rel="stylesheet" href="/app/mcp.css">
+  <link rel="stylesheet" href="/app/flow-canvas.css?v=20261109cli">
+  <link rel="stylesheet" href="/app/page-feedback.css">
+  <link rel="stylesheet" href="/app/assistant-settings.css">
+  <link rel="stylesheet" href="/preferences.css">
+  <link rel="stylesheet" href="/app/issues-list.css">
+  <link rel="stylesheet" href="/app/requirement-wizard.css?v=20261116nosop">
+  <link rel="stylesheet" href="/app/assets-harness.css">
+  <link rel="stylesheet" href="/app/sops-harness.css">
+  <link rel="stylesheet" href="/app/sop-catalog.css">
+  <link rel="stylesheet" href="/app/observability-harness.css?v=20261030obs1">
+  <link rel="stylesheet" href="/app/topbar-harness.css?v=20261030tb1">
+  <link rel="stylesheet" href="/app/approvals-harness.css?v=20261030ap1">
+  
+  <style>
+    .boot-loader{position:fixed;inset:0;z-index:2147483000;display:flex;align-items:center;justify-content:center;background:#0a0e16;background:var(--bg,#0a0e16);color:#94a3bd;color:var(--muted,#94a3bd);transition:opacity .18s ease}
+    [data-theme=light] .boot-loader{background:#f5f7fb;background:var(--bg,#f5f7fb);color:#475569;color:var(--muted,#475569)}
+    .boot-loader.leaving{opacity:0;pointer-events:none}
+    .boot-loader-box{display:flex;flex-direction:column;align-items:center;gap:16px}
+    .boot-loader-logo{width:48px;height:48px}
+    .boot-loader-spin{width:18px;height:18px;border-radius:50%;border:2px solid rgba(148,163,189,.3);border-top-color:#5b8cff;animation:boot-loader-spin .8s linear infinite}
+    .boot-loader-text{margin:0;font-size:13px;letter-spacing:.02em}
+    body.booting .app-shell{visibility:hidden}
+    @keyframes boot-loader-spin{to{transform:rotate(360deg)}}
+    @media (prefers-reduced-motion:reduce){.boot-loader-spin{animation:none}.boot-loader{transition:none}}
+  </style>
+  
+  <!-- Original web app scripts -->
+  <script src="/boot.js"></script>
+  <script src="/i18n-en.js"></script>
+  <script src="/i18n.js"></script>
+</head>
+
+<body class="booting">
+  <!-- Original loading spinner -->
+  <div id="bootLoader" class="boot-loader" role="status" aria-live="polite" aria-busy="true">
+    <div class="boot-loader-box">
+      <svg class="boot-loader-logo" viewBox="0 0 64 64" aria-hidden="true"><defs><linearGradient id="bootLoaderLogoGradient" x1="0" y1="8" x2="0" y2="58" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#3b8eea"/><stop offset="1" stop-color="#8b5cf6"/></linearGradient></defs><g fill="none" stroke="url(#bootLoaderLogoGradient)" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"><path d="M10.5 27 A11.5 11.5 0 0 1 33.5 27 V45"/><circle cx="43.5" cy="45" r="10"/></g></svg>
+      <div class="boot-loader-spin" aria-hidden="true"></div>
+      <p class="boot-loader-text">正在进入工作台…</p>
+    </div>
+  </div>
+  
+  <div id="globalProgress" class="global-progress" aria-hidden="true"></div>
+  
+  <!-- Original app-shell div -->
+  <div class="app-shell">
+    <!-- Content will be loaded from web/index.html -->
+  </div>
+  
+  <!-- Load the actual web app content -->
+  <script>
+    // Once compatibility layer is ready, load the app
+    function loadWebApp() {
+      // Create a script to load the web app
+      const script = document.createElement('script');
+      script.src = '/app/app.js';
+      script.onload = function() {
+        // Remove the Tauri-specific loading spinner
+        const tauriSplash = document.getElementById('tauriSplash');
+        if (tauriSplash) {
+          tauriSplash.style.display = 'none';
+        }
+      };
+      script.onerror = function() {
+        console.error('Failed to load web app');
+      };
+      document.body.appendChild(script);
+    }
+    
+    // Check if compatibility layer is loaded
+    const checkCompat = setInterval(() => {
+      if (window.__TAURI_COMPAT_LOADED__) {
+        clearInterval(checkCompat);
+        loadWebApp();
+      }
+    }, 100);
+    
+    // Fallback timeout
+    setTimeout(() => {
+      clearInterval(checkCompat);
+      loadWebApp();
+    }, 5000);
+  </script>
+  
+  <!-- Inject the web app HTML content -->
+  <script>
+    // In development, we need to fetch the web app HTML
+    // In production, we can inline it or serve it from the backend
+    async function injectWebAppHTML() {
+      try {
+        // Try to get the web app HTML from the backend
+        const backendUrl = window.__TAURI_BACKEND_URL__ || 'http://127.0.0.1:8090';
+        const response = await fetch(backendUrl, { timeout: 10000 });
+        if (response.ok) {
+          const html = await response.text();
+          // Parse and inject only the body content
+          const parser = new DOMParser();
+          const doc = parser.parseFromString(html, 'text/html');
+          const bodyContent = doc.body.innerHTML;
+          const appShell = document.querySelector('.app-shell');
+          if (appShell) {
+            appShell.innerHTML = bodyContent;
+          }
+        }
+      } catch (e) {
+        console.warn('Could not fetch web app HTML, using fallback:', e);
+        // In production, the backend serves the full app
+        // In dev, we might need to proxy
+      }
+    }
+    
+    // Delay slightly to let compatibility layer initialize
+    setTimeout(injectWebAppHTML, 1000);
+  </script>
+</body>
+</html>

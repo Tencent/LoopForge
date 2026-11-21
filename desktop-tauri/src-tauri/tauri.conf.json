@@ -1,0 +1,233 @@
+{
+  "$schema": "https://raw.githubusercontent.com/tauri-apps/tauri/main/schemas/tauri.schema.json",
+  "productName": "LoopForge Desktop",
+  "version": "1.0.0",
+  "description": "LoopForge - AI Agent Orchestration Platform Desktop App",
+  "authors": ["LoopForge Team"],
+  "license": "MIT",
+  "repository": "https://github.com/Tencent/LoopForge",
+  "homepage": "https://github.com/Tencent/LoopForge",
+  "identifier": "com.loopforge.desktop",
+  "tauri": {
+    "allowlist": {
+      "all": false,
+      "dialog": {
+        "all": true
+      },
+      "fs": {
+        "all": true,
+        "scope": [
+          {"name": "App", "path": "$APP"},
+          {"name": "AppData", "path": "$APPDATA"},
+          {"name": "LocalAppData", "path": "$LOCALAPPDATA"},
+          {"name": "Desktop", "path": "$DESKTOP"},
+          {"name": "Documents", "path": "$DOCUMENTS"},
+          {"name": "Downloads", "path": "$DOWNLOAD"},
+          {"name": "Pictures", "path": "$PICTURES"},
+          {"name": "Temp", "path": "$TEMP"},
+          {"name": "Web", "path": "../web"},
+          {"name": "Chatbot", "path": "../chatbot"}
+        ]
+      },
+      "http": {
+        "all": true,
+        "scope": [
+          "http://localhost:*",
+          "http://127.0.0.1:*",
+          "http://[::1]:*",
+          "https://github.com",
+          "https://api.github.com",
+          "https://ghcr.io",
+          "https://gongfeng.qq.com",
+          "ws://localhost:*",
+          "ws://127.0.0.1:*",
+          "wss://localhost:*",
+          "wss://127.0.0.1:*"
+        ]
+      },
+      "os": {
+        "all": true
+      },
+      "path": {
+        "all": true
+      },
+      "process": {
+        "all": true,
+        "scope": [
+          {"name": "Go Backend", "cmd": "loopforge-backend"},
+          {"name": "Docker", "cmd": "docker"},
+          {"name": "Docker Compose", "cmd": "docker-compose"}
+        ]
+      },
+      "shell": {
+        "all": true,
+        "scope": [
+          {"name": "Open", "cmd": "open"},
+          {"name": "Start", "cmd": "start"},
+          {"name": "XDG Open", "cmd": "xdg-open"}
+        ]
+      },
+      "clipboard": {
+        "all": true
+      },
+      "trayIcon": {
+        "all": true
+      },
+      "globalShortcuts": {
+        "all": true
+      },
+      "notification": {
+        "all": true
+      },
+      "updater": {
+        "all": true
+      }
+    },
+    "bundle": {
+      "active": true,
+      "targets": ["all"],
+      "identifier": "com.loopforge.desktop",
+      "icon": [
+        {"path": "icons/icon-32x32.ico", "sizes": [32, 32]},
+        {"path": "icons/icon-48x48.ico", "sizes": [48, 48]},
+        {"path": "icons/icon-64x64.ico", "sizes": [64, 64]},
+        {"path": "icons/icon-128x128.ico", "sizes": [128, 128]},
+        {"path": "icons/icon-256x256.ico", "sizes": [256, 256]},
+        {"path": "icons/icon-512x512.ico", "sizes": [512, 512]}
+      ],
+      "resources": [
+        "icons/**/*",
+        "../web/**/*",
+        "../chatbot/**/*"
+      ],
+      "windows": [
+        {
+          "identifier": "main",
+          "title": "LoopForge Desktop",
+          "icon": "icons/icon-64x64.ico",
+          "shortName": "LoopForge",
+          "longName": "LoopForge Desktop",
+          "topLevelDomain": "com",
+          "msi": {
+            "productCode": "{B3C2C8E1-67C4-4E5E-9A3D-2B43C09C14E5}",
+            "upgradeCode": "{B3C2C8E1-67C4-4E5E-9A3D-2B43C09C14E5}",
+            "version": "1.0.0",
+            "publisher": "LoopForge Team",
+            "manufacturer": "Tencent",
+            "requireAdmin": false,
+            "installAllUsers": false,
+            "enableIeSupport": false,
+            "createStartMenuShortcut": true,
+            "createDesktopShortcut": true,
+            "registerFileExtensions": [],
+            "registerUrlProtocols": ["loopforge"],
+            "customInstallActions": []
+          },
+          "nsis": {
+            "license": "LICENSE",
+            "installerIcon": "icons/icon-256x256.ico",
+            "uninstallerIcon": "icons/icon-64x64.ico",
+            "installerHeaderIcon": "icons/icon-64x64.ico",
+            "displayLanguageSelector": true,
+            "oneClick": false,
+            "allowToChangeInstallationDirectory": true,
+            "requestApplicationPrivileges": false,
+            "createStartMenuShortcut": true,
+            "createDesktopShortcut": true
+          },
+          "wix": {
+            "license": "LICENSE",
+            "bannerPath": "",
+            "dialogImagePath": "",
+            "language": "en-US",
+            "createDesktopShortcut": true,
+            "createStartMenuShortcut": true,
+            "installScope": "currentUser",
+            "requireAdmin": false
+          },
+          "appimage": {
+            "enable": true
+          },
+          "macos": {
+            "entitlements": null,
+            "hardenedRuntime": true,
+            "gatekeeper": null,
+            "notarization": null,
+            "signingIdentity": null
+          },
+          "linux": {
+            "desktop": {
+              "categories": ["Development", "Utility", "AI"],
+              "executableArgs": []
+            },
+            "appimage": {
+              "enable": true
+            }
+          }
+        }
+      ]
+    },
+    "application": {
+      "clientId": "com.loopforge.desktop",
+      "security": {
+        "csp": null
+      }
+    },
+    "plugins": {
+      "positioner": {
+        "windows": [
+          {
+            "url": "main",
+            "width": 1400,
+            "height": 900,
+            "x": 100,
+            "y": 100
+          }
+        ]
+      }
+    }
+  },
+  "app": {
+    "publish": false,
+    "windows": [
+      {
+        "title": "LoopForge Desktop",
+        "width": 1400,
+        "height": 900,
+        "minWidth": 1024,
+        "minHeight": 768,
+        "maxWidth": null,
+        "maxHeight": null,
+        "x": null,
+        "y": null,
+        "center": true,
+        "resizable": true,
+        "decorations": true,
+        "transparent": false,
+        "alwaysOnTop": false,
+        "visible": false,
+        "fullscreen": false,
+        "maximized": false,
+        "focus": true,
+        "theme": null,
+        "defaultTheme": "system",
+        "skipTaskbar": false,
+        "acceptFirstMouse": true,
+        "backgroundColor": "#0a0e16",
+        "roundedCorners": true,
+        "visibleOnAllWorkspaces": false,
+        "contentProtection": false,
+        "titleBarStyle": "default",
+        "trafficLightPosition": "titlebar"
+      }
+    ],
+    "macOSPrivateApi": false,
+    "macOSTargets": ["x64", "arm64"],
+    "macOSMinimumSystemVersion": "10.15",
+    "linuxPrivateApi": false,
+    "linuxTargets": ["x86_64", "x86_64-unknown-linux-gnu", "aarch64", "arm64"],
+    "linuxSigning": null,
+    "linuxAppropicalImports": [],
+    "linuxLegacyImports": []
+  }
+}
