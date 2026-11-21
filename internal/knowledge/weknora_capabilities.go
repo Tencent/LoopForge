@@ -22,6 +22,9 @@ const (
 	weknoraSentinelID = "00000000-0000-0000-0000-000000000000"
 	// weknoraCapabilityTTL is how long one probed capability set stays fresh.
 	weknoraCapabilityTTL = 5 * time.Minute
+	// weknoraCapabilityUnknownTTL is the shorter TTL used when any probe was
+	// inconclusive, so a recovering upstream is retried sooner.
+	weknoraCapabilityUnknownTTL = time.Minute
 	// weknoraCapabilityProbeTimeout bounds a single dry-run request.
 	weknoraCapabilityProbeTimeout = 10 * time.Second
 	// capabilityUnsupportedProviderReason is returned for MCP-only providers.
@@ -97,9 +100,12 @@ func runCapabilityProbe(ctx context.Context, client *WeKnoraClient, probe capabi
 
 // classifyCapabilityProbe maps a probe outcome to a tri-state verdict:
 //
-//	2xx, 400, structured 404, other handled 4xx -> available
-//	401/403, bare 404, 405, 501                  -> unavailable (route/scope missing)
-//	5xx, timeout, transport failure              -> unknown (probe inconclusive)
+//	2xx, 400, structured 404 -> available (the route answered business logic)
+//	401/403, bare 404, 405, 501 -> unavailable (route/scope missing)
+//	5xx, timeout, transport failure -> unknown (probe inconclusive)
+//
+// Any other status (409/422/429/3xx) is inconclusive on purpose: it proves
+// neither that the route exists nor that the credential is missing a scope.
 func classifyCapabilityProbe(err error) domain.CapabilityStatus {
 	if err == nil {
 		return availableStatus()
@@ -110,10 +116,12 @@ func classifyCapabilityProbe(err error) domain.CapabilityStatus {
 	var upstream *UpstreamError
 	if errors.As(err, &upstream) {
 		switch {
+		case upstream.Status == http.StatusBadRequest:
+			return availableStatus()
+		case upstream.Status == http.StatusNotFound && upstream.Structured:
+			return availableStatus()
 		case upstream.Status >= 500:
 			return unknownStatus(fmt.Sprintf("探测请求上游异常（HTTP %d），结果未知", upstream.Status))
-		case upstream.Status >= 400:
-			return availableStatus()
 		default:
 			return unknownStatus(fmt.Sprintf("探测请求返回异常状态（HTTP %d），结果未知", upstream.Status))
 		}
@@ -210,32 +218,37 @@ func capabilityFingerprint(conn domain.KnowledgeConnection) string {
 
 type capabilityCacheEntry struct {
 	fingerprint string
+	generation  uint64
 	expiresAt   time.Time
 	caps        domain.ConnectionCapabilities
 }
 
 type capabilityFlight struct {
-	done chan struct{}
-	caps domain.ConnectionCapabilities
+	done       chan struct{}
+	generation uint64
+	caps       domain.ConnectionCapabilities
 }
 
 // capabilityCache is the in-process capability cache mounted on Service.
-// Entries are keyed by connection id and invalidated by TTL or fingerprint, and
-// concurrent callers share a single in-flight probe per connection/config.
+// Entries are keyed by connection id and invalidated by TTL, connection
+// fingerprint, or an explicit generation bump. Concurrent callers share one
+// in-flight probe per connection/config/generation.
 type capabilityCache struct {
-	mu       sync.RWMutex
-	items    map[string]capabilityCacheEntry
-	inflight map[string]*capabilityFlight
-	ttl      time.Duration
-	now      func() time.Time
+	mu          sync.RWMutex
+	items       map[string]capabilityCacheEntry
+	inflight    map[string]*capabilityFlight
+	generations map[string]uint64
+	ttl         time.Duration
+	now         func() time.Time
 }
 
 func newCapabilityCache() *capabilityCache {
 	return &capabilityCache{
-		items:    map[string]capabilityCacheEntry{},
-		inflight: map[string]*capabilityFlight{},
-		ttl:      weknoraCapabilityTTL,
-		now:      time.Now,
+		items:       map[string]capabilityCacheEntry{},
+		inflight:    map[string]*capabilityFlight{},
+		generations: map[string]uint64{},
+		ttl:         weknoraCapabilityTTL,
+		now:         time.Now,
 	}
 }
 
@@ -244,14 +257,15 @@ func newCapabilityCache() *capabilityCache {
 func (c *capabilityCache) get(ctx context.Context, conn domain.KnowledgeConnection, probe func(context.Context) domain.ConnectionCapabilities) domain.ConnectionCapabilities {
 	key := connectionCacheKey(conn)
 	fingerprint := capabilityFingerprint(conn)
-	flightKey := key + "|" + fingerprint
 
 	c.mu.RLock()
-	if entry, ok := c.items[key]; ok && entry.fingerprint == fingerprint && c.now().Before(entry.expiresAt) {
+	generation := c.generations[key]
+	if entry, ok := c.items[key]; ok && entry.fingerprint == fingerprint && entry.generation == generation && c.now().Before(entry.expiresAt) {
 		caps := cloneCapabilitySet(entry.caps)
 		c.mu.RUnlock()
 		return caps
 	}
+	flightKey := capabilityFlightKey(key, fingerprint, generation)
 	flight, running := c.inflight[flightKey]
 	c.mu.RUnlock()
 	if running {
@@ -259,23 +273,46 @@ func (c *capabilityCache) get(ctx context.Context, conn domain.KnowledgeConnecti
 	}
 
 	c.mu.Lock()
+	generation = c.generations[key]
+	if entry, ok := c.items[key]; ok && entry.fingerprint == fingerprint && entry.generation == generation && c.now().Before(entry.expiresAt) {
+		caps := cloneCapabilitySet(entry.caps)
+		c.mu.Unlock()
+		return caps
+	}
+	flightKey = capabilityFlightKey(key, fingerprint, generation)
 	if flight, running := c.inflight[flightKey]; running {
 		c.mu.Unlock()
 		return c.await(ctx, flight)
 	}
-	flight = &capabilityFlight{done: make(chan struct{})}
+	flight = &capabilityFlight{done: make(chan struct{}), generation: generation}
 	c.inflight[flightKey] = flight
 	c.mu.Unlock()
 
-	caps := probe(ctx)
+	// The probe result is shared by every waiter, so it runs detached from the
+	// caller's request context: one canceled request must not cancel the probe
+	// for everyone else. It stays bounded by the probe timeout, and the caller
+	// below still returns as soon as its own context ends.
+	go func() {
+		probeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), weknoraCapabilityProbeTimeout)
+		defer cancel()
+		caps := probe(probeCtx)
 
-	c.mu.Lock()
-	delete(c.inflight, flightKey)
-	c.rememberLocked(key, fingerprint, caps)
-	flight.caps = cloneCapabilitySet(caps)
-	close(flight.done)
-	c.mu.Unlock()
-	return cloneCapabilitySet(caps)
+		c.mu.Lock()
+		if c.inflight[flightKey] == flight {
+			delete(c.inflight, flightKey)
+		}
+		if c.generations[key] == flight.generation {
+			c.rememberLocked(key, fingerprint, flight.generation, caps)
+		}
+		flight.caps = cloneCapabilitySet(caps)
+		close(flight.done)
+		c.mu.Unlock()
+	}()
+	return c.await(ctx, flight)
+}
+
+func capabilityFlightKey(key, fingerprint string, generation uint64) string {
+	return key + "|" + fingerprint + "|" + strconv.FormatUint(generation, 10)
 }
 
 func (c *capabilityCache) await(ctx context.Context, flight *capabilityFlight) domain.ConnectionCapabilities {
@@ -287,16 +324,33 @@ func (c *capabilityCache) await(ctx context.Context, flight *capabilityFlight) d
 	}
 }
 
-func (c *capabilityCache) rememberLocked(key, fingerprint string, caps domain.ConnectionCapabilities) {
+func (c *capabilityCache) rememberLocked(key, fingerprint string, generation uint64, caps domain.ConnectionCapabilities) {
+	now := c.now()
+	// A slow probe for an older configuration must not clobber a newer entry;
+	// fingerprint matching already protects readers, but skipping the write
+	// also avoids a pointless re-probe.
+	if entry, ok := c.items[key]; ok && entry.fingerprint != fingerprint && now.Before(entry.expiresAt) {
+		return
+	}
 	c.items[key] = capabilityCacheEntry{
 		fingerprint: fingerprint,
-		expiresAt:   c.now().Add(c.ttl),
+		generation:  generation,
+		expiresAt:   now.Add(c.ttlFor(caps)),
 		caps:        cloneCapabilitySet(caps),
 	}
 }
 
-// invalidate drops the cached set of one connection, e.g. after settings are
-// saved or the connection is deleted.
+func (c *capabilityCache) ttlFor(caps domain.ConnectionCapabilities) time.Duration {
+	for _, status := range caps.Capabilities {
+		if status.Status == domain.CapabilityUnknown {
+			return weknoraCapabilityUnknownTTL
+		}
+	}
+	return c.ttl
+}
+
+// invalidate drops the cached set of one connection and bumps its generation so
+// an in-flight probe started before the invalidation cannot write back.
 func (c *capabilityCache) invalidate(connectionID string) {
 	connectionID = strings.TrimSpace(connectionID)
 	if connectionID == "" {
@@ -304,6 +358,7 @@ func (c *capabilityCache) invalidate(connectionID string) {
 	}
 	c.mu.Lock()
 	delete(c.items, connectionID)
+	c.generations[connectionID]++
 	c.mu.Unlock()
 }
 
@@ -330,8 +385,16 @@ func (c *capabilityCache) demote(conn domain.KnowledgeConnection, capability dom
 	}
 	caps := cloneCapabilitySet(entry.caps)
 	caps.Capabilities[capability] = status
-	entry.caps = caps
-	c.items[key] = entry
+	// Bump the generation so a probe that started before the denial cannot
+	// overwrite the demotion when it finishes, and refresh the TTL so the
+	// demotion is not immediately treated as an expired entry.
+	c.generations[key]++
+	c.items[key] = capabilityCacheEntry{
+		fingerprint: fingerprint,
+		generation:  c.generations[key],
+		expiresAt:   c.now().Add(c.ttlFor(caps)),
+		caps:        caps,
+	}
 	return true
 }
 

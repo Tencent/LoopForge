@@ -157,14 +157,27 @@ func TestCapabilityClassifyProbe(t *testing.T) {
 		{"success", nil, domain.CapabilityAvailable},
 		{"bad request", &UpstreamError{Status: http.StatusBadRequest, Structured: true}, domain.CapabilityAvailable},
 		{"structured not found", &UpstreamError{Status: http.StatusNotFound, Structured: true}, domain.CapabilityAvailable},
+		{"structured not found without message", &UpstreamError{Status: http.StatusNotFound, Structured: true}, domain.CapabilityAvailable},
+		{"bare not found", &UpstreamError{Status: http.StatusNotFound}, domain.CapabilityUnavailable},
+		{"forbidden", &UpstreamError{Status: http.StatusForbidden, Structured: true}, domain.CapabilityUnavailable},
+		{"unauthorized", &UpstreamError{Status: http.StatusUnauthorized}, domain.CapabilityUnavailable},
+		{"method not allowed", &UpstreamError{Status: http.StatusMethodNotAllowed}, domain.CapabilityUnavailable},
+		{"not implemented", &UpstreamError{Status: http.StatusNotImplemented}, domain.CapabilityUnavailable},
+		{"conflict", &UpstreamError{Status: http.StatusConflict}, domain.CapabilityUnknown},
+		{"unprocessable", &UpstreamError{Status: http.StatusUnprocessableEntity}, domain.CapabilityUnknown},
+		{"rate limited", &UpstreamError{Status: http.StatusTooManyRequests}, domain.CapabilityUnknown},
 		{"unexpected status", &UpstreamError{Status: http.StatusFound}, domain.CapabilityUnknown},
 		{"server error", &UpstreamError{Status: http.StatusBadGateway}, domain.CapabilityUnknown},
 		{"network failure", errors.New("dial tcp: connection refused"), domain.CapabilityUnknown},
 		{"timeout", context.DeadlineExceeded, domain.CapabilityUnknown},
 	}
 	for _, tc := range cases {
-		if got := classifyCapabilityProbe(tc.err).Status; got != tc.want {
+		status := classifyCapabilityProbe(tc.err)
+		if got := status.Status; got != tc.want {
 			t.Errorf("%s: status = %q, want %q", tc.name, got, tc.want)
+		}
+		if tc.want != domain.CapabilityAvailable && strings.TrimSpace(status.Reason) == "" {
+			t.Errorf("%s: status %q must carry a reason", tc.name, tc.want)
 		}
 	}
 }
@@ -240,8 +253,14 @@ func TestCapabilityCacheTTLAndFingerprint(t *testing.T) {
 
 	mutations := []func(domain.KnowledgeConnection) domain.KnowledgeConnection{
 		func(c domain.KnowledgeConnection) domain.KnowledgeConnection { c.Token = "rotated"; return c },
-		func(c domain.KnowledgeConnection) domain.KnowledgeConnection { c.URL = "http://other.test:8080"; return c },
-		func(c domain.KnowledgeConnection) domain.KnowledgeConnection { c.Provider = domain.KnowledgeProviderLightCloud; return c },
+		func(c domain.KnowledgeConnection) domain.KnowledgeConnection {
+			c.URL = "http://other.test:8080"
+			return c
+		},
+		func(c domain.KnowledgeConnection) domain.KnowledgeConnection {
+			c.Provider = domain.KnowledgeProviderLightCloud
+			return c
+		},
 		func(c domain.KnowledgeConnection) domain.KnowledgeConnection { c.Enabled = false; return c },
 	}
 	for i, mutate := range mutations {
@@ -367,20 +386,234 @@ func TestCapabilityCacheDemoteDenied(t *testing.T) {
 }
 
 func TestCapabilitySentinelProbePaths(t *testing.T) {
+	id := weknoraSentinelID
+	expected := map[domain.KnowledgeCapability]struct {
+		method string
+		path   string
+	}{
+		domain.CapKBManage:        {http.MethodPatch, "/api/v1/knowledge-bases/" + id},
+		domain.CapDocWrite:        {http.MethodPut, "/api/v1/knowledge/manual/" + id},
+		domain.CapReparse:         {http.MethodPost, "/api/v1/knowledge/" + id + "/reparse"},
+		domain.CapChunkRead:       {http.MethodGet, "/api/v1/chunks/" + id + "?page=1&page_size=1"},
+		domain.CapPreviewDownload: {http.MethodGet, "/api/v1/knowledge/" + id + "/preview"},
+	}
 	probes := weKnoraCapabilityProbes()
-	if len(probes) != len(domain.KnowledgeCapabilities) {
-		t.Fatalf("probe count = %d, want %d", len(probes), len(domain.KnowledgeCapabilities))
+	if len(probes) != len(expected) {
+		t.Fatalf("probe count = %d, want %d", len(probes), len(expected))
 	}
-	seen := map[domain.KnowledgeCapability]bool{}
 	for _, probe := range probes {
-		seen[probe.capability] = true
-		if !strings.Contains(probe.path, weknoraSentinelID) {
-			t.Errorf("probe %s path %q does not target the sentinel id", probe.capability, probe.path)
+		want, ok := expected[probe.capability]
+		if !ok {
+			t.Errorf("unexpected capability probe %s", probe.capability)
+			continue
 		}
+		if probe.method != want.method || probe.path != want.path {
+			t.Errorf("%s probe = %s %s, want %s %s", probe.capability, probe.method, probe.path, want.method, want.path)
+		}
+		if want.method == http.MethodGet {
+			if probe.payload != nil {
+				t.Errorf("%s GET probe must not send a body", probe.capability)
+			}
+		} else if probe.payload == nil {
+			t.Errorf("%s write probe must send an empty JSON body", probe.capability)
+		}
+		delete(expected, probe.capability)
 	}
-	for _, capability := range domain.KnowledgeCapabilities {
-		if !seen[capability] {
-			t.Errorf("capability %s has no probe", capability)
+	for capability := range expected {
+		t.Errorf("capability %s has no probe", capability)
+	}
+}
+
+// capabilityRefreshFixture seeds a cached set and expires it so the next get
+// starts a probe, letting tests exercise refresh races deterministically.
+func capabilityRefreshFixture(t *testing.T, cache *capabilityCache, conn domain.KnowledgeConnection) {
+	t.Helper()
+	cache.get(context.Background(), conn, func(context.Context) domain.ConnectionCapabilities {
+		return capabilitiesWithReason(domain.CapabilityAvailable, "")
+	})
+	cache.mu.Lock()
+	entry := cache.items[connectionCacheKey(conn)]
+	entry.expiresAt = time.Now().Add(-time.Second)
+	cache.items[connectionCacheKey(conn)] = entry
+	cache.mu.Unlock()
+}
+
+func TestCapabilityCacheInvalidateDuringProbe(t *testing.T) {
+	cache := newCapabilityCache()
+	conn := capabilityTestConn()
+	var calls int32
+	started := make(chan struct{})
+	release := make(chan struct{})
+	probe := func(context.Context) domain.ConnectionCapabilities {
+		if atomic.AddInt32(&calls, 1) == 1 {
+			close(started)
 		}
+		<-release
+		return capabilitiesWithReason(domain.CapabilityAvailable, "")
+	}
+	done := make(chan domain.ConnectionCapabilities, 1)
+	go func() { done <- cache.get(context.Background(), conn, probe) }()
+	<-started
+
+	cache.invalidate(conn.ID)
+	close(release)
+	caps := <-done
+	if status := caps.Capabilities[domain.CapKBManage].Status; status != domain.CapabilityAvailable {
+		t.Fatalf("leader status = %q, want available", status)
+	}
+
+	cache.get(context.Background(), conn, func(context.Context) domain.ConnectionCapabilities {
+		atomic.AddInt32(&calls, 1)
+		return capabilitiesWithReason(domain.CapabilityAvailable, "")
+	})
+	if got := atomic.LoadInt32(&calls); got != 2 {
+		t.Fatalf("probe calls = %d, want 2: invalidate must discard the in-flight result", got)
+	}
+}
+
+func TestCapabilityCacheLeaderCancelDoesNotPoison(t *testing.T) {
+	cache := newCapabilityCache()
+	conn := capabilityTestConn()
+	var calls int32
+	started := make(chan struct{})
+	release := make(chan struct{})
+	probe := func(ctx context.Context) domain.ConnectionCapabilities {
+		if atomic.AddInt32(&calls, 1) == 1 {
+			close(started)
+		}
+		<-release
+		if ctx.Err() != nil {
+			return capabilitiesWithReason(domain.CapabilityUnknown, "probe canceled")
+		}
+		return capabilitiesWithReason(domain.CapabilityAvailable, "")
+	}
+
+	leaderCtx, cancel := context.WithCancel(context.Background())
+	leaderDone := make(chan domain.ConnectionCapabilities, 1)
+	go func() { leaderDone <- cache.get(leaderCtx, conn, probe) }()
+	<-started
+	cancel()
+	leader := <-leaderDone
+	if status := leader.Capabilities[domain.CapKBManage].Status; status != domain.CapabilityUnknown {
+		t.Fatalf("cancelled leader status = %q, want unknown", status)
+	}
+
+	close(release)
+	// A later caller must observe the completed probe, not a cached cancel.
+	caps := cache.get(context.Background(), conn, probe)
+	if status := caps.Capabilities[domain.CapKBManage].Status; status != domain.CapabilityAvailable {
+		t.Fatalf("shared probe status = %q, want available", status)
+	}
+	if got := atomic.LoadInt32(&calls); got != 1 {
+		t.Fatalf("probe calls = %d, want 1: cancelled leader must not poison the cache", got)
+	}
+}
+
+func TestCapabilityCacheStaleProbeCannotClobberNewerConfig(t *testing.T) {
+	cache := newCapabilityCache()
+	connA := capabilityTestConn()
+	connB := connA
+	connB.Token = "rotated"
+
+	var callsA, callsB int32
+	startedA := make(chan struct{})
+	releaseA := make(chan struct{})
+	probeA := func(context.Context) domain.ConnectionCapabilities {
+		if atomic.AddInt32(&callsA, 1) == 1 {
+			close(startedA)
+		}
+		<-releaseA
+		return capabilitiesWithReason(domain.CapabilityAvailable, "")
+	}
+	doneA := make(chan struct{})
+	go func() {
+		cache.get(context.Background(), connA, probeA)
+		close(doneA)
+	}()
+	<-startedA
+
+	probeB := func(context.Context) domain.ConnectionCapabilities {
+		atomic.AddInt32(&callsB, 1)
+		return capabilitiesWithReason(domain.CapabilityAvailable, "")
+	}
+	cache.get(context.Background(), connB, probeB)
+
+	close(releaseA)
+	<-doneA
+	cache.get(context.Background(), connB, probeB)
+	if got := atomic.LoadInt32(&callsB); got != 1 {
+		t.Fatalf("newer config probe calls = %d, want 1: stale probe clobbered it", got)
+	}
+
+	cache.get(context.Background(), connA, func(context.Context) domain.ConnectionCapabilities {
+		atomic.AddInt32(&callsA, 1)
+		return capabilitiesWithReason(domain.CapabilityAvailable, "")
+	})
+	if got := atomic.LoadInt32(&callsA); got != 2 {
+		t.Fatalf("stale config probe calls = %d, want 2: its result must not be cached", got)
+	}
+}
+
+func TestCapabilityCacheUnknownUsesShorterTTL(t *testing.T) {
+	cache := newCapabilityCache()
+	conn := capabilityTestConn()
+	now := time.Date(2026, 11, 21, 10, 0, 0, 0, time.UTC)
+	cache.now = func() time.Time { return now }
+	var calls int
+	probe := func(context.Context) domain.ConnectionCapabilities {
+		calls++
+		return capabilitiesWithReason(domain.CapabilityUnknown, "上游超时")
+	}
+
+	cache.get(context.Background(), conn, probe)
+	now = now.Add(30 * time.Second)
+	cache.get(context.Background(), conn, probe)
+	if calls != 1 {
+		t.Fatalf("probe calls within short TTL = %d, want 1", calls)
+	}
+	now = now.Add(31 * time.Second)
+	cache.get(context.Background(), conn, probe)
+	if calls != 2 {
+		t.Fatalf("probe calls after short TTL = %d, want 2", calls)
+	}
+}
+
+func TestCapabilityCacheDemoteSurvivesInflightProbe(t *testing.T) {
+	cache := newCapabilityCache()
+	conn := capabilityTestConn()
+	capabilityRefreshFixture(t, cache, conn)
+
+	var calls int32
+	started := make(chan struct{})
+	release := make(chan struct{})
+	probe := func(context.Context) domain.ConnectionCapabilities {
+		if atomic.AddInt32(&calls, 1) == 1 {
+			close(started)
+		}
+		<-release
+		return capabilitiesWithReason(domain.CapabilityAvailable, "")
+	}
+	done := make(chan struct{})
+	go func() {
+		cache.get(context.Background(), conn, probe)
+		close(done)
+	}()
+	<-started
+
+	if _, ok := cache.demoteDenied(conn, domain.CapReparse, &UpstreamError{Status: http.StatusForbidden}); !ok {
+		t.Fatal("403 must be recognized as a capability denial")
+	}
+	close(release)
+	<-done
+
+	caps := cache.get(context.Background(), conn, func(context.Context) domain.ConnectionCapabilities {
+		t.Fatal("demotion must survive the in-flight refresh")
+		return domain.ConnectionCapabilities{}
+	})
+	if status := caps.Capabilities[domain.CapReparse].Status; status != domain.CapabilityUnavailable {
+		t.Fatalf("reparse status = %q, want unavailable", status)
+	}
+	if status := caps.Capabilities[domain.CapKBManage].Status; status != domain.CapabilityAvailable {
+		t.Fatalf("other capabilities must stay available, got %q", status)
 	}
 }

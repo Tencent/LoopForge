@@ -995,12 +995,14 @@ func (c *WeKnoraClient) doJSON(ctx context.Context, method, pathStr string, payl
 		_, _ = io.Copy(io.Discard, resp.Body)
 		return parseUpstreamError(resp.StatusCode, raw)
 	}
+	if out == nil {
+		// Capability probes only need the status code; a successful probe must
+		// not buffer a potentially large document or preview body.
+		return nil
+	}
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, weknoraMaxResponseBytes))
 	if err != nil {
 		return fmt.Errorf("WeKnora %s 响应读取失败：%w", truncateLogPath(pathStr), err)
-	}
-	if out == nil {
-		return nil
 	}
 	if err := json.Unmarshal(raw, out); err != nil {
 		return fmt.Errorf("WeKnora %s 返回无法解析：%s", truncateLogPath(pathStr), clip(string(raw), 200))
