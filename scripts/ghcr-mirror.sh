@@ -390,7 +390,7 @@ PY
     mirror_image="${mirror_host}/${repo}@${mirror_digest}"
   fi
   printf '\n▸ Pulling %s and tagging it %s\n' "$mirror_image" "$image"
-  # Called from `if`, so a failing docker command does not exit on its own.
+  # docker_access returns the failure on Bash 3.2 and later.
   # An explicit mirror stops here. Automatic selection falls back to ghcr.io.
   if ! docker_access pull "$mirror_image"; then
     if [[ "$auto" == 1 ]]; then

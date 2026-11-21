@@ -76,8 +76,29 @@ exec "$@"
         target.write_text(contents)
         target.chmod(0o755)
 
-    def install(self, **values):
-        return subprocess.run(['bash', 'scripts/install.sh'], cwd=self.root, env=dict(self.environ, **values), text=True, capture_output=True, stdin=subprocess.DEVNULL, timeout=15)
+    def shell(self):
+        return os.environ.get('LOOPFORGE_TEST_BASH', 'bash')
+
+    def bash32(self):
+        candidates = []
+        for name in ('LOOPFORGE_TEST_BASH32', 'LOOPFORGE_TEST_BASH'):
+            value = os.environ.get(name)
+            if value:
+                candidates.append(value)
+        candidates.append('/bin/bash')
+        seen = set()
+        for candidate in candidates:
+            path = candidate if os.path.isabs(candidate) else shutil.which(candidate)
+            if not path or path in seen:
+                continue
+            seen.add(path)
+            version = subprocess.run([path, '-c', 'printf %s "${BASH_VERSINFO[0]}.${BASH_VERSINFO[1]}"'], capture_output=True, text=True)
+            if version.returncode == 0 and version.stdout == '3.2':
+                return path
+        self.skipTest('Bash 3.2 is not available')
+
+    def install(self, shell=None, **values):
+        return subprocess.run([shell or self.shell(), 'scripts/install.sh'], cwd=self.root, env=dict(self.environ, **values), text=True, capture_output=True, stdin=subprocess.DEVNULL, timeout=15)
 
     def assert_success(self, result):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -349,6 +370,34 @@ esac
         self.assertIn('pull --policy missing platform mysql', log)
         self.assertIn('Could not pull', result.stdout)
 
+    def test_bash32_cold_install_continues_when_the_image_is_missing(self):
+        shell = self.bash32()
+        self.use_compose_file()
+        self.mirror_probe_curl()
+        result = self.install(shell=shell, **self.probe_env('timeout', 'timeout'))
+        self.assert_success(result)
+        log = (self.root / 'docker.log').read_text()
+        self.assertIn('image inspect ', log)
+        self.assertIn('pull --policy missing platform mysql', log)
+        self.assertNotIn('ghcr.nju.edu.cn', log)
+
+    def test_bash32_auto_pull_failure_falls_back(self):
+        shell = self.bash32()
+        self.assert_success(self.install(shell=shell))
+        self.use_compose_file()
+        self.mirror_probe_curl()
+        (self.root / 'docker.log').unlink()
+        result = subprocess.run(
+            [shell, 'start.sh', 'pull'], cwd=self.root,
+            env=dict(self.environ, **self.probe_env(self.timed(self.DIGEST, '0.40'), self.timed(self.DIGEST, '0.10')), MOCK_PULL_FAIL='1'),
+            text=True, capture_output=True, stdin=subprocess.DEVNULL, timeout=15)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        log = (self.root / 'docker.log').read_text()
+        self.assertIn('pull ghcr.nju.edu.cn/tencent/loopforge@' + self.DIGEST, log)
+        self.assertNotIn(' tag ', log)
+        self.assertIn('pull --ignore-buildable --policy always', log)
+        self.assertIn('Could not pull', result.stdout)
+
     def test_local_image_skips_the_speed_test(self):
         self.use_compose_file()
         self.executable('curl', '#!/usr/bin/env bash\nprintf \'%s\\n\' "$*" >> "$MOCK_CURL_LOG"\nexit 99\n')
@@ -367,7 +416,7 @@ esac
         self.mirror_probe_curl()
         (self.root / 'docker.log').unlink()
         result = subprocess.run(
-            ['bash', 'start.sh', 'pull'], cwd=self.root,
+            [self.shell(), 'start.sh', 'pull'], cwd=self.root,
             env=dict(self.environ, **self.probe_env(self.timed(self.DIGEST, '0.40'), self.timed(self.DIGEST, '0.10'))),
             text=True, capture_output=True, stdin=subprocess.DEVNULL, timeout=15)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -394,7 +443,7 @@ esac
     def test_start_pull_without_mirror_is_unchanged(self):
         self.assert_success(self.install())
         (self.root / 'docker.log').unlink()
-        result = subprocess.run(['bash', 'start.sh', 'pull'], cwd=self.root, env=self.environ, text=True, capture_output=True, stdin=subprocess.DEVNULL, timeout=15)
+        result = subprocess.run([self.shell(), 'start.sh', 'pull'], cwd=self.root, env=self.environ, text=True, capture_output=True, stdin=subprocess.DEVNULL, timeout=15)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         log = (self.root / 'docker.log').read_text()
         self.assertIn('pull --ignore-buildable --policy always', log)
@@ -403,7 +452,7 @@ esac
     def test_start_pull_reapplies_schema_extensions_after_containers_are_up(self):
         self.assert_success(self.install())
         (self.root / 'docker.log').unlink()
-        result = subprocess.run(['bash', 'start.sh', 'pull'], cwd=self.root, env=dict(self.environ, MOCK_COLUMN_COUNT='0'), text=True, capture_output=True, stdin=subprocess.DEVNULL, timeout=15)
+        result = subprocess.run([self.shell(), 'start.sh', 'pull'], cwd=self.root, env=dict(self.environ, MOCK_COLUMN_COUNT='0'), text=True, capture_output=True, stdin=subprocess.DEVNULL, timeout=15)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         log = (self.root / 'docker.log').read_text()
         sql = (self.root / 'mysql.log').read_text()
@@ -417,7 +466,7 @@ esac
 
     def test_start_pull_names_the_migration_when_columns_cannot_be_checked(self):
         self.assert_success(self.install())
-        result = subprocess.run(['bash', 'start.sh', 'pull'], cwd=self.root, env=dict(self.environ, MOCK_COLUMN_COUNT='?'), text=True, capture_output=True, stdin=subprocess.DEVNULL, timeout=15)
+        result = subprocess.run([self.shell(), 'start.sh', 'pull'], cwd=self.root, env=dict(self.environ, MOCK_COLUMN_COUNT='?'), text=True, capture_output=True, stdin=subprocess.DEVNULL, timeout=15)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('Could not inspect run_telemetry.adapter', result.stderr)
         self.assertIn('migrations/001_run_obs_generated_columns.sql', result.stderr)
@@ -426,7 +475,7 @@ esac
         self.assert_success(self.install())
         self.use_compose_file()
         (self.root / 'docker.log').unlink()
-        result = subprocess.run(['bash', 'start.sh', 'pull'], cwd=self.root, env=dict(self.environ, MIRROR='ghcr.nju.edu.cn'), text=True, capture_output=True, stdin=subprocess.DEVNULL, timeout=15)
+        result = subprocess.run([self.shell(), 'start.sh', 'pull'], cwd=self.root, env=dict(self.environ, MIRROR='ghcr.nju.edu.cn'), text=True, capture_output=True, stdin=subprocess.DEVNULL, timeout=15)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         image = self.pinned_image()
         mirror = 'ghcr.nju.edu.cn/' + image[len('ghcr.io/'):]
@@ -442,7 +491,7 @@ esac
         env = self.root / '.env'
         env.write_text(env.read_text() + 'LOOPFORGE_IMAGE=ghcr.io/example/ignored:1\nLOOPFORGE_IMAGE=ghcr.io/example/chosen:9\n')
         (self.root / 'docker.log').unlink()
-        result = subprocess.run(['bash', 'start.sh', 'pull'], cwd=self.root, env=dict(self.environ, MIRROR='ghcr.nju.edu.cn'), text=True, capture_output=True, stdin=subprocess.DEVNULL, timeout=15)
+        result = subprocess.run([self.shell(), 'start.sh', 'pull'], cwd=self.root, env=dict(self.environ, MIRROR='ghcr.nju.edu.cn'), text=True, capture_output=True, stdin=subprocess.DEVNULL, timeout=15)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         log = (self.root / 'docker.log').read_text()
         self.assertIn('pull ghcr.nju.edu.cn/example/chosen:9', log)
@@ -465,7 +514,7 @@ esac
         self.use_compose_file()
         (self.root / 'docker.log').unlink()
         result = subprocess.run(
-            ['bash', 'start.sh', 'pull'], cwd=self.root,
+            [self.shell(), 'start.sh', 'pull'], cwd=self.root,
             env=dict(self.environ, MIRROR='ghcr.nju.edu.cn', MOCK_PULL_FAIL='1', MOCK_IMAGE_PRESENT='1'),
             text=True, capture_output=True, stdin=subprocess.DEVNULL, timeout=15)
         self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -505,7 +554,7 @@ esac
     def test_start_switches_source_build_back_to_release(self):
         self.assert_success(self.install(LOOPFORGE_BUILD_FROM_SOURCE='1'))
         (self.root / 'docker.log').unlink()
-        result = subprocess.run(['bash', 'start.sh', 'release'], cwd=self.root, env=self.environ, text=True, capture_output=True, stdin=subprocess.DEVNULL, timeout=15)
+        result = subprocess.run([self.shell(), 'start.sh', 'release'], cwd=self.root, env=self.environ, text=True, capture_output=True, stdin=subprocess.DEVNULL, timeout=15)
         self.assert_success(result)
         self.assertNotIn('COMPOSE_FILE=', (self.root / '.env').read_text())
         log = (self.root / 'docker.log').read_text()
@@ -513,7 +562,7 @@ esac
         self.assertNotIn('build platform', log)
 
     def test_start_refuses_local_build(self):
-        result = subprocess.run(['bash', 'start.sh', 'build'], cwd=self.root, env=self.environ, text=True, capture_output=True, stdin=subprocess.DEVNULL, timeout=15)
+        result = subprocess.run([self.shell(), 'start.sh', 'build'], cwd=self.root, env=self.environ, text=True, capture_output=True, stdin=subprocess.DEVNULL, timeout=15)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('./start.sh dev', result.stderr)
 
