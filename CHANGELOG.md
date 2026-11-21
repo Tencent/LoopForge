@@ -2,6 +2,10 @@
 
 Platform releases use `vX.Y.Z` tags and publish `ghcr.io/tencent/loopforge`. LoopForge Local packages use `local-vX.Y.Z` tags and are published by manually running the `release-local` workflow.
 
+## Unreleased
+
+- Docker sandboxes always get `--add-host host.docker.internal:host-gateway`. A native install hands every sandbox an `AGENTFLOW_SESSION_GATEWAY` URL on `host.docker.internal`, but the mapping was only added for conversation and runner-login containers, so `git credential fill` in an SOP run sandbox failed with `lookup host.docker.internal ... no such host` and the 发起 MR agent had to rediscover the docker bridge gateway on every run. The mapping now applies to all sandboxes.
+
 ## 0.4.1 — Git and MCP credentials, SOP orchestration and conversation workspaces
 
 - Configure HTTPS Git credentials per host, authorize the IP addresses of self-hosted HTTPS Git servers, and distribute trusted SSH host keys to execution machines. MCP servers, market items and SOP nodes can use configured credentials.
