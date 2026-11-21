@@ -239,8 +239,8 @@ function openAIOrchestrator() {
 
 function abortAIBuild() {
   const build = aiBuild;
-  aiBuildToken++;
   const restore = isCurrentAIBuild(build);
+  aiBuildToken++;
   aiBuild = null;
   if (restore) restoreAIBuildFailure(build);
   finishAIBuildVisuals();

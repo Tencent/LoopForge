@@ -139,17 +139,17 @@ test('orchestration refreshes project roles and restores the canvas for an unava
   `);
   const workflowName = app.evaluate('state.workflow.name');
   app.router.get('/api/agents?projectId=project-1', [{id:'new-role', name:'New role', projectId:'project-1'}]);
-  app.router.post('/api/assistant/chat', call => {
-    assert.match(call.body.messages.at(-1).content, /new-role：New role/);
-    assert.doesNotMatch(call.body.messages.at(-1).content, /private：Private role/);
-    return {drafts: [{tool:'workflows_save', body:{
-      name:'Unavailable draft', nodes:[{id:'bad', name:'Review', type:'agent', agentId:'private'}], edges:[],
-    }}]};
-  });
-  app.document.querySelector('#aiOrchestratorInput').value = 'Create a review workflow';
-  await app.evaluate('runAIOrchestrator()');
+  app.document.querySelector('#openAIOrchestrator')?.click();
+  const { posted, send } = bridge(app);
+  await send({ type: 'agentflow-sop-designer-begin', requestId: 'roles' });
+  assert.equal(posted.at(-1).ok, true);
+  assert.equal(app.evaluate("!!workflowAgent('new-role')"), true);
+  assert.equal(app.evaluate("!!workflowAgent('private')"), false);
+  await send({ type: 'agentflow-sop-designer-reply', draft: { tool: 'workflows_save', body: {
+    name: 'Unavailable draft', nodes: [{id:'bad', name:'Review', type:'agent', agentId:'private'}], edges: [],
+  } } });
   assert.equal(app.evaluate('state.workflow.name'), workflowName);
   assert.equal(app.evaluate('state.workflow.nodes.length'), 0);
   assert.equal(app.evaluate('state.workflowDirty'), false);
-  assert.match(app.document.querySelector('#aiOrchestratorLog').textContent, /Review（private）/);
+  assert.match(app.document.querySelector('#aiBuildStatus').textContent, /Review（private）/);
 });
