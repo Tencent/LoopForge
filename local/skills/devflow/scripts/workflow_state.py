@@ -772,7 +772,13 @@ def command_finish(args: argparse.Namespace) -> int:
         else:
             data["next_stage"] = args.stage
     data["updated_at"] = stamp
-    data["events"].append({"at": stamp, "event": f"stage_{args.result}", "stage": args.stage})
+    data["events"].append({
+        "at": stamp,
+        "event": f"stage_{args.result}",
+        "stage": args.stage,
+        "executor_id": stage.get("executor_id"),
+        "result": args.result,
+    })
     atomic_write(args.state, data)
     if data.get("awaiting_approval"):
         print(
