@@ -4,9 +4,11 @@ import (
 	"agentflow/internal/domain"
 	"agentflow/internal/repo"
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -457,5 +459,71 @@ func TestRunEvalRecoveryAndApplyConflicts(t *testing.T) {
 	}
 	if (&runsHandlers{}).evalHub() == nil {
 		t.Fatal("lazy eval hub missing")
+	}
+}
+
+func TestRunEvalApplyGuardsEmptyAppendTaskPrompt(t *testing.T) {
+	f := cvBNewHTTPFixture(t)
+	agent := domain.AgentDefinition{ID: "ag-append-1150", Name: "Worker", Prompt: "base prompt"}
+	if err := f.s.PutAgent(agent); err != nil {
+		t.Fatal(err)
+	}
+	run := domain.Run{
+		ID:     "run-append-1150",
+		Status: "succeeded",
+		WorkflowSnapshot: domain.WorkflowDefinition{
+			ID:    "wf-append-1150",
+			Nodes: []domain.WorkflowNode{{ID: "n1", AgentID: agent.ID}},
+		},
+		Nodes: map[string]*domain.NodeRun{},
+	}
+	if err := f.s.PutRun(run); err != nil {
+		t.Fatal(err)
+	}
+	evalRec := domain.RunEvalRecord{
+		ID:     "eval-append-1150",
+		RunID:  run.ID,
+		Status: domain.RunEvalSucceeded,
+		Result: domain.RunEvalResult{
+			Summary: "needs prompt constraint",
+			Recommendations: []domain.RunEvalRecommendation{
+				{ID: "rec-empty", Target: "agent", Action: "append_task_prompt", TargetID: agent.ID},
+				{ID: "rec-blank", Target: "agent", Action: "append_task_prompt", TargetID: agent.ID, Text: "   \n\t  "},
+				{ID: "rec-valid", Target: "agent", Action: "append_task_prompt", TargetID: agent.ID, Text: "always verify output"},
+			},
+		},
+	}
+	if err := f.s.PutRunEval(evalRec); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := cvBRequest(t, f, http.MethodPost, "/api/runs/"+run.ID+"/eval/apply",
+		map[string]any{"evalId": evalRec.ID, "recommendationIds": []string{"rec-empty", "rec-blank", "rec-valid"}}, true)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("apply status = %d: %s", rec.Code, rec.Body.String())
+	}
+	var got domain.RunEvalRecord
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Result.Recommendations) != 3 {
+		t.Fatalf("recommendations = %#v", got.Result.Recommendations)
+	}
+	for _, idx := range []int{0, 1} {
+		item := got.Result.Recommendations[idx]
+		if item.Status == domain.RunEvalRecApplied {
+			t.Fatalf("empty append rec %s should not be applied", item.ID)
+		}
+		if !strings.Contains(item.ApplyError, "缺少可追加的任务书文本") {
+			t.Fatalf("empty append rec %s applyError = %q", item.ID, item.ApplyError)
+		}
+	}
+	valid := got.Result.Recommendations[2]
+	if valid.Status != domain.RunEvalRecApplied || valid.ApplyError != "" {
+		t.Fatalf("valid append rec = %#v", valid)
+	}
+	updatedAgent, ok := f.s.Agent(agent.ID)
+	if !ok || !strings.Contains(updatedAgent.Prompt, "always verify output") {
+		t.Fatalf("agent prompt = %q (ok=%v)", updatedAgent.Prompt, ok)
 	}
 }

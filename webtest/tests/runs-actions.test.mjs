@@ -269,3 +269,46 @@ test('run activation waits for workspace restoration, deduplicates intent, and f
   assert.equal(app.document.querySelector('[data-run-activation-status]'), null);
   assert.equal(app.document.querySelector('[data-retry-node]').disabled, false);
 });
+
+test('run eval guards empty append_task_prompt recommendations and renders non-empty append controls', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  const cases = structuredClone(app.evaluate(`(() => {
+    const emptyRec = { id: 'r1', title: 'append_task_prompt', target: 'agent', action: 'append_task_prompt', targetId: 'ag-1' };
+    const blankTextRec = { id: 'r2', target: 'agent', action: 'append_task_prompt', targetId: 'ag-1', text: '   \\n\\t ' };
+    const blankSetRec = { id: 'r3', target: 'agent', action: 'append_task_prompt', targetId: 'ag-1', set: { text: '   ', instructionsDelta: '\\t' } };
+    const missingTargetRec = { id: 'r4', target: 'agent', action: 'append_task_prompt', text: 'add rule' };
+    const validTextRec = { id: 'r5', title: 'Add rule', target: 'agent', action: 'append_task_prompt', targetId: 'ag-1', text: 'Always run tests' };
+    const validDeltaRec = { id: 'r6', target: 'agent', action: 'append_task_prompt', nodeId: 'n-1', set: { instructionsDelta: 'Check diff' } };
+    return {
+      applyable: [
+        runEvalApplyable(emptyRec),
+        runEvalApplyable(blankTextRec),
+        runEvalApplyable(blankSetRec),
+        runEvalApplyable(missingTargetRec),
+        runEvalApplyable(validTextRec),
+        runEvalApplyable(validDeltaRec)
+      ],
+      emptyHTML: runEvalRecHTML(emptyRec),
+      blankHTML: runEvalRecHTML(blankTextRec),
+      missingTargetHTML: runEvalRecHTML(missingTargetRec),
+      validTextHTML: runEvalRecHTML(validTextRec),
+      validDeltaHTML: runEvalRecHTML(validDeltaRec)
+    };
+  })()`));
+
+  assert.deepEqual(cases.applyable, [false, false, false, false, true, true]);
+  assert.doesNotMatch(cases.emptyHTML, /data-apply-eval|应用此修改|预览补丁/);
+  assert.match(cases.emptyHTML, /仅建议/);
+  assert.match(cases.emptyHTML, /缺少可追加的任务书文本/);
+  assert.doesNotMatch(cases.blankHTML, /data-apply-eval|应用此修改|预览补丁/);
+  assert.match(cases.blankHTML, /缺少可追加的任务书文本/);
+  assert.doesNotMatch(cases.missingTargetHTML, /data-apply-eval|应用此修改/);
+  assert.match(cases.missingTargetHTML, /缺少目标角色/);
+  assert.match(cases.validTextHTML, /data-apply-eval="r5"/);
+  assert.match(cases.validTextHTML, /应用此修改/);
+  assert.match(cases.validTextHTML, /预览补丁/);
+  assert.match(cases.validTextHTML, /Always run tests/);
+  assert.match(cases.validDeltaHTML, /data-apply-eval="r6"/);
+  assert.match(cases.validDeltaHTML, /Check diff/);
+});
