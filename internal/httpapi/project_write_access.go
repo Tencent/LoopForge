@@ -119,12 +119,42 @@ func (d deps) runWriteGuard() gin.HandlerFunc {
 		if issue, found := d.repo.Issue(run.ExecutionContext.IssueID); found {
 			issueProject = issue.ProjectID
 		}
-		if !d.requireProjectWriter(c, domain.RunProjectID(run, issueProject)) {
+		projectID := domain.RunProjectID(run, issueProject)
+		if strings.TrimSpace(projectID) == "" {
+			// Shared workflows can start without a project. An empty project
+			// must not mean "every signed-in user": scope the run controls to
+			// the responsible user instead.
+			if !d.requireRunOwner(c, run) {
+				c.Abort()
+				return
+			}
+		} else if !d.requireProjectWriter(c, projectID) {
 			c.Abort()
 			return
 		}
 		c.Next()
 	}
+}
+
+// requireRunOwner authorizes run lifecycle writes for a run without a
+// project. Failing closed when the responsible user is unknown is deliberate:
+// the alternative (an empty project means every authenticated user) lets any
+// account approve or cancel another user's shared-workflow run.
+func (d deps) requireRunOwner(c *gin.Context, run domain.Run) bool {
+	if !authRequired() || d.isPlatformAdmin(c.Request) {
+		return true
+	}
+	user, ok := d.requestUser(c.Request, true)
+	if !ok || user.ID <= 0 {
+		c.JSON(http.StatusForbidden, gin.H{"error": "请先登录"})
+		return false
+	}
+	owner := run.ExecutionContext.ResponsibleUserID
+	if owner > 0 && owner == user.ID {
+		return true
+	}
+	c.JSON(http.StatusForbidden, gin.H{"error": "只有该运行的负责人可以修改或执行该运行"})
+	return false
 }
 
 func (d deps) requirePlatformAdmin(c *gin.Context) bool {
