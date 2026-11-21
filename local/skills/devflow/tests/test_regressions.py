@@ -368,6 +368,39 @@ class LifecycleTests(unittest.TestCase):
         self.assertIn("cleanup_team.py", adapter)
         self.assertIn("不得读取 Team 配置、成员、inbox 或状态", adapter)
 
+    def test_check_stalled_flags_stage_over_timeout(self):
+        from datetime import datetime, timedelta, timezone
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            state_path = Path(
+                run_script(
+                    "workflow_state.py", "init", "--project-root", root,
+                    "--slug", "stall-check", "--size", "medium", "--mode", "auto",
+                    "--execution-mode", "isolated", "--host-adapter", "codebuddy",
+                    "--coordinator-id", "main-1",
+                ).stdout.strip()
+            )
+            run_script("workflow_state.py", "prepare", "--state", state_path, "--stage", "REQUIREMENT")
+            run_script("workflow_state.py", "start", "--state", state_path, "--stage", "REQUIREMENT")
+            fresh = run_script(
+                "workflow_state.py", "check-stalled", "--state", state_path, check=False,
+            )
+            self.assertEqual(0, fresh.returncode)
+            self.assertIn("REQUIREMENT", fresh.stdout)
+            self.assertNotIn("STALLED", fresh.stdout)
+
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            old = datetime.now(timezone.utc) - timedelta(hours=2)
+            state["stages"]["REQUIREMENT"]["started_at"] = old.isoformat(timespec="seconds")
+            state_path.write_text(json.dumps(state), encoding="utf-8")
+            stalled = run_script(
+                "workflow_state.py", "check-stalled", "--state", state_path, check=False,
+            )
+            self.assertEqual(1, stalled.returncode)
+            self.assertIn("REQUIREMENT", stalled.stdout)
+            self.assertIn("STALLED", stalled.stdout)
+
     def fill_stage_artifacts(self, state_path, stage):
         state = json.loads(state_path.read_text(encoding="utf-8"))
         artifact_root = Path(state["artifacts_dir"])

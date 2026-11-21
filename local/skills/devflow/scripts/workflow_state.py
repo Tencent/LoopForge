@@ -842,6 +842,28 @@ def command_status(args: argparse.Namespace) -> int:
     return 0
 
 
+def command_check_stalled(args: argparse.Namespace) -> int:
+    data = load(args.state)
+    timeout = DEFAULTS.get("stage_timeout_minutes", 60)
+    stamp = datetime.now(timezone.utc)
+    stalled = False
+    for name in data.get("route", []):
+        stage = data["stages"][name]
+        if stage.get("status") != "in_progress":
+            continue
+        started_at = stage.get("started_at")
+        if not started_at:
+            print(f"{name}: in_progress elapsed=unknown")
+            continue
+        elapsed = int((stamp - datetime.fromisoformat(started_at)).total_seconds() // 60)
+        if elapsed > timeout:
+            stalled = True
+            print(f"{name}: in_progress elapsed={elapsed}m STALLED (timeout={timeout}m)")
+        else:
+            print(f"{name}: in_progress elapsed={elapsed}m")
+    return 1 if stalled else 0
+
+
 def can_upgrade_to_team(data: dict) -> bool:
     if (
         data.get("execution_policy_version") != 2
@@ -1202,6 +1224,7 @@ def main() -> int:
     item.set_defaults(func=command_approve)
     for name, func in (
         ("validate", command_validate), ("status", command_status),
+        ("check-stalled", command_check_stalled),
         ("upgrade-team", command_upgrade_team), ("rotate-team", command_rotate_team),
     ):
         item = sub.add_parser(name)

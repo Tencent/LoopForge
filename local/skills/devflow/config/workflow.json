@@ -1,6 +1,7 @@
 {
   "version": "2.0",
   "max_stage_failures": 2,
+  "stage_timeout_minutes": 60,
   "max_batch_tasks": 3,
   "required_approval_gates": ["REQUIREMENT"],
   "manual_gates": ["DESIGN", "REVIEW", "TEST"],
