@@ -409,9 +409,21 @@ func TestWeKnora_DualConnectionsManagementRouting(t *testing.T) {
 	}))
 	defer srv1.Close()
 
+	var seenMu sync.Mutex
 	var seenPaths []string
 	srv2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, weknoraSentinelID) {
+			// Capability probes must look like a structured route-level 404;
+			// the service treats a missing dimension as unsupported, not as a
+			// dead connection.
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"success":false,"error":{"code":"not_found","message":"not found"}}`))
+			return
+		}
+		seenMu.Lock()
 		seenPaths = append(seenPaths, r.Method+" "+r.URL.Path)
+		seenMu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/models":
@@ -469,37 +481,40 @@ func TestWeKnora_DualConnectionsManagementRouting(t *testing.T) {
 		t.Fatalf("expected ProjectSources auto-authorized with wk-2::kb-raw-2, got %#v", store.settings.ProjectSources["p1"])
 	}
 
-	docFile, err := svc.UploadDocument(ctx, "p1", kb.ID, "a.txt", strings.NewReader("hello"))
+	docFile, err := svc.UploadDocument(ctx, "p1", "", kb.ID, "a.txt", strings.NewReader("hello"))
 	if err != nil || docFile.ID != "wk-2::doc-file-2" {
 		t.Fatalf("UploadDocument = %#v, err=%v", docFile, err)
 	}
-	docURL, err := svc.CreateWeKnoraURLDoc(ctx, "p1", kb.ID, "https://example.com")
+	docURL, err := svc.CreateWeKnoraURLDoc(ctx, "p1", "", kb.ID, "https://example.com")
 	if err != nil || docURL.ID != "wk-2::doc-url-2" {
 		t.Fatalf("CreateWeKnoraURLDoc = %#v, err=%v", docURL, err)
 	}
-	docMan, err := svc.CreateWeKnoraManualDoc(ctx, "p1", kb.ID, "m", "body", true)
+	docMan, err := svc.CreateWeKnoraManualDoc(ctx, "p1", "", kb.ID, "m", "body", true)
 	if err != nil || docMan.ID != "wk-2::doc-man-2" {
 		t.Fatalf("CreateWeKnoraManualDoc = %#v, err=%v", docMan, err)
 	}
-	docUpd, err := svc.UpdateWeKnoraManualDoc(ctx, "p1", docMan.ID, "m2", "body2", true)
+	docUpd, err := svc.UpdateWeKnoraManualDoc(ctx, "p1", "", docMan.ID, "m2", "body2", true)
 	if err != nil || docUpd.ID != "wk-2::doc-man-2" {
 		t.Fatalf("UpdateWeKnoraManualDoc = %#v, err=%v", docUpd, err)
 	}
-	page, err := svc.Documents(ctx, "p1", kb.ID, "", 1, 20)
+	page, err := svc.Documents(ctx, "p1", "wk-2", kb.ID, "", 1, 20)
 	if err != nil || len(page.Documents) != 1 || page.Documents[0].ID != "wk-2::doc-man-2" {
 		t.Fatalf("Documents = %#v, err=%v", page, err)
 	}
-	if err := svc.DeleteWeKnoraDoc(ctx, "p1", docMan.ID); err != nil {
+	if err := svc.DeleteWeKnoraDoc(ctx, "p1", "", docMan.ID); err != nil {
 		t.Fatalf("DeleteWeKnoraDoc: %v", err)
 	}
-	if err := svc.DeleteWeKnoraKB(ctx, "p1", kb.ID); err != nil {
+	if err := svc.DeleteWeKnoraKB(ctx, "p1", "", kb.ID); err != nil {
 		t.Fatalf("DeleteWeKnoraKB: %v", err)
 	}
 	if hits := srv1Hits.Load(); hits != 0 {
 		t.Fatalf("expected 0 requests to connection 1, got %d", hits)
 	}
-	if len(seenPaths) < 8 {
-		t.Fatalf("expected all management calls routed to connection 2, got %#v", seenPaths)
+	seenMu.Lock()
+	routed := len(seenPaths)
+	seenMu.Unlock()
+	if routed < 8 {
+		t.Fatalf("expected all management calls routed to connection 2, got %d", routed)
 	}
 }
 
@@ -1214,5 +1229,414 @@ func TestWeKnoraPatchKnowledgeBaseAndGetKnowledge(t *testing.T) {
 	}
 	if got := atomic.LoadInt32(&docHits); got != 2 {
 		t.Fatalf("document lookups = %d, want 2 (one direct, one uncached reverse lookup)", got)
+	}
+}
+
+func TestWeKnora_MultiConnectionRequiresExplicitConnection(t *testing.T) {
+	store := newFakeStore()
+	store.settings = domain.KnowledgeSettings{
+		Enabled: true,
+		Connections: []domain.KnowledgeConnection{
+			{ID: "wk-1", Provider: domain.KnowledgeProviderWeKnora, URL: "http://wk-1.invalid", Token: "tok-1", Enabled: true},
+			{ID: "wk-2", Provider: domain.KnowledgeProviderWeKnora, URL: "http://wk-2.invalid", Token: "tok-2", Enabled: true},
+		},
+		ProjectSources: map[string][]string{"p1": {"wk-1::kb-1"}},
+	}
+	svc := NewService(store, func() string { return "id-1" })
+	ctx := context.Background()
+
+	_, err := svc.Documents(ctx, "p1", "", "kb-1", "", 1, 20)
+	wantKind(t, err, apperr.Invalid)
+	_, err = svc.GetWeKnoraDocument(ctx, "p1", "", "doc-1")
+	wantKind(t, err, apperr.Invalid)
+	wantKind(t, svc.DeleteWeKnoraKB(ctx, "p1", "", "kb-1"), apperr.Invalid)
+	_, err = svc.WeKnoraModels(ctx, "")
+	wantKind(t, err, apperr.Invalid)
+	_, err = svc.WeKnoraModels(ctx, "missing")
+	wantKind(t, err, apperr.NotFound)
+
+	// A connectionId that disagrees with the scoped prefix is rejected instead
+	// of silently routing the request to either instance.
+	_, err = svc.Documents(ctx, "p1", "wk-2", "wk-1::kb-1", "", 1, 20)
+	wantKind(t, err, apperr.Invalid)
+}
+
+func TestWeKnora_CapabilityUnavailableBlocksWrites(t *testing.T) {
+	var businessHits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, weknoraSentinelID) {
+			// Bare 404: this instance does not serve the management route.
+			http.NotFound(w, r)
+			return
+		}
+		businessHits.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"success": true})
+	}))
+	defer srv.Close()
+
+	store := newFakeStore()
+	store.settings = domain.KnowledgeSettings{
+		Enabled: true,
+		Connections: []domain.KnowledgeConnection{{
+			ID: "wk-1", Provider: domain.KnowledgeProviderWeKnora, URL: srv.URL, Token: "tok", Enabled: true,
+		}},
+		ProjectSources: map[string][]string{"p1": {"wk-1::kb-1"}},
+	}
+	svc := NewService(store, func() string { return "id-1" })
+	err := svc.DeleteWeKnoraKB(context.Background(), "p1", "wk-1", "wk-1::kb-1")
+	ae := wantKind(t, err, apperr.Unavailable)
+	if ae.Fields["code"] != "capability_unavailable" || ae.Fields["capability"] != "kb_manage" || ae.Fields["connectionId"] != "wk-1" {
+		t.Fatalf("unexpected capability error fields: %#v", ae.Fields)
+	}
+	if hits := businessHits.Load(); hits != 0 {
+		t.Fatalf("business endpoint must not be called when the capability is unavailable, got %d", hits)
+	}
+	caps, err := svc.WeKnoraCapabilities(context.Background(), "wk-1")
+	if err != nil || caps.Capabilities[domain.CapKBManage].Status != domain.CapabilityUnavailable {
+		t.Fatalf("capabilities = %#v, %v", caps, err)
+	}
+}
+
+func TestWeKnora_CheckKeepsOKWhenProbesFail(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodGet && r.URL.Path == "/api/v1/knowledge-bases" {
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"success": true,
+				"data":    []any{map[string]any{"id": "kb-1", "name": "KB"}},
+			})
+			return
+		}
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(map[string]any{"success": false, "error": "boom"})
+	}))
+	defer srv.Close()
+
+	store := newFakeStore()
+	store.settings = domain.KnowledgeSettings{
+		Enabled: true,
+		Connections: []domain.KnowledgeConnection{{
+			ID: "wk-1", Provider: domain.KnowledgeProviderWeKnora, URL: srv.URL, Token: "tok", Enabled: true,
+		}},
+	}
+	svc := NewService(store, func() string { return "id-1" })
+	res := svc.CheckConnection(context.Background(), "wk-1", "", "", "")
+	if !res.OK || len(res.Sources) != 1 || res.ConnectionID != "wk-1" {
+		t.Fatalf("check should stay OK while probes fail: %#v", res)
+	}
+	if res.Capabilities == nil || res.Capabilities.Capabilities[domain.CapKBManage].Status != domain.CapabilityUnknown {
+		t.Fatalf("probe failures must be unknown, got %#v", res.Capabilities)
+	}
+	if res := svc.CheckConnection(context.Background(), "missing", "", "", ""); res.OK || res.Error == "" {
+		t.Fatalf("unknown connection should fail the check: %#v", res)
+	}
+}
+
+func TestWeKnora_ManagementReadsAndStreams(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, weknoraSentinelID) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"success":false,"error":{"code":"not_found","message":"not found"}}`))
+			return
+		}
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/knowledge-bases/kb-1":
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "data": map[string]any{"id": "kb-1", "name": "KB"}})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/knowledge/doc-1":
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "data": map[string]any{
+				"id": "doc-1", "knowledge_base_id": "kb-1", "title": "Doc", "parse_status": "completed",
+			}})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/chunks/doc-1":
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"success": true, "total": 1,
+				"data": []any{map[string]any{"id": "c1", "content": "body", "chunk_index": 0, "start_at": 1, "end_at": 4}},
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/knowledge/doc-1/preview":
+			w.Header().Set("Content-Type", "text/plain")
+			_, _ = w.Write([]byte("PREVIEW"))
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/knowledge/doc-1/download":
+			w.Header().Set("Content-Type", "application/pdf")
+			_, _ = w.Write([]byte("FILE"))
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/knowledge-bases/kb-1/knowledge/file":
+			_, _ = io.Copy(io.Discard, r.Body)
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "data": map[string]any{
+				"id": "doc-2", "knowledge_base_id": "kb-1", "title": "a.md",
+			}})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	store := newFakeStore()
+	store.settings = domain.KnowledgeSettings{
+		Enabled: true,
+		Connections: []domain.KnowledgeConnection{{
+			ID: "wk-1", Provider: domain.KnowledgeProviderWeKnora, URL: srv.URL, Token: "tok", Enabled: true,
+		}},
+		ProjectSources: map[string][]string{"p1": {"wk-1::kb-1"}},
+	}
+	svc := NewService(store, func() string { return "id-1" })
+	ctx := context.Background()
+
+	kb, err := svc.GetWeKnoraKB(ctx, "p1", "wk-1", "wk-1::kb-1")
+	if err != nil || kb.ID != "wk-1::kb-1" || kb.Name != "KB" {
+		t.Fatalf("GetWeKnoraKB = %#v, %v", kb, err)
+	}
+	detail, err := svc.GetWeKnoraDocument(ctx, "p1", "wk-1", "wk-1::doc-1")
+	if err != nil || detail.ID != "wk-1::doc-1" || detail.KnowledgeBaseID != "wk-1::kb-1" {
+		t.Fatalf("GetWeKnoraDocument = %#v, %v", detail, err)
+	}
+	chunks, err := svc.ListWeKnoraChunks(ctx, "p1", "wk-1", "wk-1::doc-1", 0, 0)
+	if err != nil || chunks.Page != 1 || chunks.PageSize != 20 || len(chunks.Chunks) != 1 || chunks.Chunks[0].Content != "body" {
+		t.Fatalf("ListWeKnoraChunks = %#v, %v", chunks, err)
+	}
+	preview, err := svc.OpenWeKnoraPreview(ctx, "p1", "wk-1", "wk-1::doc-1")
+	if err != nil {
+		t.Fatalf("OpenWeKnoraPreview: %v", err)
+	}
+	body, _ := io.ReadAll(preview.Body)
+	_ = preview.Body.Close()
+	if string(body) != "PREVIEW" {
+		t.Fatalf("preview body = %q", body)
+	}
+	download, err := svc.OpenWeKnoraDownload(ctx, "p1", "wk-1", "wk-1::doc-1")
+	if err != nil {
+		t.Fatalf("OpenWeKnoraDownload: %v", err)
+	}
+	body, _ = io.ReadAll(download.Body)
+	_ = download.Body.Close()
+	if string(body) != "FILE" {
+		t.Fatalf("download body = %q", body)
+	}
+	uploaded, err := svc.UploadDocumentReader(ctx, "p1", "wk-1", "wk-1::kb-1", "a.md", strings.NewReader("# hi"))
+	if err != nil || uploaded.ID != "wk-1::doc-2" {
+		t.Fatalf("UploadDocumentReader = %#v, %v", uploaded, err)
+	}
+}
+
+func TestWeKnora_DeniedBusinessCallDemotesCachedCapability(t *testing.T) {
+	var businessHits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, weknoraSentinelID) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"success":false,"error":{"code":"not_found","message":"not found"}}`))
+			return
+		}
+		businessHits.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`{"success":false,"error":{"code":"forbidden","message":"scope missing"}}`))
+	}))
+	defer srv.Close()
+
+	store := newFakeStore()
+	store.settings = domain.KnowledgeSettings{
+		Enabled: true,
+		Connections: []domain.KnowledgeConnection{{
+			ID: "wk-1", Provider: domain.KnowledgeProviderWeKnora, URL: srv.URL, Token: "tok", Enabled: true,
+		}},
+		ProjectSources: map[string][]string{"p1": {"wk-1::kb-1"}},
+	}
+	svc := NewService(store, func() string { return "id-1" })
+	err := svc.DeleteWeKnoraKB(context.Background(), "p1", "wk-1", "wk-1::kb-1")
+	ae := wantKind(t, err, apperr.Unavailable)
+	if ae.Fields["code"] != "capability_unavailable" || ae.Fields["status"] != "unavailable" || ae.Fields["capability"] != "kb_manage" {
+		t.Fatalf("unexpected demotion error fields: %#v", ae.Fields)
+	}
+	if hits := businessHits.Load(); hits != 1 {
+		t.Fatalf("expected exactly one business request, got %d", hits)
+	}
+	caps, err := svc.WeKnoraCapabilities(context.Background(), "wk-1")
+	if err != nil || caps.Capabilities[domain.CapKBManage].Status != domain.CapabilityUnavailable {
+		t.Fatalf("cache should be demoted after a 403, got %#v, %v", caps, err)
+	}
+}
+
+func TestWeKnora_DocumentGateBlocksBeforeScopeLookup(t *testing.T) {
+	var businessHits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, weknoraSentinelID) {
+			http.NotFound(w, r)
+			return
+		}
+		businessHits.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"success": true})
+	}))
+	defer srv.Close()
+
+	store := newFakeStore()
+	store.settings = domain.KnowledgeSettings{
+		Enabled: true,
+		Connections: []domain.KnowledgeConnection{{
+			ID: "wk-1", Provider: domain.KnowledgeProviderWeKnora, URL: srv.URL, Token: "tok", Enabled: true,
+		}},
+		ProjectSources: map[string][]string{"p1": {"wk-1::kb-1"}},
+	}
+	svc := NewService(store, func() string { return "id-1" })
+	_, err := svc.UpdateWeKnoraManualDoc(context.Background(), "p1", "wk-1", "wk-1::doc-1", "t", "c", false)
+	ae := wantKind(t, err, apperr.Unavailable)
+	want := map[string]string{
+		"code": "capability_unavailable", "capability": "doc_write",
+		"connectionId": "wk-1", "status": "unavailable",
+	}
+	for key, value := range want {
+		if ae.Fields[key] != value {
+			t.Fatalf("capability error field %q = %#v, want %q (%#v)", key, ae.Fields[key], value, ae.Fields)
+		}
+	}
+	if ae.Fields["reason"] == "" {
+		t.Fatalf("capability error must carry a reason: %#v", ae.Fields)
+	}
+	if hits := businessHits.Load(); hits != 0 {
+		t.Fatalf("document write must not touch a business endpoint before the gate, got %d", hits)
+	}
+}
+
+func TestWeKnora_DocumentOutsideProjectSourcesForbidden(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/api/v1/knowledge/doc-x" {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "data": map[string]any{
+				"id": "doc-x", "knowledge_base_id": "kb-secret", "title": "Secret",
+			}})
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer srv.Close()
+
+	store := newFakeStore()
+	store.settings = domain.KnowledgeSettings{
+		Enabled: true,
+		Connections: []domain.KnowledgeConnection{{
+			ID: "wk-1", Provider: domain.KnowledgeProviderWeKnora, URL: srv.URL, Token: "tok", Enabled: true,
+		}},
+		ProjectSources: map[string][]string{"p1": {"wk-1::kb-allowed"}},
+	}
+	svc := NewService(store, func() string { return "id-1" })
+	_, err := svc.GetWeKnoraDocument(context.Background(), "p1", "wk-1", "wk-1::doc-x")
+	wantKind(t, err, apperr.Forbidden)
+}
+
+func TestWeKnora_RejectsNonCanonicalScopedIDs(t *testing.T) {
+	store := newFakeStore()
+	store.settings = domain.KnowledgeSettings{
+		Enabled: true,
+		Connections: []domain.KnowledgeConnection{{
+			ID: "wk-1", Provider: domain.KnowledgeProviderWeKnora, URL: "http://127.0.0.1:1", Token: "tok", Enabled: true,
+		}},
+		ProjectSources: map[string][]string{"p1": {"wk-1::kb-1"}},
+	}
+	svc := NewService(store, func() string { return "id-1" })
+	ctx := context.Background()
+	for _, id := range []string{"wk-1::wk-1::kb-1", "wk-1::", "::kb-1"} {
+		_, err := svc.GetWeKnoraKB(ctx, "p1", "wk-1", id)
+		wantKind(t, err, apperr.Invalid)
+	}
+	_, err := svc.Documents(ctx, "p1", "wk::1", "kb-1", "", 1, 20)
+	wantKind(t, err, apperr.Invalid)
+}
+
+func TestWeKnora_InvalidationLeavesUnchangedConnectionsCached(t *testing.T) {
+	var hits1, hits2 atomic.Int32
+	newServer := func(hits *atomic.Int32) *httptest.Server {
+		return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if strings.Contains(r.URL.Path, weknoraSentinelID) {
+				hits.Add(1)
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusNotFound)
+				_, _ = w.Write([]byte(`{"success":false,"error":{"code":"not_found","message":"not found"}}`))
+				return
+			}
+			http.NotFound(w, r)
+		}))
+	}
+	srv1, srv2 := newServer(&hits1), newServer(&hits2)
+	defer srv1.Close()
+	defer srv2.Close()
+
+	conns := []domain.KnowledgeConnection{
+		{ID: "wk-1", Provider: domain.KnowledgeProviderWeKnora, URL: srv1.URL, Token: "tok-1", Enabled: true},
+		{ID: "wk-2", Provider: domain.KnowledgeProviderWeKnora, URL: srv2.URL, Token: "tok-2", Enabled: true},
+	}
+	store := newFakeStore()
+	store.settings = domain.KnowledgeSettings{Enabled: true, Connections: conns}
+	svc := NewService(store, func() string { return "id-1" })
+	ctx := context.Background()
+	if _, err := svc.WeKnoraCapabilities(ctx, "wk-1"); err != nil {
+		t.Fatalf("warm wk-1: %v", err)
+	}
+	if _, err := svc.WeKnoraCapabilities(ctx, "wk-2"); err != nil {
+		t.Fatalf("warm wk-2: %v", err)
+	}
+	before1, before2 := hits1.Load(), hits2.Load()
+	if before1 == 0 || before2 == 0 {
+		t.Fatalf("probes did not run: %d/%d", before1, before2)
+	}
+
+	changed := append([]domain.KnowledgeConnection(nil), conns...)
+	changed[1].Token = "tok-2-rotated"
+	svc.invalidateChangedConnectionCapabilities(conns, changed)
+
+	if _, err := svc.WeKnoraCapabilities(ctx, "wk-1"); err != nil {
+		t.Fatalf("cached wk-1: %v", err)
+	}
+	if got := hits1.Load(); got != before1 {
+		t.Fatalf("unchanged connection was re-probed: %d -> %d", before1, got)
+	}
+	if _, err := svc.WeKnoraCapabilities(ctx, "wk-2"); err != nil {
+		t.Fatalf("re-probe wk-2: %v", err)
+	}
+	if got := hits2.Load(); got <= before2 {
+		t.Fatalf("changed connection kept a stale verdict: %d -> %d", before2, got)
+	}
+}
+
+func TestWeKnora_CheckConnectionInheritsTopLevelProvider(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, weknoraSentinelID) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"success":false,"error":{"code":"not_found","message":"not found"}}`))
+			return
+		}
+		if r.Method == http.MethodGet && r.URL.Path == "/api/v1/knowledge-bases" {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"success": true,
+				"data":    []any{map[string]any{"id": "kb-1", "name": "KB"}},
+			})
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer srv.Close()
+
+	store := newFakeStore()
+	store.settings = domain.KnowledgeSettings{
+		Provider: domain.KnowledgeProviderWeKnora,
+		Enabled:  true,
+		URL:      srv.URL,
+		Token:    "top-token",
+		Connections: []domain.KnowledgeConnection{{
+			ID: "wk-1", URL: srv.URL, Token: "tok", Enabled: true,
+		}},
+	}
+	svc := NewService(store, func() string { return "id-1" })
+	res := svc.CheckConnection(context.Background(), "wk-1", "", "", "")
+	if !res.OK || len(res.Sources) != 1 || res.ConnectionID != "wk-1" {
+		t.Fatalf("check must inherit the top-level provider: %#v", res)
+	}
+	if res.Capabilities == nil || res.Capabilities.Capabilities[domain.CapDocWrite].Status != domain.CapabilityAvailable {
+		t.Fatalf("capabilities should follow the inherited WeKnora provider, got %#v", res.Capabilities)
 	}
 }

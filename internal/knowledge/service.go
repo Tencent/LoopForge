@@ -47,18 +47,20 @@ type Upstream interface {
 // Service holds the 知识库 business rules: settings validation, source
 // scoping, and the review queue that writes distilled knowledge upstream.
 type Service struct {
-	store Store
-	dial  func(domain.KnowledgeSettings) (Upstream, error)
-	now   func() time.Time
-	newID func() string
+	store        Store
+	dial         func(domain.KnowledgeSettings) (Upstream, error)
+	now          func() time.Time
+	newID        func() string
+	capabilities *capabilityCache
 }
 
 func NewService(store Store, newID func() string) *Service {
 	return &Service{
-		store: store,
-		dial:  func(s domain.KnowledgeSettings) (Upstream, error) { return NewUpstream(s) },
-		now:   time.Now,
-		newID: newID,
+		store:        store,
+		dial:         func(s domain.KnowledgeSettings) (Upstream, error) { return NewUpstream(s) },
+		now:          time.Now,
+		newID:        newID,
+		capabilities: newCapabilityCache(),
 	}
 }
 
@@ -79,6 +81,7 @@ type SettingsInput struct {
 // unless ClearToken is set.
 func (s *Service) UpdateSettings(input SettingsInput, actor string) (domain.KnowledgeSettings, error) {
 	current := s.store.KnowledgeSettings()
+	before := append([]domain.KnowledgeConnection(nil), current.Connections...)
 	provider := normalizeProvider(input.Provider, current.Provider)
 	rawURL := strings.TrimSpace(input.URL)
 	if rawURL != "" {
@@ -120,7 +123,34 @@ func (s *Service) UpdateSettings(input SettingsInput, actor string) (domain.Know
 	if err := s.store.PutKnowledgeSettings(next); err != nil {
 		return current, err
 	}
+	s.invalidateChangedConnectionCapabilities(before, next.Connections)
 	return s.store.KnowledgeSettings(), nil
+}
+
+// invalidateChangedConnectionCapabilities drops cached verdicts only for
+// connections that were added, removed or reconfigured. Unrelated connections
+// keep their probe results instead of paying for a fresh detection.
+func (s *Service) invalidateChangedConnectionCapabilities(before, after []domain.KnowledgeConnection) {
+	if len(before) == 0 && len(after) == 0 {
+		s.capabilities.invalidate("")
+		return
+	}
+	prev := make(map[string]string, len(before))
+	for _, conn := range before {
+		prev[conn.ID] = capabilityFingerprint(conn)
+	}
+	next := make(map[string]struct{}, len(after))
+	for _, conn := range after {
+		next[conn.ID] = struct{}{}
+		if fp, ok := prev[conn.ID]; !ok || fp != capabilityFingerprint(conn) {
+			s.capabilities.invalidate(conn.ID)
+		}
+	}
+	for id := range prev {
+		if _, ok := next[id]; !ok {
+			s.capabilities.invalidate(id)
+		}
+	}
 }
 
 func normalizeProvider(input, current string) string {
@@ -167,11 +197,13 @@ func resolveSettingsToken(input SettingsInput, current string) string {
 }
 
 type CheckResult struct {
-	OK        bool     `json:"ok"`
-	Error     string   `json:"error,omitempty"`
-	LatencyMs int64    `json:"latencyMs"`
-	Sources   []Source `json:"sources"`
-	Tools     []string `json:"tools,omitempty"`
+	OK           bool                           `json:"ok"`
+	Error        string                         `json:"error,omitempty"`
+	LatencyMs    int64                          `json:"latencyMs"`
+	Sources      []Source                       `json:"sources"`
+	Tools        []string                       `json:"tools,omitempty"`
+	ConnectionID string                         `json:"connectionId,omitempty"`
+	Capabilities *domain.ConnectionCapabilities `json:"capabilities,omitempty"`
 }
 
 // Check probes the upstream with the saved settings, overridden by any
@@ -182,19 +214,59 @@ func (s *Service) Check(ctx context.Context, overrideURL, overrideToken string) 
 
 // CheckWithProvider probes the upstream with optional provider/URL/token overrides.
 func (s *Service) CheckWithProvider(ctx context.Context, overrideProvider, overrideURL, overrideToken string) CheckResult {
+	return s.CheckConnection(ctx, "", overrideProvider, overrideURL, overrideToken)
+}
+
+// CheckConnection probes one explicitly named connection (or the first enabled
+// one when the caller has no per-connection UI). Capability probes never flip
+// OK: a reachable instance with unprobeable management endpoints is still
+// reported as connected, with the inconclusive dimensions marked unknown.
+func (s *Service) CheckConnection(ctx context.Context, connectionID, overrideProvider, overrideURL, overrideToken string) CheckResult {
 	settings := s.store.KnowledgeSettings()
+	topProvider := settings.EffectiveProvider()
+	connectionID = strings.TrimSpace(connectionID)
+	var conn domain.KnowledgeConnection
+	switch {
+	case connectionID != "":
+		found := false
+		for _, c := range settings.Connections {
+			if c.ID == connectionID {
+				conn, found = c, true
+				break
+			}
+		}
+		if !found {
+			return CheckResult{ConnectionID: connectionID, Error: "指定的知识库连接不存在"}
+		}
+	case len(settings.Connections) > 0:
+		active := settings.ActiveConnections()
+		if len(active) == 0 {
+			return CheckResult{Error: "没有已启用的知识库连接"}
+		}
+		conn = active[0]
+	default:
+		conn = domain.KnowledgeConnection{ID: "default", Name: "默认连接", Provider: topProvider, URL: settings.URL, Token: settings.Token, Enabled: settings.Enabled}
+	}
+	// Historical rows may omit the per-connection provider; materialize it the
+	// same way the management resolver does so both paths agree on the provider.
+	if strings.TrimSpace(conn.Provider) == "" {
+		conn.Provider = topProvider
+	}
+	settings.Provider, settings.URL, settings.Token = conn.EffectiveProvider(), conn.URL, conn.Token
 	if strings.TrimSpace(overrideProvider) != "" {
 		settings.Provider = normalizeProvider(overrideProvider, settings.Provider)
+		conn.Provider = settings.Provider
 	}
 	if u := strings.TrimSpace(overrideURL); u != "" {
-		settings.URL = u
+		settings.URL, conn.URL = u, u
 	}
 	if t := strings.TrimSpace(overrideToken); t != "" {
 		settings.Token = stripBearer(t)
+		conn.Token = settings.Token
 	}
 	client, err := s.dial(settings)
 	if err != nil {
-		return CheckResult{Error: err.Error()}
+		return CheckResult{ConnectionID: conn.ID, Error: err.Error()}
 	}
 	ctx, cancel := context.WithTimeout(ctx, CallTimeout)
 	defer cancel()
@@ -202,7 +274,7 @@ func (s *Service) CheckWithProvider(ctx context.Context, overrideProvider, overr
 	sources, err := client.ListSources(ctx)
 	latency := s.now().Sub(started).Milliseconds()
 	if err != nil {
-		return CheckResult{Error: err.Error(), LatencyMs: latency}
+		return CheckResult{ConnectionID: conn.ID, Error: err.Error(), LatencyMs: latency}
 	}
 	if sources == nil {
 		sources = []Source{}
@@ -213,7 +285,23 @@ func (s *Service) CheckWithProvider(ctx context.Context, overrideProvider, overr
 			tools = append(tools, tool.Name)
 		}
 	}
-	return CheckResult{OK: true, LatencyMs: latency, Sources: sources, Tools: tools}
+	capabilities := s.connectionCapabilities(ctx, conn, settings)
+	return CheckResult{OK: true, LatencyMs: latency, Sources: sources, Tools: tools, ConnectionID: conn.ID, Capabilities: &capabilities}
+}
+
+// connectionCapabilities probes and caches the management capability set of
+// one connection. Non-WeKnora providers are known to have no management API.
+func (s *Service) connectionCapabilities(ctx context.Context, conn domain.KnowledgeConnection, settings domain.KnowledgeSettings) domain.ConnectionCapabilities {
+	if conn.EffectiveProvider() != domain.KnowledgeProviderWeKnora {
+		return capabilitiesWithReason(domain.CapabilityUnavailable, capabilityUnsupportedProviderReason)
+	}
+	wc, err := NewWeKnoraClient(settingsForConnection(settings, conn))
+	if err != nil {
+		return capabilitiesWithReason(domain.CapabilityUnknown, "无法创建 WeKnora 客户端："+err.Error())
+	}
+	return s.capabilities.get(ctx, conn, func(probeCtx context.Context) domain.ConnectionCapabilities {
+		return probeConnectionCapabilities(probeCtx, conn, wc)
+	})
 }
 
 type SourceView struct {
@@ -317,13 +405,16 @@ func (s *Service) Document(ctx context.Context, projectID, source, path string, 
 }
 
 // Documents lists documents inside a WeKnora knowledge base when authorized for projectID.
-func (s *Service) Documents(ctx context.Context, projectID, sourceID, keyword string, page, pageSize int) (WeKnoraDocumentPage, error) {
+func (s *Service) Documents(ctx context.Context, projectID, connectionID, sourceID, keyword string, page, pageSize int) (WeKnoraDocumentPage, error) {
 	sourceID = strings.TrimSpace(sourceID)
 	if sourceID == "" {
 		return WeKnoraDocumentPage{}, apperr.New(apperr.Invalid, "knowledge base id 必填")
 	}
-	settings, conn, wc, rawKBID, err := s.resolveWeKnoraSource(projectID, sourceID)
+	settings, conn, wc, rawKBID, err := s.resolveWeKnoraSource(projectID, connectionID, sourceID)
 	if err != nil {
+		return WeKnoraDocumentPage{}, err
+	}
+	if err := requireWeKnoraClient(conn, wc); err != nil {
 		return WeKnoraDocumentPage{}, err
 	}
 	ctx, cancel := context.WithTimeout(ctx, CallTimeout)
@@ -339,110 +430,226 @@ func (s *Service) Documents(ctx context.Context, projectID, sourceID, keyword st
 }
 
 // UploadDocument uploads a file to a WeKnora knowledge base when authorized for projectID.
-func (s *Service) UploadDocument(ctx context.Context, projectID, sourceID, filename string, r io.Reader) (WeKnoraDocument, error) {
+func (s *Service) UploadDocument(ctx context.Context, projectID, connectionID, sourceID, filename string, r io.Reader) (WeKnoraDocument, error) {
+	return s.UploadDocumentReader(ctx, projectID, connectionID, sourceID, filename, r)
+}
+
+// UploadDocumentReader streams a file into a knowledge base after the
+// doc_write capability gate has approved the connection.
+func (s *Service) UploadDocumentReader(ctx context.Context, projectID, connectionID, sourceID, filename string, r io.Reader) (WeKnoraDocument, error) {
 	sourceID = strings.TrimSpace(sourceID)
 	filename = strings.TrimSpace(filename)
 	if sourceID == "" || filename == "" {
 		return WeKnoraDocument{}, apperr.New(apperr.Invalid, "知识库和文件名必填")
 	}
-	settings, conn, wc, rawKBID, err := s.resolveWeKnoraSource(projectID, sourceID)
+	settings, conn, wc, rawKBID, err := s.resolveWeKnoraSource(projectID, connectionID, sourceID)
 	if err != nil {
+		return WeKnoraDocument{}, err
+	}
+	if err := s.requireCapability(ctx, conn, wc, domain.CapDocWrite); err != nil {
 		return WeKnoraDocument{}, err
 	}
 	ctx, cancel := context.WithTimeout(ctx, 2*CallTimeout)
 	defer cancel()
 	doc, err := wc.UploadDocument(ctx, rawKBID, filename, r)
 	if err != nil {
-		return WeKnoraDocument{}, apperr.New(apperr.Upstream, "上传文档失败："+err.Error())
+		return WeKnoraDocument{}, s.managementError(conn, domain.CapDocWrite, "上传文档", err)
 	}
 	return scopeWeKnoraDoc(settings, conn.ID, doc), nil
 }
 
-func (s *Service) resolveWeKnoraConnection(connectionID string) (domain.KnowledgeSettings, domain.KnowledgeConnection, *WeKnoraClient, error) {
+// resolveExplicitWeKnoraConnection selects exactly the connection the caller
+// named. Multi-connection deployments have no implicit fallback: a missing id
+// is a client error so a write never lands on an arbitrary instance. A legacy
+// single-URL deployment maps its top-level settings onto the implicit
+// "default" connection. Disabled connections stay manageable as long as their
+// URL and token are configured.
+func (s *Service) resolveExplicitWeKnoraConnection(connectionID string) (domain.KnowledgeSettings, domain.KnowledgeConnection, *WeKnoraClient, error) {
 	settings := s.store.KnowledgeSettings()
-	if !settings.Ready() {
+	connectionID = strings.TrimSpace(connectionID)
+	var conn domain.KnowledgeConnection
+	switch {
+	case connectionID != "":
+		found := false
+		for _, c := range settings.Connections {
+			if c.ID == connectionID {
+				conn, found = c, true
+				break
+			}
+		}
+		if !found {
+			return settings, domain.KnowledgeConnection{}, nil, apperr.New(apperr.NotFound, "指定的知识库连接不存在")
+		}
+	case len(settings.Connections) > 0:
+		return settings, domain.KnowledgeConnection{}, nil, apperr.New(apperr.Invalid, "请指定知识库连接 connectionId")
+	case strings.TrimSpace(settings.URL) != "" && strings.TrimSpace(settings.Token) != "":
+		conn = domain.KnowledgeConnection{ID: "default", Name: "默认连接", Provider: settings.EffectiveProvider(), URL: settings.URL, Token: settings.Token, Enabled: settings.Enabled}
+	default:
 		return settings, domain.KnowledgeConnection{}, nil, apperr.New(apperr.Unavailable, ErrNotConfigured.Error())
 	}
-	conns := settings.ActiveConnections()
-	var selected domain.KnowledgeConnection
-	found := false
-	hasWeKnora := false
-	connectionID = strings.TrimSpace(connectionID)
-	for _, c := range conns {
-		if c.EffectiveProvider() != domain.KnowledgeProviderWeKnora {
-			continue
-		}
-		hasWeKnora = true
-		if connectionID == "" || c.ID == connectionID {
-			selected = c
-			found = true
-			break
-		}
+	if strings.TrimSpace(conn.Provider) == "" {
+		conn.Provider = settings.EffectiveProvider()
 	}
-	if !found {
-		if connectionID != "" {
-			return settings, domain.KnowledgeConnection{}, nil, apperr.New(apperr.Unavailable, "指定的 WeKnora 连接不存在或未启用")
-		}
-		if !hasWeKnora {
-			return settings, domain.KnowledgeConnection{}, nil, apperr.New(apperr.Invalid, "仅 WeKnora 引擎支持该操作")
-		}
-	}
-	wc, err := NewWeKnoraClient(settingsForConnection(settings, selected))
-	if err != nil {
-		return settings, domain.KnowledgeConnection{}, nil, apperr.New(apperr.Unavailable, err.Error())
-	}
-	return settings, selected, wc, nil
-}
-
-func (s *Service) resolveWeKnoraSource(projectID, scopedKBID string) (domain.KnowledgeSettings, domain.KnowledgeConnection, *WeKnoraClient, string, error) {
-	settings := s.store.KnowledgeSettings()
-	if !settings.Ready() {
-		return settings, domain.KnowledgeConnection{}, nil, "", apperr.New(apperr.Unavailable, ErrNotConfigured.Error())
-	}
-	if !SourceAllowed(settings.SourcesForProject(projectID), scopedKBID) {
-		return settings, domain.KnowledgeConnection{}, nil, "", apperr.New(apperr.Forbidden, "该知识库来源不在当前项目的授权范围")
-	}
-	conn, rawKBID, ok := DecodeScopedSourceID(settings, scopedKBID)
-	if !ok {
-		return settings, domain.KnowledgeConnection{}, nil, "", apperr.New(apperr.Unavailable, "知识库不可用：所属连接已删除或停用")
+	if strings.TrimSpace(conn.URL) == "" || strings.TrimSpace(conn.Token) == "" {
+		return settings, conn, nil, apperr.New(apperr.Invalid, "知识库连接缺少地址或 Token")
 	}
 	if conn.EffectiveProvider() != domain.KnowledgeProviderWeKnora {
-		return settings, domain.KnowledgeConnection{}, nil, "", apperr.New(apperr.Invalid, "仅 WeKnora 引擎支持该操作")
+		return settings, conn, nil, nil
 	}
 	wc, err := NewWeKnoraClient(settingsForConnection(settings, conn))
 	if err != nil {
-		return settings, domain.KnowledgeConnection{}, nil, "", apperr.New(apperr.Unavailable, err.Error())
+		return settings, conn, nil, apperr.New(apperr.Unavailable, err.Error())
+	}
+	return settings, conn, wc, nil
+}
+
+// requireWeKnoraClient rejects management calls on non-WeKnora providers and
+// on connections whose client could not be built.
+func requireWeKnoraClient(conn domain.KnowledgeConnection, wc *WeKnoraClient) error {
+	if conn.EffectiveProvider() != domain.KnowledgeProviderWeKnora {
+		return apperr.New(apperr.Invalid, "仅 WeKnora 引擎支持该操作")
+	}
+	if wc == nil {
+		return apperr.New(apperr.Unavailable, ErrNotConfigured.Error())
+	}
+	return nil
+}
+
+// requireCapability is the write gate: it resolves the cached verdict for one
+// capability and turns unavailable or inconclusive probes into 503 errors that
+// name the dimension, so callers never reach the upstream business endpoint.
+func (s *Service) requireCapability(ctx context.Context, conn domain.KnowledgeConnection, wc *WeKnoraClient, capability domain.KnowledgeCapability) error {
+	caps := s.cachedCapabilities(ctx, conn, wc)
+	status := caps.Capabilities[capability]
+	if status.Status != domain.CapabilityAvailable {
+		return capabilityUnavailableError(conn.ID, capability, status)
+	}
+	return nil
+}
+
+// cachedCapabilities probes (or reuses) the capability set for a connection.
+func (s *Service) cachedCapabilities(ctx context.Context, conn domain.KnowledgeConnection, wc *WeKnoraClient) domain.ConnectionCapabilities {
+	if conn.EffectiveProvider() != domain.KnowledgeProviderWeKnora {
+		return capabilitiesWithReason(domain.CapabilityUnavailable, capabilityUnsupportedProviderReason)
+	}
+	if wc == nil {
+		return capabilitiesWithReason(domain.CapabilityUnknown, "未配置 WeKnora 客户端，无法探测能力")
+	}
+	return s.capabilities.get(ctx, conn, func(probeCtx context.Context) domain.ConnectionCapabilities {
+		return probeConnectionCapabilities(probeCtx, conn, wc)
+	})
+}
+
+// managementError maps a business request failure: a credential/route denial
+// demotes the cached verdict and reports capability_unavailable, everything
+// else stays an upstream error.
+func (s *Service) managementError(conn domain.KnowledgeConnection, capability domain.KnowledgeCapability, action string, err error) error {
+	if status, denied := s.capabilities.demoteDenied(conn, capability, err); denied {
+		return capabilityUnavailableError(conn.ID, capability, status)
+	}
+	return apperr.New(apperr.Upstream, action+"失败："+err.Error())
+}
+
+// decodeWeKnoraSource resolves a scoped knowledge base id without applying
+// project scope. A `connID::rawID` prefix wins; an explicit connectionId must
+// agree with it. Bare ids are only accepted for the legacy single connection.
+func (s *Service) decodeWeKnoraSource(connectionID, scopedKBID string) (domain.KnowledgeSettings, domain.KnowledgeConnection, *WeKnoraClient, string, error) {
+	connectionID = strings.TrimSpace(connectionID)
+	scopedKBID = strings.TrimSpace(scopedKBID)
+	if scopedKBID == "" {
+		return s.store.KnowledgeSettings(), domain.KnowledgeConnection{}, nil, "", apperr.New(apperr.Invalid, "knowledge base id 必填")
+	}
+	if strings.Contains(connectionID, "::") {
+		return s.store.KnowledgeSettings(), domain.KnowledgeConnection{}, nil, "", apperr.New(apperr.Invalid, "connectionId 不能包含 ::")
+	}
+	settings := s.store.KnowledgeSettings()
+	rawKBID := scopedKBID
+	if id, raw, ok := strings.Cut(scopedKBID, "::"); ok {
+		id = strings.TrimSpace(id)
+		// A scoped id has exactly one prefix. Extra separators mean the caller
+		// sent a non-canonical id: reject it instead of authorizing one id and
+		// addressing another.
+		if id == "" || strings.Contains(raw, "::") {
+			return settings, domain.KnowledgeConnection{}, nil, "", apperr.New(apperr.Invalid, "知识库 ID 格式非法")
+		}
+		if connectionID != "" && connectionID != id {
+			return settings, domain.KnowledgeConnection{}, nil, "", apperr.New(apperr.Invalid, "文档与知识库连接不匹配")
+		}
+		connectionID, rawKBID = id, strings.TrimSpace(raw)
+	}
+	if strings.TrimSpace(rawKBID) == "" {
+		return settings, domain.KnowledgeConnection{}, nil, "", apperr.New(apperr.Invalid, "knowledge base id 必填")
+	}
+	if connectionID == "" && len(settings.Connections) > 0 {
+		return settings, domain.KnowledgeConnection{}, nil, "", apperr.New(apperr.Invalid, "请指定知识库连接 connectionId")
+	}
+	settings, conn, wc, err := s.resolveExplicitWeKnoraConnection(connectionID)
+	if err != nil {
+		return settings, conn, wc, "", err
 	}
 	return settings, conn, wc, rawKBID, nil
 }
 
-func (s *Service) resolveWeKnoraDoc(ctx context.Context, projectID, scopedDocID string) (domain.KnowledgeSettings, domain.KnowledgeConnection, *WeKnoraClient, string, error) {
-	settings := s.store.KnowledgeSettings()
-	if !settings.Ready() {
-		return settings, domain.KnowledgeConnection{}, nil, "", apperr.New(apperr.Unavailable, ErrNotConfigured.Error())
-	}
-	conn, rawDocID, ok := DecodeScopedSourceID(settings, scopedDocID)
-	if !ok {
-		return settings, domain.KnowledgeConnection{}, nil, "", apperr.New(apperr.Unavailable, "文档不可用：所属连接已删除或停用")
-	}
-	if conn.EffectiveProvider() != domain.KnowledgeProviderWeKnora {
-		return settings, domain.KnowledgeConnection{}, nil, "", apperr.New(apperr.Invalid, "仅 WeKnora 引擎支持该操作")
-	}
-	wc, err := NewWeKnoraClient(settingsForConnection(settings, conn))
+func (s *Service) resolveWeKnoraSource(projectID, connectionID, scopedKBID string) (domain.KnowledgeSettings, domain.KnowledgeConnection, *WeKnoraClient, string, error) {
+	settings, conn, wc, rawKBID, err := s.decodeWeKnoraSource(connectionID, scopedKBID)
 	if err != nil {
-		return settings, domain.KnowledgeConnection{}, nil, "", apperr.New(apperr.Unavailable, err.Error())
+		return settings, conn, wc, "", err
 	}
-	if allowed := settings.SourcesForProject(projectID); len(allowed) > 0 {
-		rawKBID, err := wc.GetDocumentKBID(ctx, rawDocID)
-		if err != nil {
-			return settings, domain.KnowledgeConnection{}, nil, "", apperr.New(apperr.Upstream, "校验文档归属失败："+err.Error())
-		}
-		scopedKBID := EncodeScopedSourceID(settings, conn.ID, rawKBID)
-		if !SourceAllowed(allowed, scopedKBID) {
-			return settings, domain.KnowledgeConnection{}, nil, "", apperr.New(apperr.Forbidden, "该文档所属知识库不在当前项目的授权范围")
-		}
+	if !SourceAllowed(settings.SourcesForProject(projectID), EncodeScopedSourceID(settings, conn.ID, rawKBID)) {
+		return settings, conn, wc, "", apperr.New(apperr.Forbidden, "该知识库来源不在当前项目的授权范围")
+	}
+	return settings, conn, wc, rawKBID, nil
+}
+
+func (s *Service) resolveWeKnoraDoc(ctx context.Context, projectID, connectionID, scopedDocID string) (domain.KnowledgeSettings, domain.KnowledgeConnection, *WeKnoraClient, string, error) {
+	settings, conn, wc, rawDocID, err := s.decodeWeKnoraSource(connectionID, scopedDocID)
+	if err != nil {
+		return settings, conn, wc, "", err
+	}
+	if err := s.authorizeWeKnoraDoc(ctx, projectID, settings, conn, wc, rawDocID); err != nil {
+		return settings, conn, wc, "", err
 	}
 	return settings, conn, wc, rawDocID, nil
+}
+
+// resolveWeKnoraDocGated applies the capability gate before the parent
+// knowledge base lookup, so an unavailable management endpoint is rejected
+// without issuing any business request to the upstream instance.
+func (s *Service) resolveWeKnoraDocGated(ctx context.Context, projectID, connectionID, scopedDocID string, capability domain.KnowledgeCapability) (domain.KnowledgeSettings, domain.KnowledgeConnection, *WeKnoraClient, string, error) {
+	settings, conn, wc, rawDocID, err := s.decodeWeKnoraSource(connectionID, scopedDocID)
+	if err != nil {
+		return settings, conn, wc, "", err
+	}
+	if err := s.requireCapability(ctx, conn, wc, capability); err != nil {
+		return settings, conn, wc, "", err
+	}
+	if err := s.authorizeWeKnoraDoc(ctx, projectID, settings, conn, wc, rawDocID); err != nil {
+		return settings, conn, wc, "", err
+	}
+	return settings, conn, wc, rawDocID, nil
+}
+
+// authorizeWeKnoraDoc verifies that the document's parent knowledge base is
+// inside the project's allow-list. With no allow-list the document is scoped
+// by the project's own data only, matching resolveWeKnoraSource.
+func (s *Service) authorizeWeKnoraDoc(ctx context.Context, projectID string, settings domain.KnowledgeSettings, conn domain.KnowledgeConnection, wc *WeKnoraClient, rawDocID string) error {
+	allowed := settings.SourcesForProject(projectID)
+	if len(allowed) == 0 {
+		return nil
+	}
+	if err := requireWeKnoraClient(conn, wc); err != nil {
+		return err
+	}
+	lookupCtx, cancel := context.WithTimeout(ctx, CallTimeout)
+	defer cancel()
+	rawKBID, err := wc.GetDocumentKBID(lookupCtx, rawDocID)
+	if err != nil {
+		return apperr.New(apperr.Upstream, "校验文档归属失败："+err.Error())
+	}
+	if !SourceAllowed(allowed, EncodeScopedSourceID(settings, conn.ID, rawKBID)) {
+		return apperr.New(apperr.Forbidden, "该文档所属知识库不在当前项目的授权范围")
+	}
+	return nil
 }
 
 func scopeWeKnoraDoc(settings domain.KnowledgeSettings, connID string, doc WeKnoraDocument) WeKnoraDocument {
@@ -454,8 +661,11 @@ func scopeWeKnoraDoc(settings domain.KnowledgeSettings, connID string, doc WeKno
 }
 
 func (s *Service) WeKnoraModels(ctx context.Context, connectionID string) ([]WeKnoraModel, error) {
-	_, _, wc, err := s.resolveWeKnoraConnection(connectionID)
+	_, conn, wc, err := s.resolveExplicitWeKnoraConnection(connectionID)
 	if err != nil {
+		return nil, err
+	}
+	if err := requireWeKnoraClient(conn, wc); err != nil {
 		return nil, err
 	}
 	ctx, cancel := context.WithTimeout(ctx, CallTimeout)
@@ -468,18 +678,21 @@ func (s *Service) WeKnoraModels(ctx context.Context, connectionID string) ([]WeK
 }
 
 func (s *Service) CreateWeKnoraKB(ctx context.Context, projectID string, input WeKnoraCreateKBInput) (weKnoraKB, error) {
-	settings, conn, wc, err := s.resolveWeKnoraConnection(input.ConnectionID)
+	settings, conn, wc, err := s.resolveExplicitWeKnoraConnection(input.ConnectionID)
 	if err != nil {
 		return weKnoraKB{}, err
 	}
 	if strings.TrimSpace(input.Name) == "" {
 		return weKnoraKB{}, apperr.New(apperr.Invalid, "知识库名称不能为空")
 	}
+	if err := s.requireCapability(ctx, conn, wc, domain.CapKBManage); err != nil {
+		return weKnoraKB{}, err
+	}
 	ctx, cancel := context.WithTimeout(ctx, CallTimeout)
 	defer cancel()
 	kb, err := wc.CreateKnowledgeBase(ctx, input)
 	if err != nil {
-		return weKnoraKB{}, apperr.New(apperr.Upstream, "创建知识库失败："+err.Error())
+		return weKnoraKB{}, s.managementError(conn, domain.CapKBManage, "创建知识库", err)
 	}
 	kb.ID = EncodeScopedSourceID(settings, conn.ID, kb.ID)
 	// If this project has an explicit allowlist, auto-authorize the newly created KB for it.
@@ -492,106 +705,237 @@ func (s *Service) CreateWeKnoraKB(ctx context.Context, projectID string, input W
 	return kb, nil
 }
 
-func (s *Service) UpdateWeKnoraKB(ctx context.Context, projectID, kbID, name, description string) (weKnoraKB, error) {
-	settings, conn, wc, rawKBID, err := s.resolveWeKnoraSource(projectID, kbID)
+// GetWeKnoraKB returns the management detail of one knowledge base.
+func (s *Service) GetWeKnoraKB(ctx context.Context, projectID, connectionID, kbID string) (weKnoraKB, error) {
+	settings, conn, wc, rawKBID, err := s.resolveWeKnoraSource(projectID, connectionID, kbID)
 	if err != nil {
+		return weKnoraKB{}, err
+	}
+	if err := requireWeKnoraClient(conn, wc); err != nil {
+		return weKnoraKB{}, err
+	}
+	ctx, cancel := context.WithTimeout(ctx, CallTimeout)
+	defer cancel()
+	kb, err := wc.GetKnowledgeBase(ctx, rawKBID)
+	if err != nil {
+		return weKnoraKB{}, apperr.New(apperr.Upstream, "获取知识库详情失败："+err.Error())
+	}
+	kb.ID = EncodeScopedSourceID(settings, conn.ID, kb.ID)
+	return kb, nil
+}
+
+func (s *Service) UpdateWeKnoraKB(ctx context.Context, projectID, connectionID, kbID, name, description string) (weKnoraKB, error) {
+	settings, conn, wc, rawKBID, err := s.resolveWeKnoraSource(projectID, connectionID, kbID)
+	if err != nil {
+		return weKnoraKB{}, err
+	}
+	if err := s.requireCapability(ctx, conn, wc, domain.CapKBManage); err != nil {
 		return weKnoraKB{}, err
 	}
 	ctx, cancel := context.WithTimeout(ctx, CallTimeout)
 	defer cancel()
 	kb, err := wc.UpdateKnowledgeBase(ctx, rawKBID, name, description)
 	if err != nil {
-		return weKnoraKB{}, apperr.New(apperr.Upstream, "更新知识库失败："+err.Error())
+		return weKnoraKB{}, s.managementError(conn, domain.CapKBManage, "更新知识库", err)
 	}
 	kb.ID = EncodeScopedSourceID(settings, conn.ID, kb.ID)
 	return kb, nil
 }
 
-func (s *Service) DeleteWeKnoraKB(ctx context.Context, projectID, kbID string) error {
-	_, _, wc, rawKBID, err := s.resolveWeKnoraSource(projectID, kbID)
+func (s *Service) DeleteWeKnoraKB(ctx context.Context, projectID, connectionID, kbID string) error {
+	_, conn, wc, rawKBID, err := s.resolveWeKnoraSource(projectID, connectionID, kbID)
 	if err != nil {
+		return err
+	}
+	if err := s.requireCapability(ctx, conn, wc, domain.CapKBManage); err != nil {
 		return err
 	}
 	ctx, cancel := context.WithTimeout(ctx, CallTimeout)
 	defer cancel()
 	if err := wc.DeleteKnowledgeBase(ctx, rawKBID); err != nil {
-		return apperr.New(apperr.Upstream, "删除知识库失败："+err.Error())
+		return s.managementError(conn, domain.CapKBManage, "删除知识库", err)
 	}
 	return nil
 }
 
-func (s *Service) CreateWeKnoraURLDoc(ctx context.Context, projectID, kbID, rawURL string) (WeKnoraDocument, error) {
-	settings, conn, wc, rawKBID, err := s.resolveWeKnoraSource(projectID, kbID)
+func (s *Service) CreateWeKnoraURLDoc(ctx context.Context, projectID, connectionID, kbID, rawURL string) (WeKnoraDocument, error) {
+	settings, conn, wc, rawKBID, err := s.resolveWeKnoraSource(projectID, connectionID, kbID)
 	if err != nil {
 		return WeKnoraDocument{}, err
 	}
 	if strings.TrimSpace(rawURL) == "" {
 		return WeKnoraDocument{}, apperr.New(apperr.Invalid, "网页或文档 URL 不能为空")
 	}
+	if err := s.requireCapability(ctx, conn, wc, domain.CapDocWrite); err != nil {
+		return WeKnoraDocument{}, err
+	}
 	ctx, cancel := context.WithTimeout(ctx, 2*CallTimeout)
 	defer cancel()
 	doc, err := wc.CreateDocumentFromURL(ctx, rawKBID, rawURL)
 	if err != nil {
-		return WeKnoraDocument{}, apperr.New(apperr.Upstream, "URL 导入失败："+err.Error())
+		return WeKnoraDocument{}, s.managementError(conn, domain.CapDocWrite, "URL 导入", err)
 	}
 	return scopeWeKnoraDoc(settings, conn.ID, doc), nil
 }
 
-func (s *Service) CreateWeKnoraManualDoc(ctx context.Context, projectID, kbID, title, content string, publish bool) (WeKnoraDocument, error) {
-	settings, conn, wc, rawKBID, err := s.resolveWeKnoraSource(projectID, kbID)
+func (s *Service) CreateWeKnoraManualDoc(ctx context.Context, projectID, connectionID, kbID, title, content string, publish bool) (WeKnoraDocument, error) {
+	settings, conn, wc, rawKBID, err := s.resolveWeKnoraSource(projectID, connectionID, kbID)
 	if err != nil {
 		return WeKnoraDocument{}, err
 	}
 	if strings.TrimSpace(title) == "" || strings.TrimSpace(content) == "" {
 		return WeKnoraDocument{}, apperr.New(apperr.Invalid, "标题和正文不能为空")
 	}
+	if err := s.requireCapability(ctx, conn, wc, domain.CapDocWrite); err != nil {
+		return WeKnoraDocument{}, err
+	}
 	ctx, cancel := context.WithTimeout(ctx, CallTimeout)
 	defer cancel()
 	doc, err := wc.CreateManualDocument(ctx, rawKBID, title, content, publish)
 	if err != nil {
-		return WeKnoraDocument{}, apperr.New(apperr.Upstream, "创建文档失败："+err.Error())
+		return WeKnoraDocument{}, s.managementError(conn, domain.CapDocWrite, "创建文档", err)
 	}
 	return scopeWeKnoraDoc(settings, conn.ID, doc), nil
 }
 
-func (s *Service) UpdateWeKnoraManualDoc(ctx context.Context, projectID, docID, title, content string, publish bool) (WeKnoraDocument, error) {
+// GetWeKnoraDocument returns the management detail of one document, including
+// its parent knowledge base (already authorized through resolveWeKnoraDoc).
+func (s *Service) GetWeKnoraDocument(ctx context.Context, projectID, connectionID, docID string) (domain.KnowledgeDocumentDetail, error) {
+	settings, conn, wc, rawDocID, err := s.resolveWeKnoraDoc(ctx, projectID, connectionID, docID)
+	if err != nil {
+		return domain.KnowledgeDocumentDetail{}, err
+	}
+	if err := requireWeKnoraClient(conn, wc); err != nil {
+		return domain.KnowledgeDocumentDetail{}, err
+	}
 	ctx, cancel := context.WithTimeout(ctx, CallTimeout)
 	defer cancel()
-	settings, conn, wc, rawDocID, err := s.resolveWeKnoraDoc(ctx, projectID, docID)
+	doc, err := wc.GetKnowledge(ctx, rawDocID)
+	if err != nil {
+		return domain.KnowledgeDocumentDetail{}, apperr.New(apperr.Upstream, "获取文档详情失败："+err.Error())
+	}
+	return domain.KnowledgeDocumentDetail{
+		ID:              EncodeScopedSourceID(settings, conn.ID, doc.ID),
+		KnowledgeBaseID: EncodeScopedSourceID(settings, conn.ID, doc.KnowledgeBaseID),
+		Title:           doc.Title,
+		Type:            doc.Type,
+		FileName:        doc.FileName,
+		FileType:        doc.FileType,
+		ParseStatus:     doc.ParseStatus,
+		ErrorMessage:    doc.ErrorMessage,
+		CreatedAt:       doc.CreatedAt,
+		UpdatedAt:       doc.UpdatedAt,
+	}, nil
+}
+
+func (s *Service) UpdateWeKnoraManualDoc(ctx context.Context, projectID, connectionID, docID, title, content string, publish bool) (WeKnoraDocument, error) {
+	settings, conn, wc, rawDocID, err := s.resolveWeKnoraDocGated(ctx, projectID, connectionID, docID, domain.CapDocWrite)
 	if err != nil {
 		return WeKnoraDocument{}, err
 	}
+	ctx, cancel := context.WithTimeout(ctx, CallTimeout)
+	defer cancel()
 	doc, err := wc.UpdateManualDocument(ctx, rawDocID, title, content, publish)
 	if err != nil {
-		return WeKnoraDocument{}, apperr.New(apperr.Upstream, "更新文档失败："+err.Error())
+		return WeKnoraDocument{}, s.managementError(conn, domain.CapDocWrite, "更新文档", err)
 	}
 	return scopeWeKnoraDoc(settings, conn.ID, doc), nil
 }
 
-func (s *Service) ReparseWeKnoraDoc(ctx context.Context, projectID, docID string) error {
-	ctx, cancel := context.WithTimeout(ctx, CallTimeout)
-	defer cancel()
-	_, _, wc, rawDocID, err := s.resolveWeKnoraDoc(ctx, projectID, docID)
+func (s *Service) ReparseWeKnoraDoc(ctx context.Context, projectID, connectionID, docID string) error {
+	_, conn, wc, rawDocID, err := s.resolveWeKnoraDocGated(ctx, projectID, connectionID, docID, domain.CapReparse)
 	if err != nil {
 		return err
 	}
+	ctx, cancel := context.WithTimeout(ctx, CallTimeout)
+	defer cancel()
 	if err := wc.ReparseDocument(ctx, rawDocID); err != nil {
-		return apperr.New(apperr.Upstream, "触发重解析失败："+err.Error())
+		return s.managementError(conn, domain.CapReparse, "触发重解析", err)
 	}
 	return nil
 }
 
-func (s *Service) DeleteWeKnoraDoc(ctx context.Context, projectID, docID string) error {
-	ctx, cancel := context.WithTimeout(ctx, CallTimeout)
-	defer cancel()
-	_, _, wc, rawDocID, err := s.resolveWeKnoraDoc(ctx, projectID, docID)
+func (s *Service) DeleteWeKnoraDoc(ctx context.Context, projectID, connectionID, docID string) error {
+	_, conn, wc, rawDocID, err := s.resolveWeKnoraDocGated(ctx, projectID, connectionID, docID, domain.CapDocWrite)
 	if err != nil {
 		return err
 	}
+	ctx, cancel := context.WithTimeout(ctx, CallTimeout)
+	defer cancel()
 	if err := wc.DeleteDocument(ctx, rawDocID); err != nil {
-		return apperr.New(apperr.Upstream, "删除文档失败："+err.Error())
+		return s.managementError(conn, domain.CapDocWrite, "删除文档", err)
 	}
 	return nil
+}
+
+// ListWeKnoraChunks returns one page of parsed passages for a document.
+func (s *Service) ListWeKnoraChunks(ctx context.Context, projectID, connectionID, docID string, page, pageSize int) (domain.KnowledgeChunkList, error) {
+	_, conn, wc, rawDocID, err := s.resolveWeKnoraDocGated(ctx, projectID, connectionID, docID, domain.CapChunkRead)
+	if err != nil {
+		return domain.KnowledgeChunkList{}, err
+	}
+	page, pageSize = normalizeChunkPage(page, pageSize)
+	ctx, cancel := context.WithTimeout(ctx, CallTimeout)
+	defer cancel()
+	chunks, total, err := wc.ListChunks(ctx, rawDocID, page, pageSize)
+	if err != nil {
+		return domain.KnowledgeChunkList{}, s.managementError(conn, domain.CapChunkRead, "获取文档分块", err)
+	}
+	out := domain.KnowledgeChunkList{Chunks: make([]domain.KnowledgeChunk, 0, len(chunks)), Total: total, Page: page, PageSize: pageSize}
+	for _, chunk := range chunks {
+		out.Chunks = append(out.Chunks, domain.KnowledgeChunk{
+			ID: chunk.ID, Content: chunk.Content, ChunkIndex: chunk.ChunkIndex, StartAt: chunk.StartAt, EndAt: chunk.EndAt,
+		})
+	}
+	return out, nil
+}
+
+// OpenWeKnoraPreview streams the upstream preview of one document. The caller
+// owns the returned body and must close it.
+func (s *Service) OpenWeKnoraPreview(ctx context.Context, projectID, connectionID, docID string) (*StreamResponse, error) {
+	_, conn, wc, rawDocID, err := s.resolveWeKnoraDocGated(ctx, projectID, connectionID, docID, domain.CapPreviewDownload)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := wc.OpenPreview(ctx, rawDocID)
+	if err != nil {
+		return nil, s.managementError(conn, domain.CapPreviewDownload, "预览文档", err)
+	}
+	return resp, nil
+}
+
+// OpenWeKnoraDownload streams the original file of one document. The caller
+// owns the returned body and must close it.
+func (s *Service) OpenWeKnoraDownload(ctx context.Context, projectID, connectionID, docID string) (*StreamResponse, error) {
+	_, conn, wc, rawDocID, err := s.resolveWeKnoraDocGated(ctx, projectID, connectionID, docID, domain.CapPreviewDownload)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := wc.OpenDownload(ctx, rawDocID)
+	if err != nil {
+		return nil, s.managementError(conn, domain.CapPreviewDownload, "下载文档", err)
+	}
+	return resp, nil
+}
+
+// WeKnoraCapabilities returns the probe verdicts for one connection, using the
+// cache unless it expired or the connection fingerprinted differently.
+func (s *Service) WeKnoraCapabilities(ctx context.Context, connectionID string) (domain.ConnectionCapabilities, error) {
+	_, conn, wc, err := s.resolveExplicitWeKnoraConnection(connectionID)
+	if err != nil {
+		return domain.ConnectionCapabilities{}, err
+	}
+	return s.cachedCapabilities(ctx, conn, wc), nil
+}
+
+func normalizeChunkPage(page, pageSize int) (int, int) {
+	if page <= 0 {
+		page = 1
+	}
+	if pageSize <= 0 || pageSize > 100 {
+		pageSize = 20
+	}
+	return page, pageSize
 }
 
 type UsageAgent struct {

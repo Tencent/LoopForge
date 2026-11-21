@@ -186,6 +186,7 @@ func (s *Service) ProvisionWeKnora(ctx context.Context, input WeKnoraProvisionIn
 	if err := s.store.PutKnowledgeSettings(next); err != nil {
 		return WeKnoraProvisionResult{}, err
 	}
+	s.invalidateChangedConnectionCapabilities(current.Connections, next.Connections)
 	if migratedLegacyConnID != "" {
 		s.migrateLegacySubmissionSources(migratedLegacyConnID)
 	}
@@ -221,6 +222,7 @@ func (s *Service) DeleteConnection(connID, actor string) (domain.KnowledgeSettin
 	if err := s.store.PutKnowledgeSettings(current); err != nil {
 		return current, err
 	}
+	s.capabilities.invalidate(connID)
 	if err := s.store.DeleteKnowledgeConnectionToken(connID); err != nil {
 		return current, err
 	}

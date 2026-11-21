@@ -162,7 +162,7 @@ func (h *knowledgeHandlers) document(c *gin.Context) {
 func (h *knowledgeHandlers) documents(c *gin.Context) {
 	page, _ := strconv.Atoi(c.Query("page"))
 	pageSize, _ := strconv.Atoi(c.Query("pageSize"))
-	out, err := h.svc.Documents(c.Request.Context(), c.Query("projectId"), c.Param("id"), c.Query("keyword"), page, pageSize)
+	out, err := h.svc.Documents(c.Request.Context(), c.Query("projectId"), c.Query("connectionId"), c.Param("id"), c.Query("keyword"), page, pageSize)
 	render(c, out, err)
 }
 
@@ -214,7 +214,7 @@ func (h *knowledgeHandlers) updateSource(c *gin.Context) {
 	if !decode(c, &input) {
 		return
 	}
-	kb, err := h.svc.UpdateWeKnoraKB(c.Request.Context(), projectID, c.Param("id"), input.Name, input.Description)
+	kb, err := h.svc.UpdateWeKnoraKB(c.Request.Context(), projectID, c.Query("connectionId"), c.Param("id"), input.Name, input.Description)
 	render(c, kb, err)
 }
 
@@ -224,7 +224,7 @@ func (h *knowledgeHandlers) deleteSource(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if err := h.svc.DeleteWeKnoraKB(c.Request.Context(), projectID, c.Param("id")); err != nil {
+	if err := h.svc.DeleteWeKnoraKB(c.Request.Context(), projectID, c.Query("connectionId"), c.Param("id")); err != nil {
 		respond(c, err)
 		return
 	}
@@ -243,7 +243,7 @@ func (h *knowledgeHandlers) createFromURL(c *gin.Context) {
 	if !decode(c, &input) {
 		return
 	}
-	doc, err := h.svc.CreateWeKnoraURLDoc(c.Request.Context(), projectID, c.Param("id"), input.URL)
+	doc, err := h.svc.CreateWeKnoraURLDoc(c.Request.Context(), projectID, c.Query("connectionId"), c.Param("id"), input.URL)
 	render(c, doc, err)
 }
 
@@ -261,7 +261,7 @@ func (h *knowledgeHandlers) createManual(c *gin.Context) {
 	if !decode(c, &input) {
 		return
 	}
-	doc, err := h.svc.CreateWeKnoraManualDoc(c.Request.Context(), projectID, c.Param("id"), input.Title, input.Content, input.Publish)
+	doc, err := h.svc.CreateWeKnoraManualDoc(c.Request.Context(), projectID, c.Query("connectionId"), c.Param("id"), input.Title, input.Content, input.Publish)
 	render(c, doc, err)
 }
 
@@ -279,7 +279,7 @@ func (h *knowledgeHandlers) updateDocument(c *gin.Context) {
 	if !decode(c, &input) {
 		return
 	}
-	doc, err := h.svc.UpdateWeKnoraManualDoc(c.Request.Context(), projectID, c.Param("docId"), input.Title, input.Content, input.Publish)
+	doc, err := h.svc.UpdateWeKnoraManualDoc(c.Request.Context(), projectID, c.Query("connectionId"), c.Param("docId"), input.Title, input.Content, input.Publish)
 	render(c, doc, err)
 }
 
@@ -289,7 +289,7 @@ func (h *knowledgeHandlers) reparseDocument(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if err := h.svc.ReparseWeKnoraDoc(c.Request.Context(), projectID, c.Param("docId")); err != nil {
+	if err := h.svc.ReparseWeKnoraDoc(c.Request.Context(), projectID, c.Query("connectionId"), c.Param("docId")); err != nil {
 		respond(c, err)
 		return
 	}
@@ -302,7 +302,7 @@ func (h *knowledgeHandlers) deleteDocument(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if err := h.svc.DeleteWeKnoraDoc(c.Request.Context(), projectID, c.Param("docId")); err != nil {
+	if err := h.svc.DeleteWeKnoraDoc(c.Request.Context(), projectID, c.Query("connectionId"), c.Param("docId")); err != nil {
 		respond(c, err)
 		return
 	}
@@ -332,7 +332,7 @@ func (h *knowledgeHandlers) upload(c *gin.Context) {
 		return
 	}
 	defer f.Close()
-	doc, err := h.svc.UploadDocument(c.Request.Context(), projectID, c.Param("id"), fileHeader.Filename, f)
+	doc, err := h.svc.UploadDocument(c.Request.Context(), projectID, c.Query("connectionId"), c.Param("id"), fileHeader.Filename, f)
 	render(c, doc, err)
 }
 
