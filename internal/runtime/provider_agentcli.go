@@ -128,7 +128,7 @@ func AgentCLICommand(kind string, o AgentCLICommandOptions) CommandSpec {
 	readOnly := o.Chat && !o.Workspace
 	options := AgentCLIOptions{Model: model, Effort: effort, ReadOnly: readOnly}
 	switch kind {
-	case AgentCLIOpenCode, AgentCLIPi, AgentCLIKimi:
+	case AgentCLIOpenCode, AgentCLIPi, AgentCLIKimi, AgentCLIDeepSeek:
 		options.ImageInput = o.ImageInput || len(o.ImagePaths) > 0
 	}
 	switch kind {

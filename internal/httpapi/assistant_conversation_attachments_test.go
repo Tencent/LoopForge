@@ -147,6 +147,17 @@ func TestConversationImageRoutingAcrossEngines(t *testing.T) {
 					if err != nil || !bytes.Contains(config, []byte(`"image_in"`)) {
 						t.Fatalf("Kimi image support missing from generated model configuration: %v", err)
 					}
+				case runtime.AgentCLIDeepSeek:
+					home := filepath.Join(root, "home")
+					cred := runtime.ProviderCredential{APIKey: "fixture-key", BaseURL: "https://example.test"}
+					model := runtime.AgentCLIOptions{Model: "test-model", ImageInput: inv.command.AgentCLI.ImageInput}
+					if _, _, err := runtime.ApplyAgentCLICredential(engine, cred, model, runtime.HostAgentCLIHome(home), home, inv.command.Argv); err != nil {
+						t.Fatal(err)
+					}
+					config, err := os.ReadFile(filepath.Join(home, ".dsh", "agentflow-model.json"))
+					if err != nil || !bytes.Contains(config, []byte(`"image"`)) {
+						t.Fatalf("DeepSeek image support missing from generated model configuration: %v", err)
+					}
 				default:
 					if slices.Contains(inv.command.Argv, imagePath) || inv.command.AgentCLI.ImageInput {
 						t.Fatalf("unsupported headless image arguments: %v", inv.command.Argv)

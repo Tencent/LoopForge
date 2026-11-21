@@ -524,7 +524,7 @@ func ApplyAgentCLICredential(kind string, cred ProviderCredential, options Agent
 		env[agentCLIKeyEnv] = key
 		env["PI_CODING_AGENT_DIR"] = homeEnv + "/.pi/agent"
 	case AgentCLIDeepSeek:
-		return applyDeepSeekCredential(home, homeEnv, key, baseURL, protocol, model, strings.TrimSpace(options.Effort), argv)
+		return applyDeepSeekCredential(home, homeEnv, key, baseURL, protocol, model, strings.TrimSpace(options.Effort), options.ImageInput, argv)
 	case AgentCLIZCode:
 		return applyZCodeCredential(home, homeEnv, key, baseURL, protocol, model, strings.TrimSpace(options.Effort), argv)
 	default:
@@ -541,7 +541,7 @@ func agentCLIPiAPI(protocol string) string {
 
 // applyDeepSeekCredential writes the DeepSeek Harness model patch and puts the
 // launcher --patch flags ahead of the profile's own arguments.
-func applyDeepSeekCredential(home AgentCLIHome, homeEnv, key, baseURL, protocol, model, effort string, argv []string) ([]string, map[string]string, error) {
+func applyDeepSeekCredential(home AgentCLIHome, homeEnv, key, baseURL, protocol, model, effort string, imageInput bool, argv []string) ([]string, map[string]string, error) {
 	env := map[string]string{}
 	patch := []any{}
 	selection := map[string]any{}
@@ -574,6 +574,9 @@ func applyDeepSeekCredential(home AgentCLIHome, homeEnv, key, baseURL, protocol,
 		env[agentCLIKeyEnv] = key
 		provider := "agentflow"
 		modelConfig := map[string]any{"id": model}
+		if imageInput {
+			modelConfig["input"] = []string{"text", "image"}
+		}
 		if effort != "" {
 			// Keep the gateway's unconfigured route distinct so reverting to
 			// it on resume does not inherit the explicitly selected effort.
