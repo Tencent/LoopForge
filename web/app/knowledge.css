@@ -432,3 +432,118 @@
   align-items: center;
   gap: 4px;
 }
+
+/* 文档详情抽屉：分段视图 / 分块卡片 / 预览与分页 */
+:is(#knowledgeView, #kbDrawer) .kb-seg {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  align-self: flex-start;
+  padding: 3px;
+  border: 1px solid var(--hui-border);
+  border-radius: 10px;
+  background: var(--hui-surface-subtle, rgba(15, 23, 42, .03));
+}
+
+:is(#knowledgeView, #kbDrawer) .kb-seg button {
+  border: 0;
+  background: transparent;
+  color: var(--hui-secondary);
+  font-size: 13px;
+  font-weight: 500;
+  padding: 6px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+:is(#knowledgeView, #kbDrawer) .kb-seg button:hover {
+  color: var(--hui-text);
+}
+
+:is(#knowledgeView, #kbDrawer) .kb-seg button.active {
+  background: var(--hui-surface);
+  color: var(--hui-text);
+  font-weight: 600;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, .12);
+}
+
+#kbDrawer .kb-doc-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+#kbDrawer .kb-doc-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+#kbDrawer .kb-doc-pane {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+#kbDrawer .kb-chunk-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+#kbDrawer .kb-chunk-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--hui-border);
+  border-radius: 10px;
+}
+
+#kbDrawer .kb-chunk-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--hui-text);
+}
+
+#kbDrawer .kb-chunk-card .kb-doc-pre {
+  border: 0;
+  padding: 0;
+  background: transparent;
+}
+
+#kbDrawer .kb-preview-box {
+  border: 1px solid var(--hui-border);
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--hui-surface-subtle, rgba(15, 23, 42, .03));
+}
+
+#kbDrawer .kb-preview-img {
+  display: block;
+  max-width: 100%;
+  max-height: 60vh;
+  margin: 0 auto;
+}
+
+#kbDrawer .kb-preview-frame {
+  display: block;
+  width: 100%;
+  height: 60vh;
+  border: 0;
+  background: #fff;
+}
+
+#kbDrawer .kb-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}

@@ -29,11 +29,57 @@
     { key: 'preview_download', label: '预览下载' },
     { key: 'reparse', label: '重解析' }
   ];
+  // 管理类审计动作（tool 前缀 admin:）的可读名称，非管理类工具原样展示。
+  const KB_ADMIN_ACTION_LABELS = {
+    'admin:kb.create': '创建知识库',
+    'admin:kb.update': '更新知识库',
+    'admin:kb.delete': '删除知识库',
+    'admin:conn.probe': '探测连接',
+    'admin:conn.remove': '移除连接',
+    'admin:doc.upload': '上传文档',
+    'admin:doc.url': '链接导入文档',
+    'admin:doc.create': '创建手工文档',
+    'admin:doc.update': '更新手工文档',
+    'admin:doc.reparse': '重解析文档',
+    'admin:doc.delete': '删除文档',
+    'admin:doc.download': '下载文档'
+  };
+
+  function kbAuditTool(tool) {
+    const name = String(tool || '');
+    if (name.indexOf('admin:') !== 0) return kbEsc(name);
+    const label = KB_ADMIN_ACTION_LABELS[name] || name;
+    return `<span class="hui-badge" data-tone="info" data-size="sm" title="${kbEsc(name)}">${kbEsc(label)}</span>`;
+  }
+
   // 能力不可用原因与探测在途标记不进 kbState，避免触发整页重绘。
   const kbCapabilityReasons = {};
   const kbCapabilityFetching = {};
   const kbCapabilityProbed = {};
   let kbRenderTimer = 0;
+
+  // 文档详情抽屉状态：分段视图、分块分页、预览 blob 与手工文档编辑。
+  const kbDocView = {
+    docId: '',
+    connId: '',
+    title: '',
+    docLoading: false,
+    detail: null,
+    view: 'chunks',
+    chunkPage: 1,
+    chunkPageSize: 10,
+    chunks: null,
+    chunkLegacy: false,
+    chunkError: '',
+    chunkLoading: false,
+    preview: null,
+    previewError: '',
+    previewLoading: false,
+    objectUrl: '',
+    editContent: '',
+    editContentState: 'idle',
+    editPublish: true
+  };
 
   function scheduleKBRender() {
     if (kbRenderTimer) return;
@@ -327,6 +373,11 @@
     const drawer = document.getElementById('kbDrawer');
     const scrim = document.getElementById('kbDrawerScrim');
     if (!drawer) return;
+    kbReleasePreviewURL();
+    kbDocView.docId = '';
+    kbDocView.detail = null;
+    kbDocView.chunks = null;
+    kbDocView.preview = null;
     drawer.classList.remove('open');
     drawer.hidden = true;
     drawer.inert = true;
@@ -968,13 +1019,446 @@
     });
   }
 
-  async function kbPreviewDocLegacy(docId, title) {
+  // ---- 文档详情抽屉（分块 / 原文预览 / 手工文档编辑） ----
+
+  function kbDocField(d, camel, snake) {
+    if (!d) return '';
+    if (d[camel] != null && d[camel] !== '') return String(d[camel]);
+    if (snake && d[snake] != null && d[snake] !== '') return String(d[snake]);
+    return '';
+  }
+
+  function kbDocTypeText(d) {
+    return kbDocField(d, 'fileType', 'file_type') || kbDocField(d, 'type');
+  }
+
+  function kbDocIsManual(d) {
+    return String(kbDocField(d, 'type') || '').toLowerCase() === 'manual';
+  }
+
+  function kbReleasePreviewURL() {
+    if (!kbDocView.objectUrl) return;
+    try { URL.revokeObjectURL(kbDocView.objectUrl); } catch {}
+    kbDocView.objectUrl = '';
+  }
+
+  function kbPreviewKind(contentType) {
+    const t = String(contentType || '').toLowerCase().split(';')[0].trim();
+    if (!t) return 'binary';
+    if (t.indexOf('text/') === 0) return 'text';
+    if ([
+      'application/json', 'application/xml', 'application/javascript',
+      'application/yaml', 'application/x-yaml', 'application/x-ndjson'
+    ].indexOf(t) >= 0) return 'text';
+    if (['image/png', 'image/jpeg', 'image/jpg', 'image/gif', 'image/webp', 'image/bmp', 'image/avif'].indexOf(t) >= 0) return 'image';
+    if (t === 'application/pdf') return 'pdf';
+    return 'binary';
+  }
+
+  async function openKBDocumentDrawer(docId, title, initialView) {
+    const id = String(docId || '');
+    if (!id) return;
+    const connId = resolveExplicitConnectionId(id) || kbActiveConnId();
+    kbReleasePreviewURL();
+    Object.assign(kbDocView, {
+      docId: id,
+      connId: connId,
+      title: title || id,
+      docLoading: true,
+      detail: null,
+      view: 'chunks',
+      chunkPage: 1,
+      chunks: null,
+      chunkLegacy: false,
+      chunkError: '',
+      chunkLoading: false,
+      preview: null,
+      previewError: '',
+      previewLoading: false,
+      objectUrl: '',
+      editContent: '',
+      editContentState: 'idle',
+      editPublish: true
+    });
+    openKBDrawer(title || '文档详情', '<div id="kbDocBody"></div>');
+    renderKBDocBody();
+    await kbLoadDocDetail();
+    if (kbDocView.docId !== id) return;
+    const manual = kbDocIsManual(kbDocView.detail);
+    const canEdit = manual && kbCapabilityAllowed(connId, 'doc_write');
+    if (initialView === 'edit' && canEdit) {
+      kbDocView.view = 'edit';
+    } else if (kbCapabilityAllowed(connId, 'chunk_read')) {
+      kbDocView.view = 'chunks';
+    } else if (kbCapabilityAllowed(connId, 'preview_download')) {
+      kbDocView.view = 'preview';
+    } else {
+      kbDocView.view = canEdit ? 'edit' : 'chunks';
+    }
+    kbDocView.docLoading = false;
+    if (kbDocView.view !== 'edit') kbDocView.editContentState = 'idle';
+    kbLoadDocView();
+  }
+
+  async function kbLoadDocDetail() {
+    const id = kbDocView.docId;
+    if (!id) return;
     try {
-      const doc = await kbAPI(`/api/knowledge/document?projectId=${encodeURIComponent(kbProjectId())}&source=${encodeURIComponent(kbState.selectedSourceId)}&path=${encodeURIComponent(docId)}`);
-      const text = (doc.lines || []).map(l => l.text).join('\n\n---\n\n') || '暂无文本分块';
-      openKBDrawer(title, `<pre class="kb-doc-pre">${kbEsc(text)}</pre>`);
+      const detail = await kbAPI('/api/knowledge/documents/' + encodeURIComponent(id) + '?' + kbConnQuery(kbDocView.connId));
+      if (kbDocView.docId !== id) return;
+      kbDocView.detail = detail && typeof detail === 'object' && !Array.isArray(detail) ? detail : null;
+      const nextTitle = kbDocField(detail, 'title');
+      if (nextTitle) kbDocView.title = nextTitle;
     } catch (err) {
-      kbToast(err.message, true);
+      if (kbDocView.docId !== id) return;
+      // 详情路由尚未合入时保持抽屉可用，分块阶段再回退旧版接口。
+      if (!handleCapabilityError(err) && !err.notFound) kbToastError(err);
+      kbDocView.detailMissing = true;
+    }
+  }
+
+  function kbLoadDocView() {
+    if (!kbDocView.docId || kbDocView.docLoading) return;
+    const connId = kbDocView.connId;
+    if (kbDocView.view === 'preview') {
+      if (kbCapabilityAllowed(connId, 'preview_download') && !kbDocView.preview && !kbDocView.previewLoading && !kbDocView.previewError) {
+        kbLoadDocPreview();
+      }
+      return;
+    }
+    if (kbDocView.view === 'edit') {
+      kbLoadDocEditContent();
+      return;
+    }
+    if (kbCapabilityAllowed(connId, 'chunk_read') && !kbDocView.chunks && !kbDocView.chunkLoading && !kbDocView.chunkError) {
+      kbLoadDocChunks(kbDocView.chunkPage || 1);
+    }
+  }
+
+  async function kbLoadDocChunks(page) {
+    const id = kbDocView.docId;
+    if (!id) return;
+    kbDocView.chunkPage = Math.max(1, Number(page) || 1);
+    kbDocView.chunkLoading = true;
+    kbDocView.chunkError = '';
+    kbDocView.chunkLegacy = false;
+    renderKBDocBody();
+    try {
+      const q = kbConnQuery(kbDocView.connId, { page: kbDocView.chunkPage, pageSize: kbDocView.chunkPageSize });
+      const res = await kbAPI('/api/knowledge/documents/' + encodeURIComponent(id) + '/chunks?' + q);
+      if (kbDocView.docId !== id) return;
+      const chunks = Array.isArray(res) ? res : (Array.isArray(res && res.chunks) ? res.chunks : []);
+      kbDocView.chunks = {
+        chunks: chunks,
+        total: Number(res && res.total != null ? res.total : chunks.length),
+        page: Number((res && res.page) || kbDocView.chunkPage),
+        pageSize: Number((res && res.pageSize) || kbDocView.chunkPageSize),
+        paginated: !Array.isArray(res)
+      };
+    } catch (err) {
+      if (kbDocView.docId !== id) return;
+      if (err.notFound) {
+        await kbLoadLegacyDocChunks(id);
+      } else {
+        kbDocView.chunkError = err.message;
+        handleCapabilityError(err);
+      }
+    } finally {
+      if (kbDocView.docId === id) {
+        kbDocView.chunkLoading = false;
+        renderKBDocBody();
+      }
+    }
+  }
+
+  // 分块路由尚未合入时回退旧版 /api/knowledge/document 原文行。
+  async function kbLoadLegacyDocChunks(id) {
+    const q = 'projectId=' + encodeURIComponent(kbProjectId())
+      + '&source=' + encodeURIComponent(kbState.selectedSourceId || '')
+      + '&path=' + encodeURIComponent(id);
+    try {
+      const doc = await kbAPI('/api/knowledge/document?' + q);
+      if (kbDocView.docId !== id) return;
+      const lines = Array.isArray(doc && doc.lines) ? doc.lines : [];
+      const chunks = lines.map((line, i) => ({
+        id: 'legacy-' + i,
+        chunkIndex: i,
+        content: (line && line.text) || '',
+        startAt: 0,
+        endAt: 0
+      }));
+      kbDocView.chunks = { chunks: chunks, total: chunks.length, page: 1, pageSize: chunks.length || 1, paginated: false };
+      kbDocView.chunkLegacy = true;
+    } catch (err) {
+      if (kbDocView.docId !== id) return;
+      kbDocView.chunkError = err.message;
+    }
+  }
+
+  async function kbLoadDocPreview() {
+    const id = kbDocView.docId;
+    if (!id || kbDocView.previewLoading) return;
+    kbDocView.previewLoading = true;
+    kbDocView.previewError = '';
+    kbReleasePreviewURL();
+    renderKBDocBody();
+    try {
+      const res = await fetch('/api/knowledge/documents/' + encodeURIComponent(id) + '/preview?' + kbConnQuery(kbDocView.connId));
+      if (kbDocView.docId !== id) return;
+      if (!res.ok) {
+        const text = await res.text().catch(() => '');
+        let data = null;
+        try { data = text ? JSON.parse(text) : null; } catch {}
+        const err = new Error((data && (data.error || data.message)) || text || ('HTTP ' + res.status));
+        err.httpStatus = res.status;
+        err.notFound = res.status === 404;
+        err.code = (data && data.code) || '';
+        err.capability = (data && data.capability) || '';
+        err.connectionId = (data && data.connectionId) || '';
+        err.reason = (data && data.reason) || '';
+        throw err;
+      }
+      const contentType = res.headers.get('content-type') || '';
+      const kind = kbPreviewKind(contentType);
+      if (kind === 'text') {
+        kbDocView.preview = { kind: kind, text: await res.text() };
+      } else if (kind === 'image' || kind === 'pdf') {
+        const blob = await res.blob();
+        if (kbDocView.docId !== id) return;
+        kbReleasePreviewURL();
+        kbDocView.objectUrl = URL.createObjectURL(blob);
+        kbDocView.preview = { kind: kind, url: kbDocView.objectUrl };
+      } else {
+        kbDocView.preview = { kind: 'binary', contentType: contentType };
+      }
+    } catch (err) {
+      if (kbDocView.docId !== id) return;
+      if (err.notFound || err.httpStatus === 405) {
+        kbDocView.previewError = '原文预览接口尚未合入，可先下载原文件查看。';
+      } else {
+        kbDocView.previewError = err.message;
+        handleCapabilityError(err);
+      }
+    } finally {
+      if (kbDocView.docId === id) {
+        kbDocView.previewLoading = false;
+        renderKBDocBody();
+      }
+    }
+  }
+
+  async function kbLoadDocEditContent() {
+    const id = kbDocView.docId;
+    if (!id || kbDocView.editContentState === 'loading' || kbDocView.editContentState === 'ready') return;
+    const inline = kbDocField(kbDocView.detail, 'content');
+    if (inline) {
+      kbDocView.editContent = inline;
+      kbDocView.editContentState = 'ready';
+      renderKBDocBody();
+      return;
+    }
+    kbDocView.editContentState = 'loading';
+    renderKBDocBody();
+    try {
+      const res = await fetch('/api/knowledge/documents/' + encodeURIComponent(id) + '/preview?' + kbConnQuery(kbDocView.connId));
+      if (kbDocView.docId !== id) return;
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      if (kbPreviewKind(res.headers.get('content-type')) !== 'text') throw new Error('unsupported preview');
+      const text = await res.text();
+      if (kbDocView.docId !== id) return;
+      kbDocView.editContent = text;
+      kbDocView.editContentState = 'ready';
+    } catch {
+      if (kbDocView.docId !== id) return;
+      kbDocView.editContentState = 'failed';
+    } finally {
+      if (kbDocView.docId === id) renderKBDocBody();
+    }
+  }
+
+  function kbSwitchDocView(view) {
+    if (!view || kbDocView.view === view) return;
+    kbDocView.view = view;
+    if (view !== 'preview') kbReleasePreviewURL();
+    renderKBDocBody();
+    kbLoadDocView();
+  }
+
+  function kbRenderDocChunks() {
+    if (kbDocView.chunkLoading) return '<p class="kb-muted" role="status">正在加载分块…</p>';
+    if (kbDocView.chunkError) return `<p class="kb-muted">分块加载失败：${kbEsc(kbDocView.chunkError)}</p>`;
+    const page = kbDocView.chunks;
+    const chunks = (page && page.chunks) || [];
+    if (!chunks.length) return '<p class="kb-muted">该文档暂无分块，可能尚未完成解析。</p>';
+    const cards = chunks.map((ch, i) => {
+      const index = ch.chunkIndex != null ? ch.chunkIndex : ((page.page || 1) - 1) * (page.pageSize || 10) + i;
+      const start = ch.startAt != null ? ch.startAt : ch.start_at;
+      const end = ch.endAt != null ? ch.endAt : ch.end_at;
+      const range = (start != null && end != null && (start || end)) ? `<span class="kb-muted">字符 ${kbEsc(start)}–${kbEsc(end)}</span>` : '';
+      return `<div class="kb-chunk-card">
+        <div class="kb-chunk-head">
+          <span>分块 #${kbEsc(index)}</span>
+          ${range}
+        </div>
+        <pre class="kb-doc-pre" data-i18n-data>${kbEsc(ch.content || ch.text || '')}</pre>
+      </div>`;
+    }).join('');
+    const total = Number((page && page.total) || chunks.length);
+    const pages = page.paginated ? Math.max(1, Math.ceil(total / (page.pageSize || kbDocView.chunkPageSize))) : 1;
+    const pager = page.paginated ? `<div class="kb-pagination">
+        <span class="kb-muted">第 ${kbDocView.chunkPage} / ${pages} 页 · 共 ${total} 个分块</span>
+        <button type="button" class="kb-btn xs" data-kb-chunk-page="${kbDocView.chunkPage - 1}" ${kbDocView.chunkPage <= 1 ? 'disabled' : ''}>上一页</button>
+        <button type="button" class="kb-btn xs" data-kb-chunk-page="${kbDocView.chunkPage + 1}" ${kbDocView.chunkPage >= pages ? 'disabled' : ''}>下一页</button>
+      </div>` : '';
+    const legacyNote = kbDocView.chunkLegacy ? '<p class="kb-muted">分块接口尚未合入，当前展示旧版原文分块。</p>' : '';
+    return `<div class="kb-chunk-list">${cards}</div>${pager}${legacyNote}`;
+  }
+
+  function kbRenderDocPreview() {
+    if (kbDocView.previewLoading) return '<p class="kb-muted" role="status">正在加载原文预览…</p>';
+    if (kbDocView.previewError) return `<p class="kb-muted">${kbEsc(kbDocView.previewError)}</p>`;
+    const preview = kbDocView.preview;
+    if (!preview) return '<p class="kb-muted">暂无预览。</p>';
+    if (preview.kind === 'text') return `<pre class="kb-doc-pre" data-i18n-data>${kbEsc(preview.text)}</pre>`;
+    if (preview.kind === 'image') {
+      return `<div class="kb-preview-box"><img class="kb-preview-img" alt="${kbEsc(kbDocView.title)}" src="${kbEsc(preview.url)}"></div>`;
+    }
+    if (preview.kind === 'pdf') {
+      return `<div class="kb-preview-box"><iframe class="kb-preview-frame" title="${kbEsc(kbDocView.title)}" src="${kbEsc(preview.url)}"></iframe></div>`;
+    }
+    return '<p class="kb-muted">该文件类型不支持在线预览，请使用上方「下载」查看原文件。</p>';
+  }
+
+  function kbRenderDocEdit() {
+    const loading = kbDocView.editContentState === 'loading';
+    const failed = kbDocView.editContentState === 'failed';
+    return `<div class="kb-field">
+        <label for="kbDocEditTitle">标题</label>
+        <input class="kb-input" id="kbDocEditTitle" maxlength="200" value="${kbEsc(kbDocView.title)}">
+      </div>
+      <div class="kb-field">
+        <label for="kbDocEditContent">Markdown 正文</label>
+        <textarea class="kb-input" id="kbDocEditContent" rows="14" ${loading ? 'disabled' : ''} placeholder="${loading ? '正在加载原文…' : '# 标题&#10;正文…'}">${kbEsc(kbDocView.editContent || '')}</textarea>
+        ${failed ? '<small class="kb-muted">未能读取原文，保存将以下方内容覆盖现有正文，请谨慎操作。</small>' : ''}
+      </div>
+      <label class="kb-check-chip">
+        <input type="checkbox" role="switch" id="kbDocEditPublish" ${kbDocView.editPublish ? 'checked' : ''}>
+        <span>保存后立即发布</span>
+      </label>
+      <p class="kb-muted">保存会替换文档正文并触发重新解析。</p>
+      <div class="kb-toolbar">
+        <button type="button" class="kb-btn primary" id="kbDocSaveBtn" ${loading ? 'disabled' : ''}>保存文档</button>
+      </div>`;
+  }
+
+  function renderKBDocBody() {
+    const host = document.getElementById('kbDocBody');
+    if (!host || !kbDocView.docId) return;
+    if (kbDocView.docLoading) {
+      host.innerHTML = '<p class="kb-muted" role="status">正在加载文档详情…</p>';
+      return;
+    }
+    const detail = kbDocView.detail;
+    const connId = kbDocView.connId;
+    const manual = kbDocIsManual(detail);
+    const segs = [];
+    if (kbCapabilityAllowed(connId, 'chunk_read')) segs.push({ key: 'chunks', label: '分块' });
+    if (kbCapabilityAllowed(connId, 'preview_download')) segs.push({ key: 'preview', label: '原文预览' });
+    if (manual && kbCapabilityAllowed(connId, 'doc_write')) segs.push({ key: 'edit', label: '编辑文档' });
+    if (segs.length && !segs.some(s => s.key === kbDocView.view)) {
+      kbDocView.view = segs[0].key;
+      kbReleasePreviewURL();
+    }
+
+    const gate = kbGate(connId, 'preview_download', '预览下载');
+    const href = '/api/knowledge/documents/' + encodeURIComponent(kbDocView.docId) + '/download?' + kbConnQuery(connId);
+    const downloadHTML = gate.disabled
+      ? `<span class="kb-btn xs" aria-disabled="true" title="${kbEsc(gate.reason)}" style="opacity:.55;cursor:not-allowed">下载</span>`
+      : `<a class="kb-btn xs" href="${kbEsc(href)}" target="_blank" rel="noopener" download>下载</a>`;
+
+    const typeText = kbDocTypeText(detail);
+    const parseText = kbDocField(detail, 'parseStatus', 'parse_status');
+    const updatedText = kbDocField(detail, 'updatedAt', 'updated_at');
+    const metaHTML = detail ? `
+      ${typeText ? `<span class="hui-badge" data-tone="muted" data-size="sm">${kbEsc(typeText)}</span>` : ''}
+      ${parseText ? parseStatusBadge(parseText, kbDocField(detail, 'errorMessage', 'error_message')) : ''}
+      ${updatedText ? `<span class="kb-muted">更新于 ${kbEsc(updatedText.slice(0, 19).replace('T', ' '))}</span>` : ''}
+    ` : '';
+
+    const segHTML = segs.length ? `<div class="kb-seg" role="tablist">${segs.map(s => (
+      `<button type="button" role="tab" aria-selected="${s.key === kbDocView.view}" class="${s.key === kbDocView.view ? 'active' : ''}" data-kb-doc-view="${s.key}">${s.label}</button>`
+    )).join('')}</div>` : '';
+
+    let paneHTML = '';
+    if (!segs.length) paneHTML = '<p class="kb-muted">当前连接缺少查看文档内容所需的能力（分块读取 / 预览下载）。</p>';
+    else if (kbDocView.view === 'preview') paneHTML = kbRenderDocPreview();
+    else if (kbDocView.view === 'edit') paneHTML = kbRenderDocEdit();
+    else paneHTML = kbRenderDocChunks();
+
+    host.innerHTML = `
+      <div class="kb-doc-summary">
+        <div class="kb-doc-meta">${metaHTML}</div>
+        <div class="kb-toolbar">${downloadHTML}</div>
+      </div>
+      ${segHTML}
+      <div class="kb-doc-pane">${paneHTML}</div>
+    `;
+
+    host.querySelectorAll('[data-kb-doc-view]').forEach(btn => {
+      btn.addEventListener('click', () => kbSwitchDocView(btn.dataset.kbDocView));
+    });
+    host.querySelectorAll('[data-kb-chunk-page]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        if (btn.disabled) return;
+        kbLoadDocChunks(Number(btn.dataset.kbChunkPage) || 1);
+      });
+    });
+    const saveBtn = host.querySelector('#kbDocSaveBtn');
+    if (saveBtn) saveBtn.addEventListener('click', kbSaveDocEdit);
+    host.querySelectorAll('[data-kb-err-msg]').forEach(btn => {
+      btn.addEventListener('click', () => kbToast(btn.dataset.kbErrMsg, true));
+    });
+  }
+
+  async function kbSaveDocEdit() {
+    const host = document.getElementById('kbDocBody');
+    if (!host || !kbDocView.docId) return;
+    const connId = kbDocView.connId;
+    if (!kbCapabilityAllowed(connId, 'doc_write')) {
+      kbToast(kbCapabilityReason(connId, 'doc_write') || '当前连接缺少文档写入能力', true);
+      return;
+    }
+    const nextTitle = String(host.querySelector('#kbDocEditTitle')?.value || '').trim();
+    if (!nextTitle) { kbToast('请填写文档标题', true); return; }
+    const content = String(host.querySelector('#kbDocEditContent')?.value || '');
+    const publish = !!host.querySelector('#kbDocEditPublish')?.checked;
+    const id = kbDocView.docId;
+    const btn = host.querySelector('#kbDocSaveBtn');
+    if (btn) btn.disabled = true;
+    try {
+      const updated = await kbAPI('/api/knowledge/documents/' + encodeURIComponent(id) + '?' + kbConnQuery(connId), {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: nextTitle, content: content, publish: publish })
+      });
+      if (kbDocView.docId !== id) return;
+      if (updated && typeof updated === 'object' && !Array.isArray(updated)) kbDocView.detail = updated;
+      kbDocView.title = nextTitle;
+      kbDocView.editContent = content;
+      kbDocView.editContentState = 'ready';
+      kbDocView.editPublish = publish;
+      kbDocView.chunks = null;
+      kbDocView.preview = null;
+      kbReleasePreviewURL();
+      const head = document.querySelector('#kbDrawer .kb-drawer-head h3');
+      if (head) head.textContent = nextTitle;
+      kbToast('文档已保存');
+      renderKBDocBody();
+      await loadSelectedDocuments();
+      renderKnowledgeShell();
+    } catch (err) {
+      kbToastError(err);
+      if (btn && document.contains(btn)) btn.disabled = false;
     }
   }
 
@@ -1033,6 +1517,10 @@
       const downloadGate = kbGate(connId, 'preview_download', '预览下载');
       const rows = docs.length ? docs.map(d => {
         const docTitle = d.title || d.file_name || d.id;
+        const manualDoc = String(d.type || '').toLowerCase() === 'manual';
+        const editAction = manualDoc
+          ? `<button type="button" class="kb-btn xs" data-kb-edit-doc="${kbEsc(d.id)}" data-kb-doc-title="${kbEsc(docTitle)}"${kbGateAttrs(docGate)}>编辑</button>`
+          : '';
         const downloadHref = '/api/knowledge/documents/' + encodeURIComponent(d.id) + '/download?' + kbConnQuery(connId);
         const downloadAction = downloadGate.disabled
           ? `<span class="kb-btn xs" aria-disabled="true" title="${kbEsc(downloadGate.reason)}" style="opacity:.55;cursor:not-allowed">下载</span>`
@@ -1046,6 +1534,7 @@
           <td>
             <div class="kb-row-actions">
               <button type="button" class="kb-btn xs" data-kb-preview-doc="${kbEsc(d.id)}" data-kb-doc-title="${kbEsc(docTitle)}">查看</button>
+              ${editAction}
               <button type="button" class="kb-btn xs" data-kb-reparse-doc="${kbEsc(d.id)}"${kbGateAttrs(reparseGate)}>重解析</button>
               ${downloadAction}
               <button type="button" class="kb-btn xs danger-outline" data-kb-delete-doc="${kbEsc(d.id)}" data-kb-doc-title="${kbEsc(docTitle)}"${kbGateAttrs(docGate)}>删除</button>
@@ -1158,9 +1647,11 @@
       });
     });
 
-    // 「查看」当前复用原文分块预览；文档详情抽屉（分块分页 / 预览 / 手工编辑）由后续步骤接入。
     container.querySelectorAll('[data-kb-preview-doc]').forEach(btn => {
-      btn.addEventListener('click', () => kbPreviewDocLegacy(btn.dataset.kbPreviewDoc, btn.dataset.kbDocTitle));
+      btn.addEventListener('click', () => openKBDocumentDrawer(btn.dataset.kbPreviewDoc, btn.dataset.kbDocTitle));
+    });
+    container.querySelectorAll('[data-kb-edit-doc]').forEach(btn => {
+      btn.addEventListener('click', () => openKBDocumentDrawer(btn.dataset.kbEditDoc, btn.dataset.kbDocTitle, 'edit'));
     });
     container.querySelectorAll('[data-kb-reparse-doc]').forEach(btn => {
       btn.addEventListener('click', () => kbReparseDoc(btn.dataset.kbReparseDoc));
@@ -1395,7 +1886,7 @@
 
     const activityRows = (kbState.usage?.activity || []).slice(0, 20).map(act => `
       <tr>
-        <td>${kbEsc(act.tool)}</td>
+        <td>${kbAuditTool(act.tool)}</td>
         <td class="kb-muted">${kbEsc(act.query || '-')}</td>
         <td>${act.hits}</td>
         <td>${act.ok ? '<span class="hui-badge" data-tone="success">成功</span>' : '<span class="hui-badge" data-tone="error">失败</span>'}</td>
