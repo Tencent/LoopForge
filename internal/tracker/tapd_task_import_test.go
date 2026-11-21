@@ -79,7 +79,8 @@ func TestImportAndResyncTAPDTask(t *testing.T) {
 	if issue.Kind != "requirement" || issue.Title != "TAPD 任务标题" || issue.Description != "任务正文" || issue.Status != "todo" || issue.Priority != "high" || issue.AssigneeUserID != 8 {
 		t.Fatalf("unexpected imported task: %+v", issue)
 	}
-	if issue.ExternalRef == nil || issue.ExternalRef.ExternalType != "task" || issue.ExternalRef.ExternalURL != testTAPDTaskURL || !issue.ExternalRef.Imported {
+	const canonical = "https://www.tapd.cn/tapd_fe/10000000/task/detail/1010000000100000444"
+	if issue.ExternalRef == nil || issue.ExternalRef.ExternalType != "task" || issue.ExternalRef.ExternalURL != canonical || !issue.ExternalRef.Imported {
 		t.Fatalf("task external identity lost: %+v", issue.ExternalRef)
 	}
 	issue.BaseBranch = "feature/continue-development"

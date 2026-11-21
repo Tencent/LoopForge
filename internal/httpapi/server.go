@@ -20,6 +20,7 @@ import (
 	apidocs "agentflow/docs/api"
 	"agentflow/internal/application"
 	"agentflow/internal/auth"
+	"agentflow/internal/config"
 	"agentflow/internal/domain"
 	"agentflow/internal/engine"
 	"agentflow/internal/knowledge"
@@ -796,6 +797,7 @@ func (s *Server) bootstrap(c *gin.Context) {
 		"sponsoredModel":    sponsoredModel,
 		"sponsoredModels":   sharedModels,
 		"assistantDefaults": assistantDefaults,
+		"gongfengHost":      config.GongfengHost(),
 	})
 }
 

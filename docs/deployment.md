@@ -41,7 +41,9 @@ Use `AGENTFLOW_MYSQL_DSN` for your own MySQL deployment. A fresh account command
 - SOP roles and static previews can each select a CLI. CodeBuddy remains the default for newly created roles and static previews. To use a built-in template with another CLI, copy it into a project and update its roles, or edit the template as a platform administrator.
 - Set `AGENTFLOW_BASELINE_ALIGN_EXECUTOR=codex` on the platform to run the scheduled baseline conflict resolver with Codex. The setting takes a built-in executor ID, including `claude` for Claude Code. The resolver defaults to CodeBuddy when this setting is empty. New runs record the configured executor in their snapshot.
 - To omit CodeBuddy from a source build, pass `--build-arg CODEBUDDY_PACKAGE=` to Docker or prefix the development Compose build with `CODEBUDDY_PACKAGE=`. Use that image as `AGENTFLOW_ISOLATED_IMAGE` for platform sandboxes. Without a shared image, set `AGENTFLOW_SKIP_CODEBUDDY_INSTALL=1` for the built-in fallback Dockerfile. Custom Dockerfiles manage their own packages. With that flag the default managed CLI list also omits CodeBuddy. Set `AGENTFLOW_MANAGED_CLIS` to manage an explicit list of providers.
-- Tracker MCP authentication uses the catalog's headers or `AGENTFLOW_MCP_TOKEN` before trying the legacy host CodeBuddy OAuth fallback.
+- Tracker MCP authentication uses explicit catalog headers or the deployment's `AGENTFLOW_MCP_TOKEN`. Project-scoped trackers use their own MCP authorization headers.
+- Set `AGENTFLOW_GONGFENG_HOST` to the managed Git host (hostname and optional HTTPS port) to enable its repository and merge request links and token checks. Gongfeng OAuth also needs its application credentials and callback. Existing OAuth endpoint overrides still take precedence.
+- Set `AGENTFLOW_TAPD_HOST` to a deployment-specific TAPD web host when needed. Generated TAPD work item links use `www.tapd.cn` by default.
 
 ## Container installation
 

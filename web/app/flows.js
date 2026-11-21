@@ -3,15 +3,18 @@ function workflowPreviewContract(wf){
 }
 const PREVIEW_BUILD_NODE_ID='af-preview-build';
 const PREVIEW_BUILD_AGENT_ID='af-preview-builder';
-const PREVIEW_DEFAULT_EXECUTOR='codebuddy';
 function isPreviewBuildNode(id){return id===PREVIEW_BUILD_NODE_ID}
-function workflowPreviewExecutor(wf){return workflowPreviewContract(wf)?.executorId?.trim()||PREVIEW_DEFAULT_EXECUTOR}
+function workflowPreviewExecutor(wf){
+  const preview=workflowPreviewContract(wf);
+  const model=preview?.model?.trim();
+  return preview?.executorId?.trim()||(model&&!['default','default-model'].includes(model)?'codebuddy':'');
+}
 function workflowPreviewModel(wf){
   const model=String(workflowPreviewContract(wf)?.model||'').trim();
-  return model==='default'||(model==='default-model'&&workflowPreviewExecutor(wf)===PREVIEW_DEFAULT_EXECUTOR)?'':model;
+  return model==='default'||(model==='default-model'&&workflowPreviewExecutor(wf)==='codebuddy')?'':model;
 }
 function previewModelOptions(executorId){
-  return (executorModelCatalogs()[executorId]?.models||[]).filter(m=>m.id!=='default'&&(executorId!==PREVIEW_DEFAULT_EXECUTOR||m.id!=='default-model'));
+  return (executorModelCatalogs()[executorId]?.models||[]).filter(m=>m.id!=='default'&&(executorId!=='codebuddy'||m.id!=='default-model'));
 }
 function defaultPreviewModel(executorId, items=previewModelOptions(executorId)){
   const prefs=state.data.assistantDefaults;
@@ -21,6 +24,11 @@ function defaultPreviewModel(executorId, items=previewModelOptions(executorId)){
   return items.find(item=>item.id===preferred)?.id||items[0]?.id||'';
 }
 function fillPreviewModelSelect(sel, selected, executorId){
+  if(!executorId){
+    sel.innerHTML='<option value="">跟随责任人默认模型</option>';
+    sel.disabled=true;
+    return '';
+  }
   const items=previewModelOptions(executorId);
   const model=selected||defaultPreviewModel(executorId,items);
   if(model&&!items.some(m=>m.id===model))items.push({id:model,name:model});
@@ -31,13 +39,12 @@ function fillPreviewModelSelect(sel, selected, executorId){
 function ensurePreviewContract(){
   const wf=state.workflow;if(!wf)return null;
   const prev=workflowPreviewContract(wf)||{};
-  const preferred=state.data.assistantDefaults?.executor;
   wf.preview={
     ...prev,
     enabled:true,
     kind:'static',
-    executorId:prev.executorId||(preferred==='claude-code'?'claude':preferred)||PREVIEW_DEFAULT_EXECUTOR,
-    model:prev.model??(prev.enabled?'default':''),
+    executorId:workflowPreviewExecutor(wf),
+    model:prev.model??'',
     sourcePath:prev.sourcePath||'dist',
     indexFile:prev.indexFile||'index.html',
     spaFallback:prev.spaFallback!==false,
@@ -1118,7 +1125,7 @@ async function discardWorkflow(){
 async function saveWorkflow(){
   if(catalogGeneric(state.workflow)&&!isPlatformAdmin()){toast('通用模板为只读，请先「复制到本项目」再修改');throw new Error('generic sop is read-only')}
   if(catalogForeign(state.workflow?.projectId)){toast('这是其他项目的共享 SOP，请先复制到本项目再改');throw new Error('shared sop is read-only')}
-  if(state.workflow?.preview?.enabled&&state.workflow.preview.model===''){
+  if(state.workflow?.preview?.enabled&&workflowPreviewExecutor(state.workflow)&&state.workflow.preview.model===''){
     const workflow=state.workflow;
     await loadExecutorModelCatalogs();
     if(state.workflow!==workflow)throw new Error('SOP 已切换，请重新保存');

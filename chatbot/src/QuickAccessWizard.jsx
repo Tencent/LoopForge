@@ -562,84 +562,12 @@ function parseGitHubRepo(raw) {
   };
 }
 
-// SSH preview first (it leaves github.com to the GitHub parser, matching the
-// server); self-hosted legacy repositories keep the git.example.com form.
-export function parseGongfengRepo(raw) {
-  const httpsInfo = globalThis.LoopForgeGitHTTPS(raw);
-  if (httpsInfo) return httpsInfo;
-  const sshInfo = globalThis.LoopForgeGitSSH(raw);
-  if (sshInfo) return sshInfo;
-  const github = parseGitHubRepo(raw);
-  if (github) return github;
-  const original = String(raw || "")
-    .trim()
-    .replace(/^['"]+|['"]+$/g, "");
-  if (!original) return null;
-  const strippedClone = /^git\s+clone\s+/i.test(original);
-  let value = original
-    .replace(/^git\s+clone\s+/i, "")
-    .trim()
-    .replace(/^['"]+|['"]+$/g, "");
-  if (strippedClone && /\s/.test(value)) value = value.split(/\s+/)[0];
-  if (!value || /[\s"'<>()\\]/.test(value)) return null;
-  const ssh = /^(git@|ssh:\/\/)/i.test(value);
-  value = value.replace(/\/+$/, "");
-  const hadScheme = value.includes("://");
-  const hadAt = value.includes("@");
-  let rest = value;
-  if (hadScheme) rest = rest.slice(rest.indexOf("://") + 3);
-  if (rest.includes("@")) rest = rest.slice(rest.lastIndexOf("@") + 1);
-  let path = "";
-  if (!hadScheme && !hadAt && !rest.includes(":")) {
-    path = rest;
-  } else if (rest.includes("/")) {
-    const cut = rest.search(/[:/]/);
-    const host = rest.slice(0, cut);
-    if (host.toLowerCase() !== "git.example.com") return null;
-    path = rest.slice(cut + 1);
-    if (rest[cut] === ":") {
-      const slash = path.indexOf("/");
-      if (slash >= 0 && /^\d+$/.test(path.slice(0, slash)))
-        path = path.slice(slash + 1);
-    }
-  } else {
-    return null;
-  }
-  path = path.replace(/^git\.example\.com\//i, "").replace(/\.git$/i, "");
-  for (const marker of [
-    "/-/",
-    "/tree/",
-    "/blob/",
-    "/commit/",
-    "/commits/",
-    "/merge_requests/",
-    "/issues/",
-    "/snippets/",
-    "/wikis/",
-    "/releases/",
-    "/tags/",
-  ]) {
-    const index = path.indexOf(marker);
-    if (index >= 0) path = path.slice(0, index);
-  }
-  path = path.replace(/^\/+|\/+$/g, "");
-  const parts = path.split("/");
-  if (
-    parts.length < 2 ||
-    path.includes("..") ||
-    parts.some((seg) => !seg || /[\s\\?#]/.test(seg))
-  )
-    return null;
-  const name = parts[parts.length - 1];
-  return {
-    project: path,
-    provider: "gongfeng",
-    name,
-    webUrl: `https://git.example.com/${path}`,
-    cloneUrl: ssh
-      ? `git@git.example.com:${path}.git`
-      : `https://git.example.com/${path}.git`,
-  };
+// Explicit SSH keeps its transport. Managed HTTPS links use the configured host.
+export function parseGongfengRepo(raw, host = "") {
+  return globalThis.LoopForgeGitSSH(raw) ||
+    globalThis.LoopForgeGongfengRepository(raw, host) ||
+    globalThis.LoopForgeGitHTTPS(raw) ||
+    parseGitHubRepo(raw);
 }
 
 function slugifyProjectId(value) {
@@ -771,6 +699,7 @@ export default function QuickAccessWizard({
   const { id: userId, loginName, chineseName, isPlatformAdmin, platformRole, isGuest } = user || {};
   const [credentialsPending, setCredentialsPending] = useState(false);
   const [gitHttpHosts, setGitHttpHosts] = useState([]);
+  const [gongfengHost, setGongfengHost] = useState("");
   const [sshCredentials, setSSHCredentials] = useState({ userId: null, keys: null, error: false });
   const [catalogProjects, setCatalogProjects] = useState(projects);
   const [repositories, setRepositories] = useState([]);
@@ -921,7 +850,15 @@ export default function QuickAccessWizard({
     [availableWorkflows, selectedWorkflowId],
   );
 
-  const parsedRepo = useMemo(() => parseGongfengRepo(repoUrl), [repoUrl]);
+  const parsedRepo = useMemo(() => parseGongfengRepo(repoUrl, gongfengHost), [repoUrl, gongfengHost]);
+  useEffect(() => {
+    if (!open) return;
+    let current = true;
+    api("/api/auth/gongfeng").then(status => {
+      if (current) setGongfengHost(status?.host || "");
+    }).catch(() => {});
+    return () => { current = false; };
+  }, [open]);
 
   // Reopening during the exit transition reverses it onto the same content.
   useEffect(() => {
@@ -1148,7 +1085,7 @@ export default function QuickAccessWizard({
     if (repo?.provider === "gongfeng") return { label: "工蜂", ready: gongfengReady };
     return { label: "Git", ready: hasGit };
   };
-  const selectedRepo = (bindRepoNow && parsedRepo) || parseGongfengRepo(defaultRepo?.cloneUrl);
+  const selectedRepo = (bindRepoNow && parsedRepo) || parseGongfengRepo(defaultRepo?.cloneUrl, gongfengHost);
   const repoAccess = gitAccess(selectedRepo);
   const readyCLIs = EXECUTORS.filter(cli => personalEngineConfigured(storedUser, cli.id));
   const cliReady = readyCLIs.length > 0 || Boolean(sponsoredModel);
@@ -1429,7 +1366,7 @@ export default function QuickAccessWizard({
         repository: boundRepo,
         workflow: provisionedWorkflow || activeWorkflow,
         rolesCount: roles.length,
-        gitAccess: gitAccess(parseGongfengRepo(boundRepo?.cloneUrl)),
+        gitAccess: gitAccess(parseGongfengRepo(boundRepo?.cloneUrl, gongfengHost)),
         cliNames: EXECUTORS.filter(cli => personalEngineConfigured(storedUser, cli.id)).map(cli => cli.label),
       });
       setPhase("success");

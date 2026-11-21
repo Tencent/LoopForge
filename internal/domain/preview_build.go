@@ -46,9 +46,9 @@ func AttachPreviewBuild(wf WorkflowDefinition) (WorkflowDefinition, error) {
 		if IsPreviewBuildNode(node.ID) {
 			// Older canvases persisted the original synthetic executor on
 			// the node. The preview contract owns this choice.
-			if node.ExecutorID != wf.Preview.ExecutorOrCodeBuddy() {
+			if node.ExecutorID != wf.Preview.SelectedExecutorID() {
 				wf.Nodes = append([]WorkflowNode(nil), wf.Nodes...)
-				wf.Nodes[i].ExecutorID = wf.Preview.ExecutorOrCodeBuddy()
+				wf.Nodes[i].ExecutorID = wf.Preview.SelectedExecutorID()
 			}
 			return wf, nil
 		}
@@ -75,7 +75,7 @@ func PreviewBuildNode(wf WorkflowDefinition) WorkflowNode {
 		Name:            "构建静态站点",
 		Type:            "agent",
 		AgentID:         PreviewBuildAgentID,
-		ExecutorID:      contract.ExecutorOrCodeBuddy(),
+		ExecutorID:      contract.SelectedExecutorID(),
 		ExecutionScope:  ExecutionScopeRun,
 		ArtifactOutputs: []ArtifactContract{PreviewBuildArtifact(contract)},
 		OnFailure:       "fail",
@@ -88,13 +88,17 @@ func PreviewBuildNode(wf WorkflowDefinition) WorkflowNode {
 }
 
 func PreviewBuildAgent(contract *PreviewContract) AgentDefinition {
-	contract.Normalize()
+	executorID := contract.SelectedExecutorID()
+	model := ""
+	if executorID != "" {
+		model = contract.ModelOrDefault()
+	}
 	return AgentDefinition{
 		ID:              PreviewBuildAgentID,
 		Name:            "构建静态站点",
 		Description:     "系统步骤：构建可托管的静态站点并归档为预览。",
-		ExecutorID:      contract.ExecutorOrCodeBuddy(),
-		Model:           contract.ModelOrDefault(),
+		ExecutorID:      executorID,
+		Model:           model,
 		Prompt:          PreviewBuildPrompt(contract),
 		ArtifactOutputs: []ArtifactContract{PreviewBuildArtifact(contract)},
 		Loop: AgentLoopPolicy{

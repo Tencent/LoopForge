@@ -100,3 +100,59 @@ func TestGenericSOPExecutorPrefersRunnerLoginOverSharedKey(t *testing.T) {
 		t.Fatalf("executor with configured machine login = %s, want codex", got)
 	}
 }
+
+func TestSOPExecutorDefaultForBaselinePreviewAndProjectRole(t *testing.T) {
+	st, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(st.Close)
+	// Existing installations may still have the seeded CodeBuddy resolver.
+	baseline := repo.BaselineAlignResolverAgent()
+	baseline.ExecutorID = "codebuddy"
+	for _, role := range []domain.AgentDefinition{
+		baseline,
+		{ID: "project-reviewer", Name: "Reviewer", ProjectID: "demo"},
+		{ID: "pinned", Name: "Pinned", ProjectID: "demo", ExecutorID: "codebuddy"},
+	} {
+		if err := st.PutAgent(role); err != nil {
+			t.Fatal(err)
+		}
+	}
+	preference := domain.AssistantDefaults{Executor: "codex", Model: "fixture-model"}
+	if _, err := st.UpdateUserCredentials(1, repo.UserCredentialUpdate{
+		CodexAPIKey: "fixture-key", AssistantDefaults: &preference,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	e := &Engine{repo: st}
+	baselineFlow := domain.WorkflowDefinition{ID: BaselineAlignWorkflowID, Nodes: []domain.WorkflowNode{
+		{ID: "resolve", Type: "agent", AgentID: baseline.ID},
+	}}
+	t.Setenv("AGENTFLOW_BASELINE_ALIGN_EXECUTOR", "")
+	requirements, err := e.SOPExecutorRequirements(baselineFlow, 1, "demo")
+	if err != nil || len(requirements) != 1 || requirements[0].Kind != "codex" || !requirements[0].Configured {
+		t.Fatalf("baseline preflight = %+v, %v", requirements, err)
+	}
+	t.Setenv("AGENTFLOW_BASELINE_ALIGN_EXECUTOR", "claude")
+	requirements, err = e.SOPExecutorRequirements(baselineFlow, 1, "demo")
+	if err != nil || len(requirements) != 1 || requirements[0].Kind != "claude-code" {
+		t.Fatalf("baseline override = %+v, %v", requirements, err)
+	}
+
+	projectFlow, err := domain.AttachPreviewBuild(domain.WorkflowDefinition{
+		ID: "project-flow", ProjectID: "demo", Preview: &domain.PreviewContract{Enabled: true},
+		Nodes: []domain.WorkflowNode{
+			{ID: "review", Type: "agent", AgentID: "project-reviewer"},
+			{ID: "pinned", Type: "agent", AgentID: "pinned"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defaults, _, err := e.planSOPExecutors(projectFlow, domain.TelemetryContext{ResponsibleUserID: 1}, false)
+	if err != nil || len(defaults) != 2 ||
+		defaults["review"] != preference || defaults[domain.PreviewBuildNodeID] != preference {
+		t.Fatalf("project role and preview defaults = %+v, %v", defaults, err)
+	}
+}

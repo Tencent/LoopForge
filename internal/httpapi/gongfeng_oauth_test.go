@@ -107,6 +107,7 @@ func TestGongfengOAuthCallbackStoresGrant(t *testing.T) {
 }
 
 func TestGongfengOAuthStartRedirects(t *testing.T) {
+	t.Setenv("AGENTFLOW_GONGFENG_HOST", "git.example.com")
 	gin.SetMode(gin.TestMode)
 	t.Setenv("AGENTFLOW_PREVIEW_LOCAL_LOGIN", "")
 	st, err := repo.OpenTest()
@@ -147,6 +148,7 @@ func TestGongfengOAuthStartRedirects(t *testing.T) {
 // land on a page telling it to sign in, and the settings page must be able to
 // tell whether the server has a Gongfeng application at all.
 func TestGongfengOAuthEntryPointsThroughAuthMiddleware(t *testing.T) {
+	t.Setenv("AGENTFLOW_GONGFENG_HOST", "git.example.com")
 	gin.SetMode(gin.TestMode)
 	t.Setenv("AGENTFLOW_PREVIEW_LOCAL_LOGIN", "")
 	t.Setenv("AGENTFLOW_LOCAL_LOGIN_USER", "")

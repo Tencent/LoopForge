@@ -546,41 +546,14 @@ function issueFromForm(){
 function repoDisplayPath(info,fallback=''){return info?.provider==='ssh'?(info.project||info.cloneUrl||fallback):info?.webUrl?String(info.webUrl).replace(/^https?:\/\//,''):String(fallback||'')}
 function repoProviderLabel(info){return info?.provider==='ssh'?'Git SSH':info?.provider==='github'?'GitHub':'工蜂'}
 function parseGongfengRepoURL(raw){
-  const httpsInfo=globalThis.LoopForgeGitHTTPS?.(raw);if(httpsInfo)return httpsInfo;
   const sshInfo=globalThis.LoopForgeGitSSH?.(raw);if(sshInfo)return sshInfo;
+  const managed=globalThis.LoopForgeGongfengRepository?.(raw,state.data?.gongfengHost);if(managed)return managed;
+  const httpsInfo=globalThis.LoopForgeGitHTTPS?.(raw);if(httpsInfo)return httpsInfo;
   let publicURL=String(raw||'').trim().replace(/^git clone /,'').replace(/^github:/,'https://github.com/').replace(/^(?:git@github\.com:|ssh:\/\/git@github\.com(?::22)?\/)/,'https://github.com/');
   if(publicURL.startsWith('github.com/'))publicURL='https://'+publicURL;
   try{const u=new URL(publicURL);if(u.hostname==='github.com'&&!u.username&&!u.password&&['http:','https:'].includes(u.protocol)){const parts=u.pathname.split('/').filter(Boolean),owner=parts[0],name=(parts[1]||'').replace(/\.git$/,'');if(parts.length>=2&&/^[A-Za-z0-9_.-]+$/.test(owner)&&/^[A-Za-z0-9_.-]+$/.test(name)&&!['.','..'].includes(owner)&&!['.','..'].includes(name))return {project:'github:'+owner+'/'+name,name,webUrl:'https://github.com/'+owner+'/'+name,cloneUrl:'https://github.com/'+owner+'/'+name+'.git',provider:'github'}}}catch(_){}
 
-  let original=String(raw||'').trim().replace(/^['"]+|['"]+$/g,'');
-  if(!original)return null;
-  const strippedClone=/^git\s+clone\s+/i.test(original);
-  let s=original.replace(/^git\s+clone\s+/i,'').trim().replace(/^['"]+|['"]+$/g,'');
-  if(strippedClone&&/\s/.test(s))s=s.split(/\s+/)[0];
-  if(!s||/[\s"'<>()\\]/.test(s))return null;
-  const ssh=/^(git@|ssh:\/\/)/i.test(s);
-  s=s.replace(/\/+$/,'');
-  const hadScheme=s.includes('://'),hadAt=s.includes('@');
-  let rest=s;
-  if(hadScheme)rest=rest.slice(rest.indexOf('://')+3);
-  if(rest.includes('@'))rest=rest.slice(rest.lastIndexOf('@')+1);
-  let path='';
-  if(!hadScheme&&!hadAt&&!rest.includes(':')){
-    path=rest;
-  }else if(rest.includes('/')){
-    const cut=rest.search(/[:\/]/),host=rest.slice(0,cut);
-    if(host.toLowerCase()!=='git.example.com')return null;
-    path=rest.slice(cut+1);
-    if(rest[cut]===':'){const j=path.indexOf('/');if(j>=0&&/^\d+$/.test(path.slice(0,j)))path=path.slice(j+1)}
-  }else return null;
-  path=path.replace(/^git\.example\.com\//i,'').replace(/\.git$/i,'');
-  for(const marker of ['/-/','/tree/','/blob/','/commit/','/commits/','/merge_requests/','/issues/','/snippets/','/wikis/','/releases/','/tags/']){
-    const i=path.indexOf(marker);if(i>=0)path=path.slice(0,i);
-  }
-  path=path.replace(/^\/+|\/+$/g,'');
-  if(!path||path.includes('..')||path.split('/').some(seg=>!seg||/[\s\\?#]/.test(seg)))return null;
-  const name=path.slice(path.lastIndexOf('/')+1);
-  return {project:path,name,webUrl:`https://git.example.com/${path}`,cloneUrl:ssh?`git@git.example.com:${path}.git`:`https://git.example.com/${path}.git`};
+  return null;
 }
 // fillRepositoryFromLink 把解析结果填进空缺字段；显式填过的字段不覆盖。
 function fillRepositoryFromLink(url,fill){

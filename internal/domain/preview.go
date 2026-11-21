@@ -49,7 +49,7 @@ const (
 type PreviewContract struct {
 	Enabled      bool   `json:"enabled"`
 	Kind         string `json:"kind"`                 // static; later service/environment
-	ExecutorID   string `json:"executorId,omitempty"` // CLI executor; defaults to CodeBuddy
+	ExecutorID   string `json:"executorId,omitempty"` // empty follows the run's responsible user
 	Model        string `json:"model,omitempty"`      // model ID on the selected CLI
 	SourcePath   string `json:"sourcePath,omitempty"` // relative to the run workspace; default dist
 	IndexFile    string `json:"indexFile,omitempty"`  // default index.html
@@ -95,13 +95,19 @@ func (c *PreviewContract) SourceOrDist() string {
 	return PreviewDefaultSource
 }
 
-func (c *PreviewContract) ExecutorOrCodeBuddy() string {
-	if c != nil {
-		if id := strings.TrimSpace(c.ExecutorID); id != "" {
-			return id
-		}
+func (c *PreviewContract) SelectedExecutorID() string {
+	if c == nil {
+		return ""
 	}
-	return PreviewBuildExecutor
+	if id := strings.TrimSpace(c.ExecutorID); id != "" {
+		return id
+	}
+	model := strings.TrimSpace(c.Model)
+	if model != "" && model != PreviewDefaultModel && model != "default-model" {
+		// Old preview contracts could pin a CodeBuddy model without an executor.
+		return PreviewBuildExecutor
+	}
+	return ""
 }
 
 func (c *PreviewContract) ModelOrDefault() string {
@@ -134,8 +140,12 @@ func (c *PreviewContract) Normalize() {
 		return
 	}
 	c.Kind = c.KindOrStatic()
-	c.ExecutorID = c.ExecutorOrCodeBuddy()
-	c.Model = c.ModelOrDefault()
+	c.ExecutorID = c.SelectedExecutorID()
+	if c.ExecutorID == "" {
+		c.Model = ""
+	} else {
+		c.Model = c.ModelOrDefault()
+	}
 	c.SourcePath = c.SourceOrDist()
 	c.IndexFile = c.Index()
 	if c.RetentionSec <= 0 || c.RetentionSec > PreviewMaxRetentionSec {

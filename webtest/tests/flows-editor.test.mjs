@@ -79,9 +79,9 @@ test('flow preview properties persist the CLI, model and SPA fallback', async (t
   app.evaluate(`state.data.executors=[{id:'codebuddy',name:'CodeBuddy'},{id:'codex',name:'Codex'}];switchView('flow');addNode('preview',{at:{x:200,y:100}});renderProperties()`);
   await app.evaluate('loadExecutorModelCatalogs()');
   const executor = app.document.querySelector('#previewNodeExecutor');
-  assert.equal(executor.value, 'codebuddy');
-  assert.equal(app.evaluate('state.workflow.preview.executorId'), 'codebuddy');
-  assert.equal(app.document.querySelector('#previewNodeModel').value, 'deepseek-v4.1-flash');
+  assert.equal(executor.value, '');
+  assert.equal(app.evaluate('state.workflow.preview.executorId'), '');
+  assert.equal(app.document.querySelector('#previewNodeModel').disabled, true);
   executor.value = 'codex';
   executor.dispatchEvent(new app.window.Event('change'));
   const model = app.document.querySelector('#previewNodeModel');

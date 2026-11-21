@@ -71,6 +71,10 @@ describe("QuickAccessWizard", () => {
   });
 
   test("parses supported repository addresses", () => {
+    expect(parseGongfengRepo("acme/widgets")).toBeNull();
+    expect(parseGongfengRepo("https://git.review.test:8443/acme/widgets", "git.review.test:8443")).toMatchObject({
+      provider: "gongfeng", project: "acme/widgets", cloneUrl: "https://git.review.test:8443/acme/widgets.git",
+    });
     expect(parseGongfengRepo("https://github.com/acme/widgets")).toEqual({
       project: "github:acme/widgets",
       provider: "github",

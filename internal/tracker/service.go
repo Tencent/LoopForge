@@ -90,8 +90,7 @@ func NewService() *Service {
 }
 
 // Configure updates the sync config and recreates MCP clients.
-// Prefer catalog HTTP MCP Headers (the same assets Agent steps use). Fall back
-// to AGENTFLOW_MCP_TOKEN, then legacy host CodeBuddy OAuth.
+// Prefer the catalog MCP headers, then the deployment's AGENTFLOW_MCP_TOKEN.
 func (s *Service) Configure(cfg domain.SyncConfig) {
 	s.ConfigureWithCatalog(cfg, nil)
 }
@@ -99,16 +98,8 @@ func (s *Service) Configure(cfg domain.SyncConfig) {
 // ConfigureWithCatalog binds Gongfeng/TAPD clients from catalog MCP assets.
 func (s *Service) ConfigureWithCatalog(cfg domain.SyncConfig, servers []domain.MCPServerDefinition) {
 	s.cfg.Set(cfg)
-	bind := func(kind string) mcpBinding {
-		binding := bindTrackerMCP(kind, cfg, servers, s.authToken, "")
-		if binding.URL != "" && !headerHas(binding.Headers, "Authorization") {
-			if auth := LoadAuthFromCodeBuddy(kind); auth != "" {
-				binding = bindTrackerMCP(kind, cfg, servers, "", auth)
-			}
-		}
-		return binding
-	}
-	gf, tapd := bind("gongfeng"), bind("tapd")
+	gf := bindTrackerMCP("gongfeng", cfg, servers, s.authToken)
+	tapd := bindTrackerMCP("tapd", cfg, servers, s.authToken)
 	s.gfSource, s.tapdSource = gf.Source, tapd.Source
 	if gf.URL != "" {
 		s.gongfeng = NewMCPClient(gf.URL, gf.Headers)
@@ -1195,7 +1186,7 @@ func (s *Service) upsertTAPDRecord(store IssueStoreAdapter, projectID, workspace
 		ExternalRef: &domain.ExternalRef{
 			Source:        "tapd",
 			ExternalID:    st.ID,
-			ExternalURL:   fmt.Sprintf("https://tapd.example.com/tapd_fe/%s/%s/detail/%s", workspaceID, externalType, st.ID),
+			ExternalURL:   tapdWorkItemURL(workspaceID, externalType, st.ID),
 			ExternalState: st.Status,
 			ExternalType:  externalType,
 			SyncedAt:      time.Now().UTC(),
@@ -1356,7 +1347,7 @@ func (s *Service) CreateTAPDStory(store IssueStoreAdapter, issue domain.Issue) (
 	issue.ExternalRef = &domain.ExternalRef{
 		Source:        "tapd",
 		ExternalID:    st.ID,
-		ExternalURL:   fmt.Sprintf("https://tapd.example.com/tapd_fe/%s/story/detail/%s", workspaceID, st.ID),
+		ExternalURL:   tapdWorkItemURL(workspaceID, "story", st.ID),
 		ExternalState: st.Status,
 		ExternalType:  "story",
 		SyncedAt:      time.Now().UTC(),

@@ -117,8 +117,8 @@ func templateSOPRoleIDs(st *repo.Store, wf domain.WorkflowDefinition) map[string
 	return ids
 }
 
-// Legacy template roles were seeded with an executor but no model or effort.
-// A provider, model or effort selected on a role continues to take precedence.
+// Only roles without a pinned model or effort can inherit an executor.
+// The caller decides which legacy CodeBuddy roles are eligible.
 func followsSOPExecutorDefault(node domain.WorkflowNode, role domain.AgentDefinition) bool {
 	return node.Type == "agent" && node.ExecutorID == "" &&
 		(role.ExecutorID == "" || role.ExecutorID == "codebuddy") &&
@@ -127,9 +127,6 @@ func followsSOPExecutorDefault(node domain.WorkflowNode, role domain.AgentDefini
 
 func (e *Engine) planSOPExecutors(wf domain.WorkflowDefinition, ec domain.TelemetryContext, preflight bool) (map[string]domain.AssistantDefaults, []SOPExecutorRequirement, error) {
 	roleIDs := templateSOPRoleIDs(e.repo, wf)
-	if len(roleIDs) == 0 && !preflight {
-		return nil, nil, nil
-	}
 	access := e.sopExecutorAccess(ec)
 	defaults := access.defaults()
 	selected := make(map[string]domain.AssistantDefaults)
@@ -141,10 +138,15 @@ func (e *Engine) planSOPExecutors(wf domain.WorkflowDefinition, ec domain.Teleme
 		}
 		role, ok := workflowAgent(e.repo, wf, node.AgentID)
 		if !ok {
+			if !preflight {
+				continue
+			}
 			return nil, nil, fmt.Errorf("agent %q not found", node.AgentID)
 		}
+		legacyTemplate := roleIDs[role.ID] && role.ProjectID == wf.ProjectID
+		baselineResolver := wf.ID == BaselineAlignWorkflowID && role.ID == BaselineAlignAgentID
 		var ex domain.ExecutorDefinition
-		if roleIDs[role.ID] && role.ProjectID == wf.ProjectID && followsSOPExecutorDefault(node, role) {
+		if (role.ExecutorID == "" || legacyTemplate || baselineResolver) && followsSOPExecutorDefault(node, role) {
 			selected[node.ID] = defaults
 			if defaults.Executor != "" {
 				ex, _ = repo.BuiltInExecutor(defaults.Executor)
@@ -169,7 +171,11 @@ func (e *Engine) planSOPExecutors(wf domain.WorkflowDefinition, ec domain.Teleme
 // SOPExecutorRequirements checks the same executor configuration a manual
 // start uses. It only reports provider names and configuration status.
 func (e *Engine) SOPExecutorRequirements(wf domain.WorkflowDefinition, userID int64, projectID string) ([]SOPExecutorRequirement, error) {
-	wf, err := domain.AttachPreviewBuild(wf)
+	wf, err := configureBaselineAlignCLI(wf)
+	if err != nil {
+		return nil, err
+	}
+	wf, err = domain.AttachPreviewBuild(wf)
 	if err != nil {
 		return nil, err
 	}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -18,8 +19,8 @@ const (
 )
 
 var (
-	tapdURLRe          = regexp.MustCompile(`(?i)https?://(?:www\.)?(?:tapd\.example\.com|tapd\.cn)[^\s<>"'）】\]]+`)
-	gongfengIssueURLRe = regexp.MustCompile(`(?i)https?://git\.example\.com/[^\s<>"'）】\]]+/issues/\d+`)
+	clarifyWebURL      = regexp.MustCompile(`(?i)https?://[^\s<>"'）】\]]+`)
+	gongfengIssueURLRe = regexp.MustCompile(`(?i)https?://[^/\s<>"'）】\]]+/[^\s<>"'）】\]]+/issues/\d+`)
 )
 
 func asStringKeyMap(v any) map[string]any {
@@ -172,7 +173,7 @@ func extractTAPDRefs(texts ...string) []clarifyTAPDHit {
 	seen := map[string]bool{}
 	var out []clarifyTAPDHit
 	for _, text := range texts {
-		for _, match := range tapdURLRe.FindAllString(text, -1) {
+		for _, match := range clarifyWebURL.FindAllString(text, -1) {
 			raw := strings.TrimRight(match, ".,;:，。；：")
 			ref, err := tracker.ParseTAPDStoryURL(raw)
 			if err != nil || ref.StoryID == "" || seen[ref.StoryID] {
@@ -221,8 +222,12 @@ func gongfengProjectPathFromClarifyURL(raw string) string {
 		return ""
 	}
 	path := raw
-	if i := strings.Index(strings.ToLower(raw), "git.example.com/"); i >= 0 {
-		path = raw[i+len("git.example.com/"):]
+	if strings.Contains(raw, "://") {
+		u, err := url.Parse(raw)
+		if err != nil || u.User != nil || !domain.IsGongfengHost(u.Host) {
+			return ""
+		}
+		path = u.Path
 	}
 	parts := strings.FieldsFunc(path, func(r rune) bool { return r == '/' })
 	for i, part := range parts {
