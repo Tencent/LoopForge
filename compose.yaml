@@ -17,6 +17,7 @@ services:
       interval: 2s
       timeout: 3s
       retries: 60
+    restart: unless-stopped
   platform:
     profiles: [platform]
     # Published release stack: never builds. Bump the pinned tag (here and in
