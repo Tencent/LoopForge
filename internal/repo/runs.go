@@ -1,6 +1,7 @@
 package repo
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -267,6 +268,16 @@ func (r *RunsRepo) RunStatuses() map[string]string {
 	return out
 }
 
+// ReadRunStatus reads a single run without loading its graph or event history.
+func (r *RunsRepo) ReadRunStatus(ctx context.Context, id string) (status string, found bool, err error) {
+	var row runRow
+	err = r.DB.WithContext(ctx).Select("status").Where("id = ?", id).Take(&row).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return "", false, nil
+	}
+	return row.Status, err == nil, err
+}
+
 // RunsWithActiveNodes reports runs that still have running or pending_input nodes.
 // Used by task reconciliation without hydrating full run views.
 func (r *RunsRepo) RunsWithActiveNodes() map[string]bool {
@@ -307,6 +318,18 @@ func (r *RunsRepo) RunHeader(id string) (domain.Run, error) {
 		return domain.Run{}, nil
 	}
 	return runFromRow(row), err
+}
+
+// RunWorkflowProjectID reads the frozen project association without loading
+// the workflow graph or execution data.
+func (r *RunsRepo) RunWorkflowProjectID(id string) (string, error) {
+	project := "JSON_EXTRACT(snapshot, '$.projectId')"
+	if r.isMySQL() {
+		project = "JSON_UNQUOTE(" + project + ")"
+	}
+	var row struct{ ProjectID string }
+	err := r.DB.Table("runs").Select(project+" AS project_id").Where("id = ?", id).Scan(&row).Error
+	return strings.TrimSpace(row.ProjectID), err
 }
 
 // RunState returns the durable aggregate needed by the execution engine.

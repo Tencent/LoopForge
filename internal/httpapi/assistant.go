@@ -750,6 +750,10 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 				continue
 			}
 			if hasRecoveredReply {
+				if err := validateScheduledRunDrafts(ctx, recoveredReply.Drafts); err != nil {
+					fail(502, err.Error())
+					return
+				}
 				reply = recoveredReply
 			} else {
 				fail(502, "本轮未提交回复，请再试一次")

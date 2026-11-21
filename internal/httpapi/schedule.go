@@ -77,6 +77,11 @@ func (h *scheduleHandlers) scheduleJobs(c *gin.Context) {
 				c.JSON(400, map[string]string{"error": "AI 定时任务必须填写提示词"})
 				return
 			}
+			job.TimeoutMinutes, err = domain.NormalizeScheduleTimeoutMinutes(job.TimeoutMinutes)
+			if err != nil {
+				c.JSON(400, gin.H{"error": err.Error()})
+				return
+			}
 			job.WorkflowID = ""
 			job.UseIssueWorkflow = false
 			job.IssueStatuses = nil
@@ -93,6 +98,7 @@ func (h *scheduleHandlers) scheduleJobs(c *gin.Context) {
 			}
 			job.AssistantPrompt = ""
 			job.AssistantModel = ""
+			job.TimeoutMinutes = 0
 			job.IssueStatuses = domain.NormalizeScheduleIssueStatuses(job.IssueStatuses)
 			if len(job.IssueStatuses) == 0 {
 				job.IssueStatuses = append([]string{}, domain.DefaultScheduleIssueStatuses...)

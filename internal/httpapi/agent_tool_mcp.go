@@ -354,6 +354,9 @@ func (h *agentToolGateway) callTerminal(session *AgentToolSession, name string, 
 			logAgentToolEvent("terminal-invalid", "mode="+string(session.Mode), "tool="+name, "err="+truncateRunes(err.Error(), 160))
 			return mcpToolTextResult("草稿参数校验失败，本轮继续；请按以下错误修正后重新提交，不代表工具不可用："+err.Error(), true), nil
 		}
+		if err := validateScheduledRunDrafts(session.ctx, reply.Drafts); err != nil {
+			return mcpToolTextResult(err.Error(), true), nil
+		}
 		if session.sopDesigner() {
 			if err := vetSOPDesignerReply(&reply); err != nil {
 				logAgentToolEvent("terminal-invalid", "mode="+string(session.Mode), "tool="+name, "err="+truncateRunes(err.Error(), 160))
@@ -433,7 +436,9 @@ func (h *agentToolGateway) dispatch(ctx context.Context, session *AgentToolSessi
 		if session.WorkspaceToken != "" && session.RunID != "" && strings.HasPrefix(tool.UpstreamName, "runs_") && assistantToolInput(call).Path["id"] == session.RunID {
 			ctx = engine.WithConversationWorkspaceToken(ctx, session.WorkspaceToken, session.RunID)
 		}
-		if session.workspaceTurn != nil && strings.HasPrefix(tool.UpstreamName, "runs_") {
+		// Waiting only reads status. Do not hold the workspace operation lock
+		// while a separate tool or turn may be advancing the run.
+		if session.workspaceTurn != nil && strings.HasPrefix(tool.UpstreamName, "runs_") && tool.UpstreamName != "runs_wait" {
 			releaseTurn := session.workspaceTurn.lockOperation()
 			defer releaseTurn()
 			ctx = session.workspaceTurn.withLease(ctx, assistantToolInput(call).Path["id"])

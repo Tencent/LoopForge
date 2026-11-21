@@ -452,6 +452,11 @@ func (h *assistantHandlers) executeGeneration(parent context.Context, req assist
 				g.Status = "failed"
 				g.Error = "会话工作区续租失败，生成已中断"
 				g.Failure = &domain.AssistantFailure{Code: "WORKSPACE_LEASE_LOST", Phase: "server", Message: g.Error, Suggestion: "检查已执行操作及工作区状态后再重试；可下载诊断信息排查。"}
+			} else if ctx.Err() == context.DeadlineExceeded {
+				failure := classifyAssistantFailure(ctx, ctx.Err())
+				failure.Message = "生成超时"
+				g.Error, g.Failure = failure.Message, &failure
+				rec.diagnostics.terminate(failure.Code, failure.Message, diagUser)
 			} else {
 				g.Status = "cancelled"
 				g.Error = "生成已停止"
