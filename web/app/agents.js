@@ -287,7 +287,9 @@ function openAgentWizard(agent=null,initialStep=1){
     const presetHost=$('#agentPresetHost');if(presetHost)presetHost.dataset.ready='';
     setAgentModalMode(a?.id?'edit':'create');
     if(state.agentModalMode==='create'){state.agentCreatePreset='blank';state.agentIdAuto=true;state.agentIdSuffix=agentSlugSuffix()}
-    selectAgent(a||{id:'',name:'',version:1,projectId:state.projectFilter||'',shared:false,description:'',prompt:'',rules:[],skills:[],mcpServers:[],hooks:[],loop:{enabled:false,maxIterations:3,onExhausted:'fail'},interventions:[],artifactOutputs:[],verification:[]},false);
+    const preference=state.data.assistantDefaults||{};
+    const executorId=preference.executor==='claude-code'?'claude':preference.executor;
+    selectAgent(a||{id:'',name:'',version:1,projectId:state.projectFilter||'',shared:false,description:'',prompt:'',executorId,model:preference.model,effort:preference.effort,rules:[],skills:[],mcpServers:[],hooks:[],loop:{enabled:false,maxIterations:3,onExhausted:'fail'},interventions:[],artifactOutputs:[],verification:[]},false);
     resetAgentIdentityErrors();
     if(state.agentModalMode==='create'){syncAgentSlug();setAgentCreateStep(1)}
     else setAgentTab(AGENT_TABS[Math.max(1,Math.min(4,Number(initialStep)||1))-1]);

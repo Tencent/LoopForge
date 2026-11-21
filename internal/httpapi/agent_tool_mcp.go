@@ -384,6 +384,9 @@ func (h *agentToolGateway) dispatch(ctx context.Context, session *AgentToolSessi
 	if session.Mode == AgentToolAssistant && session.ExecMode.ReviewWrites {
 		ctx = withAssistantApprovalReviewer(ctx, session.approvalReviewer)
 	}
+	if tool.Kind == "clarify-source" {
+		return readClarifySource(session, tool.Name, args)
+	}
 	if tool.Kind == "workspace" {
 		return h.callMainBotWorkspace(ctx, session, tool.Name, args)
 	}

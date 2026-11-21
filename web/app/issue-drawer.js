@@ -223,7 +223,7 @@ function renderIssueDetailTab(){
       if(!wasSelected)b.classList.add('selected');
     }
   });
-  host.querySelectorAll('[data-clarify-model]').forEach(bindClarifyModelPicker);
+  host.querySelectorAll('[data-clarify-model]').forEach(picker=>bindClarifyModelPicker(picker,issue));
   bindWaitingActions(host);
   if(state.issueDetailTab==='clarify'&&issueClarifying(issue.id))restoreIssueClarifyThinking(issue.id);
   if(clarifyDraft)restoreIssueClarifyDraft(host,clarifyDraft);
@@ -271,8 +271,8 @@ function openIssueClarification(autoStart=false,restart=false){
   }
   renderIssueDetailTab();
   if(autoStart&&issue.clarification.status==='analyzing')attachIssueClarifyStream(issue.id);
-  else if(autoStart&&clarifyKickoffPending(issue))setTimeout(()=>sendIssueClarification(CLARIFY_AUTO_PROMPTS[0]),0);
-  else if(restart)setTimeout(()=>sendIssueClarification(CLARIFY_AUTO_PROMPTS[1]),0);
+  else if(autoStart&&clarifyKickoffPending(issue))void sendIssueClarification(CLARIFY_AUTO_PROMPTS[0]);
+  else if(restart)void sendIssueClarification(CLARIFY_AUTO_PROMPTS[1]);
 }
 function collectIssueClarifyReply(){
   const parts=[];
@@ -289,7 +289,6 @@ function collectIssueClarifyReply(){
 }
 function retryIssueClarifyTurn(){
   const issue=state.issueDetailData?.issue;if(!issue)return;
-  if(issue.clarification)issue.clarification.lastError='';
   const last=(issue.clarification?.history||[]).filter(h=>h.role==='user').pop();
   sendIssueClarification(last?.content||CLARIFY_AUTO_PROMPTS[0]);
 }
@@ -409,6 +408,12 @@ async function sendIssueClarification(initialMessage=''){
     attachIssueClarifyStream(issueId);
     return;
   }
+  const picker=$('#issueDetailBody [data-clarify-model]');
+  await picker?.modelPickerReady;
+  if(state.issueDetailData?.issue?.id!==issueId||issueClarifyJobs.get(issueId)?.attached)return;
+  if(picker&&!picker.isConnected&&(!initialMessage||!state.drawerOpen||state.issueDetailTab!=='clarify'))return;
+  const model=picker?.querySelector('[data-feature-model]')?.value||undefined;
+  if(!model&&!initialMessage)return toast('暂无可选模型，请检查个人配置中的执行器');
   const msg=initialMessage||collectIssueClarifyReply();
   if(!msg)return toast('请先选择或填写答案');
   const c=issue.clarification||(issue.clarification={});
@@ -425,7 +430,7 @@ async function sendIssueClarification(initialMessage=''){
   renderIssueDetailTab();
   renderIssues();
   try{
-    const resp=await fetch(`/api/issues/${encodeURIComponent(issueId)}/chat-clarify`,{method:'POST',headers:{'Content-Type':'application/json','Accept':'text/event-stream'},body:JSON.stringify({message:msg,history,model:selectedClarifyModel()}),signal:abort.signal});
+    const resp=await fetch(`/api/issues/${encodeURIComponent(issueId)}/chat-clarify`,{method:'POST',headers:{'Content-Type':'application/json','Accept':'text/event-stream'},body:JSON.stringify({message:msg,history,model}),signal:abort.signal});
     if(!resp.ok){let em=`HTTP ${resp.status}`;try{const d=await resp.json();em=d.error||em}catch{}throw new Error(em)}
     const data=(resp.headers.get('Content-Type')||'').includes('text/event-stream')?await consumeIssueClarifyStream(resp,issueId):await resp.json();
     await applyIssueClarifyDone(issueId,data);

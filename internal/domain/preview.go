@@ -43,14 +43,14 @@ const (
 )
 
 // PreviewContract is the run-level delivery contract frozen into
-// WorkflowSnapshot. Enabling it injects a CodeBuddy build node. The static
+// WorkflowSnapshot. Enabling it injects a build node. The static
 // site is archived when that node succeeds, so a later confirmation can open
 // the preview before the run itself finishes.
 type PreviewContract struct {
 	Enabled      bool   `json:"enabled"`
 	Kind         string `json:"kind"`                 // static; later service/environment
-	ExecutorID   string `json:"executorId,omitempty"` // currently only codebuddy
-	Model        string `json:"model,omitempty"`      // CodeBuddy model id
+	ExecutorID   string `json:"executorId,omitempty"` // CLI executor; defaults to CodeBuddy
+	Model        string `json:"model,omitempty"`      // model ID on the selected CLI
 	SourcePath   string `json:"sourcePath,omitempty"` // relative to the run workspace; default dist
 	IndexFile    string `json:"indexFile,omitempty"`  // default index.html
 	SPAFallback  bool   `json:"spaFallback,omitempty"`
@@ -96,11 +96,10 @@ func (c *PreviewContract) SourceOrDist() string {
 }
 
 func (c *PreviewContract) ExecutorOrCodeBuddy() string {
-	if c == nil {
-		return PreviewBuildExecutor
-	}
-	if id := strings.TrimSpace(c.ExecutorID); id != "" {
-		return id
+	if c != nil {
+		if id := strings.TrimSpace(c.ExecutorID); id != "" {
+			return id
+		}
 	}
 	return PreviewBuildExecutor
 }
@@ -151,12 +150,6 @@ func (c *PreviewContract) Validate() error {
 	c.Normalize()
 	if !c.Static() {
 		return fmt.Errorf("frontend preview currently supports static sites only")
-	}
-	if !strings.EqualFold(c.ExecutorID, PreviewBuildExecutor) {
-		return fmt.Errorf("frontend preview currently supports CodeBuddy CLI only")
-	}
-	if strings.TrimSpace(c.Model) == "" {
-		return fmt.Errorf("frontend preview requires a CodeBuddy model")
 	}
 	if strings.Contains(c.SourcePath, "..") || strings.HasPrefix(c.SourcePath, "/") {
 		return fmt.Errorf("frontend preview sourcePath %q is invalid", c.SourcePath)

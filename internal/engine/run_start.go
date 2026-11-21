@@ -90,7 +90,11 @@ func (e *Engine) startWorkflowDefinition(wf domain.WorkflowDefinition, input str
 		}
 	}
 	wf = defaultWorkflowSandboxProfile(wf)
-	wf, err := domain.AttachPreviewBuild(wf)
+	wf, err := configureBaselineAlignCLI(wf)
+	if err != nil {
+		return domain.Run{}, err
+	}
+	wf, err = domain.AttachPreviewBuild(wf)
 	if err != nil {
 		return domain.Run{}, err
 	}

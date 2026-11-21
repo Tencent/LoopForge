@@ -1064,6 +1064,12 @@ func (h *catalogHandlers) workflows(c *gin.Context) {
 				return
 			}
 
+			if id := v.Preview.ExecutorOrCodeBuddy(); v.Preview.Static() {
+				if _, supported := repo.BuiltInExecutor(id); !supported {
+					c.JSON(http.StatusBadRequest, gin.H{"error": "前端预览使用了不支持的 CLI：" + id})
+					return
+				}
+			}
 			if err := domain.ValidateWorkflowPreparation(v); err != nil {
 				c.JSON(400, gin.H{"error": err.Error()})
 				return

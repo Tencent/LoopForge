@@ -117,7 +117,7 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 	}
 	stored, ok := h.repo.User(current.ID)
 	if !ok {
-		c.JSON(400, gin.H{"error": "请先在个人配置中配置自己的 CodeBuddy API Key"})
+		c.JSON(400, gin.H{"error": "当前用户不可用"})
 		return
 	}
 	var req assistantRequest
@@ -131,8 +131,6 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 	if !requireAssistantApprovalUser(c, current.ID, req.ApprovalUserID) {
 		return
 	}
-	req.Executor = assistantExecutor(req.Executor)
-	req.Model = assistantRequestModel(req.Executor, req.Model)
 	if len(req.Messages) == 0 {
 		c.JSON(400, gin.H{"error": "请提供对话消息"})
 		return
@@ -187,6 +185,7 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 		}
 		req.ExecutionTarget = target
 	}
+	req.Model = h.assistantChatRequestModel(req, old, stored)
 	cliEngine, _ := assistantModelEngine(req.Model)
 	loginRunner := h.assistantLoginRunner(stored.ID, req.ExecutionTarget, cliEngine)
 	runnerLogin := loginRunner.ID != ""
@@ -234,9 +233,10 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 		return
 	}
 	catalogEngine, _ := assistantModelEngine(req.Model)
-	catalog := assistantChatCatalog(c.Request.Context(), user.CodeBuddyInternetEnvironment, nil)
+	var catalog assistantModelCatalog
 	if catalogEngine == assistantEngineCodeBuddy {
-		catalog = h.turnCatalog(c.Request.Context(), user, req.Model)
+		_, modelID := assistantModelEngine(req.Model)
+		catalog = h.turnCatalog(c.Request.Context(), user, modelID)
 	}
 	if !runnerLogin {
 		selected, err := assistantTurnCatalogModel(req.Model, catalog, user, req.RequireExactModel)
@@ -294,7 +294,9 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 	defer cancel()
 	var emit func(string, any)
 	var activity assistantActivityLog
-	reviewer := h.approvalReviewer(req, user, func(event assistantStreamEvent) {
+	reviewRequest := req
+	reviewRequest.Model = cliModel
+	reviewer := h.approvalReviewer(reviewRequest, user, func(event assistantStreamEvent) {
 		if emit != nil {
 			emit("thought", event)
 		} else {
@@ -1508,6 +1510,14 @@ type assistantCLIRequest struct {
 func runAssistantCLI(ctx context.Context, req assistantCLIRequest, user domain.User, onEvent func(assistantStreamEvent)) (output string, returnedSessionID string, returnedErr error) {
 	req.Model = assistantRequestModel(req.Executor, req.Model)
 	engine, engineModel := assistantModelEngine(req.Model)
+	if req.SessionRoot == "" && (req.ReviewOnly || req.ReportOnly) {
+		root, err := os.MkdirTemp("", "agentflow-helper-")
+		if err != nil {
+			return "", "", err
+		}
+		defer os.RemoveAll(root)
+		req.SessionRoot = root
+	}
 	if req.Execute == nil {
 		if execute, runnerLogin := helperCLIExecution(ctx, req.SessionRoot, user.ID, engine); execute != nil {
 			req.Execute = execute
@@ -1520,7 +1530,7 @@ func runAssistantCLI(ctx context.Context, req assistantCLIRequest, user domain.U
 	}
 	attempt := assistantDiagnosticsFrom(ctx).begin(engine, engineModel, req.Resume, user)
 	defer func() { attempt.finish(returnedErr) }()
-	if engine != assistantEngineCodeBuddy && (req.ReportOnly || (!req.Native && !req.ReviewOnly)) {
+	if engine != assistantEngineCodeBuddy && !req.Native && !req.ReviewOnly {
 		return "", "", errAssistantEngineUnsupported
 	}
 	var bin string
@@ -1547,23 +1557,8 @@ func runAssistantCLI(ctx context.Context, req assistantCLIRequest, user domain.U
 			return "", "", err
 		}
 	}
-	reportRoot := ""
-	if req.ReportOnly {
-		reportRoot, err = os.MkdirTemp("", "agentflow-sop-report-")
-		if err != nil {
-			return "", "", err
-		}
-		defer os.RemoveAll(reportRoot)
-	}
 	config := filepath.Join(root, "mcp.json")
-	if req.ReportOnly && req.MCPConfig != "" {
-		config = req.MCPConfig
-	} else if req.ReportOnly {
-		config = filepath.Join(reportRoot, "mcp.json")
-		if err = os.WriteFile(config, []byte(`{"mcpServers":{}}`), 0600); err != nil {
-			return "", "", err
-		}
-	} else if req.Native && strings.TrimSpace(req.MCPConfig) != "" {
+	if req.Native && strings.TrimSpace(req.MCPConfig) != "" {
 		config = req.MCPConfig
 	} else if err = os.WriteFile(config, []byte(`{"mcpServers":{}}`), 0600); err != nil {
 		return "", "", err
@@ -1573,7 +1568,7 @@ func runAssistantCLI(ctx context.Context, req assistantCLIRequest, user domain.U
 		sessionID = newAssistantSessionID()
 	}
 	var inv assistantCLIInvocation
-	engineOpts := assistantEngineInvocationOpts{Bin: bin, Root: root, Config: config, Prompt: req.Prompt, Model: engineModel, Effort: req.Effort, SessionID: sessionID, Resume: req.Resume, SystemPrompt: req.SystemPrompt, ReviewOnly: req.ReviewOnly, Workspace: req.Workspace, RunnerLogin: req.RunnerLogin}
+	engineOpts := assistantEngineInvocationOpts{Bin: bin, Root: root, Config: config, Prompt: req.Prompt, Model: engineModel, Effort: req.Effort, SessionID: sessionID, Resume: req.Resume, SystemPrompt: req.SystemPrompt, ReviewOnly: req.ReviewOnly, ReportOnly: req.ReportOnly, Workspace: req.Workspace, RunnerLogin: req.RunnerLogin}
 	switch engine {
 	case assistantEngineClaude:
 		if !req.RunnerLogin {
@@ -1593,8 +1588,8 @@ func runAssistantCLI(ctx context.Context, req assistantCLIRequest, user domain.U
 			inv, err = prepareAssistantAgentCLIInvocation(engine, engineOpts)
 			break
 		}
-		inv.command, err = prepareAssistantCommand(assistantCommandOpts{Bin: bin, Config: config, Prompt: req.Prompt, Model: req.Model, Effort: req.Effort, SessionID: sessionID, Resume: req.Resume, SystemPrompt: req.SystemPrompt, Native: req.Native, Settings: req.Settings, ReportOnly: req.ReportOnly, ReviewOnly: req.ReviewOnly, Workspace: req.Workspace})
-		inv.credentials = runtime.RunCredentials{CodeBuddy: runtime.CodeBuddyCredential{APIKey: user.CodeBuddyAPIKey, InternetEnvironment: user.CodeBuddyInternetEnvironment}}
+		inv.command, err = prepareAssistantCommand(assistantCommandOpts{Bin: bin, Config: config, Prompt: req.Prompt, Model: engineModel, Effort: req.Effort, SessionID: sessionID, Resume: req.Resume, SystemPrompt: req.SystemPrompt, Native: req.Native, Settings: req.Settings, ReportOnly: req.ReportOnly, ReviewOnly: req.ReviewOnly, Workspace: req.Workspace})
+		inv.credentials = runtime.RunCredentials{CodeBuddy: runtime.CodeBuddyUserCredential(user)}
 		inv.sessionRef = sessionID
 	}
 	if err != nil {
@@ -1610,9 +1605,6 @@ func runAssistantCLI(ctx context.Context, req assistantCLIRequest, user domain.U
 	}
 	command := inv.command.WithPrivateHomeDir(filepath.Join(root, "home"))
 	workspace := filepath.Join(root, "ws")
-	if req.ReportOnly {
-		workspace = reportRoot
-	}
 	var final, claudeResultText, claudeMessageID string
 	var claudeTextBlocks []string
 	var resultError bool
@@ -1749,6 +1741,9 @@ func runAssistantCLI(ctx context.Context, req assistantCLIRequest, user domain.U
 		return "", sessionID, assistantCredentialError{engine: engine}
 	}
 	if credentialRejected && strings.TrimSpace(final) == "" && err == nil && ctx.Err() == nil {
+		if user.CodeBuddyBaseURL != "" {
+			return "", sessionID, assistantCredentialError{engine: assistantEngineCodeBuddy}
+		}
 		return "", sessionID, errAssistantCredentialRejected
 	}
 	if ctx.Err() != nil {

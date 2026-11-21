@@ -13,7 +13,6 @@ const { project, user, apiMock, writeMock, mockState } = vi.hoisted(() => {
     gitHubCredentialConfigured: true, codeBuddyApiKeyConfigured: true,
   };
   const apiMock = vi.fn(async (path) => {
-  if (path === "/api/users" && mockState.users) return mockState.users();
   if (path === "/api/users")
     return [mockState.unconfigured ? {
       id: 1, loginName: "tester", chineseName: "测试",
@@ -36,7 +35,7 @@ const { project, user, apiMock, writeMock, mockState } = vi.hoisted(() => {
   if (path.includes("/verify")) return { valid: true };
   return [];
   });
-  const mockState = { failClone: false, unconfigured: false, users: null, sshKeys: null };
+  const mockState = { failClone: false, unconfigured: false, sshKeys: null };
   const writeMock = vi.fn(async (path, body) => {
     if (path.includes("/git-token/verify")) return { valid: true };
     if (path === "/api/projects") return { ...project, ...body };
@@ -203,7 +202,7 @@ describe("QuickAccessWizard", () => {
     );
     await screen.findByRole("dialog");
     await userAction.click(screen.getByRole("button", { name: "下一步" }));
-    expect(screen.getByRole("alert")).toHaveTextContent("请先配置 GitHub Git Token、Git SSH 密钥或 CodeBuddy API Key");
+    expect(screen.getByRole("alert")).toHaveTextContent("请先添加一个 Git 凭据或执行器。");
     expect(screen.queryByText(/工蜂/)).toBeNull();
     await userAction.click(screen.getByText("使用访问令牌（高级）"));
     await userAction.type(
@@ -219,143 +218,32 @@ describe("QuickAccessWizard", () => {
     mockState.unconfigured = false;
   });
 
-  test("saves a typed CodeBuddy key when moving past the credential step", async () => {
+  test("opens the executor picker from the credential step", async () => {
     mockState.unconfigured = true;
-    writeMock.mockClear();
-    const userAction = userEvent.setup();
-    const credentialsSaved = vi.fn();
-    render(
-      <QuickAccessWizard
-        open
-        user={{ id: 1, loginName: "tester", chineseName: "测试" }}
-        projects={[project]}
-        projectId="p1"
-        onClose={vi.fn()}
-        onCompleted={vi.fn()}
-        onCredentialsSaved={credentialsSaved}
-        onOpenView={vi.fn()}
-      />,
-    );
-    await screen.findByRole("dialog");
-    await userAction.type(screen.getByPlaceholderText("粘贴 CodeBuddy API Key"), "cb-key");
-    await userAction.click(screen.getByRole("button", { name: "下一步" }));
-    await screen.findByText("项目与仓库", { selector: "h3" });
-    expect(writeMock).toHaveBeenCalledWith(
-      "/api/users/1/credentials",
-      { codeBuddyApiKey: "cb-key", codeBuddyInternetEnvironment: "" },
-      "PUT",
-    );
-    expect(credentialsSaved).toHaveBeenCalledTimes(1);
-    mockState.unconfigured = false;
-  });
-
-  test("saves the CodeBuddy key with the chosen network environment and links to its key page", async () => {
-    mockState.unconfigured = true;
-    writeMock.mockClear();
-    const userAction = userEvent.setup();
-    render(
-      <QuickAccessWizard
-        open
-        user={{ id: 1, loginName: "tester", chineseName: "测试" }}
-        projects={[project]}
-        projectId="p1"
-        onClose={vi.fn()}
-        onCompleted={vi.fn()}
-        onOpenView={vi.fn()}
-      />,
-    );
-    await screen.findByRole("dialog");
-    const keyLink = screen.getByRole("link", { name: /获取 API Key/ });
-    expect(keyLink).toHaveAttribute("href", "https://www.codebuddy.ai/profile/keys");
-    await userAction.click(screen.getByLabelText("CodeBuddy 网络环境"));
-    await userAction.click(screen.getByRole("option", { name: /国内站/ }));
-    expect(keyLink).toHaveAttribute("href", "https://copilot.tencent.com/profile/");
-    await userAction.type(screen.getByPlaceholderText("粘贴 CodeBuddy API Key"), "sk-deepseek");
-    expect(screen.getByText(/第三方模型的 Key/)).toBeInTheDocument();
-    await userAction.click(screen.getByRole("button", { name: "下一步" }));
-    await screen.findByText("项目与仓库", { selector: "h3" });
-    expect(writeMock).toHaveBeenCalledWith(
-      "/api/users/1/credentials",
-      { codeBuddyApiKey: "sk-deepseek", codeBuddyInternetEnvironment: "internal" },
-      "PUT",
-    );
-    mockState.unconfigured = false;
-  });
-
-  test("rewrites an old china environment to internal when moving past the credential step", async () => {
-    mockState.users = () => [{ ...user, codeBuddyInternetEnvironment: "china" }];
-    writeMock.mockClear();
-    const userAction = userEvent.setup();
+    const onClose = vi.fn();
+    const parent = { postMessage: vi.fn() };
+    const parentWindow = vi.spyOn(window, "parent", "get").mockReturnValue(parent);
     try {
       render(
         <QuickAccessWizard
           open
-          user={user}
+          user={{ id: 1, loginName: "tester" }}
           projects={[project]}
           projectId="p1"
-          onClose={vi.fn()}
-          onCompleted={vi.fn()}
-          onOpenView={vi.fn()}
+          onClose={onClose}
         />,
       );
       await screen.findByRole("dialog");
-      expect(await screen.findByText(/「china」无法识别/)).toBeInTheDocument();
-      expect(screen.getByRole("link", { name: /获取 API Key/ })).toHaveAttribute(
-        "href",
-        "https://copilot.tencent.com/profile/",
+      expect(screen.queryByLabelText("CodeBuddy API Key")).not.toBeInTheDocument();
+      await userEvent.click(screen.getByRole("button", { name: "执行器配置" }));
+      expect(parent.postMessage).toHaveBeenCalledWith(
+        { type: "agentflow-chat-open-view", view: "settings", credential: "executors" },
+        location.origin,
       );
-      await userAction.click(screen.getByRole("button", { name: "下一步" }));
-      await screen.findByText("项目与仓库", { selector: "h3" });
-      expect(writeMock).toHaveBeenCalledWith(
-        "/api/users/1/credentials",
-        { codeBuddyInternetEnvironment: "internal" },
-        "PUT",
-      );
+      expect(onClose).toHaveBeenCalledTimes(1);
     } finally {
-      mockState.users = null;
-    }
-  });
-
-  test("a refresh after switching to 国际站 elsewhere drops the omitted environment", async () => {
-    let environment = "internal";
-    mockState.users = () => [
-      { ...user, ...(environment ? { codeBuddyInternetEnvironment: environment } : {}) },
-    ];
-    writeMock.mockClear();
-    const userAction = userEvent.setup();
-    try {
-      render(
-        <QuickAccessWizard
-          open
-          user={user}
-          projects={[project]}
-          projectId="p1"
-          onClose={vi.fn()}
-          onCompleted={vi.fn()}
-          onOpenView={vi.fn()}
-        />,
-      );
-      await screen.findByRole("dialog");
-      const keyLink = screen.getByRole("link", { name: /获取 API Key/ });
-      await waitFor(() =>
-        expect(keyLink).toHaveAttribute("href", "https://copilot.tencent.com/profile/"),
-      );
-      // 个人配置 switched the environment to 国际站; the users API omits it now.
-      environment = "";
-      window.dispatchEvent(new Event("focus"));
-      await waitFor(() =>
-        expect(keyLink).toHaveAttribute("href", "https://www.codebuddy.ai/profile/keys"),
-      );
-      await userAction.type(screen.getByLabelText("CodeBuddy API Key"), "ck_new");
-      await userAction.click(screen.getByRole("button", { name: "下一步" }));
-      await screen.findByText("项目与仓库", { selector: "h3" });
-      expect(writeMock).toHaveBeenCalledWith(
-        "/api/users/1/credentials",
-        { codeBuddyApiKey: "ck_new", codeBuddyInternetEnvironment: "" },
-        "PUT",
-      );
-    } finally {
-      mockState.users = null;
+      parentWindow.mockRestore();
+      mockState.unconfigured = false;
     }
   });
 

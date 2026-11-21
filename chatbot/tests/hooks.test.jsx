@@ -18,7 +18,10 @@ const { apiMock, writeMock } = vi.hoisted(() => {
     if (path === "/api/auth/current") return { user: { id: 1, loginName: "tester", codeBuddyApiKeyConfigured: true } };
     if (path === "/api/projects") return [{ id: "p1", name: "项目一", ownerId: 1, members: [1] }];
     if (path === "/api/assistant/models?executor=codex") return { default: "default", models: [{ id: "default", name: "CLI default", family: "gpt" }, { id: "gpt-5", name: "GPT-5", family: "gpt", efforts: ["high", "xhigh"] }] };
-    if (path === "/api/assistant/models") return { default: "m1", sponsoredModel: "m1", models: [{ id: "m1", name: "模型一", effort: true }] };
+    if (path === "/api/assistant/models") return {
+      default: "m1", sponsoredModel: "m1", models: [{ id: "m1", name: "模型一", effort: true }],
+      engines: [{ id: "codebuddy", configured: true }, { id: "codex", configured: true }, { id: "claude-code", configured: false }],
+    };
     if (path === "/api/users") return [{ id: 1, loginName: "tester", codeBuddyApiKeyConfigured: true }];
     if (path === "/api/assistant/sessions") return [baseSession];
     if (path.includes("/generation")) return { id: "g1", status: "completed", events: [] };
@@ -43,7 +46,6 @@ vi.mock("../src/api.js", async (original) => ({
   newId: () => "new-session",
 }));
 
-import { EXECUTORS } from "../src/engines.js";
 import { useChat } from "../src/useChat.js";
 import { writeComposerPreference } from "../src/composer-preferences.js";
 import {
@@ -81,7 +83,7 @@ describe("conversation hooks", () => {
     const { result } = renderHook(() => useChat());
     await waitFor(() => expect(result.current.ready).toBe(true));
     expect(result.current.executor).toBe("codebuddy");
-    expect(result.current.executors.map((item) => item.id)).toEqual(EXECUTORS.map((item) => item.id));
+    expect(result.current.executors.map((item) => item.id)).toEqual(["codebuddy", "codex"]);
     act(() => result.current.setExecutor("codex"));
     await waitFor(() => expect(result.current.models.map((m) => m.id)).toEqual(["gpt-5"]));
     expect(result.current.model).toBe("gpt-5");
@@ -106,6 +108,77 @@ describe("conversation hooks", () => {
     await waitFor(() => expect(result.current.ready).toBe(true));
     expect(result.current.executor).toBe("codex");
     await waitFor(() => expect(result.current.model).toBe("gpt-5"));
+  });
+
+  test("requires an available executor for a new chat and recovers a stale CLI preference", async () => {
+    const original = apiMock.getMockImplementation();
+    const user = { id: 1, loginName: "tester" };
+    let engines = [];
+    apiMock.mockImplementation(async (path, options) => {
+      if (path === "/api/auth/current") return { user };
+      if (path === "/api/users") return [user];
+      if (path === "/api/assistant/models") return { default: "m1", models: [{ id: "m1" }], engines };
+      return original(path, options);
+    });
+    writeComposerPreference("executor", "codebuddy");
+    try {
+      const { result, unmount } = renderHook(useChat);
+      await waitFor(() => expect(result.current.ready).toBe(true));
+      expect(result.current).toMatchObject({ executor: "", executors: [], model: "" });
+      await act(async () => expect(await result.current.send({ text: "第一条消息" })).toBe(false));
+      expect(writeMock).not.toHaveBeenCalled();
+      unmount();
+
+      engines = [{ id: "codebuddy", configured: false }, { id: "codex", configured: true }];
+      const configured = renderHook(useChat);
+      await waitFor(() => expect(configured.result.current.ready).toBe(true));
+      expect(configured.result.current.executor).toBe("codex");
+      expect(configured.result.current.executors.map(item => item.id)).toEqual(["codex"]);
+    } finally {
+      apiMock.mockImplementation(original);
+      writeComposerPreference("executor", null);
+    }
+  });
+
+  test("removes a deleted CLI and selects the re-added executor without reloading the chat", async () => {
+    const original = apiMock.getMockImplementation();
+    let zcode = true, codebuddy = true;
+    const identity = { id: 1, loginName: "tester", avatarUrl: "/avatar.png" };
+    apiMock.mockImplementation(async (path, options) => {
+      if (path === "/api/auth/current") return { user: identity };
+      if (path === "/api/users") return [{
+        id: 1, loginName: "tester",
+        ...(zcode && { agentCliCredentials: { zcode: { apiKeyConfigured: true } } }),
+        ...(codebuddy && { codeBuddyApiKeyConfigured: true }),
+      }];
+      if (path === "/api/assistant/models") return {
+        models: [], engines: [{ id: "zcode", configured: zcode }, { id: "codebuddy", configured: codebuddy }],
+        preferences: { executor: zcode ? "zcode" : codebuddy ? "codebuddy" : "" },
+      };
+      return original(path, options);
+    });
+    const notifyChange = () => act(() => window.dispatchEvent(new MessageEvent("message", {
+      origin: location.origin, source: window.parent, data: { type: "agentflow-credentials-changed" },
+    })));
+    try {
+      const { result } = renderHook(useChat);
+      await waitFor(() => expect(result.current.ready).toBe(true));
+      expect(result.current.executor).toBe("zcode");
+      expect(result.current.executors.map(item => item.id)).toEqual(["codebuddy", "zcode"]);
+
+      zcode = codebuddy = false;
+      notifyChange();
+      await waitFor(() => expect(result.current.executors).toEqual([]));
+      await waitFor(() => expect(result.current.user.agentCliCredentials).toBeUndefined());
+
+      codebuddy = true;
+      notifyChange();
+      await waitFor(() => expect(result.current.executor).toBe("codebuddy"));
+      expect(result.current.executors.map(item => item.id)).toEqual(["codebuddy"]);
+      expect(result.current.user.avatarUrl).toBe(identity.avatarUrl);
+    } finally {
+      apiMock.mockImplementation(original);
+    }
   });
 
   test.each([
@@ -439,6 +512,10 @@ describe("conversation hooks", () => {
   });
 
   test("does not create a chat without a concrete model on Pi", async () => {
+    const original = apiMock.getMockImplementation();
+    apiMock.mockImplementation(async (path, options) => path === "/api/assistant/models"
+      ? { ...(await original(path, options)), engines: [{ id: "pi", configured: true }] }
+      : original(path, options));
     const view = renderHook(() => useChat());
     try {
       await waitFor(() => expect(view.result.current.ready).toBe(true));
@@ -449,6 +526,7 @@ describe("conversation hooks", () => {
       expect(writeMock).not.toHaveBeenCalled();
     } finally {
       view.unmount();
+      apiMock.mockImplementation(original);
       localStorage.removeItem("loopforge.assistant.executor");
     }
   });
@@ -680,6 +758,7 @@ describe("conversation hooks", () => {
         return {
           default: "m1",
           cursorModelsPending: !discovered,
+          engines: [{ id: "cursor", configured: true }],
           models: [{ ...fallback, id: "cursor:widget", engine: "cursor", efforts: discovered ? ["low", "xhigh"] : [] }],
         };
       }
@@ -687,10 +766,7 @@ describe("conversation hooks", () => {
     });
     try {
       const { result } = renderHook(() => useChat());
-      await waitFor(() => expect(result.current.modelDetails?.name).toBe("Widget"));
       await waitFor(() => expect(result.current.ready).toBe(true));
-      expect(result.current.modelDetails.efforts || []).toEqual([]);
-      act(() => { result.current.setModel(result.current.model); });
       if (!configured) {
         configured = true;
         act(() => window.dispatchEvent(new MessageEvent("message", {
@@ -700,6 +776,9 @@ describe("conversation hooks", () => {
         })));
       }
       await waitFor(() => expect(pendingReads).toBeGreaterThan(0));
+      await waitFor(() => expect(result.current.modelDetails?.name).toBe("Widget"));
+      expect(result.current.modelDetails.efforts || []).toEqual([]);
+      act(() => { result.current.setModel(result.current.model); });
       discovered = true;
       await waitFor(() => expect(result.current.modelDetails.efforts).toEqual(["low", "xhigh"]), { timeout: 3500 });
       act(() => result.current.setEffort("xhigh"));
@@ -755,7 +834,7 @@ describe("conversation hooks", () => {
         ];
         if (personalCodexCatalog)
           models.push({ id: "codex:gpt-5", engine: "codex", name: "GPT-5", efforts: ["high"] });
-        return { default: "default", defaultEfforts: ["low"], models };
+        return { default: "default", defaultEfforts: ["low"], models, engines: [{ id: "codex", configured: true }] };
       }
       return original(path, options);
     });
@@ -844,7 +923,7 @@ describe("conversation hooks", () => {
     };
     apiMock.mockImplementation((path, options) => {
       if (path === "/api/assistant/models") return Promise.resolve({
-        default: "m1", models: [
+        default: "m1", engines: [{ id: "codebuddy", configured: true }, { id: "codex", configured: true }], models: [
           { id: "m1" },
           { id: "codex:gpt-main", engine: "codex" },
           { id: "codex:gpt-alternate", engine: "codex", efforts: ["high"] },

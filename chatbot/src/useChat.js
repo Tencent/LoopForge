@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   api,
   write,
@@ -16,7 +16,7 @@ import { cliFailureSettles } from "./cli-install.jsx";
 import { useExecutionMachines } from "./useExecutionMachines.js";
 import { executionLocked } from "./execution-target.js";
 import { knownEffort, modelEffort } from "./effort.js";
-import { EXECUTORS, concreteModel, conversationEngine, engineModels, engineOfModel } from "./engines.js";
+import { EXECUTORS, concreteModel, conversationEngine, engineModels, engineOfModel, personalEngineConfigured } from "./engines.js";
 import { readComposerPreference, useComposerOptions, writeComposerPreference } from "./composer-preferences.js";
 import {
   enqueue,
@@ -87,7 +87,10 @@ class ComposerModelError extends Error {}
 
 export function useChat() {
   const stopRequestRef = useRef(null);
-  const [user, setUser] = useState(null),
+  const accountDefaultsRef = useRef(null);
+  const draftExecutorPicked = useRef(false);
+  const userRead = useRef(0);
+  const [identity, setIdentity] = useState(null),
     [projects, setProjects] = useState([]),
     [sandboxes, setSandboxes] = useState([]),
     [sandboxProfileId, setSandboxProfileId] = useState(""),
@@ -100,6 +103,8 @@ export function useChat() {
       new URLSearchParams(location.search).get("issueId") || "",
     ),
     [models, setModels] = useState([]),
+    [catalogEngines, setCatalogEngines] = useState([]),
+    [accountDefaults, setAccountDefaults] = useState(null),
     [modelCatalogRefresh, requestModelCatalogRefresh] = useState(0),
     [sessions, setSessions] = useState([]),
     [session, setSession] = useState(null),
@@ -133,7 +138,9 @@ export function useChat() {
     // A queued message sent with "send now": it interrupts the running reply
     // and stays on screen until the server's follow-up turn has started.
     [steering, setSteering] = useState(null);
-  const { executor, model, effort } = selection;
+  // The users endpoint returns a complete snapshot. Credentials omitted
+  // after deletion must not survive in the authenticated user's profile.
+  const user = useMemo(() => identity && { ...identity, ...users.find(row => row.id === identity.id) }, [identity, users]);
   const generationKnownRef = useRef(null);
   const generationRevision = useRef(0);
   const setGenerationKnown = useCallback((id) => {
@@ -209,7 +216,8 @@ export function useChat() {
       sessionRef.current = null;
       setSession(null);
       executionMachines.resetMachine();
-      setSelection((options) => ({ executor: id ? options.executor : storedExecutor(), model: null, effort: null }));
+      draftExecutorPicked.current = false;
+      setSelection((options) => ({ executor: id ? options.executor : accountDefaultsRef.current?.executor || storedExecutor(), model: null, effort: null }));
       setSandboxProfileId("");
       currentId.current = id;
       setActiveId(id);
@@ -250,7 +258,10 @@ export function useChat() {
     setSession(stored);
   }
   const applyModelCatalog = useCallback((catalog) => {
+    accountDefaultsRef.current = catalog.preferences || null;
+    setAccountDefaults(accountDefaultsRef.current);
     setModels(catalog.models || []);
+    setCatalogEngines(catalog.engines || []);
     setCodeBuddyDefault({ id: catalog.default || "default", name: "默认", efforts: catalog.defaultEfforts });
     setSponsoredModels(sponsoredModelList(catalog));
   }, []);
@@ -299,7 +310,7 @@ export function useChat() {
           api("/api/sandboxes"),
         ]);
         if (!current) return;
-        setUser({ ...auth.user, ...users.find((u) => u.id === auth.user.id) });
+        setIdentity(auth.user);
         setUsers(users || []);
         setProjects(projectRows || []);
         setSandboxes(sandboxRows || []);
@@ -630,13 +641,35 @@ export function useChat() {
   // Without their own key users chat on the platform's shared key, limited to
   // the models the administrator allowed (the first is the default).
   const sponsoredModel = sponsoredModels[0] || "";
+  function composerRunnerId(conversation) {
+    if (!executionLocked(conversation)) return executionMachines.defaultRunnerId;
+    return conversation.executionTarget?.pool === "runner" ? conversation.executionTarget.runnerId : "";
+  }
+  const runnerId = composerRunnerId(session);
+  const runner = executionMachines.machines.find(machine => machine.id === runnerId && machine.ownerUserId === user?.id);
+  const availableExecutors = EXECUTORS.flatMap(item => {
+    const local = ["codex", "claude-code", "agy"].includes(item.id) &&
+      runner?.runtimes?.some(runtime => runtime.provider === item.id && runtime.authMode !== "personal");
+    if (local) return [{ ...item, detail: "使用执行机器上的本机登录态。" }];
+    const configured = catalogEngines.find(engine => engine.id === item.id)?.configured ??
+      personalEngineConfigured(user, item.id);
+    return configured || (item.id === "codebuddy" && sponsoredModel) ? [item] : [];
+  });
+  // Drafts can use any available executor. A recorded conversation keeps its
+  // executor even if its authentication changes.
+  const availableExecutor = id => availableExecutors.find(item => item.id === id);
+  const preferred = !activeId && !draftExecutorPicked.current && availableExecutor(accountDefaults?.executor);
+  const keepSessionExecutor = activeId && (session?.id !== activeId || submitting ||
+    generation?.status === "running" || conversationEngine(session?.messages, models, session?.executor) ||
+    (session?.executionTarget?.pool === "runner" && !executionMachines.machinesReady));
+  const executor = keepSessionExecutor || !user || user.isGuest ? selection.executor :
+    (preferred || availableExecutor(selection.executor) || availableExecutors[0])?.id || "";
+  const { model, effort } = executor === selection.executor ? selection : { model: null, effort: null };
   function resolveComposerModel(
     { executor, model, effort }, conversation, draft,
     catalogs = providerCatalogs, machines = executionMachines.machines,
   ) {
-    const personalMachineId = executionLocked(conversation)
-      ? (conversation.executionTarget?.pool === "runner" ? conversation.executionTarget.runnerId : "")
-      : executionMachines.defaultRunnerId;
+    const personalMachineId = composerRunnerId(conversation);
     const personalMachine = machines.find(
       (machine) => machine.id === personalMachineId && machine.ownerUserId === user?.id,
     );
@@ -646,7 +679,7 @@ export function useChat() {
     const providerCatalog = catalogs[agyAccountKey || executor];
     const codeBuddy = executor === "codebuddy";
     const listed = engineModels(models, executor);
-    const usesProviderCatalog = !codeBuddy && (!!agyAccountKey || !listed.length);
+    const usesProviderCatalog = !!executor && !codeBuddy && (!!agyAccountKey || !listed.length);
     const catalogToLoad = usesProviderCatalog && !providerCatalog ? agyAccountKey || executor : "";
     const executorModels = usesProviderCatalog
       ? (providerCatalog?.models || []).filter((model) => concreteModel(model, executor))
@@ -655,9 +688,11 @@ export function useChat() {
     const listedModel = findExecutorModel(executorModels, executor, model);
     const hasSelectedModel = model !== null && !listedModel?.disabled && !listedModel?.unavailable &&
       (conversation || !executorModels.length || listedModel);
+    const saved = draft && accountDefaults?.executor === executor ? accountDefaults : null;
+    const savedModel = saved ? findExecutorModel(executorModels, executor, saved.model) : null;
     const selectedModel = hasSelectedModel ? model : preferredModel(
       executorModels, executor, codeBuddyDefault.id,
-      draft ? readComposerPreference(`model.${executor}`) : null,
+      savedModel?.id ?? (draft && !saved ? readComposerPreference(`model.${executor}`) : null),
     );
     const availableModel = sponsored && !sponsoredModels.includes(selectedModel) ? sponsoredModel : selectedModel;
     const catalogEntry = findExecutorModel(executorModels, executor, availableModel) ??
@@ -672,7 +707,8 @@ export function useChat() {
       : undefined;
     // null follows the browser preference, while "" is the CLI's default level.
     const preferredEffort = ((model === null || hasSelectedModel) ? effort : null) ??
-      (draft ? readComposerPreference(effortPreference(executor, availableModel)) : null);
+      (savedModel?.id === availableModel && saved ? saved.effort ?? "" :
+        draft ? readComposerPreference(effortPreference(executor, availableModel)) : null);
     // Custom models can remain usable without a picker entry. Keep their
     // saved effort visible and let the server validate it on send.
     const historical = conversation && activeModel && !unavailableAgyVariant && availableModel === selectedModel;
@@ -681,13 +717,13 @@ export function useChat() {
       : undefined);
     const activeEffort = modelEffort(activeModelEntry, preferredEffort || legacyEffort);
     return {
-      personalMachineId, personalMachine, agyAccountKey, catalogToLoad, codeBuddy, executorModels,
+      personalMachineId, agyAccountKey, catalogToLoad, codeBuddy, executorModels,
       sponsored, activeModelEntry, activeModel, activeEffort, unavailableAgyVariant,
     };
   }
   const composerModel = resolveComposerModel({ executor, model, effort }, session, !activeId);
   const {
-    personalMachineId, personalMachine, agyAccountKey, catalogToLoad, codeBuddy, executorModels,
+    personalMachineId, agyAccountKey, catalogToLoad, codeBuddy, executorModels,
     sponsored, activeModelEntry, activeModel, activeEffort,
   } = composerModel;
   const loadProviderCatalog = useCallback((key, executor, runnerId) => {
@@ -775,12 +811,13 @@ export function useChat() {
   function chooseExecutor(id) {
     if (id === "claude") id = "claude-code";
     if (sessionLoading() || replyStatePending() || submittingRef.current || generation?.status === "running" ||
-        !EXECUTORS.some((item) => item.id === id) || id === executor) return;
+        !availableExecutor(id) || id === executor) return;
     const current = sessionRef.current;
     const locked = conversationEngine(current?.messages, models, current?.executor);
     writeComposerPreference("executor", id);
     if (locked && locked !== id) open(null);
     else if (current?.id === activeId) saveOptions(`model.${activeId}`, { executor: id });
+    draftExecutorPicked.current = true;
     setSelection({ executor: id, model: null, effort: null });
   }
 
@@ -823,31 +860,20 @@ export function useChat() {
       rememberModelChoice(activeModel, level);
     }
   }
-  // Credential flags are omitted when false, so drop the old ones before
-  // merging; otherwise a cleared key would still look configured.
-  const refreshUser = useCallback(
-    () =>
-      api("/api/users")
-        .then((rows) => {
-          setUsers(rows || []);
-          let fresh = null;
-          setUser((old) => {
-            fresh = old && (rows || []).find((u) => u.id === old.id);
-            if (!fresh) return old;
-            const base = Object.fromEntries(
-              Object.entries(old).filter(([k]) => !k.endsWith("Configured")),
-            );
-            return { ...base, ...fresh };
-          });
-          // Drop a "please configure X" error once X is configured.
-          setError((old) => {
-            const hint = credentialHint(old);
-            return hint && fresh?.[`${hint.field}Configured`] ? "" : old;
-          });
-        })
-        .catch(() => {}),
-    [],
-  );
+  const refreshUser = useCallback(async () => {
+    const read = ++userRead.current;
+    try {
+      const rows = await api("/api/users");
+      if (read !== userRead.current) return;
+      setUsers(rows || []);
+      const fresh = rows?.find(row => row.id === identity?.id);
+      // Drop a "please configure X" error once X is configured.
+      setError(old => {
+        const hint = credentialHint(old);
+        return hint && fresh?.[`${hint.field}Configured`] ? "" : old;
+      });
+    } catch {}
+  }, [identity?.id]);
   useEffect(() => {
     const onMessage = (e) => {
       if (
@@ -860,13 +886,14 @@ export function useChat() {
         requestModelCatalogRefresh((revision) => revision + 1);
       }
     };
+    const onFocus = () => requestModelCatalogRefresh(revision => revision + 1);
     window.addEventListener("message", onMessage);
-    if (ready && missingKey) window.addEventListener("focus", refreshUser);
+    if (ready && !user?.isGuest) window.addEventListener("focus", onFocus);
     return () => {
       window.removeEventListener("message", onMessage);
-      window.removeEventListener("focus", refreshUser);
+      window.removeEventListener("focus", onFocus);
     };
-  }, [ready, missingKey, refreshUser]);
+  }, [ready, user?.isGuest]);
   useEffect(() => {
     if (!ready || !modelCatalogRefresh) return;
     void refreshUser();
@@ -1024,6 +1051,7 @@ export function useChat() {
       setError("会话仍在加载，请稍候再发送。");
       return false;
     }
+    if (!executor) return false;
     const modelError = composerModelError(composerModel);
     if (modelError) {
       setError(modelError);
@@ -1087,8 +1115,9 @@ export function useChat() {
         user &&
         !user.isGuest
       ) {
+        const read = userRead.current;
         const rows = await api("/api/users").catch(() => null);
-        if (rows) setUsers(rows);
+        if (rows && read === userRead.current) setUsers(rows);
         const fresh = rows?.find((u) => u.id === user.id);
         if (fresh && !fresh.codeBuddyApiKeyConfigured) {
           if (viewingTarget()) setError("请先在个人配置中配置自己的 CodeBuddy API Key");
@@ -1561,6 +1590,7 @@ export function useChat() {
   }, []);
   return {
     user,
+    defaultApproval: accountDefaults?.approval,
     refreshUser,
     users,
     issueId: session?.issueId || (!activeId ? draftIssueId : ""),
@@ -1577,11 +1607,7 @@ export function useChat() {
     selectSandbox,
     models: executorModels,
     executor,
-    executors: EXECUTORS.map((item) => {
-      if (!personalMachine || !["codex", "claude-code", "agy"].includes(item.id)) return item;
-      const runtime = personalMachine.runtimes?.find((runtime) => runtime.provider === item.id);
-      return runtime?.authMode === "personal" ? item : { ...item, detail: "使用执行机器上的本机登录态。" };
-    }),
+    executors: user ? availableExecutors : [],
     setExecutor: chooseExecutor,
     sessions,
     session,

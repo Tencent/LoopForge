@@ -670,6 +670,7 @@ func scrubRunnerTaskCredentials(task *domain.RunnerTask) {
 		return
 	}
 	task.Invocation.CodeBuddyAPIKey = ""
+	task.Invocation.CodeBuddyBaseURL = ""
 	task.Invocation.CodeBuddyInternetEnvironment = ""
 	task.Invocation.CodexAPIKey = ""
 	task.Invocation.CodexBaseURL = ""

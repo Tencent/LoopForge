@@ -562,9 +562,9 @@ test('AI schedule model picker includes account login CLI models and keeps a sav
   const doc = app.document;
   const form = doc.querySelector('#scheduleJobForm');
   const engine = doc.querySelector('#scheduleEngine');
-  assert.deepEqual([...engine.options].map(o => [o.value, o.disabled]), [['codebuddy', false], ['codex', false], ['claude-code', true]]);
-  assert.match(engine.options[2].textContent, /缺少凭据/);
+  assert.deepEqual([...engine.options].map(o => [o.value, o.disabled]), [['codebuddy', false], ['codex', false]]);
   assert.equal(engine.value, 'codebuddy');
+  assert.equal(form.elements.assistantModel.value, 'glm-test');
 
   const toggle = doc.querySelector('#scheduleModelPicker [data-model-toggle]');
   const menu = doc.querySelector('#scheduleModelPicker .ai-model-menu');
@@ -593,5 +593,16 @@ test('AI schedule model picker includes account login CLI models and keeps a sav
   assert.equal(engine.value, 'claude-code');
   assert.equal(engine.selectedOptions[0].disabled, false);
   assert.equal(form.elements.assistantModel.value, 'claude-code:opus');
-  assert.match(doc.querySelector('#scheduleModelHint').textContent, /默认执行机器的账号登录.*离线时改用个人 API Key.*Key 缺失或不可用时任务失败.*平台共享 Key/);
+
+  app.router.get('/api/assistant/models', {
+    default: 'default',
+    models: [{ id: 'codex:gpt-6-sol', name: 'GPT-6-Sol', engine: 'codex' }],
+    engines: [
+      { id: 'codebuddy', name: 'CodeBuddy', configured: false },
+      { id: 'codex', name: 'Codex', configured: true },
+    ],
+  });
+  await app.evaluate("openScheduleJobModal('assistant')");
+  assert.equal(engine.value, 'codex');
+  assert.equal(form.elements.assistantModel.value, 'codex:gpt-6-sol');
 });

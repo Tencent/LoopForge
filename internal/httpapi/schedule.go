@@ -243,6 +243,10 @@ func (h *scheduleHandlers) bindScheduleRunAs(c *gin.Context, job *domain.Schedul
 	if !ok {
 		return true
 	}
+	model := scheduledAssistantDefault(h.repo, self, requestedModel)
+	if model != requestedModel && !scheduleRunConfigUnchanged(prior, *job) {
+		job.AssistantModel = model
+	}
 	engine, _ := assistantModelEngine(job.AssistantModel)
 	stopOnly := func() bool {
 		if job.Enabled || !scheduleRunConfigUnchanged(prior, *job) {
@@ -265,6 +269,10 @@ func (h *scheduleHandlers) bindScheduleRunAs(c *gin.Context, job *domain.Schedul
 	_, shared, ok := scheduleCredentialUser(h.repo, self, engine)
 	if !ok {
 		if stopOnly() {
+			return false
+		}
+		if assistantModelUnspecified(model) {
+			c.JSON(400, gin.H{"error": errFeatureCredentials.Error()})
 			return false
 		}
 		c.JSON(400, gin.H{"error": scheduleMissingKeyError(engine)})
@@ -309,10 +317,14 @@ func scheduleRunConfigUnchanged(prior, job domain.ScheduleJob) bool {
 // scheduleSharedRequestedModel treats the CLI-default placeholder as "no
 // model chosen", which the shared key resolves to its own default.
 func scheduleSharedRequestedModel(model string) string {
-	if model = strings.TrimSpace(model); model == assistantDefaultModel {
-		return ""
+	engine, id := assistantModelEngine(model)
+	if engine == assistantEngineCodeBuddy {
+		if codeBuddyIsDefaultModel(id) {
+			return ""
+		}
+		return id
 	}
-	return model
+	return strings.TrimSpace(model)
 }
 
 func scheduleMissingKeyError(engine string) string {
@@ -320,7 +332,7 @@ func scheduleMissingKeyError(engine string) string {
 		return fmt.Sprintf("你还没有可用的 %s 凭据，请在默认执行机器启用账号登录（Runner %s 及以上），或在个人配置填写 API Key", assistantEngineLabel(engine), domain.RunnerVersionCLISettings)
 	}
 	if engine != assistantEngineCodeBuddy {
-		return fmt.Sprintf("你还没有配置 %s API Key，平台共享 Key 只支持 CodeBuddy 模型：请先在个人配置中填写，或改选 CodeBuddy 模型", assistantEngineLabel(engine))
+		return assistantEngineMissingKey(engine)
 	}
 	return "你还没有配置 CodeBuddy API Key，平台也没有配置共享 Key，定时任务无法执行：请先在个人配置中填写自己的 Key，或联系平台管理员配置共享 Key"
 }

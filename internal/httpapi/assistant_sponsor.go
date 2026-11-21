@@ -44,6 +44,7 @@ func (h *assistantHandlers) assistantChatUser(user domain.User) (chatUser domain
 		return user, nil, false
 	}
 	user.CodeBuddyAPIKey = key.APIKey
+	user.CodeBuddyBaseURL = ""
 	user.CodeBuddyInternetEnvironment = key.InternetEnvironment
 	user.CodeBuddyModels = nil
 	return user, key.Models, true
@@ -72,7 +73,7 @@ func (h *assistantHandlers) usesSharedKey(user domain.User) bool {
 func (h *assistantHandlers) chatCatalog(ctx context.Context, user domain.User) assistantModelCatalog {
 	key, shared := h.assistantSharedKey()
 	if !shared || !h.usesSharedKey(user) {
-		return withCodeBuddyPersonalModels(assistantChatCatalog(ctx, user.CodeBuddyInternetEnvironment, nil), user)
+		return withCodeBuddyPersonalModels(ctx, assistantChatCatalog(ctx, user.CodeBuddyInternetEnvironment, nil), user)
 	}
 	return restrictAssistantCatalog(assistantChatCatalog(ctx, user.CodeBuddyInternetEnvironment, key.Models), key.Models)
 }
@@ -87,7 +88,7 @@ func (h *assistantHandlers) turnCatalog(ctx context.Context, user domain.User, m
 	if model == "" || assistantCatalogLists(catalog, model) {
 		return catalog
 	}
-	refreshCLIModels(ctx, user.CodeBuddyInternetEnvironment, user.CodeBuddyAPIKey)
+	refreshOfficialCodeBuddyModels(ctx, user)
 	catalog = h.chatCatalog(ctx, user)
 	if !assistantCatalogLists(catalog, model) {
 		log.Printf("assistant model %q is not offered to user %d after catalog refresh", model, user.ID)

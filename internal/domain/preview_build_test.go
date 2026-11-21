@@ -6,10 +6,10 @@ import (
 	"time"
 )
 
-func TestAttachPreviewBuildAppendsCodeBuddyNode(t *testing.T) {
+func TestAttachPreviewBuildUsesSelectedExecutor(t *testing.T) {
 	wf := WorkflowDefinition{
 		ID:      "front",
-		Preview: &PreviewContract{Enabled: true, Model: "gpt-5.6-terra"},
+		Preview: &PreviewContract{Enabled: true, ExecutorID: "codex", Model: "test-model"},
 		Nodes: []WorkflowNode{
 			{ID: "impl", Name: "实现", Type: "script"},
 			{ID: "test", Name: "测试", Type: "script"},
@@ -24,7 +24,7 @@ func TestAttachPreviewBuildAppendsCodeBuddyNode(t *testing.T) {
 		t.Fatalf("nodes = %d, want 3", len(got.Nodes))
 	}
 	last := got.Nodes[len(got.Nodes)-1]
-	if last.ID != PreviewBuildNodeID || last.AgentID != PreviewBuildAgentID || last.ExecutorID != PreviewBuildExecutor {
+	if last.ID != PreviewBuildNodeID || last.AgentID != PreviewBuildAgentID || last.ExecutorID != "codex" {
 		t.Fatalf("injected node = %+v", last)
 	}
 	prompt := PreviewBuildPrompt(got.Preview)
@@ -47,7 +47,7 @@ func TestAttachPreviewBuildAppendsCodeBuddyNode(t *testing.T) {
 		t.Fatalf("missing edge from success sink: %+v", got.Edges)
 	}
 	agent := PreviewBuildAgent(got.Preview)
-	if agent.Model != "gpt-5.6-terra" || agent.ExecutorID != PreviewBuildExecutor {
+	if agent.Model != "test-model" || agent.ExecutorID != "codex" {
 		t.Fatalf("synthetic agent = %+v", agent)
 	}
 }
@@ -86,14 +86,17 @@ func TestPreviewContractClampsRetentionTo30Days(t *testing.T) {
 	}
 }
 
-func TestPreviewContractRejectsNonCodeBuddy(t *testing.T) {
-	c := &PreviewContract{Enabled: true, ExecutorID: "claude", Model: "x"}
-	if err := c.Validate(); err == nil {
-		t.Fatal("expected CodeBuddy-only error")
+func TestPreviewContractOverridesLegacySyntheticExecutor(t *testing.T) {
+	wf := WorkflowDefinition{
+		Preview: &PreviewContract{Enabled: true, ExecutorID: "claude", Model: "custom"},
+		Nodes:   []WorkflowNode{{ID: PreviewBuildNodeID, AgentID: PreviewBuildAgentID, ExecutorID: "codebuddy"}},
 	}
-	disabled := &PreviewContract{Enabled: false, ExecutorID: "claude"}
-	if err := disabled.Validate(); err != nil {
-		t.Fatalf("disabled preview must skip executor checks: %v", err)
+	got, err := AttachPreviewBuild(wf)
+	if err != nil || got.Nodes[0].ExecutorID != "claude" || PreviewBuildAgent(got.Preview).Model != "custom" {
+		t.Fatalf("preview = %+v, error = %v", got.Nodes, err)
+	}
+	if wf.Nodes[0].ExecutorID != "codebuddy" {
+		t.Fatal("attach changed the input snapshot")
 	}
 }
 

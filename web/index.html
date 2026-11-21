@@ -12,7 +12,7 @@
   <link rel="stylesheet" href="/app/hui-controls.css">
   <link rel="stylesheet" href="/styles.css?v=20261031v1">
   <link rel="stylesheet" href="/assets.css?v=20260823v1">
-  <link rel="stylesheet" href="/platform.css?v=20261120sshhostprobe">
+  <link rel="stylesheet" href="/platform.css?v=20261121settingsrows">
   <link rel="stylesheet" href="/observability.css?v=20261031metrics2">
   <link rel="stylesheet" href="/artifacts.css?v=20260914r3">
   <link rel="stylesheet" href="/sops.css?v=20261030cards1">
@@ -187,10 +187,13 @@
       </div>
     </section>
     <section id="settingsView" class="view page-view">
-      <div class="page-heading">
-        <div><p class="eyebrow">个人中心</p><h1>个人配置</h1><p>管理个人账号与执行凭据。</p></div>
+      <div class="personal-settings">
+        <div class="page-heading personal-settings-heading">
+          <h1>个人配置</h1>
+          <div id="personalSettingsAccount" class="credential-account" hidden></div>
+        </div>
+        <div id="personalSettingsContent"></div>
       </div>
-      <div class="personal-settings"><div id="personalSettingsContent"></div></div>
     </section>
     <section id="platformView" class="view page-view">
       <div class="page-heading">
@@ -1100,21 +1103,20 @@
               <p class="schedule-field-hint">可填写 1–10，留空默认 10；其余需求在后续执行时继续触发。</p>
             </div>
             <div data-schedule-kind="assistant" hidden>
-              <label for="scheduleEngine">CLI 与模型</label>
+              <label for="scheduleEngine">执行器与模型</label>
               <div class="schedule-model-row">
                 <select id="scheduleEngine" class="select" name="assistantEngine" aria-label="执行 CLI">
-                  <option value="codebuddy">CodeBuddy</option>
+                  <option value="" disabled>选择执行器</option>
                 </select>
                 <div class="schedule-model-field" id="scheduleModelPicker">
                   <button type="button" class="ai-model-toggle" data-model-toggle aria-haspopup="listbox" aria-expanded="false" aria-label="模型">
                     <span class="ai-model-icon" data-family="glm">智</span>
-                    <span data-model-label>GLM-5.3-Flash</span>
+                    <span data-model-label>模型</span>
                     <span class="ai-model-caret" aria-hidden="true"></span>
                   </button>
                   <div class="ai-model-menu" hidden role="listbox" aria-label="模型"></div>
                 </div>
               </div>
-              <p class="schedule-field-hint" id="scheduleModelHint">Codex 和 Claude Code 优先使用保存人默认执行机器的账号登录。机器离线时改用个人 API Key，Key 缺失或不可用时任务失败。CodeBuddy 缺少个人 Key 时可使用平台共享 Key。</p>
             </div>
             <div data-schedule-kind="assistant" hidden>
               <label for="scheduleSessionMode">会话</label>
@@ -1295,9 +1297,9 @@
   <script src="/app/runs.js"></script>
   <script src="/app/run-activation.js"></script>
   <script src="/app/platform-ssh-hosts.js"></script>
-  <script src="/app/workbench.js?v=20261120sshhosttrust"></script>
-  <script src="/app/git-ssh-keys.js"></script>
-  <script src="/app/git-http-credentials.js"></script>
+  <script src="/app/workbench.js?v=20261121settingsrows"></script>
+  <script src="/app/git-ssh-keys.js?v=20261121settings"></script>
+  <script src="/app/git-http-credentials.js?v=20261121settings"></script>
   <script src="/app/approvals.js"></script>
   <script src="/app/obs-charts.js"></script>
   <script src="/app/observability.js"></script>

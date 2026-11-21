@@ -35,12 +35,16 @@ func (e *Engine) IngestOTLPTraces(events []domain.TelemetryEvent) int {
 		if runID == "" {
 			continue
 		}
-		if _, ok := e.repo.RunState(runID); !ok {
+		run, ok := e.repo.RunState(runID)
+		if !ok {
 			continue
 		}
 		nodeID := strings.TrimSpace(event.NodeID)
 		if nodeID == "" {
 			nodeID = strings.TrimSpace(event.Context.NodeID)
+		}
+		if node := run.Nodes[nodeID]; node != nil && node.Provider != "" {
+			event.Provider, event.Source.Provider = node.Provider, node.Provider
 		}
 		e.observe(runID, nodeID, event)
 		accepted++

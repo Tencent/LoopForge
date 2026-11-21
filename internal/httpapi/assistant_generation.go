@@ -28,7 +28,7 @@ func (h *assistantHandlers) startGeneration(c *gin.Context) {
 	}
 	stored, ok := h.repo.User(current.ID)
 	if !ok {
-		c.JSON(400, gin.H{"error": "请先配置个人 CodeBuddy API Key"})
+		c.JSON(400, gin.H{"error": "当前用户不可用"})
 		return
 	}
 	var body struct {
@@ -50,7 +50,6 @@ func (h *assistantHandlers) startGeneration(c *gin.Context) {
 		c.JSON(400, gin.H{"error": err.Error()})
 		return
 	}
-	req.Model = assistantRequestModel(req.Executor, req.Model)
 	if len(req.Messages) == 0 || req.Messages[len(req.Messages)-1].Role != "user" {
 		c.JSON(400, gin.H{"error": "请提供用户消息"})
 		return
@@ -93,6 +92,7 @@ func (h *assistantHandlers) startGeneration(c *gin.Context) {
 			return
 		}
 	}
+	req.Model = h.assistantChatRequestModel(req, old, stored)
 	cliEngine, _ := assistantModelEngine(req.Model)
 	loginRunner := h.assistantLoginRunner(stored.ID, req.ExecutionTarget, cliEngine)
 	runnerLogin := loginRunner.ID != ""
@@ -131,9 +131,10 @@ func (h *assistantHandlers) startGeneration(c *gin.Context) {
 		return
 	}
 	catalogEngine, _ := assistantModelEngine(req.Model)
-	catalog := assistantChatCatalog(c.Request.Context(), user.CodeBuddyInternetEnvironment, nil)
+	var catalog assistantModelCatalog
 	if catalogEngine == assistantEngineCodeBuddy {
-		catalog = h.turnCatalog(c.Request.Context(), user, req.Model)
+		_, modelID := assistantModelEngine(req.Model)
+		catalog = h.turnCatalog(c.Request.Context(), user, modelID)
 	}
 	if !runnerLogin {
 		selected, err := assistantTurnCatalogModel(req.Model, catalog, user, req.RequireExactModel)
@@ -509,7 +510,7 @@ func (h *assistantHandlers) steerGeneration(c *gin.Context) {
 	}
 	stored, ok := h.repo.User(current.ID)
 	if !ok {
-		c.JSON(400, gin.H{"error": "请先配置个人 CodeBuddy API Key"})
+		c.JSON(400, gin.H{"error": "当前用户不可用"})
 		return
 	}
 	ownerID, _, err := h.conversationScope(c, c.Param("id"), "", "", stored.ID)
@@ -572,7 +573,7 @@ func (h *assistantHandlers) steerGeneration(c *gin.Context) {
 	}
 	// A CodeBuddy model this instance has not listed yet refreshes the list
 	// first, like a new turn, instead of silently becoming the default.
-	catalog := assistantChatCatalog(c.Request.Context(), user.CodeBuddyInternetEnvironment, nil)
+	var catalog assistantModelCatalog
 	if engine, _ := assistantModelEngine(model); engine == assistantEngineCodeBuddy {
 		catalog = h.turnCatalog(c.Request.Context(), user, model)
 	}

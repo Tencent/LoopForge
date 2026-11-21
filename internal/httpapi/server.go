@@ -384,6 +384,7 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.Any("/api/issues/:id/runs", api.issues.issue)
 	g.Any("/api/issues/:id/clarification", api.issues.issue)
 	g.Any("/api/issues/:id/chat-clarify", api.issues.issue)
+	g.GET("/api/issues/:id/clarify-models", api.issues.issue)
 	g.Any("/api/issues/:id/chat-clarify/cancel", api.issues.issue)
 	g.Any("/api/issues/:id/reopen", api.issues.issue)
 	g.Any("/api/issues/:id/close", api.issues.issue)
@@ -766,6 +767,13 @@ func (s *Server) bootstrap(c *gin.Context) {
 	if current, ok := s.requestUser(c.Request, true); ok {
 		currentUserID = current.ID
 	}
+	var assistantDefaults domain.AssistantDefaults
+	for _, user := range users {
+		if user.ID == currentUserID {
+			assistantDefaults = user.AssistantDefaults
+			break
+		}
+	}
 	mcpServers = domain.PublicMCPServers(withMarketIcons(visibleMCPServersForUser(mcpServers, currentUserID)))
 	sharedModels := s.repo.SharedCodeBuddyModels()
 	sponsoredModel := ""
@@ -783,8 +791,9 @@ func (s *Server) bootstrap(c *gin.Context) {
 		// Set when users without their own CodeBuddy API Key can still chat
 		// and run SOPs on the platform's shared key, limited to these models
 		// (sponsoredModel is the default).
-		"sponsoredModel":  sponsoredModel,
-		"sponsoredModels": sharedModels,
+		"sponsoredModel":    sponsoredModel,
+		"sponsoredModels":   sharedModels,
+		"assistantDefaults": assistantDefaults,
 	})
 }
 
