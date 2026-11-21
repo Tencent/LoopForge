@@ -534,6 +534,36 @@ class LifecycleTests(unittest.TestCase):
             self.assertEqual("medium", state["size_class"])
             self.assertEqual("skipped", state["stages"]["SOLO"]["status"])
 
+    def test_finish_event_records_executor_id_and_result(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            state_path = Path(run_script(
+                "workflow_state.py", "init", "--project-root", root,
+                "--slug", "finish-trace", "--size", "small", "--mode", "auto",
+                "--execution-mode", "isolated", "--host-adapter", "claude",
+                "--coordinator-id", "main",
+            ).stdout.strip())
+            run_script("workflow_state.py", "prepare", "--state", state_path, "--stage", "SOLO")
+            run_script(
+                "workflow_state.py", "assign", "--state", state_path, "--stage", "SOLO",
+                "--role", STAGE_ROLES["SOLO"], "--executor-type", "devflow-stage-executor",
+                "--executor-id", "solo-1", "--dispatch-tool", "agent",
+            )
+            run_script("workflow_state.py", "start", "--state", state_path, "--stage", "SOLO")
+            self.fill_stage_artifacts(state_path, "SOLO")
+            run_script(
+                "workflow_state.py", "finish", "--state", state_path, "--stage", "SOLO",
+                "--result", "completed",
+            )
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            finished = [
+                event for event in state["events"]
+                if event.get("event") == "stage_completed" and event.get("stage") == "SOLO"
+            ]
+            self.assertEqual(1, len(finished))
+            self.assertEqual("solo-1", finished[0].get("executor_id"))
+            self.assertEqual("completed", finished[0].get("result"))
+
     def test_large_keeps_knowledge_and_legacy_medium_route_remains_valid(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
