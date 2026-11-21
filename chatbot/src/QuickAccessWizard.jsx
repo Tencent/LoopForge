@@ -13,11 +13,11 @@ import HarnessIcon from "./HarnessIcon";
 import SlidingTabs from "./SlidingTabs";
 import { api, canChatInProject, canManageProjectRepos, write } from "./api";
 import { usePanelPresence } from "./usePanelPresence";
-import { openCredentialSettings } from "./credentials";
 import { EXECUTORS, personalEngineConfigured } from "./engines.js";
 import "./quick-access-wizard.css";
 
 const DEFAULT_SOP_ID = "generic-backend-delivery";
+const CREDENTIALS_REQUIRED = "请先添加一个 Git 凭据或执行器。";
 
 // Display names for the models users without their own key may use.
 export function sharedModelNames(models, fallback = "") {
@@ -468,45 +468,6 @@ export function HarnessSwitch({ checked, onChange, disabled = false, label }) {
   );
 }
 
-/** Pill whose dot pops once each time `ok` flips; alternating keyframe names restart it. */
-function StatusPill({ ok, okLabel = "已就绪", needLabel = "待配置" }) {
-  const previous = useRef(ok);
-  const [pops, setPops] = useState(0);
-  useEffect(() => {
-    if (previous.current === ok) return;
-    previous.current = ok;
-    setPops((n) => n + 1);
-  }, [ok]);
-  return (
-    <span
-      className={`qa-status-pill ${ok ? "is-ok" : "is-need"}`}
-      data-pop={pops ? (pops % 2 ? "a" : "b") : undefined}
-    >
-      {ok ? okLabel : needLabel}
-    </span>
-  );
-}
-
-function VerifyMessage({ result, okText }) {
-  const text = result.valid
-    ? okText
-    : result.error || `缺少权限：${(result.missing || []).join("、")}`;
-  return (
-    <p
-      key={text}
-      className={`qa-verify-msg qa-msg-in ${result.valid ? "is-ok" : "is-err"}`}
-    >
-      <HarnessIcon
-        name={result.valid ? "check" : "info"}
-        size={13}
-        interactive={false}
-      />
-      <span>{text}</span>
-    </p>
-  );
-}
-
-/** Both labels share one grid cell so the button keeps its widest width while busy. */
 function BusyLabel({ busy, busyLabel, children }) {
   return (
     <span className="qa-btn-label">
@@ -765,7 +726,11 @@ export default function QuickAccessWizard({
 }) {
   const [step, setStep] = useState(0);
   const [phase, setPhase] = useState("wizard");
-  const [storedUser, setStoredUser] = useState(user);
+  const [credentialUser, setCredentialUser] = useState(null);
+  const storedUser = credentialUser?.id === user?.id ? credentialUser || user : user;
+  const { id: userId, loginName, chineseName, isPlatformAdmin, platformRole, isGuest } = user || {};
+  const [credentialsPending, setCredentialsPending] = useState(false);
+  const [gitHttpHosts, setGitHttpHosts] = useState([]);
   const [sshCredentials, setSSHCredentials] = useState({ userId: null, keys: null, error: false });
   const [catalogProjects, setCatalogProjects] = useState(projects);
   const [repositories, setRepositories] = useState([]);
@@ -775,9 +740,6 @@ export default function QuickAccessWizard({
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
-  const [gitToken, setGitToken] = useState("");
-  const [verifyingGit, setVerifyingGit] = useState(false);
-  const [gitVerify, setGitVerify] = useState(null);
   const [projectMode, setProjectMode] = useState("existing");
   const [selectedProjectId, setSelectedProjectId] = useState(projectId);
   const [newProjectName, setNewProjectName] = useState("");
@@ -797,6 +759,11 @@ export default function QuickAccessWizard({
   const [stepAnimated, setStepAnimated] = useState(false);
   const headingRef = useRef(null);
   const bodyRef = useRef(null);
+  const credentialsFrame = useRef(null);
+  const fromCredentialsFrame = useCallback((event) => {
+    const source = credentialsFrame.current?.contentWindow;
+    return Boolean(source && event.source === source && event.origin === location.origin);
+  }, []);
   const presence = usePanelPresence(open, 300);
   const reopenedWhileClosing = presence.phase === "closing";
 
@@ -926,8 +893,9 @@ export default function QuickAccessWizard({
     setStepAnimated(false);
     setPhase("wizard");
     setError("");
-    setGitToken("");
-    setGitVerify(null);
+    setCredentialUser(null);
+    setCredentialsPending(false);
+    setGitHttpHosts([]);
     setCompletedSummary(null);
     setBindRepoNow(true);
     setPreviewTab("stages");
@@ -935,50 +903,20 @@ export default function QuickAccessWizard({
     setKeyTouched(false);
   }, [open]);
 
-  const verifyStoredGitToken = useCallback(
-    async (uid = user?.id) => {
-      if (!uid) return null;
-      setVerifyingGit(true);
-      try {
-        const result = await api(
-          `/api/users/${encodeURIComponent(uid)}/git-token/verify`,
-        );
-        setGitVerify(result);
-        return result;
-      } catch (err) {
-        const fallback = { valid: false, error: err.message };
-        setGitVerify(fallback);
-        return fallback;
-      } finally {
-        setVerifyingGit(false);
-      }
-    },
-    [user?.id],
-  );
-
   useEffect(() => {
     if (!open) return undefined;
     let active = true;
     async function load() {
       setLoading(true);
       try {
-        const [usersRes, projectsRes, reposRes, workflowsRes, agentsRes] =
+        const [projectsRes, reposRes, workflowsRes, agentsRes] =
           await Promise.all([
-            api("/api/users").catch(() => []),
             api("/api/projects").catch(() => projects),
             api("/api/repositories").catch(() => []),
             api("/api/workflows").catch(() => []),
             api("/api/agents").catch(() => []),
           ]);
         if (!active) return;
-        const freshUser =
-          (usersRes || []).find(
-            (item) => Number(item.id) === Number(user?.id),
-          ) || user;
-        setStoredUser(freshUser);
-        if (freshUser?.gitHubCredentialConfigured && freshUser?.id) {
-          void verifyStoredGitToken(freshUser.id);
-        }
         const nextProjects = Array.isArray(projectsRes)
           ? projectsRes
           : projects;
@@ -987,9 +925,8 @@ export default function QuickAccessWizard({
         const nextWorkflows = Array.isArray(workflowsRes) ? workflowsRes : [];
         setWorkflows(nextWorkflows);
         setProjectAgents(Array.isArray(agentsRes) ? agentsRes : []);
-        const mine = nextProjects.filter((project) =>
-          canChatInProject(project, freshUser),
-        );
+        const actor = userId == null ? null : { id: userId, isPlatformAdmin, platformRole };
+        const mine = nextProjects.filter((project) => canChatInProject(project, actor));
         const preferred =
           mine.find((project) => project.id === projectId) || mine[0] || null;
         if (preferred) {
@@ -1006,8 +943,8 @@ export default function QuickAccessWizard({
             setSelectedWorkflowId(preferred.workflowId);
         } else {
           setProjectMode("create");
-          const login = freshUser?.loginName || "team";
-          const suggestedName = `${freshUser?.chineseName || login} 的项目`;
+          const login = loginName || "team";
+          const suggestedName = `${chineseName || login} 的项目`;
           setNewProjectName(suggestedName);
           setNewProjectId(slugifyProjectId(`${login}-project`) || "my-project");
           setNewProjectKey(deriveProjectKey(login));
@@ -1020,24 +957,48 @@ export default function QuickAccessWizard({
     return () => {
       active = false;
     };
-  }, [open, projectId, projects, user]);
+  }, [open, projectId, projects, userId, loginName, chineseName, isPlatformAdmin, platformRole]);
 
   useEffect(() => {
-    if (!open || !user?.id || user.isGuest) return undefined;
+    if (!open || !userId || isGuest) return undefined;
     let active = true;
     let generation = 0;
     const refresh = () => {
       const version = ++generation;
-      api(`/api/users/${encodeURIComponent(user.id)}/git-ssh-keys`)
+      const current = () => active && version === generation;
+      api("/api/users")
+        .then(async rows => {
+          const fresh = rows?.find(item => Number(item.id) === Number(userId));
+          if (!current() || !fresh) return;
+          setCredentialUser(fresh);
+          const http = fresh.gitHttpCredentialsConfigured
+            ? await api(`/api/users/${encodeURIComponent(userId)}/git-http-credentials`).catch(() => [])
+            : [];
+          if (current()) setGitHttpHosts(http.map(item => item.host));
+        })
+        .catch(() => {})
+        .finally(() => { if (current()) setCredentialsPending(false); });
+      api(`/api/users/${encodeURIComponent(userId)}/git-ssh-keys`)
         .then((keys) => {
-          if (active && version === generation) setSSHCredentials({ userId: user.id, keys: Array.isArray(keys) ? keys : [], error: false });
+          if (current()) setSSHCredentials({ userId, keys: Array.isArray(keys) ? keys : [], error: false });
         })
         .catch(() => {
-          if (active && version === generation) setSSHCredentials({ userId: user.id, keys: [], error: true });
+          if (current()) setSSHCredentials({ userId, keys: [], error: true });
         });
     };
     const credentialsChanged = (event) => {
-      if (event.origin === location.origin && event.source === window.parent && event.data?.type === "agentflow-credentials-changed") refresh();
+      if (event.origin !== location.origin || event.data?.type !== "agentflow-credentials-changed") return;
+      if (fromCredentialsFrame(event)) {
+        setCredentialsPending(true);
+        setError(previous => previous === CREDENTIALS_REQUIRED ? "" : previous);
+        onCredentialsSaved?.();
+        if (window.parent !== window) {
+          window.parent.postMessage({ type: "agentflow-credentials-changed" }, location.origin);
+        }
+      } else if (event.source !== window.parent) {
+        return;
+      }
+      refresh();
     };
     refresh();
     window.addEventListener("focus", refresh);
@@ -1047,7 +1008,7 @@ export default function QuickAccessWizard({
       window.removeEventListener("focus", refresh);
       window.removeEventListener("message", credentialsChanged);
     };
-  }, [open, user?.id, user?.isGuest]);
+  }, [open, userId, isGuest, fromCredentialsFrame, onCredentialsSaved]);
 
   useEffect(() => {
     if (!open || !selectedWorkflowId) return undefined;
@@ -1079,40 +1040,19 @@ export default function QuickAccessWizard({
 
   useEffect(() => {
     if (!open) return undefined;
-    const refreshUser = () => {
-      api("/api/users")
-        .then((usersRes) => {
-          const fresh = (usersRes || []).find(
-            (item) => Number(item.id) === Number(user?.id),
-          );
-          if (fresh) {
-            setStoredUser(fresh);
-            if (fresh.gitHubCredentialConfigured) {
-              void verifyStoredGitToken(fresh.id);
-            }
-          }
-        })
-        .catch(() => {});
-    };
-    window.addEventListener("focus", refreshUser);
-    const credentialsChanged = (event) => {
-      if (event.origin === location.origin && event.source === window.parent && event.data?.type === "agentflow-credentials-changed") refreshUser();
-    };
-    window.addEventListener("message", credentialsChanged);
-    return () => {
-      window.removeEventListener("focus", refreshUser);
-      window.removeEventListener("message", credentialsChanged);
-    };
-  }, [open, user?.id, verifyStoredGitToken]);
-
-  useEffect(() => {
-    if (!open) return undefined;
     const onKeyDown = (event) => {
       if (event.key === "Escape" && !saving && !closeActiveSelect) onClose?.();
     };
+    const closeFromFrame = (event) => {
+      if (!saving && fromCredentialsFrame(event) && event.data?.type === "agentflow-credentials-close") onClose?.();
+    };
     window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [open, saving, onClose]);
+    window.addEventListener("message", closeFromFrame);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("message", closeFromFrame);
+    };
+  }, [open, saving, onClose, fromCredentialsFrame]);
 
   useEffect(() => {
     if (projectMode !== "create" || !parsedRepo) return;
@@ -1163,15 +1103,22 @@ export default function QuickAccessWizard({
   const activeStepIndex = phase === "success" ? STEPS.length - 1 : step;
   const activeStep = STEPS[activeStepIndex] || STEPS[0];
   const wizardStepCount = STEPS.length - 1;
-  const gitReady = Boolean(storedUser?.gitHubCredentialConfigured || gitToken.trim());
-  const hasSSHKeys = Boolean(storedUser?.gitSshKeyConfigured);
-  const selectedSSHRepo = parsedRepo || parseGongfengRepo(defaultRepo?.cloneUrl);
+  const gitHubReady = Boolean(storedUser?.gitHubCredentialConfigured);
+  const gongfengReady = Boolean(storedUser?.gitTokenOAuth);
+  const hasGit = gitHubReady || gongfengReady || Boolean(storedUser?.gitSshKeyConfigured || storedUser?.gitHttpCredentialsConfigured);
   const sshKeysLoaded = sshCredentials.userId === user?.id && sshCredentials.keys !== null;
   const hasSSHKey = (remote) => sshKeysLoaded && !sshCredentials.error && sshCredentials.keys.some(
     (key) => globalThis.LoopForgeGitSSHHost(key.host) === remote?.host,
   );
-  const sshReady = hasSSHKey(selectedSSHRepo);
-  const sshRepository = (parsedRepo || defaultRepo)?.provider === "ssh";
+  const gitAccess = (repo) => {
+    if (repo?.provider === "ssh") return { label: "Git SSH", ready: hasSSHKey(repo) };
+    if (repo?.provider === "https") return { label: "Git HTTPS", ready: gitHttpHosts.includes(repo.host) };
+    if (repo?.provider === "github") return { label: "GitHub", ready: gitHubReady };
+    if (repo?.provider === "gongfeng") return { label: "工蜂", ready: gongfengReady };
+    return { label: "Git", ready: hasGit };
+  };
+  const selectedRepo = (bindRepoNow && parsedRepo) || parseGongfengRepo(defaultRepo?.cloneUrl);
+  const repoAccess = gitAccess(selectedRepo);
   const readyCLIs = EXECUTORS.filter(cli => personalEngineConfigured(storedUser, cli.id));
   const cliReady = readyCLIs.length > 0 || Boolean(sponsoredModel);
   const nodes =
@@ -1184,66 +1131,15 @@ export default function QuickAccessWizard({
     setStep(next);
   }
 
-  async function saveTypedGitToken() {
-    const token = gitToken.trim();
-    if (!user?.id || !token) return storedUser;
-    const endpoint = `/api/users/${encodeURIComponent(user.id)}/git-http-credentials`;
-    const credentials = await api(endpoint);
-    const existing = credentials.find(credential => credential.host === "github.com");
-    await write(endpoint, { ...(existing && { id: existing.id }), host: "github.com", platform: "github", name: "GitHub", username: "x-access-token", token }, "PUT");
-    const merged = { ...storedUser, gitHubCredentialConfigured: true, gitHttpCredentialsConfigured: true };
-    setStoredUser(merged);
-    setGitToken("");
-    void onCredentialsSaved?.();
-    window.parent !== window &&
-      window.parent.postMessage(
-        { type: "agentflow-credentials-changed" },
-        location.origin,
-      );
-    return merged;
-  }
-
-  async function verifyGit() {
-    if (!user?.id || verifyingGit) return;
-    setVerifyingGit(true);
-    setGitVerify(null);
-    setError("");
-    try {
-      const typed = gitToken.trim();
-      const result = typed
-        ? await write(
-            `/api/users/${encodeURIComponent(user.id)}/git-token/verify`,
-            { token: typed },
-          )
-        : await api(
-            `/api/users/${encodeURIComponent(user.id)}/git-token/verify`,
-          );
-      setGitVerify(result);
-      if (result?.valid && typed) await saveTypedGitToken();
-    } catch (err) {
-      setGitVerify({ valid: false, error: err.message });
-    } finally {
-      setVerifyingGit(false);
-    }
-  }
-
   async function nextStep() {
     if (saving) return;
     setError("");
     if (activeStep.id === "auth") {
-      if (!gitReady && !hasSSHKeys && !storedUser?.gitHttpCredentialsConfigured && !cliReady) {
-        setError("请先添加一个 Git 凭据或执行器。");
+      if (!hasGit && !cliReady) {
+        setError(CREDENTIALS_REQUIRED);
         return;
       }
-      setSaving(true);
-      try {
-        await saveTypedGitToken();
-        goToStep(1);
-      } catch (err) {
-        setError(err.message);
-      } finally {
-        setSaving(false);
-      }
+      goToStep(1);
       return;
     }
     if (activeStep.id === "project") {
@@ -1289,7 +1185,6 @@ export default function QuickAccessWizard({
     setSaving(true);
     setError("");
     try {
-      const latestUser = await saveTypedGitToken();
       let targetProject = currentProject;
       // Save the SOP the page shows; a stale id hidden by the current
       // filter must never be bound to the project.
@@ -1462,8 +1357,8 @@ export default function QuickAccessWizard({
         repository: boundRepo,
         workflow: provisionedWorkflow || activeWorkflow,
         rolesCount: roles.length,
-        gitReady: Boolean(boundRepo?.provider === "ssh" ? hasSSHKey(parseGongfengRepo(boundRepo.cloneUrl)) : latestUser?.gitHubCredentialConfigured),
-        cliNames: EXECUTORS.filter(cli => personalEngineConfigured(latestUser || storedUser, cli.id)).map(cli => cli.label),
+        gitAccess: gitAccess(parseGongfengRepo(boundRepo?.cloneUrl)),
+        cliNames: EXECUTORS.filter(cli => personalEngineConfigured(storedUser, cli.id)).map(cli => cli.label),
       });
       setPhase("success");
       await onCompleted?.(targetProject?.id || "");
@@ -1626,16 +1521,16 @@ export default function QuickAccessWizard({
                       <ul className="qa-status-list">
                         <li
                           className={
-                            completedSummary?.gitReady ? "is-ok" : "is-warn"
+                            completedSummary?.gitAccess.ready ? "is-ok" : "is-warn"
                           }
                         >
                           <HarnessIcon
-                            name={completedSummary?.gitReady ? "check" : "info"}
+                            name={completedSummary?.gitAccess.ready ? "check" : "info"}
                             size={14}
                           />
                           <span>
-                            {completedSummary?.repository?.provider === "ssh" ? "Git SSH 访问：" : "GitHub 访问："}
-                            {completedSummary?.gitReady
+                            {completedSummary?.gitAccess.label || "Git"} 访问：
+                            {completedSummary?.gitAccess.ready
                               ? "已就绪"
                               : "未配置，克隆/推送私有仓库前可在个人配置补齐"}
                           </span>
@@ -1730,7 +1625,7 @@ export default function QuickAccessWizard({
               <div ref={bodyRef} className="qa-body">
                 <div
                   key={activeStep.id}
-                  className={`qa-stage ${stepAnimated ? "is-entering" : ""}`}
+                  className={`qa-stage ${activeStep.id === "auth" ? "is-credentials" : ""} ${stepAnimated ? "is-entering" : ""}`}
                   data-direction={direction}
                 >
                   <div className="qa-kicker">
@@ -1748,94 +1643,12 @@ export default function QuickAccessWizard({
                   ) : null}
 
                   {activeStep.id === "auth" ? (
-                    <div className="qa-pane">
-                      <section className="qa-cred-card">
-                        <header className="qa-cred-head">
-                          <div>
-                            <strong>GitHub 代码仓库授权</strong>
-                            <span>
-                              用于克隆私有仓库、创建分支、推送代码与发起 PR
-                            </span>
-                          </div>
-                          <StatusPill ok={gitReady} />
-                        </header>
-                        <div className="qa-cred-body">
-                          <button type="button" className="qa-btn qa-btn-primary qa-btn-sm" onClick={() => openCredentialSettings("gitToken")}>
-                            {storedUser?.gitHubCredentialConfigured ? "管理 GitHub 授权" : "连接 GitHub"}
-                          </button>
-                          <p className="qa-hint">在个人配置中完成授权，返回后继续；无需手动复制令牌。</p>
-                          <p className="qa-hint">GitLab 等 SSH 仓库：<button type="button" className="qa-link-btn" onClick={() => openCredentialSettings("gitSshKey")}>{hasSSHKeys ? "管理 Git SSH 密钥" : "配置 Git SSH 密钥"}</button></p>
-                          <p className="qa-hint">工作区访问 GitLab、GitHub Enterprise 等 HTTPS 主机：<button type="button" className="qa-link-btn" onClick={() => openCredentialSettings("gitHttpCredentials")}>{storedUser?.gitHttpCredentialsConfigured ? "管理 Git 访问令牌" : "配置 Git 访问令牌"}</button></p>
-                          <details>
-                            <summary>使用访问令牌（高级）</summary>
-                          <div className="qa-input-row">
-                            <input
-                              type="password"
-                              className="qa-input"
-                              value={gitToken}
-                              onChange={(e) => setGitToken(e.target.value)}
-                              placeholder={
-                                storedUser?.gitHubCredentialConfigured
-                                  ? "已配置，留空保持不变"
-                                  : "GitHub personal access token（授予 Contents 与 Pull requests 读写权限）"
-                              }
-                              autoComplete="new-password"
-                            />
-                            <button
-                              type="button"
-                              className="qa-btn qa-btn-outline qa-btn-sm qa-btn-field"
-                              data-hover-ink-control=""
-                              aria-busy={verifyingGit || undefined}
-                              disabled={
-                                !verifyingGit &&
-                                !gitToken.trim() &&
-                                !storedUser?.gitHubCredentialConfigured
-                              }
-                              onClick={verifyGit}
-                            >
-                              <BusyLabel
-                                busy={verifyingGit}
-                                busyLabel="校验中…"
-                              >
-                                校验
-                              </BusyLabel>
-                            </button>
-                            <a
-                              className="qa-link"
-                              data-hover-ink-control=""
-                              href="https://github.com/settings/tokens"
-                              target="_blank"
-                              rel="noopener noreferrer"
-                            >
-                              申请令牌 ↗
-                            </a>
-                          </div>
-                          {gitVerify ? (
-                            <VerifyMessage
-                              result={gitVerify}
-                              okText={`令牌有效${gitVerify.login ? `（${gitVerify.login}）` : ""}`}
-                            />
-                          ) : null}
-                          </details>
-                        </div>
-                      </section>
-
-                      <section className="qa-cred-card">
-                        <header className="qa-cred-head">
-                          <div>
-                            <strong>执行器</strong>
-                            <span>{readyCLIs.length ? readyCLIs.map(cli => cli.label).join("、") : sponsoredModel ? "可使用平台共享模型" : "尚未配置执行器"}</span>
-                          </div>
-                          <StatusPill ok={cliReady} />
-                        </header>
-                        <div className="qa-cred-body">
-                          <button type="button" className="qa-btn qa-btn-secondary" onClick={() => {
-                            onClose?.();
-                            openCredentialSettings("executors");
-                          }}>执行器配置</button>
-                        </div>
-                      </section>
-                    </div>
+                    <iframe
+                      ref={credentialsFrame}
+                      className="qa-credentials-frame"
+                      aria-label="Git 与执行器配置"
+                      src="/chatbot/personal-credentials.html"
+                    />
                   ) : null}
 
                   {activeStep.id === "project" ? (
@@ -2097,9 +1910,9 @@ export default function QuickAccessWizard({
                                   支持 Git HTTPS 链接或 Git SSH 地址，例如 <code>git@gitlab.com:group/repo.git</code>。
                                 </p>
                               )}
-                              {selectedSSHRepo?.provider === "ssh" && sshKeysLoaded && !sshReady ? (
+                              {selectedRepo?.provider === "ssh" && sshKeysLoaded && !repoAccess.ready ? (
                                 <p className="qa-hint is-error" role="alert">
-                                  {sshCredentials.error ? "无法读取 SSH 密钥配置，请稍后重试。" : `尚未配置 ${selectedSSHRepo.host} 的 SSH 密钥，可稍后在「个人配置 → Git SSH 密钥」添加。`}
+                                  {sshCredentials.error ? "无法读取 SSH 密钥配置，请稍后重试。" : `尚未配置 ${selectedRepo.host} 的 SSH 密钥，可返回上一步添加，也可稍后在个人配置中添加。`}
                                 </p>
                               ) : null}
                             </div>
@@ -2226,10 +2039,10 @@ export default function QuickAccessWizard({
                             <dt>凭据</dt>
                             <dd>
                               <span
-                                className={`qa-dot ${(sshRepository ? sshReady : gitReady) && cliReady ? "is-ok" : ""}`}
+                                className={`qa-dot ${repoAccess.ready && cliReady ? "is-ok" : ""}`}
                               />
                               <span>
-                                {sshRepository ? "Git SSH" : "GitHub"} {(sshRepository ? sshReady : gitReady) ? "已配置" : "未配置"} ·
+                                {repoAccess.label} {repoAccess.ready ? "已配置" : "未配置"} ·
                                 CLI · {readyCLIs.length ? readyCLIs.map(cli => cli.label).join("、") :
                                   sponsoredModel ? "使用平台共享模型" : "未配置"}
                               </span>
@@ -2297,7 +2110,7 @@ export default function QuickAccessWizard({
                   type="button"
                   className="qa-btn qa-btn-primary"
                   aria-busy={saving || undefined}
-                  disabled={loading && !saving}
+                  disabled={(loading || (activeStep.id === "auth" && credentialsPending)) && !saving}
                   onClick={nextStep}
                 >
                   <BusyLabel busy={saving} busyLabel="正在保存…">

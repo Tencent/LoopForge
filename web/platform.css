@@ -2305,6 +2305,7 @@ body:has(#settingsView.active) #toastContainer{top:auto;bottom:84px}
 
 /* Personal configuration */
 #personalSettingsContent{container:personal-settings / inline-size}
+.embedded-credentials{overflow:auto;overscroll-behavior:contain;background:transparent;padding:3px 4px 12px}
 .credential-list{display:grid;grid-template-columns:minmax(0,1fr);gap:26px}
 .credential-panel.is-entering .credential-list{animation:credentialPop .44s var(--cr-spring) both}
 .credential-group{min-width:0}
@@ -2585,7 +2586,7 @@ html[data-theme="dark"] .credential-logo.monochrome img{filter:invert(1)}
 #personalSettingsContent code,.credential-scrim code{padding:1px 5px;border-radius:5px;background:var(--cr-elevated);color:var(--cr-text-2);font-family:var(--cr-mono);font-size:11.5px}
 
 /* wizard (ClarificationCard) */
-.credential-scrim{position:fixed;inset:0;z-index:1400;display:grid;place-items:center;padding:20px;pointer-events:none;color:var(--cr-text);font-size:13px;line-height:1.55}
+.credential-scrim{position:fixed;inset:0;z-index:1400;display:grid;grid-template-columns:minmax(0,1fr);place-items:center;padding:20px;pointer-events:none;color:var(--cr-text);font-size:13px;line-height:1.55}
 /* The backdrop appears without a fade: a full-viewport translucent opacity transition drops the dialog's entrance below 50fps under software compositing. */
 .credential-scrim::before{content:"";position:absolute;inset:0;background:color-mix(in srgb,#09090b 32%,transparent);opacity:0}
 html[data-theme="dark"] .credential-scrim::before{background:rgb(0 0 0 / .55)}

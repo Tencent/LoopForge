@@ -1,5 +1,5 @@
 import React from "react";
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, test, vi } from "vitest";
 
@@ -17,6 +17,7 @@ const { project, user, apiMock, writeMock, mockState } = vi.hoisted(() => {
     return [mockState.unconfigured ? {
       id: 1, loginName: "tester", chineseName: "测试",
       gitHubCredentialConfigured: false, codeBuddyApiKeyConfigured: false,
+      ...mockState.savedCredentials,
     } : user];
   if (path === "/api/projects") return [project];
   if (path === "/api/repositories") return [];
@@ -32,12 +33,10 @@ const { project, user, apiMock, writeMock, mockState } = vi.hoisted(() => {
     ];
   if (path === "/api/agents") return [];
   if (path.includes("/agents")) return [];
-  if (path.includes("/verify")) return { valid: true };
   return [];
   });
-  const mockState = { failClone: false, unconfigured: false, sshKeys: null };
+  const mockState = { failClone: false, unconfigured: false, sshKeys: null, savedCredentials: {} };
   const writeMock = vi.fn(async (path, body) => {
-    if (path.includes("/git-token/verify")) return { valid: true };
     if (path === "/api/projects") return { ...project, ...body };
     if (path.includes("/clone")) {
       if (mockState.failClone) throw new Error("clone unavailable");
@@ -186,41 +185,14 @@ describe("QuickAccessWizard", () => {
     }
   });
 
-  test("validates and saves typed credentials", async () => {
+  test.each([
+    ["Git", { gitHttpCredentialsConfigured: true }],
+    ["executor", { codeBuddyApiKeyConfigured: true }],
+  ])("continues onboarding after saving a %s credential in place", async (_kind, credentials) => {
     mockState.unconfigured = true;
     const userAction = userEvent.setup();
-    render(
-      <QuickAccessWizard
-        open
-        user={{ id: 1, loginName: "tester", chineseName: "测试" }}
-        projects={[project]}
-        projectId="p1"
-        onClose={vi.fn()}
-        onCompleted={vi.fn()}
-        onOpenView={vi.fn()}
-      />,
-    );
-    await screen.findByRole("dialog");
-    await userAction.click(screen.getByRole("button", { name: "下一步" }));
-    expect(screen.getByRole("alert")).toHaveTextContent("请先添加一个 Git 凭据或执行器。");
-    expect(screen.queryByText(/工蜂/)).toBeNull();
-    await userAction.click(screen.getByText("使用访问令牌（高级）"));
-    await userAction.type(
-      screen.getByPlaceholderText(/GitHub personal access token/),
-      "token-value",
-    );
-    await userAction.click(screen.getByRole("button", { name: "校验" }));
-    await waitFor(() => expect(writeMock).toHaveBeenCalledWith(
-      "/api/users/1/git-http-credentials",
-      expect.objectContaining({ host:"github.com", token: "token-value" }),
-      "PUT",
-    ));
-    mockState.unconfigured = false;
-  });
-
-  test("opens the executor picker from the credential step", async () => {
-    mockState.unconfigured = true;
     const onClose = vi.fn();
+    const onCredentialsSaved = vi.fn();
     const parent = { postMessage: vi.fn() };
     const parentWindow = vi.spyOn(window, "parent", "get").mockReturnValue(parent);
     try {
@@ -231,19 +203,39 @@ describe("QuickAccessWizard", () => {
           projects={[project]}
           projectId="p1"
           onClose={onClose}
+          onCredentialsSaved={onCredentialsSaved}
         />,
       );
-      await screen.findByRole("dialog");
-      expect(screen.queryByLabelText("CodeBuddy API Key")).not.toBeInTheDocument();
-      await userEvent.click(screen.getByRole("button", { name: "执行器配置" }));
+      const frame = await screen.findByLabelText("Git 与执行器配置");
+      expect(frame).toHaveAttribute("src", "/chatbot/personal-credentials.html");
+      const next = screen.getByRole("button", { name: "下一步" });
+      await waitFor(() => expect(next).toBeEnabled());
+      await userAction.click(next);
+      expect(screen.getByRole("alert")).toHaveTextContent("请先添加一个 Git 凭据或执行器。");
+
+      mockState.savedCredentials = credentials;
+      const data = { type: "agentflow-credentials-changed" };
+      await act(async () => {
+        window.dispatchEvent(new MessageEvent("message", { data, origin: location.origin, source: window }));
+        window.dispatchEvent(new MessageEvent("message", { data, origin: "https://other.example.org", source: frame.contentWindow }));
+      });
+      expect(onCredentialsSaved).not.toHaveBeenCalled();
+
+      await act(async () => {
+        window.dispatchEvent(new MessageEvent("message", { data, origin: location.origin, source: frame.contentWindow }));
+      });
+      expect(onCredentialsSaved).toHaveBeenCalledTimes(1);
       expect(parent.postMessage).toHaveBeenCalledWith(
-        { type: "agentflow-chat-open-view", view: "settings", credential: "executors" },
+        data,
         location.origin,
       );
-      expect(onClose).toHaveBeenCalledTimes(1);
+      await userAction.click(next);
+      expect(await screen.findByRole("heading", { name: "项目与仓库", level: 3 })).toBeInTheDocument();
+      expect(onClose).not.toHaveBeenCalled();
     } finally {
       parentWindow.mockRestore();
       mockState.unconfigured = false;
+      mockState.savedCredentials = {};
     }
   });
 

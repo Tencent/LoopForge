@@ -874,6 +874,11 @@ export function useChat() {
       });
     } catch {}
   }, [identity?.id]);
+  const refreshCredentials = useCallback(() => {
+    catalogRequests.current.clear();
+    setProviderCatalogs({});
+    requestModelCatalogRefresh((revision) => revision + 1);
+  }, []);
   useEffect(() => {
     const onMessage = (e) => {
       if (
@@ -881,9 +886,7 @@ export function useChat() {
         e.origin === location.origin &&
         e.data?.type === "agentflow-credentials-changed"
       ) {
-        catalogRequests.current.clear();
-        setProviderCatalogs({});
-        requestModelCatalogRefresh((revision) => revision + 1);
+        refreshCredentials();
       }
     };
     const onFocus = () => requestModelCatalogRefresh(revision => revision + 1);
@@ -893,7 +896,7 @@ export function useChat() {
       window.removeEventListener("message", onMessage);
       window.removeEventListener("focus", onFocus);
     };
-  }, [ready, user?.isGuest]);
+  }, [ready, user?.isGuest, refreshCredentials]);
   useEffect(() => {
     if (!ready || !modelCatalogRefresh) return;
     void refreshUser();
@@ -1591,7 +1594,7 @@ export function useChat() {
   return {
     user,
     defaultApproval: accountDefaults?.approval,
-    refreshUser,
+    refreshCredentials,
     users,
     issueId: session?.issueId || (!activeId ? draftIssueId : ""),
     linkIssue,

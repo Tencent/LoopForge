@@ -748,7 +748,7 @@ function credentialGroupHTML(group,user){
     <div class="credential-group-body">
       <div class="credential-rows">${kinds.map(kind=>credentialRowHTML(kind,user)).join('')}${git?'<div data-credential-git-rows></div>':''}</div>
       ${credentialAddMenu(group,user)}
-      ${git?'':`<a class="credential-row-main credential-subscription" href="#/runners" aria-labelledby="credentialSubscriptionTitle credentialSubscriptionAction" aria-describedby="credentialSubscriptionHelp">
+      ${git||document.body.classList.contains('embedded-credentials')?'':`<a class="credential-row-main credential-subscription" href="#/runners" aria-labelledby="credentialSubscriptionTitle credentialSubscriptionAction" aria-describedby="credentialSubscriptionHelp">
         ${credentialLogo({icon:'monitor'})}
         <span class="credential-row-who">
           <b id="credentialSubscriptionTitle">使用已有订阅</b>
@@ -1062,7 +1062,10 @@ function storeCredentialUser(saved){
   const users=state.data.users||(state.data.users=[]),index=users.findIndex(u=>Number(u.id)===Number(saved.id));
   if(index>=0)users[index]=saved;else users.push(saved);
 }
-function notifyCredentialsChanged(){$('#chatNextFrame')?.contentWindow?.postMessage({type:'agentflow-credentials-changed'},location.origin)}
+function notifyCredentialsChanged(){
+  const target=document.body.classList.contains('embedded-credentials')?window.parent:$('#chatNextFrame')?.contentWindow;
+  target?.postMessage({type:'agentflow-credentials-changed'},location.origin);
+}
 async function saveCredential(key,values={},options={}){
   const user=state.currentUser,kind=credentialKind(key);
   let saved;
@@ -1558,10 +1561,14 @@ async function refreshGongfengGrant(){
   if(!fresh||!panel||Number(state.currentUser?.id)!==Number(user.id))return;
   storeCredentialUser(fresh);
   state.gitTokenVerify=null;
-  if(credentialWizard?.kind==='gitToken'&&fresh.gitHubCredentialConfigured)closeCredentialWizard(true);
+  if(credentialWizard?.kind==='gitToken'&&(fresh.gitTokenOAuth||fresh.gitHubCredentialConfigured))closeCredentialWizard(true);
   if(!!row!==!!fresh.gitHubCredentialConfigured)renderCredentialGitGroup(panel,fresh);
   else void loadCredentialGitRows(panel,fresh);
-  if(!fresh.gitHubCredentialConfigured){repaintCredentialRow('gitToken');return}
+  notifyCredentialsChanged();
+  if(!fresh.gitHubCredentialConfigured){
+    if(fresh.gitTokenOAuth)toast('工蜂授权已保存','ok');
+    return;
+  }
   state.gitTokenAnnounceVerify=true;
   toast('工蜂授权已保存，正在校验授权有效性…');
   await refreshGitTokenStatus();

@@ -2582,7 +2582,7 @@ export default function App() {
         sponsoredModels={chat.sponsoredModels}
         onClose={() => setQuickAccessOpen(false)}
         onOpenView={(view) => navigate(view)}
-        onCredentialsSaved={chat.refreshUser}
+        onCredentialsSaved={chat.refreshCredentials}
         onCompleted={async (nextProjectId) => {
           await chat.refresh();
           if (nextProjectId) await chat.selectProject(nextProjectId);

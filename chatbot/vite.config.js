@@ -10,6 +10,8 @@ export default defineConfig({
     proxy: {
       "/api": api,
       "/mcp": api,
+      // The onboarding panel loads the same credential controls as personal settings.
+      "^/(?:app/|images/credentials/|(?:app|boot|boot-theme|i18n|i18n-en)[.]js$|(?:styles|platform|product-v4)[.]css$)": api,
       // Workspace IDE tab embeds the platform's vscode-web workbench.
       "/vscode.html": api,
       "/vscode.js": api,

@@ -42,6 +42,7 @@ function accessPublicBaseURL(configured, page){
 }
 function accessViewActive(){return !!$('#guideView')?.classList.contains('active')}
 let credentialFocusRequest=0;
+function cancelCredentialFocus(){credentialFocusRequest++}
 function gotoCredential(name,sshRemote){
   const request=++credentialFocusRequest;
   if(name!=='executors'&&!Object.hasOwn(CREDENTIAL_FIELDS,name)){switchView('settings');return}

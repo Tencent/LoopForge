@@ -1546,6 +1546,14 @@ function mountNativeChat(){
         else reloadShellProjects().then(follow).catch(()=>{});
       }
       if(message.type==='agentflow-projects-changed')reloadShellProjects().catch(()=>{});
+      if(message.type==='agentflow-credentials-changed'){
+        const userId=state.currentUser?.id;
+        api('/api/users',{silent:true}).then(users=>{
+          if(state.currentUser?.id!==userId)return;
+          const saved=users.find(user=>Number(user.id)===Number(userId));
+          if(saved)storeCredentialUser(saved);
+        }).catch(()=>{});
+      }
       if(message.type==='agentflow-quick-access-completed'){
         api('/api/bootstrap',{silent:true}).then(shell=>{
           Object.assign(state.data,shell);
@@ -1934,6 +1942,14 @@ function switchView(name){
   // 手敲 #/platform 或者从别的账号留下的 localStorage 恢复进来，都要挡住。
   if(name==='platform'&&!isPlatformAdmin())name='collaboration';
   const previous=activeViewName();
+  if(name!=='settings')cancelCredentialFocus();
+  if(previous==='settings'&&name!=='settings'){
+    window.HuiPopover?.closeAll?.();
+    window.HuiTooltip?.hide?.();
+    closeCredentialWizard(true);
+    $('#gitHTTPCredentialDialog')?.close();
+    $('#gitSSHKeyDialog')?.close();
+  }
   if(!settingsRouteApplying){
     const crossingSettings=previous!==name&&((previous==='collaboration'&&isSettingsManagementView(name))||(isSettingsManagementView(previous)&&name==='collaboration'));
     if(crossingSettings&&!settingsRouteMotion.matches){startSettingsRouteTransition(name);return}
