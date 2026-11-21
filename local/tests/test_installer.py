@@ -1,4 +1,5 @@
 import os
+import json
 import stat
 import subprocess
 import sys
@@ -225,6 +226,30 @@ class InstallerTests(unittest.TestCase):
             self.assertIn(f"project={project.resolve()}", text)
             self.assertIn("edition=classic", text)
             self.assertIn("run /start-devflow <你的需求>", text)
+
+    def test_dsh_install_and_update_hints_use_skill_catalog(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            project = self.project(temporary)
+            for args in (
+                ["install", "dsh", "--edition", "portable"],
+                ["skills", "install", "dsh"],
+                ["update", "dsh", "--edition", "portable"],
+                ["skills", "update", "dsh"],
+            ):
+                with self.subTest(args=args):
+                    output = StringIO()
+                    with redirect_stdout(output):
+                        self.assertEqual(0, main(args + ["--project-root", str(project)]))
+                    self.assertIn("ask it to use the devflow Skill", output.getvalue())
+                    self.assertNotIn("run /devflow", output.getvalue())
+
+    def test_dsh_plan_names_skill_entrypoint(self):
+        output = StringIO()
+        with redirect_stdout(output):
+            self.assertEqual(0, main(["plan", "dsh", "--edition", "portable", "--json"]))
+        plan = json.loads(output.getvalue())
+        self.assertEqual("devflow", plan["entrypoint"])
+        self.assertIn(".dsh/skills/devflow/SKILL.md", plan["files"])
 
     def test_skills_command_installs_and_manages_portable_edition(self):
         with tempfile.TemporaryDirectory() as temporary:

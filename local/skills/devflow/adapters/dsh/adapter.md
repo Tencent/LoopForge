@@ -22,6 +22,7 @@ DSH 没有 LoopForge 专用的 send/close 生命周期 API。不要伪造 execut
 
 ## 使用入口
 
-安装 Portable Skill 后，在 DSH 中使用 `/devflow <需求>`，或通过 LoopForge DSH 插件的
-`/loopforge start <需求>` 初始化任务。任务状态和产物保存在项目的
+安装 Portable Skill 后，通过 DSH 的技能工具或技能目录调用 `devflow` 并提供需求。
+可选的 LoopForge DSH 插件提供 `/loopforge start <需求>` 来初始化任务，后续仍由
+Agent 按 Skill 推进；该插件不注册 `/devflow` 命令。任务状态和产物保存在项目的
 `artifacts/<task_slug>/` 下；需要人工确认时，插件会显示待批准阶段和批准命令。

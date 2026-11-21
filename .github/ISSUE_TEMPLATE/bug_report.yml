@@ -19,6 +19,7 @@ body:
         - Local — Codex
         - Local — Cursor
         - Local — Claude Code
+        - Local — DeepSeek Harness
         - Local — installer / CLI
     validations:
       required: true
