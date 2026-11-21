@@ -391,3 +391,17 @@ func TestConversationProcessRetriesBusyRunner(t *testing.T) {
 		}
 	}
 }
+
+// This input represents one JSON line containing an attachment path and base64 data.
+func TestConversationImageInputChunkPreservesRemotePathAndUTF8(t *testing.T) {
+	const root = "/loopforge/source/session"
+	for name, part := range map[string]string{"path": root, "UTF8": "图"} {
+		t.Run(name, func(t *testing.T) {
+			input := strings.Repeat("x", maxConversationInputChunk-1) + part + strings.Repeat("z", maxConversationInputChunk)
+			first := conversationInputChunkLen(input, root)
+			if first != maxConversationInputChunk-1 {
+				t.Fatalf("first write would split %s: offset %d", name, first)
+			}
+		})
+	}
+}

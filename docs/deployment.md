@@ -165,7 +165,7 @@ Configure provider credentials in the platform UI, not the host's global CLI con
 
 ## Observability schema
 
-After the base tables have been created, run `bash scripts/install-schema-extensions.sh` for the Compose database. It installs absent `run_telemetry.adapter` and `run_logs.level` columns and their indexes from upstream migration `001_run_obs_generated_columns.sql`, then replays the `INSERT IGNORE` starter catalog. Both steps can be repeated without touching existing rows. The installer runs it before printing the address, and `./start.sh pull` runs it again after recreating containers, so an older data volume upgraded to a newer image picks up the columns the new code reads. Application startup does not run data migrations.
+After the base tables have been created, run `bash scripts/install-schema-extensions.sh` for the Compose database. It installs absent `run_telemetry.adapter` and `run_logs.level` columns and their indexes from upstream migration `001_run_obs_generated_columns.sql`, then replays the `INSERT IGNORE` starter catalog and the built-in catalog rewrites from `031_generic_backend_openssh.sql`, `033_generic_sop_mr_node.sql`, and `038_generic_sop_host_credentials.sql` in that order. The rewrites are repeatable and apply only to matching defaults. The installer runs it before printing the address, and `./start.sh pull` runs it again after recreating containers, so an older data volume upgraded to a newer image picks up the columns the new code reads and the built-in SOP graphs the new code ships. Application startup does not run data migrations.
 
 For an external MySQL deployment, review that migration and check column existence before applying its corresponding statements. Stored generated columns can rebuild large existing tables; schedule the operation accordingly.
 
@@ -175,7 +175,7 @@ For an external MySQL deployment, review that migration and check column existen
 
 | Kind | Example | What an operator does |
 | --- | --- | --- |
-| Already applied by the installer and `./start.sh pull` | `001_run_obs_generated_columns.sql`, `migrations/seed/*.sql`, `031_generic_backend_openssh.sql` | Nothing; the script above covers it |
+| Already applied by the installer and `./start.sh pull` | `001_run_obs_generated_columns.sql`, `migrations/seed/*.sql`, `031_generic_backend_openssh.sql`, `033_generic_sop_mr_node.sql`, `038_generic_sop_host_credentials.sql` | Nothing; the script above covers it |
 | Required upgrade migrations | `009_bot_interactions_utf8mb4.sql`, `036_git_http_credentials.sql` | Follow each migration's timing and prerequisites. [Migrating existing GitHub credentials](#migrating-existing-github-credentials) |
 | Optional backfills and rewrites of existing rows | `016_public_optional_repositories.sql`, `021_assistant_session_sources.sql` | Run them if the installation needs the converted rows |
 
@@ -189,15 +189,14 @@ docker compose exec -T mysql sh -c 'MYSQL_PWD="$MYSQL_PASSWORD" mysql -u loopfor
 
 This repeatable SQL changes only instruction fields that still match the original public seed. It preserves operator edits and project copies. New installations already receive these instructions from the public catalog seed; application startup does not migrate data.
 
-To add the 「发起 MR」 node to the built-in backend, frontend and defect-fix SOPs of an existing installation, apply `033_generic_sop_mr_node.sql` the same way:
+On Compose installs, the installer and `./start.sh pull` add the 「发起 MR」 node to the built-in backend, frontend, and defect-fix SOPs. They apply `033_generic_sop_mr_node.sql` to add the step, then `038_generic_sop_host_credentials.sql` to update the original MR role instructions. To apply the SQL manually, run both migrations in the same order.
 
 ```bash
-docker compose exec -T mysql sh -c 'MYSQL_PWD="$MYSQL_PASSWORD" mysql -u loopforge loopforge' < migrations/033_generic_sop_mr_node.sql
+cat migrations/033_generic_sop_mr_node.sql migrations/038_generic_sop_host_credentials.sql \
+  | docker compose exec -T mysql sh -c 'MYSQL_PWD="$MYSQL_PASSWORD" mysql -u loopforge loopforge'
 ```
 
-After it, a run of these SOPs commits and pushes its work branch and opens an MR/PR before 交付汇总, so the Git credentials of the run's responsible user need push access. The installer and `./start.sh pull` do not run it. It rewrites a template only while its node graph and 交付汇总 position are the shipped original, and the 交付汇总 prompt only while unedited; it is safe to repeat. Project SOPs adopted from these templates are copies and are not changed.
-
-After migrating personal Git credentials, apply `038_generic_sop_host_credentials.sql` to update the original authentication instruction in the three built-in MR roles. The roles can use a hosting CLI, a configured MCP, or the host's API with a token obtained through `git credential fill`.
+Migration 033 checks that the node graph and 交付汇总 position still match the shipped template. It updates the 交付汇总 prompt only when it is unedited. Migration 038 replaces the original Git authentication instruction with guidance to use a hosting CLI, a configured MCP, or `git credential fill` for API access. Both migrations preserve project copies and can be repeated. The Git credentials of the run's responsible user need push access for the new step to complete.
 
 ## GitHub credentials
 
