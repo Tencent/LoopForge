@@ -20,6 +20,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 )
 
 type assistantHelperExecutionKey struct{}
@@ -208,8 +209,15 @@ func (h *assistantHandlers) conversationExecutor(s *AgentToolSession, root strin
 				_, _ = call(cleanup, runtime.ConversationProcessRequest{Operation: "discard"})
 			}()
 		}
-		if _, err := call(ctx, runtime.ConversationProcessRequest{Operation: "prepare"}); err != nil {
+		prepared, err := call(ctx, runtime.ConversationProcessRequest{Operation: "prepare"})
+		if err != nil {
 			return "", err
+		}
+		if input, ok := command.Stdin.(*assistantLimitedImageInput); ok {
+			command, err = input.fit(command, root, prepared.Root)
+			if err != nil {
+				return "", err
+			}
 		}
 		if s.ExecutionRunnerID != "" {
 			files, err := conversationInputFiles(root)
@@ -286,16 +294,18 @@ func (h *assistantHandlers) conversationExecutor(s *AgentToolSession, root strin
 			go func() {
 				defer close(inputDone)
 				fail := func(err error) { inputErrors <- err; stopIO() }
-				// Interactive protocols use newline-delimited JSON. Preserve a
-				// complete frame so remote cwd rewriting cannot split a path.
+				// Read complete frames, then split oversized writes for runners.
+				// The CLI receives the same byte stream, including newlines.
 				reader := bufio.NewReaderSize(command.Stdin, 64<<10)
 				for {
 					data, readErr := reader.ReadString('\n')
-					if len(data) > 0 {
-						if _, writeErr := call(ioCtx, runtime.ConversationProcessRequest{Operation: "write", ID: started.ID, Data: data}); writeErr != nil {
+					for len(data) > 0 {
+						end := conversationInputChunkLen(data, root)
+						if _, writeErr := call(ioCtx, runtime.ConversationProcessRequest{Operation: "write", ID: started.ID, Data: data[:end]}); writeErr != nil {
 							fail(fmt.Errorf("原生进程输入失败：%w", writeErr))
 							return
 						}
+						data = data[end:]
 					}
 					if readErr != nil {
 						if readErr == io.EOF {
@@ -354,6 +364,27 @@ func (h *assistantHandlers) conversationExecutor(s *AgentToolSession, root strin
 			}
 		}
 	}
+}
+
+const maxConversationInputChunk = 1 << 20
+
+func conversationInputChunkLen(data, root string) int {
+	if len(data) <= maxConversationInputChunk {
+		return len(data)
+	}
+	end := maxConversationInputChunk
+	for end > maxConversationInputChunk-utf8.UTFMax && !utf8.RuneStart(data[end]) {
+		end--
+	}
+	// The runner remaps paths separately in each write request.
+	if len(root) > 1 && len(root) < end {
+		start := end - len(root) + 1
+		windowEnd := min(len(data), end+len(root)-1)
+		if i := strings.Index(data[start:windowEnd], root); i >= 0 && start+i < end {
+			end = start + i
+		}
+	}
+	return end
 }
 
 func assistantEngineBinary(kind string) string {

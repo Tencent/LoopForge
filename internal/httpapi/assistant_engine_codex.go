@@ -228,7 +228,11 @@ func (s *codexAppServer) response(message codexRPCMessage) []string {
 			}
 		}
 		s.turnPending = true
-		s.request("turn/start", map[string]any{"threadId": s.threadID, "input": []map[string]any{{"type": "text", "text": s.opts.Prompt, "text_elements": []any{}}}})
+		input := []map[string]any{{"type": "text", "text": s.opts.Prompt, "text_elements": []any{}}}
+		for _, path := range s.opts.ImagePaths {
+			input = append(input, map[string]any{"type": "localImage", "path": path})
+		}
+		s.request("turn/start", map[string]any{"threadId": s.threadID, "input": input})
 		return []string{codexLine(map[string]any{"type": "system", "subtype": "init", "session_id": s.threadID})}
 	case "turn/start":
 		if failure != "" {
