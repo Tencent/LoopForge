@@ -55,11 +55,15 @@ function effortPreference(executor, model) {
   return `effort.${executor}.${unprefixedModel(executor, model)}`;
 }
 
-// Prefer the remembered model when supplied, then the first available model.
-function preferredModel(list, executor, remembered) {
+// Use the first requested preference that is available for this executor.
+function preferredModel(list, executor, ...preferences) {
   const available = list.filter((model) => !model.disabled && !model.unavailable);
-  const listed = findExecutorModel(available, executor, remembered);
-  return (listed && remembered) || available[0]?.id || "";
+  for (const id of preferences) {
+    if (!concreteModel({ id }, executor)) continue;
+    const listed = findExecutorModel(available, executor, id);
+    if (listed) return id;
+  }
+  return available[0]?.id || "";
 }
 
 // Mirrors errAssistantSponsoredModel in internal/httpapi/assistant_sponsor.go;
@@ -110,6 +114,8 @@ export function useChat() {
     [revealId, setRevealId] = useState(activeId),
     [projectId, setProjectId] = useState(initialProject),
     [selection, setSelection] = useState(() => ({ executor: storedExecutor(), model: null, effort: null })),
+    [accountDefaults, setAccountDefaults] = useState(null),
+    [codeBuddyCatalogDefault, setCodeBuddyCatalogDefault] = useState(""),
     [sponsoredModels, setSponsoredModels] = useState([]),
     [providerCatalogs, setProviderCatalogs] = useState({}),
     [generation, setGeneration] = useState(null),
@@ -249,6 +255,8 @@ export function useChat() {
   }
   const applyModelCatalog = useCallback((catalog) => {
     setModels(catalog.models || []);
+    setAccountDefaults(catalog.preferences || null);
+    setCodeBuddyCatalogDefault(catalog.default || "");
     setSponsoredModels(sponsoredModelList(catalog));
   }, []);
   useEffect(() => {
@@ -650,10 +658,15 @@ export function useChat() {
       : listed;
     const sponsored = codeBuddy && missingKey && !user.isGuest && !!sponsoredModel;
     const listedModel = findExecutorModel(executorModels, executor, model);
-    const hasSelectedModel = concreteModel({ id: model }, executor) && !listedModel?.disabled && !listedModel?.unavailable &&
+    const concrete = concreteModel({ id: model }, executor);
+    const hasSelectedModel = concrete && !listedModel?.disabled && !listedModel?.unavailable &&
       (conversation || !executorModels.length || listedModel);
+    const inheritsDefault = !!conversation && !concrete;
+    const personalDefault = inheritsDefault && !sponsored && accountDefaults?.executor === executor ? accountDefaults : null;
     const selectedModel = hasSelectedModel ? model : preferredModel(
       executorModels, executor,
+      personalDefault?.model,
+      inheritsDefault ? (codeBuddy ? codeBuddyCatalogDefault : providerCatalog?.default) : null,
       draft ? readComposerPreference(`model.${executor}`) : null,
     );
     const availableModel = sponsored && !sponsoredModels.includes(selectedModel) ? sponsoredModel : selectedModel;
@@ -667,7 +680,9 @@ export function useChat() {
       ? catalogEntry?.efforts?.find((level) => catalogEntry.effortModelIds?.[level] === requestedModelId)
       : undefined;
     // null follows the browser preference, while "" is the CLI's default level.
-    const preferredEffort = ((model === null || hasSelectedModel) ? effort : null) ??
+    const defaultEffort = personalDefault && catalogEntry && catalogEntry === findExecutorModel(executorModels, executor, personalDefault.model)
+      ? personalDefault.effort : null;
+    const preferredEffort = (inheritsDefault ? defaultEffort : ((model === null || hasSelectedModel) ? effort : null)) ??
       (draft ? readComposerPreference(effortPreference(executor, availableModel)) : null);
     // Custom models can remain usable without a picker entry. Keep their
     // saved effort visible and let the server validate it on send.

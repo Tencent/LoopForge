@@ -771,24 +771,35 @@ describe("conversation hooks", () => {
     }
   });
 
-  test("opens and regenerates a conversation saved with a CLI default on a concrete model", async () => {
+  test.each([
+    ["personal default", "codebuddy:default", { executor: "codebuddy", model: "m3", effort: "high" }, "m2", "m3", "high"],
+    ["catalog default for the original CLI", "codebuddy:default", { executor: "codex", model: "gpt-5" }, "m2", "m2", ""],
+    ["first available model", "codebuddy:default", { executor: "codebuddy", model: "retired" }, "default", "m1", ""],
+    ["explicitly selected model", "m1", { executor: "codebuddy", model: "m3" }, "m2", "m1", ""],
+  ])("uses the %s when reopening and regenerating an old conversation", async (_name, savedModel, preferences, catalogDefault, expectedModel, expectedEffort) => {
     localStorage.removeItem("loopforge.assistant.executor");
     const original = apiMock.getMockImplementation();
     const saved = {
-      id: "s1", projectId: "p1", executor: "codebuddy", model: "codebuddy:default",
+      id: "s1", projectId: "p1", executor: "codebuddy", model: savedModel,
       messages: [{ role: "user", content: "继续" }],
     };
-    apiMock.mockImplementation((path, options) =>
-      path === "/api/assistant/sessions/s1" ? Promise.resolve(saved) : original(path, options));
+    apiMock.mockImplementation((path, options) => {
+      if (path === "/api/assistant/models") return Promise.resolve({
+        default: catalogDefault, preferences, models: [{ id: "m1" }, { id: "m2" }, { id: "m3", efforts: ["high"] }],
+      });
+      if (path === "/api/assistant/sessions/s1") return Promise.resolve(saved);
+      return original(path, options);
+    });
     try {
       const { result } = renderHook(useChat);
       await waitFor(() => expect(result.current.ready && result.current.machinesReady).toBe(true));
       act(() => result.current.open(saved.id));
       await waitFor(() => expect(result.current.session?.id).toBe(saved.id));
-      expect(result.current.model).toBe("m1");
+      expect(result.current.model).toBe(expectedModel);
+      expect(result.current.effort).toBe(expectedEffort);
       await act(() => result.current.regenerate(saved, "confirm"));
       expect(writeMock).toHaveBeenCalledWith("/api/assistant/generations", expect.objectContaining({
-        sessionId: saved.id, executor: "codebuddy", model: "m1",
+        sessionId: saved.id, executor: "codebuddy", model: expectedModel, effort: expectedEffort,
       }));
     } finally {
       apiMock.mockImplementation(original);
