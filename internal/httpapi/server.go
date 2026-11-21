@@ -94,6 +94,7 @@ type Server struct {
 	botInteractions *botInteractionHandlers
 	botIdentities   *botIdentityHandlers
 	know            *knowledgeHandlers // knowledge.go / knowledge_proxy.go
+	diagnostics     *diagnosticsHandlers
 }
 
 func New(s *repo.Store, e *engine.Engine, syncSvc *tracker.Service, basicUser, basicPass string) *gin.Engine {
@@ -157,6 +158,7 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 		github:          newGitHubHandlers(d),
 		users:           &usersHandlers{deps: d},
 		sshHostTrust:    &sshHostTrustHandlers{deps: d, hosts: s.SSHHostTrustRepo, runnerControls: runnerControls},
+		diagnostics:     &diagnosticsHandlers{deps: d},
 		catalog:         &catalogHandlers{deps: d},
 		businessDomains: &businessDomainsHandlers{deps: d},
 		insights:        &insightsHandlers{deps: d},
@@ -275,6 +277,7 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.POST("/api/platform/git-ssh-hosts/preview", api.sshHostTrust.preview)
 	g.PUT("/api/platform/git-ssh-hosts/:host", api.sshHostTrust.save)
 	g.DELETE("/api/platform/git-ssh-hosts/:host", api.sshHostTrust.remove)
+	g.GET("/api/platform/diagnostics", api.diagnostics.diagnostics)
 	// master(net/http) 的 /api/users/ 子树只接受 PUT /api/users/<id>/credentials
 	// 一种形态，其余任何方法/子路径都走 method(w) → 405 JSON。
 	g.Any("/api/users/:id/credentials", func(c *gin.Context) {
