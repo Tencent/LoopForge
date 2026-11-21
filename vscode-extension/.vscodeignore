@@ -1,0 +1,6 @@
+node_modules
+test
+lib/*.test.js
+*.map
+.gitignore
+acceptance

@@ -13,6 +13,18 @@ defaults:
     working-directory: local
 
 jobs:
+  vscode-extension:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: vscode-extension
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version: "22"
+      - run: npm test
+
   validate:
     # ubuntu-latest is Ubuntu 26.04, and actions/setup-python has no 3.8
     # build for it. Keep the 3.8 cell on 24.04 so the required check name
