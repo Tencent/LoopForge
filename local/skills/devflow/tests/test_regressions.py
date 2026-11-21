@@ -368,6 +368,22 @@ class LifecycleTests(unittest.TestCase):
         self.assertIn("cleanup_team.py", adapter)
         self.assertIn("不得读取 Team 配置、成员、inbox 或状态", adapter)
 
+    def test_pi_adapter_documents_front_blocking_and_retry_boundaries(self):
+        manifest = json.loads(
+            (SKILL_ROOT / "adapters/pi/manifest.json").read_text(encoding="utf-8")
+        )
+        adapter = (SKILL_ROOT / "adapters/pi/adapter.md").read_text(encoding="utf-8")
+        self.assertEqual("spawn", manifest["topology"])
+        self.assertEqual("subagent", manifest["dispatch_tool"])
+        self.assertIn("前台阻塞与重试边界", adapter)
+        self.assertIn("前台阻塞期间协调者无法中途 steering", adapter)
+        self.assertIn("只能等返回后校验产物，再按需重新派发新实例", adapter)
+        self.assertIn("`runLoop` 是两层 while 循环，没有写死步数上限", adapter)
+        self.assertIn("不得把步数上限当作安全网", adapter)
+        self.assertIn("阶段提示必须先收敛", adapter)
+        self.assertIn("长上下文先摘要再派发", adapter)
+        self.assertIn("不得复用已结束的 Mission id", adapter)
+
     def fill_stage_artifacts(self, state_path, stage):
         state = json.loads(state_path.read_text(encoding="utf-8"))
         artifact_root = Path(state["artifacts_dir"])
