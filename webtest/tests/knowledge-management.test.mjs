@@ -194,6 +194,16 @@ test('知识库工作区：连接能力徽标、连接筛选与文档列表分�
   // 高级配置外链把容器内网地址改写为浏览器可达地址。
   const consoleLink = document.querySelector('.kb-panel-head a[href*="18081"]');
   assert.ok(consoleLink, '存在高级配置外链');
+
+  // 能力探测 404 后标记 legacy，多次重绘不再重复请求。
+  assert.equal(callsTo(app, 'GET', '/connections/conn-b/capabilities').length, 1, '404 后不重复探测能力');
+
+  // 作用域前缀优先于当前连接筛选：筛到 CONN_B 时带前缀的知识库仍走 CONN_A。
+  chooseOption(document.querySelector('#kbConnFilter'), CONN_B);
+  await settle(12);
+  assert.equal(param(lastCall(app, 'GET', '/documents?'), 'connectionId'), CONN_A, 'connID::rawID 前缀优先于筛选连接');
+  chooseOption(document.querySelector('#kbConnFilter'), '');
+  await settle(12);
 });
 
 test('文档详情抽屉：分块分页、文本预览、手工编辑与关闭焦点归还', async (t) => {
@@ -210,7 +220,7 @@ test('文档详情抽屉：分块分页、文本预览、手工编辑与关闭�
   });
   const app = await openKnowledge(t, ROUTES([
     { method: 'GET', path: /^\/api\/knowledge\/documents\/doc-1\/chunks/, body: (call) => chunkPage(Number(call.url.searchParams.get('page') || '1')) },
-    { method: 'GET', path: /^\/api\/knowledge\/documents\/doc-1\/preview/, body: '# 安装指南\n\n正文内容', headers: { 'content-type': 'text/markdown; charset=utf-8' } },
+    { method: 'GET', path: /^\/api\/knowledge\/documents\/doc-1\/preview/, body: { status: 200, body: '# 安装指南\n\n<b>加粗标记</b><img src=x onerror="alert(1)">', headers: { 'content-type': 'text/markdown; charset=utf-8' } } },
     { method: 'PUT', path: /^\/api\/knowledge\/documents\/doc-1/, body: { title: '安装指南 v2', type: 'manual', content: '# 更新后的正文' } },
     { method: 'GET', path: /^\/api\/knowledge\/documents\/doc-1\?/, body: { id: 'doc-1', title: '安装指南', type: 'manual', parse_status: 'published', content: '# 安装指南原始正文', updatedAt: '2026-11-20T10:00:00Z' } },
   ]));
@@ -247,7 +257,9 @@ test('文档详情抽屉：分块分页、文本预览、手工编辑与关闭�
   const pre = document.querySelector('#kbDocBody pre.kb-doc-pre');
   assert.ok(pre, '文本预览使用 pre 渲染');
   assert.match(pre.textContent, /# 安装指南/);
-  assert.equal(pre.querySelectorAll('*').length, 0, '预览文本不解析为 HTML');
+  assert.match(pre.textContent, /<b>加粗标记<\/b>/, '预览保留标签原文');
+  assert.equal(pre.querySelector('b'), null, '标签不被解析为元素');
+  assert.equal(pre.querySelector('img'), null, '危险标签同样不落地为元素');
   assert.equal(param(lastCall(app, 'GET', '/documents/doc-1/preview'), 'connectionId'), CONN_A);
 
   // 元信息徽标。
@@ -664,7 +676,7 @@ test('接入配置页：连接探测、移除、一键接入、审计标签与�
   // 重新加载带上「已检测到内置 WeKnora」与项目授权范围。
   app.router.get('/api/knowledge/settings', settingsFixture({
     detectedWeKnoraUrl: 'http://weknora-app:8080',
-    projectSources: { [pid]: [SRC_A] },
+    projectSources: {},
   }));
   app.router.get(/^\/api\/knowledge\/usage/, {
     agents: [{ name: 'SRE', workflows: ['wf-1', 'wf-2'] }, { name: 'QA', workflows: [] }],
@@ -753,7 +765,9 @@ test('接入配置页：连接探测、移除、一键接入、审计标签与�
   // 保存配置：勾选项目范围后写入 projectSources。
   const scope = document.querySelector(`input[name="kbProjectScope"][value="${SRC_A}"]`);
   assert.ok(scope);
-  scope.checked = true;
+  assert.equal(scope.checked, false, '项目初始未授权任何知识库');
+  scope.click();
+  assert.equal(scope.checked, true, '勾选后纳入项目授权范围');
   document.querySelector('#kbCfgWrite').checked = false;
   document.querySelector('#kbSaveCfgBtn').click();
   await settle(14);
@@ -947,4 +961,28 @@ test('降级路径：未就绪自动跳转配置页、LightCloud 引擎与无管
   assert.match(doc3.querySelector('#kbTabBody').textContent, /仅平台管理员可修改接入配置/);
   assert.equal(doc3.querySelector('#kbProvisionManagedBtn'), null);
   assert.equal(doc3.querySelector('#kbCfgUrl').hasAttribute('readonly'), true);
+});
+
+test('连接寻址：单连接回落唯一连接并贯穿文档与详情请求', async (t) => {
+  const app = await openKnowledge(t, ROUTES([
+    { method: 'GET', path: '/api/knowledge/settings', body: settingsFixture({
+      connections: [{ id: CONN_A, name: '研发空间', url: 'http://weknora-app:8080', tokenConfigured: true, enabled: true }],
+    }) },
+    { method: 'GET', path: '/api/knowledge/sources', body: [{ id: 'kb-bare', name: '裸 ID 知识库', allowed: true }] },
+    { method: 'GET', path: /^\/api\/knowledge\/sources\/[^/]+\/documents/, body: { documents: [{ id: 'doc-bare', title: '裸文档', type: 'file', parse_status: 'completed' }], total: 1 } },
+    { method: 'GET', path: /^\/api\/knowledge\/documents\/doc-bare\/chunks/, body: { chunks: [{ chunkIndex: 0, content: '正文' }], total: 1, page: 1, pageSize: 10 } },
+    { method: 'GET', path: /^\/api\/knowledge\/documents\/doc-bare\?/, body: { title: '裸文档', type: 'file', parse_status: 'completed' } },
+  ]));
+  const { document } = app;
+  const pid = app.evaluate('state.projectFilter');
+
+  assert.equal(document.querySelector('#kbConnFilter'), null, '单连接隐藏筛选');
+  const docsCall = lastCall(app, 'GET', '/documents?');
+  assert.ok(docsCall);
+  assert.equal(param(docsCall, 'connectionId'), CONN_A, '裸知识库 ID 回落唯一连接');
+  assert.equal(param(docsCall, 'projectId'), pid);
+
+  await openDoc(app, 'doc-bare');
+  assert.equal(param(lastCall(app, 'GET', '/documents/doc-bare/chunks'), 'connectionId'), CONN_A, '裸文档 ID 同样回落唯一连接');
+  assert.equal(param(lastCall(app, 'GET', '/documents/doc-bare?'), 'connectionId'), CONN_A);
 });
