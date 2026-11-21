@@ -255,12 +255,10 @@ func AgentCLICommand(kind string, o AgentCLICommandOptions) CommandSpec {
 		}
 		argv = append(argv, extra...)
 	case AgentCLITraeCLI:
-		sandboxMode := "danger-full-access"
+		argv = []string{binary, "exec", "--json", "--skip-git-repo-check", "--dangerously-bypass-hook-trust", "-c", `approval_policy="never"`}
 		if readOnly {
-			sandboxMode = "read-only"
-		}
-		argv = []string{binary, "exec", "--json", "--skip-git-repo-check", "--sandbox", sandboxMode, "--dangerously-bypass-hook-trust", "-c", `approval_policy="never"`}
-		if !readOnly {
+			argv = append(argv, "--sandbox", "read-only")
+		} else {
 			argv = append(argv, "--permission-mode", "bypass_permissions")
 		}
 		if model != "" {
