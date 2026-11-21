@@ -28,6 +28,35 @@ func runnerPreparationFixture(t *testing.T) (*Daemon, domain.RunnerWorkspaceRequ
 	}, root
 }
 
+func TestRunnerWorkspacePreparationDeadline(t *testing.T) {
+	for _, tc := range []struct {
+		name, operation, runKind string
+		followsCaller            bool
+	}{
+		{"conversation", domain.RunnerWorkspaceOperationPrepare, domain.RunKindWorkspace, true},
+		{"SOP", domain.RunnerWorkspaceOperationPrepare, "", false},
+		{"terminal", domain.RunnerWorkspaceOperationTerminal, domain.RunKindWorkspace, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			caller, stopCaller := context.WithTimeout(context.Background(), time.Hour)
+			defer stopCaller()
+			callerDeadline, _ := caller.Deadline()
+			ctx, done := runnerWorkspacePreparationContext(caller, domain.RunnerWorkspaceRequest{
+				Operation: tc.operation, RunKind: tc.runKind,
+			})
+			defer done()
+			deadline, ok := ctx.Deadline()
+			if !ok || deadline.Equal(callerDeadline) != tc.followsCaller {
+				t.Fatalf("preparation deadline = %v, caller deadline = %v, follows caller = %t", deadline, callerDeadline, tc.followsCaller)
+			}
+			stopCaller()
+			if ctx.Err() != context.Canceled {
+				t.Fatalf("preparation context error after caller cancellation: %v", ctx.Err())
+			}
+		})
+	}
+}
+
 func TestRunnerWorkspacePreparationAndTerminalShareFrozenEnvironment(t *testing.T) {
 	d, req, root := runnerPreparationFixture(t)
 	defer d.closeAllRunSandboxes(context.Background())
