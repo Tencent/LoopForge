@@ -32,6 +32,16 @@
 #runsView .run-status-wrap .button[data-resume-run]:hover{background:color-mix(in srgb,var(--green) 86%,#000) !important;box-shadow:none;transform:none}
 .run-header-main h2{margin:0;font-size:18px}
 .run-header-main p{max-width:760px;margin:5px 0 0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted);font-size:11px}
+.run-input-details{max-width:760px;min-width:0;margin:6px 0 0;color:var(--v3-ink-3,var(--muted));font-size:12px;line-height:1.5}
+.run-input-details summary{display:flex;align-items:baseline;gap:8px;min-width:0;list-style:none;cursor:pointer}
+.run-input-details summary::-webkit-details-marker{display:none}
+.run-input-details summary::before{content:'▸';flex:0 0 auto}
+.run-input-details[open] summary::before{content:'▾'}
+.run-input-details summary::after{content:'查看全文';flex:0 0 auto;color:var(--blue)}
+.run-input-details[open] summary::after{content:'收起'}
+.run-input-preview{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.run-input-full{max-height:min(50vh,24rem);margin-top:10px;overflow:auto;overflow-wrap:anywhere;white-space:pre-wrap;color:var(--hui-text);line-height:1.6}
+.run-input-details summary:focus-visible,.run-input-full:focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:3px}
 .run-header-meta{display:flex;gap:15px;margin-top:12px;color:var(--muted-2);font-size:9.5px}
 .run-header-meta code{font-size:9.5px}
 .run-header-actions{position:static;display:flex;align-items:center;gap:5px;flex-wrap:wrap}
