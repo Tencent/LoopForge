@@ -43,6 +43,19 @@ function bridge(app) {
   return { frame, posted, send };
 }
 
+test('starting a turn includes canvas edits made while refreshing roles', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  app.evaluate(`switchView('flow');renderAll();refreshWorkflowAgents=()=>new Promise(resolve=>{window.finishRoleRefresh=resolve})`);
+  app.document.querySelector('#openAIOrchestrator')?.click();
+  const { posted, send } = bridge(app);
+  const begun = send({ type: 'agentflow-sop-designer-begin', requestId: 'refreshing' });
+  app.evaluate(`state.workflow.nodes.push({id:'manual-node',name:'My change',type:'approval',position:{x:100,y:100}});window.finishRoleRefresh()`);
+  await begun;
+  assert.equal(posted.at(-1).ok, true);
+  assert.ok(posted.at(-1).canvas.nodes.some(node => node.id === 'manual-node'));
+});
+
 test('the panel embeds the designer chat and builds the streamed draft on an empty canvas', async (t) => {
   const app = await loadApp();
   t.after(app.close);

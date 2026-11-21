@@ -265,13 +265,13 @@ async function beginAIOrchestratorTurn(requestId) {
   const reply = (payload) => postToAIOrchestrator(AI_MESSAGES.begun, {requestId, ...payload});
   if (!state.projectFilter) return reply({ok: false, error: '先在顶栏选择项目'});
   if (aiBuild) return reply({ok: false, error: '画布还在生成上一轮的流程，请稍候'});
-  const canvas = state.workflow ? aiClone(state.workflow) : null;
   const context = aiOrchestratorContext();
   await refreshWorkflowAgents().catch(() => {});
   const current = aiOrchestratorContext();
   if (aiBuild || context.projectId !== current.projectId || context.workflowId !== current.workflowId) {
     return reply({ok: false, error: '画布已切换，请重试'});
   }
+  const canvas = state.workflow ? aiClone(state.workflow) : null;
   const build = await beginAIOrchestration();
   if (!build) return reply({ok: false, error: '画布暂时不能编排'});
   reply({ok: true, projectId: state.projectFilter, workflowId: canvas?.id || state.workflow?.id || '', canvas});
