@@ -118,7 +118,7 @@ if(typeof document!=='undefined'&&document.fonts?.ready)document.fonts.ready.the
 function pickerHTML(items,selected,prefix){return `<input class="input picker-filter" data-picker-filter="${prefix}" placeholder="筛选名称或说明…">${(items||[]).map(x=>`<label class="asset-check"><input type="checkbox" name="${prefix}" value="${x.id}" ${(selected||[]).includes(x.id)?'checked':''}><span>${escapeHTML(x.name)}<small>${escapeHTML(x.description||x.id)}</small></span></label>`).join('')||'<span class="type-label">暂无可用资产，请先到对应的资产管理页面添加</span>'}`}
 function bindPickerFilters(root){(root||document).querySelectorAll('[data-picker-filter]').forEach(input=>input.oninput=()=>{const q=input.value.trim().toLowerCase();input.parentElement.querySelectorAll('.asset-check').forEach(row=>row.hidden=!!q&&!row.textContent.toLowerCase().includes(q))})}
 function executorOptions(selected){
-  const allowed=new Set(['codebuddy','codex','claude','opencode','cursor','agy','kimi','pi','dsh','zcode']);
+  const allowed=new Set(['codebuddy','codex','claude','opencode','cursor','agy','kimi','pi','dsh','zcode','traecli']);
   const items=(state.data.executors||[]).filter(executor=>allowed.has(executor.id));
   const inherited=`<option value="" ${selected?'':'selected'}>跟随责任人默认执行器</option>`;
   const legacy=selected&&!allowed.has(selected)

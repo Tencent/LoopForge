@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 
 	"agentflow/internal/domain"
@@ -253,6 +254,26 @@ func AgentCLICommand(kind string, o AgentCLICommandOptions) CommandSpec {
 			argv = append(argv, "--attach", path)
 		}
 		argv = append(argv, extra...)
+	case AgentCLITraeCLI:
+		sandboxMode := "danger-full-access"
+		if readOnly {
+			sandboxMode = "read-only"
+		}
+		argv = []string{binary, "exec", "--json", "--skip-git-repo-check", "--sandbox", sandboxMode, "--dangerously-bypass-hook-trust", "-c", `approval_policy="never"`}
+		if !readOnly {
+			argv = append(argv, "--permission-mode", "bypass_permissions")
+		}
+		if model != "" {
+			argv = append(argv, "--model", model)
+		}
+		if effort != "" {
+			argv = append(argv, "-c", "model_reasoning_effort="+strconv.Quote(effort))
+		}
+		argv = append(argv, extra...)
+		if resume != "" {
+			argv = append(argv, "resume", resume)
+		}
+		argv = append(argv, prompt)
 	}
 	return CommandSpec{Argv: argv, Provider: kind, AgentCLI: options}
 }

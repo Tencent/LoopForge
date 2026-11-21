@@ -177,6 +177,8 @@ func NewAgentCLITranslator(kind string) func(string) []string {
 		translate = (&dshStream{}).translate
 	case AgentCLIZCode:
 		translate = (&zcodeStream{}).translate
+	case AgentCLITraeCLI:
+		translate = (&traeCLIStream{}).translate
 	default:
 		return nil
 	}
@@ -882,4 +884,67 @@ func (d *dshStream) translate(s *ClaudeStream, raw map[string]any) []string {
 		return append(out, s.Result(text, failed)...)
 	}
 	return out
+}
+
+// traeCLIStream translates `traecli exec --json` (Codex-compatible JSONL)
+// events into ClaudeStream lines.
+type traeCLIStream struct{ failure string }
+
+func (t *traeCLIStream) translate(s *ClaudeStream, raw map[string]any) []string {
+	typ := stringValue(raw["type"])
+	session := stringValue(raw["thread_id"])
+	if session == "" {
+		session = stringValue(raw["threadId"])
+	}
+	switch typ {
+	case "thread.started":
+		return s.Init(session, "")
+	case "turn.completed":
+		usage, _ := raw["usage"].(map[string]any)
+		s.AddUsage(int64Value(usage["input_tokens"]), int64Value(usage["output_tokens"]), int64Value(usage["cached_input_tokens"]), 0, int64Value(usage["reasoning_output_tokens"]))
+		return s.Result("", false)
+	case "turn.failed":
+		msg := stringValue(raw["message"])
+		if msg == "" {
+			msg = errorText(raw)
+		}
+		if msg == "" {
+			msg = "TRAE CLI turn failed"
+		}
+		t.failure = msg
+		return s.Result(msg, true)
+	case "error":
+		if msg := errorText(raw); msg != "" {
+			t.failure = msg
+		}
+	case "item.started":
+		item, _ := raw["item"].(map[string]any)
+		switch stringValue(item["type"]) {
+		case "command_execution", "mcp_tool_call", "tool_call":
+			name := stringValue(item["command"])
+			if name == "" {
+				name = stringValue(item["name"])
+			}
+			return s.ToolUse(stringValue(item["id"]), name, item)
+		}
+	case "item.completed":
+		item, _ := raw["item"].(map[string]any)
+		switch stringValue(item["type"]) {
+		case "reasoning":
+			return s.Thinking(stringValue(item["text"]))
+		case "agent_message":
+			return s.Text(stringValue(item["text"]))
+		case "command_execution", "mcp_tool_call", "tool_call":
+			failed := int64Value(item["exit_code"]) != 0 || stringValue(item["status"]) == "failed"
+			out := stringValue(item["aggregated_output"])
+			if out == "" {
+				out = stringValue(item["output"])
+			}
+			if out == "" {
+				out = stringValue(item["text"])
+			}
+			return s.ToolResult(stringValue(item["id"]), failed, out)
+		}
+	}
+	return nil
 }

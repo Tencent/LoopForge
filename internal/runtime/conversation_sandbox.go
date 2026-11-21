@@ -283,6 +283,8 @@ func dockerCLISetup(provider, binary string) (string, error) {
 			// The official CLI is shipped with ZCode or built from its source;
 			// it has no standalone npm package. Never install a namesake.
 			installer = "echo 'ZCode CLI 未安装；请在工作区镜像中预装官方 ZCode CLI 并将 zcode 加入 PATH' >&2; exit 1"
+		case AgentCLITraeCLI:
+			installer = "echo 'TRAE CLI 未安装；请在工作区镜像中预装官方 TRAE CLI 并将 traecli 加入 PATH' >&2; exit 1"
 		default:
 			return "", fmt.Errorf("不支持的会话CLI %s", provider)
 		}

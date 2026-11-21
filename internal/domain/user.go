@@ -258,6 +258,7 @@ var AgentCLIProtocolOptions = map[string][]string{
 	"dsh":      {AgentCLIProtocolChat, AgentCLIProtocolResponses, AgentCLIProtocolMessages},
 	"zcode":    {AgentCLIProtocolMessages, AgentCLIProtocolChat, AgentCLIProtocolResponses},
 	"agy":      {AgentCLIProtocolGemini, AgentCLIProtocolChat},
+	"traecli":  {AgentCLIProtocolResponses, AgentCLIProtocolChat},
 }
 
 // NormalizeAgentCLIProtocol returns a supported protocol choice; unknown

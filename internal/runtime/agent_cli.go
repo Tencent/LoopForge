@@ -28,6 +28,7 @@ const (
 	AgentCLIPi          = "pi"
 	AgentCLIDeepSeek    = "dsh"
 	AgentCLIZCode       = "zcode"
+	AgentCLITraeCLI     = "traecli"
 )
 
 // AgentCLIKinds is the display order of the agent CLIs.
@@ -71,7 +72,7 @@ func agentCLIModelOptional(kind, baseURL string) bool {
 	case AgentCLICursor, AgentCLIZCode:
 		// ZCode resolves an unset model itself (applyZCodeCredential).
 		return true
-	case AgentCLIAntigravity, AgentCLIDeepSeek:
+	case AgentCLIAntigravity, AgentCLIDeepSeek, AgentCLITraeCLI:
 		return baseURL == ""
 	}
 	return false
@@ -108,6 +109,7 @@ var agentCLIHostEnv = append([]string{
 	"KIMI_MODEL_NAME", "KIMI_MODEL_API_KEY", "KIMI_MODEL_BASE_URL", "KIMI_MODEL_PROVIDER_TYPE", kimiThinkingEffortEnv,
 	"OPENCODE_CONFIG", "OPENCODE_CONFIG_CONTENT", "OPENCODE_CONFIG_DIR", "PI_CODING_AGENT_DIR",
 	"ZCODE_DATA_BASE_DIR", zcodePersonalFileEnv,
+	"TRAE_HOME", "TRAECLI_PERSONAL_ACCESS_TOKEN",
 }, zcodeHostEnv...)
 
 // agentCLIConfigPaths are the HOME-relative files an agent CLI reads its MCP
@@ -120,6 +122,7 @@ var agentCLIMCPPaths = map[string]string{
 	AgentCLIPi:          ".pi/agent/mcp.json",
 	AgentCLIDeepSeek:    ".dsh/agentflow-mcp.json",
 	AgentCLIZCode:       zcodeConfigPath,
+	AgentCLITraeCLI:     ".trae/traecli.toml",
 }
 
 // AgentCLIMCPOptions shapes the MCP configuration of one invocation.
@@ -188,6 +191,9 @@ func WriteAgentCLIMCPConfig(kind string, home AgentCLIHome, entries map[string]a
 				server["toolTimeoutMs"] = 600000
 			}
 		}
+	}
+	if kind == AgentCLITraeCLI {
+		return writeAgentCLIFile(home, rel, []byte(traeCLIMCPTOML(entries, ids)))
 	}
 	var document any
 	switch kind {
@@ -380,7 +386,7 @@ func ApplyAgentCLICredential(kind string, cred ProviderCredential, options Agent
 	if key == "" {
 		return nil, nil, fmt.Errorf("需求责任人未配置 %s API Key，请在个人配置中配置", AgentCLILabel(kind))
 	}
-	if kind == AgentCLIAntigravity {
+	if kind == AgentCLIAntigravity || kind == AgentCLITraeCLI {
 		// A crashed account-login invocation may leave a credential copy.
 		// API-key execution must not retain or inherit that account.
 		login, _ := runnerLoginSpec(kind)
@@ -528,6 +534,25 @@ func ApplyAgentCLICredential(kind string, cred ProviderCredential, options Agent
 		return applyDeepSeekCredential(home, homeEnv, key, baseURL, protocol, model, strings.TrimSpace(options.Effort), options.ImageInput, argv)
 	case AgentCLIZCode:
 		return applyZCodeCredential(home, homeEnv, key, baseURL, protocol, model, strings.TrimSpace(options.Effort), argv)
+	case AgentCLITraeCLI:
+		env[agentCLIKeyEnv] = key
+		env["TRAE_HOME"] = homeEnv + "/.trae"
+		endpoint := baseURL
+		if endpoint == "" {
+			endpoint = "https://api.openai.com/v1"
+		}
+		wireAPI := "responses"
+		if protocol == AgentCLIProtocolChat {
+			wireAPI = "chat"
+		}
+		argv = insertTraeCLIConfigArgs(argv,
+			"-c", `model_provider="agentflow"`,
+			"-c", `model_providers.agentflow.name="AgentFlow"`,
+			"-c", "model_providers.agentflow.base_url="+strconv.Quote(endpoint),
+			"-c", "model_providers.agentflow.env_key="+strconv.Quote(agentCLIKeyEnv),
+			"-c", "model_providers.agentflow.wire_api="+strconv.Quote(wireAPI),
+			"-c", "model_providers.agentflow.requires_openai_auth=false",
+		)
 	default:
 		return nil, nil, fmt.Errorf("unknown agent CLI %q", kind)
 	}
@@ -670,6 +695,8 @@ func AgentCLILabel(kind string) string {
 		return "DeepSeek Harness"
 	case AgentCLIZCode:
 		return "ZCode"
+	case AgentCLITraeCLI:
+		return "TRAE CLI"
 	}
 	return kind
 }
@@ -696,4 +723,127 @@ func withCursorModelArg(argv []string, id string) []string {
 		}
 	}
 	return argv
+}
+
+func traeCLIMCPTOML(entries map[string]any, ids []string) string {
+	var b strings.Builder
+	for _, id := range ids {
+		entry, _ := entries[id].(map[string]any)
+		if entry == nil {
+			continue
+		}
+		name := dshServerNameRe.ReplaceAllString(id, "_")
+		if name == "" {
+			continue
+		}
+		url, _ := entry["url"].(string)
+		command, _ := entry["command"].(string)
+		if url == "" && command == "" {
+			continue
+		}
+		b.WriteString("[mcp_servers.")
+		b.WriteString(name)
+		b.WriteString("]\n")
+		if url != "" {
+			b.WriteString("url = ")
+			b.WriteString(strconv.Quote(url))
+			b.WriteByte('\n')
+			if headers := tomlStringMap(entry["headers"]); len(headers) > 0 {
+				b.WriteString("http_headers = ")
+				b.WriteString(formatTOMLInlineTable(headers))
+				b.WriteByte('\n')
+			}
+		} else {
+			b.WriteString("command = ")
+			b.WriteString(strconv.Quote(command))
+			b.WriteByte('\n')
+			if cwd, _ := entry["cwd"].(string); strings.TrimSpace(cwd) != "" {
+				b.WriteString("cwd = ")
+				b.WriteString(strconv.Quote(cwd))
+				b.WriteByte('\n')
+			}
+			if args, ok := entry["args"].([]string); ok && len(args) > 0 {
+				quoted := make([]string, len(args))
+				for i, a := range args {
+					quoted[i] = strconv.Quote(a)
+				}
+				b.WriteString("args = [")
+				b.WriteString(strings.Join(quoted, ", "))
+				b.WriteString("]\n")
+			} else if args, ok := entry["args"].([]any); ok && len(args) > 0 {
+				quoted := make([]string, 0, len(args))
+				for _, a := range args {
+					if s, ok := a.(string); ok {
+						quoted = append(quoted, strconv.Quote(s))
+					}
+				}
+				if len(quoted) > 0 {
+					b.WriteString("args = [")
+					b.WriteString(strings.Join(quoted, ", "))
+					b.WriteString("]\n")
+				}
+			}
+			if env := tomlStringMap(entry["env"]); len(env) > 0 {
+				b.WriteString("env = ")
+				b.WriteString(formatTOMLInlineTable(env))
+				b.WriteByte('\n')
+			}
+		}
+		b.WriteString("default_tools_approval_mode = \"approve\"\n")
+		b.WriteString("tool_timeout_sec = 600\n\n")
+	}
+	return b.String()
+}
+
+func tomlStringMap(raw any) map[string]string {
+	switch m := raw.(type) {
+	case map[string]string:
+		if len(m) == 0 {
+			return nil
+		}
+		return m
+	case map[string]any:
+		if len(m) == 0 {
+			return nil
+		}
+		out := make(map[string]string, len(m))
+		for k, v := range m {
+			if s, ok := v.(string); ok {
+				out[k] = s
+			}
+		}
+		return out
+	default:
+		return nil
+	}
+}
+
+func formatTOMLInlineTable(m map[string]string) string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	pairs := make([]string, 0, len(keys))
+	for _, k := range keys {
+		pairs = append(pairs, strconv.Quote(k)+" = "+strconv.Quote(m[k]))
+	}
+	return "{ " + strings.Join(pairs, ", ") + " }"
+}
+
+func insertTraeCLIConfigArgs(argv []string, extra ...string) []string {
+	if len(argv) < 2 {
+		return append(append([]string{}, argv...), extra...)
+	}
+	insertAt := len(argv) - 1
+	for i := 0; i < len(argv)-1; i++ {
+		if argv[i] == "resume" {
+			insertAt = i
+			break
+		}
+	}
+	out := make([]string, 0, len(argv)+len(extra))
+	out = append(out, argv[:insertAt]...)
+	out = append(out, extra...)
+	return append(out, argv[insertAt:]...)
 }
