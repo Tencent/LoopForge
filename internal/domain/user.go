@@ -7,12 +7,18 @@ import (
 
 // User 表示系统注册或登录的员工实体，用于后续资源归属与权限隔离。
 type User struct {
-	CodexAPIKey                string `json:"codexApiKey,omitempty"`
-	CodexAPIKeyConfigured      bool   `json:"codexApiKeyConfigured,omitempty"`
-	CodexBaseURL               string `json:"codexBaseUrl,omitempty"`
-	ClaudeCodeAPIKey           string `json:"claudeCodeApiKey,omitempty"`
-	ClaudeCodeAPIKeyConfigured bool   `json:"claudeCodeApiKeyConfigured,omitempty"`
-	ClaudeCodeBaseURL          string `json:"claudeCodeBaseUrl,omitempty"`
+	CodexAPIKey           string `json:"codexApiKey,omitempty"`
+	CodexAPIKeyConfigured bool   `json:"codexApiKeyConfigured,omitempty"`
+	CodexBaseURL          string `json:"codexBaseUrl,omitempty"`
+	// CodexChatGPTLogin is the full Codex auth.json of a ChatGPT sign-in,
+	// refresh token included. It never leaves the platform; executions get
+	// codexoauth.SandboxCopyOf it.
+	CodexChatGPTLogin           string `json:"-"`
+	CodexChatGPTLoginStatus     string `json:"codexChatGptLoginStatus,omitempty"`
+	CodexChatGPTLoginConfigured bool   `json:"codexChatGptLoginConfigured,omitempty"`
+	ClaudeCodeAPIKey            string `json:"claudeCodeApiKey,omitempty"`
+	ClaudeCodeAPIKeyConfigured  bool   `json:"claudeCodeApiKeyConfigured,omitempty"`
+	ClaudeCodeBaseURL           string `json:"claudeCodeBaseUrl,omitempty"`
 	// CodexModels and ClaudeCodeModels are the model catalogs AI 对话 offers
 	// for that CLI, in display order. Empty follows the CLI's built-in models
 	// on the official endpoint, or the models the Base URL publishes.
@@ -46,6 +52,10 @@ type User struct {
 }
 
 const PlatformRoleAdmin = "admin"
+
+// CodexChatGPTNeedsRelogin marks a ChatGPT login whose refresh token the
+// issuer rejected; only a new sign-in restores it.
+const CodexChatGPTNeedsRelogin = "needs_relogin"
 
 // GitSSHKey is the public description of a personal SSH credential.
 type GitSSHKey struct {
@@ -170,6 +180,8 @@ func IsPlatformAdmin(u User) bool {
 func PublicUser(u User) User {
 	u.CodexAPIKeyConfigured = strings.TrimSpace(u.CodexAPIKey) != ""
 	u.CodexAPIKey = ""
+	u.CodexChatGPTLoginConfigured = strings.TrimSpace(u.CodexChatGPTLogin) != ""
+	u.CodexChatGPTLogin = ""
 	u.ClaudeCodeAPIKeyConfigured = strings.TrimSpace(u.ClaudeCodeAPIKey) != ""
 	u.ClaudeCodeAPIKey = ""
 	u.GitTokenOAuth = strings.TrimSpace(u.GongfengRefreshToken) != ""

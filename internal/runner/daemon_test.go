@@ -39,6 +39,16 @@ func TestBindInvocationCredentials(t *testing.T) {
 			t.Fatalf("argv=%v env=%v", argv, env)
 		}
 	})
+	t.Run("personal codex ChatGPT login replaces the key", func(t *testing.T) {
+		inv := &domain.RunnerInvocation{CredentialSource: domain.RuntimeAuthPersonal, CodexChatGPTAuth: `{"tokens":{}}`}
+		argv, env, err := bindInvocationCredentials(inv, []runtime.CredentialBinding{runtime.BindCodex}, []string{"codex", "exec", "prompt"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if v, ok := env["CODEX_API_KEY"]; !ok || v != "" || strings.Contains(strings.Join(argv, " "), "agentflow_user") {
+			t.Fatalf("argv=%v env=%v", argv, env)
+		}
+	})
 	t.Run("personal claude injects key and base URL", func(t *testing.T) {
 		inv := &domain.RunnerInvocation{CredentialSource: domain.RuntimeAuthPersonal, ClaudeCodeAPIKey: "claude-secret", ClaudeCodeBaseURL: "https://claude.example"}
 		_, env, err := bindInvocationCredentials(inv, []runtime.CredentialBinding{runtime.BindClaudeCode}, []string{"claude", "-p", "prompt"})
@@ -59,6 +69,63 @@ func TestBindSandboxPrivateHomeUsesContainerPaths(t *testing.T) {
 	}
 	if env["CODEX_API_KEY"] != "secret" {
 		t.Fatal("credential environment was lost")
+	}
+}
+
+func TestInstallCodexChatGPTLogin(t *testing.T) {
+	auth := `{"auth_mode":"chatgpt","tokens":{"access_token":"a","refresh_token":""}}`
+	login := filepath.Join(".agentflow", "private-home", "codex", ".codex", "auth.json")
+	t.Run("docker keeps the container CODEX_HOME", func(t *testing.T) {
+		workspace := t.TempDir()
+		env, err := bindSandboxPrivateHome(workspace, "docker", "codex", map[string]string{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		cleanup, err := installCodexChatGPTLogin(&domain.RunnerInvocation{CodexChatGPTAuth: auth}, "codex", workspace, env)
+		if err != nil || cleanup == nil {
+			t.Fatalf("cleanup=%v err=%v", cleanup != nil, err)
+		}
+		if env["CODEX_HOME"] != "/workspace/.agentflow/private-home/codex/.codex" {
+			t.Fatalf("CODEX_HOME = %q", env["CODEX_HOME"])
+		}
+		if data, err := os.ReadFile(filepath.Join(workspace, login)); err != nil || string(data) != auth {
+			t.Fatalf("auth.json = %q, %v", data, err)
+		}
+		cleanup("task-1")
+		if _, err := os.Stat(filepath.Join(workspace, login)); !os.IsNotExist(err) {
+			t.Fatalf("login kept after the task: %v", err)
+		}
+	})
+	t.Run("no sandbox gets a private CODEX_HOME", func(t *testing.T) {
+		workspace := t.TempDir()
+		env := map[string]string{}
+		cleanup, err := installCodexChatGPTLogin(&domain.RunnerInvocation{CodexChatGPTAuth: auth}, "codex", workspace, env)
+		if err != nil || cleanup == nil {
+			t.Fatal(err)
+		}
+		defer cleanup("task-2")
+		if env["CODEX_HOME"] != filepath.Join(workspace, ".agentflow", "private-home", "codex", ".codex") {
+			t.Fatalf("CODEX_HOME = %q", env["CODEX_HOME"])
+		}
+	})
+	t.Run("other providers and API keys are untouched", func(t *testing.T) {
+		workspace := t.TempDir()
+		for _, tc := range []struct {
+			provider string
+			inv      domain.RunnerInvocation
+		}{{"claude-code", domain.RunnerInvocation{CodexChatGPTAuth: auth}}, {"codex", domain.RunnerInvocation{CodexAPIKey: "sk"}}} {
+			env := map[string]string{}
+			if cleanup, err := installCodexChatGPTLogin(&tc.inv, tc.provider, workspace, env); cleanup != nil || err != nil || len(env) != 0 {
+				t.Fatalf("%s: cleanup=%v err=%v env=%v", tc.provider, cleanup != nil, err, env)
+			}
+		}
+	})
+}
+
+func TestPublicRunnerTaskHidesCodexChatGPTLogin(t *testing.T) {
+	task := domain.PublicRunnerTask(domain.RunnerTask{Invocation: &domain.RunnerInvocation{CodexChatGPTAuth: "secret-login"}})
+	if task.Invocation.CodexChatGPTAuth != "" {
+		t.Fatal("management view exposes the ChatGPT login")
 	}
 }
 

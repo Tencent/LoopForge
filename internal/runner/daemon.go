@@ -932,6 +932,17 @@ func (d *Daemon) executeInvocation(ctx context.Context, task domain.RunnerTask) 
 		if err != nil {
 			return execResult{status: domain.RunnerTaskFailed, errMsg: err.Error()}, nil
 		}
+		if cleanup, err := installCodexChatGPTLogin(inv, prepared.Command.Provider, workspace, credentialEnv); err != nil {
+			return execResult{status: domain.RunnerTaskFailed, errMsg: err.Error()}, nil
+		} else if cleanup != nil {
+			defer cleanup(task.ID)
+		}
+	} else if sandbox == nil && inv.CredentialSource == domain.RuntimeAuthPersonal {
+		if cleanup, err := installCodexChatGPTLogin(inv, prepared.Command.Provider, workspace, credentialEnv); err != nil {
+			return execResult{status: domain.RunnerTaskFailed, errMsg: err.Error()}, nil
+		} else if cleanup != nil {
+			defer cleanup(task.ID)
+		}
 	} else if sandbox != nil && inv.CredentialSource == domain.RuntimeAuthLocal && prepared.Command.PrivateHome {
 		loginEnv, cleanup, err := runtime.PrepareRunnerSandboxLogin(sandbox, prepared.Command.Provider, inv.RunID, inv.NodeID)
 		if err != nil {
@@ -1112,6 +1123,27 @@ func bindSandboxPrivateHome(workspace, driver, provider string, env map[string]s
 	return env, nil
 }
 
+// installCodexChatGPTLogin writes the invocation's Codex ChatGPT login into
+// the task's private Codex home and points CODEX_HOME at it when no sandbox
+// home did. The returned cleanup removes the login after the task.
+func installCodexChatGPTLogin(inv *domain.RunnerInvocation, provider, workspace string, env map[string]string) (func(string), error) {
+	if provider != "codex" || strings.TrimSpace(inv.CodexChatGPTAuth) == "" {
+		return nil, nil
+	}
+	dir, err := runtime.InstallCodexChatGPTLogin(workspace, provider, inv.CodexChatGPTAuth)
+	if err != nil {
+		return nil, err
+	}
+	if env["CODEX_HOME"] == "" {
+		env["CODEX_HOME"] = dir
+	}
+	return func(taskID string) {
+		if err := runtime.RemoveCodexChatGPTLogin(workspace, provider); err != nil {
+			log.Printf("task %s: remove Codex ChatGPT login: %v", taskID, err)
+		}
+	}, nil
+}
+
 // bindInvocationCredentials maps the closed credential bindings onto the
 // task process. Local mode leaves the CLI login state untouched; personal
 // mode injects only the selected provider's saved credential.
@@ -1131,6 +1163,12 @@ func bindInvocationCredentials(inv *domain.RunnerInvocation, bindings []runtime.
 			}
 		case runtime.BindCodex:
 			if !personal {
+				continue
+			}
+			if strings.TrimSpace(inv.CodexChatGPTAuth) != "" {
+				// installCodexChatGPTLogin writes auth.json; a host key must
+				// not take precedence over it.
+				env["CODEX_API_KEY"], env["OPENAI_API_KEY"] = "", ""
 				continue
 			}
 			key := strings.TrimSpace(inv.CodexAPIKey)
@@ -1447,7 +1485,7 @@ func (d *Daemon) defaultWorkspace(taskID string) string {
 }
 
 // runnerVersion is reported at registration; it matches the module build.
-var runnerVersion = domain.RunnerVersionGitSSHKnownHosts
+var runnerVersion = domain.RunnerVersionCodexChatGPT
 
 // Version returns the runner build version reported at registration.
 func Version() string { return runnerVersion }

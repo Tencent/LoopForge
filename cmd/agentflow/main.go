@@ -227,6 +227,7 @@ func main() {
 			syncSvc.StartAutoSync(s)
 		}
 		syncSvc.StartMRStateSync(s)
+		go s.RunCodexChatGPTRefresh(claimCtx)
 		notifications := notification.New(s)
 		opts := httpapi.BackgroundOptions{}
 		if inherited {

@@ -228,6 +228,40 @@ func TestRunnerQueueAwaitEventsAndArtifacts(t *testing.T) {
 	}
 }
 
+func TestRunnerDispatchUsesCodexChatGPTLogin(t *testing.T) {
+	e, st := cvEEngine(t)
+	if err := st.PutUser(domain.User{LoginName: "chatgpt-owner"}); err != nil {
+		t.Fatal(err)
+	}
+	user, _ := st.UserByLoginName("chatgpt-owner")
+	login := `{"auth_mode":"chatgpt","last_refresh":"` + time.Now().UTC().Format(time.RFC3339) + `","tokens":{"access_token":"opaque","refresh_token":"r1"}}`
+	if _, err := st.SaveCodexChatGPTLogin(user.ID, login); err != nil {
+		t.Fatal(err)
+	}
+	r := cvERunner(t, e, "chatgpt", domain.RunnerStatusOnline, "codex")
+	r.Runtimes[0].AuthMode = domain.RuntimeAuthPersonal
+	if err := e.repo.PutRunner(r); err != nil {
+		t.Fatal(err)
+	}
+	run := cvERunnerRun("chatgpt-run", r.ID)
+	run.ExecutionContext.ResponsibleUserID = user.ID
+	node := domain.WorkflowNode{ID: "agent", Type: "agent"}
+	ex := domain.ExecutorDefinition{ID: "codex", Kind: "codex"}
+	_, err := e.dispatchRunnerTask(context.Background(), r.ID, run, node, &runEnvironment{}, "workspace", ex, domain.AgentDefinition{ID: "a"}, domain.AgentAssetBundle{}, "prompt", "inv", runtime.InvocationOptions{}, nil)
+	if err == nil || !strings.Contains(err.Error(), domain.RunnerVersionCodexChatGPT) {
+		t.Fatalf("old runner: %v", err)
+	}
+	r.RunnerVersion = domain.RunnerVersionCodexChatGPT
+	if err := e.repo.PutRunner(r); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := e.dispatchRunnerTask(ctx, r.ID, run, node, &runEnvironment{}, "workspace", ex, domain.AgentDefinition{ID: "a"}, domain.AgentAssetBundle{}, "prompt", "inv", runtime.InvocationOptions{}, func(domain.TelemetryEvent) {}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("ChatGPT login without an API key was not dispatched: %v", err)
+	}
+}
+
 func TestRunnerDispatchEarlyAndCanceledPaths(t *testing.T) {
 	e, _ := cvEEngine(t)
 	r := cvERunner(t, e, "dispatch", domain.RunnerStatusOnline, "terminal", "codex", "claude-code", "codebuddy")

@@ -236,6 +236,7 @@ func (e *Engine) resolveRunCredentials(run domain.Run) runtime.RunCredentials {
 	credentials.GitUserEmail = identity.email
 	if user, ok := e.repo.User(userID); ok {
 		credentials.Codex = runtime.ProviderCredential{APIKey: user.CodexAPIKey, BaseURL: user.CodexBaseURL}
+		credentials.Codex.ChatGPTAuth, credentials.Codex.ChatGPTProblem = e.codexChatGPTAuth(userID)
 		credentials.ClaudeCode = runtime.ProviderCredential{APIKey: user.ClaudeCodeAPIKey, BaseURL: user.ClaudeCodeBaseURL}
 		credentials.AgentCLI = runtime.AgentCLIUserCredentials(user)
 	}
@@ -245,6 +246,16 @@ func (e *Engine) resolveRunCredentials(run domain.Run) runtime.RunCredentials {
 	})
 	credentials.MCPServers = scriptAssets.MCPServers
 	return credentials
+}
+
+// codexChatGPTAuth returns the user's ChatGPT login for Codex, refreshed when
+// close to expiry, or why an existing login cannot be used.
+func (e *Engine) codexChatGPTAuth(userID int64) (auth, problem string) {
+	auth, err := e.repo.CodexChatGPTAuth(context.Background(), userID)
+	if err != nil {
+		return "", err.Error()
+	}
+	return auth, ""
 }
 
 func (env *runEnvironment) credentialSnapshot() runtime.RunCredentials {

@@ -82,6 +82,8 @@ const CREDENTIAL_KINDS=[
     extra:{name:'codexBaseUrl',label:'Base URL',placeholder:'https://api.openai.com/v1',url:true,clearWithKey:true},
     models:{name:'codexModels',engine:'codex',endpoint:'/models'},
     impact:'以 Codex 运行的 SOP 节点将无法执行，Base URL 与模型目录一并清空。'},
+  {key:'codexChatGptLogin',group:'model',name:'Codex',short:'ChatGPT 登录',logo:'codex',monochrome:true,
+    use:'以 Codex 运行的 SOP 节点使用 ChatGPT 订阅，优先于 Codex API Key',dialog:()=>openCodexChatGPTLogin(),action:'管理登录'},
   {key:'claudeCodeApiKey',group:'model',name:'Claude Code',short:'Claude Code API Key',logo:'claude',monochrome:true,
     use:'AI 对话选择 Claude 执行器，以及以 Claude Code 运行的 SOP 节点',
     description:'AI 对话切换到 Claude Code 后可选用模型目录里的模型，SOP 在执行机器上以 Claude Code 运行的节点也使用它。目录为空时，未填 Base URL 使用 Claude Code 自带模型，填写后跟随服务发布的模型；也可以自己挑选、排序和命名。',
@@ -580,6 +582,7 @@ function gitTokenFailure(result){
 }
 function credentialStatus(kind,user){
   if(!credentialConfigured(kind,user))return 'empty';
+  if(kind.key==='codexChatGptLogin')return user.codexChatGptLoginStatus==='needs_relogin'?'err':'ok';
   if(kind.key!=='gitToken')return 'ok';
   const verify=gitTokenVerifyFor({id:state.currentUser?.id});
   if(verify?.busy)return 'busy';
@@ -601,6 +604,9 @@ function credentialSubline(kind,user){
     if(result.error)return source+dot+`<span class="is-err">${escapeHTML(result.error)}</span>`;
     if(!result.valid)return source+dot+`<span class="is-err">缺少权限 ${escapeHTML((result.missing||[]).join('、'))}</span>`;
     return source+dot+'<span class="is-ok">令牌有效</span>'+(result.scopes?.length?dot+`<span class="credential-mono">${escapeHTML(result.scopes.join(' · '))}</span>`:'');
+  }
+  if(kind.key==='codexChatGptLogin'){
+    return user.codexChatGptLoginStatus==='needs_relogin'?'<span class="is-err">登录已失效，请重新登录</span>':use;
   }
   if(kind.key==='codeBuddyApiKey'){
     const raw=String(user.codeBuddyInternetEnvironment||'').trim(),env=codeBuddyEnvironment(raw);
