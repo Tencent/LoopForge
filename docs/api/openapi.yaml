@@ -29,6 +29,46 @@ tags:
   - name: Scheduling
   - name: Analytics
 paths:
+  /api/runs/{id}/wait:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: string}}
+    get:
+      tags: [Runs]
+      operationId: waitForRun
+      summary: Wait for an SOP result or human action
+      description: |
+        Reads the current status of one SOP. Returns as soon as it is succeeded,
+        failed, cancelled, waiting or paused. If the wait window expires first,
+        the current status is returned with timedOut=true.
+      parameters:
+        - name: timeoutSec
+          in: query
+          description: Seconds to wait. Zero reads the current status immediately.
+          schema: {type: integer, minimum: 0, maximum: 25, default: 25}
+      responses:
+        "200":
+          description: Latest SOP status
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [runId, projectId, status, terminal, timedOut]
+                properties:
+                  runId: {type: string}
+                  projectId: {type: string}
+                  status: {type: string}
+                  terminal: {type: boolean, description: "Status is succeeded, failed, or cancelled"}
+                  timedOut: {type: boolean, description: The wait window ended while the run was still active or queued}
+        "400":
+          description: Invalid timeoutSec
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Run not found
+        "409":
+          description: The run is a conversation workspace
   /api/runs/{id}/control:
     parameters:
       - {name: id, in: path, required: true, schema: {type: string}}
@@ -5300,6 +5340,12 @@ components:
         assistantModel:
           type: string
           description: Model id from GET /api/assistant/models?schedule=1.
+        timeoutMinutes:
+          type: integer
+          minimum: 0
+          maximum: 240
+          default: 30
+          description: AI jobs only. Minutes allowed for each execution, including tool calls and waits. Omitted or 0 uses 30. Expiry stops the AI turn and records a failed execution. Dispatched SOPs continue independently.
         ownerUserId:
           type: integer
           format: int64
