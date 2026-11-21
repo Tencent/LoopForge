@@ -10,7 +10,7 @@
 
 原生 HOME 和工作目录路径在模式间保持稳定。配置、技能、可执行资产与二进制附件由平台准备；原生会话日志保留在执行机器，错误或取消后继续原会话。远程 Runner 通过已认证的控制连接同步资产、运行 CLI 和转发会话工具请求，不在持久任务行中保存进程输入或密钥。
 
-会话支持 PNG、JPEG、WebP 和 GIF 图片输入。CodeBuddy、Codex、Claude Code、OpenCode 和 Pi 在当前用户消息中接收原生图片。其他 CLI 可通过会话 MCP 工具 `workbench_read_image` 取得已授权附件的图像内容，原有文件路径也可供 CLI 工具读取。识别需要所选模型支持视觉输入，或由 CLI 提供识图能力。历史附件可按需读取，续聊时只把当轮新增的图片作为原生输入发送。远程 OpenCode 和 Pi 的自定义模型配置由 Runner 生成，原生传图需要使用包含此更新的 Runner。
+会话支持 PNG、JPEG、WebP 和 GIF 图片输入。CodeBuddy、Codex、Claude Code、OpenCode 和 Pi 在当前用户消息中接收原生图片。Kimi Code 等 CLI 可通过会话 MCP 工具 `workbench_read_image` 取得已授权附件的图像内容，原有文件路径也可供 CLI 工具读取。识别需要所选模型支持视觉输入，或由 CLI 提供识图能力。历史附件可按需读取，续聊时只把当轮新增的图片作为原生输入发送。远程 OpenCode、Pi 和 Kimi Code 的自定义模型配置由 Runner 生成，使用这些 CLI 传图时需要更新 Runner。
 
 ZCode 恢复时通过官方会话协议应用当前选择的模型，再启动原生 prompt 命令；保留同一 session 和历史，不直接改写 CLI 数据库。协议不兼容或模型不可用时中止，保留日志供重试。
 

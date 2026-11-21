@@ -565,6 +565,7 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 					prompt = assistantPlatformExecutionReminder + "\n" + prompt
 				}
 				cliReq := assistantCLIRequest{Executor: req.Executor, Prompt: prompt, Model: cliModel, Effort: req.Effort, SessionID: cliSessionID, Resume: resume, UserID: u.ID, Native: true, MCPConfig: mcp, Settings: settings, SystemPrompt: system, SessionRoot: cliRoot, RunnerLogin: runnerLogin, OnUsage: turnUsage.add, Workspace: req.workspaceMode, RemoteBinary: req.workspaceMode || toolSession.ExecutionRunnerID != "", Execute: h.conversationExecutor(toolSession, cliRoot)}
+				cliReq.ImageInput = conversationHasImageAttachments(req)
 				// Mode handoffs resume a journal which already has the user turn.
 				if switches == 0 || !resume {
 					cliReq.ImagePaths = conversationTurnImagePaths(cliRoot, req)
@@ -1475,6 +1476,7 @@ type assistantCLIRequest struct {
 	RemoteBinary, RunnerLogin                      bool
 	Prompt, Model, Effort, SessionID, SystemPrompt string
 	ImagePaths                                     []string
+	ImageInput                                     bool
 	Executor                                       string
 	SessionRoot                                    string
 	Resume                                         bool
@@ -1556,7 +1558,7 @@ func runAssistantCLI(ctx context.Context, req assistantCLIRequest, user domain.U
 		sessionID = newAssistantSessionID()
 	}
 	var inv assistantCLIInvocation
-	engineOpts := assistantEngineInvocationOpts{Bin: bin, Root: root, Config: config, Prompt: req.Prompt, Model: engineModel, Effort: req.Effort, SessionID: sessionID, Resume: req.Resume, SystemPrompt: req.SystemPrompt, ReviewOnly: req.ReviewOnly, Workspace: req.Workspace, RunnerLogin: req.RunnerLogin, ImagePaths: req.ImagePaths}
+	engineOpts := assistantEngineInvocationOpts{Bin: bin, Root: root, Config: config, Prompt: req.Prompt, Model: engineModel, Effort: req.Effort, SessionID: sessionID, Resume: req.Resume, SystemPrompt: req.SystemPrompt, ReviewOnly: req.ReviewOnly, Workspace: req.Workspace, RunnerLogin: req.RunnerLogin, ImagePaths: req.ImagePaths, ImageInput: req.ImageInput}
 	switch engine {
 	case assistantEngineClaude:
 		if !req.RunnerLogin {

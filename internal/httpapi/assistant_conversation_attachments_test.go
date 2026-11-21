@@ -60,6 +60,9 @@ func TestConversationImageRoutingAcrossEngines(t *testing.T) {
 		attachmentIDs:    map[string]bool{shot.ID: true, earlier.ID: true, document.ID: true},
 		attachmentOwners: map[string]int64{shot.ID: owner, earlier.ID: owner, document.ID: owner},
 	}
+	if !conversationHasImageAttachments(req) {
+		t.Fatal("conversation must advertise the image modality")
+	}
 
 	for _, engine := range append([]string{assistantEngineCodeBuddy}, assistantCLIEngines()...) {
 		t.Run(engine, func(t *testing.T) {
@@ -133,6 +136,16 @@ func TestConversationImageRoutingAcrossEngines(t *testing.T) {
 				case runtime.AgentCLIPi:
 					if !slices.Contains(inv.command.Argv, "@"+imagePath) || !inv.command.AgentCLI.ImageInput {
 						t.Fatalf("wrong Pi file input: %v", inv.command.Argv)
+					}
+				case runtime.AgentCLIKimi:
+					home := filepath.Join(root, "home")
+					cred := runtime.ProviderCredential{APIKey: "fixture-key", BaseURL: "https://example.test"}
+					if _, _, err := runtime.ApplyAgentCLICredential(engine, cred, runtime.AgentCLIOptions{Model: "test-model", ImageInput: inv.command.AgentCLI.ImageInput}, runtime.HostAgentCLIHome(home), home, inv.command.Argv); err != nil {
+						t.Fatal(err)
+					}
+					config, err := os.ReadFile(filepath.Join(home, ".kimi-code", "config.toml"))
+					if err != nil || !bytes.Contains(config, []byte(`"image_in"`)) {
+						t.Fatalf("Kimi image support missing from generated model configuration: %v", err)
 					}
 				default:
 					if slices.Contains(inv.command.Argv, imagePath) || inv.command.AgentCLI.ImageInput {

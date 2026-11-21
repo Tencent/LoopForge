@@ -84,6 +84,17 @@ func assistantImageMIME(mime string) bool {
 	return false
 }
 
+func conversationHasImageAttachments(req assistantRequest) bool {
+	for _, message := range req.Messages {
+		for _, attachment := range message.Attachments {
+			if req.attachmentIDs[attachment.ID] && assistantImageMIME(attachment.MimeType) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // Only the current user turn sends inline images. Older attachments are still
 // available by path and through the session's read-only image tool.
 func conversationTurnImagePaths(root string, req assistantRequest) []string {

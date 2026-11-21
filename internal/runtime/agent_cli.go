@@ -492,7 +492,11 @@ func ApplyAgentCLICredential(kind string, cred ProviderCredential, options Agent
 			}
 			env[kimiThinkingEffortEnv] = nativeEffort
 		}
-		lines = append(lines, `capabilities = ["thinking", "tool_use"]`, "")
+		capabilities := `["thinking", "tool_use"]`
+		if options.ImageInput {
+			capabilities = `["thinking", "tool_use", "image_in"]`
+		}
+		lines = append(lines, "capabilities = "+capabilities, "")
 		if hook := options.ApprovalCommand; hook != "" {
 			// Kimi validates 1–600 seconds and allows the tool on timeout; the
 			// hook's own retry budget ends well before that.

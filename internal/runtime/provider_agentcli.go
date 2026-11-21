@@ -90,6 +90,8 @@ type AgentCLICommandOptions struct {
 	Prompt string
 	// ImagePaths are already staged in the conversation's attachment directory.
 	ImagePaths []string
+	// Historical images remain available through the session MCP or journal.
+	ImageInput bool
 	// SystemPrompt is the system prompt body; SystemPromptFile is the same
 	// text as a path the process can read.
 	SystemPrompt, SystemPromptFile string
@@ -126,6 +128,10 @@ func AgentCLICommand(kind string, o AgentCLICommandOptions) CommandSpec {
 	readOnly := o.Chat && !o.Workspace
 	options := AgentCLIOptions{Model: model, Effort: effort, ReadOnly: readOnly}
 	switch kind {
+	case AgentCLIOpenCode, AgentCLIPi, AgentCLIKimi:
+		options.ImageInput = o.ImageInput || len(o.ImagePaths) > 0
+	}
+	switch kind {
 	case AgentCLIOpenCode:
 		argv = []string{binary, "run", "--format", "json", "--thinking"}
 		if model != "" {
@@ -140,7 +146,6 @@ func AgentCLICommand(kind string, o AgentCLICommandOptions) CommandSpec {
 		options.SystemPromptFile = o.SystemPromptFile
 		argv = append(argv, extra...)
 		if len(o.ImagePaths) > 0 {
-			options.ImageInput = true
 			for _, path := range o.ImagePaths {
 				argv = append(argv, "--file", path)
 			}
@@ -220,7 +225,6 @@ func AgentCLICommand(kind string, o AgentCLICommandOptions) CommandSpec {
 		}
 		argv = append(argv, extra...)
 		if len(o.ImagePaths) > 0 {
-			options.ImageInput = true
 			for _, path := range o.ImagePaths {
 				argv = append(argv, "@"+path)
 			}
