@@ -24,6 +24,8 @@ jobs:
         python-version: ["3.8", "3.12"]
     steps:
       - uses: actions/checkout@v7.0.1
+      # validate.sh gates its forbidden-content scans on ripgrep being present.
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ripgrep
       - uses: actions/setup-python@v5.6.0
         with:
           python-version: ${{ matrix.python-version }}

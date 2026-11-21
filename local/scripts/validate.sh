@@ -4,6 +4,13 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
+# A missing rg exits 127, which `if rg` treats like "no match", silently
+# skipping every scan below (issue #1044). Fail loudly instead.
+command -v rg >/dev/null 2>&1 || {
+  echo "ripgrep (rg) is required; the forbidden-content scans cannot run." >&2
+  exit 1
+}
+
 echo "[1/6] Checking forbidden public content"
 if rg --hidden -n \
   -e 'Tencent/multi-agents-dev-workflow-open-source' \
