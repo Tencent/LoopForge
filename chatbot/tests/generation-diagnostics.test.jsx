@@ -26,6 +26,7 @@ const report = {
     {
       id: "turn-one/1",
       engine: "codebuddy",
+      cliVersion: "v2.185.0",
       model: "model-example",
       status: "failed",
       phase: "execution",
@@ -67,6 +68,7 @@ describe("generation diagnostics", () => {
     expect(await screen.findByText("request-example")).toBeInTheDocument();
     expect(screen.getByText("trace-example")).toBeInTheDocument();
     expect(screen.getByText("退出码 7")).toBeInTheDocument();
+    expect(screen.getByText("调用 1 · codebuddy v2.185.0")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "下载诊断" })).toHaveAttribute(
       "href",
       "/api/assistant/sessions/session-one/generations/turn-one/diagnostics?download=1",

@@ -1,7 +1,6 @@
 import React, { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import HarnessIcon from "./HarnessIcon";
-import { readComposerPreference, writeComposerPreference } from "./composer-preferences.js";
 import { usePanelPresence } from "./usePanelPresence";
 import "./permission-picker.css";
 
@@ -11,20 +10,13 @@ const modes = [
   { id: "auto", icon: "priority-bolt", label: "完全权限", tone: "danger", detail: "工作区文件和命令自动执行；平台及外部操作使用当前账号权限直接执行。" },
 ];
 
-const validApprovalMode = (value) => modes.some((mode) => mode.id === value);
-
-export function storedApprovalMode(userId) {
-  if (!userId) return "confirm";
-  const value = readComposerPreference(`approvalMode.${userId}`);
-  return validApprovalMode(value) ? value : "confirm";
-}
-
-export function rememberApprovalMode(userId, value) {
-  if (userId && validApprovalMode(value)) writeComposerPreference(`approvalMode.${userId}`, value);
+export function normalizeApprovalMode(value) {
+  return modes.some((mode) => mode.id === value) ? value : "confirm";
 }
 
 // `glyph` is a rendered brand mark. Options that only set `icon` keep the Harness icon.
-export default function PermissionPicker({ value, onSelect, open, onOpenChange, label = "操作确认方式", icon, options = modes }) {
+export default function PermissionPicker({ value, onSelect, open: requestedOpen, disabled = false, onOpenChange, label = "操作确认方式", icon, options = modes }) {
+  const open = requestedOpen && !disabled;
   const trigger = useRef(null);
   const panel = useRef(null);
   const initialFocus = useRef(null);
@@ -166,6 +158,7 @@ export default function PermissionPicker({ value, onSelect, open, onOpenChange, 
       <button
         ref={trigger}
         type="button"
+        disabled={disabled}
         className="permission-selector"
         data-tone={current.tone}
         aria-label={label}

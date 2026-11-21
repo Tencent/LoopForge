@@ -262,11 +262,6 @@ func (h *assistantHandlers) session(c *gin.Context) {
 			c.JSON(404, gin.H{"error": "对话不存在"})
 			return
 		}
-		if readOnly {
-			project, _ := h.repo.Project(item.ProjectID)
-			c.JSON(200, readOnlyConversation{AssistantSession: item, ReadOnly: true, ProjectName: project.Name})
-			return
-		}
 		if !item.Shared && !readOnly {
 			if job, ok := h.readGeneration(ownerID, id); !ok || job.Status != "running" {
 				if materializeWorkspaceImages(ownerID, &item) {
@@ -277,6 +272,12 @@ func (h *assistantHandlers) session(c *gin.Context) {
 					}
 				}
 			}
+		}
+		item.Executor = h.forkExecutor(c, item, current.ID)
+		if readOnly {
+			project, _ := h.repo.Project(item.ProjectID)
+			c.JSON(200, readOnlyConversation{AssistantSession: item, ReadOnly: true, ProjectName: project.Name})
+			return
 		}
 		if shared {
 			if run, ok := h.repo.RunState(item.RunID); ok {
@@ -379,8 +380,9 @@ func (h *assistantHandlers) session(c *gin.Context) {
 		if conv.RunID == "" {
 			conv.RunID = existing.RunID
 		}
+		oldExecutor := h.forkExecutor(c, existing, current.ID)
 		if conv.Executor == "" {
-			conv.Executor = existing.Executor
+			conv.Executor = oldExecutor
 		}
 		if existing.ID != "" {
 			conv.IssueID = existing.IssueID
@@ -404,7 +406,7 @@ func (h *assistantHandlers) session(c *gin.Context) {
 		}
 		model := assistantRequestModel(conv.Executor, conv.Model)
 		engine, modelID := assistantModelEngine(model)
-		oldEngine, oldModelID := assistantModelEngine(assistantRequestModel(existing.Executor, existing.Model))
+		oldEngine, oldModelID := assistantModelEngine(assistantRequestModel(oldExecutor, existing.Model))
 		// Metadata edits can keep historical settings after the model catalog changes.
 		if engine != oldEngine || modelID != oldModelID || conv.Effort != existing.Effort {
 			editor, _ := h.repo.User(current.ID)

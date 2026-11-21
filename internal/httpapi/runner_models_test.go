@@ -182,7 +182,7 @@ func TestAntigravityGenerationUsesLiveRunnerCatalog(t *testing.T) {
 				return
 			case msg := <-conn.send:
 				if msg.WorkspaceRequest != nil && msg.WorkspaceRequest.Operation == domain.RunnerWorkspaceOperationLoginModels {
-					hub.resolveWorkspace(msg.RequestID, domain.RunnerWorkspaceResponse{Status: 200, Payload: []byte(`[
+					hub.resolveWorkspace(conn, msg.RequestID, domain.RunnerWorkspaceResponse{Status: 200, Payload: []byte(`[
 						{"id":"gemini-3.8-flash-low"}, {"id":"gemini-3.8-flash-medium"}
 					]`)})
 				}

@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"agentflow/internal/domain"
+	"agentflow/internal/managedcli"
 )
 
 // Agent CLIs beyond CodeBuddy / Codex / Claude Code. Each one runs with the
@@ -406,7 +407,10 @@ func ApplyAgentCLICredential(kind string, cred ProviderCredential, options Agent
 		return nil, nil, fmt.Errorf("%s 需要指定模型", AgentCLILabel(kind))
 	}
 	homeEnv = filepath.ToSlash(homeEnv)
-	env := map[string]string{}
+	env := managedcli.AutoUpdateEnvironment(kind)
+	if env == nil {
+		env = map[string]string{}
+	}
 	switch kind {
 	case AgentCLIOpenCode:
 		npm := map[string]string{AgentCLIProtocolChat: "@ai-sdk/openai-compatible", AgentCLIProtocolResponses: "@ai-sdk/openai", AgentCLIProtocolMessages: "@ai-sdk/anthropic"}[protocol]
@@ -432,7 +436,6 @@ func ApplyAgentCLICredential(kind string, cred ProviderCredential, options Agent
 		content, _ := json.Marshal(config)
 		env[agentCLIKeyEnv] = key
 		env["OPENCODE_CONFIG_CONTENT"] = string(content)
-		env["OPENCODE_DISABLE_AUTOUPDATE"] = "1"
 	case AgentCLICursor:
 		env["CURSOR_API_KEY"] = key
 		if model != "" {

@@ -131,6 +131,8 @@ type CommandSpec struct {
 	// privateBinds are host directories bwrap binds into this one process
 	// only (for example a terminal's own SSH agent).
 	privateBinds []string
+	// Only the selected managed installation is exposed beneath bwrap's /tmp.
+	managedCLIInstall string
 	// Conversation preparation binds credentials before acknowledging start.
 	bindingsPrepared bool
 	// Runner-owned authentication state never enters serialized invocations.

@@ -70,12 +70,12 @@ func resolveAssistantEngineBin(engine string) (string, error) {
 	if engine == assistantEngineClaude {
 		binary, override, managed = "claude", "AGENTFLOW_CLAUDE_BIN", "claude-code"
 	} else if runtime.IsAgentCLI(engine) {
-		binary, override, managed = runtime.AgentCLIBinary(engine), "AGENTFLOW_"+strings.ToUpper(strings.ReplaceAll(engine, "-", "_"))+"_BIN", ""
+		binary, override, managed = runtime.AgentCLIBinary(engine), "AGENTFLOW_"+strings.ToUpper(strings.ReplaceAll(engine, "-", "_"))+"_BIN", engine
 	}
 	if path := strings.TrimSpace(os.Getenv(override)); path != "" && fileExecutable(path) {
 		return path, nil
 	}
-	if root := strings.TrimSpace(os.Getenv("AGENTFLOW_MANAGED_CLI_ROOT")); root != "" && managed != "" {
+	if root := strings.TrimSpace(os.Getenv("AGENTFLOW_MANAGED_CLI_ROOT")); root != "" && managedcli.Supports(managed) {
 		if inventory, err := managedcli.ReadInventory(root); err == nil {
 			if path, ok := inventory.BinaryFor(managed); ok {
 				return path, nil

@@ -42,6 +42,8 @@ type ConversationProcessRequest struct {
 	After      int64                `json:"after,omitempty"`
 	Gateway    string               `json:"gateway,omitempty"`
 	Token      string               `json:"token,omitempty"`
+
+	ReportVersion bool `json:"reportVersion,omitempty"`
 }
 
 type ConversationFile struct {
@@ -68,13 +70,15 @@ func ConversationCommandFor(command CommandSpec, credentials RunCredentials) *Co
 }
 
 type ConversationProcessResult struct {
-	Root       string                  `json:"root,omitempty"`
-	ID         string                  `json:"id,omitempty"`
-	Events     []domain.TelemetryEvent `json:"events,omitempty"`
-	Sequence   int64                   `json:"sequence,omitempty"`
-	Done       bool                    `json:"done,omitempty"`
-	Error      string                  `json:"error,omitempty"`
-	NotStarted bool                    `json:"notStarted,omitempty"`
+	Root          string                  `json:"root,omitempty"`
+	ID            string                  `json:"id,omitempty"`
+	Events        []domain.TelemetryEvent `json:"events,omitempty"`
+	Sequence      int64                   `json:"sequence,omitempty"`
+	Done          bool                    `json:"done,omitempty"`
+	Error         string                  `json:"error,omitempty"`
+	NotStarted    bool                    `json:"notStarted,omitempty"`
+	CLIVersion    string                  `json:"cliVersion,omitempty"`
+	VersionSource string                  `json:"versionSource,omitempty"`
 	// GitScrubbed names the Git credentials the agent wrote by hand that were
 	// removed when a workspace CLI finished; it never holds their values.
 	GitScrubbed []string `json:"gitScrubbed,omitempty"`
@@ -139,20 +143,22 @@ func (p *ConversationProcessPool) lockAssets(ctx context.Context, root string) (
 }
 
 type conversationProcess struct {
-	mu         sync.Mutex
-	cancel     context.CancelFunc
-	input      *os.File
-	events     []domain.TelemetryEvent
-	base       int64
-	done       bool
-	err        string
-	wake       chan struct{}
-	lastPoll   time.Time
-	closeRelay func()
-	finished   chan struct{}
-	root       string
-	bytes      int
-	notStarted bool
+	mu            sync.Mutex
+	cancel        context.CancelFunc
+	input         *os.File
+	events        []domain.TelemetryEvent
+	base          int64
+	done          bool
+	err           string
+	wake          chan struct{}
+	lastPoll      time.Time
+	closeRelay    func()
+	finished      chan struct{}
+	root          string
+	bytes         int
+	notStarted    bool
+	cliVersion    string
+	versionSource string
 	// gitScrubbed is set with done, under mu.
 	gitScrubbed []string
 }
@@ -328,7 +334,11 @@ func (p *ConversationProcessPool) Handle(ctx context.Context, root, workspace st
 		proc.events = proc.events[ack:]
 		proc.base = req.After
 		n := min(len(proc.events), 256)
-		result := ConversationProcessResult{ID: req.ID, Events: append([]domain.TelemetryEvent(nil), proc.events[:n]...), Sequence: proc.base + int64(n), Done: proc.done && n == len(proc.events), Error: proc.err, NotStarted: proc.notStarted}
+		result := ConversationProcessResult{
+			ID: req.ID, Events: append([]domain.TelemetryEvent(nil), proc.events[:n]...), Sequence: proc.base + int64(n),
+			Done: proc.done && n == len(proc.events), Error: proc.err, NotStarted: proc.notStarted,
+			CLIVersion: proc.cliVersion, VersionSource: proc.versionSource,
+		}
 		if result.Done {
 			result.GitScrubbed = append([]string(nil), proc.gitScrubbed...)
 		}
@@ -615,6 +625,7 @@ func (p *ConversationProcessPool) start(ctx context.Context, root, workspace str
 		}
 		command.Argv[0] = binary
 	}
+	cliBinary := command.Argv[0]
 	bindSandbox := sb
 	bindWorkspace := filepath.Join(root, "ws")
 	if bindSandbox == nil {
@@ -643,6 +654,7 @@ func (p *ConversationProcessPool) start(ctx context.Context, root, workspace str
 		}
 	}
 	nativeArgv := append([]string(nil), command.Argv...)
+	command = withBwrapManagedCLI(command, sandboxDriver(bindSandbox))
 	command, err = bindCommand(procCtx, bindSandbox, bindWorkspace, command, req.Command.Credentials)
 	if err != nil {
 		return ConversationProcessResult{}, err
@@ -709,6 +721,19 @@ func (p *ConversationProcessPool) start(ctx context.Context, root, workspace str
 			case proc.wake <- struct{}{}:
 			default:
 			}
+		}
+		if req.ReportVersion {
+			defer ObserveCLIVersion(procCtx, sb, command.Provider, cliBinary, func(version, source string) {
+				proc.mu.Lock()
+				if !proc.done {
+					proc.cliVersion, proc.versionSource = version, source
+				}
+				proc.mu.Unlock()
+				select {
+				case proc.wake <- struct{}{}:
+				default:
+				}
+			})()
 		}
 		if sb != nil {
 			_, runErr = WithSandboxCredentials(sb, req.Command.Credentials).Exec(procCtx, command, sink)

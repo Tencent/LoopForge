@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -127,6 +128,14 @@ func (d *Daemon) readRunnerWorkspace(ctx context.Context, request domain.RunnerW
 	}
 	if request.Operation == domain.RunnerWorkspaceOperationLoginModels {
 		return d.runnerLoginModels(ctx, request.ModelProvider)
+	}
+	if request.Operation == domain.RunnerWorkspaceOperationSSHHostKeyProbe {
+		dialer := &net.Dialer{}
+		key, err := gitwork.ProbeSSHHostPublicKey(ctx, request.SSHHostKeyAddress, dialer.DialContext)
+		if err != nil {
+			return domain.RunnerWorkspaceResponse{Status: http.StatusBadGateway, Error: err.Error()}
+		}
+		return runnerWorkspacePayload(key)
 	}
 	if request.Operation == domain.RunnerWorkspaceOperationBrowser {
 		return d.handleRunnerWorkspaceBrowser(ctx, request)

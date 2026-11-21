@@ -72,6 +72,7 @@ type Server struct {
 	github          *githubHandlers
 	codeup          *codeupHandlers // codeup_auth.go
 	users           *usersHandlers // users.go
+	sshHostTrust    *sshHostTrustHandlers
 	projects        *projectsHandlers
 	insights        *insightsHandlers
 	businessDomains *businessDomainsHandlers
@@ -142,6 +143,7 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 		stream.clarifyRun = testClarifyExec
 	}
 	runnerControls := newRunnerControlHub()
+	runnerControls.sshHostLookup = s.PlatformSSHKnownHosts
 	runnerControls.successor = relayRunnerWorkspaceToSuccessor(e)
 	if bg != nil {
 		bg.runnerControls = runnerControls
@@ -156,6 +158,7 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 		github:          newGitHubHandlers(d),
 		codeup:          newCodeupHandlers(d),
 		users:           &usersHandlers{deps: d},
+		sshHostTrust:    &sshHostTrustHandlers{deps: d, hosts: s.SSHHostTrustRepo, runnerControls: runnerControls},
 		catalog:         &catalogHandlers{deps: d},
 		businessDomains: &businessDomainsHandlers{deps: d},
 		insights:        &insightsHandlers{deps: d},
@@ -271,6 +274,12 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.GET("/api/platform/codebuddy-key", api.users.platformCodeBuddyKey)
 	g.PUT("/api/platform/codebuddy-key", api.users.platformCodeBuddyKey)
 	g.DELETE("/api/platform/codebuddy-key", api.users.platformCodeBuddyKey)
+	g.GET("/api/platform/git-ssh-hosts", api.sshHostTrust.list)
+	g.POST("/api/platform/git-ssh-hosts", api.sshHostTrust.save)
+	g.DELETE("/api/platform/git-ssh-hosts", api.sshHostTrust.remove)
+	g.POST("/api/platform/git-ssh-hosts/preview", api.sshHostTrust.preview)
+	g.PUT("/api/platform/git-ssh-hosts/:host", api.sshHostTrust.save)
+	g.DELETE("/api/platform/git-ssh-hosts/:host", api.sshHostTrust.remove)
 	// master(net/http) 的 /api/users/ 子树只接受 PUT /api/users/<id>/credentials
 	// 一种形态，其余任何方法/子路径都走 method(w) → 405 JSON。
 	g.Any("/api/users/:id/credentials", func(c *gin.Context) {
@@ -658,7 +667,7 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	d.api = g
 	if d.schedule != nil {
 		d.schedule.SetAssistantPrep(asst.prepareScheduleJob)
-		d.schedule.SetAssistantSessionPrep(asst.runScheduleJobPromptReporting)
+		d.schedule.SetAssistantSessionPrep(asst.runScheduleJobPromptResult)
 	}
 	static, _ := fs.Sub(webassets.Files, ".")
 	g.NoRoute(func(c *gin.Context) {

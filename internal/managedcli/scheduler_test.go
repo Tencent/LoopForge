@@ -178,9 +178,9 @@ func TestLoopStartupCrossingWindowDoesNotSkipToday(t *testing.T) {
 	}
 	stop := start(context.Background(), func() (*Manager, error) { return f.manager, nil })
 	defer stop()
-	waitUntil(t, func() bool { return len(f.state(t).Current) == 3 })
+	waitUntil(t, func() bool { return len(f.state(t).Current) == len(providerNames()) })
 	stop()
-	if !f.state(t).LastCheck.Equal(at.Add(time.Nanosecond)) || len(f.installs) != 3 {
+	if !f.state(t).LastCheck.Equal(at.Add(time.Nanosecond)) || len(f.installs) != len(providerNames()) {
 		t.Fatal("crossing startup window deferred today's check until tomorrow")
 	}
 }
@@ -192,10 +192,10 @@ func TestLoopTimerStartsNextCheck(t *testing.T) {
 	f.manager.Now = func() time.Time { return at.Add(-50 * time.Millisecond).Add(time.Since(started)) }
 	stop := start(context.Background(), func() (*Manager, error) { return f.manager, nil })
 	defer stop()
-	waitUntil(t, func() bool { return len(f.state(t).Current) == 3 })
+	waitUntil(t, func() bool { return len(f.state(t).Current) == len(providerNames()) })
 	stop()
 	state := f.state(t)
-	if state.LastCheck.Before(at) || len(f.installs) != 3 {
+	if state.LastCheck.Before(at) || len(f.installs) != len(providerNames()) {
 		t.Fatal("timer failed to run the next daily check")
 	}
 }
@@ -205,9 +205,9 @@ func TestLoopStartupCheckUsesFixtureAndIgnoresLegacyConfig(t *testing.T) {
 	writeTestFile(t, filepath.Join(f.manager.Root, "config.json"), `{"enabled":false}`)
 	stop := start(context.Background(), func() (*Manager, error) { return f.manager, nil })
 	defer stop()
-	waitUntil(t, func() bool { return len(f.state(t).Current) == 3 })
+	waitUntil(t, func() bool { return len(f.state(t).Current) == len(providerNames()) })
 	stop()
-	if len(f.installs) != 3 {
+	if len(f.installs) != len(providerNames()) {
 		t.Fatal("startup did not check all providers")
 	}
 }
