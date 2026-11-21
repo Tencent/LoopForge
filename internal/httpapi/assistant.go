@@ -1579,7 +1579,12 @@ func runAssistantCLI(ctx context.Context, req assistantCLIRequest, user domain.U
 		sessionID = newAssistantSessionID()
 	}
 	var inv assistantCLIInvocation
-	engineOpts := assistantEngineInvocationOpts{Bin: bin, Root: root, Config: config, Prompt: req.Prompt, Model: engineModel, Effort: req.Effort, SessionID: sessionID, Resume: req.Resume, SystemPrompt: req.SystemPrompt, ReviewOnly: req.ReviewOnly, Workspace: req.Workspace, RunnerLogin: req.RunnerLogin, ImagePaths: req.ImagePaths, ImageInput: req.ImageInput}
+	engineOpts := assistantEngineInvocationOpts{
+		Bin: bin, Root: root, Config: config, Prompt: req.Prompt, Model: engineModel, Effort: req.Effort,
+		SessionID: sessionID, Resume: req.Resume, SystemPrompt: req.SystemPrompt,
+		ReviewOnly: req.ReviewOnly, ReportOnly: req.ReportOnly,
+		Workspace: req.Workspace, RunnerLogin: req.RunnerLogin, ImagePaths: req.ImagePaths, ImageInput: req.ImageInput,
+	}
 	switch engine {
 	case assistantEngineClaude:
 		if !req.RunnerLogin {
