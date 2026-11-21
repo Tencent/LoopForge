@@ -2,6 +2,11 @@
 
 Platform releases use `vX.Y.Z` tags and publish `ghcr.io/tencent/loopforge`. LoopForge Local packages use `local-vX.Y.Z` tags and are published by manually running the `release-local` workflow.
 
+## Unreleased
+
+- On macOS `/bin/bash` 3.2, a missing local image or a failed automatic mirror pull no longer aborts `./start.sh` before the official image pull.
+- `./start.sh` and `./start.sh pull` time `ghcr.io` and `ghcr.nju.edu.cn`. Nanjing is used only when the ghcr.io manifest digest was verified and the mirror returned the same digest; the pull is that digest, then tagged back to the name pinned in `compose.yaml`. A missing official digest, a digest mismatch, or a failed mirror pull stays on `ghcr.io`. `MIRROR=ghcr.io` forces the upstream registry; `MIRROR=<host>` still forces that host and does not fall back. Accepting Nanjing, or setting `MIRROR`, trusts that host. The choice is not saved in `.env`. `registry-mirrors` such as `https://docker.nju.edu.cn` only accelerates Docker Hub.
+
 ## 0.4.0 — scheduled task history, an MR node in delivery SOPs and agent CLIs in conversation workspaces
 
 - Scheduled tasks keep an execution history with a session mode, keep conversations per job and gain row actions (#958). AI jobs run with the key of the user who saved them and fall back to the shared key (#966).
