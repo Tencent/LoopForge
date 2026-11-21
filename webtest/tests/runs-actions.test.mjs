@@ -100,8 +100,7 @@ test('run helpers merge streams and format timing, output, logs, telemetry, prev
       outputs,logs,workspace,preview,statuses,gate,compact,
       adapters:[matchTelemetryAdapter({source:{adapter:'agent-hooks-v1'}},'hooks'),
         matchTelemetryAdapter({source:{adapter:'codebuddy-otel-v1'}},'live')],
-      urls:[vscodeWorkbenchURL('run x',{embed:true}),vscodeWindowName('run x!'),
-        previewCandidateHttpsURL('http://example.com:80/path')],
+      urls:[vscodeWorkbenchURL('run x',{embed:true}),vscodeWindowName('run x!')],
       clean:[runWorkspaceWasCleaned({workspaceCleanedAt:'1970-01-01'}),runWorkspaceWasCleaned({workspaceCleanedAt:'2026-01-01'})],
       page:[runPageTarget(run,'a'),runDisplayStatus({...run,status:'paused'}),runAwaitsConfirmation({...run,status:'waiting'})],
       evalApply:[runEvalApplyable({action:'workflow.update_node'}),runEvalApplyable({action:'noop'})]
@@ -123,6 +122,7 @@ test('run helpers merge streams and format timing, output, logs, telemetry, prev
   assert.deepEqual(result.logs, ['Bash npm test','Read\\npackage main.go','fatal failure','']);
   assert.match(result.workspace, /vscode\.html/);
   assert.match(result.preview, /index\.html/);
+  assert.match(result.preview, /src="http:\/\/preview\.example\/x"/);
   assert.match(result.statuses[0], /正在生成/);
   assert.match(result.statuses[1], /生成失败/);
   assert.match(result.statuses[2], /已跳过/);
@@ -131,7 +131,7 @@ test('run helpers merge streams and format timing, output, logs, telemetry, prev
   assert.match(result.gate, /command failed/);
   assert.equal(result.compact[0].message, 'AB');
   assert.deepEqual(result.adapters, [true,false]);
-  assert.deepEqual(result.urls, ['/vscode.html?run=run+x&embed=1','agentflow-vscode-runx','https://example.com/path']);
+  assert.deepEqual(result.urls, ['/vscode.html?run=run+x&embed=1','agentflow-vscode-runx']);
   assert.deepEqual(result.clean, [false,true]);
   assert.equal(result.page[0].runId, 'run-x');
   assert.equal(result.page[1], '已暂停');
@@ -170,7 +170,7 @@ test('run helpers merge streams and format timing, output, logs, telemetry, prev
   app.evaluate(`window.afPrompt=async()=> 'https://new-api.example'`);
   await app.evaluate(`editPreviewBackend(state.activeRun)`);
   assert.equal(app.evaluate(`state.runPreview.backendUrl`), 'https://new-api.example');
-  assert.equal(await app.evaluate(`resolvePreviewSessionURL('https://preview.example/probe')`), 'https://preview.example/probe');
+  assert.equal(app.evaluate(`state.runPreview.session.url`), 'https://preview.example/new');
 
   app.router.get('/api/runs/run-x', { ...app.evaluate('structuredClone(state.activeRun)'), status: 'cancelled' });
   app.router.post('/api/runs/run-x/cancel', { ok: true });

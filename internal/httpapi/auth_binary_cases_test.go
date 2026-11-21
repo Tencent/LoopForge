@@ -141,7 +141,7 @@ func TestGinMiddlewareAndSmallViews(t *testing.T) {
 	}
 
 	router := gin.New()
-	router.Use(securityHeaders(), gzipMaybe())
+	router.Use(securityHeaders(nil), gzipMaybe())
 	router.GET("/asset.js", func(c *gin.Context) { c.String(http.StatusOK, "javascript") })
 	router.GET("/api/example/stream", func(c *gin.Context) { c.String(http.StatusOK, "event") })
 	req := httptest.NewRequest(http.MethodGet, "/asset.js?v=1", nil)
