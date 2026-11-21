@@ -322,10 +322,33 @@
   z-index: 1200;
   display: flex;
   flex-direction: column;
+  transform: translateX(100%);
+  transition: transform .22s var(--hui-ease-flow);
+}
+
+#kbDrawer.open {
+  transform: translateX(0);
 }
 
 #kbDrawer[hidden] {
   display: none;
+}
+
+.kb-drawer-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 1199;
+  background: var(--hui-scrim);
+}
+
+.kb-drawer-scrim[hidden] {
+  display: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #kbDrawer {
+    transition: none;
+  }
 }
 
 #kbDrawer .kb-drawer-head {
@@ -370,4 +393,42 @@
   line-height: 1.6;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+/* 行内操作、连接能力胶囊与删除描边按钮 */
+:is(#knowledgeView, #kbDrawer) :is(.kb-btn, .hui-badge) {
+  white-space: nowrap;
+}
+
+:is(#knowledgeView, #kbDrawer) .kb-btn.xs {
+  flex-shrink: 0;
+  height: 28px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+
+:is(#knowledgeView, #kbDrawer) .kb-btn.danger-outline {
+  border-color: var(--hui-error);
+  background: transparent;
+  color: var(--hui-error);
+}
+
+:is(#knowledgeView, #kbDrawer) .kb-btn.danger-outline:hover:not(:disabled) {
+  border-color: var(--hui-error);
+  background: color-mix(in srgb, var(--hui-error) 6%, var(--hui-surface));
+  color: var(--hui-error);
+}
+
+:is(#knowledgeView, #kbDrawer) .kb-row-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+:is(#knowledgeView, #kbDrawer) .kb-cap-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
 }

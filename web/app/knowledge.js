@@ -14,8 +14,34 @@
     submissions: [],
     subFilter: 'pending',
     usage: null,
-    loading: false
+    loading: false,
+    connectionFilter: '',
+    capabilitiesByConn: {},
+    modelsByConn: {},
+    drawerTriggerEl: null
   };
+
+  // 连接级五项管理能力：库管理 / 文档写入 / 分块读取 / 预览下载 / 重解析。
+  const KB_CAPABILITIES = [
+    { key: 'kb_manage', label: '库管理' },
+    { key: 'doc_write', label: '文档写入' },
+    { key: 'chunk_read', label: '分块读取' },
+    { key: 'preview_download', label: '预览下载' },
+    { key: 'reparse', label: '重解析' }
+  ];
+  // 能力不可用原因与探测在途标记不进 kbState，避免触发整页重绘。
+  const kbCapabilityReasons = {};
+  const kbCapabilityFetching = {};
+  const kbCapabilityProbed = {};
+  let kbRenderTimer = 0;
+
+  function scheduleKBRender() {
+    if (kbRenderTimer) return;
+    kbRenderTimer = window.setTimeout(() => {
+      kbRenderTimer = 0;
+      renderKnowledgeShell();
+    }, 0);
+  }
 
   function kbProjectId() {
     return (typeof state !== 'undefined' && state && state.projectFilter) || '';
@@ -36,12 +62,12 @@
     const status = document.getElementById('kbStatusBar');
     if (status) {
       status.textContent = msg;
-      status.style.color = isError ? '#dc2626' : '#059669';
+      status.style.color = isError ? 'var(--hui-error)' : 'var(--hui-success)';
     }
     const fb = document.getElementById('kbConfigFeedback');
     if (fb) {
       fb.textContent = msg;
-      fb.style.color = isError ? '#dc2626' : '#059669';
+      fb.style.color = isError ? 'var(--hui-error)' : 'var(--hui-success)';
     }
   }
 
@@ -51,9 +77,213 @@
     let data = null;
     try { data = text ? JSON.parse(text) : null; } catch {}
     if (!res.ok) {
-      throw new Error((data && (data.error || data.message)) || text || ('HTTP ' + res.status));
+      const err = new Error((data && (data.error || data.message)) || text || ('HTTP ' + res.status));
+      err.httpStatus = res.status;
+      err.code = (data && data.code) || '';
+      err.capability = (data && data.capability) || '';
+      err.connectionId = (data && data.connectionId) || '';
+      err.reason = (data && data.reason) || '';
+      // 能力载荷中的 status 表示能力状态（available/unavailable/unknown），与 HTTP 状态码无关。
+      err.capabilityStatus = (data && data.status) || '';
+      err.notFound = res.status === 404;
+      throw err;
     }
     return data;
+  }
+
+  function kbConnections() {
+    const conns = kbState.settings && kbState.settings.connections;
+    return Array.isArray(conns) ? conns : [];
+  }
+
+  function stripScopedId(id) {
+    const raw = String(id || '');
+    const idx = raw.indexOf('::');
+    return idx > 0 ? raw.slice(idx + 2) : raw;
+  }
+
+  // 显式连接寻址：作用域前缀 > 当前筛选连接 > 调用方显式传入 > 唯一已配置连接。
+  // 已配置凭据但 enabled=false 的连接同样参与解析，便于先建库传文档再开启 Agent 检索。
+  function resolveExplicitConnectionId(sourceOrDocId, fallbackConnId) {
+    const raw = String(sourceOrDocId || '');
+    const idx = raw.indexOf('::');
+    if (idx > 0) return raw.slice(0, idx);
+    if (kbState.connectionFilter) return kbState.connectionFilter;
+    if (fallbackConnId) return fallbackConnId;
+    const conns = kbConnections();
+    if (conns.length === 1) return conns[0].id || '';
+    return '';
+  }
+
+  function kbConnQuery(connId, extra) {
+    const q = new URLSearchParams();
+    q.set('projectId', kbProjectId());
+    const cid = connId || '';
+    if (cid) q.set('connectionId', cid);
+    Object.keys(extra || {}).forEach(k => {
+      const v = extra[k];
+      if (v === undefined || v === null || v === '') return;
+      q.set(k, String(v));
+    });
+    return q.toString();
+  }
+
+  function kbCapabilitiesFor(connId) {
+    return (kbState.capabilitiesByConn[connId] = kbState.capabilitiesByConn[connId] || {});
+  }
+
+  function kbCapabilityState(connId, cap) {
+    const caps = kbState.capabilitiesByConn[connId];
+    return (caps && caps[cap]) || 'unknown';
+  }
+
+  function kbCapabilityReason(connId, cap) {
+    return kbCapabilityReasons[connId + '|' + cap] || '';
+  }
+
+  // 能力门禁：未探测或后端未提供能力接口时沿用旧行为（乐观放行），
+  // 后端明确声明不足或返回 503 后才禁用对应写操作。
+  function kbCapabilityAllowed(connId, cap) {
+    if (kbCapabilityProbed[connId] !== 'ok') return true;
+    return kbCapabilityState(connId, cap) === 'available';
+  }
+
+  function kbCapabilityTone(status) {
+    if (status === 'available') return 'success';
+    if (status === 'unavailable') return 'error';
+    return 'neutral';
+  }
+
+  function markCapabilityUnavailable(connId, cap, reason) {
+    if (!cap) return;
+    kbCapabilityProbed[connId || ''] = 'ok';
+    kbCapabilitiesFor(connId)[cap] = 'unavailable';
+    if (reason) kbCapabilityReasons[connId + '|' + cap] = reason;
+  }
+
+  function kbNormalizeCapabilities(raw, connId) {
+    const out = {};
+    if (!raw || typeof raw !== 'object') {
+      KB_CAPABILITIES.forEach(c => { out[c.key] = 'unknown'; });
+      return out;
+    }
+    const src = raw.capabilities && typeof raw.capabilities === 'object' ? raw.capabilities : raw;
+    KB_CAPABILITIES.forEach(c => {
+      const v = src[c.key];
+      let status = 'unknown';
+      let reason = '';
+      if (typeof v === 'string') status = v;
+      else if (v && typeof v === 'object') {
+        status = v.status || 'unknown';
+        reason = v.reason || v.message || '';
+      }
+      if (['available', 'unavailable', 'unknown'].indexOf(status) < 0) status = 'unknown';
+      out[c.key] = status;
+      if (reason) kbCapabilityReasons[connId + '|' + c.key] = reason;
+    });
+    return out;
+  }
+
+  function kbHasCapabilityPayload(raw) {
+    if (!raw || typeof raw !== 'object') return false;
+    if (raw.capabilities && typeof raw.capabilities === 'object') return true;
+    return KB_CAPABILITIES.some(c => raw[c.key] !== undefined);
+  }
+
+  function kbMergeCapabilities(connId, raw) {
+    const cid = connId || '';
+    kbState.capabilitiesByConn[cid] = kbNormalizeCapabilities(raw, cid);
+    kbCapabilityProbed[cid] = kbHasCapabilityPayload(raw) ? 'ok' : 'legacy';
+    return kbState.capabilitiesByConn[cid];
+  }
+
+  // 503 capability_unavailable：把对应连接的能力就地降级为不可用，并提示原因。
+  function handleCapabilityError(err) {
+    if (!err || err.code !== 'capability_unavailable') return false;
+    markCapabilityUnavailable(err.connectionId || kbState.connectionFilter || '', err.capability, err.reason || err.message);
+    kbToast((err.message || '当前连接缺少该操作所需权限') + (err.reason ? '：' + err.reason : ''), true);
+    scheduleKBRender();
+    return true;
+  }
+
+  function kbToastError(err) {
+    if (!err) return;
+    if (handleCapabilityError(err)) return;
+    kbToast(err.message, true);
+  }
+
+  let kbDrawerA11yBound = false;
+  function initKBDrawerA11y() {
+    if (kbDrawerA11yBound) return;
+    kbDrawerA11yBound = true;
+    document.addEventListener('keydown', e => {
+      if (e.key !== 'Escape') return;
+      const drawer = document.getElementById('kbDrawer');
+      if (drawer && !drawer.hidden) {
+        e.preventDefault();
+        closeKBDrawer();
+      }
+    });
+    const scrim = document.getElementById('kbDrawerScrim');
+    if (scrim) scrim.addEventListener('click', closeKBDrawer);
+  }
+
+  async function loadConnectionCapabilities(connId) {
+    if (!connId || kbCapabilityFetching[connId] || kbCapabilityProbed[connId]) return;
+    kbCapabilityFetching[connId] = true;
+    try {
+      const raw = await kbAPI('/api/knowledge/connections/' + encodeURIComponent(connId) + '/capabilities');
+      kbMergeCapabilities(connId, raw);
+    } catch (err) {
+      if (err.notFound) {
+        // 能力探测路由尚未合入：标记为 legacy，徽标展示「未知」且不重复请求。
+        kbState.capabilitiesByConn[connId] = {};
+        kbCapabilityProbed[connId] = 'legacy';
+      } else if (!handleCapabilityError(err)) {
+        kbCapabilityProbed[connId] = 'unknown';
+      }
+    } finally {
+      delete kbCapabilityFetching[connId];
+    }
+  }
+
+  function kbEnsureConnectionCapabilities() {
+    kbConnections().forEach(c => {
+      if (!c || !c.id || kbCapabilityProbed[c.id] || kbCapabilityFetching[c.id]) return;
+      loadConnectionCapabilities(c.id).then(() => {
+        if (kbState.tab === 'settings') scheduleKBRender();
+      });
+    });
+  }
+
+  function kbCapabilityBadges(connId) {
+    return `<div class="kb-cap-bar">${KB_CAPABILITIES.map(c => {
+      const st = kbCapabilityState(connId, c.key);
+      const reason = kbCapabilityReason(connId, c.key);
+      const fallback = st === 'available' ? `${c.label}可用` : (st === 'unavailable' ? `${c.label}不可用` : `${c.label}能力未知`);
+      return `<span class="hui-badge" data-tone="${kbCapabilityTone(st)}" data-size="sm" title="${kbEsc(reason || fallback)}">${kbEsc(c.label)}</span>`;
+    }).join('')}</div>`;
+  }
+
+  async function kbProbeConnection(connId, button) {
+    if (!connId) return;
+    if (button) button.disabled = true;
+    try {
+      const res = await kbAPI('/api/knowledge/check', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ connectionId: connId })
+      });
+      kbMergeCapabilities(connId, res);
+      const ok = !res || res.ok !== false;
+      kbToast(ok ? '连接探测完成' : (res.error || '连接不可用'), !ok);
+      scheduleKBRender();
+    } catch (err) {
+      kbToastError(err);
+      scheduleKBRender();
+    } finally {
+      if (button) button.disabled = false;
+    }
   }
 
   function isWeKnora() {
@@ -89,17 +319,37 @@
     }
   }
 
+  function kbDrawerFocusables(drawer) {
+    return drawer.querySelectorAll('button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])');
+  }
+
   function closeKBDrawer() {
     const drawer = document.getElementById('kbDrawer');
+    const scrim = document.getElementById('kbDrawerScrim');
     if (!drawer) return;
+    drawer.classList.remove('open');
     drawer.hidden = true;
+    drawer.inert = true;
+    drawer.setAttribute('inert', '');
     drawer.setAttribute('aria-hidden', 'true');
+    if (scrim) {
+      scrim.hidden = true;
+      scrim.setAttribute('aria-hidden', 'true');
+    }
     drawer.innerHTML = '';
+    const trigger = kbState.drawerTriggerEl;
+    kbState.drawerTriggerEl = null;
+    if (trigger && typeof trigger.focus === 'function' && document.contains(trigger)) trigger.focus();
   }
 
   function openKBDrawer(title, bodyHTML, footHTML) {
     const drawer = document.getElementById('kbDrawer');
+    const scrim = document.getElementById('kbDrawerScrim');
     if (!drawer) return;
+    const active = document.activeElement;
+    if (active && active !== document.body && !drawer.contains(active)) {
+      kbState.drawerTriggerEl = active;
+    }
     drawer.innerHTML = `
       <div class="kb-drawer-head">
         <h3>${kbEsc(title)}</h3>
@@ -109,8 +359,19 @@
       ${footHTML ? `<div class="kb-drawer-foot">${footHTML}</div>` : ''}
     `;
     drawer.hidden = false;
+    drawer.inert = false;
+    drawer.removeAttribute('inert');
     drawer.setAttribute('aria-hidden', 'false');
+    if (scrim) {
+      scrim.hidden = false;
+      scrim.setAttribute('aria-hidden', 'false');
+    }
+    const reveal = () => drawer.classList.add('open');
+    if (typeof requestAnimationFrame === 'function') requestAnimationFrame(reveal);
+    else reveal();
     drawer.querySelector('[data-kb-drawer-close]')?.addEventListener('click', closeKBDrawer);
+    const first = kbDrawerFocusables(drawer)[0];
+    if (first && typeof first.focus === 'function') first.focus();
   }
 
   async function loadKnowledgeView() {
@@ -639,7 +900,7 @@
       <div class="kb-panel">
         <div class="kb-panel-head"><h2>已连接的知识库实例（${s.connections.length}）</h2></div>
         <table class="kb-table">
-          <thead><tr><th>名称</th><th>登录邮箱</th><th>引擎</th><th>服务地址</th><th>凭据</th><th>操作</th></tr></thead>
+          <thead><tr><th>名称</th><th>登录邮箱</th><th>引擎</th><th>服务地址</th><th>凭据</th><th>能力状态</th><th>操作</th></tr></thead>
           <tbody>
             ${s.connections.map(c => `
               <tr>
@@ -648,7 +909,13 @@
                 <td>${kbEsc(c.provider || 'weknora')}</td>
                 <td class="kb-muted">${kbEsc(c.url)}</td>
                 <td>${c.tokenConfigured ? '<span class="hui-badge" data-tone="success">已配置</span>' : '<span class="hui-badge" data-tone="warn">未配置</span>'}</td>
-                <td><button type="button" class="kb-btn" data-kb-del-conn="${kbEsc(c.id)}">移除</button></td>
+                <td>${kbCapabilityBadges(c.id)}</td>
+                <td>
+                  <div class="kb-row-actions">
+                    <button type="button" class="kb-btn xs" data-kb-probe-conn="${kbEsc(c.id)}">探测</button>
+                    <button type="button" class="kb-btn danger-outline xs" data-kb-del-conn="${kbEsc(c.id)}">移除</button>
+                  </div>
+                </td>
               </tr>
             `).join('')}
           </tbody>
@@ -766,13 +1033,31 @@
       }
     });
 
+    container.querySelectorAll('[data-kb-probe-conn]').forEach(btn => {
+      btn.addEventListener('click', () => kbProbeConnection(btn.dataset.kbProbeConn, btn));
+    });
+
     container.querySelectorAll('[data-kb-del-conn]').forEach(btn => {
       btn.addEventListener('click', async () => {
+        const connId = btn.dataset.kbDelConn;
+        const conn = kbConnections().find(c => c.id === connId);
+        const name = (conn && (conn.name || conn.id)) || connId;
+        const confirmed = typeof afConfirm === 'function'
+          ? await afConfirm({
+            title: '移除知识库连接',
+            message: `确定移除「${name}」吗？仅解除平台接入，不会删除远端知识库与文档。`,
+            danger: true,
+            confirmText: '移除连接'
+          })
+          : false;
+        if (!confirmed) return;
         try {
-          await kbAPI('/api/knowledge/connections/' + encodeURIComponent(btn.dataset.kbDelConn), { method: 'DELETE' });
+          await kbAPI('/api/knowledge/connections/' + encodeURIComponent(connId), { method: 'DELETE' });
+          delete kbState.capabilitiesByConn[connId];
+          delete kbCapabilityProbed[connId];
           kbToast('已移除连接');
           await loadKnowledgeView();
-        } catch (err) { kbToast(err.message, true); }
+        } catch (err) { kbToastError(err); }
       });
     });
 
@@ -827,7 +1112,10 @@
         kbToast(err.message, true);
       }
     });
+
+    kbEnsureConnectionCapabilities();
   }
 
+  initKBDrawerA11y();
   window.loadKnowledgeView = loadKnowledgeView;
 })();

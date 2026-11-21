@@ -261,5 +261,19 @@ Object.assign(window.LF_I18N_EN,{
   "回答已引用":"Cited in reply",
   "知识库调用":"Knowledge calls",
   "证据":"Evidence",
-  "提示":"Notice"
+  "提示":"Notice",
+  "能力状态":"Capabilities",
+  "探测":"Probe",
+  "库管理":"KB management",
+  "文档写入":"Document write",
+  "分块读取":"Chunk read",
+  "预览下载":"Preview & download",
+  "移除连接":"Remove connection",
+  "移除知识库连接":"Remove knowledge base connection",
+  "连接探测完成":"Connection probe complete",
+  "已移除连接":"Connection removed",
+  "连接不可用":"Connection unavailable",
+  "凭据":"Credentials",
+  "登录邮箱":"Account email",
+  "引擎":"Engine"
 });
