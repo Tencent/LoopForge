@@ -269,6 +269,44 @@ func TestConversationClaudeRunnerLoginImageInputFrameLimit(t *testing.T) {
 		})
 	}
 
+	t.Run("Runner root expands a near-limit frame", func(t *testing.T) {
+		path := writePNG("near-limit.png", 1530)
+		paths := []string{path}
+		prompt := "Read " + path + "\n"
+		sample, err := assistantStreamImageInput(prompt, paths)
+		if err != nil {
+			t.Fatal(err)
+		}
+		const limit = runtime.ClaudeLoginMaxInputLine
+		padding := limit - sample.Len() - 4
+		if padding <= 0 || !runtime.PromptFitsArgv(len(prompt)+padding) {
+			t.Fatalf("unexpected size for near-limit PNG fixture: %d", sample.Len())
+		}
+		prompt += strings.Repeat("a", padding)
+		inv, err := prepareAssistantClaudeInvocation(assistantEngineInvocationOpts{
+			Bin: "claude", Root: root, Config: config, Prompt: prompt, ImagePaths: paths, RunnerLogin: true,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		input, ok := inv.command.Stdin.(*assistantLimitedImageInput)
+		if !ok || input.Len() != limit-4 {
+			t.Fatal("the frame should fit before the Runner remaps the path")
+		}
+		same, err := input.fit(inv.command, root, root)
+		if err != nil || same.Stdin != input {
+			t.Fatalf("unchanged root lost inline image data: %v", err)
+		}
+		target := filepath.Join(root, "a-much-longer-runner-layout", "conversations", "test")
+		if got := len(strings.ReplaceAll(input.String(), root, target)); got < limit {
+			t.Fatalf("rewritten fixture did not cross the frame limit: %d", got)
+		}
+		fallback, err := input.fit(inv.command, root, target)
+		if err != nil || fallback.Stdin != nil || slices.Contains(fallback.Argv, "--input-format") || fallback.Argv[len(fallback.Argv)-1] != prompt {
+			t.Fatalf("the Runner should receive the paths-only fallback: %v", err)
+		}
+	})
+
 	prompt := strings.Repeat("text ", 28<<10) + "Read " + large
 	inv, err := prepareAssistantClaudeInvocation(assistantEngineInvocationOpts{
 		Bin: "claude", Root: root, Config: config, Prompt: prompt, ImagePaths: []string{large}, RunnerLogin: true,

@@ -205,8 +205,15 @@ func (h *assistantHandlers) conversationExecutor(s *AgentToolSession, root strin
 				_, _ = call(cleanup, runtime.ConversationProcessRequest{Operation: "discard"})
 			}()
 		}
-		if _, err := call(ctx, runtime.ConversationProcessRequest{Operation: "prepare"}); err != nil {
+		prepared, err := call(ctx, runtime.ConversationProcessRequest{Operation: "prepare"})
+		if err != nil {
 			return "", err
+		}
+		if input, ok := command.Stdin.(*assistantLimitedImageInput); ok {
+			command, err = input.fit(command, root, prepared.Root)
+			if err != nil {
+				return "", err
+			}
 		}
 		if s.ExecutionRunnerID != "" {
 			files, err := conversationInputFiles(root)

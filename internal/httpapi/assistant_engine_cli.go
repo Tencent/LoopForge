@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -253,22 +254,56 @@ func withAssistantStreamImageInput(command runtime.CommandSpec, prompt string, i
 	if err != nil {
 		return runtime.CommandSpec{}, err
 	}
-	if frameLimit > 0 && input.Len() >= frameLimit {
-		// The prompt already includes the staged paths, so Claude can use Read.
-		if runtime.PromptFitsArgv(len(prompt)) {
-			return command, nil
-		}
-		// The runner login bridge expects stream-json even when the prompt
-		// also has to be moved to stdin.
-		input, err = assistantStreamImageInput(prompt, nil)
-		if err != nil {
-			return runtime.CommandSpec{}, err
-		}
-	}
-	// The invocations above terminate with "--", prompt. The structured
-	// message replaces the positional prompt while preserving the delimiter.
-	command.Argv = appendNativeArgs(command.Argv[:len(command.Argv)-1], "--input-format", "stream-json")
+	positional := command.Argv
+	// Replace the positional prompt while preserving the delimiter.
+	command.Argv = appendNativeArgs(positional[:len(positional)-1], "--input-format", "stream-json")
 	command.Stdin = input
+	if frameLimit == 0 {
+		return command, nil
+	}
+	limited := &assistantLimitedImageInput{
+		Buffer: input, limit: frameLimit, prompt: prompt, positional: positional,
+	}
+	command.Stdin = limited
+	return limited.fit(command, "", "")
+}
+
+// A managed Claude login bridge reads one NDJSON frame at a time. Keep the
+// paths-only fallback until Runner prepare returns its conversation root.
+type assistantLimitedImageInput struct {
+	*bytes.Buffer
+	limit      int
+	prompt     string
+	positional []string
+}
+
+func (input *assistantLimitedImageInput) fit(command runtime.CommandSpec, source, target string) (runtime.CommandSpec, error) {
+	delta := len(target) - len(source)
+	remappedSize := func(data []byte) int {
+		if source == "" || target == "" || delta == 0 {
+			return len(data)
+		}
+		return len(data) + bytes.Count(data, []byte(source))*delta
+	}
+	if remappedSize(input.Bytes()) < input.limit {
+		return command, nil
+	}
+
+	// The prompt includes the staged paths, so the CLI can read the images.
+	if runtime.PromptFitsArgv(remappedSize([]byte(input.prompt))) {
+		command.Argv = input.positional
+		command.Stdin = nil
+		return command, nil
+	}
+	// Large prompts still need stream-json on stdin for the login bridge.
+	text, err := assistantStreamImageInput(input.prompt, nil)
+	if err != nil {
+		return runtime.CommandSpec{}, err
+	}
+	if remappedSize(text.Bytes()) >= input.limit {
+		return runtime.CommandSpec{}, fmt.Errorf("Claude Code 输入超过限制")
+	}
+	command.Stdin = text
 	return command, nil
 }
 
