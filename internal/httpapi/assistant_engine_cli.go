@@ -222,7 +222,11 @@ func prepareAssistantClaudeInvocation(o assistantEngineInvocationOpts) (assistan
 	argv = append(argv, "--", o.Prompt)
 	command := runtime.CommandSpec{Argv: argv, Provider: "claude-code", CredentialBindings: []runtime.CredentialBinding{runtime.BindClaudeCode}}
 	if len(o.ImagePaths) > 0 {
-		command, err = withAssistantStreamImageInput(command, o.Prompt, o.ImagePaths)
+		frameLimit := 0
+		if o.RunnerLogin {
+			frameLimit = runtime.ClaudeLoginMaxInputLine
+		}
+		command, err = withAssistantStreamImageInput(command, o.Prompt, o.ImagePaths, frameLimit)
 		if err != nil {
 			return assistantCLIInvocation{}, err
 		}
@@ -235,10 +239,22 @@ func prepareAssistantClaudeInvocation(o assistantEngineInvocationOpts) (assistan
 	}, nil
 }
 
-func withAssistantStreamImageInput(command runtime.CommandSpec, prompt string, imagePaths []string) (runtime.CommandSpec, error) {
+func withAssistantStreamImageInput(command runtime.CommandSpec, prompt string, imagePaths []string, frameLimit int) (runtime.CommandSpec, error) {
 	input, err := assistantStreamImageInput(prompt, imagePaths)
 	if err != nil {
 		return runtime.CommandSpec{}, err
+	}
+	if frameLimit > 0 && input.Len() >= frameLimit {
+		// The prompt already includes the staged paths, so Claude can use Read.
+		if runtime.PromptFitsArgv(len(prompt)) {
+			return command, nil
+		}
+		// The runner login bridge expects stream-json even when the prompt
+		// also has to be moved to stdin.
+		input, err = assistantStreamImageInput(prompt, nil)
+		if err != nil {
+			return runtime.CommandSpec{}, err
+		}
 	}
 	// The invocations above terminate with "--", prompt. The structured
 	// message replaces the positional prompt while preserving the delimiter.

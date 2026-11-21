@@ -265,9 +265,6 @@ func (h *agentToolGateway) callTool(ctx context.Context, session *AgentToolSessi
 	if session.terminalToolsOnly() {
 		return nil, errAgentToolForbidden
 	}
-	if name == assistantReadImageTool {
-		return assistantReadImage(session, params.Arguments)
-	}
 	if name == "workbench_tool_schema" && session.Mode == AgentToolAssistant {
 		var input struct {
 			Name string `json:"name"`

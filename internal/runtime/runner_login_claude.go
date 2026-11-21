@@ -13,6 +13,9 @@ import (
 	"time"
 )
 
+// ClaudeLoginMaxInputLine is the runner login bridge's NDJSON frame limit.
+const ClaudeLoginMaxInputLine = 8 << 20
+
 // Claude's host-refresh control channel stays on process stdin/stdout, including
 // docker exec -i. Refresh tokens never cross this channel or enter a sandbox.
 type claudeLoginBridge struct {
@@ -93,7 +96,7 @@ func (b *claudeLoginBridge) start() {
 			return
 		}
 		scanner := bufio.NewScanner(b.input)
-		scanner.Buffer(make([]byte, 16<<10), 8<<20)
+		scanner.Buffer(make([]byte, 16<<10), ClaudeLoginMaxInputLine)
 		for scanner.Scan() {
 			b.writeMu.Lock()
 			_, err := b.writer.Write(append(append([]byte(nil), scanner.Bytes()...), '\n'))

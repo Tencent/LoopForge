@@ -90,7 +90,7 @@ type AgentCLICommandOptions struct {
 	Prompt string
 	// ImagePaths are already staged in the conversation's attachment directory.
 	ImagePaths []string
-	// Historical images remain available through the session MCP or journal.
+	// Historical images remain available through the session journal or path.
 	ImageInput bool
 	// SystemPrompt is the system prompt body; SystemPromptFile is the same
 	// text as a path the process can read.

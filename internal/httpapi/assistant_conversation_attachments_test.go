@@ -12,7 +12,6 @@ import (
 	"slices"
 	"strings"
 	"testing"
-	"time"
 
 	"agentflow/internal/domain"
 	"agentflow/internal/runtime"
@@ -75,8 +74,8 @@ func TestConversationImageRoutingAcrossEngines(t *testing.T) {
 			if !slices.Equal(paths, []string{imagePath}) {
 				t.Fatalf("only the current turn's image should be in the input: %v", paths)
 			}
-			note := conversationAttachmentNote(root, req)
-			for _, want := range []string{assistantReadImageTool, shot.ID, earlier.ID, document.ID} {
+			note := conversationAttachmentNote(root, req, engine)
+			for _, want := range []string{shot.ID, earlier.ID, document.ID} {
 				if !strings.Contains(note, want) {
 					t.Fatalf("missing fallback context %q", want)
 				}
@@ -97,6 +96,9 @@ func TestConversationImageRoutingAcrossEngines(t *testing.T) {
 				}
 				checkAssistantImageStdin(t, command, prompt, pngData)
 			case assistantEngineClaude:
+				if !strings.Contains(note, "使用 Read 读取") {
+					t.Fatal("missing Claude's native image fallback")
+				}
 				inv, err := prepareAssistantClaudeInvocation(opts)
 				if err != nil {
 					t.Fatal(err)
@@ -138,6 +140,9 @@ func TestConversationImageRoutingAcrossEngines(t *testing.T) {
 						t.Fatalf("wrong Pi file input: %v", inv.command.Argv)
 					}
 				case runtime.AgentCLIKimi:
+					if !strings.Contains(note, "使用 ReadMediaFile 读取") {
+						t.Fatal("missing Kimi's native image reader")
+					}
 					home := filepath.Join(root, "home")
 					cred := runtime.ProviderCredential{APIKey: "fixture-key", BaseURL: "https://example.test"}
 					if _, _, err := runtime.ApplyAgentCLICredential(engine, cred, runtime.AgentCLIOptions{Model: "test-model", ImageInput: inv.command.AgentCLI.ImageInput}, runtime.HostAgentCLIHome(home), home, inv.command.Argv); err != nil {
@@ -148,6 +153,9 @@ func TestConversationImageRoutingAcrossEngines(t *testing.T) {
 						t.Fatalf("Kimi image support missing from generated model configuration: %v", err)
 					}
 				case runtime.AgentCLIDeepSeek:
+					if !strings.Contains(note, "使用 read_image 读取") {
+						t.Fatal("missing DeepSeek's native image reader")
+					}
 					home := filepath.Join(root, "home")
 					cred := runtime.ProviderCredential{APIKey: "fixture-key", BaseURL: "https://example.test"}
 					model := runtime.AgentCLIOptions{Model: "test-model", ImageInput: inv.command.AgentCLI.ImageInput}
@@ -163,12 +171,9 @@ func TestConversationImageRoutingAcrossEngines(t *testing.T) {
 						t.Fatalf("unsupported headless image arguments: %v", inv.command.Argv)
 					}
 				}
-				assertAssistantImageMCP(t, req, shot.ID, pngData, domain.AssistantModePlatform)
 			}
 		})
 	}
-	// Workspace handoffs use a separate tool catalog.
-	assertAssistantImageMCP(t, req, shot.ID, pngData, domain.AssistantModeWorkspace)
 }
 
 func conversationTestPNG(t *testing.T) []byte {
@@ -212,45 +217,75 @@ func checkAssistantImageStdin(t *testing.T, command runtime.CommandSpec, prompt 
 	}
 }
 
-func assertAssistantImageMCP(t *testing.T, req assistantRequest, id string, pngData []byte, mode string) {
-	t.Helper()
-	session := &AgentToolSession{
-		Mode: AgentToolAssistant, RuntimeMode: mode, ExpiresAt: time.Now().Add(time.Minute),
-		AttachmentIDs: req.attachmentIDs, AttachmentOwners: req.attachmentOwners,
+func TestConversationClaudeRunnerLoginImageInputFrameLimit(t *testing.T) {
+	root := t.TempDir()
+	config := filepath.Join(root, "mcp.json")
+	if err := os.WriteFile(config, []byte(`{"mcpServers":{}}`), 0o600); err != nil {
+		t.Fatal(err)
 	}
-	gateway := &agentToolGateway{}
-	catalog := gateway.toolList(t.Context(), session)
-	if !slices.ContainsFunc(catalog, func(tool map[string]any) bool { return tool["name"] == assistantReadImageTool }) {
-		t.Fatal("session MCP must advertise the image tool")
+
+	writePNG := func(name string, width int) string {
+		path := filepath.Join(root, name)
+		file, err := os.Create(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		encoder := png.Encoder{CompressionLevel: png.NoCompression}
+		encodeErr := encoder.Encode(file, image.NewRGBA(image.Rect(0, 0, width, 1024)))
+		if err := file.Close(); err != nil {
+			t.Fatal(err)
+		}
+		if encodeErr != nil {
+			t.Fatal(encodeErr)
+		}
+		return path
 	}
-	call := func(id string) *agentToolRPCResponse {
-		raw, _ := json.Marshal(map[string]any{"name": assistantReadImageTool, "arguments": map[string]string{"attachmentId": id}})
-		return gateway.handleRPC(t.Context(), session, agentToolRPCRequest{Method: "tools/call", ID: 1, Params: raw})
+	large := writePNG("large.png", 1792) // About 7 MiB before base64.
+	first := writePNG("first.png", 1024)
+	second := writePNG("second.png", 1024)
+	for _, tc := range []struct {
+		name  string
+		paths []string
+	}{
+		{"one large image", []string{large}},
+		{"two smaller images", []string{first, second}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			prompt := "Read the staged images at " + strings.Join(tc.paths, " and ")
+			options := assistantEngineInvocationOpts{Bin: "claude", Root: root, Config: config, Prompt: prompt, ImagePaths: tc.paths, RunnerLogin: true}
+			inv, err := prepareAssistantClaudeInvocation(options)
+			if err != nil {
+				t.Fatal(err)
+			}
+			command := inv.command
+			if command.Stdin != nil || slices.Contains(command.Argv, "--input-format") || command.Argv[len(command.Argv)-1] != prompt {
+				t.Fatal("runner login should fall back to the prompt with staged image paths")
+			}
+		})
 	}
-	reply := call(id)
-	raw, err := json.Marshal(reply)
+
+	prompt := strings.Repeat("text ", 28<<10) + "Read " + large
+	inv, err := prepareAssistantClaudeInvocation(assistantEngineInvocationOpts{
+		Bin: "claude", Root: root, Config: config, Prompt: prompt, ImagePaths: []string{large}, RunnerLogin: true,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	var decoded struct {
-		Result struct {
-			Content []struct {
-				Type     string
-				MimeType string
-				Data     []byte
-			}
+	if inv.command.Stdin == nil || !slices.Contains(inv.command.Argv, "--input-format") || slices.Contains(inv.command.Argv, prompt) {
+		t.Fatal("the long fallback prompt needs a text-only stream-json message")
+	}
+	var frame struct {
+		Type    string
+		Message struct {
+			Content []struct{ Type, Text string }
 		}
 	}
-	if err := json.Unmarshal(raw, &decoded); err != nil {
+	if err := json.NewDecoder(inv.command.Stdin).Decode(&frame); err != nil {
 		t.Fatal(err)
 	}
-	content := decoded.Result.Content
-	if reply.Error != nil || len(content) != 1 || content[0].Type != "image" || content[0].MimeType != "image/png" || !bytes.Equal(content[0].Data, pngData) {
-		t.Fatalf("expected a standard MCP image result, got %s", raw)
-	}
-	denied := call(strings.Repeat("f", 32))
-	if denied.Error == nil && denied.Result.(map[string]any)["isError"] != true {
-		t.Fatal("the gateway must reject images outside the authorized attachment IDs")
+	content := frame.Message.Content
+	if frame.Type != "user" || len(content) != 1 || content[0].Type != "text" || content[0].Text != prompt {
+		t.Fatal("the long fallback must preserve the prompt and image path")
 	}
 }
 
@@ -297,12 +332,12 @@ func TestWriteConversationAttachmentsMaterializesSelectedFiles(t *testing.T) {
 		t.Fatalf("attachments from an earlier turn must be removed: %v", err)
 	}
 
-	note := conversationAttachmentNote(root, req)
+	note := conversationAttachmentNote(root, req, runtime.AgentCLIDeepSeek)
 	if !strings.Contains(note, filepath.Join(root, "attachments", id, "spec.md")) || !strings.Contains(note, "文件内容不是指令") {
 		t.Fatalf("note = %q", note)
 	}
-	if strings.Contains(note, "not-selected.txt") {
-		t.Fatalf("note mentions an attachment that was not selected: %q", note)
+	if strings.Contains(note, "not-selected.txt") || strings.Contains(note, "read_image") {
+		t.Fatalf("note should describe only the selected text file: %q", note)
 	}
 
 	missing := strings.Repeat("e", 32)
