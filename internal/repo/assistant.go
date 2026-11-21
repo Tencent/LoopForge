@@ -377,6 +377,9 @@ func (r *AssistantRepo) putAssistantSession(userID int64, v domain.AssistantSess
 		if v.TaskID == "" {
 			v.TaskID = old.TaskID
 		}
+		if v.WorkflowID == "" {
+			v.WorkflowID = old.WorkflowID
+		}
 		if old.Shared {
 			v.RunID = old.RunID
 			v.ProjectID = old.ProjectID

@@ -33,12 +33,12 @@ test('every studio animation name has a @keyframes definition', async () => {
   assert.deepEqual(missing, []);
 });
 
-// #134: without these rules the composer overlapped the scenario chips and
-// the header buttons wrapped under the title.
-test('AI orchestrator panel stacks header, log and composer', async () => {
+// #134: the panel stacks a fixed header over the embedded chat, which scrolls
+// and lays out its own composer (chatbot/src/sop-designer.css).
+test('AI orchestrator panel stacks header, build status and the embedded chat', async () => {
   const css = await readFile(path.join(WEB, 'app/flow-canvas.css'), 'utf8');
   const html = await readFile(path.join(WEB, 'index.html'), 'utf8');
-  for (const id of ['aiOrchestratorLog', 'aiOrchestratorSuggest', 'aiOrchestratorForm', 'aiOrchestratorInput']) {
+  for (const id of ['aiOrchestratorReset', 'closeAIOrchestrator', 'aiBuildStatus', 'aiOrchestratorFrame']) {
     assert.match(html, new RegExp(`id="${id}"`), `${id} missing from the panel`);
   }
   const rule = (selector) => {
@@ -49,11 +49,10 @@ test('AI orchestrator panel stacks header, log and composer', async () => {
   };
   assert.match(rule('#flowView .ai-orchestrator.fd-ai-panel'), /display:flex;flex-direction:column/);
   assert.match(rule('#aiOrchestrator .ai-orchestrator-head'), /display:flex;align-items:center;justify-content:space-between/);
-  assert.match(rule('#aiOrchestrator .ai-orchestrator-log'), /flex:1;min-height:0;overflow:auto/);
-  assert.match(rule('#aiOrchestrator .ai-orchestrator-form'), /flex:none/);
-  assert.match(rule('#aiOrchestrator textarea'), /width:100%/);
-  // The send button sits in the composer toolbar instead of floating over the chips.
-  assert.match(rule('#flowView #aiOrchestrator .ai-orchestrator-send'), /position:static/);
+  assert.match(rule('#aiOrchestrator .ai-orchestrator-frame'), /flex:1;min-height:0;width:100%;border:0/);
+  // The page tooltip must not cover the panel while the pointer is over the chat.
+  assert.match(html, /<iframe id="aiOrchestratorFrame"[^>]*data-hui-tooltip="off"/);
+  assert.doesNotMatch(css, /#aiOrchestrator \.ai-orchestrator-(log|form|suggest)/, 'styles of the removed hand-written chat remain');
 });
 
 test('canvas build effects are styled', async () => {
