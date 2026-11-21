@@ -55,6 +55,8 @@ Run it as the installation owner, including an ordinary Linux user. If that user
 
 `compose.yaml` is the published-image stack and never builds: `./start.sh`, `scripts/install.sh` and a plain `docker compose --profile platform up` all pull the GHCR release pinned there (currently `ghcr.io/tencent/loopforge:0.4.0`). The pin matches the checkout's migrations and seeds, so check out a release tag when you install. Set `LOOPFORGE_IMAGE` (for example to an `@sha256:` digest) only to override it; a value saved in `.env` takes precedence over later pin changes.
 
+Set `AGENTFLOW_WORKER_CONCURRENCY` to a positive integer in `.env` to tune the Compose platform worker's concurrent sandbox command limit (default `8`). Recreate the platform container with `docker compose --profile platform up -d platform` after changing it. These slots are shared across projects on that worker; project run admission and each connected execution machine keep their own limits. Native installations can pass `-worker-concurrency N` to the platform binary.
+
 To upgrade, update the checkout first, then refresh the containers:
 
 ```bash

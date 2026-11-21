@@ -48,7 +48,7 @@ services:
       AGENTFLOW_GATE_MCP_BINARY: /app/bin/agentflow-gate-mcp-{os}-{arch}
       # Claude Code is not bundled; it is installed from npm here on first use.
       AGENTFLOW_RUNTIME_CLI_DIR: ${LOOPFORGE_DATA_DIR}/cli
-    command: ["-workspaces", "${LOOPFORGE_DATA_DIR}/workspaces"]
+    command: ["-workspaces", "${LOOPFORGE_DATA_DIR}/workspaces", "-worker-concurrency", "${AGENTFLOW_WORKER_CONCURRENCY:-8}"]
     volumes:
       - platform-data:/data
       # Docker sandboxes bind workspace paths on the host, so the data
