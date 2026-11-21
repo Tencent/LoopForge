@@ -204,31 +204,59 @@ func (c *Client) ListTools() ([]Tool, error) {
 	return c.ListToolsContext(context.Background())
 }
 
+const maxToolPages = 100
+
 // ListToolsContext is ListTools with a caller-supplied deadline/cancellation.
 func (c *Client) ListToolsContext(ctx context.Context) ([]Tool, error) {
 	if err := c.ensureInit(ctx); err != nil {
 		return nil, fmt.Errorf("mcp init: %w", err)
 	}
+	var tools []Tool
+	seen := make(map[string]bool)
+	cursor := ""
+	for pageNumber := 0; pageNumber < maxToolPages; pageNumber++ {
+		page, next, err := c.listToolsPage(ctx, cursor)
+		if err != nil {
+			return nil, err
+		}
+		tools = append(tools, page...)
+		if next == "" {
+			return tools, nil
+		}
+		if seen[next] {
+			return nil, fmt.Errorf("mcp tools/list repeated its pagination cursor")
+		}
+		seen[next] = true
+		cursor = next
+	}
+	return nil, fmt.Errorf("mcp tools/list exceeded %d pages", maxToolPages)
+}
+
+func (c *Client) listToolsPage(ctx context.Context, cursor string) ([]Tool, string, error) {
 	c.mu.Lock()
 	c.nextID++
 	id := c.nextID
 	c.mu.Unlock()
+	params := map[string]any{}
+	if cursor != "" {
+		params["cursor"] = cursor
+	}
 	req := rpcRequest{
 		JSONRPC: "2.0",
 		ID:      id,
 		Method:  "tools/list",
-		Params:  map[string]any{},
+		Params:  params,
 	}
 	body, err := json.Marshal(req)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", c.url, bytes.NewReader(body))
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Accept", "application/json, text/event-stream")
@@ -237,31 +265,32 @@ func (c *Client) ListToolsContext(ctx context.Context) ([]Tool, error) {
 	}
 	resp, err := c.http.Do(httpReq)
 	if err != nil {
-		return nil, fmt.Errorf("mcp tools/list: %w", err)
+		return nil, "", fmt.Errorf("mcp tools/list: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 8*1024))
-		return nil, fmt.Errorf("gateway HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		return nil, "", fmt.Errorf("gateway HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 	raw, err := c.readResponse(resp)
 	if err != nil {
-		return nil, fmt.Errorf("mcp tools/list: %w", err)
+		return nil, "", fmt.Errorf("mcp tools/list: %w", err)
 	}
 	var rpcResp rpcResponse
 	if err := json.Unmarshal(raw, &rpcResp); err != nil {
-		return nil, fmt.Errorf("mcp decode tools/list: %w (body: %s)", err, string(raw))
+		return nil, "", fmt.Errorf("mcp decode tools/list: %w (body: %s)", err, string(raw))
 	}
 	if rpcResp.Error != nil {
-		return nil, fmt.Errorf("mcp tools/list error [%d]: %s", rpcResp.Error.Code, rpcResp.Error.Message)
+		return nil, "", fmt.Errorf("mcp tools/list error [%d]: %s", rpcResp.Error.Code, rpcResp.Error.Message)
 	}
 	var result struct {
-		Tools []Tool `json:"tools"`
+		Tools      []Tool `json:"tools"`
+		NextCursor string `json:"nextCursor"`
 	}
 	if err := json.Unmarshal(rpcResp.Result, &result); err != nil {
-		return nil, fmt.Errorf("mcp tools/list result: %w", err)
+		return nil, "", fmt.Errorf("mcp tools/list result: %w", err)
 	}
-	return result.Tools, nil
+	return result.Tools, result.NextCursor, nil
 }
 
 func (c *Client) ensureInit(ctx context.Context) error {
