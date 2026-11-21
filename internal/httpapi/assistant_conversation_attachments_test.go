@@ -139,6 +139,11 @@ func TestConversationImageRoutingAcrossEngines(t *testing.T) {
 					if !slices.Contains(inv.command.Argv, "@"+imagePath) || !inv.command.AgentCLI.ImageInput {
 						t.Fatalf("wrong Pi file input: %v", inv.command.Argv)
 					}
+				case runtime.AgentCLIZCode:
+					index := slices.Index(inv.command.Argv, "--attach")
+					if index < 0 || !slices.Equal(inv.command.Argv[index:], []string{"--attach", imagePath}) {
+						t.Fatalf("wrong ZCode file input: %v", inv.command.Argv)
+					}
 				case runtime.AgentCLIKimi:
 					if !strings.Contains(note, "使用 ReadMediaFile 读取") {
 						t.Fatal("missing Kimi's native image reader")

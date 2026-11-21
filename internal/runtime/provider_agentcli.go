@@ -249,6 +249,9 @@ func AgentCLICommand(kind string, o AgentCLICommandOptions) CommandSpec {
 		if resume != "" {
 			argv = append(argv, "--resume", resume)
 		}
+		for _, path := range o.ImagePaths {
+			argv = append(argv, "--attach", path)
+		}
 		argv = append(argv, extra...)
 	}
 	return CommandSpec{Argv: argv, Provider: kind, AgentCLI: options}
