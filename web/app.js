@@ -737,12 +737,25 @@ function scopedWorkflows(){
   return all.filter(w=>!catalogGeneric(w)&&catalogOwned(w.projectId));
 }
 function catalogAgents(){return (state.data?.agents||[]).filter(a=>catalogVisible(a.projectId,a.shared))}
+function projectWorkflowAgent(agent,projectId){
+  return !!agent.projectId&&(agent.projectId===projectId||agent.shared);
+}
 function workflowAgents(){
   if(catalogGeneric(state.workflow))return state.genericTemplateAgents||[];
   const projectId=state.workflow?.projectId||state.projectFilter||'';
-  return (state.data?.agents||[]).filter(a=>!!a.projectId&&(a.projectId===projectId||(a.shared&&a.projectId!==projectId)));
+  return (state.data?.agents||[]).filter(a=>projectWorkflowAgent(a,projectId));
 }
 function workflowAgent(id){return workflowAgents().find(a=>a.id===id)}
+async function refreshWorkflowAgents(){
+  const wf=state.workflow;
+  if(catalogGeneric(wf))return hydrateGenericWorkflowRoles(wf);
+  const projectId=wf?.projectId||state.projectFilter;
+  if(!projectId)return;
+  const agents=await api('/api/agents?projectId='+encodeURIComponent(projectId),{silent:true});
+  if(state.workflow!==wf)return;
+  const ids=new Set(agents.map(a=>a.id));
+  state.data.agents=(state.data.agents||[]).filter(a=>!projectWorkflowAgent(a,projectId)&&!ids.has(a.id)).concat(agents);
+}
 function clearGenericTemplateAgents(){state.genericTemplateAgents=[];state.genericTemplateAgentWorkflowId=''}
 async function hydrateGenericWorkflowRoles(wf=state.workflow){
   if(!catalogGeneric(wf)){
@@ -1097,7 +1110,7 @@ function bind(){
 	$('#refreshDashboard').onclick=refreshDashboard;
 	$('#refreshIssues').onclick=refreshIssues;
 	$('#refreshSOPs').onclick=refreshWorkflowMetrics;
-  $('#agentSearch').oninput=renderAgents;$('#agentPrev').onclick=agentWizardPrev;$('#agentNext').onclick=agentWizardNext;$$('[data-wizard-steps="agent"] [data-agent-tab]').forEach(b=>b.onclick=()=>setAgentTab(b.dataset.agentTab));$$('[data-wizard-steps="agent-create"] [data-create-step]').forEach(b=>b.onclick=()=>{if(!b.disabled)setAgentCreateStep(Number(b.dataset.createStep))});bindAgentModalInputs();$$('.agent-close').forEach(b=>b.onclick=()=>$('#agentModal').classList.remove('open'));
+  $('#agentSearch').oninput=renderAgents;$('#agentPrev').onclick=agentWizardPrev;$('#agentNext').onclick=agentWizardNext;$$('[data-wizard-steps="agent"] [data-agent-tab]').forEach(b=>b.onclick=()=>setAgentTab(b.dataset.agentTab));$$('[data-wizard-steps="agent-create"] [data-create-step]').forEach(b=>b.onclick=()=>{if(!b.disabled)setAgentCreateStep(Number(b.dataset.createStep))});bindAgentModalInputs();$$('.agent-close').forEach(b=>b.onclick=closeAgentWizard);
   $('#newRunFromRuns')&&($('#newRunFromRuns').onclick=()=>switchView('issues'));
   $('#runSearch').oninput=e=>{state.runQuery=e.target.value.trim().toLowerCase();resetListPage('runs');renderRuns()};
   $('#runWorkflowFilter').onchange=e=>{state.runWorkflowFilter=e.target.value;resetListPage('runs');renderRuns()};
@@ -1303,6 +1316,7 @@ function bind(){
       }
       const open=[...$$('.modal.open')].pop();
       if(open?.id==='scheduleModal')return closeScheduleJobModal();
+      if(open?.id==='agentModal')return closeAgentWizard();
       if(open)return open.classList.remove('open');
       const panel=$('#flowSettingsPanel');
       if(panel&&!panel.hidden){panel.hidden=true;$('#flowSettingsToggle')?.classList.remove('active');return}
@@ -1825,14 +1839,14 @@ function applyAssetRoute(){
 }
 async function applyAgentRoute(){
   const id=agentRouteId();
-  if(!id)return;
+  if(!id){$('#agentModal')?.classList.remove('open');return}
   try{
     const agent=await api(`/api/agents/${encodeURIComponent(id)}`);
     if(agentRouteId()!==id||activeViewName()!=='agents')return;
     const index=(state.data.agents||[]).findIndex(a=>a.id===id);
     if(index>=0)state.data.agents[index]=agent;else state.data.agents.push(agent);
-    openAgentWizard(agent);
-  }catch(error){toast(error.message,'err')}
+    openAgentWizard(agent,routePart(2)==='gov'?3:1,{loaded:true});
+  }catch(error){if(agentRouteId()===id)toast(error.message,'err')}
 }
 // Only SOPs visible in the active project can be restored from the URL or localStorage.
 function openableWorkflow(id){return id?catalogWorkflows().find(w=>w.id===id)||null:null}
@@ -1880,7 +1894,7 @@ function persistView(name,push=false){
     if(linked)next=runViewHash(linked);
   }
   if(name==='flow')next=flowViewHash();
-  if(name==='agents'&&agentRouteId())next=`#/agents/${encodeURIComponent(agentRouteId())}`;
+  if(name==='agents'&&agentRouteId())next=`#/agents/${encodeURIComponent(agentRouteId())}${routePart(2)==='gov'?'/gov':''}`;
   if(isProjectSharedAsset(name)&&routePart(0)===name&&assetRouteId())next=`#/${name}/${encodeURIComponent(assetRouteId())}`;
   if(name==='projects')next=projectAdminHash(state.projectAdminDetailId||'',state.projectAdminTab);
   if(name==='collaboration'){
@@ -1910,6 +1924,7 @@ function switchView(name){
   // 手敲 #/platform 或者从别的账号留下的 localStorage 恢复进来，都要挡住。
   if(name==='platform'&&!isPlatformAdmin())name='collaboration';
   const previous=activeViewName();
+  if(previous==='agents'&&name!=='agents')$('#agentModal')?.classList.remove('open');
   if(!settingsRouteApplying){
     const crossingSettings=previous!==name&&((previous==='collaboration'&&isSettingsManagementView(name))||(isSettingsManagementView(previous)&&name==='collaboration'));
     if(crossingSettings&&!settingsRouteMotion.matches){startSettingsRouteTransition(name);return}

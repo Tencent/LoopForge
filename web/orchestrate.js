@@ -16,6 +16,7 @@ const AI_MESSAGES = {
   reply: 'agentflow-sop-designer-reply',
   end: 'agentflow-sop-designer-end',
   place: 'agentflow-sop-designer-place',
+  role: 'agentflow-sop-designer-role',
   reset: 'agentflow-sop-designer-reset'
 };
 
@@ -238,10 +239,11 @@ function openAIOrchestrator() {
 
 function abortAIBuild() {
   const build = aiBuild;
+  const restore = isCurrentAIBuild(build);
   aiBuildToken++;
-  if (build) restoreAIBuildFailure(build);
-  finishAIBuildVisuals();
   aiBuild = null;
+  if (restore) restoreAIBuildFailure(build);
+  finishAIBuildVisuals();
   syncCanvasAIEntry();
   setAIBuildStatus('');
 }
@@ -263,6 +265,12 @@ async function beginAIOrchestratorTurn(requestId) {
   const reply = (payload) => postToAIOrchestrator(AI_MESSAGES.begun, {requestId, ...payload});
   if (!state.projectFilter) return reply({ok: false, error: '先在顶栏选择项目'});
   if (aiBuild) return reply({ok: false, error: '画布还在生成上一轮的流程，请稍候'});
+  const context = aiOrchestratorContext();
+  await refreshWorkflowAgents().catch(() => {});
+  const current = aiOrchestratorContext();
+  if (aiBuild || context.projectId !== current.projectId || context.workflowId !== current.workflowId) {
+    return reply({ok: false, error: '画布已切换，请重试'});
+  }
   const canvas = state.workflow ? aiClone(state.workflow) : null;
   const build = await beginAIOrchestration();
   if (!build) return reply({ok: false, error: '画布暂时不能编排'});
@@ -290,7 +298,16 @@ async function handleAIOrchestratorMessage(event) {
     case AI_MESSAGES.draft:
       return ingestAIDraftBuffer(data.buffer);
     case AI_MESSAGES.reply:
+      if (data.draft?.tool === 'agents_save') {
+        abortAIBuild();
+        return;
+      }
       return finishAIOrchestration(data.draft?.body || null);
+    case AI_MESSAGES.role:
+      if (!aiBuild && data.projectId === state.projectFilter && data.workflowId === state.workflow?.id) {
+        configureAIRoleDraft(data.role);
+      }
+      return;
     case AI_MESSAGES.end:
       abortAIBuild();
       if (data.error) setAIBuildStatus(data.error);
@@ -361,6 +378,11 @@ function placeAIGhost() {
   host.append(ghost);
 }
 
+function isCurrentAIBuild(build) {
+  return !!build && aiBuild === build && build.token === aiBuildToken
+    && state.projectFilter === build.projectId && state.workflow?.id === build.workflowId;
+}
+
 async function startAIBuild(raw, opts = {}) {
   const occupied = !!state.workflow && ((state.workflow.nodes || []).length > 0 || state.workflowDirty);
   if (occupied && !opts.confirmed) {
@@ -375,8 +397,14 @@ async function startAIBuild(raw, opts = {}) {
   const token = ++aiBuildToken;
   finishAIBuildVisuals();
   const previous = state.workflow ? aiClone(state.workflow) : null;
-  aiBuild = {token, buffer: '', thought: '', placed: new Map(), wired: new Set(), pendingEdges: [], queue: [], draining: null, ghostText: opts.ghost || 'AI 正在理解你的需求…', ghostHidden: false, freePositions: true, mode: 'create', previous, spawned: 0};
+  const selectedNode = state.selectedNode;
   state.workflow = shellForAIWorkflow(raw || {});
+  aiBuild = {
+    token, projectId: state.projectFilter, workflowId: state.workflow.id, selectedNode,
+    buffer: '', thought: '', placed: new Map(), wired: new Set(), pendingEdges: [], queue: [], draining: null,
+    ghostText: opts.ghost || 'AI 正在理解你的需求…', ghostHidden: false, freePositions: true,
+    mode: 'create', previous
+  };
   state.selectedNode = null;
   if ((state.currentView || activeViewName()) !== 'flow') switchView('flow');
   renderWorkflowMeta();
@@ -390,7 +418,7 @@ async function startAIBuild(raw, opts = {}) {
 
 function ingestStreamingWorkflow(graph) {
   const build = aiBuild;
-  if (!build) return;
+  if (!isCurrentAIBuild(build)) return;
   if (graph.name && state.workflow && state.workflow.name !== graph.name) {
     state.workflow.name = graph.name;
     renderWorkflowMeta();
@@ -417,7 +445,7 @@ function drainAIBuild() {
     // Yield first so the assignment above lands before the loop can finish and clear it.
     await Promise.resolve();
     try {
-      while (aiBuild === build && build.token === aiBuildToken) {
+      while (isCurrentAIBuild(build)) {
         const ready = build.pendingEdges.findIndex(item => build.placed.has(item.data.source) && build.placed.has(item.data.target));
         if (ready >= 0) {
           const [item] = build.pendingEdges.splice(ready, 1);
@@ -439,8 +467,7 @@ async function aiPlaceNode(build, node) {
   if (!node.position) node.position = aiProvisionalPosition(build.placed.size);
   state.workflow.nodes.push(node);
   build.placed.set(node.id, node);
-  build.spawned = (build.spawned || 0) + 1;
-  state.selectedNode = node.id;
+  if ($('#aiOrchestrator')?.hidden === false) state.selectedNode = node.id;
   renderCanvas();
   const el = document.querySelector('.flow-node[data-id="' + (CSS.escape ? CSS.escape(node.id) : node.id) + '"]');
   el?.classList.add('ai-just-built');
@@ -511,6 +538,10 @@ async function completeAIBuild(build, finalRaw) {
   if (build.mode === 'edit') return completeAIEdit(build, finalRaw);
   if (finalRaw && Array.isArray(finalRaw.nodes)) {
     ingestStreamingWorkflow({name: finalRaw.name || '', nodes: finalRaw.nodes, edges: finalRaw.edges || []});
+  }
+  await drainAIBuild();
+  if (!isCurrentAIBuild(build)) return false;
+  if (finalRaw && Array.isArray(finalRaw.nodes)) {
     const finalById = new Map(finalRaw.nodes.filter(n => n.id).map(n => [n.id, n]));
     state.workflow.nodes.forEach(node => {
       const fin = finalById.get(node.id);
@@ -519,8 +550,7 @@ async function completeAIBuild(build, finalRaw) {
     if (finalRaw.description) state.workflow.description = finalRaw.description;
     if (finalRaw.preview) state.workflow.preview = aiClone(finalRaw.preview);
   }
-  await drainAIBuild();
-  if (aiBuild !== build || build.token !== aiBuildToken) return false;
+  if (!await validateAIBuildRoles(build)) return false;
   build.ghostHidden = true;
   placeAIGhost();
   if (!state.workflow.nodes.length) {
@@ -531,6 +561,7 @@ async function completeAIBuild(build, finalRaw) {
   }
   setAIBuildStatus('整理布局…');
   await aiRelayout(build);
+  if (!isCurrentAIBuild(build)) return false;
   const canvas = $('#canvas');
   finishAIBuildVisuals();
   canvas?.classList.add('ai-done');
@@ -541,14 +572,38 @@ async function completeAIBuild(build, finalRaw) {
   renderCanvas();
   renderProperties();
   aiOverview();
-  setAIBuildStatus(aiUnboundRolesNote() || (state.workflow.edges.length ? '节点和连线都已放好，确认后点保存' : '节点已放好，确认后点保存'));
+  setAIBuildStatus(state.workflow.edges.length ? '节点和连线都已放好，确认后点保存' : '节点已放好，确认后点保存');
   return true;
 }
 
-function aiUnboundRolesNote() {
-  const agentIds = new Set((state.data?.agents || []).map(a => a.id));
-  const unbound = (state.workflow?.nodes || []).filter(n => n.type === 'agent' && n.id !== 'af-preview-build' && (!n.agentId || !agentIds.has(n.agentId)));
-  return unbound.length ? unbound.length + ' 个 Agent 节点还没绑定有效角色：' + unbound.map(n => n.name).join('、') + '，保存前在右侧属性里选一下' : '';
+async function validateAIBuildRoles(build) {
+  const unavailable = () => state.workflow.nodes.filter(node => node.type === 'agent'
+    && !(isPreviewBuildNode(node.id) && node.agentId === PREVIEW_BUILD_AGENT_ID)
+    && !workflowAgent(node.agentId));
+  if (!isCurrentAIBuild(build)) return false;
+  if (!unavailable().length) return true;
+  // A role may have been created or shared while the assistant was working.
+  await refreshWorkflowAgents().catch(() => {});
+  if (!isCurrentAIBuild(build)) return false;
+  const missing = unavailable();
+  if (!missing.length) return true;
+  const names = missing.map(node => node.name + '（' + (node.agentId || '未绑定') + '）');
+  abortAIBuild();
+  setAIBuildStatus('草稿引用了当前流程不可用的角色：' + names.join('、') + '。请先创建角色，或选择已有角色。');
+  return false;
+}
+
+function configureAIRoleDraft(role) {
+  if (!role?.name || catalogGeneric(state.workflow)) return;
+  const {id, name, description, prompt, executorId, model} = role;
+  if (id && agentIdTaken(id)) return toast('这个角色标识已存在，请使用已保存的角色继续编排');
+  openAgentWizard({id: '', name, description, prompt, executorId, model, projectId: state.projectFilter});
+  if (id) {
+    state.agentIdAuto = false;
+    $('#agentForm').elements.id.value = id;
+    syncAgentSlug();
+  }
+  setAgentCreateStep(2);
 }
 
 function aiClone(value) {
@@ -583,12 +638,13 @@ async function beginAIOrchestration() {
     const token = ++aiBuildToken;
     finishAIBuildVisuals();
     aiBuild = {
-      token, buffer: '', thought: '',
+      token, projectId: state.projectFilter, workflowId: state.workflow.id, selectedNode: state.selectedNode,
+      buffer: '', thought: '',
       placed: new Map(state.workflow.nodes.map(node => [node.id, node])),
       wired: new Set((state.workflow.edges || []).map(edge => edge.source + '→' + edge.target)),
       pendingEdges: [], queue: [], draining: null,
       ghostText: '', ghostHidden: true, freePositions: false,
-      mode: 'edit', base: aiClone(state.workflow), spawned: 0
+      mode: 'edit', base: aiClone(state.workflow)
     };
     if ((state.currentView || activeViewName()) !== 'flow') switchView('flow');
     openAIOrchestrator();
@@ -615,14 +671,9 @@ async function beginAIOrchestration() {
 }
 
 async function completeAIEdit(build, finalRaw) {
+  if (!isCurrentAIBuild(build)) return false;
   if (!finalRaw || !Array.isArray(finalRaw.nodes) || !finalRaw.nodes.length) {
-    state.workflow = build.base;
-    finishAIBuildVisuals();
-    aiBuild = null;
-    syncCanvasAIEntry();
-    renderWorkflowMeta();
-    renderCanvas();
-    renderProperties();
+    abortAIBuild();
     return false;
   }
   const merged = mergeAIEdit(build.base, finalRaw);
@@ -650,7 +701,7 @@ async function completeAIEdit(build, finalRaw) {
     ingestStreamingWorkflow({name: merged.name, nodes: newcomers, edges: laterEdges});
     await drainAIBuild();
   }
-  if (aiBuild !== build || build.token !== aiBuildToken) return false;
+  if (!await validateAIBuildRoles(build)) return false;
   build.ghostHidden = true;
   placeAIGhost();
   finishAIBuildVisuals();
@@ -659,15 +710,14 @@ async function completeAIEdit(build, finalRaw) {
   renderWorkflowMeta();
   renderCanvas();
   renderProperties();
-  setAIBuildStatus(aiUnboundRolesNote() || '已改在当前流程上，确认后点保存');
+  setAIBuildStatus('已改在当前流程上，确认后点保存');
   return (state.workflow.nodes || []).length > 0;
 }
 
 function restoreAIBuildFailure(build) {
   if (!build) return;
-  const previous = build.mode === 'edit' ? build.base : (build.spawned ? null : build.previous);
-  if (!previous) return;
-  state.workflow = previous;
+  state.workflow = build.mode === 'edit' ? build.base : build.previous;
+  state.selectedNode = build.selectedNode;
   renderWorkflowMeta();
   renderCanvas();
   renderProperties();
@@ -682,8 +732,15 @@ function aiDraftObject(raw) {
 // id is a new SOP and replaces the canvas only after the user agrees.
 async function finishAIOrchestration(raw) {
   const build = aiBuild;
-  if (!build) return false;
+  if (!isCurrentAIBuild(build)) {
+    if (build) abortAIBuild();
+    return false;
+  }
   const body = aiDraftObject(raw);
+  if (!body) {
+    abortAIBuild();
+    return false;
+  }
   if (build.mode === 'edit' && body?.id && build.base?.id && body.id !== build.base.id && Array.isArray(body.nodes)) {
     abortAIBuild();
     return playWorkflowOnCanvas(body, {confirmed: false});
