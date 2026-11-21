@@ -2904,7 +2904,7 @@ paths:
       tags: [Runs]
       operationId: passFailedRunNode
       summary: Pass a failed script node
-      description: Marks a failed script or command node as succeeded and continues downstream without re-executing it. Agent nodes must use retry with optional human context instead.
+      description: Marks a failed script or command node as succeeded and continues downstream without re-executing it. Agent nodes must use retry with optional human context instead. A node marked verificationStep:true returns 409 unless the request carries override=true; pass, rejection and override are all audited.
       requestBody:
         $ref: "#/components/requestBodies/NodeAction"
       responses:
@@ -3831,6 +3831,22 @@ components:
             properties:
               nodeId:
                 type: string
+              reason:
+                type: string
+              context:
+                type: string
+              override:
+                type: boolean
+                description: Required to pass a node marked verificationStep; the request is audited with its operator.
+              expected:
+                type: object
+                description: Binds the decision to the attempt (and optionally the artifact) the operator reviewed. Honoured by approve, reject, retry, decline-retry and resume; a mismatch returns 409 and leaves the node waiting. artifactName and artifactSha256 must be supplied together (400 otherwise) and bind to the newest artifact of that name by creation time.
+                properties:
+                  status: {type: string}
+                  attempt: {type: integer}
+                  reworkCount: {type: integer}
+                  artifactName: {type: string}
+                  artifactSha256: {type: string}
     SyncConfig:
       required: true
       content:
@@ -4855,6 +4871,14 @@ components:
           type: integer
         maxReworks:
           type: integer
+        requires:
+          type: array
+          description: "Preconditions checked before the node executes: artifact:<name>@<sha256> or verdict:<PASS|FAIL>@<diffHash>. Values are trimmed and the verdict is case-insensitive. An unmet precondition fails the node with the expected and actual values when no sibling is still running; a parallel producer must be an upstream edge."
+          items:
+            type: string
+        verificationStep:
+          type: boolean
+          description: Marks a verification step. /pass refuses it unless the request carries override=true; both outcomes are audited.
         position:
           $ref: "#/components/schemas/OpenObject"
     WorkflowEdge:

@@ -1,9 +1,11 @@
 package engine
 
 import (
+	"agentflow/internal/apperr"
 	"agentflow/internal/domain"
 	"agentflow/internal/repo"
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"sort"
@@ -155,6 +157,7 @@ func (e *Engine) Approve(runID, nodeID, humanContext string, expected ...NodeExp
 		}
 	}
 	if err := checkNodeExpectation(r, expected); err != nil {
+		e.recordGateRejection(runID, &r, nodeID, expected, err)
 		return err
 	}
 	if err := forbidClosedGongfengIssue(e.repo, r); err != nil {
@@ -178,20 +181,76 @@ func (e *Engine) Approve(runID, nodeID, humanContext string, expected ...NodeExp
 	return e.persistControlDecision(runID, r, expected...)
 }
 
+// recordGateRejection keeps a rejected human decision in the run's audit trail
+// while leaving the node parked at waiting_approval, so an approval aimed at a
+// stale artifact cannot disappear without a record of what was expected.
+func (e *Engine) recordGateRejection(runID string, r *domain.Run, nodeID string, expected []NodeExpectation, reason error) {
+	message := fmt.Sprintf("人工批准被拒绝：%s（期望 %s）", reason.Error(), describeExpectation(expected))
+	e.persistAuditEvent(runID, r, nodeID, "gate.approval_rejected", message)
+}
+
+// persistAuditEvent stores one control decision record without changing run or
+// node status. The caller holds stateMu.
+//
+// The write is revision-guarded like the decision path: a stale snapshot must
+// not overwrite a newer run header. When another writer won the revision, the
+// record is re-applied to the newest snapshot instead of being dropped. The
+// lease tail releases only the lease this call acquired; never the lease of a
+// worker that owns the run.
+func (e *Engine) persistAuditEvent(runID string, r *domain.Run, nodeID, typ, message string) {
+	e.event(r, nodeID, typ, message)
+	appendControlTelemetry(r, nodeID, typ, message)
+	if err := e.repo.PutRunAtRevision(*r, r.Revision); err != nil {
+		if !errors.Is(err, repo.ErrRunDecisionStale) {
+			log.Printf("record %s %s: %v", typ, runID, err)
+			return
+		}
+		latest, ok := e.repo.RunState(runID)
+		if !ok {
+			log.Printf("record %s %s: run disappeared", typ, runID)
+			return
+		}
+		e.event(&latest, nodeID, typ, message)
+		appendControlTelemetry(&latest, nodeID, typ, message)
+		if err := e.repo.PutRunAtRevision(latest, latest.Revision); err != nil {
+			log.Printf("record %s %s: %v", typ, runID, err)
+			return
+		}
+	}
+	e.publish(runID)
+	if e.executes() {
+		_ = e.repo.ReleaseRunLease(runID, e.instanceID, r.Generation)
+	}
+}
+
+// PassOptions carries who overrode a verification node and why the override is
+// allowed. A plain Pass never overrides; only an explicit request does.
+type PassOptions struct {
+	Override bool
+	Actor    string
+}
+
 // Pass marks a failed (or paused) node as succeeded so downstream can
 // continue without re-executing it. Operators use this after onFailure=fail,
 // when reject reworks are exhausted, or when a hard script is paused
 // mid-execution and retrying from scratch won't help (e.g. an environment
 // problem) — hard scripts can otherwise stall a run forever.
 func (e *Engine) Pass(runID, nodeID, humanContext string, expected ...NodeExpectation) error {
-	if err := e.pass(runID, nodeID, humanContext, expected...); err != nil {
+	return e.PassWithOptions(runID, nodeID, humanContext, PassOptions{}, expected...)
+}
+
+// PassWithOptions is Pass plus the explicit override a verification node needs.
+// Without Override a verification node stays failed and the request only leaves
+// an audit record; with it the operator named in Actor is recorded too.
+func (e *Engine) PassWithOptions(runID, nodeID, humanContext string, opts PassOptions, expected ...NodeExpectation) error {
+	if err := e.pass(runID, nodeID, humanContext, opts, expected...); err != nil {
 		return err
 	}
 	e.resumeParentAfterChildRecovery(runID)
 	return nil
 }
 
-func (e *Engine) pass(runID, nodeID, humanContext string, expected ...NodeExpectation) error {
+func (e *Engine) pass(runID, nodeID, humanContext string, opts PassOptions, expected ...NodeExpectation) error {
 	e.stateMu.Lock()
 	defer e.stateMu.Unlock()
 	r, ok := e.repo.RunState(runID)
@@ -246,6 +305,11 @@ func (e *Engine) pass(runID, nodeID, humanContext string, expected ...NodeExpect
 	if !found || !isScriptNode(def) {
 		return fmt.Errorf("only a failed script node can be passed")
 	}
+	if def.VerificationStep && !opts.Override {
+		message := fmt.Sprintf("拒绝人工通过验证节点：operator=%s context=%q", auditActor(opts.Actor), humanContext)
+		e.persistAuditEvent(runID, &r, nodeID, "node.pass_rejected", message)
+		return apperr.New(apperr.Conflict, "该节点标记为验证节点，/pass 不能绕过验证；如确需人工放行，请在请求中带 override:true")
+	}
 	n.Status = "succeeded"
 	n.FinishedAt = time.Now().UTC()
 	n.Activity = "人工通过，未重新执行"
@@ -261,6 +325,11 @@ func (e *Engine) pass(runID, nodeID, humanContext string, expected ...NodeExpect
 	appendArtifact(&r, nodeID, n.Attempt, "decision", "decision.md", "text/markdown", []byte(decision))
 	e.event(&r, nodeID, "node.passed", "人工通过该节点，继续下游")
 	appendControlTelemetry(&r, nodeID, "node.passed", "人工通过该节点，继续下游")
+	if def.VerificationStep {
+		message := fmt.Sprintf("人工 override 通过验证节点：operator=%s context=%q", auditActor(opts.Actor), humanContext)
+		e.event(&r, nodeID, "node.passed_override", message)
+		appendControlTelemetry(&r, nodeID, "node.passed_override", message)
+	}
 	r.CancelRequested = false
 	r.PauseRequested = false
 	r.Status = "running"
@@ -980,6 +1049,7 @@ func overlayLatestNodeBindings(st *repo.Store, r *domain.Run, nodeIDs map[string
 		}
 		n.AgentID, n.ExecutorID = src.AgentID, src.ExecutorID
 		n.ArtifactOutputs = src.ArtifactOutputs
+		n.Requires, n.VerificationStep = src.Requires, src.VerificationStep
 		n.OnFailure, n.RejectTo = src.OnFailure, src.RejectTo
 		n.RetryStrategy, n.CarryOver = src.RetryStrategy, src.CarryOver
 		if src.MaxAttempts > n.MaxAttempts {
