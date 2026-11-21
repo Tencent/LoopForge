@@ -94,6 +94,7 @@ function Step({ step, live, interrupted }) {
               <span
                 className={`execution-step-target ${["read", "edit"].includes(face.kind) ? "is-file" : ""}`}
                 title={step.detail || target}
+                aria-live={pending && step.tool === "workspace_docker_build" ? "polite" : undefined}
               >
                 {target}
               </span>

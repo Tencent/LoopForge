@@ -138,7 +138,7 @@
 #aiSchedulesView .heading-actions { display:flex;gap:8px;flex-shrink:0; }
 #aiSchedulesView .ai-schedule-panel { border:1px solid var(--hui-border);border-radius:14px;background:var(--hui-surface);box-shadow:var(--hui-panel-shadow);overflow:hidden; }
 #aiSchedulesView .ai-schedule-panel-head { display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 16px;border-bottom:1px solid var(--hui-border);font-size:13px; }
-#aiSchedulesView #aiScheduleRuntimeHint { padding:12px 16px;margin:0;color:var(--hui-secondary);font-size:12px;line-height:1.6; }
+#aiSchedulesView :is(#aiScheduleRuntimeHint, #aiScheduleTriggerHint) { padding:12px 16px;margin:0;color:var(--hui-secondary);font-size:12px;line-height:1.6; }
 #aiSchedulesView .schedule-job-list { max-height:none;overflow:visible;margin:0;gap:0; }
 #aiSchedulesView .schedule-job-item { border-top:1px solid var(--hui-border-soft); }
 #aiSchedulesView .schedule-job-row { padding:14px 16px;border:0;border-radius:0;background:transparent; }
@@ -175,20 +175,23 @@
 #aiSchedulesView .sched-exec-card-title .muted { font-weight:400;font-size:13px;color:var(--hui-secondary); }
 #aiSchedulesView .sched-exec-th-hint { display:inline-flex;align-items:center;gap:3px;color:inherit;cursor:help; }
 #aiSchedulesView .sched-exec-th-hint > .harness-icon { color:var(--hui-muted); }
-/* 概览：4 张指标卡 */
+/* 执行概览 */
 #aiSchedulesView .sched-exec-overview-main { min-width:0;padding-bottom:16px; }
-#aiSchedulesView .sched-exec-metrics { display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;padding:0 20px; }
+#aiSchedulesView .sched-exec-metrics { display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,240px),1fr));gap:12px;padding:0 20px; }
 #aiSchedulesView .sched-exec-metric { display:flex;gap:12px;align-items:flex-start;min-width:0;padding:14px;border:1px solid var(--hui-border-soft);border-radius:12px;background:var(--hui-surface); }
 #aiSchedulesView .sched-exec-metric-icon { display:grid;place-items:center;flex:none;width:36px;height:36px;border-radius:10px;color:var(--tone);background:color-mix(in srgb,var(--tone) 12%,var(--hui-surface)); }
 #aiSchedulesView .sched-exec-metric[data-tone="accent"] { --tone:var(--hui-accent); }
 #aiSchedulesView .sched-exec-metric[data-tone="success"] { --tone:var(--hui-success); }
 #aiSchedulesView .sched-exec-metric[data-tone="error"] { --tone:var(--hui-error); }
 #aiSchedulesView .sched-exec-metric[data-tone="info"] { --tone:var(--hui-info); }
-#aiSchedulesView .sched-exec-metric-body { display:flex;flex-direction:column;gap:3px;min-width:0; }
+#aiSchedulesView .sched-exec-metric-body { display:flex;flex:1;flex-direction:column;gap:3px;min-width:0;overflow-wrap:anywhere; }
 #aiSchedulesView .sched-exec-metric-body > span { color:var(--hui-secondary);font-size:12.5px; }
-#aiSchedulesView .sched-exec-metric-body > b { font:600 22px/1.2 var(--hui-sans);font-variant-numeric:tabular-nums;color:var(--hui-text);white-space:nowrap; }
+#aiSchedulesView .sched-exec-metric-body > b { font:600 22px/1.2 var(--hui-sans);font-variant-numeric:tabular-nums;color:var(--hui-text);white-space:normal; }
 #aiSchedulesView .sched-exec-metric[data-tone="error"] .sched-exec-metric-body > b { color:var(--hui-error); }
-#aiSchedulesView .sched-exec-delta { display:inline-flex;align-items:center;gap:2px;color:var(--hui-muted);font-size:12px;white-space:nowrap; }
+#aiSchedulesView .sched-exec-delta { display:inline-flex;flex-wrap:wrap;align-items:center;gap:2px;color:var(--hui-muted);font-size:12px;white-space:normal; }
+#aiSchedulesView .sched-exec-outcomes { display:flex;flex-wrap:wrap;gap:2px 12px;color:var(--hui-muted);font-size:12px;font-variant-numeric:tabular-nums; }
+#aiSchedulesView .sched-exec-outcomes > span { white-space:nowrap; }
+#aiSchedulesView .sched-exec-outcomes .has-failures { color:var(--hui-error); }
 #aiSchedulesView .sched-exec-delta b { font-weight:500;font-variant-numeric:tabular-nums; }
 #aiSchedulesView .sched-exec-delta[data-good="true"] :is(b, .harness-icon) { color:var(--hui-success); }
 #aiSchedulesView .sched-exec-delta[data-good="false"] :is(b, .harness-icon) { color:var(--hui-error); }
@@ -211,7 +214,10 @@
 #aiSchedulesView .sched-exec-table th:nth-child(2) { width:104px; }
 #aiSchedulesView .sched-exec-table th:nth-child(4) { width:156px; }
 #aiSchedulesView .sched-exec-table th:nth-child(5) { width:92px; }
-#aiSchedulesView .sched-exec-table th:nth-child(6) { width:116px; }
+#aiSchedulesView .sched-exec-table th:nth-child(6) { width:104px; }
+#aiSchedulesView .sched-exec-table th:nth-child(7) { width:116px; }
+#aiSchedulesView .sched-exec-tokens { color:var(--hui-text);font-variant-numeric:tabular-nums;white-space:nowrap; }
+#aiSchedulesView .sched-exec-tokens .muted { color:var(--hui-muted); }
 #aiSchedulesView .sched-exec-table th:last-child { width:150px;padding-right:16px; }
 #aiSchedulesView .sched-exec-table td { padding:12px 10px;vertical-align:middle;border-top:1px solid var(--hui-border-soft); }
 #aiSchedulesView .sched-exec-row { cursor:pointer;transition:background .15s var(--hui-ease-flow); }
@@ -275,8 +281,7 @@
 #aiSchedulesView .sched-exec-footnote { margin:0;padding:10px 20px;border-top:1px solid var(--hui-border-soft);color:var(--hui-muted);font-size:12px; }
 #aiSchedulesView .sched-exec-footnote:empty { display:none; }
 @media(max-width:860px) {
-  #aiSchedulesView .sched-exec-metrics { grid-template-columns:repeat(2,minmax(0,1fr)); }
-  #aiSchedulesView .sched-exec-table :is(th, td):is(:nth-child(4), :nth-child(5), :nth-child(6)) { display:none; }
+  #aiSchedulesView .sched-exec-table :is(th, td):is(:nth-child(4), :nth-child(5), :nth-child(6), :nth-child(7)) { display:none; }
   #aiSchedulesView .sched-exec-detail > td { padding-left:16px; }
   #aiSchedulesView .sched-exec-search { max-width:none; }
   #aiSchedulesView .sched-exec-reset { margin-left:0; }
@@ -298,13 +303,24 @@
   #aiSchedulesView .schedule-job-main { flex-basis:100%; }
 }
 
-/* 项目触发配置直接编辑。 */
+/* 项目触发摘要同时用于页面与编辑弹窗。 */
 #scheduleModal #scheduleJobList[hidden] { display:none; }
-#scheduleModal .schedule-config-runtime { display:flex;align-items:center;justify-content:space-between;gap:14px;padding:12px 0;color:var(--hui-secondary); }
-#scheduleModal .schedule-config-runtime>div { display:flex;flex-direction:column;gap:5px;min-width:0; }
-#scheduleModal .schedule-config-runtime b { color:var(--hui-text);font-size:13px;font-weight:500; }
-#scheduleModal .schedule-config-runtime :is(span,small) { font-size:12px;line-height:1.5;overflow-wrap:anywhere; }
-#scheduleModal .schedule-config-runtime button { flex:none; }
+:is(#aiScheduleTriggerList, #scheduleModal) .schedule-config-runtime { display:flex;align-items:center;justify-content:space-between;gap:14px;padding:12px 0;color:var(--hui-secondary); }
+:is(#aiScheduleTriggerList, #scheduleModal) .schedule-config-runtime>div { display:flex;flex-direction:column;gap:5px;min-width:0; }
+:is(#aiScheduleTriggerList, #scheduleModal) .schedule-config-runtime b { color:var(--hui-text);font-size:13px;font-weight:500;overflow-wrap:anywhere; }
+:is(#aiScheduleTriggerList, #scheduleModal) .schedule-config-runtime :is(span,small) { font-size:12px;line-height:1.5;overflow-wrap:anywhere; }
+:is(#aiScheduleTriggerList, #scheduleModal) .schedule-config-runtime button { flex:none; }
+#aiScheduleTriggerList .schedule-config-runtime {
+  flex-wrap:wrap;
+  justify-content:flex-start;
+  gap:8px;
+  padding:0 16px 14px;
+}
+#aiScheduleTriggerList .schedule-config-runtime>div { flex:1 1 220px; }
+#aiScheduleTriggerList .schedule-blocker-card { margin:0 16px 14px; }
+@media(max-width:700px) {
+  #aiScheduleTriggerList .schedule-config-runtime>div { flex-basis:100%; }
+}
 
 #scheduleModal .schedule-head small { font-size:12px;line-height:1.5; }
 

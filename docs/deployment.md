@@ -15,6 +15,20 @@ npm install --global @openai/codex@0.162.1 @anthropic-ai/claude-code@2.1.326
 
 Ensure the service can find `codebuddy` and Node.js on its PATH, or set `AGENTFLOW_CODEBUDDY_BIN` to the installed executable. Configure the model key and its network environment in personal settings. The no-key script demo does not need the CLI. The production Docker image includes CodeBuddy, Codex and DeepSeek Harness (`dsh`). Claude Code and the other agent CLIs are not bundled. When a conversation fails because one is missing, the error says it is not installed and offers an install button. That downloads the pinned `@anthropic-ai/claude-code` release, or the public package for OpenCode, Kimi Code and Pi, into `$LOOPFORGE_DATA_DIR/cli`; an installation outside the image gets the pinned `@deepseek-ai/dsh` release the same way. Cursor CLI and Antigravity use their providers' installers and land in the service user's `~/.local/bin`. Closing or reloading the browser does not stop an install that has already started, and the button stays on “自动安装” until it finishes. A finished install replaces the earlier generation failure with a prompt to send the message again. The next message reuses the installation. An SOP sandbox of the published image that selects Claude Code, OpenCode, Kimi Code or Pi installs the same package on first use and shares it with conversations. Cursor CLI and Antigravity are not installed into SOP sandboxes. Connected runners keep their own CLI requirements.
 
+WeCom notifications require `wecom-cli` on the platform service's PATH. The platform image built from this Dockerfile includes `@wecom/cli@1.3.4`; published images gain it with the next release. For a native installation, install it separately with `npm install --global @wecom/cli@1.3.4`, ensure system CA certificates are installed, and verify `wecom-cli --version` as the service user. Configuring a WeCom bot is still required to send notifications.
+
+Set `AGENTFLOW_MANAGED_CLI_ROOT` to a persistent absolute directory to enable the daily CLI updater on platform processes that execute runs (`worker` or `all`). By default it checks Claude Code, CodeBuddy, and Codex. Set `AGENTFLOW_MANAGED_CLIS` to the full comma-separated list you want to update, for example `claude-code,codebuddy,codex,pi`. The additional provider IDs are `agy`, `cursor`, `dsh`, `kimi`, `opencode`, and `pi`. The updater ignores empty entries, including trailing commas. A list with no names uses the default, and any unknown ID rejects the update. This list applies to scheduled checks, the bulk CLI update command, and managed CLI updates on Runners. Existing installations and rollback remain available. Set the same list on API and worker processes that share a managed root. The API uses the list when resolving CodeBuddy and workers claim the daily check once per root.
+
+The updater checks upstream metadata daily and downloads an eligible release when needed. It verifies npm package integrity using Subresource Integrity (SRI) before running npm lifecycle scripts. Antigravity archives are checked against the official manifest's SHA512. The official Cursor installer supplies a versioned URL without a content checksum. Cursor download integrity relies on TLS and a matching strong ETag, an opaque identifier from the archive server. [Cursor install script](https://cursor.com/install)
+
+Workers need access to the sources for the selected CLIs and can configure `HTTPS_PROXY` when needed. The updater reports download failures per provider.
+
+All candidates pass a 24-hour observation window and a version and CLI argument check before activation. The updater keeps installed versions on disk for rollback and workflow pins, so storage use grows as it installs releases. Before enabling additional providers, back up the managed root if you plan to roll back the platform release. Older platform versions accept inventories containing the original three providers. Restore the compatible backup at the original absolute path to preserve recorded executable paths. After a CLI rollback, automatic updates wait for a release newer than the rejected version.
+
+For native execution, the platform prefers explicit binary overrides, then the managed inventory. Platform-owned native workflows pin the inventory within their managed root. A worker that adopts a run can reuse its pin when it accesses the same persistent managed directory at the same absolute path with compatible binaries. Workers with separate roots resolve the CLI from their own inventory.
+
+The updater keeps observations of Cursor and Antigravity releases across daily checks so each release can age even while the vendor keeps publishing. Docker sandboxes use the CLI supplied by their image or sandbox installer. ZCode uses the executable supplied by the deployment.
+
 A conversation workspace on a custom Dockerfile without Node.js, npm or Python 3 uses the platform's own copies. On first use the platform copies its Node.js, npm and a relocatable Python into `$LOOPFORGE_DATA_DIR/cli/toolchain/<build>/`, plus each bundled CLI (CodeBuddy, Codex, DeepSeek Harness) the first time a sandbox needs it, and mounts the directory read-only at the end of the sandbox `PATH`. Tools the image ships take precedence. Only glibc images of the platform's architecture use it; Alpine (musl) images need their own Node.js, npm and Python 3. A new platform build creates a new directory and leaves the previous ones in place: after an upgrade, delete the other `cli/toolchain/<build>/` directories (about 200 MB each plus the CLIs copied into them).
 
 Stop the foreground service with Ctrl-C. Start it again with the same command. MySQL data stays in its Compose volume. `docker compose stop mysql` stops the database without deleting it.
@@ -24,14 +38,15 @@ Use `AGENTFLOW_MYSQL_DSN` for your own MySQL deployment. A fresh account command
 ## Container installation
 
 ```bash
-./start.sh             # install or start in the background (same as bash scripts/install.sh)
-./start.sh logs        # follow platform logs
-./start.sh stop        # stop; ./start.sh down removes containers but keeps data volumes
-./start.sh restart     # restart the platform container
-./start.sh pull        # refresh images and recreate changed containers
-MIRROR=ghcr.nju.edu.cn ./start.sh  # same install; replace the ghcr.io host with this registry
-./start.sh dev         # build this checkout instead (compose.dev.yaml)
-./start.sh release     # switch a source build back to the published image
+./start.sh                        # install or start in the background (same as bash scripts/install.sh)
+./start.sh logs                   # follow platform logs
+./start.sh stop                   # stop; ./start.sh down removes containers but keeps data volumes
+./start.sh restart                # restart the platform container
+./start.sh pull                   # refresh images; times ghcr.io against ghcr.nju.edu.cn
+MIRROR=ghcr.io ./start.sh         # install from ghcr.io without the speed test
+MIRROR=ghcr.nju.edu.cn ./start.sh # force that host instead of the speed test
+./start.sh dev                    # build this checkout instead (compose.dev.yaml)
+./start.sh release                # switch a source build back to the published image
 ```
 
 The installer checks Docker, Compose, Python 3 and curl. It offers to install missing Python/curl packages using apt, dnf or yum on Linux (Homebrew on macOS), Docker using its official installer, and the missing Linux x86_64/arm64 Compose plugin using the pinned official release with SHA-256 verification. A plugin is installed for the active Docker user, or system-wide when Docker requires sudo. macOS Compose comes from Docker Desktop. Set `LOOPFORGE_YES=1` to accept installation prompts; internet access and package-manager/administrator permissions are still required. The installer generates `.env` with unique secrets, pulls and starts the containers, installs the observability columns and applies `migrations/seed/*.sql`. It is safe to re-run. Set `AGENTFLOW_HTTP_PORT` or `LOOPFORGE_MYSQL_PORT` in the environment before the first run (or edit `.env` later) when the default ports are taken.
@@ -49,10 +64,11 @@ git fetch --tags && git checkout vX.Y.Z
 
 The new `compose.yaml` brings the image pin and any new platform settings together, and `./start.sh pull` recreates the platform container when either changes. A source build from `./start.sh dev` is not rebuilt by `./start.sh pull`; run `./start.sh dev` again after updating the checkout. Running `./start.sh pull` alone keeps the pinned version. With `LOOPFORGE_IMAGE` saved in `.env`, change it to the checked-out release as well; a newer image with an older `compose.yaml` can miss settings that release needs.
 
-Where `ghcr.io` downloads stall, set `MIRROR` to the registry host that replaces `ghcr.io`. `./start.sh` and `./start.sh pull` pull that reference and tag it back to the name in `compose.yaml`. Setting `MIRROR` trusts that host, because the result is tagged with the official name. The GitHub Release records the image digest; `docker image inspect --format '{{index .RepoDigests 0}}' ghcr.io/tencent/loopforge:<pin>` should show the same digest after `@`. The pull policy stays `missing` on install, so a local image is kept; `./start.sh pull` refreshes it from the same host. Leaving `MIRROR` unset preserves the direct `ghcr.io` pull. [ghcr.nju.edu.cn](https://doc.nju.edu.cn/books/e1654/page/ghcr) is one compatible host. Docker's `registry-mirrors` setting, including `https://docker.nju.edu.cn`, only applies to Docker Hub and cannot be used as `MIRROR`. A `LOOPFORGE_IMAGE` value that is not a `ghcr.io` name:tag is left unchanged.
+Where `ghcr.io` downloads stall, `./start.sh` and `./start.sh pull` time `ghcr.io` against [ghcr.nju.edu.cn](https://doc.nju.edu.cn/books/e1654/page/ghcr). Nanjing is used only when its manifest digest matches the digest just read from ghcr.io; that digest is what gets pulled, then tagged back to the name in `compose.yaml`, which trusts that host. A missing official digest, a mismatch, or a failed mirror pull stays on `ghcr.io`. `MIRROR=ghcr.io` forces the upstream registry; any other `MIRROR` host forces that registry, skips the speed test, and does not fall back. The choice is not written to `.env`. The pull policy stays `missing` on install, so a local image is kept and is not timed again; `./start.sh pull` times the registries and refreshes from the winner. The GitHub Release records the image digest; `docker image inspect --format '{{index .RepoDigests 0}}' ghcr.io/tencent/loopforge:<pin>` should show the same digest after `@`. Docker's `registry-mirrors` setting, including `https://docker.nju.edu.cn`, only applies to Docker Hub and cannot be used as `MIRROR`. A `LOOPFORGE_IMAGE` value that is not a `ghcr.io` name:tag is left unchanged.
 
 ```bash
-MIRROR=ghcr.nju.edu.cn ./start.sh
+./start.sh
+MIRROR=ghcr.io ./start.sh pull
 MIRROR=ghcr.nju.edu.cn ./start.sh pull
 ```
 
@@ -85,13 +101,15 @@ Access to the Docker socket is equivalent to root on the host. Two safeguards fo
 
 ### Slow networks: clone and image build limits
 
-Cloning a repository and building a custom sandbox image report progress while they work, and their errors keep the last lines of git or Docker output. On the platform host the progress is recorded on the run. On an execution machine it is written to the runner's log, and only the final error reaches the platform. A step that prints nothing for its stall window is treated as hung and stopped. A step that keeps printing may be slow but is stopped only by a total limit. All settings take Go durations such as `90s` or `20m`; `0` turns a limit off. Each host reads its own environment, so set the clone limits on execution machines too.
+Cloning a repository and building a custom sandbox image report progress while they work, and their errors keep the last lines of Git or Docker output. Conversations show the current Docker build step on the platform and on connected runners. A long, quiet Dockerfile step can continue until its caller or a configured limit stops the build. All settings take Go durations such as `90s` or `20m`. `0` turns a limit off. Set the variables on the platform process or execution machine that runs the command.
+
+Runner conversation workspace preparation follows the conversation request's lifetime. Stopping the turn or losing the runner control connection cancels preparation.
 
 | Setting | Default | Applies to |
 |---|---|---|
 | `AGENTFLOW_GIT_CLONE_STALL_TIMEOUT` | `5m` | `git clone` with no output. Not applied when the platform clones from a repository's local source path, whose final repack is silent. |
 | `AGENTFLOW_GIT_CLONE_TIMEOUT` | off on the platform, `10m` on execution machines | Whole `git clone`. Execution machines keep their earlier fixed 10 minute limit as the default. |
-| `AGENTFLOW_DOCKER_BUILD_STALL_TIMEOUT` | `10m` | `docker build` with no output. A quiet `RUN` step (a long compile) counts as no output. |
+| `AGENTFLOW_DOCKER_BUILD_STALL_TIMEOUT` | off | Optional no-output limit for `docker build`. A quiet `RUN` step counts as no output. |
 | `AGENTFLOW_DOCKER_BUILD_TIMEOUT` | off | Whole `docker build`. |
 
 A clone that is stopped this way is not retried, since a retry would wait on the same network. When the execution host reaches GitHub or Debian mirrors slowly, point git at a proxy (`git config --global http.proxy`) and use a nearby package mirror in the Dockerfile rather than raising these limits.
@@ -100,8 +118,12 @@ A clone that is stopped this way is not retried, since a retry would wait on the
 
 Use Git SSH for GitLab.com, self-managed GitLab, Gitea, Gogs, GitHub, and other Git hosts that offer this transport. In **Project settings → Code repositories** or **Quick access**, enter the clone address, such as `git@gitlab.com:group/repo.git` or `ssh://git@git.example.org:2222/group/repo.git`, and select the existing default branch. GitHub HTTPS continues to use GitHub authorization or a PAT.
 
-1. GitHub (`github.com:22` and `ssh.github.com:443`) works without configuration: LoopForge pins the host keys GitHub publishes at `api.github.com/meta`. For any other host, the deployment administrator creates a dedicated OpenSSH `known_hosts` file; its entries, including `@revoked`, are combined with the built-in GitHub keys. Verify the host keys against the provider's published fingerprints or with the server administrator before adding them. Use exact hostnames or IP addresses, with `[host]:port` for a nondefault port. Wildcards and hashed entries do not grant access. For a trusted team deployment, add internal hosts explicitly to this same file.
-2. For hosts other than GitHub, set `AGENTFLOW_GIT_SSH_KNOWN_HOSTS` to the file's absolute path on the platform, workers and execution machines. For Compose, put it under the existing `LOOPFORGE_DATA_DIR` bind mount and set the absolute path in `.env`. Install Git and the OpenSSH client on execution machines and in custom sandbox images. Upgrade execution machines to Runner **0.9.3** or later. Docker sandbox commands need the sandbox and execution process to share the Linux kernel for the signing agent socket. With a Docker VM separate from a native runner, use managed checkout and delivery, or use a native sandbox for interactive Git commands.
+1. GitHub (`github.com:22` and `ssh.github.com:443`) uses built-in host keys. For another host, a platform administrator opens **Platform administration → Git SSH Host Trust**, enters the hostname and optional port, and selects **Read key and review fingerprint**. The platform reads the public key through an SSH handshake subject to `AGENTFLOW_GIT_EGRESS_ALLOW_CIDRS`. For a private host, select an online personal Runner with access to the server and support for host-key discovery. You can also enter OpenSSH public keys manually, including multiple keys for a host. Check the displayed SHA256 fingerprints against the Git provider or server administrator before confirming. The registration applies across the platform to that exact host and port. Edits and removals are picked up by the next platform-managed Git operation or newly started workspace CLI or terminal session.
+2. Runner **0.11.1** and later receive the matching platform entries when a task or workspace request needs Git SSH. Deployments can also point `AGENTFLOW_GIT_SSH_KNOWN_HOSTS` at a dedicated OpenSSH `known_hosts` file. For Compose, put the file under the `LOOPFORGE_DATA_DIR` bind mount and set its absolute path in `.env`. Entries in the platform file and administration page are combined. Use exact hostnames or IP addresses in the file, with `[host]:port` for a nondefault port. Platform-supplied trusted keys take precedence for the same host and port. Runner-local keys apply when the platform supplies only revocations or has no entries for that endpoint. Both sources apply explicit `@revoked` entries. The encoded entries have a 1 MiB allowance per dispatch. Runners **0.9.3** through **0.11.0** still need their own file and variable. A separate worker can read the registry from the shared database or use its own deployment file.
+
+   If the database registry is unavailable, the platform logs the error and continues using the deployment file and built-in GitHub keys. Runner-local keys remain available under the same precedence rules. An unreadable configured `known_hosts` file still blocks Git SSH operations because it can carry revocations. The administration list marks invalid entries for removal, and an entry with a valid hostname can be repaired in place. Invalid entries contribute no trusted keys.
+
+   Install Git and the OpenSSH client on execution machines and in custom sandbox images. Docker sandbox commands need the sandbox and execution process to share the Linux kernel for the signing agent socket. With a Docker VM separate from a native runner, use managed checkout and delivery, or use a native sandbox for interactive Git commands.
 3. Generate dedicated SSH keys with no passphrase for unattended execution. Add each public key to your hosting account and grant access to the repositories it needs. Grant write access if the run must push. Under **Personal settings → Git SSH keys**, add one private key per SSH host, such as `gitlab.com` or `git.example.org:2222`. An omitted port means 22. Edit that host's entry to replace its key.
 
 Repositories automatically use the current user's key for their SSH host and port; repositories on the same host and port share that key. The repository form only shows a red warning when that host has no personal key. This reminder does not block saving the repository or completing setup; credentials and host trust can be configured before the first Git operation. There is no repository-specific or default fallback key. Checkout and SOP execution use the responsible user's keys. Conversation submission and the workspace terminal use the requesting user's keys. The temporary signing agent closes when the command or terminal ends. A terminal's agent never lives in the shared workspace: with the `bwrap` driver it sits in a private directory bound only into that terminal, and with the `local` driver (no isolation) it stays outside the workspace in a 0700 directory. Docker and seatbelt workspaces share one filesystem view among all their processes, so their terminals get no personal SSH key; push from there with the platform's submit action. `git@github.com:` and `ssh://git@github.com/` addresses are saved as GitHub repositories (HTTPS + token, automatic pull requests) unless `provider` is explicitly `ssh`. To rotate a key, replace it in settings and revoke the old public key at the host.
@@ -133,13 +155,19 @@ The upstream process roles remain `-role api`, `-role worker` and `-role all`. A
 
 Personal runners are connected from the execution-machine page with a short-lived binding code. The installer is served at `/runners/install.sh`. `AGENTFLOW_RUNNER_BINARY` can point to binaries with `{os}` and `{arch}` substitutions. Container images bundle Linux/macOS amd64/arm64 runner and gate binaries. Native source installations can build on demand with Go.
 
+Docker workspaces on macOS use a Linux Runner executable for Git credentials and MCP calls. The installer chooses the architecture of the installed macOS Runner, including Intel binaries running under Rosetta. For a universal Runner on Apple Silicon it installs the arm64 helpers and adds the amd64 helpers when available. Foreground starts and the command printed by `--no-start` select the native arm64 slice, including from a Rosetta shell. On Intel Macs the installer installs the amd64 helpers. By default, it places the helpers next to the host binary. A Runner-side `AGENTFLOW_RUNNER_BINARY` template with `{os}` selects the installation and runtime path. To install both helpers, use `{arch}` and give each architecture a distinct destination. The installer saves the template for upgrades and includes it in launchd and in the startup command printed by `--no-start`. Helper paths must resolve to files separate from the macOS Runner.
+
+The installer checks the helper destinations against the staged macOS binary and installs the required Gate MCP helpers before replacing an installed Runner. When the existing Runner has a working Docker helper, an upgrade requires a compatible helper at the new Runner's configured path before replacing the binary and restarting the service. Relative templates in the installed launchd configuration use the job's working directory. The installer and updater validate the Linux executable's format, architecture, and load segments before replacing it. Custom installs keep a compatible existing helper. A Runner built from a local checkout can build its companion from that checkout. A download URL with an `{os}` placeholder can supply both binaries when used as the Runner's download source.
+
+When platform updates are enabled, macOS runners synchronize the helper in the background at startup. A failed version check is retried during rescans, including when an older helper remains usable. A readable, compatible local ELF or a locally configured script wrapper can be copied into a Docker workspace with executable permissions while the sync runs. Operations that need a missing helper for Git or MCP can wait up to five seconds for the initial sync. The background download continues within its own transfer timeout.
+
 A platform administrator can share one CodeBuddy API Key under **Platform administration → Shared CodeBuddy Key** (平台共享 CodeBuddy Key): pick the network environment that issued it and the models members may use (the first is the default). Members without a key of their own then chat and run SOPs on it, limited to those models; a role configured with another model runs on the default and the run says so. Members with their own key keep using it with any model. Scheduled tasks, clarification, reports, bots and run evaluation still need the runner's own key. A scheduled task uses the key for its selected CLI and does not borrow the shared CodeBuddy key. The key is stored in the database like personal keys and is never shown again after saving. `AGENTFLOW_ASSISTANT_SPONSOR_LOGIN`, which lent one account's key limited to `deepseek-v4.1-flash`, still applies while no shared key is configured.
 
 Configure provider credentials in the platform UI, not the host's global CLI configuration. Credentials are bound to the responsible actor by the upstream runtime. The home composer and SOP roles each choose a built-in CLI independently. Select the executor beside the home model selector; its API key (and optional Codex/Claude base URL) comes from your personal settings. Changing the executor preserves the draft; saved conversations record the executor used. Main Bot writes still pass through the platform tool gateway and its approval checks. Requirement clarification and notifications continue to use CodeBuddy. A scheduled assistant task can select any supported CLI and runs as an ordinary chat turn; Codex and Claude Code still need that account's own credential. Live model tests are opt-in; set `AGENTFLOW_LIVE_TESTS=1` only for the acceptance suites that need to load local credentials.
 
 ## Observability schema
 
-After the base tables have been created, run `bash scripts/install-schema-extensions.sh` for the Compose database. It installs absent `run_telemetry.adapter` and `run_logs.level` columns and their indexes from upstream migration `001_run_obs_generated_columns.sql`, then replays the `INSERT IGNORE` starter catalog. Both steps can be repeated without touching existing rows. The installer runs it before printing the address, and `./start.sh pull` runs it again after recreating containers, so an older data volume upgraded to a newer image picks up the columns the new code reads. Application startup does not run data migrations.
+After the base tables have been created, run `bash scripts/install-schema-extensions.sh` for the Compose database. It installs absent `run_telemetry.adapter` and `run_logs.level` columns and their indexes from upstream migration `001_run_obs_generated_columns.sql`, then replays the `INSERT IGNORE` starter catalog and the built-in catalog rewrites from `031_generic_backend_openssh.sql`, `033_generic_sop_mr_node.sql`, and `038_generic_sop_host_credentials.sql` in that order. The rewrites are repeatable and apply only to matching defaults. The installer runs it before printing the address, and `./start.sh pull` runs it again after recreating containers, so an older data volume upgraded to a newer image picks up the columns the new code reads and the built-in SOP graphs the new code ships. Application startup does not run data migrations.
 
 For an external MySQL deployment, review that migration and check column existence before applying its corresponding statements. Stored generated columns can rebuild large existing tables; schedule the operation accordingly.
 
@@ -149,9 +177,9 @@ For an external MySQL deployment, review that migration and check column existen
 
 | Kind | Example | What an operator does |
 | --- | --- | --- |
-| Already applied by the installer and `./start.sh pull` | `001_run_obs_generated_columns.sql`, `migrations/seed/*.sql`, `031_generic_backend_openssh.sql` | Nothing; the script above covers it |
-| Must run once when upgrading | `009_bot_interactions_utf8mb4.sql` (`CONVERT TO` an existing table), new tables and columns added by hand | Run it on the database after reviewing prerequisites |
-| Backfills and one-time rewrites of existing rows | `016_public_optional_repositories.sql`, `021_assistant_session_sources.sql` | Run it if the history matters; skipping it changes no schema but leaves old rows unconverted |
+| Already applied by the installer and `./start.sh pull` | `001_run_obs_generated_columns.sql`, `migrations/seed/*.sql`, `031_generic_backend_openssh.sql`, `033_generic_sop_mr_node.sql`, `038_generic_sop_host_credentials.sql` | Nothing; the script above covers it |
+| Required upgrade migrations | `009_bot_interactions_utf8mb4.sql`, `036_git_http_credentials.sql` | Follow each migration's timing and prerequisites. [Migrating existing GitHub credentials](#migrating-existing-github-credentials) |
+| Optional backfills and rewrites of existing rows | `016_public_optional_repositories.sql`, `021_assistant_session_sources.sql` | Run them if the installation needs the converted rows |
 
 ## Updating existing public SOPs
 
@@ -163,15 +191,14 @@ docker compose exec -T mysql sh -c 'MYSQL_PWD="$MYSQL_PASSWORD" mysql -u loopfor
 
 This repeatable SQL changes only instruction fields that still match the original public seed. It preserves operator edits and project copies. New installations already receive these instructions from the public catalog seed; application startup does not migrate data.
 
-To add the 「发起 MR」 node to the built-in backend, frontend and defect-fix SOPs of an existing installation, apply `033_generic_sop_mr_node.sql` the same way:
+On Compose installs, the installer and `./start.sh pull` add the 「发起 MR」 node to the built-in backend, frontend, and defect-fix SOPs. They apply `033_generic_sop_mr_node.sql` to add the step, then `038_generic_sop_host_credentials.sql` to update the original MR role instructions. To apply the SQL manually, run both migrations in the same order.
 
 ```bash
-docker compose exec -T mysql sh -c 'MYSQL_PWD="$MYSQL_PASSWORD" mysql -u loopforge loopforge' < migrations/033_generic_sop_mr_node.sql
+cat migrations/033_generic_sop_mr_node.sql migrations/038_generic_sop_host_credentials.sql \
+  | docker compose exec -T mysql sh -c 'MYSQL_PWD="$MYSQL_PASSWORD" mysql -u loopforge loopforge'
 ```
 
-After it, a run of these SOPs commits and pushes its work branch and opens an MR/PR before 交付汇总, so the Git credentials of the run's responsible user need push access. The installer and `./start.sh pull` do not run it. It rewrites a template only while its node graph and 交付汇总 position are the shipped original, and the 交付汇总 prompt only while unedited; it is safe to repeat. Project SOPs adopted from these templates are copies and are not changed.
-
-After migrating personal Git credentials, apply `038_generic_sop_host_credentials.sql` to update the original authentication instruction in the three built-in MR roles. The roles can use a hosting CLI, a configured MCP, or the host's API with a token obtained through `git credential fill`.
+Migration 033 checks that the node graph and 交付汇总 position still match the shipped template. It updates the 交付汇总 prompt only when it is unedited. Migration 038 replaces the original Git authentication instruction with guidance to use a hosting CLI, a configured MCP, or `git credential fill` for API access. Both migrations preserve project copies and can be repeated. The Git credentials of the run's responsible user need push access for the new step to complete.
 
 ## GitHub credentials
 
@@ -186,6 +213,18 @@ The flow requests the OAuth `repo` scope so private cloning, pushes, Issues and 
 GitHub Issue import and PR status synchronization use the project owner's Git token. Git operations and the optional GitHub MCP integration use the responsible user's token. Public reads may work without a token; private repositories and writes require repository access. GitHub MCP must be installed explicitly and sends credentials only to its official HTTPS endpoint.
 
 Git commits created by the platform use the responsible local account name and a non-deliverable `@users.noreply.loopforge.invalid` email. A local account does not establish a corporate email or a verified GitHub identity.
+
+### Migrating existing GitHub credentials
+
+When upgrading from v0.4.0 to a version that reads HTTPS credentials by host, stop the old API and workers and keep MySQL running. Apply the target release's `036_git_http_credentials.sql` manually before starting the upgraded platform or running `./start.sh pull`. For Compose, use:
+
+```bash
+docker compose exec -T mysql sh -c 'MYSQL_PWD="$MYSQL_PASSWORD" mysql -u loopforge loopforge' < migrations/036_git_http_credentials.sql
+```
+
+The backfill copies existing GitHub personal access tokens and device-flow grants into `github.com` entries. If an installation already upgraded and a user's token is still in the legacy column, applying the backfill restores the missing entry. An existing `github.com` entry takes precedence.
+
+Verify the credentials after upgrading. After the rollback window, run `037_retire_plain_git_token.sql` manually using the same command with the cleanup filename. It clears a legacy token only when the corresponding `github.com` entry holds the same value. If the values differ, both are kept.
 
 ## CodeBuddy authentication environment
 

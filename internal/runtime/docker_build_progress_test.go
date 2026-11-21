@@ -115,3 +115,69 @@ func TestDockerBuildStopsWhenTheBuildStallsOrRunsTooLong(t *testing.T) {
 		}
 	})
 }
+
+func TestDockerBuildReportsStepsBeforeQuietBuildCompletes(t *testing.T) {
+	t.Setenv(dockerBuildStallEnv, "")
+	t.Setenv(dockerBuildTimeoutEnv, "")
+	if watch := dockerBuildWatch(slowDockerfile()); watch.Stall != 0 || watch.Timeout != 0 {
+		t.Fatalf("default build limits: %+v", watch)
+	}
+	gate := filepath.Join(t.TempDir(), "continue")
+	t.Setenv("TEST_DOCKER_BUILD_CONTINUE", gate)
+	installFakeDockerBuild(t, `
+		printf '%s\n' \
+		  '#1 [internal] load metadata for private-registry' \
+		  '#4 [compile 1/2] FROM private-registry/base:latest' \
+		  '#5 [compile 2/2] RUN hidden-arguments' \
+		  '#5 0.1 hidden-output' \
+		  '#6 [package 2/2] COPY --from=compile hidden-arguments'
+		until [ -f "$TEST_DOCKER_BUILD_CONTINUE" ]; do sleep 0.05; done
+		printf '%s\n' '#3 exporting to image'
+	`)
+	progress := make(chan domain.WorkspaceImageBuildProgress, 8)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	ctx = WithDockerBuildProgress(ctx, func(update domain.WorkspaceImageBuildProgress) { progress <- update })
+	done := make(chan error, 1)
+	workspace := t.TempDir()
+	go func() {
+		_, err := ensureDockerImage(ctx, workspace, slowDockerfile())
+		done <- err
+	}()
+	next := func() domain.WorkspaceImageBuildProgress {
+		t.Helper()
+		select {
+		case update := <-progress:
+			return update
+		case <-ctx.Done():
+			t.Fatal("build progress was not reported")
+			return domain.WorkspaceImageBuildProgress{}
+		}
+	}
+	started := next()
+	if started.ID == "" || started.Step != "启动构建" || started.Done {
+		t.Fatalf("start = %+v", started)
+	}
+	for _, step := range []string{
+		"读取基础镜像信息",
+		"准备 Dockerfile 阶段 compile 的基础镜像",
+		"执行 Dockerfile 阶段 compile 的第 2/2 步",
+		"执行 Dockerfile 阶段 package 的第 2/2 步",
+	} {
+		if update := next(); update.ID != started.ID || update.Step != step || update.Done {
+			t.Fatalf("progress = %+v, want %q", update, step)
+		}
+	}
+	if err := os.WriteFile(gate, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if update := next(); update.Step != "导出镜像" || update.Done {
+		t.Fatalf("export = %+v", update)
+	}
+	if update := next(); update.ID != started.ID || !update.Done || update.Failed {
+		t.Fatalf("completion = %+v", update)
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}

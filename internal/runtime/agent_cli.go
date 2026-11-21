@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"agentflow/internal/domain"
+	"agentflow/internal/managedcli"
 )
 
 // Agent CLIs beyond CodeBuddy / Codex / Claude Code. Each one runs with the
@@ -87,6 +88,8 @@ type AgentCLIOptions struct {
 	SystemPromptFile string
 	// ReadOnly is AgentCLICommandOptions.Chat.
 	ReadOnly bool
+	// ImageInput enables multimodal serialization for custom providers.
+	ImageInput bool `json:",omitempty"`
 }
 
 // agentCLIKeyEnv holds the user's key for CLIs whose configuration names
@@ -394,7 +397,10 @@ func ApplyAgentCLICredential(kind string, cred ProviderCredential, options Agent
 		return nil, nil, fmt.Errorf("%s 需要指定模型", AgentCLILabel(kind))
 	}
 	homeEnv = filepath.ToSlash(homeEnv)
-	env := map[string]string{}
+	env := managedcli.AutoUpdateEnvironment(kind)
+	if env == nil {
+		env = map[string]string{}
+	}
 	switch kind {
 	case AgentCLIOpenCode:
 		npm := map[string]string{AgentCLIProtocolChat: "@ai-sdk/openai-compatible", AgentCLIProtocolResponses: "@ai-sdk/openai", AgentCLIProtocolMessages: "@ai-sdk/anthropic"}[protocol]
@@ -403,12 +409,17 @@ func ApplyAgentCLICredential(kind string, cred ProviderCredential, options Agent
 			// Base URLs follow the Claude Code convention; the AI SDK wants /v1.
 			endpoint += "/v1"
 		}
+		modelConfig := map[string]any{"name": model}
+		if options.ImageInput {
+			modelConfig["attachment"] = true
+			modelConfig["modalities"] = map[string][]string{"input": {"text", "image"}, "output": {"text"}}
+		}
 		config := map[string]any{
 			"provider": map[string]any{"agentflow": map[string]any{
 				"npm":     npm,
 				"name":    "AgentFlow",
 				"options": map[string]any{"baseURL": endpoint, "apiKey": "{env:" + agentCLIKeyEnv + "}"},
-				"models":  map[string]any{model: map[string]any{"name": model}},
+				"models":  map[string]any{model: modelConfig},
 			}},
 			"model":      "agentflow/" + model,
 			"autoupdate": false,
@@ -420,7 +431,6 @@ func ApplyAgentCLICredential(kind string, cred ProviderCredential, options Agent
 		content, _ := json.Marshal(config)
 		env[agentCLIKeyEnv] = key
 		env["OPENCODE_CONFIG_CONTENT"] = string(content)
-		env["OPENCODE_DISABLE_AUTOUPDATE"] = "1"
 	case AgentCLICursor:
 		env["CURSOR_API_KEY"] = key
 		if model != "" {
@@ -482,7 +492,11 @@ func ApplyAgentCLICredential(kind string, cred ProviderCredential, options Agent
 			}
 			env[kimiThinkingEffortEnv] = nativeEffort
 		}
-		lines = append(lines, `capabilities = ["thinking", "tool_use"]`, "")
+		capabilities := `["thinking", "tool_use"]`
+		if options.ImageInput {
+			capabilities = `["thinking", "tool_use", "image_in"]`
+		}
+		lines = append(lines, "capabilities = "+capabilities, "")
 		if hook := options.ApprovalCommand; hook != "" {
 			// Kimi validates 1–600 seconds and allows the tool on timeout; the
 			// hook's own retry budget ends well before that.
@@ -496,9 +510,13 @@ func ApplyAgentCLICredential(kind string, cred ProviderCredential, options Agent
 		env["KIMI_DISABLE_TELEMETRY"] = "1"
 	case AgentCLIPi:
 		api := agentCLIPiAPI(protocol)
+		modelConfig := map[string]any{"id": model, "reasoning": true}
+		if options.ImageInput {
+			modelConfig["input"] = []string{"text", "image"}
+		}
 		models, _ := json.MarshalIndent(map[string]any{"providers": map[string]any{"agentflow": map[string]any{
 			"baseUrl": baseURL, "api": api, "apiKey": "$" + agentCLIKeyEnv,
-			"models": []map[string]any{{"id": model, "reasoning": true}},
+			"models": []map[string]any{modelConfig},
 		}}}, "", "  ")
 		if err := writeAgentCLIFile(home, ".pi/agent/models.json", models); err != nil {
 			return nil, nil, err
@@ -506,7 +524,7 @@ func ApplyAgentCLICredential(kind string, cred ProviderCredential, options Agent
 		env[agentCLIKeyEnv] = key
 		env["PI_CODING_AGENT_DIR"] = homeEnv + "/.pi/agent"
 	case AgentCLIDeepSeek:
-		return applyDeepSeekCredential(home, homeEnv, key, baseURL, protocol, model, strings.TrimSpace(options.Effort), argv)
+		return applyDeepSeekCredential(home, homeEnv, key, baseURL, protocol, model, strings.TrimSpace(options.Effort), options.ImageInput, argv)
 	case AgentCLIZCode:
 		return applyZCodeCredential(home, homeEnv, key, baseURL, protocol, model, strings.TrimSpace(options.Effort), argv)
 	default:
@@ -523,7 +541,7 @@ func agentCLIPiAPI(protocol string) string {
 
 // applyDeepSeekCredential writes the DeepSeek Harness model patch and puts the
 // launcher --patch flags ahead of the profile's own arguments.
-func applyDeepSeekCredential(home AgentCLIHome, homeEnv, key, baseURL, protocol, model, effort string, argv []string) ([]string, map[string]string, error) {
+func applyDeepSeekCredential(home AgentCLIHome, homeEnv, key, baseURL, protocol, model, effort string, imageInput bool, argv []string) ([]string, map[string]string, error) {
 	env := map[string]string{}
 	patch := []any{}
 	selection := map[string]any{}
@@ -556,6 +574,9 @@ func applyDeepSeekCredential(home AgentCLIHome, homeEnv, key, baseURL, protocol,
 		env[agentCLIKeyEnv] = key
 		provider := "agentflow"
 		modelConfig := map[string]any{"id": model}
+		if imageInput {
+			modelConfig["input"] = []string{"text", "image"}
+		}
 		if effort != "" {
 			// Keep the gateway's unconfigured route distinct so reverting to
 			// it on resume does not inherit the explicitly selected effort.

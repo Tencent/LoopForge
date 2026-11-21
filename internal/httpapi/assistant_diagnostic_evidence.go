@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"agentflow/internal/domain"
+	"agentflow/internal/runtime"
 )
 
 const diagnosticTimelineLimit = 160
@@ -73,6 +74,12 @@ func (a *assistantDiagnosticAttempt) process(event domain.TelemetryEvent) {
 	if a == nil {
 		return
 	}
+	if event.Name == runtime.CLIVersionEvent {
+		version, _ := event.Attributes["version"].(string)
+		source, _ := event.Attributes["source"].(string)
+		a.recordCLIVersion(version, source)
+		return
+	}
 	now := time.Now().UTC()
 	if !event.Timestamp.IsZero() {
 		now = event.Timestamp
@@ -129,10 +136,29 @@ func (a *assistantDiagnosticAttempt) process(event domain.TelemetryEvent) {
 	})
 }
 
+func (a *assistantDiagnosticAttempt) recordCLIVersion(version, source string) {
+	version = runtime.NormalizeCLIVersion(version)
+	if version == "" {
+		return
+	}
+	switch source {
+	case "managed_inventory", "package_metadata", "version_probe":
+		a.update(func(attempt *domain.AssistantCLIAttempt) {
+			if attempt.CLIVersion == "" {
+				attempt.CLIVersion, attempt.VersionSource = version, source
+			}
+			if source == "managed_inventory" && attempt.BinarySource != "explicit_override" {
+				attempt.BinarySource = source
+			}
+		})
+	}
+}
+
 var (
-	diagnosticRequestID  = regexp.MustCompile(`(?i)\b(?:request[ _-]?id|x-request-id)\s*[=:]\s*["']?([A-Za-z0-9_.:/-]{4,160})`)
-	diagnosticTraceID    = regexp.MustCompile(`(?i)\b(?:trace[ _-]?id|x-trace-id)\s*[=:]\s*["']?([A-Za-z0-9_.:/-]{4,160})`)
-	diagnosticHTTPStatus = regexp.MustCompile(`(?i)\b(?:HTTP(?:/[0-9.]+)?\s+|status(?:\s+code)?[\s:=]+)([1-5][0-9]{2})\b`)
+	diagnosticRequestID    = regexp.MustCompile(`(?i)\b(?:request[ _-]?id|x-request-id)\s*[=:]\s*["']?([A-Za-z0-9_.:/-]{4,160})`)
+	diagnosticTraceID      = regexp.MustCompile(`(?i)\b(?:trace[ _-]?id|x-trace-id)\s*[=:]\s*["']?([A-Za-z0-9_.:/-]{4,160})`)
+	diagnosticHTTPStatus   = regexp.MustCompile(`(?i)\b(?:HTTP(?:/[0-9.]+)?\s+|status(?:\s+code)?[\s:=]+)([1-5][0-9]{2})\b`)
+	codexDiagnosticVersion = regexp.MustCompile(`\b[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.-]+)?(?:\+[A-Za-z0-9.-]+)?`)
 )
 
 func diagnosticTextMetadata(e *domain.AssistantDiagnosticEvent) {
@@ -342,15 +368,15 @@ func (a *assistantDiagnosticAttempt) nativeMetadata(raw map[string]any) {
 	result, _ := raw["result"].(map[string]any)
 	version := ""
 	for _, key := range []string{"claude_code_version", "codebuddy_version", "cliVersion"} {
-		if value := get(raw, key); diagnosticVersion.MatchString(value) {
+		if value := runtime.NormalizeCLIVersion(get(raw, key)); value != "" {
 			version = value
 		}
 	}
 	// Codex initialize returns a userAgent; extract only the version, not host
 	// descriptions or other fields from the initialization response.
 	if agent := get(result, "userAgent"); strings.Contains(agent, "codex") {
-		if match := regexp.MustCompile(`\b[0-9]+\.[0-9]+\.[0-9]+\b`).FindString(agent); match != "" {
-			version = match
+		if value := runtime.NormalizeCLIVersion(codexDiagnosticVersion.FindString(agent)); value != "" {
+			version = value
 		}
 	}
 	method := get(raw, "method")
@@ -358,6 +384,14 @@ func (a *assistantDiagnosticAttempt) nativeMetadata(raw map[string]any) {
 	a.update(func(attempt *domain.AssistantCLIAttempt) {
 		if version != "" {
 			attempt.CLIVersion, attempt.VersionSource = version, "native_handshake"
+		} else if attempt.Engine == runtime.AgentCLIZCode && get(raw, "type") == "session.updated" {
+			// ZCode reports its build in the request metadata of its model
+			// events. Only keep the version, never the request headers.
+			payload, _ := raw["payload"].(map[string]any)
+			headers, _ := payload["requestHeaders"].(map[string]any)
+			if value := runtime.NormalizeCLIVersion(get(headers, "x-zcode-app-version")); value != "" {
+				attempt.CLIVersion, attempt.VersionSource = value, "native_protocol"
+			}
 		}
 		for _, key := range []string{"session_id", "sessionId", "sessionID", "conversation_id"} {
 			if id := get(raw, key); id != "" {

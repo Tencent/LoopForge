@@ -19,6 +19,7 @@ const input = html.match(/<input[^>]*name="maxDispatch"[^>]*>/)[0];
 assert.ok(input.includes('type="number"') && input.includes('min="1"') && input.includes('max="10"'));
 assert.ok(!input.includes('required'), 'dispatch limit must be optional');
 const form = {elements: Object.fromEntries(['id','name','scheduleMode','jobKind','workflowId','useIssueWorkflow','source','maxDispatch','intervalSec','cron','assistantPrompt','assistantModel','enabled'].map(name => [name,{value:''}]))};
+form.elements.timeoutMinutes={value:'',validity:{valid:true}};
 Object.assign(form.elements.name,{value:'trigger job'});
 form.elements.jobKind.value='dispatch';
 form.elements.workflowId.value='wf';

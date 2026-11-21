@@ -121,11 +121,7 @@ func conversationGuardPaths(root string) (parents, files []string, err error) {
 // first use. The native HOME remains separate from installer state.
 func resolveNativeConversationBinary(provider string) (string, error) {
 	binary := conversationBinary(provider)
-	override := "AGENTFLOW_" + strings.ToUpper(strings.ReplaceAll(provider, "-", "_")) + "_BIN"
-	if provider == "claude-code" {
-		override = "AGENTFLOW_CLAUDE_BIN"
-	}
-	if path := strings.TrimSpace(os.Getenv(override)); path != "" && fileIsExecutable(path) {
+	if path := explicitNativeCLIPath(provider); path != "" {
 		return path, nil
 	}
 	if root := strings.TrimSpace(os.Getenv("AGENTFLOW_MANAGED_CLI_ROOT")); root != "" {

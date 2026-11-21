@@ -1000,9 +1000,6 @@ function bind(){
     }else switchView(btn.dataset.view);
   });
   $('#settingsSidebarToggle')?.addEventListener('click',()=>{cancelSettingsRouteTransition();setSettingsSidebarExpanded(!settingsSidebarExpanded())});
-  $('#railSidebarToggle')?.addEventListener('click',()=>{
-    setPlatformRailExpanded(!platformRailExpanded());
-  });
   document.addEventListener('click',event=>{
     if(document.body.classList.contains('management-mode')&&event.target instanceof Element&&event.target.closest('.collab-rail-toggle')){
       event.preventDefault();event.stopImmediatePropagation();
@@ -1041,7 +1038,6 @@ function bind(){
   };
   $$('.canvas-view-toggle [data-flow-view]').forEach(btn=>btn.onclick=()=>setFlowView(btn.dataset.flowView));
   const refreshRunnersBtn=$('#refreshRunners');if(refreshRunnersBtn)refreshRunnersBtn.onclick=()=>refreshRunners();
-  $('#langToggle').onclick=()=>window.lfSetLang(window.lfLang()==='en'?'zh':'en');
   $('#themeToggle').onclick=toggleTheme;renderThemeToggle();
   const profileWrap = $('#userProfileWrap');
   const userBadge = $('#userBadge');
@@ -1762,24 +1758,6 @@ function setSettingsSidebarExpanded(expanded){
       document.body.classList.remove('settings-sidebar-entering');
     });
   }
-}
-function platformRailExpanded(){return document.body.classList.contains('platform-rail-expanded')}
-function setPlatformRailExpanded(expanded){
-  expanded=!!expanded;
-  document.body.classList.toggle('platform-rail-expanded',expanded);
-  const button=$('#railSidebarToggle');
-  if(!button)return;
-  const label=expanded?'只显示图标':'展开导航';
-  button.disabled=false;
-  button.removeAttribute('aria-disabled');
-  button.removeAttribute('title');
-  button.setAttribute('aria-controls','platformRail');
-  button.setAttribute('aria-expanded',String(expanded));
-  button.setAttribute('aria-label',label);
-  if(expanded)button.removeAttribute('data-tooltip');
-  else button.dataset.tooltip=label;
-  const text=button.querySelector('.rail-label');
-  if(text)text.textContent=label;
 }
 function viewTitles(){return {management:'设置',collaboration:'AI 工作台',issues:'需求列表',aiSchedules:'定时任务',bots:'通道管理',assistant:'AI 助手',runs:'运行记录',approvals:'待我确认',sops:'流程模板',flow:'流程设计',agents:'角色定义',mcp:'能力资产',rules:'能力资产',skills:'能力资产',dockerfiles:'环境资产',environments:'环境资产',sandboxes:'环境资产',observability:'统计',projects:'项目配置',platform:'平台管理',runners:'执行机器',settings:'个人配置',access:'访问密钥',guide:'访问密钥'}}
 // 设置侧栏只列一级入口；被合并进同一页的子视图（能力资产、环境资产的类型 Tab，

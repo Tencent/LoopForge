@@ -25,7 +25,7 @@ func AnalyzeAssistantDiagnostics(d *AssistantDiagnostics) {
 	for i := range d.Attempts {
 		attempt := &d.Attempts[i]
 		if attempt.CLIVersion == "" {
-			a.Unknowns = appendUniqueDiagnostic(a.Unknowns, "CLI 未提供版本，安装元数据也未提供版本。")
+			a.Unknowns = appendUniqueDiagnostic(a.Unknowns, "未采集到 CLI 版本。")
 		}
 		if attempt.ExitCode != nil {
 			a.Evidence = append(a.Evidence, fmt.Sprintf("调用 %s 的进程退出码为 %d，协议结果为 %s", attempt.ID, *attempt.ExitCode, attempt.Status))

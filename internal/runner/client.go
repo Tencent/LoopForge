@@ -52,6 +52,8 @@ func (c *Client) sessionToken() string {
 
 // ---------- request plumbing ----------
 
+const runnerTaskClaimPath = "/runners/tasks/claim"
+
 func (c *Client) do(ctx context.Context, method, path string, body any, out any) error {
 	var reader io.Reader
 	if body != nil {
@@ -82,7 +84,11 @@ func (c *Client) do(ctx context.Context, method, path string, body any, out any)
 	if resp.StatusCode == http.StatusNoContent {
 		return nil
 	}
-	payload, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+	responseLimit := int64(8 << 20)
+	if path == runnerTaskClaimPath {
+		responseLimit += domain.RunnerSSHKnownHostsWireLimit
+	}
+	payload, _ := io.ReadAll(io.LimitReader(resp.Body, responseLimit))
 	if resp.StatusCode >= 400 {
 		var detail struct {
 			Error string `json:"error"`
@@ -182,21 +188,23 @@ func (c *Client) Disconnect(ctx context.Context) error {
 }
 
 type ClaimRequest struct {
-	AvailableRuntimes []string `json:"availableRuntimes"`
-	Capacity          int      `json:"capacity"`
-	Preflight         bool     `json:"preflight,omitempty"`
-	NoWait            bool     `json:"noWait,omitempty"`
+	AvailableRuntimes        []string `json:"availableRuntimes"`
+	Capacity                 int      `json:"capacity"`
+	Preflight                bool     `json:"preflight,omitempty"`
+	NoWait                   bool     `json:"noWait,omitempty"`
+	SupportsGitSSHKnownHosts bool     `json:"supportsGitSshKnownHosts,omitempty"`
 }
 
 // WaitForTask long-polls without leasing work. Older servers ignore preflight
 // and return a leased task, which the daemon can still execute.
 func (c *Client) WaitForTask(ctx context.Context, req ClaimRequest) (bool, *domain.RunnerTask, error) {
 	req.Preflight = true
+	req.SupportsGitSSHKnownHosts = true
 	var out struct {
 		TaskAvailable bool              `json:"taskAvailable"`
 		Task          domain.RunnerTask `json:"task"`
 	}
-	if err := c.do(ctx, http.MethodPost, "/runners/tasks/claim", req, &out); err != nil {
+	if err := c.do(ctx, http.MethodPost, runnerTaskClaimPath, req, &out); err != nil {
 		return false, nil, err
 	}
 	if out.Task.ID != "" {
@@ -209,10 +217,11 @@ func (c *Client) WaitForTask(ctx context.Context, req ClaimRequest) (bool, *doma
 // is reported as (nil, false, nil); the caller simply polls again. The
 // context deadline must exceed the server long-poll timeout.
 func (c *Client) Claim(ctx context.Context, req ClaimRequest) (*domain.RunnerTask, bool, error) {
+	req.SupportsGitSSHKnownHosts = true
 	var out struct {
 		Task domain.RunnerTask `json:"task"`
 	}
-	if err := c.do(ctx, http.MethodPost, "/runners/tasks/claim", req, &out); err != nil {
+	if err := c.do(ctx, http.MethodPost, runnerTaskClaimPath, req, &out); err != nil {
 		return nil, false, err
 	}
 	if out.Task.ID == "" {
@@ -264,6 +273,7 @@ func (c *Client) OpenControl(ctx context.Context) (*websocket.Conn, error) {
 	}
 	u.Path = strings.TrimRight(u.Path, "/") + "/runners/connect"
 	header := http.Header{}
+	header.Set(domain.RunnerSSHHostKeyProbeHeader, "1")
 	if session := c.sessionToken(); session != "" {
 		header.Set("Authorization", "Bearer "+session)
 	}
