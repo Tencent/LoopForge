@@ -55,12 +55,15 @@ function effortPreference(executor, model) {
   return `effort.${executor}.${unprefixedModel(executor, model)}`;
 }
 
-// Prefer the remembered model when supplied, then the first available model.
-// CodeBuddy also supports a server-configured fallback when the list is empty.
-function preferredModel(list, executor, codeBuddyDefault, remembered) {
+// Use the first requested preference that is available for this executor.
+function preferredModel(list, executor, ...preferences) {
   const available = list.filter((model) => !model.disabled && !model.unavailable);
-  const listed = findExecutorModel(available, executor, remembered);
-  return (listed && remembered) || available[0]?.id || (executor === "codebuddy" ? codeBuddyDefault : "");
+  for (const id of preferences) {
+    if (!concreteModel({ id }, executor)) continue;
+    const listed = findExecutorModel(available, executor, id);
+    if (listed) return id;
+  }
+  return available[0]?.id || "";
 }
 
 // Mirrors errAssistantSponsoredModel in internal/httpapi/assistant_sponsor.go;
@@ -111,7 +114,8 @@ export function useChat() {
     [revealId, setRevealId] = useState(activeId),
     [projectId, setProjectId] = useState(initialProject),
     [selection, setSelection] = useState(() => ({ executor: storedExecutor(), model: null, effort: null })),
-    [codeBuddyDefault, setCodeBuddyDefault] = useState({ id: "default", name: "默认" }),
+    [accountDefaults, setAccountDefaults] = useState(null),
+    [codeBuddyCatalogDefault, setCodeBuddyCatalogDefault] = useState(""),
     [sponsoredModels, setSponsoredModels] = useState([]),
     [providerCatalogs, setProviderCatalogs] = useState({}),
     [generation, setGeneration] = useState(null),
@@ -251,7 +255,8 @@ export function useChat() {
   }
   const applyModelCatalog = useCallback((catalog) => {
     setModels(catalog.models || []);
-    setCodeBuddyDefault({ id: catalog.default || "default", name: "默认", efforts: catalog.defaultEfforts });
+    setAccountDefaults(catalog.preferences || null);
+    setCodeBuddyCatalogDefault(catalog.default || "");
     setSponsoredModels(sponsoredModelList(catalog));
   }, []);
   useEffect(() => {
@@ -653,15 +658,19 @@ export function useChat() {
       : listed;
     const sponsored = codeBuddy && missingKey && !user.isGuest && !!sponsoredModel;
     const listedModel = findExecutorModel(executorModels, executor, model);
-    const hasSelectedModel = model !== null && !listedModel?.disabled && !listedModel?.unavailable &&
+    const concrete = concreteModel({ id: model }, executor);
+    const hasSelectedModel = concrete && !listedModel?.disabled && !listedModel?.unavailable &&
       (conversation || !executorModels.length || listedModel);
+    const inheritsDefault = !!conversation && !concrete;
+    const personalDefault = inheritsDefault && !sponsored && accountDefaults?.executor === executor ? accountDefaults : null;
     const selectedModel = hasSelectedModel ? model : preferredModel(
-      executorModels, executor, codeBuddyDefault.id,
+      executorModels, executor,
+      personalDefault?.model,
+      inheritsDefault ? (codeBuddy ? codeBuddyCatalogDefault : providerCatalog?.default) : null,
       draft ? readComposerPreference(`model.${executor}`) : null,
     );
     const availableModel = sponsored && !sponsoredModels.includes(selectedModel) ? sponsoredModel : selectedModel;
-    const catalogEntry = findExecutorModel(executorModels, executor, availableModel) ??
-      (codeBuddy && availableModel === codeBuddyDefault.id ? codeBuddyDefault : undefined);
+    const catalogEntry = findExecutorModel(executorModels, executor, availableModel);
     const activeModel = catalogEntry?.id ?? availableModel;
     const requestedModelId = unprefixedModel(executor, availableModel);
     const unavailableAgyVariant = agyAccountKey && providerCatalog && !catalogEntry &&
@@ -671,7 +680,9 @@ export function useChat() {
       ? catalogEntry?.efforts?.find((level) => catalogEntry.effortModelIds?.[level] === requestedModelId)
       : undefined;
     // null follows the browser preference, while "" is the CLI's default level.
-    const preferredEffort = ((model === null || hasSelectedModel) ? effort : null) ??
+    const defaultEffort = personalDefault && catalogEntry && catalogEntry === findExecutorModel(executorModels, executor, personalDefault.model)
+      ? personalDefault.effort : null;
+    const preferredEffort = (inheritsDefault ? defaultEffort : ((model === null || hasSelectedModel) ? effort : null)) ??
       (draft ? readComposerPreference(effortPreference(executor, availableModel)) : null);
     // Custom models can remain usable without a picker entry. Keep their
     // saved effort visible and let the server validate it on send.
@@ -1024,11 +1035,6 @@ export function useChat() {
       setError("会话仍在加载，请稍候再发送。");
       return false;
     }
-    const modelError = composerModelError(composerModel);
-    if (modelError) {
-      setError(modelError);
-      return false;
-    }
     const currentProjectId = sessionRef.current?.projectId || "";
     const approval = fromQueue
       ? queuedApproval({ approvalMode, approvalUserId, approvalProjectId }, user?.id, currentProjectId)
@@ -1038,6 +1044,11 @@ export function useChat() {
       generation?.status === "running" ||
       steeringRef.current?.sessionId === currentId.current
     ) {
+      const modelError = composerModelError(composerModel);
+      if (modelError) {
+        setError(modelError);
+        return false;
+      }
       // Internal follow-ups (confirmed drafts) never queue or interrupt.
       if (messagesOverride || fromQueue || !currentId.current) {
         setError("当前回复仍在生成，请稍后再试。");
@@ -1080,18 +1091,18 @@ export function useChat() {
     try {
       // Recheck credentials before creating the session in case the user
       // configured a key elsewhere after this tab loaded.
-      if (
-        codeBuddy &&
-        !sponsoredModel &&
-        users.find((u) => u.id === user?.id)?.codeBuddyApiKeyConfigured === undefined &&
-        user &&
-        !user.isGuest
-      ) {
+      const account = users.find((u) => u.id === user?.id) ?? user;
+      if (codeBuddy && user && !user.isGuest && !sponsoredModel && !account?.codeBuddyApiKeyConfigured) {
         const rows = await api("/api/users").catch(() => null);
         if (rows) setUsers(rows);
-        const fresh = rows?.find((u) => u.id === user.id);
-        if (fresh && !fresh.codeBuddyApiKeyConfigured) {
+        const fresh = rows?.find((u) => u.id === user.id) ?? account;
+        if (!fresh?.codeBuddyApiKeyConfigured) {
           if (viewingTarget()) setError("请先在个人配置中配置自己的 CodeBuddy API Key");
+          return false;
+        }
+        requestModelCatalogRefresh((revision) => revision + 1);
+        if (!composerModel.activeModel) {
+          if (viewingTarget()) setError("CodeBuddy 凭证已更新，正在刷新模型列表，请稍后重试。");
           return false;
         }
       }

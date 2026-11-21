@@ -78,7 +78,7 @@ func (h *assistantHandlers) generateBotReply(ctx context.Context, bot domain.Not
 	if model == "" {
 		model = domain.DefaultNotificationReportModel
 	}
-	if assistantAllowedModel(model, loadAssistantModels(ctx, user.CodeBuddyInternetEnvironment)) != model {
+	if assistantAllowedModel(model, assistantModelsForRequest(ctx, user, model)) != model {
 		return "所选模型不可用，请在 Bot 管理中重新选择。", nil
 	}
 	if err = ensureAssistantSessionDirs(user.ID); err != nil {
