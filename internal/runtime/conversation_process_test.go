@@ -55,6 +55,9 @@ func TestConversationProcessBidirectionalAndRootFence(t *testing.T) {
 	if !strings.Contains(output, filepath.Join(root, "ws/a")) || !strings.Contains(output, "err") {
 		t.Fatalf("duplex output: %s", output)
 	}
+	if _, err = p.Handle(ctx, root, "", nil, ConversationProcessRequest{Operation: "write", ID: r.ID, EOF: true}, nil); err != nil {
+		t.Fatalf("stdin EOF after process completion: %v", err)
+	}
 	if _, err = p.Handle(ctx, root, "", nil, ConversationProcessRequest{Operation: "prepare"}, nil); err != nil {
 		t.Fatal("root released before completion:", err)
 	}

@@ -317,6 +317,9 @@ func TestNativeApprovalAllowsPlatformReadsAndRejectsEffects(t *testing.T) {
 	if result := g.approveNativeTool(context.Background(), s, json.RawMessage(`{"name":"Read","input":{"path":"SKILL.md"}}`)); !result.Allow {
 		t.Fatal("platform skill read denied")
 	}
+	if result := g.approveNativeTool(context.Background(), s, json.RawMessage(`{"name":"ReadMediaFile","input":{"path":"attachments/example/image.png"}}`)); !result.Allow {
+		t.Fatalf("platform media read denied: %s", result.Reason)
+	}
 	if result := g.approveNativeTool(context.Background(), s, json.RawMessage(`{"name":"Bash","input":{"command":"echo unsafe"}}`)); result.Allow {
 		t.Fatal("platform native shell permitted")
 	}
