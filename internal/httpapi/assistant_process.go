@@ -73,6 +73,7 @@ func (h *assistantHandlers) conversationExecutor(s *AgentToolSession, root strin
 		request := domain.RunnerWorkspaceRequest{Operation: domain.RunnerWorkspaceOperationConversationCLI}
 		workspace := ""
 		if s.RuntimeMode == domain.AssistantModeWorkspace {
+			ctx = withAssistantDockerBuildProgress(ctx, s)
 			runID := s.workspaceRun()
 			run, ok := h.repo.RunState(runID)
 			if !ok {

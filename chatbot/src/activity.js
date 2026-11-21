@@ -467,6 +467,8 @@ export function activityFace(step) {
     return { kind: "verify", busy: "正在提交节点结果", done: "已提交节点结果" };
   if (/workbench_workspace_open/.test(name))
     return { kind: "workflow", busy: "正在打开工作区", done: "已打开工作区" };
+  if (name === "workspace_docker_build")
+    return { kind: "workflow", busy: "正在构建 Docker 镜像", done: "已构建 Docker 镜像" };
   if (/workbench_delivery_register/.test(name))
     return { kind: "workflow", busy: "正在登记交付", done: "已登记交付" };
   if (/workbench_publish_artifact/.test(name))
