@@ -1093,8 +1093,7 @@ function bind(){
   $('#confirmRun').onclick=startRun; $('#newAgent').onclick=()=>openAgentWizard();
   $('#agentForm').onsubmit=saveAgent;
   $('#agentForm').elements.executorId?.addEventListener('change',e=>applyAgentModelUI(e.target.value,'','',true));
-  bindAgentPicker('#agentModelPicker',renderAgentModelPicker);
-  bindAgentPicker('#agentEffortPicker',renderAgentEffortPicker);
+  bindAgentPickers();
   $('#agentClone')&&($('#agentClone').onclick=()=>cloneAgent(state.selectedAgent));
   $('#agentForm').addEventListener('input',()=>renderAgentPreview(state.agentDraft));
   $('#agentForm').addEventListener('change',()=>renderAgentPreview(state.agentDraft)); $('#refreshRuns').onclick=()=>refreshRuns(false);$('#runBackBtn')&&($('#runBackBtn').onclick=()=>showRunList());

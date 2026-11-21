@@ -194,6 +194,11 @@ function createDOM() {
       return this.attrs.has(name) ? this.attrs.get(name) : null;
     }
     hasAttribute(name) { return this.attrs.has(String(name).toLowerCase()); }
+    toggleAttribute(name, force) {
+      const on = force === undefined ? !this.hasAttribute(name) : !!force;
+      if (on) this.setAttribute(name, ''); else this.removeAttribute(name);
+      return on;
+    }
     removeAttribute(name) {
       name = String(name).toLowerCase();
       if (!this.attrs.has(name)) return;

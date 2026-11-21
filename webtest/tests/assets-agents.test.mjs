@@ -135,25 +135,69 @@ test('role model picker reloads the editor catalog and preserves a CLI change wh
   const f = app.document.querySelector('#agentForm');
   f.elements.executorId.value = 'codex';
   f.elements.executorId.dispatchEvent(new app.window.Event('change', { bubbles: true }));
+  const toggle = app.document.querySelector('#agentModelPicker [data-model-toggle]');
+  const panel = () => app.document.querySelector('.lf-picker-menu[aria-label="模型"]:not([aria-hidden="true"])');
+  const menu = () => [...panel().querySelectorAll('[role=menuitemradio]')];
+  toggle.click();
+  const search = panel().querySelector('input');
+  search.value = 'private';
+  search.dispatchEvent(new app.window.Event('input', { bubbles: true }));
+  assert.equal(menu().length, 0, 'catalog has not arrived');
   complete(catalog([{ id: 'private/second', name: 'Second' }, { id: 'private/first', name: 'First' }]));
   await settle();
-  const menu = () => [...app.document.querySelectorAll('#agentModelPicker [role=option]')];
+  assert.equal(panel().querySelector('input'), search, 'the open menu keeps its search input');
+  assert.equal(search.value, 'private');
+  assert.equal(app.document.activeElement, search);
+  assert.deepEqual(menu().map(row => row.dataset.id), ['private/second', 'private/first']);
+  search.value = '';
+  search.dispatchEvent(new app.window.Event('input', { bubbles: true }));
   assert.deepEqual(menu().map(row => row.dataset.id), ['private/second', 'private/first', '__custom__']);
-  assert.equal(menu()[0].querySelector('.ai-model-name').textContent, 'Second');
+  assert.equal(menu()[0].querySelector('.lf-picker-copy strong').textContent, 'Second');
   assert.equal(f.elements.executorId.value, 'codex');
   assert.equal(app.evaluate(`agentEffectiveModel($('#agentForm'))`), 'private/second');
 
-  app.router.get('/api/executor-models', () => catalog([{ id: 'private/second', name: 'Renamed model' }]));
+  toggle.click();
+  let reload;
+  app.router.get('/api/executor-models', () => new Promise(resolve => { reload = resolve; }));
   app.evaluate(`openAgentWizard({id:'role-review',name:'Review',prompt:'Review changes',executorId:'codex',model:'private/second'})`);
   await settle();
+  toggle.click();
+  menu()[0].focus();
+  reload(catalog([{ id: 'private/second', name: 'Renamed model' }]));
+  await settle();
   assert.deepEqual(menu().map(row => row.dataset.id), ['private/second', '__custom__']);
+  assert.equal(app.document.activeElement, menu()[0], 'reload keeps the focused model');
+  assert.equal(menu()[0].getAttribute('aria-checked'), 'true');
+  assert.equal(app.evaluate(`agentEffectiveModel($('#agentForm'))`), 'private/second');
   assert.equal(app.document.querySelector('#agentModelPicker [data-model-label]').textContent, 'Renamed model');
+
+  // Leaving a manual model ID blank takes the catalog callback's early
+  // return, but an open CLI menu still needs the new model counts.
+  toggle.click();
+  let finishManualReload;
+  app.router.get('/api/executor-models', () => new Promise(resolve => { finishManualReload = resolve; }));
+  app.evaluate(`openAgentWizard({id:'role-review',name:'Review',prompt:'Review changes',executorId:'codex'})`);
+  await settle();
+  toggle.click();
+  menu().find(row => row.dataset.id === '__custom__').click();
+  f.elements.model.value = '';
+  f.elements.model.dispatchEvent(new app.window.Event('input', { bubbles: true }));
+  app.document.querySelector('#agentExecutorPicker [data-model-toggle]').click();
+  const cliPanel = app.document.querySelector('.lf-picker-menu[aria-label="CLI"]:not([aria-hidden="true"])');
+  const count = () => cliPanel.querySelector('[data-id="codex"] small').textContent;
+  assert.equal(count(), '1 个可用模型');
+  finishManualReload(catalog([{ id: 'private/second', name: 'Second' }, { id: 'private/third', name: 'Third' }]));
+  await settle();
+  assert.equal(f.elements.modelChoice.value, '__custom__', 'a blank manual choice is not replaced by the default');
+  assert.equal(f.elements.model.value, '');
+  assert.equal(count(), '2 个可用模型', 'the manual-entry branch also refreshes the open CLI menu');
 
   let refresh;
   app.router.get('/api/executor-models', () => new Promise(resolve => { refresh = resolve; }));
   app.evaluate(`openAgentWizard()`);
   f.elements.executorId.value = 'codex';
   f.elements.executorId.dispatchEvent(new app.window.Event('change', { bubbles: true }));
+  toggle.click();
   menu().find(row => row.dataset.id === 'private/second').click();
   await settle();
   refresh(catalog([{ id: 'private/new', name: 'New model' }]));
@@ -202,10 +246,14 @@ test('role effort picker follows each model and resets an unsupported level on m
     openAgentWizard({id:'test-role',name:'Test',prompt:'Test',executorId:'codex',model:'reasoner',effort:'xhigh'});
   `);
   await settle();
-  const choices = () => [...app.document.querySelectorAll('#agentEffortPicker [role=option]')].map(row=>row.dataset.id);
+  const choices = () => {
+    app.document.querySelector('#agentEffortPicker [data-model-toggle]').click();
+    return [...app.document.querySelectorAll('.lf-picker-menu:not([aria-hidden="true"]) [role=menuitemradio]')].map(row=>row.dataset.id);
+  };
   assert.deepEqual(choices(), ['', 'xhigh']);
   assert.equal(app.document.querySelector('#agentEffortPicker [name="effort"]').value, 'xhigh');
-  app.document.querySelector('#agentModelPicker [data-id="plain"]').click();
+  app.document.querySelector('#agentModelPicker [data-model-toggle]').click();
+  app.document.querySelector('.lf-picker-menu:not([aria-hidden="true"]) [data-id="plain"]').click();
   assert.deepEqual(choices(), ['']);
   assert.equal(app.document.querySelector('#agentEffortPicker [name="effort"]').value, '');
 });
@@ -224,7 +272,8 @@ test('a personal catalog does not rewrite an existing role effort during a name 
   loaded({codex:{customModel:true,models:[{id:'reasoner',name:'Reasoner',efforts:[]}],efforts:[]}});
   await settle();
   const picker = app.document.querySelector('#agentEffortPicker');
-  assert.deepEqual([...picker.querySelectorAll('[role=option]')].map(item=>item.dataset.id), ['']);
+  picker.querySelector('[data-model-toggle]').click();
+  assert.deepEqual([...app.document.querySelectorAll('.lf-picker-menu:not([aria-hidden="true"]) [role=menuitemradio]')].map(item=>item.dataset.id), ['']);
   assert.equal(picker.querySelector('[data-model-label]').textContent, 'xhigh');
   await app.evaluate(`
     $('#agentForm').elements.name.value='Renamed';
