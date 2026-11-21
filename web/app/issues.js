@@ -540,11 +540,13 @@ function issueFromForm(){
 }
 
 // ParseGongfengRepoURL 与后端 domain.ParseGongfengRepoURL 保持一致：把粘贴的
-// 工蜂链接（web / ssh / scp / 纯项目路径）解析成统一的仓库信息，让"粘一个链接"
-// 就能完成仓库配置。
+// 将完整的仓库链接和克隆地址解析成统一的仓库信息。
 // repoDisplayPath shows host/path for a parsed repository, e.g. github.com/owner/name.
 function repoDisplayPath(info,fallback=''){return info?.provider==='ssh'?(info.project||info.cloneUrl||fallback):info?.webUrl?String(info.webUrl).replace(/^https?:\/\//,''):String(fallback||'')}
-function repoProviderLabel(info){return info?.provider==='ssh'?'Git SSH':info?.provider==='github'?'GitHub':'工蜂'}
+function repoProviderLabel(info){
+  const labels={ssh:'Git SSH',https:'Git HTTPS',github:'GitHub',gongfeng:'工蜂'};
+  return labels[info?.provider]||'Git';
+}
 function parseGongfengRepoURL(raw){
   const sshInfo=globalThis.LoopForgeGitSSH?.(raw);if(sshInfo)return sshInfo;
   const managed=globalThis.LoopForgeGongfengRepository?.(raw,state.data?.gongfengHost);if(managed)return managed;
