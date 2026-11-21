@@ -654,6 +654,7 @@ export default function App() {
       draftReady.current !== draftKey
     ) return;
     let current = true;
+    const focusBeforeHandoff = document.activeElement;
     api(`/api/issues/${encodeURIComponent(issueMention.issueId)}`)
       .then((data) => {
         if (!current) return;
@@ -670,6 +671,8 @@ export default function App() {
         setReferences([ref]);
         setMention(null);
         requestAnimationFrame(() => {
+          // Preserve the user’s focus if they interacted during the handoff.
+          if (draftReady.current !== draftKey || document.activeElement !== focusBeforeHandoff) return;
           input.current?.focus();
           input.current?.setSelectionRange(value.caret, value.caret);
         });

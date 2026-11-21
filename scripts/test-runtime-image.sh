@@ -29,5 +29,6 @@ case "${LOOPFORGE_EXPECT_CODEBUDDY:-optional}" in
   *) if command -v codebuddy >/dev/null; then codebuddy --version; fi ;;
 esac
 dsh --version
+wecom-cli --version
 printf 'Runtime image compatibility checks passed.\n'
 CHECK
