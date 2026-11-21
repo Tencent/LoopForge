@@ -9,7 +9,7 @@ import HarnessIcon from "./HarnessIcon";
 import { readThemePreference, resolveTheme } from "./theme.js";
 import { conversationEngine, defaultEngine, engineBrand, engineModels, engineOfModel } from "./engines.js";
 import {
-  CONTEXT, DRAFT, END, MODEL_KEY, NEW_CONVERSATION, PLACE, READY, REPLY, RESET, SURFACE,
+  CONFIGURE_ROLE, CONTEXT, DRAFT, END, MODEL_KEY, NEW_CONVERSATION, PLACE, READY, REPLY, RESET, SURFACE,
   beginOnCanvas, designerParams, draftSummary, latestSession, postToCanvas, replyDraft, scenarioPage,
 } from "./sop-designer.js";
 import "./sop-designer.css";

@@ -10,7 +10,7 @@ vi.mock("../src/api.js", async (original) => ({
 }));
 import SopDesigner from "../src/SopDesigner.jsx";
 import {
-  BEGIN, BEGUN, CONTEXT, DRAFT, END, NEW_CONVERSATION, PLACE, READY, REPLY, RESET,
+  BEGIN, BEGUN, CONFIGURE_ROLE, CONTEXT, DRAFT, END, NEW_CONVERSATION, PLACE, READY, REPLY, RESET,
   beginOnCanvas, designerParams, draftSummary, isDesignerSurface, latestSession, postToCanvas, replyDraft, scenarioPage,
 } from "../src/sop-designer.js";
 
@@ -181,6 +181,21 @@ describe("SopDesigner", () => {
     stored = null;
     reply({ type: CONTEXT, projectId: "p1", workflowId: "sop-b" });
     await waitFor(() => expect(read).toHaveBeenCalledWith("/api/assistant/sessions?surface=sop-designer&workflowId=sop-b&projectId=p1"));
+  });
+
+  test("opens the role configuration from a saved assistant draft", async () => {
+    const role = { id: "reviewer", name: "改动评审", description: "检查本次改动", prompt: "总结评审结果" };
+    stored = {
+      id: "chat-role", projectId: "p1", workflowId: "sop-a",
+      messages: [{ role: "assistant", content: JSON.stringify({
+        message: "已准备角色草稿", drafts: [{ tool: "agents_save", body: role }],
+      }) }],
+    };
+    generation = { id: "g-role", status: "completed", events: [] };
+    render(<SopDesigner search="?surface=sop-designer&projectId=p1&workflowId=sop-a" canvas={canvas} />);
+    fireEvent.click(await screen.findByRole("button", { name: "配置并创建角色" }));
+    expect(posted.at(-1)).toEqual({ type: CONFIGURE_ROLE, projectId: "p1", workflowId: "sop-a", role });
+    expect(send).not.toHaveBeenCalled();
   });
 
   test("a deleted conversation starts fresh and can accept another turn", async () => {
