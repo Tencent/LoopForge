@@ -1593,6 +1593,42 @@ type TelemetryPage struct {
 	HasMore    bool                    `json:"hasMore"`
 }
 
+// RunFact is a persisted lifecycle event with a one-based resume cursor.
+type RunFact struct {
+	EventID   string     `json:"id"`
+	NodeID    string     `json:"nodeId,omitempty"`
+	Type      string     `json:"type"`
+	Timestamp *time.Time `json:"timestamp,omitempty"`
+	Cursor    int64      `json:"cursor"`
+}
+
+type RunFactPage struct {
+	Events    []RunFact `json:"events"`
+	NextAfter int64     `json:"nextAfter"`
+	HasMore   bool      `json:"hasMore"`
+}
+
+// QueryRunFacts reads the existing append-only run event history in source order.
+func (r *RunsRepo) QueryRunFacts(runID string, after int64, limit int) (RunFactPage, error) {
+	limit = clampPageLimit(limit)
+	var rows []runEventRow
+	err := r.DB.Select("seq", "event_id", "node_id", "type", "ts").
+		Where("run_id = ? AND seq >= ? AND type IN ?", runID, after, []string{
+			"gate.waiting", "gate.approved", "gate.rejected", "run.succeeded", "run.failed", "run.cancelled",
+		}).Order("seq ASC").Limit(limit + 1).Find(&rows).Error
+	if err != nil {
+		return RunFactPage{}, err
+	}
+	page := RunFactPage{Events: make([]RunFact, 0, min(len(rows), limit)), NextAfter: after, HasMore: len(rows) > limit}
+	for _, row := range rows[:min(len(rows), limit)] {
+		page.NextAfter = row.Seq + 1
+		page.Events = append(page.Events, RunFact{
+			EventID: row.EventID, NodeID: row.NodeID, Type: row.Type, Timestamp: row.Ts, Cursor: page.NextAfter,
+		})
+	}
+	return page, nil
+}
+
 // ---------- Log pages ----------
 
 func (r *RunsRepo) QueryRunLogs(runID, nodeID string, after, before int64, afterSet, beforeSet bool, limit int) (LogPage, error) {
