@@ -503,7 +503,7 @@ func (h *assistantHandlers) testRunnerCLI(ctx context.Context, runnerID, provide
 	defer os.RemoveAll(root)
 	model := provider + ":default"
 	if provider == assistantEngineCodeBuddy {
-		model = loadAssistantModels(ctx, user.CodeBuddyInternetEnvironment).Default
+		model = assistantFixedCatalog().Default
 	} else if !runnerLogin {
 		models, _ := assistantDiscoveredModelsFor(ctx, user, provider)
 		if len(models) == 0 {

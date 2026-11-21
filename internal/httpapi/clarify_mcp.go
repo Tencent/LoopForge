@@ -23,8 +23,8 @@ var (
 	gongfengIssueURLRe = regexp.MustCompile(`(?i)https?://git\.example\.com/[^\s<>"'）】\]]+/issues/\d+`)
 )
 
-func clarifyAllowedModel(id string) string {
-	return assistantAllowedModel(id, assistantKnownCatalog())
+func clarifyAllowedModel(ctx context.Context, user domain.User, id string) string {
+	return assistantAllowedModel(id, assistantModelsForRequest(ctx, user, id))
 }
 
 // errClarifyNeedsCodeBuddy is returned when a clarification asks for a model of

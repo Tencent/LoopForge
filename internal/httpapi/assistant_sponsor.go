@@ -69,12 +69,12 @@ func (h *assistantHandlers) usesSharedKey(user domain.User) bool {
 // turn on the shared key only sees the allowed models, defaulting to the
 // first; a user with their own key keeps their environment's catalog and
 // default, which the shared key's models must not replace.
-func (h *assistantHandlers) chatCatalog(ctx context.Context, user domain.User) assistantModelCatalog {
+func (h *assistantHandlers) chatCatalog(user domain.User) assistantModelCatalog {
 	key, shared := h.assistantSharedKey()
 	if !shared || !h.usesSharedKey(user) {
-		return withCodeBuddyPersonalModels(assistantChatCatalog(ctx, user.CodeBuddyInternetEnvironment, nil), user)
+		return withCodeBuddyPersonalModels(loadAssistantModels(user.CodeBuddyInternetEnvironment, user.CodeBuddyAPIKey), user)
 	}
-	return restrictAssistantCatalog(assistantChatCatalog(ctx, user.CodeBuddyInternetEnvironment, key.Models), key.Models)
+	return restrictAssistantCatalog(assistantChatCatalog(key.InternetEnvironment, key.APIKey, key.Models), key.Models)
 }
 
 // turnCatalog is chatCatalog for a turn on model. The CodeBuddy model list is
@@ -82,26 +82,17 @@ func (h *assistantHandlers) chatCatalog(ctx context.Context, user domain.User) a
 // list, or before a restart, would otherwise be replaced by the default
 // without a word. A miss refreshes the list once before deciding.
 func (h *assistantHandlers) turnCatalog(ctx context.Context, user domain.User, model string) assistantModelCatalog {
-	catalog := h.chatCatalog(ctx, user)
+	catalog := h.chatCatalog(user)
 	model = strings.TrimSpace(model)
 	if model == "" || assistantCatalogLists(catalog, model) {
 		return catalog
 	}
 	refreshCLIModels(ctx, user.CodeBuddyInternetEnvironment, user.CodeBuddyAPIKey)
-	catalog = h.chatCatalog(ctx, user)
+	catalog = h.chatCatalog(user)
 	if !assistantCatalogLists(catalog, model) {
 		log.Printf("assistant model %q is not offered to user %d after catalog refresh", model, user.ID)
 	}
 	return catalog
-}
-
-func assistantCatalogLists(catalog assistantModelCatalog, id string) bool {
-	for _, model := range catalog.Models {
-		if model.ID == id {
-			return true
-		}
-	}
-	return false
 }
 
 // restrictAssistantCatalog keeps the allowed models, in the allowed order.

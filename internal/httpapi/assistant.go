@@ -234,7 +234,7 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 		return
 	}
 	catalogEngine, _ := assistantModelEngine(req.Model)
-	catalog := assistantChatCatalog(c.Request.Context(), user.CodeBuddyInternetEnvironment, nil)
+	catalog := loadAssistantModels(user.CodeBuddyInternetEnvironment, user.CodeBuddyAPIKey)
 	if catalogEngine == assistantEngineCodeBuddy {
 		catalog = h.turnCatalog(c.Request.Context(), user, req.Model)
 	}
