@@ -25,10 +25,13 @@ func TestTraeCLICommandAndCredentials(t *testing.T) {
 	if sop.Provider != AgentCLITraeCLI {
 		t.Fatalf("provider = %q", sop.Provider)
 	}
-	for _, want := range []string{"traecli", "exec", "--json", "--skip-git-repo-check", "--sandbox", "danger-full-access", "--dangerously-bypass-hook-trust", `approval_policy="never"`, "--permission-mode", "bypass_permissions", "--model", "gpt-5"} {
+	for _, want := range []string{"traecli", "exec", "--json", "--skip-git-repo-check", "--dangerously-bypass-hook-trust", `approval_policy="never"`, "--permission-mode", "bypass_permissions", "--model", "gpt-5"} {
 		if !slices.Contains(sop.Argv, want) {
 			t.Fatalf("sop argv missing %q: %q", want, sop.Argv)
 		}
+	}
+	if slices.Contains(sop.Argv, "--sandbox") {
+		t.Fatalf("sop argv must not set both --sandbox and --permission-mode: %q", sop.Argv)
 	}
 	if !slices.Contains(sop.Argv, `model_reasoning_effort="high"`) {
 		t.Fatalf("sop argv missing reasoning effort: %q", sop.Argv)
@@ -42,7 +45,7 @@ func TestTraeCLICommandAndCredentials(t *testing.T) {
 		Chat:   true,
 		Resume: "thread-1",
 	})
-	if !slices.Contains(chat.Argv, "read-only") || !slices.Contains(chat.Argv, "resume") || !slices.Contains(chat.Argv, "thread-1") || slices.Contains(chat.Argv, "bypass_permissions") {
+	if !slices.Contains(chat.Argv, "--sandbox") || !slices.Contains(chat.Argv, "read-only") || !slices.Contains(chat.Argv, "resume") || !slices.Contains(chat.Argv, "thread-1") || slices.Contains(chat.Argv, "--permission-mode") {
 		t.Fatalf("chat argv = %q", chat.Argv)
 	}
 
