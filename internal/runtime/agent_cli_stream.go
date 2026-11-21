@@ -3,6 +3,7 @@ package runtime
 import (
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 )
 
@@ -298,13 +299,57 @@ type cursorStream struct {
 	segment  int
 	partial  strings.Builder
 	thinking strings.Builder
+	// hold is a timestamped assistant chunk identical to the text already
+	// streamed. cursor-agent also resends that whole buffer, with timestamp_ms,
+	// immediately before a tool call. The next event decides which it was.
+	hold string
+	held bool
 }
 
 func (c *cursorStream) flushText(s *ClaudeStream) []string {
-	text := c.partial.String()
+	text := stripCursorAutoRoute(c.partial.String())
 	c.partial.Reset()
 	c.segment++
 	return s.Text(text)
+}
+
+// releaseHold commits or drops the identical chunk saved by acceptPartial.
+// A tool call means it was the CLI resending the buffer, so it is dropped.
+func (c *cursorStream) releaseHold(discard bool) string {
+	if !c.held {
+		return ""
+	}
+	text := c.hold
+	c.hold = ""
+	c.held = false
+	if discard {
+		return ""
+	}
+	return c.appendPartial(text)
+}
+
+// acceptPartial returns the newly visible text. A timestamped chunk that
+// extends the buffer is a snapshot and only its new tail is shown. A chunk
+// identical to the buffer is held until the next event.
+func (c *cursorStream) acceptPartial(text string) string {
+	accumulated := c.partial.String()
+	if accumulated != "" && strings.HasPrefix(text, accumulated) && len(text) > len(accumulated) {
+		c.partial.Reset()
+		c.partial.WriteString(text)
+		return visiblePartial(accumulated, text[len(accumulated):])
+	}
+	if accumulated != "" && text == accumulated {
+		c.hold = text
+		c.held = true
+		return ""
+	}
+	return c.appendPartial(text)
+}
+
+func (c *cursorStream) appendPartial(text string) string {
+	visible := visiblePartial(c.partial.String(), text)
+	c.partial.WriteString(text)
+	return visible
 }
 
 func (c *cursorStream) flushThinking(s *ClaudeStream) []string {
@@ -347,6 +392,15 @@ func cursorToolCall(raw map[string]any) (name string, input any, result map[stri
 }
 
 func (c *cursorStream) translate(s *ClaudeStream, raw map[string]any) []string {
+	kind := stringValue(raw["type"])
+	var prelude []string
+	if text := c.releaseHold(kind == "tool_call"); text != "" {
+		prelude = s.Delta(fmt.Sprintf("text#%d", c.segment), "text", text)
+	}
+	return append(prelude, c.translateEvent(s, raw)...)
+}
+
+func (c *cursorStream) translateEvent(s *ClaudeStream, raw map[string]any) []string {
 	switch stringValue(raw["type"]) {
 	case "system":
 		if stringValue(raw["subtype"]) == "init" {
@@ -364,12 +418,14 @@ func (c *cursorStream) translate(s *ClaudeStream, raw map[string]any) []string {
 		text := contentText(message["content"])
 		out := c.flushThinking(s)
 		if _, partial := raw["timestamp_ms"]; partial {
-			c.partial.WriteString(text)
-			return append(out, s.Delta(fmt.Sprintf("text#%d", c.segment), "text", text)...)
+			if text = c.acceptPartial(text); text != "" {
+				return append(out, s.Delta(fmt.Sprintf("text#%d", c.segment), "text", text)...)
+			}
+			return out
 		}
 		c.partial.Reset()
 		c.segment++
-		return append(out, s.Text(text)...)
+		return append(out, s.Text(stripCursorAutoRoute(text))...)
 	case "tool_call":
 		out := append(c.flushThinking(s), c.flushText(s)...)
 		id := stringValue(raw["call_id"])
@@ -398,13 +454,73 @@ func (c *cursorStream) translate(s *ClaudeStream, raw map[string]any) []string {
 		usage, _ := raw["usage"].(map[string]any)
 		s.SetUsage(int64Value(usage["inputTokens"]), int64Value(usage["outputTokens"]), int64Value(usage["cacheReadTokens"]), int64Value(usage["cacheWriteTokens"]), 0)
 		failed, _ := raw["is_error"].(bool)
-		text := stringValue(raw["result"])
+		text := stripCursorAutoRoute(stringValue(raw["result"]))
 		if failed && text == "" {
 			text = errorText(raw["error"])
 		}
 		return append(out, s.Result(text, failed)...)
 	}
 	return nil
+}
+
+var (
+	cursorAutoRouteSuffix = regexp.MustCompile(`(?m)[ \t]*>[ \t]*Auto routed to [^\n]*`)
+	cursorAutoRouteLine   = regexp.MustCompile(`(?m)^[ \t]*Auto routed to [^\n]*\n?`)
+)
+
+// stripCursorAutoRoute drops Cursor Auto's routing notice from assistant
+// text. The notice is either glued on with ">" ("回复。> Auto routed to
+// GPT-5.6 Luna") or a line by itself. A progress sentence repeated on the
+// next line after that notice is the same paragraph.
+func stripCursorAutoRoute(text string) string {
+	if !strings.Contains(text, "Auto routed to ") {
+		return text
+	}
+	text = cursorAutoRouteSuffix.ReplaceAllString(text, "")
+	text = cursorAutoRouteLine.ReplaceAllString(text, "")
+	lines := strings.Split(text, "\n")
+	out := make([]string, 0, len(lines))
+	var previous string
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed != "" && trimmed == previous {
+			continue
+		}
+		out = append(out, line)
+		if trimmed != "" {
+			previous = trimmed
+		}
+	}
+	return strings.Join(out, "\n")
+}
+
+func lastNonEmptyLine(text string) string {
+	var last string
+	for _, line := range strings.Split(text, "\n") {
+		if trimmed := strings.TrimSpace(line); trimmed != "" {
+			last = trimmed
+		}
+	}
+	return last
+}
+
+// visiblePartial removes a routing notice from a new chunk. When that notice
+// is what separated two copies of the same progress sentence, the second copy
+// is dropped.
+func visiblePartial(accumulated, raw string) string {
+	visible := stripCursorAutoRoute(raw)
+	if !strings.Contains(accumulated, "Auto routed to ") && !strings.Contains(raw, "Auto routed to ") {
+		return visible
+	}
+	if strings.TrimSpace(visible) == "" {
+		return ""
+	}
+	paragraph := strings.TrimSpace(visible)
+	previous := lastNonEmptyLine(stripCursorAutoRoute(accumulated))
+	if paragraph != "" && previous != "" && paragraph == previous {
+		return ""
+	}
+	return visible
 }
 
 // antigravityStream: `agy -p --output-format stream-json`.
