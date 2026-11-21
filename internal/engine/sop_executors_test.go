@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"errors"
 	"testing"
 
 	"agentflow/internal/domain"
@@ -28,13 +29,6 @@ func TestGenericSOPCopyUsesPersonalDefaultForUnpinnedRoles(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	defaults := domain.AssistantDefaults{Executor: "dsh", Model: "deepseek-v4.1-flash"}
-	if _, err := st.UpdateUserCredentials(1, repo.UserCredentialUpdate{
-		AgentCLICredentials: map[string]repo.AgentCLICredentialUpdate{"dsh": {APIKey: "fixture-key"}},
-		AssistantDefaults:   &defaults,
-	}); err != nil {
-		t.Fatal(err)
-	}
 	workflow := domain.WorkflowDefinition{
 		ID: "copy", ProjectID: "beta", Tags: []string{"generic-source:sop-template"},
 		Nodes: []domain.WorkflowNode{
@@ -44,10 +38,38 @@ func TestGenericSOPCopyUsesPersonalDefaultForUnpinnedRoles(t *testing.T) {
 		},
 	}
 	e := &Engine{repo: st}
-	workflow.ExecutorDefaults, _, err = e.planSOPExecutors(workflow, domain.TelemetryContext{ResponsibleUserID: 1}, false)
+	execution := domain.TelemetryContext{ResponsibleUserID: 1}
+	workflow.ExecutorDefaults, _, err = e.planSOPExecutors(workflow, execution, false)
 	if err != nil {
 		t.Fatal(err)
 	}
+	run := domain.Run{
+		ID: "run-deferred", WorkflowID: workflow.ID, WorkflowSnapshot: workflow, ExecutionContext: execution, Status: "running",
+	}
+	if err := st.PutRun(run); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := workflowSandboxRequirements(st, workflow); err != nil {
+		t.Fatalf("an unresolved role should not prevent workspace preparation: %v", err)
+	}
+	if _, err := e.resolveDeferredSOPExecutor(run, workflow.Nodes[0]); !errors.Is(err, errSOPExecutorUnconfigured) {
+		t.Fatalf("the role should report missing configuration before invoking a CLI: %v", err)
+	}
+	defaults := domain.AssistantDefaults{Executor: "dsh", Model: "deepseek-v4.1-flash"}
+	if _, err := st.UpdateUserCredentials(1, repo.UserCredentialUpdate{
+		AgentCLICredentials: map[string]repo.AgentCLICredentialUpdate{"dsh": {APIKey: "fixture-key"}},
+		AssistantDefaults:   &defaults,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.resolveDeferredSOPExecutor(run, workflow.Nodes[0]); err != nil {
+		t.Fatal(err)
+	}
+	stored, ok := st.RunState(run.ID)
+	if !ok {
+		t.Fatal("run not found")
+	}
+	workflow = stored.WorkflowSnapshot
 	if len(workflow.ExecutorDefaults) != 1 || workflow.ExecutorDefaults["review"] != defaults {
 		t.Fatalf("only the inherited template role should use personal defaults: %+v", workflow.ExecutorDefaults)
 	}

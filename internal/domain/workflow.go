@@ -185,7 +185,8 @@ type WorkflowDefinition struct {
 	CreatedAt time.Time        `json:"createdAt"`
 	UpdatedAt time.Time        `json:"updatedAt"`
 	// ExecutorDefaults is populated on a run snapshot for template roles
-	// that inherit the responsible user's executor.
+	// that inherit the responsible user's executor. An empty entry defers
+	// selection until the role starts on the bound machine.
 	ExecutorDefaults map[string]AssistantDefaults `json:"executorDefaults,omitempty"`
 }
 

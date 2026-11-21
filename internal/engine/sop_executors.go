@@ -15,6 +15,8 @@ type SOPExecutorRequirement struct {
 	Configured bool   `json:"configured"`
 }
 
+var errSOPExecutorUnconfigured = errors.New("请在个人配置中添加当前执行环境可用的执行器，再重试此节点")
+
 type sopExecutorAccess struct {
 	user            domain.User
 	runner          domain.Runner
@@ -143,12 +145,8 @@ func (e *Engine) planSOPExecutors(wf domain.WorkflowDefinition, ec domain.Teleme
 		}
 		var ex domain.ExecutorDefinition
 		if roleIDs[role.ID] && role.ProjectID == wf.ProjectID && followsSOPExecutorDefault(node, role) {
-			if defaults.Executor == "" {
-				if !preflight {
-					return nil, nil, errors.New("请在个人配置中添加当前执行环境可用的执行器，再运行 SOP")
-				}
-			} else {
-				selected[node.ID] = defaults
+			selected[node.ID] = defaults
+			if defaults.Executor != "" {
 				ex, _ = repo.BuiltInExecutor(defaults.Executor)
 			}
 		} else if preflight {
@@ -183,7 +181,36 @@ func (e *Engine) SOPExecutorRequirements(wf domain.WorkflowDefinition, userID in
 
 func workflowNodeExecutor(st *repo.Store, wf domain.WorkflowDefinition, node domain.WorkflowNode, role domain.AgentDefinition) (domain.ExecutorDefinition, error) {
 	if defaults, ok := wf.ExecutorDefaults[node.ID]; ok && followsSOPExecutorDefault(node, role) {
+		if defaults.Executor == "" {
+			return domain.ExecutorDefinition{}, errSOPExecutorUnconfigured
+		}
 		role.ExecutorID, role.Model, role.Effort = defaults.Executor, defaults.Model, defaults.Effort
 	}
 	return resolveNodeExecutor(st, node, role)
+}
+
+// Runs can be queued before their responsible user has configured an executor.
+// Resolve the deferred default on the bound machine before the first role runs.
+func (e *Engine) resolveDeferredSOPExecutor(run domain.Run, node domain.WorkflowNode) (domain.Run, error) {
+	defaults, pending := run.WorkflowSnapshot.ExecutorDefaults[node.ID]
+	if !pending || defaults.Executor != "" {
+		return run, nil
+	}
+	role, found := workflowAgent(e.repo, run.WorkflowSnapshot, node.AgentID)
+	if !found || !followsSOPExecutorDefault(node, role) {
+		return run, nil
+	}
+	selected := e.sopExecutorAccess(run.ExecutionContext).defaults()
+	if selected.Executor == "" {
+		return run, errSOPExecutorUnconfigured
+	}
+	err := e.updateRunErr(run.ID, func(current *domain.Run) {
+		for id, choice := range current.WorkflowSnapshot.ExecutorDefaults {
+			if choice.Executor == "" {
+				current.WorkflowSnapshot.ExecutorDefaults[id] = selected
+			}
+		}
+		run = *current
+	})
+	return run, err
 }
