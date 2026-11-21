@@ -159,7 +159,12 @@ test("native scheduled editor mounts the shared picker, restores assets and clea
     fireEvent.click(ui.getByRole("option", { name: /测试流程/ }));
     expect(changes.mock.lastCall[0].references).toEqual([skill]);
     expect(editor.getValue().text).toContain("@测试流程");
-    fireEvent.click(ui.getByRole("button", { name: "移除引用 测试流程" }));
+    expect(
+      ui.queryByRole("button", { name: "移除引用 测试流程" }),
+    ).not.toBeInTheDocument();
+    fireEvent.change(ui.getByRole("textbox", { name: "提示词" }), {
+      target: { value: "检查", selectionStart: 2 },
+    });
     expect(editor.getValue().references).toEqual([]);
     act(() =>
       editor.setValue({
@@ -172,8 +177,8 @@ test("native scheduled editor mounts the shared picker, restores assets and clea
       "另一个任务",
     );
     expect(
-      ui.getByRole("button", { name: "移除引用 测试流程" }),
-    ).toBeInTheDocument();
+      ui.queryByRole("button", { name: "移除引用 测试流程" }),
+    ).not.toBeInTheDocument();
     act(() =>
       editor.setValue({
         projectId: "project-b",
@@ -210,7 +215,7 @@ test("shared subscriptions display pinned references without allowing replacemen
     const ui = within(host.shadowRoot),
       input = ui.getByRole("textbox", { name: "提示词" });
     expect(input.readOnly).toBe(true);
-    expect(ui.getByText("@测试流程")).toBeInTheDocument();
+    expect(input.value).toContain("@测试流程");
     expect(
       ui.queryByRole("button", { name: /引用项目资产|移除引用/ }),
     ).not.toBeInTheDocument();
@@ -253,6 +258,9 @@ test("scheduled picker exposes the same six categories as the homepage", async (
     const url = new URL(fetch.mock.calls.at(-1)[0], "http://localhost");
     expect(url.searchParams.get("projectId")).toBe("project-a");
     expect(url.searchParams.has("scope")).toBe(false);
+    expect(
+      ui.queryByRole("button", { name: "返回所有引用类别" }),
+    ).not.toBeInTheDocument();
   } finally {
     act(() => editor.destroy());
     host.remove();
@@ -300,7 +308,7 @@ test("Shadow DOM Escape contains picker events from the toolbar and options, the
   }
 });
 
-test("legacy references remain removable without rewriting an untouched prompt", () => {
+test("scheduled editor keeps legacy references without rendering chips", () => {
   const host = document.createElement("div");
   document.body.append(host);
   let editor;
@@ -318,8 +326,10 @@ test("legacy references remain removable without rewriting an untouched prompt",
   try {
     const ui = within(host.shadowRoot);
     expect(editor.getValue().text).toBe("旧提示词");
-    fireEvent.click(ui.getByRole("button", { name: "移除引用 旧需求" }));
-    expect(editor.getValue().references).toEqual([skill]);
+    expect(
+      ui.queryByRole("button", { name: /移除引用/ }),
+    ).not.toBeInTheDocument();
+    expect(editor.getValue().references).toEqual([legacy, skill]);
     expect(editor.getValue().text).toBe("旧提示词");
   } finally {
     act(() => editor.destroy());

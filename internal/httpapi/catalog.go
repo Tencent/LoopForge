@@ -1297,10 +1297,11 @@ func (h *catalogHandlers) workflow(c *gin.Context) {
 		c.JSON(200, stored)
 	case "/api/workflows/:id/clone":
 		var req struct {
-			ID        string `json:"id"`
-			Name      string `json:"name"`
-			Owner     string `json:"owner"`
-			ProjectID string `json:"projectId"`
+			ID               string `json:"id"`
+			Name             string `json:"name"`
+			Owner            string `json:"owner"`
+			ProjectID        string `json:"projectId"`
+			SandboxProfileID string `json:"sandboxProfileId"`
 		}
 		if !decode(c, &req) {
 			return
@@ -1316,12 +1317,23 @@ func (h *catalogHandlers) workflow(c *gin.Context) {
 			c.JSON(http.StatusConflict, map[string]string{"error": "该 ID 与平台通用模板冲突，请换一个 ID"})
 			return
 		}
-		if strings.TrimSpace(req.ProjectID) == "" {
-			req.ProjectID = v.ProjectID
+		req.ProjectID = strings.TrimSpace(req.ProjectID)
+		if req.ProjectID == "" {
+			req.ProjectID = strings.TrimSpace(v.ProjectID)
 		}
 		taken, _ := h.repo.Workflow(req.ID)
-		if !h.requireProjectWriter(c, strings.TrimSpace(req.ProjectID), taken.ProjectID) {
+		if !h.requireProjectWriter(c, req.ProjectID, taken.ProjectID) {
 			return
+		}
+		if req.SandboxProfileID != "" {
+			profile, ok := h.repo.Sandbox(req.SandboxProfileID)
+			if !ok || !domain.CatalogVisible(profile.ProjectID, profile.Shared, req.ProjectID) {
+				c.JSON(http.StatusBadRequest, map[string]string{"error": "所选运行沙箱已不可用，请刷新后重新选择。"})
+				return
+			}
+			v.SandboxProfileID = profile.ID
+		} else if v.Generic {
+			v.SandboxProfileID = h.genericTemplateSandbox(v.SandboxProfileID, req.ProjectID)
 		}
 		if v.Generic {
 			stored, err := h.adoptGenericWorkflow(v, req.ID, req.Name, req.Owner, req.ProjectID)
@@ -1333,7 +1345,7 @@ func (h *catalogHandlers) workflow(c *gin.Context) {
 			return
 		}
 		v.ID, v.Name, v.Owner = req.ID, req.Name, req.Owner
-		v.ProjectID = strings.TrimSpace(req.ProjectID)
+		v.ProjectID = req.ProjectID
 		v.Shared = false
 		v.Status, v.Version, v.Revision = "draft", 1, 0
 		v.CreatedAt, v.UpdatedAt = time.Time{}, time.Time{}

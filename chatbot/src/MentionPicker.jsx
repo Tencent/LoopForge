@@ -20,6 +20,75 @@ const icons = {
   run: "play",
   repository: "folder",
 };
+
+const mirroredProperties = [
+  "boxSizing",
+  "fontFamily",
+  "fontSize",
+  "fontStyle",
+  "fontWeight",
+  "letterSpacing",
+  "lineHeight",
+  "paddingBottom",
+  "paddingLeft",
+  "paddingRight",
+  "paddingTop",
+  "tabSize",
+  "textAlign",
+  "textIndent",
+  "textTransform",
+  "wordSpacing",
+  "wordBreak",
+  "overflowWrap",
+];
+
+function mentionAnchor(editor, caret) {
+  if (!editor) return null;
+  const editorRect = editor.getBoundingClientRect();
+  const style = getComputedStyle(editor);
+  const lineHeight =
+    parseFloat(style.lineHeight) || parseFloat(style.fontSize) * 1.2 || 20;
+  const mirror = document.createElement("div");
+  const marker = document.createElement("span");
+  for (const property of mirroredProperties)
+    mirror.style[property] = style[property];
+  mirror.style.visibility = "hidden";
+  mirror.style.pointerEvents = "none";
+  mirror.style.whiteSpace = "pre-wrap";
+  mirror.style.position = "fixed";
+  mirror.style.left = `${editorRect.left}px`;
+  mirror.style.top = `${editorRect.top - editor.scrollTop}px`;
+  mirror.style.width = `${editor.clientWidth || editorRect.width}px`;
+  mirror.style.minHeight = "0";
+  mirror.style.height = "auto";
+  mirror.style.border = "0";
+  mirror.style.overflow = "visible";
+  marker.style.display = "inline-block";
+  marker.style.width = "1px";
+  marker.style.height = `${lineHeight}px`;
+  marker.textContent = "\u200b";
+  mirror.append(document.createTextNode(editor.value.slice(0, caret)), marker);
+  document.body.append(mirror);
+  const markerRect = marker.getBoundingClientRect();
+  mirror.remove();
+  const fallbackTop =
+    editorRect.top +
+    (parseFloat(style.paddingTop) || 0) +
+    (editor.value.slice(0, caret).match(/\n/g) || []).length * lineHeight -
+    editor.scrollTop;
+  const top = markerRect.height ? markerRect.top : fallbackTop;
+  const bottom = markerRect.height ? markerRect.bottom : top + lineHeight;
+  return {
+    top,
+    bottom,
+    left: editorRect.left,
+    right: editorRect.right || editorRect.left + editorRect.width,
+    width: editorRect.width || editor.clientWidth,
+  };
+}
+
+export { mentionAnchor };
+
 export default forwardRef(function MentionPicker(
   {
     projectId,
@@ -168,7 +237,12 @@ export default forwardRef(function MentionPicker(
     const node = root.current;
     if (!open || !node) return undefined;
     const fit = () => {
-      const anchor = node.parentElement.getBoundingClientRect();
+      const container = node.parentElement;
+      const containerRect = container.getBoundingClientRect();
+      const editorRect = editor.current?.getBoundingClientRect();
+      const caret = trigger?.end ?? editor.current?.selectionStart ?? 0;
+      const measured = mentionAnchor(editor.current, caret);
+      const anchor = measured || containerRect;
       const viewport = window.visualViewport;
       let top = (viewport?.offsetTop || 0) + 8,
         bottom = (viewport?.offsetTop || 0) + (viewport?.height || window.innerHeight) - 8,
@@ -191,34 +265,47 @@ export default forwardRef(function MentionPicker(
         right = Math.min(right, clip.right - 8);
       }
       const above = anchor.top - top - 8, below = bottom - anchor.bottom - 8;
-      const up = above >= below;
-      let room = Math.max(above, below), y = up ? anchor.top - 8 : anchor.bottom + 8;
+      // Keep the picker below the active line whenever it has enough room;
+      // only use the upper side when the lower side cannot show a useful list.
+      const minRoom = 160;
+      const up = below < minRoom && above > below;
+      let room = up ? above : below,
+        y = up ? anchor.top - 8 : anchor.bottom + 8;
       // On short screens the picker overlays the editor rather than escaping
       // its scroll container or shrinking the results to an unusable sliver.
-      if (room < 160) {
-        room = Math.max(0, bottom - top);
-        y = up ? bottom : top;
+      if (room < minRoom) {
+        const useAbove = above > below;
+        room = Math.max(0, Math.max(above, below));
+        y = useAbove ? bottom : top;
       }
-      node.style.top = up ? "auto" : `${y - anchor.top}px`;
-      node.style.bottom = up ? `${anchor.bottom - y}px` : "auto";
-      node.style.left = `${Math.max(left, Math.min(anchor.left, right - anchor.width)) - anchor.left}px`;
+      if (room < minRoom) {
+        room = Math.max(0, bottom - top);
+        y = above > below ? bottom : top;
+      }
+      const origin = containerRect;
+      const width = editorRect?.width || containerRect.width;
+      node.style.top = up ? "auto" : `${y - origin.top}px`;
+      node.style.bottom = up ? `${origin.bottom - y}px` : "auto";
+      node.style.left = `${Math.max(left, Math.min(editorRect?.left ?? origin.left, right - width)) - origin.left}px`;
       node.style.right = "auto";
-      node.style.width = `${Math.max(0, Math.min(anchor.width, right - left))}px`;
+      node.style.width = `${Math.max(0, Math.min(width, right - left))}px`;
       node.style.maxHeight = `${Math.max(0, Math.min(440, room))}px`;
       node.dataset.placement = up ? "above" : "below";
     };
     fit();
     window.addEventListener("resize", fit);
     document.addEventListener("scroll", fit, true);
+    editor.current?.addEventListener("scroll", fit);
     window.visualViewport?.addEventListener("resize", fit);
     window.visualViewport?.addEventListener("scroll", fit);
     return () => {
       window.removeEventListener("resize", fit);
       document.removeEventListener("scroll", fit, true);
+      editor.current?.removeEventListener("scroll", fit);
       window.visualViewport?.removeEventListener("resize", fit);
       window.visualViewport?.removeEventListener("scroll", fit);
     };
-  }, [open, presence.phase, options.length, categories]);
+  }, [open, presence.phase, options.length, categories, trigger?.end, query, editor]);
   if (!presence.mounted) return null;
   return (
     <div
@@ -232,16 +319,6 @@ export default forwardRef(function MentionPicker(
       onKeyDown={keyDown}
     >
       <header>
-        <button
-          type="button"
-          aria-label="返回所有引用类别"
-          onClick={() => {
-            setType("");
-            setQuery("");
-          }}
-        >
-          <HarnessIcon name="chevron-left" size={17} />
-        </button>
         <HarnessIcon name="search" size={16} />
         <input
           aria-label="搜索引用对象"

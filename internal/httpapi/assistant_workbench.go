@@ -202,6 +202,9 @@ func (h *assistantHandlers) prepareWorkbenchContext(c *gin.Context, req *assista
 }
 
 func (h *assistantHandlers) buildWorkbenchContext(c *gin.Context, req *assistantRequest, user domain.User) error {
+	if req.sopDesigner() {
+		return h.prepareSOPDesignerContext(c, req, user)
+	}
 	if err := h.validateScheduledAssets(c.Request.Context(), req.ProjectID); err != nil {
 		return err
 	}

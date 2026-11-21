@@ -38,14 +38,15 @@ Use `AGENTFLOW_MYSQL_DSN` for your own MySQL deployment. A fresh account command
 ## Container installation
 
 ```bash
-./start.sh             # install or start in the background (same as bash scripts/install.sh)
-./start.sh logs        # follow platform logs
-./start.sh stop        # stop; ./start.sh down removes containers but keeps data volumes
-./start.sh restart     # restart the platform container
-./start.sh pull        # refresh images and recreate changed containers
-MIRROR=ghcr.nju.edu.cn ./start.sh  # same install; replace the ghcr.io host with this registry
-./start.sh dev         # build this checkout instead (compose.dev.yaml)
-./start.sh release     # switch a source build back to the published image
+./start.sh                        # install or start in the background (same as bash scripts/install.sh)
+./start.sh logs                   # follow platform logs
+./start.sh stop                   # stop; ./start.sh down removes containers but keeps data volumes
+./start.sh restart                # restart the platform container
+./start.sh pull                   # refresh images; times ghcr.io against ghcr.nju.edu.cn
+MIRROR=ghcr.io ./start.sh         # install from ghcr.io without the speed test
+MIRROR=ghcr.nju.edu.cn ./start.sh # force that host instead of the speed test
+./start.sh dev                    # build this checkout instead (compose.dev.yaml)
+./start.sh release                # switch a source build back to the published image
 ```
 
 The installer checks Docker, Compose, Python 3 and curl. It offers to install missing Python/curl packages using apt, dnf or yum on Linux (Homebrew on macOS), Docker using its official installer, and the missing Linux x86_64/arm64 Compose plugin using the pinned official release with SHA-256 verification. A plugin is installed for the active Docker user, or system-wide when Docker requires sudo. macOS Compose comes from Docker Desktop. Set `LOOPFORGE_YES=1` to accept installation prompts; internet access and package-manager/administrator permissions are still required. The installer generates `.env` with unique secrets, pulls and starts the containers, installs the observability columns and applies `migrations/seed/*.sql`. It is safe to re-run. Set `AGENTFLOW_HTTP_PORT` or `LOOPFORGE_MYSQL_PORT` in the environment before the first run (or edit `.env` later) when the default ports are taken.
@@ -63,10 +64,11 @@ git fetch --tags && git checkout vX.Y.Z
 
 The new `compose.yaml` brings the image pin and any new platform settings together, and `./start.sh pull` recreates the platform container when either changes. A source build from `./start.sh dev` is not rebuilt by `./start.sh pull`; run `./start.sh dev` again after updating the checkout. Running `./start.sh pull` alone keeps the pinned version. With `LOOPFORGE_IMAGE` saved in `.env`, change it to the checked-out release as well; a newer image with an older `compose.yaml` can miss settings that release needs.
 
-Where `ghcr.io` downloads stall, set `MIRROR` to the registry host that replaces `ghcr.io`. `./start.sh` and `./start.sh pull` pull that reference and tag it back to the name in `compose.yaml`. Setting `MIRROR` trusts that host, because the result is tagged with the official name. The GitHub Release records the image digest; `docker image inspect --format '{{index .RepoDigests 0}}' ghcr.io/tencent/loopforge:<pin>` should show the same digest after `@`. The pull policy stays `missing` on install, so a local image is kept; `./start.sh pull` refreshes it from the same host. Leaving `MIRROR` unset preserves the direct `ghcr.io` pull. [ghcr.nju.edu.cn](https://doc.nju.edu.cn/books/e1654/page/ghcr) is one compatible host. Docker's `registry-mirrors` setting, including `https://docker.nju.edu.cn`, only applies to Docker Hub and cannot be used as `MIRROR`. A `LOOPFORGE_IMAGE` value that is not a `ghcr.io` name:tag is left unchanged.
+Where `ghcr.io` downloads stall, `./start.sh` and `./start.sh pull` time `ghcr.io` against [ghcr.nju.edu.cn](https://doc.nju.edu.cn/books/e1654/page/ghcr). Nanjing is used only when its manifest digest matches the digest just read from ghcr.io; that digest is what gets pulled, then tagged back to the name in `compose.yaml`, which trusts that host. A missing official digest, a mismatch, or a failed mirror pull stays on `ghcr.io`. `MIRROR=ghcr.io` forces the upstream registry; any other `MIRROR` host forces that registry, skips the speed test, and does not fall back. The choice is not written to `.env`. The pull policy stays `missing` on install, so a local image is kept and is not timed again; `./start.sh pull` times the registries and refreshes from the winner. The GitHub Release records the image digest; `docker image inspect --format '{{index .RepoDigests 0}}' ghcr.io/tencent/loopforge:<pin>` should show the same digest after `@`. Docker's `registry-mirrors` setting, including `https://docker.nju.edu.cn`, only applies to Docker Hub and cannot be used as `MIRROR`. A `LOOPFORGE_IMAGE` value that is not a `ghcr.io` name:tag is left unchanged.
 
 ```bash
-MIRROR=ghcr.nju.edu.cn ./start.sh
+./start.sh
+MIRROR=ghcr.io ./start.sh pull
 MIRROR=ghcr.nju.edu.cn ./start.sh pull
 ```
 

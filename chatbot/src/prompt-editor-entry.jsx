@@ -26,6 +26,7 @@ function PromptEditor({ value, onChange, onError }) {
           projectId={value.projectId}
           text={value.text}
           references={value.references || []}
+          showReferenceChips={false}
           mention={mention}
           referencesReadOnly={value.readOnly}
           onMentionChange={setMention}

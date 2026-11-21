@@ -327,6 +327,7 @@ function syncScheduleJobKind(){
   f.elements.assistantPrompt.required=kind==='assistant'&&!f.elements.sharedTaskId?.value;
   f.elements.name.required=kind==='assistant';
   const assistant=kind==='assistant';
+  f.elements.timeoutMinutes.disabled=!assistant;
   $('#scheduleModalTitle').textContent=assistant?'AI 定时任务':'触发配置';
   $('#scheduleModalHint').textContent=assistant?'按计划以保存人的身份和完全权限执行提示词，可调用 SOP、平台工具、工作区及浏览器。':'按计划扫描本项目选定状态、尚未跑过 SOP 的需求，通过基线门禁后派发 SOP。基线冲突会先由对齐 Agent 解决并合入，期间暂停派发。';
   $('#scheduleModal').querySelector('.schedule-head').hidden=assistant;
@@ -376,6 +377,7 @@ function fillScheduleJobForm(job={}){
   scheduleSharedPrompt='';
   f.elements.assistantPrompt.value=job.assistantPrompt||'';
   f.elements.assistantModel.value=job.assistantModel||scheduleModelAPI()?.DEFAULT||'default';
+  f.elements.timeoutMinutes.value=job.timeoutMinutes||'';
   fillScheduleSessionMode(f,job);
   f.elements.useIssueWorkflow.checked=job.id?!!job.useIssueWorkflow:true;
   f.elements.maxDispatch.value=job.maxDispatch||'';
@@ -659,6 +661,7 @@ async function saveScheduleJob(e){
     assistantPrompt:assistant?f.elements.assistantPrompt.value.trim():'',
     assistantModel:assistant?f.elements.assistantModel.value.trim():'',
     references:assistant?scheduleReferenceIdentities(scheduleAssistantReferences):[],
+    timeoutMinutes:assistant&&f.elements.timeoutMinutes.value!==''?Number(f.elements.timeoutMinutes.value):undefined,
     sessionMode:assistant&&f.elements.sessionMode?f.elements.sessionMode.value:'',
     sessionKeep:assistant&&f.elements.sessionKeep?Number(f.elements.sessionKeep.value)||50:0,
     enabled:assistant?scheduleSavedEnabled(f.elements.id.value):f.elements.enabled.checked
@@ -668,6 +671,8 @@ async function saveScheduleJob(e){
   if(assistant&&!payload.assistantPrompt&&!payload.sharedTaskId){schedulePromptEditor?.focus();return toast('请填写 AI 定时任务的提示词')}
   if(assistant&&payload.references.some(ref=>!['agent','skill','sop','issue','run','repository'].includes(ref.type)||!ref.id))return toast('AI 定时任务引用的项目资产无效，请重新选择后保存');
   if(assistant&&payload.references.length>12)return toast('AI 定时任务最多引用 12 个项目资产');
+  if(assistant&&!payload.assistantPrompt&&!payload.sharedTaskId)return toast('请填写 AI 定时任务的提示词');
+  if(assistant&&!f.elements.timeoutMinutes.validity.valid)return toast('执行超时必须为 1–240 分钟');
   if(!assistant&&!payload.workflowId)return toast('请选择默认 SOP');
   if(!assistant&&!payload.issueStatuses.length)return toast('请至少选择一个触发状态');
   if(!assistant&&payload.maxDispatch!==undefined&&(!Number.isInteger(payload.maxDispatch)||payload.maxDispatch<1||payload.maxDispatch>10))return toast('单次最多触发需求数必须为 1–10，或留空使用默认值 10');

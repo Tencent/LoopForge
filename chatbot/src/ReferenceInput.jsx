@@ -26,6 +26,7 @@ export default forwardRef(function ReferenceInput(
     onManageIssue,
     textareaProps = {},
     referencesReadOnly = false,
+    showReferenceChips = true,
   },
   ref,
 ) {
@@ -98,7 +99,7 @@ export default forwardRef(function ReferenceInput(
         canManageIssue={canManageIssue}
         onManageIssue={onManageIssue}
       />
-      {references.length ? (
+      {showReferenceChips && references.length ? (
         <div className="composer-attachments">
           {references.map((asset) => (
             <span
@@ -159,6 +160,9 @@ export default forwardRef(function ReferenceInput(
           if (!referencesReadOnly) onMentionChange(range(event));
         }}
         onClick={(event) => {
+          if (!referencesReadOnly) onMentionChange(range(event));
+        }}
+        onSelect={(event) => {
           if (!referencesReadOnly) onMentionChange(range(event));
         }}
         onKeyDown={(event) => {

@@ -88,8 +88,21 @@ func TestScheduleJobCRUD(t *testing.T) {
 	if len(promptOnly.IssueStatuses) != 0 {
 		t.Fatalf("AI job must not keep issue statuses: %+v", promptOnly.IssueStatuses)
 	}
-	if promptOnly.MaxDispatch != 0 {
-		t.Fatalf("AI job must not keep maxDispatch: %+v", promptOnly)
+	if promptOnly.MaxDispatch != 0 || promptOnly.TimeoutMinutes != domain.DefaultScheduleTimeoutMinutes {
+		t.Fatalf("unexpected AI job limits: %+v", promptOnly)
+	}
+	for _, invalid := range []any{-1, 241, 1.5, "30"} {
+		requestJSON[map[string]string](t, h, http.MethodPut, "/api/schedule-jobs", map[string]any{
+			"id": promptOnly.ID, "name": promptOnly.Name, "assistantPrompt": promptOnly.AssistantPrompt,
+			"skipDispatch": true, "timeoutMinutes": invalid,
+		}, http.StatusBadRequest)
+	}
+	requestJSON[domain.ScheduleJob](t, h, http.MethodPut, "/api/schedule-jobs", map[string]any{
+		"id": promptOnly.ID, "name": promptOnly.Name, "assistantPrompt": promptOnly.AssistantPrompt,
+		"skipDispatch": true, "timeoutMinutes": 75,
+	}, http.StatusOK)
+	if stored, ok := st.ScheduleJob(promptOnly.ID); !ok || stored.TimeoutMinutes != 75 {
+		t.Fatalf("saved timeout was lost: %+v", stored)
 	}
 	for _, method := range []string{http.MethodPost, http.MethodPut} {
 		for _, invalid := range []any{-1, 11, 1.5, "3"} {

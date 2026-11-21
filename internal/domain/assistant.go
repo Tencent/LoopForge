@@ -12,6 +12,10 @@ const (
 	AssistantSourceSOP = "sop"
 	// AssistantSourceScheduled is a conversation produced by a scheduled task.
 	AssistantSourceScheduled = "scheduled"
+	// AssistantSourceSOPDesigner is a private conversation of the SOP
+	// designer's AI orchestrator. It belongs to one SOP canvas and stays out
+	// of the workbench conversation list.
+	AssistantSourceSOPDesigner = "sop-designer"
 )
 
 // AssistantActivityEvent contains only the user-visible execution stream, not
@@ -182,8 +186,11 @@ type AssistantSession struct {
 	// task runs. Legacy rows leave it empty and are inferred when read.
 	// TaskID is the scheduled job or assistant task that produced the session,
 	// so repeated runs of one task keep a single conversation.
+	// WorkflowID is the SOP a designer conversation (source sop-designer)
+	// edits; the canvas lists its conversations by this id.
 	Source              string                 `json:"source,omitempty"`
 	TaskID              string                 `json:"taskId,omitempty"`
+	WorkflowID          string                 `json:"workflowId,omitempty"`
 	IssueID             string                 `json:"issueId,omitempty"`
 	Participants        []AssistantParticipant `json:"participants"`
 	ParticipantsVersion int                    `json:"participantsVersion,omitempty"`

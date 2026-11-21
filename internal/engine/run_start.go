@@ -134,6 +134,11 @@ func (e *Engine) startWorkflowDefinition(wf domain.WorkflowDefinition, input str
 	if err != nil {
 		return domain.Run{}, err
 	}
+	if executionContext.SharedScheduleID != "" {
+		if err := e.validateSharedScheduleWorkflow(wf, executionContext.ProjectID, profile, resources); err != nil {
+			return domain.Run{}, err
+		}
+	}
 	if _, err := workflowSandboxRequirements(e.repo, wf); err != nil {
 		return domain.Run{}, err
 	}

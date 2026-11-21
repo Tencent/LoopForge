@@ -26,7 +26,6 @@ Preserve the platform architecture; keep deployment-specific adapters isolated. 
 | `AnalyticsRepo` | 只读运营分析视图 |
 | `PreviewsRepo` | run previews |
 | `EngineInstancesRepo` | engine instances |
-| `FeedbackRepo` | page feedbacks、page feedback images（独立表，不关联项目/Issue） |
 
 规则：
 
@@ -64,7 +63,7 @@ Preserve the platform architecture; keep deployment-specific adapters isolated. 
    `previewsHandlers`、`streamHandlers`、`runnersHandlers`、
    `scheduleHandlers`、`tokenHandlers`、`syncHandlers`、
    `assistantHandlers`、`mcpHandlers`、
-   `marketHandlers`、`feedbackHandlers`…），在 `server.go` 的 `Server` 中以指针装配。
+   `marketHandlers`…），在 `server.go` 的 `Server` 中以指针装配。
 2. **新领域必须新建自己的 handler struct**，不要把方法挂到现有领域 handler
    或 `Server` 上。
 3. 同一领域的多个文件允许（`run_eval.go`/`run_workspace.go` 属

@@ -31,12 +31,12 @@ test('AI edit mode merges existing IDs, adds nodes, and restores failed builds',
   const result = await app.evaluate(`
     (async()=>{
       const original=structuredClone(state.workflow);
-      const build=await beginAIOrchestration('add final approval');
+      const build=await beginAIOrchestration();
       const incoming={...structuredClone(original),name:'Edited delivery',
         nodes:[...original.nodes,{id:'final',name:'Final approval',type:'approval'}],
         edges:[...original.edges,{id:'edge-final',source:'node-2',target:'final',when:'success'}]};
       const ok=await completeAIEdit(build,incoming);
-      const failed=await beginAIOrchestration('adjust without result');
+      const failed=await beginAIOrchestration();
       const noResult=await completeAIEdit(failed,null);
       restoreAIBuildFailure(failed);
       return {ok,noResult,count:state.workflow.nodes.length};
@@ -48,20 +48,16 @@ test('AI edit mode merges existing IDs, adds nodes, and restores failed builds',
   await settle();
 });
 
-test('preview carry-forward and streaming parser handle partial drafts', async (t) => {
+test('streaming parser handles partial drafts', async (t) => {
   const app = await loadApp();
   t.after(app.close);
-  const values = app.evaluate(`
-    (() => {
-      const donor={name:'Preview donor',preview:{enabled:true},nodes:[
-        {id:'build',name:'Build',type:'agent'},{id:'af-preview-build',name:'Preview',type:'agent',agentId:'af-preview-builder'}
-      ],edges:[{source:'build',target:'af-preview-build',when:'success'}]};
-      const kept=ensurePreviewCarried({name:'Next',nodes:[{id:'build',name:'Build',type:'agent'}],edges:[]},[donor],'keep preview');
-      const removed=ensurePreviewCarried({name:'Next',nodes:[],edges:[]},[donor],'去掉预览节点');
-      const partial=parseStreamingWorkflow('{"name":"Partial","nodes":[{"id":"a","name":"Plan","type":"agent"},{"id":"b","name":"Review"');
-      return {kept,removed,partial,body:aiDraftBodyText('prefix "body":{"name":"X","nodes":[]} suffix')};
-    })()
-  `);
-  assert.ok(values.kept.nodes.some((node) => node.id === 'af-preview-build'));
-  assert.ok(!values.removed.nodes.some((node) => node.id === 'af-preview-build'));
+  const values = JSON.parse(app.evaluate(`
+    JSON.stringify({
+      partial: parseStreamingWorkflow('{"name":"Partial","nodes":[{"id":"a","name":"Plan","type":"agent"},{"id":"b","name":"Review"'),
+      body: aiDraftBodyText('prefix "body":{"name":"X","nodes":[]} suffix')
+    })
+  `));
+  assert.equal(values.partial.name, 'Partial');
+  assert.deepEqual(values.partial.nodes.map((node) => node.id), ['a'], 'an unfinished node waits for its closing brace');
+  assert.match(values.body, /"name":"X"/);
 });

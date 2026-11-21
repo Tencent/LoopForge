@@ -309,7 +309,7 @@ func (h *runsHandlers) withWorkspaceWriter(c *gin.Context, runID string, user in
 		}()
 	}
 	if h.engine != nil {
-		if err := h.engine.EnsureConversationWorkspace(ctx, runID, token); err != nil {
+		if _, err := h.engine.PrepareConversationWorkspace(ctx, runID, token); err != nil {
 			return err
 		}
 	}
