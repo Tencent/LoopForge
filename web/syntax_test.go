@@ -984,15 +984,18 @@ func TestRepositoryFormUsesSingleURL(t *testing.T) {
 	script := `
 const assert = require('node:assert/strict');
 const code = require('node:fs').readFileSync('` + appBundlePath(t) + `', 'utf8');
+const state = { data: {} };
+eval(require('node:fs').readFileSync('app/git-ssh.js', 'utf8'));
+assert.equal(globalThis.LoopForgeGongfengRepository('Tencent/LoopForge', 'git.review.test'), null);
 eval(code.slice(code.indexOf('function parseGongfengRepoURL(raw){'), code.indexOf('function fillRepositoryFromLink(')));
 const web = parseGongfengRepoURL('https://git.example.com/example/agent-flow');
 assert.equal(web.project, 'example/agent-flow');
 assert.equal(web.cloneUrl, 'https://git.example.com/example/agent-flow.git');
 const ssh = parseGongfengRepoURL('git@git.example.com:example/agent-flow.git');
-assert.equal(ssh.project, 'example/agent-flow');
+assert.equal(ssh.provider, 'ssh');
 assert.equal(ssh.cloneUrl, 'git@git.example.com:example/agent-flow.git');
 const cloned = parseGongfengRepoURL('git clone git@git.example.com:example/agent-flow.git');
-assert.equal(cloned.project, 'example/agent-flow');
+assert.equal(cloned.provider, 'ssh');
 assert.equal(cloned.cloneUrl, 'git@git.example.com:example/agent-flow.git');
 assert.equal(web.name, 'agent-flow');
 const http = parseGongfengRepoURL('http://git.example.com/example/agent-flow.git');

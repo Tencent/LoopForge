@@ -168,7 +168,11 @@ test('a new role saves the first model from the refreshed catalog', async (t) =>
   const catalog = id => ({ codebuddy: { models: [{ id }] }, codex: { models: [] }, claude: { models: [] } });
   app.router.get('/api/executor-models', catalog('retired-model'));
   app.router.put('/api/agents', call => ({ status: 200, body: call.body }));
-  app.evaluate(`state.data.assistantDefaults={executor:"codebuddy"};openAgentWizard()`);
+  app.evaluate(`
+    state.data.executors=[{id:"codebuddy",name:"CodeBuddy"}];
+    state.data.assistantDefaults={executor:"codebuddy"};
+    openAgentWizard();
+  `);
   await settle();
   const model = () => app.evaluate(`agentEffectiveModel($('#agentForm'))`);
   assert.equal(model(), 'retired-model');

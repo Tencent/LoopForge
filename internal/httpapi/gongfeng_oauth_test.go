@@ -185,13 +185,13 @@ func TestGongfengOAuthEntryPointsThroughAuthMiddleware(t *testing.T) {
 	for _, key := range []string{"AGENTFLOW_GONGFENG_OAUTH_CLIENT_ID", "AGENTFLOW_GONGFENG_OAUTH_CLIENT_SECRET", "AGENTFLOW_GONGFENG_OAUTH_REDIRECT_URI"} {
 		t.Setenv(key, "")
 	}
-	if rec := get("/api/auth/gongfeng", true); rec.Code != http.StatusOK || strings.TrimSpace(rec.Body.String()) != `{"enabled":false}` {
+	if rec := get("/api/auth/gongfeng", true); rec.Code != http.StatusOK || strings.TrimSpace(rec.Body.String()) != `{"enabled":false,"host":"git.example.com"}` {
 		t.Fatalf("unconfigured status = %d %s", rec.Code, rec.Body.String())
 	}
 	t.Setenv("AGENTFLOW_GONGFENG_OAUTH_CLIENT_ID", "app-id")
 	t.Setenv("AGENTFLOW_GONGFENG_OAUTH_CLIENT_SECRET", "app-secret")
 	t.Setenv("AGENTFLOW_GONGFENG_OAUTH_REDIRECT_URI", "http://127.0.0.1:18767/api/auth/gongfeng/callback")
-	if rec := get("/api/auth/gongfeng", true); rec.Code != http.StatusOK || strings.TrimSpace(rec.Body.String()) != `{"enabled":true}` {
+	if rec := get("/api/auth/gongfeng", true); rec.Code != http.StatusOK || strings.TrimSpace(rec.Body.String()) != `{"enabled":true,"host":"git.example.com"}` {
 		t.Fatalf("configured status = %d %s", rec.Code, rec.Body.String())
 	}
 	if rec := get("/api/auth/gongfeng", false); rec.Code != http.StatusUnauthorized {
