@@ -42,9 +42,7 @@ SOFTWARE.
 
 ## Grasp
 
-`internal/codexoauth/` is derived from Grasp's `server/internal/codexoauth` (Codex ChatGPT login refresh and device-code sign-in).
-
-Upstream project: <https://github.com/cocofhu/grasp>
+`internal/codexoauth/` is derived from the Grasp repository at `server/internal/codexoauth` (Codex ChatGPT login refresh and device-code sign-in). The same Grasp MIT notice also covers `chatbot/src/assets/provider-logos/` (see `LICENSE.grasp` there).
 
 MIT License
 
