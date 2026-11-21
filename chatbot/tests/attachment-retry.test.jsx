@@ -26,7 +26,8 @@ describe("message image attachments", () => {
   afterEach(() => vi.useRealTimers());
 
   test("retries a failed first fetch before showing the failure", () => {
-    render(<Attachment attachment={image} sessionId="s1" onOpen={vi.fn()} />);
+    const onOpen = vi.fn();
+    render(<Attachment attachment={image} sessionId="s1" onOpen={onOpen} />);
     expect(source()).toBe("/api/assistant/attachments/a1?sessionId=s1");
 
     fireEvent.error(screen.getByAltText("shot.png"));
@@ -43,6 +44,10 @@ describe("message image attachments", () => {
 
     fireEvent.error(screen.getByAltText("shot.png"));
     expect(screen.getByText("图片加载失败")).toBeInTheDocument();
+    // A broken image has nothing to zoom; open it in the artifact panel instead.
+    fireEvent.click(screen.getByAltText("shot.png"));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(onOpen).toHaveBeenCalledWith(expect.objectContaining({ id: "a1", kind: "attachment" }));
   });
 
   test("a late load clears the failure instead of waiting for a refresh", () => {

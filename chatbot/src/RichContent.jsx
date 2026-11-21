@@ -463,13 +463,13 @@ export function Attachment({ attachment, sessionId, onOpen }) {
         // The card shows no caption, so the hover title names the file.
         title={
           image
-            ? `${attachment.name}\n${failed ? "图片加载失败" : "单击查看大图"}`
+            ? `${attachment.name}\n${failed ? "单击在产物栏打开" : "单击查看大图"}`
             : undefined
         }
         onClick={(e) => {
           if (continuesRetry(e)) return;
-          if (image) {
-            if (!failed) setZoom(true);
+          if (image && !failed) {
+            setZoom(true);
             return;
           }
           onOpen({

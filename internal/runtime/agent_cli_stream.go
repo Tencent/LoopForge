@@ -302,15 +302,21 @@ type cursorStream struct {
 	// hold is a timestamped assistant chunk identical to the text already
 	// streamed. cursor-agent also resends that whole buffer, with timestamp_ms,
 	// immediately before a tool call. The next event decides which it was.
-	hold string
-	held bool
+	hold   string
+	held   bool
+	routes cursorRouteFilter
 }
 
 func (c *cursorStream) flushText(s *ClaudeStream) []string {
 	text := stripCursorAutoRoute(c.partial.String())
-	c.partial.Reset()
-	c.segment++
+	c.resetPartial()
 	return s.Text(text)
+}
+
+func (c *cursorStream) resetPartial() {
+	c.partial.Reset()
+	c.routes = cursorRouteFilter{}
+	c.segment++
 }
 
 // releaseHold commits or drops the identical chunk saved by acceptPartial.
@@ -342,9 +348,8 @@ func (c *cursorStream) acceptPartial(text string) string {
 }
 
 func (c *cursorStream) appendPartial(text string) string {
-	visible := visiblePartial(c.partial.String(), text)
 	c.partial.WriteString(text)
-	return visible
+	return c.routes.feed(text)
 }
 
 func (c *cursorStream) flushThinking(s *ClaudeStream) []string {
@@ -418,8 +423,7 @@ func (c *cursorStream) translateEvent(s *ClaudeStream, raw map[string]any) []str
 			}
 			return out
 		}
-		c.partial.Reset()
-		c.segment++
+		c.resetPartial()
 		return append(out, s.Text(stripCursorAutoRoute(text))...)
 	case "tool_call":
 		out := append(c.flushThinking(s), c.flushText(s)...)
@@ -458,77 +462,163 @@ func (c *cursorStream) translateEvent(s *ClaudeStream, raw map[string]any) []str
 	return nil
 }
 
+const cursorAutoRoutePrefix = "Auto routed to "
+
 var (
-	cursorAutoRouteSuffix = regexp.MustCompile(`[ \t]*>[ \t]*Auto routed to .*$`)
-	cursorAutoRouteLine   = regexp.MustCompile(`^[ \t]*Auto routed to `)
+	// The notice ends the line: either the whole line, or glued on with ">"
+	// ("回复。> Auto routed to GPT-5.6 Luna"). The model is a few ASCII words
+	// with a version digit, so prose that mentions the phrase is kept.
+	cursorAutoRouteNoticeRe = regexp.MustCompile(`(?:^|[ \t]*>)[ \t]*Auto routed to ([A-Za-z][A-Za-z0-9.\-]*(?: [A-Za-z0-9][A-Za-z0-9.\-]*){0,4})[ \t]*$`)
+	cursorAutoRouteModelRe  = regexp.MustCompile(`^[A-Za-z0-9.\- ]{0,64}$`)
 )
 
-// stripCursorAutoRoute drops Cursor Auto's routing notice from assistant
-// text. The notice is either glued on with ">" ("回复。> Auto routed to
-// GPT-5.6 Luna") or a line by itself. Only the first non-empty line after a
-// notice is compared with the line before it; a repeat there is the same
-// progress sentence and is dropped. Repeated lines elsewhere stay.
-func stripCursorAutoRoute(text string) string {
-	if !strings.Contains(text, "Auto routed to ") {
-		return text
+// cursorAutoRouteNotice returns the text before a routing notice that ends line.
+func cursorAutoRouteNotice(line string) (string, bool) {
+	m := cursorAutoRouteNoticeRe.FindStringSubmatchIndex(line)
+	if m == nil {
+		return "", false
 	}
-	lines := strings.Split(text, "\n")
-	out := make([]string, 0, len(lines))
-	var anchor string
-	var blanks []string
-	pending := false
-	lastLine := func() string {
-		for i := len(out) - 1; i >= 0; i-- {
-			if trimmed := strings.TrimSpace(out[i]); trimmed != "" {
-				return trimmed
-			}
-		}
-		return ""
+	model := line[m[2]:m[3]]
+	if !strings.ContainsAny(model, "0123456789") || strings.HasSuffix(model, ".") {
+		return "", false
 	}
-	for _, line := range lines {
-		if cursorAutoRouteLine.MatchString(line) {
-			anchor, pending, blanks = lastLine(), true, nil
-			continue
-		}
-		if loc := cursorAutoRouteSuffix.FindStringIndex(line); loc != nil {
-			if line = line[:loc[0]]; strings.TrimSpace(line) != "" {
-				out = append(out, line)
-			}
-			anchor, pending, blanks = lastLine(), true, nil
-			continue
-		}
-		trimmed := strings.TrimSpace(line)
-		if !pending {
-			out = append(out, line)
-			continue
-		}
-		if trimmed == "" {
-			blanks = append(blanks, line)
-			continue
-		}
-		pending = false
-		if anchor != "" && trimmed == anchor {
-			blanks = nil
-			continue
-		}
-		out = append(append(out, blanks...), line)
-		blanks = nil
-	}
-	return strings.Join(out, "\n")
+	return line[:m[0]], true
 }
 
-// visiblePartial returns what a new chunk adds to the cleaned buffer, so a
-// routing notice and the repeat that follows it never reach the client.
-func visiblePartial(accumulated, raw string) string {
-	if !strings.Contains(accumulated, "Auto routed to ") && !strings.Contains(raw, "Auto routed to ") {
-		return raw
+// cursorAutoRouteMayStart reports whether rest can still grow into a notice.
+// Once it cannot, appending more text never makes it one again.
+func cursorAutoRouteMayStart(rest string, afterMarker bool) bool {
+	rest = strings.TrimLeft(rest, " \t")
+	if len(rest) <= len(cursorAutoRoutePrefix) {
+		return strings.HasPrefix(cursorAutoRoutePrefix, rest) && (afterMarker || rest != "")
 	}
-	before := stripCursorAutoRoute(accumulated)
-	after := stripCursorAutoRoute(accumulated + raw)
-	if strings.HasPrefix(after, before) {
-		return after[len(before):]
+	return strings.HasPrefix(rest, cursorAutoRoutePrefix) && cursorAutoRouteModelRe.MatchString(rest[len(cursorAutoRoutePrefix):])
+}
+
+// cursorRouteFilter drops Cursor Auto's routing notice from assistant text as
+// it streams. Only the first non-empty line after a notice is compared with
+// the line before it; a repeat there is the same progress sentence and is
+// dropped. Repeated lines elsewhere stay. Text that may still turn into a
+// notice or that repeat is held until the line settles, so every chunk only
+// costs work on the unfinished line.
+type cursorRouteFilter struct {
+	line    string   // unfinished line
+	shown   int      // bytes of line already emitted
+	open    bool     // line is started in the output
+	any     bool     // output has at least one line
+	last    string   // last non-empty output line, trimmed
+	anchor  string   // line before the latest notice
+	pending bool     // waiting for the first non-empty line after a notice
+	blanks  []string // blank lines held while pending
+}
+
+func (f *cursorRouteFilter) feed(text string) string {
+	var w strings.Builder
+	for {
+		i := strings.IndexByte(text, '\n')
+		if i < 0 {
+			break
+		}
+		f.line += text[:i]
+		text = text[i+1:]
+		f.endLine(&w)
 	}
-	return stripCursorAutoRoute(raw)
+	f.line += text
+	if safe := f.safe(); safe > f.shown {
+		f.startLine(&w)
+		w.WriteString(f.line[f.shown:safe])
+		f.shown = safe
+		f.pending = false
+	}
+	return w.String()
+}
+
+func (f *cursorRouteFilter) finish() string {
+	var w strings.Builder
+	f.endLine(&w)
+	return w.String()
+}
+
+// safe is how much of the unfinished line can be shown now.
+func (f *cursorRouteFilter) safe() int {
+	line := f.line
+	if f.pending && !f.open {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || f.anchor != "" && strings.HasPrefix(f.anchor, trimmed) {
+			return 0
+		}
+	}
+	if !f.open && cursorAutoRouteMayStart(line, false) {
+		return 0
+	}
+	limit := len(strings.TrimRight(line, " \t"))
+	for i := f.shown; i < limit; i++ {
+		if line[i] == '>' && cursorAutoRouteMayStart(line[i+1:], true) {
+			return min(limit, len(strings.TrimRight(line[:i], " \t")))
+		}
+	}
+	return limit
+}
+
+func (f *cursorRouteFilter) startLine(w *strings.Builder) {
+	if f.open {
+		return
+	}
+	for _, blank := range f.blanks {
+		f.newline(w)
+		w.WriteString(blank)
+	}
+	f.blanks = nil
+	f.newline(w)
+	f.open = true
+}
+
+func (f *cursorRouteFilter) newline(w *strings.Builder) {
+	if f.any {
+		w.WriteByte('\n')
+	}
+	f.any = true
+}
+
+func (f *cursorRouteFilter) endLine(w *strings.Builder) {
+	line := f.line
+	defer func() { f.line, f.shown, f.open = "", 0, false }()
+	if before, ok := cursorAutoRouteNotice(line); ok {
+		if trimmed := strings.TrimSpace(before); trimmed != "" {
+			f.startLine(w)
+			w.WriteString(before[f.shown:])
+			f.last = trimmed
+		}
+		f.anchor, f.pending, f.blanks = f.last, true, nil
+		return
+	}
+	trimmed := strings.TrimSpace(line)
+	if f.pending && !f.open {
+		if trimmed == "" {
+			f.blanks = append(f.blanks, line)
+			return
+		}
+		f.pending = false
+		if f.anchor != "" && trimmed == f.anchor {
+			f.blanks = nil
+			return
+		}
+	}
+	f.pending = false
+	f.startLine(w)
+	w.WriteString(line[f.shown:])
+	if trimmed != "" {
+		f.last = trimmed
+	}
+}
+
+// stripCursorAutoRoute is cursorRouteFilter applied to a finished text.
+func stripCursorAutoRoute(text string) string {
+	if !strings.Contains(text, cursorAutoRoutePrefix) {
+		return text
+	}
+	var f cursorRouteFilter
+	return f.feed(text) + f.finish()
 }
 
 // antigravityStream: `agy -p --output-format stream-json`.
