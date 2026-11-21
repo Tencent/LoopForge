@@ -713,6 +713,88 @@ describe("conversation hooks", () => {
     }
   });
 
+  test.each([
+    [false, "请先在个人配置中配置自己的 CodeBuddy API Key"],
+    [true, "当前 CLI 暂无可用模型，请在个人配置中获取或添加模型。"],
+  ])("blocks sends without a usable CodeBuddy model (key configured: %s)", async (configured, message) => {
+    localStorage.removeItem("loopforge.assistant.executor");
+    const original = apiMock.getMockImplementation();
+    const user = { id: 1, loginName: "tester", codeBuddyApiKeyConfigured: configured };
+    apiMock.mockImplementation((path, options) => {
+      if (path === "/api/auth/current") return Promise.resolve({ user });
+      if (path === "/api/users") return Promise.resolve([user]);
+      if (path === "/api/assistant/models") return Promise.resolve({
+        default: "default", models: [{ id: "default" }, { id: "default-model" }],
+      });
+      return original(path, options);
+    });
+    try {
+      const { result } = renderHook(useChat);
+      await waitFor(() => expect(result.current.ready && result.current.machinesReady).toBe(true));
+      expect(result.current.models).toEqual([]);
+      expect(result.current.model).toBe("");
+      await act(async () => expect(await result.current.send({ text: "草稿" })).toBe(false));
+      expect(result.current.error).toBe(message);
+      expect(writeMock).not.toHaveBeenCalled();
+    } finally {
+      apiMock.mockImplementation(original);
+    }
+  });
+
+  test("reloads the model list if a CodeBuddy key was added in another tab", async () => {
+    localStorage.removeItem("loopforge.assistant.executor");
+    const original = apiMock.getMockImplementation();
+    const user = { id: 1, loginName: "tester" };
+    let configured = false;
+    apiMock.mockImplementation((path, options) => {
+      if (path === "/api/auth/current") return Promise.resolve({ user });
+      if (path === "/api/users") return Promise.resolve([{ ...user, codeBuddyApiKeyConfigured: configured }]);
+      if (path === "/api/assistant/models") return Promise.resolve({
+        default: "default", models: configured ? [{ id: "deepseek-v4.1-flash" }] : [],
+      });
+      return original(path, options);
+    });
+    try {
+      const { result } = renderHook(useChat);
+      await waitFor(() => expect(result.current.ready && result.current.machinesReady).toBe(true));
+      configured = true;
+      await act(async () => expect(await result.current.send({ text: "草稿" })).toBe(false));
+      expect(result.current.error).toContain("正在刷新模型列表");
+      expect(writeMock).not.toHaveBeenCalled();
+      await waitFor(() => expect(result.current.model).toBe("deepseek-v4.1-flash"));
+      await act(async () => expect(await result.current.send({ text: "草稿" })).toBe(true));
+      expect(writeMock).toHaveBeenCalledWith("/api/assistant/generations", expect.objectContaining({
+        executor: "codebuddy", model: "deepseek-v4.1-flash",
+      }));
+    } finally {
+      apiMock.mockImplementation(original);
+    }
+  });
+
+  test("opens and regenerates a conversation saved with a CLI default on a concrete model", async () => {
+    localStorage.removeItem("loopforge.assistant.executor");
+    const original = apiMock.getMockImplementation();
+    const saved = {
+      id: "s1", projectId: "p1", executor: "codebuddy", model: "codebuddy:default",
+      messages: [{ role: "user", content: "继续" }],
+    };
+    apiMock.mockImplementation((path, options) =>
+      path === "/api/assistant/sessions/s1" ? Promise.resolve(saved) : original(path, options));
+    try {
+      const { result } = renderHook(useChat);
+      await waitFor(() => expect(result.current.ready && result.current.machinesReady).toBe(true));
+      act(() => result.current.open(saved.id));
+      await waitFor(() => expect(result.current.session?.id).toBe(saved.id));
+      expect(result.current.model).toBe("m1");
+      await act(() => result.current.regenerate(saved, "confirm"));
+      expect(writeMock).toHaveBeenCalledWith("/api/assistant/generations", expect.objectContaining({
+        sessionId: saved.id, executor: "codebuddy", model: "m1",
+      }));
+    } finally {
+      apiMock.mockImplementation(original);
+    }
+  });
+
   test("without an own key chat is limited to the administrator's shared models", async () => {
     localStorage.removeItem("loopforge.assistant.executor");
     const original = apiMock.getMockImplementation();

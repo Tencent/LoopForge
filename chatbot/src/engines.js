@@ -35,7 +35,8 @@ export function engineOfModel(id, models = []) {
 }
 
 export const concreteModel = (model, engine = modelEngine(model)) =>
-  !!model?.id && model.id !== "default" && model.id !== `${engine}:default`;
+  !!model?.id && model.id !== "default" && model.id !== `${engine}:default` &&
+  (engine !== "codebuddy" || (model.id !== "default-model" && model.id !== "codebuddy:default-model"));
 
 export const engineModels = (models, engine) =>
   (models || []).filter((m) => modelEngine(m) === engine && concreteModel(m, engine));
