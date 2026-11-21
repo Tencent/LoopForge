@@ -781,6 +781,83 @@ class LifecycleTests(unittest.TestCase):
             self.assertEqual("in_progress", state["status"])
             self.assertIsNone(state["awaiting_approval"])
 
+    def test_approve_records_reason_approver_and_legacy_approve_still_works(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            state_path = Path(
+                run_script(
+                    "workflow_state.py", "init", "--project-root", root,
+                    "--slug", "approval-audit", "--size", "medium", "--mode", "auto",
+                    "--execution-mode", "isolated", "--host-adapter", "codebuddy",
+                    "--coordinator-id", "main-1",
+                ).stdout.strip()
+            )
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            self.assertEqual([], state["approvals"])
+            run_script("workflow_state.py", "prepare", "--state", state_path, "--stage", "REQUIREMENT")
+            run_script("workflow_state.py", "start", "--state", state_path, "--stage", "REQUIREMENT")
+            self.fill_stage_artifacts(state_path, "REQUIREMENT")
+            run_script(
+                "workflow_state.py", "finish", "--state", state_path,
+                "--stage", "REQUIREMENT", "--result", "completed",
+            )
+            empty_reason = run_script(
+                "workflow_state.py", "approve", "--state", state_path,
+                "--stage", "REQUIREMENT", "--user-confirmed", "--reason", "", check=False,
+            )
+            self.assertNotEqual(0, empty_reason.returncode)
+            self.assertIn("reason must be non-empty", empty_reason.stderr)
+            run_script(
+                "workflow_state.py", "approve", "--state", state_path,
+                "--stage", "REQUIREMENT", "--user-confirmed",
+                "--reason", "scope and acceptance criteria confirmed",
+                "--approver", "reviewer-1",
+            )
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            self.assertEqual(1, len(state["approvals"]))
+            approval = state["approvals"][0]
+            self.assertEqual("REQUIREMENT", approval["stage"])
+            self.assertEqual("reviewer-1", approval["approver"])
+            self.assertEqual("scope and acceptance criteria confirmed", approval["reason"])
+            self.assertTrue(approval["user_confirmed"])
+            self.assertEqual("main-1", approval["executor_id"])
+            self.assertEqual("DESIGN", approval["next_stage"])
+            event = [e for e in state["events"] if e["event"] == "stage_approved"][0]
+            self.assertEqual("reviewer-1", event["approver"])
+            status = run_script("workflow_state.py", "status", "--state", state_path).stdout
+            self.assertIn("approvals=1", status)
+            self.assertIn("last approval: REQUIREMENT by reviewer-1", status)
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            state_path = Path(
+                run_script(
+                    "workflow_state.py", "init", "--project-root", root,
+                    "--slug", "approval-legacy", "--size", "medium", "--mode", "auto",
+                    "--execution-mode", "isolated", "--host-adapter", "codebuddy",
+                    "--coordinator-id", "main-1",
+                ).stdout.strip()
+            )
+            # Old states have no approvals key at all; approve must still work.
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            del state["approvals"]
+            state_path.write_text(json.dumps(state), encoding="utf-8")
+            run_script("workflow_state.py", "prepare", "--state", state_path, "--stage", "REQUIREMENT")
+            run_script("workflow_state.py", "start", "--state", state_path, "--stage", "REQUIREMENT")
+            self.fill_stage_artifacts(state_path, "REQUIREMENT")
+            run_script(
+                "workflow_state.py", "finish", "--state", state_path,
+                "--stage", "REQUIREMENT", "--result", "completed",
+            )
+            run_script(
+                "workflow_state.py", "approve", "--state", state_path,
+                "--stage", "REQUIREMENT", "--user-confirmed",
+            )
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            self.assertEqual(1, len(state["approvals"]))
+            self.assertEqual("user", state["approvals"][0]["approver"])
+            self.assertEqual("", state["approvals"][0]["reason"])
+
     def test_policy_v2_codebuddy_state_remains_resumable(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
