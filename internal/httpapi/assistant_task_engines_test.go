@@ -54,8 +54,12 @@ func TestScheduledRunModelRefreshesAndNeverFallsBack(t *testing.T) {
 	if got, err := scheduledRunModel(context.Background(), "deepseek-v4.1-flash", owner); err != nil || got != "deepseek-v4.1-flash" {
 		t.Fatalf("model = %q, %v", got, err)
 	}
-	if got, err := scheduledRunModel(context.Background(), "", owner); err != nil || got != assistantFixedCatalog().Default {
-		t.Fatalf("empty model = %q, %v", got, err)
+	// No model, or the retired "default" placeholder, runs on the first
+	// model the owner's account lists.
+	for _, requested := range []string{"", "default"} {
+		if got, err := scheduledRunModel(context.Background(), requested, owner); err != nil || got != "deepseek-v4.1-flash" {
+			t.Fatalf("%q model = %q, %v", requested, got, err)
+		}
 	}
 	if got, err := scheduledRunModel(context.Background(), "gone-model", owner); err == nil || !strings.Contains(err.Error(), "gone-model") {
 		t.Fatalf("unavailable model = %q, %v", got, err)
@@ -161,6 +165,7 @@ func joinScheduledProject(t *testing.T, st *repo.Store, projectID string, userID
 // A scheduled run is an ordinary chat turn: a live generation the page can
 // follow, a transcript saved by chat, and the scheduled session's metadata.
 func TestScheduledTaskRunsAsChatTurn(t *testing.T) {
+	t.Setenv("AGENTFLOW_ASSISTANT_MODELS", "glm-5.1")
 	st := cvAStore(t)
 	_ = st.PutProject(domain.Project{ID: "turn-project", Name: "Turn"})
 	_ = st.PutUser(domain.User{LoginName: "turn-user", CodeBuddyAPIKey: "secret"})

@@ -357,10 +357,12 @@ func TestAssistantFixedCatalog(t *testing.T) {
 	if assistantAllowedModel("unknown", got) != "public-model" || assistantAllowedModel("other-model", got) != "other-model" {
 		t.Fatal("model selection")
 	}
-	t.Setenv("AGENTFLOW_ASSISTANT_MODEL", "")
+	// No CLI-default entry: without configured models the list is empty,
+	// and the retired "default" placeholder is not listed.
+	t.Setenv("AGENTFLOW_ASSISTANT_MODEL", "default")
 	t.Setenv("AGENTFLOW_ASSISTANT_MODELS", "")
-	if got := assistantFixedCatalog(); got.Default != "default" || len(got.Models) != 1 {
-		t.Fatalf("default catalog: %+v", got)
+	if got := assistantFixedCatalog(); got.Default != "" || len(got.Models) != 0 {
+		t.Fatalf("unconfigured catalog: %+v", got)
 	}
 }
 

@@ -18,11 +18,11 @@ func TestCodeBuddyPersonalModelsDefaultMatchesPicker(t *testing.T) {
 		t.Fatalf("default = %q, want the first saved model", catalog.Default)
 	}
 	for _, id := range []string{"env-default", "env-other", "personal-a", "personal-b"} {
-		if got := assistantAllowedUserModel(id, catalog, user); got != id {
+		if got := assistantAllowedUserModel(context.Background(), id, catalog, user); got != id {
 			t.Fatalf("model %s not accepted: %q", id, got)
 		}
 	}
-	if got := assistantAllowedUserModel("", catalog, user); got != "personal-a" {
+	if got := assistantAllowedUserModel(context.Background(), "", catalog, user); got != "personal-a" {
 		t.Fatalf("empty request runs on %q, want personal-a", got)
 	}
 

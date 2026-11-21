@@ -14,18 +14,10 @@ import (
 	"agentflow/internal/tracker"
 )
 
-const (
-	clarifyDefaultModel = assistantDefaultModel
-)
-
 var (
 	tapdURLRe          = regexp.MustCompile(`(?i)https?://(?:www\.)?(?:tapd\.example\.com|tapd\.cn)[^\s<>"'）】\]]+`)
 	gongfengIssueURLRe = regexp.MustCompile(`(?i)https?://git\.example\.com/[^\s<>"'）】\]]+/issues/\d+`)
 )
-
-func clarifyAllowedModel(id string) string {
-	return assistantAllowedModel(id, assistantKnownCatalog())
-}
 
 // errClarifyNeedsCodeBuddy is returned when a clarification asks for a model of
 // another CLI: clarification runs on CodeBuddy only, so a "codex:…" id must be

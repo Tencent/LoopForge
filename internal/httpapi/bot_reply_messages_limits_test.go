@@ -56,6 +56,7 @@ func TestBotReplyMessagesKeepsCurrentMessageAndQuoteInFull(t *testing.T) {
 // generateBotReply must use the filtered history: binding links and unbind
 // exchanges never reach the model prompt, ordinary history still does.
 func TestGenerateBotReplyOmitsBindingExchangesFromPrompt(t *testing.T) {
+	t.Setenv("AGENTFLOW_ASSISTANT_MODELS", "glm-5.1")
 	_, h, bot := botFixture(t)
 	var prompt string
 	h.generate = func(ctx context.Context, p string, user domain.User) (string, error) {

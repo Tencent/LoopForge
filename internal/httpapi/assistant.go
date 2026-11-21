@@ -234,12 +234,12 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 		return
 	}
 	catalogEngine, _ := assistantModelEngine(req.Model)
-	catalog := assistantChatCatalog(c.Request.Context(), user.CodeBuddyInternetEnvironment, nil)
+	catalog := assistantChatCatalog(c.Request.Context(), user.CodeBuddyInternetEnvironment, user.CodeBuddyAPIKey, nil)
 	if catalogEngine == assistantEngineCodeBuddy {
 		catalog = h.turnCatalog(c.Request.Context(), user, req.Model)
 	}
 	if !runnerLogin {
-		selected, err := assistantTurnCatalogModel(req.Model, catalog, user, req.RequireExactModel)
+		selected, err := assistantTurnCatalogModel(c.Request.Context(), req.Model, catalog, user, req.RequireExactModel)
 		if err != nil {
 			c.JSON(400, gin.H{"error": err.Error()})
 			return
@@ -473,11 +473,10 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 	nativeContinuationReady := false
 	var turnUsage assistantTurnUsage
 	replyModel := strings.TrimSpace(req.Model)
-	if replyModel == "" {
-		replyModel = assistantDefaultModel
-	}
 	if report, ok := modelCtx.Value(scheduledUsageReportKey{}).(scheduledUsageReport); ok && report.GenerationID == assistantControlScopeFrom(modelCtx).GenerationID && report.Report != nil {
-		defer func() { report.Report(replyModel, turnUsage.snapshot()) }()
+		// Preserve the usage record for CLIs that use their own default and
+		// do not report a concrete model.
+		defer func() { report.Report(firstNonEmpty(replyModel, assistantDefaultModel), turnUsage.snapshot()) }()
 	}
 	var turn string
 	generate := h.generate
@@ -1884,7 +1883,7 @@ type assistantCommandOpts struct {
 }
 
 func prepareAssistantCommand(opts assistantCommandOpts) (runtime.CommandSpec, error) {
-	model := strings.TrimSpace(opts.Model)
+	model := domain.ChosenModel(opts.Model)
 	if model == "" {
 		model = assistantFixedCatalog().Default
 	}

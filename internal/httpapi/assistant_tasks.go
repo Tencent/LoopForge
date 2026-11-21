@@ -494,16 +494,17 @@ func firstNonEmpty(values ...string) string {
 func scheduledRunModel(ctx context.Context, requested string, user domain.User) (string, error) {
 	requested = strings.TrimSpace(requested)
 	env := user.CodeBuddyInternetEnvironment
-	catalog := withCodeBuddyPersonalModels(loadAssistantModels(ctx, env), user)
-	model := assistantAllowedUserModel(requested, catalog, user)
-	if requested == "" || model == requested {
-		return model, nil
-	}
-	if engine, _ := assistantModelEngine(requested); engine == assistantEngineCodeBuddy {
+	catalog := withCodeBuddyPersonalModels(loadAssistantModels(ctx, env, user.CodeBuddyAPIKey), user)
+	model := assistantAllowedUserModel(ctx, requested, catalog, user)
+	engine, chosen := assistantModelEngine(requested)
+	implicit := domain.ChosenModel(chosen) == ""
+	if engine == assistantEngineCodeBuddy && ((implicit && model == "") || (!implicit && model != requested)) {
 		refreshCLIModels(ctx, env, user.CodeBuddyAPIKey)
-		if model = assistantAllowedUserModel(requested, loadAssistantModels(ctx, env), user); model == requested {
-			return model, nil
-		}
+		catalog = withCodeBuddyPersonalModels(loadAssistantModels(ctx, env, user.CodeBuddyAPIKey), user)
+		model = assistantAllowedUserModel(ctx, requested, catalog, user)
+	}
+	if implicit || model == requested {
+		return model, nil
 	}
 	return "", fmt.Errorf("定时任务指定的模型 %s 在负责人的账号下不可用，本次没有运行；请在定时任务里改选可用的模型", requested)
 }

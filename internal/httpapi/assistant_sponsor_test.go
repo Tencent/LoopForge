@@ -181,7 +181,8 @@ func TestOwnKeyKeepsItsEnvironmentDefaultWhileAKeyIsShared(t *testing.T) {
 		used = u
 		return `{"message":"ok","drafts":[]}`, nil
 	}}
-	operatorDefault := assistantFixedCatalog().Default
+	// The first model of the user's own environment, not the shared key's.
+	operatorDefault := "claude-opus-5"
 
 	var catalog assistantModelCatalog
 	mrec := httptest.NewRecorder()
@@ -340,7 +341,8 @@ func TestAssistantModelsPerExecutor(t *testing.T) {
 	}
 	for executor, family := range map[string]string{"codex": "gpt", "claude": "claude", "claude-code": "claude"} {
 		rec, catalog := get(executor)
-		if rec.Code != 200 || len(catalog.Models) < 2 || catalog.Default != catalog.Models[0].ID {
+		// No CLI-default entry: the first listed model is the default.
+		if rec.Code != 200 || len(catalog.Models) == 0 || catalog.Default != catalog.Models[0].ID || strings.Contains(rec.Body.String(), `"id":"default"`) {
 			t.Fatalf("%s catalog: %d %s", executor, rec.Code, rec.Body.String())
 		}
 		for _, model := range catalog.Models {
@@ -408,8 +410,8 @@ func TestChatCatalogsListTheDefaultFirst(t *testing.T) {
 	ctx := context.Background()
 	shared := []string{"deepseek-v4.1-flash", "glm-5.3-flash-ioa"}
 	for name, catalog := range map[string]assistantModelCatalog{
-		"own key":    assistantChatCatalog(ctx, "", nil),
-		"shared key": restrictAssistantCatalog(assistantChatCatalog(ctx, "", shared), shared),
+		"own key":    assistantChatCatalog(ctx, "", "", nil),
+		"shared key": restrictAssistantCatalog(assistantChatCatalog(ctx, "", "", shared), shared),
 	} {
 		if len(catalog.Models) == 0 || catalog.Models[0].ID != catalog.Default {
 			t.Fatalf("%s: default %q is not listed first in %+v", name, catalog.Default, catalog.Models)

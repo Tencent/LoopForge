@@ -14,20 +14,22 @@ import (
 )
 
 func TestClarifyAllowedModelFallsBackToCatalog(t *testing.T) {
-	t.Setenv("AGENTFLOW_ASSISTANT_MODELS", "public-model")
-	if got := clarifyAllowedModel(""); got != clarifyDefaultModel {
-		t.Fatalf("empty model = %q", got)
+	stubCLIModelDiscovery(t)
+	t.Setenv("AGENTFLOW_ASSISTANT_MODELS", "first-model,public-model")
+	// No model, an unknown one and the retired "default" placeholder all
+	// run on the first listed model.
+	for _, requested := range []string{"", "not-a-model", "default"} {
+		if got := codeBuddyAccountModel(t.Context(), domain.User{}, requested); got != "first-model" {
+			t.Fatalf("%q = %q", requested, got)
+		}
 	}
-	if got := clarifyAllowedModel("not-a-model"); got != clarifyDefaultModel {
-		t.Fatalf("unknown model = %q", got)
-	}
-	if got := clarifyAllowedModel("public-model"); got != "public-model" {
+	if got := codeBuddyAccountModel(t.Context(), domain.User{}, "public-model"); got != "public-model" {
 		t.Fatalf("listed model = %q", got)
 	}
 }
 
 func TestClarifyCommandKeepsReadGrepGlob(t *testing.T) {
-	command, err := prepareClarifyCommand("codebuddy", clarifyDefaultModel, "prompt", "clarify-test", "af1", false)
+	command, err := prepareClarifyCommand("codebuddy", clarifyTestModel, "prompt", "clarify-test", "af1", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -48,7 +50,7 @@ func TestClarifyCommandKeepsReadGrepGlob(t *testing.T) {
 		if arg == "--no-session-persistence" {
 			foundNoPersist = true
 		}
-		if arg == "--model" && i+1 < len(command.Argv) && command.Argv[i+1] != clarifyDefaultModel {
+		if arg == "--model" && i+1 < len(command.Argv) && command.Argv[i+1] != clarifyTestModel {
 			t.Fatalf("model = %q", command.Argv[i+1])
 		}
 	}
@@ -65,7 +67,7 @@ func TestClarifyCommandKeepsReadGrepGlob(t *testing.T) {
 
 func TestPrepareClarifyCommandSubmitOnlyDisallowsRead(t *testing.T) {
 	command, err := prepareClarifyCommandWith(clarifyCommandOpts{
-		Bin: "codebuddy", Model: clarifyDefaultModel, Prompt: "submit", RunID: "clarify-test", SessionID: "af1",
+		Bin: "codebuddy", Model: clarifyTestModel, Prompt: "submit", RunID: "clarify-test", SessionID: "af1",
 		Native: true, SubmitOnly: true,
 	})
 	if err != nil {
@@ -78,7 +80,7 @@ func TestPrepareClarifyCommandSubmitOnlyDisallowsRead(t *testing.T) {
 }
 
 func TestPrepareClarifyCommandResumeUsesResumeFlag(t *testing.T) {
-	command, err := prepareClarifyCommand("codebuddy", clarifyDefaultModel, "继续", "clarify-test", "af1", true)
+	command, err := prepareClarifyCommand("codebuddy", clarifyTestModel, "继续", "clarify-test", "af1", true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -384,3 +386,5 @@ func TestDispatchClarifyMCPCallReadOnlyTAPD(t *testing.T) {
 		t.Fatalf("write should be rejected: %v", err)
 	}
 }
+
+const clarifyTestModel = "glm-5.1"

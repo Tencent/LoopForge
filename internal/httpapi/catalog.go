@@ -1080,7 +1080,7 @@ func (h *catalogHandlers) workflows(c *gin.Context) {
 				if _, ok := h.requireWorkflowSandbox(c, v); !ok {
 					return
 				}
-				v, err := domain.AttachPreviewBuild(v)
+				v, err := h.attachPreviewBuild(c, v)
 				if err != nil {
 					c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
 					return
@@ -1097,7 +1097,7 @@ func (h *catalogHandlers) workflows(c *gin.Context) {
 				c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
 				return
 			}
-			v, err := domain.AttachPreviewBuild(v)
+			v, err := h.attachPreviewBuild(c, v)
 			if err != nil {
 				c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
 				return
@@ -1379,4 +1379,21 @@ func workflowHasNotifications(workflow domain.WorkflowDefinition) bool {
 		}
 	}
 	return false
+}
+
+// attachPreviewBuild adds the preview build node. A preview without a model
+// is saved on the first CodeBuddy model listed, so the build does not leave
+// the model to the CLI.
+func (h *catalogHandlers) attachPreviewBuild(c *gin.Context, v domain.WorkflowDefinition) (domain.WorkflowDefinition, error) {
+	if v.Preview != nil && v.Preview.Enabled && v.Preview.ChosenModel() == "" {
+		preview := *v.Preview
+		preview.Model = assistantFixedCatalog().Default
+		if current, ok := h.requestUser(c.Request, true); ok {
+			if user, found := h.repo.User(current.ID); found {
+				preview.Model = codeBuddyAccountModel(c.Request.Context(), user, "")
+			}
+		}
+		v.Preview = &preview
+	}
+	return domain.AttachPreviewBuild(v)
 }

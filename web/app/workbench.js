@@ -73,7 +73,7 @@ const CREDENTIAL_KINDS=[
     placeholder:'请输入个人 ck_ key',
     extra:{name:'codeBuddyInternetEnvironment',label:'网络环境',options:CODEBUDDY_ENVIRONMENTS},
     models:{name:'codeBuddyModels',engine:'codebuddy'},
-    impact:'AI 对话将只能使用默认模型，CodeBuddy 执行器节点会失败。'},
+    impact:'AI 对话将只能使用平台共享 Key 允许的模型，CodeBuddy 执行器节点会失败。'},
   {key:'codexApiKey',group:'model',name:'Codex',short:'Codex API Key',logo:'codex',monochrome:true,
     use:'AI 对话选择 Codex 执行器，以及以 Codex 运行的 SOP 节点',
     description:'AI 对话切换到 Codex 后可选用模型目录里的模型，SOP 在执行机器上以 Codex 运行的节点也使用它。目录为空时，未填 Base URL 使用 Codex 自带模型，填写后跟随服务发布的模型；也可以自己挑选、排序和命名。',
@@ -1685,7 +1685,7 @@ async function loadPlatformSharedKey(host){
     defaultSelect.value=models.includes(current)?current:(models[0]||'');
   };
   const renderModels=()=>{
-    const listed=catalog.filter(m=>m&&m.id&&m.id!=='default');
+    const listed=catalog.filter(m=>m&&m.id);
     const ids=new Set(listed.map(m=>m.id));
     for(const id of selected)if(!ids.has(id)){listed.push({id,name:id});ids.add(id)}
     modelsHost.innerHTML=listed.length?listed.map(m=>`<label class="platform-check platform-model-option"><input type="checkbox" value="${escapeHTML(m.id)}"${selected.includes(m.id)?' checked':''}><span>${escapeHTML(m.name&&m.name!==m.id?`${m.name}（${m.id}）`:sharedModelLabel(m.id))}</span>${m.credits?`<small>${escapeHTML(m.credits)}</small>`:''}</label>`).join(''):'<p class="prop-hint">这个网络环境暂时没有读到模型列表，可以在下面直接填模型 ID。</p>';

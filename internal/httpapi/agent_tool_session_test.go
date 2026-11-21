@@ -185,7 +185,7 @@ func TestNativeClarifyCommandKeepsReadAndSessionMCP(t *testing.T) {
 	}
 	t.Cleanup(files.Cleanup)
 	command, err := prepareClarifyCommandWith(clarifyCommandOpts{
-		Bin: "codebuddy", Model: clarifyDefaultModel, Prompt: "p", RunID: "r", SessionID: "af1",
+		Bin: "codebuddy", Model: clarifyTestModel, Prompt: "p", RunID: "r", SessionID: "af1",
 		Native: true, MCPConfig: files.MCPConfig, Settings: files.Settings,
 	})
 	if err != nil {

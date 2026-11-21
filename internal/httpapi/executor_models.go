@@ -128,15 +128,14 @@ func effortOptions(levels []string) []executorEffortOption {
 
 // executorModelCatalogs returns the fixed per-CLI catalog. The CodeBuddy list
 // reuses the assistant catalog so the wizard, AI 助手 and 澄清 stay in sync.
-func executorModelCatalogs(kimiBaseURL string) map[string]executorModelCatalog {
+func executorModelCatalogs(kimiBaseURL string, codeBuddy assistantModelCatalog) map[string]executorModelCatalog {
 	codebuddyModels := make([]executorModelInfo, 0)
-	known := assistantKnownCatalog()
-	for _, model := range selectableCodeBuddyModels(known.Models) {
+	for _, model := range selectableCodeBuddyModels(codeBuddy.Models) {
 		codebuddyModels = append(codebuddyModels, executorModelInfo{ID: model.ID, Name: model.Name, Credits: model.Credits})
 	}
 	catalogs := map[string]executorModelCatalog{
 		"codebuddy": {
-			Default: known.Default,
+			Default: codeBuddy.Default,
 			Models:  codebuddyModels,
 			Efforts: effortOptions(domain.ExecutorEffortLevels["codebuddy"]),
 		},
@@ -214,7 +213,7 @@ func cursorCatalogModels() []executorModelInfo {
 func (h *catalogHandlers) executorModels(c *gin.Context) {
 	c.Header("Cache-Control", "private, no-store")
 	if c.Query("builtin") == "1" {
-		c.JSON(http.StatusOK, executorModelCatalogs(""))
+		c.JSON(http.StatusOK, executorModelCatalogs("", assistantFixedCatalog()))
 		return
 	}
 	var user domain.User
@@ -225,7 +224,7 @@ func (h *catalogHandlers) executorModels(c *gin.Context) {
 		}
 	}
 	_, kimiBaseURL := assistantEngineCredential(user, runtime.AgentCLIKimi)
-	catalogs := executorModelCatalogs(kimiBaseURL)
+	catalogs := executorModelCatalogs(kimiBaseURL, loadAssistantModels(c.Request.Context(), user.CodeBuddyInternetEnvironment, user.CodeBuddyAPIKey))
 	if antigravityUsesCustomEndpoint(user) {
 		catalog := catalogs[runtime.AgentCLIAntigravity]
 		catalog.Models = []executorModelInfo{}
@@ -264,6 +263,7 @@ func (h *catalogHandlers) executorModels(c *gin.Context) {
 			})
 		}
 		if len(catalog.Models) > 0 {
+			catalog.Default = catalog.Models[0].ID
 			catalogs[id] = catalog
 		}
 	}

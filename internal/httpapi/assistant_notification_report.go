@@ -16,8 +16,9 @@ func (h *assistantHandlers) generateReport(ctx context.Context, run domain.Run, 
 	if !ok || strings.TrimSpace(user.CodeBuddyAPIKey) == "" {
 		return domain.AINotificationContent{}, notification.ErrReportCredentials
 	}
-	catalog := loadAssistantModels(ctx, user.CodeBuddyInternetEnvironment)
-	if assistantAllowedModel(model, catalog) != model {
+	requested := domain.ChosenModel(model)
+	model = codeBuddyAccountModel(ctx, user, requested)
+	if model == "" || (requested != "" && model != requested) {
 		return domain.AINotificationContent{}, notification.ErrReportModel
 	}
 

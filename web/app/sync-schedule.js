@@ -103,7 +103,7 @@ function selectedClarifyModel(){
   const stored=localStorage.getItem('agentflow.clarifyModel')||'';
   // Clarification runs on CodeBuddy only; a saved "codex:…" id falls back.
   if(api?.codeBuddyModel)return api.codeBuddyModel(stored);
-  return stored||(api&&api.DEFAULT)||'default';
+  return stored;
 }
 function setClarifyModel(id){
   if(!id)return;
@@ -215,7 +215,7 @@ function bindScheduleModelPicker(){
     const open=menu.hidden;
     closeScheduleModelMenu();
     if(!open)return;
-    const selected=form.elements.assistantModel.value||api.DEFAULT;
+    const selected=form.elements.assistantModel.value||api.firstModel();
     api.renderOptions(menu, scheduleEngineModels(scheduleModelEngine(selected)), selected, id=>{
       paintScheduleModel(id);
       closeScheduleModelMenu();
@@ -228,7 +228,7 @@ function bindScheduleModelPicker(){
   if(engine)engine.onchange=()=>{
     const api=scheduleModelAPI();
     const models=scheduleEngineModels(engine.value);
-    const next=models[0]?.id||(engine.value==='codebuddy'?(scheduleModelCatalog().default||api?.DEFAULT):'');
+    const next=models[0]?.id || '';
     if(next)paintScheduleModel(next);
   };
   document.addEventListener('click',e=>{if(!host.contains(e.target))closeScheduleModelMenu()});
@@ -245,7 +245,7 @@ async function loadScheduleModels(){
   }catch{
     scheduleCatalog=await picker.load();
   }
-  paintScheduleModel($('#scheduleJobForm')?.elements.assistantModel.value||picker.DEFAULT);
+  paintScheduleModel($('#scheduleJobForm')?.elements.assistantModel.value||scheduleModelCatalog().default);
 }
 function paintScheduleModel(selected){
   const api=scheduleModelAPI();
@@ -253,7 +253,7 @@ function paintScheduleModel(selected){
   const f=$('#scheduleJobForm');
   if(!api||!host||!f)return;
   const catalog=scheduleModelCatalog();
-  const keep=selected||f.elements.assistantModel.value||catalog.default||api.DEFAULT;
+  const keep=selected||f.elements.assistantModel.value||catalog.default||'';
   f.elements.assistantModel.value=keep;
   const toggle=host.querySelector('[data-model-toggle]');
   const item=catalog.models?.find(model=>model.id===keep);
@@ -331,7 +331,7 @@ function fillScheduleJobForm(job={}){
   if(!cron)f.elements.intervalSec.value=interval;
   f.elements.jobKind.value=job.id?scheduleJobKind(job):scheduleEditorKind;
   f.elements.assistantPrompt.value=job.assistantPrompt||'';
-  f.elements.assistantModel.value=job.assistantModel||scheduleModelAPI()?.DEFAULT||'default';
+  f.elements.assistantModel.value=job.assistantModel||scheduleModelAPI()?.firstModel?.()||'';
   f.elements.timeoutMinutes.value=job.timeoutMinutes||'';
   fillScheduleSessionMode(f,job);
   f.elements.useIssueWorkflow.checked=job.id?!!job.useIssueWorkflow:true;

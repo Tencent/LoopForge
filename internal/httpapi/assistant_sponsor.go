@@ -52,7 +52,7 @@ func (h *assistantHandlers) assistantChatUser(user domain.User) (chatUser domain
 // assistantSponsoredModelFor limits shared-key turns to the allowed models.
 // An empty request picks the default; any other model is refused.
 func assistantSponsoredModelFor(shared []string, requested string) (string, bool) {
-	return repo.SharedCodeBuddyKey{Models: shared}.Model(requested)
+	return repo.SharedCodeBuddyKey{Models: shared}.Model(domain.ChosenModel(requested))
 }
 
 // usesSharedKey reports whether a chat turn for user runs on the shared key:
@@ -72,24 +72,24 @@ func (h *assistantHandlers) usesSharedKey(user domain.User) bool {
 func (h *assistantHandlers) chatCatalog(ctx context.Context, user domain.User) assistantModelCatalog {
 	key, shared := h.assistantSharedKey()
 	if !shared || !h.usesSharedKey(user) {
-		return withCodeBuddyPersonalModels(assistantChatCatalog(ctx, user.CodeBuddyInternetEnvironment, nil), user)
+		return withCodeBuddyPersonalModels(assistantChatCatalog(ctx, user.CodeBuddyInternetEnvironment, user.CodeBuddyAPIKey, nil), user)
 	}
-	return restrictAssistantCatalog(assistantChatCatalog(ctx, user.CodeBuddyInternetEnvironment, key.Models), key.Models)
+	return restrictAssistantCatalog(assistantChatCatalog(ctx, user.CodeBuddyInternetEnvironment, user.CodeBuddyAPIKey, key.Models), key.Models)
 }
 
 // turnCatalog is chatCatalog for a turn on model. The CodeBuddy model list is
 // cached in memory per instance, so a model picked from another instance's
-// list, or before a restart, would otherwise be replaced by the default
-// without a word. A miss refreshes the list once before deciding.
+// list, or before a restart, would otherwise be replaced by the first listed
+// model without a word. A miss refreshes the list once before deciding.
 func (h *assistantHandlers) turnCatalog(ctx context.Context, user domain.User, model string) assistantModelCatalog {
 	catalog := h.chatCatalog(ctx, user)
-	model = strings.TrimSpace(model)
-	if model == "" || assistantCatalogLists(catalog, model) {
+	model = domain.ChosenModel(model)
+	if (model == "" && catalog.Default != "") || assistantCatalogLists(catalog, model) {
 		return catalog
 	}
 	refreshCLIModels(ctx, user.CodeBuddyInternetEnvironment, user.CodeBuddyAPIKey)
 	catalog = h.chatCatalog(ctx, user)
-	if !assistantCatalogLists(catalog, model) {
+	if model != "" && !assistantCatalogLists(catalog, model) {
 		log.Printf("assistant model %q is not offered to user %d after catalog refresh", model, user.ID)
 	}
 	return catalog

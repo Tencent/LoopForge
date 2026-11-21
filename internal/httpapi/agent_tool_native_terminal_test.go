@@ -123,7 +123,7 @@ func TestCodeBuddyWaitsForSessionGatewayBeforeFirstRequest(t *testing.T) {
 		}
 	}
 	h := &streamHandlers{}
-	_, out, _, err := h.runClarifyTurn(context.Background(), root, bin, clarifyDefaultModel, "p", "clarify-wait", "af-wait", filepath.Join(root, "clarify-home"), false,
+	_, out, _, err := h.runClarifyTurn(context.Background(), root, bin, clarifyTestModel, "p", "clarify-wait", "af-wait", filepath.Join(root, "clarify-home"), false,
 		runtime.RunCredentials{CodeBuddy: runtime.CodeBuddyCredential{APIKey: "test-key"}}, func(string, any) {}, clarifyTurnOpts{Native: true, MCPConfig: files.MCPConfig, Settings: files.Settings})
 	if err != nil || !strings.Contains(out, want) {
 		t.Fatalf("clarify: got %q err=%v, want %q", out, err, want)

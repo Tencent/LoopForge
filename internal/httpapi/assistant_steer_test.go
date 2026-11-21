@@ -272,6 +272,7 @@ func TestCommitTurnTranscriptKeepsSameSteerOnce(t *testing.T) {
 }
 
 func TestSteerKeepsConversationCLI(t *testing.T) {
+	t.Setenv("AGENTFLOW_ASSISTANT_MODEL", "test-codebuddy")
 	for _, tc := range []struct {
 		name, executor, savedModel, requested, wantModel string
 		runnerLogin, missingKey                          bool
@@ -285,7 +286,7 @@ func TestSteerKeepsConversationCLI(t *testing.T) {
 		{"cursor prefixed", "cursor", "cursor:old", "cursor:selected", "cursor:selected", false, false, 200},
 		{"cursor unprefixed", "cursor", "cursor:old", "selected", "cursor:selected", false, false, 200},
 		{"cursor legacy", "cursor", "old", "selected", "cursor:selected", false, false, 200},
-		{"codebuddy", "codebuddy", "default", "default", "default", false, false, 200},
+		{"codebuddy", "codebuddy", "default", "default", "test-codebuddy", false, false, 200},
 		{"codex missing key", "codex", "codex:gpt-old", "gpt-selected", "", false, true, 400},
 		{"cursor missing key", "cursor", "cursor:old", "selected", "", false, true, 400},
 		{"codex to cursor", "codex", "codex:gpt-old", "cursor:selected", "", true, false, 409},

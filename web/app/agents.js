@@ -162,6 +162,9 @@ function paintAgentPicker(pickerId,item){
   const label=toggle?.querySelector('[data-model-label]');
   if(toggle&&label&&label.scrollWidth<=label.clientWidth){toggle.removeAttribute('title');toggle.removeAttribute('data-hui-title')}
 }
+// A role starts on the first model its CLI lists; there is no CLI-default
+// choice.
+function agentFirstModel(executorId){return (executorModelCatalogs()[executorId]?.models||[])[0]?.id||''}
 function renderAgentModelPicker(){
   const picker=$('#agentModelPicker');if(!picker)return;
   const current=picker.querySelector('[name="modelChoice"]').value;
@@ -199,9 +202,10 @@ function renderAgentEffortPicker(modelChanged=false){
 function applyAgentModelUI(executorId,model,effort,pickFirst=false){
   const picker=$('#agentModelPicker');if(!picker||!$('#agentEffortPicker'))return;
   const cat=executorModelCatalogs()[executorId]||{};
-  // Keep cached models available for manual picks while the catalog refreshes.
-  let choice=model||(pickFirst&&!executorModelCatalogRequest?(cat.models||[]).find(item=>item.id!=='default')?.id:'')||'';
-  if(choice&&choice!=='default'&&!(cat.models||[]).some(m=>m.id===choice)&&cat.customModel)choice=AGENT_CUSTOM_MODEL;
+  // Roles saved by earlier versions may hold "default", the retired
+  // placeholder for "let the CLI pick": they start on the first model too.
+  let choice=model&&model!=='default'?model:(pickFirst && !executorModelCatalogRequest ? agentFirstModel(executorId) : '');
+  if(choice&&!(cat.models||[]).some(m=>m.id===choice)&&cat.customModel)choice=AGENT_CUSTOM_MODEL;
   picker.querySelector('[name="modelChoice"]').value=choice;
   const customInput=$('#agentModelCustomField')?.querySelector('input[name="model"]');
   if(customInput&&choice===AGENT_CUSTOM_MODEL)customInput.value=model||'';

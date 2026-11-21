@@ -196,9 +196,7 @@ func ProviderRequirements(kind string) SandboxRequirements {
 // PrepareProviderCommand exposes the same provider flag and credential-binding
 // policy to control-plane call sites that do not run a workflow node.
 func PrepareProviderCommand(executor domain.ExecutorDefinition, prompt, driver string, options InvocationOptions) (CommandSpec, error) {
-	if executor.Model == "default" {
-		executor.Model = ""
-	}
+	executor.Model = domain.ChosenModel(executor.Model)
 	return providerForKind(executor.Kind).Prepare(providerInvocation{
 		Executor: executor,
 		Prompt:   prompt,

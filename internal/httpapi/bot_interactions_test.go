@@ -23,7 +23,7 @@ func botFixture(t *testing.T) (*repo.Store, *assistantHandlers, domain.Notificat
 	s.PutUser(domain.User{ID: 42, LoginName: "bot-owner", CodeBuddyAPIKey: "owner-key", CodeBuddyInternetEnvironment: "ioa"})
 	s.PutUser(domain.User{ID: 43, LoginName: "other-user", CodeBuddyAPIKey: "other-key", CodeBuddyInternetEnvironment: "ioa"})
 	s.PutProject(domain.Project{ID: "p", OwnerID: 42, Members: []domain.ProjectMember{{UserID: 43, Role: "member"}}})
-	bot := domain.NotificationBot{ID: "b", BotID: "external", ProjectID: "p", OwnerID: 42, Enabled: true, InteractionEnabled: true, Model: domain.DefaultNotificationReportModel}
+	bot := domain.NotificationBot{ID: "b", BotID: "external", ProjectID: "p", OwnerID: 42, Enabled: true, InteractionEnabled: true}
 	if err = s.SaveNotificationBot(bot, "secret"); err != nil {
 		t.Fatal(err)
 	}
@@ -38,6 +38,7 @@ func botFixture(t *testing.T) (*repo.Store, *assistantHandlers, domain.Notificat
 	return s, h, bot
 }
 func TestBotUsesBoundSenderIdentityAutoModeAndSharedChatContext(t *testing.T) {
+	t.Setenv("AGENTFLOW_ASSISTANT_MODELS", "glm-5.1")
 	s, h, bot := botFixture(t)
 	h.generate = func(ctx context.Context, prompt string, user domain.User) (string, error) {
 		if user.ID != 43 || user.CodeBuddyAPIKey != "other-key" || user.CodeBuddyInternetEnvironment != "ioa" {
@@ -127,6 +128,7 @@ func TestBotTerminalRetryCannotRepeatCachedWriteTool(t *testing.T) {
 }
 
 func TestBotMissingSubmissionRetriesOnlyTerminalStep(t *testing.T) {
+	t.Setenv("AGENTFLOW_ASSISTANT_MODELS", "glm-5.1")
 	_, h, bot := botFixture(t)
 	calls := 0
 	h.generate = func(ctx context.Context, prompt string, user domain.User) (string, error) {

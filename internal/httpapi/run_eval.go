@@ -122,7 +122,7 @@ func (h *runsHandlers) startRunEval(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, map[string]string{"error": "运行评测目前只支持 CodeBuddy 模型，请改选 CodeBuddy 模型"})
 		return
 	}
-	catalog := loadAssistantModels(c.Request.Context(), user.CodeBuddyInternetEnvironment)
+	catalog := loadAssistantModels(c.Request.Context(), user.CodeBuddyInternetEnvironment, user.CodeBuddyAPIKey)
 	model := assistantAllowedModel(req.Model, catalog)
 	project, _ := h.repo.Project(run.ExecutionContext.ProjectID)
 	rec := domain.RunEvalRecord{

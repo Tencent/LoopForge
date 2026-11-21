@@ -131,12 +131,12 @@ func (h *assistantHandlers) startGeneration(c *gin.Context) {
 		return
 	}
 	catalogEngine, _ := assistantModelEngine(req.Model)
-	catalog := assistantChatCatalog(c.Request.Context(), user.CodeBuddyInternetEnvironment, nil)
+	catalog := assistantChatCatalog(c.Request.Context(), user.CodeBuddyInternetEnvironment, user.CodeBuddyAPIKey, nil)
 	if catalogEngine == assistantEngineCodeBuddy {
 		catalog = h.turnCatalog(c.Request.Context(), user, req.Model)
 	}
 	if !runnerLogin {
-		selected, err := assistantTurnCatalogModel(req.Model, catalog, user, req.RequireExactModel)
+		selected, err := assistantTurnCatalogModel(c.Request.Context(), req.Model, catalog, user, req.RequireExactModel)
 		if err != nil {
 			c.JSON(400, gin.H{"error": err.Error()})
 			return
@@ -577,12 +577,12 @@ func (h *assistantHandlers) steerGeneration(c *gin.Context) {
 	}
 	// A CodeBuddy model this instance has not listed yet refreshes the list
 	// first, like a new turn, instead of silently becoming the default.
-	catalog := assistantChatCatalog(c.Request.Context(), user.CodeBuddyInternetEnvironment, nil)
+	catalog := assistantChatCatalog(c.Request.Context(), user.CodeBuddyInternetEnvironment, user.CodeBuddyAPIKey, nil)
 	if engine, _ := assistantModelEngine(model); engine == assistantEngineCodeBuddy {
 		catalog = h.turnCatalog(c.Request.Context(), user, model)
 	}
 	if !runnerLogin {
-		selected, err := assistantTurnCatalogModel(model, catalog, user, body.RequireExactModel)
+		selected, err := assistantTurnCatalogModel(c.Request.Context(), model, catalog, user, body.RequireExactModel)
 		if err != nil {
 			c.JSON(400, gin.H{"error": err.Error()})
 			return

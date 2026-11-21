@@ -125,9 +125,9 @@ func assistantTitleModel(ctx context.Context, user domain.User, model string, sh
 		}
 		return model, ""
 	}
-	catalog := assistantChatCatalog(ctx, user.CodeBuddyInternetEnvironment, nil)
+	catalog := assistantChatCatalog(ctx, user.CodeBuddyInternetEnvironment, user.CodeBuddyAPIKey, nil)
 	if len(shared) > 0 {
-		catalog = restrictAssistantCatalog(assistantChatCatalog(ctx, user.CodeBuddyInternetEnvironment, shared), shared)
+		catalog = restrictAssistantCatalog(assistantChatCatalog(ctx, user.CodeBuddyInternetEnvironment, user.CodeBuddyAPIKey, shared), shared)
 	}
 	if chosen := assistantApprovalReviewModel(catalog); chosen != "" {
 		return chosen, ""

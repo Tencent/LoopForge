@@ -45,7 +45,7 @@ func validateAssistantProvider(req *assistantRequest, user domain.User) error {
 		return fmt.Errorf("请先在个人设置中配置 %s API Key", label)
 	}
 	if req.Executor == "codebuddy" {
-		req.Model = assistantAllowedModel(req.Model, loadAssistantModels(context.Background(), user.CodeBuddyInternetEnvironment))
+		req.Model = assistantAllowedModel(req.Model, loadAssistantModels(context.Background(), user.CodeBuddyInternetEnvironment, user.CodeBuddyAPIKey))
 	} else {
 		req.Model = strings.TrimSpace(req.Model)
 		if len(req.Model) > 256 || strings.ContainsAny(req.Model, "\r\n\x00") {
@@ -131,7 +131,7 @@ func prepareAlternateAssistantCommand(ctx context.Context, req assistantCLIReque
 	} else {
 		args = []string{"-p", "--bare", "--output-format", "stream-json", "--verbose", "--include-partial-messages", "--max-turns", nativeAssistantUnlimitedTurns, "--system-prompt", sys, "--tools", "", "--mcp-config", req.MCPConfig, "--strict-mcp-config", "--setting-sources", "", "--permission-mode", "dontAsk", "--allowedTools", "mcp__agentflow_session__*", "--no-session-persistence"}
 	}
-	if req.Model != "" && req.Model != "default" {
+	if req.Model != "" {
 		args = append(args, "--model", req.Model)
 	}
 	args = append([]string{bin}, append(args, req.Prompt)...)

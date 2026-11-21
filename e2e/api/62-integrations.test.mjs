@@ -34,7 +34,7 @@ test('notification bots: create, update, secret stays write-only, delete', async
   assert.equal(bot.secretConfigured, true);
   assert.equal(bot.ownerId, me.id);
   assert.equal(bot.health, 'unchecked');
-  assert.ok(bot.model, 'a default report model is assigned');
+  assert.equal(bot.model || '', '', 'an unselected model is resolved for the responsible account when the report runs');
 
   const bots = await api('GET', `/api/notification-bots?projectId=${P}`, undefined, { raw: true });
   assert.ok(list(bots.data).some(b => b.id === bot.id));
