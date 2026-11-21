@@ -85,6 +85,9 @@ type ScheduleJob struct {
 	Cron            string `json:"cron,omitempty"`
 	AssistantPrompt string `json:"assistantPrompt,omitempty"`
 	AssistantModel  string `json:"assistantModel,omitempty"`
+	// TimeoutMinutes bounds one AI execution, including tool calls and SOP waits.
+	// Zero uses the default for jobs saved before this field existed.
+	TimeoutMinutes int `json:"timeoutMinutes,omitempty"`
 	// SessionMode picks the Studio conversation an AI job runs in: empty opens
 	// a new conversation for every execution; "fixed" keeps continuing
 	// FixedSessionID.

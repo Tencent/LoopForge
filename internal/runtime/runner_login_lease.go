@@ -256,7 +256,7 @@ func bindRunnerLoginLease(command CommandSpec) CommandSpec {
 		command.runnerLoginPrompt = command.Argv[len(command.Argv)-1]
 		command.Argv = append([]string(nil), command.Argv[:len(command.Argv)-1]...)
 	}
-	command.Argv = append(dropArgWithValue(command.Argv, "--input-format"), "--input-format", "stream-json")
+	command.Argv = insertBeforeFlag(dropArgWithValue(command.Argv, "--input-format"), "--", "--input-format", "stream-json")
 	command.runnerLoginInitialize = true
 	return command
 }

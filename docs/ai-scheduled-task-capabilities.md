@@ -15,15 +15,17 @@
 
 执行身份由最后保存任务的人决定。未绑定身份的旧任务按项目 Owner、独立任务记录的 Owner 的顺序查找个人凭据。Codex 和 Claude Code 优先使用执行账号的默认个人执行机器上的「账号登录」，需要 Runner 0.10.2 或以上版本，并启用对应 CLI。默认机器离线或未启用账号登录时，任务改用执行账号在个人配置中填写的 API Key，以所选 CLI 和模型在云端执行。Key 缺失或执行失败时记录具体原因。CodeBuddy 缺少个人 Key 时可以使用平台共享 Key，模型限于管理员允许的列表。保存时会校验可用的凭据。
 
-工具访问范围由执行账号和项目决定。关闭页面后任务继续执行，直到 CLI 结束或在会话页停止。MCP 网关在本轮结束时关闭。
+工具访问范围由执行账号和项目决定。AI 定时任务可配置每轮执行时限 `timeoutMinutes`（1–240 分钟，默认 30 分钟，旧任务自动使用默认值）。关闭页面后任务继续执行，直到 CLI 结束、达到时限或用户在会话页停止。超时会停止 CLI 及本轮 MCP 调用，并在执行记录中显示失败原因。已派发的 SOP 按自己的生命周期运行。
+
+定时提示词直接调用 `runs_start` 或 `issues_dispatch` 取得运行 ID，通过 `runs_retry` 重试时沿用原运行 ID。如果模型把这些操作放进结束会话的草稿，平台会让它继续本轮并直接调用对应工具。提示词要求等待 SOP 结果时，使用 `runs_wait` 传入该 ID。服务端每次最多等 25 秒，读到成功、失败、取消、待人工处理或暂停就返回。窗口到期仍在运行时返回 `timedOut: true`，调用方可以继续等待同一运行。
 
 由于任务以保存人（或项目 Owner）身份、完全权限执行，`/api/schedule-jobs` 的新建、修改、立即运行和删除都要求项目写权限（Owner、平台管理员或非 viewer 成员），列表只返回调用者所在项目的任务；按 id 保存时既校验原项目也校验目标项目。执行身份只由服务端决定，请求里的 `ownerUserId`、`runAsUserId` 不生效。项目记录已不存在的任务只允许平台管理员或该任务原 Owner 管理。
 
 ## 实现与验证
 
-- `internal/httpapi/assistant_schedule.go`：按所选模型的 CLI 选择执行账号，不再给这一轮单独设超时。
+- `internal/httpapi/assistant_schedule.go`：按所选模型的 CLI 选择执行账号，并把每轮时限传给对话执行。
 - `internal/httpapi/assistant_tasks.go`：定时任务打开一轮普通对话（`executeGeneration` → `POST /api/assistant/chat`），系统提示词、技能、流式和停止都走主页路径；跑完再把结果写回任务。
-- `internal/httpapi/agent_tool_session.go`：工具网关跟当前轮次的 context 一起结束，没有 5 分钟或固定时长的轮次上限。
+- `internal/httpapi/agent_tool_session.go`：工具网关随当前轮次结束，在途调用随执行取消。
 - `TestScheduledAssistantCanDispatchSOP`：通过定时执行链路调用真实平台派发接口，使用内存测试数据和仅含审批节点的 SOP。
 - `TestScheduledAssistantNativeGatewayKeepsWorkspaceAndTerminalReply`：模拟 CLI 通过本地回环网关提交最终回复，验证执行前会话、租约控制器初始化、绑定和附件留存。
 
