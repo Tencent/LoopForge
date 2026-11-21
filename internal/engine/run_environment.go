@@ -270,9 +270,14 @@ func (e *Engine) adoptForeignWorkspace(run domain.Run) error {
 	if e.workspaceBlocked(run) {
 		return repo.ErrRunWorkspaceBound
 	}
-	lost := hasCodeWorkspace(run)
+	lost := e.workspaceLost(run)
 	message := e.workspaceLostMessage(run)
 	if sharesWorkspace(run) {
+		if e.defaultExecutionRunner(run) != "" {
+			// The parent's checkout is on its runner and survives the platform
+			// restart; the child continues there once it is resumed.
+			return nil
+		}
 		// The checkout belongs to the parent; only its rerun may rebuild it.
 		return errors.New(message)
 	}
