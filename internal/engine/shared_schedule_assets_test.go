@@ -197,3 +197,124 @@ func TestSharedScheduleRejectsPrivateNestedSOP(t *testing.T) {
 		t.Fatalf("rejected child created a run: %d runs", len(runs))
 	}
 }
+
+func TestSharedScheduleRejectsPrivateNestedDependencies(t *testing.T) {
+	tests := []struct {
+		name       string
+		expected   string
+		setupChild func(*repo.Store) (domain.WorkflowDefinition, error)
+	}{
+		{
+			name:     "environment behind shared sandbox",
+			expected: "环境",
+			setupChild: func(st *repo.Store) (domain.WorkflowDefinition, error) {
+				if err := st.PutEnvironment(domain.EnvironmentDefinition{
+					ID: "private-environment", Name: "Private environment", ProjectID: "source",
+					Variables: map[string]string{"PRIVATE_TOKEN": "do-not-leak"}, InstallScript: "echo private-install",
+				}); err != nil {
+					return domain.WorkflowDefinition{}, err
+				}
+				if err := st.PutSandbox(domain.SandboxProfile{
+					ID: "shared-sandbox-with-private-environment", Name: "Shared sandbox", ProjectID: "source",
+					Shared: true, Driver: domain.SandboxDriverNative, EnvironmentID: "private-environment",
+				}); err != nil {
+					return domain.WorkflowDefinition{}, err
+				}
+				return domain.WorkflowDefinition{
+					ID: "child-with-private-environment", Name: "Child with private environment", ProjectID: "source", Shared: true,
+					SandboxProfileID: "shared-sandbox-with-private-environment",
+					Nodes:            []domain.WorkflowNode{{ID: "approve", Name: "Approve", Type: "approval"}},
+				}, nil
+			},
+		},
+		{
+			name:     "docker sandbox with private dockerfile",
+			expected: "Dockerfile",
+			setupChild: func(st *repo.Store) (domain.WorkflowDefinition, error) {
+				if err := st.PutDockerfile(domain.DockerfileDefinition{
+					ID: "private-dockerfile", Name: "Private Dockerfile", ProjectID: "source", Content: "FROM scratch\n",
+				}); err != nil {
+					return domain.WorkflowDefinition{}, err
+				}
+				if err := st.PutSandbox(domain.SandboxProfile{
+					ID: "shared-docker-sandbox", Name: "Shared Docker sandbox", ProjectID: "source",
+					Shared: true, Driver: domain.SandboxDriverDocker, DockerfileID: "private-dockerfile",
+				}); err != nil {
+					return domain.WorkflowDefinition{}, err
+				}
+				return domain.WorkflowDefinition{
+					ID: "child-with-private-dockerfile", Name: "Child with private Dockerfile", ProjectID: "source", Shared: true,
+					SandboxProfileID: "shared-docker-sandbox",
+					Nodes:            []domain.WorkflowNode{{ID: "approve", Name: "Approve", Type: "approval"}},
+				}, nil
+			},
+		},
+		{
+			name:     "private role node",
+			expected: "角色",
+			setupChild: func(st *repo.Store) (domain.WorkflowDefinition, error) {
+				if err := st.PutAgent(domain.AgentDefinition{
+					ID: "private-role", Name: "Private role", ProjectID: "source", ExecutorID: "mock",
+				}); err != nil {
+					return domain.WorkflowDefinition{}, err
+				}
+				return domain.WorkflowDefinition{
+					ID: "child-with-private-role", Name: "Child with private role", ProjectID: "source", Shared: true,
+					SandboxProfileID: repo.DefaultSandboxProfileID,
+					Nodes:            []domain.WorkflowNode{{ID: "role", Name: "Role", Type: "agent", AgentID: "private-role"}},
+				}, nil
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			st, err := repo.OpenTest()
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(st.Close)
+			child, err := tc.setupChild(st)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := st.PutWorkflow(child); err != nil {
+				t.Fatal(err)
+			}
+			parent := domain.WorkflowDefinition{
+				ID: "shared-parent-" + child.ID, Name: "Shared parent", ProjectID: "source", Shared: true,
+				SandboxProfileID: repo.DefaultSandboxProfileID,
+				Nodes:            []domain.WorkflowNode{{ID: "child", Name: "Child", Type: "sop", SOPWorkflowID: child.ID}},
+			}
+			if err := st.PutWorkflow(parent); err != nil {
+				t.Fatal(err)
+			}
+			job := domain.ScheduleJob{
+				ID: "job-" + child.ID, Name: "Nested dependency", ProjectID: "source", SkipDispatch: true,
+				AssistantPrompt: "start", References: []domain.AssistantReference{{Type: "sop", ID: parent.ID}},
+			}
+			if err := st.PutScheduleJob(job); err != nil {
+				t.Fatal(err)
+			}
+			version, err := st.PublishSharedSchedule(job.ID, job.ProjectID, domain.SharedScheduleVersion{Name: job.Name, Prompt: job.AssistantPrompt}, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			e := New(st, runtime.NewManager(t.TempDir()))
+			e.ConfigureExecution("test", "test", time.Second, false)
+			exec := domain.TelemetryContext{ProjectID: "target", ResponsibleUserID: 42, SharedScheduleID: version.ID, SharedScheduleVersion: version.Version}
+			parentRun, err := e.StartWithRepositoriesContext(parent.ID, "inspect", nil, exec)
+			if err != nil {
+				t.Fatal(err)
+			}
+			exec.ParentRunID, exec.ParentNodeID = parentRun.ID, "child"
+			if _, err := e.StartWithRepositoriesContext(child.ID, "inspect", nil, exec); err == nil || !strings.Contains(err.Error(), tc.expected) {
+				t.Fatalf("private nested dependency was admitted: %v", err)
+			}
+			if runs := st.Runs(); len(runs) != 1 {
+				t.Fatalf("rejected child created a run or leaked its snapshot: %d runs", len(runs))
+			}
+		})
+	}
+}
