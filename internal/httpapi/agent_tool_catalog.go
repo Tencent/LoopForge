@@ -373,7 +373,7 @@ func (h *agentToolGateway) buildCatalog(ctx context.Context, session *AgentToolS
 			schema, _ := json.Marshal(platformToolInputSchema(op))
 			out = append(out, agentToolDescriptor{
 				Name:         ns,
-				Description:  op.Description + " (" + op.Method + " " + op.Path + ")",
+				Description:  mcpserver.ToolDescription(op),
 				InputSchema:  schema,
 				Kind:         "agentflow",
 				UpstreamName: name,
@@ -400,7 +400,7 @@ func (h *agentToolGateway) buildCatalog(ctx context.Context, session *AgentToolS
 			}
 			out = append(out, agentToolDescriptor{
 				Name:         ns,
-				Description:  writePolicy + op.Description + " (" + op.Method + " " + op.Path + ")",
+				Description:  writePolicy + mcpserver.ToolDescription(op),
 				InputSchema:  schema,
 				Kind:         "agentflow",
 				UpstreamName: name,
@@ -408,7 +408,7 @@ func (h *agentToolGateway) buildCatalog(ctx context.Context, session *AgentToolS
 		}
 	}
 	if session.Mode == AgentToolAssistant {
-		out = append(out, agentToolDescriptor{Name: "workbench_tool_schema", Description: "读取平台工具的准确参数契约。提交写入草稿前先读取对应工具 schema；不要猜字段、路径或参数包装。", InputSchema: json.RawMessage(`{"type":"object","properties":{"name":{"type":"string"}},"required":["name"],"additionalProperties":false}`), Kind: "workbench"})
+		out = append(out, agentToolDescriptor{Name: "workbench_tool_schema", Description: `读取平台工具的准确参数契约。参数使用 name，例如 {"name":"issues_save"}，不要使用 tool 字段。提交写入草稿前先读取对应工具 schema；不要猜字段、路径或参数包装。`, InputSchema: json.RawMessage(`{"type":"object","properties":{"name":{"type":"string"}},"required":["name"],"additionalProperties":false}`), Kind: "workbench"})
 		if strings.TrimSpace(session.SpaceID) != "" {
 			out = append(out, publishArtifactDescriptor(session, false))
 		}
