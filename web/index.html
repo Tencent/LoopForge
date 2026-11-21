@@ -1138,9 +1138,12 @@
               </div>
             </div>
             <div data-schedule-kind="assistant" data-schedule-prompt hidden>
-              <label>提示词</label>
-              <textarea name="assistantPrompt" class="input" rows="4" placeholder="到点后助手要做的事，原文执行。例如：给能确定仓库的 backlog 绑仓库；没把握的标 ignored。"></textarea>
+              <label for="schedulePromptFallback">提示词</label>
+              <textarea id="schedulePromptFallback" name="assistantPrompt" class="input" rows="4" placeholder="到点后助手要做的事，原文执行。例如：给能确定仓库的 backlog 绑仓库；没把握的标 ignored。"></textarea>
               <p class="schedule-field-hint">到点以与主页 AI 对话相同的完全权限执行提示词，可按需读写平台、启动 SOP、操作工作区及浏览器。</p>
+            </div>
+            <div data-schedule-reference-editor hidden>
+              <div id="schedulePromptEditor"></div>
             </div>
           </div>
           <div data-schedule-kind="assistant" class="schedule-notifications" hidden><h3>Bot 通知</h3><p class="schedule-field-hint">可把执行结果、AI 摘要或自定义消息发送到项目 Bot。</p><div id="scheduleNotificationEditor"></div></div>
@@ -1164,6 +1167,7 @@
         <div class="shared-schedule-section-head"><b>业务参数</b><button id="sharedScheduleAddParameter" type="button" class="button ghost small">添加参数</button></div>
         <div id="sharedScheduleParameterRows" class="shared-schedule-parameter-rows"></div>
         <label>版本说明<input class="input" name="changeNote" maxlength="1000" placeholder="说明本次调整，供订阅项目决定是否升级"></label>
+        <p id="sharedSchedulePublishReferences" class="schedule-field-hint"></p>
         <p id="sharedSchedulePublishError" class="schedule-field-hint" role="status"></p>
         <div class="shared-schedule-actions"><button class="button primary" type="submit">发布 v1</button></div>
       </form>
