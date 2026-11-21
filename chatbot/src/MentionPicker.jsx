@@ -26,6 +26,7 @@ export default forwardRef(function MentionPicker(
     trigger,
     onSelect,
     onClose,
+    onRestoreFocus,
     editor,
     issueId,
     onManageIssue,
@@ -75,9 +76,10 @@ export default forwardRef(function MentionPicker(
           }),
       );
       if (version !== request.current || !openRef.current) return;
-      setRows((old) =>
-        offset ? [...old, ...(data.items || data)] : data.items || data,
+      const items = (data.items || data).filter((item) =>
+        referenceTypes.some((reference) => reference.type === item.type),
       );
+      setRows((old) => offset ? [...old, ...items] : items);
       setNext(data.nextOffset || 0);
     } catch (e) {
       if (version === request.current && openRef.current) setError(e.message);
@@ -104,10 +106,8 @@ export default forwardRef(function MentionPicker(
   useEffect(() => {
     if (!open) return;
     function outside(event) {
-      if (
-        !root.current?.contains(event.target) &&
-        event.target !== editor.current
-      )
+      const target = event.composedPath?.()[0] || event.target;
+      if (!root.current?.contains(target) && target !== editor.current)
         onClose();
     }
     document.addEventListener("pointerdown", outside);
@@ -126,12 +126,13 @@ export default forwardRef(function MentionPicker(
   }
   function keyDown(event) {
     if (!open) return false;
-    if (event.nativeEvent?.isComposing) return false;
+    if (event.nativeEvent?.isComposing || event.isComposing || event.keyCode === 229) return false;
     if (event.key === "Escape") {
       event.preventDefault();
       event.stopPropagation();
       onClose();
-      editor.current?.focus();
+      if (onRestoreFocus) onRestoreFocus();
+      else editor.current?.focus({ preventScroll: true });
       return true;
     }
     if (["ArrowDown", "ArrowUp"].includes(event.key)) {
@@ -167,30 +168,55 @@ export default forwardRef(function MentionPicker(
     const node = root.current;
     if (!open || !node) return undefined;
     const fit = () => {
-      const box = node.getBoundingClientRect();
-      let top = 12;
+      const anchor = node.parentElement.getBoundingClientRect();
+      const viewport = window.visualViewport;
+      let top = (viewport?.offsetTop || 0) + 8,
+        bottom = (viewport?.offsetTop || 0) + (viewport?.height || window.innerHeight) - 8,
+        left = (viewport?.offsetLeft || 0) + 8,
+        right = (viewport?.offsetLeft || 0) + (viewport?.width || window.innerWidth) - 8;
       for (
         let parent = node.parentElement;
         parent;
-        parent = parent.parentElement
+        parent = parent.parentElement || parent.getRootNode()?.host
       ) {
         const style = getComputedStyle(parent);
         const clips = [style.overflowY, style.overflowX].some((value) =>
           ["auto", "scroll", "hidden", "clip"].includes(value),
         );
         if (!clips) continue;
-        top = Math.max(top, parent.getBoundingClientRect().top + 8);
+        const clip = parent.getBoundingClientRect();
+        top = Math.max(top, clip.top + 8);
+        bottom = Math.min(bottom, clip.bottom - 8);
+        left = Math.max(left, clip.left + 8);
+        right = Math.min(right, clip.right - 8);
       }
-      const room = box.bottom - top;
-      node.style.maxHeight = `${Math.min(440, Math.max(80, room))}px`;
+      const above = anchor.top - top - 8, below = bottom - anchor.bottom - 8;
+      const up = above >= below;
+      let room = Math.max(above, below), y = up ? anchor.top - 8 : anchor.bottom + 8;
+      // On short screens the picker overlays the editor rather than escaping
+      // its scroll container or shrinking the results to an unusable sliver.
+      if (room < 160) {
+        room = Math.max(0, bottom - top);
+        y = up ? bottom : top;
+      }
+      node.style.top = up ? "auto" : `${y - anchor.top}px`;
+      node.style.bottom = up ? `${anchor.bottom - y}px` : "auto";
+      node.style.left = `${Math.max(left, Math.min(anchor.left, right - anchor.width)) - anchor.left}px`;
+      node.style.right = "auto";
+      node.style.width = `${Math.max(0, Math.min(anchor.width, right - left))}px`;
+      node.style.maxHeight = `${Math.max(0, Math.min(440, room))}px`;
+      node.dataset.placement = up ? "above" : "below";
     };
     fit();
     window.addEventListener("resize", fit);
-    const scroller = node.closest(".empty-conversation, .message-scroll");
-    scroller?.addEventListener("scroll", fit, { passive: true });
+    document.addEventListener("scroll", fit, true);
+    window.visualViewport?.addEventListener("resize", fit);
+    window.visualViewport?.addEventListener("scroll", fit);
     return () => {
       window.removeEventListener("resize", fit);
-      scroller?.removeEventListener("scroll", fit);
+      document.removeEventListener("scroll", fit, true);
+      window.visualViewport?.removeEventListener("resize", fit);
+      window.visualViewport?.removeEventListener("scroll", fit);
     };
   }, [open, presence.phase, options.length, categories]);
   if (!presence.mounted) return null;
@@ -227,7 +253,7 @@ export default forwardRef(function MentionPicker(
           value={query}
           onChange={(e) => setQuery(e.target.value)}
         />
-        <button type="button" onClick={() => { onClose(); editor.current?.focus({ preventScroll: true }); }} className="mention-close">
+        <button type="button" onClick={() => { onClose(); if (onRestoreFocus) onRestoreFocus(); else editor.current?.focus({ preventScroll: true }); }} className="mention-close">
           关闭
         </button>
       </header>

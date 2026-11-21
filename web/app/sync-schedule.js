@@ -1,10 +1,10 @@
 let scheduleNotificationBindings=[];
-let scheduleReferences=[];
-let scheduleReferenceRequest=0;
-let scheduleReferenceSearchTimer=null;
 let scheduleEditorKind='dispatch';
 let scheduleModalVersion=0;
 let scheduleModalOpener=null;
+let scheduleAssistantReferences=[];
+let schedulePromptEditor=null;
+let scheduleSharedPrompt='';
 // --- Sync Panel (embedded in Issues view) ---
 function sourceBadge(issue){if(!issue.source||issue.source==='local')return '<span class="sync-badge local">本地</span>';if(issue.source==='github')return '<span class="sync-badge local">GitHub</span>';if(issue.source==='gongfeng')return '<span class="sync-badge gongfeng">工蜂</span>';if(issue.source==='tapd')return '<span class="sync-badge tapd">TAPD</span>';return ''}
 function externalLink(issue){if(!issue.externalRef)return '';return `<a href="${escapeHTML(safeURL(issue.externalRef.externalUrl))}" target="_blank" rel="noopener noreferrer" class="ext-link" title="${escapeHTML(issue.externalRef.externalUrl)}">↗</a>`}
@@ -101,80 +101,45 @@ function scheduleIssueStatusValues(job){
   return ['backlog','todo'];
 }
 function scheduleModelAPI(){return window.AgentFlowAssistantModels}
-const scheduleReferenceLabels={agent:'角色',skill:'技能',sop:'SOP',issue:'需求',run:'运行',repository:'仓库'};
-function scheduleReferenceKey(ref){return `${ref?.type||''}/${ref?.id||''}`}
-function renderScheduleReferences(){
-  const host=$('#scheduleReferenceList');
-  if(!host)return;
-  host.innerHTML=scheduleReferences.length?scheduleReferences.map(ref=>`<span class="schedule-reference-chip"><span>${escapeHTML(scheduleReferenceLabels[ref.type]||ref.type)} · ${escapeHTML(ref.name||ref.id)}</span><button type="button" data-remove-schedule-reference="${escapeHTML(scheduleReferenceKey(ref))}" aria-label="移除 ${escapeHTML(ref.name||ref.id)}">×</button></span>`).join(''):'<span class="schedule-field-hint">尚未引用项目资产</span>';
-  host.querySelectorAll('[data-remove-schedule-reference]').forEach(button=>button.onclick=()=>{
-    const key=button.dataset.removeScheduleReference;
-    scheduleReferences=scheduleReferences.filter(ref=>scheduleReferenceKey(ref)!==key);
-    renderScheduleReferences();
-    loadScheduleReferenceOptions();
-  });
+function scheduleReferenceIdentity(ref){
+  const type=String(ref?.type||'').trim(),id=String(ref?.id||'').trim();
+  return {type,id};
 }
-async function loadScheduleReferenceOptions(){
-  const host=$('#scheduleReferenceOptions');
-  if(!host)return;
-  const request=++scheduleReferenceRequest,modalVersion=scheduleModalVersion;
-  const projectId=state.projectFilter||'';
-  if(!projectId){host.innerHTML='<div class="schedule-field-hint">请先选择项目。</div>';return}
-  host.innerHTML='<div class="schedule-field-hint">读取项目资产…</div>';
-  try{
-    const params=new URLSearchParams({projectId,type:$('#scheduleReferenceType')?.value||'',q:$('#scheduleReferenceQuery')?.value.trim()||'',offset:'0'});
-    const data=await api('/api/assistant/references?'+params.toString());
-    if(request!==scheduleReferenceRequest||modalVersion!==scheduleModalVersion||projectId!==state.projectFilter)return;
-    const rows=data.items||data||[];
-    host.innerHTML=rows.length?rows.map(ref=>{
-      const selected=scheduleReferences.some(item=>scheduleReferenceKey(item)===scheduleReferenceKey(ref));
-      return `<button type="button" class="schedule-reference-option" role="option" aria-selected="${selected}" data-schedule-reference="${escapeHTML(scheduleReferenceKey(ref))}"><span>${escapeHTML(scheduleReferenceLabels[ref.type]||ref.type)} · ${escapeHTML(ref.name||ref.id)}</span><small>${selected?'已引用':escapeHTML(ref.projectName||ref.id)}</small></button>`;
-    }).join(''):'<div class="schedule-field-hint">没有找到可引用的项目资产。</div>';
-    host.querySelectorAll('[data-schedule-reference]').forEach(button=>button.onclick=()=>{
-      const ref=rows.find(item=>scheduleReferenceKey(item)===button.dataset.scheduleReference);
-      if(!ref)return;
-      if(!scheduleReferences.some(item=>scheduleReferenceKey(item)===scheduleReferenceKey(ref))){
-        if(scheduleReferences.length>=12)return toast('每个定时任务最多引用 12 个项目资产','warn');
-        scheduleReferences=[...scheduleReferences,ref];
-      }
-      renderScheduleReferences();
-      loadScheduleReferenceOptions();
-      $('#scheduleReferenceQuery')?.focus();
-    });
-  }catch(err){
-    if(request===scheduleReferenceRequest&&modalVersion===scheduleModalVersion&&projectId===state.projectFilter)host.innerHTML=`<div class="schedule-field-hint">读取项目资产失败：${escapeHTML(err.message)}</div>`
+function scheduleReferenceIdentities(refs){
+  const seen=new Set(),out=[];
+  for(const ref of Array.isArray(refs)?refs:[]){
+    const identity=scheduleReferenceIdentity(ref);
+    const key=`${identity.type}:${identity.id}`;if(seen.has(key))continue;
+    seen.add(key);out.push(identity);
   }
+  return out;
 }
-function bindScheduleReferencePicker(){
-  const add=$('#scheduleAddReference'),picker=$('#scheduleReferencePicker');
-  if(!add||!picker||add.dataset.bound)return;
-  add.dataset.bound='1';
-  add.onclick=()=>{picker.hidden=!picker.hidden;add.setAttribute('aria-expanded',String(!picker.hidden));if(!picker.hidden){loadScheduleReferenceOptions();$('#scheduleReferenceQuery')?.focus()}};
-  $('#scheduleReferenceType')?.addEventListener('change',loadScheduleReferenceOptions);
-  $('#scheduleReferenceQuery')?.addEventListener('input',()=>{clearTimeout(scheduleReferenceSearchTimer);scheduleReferenceSearchTimer=setTimeout(loadScheduleReferenceOptions,180)});
-  const options=$('#scheduleReferenceOptions');
-  options?.addEventListener('keydown',event=>{
-    const items=[...options.querySelectorAll('[data-schedule-reference]')];
-    if(!items.length||!['ArrowDown','ArrowUp','Home','End'].includes(event.key))return;
-    event.preventDefault();
-    const current=items.indexOf(document.activeElement);
-    const next=event.key==='Home'?0:event.key==='End'?items.length-1:Math.max(0,(current+(event.key==='ArrowDown'?1:-1)+items.length)%items.length);
-    items[next]?.focus();
-  });
-  (picker.closest('.schedule-references')||picker).addEventListener('keydown',event=>{
-    if(event.key!=='Escape'||picker.hidden)return;
-    event.preventDefault();
-    event.stopPropagation();
-    picker.hidden=true;
-    add.setAttribute('aria-expanded','false');
-    add.focus();
-  });
-  document.addEventListener('pointerdown',event=>{
-    if(picker.hidden||picker.contains(event.target)||event.target===add)return;
-    picker.hidden=true;
-    add.setAttribute('aria-expanded','false');
-  });
+function syncSchedulePromptEditor(){
+  const f=$('#scheduleJobForm'),host=$('#schedulePromptEditor');
+  if(!f||!host||f.elements.jobKind.value!=='assistant')return;
+  const mount=window.LoopForgePromptEditor?.mount;
+  if(!mount){
+    if(!document.getElementById('schedulePromptEditorModule')){
+      const script=document.createElement('script');script.id='schedulePromptEditorModule';
+      script.type='module';script.src='/chatbot/prompt-editor.js';
+      script.onerror=()=>{script.remove();if($('#scheduleModal').classList.contains('open'))toast('项目资产输入组件加载失败，提示词仍可编辑；请重新打开任务重试','err')};
+      document.head.append(script);
+    }
+    return;
+  }
+  const version=scheduleModalVersion,projectId=state.projectFilter;
+  const value={scope:version,projectId,text:f.elements.sharedTaskId.value?scheduleSharedPrompt:f.elements.assistantPrompt.value,references:structuredClone(scheduleAssistantReferences),readOnly:!!f.elements.sharedTaskId.value};
+  if(schedulePromptEditor)schedulePromptEditor.setValue(value);
+  else schedulePromptEditor=mount(host,{value,onChange:draft=>{
+    if(version!==scheduleModalVersion||projectId!==state.projectFilter||f.elements.jobKind.value!=='assistant')return;
+    scheduleAssistantReferences=structuredClone(draft.references||[]);
+    if(!f.elements.sharedTaskId.value)f.elements.assistantPrompt.value=draft.text;
+  },onError:message=>toast(message,'err')});
+  f.querySelector('[data-schedule-prompt]').hidden=true;
+  f.querySelector('[data-schedule-reference-editor]').hidden=false;
+  f.elements.assistantPrompt.required=false;
 }
+window.addEventListener('loopforge-prompt-editor-ready',()=>{if($('#scheduleModal')?.classList.contains('open'))syncSchedulePromptEditor()});
 function selectedClarifyModel(){
   const api=window.AgentFlowAssistantModels;
   const stored=localStorage.getItem('agentflow.clarifyModel')||'';
@@ -356,6 +321,7 @@ function syncScheduleJobKind(){
   const kind=f.elements.jobKind.value==='assistant'?'assistant':'dispatch';
   f.elements.jobKind.value=kind;
   f.querySelectorAll('[data-schedule-kind]').forEach(el=>{el.hidden=el.dataset.scheduleKind!==kind});
+  f.querySelector('[data-schedule-reference-editor]').hidden=true;
   f.elements.workflowId.required=kind==='dispatch';
   f.elements.maxDispatch.disabled=kind==='assistant';
   f.elements.assistantPrompt.required=kind==='assistant'&&!f.elements.sharedTaskId?.value;
@@ -406,11 +372,9 @@ function fillScheduleJobForm(job={}){
   }
   if(!cron)f.elements.intervalSec.value=interval;
   f.elements.jobKind.value=job.id?scheduleJobKind(job):scheduleEditorKind;
+  scheduleAssistantReferences=Array.isArray(job.references)?structuredClone(job.references):[];
+  scheduleSharedPrompt='';
   f.elements.assistantPrompt.value=job.assistantPrompt||'';
-  scheduleReferences=Array.isArray(job.references)
-    ?job.references.filter(ref=>ref&&ref.type&&ref.id).slice(0,12).map(ref=>({type:String(ref.type),id:String(ref.id),name:String(ref.name||''),projectId:String(ref.projectId||''),projectName:String(ref.projectName||'')}))
-    :[];
-  renderScheduleReferences();
   f.elements.assistantModel.value=job.assistantModel||scheduleModelAPI()?.DEFAULT||'default';
   fillScheduleSessionMode(f,job);
   f.elements.useIssueWorkflow.checked=job.id?!!job.useIssueWorkflow:true;
@@ -428,21 +392,16 @@ function fillScheduleJobForm(job={}){
   syncScheduleJobTiming();
   syncScheduleJobKind();
   fillSharedScheduleForm(job);
+  syncSchedulePromptEditor();
 }
 function projectTriggerJob(){return scheduleJobsInView(state.data.scheduleJobs,state.projectFilter).find(job=>!job.skipDispatch)}
 function resetScheduleJobForm(){fillScheduleJobForm(scheduleEditorKind==='dispatch'?(projectTriggerJob()||{}):{})}
 function closeScheduleJobModal(){
   scheduleModalVersion++;
-  scheduleReferenceRequest++;
-  clearTimeout(scheduleReferenceSearchTimer);
-  scheduleReferences=[];
-  const picker=$('#scheduleReferencePicker');
-  if(picker)picker.hidden=true;
-  const addReference=$('#scheduleAddReference');
-  if(addReference)addReference.setAttribute('aria-expanded','false');
   const modal=$('#scheduleModal');
   if(!modal.classList.contains('open'))return;
   modal.classList.remove('open');
+  schedulePromptEditor?.destroy();schedulePromptEditor=null;
   const editId=scheduleModalOpener?.dataset?.editSchedule;
   const replacement=editId?[...$$('#aiScheduleJobList [data-edit-schedule]')].find(el=>el.dataset.editSchedule===editId):null;
   const versionId=scheduleModalOpener?.dataset?.sharedVersions;
@@ -454,22 +413,11 @@ function closeScheduleJobModal(){
 async function openScheduleJobModal(kind='dispatch',job){
   if(!state.projectFilter)return toast('请先选择项目');
   const version=++scheduleModalVersion,projectId=state.projectFilter;
+  schedulePromptEditor?.destroy();schedulePromptEditor=null;
   scheduleEditorKind=kind==='assistant'?'assistant':'dispatch';
   scheduleModalOpener=document.activeElement;
   if(scheduleModalOpener?.closest('#issueHeadingMenu'))scheduleModalOpener=$('#issueHeadingMore');
   const f=$('#scheduleJobForm');
-  bindScheduleReferencePicker();
-  scheduleReferences=[];
-  scheduleReferenceRequest++;
-  clearTimeout(scheduleReferenceSearchTimer);
-  const picker=$('#scheduleReferencePicker');
-  if(picker)picker.hidden=true;
-  const addReference=$('#scheduleAddReference');
-  if(addReference)addReference.setAttribute('aria-expanded','false');
-  const referenceQuery=$('#scheduleReferenceQuery');
-  if(referenceQuery)referenceQuery.value='';
-  const referenceType=$('#scheduleReferenceType');
-  if(referenceType)referenceType.value='';
   f.inert=false;
   f.querySelector('[type="submit"]').disabled=false;
   if(scheduleEditorKind==='assistant')fillScheduleJobForm(job||{});
@@ -710,14 +658,16 @@ async function saveScheduleJob(e){
     cron:cron?f.elements.cron.value.trim():'',
     assistantPrompt:assistant?f.elements.assistantPrompt.value.trim():'',
     assistantModel:assistant?f.elements.assistantModel.value.trim():'',
-    references:assistant?scheduleReferences.map(ref=>({type:ref.type,id:ref.id})):[],
+    references:assistant?scheduleReferenceIdentities(scheduleAssistantReferences):[],
     sessionMode:assistant&&f.elements.sessionMode?f.elements.sessionMode.value:'',
     sessionKeep:assistant&&f.elements.sessionKeep?Number(f.elements.sessionKeep.value)||50:0,
     enabled:assistant?scheduleSavedEnabled(f.elements.id.value):f.elements.enabled.checked
   };
   if(assistant&&typeof sharedScheduleFormPayload==='function')Object.assign(payload,sharedScheduleFormPayload(f));
   if(!payload.name)return toast('请填写任务名称');
-  if(assistant&&!payload.assistantPrompt&&!payload.sharedTaskId)return toast('请填写 AI 定时任务的提示词');
+  if(assistant&&!payload.assistantPrompt&&!payload.sharedTaskId){schedulePromptEditor?.focus();return toast('请填写 AI 定时任务的提示词')}
+  if(assistant&&payload.references.some(ref=>!['agent','skill','sop','issue','run','repository'].includes(ref.type)||!ref.id))return toast('AI 定时任务引用的项目资产无效，请重新选择后保存');
+  if(assistant&&payload.references.length>12)return toast('AI 定时任务最多引用 12 个项目资产');
   if(!assistant&&!payload.workflowId)return toast('请选择默认 SOP');
   if(!assistant&&!payload.issueStatuses.length)return toast('请至少选择一个触发状态');
   if(!assistant&&payload.maxDispatch!==undefined&&(!Number.isInteger(payload.maxDispatch)||payload.maxDispatch<1||payload.maxDispatch>10))return toast('单次最多触发需求数必须为 1–10，或留空使用默认值 10');

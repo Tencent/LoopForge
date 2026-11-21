@@ -202,6 +202,9 @@ func (h *assistantHandlers) prepareWorkbenchContext(c *gin.Context, req *assista
 }
 
 func (h *assistantHandlers) buildWorkbenchContext(c *gin.Context, req *assistantRequest, user domain.User) error {
+	if err := h.validateScheduledAssets(c.Request.Context(), req.ProjectID); err != nil {
+		return err
+	}
 	// Existing personal attachments remain usable when an unassigned conversation
 	// is explicitly bound to an authorized project. Never infer another user's files.
 	historicalAttachments := map[string]bool{}

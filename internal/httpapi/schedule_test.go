@@ -169,6 +169,16 @@ func TestAIScheduleReferencesPersistIdentityAndRefreshDisplayData(t *testing.T) 
 	if _, err := assistant.normalizeScheduledReferences("platform", []domain.AssistantReference{{Type: "element", ID: "x"}}); err == nil {
 		t.Fatal("unsupported scheduled reference type should be rejected")
 	}
+	for _, typ := range []string{"element", "unknown"} {
+		response := requestJSON[map[string]string](t, h, http.MethodPost, "/api/schedule-jobs", map[string]any{
+			"name": "不可复用的引用", "projectId": "platform", "skipDispatch": true,
+			"intervalSec": 3600, "assistantPrompt": "读取资产",
+			"references": []map[string]any{{"type": typ, "id": "legacy-reference"}},
+		}, http.StatusBadRequest)
+		if !strings.Contains(response["error"], "无效") {
+			t.Fatalf("unsupported type %s: %+v", typ, response)
+		}
+	}
 	requestJSON[map[string]string](t, h, http.MethodPost, "/api/schedule-jobs", map[string]any{
 		"name": "跨项目引用", "projectId": "platform", "skipDispatch": true,
 		"intervalSec": 3600, "assistantPrompt": "读取需求", "enabled": true,

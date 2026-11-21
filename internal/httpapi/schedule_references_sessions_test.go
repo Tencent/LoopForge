@@ -137,3 +137,22 @@ func TestScheduleReferencesWithSessionModesAndSharedKey(t *testing.T) {
 		}
 	}
 }
+
+func TestScheduleRejectsInvalidReferencesBeforeOpeningConversation(t *testing.T) {
+	stubCLIModelDiscovery(t)
+	discoverCLIModels = func(context.Context, string, string) []string { return []string{"glm-5.1"} }
+	h, _, job := scheduleSessionFixture(t)
+	job.AssistantModel = "glm-5.1"
+	h.generate = func(context.Context, string, domain.User) (string, error) {
+		t.Fatal("unsupported reference reached the model")
+		return "", nil
+	}
+	for _, typ := range []string{"element", "unknown"} {
+		job.References = []domain.AssistantReference{{Type: typ, ID: "legacy-reference"}}
+		opened := false
+		_, sessionID, err := h.runScheduleJobPromptReporting(job, func(string) { opened = true })
+		if err == nil || opened || sessionID != "" {
+			t.Fatalf("unsupported %s: opened=%v session=%q err=%v", typ, opened, sessionID, err)
+		}
+	}
+}

@@ -66,6 +66,7 @@ func (h *assistantHandlers) runScheduleJobPromptResult(job domain.ScheduleJob, o
 	if h == nil || h.repo == nil {
 		return result, fmt.Errorf("未连接数据源")
 	}
+	ctx := withAssistantExecMode(context.Background(), assistantExecModeForApproval(AssistantApprovalAuto))
 	prompt := strings.TrimSpace(job.AssistantPrompt)
 	if job.SharedTaskID != "" {
 		version, verr := h.repo.SharedScheduleVersion(job.SharedTaskID, job.SharedTaskVersion)
@@ -76,6 +77,11 @@ func (h *assistantHandlers) runScheduleJobPromptResult(job domain.ScheduleJob, o
 		if err != nil {
 			return result, err
 		}
+		if err := h.repo.ValidateSharedScheduleAssets(version); err != nil {
+			return result, err
+		}
+		job.References = domain.CloneAssistantReferences(version.References)
+		ctx = context.WithValue(ctx, scheduledAssetsKey{}, scheduledAssets{ProjectID: job.ProjectID, Version: version})
 	}
 	if prompt == "" {
 		return result, nil
@@ -94,7 +100,7 @@ func (h *assistantHandlers) runScheduleJobPromptResult(job domain.ScheduleJob, o
 		}
 		model = allowed
 	}
-	refs, err := h.normalizeScheduledReferences(job.ProjectID, job.References)
+	refs, err := h.normalizeScheduledReferencesIn(ctx, job.ProjectID, job.References)
 	if err != nil {
 		return result, err
 	}
@@ -106,7 +112,6 @@ func (h *assistantHandlers) runScheduleJobPromptResult(job domain.ScheduleJob, o
 		ProjectID:     job.ProjectID,
 		Notifications: domain.CloneNotificationBindings(job.Notifications),
 	}
-	ctx := withAssistantExecMode(context.Background(), assistantExecModeForApproval(AssistantApprovalAuto))
 	ctx = withAssistantSessionOrigin(ctx, domain.AssistantSourceScheduled, job.ID)
 	policy := scheduledSessionPolicy{KeepHistory: true, Opened: opened, ReportUsage: func(model string, usage *domain.TokenUsage) {
 		result.Model, result.Usage = model, usage
@@ -135,18 +140,31 @@ func (h *assistantHandlers) runScheduleJobPromptResult(job domain.ScheduleJob, o
 // stable asset identity. Names and project metadata are presentation details;
 // every execution resolves the current record again through prepareWorkbenchContext.
 func (h *assistantHandlers) normalizeScheduledReferences(projectID string, refs []domain.AssistantReference) ([]domain.AssistantReference, error) {
+	return h.normalizeScheduledReferencesIn(context.Background(), projectID, refs)
+}
+
+func (h *assistantHandlers) normalizeScheduledReferencesIn(ctx context.Context, projectID string, refs []domain.AssistantReference) ([]domain.AssistantReference, error) {
+	if err := h.validateScheduledAssets(ctx, projectID); err != nil {
+		return nil, err
+	}
 	if len(refs) == 0 {
 		return nil, nil
 	}
 	if len(refs) > 12 {
 		return nil, fmt.Errorf("AI 定时任务最多引用 12 个项目资产")
 	}
+	// Scheduled prompts use the same reference resolver as the homepage. The
+	// stricter shareability check is applied only when a job is published as a
+	// shared definition; a private job may use any project-visible reference.
 	allowed := map[string]bool{"agent": true, "skill": true, "sop": true, "issue": true, "run": true, "repository": true}
 	seen := map[string]bool{}
 	out := make([]domain.AssistantReference, 0, len(refs))
 	for _, raw := range refs {
 		typ, id := strings.TrimSpace(raw.Type), strings.TrimSpace(raw.ID)
-		if !allowed[typ] || id == "" {
+		if !allowed[typ] {
+			return nil, fmt.Errorf("定时任务引用的项目资产类型无效")
+		}
+		if id == "" {
 			return nil, fmt.Errorf("定时任务引用的项目资产无效")
 		}
 		key := typ + "\x00" + id
@@ -194,7 +212,9 @@ func (h *assistantHandlers) scheduledMessageReferences(projectID string, refs []
 			}
 		case "sop":
 			if v, ok := h.repo.Workflow(ref.ID); ok && (v.Shared || v.Generic) {
-				ownerProject = v.ProjectID
+				if v.ProjectID != "" {
+					ownerProject = v.ProjectID
+				}
 			}
 		}
 		canonical.ProjectID = ownerProject

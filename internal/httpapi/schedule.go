@@ -83,7 +83,7 @@ func (h *scheduleHandlers) scheduleJobs(c *gin.Context) {
 			job.IssueStatuses = nil
 			job.MaxDispatch = 0
 			job.Source = ""
-			if len(job.References) > 0 {
+			if len(job.References) > 0 && job.SharedTaskID == "" {
 				if h.assistant == nil {
 					c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "AI 定时任务引用功能未就绪"})
 					return

@@ -224,7 +224,7 @@ func (h *assistantHandlers) executeAssistantTask(ctx context.Context, user domai
 		return errAssistantBusy
 	}
 	defer h.active.Delete(activeKey)
-	if refs, err := h.normalizeScheduledReferences(task.ProjectID, task.References); err != nil {
+	if refs, err := h.normalizeScheduledReferencesIn(ctx, task.ProjectID, task.References); err != nil {
 		task.LastStatus, task.LastError = "error", err.Error()
 		return err
 	} else {

@@ -99,3 +99,58 @@ func TestAssistantTaskReferenceSaveRequiresProjectAccess(t *testing.T) {
 		t.Fatalf("permission response reveals reference existence: %s", rec.Body.String())
 	}
 }
+
+func TestScheduledReferencesApplyHomepageReusableAssetVisibility(t *testing.T) {
+	st := cvAStore(t)
+	h := &assistantHandlers{deps: &deps{repo: st}}
+	for _, typ := range []string{"agent", "skill", "sop"} {
+		t.Run(typ, func(t *testing.T) {
+			put := func(id, project string, shared bool) {
+				var err error
+				switch typ {
+				case "agent":
+					err = st.PutAgent(domain.AgentDefinition{ID: id, Name: "Reusable", ProjectID: project, Shared: shared})
+				case "skill":
+					err = st.PutSkill(domain.SkillDefinition{ID: id, Name: "Reusable", ProjectID: project, Shared: shared})
+				case "sop":
+					err = st.PutWorkflow(domain.WorkflowDefinition{ID: id, Name: "Reusable", ProjectID: project, Shared: shared})
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			ref := []domain.AssistantReference{{Type: typ, ID: typ + "-home", ProjectID: "home", Name: "forged"}}
+			put(typ+"-home", "home", false)
+			if _, err := h.normalizeScheduledReferences("home", ref); err != nil {
+				t.Fatalf("local private asset: %v", err)
+			}
+			ref[0].ID = typ + "-private"
+			put(typ+"-private", "foreign", false)
+			if _, err := h.normalizeScheduledReferences("home", ref); err == nil {
+				t.Fatal("foreign private asset was accepted")
+			}
+			ref[0].ID = typ + "-shared"
+			put(typ+"-shared", "foreign", true)
+			if _, err := h.normalizeScheduledReferences("home", ref); err != nil {
+				t.Fatalf("explicitly shared asset: %v", err)
+			}
+			if typ == "sop" {
+				workflow, _ := st.Workflow(ref[0].ID)
+				workflow.Shared = false
+				if err := st.PutWorkflow(workflow); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				put(ref[0].ID, "foreign", false)
+			}
+			if _, err := h.normalizeScheduledReferences("home", ref); err == nil {
+				t.Fatal("revoked sharing remained accessible")
+			}
+		})
+	}
+	for _, typ := range []string{"element", "unknown"} {
+		if _, err := h.normalizeScheduledReferences("home", []domain.AssistantReference{{Type: typ, ID: "any"}}); err == nil || !strings.Contains(err.Error(), "无效") {
+			t.Errorf("unsupported type %q: %v", typ, err)
+		}
+	}
+}
