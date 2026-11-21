@@ -67,6 +67,22 @@ func (l *assistantActivityLog) add(event assistantStreamEvent) {
 	}
 	event.Input = truncateRunes(event.Input, 8000)
 	event.Output = truncateRunes(event.Output, 8000)
+	if event.Kind == "tool" && event.Tool == assistantDockerBuildTool && event.ID != "" {
+		for i := len(l.events) - 1; i >= 0; i-- {
+			step := &l.events[i]
+			if step.Kind == "tool" && step.Tool == event.Tool && step.ID == event.ID {
+				detail := truncateRunes(event.Detail, 4000)
+				bytes := l.bytes - len(step.Detail) + len(detail)
+				if bytes > 512<<10 {
+					l.truncated = true
+					return
+				}
+				l.bytes = bytes
+				step.Detail = detail
+				return
+			}
+		}
+	}
 	size := len(event.Text) + len(event.Detail) + len(event.Input) + len(event.Output)
 	if len(l.events) >= 512 || l.bytes+size > 512<<10 {
 		l.truncated = true

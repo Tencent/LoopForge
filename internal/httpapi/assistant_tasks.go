@@ -497,7 +497,7 @@ func scheduledRunModel(ctx context.Context, requested string, user domain.User) 
 	engine, id := assistantModelEngine(requested)
 	if engine == assistantEngineCodeBuddy {
 		env := user.CodeBuddyInternetEnvironment
-		catalog := withCodeBuddyPersonalModels(ctx, loadAssistantModels(ctx, env), user)
+		catalog := withCodeBuddyPersonalModels(ctx, loadAssistantModels(env, user.CodeBuddyAPIKey), user)
 		if id == "" || codeBuddyIsDefaultModel(id) {
 			return catalog.Default, nil
 		}
@@ -505,7 +505,7 @@ func scheduledRunModel(ctx context.Context, requested string, user domain.User) 
 			return model, nil
 		}
 		refreshOfficialCodeBuddyModels(ctx, user)
-		if model := assistantAllowedModel(id, loadAssistantModels(ctx, env)); model == id {
+		if model := assistantAllowedModel(id, loadAssistantModels(env, user.CodeBuddyAPIKey)); model == id {
 			return model, nil
 		}
 	} else if model := assistantAllowedUserModel(requested, assistantModelCatalog{}, user); model == requested {

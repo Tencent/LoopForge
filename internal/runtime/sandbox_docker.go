@@ -4,6 +4,7 @@ import (
 	"agentflow/internal/domain"
 	"agentflow/internal/procwatch"
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -915,8 +916,32 @@ func ensureDockerImage(ctx context.Context, workspace string, dockerfile domain.
 		return "", err
 	}
 	args := dockerBuildArgs(image, contextDir)
-	build := func(ctx context.Context) *exec.Cmd { return exec.CommandContext(ctx, "docker", args...) }
-	if tail, err := procwatch.Run(ctx, build, dockerBuildWatch(dockerfile)); err != nil {
+	watch := dockerBuildWatch(dockerfile)
+	report := DockerBuildProgressObserver(ctx)
+	build := func(ctx context.Context) *exec.Cmd {
+		cmd := exec.CommandContext(ctx, "docker", args...)
+		if report != nil {
+			cmd.Env = append(cmd.Environ(), "BUILDKIT_PROGRESS=plain")
+		}
+		return cmd
+	}
+	var buildID string
+	if report != nil {
+		buildID = rand.Text()
+		step := "启动构建"
+		report(domain.WorkspaceImageBuildProgress{ID: buildID, Step: step})
+		watch.OnLine = func(line string) {
+			if next := dockerBuildStep(line); next != "" && next != step {
+				step = next
+				report(domain.WorkspaceImageBuildProgress{ID: buildID, Step: step})
+			}
+		}
+	}
+	tail, err := procwatch.Run(ctx, build, watch)
+	if report != nil {
+		report(domain.WorkspaceImageBuildProgress{ID: buildID, Done: true, Failed: err != nil})
+	}
+	if err != nil {
 		// Only the tail: a build killed after minutes of apt output used to
 		// carry all of it in the error.
 		return "", fmt.Errorf("docker build: %w: %s", err, tail)
@@ -924,8 +949,8 @@ func ensureDockerImage(ctx context.Context, workspace string, dockerfile domain.
 	return image, nil
 }
 
-// Build limits. A RUN step can be silent for a while (a compile, a large
-// download without a progress bar), so the stall window is wider than for git.
+// A Dockerfile step can work quietly for an arbitrary amount of time.
+// Apply an output-based limit only when explicitly configured.
 const (
 	dockerBuildStallEnv   = "AGENTFLOW_DOCKER_BUILD_STALL_TIMEOUT"
 	dockerBuildTimeoutEnv = "AGENTFLOW_DOCKER_BUILD_TIMEOUT"
@@ -942,7 +967,7 @@ func dockerBuildWatch(dockerfile domain.DockerfileDefinition) procwatch.Options 
 	}
 	return procwatch.Options{
 		Stage: "image", Label: label,
-		Stall: procwatch.DurationEnv(dockerBuildStallEnv, 10*time.Minute), StallEnv: dockerBuildStallEnv,
+		Stall: procwatch.DurationEnv(dockerBuildStallEnv, 0), StallEnv: dockerBuildStallEnv,
 		Timeout: procwatch.DurationEnv(dockerBuildTimeoutEnv, 0), TimeoutEnv: dockerBuildTimeoutEnv,
 	}
 }

@@ -45,7 +45,7 @@ func validateAssistantProvider(req *assistantRequest, user domain.User) error {
 		return fmt.Errorf("请先在个人设置中配置 %s API Key", label)
 	}
 	if req.Executor == "codebuddy" {
-		req.Model = assistantAllowedModel(req.Model, loadAssistantModels(context.Background(), user.CodeBuddyInternetEnvironment))
+		req.Model = assistantAllowedModel(req.Model, loadAssistantModels(user.CodeBuddyInternetEnvironment, user.CodeBuddyAPIKey))
 	} else {
 		req.Model = strings.TrimSpace(req.Model)
 		if len(req.Model) > 256 || strings.ContainsAny(req.Model, "\r\n\x00") {

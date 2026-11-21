@@ -79,6 +79,10 @@ func (h *assistantHandlers) generateBotReply(ctx context.Context, bot domain.Not
 		}
 		return "你的平台账号尚未配置对应的模型凭据。" + err.Error(), nil
 	}
+	if engine, id := assistantModelEngine(model); engine == assistantEngineCodeBuddy &&
+		!codeBuddyIsDefaultModel(id) && !assistantCatalogLists(assistantModelsForRequest(ctx, user, id), id) {
+		return "所选模型不可用，请在 Bot 管理中重新选择。", nil
+	}
 	if err = ensureAssistantSessionDirs(user.ID); err != nil {
 		return "", err
 	}

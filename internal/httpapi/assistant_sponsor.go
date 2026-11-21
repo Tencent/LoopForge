@@ -73,9 +73,9 @@ func (h *assistantHandlers) usesSharedKey(user domain.User) bool {
 func (h *assistantHandlers) chatCatalog(ctx context.Context, user domain.User) assistantModelCatalog {
 	key, shared := h.assistantSharedKey()
 	if !shared || !h.usesSharedKey(user) {
-		return withCodeBuddyPersonalModels(ctx, assistantChatCatalog(ctx, user.CodeBuddyInternetEnvironment, nil), user)
+		return withCodeBuddyPersonalModels(ctx, assistantChatCatalog(user.CodeBuddyInternetEnvironment, user.CodeBuddyAPIKey, nil), user)
 	}
-	return restrictAssistantCatalog(assistantChatCatalog(ctx, user.CodeBuddyInternetEnvironment, key.Models), key.Models)
+	return restrictAssistantCatalog(assistantChatCatalog(user.CodeBuddyInternetEnvironment, user.CodeBuddyAPIKey, key.Models), key.Models)
 }
 
 // turnCatalog is chatCatalog for a turn on model. The CodeBuddy model list is

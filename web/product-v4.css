@@ -284,85 +284,9 @@ html[data-theme="dark"] .platform-rail [data-tooltip]::before {
   flex-shrink: 0;
 }
 
-/* 图标栏默认只有图标。开关把它展开成和设置导航一样的文字行，不把整栏收掉。 */
+/* 图标栏固定为图标，不提供展开成文字行的开关。 */
 .platform-rail .rail-label {
   display: none;
-}
-body.platform-rail-expanded {
-  --rail-w: 240px;
-}
-body.platform-rail-expanded .platform-rail {
-  align-items: stretch !important;
-  padding: 12px 10px 10px !important;
-}
-body.platform-rail-expanded .rail-nav,
-body.platform-rail-expanded .rail-bottom {
-  align-items: stretch;
-}
-body.platform-rail-expanded .platform-rail .rail-btn {
-  width: 100% !important;
-  height: 38px !important;
-  min-height: 38px !important;
-  margin: 0 !important;
-  padding: 0 10px !important;
-  border-radius: 10px !important;
-  justify-content: flex-start !important;
-  gap: 10px;
-}
-body.platform-rail-expanded .platform-rail .rail-label {
-  display: block;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: inherit;
-  font-size: 14px;
-  font-weight: 400;
-  line-height: 1.2;
-}
-body.platform-rail-expanded .platform-rail .rail-btn.active .rail-label {
-  font-weight: 600;
-}
-body.platform-rail-expanded .platform-rail [data-tooltip]::after,
-body.platform-rail-expanded .platform-rail [data-tooltip]::before {
-  display: none !important;
-}
-body.platform-rail-expanded .rail-divider {
-  width: auto;
-  margin: 8px 8px;
-}
-body.platform-rail-expanded .platform-rail .nav-badge:not([hidden]) {
-  position: static;
-  margin-left: auto;
-}
-body.platform-rail-expanded .platform-rail .user-badge.rail-user {
-  width: 100% !important;
-  height: 38px !important;
-  min-height: 38px !important;
-  margin: 0 !important;
-  padding: 0 8px !important;
-  border: 0 !important;
-  border-radius: 10px !important;
-  justify-content: flex-start !important;
-  gap: 10px;
-  background: transparent !important;
-}
-body.platform-rail-expanded .platform-rail .user-badge.rail-user:hover,
-body.platform-rail-expanded .platform-rail .rail-profile-wrap.is-open .user-badge.rail-user {
-  border-color: transparent !important;
-  background: var(--rail-hover) !important;
-  box-shadow: none !important;
-}
-body.platform-rail-expanded .platform-rail .user-avatar-circle.rail-user-avatar {
-  width: 28px !important;
-  height: 28px !important;
-  flex: none;
-}
-body.platform-rail-expanded .platform-rail #userName {
-  max-width: none;
-  flex: 1;
-  font-size: 14px;
-  font-weight: 500;
 }
 @media (prefers-reduced-motion: reduce) {
   .app-shell,

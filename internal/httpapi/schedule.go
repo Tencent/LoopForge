@@ -121,7 +121,7 @@ func (h *scheduleHandlers) scheduleJobs(c *gin.Context) {
 		}
 		requestedModel := job.AssistantModel
 		if job.SkipDispatch {
-			job.AssistantModel = assistantScheduledModel(job.AssistantModel, loadAssistantModels(c.Request.Context(), ""))
+			job.AssistantModel = assistantScheduledModel(job.AssistantModel, assistantFixedCatalog())
 		}
 		if job.ProjectID == "" {
 			job.ProjectID = "platform"

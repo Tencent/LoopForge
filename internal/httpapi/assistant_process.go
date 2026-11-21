@@ -538,7 +538,7 @@ func (h *assistantHandlers) testRunnerCLI(ctx context.Context, runnerID, provide
 	defer os.RemoveAll(root)
 	model := provider + ":default"
 	if provider == assistantEngineCodeBuddy {
-		model = loadAssistantModels(ctx, user.CodeBuddyInternetEnvironment).Default
+		model = loadAssistantModels(user.CodeBuddyInternetEnvironment, user.CodeBuddyAPIKey).Default
 		if user.CodeBuddyBaseURL != "" {
 			model = personalCodeBuddyCatalog(ctx, user).Default
 		}

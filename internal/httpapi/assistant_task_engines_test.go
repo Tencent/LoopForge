@@ -35,6 +35,8 @@ func TestAssistantScheduledModelKeepsCLIModels(t *testing.T) {
 // The CodeBuddy model list is empty after a restart: a scheduled run refreshes
 // it with the owner's key and never swaps an unavailable model for the default.
 func TestScheduledRunModelRefreshesAndNeverFallsBack(t *testing.T) {
+	t.Setenv("AGENTFLOW_ASSISTANT_MODEL", "")
+	t.Setenv("AGENTFLOW_ASSISTANT_MODELS", "")
 	old := discoverCLIModels
 	discoverCLIModels = func(_ context.Context, environment, apiKey string) []string {
 		if environment == "internal" && apiKey == "owner-key" {
@@ -57,6 +59,9 @@ func TestScheduledRunModelRefreshesAndNeverFallsBack(t *testing.T) {
 	}
 	if got, err := scheduledRunModel(context.Background(), "", owner); err != nil || got != assistantFixedCatalog().Default {
 		t.Fatalf("empty model = %q, %v", got, err)
+	}
+	if got, err := scheduledRunModel(context.Background(), assistantDefaultModel, owner); err != nil || got != assistantDefaultModel {
+		t.Fatalf("legacy CLI default = %q, %v", got, err)
 	}
 	if got, err := scheduledRunModel(context.Background(), "gone-model", owner); err == nil || !strings.Contains(err.Error(), "gone-model") {
 		t.Fatalf("unavailable model = %q, %v", got, err)

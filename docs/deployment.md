@@ -109,13 +109,15 @@ Access to the Docker socket is equivalent to root on the host. Two safeguards fo
 
 ### Slow networks: clone and image build limits
 
-Cloning a repository and building a custom sandbox image report progress while they work, and their errors keep the last lines of git or Docker output. On the platform host the progress is recorded on the run. On an execution machine it is written to the runner's log, and only the final error reaches the platform. A step that prints nothing for its stall window is treated as hung and stopped. A step that keeps printing may be slow but is stopped only by a total limit. All settings take Go durations such as `90s` or `20m`; `0` turns a limit off. Each host reads its own environment, so set the clone limits on execution machines too.
+Cloning a repository and building a custom sandbox image report progress while they work, and their errors keep the last lines of Git or Docker output. Conversations show the current Docker build step on the platform and on connected runners. A long, quiet Dockerfile step can continue until its caller or a configured limit stops the build. All settings take Go durations such as `90s` or `20m`. `0` turns a limit off. Set the variables on the platform process or execution machine that runs the command.
+
+Runner conversation workspace preparation follows the conversation request's lifetime. Stopping the turn or losing the runner control connection cancels preparation.
 
 | Setting | Default | Applies to |
 |---|---|---|
 | `AGENTFLOW_GIT_CLONE_STALL_TIMEOUT` | `5m` | `git clone` with no output. Not applied when the platform clones from a repository's local source path, whose final repack is silent. |
 | `AGENTFLOW_GIT_CLONE_TIMEOUT` | off on the platform, `10m` on execution machines | Whole `git clone`. Execution machines keep their earlier fixed 10 minute limit as the default. |
-| `AGENTFLOW_DOCKER_BUILD_STALL_TIMEOUT` | `10m` | `docker build` with no output. A quiet `RUN` step (a long compile) counts as no output. |
+| `AGENTFLOW_DOCKER_BUILD_STALL_TIMEOUT` | off | Optional no-output limit for `docker build`. A quiet `RUN` step counts as no output. |
 | `AGENTFLOW_DOCKER_BUILD_TIMEOUT` | off | Whole `docker build`. |
 
 A clone that is stopped this way is not retried, since a retry would wait on the same network. When the execution host reaches GitHub or Debian mirrors slowly, point git at a proxy (`git config --global http.proxy`) and use a nearby package mirror in the Dockerfile rather than raising these limits.
