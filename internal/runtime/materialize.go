@@ -448,7 +448,12 @@ func mcpConfigEntries(servers []domain.MCPServerDefinition) (map[string]any, err
 			}
 		} else {
 			entry["command"] = m.Command
-			entry["args"] = m.Args
+			// A nil slice would render as "args": null, which Claude Code
+			// rejects by silently skipping the whole server (including the
+			// gate MCP). Omit args when empty, as the Codex renderer does.
+			if len(m.Args) > 0 {
+				entry["args"] = m.Args
+			}
 			if cwd := MCPRuntimeWorkingDirectory(m); cwd != "" {
 				entry["cwd"] = cwd
 			}
