@@ -8,8 +8,8 @@ import (
 )
 
 // The OAuth tab and the settings page must agree on the channel and message,
-// and the settings listener must be registered once. The quick-access wizard
-// asks for a GitHub token and still refreshes the user when focus returns.
+// and both credential surfaces must register the shared settings listener.
+// The wizard refreshes credentials when the panel reports a save and on focus.
 func TestGongfengOAuthCompletionChannelIsShared(t *testing.T) {
 	read := func(name string) string {
 		data, err := os.ReadFile(name)
@@ -21,7 +21,7 @@ func TestGongfengOAuthCompletionChannelIsShared(t *testing.T) {
 	for name, wants := range map[string][]string{
 		"gongfeng-oauth-done.js":               {"'agentflow-gongfeng-oauth'", "type:'gongfeng-oauth-completed'"},
 		"app/workbench.js":                     {"'agentflow-gongfeng-oauth'", "'gongfeng-oauth-completed'", "function listenForGongfengOAuth()"},
-		"../chatbot/src/QuickAccessWizard.jsx": {`window.addEventListener("focus", refreshUser)`},
+		"../chatbot/src/QuickAccessWizard.jsx": {`window.addEventListener("focus", refresh)`, `"agentflow-credentials-changed"`},
 	} {
 		code := read(name)
 		for _, want := range wants {
@@ -30,11 +30,10 @@ func TestGongfengOAuthCompletionChannelIsShared(t *testing.T) {
 			}
 		}
 	}
-	if wizard := read("../chatbot/src/QuickAccessWizard.jsx"); strings.Contains(wizard, "agentflow-gongfeng-oauth") || strings.Contains(wizard, "BroadcastChannel") {
-		t.Error("the quick-access wizard must not offer the legacy OAuth flow")
-	}
-	if n := strings.Count(read("app.js"), "listenForGongfengOAuth()"); n != 1 {
-		t.Fatalf("settings listener must be registered exactly once at startup, found %d calls", n)
+	for _, entry := range []string{"app.js", "../chatbot/public/personal-credentials.js"} {
+		if n := strings.Count(read(entry), "listenForGongfengOAuth()"); n != 1 {
+			t.Errorf("%s must register the shared listener once, found %d calls", entry, n)
+		}
 	}
 }
 

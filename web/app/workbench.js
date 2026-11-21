@@ -601,9 +601,9 @@ function credentialStatus(kind,user){
   return gitTokenFailure(verify?.result)?'err':'ok';
 }
 function credentialBadgeHTML(status){
-  const lamp={empty:'<span class="hui-lamp is-hollow" aria-hidden="true"><i></i></span>',ok:'<span class="hui-lamp" aria-hidden="true"><i></i></span>',busy:credentialSpinner(12),err:credentialGlyph('alert',12)}[status];
-  const label={empty:'未配置',ok:'已配置',busy:'校验中',err:'有错误'}[status];
-  const tone={empty:'muted',ok:'success',busy:'info',err:'error'}[status];
+  const lamp={empty:'<span class="hui-lamp is-hollow" aria-hidden="true"><i></i></span>',ok:'<span class="hui-lamp" aria-hidden="true"><i></i></span>',busy:credentialSpinner(12),err:credentialGlyph('alert',12),shared:credentialGlyph('sparkles',12)}[status];
+  const label={empty:'未配置',ok:'已配置',busy:'校验中',err:'有错误',shared:'共享模型可用'}[status];
+  const tone={empty:'muted',ok:'success',busy:'info',err:'error',shared:'info'}[status];
   return `<span class="hui-badge credential-status" data-size="sm" data-tone="${tone}" data-status="${status}" role="status">${lamp}<span class="hui-badge-label">${label}</span></span>`;
 }
 function credentialSubline(kind,user){
@@ -738,17 +738,24 @@ function credentialAddMenu(group,user){
 }
 function credentialGroupHTML(group,user){
   const git=group.id==='platform';
+  const onboarding=state.credentialOnboarding;
   const kinds=CREDENTIAL_KINDS.filter(kind=>kind.group===group.id&&!kind.dialog&&credentialConfigured(kind,user));
   const scope=git&&(kinds.length||user.gitHttpCredentialsConfigured||user.gitSshKeyConfigured);
+  const heading=`<h2 id="credential-group-${group.id}" class="credential-group-heading">${group.name}</h2>`;
+  const configured=git?(scope||user.gitTokenOAuth):kinds.length;
+  const status=configured?'ok':!git&&onboarding?.sharedModel?'shared':'empty';
+  const purpose=git?'连接 GitHub、GitLab 或 SSH 仓库，供任务读取代码和提交改动。':'添加 CodeBuddy、Codex 等执行器，使用你自己的模型对话和运行任务。';
   return `<section class="credential-group" data-credential-group="${group.id}" aria-labelledby="credential-group-${group.id}">
     <header class="credential-group-title">
-      <h2 id="credential-group-${group.id}" class="credential-group-heading">${group.name}</h2>
-      ${git?`<p class="credential-group-note"${scope?'':' hidden'}>按仓库地址的协议、主机和端口匹配</p>`:''}
+      ${onboarding?`<span class="credential-group-icon">${credentialGlyph(git?'branch':'terminal',18)}</span>
+        <div class="credential-group-copy">${heading}<p class="credential-group-purpose">${purpose}</p></div>
+        ${credentialBadgeHTML(status)}`:heading}
+      ${git&&!onboarding?`<p class="credential-group-note"${scope?'':' hidden'}>按仓库地址的协议、主机和端口匹配</p>`:''}
     </header>
     <div class="credential-group-body">
       <div class="credential-rows">${kinds.map(kind=>credentialRowHTML(kind,user)).join('')}${git?'<div data-credential-git-rows></div>':''}</div>
       ${credentialAddMenu(group,user)}
-      ${git||document.body.classList.contains('embedded-credentials')?'':`<a class="credential-row-main credential-subscription" href="#/runners" aria-labelledby="credentialSubscriptionTitle credentialSubscriptionAction" aria-describedby="credentialSubscriptionHelp">
+      ${git||onboarding?'':`<a class="credential-row-main credential-subscription" href="#/runners" aria-labelledby="credentialSubscriptionTitle credentialSubscriptionAction" aria-describedby="credentialSubscriptionHelp">
         ${credentialLogo({icon:'monitor'})}
         <span class="credential-row-who">
           <b id="credentialSubscriptionTitle">使用已有订阅</b>
@@ -760,10 +767,10 @@ function credentialGroupHTML(group,user){
   </section>`;
 }
 function credentialPanelHTML(user){
-  const hasCLI=CREDENTIAL_KINDS.some(kind=>kind.group==='model'&&credentialConfigured(kind,user));
+  const showDefaults=!state.credentialOnboarding&&CREDENTIAL_KINDS.some(kind=>kind.group==='model'&&credentialConfigured(kind,user));
   return `<div class="credential-list">
     ${CREDENTIAL_GROUPS.map(group=>credentialGroupHTML(group,user)).join('')}
-    ${hasCLI?`<section class="credential-group credential-defaults" aria-labelledby="credentialDefaultsTitle" data-credential-defaults>${credentialDefaultsHeader()}<p class="credential-default-status" role="status">正在读取执行器…</p></section>`:''}
+    ${showDefaults?`<section class="credential-group credential-defaults" aria-labelledby="credentialDefaultsTitle" data-credential-defaults>${credentialDefaultsHeader()}<p class="credential-default-status" role="status">正在读取执行器…</p></section>`:''}
   </div>`;
 }
 function credentialGitRowsHTML(http,ssh,showGitHub){
@@ -1063,7 +1070,7 @@ function storeCredentialUser(saved){
   if(index>=0)users[index]=saved;else users.push(saved);
 }
 function notifyCredentialsChanged(){
-  const target=document.body.classList.contains('embedded-credentials')?window.parent:$('#chatNextFrame')?.contentWindow;
+  const target=state.credentialOnboarding?window.parent:$('#chatNextFrame')?.contentWindow;
   target?.postMessage({type:'agentflow-credentials-changed'},location.origin);
 }
 async function saveCredential(key,values={},options={}){

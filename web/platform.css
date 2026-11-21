@@ -2305,6 +2305,8 @@ body:has(#settingsView.active) #toastContainer{top:auto;bottom:84px}
 
 /* Personal configuration */
 #personalSettingsContent{container:personal-settings / inline-size}
+.embedded-credentials-root{background:var(--hui-surface);color-scheme:light}
+.embedded-credentials-root[data-theme="dark"]{background:var(--hui-stage);color-scheme:dark}
 .embedded-credentials{overflow:auto;overscroll-behavior:contain;background:transparent;padding:3px 4px 12px}
 .credential-list{display:grid;grid-template-columns:minmax(0,1fr);gap:26px}
 .credential-panel.is-entering .credential-list{animation:credentialPop .44s var(--cr-spring) both}
@@ -2357,6 +2359,101 @@ html[data-theme="dark"] .credential-add-panel img.hui-select-option-brand.is-mon
 .credential-default-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:10px}
 .credential-default-actions[hidden]{display:none}
 .credential-default-error{margin:8px 0 0;color:var(--hui-error);font-size:12px}
+
+.embedded-credentials .credential-list {
+  gap: 12px;
+}
+
+.embedded-credentials .credential-group {
+  border: 1px solid var(--hui-border);
+  border-radius: 13px;
+  background: var(--hui-canvas);
+}
+
+.embedded-credentials .credential-group-title {
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+  padding: 14px 16px 10px;
+}
+
+.credential-group-icon {
+  display: grid;
+  place-items: center;
+  align-self: start;
+  width: 36px;
+  height: 36px;
+  border-radius: 9px;
+  background: var(--hui-accent-soft);
+  color: var(--hui-accent);
+}
+
+.credential-group-purpose {
+  margin: 4px 0 0;
+  color: var(--hui-secondary);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.embedded-credentials .credential-group-body {
+  padding: 0 16px 12px;
+  border: 0;
+  background: none;
+}
+
+.embedded-credentials .credential-add-row {
+  min-height: 0;
+}
+
+.embedded-credentials .credential-rows:not(:has(.credential-row)) + .credential-add-row {
+  margin-inline-start: 46px;
+}
+
+.embedded-credentials .credential-rows:has(.credential-row) + .credential-add-row {
+  padding-top: 10px;
+}
+
+.embedded-credentials .credential-add-row .hui-select-trigger {
+  width: auto;
+  min-height: 36px;
+  gap: 7px;
+  padding: 0 9px;
+  border: 1px solid var(--hui-border-strong);
+  border-radius: 8px;
+  background: var(--hui-surface);
+}
+
+.embedded-credentials .credential-add-trigger :is(.hui-select-lead, .hui-select-chevron) {
+  position: static;
+  margin: 0;
+}
+
+.embedded-credentials .credential-add-trigger::after {
+  inset: 0;
+}
+
+@container personal-settings (max-width: 420px) {
+  .embedded-credentials .credential-group-title {
+    row-gap: 6px;
+  }
+
+  .embedded-credentials .credential-group-copy {
+    display: contents;
+  }
+
+  .embedded-credentials .credential-group-purpose {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    margin: 0;
+    font-size: 12px;
+  }
+
+  .embedded-credentials .credential-rows:not(:has(.credential-row)) + .credential-add-row {
+    margin-inline-start: 0;
+  }
+}
 
 @container personal-settings (max-width:380px){
   .credential-list{gap:22px}

@@ -1383,6 +1383,7 @@ export default function QuickAccessWizard({
     >
       <div
         className="qa-dialog"
+        data-step={activeStep.id}
         role="dialog"
         aria-modal="true"
         aria-labelledby="qa-wizard-title"
@@ -1628,12 +1629,24 @@ export default function QuickAccessWizard({
                   className={`qa-stage ${activeStep.id === "auth" ? "is-credentials" : ""} ${stepAnimated ? "is-entering" : ""}`}
                   data-direction={direction}
                 >
-                  <div className="qa-kicker">
-                    第 {activeStepIndex + 1} 步，共 {wizardStepCount} 步
-                  </div>
-                  <h3 ref={headingRef} tabIndex={-1} className="qa-title">
-                    {activeStep.title}
-                  </h3>
+                  <header className="qa-stage-heading">
+                    <div className="qa-kicker">
+                      <span className="qa-kicker-name" aria-hidden="true">快速接入</span>
+                      第 {activeStepIndex + 1} 步，共 {wizardStepCount} 步
+                    </div>
+                    <h3 ref={headingRef} tabIndex={-1} className="qa-title">
+                      {activeStep.title}
+                    </h3>
+                    {activeStep.id === "auth" ? (
+                      <p className="qa-lede">
+                        {hasGit || readyCLIs.length
+                          ? "可以继续选择项目和仓库，也可以先补齐下面的配置。"
+                          : sponsoredModel
+                            ? "平台共享模型可用，可直接继续。需要操作私有仓库时，可以在这里添加 Git 凭据。"
+                            : "配置任意一项即可继续。下一步选择项目和仓库。"}
+                      </p>
+                    ) : null}
+                  </header>
 
                   {error ? (
                     <p key={error} className="qa-note is-err" role="alert">
@@ -1647,7 +1660,7 @@ export default function QuickAccessWizard({
                       ref={credentialsFrame}
                       className="qa-credentials-frame"
                       aria-label="Git 与执行器配置"
-                      src="/chatbot/personal-credentials.html"
+                      src={`/chatbot/personal-credentials.html${sponsoredModel ? "?shared-model=1" : ""}`}
                     />
                   ) : null}
 

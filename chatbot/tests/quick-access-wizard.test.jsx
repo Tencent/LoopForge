@@ -208,6 +208,9 @@ describe("QuickAccessWizard", () => {
       );
       const frame = await screen.findByLabelText("Git 与执行器配置");
       expect(frame).toHaveAttribute("src", "/chatbot/personal-credentials.html");
+      expect(screen.getByRole("heading", { name: "凭据与授权", level: 3 })).toBeVisible();
+      expect(screen.getByText("第 1 步，共 3 步")).toBeVisible();
+      expect(screen.getByText("配置任意一项即可继续。下一步选择项目和仓库。")).toBeVisible();
       const next = screen.getByRole("button", { name: "下一步" });
       await waitFor(() => expect(next).toBeEnabled());
       await userAction.click(next);
@@ -229,6 +232,7 @@ describe("QuickAccessWizard", () => {
         data,
         location.origin,
       );
+      expect(screen.getByText(/可以继续选择项目和仓库/)).toBeVisible();
       await userAction.click(next);
       expect(await screen.findByRole("heading", { name: "项目与仓库", level: 3 })).toBeInTheDocument();
       expect(onClose).not.toHaveBeenCalled();
@@ -255,6 +259,10 @@ describe("QuickAccessWizard", () => {
       />,
     );
     await screen.findByRole("dialog");
+    expect(screen.getByText(/平台共享模型可用，可直接继续/)).toBeVisible();
+    expect(screen.getByLabelText("Git 与执行器配置")).toHaveAttribute(
+      "src", "/chatbot/personal-credentials.html?shared-model=1",
+    );
     await userAction.click(screen.getByRole("button", { name: "下一步" }));
     expect(await screen.findByText("项目与仓库", { selector: "h3" })).toBeInTheDocument();
     mockState.unconfigured = false;

@@ -1,5 +1,8 @@
 (() => {
   const host = $('#personalSettingsContent');
+  state.credentialOnboarding = {
+    sharedModel: new URLSearchParams(location.search).get('shared-model') === '1',
+  };
   async function load() {
     host.setAttribute('aria-busy', 'true');
     try {
