@@ -1378,11 +1378,16 @@ async function loadRunEval(runId,background){
 }
 async function startRunEval(run){
   if(!['succeeded','failed','cancelled'].includes(run.status))return toast('请等 SOP 跑完后再评测');
-  const picker=$('#runEvalModelPicker');
+  let picker=$('#runEvalModelPicker');
   await picker?.modelPickerReady;
+  if(picker&&!picker.isConnected&&state.activeRun?.id===run.id){
+    // Loading the last evaluation can replace the picker while its catalog is loading.
+    picker=$('#runEvalModelPicker');
+    await picker?.modelPickerReady;
+  }
   if(!picker?.isConnected||state.runEvalBusy)return;
   const model=picker.querySelector('[data-feature-model]')?.value;
-  if(!model)return toast('请先选择模型');
+  if(!model)return toast('暂无可选模型，请检查个人配置中的执行器');
   state.runEvalBusy=true;state.runEvalThoughts=['正在提交评测…'];
   const host=$('#runDetail'),pane=host?.querySelector('[data-run-pane="eval"]');
   if(pane){pane.innerHTML=runEvalPaneHTML(run);bindRunEvalPane(run,host)}

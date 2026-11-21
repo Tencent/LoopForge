@@ -410,7 +410,8 @@ async function sendIssueClarification(initialMessage=''){
   }
   const picker=$('#issueDetailBody [data-clarify-model]');
   await picker?.modelPickerReady;
-  if((picker&&!picker.isConnected)||state.issueDetailData?.issue?.id!==issueId||issueClarifyJobs.get(issueId)?.attached)return;
+  if(state.issueDetailData?.issue?.id!==issueId||issueClarifyJobs.get(issueId)?.attached)return;
+  if(picker&&!picker.isConnected&&(!initialMessage||!state.drawerOpen||state.issueDetailTab!=='clarify'))return;
   const model=picker?.querySelector('[data-feature-model]')?.value||undefined;
   if(!model&&!initialMessage)return toast('暂无可选模型，请检查个人配置中的执行器');
   const msg=initialMessage||collectIssueClarifyReply();

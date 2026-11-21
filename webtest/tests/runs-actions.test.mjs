@@ -234,7 +234,13 @@ test('run helpers merge streams and format timing, output, logs, telemetry, prev
     evalHost.innerHTML='<div data-run-pane="eval">'+runEvalPaneHTML(evalRun)+'</div>';
     bindRunEvalPane(evalRun,evalHost);
   `);
-  await app.evaluate(`startRunEval(state.activeRun)`);
+  const submittingEvaluation=app.evaluate(`startRunEval(state.activeRun)`);
+  app.evaluate(`{
+    const host=document.querySelector('#runDetail');
+    host.querySelector('[data-run-pane="eval"]').innerHTML=runEvalPaneHTML(state.activeRun);
+    bindRunEvalPane(state.activeRun,host);
+  }`);
+  await submittingEvaluation;
   assert.equal(app.router.calls.find(c => c.method === 'POST' && c.path === '/api/runs/run-x/eval')?.body.model, 'codex:model-x');
   app.evaluate(`state.runEvalStream?.close();state.runEvalStream=null;state.runEvalBusy=false`);
   app.evaluate(`
