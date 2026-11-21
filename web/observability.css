@@ -150,10 +150,15 @@
 .telemetry-category .adapter-tag{margin-left:6px;font-style:normal;font-size:9px;font-weight:700;color:var(--muted-2)}
 .obs-table .run-row,.run-row{cursor:pointer}
 .node-artifact-list{display:grid;gap:8px}
-.node-artifact-card{display:flex;align-items:center;gap:9px;padding:9px 10px;border:1px solid var(--line);border-radius:9px;background:var(--panel);cursor:pointer;transition:border-color .14s}
+.node-artifact-card{display:flex;align-items:center;gap:9px;min-width:0;padding:9px 10px;border:1px solid var(--line);border-radius:9px;background:var(--panel);cursor:pointer;text-align:left;transition:border-color .14s}
 .node-artifact-card:hover{border-color:var(--blue)}
-.node-artifact-card b{font-size:11px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.node-artifact-card>div{display:flex;flex:1;flex-direction:column;gap:2px;min-width:0}
+.node-artifact-card b{display:block;font-size:11px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .node-artifact-card span{font-size:9px;color:var(--muted-2)}
+.node-artifact-card>div>span{display:block;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.node-artifact-card>div>small{font-size:9px;color:var(--muted-2);overflow-wrap:anywhere}
+.node-artifact-card>.artifact-file-icon,.node-artifact-card>i{flex-shrink:0}
+.node-artifact-card>i{white-space:nowrap}
 .node-artifact-card code{font-size:8.5px;color:var(--muted-2)}
 .artifact-file-icon{width:28px;height:28px;display:grid;place-items:center;border-radius:7px;background:var(--blue-soft);color:var(--blue);font-size:12px}
 .approval-callout{display:flex;flex-direction:column;flex-shrink:0;min-height:fit-content;overflow:visible;gap:12px;margin:14px 20px 0;padding:16px 20px;border:1px solid rgba(245,158,11,.45);border-radius:12px;background:rgba(251,191,36,.08);box-sizing:border-box}
