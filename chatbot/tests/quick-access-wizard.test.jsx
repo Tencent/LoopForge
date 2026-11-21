@@ -35,8 +35,9 @@ const { project, user, apiMock, writeMock, mockState } = vi.hoisted(() => {
   if (path.includes("/agents")) return [];
   return [];
   });
-  const mockState = { failClone: false, unconfigured: false, sshKeys: null, savedCredentials: {} };
+  const mockState = { failClone: false, unconfigured: false, sshKeys: null, savedCredentials: {}, gitVerification: null };
   const writeMock = vi.fn(async (path, body) => {
+    if (path === "/api/users/1/git-token/verify") return mockState.gitVerification;
     if (path === "/api/projects") return { ...project, ...body };
     if (path.includes("/clone")) {
       if (mockState.failClone) throw new Error("clone unavailable");
@@ -185,15 +186,14 @@ describe("QuickAccessWizard", () => {
     }
   });
 
-  test.each([
-    ["Git", { gitHttpCredentialsConfigured: true }],
-    ["executor", { codeBuddyApiKeyConfigured: true }],
-  ])("continues onboarding after saving a %s credential in place", async (_kind, credentials) => {
+  test("keeps the wizard open when configuring an executor and refreshes it on return", async () => {
     mockState.unconfigured = true;
     const userAction = userEvent.setup();
     const onClose = vi.fn();
-    const onCredentialsSaved = vi.fn();
-    const parent = { postMessage: vi.fn() };
+    const parentFrame = document.createElement("iframe");
+    document.body.append(parentFrame);
+    const parent = parentFrame.contentWindow;
+    const post = vi.spyOn(parent, "postMessage").mockImplementation(() => {});
     const parentWindow = vi.spyOn(window, "parent", "get").mockReturnValue(parent);
     try {
       render(
@@ -203,11 +203,8 @@ describe("QuickAccessWizard", () => {
           projects={[project]}
           projectId="p1"
           onClose={onClose}
-          onCredentialsSaved={onCredentialsSaved}
         />,
       );
-      const frame = await screen.findByLabelText("Git 与执行器配置");
-      expect(frame).toHaveAttribute("src", "/chatbot/personal-credentials.html");
       expect(screen.getByRole("heading", { name: "凭据与授权", level: 3 })).toBeVisible();
       expect(screen.getByText("第 1 步，共 3 步")).toBeVisible();
       expect(screen.getByText("配置任意一项即可继续。下一步选择项目和仓库。")).toBeVisible();
@@ -216,30 +213,59 @@ describe("QuickAccessWizard", () => {
       await userAction.click(next);
       expect(screen.getByRole("alert")).toHaveTextContent("请先添加一个 Git 凭据或执行器。");
 
-      mockState.savedCredentials = credentials;
+      await userAction.click(screen.getByRole("button", { name: "执行器配置", exact: true }));
+      expect(post).toHaveBeenCalledWith(
+        { type: "agentflow-chat-open-view", view: "settings", credential: "executors", returnToQuickAccess: true },
+        location.origin,
+      );
+      expect(onClose).not.toHaveBeenCalled();
+      mockState.savedCredentials = { codeBuddyApiKeyConfigured: true };
       const data = { type: "agentflow-credentials-changed" };
       await act(async () => {
         window.dispatchEvent(new MessageEvent("message", { data, origin: location.origin, source: window }));
-        window.dispatchEvent(new MessageEvent("message", { data, origin: "https://other.example.org", source: frame.contentWindow }));
+        window.dispatchEvent(new MessageEvent("message", { data, origin: "https://other.example.org", source: parent }));
       });
-      expect(onCredentialsSaved).not.toHaveBeenCalled();
+      expect(screen.getByText("尚未配置执行器")).toBeVisible();
 
       await act(async () => {
-        window.dispatchEvent(new MessageEvent("message", { data, origin: location.origin, source: frame.contentWindow }));
+        window.dispatchEvent(new MessageEvent("message", { data, origin: location.origin, source: parent }));
+        window.dispatchEvent(new MessageEvent("message", { data: { type: "agentflow-chat-resume-quick-access" }, origin: location.origin, source: parent }));
       });
-      expect(onCredentialsSaved).toHaveBeenCalledTimes(1);
-      expect(parent.postMessage).toHaveBeenCalledWith(
-        data,
-        location.origin,
-      );
+      expect(screen.getByRole("heading", { name: "凭据与授权", level: 3 })).toHaveFocus();
       expect(screen.getByText(/可以继续选择项目和仓库/)).toBeVisible();
       await userAction.click(next);
       expect(await screen.findByRole("heading", { name: "项目与仓库", level: 3 })).toBeInTheDocument();
       expect(onClose).not.toHaveBeenCalled();
     } finally {
       parentWindow.mockRestore();
+      post.mockRestore();
+      parentFrame.remove();
       mockState.unconfigured = false;
       mockState.savedCredentials = {};
+    }
+  });
+
+  test("validates the optional GitHub token before advancing or saving it", async () => {
+    mockState.unconfigured = true;
+    const actions = userEvent.setup();
+    try {
+      render(<QuickAccessWizard open user={{ id: 1, loginName: "tester" }} projects={[project]} projectId="p1" />);
+      await actions.click(screen.getByText("使用访问令牌（高级）"));
+      await actions.type(screen.getByLabelText("GitHub 个人访问令牌"), "token-value");
+      mockState.gitVerification = { valid: false, error: "测试校验拒绝" };
+      const next = screen.getByRole("button", { name: "下一步" });
+      await actions.click(next);
+      expect(await screen.findByText("测试校验拒绝")).toBeVisible();
+      expect(writeMock.mock.calls.some(([path]) => path === "/api/users/1/git-http-credentials")).toBe(false);
+      mockState.gitVerification = { valid: true };
+      await actions.click(next);
+      expect(await screen.findByRole("heading", { name: "项目与仓库", level: 3 })).toBeVisible();
+      expect(writeMock).toHaveBeenCalledWith(
+        "/api/users/1/git-http-credentials", expect.objectContaining({ host: "github.com", token: "token-value" }), "PUT",
+      );
+    } finally {
+      mockState.unconfigured = false;
+      mockState.gitVerification = null;
     }
   });
 
@@ -260,9 +286,7 @@ describe("QuickAccessWizard", () => {
     );
     await screen.findByRole("dialog");
     expect(screen.getByText(/平台共享模型可用，可直接继续/)).toBeVisible();
-    expect(screen.getByLabelText("Git 与执行器配置")).toHaveAttribute(
-      "src", "/chatbot/personal-credentials.html?shared-model=1",
-    );
+    expect(screen.getByText("可使用平台共享模型")).toBeVisible();
     await userAction.click(screen.getByRole("button", { name: "下一步" }));
     expect(await screen.findByText("项目与仓库", { selector: "h3" })).toBeInTheDocument();
     mockState.unconfigured = false;

@@ -14,6 +14,7 @@ import SlidingTabs from "./SlidingTabs";
 import { api, canChatInProject, canManageProjectRepos, write } from "./api";
 import { usePanelPresence } from "./usePanelPresence";
 import { EXECUTORS, personalEngineConfigured } from "./engines.js";
+import { openCredentialSettings } from "./credentials";
 import "./quick-access-wizard.css";
 
 const DEFAULT_SOP_ID = "generic-backend-delivery";
@@ -468,6 +469,45 @@ export function HarnessSwitch({ checked, onChange, disabled = false, label }) {
   );
 }
 
+/** Pill whose dot pops once each time `ok` flips; alternating keyframe names restart it. */
+function StatusPill({ ok, okLabel = "已就绪", needLabel = "待配置" }) {
+  const previous = useRef(ok);
+  const [pops, setPops] = useState(0);
+  useEffect(() => {
+    if (previous.current === ok) return;
+    previous.current = ok;
+    setPops((n) => n + 1);
+  }, [ok]);
+  return (
+    <span
+      className={`qa-status-pill ${ok ? "is-ok" : "is-need"}`}
+      data-pop={pops ? (pops % 2 ? "a" : "b") : undefined}
+    >
+      {ok ? okLabel : needLabel}
+    </span>
+  );
+}
+
+function VerifyMessage({ result, okText }) {
+  const text = result.valid
+    ? okText
+    : result.error || `缺少权限：${(result.missing || []).join("、")}`;
+  return (
+    <p
+      key={text}
+      className={`qa-verify-msg qa-msg-in ${result.valid ? "is-ok" : "is-err"}`}
+    >
+      <HarnessIcon
+        name={result.valid ? "check" : "info"}
+        size={13}
+        interactive={false}
+      />
+      <span>{text}</span>
+    </p>
+  );
+}
+
+/** Both labels share one grid cell so the button keeps its widest width while busy. */
 function BusyLabel({ busy, busyLabel, children }) {
   return (
     <span className="qa-btn-label">
@@ -740,6 +780,9 @@ export default function QuickAccessWizard({
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [gitToken, setGitToken] = useState("");
+  const [verifyingGit, setVerifyingGit] = useState(false);
+  const [gitVerify, setGitVerify] = useState(null);
   const [projectMode, setProjectMode] = useState("existing");
   const [selectedProjectId, setSelectedProjectId] = useState(projectId);
   const [newProjectName, setNewProjectName] = useState("");
@@ -759,11 +802,6 @@ export default function QuickAccessWizard({
   const [stepAnimated, setStepAnimated] = useState(false);
   const headingRef = useRef(null);
   const bodyRef = useRef(null);
-  const credentialsFrame = useRef(null);
-  const fromCredentialsFrame = useCallback((event) => {
-    const source = credentialsFrame.current?.contentWindow;
-    return Boolean(source && event.source === source && event.origin === location.origin);
-  }, []);
   const presence = usePanelPresence(open, 300);
   const reopenedWhileClosing = presence.phase === "closing";
 
@@ -893,6 +931,8 @@ export default function QuickAccessWizard({
     setStepAnimated(false);
     setPhase("wizard");
     setError("");
+    setGitToken("");
+    setGitVerify(null);
     setCredentialUser(null);
     setCredentialsPending(false);
     setGitHttpHosts([]);
@@ -987,17 +1027,15 @@ export default function QuickAccessWizard({
         });
     };
     const credentialsChanged = (event) => {
-      if (event.origin !== location.origin || event.data?.type !== "agentflow-credentials-changed") return;
-      if (fromCredentialsFrame(event)) {
-        setCredentialsPending(true);
-        setError(previous => previous === CREDENTIALS_REQUIRED ? "" : previous);
-        onCredentialsSaved?.();
-        if (window.parent !== window) {
-          window.parent.postMessage({ type: "agentflow-credentials-changed" }, location.origin);
-        }
-      } else if (event.source !== window.parent) {
+      if (event.source !== window.parent || event.origin !== location.origin) return;
+      if (event.data?.type === "agentflow-chat-resume-quick-access") {
+        headingRef.current?.focus({ preventScroll: true });
+        refresh();
         return;
       }
+      if (event.data?.type !== "agentflow-credentials-changed") return;
+      setCredentialsPending(true);
+      setError(previous => previous === CREDENTIALS_REQUIRED ? "" : previous);
       refresh();
     };
     refresh();
@@ -1008,7 +1046,7 @@ export default function QuickAccessWizard({
       window.removeEventListener("focus", refresh);
       window.removeEventListener("message", credentialsChanged);
     };
-  }, [open, userId, isGuest, fromCredentialsFrame, onCredentialsSaved]);
+  }, [open, userId, isGuest]);
 
   useEffect(() => {
     if (!open || !selectedWorkflowId) return undefined;
@@ -1041,18 +1079,11 @@ export default function QuickAccessWizard({
   useEffect(() => {
     if (!open) return undefined;
     const onKeyDown = (event) => {
-      if (event.key === "Escape" && !saving && !closeActiveSelect) onClose?.();
-    };
-    const closeFromFrame = (event) => {
-      if (!saving && fromCredentialsFrame(event) && event.data?.type === "agentflow-credentials-close") onClose?.();
+      if (event.key === "Escape" && !saving && !verifyingGit && !closeActiveSelect) onClose?.();
     };
     window.addEventListener("keydown", onKeyDown);
-    window.addEventListener("message", closeFromFrame);
-    return () => {
-      window.removeEventListener("keydown", onKeyDown);
-      window.removeEventListener("message", closeFromFrame);
-    };
-  }, [open, saving, onClose, fromCredentialsFrame]);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [open, saving, verifyingGit, onClose]);
 
   useEffect(() => {
     if (projectMode !== "create" || !parsedRepo) return;
@@ -1131,11 +1162,52 @@ export default function QuickAccessWizard({
     setStep(next);
   }
 
+  async function verifyGit() {
+    if (!userId || verifyingGit) return false;
+    const secret = gitToken.trim();
+    const userPath = `/api/users/${encodeURIComponent(userId)}`;
+    setVerifyingGit(true);
+    setGitVerify(null);
+    setError("");
+    try {
+      const result = secret
+        ? await write(`${userPath}/git-token/verify`, { token: secret })
+        : await api(`${userPath}/git-token/verify`);
+      if (result.valid && secret) {
+        const endpoint = `${userPath}/git-http-credentials`;
+        const credentials = await api(endpoint);
+        const existing = credentials.find(credential => credential.host === "github.com");
+        await write(endpoint, {
+          ...(existing ? { id: existing.id } : {}),
+          host: "github.com", platform: "github", name: "GitHub", username: "x-access-token", token: secret,
+        }, "PUT");
+        setCredentialUser({ ...storedUser, id: userId, gitHubCredentialConfigured: true, gitHttpCredentialsConfigured: true });
+        setGitToken("");
+        onCredentialsSaved?.();
+        if (window.parent !== window) {
+          window.parent.postMessage({ type: "agentflow-credentials-changed" }, location.origin);
+        }
+      }
+      setGitVerify(result);
+      return result.valid;
+    } catch (failure) {
+      setGitVerify({ valid: false, error: failure.message });
+      return false;
+    } finally {
+      setVerifyingGit(false);
+    }
+  }
+
   async function nextStep() {
-    if (saving) return;
+    if (saving || verifyingGit) return;
     setError("");
     if (activeStep.id === "auth") {
-      if (!hasGit && !cliReady) {
+      if (gitToken.trim()) {
+        if (!(await verifyGit())) {
+          setError("GitHub 令牌未保存，请检查校验结果。");
+          return;
+        }
+      } else if (!hasGit && !cliReady) {
         setError(CREDENTIALS_REQUIRED);
         return;
       }
@@ -1377,13 +1449,12 @@ export default function QuickAccessWizard({
       inert={closing}
       aria-hidden={closing || undefined}
       onClick={(event) => {
-        if (event.target === event.currentTarget && !saving && !closing)
+        if (event.target === event.currentTarget && !saving && !verifyingGit && !closing)
           onClose?.();
       }}
     >
       <div
         className="qa-dialog"
-        data-step={activeStep.id}
         role="dialog"
         aria-modal="true"
         aria-labelledby="qa-wizard-title"
@@ -1443,7 +1514,7 @@ export default function QuickAccessWizard({
             type="button"
             className="qa-close"
             aria-label="关闭快速接入"
-            disabled={saving}
+            disabled={saving || verifyingGit}
             onClick={onClose}
           >
             <HarnessIcon name="close" size={16} />
@@ -1626,7 +1697,7 @@ export default function QuickAccessWizard({
               <div ref={bodyRef} className="qa-body">
                 <div
                   key={activeStep.id}
-                  className={`qa-stage ${activeStep.id === "auth" ? "is-credentials" : ""} ${stepAnimated ? "is-entering" : ""}`}
+                  className={`qa-stage ${stepAnimated ? "is-entering" : ""}`}
                   data-direction={direction}
                 >
                   <header className="qa-stage-heading">
@@ -1656,12 +1727,58 @@ export default function QuickAccessWizard({
                   ) : null}
 
                   {activeStep.id === "auth" ? (
-                    <iframe
-                      ref={credentialsFrame}
-                      className="qa-credentials-frame"
-                      aria-label="Git 与执行器配置"
-                      src={`/chatbot/personal-credentials.html${sponsoredModel ? "?shared-model=1" : ""}`}
-                    />
+                    <div className="qa-pane">
+                      <section className="qa-cred-card" aria-labelledby="qa-github-title">
+                        <header className="qa-cred-head">
+                          <div>
+                            <strong id="qa-github-title">GitHub 代码仓库授权</strong>
+                            <span>用于克隆私有仓库、创建分支、推送代码与发起 PR</span>
+                          </div>
+                          <StatusPill ok={gitHubReady} />
+                        </header>
+                        <div className="qa-cred-body">
+                          <button type="button" className="qa-btn qa-btn-primary qa-btn-sm" disabled={verifyingGit} onClick={() => openCredentialSettings("gitToken")}>
+                            {gitHubReady ? "管理 GitHub 授权" : "连接 GitHub"}
+                          </button>
+                          <p className="qa-hint">在个人配置中完成授权，返回后继续。</p>
+                          <p className="qa-hint">GitLab 等 SSH 仓库：<button type="button" className="qa-link-btn" disabled={verifyingGit} onClick={() => openCredentialSettings("gitSshKey")}>{storedUser?.gitSshKeyConfigured ? "管理 Git SSH 密钥" : "配置 Git SSH 密钥"}</button></p>
+                          <p className="qa-hint">GitLab、GitHub Enterprise 等 HTTPS 主机：<button type="button" className="qa-link-btn" disabled={verifyingGit} onClick={() => openCredentialSettings("gitHttpCredentials")}>{storedUser?.gitHttpCredentialsConfigured ? "管理 Git 访问令牌" : "配置 Git 访问令牌"}</button></p>
+                          <details>
+                            <summary>使用访问令牌（高级）</summary>
+                            <div className="qa-input-row">
+                              <input
+                                type="password"
+                                className="qa-input"
+                                value={gitToken}
+                                onChange={(event) => { setGitToken(event.target.value); setGitVerify(null); }}
+                                placeholder={gitHubReady ? "已配置，留空保持不变" : "GitHub 个人访问令牌（PAT）"}
+                                aria-label="GitHub 个人访问令牌"
+                                autoComplete="new-password"
+                                disabled={verifyingGit}
+                              />
+                              <button type="button" className="qa-btn qa-btn-outline qa-btn-sm qa-btn-field" data-hover-ink-control="" disabled={!userId || verifyingGit || (!gitToken.trim() && !gitHubReady)} aria-busy={verifyingGit || undefined} onClick={verifyGit}>
+                                <BusyLabel busy={verifyingGit} busyLabel="校验中…">校验</BusyLabel>
+                              </button>
+                              <a className="qa-link" data-hover-ink-control="" href="https://github.com/settings/tokens" target="_blank" rel="noopener noreferrer">申请令牌 ↗</a>
+                            </div>
+                            {gitVerify ? <VerifyMessage result={gitVerify} okText={`令牌有效${gitVerify.login ? `（${gitVerify.login}）` : ""}`} /> : null}
+                          </details>
+                        </div>
+                      </section>
+                      <section className="qa-cred-card" aria-labelledby="qa-executors-title">
+                        <header className="qa-cred-head">
+                          <div>
+                            <strong id="qa-executors-title">执行器</strong>
+                            <span>{readyCLIs.length ? readyCLIs.map(cli => cli.label).join("、") : sponsoredModel ? "可使用平台共享模型" : "尚未配置执行器"}</span>
+                          </div>
+                          <StatusPill ok={cliReady} />
+                        </header>
+                        <div className="qa-cred-body">
+                          <button type="button" className="qa-btn qa-btn-secondary" disabled={verifyingGit} onClick={() => openCredentialSettings("executors", undefined, { returnToQuickAccess: true })}>执行器配置</button>
+                          <p className="qa-hint">在个人配置中保存后，点击「返回快速接入」继续。</p>
+                        </div>
+                      </section>
+                    </div>
                   ) : null}
 
                   {activeStep.id === "project" ? (
@@ -2123,7 +2240,7 @@ export default function QuickAccessWizard({
                   type="button"
                   className="qa-btn qa-btn-primary"
                   aria-busy={saving || undefined}
-                  disabled={(loading || (activeStep.id === "auth" && credentialsPending)) && !saving}
+                  disabled={verifyingGit || ((loading || (activeStep.id === "auth" && credentialsPending)) && !saving)}
                   onClick={nextStep}
                 >
                   <BusyLabel busy={saving} busyLabel="正在保存…">

@@ -20,25 +20,6 @@ test('personal settings lists a managed Git credential even without personal Git
   assert.equal(group.querySelector('.credential-group-note').hidden, false);
 });
 
-test('quick access explains both settings groups and shows the available credentials', async (t) => {
-  const app = await loadApp();
-  t.after(app.close);
-  app.evaluate(`
-    state.currentUser={id:1,isGuest:false};
-    state.data.users=[{id:1,gitSshKeyConfigured:true}];
-    state.credentialOnboarding={sharedModel:true};
-  `);
-  await app.evaluate(`renderPersonalSettings()`);
-  const git = app.document.querySelector('[data-credential-group="platform"]');
-  const executors = app.document.querySelector('[data-credential-group="model"]');
-  assert.match(git.querySelector('.credential-group-purpose').textContent, /读取代码和提交改动/);
-  assert.match(executors.querySelector('.credential-group-purpose').textContent, /对话和运行任务/);
-  assert.equal(git.querySelector('.credential-group-title [role="status"]').textContent, '已配置');
-  assert.equal(executors.querySelector('.credential-group-title [role="status"]').textContent, '共享模型可用');
-  assert.ok(git.querySelector('[data-credential-add-menu]'));
-  assert.ok(executors.querySelector('[data-credential-add-menu]'));
-});
-
 test('credential wizard selects a provider, validates input, saves, and finishes', async (t) => {
   const app = await loadApp();
   t.after(app.close);

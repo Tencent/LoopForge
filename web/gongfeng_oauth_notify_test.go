@@ -8,8 +8,8 @@ import (
 )
 
 // The OAuth tab and the settings page must agree on the channel and message,
-// and both credential surfaces must register the shared settings listener.
-// The wizard refreshes credentials when the panel reports a save and on focus.
+// and the settings page must register its listener once. The wizard refreshes
+// credentials when settings reports a save and when focus returns.
 func TestGongfengOAuthCompletionChannelIsShared(t *testing.T) {
 	read := func(name string) string {
 		data, err := os.ReadFile(name)
@@ -30,10 +30,8 @@ func TestGongfengOAuthCompletionChannelIsShared(t *testing.T) {
 			}
 		}
 	}
-	for _, entry := range []string{"app.js", "../chatbot/public/personal-credentials.js"} {
-		if n := strings.Count(read(entry), "listenForGongfengOAuth()"); n != 1 {
-			t.Errorf("%s must register the shared listener once, found %d calls", entry, n)
-		}
+	if n := strings.Count(read("app.js"), "listenForGongfengOAuth()"); n != 1 {
+		t.Fatalf("settings must register the shared listener once, found %d calls", n)
 	}
 }
 

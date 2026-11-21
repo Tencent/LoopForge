@@ -571,6 +571,14 @@ export default function App() {
     }
     if (starter.prompt) useStarter(starter.prompt);
   }
+  function closeQuickAccess() {
+    setQuickAccessOpen(false);
+    if (window.parent !== window) return;
+    const url = new URL(location.href);
+    if (!url.searchParams.has("quickAccess")) return;
+    url.searchParams.delete("quickAccess");
+    history.replaceState(history.state, "", url);
+  }
   useEffect(() => {
     const wide = sidebarViewport().matchMedia("(min-width:1001px)");
     const apply = () => setSidebarWidth(readSidebarWidth());
@@ -634,9 +642,13 @@ export default function App() {
     const listener = (event) => {
       if (
         event.source !== window.parent ||
-        event.origin !== location.origin ||
-        event.data?.type !== "agentflow-chat-mention-issue"
+        event.origin !== location.origin
       ) return;
+      if (event.data?.type === "agentflow-chat-resume-quick-access") {
+        setQuickAccessOpen(true);
+        return;
+      }
+      if (event.data?.type !== "agentflow-chat-mention-issue") return;
       const issueId = String(event.data.issueId || "");
       const projectId = String(event.data.projectId || "");
       if (!issueId || !projectId) return;
@@ -2580,7 +2592,7 @@ export default function App() {
         defaultModel={chat.model}
         sponsoredModel={chat.sponsoredModel}
         sponsoredModels={chat.sponsoredModels}
-        onClose={() => setQuickAccessOpen(false)}
+        onClose={closeQuickAccess}
         onOpenView={(view) => navigate(view)}
         onCredentialsSaved={chat.refreshCredentials}
         onCompleted={async (nextProjectId) => {

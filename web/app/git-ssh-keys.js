@@ -36,7 +36,7 @@ async function renderGitSSHMissingHint(element, remote) {
 }
 
 function refreshGitSSHWarnings() {
-  if (typeof repoDrawerOpen === 'function' && repoDrawerOpen()) syncRepoDrawerDetect();
+  if (repoDrawerOpen()) syncRepoDrawerDetect();
   if ($('#repositoryModal')?.classList.contains('open')) renderRepositoryCredentialHint();
 }
 
