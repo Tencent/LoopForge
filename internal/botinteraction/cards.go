@@ -13,6 +13,10 @@ import (
 
 var ErrCardExpired = errors.New("该节点已不再等待本次操作")
 
+// ErrCardDeliveryUnknown: the card may have reached the chat but the platform
+// did not confirm it; the notification needs manual review, not a resend.
+var ErrCardDeliveryUnknown = errors.New("企业微信卡片送达结果待核对")
+
 func ActionsForDelivery(store *repo.Store, item domain.NotificationDelivery) []map[string]any {
 	run, ok := store.RunState(item.RunID)
 	if !ok {
@@ -97,8 +101,13 @@ func (s *Service) QueueNotificationCard(ctx context.Context, bot domain.Notifica
 		if err != nil {
 			return err
 		}
-		if record.Status == "reply_failed" {
+		switch record.Status {
+		case domain.BotReplyFailed:
 			return errors.New("企业微信卡片发送失败，请检查会话和 Bot 授权")
+		case domain.BotReplyUnknown:
+			return ErrCardDeliveryUnknown
+		case domain.BotCancelled:
+			return errors.New("机器人已停用或删除，卡片未发送")
 		}
 		if record.Status == "replied" {
 			if record.LastError != "" {
@@ -145,37 +154,7 @@ func actionLabel(action string) string {
 // Card text fields are plain text. Keep the reason visible above context rows,
 // instead of embedding a long Markdown notification in the clipped subtitle.
 func notificationCard(run domain.Run, item domain.NotificationDelivery, actions []map[string]any, content string) map[string]any {
-	reason, required := "", ""
-	node := run.Nodes[item.NodeID]
-	if node != nil {
-		if node.GateResult != nil {
-			reason = node.GateResult.Summary
-			if strings.TrimSpace(reason) == "" {
-				reason = node.GateResult.Reason
-			}
-			required = node.GateResult.ActionRequired
-		}
-		if strings.TrimSpace(reason) == "" {
-			reason = node.Error
-		}
-	}
-	if strings.TrimSpace(reason) == "" {
-		for _, line := range strings.Split(content, "\n") {
-			line = strings.TrimSpace(line)
-			if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, "需求：") || strings.HasPrefix(line, "SOP：") || strings.HasPrefix(line, "节点：") || strings.HasPrefix(line, "查看详情：") {
-				continue
-			}
-			reason = line
-			break
-		}
-	}
-	if strings.TrimSpace(reason) == "" {
-		if item.EventType == "waiting" {
-			reason = "流程在此设置了人工确认，请确认后继续。"
-		} else {
-			reason = "节点执行失败，请查看运行详情。"
-		}
-	}
+	reason, required := cardReason(run, item, content)
 	body := "原因：" + cardText(reason, 76)
 	if required != "" {
 		body += "\n待处理：" + cardText(required, 27)
@@ -207,6 +186,43 @@ func notificationCard(run domain.Run, item domain.NotificationDelivery, actions 
 		card["action_menu"] = menu
 	}
 	return card
+}
+
+// cardReason is the short explanation shown on action cards: the gate
+// summary, the node error or the first content line.
+func cardReason(run domain.Run, item domain.NotificationDelivery, content string) (string, string) {
+	reason, required := "", ""
+	node := run.Nodes[item.NodeID]
+	if node != nil {
+		if node.GateResult != nil {
+			reason = node.GateResult.Summary
+			if strings.TrimSpace(reason) == "" {
+				reason = node.GateResult.Reason
+			}
+			required = node.GateResult.ActionRequired
+		}
+		if strings.TrimSpace(reason) == "" {
+			reason = node.Error
+		}
+	}
+	if strings.TrimSpace(reason) == "" {
+		for _, line := range strings.Split(content, "\n") {
+			line = strings.TrimSpace(line)
+			if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, "需求：") || strings.HasPrefix(line, "SOP：") || strings.HasPrefix(line, "节点：") || strings.HasPrefix(line, "查看详情：") {
+				continue
+			}
+			reason = line
+			break
+		}
+	}
+	if strings.TrimSpace(reason) == "" {
+		if item.EventType == "waiting" {
+			reason = "流程在此设置了人工确认，请确认后继续。"
+		} else {
+			reason = "节点执行失败，请查看运行详情。"
+		}
+	}
+	return reason, required
 }
 func notificationCardIssue(content string) string {
 	for _, line := range strings.Split(content, "\n") {

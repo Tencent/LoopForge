@@ -17,7 +17,7 @@ func TestBotBindingRequiresBothIdentitiesAndRejectsReplay(t *testing.T) {
 	}
 	defer s.Close()
 	now := time.Now().UTC()
-	token, err := s.NewBotBindingChallenge("bot", "sender", now)
+	token, err := s.NewBotBindingChallenge(testWeComBot("bot"), "sender", now, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -35,10 +35,10 @@ func TestBotBindingRequiresBothIdentitiesAndRejectsReplay(t *testing.T) {
 	if _, err = s.ClaimBotBindingChallenge(token, 43, now); err == nil {
 		t.Fatal("other account replaced claim")
 	}
-	if _, err = s.ConfirmBotUserBinding("bot", "other-sender", code, now); err == nil {
+	if _, err = s.ConfirmBotUserBinding(testWeComBot("bot"), "other-sender", code, now); err == nil {
 		t.Fatal("group participant stole binding")
 	}
-	if _, err = s.ConfirmBotUserBinding("other-bot", "sender", code, now); err == nil {
+	if _, err = s.ConfirmBotUserBinding(testWeComBot("other-bot"), "sender", code, now); err == nil {
 		t.Fatal("cross-Bot confirmation")
 	}
 	var challenge domain.BotBindingChallenge
@@ -52,7 +52,7 @@ func TestBotBindingRequiresBothIdentitiesAndRejectsReplay(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			_, err := s.ConfirmBotUserBinding("bot", "sender", code, now)
+			_, err := s.ConfirmBotUserBinding(testWeComBot("bot"), "sender", code, now)
 			success <- err == nil
 		}()
 	}
@@ -77,7 +77,7 @@ func TestBotBindingRequiresBothIdentitiesAndRejectsReplay(t *testing.T) {
 	if err = s.RevokeBotUserBinding(binding.ID, 42, now); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = s.ConfirmBotUserBinding("bot", "sender", code, now); err == nil {
+	if _, err = s.ConfirmBotUserBinding(testWeComBot("bot"), "sender", code, now); err == nil {
 		t.Fatal("old code rebound after revoke")
 	}
 	if _, err = s.BotBindingChallengeStatus(token, 42, now); err == nil {
@@ -91,8 +91,8 @@ func TestBotBindingExpiryAttemptLimitAndLatestLink(t *testing.T) {
 	}
 	defer s.Close()
 	now := time.Now().UTC()
-	old, _ := s.NewBotBindingChallenge("bot", "sender", now)
-	token, _ := s.NewBotBindingChallenge("bot", "sender", now.Add(time.Second))
+	old, _ := s.NewBotBindingChallenge(testWeComBot("bot"), "sender", now, true)
+	token, _ := s.NewBotBindingChallenge(testWeComBot("bot"), "sender", now.Add(time.Minute+time.Second), true)
 	if _, err = s.ClaimBotBindingChallenge(old, 42, now); err == nil {
 		t.Fatal("old link remains usable")
 	}
@@ -105,16 +105,16 @@ func TestBotBindingExpiryAttemptLimitAndLatestLink(t *testing.T) {
 		if claimErr != nil || again != code {
 			t.Fatal("reopening changed code or reset attempts", claimErr)
 		}
-		if _, err = s.ConfirmBotUserBinding("bot", "sender", "wrong", now); err == nil {
+		if _, err = s.ConfirmBotUserBinding(testWeComBot("bot"), "sender", "wrong", now); err == nil {
 			t.Fatal("invalid code accepted")
 		}
 	}
-	if _, err = s.ConfirmBotUserBinding("bot", "sender", code, now); err == nil {
+	if _, err = s.ConfirmBotUserBinding(testWeComBot("bot"), "sender", code, now); err == nil {
 		t.Fatal("attempt limit ignored")
 	}
-	token, _ = s.NewBotBindingChallenge("bot", "sender", now)
-	code, _ = s.ClaimBotBindingChallenge(token, 42, now)
-	if _, err = s.ConfirmBotUserBinding("bot", "sender", code, now.Add(16*time.Minute)); err == nil {
+	token, _ = s.NewBotBindingChallenge(testWeComBot("bot"), "sender", now.Add(3*time.Minute), true)
+	code, _ = s.ClaimBotBindingChallenge(token, 42, now.Add(3*time.Minute))
+	if _, err = s.ConfirmBotUserBinding(testWeComBot("bot"), "sender", code, now.Add(19*time.Minute)); err == nil {
 		t.Fatal("expired code accepted")
 	}
 }
@@ -135,7 +135,7 @@ func TestBotBindingMySQLConcurrentConfirmation(t *testing.T) {
 	id := botIdentityID(bot, sender)
 	defer s.DB.Where("binding_id = ?", id).Delete(&domain.BotBindingChallenge{})
 	defer s.DB.Where("id = ?", id).Delete(&domain.BotUserBinding{})
-	token, err := s.NewBotBindingChallenge(bot, sender, now)
+	token, err := s.NewBotBindingChallenge(testWeComBot(bot), sender, now, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -166,7 +166,7 @@ func TestBotBindingMySQLConcurrentConfirmation(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			_, err := s.ConfirmBotUserBinding(bot, sender, code, now)
+			_, err := s.ConfirmBotUserBinding(testWeComBot(bot), sender, code, now)
 			results <- err == nil
 		}()
 	}
@@ -250,4 +250,10 @@ func TestBotBindingChallengeCleanupRetentionAndIsolation(t *testing.T) {
 	if _, err = s.DeleteExpiredBotBindingChallenges(cancelled, now); err == nil {
 		t.Fatal("cancelled cleanup ignored context")
 	}
+}
+
+// testWeComBot is a legacy WeCom configuration whose identity scope is the
+// external Bot ID.
+func testWeComBot(external string) domain.NotificationBot {
+	return domain.NotificationBot{ID: "cfg-" + external, BotID: external}
 }

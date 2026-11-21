@@ -132,7 +132,8 @@ func TestBotMissingSubmissionRetriesOnlyTerminalStep(t *testing.T) {
 	h.generate = func(ctx context.Context, prompt string, user domain.User) (string, error) {
 		calls++
 		if calls == 1 {
-			return "查询结果已经准备好，但未提交终态", nil
+			// No answer and no terminal call: only the terminal step reruns.
+			return "", nil
 		}
 		if strings.Contains(prompt, "原始查询标记") || !strings.Contains(prompt, "不要重新查询") {
 			t.Fatal("retry restarted task", prompt)
@@ -157,10 +158,25 @@ func TestBotMissingSubmissionRetriesOnlyTerminalStep(t *testing.T) {
 	}
 }
 
+// A completed conversational answer needs no terminal tool call: the Bot
+// accepts it like the web assistant instead of retrying until it fails.
+func TestBotAcceptsNaturalAnswerWithoutTerminalCall(t *testing.T) {
+	_, h, bot := botFixture(t)
+	calls := 0
+	h.generate = func(ctx context.Context, prompt string, user domain.User) (string, error) {
+		calls++
+		return "项目当前有 2 个运行中的 SOP，均在实现节点。", nil
+	}
+	reply, err := h.generateBotReply(context.Background(), bot, domain.BotConversation{SessionID: "bot-session", ChatType: "single"}, nil, domain.BotInteraction{SenderID: "new-wecom-user", Content: "项目状态"})
+	if err != nil || calls != 1 || !strings.Contains(reply, "2 个运行中的 SOP") {
+		t.Fatal(reply, err, calls)
+	}
+}
+
 func bindBotTestUser(t *testing.T, s *repo.Store, bot domain.NotificationBot, sender string, userID int64) {
 	t.Helper()
 	now := time.Now().UTC()
-	token, err := s.NewBotBindingChallenge(bot.BotID, sender, now)
+	token, err := s.NewBotBindingChallenge(bot, sender, now, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -168,7 +184,7 @@ func bindBotTestUser(t *testing.T, s *repo.Store, bot domain.NotificationBot, se
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = s.ConfirmBotUserBinding(bot.BotID, sender, code, now); err != nil {
+	if _, err = s.ConfirmBotUserBinding(bot, sender, code, now); err != nil {
 		t.Fatal(err)
 	}
 }
