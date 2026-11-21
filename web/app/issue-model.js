@@ -269,6 +269,18 @@ function issueOwnerSummary(i){
 function issueHasFailedNode(run){
   return Object.values(run?.nodes||{}).some(n=>n?.status==='failed');
 }
+// Closed by hand or in the external tracker without a merged delivery.
+function issueClosedWithoutDelivery(i){
+  return issueManuallyClosed(i)||(issueTrackerClosed(i)&&!issueMergedDelivery(i));
+}
+// 已闭环 lists delivered work; 已关闭 lists work closed without delivery.
+// Both share the closed run health, which also orders the list.
+function issueMatchesRunFilter(i,filter){
+  if(filter==='mr')return pendingDeliveryMRCount(i)>0;
+  if(filter==='closed')return issueRunHealth(i)==='closed'&&!issueClosedWithoutDelivery(i);
+  if(filter==='shut')return issueRunHealth(i)==='closed'&&issueClosedWithoutDelivery(i);
+  return issueRunHealth(i)===filter;
+}
 function issueRunHealth(i){
   const {task,run}=issueExecution(i);
   if(issueExecutionBlocked(i))return'closed';

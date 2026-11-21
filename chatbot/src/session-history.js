@@ -21,13 +21,12 @@ export function emptyRunConversation(session) {
   );
 }
 
-const FINISHED_RUN = new Set(["succeeded", "cancelled"]);
-
-// A finished run nobody ever talked in is a run record, not a conversation:
-// the 运行 page lists it, so the history leaves it out. Runs still going,
-// waiting for a person or failed stay, as does any run with an unknown state.
+// A run nobody ever talked in is a run record, not a conversation: the 运行
+// page lists it (running, failed or finished), so the history leaves it out.
+// A run waiting for a person stays, as does any run with an unknown state.
 export function idleRunConversation(session) {
-  return emptyRunConversation(session) && FINISHED_RUN.has(session.runStatus);
+  const status = String(session?.runStatus || "");
+  return emptyRunConversation(session) && status !== "" && status !== "waiting";
 }
 
 // A scheduled task conversation, marked by the backend source or, for rows

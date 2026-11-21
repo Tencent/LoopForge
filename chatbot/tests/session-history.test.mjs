@@ -125,7 +125,7 @@ test("only finished runs nobody talked in count as idle", () => {
   assert.deepEqual(
     rows.filter(idleRunConversation).map((row) => row.id),
     // sop-f: an unread message count never hides a run.
-    ["sop-a", "sop-e"],
+    ["sop-a", "sop-d", "sop-e"],
   );
   // Grouping itself no longer splits run conversations out.
   const groups = groupSessionHistory(rows, projects);

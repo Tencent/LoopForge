@@ -1,6 +1,7 @@
 import {
   groupSessionHistory,
   idleRunConversation,
+  scheduledSession,
   sessionProjectName,
   sessionSearchText,
 } from "./session-history.js";
@@ -38,6 +39,27 @@ export function previewSessions(sessions, limit, activeId = "") {
   return active ? [...head, active] : head;
 }
 
+// Every execution of a scheduled job keeps its own conversation under the same
+// title; all but the most recent one per project and title are superseded.
+export function supersededScheduledSessions(sessions) {
+  const newest = new Map();
+  const older = new Set();
+  for (const session of sessions || []) {
+    if (!scheduledSession(session)) continue;
+    const key = `${session.projectId || ""}\u0000${session.title || ""}`;
+    const kept = newest.get(key);
+    if (!kept) {
+      newest.set(key, session);
+    } else if ((Date.parse(session.updatedAt) || 0) > (Date.parse(kept.updatedAt) || 0)) {
+      older.add(kept.id);
+      newest.set(key, session);
+    } else {
+      older.add(session.id);
+    }
+  }
+  return older;
+}
+
 // Splits the sidebar into the two blocks it renders: 置顶 and the per-project
 // history. A pinned session only ever belongs to 置顶, so the same conversation
 // cannot be listed twice. A running or newly finished reply stays in its own
@@ -57,6 +79,7 @@ export function splitSidebarSections(
 ) {
   const needle = query.trim().toLocaleLowerCase();
   const pinIds = new Set(pinned);
+  const olderScheduled = hideIdleRuns && !needle ? supersededScheduledSessions(sessions) : new Set();
 
   const visible = (sessions || []).filter((session) => {
     // Old versions persisted a blank conversation when choosing a machine.
@@ -64,13 +87,14 @@ export function splitSidebarSections(
     if (!!session.archived !== !!archived) return false;
     if (mineOnly && !sessionIncludesUser(session, currentUserId)) return false;
     if (!needle) {
-      // Finished runs nobody talked in are left to the 运行 page; a search,
-      // a pin or opening one still shows it.
+      // Runs nobody talked in are left to the 运行 page, and a scheduled job
+      // shows only its latest execution; a search, a pin or opening one still
+      // shows it.
       return !(
         hideIdleRuns &&
         session.id !== activeId &&
         !pinIds.has(session.id) &&
-        idleRunConversation(session)
+        (idleRunConversation(session) || olderScheduled.has(session.id))
       );
     }
     const name = sessionProjectName(session.projectId, projects);

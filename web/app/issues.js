@@ -124,8 +124,7 @@ function filteredIssues(){
       issues=issues.filter(i=>String(i.assigneeUserId)===state.issueAssigneeFilter||String(i.assigneeId)===state.issueAssigneeFilter||(i.sopBindings||[]).some(b=>String(b.assigneeUserId)===state.issueAssigneeFilter));
     }
   }
-  if(state.issueRunFilter==='mr')issues=issues.filter(i=>pendingDeliveryMRCount(i)>0);
-  else if(state.issueRunFilter)issues=issues.filter(i=>issueRunHealth(i)===state.issueRunFilter);
+  if(state.issueRunFilter)issues=issues.filter(i=>issueMatchesRunFilter(i,state.issueRunFilter));
   if(state.issueQuery){
     issues=issues.filter(i=>issueMatchesQuery(i,projects.find(x=>x.id===i.projectId),state.issueQuery));
   }

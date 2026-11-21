@@ -269,6 +269,7 @@ func (e *Engine) requeueIntegrationConflict(id, targetBranch string, files []str
 				nr.Error = ""
 				nr.Output = ""
 				nr.ChildRunID = ""
+				nr.StartedAt = time.Time{}
 				nr.FinishedAt = time.Time{}
 				if n == target {
 					nr.ReworkCount++

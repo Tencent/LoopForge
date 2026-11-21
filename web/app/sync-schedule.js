@@ -81,6 +81,8 @@ function scheduleJobKind(job){
   return job?.skipDispatch?'assistant':'dispatch';
 }
 function scheduleJobTimingLabel(job){
+  const dailyAt=scheduleDailyCronTime(job?.cron);
+  if(dailyAt)return `每天 ${dailyAt}`;
   if(job?.cron)return job.cron;
   return scheduleIntervalLabel(job?.intervalSec||3600);
 }
@@ -264,15 +266,29 @@ function paintScheduleModel(selected){
 function syncScheduleJobTiming(){
   const f=$('#scheduleJobForm');if(!f)return;
   const cron=f.elements.scheduleMode.value==='cron';
+  const daily=!cron&&f.elements.intervalSec.value===SCHEDULE_DAILY_SEC;
   f.elements.intervalSec.hidden=cron;
   f.elements.cron.hidden=!cron;
+  if(f.elements.dailyAt)f.elements.dailyAt.hidden=!daily;
   f.querySelectorAll('[data-schedule-tab]').forEach(b=>{
     const on=b.dataset.scheduleTab===(cron?'cron':'interval');
     b.classList.toggle('is-active',on);
     b.setAttribute('aria-selected',on?'true':'false');
   });
   const hint=f.querySelector('[data-schedule-hint]');
-  if(hint)hint.textContent=cron?'东八区 5 段：分 时 日 月 周。例 0 * * * * 每小时，0 9 * * 1-5 工作日 9:00。日和周都填时满足任一即执行，如 0 9 1 * 1 为每月 1 号和每周一。':'按所选间隔循环执行。';
+  if(hint)hint.textContent=cron?'东八区 5 段：分 时 日 月 周。例 0 * * * * 每小时，0 9 * * 1-5 工作日 9:00。日和周都填时满足任一即执行，如 0 9 1 * 1 为每月 1 号和每周一。':daily?'每天在所选时间（东八区）执行一次。':'按所选间隔循环执行。';
+}
+const SCHEDULE_DAILY_SEC='86400';
+// "每天" is saved as a daily cron so it fires at a fixed clock time instead of
+// 24 hours after whenever the job last ran.
+function scheduleDailyCronTime(cron){
+  const m=/^(\d{1,2}) (\d{1,2}) \* \* \*$/.exec(String(cron||'').trim());
+  if(!m||Number(m[1])>59||Number(m[2])>23)return '';
+  return `${m[2].padStart(2,'0')}:${m[1].padStart(2,'0')}`;
+}
+function scheduleDailyCron(time){
+  const [h,m]=String(time||'09:00').split(':').map(Number);
+  return `${Number.isFinite(m)?m:0} ${Number.isFinite(h)?h:9} * * *`;
 }
 function syncScheduleJobKind(){
   const f=$('#scheduleJobForm');if(!f)return;
@@ -321,10 +337,12 @@ function fillScheduleJobForm(job={}){
   const f=$('#scheduleJobForm');
   f.elements.id.value=job.id||'';
   f.elements.name.value=job.name||((job.id?scheduleJobKind(job):scheduleEditorKind)==='assistant'?'':'触发配置');
-  const cron=String(job.cron||'').trim();
+  const dailyAt=scheduleDailyCronTime(job.cron);
+  const cron=dailyAt?'':String(job.cron||'').trim();
   f.elements.scheduleMode.value=cron?'cron':'interval';
   f.elements.cron.value=cron;
-  const interval=String(job.intervalSec||3600);
+  if(f.elements.dailyAt)f.elements.dailyAt.value=dailyAt||'09:00';
+  const interval=dailyAt?SCHEDULE_DAILY_SEC:String(job.intervalSec||3600);
   if(!cron&&![...f.elements.intervalSec.options].some(o=>o.value===interval)){
     const opt=document.createElement('option');opt.value=interval;opt.textContent=scheduleIntervalLabel(interval);f.elements.intervalSec.append(opt);
   }
@@ -596,7 +614,9 @@ function renderScheduleJobList(list,jobs,kind,canRun){
 }
 async function saveScheduleJob(e){
   e.preventDefault();
-  const f=e.currentTarget,cron=f.elements.scheduleMode.value==='cron',assistant=f.elements.jobKind.value==='assistant';
+  const f=e.currentTarget,assistant=f.elements.jobKind.value==='assistant';
+  const daily=f.elements.scheduleMode.value!=='cron'&&f.elements.intervalSec.value===SCHEDULE_DAILY_SEC&&!!f.elements.dailyAt;
+  const cron=f.elements.scheduleMode.value==='cron'||daily;
   const payload={
     id:f.elements.id.value,
     name:f.elements.name.value.trim()||(assistant?'':'触发配置'),
@@ -609,7 +629,7 @@ async function saveScheduleJob(e){
     issueStatuses:assistant?[]:[...f.querySelectorAll('[name="issueStatus"]:checked')].map(cb=>cb.value),
     maxDispatch:assistant||f.elements.maxDispatch.value.trim()===''?undefined:Number(f.elements.maxDispatch.value),
     intervalSec:cron?0:Number(f.elements.intervalSec.value)||3600,
-    cron:cron?f.elements.cron.value.trim():'',
+    cron:daily?scheduleDailyCron(f.elements.dailyAt.value):cron?f.elements.cron.value.trim():'',
     assistantPrompt:assistant?f.elements.assistantPrompt.value.trim():'',
     assistantModel:assistant?f.elements.assistantModel.value.trim():'',
     timeoutMinutes:assistant&&f.elements.timeoutMinutes.value!==''?Number(f.elements.timeoutMinutes.value):undefined,

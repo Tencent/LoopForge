@@ -150,6 +150,53 @@ describe("conversation hooks", () => {
     }
   });
 
+  test.each([
+    { replyRunning: false },
+    { replyRunning: true },
+  ])("a stale transcript resends once on top of the stored one (reply running: $replyRunning)", async ({ replyRunning }) => {
+    const originalAPI = apiMock.getMockImplementation();
+    const originalWrite = writeMock.getMockImplementation();
+    const sent = [];
+    let stale = false;
+    apiMock.mockImplementation(async (path, options) => {
+      if (stale && path === "/api/assistant/sessions/s1/generation")
+        return { id: "other", status: replyRunning ? "running" : "completed", events: [] };
+      if (stale && path === "/api/assistant/sessions/s1") {
+        const stored = await originalAPI(path, options);
+        return { ...stored, messages: [...stored.messages, { role: "user", content: "同事刚发的" }] };
+      }
+      return originalAPI(path, options);
+    });
+    writeMock.mockImplementation((path, body, method) => {
+      if (path !== "/api/assistant/generations") return originalWrite(path, body, method);
+      sent.push(body.messages.map((m) => m.content));
+      if (sent.length === 1) {
+        stale = true;
+        return Promise.reject(Object.assign(Error("共享会话已更新，请重新打开后发送"), { status: 409 }));
+      }
+      return Promise.resolve({ id: "g2", status: "running", events: [] });
+    });
+    try {
+      const { result } = renderHook(useChat);
+      await waitFor(() => expect(result.current.ready).toBe(true));
+      act(() => result.current.open("s1"));
+      await waitFor(() => expect(result.current).toMatchObject({
+        session: expect.objectContaining({ id: "s1" }), replyStatePending: false,
+      }));
+      await act(async () => expect(await result.current.send({ text: "我的问题" })).toBe(!replyRunning));
+      if (replyRunning) {
+        expect(sent).toHaveLength(1);
+        expect(result.current.error).toBe("共享会话已更新，请重新打开后发送");
+      } else {
+        expect(sent).toEqual([["原消息", "我的问题"], ["原消息", "同事刚发的", "我的问题"]]);
+        expect(result.current.error).toBe("");
+      }
+    } finally {
+      apiMock.mockImplementation(originalAPI);
+      writeMock.mockImplementation(originalWrite);
+    }
+  });
+
   test("an earlier generation poll cannot replace a newly accepted running generation", async () => {
     const originalAPI = apiMock.getMockImplementation();
     const originalWrite = writeMock.getMockImplementation();

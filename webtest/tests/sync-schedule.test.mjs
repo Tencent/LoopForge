@@ -25,7 +25,7 @@ test('schedule helpers and job list describe timing, status, blockers, and proje
   assert.equal(app.document.querySelector('#scheduleJobCount').textContent, '已启用');
   assert.equal(app.evaluate(`scheduleIntervalLabel(172800)`), '每 2 天');
   assert.equal(app.evaluate(`scheduleIntervalLabel(120)`), '每 2 分钟');
-  assert.equal(app.evaluate(`scheduleJobTimingLabel({cron:'0 8 * * *'})`), '0 8 * * *');
+  assert.equal(app.evaluate(`scheduleJobTimingLabel({cron:'0 8 * * *'})`), '每天 08:00');
   assert.equal(app.evaluate(`scheduleSourceLabel({source:'tapd'})`), '只同步 TAPD');
   assert.equal(JSON.stringify(app.evaluate(`scheduleIssueStatusValues({id:'old'})`)), JSON.stringify(['backlog', 'todo', 'in_progress', 'in_review', 'blocked']));
   assert.match(app.evaluate(`alignConflictPanelHTML(state.data.runs[0])`), /resolved package\.json|让 Agent 重新对齐/);
@@ -605,4 +605,34 @@ test('AI schedule model picker includes account login CLI models and keeps a sav
   assert.equal(engine.selectedOptions[0].disabled, false);
   assert.equal(form.elements.assistantModel.value, 'claude-code:opus');
   assert.match(doc.querySelector('#scheduleModelHint').textContent, /默认执行机器的账号登录.*离线时改用个人 API Key.*Key 缺失或不可用时任务失败.*平台共享 Key/);
+});
+
+test('a daily job runs at the chosen time of day and reopens with it', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  app.router.put('/api/schedule-jobs', call => ({ ...call.body }));
+  app.evaluate(`(() => {
+    state.projectFilter='project-1';
+    state.data.scheduleJobs=[];
+    fillScheduleJobForm({id:'job-ai',projectId:'project-1',name:'巡检',skipDispatch:true,assistantPrompt:'x',intervalSec:3600,enabled:true});
+  })()`);
+  const form = app.document.querySelector('#scheduleJobForm');
+  assert.equal(form.elements.dailyAt.hidden, true, 'only "每天" asks for a time of day');
+  form.elements.intervalSec.value = '86400';
+  form.elements.intervalSec.dispatchEvent(new app.window.Event('change'));
+  assert.equal(form.elements.dailyAt.hidden, false);
+  assert.match(app.document.querySelector('[data-schedule-hint]').textContent, /每天在所选时间/);
+  form.elements.dailyAt.value = '08:30';
+  form.dispatchEvent(new app.window.Event('submit', { bubbles: true, cancelable: true }));
+  await settle(4);
+  const call = app.router.calls.find(c => c.method === 'PUT' && c.path === '/api/schedule-jobs');
+  assert.equal(call.body.cron, '30 8 * * *');
+  assert.equal(call.body.intervalSec, 0);
+
+  app.evaluate(`fillScheduleJobForm({id:'job-ai',projectId:'project-1',name:'巡检',skipDispatch:true,assistantPrompt:'x',cron:'5 21 * * *',enabled:true})`);
+  assert.equal(form.elements.scheduleMode.value, 'interval');
+  assert.equal(form.elements.intervalSec.value, '86400');
+  assert.equal(form.elements.dailyAt.value, '21:05');
+  assert.equal(app.evaluate(`scheduleJobTimingLabel({cron:'5 21 * * *'})`), '每天 21:05');
+  assert.equal(app.evaluate(`scheduleJobTimingLabel({cron:'0 9 * * 1-5'})`), '0 9 * * 1-5');
 });

@@ -562,6 +562,24 @@ func (r *RunsRepo) RunsAwaitingBuiltPreview() []string {
 	return ids
 }
 
+// LiveChildRunIDs returns the running or waiting child SOP runs started by
+// parentID, including ones its SOP nodes no longer reference.
+func (r *RunsRepo) LiveChildRunIDs(parentID string) []string {
+	parentID = strings.TrimSpace(parentID)
+	if parentID == "" {
+		return nil
+	}
+	var ids []string
+	err := r.DB.Model(&runRow{}).
+		Where("quota_parent_run_id = ? AND status IN ?", parentID, []string{"running", "waiting"}).
+		Order("id").
+		Pluck("id", &ids).Error
+	if err != nil {
+		return nil
+	}
+	return ids
+}
+
 // ClaimRunWorkspaceCleanup atomically makes an expired terminal workspace
 // unavailable before cleanup starts. This prevents a concurrent retry from
 // reusing a directory while a local deletion or durable Runner cleanup is in

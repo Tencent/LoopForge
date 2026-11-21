@@ -1272,6 +1272,7 @@ function bind(){
     if(f.elements.scheduleMode.value==='cron')f.elements.cron.focus();
     else f.elements.intervalSec.focus();
   });
+  $('#scheduleJobForm').elements.intervalSec.addEventListener('change',syncScheduleJobTiming);
   bindScheduleModelPicker();
   $('#pushToGongfeng').onclick=()=>pushIssue('gongfeng');
   $('#pushToTAPD').onclick=()=>pushIssue('tapd');
@@ -1878,7 +1879,7 @@ async function applyFlowRoute(){
   if(!id||state.workflow?.id===id)return;
   const wf=openableWorkflow(id);
   if(!wf){rememberOpenWorkflow();return}
-  if(state.workflowDirty&&!(await afConfirm({title:'未保存更改',message:'当前流程有未保存修改，切换将放弃这些修改。继续？',danger:true}))){rememberOpenWorkflow();return}
+  if(state.workflowDirty&&!(await afConfirm({title:'放弃修改并切换流程？',message:'当前流程有未保存修改。切换后将丢弃这些修改。',danger:true,confirmText:'放弃修改并切换',cancelText:'继续编辑'}))){rememberOpenWorkflow();return}
   if(flowRouteId()!==id)return;
   state.workflow=clone(wf);
   state.workflowSaved=clone(wf);

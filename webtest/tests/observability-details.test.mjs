@@ -236,7 +236,7 @@ test('conversation code changes have their own group, close the Token ring, and 
   assert.equal(label([{ project: 'team/app', iid: 6, url: url + 6, state: 'merged' }], true), '对话直接交付');
   // The funnel counts conversation work as executed once it has a PR.
   const stages = JSON.parse(app.evaluate(`JSON.stringify(obsDeliveryStages())`));
-  assert.deepEqual(stages.slice(0, 2).map(s => [s.name, s.value]), [['有执行的单', 2], ['SOP 成功 / 对话已提 PR', 2]]);
+  assert.deepEqual(stages.slice(0, 2).map(s => [s.name, s.value]), [['有执行的单', 2], ['最近一次 SOP 成功 / 对话已提 PR', 2]]);
   assert.equal(app.evaluate(`state.analytics.deliveries.filter(it=>obsDeliveryMatches(it,'done')).length`), 2);
   assert.equal(app.evaluate(`obsOwnerRows()[0].delivered`), 1);
   const report = app.evaluate(`buildObsReportHTML()`);

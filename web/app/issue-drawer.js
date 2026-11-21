@@ -23,8 +23,13 @@ async function openIssueDetail(id,tab){
   drawer.classList.add('open');
   drawer.setAttribute('aria-hidden','false');
   $('#issueDetailBody').innerHTML='<div class="detail-empty">正在加载需求详情…</div>';
+  // A hung request must not leave the drawer loading forever, and a reply for
+  // an issue the reader already left must not replace the one now open.
+  const timed=(ms=20000)=>({signal:AbortSignal.timeout(ms)});
+  const left=()=>!state.drawerOpen||state.selectedIssue!==issueId;
   try{
-    const detail=await api(`/api/issues/${encodeURIComponent(issueId)}`);const issue=detail.issue;const comments=detail.comments||[];
+    const detail=await api(`/api/issues/${encodeURIComponent(issueId)}`,timed());const issue=detail.issue;const comments=detail.comments||[];
+    if(left())return;
     const localIssue=(state.data.issues||[]).find(i=>i.id===issueId);
     // Keep local view state, but deletion feedback must come from this fresh detail response.
     const permissions={deletionAllowed:issue.deletionAllowed,deletionRequiresForce:issue.deletionRequiresForce,deletionBlock:issue.deletionBlock,closureAllowed:issue.closureAllowed};
@@ -32,10 +37,10 @@ async function openIssueDetail(id,tab){
     const task=latestIssueTask(issue);
     const runId=task?.runId||latestIssueRun(issue, task)?.id;
     let requirement=null;
-    try{requirement=await api(`/api/issues/${encodeURIComponent(issueId)}/requirement`,{silent:true})}catch(e){}
+    try{requirement=await api(`/api/issues/${encodeURIComponent(issueId)}/requirement`,{silent:true,...timed()})}catch(e){}
     let run=null;
     if(runId){
-      try{run=await api(`/api/runs/${runId}`)}catch(e){}
+      try{run=await api(`/api/runs/${runId}`,timed())}catch(e){}
       if(run?.id){
         if(!state.data.runs)state.data.runs=[];
         const rIdx=state.data.runs.findIndex(r=>r.id===run.id);
@@ -46,9 +51,10 @@ async function openIssueDetail(id,tab){
     }
     let deletionTask=null;
     if(issue.deletionBlock?.taskId&&!issue.deletionBlock.runId){
-      try{deletionTask=await api(`/api/tasks/${encodeURIComponent(issue.deletionBlock.taskId)}`,{silent:true})}catch(e){}
+      try{deletionTask=await api(`/api/tasks/${encodeURIComponent(issue.deletionBlock.taskId)}`,{silent:true,...timed()})}catch(e){}
       if(deletionTask?.issueId!==issueId)deletionTask=null;
     }
+    if(left())return;
     state.issueDetailData={issue,comments,run,task,requirement,deletionTask};
     const health=issueRunHealth(issue),stage=issueCurrentStage(issue),needsConfirm=clarificationNeedsConfirm(issue);
     state.issueDetailTab=tab||(issueClarifying(issueId)||needsConfirm?'clarify':((health==='attention'||health==='active'||stage.key==='waiting')?'sop':'overview'));
@@ -58,7 +64,11 @@ async function openIssueDetail(id,tab){
       restoreIssueClarifyThinking(issueId);
       attachIssueClarifyStream(issueId);
     }
-  }catch(e){$('#issueDetailBody').innerHTML=`<div class="detail-empty">加载失败：${escapeHTML(e.message)}</div>`}
+  }catch(e){
+    if(left())return;
+    const message=e?.name==='TimeoutError'||e?.name==='AbortError'?'请求超时，请关闭后重新打开':e.message;
+    $('#issueDetailBody').innerHTML=`<div class="detail-empty">加载失败：${escapeHTML(message)}</div>`;
+  }
 }
 function issueClarifyViewKey(issue,project){
   const c=issue?.clarification||{};

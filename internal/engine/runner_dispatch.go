@@ -676,12 +676,34 @@ func (e *Engine) dispatchRunnerCommand(ctx context.Context, runnerID, runID, nod
 // existing checkout is left in place, and the runner only uses the token to
 // authenticate that command.
 func (e *Engine) gateCommandInvocation(run domain.Run, nodeID string) *domain.RunnerInvocation {
-	assets := e.resolveScriptMCPAssets(run.ExecutionContext.ProjectID, run.ExecutionContext.ResponsibleUserID)
+	assets := e.gateMCPAssets(run, nodeID)
 	invocation := &domain.RunnerInvocation{
 		RunID: run.ID, NodeID: nodeID, Assets: assets, MCPCallServers: assets.MCPServers}
 	identity := resolveGitIdentity(e.repo, run.ExecutionContext.ResponsibleUserID)
 	bindRunnerRepositories(invocation, run, identity.name, identity.email)
 	return invocation
+}
+
+// gateMCPAssets picks the MCP servers a verification gate may call. An agent
+// node's gates get its role's MCP servers only: provisioning every project
+// MCP would let an unrelated server whose install fails (for example one that
+// needs an isolated sandbox) fail the gate before its command runs. Script
+// nodes keep every project MCP, as their scripts may call any of them.
+func (e *Engine) gateMCPAssets(run domain.Run, nodeID string) domain.AgentAssetBundle {
+	projectID, userID := run.ExecutionContext.ProjectID, run.ExecutionContext.ResponsibleUserID
+	wf := workflowForRun(e.repo, run)
+	for _, node := range wf.Nodes {
+		if node.ID != nodeID || isScriptNode(node) || strings.TrimSpace(node.AgentID) == "" {
+			continue
+		}
+		agent, ok := workflowAgent(e.repo, wf, node.AgentID)
+		if !ok {
+			break
+		}
+		role := e.resolveAssets(agent, projectID, wf.ID, userID)
+		return domain.AgentAssetBundle{MCPServers: role.MCPServers, MCPFiles: role.MCPFiles}
+	}
+	return e.resolveScriptMCPAssets(projectID, userID)
 }
 
 // NotifyRunnerTaskChanged wakes workflow goroutines waiting for a runner task
