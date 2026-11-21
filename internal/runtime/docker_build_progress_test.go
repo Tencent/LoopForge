@@ -125,7 +125,12 @@ func TestDockerBuildReportsStepsBeforeQuietBuildCompletes(t *testing.T) {
 	gate := filepath.Join(t.TempDir(), "continue")
 	t.Setenv("TEST_DOCKER_BUILD_CONTINUE", gate)
 	installFakeDockerBuild(t, `
-		printf '%s\n' '#1 [internal] load metadata for private-registry' '#2 [build 2/3] RUN hidden-arguments' '#2 0.1 hidden-output'
+		printf '%s\n' \
+		  '#1 [internal] load metadata for private-registry' \
+		  '#4 [compile 1/2] FROM private-registry/base:latest' \
+		  '#5 [compile 2/2] RUN hidden-arguments' \
+		  '#5 0.1 hidden-output' \
+		  '#6 [package 2/2] COPY --from=compile hidden-arguments'
 		until [ -f "$TEST_DOCKER_BUILD_CONTINUE" ]; do sleep 0.05; done
 		printf '%s\n' '#3 exporting to image'
 	`)
@@ -153,7 +158,12 @@ func TestDockerBuildReportsStepsBeforeQuietBuildCompletes(t *testing.T) {
 	if started.ID == "" || started.Step != "启动构建" || started.Done {
 		t.Fatalf("start = %+v", started)
 	}
-	for _, step := range []string{"读取基础镜像信息", "执行 Dockerfile 第 2/3 步"} {
+	for _, step := range []string{
+		"读取基础镜像信息",
+		"准备 Dockerfile 阶段 compile 的基础镜像",
+		"执行 Dockerfile 阶段 compile 的第 2/2 步",
+		"执行 Dockerfile 阶段 package 的第 2/2 步",
+	} {
 		if update := next(); update.ID != started.ID || update.Step != step || update.Done {
 			t.Fatalf("progress = %+v, want %q", update, step)
 		}
