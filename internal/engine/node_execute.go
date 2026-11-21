@@ -1202,7 +1202,15 @@ func lostCLISession(output string, err error) bool {
 	return strings.Contains(msg, "no conversation found") ||
 		strings.Contains(msg, "session not found") ||
 		strings.Contains(msg, "no such session") ||
-		strings.Contains(msg, "conversation does not exist")
+		strings.Contains(msg, "conversation does not exist") ||
+		// Codex answers `exec resume <id>` with a JSON-RPC error when the
+		// thread's rollout file is gone, which happens when the sandbox is
+		// recreated or re-prepared and .agentflow is reset. The session is
+		// equally unrecoverable, so the node must restart instead of parking
+		// on a human gate.
+		strings.Contains(msg, "no rollout found") ||
+		strings.Contains(msg, "thread/resume failed") ||
+		strings.Contains(msg, "code -32600")
 }
 
 func clipHumanGateDetail(detail string) string {
