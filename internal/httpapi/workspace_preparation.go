@@ -32,7 +32,7 @@ func (h *runsHandlers) withPreparedWorkspace(c *gin.Context, runID string, fn fu
 	defer func() { c.Request = originalRequest }()
 	ctx = engine.WithConversationWorkspaceToken(ctx, token, runID)
 	c.Request = c.Request.WithContext(ctx)
-	if err := h.engine.EnsureConversationWorkspace(ctx, runID, token); err != nil {
+	if _, err := h.engine.PrepareConversationWorkspace(ctx, runID, token); err != nil {
 		return err
 	}
 	state, err := h.engine.EnsureWorkspaceReady(ctx, runID)
