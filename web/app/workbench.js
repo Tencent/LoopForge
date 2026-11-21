@@ -29,8 +29,8 @@ function updateApprovalBadge(){
 // ================= 个人凭证 =================
 // One table drives the list rows, the inline editors and the add wizard.
 const CREDENTIAL_GROUPS=[
-  {id:'platform',name:'Git 配置',icon:'git'},
-  {id:'model',name:'执行器配置',icon:'sparkles'},
+  {id:'platform',name:'Git 配置'},
+  {id:'model',name:'执行器配置'},
 ];
 // A CodeBuddy key only works on the edition that issued it; the CLI treats unknown values as 国际站.
 // Keep in sync with chatbot/src/credentials.js and domain.NormalizeCodeBuddyInternetEnvironment.
@@ -730,9 +730,11 @@ function credentialAddMenu(group,user){
   const options=git?GIT_ADD_OPTIONS:CREDENTIAL_KINDS.filter(kind=>kind.group==='model'&&!credentialConfigured(kind,user))
     .map(kind=>({id:kind.key,name:kind.name,logo:kind.logo,monochrome:kind.monochrome}));
   if(!options.length)return '';
-  return `<select class="select credential-add-menu" data-credential-add-menu="${group.id}" data-icon="plus" data-align="end" data-min-width="216" aria-label="${label}">
-    <option value="" selected disabled hidden>${label}</option>${options.map(option=>credentialOptionHTML(option)).join('')}
-  </select>`;
+  return `<div class="credential-add-row">
+    <select class="select credential-add-menu" data-credential-add-menu="${group.id}" data-icon="plus" data-min-width="216" aria-label="${label}">
+      <option value="" selected disabled hidden>${label}</option>${options.map(option=>credentialOptionHTML(option)).join('')}
+    </select>
+  </div>`;
 }
 function credentialGroupHTML(group,user){
   const git=group.id==='platform';
@@ -740,16 +742,21 @@ function credentialGroupHTML(group,user){
   const scope=git&&(kinds.length||user.gitHttpCredentialsConfigured||user.gitSshKeyConfigured);
   return `<section class="credential-group" data-credential-group="${group.id}" aria-labelledby="credential-group-${group.id}">
     <header class="credential-group-title">
-      <h2 id="credential-group-${group.id}" class="credential-group-heading">${credentialGlyph(group.icon,16)}${group.name}</h2>
-      ${credentialAddMenu(group,user)}
+      <h2 id="credential-group-${group.id}" class="credential-group-heading">${group.name}</h2>
       ${git?`<p class="credential-group-note"${scope?'':' hidden'}>按仓库地址的协议、主机和端口匹配</p>`:''}
     </header>
-    <div class="credential-rows">${kinds.map(kind=>credentialRowHTML(kind,user)).join('')}${git?'<div data-credential-git-rows></div>':''}</div>
-    ${git?'':`<a class="credential-subscription" href="#/runners" aria-labelledby="credentialSubscriptionTitle credentialSubscriptionAction" aria-describedby="credentialSubscriptionHelp">
-      ${credentialGlyph('monitor',16)}
-      <span><strong id="credentialSubscriptionTitle">使用已有订阅</strong><small id="credentialSubscriptionHelp">Claude Code、Codex 和 Antigravity 可用「账号登录」运行对话和 SOP。</small></span>
-      <span id="credentialSubscriptionAction" class="credential-subscription-action">配置执行机器${credentialGlyph('arrow-right',14)}</span>
-    </a>`}
+    <div class="credential-group-body">
+      <div class="credential-rows">${kinds.map(kind=>credentialRowHTML(kind,user)).join('')}${git?'<div data-credential-git-rows></div>':''}</div>
+      ${credentialAddMenu(group,user)}
+      ${git?'':`<a class="credential-row-main credential-subscription" href="#/runners" aria-labelledby="credentialSubscriptionTitle credentialSubscriptionAction" aria-describedby="credentialSubscriptionHelp">
+        ${credentialLogo({icon:'monitor'})}
+        <span class="credential-row-who">
+          <b id="credentialSubscriptionTitle">使用已有订阅</b>
+          <small id="credentialSubscriptionHelp">Claude Code、Codex 和 Antigravity 可用账号登录</small>
+        </span>
+        <span class="credential-row-end credential-row-action"><span id="credentialSubscriptionAction">配置执行机器</span>${credentialGlyph('arrow-right',14)}</span>
+      </a>`}
+    </div>
   </section>`;
 }
 function credentialPanelHTML(user){
@@ -802,12 +809,16 @@ function credentialDefaultOptions(options,value){
 }
 function credentialDefaultsHeader(){
   return `<header class="credential-group-title">
-    <h2 id="credentialDefaultsTitle" class="credential-group-heading">${credentialGlyph('settings',16)}AI 默认设置</h2>
+    <h2 id="credentialDefaultsTitle" class="credential-group-heading">AI 默认设置</h2>
     <span class="credential-default-feedback" role="status" data-default-feedback></span>
   </header>`;
 }
-function credentialDefaultField(label,name,options=''){
-  return `<label class="credential-default-field"><span>${label}</span><select class="select" name="${name}" aria-label="${label}" data-align="end">${options}</select></label>`;
+function credentialDefaultField(label,name,icon,options=''){
+  const id=`credentialDefault-${name}`;
+  return `<div class="credential-default-field">
+    <label class="credential-default-label" id="${id}-label" for="${id}">${credentialGlyph(icon,16)}<span>${label}</span></label>
+    <select class="select credential-default-select" id="${id}" name="${name}" data-align="end" data-min-width="${name==='model'?280:216}" data-reveal-selected>${options}</select>
+  </div>`;
 }
 function credentialDefaultValues(form){
   const {executor,model,effort,approval}=form.elements;
@@ -832,10 +843,12 @@ function paintCredentialDefaults(host,catalog){
   host.innerHTML=`${credentialDefaultsHeader()}
     <form class="credential-default-form" data-ai-defaults-form>
       <fieldset>
-        ${credentialDefaultField('默认执行器','executor',executorOptions)}
-        ${credentialDefaultField('默认模型','model')}
-        ${credentialDefaultField('思考强度','effort')}
-        ${credentialDefaultField('操作确认方式','approval',credentialDefaultOptions(ASSISTANT_APPROVAL_CHOICES,prefs.approval||'confirm'))}
+        <div class="credential-group-body">
+          ${credentialDefaultField('默认执行器','executor','terminal',executorOptions)}
+          ${credentialDefaultField('默认模型','model','sparkles')}
+          ${credentialDefaultField('思考强度','effort','brain')}
+          ${credentialDefaultField('操作确认方式','approval','gate',credentialDefaultOptions(ASSISTANT_APPROVAL_CHOICES,prefs.approval||'confirm'))}
+        </div>
         <div class="credential-default-actions" data-default-actions hidden>
           <button type="reset" class="credential-btn secondary">取消</button>
           <button type="submit" class="credential-btn primary" data-save-ai-defaults>保存设置</button>
@@ -861,6 +874,14 @@ function paintCredentialDefaults(host,catalog){
     syncEffort();
   };
   fillModels();
+  for(const select of form.querySelectorAll('.credential-default-select')){
+    const menu=window.HuiSelect?.enhance(select);
+    if(!menu)continue;
+    menu.panel.classList.add('credential-default-panel');
+    const value=menu.trigger.querySelector('.hui-select-value');
+    value.id=`${select.id}-value`;
+    menu.trigger.setAttribute('aria-labelledby',`${select.id}-label ${value.id}`);
+  }
   form.dataset.initial=JSON.stringify(credentialDefaultValues(form));
   form.onchange=event=>{
     feedback.textContent='';
@@ -917,7 +938,8 @@ async function saveCredentialDefaults(form,host){
     if(host.isConnected){
       paintCredentialDefaults(host,ui.catalog);
       CREDENTIAL_KINDS.filter(kind=>kind.group==='model').forEach(kind=>repaintCredentialRow(kind.key));
-      host.querySelector('[name="executor"]')?.focus({preventScroll:true});
+      const executor=host.querySelector('.credential-default-field .hui-select-trigger, [name="executor"]:not(.hui-select-native)');
+      executor?.focus({preventScroll:true});
       host.querySelector('[data-default-feedback]').textContent='已保存';
     }
     notifyCredentialsChanged();

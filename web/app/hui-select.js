@@ -267,8 +267,19 @@
         });
         watcher.observe(select, { childList: true, subtree: true, attributes: true, characterData: true });
       }
-      if (!searchBar.hidden && via !== 'touch') search.focus();
-      else focusOption();
+      if (searchBar.hidden || via === 'touch') {
+        focusOption();
+      } else {
+        search.focus({ preventScroll: true });
+        // Keep a saved value visible in a long list while leaving search ready to type.
+        if (select.getAttribute('data-reveal-selected') !== null) {
+          const selected = buttons.find(button => button.huiIndex === selectedIndex());
+          if (selected) {
+            list.scrollTop += selected.getBoundingClientRect().top - list.getBoundingClientRect().top
+              - (list.clientHeight - selected.offsetHeight) / 2;
+          }
+        }
+      }
     }
     function close(focusAnchor) {
       if (!open) return;
@@ -404,7 +415,8 @@
 
     trigger.addEventListener('click', event => {
       event.stopPropagation?.();
-      if (selector.isOpen()) selector.close(true); else selector.show();
+      if (selector.isOpen()) selector.close(true);
+      else selector.show(event.pointerType === 'touch' ? 'touch' : undefined);
     });
     trigger.addEventListener('keydown', event => {
       if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
