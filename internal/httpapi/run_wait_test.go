@@ -77,3 +77,48 @@ func TestWaitRunReadsOutcomeAndChecksAccess(t *testing.T) {
 		t.Fatalf("cancelled wait: %d %s", rec.Code, rec.Body)
 	}
 }
+
+func TestWaitRunUsesFrozenWorkflowProjectWhenStartOmitsProject(t *testing.T) {
+	t.Setenv("AGENTFLOW_AUTH_REQUIRED", "true")
+	h, owner := workbenchFixture(t)
+	en := engine.New(h.repo, runtime.NewManager(t.TempDir()))
+	api := New(h.repo, en, nil, "", "")
+
+	wf := domain.WorkflowDefinition{
+		ID: "wait-manual-start", Name: "Wait for manual SOP", ProjectID: "workbench",
+		SandboxProfileID: "local",
+		Nodes:            []domain.WorkflowNode{{ID: "review", Name: "Review", Type: "approval", MaxAttempts: 1}},
+	}
+	if err := h.repo.PutWorkflow(wf); err != nil {
+		t.Fatal(err)
+	}
+	c, rec := workbenchContext(owner, http.MethodPost, "/api/runs",
+		bytes.NewBufferString("{\"workflowId\":\"wait-manual-start\"}"))
+	api.ServeHTTP(rec, c.Request)
+	var run domain.Run
+	if err := json.Unmarshal(rec.Body.Bytes(), &run); rec.Code != http.StatusCreated || err != nil {
+		t.Fatalf("start SOP without an explicit project: %d %s", rec.Code, rec.Body)
+	}
+	if run.ExecutionContext.ProjectID != "" || run.WorkflowSnapshot.ProjectID != wf.ProjectID {
+		t.Fatalf("unexpected run scope: context=%q snapshot=%q", run.ExecutionContext.ProjectID, run.WorkflowSnapshot.ProjectID)
+	}
+	t.Cleanup(func() { _ = en.Cancel(run.ID) })
+
+	path := "/api/runs/" + run.ID + "/wait?timeoutSec=0"
+	c, rec = workbenchContext(owner, http.MethodGet, path, bytes.NewBuffer(nil))
+	api.ServeHTTP(rec, c.Request)
+	var result runWaitResult
+	if err := json.Unmarshal(rec.Body.Bytes(), &result); rec.Code != http.StatusOK || err != nil || result.ProjectID != wf.ProjectID {
+		t.Fatalf("project owner's wait: %d %s", rec.Code, rec.Body)
+	}
+
+	if err := h.repo.PutUser(domain.User{LoginName: "wait-outsider"}); err != nil {
+		t.Fatal(err)
+	}
+	other, _ := h.repo.UserByLoginName("wait-outsider")
+	c, rec = workbenchContext(other, http.MethodGet, path, bytes.NewBuffer(nil))
+	api.ServeHTTP(rec, c.Request)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("outsider's wait: %d %s", rec.Code, rec.Body)
+	}
+}

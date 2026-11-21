@@ -3,6 +3,7 @@ package httpapi
 import (
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"agentflow/internal/domain"
@@ -33,7 +34,19 @@ func (h *runsHandlers) waitRun(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "run not found"})
 		return
 	}
-	projectID := run.ExecutionContext.ProjectID
+	projectID := domain.RunProjectID(run, "")
+	if projectID == "" && run.ExecutionContext.IssueID != "" {
+		if issue, found := h.repo.Issue(run.ExecutionContext.IssueID); found {
+			projectID = strings.TrimSpace(issue.ProjectID)
+		}
+	}
+	if projectID == "" {
+		projectID, err = h.repo.RunWorkflowProjectID(run.ID)
+		if err != nil {
+			respond(c, err)
+			return
+		}
+	}
 	if _, ok := h.projectRunUser(c, projectID); !ok {
 		return
 	}

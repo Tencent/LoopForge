@@ -320,6 +320,18 @@ func (r *RunsRepo) RunHeader(id string) (domain.Run, error) {
 	return runFromRow(row), err
 }
 
+// RunWorkflowProjectID reads the frozen project association without loading
+// the workflow graph or execution data.
+func (r *RunsRepo) RunWorkflowProjectID(id string) (string, error) {
+	project := "JSON_EXTRACT(snapshot, '$.projectId')"
+	if r.isMySQL() {
+		project = "JSON_UNQUOTE(" + project + ")"
+	}
+	var row struct{ ProjectID string }
+	err := r.DB.Table("runs").Select(project+" AS project_id").Where("id = ?", id).Scan(&row).Error
+	return strings.TrimSpace(row.ProjectID), err
+}
+
 // RunState returns the durable aggregate needed by the execution engine.
 // Worker logs are append-only and are never read by engine decisions, so
 // loading the entire log history on every state transition only makes long
