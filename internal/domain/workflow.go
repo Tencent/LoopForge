@@ -77,6 +77,15 @@ type WorkflowNode struct {
 	MaxReworks            int                `json:"maxReworks"`
 	Notifications         []NodeNotification `json:"notifications,omitempty"`
 	Position              Position           `json:"position"`
+	// Size is the canvas card footprint chosen by the designer. Height is
+	// omitted until the designer fixes it; width falls back to the default.
+	Size *NodeSize `json:"size,omitempty"`
+}
+
+// NodeSize is the designer-adjusted card footprint.
+type NodeSize struct {
+	W float64 `json:"w"`
+	H float64 `json:"h,omitempty"`
 }
 
 // ValidateWorkflowMetricStages prevents silently dropping a mistyped stage.
