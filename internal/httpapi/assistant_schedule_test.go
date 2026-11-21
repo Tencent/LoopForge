@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -12,11 +13,12 @@ import (
 	"agentflow/internal/engine"
 	"agentflow/internal/repo"
 	"agentflow/internal/runtime"
+	"agentflow/internal/schedule"
 	"agentflow/internal/tracker"
 )
 
-// A scheduled run, like a chat turn, has no time limit.
-func TestScheduledAssistantHasNoDeadline(t *testing.T) {
+func TestScheduledAssistantDeadline(t *testing.T) {
+	t.Setenv("AGENTFLOW_ASSISTANT_SESSION_DIR", t.TempDir())
 	st, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -26,17 +28,76 @@ func TestScheduledAssistantHasNoDeadline(t *testing.T) {
 		t.Fatal(err)
 	}
 	user, _ := st.UserByLoginName("schedule-owner")
-	called := false
-	stopped := errors.New("stop test generation")
-	h := &assistantHandlers{deps: &deps{repo: st}, generate: func(ctx context.Context, _ string, _ domain.User) (string, error) {
-		called = true
-		if deadline, ok := ctx.Deadline(); ok {
-			t.Fatalf("scheduled generation has a deadline: %s", time.Until(deadline))
-		}
-		return "", stopped
-	}}
-	if _, err := h.prepareScheduleJob(domain.ScheduleJob{OwnerUserID: user.ID, AssistantPrompt: "inspect"}); err == nil || !called {
-		t.Fatalf("generation was not reached: called=%v err=%v", called, err)
+	for _, tc := range []struct {
+		name    string
+		minutes int
+		want    time.Duration
+	}{
+		{"existing job", 0, 30 * time.Minute},
+		{"configured limit", 5, 5 * time.Minute},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			called := false
+			h := &assistantHandlers{deps: &deps{repo: st}, generate: func(ctx context.Context, _ string, _ domain.User) (string, error) {
+				called = true
+				deadline, ok := ctx.Deadline()
+				if remaining := time.Until(deadline); !ok || remaining > tc.want || remaining < tc.want-10*time.Second {
+					t.Errorf("scheduled generation deadline = %s remaining, want %s", remaining, tc.want)
+				}
+				return "定时巡检已完成", nil
+			}}
+			if _, err := h.prepareScheduleJob(domain.ScheduleJob{OwnerUserID: user.ID, AssistantPrompt: "inspect", TimeoutMinutes: tc.minutes}); err != nil || !called {
+				t.Fatalf("generation did not complete: called=%v err=%v", called, err)
+			}
+		})
+	}
+}
+
+func TestScheduledAssistantStopsAtDeadline(t *testing.T) {
+	h, user := workbenchFixture(t)
+	started := make(chan struct{})
+	h.generate = func(ctx context.Context, _ string, _ domain.User) (string, error) {
+		close(started)
+		<-ctx.Done()
+		return "", ctx.Err()
+	}
+	task := assistantTask{ProjectID: "workbench", Name: "Timeout", Prompt: "wait"}
+	ctx := withScheduledSessionPolicy(context.Background(), scheduledSessionPolicy{Timeout: time.Second})
+	if err := h.executeAssistantTask(ctx, user, &task); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("scheduled generation error = %v, want DeadlineExceeded", err)
+	}
+	select {
+	case <-started:
+	default:
+		t.Fatal("deadline elapsed before the turn started")
+	}
+	if task.LastStatus != "error" || task.LastError != "定时任务执行超时" || task.SessionID == "" {
+		t.Fatalf("unexpected task outcome: %+v", task)
+	}
+	generation, ok := h.repo.PeekAssistantGeneration(user.ID, task.SessionID)
+	if !ok || generation.Status != "failed" || generation.Failure == nil || generation.Failure.Code != "EXECUTION_TIMEOUT" {
+		t.Fatalf("unexpected generation outcome: %+v", generation)
+	}
+}
+
+func TestScheduledAssistantRecoveredDraftDoesNotDispatchRun(t *testing.T) {
+	h, user := workbenchFixture(t)
+	wf := domain.WorkflowDefinition{ID: "wf", Name: "Scheduled approval", ProjectID: "workbench", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{ID: "review", Type: "approval"}}}
+	if err := h.repo.PutWorkflow(wf); err != nil {
+		t.Fatal(err)
+	}
+	h.engine = engine.New(h.repo, runtime.NewManager(t.TempDir()))
+	h.api = New(h.repo, h.engine, tracker.NewService(), "", "")
+	h.generate = func(context.Context, string, domain.User) (string, error) {
+		return `{"message":"启动并等待","drafts":[{"tool":"runs_start","body":{"workflowId":"wf"}}]}`, nil
+	}
+	task := assistantTask{ProjectID: "workbench", Name: "Wait for SOP", Prompt: "启动 SOP 并等待终态"}
+	err := h.executeAssistantTask(context.Background(), user, &task)
+	if err == nil || !strings.Contains(err.Error(), "agentflow__runs_start") || task.LastStatus != "error" {
+		t.Fatalf("scheduled draft fallback: status=%q err=%v", task.LastStatus, err)
+	}
+	if runs := h.repo.Runs(); len(runs) != 0 {
+		t.Fatalf("scheduled draft fallback dispatched %d runs", len(runs))
 	}
 }
 
@@ -110,5 +171,64 @@ func TestScheduledAssistantAutoWritesWithoutConfirmation(t *testing.T) {
 				t.Fatalf("scheduled write did not persist: called=%v issue=%+v", called, got)
 			}
 		})
+	}
+}
+
+func TestScheduledUsageStaysPerExecution(t *testing.T) {
+	h, user := workbenchFixture(t)
+	bin := filepath.Join(t.TempDir(), "codebuddy")
+	t.Setenv("AGENTFLOW_CODEBUDDY_BIN", bin)
+	job := domain.ScheduleJob{ID: "usage-job", ProjectID: "workbench", OwnerUserID: user.ID, RunAsUserID: user.ID, Name: "巡检", SkipDispatch: true, AssistantPrompt: "检查文件", Enabled: true, SessionMode: domain.ScheduleSessionFixed}
+	if err := h.repo.PutScheduleJob(job); err != nil {
+		t.Fatal(err)
+	}
+	svc := schedule.New(h.repo, tracker.NewService(), nil)
+	svc.SetAssistantSessionPrep(h.runScheduleJobPromptResult)
+	var sessionID, firstID string
+	for _, tc := range []struct {
+		name, message string
+		input         int64
+		failed        bool
+		unreported    bool
+	}{
+		{name: "first", message: "检查结果正常，没有问题。", input: 10},
+		{name: "fixed_second", message: "检查结果正常，没有问题。", input: 10},
+		{name: "failed_retries", message: "我先查看一下文件。", input: 30, failed: true},
+		{name: "unreported", message: "检查结果正常，没有问题。", unreported: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			usage := `,"usage":{"input_tokens":10,"output_tokens":5,"cache_read_input_tokens":100,"cache_creation_input_tokens":3}`
+			if tc.unreported {
+				usage = ""
+			}
+			script := "#!/bin/sh\necho '{\"type\":\"result\",\"result\":\"" + tc.message + "\"" + usage + "}'\n"
+			if err := os.WriteFile(bin, []byte(script), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			out, err := svc.RunNow(job.ID)
+			if (err != nil) != tc.failed {
+				t.Fatalf("outcome=%+v err=%v", out, err)
+			}
+			e, ok := h.repo.ScheduleJobExecution(domain.ScheduleJobExecutionID(out.LastTraceID))
+			if !ok || e.SessionID == "" || (!tc.unreported && e.Model == "") {
+				t.Fatalf("execution=%+v", e)
+			}
+			if sessionID == "" {
+				sessionID, firstID = e.SessionID, e.ID
+			} else if e.SessionID != sessionID {
+				t.Fatalf("fixed session changed: %s != %s", e.SessionID, sessionID)
+			}
+			if tc.unreported {
+				if e.Usage != nil {
+					t.Fatalf("unexpected usage=%+v", e.Usage)
+				}
+			} else if e.Usage == nil || e.Usage.InputTokens != tc.input || e.Usage.OutputTokens != tc.input/2 || e.Usage.CacheReadTokens != tc.input*10 || e.ExecutionTotalTokens() != tc.input*3/2 {
+				t.Fatalf("usage=%+v", e.Usage)
+			}
+		})
+	}
+	first, _ := h.repo.ScheduleJobExecution(firstID)
+	if first.Usage == nil || first.Usage.InputTokens != 10 {
+		t.Fatalf("earlier usage changed: %+v", first)
 	}
 }

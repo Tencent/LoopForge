@@ -90,9 +90,7 @@ func (h *assistantHandlers) turnCatalog(ctx context.Context, user domain.User, m
 	refreshCLIModels(ctx, user.CodeBuddyInternetEnvironment, user.CodeBuddyAPIKey)
 	catalog = h.chatCatalog(ctx, user)
 	if !assistantCatalogLists(catalog, model) {
-		// The list is fresh (or discovery failed) and still lacks the model:
-		// the turn falls back to the default, so leave a trace of why.
-		log.Printf("assistant model %q is not offered to user %d; the turn runs on %q", model, user.ID, catalog.Default)
+		log.Printf("assistant model %q is not offered to user %d after catalog refresh", model, user.ID)
 	}
 	return catalog
 }

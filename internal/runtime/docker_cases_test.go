@@ -44,7 +44,7 @@ func TestDockerSandboxLifecycleWithFakeCLI(t *testing.T) {
 		t.Fatalf("sandbox=%+v", sb)
 	}
 	const extraValue = "test-extra-credential"
-	command, err := bindCommand(sb, workspace, CommandSpec{
+	command, err := bindCommand(t.Context(), sb, workspace, CommandSpec{
 		Argv:               []string{"sh", "-lc", "echo ok"},
 		CredentialBindings: []CredentialBinding{BindExtra},
 		ExtraCredentialEnv: map[string]string{"DEPLOYMENT_VALUE": "registry"},

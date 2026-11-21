@@ -149,6 +149,9 @@ func TestApplyAgentCLICredential(t *testing.T) {
 	if env[agentCLIKeyEnv] != "secret-key" || strings.Contains(env["OPENCODE_CONFIG_CONTENT"], "secret-key") || !strings.Contains(env["OPENCODE_CONFIG_CONTENT"], `"baseURL":"https://gw.example/v1"`) || !strings.Contains(env["OPENCODE_CONFIG_CONTENT"], "@ai-sdk/anthropic") {
 		t.Fatalf("opencode env: %v", env)
 	}
+	if env["OPENCODE_DISABLE_AUTOUPDATE"] != "1" {
+		t.Fatal("OpenCode auto-updater is enabled")
+	}
 
 	_, env, err = ApplyAgentCLICredential(AgentCLIKimi, ProviderCredential{APIKey: "secret-key", BaseURL: "https://api.example/v1", Protocol: "responses"}, AgentCLIOptions{Model: "m"}, HostAgentCLIHome(home), "/w/home", nil)
 	if err != nil {
@@ -157,6 +160,9 @@ func TestApplyAgentCLICredential(t *testing.T) {
 	toml, _ := os.ReadFile(filepath.Join(home, ".kimi-code", "config.toml"))
 	if env["KIMI_CODE_HOME"] != "/w/home/.kimi-code" || !strings.Contains(string(toml), `type = "openai_responses"`) || strings.Contains(string(toml), "secret-key") {
 		t.Fatalf("kimi config: %v\n%s", env, toml)
+	}
+	if env["KIMI_CODE_NO_AUTO_UPDATE"] != "1" {
+		t.Fatal("Kimi auto-updater is enabled")
 	}
 
 	// Chat on Antigravity adds deny rules inline, repeating the provider.
@@ -396,7 +402,7 @@ func TestBindCommandRejectsSymlinkedParentsBeforeWritingCredentials(t *testing.T
 				credentials := RunCredentials{AgentCLI: map[string]ProviderCredential{
 					kind: {APIKey: "fake-test-key", BaseURL: "https://example.test"},
 				}}
-				if _, err := bindCommand(sb, workspace, command, credentials); err == nil {
+				if _, err := bindCommand(t.Context(), sb, workspace, command, credentials); err == nil {
 					t.Fatal("symlinked private-home component was accepted")
 				}
 				entries, err := os.ReadDir(outside)
@@ -428,7 +434,7 @@ func TestBindAgentCLICommandRejectsSymlinkedPrivateHome(t *testing.T) {
 			if _, _, err := BindAgentCLICommand(sb, workspace, command, ProviderCredential{APIKey: "secret-key", BaseURL: "https://example.test"}, command.Argv); err == nil {
 				t.Fatal("symlinked private home was accepted")
 			}
-			if _, err := bindCommand(sb, workspace, command, RunCredentials{}); err == nil {
+			if _, err := bindCommand(t.Context(), sb, workspace, command, RunCredentials{}); err == nil {
 				t.Fatal("bindCommand accepted a symlinked private home")
 			}
 			if entries, _ := os.ReadDir(outside); len(entries) != 0 {

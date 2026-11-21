@@ -57,6 +57,10 @@ func nativeCLIRecorder(t *testing.T) (string, func() []nativeCLICall) {
 	bin, capture := filepath.Join(dir, "codebuddy"), filepath.Join(dir, "calls")
 	quote := func(s string) string { return "'" + strings.ReplaceAll(s, "'", "'\"'\"'") + "'" }
 	script := fmt.Sprintf(`#!/bin/sh
+if [ "$1" = "--version" ]; then
+  echo 2.185.0
+  exit 0
+fi
 previous=''
 config=''
 sid=''

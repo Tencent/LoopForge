@@ -18,7 +18,7 @@
 
 - HTTPS：个人配置的 Git Token。`GIT_ASKPASS` 指向工作区 `.agentflow/runtime/git-askpass-hosts`，脚本本身不含令牌，从提示里解析出 URL 主机，只在它恰好是 `https://github.com` 时以 `x-access-token` 应答；`github.com.example`、`github.com@example`、`http://` 等其他地址都拿不到凭据。带 `oauth2:`/`private:` 前缀的令牌不是 GitHub 令牌，不会注入。`GIT_TERMINAL_PROMPT=0`，不会卡在交互输入上。
 - `GH_TOKEN`：同一个令牌，供 `gh` 或 `curl` 调 GitHub API。平台进程自身的 `GH_TOKEN`/`GITHUB_TOKEN` 不会透传进沙箱。
-- SSH：个人 SSH 密钥按 `host:port` 绑定（不再按项目登记的仓库地址），任何克隆地址只要主机端口匹配就能用。私钥只在平台进程内存中的临时 ssh-agent 里，沙箱只看到 agent socket、公钥与 ssh config；主机公钥必须固定：平台内置 GitHub 公布的 `github.com:22` 与 `ssh.github.com:443` 公钥（来自 api.github.com/meta），其他主机由管理员通过 `AGENTFLOW_GIT_SSH_KNOWN_HOSTS` 固定，两者合并生效（文件里的 `@revoked` 同样作用于内置公钥）；未固定的主机报错说明原因。
+- SSH 克隆使用按 `host:port` 绑定的个人密钥。同一主机和端口的仓库共用该密钥。执行进程在内存中持有私钥，并通过临时 ssh-agent 签名。沙箱只接收 agent socket、公钥与 SSH 配置。平台内置 `github.com:22` 与 `ssh.github.com:443` 的主机公钥，其他主机由平台管理员在「平台管理 → Git SSH 主机信任」核验并登记。部署文件 `AGENTFLOW_GIT_SSH_KNOWN_HOSTS` 的条目与页面记录合并生效。Runner 0.11.1 及以上会在启动工作区会话时收到匹配的条目。同一主机和端口优先使用平台下发的受信公钥。平台仅下发吊销记录或没有匹配条目时，Runner 使用本地配置的受信公钥。两处的 `@revoked` 条目都生效。
 - 提交身份：`GIT_CONFIG_SYSTEM` 设为发言人的登录名，邮箱 `<login>@users.noreply.loopforge.invalid`；Agent 可以用 `git config --global/--local` 覆盖。
 
 工具结果和回复都会对发言人的令牌（含去掉前缀后的裸令牌）做脱敏；提示词要求 Agent 不打印、不回显、不写入令牌。

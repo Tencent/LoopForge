@@ -298,6 +298,20 @@ func assistantAllowedUserModel(id string, catalog assistantModelCatalog, user do
 	return engine + ":" + model
 }
 
+func assistantTurnCatalogModel(requested string, catalog assistantModelCatalog, user domain.User, exact bool) (string, error) {
+	model := assistantAllowedUserModel(requested, catalog, user)
+	engine, id := assistantModelEngine(requested)
+	useDefault := id == "" || id == assistantDefaultModel ||
+		(engine == assistantEngineCodeBuddy && codeBuddyIsDefaultModel(id))
+	if exact && !useDefault {
+		selectedEngine, selectedID := assistantModelEngine(model)
+		if selectedEngine != engine || selectedID != id {
+			return "", fmt.Errorf("模型 %s 已不在当前目录，请重新选择模型", id)
+		}
+	}
+	return model, nil
+}
+
 // assistantScheduledModel normalizes the model of an AI scheduled task on
 // save. The run uses the project owner's keys and CodeBuddy environment, not
 // the editor's, so a well-formed model is kept as-is; it is checked against

@@ -21,7 +21,7 @@ import ActivityTrace from "../src/ActivityTrace.jsx";
 import MentionPicker from "../src/MentionPicker.jsx";
 import ModelPicker from "../src/ModelPicker.jsx";
 import Participants, { Avatar, authorFor, peopleFor } from "../src/Participants.jsx";
-import PermissionPicker, { rememberApprovalMode, storedApprovalMode } from "../src/PermissionPicker.jsx";
+import PermissionPicker, { normalizeApprovalMode } from "../src/PermissionPicker.jsx";
 import { SidebarSection } from "../src/SidebarPreview.jsx";
 
 describe("pickers and activity", () => {
@@ -81,25 +81,10 @@ describe("pickers and activity", () => {
     expect(selectPermission).toHaveBeenCalledWith("auto");
   });
 
-  test("remembers the approval mode and ignores unknown values", () => {
-    expect(storedApprovalMode(1)).toBe("confirm");
-    rememberApprovalMode(1, "assisted");
-    expect(storedApprovalMode(1)).toBe("assisted");
-    rememberApprovalMode(1, "bogus");
-    expect(storedApprovalMode(1)).toBe("assisted");
-    localStorage.setItem("loopforge.assistant.approvalMode.1", "bogus");
-    expect(storedApprovalMode(1)).toBe("confirm");
-  });
-
-  test("only restores full permissions for the account that selected them", () => {
-    localStorage.setItem("loopforge.assistant.approvalMode", "auto");
-    expect(storedApprovalMode(1)).toBe("confirm");
-    rememberApprovalMode(1, "auto");
-    expect(storedApprovalMode(1)).toBe("auto");
-    expect(storedApprovalMode(2)).toBe("confirm");
-    expect(storedApprovalMode(null)).toBe("confirm");
-    rememberApprovalMode(1, "confirm");
-    expect(storedApprovalMode(1)).toBe("confirm");
+  test("uses request approval for an unknown mode", () => {
+    expect(normalizeApprovalMode("auto")).toBe("auto");
+    expect(normalizeApprovalMode("bogus")).toBe("confirm");
+    expect(normalizeApprovalMode(undefined)).toBe("confirm");
   });
 
   test("expands detailed activity including failures", async () => {
