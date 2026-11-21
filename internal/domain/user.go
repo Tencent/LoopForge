@@ -47,6 +47,24 @@ type User struct {
 	UpdatedAt                    time.Time  `json:"updatedAt"`
 }
 
+// HasExecutorCredential reports whether the user has their own key for a CLI.
+func (u User) HasExecutorCredential(kind string) bool {
+	var key string
+	switch kind {
+	case "codebuddy":
+		key = u.CodeBuddyAPIKey
+	case "codex":
+		key = u.CodexAPIKey
+	case "claude-code":
+		key = u.ClaudeCodeAPIKey
+	default:
+		if IsAgentCLIKind(kind) {
+			key = u.AgentCLICredentials[kind].APIKey
+		}
+	}
+	return strings.TrimSpace(key) != ""
+}
+
 const PlatformRoleAdmin = "admin"
 
 // GitSSHKey is the public description of a personal SSH credential.

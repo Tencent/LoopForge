@@ -981,6 +981,9 @@ func overlayLatestNodeBindings(st *repo.Store, r *domain.Run, nodeIDs map[string
 		if !ok {
 			continue
 		}
+		if n.AgentID != src.AgentID || n.ExecutorID != src.ExecutorID {
+			delete(r.WorkflowSnapshot.ExecutorDefaults, n.ID)
+		}
 		n.AgentID, n.ExecutorID = src.AgentID, src.ExecutorID
 		n.ArtifactOutputs = src.ArtifactOutputs
 		n.OnFailure, n.RejectTo = src.OnFailure, src.RejectTo

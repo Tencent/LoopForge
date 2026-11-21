@@ -204,6 +204,15 @@ func workflowAgent(st *repo.Store, wf domain.WorkflowDefinition, id string) (dom
 	if domain.IsPreviewBuildAgent(id) {
 		return domain.PreviewBuildAgent(wf.Preview), true
 	}
+	if wf.Generic {
+		if template, ok := st.GenericTemplateByWorkflow(wf.ID); ok {
+			for _, role := range template.Agents {
+				if role.ID == id {
+					return role, true
+				}
+			}
+		}
+	}
 	if agent, ok := st.Agent(id); ok {
 		if st.AgentShadowsTemplateOutside(agent, wf.ProjectID) {
 			return st.GenericAgentByID(id)

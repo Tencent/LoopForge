@@ -463,9 +463,27 @@ func TestGenericTemplateRunsDirectlyByReference(t *testing.T) {
 	}
 	eng := engine.New(s, runtime.NewManager(filepath.Join(t.TempDir(), "ws")))
 	h := New(s, eng, tracker.NewService(), "", "")
+	path := "/api/workflows/" + repo.GenericBackendDeliveryWorkflowID + "/executor-requirements?projectId=alpha"
+	requirements := requestEmptyJSON[[]engine.SOPExecutorRequirement](t, h, http.MethodGet, path, http.StatusOK)
+	if len(requirements) != 1 || requirements[0].Configured || requirements[0].Kind != "" {
+		t.Fatalf("unconfigured account should see a generic executor requirement: %+v", requirements)
+	}
+	runInput := map[string]any{"workflowId": repo.GenericBackendDeliveryWorkflowID, "input": "x", "projectId": "alpha"}
+	requestJSON[map[string]string](t, h, http.MethodPost, "/api/runs", runInput, http.StatusBadRequest)
+	if len(s.Runs()) != 0 {
+		t.Fatal("missing configuration should not start a run")
+	}
+	defaults := domain.AssistantDefaults{Executor: "codex", Model: "fixture-model", Effort: "low"}
+	baseURL := "http://127.0.0.1:1/v1"
+	if _, err := s.UpdateUserCredentials(1, repo.UserCredentialUpdate{CodexAPIKey: "fixture-key", CodexBaseURL: &baseURL, AssistantDefaults: &defaults}); err != nil {
+		t.Fatal(err)
+	}
+	requirements = requestEmptyJSON[[]engine.SOPExecutorRequirement](t, h, http.MethodGet, path, http.StatusOK)
+	if len(requirements) != 1 || requirements[0] != (engine.SOPExecutorRequirement{Kind: "codex", Name: "Codex", Configured: true}) {
+		t.Fatalf("preflight must find the configured executor: %+v", requirements)
+	}
 	run := requestJSON[domain.Run](t, h, http.MethodPost, "/api/runs",
-		map[string]any{"workflowId": repo.GenericBackendDeliveryWorkflowID, "input": "x", "projectId": "alpha"},
-		http.StatusCreated)
+		runInput, http.StatusCreated)
 	t.Cleanup(func() {
 		_ = eng.Cancel(run.ID)
 		// Wait for the run to fully stop so the workspace quiesces before
@@ -485,6 +503,11 @@ func TestGenericTemplateRunsDirectlyByReference(t *testing.T) {
 	}
 	if run.WorkflowSnapshot.SandboxProfileID != repo.GenericDockerSandboxID {
 		t.Fatalf("direct generic run sandbox = %q, want %s", run.WorkflowSnapshot.SandboxProfileID, repo.GenericDockerSandboxID)
+	}
+	for _, node := range run.WorkflowSnapshot.Nodes {
+		if node.Type == "agent" && run.WorkflowSnapshot.ExecutorDefaults[node.ID] != defaults {
+			t.Fatalf("run did not freeze the selected executor and model for %s: %+v", node.ID, run.WorkflowSnapshot.ExecutorDefaults)
+		}
 	}
 	if run.ExecutionContext.ProjectID != "alpha" {
 		t.Fatalf("run should belong to the requesting project: %+v", run.ExecutionContext)

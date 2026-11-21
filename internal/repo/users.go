@@ -379,11 +379,11 @@ func (r *UsersRepo) updateUserCredentials(id int64, update UserCredentialUpdate)
 		return domain.User{}, err
 	}
 	if update.AssistantDefaults != nil {
-		if !hasAssistantExecutor(user, update.AssistantDefaults.Executor) {
+		if !user.HasExecutorCredential(update.AssistantDefaults.Executor) {
 			return domain.User{}, ErrAssistantDefaultExecutorUnavailable
 		}
 		user.AssistantDefaults = *update.AssistantDefaults
-	} else if !hasAssistantExecutor(user, user.AssistantDefaults.Executor) {
+	} else if !user.HasExecutorCredential(user.AssistantDefaults.Executor) {
 		user.AssistantDefaults.Executor = firstAssistantExecutor(user)
 		user.AssistantDefaults.Model = ""
 		user.AssistantDefaults.Effort = ""

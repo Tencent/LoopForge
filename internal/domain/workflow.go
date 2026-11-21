@@ -184,6 +184,9 @@ type WorkflowDefinition struct {
 	Edges     []WorkflowEdge   `json:"edges"`
 	CreatedAt time.Time        `json:"createdAt"`
 	UpdatedAt time.Time        `json:"updatedAt"`
+	// ExecutorDefaults is populated on a run snapshot for template roles
+	// that inherit the responsible user's executor.
+	ExecutorDefaults map[string]AssistantDefaults `json:"executorDefaults,omitempty"`
 }
 
 // UnmarshalJSON migrates the pre-workflow-sandbox shape while the legacy node

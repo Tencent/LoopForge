@@ -964,7 +964,12 @@ function agentBindCard(n){
   if(!agent)return `<div class="fd-field"><label>这个步骤用哪个角色</label><select class="select" data-p="agentId">${opts}</select><p class="prop-hint">${hint}</p><p class="prop-hint">先选一个已定义的角色。画布只编排顺序和打回，不改编排角色内部的任务。</p></div>`;
   const arts=effectiveNodeArtifacts(n,agent),gates=roleGates(agent);
   const duty=String(agent.description||'').trim(),taskHint=duty?(duty.length>48?`${duty.slice(0,48)}…`:duty):'还没写职责，可在角色定义里补';
-  const model=agent.model||exec?.model||exec?.name||'未选模型';
+  const source=(state.workflow?.tags||[]).find(tag=>tag.startsWith('generic-source:'))?.slice('generic-source:'.length);
+  const template=(state.data.workflows||[]).find(w=>w.id===source&&catalogGeneric(w));
+  const fromTemplate=generic||template?.nodes?.some(node=>node.agentId&&(node.agentId===agent.id||`${node.agentId}-${projectId}`===agent.id));
+  const inheritsExecutor=fromTemplate&&(agent.projectId||'')===(state.workflow?.projectId||'')&&!n.executorId&&
+    (!agent.executorId||agent.executorId==='codebuddy')&&!String(agent.model||'').trim()&&!String(agent.effort||'').trim();
+  const model=inheritsExecutor?'跟随责任人':agent.model||exec?.model||exec?.name||'未选模型';
   return `<div class="fd-field"><label>这个步骤用哪个角色</label><select class="select" data-p="agentId">${opts}</select><p class="prop-hint">${hint}</p></div>
     <div class="fd-role"><div class="fd-role-h"><span class="fd-tile" style="--tint:${flowPalette.roleTint(agent.id)}">${escapeHTML(flowPalette.initial(agent.name))}</span><span class="fd-role-t"><b>${escapeHTML(agent.name)}</b><small>${escapeHTML(taskHint)}</small></span><button type="button" class="fd-btn ghost sm" id="openBoundAgent">编辑角色 prompt</button></div><div class="fd-stats"><div title="${escapeHTML(model)}"><b class="txt">${escapeHTML(model)}</b><small>模型</small></div><div><b>${arts.length}</b><small>产物</small></div><div><b>${gates.length}</b><small>门禁</small></div><div><b>${agent.loop?.enabled?`${agent.loop.maxIterations||1} 轮`:'单轮'}</b><small>Loop</small></div></div></div>`;
 }
