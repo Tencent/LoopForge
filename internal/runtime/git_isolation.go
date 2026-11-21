@@ -12,7 +12,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"agentflow/internal/domain"
@@ -301,7 +300,7 @@ func gitIndexLockHeldUnder(procRoot, lockPath string, self uint32) (inUse, confi
 	if err != nil {
 		return false, false, err
 	}
-	stat, ok := lock.Sys().(*syscall.Stat_t)
+	owner, ok := gitIndexLockOwnerUID(lock)
 	if !lock.Mode().IsRegular() || !ok {
 		return false, false, fmt.Errorf("index lock %s is not a regular file", want)
 	}
@@ -310,7 +309,7 @@ func gitIndexLockHeldUnder(procRoot, lockPath string, self uint32) (inUse, confi
 		return false, false, err
 	}
 	uncertain := false
-	foreignOwner := stat.Uid != self
+	foreignOwner := owner != self
 	for _, entry := range entries {
 		if !entry.IsDir() {
 			continue
@@ -320,7 +319,7 @@ func gitIndexLockHeldUnder(procRoot, lockPath string, self uint32) (inUse, confi
 		}
 		held, readErr := fdDirHoldsFile(filepath.Join(procRoot, entry.Name(), "fd"), want, lock)
 		if readErr != nil {
-			if foreignOwner && !errors.Is(readErr, os.ErrNotExist) && procMayOwnFile(filepath.Join(procRoot, entry.Name()), stat.Uid) {
+			if foreignOwner && !errors.Is(readErr, os.ErrNotExist) && procMayOwnFile(filepath.Join(procRoot, entry.Name()), owner) {
 				uncertain = true
 			}
 			continue
