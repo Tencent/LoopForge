@@ -742,6 +742,25 @@ func (s *Service) UpdateWeKnoraKB(ctx context.Context, projectID, connectionID, 
 	return kb, nil
 }
 
+// PatchWeKnoraKB updates only the supplied fields; nil means "leave as is".
+func (s *Service) PatchWeKnoraKB(ctx context.Context, projectID, connectionID, kbID string, name, description *string) (weKnoraKB, error) {
+	settings, conn, wc, rawKBID, err := s.resolveWeKnoraSource(projectID, connectionID, kbID)
+	if err != nil {
+		return weKnoraKB{}, err
+	}
+	if err := s.requireCapability(ctx, conn, wc, domain.CapKBManage); err != nil {
+		return weKnoraKB{}, err
+	}
+	ctx, cancel := context.WithTimeout(ctx, CallTimeout)
+	defer cancel()
+	kb, err := wc.PatchKnowledgeBase(ctx, rawKBID, name, description)
+	if err != nil {
+		return weKnoraKB{}, s.managementError(conn, domain.CapKBManage, "更新知识库", err)
+	}
+	kb.ID = EncodeScopedSourceID(settings, conn.ID, kb.ID)
+	return kb, nil
+}
+
 func (s *Service) DeleteWeKnoraKB(ctx context.Context, projectID, connectionID, kbID string) error {
 	_, conn, wc, rawKBID, err := s.resolveWeKnoraSource(projectID, connectionID, kbID)
 	if err != nil {

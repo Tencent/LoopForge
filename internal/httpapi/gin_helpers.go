@@ -187,13 +187,23 @@ func (w *gzipWriter) Flush() {
 	}
 }
 
+// knowledgeStreamPath reports whether path streams a stored document from the
+// KB upstream. Those responses are proxied verbatim: gzip buffering would drop
+// the exact Content-Length and delay the first byte of large files.
+func knowledgeStreamPath(path string) bool {
+	if !strings.HasPrefix(path, "/api/knowledge/documents/") {
+		return false
+	}
+	return strings.HasSuffix(path, "/preview") || strings.HasSuffix(path, "/download")
+}
+
 func gzipMaybe() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if c.Request.Method == http.MethodHead || strings.EqualFold(c.GetHeader("Upgrade"), "websocket") || !strings.Contains(c.GetHeader("Accept-Encoding"), "gzip") {
 			c.Next()
 			return
 		}
-		if strings.Contains(c.Request.URL.Path, "/stream") || strings.HasPrefix(c.Request.URL.Path, "/api/otel/") || strings.Contains(c.GetHeader("Accept"), "text/event-stream") {
+		if strings.Contains(c.Request.URL.Path, "/stream") || strings.HasPrefix(c.Request.URL.Path, "/api/otel/") || strings.Contains(c.GetHeader("Accept"), "text/event-stream") || knowledgeStreamPath(c.Request.URL.Path) {
 			c.Next()
 			return
 		}

@@ -784,12 +784,16 @@ func (c *WeKnoraClient) CreateKnowledgeBase(ctx context.Context, input WeKnoraCr
 	return env.Data, nil
 }
 
-// PatchKnowledgeBase updates only name/description, leaving chunking, VLM and
-// index configuration untouched (PUT would overwrite them with zero values).
-func (c *WeKnoraClient) PatchKnowledgeBase(ctx context.Context, kbID, name, description string) (weKnoraKB, error) {
-	payload := map[string]any{
-		"name":        strings.TrimSpace(name),
-		"description": strings.TrimSpace(description),
+// PatchKnowledgeBase updates only the fields the caller supplies, leaving the
+// rest of the knowledge base untouched (chunking, VLM and index configuration
+// included). A nil field is omitted from the payload.
+func (c *WeKnoraClient) PatchKnowledgeBase(ctx context.Context, kbID string, name, description *string) (weKnoraKB, error) {
+	payload := map[string]any{}
+	if name != nil {
+		payload["name"] = strings.TrimSpace(*name)
+	}
+	if description != nil {
+		payload["description"] = strings.TrimSpace(*description)
 	}
 	var env struct {
 		Success bool      `json:"success"`
@@ -801,9 +805,10 @@ func (c *WeKnoraClient) PatchKnowledgeBase(ctx context.Context, kbID, name, desc
 	return env.Data, nil
 }
 
-// UpdateKnowledgeBase is kept for callers that still use the old name.
+// UpdateKnowledgeBase replaces both editable fields; callers with partial
+// input use PatchKnowledgeBase with nil for the untouched field.
 func (c *WeKnoraClient) UpdateKnowledgeBase(ctx context.Context, kbID, name, description string) (weKnoraKB, error) {
-	return c.PatchKnowledgeBase(ctx, kbID, name, description)
+	return c.PatchKnowledgeBase(ctx, kbID, &name, &description)
 }
 
 func (c *WeKnoraClient) DeleteKnowledgeBase(ctx context.Context, kbID string) error {

@@ -1203,7 +1203,8 @@ func TestWeKnoraPatchKnowledgeBaseAndGetKnowledge(t *testing.T) {
 	if err != nil {
 		t.Fatalf("client: %v", err)
 	}
-	kb, err := c.PatchKnowledgeBase(context.Background(), "kb-1", " renamed ", "desc")
+	name, desc := " renamed ", "desc"
+	kb, err := c.PatchKnowledgeBase(context.Background(), "kb-1", &name, &desc)
 	if err != nil || kb.Name != "renamed" {
 		t.Fatalf("PatchKnowledgeBase = %+v, %v", kb, err)
 	}
@@ -1215,6 +1216,15 @@ func TestWeKnoraPatchKnowledgeBaseAndGetKnowledge(t *testing.T) {
 	}
 	if _, err := c.UpdateKnowledgeBase(context.Background(), "kb-1", "renamed", "desc"); err != nil {
 		t.Fatalf("UpdateKnowledgeBase alias: %v", err)
+	}
+	if _, err := c.PatchKnowledgeBase(context.Background(), "kb-1", &name, nil); err != nil {
+		t.Fatalf("partial patch: %v", err)
+	}
+	patchMu.Lock()
+	body = patchBody
+	patchMu.Unlock()
+	if _, present := body["description"]; present {
+		t.Fatalf("nil description must be omitted, got %#v", body)
 	}
 
 	doc, err := c.GetKnowledge(context.Background(), "doc-1")

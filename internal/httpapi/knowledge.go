@@ -2,10 +2,14 @@ package httpapi
 
 import (
 	"context"
+	"errors"
+	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"agentflow/internal/domain"
 	"agentflow/internal/knowledge"
@@ -32,6 +36,58 @@ func (h *knowledgeHandlers) actor(r *http.Request) string {
 		return user.LoginName
 	}
 	return "local"
+}
+
+// auditWrite records one management mutation on both the structured log and
+// the usage activity feed, so operators can see who changed what upstream.
+func (h *knowledgeHandlers) auditWrite(c *gin.Context, action, connID, targetID, projectID string, err error) {
+	status := "ok"
+	if err != nil {
+		status = "failed"
+	}
+	actor := h.actor(c.Request)
+	attrs := []any{
+		"event", "knowledge.management.audit",
+		"actor", actor,
+		"actorId", actor,
+		"actorUsername", actor,
+		"projectId", projectID,
+		"connectionId", connID,
+		"action", action,
+		"targetId", targetID,
+		"status", status,
+	}
+	if err != nil {
+		attrs = append(attrs, "error", err.Error())
+		slog.WarnContext(c.Request.Context(), "knowledge management audit", attrs...)
+	} else {
+		slog.InfoContext(c.Request.Context(), "knowledge management audit", attrs...)
+	}
+	h.activity.add(knowledgeActivity{
+		ServerID:  connID,
+		Origin:    "admin_console",
+		At:        time.Now().UTC(),
+		Tool:      "admin:" + action,
+		ProjectID: projectID,
+		Query:     targetID,
+		OK:        err == nil,
+		Error:     errorText(err),
+	})
+}
+
+func errorText(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
+}
+
+// auditTarget names the created resource, or the addressed parent on failure.
+func auditTarget(created, fallback string) string {
+	if created = strings.TrimSpace(created); created != "" {
+		return created
+	}
+	return fallback
 }
 
 // render writes value on success or the mapped error otherwise.
@@ -92,14 +148,21 @@ func (h *knowledgeHandlers) check(c *gin.Context) {
 		return
 	}
 	var input struct {
-		Provider string `json:"provider"`
-		URL      string `json:"url"`
-		Token    string `json:"token"`
+		Provider     string `json:"provider"`
+		URL          string `json:"url"`
+		Token        string `json:"token"`
+		ConnectionID string `json:"connectionId"`
 	}
 	if !decodeOptional(c, &input) {
 		return
 	}
-	c.JSON(http.StatusOK, h.svc.CheckWithProvider(c.Request.Context(), input.Provider, input.URL, input.Token))
+	c.JSON(http.StatusOK, h.svc.CheckConnection(c.Request.Context(), input.ConnectionID, input.Provider, input.URL, input.Token))
+}
+
+// 路由: g.GET("/api/knowledge/connections/:id/capabilities", h.connectionCapabilities)
+func (h *knowledgeHandlers) connectionCapabilities(c *gin.Context) {
+	caps, err := h.svc.WeKnoraCapabilities(c.Request.Context(), c.Param("id"))
+	render(c, caps, err)
 }
 
 // 路由: g.POST("/api/knowledge/weknora/provision", h.provisionWeKnora)
@@ -133,7 +196,67 @@ func (h *knowledgeHandlers) deleteConnection(c *gin.Context) {
 // 路由: g.GET("/api/knowledge/sources", h.sources)
 func (h *knowledgeHandlers) sources(c *gin.Context) {
 	list, err := h.svc.Sources(c.Request.Context(), c.Query("projectId"))
-	render(c, list, err)
+	if err != nil {
+		respond(c, err)
+		return
+	}
+	if connID := strings.TrimSpace(c.Query("connectionId")); connID != "" {
+		if !h.knownConnection(connID) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "指定的知识库连接不存在"})
+			return
+		}
+		filtered := make([]knowledge.SourceView, 0, len(list))
+		for _, item := range list {
+			if scopedSourceInConnection(item.ID, connID) {
+				filtered = append(filtered, item)
+			}
+		}
+		list = filtered
+	}
+	c.JSON(http.StatusOK, list)
+}
+
+// knownConnection reports whether connectionID names a configured connection or
+// the legacy top-level connection.
+func (h *knowledgeHandlers) knownConnection(connectionID string) bool {
+	conns := h.svc.Settings().Connections
+	if connectionID == "default" {
+		// The legacy top-level connection only exists without explicit ones.
+		return len(conns) == 0
+	}
+	for _, conn := range conns {
+		if conn.ID == connectionID {
+			return true
+		}
+	}
+	return false
+}
+
+// scopedSourceInConnection matches a source ID against an explicit connection:
+// multi-connection sources carry a "connID::" prefix, legacy ones do not.
+func scopedSourceInConnection(sourceID, connectionID string) bool {
+	if connectionID == "" || connectionID == "default" {
+		return !strings.Contains(sourceID, "::")
+	}
+	return strings.HasPrefix(sourceID, connectionID+"::")
+}
+
+// scopedConnectionID prefers the explicit connectionId query parameter, then
+// the "connID::" prefix of a composite path ID, so audits name the connection.
+func scopedConnectionID(connectionID, pathID string) string {
+	if connectionID = strings.TrimSpace(connectionID); connectionID != "" {
+		return connectionID
+	}
+	if idx := strings.Index(pathID, "::"); idx > 0 {
+		return pathID[:idx]
+	}
+	return ""
+}
+
+// 路由: g.GET("/api/knowledge/sources/:id", h.source)
+func (h *knowledgeHandlers) source(c *gin.Context) {
+	kb, err := h.svc.GetWeKnoraKB(c.Request.Context(), c.Query("projectId"), c.Query("connectionId"), c.Param("id"))
+	render(c, kb, err)
 }
 
 // 路由: g.POST("/api/knowledge/search", h.search)
@@ -164,6 +287,62 @@ func (h *knowledgeHandlers) documents(c *gin.Context) {
 	pageSize, _ := strconv.Atoi(c.Query("pageSize"))
 	out, err := h.svc.Documents(c.Request.Context(), c.Query("projectId"), c.Query("connectionId"), c.Param("id"), c.Query("keyword"), page, pageSize)
 	render(c, out, err)
+}
+
+// 路由: g.GET("/api/knowledge/documents/:docId", h.documentDetail)
+func (h *knowledgeHandlers) documentDetail(c *gin.Context) {
+	doc, err := h.svc.GetWeKnoraDocument(c.Request.Context(), c.Query("projectId"), c.Query("connectionId"), c.Param("docId"))
+	render(c, doc, err)
+}
+
+// 路由: g.GET("/api/knowledge/documents/:docId/chunks", h.documentChunks)
+func (h *knowledgeHandlers) documentChunks(c *gin.Context) {
+	page, _ := strconv.Atoi(c.Query("page"))
+	pageSize, _ := strconv.Atoi(c.Query("pageSize"))
+	out, err := h.svc.ListWeKnoraChunks(c.Request.Context(), c.Query("projectId"), c.Query("connectionId"), c.Param("docId"), page, pageSize)
+	render(c, out, err)
+}
+
+// 路由: g.GET("/api/knowledge/documents/:docId/preview", h.documentPreview)
+func (h *knowledgeHandlers) documentPreview(c *gin.Context) {
+	h.streamDocument(c, h.svc.OpenWeKnoraPreview)
+}
+
+// 路由: g.GET("/api/knowledge/documents/:docId/download", h.documentDownload)
+func (h *knowledgeHandlers) documentDownload(c *gin.Context) {
+	h.streamDocument(c, h.svc.OpenWeKnoraDownload)
+}
+
+type documentOpener func(context.Context, string, string, string) (*knowledge.StreamResponse, error)
+
+// streamDocument forwards an upstream document body verbatim. The client has
+// already downgraded dangerous MIME types; these headers additionally stop a
+// stored HTML/SVG file from being sniffed or cached by the browser, and the
+// exact Content-Length survives because gzip is skipped for these paths.
+func (h *knowledgeHandlers) streamDocument(c *gin.Context, open documentOpener) {
+	res, err := open(c.Request.Context(), c.Query("projectId"), c.Query("connectionId"), c.Param("docId"))
+	if err != nil {
+		respond(c, err)
+		return
+	}
+	defer res.Body.Close()
+	contentType := strings.TrimSpace(res.ContentType)
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+	c.Header("Content-Type", contentType)
+	if res.ContentLength > 0 {
+		c.Header("Content-Length", strconv.FormatInt(res.ContentLength, 10))
+	}
+	if res.ContentDisposition != "" {
+		c.Header("Content-Disposition", res.ContentDisposition)
+	}
+	c.Header("Cache-Control", "private, no-store")
+	c.Header("X-Content-Type-Options", "nosniff")
+	c.Status(http.StatusOK)
+	if _, err := io.Copy(c.Writer, res.Body); err != nil {
+		slog.WarnContext(c.Request.Context(), "knowledge document stream interrupted", "docId", c.Param("docId"), "error", err)
+	}
 }
 
 func (h *knowledgeHandlers) requireKnowledgeWriter(c *gin.Context) (string, bool) {
@@ -198,6 +377,7 @@ func (h *knowledgeHandlers) createSource(c *gin.Context) {
 		return
 	}
 	kb, err := h.svc.CreateWeKnoraKB(c.Request.Context(), projectID, input)
+	h.auditWrite(c, "kb.create", input.ConnectionID, auditTarget(kb.ID, strings.TrimSpace(input.Name)), projectID, err)
 	render(c, kb, err)
 }
 
@@ -215,6 +395,7 @@ func (h *knowledgeHandlers) updateSource(c *gin.Context) {
 		return
 	}
 	kb, err := h.svc.UpdateWeKnoraKB(c.Request.Context(), projectID, c.Query("connectionId"), c.Param("id"), input.Name, input.Description)
+	h.auditWrite(c, "kb.update", scopedConnectionID(c.Query("connectionId"), c.Param("id")), c.Param("id"), projectID, err)
 	render(c, kb, err)
 }
 
@@ -224,11 +405,35 @@ func (h *knowledgeHandlers) deleteSource(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if err := h.svc.DeleteWeKnoraKB(c.Request.Context(), projectID, c.Query("connectionId"), c.Param("id")); err != nil {
+	err := h.svc.DeleteWeKnoraKB(c.Request.Context(), projectID, c.Query("connectionId"), c.Param("id"))
+	h.auditWrite(c, "kb.delete", scopedConnectionID(c.Query("connectionId"), c.Param("id")), c.Param("id"), projectID, err)
+	if err != nil {
 		respond(c, err)
 		return
 	}
 	c.Status(http.StatusNoContent)
+}
+
+// 路由: g.PATCH("/api/knowledge/sources/:id", h.patchSource)
+func (h *knowledgeHandlers) patchSource(c *gin.Context) {
+	projectID, ok := h.requireKnowledgeWriter(c)
+	if !ok {
+		return
+	}
+	var input struct {
+		Name        *string `json:"name"`
+		Description *string `json:"description"`
+	}
+	if !decodeOptional(c, &input) {
+		return
+	}
+	if input.Name == nil && input.Description == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请至少提供 name 或 description 之一"})
+		return
+	}
+	kb, err := h.svc.PatchWeKnoraKB(c.Request.Context(), projectID, c.Query("connectionId"), c.Param("id"), input.Name, input.Description)
+	h.auditWrite(c, "kb.update", scopedConnectionID(c.Query("connectionId"), c.Param("id")), c.Param("id"), projectID, err)
+	render(c, kb, err)
 }
 
 // 路由: g.POST("/api/knowledge/sources/:id/url", h.createFromURL)
@@ -244,6 +449,7 @@ func (h *knowledgeHandlers) createFromURL(c *gin.Context) {
 		return
 	}
 	doc, err := h.svc.CreateWeKnoraURLDoc(c.Request.Context(), projectID, c.Query("connectionId"), c.Param("id"), input.URL)
+	h.auditWrite(c, "doc.url", scopedConnectionID(c.Query("connectionId"), c.Param("id")), auditTarget(doc.ID, c.Param("id")), projectID, err)
 	render(c, doc, err)
 }
 
@@ -262,6 +468,7 @@ func (h *knowledgeHandlers) createManual(c *gin.Context) {
 		return
 	}
 	doc, err := h.svc.CreateWeKnoraManualDoc(c.Request.Context(), projectID, c.Query("connectionId"), c.Param("id"), input.Title, input.Content, input.Publish)
+	h.auditWrite(c, "doc.create", scopedConnectionID(c.Query("connectionId"), c.Param("id")), auditTarget(doc.ID, c.Param("id")), projectID, err)
 	render(c, doc, err)
 }
 
@@ -280,6 +487,7 @@ func (h *knowledgeHandlers) updateDocument(c *gin.Context) {
 		return
 	}
 	doc, err := h.svc.UpdateWeKnoraManualDoc(c.Request.Context(), projectID, c.Query("connectionId"), c.Param("docId"), input.Title, input.Content, input.Publish)
+	h.auditWrite(c, "doc.update", scopedConnectionID(c.Query("connectionId"), c.Param("docId")), c.Param("docId"), projectID, err)
 	render(c, doc, err)
 }
 
@@ -289,7 +497,9 @@ func (h *knowledgeHandlers) reparseDocument(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if err := h.svc.ReparseWeKnoraDoc(c.Request.Context(), projectID, c.Query("connectionId"), c.Param("docId")); err != nil {
+	err := h.svc.ReparseWeKnoraDoc(c.Request.Context(), projectID, c.Query("connectionId"), c.Param("docId"))
+	h.auditWrite(c, "doc.reparse", scopedConnectionID(c.Query("connectionId"), c.Param("docId")), c.Param("docId"), projectID, err)
+	if err != nil {
 		respond(c, err)
 		return
 	}
@@ -302,12 +512,23 @@ func (h *knowledgeHandlers) deleteDocument(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if err := h.svc.DeleteWeKnoraDoc(c.Request.Context(), projectID, c.Query("connectionId"), c.Param("docId")); err != nil {
+	err := h.svc.DeleteWeKnoraDoc(c.Request.Context(), projectID, c.Query("connectionId"), c.Param("docId"))
+	h.auditWrite(c, "doc.delete", scopedConnectionID(c.Query("connectionId"), c.Param("docId")), c.Param("docId"), projectID, err)
+	if err != nil {
 		respond(c, err)
 		return
 	}
 	c.Status(http.StatusNoContent)
 }
+
+const (
+	maxKnowledgeUpload = 50 << 20
+	// knowledgeUploadEnvelope leaves room for multipart boundaries and field
+	// headers, so a file at the exact limit is not rejected by framing bytes.
+	// The contract is one file plus a short filename; a longer envelope is
+	// rejected rather than risking a false 413.
+	knowledgeUploadEnvelope = 1 << 20
+)
 
 // 路由: g.POST("/api/knowledge/sources/:id/upload", h.upload)
 func (h *knowledgeHandlers) upload(c *gin.Context) {
@@ -320,10 +541,20 @@ func (h *knowledgeHandlers) upload(c *gin.Context) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "只有平台管理员或项目成员可以上传文档"})
 		return
 	}
-	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 50<<20)
+	connID := scopedConnectionID(c.Query("connectionId"), c.Param("id"))
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxKnowledgeUpload+knowledgeUploadEnvelope)
 	fileHeader, err := c.FormFile("file")
 	if err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "文件超过 50MB 上限"})
+			return
+		}
 		c.JSON(http.StatusBadRequest, gin.H{"error": "请选择要上传的文件（字段名 file）"})
+		return
+	}
+	if fileHeader.Size > maxKnowledgeUpload {
+		c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "文件超过 50MB 上限"})
 		return
 	}
 	f, err := fileHeader.Open()
@@ -332,7 +563,10 @@ func (h *knowledgeHandlers) upload(c *gin.Context) {
 		return
 	}
 	defer f.Close()
-	doc, err := h.svc.UploadDocument(c.Request.Context(), projectID, c.Query("connectionId"), c.Param("id"), fileHeader.Filename, f)
+	// The multipart file streams straight into the upstream request: no full
+	// buffering, so a 50MB document costs no 50MB of heap.
+	doc, err := h.svc.UploadDocumentReader(c.Request.Context(), projectID, c.Query("connectionId"), c.Param("id"), fileHeader.Filename, f)
+	h.auditWrite(c, "doc.upload", connID, auditTarget(doc.ID, c.Param("id")), projectID, err)
 	render(c, doc, err)
 }
 
