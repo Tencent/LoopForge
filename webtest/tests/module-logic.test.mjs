@@ -42,14 +42,14 @@ test('orchestration parsing and merge helpers preserve a valid workflow', async 
       const normalized=normalizeAIWorkflow(raw);
       const parsed=parseStreamingWorkflow('{"name":"Generated delivery","nodes":[{"id":"a","name":"Plan","type":"agent"}],"edges":[]}');
       const shell=shellForAIWorkflow(raw);
-      const compact=compactWorkflowForAI(state.data.workflows[0]);
-      const merged=mergeAIEdit(state.data.workflows[0],raw,'replace implementation',[]);
-      return {normalized,parsed,shell,compact,merged,prompt:aiOrchestratePrompt('add review',compact,[])};
+      const merged=mergeAIEdit(state.data.workflows[0],raw);
+      return {normalized,parsed,shell,merged};
     })()
   `);
   assert.equal(result.normalized.nodes.length, 2);
-  assert.match(result.prompt, /add review/);
-  assert.ok(result.merged.nodes.length >= 2);
+  assert.equal(result.parsed.nodes[0].id, 'a');
+  assert.equal(result.shell.nodes.length, 0);
+  assert.equal(result.merged.nodes.length, 2);
   await settle();
 });
 

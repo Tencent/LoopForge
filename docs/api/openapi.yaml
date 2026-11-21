@@ -90,6 +90,32 @@ paths:
                 sessionId: {type: string}
                 model: {type: string}
                 updatedAt: {type: string, format: date-time}
+                surface:
+                  type: string
+                  enum: [sop-designer]
+                  description: |
+                    Entry that sends the turn; omit for the workbench.
+                    `sop-designer` is the SOP canvas's AI orchestrator: it
+                    needs `projectId`, always runs in confirm mode, offers
+                    only read-only platform tools and accepts one
+                    `workflows_save` draft per turn. Its conversation is
+                    private to the caller, stays out of the workbench list
+                    and cannot be continued from the workbench. The server
+                    owns the transcript: send only the new user message.
+                    On a canvas with nodes the draft body may be
+                    `{"operations":[…]}` (add_node, update_node, remove_node,
+                    add_edge, remove_edge, update_workflow); the server
+                    applies them to `canvas` and returns the full workflow.
+                workflowId: {type: string, description: "SOP the canvas edits (sop-designer only)"}
+                canvas:
+                  type: object
+                  additionalProperties: true
+                  description: "Current canvas workflow (sop-designer only, up to 256 KiB). Injected into the turn as data without layout, not stored in the transcript; edit operations are applied to it"
+                referenceWorkflowIds:
+                  type: array
+                  maxItems: 2
+                  items: {type: string}
+                  description: "Existing SOPs the user named, injected as data (sop-designer only)"
                 messages:
                   type: array
                   minItems: 1
@@ -199,7 +225,18 @@ paths:
       tags: [Assistant]
       operationId: listAssistantSessions
       summary: List personal conversations and authorized shared SOP discussions
-      description: Conversations persist in MySQL `assistant_sessions`. Personal conversations belong to the caller; shared SOP conversations belong to a run and require project access.
+      description: Conversations persist in MySQL `assistant_sessions`. Personal conversations belong to the caller; shared SOP conversations belong to a run and require project access. SOP designer conversations are listed only with `surface=sop-designer`.
+      parameters:
+        - name: surface
+          in: query
+          required: false
+          schema: {type: string, enum: [sop-designer]}
+          description: "`sop-designer` lists only the caller's SOP designer conversations instead of the workbench history"
+        - name: workflowId
+          in: query
+          required: false
+          schema: {type: string}
+          description: With `surface=sop-designer`, only the conversations of this SOP
       responses:
         "200":
           description: Recent conversations without message bodies
