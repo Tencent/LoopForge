@@ -56,15 +56,18 @@ type runnerControlMessage struct {
 	RequestID         string                          `json:"requestId,omitempty"`
 	WorkspaceRequest  *domain.RunnerWorkspaceRequest  `json:"workspaceRequest,omitempty"`
 	WorkspaceResponse *domain.RunnerWorkspaceResponse `json:"workspaceResponse,omitempty"`
+	WorkspaceProgress *domain.WorkspaceOpening        `json:"workspaceProgress,omitempty"`
 }
 
 type runnerWorkspaceForwarder func(context.Context, string, domain.RunnerWorkspaceRequest) (domain.RunnerWorkspaceResponse, error)
 
 type runnerControlHub struct {
-	mu      sync.Mutex
-	conns   map[string]*runnerControlConn
-	pending map[string]runnerWorkspaceWaiter
-	nextID  uint64
+	mu                  sync.Mutex
+	conns               map[string]*runnerControlConn
+	pending             map[string]runnerWorkspaceWaiter
+	progress            map[string]runnerWorkspaceProgress
+	onWorkspaceProgress func(string, domain.WorkspaceOpening)
+	nextID              uint64
 	// registered is closed and replaced whenever a runner (re)connects.
 	registered chan struct{}
 	// dropped records when each runner's socket last went away.
@@ -87,6 +90,11 @@ type runnerWorkspaceWaiter struct {
 	result chan domain.RunnerWorkspaceResponse
 }
 
+type runnerWorkspaceProgress struct {
+	conn    *runnerControlConn
+	updates chan domain.WorkspaceOpening
+}
+
 type runnerControlConn struct {
 	runnerID                string
 	ownerUserID             int64
@@ -101,6 +109,7 @@ func newRunnerControlHub() *runnerControlHub {
 	return &runnerControlHub{
 		conns:          map[string]*runnerControlConn{},
 		pending:        map[string]runnerWorkspaceWaiter{},
+		progress:       map[string]runnerWorkspaceProgress{},
 		registered:     make(chan struct{}),
 		dropped:        map[string]time.Time{},
 		startedAt:      time.Now(),
@@ -255,10 +264,15 @@ func (h *runnerControlHub) send(ctx context.Context, conn *runnerControlConn, re
 	requestID := fmt.Sprintf("workspace-%d", h.nextID)
 	result := make(chan domain.RunnerWorkspaceResponse, 1)
 	h.pending[requestID] = runnerWorkspaceWaiter{conn: conn, result: result}
+	updates := make(chan domain.WorkspaceOpening, 1)
+	if request.Operation == domain.RunnerWorkspaceOperationPrepare && request.RunKind == domain.RunKindWorkspace {
+		h.progress[requestID] = runnerWorkspaceProgress{conn: conn, updates: updates}
+	}
 	h.mu.Unlock()
 	defer func() {
 		h.mu.Lock()
 		delete(h.pending, requestID)
+		delete(h.progress, requestID)
 		h.mu.Unlock()
 	}()
 
@@ -274,24 +288,57 @@ func (h *runnerControlHub) send(ctx context.Context, conn *runnerControlConn, re
 	case <-ctx.Done():
 		return domain.RunnerWorkspaceResponse{}, false, ctx.Err()
 	}
-	select {
-	case response := <-result:
-		return response, true, nil
-	case <-conn.done:
-		return domain.RunnerWorkspaceResponse{}, true, errRunnerWorkspaceUnavailable
-	case <-ctx.Done():
-		// Chunked exports hold the runner's workspace fence. End the remote
-		// request too; cancelling only our waiter would strand the next turn.
-		if domain.IsWorkspaceCheckpointTransferOperation(request.Operation) || request.Operation == domain.RunnerWorkspaceOperationCheckpoint {
-			timer := time.NewTimer(time.Second)
-			select {
-			case conn.send <- runnerControlMessage{Type: "workspace.cancel", RequestID: requestID}:
-			case <-conn.done:
-			case <-timer.C:
-			}
-			timer.Stop()
+	report := func(p domain.WorkspaceOpening) {
+		if h.onWorkspaceProgress != nil {
+			h.onWorkspaceProgress(request.RunID, p)
 		}
-		return domain.RunnerWorkspaceResponse{}, true, ctx.Err()
+	}
+	for {
+		select {
+		case progress := <-updates:
+			report(progress)
+		case response := <-result:
+			select {
+			case progress := <-updates:
+				report(progress)
+			default:
+			}
+			return response, true, nil
+		case <-conn.done:
+			return domain.RunnerWorkspaceResponse{}, true, errRunnerWorkspaceUnavailable
+		case <-ctx.Done():
+			// Preparation and checkpoint work must release the remote workspace.
+			// Persistent conversation processes have their own stop operation.
+			if domain.IsWorkspaceCheckpointTransferOperation(request.Operation) || request.Operation == domain.RunnerWorkspaceOperationCheckpoint ||
+				(request.Operation == domain.RunnerWorkspaceOperationPrepare && request.RunKind == domain.RunKindWorkspace) {
+				timer := time.NewTimer(time.Second)
+				select {
+				case conn.send <- runnerControlMessage{Type: "workspace.cancel", RequestID: requestID}:
+				case <-conn.done:
+				case <-timer.C:
+				}
+				timer.Stop()
+			}
+			return domain.RunnerWorkspaceResponse{}, true, ctx.Err()
+		}
+	}
+}
+
+func (h *runnerControlHub) resolveWorkspaceProgress(conn *runnerControlConn, requestID string, progress domain.WorkspaceOpening) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	pending, ok := h.progress[requestID]
+	if !ok || pending.conn != conn {
+		return
+	}
+	select {
+	case pending.updates <- progress:
+	default:
+		select {
+		case <-pending.updates:
+		default:
+		}
+		pending.updates <- progress
 	}
 }
 
@@ -568,6 +615,10 @@ func (h *runnersHandlers) runnerControlConnect(c *gin.Context) {
 			return
 		}
 		_ = ws.SetReadDeadline(time.Now().Add(runnerWSReadTimeout))
+		if input.Type == "workspace.progress" && input.WorkspaceProgress != nil {
+			h.runnerControls.resolveWorkspaceProgress(conn, input.RequestID, *input.WorkspaceProgress)
+			continue
+		}
 		if input.Type == "agent_tool.cancel" {
 			if stop, ok := toolCancels.Load(input.RequestID); ok {
 				stop.(context.CancelFunc)()

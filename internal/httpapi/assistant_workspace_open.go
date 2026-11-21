@@ -13,6 +13,7 @@ import (
 
 	"agentflow/internal/domain"
 	"agentflow/internal/engine"
+	"agentflow/internal/workspaceprep"
 )
 
 // A conversation workspace is an environment, not a checkout: Main Bot picks
@@ -213,21 +214,38 @@ func (h *agentToolGateway) openConversationWorkspace(ctx context.Context, s *Age
 	treeCtx := context.WithValue(ctx, mainBotWorkspaceKey{}, run.ID)
 	tree, err := h.callMainBotWorkspace(treeCtx, s, "workbench_workspace_tree", map[string]any{})
 	if err != nil {
-		// Reusing the bound workspace switched nothing, so there is no binding
-		// to restore: keep it for the next attempt.
-		if bound.Reused {
-			return "", fmt.Errorf("工作区已绑定（%s），但准备时失败：%w", run.ID, err)
+		// A failed SOP attachment or personal workspace switch restores the
+		// prior binding. Project workspaces keep their files for an in-place retry.
+		if (!run.IsWorkspace() || run.IsPersonalWorkspace()) && !bound.Reused {
+			active, rollbackErr := h.rollbackConversationWorkspaceBinding(ctx, s, bound)
+			if rollbackErr != nil {
+				return "", fmt.Errorf("工作区 %s 准备失败：%s。恢复绑定失败：%s", run.ID, workspaceprep.Sanitize(err.Error()), workspaceprep.Sanitize(rollbackErr.Error()))
+			}
+			if bound.Created {
+				return "", fmt.Errorf("工作区准备失败（已放弃这个工作区）：%s", workspaceprep.Sanitize(err.Error()))
+			}
+			if active != bound.Previous {
+				return "", fmt.Errorf("打开工作区 %s 失败：%s", run.ID, workspaceprep.Sanitize(err.Error()))
+			}
+			return "", fmt.Errorf("打开工作区 %s 失败（已恢复原绑定）：%s", run.ID, workspaceprep.Sanitize(err.Error()))
 		}
-		active, rollbackErr := h.rollbackConversationWorkspaceBinding(ctx, s, bound)
-		switch {
-		case rollbackErr != nil:
-			return "", fmt.Errorf("工作区 %s 准备失败：%v。恢复绑定失败：%w", run.ID, err, rollbackErr)
-		case bound.Created:
-			return "", fmt.Errorf("工作区准备失败（已放弃这个工作区）：%w", err)
-		case active == bound.Previous:
-			return "", fmt.Errorf("打开工作区 %s 失败（已恢复原绑定）：%w", run.ID, err)
-		default:
-			return "", fmt.Errorf("打开工作区 %s 失败：%w", run.ID, err)
+		if current, ok := h.repo.RunState(run.ID); ok && h.engine != nil {
+			if progress := current.LatestWorkspaceOpening(); progress == nil || progress.State != "failed" {
+				h.engine.RecordWorkspaceOpening(run.ID, domain.WorkspaceOpening{State: "failed", Message: err.Error()})
+			}
+		}
+		return "", fmt.Errorf("工作区 %s 准备失败，已保留绑定和已有文件。修复后用 workbench_workspace_open 重试当前环境（不传 sandboxProfileId）：%s", run.ID, workspaceprep.Sanitize(err.Error()))
+	}
+	if h.engine != nil {
+		warning := h.engine.WorkspaceDockerfileWarning(run)
+		if warning != "" {
+			out["environmentWarning"] = warning
+			notice.WriteString(warning)
+		}
+		if current, ok := h.repo.RunState(run.ID); ok {
+			if progress := current.LatestWorkspaceOpening(); progress == nil || progress.State != "ready" || progress.Warning != warning {
+				h.engine.RecordWorkspaceOpening(run.ID, domain.WorkspaceOpening{State: "ready", Message: "工作区已就绪"})
+			}
 		}
 	}
 	out["files"] = json.RawMessage(truncateJSONForTool(tree, 6000))
