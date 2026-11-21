@@ -544,8 +544,9 @@ function issueFromForm(){
 // 就能完成仓库配置。
 // repoDisplayPath shows host/path for a parsed repository, e.g. github.com/owner/name.
 function repoDisplayPath(info,fallback=''){return info?.provider==='ssh'?(info.project||info.cloneUrl||fallback):info?.webUrl?String(info.webUrl).replace(/^https?:\/\//,''):String(fallback||'')}
-function repoProviderLabel(info){return info?.provider==='ssh'?'Git SSH':info?.provider==='github'?'GitHub':'工蜂'}
+function repoProviderLabel(info){return info?.provider==='ssh'?'Git SSH':info?.provider==='github'?'GitHub':info?.provider==='codeup'?'云效 Codeup':'工蜂'}
 function parseGongfengRepoURL(raw){
+  const codeupInfo=globalThis.LoopForgeCodeupRepo?.(raw);if(codeupInfo)return codeupInfo;
   const httpsInfo=globalThis.LoopForgeGitHTTPS?.(raw);if(httpsInfo)return httpsInfo;
   const sshInfo=globalThis.LoopForgeGitSSH?.(raw);if(sshInfo)return sshInfo;
   let publicURL=String(raw||'').trim().replace(/^git clone /,'').replace(/^github:/,'https://github.com/').replace(/^(?:git@github\.com:|ssh:\/\/git@github\.com(?::22)?\/)/,'https://github.com/');
@@ -601,13 +602,18 @@ function renderRepositoryCredentialHint(){
   host.sshHintVersion=(host.sshHintVersion||0)+1;
   host.hidden=false;
   host.removeAttribute('role');
-  const configured=!!user.gitHttpCredentialsConfigured;
-  const title=configured?'已配置 Git 访问令牌':'仓库可以先保存，代码任务还需要 Token';
-  const message=configured?'请确认 Token 已获得目标仓库的访问和写入权限。SOP 使用需求责任人的 Token，未指定时使用项目 Owner 的 Token。':'使用仓库进行需求分析、访问私有代码或提交 PR 前，请先配置 Git 访问令牌。SOP 使用需求责任人的 Token，未指定时使用项目 Owner 的 Token。';
+  const codeup=remote?.provider==='codeup';
+  const configured=codeup?!!(user.codeupCredentialConfigured||(typeof codeupCredentialRecord==='function'&&codeupCredentialRecord(user))):!!user.gitHttpCredentialsConfigured;
+  const title=codeup
+    ?(configured?'已配置云效仓库授权':'仓库可以先保存，代码任务还需要云效授权')
+    :(configured?'已配置 Git 访问令牌':'仓库可以先保存，代码任务还需要 Token');
+  const message=codeup
+    ?(configured?'请确认令牌已获得目标仓库的读写权限。SOP 使用需求责任人的令牌，未指定时使用项目 Owner 的令牌。':'使用云效仓库进行需求分析、访问私有代码或提交合并请求前，请先配置云效仓库授权（个人访问令牌 PAT + HTTPS 克隆账号）。SOP 使用需求责任人的凭据，未指定时使用项目 Owner 的凭据。')
+    :(configured?'请确认 Token 已获得目标仓库的访问和写入权限。SOP 使用需求责任人的 Token，未指定时使用项目 Owner 的 Token。':'使用仓库进行需求分析、访问私有代码或提交 PR 前，请先配置 Git 访问令牌。SOP 使用需求责任人的 Token，未指定时使用项目 Owner 的 Token。');
   host.dataset.configured=String(configured);
-  host.innerHTML=`<div><b>${escapeHTML(title)}</b><p>${escapeHTML(message)}</p></div><button type="button" class="button ghost small" data-repository-configure-token>${configured?'个人设置':'配置 Git 访问令牌'}</button>`;
+  host.innerHTML=`<div><b>${escapeHTML(title)}</b><p>${escapeHTML(message)}</p></div><button type="button" class="button ghost small" data-repository-configure-token>${configured?'个人设置':codeup?'配置云效仓库授权':'配置 Git 访问令牌'}</button>`;
   host.querySelector('[data-repository-configure-token]').onclick=()=>{
-    $('#repositoryModal').classList.remove('open');gotoCredential('gitHttpCredentials');
+    $('#repositoryModal').classList.remove('open');gotoCredential(codeup?'codeupToken':'gitHttpCredentials');
   };
 }
 function renderRepositoryList(){renderRepositoryCredentialHint();const project=(state.data.projects||[]).find(p=>p.id===state.projectFilter),repos=(state.data.repositories||[]).filter(r=>r.projectId===state.projectFilter);$('#repositoryProjectHint').textContent=`当前项目：${project?.name||'—'}。粘贴 GitHub 链接或 Git SSH 地址；集成分支用于检查多个 SOP 执行后是否存在合并冲突，可留空。`;$('#repositoryList').innerHTML=repos.map(r=>`<button type="button" data-edit-repo="${escapeHTML(r.id)}"><b>${escapeHTML(r.name)}</b><span>${escapeHTML(r.gongfengProjectId||r.cloneUrl)} · 主分支 ${escapeHTML(r.defaultBranch||'master')} · 集成分支 ${escapeHTML(r.integrateBranch||'未配置')}</span><em>${project?.defaultRepositoryId===r.id?'默认仓库':'编辑'}</em></button>`).join('')||'<p>当前项目还没有绑定代码仓库。</p>';$('#repositoryList').querySelectorAll('[data-edit-repo]').forEach(b=>b.onclick=()=>fillRepositoryForm((state.data.repositories||[]).find(r=>r.id===b.dataset.editRepo)))}

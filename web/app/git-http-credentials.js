@@ -1,4 +1,4 @@
-const GIT_HTTP_PLATFORMS = [['github', 'GitHub / GitHub Enterprise'], ['gitlab', 'GitLab'], ['other', '其他平台']];
+const GIT_HTTP_PLATFORMS = [['github', 'GitHub / GitHub Enterprise'], ['gitlab', 'GitLab'], ['codeup', '云效 Codeup'], ['other', '其他平台']];
 
 // Mirrors gitwork.HTTPSHostScope closely enough to prefill the form; the server
 // remains the authority on what a host scope is.
@@ -9,6 +9,9 @@ function gitHTTPHostScope(raw) {
 }
 
 function gitHTTPDefaultUsername(platform) {
+  // Codeup authenticates with the personal HTTPS clone account; there is no
+  // shared placeholder username like x-access-token / oauth2.
+  if (platform === 'codeup') return '';
   return platform === 'gitlab' ? 'oauth2' : 'x-access-token';
 }
 
@@ -48,7 +51,7 @@ function openGitHTTPCredentials() {
             ${GIT_HTTP_PLATFORMS.map(([value, label]) => `<option value="${value}">${escapeHTML(label)}</option>`).join('')}
           </select>
         </div>
-        <small id="gitHTTPCredentialPlatformHint">GitHub 和 GitLab 支持 gh / glab 认证和 PR/MR 合并状态同步。其他平台也可由 Agent 创建 PR/MR，合并状态请到托管平台查看。</small>
+        <small id="gitHTTPCredentialPlatformHint">GitHub 和 GitLab 支持 gh / glab 认证和 PR/MR 合并状态同步。云效 Codeup 使用个人访问令牌（PAT）与 HTTPS 克隆账号。其他平台也可由 Agent 创建 PR/MR，合并状态请到托管平台查看。</small>
       </label>
       ${credentialFieldHTML({label:'名称', name:'name', type:'text', placeholder:'例如 公司 GitLab', hint:null})}
       ${credentialFieldHTML({label:'Git 认证用户名', name:'username', type:'text', placeholder:'x-access-token', hint:'按托管平台要求填写；这是 HTTPS 认证用户名，不是提交作者名，通常无法从 Token 推导。'})}
@@ -75,6 +78,16 @@ function openGitHTTPCredentials() {
     status.textContent = message;
     status.classList.toggle('is-error', error);
     status.hidden = !message;
+  }
+
+  // Codeup names its two secrets differently: the HTTPS clone account and the PAT.
+  function syncPlatformLabels() {
+    const codeup = platform.value === 'codeup';
+    const labelOf = input => input.closest('.credential-field')?.querySelector('span');
+    const usernameLabel = labelOf(username), tokenLabel = labelOf(token);
+    if (usernameLabel) usernameLabel.textContent = codeup ? 'HTTPS 克隆账号' : 'Git 认证用户名';
+    if (tokenLabel) tokenLabel.textContent = codeup ? '个人访问令牌 PAT' : '个人访问令牌';
+    username.placeholder = codeup ? '云效「个人设置 → HTTPS 密码」中的克隆账号' : gitHTTPDefaultUsername(platform.value);
   }
 
   function credentialSummary(cred) {
@@ -109,7 +122,7 @@ function openGitHTTPCredentials() {
     platform.value = cred?.platform || 'github';
     name.value = cred?.name || '';
     username.value = cred?.username || '';
-    username.placeholder = gitHTTPDefaultUsername(platform.value);
+    syncPlatformLabels();
     token.required = !cred;
     token.placeholder = cred ? '留空保留现有令牌' : '粘贴个人访问令牌';
     (cred ? name : host).focus();
@@ -137,7 +150,9 @@ function openGitHTTPCredentials() {
       creds = await api(id ? `${endpoint}/${encodeURIComponent(id)}` : endpoint, {
         method, silent:true, ...(body ? {body:JSON.stringify(body)} : {}),
       });
-      storeCredentialUser({...credentialUser(), id:user.id, gitHttpCredentialsConfigured:creds.length > 0, gitHubCredentialConfigured:creds.some(credential=>credential.host==='github.com')});
+      const codeupRecord = creds.find(credential => credential.host === 'codeup.aliyun.com') || null;
+      state.codeupCredential = {userId:user.id, record:codeupRecord};
+      storeCredentialUser({...credentialUser(), id:user.id, gitHttpCredentialsConfigured:creds.length > 0, gitHubCredentialConfigured:creds.some(credential=>credential.host==='github.com'), codeupCredentialConfigured:!!codeupRecord});
       renderCredentialPanel();
       notifyCredentialsChanged();
       deleting = '';
@@ -186,13 +201,25 @@ function openGitHTTPCredentials() {
     if (editing) return;
     const scope = gitHTTPHostScope(host.value);
     if (scope === 'github.com') platform.value = 'github';
+    else if (scope === 'codeup.aliyun.com') platform.value = 'codeup';
     else if (/(^|\.)gitlab\./.test(scope)) platform.value = 'gitlab';
-    username.placeholder = gitHTTPDefaultUsername(platform.value);
-    if (!name.value.trim()) name.value = scope;
+    syncPlatformLabels();
+    if (!name.value.trim()) name.value = platform.value === 'codeup' ? '云效 Codeup' : scope;
   });
-  platform.addEventListener('change', () => { username.placeholder = gitHTTPDefaultUsername(platform.value); });
+  platform.addEventListener('change', () => {
+    if (!editing && platform.value === 'codeup') {
+      if (!host.value.trim()) host.value = 'codeup.aliyun.com';
+      if (!name.value.trim()) name.value = '云效 Codeup';
+    }
+    syncPlatformLabels();
+  });
   form.onsubmit = event => {
     event.preventDefault();
+    if (platform.value === 'codeup' && !username.value.trim()) {
+      setStatus('请填写云效 HTTPS 克隆账号', true);
+      username.focus();
+      return;
+    }
     const body = {
       host:host.value, platform:platform.value, name:name.value,
       username:username.value.trim() || gitHTTPDefaultUsername(platform.value),

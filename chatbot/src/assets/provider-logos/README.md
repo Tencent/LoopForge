@@ -10,8 +10,17 @@ The interface uses these bundled assets in both chat and configuration.
   and the pinned assets were downloaded from the corresponding
   `cdn.jsdelivr.net/npm/simple-icons@v16/icons/<slug>.svg` URLs.
 - `pi.svg` is the official primary color mark from the [Pi press kit](https://pi.dev/press-kit).
+- `codeup.svg` is an original LoopForge monochrome placeholder glyph (a cloud
+  with code brackets) for the Yunxiao Codeup credential card, following the
+  monochrome-glyph precedent of `pi.svg`. It is not an official Alibaba Cloud
+  or Codeup mark; replace it if an official brand asset becomes available.
+  The same file is mirrored at `web/images/credentials/codeup.svg`.
 - `antigravity.svg` is the full-color icon from the [Google Antigravity press assets](https://antigravity.google/press).
 - `kimi-code.png` is the icon published by Moonshot AI for the [Kimi Code extension](https://marketplace.visualstudio.com/items?itemName=moonshot-ai.kimi-code).
+- `qoder.svg` is the official Qoder CN brand mark, extracted from the installed
+  Qoder CN client's `qoderCnIdeLogo` vector asset and recolored to a monochrome
+  glyph (background removed). It is the same mark as
+  `web/images/credentials/qoder.svg`, bundled here for the chat CLI selector.
 - `openai.svg` comes from the [OpenAI 2025 logo package](https://cdn.openai.com/brand/OpenAI-Logos-2025.zip).
   `codex.svg` uses the same official OpenAI blossom because OpenAI does not
   publish a separate Codex mark in that package or in the official Codex CLI

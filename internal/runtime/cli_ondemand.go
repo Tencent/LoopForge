@@ -52,6 +52,7 @@ func onDemandCLICatalog() map[string]onDemandCLI {
 		"kimi":        {Engine: "kimi", Binary: "kimi", Package: "@moonshot-ai/kimi-code"},
 		"pi":          {Engine: "pi", Binary: "pi", Package: "@earendil-works/pi-coding-agent"},
 		"dsh":         {Engine: "dsh", Binary: "dsh", Package: "@deepseek-ai/dsh@" + DeepSeekHarnessVersion, RelaxEngines: true, Bundled: true},
+		"qodercn":     {Engine: "qodercn", Binary: "qodercn", Package: "@qodercn-ai/qoderclicn"},
 	}
 }
 

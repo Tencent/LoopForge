@@ -78,6 +78,21 @@ func InstallConversationApproval(root, provider string, command CommandSpec) (Co
 		if err := writeAgentCLIFile(home, zcodeConfigPath, data); err != nil {
 			return command, err
 		}
+	case AgentCLIQoderCN:
+		// Qoder CN reads Claude-Code-style hooks from settings.json. Merge the
+		// PreToolUse guard so the MCP servers and model selection survive.
+		if err := mergeQoderCNSettings(home, func(document map[string]any) {
+			configured, _ := document["hooks"].(map[string]any)
+			if configured == nil {
+				configured = map[string]any{}
+			}
+			for event, entry := range hooks {
+				configured[event] = entry
+			}
+			document["hooks"] = configured
+		}); err != nil {
+			return command, err
+		}
 	case "codex":
 		entry := "hooks.PreToolUse=[{hooks=[{type=\"command\",command=" + strconv.Quote(launch) + ",timeout=" + strconv.Itoa(conversationApprovalHookWatchdog) + "}]}]"
 		command.Argv = append(command.Argv[:len(command.Argv)-1], "-c", "features.hooks=true", "-c", entry, command.Argv[len(command.Argv)-1])

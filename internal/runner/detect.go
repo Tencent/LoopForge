@@ -48,6 +48,9 @@ var defaultProviders = []providerSpec{
 	// The official ZCode has no npm package and its --help omits
 	// --output-format, so compatibility is probed with the flags we pass.
 	{Kind: "zcode", Binary: "zcode", VersionFlags: []string{"--output-format", "stream-json", "--mode", "yolo"}},
+	// Qoder CN ships an npm package and is found on PATH; it has no reliable
+	// non-interactive update subcommand.
+	{Kind: "qodercn", Binary: "qodercn"},
 }
 
 // terminalProviderKind is the built-in remote-terminal capability: the

@@ -252,6 +252,10 @@ export function branchCompareUrl(repository) {
     return same
       ? `https://github.com/${github}/tree/${refPath(work)}`
       : `https://github.com/${github}/compare/${refPath(base)}...${refPath(work)}`;
+  const codeup = codeupRepoPath(repository?.cloneUrl);
+  // Codeup's compare page URL differs between editions, so both cases link to
+  // the work branch tree, which is stable across center/region deployments.
+  if (codeup) return `https://codeup.aliyun.com/${codeup}/tree/${refPath(work)}`;
   const path = gongfengProjectPath(repository?.cloneUrl);
   if (!path) return "";
   if (same) return `https://git.example.com/${path}/-/tree/${refPath(work)}`;
@@ -267,6 +271,18 @@ export function githubRepoPath(remote) {
     /^(?:git@|ssh:\/\/git@)github\.com[:/]([^/]+\/[^/]+?)(?:\.git)?\/?$/.exec(raw) ||
     /^https:\/\/github\.com\/([^/]+\/[^/]+?)(?:\.git)?\/?$/.exec(raw);
   return match ? match[1] : "";
+}
+
+// Codeup paths keep the organization id as the first segment and may nest
+// groups: {orgId}/{group...}/{repo}. SSH remotes map to the same HTTPS web path.
+export function codeupRepoPath(remote) {
+  const raw = String(remote || "").trim();
+  const match =
+    /^(?:git@|ssh:\/\/git@)codeup\.aliyun\.com[:/](.+?)(?:\.git)?\/?$/.exec(raw) ||
+    /^https:\/\/codeup\.aliyun\.com\/(.+?)(?:\.git)?\/?$/.exec(raw);
+  if (!match) return "";
+  const path = match[1].replace(/\.git$/, "").replace(/^\/+|\/+$/g, "");
+  return path.split("/").length >= 2 ? path : "";
 }
 
 export function gongfengProjectPath(remote) {

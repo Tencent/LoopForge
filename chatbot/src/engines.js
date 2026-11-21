@@ -14,12 +14,14 @@ export const EXECUTORS = [
   { id: "pi", icon: "terminal", label: "Pi", detail: "使用 Pi 与个人 API Key。" },
   { id: "dsh", icon: "terminal", label: "DeepSeek Harness", detail: "使用 DeepSeek Harness 与个人 API Key。" },
   { id: "zcode", icon: "terminal", label: "ZCode", detail: "使用 ZCode 与个人 API Key。" },
+  { id: "qodercn", icon: "terminal", label: "Qoder CN", detail: "使用 Qoder CN 与个人访问令牌（PAT）。" },
 ];
 
 // Bundled logo per CLI; an unknown CLI falls back to its model's brand.
 const brands = {
   codebuddy: "codebuddy", codex: "codex", "claude-code": "claude",
   opencode: "opencode", cursor: "cursor", agy: "antigravity", kimi: "kimi-code", pi: "pi", dsh: "deepseek", zcode: "zhipu",
+  qodercn: "qoder",
 };
 export const engineBrand = (id) => Object.hasOwn(brands, id) ? brands[id] : "";
 

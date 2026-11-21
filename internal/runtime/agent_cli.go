@@ -27,6 +27,7 @@ const (
 	AgentCLIPi          = "pi"
 	AgentCLIDeepSeek    = "dsh"
 	AgentCLIZCode       = "zcode"
+	AgentCLIQoderCN     = "qodercn"
 )
 
 // AgentCLIKinds is the display order of the agent CLIs.
@@ -67,8 +68,9 @@ func AgentCLINeedsBaseURL(kind, protocol string) bool {
 // can, DeepSeek Harness on the official endpoint.
 func agentCLIModelOptional(kind, baseURL string) bool {
 	switch kind {
-	case AgentCLICursor, AgentCLIZCode:
-		// ZCode resolves an unset model itself (applyZCodeCredential).
+	case AgentCLICursor, AgentCLIZCode, AgentCLIQoderCN:
+		// ZCode resolves an unset model itself (applyZCodeCredential); Qoder CN
+		// falls back to the CLI's own model on its official endpoint.
 		return true
 	case AgentCLIAntigravity, AgentCLIDeepSeek:
 		return baseURL == ""
@@ -105,6 +107,8 @@ var agentCLIHostEnv = append([]string{
 	"KIMI_MODEL_NAME", "KIMI_MODEL_API_KEY", "KIMI_MODEL_BASE_URL", "KIMI_MODEL_PROVIDER_TYPE", kimiThinkingEffortEnv,
 	"OPENCODE_CONFIG", "OPENCODE_CONFIG_CONTENT", "OPENCODE_CONFIG_DIR", "PI_CODING_AGENT_DIR",
 	"ZCODE_DATA_BASE_DIR", zcodePersonalFileEnv,
+	"QODERCN_PERSONAL_ACCESS_TOKEN", "QODERCN_CONFIG_DIR", "QODERCN_MODEL", "QODERCN_PERMISSION_MODE",
+	"QODERCN_SESSION_ID", "QODERCN_SESSION_NAME", "QODERCN_WORKING_DIR", "QODERCN_SUBAGENT_MODEL",
 }, zcodeHostEnv...)
 
 // agentCLIConfigPaths are the HOME-relative files an agent CLI reads its MCP
@@ -117,6 +121,7 @@ var agentCLIMCPPaths = map[string]string{
 	AgentCLIPi:          ".pi/agent/mcp.json",
 	AgentCLIDeepSeek:    ".dsh/agentflow-mcp.json",
 	AgentCLIZCode:       zcodeConfigPath,
+	AgentCLIQoderCN:     qoderCNConfigPath,
 }
 
 // AgentCLIMCPOptions shapes the MCP configuration of one invocation.
@@ -185,6 +190,13 @@ func WriteAgentCLIMCPConfig(kind string, home AgentCLIHome, entries map[string]a
 				server["toolTimeoutMs"] = 600000
 			}
 		}
+	}
+	if kind == AgentCLIQoderCN {
+		// Qoder CN keeps model, permissions and hooks beside mcpServers in one
+		// settings.json, so merge instead of replacing the whole document.
+		return mergeQoderCNSettings(home, func(document map[string]any) {
+			document["mcpServers"] = servers
+		})
 	}
 	var document any
 	switch kind {
@@ -512,6 +524,8 @@ func ApplyAgentCLICredential(kind string, cred ProviderCredential, options Agent
 		return applyDeepSeekCredential(home, homeEnv, key, baseURL, protocol, model, strings.TrimSpace(options.Effort), argv)
 	case AgentCLIZCode:
 		return applyZCodeCredential(home, homeEnv, key, baseURL, protocol, model, strings.TrimSpace(options.Effort), argv)
+	case AgentCLIQoderCN:
+		return applyQoderCNCredential(home, homeEnv, key, baseURL, protocol, model, argv)
 	default:
 		return nil, nil, fmt.Errorf("unknown agent CLI %q", kind)
 	}
@@ -644,6 +658,8 @@ func AgentCLILabel(kind string) string {
 		return "DeepSeek Harness"
 	case AgentCLIZCode:
 		return "ZCode"
+	case AgentCLIQoderCN:
+		return "Qoder CN"
 	}
 	return kind
 }

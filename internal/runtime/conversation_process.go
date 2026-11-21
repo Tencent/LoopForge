@@ -596,7 +596,7 @@ func (p *ConversationProcessPool) start(ctx context.Context, root, workspace str
 	}
 	// Some CLIs continue after a hook interpreter cannot be spawned. Both
 	// the platform guard and the native approval hook must fail closed.
-	if (spec == nil || spec.Profile.Driver != domain.SandboxDriverDocker) && (command.Provider == AgentCLIKimi || command.Provider == "codex" || command.Provider == AgentCLICursor || command.Provider == AgentCLIAntigravity || command.Provider == AgentCLIZCode) {
+	if (spec == nil || spec.Profile.Driver != domain.SandboxDriverDocker) && (command.Provider == AgentCLIKimi || command.Provider == "codex" || command.Provider == AgentCLICursor || command.Provider == AgentCLIAntigravity || command.Provider == AgentCLIZCode || command.Provider == AgentCLIQoderCN) {
 		check := exec.CommandContext(procCtx, "python3", "-c", "import json,urllib.request")
 		if err = check.Run(); err != nil {
 			return ConversationProcessResult{}, fmt.Errorf("原生工具审批需要 Python3：%w", err)
@@ -605,7 +605,7 @@ func (p *ConversationProcessPool) start(ctx context.Context, root, workspace str
 	// These providers load hooks/extensions from persistent HOME in platform
 	// mode too. Refresh them on every start so returning from a workspace never
 	// runs a stale hook (Pi's codemode wrapper must reach its concrete tools).
-	if spec != nil || command.Provider == AgentCLIKimi || command.Provider == AgentCLIPi || command.Provider == AgentCLIOpenCode || command.Provider == AgentCLICursor || command.Provider == AgentCLIAntigravity || command.Provider == AgentCLIZCode {
+	if spec != nil || command.Provider == AgentCLIKimi || command.Provider == AgentCLIPi || command.Provider == AgentCLIOpenCode || command.Provider == AgentCLICursor || command.Provider == AgentCLIAntigravity || command.Provider == AgentCLIZCode || command.Provider == AgentCLIQoderCN {
 		command, err = InstallConversationApproval(root, command.Provider, command)
 		if err != nil {
 			return ConversationProcessResult{}, err

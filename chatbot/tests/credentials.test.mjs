@@ -49,6 +49,8 @@ test("CodeBuddy key links follow the selected network environment", () => {
   assert.match(china.link, /国内站/);
   assert.deepEqual(china.steps, CREDENTIAL_GUIDES.codeBuddyApiKey.steps);
   assert.equal(credentialGuide("gitToken", {}), CREDENTIAL_GUIDES.gitToken);
+  assert.equal(credentialGuide("codeupToken", {}), CREDENTIAL_GUIDES.codeupToken);
+  assert.equal(CREDENTIAL_GUIDES.codeupToken.url, "/#/settings");
   assert.equal(credentialGuide("unknown", {}), null);
 });
 
@@ -106,6 +108,16 @@ test("credential errors from the platform link to the right setting", () => {
     [
       "当前配置的是工蜂「私人令牌」，只能用于 API，不能克隆或推送仓库",
       "gitToken",
+      false,
+    ],
+    [
+      "当前责任人未配置云效 Codeup 仓库授权：请先在个人配置中填写个人访问令牌与 HTTPS 克隆账号",
+      "codeupToken",
+      true,
+    ],
+    [
+      "git clone https://codeup.aliyun.com/org/group/repo.git: exit status 128: Authentication failed",
+      "codeupToken",
       false,
     ],
   ];
