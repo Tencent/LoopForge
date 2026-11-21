@@ -91,7 +91,7 @@ func NewService() *Service {
 
 // Configure updates the sync config and recreates MCP clients.
 // Prefer catalog HTTP MCP Headers (the same assets Agent steps use). Fall back
-// to AGENTFLOW_MCP_TOKEN, then ~/.codebuddy/mcp.json OAuth.
+// to AGENTFLOW_MCP_TOKEN, then legacy host CodeBuddy OAuth.
 func (s *Service) Configure(cfg domain.SyncConfig) {
 	s.ConfigureWithCatalog(cfg, nil)
 }
@@ -99,8 +99,16 @@ func (s *Service) Configure(cfg domain.SyncConfig) {
 // ConfigureWithCatalog binds Gongfeng/TAPD clients from catalog MCP assets.
 func (s *Service) ConfigureWithCatalog(cfg domain.SyncConfig, servers []domain.MCPServerDefinition) {
 	s.cfg.Set(cfg)
-	gf := bindTrackerMCP("gongfeng", cfg, servers, s.authToken, LoadAuthFromCodeBuddy("gongfeng"))
-	tapd := bindTrackerMCP("tapd", cfg, servers, s.authToken, LoadAuthFromCodeBuddy("tapd"))
+	bind := func(kind string) mcpBinding {
+		binding := bindTrackerMCP(kind, cfg, servers, s.authToken, "")
+		if binding.URL != "" && !headerHas(binding.Headers, "Authorization") {
+			if auth := LoadAuthFromCodeBuddy(kind); auth != "" {
+				binding = bindTrackerMCP(kind, cfg, servers, "", auth)
+			}
+		}
+		return binding
+	}
+	gf, tapd := bind("gongfeng"), bind("tapd")
 	s.gfSource, s.tapdSource = gf.Source, tapd.Source
 	if gf.URL != "" {
 		s.gongfeng = NewMCPClient(gf.URL, gf.Headers)

@@ -844,7 +844,10 @@ func (e *Engine) RefreshRunSOP(runID string) error {
 	// an existing workspace. A new Run will pick up the latest sandbox asset.
 	latest.SandboxProfileID = r.WorkflowSnapshot.SandboxProfileID
 	latest.SandboxSnapshot = r.WorkflowSnapshot.SandboxSnapshot
-	var err error
+	latest, err := configureBaselineAlignCLI(latest)
+	if err != nil {
+		return err
+	}
 	latest, err = domain.AttachPreviewBuild(latest)
 	if err != nil {
 		return err
@@ -977,6 +980,9 @@ func overlayLatestNodeBindings(st *repo.Store, r *domain.Run, nodeIDs map[string
 		src, ok := byID[n.ID]
 		if !ok {
 			continue
+		}
+		if n.AgentID != src.AgentID || n.ExecutorID != src.ExecutorID {
+			delete(r.WorkflowSnapshot.ExecutorDefaults, n.ID)
 		}
 		n.AgentID, n.ExecutorID = src.AgentID, src.ExecutorID
 		n.ArtifactOutputs = src.ArtifactOutputs

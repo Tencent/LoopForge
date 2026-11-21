@@ -420,6 +420,11 @@ func redactAssistantSecrets(text string, user domain.User) string {
 			text = strings.ReplaceAll(text, secret, "[redacted]")
 		}
 	}
+	for _, credential := range runtime.AgentCLIUserCredentials(user) {
+		if key := strings.TrimSpace(credential.APIKey); key != "" {
+			text = strings.ReplaceAll(text, key, "[redacted]")
+		}
+	}
 	return gitSecretRedactions.redact(text, "[redacted]")
 }
 

@@ -928,6 +928,7 @@ async function boot(){
       history.pushState({assetFrom:assetViewHash(state.assetType)},'',assetDetailHash);
       return;
     }
+    if(name==='settings'&&routePart(1)==='executors'){gotoCredential('executors');return}
     if(activeViewName()!==name){
       if(name==='flow')await applyFlowRoute();
       if(name==='projects')syncProjectAdminRouteState();
@@ -951,7 +952,8 @@ async function boot(){
   });
   if(view==='projects')syncProjectAdminRouteState();
   renderAll();
-  switchView(view);
+  if(view==='settings'&&routePart(1)==='executors')gotoCredential('executors');
+  else switchView(view);
   settleBootLoader();
   if(!['approvals','issues','runs','sops'].includes(state.currentView))preloadApprovalBadge();
   restoreRequirementComposer();
@@ -989,6 +991,7 @@ window.addEventListener('storage',event=>{if(!event.key||event.key===THEME_KEY)a
 
 function bind(){
 	prepareMCPFormHints();
+  $('#returnToQuickAccess')?.addEventListener('click',returnToQuickAccess);
   $$('.nav[data-view]').forEach(btn=>btn.onclick=async()=>{
     if(!(await confirmAssetLeave()))return;
     if(btn.dataset.view==='projects'&&state.projectAdminDetailId){
@@ -1478,6 +1481,25 @@ function postNativeChatProject(frame){
 // requirement already @-mentioned. It waits here until the chat frame can
 // take it: in the frame URL on first mount, otherwise once the chat is ready.
 let pendingChatIssueMention=null;
+let pendingQuickAccessReturn=false;
+const QUICK_ACCESS_EXECUTOR_SETTINGS='#/settings/executors/quick-access';
+let quickAccessExecutorSettingsActive=false;
+function postQuickAccessReturn(frame){
+  if(!pendingQuickAccessReturn||!nativeChatReady||!frame?.contentWindow)return;
+  pendingQuickAccessReturn=false;
+  frame.contentWindow.postMessage({type:'agentflow-chat-resume-quick-access'},location.origin);
+}
+function returnToQuickAccess(){
+  if(location.hash!==QUICK_ACCESS_EXECUTOR_SETTINGS)return;
+  if(history.state?.quickAccessExecutorReturn){history.back();return}
+  const chat=new URL('/chatbot/',location.origin),params=new URLSearchParams(location.search);
+  chat.searchParams.set('quickAccess','1');
+  const projectId=params.get('projectId');
+  const session=params.get('chatSession');
+  if(projectId)chat.searchParams.set('projectId',projectId);
+  if(session)chat.searchParams.set('session',session);
+  location.replace(chat);
+}
 function postPendingChatIssueMention(frame){
   if(!pendingChatIssueMention||!nativeChatReady||frame?.dataset.src!=='native')return;
   frame.contentWindow?.postMessage({type:'agentflow-chat-mention-issue',...pendingChatIssueMention},location.origin);
@@ -1513,6 +1535,7 @@ function mountNativeChat(){
         nativeChatReady=true;
         postPendingChatIssueMention(frame);
         postNativeChatProject(frame);
+        postQuickAccessReturn(frame);
         finishBootLoader();
       }
       if(message.type==='agentflow-chat-session'){
@@ -1540,6 +1563,14 @@ function mountNativeChat(){
         else reloadShellProjects().then(follow).catch(()=>{});
       }
       if(message.type==='agentflow-projects-changed')reloadShellProjects().catch(()=>{});
+      if(message.type==='agentflow-credentials-changed'){
+        const userId=state.currentUser?.id;
+        api('/api/users',{silent:true}).then(users=>{
+          if(state.currentUser?.id!==userId)return;
+          const saved=users.find(user=>Number(user.id)===Number(userId));
+          if(saved)storeCredentialUser(saved);
+        }).catch(()=>{});
+      }
       if(message.type==='agentflow-quick-access-completed'){
         api('/api/bootstrap',{silent:true}).then(shell=>{
           Object.assign(state.data,shell);
@@ -1552,7 +1583,12 @@ function mountNativeChat(){
         }).catch(()=>{});
       }
       if(message.type==='agentflow-chat-open-view'&&['settings','runners','sops','projects','runs','agents','environments','dockerfiles','sandboxes','flow','mcp'].includes(message.view)){
-        if(message.view==='settings'&&CREDENTIAL_FIELDS[message.credential])gotoCredential(message.credential,message.sshRemote);
+        if(message.view==='settings'&&message.credential){
+          if(message.credential==='executors'&&message.returnToQuickAccess===true&&activeViewName()==='collaboration'&&location.hash!==QUICK_ACCESS_EXECUTOR_SETTINGS){
+            history.pushState({quickAccessExecutorReturn:true},'',QUICK_ACCESS_EXECUTOR_SETTINGS);
+          }
+          gotoCredential(message.credential,message.sshRemote);
+        }
         else if(message.view==='sandboxes'&&message.action==='create')createConversationSandbox(message.projectId).catch(error=>toast(error.message));
         else if(message.view==='runs'&&/^run-[\w-]+$/.test(message.runId||''))location.hash='#/runs/'+encodeURIComponent(message.runId);
         else switchView(message.view);
@@ -1561,6 +1597,7 @@ function mountNativeChat(){
   }
   if(frame.dataset.src!=='native'){
     frame.dataset.src='native';
+    nativeChatReady=false;
     const topParams=new URL(location.href).searchParams;
     const projectId=nativeChatProjectId();
     const sessionId=topParams.get('chatSession')||'';
@@ -1875,6 +1912,7 @@ function syncRunHash(id){
 function persistView(name,push=false){
   localStorage.setItem('agentflow.activeView',name);
   let next=`#/${name}`;
+  if(name==='settings'&&location.hash===QUICK_ACCESS_EXECUTOR_SETTINGS)next=QUICK_ACCESS_EXECUTOR_SETTINGS;
   if(name==='runs'){
     const linked=runRouteId();
     if(linked)next=runViewHash(linked);
@@ -1910,6 +1948,14 @@ function switchView(name){
   // 手敲 #/platform 或者从别的账号留下的 localStorage 恢复进来，都要挡住。
   if(name==='platform'&&!isPlatformAdmin())name='collaboration';
   const previous=activeViewName();
+  if(name!=='settings')cancelCredentialFocus();
+  if(previous==='settings'&&name!=='settings'){
+    window.HuiPopover?.closeAll?.();
+    window.HuiTooltip?.hide?.();
+    closeCredentialWizard(true);
+    $('#gitHTTPCredentialDialog')?.close();
+    $('#gitSSHKeyDialog')?.close();
+  }
   if(!settingsRouteApplying){
     const crossingSettings=previous!==name&&((previous==='collaboration'&&isSettingsManagementView(name))||(isSettingsManagementView(previous)&&name==='collaboration'));
     if(crossingSettings&&!settingsRouteMotion.matches){startSettingsRouteTransition(name);return}
@@ -1948,6 +1994,15 @@ function switchView(name){
   //（staying）不压；hashchange 后退触发的调用 prevView 非空且 hash 已是目标值，
   // persistView 内部会短路，不会重复压栈。
   persistView(name,!staying&&!!prevView);
+  const resumeQuickAccess=name==='collaboration'&&quickAccessExecutorSettingsActive;
+  quickAccessExecutorSettingsActive=name==='settings'&&location.hash===QUICK_ACCESS_EXECUTOR_SETTINGS;
+  const quickAccessReturnButton=$('#returnToQuickAccess');
+  if(quickAccessReturnButton)quickAccessReturnButton.hidden=!quickAccessExecutorSettingsActive;
+  if(name!=='collaboration')pendingQuickAccessReturn=false;
+  if(resumeQuickAccess){
+    pendingQuickAccessReturn=true;
+    postQuickAccessReturn($('#chatNextFrame'));
+  }
   const nav=$('.platform-sidebar nav');
   if(nav){
     if(['dashboard','issues','approvals'].includes(name)){

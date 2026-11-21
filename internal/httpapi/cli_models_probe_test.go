@@ -52,6 +52,27 @@ func TestProbeCLIModelsUsesOfficialEndpointWithoutBaseURL(t *testing.T) {
 	}
 }
 
+func TestProbeCodeBuddyIOAModelsReportsMissingCLI(t *testing.T) {
+	h, owner := workbenchFixture(t)
+	bin := t.TempDir()
+	t.Setenv("PATH", bin)
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("AGENTFLOW_CODEBUDDY_BIN", "")
+	t.Setenv("AGENTFLOW_MANAGED_CLI_ROOT", "")
+	t.Setenv("AGENTFLOW_RUNTIME_CLI_DIR", t.TempDir())
+	original := assistantCLIGlobalDirs
+	assistantCLIGlobalDirs = []string{bin}
+	t.Cleanup(func() { assistantCLIGlobalDirs = original })
+
+	payload := bytes.NewBufferString(`{"engine":"codebuddy","environment":"ioa"}`)
+	c, w := workbenchContext(owner, http.MethodPost, "/", payload)
+	c.Params = gin.Params{{Key: "id", Value: strconv.FormatInt(owner.ID, 10)}}
+	(&usersHandlers{deps: h.deps}).probeCLIModels(c)
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "没有安装") {
+		t.Fatalf("missing CodeBuddy CLI: %d %s", w.Code, w.Body.String())
+	}
+}
+
 func TestDiscoverGeminiModelsKeepsGenerativeIDs(t *testing.T) {
 	service := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet || r.URL.Path != "/v1beta/models" || r.Header.Get("x-goog-api-key") != "fixture-key" {

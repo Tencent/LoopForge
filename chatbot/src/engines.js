@@ -2,7 +2,7 @@
 // (`engines`); models without `engine` run on CodeBuddy.
 export const defaultEngine = "codebuddy";
 
-// Main Bot can run on any configured agent CLI; CodeBuddy stays the default.
+// Main Bot can run on any configured agent CLI.
 export const EXECUTORS = [
   { id: "codebuddy", icon: "sparkles", label: "CodeBuddy", detail: "使用 CodeBuddy 模型与个人 API Key。" },
   { id: "codex", icon: "terminal", label: "Codex", detail: "使用 Codex CLI 与个人 Codex API Key。" },
@@ -22,6 +22,15 @@ const brands = {
   opencode: "opencode", cursor: "cursor", agy: "antigravity", kimi: "kimi-code", pi: "pi", dsh: "deepseek", zcode: "zhipu",
 };
 export const engineBrand = (id) => Object.hasOwn(brands, id) ? brands[id] : "";
+
+export function personalEngineConfigured(user, engine) {
+  switch (engine) {
+    case "codebuddy": return Boolean(user?.codeBuddyApiKeyConfigured);
+    case "codex": return Boolean(user?.codexApiKeyConfigured);
+    case "claude-code": return Boolean(user?.claudeCodeApiKeyConfigured);
+    default: return Boolean(user?.agentCliCredentials?.[engine]?.apiKeyConfigured);
+  }
+}
 
 export const modelEngine = (model) => model?.engine || defaultEngine;
 

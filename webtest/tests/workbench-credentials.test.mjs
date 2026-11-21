@@ -2,6 +2,24 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { loadApp, settle } from '../lib/load-app.mjs';
 
+test('personal settings lists a managed Git credential even without personal Git records', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  app.router.get('/api/users/1/git-http-credentials', [
+    {id:'managed',name:'内部托管凭据',host:'git.example.test',platform:'gitlab',managed:true},
+  ]);
+  app.evaluate(`
+    state.currentUser={...state.data.users[0],id:1,isGuest:false,gitHttpCredentialsConfigured:false,gitHubCredentialConfigured:false};
+    state.data.users[0]=state.currentUser;
+    renderPersonalSettings();
+  `);
+  await settle(4);
+  const group = app.document.querySelector('[data-credential-group="platform"]');
+  assert.match(group.querySelector('[data-credential-git-rows]').textContent, /内部托管凭据/);
+  assert.equal(group.querySelector('[data-credential-git-id="managed"]').textContent.trim(), '查看');
+  assert.equal(group.querySelector('.credential-group-note').hidden, false);
+});
+
 test('credential wizard selects a provider, validates input, saves, and finishes', async (t) => {
   const app = await loadApp();
   t.after(app.close);
@@ -54,11 +72,12 @@ test('credential wizard focuses the first field on its own but never pulls focus
   assert.equal(pane().querySelector('input[name="secret"]').value, '');
 });
 
-test('CodeBuddy wizard picks the network environment from a list and its key link follows the choice', async (t) => {
+test('CodeBuddy wizard supports a custom Base URL alongside its network environment', async (t) => {
   const app = await loadApp();
   t.after(app.close);
   app.evaluate(`state.data.users[0].id=1;state.currentUser={...state.data.users[0],id:1,isGuest:false};state.data.users[0]=state.currentUser`);
-  app.router.put('/api/users/1/credentials', { id: 1, username: 'tester', codeBuddyApiKeyConfigured: true, codeBuddyInternetEnvironment: 'internal' });
+  const baseUrl = 'https://gateway.example/v1';
+  app.router.put('/api/users/1/credentials', { id: 1, username: 'tester', codeBuddyApiKeyConfigured: true, codeBuddyInternetEnvironment: 'internal', codeBuddyBaseUrl: baseUrl });
   await app.evaluate(`renderPersonalSettings()`);
   app.evaluate(`openCredentialWizard('codeBuddyApiKey')`);
   const pane = () => app.document.querySelector('#credentialWizard .credential-pane:not(.is-leaving)');
@@ -83,16 +102,20 @@ test('CodeBuddy wizard picks the network environment from a list and its key lin
   assert.match(hint.textContent, /第三方/);
   const next = app.document.querySelector('#credentialWizard [data-wizard-next]');
   assert.equal(next.disabled, false, 'the warning never blocks saving');
-  secret.value = 'ck_placeholder';
-  secret.dispatchEvent(new app.window.Event('input', { bubbles: true }));
+  const endpoint = pane().querySelector('input[name="baseUrl"]');
+  assert.equal(endpoint.value, '');
+  endpoint.value = 'ftp://gateway.example';
+  endpoint.dispatchEvent(new app.window.Event('input', { bubbles: true }));
+  assert.equal(next.disabled, true);
+  endpoint.value = baseUrl;
+  endpoint.dispatchEvent(new app.window.Event('input', { bubbles: true }));
+  assert.equal(next.disabled, false);
   assert.equal(pane().querySelector('[data-credential-hint="secret"]').className, 'is-ok');
   next.click();
-  await settle(3);
-  assert.match(pane().textContent, /国内站 · copilot\.tencent\.com/);
-  app.document.querySelector('#credentialWizard [data-wizard-next]').click();
   await settle(6);
+  assert.equal(app.document.querySelector('#credentialWizard'), null);
   const saved = app.router.calls.find((call) => call.path === '/api/users/1/credentials');
-  assert.deepEqual(saved.body, { codeBuddyApiKey: 'ck_placeholder', codeBuddyInternetEnvironment: 'internal' });
+  assert.deepEqual(saved.body, { codeBuddyApiKey: 'sk-third-party', codeBuddyInternetEnvironment: 'internal', codeBuddyBaseUrl: baseUrl });
 });
 
 test('CodeBuddy inline editor changes only the network environment and keeps the key link in step', async (t) => {

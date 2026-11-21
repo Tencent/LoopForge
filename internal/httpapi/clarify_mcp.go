@@ -3,7 +3,6 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"path/filepath"
 	"regexp"
@@ -22,24 +21,6 @@ var (
 	tapdURLRe          = regexp.MustCompile(`(?i)https?://(?:www\.)?(?:tapd\.example\.com|tapd\.cn)[^\s<>"'）】\]]+`)
 	gongfengIssueURLRe = regexp.MustCompile(`(?i)https?://git\.example\.com/[^\s<>"'）】\]]+/issues/\d+`)
 )
-
-func clarifyAllowedModel(id string) string {
-	return assistantAllowedModel(id, assistantKnownCatalog())
-}
-
-// errClarifyNeedsCodeBuddy is returned when a clarification asks for a model of
-// another CLI: clarification runs on CodeBuddy only, so a "codex:…" id must be
-// refused instead of being swapped for the CodeBuddy default.
-var errClarifyNeedsCodeBuddy = errors.New("需求澄清目前只支持 CodeBuddy 模型，请在模型列表中改选 CodeBuddy 模型")
-
-// clarifyModelEngineError reports whether id names a model of a CLI that
-// requirement clarification cannot run.
-func clarifyModelEngineError(id string) error {
-	if engine, _ := assistantModelEngine(id); engine != assistantEngineCodeBuddy {
-		return errClarifyNeedsCodeBuddy
-	}
-	return nil
-}
 
 func asStringKeyMap(v any) map[string]any {
 	m, ok := v.(map[string]any)

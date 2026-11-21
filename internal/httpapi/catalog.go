@@ -1064,6 +1064,12 @@ func (h *catalogHandlers) workflows(c *gin.Context) {
 				return
 			}
 
+			if id := v.Preview.ExecutorOrCodeBuddy(); v.Preview.Static() {
+				if _, supported := repo.BuiltInExecutor(id); !supported {
+					c.JSON(http.StatusBadRequest, gin.H{"error": "前端预览使用了不支持的 CLI：" + id})
+					return
+				}
+			}
 			if err := domain.ValidateWorkflowPreparation(v); err != nil {
 				c.JSON(400, gin.H{"error": err.Error()})
 				return
@@ -1240,6 +1246,25 @@ func (h *catalogHandlers) workflow(c *gin.Context) {
 			return
 		}
 		c.JSON(200, stored)
+	case "/api/workflows/:id/executor-requirements":
+		if !v.Generic {
+			c.JSON(http.StatusNotFound, gin.H{"error": "generic template not found"})
+			return
+		}
+		var userID int64
+		projectID := strings.TrimSpace(c.Query("projectId"))
+		if user, ok := h.requestUser(c.Request, true); ok {
+			userID = user.ID
+		} else if project, ok := h.repo.Project(projectID); ok && !authRequired() {
+			userID = project.OwnerID
+		}
+		rows, err := h.engine.SOPExecutorRequirements(v, userID, projectID)
+		if err != nil {
+			respond(c, err)
+			return
+		}
+		c.Header("Cache-Control", "private, no-store")
+		c.JSON(http.StatusOK, rows)
 	case "/api/workflows/:id/agents":
 		template, ok := h.repo.GenericTemplateByWorkflow(id)
 		if !ok {

@@ -1,0 +1,189 @@
+package engine
+
+import (
+	"errors"
+	"fmt"
+	"strings"
+
+	"agentflow/internal/domain"
+	"agentflow/internal/repo"
+)
+
+type SOPExecutorRequirement struct {
+	Kind       string `json:"kind,omitempty"`
+	Name       string `json:"name"`
+	Configured bool   `json:"configured"`
+}
+
+type sopExecutorAccess struct {
+	user            domain.User
+	runner          domain.Runner
+	usesRunner      bool
+	sharedCodeBuddy bool
+}
+
+func (e *Engine) sopExecutorAccess(ec domain.TelemetryContext) sopExecutorAccess {
+	user, _ := e.repo.User(ec.ResponsibleUserID)
+	runner, _ := e.repo.Runner(ec.ExecutionRunnerID)
+	return sopExecutorAccess{
+		user: user, runner: runner, usesRunner: ec.ExecutionRunnerID != "",
+		sharedCodeBuddy: resolveCodeBuddyCredential(e.repo, user.ID).Sponsored,
+	}
+}
+
+func (a sopExecutorAccess) configured(kind string) bool {
+	if a.usesRunner {
+		if !a.runner.SupportsProvider(kind) {
+			return false
+		}
+		if domain.SupportsRunnerLogin(kind) && a.runner.RuntimeAuthMode(kind) == domain.RuntimeAuthLocal {
+			return true
+		}
+		if kind == "codebuddy" && strings.TrimSpace(a.user.CodeBuddyBaseURL) != "" && !a.runner.SupportsCodeBuddyBaseURL() {
+			return false
+		}
+	}
+	return a.user.HasExecutorCredential(kind) || kind == "codebuddy" && a.sharedCodeBuddy
+}
+
+func (a sopExecutorAccess) defaults() domain.AssistantDefaults {
+	preferred := a.user.AssistantDefaults
+	if ex, ok := repo.BuiltInExecutorForKind(preferred.Executor); ok && a.user.HasExecutorCredential(ex.Kind) && a.configured(ex.Kind) {
+		model := strings.TrimSpace(preferred.Model)
+		if model == "" {
+			model = a.firstSavedModel(ex.Kind)
+		}
+		return domain.AssistantDefaults{Executor: ex.ID, Model: model, Effort: preferred.Effort}
+	}
+	executors := repo.BuiltInExecutors()
+	for _, ex := range executors {
+		if a.user.HasExecutorCredential(ex.Kind) && a.configured(ex.Kind) {
+			return domain.AssistantDefaults{Executor: ex.ID, Model: a.firstSavedModel(ex.Kind)}
+		}
+	}
+	for _, ex := range executors {
+		if a.usesRunner && domain.SupportsRunnerLogin(ex.Kind) && a.runner.RuntimeAuthMode(ex.Kind) == domain.RuntimeAuthLocal && a.configured(ex.Kind) {
+			return domain.AssistantDefaults{Executor: ex.ID}
+		}
+	}
+	if a.configured("codebuddy") {
+		return domain.AssistantDefaults{Executor: "codebuddy"}
+	}
+	return domain.AssistantDefaults{}
+}
+
+func (a sopExecutorAccess) firstSavedModel(kind string) string {
+	var models []domain.CLIModel
+	switch kind {
+	case "codebuddy":
+		models = a.user.CodeBuddyModels
+	case "codex":
+		models = a.user.CodexModels
+	case "claude-code":
+		models = a.user.ClaudeCodeModels
+	default:
+		models = a.user.AgentCLICredentials[kind].Models
+	}
+	if len(models) != 0 {
+		return models[0].ID
+	}
+	return ""
+}
+
+func templateSOPRoleIDs(st *repo.Store, wf domain.WorkflowDefinition) map[string]bool {
+	source := wf.ID
+	if !wf.Generic {
+		source = ""
+		for _, tag := range wf.Tags {
+			if id, found := strings.CutPrefix(tag, "generic-source:"); found {
+				source = id
+				break
+			}
+		}
+	}
+	template, ok := st.GenericTemplateByWorkflow(source)
+	if !ok {
+		return nil
+	}
+	ids := make(map[string]bool, len(template.Agents))
+	for _, role := range template.Agents {
+		ids[role.ID] = true
+		if !wf.Generic {
+			ids[role.ID+"-"+wf.ProjectID] = true
+		}
+	}
+	return ids
+}
+
+// Legacy template roles were seeded with an executor but no model or effort.
+// A provider, model or effort selected on a role continues to take precedence.
+func followsSOPExecutorDefault(node domain.WorkflowNode, role domain.AgentDefinition) bool {
+	return node.Type == "agent" && node.ExecutorID == "" &&
+		(role.ExecutorID == "" || role.ExecutorID == "codebuddy") &&
+		strings.TrimSpace(role.Model) == "" && strings.TrimSpace(role.Effort) == ""
+}
+
+func (e *Engine) planSOPExecutors(wf domain.WorkflowDefinition, ec domain.TelemetryContext, preflight bool) (map[string]domain.AssistantDefaults, []SOPExecutorRequirement, error) {
+	roleIDs := templateSOPRoleIDs(e.repo, wf)
+	if len(roleIDs) == 0 && !preflight {
+		return nil, nil, nil
+	}
+	access := e.sopExecutorAccess(ec)
+	defaults := access.defaults()
+	selected := make(map[string]domain.AssistantDefaults)
+	requirements := make([]SOPExecutorRequirement, 0)
+	seen := make(map[string]bool)
+	for _, node := range wf.Nodes {
+		if node.Type != "agent" {
+			continue
+		}
+		role, ok := workflowAgent(e.repo, wf, node.AgentID)
+		if !ok {
+			return nil, nil, fmt.Errorf("agent %q not found", node.AgentID)
+		}
+		var ex domain.ExecutorDefinition
+		if roleIDs[role.ID] && role.ProjectID == wf.ProjectID && followsSOPExecutorDefault(node, role) {
+			if defaults.Executor == "" {
+				if !preflight {
+					return nil, nil, errors.New("请在个人配置中添加当前执行环境可用的执行器，再运行 SOP")
+				}
+			} else {
+				selected[node.ID] = defaults
+				ex, _ = repo.BuiltInExecutor(defaults.Executor)
+			}
+		} else if preflight {
+			var err error
+			ex, err = resolveNodeExecutor(e.repo, node, role)
+			if err != nil {
+				return nil, nil, err
+			}
+		}
+		if preflight && !seen[ex.Kind] {
+			seen[ex.Kind] = true
+			requirements = append(requirements, SOPExecutorRequirement{
+				Kind: ex.Kind, Name: ex.Name, Configured: ex.Kind != "" && access.configured(ex.Kind),
+			})
+		}
+	}
+	return selected, requirements, nil
+}
+
+// SOPExecutorRequirements checks the same executor configuration a manual
+// start uses. It only reports provider names and configuration status.
+func (e *Engine) SOPExecutorRequirements(wf domain.WorkflowDefinition, userID int64, projectID string) ([]SOPExecutorRequirement, error) {
+	wf, err := domain.AttachPreviewBuild(wf)
+	if err != nil {
+		return nil, err
+	}
+	ec := domain.TelemetryContext{ResponsibleUserID: userID, ProjectID: projectID}
+	e.selectSOPExecutionTarget(&ec)
+	_, requirements, err := e.planSOPExecutors(wf, ec, true)
+	return requirements, err
+}
+
+func workflowNodeExecutor(st *repo.Store, wf domain.WorkflowDefinition, node domain.WorkflowNode, role domain.AgentDefinition) (domain.ExecutorDefinition, error) {
+	if defaults, ok := wf.ExecutorDefaults[node.ID]; ok && followsSOPExecutorDefault(node, role) {
+		role.ExecutorID, role.Model, role.Effort = defaults.Executor, defaults.Model, defaults.Effort
+	}
+	return resolveNodeExecutor(st, node, role)
+}
