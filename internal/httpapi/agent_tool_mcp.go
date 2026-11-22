@@ -411,6 +411,9 @@ func (h *agentToolGateway) dispatch(ctx context.Context, session *AgentToolSessi
 		if session.Mode == AgentToolScheduled {
 			ctx = withAssistantExecMode(ctx, session.ExecMode)
 		}
+		if scope := scheduledAssetsFrom(session.ctx); scope.Version.ID != "" {
+			ctx = context.WithValue(ctx, scheduledAssetsKey{}, scope)
+		}
 		call := assistantMCPCall{Server: "agentflow", Tool: tool.UpstreamName, Arguments: args}
 		if session.canOpenConversationWorkspace() {
 			ctx = withConversationSession(ctx, session.ChatSessionID)

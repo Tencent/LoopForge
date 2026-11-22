@@ -80,6 +80,18 @@ func (h *assistantHandlers) putTask(c *gin.Context) {
 		c.JSON(404, gin.H{"error": "项目不存在"})
 		return
 	}
+	if !h.workbenchProjectAllowed(c, task.ProjectID, current.ID) {
+		c.JSON(403, gin.H{"error": "无权访问项目"})
+		return
+	}
+	if len(task.References) > 0 {
+		refs, err := h.normalizeScheduledReferences(task.ProjectID, task.References)
+		if err != nil {
+			c.JSON(400, gin.H{"error": err.Error()})
+			return
+		}
+		task.References = refs
+	}
 
 	if len(task.Notifications) > 0 || len(existing.Notifications) > 0 {
 		if h.notifications == nil || !h.notifications.access(c, task.ProjectID, true) {
@@ -221,6 +233,17 @@ func (h *assistantHandlers) executeAssistantTask(ctx context.Context, user domai
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
+	if refs, err := h.normalizeScheduledReferencesIn(ctx, task.ProjectID, task.References); err != nil {
+		task.LastStatus, task.LastError = "error", err.Error()
+		return err
+	} else {
+		task.References = refs
+	}
+	messageReferences, err := h.scheduledMessageReferences(task.ProjectID, task.References)
+	if err != nil {
+		task.LastStatus, task.LastError = "error", err.Error()
+		return err
+	}
 	ctx = withAssistantExecMode(ctx, assistantExecModeForApproval(AssistantApprovalAuto))
 	mode := assistantExecModeFrom(ctx)
 
@@ -270,7 +293,7 @@ func (h *assistantHandlers) executeAssistantTask(ctx context.Context, user domai
 	prevSession := strings.TrimSpace(task.SessionID)
 	sessionID := newAssistantSessionID()
 	now := time.Now().UTC()
-	prompt := assistantMessage{Role: "user", Content: scheduledAssistantPrompt(*task, mode), AuthorID: user.ID, AuthorName: user.LoginName, CreatedAt: now}
+	prompt := assistantMessage{Role: "user", Content: scheduledAssistantPrompt(*task, mode), AuthorID: user.ID, AuthorName: user.LoginName, CreatedAt: now, References: messageReferences}
 	pending := assistantConversation{ID: sessionID, Title: "定时 · " + task.Name, ProjectID: task.ProjectID, Model: model, Executor: cliEngine, ExecutionTarget: target, Source: origin.Source, TaskID: origin.TaskID, Messages: []assistantMessage{prompt}}
 	// A pinned conversation continues as long as it is still this job's
 	// conversation in this project; otherwise the run opens a new one, which
@@ -315,7 +338,7 @@ func (h *assistantHandlers) executeAssistantTask(ctx context.Context, user domai
 		// records; the session janitor trims old ones.
 		prevSession, origin.TaskID = "", ""
 	}
-	err := h.readScheduledTurn(user, task, g, len(req.Messages), prevSession, origin.TaskID)
+	err = h.readScheduledTurn(user, task, g, len(req.Messages), prevSession, origin.TaskID)
 	if err != nil && errors.Is(ctx.Err(), context.DeadlineExceeded) {
 		return fail(err.Error())
 	}
