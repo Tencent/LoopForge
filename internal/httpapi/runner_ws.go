@@ -47,15 +47,17 @@ var (
 )
 
 type runnerControlMessage struct {
-	ToolRequest       *domain.RunnerToolRequest       `json:"toolRequest,omitempty"`
-	ToolResponse      *domain.RunnerToolResponse      `json:"toolResponse,omitempty"`
-	Type              string                          `json:"type"`
-	TaskID            string                          `json:"taskId,omitempty"`
-	DesiredState      string                          `json:"desiredState,omitempty"`
-	ActiveTaskIDs     []string                        `json:"activeTaskIds,omitempty"`
-	RequestID         string                          `json:"requestId,omitempty"`
-	WorkspaceRequest  *domain.RunnerWorkspaceRequest  `json:"workspaceRequest,omitempty"`
-	WorkspaceResponse *domain.RunnerWorkspaceResponse `json:"workspaceResponse,omitempty"`
+	ToolRequest        *domain.RunnerToolRequest           `json:"toolRequest,omitempty"`
+	ToolResponse       *domain.RunnerToolResponse          `json:"toolResponse,omitempty"`
+	Type               string                              `json:"type"`
+	TaskID             string                              `json:"taskId,omitempty"`
+	DesiredState       string                              `json:"desiredState,omitempty"`
+	ActiveTaskIDs      []string                            `json:"activeTaskIds,omitempty"`
+	RequestID          string                              `json:"requestId,omitempty"`
+	WorkspaceRequest   *domain.RunnerWorkspaceRequest      `json:"workspaceRequest,omitempty"`
+	WorkspaceResponse  *domain.RunnerWorkspaceResponse     `json:"workspaceResponse,omitempty"`
+	ObserveImageBuild  bool                                `json:"observeImageBuild,omitempty"`
+	ImageBuildProgress *domain.WorkspaceImageBuildProgress `json:"imageBuildProgress,omitempty"`
 }
 
 type runnerWorkspaceForwarder func(context.Context, string, domain.RunnerWorkspaceRequest) (domain.RunnerWorkspaceResponse, error)
@@ -83,8 +85,9 @@ type runnerControlHub struct {
 }
 
 type runnerWorkspaceWaiter struct {
-	conn   *runnerControlConn
-	result chan domain.RunnerWorkspaceResponse
+	conn          *runnerControlConn
+	result        chan domain.RunnerWorkspaceResponse
+	imageProgress func(domain.WorkspaceImageBuildProgress)
 }
 
 type runnerControlConn struct {
@@ -250,11 +253,12 @@ func (h *runnerControlHub) send(ctx context.Context, conn *runnerControlConn, re
 	}
 	// Older runners ignore the optional workspace field when decoding JSON.
 	request.GitSSHKnownHosts = runnerWorkspaceSSHKnownHosts(gitwork.WithSSHKnownHostsLookup(ctx, h.sshHostLookup), request)
+	observeImageBuild := runtime.DockerBuildProgressObserver(ctx)
 	h.mu.Lock()
 	h.nextID++
 	requestID := fmt.Sprintf("workspace-%d", h.nextID)
 	result := make(chan domain.RunnerWorkspaceResponse, 1)
-	h.pending[requestID] = runnerWorkspaceWaiter{conn: conn, result: result}
+	h.pending[requestID] = runnerWorkspaceWaiter{conn: conn, result: result, imageProgress: observeImageBuild}
 	h.mu.Unlock()
 	defer func() {
 		h.mu.Lock()
@@ -268,7 +272,7 @@ func (h *runnerControlHub) send(ctx context.Context, conn *runnerControlConn, re
 	default:
 	}
 	select {
-	case conn.send <- runnerControlMessage{Type: "workspace.request", RequestID: requestID, WorkspaceRequest: &request}:
+	case conn.send <- runnerControlMessage{Type: "workspace.request", RequestID: requestID, WorkspaceRequest: &request, ObserveImageBuild: observeImageBuild != nil}:
 	case <-conn.done:
 		return domain.RunnerWorkspaceResponse{}, false, errRunnerWorkspaceUnavailable
 	case <-ctx.Done():
@@ -280,18 +284,34 @@ func (h *runnerControlHub) send(ctx context.Context, conn *runnerControlConn, re
 	case <-conn.done:
 		return domain.RunnerWorkspaceResponse{}, true, errRunnerWorkspaceUnavailable
 	case <-ctx.Done():
-		// Chunked exports hold the runner's workspace fence. End the remote
-		// request too; cancelling only our waiter would strand the next turn.
-		if domain.IsWorkspaceCheckpointTransferOperation(request.Operation) || request.Operation == domain.RunnerWorkspaceOperationCheckpoint {
-			timer := time.NewTimer(time.Second)
+		// Checkpoints and preparation hold the runner's workspace fence.
+		// End the remote work too so the next turn can use the workspace.
+		if domain.IsCancelableRunnerWorkspaceOperation(request.Operation) {
+			message := runnerControlMessage{Type: "workspace.cancel", RequestID: requestID}
 			select {
-			case conn.send <- runnerControlMessage{Type: "workspace.cancel", RequestID: requestID}:
+			case conn.send <- message:
 			case <-conn.done:
-			case <-timer.C:
+			default:
+				// Keep the cancellation queued behind its request even when
+				// the socket is busy. Disconnect also cancels the runner work.
+				go func() {
+					select {
+					case conn.send <- message:
+					case <-conn.done:
+					}
+				}()
 			}
-			timer.Stop()
 		}
 		return domain.RunnerWorkspaceResponse{}, true, ctx.Err()
+	}
+}
+
+func (h *runnerControlHub) reportImageBuild(conn *runnerControlConn, requestID string, progress domain.WorkspaceImageBuildProgress) {
+	h.mu.Lock()
+	waiter, ok := h.pending[requestID]
+	h.mu.Unlock()
+	if ok && waiter.conn == conn && waiter.imageProgress != nil {
+		waiter.imageProgress(progress)
 	}
 }
 
@@ -375,6 +395,7 @@ func (h *runnerControlHub) closeWhenIdle(limit time.Duration) {
 }
 
 const runnerWorkspaceRelayPath = "/internal/runner-workspace"
+const runnerWorkspaceRelayStream = "application/x-ndjson"
 
 // runnerWorkspaceRelayLimit bounds relayed bodies; the runner socket itself
 // accepts 20 MiB messages, the envelope adds a little JSON around them.
@@ -383,6 +404,12 @@ const runnerWorkspaceRelayLimit = 24 << 20
 type runnerWorkspaceRelayRequest struct {
 	RunnerID string                        `json:"runnerId"`
 	Request  domain.RunnerWorkspaceRequest `json:"request"`
+}
+
+type runnerWorkspaceRelayUpdate struct {
+	Progress *domain.WorkspaceImageBuildProgress `json:"progress,omitempty"`
+	Response *domain.RunnerWorkspaceResponse     `json:"response,omitempty"`
+	Error    string                              `json:"error,omitempty"`
 }
 
 // handleRunnerWorkspaceRelay serves workspace RPCs that a handed-over
@@ -400,6 +427,10 @@ func handleRunnerWorkspaceRelay(e *engine.Engine, hub *runnerControlHub) gin.Han
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
 			return
 		}
+		if c.GetHeader("Accept") == runnerWorkspaceRelayStream {
+			streamRunnerWorkspaceRelay(c, hub, input)
+			return
+		}
 		response, err := hub.requestRelayed(c.Request.Context(), input.RunnerID, input.Request)
 		if err != nil {
 			status := http.StatusServiceUnavailable
@@ -411,6 +442,37 @@ func handleRunnerWorkspaceRelay(e *engine.Engine, hub *runnerControlHub) gin.Han
 		}
 		c.JSON(http.StatusOK, response)
 	}
+}
+
+func streamRunnerWorkspaceRelay(c *gin.Context, hub *runnerControlHub, input runnerWorkspaceRelayRequest) {
+	ctx := c.Request.Context()
+	c.Header("Content-Type", runnerWorkspaceRelayStream)
+	c.Header("X-Accel-Buffering", "no")
+	c.Status(http.StatusOK)
+	encoder := json.NewEncoder(c.Writer)
+	send := func(update runnerWorkspaceRelayUpdate) {
+		if ctx.Err() == nil && encoder.Encode(update) == nil {
+			c.Writer.Flush()
+		}
+	}
+	var mu sync.Mutex
+	finished := false
+	progressCtx := runtime.WithDockerBuildProgress(ctx, func(progress domain.WorkspaceImageBuildProgress) {
+		mu.Lock()
+		defer mu.Unlock()
+		if !finished {
+			send(runnerWorkspaceRelayUpdate{Progress: &progress})
+		}
+	})
+	response, err := hub.requestRelayed(progressCtx, input.RunnerID, input.Request)
+	mu.Lock()
+	defer mu.Unlock()
+	finished = true
+	if err != nil {
+		send(runnerWorkspaceRelayUpdate{Error: err.Error()})
+		return
+	}
+	send(runnerWorkspaceRelayUpdate{Response: &response})
 }
 
 // relayRunnerWorkspaceToSuccessor reaches runners through the process that
@@ -432,6 +494,10 @@ func relayRunnerWorkspaceToSuccessor(e *engine.Engine) runnerWorkspaceForwarder 
 		}
 		req.Header.Set(engine.ControlTokenHeader, token)
 		req.Header.Set("Content-Type", "application/json")
+		observeImageBuild := runtime.DockerBuildProgressObserver(ctx)
+		if observeImageBuild != nil {
+			req.Header.Set("Accept", runnerWorkspaceRelayStream)
+		}
 		res, err := http.DefaultClient.Do(req)
 		if err != nil {
 			if ctx.Err() != nil {
@@ -451,11 +517,32 @@ func relayRunnerWorkspaceToSuccessor(e *engine.Engine) runnerWorkspaceForwarder 
 			}
 			return domain.RunnerWorkspaceResponse{}, fmt.Errorf("%w: successor returned HTTP %d %s", errRunnerWorkspaceUnavailable, res.StatusCode, strings.TrimSpace(failure.Error))
 		}
+		decoder := json.NewDecoder(reader)
+		if observeImageBuild != nil && res.Header.Get("Content-Type") == runnerWorkspaceRelayStream {
+			return readRunnerWorkspaceRelayStream(decoder, observeImageBuild)
+		}
 		var response domain.RunnerWorkspaceResponse
-		if err := json.NewDecoder(reader).Decode(&response); err != nil {
+		if err := decoder.Decode(&response); err != nil {
 			return domain.RunnerWorkspaceResponse{}, fmt.Errorf("relay to successor: %w", err)
 		}
 		return response, nil
+	}
+}
+
+func readRunnerWorkspaceRelayStream(decoder *json.Decoder, observe func(domain.WorkspaceImageBuildProgress)) (domain.RunnerWorkspaceResponse, error) {
+	for {
+		var update runnerWorkspaceRelayUpdate
+		if err := decoder.Decode(&update); err != nil {
+			return domain.RunnerWorkspaceResponse{}, fmt.Errorf("relay to successor: %w", err)
+		}
+		switch {
+		case update.Progress != nil:
+			observe(*update.Progress)
+		case update.Response != nil:
+			return *update.Response, nil
+		default:
+			return domain.RunnerWorkspaceResponse{}, fmt.Errorf("%w: successor: %s", errRunnerWorkspaceUnavailable, update.Error)
+		}
 	}
 }
 
@@ -612,6 +699,10 @@ func (h *runnersHandlers) runnerControlConnect(c *gin.Context) {
 		}
 		if input.Type == "workspace.response" && input.WorkspaceResponse != nil {
 			h.runnerControls.resolveWorkspace(conn, input.RequestID, *input.WorkspaceResponse)
+			continue
+		}
+		if input.Type == "workspace.image_progress" && input.ImageBuildProgress != nil {
+			h.runnerControls.reportImageBuild(conn, input.RequestID, *input.ImageBuildProgress)
 			continue
 		}
 		if input.Type != "hello" {

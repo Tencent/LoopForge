@@ -193,12 +193,30 @@ export function credentialHint(text) {
   return null;
 }
 
-export function openCredentialSettings(field, sshRemote) {
-  const credential = CREDENTIALS[field] ? field : "";
-  if (window.parent !== window)
+export function openCredentialSettings(field, sshRemote, { returnToQuickAccess = false } = {}) {
+  const credential = field === "executors" || Object.hasOwn(CREDENTIALS, field) ? field : "";
+  const resume = credential === "executors" && returnToQuickAccess;
+  if (window.parent !== window) {
     window.parent.postMessage(
-      { type: "agentflow-chat-open-view", view: "settings", credential, ...(credential === "gitSshKey" && sshRemote ? { sshRemote } : {}) },
+      {
+        type: "agentflow-chat-open-view", view: "settings", credential,
+        ...(credential === "gitSshKey" && sshRemote ? { sshRemote } : {}),
+        ...(resume ? { returnToQuickAccess: true } : {}),
+      },
       location.origin,
     );
-  else location.href = "/#/settings";
+  } else if (resume) {
+    const current = new URL(location.href);
+    current.searchParams.set("quickAccess", "1");
+    history.replaceState(history.state, "", current);
+    const settings = new URL("/", location.origin);
+    for (const [key, source] of [["projectId", "projectId"], ["chatSession", "session"]]) {
+      const value = current.searchParams.get(source);
+      if (value) settings.searchParams.set(key, value);
+    }
+    settings.hash = "/settings/executors/quick-access";
+    location.assign(settings);
+  } else {
+    location.href = credential === "executors" ? "/#/settings/executors" : "/#/settings";
+  }
 }

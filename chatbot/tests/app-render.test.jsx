@@ -71,6 +71,47 @@ vi.mock("mermaid", () => ({
 import App from "../src/App.jsx";
 
 describe("App", () => {
+  test("pages the transcript without losing the reading position or original message indexes", () => {
+    const original = { activeId: chat.activeId, session: chat.session };
+    const messages = Array.from({ length: 85 }, (_, index) => ({
+      role: "user", content: "Message " + index,
+    }));
+    const open = (id, rows) => Object.assign(chat, { activeId: id, session: { id, messages: rows } });
+    const more = () => screen.queryByRole("button", { name: "显示更早的消息" });
+    open("long", messages.slice(0, 39));
+    try {
+      const view = render(<App />);
+      const rows = () => [...view.container.querySelectorAll("[data-message-index]")];
+      expect(rows()).toHaveLength(39);
+      expect(more()).toBeNull();
+      open("long", messages);
+      view.rerender(<App />);
+      expect(rows()).toHaveLength(40);
+      expect(rows()[0].dataset.messageIndex).toBe("45");
+      const scroller = view.container.querySelector(".message-scroll");
+      Object.defineProperty(scroller, "scrollHeight", { value: 2000 });
+      fireEvent.scroll(scroller, { target: { scrollTop: 100 } });
+      open("long", [...messages, { role: "assistant", content: "New reply" }]);
+      view.rerender(<App />);
+      expect(rows()[0].dataset.messageIndex).toBe("45");
+      expect(rows().at(-1)).toHaveTextContent("New reply");
+      fireEvent.click(more());
+      expect(rows()[0].dataset.messageIndex).toBe("5");
+      fireEvent.click(within(rows()[0]).getByRole("button", { name: "编辑消息" }));
+      expect(within(screen.getByRole("dialog")).getByRole("textbox")).toHaveValue("Message 5");
+      fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "关闭" }));
+      fireEvent.click(more());
+      expect(rows()).toHaveLength(86);
+      expect(more()).toBeNull();
+      open("other", messages);
+      view.rerender(<App />);
+      expect(rows()).toHaveLength(40);
+      expect(rows()[0].dataset.messageIndex).toBe("45");
+    } finally {
+      Object.assign(chat, original);
+    }
+  });
+
   test("pauses without showing an intermediate stopping state", () => {
     const previous = { ...chat };
     Object.assign(chat, { activeId: "stopping-chat", busy: true, stopping: true,
@@ -897,10 +938,13 @@ describe("App", () => {
     Object.assign(chat, previous);
   });
 
-  test("covers credential, local upload, read-only, and interrupted states", async () => {
+  test("offers executor setup before the first chat, along with local upload and read-only states", async () => {
     const previous = { ...chat };
     Object.assign(chat, {
-      user: { id: "u1", loginName: "tester", codexApiKeyConfigured: true },
+      user: { id: "u1", loginName: "tester" },
+      executor: "",
+      executors: [],
+      machinesReady: true,
       activeId: null,
       session: null,
       sessions: [],
@@ -913,11 +957,14 @@ describe("App", () => {
       error: "",
     });
     const view = render(<App />);
-    expect(screen.getByText(/当前执行器 CodeBuddy 需要先配置 CodeBuddy API Key/)).toBeInTheDocument();
-    expect(screen.getByText(/也可以在输入框下方把执行器切换过去/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "新增执行器" })).toBeInTheDocument();
+    expect(screen.queryByText(/CodeBuddy API Key/)).toBeNull();
+    expect(screen.getByRole("button", { name: "选择模型" })).toBeDisabled();
     chat.executor = "codex";
+    chat.executors = previous.executors.filter(item => item.id === "codex");
     view.rerender(<App />);
-    expect(screen.queryByText(/当前执行器 CodeBuddy/)).toBeNull();
+    expect(screen.queryByRole("button", { name: "新增执行器" })).toBeNull();
+    expect(screen.getByRole("button", { name: "CLI" })).toHaveTextContent("Codex");
     chat.executor = "codebuddy";
     chat.local = true;
     view.rerender(<App />);

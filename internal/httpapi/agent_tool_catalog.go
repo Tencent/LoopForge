@@ -302,6 +302,9 @@ func (h *agentToolGateway) buildCatalog(ctx context.Context, session *AgentToolS
 	if session == nil {
 		return nil
 	}
+	if session.sopDesigner() {
+		return sopDesignerCatalog(session)
+	}
 	session.mu.Lock()
 	if session.terminalOnly || session.Mode == AgentToolReport {
 		session.mu.Unlock()
@@ -312,9 +315,13 @@ func (h *agentToolGateway) buildCatalog(ctx context.Context, session *AgentToolS
 		session.mu.Unlock()
 		return out
 	}
+	clarifyRepos := len(session.clarifyRepos) > 0
 	session.mu.Unlock()
 
 	out := make([]agentToolDescriptor, 0, 16)
+	if session.Mode == AgentToolClarify && clarifyRepos {
+		out = append(out, clarifySourceTools...)
+	}
 	seen := map[string]bool{}
 	for _, server := range session.MCPServers {
 		kind := classifyClarifyMCP(server)
@@ -538,4 +545,35 @@ func mcpToolTextResult(text string, isError bool) map[string]any {
 		"content": []map[string]any{{"type": "text", "text": text}},
 		"isError": isError,
 	}
+}
+
+// sopDesignerCatalog is the SOP designer's whole tool set: the read-only
+// platform tools it needs to look up roles and SOPs, the schema reader and the
+// terminal reply tool. External MCPs, workspace and browser tools are left
+// out, so a designer turn can only end in a workflows_save draft.
+func sopDesignerCatalog(session *AgentToolSession) []agentToolDescriptor {
+	session.mu.Lock()
+	terminalOnly := session.terminalOnly
+	session.mu.Unlock()
+	if terminalOnly {
+		return terminalToolDescriptors(session.Mode, session.ExecMode)
+	}
+	out := make([]agentToolDescriptor, 0, len(sopDesignerReadTools)+3)
+	for _, name := range sopDesignerReadTools {
+		op, ok := assistantPublicOperations[name]
+		if !ok || !op.ReadOnly {
+			continue
+		}
+		schema, _ := json.Marshal(platformToolInputSchema(op))
+		out = append(out, agentToolDescriptor{
+			Name:         namespaceAgentTool("agentflow", name),
+			Description:  op.Description + " (" + op.Method + " " + op.Path + ")",
+			InputSchema:  schema,
+			Kind:         "agentflow",
+			UpstreamName: name,
+		})
+	}
+	out = append(out, agentToolDescriptor{Name: "workbench_tool_schema", Description: "读取平台工具的准确参数契约。提交 workflows_save 草稿前先读取它的 schema；不要猜字段或参数包装。", InputSchema: json.RawMessage(`{"type":"object","properties":{"name":{"type":"string"}},"required":["name"],"additionalProperties":false}`), Kind: "workbench"})
+	out = append(out, terminalToolDescriptors(session.Mode, session.ExecMode)...)
+	return out
 }

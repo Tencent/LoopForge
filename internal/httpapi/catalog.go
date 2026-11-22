@@ -146,7 +146,7 @@ func (h *catalogHandlers) repositories(c *gin.Context) {
 		h.saveRepository(c, v)
 		return
 	}
-	// One pasted repository reference (web / SSH / clone / git clone / group/repo)
+	// One pasted repository reference (web / SSH / clone / git clone)
 	// An unknown HTTPS host is a Git transport, not an unknown hosting adapter.
 	_, knownHost := domain.ParseRepositoryURL(sshReference)
 	if v.Provider == domain.RepositoryProviderHTTPS || !knownHost && strings.HasPrefix(strings.TrimPrefix(sshReference, "git clone "), "https://") {
@@ -182,7 +182,7 @@ func (h *catalogHandlers) repositories(c *gin.Context) {
 		h.saveRepository(c, v)
 		return
 	}
-	// One pasted repository reference (web / SSH / clone / git clone / group/repo)
+	// One pasted repository reference (web / SSH / clone / git clone)
 	// is enough. Prefer repoUrl so an SSH paste keeps an SSH clone URL.
 	var parsed domain.GongfengRepoInfo
 	var parsedOK bool
@@ -197,7 +197,7 @@ func (h *catalogHandlers) repositories(c *gin.Context) {
 	if primary != "" {
 		info, ok := domain.ParseRepositoryURL(primary)
 		if !ok {
-			c.JSON(400, gin.H{"error": "仓库 URL 无法识别，请提供 GitHub 链接或 Git SSH 克隆地址"})
+			c.JSON(400, gin.H{"error": "请填写完整的 GitHub、HTTPS 或 Git SSH 仓库地址"})
 			return
 		}
 		if body.RepoURL != "" && body.URL != "" {
@@ -218,6 +218,12 @@ func (h *catalogHandlers) repositories(c *gin.Context) {
 	if v.GongfengProjectID != "" {
 		if info, ok := domain.ParseRepositoryURL(v.GongfengProjectID); ok {
 			v.GongfengProjectID = info.Project
+		} else if info, ok := domain.ParseGongfengRepoURL(v.GongfengProjectID); ok && !strings.ContainsAny(v.GongfengProjectID, ":@") {
+			// An explicit legacy project ID is different from a pasted repoUrl.
+			v.GongfengProjectID = info.Project
+			if !parsedOK {
+				parsed, parsedOK = info, true
+			}
 		} else if !strings.HasPrefix(v.GongfengProjectID, "github:") && !strings.HasPrefix(v.GongfengProjectID, "codeup:") && !domain.IsSafeGongfengProjectID(v.GongfengProjectID) {
 			c.JSON(400, map[string]string{"error": "仓库链接无法识别：请提供有效的 GitHub 仓库地址"})
 			return
@@ -239,7 +245,7 @@ func (h *catalogHandlers) repositories(c *gin.Context) {
 	}
 	if v.GongfengProjectID != "" {
 		if v.WebURL == "" {
-			v.WebURL = "https://" + domain.GongfengRepoHost + "/" + v.GongfengProjectID
+			v.WebURL = "https://" + domain.GongfengRepositoryHost() + "/" + v.GongfengProjectID
 		}
 		if v.CloneURL == "" {
 			v.CloneURL = v.WebURL + ".git"
@@ -346,15 +352,7 @@ func (h *catalogHandlers) agents(c *gin.Context) {
 			if !h.requireProjectWriter(c, v.ProjectID) {
 				return
 			}
-			if strings.TrimSpace(v.ExecutorID) == "" {
-				v.ExecutorID = "codebuddy"
-			}
-			builtIn, ok := repo.BuiltInExecutor(v.ExecutorID)
-			if !ok {
-				c.JSON(http.StatusBadRequest, map[string]string{"error": "不支持的 CLI：" + v.ExecutorID})
-				return
-			}
-			if err := domain.ValidateAgentEffort(v.Effort, builtIn.Kind); err != nil {
+			if err := validateCatalogAgentExecutor(&v); err != nil {
 				c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
 				return
 			}
@@ -379,6 +377,25 @@ func (h *catalogHandlers) agents(c *gin.Context) {
 			c.JSON(200, stored)
 		}
 	}
+}
+
+func validateCatalogAgentExecutor(agent *domain.AgentDefinition) error {
+	agent.ExecutorID = strings.TrimSpace(agent.ExecutorID)
+	agent.Model = strings.TrimSpace(agent.Model)
+	agent.Effort = strings.TrimSpace(agent.Effort)
+	if agent.ExecutorID == "" {
+		if (agent.Model == "" || agent.Model == "default") && agent.Effort == "" {
+			agent.Model = ""
+			return nil
+		}
+		// Old API callers could pin a CodeBuddy model or effort using only its ID.
+		agent.ExecutorID = "codebuddy"
+	}
+	executor, ok := repo.BuiltInExecutor(agent.ExecutorID)
+	if !ok {
+		return fmt.Errorf("不支持的 CLI：%s", agent.ExecutorID)
+	}
+	return domain.ValidateAgentEffort(agent.Effort, executor.Kind)
 }
 
 func filterAgentsForProject(agents []domain.AgentDefinition, projectID string) []domain.AgentDefinition {
@@ -1070,6 +1087,12 @@ func (h *catalogHandlers) workflows(c *gin.Context) {
 				return
 			}
 
+			if id := v.Preview.SelectedExecutorID(); v.Preview.Static() && id != "" {
+				if _, supported := repo.BuiltInExecutor(id); !supported {
+					c.JSON(http.StatusBadRequest, gin.H{"error": "前端预览使用了不支持的 CLI：" + id})
+					return
+				}
+			}
 			if err := domain.ValidateWorkflowPreparation(v); err != nil {
 				c.JSON(400, gin.H{"error": err.Error()})
 				return
@@ -1246,6 +1269,25 @@ func (h *catalogHandlers) workflow(c *gin.Context) {
 			return
 		}
 		c.JSON(200, stored)
+	case "/api/workflows/:id/executor-requirements":
+		if !v.Generic {
+			c.JSON(http.StatusNotFound, gin.H{"error": "generic template not found"})
+			return
+		}
+		var userID int64
+		projectID := strings.TrimSpace(c.Query("projectId"))
+		if user, ok := h.requestUser(c.Request, true); ok {
+			userID = user.ID
+		} else if project, ok := h.repo.Project(projectID); ok && !authRequired() {
+			userID = project.OwnerID
+		}
+		rows, err := h.engine.SOPExecutorRequirements(v, userID, projectID)
+		if err != nil {
+			respond(c, err)
+			return
+		}
+		c.Header("Cache-Control", "private, no-store")
+		c.JSON(http.StatusOK, rows)
 	case "/api/workflows/:id/agents":
 		template, ok := h.repo.GenericTemplateByWorkflow(id)
 		if !ok {
@@ -1264,15 +1306,7 @@ func (h *catalogHandlers) workflow(c *gin.Context) {
 		if !decode(c, &agent) {
 			return
 		}
-		if strings.TrimSpace(agent.ExecutorID) == "" {
-			agent.ExecutorID = "codebuddy"
-		}
-		builtIn, ok := repo.BuiltInExecutor(agent.ExecutorID)
-		if !ok {
-			c.JSON(http.StatusBadRequest, map[string]string{"error": "不支持的 CLI：" + agent.ExecutorID})
-			return
-		}
-		if err := domain.ValidateAgentEffort(agent.Effort, builtIn.Kind); err != nil {
+		if err := validateCatalogAgentExecutor(&agent); err != nil {
 			c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
@@ -1312,10 +1346,11 @@ func (h *catalogHandlers) workflow(c *gin.Context) {
 		c.JSON(200, stored)
 	case "/api/workflows/:id/clone":
 		var req struct {
-			ID        string `json:"id"`
-			Name      string `json:"name"`
-			Owner     string `json:"owner"`
-			ProjectID string `json:"projectId"`
+			ID               string `json:"id"`
+			Name             string `json:"name"`
+			Owner            string `json:"owner"`
+			ProjectID        string `json:"projectId"`
+			SandboxProfileID string `json:"sandboxProfileId"`
 		}
 		if !decode(c, &req) {
 			return
@@ -1331,12 +1366,23 @@ func (h *catalogHandlers) workflow(c *gin.Context) {
 			c.JSON(http.StatusConflict, map[string]string{"error": "该 ID 与平台通用模板冲突，请换一个 ID"})
 			return
 		}
-		if strings.TrimSpace(req.ProjectID) == "" {
-			req.ProjectID = v.ProjectID
+		req.ProjectID = strings.TrimSpace(req.ProjectID)
+		if req.ProjectID == "" {
+			req.ProjectID = strings.TrimSpace(v.ProjectID)
 		}
 		taken, _ := h.repo.Workflow(req.ID)
-		if !h.requireProjectWriter(c, strings.TrimSpace(req.ProjectID), taken.ProjectID) {
+		if !h.requireProjectWriter(c, req.ProjectID, taken.ProjectID) {
 			return
+		}
+		if req.SandboxProfileID != "" {
+			profile, ok := h.repo.Sandbox(req.SandboxProfileID)
+			if !ok || !domain.CatalogVisible(profile.ProjectID, profile.Shared, req.ProjectID) {
+				c.JSON(http.StatusBadRequest, map[string]string{"error": "所选运行沙箱已不可用，请刷新后重新选择。"})
+				return
+			}
+			v.SandboxProfileID = profile.ID
+		} else if v.Generic {
+			v.SandboxProfileID = h.genericTemplateSandbox(v.SandboxProfileID, req.ProjectID)
 		}
 		if v.Generic {
 			stored, err := h.adoptGenericWorkflow(v, req.ID, req.Name, req.Owner, req.ProjectID)
@@ -1348,7 +1394,7 @@ func (h *catalogHandlers) workflow(c *gin.Context) {
 			return
 		}
 		v.ID, v.Name, v.Owner = req.ID, req.Name, req.Owner
-		v.ProjectID = strings.TrimSpace(req.ProjectID)
+		v.ProjectID = req.ProjectID
 		v.Shared = false
 		v.Status, v.Version, v.Revision = "draft", 1, 0
 		v.CreatedAt, v.UpdatedAt = time.Time{}, time.Time{}

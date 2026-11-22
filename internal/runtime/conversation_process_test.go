@@ -55,8 +55,33 @@ func TestConversationProcessBidirectionalAndRootFence(t *testing.T) {
 	if !strings.Contains(output, filepath.Join(root, "ws/a")) || !strings.Contains(output, "err") {
 		t.Fatalf("duplex output: %s", output)
 	}
+	if _, err = p.Handle(ctx, root, "", nil, ConversationProcessRequest{Operation: "write", ID: r.ID, EOF: true}, nil); err != nil {
+		t.Fatalf("stdin EOF after process completion: %v", err)
+	}
 	if _, err = p.Handle(ctx, root, "", nil, ConversationProcessRequest{Operation: "prepare"}, nil); err != nil {
 		t.Fatal("root released before completion:", err)
+	}
+}
+
+func TestConversationProcessEOFAfterExit(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	root := t.TempDir()
+	pool := &ConversationProcessPool{}
+	start, err := pool.Handle(ctx, root, "", nil, ConversationProcessRequest{
+		Operation: "start",
+		Command:   &ConversationCommand{Argv: []string{"sh", "-c", "echo done"}, Interactive: true},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if output := conversationPoll(t, pool, ctx, root, start.ID); strings.TrimSpace(output) != "done" {
+		t.Fatalf("finished process output = %q", output)
+	}
+	if _, err := pool.Handle(ctx, root, "", nil, ConversationProcessRequest{
+		Operation: "write", ID: start.ID, EOF: true,
+	}, nil); err != nil {
+		t.Fatalf("close stdin after process exit: %v", err)
 	}
 }
 
@@ -100,6 +125,28 @@ func TestConversationCLIVersionPreservesOutputQuota(t *testing.T) {
 			}
 			return
 		}
+	}
+}
+
+func TestConversationProcessStopsAfterTerminalResult(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 8*time.Second)
+	defer cancel()
+	root := t.TempDir()
+	pool := &ConversationProcessPool{}
+	script := `printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"result":"done"}'; exec sleep 60`
+	start := time.Now()
+	started, err := pool.Handle(ctx, root, "", nil, ConversationProcessRequest{
+		Operation: "start", Command: &ConversationCommand{Argv: []string{"sh", "-c", script}},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	output := conversationPoll(t, pool, ctx, root, started.ID)
+	if !strings.Contains(output, `"result":"done"`) {
+		t.Fatalf("output = %q", output)
+	}
+	if elapsed := time.Since(start); elapsed > 6*time.Second {
+		t.Fatalf("turn stayed running for %s after the terminal result", elapsed)
 	}
 }
 

@@ -18,6 +18,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"agentflow/internal/domain"
@@ -285,6 +286,10 @@ func (p *ConversationProcessPool) Handle(ctx context.Context, root, workspace st
 		defer stopWrite()
 		if req.EOF {
 			err = input.Close()
+			// A short-lived CLI can exit before the client relays its final EOF.
+			if errors.Is(err, os.ErrClosed) || errors.Is(err, io.ErrClosedPipe) {
+				err = nil
+			}
 		} else {
 			_, err = io.WriteString(input, conversationRemap(req.Data, req.SourceRoot, root))
 		}
@@ -360,6 +365,24 @@ func conversationAssetPath(root, target string) error {
 		}
 	}
 	return nil
+}
+
+// conversationTerminalResultDrain is how long a CLI may linger after its
+// stream-json terminal result. ExecutorRunner uses the same window before it
+// stops hook processes that outlive the protocol result.
+const conversationTerminalResultDrain = 2500 * time.Millisecond
+
+// conversationStdoutTerminal reports a Claude-style stream-json result frame,
+// which Cursor, CodeBuddy and the other agent CLIs emit when the turn is over.
+func conversationStdoutTerminal(line string) bool {
+	line = strings.TrimSpace(line)
+	if line == "" || line[0] != '{' {
+		return false
+	}
+	var event struct {
+		Type string `json:"type"`
+	}
+	return json.Unmarshal([]byte(line), &event) == nil && event.Type == "result"
 }
 
 // IDs are generated before dispatch, so cancellation can address a start whose
@@ -445,6 +468,9 @@ func (p *ConversationProcessPool) start(ctx context.Context, root, workspace str
 	var release func()
 	var stdin io.Closer
 	var cleanupLogin func() error
+	// Set once a terminal result line has been followed by the drain window
+	// and this process is stopped so a lingering CLI cannot pin the turn.
+	var stopAfterTerminalResult atomic.Bool
 	finish := func(runErr error, notStarted bool) {
 		cancel()
 		// Cancellation can skip the shell EXIT trap. Clean ephemeral ZCode
@@ -475,6 +501,12 @@ func (p *ConversationProcessPool) start(ctx context.Context, root, workspace str
 			proc.notStarted = notStarted
 		}
 		proc.gitScrubbed = gitScrubbed
+		// The process was stopped because its protocol already emitted a
+		// terminal result. The kill is not a failed turn; the result line is.
+		if runErr != nil && stopAfterTerminalResult.Load() {
+			runErr = nil
+			notStarted = false
+		}
 		if runErr != nil && proc.err == "" {
 			proc.err = runErr.Error()
 			proc.notStarted = notStarted
@@ -704,6 +736,28 @@ func (p *ConversationProcessPool) start(ctx context.Context, root, workspace str
 				}
 			}
 		}()
+		// Hook interpreters and browser helpers can keep the CLI alive after
+		// it has already emitted its terminal result. Same drain as
+		// ExecutorRunner: let the trailing output land, then stop the process
+		// so the turn can be marked finished and a queued follow-up can send.
+		terminalResult := make(chan struct{})
+		var terminalOnce sync.Once
+		go func() {
+			select {
+			case <-terminalResult:
+				timer := time.NewTimer(conversationTerminalResultDrain)
+				defer timer.Stop()
+				select {
+				case <-timer.C:
+					stopAfterTerminalResult.Store(true)
+					cancel()
+				case <-watchDone:
+				case <-procCtx.Done():
+				}
+			case <-watchDone:
+			case <-procCtx.Done():
+			}
+		}()
 		sink := func(ev domain.TelemetryEvent) {
 			if ev.Name != "process.stdout" && ev.Name != "process.stderr" {
 				return
@@ -717,6 +771,9 @@ func (p *ConversationProcessPool) start(ctx context.Context, root, workspace str
 				cancel()
 			}
 			proc.mu.Unlock()
+			if ev.Name == "process.stdout" && conversationStdoutTerminal(ev.Message) {
+				terminalOnce.Do(func() { close(terminalResult) })
+			}
 			select {
 			case proc.wake <- struct{}{}:
 			default:

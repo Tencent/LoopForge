@@ -149,6 +149,7 @@ func spanEvent(span otlpSpan, attrs map[string]string) domain.TelemetryEvent {
 	if span.Status.Code == 2 {
 		level = "error"
 	}
+	provider := otlpProvider(attrs)
 	return domain.TelemetryEvent{
 		Category:   category,
 		Name:       eventName,
@@ -157,9 +158,23 @@ func spanEvent(span otlpSpan, attrs map[string]string) domain.TelemetryEvent {
 		Message:    msg,
 		Timestamp:  end,
 		ParentID:   span.ParentSpanID,
-		Source:     domain.TelemetrySource{Layer: "executor", Adapter: AdapterOTEL, Provider: "codebuddy", Protocol: "otlp"},
+		Provider:   provider,
+		Source:     domain.TelemetrySource{Layer: "executor", Adapter: AdapterOTEL, Provider: provider, Protocol: "otlp"},
 		Attributes: attrAny,
 	}
+}
+
+func otlpProvider(attrs map[string]string) string {
+	if provider := firstNonEmpty(attrs["agentflow.executor_kind"], attrs["gen_ai.provider.name"], attrs["gen_ai.system"]); provider != "" {
+		return provider
+	}
+	if service := attrs["service.name"]; strings.HasPrefix(service, "agentflow-") {
+		return strings.TrimPrefix(service, "agentflow-")
+	}
+	if attrs["codebuddy.span_type"] != "" {
+		return "codebuddy"
+	}
+	return ""
 }
 
 func kvMap(kvs []otlpKV) map[string]string {

@@ -93,6 +93,7 @@ type gitTokenTestTransport func(*http.Request) (*http.Response, error)
 func (f gitTokenTestTransport) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
 func TestVerifyGongfengToken(t *testing.T) {
+	t.Setenv("AGENTFLOW_GONGFENG_HOST", "git.review.test")
 	cases := []struct {
 		name, selfBody, userBody string
 		selfStatus, userStatus   int

@@ -737,12 +737,25 @@ function scopedWorkflows(){
   return all.filter(w=>!catalogGeneric(w)&&catalogOwned(w.projectId));
 }
 function catalogAgents(){return (state.data?.agents||[]).filter(a=>catalogVisible(a.projectId,a.shared))}
+function projectWorkflowAgent(agent,projectId){
+  return !!agent.projectId&&(agent.projectId===projectId||agent.shared);
+}
 function workflowAgents(){
   if(catalogGeneric(state.workflow))return state.genericTemplateAgents||[];
   const projectId=state.workflow?.projectId||state.projectFilter||'';
-  return (state.data?.agents||[]).filter(a=>!!a.projectId&&(a.projectId===projectId||(a.shared&&a.projectId!==projectId)));
+  return (state.data?.agents||[]).filter(a=>projectWorkflowAgent(a,projectId));
 }
 function workflowAgent(id){return workflowAgents().find(a=>a.id===id)}
+async function refreshWorkflowAgents(){
+  const wf=state.workflow;
+  if(catalogGeneric(wf))return hydrateGenericWorkflowRoles(wf);
+  const projectId=wf?.projectId||state.projectFilter;
+  if(!projectId)return;
+  const agents=await api('/api/agents?projectId='+encodeURIComponent(projectId),{silent:true});
+  if(state.workflow!==wf)return;
+  const ids=new Set(agents.map(a=>a.id));
+  state.data.agents=(state.data.agents||[]).filter(a=>!projectWorkflowAgent(a,projectId)&&!ids.has(a.id)).concat(agents);
+}
 function clearGenericTemplateAgents(){state.genericTemplateAgents=[];state.genericTemplateAgentWorkflowId=''}
 async function hydrateGenericWorkflowRoles(wf=state.workflow){
   if(!catalogGeneric(wf)){
@@ -928,6 +941,7 @@ async function boot(){
       history.pushState({assetFrom:assetViewHash(state.assetType)},'',assetDetailHash);
       return;
     }
+    if(name==='settings'&&routePart(1)==='executors'){gotoCredential('executors');return}
     if(activeViewName()!==name){
       if(name==='flow')await applyFlowRoute();
       if(name==='projects')syncProjectAdminRouteState();
@@ -951,7 +965,8 @@ async function boot(){
   });
   if(view==='projects')syncProjectAdminRouteState();
   renderAll();
-  switchView(view);
+  if(view==='settings'&&routePart(1)==='executors')gotoCredential('executors');
+  else switchView(view);
   settleBootLoader();
   if(!['approvals','issues','runs','sops'].includes(state.currentView))preloadApprovalBadge();
   restoreRequirementComposer();
@@ -989,6 +1004,7 @@ window.addEventListener('storage',event=>{if(!event.key||event.key===THEME_KEY)a
 
 function bind(){
 	prepareMCPFormHints();
+  $('#returnToQuickAccess')?.addEventListener('click',returnToQuickAccess);
   $$('.nav[data-view]').forEach(btn=>btn.onclick=async()=>{
     if(!(await confirmAssetLeave()))return;
     if(btn.dataset.view==='projects'&&state.projectAdminDetailId){
@@ -1000,9 +1016,6 @@ function bind(){
     }else switchView(btn.dataset.view);
   });
   $('#settingsSidebarToggle')?.addEventListener('click',()=>{cancelSettingsRouteTransition();setSettingsSidebarExpanded(!settingsSidebarExpanded())});
-  $('#railSidebarToggle')?.addEventListener('click',()=>{
-    setPlatformRailExpanded(!platformRailExpanded());
-  });
   document.addEventListener('click',event=>{
     if(document.body.classList.contains('management-mode')&&event.target instanceof Element&&event.target.closest('.collab-rail-toggle')){
       event.preventDefault();event.stopImmediatePropagation();
@@ -1041,7 +1054,6 @@ function bind(){
   };
   $$('.canvas-view-toggle [data-flow-view]').forEach(btn=>btn.onclick=()=>setFlowView(btn.dataset.flowView));
   const refreshRunnersBtn=$('#refreshRunners');if(refreshRunnersBtn)refreshRunnersBtn.onclick=()=>refreshRunners();
-  $('#langToggle').onclick=()=>window.lfSetLang(window.lfLang()==='en'?'zh':'en');
   $('#themeToggle').onclick=toggleTheme;renderThemeToggle();
   const profileWrap = $('#userProfileWrap');
   const userBadge = $('#userBadge');
@@ -1101,7 +1113,7 @@ function bind(){
 	$('#refreshDashboard').onclick=refreshDashboard;
 	$('#refreshIssues').onclick=refreshIssues;
 	$('#refreshSOPs').onclick=refreshWorkflowMetrics;
-  $('#agentSearch').oninput=renderAgents;$('#agentPrev').onclick=agentWizardPrev;$('#agentNext').onclick=agentWizardNext;$$('[data-wizard-steps="agent"] [data-agent-tab]').forEach(b=>b.onclick=()=>setAgentTab(b.dataset.agentTab));$$('[data-wizard-steps="agent-create"] [data-create-step]').forEach(b=>b.onclick=()=>{if(!b.disabled)setAgentCreateStep(Number(b.dataset.createStep))});bindAgentModalInputs();$$('.agent-close').forEach(b=>b.onclick=()=>$('#agentModal').classList.remove('open'));
+  $('#agentSearch').oninput=renderAgents;$('#agentPrev').onclick=agentWizardPrev;$('#agentNext').onclick=agentWizardNext;$$('[data-wizard-steps="agent"] [data-agent-tab]').forEach(b=>b.onclick=()=>setAgentTab(b.dataset.agentTab));$$('[data-wizard-steps="agent-create"] [data-create-step]').forEach(b=>b.onclick=()=>{if(!b.disabled)setAgentCreateStep(Number(b.dataset.createStep))});bindAgentModalInputs();$$('.agent-close').forEach(b=>b.onclick=closeAgentWizard);
   $('#newRunFromRuns')&&($('#newRunFromRuns').onclick=()=>switchView('issues'));
   $('#runSearch').oninput=e=>{state.runQuery=e.target.value.trim().toLowerCase();resetListPage('runs');renderRuns()};
   $('#runWorkflowFilter').onchange=e=>{state.runWorkflowFilter=e.target.value;resetListPage('runs');renderRuns()};
@@ -1307,6 +1319,7 @@ function bind(){
       }
       const open=[...$$('.modal.open')].pop();
       if(open?.id==='scheduleModal')return closeScheduleJobModal();
+      if(open?.id==='agentModal')return closeAgentWizard();
       if(open)return open.classList.remove('open');
       const panel=$('#flowSettingsPanel');
       if(panel&&!panel.hidden){panel.hidden=true;$('#flowSettingsToggle')?.classList.remove('active');return}
@@ -1482,6 +1495,25 @@ function postNativeChatProject(frame){
 // requirement already @-mentioned. It waits here until the chat frame can
 // take it: in the frame URL on first mount, otherwise once the chat is ready.
 let pendingChatIssueMention=null;
+let pendingQuickAccessReturn=false;
+const QUICK_ACCESS_EXECUTOR_SETTINGS='#/settings/executors/quick-access';
+let quickAccessExecutorSettingsActive=false;
+function postQuickAccessReturn(frame){
+  if(!pendingQuickAccessReturn||!nativeChatReady||!frame?.contentWindow)return;
+  pendingQuickAccessReturn=false;
+  frame.contentWindow.postMessage({type:'agentflow-chat-resume-quick-access'},location.origin);
+}
+function returnToQuickAccess(){
+  if(location.hash!==QUICK_ACCESS_EXECUTOR_SETTINGS)return;
+  if(history.state?.quickAccessExecutorReturn){history.back();return}
+  const chat=new URL('/chatbot/',location.origin),params=new URLSearchParams(location.search);
+  chat.searchParams.set('quickAccess','1');
+  const projectId=params.get('projectId');
+  const session=params.get('chatSession');
+  if(projectId)chat.searchParams.set('projectId',projectId);
+  if(session)chat.searchParams.set('session',session);
+  location.replace(chat);
+}
 function postPendingChatIssueMention(frame){
   if(!pendingChatIssueMention||!nativeChatReady||frame?.dataset.src!=='native')return;
   frame.contentWindow?.postMessage({type:'agentflow-chat-mention-issue',...pendingChatIssueMention},location.origin);
@@ -1517,6 +1549,7 @@ function mountNativeChat(){
         nativeChatReady=true;
         postPendingChatIssueMention(frame);
         postNativeChatProject(frame);
+        postQuickAccessReturn(frame);
         finishBootLoader();
       }
       if(message.type==='agentflow-chat-session'){
@@ -1544,6 +1577,14 @@ function mountNativeChat(){
         else reloadShellProjects().then(follow).catch(()=>{});
       }
       if(message.type==='agentflow-projects-changed')reloadShellProjects().catch(()=>{});
+      if(message.type==='agentflow-credentials-changed'){
+        const userId=state.currentUser?.id;
+        api('/api/users',{silent:true}).then(users=>{
+          if(state.currentUser?.id!==userId)return;
+          const saved=users.find(user=>Number(user.id)===Number(userId));
+          if(saved)storeCredentialUser(saved);
+        }).catch(()=>{});
+      }
       if(message.type==='agentflow-quick-access-completed'){
         api('/api/bootstrap',{silent:true}).then(shell=>{
           Object.assign(state.data,shell);
@@ -1556,7 +1597,12 @@ function mountNativeChat(){
         }).catch(()=>{});
       }
       if(message.type==='agentflow-chat-open-view'&&['settings','runners','sops','projects','runs','agents','environments','dockerfiles','sandboxes','flow','mcp'].includes(message.view)){
-        if(message.view==='settings'&&CREDENTIAL_FIELDS[message.credential])gotoCredential(message.credential,message.sshRemote);
+        if(message.view==='settings'&&message.credential){
+          if(message.credential==='executors'&&message.returnToQuickAccess===true&&activeViewName()==='collaboration'&&location.hash!==QUICK_ACCESS_EXECUTOR_SETTINGS){
+            history.pushState({quickAccessExecutorReturn:true},'',QUICK_ACCESS_EXECUTOR_SETTINGS);
+          }
+          gotoCredential(message.credential,message.sshRemote);
+        }
         else if(message.view==='sandboxes'&&message.action==='create')createConversationSandbox(message.projectId).catch(error=>toast(error.message));
         else if(message.view==='runs'&&/^run-[\w-]+$/.test(message.runId||''))location.hash='#/runs/'+encodeURIComponent(message.runId);
         else switchView(message.view);
@@ -1565,6 +1611,7 @@ function mountNativeChat(){
   }
   if(frame.dataset.src!=='native'){
     frame.dataset.src='native';
+    nativeChatReady=false;
     const topParams=new URL(location.href).searchParams;
     const projectId=nativeChatProjectId();
     const sessionId=topParams.get('chatSession')||'';
@@ -1763,24 +1810,6 @@ function setSettingsSidebarExpanded(expanded){
     });
   }
 }
-function platformRailExpanded(){return document.body.classList.contains('platform-rail-expanded')}
-function setPlatformRailExpanded(expanded){
-  expanded=!!expanded;
-  document.body.classList.toggle('platform-rail-expanded',expanded);
-  const button=$('#railSidebarToggle');
-  if(!button)return;
-  const label=expanded?'只显示图标':'展开导航';
-  button.disabled=false;
-  button.removeAttribute('aria-disabled');
-  button.removeAttribute('title');
-  button.setAttribute('aria-controls','platformRail');
-  button.setAttribute('aria-expanded',String(expanded));
-  button.setAttribute('aria-label',label);
-  if(expanded)button.removeAttribute('data-tooltip');
-  else button.dataset.tooltip=label;
-  const text=button.querySelector('.rail-label');
-  if(text)text.textContent=label;
-}
 function viewTitles(){return {management:'设置',collaboration:'AI 工作台',issues:'需求列表',aiSchedules:'定时任务',bots:'通道管理',assistant:'AI 助手',runs:'运行记录',approvals:'待我确认',sops:'流程模板',flow:'流程设计',agents:'角色定义',mcp:'能力资产',rules:'能力资产',skills:'能力资产',dockerfiles:'环境资产',environments:'环境资产',sandboxes:'环境资产',observability:'统计',projects:'项目配置',platform:'平台管理',runners:'执行机器',settings:'个人配置',access:'访问密钥',guide:'访问密钥'}}
 // 设置侧栏只列一级入口；被合并进同一页的子视图（能力资产、环境资产的类型 Tab，
 // 从流程模板打开的流程设计）按 data-nav-match 高亮它们所属的入口。
@@ -1847,14 +1876,14 @@ function applyAssetRoute(){
 }
 async function applyAgentRoute(){
   const id=agentRouteId();
-  if(!id)return;
+  if(!id){$('#agentModal')?.classList.remove('open');return}
   try{
     const agent=await api(`/api/agents/${encodeURIComponent(id)}`);
     if(agentRouteId()!==id||activeViewName()!=='agents')return;
     const index=(state.data.agents||[]).findIndex(a=>a.id===id);
     if(index>=0)state.data.agents[index]=agent;else state.data.agents.push(agent);
-    openAgentWizard(agent);
-  }catch(error){toast(error.message,'err')}
+    openAgentWizard(agent,routePart(2)==='gov'?3:1,{loaded:true});
+  }catch(error){if(agentRouteId()===id)toast(error.message,'err')}
 }
 // Only SOPs visible in the active project can be restored from the URL or localStorage.
 function openableWorkflow(id){return id?catalogWorkflows().find(w=>w.id===id)||null:null}
@@ -1897,12 +1926,13 @@ function syncRunHash(id){
 function persistView(name,push=false){
   localStorage.setItem('agentflow.activeView',name);
   let next=`#/${name}`;
+  if(name==='settings'&&location.hash===QUICK_ACCESS_EXECUTOR_SETTINGS)next=QUICK_ACCESS_EXECUTOR_SETTINGS;
   if(name==='runs'){
     const linked=runRouteId();
     if(linked)next=runViewHash(linked);
   }
   if(name==='flow')next=flowViewHash();
-  if(name==='agents'&&agentRouteId())next=`#/agents/${encodeURIComponent(agentRouteId())}`;
+  if(name==='agents'&&agentRouteId())next=`#/agents/${encodeURIComponent(agentRouteId())}${routePart(2)==='gov'?'/gov':''}`;
   if(isProjectSharedAsset(name)&&routePart(0)===name&&assetRouteId())next=`#/${name}/${encodeURIComponent(assetRouteId())}`;
   if(name==='projects')next=projectAdminHash(state.projectAdminDetailId||'',state.projectAdminTab);
   if(name==='collaboration'){
@@ -1932,6 +1962,15 @@ function switchView(name){
   // 手敲 #/platform 或者从别的账号留下的 localStorage 恢复进来，都要挡住。
   if(name==='platform'&&!isPlatformAdmin())name='collaboration';
   const previous=activeViewName();
+  if(name!=='settings')cancelCredentialFocus();
+  if(previous==='settings'&&name!=='settings'){
+    window.HuiPopover?.closeAll?.();
+    window.HuiTooltip?.hide?.();
+    closeCredentialWizard(true);
+    $('#gitHTTPCredentialDialog')?.close();
+    $('#gitSSHKeyDialog')?.close();
+  }
+  if(previous==='agents'&&name!=='agents')$('#agentModal')?.classList.remove('open');
   if(!settingsRouteApplying){
     const crossingSettings=previous!==name&&((previous==='collaboration'&&isSettingsManagementView(name))||(isSettingsManagementView(previous)&&name==='collaboration'));
     if(crossingSettings&&!settingsRouteMotion.matches){startSettingsRouteTransition(name);return}
@@ -1970,6 +2009,15 @@ function switchView(name){
   //（staying）不压；hashchange 后退触发的调用 prevView 非空且 hash 已是目标值，
   // persistView 内部会短路，不会重复压栈。
   persistView(name,!staying&&!!prevView);
+  const resumeQuickAccess=name==='collaboration'&&quickAccessExecutorSettingsActive;
+  quickAccessExecutorSettingsActive=name==='settings'&&location.hash===QUICK_ACCESS_EXECUTOR_SETTINGS;
+  const quickAccessReturnButton=$('#returnToQuickAccess');
+  if(quickAccessReturnButton)quickAccessReturnButton.hidden=!quickAccessExecutorSettingsActive;
+  if(name!=='collaboration')pendingQuickAccessReturn=false;
+  if(resumeQuickAccess){
+    pendingQuickAccessReturn=true;
+    postQuickAccessReturn($('#chatNextFrame'));
+  }
   const nav=$('.platform-sidebar nav');
   if(nav){
     if(['dashboard','issues','approvals'].includes(name)){

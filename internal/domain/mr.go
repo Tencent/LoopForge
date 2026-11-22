@@ -9,11 +9,9 @@ import (
 	"time"
 )
 
-// Gongfeng MCP often returns http://git.example.com/.../merge_requests/N. Accept
-// either scheme and store the canonical https URL.
-var githubPRURL = regexp.MustCompile(`https?://github\.com/([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)/pull/(\d+)`)
-
-var gongfengMRURL = regexp.MustCompile(`https?://git\.example\.com/([^\s"'<>#]+)/merge_requests/(\d+)`)
+// Find review links in the order they are cited. We validate their host and
+// project below before treating any link in free text as delivery evidence.
+var hostedReviewURL = regexp.MustCompile(`https?://([^/\s"'<>#]+)/([^\s"'<>#]+)/(pull|merge_requests)/(\d+)`)
 
 // codeupMRURL matches a Codeup change-request detailUrl/webUrl:
 // https://codeup.aliyun.com/{orgId}/{group}/{repo}/change/{localId}.
@@ -114,19 +112,21 @@ func ParseGongfengMR(text string) (project string, iid int, url string, ok bool)
 
 // ParseGongfengMRs extracts unique Gongfeng merge request URLs in appearance order.
 func ParseGongfengMRs(text string) []GongfengMRRef {
-	for _, match := range githubPRURL.FindAllStringSubmatch(text, -1) {
-		text = strings.ReplaceAll(text, match[0], "https://git.example.com/github:"+match[1]+"/merge_requests/"+match[2])
-	}
-	matches := gongfengMRURL.FindAllStringSubmatch(text, -1)
-	codeupMatches := codeupMRURL.FindAllStringSubmatch(text, -1)
-	if len(matches) == 0 && len(codeupMatches) == 0 {
-		return nil
-	}
-	out := make([]GongfengMRRef, 0, len(matches)+len(codeupMatches))
+	var out []GongfengMRRef
 	seen := map[string]struct{}{}
-	for _, match := range matches {
-		project := strings.TrimSuffix(strings.TrimSuffix(match[1], "/"), "/-")
-		iid, _ := strconv.Atoi(match[2])
+	for _, match := range hostedReviewURL.FindAllStringSubmatch(text, -1) {
+		host, path, kind := match[1], match[2], match[3]
+		var project string
+		if kind == "pull" && strings.EqualFold(host, "github.com") && githubRepositoryPath.MatchString(path) {
+			project = "github:" + path
+		} else if kind == "merge_requests" && IsGongfengHost(host) {
+			path = strings.TrimSuffix(strings.TrimSuffix(path, "/"), "/-")
+			project = normalizeGongfengProjectPath(path)
+			if project == "" && IsSafeGongfengProjectID(path) {
+				project = path
+			}
+		}
+		iid, _ := strconv.Atoi(match[4])
 		if project == "" || iid <= 0 {
 			continue
 		}
@@ -137,7 +137,9 @@ func ParseGongfengMRs(text string) []GongfengMRRef {
 		seen[key] = struct{}{}
 		out = append(out, GongfengMRRef{Project: project, IID: iid, URL: GongfengMRURL(project, iid)})
 	}
-	for _, match := range codeupMatches {
+	// Codeup change requests use /change/{localId} instead of pull or
+	// merge_requests, so hostedReviewURL never matches them; scan separately.
+	for _, match := range codeupMRURL.FindAllStringSubmatch(text, -1) {
 		project := "codeup:" + match[1]
 		iid, _ := strconv.Atoi(match[2])
 		if iid <= 0 {

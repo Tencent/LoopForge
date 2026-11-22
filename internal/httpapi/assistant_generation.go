@@ -28,7 +28,7 @@ func (h *assistantHandlers) startGeneration(c *gin.Context) {
 	}
 	stored, ok := h.repo.User(current.ID)
 	if !ok {
-		c.JSON(400, gin.H{"error": "请先配置个人 CodeBuddy API Key"})
+		c.JSON(400, gin.H{"error": "当前用户不可用"})
 		return
 	}
 	var body struct {
@@ -46,7 +46,10 @@ func (h *assistantHandlers) startGeneration(c *gin.Context) {
 	if !requireAssistantApprovalUser(c, current.ID, req.ApprovalUserID) {
 		return
 	}
-	req.Model = assistantRequestModel(req.Executor, req.Model)
+	if err := normalizeAssistantSurface(&req); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
 	if len(req.Messages) == 0 || req.Messages[len(req.Messages)-1].Role != "user" {
 		c.JSON(400, gin.H{"error": "请提供用户消息"})
 		return
@@ -69,6 +72,10 @@ func (h *assistantHandlers) startGeneration(c *gin.Context) {
 		c.JSON(403, gin.H{"error": err.Error()})
 		return
 	}
+	if err := h.bindSOPDesignerTranscript(ownerID, &req); err != nil {
+		c.JSON(409, gin.H{"error": err.Error()})
+		return
+	}
 	old, _ := h.repo.AssistantSession(ownerID, req.SessionID)
 	if old.ID != "" && old.ExecutionLocked() {
 		if req.ExecutionTarget != nil && *req.ExecutionTarget != old.Execution() {
@@ -85,6 +92,7 @@ func (h *assistantHandlers) startGeneration(c *gin.Context) {
 			return
 		}
 	}
+	req.Model = h.assistantChatRequestModel(req, old, stored)
 	cliEngine, _ := assistantModelEngine(req.Model)
 	loginRunner := h.assistantLoginRunner(stored.ID, req.ExecutionTarget, cliEngine)
 	runnerLogin := loginRunner.ID != ""
@@ -123,9 +131,10 @@ func (h *assistantHandlers) startGeneration(c *gin.Context) {
 		return
 	}
 	catalogEngine, _ := assistantModelEngine(req.Model)
-	catalog := assistantChatCatalog(c.Request.Context(), user.CodeBuddyInternetEnvironment, nil)
+	var catalog assistantModelCatalog
 	if catalogEngine == assistantEngineCodeBuddy {
-		catalog = h.turnCatalog(c.Request.Context(), user, req.Model)
+		_, modelID := assistantModelEngine(req.Model)
+		catalog = h.turnCatalog(c.Request.Context(), user, modelID)
 	}
 	if !runnerLogin {
 		selected, err := assistantTurnCatalogModel(req.Model, catalog, user, req.RequireExactModel)
@@ -184,6 +193,9 @@ func (h *assistantHandlers) startGeneration(c *gin.Context) {
 		issueID = req.linkedIssueID
 	}
 	pending := assistantConversation{ExecutionTarget: req.ExecutionTarget, ID: req.SessionID, Shared: old.Shared, ProjectID: req.ProjectID, IssueID: issueID, Model: req.Model, Effort: req.Effort, Executor: req.Executor, RunID: req.RunID, Messages: req.Messages, TitleEdited: old.TitleEdited, TitleGenerated: old.TitleGenerated}
+	if req.sopDesigner() {
+		pending.Source, pending.WorkflowID = domain.AssistantSourceSOPDesigner, req.WorkflowID
+	}
 	if old.TitleEdited || old.TitleGenerated {
 		pending.Title = old.Title
 	} else {
@@ -440,6 +452,11 @@ func (h *assistantHandlers) executeGeneration(parent context.Context, req assist
 				g.Status = "failed"
 				g.Error = "会话工作区续租失败，生成已中断"
 				g.Failure = &domain.AssistantFailure{Code: "WORKSPACE_LEASE_LOST", Phase: "server", Message: g.Error, Suggestion: "检查已执行操作及工作区状态后再重试；可下载诊断信息排查。"}
+			} else if ctx.Err() == context.DeadlineExceeded {
+				failure := classifyAssistantFailure(ctx, ctx.Err())
+				failure.Message = "生成超时"
+				g.Error, g.Failure = failure.Message, &failure
+				rec.diagnostics.terminate(failure.Code, failure.Message, diagUser)
 			} else {
 				g.Status = "cancelled"
 				g.Error = "生成已停止"
@@ -498,7 +515,7 @@ func (h *assistantHandlers) steerGeneration(c *gin.Context) {
 	}
 	stored, ok := h.repo.User(current.ID)
 	if !ok {
-		c.JSON(400, gin.H{"error": "请先配置个人 CodeBuddy API Key"})
+		c.JSON(400, gin.H{"error": "当前用户不可用"})
 		return
 	}
 	ownerID, _, err := h.conversationScope(c, c.Param("id"), "", "", stored.ID)
@@ -561,7 +578,7 @@ func (h *assistantHandlers) steerGeneration(c *gin.Context) {
 	}
 	// A CodeBuddy model this instance has not listed yet refreshes the list
 	// first, like a new turn, instead of silently becoming the default.
-	catalog := assistantChatCatalog(c.Request.Context(), user.CodeBuddyInternetEnvironment, nil)
+	var catalog assistantModelCatalog
 	if engine, _ := assistantModelEngine(model); engine == assistantEngineCodeBuddy {
 		catalog = h.turnCatalog(c.Request.Context(), user, model)
 	}

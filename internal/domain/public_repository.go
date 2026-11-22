@@ -50,6 +50,12 @@ func ParseRepositoryURL(raw string) (GongfengRepoInfo, bool) {
 		base := "https://github.com/" + path
 		return GongfengRepoInfo{Project: "github:" + path, Name: strings.TrimSuffix(parts[1], ".git"), WebURL: base, CloneURL: base + ".git"}, true
 	}
+	if !strings.ContainsAny(s, ":@") {
+		host, _, _ := strings.Cut(s, "/")
+		if !IsGongfengHost(host) {
+			return GongfengRepoInfo{}, false
+		}
+	}
 	return ParseGongfengRepoURL(raw)
 }
 

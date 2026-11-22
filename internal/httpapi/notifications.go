@@ -153,12 +153,16 @@ func (h *notificationHandlers) save(c *gin.Context, old *domain.NotificationBot)
 		bot.InteractionEnabled = *req.InteractionEnabled
 	}
 	if req.Model != nil {
-		model := strings.TrimSpace(*req.Model)
-		if model == "" {
-			model = domain.DefaultNotificationReportModel
+		model, err := normalizeFeatureModel(*req.Model)
+		if err != nil {
+			c.JSON(400, gin.H{"error": err.Error()})
+			return
 		}
-		if assistantAllowedModel(model, assistantKnownCatalog()) != model {
-			c.JSON(400, gin.H{"error": "请选择有效的 CodeBuddy 模型"})
+		// Preserve validation on the legacy, unqualified CodeBuddy field.
+		// Explicit CLI IDs are checked by their own model service at runtime.
+		if !assistantModelHasEnginePrefix(model) && !codeBuddyIsDefaultModel(model) &&
+			(old == nil || old.Model != model) && !assistantCatalogLists(assistantKnownCatalog(), model) {
+			c.JSON(400, gin.H{"error": errFeatureModel.Error()})
 			return
 		}
 		bot.Model = model

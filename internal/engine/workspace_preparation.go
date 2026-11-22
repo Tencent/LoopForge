@@ -431,7 +431,7 @@ func workspaceConversationRequirements(st *repo.Store, wf domain.WorkflowDefinit
 		if !ok {
 			continue
 		}
-		executor, err := resolveNodeExecutor(st, node, agent)
+		executor, err := workflowNodeExecutor(st, wf, node, agent)
 		if err != nil {
 			continue
 		}

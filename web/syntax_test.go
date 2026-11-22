@@ -39,9 +39,10 @@ func TestClarifyModelPickerAndMCPPrompt(t *testing.T) {
 	}
 	for _, want := range []string{
 		"agentflow.clarifyModel",
-		"selectedClarifyModel",
 		"data-clarify-model",
-		"model:selectedClarifyModel()",
+		"/clarify-models",
+		"picker.querySelector('[data-feature-model]')?.value",
+		"JSON.stringify({message:msg,history,model})",
 	} {
 		if !strings.Contains(string(app), want) {
 			t.Fatalf("clarify model picker is missing %q", want)
@@ -504,29 +505,20 @@ assert.deepEqual(cred.CREDENTIAL_GROUPS.map(g => g.id), ['platform', 'model']);
 assert.deepEqual(cred.CREDENTIAL_KINDS.filter(k => k.group === 'platform').map(k => k.key), ['gitToken', 'codeupToken', 'gitSshKey', 'gitHttpCredentials']);
 assert.deepEqual(cred.CREDENTIAL_KINDS.filter(k => k.group === 'model').map(k => k.key), ['codeBuddyApiKey', 'codexApiKey', 'claudeCodeApiKey', 'agentCli.opencode', 'agentCli.cursor', 'agentCli.agy', 'agentCli.kimi', 'agentCli.pi', 'agentCli.dsh', 'agentCli.zcode', 'agentCli.qodercn']);
 
-// Progress, next-step hint, filter counts and per-group counts.
+// Existing credentials are rows. The add controls own the available types.
 const html = credentialPanelHTML(user);
-assert.ok(html.includes('<b>2</b> / 15 已配置'));
-assert.ok(html.includes('data-credential-setup="codeBuddyApiKey"'), 'next step follows Git → CodeBuddy');
-assert.ok(html.includes('1 / 4') && html.includes('1 / 11'));
-assert.ok(html.includes('已配置<span>2</span>') && html.includes('未配置<span>13</span>'));
-assert.equal(count(html, 'data-credential-row='), 15);
-assert.ok(!html.includes('credential-grid') && !html.includes('credential-savebar') && !html.includes('userCredentialForm'));
-// Unconfigured rows only offer 去配置; configured rows carry an inline editor with delete.
-assert.equal(count(html, 'data-credential-act="setup"'), 13);
+assert.equal(count(html, 'data-credential-row='), 2);
+assert.equal(count(html, 'data-credential-add-menu='), 2);
+assert.match(html, /新增 Git 配置.*<option value="gitToken"[^>]*>GitHub<\/option>/s);
+assert.match(html, /新增执行器.*<option value="claudeCodeApiKey"[^>]*>Claude Code<\/option>/s);
+assert.ok(!html.includes('<option value="codexApiKey"'));
+assert.ok(html.includes('data-credential-row="codexApiKey"'));
 assert.equal(count(html, 'credential-editor-form'), 2);
 assert.equal(count(html, 'data-credential-act="delete"'), 2);
-for (const key of ['codeBuddyApiKey', 'claudeCodeApiKey']) {
-  const row = credentialRowHTML(cred.kind(key), user);
-  assert.ok(row.includes('去配置') && !row.includes('credential-editor-form') && !row.includes('is-configured'), key);
-  // The whole row is a hoverable button that opens the wizard; it has nothing to expand.
-  assert.ok(row.includes('class="credential-row-main credential-ink" role="button" tabindex="0">'), key);
-}
-assert.ok(credentialRowHTML(cred.kind('gitToken'), user).includes('class="credential-row-main credential-ink" role="button" tabindex="0" aria-expanded="false"'));
-assert.ok(!html.includes('点击任意行配置或编辑') && !html.includes('点击已配置的行展开编辑'));
+assert.equal(count(credentialPanelHTML({}), 'data-credential-row='), 0);
+assert.ok(!credentialPanelHTML({}).includes('data-credential-defaults'));
+assert.ok(html.includes('data-credential-defaults'));
 assert.ok(credentialRowHTML(cred.kind('gitToken'), user).includes('git-token-verify'), 'Git row keeps 重新校验');
-assert.ok(credentialPanelHTML({...user, codeBuddyApiKeyConfigured: true}).includes('推荐凭证已全部就绪'));
-assert.equal(credentialNextKind({}).key, 'gitToken');
 
 // Each kind saves and deletes only its own fields.
 assert.deepEqual(credentialSavePayload(cred.kind('gitToken'), {secret: ' ghp_1 '}), {gitToken: 'ghp_1'});
@@ -656,14 +648,15 @@ assert.equal(calls.length, 0);
   assert.equal(cred.wizard.secret, 'sk-KEEP', 're-selecting the same kind keeps the input');
   assert.ok(!credentialFieldHTML({label: 'k', name: 'secret', value: 'sk-LEAK'}).includes('sk-LEAK'), 'secrets are never written into markup');
   assert.ok(credentialFieldHTML({label: 'u', name: 'extra', type: 'url', value: 'https://p.example'}).includes('value="https://p.example"'));
-  // 去配置 jumps straight to step 2 with no back button.
+  // Choosing a provider opens its own form with a direct save action.
   cred.wizard = {step: 2, kind: 'codeBuddyApiKey', direct: true, secret: '', extra: 'ioa', guide: {}, error: ''};
   const cbStepTwo = credentialWizardStepTwoHTML(cred.kind('codeBuddyApiKey'));
   assert.ok(cbStepTwo.indexOf('<select name="extra">') < cbStepTwo.indexOf('name="secret"'), 'the network environment is picked before the key');
   assert.ok(cbStepTwo.includes('href="https://tencent.sso.copilot.tencent.com/profile/keys" target="_blank" rel="noopener noreferrer" data-wizard-link="1" data-environment-link>前往iOA获取 API Key'));
   assert.ok(!cbStepTwo.includes('https://www.codebuddy.ai/"'));
   cred.wizard.extra = '';
-  assert.ok(credentialWizardStepTwoHTML(cred.kind('codeBuddyApiKey')).includes('credential-description'));
+  assert.ok(credentialWizardStepTwoHTML(cred.kind('codeBuddyApiKey')).includes('新增 CodeBuddy'));
+  assert.ok(credentialWizardFootHTML().includes('保存执行器'));
   assert.ok(!credentialWizardFootHTML().includes('data-wizard-back'));
   assert.ok(credentialWizardFootHTML().includes('data-wizard-next disabled'), 'an empty key blocks next');
   cred.wizard.direct = false;
@@ -1080,7 +1073,9 @@ func TestRepositoryFormUsesSingleURL(t *testing.T) {
 	script := `
 const assert = require('node:assert/strict');
 const code = require('node:fs').readFileSync('` + appBundlePath(t) + `', 'utf8');
+const state = { data: {} };
 eval(require('node:fs').readFileSync('app/git-ssh.js', 'utf8'));
+assert.equal(globalThis.LoopForgeGongfengRepository('Tencent/LoopForge', 'git.review.test'), null);
 eval(code.slice(code.indexOf('function repoProviderLabel('), code.indexOf('function parseGongfengRepoURL(')));
 eval(code.slice(code.indexOf('function parseGongfengRepoURL(raw){'), code.indexOf('function fillRepositoryFromLink(')));
 const web = parseGongfengRepoURL('https://git.example.com/example/agent-flow');
@@ -2101,9 +2096,9 @@ func TestAgentPageListAndTabbedModal(t *testing.T) {
 		"function setAgentCreateStep(",
 		"function syncTabIndicator(",
 		"function persistAgent(",
-		"function openAgentWizard(agent=null,initialStep=1)",
+		"function openAgentWizard(",
 		"state.genericTemplateAgents",
-		"openAgentWizard(agent,2)",
+		"function applyAgentRoute(",
 	} {
 		if !strings.Contains(app, want) {
 			t.Fatalf("app bundle is missing agent page wiring %q", want)

@@ -24,10 +24,8 @@ import (
 	"agentflow/internal/runtime"
 )
 
-// AI 对话 runs on CodeBuddy by default. A model ID prefixed with another CLI
-// ("codex:", "claude-code:" or an agent CLI kind such as "opencode:") runs the
-// turn on that CLI with the caller's own key and Base URL from 个人配置; the
-// part after the prefix is passed to the CLI as-is.
+// The assistant stores CLI-prefixed model IDs. Bare concrete IDs from older
+// CodeBuddy sessions retain the CodeBuddy interpretation.
 const (
 	assistantEngineCodeBuddy = "codebuddy"
 	assistantEngineCodex     = "codex"
@@ -41,6 +39,9 @@ func assistantCLIEngines() []string {
 
 func assistantModelEngine(id string) (engine, model string) {
 	id = strings.TrimSpace(id)
+	if rest, ok := strings.CutPrefix(id, assistantEngineCodeBuddy+":"); ok {
+		return assistantEngineCodeBuddy, strings.TrimSpace(rest)
+	}
 	for _, engine := range assistantCLIEngines() {
 		if rest, ok := strings.CutPrefix(id, engine+":"); ok {
 			return engine, strings.TrimSpace(rest)
@@ -55,6 +56,7 @@ type assistantEngineOption struct {
 	ID         string `json:"id"`
 	Name       string `json:"name"`
 	Configured bool   `json:"configured"`
+	Personal   bool   `json:"personal"`
 	Credential string `json:"credential"`
 }
 
@@ -83,6 +85,7 @@ func assistantEngineOptions(user domain.User, sponsored bool) []assistantEngineO
 			ID:         engine,
 			Name:       assistantEngineLabel(engine),
 			Configured: key != "" || (engine == assistantEngineCodeBuddy && sponsored),
+			Personal:   key != "",
 			Credential: assistantEngineCredentialField(engine),
 		})
 	}
@@ -108,7 +111,7 @@ func assistantEngineCredential(user domain.User, engine string) (apiKey, baseURL
 	case assistantEngineClaude:
 		return strings.TrimSpace(user.ClaudeCodeAPIKey), strings.TrimSpace(user.ClaudeCodeBaseURL)
 	case assistantEngineCodeBuddy:
-		return strings.TrimSpace(user.CodeBuddyAPIKey), ""
+		return strings.TrimSpace(user.CodeBuddyAPIKey), strings.TrimSpace(user.CodeBuddyBaseURL)
 	}
 	cred := user.AgentCLICredentials[engine]
 	if runtime.IsAgentCLI(engine) && engine != runtime.AgentCLICursor {
@@ -157,7 +160,7 @@ func assistantEngineBuiltinModels(engine string) []assistantDiscoveredModel {
 		catalogKey = "claude"
 	}
 	var out []assistantDiscoveredModel
-	for _, model := range executorModelCatalogs("")[catalogKey].Models {
+	for _, model := range executorModelCatalogs("", assistantFixedCatalog())[catalogKey].Models {
 		out = append(out, assistantDiscoveredModel{ID: model.ID, Name: model.Name})
 	}
 	return out
@@ -166,7 +169,7 @@ func assistantEngineBuiltinModels(engine string) []assistantDiscoveredModel {
 // assistantValidEngineModel guards model IDs that reach a CLI argument or a
 // TOML config override.
 func assistantValidEngineModel(model string) bool {
-	if model == "" || len(model) > 128 {
+	if model == "" || len(model) > 128 || strings.HasPrefix(model, "-") {
 		return false
 	}
 	for _, r := range model {
@@ -251,30 +254,26 @@ func assistantEngineMissingKey(engine string) string {
 }
 
 // assistantTurnUser checks personal credentials or the chosen runner login.
-// Non-CodeBuddy turns can still borrow a CodeBuddy key for approval reviews.
 func (h *assistantHandlers) assistantTurnUser(stored domain.User, model string, runnerLogin bool) (domain.User, string, string) {
 	engine, id := assistantModelEngine(model)
 	if engine != assistantEngineCodeBuddy {
-		if runnerLogin {
-			if id == "" {
-				id = "default"
-			}
-			if !assistantValidEngineModel(id) {
-				return stored, "", "模型 ID 无效"
-			}
-			model = engine + ":" + id
-		} else if key, _ := assistantEngineCredential(stored, engine); key == "" {
+		if id == "" {
+			id = assistantDefaultModel
+		}
+		if !assistantValidEngineModel(id) {
+			return stored, "", "模型 ID 无效"
+		}
+		if key, _ := assistantEngineCredential(stored, engine); !runnerLogin && key == "" {
 			return stored, "", assistantEngineMissingKey(engine)
 		}
-		user, _, _ := h.assistantChatUser(stored)
-		return user, model, ""
+		return stored, engine + ":" + id, ""
 	}
 	user, shared, ok := h.assistantChatUser(stored)
 	if !ok {
 		return stored, "", "请先在个人配置中配置自己的 CodeBuddy API Key"
 	}
 	if len(shared) > 0 {
-		forced, allowed := assistantSponsoredModelFor(shared, model)
+		forced, allowed := assistantSponsoredModelFor(shared, id)
 		if !allowed {
 			return stored, "", errAssistantSponsoredModel(shared)
 		}
@@ -290,7 +289,7 @@ func (h *assistantHandlers) assistantTurnUser(stored domain.User, model string, 
 func assistantAllowedUserModel(id string, catalog assistantModelCatalog, user domain.User) string {
 	engine, model := assistantModelEngine(id)
 	if engine == assistantEngineCodeBuddy {
-		return assistantAllowedModel(id, catalog)
+		return assistantAllowedModel(model, catalog)
 	}
 	if key, _ := assistantEngineCredential(user, engine); key == "" || !assistantValidEngineModel(model) {
 		return catalog.Default
@@ -312,16 +311,14 @@ func assistantTurnCatalogModel(requested string, catalog assistantModelCatalog, 
 	return model, nil
 }
 
-// assistantScheduledModel normalizes the model of an AI scheduled task on
-// save. The run uses the project owner's keys and CodeBuddy environment, not
-// the editor's, so a well-formed model is kept as-is; it is checked against
-// the owner's account when it runs (see scheduledRunModel).
+// assistantScheduledModel normalizes a scheduled model without replacing a
+// well-formed selection. The account bound to the task validates it at run time.
 func assistantScheduledModel(id string, catalog assistantModelCatalog) string {
 	engine, model := assistantModelEngine(id)
-	if engine != assistantEngineCodeBuddy && assistantValidEngineModel(model) {
-		return engine + ":" + model
-	}
-	if engine == assistantEngineCodeBuddy && assistantValidEngineModel(model) {
+	if assistantValidEngineModel(model) {
+		if engine != assistantEngineCodeBuddy || model == assistantDefaultModel && assistantModelHasEnginePrefix(id) {
+			return engine + ":" + model
+		}
 		return model
 	}
 	return assistantAllowedModel(id, catalog)
@@ -666,11 +663,30 @@ func writeAssistantEngineState(root string, state assistantEngineState) error {
 	return os.WriteFile(filepath.Join(root, "engine.json"), data, 0o600)
 }
 
+// assistantChatRequestModel keeps an existing conversation's model when
+// omitted, or chooses a personal CLI for a new conversation with no selection.
+func (h *assistantHandlers) assistantChatRequestModel(req assistantRequest, saved domain.AssistantSession, user domain.User) string {
+	if strings.TrimSpace(req.Executor) == "" && assistantModelUnspecified(req.Model) {
+		if saved.Model != "" || saved.Executor != "" {
+			return assistantRequestModel(saved.Executor, saved.Model)
+		}
+		if preferred := personalDefaultModel(user); preferred != "" {
+			return preferred
+		}
+		if _, _, codeBuddyAvailable := h.assistantChatUser(user); !codeBuddyAvailable {
+			if model, err := resolveFeatureModel(user, ""); err == nil {
+				return model
+			}
+		}
+	}
+	return assistantRequestModel(req.Executor, req.Model)
+}
+
 // assistantRequestModel maps a legacy executor field onto the model prefix
 // the conversation engines use. A model that already names its CLI is kept.
 func assistantRequestModel(executor, model string) string {
 	model = strings.TrimSpace(model)
-	if engine, _ := assistantModelEngine(model); engine != assistantEngineCodeBuddy {
+	if assistantModelHasEnginePrefix(model) {
 		return model
 	}
 	switch assistantExecutor(executor) {

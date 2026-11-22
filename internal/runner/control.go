@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"agentflow/internal/domain"
+	"agentflow/internal/runtime"
 
 	"github.com/gorilla/websocket"
 )
@@ -29,15 +30,17 @@ var controlReadTimeout = 75 * time.Second
 var controlWriteTimeout = 10 * time.Second
 
 type controlMessage struct {
-	ToolRequest       *domain.RunnerToolRequest       `json:"toolRequest,omitempty"`
-	ToolResponse      *domain.RunnerToolResponse      `json:"toolResponse,omitempty"`
-	Type              string                          `json:"type"`
-	TaskID            string                          `json:"taskId,omitempty"`
-	DesiredState      string                          `json:"desiredState,omitempty"`
-	ActiveTaskIDs     []string                        `json:"activeTaskIds,omitempty"`
-	RequestID         string                          `json:"requestId,omitempty"`
-	WorkspaceRequest  *domain.RunnerWorkspaceRequest  `json:"workspaceRequest,omitempty"`
-	WorkspaceResponse *domain.RunnerWorkspaceResponse `json:"workspaceResponse,omitempty"`
+	ToolRequest        *domain.RunnerToolRequest           `json:"toolRequest,omitempty"`
+	ToolResponse       *domain.RunnerToolResponse          `json:"toolResponse,omitempty"`
+	Type               string                              `json:"type"`
+	TaskID             string                              `json:"taskId,omitempty"`
+	DesiredState       string                              `json:"desiredState,omitempty"`
+	ActiveTaskIDs      []string                            `json:"activeTaskIds,omitempty"`
+	RequestID          string                              `json:"requestId,omitempty"`
+	WorkspaceRequest   *domain.RunnerWorkspaceRequest      `json:"workspaceRequest,omitempty"`
+	WorkspaceResponse  *domain.RunnerWorkspaceResponse     `json:"workspaceResponse,omitempty"`
+	ObserveImageBuild  bool                                `json:"observeImageBuild,omitempty"`
+	ImageBuildProgress *domain.WorkspaceImageBuildProgress `json:"imageBuildProgress,omitempty"`
 }
 
 // controlLoop maintains one outbound WebSocket for immediate server-to-runner
@@ -84,8 +87,8 @@ func (d *Daemon) controlLoop(ctx context.Context) {
 func (d *Daemon) readControls(daemonCtx context.Context, conn *websocket.Conn) error {
 	ctx, cancel := context.WithCancel(daemonCtx)
 	var requests sync.WaitGroup
-	var checkpointMu sync.Mutex
-	checkpointCancels := map[string]context.CancelFunc{}
+	var workspaceCancelMu sync.Mutex
+	workspaceCancels := map[string]context.CancelFunc{}
 	var writeMu sync.Mutex
 	writeMessage := func(message controlMessage) error {
 		writeMu.Lock()
@@ -139,9 +142,9 @@ func (d *Daemon) readControls(daemonCtx context.Context, conn *websocket.Conn) e
 			continue
 		}
 		if message.Type == "workspace.cancel" {
-			checkpointMu.Lock()
-			stop := checkpointCancels[message.RequestID]
-			checkpointMu.Unlock()
+			workspaceCancelMu.Lock()
+			stop := workspaceCancels[message.RequestID]
+			workspaceCancelMu.Unlock()
 			if stop != nil {
 				stop()
 			}
@@ -164,11 +167,11 @@ func (d *Daemon) readControls(daemonCtx context.Context, conn *websocket.Conn) e
 			}
 			requestCtx := ctx
 			stopRequest := func() {}
-			if domain.IsWorkspaceCheckpointTransferOperation(message.WorkspaceRequest.Operation) || message.WorkspaceRequest.Operation == domain.RunnerWorkspaceOperationCheckpoint {
+			if domain.IsCancelableRunnerWorkspaceOperation(message.WorkspaceRequest.Operation) {
 				requestCtx, stopRequest = context.WithCancel(ctx)
-				checkpointMu.Lock()
-				checkpointCancels[message.RequestID] = stopRequest
-				checkpointMu.Unlock()
+				workspaceCancelMu.Lock()
+				workspaceCancels[message.RequestID] = stopRequest
+				workspaceCancelMu.Unlock()
 			}
 			requests.Add(1)
 			go func(message controlMessage, requestCtx context.Context, stopRequest context.CancelFunc) {
@@ -176,15 +179,22 @@ func (d *Daemon) readControls(daemonCtx context.Context, conn *websocket.Conn) e
 				defer func() { <-slots }()
 				defer func() {
 					stopRequest()
-					checkpointMu.Lock()
-					delete(checkpointCancels, message.RequestID)
-					checkpointMu.Unlock()
+					workspaceCancelMu.Lock()
+					delete(workspaceCancels, message.RequestID)
+					workspaceCancelMu.Unlock()
 				}()
 				var response domain.RunnerWorkspaceResponse
 				var startUpdate func()
 				if message.WorkspaceRequest.Operation == domain.RunnerWorkspaceOperationMaintenance {
 					response, startUpdate = d.maintenanceResponse(requestCtx, daemonCtx, message.WorkspaceRequest.Maintenance)
 				} else {
+					if message.ObserveImageBuild {
+						requestCtx = runtime.WithDockerBuildProgress(requestCtx, func(progress domain.WorkspaceImageBuildProgress) {
+							if requestCtx.Err() == nil {
+								_ = writeMessage(controlMessage{Type: "workspace.image_progress", RequestID: message.RequestID, ImageBuildProgress: &progress})
+							}
+						})
+					}
 					response = d.readRunnerWorkspace(requestCtx, *message.WorkspaceRequest)
 				}
 				err := writeMessage(controlMessage{Type: "workspace.response", RequestID: message.RequestID, WorkspaceResponse: &response})

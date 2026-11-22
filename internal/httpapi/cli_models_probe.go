@@ -86,15 +86,15 @@ func (h *usersHandlers) probeCLIModels(c *gin.Context) {
 		protocol = runtime.AgentCLIProtocol(engine, *req.Protocol)
 	}
 	c.Header("Cache-Control", "private, no-store")
-	if engine == assistantEngineCodeBuddy {
-		if req.Environment != nil {
-			var ok bool
-			environment, ok = domain.NormalizeCodeBuddyInternetEnvironment(*req.Environment)
-			if !ok {
-				c.JSON(http.StatusBadRequest, cliModelProbeResult{Error: "请选择有效的 CodeBuddy 网络环境"})
-				return
-			}
+	if engine == assistantEngineCodeBuddy && req.Environment != nil {
+		var ok bool
+		environment, ok = domain.NormalizeCodeBuddyInternetEnvironment(*req.Environment)
+		if !ok {
+			c.JSON(http.StatusBadRequest, cliModelProbeResult{Error: "请选择有效的 CodeBuddy 网络环境"})
+			return
 		}
+	}
+	if engine == assistantEngineCodeBuddy && baseURL == "" {
 		ctx, cancel := context.WithTimeout(c.Request.Context(), 15*time.Second)
 		defer cancel()
 		var models []domain.CLIModel
@@ -104,6 +104,10 @@ func (h *usersHandlers) probeCLIModels(c *gin.Context) {
 			}
 		}
 		if len(models) == 0 {
+			if _, err := resolveAssistantEngineBin(engine); errors.Is(err, errAssistantCLIMissing) {
+				c.JSON(http.StatusOK, cliModelProbeResult{Error: err.Error()})
+				return
+			}
 			c.JSON(http.StatusOK, cliModelProbeResult{Error: "CodeBuddy CLI 没有返回模型，请检查 CLI 和个人凭据"})
 			return
 		}

@@ -90,7 +90,11 @@ func (e *Engine) startWorkflowDefinition(wf domain.WorkflowDefinition, input str
 		}
 	}
 	wf = defaultWorkflowSandboxProfile(wf)
-	wf, err := domain.AttachPreviewBuild(wf)
+	wf, err := configureBaselineAlignCLI(wf)
+	if err != nil {
+		return domain.Run{}, err
+	}
+	wf, err = domain.AttachPreviewBuild(wf)
 	if err != nil {
 		return domain.Run{}, err
 	}
@@ -109,6 +113,14 @@ func (e *Engine) startWorkflowDefinition(wf domain.WorkflowDefinition, input str
 	resources, err := resolveSandboxResources(e.repo, profile)
 	if err != nil {
 		return domain.Run{}, err
+	}
+	e.selectSOPExecutionTarget(&executionContext)
+	wf.ExecutorDefaults = nil
+	if executionContext.ResponsibleUserID > 0 {
+		wf.ExecutorDefaults, _, err = e.planSOPExecutors(wf, executionContext, false)
+		if err != nil {
+			return domain.Run{}, err
+		}
 	}
 	if _, err := workflowSandboxRequirements(e.repo, wf); err != nil {
 		return domain.Run{}, err
@@ -129,25 +141,6 @@ func (e *Engine) startWorkflowDefinition(wf domain.WorkflowDefinition, input str
 		firstRepository = repositories[0]
 	}
 	executionContext.RunID, executionContext.TraceID, executionContext.WorkflowID, executionContext.WorkflowVersion = id, id, workflowID, wf.Version
-	if executionContext.ParentRunID == "" && !executionContext.ExecutionPinned {
-		executionContext.ExecutionRunnerID = e.repo.DefaultRunner(executionContext.ResponsibleUserID)
-		executionContext.WorkspaceRunID = ""
-	}
-	if executionContext.ExecutionRunnerID == "" && !executionContext.ExecutionPinned {
-		if runner, ok := e.cloudPoolRunner(executionContext.ProjectID); ok {
-			executionContext.ExecutionRunnerID = runner.ID
-			executionContext.ExecutionPool = domain.ExecutionModeCloud
-		} else if e.cloudPoolRequired(executionContext.ProjectID) {
-			// The first node binds a pool runner once one is online.
-			executionContext.ExecutionPool = domain.ExecutionModeCloud
-		}
-	}
-	if executionContext.ExecutionRunnerID != "" || executionContext.ExecutionPool == domain.ExecutionModeCloud {
-		executionContext.ExecutionMode = domain.ExecutionModeRunner
-		executionContext.RunnerWorkspaceLayout = domain.RunnerWorkspaceLayoutShared
-	} else {
-		executionContext.ExecutionMode = domain.ExecutionModeCloud
-	}
 	if err := e.requireWorkBranchCapabilities(executionContext.ExecutionRunnerID, repositories); err != nil {
 		return domain.Run{}, err
 	}
@@ -207,6 +200,28 @@ func (e *Engine) startWorkflowDefinition(wf domain.WorkflowDefinition, input str
 	}
 	go e.execute(ctx, id)
 	return r, nil
+}
+
+func (e *Engine) selectSOPExecutionTarget(executionContext *domain.TelemetryContext) {
+	if executionContext.ParentRunID == "" && !executionContext.ExecutionPinned {
+		executionContext.ExecutionRunnerID = e.repo.DefaultRunner(executionContext.ResponsibleUserID)
+		executionContext.WorkspaceRunID = ""
+	}
+	if executionContext.ExecutionRunnerID == "" && !executionContext.ExecutionPinned {
+		if runner, ok := e.cloudPoolRunner(executionContext.ProjectID); ok {
+			executionContext.ExecutionRunnerID = runner.ID
+			executionContext.ExecutionPool = domain.ExecutionModeCloud
+		} else if e.cloudPoolRequired(executionContext.ProjectID) {
+			// The first node binds a pool runner once one is online.
+			executionContext.ExecutionPool = domain.ExecutionModeCloud
+		}
+	}
+	if executionContext.ExecutionRunnerID != "" || executionContext.ExecutionPool == domain.ExecutionModeCloud {
+		executionContext.ExecutionMode = domain.ExecutionModeRunner
+		executionContext.RunnerWorkspaceLayout = domain.RunnerWorkspaceLayoutShared
+	} else {
+		executionContext.ExecutionMode = domain.ExecutionModeCloud
+	}
 }
 
 func (e *Engine) executes() bool {

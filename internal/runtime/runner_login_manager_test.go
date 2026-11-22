@@ -488,38 +488,57 @@ func TestRunnerLoginSourceAliasChanges(t *testing.T) {
 }
 
 func TestManagedClaudeBridge(t *testing.T) {
-	source, _, renewed := managedLoginFixture(t, "claude-code")
-	manager := &runnerLoginManager{stateDir: t.TempDir(), refresh: func(context.Context, string, []byte) ([]byte, error) { return renewed, nil }}
-	lease, err := newRunnerLoginLease(context.Background(), manager, source, false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer lease.close()
 	root := t.TempDir()
 	bin := filepath.Join(root, "claude")
 	script := `#!/usr/bin/env python3
 import sys,json
+assert sys.argv.index('--input-format') < sys.argv.index('--')
 for line in sys.stdin:
  x=json.loads(line)
  if x.get('type')=='control_request':
   print(json.dumps({'type':'control_response','response':{'subtype':'success','request_id':x['request_id']}}),flush=True)
  elif x.get('type')=='user':
-  assert x['message']['content']=='original task prompt'
+  content=x['message']['content']
+  if isinstance(content, list):
+   assert content[0]['text']=='original task prompt' and content[1]['type']=='image'
+  else:
+   assert content=='original task prompt'
   print(json.dumps({'type':'control_request','request_id':'refresh-one','request':{'subtype':'oauth_token_refresh'}}),flush=True)
  elif x.get('type')=='control_response':
   assert x['response']['response']['accessToken']=='claude-access-1'
   print(json.dumps({'type':'result','is_error':False,'result':'bridge-ok'}),flush=True)
-  break
 `
 	if err := os.WriteFile(bin, []byte(script), 0700); err != nil {
 		t.Fatal(err)
 	}
-	command := WithCommandEnvironment(CommandSpec{Provider: "claude-code", Argv: []string{bin, "-p", "original task prompt"}}, lease.environment())
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	out, err := (&localSandbox{workspace: root}).Exec(ctx, command, nil)
-	if err != nil || !strings.Contains(out, "bridge-ok") || strings.Contains(out, "oauth_token_refresh") || strings.Contains(out, "claude-access-1") {
-		t.Fatalf("managed bridge failed or leaked control messages: %v", err)
+	for _, tc := range []struct {
+		name  string
+		args  []string
+		stdin string
+	}{
+		{"positional prompt", []string{"-p", "--", "original task prompt"}, ""},
+		{"streamed image", []string{"-p", "--input-format", "stream-json", "--"}, `{"type":"user","message":{"role":"user","content":[{"type":"text","text":"original task prompt"},{"type":"image","source":{"type":"base64","media_type":"image/png","data":"AA=="}}]}}` + "\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			source, _, renewed := managedLoginFixture(t, "claude-code")
+			manager := &runnerLoginManager{stateDir: t.TempDir(), refresh: func(context.Context, string, []byte) ([]byte, error) { return renewed, nil }}
+			lease, err := newRunnerLoginLease(t.Context(), manager, source, false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer lease.close()
+			command := CommandSpec{Provider: "claude-code", Argv: append([]string{bin}, tc.args...)}
+			if tc.stdin != "" {
+				command.Stdin = strings.NewReader(tc.stdin)
+			}
+			command = WithCommandEnvironment(command, lease.environment())
+			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+			defer cancel()
+			out, err := (&localSandbox{workspace: root}).Exec(ctx, command, nil)
+			if err != nil || !strings.Contains(out, "bridge-ok") || strings.Contains(out, "oauth_token_refresh") || strings.Contains(out, "claude-access-1") {
+				t.Fatalf("managed bridge failed or leaked control messages: %v", err)
+			}
+		})
 	}
 }
 
