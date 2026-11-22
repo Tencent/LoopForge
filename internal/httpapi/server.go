@@ -324,6 +324,7 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.POST("/api/assistant/sessions/:id/proposals", asst.decideProposal)
 	g.GET("/api/assistant/preferences", asst.preferences)
 	g.PUT("/api/assistant/preferences", asst.preferences)
+	g.POST("/api/assistant/approval-review/probe", asst.probeApprovalReviewModels)
 	g.GET("/api/assistant/models", asst.models)
 	g.POST("/api/assistant/cli-install", asst.installCLI)
 	g.GET("/api/assistant/cli-install", asst.cliInstallStatus)

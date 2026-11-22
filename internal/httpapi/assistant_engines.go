@@ -431,6 +431,20 @@ func assistantDiscoveryKey(protocol, apiKey, baseURL string) string {
 	return hex.EncodeToString(sum[:])
 }
 
+func invalidateAssistantEngineDiscoveryCache(user domain.User) {
+	for _, engine := range assistantCLIEngines() {
+		key, baseURL := assistantEngineCredential(user, engine)
+		if key == "" || baseURL == "" {
+			continue
+		}
+		protocol := assistantEngineProtocol(user, engine)
+		if assistantEngineAnthropicModels(engine, protocol) {
+			protocol = runtime.AgentCLIProtocolMessages
+		}
+		assistantDiscoveryCache.Delete(assistantDiscoveryKey(protocol, key, baseURL))
+	}
+}
+
 func cachedAssistantEngineDiscovery(ctx context.Context, protocol, apiKey, baseURL string) []assistantDiscoveredModel {
 	cacheKey := assistantDiscoveryKey(protocol, apiKey, baseURL)
 	now := time.Now()
@@ -543,7 +557,11 @@ func cursorCatalogEqual(a, b []domain.CLIModel) bool {
 func discoverAssistantEngineModels(ctx context.Context, anthropic bool, apiKey, baseURL string) ([]assistantDiscoveredModel, error) {
 	endpoint := strings.TrimRight(baseURL, "/")
 	if anthropic {
-		endpoint += "/v1/models"
+		if strings.HasSuffix(endpoint, "/v1") {
+			endpoint += "/models"
+		} else {
+			endpoint += "/v1/models"
+		}
 	} else {
 		endpoint += "/models"
 	}
@@ -628,6 +646,32 @@ func discoverAssistantEngineModels(ctx context.Context, anthropic bool, apiKey, 
 		return out, nil
 	}
 	return nil, lastErr
+}
+
+// assistantGeminiModelsDiscover is a variable so tests can stub the network.
+var assistantGeminiModelsDiscover = discoverGeminiModels
+
+func discoverApprovalReviewAPIModels(ctx context.Context, protocol, apiKey, baseURL string) ([]assistantDiscoveredModel, error) {
+	baseURL = strings.TrimSpace(baseURL)
+	switch protocol {
+	case runtime.AgentCLIProtocolMessages:
+		if baseURL == "" {
+			baseURL = assistantAnthropicAPIBase
+		}
+		return assistantEngineDiscover(ctx, true, apiKey, baseURL)
+	case runtime.AgentCLIProtocolChat, runtime.AgentCLIProtocolResponses:
+		if baseURL == "" {
+			baseURL = "https://api.openai.com/v1"
+		}
+		return assistantEngineDiscover(ctx, false, apiKey, baseURL)
+	case runtime.AgentCLIProtocolGemini:
+		if baseURL == "" {
+			baseURL = "https://generativelanguage.googleapis.com"
+		}
+		return assistantGeminiModelsDiscover(ctx, apiKey, baseURL)
+	default:
+		return nil, fmt.Errorf("不支持的接口协议：%s", protocol)
+	}
 }
 
 // assistantEngineState records which CLI holds a personal conversation's

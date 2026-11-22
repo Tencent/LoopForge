@@ -1062,7 +1062,14 @@ function storeCredentialUser(saved){
   const users=state.data.users||(state.data.users=[]),index=users.findIndex(u=>Number(u.id)===Number(saved.id));
   if(index>=0)users[index]=saved;else users.push(saved);
 }
-function notifyCredentialsChanged(){$('#chatNextFrame')?.contentWindow?.postMessage({type:'agentflow-credentials-changed'},location.origin)}
+function notifyCredentialsChanged(){
+  $('#chatNextFrame')?.contentWindow?.postMessage({type:'agentflow-credentials-changed'},location.origin);
+  if(typeof window!=='undefined'){
+    window.AgentFlowAssistantModels?.load?.({refresh:true})?.then(()=>{
+      if(typeof renderAssistantSettings==='function'&&typeof document!=='undefined'&&document.querySelector('#assistantView.active'))renderAssistantSettings();
+    }).catch(()=>{});
+  }
+}
 async function saveCredential(key,values={},options={}){
   const user=state.currentUser,kind=credentialKind(key);
   let saved;

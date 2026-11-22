@@ -70,14 +70,14 @@ func prepareAssistantAgentCLIInvocation(kind string, o assistantEngineInvocation
 			out := translate(line)
 			for i, translated := range out {
 				out[i] = assistantAgentCLILine(kind, translated, &native)
-				if agentCLISessionValid(native) {
+				if !o.ReviewOnly && agentCLISessionValid(native) {
 					_ = writeAgentCLISession(o.Root, kind, o.SessionID, native)
 				}
 			}
 			return out
 		},
 		finish: func(ok bool) {
-			if agentCLISessionValid(native) {
+			if !o.ReviewOnly && agentCLISessionValid(native) {
 				_ = writeAgentCLISession(o.Root, kind, o.SessionID, native)
 			}
 		},
