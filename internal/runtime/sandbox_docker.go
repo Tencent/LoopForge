@@ -5,6 +5,7 @@ import (
 	"agentflow/internal/procwatch"
 	"agentflow/internal/workspaceprep"
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -287,7 +288,7 @@ func (s *dockerSandbox) onDemandCLIPath(ctx context.Context, command CommandSpec
 		return "", nil
 	}
 	spec, ok := onDemandCLICatalog()[command.Provider]
-	if !ok || spec.Bundled || spec.Script != "" || command.Argv[0] != spec.Binary {
+	if !ok || spec.Bundled || spec.InstallerURL != "" || command.Argv[0] != spec.Binary {
 		return "", nil
 	}
 	if spec.Engine == "claude-code" {
@@ -628,7 +629,7 @@ func DockerImageCached(ctx context.Context, dockerfile domain.DockerfileDefiniti
 	if image := isolatedRuntimeImage(dockerfile); image != "" {
 		return dockerImageExists(ctx, image)
 	}
-	return dockerImageExists(ctx, cachedDockerImageName(dockerfile))
+	return dockerImageExists(ctx, cachedDockerImageName(effectiveIsolatedDockerfile(dockerfile)))
 }
 
 func reclaimCachedDockerImages(ctx context.Context, keep map[string]struct{}) (int, error) {
@@ -906,6 +907,7 @@ func ensureDockerImage(ctx context.Context, workspace string, dockerfile domain.
 		}
 		return image, nil
 	}
+	dockerfile = effectiveIsolatedDockerfile(dockerfile)
 	image := cachedDockerImageName(dockerfile)
 	if dockerImageExists(ctx, image) {
 		return image, nil
@@ -915,12 +917,30 @@ func ensureDockerImage(ctx context.Context, workspace string, dockerfile domain.
 		return "", err
 	}
 	args := dockerBuildArgs(image, contextDir)
+	watch := dockerBuildWatch(dockerfile)
+	report := DockerBuildProgressObserver(ctx)
 	build := func(ctx context.Context) *exec.Cmd {
 		cmd := exec.CommandContext(ctx, "docker", args...)
-		cmd.Env = append(os.Environ(), "BUILDKIT_PROGRESS=plain")
+		cmd.Env = append(cmd.Environ(), "BUILDKIT_PROGRESS=plain")
 		return cmd
 	}
-	if tail, err := procwatch.Run(workspaceprep.Observe(ctx), build, dockerBuildWatch(dockerfile)); err != nil {
+	var buildID string
+	if report != nil {
+		buildID = rand.Text()
+		step := "启动构建"
+		report(domain.WorkspaceImageBuildProgress{ID: buildID, Step: step})
+		watch.OnLine = func(line string) {
+			if next := dockerBuildStep(line); next != "" && next != step {
+				step = next
+				report(domain.WorkspaceImageBuildProgress{ID: buildID, Step: step})
+			}
+		}
+	}
+	tail, err := procwatch.Run(workspaceprep.Observe(ctx), build, watch)
+	if report != nil {
+		report(domain.WorkspaceImageBuildProgress{ID: buildID, Done: true, Failed: err != nil})
+	}
+	if err != nil {
 		// Only the tail: a build killed after minutes of apt output used to
 		// carry all of it in the error.
 		return "", fmt.Errorf("docker build: %w: %s", err, tail)
@@ -928,8 +948,8 @@ func ensureDockerImage(ctx context.Context, workspace string, dockerfile domain.
 	return image, nil
 }
 
-// Build limits. A RUN step can be silent for a while (a compile, a large
-// download without a progress bar), so the stall window is wider than for git.
+// A Dockerfile step can work quietly for an arbitrary amount of time.
+// Apply an output-based limit only when explicitly configured.
 const (
 	dockerBuildStallEnv   = "AGENTFLOW_DOCKER_BUILD_STALL_TIMEOUT"
 	dockerBuildTimeoutEnv = "AGENTFLOW_DOCKER_BUILD_TIMEOUT"
@@ -946,22 +966,35 @@ func dockerBuildWatch(dockerfile domain.DockerfileDefinition) procwatch.Options 
 	}
 	return procwatch.Options{
 		Stage: "image", Label: label,
-		Stall: procwatch.DurationEnv(dockerBuildStallEnv, 10*time.Minute), StallEnv: dockerBuildStallEnv,
+		Stall: procwatch.DurationEnv(dockerBuildStallEnv, 0), StallEnv: dockerBuildStallEnv,
 		Timeout: procwatch.DurationEnv(dockerBuildTimeoutEnv, 0), TimeoutEnv: dockerBuildTimeoutEnv,
 		Redact: workspaceprep.Sanitize,
 	}
 }
 
 func isolatedRuntimeImage(dockerfile domain.DockerfileDefinition) string {
-	if dockerfile.Content != IsolatedDockerfile || len(dockerfile.Files) != 0 {
+	if !isBuiltInIsolatedDockerfile(dockerfile) {
 		return ""
 	}
 	return strings.TrimSpace(os.Getenv("AGENTFLOW_ISOLATED_IMAGE"))
 }
 
-// IsolatedDockerfile matches the public "generic-backend" environment so both
-// share one cached image.
-const IsolatedDockerfile = "FROM node:22-bookworm\nRUN apt-get update && apt-get install -y --no-install-recommends git openssh-client python3 ripgrep ca-certificates curl && rm -rf /var/lib/apt/lists/*\nRUN npm install -g @openai/codex @anthropic-ai/claude-code @tencent-ai/codebuddy-code\nWORKDIR /workspace\n"
+const isolatedDockerfileBase = "FROM node:22-bookworm\nRUN apt-get update && apt-get install -y --no-install-recommends git openssh-client python3 ripgrep ca-certificates curl && rm -rf /var/lib/apt/lists/*\n"
+const legacyIsolatedDockerfile = isolatedDockerfileBase + "RUN npm install -g @openai/codex @anthropic-ai/claude-code @tencent-ai/codebuddy-code\nWORKDIR /workspace\n"
+
+// IsolatedDockerfile is the fallback for profiles without a custom image.
+const IsolatedDockerfile = isolatedDockerfileBase + "RUN npm install -g @openai/codex @anthropic-ai/claude-code\nARG CODEBUDDY_PACKAGE=@tencent-ai/codebuddy-code\nRUN if [ -n \"$CODEBUDDY_PACKAGE\" ]; then npm install -g \"$CODEBUDDY_PACKAGE\"; fi\nWORKDIR /workspace\n"
+
+func isBuiltInIsolatedDockerfile(dockerfile domain.DockerfileDefinition) bool {
+	return len(dockerfile.Files) == 0 && (dockerfile.Content == IsolatedDockerfile || dockerfile.Content == legacyIsolatedDockerfile)
+}
+
+func effectiveIsolatedDockerfile(dockerfile domain.DockerfileDefinition) domain.DockerfileDefinition {
+	if os.Getenv("AGENTFLOW_SKIP_CODEBUDDY_INSTALL") == "1" && isBuiltInIsolatedDockerfile(dockerfile) {
+		dockerfile.Content = strings.Replace(IsolatedDockerfile, "ARG CODEBUDDY_PACKAGE=@tencent-ai/codebuddy-code", "ARG CODEBUDDY_PACKAGE=", 1)
+	}
+	return dockerfile
+}
 
 // PrebuildIsolatedImage warms the shared sandbox image in the background so
 // the first SOP on a fresh container install does not wait for the build.

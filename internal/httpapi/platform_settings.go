@@ -208,7 +208,7 @@ func (h *usersHandlers) platformCodeBuddyKey(c *gin.Context) {
 			apiKey = key.APIKey
 		}
 		refreshCLIModels(c.Request.Context(), environment, apiKey)
-		catalog := loadAssistantModels(c.Request.Context(), environment).Models
+		catalog := loadAssistantModels(environment, apiKey).Models
 		c.JSON(http.StatusOK, platformCodeBuddyKeyResponse{PlatformCodeBuddyKeyStatus: status, Catalog: catalog})
 	case http.MethodPut:
 		h.savePlatformCodeBuddyKey(c)

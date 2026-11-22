@@ -202,6 +202,12 @@ func (h *assistantHandlers) prepareWorkbenchContext(c *gin.Context, req *assista
 }
 
 func (h *assistantHandlers) buildWorkbenchContext(c *gin.Context, req *assistantRequest, user domain.User) error {
+	if req.sopDesigner() {
+		return h.prepareSOPDesignerContext(c, req, user)
+	}
+	if err := h.validateScheduledAssets(c.Request.Context(), req.ProjectID); err != nil {
+		return err
+	}
 	// Existing personal attachments remain usable when an unassigned conversation
 	// is explicitly bound to an authorized project. Never infer another user's files.
 	historicalAttachments := map[string]bool{}
@@ -1354,7 +1360,9 @@ func (h *assistantHandlers) linkMentionedIssue(req *assistantRequest, user domai
 	}
 	ownerID := assistantStorageOwner(h.repo, req.SessionID, user.ID)
 	session, ok := h.repo.AssistantSession(ownerID, req.SessionID)
-	if !ok || session.Shared || session.RunID != "" || session.IssueID != "" {
+	// Scheduled references belong to each execution and must not become a
+	// persistent issue binding when a fixed session is reused.
+	if !ok || session.Shared || session.Source == domain.AssistantSourceScheduled || session.RunID != "" || session.IssueID != "" {
 		return ""
 	}
 	issueID := ""

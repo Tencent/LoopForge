@@ -67,6 +67,13 @@ func TestScheduleJobCRUD(t *testing.T) {
 	if custom.MaxDispatch != 3 {
 		t.Fatalf("custom dispatch limit = %d", custom.MaxDispatch)
 	}
+	dispatchRefs := requestJSON[domain.ScheduleJob](t, h, http.MethodPut, "/api/schedule-jobs", map[string]any{
+		"id": custom.ID, "name": custom.Name, "workflowId": custom.WorkflowID,
+		"references": []map[string]any{{"type": "issue", "id": "missing"}},
+	}, http.StatusOK)
+	if len(dispatchRefs.References) != 0 {
+		t.Fatalf("dispatch job retained AI references: %+v", dispatchRefs.References)
+	}
 	if got := strings.Join(custom.IssueStatuses, ","); got != "todo,in_progress" {
 		t.Fatalf("normalized issue statuses = %q", got)
 	}
@@ -81,8 +88,21 @@ func TestScheduleJobCRUD(t *testing.T) {
 	if len(promptOnly.IssueStatuses) != 0 {
 		t.Fatalf("AI job must not keep issue statuses: %+v", promptOnly.IssueStatuses)
 	}
-	if promptOnly.MaxDispatch != 0 {
-		t.Fatalf("AI job must not keep maxDispatch: %+v", promptOnly)
+	if promptOnly.MaxDispatch != 0 || promptOnly.TimeoutMinutes != domain.DefaultScheduleTimeoutMinutes {
+		t.Fatalf("unexpected AI job limits: %+v", promptOnly)
+	}
+	for _, invalid := range []any{-1, 241, 1.5, "30"} {
+		requestJSON[map[string]string](t, h, http.MethodPut, "/api/schedule-jobs", map[string]any{
+			"id": promptOnly.ID, "name": promptOnly.Name, "assistantPrompt": promptOnly.AssistantPrompt,
+			"skipDispatch": true, "timeoutMinutes": invalid,
+		}, http.StatusBadRequest)
+	}
+	requestJSON[domain.ScheduleJob](t, h, http.MethodPut, "/api/schedule-jobs", map[string]any{
+		"id": promptOnly.ID, "name": promptOnly.Name, "assistantPrompt": promptOnly.AssistantPrompt,
+		"skipDispatch": true, "timeoutMinutes": 75,
+	}, http.StatusOK)
+	if stored, ok := st.ScheduleJob(promptOnly.ID); !ok || stored.TimeoutMinutes != 75 {
+		t.Fatalf("saved timeout was lost: %+v", stored)
 	}
 	for _, method := range []string{http.MethodPost, http.MethodPut} {
 		for _, invalid := range []any{-1, 11, 1.5, "3"} {
@@ -110,6 +130,73 @@ func TestScheduleJobCRUD(t *testing.T) {
 	if _, ok := st.ScheduleJob(created.ID); ok {
 		t.Fatal("schedule job was not deleted")
 	}
+}
+
+func TestAIScheduleReferencesPersistIdentityAndRefreshDisplayData(t *testing.T) {
+	st, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(st.Close)
+	issue := domain.Issue{ID: "scheduled-ref-issue", ProjectID: "platform", Title: "初始标题", Description: "详情", Status: "todo"}
+	if err := st.PutIssue(issue); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.PutProject(domain.Project{ID: "scheduled-ref-foreign", Name: "Foreign", OwnerID: 99}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.PutIssue(domain.Issue{ID: "scheduled-ref-foreign-issue", ProjectID: "scheduled-ref-foreign", Title: "跨项目"}); err != nil {
+		t.Fatal(err)
+	}
+	h := New(st, engine.New(st, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "")
+	saved := requestJSON[domain.ScheduleJob](t, h, http.MethodPost, "/api/schedule-jobs", map[string]any{
+		"name": "引用需求", "projectId": "platform", "skipDispatch": true,
+		"intervalSec": 3600, "assistantPrompt": "读取需求", "enabled": true,
+		"references": []map[string]any{{"type": "issue", "id": issue.ID, "name": "伪造名称", "projectId": "别的项目"}},
+	}, http.StatusOK)
+	if len(saved.References) != 1 || saved.References[0].Type != "issue" || saved.References[0].ID != issue.ID {
+		t.Fatalf("saved references = %+v", saved.References)
+	}
+	if saved.References[0].Name != issue.Title || saved.References[0].ProjectID != issue.ProjectID {
+		t.Fatalf("response should resolve current display data: %+v", saved.References[0])
+	}
+	stored, ok := st.ScheduleJob(saved.ID)
+	if !ok || len(stored.References) != 1 || stored.References[0].Name != "" || stored.References[0].ProjectID != "" {
+		t.Fatalf("stored references must keep only identity: %+v", stored.References)
+	}
+	issue.Title = "更新后的标题"
+	if err := st.PutIssue(issue); err != nil {
+		t.Fatal(err)
+	}
+	assistant := &assistantHandlers{deps: &deps{repo: st}}
+	canonical, data, err := assistant.workbenchReference(domain.AssistantReference{Type: "issue", ID: issue.ID}, "platform")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if canonical.Name != issue.Title || !strings.Contains(data, "更新后的标题") {
+		t.Fatalf("runtime reference did not refresh: canonical=%+v data=%s", canonical, data)
+	}
+	if _, err := assistant.normalizeScheduledReferences("platform", []domain.AssistantReference{{Type: "issue", ID: "missing"}}); err == nil {
+		t.Fatal("missing scheduled reference should be rejected")
+	}
+	if _, err := assistant.normalizeScheduledReferences("platform", []domain.AssistantReference{{Type: "element", ID: "x"}}); err == nil {
+		t.Fatal("unsupported scheduled reference type should be rejected")
+	}
+	for _, typ := range []string{"element", "unknown"} {
+		response := requestJSON[map[string]string](t, h, http.MethodPost, "/api/schedule-jobs", map[string]any{
+			"name": "不可复用的引用", "projectId": "platform", "skipDispatch": true,
+			"intervalSec": 3600, "assistantPrompt": "读取资产",
+			"references": []map[string]any{{"type": typ, "id": "legacy-reference"}},
+		}, http.StatusBadRequest)
+		if !strings.Contains(response["error"], "无效") {
+			t.Fatalf("unsupported type %s: %+v", typ, response)
+		}
+	}
+	requestJSON[map[string]string](t, h, http.MethodPost, "/api/schedule-jobs", map[string]any{
+		"name": "跨项目引用", "projectId": "platform", "skipDispatch": true,
+		"intervalSec": 3600, "assistantPrompt": "读取需求", "enabled": true,
+		"references": []map[string]any{{"type": "issue", "id": "scheduled-ref-foreign-issue"}},
+	}, http.StatusBadRequest)
 }
 
 func TestScheduledDispatchUsesIntegrationBranchAndManualDispatchDoesNot(t *testing.T) {
@@ -440,6 +527,22 @@ func TestEnsureBaselineAlignWorkflowUpgradesExistingRevision(t *testing.T) {
 		if n.ID == "confirm" {
 			t.Fatal("confirm node must be removed")
 		}
+	}
+	if wf.Nodes[1].ExecutionScope != domain.ExecutionScopeRepositories {
+		t.Fatal("the merge verifier must run inside the repository checkout")
+	}
+
+	wf.Version = 7
+	wf.Nodes[1].ExecutionScope = ""
+	if err := st.PutWorkflow(wf); err != nil {
+		t.Fatal(err)
+	}
+	if !h.ensureBaselineAlignWorkflow(domain.ScheduleJob{ProjectID: "platform"}) {
+		t.Fatal("ensure should upgrade the previously installed v7 align SOP")
+	}
+	if upgraded, ok := st.Workflow(engine.BaselineAlignWorkflowID); !ok || upgraded.Version != baselineAlignWorkflowVersion ||
+		len(upgraded.Nodes) != 2 || upgraded.Nodes[1].ExecutionScope != domain.ExecutionScopeRepositories {
+		t.Fatalf("installed align SOP still lacks repository-scoped verification: %+v", upgraded)
 	}
 }
 

@@ -45,6 +45,7 @@ func bindCommand(ctx context.Context, sandbox Sandbox, workspace string, command
 	// Known host credentials are cleared for every child by default. A provider
 	// receives them only by explicitly requesting a controlled binding.
 	bound.environment["CODEBUDDY_API_KEY"] = ""
+	bound.environment["CODEBUDDY_BASE_URL"] = ""
 	bound.environment["CODEBUDDY_INTERNET_ENVIRONMENT"] = ""
 	bound.environment["AGENTFLOW_GIT_TOKEN"] = ""
 	bound.environment["GH_TOKEN"] = ""
@@ -107,13 +108,13 @@ func bindCommand(ctx context.Context, sandbox Sandbox, workspace string, command
 	for _, binding := range command.CredentialBindings {
 		switch binding {
 		case BindCodeBuddy:
-			// Empty values are intentional: a responsible user without credentials must
-			// not inherit either variable from the AgentFlow host process.
+			// Clearing an endpoint restores CodeBuddy's official address for this edition.
 			bound.environment["CODEBUDDY_API_KEY"] = strings.TrimSpace(credentials.CodeBuddy.APIKey)
 			if bound.environment["CODEBUDDY_API_KEY"] == "" {
 				return CommandSpec{}, fmt.Errorf("需求责任人未配置 CodeBuddy API Key，请在个人配置中配置")
 			}
 			bound.environment["CODEBUDDY_INTERNET_ENVIRONMENT"] = strings.TrimSpace(credentials.CodeBuddy.InternetEnvironment)
+			bound.environment["CODEBUDDY_BASE_URL"] = strings.TrimSpace(credentials.CodeBuddy.BaseURL)
 		case BindGit:
 			if err := bindWorkspaceGitEnvironment(ctx, sandbox, workspace, bound.environment, credentials); err != nil {
 				return CommandSpec{}, err
@@ -150,11 +151,7 @@ func bindCommand(ctx context.Context, sandbox Sandbox, workspace string, command
 			if bound.environment["ANTHROPIC_API_KEY"] == "" {
 				return CommandSpec{}, fmt.Errorf("需求责任人未配置 Claude Code API Key，请在个人配置中配置")
 			}
-			baseURL := strings.TrimSpace(credentials.ClaudeCode.BaseURL)
-			if baseURL == "" {
-				baseURL = "https://api.anthropic.com"
-			}
-			bound.environment["ANTHROPIC_BASE_URL"] = baseURL
+			BindClaudeCodeEndpoint(bound.environment, credentials.ClaudeCode.BaseURL)
 		case BindAgentCLI:
 			var home AgentCLIHome
 			homeEnv := bound.environment["HOME"]
@@ -185,27 +182,37 @@ func bindCommand(ctx context.Context, sandbox Sandbox, workspace string, command
 	if command.HookOutput != "" {
 		bound.environment["AGENTFLOW_HOOK_OUTPUT"] = command.HookOutput
 	}
-	bindTelemetryEnvironment(bound.environment, command.Telemetry)
+	bindTelemetryEnvironment(bound.environment, command.Telemetry, command.Provider)
 	return bound, nil
 }
 
 // bindTelemetryEnvironment points the child CLI's OpenTelemetry exporter at
 // the AgentFlow collector and tags its spans with the run and node. A nil
 // telemetry leaves env untouched.
-func bindTelemetryEnvironment(env map[string]string, telemetry *InvocationOptions) {
+func bindTelemetryEnvironment(env map[string]string, telemetry *InvocationOptions, provider string) {
 	if telemetry == nil {
 		return
 	}
 	runID, nodeID := telemetry.RunID, telemetry.NodeID
 	env["AGENTFLOW_RUN_ID"] = runID
 	env["AGENTFLOW_NODE_ID"] = nodeID
-	env["CODEBUDDY_CODE_ENABLE_TELEMETRY"] = "1"
-	env["CLAUDE_CODE_ENABLE_TELEMETRY"] = "1"
+	switch provider {
+	case "codebuddy":
+		env["CODEBUDDY_CODE_ENABLE_TELEMETRY"] = "1"
+	case "claude-code":
+		env["CLAUDE_CODE_ENABLE_TELEMETRY"] = "1"
+	}
 	env["OTEL_TRACES_EXPORTER"] = "otlp"
 	env["OTEL_EXPORTER_OTLP_PROTOCOL"] = "http/protobuf"
 	env["OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"] = observability.CollectorTracesURL()
 	env["OTEL_LOG_TOOL_DETAILS"] = "1"
-	env["OTEL_RESOURCE_ATTRIBUTES"] = fmt.Sprintf("agentflow.run_id=%s,agentflow.node_id=%s,service.name=agentflow-codebuddy", runID, nodeID)
+	attributes := fmt.Sprintf("agentflow.run_id=%s,agentflow.node_id=%s", runID, nodeID)
+	if provider == "" {
+		attributes += ",service.name=agentflow"
+	} else {
+		attributes += fmt.Sprintf(",agentflow.executor_kind=%s,service.name=agentflow-%s", provider, provider)
+	}
+	env["OTEL_RESOURCE_ATTRIBUTES"] = attributes
 }
 
 // CodexUserProviderArgv inserts a dedicated "agentflow_user" model provider

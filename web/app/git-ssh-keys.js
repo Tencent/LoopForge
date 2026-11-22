@@ -45,7 +45,7 @@ window.addEventListener('focus', () => {
   refreshGitSSHWarnings();
 });
 
-function openGitSSHKeys(remote = '') {
+function openGitSSHKeys(remote = '', options = {}) {
   const user = state.currentUser;
   if (!user?.id || user.isGuest) return;
 
@@ -149,7 +149,7 @@ function openGitSSHKeys(remote = '') {
       });
       gitSSHKeyCache = {userId:user.id, keys, pending:null};
       storeCredentialUser({...credentialUser(), id:user.id, gitSshKeyConfigured:keys.length > 0});
-      renderCredentialPanel();
+      renderCredentialGitGroup();
       notifyCredentialsChanged();
       refreshGitSSHWarnings();
       deleting = '';
@@ -192,8 +192,7 @@ function openGitSSHKeys(remote = '') {
   dialog.addEventListener('close', () => {
     form.reset();
     dialog.remove();
-    if (opener?.isConnected) opener.focus({preventScroll:true});
-    else $('#credentialPanel [data-credential-row="gitSshKey"] [data-credential-act="setup"]')?.focus({preventScroll:true});
+    (opener?.isConnected ? opener : $('#credentialPanel [data-credential-add-menu="platform"]'))?.focus({preventScroll:true});
   });
   document.body.append(dialog);
   dialog.showModal();
@@ -207,6 +206,9 @@ function openGitSSHKeys(remote = '') {
     if (repository) {
       const existing = keys.find(key => globalThis.LoopForgeGitSSHHost(key.host) === repository.host);
       openForm(existing || null, repository);
+    } else {
+      const selected = keys.find(key => key.id === options.id);
+      if (selected || options.add) openForm(selected || null, null);
     }
   }).catch(error => setStatus(error.message, true));
 }

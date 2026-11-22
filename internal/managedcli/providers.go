@@ -85,6 +85,9 @@ func EnabledProviders() ([]string, error) {
 		selected[name] = struct{}{}
 	}
 	if len(selected) == 0 {
+		if os.Getenv("AGENTFLOW_SKIP_CODEBUDDY_INSTALL") == "1" {
+			return []string{"claude-code", "codex"}, nil
+		}
 		return []string{"claude-code", "codebuddy", "codex"}, nil
 	}
 	providers := make([]string, 0, len(selected))

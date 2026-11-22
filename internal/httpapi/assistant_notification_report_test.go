@@ -4,6 +4,7 @@ import (
 	"agentflow/internal/domain"
 	"agentflow/internal/notification"
 	"agentflow/internal/repo"
+	"agentflow/internal/runtime"
 	"context"
 	"encoding/json"
 	"errors"
@@ -26,6 +27,26 @@ func activeReportSession(t *testing.T) *AgentToolSession {
 	}
 	t.Fatal("missing report session")
 	return nil
+}
+
+func TestSOPReportClaudeInvocationDisablesToolsAndSessionPersistence(t *testing.T) {
+	var argv []string
+	_, _, err := runAssistantCLI(t.Context(), assistantCLIRequest{
+		Model: "claude-code:fixture-model", Prompt: "Write a report", SessionRoot: t.TempDir(),
+		ReportOnly: true, Native: true, RemoteBinary: true,
+		Execute: func(_ context.Context, _ string, command runtime.CommandSpec, _ runtime.RunCredentials, sink runtime.EventSink) (string, error) {
+			argv = append([]string(nil), command.Argv...)
+			sink(domain.TelemetryEvent{Name: "process.stdout", Message: `{"type":"result","subtype":"success","result":"Report"}`})
+			return "", nil
+		},
+	}, domain.User{ID: 1, ClaudeCodeAPIKey: "fixture-key"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tools := slices.Index(argv, "--tools")
+	if tools < 0 || tools+1 >= len(argv) || argv[tools+1] != "" || !slices.Contains(argv, "--no-session-persistence") {
+		t.Fatalf("report-only flags missing from Claude invocation: %v", argv)
+	}
 }
 
 func TestSOPReportUsesResponsibleUserAndMCPSubmission(t *testing.T) {

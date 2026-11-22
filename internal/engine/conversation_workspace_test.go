@@ -608,3 +608,125 @@ exec sleep 30
 		t.Fatal("cleanup marker not cleared after ensureRunBrowser restore")
 	}
 }
+
+func bindConversationWorkspaceHost(t *testing.T, e *Engine, id, host, root string) {
+	t.Helper()
+	if err := e.repo.DB.Table("runs").Where("id = ?", id).Updates(map[string]any{
+		"status": "waiting", "workspace_host": host, "workspace_root": root,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestConversationWorkspaceKeepsCheckoutWhenBoundHostIsGone(t *testing.T) {
+	t.Parallel()
+	e, id := checkpointFixture(t)
+	bindConversationWorkspaceHost(t, e, id, "dead-host", e.sandboxes.Root())
+	token, err := e.BeginConversationWorkspaceUse(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = e.EnsureConversationWorkspace(context.Background(), id, token); err != nil {
+		t.Fatal(err)
+	}
+	run, _ := e.repo.RunState(id)
+	if run.WorkspaceHost != e.workspaceHost || run.WorkspaceRoot != e.sandboxes.Root() {
+		t.Fatalf("checkout not rebound: host=%s root=%s", run.WorkspaceHost, run.WorkspaceRoot)
+	}
+	body, err := os.ReadFile(filepath.Join(e.RunWorkspace(id), "README.md"))
+	if err != nil || string(body) != "uncommitted" {
+		t.Fatalf("local checkout lost: %q %v", body, err)
+	}
+}
+
+func TestConversationWorkspaceRefusesLiveForeignBind(t *testing.T) {
+	t.Parallel()
+	e, id := checkpointFixture(t)
+	bindConversationWorkspaceHost(t, e, id, "live-host", e.sandboxes.Root())
+	if err := e.repo.HeartbeatEngineInstance(repo.EngineInstance{InstanceID: "live-host", Role: "worker", WorkspaceHost: "live-host", ControlURL: "http://127.0.0.1:9"}, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	token, err := e.BeginConversationWorkspaceUse(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = e.EnsureConversationWorkspace(context.Background(), id, token); !errors.Is(err, ErrConversationWorkspaceBound) {
+		t.Fatal(err)
+	}
+	run, _ := e.repo.RunState(id)
+	if run.WorkspaceHost != "live-host" {
+		t.Fatalf("live bind moved to %s", run.WorkspaceHost)
+	}
+	body, err := os.ReadFile(filepath.Join(e.RunWorkspace(id), "README.md"))
+	if err != nil || string(body) != "uncommitted" {
+		t.Fatalf("live checkout touched: %q %v", body, err)
+	}
+}
+
+func TestConversationWorkspaceRestoresSnapshotWhenBoundHostIsGone(t *testing.T) {
+	t.Parallel()
+	for name, sameRoot := range map[string]bool{"different root": false, "same root with empty checkout": true} {
+		t.Run(name, func(t *testing.T) {
+			e, id := checkpointFixture(t)
+			token, err := e.BeginConversationWorkspaceUse(id)
+			if err != nil {
+				t.Fatal(err)
+			}
+			archive, err := runtime.CreateWorkspaceCheckpoint(e.RunWorkspace(id))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err = e.repo.SaveWorkspaceCheckpoint(id, token, time.Now().UTC(), archive); err != nil {
+				t.Fatal(err)
+			}
+			if err = os.RemoveAll(e.RunWorkspace(id)); err != nil {
+				t.Fatal(err)
+			}
+			boundRoot := "/gone"
+			if sameRoot {
+				boundRoot = e.sandboxes.Root()
+				if err := os.MkdirAll(filepath.Join(e.RunWorkspace(id), ".agentflow"), 0o700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			bindConversationWorkspaceHost(t, e, id, "dead-host", boundRoot)
+			if err = e.EnsureConversationWorkspace(context.Background(), id, token); err != nil {
+				t.Fatal(err)
+			}
+			body, err := os.ReadFile(filepath.Join(e.RunWorkspace(id), "README.md"))
+			if err != nil || string(body) != "uncommitted" {
+				t.Fatalf("snapshot not restored: %q %v", body, err)
+			}
+			run, _ := e.repo.RunState(id)
+			if run.WorkspaceHost != e.workspaceHost || run.WorkspaceRoot != e.sandboxes.Root() {
+				t.Fatalf("snapshot restore left host=%s root=%s", run.WorkspaceHost, run.WorkspaceRoot)
+			}
+		})
+	}
+}
+
+func TestConversationWorkspaceReportsLossWhenNothingSurvived(t *testing.T) {
+	t.Parallel()
+	e, id := checkpointFixture(t)
+	if err := os.RemoveAll(e.RunWorkspace(id)); err != nil {
+		t.Fatal(err)
+	}
+	bindConversationWorkspaceHost(t, e, id, "dead-host", "/gone")
+	token, err := e.BeginConversationWorkspaceUse(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = e.EnsureConversationWorkspace(context.Background(), id, token); !errors.Is(err, ErrConversationWorkspaceLost) {
+		t.Fatal(err)
+	}
+	run, _ := e.repo.RunState(id)
+	if run.WorkspaceHost != e.workspaceHost || run.WorkspaceRoot != e.sandboxes.Root() {
+		t.Fatalf("lost workspace not rebound: host=%s root=%s", run.WorkspaceHost, run.WorkspaceRoot)
+	}
+	if _, err = os.Stat(e.RunWorkspace(id)); err != nil {
+		t.Fatal(err)
+	}
+	if err = e.EnsureConversationWorkspace(context.Background(), id, token); err != nil {
+		t.Fatal(err)
+	}
+}

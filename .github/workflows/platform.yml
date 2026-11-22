@@ -55,7 +55,7 @@ jobs:
       - name: Check real CLI credentials, MCP, stream parsing and native-tool restrictions
         env:
           AGENTFLOW_TEST_NATIVE_PROVIDERS: '1'
-        run: go test -p=2 ./internal/httpapi ./internal/runtime -run 'TestAssistantNativeProviderGateway|TestNativeProviderCustomGateway' -count=1 -v
+        run: go test -p=2 ./internal/httpapi ./internal/runtime -run 'TestAssistantNativeProviderGateway|TestNativeProviderCustomGateway|TestFeatureModelsWithoutCodeBuddy' -count=1 -v
       - run: go vet ./...
       - run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
       - run: python3 scripts/collect-go-notices.py

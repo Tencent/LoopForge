@@ -46,7 +46,7 @@ func TestAssistantApprovalReviewUsesConfiguredDefaultWithoutPrices(t *testing.T)
 
 func TestAssistantChatCatalogPreselectsSponsoredModelOnlyWithSponsor(t *testing.T) {
 	t.Setenv("AGENTFLOW_ASSISTANT_MODEL", "team-model")
-	catalog := assistantChatCatalog(context.Background(), "", nil)
+	catalog := loadAssistantModels("", "")
 	if catalog.Default != "team-model" {
 		t.Fatal("chat default without sponsor", catalog)
 	}
@@ -55,7 +55,7 @@ func TestAssistantChatCatalogPreselectsSponsoredModelOnlyWithSponsor(t *testing.
 			t.Fatal("sponsored model listed without sponsor", catalog)
 		}
 	}
-	catalog = assistantChatCatalog(context.Background(), "", []string{assistantSponsoredModel, "shared-extra"})
+	catalog = assistantChatCatalog("", "shared-key", []string{assistantSponsoredModel, "shared-extra"})
 	listed := 0
 	for _, model := range catalog.Models {
 		if model.ID == assistantSponsoredModel || model.ID == "shared-extra" {

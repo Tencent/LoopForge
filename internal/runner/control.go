@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"agentflow/internal/domain"
+	"agentflow/internal/runtime"
 	"agentflow/internal/workspaceprep"
 
 	"github.com/gorilla/websocket"
@@ -30,16 +31,18 @@ var controlReadTimeout = 75 * time.Second
 var controlWriteTimeout = 10 * time.Second
 
 type controlMessage struct {
-	ToolRequest       *domain.RunnerToolRequest       `json:"toolRequest,omitempty"`
-	ToolResponse      *domain.RunnerToolResponse      `json:"toolResponse,omitempty"`
-	Type              string                          `json:"type"`
-	TaskID            string                          `json:"taskId,omitempty"`
-	DesiredState      string                          `json:"desiredState,omitempty"`
-	ActiveTaskIDs     []string                        `json:"activeTaskIds,omitempty"`
-	RequestID         string                          `json:"requestId,omitempty"`
-	WorkspaceRequest  *domain.RunnerWorkspaceRequest  `json:"workspaceRequest,omitempty"`
-	WorkspaceResponse *domain.RunnerWorkspaceResponse `json:"workspaceResponse,omitempty"`
-	WorkspaceProgress *domain.WorkspaceOpening        `json:"workspaceProgress,omitempty"`
+	ToolRequest        *domain.RunnerToolRequest           `json:"toolRequest,omitempty"`
+	ToolResponse       *domain.RunnerToolResponse          `json:"toolResponse,omitempty"`
+	Type               string                              `json:"type"`
+	TaskID             string                              `json:"taskId,omitempty"`
+	DesiredState       string                              `json:"desiredState,omitempty"`
+	ActiveTaskIDs      []string                            `json:"activeTaskIds,omitempty"`
+	RequestID          string                              `json:"requestId,omitempty"`
+	WorkspaceRequest   *domain.RunnerWorkspaceRequest      `json:"workspaceRequest,omitempty"`
+	WorkspaceResponse  *domain.RunnerWorkspaceResponse     `json:"workspaceResponse,omitempty"`
+	WorkspaceProgress  *domain.WorkspaceOpening            `json:"workspaceProgress,omitempty"`
+	ObserveImageBuild  bool                                `json:"observeImageBuild,omitempty"`
+	ImageBuildProgress *domain.WorkspaceImageBuildProgress `json:"imageBuildProgress,omitempty"`
 }
 
 // controlLoop maintains one outbound WebSocket for immediate server-to-runner
@@ -86,8 +89,8 @@ func (d *Daemon) controlLoop(ctx context.Context) {
 func (d *Daemon) readControls(daemonCtx context.Context, conn *websocket.Conn) error {
 	ctx, cancel := context.WithCancel(daemonCtx)
 	var requests sync.WaitGroup
-	var cancelMu sync.Mutex
-	cancellations := map[string]context.CancelFunc{}
+	var workspaceCancelMu sync.Mutex
+	workspaceCancels := map[string]context.CancelFunc{}
 	var writeMu sync.Mutex
 	writeMessage := func(message controlMessage) error {
 		writeMu.Lock()
@@ -141,9 +144,9 @@ func (d *Daemon) readControls(daemonCtx context.Context, conn *websocket.Conn) e
 			continue
 		}
 		if message.Type == "workspace.cancel" {
-			cancelMu.Lock()
-			stop := cancellations[message.RequestID]
-			cancelMu.Unlock()
+			workspaceCancelMu.Lock()
+			stop := workspaceCancels[message.RequestID]
+			workspaceCancelMu.Unlock()
 			if stop != nil {
 				stop()
 			}
@@ -166,15 +169,11 @@ func (d *Daemon) readControls(daemonCtx context.Context, conn *websocket.Conn) e
 			}
 			requestCtx := ctx
 			stopRequest := func() {}
-			// Only one-shot preparation/checkpoint requests own their context.
-			// A native conversation process must outlive its start/poll RPC.
-			request := message.WorkspaceRequest
-			if domain.IsWorkspaceCheckpointTransferOperation(request.Operation) || request.Operation == domain.RunnerWorkspaceOperationCheckpoint ||
-				(request.Operation == domain.RunnerWorkspaceOperationPrepare && request.RunKind == domain.RunKindWorkspace) {
+			if domain.IsCancelableRunnerWorkspaceOperation(message.WorkspaceRequest.Operation) {
 				requestCtx, stopRequest = context.WithCancel(ctx)
-				cancelMu.Lock()
-				cancellations[message.RequestID] = stopRequest
-				cancelMu.Unlock()
+				workspaceCancelMu.Lock()
+				workspaceCancels[message.RequestID] = stopRequest
+				workspaceCancelMu.Unlock()
 			}
 			requests.Add(1)
 			go func(message controlMessage, requestCtx context.Context, stopRequest context.CancelFunc) {
@@ -182,9 +181,9 @@ func (d *Daemon) readControls(daemonCtx context.Context, conn *websocket.Conn) e
 				defer func() { <-slots }()
 				defer func() {
 					stopRequest()
-					cancelMu.Lock()
-					delete(cancellations, message.RequestID)
-					cancelMu.Unlock()
+					workspaceCancelMu.Lock()
+					delete(workspaceCancels, message.RequestID)
+					workspaceCancelMu.Unlock()
 				}()
 				if request := message.WorkspaceRequest; request.Operation == domain.RunnerWorkspaceOperationPrepare && request.RunKind == domain.RunKindWorkspace {
 					requestCtx = workspaceprep.WithSink(requestCtx, func(progress domain.WorkspaceOpening) {
@@ -198,6 +197,13 @@ func (d *Daemon) readControls(daemonCtx context.Context, conn *websocket.Conn) e
 				if message.WorkspaceRequest.Operation == domain.RunnerWorkspaceOperationMaintenance {
 					response, startUpdate = d.maintenanceResponse(requestCtx, daemonCtx, message.WorkspaceRequest.Maintenance)
 				} else {
+					if message.ObserveImageBuild {
+						requestCtx = runtime.WithDockerBuildProgress(requestCtx, func(progress domain.WorkspaceImageBuildProgress) {
+							if requestCtx.Err() == nil {
+								_ = writeMessage(controlMessage{Type: "workspace.image_progress", RequestID: message.RequestID, ImageBuildProgress: &progress})
+							}
+						})
+					}
 					response = d.readRunnerWorkspace(requestCtx, *message.WorkspaceRequest)
 				}
 				err := writeMessage(controlMessage{Type: "workspace.response", RequestID: message.RequestID, WorkspaceResponse: &response})

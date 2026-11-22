@@ -1,17 +1,22 @@
 // 访问密钥：访问密钥 的创建、撤销，以及创建后复制 MCP 接入提示词。
 function accessMcpClientSpec(client,base,token){
-  const json=JSON.stringify({mcpServers:{agentflow:{type:'streamable-http',url:`${base}/mcp`,headers:{Authorization:`Bearer ${token}`}}}},null,2);
+  const json=JSON.stringify({mcpServers:{agentflow:{url:`${base}/mcp`,headers:{Authorization:`Bearer ${token}`}}}},null,2);
   const specs={
     cursor:{label:'Cursor',location:'~/.cursor/mcp.json',codeTitle:'mcp.json',code:json,verify:'在 Cursor 设置的 MCP 列表中确认 agentflow 已连接'},
     claude:{label:'Claude Code',location:'Claude CLI（用户级配置写入 ~/.claude.json）',codeTitle:'Shell',code:`claude mcp add --transport http --scope user agentflow ${base}/mcp \\\n  --header "Authorization: Bearer ${token}"`,verify:'claude mcp get agentflow && claude mcp list'},
-    codebuddy:{label:'CodeBuddy',location:'~/.codebuddy/mcp.json',codeTitle:'mcp.json',code:json,verify:'在 CodeBuddy 的 MCP 管理页确认 agentflow 已连接'},
+    codebuddy:{label:'CodeBuddy',location:'CodeBuddy 用户级 MCP 配置',codeTitle:'mcp.json',code:json,verify:'在 CodeBuddy 的 MCP 管理页确认 agentflow 已连接'},
     codex:{label:'Codex',location:'~/.codex/config.toml',codeTitle:'config.toml',code:`[mcp_servers.agentflow]\nurl = "${base}/mcp"\nhttp_headers = { Authorization = "Bearer ${token}" }`,verify:'codex mcp list'}
   };
   return specs[client]||specs.cursor;
 }
 function accessMcpAgentPrompt(spec,base,token){
   if(!token||token==='<YOUR_PERSONAL_TOKEN>')return '';
-  return `按照这个流程安装、初始化并验证好 LoopForge MCP：\n\n1. 使用 curl 下载 安装流程文件, 禁止使用 fetch：${base}/mcp-setup.txt\n2. 两个占位符替换为：\n   API_TOKEN = ${token}\n   ENDPOINT = ${base}/mcp`;
+  const guide = `${base}/mcp-setup.txt`;
+  const instructions = window.lfT(
+    `请为 ${spec.label} 接入 LoopForge 平台 MCP。使用 curl 下载 ${guide}（禁止使用 fetch），按指南中 ${spec.label} 的步骤配置，最后用 tools/list 验证连接。`,
+    `Connect ${spec.label} to the LoopForge platform MCP server. Download ${guide} with curl, follow the steps for ${spec.label}, then verify the connection with tools/list.`
+  );
+  return `${instructions}\n\nAPI_TOKEN = ${token}\nENDPOINT = ${base}/mcp`;
 }
 // 对外展示的固定接入地址：优先使用部署下发的 APP_DOMAIN，避免硬编码固定域名。
 function getPublicBaseURL(){
@@ -37,9 +42,10 @@ function accessPublicBaseURL(configured, page){
 }
 function accessViewActive(){return !!$('#guideView')?.classList.contains('active')}
 let credentialFocusRequest=0;
+function cancelCredentialFocus(){credentialFocusRequest++}
 function gotoCredential(name,sshRemote){
   const request=++credentialFocusRequest;
-  if(!CREDENTIAL_FIELDS[name]){switchView('settings');return}
+  if(name!=='executors'&&!Object.hasOwn(CREDENTIAL_FIELDS,name)){switchView('settings');return}
   if(name==='gitSshKey')return openGitSSHKeys(sshRemote);
   if(name==='gitHttpCredentials')return openGitHTTPCredentials();
   switchView('settings');
@@ -57,9 +63,17 @@ function gotoCredential(name,sshRemote){
     }
     if(performance.now()<focusAfter){requestAnimationFrame(focusCredential);return}
     const panel=document.querySelector('#personalSettingsContent #credentialPanel'),row=panel?.querySelector(`[data-credential-row="${name}"]`);
-    if(!row||!panel.getClientRects().length)return;
+    if(!panel?.getClientRects().length)return;
+    if(name==='executors'){
+      const group=panel.querySelector('[data-credential-group="model"]');
+      if(matchMedia('(max-width:1000px)').matches)setSettingsSidebarExpanded(false);
+      group?.scrollIntoView({block:'nearest',behavior:'instant'});
+      const select=group?.querySelector('[data-credential-add-menu]');
+      if(select)window.HuiSelect?.enhance(select)?.open();
+      return;
+    }
     // Missing credentials open the wizard on its fill-in step; configured ones expand in place.
-    if(row.classList.contains('is-configured'))revealCredentialRow(name);
+    if(row?.classList.contains('is-configured'))revealCredentialRow(name);
     else openCredentialWizard(name);
   };
   requestAnimationFrame(focusCredential);
@@ -106,6 +120,91 @@ async function loadAccessTokens(){
   }
   if(accessViewActive())renderAccessTokens();
 }
+function accessTokenSetupHTML(token){
+  const clients = [['cursor','Cursor'], ['claude','Claude Code'], ['codebuddy','CodeBuddy'], ['codex','Codex']];
+  return `<section class="token-reveal" aria-labelledby="token-setup-title">
+    <div class="token-setup-layout">
+      <div class="token-setup-intro">
+        <div class="token-created">${huiIcon('check')}访问密钥已创建</div>
+        <h2 id="token-setup-title" tabindex="-1">连接 LoopForge 平台 MCP</h2>
+        <p>接入后，可以在 AI 对话里查询项目、需求和运行进度。</p>
+        <fieldset class="token-client-picker">
+          <legend>选择 AI 客户端</legend>
+          <div class="token-client-options">
+            ${clients.map(([id,label]) => `<label class="token-client-choice">
+              <input type="radio" name="token-client" data-native data-revealed-client="${id}" value="${id}">
+              <span class="token-client-tile">
+                <img class="token-client-icon" data-client="${id}" src="/images/credentials/${id}.svg" width="20" height="20" alt="">
+                <span>${label}</span>
+                <span class="token-client-indicator" aria-hidden="true"></span>
+              </span>
+            </label>`).join('')}
+          </div>
+        </fieldset>
+      </div>
+      <div class="token-setup-action">
+        <div class="token-connection" aria-hidden="true">
+          <span class="token-connection-mark"><img src="/images/loopforge-logo.png" width="28" height="28" alt=""></span>
+          <span class="token-connection-link">${huiIcon('connector')}</span>
+          <span class="token-connection-mark"><img id="token-connection-client" class="token-client-icon" width="23" height="23" alt=""></span>
+        </div>
+        <div class="token-paste" aria-live="polite">
+          <h3 id="token-paste-title"></h3>
+          <p id="token-paste-hint"></p>
+        </div>
+        <button type="button" class="button primary" data-copy-revealed-prompt>${huiIcon('copy')}复制 MCP 接入提示词</button>
+        <p class="token-copy-note">${huiIcon('lock')}已包含接入地址和访问密钥</p>
+      </div>
+    </div>
+    <div class="token-reveal-footer">
+      <details class="token-key-info">
+        <summary>
+          ${huiIcon('key')}<span>查看或复制访问密钥</span>${huiIcon('chevron-down','token-key-chevron')}
+          <small>仅显示一次</small>
+        </summary>
+        <div class="token-key-controls">
+          <code>${escapeHTML(token)}</code>
+          <button type="button" class="button ghost small" data-copy-revealed>仅复制密钥</button>
+          <p>手动配置 MCP 或调用 REST API 时可使用此密钥。</p>
+        </div>
+      </details>
+      <button type="button" class="button ghost small" data-close-revealed>完成</button>
+    </div>
+  </section>`;
+}
+function bindAccessTokenSetup(panel,token){
+  const base = getPublicBaseURL();
+  const clients = [...panel.querySelectorAll('[data-revealed-client]')];
+  const copyPrompt = panel.querySelector('[data-copy-revealed-prompt]');
+  const clientIcon = panel.querySelector('#token-connection-client');
+  const title = panel.querySelector('#token-paste-title');
+  const hint = panel.querySelector('#token-paste-hint');
+  function selectClient(choice){
+    const id = choice.value;
+    choice.checked = true;
+    state.accessClient = id;
+    const spec = accessMcpClientSpec(id,base,token);
+    clientIcon.src = choice.closest('label').querySelector('img').src;
+    clientIcon.dataset.client = id;
+    title.textContent = window.lfT(`在 ${spec.label} 中配置`, `Set up in ${spec.label}`);
+    hint.textContent = window.lfT(
+      `将提示词粘贴到你自己的 ${spec.label} 对话中并发送，助手会配置并验证连接。`,
+      `Paste the prompt into your own ${spec.label} chat and send it. Your assistant will set up and verify the connection.`
+    );
+    copyPrompt.onclick = () => copyText(accessMcpAgentPrompt(spec,base,token),window.lfT(
+      `已复制，请粘贴到 ${spec.label} 对话中并发送`,
+      `Prompt copied. Paste it into your ${spec.label} chat and send it.`
+    ));
+  }
+  clients.forEach(choice => choice.onchange = () => selectClient(choice));
+  selectClient(clients.find(choice => choice.value === state.accessClient) || clients[0]);
+  panel.querySelector('[data-copy-revealed]').onclick = () => copyText(token,'访问密钥已复制');
+  panel.querySelector('[data-close-revealed]').onclick = () => {
+    state.revealedToken = '';
+    renderAccessTokens();
+    $('#accessTokenForm input')?.focus();
+  };
+}
 function renderAccessTokens(openCreate=false){
   const body=$('#accessBody'),user=state.currentUser,isGuest=!user||user.isGuest,tokens=Array.isArray(state.accessTokens)?state.accessTokens:[];
   if(isGuest){
@@ -121,24 +220,52 @@ function renderAccessTokens(openCreate=false){
     body.querySelector('[data-access-login]').onclick=()=>{if(state.loginUrl)location.href=state.loginUrl};
     return;
   }
-  const base=getPublicBaseURL();
-  const revealedSpec=state.revealedToken?accessMcpClientSpec(state.accessClient,base,state.revealedToken):null;
-  const revealedPrompt=revealedSpec?accessMcpAgentPrompt(revealedSpec,base,state.revealedToken):'';
-  const revealClients=state.revealedToken?[['cursor','Cursor'],['claude','Claude Code'],['codebuddy','CodeBuddy'],['codex','Codex']].map(([id,label])=>`<button type="button" class="${state.accessClient===id?'active':''}" data-revealed-client="${id}">${label}</button>`).join(''):'';
-  const reveal=state.revealedToken?`<div class="token-reveal"><b>访问密钥已创建，可直接复制完整配置提示词</b><p>先选择客户端；复制内容会自动带上本次访问密钥和 Endpoint，无需再次替换占位符。平台只保存哈希，关闭后无法再次查看明文。</p><div class="access-clients token-client-picker">${revealClients}</div><div class="token-reveal-line"><code>${escapeHTML(state.revealedToken)}</code><button type="button" class="button primary small" data-copy-revealed-prompt="${encodeURIComponent(revealedPrompt)}">⧉ 复制 ${escapeHTML(revealedSpec.label)} 配置提示词</button><button type="button" class="button ghost small" data-copy-revealed>仅复制密钥</button><button type="button" class="button ghost small" data-close-revealed>已保存</button></div></div>`:'';
-  const rows=tokens.length?tokens.map(t=>{const revoked=!!t.revokedAt,expired=t.expiresAt&&new Date(t.expiresAt)<new Date();return `<div class="token-row ${revoked||expired?'revoked':''}"><div class="token-row-main"><b>${escapeHTML(t.name)}</b><code>${escapeHTML(t.prefix)}••••••••</code></div><div class="token-meta">创建 ${relativeTime(t.createdAt)} · ${t.lastUsedAt?`最近使用 ${relativeTime(t.lastUsedAt)}`:'尚未使用'} · ${revoked?'已撤销':expired?'已过期':`有效至 ${new Date(t.expiresAt).toLocaleDateString()}`}</div>${!revoked&&!expired?`<button type="button" class="button danger-outline small" data-revoke-token="${escapeHTML(t.id)}">撤销</button>`:''}</div>`}).join(''):'<div class="token-empty">还没有访问密钥，创建后即可接入 REST API 和 MCP。</div>';
-  const activeCount=tokens.filter(t=>!t.revokedAt&&(!t.expiresAt||new Date(t.expiresAt)>new Date())).length;
-  body.innerHTML=`<div class="access-card access-tokens">${reveal}<form id="accessTokenForm" class="token-create-form"><label>密钥名称<input class="input" name="name" required maxlength="128" placeholder="例如：我的 Cursor"></label><label>有效期<select class="select" name="expiresInDays"><option value="30">30 天</option><option value="90" selected>90 天</option><option value="180">180 天</option><option value="365">365 天</option></select></label><button type="submit" class="button primary">创建访问密钥</button></form><div class="access-card-title"><i>K</i>我的访问密钥 <span style="margin-left:auto;color:var(--muted-2);font-size:10.5px">${activeCount} 个可用</span></div><div class="token-list">${rows}</div></div>`;
-  body.querySelector('[data-copy-revealed]')?.addEventListener('click',()=>copyText(state.revealedToken,'访问密钥已复制'));
-  body.querySelector('[data-copy-revealed-prompt]')?.addEventListener('click',b=>copyText(decodeURIComponent(b.currentTarget.dataset.copyRevealedPrompt),`${revealedSpec.label} 配置提示词已复制`));
-  body.querySelectorAll('[data-revealed-client]').forEach(b=>b.onclick=()=>{state.accessClient=b.dataset.revealedClient;renderAccessTokens()});
-  body.querySelector('[data-close-revealed]')?.addEventListener('click',()=>{state.revealedToken='';renderAccessTokens()});
+  const reveal = state.revealedToken ? accessTokenSetupHTML(state.revealedToken) : '';
+  const now = Date.now();
+  const rows = tokens.map(t => {
+    const revoked = !!t.revokedAt;
+    const expired = t.expiresAt && Date.parse(t.expiresAt) <= now;
+    const expiry = t.expiresAt ? `有效至 ${new Date(t.expiresAt).toLocaleDateString()}` : '长期有效';
+    return `<div class="token-row${revoked || expired ? ' revoked' : ''}">
+      <span class="token-row-icon">${huiIcon('key')}</span>
+      <div class="token-row-main"><b>${escapeHTML(t.name)}</b><code>${escapeHTML(t.prefix)}••••••••</code></div>
+      <div class="token-meta">创建 ${relativeTime(t.createdAt)} · ${t.lastUsedAt ? `最近使用 ${relativeTime(t.lastUsedAt)}` : '尚未使用'} · ${revoked ? '已撤销' : expired ? '已过期' : expiry}</div>
+      ${revoked || expired ? '' : `<button type="button" class="button danger-outline small" data-revoke-token="${escapeHTML(t.id)}">撤销</button>`}
+    </div>`;
+  }).join('');
+  const activeCount = tokens.filter(t => !t.revokedAt && (!t.expiresAt || Date.parse(t.expiresAt) > now)).length;
+  const form = `<form id="accessTokenForm" class="token-create-form">
+    <label>密钥名称<input class="input" name="name" required maxlength="128" placeholder="例如：我的 Cursor"></label>
+    <label>有效期<select class="select" name="expiresInDays">
+      <option value="30">30 天</option><option value="90" selected>90 天</option>
+      <option value="180">180 天</option><option value="365">365 天</option>
+    </select></label>
+    <button type="submit" class="button ${reveal ? 'ghost' : 'primary'}">创建访问密钥</button>
+  </form>`;
+  body.innerHTML = `${reveal}
+    <section class="token-manager" aria-labelledby="token-list-title">
+      ${reveal ? '' : form}
+      <div class="token-list-heading">
+        <h2 id="token-list-title">我的访问密钥</h2>
+        <span>${activeCount} 个可用</span>
+      </div>
+      <div class="token-list">${rows || '<div class="token-empty">还没有访问密钥，创建后即可接入 REST API 和 MCP。</div>'}</div>
+      ${reveal ? `<details class="token-create-more"><summary class="button ghost small">${huiIcon('plus')}创建新密钥</summary>${form}</details>` : ''}
+    </section>`;
+  if(reveal) bindAccessTokenSetup(body.querySelector('.token-reveal'),state.revealedToken);
   body.querySelector('#accessTokenForm')?.addEventListener('submit',createPersonalToken);
   body.querySelectorAll('[data-revoke-token]').forEach(b=>b.onclick=()=>revokePersonalToken(b.dataset.revokeToken));
+  window.AgentFlowHarnessIcons?.hydrate(body);
 }
 async function createPersonalToken(e){
   e.preventDefault();const form=e.currentTarget;
-  try{const result=await api('/api/auth/tokens',{method:'POST',body:JSON.stringify({name:form.elements.name.value.trim(),expiresInDays:Number(form.elements.expiresInDays.value)})});state.revealedToken=result.token;await loadAccessTokens();toast('访问密钥已创建，请立即复制','ok')}catch(err){toast(err.message,'err')}
+  try{
+    const result = await api('/api/auth/tokens',{method:'POST',body:JSON.stringify({name:form.elements.name.value.trim(),expiresInDays:Number(form.elements.expiresInDays.value)})});
+    state.revealedToken = result.token;
+    await loadAccessTokens();
+    if(accessViewActive()) $('#token-setup-title')?.focus();
+    toast('访问密钥已创建','ok');
+  }catch(err){toast(err.message,'err')}
 }
 async function revokePersonalToken(id){
   if(!(await afConfirm({title:'撤销访问密钥',message:'撤销后，正在使用这个访问密钥的 API 和 MCP 客户端会立即失效。确定撤销？',danger:true,confirmText:'确定撤销'})))return;

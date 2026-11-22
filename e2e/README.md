@@ -34,6 +34,8 @@ AGENTFLOW_E2E_CODEBUDDY_API_KEY=ck_... ./local.sh api/40-model.test.mjs   # 带�
 | `AGENTFLOW_E2E_BASE` | 验收环境，默认 localhost:8090 |
 | `AGENTFLOW_E2E_MODEL` | 显式设为 `1` 启用付费模型测试，默认关闭 |
 | `AGENTFLOW_E2E_MODEL_ID` | 真实 Agent 节点使用的模型 ID，例如 `deepseek-v4.1-flash` |
+| `AGENTFLOW_E2E_CLI_KEY` | 本地实测时所选 CLI 的个人凭据 |
+| `AGENTFLOW_E2E_CLI_BASE_URL` | 本地实测可选的自定义模型网关 |
 | `AGENTFLOW_E2E_EXECUTOR` | 执行器，默认 `codebuddy` |
 | `AGENTFLOW_E2E_SANDBOX` | 沙箱，默认 `local`，仅对可信的验收任务使用 |
 | `AGENTFLOW_E2E_MODEL_SANDBOX` | 真实模型用例使用的沙箱，镜像里要有执行器 CLI；默认同 `AGENTFLOW_E2E_SANDBOX` |
@@ -47,6 +49,23 @@ AGENTFLOW_E2E_CODEBUDDY_API_KEY=ck_... ./local.sh api/40-model.test.mjs   # 带�
 | `E2E_CHROMIUM` | 可选的 Chromium 路径 |
 
 API Token 和 UI 登录账号应属于同一用户。模型 Key 在平台个人设置中配置，网络环境必须匹配 Key 所属版本。测试不会将模型 Key 写进测试源码。不要公开 `.auth/`、原始失败 trace 或本地凭据文件。
+
+### 测试部署时批量导入模型 Key 和 Git Token
+
+把配置模板复制到 Git 已忽略的 `.local/e2e-model-keys.json`，或在 CI 中将同格式的私密 JSON 挂载为文件。每个账号按需填写 `apiKeys` 和 GitHub 个人访问令牌 `gitToken`，密码从 `passwordEnv` 指定的 CI 密钥环境变量读取。测试账号需要提前创建并设置密码。平台健康检查通过后，在仓库根目录执行下面的命令（Node.js 20+）。[配置模板](model-keys.example.json)
+
+```bash
+export AGENTFLOW_E2E_BASE=http://127.0.0.1:8090
+export AGENTFLOW_E2E_MODEL_KEYS_FILE="$PWD/.local/e2e-model-keys.json"
+node e2e/setup-model-keys.mjs
+```
+
+如果流水线已调用 `node e2e/setup-auth.mjs`，给该步骤传入相同的环境变量即可，它会先导入凭证再创建 LoopForge 测试 API Token。设置 `LOOPFORGE_TEST_USER` 以选择 Token 对应的测试账号。远程测试平台使用 HTTPS。
+
+- 未指定文件路径、文件为空或所有凭证值为空时跳过导入。空白字符串和 `null` 都按空值处理，对应的已有凭证会保留。显式指定的文件无法读取、配置错误、登录或保存失败时退出非零。
+- `gitToken` 保存到该测试账号的 `github.com` HTTPS Git 凭证。再次导入会更新同一条凭证。单独导入 Git Token 时可省略 `apiKeys`。测试部署需支持按主机保存 Git 凭证。
+- `dsh` 对应 DeepSeek Harness，`kimi` 对应 Kimi Code。CodeBuddy 每个账号只能保存一把 Key，iOA 和国内版分别使用 `ioa` 和 `internal`。国际版显式填 `""`，省略环境字段则沿用账号已有配置。
+- 导入只保存凭证。跑真实模型用例时仍需设置 `AGENTFLOW_E2E_MODEL=1`，并按用例选择执行器和模型 ID。测试部署需支持配置中使用的 CLI。
 
 ## 覆盖范围
 

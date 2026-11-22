@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # Bring the Compose database up to what this release reads but gorm
 # AutoMigrate cannot create: the generated columns from migration 001, the
-# INSERT IGNORE starter catalog and the built-in Dockerfile update from
-# migration 031. All steps are safe to repeat, so the installer and
+# INSERT IGNORE starter catalog, the built-in Dockerfile update from
+# migration 031 and the 「发起 MR」 node of the built-in code delivery SOPs from
+# migration 033, followed by the MR roles' Git credential instructions from
+# migration 038. All steps are safe to repeat, so the installer and
 # `./start.sh pull` run it after the platform is healthy.
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -13,4 +15,8 @@ if ! bash scripts/install-observability-schema.sh; then
   printf '  Run migrations/001_run_obs_generated_columns.sql against the LoopForge database, then retry.\n' >&2
   exit 1
 fi
-cat migrations/seed/*.sql migrations/031_generic_backend_openssh.sql | docker_access compose exec -T mysql sh -c 'MYSQL_PWD="$MYSQL_PASSWORD" mysql -u loopforge loopforge'
+cat migrations/seed/*.sql \
+  migrations/031_generic_backend_openssh.sql \
+  migrations/033_generic_sop_mr_node.sql \
+  migrations/038_generic_sop_host_credentials.sql \
+  | docker_access compose exec -T mysql sh -c 'MYSQL_PWD="$MYSQL_PASSWORD" mysql -u loopforge loopforge'

@@ -245,7 +245,7 @@ func (e *Engine) restoreConversationCheckpoint(ctx context.Context, run domain.R
 	}
 	defer source.Close()
 	sourceReader := workspaceCheckpointContextReader{ctx, source}
-	if e.defaultExecutionRunner(run) == "" && !e.foreignWorkspaceBind(run) {
+	if root != "" {
 		return runtime.RestoreWorkspaceCheckpointFrom(root, sourceReader)
 	}
 	meta, _ := e.repo.WorkspaceCheckpoint(run.ID)

@@ -32,6 +32,7 @@ type userWithConfig struct {
 	GongfengRefreshToken         *string    `gorm:"column:gongfeng_refresh_token"`
 	GongfengTokenExpiresAt       *time.Time `gorm:"column:gongfeng_token_expires_at"`
 	CodeBuddyAPIKey              *string    `gorm:"column:codebuddy_api_key"`
+	CodeBuddyBaseURL             *string    `gorm:"column:codebuddy_base_url"`
 	CodeBuddyInternetEnvironment string     `gorm:"column:codebuddy_internet_environment"`
 	CodeBuddyModels              *string    `gorm:"column:codebuddy_models"`
 	CodexAPIKey                  *string    `gorm:"column:codex_api_key"`
@@ -41,6 +42,7 @@ type userWithConfig struct {
 	ClaudeCodeBaseURL            *string    `gorm:"column:claude_code_base_url"`
 	ClaudeCodeModels             *string    `gorm:"column:claude_code_models"`
 	AgentCLICredentials          *string    `gorm:"column:agent_cli_credentials"`
+	AssistantDefaults            *string    `gorm:"column:assistant_defaults"`
 	Created                      *time.Time `gorm:"column:created_at"`
 	Updated                      *time.Time `gorm:"column:updated_at"`
 }
@@ -50,9 +52,10 @@ const userSelectColumns = `u.id, u.staff_id, u.login_name, u.chinese_name, u.dep
 	c.git_token, EXISTS (SELECT 1 FROM user_git_ssh_keys k WHERE k.user_id = u.id) AS git_ssh_key_configured,
 	EXISTS (SELECT 1 FROM user_git_http_credentials h WHERE h.user_id = u.id) AS git_http_credentials_configured,
 	EXISTS (SELECT 1 FROM user_git_http_credentials h WHERE h.user_id = u.id AND h.host = 'github.com') AS github_credential_configured,
-	c.gongfeng_refresh_token, c.gongfeng_token_expires_at, c.codebuddy_api_key, COALESCE(c.codebuddy_internet_environment, '') AS codebuddy_internet_environment, c.codebuddy_models,
+	c.gongfeng_refresh_token, c.gongfeng_token_expires_at, c.codebuddy_api_key, c.codebuddy_base_url,
+	COALESCE(c.codebuddy_internet_environment, '') AS codebuddy_internet_environment, c.codebuddy_models,
 	c.codex_api_key, c.codex_base_url, c.codex_models, c.claude_code_api_key, c.claude_code_base_url, c.claude_code_models,
-	c.agent_cli_credentials,
+	c.agent_cli_credentials, c.assistant_defaults,
 	u.created_at, u.updated_at`
 
 func (r userWithConfig) toDomain() domain.User {
@@ -77,6 +80,9 @@ func (r userWithConfig) toDomain() domain.User {
 	if r.CodeBuddyAPIKey != nil {
 		u.CodeBuddyAPIKey = *r.CodeBuddyAPIKey
 	}
+	if r.CodeBuddyBaseURL != nil {
+		u.CodeBuddyBaseURL = *r.CodeBuddyBaseURL
+	}
 	if r.CodexAPIKey != nil {
 		u.CodexAPIKey = *r.CodexAPIKey
 	}
@@ -93,6 +99,9 @@ func (r userWithConfig) toDomain() domain.User {
 	u.ClaudeCodeModels = decodeCLIModels(r.ClaudeCodeModels)
 	if r.AgentCLICredentials != nil {
 		_ = json.Unmarshal([]byte(*r.AgentCLICredentials), &u.AgentCLICredentials)
+	}
+	if r.AssistantDefaults != nil {
+		_ = json.Unmarshal([]byte(*r.AssistantDefaults), &u.AssistantDefaults)
 	}
 	if r.Created != nil {
 		u.CreatedAt = *r.Created
@@ -172,6 +181,7 @@ func (r *UsersRepo) PutUser(v domain.User) error {
 		v.CodexAPIKey, v.CodexBaseURL, v.CodexModels = old.CodexAPIKey, old.CodexBaseURL, old.CodexModels
 		v.ClaudeCodeAPIKey, v.ClaudeCodeBaseURL, v.ClaudeCodeModels = old.ClaudeCodeAPIKey, old.ClaudeCodeBaseURL, old.ClaudeCodeModels
 		v.CodeBuddyAPIKey = old.CodeBuddyAPIKey
+		v.CodeBuddyBaseURL = old.CodeBuddyBaseURL
 		v.CodeBuddyInternetEnvironment = old.CodeBuddyInternetEnvironment
 		v.CodeBuddyModels = old.CodeBuddyModels
 		v.AgentCLICredentials = old.AgentCLICredentials
@@ -241,6 +251,7 @@ func userHasConfig(user domain.User) bool {
 	return user.GitToken != "" ||
 		user.GongfengRefreshToken != "" ||
 		user.CodeBuddyAPIKey != "" ||
+		user.CodeBuddyBaseURL != "" ||
 		user.CodeBuddyInternetEnvironment != "" ||
 		len(user.CodeBuddyModels) > 0 ||
 		user.CodexAPIKey != "" ||
@@ -253,18 +264,20 @@ func userHasConfig(user domain.User) bool {
 }
 
 type UserCredentialUpdate struct {
-	CodeBuddyAPIKey              string             `json:"codeBuddyApiKey"`
-	CodeBuddyAPIKeyClear         bool               `json:"codeBuddyApiKeyClear"`
-	CodeBuddyInternetEnvironment *string            `json:"codeBuddyInternetEnvironment"`
-	CodeBuddyModels              *[]domain.CLIModel `json:"codeBuddyModels"`
-	CodexAPIKey                  string             `json:"codexApiKey"`
-	CodexAPIKeyClear             bool               `json:"codexApiKeyClear"`
-	CodexBaseURL                 *string            `json:"codexBaseUrl"`
-	CodexModels                  *[]domain.CLIModel `json:"codexModels"`
-	ClaudeCodeAPIKey             string             `json:"claudeCodeApiKey"`
-	ClaudeCodeAPIKeyClear        bool               `json:"claudeCodeApiKeyClear"`
-	ClaudeCodeBaseURL            *string            `json:"claudeCodeBaseUrl"`
-	ClaudeCodeModels             *[]domain.CLIModel `json:"claudeCodeModels"`
+	AssistantDefaults            *domain.AssistantDefaults `json:"assistantDefaults"`
+	CodeBuddyAPIKey              string                    `json:"codeBuddyApiKey"`
+	CodeBuddyAPIKeyClear         bool                      `json:"codeBuddyApiKeyClear"`
+	CodeBuddyBaseURL             *string                   `json:"codeBuddyBaseUrl"`
+	CodeBuddyInternetEnvironment *string                   `json:"codeBuddyInternetEnvironment"`
+	CodeBuddyModels              *[]domain.CLIModel        `json:"codeBuddyModels"`
+	CodexAPIKey                  string                    `json:"codexApiKey"`
+	CodexAPIKeyClear             bool                      `json:"codexApiKeyClear"`
+	CodexBaseURL                 *string                   `json:"codexBaseUrl"`
+	CodexModels                  *[]domain.CLIModel        `json:"codexModels"`
+	ClaudeCodeAPIKey             string                    `json:"claudeCodeApiKey"`
+	ClaudeCodeAPIKeyClear        bool                      `json:"claudeCodeApiKeyClear"`
+	ClaudeCodeBaseURL            *string                   `json:"claudeCodeBaseUrl"`
+	ClaudeCodeModels             *[]domain.CLIModel        `json:"claudeCodeModels"`
 	// AgentCLICredentials updates the agent CLIs by kind; absent fields keep
 	// the stored value. CodeBuddy, Codex and Claude Code stay on their own columns.
 	AgentCLICredentials map[string]AgentCLICredentialUpdate `json:"agentCliCredentials"`
@@ -309,10 +322,18 @@ func (r *UsersRepo) updateUserCredentials(id int64, update UserCredentialUpdate)
 	if !ok {
 		return domain.User{}, errors.New("user not found")
 	}
+	previousDefaults := user.AssistantDefaults
+	if user.AssistantDefaults.Executor == "" {
+		user.AssistantDefaults.Executor = firstAssistantExecutor(user)
+	}
 	if update.CodeBuddyAPIKeyClear {
 		user.CodeBuddyAPIKey = ""
+		user.CodeBuddyBaseURL = ""
 	} else if value := strings.TrimSpace(update.CodeBuddyAPIKey); value != "" {
 		user.CodeBuddyAPIKey = value
+	}
+	if update.CodeBuddyBaseURL != nil && !update.CodeBuddyAPIKeyClear {
+		user.CodeBuddyBaseURL = strings.TrimSpace(*update.CodeBuddyBaseURL)
 	}
 	if update.CodeBuddyInternetEnvironment != nil {
 		user.CodeBuddyInternetEnvironment = strings.TrimSpace(*update.CodeBuddyInternetEnvironment)
@@ -357,9 +378,28 @@ func (r *UsersRepo) updateUserCredentials(id int64, update UserCredentialUpdate)
 	if err := applyAgentCLICredentialUpdates(&user, update.AgentCLICredentials); err != nil {
 		return domain.User{}, err
 	}
+	if update.AssistantDefaults != nil {
+		if !user.HasExecutorCredential(update.AssistantDefaults.Executor) {
+			return domain.User{}, ErrAssistantDefaultExecutorUnavailable
+		}
+		user.AssistantDefaults = *update.AssistantDefaults
+	} else if !user.HasExecutorCredential(user.AssistantDefaults.Executor) {
+		user.AssistantDefaults.Executor = firstAssistantExecutor(user)
+		user.AssistantDefaults.Model = ""
+		user.AssistantDefaults.Effort = ""
+	}
 	user.UpdatedAt = time.Now().UTC()
 	if err := r.writeUserConfig(user); err != nil {
 		return domain.User{}, err
+	}
+	if user.AssistantDefaults != previousDefaults {
+		value, err := json.Marshal(user.AssistantDefaults)
+		if err != nil {
+			return domain.User{}, err
+		}
+		if err := r.DB.Model(&userConfigRow{}).Where("user_id = ?", id).Update("assistant_defaults", string(value)).Error; err != nil {
+			return domain.User{}, err
+		}
 	}
 	return user, nil
 }
@@ -387,6 +427,7 @@ func (r *UsersRepo) writeUserConfig(v domain.User) error {
 		"git_token":              nullableString(v.GitToken),
 		"gongfeng_refresh_token": nullableString(v.GongfengRefreshToken), "gongfeng_token_expires_at": timePtr(v.GongfengTokenExpiresAt),
 		"codebuddy_api_key":              nullableString(v.CodeBuddyAPIKey),
+		"codebuddy_base_url":             nullableString(v.CodeBuddyBaseURL),
 		"codebuddy_internet_environment": v.CodeBuddyInternetEnvironment,
 		"codebuddy_models":               encodeCLIModels(v.CodeBuddyModels),
 		"codex_api_key":                  nullableString(v.CodexAPIKey), "codex_base_url": nullableString(v.CodexBaseURL), "codex_models": encodeCLIModels(v.CodexModels),

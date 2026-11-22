@@ -11,10 +11,11 @@ import (
 	"strings"
 
 	"agentflow/internal/domain"
+	"agentflow/internal/engine"
 	"agentflow/internal/runtime"
 )
 
-var errAssistantMissingResult = errors.New("CodeBuddy did not emit type=result")
+var errAssistantMissingResult = errors.New("CLI did not return a non-empty answer in type=result")
 var errAssistantExecutionUnavailable = errors.New("conversation execution machine unavailable")
 
 func assistantCLIMaxTurns(text string) bool {
@@ -68,7 +69,7 @@ func assistantCLIStreamFailure(line string) error {
 func assistantGenerationFailure(ctx context.Context, err error) (int, string) {
 	failure := classifyAssistantFailure(ctx, err)
 	status := http.StatusBadGateway
-	if failure.Code == "EXECUTION_MACHINE_UNAVAILABLE" {
+	if failure.Code == "EXECUTION_MACHINE_UNAVAILABLE" || failure.Code == "WORKSPACE_BOUND_ELSEWHERE" || failure.Code == "WORKSPACE_REBOUND" {
 		status = http.StatusServiceUnavailable
 	} else if ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		status = http.StatusGatewayTimeout
@@ -97,9 +98,20 @@ func classifyAssistantFailure(ctx context.Context, err error) domain.AssistantFa
 		f.Code, f.Phase, f.Message, f.Suggestion = "EXECUTION_MACHINE_UNAVAILABLE", "setup", "会话绑定的执行机器暂不可用，请等待原机器恢复后重试", "会话已固定在原执行机器上，请确认该 Runner 在线后再重试。"
 		return f
 	}
+	if errors.Is(err, engine.ErrConversationWorkspaceBound) {
+		f.Code, f.Phase, f.Message, f.Suggestion = "WORKSPACE_BOUND_ELSEWHERE", "setup", "工作区仍绑定在其他 LoopForge 实例，请等待该实例恢复后重试", "请确认持有该工作区的实例仍在线；实例已下线时重试会由当前实例接管。"
+		return f
+	}
+	if errors.Is(err, engine.ErrConversationWorkspaceLost) {
+		f.Code, f.Phase, f.Message, f.Suggestion = "WORKSPACE_REBOUND", "setup", engine.ErrConversationWorkspaceLost.Error(), "请重新发送上一条消息。"
+		return f
+	}
 	var missing assistantCLIMissingError
 	if errors.As(err, &missing) {
-		f.Code, f.Phase, f.Message, f.Suggestion = "CLI_NOT_INSTALLED", "setup", missing.Error(), "请管理员检查执行器的安装与配置。"
+		f.Code, f.Phase, f.Message = "CLI_NOT_INSTALLED", "setup", missing.Error()
+		if runtime.OnDemandInstallable(missing.engine) {
+			f.Suggestion = "可在对话中安装此执行器，安装后重新发送。"
+		}
 		return f
 	}
 	// The process error usually carries the CLI's stderr tail. Classify the
@@ -151,7 +163,7 @@ func classifyAssistantFailureText(f domain.AssistantFailure, err error, text str
 	case has("rate limit", "rate_limit", "too many requests", "http 429", "status 429", "status code 429", "status=429"):
 		f.Code, f.Phase, f.Message, f.Suggestion = "RATE_LIMITED", "provider", "模型服务请求过于频繁（429）", "请稍后再试，或检查模型服务的限流配置。"
 	case errors.Is(err, errAssistantCredentialRejected), has("unauthorized", "invalid api key", "invalid_api_key", "invalid token", "api key expired", "invalid credential", "http 401", "status 401", "status code 401", "status=401", "authentication_error"):
-		f.Code, f.Phase, f.Message, f.Suggestion = "AUTHENTICATION_FAILED", "provider", "CodeBuddy 凭据无效或已过期，请检查个人配置后重试", "请检查所用 CLI 的 API Key 和 Base URL。"
+		f.Code, f.Phase, f.Message, f.Suggestion = "AUTHENTICATION_FAILED", "provider", "模型服务凭据无效或已过期，请检查个人配置后重试", "请检查所用 CLI 的 API Key 和 Base URL。"
 		var credential assistantCredentialError
 		if errors.As(err, &credential) {
 			f.Message = credential.Error()

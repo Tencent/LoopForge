@@ -20,6 +20,7 @@ import (
 	apidocs "agentflow/docs/api"
 	"agentflow/internal/application"
 	"agentflow/internal/auth"
+	"agentflow/internal/config"
 	"agentflow/internal/domain"
 	"agentflow/internal/engine"
 	"agentflow/internal/knowledge"
@@ -93,7 +94,6 @@ type Server struct {
 	botInteractions *botInteractionHandlers
 	botIdentities   *botIdentityHandlers
 	know            *knowledgeHandlers // knowledge.go / knowledge_proxy.go
-	feedback        *feedbackHandlers  // page_feedback.go
 }
 
 func New(s *repo.Store, e *engine.Engine, syncSvc *tracker.Service, basicUser, basicPass string) *gin.Engine {
@@ -176,7 +176,6 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 		tokens:          &tokenHandlers{deps: d},
 		syncAPI:         &syncHandlers{deps: d},
 		know:            &knowledgeHandlers{deps: d, svc: knowledge.NewService(d.repo, randomID), activity: &knowledgeActivityLog{}},
-		feedback:        &feedbackHandlers{deps: d},
 	}
 	e.WorkspaceActive = func(run domain.Run) bool { return api.runs.terminals.HasRunScope(run.ID) }
 	api.catalog.notifications = api.notifications
@@ -387,6 +386,7 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.Any("/api/issues/:id/runs", api.issues.issue)
 	g.Any("/api/issues/:id/clarification", api.issues.issue)
 	g.Any("/api/issues/:id/chat-clarify", api.issues.issue)
+	g.GET("/api/issues/:id/clarify-models", api.issues.issue)
 	g.Any("/api/issues/:id/chat-clarify/cancel", api.issues.issue)
 	g.Any("/api/issues/:id/reopen", api.issues.issue)
 	g.Any("/api/issues/:id/close", api.issues.issue)
@@ -493,6 +493,7 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.POST("/api/workflows/:id/publish", api.catalog.workflow)
 	g.GET("/api/workflows/:id/agents", api.catalog.workflow)
 	g.PUT("/api/workflows/:id/agents", api.catalog.workflow)
+	g.GET("/api/workflows/:id/executor-requirements", api.catalog.workflow)
 	g.POST("/api/workflows/:id/clone", api.catalog.workflow)
 	g.GET("/api/workflow-metrics", api.runs.workflowMetrics)
 	g.POST(insightIngestPath, api.insights.ingest)
@@ -502,12 +503,6 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.GET("/api/analytics", api.runs.analytics)
 	g.GET("/api/observability/spec", api.observabilitySpec)
 	g.POST("/api/otel/*path", api.otel)
-
-	// --- page feedback (standalone, no project) ---
-	g.POST("/api/page-feedback", api.feedback.submit)
-	g.GET("/api/page-feedback", api.feedback.list)
-	g.GET("/api/page-feedback/:id", api.feedback.detail)
-	g.GET("/api/page-feedback/:id/images/:imageId", api.feedback.image)
 
 	// --- knowledge base ---
 	g.GET("/api/knowledge/settings", api.know.settings)
@@ -530,6 +525,7 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.GET("/api/runs", api.runs.runs)
 	g.POST("/api/runs", api.runs.runs)
 	g.GET("/api/runs/:id", api.runs.run)
+	g.GET("/api/runs/:id/wait", api.runs.waitRun)
 	g.DELETE("/api/runs/:id", api.runs.run)
 	g.GET("/api/runs/:id/telemetry", api.runs.run)
 	g.GET("/api/runs/:id/logs", api.runs.run)
@@ -775,6 +771,13 @@ func (s *Server) bootstrap(c *gin.Context) {
 	if current, ok := s.requestUser(c.Request, true); ok {
 		currentUserID = current.ID
 	}
+	var assistantDefaults domain.AssistantDefaults
+	for _, user := range users {
+		if user.ID == currentUserID {
+			assistantDefaults = user.AssistantDefaults
+			break
+		}
+	}
 	mcpServers = domain.PublicMCPServers(withMarketIcons(visibleMCPServersForUser(mcpServers, currentUserID)))
 	sharedModels := s.repo.SharedCodeBuddyModels()
 	sponsoredModel := ""
@@ -792,8 +795,10 @@ func (s *Server) bootstrap(c *gin.Context) {
 		// Set when users without their own CodeBuddy API Key can still chat
 		// and run SOPs on the platform's shared key, limited to these models
 		// (sponsoredModel is the default).
-		"sponsoredModel":  sponsoredModel,
-		"sponsoredModels": sharedModels,
+		"sponsoredModel":    sponsoredModel,
+		"sponsoredModels":   sharedModels,
+		"assistantDefaults": assistantDefaults,
+		"gongfengHost":      config.GongfengHost(),
 	})
 }
 

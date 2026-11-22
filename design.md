@@ -50,7 +50,7 @@
 - 主导航保留全部业务入口，个人配置、配置与管理、执行机器统一归入设置。
 - 从工作区点击全局设置按钮，默认打开个人配置；处于设置或管理区域时再次点击该按钮返回工作台首页。
 - 侧栏折叠按钮只控制侧栏显示，不改变当前业务页面。折叠和展开都要有完整过渡。
-- 图标栏里、设置按钮正上方有导航开关（`#railSidebarToggle`，Harness `panel-left`，`aria-controls="platformRail"`）。默认仍是 56px 图标栏；点开关后栏宽变为 240px，每个入口展开成和设置导航一样的「图标 + 文字」行，再次点击回到只有图标。图标栏不会被收成 0。当前页面、会话列表和设置导航都保持不变。文字已经可见时不再弹出悬停提示。宽度变化沿用外壳的栏宽过渡；系统开启减少动态效果时立即切换。
+- 左侧图标栏固定为 56px 图标，不提供展开成文字行的开关。悬停仍用提示说明入口。
 - 流程设计页 SOP 名称旁有一枚不占视觉重心的复制按钮（`#copyWorkflowName`，Harness `copy`，14px，默认弱化色）。它只把当前 SOP 名称写入剪贴板；点击不打开切换菜单。没有打开流程时按钮隐藏。悬停提示只用 `data-tip` 一处，不再同时写浏览器 `title`。切换列表里每个 SOP 名称右侧也有同样的复制按钮（`.fd-pop-copy`），只复制该行名称，不切换 SOP、不关闭菜单；这一处只用 `title`。
 - 设置模式与工作台模式切换通过共享过渡控制器衔接；过渡副本不得接受点击、键盘焦点或提交操作。
 - 凭据定位等跳转应在目标页面挂载后聚焦；用户已切换到其他页面时取消旧的焦点请求。
@@ -97,7 +97,7 @@
 - 浮层根据可用空间向上或向下展开，限制在可视视口内；手机键盘改变 `visualViewport` 时重新定位。
 - Escape 关闭并返回触发器，Tab 接回输入区的正常顺序；点击外部关闭时不抢焦点。
 - 权限选择保留原有确认模式和选值，视觉调整不改变执行权限或审批语义。
-- SOP「AI 编排助手」在输入区下提供 CLI 与模型选择，复用 `/api/assistant/models` 的个人模型目录，拆成「CLI」「模型」两个按钮，模型列表只显示所选 CLI 的模型，两处都支持搜索。选择独立记忆；同 CLI 切模型保留会话，跨 CLI 开启新对话，画布保留。生成期间禁用选择器，审批仍为每次确认，只生成草稿。面板使用固定标题栏、独立滚动消息区和底部输入框，推荐场景、发送按钮和消息状态完整应用 Harness 样式；窄屏下限制在画布宽度内。
+- SOP「AI 编排助手」的面板只保留固定标题栏（新对话、收起）和画布构建状态，对话本身是嵌入的 chatbot `sop-designer` 入口（`/chatbot/?surface=sop-designer`，`chatbot/src/SopDesigner.jsx`），消息、执行过程、CLI 与模型选择、发送和停止按钮都复用工作台组件。CLI 与模型选择复用 `/api/assistant/models` 的个人模型目录，选择独立记忆（`agentflow.orchestratorModel`）；同 CLI 切模型保留会话，跨 CLI 开启新对话，画布保留。生成期间禁用选择器，审批固定为每次确认，只生成草稿。对话与画布只通过 `agentflow-sop-designer-*` 窗口消息交互：每轮开始前画布交出当前流程，生成中把草稿流交给画布逐个放节点，结束后画布按 SOP id 决定原地修改还是另起一条（另起需用户确认）。窄屏下面板限制在画布宽度内。
 
 模型品牌 SVG 来自 Grasp 的品牌资源集合。具体来源及许可见 `chatbot/src/assets/provider-logos/README.md`、`SOURCE.md` 和相邻许可文件。
 
@@ -444,20 +444,6 @@ AI 助手页（`#assistantView`，路由 `#/assistant`）在设置导航「管�
 - 悬停只加深阴影（紫调 `0 12px 28px -16px`）并换强边框，显式覆盖 product-v3 / v4 / sops.css 的 `translateY`；键盘焦点为强调色边框 + 3px 淡紫外圈。主操作与「⋯」带 `data-hover-ink-control`，由 `hover-ink.js` 驱动落点 ink。
 - 减少动态效果时控制器跳过入场、FLIP 与退出节点，CSS 同时关闭卡片内动画、过渡和呼吸点。
 
-## 悬浮页面反馈
-
-登录用户（非访客）在所有页面右下角看到 44px 圆形反馈按钮，`renderUserBadge()` 调用 `AgentFlowPageFeedback.sync()` 按当前用户挂载或卸载。样式全部使用 `--hui-*` 令牌，类名统一为 `.fb-*`；层级为 110–117，低于对话框（120）。工作台返回按钮出现时按钮整体上移避让。
-
-| 区域 | 约定 |
-| --- | --- |
-| 卡片 | 宽 384px（≤1000px 时贴边），标题「帮助我们做得更好」、副标题「AI Native团队将在24小时以内快速响应」；只有一个输入框（占位「您的不知所措也是我们的问题」，上限 5000 字），首行非空文字即标题（≤120 字）。底部折叠显示自动附带的页面位置 |
-| 图片 | 选择、粘贴、拖入均可，最多 5 张、单张 ≤5MB，仅 PNG / JPEG / GIF / WebP；服务端按内容识别类型，不信任扩展名 |
-| 点选元素 | 「点选元素」进入拾取态：顶部提示条 + 高亮框；同源 iframe（工作台）内同样可选，捕获阶段拦截点击，不触发业务逻辑；Escape 退出 |
-| 提交 | `multipart/form-data` 发到 `POST /api/page-feedback`，提交人只取服务端会话；401 时保留草稿并提示重新登录。成功后显示完成态约 1.6s 再收起清空 |
-| 拖动与隐藏 | 长按 320ms 或移动超过 6px 开始拖动，底部中央出现回收区，进入 72px 半径变为激活态，松开即隐藏并给出可撤销提示。拖动中 Escape 或 `pointercancel` 回弹原位，拖动后的点击一律吞掉 |
-
-隐藏状态只保存在内存，刷新后恢复；组件不读写 localStorage、sessionStorage 或 cookie。URL 与 iframe 地址在上传前去掉 userinfo 与 token、code、signature 等敏感参数，服务端再清洗一次。减少动态效果时取消全部动画与过渡。
-
 ## 实现位置
 
 | 位置 | 职责 |
@@ -488,7 +474,6 @@ AI 助手页（`#assistantView`，路由 `#/assistant`）在设置导航「管�
 | `web/app.js`（`afOpenDialog`、`afConfirm`、`afPrompt`、`afAlert`） | 确认对话框的排队、焦点管理和模板 |
 | `chatbot/src/HarnessSelect.jsx`、`harness-select-model.js`、`harness-controls.css` | 工作台的 React 下拉组件、可测试的选项 / 键盘 / 定位逻辑及样式 |
 | `web/app/sops.js`、`web/app/sop-catalog.css` | 流程模板卡片模板（`projectSOPCard`、`sharedSOPCard`、`genericSOPCard`）、徽标映射、「⋯」菜单浮层、`sopCatalogMotion` 入场 / FLIP / 退出动效 |
-| `web/app/page-feedback.js`、`web/app/page-feedback.css`、`internal/httpapi/page_feedback.go`、`internal/repo/page_feedback.go` | 悬浮反馈按钮、卡片、元素拾取与拖动隐藏；反馈提交 / 查询接口及 `page_feedbacks`、`page_feedback_images` 表 |
 
 ## 验证与交付
 

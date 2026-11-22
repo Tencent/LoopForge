@@ -358,7 +358,8 @@ func TestCheckpointCancellationReleasesRunnerWorkspaceForNextTurn(t *testing.T) 
 // workspace.cancel only reaches requests that own their context. A
 // run-preparation request (RunKind other than workspace) runs on the daemon
 // context, so a stray cancel for its ID must not abort the preparation.
-func TestWorkspaceCancelDoesNotAbortRunPreparation(t *testing.T) {
+// Only conversation workspace preparation streams opening progress.
+func TestRunPreparationDoesNotStreamOpeningProgress(t *testing.T) {
 	d, request, root := runnerPreparationFixture(t)
 	request.Workflow.Nodes[0].Script = "touch preparation-started; sleep 1; touch preparation-finished"
 	defer d.closeAllRunSandboxes(context.Background())
@@ -384,9 +385,6 @@ func TestWorkspaceCancelDoesNotAbortRunPreparation(t *testing.T) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	if err := peer.WriteJSON(controlMessage{Type: "workspace.cancel", RequestID: "run-prepare"}); err != nil {
-		t.Fatal(err)
-	}
 	_ = peer.SetReadDeadline(time.Now().Add(8 * time.Second))
 	for {
 		var message controlMessage
@@ -400,7 +398,7 @@ func TestWorkspaceCancelDoesNotAbortRunPreparation(t *testing.T) {
 			continue
 		}
 		if message.RequestID != "run-prepare" || message.WorkspaceResponse == nil || message.WorkspaceResponse.Status != 200 {
-			t.Fatalf("run preparation was aborted by workspace.cancel: %+v", message.WorkspaceResponse)
+			t.Fatalf("run preparation failed: %+v", message.WorkspaceResponse)
 		}
 		break
 	}

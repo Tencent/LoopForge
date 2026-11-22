@@ -12,7 +12,7 @@ function gitHTTPDefaultUsername(platform) {
   return platform === 'gitlab' ? 'oauth2' : 'x-access-token';
 }
 
-function openGitHTTPCredentials() {
+function openGitHTTPCredentials(options = {}) {
   const user = state.currentUser;
   if (!user?.id || user.isGuest) return;
 
@@ -69,7 +69,7 @@ function openGitHTTPCredentials() {
   name.maxLength = 80;
   username.maxLength = 128;
   token.maxLength = 4096;
-  host.required = name.required = true;
+  host.required = true;
 
   function setStatus(message = '', error = false) {
     status.textContent = message;
@@ -106,8 +106,9 @@ function openGitHTTPCredentials() {
     form.querySelector('h3').textContent = cred ? '编辑令牌' : '添加令牌';
     host.value = cred?.host || '';
     host.readOnly = !!cred;
-    platform.value = cred?.platform || 'github';
+    platform.value = cred?.platform || options.platform || 'github';
     name.value = cred?.name || '';
+    name.placeholder = '例如 公司 GitLab';
     username.value = cred?.username || '';
     username.placeholder = gitHTTPDefaultUsername(platform.value);
     token.required = !cred;
@@ -138,7 +139,7 @@ function openGitHTTPCredentials() {
         method, silent:true, ...(body ? {body:JSON.stringify(body)} : {}),
       });
       storeCredentialUser({...credentialUser(), id:user.id, gitHttpCredentialsConfigured:creds.length > 0, gitHubCredentialConfigured:creds.some(credential=>credential.host==='github.com')});
-      renderCredentialPanel();
+      renderCredentialGitGroup();
       notifyCredentialsChanged();
       deleting = '';
       renderList();
@@ -188,13 +189,13 @@ function openGitHTTPCredentials() {
     if (scope === 'github.com') platform.value = 'github';
     else if (/(^|\.)gitlab\./.test(scope)) platform.value = 'gitlab';
     username.placeholder = gitHTTPDefaultUsername(platform.value);
-    if (!name.value.trim()) name.value = scope;
+    name.placeholder = scope || '例如 公司 GitLab';
   });
   platform.addEventListener('change', () => { username.placeholder = gitHTTPDefaultUsername(platform.value); });
   form.onsubmit = event => {
     event.preventDefault();
     const body = {
-      host:host.value, platform:platform.value, name:name.value,
+      host:host.value, platform:platform.value, name:name.value.trim() || gitHTTPHostScope(host.value),
       username:username.value.trim() || gitHTTPDefaultUsername(platform.value),
       token:token.value,
     };
@@ -208,8 +209,7 @@ function openGitHTTPCredentials() {
   dialog.addEventListener('close', () => {
     form.reset();
     dialog.remove();
-    if (opener?.isConnected) opener.focus({preventScroll:true});
-    else $('#credentialPanel [data-credential-row="gitHttpCredentials"] [data-credential-act="setup"]')?.focus({preventScroll:true});
+    (opener?.isConnected ? opener : $('#credentialPanel [data-credential-add-menu="platform"]'))?.focus({preventScroll:true});
   });
   document.body.append(dialog);
   dialog.showModal();
@@ -220,5 +220,8 @@ function openGitHTTPCredentials() {
     add.disabled = false;
     setStatus(creds.length ? '' : '还没有配置 Git 访问令牌');
     renderList();
+    const selected = creds.find(cred => cred.id === options.id);
+    if (selected && !selected.managed) openForm(selected);
+    else if (options.add) openForm(null);
   }).catch(error => setStatus(error.message, true));
 }

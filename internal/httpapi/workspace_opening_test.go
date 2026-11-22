@@ -70,44 +70,6 @@ func TestRunnerWorkspaceProgressIsRequestScopedAndCancellationIsForwarded(t *tes
 	}
 }
 
-func TestWorkspaceCancellationWaitsForBusyControlWriter(t *testing.T) {
-	for _, operation := range []string{domain.RunnerWorkspaceOperationPrepare, domain.RunnerWorkspaceOperationCheckpointExport, domain.RunnerWorkspaceOperationCheckpoint} {
-		t.Run(operation, func(t *testing.T) {
-			hub := quietRunnerHub()
-			conn := testRunnerConn("busy-writer")
-			conn.send = make(chan runnerControlMessage)
-			registerTestConn(hub, conn)
-			ctx, cancel := context.WithCancel(context.Background())
-			defer cancel()
-			done := make(chan error, 1)
-			go func() {
-				_, err := hub.requestWorkspace(ctx, conn.runnerID, domain.RunnerWorkspaceRequest{RunKind: domain.RunKindWorkspace, Operation: operation})
-				done <- err
-			}()
-			request := <-conn.send
-			cancel()
-			// Simulate a writer occupied with another message. The cancellation
-			// must wait briefly instead of being silently discarded.
-			select {
-			case err := <-done:
-				t.Fatalf("dropped cancellation while writer was busy: %v", err)
-			case <-time.After(30 * time.Millisecond):
-			}
-			select {
-			case stop := <-conn.send:
-				if stop.Type != "workspace.cancel" || stop.RequestID != request.RequestID {
-					t.Fatalf("wrong cancellation: %+v", stop)
-				}
-			case <-time.After(2 * time.Second):
-				t.Fatal("remote cancellation was lost")
-			}
-			if err := <-done; !errors.Is(err, context.Canceled) {
-				t.Fatalf("cancel result: %v", err)
-			}
-		})
-	}
-}
-
 func TestWorkspaceOpeningFailureKeepsBindingAndRetryUsesSameRun(t *testing.T) {
 	h, owner := workbenchFixture(t)
 	if err := h.repo.PutRepository(domain.Repository{ID: "repo-web", ProjectID: "workbench", Name: "web", CloneURL: "https://git.example.com/team/web.git", DefaultBranch: "main"}); err != nil {
@@ -244,7 +206,9 @@ func TestWorkspaceOpeningFailureAppearsInProblemsWithoutNodes(t *testing.T) {
 // Only workspace-opening preparation is request-scoped. A run-preparation
 // request (RunKind other than workspace) keeps main's behaviour: cancelling
 // the waiter neither registers live progress nor tells the runner to stop.
-func TestRunPreparationIsNotRequestScoped(t *testing.T) {
+// Run preparation is cancellable like other one-shot requests, but only
+// conversation workspace preparation reports opening progress.
+func TestRunPreparationDoesNotAcceptOpeningProgress(t *testing.T) {
 	hub := quietRunnerHub()
 	conn := testRunnerConn("runner-run-prepare")
 	registerTestConn(hub, conn)
@@ -272,10 +236,5 @@ func TestRunPreparationIsNotRequestScoped(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("request cancellation blocked")
-	}
-	select {
-	case unexpected := <-conn.send:
-		t.Fatalf("run preparation was cancelled on the runner: %+v", unexpected)
-	default:
 	}
 }

@@ -41,6 +41,14 @@ func TestSharedScheduleSubscriptionUsesPinnedVersionAndTargetOwner(t *testing.T)
 		t.Fatal(err)
 	}
 	source := domain.ScheduleJob{ID: "publish-source", ProjectID: "workbench", Name: "巡检", SkipDispatch: true, AssistantPrompt: "Source prompt", IntervalSec: 3600, AssistantModel: "glm-5.3-flash-ioa", OwnerUserID: sourceOwner.ID}
+	privateSkill := domain.SkillDefinition{ID: "private-source-skill", Name: "Private source skill", ProjectID: source.ProjectID}
+	if err := st.PutSkill(privateSkill); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.PutIssue(domain.Issue{ID: "source-private-issue", ProjectID: source.ProjectID, Title: "Private source issue"}); err != nil {
+		t.Fatal(err)
+	}
+	source.References = []domain.AssistantReference{{Type: "skill", ID: privateSkill.ID}}
 	if err := st.PutScheduleJob(source); err != nil {
 		t.Fatal(err)
 	}
@@ -49,8 +57,17 @@ func TestSharedScheduleSubscriptionUsesPinnedVersionAndTargetOwner(t *testing.T)
 	requestJSONAuthed[map[string]any](t, server, owner, http.MethodPost, "/api/schedule-jobs/publish-source/publish", publish, 403)
 	requestJSONAuthed[map[string]any](t, server, sourceOwner, http.MethodPost, "/api/schedule-jobs/publish-source/publish", map[string]any{"baseVersion": -1}, 400)
 	requestJSONAuthed[map[string]any](t, server, sourceOwner, http.MethodPost, "/api/schedule-jobs/publish-source/publish", map[string]any{}, 400)
+	source.References = []domain.AssistantReference{{Type: "issue", ID: "source-private-issue"}}
+	if err := st.PutScheduleJob(source); err != nil {
+		t.Fatal(err)
+	}
+	requestJSONAuthed[map[string]any](t, server, sourceOwner, http.MethodPost, "/api/schedule-jobs/publish-source/publish", publish, 400)
+	source.References = []domain.AssistantReference{{Type: "skill", ID: privateSkill.ID}}
+	if err := st.PutScheduleJob(source); err != nil {
+		t.Fatal(err)
+	}
 	v1 := requestJSONAuthed[domain.SharedScheduleVersion](t, server, sourceOwner, http.MethodPost, "/api/schedule-jobs/publish-source/publish", publish, 201)
-	if v1.Version != 1 || v1.SourceProjectID != "workbench" {
+	if v1.Version != 1 || v1.SourceProjectID != "workbench" || !sameScheduleReferenceIDs(v1.References, source.References) || !v1.HasAsset("skill", privateSkill.ID) {
 		t.Fatalf("invalid first publication %+v", v1)
 	}
 	raw, _ := json.Marshal(v1)
@@ -59,10 +76,13 @@ func TestSharedScheduleSubscriptionUsesPinnedVersionAndTargetOwner(t *testing.T)
 	}
 	requestJSONAuthed[map[string]any](t, server, sourceOwner, http.MethodPost, "/api/schedule-jobs/publish-source/publish", publish, 409)
 	binding := map[string]any{"projectId": "subscriber", "skipDispatch": true, "sharedTaskId": v1.ID, "sharedTaskVersion": 1, "parameterValues": map[string]string{"days": "5"}, "assistantPrompt": "untrusted copy", "enabled": true}
+	binding["references"] = []domain.AssistantReference{{Type: "issue", ID: "source-private-issue"}}
+	requestJSONAuthed[map[string]any](t, server, owner, http.MethodPost, "/api/schedule-jobs", binding, 400)
+	delete(binding, "references")
 	requestJSONAuthed[map[string]any](t, server, sourceOwner, http.MethodPost, "/api/schedule-jobs", binding, 403)
 	requestJSONAuthed[map[string]any](t, server, viewer, http.MethodPost, "/api/schedule-jobs", binding, 403)
 	subscribed := requestJSONAuthed[domain.ScheduleJob](t, server, owner, http.MethodPost, "/api/schedule-jobs", binding, 200)
-	if subscribed.AssistantPrompt != "" || subscribed.OwnerUserID != owner.ID || subscribed.IntervalSec != 3600 || subscribed.SharedTaskVersion != 1 || subscribed.ParameterValues["days"] != "5" {
+	if subscribed.AssistantPrompt != "" || subscribed.OwnerUserID != owner.ID || subscribed.IntervalSec != 3600 || subscribed.SharedTaskVersion != 1 || subscribed.ParameterValues["days"] != "5" || !sameScheduleReferenceIDs(subscribed.References, v1.References) {
 		t.Fatalf("invalid binding %+v", subscribed)
 	}
 	requestJSONAuthed[map[string]any](t, server, owner, http.MethodPost, "/api/schedule-jobs/"+subscribed.ID+"/publish", publish, 400)

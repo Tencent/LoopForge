@@ -2,6 +2,9 @@ let scheduleNotificationBindings=[];
 let scheduleEditorKind='dispatch';
 let scheduleModalVersion=0;
 let scheduleModalOpener=null;
+let scheduleAssistantReferences=[];
+let schedulePromptEditor=null;
+let scheduleSharedPrompt='';
 // --- Sync Panel (embedded in Issues view) ---
 function sourceBadge(issue){if(!issue.source||issue.source==='local')return '<span class="sync-badge local">本地</span>';if(issue.source==='github')return '<span class="sync-badge local">GitHub</span>';if(issue.source==='gongfeng')return '<span class="sync-badge gongfeng">工蜂</span>';if(issue.source==='tapd')return '<span class="sync-badge tapd">TAPD</span>';return ''}
 function externalLink(issue){if(!issue.externalRef)return '';return `<a href="${escapeHTML(safeURL(issue.externalRef.externalUrl))}" target="_blank" rel="noopener noreferrer" class="ext-link" title="${escapeHTML(issue.externalRef.externalUrl)}">↗</a>`}
@@ -98,56 +101,58 @@ function scheduleIssueStatusValues(job){
   return ['backlog','todo'];
 }
 function scheduleModelAPI(){return window.AgentFlowAssistantModels}
-function selectedClarifyModel(){
-  const api=window.AgentFlowAssistantModels;
-  const stored=localStorage.getItem('agentflow.clarifyModel')||'';
-  // Clarification runs on CodeBuddy only; a saved "codex:…" id falls back.
-  if(api?.codeBuddyModel)return api.codeBuddyModel(stored);
-  return stored||(api&&api.DEFAULT)||'default';
+function scheduleReferenceIdentity(ref){
+  const type=String(ref?.type||'').trim(),id=String(ref?.id||'').trim();
+  return {type,id};
 }
-function setClarifyModel(id){
-  if(!id)return;
-  localStorage.setItem('agentflow.clarifyModel',id);
-  $$('[data-clarify-model-value]').forEach(el=>{el.value=id});
-}
-function clarifyModelPickerHTML(disabled){
-  const id=escapeHTML(selectedClarifyModel());
-  return `<div class="clarify-model-field" data-clarify-model><input type="hidden" data-clarify-model-value value="${id}"><button type="button" class="ai-model-toggle" data-model-toggle aria-haspopup="listbox" aria-expanded="false"${disabled?' disabled':''}><span class="ai-model-icon" data-family="glm">智</span><span data-model-label>选择模型</span><span class="ai-model-caret" aria-hidden="true"></span></button><div class="ai-model-menu" hidden role="listbox"></div></div>`;
-}
-function bindClarifyModelPicker(host){
-  if(!host)return;
-  const api=window.AgentFlowAssistantModels,toggle=host.querySelector('[data-model-toggle]'),menu=host.querySelector('.ai-model-menu');
-  if(!api||!toggle||!menu)return;
-  const paint=()=>{const keep=selectedClarifyModel();const hidden=host.querySelector('[data-clarify-model-value]');if(hidden)hidden.value=keep;api.paint(toggle,keep)};
-  api.load?.().then(paint).catch(paint);
-  if(!bindClarifyModelPicker.docBound){
-    bindClarifyModelPicker.docBound=true;
-    document.addEventListener('click',e=>{
-      $$('[data-clarify-model]').forEach(el=>{
-        if(el.contains(e.target))return;
-        const m=el.querySelector('.ai-model-menu'),t=el.querySelector('[data-model-toggle]');
-        if(m)m.hidden=true;
-        if(t)t.setAttribute('aria-expanded','false');
-      });
-    });
+function scheduleReferenceIdentities(refs){
+  const seen=new Set(),out=[];
+  for(const ref of Array.isArray(refs)?refs:[]){
+    const identity=scheduleReferenceIdentity(ref);
+    const key=`${identity.type}:${identity.id}`;if(seen.has(key))continue;
+    seen.add(key);out.push(identity);
   }
-  if(host.dataset.bound)return;
-  host.dataset.bound='1';
-  toggle.onclick=e=>{
-    e.stopPropagation();
-    if(toggle.disabled)return;
-    const open=menu.hidden;
-    menu.hidden=!open;
-    toggle.setAttribute('aria-expanded',open?'true':'false');
-    if(open){
-      api.renderCodeBuddyList(menu, selectedClarifyModel(), id=>{
-        setClarifyModel(id);
-        api.paint(toggle, id);
-        menu.hidden=true;
-        toggle.setAttribute('aria-expanded','false');
-      });
+  return out;
+}
+function syncSchedulePromptEditor(){
+  const f=$('#scheduleJobForm'),host=$('#schedulePromptEditor');
+  if(!f||!host||f.elements.jobKind.value!=='assistant')return;
+  const mount=window.LoopForgePromptEditor?.mount;
+  if(!mount){
+    if(!document.getElementById('schedulePromptEditorModule')){
+      const script=document.createElement('script');script.id='schedulePromptEditorModule';
+      script.type='module';script.src='/chatbot/prompt-editor.js';
+      script.onerror=()=>{script.remove();if($('#scheduleModal').classList.contains('open'))toast('项目资产输入组件加载失败，提示词仍可编辑；请重新打开任务重试','err')};
+      document.head.append(script);
     }
-  };
+    return;
+  }
+  const version=scheduleModalVersion,projectId=state.projectFilter;
+  const value={scope:version,projectId,text:f.elements.sharedTaskId.value?scheduleSharedPrompt:f.elements.assistantPrompt.value,references:structuredClone(scheduleAssistantReferences),readOnly:!!f.elements.sharedTaskId.value};
+  if(schedulePromptEditor)schedulePromptEditor.setValue(value);
+  else schedulePromptEditor=mount(host,{value,onChange:draft=>{
+    if(version!==scheduleModalVersion||projectId!==state.projectFilter||f.elements.jobKind.value!=='assistant')return;
+    scheduleAssistantReferences=structuredClone(draft.references||[]);
+    if(!f.elements.sharedTaskId.value)f.elements.assistantPrompt.value=draft.text;
+  },onError:message=>toast(message,'err')});
+  f.querySelector('[data-schedule-prompt]').hidden=true;
+  f.querySelector('[data-schedule-reference-editor]').hidden=false;
+  f.elements.assistantPrompt.required=false;
+}
+window.addEventListener('loopforge-prompt-editor-ready',()=>{if($('#scheduleModal')?.classList.contains('open'))syncSchedulePromptEditor()});
+function clarifyModelPickerHTML(disabled){
+  return `<div class="feature-model-picker clarify-model-picker" data-clarify-model ${disabled?'data-picker-readonly':''}>${scheduleModelAPI()?.featurePickerHTML()||''}</div>`;
+}
+let clarifyModelChoice;
+function bindClarifyModelPicker(host, issue){
+  const models=scheduleModelAPI();
+  return models?.bindFeaturePicker(host,{
+    model:clarifyModelChoice?.issueId===issue.id?clarifyModelChoice.model:'',
+    legacyModel:localStorage.getItem('agentflow.clarifyModel'),
+    readOnly:host.hasAttribute('data-picker-readonly'),
+    onChange:model=>{clarifyModelChoice={issueId:issue.id,model}},
+    loadCatalog:()=>models.fetchCatalog(`/api/issues/${encodeURIComponent(issue.id)}/clarify-models`)
+  });
 }
 // The AI 定时任务 model picker: a CLI select narrows the model list to that
 // CLI, like the chat composer's CLI switch. The menu is fixed-positioned so the
@@ -159,6 +164,13 @@ function scheduleModelCatalog(){
 function scheduleEngineModels(engine){
   return (scheduleModelCatalog().models||[]).filter(m=>(m.engine||'codebuddy')===engine);
 }
+function scheduleDefaultModel(engine){
+  const models=scheduleEngineModels(engine);
+  const prefs=scheduleModelCatalog().preferences;
+  const saved=prefs?.executor===engine&&models.find(item=>item.id===prefs.model||item.id===engine+':'+prefs.model);
+  const preferred=engine==='codebuddy'&&models.find(item=>item.id===scheduleModelCatalog().default);
+  return saved?.id||preferred?.id||models[0]?.id||'';
+}
 function scheduleModelEngine(id){
   return scheduleModelAPI()?.engineOf?.(id,scheduleModelCatalog())||'codebuddy';
 }
@@ -167,8 +179,10 @@ function paintScheduleEngines(selected){
   if(!select)return;
   const current=scheduleModelEngine(selected);
   const engines=scheduleModelCatalog().engines||[];
-  const list=engines.length?[...engines]:[{id:'codebuddy',name:'CodeBuddy'}];
-  if(!list.some(e=>e.id===current))list.push({id:current,name:current});
+  const list=engines.filter(engine=>engine.configured||scheduleEngineModels(engine.id).length);
+  if(!list.some(e=>e.id===current)&&(scheduleModelAPI()?.concreteModelId(selected)||$('#scheduleJobForm')?.elements.id.value)){
+    list.push(engines.find(e=>e.id===current)||{id:current,name:current});
+  }
   // CodeBuddy can run on its native default with no concrete model in the
   // list. A saved task keeps its CLI selectable during edits.
   select.replaceChildren(...list.map(e=>{
@@ -177,7 +191,9 @@ function paintScheduleEngines(selected){
     option.disabled=!usable;
     return option;
   }));
-  select.value=current;
+  if(!list.length)select.add(new Option('暂无可用执行器',''));
+  select.value=list.some(item=>item.id===current)?current:list[0]?.id||'';
+  select.disabled=!list.length;
 }
 function closeScheduleModelMenu(){
   const host=$('#scheduleModelPicker');
@@ -227,8 +243,7 @@ function bindScheduleModelPicker(){
   const engine=$('#scheduleEngine');
   if(engine)engine.onchange=()=>{
     const api=scheduleModelAPI();
-    const models=scheduleEngineModels(engine.value);
-    const next=models[0]?.id||(engine.value==='codebuddy'?(scheduleModelCatalog().default||api?.DEFAULT):'');
+    const next=scheduleDefaultModel(engine.value)||(engine.value==='codebuddy'?(scheduleModelCatalog().default||api?.DEFAULT):'');
     if(next)paintScheduleModel(next);
   };
   document.addEventListener('click',e=>{if(!host.contains(e.target))closeScheduleModelMenu()});
@@ -240,12 +255,23 @@ function bindScheduleModelPicker(){
 async function loadScheduleModels(){
   const picker=scheduleModelAPI();
   if(!picker)return;
+  const version=scheduleModalVersion;
+  let catalog;
   try{
-    scheduleCatalog=await api('/api/assistant/models?schedule=1',{silent:true});
+    catalog=await api('/api/assistant/models?schedule=1',{silent:true});
   }catch{
-    scheduleCatalog=await picker.load();
+    catalog=await picker.load();
   }
-  paintScheduleModel($('#scheduleJobForm')?.elements.assistantModel.value||picker.DEFAULT);
+  if(version!==scheduleModalVersion)return;
+  scheduleCatalog=catalog;
+  const form=$('#scheduleJobForm');
+  const selected=form.elements.assistantModel.value;
+  const configured=(catalog?.engines||[]).filter(engine=>engine.configured);
+  const preferred=configured.find(engine=>engine.id===catalog.preferences?.executor);
+  const fallback=!form.elements.id.value&&!picker.concreteModelId(selected)
+    ?(preferred&&scheduleDefaultModel(preferred.id))||configured.map(engine=>scheduleDefaultModel(engine.id)).find(Boolean)
+    :'';
+  paintScheduleModel(fallback||selected||picker.DEFAULT);
 }
 function paintScheduleModel(selected){
   const api=scheduleModelAPI();
@@ -279,11 +305,13 @@ function syncScheduleJobKind(){
   const kind=f.elements.jobKind.value==='assistant'?'assistant':'dispatch';
   f.elements.jobKind.value=kind;
   f.querySelectorAll('[data-schedule-kind]').forEach(el=>{el.hidden=el.dataset.scheduleKind!==kind});
+  f.querySelector('[data-schedule-reference-editor]').hidden=true;
   f.elements.workflowId.required=kind==='dispatch';
   f.elements.maxDispatch.disabled=kind==='assistant';
   f.elements.assistantPrompt.required=kind==='assistant'&&!f.elements.sharedTaskId?.value;
   f.elements.name.required=kind==='assistant';
   const assistant=kind==='assistant';
+  f.elements.timeoutMinutes.disabled=!assistant;
   $('#scheduleModalTitle').textContent=assistant?'AI 定时任务':'触发配置';
   $('#scheduleModalHint').textContent=assistant?'按计划以保存人的身份和完全权限执行提示词，可调用 SOP、平台工具、工作区及浏览器。':'按计划扫描本项目选定状态、尚未跑过 SOP 的需求，通过基线门禁后派发 SOP。基线冲突会先由对齐 Agent 解决并合入，期间暂停派发。';
   $('#scheduleModal').querySelector('.schedule-head').hidden=assistant;
@@ -329,8 +357,11 @@ function fillScheduleJobForm(job={}){
   }
   if(!cron)f.elements.intervalSec.value=interval;
   f.elements.jobKind.value=job.id?scheduleJobKind(job):scheduleEditorKind;
+  scheduleAssistantReferences=Array.isArray(job.references)?structuredClone(job.references):[];
+  scheduleSharedPrompt='';
   f.elements.assistantPrompt.value=job.assistantPrompt||'';
   f.elements.assistantModel.value=job.assistantModel||scheduleModelAPI()?.DEFAULT||'default';
+  f.elements.timeoutMinutes.value=job.timeoutMinutes||'';
   fillScheduleSessionMode(f,job);
   f.elements.useIssueWorkflow.checked=job.id?!!job.useIssueWorkflow:true;
   f.elements.maxDispatch.value=job.maxDispatch||'';
@@ -347,6 +378,7 @@ function fillScheduleJobForm(job={}){
   syncScheduleJobTiming();
   syncScheduleJobKind();
   fillSharedScheduleForm(job);
+  syncSchedulePromptEditor();
 }
 function projectTriggerJob(){return scheduleJobsInView(state.data.scheduleJobs,state.projectFilter).find(job=>!job.skipDispatch)}
 function resetScheduleJobForm(){fillScheduleJobForm(scheduleEditorKind==='dispatch'?(projectTriggerJob()||{}):{})}
@@ -355,6 +387,7 @@ function closeScheduleJobModal(){
   const modal=$('#scheduleModal');
   if(!modal.classList.contains('open'))return;
   modal.classList.remove('open');
+  schedulePromptEditor?.destroy();schedulePromptEditor=null;
   const editId=scheduleModalOpener?.dataset?.editSchedule;
   const replacement=editId?[...$$('#aiScheduleJobList [data-edit-schedule]')].find(el=>el.dataset.editSchedule===editId):null;
   const versionId=scheduleModalOpener?.dataset?.sharedVersions;
@@ -366,10 +399,12 @@ function closeScheduleJobModal(){
 async function openScheduleJobModal(kind='dispatch',job){
   if(!state.projectFilter)return toast('请先选择项目');
   const version=++scheduleModalVersion,projectId=state.projectFilter;
+  schedulePromptEditor?.destroy();schedulePromptEditor=null;
   scheduleEditorKind=kind==='assistant'?'assistant':'dispatch';
   scheduleModalOpener=document.activeElement;
   if(scheduleModalOpener?.closest('#issueHeadingMenu'))scheduleModalOpener=$('#issueHeadingMore');
   const f=$('#scheduleJobForm');
+  f.modelPickerReady=null;
   f.inert=false;
   f.querySelector('[type="submit"]').disabled=false;
   if(scheduleEditorKind==='assistant')fillScheduleJobForm(job||{});
@@ -377,7 +412,8 @@ async function openScheduleJobModal(kind='dispatch',job){
   $('#scheduleModal').classList.add('open');
   if(scheduleEditorKind==='assistant'){
     f.elements.name.focus();
-    await Promise.all([refreshAISchedules(),loadScheduleModels(),loadSharedScheduleEditor(job||{},version,projectId)]);
+    f.modelPickerReady=loadScheduleModels();
+    await Promise.all([refreshAISchedules(),f.modelPickerReady,loadSharedScheduleEditor(job||{},version,projectId)]);
   }else{
     // Load the saved project config before allowing edits or a first save.
     f.inert=true;
@@ -465,7 +501,7 @@ function renderScheduleJobs(){
   const disabled='本实例不执行定时任务；任务可在主实例自动运行。';
   $('#scheduleRuntimeHint').textContent=canRun?'每个项目使用一份触发配置，修改后保存即可生效。立即运行在服务端执行，关闭页面不会中断。':disabled;
   const triggerHint=$('#aiScheduleTriggerHint');if(triggerHint)triggerHint.textContent=canRun?'按计划扫描本项目选定状态、尚未跑过 SOP 的需求，通过基线门禁后派发 SOP。每个项目使用一份触发配置。':disabled;
-  $('#aiScheduleRuntimeHint').textContent=!state.projectFilter?'请先在顶栏选择项目，再管理 AI 定时任务。':canRun?'以最后保存任务的人的身份和完全权限执行。默认执行机器离线时使用该用户的 API Key。CodeBuddy 缺少个人 Key 时可使用平台共享 Key。关闭页面不会中断执行。':disabled;
+  $('#aiScheduleRuntimeHint').textContent=!state.projectFilter?'请先在顶栏选择项目，再管理 AI 定时任务。':canRun?'任务以最后保存人的身份和完全权限执行。关闭页面后，任务会继续运行。':disabled;
   $('#aiScheduleProjectName').textContent=currentProject()?.name||'当前项目';
   $('#aiScheduleCount').textContent=`${assistant.length} 个任务`;
   $('#newAISchedule').disabled=!state.projectFilter;
@@ -595,6 +631,11 @@ function renderScheduleJobList(list,jobs,kind,canRun){
 async function saveScheduleJob(e){
   e.preventDefault();
   const f=e.currentTarget,cron=f.elements.scheduleMode.value==='cron',assistant=f.elements.jobKind.value==='assistant';
+  const version=scheduleModalVersion;
+  if(assistant&&f.modelPickerReady){
+    await f.modelPickerReady;
+    if(version!==scheduleModalVersion)return;
+  }
   const payload={
     id:f.elements.id.value,
     name:f.elements.name.value.trim()||(assistant?'':'触发配置'),
@@ -610,18 +651,24 @@ async function saveScheduleJob(e){
     cron:cron?f.elements.cron.value.trim():'',
     assistantPrompt:assistant?f.elements.assistantPrompt.value.trim():'',
     assistantModel:assistant?f.elements.assistantModel.value.trim():'',
+    references:assistant?scheduleReferenceIdentities(scheduleAssistantReferences):[],
+    timeoutMinutes:assistant&&f.elements.timeoutMinutes.value!==''?Number(f.elements.timeoutMinutes.value):undefined,
     sessionMode:assistant&&f.elements.sessionMode?f.elements.sessionMode.value:'',
     sessionKeep:assistant&&f.elements.sessionKeep?Number(f.elements.sessionKeep.value)||50:0,
     enabled:assistant?scheduleSavedEnabled(f.elements.id.value):f.elements.enabled.checked
   };
   if(assistant&&typeof sharedScheduleFormPayload==='function')Object.assign(payload,sharedScheduleFormPayload(f));
   if(!payload.name)return toast('请填写任务名称');
+  if(assistant&&!payload.assistantPrompt&&!payload.sharedTaskId){schedulePromptEditor?.focus();return toast('请填写 AI 定时任务的提示词')}
+  if(assistant&&payload.references.some(ref=>!['agent','skill','sop','issue','run','repository'].includes(ref.type)||!ref.id))return toast('AI 定时任务引用的项目资产无效，请重新选择后保存');
+  if(assistant&&payload.references.length>12)return toast('AI 定时任务最多引用 12 个项目资产');
   if(assistant&&!payload.assistantPrompt&&!payload.sharedTaskId)return toast('请填写 AI 定时任务的提示词');
+  if(assistant&&!f.elements.timeoutMinutes.validity.valid)return toast('执行超时必须为 1–240 分钟');
   if(!assistant&&!payload.workflowId)return toast('请选择默认 SOP');
   if(!assistant&&!payload.issueStatuses.length)return toast('请至少选择一个触发状态');
   if(!assistant&&payload.maxDispatch!==undefined&&(!Number.isInteger(payload.maxDispatch)||payload.maxDispatch<1||payload.maxDispatch>10))return toast('单次最多触发需求数必须为 1–10，或留空使用默认值 10');
   if(cron&&!payload.cron)return toast('请填写 Cron 表达式');
-  const version=scheduleModalVersion,projectId=state.projectFilter,button=f.querySelector?.('[type="submit"]'),label=button?.textContent;
+  const projectId=state.projectFilter,button=f.querySelector?.('[type="submit"]'),label=button?.textContent;
   if(button?.disabled)return;
   if(button){button.disabled=true;button.textContent='保存中…'}
   try{

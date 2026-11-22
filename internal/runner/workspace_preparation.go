@@ -48,12 +48,18 @@ func onceRelease(callbacks ...func()) func() {
 
 const runnerWorkspacePreparationTimeout = 15 * time.Minute
 
-func (d *Daemon) prepareRunnerWorkspace(ctx context.Context, root string, request domain.RunnerWorkspaceRequest) domain.RunnerWorkspaceResponse {
-	if !workspaceprep.Enabled(ctx) {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, runnerWorkspacePreparationTimeout)
-		defer cancel()
+func runnerWorkspacePreparationContext(ctx context.Context, request domain.RunnerWorkspaceRequest) (context.Context, context.CancelFunc) {
+	if request.Operation == domain.RunnerWorkspaceOperationPrepare && request.RunKind == domain.RunKindWorkspace {
+		// The control plane stops preparation with the conversation. The
+		// control connection also cancels this work if it goes away.
+		return context.WithCancel(ctx)
 	}
+	return context.WithTimeout(ctx, runnerWorkspacePreparationTimeout)
+}
+
+func (d *Daemon) prepareRunnerWorkspace(ctx context.Context, root string, request domain.RunnerWorkspaceRequest) domain.RunnerWorkspaceResponse {
+	ctx, cancel := runnerWorkspacePreparationContext(ctx, request)
+	defer cancel()
 	task, err := d.workspaceSandboxTask(root, request)
 	if err != nil {
 		return runnerWorkspaceError(err)
@@ -130,7 +136,7 @@ func (d *Daemon) handleRunnerWorkspaceTerminal(ctx context.Context, root, scope 
 	if !request.Terminal.ExpiresAt.IsZero() && !request.Terminal.ExpiresAt.After(time.Now()) {
 		return runtime.TerminalResult{}, fmt.Errorf("terminal authorization has expired")
 	}
-	ctx, cancel := context.WithTimeout(ctx, runnerWorkspacePreparationTimeout)
+	ctx, cancel := runnerWorkspacePreparationContext(ctx, request)
 	defer cancel()
 	task, err := d.workspaceSandboxTask(root, request)
 	if err != nil {

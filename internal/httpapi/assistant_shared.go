@@ -119,6 +119,9 @@ func assistantRequestApprovalMode(req assistantRequest) string {
 }
 
 func assistantSystemPromptForRequest(req assistantRequest, mode string) string {
+	if req.sopDesigner() {
+		return assistantSOPDesignerSystemPrompt
+	}
 	return withSpaceDeliverable(req, assistantSystemPromptForMode(mode))
 }
 
