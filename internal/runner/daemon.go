@@ -31,6 +31,7 @@ type Daemon struct {
 	conversationMu        sync.Mutex
 	conversationForward   runtime.ConversationToolForward
 	conversationReplies   map[string]chan domain.RunnerToolResponse
+	conversationToolSeq   atomic.Uint64
 	cfg                   Config
 	client                *Client
 	executor              *runtime.ExecutorRunner
@@ -46,6 +47,11 @@ type Daemon struct {
 	wsOnline             atomic.Bool
 	updateMu             sync.RWMutex
 	updateReady          atomic.Bool
+	updateDownloadMu     sync.Mutex
+	dockerHelperSyncDone chan struct{} // closed after the initial macOS helper sync
+	cancelClaimLoop      context.CancelFunc
+	heartbeatWake        chan struct{}
+	maintenance          runnerMaintenanceState
 	runSandboxMu         sync.Mutex
 	runSandboxes         map[string]*runSandbox
 	managedTasks         map[string]*managedTask
@@ -129,7 +135,8 @@ func New(cfg Config) (*Daemon, error) {
 		host, _ := os.Hostname()
 		cfg.Name = host
 	}
-	return &Daemon{cfg: cfg, client: NewClient(cfg.ServerURL), executor: runtime.NewExecutorRunner(), controls: map[string]chan string{}, pendingControls: map[string]string{}}, nil
+	return &Daemon{cfg: cfg, client: NewClient(cfg.ServerURL), executor: runtime.NewExecutorRunner(),
+		controls: map[string]chan string{}, pendingControls: map[string]string{}, heartbeatWake: make(chan struct{}, 1)}, nil
 }
 
 func trimTrailingSlash(s string) string {
@@ -148,17 +155,30 @@ func (d *Daemon) Run(ctx context.Context) error {
 		return err
 	}
 	d.refreshRuntimes(ctx)
-	go d.rescanLoop(ctx)
+	claimCtx, cancelClaim := context.WithCancel(ctx)
+	defer cancelClaim()
+	d.cancelClaimLoop = cancelClaim
+	if goruntime.GOOS == "darwin" && !d.cfg.DisableAutoUpdate {
+		d.dockerHelperSyncDone = make(chan struct{})
+	}
+	go d.rescanLoop(ctx, 5*time.Minute)
 	heartbeatDone := make(chan struct{})
 	go func() { defer close(heartbeatDone); d.heartbeatLoop(ctx) }()
 	controlDone := make(chan struct{})
 	go func() { defer close(controlDone); d.controlLoop(ctx) }()
-	err := d.claimLoop(ctx)
+	err := d.claimLoop(claimCtx)
+	if d.updateReady.Load() {
+		err = ErrUpdateReady
+	}
 	// Workspace preparation runs on the control connection. Cancel and join it
 	// before closing shared sandboxes, including on an automatic-update exit.
 	stop()
 	<-controlDone
+	d.maintenance.jobs.Wait()
 	<-heartbeatDone
+	if d.dockerHelperSyncDone != nil {
+		<-d.dockerHelperSyncDone
+	}
 	closeCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	d.closeAllRunSandboxes(closeCtx)
 	cancel()
@@ -358,8 +378,13 @@ func (d *Daemon) availableProviders() []string {
 	return providers
 }
 
-func (d *Daemon) rescanLoop(ctx context.Context) {
-	ticker := time.NewTicker(5 * time.Minute)
+func (d *Daemon) rescanLoop(ctx context.Context, interval time.Duration) {
+	helperSynced := false
+	if d.dockerHelperSyncDone != nil {
+		helperSynced = d.refreshDockerRunnerHelper(ctx, false)
+		close(d.dockerHelperSyncDone)
+	}
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
 		select {
@@ -367,6 +392,9 @@ func (d *Daemon) rescanLoop(ctx context.Context) {
 			return
 		case <-ticker.C:
 			d.refreshRuntimes(ctx)
+			if d.dockerHelperSyncDone != nil {
+				helperSynced = d.refreshDockerRunnerHelper(ctx, helperSynced)
+			}
 			d.reapIdleRunSandboxes(ctx, runSandboxIdleTTL)
 		}
 	}
@@ -406,6 +434,7 @@ func (d *Daemon) heartbeatLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+		case <-d.heartbeatWake:
 		}
 	}
 }
@@ -517,6 +546,8 @@ func (d *Daemon) executeTask(ctx context.Context, task domain.RunnerTask) {
 	// locks, cloning repositories, creating sandboxes and collecting outputs too.
 	ctx, stopLease := d.keepTaskLease(ctx, task, leaseRenewInterval)
 	defer stopLease()
+	ctx = d.withDockerRunnerHelperWait(ctx)
+	ctx = gitwork.WithSSHKnownHosts(ctx, task.GitSSHKnownHosts)
 	// The read fence ends before the completion report: once the control plane
 	// sees this task terminal (and lets a paused run continue), a follow-up
 	// preparation or snapshot must not still find the gate held.
@@ -717,7 +748,7 @@ func (d *Daemon) executeTerminal(ctx context.Context, task domain.RunnerTask) ex
 		return execResult{status: domain.RunnerTaskFailed, errMsg: fmt.Sprintf("workspace %s: %v", workspace, err)}
 	}
 	if task.Invocation != nil {
-		if err := checkoutInvocationRepositories(ctx, workspace, task.Invocation, runnerTaskSandboxDriver(task)); err != nil {
+		if err := checkoutInvocationRepositories(ctx, workspace, task.Invocation); err != nil {
 			return execResult{status: domain.RunnerTaskFailed, errMsg: fmt.Sprintf("repository checkout: %v", err)}
 		}
 		if err := writeRunnerHumanContext(workspace, task.Invocation.HumanContext); err != nil {
@@ -743,21 +774,22 @@ func (d *Daemon) executeTerminal(ctx context.Context, task domain.RunnerTask) ex
 		if len(servers) == 0 {
 			servers = task.Invocation.Assets.MCPServers
 		}
-		bound, _, _ := runtime.PrepareMCPServers(domain.AgentAssetBundle{MCPServers: servers, MCPFiles: task.Invocation.Assets.MCPFiles}, d.mcpTarget(false, invocationGitToken(task.Invocation)))
+		bound, _, _ := runtime.PrepareMCPServers(domain.AgentAssetBundle{MCPServers: servers, MCPFiles: task.Invocation.Assets.MCPFiles}, d.mcpTarget(false, task.Invocation.GitHTTPCredentials))
 		if err := runtime.ProvisionMCPAssets(ctx, sandbox, workspace, bound, nil); err != nil {
 			return execResult{status: domain.RunnerTaskFailed, errMsg: fmt.Sprintf("provision MCP: %v", err)}
 		}
-		env, err := runtime.ScriptMCPEnvironment(sandbox, workspace, bound.MCPServers)
+		env, err := runtime.ScriptMCPEnvironment(ctx, sandbox, workspace, bound.MCPServers)
 		if err != nil {
 			return execResult{status: domain.RunnerTaskFailed, errMsg: fmt.Sprintf("prepare mcp call: %v", err)}
 		}
 		command = runtime.WithCommandEnvironment(command, env)
 		command.Argv = runtime.BindMCPCallArgv(sandbox, command.Argv)
-		gitEnv, err := runtime.GitEnvironment(sandbox, workspace, invocationGitToken(task.Invocation))
+		gitEnv, closeGit, err := runtime.RunGitEnvironment(ctx, sandbox, workspace, invocationGitCredentials(task.Invocation))
 		if err != nil {
 			return execResult{status: domain.RunnerTaskFailed, errMsg: fmt.Sprintf("prepare git credentials: %v", err)}
 		}
-		cleanup, err := runtime.BindGitSSH(sandbox, workspace, gitEnv, task.Invocation.GitSSHKeys)
+		defer closeGit()
+		cleanup, err := runtime.BindGitSSH(ctx, sandbox, workspace, gitEnv, task.Invocation.GitSSHKeys)
 		if err != nil {
 			return execResult{status: domain.RunnerTaskFailed, errMsg: fmt.Sprintf("prepare git credentials: %v", err)}
 		}
@@ -776,12 +808,12 @@ func (d *Daemon) executeTerminal(ctx context.Context, task domain.RunnerTask) ex
 
 // mcpTarget addresses platform-served MCP servers through this runner's own
 // server URL, the one platform address known to be reachable from here.
-func (d *Daemon) mcpTarget(requireCredentials bool, gitTokens ...string) runtime.MCPTarget {
-	var gitToken string
-	if len(gitTokens) > 0 {
-		gitToken = gitTokens[0]
+func (d *Daemon) mcpTarget(requireCredentials bool, hostCredentials ...map[string]domain.GitHTTPExecutionCredential) runtime.MCPTarget {
+	var credentials map[string]domain.GitHTTPExecutionCredential
+	if len(hostCredentials) > 0 {
+		credentials = hostCredentials[0]
 	}
-	return runtime.MCPTarget{ServerURL: d.cfg.ServerURL, GitToken: gitToken, RequireCredentials: requireCredentials}
+	return runtime.MCPTarget{ServerURL: d.cfg.ServerURL, GitHTTPCredentials: credentials, RequireCredentials: requireCredentials}
 }
 
 // executeInvocation runs a workflow Agent node locally: it materializes the
@@ -797,8 +829,13 @@ func (d *Daemon) executeInvocation(ctx context.Context, task domain.RunnerTask) 
 	if err := os.MkdirAll(workspace, 0o755); err != nil {
 		return execResult{status: domain.RunnerTaskFailed, errMsg: fmt.Sprintf("workspace %s: %v", workspace, err)}, nil
 	}
-	if err := checkoutInvocationRepositories(ctx, workspace, inv, runnerTaskSandboxDriver(task)); err != nil {
-		return execResult{status: domain.RunnerTaskFailed, errMsg: fmt.Sprintf("repository checkout: %v", err)}, nil
+	checkoutErr := checkoutInvocationRepositories(ctx, workspace, inv)
+	repositoryFallback := checkoutErr != nil && inv.RepositoryPreparationFallback && ctx.Err() == nil
+	if checkoutErr != nil {
+		if !repositoryFallback {
+			return execResult{status: domain.RunnerTaskFailed, errMsg: fmt.Sprintf("repository checkout: %v", checkoutErr)}, nil
+		}
+		task.Prompt = runtime.GitPreparationFallbackPrompt(invocationRepositoryContexts(inv), checkoutErr.Error()) + task.Prompt
 	}
 	if err := writeRunnerHumanContext(workspace, inv.HumanContext); err != nil {
 		return execResult{status: domain.RunnerTaskFailed, errMsg: fmt.Sprintf("write human context: %v", err)}, nil
@@ -818,7 +855,7 @@ func (d *Daemon) executeInvocation(ctx context.Context, task domain.RunnerTask) 
 		}
 		defer release()
 	}
-	target := d.mcpTarget(true, invocationGitToken(inv))
+	target := d.mcpTarget(true, inv.GitHTTPCredentials)
 	sshRepoCount := len(inv.GitSSHRemotes())
 	target.SSHRepositoriesOnly = sshRepoCount > 0 && sshRepoCount == max(len(inv.Repositories), 1)
 	boundAssets, _, err := runtime.PrepareMCPServers(inv.Assets, target)
@@ -839,13 +876,20 @@ func (d *Daemon) executeInvocation(ctx context.Context, task domain.RunnerTask) 
 		Agent:        inv.Agent,
 		Assets:       boundAssets,
 		Prompt:       task.Prompt,
-		Options:      runtime.InvocationOptions{RunID: inv.RunID, NodeID: inv.NodeID, ResumeSessionID: inv.ResumeSessionID, GateResultPath: inv.GateResultPath, Repositories: invocationRepositoryContexts(inv), BrowserMCP: browserMCP},
-		Driver:       driver,
+		Options: runtime.InvocationOptions{
+			RunID: inv.RunID, NodeID: inv.NodeID, ResumeSessionID: inv.ResumeSessionID,
+			GateResultPath: inv.GateResultPath, Repositories: invocationRepositoryContexts(inv),
+			BrowserMCP: browserMCP, RunnerLogin: inv.CredentialSource == domain.RuntimeAuthLocal,
+		},
+		Driver: driver,
 	})
 	if err != nil {
 		return execResult{status: domain.RunnerTaskFailed, errMsg: fmt.Sprintf("prepare invocation: %v", err)}, nil
 	}
 	if prepared.Builtin {
+		if repositoryFallback {
+			return execResult{status: domain.RunnerTaskFailed, errMsg: "builtin executor cannot recover a failed repository checkout"}, nil
+		}
 		// Builtin executors (mock) need no CLI process.
 		if err := d.client.StartTask(ctx, task.ID); err != nil {
 			return execResult{status: domain.RunnerTaskFailed, errMsg: fmt.Sprintf("start: %v", err)}, nil
@@ -862,9 +906,21 @@ func (d *Daemon) executeInvocation(ctx context.Context, task domain.RunnerTask) 
 		return execResult{status: domain.RunnerTaskFailed, errMsg: err.Error()}, nil
 	}
 	if runtime.IsAgentCLI(prepared.Command.Provider) {
-		cred := runtime.ProviderCredential{APIKey: inv.AgentCLIAPIKey, BaseURL: inv.AgentCLIBaseURL, Protocol: inv.AgentCLIProtocol, Models: inv.AgentCLIModels}
 		var agentEnv map[string]string
-		argv, agentEnv, err = runtime.BindAgentCLICommand(sandbox, workspace, prepared.Command, cred, argv)
+		if inv.CredentialSource == domain.RuntimeAuthLocal && domain.SupportsRunnerLogin(prepared.Command.Provider) {
+			var cleanup func() error
+			agentEnv, cleanup, err = runtime.PrepareRunnerAgentCLILogin(sandbox, prepared.Command)
+			if cleanup != nil {
+				defer func() {
+					if err := cleanup(); err != nil {
+						log.Printf("task %s: clean sandbox CLI login: %v", task.ID, err)
+					}
+				}()
+			}
+		} else {
+			cred := runtime.ProviderCredential{APIKey: inv.AgentCLIAPIKey, BaseURL: inv.AgentCLIBaseURL, Protocol: inv.AgentCLIProtocol, Models: inv.AgentCLIModels}
+			argv, agentEnv, err = runtime.BindAgentCLICommand(sandbox, workspace, prepared.Command, cred, argv)
+		}
 		if err != nil {
 			return execResult{status: domain.RunnerTaskFailed, errMsg: err.Error()}, nil
 		}
@@ -875,6 +931,21 @@ func (d *Daemon) executeInvocation(ctx context.Context, task domain.RunnerTask) 
 		credentialEnv, err = bindSandboxPrivateHome(workspace, task.Sandbox.Profile.Driver, task.Provider, credentialEnv)
 		if err != nil {
 			return execResult{status: domain.RunnerTaskFailed, errMsg: err.Error()}, nil
+		}
+	} else if sandbox != nil && inv.CredentialSource == domain.RuntimeAuthLocal && prepared.Command.PrivateHome {
+		loginEnv, cleanup, err := runtime.PrepareRunnerSandboxLogin(sandbox, prepared.Command.Provider, inv.RunID, inv.NodeID)
+		if err != nil {
+			return execResult{status: domain.RunnerTaskFailed, errMsg: err.Error()}, nil
+		}
+		if cleanup != nil {
+			defer func() {
+				if err := cleanup(); err != nil {
+					log.Printf("task %s: clean sandbox CLI login: %v", task.ID, err)
+				}
+			}()
+		}
+		for key, value := range loginEnv {
+			credentialEnv[key] = value
 		}
 	}
 	commandEnv := runtime.CommandEnvironment(prepared.Command)
@@ -888,11 +959,12 @@ func (d *Daemon) executeInvocation(ctx context.Context, task domain.RunnerTask) 
 		commandEnv[key] = value
 	}
 	if slices.Contains(prepared.Command.CredentialBindings, runtime.BindGit) {
-		gitEnv, gitErr := runtime.GitEnvironment(sandbox, workspace, invocationGitToken(inv))
+		gitEnv, closeGit, gitErr := runtime.RunGitEnvironment(ctx, sandbox, workspace, invocationGitCredentials(inv))
 		if gitErr != nil {
 			return execResult{status: domain.RunnerTaskFailed, errMsg: fmt.Sprintf("prepare git credentials: %v", gitErr)}, nil
 		}
-		cleanup, gitErr := runtime.BindGitSSH(sandbox, workspace, gitEnv, inv.GitSSHKeys)
+		defer closeGit()
+		cleanup, gitErr := runtime.BindGitSSH(ctx, sandbox, workspace, gitEnv, inv.GitSSHKeys)
 		if gitErr != nil {
 			return execResult{status: domain.RunnerTaskFailed, errMsg: fmt.Sprintf("prepare git credentials: %v", gitErr)}, nil
 		}
@@ -906,10 +978,10 @@ func (d *Daemon) executeInvocation(ctx context.Context, task domain.RunnerTask) 
 		if len(servers) == 0 {
 			servers = boundAssets.MCPServers
 		} else {
-			gateAssets, _, _ := runtime.PrepareMCPServers(domain.AgentAssetBundle{MCPServers: servers}, d.mcpTarget(false, invocationGitToken(inv)))
+			gateAssets, _, _ := runtime.PrepareMCPServers(domain.AgentAssetBundle{MCPServers: servers}, d.mcpTarget(false, inv.GitHTTPCredentials))
 			servers = gateAssets.MCPServers
 		}
-		mcpEnv, mcpErr := runtime.ScriptMCPEnvironment(sandbox, workspace, servers)
+		mcpEnv, mcpErr := runtime.ScriptMCPEnvironment(ctx, sandbox, workspace, servers)
 		if mcpErr != nil {
 			return execResult{status: domain.RunnerTaskFailed, errMsg: fmt.Sprintf("prepare mcp call: %v", mcpErr)}, nil
 		}
@@ -930,6 +1002,11 @@ func (d *Daemon) executeInvocation(ctx context.Context, task domain.RunnerTask) 
 	result.outputs = collectTaskOutputs(workspace, inv)
 	if result.status != domain.RunnerTaskSuccess {
 		return result, nil
+	}
+	if repositoryFallback {
+		if err := runtime.VerifyGitPreparation(invocationGitHTTPContext(ctx, inv), workspace, invocationRepositoryContexts(inv)); err != nil {
+			return execResult{status: domain.RunnerTaskFailed, errMsg: fmt.Sprintf("Agent repository preparation failed validation: %v", err)}, nil
+		}
 	}
 	artifacts := collectRunnerInvocationArtifacts(workspace, inv)
 	return result, artifacts
@@ -989,9 +1066,13 @@ func invocationRepositoryContexts(inv *domain.RunnerInvocation) []domain.Reposit
 	out := make([]domain.RepositoryContext, 0, len(repositories))
 	for _, repository := range repositories {
 		out = append(out, domain.RepositoryContext{
-			RepositoryID: repository.RepositoryID,
-			Name:         repository.Name,
-			WorkspaceDir: repository.Dir,
+			RepositoryID:              repository.RepositoryID,
+			Name:                      repository.Name,
+			WorkspaceDir:              repository.Dir,
+			CloneURL:                  repository.CloneURL,
+			BaseBranch:                repository.Ref,
+			WorkBranch:                repository.WorkBranch,
+			RequireExistingWorkBranch: repository.RequireExistingWorkBranch,
 		})
 	}
 	return out
@@ -1045,6 +1126,7 @@ func bindInvocationCredentials(inv *domain.RunnerInvocation, bindings []runtime.
 				return nil, nil, errors.New("CodeBuddy 个人 API Key 未配置")
 			}
 			env["CODEBUDDY_API_KEY"] = key
+			env["CODEBUDDY_BASE_URL"] = strings.TrimSpace(inv.CodeBuddyBaseURL)
 			if net := strings.TrimSpace(inv.CodeBuddyInternetEnvironment); net != "" {
 				env["CODEBUDDY_INTERNET_ENVIRONMENT"] = net
 			}
@@ -1083,33 +1165,17 @@ func bindInvocationCredentials(inv *domain.RunnerInvocation, bindings []runtime.
 	return argv, env, nil
 }
 
-// invocationGitToken is the token child processes use for git remotes; every
-// repository of one run carries the same responsible user's token.
-func invocationGitToken(inv *domain.RunnerInvocation) string {
-	if inv == nil {
-		return ""
-	}
-	for _, repo := range inv.Repositories {
-		if token := strings.TrimSpace(repo.GitToken); token != "" {
-			return token
-		}
-	}
-	if inv.Repository != nil {
-		return strings.TrimSpace(inv.Repository.GitToken)
-	}
-	return ""
-}
-
 // checkoutInvocationRepositories checks out every repository the invocation
 // carries: each into its Dir under the task workspace. Empty Dir is only
 // kept for persisted legacy invocations that already checked out at the
 // workspace root. Later invocations and gates reuse the existing checkout
 // (once per workspace).
-func checkoutInvocationRepositories(ctx context.Context, workspace string, inv *domain.RunnerInvocation, driver string, refreshClean ...bool) error {
+func checkoutInvocationRepositories(ctx context.Context, workspace string, inv *domain.RunnerInvocation, refreshClean ...bool) error {
 	if inv == nil {
 		return nil
 	}
 	ctx = gitwork.WithSSHKeys(ctx, inv.GitSSHKeys)
+	ctx = invocationGitHTTPContext(ctx, inv)
 	repos := invocationRepositories(inv)
 	for i := range repos {
 		repo := repos[i]
@@ -1132,9 +1198,6 @@ func checkoutInvocationRepositories(ctx context.Context, workspace string, inv *
 		}
 		if err := configureRepositoryGitIdentity(ctx, target, inv.GitUserName, inv.GitUserEmail); err != nil {
 			return err
-		}
-		if err := runtime.ProtectProjectAgentGitIndex(ctx, target, driver); err != nil {
-			return fmt.Errorf("protect repository Agent configuration in %s: %w", repo.Dir, err)
 		}
 	}
 	return nil
@@ -1240,7 +1303,7 @@ func repositoryGitContext(ctx context.Context, repo domain.RunnerRepository) con
 	if repo.UseSSH {
 		return gitwork.WithSSHRemote(ctx, repo.CloneURL)
 	}
-	return gitwork.WithToken(ctx, repo.GitToken)
+	return gitwork.WithHTTPRemote(ctx, repo.CloneURL)
 }
 
 // checkoutExistingRepositoryBranch validates the remote head even when the
@@ -1385,7 +1448,7 @@ func (d *Daemon) defaultWorkspace(taskID string) string {
 }
 
 // runnerVersion is reported at registration; it matches the module build.
-var runnerVersion = "0.10.1"
+var runnerVersion = domain.RunnerVersionCodeBuddyBaseURL
 
 // Version returns the runner build version reported at registration.
 func Version() string { return runnerVersion }

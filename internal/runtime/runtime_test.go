@@ -216,19 +216,6 @@ func TestDockerBindMatchesWorkspace(t *testing.T) {
 	}
 }
 
-func TestDockerContainerReusableWhenBindMatches(t *testing.T) {
-	dir := t.TempDir()
-	if !dockerContainerReusable(dir, nil, dir) {
-		t.Fatal("matching bind should be reused after worker restart")
-	}
-	if dockerContainerReusable(dir, fmt.Errorf("inspect failed"), dir) {
-		t.Fatal("inspect failure must not reuse")
-	}
-	if dockerContainerReusable(filepath.Join(dir, "other"), nil, dir) {
-		t.Fatal("mismatched bind must not reuse")
-	}
-}
-
 func TestIsSandboxInterrupt(t *testing.T) {
 	if IsSandboxInterrupt(nil) {
 		t.Fatal("nil")
@@ -660,7 +647,7 @@ func TestManagerRejectsUnknownSandboxDriver(t *testing.T) {
 	}
 }
 
-func TestSeatbeltProfileDeniesHostWritesAndProjectAgentConfig(t *testing.T) {
+func TestSeatbeltProfileDeniesHostWrites(t *testing.T) {
 	workspace := t.TempDir()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -668,14 +655,14 @@ func TestSeatbeltProfileDeniesHostWritesAndProjectAgentConfig(t *testing.T) {
 	if err := os.MkdirAll(stateDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	profile, err := seatbeltProfileRequirements(workspace, ProviderRequirements("claude-code"))
+	profile, err := seatbeltProfileCommand(workspace, ProviderRequirements("claude-code"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(profile, stateDir) {
 		t.Fatal("host Claude state must not be writable by a user-credential run")
 	}
-	needles := []string{"(deny file-write*)", "(allow file-write*", "/private/tmp", "/dev/null", filepath.Join(workspace, "AGENTS.md"), filepath.Join(workspace, ".claude")}
+	needles := []string{"(deny file-write*)", "(allow file-write*", "/private/tmp", "/dev/null", workspace}
 	if runtime.GOOS == "darwin" {
 		needles = append(needles, "/private/var/folders")
 	}
@@ -695,7 +682,7 @@ func TestBwrapProvidesWritableRuntimeInfrastructure(t *testing.T) {
 		t.Fatal(err)
 	}
 	bunfs := stubBunFSMountPoint(t, filepath.Join(t.TempDir(), "$bunfs"))
-	args, err := bwrapArgsRequirements(workspace, ProviderRequirements("codebuddy"))
+	args, err := bwrapArgsCommand(workspace, ProviderRequirements("codebuddy"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -832,7 +819,7 @@ func TestLightweightSandboxSmoke(t *testing.T) {
 		t.Fatal(createErr)
 	}
 	allowed := `test "$HOME" != "` + stateHome + `" && test -w "$HOME" && f=$(mktemp) && printf ok > "$f" && printf ok > /dev/null && printf ok > workspace-write.txt`
-	command, err := bindCommand(sb, workspace, CommandSpec{Argv: []string{fakeCodeBuddy, "-lc", allowed}, Provider: "codebuddy", PrivateHome: true}, RunCredentials{})
+	command, err := bindCommand(t.Context(), sb, workspace, CommandSpec{Argv: []string{fakeCodeBuddy, "-lc", allowed}, Provider: "codebuddy", PrivateHome: true}, RunCredentials{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -851,212 +838,65 @@ func TestLightweightSandboxSmoke(t *testing.T) {
 	}
 }
 
-func TestBwrapAndDockerMaskRepositoryAgentConfig(t *testing.T) {
+func TestRestoreLegacyWorkspaceAgentConfig(t *testing.T) {
 	workspace := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(workspace, ".agents", "skills", "repo"), 0o755); err != nil {
+	repository := filepath.Join(workspace, "repo")
+	if err := os.Mkdir(repository, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(workspace, "AGENTS.md"), []byte("repo prompt"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(filepath.Join(workspace, "services", "api", ".claude"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(workspace, "services", "api", "CLAUDE.md"), []byte("nested prompt"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	docker, err := dockerAgentConfigMasks(workspace)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for name, isDir := range map[string]bool{"empty-dir": true, "empty-file": false} {
-		target := filepath.Join(workspace, ".agentflow", "isolation", name)
-		info, err := os.Lstat(target)
-		if err != nil || (isDir && !info.IsDir()) || (!isDir && !info.Mode().IsRegular()) {
-			t.Fatalf("Docker mount target %s: %v, %v", target, info, err)
-		}
-	}
-	bwrap, err := bwrapAgentConfigMasks(workspace)
-	if err != nil {
-		t.Fatal(err)
-	}
-	bwrapText, dockerText := strings.Join(bwrap, " "), strings.Join(docker, " ")
-	for _, target := range []string{filepath.Join(workspace, "AGENTS.md"), filepath.Join(workspace, ".agents"), filepath.Join(workspace, "services", "api", ".claude"), filepath.Join(workspace, "services", "api", "CLAUDE.md")} {
-		if !strings.Contains(bwrapText, target) {
-			t.Fatalf("bwrap mask missing %s: %v", target, bwrap)
-		}
-	}
-	for _, target := range []string{"dst=/workspace/AGENTS.md", "dst=/workspace/.agents", "dst=/workspace/services/api/.claude", "dst=/workspace/services/api/CLAUDE.md"} {
-		if !strings.Contains(dockerText, target) {
-			t.Fatalf("docker mask missing %s: %v", target, docker)
-		}
-	}
-	if strings.Contains(dockerText, "src="+workspace) {
-		t.Fatalf("docker isolation sources nested inside workspace bind: %v", docker)
-	}
-}
+	testRuntimeGit(t, repository, "init", "-b", "main")
+	testRuntimeGit(t, repository, "config", "user.email", "agentflow@test.local")
+	testRuntimeGit(t, repository, "config", "user.name", "AgentFlow Test")
 
-func TestManagedSandboxGitIndexPreservesMaskedAgentConfig(t *testing.T) {
-	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git is unavailable")
-	}
-	workspace := t.TempDir()
-	testRuntimeGit(t, workspace, "init", "-b", "main")
-	testRuntimeGit(t, workspace, "config", "user.email", "agentflow@test.local")
-	testRuntimeGit(t, workspace, "config", "user.name", "AgentFlow Test")
-
-	originals := map[string]string{
-		"AGENTS.md":                          "root instructions\n",
-		".codex/config.toml":                 "model = \"host\"\n",
-		".agents/skills/repo/SKILL.md":       "repository skill\n",
-		"services/api/CLAUDE.md":             "nested instructions\n",
-		"services/api/.claude/settings.json": "{\"enabled\":true}\n",
-	}
-	for path, content := range originals {
-		full := filepath.Join(workspace, filepath.FromSlash(path))
-		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+	paths := []string{"AGENTS.md", "subdir/CLAUDE.md", ".codex/config.toml", "app.txt"}
+	for _, name := range paths {
+		path := filepath.Join(repository, name)
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(full, []byte(content), 0o600); err != nil {
+		if err := os.WriteFile(path, []byte("original\n"), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
-	businessPath := filepath.Join(workspace, "src", "app.txt")
-	if err := os.MkdirAll(filepath.Dir(businessPath), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(businessPath, []byte("before\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	testRuntimeGit(t, workspace, "add", "-A")
-	testRuntimeGit(t, workspace, "commit", "-m", "baseline")
-	untrackedAgentConfig := filepath.Join(workspace, "services", "worker", "CODEBUDDY.md")
-	if err := os.MkdirAll(filepath.Dir(untrackedAgentConfig), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(untrackedAgentConfig, []byte("untracked local instructions\n"), 0o600); err != nil {
+	testRuntimeGit(t, repository, "add", "-A")
+	testRuntimeGit(t, repository, "commit", "-m", "baseline")
+	testRuntimeGit(t, repository, append([]string{"update-index", "--skip-worktree"}, paths...)...)
+	exclude := filepath.Join(repository, ".git", "info", "exclude")
+	kept := "*.generated\n" + agentFlowGitExcludeBlock + "/tmp/\n"
+	data := "*.generated\n" + legacyProjectAgentGitExcludeBlock + agentFlowGitExcludeBlock + "/tmp/\n"
+	if err := os.WriteFile(exclude, []byte(data), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
-	ctx := context.Background()
-	if err := ProtectProjectAgentGitIndex(ctx, workspace, "bwrap"); err != nil {
+	repos := []domain.RepositoryContext{{WorkspaceDir: "repo"}}
+	if err := RestoreLegacyWorkspaceAgentConfig(context.Background(), workspace, repos); err != nil {
 		t.Fatal(err)
 	}
-	for path := range originals {
-		flag := testRuntimeGit(t, workspace, "ls-files", "-v", "--", path)
-		if !strings.HasPrefix(flag, "S ") {
-			t.Fatalf("protected path %s does not have skip-worktree set: %q", path, flag)
+	for _, name := range paths[:len(paths)-1] {
+		if flag := testRuntimeGit(t, repository, "ls-files", "-v", "--", name); !strings.HasPrefix(flag, "H ") {
+			t.Fatalf("%s still hidden: %s", name, flag)
 		}
 	}
-	if err := RestoreProjectAgentGitIndex(ctx, workspace, "bwrap"); err != nil {
+	if flag := testRuntimeGit(t, repository, "ls-files", "-v", "--", "app.txt"); !strings.HasPrefix(flag, "S ") {
+		t.Fatalf("user skip-worktree flag changed: %s", flag)
+	}
+	if got, err := os.ReadFile(exclude); err != nil || string(got) != kept {
+		t.Fatalf("exclude = %q, err=%v", got, err)
+	}
+	// A subsequent call must leave newly set user bits alone once the marker is gone.
+	testRuntimeGit(t, repository, "update-index", "--skip-worktree", "AGENTS.md")
+	if err := RestoreLegacyWorkspaceAgentConfig(context.Background(), workspace, repos); err != nil {
 		t.Fatal(err)
 	}
-	if flag := testRuntimeGit(t, workspace, "ls-files", "-v", "--", "AGENTS.md"); strings.HasPrefix(flag, "S ") {
-		t.Fatalf("restore left skip-worktree set: %q", flag)
-	}
-	if err := ProtectProjectAgentGitIndex(ctx, workspace, "docker"); err != nil {
-		t.Fatal(err)
-	}
-
-	// Emulate the filesystem view produced by the Docker/bwrap masks: files
-	// become empty and protected directories contain no repository files.
-	if err := os.WriteFile(filepath.Join(workspace, "AGENTS.md"), nil, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(workspace, "services", "api", "CLAUDE.md"), nil, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	for _, dir := range []string{".codex", ".agents", "services/api/.claude"} {
-		if err := os.RemoveAll(filepath.Join(workspace, filepath.FromSlash(dir))); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := os.WriteFile(untrackedAgentConfig, nil, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(businessPath, []byte("after\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	testRuntimeGit(t, workspace, "add", "-A")
-	if got := testRuntimeGit(t, workspace, "diff", "--cached", "--name-only"); got != "src/app.txt" {
-		t.Fatalf("masked project configuration leaked into staged diff: %q", got)
-	}
-	testRuntimeGit(t, workspace, "commit", "-m", "business change")
-	for path, original := range originals {
-		if got := testRuntimeGit(t, workspace, "show", "HEAD:"+path); got+"\n" != original {
-			t.Fatalf("committed content for %s = %q, want %q", path, got, strings.TrimSuffix(original, "\n"))
-		}
+	if flag := testRuntimeGit(t, repository, "ls-files", "-v", "--", "AGENTS.md"); !strings.HasPrefix(flag, "S ") {
+		t.Fatalf("unmarked checkout changed on reuse: %s", flag)
 	}
 }
 
-func TestLocalSandboxDoesNotChangeProjectAgentGitIndex(t *testing.T) {
-	workspace := t.TempDir()
-	testRuntimeGit(t, workspace, "init", "-b", "main")
-	testRuntimeGit(t, workspace, "config", "user.email", "agentflow@test.local")
-	testRuntimeGit(t, workspace, "config", "user.name", "AgentFlow Test")
-	if err := os.WriteFile(filepath.Join(workspace, "AGENTS.md"), []byte("local instructions\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	testRuntimeGit(t, workspace, "add", "AGENTS.md")
-	testRuntimeGit(t, workspace, "commit", "-m", "baseline")
-	if err := ProtectProjectAgentGitIndex(context.Background(), workspace, "local"); err != nil {
-		t.Fatal(err)
-	}
-	if flag := testRuntimeGit(t, workspace, "ls-files", "-v", "--", "AGENTS.md"); strings.HasPrefix(flag, "S ") {
-		t.Fatalf("local sandbox unexpectedly set skip-worktree: %q", flag)
-	}
-}
-
-func TestProjectAgentGitIndexUpdatesAreIdempotent(t *testing.T) {
-	workspace := t.TempDir()
-	testRuntimeGit(t, workspace, "init", "-b", "main")
-	testRuntimeGit(t, workspace, "config", "user.email", "agentflow@test.local")
-	testRuntimeGit(t, workspace, "config", "user.name", "AgentFlow Test")
-	if err := os.WriteFile(filepath.Join(workspace, "AGENTS.md"), []byte("instructions\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	testRuntimeGit(t, workspace, "add", "AGENTS.md")
-	testRuntimeGit(t, workspace, "commit", "-m", "baseline")
-
-	ctx := context.Background()
-	if err := ProtectProjectAgentGitIndex(ctx, workspace, "docker"); err != nil {
-		t.Fatal(err)
-	}
-	lockPath := filepath.Join(workspace, ".git", "index.lock")
-	lock, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o600)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// A second protect has no paths to update and therefore must not contend
-	// with an unrelated live index lock.
-	if err := ProtectProjectAgentGitIndex(ctx, workspace, "docker"); err != nil {
-		lock.Close()
-		t.Fatalf("idempotent protect touched the index: %v", err)
-	}
-	if err := lock.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Remove(lockPath); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := RestoreProjectAgentGitIndex(ctx, workspace, "docker"); err != nil {
-		t.Fatal(err)
-	}
-	lock, err = os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o600)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// Restore is idempotent for the same reason.
-	if err := RestoreProjectAgentGitIndex(ctx, workspace, "docker"); err != nil {
-		lock.Close()
-		t.Fatalf("idempotent restore touched the index: %v", err)
-	}
-	if err := lock.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Remove(lockPath); err != nil {
+func markLegacyProjectAgentConfig(t *testing.T, workspace string) {
+	t.Helper()
+	testRuntimeGit(t, workspace, "update-index", "--skip-worktree", "AGENTS.md")
+	if err := os.WriteFile(filepath.Join(workspace, ".git", "info", "exclude"), []byte(legacyProjectAgentGitExcludeBlock), 0o600); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -1071,14 +911,12 @@ func TestRestoreProjectAgentGitIndexRemovesStaleIndexLock(t *testing.T) {
 	}
 	testRuntimeGit(t, workspace, "add", "AGENTS.md")
 	testRuntimeGit(t, workspace, "commit", "-m", "baseline")
-	if err := ProtectProjectAgentGitIndex(context.Background(), workspace, "docker"); err != nil {
-		t.Fatal(err)
-	}
+	markLegacyProjectAgentConfig(t, workspace)
 	lockPath := filepath.Join(workspace, ".git", "index.lock")
 	if err := os.WriteFile(lockPath, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := RestoreProjectAgentGitIndex(context.Background(), workspace, "docker"); err != nil {
+	if err := RestoreLegacyProjectAgentConfig(context.Background(), workspace); err != nil {
 		t.Fatalf("restore with stale index lock: %v", err)
 	}
 	if _, err := os.Stat(lockPath); !os.IsNotExist(err) {
@@ -1099,9 +937,7 @@ func TestRestoreProjectAgentGitIndexKeepsLiveIndexLock(t *testing.T) {
 	}
 	testRuntimeGit(t, workspace, "add", "AGENTS.md")
 	testRuntimeGit(t, workspace, "commit", "-m", "baseline")
-	if err := ProtectProjectAgentGitIndex(context.Background(), workspace, "docker"); err != nil {
-		t.Fatal(err)
-	}
+	markLegacyProjectAgentConfig(t, workspace)
 	lockPath := filepath.Join(workspace, ".git", "index.lock")
 	lock, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
@@ -1112,7 +948,7 @@ func TestRestoreProjectAgentGitIndexKeepsLiveIndexLock(t *testing.T) {
 	wait, poll := gitIndexLockWait, gitIndexLockPoll
 	gitIndexLockWait, gitIndexLockPoll = 300*time.Millisecond, 20*time.Millisecond
 	defer func() { gitIndexLockWait, gitIndexLockPoll = wait, poll }()
-	err = RestoreProjectAgentGitIndex(context.Background(), workspace, "docker")
+	err = RestoreLegacyProjectAgentConfig(context.Background(), workspace)
 	if err == nil || !strings.Contains(err.Error(), "held by a live process") {
 		t.Fatalf("restore error = %v, want live-process protection", err)
 	}
@@ -1489,45 +1325,30 @@ func TestRunSandboxBindsCodeBuddyCredentialOnlyToTargetProcess(t *testing.T) {
 	}
 }
 
-func TestRunSandboxBindsGitAskPassForVerification(t *testing.T) {
-	root := t.TempDir()
-	manager := NewManager(root)
-	sandbox, err := manager.AcquireRun(context.Background(), "run-git-askpass", domain.SandboxProfile{ID: "local", Driver: "local"}, SandboxRequirements{}, RunCredentials{
-		GitToken: "proj_git_token",
-	}, SandboxResources{})
+func TestRunSandboxBindsHostCredentialHelperForVerification(t *testing.T) {
+	manager := NewManager(t.TempDir())
+	sb, err := manager.AcquireRun(context.Background(), "helper-verification", domain.SandboxProfile{ID: "local", Driver: "local"}, SandboxRequirements{}, RunCredentials{GitHTTPCredentials: testHTTPSCredentials("proj_git_token")}, SandboxResources{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer sandbox.Close(context.Background())
-
-	output, err := sandbox.Exec(context.Background(), CommandSpec{
-		Argv:               []string{"sh", "-lc", `printf '%s\n' "$GIT_ASKPASS"; test -x "$GIT_ASKPASS"; "$GIT_ASKPASS" "Username for 'https://git.example.com':"; "$GIT_ASKPASS" "Password for 'https://git.example.com':"`},
-		Provider:           "verification",
-		CredentialBindings: []CredentialBinding{BindGit},
-	}, nil)
-	if err != nil {
-		t.Fatal(err)
+	defer sb.Close(context.Background())
+	script := `import os,subprocess
+assert not os.getenv('GIT_ASKPASS') and not os.getenv('AGENTFLOW_GIT_TOKEN')
+p=subprocess.run(['git','credential','fill'],input='protocol=https\nhost=git.example.com\n\n',text=True,capture_output=True,check=True)
+c=dict(l.split('=',1)for l in p.stdout.splitlines()if '='in l)
+assert c['password']=='proj_git_token'
+print('HELPER_VERIFIED')`
+	out, err := sb.Exec(context.Background(), CommandSpec{Argv: []string{"python3", "-c", script}, CredentialBindings: []CredentialBinding{BindGit}}, nil)
+	if err != nil || !strings.Contains(out, "HELPER_VERIFIED") {
+		t.Fatalf("helper: %v %s", err, out)
 	}
-	lines := strings.Split(strings.TrimSpace(output), "\n")
-	if len(lines) != 3 {
-		t.Fatalf("askpass output = %q", output)
-	}
-	if !strings.HasSuffix(lines[0], filepath.Join(".agentflow", "runtime", "git-askpass")) {
-		t.Fatalf("GIT_ASKPASS = %q", lines[0])
-	}
-	if lines[1] != "private" || lines[2] != "proj_git_token" {
-		t.Fatalf("askpass answers = %q %q", lines[1], lines[2])
-	}
-	plain, err := sandbox.Exec(context.Background(), CommandSpec{Argv: []string{"sh", "-lc", `printf '%s|%s' "$GIT_ASKPASS" "$AGENTFLOW_GIT_TOKEN"`}, Provider: "verification"}, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.TrimSpace(plain) != "|" {
-		t.Fatalf("git credential leaked to unbound child: %q", plain)
+	plain, err := sb.Exec(context.Background(), CommandSpec{Argv: []string{"sh", "-c", `printf '%s|%s' "$GIT_ASKPASS" "$AGENTFLOW_GIT_TOKEN"`}}, nil)
+	if err != nil || strings.TrimSpace(plain) != "|" {
+		t.Fatalf("unbound command received credentials: %v %s", err, plain)
 	}
 }
 
-func TestVerificationGitLSRemoteAskPassAgainstHTTP401(t *testing.T) {
+func TestVerificationGitCredentialIsNotSentToHTTPRemote(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not installed")
 	}
@@ -1558,7 +1379,7 @@ func TestVerificationGitLSRemoteAskPassAgainstHTTP401(t *testing.T) {
 	}
 	manager := NewManager(root)
 	sandbox, err := manager.AcquireRun(context.Background(), "run-git-401", domain.SandboxProfile{ID: "local", Driver: "local"}, SandboxRequirements{}, RunCredentials{
-		GitToken: "proj_git_token",
+		GitHTTPCredentials: testHTTPSCredentials("proj_git_token"),
 	}, SandboxResources{})
 	if err != nil {
 		t.Fatal(err)
@@ -1599,8 +1420,8 @@ func TestVerificationGitLSRemoteAskPassAgainstHTTP401(t *testing.T) {
 			"GIT_CONFIG_NOSYSTEM": "1",
 		},
 	}, nil)
-	if !authorized.Load() {
-		t.Fatalf("GIT_ASKPASS did not send Basic auth; err=%v out=%q", withErr, with)
+	if authorized.Load() || withErr == nil {
+		t.Fatalf("HTTPS token must not authenticate plain HTTP; err=%v out=%q", withErr, with)
 	}
 }
 
@@ -2290,19 +2111,6 @@ func TestDockerWorkspaceExecDropsInnerLoginShell(t *testing.T) {
 	}
 }
 
-func TestSandboxMasksRejectSymlinkedAgentDirectory(t *testing.T) {
-	dir := t.TempDir()
-	if err := os.Symlink(t.TempDir(), filepath.Join(dir, ".claude")); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := bwrapAgentConfigMasks(dir); err == nil {
-		t.Fatal("bwrap masks accepted a symlinked Agent CLI directory")
-	}
-	if _, err := dockerAgentConfigMasks(dir); err == nil {
-		t.Fatal("Docker masks accepted a symlinked Agent CLI directory")
-	}
-}
-
 func TestAdapterRequiresTerminalResult(t *testing.T) {
 	adapter := newProtocolAdapter(domain.ExecutorDefinition{Kind: "codebuddy", Protocol: "stream-json"}, nil)
 	if adapter.Finished() || adapter.Failed() {
@@ -2466,6 +2274,7 @@ func TestProjectAgentGitIndexWaitsForBriefLiveLock(t *testing.T) {
 	}
 	testRuntimeGit(t, workspace, "add", "AGENTS.md")
 	testRuntimeGit(t, workspace, "commit", "-m", "baseline")
+	markLegacyProjectAgentConfig(t, workspace)
 	wait, poll := gitIndexLockWait, gitIndexLockPoll
 	gitIndexLockWait, gitIndexLockPoll = 5*time.Second, 20*time.Millisecond
 	defer func() { gitIndexLockWait, gitIndexLockPoll = wait, poll }()
@@ -2479,7 +2288,7 @@ func TestProjectAgentGitIndexWaitsForBriefLiveLock(t *testing.T) {
 		lock.Close()
 		os.Remove(lockPath)
 	}()
-	if err := ProtectProjectAgentGitIndex(context.Background(), workspace, "docker"); err != nil {
+	if err := RestoreLegacyProjectAgentConfig(context.Background(), workspace); err != nil {
 		t.Fatalf("brief live lock failed preparation: %v", err)
 	}
 }
@@ -2496,6 +2305,7 @@ func TestProjectAgentGitIndexLockWaitStopsOnCancel(t *testing.T) {
 	}
 	testRuntimeGit(t, workspace, "add", "AGENTS.md")
 	testRuntimeGit(t, workspace, "commit", "-m", "baseline")
+	markLegacyProjectAgentConfig(t, workspace)
 	wait, poll := gitIndexLockWait, gitIndexLockPoll
 	gitIndexLockWait, gitIndexLockPoll = time.Minute, 20*time.Millisecond
 	defer func() { gitIndexLockWait, gitIndexLockPoll = wait, poll }()
@@ -2509,7 +2319,7 @@ func TestProjectAgentGitIndexLockWaitStopsOnCancel(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
 	started := time.Now()
-	err = ProtectProjectAgentGitIndex(ctx, workspace, "docker")
+	err = RestoreLegacyProjectAgentConfig(ctx, workspace)
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("cancelled wait error = %v, want context deadline", err)
 	}

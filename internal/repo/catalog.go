@@ -26,7 +26,6 @@ func BaselineAlignResolverAgent() domain.AgentDefinition {
 		Shared:      true,
 		Description: "全平台共用：把默认分支合入集成分支并解决冲突。不跑项目测试，不写修复报告，不发 MR。",
 		Prompt:      "你只做基线对齐，不是需求修复。\n1. 在当前工作分支执行 git fetch 并 merge 默认分支\n2. 逐块解决冲突，保留双方有效实现；拿不准时选对业务影响更小的一侧并在提交说明里写清\n3. git add 冲突文件并创建合并提交，提交说明列出冲突文件与取舍\n4. 不要 push，不要改默认分支，不要跑项目单测或 E2E，不要写 fix-plan.md / fix-report.md / review-report.md\n5. 结束后用几句话说明每个冲突文件的取舍即可",
-		ExecutorID:  "codebuddy",
 	}
 }
 
@@ -745,11 +744,76 @@ func (r *CatalogRepo) PutScheduleJob(v domain.ScheduleJob) error {
 	})
 }
 
+// SetScheduleJobEnabled flips only a job's enabled flag, leaving its
+// configuration and the outcome of a run in progress untouched.
+func (r *CatalogRepo) SetScheduleJobEnabled(id string, enabled bool) (domain.ScheduleJob, error) {
+	var out domain.ScheduleJob
+	err := r.DB.Transaction(func(tx *gorm.DB) error {
+		var row scheduleJobRow
+		if err := r.locking(tx).Where("id = ?", id).First(&row).Error; err != nil {
+			return err
+		}
+		if err := json.Unmarshal(row.Payload, &out); err != nil {
+			return err
+		}
+		out.Enabled = enabled
+		out.UpdatedAt = time.Now().UTC()
+		flag := 0
+		if enabled {
+			flag = 1
+		}
+		return tx.Model(&row).Updates(map[string]any{"enabled": flag, "payload": mustJSON(out), "updated_at": timePtr(out.UpdatedAt)}).Error
+	})
+	return out, err
+}
+
+// ErrScheduleJobChanged reports that the stored job no longer matches what
+// the caller checked, e.g. it was edited or moved to another project.
+var ErrScheduleJobChanged = errors.New("任务已被其他人修改或移动，请刷新后重试")
+
+// DisableScheduleJob turns the job off only if unchanged accepts the row as
+// it is stored now, checked under the row lock, and returns the stored job.
+// Nothing else in the row is touched.
+func (r *CatalogRepo) DisableScheduleJob(id string, unchanged func(current domain.ScheduleJob) bool) (domain.ScheduleJob, error) {
+	var current domain.ScheduleJob
+	err := r.DB.Transaction(func(tx *gorm.DB) error {
+		var row scheduleJobRow
+		err := r.locking(tx).Where("id = ?", id).First(&row).Error
+		if err == gorm.ErrRecordNotFound {
+			return ErrScheduleJobChanged
+		}
+		if err != nil {
+			return err
+		}
+		if err := json.Unmarshal(row.Payload, &current); err != nil {
+			return err
+		}
+		if !unchanged(current) {
+			return ErrScheduleJobChanged
+		}
+		current.Enabled = false
+		current.UpdatedAt = time.Now().UTC()
+		return tx.Model(&row).Updates(map[string]any{"enabled": 0, "payload": mustJSON(current), "updated_at": timePtr(current.UpdatedAt)}).Error
+	})
+	if err != nil {
+		return domain.ScheduleJob{}, err
+	}
+	return current, nil
+}
+
 func (r *CatalogRepo) DeleteScheduleJob(id string) error {
 	if _, ok := r.ScheduleJob(id); !ok {
 		return fmt.Errorf("schedule job not found")
 	}
-	return r.DB.Table("schedule_jobs").Where("id = ?", id).Delete(nil).Error
+	return r.DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Table("schedule_job_executions").Where("job_id = ?", id).Delete(nil).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("job_id = ?", id).Delete(&scheduleJobExecutionStatRow{}).Error; err != nil {
+			return err
+		}
+		return tx.Table("schedule_jobs").Where("id = ?", id).Delete(nil).Error
+	})
 }
 
 // ---------- Definition revisions ----------

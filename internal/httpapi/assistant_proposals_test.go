@@ -341,7 +341,7 @@ func TestSOPDraftsNeedAProposalUnlessTheUserAskedForTheSOP(t *testing.T) {
 func TestAssistantPreferencesShapeTheContext(t *testing.T) {
 	h, u := workbenchFixture(t)
 	h.repo.PutAgent(domain.AgentDefinition{ID: "reviewer", Name: "评审", ProjectID: "workbench", Prompt: "评审"})
-	if p := h.repo.AssistantPreferences(u.ID); p.ProactiveRoles || p.ProactiveSOPs || p.Instructions != "" {
+	if p := h.repo.AssistantPreferences(u.ID); p.ProactiveRoles || p.ProactiveSOPs || p.SteerOnSend || p.Instructions != "" {
 		t.Fatalf("defaults=%+v", p)
 	}
 	put := func(body string) (int, domain.AssistantPreferences) {
@@ -403,13 +403,13 @@ func TestAssistantPreferencesShapeTheContext(t *testing.T) {
 		}
 	}
 
-	code, saved := put(`{"proactiveRoles":true,"proactiveSops":false,"instructions":"  回复先给结论  "}`)
-	if code != 200 || !saved.ProactiveRoles || saved.ProactiveSOPs || saved.Instructions != "回复先给结论" {
+	code, saved := put(`{"proactiveRoles":true,"proactiveSops":false,"steerOnSend":true,"instructions":"  回复先给结论  "}`)
+	if code != 200 || !saved.ProactiveRoles || saved.ProactiveSOPs || !saved.SteerOnSend || saved.Instructions != "回复先给结论" {
 		t.Fatalf("saved=%d %+v", code, saved)
 	}
 	c, rec := workbenchContext(u, "GET", "/api/assistant/preferences", &bytes.Buffer{})
 	h.preferences(c)
-	if !strings.Contains(rec.Body.String(), `"proactiveRoles":true`) {
+	if !strings.Contains(rec.Body.String(), `"proactiveRoles":true`) || !strings.Contains(rec.Body.String(), `"steerOnSend":true`) {
 		t.Fatalf("get=%s", rec.Body.String())
 	}
 	for _, mode := range []string{AssistantApprovalConfirm, AssistantApprovalAuto} {

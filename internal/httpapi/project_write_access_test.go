@@ -6,6 +6,8 @@ import (
 	"agentflow/internal/repo"
 	"agentflow/internal/runtime"
 	"bytes"
+	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -32,14 +34,17 @@ func TestProjectContentWritesRequireMembership(t *testing.T) {
 		}
 		return w.Result().Cookies()[0]
 	}
-	call := func(cookie *http.Cookie, method, path, body string) int {
+	request := func(cookie *http.Cookie, method, path, body string) *httptest.ResponseRecorder {
 		r := httptest.NewRequest(method, "http://localhost"+path, bytes.NewBufferString(body))
 		r.Header.Set("Content-Type", "application/json")
 		r.Header.Set("Origin", "http://localhost")
 		r.AddCookie(cookie)
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, r)
-		return w.Code
+		return w
+	}
+	call := func(cookie *http.Cookie, method, path, body string) int {
+		return request(cookie, method, path, body).Code
 	}
 	session("admin")
 	owner, member, viewer, other := session("owner"), session("member"), session("viewer"), session("other")
@@ -55,7 +60,7 @@ func TestProjectContentWritesRequireMembership(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	issue := `{"id":"i1","projectId":"p1","title":"Fix login"}`
+	issue := fmt.Sprintf(`{"id":"i1","projectId":"p1","title":"Fix login","assigneeUserId":%d}`, ownerUser.ID)
 	if code := call(other, "POST", "/api/issues", issue); code != 403 {
 		t.Fatalf("non-member create issue: %d", code)
 	}
@@ -65,6 +70,30 @@ func TestProjectContentWritesRequireMembership(t *testing.T) {
 	if code := call(member, "POST", "/api/issues", issue); code != 200 {
 		t.Fatalf("member create issue: %d", code)
 	}
+	t.Run("clarification catalog uses the responsible account", func(t *testing.T) {
+		const path = "/api/issues/i1/clarify-models"
+		models := []domain.CLIModel{{ID: "owner-model"}}
+		const key = "owner-test-key"
+		if _, err := s.UpdateUserCredentials(ownerUser.ID, repo.UserCredentialUpdate{CodexAPIKey: key, CodexModels: &models}); err != nil {
+			t.Fatal(err)
+		}
+		for _, cookie := range []*http.Cookie{other, viewer} {
+			if code := call(cookie, "GET", path, ""); code != 403 {
+				t.Fatalf("clarification catalog requires project write access: %d", code)
+			}
+		}
+		w := request(member, "GET", path, "")
+		if w.Code != 200 || bytes.Contains(w.Body.Bytes(), []byte(key)) {
+			t.Fatalf("invalid clarification catalog response: %d", w.Code)
+		}
+		var catalog assistantModelCatalog
+		if err := json.Unmarshal(w.Body.Bytes(), &catalog); err != nil {
+			t.Fatal(err)
+		}
+		if len(catalog.Models) != 1 || catalog.Models[0].ID != "codex:owner-model" {
+			t.Fatalf("want the project owner's model: %+v", catalog.Models)
+		}
+	})
 	if code := call(other, "PUT", "/api/issues", `{"id":"i1","projectId":"p1","title":"Hijacked"}`); code != 403 {
 		t.Fatalf("non-member edit issue: %d", code)
 	}

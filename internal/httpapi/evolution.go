@@ -680,7 +680,7 @@ func (h *evolutionHandlers) createProposal(c *gin.Context) {
 		}
 		finding = f
 	}
-	catalog := loadAssistantModels(c.Request.Context(), user.CodeBuddyInternetEnvironment)
+	catalog := assistantModelsForRequest(c.Request.Context(), user, req.Model)
 	p := domain.EvoProposal{
 		ID:          "evp-" + randomID(),
 		ProjectID:   req.ProjectID,

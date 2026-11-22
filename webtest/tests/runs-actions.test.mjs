@@ -15,6 +15,10 @@ test('run helpers merge streams and format timing, output, logs, telemetry, prev
   };
   app.router.get('/api/runs/run-x/eval', evaluation);
   app.router.post('/api/runs/run-x/eval', { ...evaluation, status: 'running' });
+  app.router.get('/api/assistant/models', {
+    engines: [{id:'codex',name:'Codex',personal:true}],
+    models: [{id:'codex:model-x',name:'Model X',engine:'codex'}],
+  });
   app.router.post('/api/runs/run-x/eval/apply', {
     ...evaluation, result: { ...evaluation.result,
       recommendations: [{ ...evaluation.result.recommendations[0], status: 'applied', appliedTargetId: 'flow-1' }] }
@@ -74,7 +78,7 @@ test('run helpers merge streams and format timing, output, logs, telemetry, prev
     ];
     const stages=workflowStages({nodes:[{id:'a'},{id:'b'},{id:'c'}],
       edges:[{source:'a',target:'b'},{source:'a',target:'c'}]}).map(s=>s.map(n=>n.id));
-    state.runWorkspace={runId:'run-x',loading:false,error:'',info:{available:true}};
+    state.runWorkspace={runId:'run-x',cleaned:false,loading:false,error:'',info:{available:true}};
     const workspace=workspacePaneHTML(run);
     state.runPreview={runId:'run-x',loading:false,error:'',info:{status:'ready',entryFile:'index.html',fileCount:4},
       session:{url:'http://preview.example/x',backendUrl:'https://api.example'}};
@@ -216,7 +220,7 @@ test('run helpers merge streams and format timing, output, logs, telemetry, prev
   assert.deepEqual(structuredClone(app.evaluate(`state.runLogs.items.map(x=>x.sequence)`)), [3]);
   assert.deepEqual(structuredClone(app.evaluate(`state.runTelemetry.items.map(x=>x.sequence)`)), [3]);
   app.evaluate(`
-    state.runWorkspace={runId:'run-live',info:{available:true},maximized:false};
+    state.runWorkspace={runId:'run-live',cleaned:false,info:{available:true},maximized:false};
     onWorkspaceVscodeMessage({origin:location.origin,data:{type:'agentflow-vscode',runId:'run-live',action:'maximize',maximized:true}});
     HTMLAnchorElement.prototype.click=function(){};
   `);
@@ -225,10 +229,19 @@ test('run helpers merge streams and format timing, output, logs, telemetry, prev
   assert.equal(app.router.calls.find(c => c.path.endsWith('/logs.txt')).method, 'GET');
   app.evaluate(`
     const evalRun={id:'run-x',status:'failed',workflowId:'flow-1',nodes:{}};
-    state.activeRun=evalRun;state.selectedRun='run-x';state.currentUser.codeBuddyApiKeyConfigured=true;
+    state.activeRun=evalRun;state.selectedRun='run-x';
+    const evalHost=document.querySelector('#runDetail');
+    evalHost.innerHTML='<div data-run-pane="eval">'+runEvalPaneHTML(evalRun)+'</div>';
+    bindRunEvalPane(evalRun,evalHost);
   `);
-  await app.evaluate(`startRunEval(state.activeRun)`);
-  assert.equal(app.router.calls.find(c => c.method === 'POST' && c.path === '/api/runs/run-x/eval').body.model, 'model-x');
+  const submittingEvaluation=app.evaluate(`startRunEval(state.activeRun)`);
+  app.evaluate(`{
+    const host=document.querySelector('#runDetail');
+    host.querySelector('[data-run-pane="eval"]').innerHTML=runEvalPaneHTML(state.activeRun);
+    bindRunEvalPane(state.activeRun,host);
+  }`);
+  await submittingEvaluation;
+  assert.equal(app.router.calls.find(c => c.method === 'POST' && c.path === '/api/runs/run-x/eval')?.body.model, 'codex:model-x');
   app.evaluate(`state.runEvalStream?.close();state.runEvalStream=null;state.runEvalBusy=false`);
   app.evaluate(`
     state.data.runs=[{id:'run-select',status:'succeeded',workflowId:'flow-1',createdAt:'2026-02-01',nodes:{}}];

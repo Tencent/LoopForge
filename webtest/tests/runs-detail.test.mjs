@@ -52,7 +52,7 @@ test('run detail loads logs, telemetry, preview, workspace, evaluation, and chil
   await app.evaluate(`loadRunLogs('run-1','node-1')`);
   await app.evaluate(`loadRunTelemetry('run-1','node-1')`);
   await app.evaluate(`loadRunPreview('run-1',{})`);
-  await app.evaluate(`loadRunWorkspace('run-1',true)`);
+  await app.evaluate(`loadRunWorkspace('run-1',{refresh:true})`);
   await app.evaluate(`loadRunEval('run-1',false)`);
   app.evaluate(`renderRunDetail(state.activeRun);renderRunOverview();refreshChildRuns(state.activeRun)`);
   for (const tab of app.document.querySelectorAll('#runsView [role="tab"], #runsView .run-tab')) {

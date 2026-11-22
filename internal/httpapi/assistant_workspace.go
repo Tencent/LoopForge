@@ -1,22 +1,16 @@
 package httpapi
 
 import (
-	"agentflow/internal/domain"
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	pathpkg "path"
-	"strconv"
 	"strings"
-	"time"
 
 	"agentflow/internal/application"
+	"agentflow/internal/domain"
 	"agentflow/internal/engine"
 	"agentflow/internal/mcpserver"
-	"agentflow/internal/runtime"
 )
 
 type mainBotWorkspaceKey struct{}
@@ -48,47 +42,42 @@ func (s *AgentToolSession) conversationWorkspace() string {
 	return s.workspaceRunID
 }
 
-// Project access is checked at the conversation entry point. The storage owner
-// does not limit which participants can use the conversation workspace.
+// Project participants share one workspace binding. A personal conversation
+// uses its owner's binding.
 func (s *AgentToolSession) canOpenConversationWorkspace() bool {
-	return s.RunID == "" && strings.TrimSpace(s.ProjectID) != "" && s.ChatSessionID != ""
+	return s.RunID == "" && s.ChatSessionID != "" &&
+		(s.ProjectID != "" || s.UserID > 0 && s.ChatOwnerID == s.UserID)
+}
+
+func (h *agentToolGateway) mayUseWorkspace(s *AgentToolSession, run domain.Run) bool {
+	if run.ExecutionContext.ProjectID != s.ProjectID || s.User.ID != s.UserID {
+		return false
+	}
+	if !run.IsPersonalWorkspace() {
+		return true
+	}
+	if !s.canOpenConversationWorkspace() {
+		return false
+	}
+	conv, ok := h.repo.AssistantSession(s.UserID, s.ChatSessionID)
+	return ok && conv.WorkspaceRunID == run.ID && conversationMayBind(conv, run, s.ProjectID)
 }
 
 func mainBotWorkspaceTools(s *AgentToolSession) []agentToolDescriptor {
 	if s.Mode != AgentToolAssistant || (s.RunID == "" && !s.canOpenConversationWorkspace()) {
 		return nil
 	}
-	descriptors := []struct{ name, description, schema string }{
-		{"tree", "列出当前工作区的文件（任务会话是任务工作区；普通对话是用 workbench_workspace_open 打开的临时工作区）。路径相对工作区，不是控制平面目录。", `{"type":"object","properties":{"path":{"type":"string"}},"additionalProperties":false}`},
-		{"read", "读取当前工作区文件，返回 content 与 sha256；修改前先读取。", `{"type":"object","properties":{"path":{"type":"string"}},"required":["path"],"additionalProperties":false}`},
-		{"write", "直接保存当前工作区文件。expectedSha256 必须为读取时的 sha256；新建文件传字符串 \"missing\"（不是空串，也不是空内容的 sha256），且父目录必须已存在。若文件已变更，重新读取并对齐，不能盲目覆盖。SOP 正在执行时需先暂停；临时工作区允许直接写入。", `{"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"},"expectedSha256":{"type":"string","description":"workbench_workspace_read 返回的 sha256；新建文件传 \"missing\""}},"required":["path","content","expectedSha256"],"additionalProperties":false}`},
-		{"command", "在当前工作区运行 shell 命令并返回 output、exitCode，用于小改动与验证。最长 120 秒；SOP 正在执行时需先暂停。", `{"type":"object","properties":{"command":{"type":"string"},"timeoutSeconds":{"type":"integer","minimum":1,"maximum":120}},"required":["command"],"additionalProperties":false}`},
-		{"attach", "把工作区里的文本文件（HTML demo、Markdown/文本报告、JSON、CSV 等，单个不超过 1MB）附在本轮回复里交给用户。工作区地址只在工作区存活时能在侧栏「浏览器」页签打开，要让用户留存或下载文件就用它：HTML 在产物栏以沙箱方式可交互预览，其他文件可查看和下载。每轮最多 4 个；同名文件再次附加时以最新内容为准，所以改完文件后重新附加即可。", `{"type":"object","properties":{"path":{"type":"string"}},"required":["path"],"additionalProperties":false}`},
-	}
-	out := make([]agentToolDescriptor, 0, len(descriptors)+2)
-	if s.RunID == "" {
-		out = append(out, workspaceOpenDescriptor(), workspaceSOPDescriptor())
-	}
-	for _, d := range descriptors {
-		out = append(out, agentToolDescriptor{Name: "workbench_workspace_" + d.name, Description: d.description, InputSchema: json.RawMessage(d.schema), Kind: "workspace"})
-	}
-	return append(out, workspaceSubmitMRDescriptor())
+	// Files, patches and commands use the CLI's native tools inside the
+	// workspace; git, pushes and PRs use the agent's own git with the
+	// requester's credentials, and PRs are registered when the turn ends. Only
+	// the mode switch stays; files reach the user through
+	// workbench_publish_artifact's path.
+	return []agentToolDescriptor{workspaceOpenDescriptor()}
 }
 
 func (h *agentToolGateway) callMainBotWorkspace(ctx context.Context, s *AgentToolSession, name string, args map[string]any) (result string, resultErr error) {
 	if len(mainBotWorkspaceTools(s)) == 0 {
 		return "", errAgentToolForbidden
-	}
-	if name == "workbench_workspace_submit_mr" && !s.ExecMode.AutoWrite {
-		return "", fmt.Errorf("提交 MR 或推送分支需要外部写入授权，请切换到「帮我批准」或「完全权限」后继续")
-	}
-	if s.ExecMode.ReviewWrites && name != "workbench_workspace_tree" && name != "workbench_workspace_read" && name != "workbench_workspace_attach" && name != "workbench_workspace_open" && name != "workbench_platform_mode" {
-		// Commands are always reviewed: arbitrary shell text can mutate state.
-		ctx = withAssistantApprovalReviewer(ctx, s.approvalReviewer)
-		review := reviewAssistantAction(ctx, name, "当前项目工作区操作，文件写入、命令执行或提交 MR 会产生副作用", map[string]any{"runId": s.workspaceRun(), "arguments": args})
-		if !review.allows() {
-			return "", assistantReviewRefusal(name, review)
-		}
 	}
 	if name == "workbench_platform_mode" {
 		s.requestMode(domain.AssistantModePlatform)
@@ -106,9 +95,6 @@ func (h *agentToolGateway) callMainBotWorkspace(ctx context.Context, s *AgentToo
 		}
 		return h.openConversationWorkspace(ctx, s, args)
 	}
-	if name == "workbench_workspace_sop" {
-		return h.controlConversationSOP(ctx, s, args)
-	}
 	releaseTurn := s.workspaceTurn.lockOperation()
 	defer releaseTurn()
 	runID := s.workspaceRun()
@@ -116,10 +102,10 @@ func (h *agentToolGateway) callMainBotWorkspace(ctx context.Context, s *AgentToo
 		return "", fmt.Errorf("工作区已切换，请重新调用工具")
 	}
 	if runID == "" {
-		return "", fmt.Errorf("本对话还没有工作区：先调用 workbench_workspace_open 为要改的仓库开一个临时工作区")
+		return "", fmt.Errorf("本对话还没有工作区：先调用 workbench_workspace_open 打开一个")
 	}
 	run, ok := h.repo.RunState(runID)
-	if !ok || run.ExecutionContext.ProjectID != s.ProjectID || s.User.ID != s.UserID {
+	if !ok || !h.mayUseWorkspace(s, run) {
 		return "", errAgentToolForbidden
 	}
 	if engine.WorkspaceRunID(run) != run.ID {
@@ -130,7 +116,7 @@ func (h *agentToolGateway) callMainBotWorkspace(ctx context.Context, s *AgentToo
 	// The first successful operation must tell Main Bot it restored a snapshot;
 	// a readable file after lazy restore does not imply the old workspace survived.
 	defer func() {
-		if (!wasReclaimed && len(restoredArtifacts) == 0 && name != "workbench_workspace_command") || resultErr != nil {
+		if (!wasReclaimed && len(restoredArtifacts) == 0) || resultErr != nil {
 			return
 		}
 		var payload map[string]any
@@ -144,19 +130,6 @@ func (h *agentToolGateway) callMainBotWorkspace(ctx context.Context, s *AgentToo
 				payload["workspaceNotice"] = "当前目录已补回缺失的归档产物，已有文件未覆盖；这是产物重建，不是完整历史工作区快照恢复。"
 			}
 
-			if name == "workbench_workspace_command" {
-				payload["environmentReady"] = true
-				if h.engine != nil {
-					if status, err := h.engine.WorkspacePreparationStatus(ctx, runID); err == nil {
-						payload["workspacePreparation"] = runtime.PublicWorkspacePreparationStatus(status)
-						if len(status.Steps) == 0 {
-							payload["workspaceNotice"] = "本次命令已在任务配置的基础运行环境中执行；未配置额外工作区准备脚本，原 SOP 前置脚本不会自动重放。"
-						} else {
-							payload["workspaceNotice"] = "本次命令执行前已完成配置的工作区准备；同一环境中的后续文件改动不会触发这些重建脚本。SOP 历史节点状态保持不变。"
-						}
-					}
-				}
-			}
 			raw, err := json.Marshal(payload)
 			if err == nil {
 				result = string(raw)
@@ -171,30 +144,14 @@ func (h *agentToolGateway) callMainBotWorkspace(ctx context.Context, s *AgentToo
 	ctx = context.WithValue(ctx, requestUserContextKey{}, domainUserToAuth(s.User))
 	ctx = context.WithValue(ctx, mainBotWorkspaceKey{}, runID)
 	switch name {
-	case "workbench_workspace_tree", "workbench_workspace_read":
+	case "workbench_workspace_tree":
+		// Internal only: preparing the workspace on open restores a reclaimed
+		// snapshot and starts the sandbox before the CLI hands over.
 		path, _ := args["path"].(string)
-		endpoint := "tree"
-		if name == "workbench_workspace_read" {
-			endpoint = "file"
-			if strings.TrimSpace(path) == "" {
-				return "", fmt.Errorf("path is required")
-			}
-		}
-		return h.invokeMainBotWorkspace(ctx, s, "GET", endpoint, nil, map[string]string{"path": path})
-	case "workbench_workspace_write":
-		path, pok := args["path"].(string)
-		content, cok := args["content"].(string)
-		sha, sok := args["expectedSha256"].(string)
-		if !pok || !cok || !sok || strings.TrimSpace(path) == "" {
-			return "", fmt.Errorf("path, content and expectedSha256 are required")
-		}
-		return h.invokeMainBotWorkspace(ctx, s, "PUT", "file", map[string]any{"path": path, "content": content, "expectedSha256": sha}, nil)
-	case "workbench_workspace_command":
-		return h.mainBotWorkspaceCommand(ctx, s, args)
-	case "workbench_workspace_attach":
+		return h.invokeMainBotWorkspace(ctx, s, "GET", "tree", nil, map[string]string{"path": path})
+	case workspaceAttachInternal:
+		// Internal: workbench_publish_artifact with a path, and role deliverables.
 		return h.attachWorkspaceFile(ctx, s, args)
-	case "workbench_workspace_submit_mr":
-		return h.workspaceSubmitMR(ctx, s, args)
 	}
 	return "", errAgentToolUnknown
 }
@@ -206,6 +163,7 @@ func (h *agentToolGateway) mainBotWorkspaceLease(ctx context.Context, s *AgentTo
 	if h.engine == nil {
 		return ctx, nil, release, nil
 	}
+	ctx = withAssistantDockerBuildProgress(ctx, s)
 	if s.workspaceTurn != nil {
 		ctx, err := s.workspaceTurn.lease(ctx, runID)
 		if err != nil {
@@ -268,47 +226,6 @@ type mainBotWorkspaceError struct {
 
 func (e *mainBotWorkspaceError) Error() string { return e.body }
 
-// mainBotWorkspaceBusy reports an answer that is safe to retry: the endpoint
-// refused before touching the PTY because another holder (a parallel role's
-// command preparing the environment, a snapshot save) owns the workspace.
-func mainBotWorkspaceBusy(err error) bool {
-	var failure *mainBotWorkspaceError
-	if !errors.As(err, &failure) || failure.status != 409 {
-		return false
-	}
-	var body struct {
-		Code string `json:"code"`
-	}
-	return json.Unmarshal([]byte(failure.body), &body) == nil && body.Code == "workspace_busy"
-}
-
-// mainBotTerminalBusyWait bounds how long a command waits for parallel roles
-// before its own timeout starts; it is long enough for one environment setup.
-var mainBotTerminalBusyWait = 90 * time.Second
-
-func openMainBotTerminal(ctx context.Context, open func(context.Context) (runtime.TerminalResult, error)) (runtime.TerminalResult, error) {
-	ctx, cancel := context.WithTimeout(ctx, mainBotTerminalBusyWait)
-	defer cancel()
-	delay := 300 * time.Millisecond
-	for {
-		opened, err := open(ctx)
-		if err == nil || !mainBotWorkspaceBusy(err) {
-			return opened, err
-		}
-		select {
-		case <-ctx.Done():
-			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-				return opened, fmt.Errorf("等待其他角色释放工作区超时（%s）：%w", mainBotTerminalBusyWait, err)
-			}
-			return opened, ctx.Err()
-		case <-time.After(delay):
-		}
-		if delay *= 2; delay > 3*time.Second {
-			delay = 3 * time.Second
-		}
-	}
-}
-
 var workspaceAttachmentTypes = map[string]string{
 	".html": "text/html", ".htm": "text/html",
 	".md": "text/markdown", ".markdown": "text/markdown",
@@ -321,19 +238,22 @@ var workspaceAttachmentTypes = map[string]string{
 // attachment of this turn's reply: the user cannot reach the execution
 // machine, so a workspace path or localhost link opens nothing for them.
 func (h *agentToolGateway) attachWorkspaceFile(ctx context.Context, s *AgentToolSession, args map[string]any) (string, error) {
+	runID := mainBotWorkspaceRun(ctx)
+	if runID == "" {
+		runID = s.workspaceRun()
+	}
 	raw, _ := args["path"].(string)
 	rel := strings.TrimPrefix(strings.TrimPrefix(strings.TrimSpace(raw), "file://"), "/workspace/")
+	if marker := "/" + runID + "/"; runID != "" && pathpkg.IsAbs(rel) && strings.Contains(rel, marker) {
+		rel = rel[strings.LastIndex(rel, marker)+len(marker):]
+	}
 	if rel == "" {
 		return "", fmt.Errorf("path is required")
 	}
 	name := pathpkg.Base(strings.ReplaceAll(rel, "\\", "/"))
 	mimeType := workspaceAttachmentTypes[strings.ToLower(pathpkg.Ext(name))]
 	if mimeType == "" {
-		return "", fmt.Errorf("只能附加文本文件（html、md、txt、log、csv、yaml、json、xml）；要给用户看页面效果，用 workbench_browser_screenshot 截图")
-	}
-	runID := mainBotWorkspaceRun(ctx)
-	if runID == "" {
-		runID = s.workspaceRun()
+		return "", fmt.Errorf("path 只能是文本文件（html、md、txt、log、csv、yaml、json、xml）；要给用户看页面效果，用 workbench_browser_screenshot 截图")
 	}
 	result, err := (mcpserver.LocalInvoker{Handler: h.api}).Invoke(ctx, application.Operation{Method: "GET", Path: "/api/runs/{id}/workspace/file"}, mcpserver.ToolInput{Path: map[string]string{"id": runID}, Query: map[string]string{"path": rel}})
 	if err != nil {
@@ -356,176 +276,4 @@ func (h *agentToolGateway) attachWorkspaceFile(ctx context.Context, s *AgentTool
 	}
 	out, _ := json.Marshal(map[string]any{"attached": name, "notice": "已附在本轮回复里，用户可在对话和产物栏打开；回复里提文件名即可，不要再给路径。"})
 	return string(out), nil
-}
-
-func (h *agentToolGateway) mainBotWorkspaceCommand(ctx context.Context, s *AgentToolSession, args map[string]any) (string, error) {
-	command, ok := args["command"].(string)
-	if !ok || strings.TrimSpace(command) == "" || len(command) > 16384 {
-		return "", fmt.Errorf("command is required and must be at most 16384 bytes")
-	}
-	seconds := 30
-	if value, ok := args["timeoutSeconds"]; ok {
-		n, err := strconv.Atoi(fmt.Sprint(value))
-		if err != nil || n < 1 || n > 120 {
-			return "", fmt.Errorf("timeoutSeconds must be 1..120")
-		}
-		seconds = n
-	}
-	parent := ctx
-	terminal := func(ctx context.Context, operation, id, data string) (runtime.TerminalResult, error) {
-		raw, err := h.invokeMainBotWorkspace(ctx, s, "POST", "terminal", map[string]any{"operation": operation, "id": id, "data": data}, nil)
-		var result runtime.TerminalResult
-		if err == nil {
-			err = json.Unmarshal([]byte(raw), &result)
-		}
-		return result, err
-	}
-	// Roles dispatched in parallel share this workspace. One may be preparing
-	// its environment right now; wait for it instead of failing this command.
-	// The wait does not count against the command's own timeout.
-	opened, err := openMainBotTerminal(parent, func(ctx context.Context) (runtime.TerminalResult, error) {
-		return terminal(ctx, "open", "", "")
-	})
-	if err != nil {
-		return "", err
-	}
-	ctx, cancel := context.WithTimeout(parent, time.Duration(seconds)*time.Second)
-	defer cancel()
-	defer func() {
-		cleanup, stop := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-		defer stop()
-		_, _ = terminal(cleanup, "close", opened.ID, "")
-	}()
-	nonce := make([]byte, 16)
-	if _, err = rand.Read(nonce); err != nil {
-		return "", err
-	}
-	token := hex.EncodeToString(nonce)
-	marker := "__main_bot_exit_" + token + ":"
-	ready := "__main_bot_ready_" + token
-	// The terminal echoes input typed before `stty -echo` takes effect and
-	// prints a prompt before every line. Silence both first, then wait for a
-	// ready line that only the shell's own output can produce (the echoed
-	// input has a quote before the token), and keep what follows it.
-	if _, err = terminal(ctx, "input", opened.ID, "stty -echo; PS1=; PS2=; printf '\\n%s\\n' '"+ready+"'\n"); err != nil {
-		return "", err
-	}
-	var output strings.Builder
-	read := func() (bool, error) {
-		result, err := terminal(ctx, "read", opened.ID, "")
-		if err != nil {
-			return false, err
-		}
-		if output.Len()+len(result.Data) > 128<<10 {
-			return false, fmt.Errorf("command output exceeds 128 KB")
-		}
-		output.Write(result.Data)
-		return result.Exited, nil
-	}
-	pause := func() error {
-		select {
-		case <-ctx.Done():
-			return fmt.Errorf("command stopped: %w", ctx.Err())
-		case <-time.After(100 * time.Millisecond):
-			return nil
-		}
-	}
-	for {
-		exited, err := read()
-		if err != nil {
-			return "", err
-		}
-		text := strings.ReplaceAll(output.String(), "\r\n", "\n")
-		if at := strings.Index(text, "\n"+ready+"\n"); at >= 0 {
-			output.Reset()
-			output.WriteString(text[at+len(ready)+2:])
-			break
-		}
-		if exited {
-			return "", fmt.Errorf("workspace terminal closed before the command ran: %s", truncateRunes(text, 2000))
-		}
-		if err := pause(); err != nil {
-			return "", err
-		}
-	}
-	begin := "__main_bot_begin_" + token
-	if _, err = terminal(ctx, "input", opened.ID, workspaceCommandInput(command, begin, marker)); err != nil {
-		return "", err
-	}
-	for {
-		exited, err := read()
-		if err == nil && !exited {
-			err = pause()
-		}
-		if err != nil {
-			if parent.Err() == nil && errors.Is(ctx.Err(), context.DeadlineExceeded) {
-				return "", workspaceCommandTimeout(seconds, output.String(), begin)
-			}
-			return "", err
-		}
-		if exited {
-			out, code, err := workspaceCommandOutput(output.String(), begin, marker)
-			if err != nil {
-				return "", err
-			}
-			raw, _ := json.Marshal(map[string]any{"output": out, "exitCode": code})
-			return string(raw), nil
-		}
-	}
-}
-
-// workspaceCommandInput wraps a command for the workspace terminal. The
-// command is one shell argument, preserving quotes, substitutions and
-// newlines without letting it alter the status wrapper. It is all one input
-// line: the shell reads it whole before running anything, so line-editor
-// output (e.g. bash 5 bracketed-paste toggles around every read) lands before
-// the begin line and none follows the exit line. Nobody types into this
-// terminal, so pagers are disabled and stdin is empty: `git log` or a prompt
-// would otherwise wait for a key until the timeout.
-func workspaceCommandInput(command, begin, marker string) string {
-	quoted := "'" + strings.ReplaceAll(command, "'", "'\"'\"'") + "'"
-	return "printf '\\n%s\\n' '" + begin + "'; export PAGER=cat GIT_PAGER=cat MANPAGER=cat SYSTEMD_PAGER=; /bin/sh -c " + quoted + " </dev/null; printf '\\n" + marker + "%s\\n' \"$?\"; exit\n"
-}
-
-// workspaceCommandTimeout tells the model what the stopped command printed and
-// how to proceed, instead of a bare "context deadline exceeded".
-func workspaceCommandTimeout(seconds int, raw, begin string) error {
-	text := strings.ReplaceAll(raw, "\r\n", "\n")
-	if at := strings.Index(text, "\n"+begin+"\n"); at >= 0 {
-		text = text[at+len(begin)+2:]
-	} else {
-		text = ""
-	}
-	msg := fmt.Sprintf("command did not finish within %d seconds and was stopped", seconds)
-	if seconds < 120 {
-		msg += "; retry with a larger timeoutSeconds (max 120)"
-	} else {
-		msg += "; split it into shorter steps, or start it in the background (nohup ... > log 2>&1 &) and poll the log"
-	}
-	if strings.TrimSpace(text) == "" {
-		return errors.New(msg + ". It printed nothing before it was stopped.")
-	}
-	return fmt.Errorf("%s. Output so far:\n%s", msg, tailRunes(text, 4000))
-}
-
-// workspaceCommandOutput keeps only what the command printed: the text between
-// the begin line and the exit-status line, both printed by the shell itself
-// (echoed input has a quote before the token, never a newline).
-func workspaceCommandOutput(raw, begin, marker string) (string, int, error) {
-	text := strings.ReplaceAll(raw, "\r\n", "\n")
-	start := strings.Index(text, "\n"+begin+"\n")
-	if start < 0 {
-		return "", 0, fmt.Errorf("command ended before it started: %s", truncateRunes(text, 2000))
-	}
-	text = text[start+len(begin)+2:]
-	at := strings.LastIndex(text, "\n"+marker)
-	if at < 0 {
-		return "", 0, fmt.Errorf("command ended without an exit status: %s", truncateRunes(text, 2000))
-	}
-	line := strings.SplitN(text[at+1+len(marker):], "\n", 2)[0]
-	code, err := strconv.Atoi(strings.TrimSpace(line))
-	if err != nil {
-		return "", 0, err
-	}
-	return text[:at], code, nil
 }

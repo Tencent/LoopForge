@@ -123,19 +123,14 @@ func TestCheckoutRepositoryKeepsTokenOutOfGitConfig(t *testing.T) {
 	}
 }
 
-func TestInvocationGitTokenPrefersRepositories(t *testing.T) {
-	inv := &domain.RunnerInvocation{
-		Repository:   &domain.RunnerRepository{GitToken: "legacy"},
-		Repositories: []domain.RunnerRepository{{}, {GitToken: " multi "}},
+func TestInvocationCredentialsNeverReadLegacyRepositoryTokens(t *testing.T) {
+	inv := &domain.RunnerInvocation{Repository: &domain.RunnerRepository{GitToken: "legacy"}, Repositories: []domain.RunnerRepository{{GitToken: "legacy-other"}}}
+	if len(invocationGitCredentials(inv).GitHTTPCredentials) != 0 {
+		t.Fatal("legacy repository tokens must not authenticate execution")
 	}
-	if got := invocationGitToken(inv); got != "multi" {
-		t.Fatalf("token = %q", got)
-	}
-	if got := invocationGitToken(&domain.RunnerInvocation{Repository: &domain.RunnerRepository{GitToken: "legacy"}}); got != "legacy" {
-		t.Fatalf("legacy token = %q", got)
-	}
-	if got := invocationGitToken(nil); got != "" {
-		t.Fatalf("nil token = %q", got)
+	inv.GitHTTPCredentials = map[string]domain.GitHTTPExecutionCredential{"unfamiliar.example.org": {Token: "host-token"}}
+	if invocationGitCredentials(inv).GitHTTPCredentials["unfamiliar.example.org"].Token != "host-token" {
+		t.Fatal("host credential was lost")
 	}
 }
 

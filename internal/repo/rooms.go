@@ -128,6 +128,12 @@ func (r *RoomsRepo) MessageWithAttachment(roomID, attachmentID string) (domain.C
 	return domain.ChatMessage{}, false
 }
 
+// RoomAttachmentsInUse reports which attachment ids a room message still
+// carries; the AI reply to a room message reuses the poster's attachments.
+func (r *RoomsRepo) RoomAttachmentsInUse(ids []string) (map[string]bool, error) {
+	return payloadMentions(r.DB, "chat_messages", ids)
+}
+
 func (r *RoomsRepo) TimelineMessages(roomID, threadID string, limit int) []domain.ChatMessage {
 	roomID, threadID = strings.TrimSpace(roomID), strings.TrimSpace(threadID)
 	if roomID == "" {

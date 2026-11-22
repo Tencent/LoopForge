@@ -143,12 +143,12 @@ export function collectArtifacts(session) {
         source: draft.saved ? "已执行" : "待确认",
       });
     }
-    // workbench_workspace_submit_mr only appears in the reply text (its tool
-    // result is not persisted), so the artifact panel derives pull / merge
-    // requests from those links instead of hiding them until the tool is re-run.
+    // PR/MR links the agent opened with its own git only appear in the reply
+    // text, so the artifact panel derives pull / merge requests from those
+    // links.
     const reviewLinks = [
       [/https:\/\/github\.com\/([A-Za-z0-9._-]+\/[A-Za-z0-9._-]+)\/pull\/(\d+)/g, "#", "PR"],
-      [/https?:\/\/git\.example\.com\/([A-Za-z0-9._\-\/]+?)(?:\/-)?\/merge_requests\/(\d+)/g, "!", "MR"],
+      [/https?:\/\/[A-Za-z0-9.-]+(?::\d+)?\/([A-Za-z0-9._\-\/]+?)(?:\/-)?\/merge_requests\/(\d+)/g, "!", "MR"],
     ];
     for (const [pattern, marker, label] of reviewLinks)
       for (const match of (reply.message || "").matchAll(pattern)) {
@@ -231,7 +231,9 @@ export function projectChange(current, nextProjectId) {
   return !current.projectId &&
     nextProjectId &&
     !current.shared &&
-    !current.runId
+    !current.runId &&
+    !current.workspaceRunId &&
+    !current.ownWorkspaceRunIds?.length
     ? "bind"
     : "new";
 }

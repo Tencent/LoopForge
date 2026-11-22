@@ -19,7 +19,8 @@ const (
 	AdapterLive        = "anthropic-stream-v1"
 	AdapterHooks       = "agent-hooks-v1"
 	AdapterLegacyHooks = "codebuddy-hooks-v1"
-	AdapterOTEL        = "codebuddy-otel-v1"
+	AdapterOTEL        = "otlp-v1"
+	AdapterLegacyOTEL  = "codebuddy-otel-v1"
 )
 
 const hookPython = `#!/usr/bin/env python3
@@ -343,9 +344,9 @@ func MatchAdapter(event domain.TelemetryEvent, view string) bool {
 	case "hooks":
 		return adapter == AdapterHooks || adapter == AdapterLegacyHooks
 	case "otel":
-		return adapter == AdapterOTEL
+		return adapter == AdapterOTEL || adapter == AdapterLegacyOTEL
 	case "live":
-		return adapter != AdapterHooks && adapter != AdapterLegacyHooks && adapter != AdapterOTEL
+		return adapter != AdapterHooks && adapter != AdapterLegacyHooks && adapter != AdapterOTEL && adapter != AdapterLegacyOTEL
 	default:
 		return adapter == view
 	}

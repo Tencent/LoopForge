@@ -39,7 +39,7 @@ func (h *runsHandlers) workspaceRestore(c *gin.Context) {
 		defer stop()
 		_ = h.engine.EndConversationWorkspaceUse(ctx, run.ID, token)
 	}()
-	if err = h.engine.EnsureConversationWorkspace(c.Request.Context(), run.ID, token); err != nil {
+	if _, err = h.engine.PrepareConversationWorkspace(c.Request.Context(), run.ID, token); err != nil {
 		c.JSON(409, gin.H{"error": err.Error()})
 		return
 	}
@@ -102,7 +102,12 @@ func (h *runsHandlers) workspaceLifecycleInfo(c *gin.Context, run domain.Run, pa
 	if !ok {
 		return
 	}
-	payload["restorable"] = meta.SavedAt != nil && meta.SHA256 != "" && h.workspaceWritable(c, domain.Run{Status: "succeeded", ExecutionContext: run.ExecutionContext})
+	restorable := false
+	if meta.SavedAt != nil && meta.SHA256 != "" {
+		_, status, _ := h.workspaceEditAccess(c.Request, run)
+		restorable = status == 0
+	}
+	payload["restorable"] = restorable
 	payload["checkpointSavedAt"] = meta.SavedAt
 	if state, err := h.engine.WorkspaceRestoreStatus(run.ID); err == nil && (state.Status == "restoring" || state.Status == "failed") {
 		payload["restore"] = state

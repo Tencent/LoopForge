@@ -16,32 +16,36 @@ import (
 	"agentflow/internal/managedcli"
 )
 
-func TestResolveUnmanagedCLIPreservesPathAndInstallerFallback(t *testing.T) {
+func TestResolveManagedPiBeforePATHAndPreserveOverrides(t *testing.T) {
 	root, host, home := t.TempDir(), t.TempDir(), t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("PATH", host)
 	t.Setenv("AGENTFLOW_MANAGED_CLI_ROOT", root)
-	t.Setenv("AGENTFLOW_DSH_BIN", "")
+	t.Setenv("AGENTFLOW_PI_BIN", "")
 	t.Setenv("AGENTFLOW_CURSOR_BIN", "")
-	hostDSH := filepath.Join(host, "dsh")
-	if err := os.WriteFile(hostDSH, []byte("#!/bin/sh\n"), 0700); err != nil {
+	hostPi := filepath.Join(host, "pi")
+	if err := os.WriteFile(hostPi, []byte("#!/bin/sh\n"), 0700); err != nil {
 		t.Fatal(err)
 	}
-	managed := filepath.Join(root, "providers", "dsh", "0.2.2-rc.1", "node_modules", ".bin", "dsh")
+	managed := filepath.Join(root, "providers", "pi", "1.5.2", "node_modules", ".bin", "pi")
 	if err := os.MkdirAll(filepath.Dir(managed), 0700); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(managed, []byte("#!/bin/sh\n"), 0700); err != nil {
 		t.Fatal(err)
 	}
-	data, _ := json.Marshal(managedcli.State{Current: managedcli.Inventory{"dsh": {Version: "0.2.2-rc.1", Binary: managed}}})
+	data, _ := json.Marshal(managedcli.State{Current: managedcli.Inventory{"pi": {Version: "1.5.2", Binary: managed}}})
 	if err := os.WriteFile(filepath.Join(root, "state.json"), data, 0600); err != nil {
 		t.Fatal(err)
 	}
-	if got, err := resolveAssistantEngineBin("dsh"); err != nil || got != hostDSH {
-		t.Fatalf("unmanaged dsh did not use PATH: %q %v", got, err)
+	if got, err := resolveAssistantEngineBin("pi"); err != nil || got != managed {
+		t.Fatalf("managed Pi did not supersede the host binary: %q %v", got, err)
 	}
-	// Cursor has no npm package: the managed root never hides ~/.local/bin.
+	t.Setenv("AGENTFLOW_PI_BIN", hostPi)
+	if got, err := resolveAssistantEngineBin("pi"); err != nil || got != hostPi {
+		t.Fatalf("explicit Pi override was ignored: %q %v", got, err)
+	}
+	// An empty Cursor inventory still falls back to its installer location.
 	found, err := resolveAssistantEngineBin("cursor")
 	// The integration image also installs Cursor globally. PATH and HOME
 	// isolation deliberately do not disable the supported global fallback.
@@ -78,10 +82,10 @@ func TestCursorModelFamilies(t *testing.T) {
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("families=%+v", got)
 	}
-	if efforts := assistantModelEfforts(domain.User{}, "cursor:gpt-5.6-sol"); !slices.Equal(efforts, []string{"none", "low", "medium", "high", "xhigh", "max"}) {
+	if efforts := assistantModelEfforts(context.Background(), domain.User{}, "cursor:gpt-5.6-sol"); !slices.Equal(efforts, []string{"none", "low", "medium", "high", "xhigh", "max"}) {
 		t.Fatalf("cursor family efforts: %v", efforts)
 	}
-	if err := validateAssistantEffort(domain.User{}, "cursor:kimi-k3", "medium"); err == nil {
+	if err := validateAssistantEffort(context.Background(), domain.User{}, "cursor:kimi-k3", "medium"); err == nil {
 		t.Fatal("chat must offer only the family's own efforts")
 	}
 }
@@ -95,16 +99,16 @@ func TestCachedCursorModelsRefreshInBackground(t *testing.T) {
 	}
 	t.Cleanup(func() { assistantCursorModels = previous })
 	key := "crsr_test_" + t.Name()
-	if got := cachedCursorModels(key); got != nil {
-		t.Fatalf("cold cache must answer at once with the builtin catalog: %+v", got)
+	if got, pending := cachedCursorModels(key); got != nil || !pending {
+		t.Fatalf("cold cache must answer at once with discovery pending: %+v, pending=%v", got, pending)
 	}
 	if got := <-calls; got != key {
 		t.Fatalf("discovery used key %q", got)
 	}
 	deadline := time.Now().Add(2 * time.Second)
 	for {
-		got := cachedCursorModels(key)
-		if len(got) == 1 && got[0].ID == "claude-opus-5-5-high" {
+		got, pending := cachedCursorModels(key)
+		if !pending && len(got) == 1 && got[0].ID == "claude-opus-5-5-high" {
 			break
 		}
 		if time.Now().After(deadline) {

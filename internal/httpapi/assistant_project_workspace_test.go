@@ -10,7 +10,7 @@ import (
 	"testing"
 
 	"agentflow/internal/domain"
-	"agentflow/internal/runtime"
+
 	"github.com/gin-gonic/gin"
 )
 
@@ -31,7 +31,7 @@ func TestProjectParticipantsKeepConversationToolsAndWorkspace(t *testing.T) {
 			if err := h.repo.PutAssistantSession(owner.ID, chat); err != nil {
 				t.Fatal(err)
 			}
-			content := "before"
+			content := ""
 			h.generate = func(ctx context.Context, prompt string, actor domain.User) (string, error) {
 				if actor.ID != peer.ID || !strings.Contains(prompt, run.ID) {
 					return "", fmt.Errorf("participant lost identity or workspace context: actor=%d", actor.ID)
@@ -50,33 +50,24 @@ func TestProjectParticipantsKeepConversationToolsAndWorkspace(t *testing.T) {
 				}
 				gateway := &agentToolGateway{deps: h.deps}
 				catalog := gateway.buildCatalog(ctx, session)
-				for _, name := range []string{"workbench_workspace_open", "workbench_workspace_tree", "workbench_workspace_read", "workbench_workspace_write", "workbench_workspace_command", "workbench_workspace_submit_mr", "workbench_workspace_sop", "workbench_browser_navigate"} {
+				for _, name := range []string{"workbench_workspace_open", "workbench_browser_navigate"} {
 					if _, ok := lookupAgentTool(catalog, name); !ok {
 						return "", fmt.Errorf("participant lost tool %s", name)
 					}
 				}
 				gateway.api = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					user, ok := h.requestUser(r, true)
-					if !ok || user.ID != peer.ID || mainBotWorkspaceRun(r.Context()) != run.ID || r.URL.Path != "/api/runs/"+run.ID+"/workspace/file" {
+					if !ok || user.ID != peer.ID || mainBotWorkspaceRun(r.Context()) != run.ID || r.URL.Path != "/api/runs/"+run.ID+"/workspace/tree" {
 						t.Errorf("workspace operation lost caller or conversation: %s", r.URL.Path)
 						http.Error(w, "wrong scope", http.StatusForbidden)
 						return
 					}
-					if r.Method == http.MethodPut {
-						var body struct{ Content string }
-						if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-							t.Error(err)
-						}
-						content = body.Content
-					}
-					_ = json.NewEncoder(w).Encode(map[string]string{"content": content, "sha256": runtime.WorkspaceContentSHA(content)})
+					content = "prepared"
+					_ = json.NewEncoder(w).Encode(map[string]any{"files": []string{"README.md"}})
 				})
-				if _, err := gateway.callMainBotWorkspace(ctx, session, "workbench_workspace_write", map[string]any{"path": "README.md", "content": "peer edit", "expectedSha256": runtime.WorkspaceContentSHA(content)}); err != nil {
+				// Opening the shared workspace prepares it as the participant.
+				if _, err := gateway.callMainBotWorkspace(ctx, session, "workbench_workspace_tree", map[string]any{}); err != nil {
 					return "", err
-				}
-				read, err := gateway.callMainBotWorkspace(ctx, session, "workbench_workspace_read", map[string]any{"path": "README.md"})
-				if err != nil || !strings.Contains(read, "peer edit") {
-					return "", fmt.Errorf("participant cannot read its edit: %s %v", read, err)
 				}
 				return "edited", nil
 			}
@@ -94,7 +85,7 @@ func TestProjectParticipantsKeepConversationToolsAndWorkspace(t *testing.T) {
 				t.Fatalf("participant cannot continue conversation: %d %s", rec.Code, rec.Body.String())
 			}
 			stored, _ = h.repo.AssistantSession(owner.ID, chat.ID)
-			if content != "peer edit" || stored.WorkspaceRunID != run.ID || stored.UserID != owner.ID || stored.Messages[len(stored.Messages)-2].AuthorID != peer.ID {
+			if content != "prepared" || stored.WorkspaceRunID != run.ID || stored.UserID != owner.ID || stored.Messages[len(stored.Messages)-2].AuthorID != peer.ID {
 				t.Fatalf("participant turn changed shared workspace ownership or lost attribution: %+v", stored)
 			}
 		})
@@ -146,11 +137,11 @@ func TestProjectParticipantOpensAndSwitchesSharedWorkspace(t *testing.T) {
 	}
 	session.UserID, session.User = peer.ID, peer
 	gateway := &agentToolGateway{deps: h.deps}
-	first, err := gateway.bindConversationWorkspace(context.Background(), session, workspaceOpenChoice{Goal: "first shared workspace"})
+	first, err := gateway.bindConversationWorkspace(context.Background(), session, workspaceOpenChoice{})
 	if err != nil || !first.Created || first.Run.ExecutionContext.ResponsibleUserID != peer.ID {
 		t.Fatalf("participant cannot open workspace with its own execution identity: %+v %v", first, err)
 	}
-	second, err := gateway.bindConversationWorkspace(context.Background(), session, workspaceOpenChoice{Goal: "second shared workspace", New: true})
+	second, err := gateway.bindConversationWorkspace(context.Background(), session, workspaceOpenChoice{SandboxID: altConversationSandbox(t, h)})
 	if err != nil || !second.Created || second.Previous != first.Run.ID {
 		t.Fatalf("participant cannot switch workspace: %+v %v", second, err)
 	}

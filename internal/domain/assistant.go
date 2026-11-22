@@ -12,6 +12,10 @@ const (
 	AssistantSourceSOP = "sop"
 	// AssistantSourceScheduled is a conversation produced by a scheduled task.
 	AssistantSourceScheduled = "scheduled"
+	// AssistantSourceSOPDesigner is a private conversation of the SOP
+	// designer's AI orchestrator. It belongs to one SOP canvas and stays out
+	// of the workbench conversation list.
+	AssistantSourceSOPDesigner = "sop-designer"
 )
 
 // AssistantActivityEvent contains only the user-visible execution stream, not
@@ -35,6 +39,11 @@ type AssistantActivityEvent struct {
 	Subagent string `json:"subagent,omitempty"`
 	Role     string `json:"role,omitempty"`
 	AgentID  string `json:"agentId,omitempty"`
+	// Model is the model an Agent dispatch asked its subagent to run on
+	// (empty when it inherits the reply's model). An "agentModel" event,
+	// whose Parent is the dispatch, carries the model the subagent reported
+	// it actually ran on, which also resolves aliases such as "lite".
+	Model string `json:"model,omitempty"`
 	// Input is the task an Agent dispatch hands the subagent and Output the
 	// report it returns; the side panel shows them like an SOP node session.
 	Input  string `json:"input,omitempty"`
@@ -166,8 +175,11 @@ type AssistantSession struct {
 	// task runs. Legacy rows leave it empty and are inferred when read.
 	// TaskID is the scheduled job or assistant task that produced the session,
 	// so repeated runs of one task keep a single conversation.
+	// WorkflowID is the SOP a designer conversation (source sop-designer)
+	// edits; the canvas lists its conversations by this id.
 	Source              string                 `json:"source,omitempty"`
 	TaskID              string                 `json:"taskId,omitempty"`
+	WorkflowID          string                 `json:"workflowId,omitempty"`
 	IssueID             string                 `json:"issueId,omitempty"`
 	Participants        []AssistantParticipant `json:"participants"`
 	ParticipantsVersion int                    `json:"participantsVersion,omitempty"`
@@ -181,6 +193,8 @@ type AssistantSession struct {
 	Shared           bool   `json:"shared,omitempty"`
 	GenerationStatus string `json:"generationStatus,omitempty"`
 	GenerationID     string `json:"generationId,omitempty"`
+	// RecentClientRequestIDs confirms admitted sends after another turn starts.
+	RecentClientRequestIDs []string `json:"recentClientRequestIds,omitempty"`
 	// Unread marks, for the listing reader, a reply that completed after they
 	// last opened the conversation. Listing only; never stored.
 	Unread      bool   `json:"unread,omitempty"`
@@ -238,7 +252,9 @@ type AssistantNativeApproval struct {
 	GenerationID string          `json:"generationId,omitempty"`
 	ActorID      int64           `json:"actorId"`
 	Tool         string          `json:"tool"`
+	Summary      string          `json:"summary,omitempty"`
 	Input        json.RawMessage `json:"input"`
 	InputDigest  string          `json:"-"`
 	Decision     string          `json:"decision"`
+	CreatedAt    time.Time       `json:"createdAt"`
 }

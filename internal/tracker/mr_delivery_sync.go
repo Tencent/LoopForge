@@ -117,9 +117,25 @@ func (s *Service) syncMRDeliveryStates(store MRDeliveryStore) {
 	updated := 0
 	for _, row := range pending {
 		if strings.HasPrefix(row.MRProject, "github:") {
+			if ok, err := s.refreshExternalDelivery(store, row); ok || err != nil {
+				if err != nil {
+					log.Printf("GitHub delivery refresh: %v", err)
+				} else {
+					updated++
+				}
+				continue
+			}
 			if err := s.refreshGitHubDelivery(store, row.MRProject, row.MRIID); err != nil {
 				log.Printf("GitHub delivery refresh: %v", err)
 			} else {
+				updated++
+			}
+			continue
+		}
+		if strings.HasPrefix(row.MRProject, domain.MRProjectGHE) || strings.HasPrefix(row.MRProject, domain.MRProjectGitLab) {
+			if ok, err := s.refreshExternalDelivery(store, row); err != nil {
+				log.Printf("mr-delivery refresh %s!%d: %v", row.MRProject, row.MRIID, err)
+			} else if ok {
 				updated++
 			}
 			continue
@@ -186,7 +202,7 @@ func (s *Service) discoverPromoteMRs(store MRDeliveryStore) {
 				if mr.IID <= 0 {
 					continue
 				}
-				url := "https://git.example.com/" + project + "/merge_requests/" + strconv.Itoa(mr.IID)
+				url := domain.GongfengMRURL(project, mr.IID)
 				if err := store.EnsureMRDeliveryState(project, mr.IID, url, domain.BaselinePromoteIssueID); err != nil {
 					log.Printf("mr-delivery ensure promote %s!%d: %v", project, mr.IID, err)
 					continue

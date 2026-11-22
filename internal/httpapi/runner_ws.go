@@ -15,6 +15,8 @@ import (
 
 	"agentflow/internal/domain"
 	"agentflow/internal/engine"
+	"agentflow/internal/gitwork"
+	"agentflow/internal/runtime"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
@@ -45,15 +47,17 @@ var (
 )
 
 type runnerControlMessage struct {
-	ToolRequest       *domain.RunnerToolRequest       `json:"toolRequest,omitempty"`
-	ToolResponse      *domain.RunnerToolResponse      `json:"toolResponse,omitempty"`
-	Type              string                          `json:"type"`
-	TaskID            string                          `json:"taskId,omitempty"`
-	DesiredState      string                          `json:"desiredState,omitempty"`
-	ActiveTaskIDs     []string                        `json:"activeTaskIds,omitempty"`
-	RequestID         string                          `json:"requestId,omitempty"`
-	WorkspaceRequest  *domain.RunnerWorkspaceRequest  `json:"workspaceRequest,omitempty"`
-	WorkspaceResponse *domain.RunnerWorkspaceResponse `json:"workspaceResponse,omitempty"`
+	ToolRequest        *domain.RunnerToolRequest           `json:"toolRequest,omitempty"`
+	ToolResponse       *domain.RunnerToolResponse          `json:"toolResponse,omitempty"`
+	Type               string                              `json:"type"`
+	TaskID             string                              `json:"taskId,omitempty"`
+	DesiredState       string                              `json:"desiredState,omitempty"`
+	ActiveTaskIDs      []string                            `json:"activeTaskIds,omitempty"`
+	RequestID          string                              `json:"requestId,omitempty"`
+	WorkspaceRequest   *domain.RunnerWorkspaceRequest      `json:"workspaceRequest,omitempty"`
+	WorkspaceResponse  *domain.RunnerWorkspaceResponse     `json:"workspaceResponse,omitempty"`
+	ObserveImageBuild  bool                                `json:"observeImageBuild,omitempty"`
+	ImageBuildProgress *domain.WorkspaceImageBuildProgress `json:"imageBuildProgress,omitempty"`
 }
 
 type runnerWorkspaceForwarder func(context.Context, string, domain.RunnerWorkspaceRequest) (domain.RunnerWorkspaceResponse, error)
@@ -61,7 +65,7 @@ type runnerWorkspaceForwarder func(context.Context, string, domain.RunnerWorkspa
 type runnerControlHub struct {
 	mu      sync.Mutex
 	conns   map[string]*runnerControlConn
-	pending map[string]chan domain.RunnerWorkspaceResponse
+	pending map[string]runnerWorkspaceWaiter
 	nextID  uint64
 	// registered is closed and replaced whenever a runner (re)connects.
 	registered chan struct{}
@@ -77,20 +81,29 @@ type runnerControlHub struct {
 	reconnectGrace time.Duration
 	startupGrace   time.Duration
 	handoverDrain  time.Duration
+	sshHostLookup  gitwork.SSHKnownHostsLookup
+}
+
+type runnerWorkspaceWaiter struct {
+	conn          *runnerControlConn
+	result        chan domain.RunnerWorkspaceResponse
+	imageProgress func(domain.WorkspaceImageBuildProgress)
 }
 
 type runnerControlConn struct {
-	runnerID string
-	ws       *websocket.Conn
-	send     chan runnerControlMessage
-	done     chan struct{}
-	once     sync.Once
+	runnerID                string
+	ownerUserID             int64
+	supportsSSHHostKeyProbe bool
+	ws                      *websocket.Conn
+	send                    chan runnerControlMessage
+	done                    chan struct{}
+	once                    sync.Once
 }
 
 func newRunnerControlHub() *runnerControlHub {
 	return &runnerControlHub{
 		conns:          map[string]*runnerControlConn{},
-		pending:        map[string]chan domain.RunnerWorkspaceResponse{},
+		pending:        map[string]runnerWorkspaceWaiter{},
 		registered:     make(chan struct{}),
 		dropped:        map[string]time.Time{},
 		startedAt:      time.Now(),
@@ -201,14 +214,51 @@ func (h *runnerControlHub) reconnectExpectedLocked(runnerID string, now time.Tim
 	return ok && now.Sub(dropped) < h.reconnectGrace
 }
 
+// Resolve pins on the platform serving the socket, including requests relayed
+// by a predecessor during handover.
+func runnerWorkspaceSSHKnownHosts(ctx context.Context, request domain.RunnerWorkspaceRequest) *domain.GitSSHKnownHosts {
+	var preparationKeys, conversationKeys map[string]string
+	if request.PreparationInvocation != nil {
+		preparationKeys = request.PreparationInvocation.GitSSHKeys
+	}
+	if request.Operation == domain.RunnerWorkspaceOperationConversationCLI {
+		// Only starts need pins. Skip decoding asset transfers and stdin data.
+		var conversation struct {
+			Operation string                       `json:"operation"`
+			Command   *runtime.ConversationCommand `json:"command"`
+		}
+		if json.Unmarshal(request.Conversation, &conversation) == nil && conversation.Operation == "start" && conversation.Command != nil {
+			conversationKeys = conversation.Command.Credentials.GitSSHHostKeys
+		}
+	}
+	return gitwork.SSHKnownHostsForKeys(ctx, preparationKeys, request.TerminalGitSSHKeys, conversationKeys)
+}
+
 // send delivers one request; sent reports whether it reached the socket's
 // queue, after which it must not be retried elsewhere.
 func (h *runnerControlHub) send(ctx context.Context, conn *runnerControlConn, request domain.RunnerWorkspaceRequest) (domain.RunnerWorkspaceResponse, bool, error) {
+	if request.Operation == domain.RunnerWorkspaceOperationSSHHostKeyProbe {
+		// Runner IDs can be rebound before an old connection disconnects.
+		if request.SSHHostKeyOwnerID <= 0 || request.SSHHostKeyOwnerID != conn.ownerUserID {
+			return domain.RunnerWorkspaceResponse{
+				Status: http.StatusConflict, Error: "执行机器绑定已变更，请刷新后重试",
+			}, false, nil
+		}
+		if !conn.supportsSSHHostKeyProbe {
+			return domain.RunnerWorkspaceResponse{
+				Status: http.StatusConflict, Error: "该执行机器暂不支持读取 SSH 主机公钥，请升级 Runner 或手动录入",
+			}, false, nil
+		}
+		request.SSHHostKeyOwnerID = 0
+	}
+	// Older runners ignore the optional workspace field when decoding JSON.
+	request.GitSSHKnownHosts = runnerWorkspaceSSHKnownHosts(gitwork.WithSSHKnownHostsLookup(ctx, h.sshHostLookup), request)
+	observeImageBuild := runtime.DockerBuildProgressObserver(ctx)
 	h.mu.Lock()
 	h.nextID++
 	requestID := fmt.Sprintf("workspace-%d", h.nextID)
 	result := make(chan domain.RunnerWorkspaceResponse, 1)
-	h.pending[requestID] = result
+	h.pending[requestID] = runnerWorkspaceWaiter{conn: conn, result: result, imageProgress: observeImageBuild}
 	h.mu.Unlock()
 	defer func() {
 		h.mu.Lock()
@@ -222,7 +272,7 @@ func (h *runnerControlHub) send(ctx context.Context, conn *runnerControlConn, re
 	default:
 	}
 	select {
-	case conn.send <- runnerControlMessage{Type: "workspace.request", RequestID: requestID, WorkspaceRequest: &request}:
+	case conn.send <- runnerControlMessage{Type: "workspace.request", RequestID: requestID, WorkspaceRequest: &request, ObserveImageBuild: observeImageBuild != nil}:
 	case <-conn.done:
 		return domain.RunnerWorkspaceResponse{}, false, errRunnerWorkspaceUnavailable
 	case <-ctx.Done():
@@ -234,39 +284,58 @@ func (h *runnerControlHub) send(ctx context.Context, conn *runnerControlConn, re
 	case <-conn.done:
 		return domain.RunnerWorkspaceResponse{}, true, errRunnerWorkspaceUnavailable
 	case <-ctx.Done():
-		// Chunked exports hold the runner's workspace fence. End the remote
-		// request too; cancelling only our waiter would strand the next turn.
-		if domain.IsWorkspaceCheckpointTransferOperation(request.Operation) || request.Operation == domain.RunnerWorkspaceOperationCheckpoint {
-			timer := time.NewTimer(time.Second)
+		// Checkpoints and preparation hold the runner's workspace fence.
+		// End the remote work too so the next turn can use the workspace.
+		if domain.IsCancelableRunnerWorkspaceOperation(request.Operation) {
+			message := runnerControlMessage{Type: "workspace.cancel", RequestID: requestID}
 			select {
-			case conn.send <- runnerControlMessage{Type: "workspace.cancel", RequestID: requestID}:
+			case conn.send <- message:
 			case <-conn.done:
-			case <-timer.C:
+			default:
+				// Keep the cancellation queued behind its request even when
+				// the socket is busy. Disconnect also cancels the runner work.
+				go func() {
+					select {
+					case conn.send <- message:
+					case <-conn.done:
+					}
+				}()
 			}
-			timer.Stop()
 		}
 		return domain.RunnerWorkspaceResponse{}, true, ctx.Err()
 	}
 }
 
-func (h *runnerControlHub) resolveWorkspace(requestID string, response domain.RunnerWorkspaceResponse) {
+func (h *runnerControlHub) reportImageBuild(conn *runnerControlConn, requestID string, progress domain.WorkspaceImageBuildProgress) {
 	h.mu.Lock()
-	result := h.pending[requestID]
+	waiter, ok := h.pending[requestID]
 	h.mu.Unlock()
-	if result == nil {
+	if ok && waiter.conn == conn && waiter.imageProgress != nil {
+		waiter.imageProgress(progress)
+	}
+}
+
+func (h *runnerControlHub) resolveWorkspace(conn *runnerControlConn, requestID string, response domain.RunnerWorkspaceResponse) {
+	h.mu.Lock()
+	waiter, ok := h.pending[requestID]
+	h.mu.Unlock()
+	if !ok || waiter.conn != conn {
 		return
 	}
 	select {
-	case result <- response:
+	case waiter.result <- response:
 	default:
 	}
 }
 
-func (h *runnerControlHub) register(runnerID string, ws *websocket.Conn) *runnerControlConn {
-	c := &runnerControlConn{runnerID: runnerID, ws: ws, send: make(chan runnerControlMessage, 64), done: make(chan struct{})}
+func (h *runnerControlHub) register(runner domain.Runner, ws *websocket.Conn, supportsSSHHostKeyProbe bool) *runnerControlConn {
+	c := &runnerControlConn{
+		runnerID: runner.ID, ownerUserID: runner.OwnerUserID, ws: ws, supportsSSHHostKeyProbe: supportsSSHHostKeyProbe,
+		send: make(chan runnerControlMessage, 64), done: make(chan struct{}),
+	}
 	h.mu.Lock()
-	old := h.conns[runnerID]
-	h.conns[runnerID] = c
+	old := h.conns[runner.ID]
+	h.conns[runner.ID] = c
 	close(h.registered)
 	h.registered = make(chan struct{})
 	h.mu.Unlock()
@@ -326,6 +395,7 @@ func (h *runnerControlHub) closeWhenIdle(limit time.Duration) {
 }
 
 const runnerWorkspaceRelayPath = "/internal/runner-workspace"
+const runnerWorkspaceRelayStream = "application/x-ndjson"
 
 // runnerWorkspaceRelayLimit bounds relayed bodies; the runner socket itself
 // accepts 20 MiB messages, the envelope adds a little JSON around them.
@@ -334,6 +404,12 @@ const runnerWorkspaceRelayLimit = 24 << 20
 type runnerWorkspaceRelayRequest struct {
 	RunnerID string                        `json:"runnerId"`
 	Request  domain.RunnerWorkspaceRequest `json:"request"`
+}
+
+type runnerWorkspaceRelayUpdate struct {
+	Progress *domain.WorkspaceImageBuildProgress `json:"progress,omitempty"`
+	Response *domain.RunnerWorkspaceResponse     `json:"response,omitempty"`
+	Error    string                              `json:"error,omitempty"`
 }
 
 // handleRunnerWorkspaceRelay serves workspace RPCs that a handed-over
@@ -351,6 +427,10 @@ func handleRunnerWorkspaceRelay(e *engine.Engine, hub *runnerControlHub) gin.Han
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
 			return
 		}
+		if c.GetHeader("Accept") == runnerWorkspaceRelayStream {
+			streamRunnerWorkspaceRelay(c, hub, input)
+			return
+		}
 		response, err := hub.requestRelayed(c.Request.Context(), input.RunnerID, input.Request)
 		if err != nil {
 			status := http.StatusServiceUnavailable
@@ -362,6 +442,37 @@ func handleRunnerWorkspaceRelay(e *engine.Engine, hub *runnerControlHub) gin.Han
 		}
 		c.JSON(http.StatusOK, response)
 	}
+}
+
+func streamRunnerWorkspaceRelay(c *gin.Context, hub *runnerControlHub, input runnerWorkspaceRelayRequest) {
+	ctx := c.Request.Context()
+	c.Header("Content-Type", runnerWorkspaceRelayStream)
+	c.Header("X-Accel-Buffering", "no")
+	c.Status(http.StatusOK)
+	encoder := json.NewEncoder(c.Writer)
+	send := func(update runnerWorkspaceRelayUpdate) {
+		if ctx.Err() == nil && encoder.Encode(update) == nil {
+			c.Writer.Flush()
+		}
+	}
+	var mu sync.Mutex
+	finished := false
+	progressCtx := runtime.WithDockerBuildProgress(ctx, func(progress domain.WorkspaceImageBuildProgress) {
+		mu.Lock()
+		defer mu.Unlock()
+		if !finished {
+			send(runnerWorkspaceRelayUpdate{Progress: &progress})
+		}
+	})
+	response, err := hub.requestRelayed(progressCtx, input.RunnerID, input.Request)
+	mu.Lock()
+	defer mu.Unlock()
+	finished = true
+	if err != nil {
+		send(runnerWorkspaceRelayUpdate{Error: err.Error()})
+		return
+	}
+	send(runnerWorkspaceRelayUpdate{Response: &response})
 }
 
 // relayRunnerWorkspaceToSuccessor reaches runners through the process that
@@ -383,6 +494,10 @@ func relayRunnerWorkspaceToSuccessor(e *engine.Engine) runnerWorkspaceForwarder 
 		}
 		req.Header.Set(engine.ControlTokenHeader, token)
 		req.Header.Set("Content-Type", "application/json")
+		observeImageBuild := runtime.DockerBuildProgressObserver(ctx)
+		if observeImageBuild != nil {
+			req.Header.Set("Accept", runnerWorkspaceRelayStream)
+		}
 		res, err := http.DefaultClient.Do(req)
 		if err != nil {
 			if ctx.Err() != nil {
@@ -402,11 +517,32 @@ func relayRunnerWorkspaceToSuccessor(e *engine.Engine) runnerWorkspaceForwarder 
 			}
 			return domain.RunnerWorkspaceResponse{}, fmt.Errorf("%w: successor returned HTTP %d %s", errRunnerWorkspaceUnavailable, res.StatusCode, strings.TrimSpace(failure.Error))
 		}
+		decoder := json.NewDecoder(reader)
+		if observeImageBuild != nil && res.Header.Get("Content-Type") == runnerWorkspaceRelayStream {
+			return readRunnerWorkspaceRelayStream(decoder, observeImageBuild)
+		}
 		var response domain.RunnerWorkspaceResponse
-		if err := json.NewDecoder(reader).Decode(&response); err != nil {
+		if err := decoder.Decode(&response); err != nil {
 			return domain.RunnerWorkspaceResponse{}, fmt.Errorf("relay to successor: %w", err)
 		}
 		return response, nil
+	}
+}
+
+func readRunnerWorkspaceRelayStream(decoder *json.Decoder, observe func(domain.WorkspaceImageBuildProgress)) (domain.RunnerWorkspaceResponse, error) {
+	for {
+		var update runnerWorkspaceRelayUpdate
+		if err := decoder.Decode(&update); err != nil {
+			return domain.RunnerWorkspaceResponse{}, fmt.Errorf("relay to successor: %w", err)
+		}
+		switch {
+		case update.Progress != nil:
+			observe(*update.Progress)
+		case update.Response != nil:
+			return *update.Response, nil
+		default:
+			return domain.RunnerWorkspaceResponse{}, fmt.Errorf("%w: successor: %s", errRunnerWorkspaceUnavailable, update.Error)
+		}
 	}
 }
 
@@ -489,6 +625,8 @@ var runnerWSUpgrader = websocket.Upgrader{
 	WriteBufferSize:  1024,
 }
 
+type legacyRunnerToolRequestKey struct{}
+
 // runnerControlConnect 升级 /runners/ws 连接并进入控制消息循环。
 // 路由: g.GET("/runners/ws", h.runnerControlConnect)
 func (h *runnersHandlers) runnerControlConnect(c *gin.Context) {
@@ -500,8 +638,11 @@ func (h *runnersHandlers) runnerControlConnect(c *gin.Context) {
 	if err != nil {
 		return
 	}
-	conn := h.runnerControls.register(runner.ID, ws)
+	conn := h.runnerControls.register(runner, ws, c.GetHeader(domain.RunnerSSHHostKeyProbeHeader) == "1")
 	defer h.runnerControls.unregister(conn)
+	connCtx, cancel := context.WithCancel(c.Request.Context())
+	defer cancel()
+	var toolCancels sync.Map // request ID -> context.CancelFunc
 	go conn.writeLoop()
 	ws.SetReadLimit(20 << 20)
 	_ = ws.SetReadDeadline(time.Now().Add(runnerWSReadTimeout))
@@ -514,8 +655,21 @@ func (h *runnersHandlers) runnerControlConnect(c *gin.Context) {
 			return
 		}
 		_ = ws.SetReadDeadline(time.Now().Add(runnerWSReadTimeout))
+		if input.Type == "agent_tool.cancel" {
+			if stop, ok := toolCancels.Load(input.RequestID); ok {
+				stop.(context.CancelFunc)()
+			}
+			continue
+		}
 		if input.Type == "agent_tool.request" && input.ToolRequest != nil {
+			toolCtx, stop := context.WithCancel(connCtx)
+			if _, duplicate := toolCancels.LoadOrStore(input.RequestID, stop); duplicate {
+				stop()
+				continue
+			}
 			go func(input runnerControlMessage) {
+				defer toolCancels.Delete(input.RequestID)
+				defer stop()
 				result := domain.RunnerToolResponse{}
 				session, ok := agentToolSessions.get(input.ToolRequest.Token)
 				if !ok || session.ExecutionRunnerID != runner.ID {
@@ -525,7 +679,11 @@ func (h *runnersHandlers) runnerControlConnect(c *gin.Context) {
 					if err := json.Unmarshal(input.ToolRequest.Body, &request); err != nil {
 						result.Error = "invalid tool request"
 					} else {
-						response := (&agentToolGateway{deps: h.deps}).handleRPC(withAgentToolToken(c.Request.Context(), input.ToolRequest.Token), session, request)
+						ctx := withAgentToolToken(toolCtx, input.ToolRequest.Token)
+						if !input.ToolRequest.SupportsCancel {
+							ctx = context.WithValue(ctx, legacyRunnerToolRequestKey{}, true)
+						}
+						response := (&agentToolGateway{deps: h.deps}).handleRPC(ctx, session, request)
 						if response != nil {
 							result.Body, _ = json.Marshal(response)
 						}
@@ -533,13 +691,18 @@ func (h *runnersHandlers) runnerControlConnect(c *gin.Context) {
 				}
 				select {
 				case conn.send <- runnerControlMessage{Type: "agent_tool.response", RequestID: input.RequestID, ToolResponse: &result}:
+				case <-toolCtx.Done():
 				case <-conn.done:
 				}
 			}(input)
 			continue
 		}
 		if input.Type == "workspace.response" && input.WorkspaceResponse != nil {
-			h.runnerControls.resolveWorkspace(input.RequestID, *input.WorkspaceResponse)
+			h.runnerControls.resolveWorkspace(conn, input.RequestID, *input.WorkspaceResponse)
+			continue
+		}
+		if input.Type == "workspace.image_progress" && input.ImageBuildProgress != nil {
+			h.runnerControls.reportImageBuild(conn, input.RequestID, *input.ImageBuildProgress)
 			continue
 		}
 		if input.Type != "hello" {

@@ -389,6 +389,9 @@ func mergeIssueEdit(v, existing domain.Issue) domain.Issue {
 	if v.Kind == "" {
 		v.Kind = existing.Kind
 	}
+	if strings.TrimSpace(v.SOPMode) == "" {
+		v.SOPMode = existing.SOPMode
+	}
 	if v.AssigneeID == "" {
 		v.AssigneeID = existing.AssigneeID
 	}
@@ -444,6 +447,7 @@ var issueRoutes = map[string]issueRoute{
 	"/api/issues/:id/runs":                {handle: issuesHandlers.issueRuns, methods: []string{http.MethodGet}},
 	"/api/issues/:id/clarification":       {handle: issuesHandlers.submitIssueClarification, methods: []string{http.MethodPost}},
 	"/api/issues/:id/chat-clarify":        {handle: issuesHandlers.chatClarifyIssue, methods: []string{http.MethodGet, http.MethodPost}},
+	"/api/issues/:id/clarify-models":      {handle: issuesHandlers.clarifyModels, methods: []string{http.MethodGet}},
 	"/api/issues/:id/chat-clarify/cancel": {handle: issuesHandlers.cancelChatClarifyIssue, methods: []string{http.MethodPost}},
 	"/api/issues/:id/reopen":              {handle: issuesHandlers.reopenIssue, methods: []string{http.MethodPost}},
 	"/api/issues/:id/close":               {handle: issuesHandlers.closeIssue, methods: []string{http.MethodPost}},
@@ -472,6 +476,29 @@ func (h issuesHandlers) issue(c *gin.Context) {
 		return
 	}
 	route.handle(h, c, issue)
+}
+
+// Use the account that will execute the clarification. This catalog is only
+// available to callers allowed to start the clarification.
+func (h issuesHandlers) clarifyModels(c *gin.Context, issue domain.Issue) {
+	if !h.requireProjectWriter(c, issue.ProjectID) {
+		return
+	}
+	user, err := h.repo.ResponsibleUser(issue)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	ctx := c.Request.Context()
+	catalog := personalCodeBuddyCatalog(ctx, user)
+	catalog.Engines = assistantEngineOptions(user, false)
+	if user.AssistantDefaults != (domain.AssistantDefaults{}) {
+		catalog.Preferences = &user.AssistantDefaults
+	}
+	models, _ := assistantEngineModels(ctx, user, nil)
+	catalog.Models = append(selectableCodeBuddyModels(catalog.Models), models...)
+	c.Header("Cache-Control", "private, no-store")
+	c.JSON(http.StatusOK, catalog)
 }
 
 func actorLabel(user *auth.User) (string, int64) {
@@ -791,7 +818,7 @@ func normalizeSOPBindings(store *repo.Store, projectID string, in []domain.Issue
 }
 
 func (h issuesHandlers) bindRequirementPlaybook(issue *domain.Issue) {
-	if issue == nil || !domain.IsRequirementWorkItem(*issue) {
+	if issue == nil || !domain.IsRequirementWorkItem(*issue) || issue.WithoutSOP() {
 		return
 	}
 	project, ok := h.repo.Project(issue.ProjectID)

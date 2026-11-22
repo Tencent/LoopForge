@@ -4,10 +4,13 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
 	"agentflow/internal/domain"
+	"agentflow/internal/repo"
+	"agentflow/internal/runtime"
 )
 
 // BaselineAlignWorkflowID is the built-in SOP that resolves default→integrate
@@ -16,6 +19,26 @@ const BaselineAlignWorkflowID = "scheduled-baseline-align"
 
 // BaselineAlignAgentID is the platform-shared resolve role for that SOP.
 const BaselineAlignAgentID = domain.BaselineAlignAgentID
+
+func configureBaselineAlignCLI(wf domain.WorkflowDefinition) (domain.WorkflowDefinition, error) {
+	if wf.ID != BaselineAlignWorkflowID {
+		return wf, nil
+	}
+	executorID := strings.TrimSpace(os.Getenv("AGENTFLOW_BASELINE_ALIGN_EXECUTOR"))
+	if executorID == "" {
+		return wf, nil
+	}
+	if _, ok := repo.BuiltInExecutor(executorID); !ok {
+		return wf, fmt.Errorf("AGENTFLOW_BASELINE_ALIGN_EXECUTOR: unsupported executor %q", executorID)
+	}
+	wf.Nodes = slices.Clone(wf.Nodes)
+	for i, node := range wf.Nodes {
+		if node.Type == "agent" && node.AgentID == BaselineAlignAgentID {
+			wf.Nodes[i].ExecutorID = executorID
+		}
+	}
+	return wf, nil
+}
 
 // AlignConflictError means the shared integrate branch and the repository
 // default branch diverged. Scheduled issue SOPs for that repository must wait.
@@ -112,11 +135,11 @@ func ShouldAlignIntegrate(r domain.RepositoryContext) bool {
 // branch and pushes when the merge is clean. Conflicts are aborted and
 // returned as AlignConflictError (with extracted conflict hunks); the remote
 // integrate branch is left unchanged.
-func AlignIntegrateBaseline(repository domain.RepositoryContext, gitToken string, locks IntegrationLocker) error {
-	return alignIntegrateBaseline(context.Background(), repository, gitToken, locks)
+func AlignIntegrateBaseline(repository domain.RepositoryContext, credentials runtime.RunCredentials, locks IntegrationLocker) error {
+	return alignIntegrateBaseline(withRunGitCredentials(context.Background(), credentials), repository, locks)
 }
 
-func alignIntegrateBaseline(ctx context.Context, repository domain.RepositoryContext, gitToken string, locks IntegrationLocker) error {
+func alignIntegrateBaseline(ctx context.Context, repository domain.RepositoryContext, locks IntegrationLocker) error {
 	if !ShouldAlignIntegrate(repository) {
 		return nil
 	}
@@ -132,7 +155,7 @@ func alignIntegrateBaseline(ctx context.Context, repository domain.RepositoryCon
 	work.WorkBranch = ""
 	work.IntegrateBranch = domain.NormalizeIntegrateBranch(repository.IntegrateBranch)
 	work.BaseBranch = work.IntegrateBranch
-	ctx = withRepositoryGit(withGitToken(ctx, gitToken), work)
+	ctx = withRepositoryGit(ctx, work)
 	if err := prepareRepository(ctx, dir, work); err != nil {
 		return err
 	}

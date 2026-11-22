@@ -3,12 +3,14 @@ package httpapi
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"agentflow/internal/domain"
+	"agentflow/internal/repo"
 	"github.com/gin-gonic/gin"
 )
 
@@ -141,6 +143,34 @@ func TestAssistantReplyKeepsMarkdownSpacing(t *testing.T) {
 	}
 }
 
+func TestAssistantVisibleReplyPreservesIndentedCode(t *testing.T) {
+	const intro = "Minimal example:"
+	const code = "    first()\n    second()"
+	const final = intro + "\n\n" + code
+	reply, ok := recoverNativeAssistantReply(final, "")
+	if !ok {
+		t.Fatal("native reply was rejected")
+	}
+	if got := assistantVisibleReply(reply.Message, nil); got != final {
+		t.Fatalf("saved reply lost indentation: %q", got)
+	}
+	var activity assistantActivityLog
+	activity.add(assistantStreamEvent{Kind: "answer", Text: "Earlier progress."})
+	activity.add(assistantStreamEvent{Kind: "tool", ID: "t1"})
+	activity.add(assistantStreamEvent{Kind: "answer", Text: intro})
+	if got := assistantVisibleReply(reply.Message, activity.snapshot()); got != "Earlier progress.\n\n"+final {
+		t.Fatalf("appending the unstreamed code altered the reply: %q", got)
+	}
+	activity.add(assistantStreamEvent{Kind: "tool", ID: "t2"})
+	line := `{"type":"assistant","message":{"content":[{"type":"text","text":"    first()\n    second()"}]}}`
+	for _, event := range assistantStreamEvents(line) {
+		activity.add(event)
+	}
+	if got := assistantVisibleReply(reply.Message, activity.snapshot()); got != "Earlier progress.\n\n"+final {
+		t.Fatalf("merging streamed text altered the reply: %q", got)
+	}
+}
+
 func TestStoppedGenerationKeepsPartialTranscript(t *testing.T) {
 	h, user := workbenchFixture(t)
 	started := make(chan struct{})
@@ -197,25 +227,147 @@ func TestStoppedGenerationKeepsPartialTranscript(t *testing.T) {
 }
 
 func TestSteerContinuesFromPartialTranscript(t *testing.T) {
-	h, user := workbenchFixture(t)
-	started := make(chan struct{})
-	var mu sync.Mutex
-	var prompts []string
-	h.generate = func(ctx context.Context, prompt string, _ domain.User) (string, error) {
-		mu.Lock()
-		prompts = append(prompts, prompt)
-		n := len(prompts)
-		mu.Unlock()
-		if n == 1 {
-			sink := ctx.Value(assistantGenerationSinkKey{}).(func(string, any))
-			sink("thought", assistantStreamEvent{Kind: "answer", Text: "第一段说明"})
-			close(started)
-			<-ctx.Done()
-			return "", ctx.Err()
-		}
-		return "已改为查看仓库", nil
+	for _, tc := range []struct {
+		name, cli               string
+		runner, login, prefixed bool
+	}{
+		{"codebuddy cloud", "codebuddy", false, false, false},
+		{"codebuddy runner", "codebuddy", true, false, false},
+		{"codex login bare model", "codex", true, true, false},
+		{"codex login prefixed model", "codex", true, true, true},
+		{"codex cloud key", "codex", false, false, true},
+		{"cursor cloud bare model", "cursor", false, false, false},
+		{"cursor runner prefixed model", "cursor", true, false, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h, user := workbenchFixture(t)
+			stubCLIModelDiscovery(t)
+			discoverCLIModels = func(context.Context, string, string) []string { return []string{"claude-opus-5.5", "gpt-6-sol"} }
+			credentials := repo.UserCredentialUpdate{CodeBuddyAPIKeyClear: tc.cli != "codebuddy"}
+			if !tc.login {
+				credentials.CodexAPIKey = "test-codex"
+				credentials.AgentCLICredentials = map[string]repo.AgentCLICredentialUpdate{"cursor": {APIKey: "test-cursor"}}
+			}
+			var err error
+			user, err = h.repo.UpdateUserCredentials(user.ID, credentials)
+			if err != nil {
+				t.Fatal(err)
+			}
+			target := domain.AssistantExecutionTarget{Pool: domain.ExecutionModeCloud}
+			if tc.runner {
+				runner := domain.Runner{ID: "steer-runner", OwnerUserID: user.ID, Runtimes: []domain.RunnerRuntime{{Provider: "codex", AuthMode: domain.RuntimeAuthLocal}}}
+				if err := h.repo.PutRunner(runner); err != nil {
+					t.Fatal(err)
+				}
+				target = domain.AssistantExecutionTarget{Pool: domain.ExecutionModeRunner, RunnerID: runner.ID}
+			}
+			// Switch between CodeBuddy models and reset an effort the new one does not support.
+			initialModel, selectedModel, initialEffort := "claude-opus-5.5", "gpt-6-sol", "max"
+			if tc.cli != "codebuddy" {
+				initialModel, selectedModel, initialEffort = tc.cli+":initial", tc.cli+":selected", ""
+			}
+			messages := []assistantMessage{{Role: "user", Content: "上一轮"}, {Role: "assistant", Content: "上一轮已完成", Model: initialModel}}
+			if err := h.repo.PutAssistantSession(user.ID, domain.AssistantSession{ID: "steer-chat", ProjectID: "workbench", Executor: tc.cli, Model: initialModel, ExecutionTarget: &target, Messages: messages}); err != nil {
+				t.Fatal(err)
+			}
+			started := make(chan struct{})
+			var mu sync.Mutex
+			var prompts []string
+			h.generate = func(ctx context.Context, prompt string, _ domain.User) (string, error) {
+				mu.Lock()
+				prompts = append(prompts, prompt)
+				n := len(prompts)
+				mu.Unlock()
+				if n == 1 {
+					sink := ctx.Value(assistantGenerationSinkKey{}).(func(string, any))
+					sink("thought", assistantStreamEvent{Kind: "answer", Text: "第一段说明"})
+					close(started)
+					<-ctx.Done()
+					return "", ctx.Err()
+				}
+				return "已改为查看仓库", nil
+			}
+			messages = append(messages, assistantMessage{Role: "user", Content: "先查项目"})
+			request, _ := json.Marshal(assistantRequest{ProjectID: "workbench", SessionID: "steer-chat", Model: initialModel, Effort: initialEffort, Messages: messages})
+			c, rec := workbenchContext(user, "POST", "/api/assistant/generations", bytes.NewBuffer(request))
+			h.startGeneration(c)
+			if rec.Code != 202 {
+				t.Fatalf("start: %d %s", rec.Code, rec.Body.String())
+			}
+			select {
+			case <-started:
+			case <-time.After(5 * time.Second):
+				t.Fatal("generation never wrote")
+			}
+			g, _ := h.repo.AssistantGeneration(user.ID, "steer-chat")
+			requestedModel := selectedModel
+			if tc.cli != "codebuddy" && !tc.prefixed {
+				requestedModel = "selected"
+			}
+			body, _ := json.Marshal(gin.H{"content": "改查仓库", "model": requestedModel, "effort": "", "approvalMode": "confirm"})
+			c, rec = workbenchContext(user, "POST", "/api/assistant/sessions/steer-chat/generation/steer?generationId="+g.ID, bytes.NewBuffer(body))
+			c.Params = gin.Params{{Key: "id", Value: "steer-chat"}}
+			h.steerGeneration(c)
+			if rec.Code != 200 {
+				t.Fatalf("steer: %d %s", rec.Code, rec.Body.String())
+			}
+			deadline := time.Now().Add(5 * time.Second)
+			for {
+				saved, _ := h.repo.AssistantSession(user.ID, "steer-chat")
+				current, _ := h.repo.AssistantGeneration(user.ID, "steer-chat")
+				if current.Status == "completed" && len(saved.Messages) == 6 {
+					if saved.Effort != "" {
+						t.Fatalf("follow-up kept the old effort %q", saved.Effort)
+					}
+					if saved.Executor != tc.cli || saved.Model != selectedModel || saved.Execution() != target || saved.Messages[5].Model != selectedModel {
+						t.Fatalf("follow-up changed CLI, model or execution target: %+v", saved)
+					}
+					if saved.Messages[3].Model != initialModel || !strings.Contains(saved.Messages[3].Content, "第一段说明") {
+						t.Fatalf("partial missing: %+v", saved.Messages[3])
+					}
+					if saved.Messages[4].Content != "改查仓库" || saved.Messages[4].Trigger != "steer" {
+						t.Fatalf("steer message: %+v", saved.Messages[4])
+					}
+					if !strings.Contains(saved.Messages[5].Content, "已改为查看仓库") {
+						t.Fatalf("follow-up: %s", saved.Messages[5].Content)
+					}
+					mu.Lock()
+					got := append([]string(nil), prompts...)
+					mu.Unlock()
+					if len(got) < 2 || !strings.Contains(got[1], "第一段说明") || !strings.Contains(got[1], "改查仓库") {
+						t.Fatalf("follow-up prompt: %v", got)
+					}
+					return
+				}
+				if time.Now().After(deadline) {
+					t.Fatalf("steer did not continue: status=%s messages=%d error=%s", current.Status, len(saved.Messages), current.Error)
+				}
+				time.Sleep(20 * time.Millisecond)
+			}
+		})
 	}
-	c, rec := workbenchContext(user, "POST", "/api/assistant/generations", bytes.NewBufferString(`{"projectId":"workbench","sessionId":"steer-chat","messages":[{"role":"user","content":"先查项目"}]}`))
+}
+
+// A steer on a remembered CodeBuddy model this instance has not listed yet
+// (another instance served the picker) refreshes the list instead of
+// switching the rest of the turn to the default model.
+func TestSteerRefreshesTheModelListBeforeFallingBack(t *testing.T) {
+	h, user := workbenchFixture(t)
+	stubCLIModelDiscovery(t)
+	discoverCLIModels = func(context.Context, string, string) []string { return []string{"claude-opus-5.5"} }
+	release := make(chan struct{})
+	t.Cleanup(func() { close(release) })
+	started := make(chan struct{})
+	h.generate = func(ctx context.Context, _ string, _ domain.User) (string, error) {
+		select {
+		case <-started:
+		default:
+			close(started)
+		}
+		<-release
+		return "", ctx.Err()
+	}
+	c, rec := workbenchContext(user, "POST", "/api/assistant/generations", bytes.NewBufferString(`{"projectId":"workbench","sessionId":"steer-model","messages":[{"role":"user","content":"先查项目"}]}`))
 	h.startGeneration(c)
 	if rec.Code != 202 {
 		t.Fatalf("start: %d %s", rec.Code, rec.Body.String())
@@ -223,40 +375,21 @@ func TestSteerContinuesFromPartialTranscript(t *testing.T) {
 	select {
 	case <-started:
 	case <-time.After(5 * time.Second):
-		t.Fatal("generation never wrote")
+		t.Fatal("generation never started")
 	}
-	g, _ := h.repo.AssistantGeneration(user.ID, "steer-chat")
-	c, rec = workbenchContext(user, "POST", "/api/assistant/sessions/steer-chat/generation/steer?generationId="+g.ID, bytes.NewBufferString(`{"content":"改查仓库","approvalMode":"confirm"}`))
-	c.Params = gin.Params{{Key: "id", Value: "steer-chat"}}
+	// This instance has not seen the model list yet.
+	cliModelMu.Lock()
+	cliModelCache = map[string]cliModelEntry{}
+	cliModelMu.Unlock()
+	g, _ := h.repo.AssistantGeneration(user.ID, "steer-model")
+	c, rec = workbenchContext(user, "POST", "/api/assistant/sessions/steer-model/generation/steer?generationId="+g.ID, bytes.NewBufferString(`{"content":"改查仓库","model":"claude-opus-5.5","approvalMode":"confirm"}`))
+	c.Params = gin.Params{{Key: "id", Value: "steer-model"}}
 	h.steerGeneration(c)
 	if rec.Code != 200 {
 		t.Fatalf("steer: %d %s", rec.Code, rec.Body.String())
 	}
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		saved, _ := h.repo.AssistantSession(user.ID, "steer-chat")
-		current, _ := h.repo.AssistantGeneration(user.ID, "steer-chat")
-		if current.Status == "completed" && len(saved.Messages) == 4 {
-			if !strings.Contains(saved.Messages[1].Content, "第一段说明") {
-				t.Fatalf("partial missing: %s", saved.Messages[1].Content)
-			}
-			if saved.Messages[2].Content != "改查仓库" || saved.Messages[2].Trigger != "steer" {
-				t.Fatalf("steer message: %+v", saved.Messages[2])
-			}
-			if !strings.Contains(saved.Messages[3].Content, "已改为查看仓库") {
-				t.Fatalf("follow-up: %s", saved.Messages[3].Content)
-			}
-			mu.Lock()
-			got := append([]string(nil), prompts...)
-			mu.Unlock()
-			if len(got) < 2 || !strings.Contains(got[1], "第一段说明") || !strings.Contains(got[1], "改查仓库") {
-				t.Fatalf("follow-up prompt: %v", got)
-			}
-			return
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("steer did not continue: status=%s messages=%d prompts=%d", current.Status, len(saved.Messages), len(prompts))
-		}
-		time.Sleep(20 * time.Millisecond)
+	current, _ := h.repo.AssistantGeneration(user.ID, "steer-model")
+	if current.Steer == nil || current.Steer.Model != "claude-opus-5.5" {
+		t.Fatalf("steer model = %+v, want claude-opus-5.5", current.Steer)
 	}
 }

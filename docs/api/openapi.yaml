@@ -28,8 +28,47 @@ tags:
   - name: Sync
   - name: Scheduling
   - name: Analytics
-  - name: Feedback
 paths:
+  /api/runs/{id}/wait:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: string}}
+    get:
+      tags: [Runs]
+      operationId: waitForRun
+      summary: Wait for an SOP result or human action
+      description: |
+        Reads the current status of one SOP. Returns as soon as it is succeeded,
+        failed, cancelled, waiting or paused. If the wait window expires first,
+        the current status is returned with timedOut=true.
+      parameters:
+        - name: timeoutSec
+          in: query
+          description: Seconds to wait. Zero reads the current status immediately.
+          schema: {type: integer, minimum: 0, maximum: 25, default: 25}
+      responses:
+        "200":
+          description: Latest SOP status
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [runId, projectId, status, terminal, timedOut]
+                properties:
+                  runId: {type: string}
+                  projectId: {type: string}
+                  status: {type: string}
+                  terminal: {type: boolean, description: "Status is succeeded, failed, or cancelled"}
+                  timedOut: {type: boolean, description: The wait window ended while the run was still active or queued}
+        "400":
+          description: Invalid timeoutSec
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Run not found
+        "409":
+          description: The run is a conversation workspace
   /api/runs/{id}/control:
     parameters:
       - {name: id, in: path, required: true, schema: {type: string}}
@@ -65,7 +104,7 @@ paths:
       operationId: chatAssistant
       summary: Ask the Studio AI assistant or generate platform resource drafts
       description: |
-        Uses the signed-in user's personal CodeBuddy API key. The model can
+        Uses the signed-in user's credential for the selected CLI. The model can
         request bounded source lookups and project HTTP MCP calls (`mcpCalls`).
         The CLI itself cannot call MCP, modify the source snapshot, push, or
         deploy. The server invokes TAPD/Gongfeng-style HTTP MCP that the user
@@ -90,6 +129,32 @@ paths:
                 sessionId: {type: string}
                 model: {type: string}
                 updatedAt: {type: string, format: date-time}
+                surface:
+                  type: string
+                  enum: [sop-designer]
+                  description: |
+                    Entry that sends the turn; omit for the workbench.
+                    `sop-designer` is the SOP canvas's AI orchestrator: it
+                    needs `projectId`, always runs in confirm mode, offers
+                    only read-only platform tools and accepts one
+                    `workflows_save` draft per turn. Its conversation is
+                    private to the caller, stays out of the workbench list
+                    and cannot be continued from the workbench. The server
+                    owns the transcript: send only the new user message.
+                    On a canvas with nodes the draft body may be
+                    `{"operations":[…]}` (add_node, update_node, remove_node,
+                    add_edge, remove_edge, update_workflow); the server
+                    applies them to `canvas` and returns the full workflow.
+                workflowId: {type: string, description: "SOP the canvas edits (sop-designer only)"}
+                canvas:
+                  type: object
+                  additionalProperties: true
+                  description: "Current canvas workflow (sop-designer only, up to 256 KiB). Injected into the turn as data without layout, not stored in the transcript; edit operations are applied to it"
+                referenceWorkflowIds:
+                  type: array
+                  maxItems: 2
+                  items: {type: string}
+                  description: "Existing SOPs the user named, injected as data (sop-designer only)"
                 messages:
                   type: array
                   minItems: 1
@@ -166,10 +231,12 @@ paths:
     get:
       tags: [Assistant]
       operationId: listAssistantModels
-      summary: List CodeBuddy models available to the Studio assistant
-      description: |
-        Hardcoded iOA assistant catalog with display names and credit
-        multipliers. Defaults to default.
+      summary: List models available to the Studio assistant
+      parameters:
+        - name: schedule
+          in: query
+          schema: {type: integer, enum: [1]}
+          description: Include built-in models for CLIs configured to use account login on the signed-in user's default execution machine.
       responses:
         "200":
           description: Model catalog
@@ -180,15 +247,28 @@ paths:
                 required: [default, models]
                 properties:
                   default: {type: string}
+                  preferences:
+                    $ref: "#/components/schemas/AssistantDefaults"
+                  engines:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: {type: string}
+                        name: {type: string}
+                        configured: {type: boolean}
+                        personal: {type: boolean}
+                        credential: {type: string, description: Configuration field name}
                   models:
                     type: array
                     items:
                       type: object
-                      required: [id, name, family, credits]
+                      required: [id, name, family]
                       properties:
                         id: {type: string}
                         name: {type: string}
                         family: {type: string}
+                        engine: {type: string}
                         credits: {type: string, example: x0.79}
         "401":
           $ref: "#/components/responses/Unauthorized"
@@ -197,7 +277,18 @@ paths:
       tags: [Assistant]
       operationId: listAssistantSessions
       summary: List personal conversations and authorized shared SOP discussions
-      description: Conversations persist in MySQL `assistant_sessions`. Personal conversations belong to the caller; shared SOP conversations belong to a run and require project access.
+      description: Conversations persist in MySQL `assistant_sessions`. Personal conversations belong to the caller; shared SOP conversations belong to a run and require project access. SOP designer conversations are listed only with `surface=sop-designer`.
+      parameters:
+        - name: surface
+          in: query
+          required: false
+          schema: {type: string, enum: [sop-designer]}
+          description: "`sop-designer` lists only the caller's SOP designer conversations instead of the workbench history"
+        - name: workflowId
+          in: query
+          required: false
+          schema: {type: string}
+          description: With `surface=sop-designer`, only the conversations of this SOP
       responses:
         "200":
           description: Recent conversations without message bodies
@@ -401,7 +492,7 @@ paths:
         These tasks make the Studio assistant run a user-written prompt on an
         interval, scoped to one Studio project. They persist in MySQL
         `assistant_tasks` and are not TAPD/Gongfeng SOP schedule jobs. Each run
-        starts a fresh CodeBuddy session and does not resume the previous run.
+        starts a fresh session on the selected CLI.
         During execution the server may invoke that project's HTTP MCP servers
         (for example TAPD) on the model's `mcpCalls`.
       parameters:
@@ -434,7 +525,7 @@ paths:
                 intervalSec: {type: integer, minimum: 60, description: Used when cron is empty. Minimum 60 seconds.}
                 cron: {type: string, description: Optional 5-field cron (minute hour day month weekday) in Asia/Shanghai. When set, intervalSec is ignored.}
                 enabled: {type: boolean}
-                model: {type: string, description: CodeBuddy model id used when the task runs}
+                model: {type: string, description: Model ID on the selected CLI. Prefix non-CodeBuddy models with the CLI ID.}
                 projectId: {type: string, description: Studio project that owns this assistant task}
       responses:
         "200":
@@ -659,7 +750,8 @@ paths:
     put:
       tags: [Users]
       operationId: updateOwnCredentials
-      summary: Update credentials for the current authenticated user
+      summary: Update model credentials for the current authenticated user
+      description: Git access tokens are managed through /api/users/{id}/git-http-credentials.
       parameters:
         - name: id
           in: path
@@ -672,10 +764,11 @@ paths:
             schema:
               type: object
               properties:
-                gitToken: {type: string, writeOnly: true}
-                gitTokenClear: {type: boolean}
+                assistantDefaults:
+                  $ref: "#/components/schemas/AssistantDefaults"
                 codeBuddyApiKey: {type: string, writeOnly: true}
                 codeBuddyApiKeyClear: {type: boolean}
+                codeBuddyBaseUrl: {type: string, description: "HTTP(S) CodeBuddy gateway base URL. Omitted preserves the value; empty uses the official endpoint for the selected edition."}
                 codeBuddyInternetEnvironment: {type: string, description: "Edition that issued the CodeBuddy key: empty for International, \"internal\" for China, \"ioa\" for iOA (\"public\" and \"China\" are also accepted). Any other value is rejected with 400."}
                 codexApiKey: {type: string, writeOnly: true, description: "Blank preserves the stored key."}
                 codexApiKeyClear: {type: boolean}
@@ -818,6 +911,136 @@ paths:
             application/json:
               schema: {$ref: "#/components/schemas/PlatformCodeBuddyKey"}
         "403": {description: Platform administrator access or same-origin request required}
+  /api/platform/git-ssh-hosts:
+    get:
+      tags: [Repositories]
+      operationId: listPlatformGitSSHHosts
+      summary: List Git SSH host keys registered by platform administrators
+      responses:
+        "200":
+          description: Platform registrations
+          content:
+            application/json:
+              schema: {type: array, items: {$ref: "#/components/schemas/PlatformGitSSHHost"}}
+        "403": {$ref: "#/components/responses/Forbidden"}
+    post:
+      tags: [Repositories]
+      operationId: createPlatformGitSSHHost
+      summary: Register a verified Git SSH host for the whole platform
+      description: Platform administrators only. Browser requests must be same-origin.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/PlatformGitSSHHost"}
+      responses:
+        "201":
+          description: Saved registration
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/PlatformGitSSHHost"}
+        "400": {description: Invalid SSH host or public keys}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "409": {description: The host and port are already registered}
+    delete:
+      tags: [Repositories]
+      operationId: deleteStoredPlatformGitSSHHost
+      summary: Remove a Git SSH host registration by its stored hostname
+      description: Platform administrators can remove a record marked invalid in the list by supplying its stored hostname and revision. Browser requests must be same-origin.
+      parameters:
+        - name: host
+          in: query
+          required: true
+          allowEmptyValue: true
+          schema: {type: string}
+          description: The host field as returned by the list, including any invalid characters in a corrupt record.
+        - name: If-Match
+          in: header
+          required: true
+          schema: {type: string}
+          description: Quote the revision returned when the registration was read.
+      responses:
+        "204": {description: Registration removed}
+        "400": {description: Invalid host parameter or revision}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "412": {description: The registration has changed or been removed}
+        "428": {description: The current registration revision is required}
+  /api/platform/git-ssh-hosts/preview:
+    post:
+      tags: [Repositories]
+      operationId: previewPlatformGitSSHHost
+      summary: Read SHA256 fingerprints for proposed Git SSH host keys
+      description: Platform administrators can preview supplied keys or read a single key presented by an SSH host. Preview leaves the registry unchanged. Verify the fingerprint with the Git provider before saving the returned public key.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: "#/components/schemas/PlatformGitSSHHost"
+                - type: object
+                  required: [host, probe]
+                  properties:
+                    host: {type: string, example: "git.example.org:2222"}
+                    probe:
+                      type: object
+                      properties:
+                        runnerId: {type: string, description: Use an online Runner owned by the requesting administrator. Omit to use the platform server.}
+      responses:
+        "200":
+          description: Normalized host, public keys, and proposed fingerprints
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/PlatformGitSSHHost"}
+        "400": {description: Invalid host or keys or multiple preview sources}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {description: Runner not found}
+        "409": {description: Runner cannot read an SSH host public key at this time}
+        "502": {description: Unable to read a valid public key from the SSH host}
+        "503": {description: Runner unavailable}
+        "504": {description: Runner did not respond in time}
+  /api/platform/git-ssh-hosts/{host}:
+    parameters:
+      - {name: host, in: path, required: true, schema: {type: string}, example: "git.example.org:2222"}
+      - name: If-Match
+        in: header
+        required: true
+        schema: {type: string}
+        description: Quote the revision returned when the registration was read or saved.
+    put:
+      tags: [Repositories]
+      operationId: updatePlatformGitSSHHost
+      summary: Replace the keys of a registered Git SSH host
+      description: Platform administrators only. Browser requests must be same-origin.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [publicKeys]
+              properties:
+                publicKeys: {type: string, description: One OpenSSH public key per line.}
+      responses:
+        "200":
+          description: Updated registration
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/PlatformGitSSHHost"}
+        "400": {description: Invalid SSH host or public keys}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "412": {description: The registration has changed or been removed}
+        "428": {description: The current registration revision is required}
+    delete:
+      tags: [Repositories]
+      operationId: deletePlatformGitSSHHost
+      summary: Remove a platform Git SSH host registration
+      description: Platform administrators only. Browser requests must be same-origin.
+      responses:
+        "204": {description: Registration removed}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "412": {description: The registration has changed or been removed}
+        "428": {description: The current registration revision is required}
   /api/business-domains:
     get:
       tags: [BusinessDomains]
@@ -1295,6 +1518,28 @@ paths:
           $ref: "#/components/responses/RunList"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/issues/{issueId}/clarify-models:
+    parameters:
+      - $ref: "#/components/parameters/IssueId"
+    get:
+      tags: [Issues]
+      operationId: listIssueClarificationModels
+      description: List model choices for the issue assignee or project owner who runs the clarification. Requires project write access.
+      responses:
+        "200":
+          description: Executors and models available for issue clarification
+          content:
+            application/json:
+              schema:
+                $ref: "#/paths/~1api~1assistant~1models/get/responses/200/content/application~1json/schema"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
   /api/issues/{issueId}/chat-clarify:
@@ -2917,6 +3162,7 @@ paths:
     post:
       tags: [Runs]
       operationId: startRunEval
+      description: Evaluates a finished run using the requesting account's personal CLI credentials.
       requestBody:
         required: false
         content:
@@ -3294,143 +3540,116 @@ paths:
           $ref: "#/components/responses/NotFound"
         "409":
           $ref: "#/components/responses/Conflict"
-  /api/page-feedback:
+  /api/schedule-jobs/{jobId}/enabled:
+    parameters:
+      - $ref: "#/components/parameters/JobId"
     post:
-      tags: [Feedback]
-      operationId: submitPageFeedback
+      tags: [Scheduling]
+      operationId: setScheduleJobEnabled
       description: |
-        Submits a report from the floating page feedback widget. The report is
-        stored in its own table and is not linked to any project or issue.
-        Only a signed-in, non-guest browser session may submit: guests, expired
-        sessions and anonymous callers get 401 {"error":"请先登录"}; requests
-        carrying an Authorization Bearer header (personal API token) are
-        refused with 401 as well. The submitter (userId, loginName = RTX, chineseName snapshot falling back to
-        loginName) is always taken from the session; submitter fields in the
-        payload are ignored. Images are sniffed by content and must be PNG,
-        JPEG, GIF or WebP; at most 5 images of 5MB each, 27MB request body.
-        Sensitive query parameters (token, code, ticket, session, key, secret,
-        password…) are removed from url and frameUrl before storage.
-      security:
-        - cookieAuth: []
+        Starts or stops the job's schedule. Only `enabled` changes: the prompt,
+        key binding (runAsUserId) and session mode stay as saved, and a run in
+        progress finishes either way. Requires write access to the job's project.
       requestBody:
         required: true
         content:
-          multipart/form-data:
+          application/json:
             schema:
               type: object
-              required: [payload]
+              required: [enabled]
               properties:
-                payload:
-                  type: string
-                  description: JSON-encoded PageFeedbackPayload
-                images:
-                  type: array
-                  maxItems: 5
-                  items: {type: string, format: binary}
-            encoding:
-              payload:
-                contentType: application/json
+                enabled: { type: boolean }
       responses:
-        "201":
-          description: Stored feedback
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/PageFeedback"
+        "200":
+          $ref: "#/components/responses/ScheduleJob"
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
-        "413":
-          description: Request body exceeds 27MB
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/schedule-job-executions:
+    get:
+      tags: [Scheduling]
+      operationId: listScheduleJobExecutions
+      description: |
+        Execution history of the schedule jobs the caller may read, newest first.
+      parameters:
+        - { name: projectId, in: query, schema: { type: string } }
+        - { name: jobId, in: query, schema: { type: string } }
+        - { name: status, in: query, schema: { type: string, enum: [running, success, failed, waiting] } }
+        - { name: traceId, in: query, schema: { type: string } }
+        - { name: limit, in: query, schema: { type: integer, default: 100, maximum: 500 } }
+      responses:
+        "200":
+          description: Executions
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Error"
+                type: array
+                items:
+                  $ref: "#/components/schemas/ScheduleJobExecution"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: jobId belongs to a project the caller cannot read
+  /api/schedule-job-executions/dashboard:
     get:
-      tags: [Feedback]
-      operationId: listPageFeedback
+      tags: [Scheduling]
+      operationId: scheduleJobExecutionDashboard
       description: |
-        Lists every report newest first. Any signed-in employee may read all
-        reports, using the browser session or a personal API token (Bearer).
-        Guests get 401. Images carry metadata and a download url only.
+        One page of a project's execution dashboard, filtered, counted and paged on the server.
+        `total` counts the executions matching the filters. `overview` follows the job filter
+        only and compares the last 7×24 hours (the current hour included) with the 7×24 hours
+        before, counted by the hour an execution started. Finished executions come from hourly
+        statistics kept 30 days, independent of the 200 executions a job keeps; running ones
+        are counted from the history. `records` and `recentFailed` cover the whole project.
       parameters:
-        - name: limit
-          in: query
-          schema: {type: integer, minimum: 1, maximum: 100, default: 20}
-        - name: offset
-          in: query
-          schema: {type: integer, minimum: 0, default: 0}
+        - { name: projectId, in: query, required: true, schema: { type: string } }
+        - { name: jobId, in: query, schema: { type: string } }
+        - { name: status, in: query, schema: { type: string, enum: [running, success, failed, waiting] } }
+        - { name: since, in: query, description: Only executions started at or after this time, schema: { type: string, format: date-time } }
+        - { name: q, in: query, description: Case-insensitive search in job name and ID, trace ID, error, AI reply and dispatched runs, schema: { type: string } }
+        - { name: offset, in: query, schema: { type: integer, default: 0 } }
+        - { name: limit, in: query, schema: { type: integer, default: 20, maximum: 100 } }
       responses:
         "200":
-          description: Page of feedback
+          description: Dashboard page
           content:
             application/json:
               schema:
                 type: object
-                required: [items, total, offset, limit, hasMore]
                 properties:
                   items:
                     type: array
                     items:
-                      $ref: "#/components/schemas/PageFeedback"
-                  total: {type: integer, format: int64}
-                  offset: {type: integer}
-                  limit: {type: integer}
-                  hasMore: {type: boolean}
+                      $ref: "#/components/schemas/ScheduleJobExecution"
+                  total:
+                    type: integer
+                  overview:
+                    type: object
+                    properties:
+                      current:
+                        $ref: "#/components/schemas/ScheduleExecutionWindow"
+                      previous:
+                        $ref: "#/components/schemas/ScheduleExecutionWindow"
+                      since:
+                        type: string
+                        format: date-time
+                  records:
+                    type: integer
+                    description: Executions kept for the project
+                  recentFailed:
+                    type: integer
+                    description: Failed executions of the project in the current window
+        "400":
+          description: projectId missing or since is not RFC 3339
         "401":
           $ref: "#/components/responses/Unauthorized"
-  /api/page-feedback/{id}:
-    parameters:
-      - name: id
-        in: path
-        required: true
-        schema: {type: string}
-    get:
-      tags: [Feedback]
-      operationId: getPageFeedback
-      description: One report with its submitter. Session cookie or personal API token; guests get 401.
-      responses:
-        "200":
-          description: Feedback
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/PageFeedback"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "404":
-          $ref: "#/components/responses/NotFound"
-  /api/page-feedback/{id}/images/{imageId}:
-    parameters:
-      - name: id
-        in: path
-        required: true
-        schema: {type: string}
-      - name: imageId
-        in: path
-        required: true
-        schema: {type: string}
-    get:
-      tags: [Feedback]
-      operationId: getPageFeedbackImage
-      description: |
-        Image bytes served inline with the stored content type,
-        X-Content-Type-Options nosniff and Content-Security-Policy
-        default-src 'none'. 404 when the image does not belong to the report.
-        Session cookie or personal API token; guests get 401.
-      responses:
-        "200":
-          description: Image
-          content:
-            image/png: {}
-            image/jpeg: {}
-            image/gif: {}
-            image/webp: {}
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "404":
-          $ref: "#/components/responses/NotFound"
+        "403":
+          description: jobId belongs to a project the caller cannot read
   /api/shared-schedule-tasks:
     get:
       tags: [Scheduling]
@@ -3868,6 +4087,13 @@ components:
             items:
               $ref: "#/components/schemas/ScheduleJob"
   schemas:
+    AssistantDefaults:
+      type: object
+      properties:
+        executor: {type: string, description: A configured personal executor.}
+        model: {type: string, description: Concrete model ID on the executor.}
+        effort: {type: string, description: The selected model's reasoning effort.}
+        approval: {type: string, enum: [confirm, assisted, auto], description: Initial confirmation mode for new conversations.}
     OpenObject:
       type: object
       additionalProperties: true
@@ -3973,91 +4199,6 @@ components:
         expiresAt: {type: string, format: date-time}
         createdAt: {type: string, format: date-time}
         revokedAt: {type: string, format: date-time}
-    PageFeedbackPayload:
-      type: object
-      description: Unknown fields, including any submitter fields, are ignored.
-      required: [title]
-      properties:
-        title: {type: string, minLength: 1, maxLength: 120, description: First line of the user's text}
-        description: {type: string, maxLength: 5000, description: Full text}
-        url: {type: string, maxLength: 2048}
-        route: {type: string, description: Hash route}
-        view: {type: string}
-        frameUrl: {type: string, maxLength: 2048, description: Workbench iframe location}
-        context:
-          $ref: "#/components/schemas/PageFeedbackContext"
-        element:
-          $ref: "#/components/schemas/PageFeedbackElement"
-    PageFeedbackContext:
-      type: object
-      properties:
-        scroll: {$ref: "#/components/schemas/PageFeedbackPoint"}
-        viewport:
-          type: object
-          properties:
-            width: {type: number}
-            height: {type: number}
-        dpr: {type: number}
-        userAgent: {type: string}
-        language: {type: string}
-        theme: {type: string}
-        capturedAt: {type: string}
-    PageFeedbackPoint:
-      type: object
-      properties:
-        x: {type: number}
-        y: {type: number}
-    PageFeedbackRect:
-      type: object
-      properties:
-        x: {type: number}
-        y: {type: number}
-        width: {type: number}
-        height: {type: number}
-    PageFeedbackElement:
-      type: object
-      properties:
-        selector: {type: string}
-        tag: {type: string}
-        text: {type: string, maxLength: 200}
-        rect: {$ref: "#/components/schemas/PageFeedbackRect"}
-        pageRect: {$ref: "#/components/schemas/PageFeedbackRect"}
-        point: {$ref: "#/components/schemas/PageFeedbackPoint"}
-        inFrame: {type: boolean}
-    PageFeedback:
-      type: object
-      required: [id, title, url, route, context, submitter, images, createdAt]
-      properties:
-        id: {type: string}
-        title: {type: string}
-        description: {type: string}
-        url: {type: string}
-        route: {type: string}
-        view: {type: string}
-        frameUrl: {type: string}
-        context: {$ref: "#/components/schemas/PageFeedbackContext"}
-        element: {$ref: "#/components/schemas/PageFeedbackElement"}
-        submitter:
-          type: object
-          required: [userId, loginName, chineseName]
-          properties:
-            userId: {type: integer, format: int64}
-            loginName: {type: string, description: Employee RTX}
-            chineseName: {type: string, description: Snapshot at submit time; RTX when empty}
-        images:
-          type: array
-          items:
-            type: object
-            properties:
-              id: {type: string}
-              position: {type: integer}
-              fileName: {type: string}
-              mimeType: {type: string}
-              size: {type: integer, format: int64}
-              sha256: {type: string}
-              url: {type: string}
-              createdAt: {type: string, format: date-time}
-        createdAt: {type: string, format: date-time}
     Error:
       type: object
       required: [error]
@@ -4218,6 +4359,19 @@ components:
         password: {type: boolean, description: False for accounts that sign in through GitHub or a gateway}
         codeBuddyApiKeyConfigured: {type: boolean}
         createdAt: {type: string, format: date-time}
+    PlatformGitSSHHost:
+      type: object
+      required: [host, publicKeys]
+      properties:
+        host: {type: string, example: "git.example.org:2222"}
+        publicKeys: {type: string, description: One OpenSSH public key per line.}
+        fingerprints:
+          type: array
+          readOnly: true
+          items: {type: string}
+        invalid: {type: boolean, readOnly: true, description: Set on a stored record with an invalid hostname or public keys. The list omits its key contents.}
+        invalidHost: {type: boolean, readOnly: true, description: The stored hostname does not identify a canonical SSH endpoint. Remove this record before registering the correct host.}
+        revision: {type: string, readOnly: true, description: Opaque revision for conditional updates and removals.}
     PlatformCodeBuddyKey:
       type: object
       properties:
@@ -4249,8 +4403,9 @@ components:
         deptId: {type: integer}
         deptName: {type: string}
         avatarUrl: {type: string}
-        gitTokenConfigured: {type: boolean, readOnly: true}
+        gitHubCredentialConfigured: {type: boolean, readOnly: true}
         codeBuddyApiKeyConfigured: {type: boolean, readOnly: true}
+        codeBuddyBaseUrl: {type: string}
         codexApiKeyConfigured: {type: boolean, readOnly: true}
         codexBaseUrl: {type: string}
         claudeCodeApiKeyConfigured: {type: boolean, readOnly: true}
@@ -4289,7 +4444,7 @@ components:
           type: string
         provider:
           type: string
-          description: GitHub for public repositories; inferred from the repository URL
+          description: "Inferred from the repository URL: github, gongfeng, https, or ssh. Unknown HTTPS hosts use Git transport without a hosting API adapter."
           example: github
         name:
           type: string
@@ -4304,12 +4459,6 @@ components:
           type: string
         localPath:
           type: string
-        gitToken:
-          type: string
-          writeOnly: true
-        gitTokenConfigured:
-          type: boolean
-          readOnly: true
         pipelineProjectId:
           type: integer
         pipelineDefId:
@@ -5234,14 +5383,37 @@ components:
           description: Optional 5-field cron (minute hour day month weekday) in Asia/Shanghai. When set, intervalSec is ignored.
         assistantPrompt:
           type: string
-          description: User-written CodeBuddy prompt executed at schedule time. Required for independent AI jobs; subscriptions resolve their pinned shared version instead. Cleared on trigger jobs.
+          description: User-written prompt executed at schedule time. Required for independent AI jobs. Subscriptions resolve their pinned shared version. Cleared on trigger jobs.
         assistantModel:
           type: string
-          description: CodeBuddy model id from GET /api/assistant/models.
+          description: Model id from GET /api/assistant/models?schedule=1.
+        timeoutMinutes:
+          type: integer
+          minimum: 0
+          maximum: 240
+          default: 30
+          description: AI jobs only. Minutes allowed for each execution, including tool calls and waits. Omitted or 0 uses 30. Expiry stops the AI turn and records a failed execution. Dispatched SOPs continue independently.
         ownerUserId:
           type: integer
           format: int64
-          description: Project owner whose CodeBuddy key runs assistantPrompt
+          description: Project owner recorded for jobs saved without a run-as identity.
+        runAsUserId:
+          type: integer
+          format: int64
+          readOnly: true
+          description: User bound by the server to the last saver. Codex and Claude Code use configured account login on their online default personal Runner. Other configurations and offline Runners use the saver's personal API Key. CodeBuddy can use the shared key for allowed models if the personal key is missing. A bound user must retain write access to the project. Zero uses legacy owner selection.
+        runAsName:
+          type: string
+          readOnly: true
+          description: Display name of runAsUserId.
+        sessionMode:
+          type: string
+          enum: ["", fixed]
+          description: AI jobs only. Empty opens a new Studio conversation per execution; "fixed" keeps continuing one pinned conversation (fixedSessionId, server-managed).
+        sessionKeep:
+          type: integer
+          enum: [10, 50, 100, -1]
+          description: AI jobs that open a conversation per execution keep only their newest sessionKeep conversations; older ones are deleted after each execution (the execution records stay). -1 keeps all. Omitted or 0 saves the default 50; other values are rejected with 400. Ignored in fixed mode.
         lastRunAt:
           type: string
           format: date-time
@@ -5264,6 +5436,10 @@ components:
         lastAssistantMessage:
           type: string
           readOnly: true
+        lastTraceId:
+          type: string
+          description: Trace ID of the latest execution; matches ScheduleJobExecution.traceId and the scheduler log lines.
+          readOnly: true
         createdAt:
           type: string
           format: date-time
@@ -5272,6 +5448,98 @@ components:
           type: string
           format: date-time
           readOnly: true
+    ScheduleExecutionWindow:
+      type: object
+      description: Executions started in one window. total = finished + running; avgMs averages finished executions with a duration.
+      properties:
+        total: { type: integer }
+        finished: { type: integer }
+        success: { type: integer }
+        failed: { type: integer }
+        running: { type: integer }
+        avgMs: { type: integer, format: int64 }
+        metered:
+          type: integer
+          description: Finished executions that reported usage; missing usage is not counted as zero.
+        tokens:
+          type: object
+          description: Sum of each execution's reported total (or input plus output); cache details are not added again.
+          properties:
+            total: { type: integer, format: int64 }
+            input: { type: integer, format: int64 }
+            output: { type: integer, format: int64 }
+            cacheRead: { type: integer, format: int64 }
+            cacheWrite: { type: integer, format: int64 }
+        avgTokens: { type: integer, format: int64, description: Average tokens over metered executions only. }
+        priced: { type: integer, description: Executions whose cost could be estimated. }
+        costCny: { type: number, format: double, description: Sum of estimated costs in CNY. }
+    ScheduleJobExecution:
+      type: object
+      description: One execution of a schedule job. Each job keeps its latest 200 executions.
+      properties:
+        id:
+          type: string
+        jobId:
+          type: string
+        jobName:
+          type: string
+        jobKind:
+          type: string
+          enum: [assistant, trigger]
+        projectId:
+          type: string
+        traceId:
+          type: string
+          description: 32-hex trace ID, also written to every scheduler log line of this execution.
+        triggerOrigin:
+          type: string
+          enum: [timer, manual_run]
+        status:
+          type: string
+          enum: [running, success, failed, waiting]
+        error:
+          type: string
+        pulled:
+          type: integer
+        dispatched:
+          type: integer
+        assistantMessage:
+          type: string
+        model:
+          type: string
+          description: Model used by this execution's AI generation.
+        usage:
+          $ref: "#/components/schemas/TokenUsage"
+          description: Optional usage for this execution including retries and usage before failure, excluding prior turns and downstream SOPs. Absence means unreported.
+        costCny:
+          type: number
+          format: double
+          description: Optional estimated cost in CNY, only present when pricing is known.
+        sessionId:
+          type: string
+          description: Studio conversation an AI execution ran in.
+        sessionGone:
+          type: boolean
+          description: Computed on each read, never stored. True when sessionId names a conversation that no longer exists (trimmed by the job's sessionKeep or the retention period, or deleted by hand). Running executions are never marked.
+        runs:
+          type: array
+          items:
+            type: object
+            properties:
+              issueId:
+                type: string
+              issueTitle:
+                type: string
+              runId:
+                type: string
+        startedAt:
+          type: string
+          format: date-time
+        finishedAt:
+          type: string
+          format: date-time
+        durationMs:
+          type: integer
     WorkflowMetrics:
       type: object
       additionalProperties: true

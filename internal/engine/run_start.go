@@ -96,7 +96,11 @@ func (e *Engine) startWorkflowDefinitionSeeded(wf domain.WorkflowDefinition, inp
 		}
 	}
 	wf = defaultWorkflowSandboxProfile(wf)
-	wf, err := domain.AttachPreviewBuild(wf)
+	wf, err := configureBaselineAlignCLI(wf)
+	if err != nil {
+		return domain.Run{}, err
+	}
+	wf, err = domain.AttachPreviewBuild(wf)
 	if err != nil {
 		return domain.Run{}, err
 	}
@@ -107,12 +111,22 @@ func (e *Engine) startWorkflowDefinitionSeeded(wf domain.WorkflowDefinition, inp
 	if !ok {
 		return domain.Run{}, fmt.Errorf("sandbox profile %q not found", wf.SandboxProfileID)
 	}
-	if workspace && (profile.Driver != "docker" || profile.DockerfileID == "" || !(profile.ProjectID == executionContext.ProjectID || profile.Shared)) {
-		return domain.Run{}, fmt.Errorf("对话工作区必须选择本项目或共享的 Docker 沙箱")
+	if workspace {
+		if _, err := e.repo.ConversationSandbox(executionContext.ProjectID, profile.ID); err != nil {
+			return domain.Run{}, err
+		}
 	}
 	resources, err := resolveSandboxResources(e.repo, profile)
 	if err != nil {
 		return domain.Run{}, err
+	}
+	e.selectSOPExecutionTarget(&executionContext)
+	wf.ExecutorDefaults = nil
+	if executionContext.ResponsibleUserID > 0 {
+		wf.ExecutorDefaults, _, err = e.planSOPExecutors(wf, executionContext, false)
+		if err != nil {
+			return domain.Run{}, err
+		}
 	}
 	if _, err := workflowSandboxRequirements(e.repo, wf); err != nil {
 		return domain.Run{}, err
@@ -133,25 +147,6 @@ func (e *Engine) startWorkflowDefinitionSeeded(wf domain.WorkflowDefinition, inp
 		firstRepository = repositories[0]
 	}
 	executionContext.RunID, executionContext.TraceID, executionContext.WorkflowID, executionContext.WorkflowVersion = id, id, workflowID, wf.Version
-	if executionContext.ParentRunID == "" && !executionContext.ExecutionPinned {
-		executionContext.ExecutionRunnerID = e.repo.DefaultRunner(executionContext.ResponsibleUserID)
-		executionContext.WorkspaceRunID = ""
-	}
-	if executionContext.ExecutionRunnerID == "" && !executionContext.ExecutionPinned {
-		if runner, ok := e.cloudPoolRunner(executionContext.ProjectID); ok {
-			executionContext.ExecutionRunnerID = runner.ID
-			executionContext.ExecutionPool = domain.ExecutionModeCloud
-		} else if e.cloudPoolRequired(executionContext.ProjectID) {
-			// The first node binds a pool runner once one is online.
-			executionContext.ExecutionPool = domain.ExecutionModeCloud
-		}
-	}
-	if executionContext.ExecutionRunnerID != "" || executionContext.ExecutionPool == domain.ExecutionModeCloud {
-		executionContext.ExecutionMode = domain.ExecutionModeRunner
-		executionContext.RunnerWorkspaceLayout = domain.RunnerWorkspaceLayoutShared
-	} else {
-		executionContext.ExecutionMode = domain.ExecutionModeCloud
-	}
 	if err := e.requireWorkBranchCapabilities(executionContext.ExecutionRunnerID, repositories); err != nil {
 		return domain.Run{}, err
 	}
@@ -224,6 +219,28 @@ func (e *Engine) startWorkflowDefinitionSeeded(wf domain.WorkflowDefinition, inp
 	}
 	go e.execute(ctx, id)
 	return r, nil
+}
+
+func (e *Engine) selectSOPExecutionTarget(executionContext *domain.TelemetryContext) {
+	if executionContext.ParentRunID == "" && !executionContext.ExecutionPinned {
+		executionContext.ExecutionRunnerID = e.repo.DefaultRunner(executionContext.ResponsibleUserID)
+		executionContext.WorkspaceRunID = ""
+	}
+	if executionContext.ExecutionRunnerID == "" && !executionContext.ExecutionPinned {
+		if runner, ok := e.cloudPoolRunner(executionContext.ProjectID); ok {
+			executionContext.ExecutionRunnerID = runner.ID
+			executionContext.ExecutionPool = domain.ExecutionModeCloud
+		} else if e.cloudPoolRequired(executionContext.ProjectID) {
+			// The first node binds a pool runner once one is online.
+			executionContext.ExecutionPool = domain.ExecutionModeCloud
+		}
+	}
+	if executionContext.ExecutionRunnerID != "" || executionContext.ExecutionPool == domain.ExecutionModeCloud {
+		executionContext.ExecutionMode = domain.ExecutionModeRunner
+		executionContext.RunnerWorkspaceLayout = domain.RunnerWorkspaceLayoutShared
+	} else {
+		executionContext.ExecutionMode = domain.ExecutionModeCloud
+	}
 }
 
 func (e *Engine) executes() bool {

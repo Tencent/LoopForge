@@ -139,13 +139,16 @@ func approvalReviewInput(req assistantRequest, user domain.User) assistantApprov
 
 func (h *assistantHandlers) approvalReviewer(req assistantRequest, user domain.User, notify func(assistantStreamEvent)) assistantApprovalReviewer {
 	input := approvalReviewInput(req, user)
-	var catalog assistantModelCatalog
-	if h.reviewCatalog != nil {
-		catalog = h.reviewCatalog(user.CodeBuddyInternetEnvironment)
+	selected := assistantRequestModel(req.Executor, req.Model)
+	engine, _ := assistantModelEngine(selected)
+	var models []string
+	if engine != assistantEngineCodeBuddy || user.CodeBuddyBaseURL != "" || (req.RequireExactModel && selected != "") {
+		models = []string{selected}
+	} else if h.reviewCatalog != nil {
+		models = assistantApprovalReviewModels(h.reviewCatalog(user.CodeBuddyInternetEnvironment))
 	} else {
-		catalog = h.chatCatalog(context.Background(), user)
+		models = assistantApprovalReviewModels(h.chatCatalog(context.Background(), user))
 	}
-	models := assistantApprovalReviewModels(catalog)
 	var modelMu sync.Mutex
 	primaryUnavailable := false
 	return func(ctx context.Context, tool, description string, args map[string]any) assistantApprovalReview {
@@ -194,9 +197,12 @@ func (h *assistantHandlers) approvalReviewer(req assistantRequest, user domain.U
 			result = assistantApprovalReview{Outcome: "unavailable", Rationale: "自动审批已取消或超时，请手动确认后执行"}
 		}
 		if notify != nil {
-			state := "待确认"
-			if result.allows() {
+			state := "未通过"
+			switch {
+			case result.allows():
 				state = "已批准"
+			case result.Outcome != "allow" && result.Outcome != "deny":
+				state = "审查不可用"
 			}
 			notify(assistantStreamEvent{Kind: "status", Text: "帮我批准：" + state, Detail: result.Model + " · " + result.Rationale})
 		}
@@ -205,7 +211,10 @@ func (h *assistantHandlers) approvalReviewer(req assistantRequest, user domain.U
 }
 
 func runAssistantApprovalReview(ctx context.Context, input assistantApprovalInput, user domain.User, model string) (assistantApprovalReview, error) {
-	if model == "" || strings.TrimSpace(user.CodeBuddyAPIKey) == "" {
+	engine, _ := assistantModelEngine(model)
+	key, _ := assistantEngineCredential(user, engine)
+	_, login := helperCLIExecution(ctx, "", user.ID, engine)
+	if model == "" || key == "" && !login {
 		return assistantApprovalReview{}, fmt.Errorf("review model or credential unavailable")
 	}
 	root, err := os.MkdirTemp("", "agentflow-approval-review-")

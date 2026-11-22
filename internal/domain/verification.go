@@ -70,18 +70,27 @@ func uniqueGateID(base string, used map[string]bool) string {
 	}
 }
 
+// VerificationModeMR gates pass only when, for every repository whose pushed
+// work branch carries new commits, the hosting platform has an MR from that
+// work branch into the run's target branch that carries the pushed tip. The
+// engine runs the check; the gate has no commands.
+const VerificationModeMR = "mr"
+
 // ValidateVerificationGate requires command gates to declare run or repositories.
-// Manual gates and empty command lists may omit the field.
+// Manual and MR gates and empty command lists may omit the field.
 func ValidateVerificationGate(gate VerificationGate) error {
 	mode := gateMode(gate)
 	switch mode {
-	case "", "command", "manual":
+	case "", "command", "manual", VerificationModeMR:
 	default:
 		return fmt.Errorf("verification gate %s has invalid mode %q", gate.ID, gate.Mode)
 	}
 	scope := strings.TrimSpace(gate.ExecutionScope)
 	if scope != "" && scope != ExecutionScopeRun && scope != ExecutionScopeRepositories {
 		return fmt.Errorf("verification gate %s has invalid executionScope %q", gate.ID, gate.ExecutionScope)
+	}
+	if mode == VerificationModeMR && commandHasContent(gate) {
+		return fmt.Errorf("verification gate %s: mode %q takes no commands", gate.ID, VerificationModeMR)
 	}
 	if mode == "manual" || !commandHasContent(gate) {
 		return nil

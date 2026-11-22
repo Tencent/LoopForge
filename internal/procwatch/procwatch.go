@@ -66,6 +66,9 @@ type Options struct {
 	TimeoutEnv string
 	// Redact scrubs secrets from every line before it is kept or reported.
 	Redact func(string) string
+	// OnLine receives each nonempty line after redaction, independently of
+	// the throttled progress events. The callback should return promptly.
+	OnLine func(string)
 }
 
 const (
@@ -95,6 +98,9 @@ func Run(ctx context.Context, build func(context.Context) *exec.Cmd, opts Option
 	started := time.Now()
 	out := &lineWriter{redact: opts.Redact, last: started}
 	out.onLine = func(line string, now time.Time) {
+		if opts.OnLine != nil {
+			opts.OnLine(line)
+		}
 		if now.Sub(out.lastEmit) < progressEvery {
 			return
 		}

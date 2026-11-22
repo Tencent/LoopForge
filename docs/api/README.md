@@ -128,6 +128,7 @@ curl -H "Authorization: Bearer $AGENTFLOW_TOKEN" "$AGENTFLOW_URL/api/health"
 | `GET`, `POST` | `/api/runs` |
 | `GET`, `DELETE` | `/api/runs/{runId}` |
 | `GET` | `/api/runs/{runId}/stream` |
+| `GET` | `/api/runs/{runId}/wait` |
 | `GET` | `/api/runs/{runId}/logs` |
 | `GET` | `/api/runs/{runId}/logs.txt` |
 | `GET` | `/api/runs/{runId}/telemetry` |
@@ -142,6 +143,8 @@ curl -H "Authorization: Bearer $AGENTFLOW_TOKEN" "$AGENTFLOW_URL/api/health"
 | `GET`, `POST`, `PUT` | `/api/schedule-jobs` |
 | `DELETE` | `/api/schedule-jobs/{id}` |
 | `POST` | `/api/schedule-jobs/{id}/run` |
+| `POST` | `/api/schedule-jobs/{id}/enabled` |
+| `GET` | `/api/schedule-job-executions` |
 
 ### 同步
 

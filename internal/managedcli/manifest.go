@@ -18,13 +18,14 @@ import (
 
 var releaseVersion = regexp.MustCompile(`^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$`)
 
-// Installation points at one immutable, version-specific npm installation.
+// Installation points at an immutable version-specific CLI installation.
 // Authentication/configuration homes are deliberately not part of this record.
 type Installation struct {
-	Version     string    `json:"version"`
-	Binary      string    `json:"binary"`
-	Integrity   string    `json:"integrity,omitempty"`
-	InstalledAt time.Time `json:"installedAt,omitempty"`
+	Version     string     `json:"version"`
+	Binary      string     `json:"binary"`
+	Integrity   string     `json:"integrity,omitempty"`
+	PublishedAt *time.Time `json:"publishedAt,omitempty"`
+	InstalledAt time.Time  `json:"installedAt,omitempty"`
 }
 
 type Inventory map[string]Installation
@@ -35,12 +36,13 @@ func (i Inventory) BinaryFor(provider string) (string, bool) {
 }
 
 type State struct {
-	LastCheck  time.Time         `json:"lastCheck"`
-	Candidates Inventory         `json:"candidates"`
-	Current    Inventory         `json:"current"`
-	Previous   Inventory         `json:"previous"`
-	Rejected   map[string]string `json:"rejected,omitempty"`
-	UpdatedAt  time.Time         `json:"updatedAt,omitempty"`
+	LastCheck          time.Time                      `json:"lastCheck"`
+	Candidates         Inventory                      `json:"candidates"`
+	Current            Inventory                      `json:"current"`
+	Previous           Inventory                      `json:"previous"`
+	Rejected           map[string]string              `json:"rejected,omitempty"`
+	VendorObservations map[string][]vendorObservation `json:"vendorObservations,omitempty"`
+	UpdatedAt          time.Time                      `json:"updatedAt,omitempty"`
 }
 
 // State and its rollback pointers are committed in one atomic rename.
@@ -63,6 +65,9 @@ func ReadState(root string) (State, error) {
 	if state.Rejected == nil {
 		state.Rejected = map[string]string{}
 	}
+	if state.VendorObservations == nil {
+		state.VendorObservations = map[string][]vendorObservation{}
+	}
 	if err := validateInventory(root, state.Current); err != nil {
 		return State{}, fmt.Errorf("current inventory: %w", err)
 	}
@@ -74,8 +79,8 @@ func ReadInventory(root string) (Inventory, error) {
 	return state.Current, err
 }
 
-// PinInventory fixes the complete inventory for a run, including an empty one
-// before initial provisioning. Pins live outside agent-controlled workspaces.
+// PinInventory fixes the complete inventory for a run in this root, including
+// an empty one before provisioning. Pins live outside agent-controlled workspaces.
 // Publishing via link makes concurrent first claims observe a complete file.
 // Old versions and pins are not automatically deleted: suspended/resumable runs
 // may still reference them after the runner or updater restarts.
@@ -161,10 +166,10 @@ func validateInventory(root string, inventory Inventory) error {
 		return errors.New("managed CLI inventory must be a JSON object")
 	}
 	for provider, installed := range inventory {
-		if _, ok := providerSpecs[provider]; !ok {
+		if !Supports(provider) {
 			return fmt.Errorf("unknown managed CLI provider %q", provider)
 		}
-		if !releaseVersion.MatchString(installed.Version) {
+		if !validProviderVersion(provider, installed.Version) {
 			return fmt.Errorf("invalid release version for %s", provider)
 		}
 		base := filepath.Join(root, "providers", provider)

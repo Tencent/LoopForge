@@ -7,13 +7,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/gin-gonic/gin"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/gin-gonic/gin"
 )
 
 func TestDecodeAssistantCLIResult(t *testing.T) {
@@ -21,7 +22,7 @@ func TestDecodeAssistantCLIResult(t *testing.T) {
 	if err != nil || !strings.Contains(out, `"message":"ok"`) {
 		t.Fatalf("is_error with body should still return result: out=%q err=%v", out, err)
 	}
-	if _, err := decodeAssistantCLIResult("", false, nil, []string{"boom"}); err == nil || !strings.Contains(err.Error(), "did not emit type=result") {
+	if _, err := decodeAssistantCLIResult("", false, nil, []string{"boom"}); !errors.Is(err, errAssistantMissingResult) {
 		t.Fatalf("empty result should fail: %v", err)
 	}
 	if _, err := decodeAssistantCLIResult("ok", false, errors.New("signal: killed"), []string{"x"}); err == nil || !strings.Contains(err.Error(), "signal: killed") {
@@ -112,7 +113,7 @@ func TestAssistantAuthenticationAndCredentialIsolation(t *testing.T) {
 		if u.CodeBuddyAPIKey != "alice-secret" {
 			t.Fatal("wrong credential")
 		}
-		if strings.Contains(prompt, "secret") {
+		if strings.Contains(prompt, "alice-secret") || strings.Contains(prompt, "bob-secret") || strings.Contains(prompt, "project-secret") {
 			t.Fatal("credential leaked to prompt")
 		}
 		return `{"message":"alice-secret 已隐藏","drafts":[]}`, nil
@@ -322,7 +323,7 @@ func TestAssistantResumeTurnKeepsCurrentAttachments(t *testing.T) {
 	if strings.Contains(prompt, "第一轮问题") || strings.Contains(prompt, "old-file") {
 		t.Fatalf("resume prompt leaked earlier turns: %s", prompt)
 	}
-	for _, want := range []string{"这里丑，给几个 demo", "shot-1", "Clipboard_Screenshot.png", "image/png", "workbench_attachment_read"} {
+	for _, want := range []string{"这里丑，给几个 demo", "shot-1", "Clipboard_Screenshot.png", "image/png", "原生可读路径"} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("resume prompt missing %q: %s", want, prompt)
 		}
@@ -330,7 +331,7 @@ func TestAssistantResumeTurnKeepsCurrentAttachments(t *testing.T) {
 	first := h.turnPrompt(assistantRequest{
 		Messages: []assistantMessage{{Role: "user", Content: "看这张图", Attachments: []domain.AssistantAttachment{{ID: "shot-1", Name: "a.png", MimeType: "image/png"}}}},
 	}, "", false)
-	if !strings.Contains(first, "workbench_attachment_read") || !strings.Contains(first, "shot-1") {
+	if !strings.Contains(first, "原生可读路径") || !strings.Contains(first, "shot-1") {
 		t.Fatalf("first turn dropped attachment instruction: %s", first)
 	}
 }

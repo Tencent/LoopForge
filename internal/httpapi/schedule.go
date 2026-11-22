@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"maps"
 	"net/http"
 	"strings"
 	"time"
@@ -76,6 +77,11 @@ func (h *scheduleHandlers) scheduleJobs(c *gin.Context) {
 				c.JSON(400, map[string]string{"error": "AI 定时任务必须填写提示词"})
 				return
 			}
+			job.TimeoutMinutes, err = domain.NormalizeScheduleTimeoutMinutes(job.TimeoutMinutes)
+			if err != nil {
+				c.JSON(400, gin.H{"error": err.Error()})
+				return
+			}
 			job.WorkflowID = ""
 			job.UseIssueWorkflow = false
 			job.IssueStatuses = nil
@@ -92,6 +98,7 @@ func (h *scheduleHandlers) scheduleJobs(c *gin.Context) {
 			}
 			job.AssistantPrompt = ""
 			job.AssistantModel = ""
+			job.TimeoutMinutes = 0
 			job.IssueStatuses = domain.NormalizeScheduleIssueStatuses(job.IssueStatuses)
 			if len(job.IssueStatuses) == 0 {
 				job.IssueStatuses = append([]string{}, domain.DefaultScheduleIssueStatuses...)
@@ -112,8 +119,9 @@ func (h *scheduleHandlers) scheduleJobs(c *gin.Context) {
 		} else if job.IntervalSec < 30 {
 			job.IntervalSec = 300
 		}
+		requestedModel := job.AssistantModel
 		if job.SkipDispatch {
-			job.AssistantModel = assistantScheduledModel(job.AssistantModel, loadAssistantModels(c.Request.Context(), ""))
+			job.AssistantModel = assistantScheduledModel(job.AssistantModel, assistantFixedCatalog())
 		}
 		if job.ProjectID == "" {
 			job.ProjectID = "platform"
@@ -124,6 +132,9 @@ func (h *scheduleHandlers) scheduleJobs(c *gin.Context) {
 			job.OwnerUserID = project.OwnerID
 		} else if job.SharedTaskID == "" {
 			job.OwnerUserID = existingJob.OwnerUserID
+		}
+		if !h.bindScheduleRunAs(c, &job, existingJob, requestedModel) {
+			return
 		}
 		if job.ID == "" {
 			job.ID = "job-" + time.Now().UTC().Format("20060102150405.000000000")
@@ -166,6 +177,31 @@ func (h *scheduleHandlers) scheduleJobs(c *gin.Context) {
 		job.LastPulled = prior.LastPulled
 		job.LastDispatched = prior.LastDispatched
 		job.LastAssistantMessage = prior.LastAssistantMessage
+		job.LastTraceID = prior.LastTraceID
+		job.LastSessionID = prior.LastSessionID
+		// The pinned conversation is chosen by the first fixed-mode run, never
+		// by a save; leaving fixed mode unpins it, so re-enabling starts fresh.
+		job.FixedSessionID = ""
+		if job.SkipDispatch && strings.TrimSpace(job.SessionMode) == domain.ScheduleSessionFixed {
+			job.SessionMode = domain.ScheduleSessionFixed
+			if prior.UsesFixedSession() && prior.ProjectID == job.ProjectID {
+				job.FixedSessionID = prior.FixedSessionID
+			}
+		} else {
+			job.SessionMode = ""
+		}
+		// SessionKeep only limits jobs that open a conversation per execution;
+		// a fixed-mode job keeps its choice for when it leaves fixed mode.
+		if job.SkipDispatch {
+			keep, err := domain.NormalizeScheduleSessionKeep(job.SessionKeep)
+			if err != nil {
+				c.JSON(400, gin.H{"error": err.Error()})
+				return
+			}
+			job.SessionKeep = keep
+		} else {
+			job.SessionKeep = 0
+		}
 		job.NotificationSnapshot = prior.NotificationSnapshot
 		job.NotificationResult = prior.NotificationResult
 		var saveErr error
@@ -187,6 +223,130 @@ func (h *scheduleHandlers) scheduleJobs(c *gin.Context) {
 	}
 }
 
+// bindScheduleRunAs binds an AI job to the user who saves it: the creator, and
+// later whoever edits it, so nobody can make a prompt run with another
+// member's credentials. The binding is never taken from the request. The saver's
+// default machine login or own key is used, else the platform's shared CodeBuddy key
+// (limited to the models it allows, its default when requestedModel is empty);
+// with neither the save is refused, since the job could not run. Without a
+// signed-in user the job stays on the project owner's keys. A saver without
+// a usable key may still stop the job when nothing it runs changes; only
+// enabled is then turned off, since the name and notifications also go into
+// the prompt and a stopped job can be run by hand. That is checked again
+// under the row lock against the stored job, which another save may have
+// edited or moved meanwhile; then the save gets 409. A false return means the
+// response has been written.
+func (h *scheduleHandlers) bindScheduleRunAs(c *gin.Context, job *domain.ScheduleJob, prior domain.ScheduleJob, requestedModel string) bool {
+	job.RunAsUserID, job.RunAsName = 0, ""
+	if !job.SkipDispatch {
+		return true
+	}
+	current, ok := h.requestUser(c.Request, true)
+	if !ok || current == nil || current.ID <= 0 {
+		return true
+	}
+	self, ok := h.repo.User(current.ID)
+	if !ok {
+		return true
+	}
+	model := scheduledAssistantDefault(h.repo, self, requestedModel)
+	if model != requestedModel && !scheduleRunConfigUnchanged(prior, *job) {
+		job.AssistantModel = model
+	}
+	engine, _ := assistantModelEngine(job.AssistantModel)
+	stopOnly := func() bool {
+		if job.Enabled || !scheduleRunConfigUnchanged(prior, *job) {
+			return false
+		}
+		stored, err := h.repo.DisableScheduleJob(prior.ID, func(current domain.ScheduleJob) bool {
+			return scheduleStopAllowed(prior, *job, current)
+		})
+		if errors.Is(err, repo.ErrScheduleJobChanged) {
+			c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+			return true
+		}
+		if err != nil {
+			respond(c, err)
+			return true
+		}
+		c.JSON(200, stored)
+		return true
+	}
+	_, shared, ok := scheduleCredentialUser(h.repo, self, engine)
+	if !ok {
+		if stopOnly() {
+			return false
+		}
+		if assistantModelUnspecified(model) {
+			c.JSON(400, gin.H{"error": errFeatureCredentials.Error()})
+			return false
+		}
+		c.JSON(400, gin.H{"error": scheduleMissingKeyError(engine)})
+		return false
+	}
+	if shared != nil {
+		model, allowed := assistantSponsoredModelFor(shared, scheduleSharedRequestedModel(requestedModel))
+		if !allowed {
+			if stopOnly() {
+				return false
+			}
+			c.JSON(400, gin.H{"error": "你还没有配置个人 CodeBuddy API Key，定时任务会使用平台共享 Key，只能选平台管理员允许的模型（" + strings.Join(shared, "、") + "）；要用其他模型，请先在个人配置中填写自己的 Key"})
+			return false
+		}
+		job.AssistantModel = model
+	}
+	job.RunAsUserID, job.RunAsName = self.ID, scheduleUserName(self)
+	return true
+}
+
+// scheduleStopAllowed reports whether a keyless stop request, authorized
+// against prior, may still turn off current, the job as stored under the lock:
+// it must be in the project write access was checked for and run exactly what
+// the request was checked against.
+func scheduleStopAllowed(prior, request, current domain.ScheduleJob) bool {
+	return current.ProjectID == prior.ProjectID && scheduleRunConfigUnchanged(current, request)
+}
+
+// scheduleRunConfigUnchanged reports whether job still runs exactly what the
+// stored prior runs. A run can be started by hand while a job is stopped, so
+// the binding may only be kept when nothing that is executed changed.
+func scheduleRunConfigUnchanged(prior, job domain.ScheduleJob) bool {
+	return prior.ID != "" && prior.ID == job.ID && prior.SkipDispatch &&
+		prior.ProjectID == job.ProjectID &&
+		prior.AssistantPrompt == job.AssistantPrompt &&
+		prior.AssistantModel == job.AssistantModel &&
+		prior.SharedTaskID == job.SharedTaskID &&
+		prior.SharedTaskVersion == job.SharedTaskVersion &&
+		maps.Equal(prior.ParameterValues, job.ParameterValues)
+}
+
+// scheduleSharedRequestedModel treats the CLI-default placeholder as "no
+// model chosen", which the shared key resolves to its own default.
+func scheduleSharedRequestedModel(model string) string {
+	engine, id := assistantModelEngine(model)
+	if engine == assistantEngineCodeBuddy {
+		if codeBuddyIsDefaultModel(id) {
+			return ""
+		}
+		return id
+	}
+	return strings.TrimSpace(model)
+}
+
+func scheduleMissingKeyError(engine string) string {
+	if assistantSupportsRunnerLogin(engine) {
+		return fmt.Sprintf("你还没有可用的 %s 凭据，请在默认执行机器启用账号登录（Runner %s 及以上），或在个人配置填写 API Key", assistantEngineLabel(engine), domain.RunnerVersionCLISettings)
+	}
+	if engine != assistantEngineCodeBuddy {
+		return assistantEngineMissingKey(engine)
+	}
+	return "你还没有配置 CodeBuddy API Key，平台也没有配置共享 Key，定时任务无法执行：请先在个人配置中填写自己的 Key，或联系平台管理员配置共享 Key"
+}
+
+func scheduleUserName(user domain.User) string {
+	return firstNonEmpty(strings.TrimSpace(user.LoginName), strings.TrimSpace(user.ChineseName), fmt.Sprintf("用户 %d", user.ID))
+}
+
 // 路由: g.DELETE("/api/schedule-jobs/:id", h.scheduleJob)
 func (h *scheduleHandlers) scheduleJob(c *gin.Context) {
 	// master 子树语义：仅 DELETE 单段路径执行删除，其余方法（含 GET 单个）
@@ -206,6 +366,37 @@ func (h *scheduleHandlers) scheduleJob(c *gin.Context) {
 		h.assistant.deleteScheduledSessionsForTask(c.Param("id"))
 	}
 	c.JSON(200, map[string]bool{"ok": true})
+}
+
+// scheduleJobEnabled starts or stops a job's schedule without a full save, so
+// toggling never rewrites its prompt, key binding or session. A run already
+// in progress finishes either way.
+// 路由: g.POST("/api/schedule-jobs/:id/enabled", h.scheduleJobEnabled)
+func (h *scheduleHandlers) scheduleJobEnabled(c *gin.Context) {
+	var body struct {
+		Enabled *bool `json:"enabled"`
+	}
+	if !decode(c, &body) {
+		return
+	}
+	if body.Enabled == nil {
+		c.JSON(400, gin.H{"error": "enabled is required"})
+		return
+	}
+	job, ok := h.repo.ScheduleJob(c.Param("id"))
+	if !ok {
+		c.JSON(404, gin.H{"error": "schedule job not found"})
+		return
+	}
+	if !h.requireScheduleJob(c, job, true) {
+		return
+	}
+	saved, err := h.repo.SetScheduleJobEnabled(job.ID, *body.Enabled)
+	if err != nil {
+		respond(c, err)
+		return
+	}
+	c.JSON(200, saved)
 }
 
 // scheduleJobRun starts a scheduled job on the server and returns 202 with
@@ -237,8 +428,15 @@ func (h *scheduleHandlers) scheduleJobRun(c *gin.Context) {
 }
 
 func (h *scheduleHandlers) dispatchScheduled(job domain.ScheduleJob, issue domain.Issue, triggerOrigin string) error {
-	_, err := dispatchIssue(h.deps, dispatchRequest{IssueID: issue.ID, WorkflowID: job.ResolveWorkflow(issue), ScheduleJobID: job.ID, TriggerOrigin: triggerOrigin})
+	_, err := h.dispatchScheduledRun(job, issue, triggerOrigin)
 	return err
+}
+
+// dispatchScheduledRun is dispatchScheduled reporting the started run ID for
+// the execution record.
+func (h *scheduleHandlers) dispatchScheduledRun(job domain.ScheduleJob, issue domain.Issue, triggerOrigin string) (string, error) {
+	task, err := dispatchIssue(h.deps, dispatchRequest{IssueID: issue.ID, WorkflowID: job.ResolveWorkflow(issue), ScheduleJobID: job.ID, TriggerOrigin: triggerOrigin})
+	return task.RunID, err
 }
 
 func (h *scheduleHandlers) guardScheduledBaseline(job domain.ScheduleJob, issues []domain.Issue) (map[string]domain.ScheduleJobBlocker, error) {
@@ -370,7 +568,7 @@ func (h *scheduleHandlers) startBaselineAlignRun(job domain.ScheduleJob, repo do
 	input := fmt.Sprintf(`对齐仓库 %s 的集成分支 %s 与默认分支 %s。冲突文件：%s。
 
 ## 执行要求（严格，禁止只输出计划）
-1. 在当前工作分支执行 git fetch origin %s && git merge origin/%s
+1. 进入本次对齐仓库的检出目录，在当前工作分支执行 git fetch origin %s && git merge origin/%s
 2. 逐个解决下方列出的冲突块：原则是保留双方有效实现；不确定取舍时选择对业务影响最小的方案并在提交说明里标注
 3. 全部解决后 git add 并 git commit，提交说明必须列出冲突文件与每个文件的取舍
 4. 不要 push（平台在校验通过后自动推送并创建基线 MR）；不要改动默认分支 %s
@@ -392,7 +590,7 @@ func (h *scheduleHandlers) startBaselineAlignRun(job domain.ScheduleJob, repo do
 	return run.ID, nil
 }
 
-const baselineAlignWorkflowVersion = 7
+const baselineAlignWorkflowVersion = 8
 
 func alignWorkflowUsesPlatformAgent(wf domain.WorkflowDefinition) bool {
 	for _, n := range wf.Nodes {
@@ -457,7 +655,11 @@ func (h *scheduleHandlers) ensureBaselineAlignWorkflow(_ domain.ScheduleJob) boo
 		SandboxProfileID: "local",
 		Nodes: []domain.WorkflowNode{
 			{ID: "resolve", Name: "解决冲突", Type: "agent", AgentID: engine.BaselineAlignAgentID, MaxAttempts: 2, MaxReworks: 2, RejectTo: "resolve", Position: domain.Position{X: 80, Y: 80}},
-			{ID: "verify", Name: "校验真实合并", Type: "script", ScriptLanguage: "shell", Script: baselineAlignVerifyScript, MaxAttempts: 1, MaxReworks: 2, OnFailure: "reject", RejectTo: "resolve", Position: domain.Position{X: 360, Y: 80}},
+			{
+				ID: "verify", Name: "校验真实合并", Type: "script",
+				ScriptLanguage: "shell", Script: baselineAlignVerifyScript, ExecutionScope: domain.ExecutionScopeRepositories,
+				MaxAttempts: 1, MaxReworks: 2, OnFailure: "reject", RejectTo: "resolve", Position: domain.Position{X: 360, Y: 80},
+			},
 		},
 		Edges: []domain.WorkflowEdge{
 			{ID: "e-align-1", Source: "resolve", Target: "verify"},

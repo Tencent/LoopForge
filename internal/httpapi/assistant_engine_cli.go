@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -37,10 +38,13 @@ type assistantCLIInvocation struct {
 
 type assistantEngineInvocationOpts struct {
 	Bin, Root, Config, Prompt, Model, Effort, SessionID, SystemPrompt string
-	Resume, Workspace                                                 bool
+	ImagePaths                                                        []string
+	ImageInput                                                        bool
+	Resume, Workspace, RunnerLogin                                    bool
 	// ReviewOnly is a one-shot call without MCP servers or session history,
 	// such as a title summary.
 	ReviewOnly bool
+	ReportOnly bool
 	User       runtime.ProviderCredential
 }
 
@@ -70,12 +74,12 @@ func resolveAssistantEngineBin(engine string) (string, error) {
 	if engine == assistantEngineClaude {
 		binary, override, managed = "claude", "AGENTFLOW_CLAUDE_BIN", "claude-code"
 	} else if runtime.IsAgentCLI(engine) {
-		binary, override, managed = runtime.AgentCLIBinary(engine), "AGENTFLOW_"+strings.ToUpper(strings.ReplaceAll(engine, "-", "_"))+"_BIN", ""
+		binary, override, managed = runtime.AgentCLIBinary(engine), "AGENTFLOW_"+strings.ToUpper(strings.ReplaceAll(engine, "-", "_"))+"_BIN", engine
 	}
 	if path := strings.TrimSpace(os.Getenv(override)); path != "" && fileExecutable(path) {
 		return path, nil
 	}
-	if root := strings.TrimSpace(os.Getenv("AGENTFLOW_MANAGED_CLI_ROOT")); root != "" && managed != "" {
+	if root := strings.TrimSpace(os.Getenv("AGENTFLOW_MANAGED_CLI_ROOT")); root != "" && managedcli.Supports(managed) {
 		if inventory, err := managedcli.ReadInventory(root); err == nil {
 			if path, ok := inventory.BinaryFor(managed); ok {
 				return path, nil
@@ -89,7 +93,11 @@ func resolveAssistantEngineBin(engine string) (string, error) {
 	if strings.TrimSpace(home) == "" {
 		home = "/root"
 	}
-	for _, candidate := range []string{filepath.Join(home, ".local", "bin", binary), "/usr/local/bin/" + binary, "/usr/bin/" + binary} {
+	candidates := []string{filepath.Join(home, ".local", "bin", binary)}
+	for _, dir := range assistantCLIGlobalDirs {
+		candidates = append(candidates, filepath.Join(dir, binary))
+	}
+	for _, candidate := range candidates {
 		if fileExecutable(candidate) {
 			return candidate, nil
 		}
@@ -99,6 +107,11 @@ func resolveAssistantEngineBin(engine string) (string, error) {
 	}
 	return "", assistantCLIMissingError{engine: engine, binary: binary}
 }
+
+// assistantCLIGlobalDirs are the global install locations checked after PATH
+// and ~/.local/bin. Tests that model a host without a CLI clear it, because
+// the platform image installs some CLIs (dsh, codex, ...) into /usr/local/bin.
+var assistantCLIGlobalDirs = []string{"/usr/local/bin", "/usr/bin"}
 
 var errAssistantCLIMissing = errors.New("assistant CLI not installed")
 
@@ -129,6 +142,10 @@ func (e assistantCredentialError) Error() string {
 
 func (e assistantCredentialError) Is(target error) bool {
 	return target == errAssistantCredentialRejected
+}
+
+func assistantRunnerLoginError(engine string) error {
+	return fmt.Errorf("执行机器上的 %s 本机登录态无效或已过期，请检查 Runner 账户的 CLI 登录", assistantEngineLabel(engine))
 }
 
 var assistantAuthFailureRe = regexp.MustCompile(`(?i)\b(401|403)\b|unauthorized|invalid api key|invalid x-api-key|authentication_error|incorrect api key`)
@@ -194,15 +211,17 @@ func prepareAssistantClaudeInvocation(o assistantEngineInvocationOpts) (assistan
 	argv := []string{o.Bin, "-p", "--verbose", "--output-format", "stream-json", "--include-partial-messages",
 		"--max-turns", nativeAssistantUnlimitedTurns, "--system-prompt", o.SystemPrompt,
 		"--mcp-config", mcpPath, "--strict-mcp-config", "--settings", settingsPath, "--setting-sources", "user",
-		"--permission-mode", "bypassPermissions",
-		"--model", o.Model}
+		"--permission-mode", "bypassPermissions"}
+	if o.Model != "" {
+		argv = append(argv, "--model", o.Model)
+	}
 	if !o.Workspace {
 		argv = append(argv, "--disallowedTools", claudeAssistantDisallowedTools)
 	}
 	if effort := strings.TrimSpace(o.Effort); effort != "" {
 		argv = append(argv, "--effort", effort)
 	}
-	if o.ReviewOnly {
+	if o.ReviewOnly || o.ReportOnly {
 		argv = append(argv, "--tools", "", "--no-session-persistence")
 	}
 	if o.Resume {
@@ -213,11 +232,80 @@ func prepareAssistantClaudeInvocation(o assistantEngineInvocationOpts) (assistan
 	// --disallowedTools is variadic: end option parsing before the prompt.
 	argv = append(argv, "--", o.Prompt)
 	command := runtime.CommandSpec{Argv: argv, Provider: "claude-code", CredentialBindings: []runtime.CredentialBinding{runtime.BindClaudeCode}}
+	if len(o.ImagePaths) > 0 {
+		frameLimit := 0
+		if o.RunnerLogin {
+			frameLimit = runtime.ClaudeLoginMaxInputLine
+		}
+		command, err = withAssistantStreamImageInput(command, o.Prompt, o.ImagePaths, frameLimit)
+		if err != nil {
+			return assistantCLIInvocation{}, err
+		}
+	}
+	command = runtime.PromptOnStdin(command, o.Prompt)
 	return assistantCLIInvocation{
 		command:     command.WithClaudeBypassAccepted(),
 		credentials: runtime.RunCredentials{ClaudeCode: o.User},
 		sessionRef:  sessionID,
 	}, nil
+}
+
+func withAssistantStreamImageInput(command runtime.CommandSpec, prompt string, imagePaths []string, frameLimit int) (runtime.CommandSpec, error) {
+	input, err := assistantStreamImageInput(prompt, imagePaths)
+	if err != nil {
+		return runtime.CommandSpec{}, err
+	}
+	positional := command.Argv
+	// Replace the positional prompt while preserving the delimiter.
+	command.Argv = appendNativeArgs(positional[:len(positional)-1], "--input-format", "stream-json")
+	command.Stdin = input
+	if frameLimit == 0 {
+		return command, nil
+	}
+	limited := &assistantLimitedImageInput{
+		Buffer: input, limit: frameLimit, prompt: prompt, positional: positional,
+	}
+	command.Stdin = limited
+	return limited.fit(command, "", "")
+}
+
+// A managed Claude login bridge reads one NDJSON frame at a time. Keep the
+// paths-only fallback until Runner prepare returns its conversation root.
+type assistantLimitedImageInput struct {
+	*bytes.Buffer
+	limit      int
+	prompt     string
+	positional []string
+}
+
+func (input *assistantLimitedImageInput) fit(command runtime.CommandSpec, source, target string) (runtime.CommandSpec, error) {
+	delta := len(target) - len(source)
+	remappedSize := func(data []byte) int {
+		if source == "" || target == "" || delta == 0 {
+			return len(data)
+		}
+		return len(data) + bytes.Count(data, []byte(source))*delta
+	}
+	if remappedSize(input.Bytes()) < input.limit {
+		return command, nil
+	}
+
+	// The prompt includes the staged paths, so the CLI can read the images.
+	if runtime.PromptFitsArgv(remappedSize([]byte(input.prompt))) {
+		command.Argv = input.positional
+		command.Stdin = nil
+		return command, nil
+	}
+	// Large prompts still need stream-json on stdin for the login bridge.
+	text, err := assistantStreamImageInput(input.prompt, nil)
+	if err != nil {
+		return runtime.CommandSpec{}, err
+	}
+	if remappedSize(text.Bytes()) >= input.limit {
+		return runtime.CommandSpec{}, fmt.Errorf("Claude Code 输入超过限制")
+	}
+	command.Stdin = text
+	return command, nil
 }
 
 // Codex tools that act outside the platform gateway. The chat runs on the
@@ -305,4 +393,4 @@ func writeCodexThread(root, sessionID, threadID string) error {
 	return os.WriteFile(codexThreadsPath(root), data, 0o600)
 }
 
-var errAssistantEngineUnsupported = errors.New("该调用只支持 CodeBuddy 模型")
+var errAssistantEngineUnsupported = errors.New("此调用未启用 CLI 会话或单次模型调用模式")

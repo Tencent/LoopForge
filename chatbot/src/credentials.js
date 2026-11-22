@@ -7,6 +7,7 @@ export const CREDENTIALS = {
   claudeCodeApiKey: "Claude Code API Key",
   gitToken: "GitHub Git Token",
   gitSshKey: "Git SSH 密钥",
+  gitHttpCredentials: "Git 访问令牌",
 };
 
 // A CodeBuddy key only works on the edition that issued it, and the CLI
@@ -89,7 +90,14 @@ export const CREDENTIAL_GUIDES = {
   gitSshKey: {
     steps: [
       "把专用公钥添加到代码托管账号，并按需授予仓库写权限",
-      "到「个人配置 → Git SSH 密钥」为该主机添加无口令私钥，同一主机的仓库自动共用；请管理员信任该 SSH 主机",
+      "到「个人配置 → Git SSH 密钥」为该主机添加无口令私钥，同一主机的仓库自动共用；请平台管理员在「平台管理 → Git SSH 主机信任」登记主机公钥",
+      "回到这里重试",
+    ],
+  },
+  gitHttpCredentials: {
+    steps: [
+      "在代码托管平台创建仓库级、最小权限的个人访问令牌",
+      "到「个人配置 → Git 访问令牌」为该 HTTPS 主机添加令牌，并开启「提供给工作区」",
       "回到这里重试",
     ],
   },
@@ -170,12 +178,30 @@ export function credentialHint(text) {
   return null;
 }
 
-export function openCredentialSettings(field, sshRemote) {
-  const credential = CREDENTIALS[field] ? field : "";
-  if (window.parent !== window)
+export function openCredentialSettings(field, sshRemote, { returnToQuickAccess = false } = {}) {
+  const credential = field === "executors" || Object.hasOwn(CREDENTIALS, field) ? field : "";
+  const resume = credential === "executors" && returnToQuickAccess;
+  if (window.parent !== window) {
     window.parent.postMessage(
-      { type: "agentflow-chat-open-view", view: "settings", credential, ...(credential === "gitSshKey" && sshRemote ? { sshRemote } : {}) },
+      {
+        type: "agentflow-chat-open-view", view: "settings", credential,
+        ...(credential === "gitSshKey" && sshRemote ? { sshRemote } : {}),
+        ...(resume ? { returnToQuickAccess: true } : {}),
+      },
       location.origin,
     );
-  else location.href = "/#/settings";
+  } else if (resume) {
+    const current = new URL(location.href);
+    current.searchParams.set("quickAccess", "1");
+    history.replaceState(history.state, "", current);
+    const settings = new URL("/", location.origin);
+    for (const [key, source] of [["projectId", "projectId"], ["chatSession", "session"]]) {
+      const value = current.searchParams.get(source);
+      if (value) settings.searchParams.set(key, value);
+    }
+    settings.hash = "/settings/executors/quick-access";
+    location.assign(settings);
+  } else {
+    location.href = credential === "executors" ? "/#/settings/executors" : "/#/settings";
+  }
 }
