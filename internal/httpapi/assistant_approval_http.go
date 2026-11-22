@@ -464,6 +464,10 @@ func postApprovalHTTP(ctx context.Context, target approvalHTTPTarget, payload ma
 			}
 			return nil, 0, err
 		}
+		if resp.StatusCode >= 300 && resp.StatusCode < 400 {
+			resp.Body.Close()
+			return nil, resp.StatusCode, errApprovalPolicyBlocked{msg: fmt.Sprintf("审查接口返回重定向 HTTP %d，已拒绝跟随跳转", resp.StatusCode)}
+		}
 		raw, readErr := io.ReadAll(io.LimitReader(resp.Body, 512<<10))
 		resp.Body.Close()
 		if readErr != nil {
@@ -471,9 +475,6 @@ func postApprovalHTTP(ctx context.Context, target approvalHTTPTarget, payload ma
 		}
 		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 			return raw, resp.StatusCode, nil
-		}
-		if resp.StatusCode >= 300 && resp.StatusCode < 400 {
-			return raw, resp.StatusCode, errApprovalPolicyBlocked{msg: fmt.Sprintf("审查接口返回重定向 HTTP %d，已拒绝跟随跳转", resp.StatusCode)}
 		}
 		lastStatus = resp.StatusCode
 		lastErr = fmt.Errorf("HTTP %d: %s", resp.StatusCode, truncateRunes(strings.TrimSpace(string(raw)), 200))

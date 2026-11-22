@@ -521,6 +521,40 @@ func TestApprovalHTTPEgressAndRedirectProtection(t *testing.T) {
 			t.Fatalf("redirect block must not fall back to local CLI: err=%v cliCalls=%d targetHits=%d", err, cliCalls, targetHits)
 		}
 
+		// 2b. Truncated/broken 3xx body must still be treated as policy rejection
+		//     before reading the body, never as an ordinary I/O error triggering CLI fallback.
+		truncatedRedirectSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			hj, ok := w.(http.Hijacker)
+			if !ok {
+				http.Redirect(w, r, targetSrv.URL+r.URL.Path, http.StatusFound)
+				return
+			}
+			conn, rw, err := hj.Hijack()
+			if err != nil {
+				return
+			}
+			_, _ = rw.WriteString("HTTP/1.1 302 Found\r\nLocation: " + targetSrv.URL + "/v1\r\nContent-Length: 100\r\n\r\npartial")
+			_ = rw.Flush()
+			_ = conn.Close()
+		}))
+		defer truncatedRedirectSrv.Close()
+
+		truncatedUser := domain.User{ID: 1, CodexAPIKey: "sk-codex", CodexBaseURL: truncatedRedirectSrv.URL + "/v1"}
+		_, err = runAssistantApprovalReviewWithEffort(context.Background(), input, truncatedUser, "codex:gpt-4.1-mini", "low")
+		if !errors.As(err, &policyErr) || cliCalls != 0 || targetHits != 0 {
+			t.Fatalf("truncated 3xx response must still reject as policy error without CLI fallback: err=%v cliCalls=%d targetHits=%d", err, cliCalls, targetHits)
+		}
+
+		hProbe, uProbe := workbenchFixture(t)
+		cProbe, recProbe := workbenchContext(uProbe, "POST", "/api/assistant/approval-review/probe",
+			bytes.NewBufferString(`{"protocol":"chat","baseUrl":"`+truncatedRedirectSrv.URL+`/v1","apiKey":"sk-secret"}`))
+		hProbe.probeApprovalReviewModels(cProbe)
+		var probeRes cliModelProbeResult
+		_ = json.Unmarshal(recProbe.Body.Bytes(), &probeRes)
+		if !strings.Contains(probeRes.Error, "重定向") || targetHits != 0 {
+			t.Fatalf("probe on truncated 3xx response must reject redirect before body read: res=%+v targetHits=%d", probeRes, targetHits)
+		}
+
 		// 3. Approval reviewer loop must terminate immediately on egress block
 		//    rather than falling back to the session model's local CLI.
 		t.Setenv(approvalEgressAllowCIDRsEnv, "")

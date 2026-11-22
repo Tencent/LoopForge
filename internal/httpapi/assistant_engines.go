@@ -605,13 +605,14 @@ func discoverAssistantEngineModelsWithClient(ctx context.Context, client *http.C
 			}
 			return nil, fmt.Errorf("无法连接 %s：%w", endpoint, err)
 		}
+		if resp.StatusCode >= 300 && resp.StatusCode < 400 {
+			resp.Body.Close()
+			return nil, fmt.Errorf("%s 返回重定向 HTTP %d，已拒绝跟随跳转", endpoint, resp.StatusCode)
+		}
 		body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 		resp.Body.Close()
 		if err != nil {
 			return nil, err
-		}
-		if resp.StatusCode >= 300 && resp.StatusCode < 400 {
-			return nil, fmt.Errorf("%s 返回重定向 HTTP %d，已拒绝跟随跳转", endpoint, resp.StatusCode)
 		}
 		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
 			lastErr = fmt.Errorf("%s 拒绝了 API Key（HTTP %d）", endpoint, resp.StatusCode)
