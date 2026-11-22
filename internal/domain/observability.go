@@ -45,6 +45,8 @@ type TelemetryContext struct {
 	IssueNumber           int    `json:"issueNumber,omitempty"`
 	TaskID                string `json:"taskId,omitempty"`
 	ScheduleJobID         string `json:"scheduleJobId,omitempty"`
+	SharedScheduleID      string `json:"sharedScheduleId,omitempty"`
+	SharedScheduleVersion int    `json:"sharedScheduleVersion,omitempty"`
 	// BotOriginID is the chat origin (bot_chat_origins) a top-level run was
 	// started from, stored with the run so that its first events already
 	// go back to that chat.

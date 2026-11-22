@@ -67,6 +67,15 @@ func (h *scheduleHandlers) visibleScheduleJobs(r *http.Request, jobs []domain.Sc
 	out := make([]domain.ScheduleJob, 0, len(jobs))
 	for _, job := range jobs {
 		if h.scheduleJobAllowed(r, job, false) {
+			if job.SharedTaskID != "" {
+				if version, err := h.repo.SharedScheduleVersion(job.SharedTaskID, job.SharedTaskVersion); err == nil {
+					job.References = domain.CloneAssistantReferences(version.References)
+				}
+			} else if h.assistant != nil && len(job.References) > 0 {
+				if refs, err := h.assistant.scheduledMessageReferences(job.ProjectID, job.References); err == nil {
+					job.References = refs
+				}
+			}
 			out = append(out, job)
 		}
 	}
@@ -148,6 +157,10 @@ func (h *scheduleHandlers) publishSharedSchedule(c *gin.Context) {
 		v.Prompt = job.AssistantPrompt
 	}
 	published, err := h.repo.PublishSharedSchedule(job.ID, job.ProjectID, v, *input.BaseVersion)
+	if errors.Is(err, repo.ErrSharedScheduleReferences) {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
 	if errors.Is(err, repo.ErrSharedScheduleVersionConflict) {
 		c.JSON(409, gin.H{"error": err.Error()})
 		return
@@ -197,10 +210,19 @@ func (h *scheduleHandlers) bindSharedSchedule(c *gin.Context, job *domain.Schedu
 		respond(c, err)
 		return false
 	}
+	if err := h.repo.ValidateSharedScheduleAssets(v); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return false
+	}
+	if len(job.References) > 0 && !sameScheduleReferenceIDs(job.References, v.References) {
+		c.JSON(400, gin.H{"error": "订阅任务的引用由共享版本维护，不能替换"})
+		return false
+	}
 	project, _ := h.repo.Project(job.ProjectID)
 	job.OwnerUserID = project.OwnerID
 	job.ParameterValues = values
 	job.AssistantPrompt = ""
+	job.References = domain.CloneAssistantReferences(v.References)
 	if job.Name == "" {
 		job.Name = v.Name
 	}

@@ -368,6 +368,16 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 		}
 		e.nodeFailedAt(runID, node, executionAttempt, executionGeneration, err, allowReject)
 	}
+	if currentLease.ExecutionContext.SharedScheduleID != "" {
+		version, err := e.repo.SharedScheduleVersion(currentLease.ExecutionContext.SharedScheduleID, currentLease.ExecutionContext.SharedScheduleVersion)
+		if err == nil {
+			err = e.repo.ValidateSharedScheduleAssets(version)
+		}
+		if err != nil {
+			failNode(err, false)
+			return
+		}
+	}
 	if node.Type == "sop" {
 		e.executeSOPNode(ctx, runID, wf, node, executionAttempt, executionGeneration)
 		return
@@ -767,6 +777,15 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 			}
 			if repositoryFallback != "" {
 				prompt = runtime.GitPreparationFallbackPrompt(current.RepositoryContexts(), repositoryFallback) + prompt
+			}
+			if current.ExecutionContext.SharedScheduleID != "" {
+				version, assetErr := e.repo.SharedScheduleVersion(current.ExecutionContext.SharedScheduleID, current.ExecutionContext.SharedScheduleVersion)
+				if assetErr != nil {
+					return "", assetErr
+				}
+				if assetErr = e.repo.ValidateSharedScheduleAssets(version); assetErr != nil {
+					return "", assetErr
+				}
 			}
 			assets := e.resolveAssets(agent, current.ExecutionContext.ProjectID, wf.ID, current.ExecutionContext.ResponsibleUserID)
 			warnMCPSkipped := func(message string) {
