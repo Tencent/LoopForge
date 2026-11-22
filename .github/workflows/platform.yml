@@ -97,6 +97,13 @@ jobs:
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - name: Install bubblewrap for the native sandbox
         run: sudo apt-get update && sudo apt-get install -y bubblewrap
+      # The welcome SOP runs in generic-docker. As in a Compose installation, it
+      # uses the pinned platform image instead of building one during the tests.
+      - name: Pull the pinned platform image for the generic-docker sandbox
+        run: |
+          pinned=$(sed -n 's/^ *image: \${LOOPFORGE_IMAGE:-\(.*\)}$/\1/p' compose.yaml)
+          docker pull --quiet "$pinned"
+          echo "AGENTFLOW_ISOLATED_IMAGE=$pinned" >> "$GITHUB_ENV"
       - name: Start clean local installation
         run: |
           bash scripts/dev.sh > /tmp/loopforge.log 2>&1 &
