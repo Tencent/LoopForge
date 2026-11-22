@@ -32,11 +32,13 @@ export default forwardRef(function ReferenceInput(
 ) {
   const picker = useRef(null);
   const returnFocus = useRef(null),
-    selection = useRef(null);
+    selection = useRef(null),
+    dismissedSelection = useRef(null);
   const range = (event) =>
     mentionAt(event.target.value, event.target.selectionStart, references);
   const open = (trigger) => {
     if (referencesReadOnly) return;
+    dismissedSelection.current = null;
     returnFocus.current = trigger || editorRef.current;
     const caret = editorRef.current?.selectionStart ?? text.length;
     onMentionChange(
@@ -47,6 +49,17 @@ export default forwardRef(function ReferenceInput(
       },
     );
     editorRef.current?.focus();
+  };
+  const close = () => {
+    const editor = editorRef.current;
+    dismissedSelection.current = editor
+      ? {
+          value: editor.value,
+          start: editor.selectionStart,
+          end: editor.selectionEnd,
+        }
+      : null;
+    onMentionChange(null);
   };
   useImperativeHandle(ref, () => ({
     openReferences: open,
@@ -88,7 +101,7 @@ export default forwardRef(function ReferenceInput(
         trigger={mention}
         editor={editorRef}
         onSelect={choose}
-        onClose={() => onMentionChange(null)}
+        onClose={close}
         onRestoreFocus={() =>
           (returnFocus.current?.isConnected
             ? returnFocus.current
@@ -143,6 +156,7 @@ export default forwardRef(function ReferenceInput(
         value={text}
         aria-expanded={!!mention}
         onChange={(event) => {
+          dismissedSelection.current = null;
           returnFocus.current = editorRef.current;
           const value = event.target.value;
           onChange({
@@ -160,10 +174,26 @@ export default forwardRef(function ReferenceInput(
           if (!referencesReadOnly) onMentionChange(range(event));
         }}
         onClick={(event) => {
-          if (!referencesReadOnly) onMentionChange(range(event));
+          if (!referencesReadOnly) {
+            dismissedSelection.current = null;
+            onMentionChange(range(event));
+          }
         }}
         onSelect={(event) => {
-          if (!referencesReadOnly) onMentionChange(range(event));
+          if (referencesReadOnly) return;
+          // React also emits select events on Escape and focus restoration.
+          // Keep a dismissed mention closed until its text or selection changes.
+          const dismissed = dismissedSelection.current,
+            editor = event.target;
+          if (
+            dismissed &&
+            dismissed.value === editor.value &&
+            dismissed.start === editor.selectionStart &&
+            dismissed.end === editor.selectionEnd
+          )
+            return;
+          dismissedSelection.current = null;
+          onMentionChange(range(event));
         }}
         onKeyDown={(event) => {
           if (mention && picker.current?.keyDown(event)) return;

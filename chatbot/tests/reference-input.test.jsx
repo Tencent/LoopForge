@@ -137,6 +137,49 @@ test("Escape closes the picker without bubbling into the surrounding modal", asy
   }
 });
 
+test("Escape stays dismissed through selection events until the caret or draft changes", async () => {
+  mockReferences();
+  render(<ConversationInput />);
+  const input = screen.getByRole("textbox", { name: "消息" });
+  act(() => input.focus());
+  fireEvent.change(input, {
+    target: { value: "@测试", selectionStart: 3 },
+  });
+  await screen.findByRole("option", { name: /测试流程/ });
+  fireEvent.keyDown(input, { key: "Escape" });
+  fireEvent.keyUp(input, { key: "Escape" });
+  fireEvent.select(input);
+  expect(input).toHaveAttribute("aria-expanded", "false");
+  expect(input).toHaveFocus();
+  expect(input.value).toBe("@测试");
+
+  // A deliberate caret movement or input must still reopen suggestions.
+  input.setSelectionRange(2, 2);
+  fireEvent.select(input);
+  expect(input).toHaveAttribute("aria-expanded", "true");
+  await screen.findByRole("option", { name: /测试流程/ });
+  const search = screen.getByRole("textbox", { name: "搜索引用对象" });
+  act(() => search.focus());
+  fireEvent.keyDown(search, { key: "Escape" });
+  fireEvent.keyUp(input, { key: "Escape" });
+  fireEvent.select(input);
+  expect(input).toHaveAttribute("aria-expanded", "false");
+  expect(input).toHaveFocus();
+
+  // Explicitly clicking the same position must reopen the picker too.
+  fireEvent.click(input);
+  expect(input).toHaveAttribute("aria-expanded", "true");
+  fireEvent.keyDown(input, { key: "Escape" });
+  fireEvent.keyUp(input, { key: "Escape" });
+  fireEvent.select(input);
+  expect(input).toHaveAttribute("aria-expanded", "false");
+
+  fireEvent.change(input, {
+    target: { value: "@测", selectionStart: 2 },
+  });
+  expect(input).toHaveAttribute("aria-expanded", "true");
+});
+
 test("native scheduled editor mounts the shared picker, restores assets and clears stale state on reopening", async () => {
   mockReferences();
   const host = document.createElement("div");
@@ -301,6 +344,41 @@ test("Shadow DOM Escape contains picker events from the toolbar and options, the
     expect(editor.getValue().text).toBe("未保存的草稿");
     fireEvent.keyDown(button, { key: "Escape", bubbles: true, composed: true });
     expect(escaped).toBe(1);
+
+    const input = ui.getByRole("textbox", { name: "提示词" });
+    act(() => input.focus());
+    fireEvent.change(input, {
+      target: { value: "未保存的草稿 @测试", selectionStart: 10 },
+    });
+    await ui.findByRole("option", { name: /测试流程/ });
+    fireEvent.keyDown(input, { key: "Escape", bubbles: true, composed: true });
+    fireEvent.keyUp(input, { key: "Escape", bubbles: true, composed: true });
+    fireEvent.select(input);
+    expect(escaped).toBe(1);
+    expect(input).toHaveAttribute("aria-expanded", "false");
+    expect(host.shadowRoot.activeElement).toBe(input);
+    expect(editor.getValue().text).toBe("未保存的草稿 @测试");
+
+    fireEvent.click(button);
+    expect(input).toHaveAttribute("aria-expanded", "true");
+    fireEvent.keyDown(input, { key: "Escape", bubbles: true, composed: true });
+    fireEvent.keyUp(button, { key: "Escape", bubbles: true, composed: true });
+    expect(escaped).toBe(1);
+    expect(input).toHaveAttribute("aria-expanded", "false");
+    expect(host.shadowRoot.activeElement).toBe(button);
+
+    fireEvent.click(input);
+    await ui.findByRole("option", { name: /测试流程/ });
+    const search = ui.getByRole("textbox", { name: "搜索引用对象" });
+    act(() => search.focus());
+    fireEvent.keyDown(search, { key: "Escape", bubbles: true, composed: true });
+    expect(escaped).toBe(1);
+    expect(host.shadowRoot.activeElement).toBe(button);
+    fireEvent.keyUp(input, { key: "Escape", bubbles: true, composed: true });
+    fireEvent.select(input);
+    expect(input).toHaveAttribute("aria-expanded", "false");
+    fireEvent.keyDown(input, { key: "Escape", bubbles: true, composed: true });
+    expect(escaped).toBe(2);
   } finally {
     document.removeEventListener("keydown", globalEscape);
     act(() => editor.destroy());
