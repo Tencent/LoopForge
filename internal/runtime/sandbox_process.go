@@ -502,9 +502,11 @@ func bwrapArgsCommand(workspace string, requirements SandboxRequirements) ([]str
 		"--die-with-parent", "--new-session",
 		"--unshare-user", "--unshare-pid", "--unshare-ipc", "--unshare-uts",
 		"--ro-bind", "/", "/",
+		// The private /tmp comes before the workspace bind, or it would hide a
+		// workspace under the host /tmp.
+		"--tmpfs", "/tmp",
 		"--bind", root, root,
 		"--chdir", root,
-		"--tmpfs", "/tmp",
 		"--proc", "/proc",
 		"--dev-bind", "/dev", "/dev",
 	}

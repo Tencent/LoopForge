@@ -22,7 +22,10 @@ func TestMain(m *testing.M) {
 	if runtime.RunMCPCallCLI(os.Args[1:]) || runtime.RunGitHelperCLI(os.Args[1:]) {
 		return
 	}
-	os.Exit(m.Run())
+	cleanup := repo.UseSandboxVisibleTempDir()
+	code := m.Run()
+	cleanup()
+	os.Exit(code)
 }
 
 func putGateTestAgent(t *testing.T, s *repo.Store, id string, gates []domain.VerificationGate) {
