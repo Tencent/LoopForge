@@ -81,6 +81,24 @@ test('AI workbench: a saved conversation is listed, opened, searched, renamed, a
   expect(errors).toEqual([]);
 });
 
+test('ZCode reports platform CLI availability before credentials are saved', async ({ page, identity }) => {
+  const me = await userById(identity.user.id);
+  test.skip(!!me?.agentCliCredentials?.zcode?.apiKeyConfigured, 'ZCode is already configured for this user');
+  await openView(page, 'settings');
+  await page.locator('#credentialPanel').getByRole('button', { name: '新增执行器', exact: true }).click();
+  const probe = page.waitForResponse(response => {
+    const url = new URL(response.url());
+    return url.pathname === '/api/assistant/cli-install' && url.searchParams.get('engine') === 'zcode';
+  });
+  await page.getByRole('listbox', { name: '新增执行器', exact: true }).getByRole('option', { name: 'ZCode', exact: true }).click();
+  const response = await probe;
+  expect(response.ok()).toBe(true);
+  const { status } = await response.json();
+  expect(['installed', 'missing']).toContain(status);
+  await expect(page.locator('#credentialWizard [data-credential-runtime]'))
+    .toContainText(status === 'installed' ? '平台服务器已检测到 ZCode CLI' : '平台服务器缺少 ZCode CLI');
+});
+
 test('personal credentials: the add wizard validates, saves write-only, and the row clears it', async ({ page, identity }) => {
   const me = identity.user;
   test.skip(!!(await userById(me.id))?.codexApiKeyConfigured, 'the token owner already has a Codex API Key; not overwriting a real credential');

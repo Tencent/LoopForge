@@ -16,10 +16,8 @@ import (
 // a person asks from a failed conversation. Package names and installer URLs are fixed:
 // the request may choose an engine, never a URL or a package.
 const (
-	cursorInstallerURL  = "https://cursor.com/install"
-	agyInstallerURL     = "https://antigravity.google/cli/install.sh"
-	cursorInstallScript = "curl -fsSL --proto '=https' --tlsv1.2 " + cursorInstallerURL + " | bash"
-	agyInstallScript    = "curl -fsSL --proto '=https' --tlsv1.2 " + agyInstallerURL + " | bash"
+	cursorInstallerURL = "https://cursor.com/install"
+	agyInstallerURL    = "https://antigravity.google/cli/install.sh"
 )
 
 // DeepSeekHarnessVersion is the dsh release the Dockerfile bundles and an
@@ -32,7 +30,7 @@ type onDemandCLI struct {
 	Engine       string
 	Binary       string
 	Package      string
-	Script       string
+	InstallerURL string
 	RelaxEngines bool
 	// Bundled CLIs ship in the published image, so its sandboxes never
 	// install them.
@@ -47,8 +45,8 @@ func onDemandCLICatalog() map[string]onDemandCLI {
 		"codebuddy":   {Engine: "codebuddy", Binary: "codebuddy", Package: "@tencent-ai/codebuddy-code", Bundled: true},
 		"claude-code": {Engine: "claude-code", Binary: "claude", Package: "@anthropic-ai/claude-code"},
 		"opencode":    {Engine: "opencode", Binary: "opencode", Package: "opencode-ai"},
-		"cursor":      {Engine: "cursor", Binary: "cursor-agent", Script: cursorInstallScript},
-		"agy":         {Engine: "agy", Binary: "agy", Script: agyInstallScript},
+		"cursor":      {Engine: "cursor", Binary: cursorCLIBinary, InstallerURL: cursorInstallerURL},
+		"agy":         {Engine: "agy", Binary: "agy", InstallerURL: agyInstallerURL},
 		"kimi":        {Engine: "kimi", Binary: "kimi", Package: "@moonshot-ai/kimi-code"},
 		"pi":          {Engine: "pi", Binary: "pi", Package: "@earendil-works/pi-coding-agent"},
 		"dsh":         {Engine: "dsh", Binary: "dsh", Package: "@deepseek-ai/dsh@" + DeepSeekHarnessVersion, RelaxEngines: true, Bundled: true},
@@ -69,6 +67,11 @@ func OnDemandCLIPath(engine string) (string, bool) {
 	if !ok {
 		return "", false
 	}
+	if engine == AgentCLICursor {
+		if path := sharedCursorCLIPath(); fileIsExecutable(path) {
+			return path, true
+		}
+	}
 	path := onDemandBinary(spec)
 	if path == "" || !fileIsExecutable(path) {
 		return "", false
@@ -77,7 +80,7 @@ func OnDemandCLIPath(engine string) (string, bool) {
 }
 
 func onDemandBinary(spec onDemandCLI) string {
-	if spec.Script != "" {
+	if spec.InstallerURL != "" {
 		home, err := os.UserHomeDir()
 		if err != nil || strings.TrimSpace(home) == "" {
 			return ""
@@ -111,8 +114,14 @@ func InstallOnDemandCLI(ctx context.Context, engine string) (string, error) {
 	switch {
 	case spec.Engine == "claude-code":
 		path, err = EnsureClaudeCode(ctx)
-	case spec.Script != "":
-		path, err = installScriptCLI(ctx, spec)
+	case spec.Engine == AgentCLICursor && sharedCursorCLIPath() != "":
+		path, err = prepareSharedCursorCLI(ctx, true)
+	case spec.InstallerURL != "":
+		home, homeErr := os.UserHomeDir()
+		if homeErr != nil || strings.TrimSpace(home) == "" {
+			return "", errors.New("无法确定安装用户的主目录")
+		}
+		path, err = installScriptCLI(ctx, spec, home)
 	default:
 		path, err = installNPMCLI(ctx, spec)
 	}
@@ -191,16 +200,12 @@ func activateNPMStage(parent, stage, binary string) (string, error) {
 	return filepath.Join(target, "node_modules", ".bin", binary), nil
 }
 
-func installScriptCLI(ctx context.Context, spec onDemandCLI) (string, error) {
+func installScriptCLI(ctx context.Context, spec onDemandCLI, home string) (string, error) {
 	if _, err := exec.LookPath("bash"); err != nil {
 		return "", errors.New("服务器上没有 bash，无法安装")
 	}
-	home, err := os.UserHomeDir()
-	if err != nil || strings.TrimSpace(home) == "" {
-		return "", errors.New("无法确定安装用户的主目录")
-	}
-	cmd := exec.CommandContext(ctx, "bash", "-c", spec.Script)
-	cmd.Env = append(os.Environ(), "HOME="+home)
+	cmd := exec.CommandContext(ctx, "sh", "-ec", scriptCLIInstaller(spec.InstallerURL))
+	cmd.Env = upsertEnv(os.Environ(), "HOME", home)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return "", errors.New(installCommandError(ctx, err, out))
 	}
@@ -209,6 +214,21 @@ func installScriptCLI(ctx context.Context, spec onDemandCLI) (string, error) {
 		return "", fmt.Errorf("安装后没有找到可执行文件 %s", spec.Binary)
 	}
 	return path, nil
+}
+
+// Download the complete HTTPS installer before executing it. Retry the transfer
+// once because a TLS connection failure can be transient.
+func scriptCLIInstaller(url string) string {
+	return "installer_url=" + shellSingleQuote(url) + "\n" + `installer_file=$(mktemp)
+trap 'rm -f "$installer_file"' EXIT
+download_installer() {
+  curl -fsSL --proto '=https' --tlsv1.2 --connect-timeout 10 --max-time 45 -o "$installer_file" "$installer_url"
+}
+if ! download_installer; then
+  sleep 1
+  download_installer
+fi
+bash -o pipefail "$installer_file" >&2`
 }
 
 func installCommandError(ctx context.Context, err error, out []byte) string {

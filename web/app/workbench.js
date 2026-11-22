@@ -1355,13 +1355,17 @@ function credentialWizardStepTwoHTML(kind){
   // The network environment decides where the key comes from, so it is chosen first.
   const baseField=kind.baseURL?credentialBaseURLFieldHTML(wizard.baseUrl):'';
   const fields=(kind.extra?.options?extraField+secretField:secretField+extraField+protocolField)+baseField;
+  const runtimeNotice=kind.agentCli==='zcode'?`<div class="credential-note credential-runtime-note" data-credential-runtime role="status">
+    ${credentialGlyph('info',14)}<span><b>需要预装 ZCode CLI</b><span>请确认所选执行机器或 Docker 工作区镜像已安装官方 CLI。</span></span>
+  </div>`:'';
   if(isDirectExecutorForm(wizard)){
     const error=wizard.error?`<p class="credential-vline is-err" role="alert">${escapeHTML(wizard.error)}</p>`:'';
     return `<div class="credential-direct-heading">${credentialLogo(kind)}<h3>新增 ${escapeHTML(kind.name)}</h3></div>
+      ${runtimeNotice}
       <fieldset class="credential-fields"${wizard.saving?' disabled':''}>${fields}</fieldset>
       <details class="credential-direct-help"><summary>如何获取密钥</summary><ol class="credential-guide">${guide}</ol></details>${error}`;
   }
-  return `<div class="credential-question">${credentialLogo(kind,'is-mini')}<span>${github?'使用访问令牌':'配置 '+escapeHTML(kind.short)}</span><small class="credential-description">${escapeHTML(kind.description)}</small></div>${methods}<ol class="credential-guide">${guide}</ol><div class="credential-fields">
+  return `<div class="credential-question">${credentialLogo(kind,'is-mini')}<span>${github?'使用访问令牌':'配置 '+escapeHTML(kind.short)}</span><small class="credential-description">${escapeHTML(kind.description)}</small></div>${runtimeNotice}${methods}<ol class="credential-guide">${guide}</ol><div class="credential-fields">
     ${fields}
   </div>`;
 }
@@ -1408,6 +1412,19 @@ function paintCredentialWizard(direction){
   if(old&&direction){old.className=`credential-pane is-leaving ${direction>0?'is-forward':'is-back'}`;old.querySelectorAll('input,textarea').forEach(input=>{input.value=''});setTimeout(()=>old.remove(),180)}
   else old?.remove();
   body.append(pane);
+  const runtimeNotice=pane.querySelector('[data-credential-runtime]');
+  if(runtimeNotice)api('/api/assistant/cli-install?engine=zcode',{silent:true}).then(({status})=>{
+    const heading=runtimeNotice.querySelector('b'),detail=heading.nextElementSibling;
+    if(status==='installed'){
+      heading.textContent='平台服务器已检测到 ZCode CLI';
+      detail.textContent='使用独立执行机器或 Docker 工作区时，请确认该环境也已预装。';
+    }
+    if(status==='missing'){
+      runtimeNotice.classList.add('is-warn');
+      heading.textContent='平台服务器缺少 ZCode CLI';
+      detail.textContent='请管理员在任务所用环境安装官方 CLI，并将 zcode 加入 PATH。';
+    }
+  }).catch(()=>{});
   const secretInput=pane.querySelector('[name="secret"]');if(secretInput)secretInput.value=wizard.secret||'';
   if(before&&direction){body.style.height=before+'px';requestAnimationFrame(()=>{body.style.height=pane.offsetHeight+'px';setTimeout(()=>{body.style.height=''},300)})}
   scrim.querySelectorAll('.credential-dots span').forEach((dot,index)=>{dot.className=wizard.done||index+1<wizard.step?'is-done':index+1===wizard.step?'is-current':''});

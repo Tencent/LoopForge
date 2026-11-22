@@ -26,7 +26,8 @@ function render() {
 
 $('switchMode').onclick = () => { mode = mode === 'login' ? 'register' : 'login'; render(); };
 
-fetch('/api/auth/setup').then(r => r.ok ? r.json() : {}).then(state => {
+fetch('/api/auth/setup').then(r => r.ok ? r.json() : null).then(state => {
+  if (!state) return;
   signup = !!state.signupEnabled;
   if (state.needsSetup) mode = 'setup';
   else if (location.hash === '#register' && signup) mode = 'register';
