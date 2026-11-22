@@ -61,6 +61,29 @@ test("stays on automatic install when a reload finds the download still running"
   expect(await screen.findByRole("button", { name: "自动安装" })).toBeDisabled();
 });
 
+test("recovers the server result when the install request times out", async () => {
+  let started = false;
+  const done = vi.fn();
+  vi.stubGlobal("fetch", vi.fn(async (_url, options) => {
+    if (options?.method === "POST") {
+      started = true;
+      return jsonResponse(null, 504);
+    }
+    return jsonResponse({ engine: "cursor", status: started ? "installed" : "missing" });
+  }));
+  render(
+    <CLIInstallAction
+      text="Cursor CLI（cursor）没有安装在当前服务器上。安装后即可在对话里使用。"
+      onResult={done}
+    />,
+  );
+  const install = await screen.findByRole("button", { name: "安装 Cursor CLI" });
+  await waitFor(() => expect(install).toBeEnabled());
+  await userEvent.click(install);
+  await waitFor(() => expect(done).toHaveBeenCalledWith("Cursor CLI 已安装，请重新发送。"));
+  expect(screen.queryByText(/504/)).toBeNull();
+});
+
 test("a reload shows automatic install before the status request returns", () => {
   sessionStorage.setItem("loopforge.cli-install.opencode", "installing");
   vi.stubGlobal("fetch", vi.fn(() => new Promise(() => {})));
@@ -86,13 +109,17 @@ test("a finished install replaces the generation failure", async () => {
 });
 
 test("keeps the install button when the download fails", async () => {
+  let started = false;
+  const error = "安装失败：registry unreachable";
   vi.stubGlobal(
     "fetch",
-    vi.fn(async (_url, options) =>
-      options?.method === "POST"
-        ? jsonResponse({ error: "安装失败：registry unreachable" }, 502)
-        : jsonResponse({ engine: "pi", status: "missing" }),
-    ),
+    vi.fn(async (_url, options) => {
+      if (options?.method === "POST") {
+        started = true;
+        return jsonResponse({ error }, 502);
+      }
+      return jsonResponse(started ? { engine: "pi", status: "failed", error } : { engine: "pi", status: "missing" });
+    }),
   );
   render(
     <CLIInstallAction text="Pi（pi）没有安装在当前服务器上。安装后即可在对话里使用。" />,
@@ -100,6 +127,6 @@ test("keeps the install button when the download fails", async () => {
   const install = await screen.findByRole("button", { name: "安装 Pi" });
   await waitFor(() => expect(install).toBeEnabled());
   await userEvent.click(install);
-  expect(await screen.findByText("安装失败：registry unreachable")).toBeInTheDocument();
+  expect(await screen.findByText(error)).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "安装 Pi" })).toBeEnabled();
 });
