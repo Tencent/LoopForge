@@ -1306,7 +1306,25 @@ function renderRunDetail(r){
   bindRunEvalPane(r,host);
   if(runDetailTab==='eval')loadRunEval(r.id);
 }
-function fallbackCopyText(value){const ta=document.createElement('textarea');ta.value=value;ta.setAttribute('readonly','');ta.style.cssText='position:fixed;top:-9999px;left:-9999px';document.body.appendChild(ta);ta.select();let ok=false;try{ok=document.execCommand('copy')}catch(e){ok=false}document.body.removeChild(ta);return ok}
+function fallbackCopyText(value){
+  const input=document.createElement('textarea');
+  input.value=value;
+  input.readOnly=true;
+  input.style.cssText='position:fixed;top:-9999px;left:-9999px';
+  const modal=$('#artifactModal[open]');
+  const previousFocus=document.activeElement;
+  const container=modal||document.body;
+  container.appendChild(input);
+  try{
+    input.select();
+    return document.execCommand('copy');
+  }catch{
+    return false;
+  }finally{
+    input.remove();
+    if(modal?.contains(previousFocus))previousFocus.focus({preventScroll:true});
+  }
+}
 async function copyText(value,message){if(navigator.clipboard&&window.isSecureContext){try{await navigator.clipboard.writeText(value);toast(message);return}catch(e){}}toast(fallbackCopyText(value)?message:'复制失败，请手动复制')}
 async function downloadRunLogs(runId){
   try{
@@ -1483,7 +1501,9 @@ function bindArtifactPreview(){
   const modal=$('#artifactModal');
   modal.querySelector('.artifact-close').onclick=()=>modal.close();
   modal.addEventListener('close',()=>{
-    if(!modal.open)artifactPreviewRequest?.abort();
+    if(modal.open)return;
+    artifactPreviewRequest?.abort();
+    $('#artifactToastContainer').replaceChildren();
   });
   modal.addEventListener('pointerdown',e=>{
     if(e.target!==modal)return;

@@ -108,7 +108,7 @@ async function api(path, options={}) {
 }
 const toastActions=new Map();
 function toast(message, type='info', duration=2600){
-  const container=$('#toastContainer');
+  const container=$('#artifactModal[open] #artifactToastContainer')||$('#toastContainer');
   const legacy=$('#toast');
   if(!container&&legacy){
     const kind=type==='ok'||type==='err'?type:'info';

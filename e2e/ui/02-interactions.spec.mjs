@@ -128,6 +128,14 @@ test('run detail: tabs render and a waiting approval is approved from the UI', a
   const dialog = page.getByRole('dialog', { name: 'result' });
   await expect(dialog.getByRole('button', { name: '关闭', exact: true })).toBeFocused();
   await expect(page.locator('#artifactPreview')).toContainText('UI E2E');
+  await page.context().grantPermissions(['clipboard-write']);
+  await dialog.getByRole('button', { name: /复制内容/ }).click();
+  const feedback = dialog.getByRole('status').filter({ hasText: '产物内容已复制到剪贴板' });
+  await expect(feedback).toBeVisible();
+  await expect.poll(() => feedback.evaluate(el => {
+    const rect = el.getBoundingClientRect();
+    return el.contains(document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2));
+  })).toBe(true);
   await page.keyboard.press('Escape');
   await expect(dialog).toBeHidden();
   await expect(preview).toBeFocused();
