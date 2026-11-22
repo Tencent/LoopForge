@@ -264,57 +264,7 @@ func BuiltInExecutorForKind(kind string) (domain.ExecutorDefinition, bool) {
 	return domain.ExecutorDefinition{}, false
 }
 
-// ---------- Dockerfiles / Environments / Sandboxes ----------
-
-func (r *CatalogRepo) Dockerfiles() []domain.DockerfileDefinition {
-	return payloadList[domain.DockerfileDefinition](r.DB, "dockerfiles", "")
-}
-
-func (r *CatalogRepo) Dockerfile(id string) (domain.DockerfileDefinition, bool) {
-	return payloadOne[domain.DockerfileDefinition](r.DB, "dockerfiles", id)
-}
-
-func (r *CatalogRepo) PutDockerfile(v domain.DockerfileDefinition) error {
-	if err := domain.ValidateDockerfile(v); err != nil {
-		return err
-	}
-	v.UpdatedAt = time.Now().UTC()
-	return upsert(r.DB, "dockerfiles", map[string]any{
-		"id": v.ID, "name": v.Name, "payload": mustJSON(v), "updated_at": timePtr(v.UpdatedAt),
-	})
-}
-
-func (r *CatalogRepo) DeleteDockerfile(id string) error {
-	if _, ok := r.Dockerfile(id); !ok {
-		return fmt.Errorf("dockerfile not found")
-	}
-	return r.DB.Table("dockerfiles").Where("id = ?", id).Delete(nil).Error
-}
-
-func (r *CatalogRepo) Environments() []domain.EnvironmentDefinition {
-	return payloadList[domain.EnvironmentDefinition](r.DB, "environments", "")
-}
-
-func (r *CatalogRepo) Environment(id string) (domain.EnvironmentDefinition, bool) {
-	return payloadOne[domain.EnvironmentDefinition](r.DB, "environments", id)
-}
-
-func (r *CatalogRepo) PutEnvironment(v domain.EnvironmentDefinition) error {
-	if err := domain.ValidateEnvironment(v); err != nil {
-		return err
-	}
-	v.UpdatedAt = time.Now().UTC()
-	return upsert(r.DB, "environments", map[string]any{
-		"id": v.ID, "name": v.Name, "payload": mustJSON(v), "updated_at": timePtr(v.UpdatedAt),
-	})
-}
-
-func (r *CatalogRepo) DeleteEnvironment(id string) error {
-	if _, ok := r.Environment(id); !ok {
-		return fmt.Errorf("environment not found")
-	}
-	return r.DB.Table("environments").Where("id = ?", id).Delete(nil).Error
-}
+// ---------- Sandboxes ----------
 
 func (r *CatalogRepo) Sandboxes() []domain.SandboxProfile {
 	profiles := payloadList[domain.SandboxProfile](r.DB, "sandboxes", "")
@@ -339,7 +289,7 @@ func (r *CatalogRepo) Sandbox(id string) (domain.SandboxProfile, bool) {
 	// A missing row may use the built-in default. Database failures or invalid
 	// stored configuration must not silently switch a run's execution policy.
 	if errors.Is(err, gorm.ErrRecordNotFound) && id == DefaultSandboxProfileID {
-		return DefaultSandboxProfile(), true
+		return GenericDockerSandbox(), true
 	}
 	if err != nil || json.Unmarshal(row.Payload, &profile) != nil {
 		return domain.SandboxProfile{}, false
@@ -370,18 +320,16 @@ func (r *CatalogRepo) PutSandbox(v domain.SandboxProfile) error {
 		return fmt.Errorf("unsupported sandbox driver %q", v.Driver)
 	}
 	stored := normalizeSandboxProfile(v)
-	if stored.Driver == "docker" && stored.DockerfileID == "" {
-		return errors.New("docker sandbox requires a dockerfileId")
-	}
-	if stored.DockerfileID != "" {
-		if _, ok := r.Dockerfile(stored.DockerfileID); !ok {
-			return fmt.Errorf("dockerfile %q not found", stored.DockerfileID)
+	if stored.Driver == domain.SandboxDriverLocal {
+		if stored.ID == DefaultSandboxProfileID {
+			return errors.New("默认运行沙箱供 SOP 使用，不能改为 local")
+		}
+		if err := domain.ValidateLocalSandbox(stored); err != nil {
+			return err
 		}
 	}
-	if stored.EnvironmentID != "" {
-		if _, ok := r.Environment(stored.EnvironmentID); !ok {
-			return fmt.Errorf("environment %q not found", stored.EnvironmentID)
-		}
+	if err := domain.ValidateSandboxAssets(stored); err != nil {
+		return err
 	}
 	return upsert(r.DB, "sandboxes", map[string]any{
 		"id": stored.ID, "name": stored.Name, "payload": mustJSON(stored),
@@ -514,11 +462,12 @@ func (r *CatalogRepo) putWorkflow(v domain.WorkflowDefinition, publishing bool) 
 		return err
 	}
 	v = normalizeWorkflowDefinition(v)
-	if strings.TrimSpace(v.SandboxProfileID) == "" {
-		v.SandboxProfileID = "local"
-	}
-	if _, ok := r.Sandbox(v.SandboxProfileID); !ok {
+	profile, ok := r.Sandbox(v.SandboxProfileID)
+	if !ok {
 		return fmt.Errorf("sandbox profile %q not found", v.SandboxProfileID)
+	}
+	if err := domain.ValidateWorkflowSandbox(profile); err != nil {
+		return err
 	}
 	now := time.Now().UTC()
 	old, ok := r.storedWorkflow(v.ID)
@@ -928,25 +877,47 @@ func ProjectIssueWorkflowID(projectID string) string {
 
 func normalizeSandboxProfile(profile domain.SandboxProfile) domain.SandboxProfile {
 	profile.Driver = strings.TrimSpace(profile.Driver)
-	profile.DockerfileID = strings.TrimSpace(profile.DockerfileID)
-	profile.EnvironmentID = strings.TrimSpace(profile.EnvironmentID)
+	profile.DockerfileID, profile.EnvironmentID = "", ""
+	profile.RunnerID = strings.TrimSpace(profile.RunnerID)
+	profile.BaseDir = strings.TrimSpace(profile.BaseDir)
+	if i := profile.Install; i != nil && strings.TrimSpace(i.Script) == "" && len(i.PathEntries) == 0 && len(i.Variables) == 0 {
+		profile.Install = nil
+	}
+	// Each driver keeps only its own recipe, so switching drivers drops the
+	// other one instead of failing the save.
+	if profile.Driver != domain.SandboxDriverDocker {
+		profile.Dockerfile = nil
+	}
+	switch profile.Driver {
+	case "native", "seatbelt", "bwrap":
+	default:
+		profile.Install = nil
+	}
 	switch profile.Driver {
 	case "local":
-		profile.DockerfileID = ""
 		profile.ReadOnlyRootFS = false
+		paths := map[string]string{}
+		for id, path := range profile.RepositoryPaths {
+			if id, path = strings.TrimSpace(id), strings.TrimSpace(path); path != "" {
+				paths[id] = path
+			}
+		}
+		profile.RepositoryPaths = nil
+		if len(paths) > 0 {
+			profile.RepositoryPaths = paths
+		}
+		return profile
 	case "native", "seatbelt", "bwrap":
 		profile.Driver = domain.SandboxDriverNative
-		profile.DockerfileID = ""
 		profile.ReadOnlyRootFS = false
-	case "docker":
-		profile.EnvironmentID = ""
 	}
+	profile.RunnerID, profile.BaseDir, profile.RepositoryPaths = "", "", nil
 	return profile
 }
 
 func normalizeWorkflowDefinition(workflow domain.WorkflowDefinition) domain.WorkflowDefinition {
 	if strings.TrimSpace(workflow.SandboxProfileID) == "" {
-		workflow.SandboxProfileID = "local"
+		workflow.SandboxProfileID = DefaultSandboxProfileID
 	}
 	for index := range workflow.Nodes {
 		node := &workflow.Nodes[index]

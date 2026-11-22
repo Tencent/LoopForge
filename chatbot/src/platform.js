@@ -32,9 +32,7 @@ const entities = {
   assistant_tasks: "助手定时任务",
   runs: "运行",
   issues: "需求",
-  environments: "环境",
   sandboxes: "沙箱",
-  dockerfiles: "Dockerfile",
   executors: "执行器",
 };
 const verbs = {

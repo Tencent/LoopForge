@@ -151,8 +151,13 @@ func buildArtifactFresh(cache, root string) bool {
 			return filepath.SkipDir
 		}
 		if entry.IsDir() {
-			switch entry.Name() {
-			case "vendor", ".git", "testdata", "web", "docs":
+			// Every agent turn waits on this walk under gateMCPBuildMu, so
+			// frontend dependency trees (tens of thousands of files) must
+			// not be visited.
+			switch name := entry.Name(); {
+			case path != root && strings.HasPrefix(name, "."):
+				return filepath.SkipDir
+			case name == "vendor", name == "testdata", name == "web", name == "docs", name == "node_modules":
 				return filepath.SkipDir
 			}
 			return nil

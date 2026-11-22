@@ -432,6 +432,11 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 			return
 		}
 	}
+	// Runs frozen before local became conversation-only still carry it.
+	if err := domain.ValidateWorkflowSandbox(profile); err != nil {
+		failNode(err, false)
+		return
+	}
 	requirements, err := workflowSandboxRequirements(e.repo, wf)
 	if err != nil {
 		failNode(err, nodeRejects(node))

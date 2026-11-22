@@ -96,7 +96,6 @@ func (m *Manager) open(ctx context.Context, id, dir string, profile domain.Sandb
 		return fail(err)
 	}
 	profile.Environment = overlayEnvironment(profile.Environment, activated.Overlay)
-	profile, resources.Dockerfile = isolateLocalDriver(profile, resources.Dockerfile)
 	sandbox, err := createDriverSandbox(ctx, "sandbox", id, workspace, profile, requirements, resources.Dockerfile)
 	if err != nil {
 		return fail(err)

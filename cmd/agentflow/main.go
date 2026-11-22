@@ -139,7 +139,6 @@ func main() {
 	}
 	log.Printf("storage driver=%v database=%v role=%s", s.StorageInfo()["driver"], s.StorageInfo()["database"], role)
 	e := engine.New(s, runtime.NewManagerWithLimit(root, *workerConcurrency))
-	runtime.PrebuildIsolatedImage()
 	host, _ := os.Hostname()
 	instanceID := strings.TrimSpace(os.Getenv("AGENTFLOW_INSTANCE_ID"))
 	if instanceID == "" {

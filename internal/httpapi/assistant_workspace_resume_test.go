@@ -367,9 +367,9 @@ func TestWorkspaceOpenBorrowedSOPMachineMismatchAndFailureRollback(t *testing.T)
 		t.Fatalf("expected both runner IDs in mismatch error, got: %v", err)
 	}
 
-	// Local driver refused cleanly.
+	// A local snapshot that lost its execution machine is refused cleanly.
 	_, err = gateway.openConversationWorkspace(context.Background(), sCloud, map[string]any{"workspaceRunId": sopLocal.ID})
-	if err == nil || !strings.Contains(err.Error(), "Docker 或 native") {
+	if err == nil || !strings.Contains(err.Error(), "未绑定执行机器") {
 		t.Fatalf("expected sandbox driver refusal, got: %v", err)
 	}
 

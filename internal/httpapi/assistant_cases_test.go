@@ -233,13 +233,11 @@ func TestAssistantAcceptanceAndDraftWarnings(t *testing.T) {
 
 	h := &assistantHandlers{deps: &deps{repo: st}}
 	for tool, wantPart := range map[string]string{
-		"agents_delete":       "不存在",
-		"rules_delete":        "不存在",
-		"skills_delete":       "不存在",
-		"dockerfiles_delete":  "不存在",
-		"environments_delete": "不存在",
-		"sandboxes_delete":    "不存在",
-		"workflows_delete":    "不存在",
+		"agents_delete":    "不存在",
+		"rules_delete":     "不存在",
+		"skills_delete":    "不存在",
+		"sandboxes_delete": "不存在",
+		"workflows_delete": "不存在",
 	} {
 		d := assistantDraft{Tool: tool, Body: json.RawMessage(`{"id":"missing"}`)}
 		warnings := h.assistantDraftWarnings(d)
@@ -261,13 +259,9 @@ func TestAssistantAcceptanceAndDraftWarnings(t *testing.T) {
 	_ = st.PutRule(domain.RuleDefinition{ID: "rule-ref", Name: "Rule", ProjectID: projectID})
 	_ = st.PutSkill(domain.SkillDefinition{ID: "skill-ref", Name: "Skill", ProjectID: projectID})
 	_ = st.PutAgent(domain.AgentDefinition{ID: "agent-ref", Name: "Agent Ref", ProjectID: projectID, Rules: []string{"rule-ref"}, Skills: []string{"skill-ref"}})
-	_ = st.PutDockerfile(domain.DockerfileDefinition{ID: "docker-ref", Name: "Docker", ProjectID: projectID})
-	_ = st.PutEnvironment(domain.EnvironmentDefinition{ID: "env-ref", Name: "Env", ProjectID: projectID})
-	_ = st.PutSandbox(domain.SandboxProfile{ID: "sandbox-ref", Name: "Sandbox Ref", ProjectID: projectID, DockerfileID: "docker-ref", EnvironmentID: "env-ref"})
+	_ = st.PutSandbox(domain.SandboxProfile{ID: "sandbox-ref", Name: "Sandbox Ref", ProjectID: projectID})
 	_ = st.PutWorkflow(domain.WorkflowDefinition{ID: "workflow-ref", Name: "Workflow Ref", ProjectID: projectID, SandboxProfileID: "sandbox-ref"})
 	_ = h.agentNamesReferencing("rule", "rule-ref")
 	_ = h.agentNamesReferencing("skill", "skill-ref")
-	_ = h.sandboxNamesReferencing("dockerfile", "docker-ref")
-	_ = h.sandboxNamesReferencing("environment", "env-ref")
 	_ = h.workflowNamesReferencingSandbox("sandbox-ref")
 }

@@ -104,7 +104,7 @@ func TestCatalogAssetLifecycle(t *testing.T) {
 		ID: skill.ID, Name: skill.Name, ProjectID: skill.ProjectID, Shared: false,
 	}, http.StatusConflict)
 
-	if err := f.s.PutSandbox(domain.SandboxProfile{ID: "cvb-r2-global-sandbox", Name: "Global sandbox", ProjectID: "platform", Driver: "local"}); err != nil {
+	if err := f.s.PutSandbox(domain.SandboxProfile{ID: "cvb-r2-global-sandbox", Name: "Global sandbox", ProjectID: "platform", Driver: "native"}); err != nil {
 		t.Fatal(err)
 	}
 	workflow := domain.WorkflowDefinition{ID: "cvb-r2-global-flow", Name: "Global", ProjectID: "platform", SandboxProfileID: "cvb-r2-global-sandbox"}
@@ -130,32 +130,6 @@ func TestCatalogAssetLifecycle(t *testing.T) {
 }
 
 func TestCatalogSandboxDependencyAndScopeHelpers(t *testing.T) {
-	f := cvBNewHTTPFixture(t)
-	h := &catalogHandlers{deps: &deps{repo: f.s}}
-	dockerfile := domain.DockerfileDefinition{ID: "cvb-r2-docker", Name: "Docker", ProjectID: "platform", Content: "FROM alpine\n"}
-	environment := domain.EnvironmentDefinition{ID: "cvb-r2-env", Name: "Environment", ProjectID: "platform"}
-	if err := f.s.PutDockerfile(dockerfile); err != nil {
-		t.Fatal(err)
-	}
-	if err := f.s.PutEnvironment(environment); err != nil {
-		t.Fatal(err)
-	}
-	if err := h.shareSandboxDependencies(domain.SandboxProfile{ID: "box", ProjectID: "platform", Shared: true,
-		DockerfileID: dockerfile.ID, EnvironmentID: environment.ID}); err != nil {
-		t.Fatal(err)
-	}
-	if item, _ := f.s.Dockerfile(dockerfile.ID); !item.Shared {
-		t.Fatal("dockerfile not shared")
-	}
-	if item, _ := f.s.Environment(environment.ID); !item.Shared {
-		t.Fatal("environment not shared")
-	}
-	if err := h.shareSandboxDependencies(domain.SandboxProfile{DockerfileID: "missing"}); err == nil {
-		t.Fatal("missing dockerfile accepted")
-	}
-	if err := h.shareSandboxDependencies(domain.SandboxProfile{EnvironmentID: "missing"}); err == nil {
-		t.Fatal("missing environment accepted")
-	}
 	if !workflowHasNotifications(domain.WorkflowDefinition{Nodes: []domain.WorkflowNode{{
 		Notifications: []domain.NotificationBinding{{Scope: "node"}},
 	}}}) || workflowHasNotifications(domain.WorkflowDefinition{}) {
@@ -175,7 +149,7 @@ func TestRunEvalBusyApplyAndCloneHelpers(t *testing.T) {
 	if _, err := f.s.UpdateUserCredentials(f.user.ID, repo.UserCredentialUpdate{CodeBuddyAPIKey: "key"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.s.PutSandbox(domain.SandboxProfile{ID: "cvb-r2-eval-sandbox", Name: "Eval sandbox", ProjectID: "platform", Driver: "local"}); err != nil {
+	if err := f.s.PutSandbox(domain.SandboxProfile{ID: "cvb-r2-eval-sandbox", Name: "Eval sandbox", ProjectID: "platform", Driver: "native"}); err != nil {
 		t.Fatal(err)
 	}
 	run := domain.Run{ID: "cvb-r2-eval-branches", WorkflowID: "cvb-r2-eval-flow", Status: "succeeded",
@@ -296,16 +270,8 @@ func TestCatalogEnvironmentConflictMatrix(t *testing.T) {
 	if err := f.s.PutProject(other); err != nil {
 		t.Fatal(err)
 	}
-	docker := domain.DockerfileDefinition{ID: "cvb-r2-assets-docker", Name: "Docker", ProjectID: "platform", Shared: true, Content: "FROM alpine\n"}
-	env := domain.EnvironmentDefinition{ID: "cvb-r2-assets-env", Name: "Env", ProjectID: "platform", Shared: true}
 	box := domain.SandboxProfile{ID: "cvb-r2-assets-box", Name: "Box", ProjectID: "platform", Shared: true, Driver: "docker",
-		DockerfileID: docker.ID, EnvironmentID: env.ID}
-	if err := f.s.PutDockerfile(docker); err != nil {
-		t.Fatal(err)
-	}
-	if err := f.s.PutEnvironment(env); err != nil {
-		t.Fatal(err)
-	}
+		Dockerfile: &domain.SandboxDockerfile{Content: "FROM alpine\n"}}
 	if err := f.s.PutSandbox(box); err != nil {
 		t.Fatal(err)
 	}
@@ -318,15 +284,11 @@ func TestCatalogEnvironmentConflictMatrix(t *testing.T) {
 		path string
 		body any
 	}{
-		{"/api/dockerfiles", domain.DockerfileDefinition{ID: docker.ID, Name: "Moved", ProjectID: other.ID}},
-		{"/api/dockerfiles", domain.DockerfileDefinition{ID: docker.ID, Name: docker.Name, ProjectID: "platform", Shared: false}},
-		{"/api/environments", domain.EnvironmentDefinition{ID: env.ID, Name: "Moved", ProjectID: other.ID}},
-		{"/api/environments", domain.EnvironmentDefinition{ID: env.ID, Name: env.Name, ProjectID: "platform", Shared: false}},
 		{"/api/sandboxes", domain.SandboxProfile{ID: box.ID, Name: "Moved", ProjectID: other.ID}},
 		{"/api/sandboxes", domain.SandboxProfile{ID: box.ID, Name: box.Name, ProjectID: "platform", Shared: false}},
 	} {
 		rec := cvBRequest(t, f, http.MethodPut, tc.path, tc.body, true)
-		if rec.Code != http.StatusConflict && !(tc.path == "/api/environments" && rec.Code == http.StatusOK) {
+		if rec.Code != http.StatusConflict {
 			t.Errorf("PUT %s = %d: %s", tc.path, rec.Code, rec.Body.String())
 		}
 	}
@@ -566,7 +528,7 @@ func TestDispatchWorkflowSelectionErrors(t *testing.T) {
 		t.Fatal("issue without workflow dispatched")
 	}
 
-	if err := f.s.PutSandbox(domain.SandboxProfile{ID: "cvb-r2-dispatch-box", Name: "Box", ProjectID: "platform", Driver: "local"}); err != nil {
+	if err := f.s.PutSandbox(domain.SandboxProfile{ID: "cvb-r2-dispatch-box", Name: "Box", ProjectID: "platform", Driver: "native"}); err != nil {
 		t.Fatal(err)
 	}
 	fallbackID := repo.ProjectIssueWorkflowID("platform")
@@ -735,7 +697,7 @@ func TestCatalogRemainingReachableBranches(t *testing.T) {
 		t.Errorf("generic publish = %d: %s", rec.Code, rec.Body.String())
 	}
 
-	if err := f.s.PutSandbox(domain.SandboxProfile{ID: "cvb-r2-notify-box", Name: "Notify", ProjectID: "platform", Driver: "local"}); err != nil {
+	if err := f.s.PutSandbox(domain.SandboxProfile{ID: "cvb-r2-notify-box", Name: "Notify", ProjectID: "platform", Driver: "native"}); err != nil {
 		t.Fatal(err)
 	}
 	notifyBot := domain.NotificationBot{ID: "cvb-r2-catalog-bot", ProjectID: "platform", Name: "Catalog bot",

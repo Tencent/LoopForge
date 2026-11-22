@@ -646,9 +646,11 @@ func (d *Daemon) executeRunCleanup(ctx context.Context, task domain.RunnerTask) 
 			return execResult{status: domain.RunnerTaskFailed, errMsg: fmt.Sprintf("cleanup docker sandbox: %v", err)}
 		}
 	}
+	worktrees := localWorktreeCommonDirs(ctx, target)
 	if err := os.RemoveAll(target); err != nil {
 		return execResult{status: domain.RunnerTaskFailed, errMsg: fmt.Sprintf("remove runner workspace: %v", err)}
 	}
+	pruneLocalWorktrees(ctx, worktrees)
 	_ = d.client.SendEvents(ctx, task.ID, []domain.RunnerTaskEvent{{Seq: 1, Type: "system", Data: "run sandbox and workspace removed", Ts: time.Now().UTC()}})
 	return execResult{status: domain.RunnerTaskSuccess, exitCode: 0, result: "run sandbox and workspace removed"}
 }
@@ -1448,7 +1450,7 @@ func (d *Daemon) defaultWorkspace(taskID string) string {
 }
 
 // runnerVersion is reported at registration; it matches the module build.
-var runnerVersion = domain.RunnerVersionCodeBuddyBaseURL
+var runnerVersion = domain.RunnerVersionLocalWorktree
 
 // Version returns the runner build version reported at registration.
 func Version() string { return runnerVersion }

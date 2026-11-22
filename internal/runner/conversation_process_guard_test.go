@@ -40,8 +40,7 @@ func TestConversationProcessRejectsInvalidRequests(t *testing.T) {
 		{"traversal key", true, domain.RunnerWorkspaceRequest{Conversation: conversationRequest(t, runtime.ConversationProcessRequest{Operation: "prepare", SessionKey: "../" + key[3:]})}, "invalid conversation process request"},
 		{"upper-case key", true, domain.RunnerWorkspaceRequest{Conversation: conversationRequest(t, runtime.ConversationProcessRequest{Operation: "prepare", SessionKey: strings.Repeat("A", 64)})}, "invalid conversation process request"},
 		{"invalid run id", true, domain.RunnerWorkspaceRequest{RunID: "..", Conversation: conversationRequest(t, runtime.ConversationProcessRequest{Operation: "prepare", SessionKey: key})}, "invalid run id"},
-		{"run without sandbox", true, domain.RunnerWorkspaceRequest{RunID: "run-1", Conversation: conversationRequest(t, runtime.ConversationProcessRequest{Operation: "prepare", SessionKey: key})}, "只支持 Docker 或 native"},
-		{"non-docker sandbox", true, domain.RunnerWorkspaceRequest{RunID: "run-1", Sandbox: &domain.RunnerSandboxSpec{Profile: domain.SandboxProfile{Driver: "process"}}, Conversation: conversationRequest(t, runtime.ConversationProcessRequest{Operation: "prepare", SessionKey: key})}, "只支持 Docker 或 native"},
+		{"run without sandbox", true, domain.RunnerWorkspaceRequest{RunID: "run-1", Conversation: conversationRequest(t, runtime.ConversationProcessRequest{Operation: "prepare", SessionKey: key})}, "缺少沙箱配置"},
 		{"no control channel", false, domain.RunnerWorkspaceRequest{Conversation: conversationRequest(t, runtime.ConversationProcessRequest{Operation: "prepare", SessionKey: key})}, "control channel unavailable"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

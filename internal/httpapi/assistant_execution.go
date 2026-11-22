@@ -125,8 +125,8 @@ func (h *assistantHandlers) sessionMode(c *gin.Context) {
 			return
 		}
 		request, err := h.engine.TrustedWorkspaceRequest(runID, domain.RunnerWorkspaceRequest{})
-		if err != nil || request.Sandbox == nil || !domain.ConversationSandboxDriver(request.Sandbox.Profile.Driver) {
-			c.JSON(409, gin.H{"error": "对话工作区只支持 Docker 或 native 沙箱"})
+		if err != nil || request.Sandbox == nil {
+			c.JSON(409, gin.H{"error": "工作区缺少沙箱配置"})
 			return
 		}
 	}

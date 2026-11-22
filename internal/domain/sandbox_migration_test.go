@@ -8,12 +8,12 @@ import (
 
 func TestWorkflowUnmarshalLiftsConsistentLegacyNodeSandbox(t *testing.T) {
 	var workflow WorkflowDefinition
-	raw := []byte(`{"id":"legacy","nodes":[{"id":"a","sandboxProfileId":"local"},{"id":"b","sandboxProfileId":"local"}]}`)
+	raw := []byte(`{"id":"legacy","nodes":[{"id":"a","sandboxProfileId":"test-native"},{"id":"b","sandboxProfileId":"test-native"}]}`)
 	if err := json.Unmarshal(raw, &workflow); err != nil {
 		t.Fatal(err)
 	}
-	if workflow.SandboxProfileID != "local" {
-		t.Fatalf("sandboxProfileId = %q, want local", workflow.SandboxProfileID)
+	if workflow.SandboxProfileID != "test-native" {
+		t.Fatalf("sandboxProfileId = %q, want test-native", workflow.SandboxProfileID)
 	}
 	marshaled, err := json.Marshal(workflow)
 	if err != nil {
@@ -26,7 +26,7 @@ func TestWorkflowUnmarshalLiftsConsistentLegacyNodeSandbox(t *testing.T) {
 
 func TestWorkflowUnmarshalRejectsConflictingLegacyNodeSandboxes(t *testing.T) {
 	var workflow WorkflowDefinition
-	err := json.Unmarshal([]byte(`{"id":"legacy","nodes":[{"id":"a","sandboxProfileId":"local"},{"id":"b","sandboxProfileId":"container"}]}`), &workflow)
+	err := json.Unmarshal([]byte(`{"id":"legacy","nodes":[{"id":"a","sandboxProfileId":"test-native"},{"id":"b","sandboxProfileId":"container"}]}`), &workflow)
 	if err == nil || !strings.Contains(err.Error(), "conflicting legacy node sandbox profiles") {
 		t.Fatalf("expected explicit conflict, got %v", err)
 	}

@@ -23,11 +23,14 @@ func TestNativeHookForwardsExactInputAndFailsClosed(t *testing.T) {
 	}
 	var received struct {
 		Params struct {
-			Name  string          `json:"name"`
-			Input json.RawMessage `json:"input"`
+			Name      string          `json:"name"`
+			Input     json.RawMessage `json:"input"`
+			Cwd       string          `json:"cwd"`
+			Workspace string          `json:"workspace"`
 		} `json:"params"`
 	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		received.Params.Cwd = ""
 		_ = json.NewDecoder(r.Body).Decode(&received)
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"result":{"allow":false,"reason":"denied exact action"}}`))
@@ -37,13 +40,13 @@ func TestNativeHookForwardsExactInputAndFailsClosed(t *testing.T) {
 	if err := os.WriteFile(script, []byte(conversationApprovalPython), 0600); err != nil {
 		t.Fatal(err)
 	}
-	for _, input := range []string{
-		`{"tool_name":"Bash","tool_input":{"command":"printf exact"}}`,
+	for i, input := range []string{
+		`{"tool_name":"Bash","tool_input":{"command":"printf exact"},"cwd":"/w/repo/src"}`,
 		`{"toolName":"Bash","toolInput":{"command":"printf exact"}}`,
 		`{"toolCall":{"name":"Bash","args":{"command":"printf exact"}}}`,
 	} {
 		cmd := exec.Command("python3", script)
-		cmd.Env = append(os.Environ(), "AGENTFLOW_NATIVE_APPROVAL_URL="+server.URL)
+		cmd.Env = append(os.Environ(), "AGENTFLOW_NATIVE_APPROVAL_URL="+server.URL, "AGENTFLOW_NATIVE_WORKSPACE=/w/repo")
 		cmd.Stdin = strings.NewReader(input)
 		output, err := cmd.CombinedOutput()
 		if err == nil || !strings.Contains(string(output), `"permissionDecision": "deny"`) {
@@ -51,6 +54,9 @@ func TestNativeHookForwardsExactInputAndFailsClosed(t *testing.T) {
 		}
 		if received.Params.Name != "Bash" || !bytes.Contains(received.Params.Input, []byte("printf exact")) {
 			t.Fatalf("lost exact input: %+v", received)
+		}
+		if received.Params.Workspace != "/w/repo" || !filepath.IsAbs(received.Params.Cwd) || (i == 0) != (received.Params.Cwd == "/w/repo/src") {
+			t.Fatalf("hook must report where the CLI runs: %+v", received.Params)
 		}
 	}
 	cmd := exec.Command("python3", script)

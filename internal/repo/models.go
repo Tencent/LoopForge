@@ -197,24 +197,6 @@ type executorRow struct {
 
 func (executorRow) TableName() string { return "executors" }
 
-type dockerfileRow struct {
-	ID      string     `gorm:"column:id;primaryKey;size:64"`
-	Name    string     `gorm:"column:name;size:255"`
-	Payload []byte     `gorm:"column:payload;type:json"`
-	Updated *time.Time `gorm:"column:updated_at"`
-}
-
-func (dockerfileRow) TableName() string { return "dockerfiles" }
-
-type environmentRow struct {
-	ID      string     `gorm:"column:id;primaryKey;size:64"`
-	Name    string     `gorm:"column:name;size:255"`
-	Payload []byte     `gorm:"column:payload;type:json"`
-	Updated *time.Time `gorm:"column:updated_at"`
-}
-
-func (environmentRow) TableName() string { return "environments" }
-
 type sandboxRow struct {
 	ID      string `gorm:"column:id;primaryKey;size:64"`
 	Name    string `gorm:"column:name;size:255"`
@@ -763,7 +745,7 @@ func allModels() []any {
 		insightSourceRow{}, insightExecutionRow{},
 		projectRow{}, projectMemberRow{}, repositoryRow{}, businessDomainRow{}, businessDomainAssignmentRow{},
 		agentRow{}, ruleRow{}, skillRow{}, skillFileRow{}, mcpServerRow{}, mcpFileRow{}, executorRow{},
-		dockerfileRow{}, environmentRow{}, sandboxRow{},
+		sandboxRow{},
 		workflowRow{}, syncConfigRow{}, scheduleJobRow{}, scheduleJobExecutionRow{}, scheduleJobExecutionStatRow{}, sharedScheduleVersionRow{},
 		issueRow{}, issueCommentRow{}, taskRow{},
 		runAdmissionLockRow{}, runRow{}, runNodeRow{}, runEventRow{}, runTelemetryRow{}, runLogRow{}, runArtifactRow{}, runEvalRow{},

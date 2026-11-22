@@ -77,7 +77,7 @@ func (d *deps) locking(q *gorm.DB) *gorm.DB {
 }
 
 // CatalogRepo owns the reusable definitions: agents, rules, skills, MCP
-// servers, executors, dockerfiles, environments, sandboxes, workflows,
+// servers, executors, sandboxes (with their Dockerfile or install), workflows,
 // repositories, sync config, schedule jobs and definition revisions.
 type CatalogRepo struct {
 	*deps

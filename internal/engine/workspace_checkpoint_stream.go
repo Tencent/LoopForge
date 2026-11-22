@@ -18,6 +18,9 @@ import (
 )
 
 func (e *Engine) saveConversationWorkspace(ctx context.Context, run domain.Run, token string) error {
+	if run.IsLocalWorkspace() {
+		return nil
+	}
 	file, err := os.CreateTemp("", "agentflow-checkpoint-save-")
 	if err != nil {
 		return err

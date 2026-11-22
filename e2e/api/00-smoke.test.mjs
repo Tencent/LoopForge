@@ -53,8 +53,6 @@ const readOnly = [
   ['/api/skills', d => assert.ok(Array.isArray(list(d)))],
   ['/api/mcp-servers', d => assert.ok(Array.isArray(list(d)))],
   ['/api/mcp-market', d => assert.ok(d)],
-  ['/api/dockerfiles', d => assert.ok(Array.isArray(list(d)))],
-  ['/api/environments', d => assert.ok(Array.isArray(list(d)))],
   ['/api/sandboxes', d => assert.ok(list(d).some(s => s.id === cfg.sandbox), `sandbox ${cfg.sandbox} missing`)],
   ['/api/repositories', d => assert.ok(Array.isArray(list(d)))],
   ['/api/issues', d => assert.ok(Array.isArray(list(d)))],

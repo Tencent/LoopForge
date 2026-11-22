@@ -40,12 +40,13 @@ func (h *agentToolGateway) workspaceOpenDescriptorFor(s *AgentToolSession) agent
 	if fixed := strings.TrimSpace(s.SandboxProfileID); fixed != "" {
 		fmt.Fprintf(&b, "\n\n用户已在高级设置中指定运行环境 %s，不要填 sandboxProfileId。", fixed)
 	} else {
-		b.WriteString("\n\n可选运行环境（sandboxProfileId，按要做的事需要的语言、工具链选择，拿不准用 generic-docker）：")
+		b.WriteString("\n\n可选运行环境（sandboxProfileId，按要做的事需要的语言、工具链选择，拿不准用 generic-docker；local 直接在本机的项目仓库 worktree 中工作，没有隔离，只在用户要求时使用）：")
+		conv, _ := h.repo.AssistantSession(s.ChatOwnerID, s.ChatSessionID)
 		for _, profile := range h.repo.ConversationSandboxes(s.ProjectID) {
-			name := profile.Name
-			if df, ok := h.repo.Dockerfile(profile.DockerfileID); ok && df.Name != "" && df.Name != name {
-				name += "，镜像 " + df.Name
+			if localSandboxOwner(h.repo, profile, s.UserID) != nil || localSandboxRunner(h.repo, profile, conv.Execution().RunnerID) != nil {
+				continue
 			}
+			name := profile.Name
 			if profile.Driver != "" && profile.Driver != domain.SandboxDriverDocker {
 				name += "，" + profile.Driver + " 沙箱"
 			}
@@ -440,8 +441,12 @@ func (h *agentToolGateway) bindConversationWorkspace(ctx context.Context, s *Age
 		convMachine := h.executionMachineLabel(conv.Execution().RunnerID)
 		return binding, fmt.Errorf("工作区 %s 位于%s，与当前对话绑定的%s不在同一执行机器上；如需直接操作该工作区，请在「%s」下新建对话后再接入", binding.Run.ID, srcMachine, convMachine, srcMachine)
 	}
-	if snapshot := binding.Run.WorkflowSnapshot.SandboxSnapshot; snapshot != nil && !domain.ConversationSandboxDriver(snapshot.Profile.Driver) {
-		return binding, fmt.Errorf("对话工作区只支持 Docker 或 native 沙箱（工作区 %s 使用的是 %s）", binding.Run.ID, snapshot.Profile.Driver)
+	// A local workspace is the owner's own checkout: other speakers of a
+	// shared conversation may not drive it.
+	if snapshot := binding.Run.WorkflowSnapshot.SandboxSnapshot; snapshot != nil {
+		if err := localSandboxOwner(h.repo, snapshot.Profile, s.UserID); err != nil {
+			return binding, err
+		}
 	}
 	if binding.Run.ID == s.workspaceRunID {
 		binding.Reused = true
@@ -495,11 +500,17 @@ func (h *agentToolGateway) startConversationWorkspace(s *AgentToolSession, conv 
 	if err != nil {
 		return domain.Run{}, err
 	}
+	target := conv.Execution()
+	if err := localSandboxOwner(h.repo, sandbox, s.UserID); err != nil {
+		return domain.Run{}, err
+	}
+	if err := localSandboxRunner(h.repo, sandbox, target.RunnerID); err != nil {
+		return domain.Run{}, err
+	}
 	if h.engine == nil {
 		return domain.Run{}, fmt.Errorf("执行引擎不可用")
 	}
 	title := "对话工作区：" + truncateRunes(sandbox.Name, 80)
-	target := conv.Execution()
 	return h.engine.StartConversationWorkspace(title, domain.TelemetryContext{
 		ProjectID: s.ProjectID, ResponsibleUserID: s.UserID,
 		ExecutionPinned: true, ExecutionMode: target.Pool, ExecutionRunnerID: target.RunnerID,

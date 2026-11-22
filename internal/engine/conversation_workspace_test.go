@@ -357,7 +357,7 @@ func TestLegacyWorkspaceReplayAfterMainBotCreatedEmptyCheckpoint(t *testing.T) {
 	t.Parallel()
 	e, s := newRecoveryEngine(t)
 	e.ConfigureExecution("test", "test", time.Minute, false)
-	wf := domain.WorkflowDefinition{ID: "legacy-replay", SandboxProfileID: "local", Nodes: []domain.WorkflowNode{{ID: "first", Type: "command", Command: "true"}, {ID: "second", Type: "command", Command: "true"}}, Edges: []domain.WorkflowEdge{{Source: "first", Target: "second", When: "success"}}}
+	wf := domain.WorkflowDefinition{ID: "legacy-replay", SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{{ID: "first", Type: "command", Command: "true"}, {ID: "second", Type: "command", Command: "true"}}, Edges: []domain.WorkflowEdge{{Source: "first", Target: "second", When: "success"}}}
 	r := domain.Run{ID: "legacy-replay", Status: "succeeded", WorkflowID: wf.ID, WorkflowSnapshot: wf, WorkspaceCleanedAt: time.Now().UTC(), Nodes: map[string]*domain.NodeRun{"first": {NodeID: "first", Status: "succeeded", Attempt: 1, Output: "archived output"}, "second": {NodeID: "second", Status: "succeeded", Attempt: 1}}}
 	if err := s.PutRun(r); err != nil {
 		t.Fatal(err)
@@ -422,7 +422,7 @@ func TestMaterializeRunnerConversationWorkspaceRequestsCheckout(t *testing.T) {
 	}
 	run := domain.Run{
 		ID: "chat-workspace", Kind: domain.RunKindWorkspace, Status: "waiting", Nodes: map[string]*domain.NodeRun{},
-		WorkflowSnapshot: domain.WorkflowDefinition{ID: domain.ConversationWorkspaceWorkflowID, SandboxProfileID: "local"},
+		WorkflowSnapshot: domain.WorkflowDefinition{ID: domain.ConversationWorkspaceWorkflowID, SandboxProfileID: "test-native"},
 		ExecutionContext: domain.TelemetryContext{ProjectID: "platform", ExecutionMode: domain.ExecutionModeRunner, ExecutionRunnerID: "chat-runner", RunnerWorkspaceLayout: domain.RunnerWorkspaceLayoutShared},
 		Repositories:     []domain.RepositoryContext{{RepositoryID: "web", Name: "web", CloneURL: "https://git.example.com/team/web.git", BaseBranch: "main", WorkBranch: "feature/chat", WorkspaceDir: "web"}},
 	}

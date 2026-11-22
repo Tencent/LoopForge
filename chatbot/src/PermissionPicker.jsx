@@ -5,8 +5,8 @@ import { usePanelPresence } from "./usePanelPresence";
 import "./permission-picker.css";
 
 const modes = [
-  { id: "confirm", icon: "gate", label: "请求批准", detail: "工作区文件和命令自动执行；平台写入由你确认，外部工具写入需要授权。" },
-  { id: "assisted", icon: "confirmation-check", label: "帮我批准", detail: "工作区文件和命令自动执行；git push 等外部写入命令由 AI 审查直接批准或拒绝；平台写入未通过审查时交给你确认。" },
+  { id: "confirm", icon: "gate", label: "请求批准", detail: "沙箱工作区里的文件和命令自动执行，local 工作区的每次操作都由你批准；平台写入由你确认，外部工具写入需要授权。" },
+  { id: "assisted", icon: "confirmation-check", label: "帮我批准", detail: "沙箱工作区里的文件和命令自动执行；local 工作区的每次操作和 git push 等外部写入命令由 AI 审查直接批准或拒绝；平台写入未通过审查时交给你确认。" },
   { id: "auto", icon: "priority-bolt", label: "完全权限", tone: "danger", detail: "工作区文件和命令自动执行；平台及外部操作使用当前账号权限直接执行。" },
 ];
 

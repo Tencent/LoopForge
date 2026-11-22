@@ -61,6 +61,14 @@ const ConversationWorkspaceWorkflowID = "conversation-workspace"
 // IsWorkspace distinguishes an on-demand chat workspace from a scheduled SOP.
 func (r Run) IsWorkspace() bool { return r.Kind == RunKindWorkspace }
 
+// IsLocalWorkspace identifies a workspace made of git worktrees on its owner's
+// machine: no isolation and no snapshot, so the worktrees hold the only copy
+// of uncommitted work.
+func (r Run) IsLocalWorkspace() bool {
+	snapshot := r.WorkflowSnapshot.SandboxSnapshot
+	return r.IsWorkspace() && snapshot != nil && snapshot.Profile.Driver == SandboxDriverLocal
+}
+
 // IsPersonalWorkspace identifies a workspace whose access is scoped to its owner.
 func (r Run) IsPersonalWorkspace() bool {
 	return r.IsWorkspace() && r.ExecutionContext.ProjectID == ""

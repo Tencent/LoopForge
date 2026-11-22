@@ -102,8 +102,8 @@ func (h *assistantHandlers) conversationExecutor(s *AgentToolSession, root strin
 			if err != nil {
 				return "", err
 			}
-			if request.Sandbox == nil || !domain.ConversationSandboxDriver(request.Sandbox.Profile.Driver) {
-				return "", fmt.Errorf("对话工作区只支持 Docker 或 native 沙箱")
+			if request.Sandbox == nil {
+				return "", fmt.Errorf("工作区缺少沙箱配置")
 			}
 			if s.ExecutionRunnerID == "" {
 				var reason string

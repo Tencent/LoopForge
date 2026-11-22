@@ -260,13 +260,16 @@ type AssistantTask struct {
 
 // AssistantNativeApproval names one immutable native tool invocation.
 type AssistantNativeApproval struct {
-	ID           string          `json:"id"`
-	GenerationID string          `json:"generationId,omitempty"`
-	ActorID      int64           `json:"actorId"`
-	Tool         string          `json:"tool"`
-	Summary      string          `json:"summary,omitempty"`
-	Input        json.RawMessage `json:"input"`
-	InputDigest  string          `json:"-"`
-	Decision     string          `json:"decision"`
-	CreatedAt    time.Time       `json:"createdAt"`
+	ID           string `json:"id"`
+	GenerationID string `json:"generationId,omitempty"`
+	ActorID      int64  `json:"actorId"`
+	Tool         string `json:"tool"`
+	Summary      string `json:"summary,omitempty"`
+	// Local marks an action inside a local workspace, which runs on the
+	// owner's machine without isolation, rather than an external write.
+	Local       bool            `json:"local,omitempty"`
+	Input       json.RawMessage `json:"input"`
+	InputDigest string          `json:"-"`
+	Decision    string          `json:"decision"`
+	CreatedAt   time.Time       `json:"createdAt"`
 }

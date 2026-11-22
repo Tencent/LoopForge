@@ -35,8 +35,8 @@ func (d *Daemon) conversationProcess(ctx context.Context, request domain.RunnerW
 		if err != nil {
 			return runnerWorkspaceError(err)
 		}
-		if request.Sandbox == nil || !domain.ConversationSandboxDriver(request.Sandbox.Profile.Driver) {
-			return domain.RunnerWorkspaceResponse{Status: 400, Error: "对话工作区只支持 Docker 或 native 沙箱"}
+		if request.Sandbox == nil {
+			return domain.RunnerWorkspaceResponse{Status: 400, Error: "工作区缺少沙箱配置"}
 		}
 	}
 	d.conversationMu.Lock()

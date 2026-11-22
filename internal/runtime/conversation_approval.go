@@ -144,7 +144,7 @@ try:
     event=json.load(sys.stdin)
     name=event.get("tool_name") or event.get("toolName") or event.get("tool",{}).get("name") or event.get("toolCall",{}).get("name") or event.get("hook_event_name","")
     arguments=event.get("tool_input",event.get("toolInput",event.get("input",event.get("arguments",event.get("toolCall",{}).get("args",{})))))
-    payload={"jsonrpc":"2.0","id":1,"method":"agentflow/nativeApproval","params":{"id":uuid.uuid4().hex,"name":name,"input":arguments}}
+    payload={"jsonrpc":"2.0","id":1,"method":"agentflow/nativeApproval","params":{"id":uuid.uuid4().hex,"name":name,"input":arguments,"cwd":event.get("cwd") or os.getcwd(),"workspace":os.environ.get("AGENTFLOW_NATIVE_WORKSPACE","")}}
     url=os.environ["AGENTFLOW_NATIVE_APPROVAL_URL"]
     while True:
         remaining=deadline-time.monotonic()
@@ -189,7 +189,7 @@ if not allowed:
 
 const conversationApprovalJS = `import {randomUUID} from "node:crypto";
 async function approve(name,input,signal) {
-  const payload=JSON.stringify({jsonrpc:"2.0",id:1,method:"agentflow/nativeApproval",params:{id:randomUUID(),name,input}});
+  const payload=JSON.stringify({jsonrpc:"2.0",id:1,method:"agentflow/nativeApproval",params:{id:randomUUID(),name,input,cwd:process.cwd(),workspace:process.env.AGENTFLOW_NATIVE_WORKSPACE||""}});
   const limit=Date.now()+` + conversationApprovalLimitSeconds + `*1000;
   let deadline=Math.min(limit,Date.now()+` + conversationApprovalRetrySeconds + `*1000);
   for(;;) {

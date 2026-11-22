@@ -36,7 +36,11 @@ func (h *assistantHandlers) sessionSandbox(c *gin.Context) {
 	}
 	id := strings.TrimSpace(*body.SandboxProfileID)
 	if id != "" {
-		if _, err := h.repo.ConversationSandbox(s.ProjectID, id); err != nil {
+		profile, err := h.repo.ConversationSandbox(s.ProjectID, id)
+		if err == nil {
+			err = localSandboxOwner(h.repo, profile, u.ID)
+		}
+		if err != nil {
 			c.JSON(400, gin.H{"error": err.Error()})
 			return
 		}

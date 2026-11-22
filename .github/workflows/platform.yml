@@ -24,6 +24,10 @@ jobs:
         run: bash scripts/build-chatbot.sh
       - name: Let Chromium use its sandbox as an unprivileged user
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      # Engine and API tests run SOP nodes in the shared test-native sandbox,
+      # which is bwrap on Linux.
+      - name: Install bubblewrap for the native sandbox
+        run: sudo apt-get update && sudo apt-get install -y bubblewrap
       - name: Warm up Chromium so the first real-browser test does not pay the cold start
         run: |
           for name in chromium chromium-browser google-chrome-stable google-chrome; do

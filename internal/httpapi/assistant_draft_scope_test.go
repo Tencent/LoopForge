@@ -26,8 +26,6 @@ var assistantDraftScope = map[string]string{
 	"rules_save":                "project",
 	"skills_save":               "project",
 	"mcp_servers_save":          "project",
-	"dockerfiles_save":          "project",
-	"environments_save":         "project",
 	"sandboxes_save":            "project",
 	"workflows_save":            "project",
 	"workflows_clone":           "project",

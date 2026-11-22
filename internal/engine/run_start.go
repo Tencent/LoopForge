@@ -133,8 +133,10 @@ func (e *Engine) startWorkflowDefinition(wf domain.WorkflowDefinition, input str
 		if _, err := e.repo.ConversationSandbox(executionContext.ProjectID, profile.ID); err != nil {
 			return domain.Run{}, err
 		}
+	} else if err := domain.ValidateWorkflowSandbox(profile); err != nil {
+		return domain.Run{}, err
 	}
-	resources, err := resolveSandboxResources(e.repo, profile)
+	sandbox, err := resolveSandbox(profile)
 	if err != nil {
 		return domain.Run{}, err
 	}
@@ -173,7 +175,10 @@ func (e *Engine) startWorkflowDefinition(wf domain.WorkflowDefinition, input str
 	if err := e.requireWorkBranchCapabilities(executionContext.ExecutionRunnerID, repositories); err != nil {
 		return domain.Run{}, err
 	}
-	wf.SandboxSnapshot = resolvedSandboxSnapshot(profile, resources)
+	if err := e.requireLocalSandboxRunner(profile, executionContext); err != nil {
+		return domain.Run{}, err
+	}
+	wf.SandboxSnapshot = sandbox
 	r := domain.Run{
 		ID: id, WorkflowID: workflowID, WorkflowSnapshot: wf, Status: "running", Input: input,
 		Repository: firstRepository, ExecutionContext: executionContext, Nodes: map[string]*domain.NodeRun{},
@@ -251,6 +256,29 @@ func (e *Engine) selectSOPExecutionTarget(executionContext *domain.TelemetryCont
 	} else {
 		executionContext.ExecutionMode = domain.ExecutionModeCloud
 	}
+}
+
+// requireLocalSandboxRunner keeps a local sandbox on the one machine it is
+// bound to and with that machine's owner: it runs without isolation there.
+func (e *Engine) requireLocalSandboxRunner(profile domain.SandboxProfile, executionContext domain.TelemetryContext) error {
+	if strings.TrimSpace(profile.Driver) != domain.SandboxDriverLocal {
+		return nil
+	}
+	runnerID := strings.TrimSpace(executionContext.ExecutionRunnerID)
+	if runnerID == "" || executionContext.ExecutionPool == domain.ExecutionModeCloud || runnerID != profile.RunnerID {
+		return fmt.Errorf("local 沙箱 %s 只能在它绑定的执行机器上打开", profile.ID)
+	}
+	runner, ok := e.repo.Runner(runnerID)
+	if !ok {
+		return fmt.Errorf("local 沙箱 %s 绑定的执行机器 %s 不存在", profile.ID, runnerID)
+	}
+	if runner.OwnerUserID == 0 || runner.OwnerUserID != executionContext.ResponsibleUserID {
+		return fmt.Errorf("local 沙箱 %s 只能由执行机器 %s 的主人使用", profile.ID, runner.Name)
+	}
+	if !runner.SupportsLocalWorktree() {
+		return fmt.Errorf("local 沙箱需要执行机器升级至 %s 或更新版本，请先更新 Runner", domain.RunnerVersionLocalWorktree)
+	}
+	return nil
 }
 
 func (e *Engine) executes() bool {

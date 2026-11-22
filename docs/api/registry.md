@@ -17,8 +17,6 @@
   "skills":[],
   "mcpServers":[],
   "executors":[],
-  "dockerfiles":[],
-  "environments":[],
   "sandboxes":[],
   "workflows":[],
   "syncConfig":{},
@@ -175,48 +173,26 @@ curl -u "$AGENTFLOW_USER:$AGENTFLOW_PASS" -X POST \
 
 返回只读的内置 CLI 目录（CodeBuddy、Codex、Claude Code，以及 OpenCode、Cursor CLI、Antigravity、Kimi Code、Pi、DeepSeek Harness、ZCode）。CLI 不允许通过 API 新增或修改；模型在 Agent 中设置，API Key/Base URL 使用需求责任人（未指定时为项目 Owner）的个人配置。
 
-## Dockerfile、Environment 与 Sandbox Profile
+## Sandbox Profile
 
-### `GET /api/dockerfiles`
-
-返回 `DockerfileDefinition[]`，`200`。字段为 `id`、`name`、`description`、`content`、`files`、`updatedAt`。
-
-### `PUT /api/dockerfiles`
-
-`id`、`name`、`content` 必填；`files` 的 key 必须是安全的相对路径。成功 `200 {"ok":true}`；校验失败 `400`。
-
-### `DELETE /api/dockerfiles?id={id}`
-
-删除 Dockerfile。前置条件：未共享且未被任何沙箱引用，否则 `409`；成功 `204`。
-
-### `GET /api/environments`
-
-返回 `EnvironmentDefinition[]`，`200`。字段为 `id`、`name`、`description`、`variables`、`pathEntries`、`installScript`、`updatedAt`。
-
-### `PUT /api/environments`
-
-`id`、`name` 必填；变量名不得含 `=`/NUL，`pathEntries` 必须是安全相对路径。成功 `200 {"ok":true}`；校验失败 `400`。
-
-### `DELETE /api/environments?id={id}`
-
-删除环境安装脚本。前置条件：未共享且未被任何沙箱引用，否则 `409`；成功 `204`。
+沙箱自带运行环境：docker 沙箱的 Dockerfile 和 native 沙箱的环境安装脚本都存在沙箱里，随沙箱一起共享，没有单独的 Dockerfile 或安装脚本资产。旧的 `/api/dockerfiles`、`/api/environments` 已移除；升级时执行 `migrations/041_sandbox_inline_assets.sql` 把它们合并进沙箱。
 
 ### `GET /api/sandboxes`
 
-返回 `SandboxProfile[]`，`200`。字段为 `id`、`name`、`driver`（`local|native|docker`；保存 `seatbelt` 或 `bwrap` 会归一成 `native`，运行时在 macOS 解析为 seatbelt、在 Linux 解析为 bwrap）、`dockerfileId`、`environmentId`、`readOnlyRootFS`、`environment`。
+返回 `SandboxProfile[]`，`200`。字段为 `id`、`name`、`driver`（`local|native|docker`；保存 `seatbelt` 或 `bwrap` 会归一成 `native`，运行时在 macOS 解析为 seatbelt、在 Linux 解析为 bwrap）、`dockerfile`、`install`、`readOnlyRootFS`、`environment`。`dockerfile` 为 `{content, files}`，`files` 是构建上下文文件（相对路径 → 内容）；`install` 为 `{script, pathEntries, variables}`，脚本以 `PREFIX` 指向这个沙箱专属的工具目录（工作区下的 `.agentflow/environment/<沙箱 id>`，每个新工作区各装一次）执行一次，脚本内容变化后才重新安装（只改 `variables` 不会触发）；`PREFIX/bin` 总排在 PATH 最前，`pathEntries` 追加 `PREFIX` 下的其他目录（相对路径）；`variables` 在安装和执行时设置。`local` 只用于对话工作区，另有 `runnerId`（绑定的执行机器）、`baseDir`（未配置路径的仓库克隆到这里，默认 `~/.loopforge/local`）和 `repositoryPaths`（仓库 ID → 该机器上的检出路径，绝对路径或 `~/` 开头）。
 
 ### `PUT /api/sandboxes`
 
-`id` 必填，成功 `200 {"ok":true}`；校验/存储失败 `400`。
+`id` 必填，成功 `200 {"ok":true}`；校验/存储失败 `400`。`docker` 必须带非空的 `dockerfile.content`；`dockerfile` 只对 `docker` 生效、`install` 只对 `native` 生效，切换隔离方式后另一种配置在保存时丢弃。`files` 的 key 和 `pathEntries` 必须是安全的相对路径，变量名不得含 `=`/NUL。`local` 必须绑定执行机器且不能共享；只有该机器的主人能保存、改绑（原绑定和新绑定都要是自己的机器），否则 `403`。
 
 ### `DELETE /api/sandboxes?id={id}`
 
-删除沙箱配置。前置条件：不是内置 `local`、未共享、且未被任何 SOP 引用，否则 `409`；成功 `204`。
+删除沙箱配置。前置条件：不是内置 `generic-docker`、未共享、且未被任何 SOP 引用，否则 `409`；绑定了执行机器的 `local` 只有机器主人能删，否则 `403`；成功 `204`。
 
 ```bash
 curl -u "$AGENTFLOW_USER:$AGENTFLOW_PASS" -X PUT \
   -H 'Content-Type: application/json' \
-  -d '{"id":"sandbox-go","name":"Go 隔离环境","driver":"docker","dockerfileId":"go-1.23","readOnlyRootFS":false}' \
+  -d '{"id":"sandbox-go","name":"Go 隔离环境","driver":"docker","dockerfile":{"content":"FROM golang:1.23\nWORKDIR /workspace\n"},"readOnlyRootFS":false}' \
   "$AGENTFLOW_URL/api/sandboxes"
 ```
 

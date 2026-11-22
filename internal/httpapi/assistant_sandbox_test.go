@@ -23,13 +23,11 @@ func chatSandboxFixture(t *testing.T) (*assistantHandlers, domain.User, *AgentTo
 	t.Helper()
 	h, user := workbenchFixture(t)
 	h.engine = engine.New(h.repo, runtime.NewManager(t.TempDir()))
-	if err := h.repo.PutDockerfile(domain.DockerfileDefinition{ID: "chat-df", Name: "Business image", ProjectID: "workbench", Content: "FROM alpine:3.20\n"}); err != nil {
-		t.Fatal(err)
-	}
+	recipe := &domain.SandboxDockerfile{Content: "FROM alpine:3.20\n"}
 	for _, profile := range []domain.SandboxProfile{
-		{ID: "business", Name: "Business", ProjectID: "workbench", Driver: "docker", DockerfileID: "chat-df"},
-		{ID: "shared", Name: "Shared", ProjectID: "other", Shared: true, Driver: "docker", DockerfileID: "chat-df"},
-		{ID: "private", Name: "Private", ProjectID: "other", Driver: "docker", DockerfileID: "chat-df"},
+		{ID: "business", Name: "Business", ProjectID: "workbench", Driver: "docker", Dockerfile: recipe},
+		{ID: "shared", Name: "Shared", ProjectID: "other", Shared: true, Driver: "docker", Dockerfile: recipe},
+		{ID: "private", Name: "Private", ProjectID: "other", Driver: "docker", Dockerfile: recipe},
 	} {
 		if err := h.repo.PutSandbox(profile); err != nil {
 			t.Fatal(err)
@@ -70,9 +68,9 @@ func TestConversationSandboxSelectionFreezesIndependentWorkspace(t *testing.T) {
 		t.Fatalf("wrong environment: %+v", run.WorkflowSnapshot.SandboxSnapshot)
 	}
 	frozen := run.WorkflowSnapshot.SandboxSnapshot.Dockerfile.Content
-	df, _ := h.repo.Dockerfile("chat-df")
-	df.Content = "FROM busybox:1.36\n"
-	_ = h.repo.PutDockerfile(df)
+	business, _ := h.repo.Sandbox("business")
+	business.Dockerfile = &domain.SandboxDockerfile{Content: "FROM busybox:1.36\n"}
+	_ = h.repo.PutSandbox(business)
 	again, reused, err := open("")
 	if err != nil || !reused || again.ID != run.ID || again.WorkflowSnapshot.SandboxProfileID != "business" || again.WorkflowSnapshot.SandboxSnapshot.Dockerfile.Content != frozen {
 		t.Fatalf("frozen environment changed: %+v %v", again, err)

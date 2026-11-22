@@ -18,7 +18,7 @@ func TestDefaultSandboxWithoutSeedDoesNotWriteRows(t *testing.T) {
 		t.Fatal(err)
 	}
 	profile, ok := s.Sandbox(DefaultSandboxProfileID)
-	if !ok || profile.ID != "local" || profile.Driver != domain.SandboxDriverLocal || !profile.Shared || profile.ProjectID != "" {
+	if !ok || profile.ID != GenericDockerSandboxID || profile.Driver != domain.SandboxDriverDocker || !profile.Shared {
 		t.Fatalf("missing shared default: %+v, found=%v", profile, ok)
 	}
 	profiles := s.Sandboxes()
@@ -40,7 +40,7 @@ func TestStoredDefaultSandboxWinsWithoutDuplicatesAndCannotBeDeleted(t *testing.
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { s.Close() })
-	configured := domain.SandboxProfile{ID: "local", Name: "Operator configured", ProjectID: "platform", Shared: true, Driver: "native", Environment: map[string]string{"PRESERVE": "yes"}}
+	configured := domain.SandboxProfile{ID: DefaultSandboxProfileID, Name: "Operator configured", ProjectID: "platform", Shared: true, Driver: "native", Environment: map[string]string{"PRESERVE": "yes"}}
 	if err := s.PutSandbox(configured); err != nil {
 		t.Fatal(err)
 	}
@@ -79,14 +79,14 @@ func TestDefaultSandboxDoesNotMaskCorruptConfigurationOrDatabaseFailure(t *testi
 		t.Fatal(err)
 	}
 	if _, ok := s.Sandbox(DefaultSandboxProfileID); ok {
-		t.Fatal("invalid stored configuration must not fall back to local execution")
+		t.Fatal("invalid stored configuration must not fall back to the built-in default")
 	}
 	if err := s.DB.Exec("DELETE FROM sandboxes").Error; err != nil {
 		t.Fatal(err)
 	}
 	s.Close()
 	if _, ok := s.Sandbox(DefaultSandboxProfileID); ok {
-		t.Fatal("database failure must not fall back to local execution")
+		t.Fatal("database failure must not fall back to the built-in default")
 	}
 	if profiles := s.Sandboxes(); len(profiles) != 0 {
 		t.Fatalf("database failure reported available sandboxes: %+v", profiles)
@@ -101,7 +101,7 @@ func TestSeededGenericDockerSandboxIsSharedForConversations(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { s.Close() })
-	seeded := `{"id":"generic-docker","name":"Docker 隔离沙箱","driver":"docker","dockerfileId":"generic-backend","readOnlyRootFS":false}`
+	seeded := `{"id":"generic-docker","name":"Docker 隔离沙箱","driver":"docker","dockerfile":{"content":"FROM debian"},"readOnlyRootFS":false}`
 	if err := s.DB.Table("sandboxes").Where("id = ?", GenericDockerSandboxID).Update("payload", seeded).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -121,9 +121,10 @@ func TestSeededGenericDockerSandboxIsSharedForConversations(t *testing.T) {
 	}
 }
 
-// Conversation workspaces run in Docker or in the execution machine's native
-// lightweight sandbox; local (no isolation) is never offered.
-func TestConversationSandboxAcceptsDockerAndNative(t *testing.T) {
+// Conversation workspaces run in Docker, in the execution machine's native
+// lightweight sandbox, or on the machine a local sandbox is bound to. A stored
+// local row that lost its binding is refused instead of running unbound.
+func TestConversationSandboxAcceptsDockerNativeAndBoundLocal(t *testing.T) {
 	s, err := OpenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -132,14 +133,17 @@ func TestConversationSandboxAcceptsDockerAndNative(t *testing.T) {
 	for _, profile := range []domain.SandboxProfile{
 		{ID: "cs-native", Name: "Native", ProjectID: "p", Driver: domain.SandboxDriverNative},
 		{ID: "cs-bwrap", Name: "Bwrap", ProjectID: "p", Driver: domain.SandboxDriverBwrap},
-		{ID: "cs-local", Name: "Local", ProjectID: "p", Driver: domain.SandboxDriverLocal},
+		{ID: "cs-local", Name: "Local", ProjectID: "p", Driver: domain.SandboxDriverLocal, RunnerID: "runner-1"},
 		{ID: "cs-other", Name: "Other", ProjectID: "q", Driver: domain.SandboxDriverNative},
 	} {
 		if err := s.PutSandbox(profile); err != nil {
 			t.Fatal(err)
 		}
 	}
-	for id, ok := range map[string]bool{"cs-native": true, "cs-bwrap": true, GenericDockerSandboxID: true, "cs-local": false, "cs-other": false} {
+	if err := s.DB.Table("sandboxes").Create(map[string]any{"id": "cs-unbound", "name": "Unbound", "payload": `{"id":"cs-unbound","name":"Unbound","projectId":"p","driver":"local"}`}).Error; err != nil {
+		t.Fatal(err)
+	}
+	for id, ok := range map[string]bool{"cs-native": true, "cs-bwrap": true, GenericDockerSandboxID: true, "cs-local": true, "cs-unbound": false, "cs-other": false} {
 		if _, err := s.ConversationSandbox("p", id); (err == nil) != ok {
 			t.Fatalf("ConversationSandbox(%s) err=%v, want ok=%v", id, err, ok)
 		}
@@ -148,7 +152,7 @@ func TestConversationSandboxAcceptsDockerAndNative(t *testing.T) {
 	for _, profile := range s.ConversationSandboxes("p") {
 		listed[profile.ID] = true
 	}
-	if !listed["cs-native"] || listed["cs-local"] || listed["cs-other"] {
+	if !listed["cs-native"] || !listed["cs-local"] || listed["cs-unbound"] || listed["cs-other"] {
 		t.Fatalf("conversation sandboxes = %v", listed)
 	}
 }

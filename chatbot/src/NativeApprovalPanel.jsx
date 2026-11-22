@@ -3,8 +3,8 @@ import { api, write, sessionPath } from "./api";
 import HarnessIcon from "./HarnessIcon";
 import "./native-approval.css";
 
-// External commands and external MCP writes can wait here for the speaker
-// in "请求批准" mode.
+// External commands and external MCP writes, and every non-read action of a
+// local workspace, can wait here for the speaker in "请求批准" mode.
 function commandText(input) {
   const command = input?.command ?? input?.cmd ?? input?.commands;
   if (typeof command === "string") return command;
@@ -56,15 +56,15 @@ export default function NativeApprovalPanel({ chat, onChange }) {
   }, [pendingIds]);
   if (!mine.length) return null;
   return (
-    <section className="native-approvals" aria-label="待批准的外部写入" aria-live="polite">
+    <section className="native-approvals" aria-label="待批准的操作" aria-live="polite">
       {mine.map((item) => (
         <div className="native-approval" key={item.id}>
           <div className="native-approval-title">
             <HarnessIcon name="warning" size={15} aria-hidden="true" />
-            <strong>批准外部写入{item.summary ? `：${item.summary}` : ""}</strong>
+            <strong>{item.local ? "批准本机操作" : "批准外部写入"}{item.summary ? `：${item.summary}` : ""}</strong>
           </div>
           <pre>{commandText(item.input)}</pre>
-          <p>这项操作会写入外部系统。仅批准这一次。停止回复、调用取消或等待超时后，审批会失效。</p>
+          <p>{item.local ? "这项操作直接在你的执行机器上执行，没有沙箱隔离。" : "这项操作会写入外部系统。"}仅批准这一次。停止回复、调用取消或等待超时后，审批会失效。</p>
           <div className="native-approval-actions">
             <button type="button" disabled={!!saving} onClick={() => decide(item, "deny")}>
               拒绝

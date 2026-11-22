@@ -456,6 +456,83 @@ func TestWorkspaceExternalWritesFollowApprovalMode(t *testing.T) {
 	}
 }
 
+// A local workspace runs on the owner's machine without a sandbox, so every
+// action that is not a read follows the approval mode.
+func TestLocalWorkspaceActionsFollowApprovalMode(t *testing.T) {
+	h, actor, _, _, conv := sharedWorkbenchFixture(t)
+	gateway := &agentToolGateway{deps: h.deps}
+	run := domain.Run{ID: "local-ws", Kind: domain.RunKindWorkspace, WorkflowID: domain.ConversationWorkspaceWorkflowID, Status: "waiting", Nodes: map[string]*domain.NodeRun{},
+		WorkflowSnapshot: domain.WorkflowDefinition{SandboxSnapshot: &domain.RunnerSandboxSpec{Profile: domain.SandboxProfile{ID: "mine", Driver: domain.SandboxDriverLocal}}}}
+	if err := h.repo.PutRun(run); err != nil {
+		t.Fatal(err)
+	}
+	generation := domain.AssistantGeneration{ID: "local-generation", UserID: actor.ID, SessionID: conv.ID, ActorID: actor.ID, Status: "running"}
+	if err := h.repo.BeginAssistantGeneration(generation); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.WithValue(context.Background(), assistantControlScopeKey{}, assistantControlScope{GenerationID: generation.ID})
+	reviews := 0
+	s := &AgentToolSession{Token: "local-phase", UserID: actor.ID, User: actor, ChatOwnerID: actor.ID, ChatSessionID: conv.ID, RuntimeMode: domain.AssistantModeWorkspace, RunID: run.ID, ctx: ctx,
+		approvalReviewer: func(_ context.Context, _, summary string, _ map[string]any) assistantApprovalReview {
+			reviews++
+			if !strings.Contains(summary, "没有沙箱隔离") {
+				t.Errorf("reviewer was not told the action is unisolated: %s", summary)
+			}
+			return assistantApprovalReview{Outcome: "deny", Rationale: "会删除本机文件"}
+		},
+	}
+	approve := func(raw string) nativeToolApprovalResult {
+		return gateway.approveNativeTool(ctx, s, json.RawMessage(raw))
+	}
+
+	s.ExecMode = assistantExecModeForApproval(AssistantApprovalConfirm)
+	in := `,"workspace":"/w","cwd":"/w/src"`
+	if result := approve(`{"id":"read","name":"Read","input":{"path":"note.txt"}` + in + `}`); !result.Allow {
+		t.Fatalf("reads inside the workspace need no approval: %+v", result)
+	}
+	if result := approve(`{"id":"ro","name":"Bash","input":{"command":"git status && ls -la .. | wc -l"}` + in + `}`); !result.Allow {
+		t.Fatalf("read-only commands inside the workspace need no approval: %+v", result)
+	}
+	if result := approve(`{"id":"shell","name":"Bash","input":{"command":"npm test"}` + in + `}`); result.Allow || !result.Pending {
+		t.Fatalf("a local command must wait for the speaker: %+v", result)
+	}
+	if result := approve(`{"id":"write","name":"Write","input":{"file_path":"/w/note.txt","content":"x"}` + in + `}`); result.Allow || !result.Pending {
+		t.Fatalf("a local file write must wait for the speaker: %+v", result)
+	}
+	if result := approve(`{"id":"etc","name":"Read","input":{"file_path":"/etc/hosts"}` + in + `}`); result.Allow || !result.Pending {
+		t.Fatalf("a read outside the workspace must wait for the speaker: %+v", result)
+	}
+	if result := approve(`{"id":"unknown","name":"Bash","input":{"command":"ls"}}`); result.Allow || !result.Pending {
+		t.Fatalf("without a reported workspace every command waits: %+v", result)
+	}
+	pending := h.repo.PendingNativeApprovals(actor.ID, conv.ID)
+	if len(pending) != 4 || !pending[0].Local || pending[0].Summary != "执行命令" || pending[1].Summary != "修改文件 /w/note.txt" || pending[2].Summary != "读取工作区外 /etc/hosts" || !pending[2].Local {
+		t.Fatalf("local cards: %+v", pending)
+	}
+	if err := h.repo.DecideNativeApproval(actor.ID, actor.ID, conv.ID, pending[0].ID, "deny"); err != nil {
+		t.Fatal(err)
+	}
+	if result := approve(`{"id":"shell","name":"Bash","input":{"command":"npm test"}` + in + `}`); result.Allow || !strings.Contains(result.Reason, "本机操作") {
+		t.Fatalf("denied local command: %+v", result)
+	}
+	if result := approve(`{"id":"push","name":"Bash","input":{"command":"git push origin fix"}}`); !result.Pending {
+		t.Fatalf("external write must still wait: %+v", result)
+	}
+	if items := h.repo.PendingNativeApprovals(actor.ID, conv.ID); items[len(items)-1].Local || items[len(items)-1].Summary != "git push" {
+		t.Fatalf("an external write keeps its own card: %+v", items[len(items)-1])
+	}
+
+	s.ExecMode = assistantExecModeForApproval(AssistantApprovalAssisted)
+	if result := approve(`{"id":"rm","name":"Bash","input":{"command":"rm -rf build"}}`); result.Allow || reviews != 1 || !strings.Contains(result.Reason, "会删除本机文件") {
+		t.Fatalf("assisted local command: %+v reviews=%d", result, reviews)
+	}
+
+	s.ExecMode = assistantExecModeForApproval(AssistantApprovalAuto)
+	if result := approve(`{"id":"auto","name":"Bash","input":{"command":"npm test"}}`); !result.Allow || reviews != 1 {
+		t.Fatalf("auto local command: %+v", result)
+	}
+}
+
 func TestNativeApprovalCardInputStaysValidJSONWhenRedacted(t *testing.T) {
 	command := `curl -sS -X POST -H "Authorization: token $GH_TOKEN" -H 'Accept: application/vnd.github+json' -d '{"head":"fix","base":"main"}' https://api.github.com/repos/a/b/pulls`
 	raw, _ := json.Marshal(map[string]any{"command": command, "timeout": 120000})

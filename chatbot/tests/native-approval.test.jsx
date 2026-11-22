@@ -42,3 +42,11 @@ test("shows an external MCP tool and the arguments being approved", async () => 
   fireEvent.click(screen.getByRole("button", { name: "拒绝" }));
   await waitFor(() => expect(writeMock).toHaveBeenCalledWith("/api/assistant/sessions/chat1/native-approvals/mcp1", { decision: "deny" }));
 });
+
+test("labels a local workspace action as an unisolated action on the owner's machine", async () => {
+  apiMock.mockResolvedValue([{ id: "l1", actorId: 1, tool: "Bash", summary: "执行命令", local: true, input: { command: "npm test" } }]);
+  render(<NativeApprovalPanel chat={chat} />);
+  expect(await screen.findByText("批准本机操作：执行命令")).toBeInTheDocument();
+  expect(screen.getByText(/直接在你的执行机器上执行，没有沙箱隔离/)).toBeInTheDocument();
+  expect(screen.queryByText(/会写入外部系统/)).not.toBeInTheDocument();
+});

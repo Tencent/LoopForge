@@ -37,9 +37,6 @@ func TestConfigureProcessConversationSandboxAllowsSeatbeltAndBwrap(t *testing.T)
 			}
 		}
 	}
-	if err := ConfigureConversationSandbox(ctx, &processSandbox{driver: "other", workspace: t.TempDir()}, t.TempDir()); err == nil {
-		t.Fatal("unexpectedly accepted unsupported process driver")
-	}
 }
 
 func TestSeatbeltProfileConversationHomeAndGuardOrder(t *testing.T) {

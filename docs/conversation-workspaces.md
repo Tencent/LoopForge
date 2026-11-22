@@ -38,7 +38,7 @@
 
 已关联 SOP 的任务会话里，SOP 执行中工作区只读；Main Bot 用 `runs_pause` 或 `runs_cancel` 停下 SOP 后才进入工作区模式（`workbench_workspace_open` 返回 `handoff=false` 时会提示这一点）。SOP 的交付由它自己的交付节点完成。
 
-对话工作区创建时冻结完整沙箱、Dockerfile 和环境定义，之后不再改变环境；换环境就是切到另一个工作区。准备工作区失败时，本次新建的工作区会被取消并解绑，会话回到之前的工作区，不会卡在一个打不开的工作区上。
+对话工作区创建时冻结完整沙箱（连同它的 Dockerfile 或环境安装脚本），之后不再改变环境；换环境就是切到另一个工作区。准备工作区失败时，本次新建的工作区会被取消并解绑，会话回到之前的工作区，不会卡在一个打不开的工作区上。
 
 ## Native 沙箱
 
@@ -49,9 +49,21 @@
 
 Docker 与 bwrap 下两种模式的 CLI 都在 `<会话根>/ws` 运行（工作区模式下这里挂的是运行工作区），按 cwd 存放原生会话的 CLI（如 Claude Code、CodeBuddy）进出工作区、换环境都能续接。seatbelt 下由于平台模式与工作区模式的 cwd 不同，或任一环境原生日志确实不可用时，平台在当前阶段用完整对话上下文新建原生会话继续（`cli.resume_fallback`），每个阶段最多一次，并告诉新会话当前所处的模式。
 
+## local 沙箱
+
+local 沙箱让对话直接复用某台执行机器的环境：不隔离，Agent 在这台机器上用它自己的工具链、git 配置和凭据工作。它只用于对话工作区，SOP 不能选 local（保存 SOP、启动运行和执行节点时都会拒绝）。
+
+- **绑定一台执行机器**：在沙箱编辑页选择执行机器，列表只有自己绑定的机器。只有这台机器的主人能保存、改绑或删除这个沙箱，local 沙箱也不能共享；需要多台机器时每台建一个。对话必须固定在绑定的机器上，并由机器主人发起，否则沙箱不会出现在可选列表里，打开时也会报错。执行机器需升级到 Runner 0.12.0 或更新版本。
+- **仓库路径**：编辑页按项目仓库列出路径输入框，填这台机器上已有的检出（绝对路径或 `~/` 开头）。没填的仓库在第一次打开时克隆到基础目录（默认 `~/.loopforge/local`）下的 `<仓库名>`，之后复用这个克隆。
+- **worktree**：打开工作区时，Runner 在主仓库里先 `git fetch --prune origin`，再为每个仓库用 `git worktree add` 在工作区目录下建一个 worktree：有工作分支时检出或新建该分支（远端已有同名分支时跟踪它），没有时以 `origin/<分支>` 分离检出。主仓库当前的分支和未提交改动不受影响。同一主仓库的克隆、fetch 和 worktree 操作在机器上串行执行。git 使用机器自己的配置和凭据（`~/.gitconfig`、SSH 密钥、credential helper），不注入平台凭据。
+- **生命周期**：local 工作区没有快照，也不做空闲回收：worktree 里的未提交改动就是唯一的一份，只在删除工作区时随目录一起移除，随后 `git worktree prune` 清掉登记；工作分支保留在主仓库里。
+- **审批**：没有沙箱隔离，按 Claude Code 默认权限模式处理：工作区内的读取、搜索和只读命令直接执行，其余原生文件、补丁、命令和工作区外读取按审批模式逐次处理，见 [会话执行机器与原生工作区](conversation-native-cli.md)。
+
+旧版不绑定执行机器的 local 沙箱已失效：保存或打开时会提示由机器主人重新配置。SOP 默认改用 `generic-docker`，`migrations/040_local_sandbox_runner_only.sql` 把引用旧 local 沙箱的内置 SOP 改到 `generic-docker`（部署时不会自动执行，需要手动运行）。
+
 `PUT /api/assistant/sessions/{id}/sandbox` 接受 `{ "sandboxProfileId": "id 或空字符串" }`，具备项目访问权限的会话参与者均可调用；生成期间和任务会话拒绝变更。已有工作区不受影响，新选择只用于之后新开的工作区。普通会话创建时也可以提交 `sandboxProfileId`，后续普通会话保存不能覆盖已保存的选择或伪造工作区绑定。
 
-对话工作区使用独立的 `Run.kind=workspace` 和 `conversation-workspace` 标识，不参与 SOP 调度或占用 SOP 配额；继续复用 Runner、沙箱、Git、终端、快照、租约和空闲回收。API 与 Runner 需一起升级，旧 Runner 对新工作区请求会收到明确的版本要求。
+对话工作区使用独立的 `Run.kind=workspace` 和 `conversation-workspace` 标识，不参与 SOP 调度或占用 SOP 配额；继续复用 Runner、沙箱、Git、终端、快照、租约和空闲回收（local 工作区不做快照和空闲回收）。API 与 Runner 需一起升级，旧 Runner 对新工作区请求会收到明确的版本要求。
 
 旧群协作的邀请、角色派发、群 MCP、清单、自动跟进及切回 SOP 写入口退出，对话只有一种状态。手动 SQL 把会话 workspaceRunId 指向的历史临时工作区转为 workspace；其余未结束的群运行连同节点与 Runner 任务一并置为 cancelled，其群会话成为已结束任务的普通任务会话，历史消息与交接材料保留。已取消的群记录没有可续跑的 SOP 图，run 控制接口拒绝对它重试或恢复。
 

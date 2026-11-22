@@ -265,13 +265,16 @@ func TestCatalogValidationDeletionAndBuiltins(t *testing.T) {
 	if err := s.PutSandbox(domain.SandboxProfile{ID: "cve-sandbox", Name: "Sandbox", Driver: "docker"}); err == nil {
 		t.Fatal("docker sandbox without Dockerfile accepted")
 	}
-	if err := s.PutSandbox(domain.SandboxProfile{ID: "cve-sandbox", Name: "Sandbox", Driver: "docker", DockerfileID: "missing"}); err == nil {
-		t.Fatal("missing Dockerfile accepted")
+	if err := s.PutSandbox(domain.SandboxProfile{ID: "cve-sandbox", Name: "Sandbox", Driver: "docker", Dockerfile: &domain.SandboxDockerfile{Content: " "}}); err == nil {
+		t.Fatal("blank Dockerfile accepted")
 	}
-	if err := s.PutSandbox(domain.SandboxProfile{ID: "cve-sandbox", Name: "Sandbox", Driver: "local", EnvironmentID: "missing"}); err == nil {
-		t.Fatal("missing environment accepted")
+	if err := s.PutSandbox(domain.SandboxProfile{ID: "cve-sandbox", Name: "Sandbox", Driver: "native", Install: &domain.SandboxInstall{PathEntries: []string{"../bin"}}}); err == nil {
+		t.Fatal("install escaping its root accepted")
 	}
-	if err := s.PutSandbox(domain.SandboxProfile{ID: "cve-local-sandbox", Name: "Local", Driver: "local"}); err != nil {
+	if err := s.PutSandbox(domain.SandboxProfile{ID: "cve-local-sandbox", Name: "Local", Driver: "local"}); err == nil {
+		t.Fatal("local sandbox without an execution machine accepted")
+	}
+	if err := s.PutSandbox(domain.SandboxProfile{ID: "cve-local-sandbox", Name: "Local", Driver: "local", RunnerID: "runner-1"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.DeleteSandbox("missing"); err == nil {

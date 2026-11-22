@@ -160,6 +160,9 @@ type conversationProcess struct {
 	notStarted    bool
 	cliVersion    string
 	versionSource string
+	// workingDir is the run workspace a seatbelt or local CLI works in instead
+	// of <root>/ws; set before the process starts.
+	workingDir string
 	// gitScrubbed is set with done, under mu.
 	gitScrubbed []string
 }
@@ -274,7 +277,7 @@ func (p *ConversationProcessPool) Handle(ctx context.Context, root, workspace st
 	switch req.Operation {
 	case "write":
 		proc.mu.Lock()
-		input := proc.input
+		input, workingDir := proc.input, proc.workingDir
 		proc.mu.Unlock()
 		if input == nil {
 			return ConversationProcessResult{}, fmt.Errorf("process has no stdin")
@@ -291,7 +294,7 @@ func (p *ConversationProcessPool) Handle(ctx context.Context, root, workspace st
 				err = nil
 			}
 		} else {
-			_, err = io.WriteString(input, conversationRemap(req.Data, req.SourceRoot, root))
+			_, err = io.WriteString(input, conversationWorkingDirRemap(conversationRemap(req.Data, req.SourceRoot, root), root, workingDir))
 		}
 		return ConversationProcessResult{}, err
 	case "stop":
@@ -554,9 +557,6 @@ func (p *ConversationProcessPool) start(ctx context.Context, root, workspace str
 				return ConversationProcessResult{}, err
 			}
 		}
-		if profile.Driver != domain.SandboxDriverDocker && profile.Driver != domain.SandboxDriverBwrap && profile.Driver != domain.SandboxDriverSeatbelt {
-			return ConversationProcessResult{}, fmt.Errorf("对话工作区只支持 Docker 或 native 沙箱")
-		}
 		resolved := *spec
 		resolved.Profile = profile
 		spec = &resolved
@@ -596,14 +596,22 @@ func (p *ConversationProcessPool) start(ctx context.Context, root, workspace str
 	command = command.WithPrivateHomeDir(filepath.Join(root, "home"))
 	command.AgentCLI.SystemPromptFile = conversationRemap(command.AgentCLI.SystemPromptFile, req.SourceRoot, root)
 	command.WorkingDir = filepath.Join(root, "ws")
-	if spec != nil && spec.Profile.Driver == domain.SandboxDriverSeatbelt {
-		// macOS seatbelt has no mount namespace to map <root>/ws onto the run
-		// workspace, so point the sandboxed CLI directly at the run workspace.
+	if spec != nil && (spec.Profile.Driver == domain.SandboxDriverSeatbelt || spec.Profile.Driver == domain.SandboxDriverLocal) {
+		// macOS seatbelt and local have no mount namespace to map <root>/ws onto
+		// the run workspace, so point the CLI directly at the run workspace.
 		switch {
 		case sb != nil && strings.TrimSpace(sb.Workspace()) != "":
 			command.WorkingDir = sb.Workspace()
 		case strings.TrimSpace(workspace) != "":
 			command.WorkingDir = workspace
+		}
+		if command.WorkingDir != filepath.Join(root, "ws") {
+			proc.mu.Lock()
+			proc.workingDir = command.WorkingDir
+			proc.mu.Unlock()
+			// The approval hook reports it so the platform can tell reads and
+			// read-only commands inside the workspace from everything else.
+			command = WithCommandEnvironment(command, map[string]string{"AGENTFLOW_NATIVE_WORKSPACE": command.WorkingDir})
 		}
 	}
 	command.OwnProcessGroup = true
@@ -961,4 +969,16 @@ func conversationRemap(value, source, target string) string {
 		return value
 	}
 	return strings.ReplaceAll(value, source, target)
+}
+
+// conversationWorkingDirRemap points JSON values naming <root>/ws (Codex
+// app-server's thread cwd) at the run workspace when the CLI works there.
+// Only the exact quoted value is replaced, never a longer path.
+func conversationWorkingDirRemap(data, root, workingDir string) string {
+	if workingDir == "" {
+		return data
+	}
+	from, _ := json.Marshal(filepath.Join(root, "ws"))
+	to, _ := json.Marshal(workingDir)
+	return strings.ReplaceAll(data, string(from), string(to))
 }

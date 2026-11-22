@@ -17,6 +17,12 @@ import (
 // run's existing container. The owner holds its execution fence while doing
 // this, and reruns preparation afterwards because a mount change recreates the
 // container. Browser and delivery operations subsequently use this same sandbox.
+//
+// A native workspace binds <root>/home on bwrap and maps <root>/ws onto the run
+// workspace with host paths read-only and the host network/Docker socket
+// reachable. macOS seatbelt lacks mount namespaces, so the CLI keeps cwd on the
+// run workspace while seatbelt grants writes only to the run workspace, temps,
+// and <root>/home with approval hooks write-protected.
 func ConfigureConversationSandbox(ctx context.Context, sandbox Sandbox, root string) error {
 	root, err := filepath.Abs(root)
 	if err != nil {
@@ -25,12 +31,17 @@ func ConfigureConversationSandbox(ctx context.Context, sandbox Sandbox, root str
 	if err = os.MkdirAll(filepath.Join(root, "ws"), 0700); err != nil {
 		return err
 	}
-	if p, ok := unwrapSandbox(sandbox).(*processSandbox); ok {
-		return configureProcessConversationSandbox(p, root)
-	}
 	s, ok := unwrapSandbox(sandbox).(*dockerSandbox)
 	if !ok {
-		return fmt.Errorf("对话工作区只支持 Docker 或 native 沙箱")
+		// Native and local have no container to recreate; local needs no
+		// mounts at all, since the private HOME is only an environment value.
+		if err := os.MkdirAll(filepath.Join(root, "home"), 0700); err != nil {
+			return err
+		}
+		if p, ok := unwrapSandbox(sandbox).(*processSandbox); ok {
+			p.requirements.ConversationRoot = root
+		}
+		return nil
 	}
 	s.execGate.Lock()
 	defer s.execGate.Unlock()
@@ -43,23 +54,6 @@ func ConfigureConversationSandbox(ctx context.Context, sandbox Sandbox, root str
 		s.requirements.ConversationRoot = previousRoot
 		return err
 	}
-	return nil
-}
-
-// configureProcessConversationSandbox enables a native process workspace
-// (Linux bwrap or macOS seatbelt). On bwrap it binds <root>/home and maps
-// <root>/ws onto the run workspace with host paths read-only and the host
-// network/Docker socket reachable. On seatbelt macOS lacks mount namespaces, so
-// the CLI keeps cwd on the run workspace while seatbelt grants writes only to
-// the run workspace, temps, and <root>/home with approval hooks write-protected.
-func configureProcessConversationSandbox(s *processSandbox, root string) error {
-	if s.driver != "bwrap" && s.driver != "seatbelt" {
-		return fmt.Errorf("对话工作区只支持 Docker 或 native 沙箱")
-	}
-	if err := os.MkdirAll(filepath.Join(root, "home"), 0700); err != nil {
-		return err
-	}
-	s.requirements.ConversationRoot = root
 	return nil
 }
 
@@ -153,14 +147,11 @@ func resolveNativeConversationBinary(provider string) (string, error) {
 }
 
 func ensureConversationCLI(ctx context.Context, sandbox Sandbox, provider, home string) (string, error) {
-	if _, native := unwrapSandbox(sandbox).(*processSandbox); native {
-		// A native workspace runs the execution machine's own CLI, matching
-		// how the platform mode resolves host binaries.
-		return resolveNativeConversationBinary(provider)
-	}
 	s, ok := unwrapSandbox(sandbox).(*dockerSandbox)
 	if !ok {
-		return "", fmt.Errorf("对话工作区只支持 Docker 或 native 沙箱")
+		// Native and local workspaces run the execution machine's own CLI,
+		// matching how the platform mode resolves host binaries.
+		return resolveNativeConversationBinary(provider)
 	}
 	s.execGate.RLock()
 	defer s.execGate.RUnlock()

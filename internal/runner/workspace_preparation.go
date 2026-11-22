@@ -88,7 +88,7 @@ func (d *Daemon) prepareRunnerWorkspace(ctx context.Context, root string, reques
 	if err := os.MkdirAll(root, 0700); err != nil {
 		return runnerWorkspaceError(err)
 	}
-	if err := checkoutInvocationRepositories(ctx, root, request.PreparationInvocation, request.RefreshCleanRepositories); err != nil {
+	if err := checkoutWorkspaceRepositories(ctx, root, request, request.RefreshCleanRepositories); err != nil {
 		return runnerWorkspaceError(fmt.Errorf("prepare workspace repositories: %w", err))
 	}
 	sb, release, err := d.acquireTaskSandbox(ctx, task)
@@ -131,7 +131,7 @@ func (d *Daemon) handleRunnerWorkspaceTerminal(ctx context.Context, root, scope 
 	unlock := onceRelease(gate.Unlock)
 	d.workspacePreparing.Store(key, true)
 	defer d.workspacePreparing.Delete(key)
-	if err := checkoutInvocationRepositories(ctx, root, request.PreparationInvocation); err != nil {
+	if err := checkoutWorkspaceRepositories(ctx, root, request, false); err != nil {
 		unlock()
 		return runtime.TerminalResult{}, fmt.Errorf("prepare workspace repositories: %w", err)
 	}

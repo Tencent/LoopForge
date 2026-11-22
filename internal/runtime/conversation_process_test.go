@@ -85,6 +85,21 @@ func TestConversationProcessEOFAfterExit(t *testing.T) {
 	}
 }
 
+// A seatbelt or local CLI works in the run workspace, so Codex app-server's
+// thread cwd naming <root>/ws must follow it; other paths stay as they are.
+func TestConversationWorkingDirRemapFollowsTheRunWorkspace(t *testing.T) {
+	root, workspace := "/runner/.conversations/c1", "/runner/runs/r1/workspace"
+	data := `{"method":"thread/start","params":{"cwd":"/runner/.conversations/c1/ws","note":"/runner/.conversations/c1/ws/a.txt","other":"/runner/.conversations/c1/wsx"}}`
+	got := conversationWorkingDirRemap(data, root, workspace)
+	want := `{"method":"thread/start","params":{"cwd":"/runner/runs/r1/workspace","note":"/runner/.conversations/c1/ws/a.txt","other":"/runner/.conversations/c1/wsx"}}`
+	if got != want {
+		t.Fatalf("remap:\n got %s\nwant %s", got, want)
+	}
+	if got := conversationWorkingDirRemap(data, root, ""); got != data {
+		t.Fatalf("docker/bwrap/platform data changed: %s", got)
+	}
+}
+
 func TestConversationCLIVersionPreservesOutputQuota(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()

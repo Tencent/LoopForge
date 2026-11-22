@@ -187,6 +187,10 @@ func (h *agentToolGateway) approveNativeTool(ctx context.Context, s *AgentToolSe
 		ID    string          `json:"id"`
 		Name  string          `json:"name"`
 		Input json.RawMessage `json:"input"`
+		// The CLI's current directory and the run workspace, as the runner's
+		// hook sees them; only local workspaces use them.
+		Cwd       string `json:"cwd"`
+		Workspace string `json:"workspace"`
 	}
 	if len(raw) > 256<<10 || json.Unmarshal(raw, &action) != nil || strings.TrimSpace(action.Name) == "" || len(action.ID) > 128 {
 		return deny("原生工具审批参数无效")
@@ -197,18 +201,33 @@ func (h *agentToolGateway) approveNativeTool(ctx context.Context, s *AgentToolSe
 	if h.nativeGatewayTool(ctx, s, action.Name, action.Input) {
 		return nativeToolApprovalResult{Allow: true}
 	}
-	switch strings.ToLower(action.Name) {
-	case "skill", "read", "read_file", "readfile", "glob", "grep", "list", "ls", "list_directory", "list_resources", "view_image", "readmediafile", "todowrite", "todo_read", "todoread":
+	tool := strings.ToLower(action.Name)
+	switch tool {
+	case "skill", "list_resources", "todowrite", "todo_read", "todoread":
 		return nativeToolApprovalResult{Allow: true}
 	}
-	if s.RuntimeMode != domain.AssistantModeWorkspace {
+	workspace := s.RuntimeMode == domain.AssistantModeWorkspace
+	// Files and commands inside the sandbox run in every approval mode. Only
+	// commands that write to outside systems follow the approval mode. A local
+	// workspace has no sandbox: only reads inside it and read-only commands
+	// skip the approval mode (see assistant_native_local.go).
+	local := workspace && h.localWorkspaceSession(s)
+	where, scoped := newNativeLocalScope(action.Workspace, action.Cwd)
+	if nativeReadTools[tool] && (!local || scoped && nativeLocalReadAllowed(tool, action.Input, where)) {
+		return nativeToolApprovalResult{Allow: true}
+	}
+	if !workspace {
 		return deny("平台模式禁用原生命令和写入工具，请先打开工作区")
 	}
-	// Files and commands inside the sandbox run in every approval mode. Only
-	// commands that write to outside systems follow the approval mode.
 	label, external := nativeExternalWrite(action.Input)
-	if !external {
+	local = local && !external
+	if !external && (!local || scoped && nativeLocalCommandReadOnly(action.Input, where)) {
 		return nativeToolApprovalResult{Allow: true}
+	}
+	scope, reviewSummary := "外部写入", "工作区命令（"+label+"），会写入沙箱外的系统"
+	if local {
+		label = nativeLocalActionLabel(action.Name, action.Input)
+		scope, reviewSummary = "本机操作", "local 工作区操作（"+label+"），直接在执行机器本机执行，没有沙箱隔离"
 	}
 	var compact bytes.Buffer
 	if json.Compact(&compact, action.Input) != nil {
@@ -232,7 +251,7 @@ func (h *agentToolGateway) approveNativeTool(ctx context.Context, s *AgentToolSe
 			case "allow":
 				return nativeToolApprovalResult{Allow: true}
 			case "deny":
-				return deny("用户拒绝了本次外部写入，不要换一种方式重试；先问用户怎么处理")
+				return deny("用户拒绝了本次" + scope + "，不要换一种方式重试；先问用户怎么处理")
 			}
 			if time.Since(old.CreatedAt) > nativeApprovalWait {
 				_ = h.repo.DecideNativeApproval(s.ChatOwnerID, old.ActorID, s.ChatSessionID, old.ID, "deny")
@@ -253,7 +272,7 @@ func (h *agentToolGateway) approveNativeTool(ctx context.Context, s *AgentToolSe
 		}
 		review, done, ok := s.nativeReview(ctx, nativeReviewPoll, id, nativeApprovalPhase(string(action.Input)), func(reviewCtx context.Context) assistantApprovalReview {
 			args := map[string]any{"tool": action.Name, "input": action.Input, "runId": s.workspaceRun()}
-			return reviewAssistantAction(withAssistantApprovalReviewer(reviewCtx, s.approvalReviewer), "native_"+action.Name, "工作区命令（"+label+"），会写入沙箱外的系统", args)
+			return reviewAssistantAction(withAssistantApprovalReviewer(reviewCtx, s.approvalReviewer), "native_"+action.Name, reviewSummary, args)
 		})
 		switch {
 		case !ok:
@@ -266,14 +285,14 @@ func (h *agentToolGateway) approveNativeTool(ctx context.Context, s *AgentToolSe
 			}
 			return nativeToolApprovalResult{Allow: true, Reason: review.Rationale}
 		default:
-			return deny(nativeReviewRefusal(review))
+			return deny(nativeReviewRefusal(review, scope))
 		}
 	}
 	// Ask the speaker; the hook polls until they decide or the turn ends.
 	if h.repo == nil || s.ChatSessionID == "" || s.ChatOwnerID == 0 || generation == "" || action.ID == "" {
 		return deny("缺少审批上下文或调用标识")
 	}
-	item := domain.AssistantNativeApproval{ID: id, GenerationID: generation, ActorID: s.UserID, Tool: action.Name, Summary: label, Input: action.Input}
+	item := domain.AssistantNativeApproval{ID: id, GenerationID: generation, ActorID: s.UserID, Tool: action.Name, Summary: label, Local: local, Input: action.Input}
 	if err := h.repo.CreateNativeApproval(s.ChatOwnerID, s.ChatSessionID, phase, item); err != nil {
 		return deny("无法保存审批请求")
 	}
@@ -290,15 +309,45 @@ func (h *agentToolGateway) approveNativeTool(ctx context.Context, s *AgentToolSe
 // nativeReviewRefusal tells the agent why assisted mode declined a command.
 // The reviewer's own texts for an unavailable review still mention a manual
 // confirmation used by platform drafts; native commands have none.
-func nativeReviewRefusal(review assistantApprovalReview) string {
+func nativeReviewRefusal(review assistantApprovalReview, scope string) string {
 	if review.Outcome != "allow" && review.Outcome != "deny" {
-		return "帮我批准：自动审查暂不可用，已拒绝本次外部写入，操作未执行；告诉用户需要执行什么，不要换一种方式重试"
+		return "帮我批准：自动审查暂不可用，已拒绝本次" + scope + "，操作未执行；告诉用户需要执行什么，不要换一种方式重试"
 	}
 	reason := strings.TrimSpace(review.Rationale)
 	if reason == "" {
 		reason = "审查未通过"
 	}
-	return "帮我批准：审查拒绝了本次外部写入（" + reason + "），操作未执行；不要换一种方式重试，先告诉用户原因"
+	return "帮我批准：审查拒绝了本次" + scope + "（" + reason + "），操作未执行；不要换一种方式重试，先告诉用户原因"
+}
+
+func (h *agentToolGateway) localWorkspaceSession(s *AgentToolSession) bool {
+	id := s.workspaceRun()
+	if id == "" || h.repo == nil {
+		return false
+	}
+	run, ok := h.repo.RunState(id)
+	return ok && run.IsLocalWorkspace()
+}
+
+// nativeLocalActionLabel names a local workspace action for its approval card.
+func nativeLocalActionLabel(tool string, input json.RawMessage) string {
+	var args map[string]any
+	_ = json.Unmarshal(input, &args)
+	verb := "修改文件 "
+	if nativeReadTools[strings.ToLower(tool)] {
+		verb = "读取工作区外 "
+	}
+	for _, key := range []string{"file_path", "filePath", "path", "absolute_path", "dir_path", "pattern", "target_file", "notebook_path"} {
+		if path, ok := args[key].(string); ok && strings.TrimSpace(path) != "" {
+			return verb + truncateRunes(strings.TrimSpace(path), 120)
+		}
+	}
+	for _, key := range []string{"command", "cmd", "commands"} {
+		if _, ok := args[key]; ok {
+			return "执行命令"
+		}
+	}
+	return "使用 " + tool
 }
 
 // nativeReviewBudget bounds one background review. The reviewer stops at 60

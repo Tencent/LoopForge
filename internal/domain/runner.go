@@ -148,6 +148,15 @@ func (r Runner) SupportsCodeBuddyBaseURL() bool {
 	return versionAtLeast(r.RunnerVersion, RunnerVersionCodeBuddyBaseURL)
 }
 
+// RunnerVersionLocalWorktree is the first runner that opens local sandbox
+// workspaces as linked worktrees of host checkouts. Older daemons would clone
+// into the runner workspace and ignore the configured repository paths.
+const RunnerVersionLocalWorktree = "0.12.0"
+
+func (r Runner) SupportsLocalWorktree() bool {
+	return versionAtLeast(r.RunnerVersion, RunnerVersionLocalWorktree)
+}
+
 func (r Runner) SupportsSharedPush() bool {
 	return versionAtLeast(r.RunnerVersion, RunnerVersionSharedPush)
 }
