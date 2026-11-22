@@ -14,7 +14,8 @@ type AnalyticsFilter struct {
 	WorkflowID string
 	From       time.Time
 	To         time.Time
-	// Scope "overview" skips delivery scans and detailed breakdowns for faster dashboards.
+	// Scope "overview" skips delivery scans and detailed breakdowns. "dashboard"
+	// also includes compact delivery and intervention cohorts without write paths.
 	Scope string
 	// UserID keeps runs whose responsible executor or linked issue assignee matches.
 	UserID string
@@ -500,6 +501,7 @@ type AnalyticsActivityPoint struct {
 }
 
 type AnalyticsSnapshot struct {
+	Dashboard     *AnalyticsDashboard      `json:"dashboard,omitempty"`
 	Activity      AnalyticsActivity        `json:"activity"`
 	ActivityTrend []AnalyticsActivityPoint `json:"activityTrend"`
 	DataErrors    []string                 `json:"dataErrors,omitempty"`

@@ -40,6 +40,7 @@
   <link rel="stylesheet" href="/app/sops-harness.css">
   <link rel="stylesheet" href="/app/sop-catalog.css">
   <link rel="stylesheet" href="/app/observability-harness.css?v=20261030obs1">
+  <link rel="stylesheet" href="/app/observability-dashboard.css">
   <link rel="stylesheet" href="/app/topbar-harness.css?v=20261030tb1">
   <link rel="stylesheet" href="/app/approvals-harness.css?v=20261030ap1">
   <style>
@@ -635,14 +636,8 @@
     <!-- 可观测与分析 -->
     <section id="observabilityView" class="view page-view">
       <div class="page-heading obs-heading">
-        <div class="obs-title-row"><h1>统计</h1>
-          <div class="obs-tabs" id="obsTabs" role="tablist" aria-label="统计分类">
-            <button class="obs-tab active" role="tab" data-obs-tab="overview"><svg class="agent-icon harness-icon" data-icon="token" width="14" height="14" aria-hidden="true"></svg>用量</button>
-            <button class="obs-tab" role="tab" data-obs-tab="delivery"><svg class="agent-icon harness-icon" data-icon="flag" width="14" height="14" aria-hidden="true"></svg>交付<i id="obsDeliveryCount" hidden></i></button>
-          </div>
-        </div>
+        <div class="obs-title-row"><h1>研发效能</h1></div>
         <div class="heading-actions">
-          <span class="live-state" id="obsLiveState"><i></i> 数据就绪</span>
           <button id="exportObsReport" class="button ghost" type="button"><svg class="agent-icon harness-icon" data-icon="download" width="14" height="14" aria-hidden="true"></svg>导出报告</button>
           <button id="refreshObs" class="button ghost" type="button"><svg class="agent-icon harness-icon" data-icon="refresh" width="14" height="14" aria-hidden="true"></svg>刷新</button>
         </div>
@@ -1322,6 +1317,7 @@
   <script src="/app/approvals.js"></script>
   <script src="/app/obs-charts.js"></script>
   <script src="/app/observability.js"></script>
+  <script src="/app/observability-dashboard.js"></script>
   <script src="/app/issue-drawer.js"></script>
   <script src="/app/revisions.js"></script>
   <script src="/app/harness-motion.js"></script>

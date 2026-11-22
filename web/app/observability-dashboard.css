@@ -1,0 +1,75 @@
+/* Harness UI tokens, MIT attribution: harness-ui-LICENSE.txt. */
+#observabilityView .obs-heading{margin-bottom:0}
+#observabilityView .obs-heading h1{font:600 22px/1.3 var(--hui-sans);color:var(--hui-text)}
+#observabilityView .obs-dashboard{color:var(--hui-text);font-family:var(--hui-sans);--od-motion:350ms}
+#observabilityView .od-toolbar{display:flex;align-items:center;justify-content:flex-end;flex-wrap:wrap;gap:8px;margin:12px 0 18px}
+#observabilityView .od-toolbar select{width:160px;max-width:100%;height:34px}
+#observabilityView .od-toolbar .od-sources{width:34px;padding:0;justify-content:center}
+#observabilityView .od-error{padding:12px 14px;margin-bottom:14px;border:1px solid var(--hui-error);border-radius:10px;color:var(--hui-error);background:var(--hui-surface)}
+#observabilityView .od-error[hidden]{display:none}
+#observabilityView .od-kpis{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;margin-bottom:18px}
+#observabilityView .od-kpi{min-width:0;padding:15px 17px;border:1px solid var(--hui-border);border-radius:12px;background:var(--hui-surface)}
+#observabilityView .od-kpi>span{display:block;font-size:13px;color:var(--hui-muted)}
+#observabilityView .od-kpi>b{display:block;margin-top:8px;font-size:28px;font-weight:600;line-height:1.3;letter-spacing:-.025em;color:var(--hui-text);overflow-wrap:anywhere}
+#observabilityView .od-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin-bottom:14px;align-items:stretch}
+#observabilityView .od-bottom{grid-template-columns:minmax(0,1.8fr) minmax(230px,1fr);align-items:start;margin-bottom:0}
+#observabilityView .od-panel{min-width:0;padding:17px;background:var(--hui-surface);border:1px solid var(--hui-border);border-radius:14px;transition:border-color .18s var(--hui-ease-flow)}
+#observabilityView .od-panel:hover{border-color:var(--hui-border-strong)}
+#observabilityView .od-head{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;min-height:26px;margin-bottom:14px}
+#observabilityView .od-head h2{margin:0;color:var(--hui-text);font:600 14px/1.5 var(--hui-sans)}
+#observabilityView .od-head select{width:180px;max-width:100%;font-size:12px;height:32px}
+#observabilityView .od-legend{display:flex;flex-wrap:wrap;gap:14px;align-items:center;margin-bottom:12px;color:var(--hui-muted);font-size:12px}
+#observabilityView .od-legend>span{display:inline-flex;gap:5px;align-items:center}
+#observabilityView .od-legend b{font-weight:500;color:var(--hui-text)}
+#observabilityView .od-dot{display:inline-block;flex:none;width:7px;height:7px;background:var(--hui-accent);border-radius:2px}
+#observabilityView .od-dot.blue{background:var(--hui-info)}
+#observabilityView .od-dot.amber{background:var(--hui-warn)}
+#observabilityView .od-dot.dash{width:14px;height:2px;background:repeating-linear-gradient(to right,var(--hui-accent) 0 4px,transparent 4px 6px);border-radius:0}
+#observabilityView .od-vibe{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin:0 0 18px}
+#observabilityView .od-vibe .od-kpi{padding:0;border:0;background:transparent}
+#observabilityView .od-vibe .od-kpi>span{font-size:12px}
+#observabilityView .od-vibe .od-kpi>b{font-size:22px;margin-top:5px;font-weight:550}
+#observabilityView .od-sop{display:flex;align-items:baseline;flex-wrap:wrap;gap:14px 26px;margin-bottom:12px}
+#observabilityView .od-sop>span{display:flex;align-items:baseline;gap:9px;color:var(--hui-muted);font-size:12px}
+#observabilityView .od-sop b{font-size:18px;font-weight:500;color:var(--hui-text)}
+#observabilityView .od-metrics{display:flex;gap:4px;flex-wrap:wrap;margin-bottom:8px}
+#observabilityView .od-metrics button{border:0;border-radius:6px;padding:5px 8px;background:transparent;color:var(--hui-muted);font:400 12px/1.5 var(--hui-sans);cursor:pointer;transition:background .18s var(--hui-ease-flow),color .18s var(--hui-ease-flow)}
+#observabilityView .od-metrics button[aria-pressed=true]{color:var(--hui-accent);background:var(--hui-accent-soft)}
+#observabilityView .od-metrics button:hover{background:var(--hui-soft)}
+#observabilityView .od-human-legend{margin:10px 0 0;gap:12px}
+#observabilityView .od-label{font-size:13px;color:var(--hui-muted)}
+#observabilityView .od-cost-value{display:block;font-size:26px;font-weight:600;margin:7px 0 20px;color:var(--hui-text)}
+#observabilityView .od-token{display:flex;align-items:center;justify-content:space-between;gap:12px;padding-top:17px;border-top:1px solid var(--hui-border);font-size:13px;color:var(--hui-muted)}
+#observabilityView .od-token b{font-size:18px;font-weight:500;color:var(--hui-text)}
+#observabilityView .obs-dashboard .num{font-variant-numeric:tabular-nums}
+#observabilityView .obs-dashboard .obs-chart{min-width:0;width:100%}
+#observabilityView .obs-dashboard .obs-chart.is-fallback svg{max-width:100%;height:auto;display:block;fill:var(--hui-muted);font:11px var(--hui-sans)}
+#observabilityView .obs-dashboard[aria-busy=true]{cursor:progress}
+@media(prefers-reduced-motion:no-preference){
+  #observabilityView .obs-dashboard .od-panel{animation:od-panel-in .32s var(--hui-ease-flow) both}
+  #observabilityView .obs-dashboard .od-grid:first-of-type .od-panel:nth-child(2){animation-delay:45ms}
+  @keyframes od-panel-in{from{opacity:.35;transform:translateY(6px)}to{opacity:1;transform:none}}
+}
+@media(max-width:1100px){
+  #observabilityView .od-vibe{grid-template-columns:repeat(2,minmax(0,1fr))}
+  #observabilityView [data-obs-chart=dashboard-delivery]{height:310px!important}
+}
+@media(max-width:850px){
+  #observabilityView .od-grid,#observabilityView .od-bottom{grid-template-columns:1fr}
+  #observabilityView .od-vibe{grid-template-columns:repeat(4,minmax(0,1fr))}
+  #observabilityView [data-obs-chart=dashboard-delivery]{height:230px!important}
+}
+@media(max-width:540px){
+  #observabilityView .od-toolbar{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr) auto;justify-content:stretch}
+  #observabilityView .od-toolbar select{width:100%}
+  #observabilityView .od-kpis{grid-template-columns:1fr;gap:9px}
+  #observabilityView .od-kpis>.od-kpi{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:13px}
+  #observabilityView .od-kpis>.od-kpi>b{margin:0;font-size:24px}
+  #observabilityView .od-vibe{grid-template-columns:repeat(2,minmax(0,1fr));gap:15px 20px}
+  #observabilityView .od-panel{padding:14px}
+  #observabilityView .od-head select{width:100%;max-width:none}
+  #observabilityView .od-sop{gap:12px}
+}
+@media(prefers-reduced-motion:reduce){
+  #observabilityView .obs-dashboard *,#observabilityView .obs-dashboard *::before{animation:none!important;transition:none!important}
+}

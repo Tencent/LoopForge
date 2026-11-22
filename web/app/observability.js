@@ -362,25 +362,9 @@ async function switchObsTab(tab){
   renderObservability();
 }
 async function refreshObs(){
-  if(refreshObsPending)return refreshObsPending;
-  refreshObsPending=(async()=>{
-    ensureObsUserFilter();
-    const host=$('#obsBody');
-    if(host)host.innerHTML=`<div class="obs-pane active"><div class="detail-empty">正在加载用量数据…</div></div>`;
-    state.obsAnalyticsFull=false;
-    try{
-      const opt={silent:true};
-      const overview=state.obsTab!=='delivery';
-      const analytics=await api('/api/analytics'+analyticsQuery({overview}),opt);
-      state.analytics=analytics;
-      if(!overview)state.obsAnalyticsFull=true;
-    }catch(e){toast(e.message)}
-    finally{refreshObsPending=null}
-    renderObservability();
-    refreshObsCrossProject().then(()=>{if(activeViewName()==='observability')renderObservability()});
-  })();
-  return refreshObsPending;
+  return obsLoadDashboard();
 }
+
 function runCost(r){return Number((state.analytics?.runTraces||[]).find(t=>t.runId===r.id)?.costCny||0)}
 function runTokens(r){return Number(r.usage?.totalTokens||0)}
 function runArtifactCount(r){return Number(r?.artifactCount??r?.artifacts?.length??0)}
@@ -557,41 +541,7 @@ let obsCardBuilders={};
 let obsExpandState=null;
 function obsChartFormatters(theme,reduced){return {theme,reduced,fmtTokens:formatTokens,fmtCost:v=>'¥'+Number(v||0).toFixed(2),label:obsTrendLabel}}
 function renderObservability(){
-  ensureObsUserFilter();
-  renderObsTabs();
-  const host=$('#obsBody');if(!host)return;
-  state.obsTab=obsNormalizeTab(state.obsTab);
-  $$('#obsTabs .obs-tab').forEach(b=>b.classList.toggle('active',b.dataset.obsTab===state.obsTab));
-  const summary=state.analytics?.summary||{};
-  $('#obsLiveState').classList.toggle('active',((summary.activeRuns||0)+(summary.waitingRuns||0))>0);
-  const badge=$('#obsDeliveryCount');
-  if(badge){const n=state.analytics?.delivery?.issues||0;badge.hidden=!n;badge.textContent=n?lfT(`${n} 单`,`${n} ${n===1?'item':'items'}`):''}
-  const reopen=obsExpandState?.key||'';
-  if(reopen)obsCollapse({silent:true});
-  obsDisposeCharts(host);
-  obsDisposeSelects();
-  obsCardBuilders={};
-  const tab=state.obsTab;
-  {
-    const html=tab==='delivery'?obsDelivery():obsOverview();
-    host.innerHTML=`<div class="obs-pane active">${obsFilterBar()}${html}</div>`;
-    state.obsSelects=obsEnhanceSelects(host);
-    host.querySelectorAll('[data-obs-scope]').forEach(b=>b.onclick=()=>setObsScope(b.dataset.obsScope));
-    host.querySelectorAll('[data-obs-grain]').forEach(b=>b.onclick=()=>setObsTrendGrain(b.dataset.obsGrain));
-    host.querySelectorAll('[data-obs-period-step]').forEach(b=>b.onclick=()=>obsShiftPeriod(Number(b.dataset.obsPeriodStep)));
-    const periodInput=host.querySelector('#obsPeriodInput');
-    if(periodInput)periodInput.onchange=()=>setObsPeriod(periodInput.value);
-    const userSelect=host.querySelector('#obsUserFilter');
-    if(userSelect)userSelect.onchange=()=>{state.obsUserFilter=userSelect.value||'';resetListPages('obs-');applyObsFilter()};
-    const originSelect=host.querySelector('#obsOriginFilter');if(originSelect)originSelect.onchange=()=>{state.obsOriginFilter=originSelect.value;resetListPages('obs-');applyObsFilter()};
-    const sourceButton=host.querySelector('#obsManageSources');if(sourceButton)sourceButton.onclick=openObsSources;
-    const obsSourceSel=host.querySelector('#obsSourceFilter');if(obsSourceSel)obsSourceSel.onchange=()=>{state.obsSourceFilter=obsSourceSel.value;resetListPages('obs-');applyObsFilter()};
-  }
-  obsBindActions(host);
-  bindPager(host);
-  obsHydrateIcons(host);
-  obsMountCharts(host);
-  if(reopen){const card=host.querySelector(`[data-obs-card="${reopen}"]`);if(card)obsExpand(card,{silent:true})}
+  obsRenderDashboard();
 }
 // obsBindActions 绑定卡片内的交互；卡片局部重渲染后会对新节点重新调用。
 function obsBindActions(root){
@@ -1530,6 +1480,7 @@ function obsReportTable(title,headers,rows){
   return `<section class="block"><h2>${title}</h2><table><thead><tr>${headers.map(h=>`<th>${h}</th>`).join('')}</tr></thead><tbody>${rows}</tbody></table></section>`;
 }
 async function exportObsReport(){
+  if(state.obsDashboardSnapshot?.dashboard)return exportObsDashboardReport();
   ensureObsUserFilter();
   toast('正在生成报告…');
   try{

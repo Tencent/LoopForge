@@ -2,6 +2,18 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { loadApp, settle } from '../lib/load-app.mjs';
 
+// Exercise the retained detailed report builders independently of the compact dashboard.
+async function loadReportPreview() {
+  const app = await loadApp();
+  app.evaluate(`function renderReportPreview(){
+    const host=document.querySelector('#obsBody');
+    obsDisposeCharts(host);obsDisposeSelects();
+    host.innerHTML=state.obsTab==='delivery'?obsDelivery():obsOverview();
+    obsBindActions(host);bindPager(host);obsHydrateIcons(host);obsMountCharts(host);
+  }`);
+  return app;
+}
+
 const analytics = {
   summary: {
     totalRuns: 4, succeededRuns: 2, failedRuns: 1, cancelledRuns: 1, activeRuns: 1,
@@ -76,14 +88,14 @@ const analytics = {
 };
 
 test('observability renders rich usage, drills into details, filters, and expands cards', async (t) => {
-  const app = await loadApp();
+  const app = await loadReportPreview();
   t.after(app.close);
   app.evaluate(`
     state.currentUser={...state.data.users[0],id:1,isGuest:false};
     state.data.users[0]=state.currentUser;
     state.analytics=${JSON.stringify(analytics)};
     state.obsTab='overview';state.obsScope='project';state.obsTrendGrain='all';
-    renderObservability();
+    renderReportPreview();
   `);
   const report = app.evaluate(`buildObsReportHTML()`);
   assert.match(report, /¥1\.25/);
@@ -110,7 +122,7 @@ test('observability renders rich usage, drills into details, filters, and expand
 });
 
 test('delivery observability renders funnel, owners, filters, and CSV data', async (t) => {
-  const app = await loadApp();
+  const app = await loadReportPreview();
   t.after(app.close);
   const delivery = {
     issues: 2, sopSucceeded: 2, withMr: 2, totalMrs: 3, mrMerged: 2, mrIntegrated: 1, issuesWithMergedMr: 1,
@@ -139,7 +151,7 @@ test('delivery observability renders funnel, owners, filters, and CSV data', asy
   app.evaluate(`
     state.analytics=${JSON.stringify({ ...analytics, delivery, deliveries })};
     state.obsTab='delivery';state.obsAnalyticsFull=true;state.obsDeliveryFilter='all';
-    renderObservability();
+    renderReportPreview();
   `);
   const body = app.document.querySelector('#obsBody');
   const row = body.querySelector('[data-edit-issue="issue-1"]');
@@ -161,7 +173,7 @@ test('delivery observability renders funnel, owners, filters, and CSV data', asy
 });
 
 test('conversation code changes have their own group, close the Token ring, and flow through delivery', async (t) => {
-  const app = await loadApp();
+  const app = await loadReportPreview();
   t.after(app.close);
   const summary = { ...analytics.summary, totalTokens: 7400, totalCostCny: 1.55, conversationWorkspaces: 3, conversationLinkedWorkspaces: 2, conversationIssues: 1, conversationIssuesWithMr: 1, conversationIssuesDelivered: 1, conversationTokens: 1000, conversationCostCny: .3 };
   const trend = analytics.trend.map(p => p.date === '2026-10' ? { ...p, tokens: 4200, costCny: .9, conversationTokens: 1000, conversationCostCny: .3, conversationIssues: 1, conversationWorkspaces: 3 } : p);
@@ -181,7 +193,7 @@ test('conversation code changes have their own group, close the Token ring, and 
     state.analytics=${JSON.stringify(full)};
     state.obsAnalyticsFull=true;
     state.obsTab='overview';state.obsScope='project';state.obsTrendGrain='all';
-    renderObservability();
+    renderReportPreview();
   `);
   const groups = [...app.document.querySelectorAll('#obsBody .obs-kg')].map(g => ({ title: g.querySelector('h4 span').textContent, text: g.textContent }));
   const titles = groups.map(g => g.title);
@@ -215,10 +227,11 @@ test('conversation code changes have their own group, close the Token ring, and 
   const view = JSON.parse(app.evaluate(`state.obsTrendGrain='month';state.obsPeriodKey='2026-10';JSON.stringify(obsScopedView())`));
   assert.deepEqual([view.conversationTokens, view.sopTokens, view.tokens, view.conversationIssues, view.conversationWorkspaces], [1000, 3200, 4200, 1, 3]);
   // Clicking the conversation slice opens its deliveries.
-  app.evaluate(`state.obsTrendGrain='all';state.obsPeriodKey='';state.obsBdDim='sop';state.obsBdMetric='tokens';renderObservability();obsBreakdownJump(obsBreakdownRows('sop','tokens').findIndex(r=>r.conversation))`);
+  app.evaluate(`state.obsTrendGrain='all';state.obsPeriodKey='';state.obsBdDim='sop';state.obsBdMetric='tokens';renderReportPreview();obsBreakdownJump(obsBreakdownRows('sop','tokens').findIndex(r=>r.conversation))`);
   await settle(3);
   assert.equal(app.evaluate(`state.obsTab`), 'delivery');
   assert.equal(app.evaluate(`state.obsDeliveryFilter`), 'direct');
+  app.evaluate(`renderReportPreview()`);
   const body = app.document.querySelector('#obsBody');
   assert.ok(body.querySelector('[data-edit-issue="issue-chat"]'));
   assert.equal(body.querySelector('[data-edit-issue="issue-sop"]'), null);
@@ -243,12 +256,12 @@ test('conversation code changes have their own group, close the Token ring, and 
   assert.match(report, /对话直接交付/);
   assert.match(report, /1 个需求/);
   // Without conversation data the group is not shown.
-  app.evaluate(`state.analytics=${JSON.stringify(analytics)};state.obsTab='overview';renderObservability()`);
+  app.evaluate(`state.analytics=${JSON.stringify(analytics)};state.obsTab='overview';renderReportPreview()`);
   assert.doesNotMatch(app.document.querySelector('#obsBody').textContent, /不走 SOP/);
 });
 
 test('conversation activity cards show counts, collaboration share, periods without runs, and report data', async (t) => {
-  const app = await loadApp();
+  const app = await loadReportPreview();
   t.after(app.close);
   const activity = { sessions: 3, collaborativeSessions: 2, requirements: 4, sopRuns: 5,
     sessionUsage: { tokens: 6000, inputTokens: 5000, outputTokens: 1000, cacheReadTokens: 3000, cacheWriteTokens: 500, reportedReplies: 3, missingReplies: 1, undatedReplies: 1 },
@@ -258,7 +271,7 @@ test('conversation activity cards show counts, collaboration share, periods with
       activityTrend:[{date:'2026-10',sessions:2,collaborativeSessions:1,requirements:1,sopRuns:0,
         sessionUsage:{tokens:1000,reportedReplies:1},collaborativeUsage:{tokens:500,reportedReplies:1}}]};
     state.obsTab='overview';state.obsScope='project';state.obsTrendGrain='all';state.obsPeriodKey='';
-    renderObservability();
+    renderReportPreview();
   `);
   const group = () => [...app.document.querySelectorAll('#obsBody .obs-kg')]
     .find(g => g.querySelector('h4 span').textContent === 'Vibe Coding 与协作');
@@ -275,33 +288,33 @@ test('conversation activity cards show counts, collaboration share, periods with
   assert.match(report, /66\.7%/);
   assert.match(report, /协作会话 Token/);
   assert.match(report, /4\.5k/);
-  app.evaluate(`state.obsTrendGrain='month';state.obsPeriodKey='';renderObservability()`);
+  app.evaluate(`state.obsTrendGrain='month';state.obsPeriodKey='';renderReportPreview()`);
   assert.equal(app.evaluate('obsPeriodKey()'), '2026-10', 'activity-only periods can be selected without run data');
   assert.ok(app.evaluate(`obsPeriodChoices().includes('2026-10')`));
   assert.match(group().textContent, /占会话 50\.0%/);
   assert.equal(app.evaluate('obsActivityView().sopRuns'), 0);
   assert.equal(app.evaluate('obsActivityView().sessionUsage.tokens'), 1000);
   assert.equal(app.evaluate('obsActivityView().collaborativeUsage.tokens'), 500);
-  app.evaluate(`state.obsPeriodKey='2026-11';renderObservability()`);
+  app.evaluate(`state.obsPeriodKey='2026-11';renderReportPreview()`);
   assert.match(group().textContent, /暂无会话/);
   assert.equal(app.evaluate('obsActivityView().sessions'), 0);
   assert.equal(app.evaluate('obsActivityUsageCard(obsActivityView(),false).value'), '0');
   app.evaluate(`
     state.obsTrendGrain='week';state.obsPeriodKey='2026-W42';
     state.analytics.activityTrend=[{date:'2026-W42',sessions:1,collaborativeSessions:1,requirements:2,sopRuns:3}];
-    renderObservability();
+    renderReportPreview();
   `);
   assert.match(group().textContent, /占会话 100\.0%/);
   app.evaluate(`
     state.obsTrendGrain='day';state.obsPeriodKey='2026-10-08';
     state.analytics.activityTrend=[{date:'2026-10-08',sessions:1,collaborativeSessions:0,requirements:0,sopRuns:0}];
-    renderObservability();
+    renderReportPreview();
   `);
   assert.match(group().textContent, /占会话 0\.0%/);
-  app.evaluate(`state.analytics.activityTrend[0].sessionUsage={missingReplies:2};renderObservability()`);
+  app.evaluate(`state.analytics.activityTrend[0].sessionUsage={missingReplies:2};renderReportPreview()`);
   assert.equal(app.evaluate('obsActivityUsageCard(obsActivityView(),false).value'), '未采集');
   assert.match(group().textContent, /2 条回复未采集/);
-  app.evaluate(`delete state.analytics.activity;renderObservability()`);
+  app.evaluate(`delete state.analytics.activity;renderReportPreview()`);
   assert.match(group().textContent, /暂无统计数据/);
   assert.doesNotMatch(group().textContent, /NaN|Infinity/);
 });

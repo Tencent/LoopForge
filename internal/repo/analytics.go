@@ -53,6 +53,7 @@ type analyticsRunSignals struct {
 	toolSucceeded int
 	toolFailed    int
 	interventions int
+	byNode        map[string]domain.AnalyticsHumanCounts
 }
 
 // Analytics returns a read-only, vendor-neutral operational view across runs.
@@ -65,12 +66,15 @@ func (r *AnalyticsRepo) Analytics(filter domain.AnalyticsFilter) domain.Analytic
 // still applied in Go by the same predicates, so every aggregate is identical to
 // the self-fetching path. Nil keeps the original behavior.
 func (r *AnalyticsRepo) analyticsWithRuns(filter domain.AnalyticsFilter, prefetched []domain.Run) (out domain.AnalyticsSnapshot) {
-	overview := filter.Scope == "overview"
+	overview := filter.Scope == "overview" || filter.Scope == "dashboard"
 	now := time.Now().UTC()
 	out = domain.AnalyticsSnapshot{
 		Filter:   filter,
 		Summary:  domain.AnalyticsSummary{GeneratedAt: now},
 		Coverage: domain.AnalyticsCoverage{AdapterEvents: map[string]int{}, LogLevels: map[string]int{}},
+	}
+	if filter.Scope == "dashboard" {
+		out.Dashboard = &domain.AnalyticsDashboard{}
 	}
 	defer applyAnalyticsCNY(&out)
 	trends := map[string]*domain.AnalyticsTrendPoint{}
@@ -475,7 +479,11 @@ func (r *AnalyticsRepo) analyticsWithRuns(filter domain.AnalyticsFilter, prefetc
 	// Tool outcome and human-decision facts live in append-only event tables,
 	// not in Run summary columns. Load only matching tool-finish telemetry and
 	// compact control events, then join them back to each auditable Run row.
-	signals := r.analyticsRunSignals(includedRunIDs)
+	signals, signalErr := r.analyticsRunSignals(includedRunIDs)
+	if signalErr != nil {
+		out.DataErrors = append(out.DataErrors, "人工介入统计读取失败")
+		return out
+	}
 	for runID, signal := range signals {
 		index, ok := runTraceIndex[runID]
 		if !ok {
@@ -596,8 +604,19 @@ func (r *AnalyticsRepo) analyticsWithRuns(filter domain.AnalyticsFilter, prefetc
 		out.Failures = append(out.Failures, *failure)
 	}
 	sort.Slice(out.Failures, func(i, j int) bool { return out.Failures[i].Count > out.Failures[j].Count })
-	out.MRMerges, out.Summary.MergedMRsMissingTime = r.mrMergeAnalytics(filter, issuesByID)
+	merged, missingMergeTime, mergeErr := r.mrMergeAnalytics(filter, issuesByID)
+	if mergeErr != nil {
+		out.DataErrors = append(out.DataErrors, "交付统计读取失败")
+		return out
+	}
+	out.MRMerges, out.Summary.MergedMRsMissingTime = merged, missingMergeTime
 	out.Summary.MergedMRs = len(out.MRMerges)
+	if out.Dashboard != nil {
+		if err := r.analyticsDashboard(filter, platformRuns, issuesByID, workflowDefs, signals, &out); err != nil {
+			out.DataErrors = append(out.DataErrors, "统计趋势读取失败")
+			return out
+		}
+	}
 	for _, mr := range out.MRMerges {
 		analyticsTrendEntry(trends, analyticsTrendBucket(mr.MergedAt, filter.Grain)).MergedMRs++
 	}
@@ -624,6 +643,14 @@ func (r *AnalyticsRepo) analyticsWithRuns(filter domain.AnalyticsFilter, prefetc
 			out.Delivery.Issues = countDeliveryGroups(filter, platformRuns, issuesByID)
 		}
 		out.Summary.InProgressIssues = countInProgressIssues(issueList, filter)
+		if out.Dashboard != nil {
+			// The compact page consumes aggregates, not trace IDs, MR links or
+			// per-person / per-model detail. Keep legacy overview unchanged.
+			out.RunTraces, out.MRMerges, out.Trend, out.WeekHour = nil, nil, nil, nil
+			out.UserUsage, out.ProjectUsage = nil, nil
+			out.Workflows, out.Models, out.Nodes, out.Failures = nil, nil, nil, nil
+			out.Categories, out.WorkflowVersions, out.IssueSources = nil, nil, nil
+		}
 		return out
 	}
 	out.Agents = finalizeBreakdowns(agents)
@@ -653,22 +680,36 @@ var analyticsHumanEventTypes = []string{
 // analyticsRunSignals reads only the append-only facts needed by the Loop
 // demo. It deliberately avoids hydrating logs, output, artifacts, and ordinary
 // progress telemetry into the analytics request.
-func (r *AnalyticsRepo) analyticsRunSignals(runIDs []string) map[string]analyticsRunSignals {
+func (r *AnalyticsRepo) analyticsRunSignals(runIDs []string) (map[string]analyticsRunSignals, error) {
 	out := map[string]analyticsRunSignals{}
 	for start := 0; start < len(runIDs); start += 500 {
 		batch := runIDs[start:min(start+500, len(runIDs))]
 		r.accumulateToolSignals(out, batch)
 
 		var eventRows []runEventRow
-		if err := r.DB.Select("run_id", "type").Where("run_id IN ? AND type IN ?", batch, analyticsHumanEventTypes).Find(&eventRows).Error; err == nil {
-			for _, row := range eventRows {
-				signal := out[row.RunID]
-				signal.interventions++
-				out[row.RunID] = signal
+		if err := r.DB.Select("run_id", "node_id", "type").Where("run_id IN ? AND type IN ?", batch, analyticsHumanEventTypes).Find(&eventRows).Error; err != nil {
+			return nil, err
+		}
+		for _, row := range eventRows {
+			signal := out[row.RunID]
+			signal.interventions++
+			if signal.byNode == nil {
+				signal.byNode = map[string]domain.AnalyticsHumanCounts{}
 			}
+			counts := signal.byNode[row.NodeID]
+			switch row.Type {
+			case "gate.approved", "node.passed":
+				counts.Approvals++
+			case "gate.rejected":
+				counts.Rejections++
+			default:
+				counts.Retries++
+			}
+			signal.byNode[row.NodeID] = counts
+			out[row.RunID] = signal
 		}
 	}
-	return out
+	return out, nil
 }
 
 func (r *AnalyticsRepo) accumulateToolSignals(out map[string]analyticsRunSignals, batch []string) {

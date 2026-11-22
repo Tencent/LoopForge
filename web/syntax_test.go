@@ -1252,26 +1252,21 @@ func TestPlaybooksPageRemoved(t *testing.T) {
 	}
 }
 
-func TestObsDeliveryBadgeShowsWithoutFullScan(t *testing.T) {
-	src, err := os.ReadFile("app/observability.js")
+func TestAnalyticsDashboardReplacesCategoryTabs(t *testing.T) {
+	page, err := os.ReadFile("index.html")
 	if err != nil {
 		t.Fatal(err)
 	}
-	code := string(src)
-	start := strings.Index(code, "const badge=$('#obsDeliveryCount');")
-	if start < 0 {
-		t.Fatal("delivery badge render missing")
+	start := strings.Index(string(page), `id="observabilityView"`)
+	end := strings.Index(string(page)[start:], `id="projectsView"`)
+	view := string(page)[start : start+end]
+	if strings.Contains(view, `data-obs-tab=`) || strings.Contains(view, `id="obsDeliveryCount"`) {
+		t.Fatal("dashboard must have a single view")
 	}
-	end := strings.Index(code[start:], "\n  const reopen=")
-	if end < 0 {
-		t.Fatal("delivery badge render block not found")
-	}
-	block := code[start : start+end]
-	if strings.Contains(block, "obsAnalyticsFull") {
-		t.Fatalf("delivery badge must not wait for the full delivery scan: %s", block)
-	}
-	if !strings.Contains(block, "state.analytics?.delivery?.issues") || !strings.Contains(block, "badge.hidden=!n") {
-		t.Fatalf("delivery badge should read overview delivery count and hide at zero: %s", block)
+	for _, asset := range []string{"app/observability-dashboard.js", "app/observability-dashboard.css"} {
+		if !strings.Contains(string(page), asset) {
+			t.Fatalf("dashboard asset missing: %s", asset)
+		}
 	}
 }
 
@@ -1281,7 +1276,7 @@ func TestUsageAnalysisUI(t *testing.T) {
 		t.Fatal(err)
 	}
 	page := string(html)
-	for _, want := range []string{`data-obs-tab="overview"><svg class="agent-icon harness-icon" data-icon="token" width="14" height="14" aria-hidden="true"></svg>用量`, `data-obs-tab="delivery"><svg class="agent-icon harness-icon" data-icon="flag" width="14" height="14" aria-hidden="true"></svg>交付`, `id="exportObsReport"`} {
+	for _, want := range []string{`<h1>研发效能</h1>`, `id="exportObsReport"`, `/app/observability-dashboard.js`} {
 		if !strings.Contains(page, want) {
 			t.Fatalf("usage analysis UI missing %q", want)
 		}
