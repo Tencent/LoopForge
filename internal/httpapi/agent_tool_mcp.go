@@ -265,6 +265,12 @@ func (h *agentToolGateway) callTool(ctx context.Context, session *AgentToolSessi
 	if session.terminalToolsOnly() {
 		return nil, errAgentToolForbidden
 	}
+	if session.sopDesigner() {
+		// The designer catalog is the allowlist; nothing outside it runs.
+		if _, ok := lookupAgentTool(h.buildCatalog(ctx, session), name); !ok {
+			return nil, fmt.Errorf("%w: %s", errAgentToolForbidden, name)
+		}
+	}
 	if name == "workbench_tool_schema" && session.Mode == AgentToolAssistant {
 		var input struct {
 			Name string `json:"name"`
@@ -335,10 +341,27 @@ func (h *agentToolGateway) callTerminal(session *AgentToolSession, name string, 
 		}
 		return mcpToolTextResult("提交成功，本轮结束。", false), nil
 	case name == submitAssistantReplyTool && session.Mode == AgentToolAssistant:
+		if session.sopDesigner() {
+			expanded, err := expandSOPDesignerReply(raw, session.DesignerCanvas)
+			if err != nil {
+				logAgentToolEvent("terminal-invalid", "mode="+string(session.Mode), "tool="+name, "err="+truncateRunes(err.Error(), 160))
+				return mcpToolTextResult("草稿未提交，本轮继续；请修正后重新提交："+err.Error(), true), nil
+			}
+			raw = expanded
+		}
 		reply, err := parseSubmitAssistantReplyArgs(raw, session.ProjectID)
 		if err != nil {
 			logAgentToolEvent("terminal-invalid", "mode="+string(session.Mode), "tool="+name, "err="+truncateRunes(err.Error(), 160))
 			return mcpToolTextResult("草稿参数校验失败，本轮继续；请按以下错误修正后重新提交，不代表工具不可用："+err.Error(), true), nil
+		}
+		if err := validateScheduledRunDrafts(session.ctx, reply.Drafts); err != nil {
+			return mcpToolTextResult(err.Error(), true), nil
+		}
+		if session.sopDesigner() {
+			if err := vetSOPDesignerReply(&reply); err != nil {
+				logAgentToolEvent("terminal-invalid", "mode="+string(session.Mode), "tool="+name, "err="+truncateRunes(err.Error(), 160))
+				return mcpToolTextResult("草稿未提交，本轮继续："+err.Error(), true), nil
+			}
 		}
 		if h.deps != nil && h.repo != nil {
 			if err := h.assistant().vetProposalDrafts(session, &reply); err != nil {
@@ -364,6 +387,9 @@ func (h *agentToolGateway) dispatch(ctx context.Context, session *AgentToolSessi
 	if session.Mode == AgentToolAssistant && session.ExecMode.ReviewWrites {
 		ctx = withAssistantApprovalReviewer(ctx, session.approvalReviewer)
 	}
+	if tool.Kind == "clarify-source" {
+		return readClarifySource(session, tool.Name, args)
+	}
 	if tool.Kind == "workspace" {
 		return h.callMainBotWorkspace(ctx, session, tool.Name, args)
 	}
@@ -384,6 +410,9 @@ func (h *agentToolGateway) dispatch(ctx context.Context, session *AgentToolSessi
 		}
 		if session.Mode == AgentToolScheduled {
 			ctx = withAssistantExecMode(ctx, session.ExecMode)
+		}
+		if scope := scheduledAssetsFrom(session.ctx); scope.Version.ID != "" {
+			ctx = context.WithValue(ctx, scheduledAssetsKey{}, scope)
 		}
 		call := assistantMCPCall{Server: "agentflow", Tool: tool.UpstreamName, Arguments: args}
 		if session.canOpenConversationWorkspace() {
@@ -410,7 +439,9 @@ func (h *agentToolGateway) dispatch(ctx context.Context, session *AgentToolSessi
 		if session.WorkspaceToken != "" && session.RunID != "" && strings.HasPrefix(tool.UpstreamName, "runs_") && assistantToolInput(call).Path["id"] == session.RunID {
 			ctx = engine.WithConversationWorkspaceToken(ctx, session.WorkspaceToken, session.RunID)
 		}
-		if session.workspaceTurn != nil && strings.HasPrefix(tool.UpstreamName, "runs_") {
+		// Waiting only reads status. Do not hold the workspace operation lock
+		// while a separate tool or turn may be advancing the run.
+		if session.workspaceTurn != nil && strings.HasPrefix(tool.UpstreamName, "runs_") && tool.UpstreamName != "runs_wait" {
 			releaseTurn := session.workspaceTurn.lockOperation()
 			defer releaseTurn()
 			ctx = session.workspaceTurn.withLease(ctx, assistantToolInput(call).Path["id"])

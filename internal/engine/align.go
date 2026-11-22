@@ -4,10 +4,12 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
 	"agentflow/internal/domain"
+	"agentflow/internal/repo"
 	"agentflow/internal/runtime"
 )
 
@@ -17,6 +19,26 @@ const BaselineAlignWorkflowID = "scheduled-baseline-align"
 
 // BaselineAlignAgentID is the platform-shared resolve role for that SOP.
 const BaselineAlignAgentID = domain.BaselineAlignAgentID
+
+func configureBaselineAlignCLI(wf domain.WorkflowDefinition) (domain.WorkflowDefinition, error) {
+	if wf.ID != BaselineAlignWorkflowID {
+		return wf, nil
+	}
+	executorID := strings.TrimSpace(os.Getenv("AGENTFLOW_BASELINE_ALIGN_EXECUTOR"))
+	if executorID == "" {
+		return wf, nil
+	}
+	if _, ok := repo.BuiltInExecutor(executorID); !ok {
+		return wf, fmt.Errorf("AGENTFLOW_BASELINE_ALIGN_EXECUTOR: unsupported executor %q", executorID)
+	}
+	wf.Nodes = slices.Clone(wf.Nodes)
+	for i, node := range wf.Nodes {
+		if node.Type == "agent" && node.AgentID == BaselineAlignAgentID {
+			wf.Nodes[i].ExecutorID = executorID
+		}
+	}
+	return wf, nil
+}
 
 // AlignConflictError means the shared integrate branch and the repository
 // default branch diverged. Scheduled issue SOPs for that repository must wait.

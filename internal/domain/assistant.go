@@ -12,6 +12,10 @@ const (
 	AssistantSourceSOP = "sop"
 	// AssistantSourceScheduled is a conversation produced by a scheduled task.
 	AssistantSourceScheduled = "scheduled"
+	// AssistantSourceSOPDesigner is a private conversation of the SOP
+	// designer's AI orchestrator. It belongs to one SOP canvas and stays out
+	// of the workbench conversation list.
+	AssistantSourceSOPDesigner = "sop-designer"
 )
 
 // AssistantActivityEvent contains only the user-visible execution stream, not
@@ -90,6 +94,17 @@ type AssistantReference struct {
 	// preview (Type "element"); it is the user's own context, not an object
 	// the platform looks up.
 	Element *AssistantPageElement `json:"element,omitempty"`
+}
+
+// CloneAssistantReferences returns an independent copy for persisted task
+// payloads and message construction.
+func CloneAssistantReferences(refs []AssistantReference) []AssistantReference {
+	if len(refs) == 0 {
+		return nil
+	}
+	out := make([]AssistantReference, len(refs))
+	copy(out, refs)
+	return out
 }
 
 // AssistantPageElement is a page element picked in the native preview.
@@ -171,8 +186,11 @@ type AssistantSession struct {
 	// task runs. Legacy rows leave it empty and are inferred when read.
 	// TaskID is the scheduled job or assistant task that produced the session,
 	// so repeated runs of one task keep a single conversation.
+	// WorkflowID is the SOP a designer conversation (source sop-designer)
+	// edits; the canvas lists its conversations by this id.
 	Source              string                 `json:"source,omitempty"`
 	TaskID              string                 `json:"taskId,omitempty"`
+	WorkflowID          string                 `json:"workflowId,omitempty"`
 	IssueID             string                 `json:"issueId,omitempty"`
 	Participants        []AssistantParticipant `json:"participants"`
 	ParticipantsVersion int                    `json:"participantsVersion,omitempty"`
@@ -225,6 +243,7 @@ type AssistantTask struct {
 	UserID               int64                 `json:"userId,omitempty"`
 	Name                 string                `json:"name"`
 	Prompt               string                `json:"prompt"`
+	References           []AssistantReference  `json:"references,omitempty"`
 	Model                string                `json:"model,omitempty"`
 	ProjectID            string                `json:"projectId,omitempty"`
 	SessionID            string                `json:"sessionId,omitempty"`

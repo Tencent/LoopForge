@@ -21,6 +21,17 @@ import (
 )
 
 func TestBindInvocationCredentials(t *testing.T) {
+	t.Run("personal codebuddy overrides the runner endpoint", func(t *testing.T) {
+		inv := &domain.RunnerInvocation{CredentialSource: domain.RuntimeAuthPersonal, CodeBuddyAPIKey: "fixture-key", CodeBuddyBaseURL: "https://gateway.example/v1", CodeBuddyInternetEnvironment: "ioa"}
+		for _, baseURL := range []string{inv.CodeBuddyBaseURL, ""} {
+			inv.CodeBuddyBaseURL = baseURL
+			_, env, err := bindInvocationCredentials(inv, []runtime.CredentialBinding{runtime.BindCodeBuddy}, []string{"codebuddy", "-p", "prompt"})
+			boundURL, present := env["CODEBUDDY_BASE_URL"]
+			if err != nil || !present || boundURL != baseURL || env["CODEBUDDY_INTERNET_ENVIRONMENT"] != "ioa" {
+				t.Fatalf("unexpected CodeBuddy endpoint binding: %q, %v", boundURL, err)
+			}
+		}
+	})
 	t.Run("local login leaves codex invocation unchanged", func(t *testing.T) {
 		argv := []string{"codex", "exec", "prompt"}
 		gotArgv, env, err := bindInvocationCredentials(&domain.RunnerInvocation{CredentialSource: domain.RuntimeAuthLocal}, []runtime.CredentialBinding{runtime.BindCodex}, argv)

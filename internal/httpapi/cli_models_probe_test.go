@@ -45,10 +45,31 @@ func TestProbeCLIModelsUsesOfficialEndpointWithoutBaseURL(t *testing.T) {
 			c.Params = gin.Params{{Key: "id", Value: strconv.FormatInt(owner.ID, 10)}}
 			handlers.probeCLIModels(c)
 			if !called || w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"source":"official"`) ||
-				!strings.Contains(w.Body.String(), `"id":"official-model"`) {
+				!strings.Contains(w.Body.String(), `"id":"official-model"`) || !strings.Contains(w.Body.String(), `"connected":true`) {
 				t.Fatalf("result %d %s", w.Code, w.Body.String())
 			}
 		})
+	}
+}
+
+func TestProbeCodeBuddyIOAModelsReportsMissingCLI(t *testing.T) {
+	h, owner := workbenchFixture(t)
+	bin := t.TempDir()
+	t.Setenv("PATH", bin)
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("AGENTFLOW_CODEBUDDY_BIN", "")
+	t.Setenv("AGENTFLOW_MANAGED_CLI_ROOT", "")
+	t.Setenv("AGENTFLOW_RUNTIME_CLI_DIR", t.TempDir())
+	original := assistantCLIGlobalDirs
+	assistantCLIGlobalDirs = []string{bin}
+	t.Cleanup(func() { assistantCLIGlobalDirs = original })
+
+	payload := bytes.NewBufferString(`{"engine":"codebuddy","environment":"ioa"}`)
+	c, w := workbenchContext(owner, http.MethodPost, "/", payload)
+	c.Params = gin.Params{{Key: "id", Value: strconv.FormatInt(owner.ID, 10)}}
+	(&usersHandlers{deps: h.deps}).probeCLIModels(c)
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "没有安装") {
+		t.Fatalf("missing CodeBuddy CLI: %d %s", w.Code, w.Body.String())
 	}
 }
 

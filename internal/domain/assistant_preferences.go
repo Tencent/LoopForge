@@ -2,6 +2,14 @@ package domain
 
 import "time"
 
+// AssistantDefaults applies to new selections made with the user's own credentials.
+type AssistantDefaults struct {
+	Executor string `json:"executor,omitempty"`
+	Model    string `json:"model,omitempty"`
+	Effort   string `json:"effort,omitempty"`
+	Approval string `json:"approval,omitempty"`
+}
+
 // AssistantPreferencesInstructionsMax caps the user's own rules for Main Bot.
 const AssistantPreferencesInstructionsMax = 4000
 

@@ -146,7 +146,7 @@ func (h *catalogHandlers) repositories(c *gin.Context) {
 		h.saveRepository(c, v)
 		return
 	}
-	// One pasted repository reference (web / SSH / clone / git clone / group/repo)
+	// One pasted repository reference (web / SSH / clone / git clone)
 	// An unknown HTTPS host is a Git transport, not an unknown hosting adapter.
 	_, knownHost := domain.ParseRepositoryURL(sshReference)
 	if v.Provider == domain.RepositoryProviderHTTPS || !knownHost && strings.HasPrefix(strings.TrimPrefix(sshReference, "git clone "), "https://") {
@@ -182,7 +182,7 @@ func (h *catalogHandlers) repositories(c *gin.Context) {
 		h.saveRepository(c, v)
 		return
 	}
-	// One pasted repository reference (web / SSH / clone / git clone / group/repo)
+	// One pasted repository reference (web / SSH / clone / git clone)
 	// is enough. Prefer repoUrl so an SSH paste keeps an SSH clone URL.
 	var parsed domain.GongfengRepoInfo
 	var parsedOK bool
@@ -197,7 +197,7 @@ func (h *catalogHandlers) repositories(c *gin.Context) {
 	if primary != "" {
 		info, ok := domain.ParseRepositoryURL(primary)
 		if !ok {
-			c.JSON(400, gin.H{"error": "仓库 URL 无法识别，请提供 GitHub 链接或 Git SSH 克隆地址"})
+			c.JSON(400, gin.H{"error": "请填写完整的 GitHub、HTTPS 或 Git SSH 仓库地址"})
 			return
 		}
 		if body.RepoURL != "" && body.URL != "" {
@@ -218,6 +218,12 @@ func (h *catalogHandlers) repositories(c *gin.Context) {
 	if v.GongfengProjectID != "" {
 		if info, ok := domain.ParseRepositoryURL(v.GongfengProjectID); ok {
 			v.GongfengProjectID = info.Project
+		} else if info, ok := domain.ParseGongfengRepoURL(v.GongfengProjectID); ok && !strings.ContainsAny(v.GongfengProjectID, ":@") {
+			// An explicit legacy project ID is different from a pasted repoUrl.
+			v.GongfengProjectID = info.Project
+			if !parsedOK {
+				parsed, parsedOK = info, true
+			}
 		} else if !strings.HasPrefix(v.GongfengProjectID, "github:") && !domain.IsSafeGongfengProjectID(v.GongfengProjectID) {
 			c.JSON(400, map[string]string{"error": "仓库链接无法识别：请提供有效的 GitHub 仓库地址"})
 			return
@@ -239,7 +245,7 @@ func (h *catalogHandlers) repositories(c *gin.Context) {
 	}
 	if v.GongfengProjectID != "" {
 		if v.WebURL == "" {
-			v.WebURL = "https://" + domain.GongfengRepoHost + "/" + v.GongfengProjectID
+			v.WebURL = "https://" + domain.GongfengRepositoryHost() + "/" + v.GongfengProjectID
 		}
 		if v.CloneURL == "" {
 			v.CloneURL = v.WebURL + ".git"
@@ -340,15 +346,7 @@ func (h *catalogHandlers) agents(c *gin.Context) {
 			if !h.requireProjectWriter(c, v.ProjectID) {
 				return
 			}
-			if strings.TrimSpace(v.ExecutorID) == "" {
-				v.ExecutorID = "codebuddy"
-			}
-			builtIn, ok := repo.BuiltInExecutor(v.ExecutorID)
-			if !ok {
-				c.JSON(http.StatusBadRequest, map[string]string{"error": "不支持的 CLI：" + v.ExecutorID})
-				return
-			}
-			if err := domain.ValidateAgentEffort(v.Effort, builtIn.Kind); err != nil {
+			if err := validateCatalogAgentExecutor(&v); err != nil {
 				c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
 				return
 			}
@@ -356,16 +354,14 @@ func (h *catalogHandlers) agents(c *gin.Context) {
 				c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
 				return
 			}
+			if existing, ok := h.repo.Agent(v.ID); ok && existing.Shared && !v.Shared && h.sharedScheduleReferences("agent", v.ID) {
+				c.JSON(http.StatusConflict, map[string]string{"error": "该角色仍被共享任务引用，不能取消共享"})
+				return
+			}
 			if v.Version == 0 {
 				v.Version = 1
 			}
-			if v.Shared {
-				if err := h.shareAgentAssets(v); err != nil {
-					respond(c, err)
-					return
-				}
-			}
-			if err := h.repo.PutAgent(v); err != nil {
+			if err := h.repo.PutAgentWithSharing(v); err != nil {
 				respond(c, err)
 				return
 			}
@@ -373,6 +369,25 @@ func (h *catalogHandlers) agents(c *gin.Context) {
 			c.JSON(200, stored)
 		}
 	}
+}
+
+func validateCatalogAgentExecutor(agent *domain.AgentDefinition) error {
+	agent.ExecutorID = strings.TrimSpace(agent.ExecutorID)
+	agent.Model = strings.TrimSpace(agent.Model)
+	agent.Effort = strings.TrimSpace(agent.Effort)
+	if agent.ExecutorID == "" {
+		if (agent.Model == "" || agent.Model == "default") && agent.Effort == "" {
+			agent.Model = ""
+			return nil
+		}
+		// Old API callers could pin a CodeBuddy model or effort using only its ID.
+		agent.ExecutorID = "codebuddy"
+	}
+	executor, ok := repo.BuiltInExecutor(agent.ExecutorID)
+	if !ok {
+		return fmt.Errorf("不支持的 CLI：%s", agent.ExecutorID)
+	}
+	return domain.ValidateAgentEffort(agent.Effort, executor.Kind)
 }
 
 func filterAgentsForProject(agents []domain.AgentDefinition, projectID string) []domain.AgentDefinition {
@@ -387,29 +402,9 @@ func filterAgentsForProject(agents []domain.AgentDefinition, projectID string) [
 }
 
 func (h *catalogHandlers) validateWorkflowAgentScopes(workflow domain.WorkflowDefinition) error {
-	projectID := strings.TrimSpace(workflow.ProjectID)
-	if projectID == "" {
-		return nil
-	}
-	for _, node := range workflow.Nodes {
-		if node.Type != "agent" {
-			continue
-		}
-		agentID := strings.TrimSpace(node.AgentID)
-		if agentID == "" || domain.IsPreviewBuildAgent(agentID) {
-			continue
-		}
-		agent, ok := h.repo.Agent(agentID)
-		if !ok {
-			return fmt.Errorf("角色 %q 不存在", agentID)
-		}
-		owner := strings.TrimSpace(agent.ProjectID)
-		if owner == "" || (owner != projectID && !agent.Shared) {
-			return fmt.Errorf("角色 %q 不属于当前项目且尚未共享", agent.Name)
-		}
-	}
-	return nil
+	return h.repo.ValidateWorkflowAgentScopes(workflow)
 }
+
 func (h *catalogHandlers) agent(c *gin.Context) {
 	id := c.Param("id")
 	current, ok := h.repo.Agent(id)
@@ -451,6 +446,20 @@ func (h *catalogHandlers) agent(c *gin.Context) {
 		}
 		c.JSON(http.StatusOK, revision)
 	case "/api/agents/:id/revisions/:rev/restore":
+		revision, ok := h.repo.Revision(c.Param("rev"))
+		if !ok || revision.Kind != "agent" || revision.EntityID != id {
+			c.JSON(http.StatusBadRequest, map[string]string{"error": "agent revision not found"})
+			return
+		}
+		var restored domain.AgentDefinition
+		if json.Unmarshal(revision.Payload, &restored) != nil {
+			c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid agent revision"})
+			return
+		}
+		if current.Shared && !restored.Shared && h.sharedScheduleReferences("agent", id) {
+			c.JSON(http.StatusConflict, map[string]string{"error": "该角色仍被共享任务引用，不能取消共享"})
+			return
+		}
 		stored, err := h.repo.RestoreAgentRevision(c.Param("rev"))
 		if err != nil {
 			respond(c, err)
@@ -518,27 +527,7 @@ func (h *catalogHandlers) agent(c *gin.Context) {
 var errPersonalMCPCloneRequiresLogin = errors.New("复制包含个人 MCP 的角色前请先登录")
 
 func (h *catalogHandlers) shareAgentAssets(agent domain.AgentDefinition) error {
-	for _, id := range agent.Rules {
-		item, ok := h.repo.Rule(id)
-		if !ok || item.Shared || (item.ProjectID != "" && item.ProjectID != agent.ProjectID) {
-			continue
-		}
-		item.Shared = true
-		if err := h.repo.PutRule(item); err != nil {
-			return fmt.Errorf("share rule %q: %w", id, err)
-		}
-	}
-	for _, id := range agent.Skills {
-		item, ok := h.repo.Skill(id)
-		if !ok || item.Shared || (item.ProjectID != "" && item.ProjectID != agent.ProjectID) {
-			continue
-		}
-		item.Shared = true
-		if err := h.repo.PutSkill(item); err != nil {
-			return fmt.Errorf("share skill %q: %w", id, err)
-		}
-	}
-	return nil
+	return h.repo.ShareAgentAssets(agent)
 }
 
 func (h *catalogHandlers) cloneAgentMCPServers(ids []string, projectID string, userID int64) ([]string, error) {
@@ -696,8 +685,8 @@ func (h *catalogHandlers) skills(c *gin.Context) {
 			if existing, ok := h.repo.Skill(v.ID); ok && existing.ProjectID != "" && existing.ProjectID != v.ProjectID {
 				c.JSON(409, map[string]string{"error": "skill id is already used by another project"})
 				return
-			} else if ok && existing.Shared && !v.Shared && h.sharedAgentReferences("skill", v.ID) {
-				c.JSON(409, map[string]string{"error": "该技能仍被共享角色引用，不能取消共享"})
+			} else if ok && existing.Shared && !v.Shared && (h.sharedAgentReferences("skill", v.ID) || h.sharedScheduleReferences("skill", v.ID)) {
+				c.JSON(409, map[string]string{"error": "该技能仍被共享角色或共享任务引用，不能取消共享"})
 				return
 			}
 			// The binary file manifest is owned by the skill_files table;
@@ -731,6 +720,25 @@ func (h *catalogHandlers) sharedAgentReferences(kind, id string) bool {
 		}
 		if slices.Contains(refs, id) {
 			return true
+		}
+	}
+	return false
+}
+
+func (h *catalogHandlers) sharedScheduleReferences(kind, id string) bool {
+	items, err := h.repo.SharedScheduleTasks()
+	if err != nil {
+		return true
+	}
+	for _, latest := range items {
+		versions, err := h.repo.SharedScheduleVersions(latest.ID)
+		if err != nil {
+			return true
+		}
+		for _, item := range versions {
+			if item.HasAsset(kind, id) {
+				return true
+			}
 		}
 	}
 	return false
@@ -1063,7 +1071,17 @@ func (h *catalogHandlers) workflows(c *gin.Context) {
 			if !h.requireProjectWriter(c, v.ProjectID, previousProjectID) {
 				return
 			}
+			if previous, exists := h.repo.Workflow(v.ID); exists && previous.Shared && !v.Shared && h.sharedScheduleReferences("sop", v.ID) {
+				c.JSON(http.StatusConflict, map[string]string{"error": "该 SOP 仍被共享任务引用，不能取消共享"})
+				return
+			}
 
+			if id := v.Preview.SelectedExecutorID(); v.Preview.Static() && id != "" {
+				if _, supported := repo.BuiltInExecutor(id); !supported {
+					c.JSON(http.StatusBadRequest, gin.H{"error": "前端预览使用了不支持的 CLI：" + id})
+					return
+				}
+			}
 			if err := domain.ValidateWorkflowPreparation(v); err != nil {
 				c.JSON(400, gin.H{"error": err.Error()})
 				return
@@ -1102,16 +1120,8 @@ func (h *catalogHandlers) workflows(c *gin.Context) {
 				c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
 				return
 			}
-			profile, ok := h.requireWorkflowSandbox(c, v)
-			if !ok {
-				return
-			}
-			if v.ProjectID != "" && profile.ProjectID != "" && profile.ProjectID != v.ProjectID && !profile.Shared {
-				c.JSON(http.StatusBadRequest, map[string]string{"error": "沙箱不属于当前项目且尚未共享"})
-				return
-			}
-			if v.Shared && !profile.Shared {
-				c.JSON(http.StatusBadRequest, map[string]string{"error": "共享 SOP 只能使用已共享的沙箱"})
+			if err := h.repo.ValidateWorkflowSharing(v); err != nil {
+				c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
 				return
 			}
 			if v.Version == 0 {
@@ -1234,12 +1244,35 @@ func (h *catalogHandlers) workflow(c *gin.Context) {
 		if workflowHasNotifications(restored) && !h.notifications.access(c, v.ProjectID, true) {
 			return
 		}
+		if v.Shared && !restored.Shared && h.sharedScheduleReferences("sop", id) {
+			c.JSON(http.StatusConflict, map[string]string{"error": "该 SOP 仍被共享任务引用，不能取消共享"})
+			return
+		}
 		stored, err := h.repo.RestoreWorkflowRevision(c.Param("rev"))
 		if err != nil {
 			respond(c, err)
 			return
 		}
 		c.JSON(200, stored)
+	case "/api/workflows/:id/executor-requirements":
+		if !v.Generic {
+			c.JSON(http.StatusNotFound, gin.H{"error": "generic template not found"})
+			return
+		}
+		var userID int64
+		projectID := strings.TrimSpace(c.Query("projectId"))
+		if user, ok := h.requestUser(c.Request, true); ok {
+			userID = user.ID
+		} else if project, ok := h.repo.Project(projectID); ok && !authRequired() {
+			userID = project.OwnerID
+		}
+		rows, err := h.engine.SOPExecutorRequirements(v, userID, projectID)
+		if err != nil {
+			respond(c, err)
+			return
+		}
+		c.Header("Cache-Control", "private, no-store")
+		c.JSON(http.StatusOK, rows)
 	case "/api/workflows/:id/agents":
 		template, ok := h.repo.GenericTemplateByWorkflow(id)
 		if !ok {
@@ -1258,15 +1291,7 @@ func (h *catalogHandlers) workflow(c *gin.Context) {
 		if !decode(c, &agent) {
 			return
 		}
-		if strings.TrimSpace(agent.ExecutorID) == "" {
-			agent.ExecutorID = "codebuddy"
-		}
-		builtIn, ok := repo.BuiltInExecutor(agent.ExecutorID)
-		if !ok {
-			c.JSON(http.StatusBadRequest, map[string]string{"error": "不支持的 CLI：" + agent.ExecutorID})
-			return
-		}
-		if err := domain.ValidateAgentEffort(agent.Effort, builtIn.Kind); err != nil {
+		if err := validateCatalogAgentExecutor(&agent); err != nil {
 			c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
@@ -1306,10 +1331,11 @@ func (h *catalogHandlers) workflow(c *gin.Context) {
 		c.JSON(200, stored)
 	case "/api/workflows/:id/clone":
 		var req struct {
-			ID        string `json:"id"`
-			Name      string `json:"name"`
-			Owner     string `json:"owner"`
-			ProjectID string `json:"projectId"`
+			ID               string `json:"id"`
+			Name             string `json:"name"`
+			Owner            string `json:"owner"`
+			ProjectID        string `json:"projectId"`
+			SandboxProfileID string `json:"sandboxProfileId"`
 		}
 		if !decode(c, &req) {
 			return
@@ -1325,12 +1351,23 @@ func (h *catalogHandlers) workflow(c *gin.Context) {
 			c.JSON(http.StatusConflict, map[string]string{"error": "该 ID 与平台通用模板冲突，请换一个 ID"})
 			return
 		}
-		if strings.TrimSpace(req.ProjectID) == "" {
-			req.ProjectID = v.ProjectID
+		req.ProjectID = strings.TrimSpace(req.ProjectID)
+		if req.ProjectID == "" {
+			req.ProjectID = strings.TrimSpace(v.ProjectID)
 		}
 		taken, _ := h.repo.Workflow(req.ID)
-		if !h.requireProjectWriter(c, strings.TrimSpace(req.ProjectID), taken.ProjectID) {
+		if !h.requireProjectWriter(c, req.ProjectID, taken.ProjectID) {
 			return
+		}
+		if req.SandboxProfileID != "" {
+			profile, ok := h.repo.Sandbox(req.SandboxProfileID)
+			if !ok || !domain.CatalogVisible(profile.ProjectID, profile.Shared, req.ProjectID) {
+				c.JSON(http.StatusBadRequest, map[string]string{"error": "所选运行沙箱已不可用，请刷新后重新选择。"})
+				return
+			}
+			v.SandboxProfileID = profile.ID
+		} else if v.Generic {
+			v.SandboxProfileID = h.genericTemplateSandbox(v.SandboxProfileID, req.ProjectID)
 		}
 		if v.Generic {
 			stored, err := h.adoptGenericWorkflow(v, req.ID, req.Name, req.Owner, req.ProjectID)
@@ -1342,7 +1379,7 @@ func (h *catalogHandlers) workflow(c *gin.Context) {
 			return
 		}
 		v.ID, v.Name, v.Owner = req.ID, req.Name, req.Owner
-		v.ProjectID = strings.TrimSpace(req.ProjectID)
+		v.ProjectID = req.ProjectID
 		v.Shared = false
 		v.Status, v.Version, v.Revision = "draft", 1, 0
 		v.CreatedAt, v.UpdatedAt = time.Time{}, time.Time{}

@@ -9,5 +9,6 @@ services:
       args:
         LOOPFORGE_BUILD_JOBS: ${LOOPFORGE_BUILD_JOBS:-}
         LOOPFORGE_COMMIT: ${LOOPFORGE_COMMIT:-}
+        CODEBUDDY_PACKAGE: ${CODEBUDDY_PACKAGE-@tencent-ai/codebuddy-code@2.167.0}
     environment:
       AGENTFLOW_ISOLATED_IMAGE: loopforge-platform:local

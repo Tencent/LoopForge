@@ -1,0 +1,92 @@
+:host {
+  display: block;
+  min-width: 0;
+
+  --text: var(--hui-text);
+  --surface: var(--hui-surface);
+  --line: var(--hui-border);
+  --muted: var(--hui-muted);
+  --subtle: var(--hui-canvas);
+  --chat-font-size: 13px;
+  --chat-font-weight: 400;
+  --chat-line-height: 1.65;
+  font: 13px/1.65 var(--hui-sans);
+  color: var(--hui-text);
+}
+* {
+  box-sizing: border-box;
+}
+button,
+input,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+button {
+  border: 0;
+  background: none;
+  cursor: pointer;
+}
+button:focus-visible,
+input:focus-visible {
+  outline: 2px solid var(--hui-accent);
+  outline-offset: 2px;
+}
+.composer {
+  position: relative;
+  border: 1px solid var(--hui-border);
+  border-radius: 12px;
+  background: var(--hui-surface);
+}
+.composer:focus-within {
+  border-color: var(--hui-accent);
+  box-shadow: 0 0 0 2px var(--hui-focus-ring);
+}
+.schedule-prompt-shell > label {
+  display: block;
+  font-size: 12.5px;
+  font-weight: 500;
+  margin-bottom: 6px;
+}
+.schedule-field-hint {
+  color: var(--hui-muted);
+  font-size: 12px;
+  margin: 6px 0 0;
+}
+.composer textarea {
+  height: 112px;
+  min-height: 112px;
+  max-height: 280px;
+  resize: vertical;
+}
+.composer-attachments {
+  max-height: 90px;
+  overflow-y: auto;
+}
+.prompt-toolbar {
+  padding: 4px 10px 9px;
+}
+.prompt-toolbar > span {
+  color: var(--hui-muted);
+  font-size: 12px;
+}
+.prompt-toolbar button {
+  min-height: 28px;
+  border-radius: 8px;
+  padding: 4px 8px;
+  color: var(--hui-muted);
+}
+.prompt-toolbar button:hover {
+  background: var(--hui-canvas);
+  color: var(--hui-text);
+}
+.mention-picker {
+  z-index: 100;
+}
+@media (pointer: coarse) {
+  .prompt-toolbar button,
+  .composer-attachment-file > button {
+    min-height: 44px;
+    min-width: 44px;
+  }
+}

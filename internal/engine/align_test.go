@@ -7,7 +7,47 @@ import (
 	"testing"
 
 	"agentflow/internal/domain"
+	"agentflow/internal/repo"
+	"agentflow/internal/runtime"
 )
+
+func TestBaselineAlignRunKeepsConfiguredCLI(t *testing.T) {
+	store, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(store.Close)
+	wf := domain.WorkflowDefinition{
+		ID: BaselineAlignWorkflowID, Name: "Align", SandboxProfileID: "local",
+		Nodes: []domain.WorkflowNode{{ID: "resolve", Type: "agent", AgentID: BaselineAlignAgentID}},
+	}
+	if err := store.PutWorkflow(wf); err != nil {
+		t.Fatal(err)
+	}
+	eng := New(store, runtime.NewManager(t.TempDir()))
+	eng.ConfigureExecution("", "", 0, false)
+	for _, choice := range []struct{ setting, want string }{
+		{"", "codebuddy"},
+		{"codex", "codex"},
+	} {
+		t.Setenv("AGENTFLOW_BASELINE_ALIGN_EXECUTOR", choice.setting)
+		run, err := eng.Start(wf.ID, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("AGENTFLOW_BASELINE_ALIGN_EXECUTOR", "claude")
+		snapshot := run.WorkflowSnapshot
+		node := snapshot.Nodes[0]
+		agent, ok := workflowAgent(store, snapshot, node.AgentID)
+		if !ok {
+			t.Fatal("baseline resolver is missing")
+		}
+		executor, err := resolveNodeExecutor(store, node, agent)
+		if err != nil || executor.ID != choice.want {
+			t.Fatalf("baseline executor = %q, want %q (error %v)", executor.ID, choice.want, err)
+		}
+	}
+}
 
 func TestExtractConflictBlocks(t *testing.T) {
 	t.Parallel()

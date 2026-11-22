@@ -48,6 +48,50 @@ function approvalWaitReason(run,nodeId){
   if(instructions)text+=`确认要求：${instructions}`;
   return text;
 }
+function approvalArtifactLinksHTML(run,node) {
+  if (!node?.id || !run?.artifacts?.length) return '';
+  const snapshot = run.workflowSnapshot || {};
+  const incoming = new Map();
+  for (const edge of snapshot.edges || []) {
+    if (!incoming.has(edge.target)) incoming.set(edge.target, []);
+    incoming.get(edge.target).push(edge.source);
+  }
+  const upstream = new Set([node.id]);
+  for (const id of upstream) {
+    for (const source of incoming.get(id) || []) upstream.add(source);
+  }
+  // Old linear snapshots may omit edges. The immediately preceding step is
+  // also used by the approval explanation for those snapshots.
+  if (!incoming.size) {
+    const steps = snapshot.nodes || [];
+    const index = steps.findIndex(step => step.id === node.id);
+    if (index > 0) upstream.add(steps[index-1].id);
+  }
+  const links = run.artifacts.filter(artifact => {
+    if (!upstream.has(artifact.nodeId)) return false;
+    const step = run.nodes?.[artifact.nodeId];
+    return (artifact.nodeId === node.id || step?.status === 'succeeded') &&
+      (!step?.attempt || !artifact.attempt || step.attempt === artifact.attempt);
+  });
+  if (!links.length) return '';
+  return `<div class="callout-section"><strong class="callout-label">待审交付物</strong><div class="approval-artifacts">
+    ${links.map(artifact => `<button type="button" class="button ghost small" data-review-run="${escapeHTML(run.id)}" data-review-artifact="${escapeHTML(artifact.id)}" title="${escapeHTML(artifact.path||artifact.name)}">${huiIcon('doc')}<span>${escapeHTML(artifact.name||artifact.path)}</span></button>`).join('')}
+  </div></div>`;
+}
+function bindReviewArtifactActions(root,run) {
+  root.querySelectorAll('[data-review-artifact]').forEach(button => {
+    button.onclick = async () => {
+      const {reviewRun,reviewArtifact} = button.dataset;
+      let current = [run,cachedRun(reviewRun),...(state.approvalItems || [])].find(item =>
+        item?.id === reviewRun && item.artifacts?.some(artifact => artifact.id === reviewArtifact));
+      try {
+        if (!current) current = await api(`/api/runs/${encodeURIComponent(reviewRun)}`,{silent:true});
+        if (!current?.artifacts?.some(artifact => artifact.id === reviewArtifact)) throw new Error('待审交付物已更新，请刷新后重试');
+        await previewArtifact(current,reviewArtifact,button);
+      } catch(error) { toast(error.message,'err'); }
+    };
+  });
+}
 function humanGateSectionsHTML(nr,run,node){
   if(turnsExhausted(nr)){
     return `<div class="callout-section"><strong class="callout-label">说明</strong><p class="callout-text">${escapeHTML(nr?.error||'请确认是否重试本节点。不重试则本节点失败。')}</p></div>`;
@@ -77,12 +121,12 @@ function humanGateSectionsHTML(nr,run,node){
     const err=nr?.error||nr?.feedback||'门禁未通过。请看产物和日志后决定。';
     sections.push(`<div class="callout-section"><strong class="callout-label">判断依据</strong><p class="callout-text">${escapeHTML(err)}</p></div>`);
   }
-  return sections.join('');
+  return sections.join('')+approvalArtifactLinksHTML(run,node);
 }
-function humanDecisionPanelHTML(runId,nodeId,nr,node,nodes){
-  if(cachedRun(runId)?.status==='queued')return '';
+function humanDecisionPanelHTML(runId,nodeId,nr,node,nodes,run=cachedRun(runId)){
+  if(run?.status==='queued')return '';
   const field=isScriptWorkflowNode(node)?'':humanContextFieldHTML();
-  return `<div class="human-decision" data-human-context-root><div class="human-gate-brief">${humanGateSectionsHTML(nr,cachedRun(runId),node)}</div>${field}<div class="ap-buttons">${waitingActionButtons(runId,nodeId,nr,node,nodes)}</div></div>`;
+  return `<div class="human-decision" data-human-context-root><div class="human-gate-brief">${humanGateSectionsHTML(nr,run,node)}</div>${field}<div class="ap-buttons">${waitingActionButtons(runId,nodeId,nr,node,nodes)}</div></div>`;
 }
 function failedNodeId(run){
   const nodes=run?.workflowSnapshot?.nodes||[];
@@ -233,7 +277,7 @@ function pausedRunPanelHTML(run){
   const resumeLabel='直接继续';
   return `<div class="approval-callout paused-run-callout" data-human-context-root><div class="callout-head"><div class="callout-title-row"><span class="callout-badge human">运行已暂停</span><b class="callout-title">流程已暂停执行</b></div></div><div class="callout-content"><p class="callout-text">${detail}</p></div>${agentPaused?humanContextFieldHTML():''}<div class="ap-buttons"><button class="button primary" data-resume-paused="${escapeHTML(run.id)}">${resumeLabel}</button>${passButton}${refreshRunSOPButtonHTML(run)}</div></div>`;
 }
-function approvalCalloutHTML(node,nr,nodes){
+function approvalCalloutHTML(node,nr,nodes,run){
   nodes=nodes||state.activeRun?.workflowSnapshot?.nodes||[];
   const field=isScriptWorkflowNode(node)?'':humanContextFieldHTML();
   const nodeTitle=escapeHTML(node?.name||node?.id||'当前节点');
@@ -244,7 +288,7 @@ function approvalCalloutHTML(node,nr,nodes){
     ? `<button class="button primary" data-retry-node="${node.id}">重试本节点</button><button class="button ghost" data-decline-retry="${node.id}">不重试</button>`
     : `<button class="button primary" data-approve="${node.id}">确认通过，继续下游</button><button class="button ghost" data-retry-node="${node.id}">补充信息，重跑当前节点</button>${rework}`;
   const title=turnsExhausted(nr)?'对话轮次已用尽':(gate?.decision==='human'?'等待人工确认':'需要人工判断');
-  return `<div class="approval-callout human" data-human-context-root><div class="callout-head"><div class="callout-title-row"><span class="callout-badge human">待确认</span><b class="callout-title">${title}</b><span class="callout-node-name">步骤：<b>${nodeTitle}</b></span></div></div><div class="callout-content">${humanGateSectionsHTML(nr,typeof state!=='undefined'?state.activeRun:null,node)}</div>${field}<div class="ap-buttons">${buttons}</div></div>`;
+  return `<div class="approval-callout human" data-human-context-root><div class="callout-head"><div class="callout-title-row"><span class="callout-badge human">待确认</span><b class="callout-title">${title}</b><span class="callout-node-name">步骤：<b>${nodeTitle}</b></span></div></div><div class="callout-content">${humanGateSectionsHTML(nr,run,node)}</div>${field}<div class="ap-buttons">${buttons}</div></div>`;
 }
 async function retryWaitingNode(runId,nodeId,fromEl){
   if(queuedRunActionBlocked(runId))return;
@@ -322,6 +366,7 @@ async function refreshRunSOP(runId){
 }
 function bindWaitingActions(root){
   if(!root)return;
+  bindReviewArtifactActions(root);
   root.querySelectorAll('[data-approve]').forEach(b=>b.onclick=()=>approveRun(b.dataset.approve,b.dataset.node,b));
   root.querySelectorAll('[data-reject]').forEach(b=>b.onclick=()=>rejectRun(b.dataset.reject,b.dataset.node,b));
   root.querySelectorAll('[data-retry-node]').forEach(b=>b.onclick=()=>retryWaitingNode(b.dataset.retryNode,b.dataset.node,b));
@@ -472,7 +517,7 @@ function approvalCardHTML(r){
   const sep='<span class="ap-sep" aria-hidden="true">·</span>';
   const sideButton=issue?`<button class="button ghost small" data-open-issue="${escapeHTML(issue.id)}">打开需求</button>`:`<button class="button ghost small" data-open-logs="${escapeHTML(r.id)}">${alignRun?'查看对齐详情':'排查日志'}</button>`;
   const more=`<div class="ap-more"><button type="button" class="ap-more-toggle" data-ap-more title="更多操作" aria-label="更多操作" aria-haspopup="menu" aria-expanded="false">${huiIcon('more-horizontal')}</button><div class="ap-more-menu" role="menu" hidden><button type="button" class="ap-menu-item danger" role="menuitem" data-cancel-run="${escapeHTML(r.id)}">${huiIcon('close')}<span>取消流程</span></button></div></div>`;
-  const decision=r.pauseRequested?pausedRunPanelHTML(r):humanDecisionPanelHTML(r.id,nodeId,r.nodes?.[nodeId],node,r.workflowSnapshot?.nodes||[]);
+  const decision=r.pauseRequested?pausedRunPanelHTML(r):humanDecisionPanelHTML(r.id,nodeId,r.nodes?.[nodeId],node,r.workflowSnapshot?.nodes||[],r);
   return `<div class="ap-card${approvalSelectable(r)&&approvalSelection().has(approvalKey(r.id,waitingNodeId(r)))?' is-selected':''}"><div class="ap-card-head">${approvalSelectBoxHTML(r)}<div class="ap-main"><div class="ap-head"><b>${escapeHTML(title)}</b>${approvalStatusBadgeHTML(r.pauseRequested)}</div><div class="ap-meta">${keyHTML}${sep}${r.pauseRequested?'暂停于':'卡在'}「${escapeHTML(node?.name||nodeId||'确认')}」${sep}已等待 ${relativeTime(r.createdAt)}</div></div><div class="ap-side">${sideButton}${!r.pauseRequested?refreshRunSOPButtonHTML(r):''}${more}</div></div>${decision?`<div class="ap-body">${decision}</div>`:''}</div>`;
 }
 function closeApprovalMoreMenus(except){
@@ -509,7 +554,10 @@ async function renderApprovals(background=false){
   if(!background){try{const [runs,tasks,issues]=await Promise.all([api('/api/runs'),api('/api/tasks'),api('/api/issues')]);state.data.runs=runs;state.data.tasks=tasks;state.data.issues=issues}catch(e){toast(e.message,'err')}}
   const items=(await Promise.all(approvalItems().map(async summary=>{
     const cached=cachedRun(summary.id);
-    if(cached?.workflowSnapshot?.id)return {...cached,...summary,workflowSnapshot:cached.workflowSnapshot};
+    if(cached?.workflowSnapshot?.id && (cached.artifacts?.length||0)===(summary.artifactCount||0) &&
+      (!summary.artifactCount || cached.updatedAt===summary.updatedAt)){
+      return {...cached,...summary,workflowSnapshot:cached.workflowSnapshot,artifacts:cached.artifacts};
+    }
     try{
       const full=await api(`/api/runs/${encodeURIComponent(summary.id)}`,{silent:true});
       if(full?.id){

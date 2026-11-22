@@ -39,7 +39,7 @@ func (h *runsHandlers) workspaceRestore(c *gin.Context) {
 		defer stop()
 		_ = h.engine.EndConversationWorkspaceUse(ctx, run.ID, token)
 	}()
-	if err = h.engine.EnsureConversationWorkspace(c.Request.Context(), run.ID, token); err != nil {
+	if _, err = h.engine.PrepareConversationWorkspace(c.Request.Context(), run.ID, token); err != nil {
 		c.JSON(409, gin.H{"error": err.Error()})
 		return
 	}

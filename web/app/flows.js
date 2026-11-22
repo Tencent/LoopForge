@@ -3,48 +3,48 @@ function workflowPreviewContract(wf){
 }
 const PREVIEW_BUILD_NODE_ID='af-preview-build';
 const PREVIEW_BUILD_AGENT_ID='af-preview-builder';
-const PREVIEW_MODEL_FALLBACK=[
-  {id:'default',name:'GLM-5.3-Flash'},
-  {id:'glm-5.3-ioa',name:'GLM-5.3'},
-  {id:'gpt-5.6-terra',name:'GPT-5.6-Terra'},
-  {id:'gpt-5.6-luna',name:'GPT-5.6-Luna'},
-  {id:'gpt-6-sol',name:'GPT-6-Sol'},
-  {id:'claude-sonnet-4.6',name:'Claude-Sonnet-4.6'},
-  {id:'kimi-k3-ioa',name:'Kimi-K3'},
-  {id:'deepseek-v4.1-flash',name:'DeepSeek-V4.1-Flash'}
-];
 function isPreviewBuildNode(id){return id===PREVIEW_BUILD_NODE_ID}
+function workflowPreviewExecutor(wf){
+  const preview=workflowPreviewContract(wf);
+  const model=preview?.model?.trim();
+  return preview?.executorId?.trim()||(model&&!['default','default-model'].includes(model)?'codebuddy':'');
+}
 function workflowPreviewModel(wf){
-  const api=window.AgentFlowAssistantModels;
-  const fallback=(api&&api.DEFAULT)||'default';
-  const model=(workflowPreviewContract(wf)||{}).model;
-  return (model&&String(model).trim())||fallback;
+  const model=String(workflowPreviewContract(wf)?.model||'').trim();
+  return model==='default'||(model==='default-model'&&workflowPreviewExecutor(wf)==='codebuddy')?'':model;
 }
-function previewModelChoices(){
-  const api=window.AgentFlowAssistantModels;
-  // The preview build node runs on CodeBuddy (executorId codebuddy).
-  const models=api?.codeBuddyModels?.()||api?.catalog?.()?.models;
-  if(models&&models.length)return models.map(m=>({id:m.id,name:m.name||m.id}));
-  return PREVIEW_MODEL_FALLBACK.slice();
+function previewModelOptions(executorId){
+  return (executorModelCatalogs()[executorId]?.models||[]).filter(m=>m.id!=='default'&&(executorId!=='codebuddy'||m.id!=='default-model'));
 }
-function fillPreviewModelSelect(sel, selected){
-  if(!sel)return;
-  const items=previewModelChoices();
-  const keep=selected||items[0]?.id||'default';
-  if(keep&&!items.some(m=>m.id===keep))items.unshift({id:keep,name:keep});
-  sel.innerHTML=items.map(m=>`<option value="${escapeHTML(m.id)}" ${m.id===keep?'selected':''}>${escapeHTML(m.name||m.id)}</option>`).join('');
+function defaultPreviewModel(executorId, items=previewModelOptions(executorId)){
+  const prefs=state.data.assistantDefaults;
+  const preferenceExecutor=prefs?.executor==='claude-code'?'claude':prefs?.executor;
+  if(preferenceExecutor===executorId&&items.some(item=>item.id===prefs.model))return prefs.model;
+  const preferred=executorModelCatalogs()[executorId]?.default;
+  return items.find(item=>item.id===preferred)?.id||items[0]?.id||'';
+}
+function fillPreviewModelSelect(sel, selected, executorId){
+  if(!executorId){
+    sel.innerHTML='<option value="">跟随责任人默认模型</option>';
+    sel.disabled=true;
+    return '';
+  }
+  const items=previewModelOptions(executorId);
+  const model=selected||defaultPreviewModel(executorId,items);
+  if(model&&!items.some(m=>m.id===model))items.push({id:model,name:model});
+  sel.innerHTML=items.length?items.map(m=>`<option value="${escapeHTML(m.id)}" ${m.id===model?'selected':''}>${escapeHTML(m.name||m.id)}</option>`).join(''):'<option value="">暂无可选模型</option>';
+  sel.disabled=flowReadOnly()||!items.length;
+  return model;
 }
 function ensurePreviewContract(){
   const wf=state.workflow;if(!wf)return null;
   const prev=workflowPreviewContract(wf)||{};
-  const api=window.AgentFlowAssistantModels;
-  const model=(prev.model&&String(prev.model).trim())||(api&&api.DEFAULT)||'default';
   wf.preview={
     ...prev,
     enabled:true,
     kind:'static',
-    executorId:'codebuddy',
-    model,
+    executorId:workflowPreviewExecutor(wf),
+    model:prev.model??'',
     sourcePath:prev.sourcePath||'dist',
     indexFile:prev.indexFile||'index.html',
     spaFallback:prev.spaFallback!==false,
@@ -81,7 +81,7 @@ function syncPreviewBuildGraph(){
     name:'构建静态站点',
     type:'agent',
     agentId:PREVIEW_BUILD_AGENT_ID,
-    executorId:'codebuddy',
+    executorId:workflowPreviewExecutor(wf),
     executionScope:'run',
     onFailure:'fail',
     retryStrategy:'targeted_fix',
@@ -193,12 +193,11 @@ function addNode(type,opts={}){
   const at=opts.at?{x:Math.round(opts.at.x/10)*10,y:Math.round(opts.at.y/10)*10}:flowViewport.freeSpot();
   if(type==='preview'){
     const existing=state.workflow.nodes.find(n=>isPreviewBuildNode(n.id));
-    if(existing){state.selectedNode=existing.id;renderCanvas();renderProperties();return toast('预览节点已存在，可拖拽连线调整它的位置')}
+    if(existing){openNodeDrawer(existing.id);return toast('预览节点已存在，可拖拽连线调整它的位置')}
     flowHistory.record();
     ensurePreviewContract();
-    state.workflow.nodes.push({id:PREVIEW_BUILD_NODE_ID,name:'构建静态站点',type:'agent',agentId:PREVIEW_BUILD_AGENT_ID,executorId:'codebuddy',executionScope:'run',onFailure:'fail',retryStrategy:'targeted_fix',maxAttempts:2,maxReworks:1,position:at,artifactOutputs:[{name:'frontend-preview',path:'dist/index.html',required:true}]});
-    state.selectedNode=PREVIEW_BUILD_NODE_ID;
-    dirty();renderCanvas();renderProperties();
+    state.workflow.nodes.push({id:PREVIEW_BUILD_NODE_ID,name:'构建静态站点',type:'agent',agentId:PREVIEW_BUILD_AGENT_ID,executorId:workflowPreviewExecutor(state.workflow),executionScope:'run',onFailure:'fail',retryStrategy:'targeted_fix',maxAttempts:2,maxReworks:1,position:at,artifactOutputs:[{name:'frontend-preview',path:'dist/index.html',required:true}]});
+    dirty();openNodeDrawer(PREVIEW_BUILD_NODE_ID);
     return;
   }
   flowHistory.record();
@@ -207,8 +206,8 @@ function addNode(type,opts={}){
   const agentId=type==='agent'?(opts.agentId||workflowAgents()[0]?.id||''):'';
   const agent=agentId?workflowAgent(agentId):null;
   const node={id:uid(type),name:firstSOP?.name||(opts.agentId&&agent?.name)||labels[type]||'新节点',type,agentId,sopWorkflowId:firstSOP?.id||'',scriptLanguage:type==='script'?'shell':'',script:type==='script'?"printf 'passed\\n'":'',executionScope:'run',artifactOutputs:firstSOP?sopDeclaredArtifacts(firstSOP):[],rejectTo:'',onFailure:'fail',retryStrategy:'targeted_fix',carryOver:['failed_checks','last_error','upstream_artifacts'],maxAttempts:1,maxReworks:3,position:at};
-  state.workflow.nodes.push(node);state.selectedNode=node.id;
-  dirty();renderCanvas();renderProperties();
+  state.workflow.nodes.push(node);
+  dirty();openNodeDrawer(node.id);
 }
 // Removes a node with its edges and any reject routes pointing at it.
 function removeNode(id){
@@ -235,8 +234,8 @@ function duplicateNode(id){
   const copy=clone(n);
   Object.assign(copy,{id:uid(n.type||'node'),name:`${n.name} 副本`,position:{x:(n.position?.x||0)+40,y:(n.position?.y||0)+40},rejectTo:''});
   if(copy.onFailure==='reject')copy.onFailure='fail';
-  wf.nodes.push(copy);state.selectedNode=copy.id;
-  dirty();renderCanvas();renderProperties();
+  wf.nodes.push(copy);
+  dirty();openNodeDrawer(copy.id);
   flowToast('已复制（不含连线）',{undo:true});
   return copy;
 }
@@ -284,7 +283,10 @@ function flowNodeTint(n){
 }
 function flowNodeEl(id){return document.querySelector(`#nodes .flow-node[data-id="${CSS.escape(id)}"]`)}
 function nodeMeta(n){
-  if(isPreviewBuildNode(n.id))return {kind:'preview',subtitle:'CodeBuddy 静态站点构建',tags:[{text:workflowPreviewModel(state.workflow)}]};
+  if(isPreviewBuildNode(n.id)){
+    const model=workflowPreviewModel(state.workflow);
+    return {kind:'preview',subtitle:'静态站点构建',tags:model?[{text:model}]:[]};
+  }
   if(n.type==='agent'){
     const a=workflowAgent(n.agentId),generic=catalogGeneric(state.workflow);
     const e=(state.data.executors||[]).find(x=>x.id===(a?.executorId||n.executorId));
@@ -390,7 +392,7 @@ function flowDiagnostics(){
   const nodes=state.workflow.nodes||[],edges=state.workflow.edges||[],incoming=new Map(nodes.map(n=>[n.id,0])),items=[];edges.forEach(e=>incoming.has(e.target)&&incoming.set(e.target,incoming.get(e.target)+1));
   const starts=nodes.filter(n=>incoming.get(n.id)===0);items.push({level:!nodes.length?'error':starts.length===1?'ok':'warn',title:'流程入口',detail:!nodes.length?'至少添加一个节点':starts.length===1?`从「${starts[0].name}」开始`:`检测到 ${starts.length} 个入口；这些节点会并行启动`});
   items.push({level:state.data.sandboxes?.some(s=>s.id===state.workflow.sandboxProfileId)?'ok':'error',title:'运行沙箱',detail:state.workflow.sandboxProfileId?`整条流程使用 ${state.workflow.sandboxProfileId}`:'尚未选择 Workflow 运行沙箱'});
-  nodes.forEach(n=>{if(isPreviewBuildNode(n.id)){const inDeg=edges.filter(e=>e.target===n.id).length;items.push({level:inDeg?'ok':'warn',title:n.name,detail:inDeg?`插在流程中间：CodeBuddy ${workflowPreviewModel(state.workflow)} 构建静态站点，运行成功后归档预览`:'还没有前序依赖，会作为流程入口直接运行；请从上游节点连线到此'});return}if(n.type==='agent'){const missing=[];const agent=workflowAgent(n.agentId);const generic=catalogGeneric(state.workflow);if(!n.agentId)missing.push('角色');else if(!agent)missing.push(generic?'通用模板角色未加载':'角色不属于当前项目或未共享');else if(!generic&&!(agent.executorId||n.executorId))missing.push('角色未选模型');if(!(n.artifactOutputs||[]).length&&!(agent?.artifactOutputs||[]).length)missing.push('角色产物契约');items.push({level:missing.length?'warn':'ok',title:n.name,detail:missing.length?`尚未配置：${missing.join('、')}`:generic?'已绑定通用模板角色；任务书与门禁在角色定义中':'已绑定角色；任务书与门禁在角色定义中'})}if(n.type==='sop'){const missing=[];const wf=sopWorkflowChoices(state.workflow.id).find(w=>w.id===n.sopWorkflowId)||(state.data.workflows||[]).find(w=>w.id===n.sopWorkflowId);if(!n.sopWorkflowId)missing.push('要跑的 SOP');else if(!wf)missing.push('引用的 SOP 不存在');if(n.sopWorkflowId===state.workflow.id)missing.push('不能引用自己');items.push({level:missing.length?'error':'ok',title:n.name,detail:missing.length?`尚未配置：${missing.join('、')}`:`引用「${wf.name}」，产物交给下一步`})}if(n.rejectTo&&!nodes.some(x=>x.id===n.rejectTo))items.push({level:'error',title:n.name,detail:'失败打回目标不存在'})});
+  nodes.forEach(n=>{if(isPreviewBuildNode(n.id)){const inDeg=edges.filter(e=>e.target===n.id).length;items.push({level:inDeg?'ok':'warn',title:n.name,detail:inDeg?`插在流程中间：${workflowPreviewModel(state.workflow)} 构建静态站点，运行成功后归档预览`:'还没有前序依赖，会作为流程入口直接运行；请从上游节点连线到此'});return}if(n.type==='agent'){const missing=[];const agent=workflowAgent(n.agentId);const generic=catalogGeneric(state.workflow);if(!n.agentId)missing.push('角色');else if(!agent)missing.push(generic?'通用模板角色未加载':'角色不属于当前项目或未共享');else if(!generic&&!(agent.executorId||n.executorId))missing.push('角色未选模型');if(!(n.artifactOutputs||[]).length&&!(agent?.artifactOutputs||[]).length)missing.push('角色产物契约');items.push({level:missing.length?'warn':'ok',title:n.name,detail:missing.length?`尚未配置：${missing.join('、')}`:generic?'已绑定通用模板角色；任务书与门禁在角色定义中':'已绑定角色；任务书与门禁在角色定义中'})}if(n.type==='sop'){const missing=[];const wf=sopWorkflowChoices(state.workflow.id).find(w=>w.id===n.sopWorkflowId)||(state.data.workflows||[]).find(w=>w.id===n.sopWorkflowId);if(!n.sopWorkflowId)missing.push('要跑的 SOP');else if(!wf)missing.push('引用的 SOP 不存在');if(n.sopWorkflowId===state.workflow.id)missing.push('不能引用自己');items.push({level:missing.length?'error':'ok',title:n.name,detail:missing.length?`尚未配置：${missing.join('、')}`:`引用「${wf.name}」，产物交给下一步`})}if(n.rejectTo&&!nodes.some(x=>x.id===n.rejectTo))items.push({level:'error',title:n.name,detail:'失败打回目标不存在'})});
   if(nodes.length>1&&edges.length===0)items.push({level:'warn',title:'成功路径',detail:'多个节点之间没有依赖关系，将同时启动'});if(!items.some(x=>x.level==='error'))items.push({level:'ok',title:'结构校验',detail:'未发现阻止保存或试运行的结构错误'});return items;
 }
 function setFlowView(mode){$$('.canvas-view-toggle button').forEach(b=>b.classList.toggle('active',b.dataset.flowView===mode));$('#canvas').hidden=mode!=='canvas';$('#flowCheckPanel').hidden=mode!=='check';$('#flowStageWrap')?.classList.toggle('check-mode',mode==='check');if(mode==='check')$('#flowCheckPanel').innerHTML=`<div class="page-heading" style="margin-bottom:14px"><div><h1 style="font-size:17px">配置检查</h1><p>运行前检查入口、CLI、产物契约和返工路径。</p></div></div><div class="flow-check-grid">${flowDiagnostics().map(x=>`<div class="flow-check-item ${x.level}"><b>${escapeHTML(x.title)}</b><p>${escapeHTML(x.detail)}</p></div>`).join('')}</div>`;else flowViewport.renderMinimap()}
@@ -399,7 +401,7 @@ function setThemePreference(preference){if(!['light','dark','system'].includes(p
 function renderThemeSegment({snap=false}={}){const preference=typeof activeThemePreference==='string'?activeThemePreference:readThemePreference();document.querySelectorAll('.upp-theme-seg').forEach(seg=>{seg.querySelectorAll('[data-theme-pref]').forEach(button=>{const on=button.dataset.themePref===preference;button.classList.toggle('active',on);if(button.getAttribute('aria-checked')!==String(on))button.setAttribute('aria-checked',String(on));button.tabIndex=on?0:-1});const tabs=window.AgentFlowSlidingTabs;if(!tabs)return;const indicator=seg.querySelector(':scope > [data-sliding-indicator]');if(snap&&indicator)indicator.style.transition='none';tabs.mount(seg,{activeSelector:'.active',auto:true,compact:true,cacheKey:'upp-theme-seg'}).refresh();if(snap&&indicator){indicator.getBoundingClientRect();requestAnimationFrame(()=>{indicator.style.transition=''})}})}
 function renderThemeToggle(){renderThemeSegment();const light=document.documentElement.dataset.theme==='light',button=$('#themeToggle');if(!button)return;window.AgentFlowHarnessIcons?.render(button.querySelector('span'),light?'moon':'sun');button.querySelector('b').textContent=light?'深色':'亮色';button.title=light?'切换到深色主题':'切换到亮色主题'}
 function toggleTheme(){const theme=document.documentElement.dataset.theme==='light'?'dark':'light';try{localStorage.setItem(THEME_KEY,theme)}catch{}applyTheme(theme)}
-function statusText(s){return ({pending:'待执行',running:'运行中',succeeded:'已完成',failed:'失败',waiting_approval:'待审批',cancelled:'已取消'}[s]||'')}
+function statusText(s){return ({pending:'待执行',running:'运行中',succeeded:'已完成',failed:'失败',waiting_approval:'待确认',cancelled:'已取消'}[s]||'')}
 function canvasPoint(e){return flowViewport.toWorld(e.clientX,e.clientY)}
 function flowReaches(from,to){
   const seen=new Set([from]),queue=[from];
@@ -593,6 +595,7 @@ function flowToast(message,opts={}){
 }
 function openNodeDrawer(id){
   if(!state.workflow?.nodes.some(n=>n.id===id))return;
+  if($('#aiOrchestrator')?.hidden===false)setAIOrchestratorOpen(false);
   if(state.selectedNode!==id)state.flowWantReject=null;
   state.selectedNode=id;renderCanvas();renderProperties();
 }
@@ -627,7 +630,7 @@ function bindFlowDesigner(){
   document.addEventListener('pointerdown',e=>{if(!e.target.closest('#flowNodeMenu,[data-node-menu]'))closeNodeMenu()});
   document.addEventListener('keydown',e=>{
     if(!$('#flowView')?.classList.contains('active')||e.defaultPrevented)return;
-    const mod=e.metaKey||e.ctrlKey,key=(e.key||'').toLowerCase(),blocked=!!$('.modal.open')||$('#commandPalette')?.hidden===false;
+    const mod=e.metaKey||e.ctrlKey,key=(e.key||'').toLowerCase(),blocked=!!$('.modal.open, dialog:modal')||$('#commandPalette')?.hidden===false;
     if(mod&&key==='s'){e.preventDefault();if(!blocked&&!$('#saveWorkflow')?.disabled)saveWorkflow().catch(()=>{});return}
     if(blocked||e.target.closest?.('input,textarea,select,[contenteditable="true"],[contenteditable=""]'))return;
     if(mod&&key==='z'){e.preventDefault();if(e.shiftKey?flowHistory.redo():flowHistory.undo())flowToast(e.shiftKey?'已重做':'已撤销');return}
@@ -851,6 +854,14 @@ function effectiveNodeArtifacts(node,agent){
 function roleGates(agent){
   return [...(agent?.verification||[])].filter(g=>g.mode!=='submit');
 }
+function boundRoleLink(agent,validation=false){
+  if(!agent)return '';
+  const id=validation?'openBoundAgentValidation':'openBoundAgent';
+  const label=validation?'去角色定义编辑校验清单':'角色配置';
+  if(catalogGeneric(state.workflow))return `<button type="button" class="fd-btn ghost sm" id="${id}">${label}</button>`;
+  const href='#/agents/'+encodeURIComponent(agent.id)+(validation?'/gov':'');
+  return `<a class="fd-btn ghost sm" id="${id}" href="${escapeHTML(href)}">${label}</a>`;
+}
 function nodeGatePane(n){
   const agent=workflowAgent(n.agentId);
   const artifacts=effectiveNodeArtifacts(n,agent);
@@ -860,7 +871,7 @@ function nodeGatePane(n){
   const gateRows=gates.length?gates.map(g=>{const cmds=(g.commands||[]).filter(Boolean);return `<div class="fd-tl-row"><span class="fd-tl-ic">${flowPalette.icon('terminal',13)}</span><span class="fd-tl-main"><b>${escapeHTML(g.name||g.id||'未命名门禁')}</b><code>${escapeHTML(cmds.join(' && ')||'人工确认')}</code><small>${g.executionScope==='repositories'?'每个代码仓库':'Run 工作区'} · 失败后 ${escapeHTML({loop:'本节点自修正',reject:'打回上游',human:'转人工确认',fail:'本节点失败'}[g.onFailure]||'按节点策略')}</small></span></div>`}).join(''):'<div class="fd-tl-none">这个节点没有额外门禁命令。</div>';
   const terminal=n.type==='agent'?step(1,'先提交结构化终态','平台内建',`<div class="fd-tl-row"><span class="fd-tl-ic">${flowPalette.icon('check',13)}</span><span class="fd-tl-main"><code>pass | rework | fail | human</code><small>Agent 完成任务后必须先调用 submit_gate_result 提交终态；缺失时自动恢复同一会话重试。</small></span></div>`):'';
   const base=n.type==='agent'?1:0;
-  return `<p class="prop-hint">执行时 Agent 节点先提交结构化终态，随后校验产物，最后执行可选门禁命令。</p><ol class="fd-tl">${terminal}${step(base+1,'再校验产物',`${artifacts.length} 项`,artifactRows)}${step(base+2,'最后触发额外门禁',`${gates.length} 项`,gateRows)}</ol>${agent?'<button type="button" class="fd-btn ghost sm" id="openBoundAgentValidation">去角色定义编辑校验清单</button>':''}`;
+  return `<p class="prop-hint">执行时 Agent 节点先提交结构化终态，随后校验产物，最后执行可选门禁命令。</p><ol class="fd-tl">${terminal}${step(base+1,'再校验产物',`${artifacts.length} 项`,artifactRows)}${step(base+2,'最后触发额外门禁',`${gates.length} 项`,gateRows)}</ol>${boundRoleLink(agent,true)}`;
 }
 
 function renderAgentAssetsPanel(a){
@@ -968,9 +979,15 @@ function agentBindCard(n){
   if(!agent)return `<div class="fd-field"><label>这个步骤用哪个角色</label><select class="select" data-p="agentId">${opts}</select><p class="prop-hint">${hint}</p><p class="prop-hint">先选一个已定义的角色。画布只编排顺序和打回，不改编排角色内部的任务。</p></div>`;
   const arts=effectiveNodeArtifacts(n,agent),gates=roleGates(agent);
   const duty=String(agent.description||'').trim(),taskHint=duty?(duty.length>48?`${duty.slice(0,48)}…`:duty):'还没写职责，可在角色定义里补';
-  const model=agent.model||exec?.model||exec?.name||'未选模型';
+  const source=(state.workflow?.tags||[]).find(tag=>tag.startsWith('generic-source:'))?.slice('generic-source:'.length);
+  const template=(state.data.workflows||[]).find(w=>w.id===source&&catalogGeneric(w));
+  const fromTemplate=generic||template?.nodes?.some(node=>node.agentId&&(node.agentId===agent.id||`${node.agentId}-${projectId}`===agent.id));
+  const legacyTemplate=fromTemplate&&(agent.projectId||'')===(state.workflow?.projectId||'')&&agent.executorId==='codebuddy';
+  const inheritsExecutor=!n.executorId&&(!agent.executorId||legacyTemplate)&&
+    !String(agent.model||'').trim()&&!String(agent.effort||'').trim();
+  const model=inheritsExecutor?'跟随责任人':agent.model||exec?.model||exec?.name||'未选模型';
   return `<div class="fd-field"><label>这个步骤用哪个角色</label><select class="select" data-p="agentId">${opts}</select><p class="prop-hint">${hint}</p></div>
-    <div class="fd-role"><div class="fd-role-h"><span class="fd-tile" style="--tint:${flowPalette.roleTint(agent.id)}">${escapeHTML(flowPalette.initial(agent.name))}</span><span class="fd-role-t"><b>${escapeHTML(agent.name)}</b><small>${escapeHTML(taskHint)}</small></span><button type="button" class="fd-btn ghost sm" id="openBoundAgent">编辑角色 prompt</button></div><div class="fd-stats"><div title="${escapeHTML(model)}"><b class="txt">${escapeHTML(model)}</b><small>模型</small></div><div><b>${arts.length}</b><small>产物</small></div><div><b>${gates.length}</b><small>门禁</small></div><div><b>${agent.loop?.enabled?`${agent.loop.maxIterations||1} 轮`:'单轮'}</b><small>Loop</small></div></div></div>`;
+    <div class="fd-role"><div class="fd-role-h"><span class="fd-tile" style="--tint:${flowPalette.roleTint(agent.id)}">${escapeHTML(flowPalette.initial(agent.name))}</span><span class="fd-role-t"><b>${escapeHTML(agent.name)}</b><small>${escapeHTML(taskHint)}</small></span>${boundRoleLink(agent)}</div><div class="fd-stats"><div title="${escapeHTML(model)}"><b class="txt">${escapeHTML(model)}</b><small>模型</small></div><div><b>${arts.length}</b><small>产物</small></div><div><b>${gates.length}</b><small>门禁</small></div><div><b>${agent.loop?.enabled?`${agent.loop.maxIterations||1} 轮`:'单轮'}</b><small>Loop</small></div></div></div>`;
 }
 function flowDrawerHead(n,kind,label){
   const agent=kind==='agent'?workflowAgent(n.agentId):null;
@@ -984,20 +1001,36 @@ function flowFold(id,title,sub,body,defaultOpen){
   return `<details class="fd-sec fd-fold" data-fold="${id}" ${open?'open':''}><summary><span class="fd-sec-t">${title}</span>${sub?`<small>${sub}</small>`:''}<span class="fd-chev">${flowPalette.icon('chev',14)}</span></summary><div class="fd-sec-b">${body}</div></details>`;
 }
 function renderPreviewBuildProperties(host,n){
-  const model=workflowPreviewModel(state.workflow);
   const spa=state.workflow.preview?.spaFallback!==false;
   host.innerHTML=`${flowDrawerHead(n,'preview','系统步骤 · 前端预览')}
     <div class="fd-db">
       <section class="fd-sec"><div class="fd-sec-h"><span class="fd-sec-t">主配置</span></div><div class="fd-sec-b">
         <p class="prop-hint">运行到该节点时用所选模型构建静态站点，不必再手写脚本节点；Run 成功后平台归档预览。它只有成功出口。</p>
-        <div class="fd-field"><label>CodeBuddy 模型</label><select class="select" id="previewNodeModel"></select></div>
+        <div class="fd-field"><label for="previewNodeExecutor">执行器</label><select class="select" id="previewNodeExecutor">${executorOptions(workflowPreviewExecutor(state.workflow))}</select></div>
+        <div class="fd-field"><label for="previewNodeModel">模型</label><select class="select" id="previewNodeModel"></select></div>
         <label class="fd-check"><input type="checkbox" id="previewNodeSpa" ${spa?'checked':''}><span>单页应用回退（找不到路径时返回入口 HTML）</span></label>
       </div></section>
     </div>
     <div class="fd-df"><span class="fd-df-hint">从左侧「成功」出口连到下一步；预览节点没有失败出口</span></div>`;
-  fillPreviewModelSelect($('#previewNodeModel'), model);
-  const sel=$('#previewNodeModel');
-  if(sel)sel.onchange=()=>{flowHistory.record();updatePreviewContract({model:sel.value});dirty();renderCanvas();};
+  const executor=$('#previewNodeExecutor'),sel=$('#previewNodeModel');
+  const fill=()=>{
+    const model=fillPreviewModelSelect(sel,workflowPreviewModel(state.workflow),executor.value);
+    if(!sel.disabled&&model&&state.workflow.preview?.model===''){
+      updatePreviewContract({model});
+      renderCanvas();
+    }
+  };
+  fill();
+  loadExecutorModelCatalogs().then(()=>{if(executor.isConnected)fill()});
+  executor.onchange=()=>{
+    flowHistory.record();
+    updatePreviewContract({executorId:executor.value,model:''});
+    n.executorId=executor.value;
+    fill();
+    dirty();
+    renderCanvas();
+  };
+  sel.onchange=()=>{flowHistory.record();updatePreviewContract({model:sel.value});dirty();renderCanvas();};
   const spaBox=$('#previewNodeSpa');
   if(spaBox)spaBox.onchange=()=>{flowHistory.record();updatePreviewContract({spaFallback:spaBox.checked});dirty();};
 }
@@ -1063,8 +1096,11 @@ function bindNodeProperties(host,n){
   };
   host.querySelector('#addSOPHandoff')?.addEventListener('click',()=>{flowHistory.record();n.artifactOutputs=n.artifactOutputs||[];n.artifactOutputs.push({name:'',path:'',mediaType:'text/markdown',required:true});renderProperties();dirty()});
   if(n.type==='sop')bindArtifactRows(host,n);
-  const openBound=$('#openBoundAgent');if(openBound)openBound.onclick=()=>{const agent=workflowAgent(n.agentId);if(!agent)return;if(!catalogGeneric(state.workflow))switchView('agents');openAgentWizard(agent,2)};
-  const openBoundValidation=$('#openBoundAgentValidation');if(openBoundValidation)openBoundValidation.onclick=()=>{const agent=workflowAgent(n.agentId);if(!agent)return;if(!catalogGeneric(state.workflow))switchView('agents');openAgentWizard(agent,3)};
+  if(catalogGeneric(state.workflow)){
+    const agent=workflowAgent(n.agentId);
+    host.querySelector('#openBoundAgent')?.addEventListener('click',()=>openAgentWizard(agent));
+    host.querySelector('#openBoundAgentValidation')?.addEventListener('click',()=>openAgentWizard(agent,3));
+  }
   host.querySelectorAll('[data-fail]').forEach(b=>b.onclick=()=>{
     if(b.dataset.fail==='fail'){state.flowWantReject=false;if(!setRejectTo(n.id,'')&&n.onFailure==='reject'){n.onFailure='fail';dirty()}renderProperties();return}
     state.flowWantReject=true;renderProperties();host.querySelector('#rejectTarget')?.focus();
@@ -1101,31 +1137,42 @@ async function discardWorkflow(){
 async function saveWorkflow(){
   if(catalogGeneric(state.workflow)&&!isPlatformAdmin()){toast('通用模板为只读，请先「复制到本项目」再修改');throw new Error('generic sop is read-only')}
   if(catalogForeign(state.workflow?.projectId)){toast('这是其他项目的共享 SOP，请先复制到本项目再改');throw new Error('shared sop is read-only')}
+  if(state.workflow?.preview?.enabled&&workflowPreviewExecutor(state.workflow)&&state.workflow.preview.model===''){
+    const workflow=state.workflow;
+    await loadExecutorModelCatalogs();
+    if(state.workflow!==workflow)throw new Error('SOP 已切换，请重新保存');
+    if(!workflow.preview.model)workflow.preview.model=defaultPreviewModel(workflowPreviewExecutor(workflow));
+    if(!workflow.preview.model){
+      const message='请选择构建静态站点的模型';
+      toast(message);
+      throw new Error(message);
+    }
+  }
   try{const saved=await api('/api/workflows',{method:'PUT',body:JSON.stringify(state.workflow)});state.workflow=clone(saved);const i=state.data.workflows.findIndex(w=>w.id===saved.id);if(i>=0)state.data.workflows[i]=clone(saved);else state.data.workflows.unshift(clone(saved));markWorkflowClean();renderWorkflowMeta();renderSOPCatalog();renderCanvas();renderProperties();toast('SOP 草稿已保存');return saved}catch(e){if(e.message.includes('revision conflict')){toast('保存冲突：其他人已更新该 SOP，请重新选择后合并')}else if(e.message!=='shared sop is read-only'&&e.message!=='generic sop is read-only')toast(e.message);throw e}}
 function sopSandboxChoices(){
   return (state.data.sandboxes||[]).filter(s=>s.id&&catalogVisible(s.projectId,s.shared));
 }
-function defaultSOPSandbox(choices=sopSandboxChoices()){
-  return choices.find(s=>s.id==='local')||choices.find(s=>catalogOwned(s.projectId)&&s.driver==='docker')||choices.find(s=>s.driver==='docker')||choices[0];
+function defaultSOPSandbox(choices=sopSandboxChoices(),preferredId){
+  const isolated=choices.filter(s=>sandboxDriverOption(s.driver)!=='local');
+  return isolated.find(s=>s.id===preferredId)||isolated.find(s=>catalogOwned(s.projectId))||isolated[0];
 }
 function syncSOPSandboxSelection(){
   const select=$('#sopCreateSandbox'),template=(state.data.workflows||[]).find(w=>w.id===state.sopTemplate);
   const choices=sopSandboxChoices(),sameSource=select.dataset.source===state.sopTemplate&&select.dataset.project===state.projectFilter;
-  const preferred=sameSource?select.value:(template?.sandboxProfileId||defaultSOPSandbox(choices)?.id||'');
-  // Generic adoption already selects a project/shared fallback on the server.
-  const selected=catalogGeneric(template)
-    ?choices.find(s=>s.id===template.sandboxProfileId)||choices.find(s=>catalogOwned(s.projectId))||choices[0]
-    :choices.find(s=>s.id===preferred);
+  const missingTemplateSandbox=template?.sandboxProfileId&&!catalogGeneric(template)&&!choices.some(s=>s.id===template.sandboxProfileId);
+  let selected;
+  if(sameSource)selected=choices.find(s=>s.id===select.value);
+  else if(!missingTemplateSandbox)selected=defaultSOPSandbox(choices,template?.sandboxProfileId);
   select.innerHTML=`<option value="">${escapeHTML(lfT('请选择运行沙箱','Select a sandbox'))}</option>`+choices.map(s=>`<option value="${escapeHTML(s.id)}">${escapeHTML(s.name||s.id)}${catalogForeign(s.projectId)?lfT(' · 共享',' · Shared'):''}</option>`).join('');
   select.value=selected?.id||'';
   select.dataset.source=state.sopTemplate;select.dataset.project=state.projectFilter;
-  select.disabled=catalogGeneric(template)||!choices.length;
+  select.disabled=!choices.length;
   select.onchange=()=>syncSOPSandboxSelection();
   $('#sopFinish').disabled=!selected;
   $('#sopSandboxHint').textContent=!choices.length
     ?lfT('当前项目没有可用的运行沙箱，请先配置或请管理员共享一个沙箱，再点击「刷新沙箱」。','No sandbox is available for this project. Configure one or ask an administrator to share one, then refresh sandboxes.')
-    :!selected?lfT('模板原有沙箱不可用，请重新选择运行沙箱。','The template sandbox is unavailable. Select a replacement sandbox.')
-    :catalogGeneric(template)?lfT('通用模板优先使用原有沙箱，不可用时自动选择本项目可用沙箱。复制后可在流程设置中修改。','Starter templates prefer their original sandbox and otherwise use an available project sandbox. You can change it in SOP settings after copying.')
+    :!selected&&missingTemplateSandbox?lfT('模板原有沙箱不可用，请重新选择运行沙箱。','The template sandbox is unavailable. Select a replacement sandbox.')
+    :!selected?lfT('请选择运行沙箱。如需本地执行，请确认流程中的任务均可信。','Select a sandbox. Choose local execution only if you trust every task in this SOP.')
     :lfT('选择此 SOP 使用的运行环境，创建后仍可在流程设置中修改。','Choose the execution environment for this SOP. You can change it in SOP settings later.');
 }
 async function refreshSOPSandboxes(){
@@ -1134,13 +1181,13 @@ async function refreshSOPSandboxes(){
     state.data.sandboxes=await api('/api/sandboxes');
     // Empty installations can acquire a first sandbox without losing form input.
     const select=$('#sopCreateSandbox');
-    if(!select.value&&!state.data.workflows.some(w=>w.id===state.sopTemplate))delete select.dataset.source;
+    if(!select.value)delete select.dataset.source;
     syncSOPSandboxSelection();
   }catch(err){toast(err.message)}finally{button.disabled=false}
 }
 function newWorkflow(){
   const sandbox=defaultSOPSandbox();
-  if(!sandbox)return toast(lfT('当前项目没有可用的运行沙箱，请先到「设置 → 沙箱」配置。','No sandbox is available for this project. Configure one in Settings → Sandboxes first.'));
+  if(!sandbox)return openSOPWizard();
   state.workflow={id:uid('sop'),name:'未命名 SOP',version:1,revision:0,status:'draft',projectId:state.projectFilter||'',shared:false,owner:'',tags:[],description:'',sandboxProfileId:sandbox.id,nodes:[],edges:[]};state.selectedNode=null;rememberOpenWorkflow();renderAll();dirty();
 }
 function openSOPWizard(){
@@ -1170,7 +1217,7 @@ async function createSOPFromWizard(e){
       // A generic template brings its own roles, so it must be adopted through
       // the clone endpoint instead of being written as a bare workflow.
       if(!state.projectFilter)return toast('请先在顶部选择一个项目');
-      saved=await api(`/api/workflows/${encodeURIComponent(template.id)}/clone`,{method:'POST',body:JSON.stringify({id:uid('sop'),name,owner,projectId:state.projectFilter})});
+      saved=await api(`/api/workflows/${encodeURIComponent(template.id)}/clone`,{method:'POST',body:JSON.stringify({id:uid('sop'),name,owner,projectId:state.projectFilter,sandboxProfileId:sandboxId})});
       if(description||owner||tags.length)saved=await api('/api/workflows',{method:'PUT',body:JSON.stringify({...saved,name,description:description||saved.description,owner:owner||saved.owner,tags:tags.length?tags:saved.tags})});
     }else{
       const workflow=template?clone(template):{nodes:[],edges:[]};

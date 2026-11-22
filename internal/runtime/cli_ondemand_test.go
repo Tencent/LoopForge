@@ -88,21 +88,34 @@ func TestInstallOnDemandCLIReportsNPMFailureWithoutActivating(t *testing.T) {
 
 func TestInstallOnDemandCLIInstallsCursorWithOfficialInstaller(t *testing.T) {
 	home := t.TempDir()
-	log := filepath.Join(t.TempDir(), "bash.log")
+	log := filepath.Join(t.TempDir(), "curl.log")
 	t.Setenv("HOME", home)
-	t.Setenv("BASH_TEST_LOG", log)
-	useFakeCommands(t, map[string]string{"bash": `#!/bin/sh
-printf '%s\n' "$*" >> "$BASH_TEST_LOG"
+	t.Setenv("AGENTFLOW_RUNTIME_CLI_DIR", t.TempDir())
+	t.Setenv("CURL_TEST_LOG", log)
+	useFakeCommands(t, map[string]string{"curl": `#!/bin/sh
+set -eu
+printf '%s\n' "$*" >> "$CURL_TEST_LOG"
+while [ "$1" != -o ]; do shift; done
+cat > "$2" <<'INSTALL'
+set -eu
+package="$HOME/.local/share/cursor-agent/versions/2026.11.22-e9042b2"
+mkdir -p "$package"
 mkdir -p "$HOME/.local/bin"
-printf '#!/bin/sh\necho cursor\n' > "$HOME/.local/bin/cursor-agent"
-chmod 755 "$HOME/.local/bin/cursor-agent"
+printf '#!/bin/sh\necho cursor\n' > "$package/cursor-agent"
+chmod 755 "$package/cursor-agent"
+printf 'runtime\n' > "$package/index.js"
+ln -s "$package/cursor-agent" "$HOME/.local/bin/cursor-agent"
+INSTALL
 `})
 	path, err := InstallOnDemandCLI(context.Background(), "cursor")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if path != filepath.Join(home, ".local", "bin", "cursor-agent") {
+	if path != sharedCursorCLIPath() || !fileIsExecutable(path) {
 		t.Fatalf("binary %q", path)
+	}
+	if data, err := os.ReadFile(filepath.Join(filepath.Dir(path), "index.js")); err != nil || string(data) != "runtime\n" {
+		t.Fatalf("Cursor runtime files missing: %q %v", data, err)
 	}
 	calls, _ := os.ReadFile(log)
 	if !strings.Contains(string(calls), "https://cursor.com/install") {
@@ -114,6 +127,40 @@ chmod 755 "$HOME/.local/bin/cursor-agent"
 	calls, _ = os.ReadFile(log)
 	if strings.Count(string(calls), "\n") != 1 {
 		t.Fatalf("installer ran twice: %s", calls)
+	}
+}
+
+func TestCursorSharesOnlyTheExistingPackage(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("AGENTFLOW_RUNTIME_CLI_DIR", t.TempDir())
+	legacy := filepath.Join(home, ".local", "bin", cursorCLIBinary)
+	if err := os.MkdirAll(filepath.Dir(legacy), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(writeScript(t, "#!/bin/sh\n"), legacy); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := prepareSharedCursorCLI(t.Context(), false); err != nil || got != "" {
+		t.Fatalf("shared a launcher outside the official package directory: %q %v", got, err)
+	}
+	if err := os.Remove(legacy); err != nil {
+		t.Fatal(err)
+	}
+	packageDir := filepath.Join(home, ".local", "share", cursorCLIBinary, "versions", "2026.11.22-e9042b2")
+	if err := os.MkdirAll(packageDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	official := filepath.Join(packageDir, cursorCLIBinary)
+	if err := os.WriteFile(official, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(official, legacy); err != nil {
+		t.Fatal(err)
+	}
+	path, err := prepareSharedCursorCLI(t.Context(), false)
+	if err != nil || path != sharedCursorCLIPath() || !fileIsExecutable(path) || !fileIsExecutable(legacy) {
+		t.Fatalf("reuse: %q %v", path, err)
 	}
 }
 

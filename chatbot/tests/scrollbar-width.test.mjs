@@ -42,6 +42,28 @@ function outsideFallback() {
   return outside;
 }
 
+test(".message-scroll keeps the native track off so Chrome paints a slim overlay thumb", () => {
+  const outside = rules(outsideFallback());
+  const base = outside.find(({ selectors }) => selectors.length === 1 && selectors[0] === ".message-scroll");
+  assert.ok(base, "missing .message-scroll base rule");
+  assert.doesNotMatch(base.body, /scrollbar-(?:width|color)/);
+  assert.match(base.body, /--message-scrollbar-thumb:\s*color-mix\(in srgb, var\(--muted\) 28%, transparent\)/);
+
+  const thumb = outside.find(({ selectors }) => selectors.includes(".message-scroll::-webkit-scrollbar-thumb"));
+  assert.ok(thumb, "missing .message-scroll::-webkit-scrollbar-thumb rule");
+  assert.match(thumb.body, /border:\s*3px solid transparent/);
+  assert.match(thumb.body, /background-color:\s*var\(--message-scrollbar-thumb\)/);
+
+  const bar = styles.match(/\.message-scroll::-webkit-scrollbar\s*\{([^}]*)\}/);
+  assert.ok(bar, "missing .message-scroll::-webkit-scrollbar rule");
+  assert.match(bar[1], /width:\s*10px/);
+
+  const fallback = fallbackBlocks().find((source) => /\.message-scroll\s*\{/.test(source));
+  assert.ok(fallback, `missing ${fallbackQuery} block for .message-scroll`);
+  assert.match(fallback, /\.message-scroll\s*\{[^}]*scrollbar-width:\s*thin/);
+  assert.match(fallback, /scrollbar-color:\s*color-mix\(in srgb, var\(--muted\) 28%, transparent\)\s*transparent/);
+});
+
 test(".session-list keeps scrollbar-width/color out of its base rules so Chrome uses the 4px webkit scrollbar", () => {
   const found = sessionListRules(outsideFallback());
   assert.ok(found.some(({ selectors }) => selectors.includes(".session-list")), "missing .session-list base rule");

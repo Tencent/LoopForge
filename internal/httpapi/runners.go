@@ -857,7 +857,8 @@ func (h *runnersHandlers) runnerTaskClaim(c *gin.Context) {
 		if task.Invocation != nil && task.Invocation.GitSSHUserID > 0 && runner.SupportsGitSSH() && len(task.Invocation.GitSSHRemotes()) > 0 {
 			task.Invocation.GitSSHKeys = h.repo.GitSSHKeysForRemotes(task.Invocation.GitSSHUserID, task.Invocation.GitSSHRemotes())
 			if input.SupportsGitSSHKnownHosts {
-				task.GitSSHKnownHosts = gitwork.SSHKnownHostsForKeys(task.Invocation.GitSSHKeys)
+				ctx := gitwork.WithSSHKnownHostsLookup(c.Request.Context(), h.repo.PlatformSSHKnownHosts)
+				task.GitSSHKnownHosts = gitwork.SSHKnownHostsForKeys(ctx, task.Invocation.GitSSHKeys)
 			}
 			task.Invocation.GitSSHUserID = 0
 			c.Header("Cache-Control", "no-store")

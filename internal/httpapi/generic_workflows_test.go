@@ -142,6 +142,35 @@ func TestAdoptedTemplateRolesAreDeletableOnceTheCopyIsGone(t *testing.T) {
 	}
 }
 
+func TestGenericTemplateCloneUsesSelectedSandbox(t *testing.T) {
+	h, s := newGenericTemplateServer(t)
+	for _, profile := range []domain.SandboxProfile{
+		{ID: "project-native", Name: "Native", Driver: "native", ProjectID: "alpha"},
+		{ID: "shared-native", Name: "Shared native", Driver: "native", ProjectID: "beta", Shared: true},
+		{ID: "private-native", Name: "Private native", Driver: "native", ProjectID: "beta"},
+	} {
+		if err := s.PutSandbox(profile); err != nil {
+			t.Fatal(err)
+		}
+	}
+	path := "/api/workflows/" + repo.GenericBackendDeliveryWorkflowID + "/clone"
+	for _, sandbox := range []string{"missing", "private-native", "project-native", "shared-native", "local"} {
+		id := "copy-" + sandbox
+		body := map[string]string{"id": id, "name": id, "projectId": "alpha", "sandboxProfileId": sandbox}
+		if sandbox == "missing" || sandbox == "private-native" {
+			requestJSON[map[string]string](t, h, http.MethodPost, path, body, http.StatusBadRequest)
+			if workflowRowExists(t, s, id) {
+				t.Fatalf("created a draft for unavailable sandbox %q", sandbox)
+			}
+			continue
+		}
+		copy := requestJSON[domain.WorkflowDefinition](t, h, http.MethodPost, path, body, http.StatusCreated)
+		if copy.SandboxProfileID != sandbox {
+			t.Fatalf("cloned with %q, want %q", copy.SandboxProfileID, sandbox)
+		}
+	}
+}
+
 func TestGenericTemplateCloneCreatesProjectRolesAndRemapsNodes(t *testing.T) {
 	h, s := newGenericTemplateServer(t)
 	gongfeng := domain.MCPServerDefinition{
@@ -433,29 +462,52 @@ func TestGenericTemplateRunsDirectlyByReference(t *testing.T) {
 		t.Fatal(err)
 	}
 	eng := engine.New(s, runtime.NewManager(filepath.Join(t.TempDir(), "ws")))
+	eng.ConfigureExecution("template-admission-test", "", 0, false)
 	h := New(s, eng, tracker.NewService(), "", "")
-	run := requestJSON[domain.Run](t, h, http.MethodPost, "/api/runs",
-		map[string]any{"workflowId": repo.GenericBackendDeliveryWorkflowID, "input": "x", "projectId": "alpha"},
-		http.StatusCreated)
-	t.Cleanup(func() {
-		_ = eng.Cancel(run.ID)
-		// Wait for the run to fully stop so the workspace quiesces before
-		// TempDir RemoveAll — a still-running node goroutine recreates
-		// files underneath the cleanup and races it.
-		deadline := time.Now().Add(15 * time.Second)
-		for time.Now().Before(deadline) {
-			current, ok := s.Run(run.ID)
-			if !ok || current.Status != "running" {
-				return
-			}
-			time.Sleep(100 * time.Millisecond)
+	path := "/api/workflows/" + repo.GenericBackendDeliveryWorkflowID + "/executor-requirements?projectId=alpha"
+	requirements := requestEmptyJSON[[]engine.SOPExecutorRequirement](t, h, http.MethodGet, path, http.StatusOK)
+	if len(requirements) != 1 || requirements[0].Configured || requirements[0].Kind != "" {
+		t.Fatalf("unconfigured account should see a generic executor requirement: %+v", requirements)
+	}
+	runInput := map[string]any{"workflowId": repo.GenericBackendDeliveryWorkflowID, "input": "x", "projectId": "alpha"}
+	if err := s.PutProject(domain.Project{ID: "no-repo", Name: "No repository", OwnerID: 1}); err != nil {
+		t.Fatal(err)
+	}
+	pending := requestJSON[domain.Run](t, h, http.MethodPost, "/api/runs",
+		map[string]any{"workflowId": repo.GenericBackendDeliveryWorkflowID, "input": "x", "projectId": "no-repo"}, http.StatusCreated)
+	if len(pending.Repositories) != 0 || pending.Repository.RepositoryID != "" {
+		t.Fatalf("run should be admitted without a repository: %+v", pending.Repository)
+	}
+	for _, node := range pending.WorkflowSnapshot.Nodes {
+		if node.Type != "agent" {
+			continue
 		}
-	})
+		choice, deferred := pending.WorkflowSnapshot.ExecutorDefaults[node.ID]
+		if !deferred || choice.Executor != "" {
+			t.Fatalf("node %s should defer executor selection: %+v", node.ID, choice)
+		}
+	}
+	defaults := domain.AssistantDefaults{Executor: "codex", Model: "fixture-model", Effort: "low"}
+	baseURL := "http://127.0.0.1:1/v1"
+	if _, err := s.UpdateUserCredentials(1, repo.UserCredentialUpdate{CodexAPIKey: "fixture-key", CodexBaseURL: &baseURL, AssistantDefaults: &defaults}); err != nil {
+		t.Fatal(err)
+	}
+	requirements = requestEmptyJSON[[]engine.SOPExecutorRequirement](t, h, http.MethodGet, path, http.StatusOK)
+	if len(requirements) != 1 || requirements[0] != (engine.SOPExecutorRequirement{Kind: "codex", Name: "Codex", Configured: true}) {
+		t.Fatalf("preflight must find the configured executor: %+v", requirements)
+	}
+	run := requestJSON[domain.Run](t, h, http.MethodPost, "/api/runs",
+		runInput, http.StatusCreated)
 	if run.WorkflowSnapshot.ID != repo.GenericBackendDeliveryWorkflowID || !run.WorkflowSnapshot.Generic {
 		t.Fatalf("run should snapshot the catalog template, not the legacy row: %+v", run.WorkflowSnapshot)
 	}
 	if run.WorkflowSnapshot.SandboxProfileID != repo.GenericDockerSandboxID {
 		t.Fatalf("direct generic run sandbox = %q, want %s", run.WorkflowSnapshot.SandboxProfileID, repo.GenericDockerSandboxID)
+	}
+	for _, node := range run.WorkflowSnapshot.Nodes {
+		if node.Type == "agent" && run.WorkflowSnapshot.ExecutorDefaults[node.ID] != defaults {
+			t.Fatalf("run did not freeze the selected executor and model for %s: %+v", node.ID, run.WorkflowSnapshot.ExecutorDefaults)
+		}
 	}
 	if run.ExecutionContext.ProjectID != "alpha" {
 		t.Fatalf("run should belong to the requesting project: %+v", run.ExecutionContext)

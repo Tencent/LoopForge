@@ -1,15 +1,12 @@
-// Shared CLI / model picker for the classic SPA (issue #441).
+// Shared catalog rendering, the CLI / model picker for the classic SPA
+// (issue #441) and the linked executor/model selectors.
 //
-// Regression: the clarification model picker (and every other classic-SPA
-// picker) needs window.AgentFlowAssistantModels. A refactor once deleted the
-// only definition and the 澄清 tab's 「选择模型」 button silently stopped
-// opening. This test boots the shared module plus the real picker helpers
-// from the bundle and drives the menus the way a user does.
-//
-// Issue #441: the chat composer, the role wizard and requirement clarification each drew a
-// different picker. They now share AgentFlowAssistantModels.bindPicker, the
-// classic-SPA twin of chatbot/src/ModelPicker.jsx: a body-level menu with
-// search, brand icons, the "family · credits" line and a fixed check slot.
+// Issue #441: the chat composer and the role wizard each drew a different
+// picker. They now share AgentFlowAssistantModels.bindPicker, the classic-SPA
+// twin of chatbot/src/ModelPicker.jsx: a body-level menu with search, brand
+// icons, the "family · credits" line and a fixed check slot. This test boots
+// the shared module plus the real picker helpers from the bundle and drives
+// the menus the way a user does.
 'use strict';
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -21,7 +18,7 @@ const indexHTML = fs.readFileSync(process.argv[4] || 'index.html', 'utf8');
 
 const dom = createDOM();
 const { window: win, document } = dom;
-const store = new Map([['agentflow.clarifyModel', 'model-a']]);
+const store = new Map();
 Object.assign(win, {
   localStorage: {
     getItem: key => (store.has(key) ? store.get(key) : null),
@@ -38,7 +35,7 @@ Object.assign(win, {
         { id: 'model-b', name: 'Model B', family: 'glm', credits: 'x0.06' },
         { id: 'codex:gpt-5.5', name: 'GPT-5.5', family: 'gpt', engine: 'codex' },
       ],
-      engines: [{ id: 'codebuddy', name: 'CodeBuddy' }, { id: 'codex', name: 'Codex' }],
+      engines: [{ id: 'codebuddy', name: 'CodeBuddy', configured: true, personal: true }, { id: 'codex', name: 'Codex', configured: true, personal: true }],
     }),
   }),
   $: selector => document.querySelector(selector),
@@ -59,6 +56,20 @@ function extract(name) {
   const next = /\n(?:async )?function \w+\(|\nconst \w+=/.exec(rest.slice(1));
   dom.run(next ? rest.slice(0, next.index + 1) : rest, name);
 }
+function pickerFixture() {
+  const field = () => ({
+    options: [], value: '', disabled: true,
+    replaceChildren(...options) { this.options = options; },
+    append(option) { this.options.push(option); },
+    prepend(option) { this.options.unshift(option); },
+  });
+  const executor = field(), model = field();
+  const host = {
+    isConnected: true,
+    querySelector(selector) { return selector === '[data-feature-executor]' ? executor : model; },
+  };
+  return {host, executor, model};
+}
 const menus = () => [...document.querySelectorAll('.lf-picker-menu')].filter(menu => menu.getAttribute('aria-hidden') !== 'true');
 const options = menu => [...menu.querySelectorAll('.lf-picker-option')];
 const key = (target, name) => {
@@ -70,7 +81,7 @@ const key = (target, name) => {
 (async () => {
   const api = win.AgentFlowAssistantModels;
   assert.ok(api, 'window.AgentFlowAssistantModels must be defined for classic-SPA pickers');
-  for (const name of ['bindPicker', 'brandOf', 'catalog', 'engineBrand', 'load', 'paint', 'paintItem', 'renderList', 'renderOptions']) {
+  for (const name of ['bindFeaturePicker', 'bindPicker', 'brandOf', 'catalog', 'concreteModelId', 'engineBrand', 'featurePickerHTML', 'load', 'paint', 'paintItem', 'renderList', 'renderOptions']) {
     assert.equal(typeof api[name], 'function', `AgentFlowAssistantModels.${name}`);
   }
   assert.equal(api.DEFAULT, 'default');
@@ -122,7 +133,6 @@ const key = (target, name) => {
   // Pickers keep painting before the catalog lands, so the built-in fallback
   // must already render a usable label, and an unknown brand shows the
   // neutral glyph instead of a lettered "AI" badge.
-  assert.equal(api.codeBuddyModel('codex:gpt-5.5'), 'default', 'codex ids fall back before the catalog loads');
   const probe = dom.html('<button><span class="ai-model-icon"></span><span data-model-label></span></button>');
   api.paint(probe, api.DEFAULT);
   assert.equal(probe.querySelector('[data-model-label]').textContent, '默认');
@@ -132,34 +142,34 @@ const key = (target, name) => {
   assert.ok(probeIcon.querySelector('svg[data-icon="brain"]'), 'unknown brands use the Harness brain glyph');
   assert.ok(!/AI/.test(probeIcon.textContent), 'no lettered badge');
   probe.remove();
-  assert.equal(api.codeBuddyModels().length, 0, 'the placeholder is not selectable before loading');
+  assert.equal(api.engineOf('codex:gpt-5.5'), 'codex');
+  assert.equal(api.concreteModelId('codebuddy:default-model'), '');
 
   await api.load();
   assert.equal(api.catalog().default, 'model-b');
-  assert.equal(api.catalog().models.length, 3, 'catalog adopts /api/assistant/models');
-  // Issue #228: clarification runs on CodeBuddy only, so CodeBuddy-only
-  // pickers hide other CLIs and a saved "codex:…" id falls back.
-  assert.deepEqual(api.codeBuddyModels().map(m => m.id), ['model-a', 'model-b']);
-  assert.equal(api.codeBuddyModel('codex:gpt-5.5'), 'default');
-  assert.equal(api.codeBuddyModel(''), 'default');
-  assert.equal(api.codeBuddyModel('model-a'), 'model-a');
+  assert.equal(api.catalog().models.length, 3, 'catalog adopts concrete models');
+  assert.match(bundle, /bindClarifyModelPicker/);
 
-  // ---- 需求详情 / 澄清: the clarification picker ----
-  for (const name of ['selectedClarifyModel', 'setClarifyModel', 'clarifyModelPickerHTML', 'bindClarifyModelPicker']) extract(name);
-  const host = dom.html(win.clarifyModelPickerHTML(false));
+  // ---- bindPicker: menu chrome, search and keyboard on a model list ----
+  const host = dom.html('<div><button type="button" class="ai-model-toggle" data-model-toggle><span class="ai-model-icon"></span><span data-model-label></span></button></div>');
   const toggle = host.querySelector('[data-model-toggle]');
-  const hidden = host.querySelector('[data-clarify-model-value]');
-  assert.equal(host.querySelector('.ai-model-menu'), null, 'the old inline menu is gone');
-  win.bindClarifyModelPicker(host);
-  await dom.settle();
-  assert.equal(host.dataset.bound, '1', 'clarify picker must bind once the model API exists');
+  let picked = 'model-a';
+  api.bindPicker(toggle, {
+    label: '模型',
+    searchPlaceholder: '搜索模型',
+    emptyText: '没有匹配的模型',
+    items: () => api.catalog().models.filter(model => !model.engine),
+    value: () => picked,
+    onPick: id => { picked = id; api.paint(toggle, id); },
+  });
+  api.paint(toggle, picked);
   assert.equal(toggle.querySelector('[data-model-label]').textContent, 'Model A');
   assert.equal(toggle.querySelector('.ai-model-icon').dataset.brand, 'claude');
   assert.equal(toggle.getAttribute('aria-haspopup'), 'menu');
 
   toggle.click();
   let [menu] = menus();
-  assert.ok(menu, 'clicking 选择模型 must open the shared menu');
+  assert.ok(menu, 'clicking the trigger must open the shared menu');
   assert.equal(menu.parentNode, document.body, 'the menu hangs from <body> so dialogs cannot clip it');
   assert.equal(menu.getAttribute('role'), 'menu');
   assert.equal(toggle.getAttribute('aria-expanded'), 'true');
@@ -169,8 +179,7 @@ const key = (target, name) => {
   assert.equal(search.placeholder, '搜索模型');
   assert.equal(document.activeElement, search, 'opening focuses the search box');
   let rows = options(menu);
-  assert.equal(rows.length, 2, 'menu lists only CodeBuddy models');
-  assert.ok(!rows.some(row => row.dataset.id.startsWith('codex:')), 'clarify menu hides Codex models');
+  assert.equal(rows.length, 2, 'menu lists the items it was given');
   assert.equal(rows[0].getAttribute('role'), 'menuitemradio');
   assert.equal(rows[0].getAttribute('aria-checked'), 'true', 'stored model is checked');
   assert.ok(rows[0].querySelector('.lf-picker-check svg[data-icon="check"]'), 'checked row draws the check');
@@ -217,8 +226,7 @@ const key = (target, name) => {
   box.value = 'model b';
   box.dispatchEvent(new win.Event('input', { bubbles: true }));
   key(box, 'Enter');
-  assert.equal(store.get('agentflow.clarifyModel'), 'model-b');
-  assert.equal(hidden.value, 'model-b');
+  assert.equal(picked, 'model-b');
   assert.equal(toggle.querySelector('[data-model-label]').textContent, 'Model B');
   assert.equal(menus().length, 0);
 
@@ -229,10 +237,6 @@ const key = (target, name) => {
   assert.equal(menus().length, 0, 'outside press closes the menu');
   dom.advance(200);
   host.remove();
-
-  // A Codex id saved before #228 must not reach chat-clarify.
-  store.set('agentflow.clarifyModel', 'codex:gpt-5.5');
-  assert.equal(win.selectedClarifyModel(), 'default');
 
   // ---- 角色定义: CLI, model and effort in the role wizard ----
   const grid = /<div class="as-grid agent-runtime-grid">[\s\S]*?<label class="as-field" id="agentModelCustomField"[\s\S]*?<\/label>/.exec(indexHTML);
@@ -276,16 +280,18 @@ const key = (target, name) => {
   cliToggle.click();
   [menu] = menus();
   assert.equal(menu.getAttribute('aria-label'), 'CLI');
-  assert.equal(menu.querySelector('.lf-picker-search'), null, 'two CLIs need no search box');
+  assert.equal(menu.querySelector('.lf-picker-search'), null, 'a short CLI list needs no search box');
   rows = options(menu);
-  assert.deepEqual(rows.map(row => row.dataset.id), ['codebuddy', 'codex']);
-  assert.equal(document.activeElement, rows[0], 'without search the checked row takes focus');
-  assert.equal(rows[1].querySelector('.ai-model-icon').dataset.brand, 'gpt');
-  assert.equal(rows[0].querySelector('small').textContent, '1 个可用模型');
+  assert.deepEqual(rows.map(row => row.dataset.id), ['', 'codebuddy', 'codex'], 'the owner-default choice leads the list');
+  assert.equal(rows[0].querySelector('.lf-picker-copy strong').textContent, '跟随责任人默认执行器');
+  assert.ok(rows[0].querySelector('.ai-model-icon.is-empty'), 'the owner-default choice has no CLI logo');
+  assert.equal(document.activeElement, rows[1], 'without search the checked row takes focus');
+  assert.equal(rows[2].querySelector('.ai-model-icon').dataset.brand, 'gpt');
+  assert.equal(rows[1].querySelector('small').textContent, '1 个可用模型');
   win.AgentFlowExecutorModels.codebuddy.models.push({ id: 'glm-6', name: 'GLM-6' });
   win.renderAgentExecutorPicker();
-  assert.equal(options(menu)[0].querySelector('small').textContent, '2 个可用模型', 'an open CLI menu receives catalog counts');
-  assert.ok(document.activeElement === options(menu)[0], 'refresh preserves the focused CLI');
+  assert.equal(options(menu)[1].querySelector('small').textContent, '2 个可用模型', 'an open CLI menu receives catalog counts');
+  assert.ok(document.activeElement === options(menu)[1], 'refresh preserves the focused CLI');
 
   // Only one menu at a time.
   modelToggle.click();
@@ -328,7 +334,7 @@ const key = (target, name) => {
 
   // Switching CLI fires change on the select, so the model list follows it.
   cliToggle.click();
-  options(menus()[0])[1].click();
+  options(menus()[0])[2].click();
   assert.equal(select.value, 'codex');
   assert.equal(changes, 1, 'picking a CLI fires change exactly once');
   assert.equal(label(cliToggle), 'Codex');
@@ -348,10 +354,69 @@ const key = (target, name) => {
   assert.equal(form.querySelector('#agentModelCustomField').hidden, false, 'manual model id field appears');
   dom.advance(200);
 
+  // Following the owner's default CLI leaves model and effort to the owner:
+  // an open model menu closes and both triggers are disabled.
+  modelToggle.click();
+  assert.equal(menus().length, 1);
+  cliToggle.click();
+  options(menus()[0])[0].click();
+  assert.equal(select.value, '');
+  assert.equal(changes, 2);
+  assert.equal(menus().length, 0, 'no picker stays open');
+  assert.equal(modelToggle.disabled, true);
+  assert.equal(effortToggle.disabled, true);
+  assert.equal(form.elements.modelChoice.value, '');
+  assert.equal(form.elements.effort.value, '');
+  modelToggle.click();
+  assert.equal(menus().length, 0, 'a disabled model trigger stays shut');
+  win.applyAgentModelUI('', '', '');
+  assert.equal(modelToggle.getAttribute('aria-expanded'), 'false');
+  dom.advance(200);
+
   // Disabled triggers stay shut.
   effortToggle.disabled = true;
   effortToggle.click();
   assert.equal(menus().length, 0);
 
+  // ---- bindFeaturePicker: linked executor and model selects ----
+  win.Option = class Option { constructor(text, value) { this.text = text; this.value = value; } };
+  const pair = pickerFixture();
+  const featureChanges = [];
+  await api.bindFeaturePicker(pair.host, {model: 'default', onChange: id => featureChanges.push(id)});
+  assert.equal(pair.executor.value, 'codebuddy');
+  assert.equal(pair.model.value, 'codebuddy:model-b');
+  assert.deepEqual(pair.model.options.map(option => option.value), ['codebuddy:model-a', 'codebuddy:model-b']);
+  pair.model.value = 'codebuddy:model-a';
+  pair.model.onchange();
+  pair.executor.value = 'codex';
+  pair.executor.onchange();
+  assert.equal(pair.model.value, 'codex:gpt-5.5');
+  assert.deepEqual(pair.model.options.map(option => option.text), ['GPT-5.5']);
+  pair.executor.value = 'codebuddy';
+  pair.executor.onchange();
+  assert.equal(pair.model.value, 'codebuddy:model-a');
+  assert.deepEqual(featureChanges, ['codebuddy:model-a', 'codex:gpt-5.5', 'codebuddy:model-a']);
+
+  const codexOnly = pickerFixture();
+  await api.bindFeaturePicker(codexOnly.host, {
+    model: 'model-b',
+    loadCatalog: async () => ({
+      ...api.catalog(),
+      engines: [
+        {id: 'codebuddy', name: 'CodeBuddy', configured: true, personal: false},
+        {id: 'codex', name: 'Codex', configured: true, personal: true},
+      ],
+    }),
+  });
+  assert.equal(codexOnly.executor.value, 'codex');
+  assert.deepEqual(codexOnly.executor.options.map(item => item.value), ['codex']);
+  assert.equal(codexOnly.model.value, 'codex:gpt-5.5');
+
+  const saved = pickerFixture();
+  await api.bindFeaturePicker(saved.host, {model: 'claude-code:old-model', keepSaved: true, loadCatalog: async () => ({
+    engines: [{id: 'claude-code', name: 'Claude Code', configured: false}], models: [],
+  })});
+  assert.equal(saved.executor.value, 'claude-code');
+  assert.equal(saved.model.value, 'claude-code:old-model');
   console.log('assistant models ok');
 })().catch(err => { console.error(err); process.exit(1); });

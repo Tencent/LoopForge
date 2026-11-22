@@ -340,3 +340,20 @@ func snippet(s, needle string) string {
 	}
 	return s[start:end]
 }
+
+func TestStudioReleaseVersionIsStampedOnlyForReleaseTags(t *testing.T) {
+	static := fstest.MapFS{"index.html": {Data: []byte(`<html><head></head><body></body></html>`)}}
+	h := studioFileServer(static)
+	for _, version := range []string{"v0.4.1-rc.1", "", "main", "<img src=x onerror=alert(1)>"} {
+		t.Run(version, func(t *testing.T) {
+			t.Setenv("LOOPFORGE_RELEASE_VERSION", version)
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+			want := version == "v0.4.1-rc.1"
+			if got := strings.Contains(rec.Body.String(), `<meta name="loopforge-release-version" content="v0.4.1-rc.1">`); got != want ||
+				strings.Contains(rec.Body.String(), "onerror") {
+				t.Fatalf("unexpected release metadata: %s", rec.Body.String())
+			}
+		})
+	}
+}

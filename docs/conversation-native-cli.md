@@ -10,6 +10,8 @@
 
 原生 HOME 和工作目录路径在模式间保持稳定。配置、技能、可执行资产与二进制附件由平台准备；原生会话日志保留在执行机器，错误或取消后继续原会话。远程 Runner 通过已认证的控制连接同步资产、运行 CLI 和转发会话工具请求，不在持久任务行中保存进程输入或密钥。
 
+会话支持 PNG、JPEG、WebP 和 GIF 图片输入。CodeBuddy、Codex、Claude Code、OpenCode、Pi 和 ZCode 在当前用户消息中接收原生图片。ZCode 通过 `--attach` 传图，已验证 CLI 0.17.1。Kimi Code 用 `ReadMediaFile`，DeepSeek Harness 用 `read_image` 读取会话目录中的附件。Claude Code 使用 Runner 登录时，如果内嵌图片的消息超过桥接输入帧上限，会通过 `Read` 读取附件路径。识别需要所选模型支持视觉输入，或由 CLI 提供识图能力。续聊只内嵌当轮新增的图片，历史附件仍保留在会话目录中。远程 OpenCode、Pi、Kimi Code 和 DeepSeek Harness 的自定义模型配置由 Runner 生成，使用这些 CLI 传图时需要更新 Runner。
+
 ZCode 恢复时通过官方会话协议应用当前选择的模型，再启动原生 prompt 命令；保留同一 session 和历史，不直接改写 CLI 数据库。协议不兼容或模型不可用时中止，保留日志供重试。
 
 工作区是独立沙箱，沙箱内的原生文件、补丁和命令（编辑、构建、测试等）在三种审批模式下都直接执行，不做人工确认或独立模型审查。越过沙箱、写入外部系统的命令才按审批模式处理：`git push`；`gh pr|issue|release|repo|… create/merge/close/comment/edit/review/delete…`；`gh api` 带写方法或 `-f/-F/--input`；`curl` 带 `-X POST/PUT/PATCH/DELETE`、`-d/--data*`、`-F/--form`、`-T`、`--json`，`wget --post-*`；`npm/pnpm/yarn/bun/poetry/cargo publish`、`twine upload`、`gem push`；`docker/podman push`；`kubectl apply/delete/…`、`helm install/upgrade/…`、`terraform apply/destroy`。识别看工具输入里的 `command/cmd/args/script` 等字段，与 CLI 的工具名无关。这是防误操作的护栏，不是安全边界：脚本自己联网写入不会被识别。

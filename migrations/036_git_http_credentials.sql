@@ -15,11 +15,12 @@ CREATE TABLE IF NOT EXISTS user_git_http_credentials (
   PRIMARY KEY (user_id, id)
 );
 
--- Copy plain personal tokens to github.com. Internal OAuth grants (a refresh
--- token or an "oauth2:"/"private:" prefix) stay in user_configs, where they
--- keep refreshing, and surface as the read-only managed credential.
--- user_configs.git_token keeps its copy until a later cleanup script.
-INSERT IGNORE INTO user_git_http_credentials (
+-- Run before starting the version that reads personal Git credentials by host.
+-- Copy personal access tokens and GitHub device-flow grants to github.com.
+-- The deployment adapter keeps its managed grants (a refresh token or an
+-- "oauth2:"/"private:" prefix) in user_configs.
+-- Preserve existing host credentials and surface other insert errors.
+INSERT INTO user_git_http_credentials (
   user_id, id, name, platform, host, username, token, created_at, updated_at
 )
 SELECT
@@ -29,7 +30,8 @@ FROM user_configs c
 WHERE COALESCE(TRIM(c.git_token), '') <> ''
   AND COALESCE(TRIM(c.gongfeng_refresh_token), '') = ''
   AND LOWER(TRIM(c.git_token)) NOT LIKE 'oauth2:%'
-  AND LOWER(TRIM(c.git_token)) NOT LIKE 'private:%';
+  AND LOWER(TRIM(c.git_token)) NOT LIKE 'private:%'
+ON DUPLICATE KEY UPDATE id = user_git_http_credentials.id;
 
 -- The user who registered a delivered MR; background polling prefers that
 -- user's credential for the MR host. Startup AutoMigrate also adds it.
