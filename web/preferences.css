@@ -104,6 +104,10 @@ html.lang-enter #bootLoader { display: none !important; }
 .login-card [hidden] { display:none!important }
 .login-card .login-setup { padding:10px 12px;border-radius:10px;background:color-mix(in srgb,var(--blue) 10%,transparent);color:var(--text);font-size:13px }
 .login-card .login-rule { margin:-12px 0 0;font-size:12px;color:var(--muted) }
+.login-divider { display:flex;align-items:center;gap:12px;margin:20px 0 16px;font-size:12px;color:var(--muted) }
+.login-divider::before,.login-divider::after { content:"";flex:1;border-top:1px solid var(--line) }
+.login-github { display:flex;align-items:center;justify-content:center;gap:10px;width:100%;box-sizing:border-box;padding:12px;text-decoration:none;border-color:var(--line);background:var(--panel-2) }
+.login-github:hover { border-color:var(--muted) }
 .login-link { border:0;background:none;padding:0;color:var(--blue);font:inherit;cursor:pointer }
 .login-link:hover { text-decoration:underline }
 @media(max-width:800px){html[data-lang="en"] .platform-sidebar{width:100%}}

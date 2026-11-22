@@ -144,6 +144,16 @@ SSH handles clone, fetch and push. A conversation delivery returns the branch an
 
 The first account created in the browser becomes the platform administrator. After that, anyone who can reach the login page may sign up as a regular user while `AGENTFLOW_ALLOW_SIGNUP` is `true` (the default). Registered users can create requirements and run SOPs on your workers, so set `AGENTFLOW_ALLOW_SIGNUP=false` for any installation reachable from untrusted networks and create accounts explicitly instead.
 
+### Sign in with GitHub
+
+The login page can also offer **Continue with GitHub**. It uses the OAuth web flow, so it needs its own GitHub OAuth App with a client secret, separate from the Device Flow app used for repository credentials:
+
+1. On GitHub, open **Settings → Developer settings → OAuth Apps → New OAuth App**. Set **Authorization callback URL** to `https://<your LoopForge host>/api/auth/github/login/callback`.
+2. Generate a client secret and set `AGENTFLOW_GITHUB_LOGIN_CLIENT_ID` and `AGENTFLOW_GITHUB_LOGIN_CLIENT_SECRET` in `.env`, then restart. The button appears only when both are set.
+3. Behind a reverse proxy that does not forward the original host and scheme, set `AGENTFLOW_GITHUB_LOGIN_REDIRECT_URL` to the exact callback URL registered above.
+
+Sign-in requests only the `read:user` scope and does not store the GitHub token; repository access still uses **Connect GitHub** below. Accounts are linked by GitHub's numeric account ID (table `user_github_identities`, also in `migrations/040_github_sign_in.sql`), so renaming a GitHub account keeps the same LoopForge user. The first sign-in creates a regular account named after the GitHub login, or `gh-<login>` when that name is taken or reserved for a configured administrator. It joins the welcome project like a self sign-up. New GitHub accounts follow `AGENTFLOW_ALLOW_SIGNUP`: when sign-up is off, only GitHub accounts already linked can sign in. The administrator account must still be created with a password on first start. Existing password accounts are not merged with GitHub accounts automatically.
+
 Platform administrators create accounts under **Platform administration → Member accounts** (平台管理 → 成员账号): enter a login name and an initial password, optionally grant administration, and hand the password to the teammate. The same page lists every account and resets the password of a password account; accounts that sign in through GitHub or a gateway cannot be given a password there. New accounts join the welcome project, like self sign-ups.
 
 LoopForge assumes a trusted team. Every signed-in account can list all projects, requirements and runs. Project settings and repositories can be changed only by the project owner or a platform administrator, and personal credentials only by their owner. Do not use one installation to separate untrusted tenants.

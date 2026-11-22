@@ -10,7 +10,7 @@ Object.assign(window.LF_I18N_EN,{"LoopForge · 组队来做":"LoopForge · assem
 Object.assign(window.LF_I18N_EN,{"↩ 回复":"↩ Reply","回复这条消息":"Reply to this message","取消回复":"Cancel reply","正在思考…":"Thinking…","这次没答上来，可以再问一次。":"No answer this time — try asking again.","原消息已经不在最近的记录里":"The original message is no longer in recent history","发消息… @LoopForge 提问或派活，@ SOP 按流程跑，/ 看命令":"Message… @LoopForge to ask or hand off work, @ an SOP for a fixed process, / for commands","提问或派活，Bot 们自己分工交接；":" to ask or hand off work — bots split it up and hand off;","一条 SOP 按固定流程跑。悬停消息点「回复」可以接着问，":" an SOP to run a fixed process. Hover a message and click Reply to follow up,","看命令。":" for commands.","本项目":"This project","通用模板 · 平台维护":"Templates · maintained by the platform"});
 Object.assign(window.LF_I18N_EN,{"你的 AI 交付团队":"Your AI delivery team"});
 
-Object.assign(window.LF_I18N_EN,{"登录":"Sign in","登录你的交付工作台":"Sign in to your delivery workspace","用户名":"Username","密码":"Password","请联系部署管理员创建账号。":"Ask your deployment administrator to create an account.","切换主题":"Switch theme","中 / EN":"中 / EN"});
+Object.assign(window.LF_I18N_EN,{"登录":"Sign in","登录你的交付工作台":"Sign in to your delivery workspace","用户名":"Username","密码":"Password","请联系部署管理员创建账号。":"Ask your deployment administrator to create an account.","使用 GitHub 登录":"Continue with GitHub","切换主题":"Switch theme","中 / EN":"中 / EN"});
 
 Object.assign(window.LF_I18N_EN,{"同步 GitHub":"Sync GitHub","AI 工作台":"AI workspace","产研 AI 协作平台":"AI delivery platform","配置与管理":"Configuration","从创建需求、选择 SOP 到查看运行与审批，体验完整交付流程。":"Create requirements, select an SOP, inspect runs and review approvals.","本地执行（仅可信任务）":"Local execution (trusted tasks only)","Docker 隔离沙箱":"Docker sandbox"});
 
