@@ -67,6 +67,35 @@ type assistantApprovalReviewCandidate struct {
 	CustomAPI *domain.ApprovalReviewAPIConfig
 }
 
+type approvalActionSource string
+
+const (
+	approvalSourceUnknown          approvalActionSource = ""
+	approvalSourceBuiltinPlatform  approvalActionSource = "builtin_platform"
+	approvalSourceBuiltinWorkspace approvalActionSource = "builtin_workspace"
+	approvalSourceExternalMCP      approvalActionSource = "external_mcp"
+	approvalSourceNativeCommand    approvalActionSource = "native_command"
+)
+
+type approvalActionSourceKey struct{}
+
+func withApprovalActionSource(ctx context.Context, src approvalActionSource) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return context.WithValue(ctx, approvalActionSourceKey{}, src)
+}
+
+func approvalActionSourceFrom(ctx context.Context) approvalActionSource {
+	if ctx == nil {
+		return approvalSourceUnknown
+	}
+	if src, ok := ctx.Value(approvalActionSourceKey{}).(approvalActionSource); ok {
+		return src
+	}
+	return approvalSourceUnknown
+}
+
 type assistantApprovalReviewer func(context.Context, string, string, map[string]any) assistantApprovalReview
 type assistantApprovalReviewerKey struct{}
 
@@ -159,7 +188,7 @@ func resolveApprovalReviewCandidates(req assistantRequest, user domain.User, cus
 //  1. User's explicit review configuration:
 //     - mode="api": standalone HTTP API (protocol + baseUrl + apiKey + model)
 //     - mode="cli": user-chosen configured CLI + model
-//     - mode="follow": optional env AGENTFLOW_APPROVAL_REVIEW_MODEL if set
+//     - mode="follow": strictly follows the conversation's own CLI and model
 //  2. Fallback: the conversation's own CLI and model (at weakest reasoning
 //     effort), which works with any custom Base URL without guessing preset IDs.
 func resolveApprovalReviewCandidatesForPrefs(req assistantRequest, user domain.User, prefs domain.AssistantPreferences, requireCred bool, runnerLogin ...func(string) bool) []assistantApprovalReviewCandidate {
@@ -210,9 +239,7 @@ func resolveApprovalReviewCandidatesForPrefs(req assistantRequest, user domain.U
 			addCLI(custom, true)
 		}
 	default:
-		if envModel := strings.TrimSpace(os.Getenv("AGENTFLOW_APPROVAL_REVIEW_MODEL")); envModel != "" {
-			addCLI(envModel, true)
-		}
+		// Strictly follow the conversation's own CLI and model.
 	}
 
 	sessionModel := strings.TrimSpace(req.Model)
@@ -275,7 +302,7 @@ func (h *assistantHandlers) approvalReviewer(req assistantRequest, user domain.U
 		notify(assistantStreamEvent{Kind: "status", Text: "帮我批准：" + state, Detail: label + " · " + result.Rationale})
 	}
 	return func(ctx context.Context, tool, description string, args map[string]any) assistantApprovalReview {
-		if fast, ok := h.evaluateApprovalFastPath(tool, args); ok {
+		if fast, ok := h.evaluateApprovalFastPath(ctx, tool, args); ok {
 			stateMu.Lock()
 			consecutiveDenies = 0
 			stateMu.Unlock()
@@ -312,7 +339,21 @@ func (h *assistantHandlers) approvalReviewer(req assistantRequest, user domain.U
 		action := input
 		action.Tool = tool
 		action.Description = description
-		action.Arguments = summarizeApprovalArguments(args, user)
+		action.Arguments = redactApprovalArguments(args, user)
+		fitted, ok := fitApprovalReviewBudget(action, assistantApprovalMaxPayloadBytes)
+		if !ok {
+			oversized := assistantApprovalReview{
+				Outcome:   "unavailable",
+				Model:     assistantApprovalPolicyModel,
+				Rationale: "待审查操作参数超过安全审查大小上限，已停止本次自动审批",
+			}
+			stateMu.Lock()
+			consecutiveDenies++
+			stateMu.Unlock()
+			emitDecision(oversized)
+			return oversized
+		}
+		action = fitted
 		var result assistantApprovalReview
 		ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 		defer cancel()

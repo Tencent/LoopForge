@@ -43,6 +43,14 @@ func TestResolveApprovalHTTPTargetCoversAllFourProtocols(t *testing.T) {
 		{"dsh:deepseek-flash", true, runtime.AgentCLIProtocolChat, "https://api.deepseek.com/v1/chat/completions"},
 		{"cursor:auto", false, "", ""},
 		{"deepseek-v4.1-flash", false, "", ""},
+		// CLI default & short aliases must skip direct HTTP so the CLI resolves them.
+		{"codex:default", false, "", ""},
+		{"claude-code:default", false, "", ""},
+		{"opencode:default", false, "", ""},
+		{"claude-code:sonnet", false, "", ""},
+		{"claude-code:haiku", false, "", ""},
+		{"claude-code:opus", false, "", ""},
+		{"default", false, "", ""},
 	}
 	for _, tc := range cases {
 		got, ok := resolveApprovalHTTPTarget(user, tc.model)
@@ -62,6 +70,7 @@ func TestResolveApprovalHTTPTargetCoversAllFourProtocols(t *testing.T) {
 }
 
 func TestRunAssistantApprovalHTTPProtocolsAndDowngrades(t *testing.T) {
+	t.Setenv(approvalEgressAllowCIDRsEnv, "127.0.0.1/32,::1/128")
 	allowJSON := `{"outcome":"allow","risk_level":"low","user_authorization":"high","rationale":"已核对"}`
 
 	t.Run("anthropic_messages_with_bearer_fallback_and_thinking_downgrade", func(t *testing.T) {
@@ -249,6 +258,7 @@ func TestResolveApprovalCustomAPITargetAndFallback(t *testing.T) {
 	}
 
 	// Live mock HTTP execution of custom API mode with secret redaction.
+	t.Setenv(approvalEgressAllowCIDRsEnv, "127.0.0.1/32,::1/128")
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		if strings.Contains(string(body), "sk-custom-api-secret") {
@@ -274,6 +284,7 @@ func TestResolveApprovalCustomAPITargetAndFallback(t *testing.T) {
 }
 
 func TestProbeApprovalReviewModelsAllProtocolsAndStoredKey(t *testing.T) {
+	t.Setenv(approvalEgressAllowCIDRsEnv, "127.0.0.1/32,::1/128")
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/v1/models":
@@ -346,6 +357,101 @@ func TestProbeApprovalReviewModelsAllProtocolsAndStoredKey(t *testing.T) {
 	if res.Error == "" || len(res.Models) != 0 {
 		t.Fatalf("expected missing key error, got %+v", res)
 	}
+
+	// 5. Cross-origin Base URL change (different host/port) must NOT reuse stored key.
+	otherHits := 0
+	otherSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		otherHits++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":[{"id":"leaked"}]}`))
+	}))
+	defer otherSrv.Close()
+
+	res = probe(`{"protocol":"chat","baseUrl":"` + otherSrv.URL + `/v1","apiKey":""}`)
+	if !strings.Contains(res.Error, "跨源") || otherHits != 0 {
+		t.Fatalf("cross-origin probe should block stored key reuse: res=%+v otherHits=%d", res, otherHits)
+	}
+
+	// 6. Switching to official endpoint (empty baseUrl) is also cross-origin vs custom gateway.
+	res = probe(`{"protocol":"chat","baseUrl":"","apiKey":""}`)
+	if !strings.Contains(res.Error, "跨源") || len(res.Models) != 0 {
+		t.Fatalf("switching from custom gateway to official endpoint must block stored key reuse: %+v", res)
+	}
+
+	// 7. Cross-origin probe succeeds once the user supplies a new key explicitly.
+	res = probe(`{"protocol":"chat","baseUrl":"` + otherSrv.URL + `/v1","apiKey":"sk-new-origin"}`)
+	if res.Error != "" || otherHits != 1 || len(res.Models) != 1 || res.Models[0].ID != "leaked" {
+		t.Fatalf("cross-origin probe with new key should succeed: res=%+v hits=%d", res, otherHits)
+	}
+}
+
+func TestApprovalHTTPEgressAndRedirectProtection(t *testing.T) {
+	t.Run("blocks_non_public_addresses_by_default", func(t *testing.T) {
+		t.Setenv(approvalEgressAllowCIDRsEnv, "")
+		hits := 0
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			hits++
+			w.WriteHeader(http.StatusOK)
+		}))
+		defer srv.Close()
+
+		_, err := runAssistantApprovalHTTP(context.Background(), approvalHTTPTarget{
+			Protocol: runtime.AgentCLIProtocolChat,
+			Endpoint: srv.URL + "/v1/chat/completions",
+			APIKey:   "sk-test",
+			Model:    "gpt-4.1-mini",
+		}, "policy", "{}")
+		if err == nil || !strings.Contains(err.Error(), approvalEgressAllowCIDRsEnv) || hits != 0 {
+			t.Fatalf("expected egress block on approval HTTP, err=%v hits=%d", err, hits)
+		}
+
+		h, u := workbenchFixture(t)
+		c, rec := workbenchContext(u, "POST", "/api/assistant/approval-review/probe",
+			bytes.NewBufferString(`{"protocol":"chat","baseUrl":"`+srv.URL+`/v1","apiKey":"sk-test"}`))
+		h.probeApprovalReviewModels(c)
+		var res cliModelProbeResult
+		_ = json.Unmarshal(rec.Body.Bytes(), &res)
+		if !strings.Contains(res.Error, approvalEgressAllowCIDRsEnv) || hits != 0 {
+			t.Fatalf("expected egress block on model probe, res=%+v hits=%d", res, hits)
+		}
+	})
+
+	t.Run("refuses_redirects_on_review_and_probe", func(t *testing.T) {
+		t.Setenv(approvalEgressAllowCIDRsEnv, "127.0.0.1/32,::1/128")
+		targetHits := 0
+		targetSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			targetHits++
+			w.WriteHeader(http.StatusOK)
+		}))
+		defer targetSrv.Close()
+
+		redirectSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, targetSrv.URL+r.URL.Path, http.StatusFound)
+		}))
+		defer redirectSrv.Close()
+
+		_, err := runAssistantApprovalHTTP(context.Background(), approvalHTTPTarget{
+			Protocol: runtime.AgentCLIProtocolChat,
+			Endpoint: redirectSrv.URL + "/v1/chat/completions",
+			APIKey:   "sk-secret",
+			Model:    "gpt-4.1-mini",
+		}, "policy", "{}")
+		if err == nil || !strings.Contains(err.Error(), "重定向") || targetHits != 0 {
+			t.Fatalf("approval HTTP must refuse redirect: err=%v targetHits=%d", err, targetHits)
+		}
+
+		h, u := workbenchFixture(t)
+		for _, proto := range []string{runtime.AgentCLIProtocolChat, runtime.AgentCLIProtocolMessages, runtime.AgentCLIProtocolGemini} {
+			c, rec := workbenchContext(u, "POST", "/api/assistant/approval-review/probe",
+				bytes.NewBufferString(`{"protocol":"`+proto+`","baseUrl":"`+redirectSrv.URL+`","apiKey":"sk-secret"}`))
+			h.probeApprovalReviewModels(c)
+			var res cliModelProbeResult
+			_ = json.Unmarshal(rec.Body.Bytes(), &res)
+			if !strings.Contains(res.Error, "重定向") || targetHits != 0 {
+				t.Fatalf("probe %s must refuse redirect: res=%+v targetHits=%d", proto, res, targetHits)
+			}
+		}
+	})
 }
 
 func mustJSON(s string) string {

@@ -136,11 +136,17 @@ form.approvalReviewMode.value = 'cli';
 form.instructions.value = '先给结论，再给细节';
 assert.equal(mb.assistantPrefsDirty(form), true);
 
-// 5. Validation in custom API mode.
+// 5. Validation in custom API mode (including cross-origin Base URL key reuse guard).
 assert.ok(mb.validateAssistantPrefsDraft({ approvalReviewMode: 'api', approvalReviewApi: { protocol: 'chat', model: '', apiKey: 'sk-1' } }, null));
-assert.ok(mb.validateAssistantPrefsDraft({ approvalReviewMode: 'api', approvalReviewApi: { protocol: 'chat', model: 'hy4', apiKey: '' } }, null));
-assert.ok(mb.validateAssistantPrefsDraft({ approvalReviewMode: 'api', approvalReviewApi: { protocol: 'chat', model: 'hy4', baseUrl: 'ftp://bad.example', apiKey: 'sk-1' } }, null));
-assert.equal(mb.validateAssistantPrefsDraft({ approvalReviewMode: 'api', approvalReviewApi: { protocol: 'chat', model: 'gpt-4.1-mini', baseUrl: 'https://gateway.example.com/v1', apiKey: '' } }, { approvalReviewApi: { apiKeyConfigured: true } }), null);
+assert.ok(mb.validateAssistantPrefsDraft({ approvalReviewMode: 'api', approvalReviewApi: { protocol: 'chat', model: 'gpt-4.1-mini', apiKey: '' } }, null));
+assert.ok(mb.validateAssistantPrefsDraft({ approvalReviewMode: 'api', approvalReviewApi: { protocol: 'chat', model: 'gpt-4.1-mini', baseUrl: 'ftp://bad.example', apiKey: 'sk-1' } }, null));
+const savedApi = { approvalReviewApi: { protocol: 'chat', baseUrl: 'https://gateway.example.com/v1', model: 'gpt-4.1-mini', apiKeyConfigured: true } };
+assert.equal(mb.validateAssistantPrefsDraft({ approvalReviewMode: 'api', approvalReviewApi: { protocol: 'chat', model: 'gpt-4.1-mini', baseUrl: 'https://gateway.example.com/v1', apiKey: '' } }, savedApi), null);
+assert.equal(mb.validateAssistantPrefsDraft({ approvalReviewMode: 'api', approvalReviewApi: { protocol: 'responses', model: 'gpt-5.4-mini', baseUrl: 'https://gateway.example.com/v2', apiKey: '' } }, savedApi), null, 'same-origin path/protocol change can reuse saved key');
+const crossOriginErr = mb.validateAssistantPrefsDraft({ approvalReviewMode: 'api', approvalReviewApi: { protocol: 'chat', model: 'gpt-4.1-mini', baseUrl: 'https://other.example.com/v1', apiKey: '' } }, savedApi);
+assert.ok(crossOriginErr && crossOriginErr.message.includes('跨源变更'), 'cross-origin Base URL change must require new API key');
+const officialOriginChangeErr = mb.validateAssistantPrefsDraft({ approvalReviewMode: 'api', approvalReviewApi: { protocol: 'messages', model: 'claude-haiku-4-5', baseUrl: '', apiKey: '' } }, { approvalReviewApi: { protocol: 'chat', baseUrl: '', apiKeyConfigured: true } });
+assert.ok(officialOriginChangeErr && officialOriginChangeErr.message.includes('跨源变更'), 'switching official endpoint across providers must require new API key');
 
 ctx.state.currentUser = { id: 0, isGuest: true };
 assert.equal(mb.assistantPrefsSignedIn(), false);

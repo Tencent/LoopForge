@@ -253,7 +253,7 @@ func (h *agentToolGateway) approveNativeTool(ctx context.Context, s *AgentToolSe
 		}
 		review, done, ok := s.nativeReview(ctx, nativeReviewPoll, id, nativeApprovalPhase(string(action.Input)), func(reviewCtx context.Context) assistantApprovalReview {
 			args := map[string]any{"tool": action.Name, "input": action.Input, "runId": s.workspaceRun()}
-			return reviewAssistantAction(withAssistantApprovalReviewer(reviewCtx, s.approvalReviewer), "native_"+action.Name, "工作区命令（"+label+"），会写入沙箱外的系统", args)
+			return reviewAssistantAction(withApprovalActionSource(withAssistantApprovalReviewer(reviewCtx, s.approvalReviewer), approvalSourceNativeCommand), "native_"+action.Name, "工作区命令（"+label+"），会写入沙箱外的系统", args)
 		})
 		switch {
 		case !ok:

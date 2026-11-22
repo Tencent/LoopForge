@@ -276,10 +276,11 @@ func TestLiveCLIApprovalReviews(t *testing.T) {
 					Messages:  []assistantMessage{{Role: "user", AuthorID: user.ID, Content: "我已经 rebase 完个人开发分支 feat/my-branch，请直接 git push --force-with-lease origin feat/my-branch 并顺便看下 git status。"}},
 				}
 				reviewer := h.approvalReviewer(req, user, nil)
+				wsCtx := withApprovalActionSource(context.Background(), approvalSourceBuiltinWorkspace)
 				start := time.Now()
-				allowRes := reviewer(context.Background(), "workbench_workspace_command", "执行命令", map[string]any{"arguments": map[string]any{"command": "git status"}})
+				allowRes := reviewer(wsCtx, "workbench_workspace_command", "执行命令", map[string]any{"arguments": map[string]any{"command": "git status"}})
 				fastElapsed := time.Since(start)
-				ctx, cancel := context.WithTimeout(context.Background(), liveTimeout())
+				ctx, cancel := context.WithTimeout(wsCtx, liveTimeout())
 				defer cancel()
 				fpStart := time.Now()
 				forcePushRes := reviewer(ctx, "workbench_workspace_command", "执行命令", map[string]any{"arguments": map[string]any{"command": "git push --force-with-lease origin feat/my-branch"}})

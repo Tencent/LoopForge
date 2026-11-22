@@ -483,7 +483,7 @@ func (h *agentToolGateway) dispatch(ctx context.Context, session *AgentToolSessi
 				return "", errMCPApprovalExpired
 			}
 		} else if session.ExecMode.ReviewWrites {
-			review := reviewAssistantAction(ctx, name, mcpServerName(h, session, call.Server)+" MCP 写入外部系统", map[string]any{"server": call.Server, "tool": call.Tool, "arguments": call.Arguments})
+			review := reviewAssistantAction(withApprovalActionSource(ctx, approvalSourceExternalMCP), name, mcpServerName(h, session, call.Server)+" MCP 写入外部系统", map[string]any{"server": call.Server, "tool": call.Tool, "arguments": call.Arguments})
 			if !review.allows() {
 				return "", assistantReviewRefusal(name, review)
 			}

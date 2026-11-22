@@ -425,13 +425,28 @@ func TestAssistantPreferencesShapeTheContext(t *testing.T) {
 	if code != 200 || !saved.SteerOnSend || saved.ApprovalReviewMode != domain.ApprovalReviewModeAPI || saved.ApprovalReviewAPI == nil || !saved.ApprovalReviewAPI.APIKeyConfigured || saved.ApprovalReviewAPI.APIKey != "" || saved.ApprovalReviewAPI.Model != "gemini-2.5-flash" {
 		t.Fatalf("saved api=%d %+v", code, saved)
 	}
-	// Updating model without re-sending apiKey preserves stored key and still omits it from GET/PUT responses.
-	code, saved = put(`{"proactiveRoles":true,"proactiveSops":false,"steerOnSend":true,"approvalReviewMode":"api","approvalReviewApi":{"protocol":"chat","baseUrl":"https://gateway.example.com/v1","model":"gpt-4.1-mini"},"instructions":"回复先给结论"}`)
-	if code != 200 || saved.ApprovalReviewAPI == nil || !saved.ApprovalReviewAPI.APIKeyConfigured || saved.ApprovalReviewAPI.APIKey != "" || saved.ApprovalReviewAPI.Model != "gpt-4.1-mini" {
-		t.Fatalf("updated api=%d %+v", code, saved)
+	// Cross-origin Base URL change without a new apiKey must be rejected and preserve original stored config.
+	if code, _ = put(`{"proactiveRoles":true,"proactiveSops":false,"steerOnSend":true,"approvalReviewMode":"api","approvalReviewApi":{"protocol":"chat","baseUrl":"https://gateway.example.com/v1","model":"gpt-4.1-mini"},"instructions":"回复先给结论"}`); code != 400 {
+		t.Fatalf("cross-origin api update without key accepted: %d", code)
+	}
+	if stored := h.repo.AssistantPreferences(u.ID); stored.ApprovalReviewAPI == nil || stored.ApprovalReviewAPI.BaseURL != "https://generativelanguage.googleapis.com" || stored.ApprovalReviewAPI.APIKey != "sk-review-secret" {
+		t.Fatalf("rejected cross-origin update mutated stored api: %+v", stored.ApprovalReviewAPI)
+	}
+	// Same-origin update (path or model change, or official empty baseUrl on same origin) preserves stored key.
+	code, saved = put(`{"proactiveRoles":true,"proactiveSops":false,"steerOnSend":true,"approvalReviewMode":"api","approvalReviewApi":{"protocol":"gemini","baseUrl":"","model":"gemini-2.5-pro"},"instructions":"回复先给结论"}`)
+	if code != 200 || saved.ApprovalReviewAPI == nil || !saved.ApprovalReviewAPI.APIKeyConfigured || saved.ApprovalReviewAPI.APIKey != "" || saved.ApprovalReviewAPI.Model != "gemini-2.5-pro" {
+		t.Fatalf("same-origin api update=%d %+v", code, saved)
 	}
 	if stored := h.repo.AssistantPreferences(u.ID); stored.ApprovalReviewAPI == nil || stored.ApprovalReviewAPI.APIKey != "sk-review-secret" {
-		t.Fatalf("stored key lost on partial update: %+v", stored.ApprovalReviewAPI)
+		t.Fatalf("stored key lost on same-origin update: %+v", stored.ApprovalReviewAPI)
+	}
+	// Legacy PUT omitting approvalReview* fields must preserve saved API review settings and key.
+	code, saved = put(`{"proactiveRoles":true,"proactiveSops":false,"steerOnSend":true,"instructions":"回复先给结论"}`)
+	if code != 200 || saved.ApprovalReviewMode != domain.ApprovalReviewModeAPI || saved.ApprovalReviewAPI == nil || !saved.ApprovalReviewAPI.APIKeyConfigured || saved.ApprovalReviewAPI.Model != "gemini-2.5-pro" {
+		t.Fatalf("legacy PUT should preserve saved API review settings: code=%d %+v", code, saved)
+	}
+	if stored := h.repo.AssistantPreferences(u.ID); stored.ApprovalReviewAPI == nil || stored.ApprovalReviewAPI.APIKey != "sk-review-secret" {
+		t.Fatalf("legacy PUT dropped stored api key: %+v", stored.ApprovalReviewAPI)
 	}
 	c, rec := workbenchContext(u, "GET", "/api/assistant/preferences", &bytes.Buffer{})
 	h.preferences(c)
@@ -463,8 +478,14 @@ func TestAssistantPreferencesShapeTheContext(t *testing.T) {
 		}
 	}
 
-	if code, _ := put(`{"proactiveSops":true}`); code != 200 {
-		t.Fatalf("SOPs on=%d", code)
+	// Legacy PUT while in CLI mode also preserves CLI mode & model; explicit "follow" switches back.
+	code, saved = put(`{"proactiveSops":true}`)
+	if code != 200 || saved.ApprovalReviewMode != domain.ApprovalReviewModeCLI || saved.ApprovalReviewModel != "claude-code:claude-haiku-4-5" {
+		t.Fatalf("legacy PUT should preserve CLI review settings: code=%d %+v", code, saved)
+	}
+	code, saved = put(`{"proactiveSops":true,"approvalReviewMode":"follow"}`)
+	if code != 200 || saved.ApprovalReviewMode != domain.ApprovalReviewModeFollow {
+		t.Fatalf("explicit follow switch failed: code=%d %+v", code, saved)
 	}
 	if req := contextFor(AssistantApprovalAuto); !strings.Contains(req.contextText, "- 走 SOP：") || !strings.Contains(req.contextText, "当前是完全权限：走 SOP 时直接调用写入工具") || strings.Contains(req.contextText, askSOP) {
 		t.Fatalf("full access with SOPs on: %s", req.contextText)

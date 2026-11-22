@@ -101,7 +101,7 @@ func (h *assistantHandlers) resolveAssistantDrafts(ctx context.Context, user dom
 				_ = json.Unmarshal(draft.Body, &body)
 				args["body"] = body
 			}
-			review := reviewAssistantAction(ctx, draft.Tool, assistantPublicOperations[draft.Tool].Description, args)
+			review := reviewAssistantAction(withApprovalActionSource(ctx, approvalSourceBuiltinPlatform), draft.Tool, assistantPublicOperations[draft.Tool].Description, args)
 			draft.Review = &review
 			if review.allows() {
 				auto = append(auto, draft)

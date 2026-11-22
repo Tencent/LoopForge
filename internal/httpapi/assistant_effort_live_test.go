@@ -42,7 +42,18 @@ func TestAssistantEffortAndReviewLive(t *testing.T) {
 	}
 	t.Logf("primary review: model=%s outcome=%s", result.Model, result.Outcome)
 	// Force custom review model failure, then exercise fallback to session model.
-	t.Setenv("AGENTFLOW_APPROVAL_REVIEW_MODEL", "custom-review-model")
+	st, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	if _, err := st.PutAssistantPreferences(user.ID, domain.AssistantPreferences{
+		ApprovalReviewMode:  domain.ApprovalReviewModeCLI,
+		ApprovalReviewModel: "custom-review-model",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	h.deps = &deps{repo: st}
 	h.review = func(ctx context.Context, input assistantApprovalInput, u domain.User, model string) (assistantApprovalReview, error) {
 		if model == "custom-review-model" {
 			return assistantApprovalReview{}, errors.New("simulated custom model failure")

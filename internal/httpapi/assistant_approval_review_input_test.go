@@ -76,30 +76,60 @@ func TestApprovalReviewInputExcludesOtherUsersAndAssistantAndRedacts(t *testing.
 	}
 }
 
-func TestSummarizeApprovalArgumentsCompactsAndRedacts(t *testing.T) {
+func TestRedactApprovalArgumentsPreservesFullArgsAndEnforcesBudget(t *testing.T) {
 	user := domain.User{ID: 1, ClaudeCodeAPIKey: "sk-ant-secret-token"}
-	longBody := strings.Repeat("a", 400) + "sk-ant-secret-token" + strings.Repeat("z", 400)
+	longBody := strings.Repeat("a", 400) + "MIDDLE_PAYLOAD_MUST_STAY" + "sk-ant-secret-token" + strings.Repeat("z", 400)
 	many := make([]any, 25)
 	for i := range many {
 		many[i] = fmt.Sprintf("item-%d", i)
 	}
-	got := summarizeApprovalArguments(map[string]any{
+	deep := map[string]any{"l1": map[string]any{"l2": map[string]any{"l3": map[string]any{"l4": map[string]any{"l5": map[string]any{"l6": map[string]any{"target": "prod-db"}}}}}}}
+	got := redactApprovalArguments(map[string]any{
 		"path":    "src/main.go",
 		"content": longBody,
 		"items":   many,
+		"nested":  deep,
 	}, user)
 	if got["path"] != "src/main.go" {
 		t.Fatalf("short field mutated: %#v", got["path"])
 	}
 	content, _ := got["content"].(string)
 	if strings.Contains(content, user.ClaudeCodeAPIKey) {
-		t.Fatalf("secret leaked in summarized argument: %q", content)
+		t.Fatalf("secret leaked in redacted argument: %q", content)
 	}
-	if !strings.Contains(content, "已省略") || len([]rune(content)) >= len([]rune(longBody)) {
-		t.Fatalf("long string was not compacted: %q", content)
+	if !strings.Contains(content, "MIDDLE_PAYLOAD_MUST_STAY") {
+		t.Fatalf("middle of long argument was lost: %q", content)
 	}
 	items, _ := got["items"].([]any)
-	if len(items) != assistantApprovalArgSliceHeadItems+1 || !strings.Contains(fmt.Sprint(items[len(items)-1]), "共 25 项") {
-		t.Fatalf("large slice not compacted: %#v", items)
+	if len(items) != 25 || items[24] != "item-24" {
+		t.Fatalf("slice tail was lost: len=%d items=%#v", len(items), items)
+	}
+	// Deep nested field must survive intact.
+	nested := got["nested"].(map[string]any)["l1"].(map[string]any)["l2"].(map[string]any)["l3"].(map[string]any)["l4"].(map[string]any)["l5"].(map[string]any)["l6"].(map[string]any)
+	if nested["target"] != "prod-db" {
+		t.Fatalf("deep nested target lost: %#v", nested)
+	}
+
+	// Budget enforcement: drops older messages first (marking Truncated=true),
+	// and fails closed if full arguments alone exceed maxBytes.
+	action := assistantApprovalInput{
+		Tool: "rules_save",
+		Messages: []assistantApprovalMessage{
+			{Role: "user", Content: strings.Repeat("old ", 400)},
+			{Role: "user", Content: "latest instruction"},
+		},
+		Arguments: map[string]any{"body": strings.Repeat("x", 1200)},
+	}
+	fitted, ok := fitApprovalReviewBudget(action, 1800)
+	if !ok || !fitted.Truncated || len(fitted.Messages) != 1 || fitted.Messages[0].Content != "latest instruction" {
+		t.Fatalf("expected older messages trimmed while keeping full args: ok=%v fitted=%+v", ok, fitted)
+	}
+	oversized := assistantApprovalInput{
+		Tool:      "rules_save",
+		Messages:  []assistantApprovalMessage{{Role: "user", Content: "save"}},
+		Arguments: map[string]any{"body": strings.Repeat("x", assistantApprovalMaxPayloadBytes+100)},
+	}
+	if _, ok := fitApprovalReviewBudget(oversized, assistantApprovalMaxPayloadBytes); ok {
+		t.Fatal("oversized arguments should fail closed instead of being truncated")
 	}
 }

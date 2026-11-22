@@ -75,15 +75,13 @@ func (h *assistantHandlers) probeApprovalReviewModels(c *gin.Context) {
 		c.JSON(http.StatusOK, cliModelProbeResult{Error: "请选择支持的接口协议（Chat Completions / Responses / Messages / Gemini）"})
 		return
 	}
-	baseURL := ""
-	apiKey := strings.TrimSpace(req.APIKey)
+	var existingAPI *domain.ApprovalReviewAPIConfig
 	if h.repo != nil {
-		if existing := h.repo.AssistantPreferences(user.ID); existing.ApprovalReviewAPI != nil {
-			baseURL = strings.TrimSpace(existing.ApprovalReviewAPI.BaseURL)
-			if apiKey == "" && !req.APIKeyClear {
-				apiKey = strings.TrimSpace(existing.ApprovalReviewAPI.APIKey)
-			}
-		}
+		existingAPI = h.repo.AssistantPreferences(user.ID).ApprovalReviewAPI
+	}
+	baseURL := ""
+	if existingAPI != nil {
+		baseURL = strings.TrimSpace(existingAPI.BaseURL)
 	}
 	if req.BaseURL != nil {
 		baseURL = strings.TrimSpace(*req.BaseURL)
@@ -91,6 +89,15 @@ func (h *assistantHandlers) probeApprovalReviewModels(c *gin.Context) {
 	if baseURL != "" {
 		if err := validateApprovalReviewBaseURL(baseURL); err != nil {
 			c.JSON(http.StatusOK, cliModelProbeResult{Error: err.Error()})
+			return
+		}
+	}
+	apiKey := strings.TrimSpace(req.APIKey)
+	if apiKey == "" && !req.APIKeyClear && existingAPI != nil && strings.TrimSpace(existingAPI.APIKey) != "" {
+		if approvalReviewSameOrigin(existingAPI.Protocol, existingAPI.BaseURL, protocol, baseURL) {
+			apiKey = strings.TrimSpace(existingAPI.APIKey)
+		} else {
+			c.JSON(http.StatusOK, cliModelProbeResult{Error: "API 地址已跨源变更，请重新填写自定义审查 API Key"})
 			return
 		}
 	}
@@ -112,9 +119,51 @@ func (h *assistantHandlers) probeApprovalReviewModels(c *gin.Context) {
 	c.JSON(http.StatusOK, cliModelProbeResult{Models: cliModelsOf(models), Source: "remote"})
 }
 
+// approvalReviewEffectiveOrigin returns the canonical scheme://host:port that a
+// custom review API config connects to (mapping empty BaseURL to the protocol's
+// official endpoint). It is used to prevent reusing a stored key across origins.
+func approvalReviewEffectiveOrigin(protocol, rawBaseURL string) string {
+	baseURL := strings.TrimSpace(rawBaseURL)
+	if baseURL == "" {
+		switch strings.TrimSpace(protocol) {
+		case runtime.AgentCLIProtocolMessages:
+			baseURL = assistantAnthropicAPIBase
+		case runtime.AgentCLIProtocolChat, runtime.AgentCLIProtocolResponses:
+			baseURL = "https://api.openai.com/v1"
+		case runtime.AgentCLIProtocolGemini:
+			baseURL = "https://generativelanguage.googleapis.com"
+		default:
+			return ""
+		}
+	}
+	u, err := url.Parse(baseURL)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return ""
+	}
+	scheme := strings.ToLower(u.Scheme)
+	host := strings.ToLower(u.Hostname())
+	port := u.Port()
+	if port == "" {
+		if scheme == "https" {
+			port = "443"
+		} else {
+			port = "80"
+		}
+	}
+	return fmt.Sprintf("%s://%s:%s", scheme, host, port)
+}
+
+func approvalReviewSameOrigin(protoA, baseA, protoB, baseB string) bool {
+	originA := approvalReviewEffectiveOrigin(protoA, baseA)
+	originB := approvalReviewEffectiveOrigin(protoB, baseB)
+	return originA != "" && originA == originB
+}
+
 func normalizeAndValidateAssistantPreferences(body, existing domain.AssistantPreferences) (domain.AssistantPreferences, error) {
 	out := body
-	mode := strings.TrimSpace(body.ApprovalReviewMode)
+	rawMode := strings.TrimSpace(body.ApprovalReviewMode)
+	modeExplicit := rawMode != ""
+	mode := rawMode
 	if mode == "" {
 		switch {
 		case body.ApprovalReviewAPI != nil && (strings.TrimSpace(body.ApprovalReviewAPI.Model) != "" || strings.TrimSpace(body.ApprovalReviewAPI.APIKey) != "" || strings.TrimSpace(body.ApprovalReviewAPI.BaseURL) != ""):
@@ -122,7 +171,9 @@ func normalizeAndValidateAssistantPreferences(body, existing domain.AssistantPre
 		case strings.TrimSpace(body.ApprovalReviewModel) != "":
 			mode = domain.ApprovalReviewModeCLI
 		default:
-			mode = domain.ApprovalReviewModeFollow
+			// Legacy clients omit the approvalReview* fields when saving other
+			// settings; preserve the existing review mode instead of resetting.
+			mode = existing.EffectiveApprovalReviewMode()
 		}
 	}
 	switch mode {
@@ -132,19 +183,19 @@ func normalizeAndValidateAssistantPreferences(body, existing domain.AssistantPre
 	}
 	out.ApprovalReviewMode = mode
 
-	if strings.TrimSpace(body.ApprovalReviewModel) != "" || mode == domain.ApprovalReviewModeCLI {
+	if strings.TrimSpace(body.ApprovalReviewModel) != "" {
 		reviewModel, err := validateApprovalReviewModel(body.ApprovalReviewModel)
 		if err != nil {
 			return out, err
 		}
-		if mode == domain.ApprovalReviewModeCLI && reviewModel == "" {
-			return out, fmt.Errorf("请选择或填写自定义审查模型 ID")
-		}
 		out.ApprovalReviewModel = reviewModel
+	} else if modeExplicit && mode == domain.ApprovalReviewModeCLI {
+		return out, fmt.Errorf("请选择或填写自定义审查模型 ID")
 	} else {
 		out.ApprovalReviewModel = existing.ApprovalReviewModel
 	}
 
+	originChangedWithoutKey := false
 	if body.ApprovalReviewAPI != nil {
 		cfg := domain.ApprovalReviewAPIConfig{
 			Protocol: strings.TrimSpace(body.ApprovalReviewAPI.Protocol),
@@ -156,8 +207,12 @@ func normalizeAndValidateAssistantPreferences(body, existing domain.AssistantPre
 			cfg.APIKey = ""
 		case strings.TrimSpace(body.ApprovalReviewAPI.APIKey) != "":
 			cfg.APIKey = strings.TrimSpace(body.ApprovalReviewAPI.APIKey)
-		case existing.ApprovalReviewAPI != nil:
-			cfg.APIKey = strings.TrimSpace(existing.ApprovalReviewAPI.APIKey)
+		case existing.ApprovalReviewAPI != nil && strings.TrimSpace(existing.ApprovalReviewAPI.APIKey) != "":
+			if approvalReviewSameOrigin(existing.ApprovalReviewAPI.Protocol, existing.ApprovalReviewAPI.BaseURL, cfg.Protocol, cfg.BaseURL) {
+				cfg.APIKey = strings.TrimSpace(existing.ApprovalReviewAPI.APIKey)
+			} else {
+				originChangedWithoutKey = true
+			}
 		}
 		if cfg.Protocol == "" && cfg.BaseURL == "" && cfg.Model == "" && cfg.APIKey == "" {
 			out.ApprovalReviewAPI = nil
@@ -169,7 +224,13 @@ func normalizeAndValidateAssistantPreferences(body, existing domain.AssistantPre
 	}
 
 	if mode == domain.ApprovalReviewModeAPI {
-		if err := validateApprovalReviewAPI(out.ApprovalReviewAPI); err != nil {
+		if err := validateApprovalReviewAPIShape(out.ApprovalReviewAPI); err != nil {
+			return out, err
+		}
+		if originChangedWithoutKey {
+			return out, fmt.Errorf("API 地址已跨源变更，请重新填写自定义审查 API Key")
+		}
+		if err := validateApprovalReviewAPIKey(out.ApprovalReviewAPI); err != nil {
 			return out, err
 		}
 	} else if out.ApprovalReviewAPI != nil && out.ApprovalReviewAPI.BaseURL != "" {
@@ -180,7 +241,7 @@ func normalizeAndValidateAssistantPreferences(body, existing domain.AssistantPre
 	return out, nil
 }
 
-func validateApprovalReviewAPI(cfg *domain.ApprovalReviewAPIConfig) error {
+func validateApprovalReviewAPIShape(cfg *domain.ApprovalReviewAPIConfig) error {
 	if cfg == nil {
 		return fmt.Errorf("请填写自定义审查 API 配置")
 	}
@@ -200,7 +261,11 @@ func validateApprovalReviewAPI(cfg *domain.ApprovalReviewAPIConfig) error {
 	if len(cfg.Model) > 160 || !assistantValidEngineModel(cfg.Model) {
 		return fmt.Errorf("自定义审查模型 ID 格式不正确")
 	}
-	if cfg.APIKey == "" {
+	return nil
+}
+
+func validateApprovalReviewAPIKey(cfg *domain.ApprovalReviewAPIConfig) error {
+	if cfg == nil || cfg.APIKey == "" {
 		return fmt.Errorf("请填写自定义审查 API Key")
 	}
 	if len(cfg.APIKey) > 512 || strings.ContainsAny(cfg.APIKey, "\r\n") {
@@ -214,7 +279,7 @@ func validateApprovalReviewBaseURL(raw string) error {
 		return fmt.Errorf("Base URL 格式不正确")
 	}
 	u, err := url.Parse(raw)
-	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" || u.User != nil {
 		return fmt.Errorf("Base URL 必须以 http:// 或 https:// 开头")
 	}
 	return nil

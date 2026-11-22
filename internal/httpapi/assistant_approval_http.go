@@ -7,16 +7,102 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
+	"os"
 	"strings"
+	"syscall"
 	"time"
 
 	"agentflow/internal/domain"
 	"agentflow/internal/runtime"
 )
 
-var approvalReviewHTTPClient = &http.Client{Timeout: 25 * time.Second}
+// approvalEgressAllowCIDRsEnv lists comma-separated CIDR networks that the
+// control plane's approval HTTP reviewer and custom-API model prober may dial
+// even when they are non-public (for example an internal model gateway).
+const approvalEgressAllowCIDRsEnv = "AGENTFLOW_APPROVAL_EGRESS_ALLOW_CIDRS"
+
+var approvalNonPublicPrefixes = []netip.Prefix{
+	netip.MustParsePrefix("0.0.0.0/8"),
+	netip.MustParsePrefix("100.64.0.0/10"),
+	netip.MustParsePrefix("192.0.0.0/24"),
+	netip.MustParsePrefix("198.18.0.0/15"),
+	netip.MustParsePrefix("64:ff9b::/96"),
+	netip.MustParsePrefix("2001:db8::/32"),
+}
+
+// approvalHTTPClientFactory creates an egress-guarded HTTP client for each
+// call so allowlist changes take effect without reusing stale connections.
+var approvalHTTPClientFactory = newApprovalEgressClient
+
+func newApprovalEgressClient(timeout time.Duration) *http.Client {
+	if timeout <= 0 {
+		timeout = 25 * time.Second
+	}
+	allowed := approvalAllowedEgressPrefixes()
+	dialer := &net.Dialer{
+		Timeout: 10 * time.Second,
+		Control: func(_, address string, _ syscall.RawConn) error {
+			return checkApprovalEgressAddress(address, allowed)
+		},
+	}
+	transport := &http.Transport{
+		Proxy:                 nil,
+		DialContext:           dialer.DialContext,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ResponseHeaderTimeout: timeout,
+		DisableKeepAlives:     true,
+	}
+	return &http.Client{
+		Timeout:   timeout,
+		Transport: transport,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+}
+
+func approvalAllowedEgressPrefixes() []netip.Prefix {
+	var out []netip.Prefix
+	for _, raw := range strings.Split(os.Getenv(approvalEgressAllowCIDRsEnv), ",") {
+		if prefix, err := netip.ParsePrefix(strings.TrimSpace(raw)); err == nil {
+			out = append(out, prefix.Masked())
+		}
+	}
+	return out
+}
+
+func checkApprovalEgressAddress(address string, allowed []netip.Prefix) error {
+	ap, err := netip.ParseAddrPort(address)
+	if err != nil {
+		return fmt.Errorf("审查接口连接地址无效 %q", address)
+	}
+	ip := ap.Addr().Unmap()
+	for _, prefix := range allowed {
+		if prefix.Contains(ip) {
+			return nil
+		}
+	}
+	if !approvalIsPublicIP(ip) {
+		return fmt.Errorf("审查接口不允许访问私有或本地地址 %s（如需访问内网网关，请配置 %s）", ip, approvalEgressAllowCIDRsEnv)
+	}
+	return nil
+}
+
+func approvalIsPublicIP(ip netip.Addr) bool {
+	if !ip.IsGlobalUnicast() || ip.IsPrivate() || ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsMulticast() || ip.IsUnspecified() {
+		return false
+	}
+	for _, prefix := range approvalNonPublicPrefixes {
+		if prefix.Contains(ip) {
+			return false
+		}
+	}
+	return true
+}
 
 // errApprovalHTTPFatal marks a definitive auth or missing-model HTTP error
 // where falling back to spawning the same CLI with the same key/model would
@@ -38,8 +124,17 @@ type approvalHTTPTarget struct {
 func resolveApprovalHTTPTarget(user domain.User, model string) (approvalHTTPTarget, bool) {
 	engine, modelID := assistantModelEngine(strings.TrimSpace(model))
 	modelID = strings.TrimSpace(modelID)
-	if modelID == "" {
+	// CLI default aliases (e.g. "codex:default", "claude-code:default") and
+	// Claude Code's short CLI aliases are resolved by the CLI itself and are
+	// not raw upstream model IDs, so skip direct HTTP and let the CLI run.
+	if modelID == "" || strings.EqualFold(modelID, assistantDefaultModel) {
 		return approvalHTTPTarget{}, false
+	}
+	if engine == assistantEngineClaude {
+		switch strings.ToLower(modelID) {
+		case "sonnet", "haiku", "opus":
+			return approvalHTTPTarget{}, false
+		}
 	}
 	var protocol, baseURL, apiKey string
 	switch engine {
@@ -309,7 +404,8 @@ func postApprovalHTTP(ctx context.Context, target approvalHTTPTarget, payload ma
 		default:
 			req.Header.Set("Authorization", "Bearer "+target.APIKey)
 		}
-		resp, err := approvalReviewHTTPClient.Do(req)
+		client := approvalHTTPClientFactory(25 * time.Second)
+		resp, err := client.Do(req)
 		if err != nil {
 			return nil, 0, err
 		}
@@ -320,6 +416,9 @@ func postApprovalHTTP(ctx context.Context, target approvalHTTPTarget, payload ma
 		}
 		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 			return raw, resp.StatusCode, nil
+		}
+		if resp.StatusCode >= 300 && resp.StatusCode < 400 {
+			return raw, resp.StatusCode, fmt.Errorf("审查接口返回重定向 HTTP %d，已拒绝跟随跳转", resp.StatusCode)
 		}
 		lastStatus = resp.StatusCode
 		lastErr = fmt.Errorf("HTTP %d: %s", resp.StatusCode, truncateRunes(strings.TrimSpace(string(raw)), 200))

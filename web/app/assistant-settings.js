@@ -360,6 +360,29 @@ function destroyAssistantSelects(){
   assistantPrefsUI.docCleanup=null;
  }
 }
+function assistantReviewApiOrigin(protocol,rawBaseUrl){
+ let base=String(rawBaseUrl||'').trim();
+ if(!base){
+  if(protocol==='messages')base='https://api.anthropic.com';
+  else if(protocol==='gemini')base='https://generativelanguage.googleapis.com';
+  else if(protocol==='chat'||protocol==='responses')base='https://api.openai.com/v1';
+  else return '';
+ }
+ try{
+  const u=new URL(base);
+  if(u.protocol!=='http:'&&u.protocol!=='https:')return '';
+  const port=u.port||(u.protocol==='https:'?'443':'80');
+  return `${u.protocol}//${u.hostname.toLowerCase()}:${port}`;
+ }catch{return ''}
+}
+function assistantReviewApiKeyReuseState(saved,protocol,baseUrl,apiKeyClear){
+ const prev=assistantReviewSavedApi(saved);
+ if(!prev.apiKeyConfigured||apiKeyClear)return {reusable:false,originChanged:false};
+ const oldOrigin=assistantReviewApiOrigin(prev.protocol,prev.baseUrl);
+ const nextOrigin=assistantReviewApiOrigin(protocol,baseUrl);
+ if(oldOrigin&&oldOrigin===nextOrigin)return {reusable:true,originChanged:false};
+ return {reusable:false,originChanged:true};
+}
 function validateAssistantPrefsDraft(draft,saved){
  if(draft.approvalReviewMode==='cli'&&!draft.approvalReviewModel){
   return {message:'请选择或填写自定义审查模型 ID',focus:'#assistantPrefsReviewModelCustom, #assistantPrefsReviewModelBtn'};
@@ -370,8 +393,10 @@ function validateAssistantPrefsDraft(draft,saved){
   if(cfg.baseUrl){
    try{const u=new URL(cfg.baseUrl);if(u.protocol!=='http:'&&u.protocol!=='https:')throw new Error('bad')}catch{return {message:'Base URL 必须以 http:// 或 https:// 开头',focus:'#assistantPrefsReviewApiBaseUrl'}}
   }
-  const hasSavedKey=!!saved?.approvalReviewApi?.apiKeyConfigured&&!cfg.apiKeyClear;
-  if(!cfg.apiKey&&!hasSavedKey)return {message:'请填写自定义审查 API Key',focus:'#assistantPrefsReviewApiKey'};
+  const reuse=assistantReviewApiKeyReuseState(saved,cfg.protocol||'chat',cfg.baseUrl||'',!!cfg.apiKeyClear);
+  if(!cfg.apiKey&&!reuse.reusable){
+   return {message:reuse.originChanged?'API 地址已跨源变更，请重新填写自定义审查 API Key':'请填写自定义审查 API Key',focus:'#assistantPrefsReviewApiKey'};
+  }
  }
  return null;
 }
@@ -601,10 +626,23 @@ function renderAssistantSettings(draftOverride){
    }
   }
  };
+ const syncApiKeyPlaceholder=()=>{
+  if(!apiKeyInput)return;
+  const clear=apiKeyClearInput?.value==='1';
+  if(clear){
+   apiKeyInput.placeholder='保存后将清除已存 Key，或输入新 Key 替换';
+   return;
+  }
+  const reuse=assistantReviewApiKeyReuseState(assistantPrefsUI.saved,apiProtoSel?.value||'chat',apiBaseInput?.value||'',false);
+  if(reuse.reusable)apiKeyInput.placeholder='已配置，留空保持不变';
+  else if(reuse.originChanged)apiKeyInput.placeholder='API 地址已变更，请重新填写 API Key';
+  else apiKeyInput.placeholder='填写 API Key（仅用于帮我批准审查）';
+ };
  const syncProtocolPlaceholders=()=>{
   const meta=assistantReviewProtocolMeta(apiProtoSel?.value||'chat');
   if(apiModelInput)apiModelInput.placeholder=meta.modelPlaceholder;
   if(apiBaseInput)apiBaseInput.placeholder=meta.basePlaceholder;
+  syncApiKeyPlaceholder();
  };
  const clearApiProbe=()=>{
   assistantPrefsUI.probeToken=(assistantPrefsUI.probeToken||0)+1;
@@ -632,9 +670,9 @@ function renderAssistantSettings(draftOverride){
    try{const u=new URL(baseUrl);if(u.protocol!=='http:'&&u.protocol!=='https:')throw new Error('bad')}
    catch{toast('Base URL 必须以 http:// 或 https:// 开头');apiBaseInput?.focus();return}
   }
-  const hasSavedKey=!!assistantPrefsUI.saved?.approvalReviewApi?.apiKeyConfigured&&!apiKeyClear;
-  if(!apiKey&&!hasSavedKey){
-   toast('请先填写自定义审查 API Key');
+  const reuse=assistantReviewApiKeyReuseState(assistantPrefsUI.saved,protocol,baseUrl,apiKeyClear);
+  if(!apiKey&&!reuse.reusable){
+   toast(reuse.originChanged?'API 地址已跨源变更，请重新填写自定义审查 API Key':'请先填写自定义审查 API Key');
    apiKeyInput?.focus();
    return;
   }
@@ -706,7 +744,8 @@ function renderAssistantSettings(draftOverride){
   apiProtoSel.addEventListener('change',()=>{syncProtocolPlaceholders();clearApiProbe();refresh()});
  }
  if(apiBaseInput){
-  apiBaseInput.addEventListener('change',clearApiProbe);
+  apiBaseInput.addEventListener('input',syncApiKeyPlaceholder);
+  apiBaseInput.addEventListener('change',()=>{clearApiProbe();syncApiKeyPlaceholder()});
  }
  if(apiKeyClearBtn&&apiKeyClearInput&&apiKeyInput){
   apiKeyClearBtn.addEventListener('click',()=>{
@@ -714,7 +753,7 @@ function renderAssistantSettings(draftOverride){
    apiKeyClearInput.value=next;
    apiKeyClearBtn.dataset.clearState=next;
    apiKeyClearBtn.textContent=next==='1'?'撤销清除':'清除已存 Key';
-   apiKeyInput.placeholder=next==='1'?'保存后将清除已存 Key，或输入新 Key 替换':'已配置，留空保持不变';
+   syncApiKeyPlaceholder();
    refresh();
   });
  }
