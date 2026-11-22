@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash"
 	"io"
 	"os"
 	"path/filepath"
@@ -17,20 +18,28 @@ import (
 	"time"
 )
 
-func (e *Engine) saveConversationWorkspace(ctx context.Context, run domain.Run, token string) error {
+func (e *Engine) saveConversationWorkspace(ctx context.Context, run domain.Run, token, previousSHA string) error {
 	file, err := os.CreateTemp("", "agentflow-checkpoint-save-")
 	if err != nil {
 		return err
 	}
 	defer func() { file.Close(); os.Remove(file.Name()) }()
-	if e.defaultExecutionRunner(run) != "" || e.foreignWorkspaceBind(run) {
-		if err = e.downloadConversationCheckpoint(ctx, run, file); err != nil {
-			return err
-		}
-		if _, err = file.Seek(0, io.SeekStart); err != nil {
-			return err
-		}
-		if err = runtime.ValidateWorkspaceCheckpointFrom(workspaceCheckpointContextReader{ctx, file}); err != nil {
+	// After failed reclamation, compare the current bytes with the saved copy
+	// so another attempt at deletion does not publish an identical archive.
+	destination := io.Writer(file)
+	var digest hash.Hash
+	if previousSHA != "" {
+		digest = sha256.New()
+		destination = io.MultiWriter(file, digest)
+	}
+	remote := e.defaultExecutionRunner(run) != "" || e.foreignWorkspaceBind(run)
+	if remote {
+		if err = e.downloadConversationCheckpoint(ctx, run, destination); err != nil {
+			// A lost reclaim reply can leave the directory already gone.
+			// Only a root-level probe confirms that an export's ENOENT is safe.
+			if previousSHA != "" && os.IsNotExist(err) && e.remoteCheckpointRootMissing(ctx, run) {
+				return e.verifyStoredCheckpoint(ctx, run.ID)
+			}
 			return err
 		}
 	} else {
@@ -38,7 +47,13 @@ func (e *Engine) saveConversationWorkspace(ctx context.Context, run domain.Run, 
 		if reason != "" {
 			return fmt.Errorf("%s", reason)
 		}
-		err = runtime.CreateWorkspaceCheckpointToContext(ctx, root, workspaceCheckpointContextWriter{ctx, file})
+		err = runtime.CreateWorkspaceCheckpointToContext(ctx, root, workspaceCheckpointContextWriter{ctx, destination})
+		if previousSHA != "" && os.IsNotExist(err) {
+			if _, statErr := os.Lstat(root); os.IsNotExist(statErr) {
+				return e.verifyStoredCheckpoint(ctx, run.ID)
+			}
+			return err
+		}
 		if os.IsNotExist(err) && run.WorkspaceHost == "" {
 			if err = file.Truncate(0); err != nil {
 				return err
@@ -52,10 +67,31 @@ func (e *Engine) saveConversationWorkspace(ctx context.Context, run domain.Run, 
 			return err
 		}
 	}
+	if digest != nil && hex.EncodeToString(digest.Sum(nil)) == previousSHA && e.verifyStoredCheckpoint(ctx, run.ID) == nil {
+		// The preceding cleanup already validated this archive. If stored
+		// bytes are damaged, fall through and publish the new valid copy.
+		return nil
+	}
 	if _, err = file.Seek(0, io.SeekStart); err != nil {
 		return err
 	}
+	if remote {
+		if err = runtime.ValidateWorkspaceCheckpointFrom(workspaceCheckpointContextReader{ctx, file}); err != nil {
+			return err
+		}
+		if _, err = file.Seek(0, io.SeekStart); err != nil {
+			return err
+		}
+	}
 	return e.repo.SaveWorkspaceCheckpointStream(run.ID, token, time.Now().UTC(), workspaceCheckpointContextReader{ctx, file})
+}
+
+func (e *Engine) remoteCheckpointRootMissing(ctx context.Context, run domain.Run) bool {
+	result, err := e.requestWorkspaceCheckpoint(ctx, run, domain.RunnerWorkspaceRequest{
+		RunID: run.ID, RunStatus: run.Status, WorkspaceLayout: run.ExecutionContext.RunnerWorkspaceLayout,
+		Operation: domain.RunnerWorkspaceOperationCheckpointStatus,
+	})
+	return err == nil && result.Code == domain.WorkspaceErrorMissing
 }
 
 func (e *Engine) closeCheckpointTransfer(ctx context.Context, run domain.Run, id string) {

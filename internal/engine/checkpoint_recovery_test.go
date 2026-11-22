@@ -1,8 +1,12 @@
 package engine
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"sync/atomic"
@@ -160,6 +164,113 @@ func TestConversationWorkspaceStaleCleanupKeepsReclaimedCheckpoint(t *testing.T)
 	content, err := os.ReadFile(filepath.Join(e.RunWorkspace(id), "README.md"))
 	if err != nil || string(content) != "uncommitted" {
 		t.Fatalf("restored checkpoint did not preserve the original file: %q, %v", content, err)
+	}
+}
+
+func TestConversationWorkspaceReclaimRetryKeepsVerifiedArchive(t *testing.T) {
+	t.Parallel()
+	worker, id := checkpointFixture(t)
+	worker.workspaceHost = "checkpoint-retry-worker"
+	worker.controlToken = "checkpoint-retry-test"
+	if err := worker.repo.DB.Table("runs").Where("id = ?", id).Updates(map[string]any{
+		"workspace_host": worker.workspaceHost,
+		"workspace_root": worker.sandboxes.Root(),
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	var exports, reclaims atomic.Int64
+	var dropReply atomic.Bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			http.Error(w, "read request", http.StatusBadRequest)
+			return
+		}
+		var req domain.RunnerWorkspaceRequest
+		if err := json.Unmarshal(body, &req); err != nil {
+			http.Error(w, "decode request", http.StatusBadRequest)
+			return
+		}
+		r.Body = io.NopCloser(bytes.NewReader(body))
+		switch req.Operation {
+		case domain.RunnerWorkspaceOperationCheckpointExport:
+			exports.Add(1)
+		case domain.RunnerWorkspaceOperationReclaim:
+			reclaims.Add(1)
+			if dropReply.Load() {
+				// The Worker deletes the checkout, but the controller loses
+				// the result and must probe the actual directory.
+				worker.HandleWorkspaceCheckpoint(httptest.NewRecorder(), r)
+			}
+			http.Error(w, "temporarily unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		worker.HandleWorkspaceCheckpoint(w, r)
+	}))
+	defer server.Close()
+	t.Cleanup(worker.checkpointTransfers.Close)
+	if err := worker.repo.HeartbeatEngineInstance(repo.EngineInstance{
+		InstanceID: worker.workspaceHost, Role: "worker", WorkspaceHost: worker.workspaceHost, ControlURL: server.URL,
+	}, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	controller := func() *Engine {
+		e := New(worker.repo, runtime.NewManager(t.TempDir()))
+		e.workspaceHost, e.controlToken = "checkpoint-retry-controller", worker.controlToken
+		return e
+	}
+	e := controller()
+	if err := e.ReleaseConversationWorkspace(id); err != nil {
+		t.Fatal(err)
+	}
+	sweep := func(now time.Time) {
+		t.Helper()
+		run, ok := e.repo.RunState(id)
+		if !ok {
+			t.Fatal("workspace disappeared")
+		}
+		e.cleanupWorkspace(run, now)
+	}
+	sweep(time.Now().UTC())
+	first, _ := e.repo.WorkspaceCheckpoint(id)
+	if first.CleanupRetryAt == nil || first.ArchiveID == "" || reclaims.Load() != 1 {
+		t.Fatal("failed reclaim did not retain a checkpoint and schedule its retry")
+	}
+	e = controller()
+	sweep(first.CleanupRetryAt.Add(-time.Second))
+	if exports.Load() != 1 || reclaims.Load() != 1 {
+		t.Fatal("a new controller attempted cleanup before the stored deadline")
+	}
+	sweep(*first.CleanupRetryAt)
+	second, _ := e.repo.WorkspaceCheckpoint(id)
+	if exports.Load() != 2 || reclaims.Load() != 2 || second.ArchiveID != first.ArchiveID ||
+		second.CleanupRetryAt == nil || !second.CleanupRetryAt.After(*first.CleanupRetryAt) {
+		t.Fatal("unchanged retry did not reuse the verified archive and defer again")
+	}
+	path := filepath.Join(worker.RunWorkspace(id), "README.md")
+	if err := os.WriteFile(path, []byte("edited during failed cleanup"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	dropReply.Store(true)
+	sweep(*second.CleanupRetryAt)
+	done, _ := e.repo.RunState(id)
+	if done.WorkspaceCleanedAt.IsZero() {
+		t.Fatal("lost reclaim reply made the successfully cleaned workspace unavailable for restore")
+	}
+	token, err := e.BeginConversationWorkspaceUse(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.EnsureConversationWorkspace(t.Context(), id, token); err != nil {
+		t.Fatal(err)
+	}
+	content, err := os.ReadFile(path)
+	if err != nil || string(content) != "edited during failed cleanup" {
+		t.Fatalf("restore lost the edit: %q, %v", content, err)
+	}
+	restored, _ := e.repo.WorkspaceCheckpoint(id)
+	if restored.ArchiveID == first.ArchiveID || restored.CleanupRetryAt != nil {
+		t.Fatal("restore did not retain the latest archive or reset the cleanup deadline")
 	}
 }
 

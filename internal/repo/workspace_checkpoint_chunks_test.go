@@ -179,7 +179,7 @@ func checkpointBackoffTest(t *testing.T, s *Store, other *RunsRepo) {
 		t.Fatal(err)
 	}
 	meta, _ = s.WorkspaceCheckpoint(run.ID)
-	if meta.Error != "" || meta.SaveRetryAt != nil || meta.SaveFailures != 0 || meta.ArchiveID != "" {
+	if meta.Error != "" || meta.SaveRetryAt != nil || meta.SaveFailures != 0 || meta.ArchiveID == "" || meta.ArchiveChunks != 1 {
 		t.Fatal("successful save did not reset backoff")
 	}
 }

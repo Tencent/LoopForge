@@ -218,10 +218,18 @@ func (e *Engine) cleanupWorkspace(run domain.Run, now time.Time) {
 		ctx, stop := context.WithTimeout(context.Background(), 30*time.Second)
 		defer stop()
 		response, err := e.requestWorkspaceCheckpoint(ctx, run, domain.RunnerWorkspaceRequest{RunID: run.ID, Operation: domain.RunnerWorkspaceOperationReclaim, CheckpointLease: meta.LeaseToken})
+		if err == nil && response.Error != "" {
+			err = fmt.Errorf("%s", response.Error)
+		}
 		if err != nil {
-			reset(err)
-		} else if response.Error != "" {
-			reset(fmt.Errorf("%s", response.Error))
+			// The Worker can remove the directory before the reply is lost.
+			// Keep its saved checkpoint immediately available for restoration
+			// when an independent probe confirms that removal completed.
+			probeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if !e.remoteCheckpointRootMissing(probeCtx, run) {
+				reset(err)
+			}
 		}
 		return
 	}

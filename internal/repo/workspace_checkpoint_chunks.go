@@ -27,20 +27,11 @@ type workspaceCheckpointChunk struct {
 
 func (workspaceCheckpointChunk) TableName() string { return "run_workspace_checkpoint_chunks" }
 
-// Stage bounded rows, then publish the manifest by lease CAS. A failed save
-// cannot replace the previous archive. Crashed staging rows expire on the next
-// save; deleting a run also deletes all its chunks.
+// Keep new archive payloads off the lease row, where a metadata update can
+// copy an unchanged inline BLOB into MySQL's binary log. Stage bounded rows
+// and publish the manifest by lease CAS. The reader still accepts inline
+// checkpoints from older releases.
 func (r *RunsRepo) SaveWorkspaceCheckpointStream(runID, token string, now time.Time, source io.Reader) error {
-	// Keep the legacy representation for small archives, including during a
-	// rolling upgrade. The lookahead is bounded independently of archive size.
-	prefix, err := io.ReadAll(io.LimitReader(source, workspaceCheckpointInlineBytes+1))
-	if err != nil {
-		return err
-	}
-	if len(prefix) <= workspaceCheckpointInlineBytes {
-		return r.SaveWorkspaceCheckpoint(runID, token, now, prefix)
-	}
-	source = io.MultiReader(bytes.NewReader(prefix), source)
 	raw := make([]byte, 24)
 	if _, err := rand.Read(raw); err != nil {
 		return err
@@ -92,7 +83,7 @@ func (r *RunsRepo) SaveWorkspaceCheckpointStream(runID, token string, now time.T
 	if size == 0 {
 		return fmt.Errorf("empty workspace checkpoint")
 	}
-	err = r.DB.Transaction(func(tx *gorm.DB) error {
+	err := r.DB.Transaction(func(tx *gorm.DB) error {
 		if _, err := r.takeRunForUpdate(tx, runID); err != nil {
 			return err
 		}

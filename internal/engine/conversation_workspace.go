@@ -408,7 +408,7 @@ func (e *Engine) claimIdleConversationWorkspace(run domain.Run, now time.Time) (
 		return true, false, nil, nil
 	}
 	cleanupHeld := now.Before(run.WorkspaceCleanupNotBefore)
-	if cleanupHeld && !heldWorkspaceCheckpointNeedsSave(meta, idleSinceBeforeLease, now) {
+	if (cleanupHeld || meta.CleanupDeferred(now)) && !heldWorkspaceCheckpointNeedsSave(meta, idleSinceBeforeLease, now) {
 		// A cleanup hold alone is not a reason to take a lease or rearchive.
 		return true, false, nil, nil
 	}
@@ -417,6 +417,7 @@ func (e *Engine) claimIdleConversationWorkspace(run domain.Run, now time.Time) (
 		return true, false, nil, nil
 	}
 	meta, _ = e.repo.WorkspaceCheckpoint(run.ID)
+	cleanupHeld = cleanupHeld || meta.CleanupDeferred(now)
 	idleSince := meta.LastUsedAt
 	if !exists {
 		idleSince = run.UpdatedAt
@@ -460,7 +461,11 @@ func (e *Engine) claimIdleConversationWorkspace(run domain.Run, now time.Time) (
 	if needsSave {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		defer cancel()
-		captureErr := e.saveConversationWorkspace(ctx, run, token)
+		var previousSHA string
+		if !cleanupHeld && meta.CleanupRetryAt != nil && meta.SavedAt != nil && meta.Error == "" {
+			previousSHA = meta.SHA256
+		}
+		captureErr := e.saveConversationWorkspace(ctx, run, token, previousSHA)
 		if captureErr != nil {
 			saveError = captureErr.Error()
 			return true, false, nil, captureErr

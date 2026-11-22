@@ -15,11 +15,14 @@ import (
 )
 
 type WorkspaceCheckpoint struct {
-	ArchiveID      string     `gorm:"size:64" json:"-"`
-	ArchiveBytes   int64      `json:"-"`
-	ArchiveChunks  int        `json:"-"`
-	SaveFailures   int        `json:"-"`
-	SaveRetryAt    *time.Time `json:"nextSaveAttemptAt,omitempty"`
+	ArchiveID     string     `gorm:"size:64" json:"-"`
+	ArchiveBytes  int64      `json:"-"`
+	ArchiveChunks int        `json:"-"`
+	SaveFailures  int        `json:"-"`
+	SaveRetryAt   *time.Time `json:"nextSaveAttemptAt,omitempty"`
+	// CleanupRetryAt bounds retries after physical reclaim fails. A restored
+	// workspace starts a new cleanup lifecycle without this deadline.
+	CleanupRetryAt *time.Time `json:"-"`
 	RunID          string     `gorm:"primaryKey;size:64" json:"-"`
 	Archive        []byte     `gorm:"type:mediumblob" json:"-"`
 	SHA256         string     `gorm:"size:64" json:"-"`
@@ -50,6 +53,10 @@ func (c WorkspaceCheckpoint) Released() bool {
 	return c.ReleasedAt != nil && !c.LastUsedAt.After(*c.ReleasedAt)
 }
 
+func (c WorkspaceCheckpoint) CleanupDeferred(now time.Time) bool {
+	return c.CleanupRetryAt != nil && now.Before(*c.CleanupRetryAt)
+}
+
 var ErrWorkspaceInUse = errors.New("工作区正在使用或保存，请稍后重试")
 var ErrWorkspaceCheckpointBackoff = errors.New("workspace checkpoint save is backing off")
 
@@ -57,6 +64,9 @@ const workspaceBackgroundSavePrefix = "save:"
 
 // workspaceUseTerm is how long a workspace lease lasts from its last renewal.
 const workspaceUseTerm = 15 * time.Minute
+
+// A failed deletion must not re-export the checkout on every maintenance pass.
+const workspaceCleanupRetryDelay = 10 * time.Minute
 
 func (r *RunsRepo) WorkspaceCheckpoint(runID string) (WorkspaceCheckpoint, bool) {
 	var item WorkspaceCheckpoint
@@ -275,6 +285,9 @@ func (r *RunsRepo) ClaimCheckpointWorkspaceCleanup(runID, token string, revision
 		if checkpoint.FollowUp && !checkpoint.Released() && now.Before(checkpoint.LastUsedAt.Add(time.Hour)) {
 			return nil
 		}
+		if checkpoint.CleanupDeferred(now) {
+			return nil
+		}
 		var count int64
 		if err = tx.Model(&runNodeRow{}).Where("run_id = ? AND status = ?", runID, "running").Count(&count).Error; err != nil {
 			return err
@@ -283,8 +296,16 @@ func (r *RunsRepo) ClaimCheckpointWorkspaceCleanup(runID, token string, revision
 			return nil
 		}
 		result := tx.Model(&runRow{}).Where("id = ? AND revision = ?", runID, revision).Updates(map[string]any{"workspace_cleaned_at": now, "sandbox_id": ""})
-		claimed = result.RowsAffected == 1
-		return result.Error
+		if result.Error != nil || result.RowsAffected != 1 {
+			return result.Error
+		}
+		// Set the next allowed attempt before deleting. A failed remote cleanup
+		// or a restarted coordinator cannot immediately redo the checkpoint.
+		if err := tx.Model(&WorkspaceCheckpoint{}).Where("run_id = ?", runID).Update("cleanup_retry_at", now.Add(workspaceCleanupRetryDelay)).Error; err != nil {
+			return err
+		}
+		claimed = true
+		return nil
 	})
 	return claimed, err
 }
@@ -305,6 +326,10 @@ func (r *RunsRepo) RestoreCheckpointWorkspaceBinding(runID, token, host, root st
 		// earlier failed or interrupted restore.
 		if err := tx.Model(&WorkspaceCheckpoint{}).Where("run_id = ? AND lease_token = ? AND restore_status = ?", runID, token, "failed").
 			Updates(map[string]any{"restore_status": "ready", "restore_error": ""}).Error; err != nil {
+			return err
+		}
+		if err := tx.Model(&WorkspaceCheckpoint{}).Where("run_id = ? AND lease_token = ? AND cleanup_retry_at IS NOT NULL", runID, token).
+			Update("cleanup_retry_at", nil).Error; err != nil {
 			return err
 		}
 		values := map[string]any{"workspace_cleaned_at": nil, "revision": gorm.Expr("revision + 1")}
