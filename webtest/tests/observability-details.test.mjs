@@ -175,6 +175,7 @@ test('conversation code changes have their own group, close the Token ring, and 
       sopSucceeded: true, delivered: false, runCount: 1, userId: 1, tokens: 2400, costCny: .5, costKnown: true },
   ];
   const full = { ...analytics, summary, trend, delivery, deliveries };
+  app.router.get('/api/analytics', full);
   app.evaluate(`
     state.currentUser={...state.data.users[0],id:1,isGuest:false};
     state.data.users[0]=state.currentUser;

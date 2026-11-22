@@ -98,6 +98,7 @@ func TestInsightIdempotencyAndAnalytics(t *testing.T) {
 		{domain.AnalyticsFilter{UserID: "8"}, 0}, {domain.AnalyticsFilter{Origin: "external", From: now, To: now}, 1},
 		{domain.AnalyticsFilter{Origin: "external", To: now.Add(-time.Second)}, 0}, {domain.AnalyticsFilter{Origin: "external", IssueSource: "local"}, 0},
 		{domain.AnalyticsFilter{RequirementsOnly: true}, 0},
+		{domain.AnalyticsFilter{ProjectScope: "unassigned"}, 0},
 	} {
 		got := s.Analytics(tc.filter)
 		if got.Summary.TotalRuns != tc.want {

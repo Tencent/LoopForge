@@ -28,6 +28,7 @@ func (h *runsHandlers) analytics(c *gin.Context) {
 	filter := domain.AnalyticsFilter{
 		Origin:           c.Query("origin"),
 		ProjectID:        c.Query("projectId"),
+		ProjectScope:     strings.TrimSpace(c.Query("projectScope")),
 		WorkflowID:       c.Query("workflowId"),
 		Scope:            strings.TrimSpace(c.Query("scope")),
 		UserID:           strings.TrimSpace(c.Query("userId")),
@@ -35,6 +36,14 @@ func (h *runsHandlers) analytics(c *gin.Context) {
 		RequirementsOnly: c.Query("requirementsOnly") == "1",
 		Grain:            strings.TrimSpace(c.Query("grain")),
 		TimeZone:         strings.TrimSpace(c.Query("tz")),
+	}
+	if filter.ProjectScope != "" && filter.ProjectScope != "unassigned" {
+		c.JSON(400, gin.H{"error": "projectScope 必须为空或 unassigned"})
+		return
+	}
+	if filter.ProjectScope == "unassigned" && filter.ProjectID != "" {
+		c.JSON(400, gin.H{"error": "projectScope=unassigned 不能与 projectId 同时使用"})
+		return
 	}
 	if raw := c.Query("from"); raw != "" {
 		value, err := time.Parse(time.RFC3339, raw)

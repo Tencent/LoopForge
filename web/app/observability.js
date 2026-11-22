@@ -1,5 +1,18 @@
 // ================= 可观测与分析 =================
 let refreshObsPending=null;
+let obsAnalyticsRequest=0,obsCrossProjectRequest=0;
+async function loadObsAnalytics(overview,forExport=false){
+  const request=++obsAnalyticsRequest,query=analyticsQuery({overview});
+  const current=()=>request===obsAnalyticsRequest&&query===analyticsQuery({overview:forExport?overview:state.obsTab!=='delivery'});
+  try{
+    const analytics=await api('/api/analytics'+query,{silent:true});
+    if(!current())return false;
+    state.analytics=analytics;
+    state.obsAnalyticsFull=!overview;
+    state.obsAnalyticsQuery=query;
+    return true;
+  }catch(e){if(current()){toast(e.message);return null}return false}
+}
 function showDirectRunButton(onFlow){
   const btn=$('#runButton');
   if(!btn)return;
@@ -325,17 +338,27 @@ function obsScopedView(){
   };
 }
 function ensureObsUserFilter(){
-  if(state.obsUserFilterReady)return;
-  state.obsUserFilterReady=true;
-  if(state.obsScope==='project')return;
+  if(state.obsScope==='project'||state.obsUserFilter)return;
   const user=state.currentUser;
-  if(user&&!user.isGuest&&user.id)state.obsUserFilter=String(user.id);
+  if(user&&!user.isGuest&&user.id){state.obsUserFilter=String(user.id);state.obsUserFilterReady=true}
+}
+function obsUnassignedProject(){return obsScope()==='user'&&state.obsProjectScope==='unassigned'}
+function obsProjectLabel(){
+  if(obsUnassignedProject())return '未归属项目';
+  const project=currentProject();
+  return project?.name||project?.id||'全部项目';
+}
+function setObsProjectScope(scope){
+  state.obsProjectScope=scope==='unassigned'?'unassigned':'';
+  resetListPages('obs-');
+  applyObsFilter();
 }
 function setObsScope(scope){
   scope=scope==='project'?'project':'user';
   if(obsScope()===scope)return;
   if(scope==='project')state.obsUserSaved=state.obsUserFilter||'';
   state.obsScope=scope;
+  if(scope==='project')state.obsProjectScope='';
   localStorage.setItem('agentflow.obsScope',scope);
   if(scope==='user'&&!state.obsUserFilter){
     state.obsUserFilter=state.obsUserSaved||(state.currentUser&&!state.currentUser.isGuest&&state.currentUser.id?String(state.currentUser.id):'');
@@ -347,13 +370,11 @@ async function switchObsTab(tab){
   tab=obsNormalizeTab(tab);
   state.obsTab=tab;
   $$('#obsTabs .obs-tab').forEach(x=>x.classList.toggle('active',x.dataset.obsTab===tab));
-  if(tab==='delivery'&&!state.obsAnalyticsFull){
+  if(tab==='delivery'&&(!state.obsAnalyticsFull||state.obsAnalyticsQuery!==analyticsQuery({overview:false}))){
     const host=$('#obsBody');
     if(host)host.innerHTML=`<div class="obs-pane active"><div class="detail-empty">正在加载交付数据…</div></div>`;
-    try{
-      state.analytics=await api('/api/analytics'+analyticsQuery({overview:false}),{silent:true});
-      state.obsAnalyticsFull=true;
-    }catch(e){toast(e.message)}
+    const loaded=await loadObsAnalytics(false);
+    if(loaded===false)return;
   }
   renderObservability();
 }
@@ -364,13 +385,7 @@ async function refreshObs(){
     const host=$('#obsBody');
     if(host)host.innerHTML=`<div class="obs-pane active"><div class="detail-empty">正在加载用量数据…</div></div>`;
     state.obsAnalyticsFull=false;
-    try{
-      const opt={silent:true};
-      const overview=state.obsTab!=='delivery';
-      const analytics=await api('/api/analytics'+analyticsQuery({overview}),opt);
-      state.analytics=analytics;
-      if(!overview)state.obsAnalyticsFull=true;
-    }catch(e){toast(e.message)}
+    try{await loadObsAnalytics(state.obsTab!=='delivery')}
     finally{refreshObsPending=null}
     renderObservability();
     refreshObsCrossProject().then(()=>{if(activeViewName()==='observability')renderObservability()});
@@ -382,11 +397,12 @@ function runTokens(r){return Number(r.usage?.totalTokens||0)}
 function runArtifactCount(r){return Number(r?.artifactCount??r?.artifacts?.length??0)}
 function obsKpiRow(items){return `<div class="obs-kpi-grid">${items.map(c=>`<div class="obs-metric" style="--accent:${c.color}"><span>${c.label}</span><b>${c.value}</b><small>${c.foot||''}</small></div>`).join('')}</div>`}
 function analyticsQuery(opts){
+  ensureObsUserFilter();
   opts=opts||{};
   const parts=[];
   if(!opts.crossProject){
-    const base=projectQuery().replace(/^\?/,'');
-    if(base)parts.push(base);
+    if(obsUnassignedProject())parts.push('projectScope=unassigned');
+    else{const base=projectQuery().replace(/^\?/,'');if(base)parts.push(base)}
   }
   if(opts.overview)parts.push('scope=overview');
   if(obsScope()==='user'&&state.obsUserFilter)parts.push('userId='+encodeURIComponent(state.obsUserFilter));
@@ -398,20 +414,18 @@ function analyticsQuery(opts){
   return parts.length?'?'+parts.join('&'):'';
 }
 async function refreshObsCrossProject(){
+  ensureObsUserFilter();
+  const request=++obsCrossProjectRequest;
   if(obsScope()!=='user'||!state.obsUserFilter){state.obsCrossProject=null;return}
+  const query=analyticsQuery({overview:true,crossProject:true});
+  const current=()=>request===obsCrossProjectRequest&&obsScope()==='user'&&query===analyticsQuery({overview:true,crossProject:true});
   try{
-    state.obsCrossProject=await api('/api/analytics'+analyticsQuery({overview:true,crossProject:true}),{silent:true});
-  }catch(e){state.obsCrossProject=null}
+    const analytics=await api('/api/analytics'+query,{silent:true});
+    if(current())state.obsCrossProject=analytics;
+  }catch(e){if(current())state.obsCrossProject=null}
 }
 async function applyObsFilter(){
-  try{
-    const overview=state.obsTab!=='delivery';
-    const [analytics]=await Promise.all([
-      api('/api/analytics'+analyticsQuery({overview}),{silent:true}),
-    ]);
-    state.analytics=analytics;
-    state.obsAnalyticsFull=!overview;
-  }catch(e){toast(e.message)}
+  if(!await loadObsAnalytics(state.obsTab!=='delivery'))return;
   renderObservability();
   refreshObsCrossProject().then(()=>{if(activeViewName()==='observability')renderObservability()});
 }
@@ -448,31 +462,31 @@ function obsUserChoices(){
 function obsFilterBar(){
   ensureObsUserFilter();
   const project=currentProject();
-  const projectName=project?.name||project?.id||'当前项目';
+  const projectName=obsProjectLabel();
   const scope=obsScope();
   const selected=scope==='user'?(state.obsUserFilter||''):'';
   const current=userById(selected);
-  const label=current?userDisplay(current):(selected?obsUserName(selected):'全部成员');
+  const label=current?userDisplay(current):(selected?obsUserName(selected):'请选择责任人');
   const me=String(state.currentUser?.id||'');
   const people=obsUserChoices();
-  const userOptions=[`<option value=""${!selected?' selected':''} data-search="all 全部成员">全部责任人</option>`,
+  const userOptions=[...(!selected?['<option value="" selected disabled>请选择责任人</option>']:[]),
     ...people.map(u=>{const id=String(u.id);return `<option value="${escapeHTML(id)}"${id===String(selected)?' selected':''} data-search="${escapeHTML(`${u.loginName||''} ${u.chineseName||''}`)}"${id===me?' data-meta="我"':''}>${escapeHTML(userDisplay(u))}</option>`})];
   if(selected&&!people.some(u=>String(u.id)===String(selected)))userOptions.push(`<option value="${escapeHTML(String(selected))}" selected>${escapeHTML(label)}</option>`);
   const originChoices=[['','全部执行'],['internal','平台内'],['external','外部工作流']];
   const sourceChoices=[['','全部来源'],['local','本地'],['github','GitHub']];
   const sources=sourceChoices.map(([v,l])=>`<option value="${v}" ${(state.obsSourceFilter||'')===v?'selected':''}>${l}</option>`).join('');
   const grain=obsTrendGrain();
-  const hint=scope==='project'
+  const hint=obsUnassignedProject()?'个人指标仅含所选成员在未归属项目中的会话、用量和执行；顶栏项目不参与此筛选。':scope==='project'
     ?`项目指标 = 顶栏当前项目「${projectName}」全部成员的运行、Token 和交付，不是全平台汇总。${grain==='all'?'当前看全部历史，趋势按月聚合，点一个月可下钻。':'上方数字和 Loop 指标只含所选时段；点趋势图或用两侧箭头换一天 / 一周 / 一月。'}`
     :`个人指标 = 责任人在当前项目「${projectName}」里的执行。一人多项目时，下方「各项目」看他在其他项目的量，不会加进上面的 KPI。${grain==='all'?'当前看全部历史，趋势按月聚合，点一个月可下钻。':'上方数字和 Loop 指标只含所选时段；点趋势图或用两侧箭头换一天 / 一周 / 一月。'}`;
-  const userFilter=scope==='user'?`<select id="obsUserFilter" data-obs-select data-icon="user" aria-label="责任人">${userOptions.join('')}</select>`:'';
+  const userFilter=scope==='user'?`<select id="obsUserFilter" data-obs-select data-icon="user" aria-label="责任人">${userOptions.join('')}</select>`+obsSeg('data-obs-project-scope',[['','顶栏项目'],['unassigned','未归属项目']],obsUnassignedProject()?'unassigned':''):'';
   const originFilter=`<select id="obsOriginFilter" data-obs-select data-icon="run-live" aria-label="执行">${originChoices.map(([v,l])=>`<option value="${v}" ${(state.obsOriginFilter||'')===v?'selected':''}>${l}</option>`).join('')}</select>`;
   const sourceFilter=`<select id="obsSourceFilter" data-obs-select data-icon="connector" aria-label="需求来源">${sources}</select>`;
   const clear=(kind,title)=>`<button type="button" data-obs-clear-filter="${kind}" title="${title}" aria-label="${title}">${obsIcon('close',11)}</button>`;
   const chips=[];
   if(scope==='project')chips.push(`<span class="obs-chip">项目「${escapeHTML(projectName)}」全部成员</span>`);
-  else if(selected)chips.push(`<span class="obs-chip">「${escapeHTML(projectName)}」项目内 · ${escapeHTML(label)} 负责的执行${clear('user','清除责任人')}</span>`);
-  else chips.push(`<span class="obs-chip">「${escapeHTML(projectName)}」项目内 · 全部成员</span>`);
+  else if(selected)chips.push(`<span class="obs-chip">个人 · ${escapeHTML(label)} · ${escapeHTML(projectName)}${selected!==me?clear('user','恢复为当前用户'):''}</span>`);
+  else chips.push('<span class="obs-chip">个人 · 请选择责任人</span>');
   if(state.obsOriginFilter)chips.push(`<span class="obs-chip">${escapeHTML((originChoices.find(([v])=>v===state.obsOriginFilter)||[,state.obsOriginFilter])[1])}${clear('origin','清除执行来源')}</span>`);
   if(state.obsSourceFilter)chips.push(`<span class="obs-chip">${escapeHTML(obsSourceLabel(state.obsSourceFilter))}需求${clear('source','清除需求来源')}</span>`);
   if(grain!=='all'){
@@ -483,7 +497,8 @@ function obsFilterBar(){
   return `<div class="obs-fbar"><div class="obs-fbar-row">${obsSeg('data-obs-scope',[['user','个人',0,'','user'],['project','项目',0,'','users']],scope)}${userFilter}${originFilter}${sourceFilter}<span class="obs-sp"></span>${obsSeg('data-obs-grain',[['all','全部'],['day','日'],['week','周'],['month','月']],grain)}${obsPeriodPicker()}${manage}</div><div class="obs-scopeline"><span>统计范围</span>${chips.join('')}<span class="obs-info" tabindex="0">${obsIcon('info',13)}口径说明<span class="obs-tip" role="tooltip">${escapeHTML(hint)}</span></span></div></div>`;
 }
 function obsFilteredRuns(){
-  let runs=scopedRuns(state.data.runs||[]);
+  ensureObsUserFilter();
+  let runs=obsUnassignedProject()?(state.data.runs||[]).filter(r=>!runProjectId(r)):scopedRuns(state.data.runs||[]);
   if(obsScope()==='user'&&state.obsUserFilter)runs=runs.filter(r=>obsRunMatchesUser(r,state.obsUserFilter));
   if(state.obsSourceFilter)runs=runs.filter(r=>String(obsLinkedIssue(r)?.source||'local').toLowerCase()===state.obsSourceFilter);
   return runs;
@@ -569,6 +584,7 @@ function renderObservability(){
     host.innerHTML=`<div class="obs-pane active">${obsFilterBar()}${html}</div>`;
     state.obsSelects=obsEnhanceSelects(host);
     host.querySelectorAll('[data-obs-scope]').forEach(b=>b.onclick=()=>setObsScope(b.dataset.obsScope));
+    host.querySelectorAll('[data-obs-project-scope]').forEach(b=>b.onclick=()=>setObsProjectScope(b.dataset.obsProjectScope));
     host.querySelectorAll('[data-obs-grain]').forEach(b=>b.onclick=()=>setObsTrendGrain(b.dataset.obsGrain));
     host.querySelectorAll('[data-obs-period-step]').forEach(b=>b.onclick=()=>obsShiftPeriod(Number(b.dataset.obsPeriodStep)));
     const periodInput=host.querySelector('#obsPeriodInput');
@@ -1096,7 +1112,7 @@ function obsUsageKpis(view){
   const cum=(text)=>view.period?text:'';
   const tokenFoot=view.inputTokens!=null?`入 ${formatTokens(view.inputTokens)} / 出 ${formatTokens(view.outputTokens)}`:(view.period?`该${obsGrainCaption()} ${formatTokens(totalTokens)}`:`累计 ${formatTokens(totalTokens)}`);
   const successFoot=`${succeeded} 成功 / ${failed} 失败${view.firstPass!=null?` · 一次通过 ${total?percent(view.firstPass):'—'}`:''}`;
-  const costFoot='人民币 · Hy 上报 / 其他公价';
+  const costFoot='人民币 · Hy 上报 / 其他公价 · 普通对话成本未计入';
   const deltaTip=prevLabel?[`环比对象：${escapeHTML(prevLabel)}`]:[];
   const convTokens=view.conversationTokens||0,convCost=view.conversationCost||0;
   const convTip=convTokens?[['其中对话改代码',formatTokens(convTokens)]]:[];
@@ -1356,11 +1372,11 @@ function obsCrossProjectTable(){
   if(obsScope()!=='user'||!state.obsUserFilter)return null;
   const rows=state.obsCrossProject?.projectUsage||[];
   if(!rows.length)return null;
-  const current=state.projectFilter;
+  const current=obsUnassignedProject()?'':state.projectFilter;
   const other=rows.filter(r=>r.projectId&&r.projectId!==current);
   const totalTokens=rows.reduce((n,r)=>n+(r.tokens||0),0);
   const here=rows.find(r=>r.projectId===current);
-  const note=other.length
+  const note=obsUnassignedProject()?'上方 KPI 仅含未归属项目；此表另列该责任人在各项目的执行用量。':other.length
     ?`该责任人在 ${rows.length} 个项目有执行。上面 KPI 只含「${escapeHTML(obsProjectName(current))}」（${formatTokens(here?.tokens||0)}），跨项目合计 ${formatTokens(totalTokens)}。`
     :`该责任人目前只在当前项目有执行记录，个人与项目切换不会把其他项目加进来。`;
   return {key:'projects',title:'该责任人在各项目',sub:note,tables:[{headers:['项目','运行','需求','Tokens','成本'],rows:rows.map(r=>obsRow([`<b>${escapeHTML(obsProjectName(r.projectId))}</b>${r.projectId===current?'<span class="obs-pill">当前</span>':''}`,String(r.runs||0),String(r.uniqueIssues||0),formatTokens(r.tokens),costLabel(r.costCny,r.costKnown)],'',r.projectId===current?'obs-current-project':''))}]};
@@ -1496,11 +1512,11 @@ function obsDeliveriesCard(){
 }
 function obsPlain(v){return String(v==null?'':v).replace(/<[^>]+>/g,'')}
 function obsReportScope(){
-  const project=currentProject();
+  ensureObsUserFilter();
   const dim=obsScope()==='project'?'项目':'个人';
-  const who=obsScope()==='project'?(project?.name||project?.id||'当前项目'):(state.obsUserFilter?obsUserName(state.obsUserFilter):'全部成员');
+  const who=obsScope()==='project'?obsProjectLabel():(state.obsUserFilter?obsUserName(state.obsUserFilter):'请选择责任人');
   const source=(state.obsSourceFilter?obsSourceLabel(state.obsSourceFilter):'全部需求来源')+' · '+({internal:'平台内执行',external:'外部工作流'}[state.obsOriginFilter]||'全部执行');
-  return {project:project?.name||project?.id||'全部项目', dim, who, source, at:new Date().toLocaleString()};
+  return {project:obsProjectLabel(), dim, who, source, at:new Date().toLocaleString()};
 }
 function obsReportTable(title,headers,rows){
   if(!rows)return `<section class="block"><h2>${title}</h2><p class="empty">暂无数据</p></section>`;
@@ -1510,9 +1526,8 @@ async function exportObsReport(){
   ensureObsUserFilter();
   toast('正在生成报告…');
   try{
-    if(!state.obsAnalyticsFull){
-      state.analytics=await api('/api/analytics'+analyticsQuery({overview:false}),{silent:true});
-      state.obsAnalyticsFull=true;
+    if(!state.obsAnalyticsFull||state.obsAnalyticsQuery!==analyticsQuery({overview:false})){
+      if(!await loadObsAnalytics(false,true))return;
     }
     const html=buildObsReportHTML();
     const blob=new Blob([html],{type:'text/html;charset=utf-8'});
@@ -1552,7 +1567,7 @@ function buildObsReportHTML(){
     ['成功率',summary.totalRuns?percent(summary.successRate):'—',`${summary.succeededRuns||0} 成功 / ${summary.failedRuns||0} 失败`],
     ['一次通过',summary.totalRuns?percent(summary.firstPassRate):'—',`${summary.reworkedRuns||0} 次返工`],
     ['Token',formatTokens(summary.totalTokens),`入 ${formatTokens(summary.inputTokens)} / 出 ${formatTokens(summary.outputTokens)}`],
-    ['成本',obsPlain(costLabel(summary.totalCostCny,summary.costUnknownRuns===0)),summary.costUnknownRuns?`${summary.costUnknownRuns} 次未识别`:'已识别'],
+    ['成本',obsPlain(costLabel(summary.totalCostCny,summary.costUnknownRuns===0)),(summary.costUnknownRuns?`${summary.costUnknownRuns} 次未识别`:'已识别')+' · 普通对话成本未计入'],
     ['缓存命中',(Number(summary.inputTokens||0)+Number(summary.cacheReadTokens||0))?Number(summary.cacheHitRate||0).toFixed(0)+'%':'—',`缓存读 ${formatTokens(summary.cacheReadTokens||0)}`],
     ['P95 执行',summary.executionP95DurationMs?duration(summary.executionP95DurationMs):'—',summary.executionAverageDurationMs?`平均 ${duration(summary.executionAverageDurationMs)}`:'—'],
     ['对话改代码',`${summary.conversationIssues||0} 个需求`,`${summary.conversationWorkspaces||0} 个工作区 · ${formatTokens(summary.conversationTokens||0)} · ${obsPlain(costLabel(summary.conversationCostCny||0,true))}`],
