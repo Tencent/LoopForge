@@ -22,7 +22,8 @@
 #   AGENTFLOW_E2E_LOCAL_MYSQL_CONTAINER MySQL container name (default
 #                                    agentflow-e2e-local-mysql); set it when
 #                                    several checkouts run the suite at once
-#   AGENTFLOW_E2E_MODEL_SANDBOX      sandbox for model scenarios (default local:
+#   AGENTFLOW_E2E_MODEL_SANDBOX      sandbox for model scenarios (default
+#                                    e2e-native, which uses the host's CLIs:
 #                                    the seeded Docker image has no model CLI)
 #   AGENTFLOW_E2E_KEEP=1             keep the platform, database and files; the
 #                                    exports needed to rerun single files against
@@ -153,7 +154,6 @@ api() {
 }
 api POST /api/projects '{"id":"e2e-auto","key":"E2E","name":"E2E 自动化测试（勿用）","color":"#8b5cf6","ownerId":900001}'
 api PUT /api/sandboxes '{"id":"generic-docker","name":"Generic Docker","projectId":"e2e-auto","driver":"docker","dockerfile":{"content":"FROM python:3.12-slim\nRUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates && rm -rf /var/lib/apt/lists/*\n"},"readOnlyRootFS":false}'
-api PUT /api/sandboxes '{"id":"local","name":"Local","projectId":"e2e-auto","driver":"local"}'
 
 REPO="$WORK/repo"
 mkdir -p "$REPO/src" && git -C "$REPO/src" init -q -b main &&
@@ -164,7 +164,7 @@ mkdir -p "$REPO/src" && git -C "$REPO/src" init -q -b main &&
 
 export AGENTFLOW_E2E_BASE=$BASE AGENTFLOW_E2E_TOKEN=$TOKEN AGENTFLOW_E2E_TOKEN_B=$TOKEN_B
 export AGENTFLOW_E2E_REPO_CLONE_URL="$REPO/remote.git" AGENTFLOW_E2E_REPO_BRANCH=main
-export AGENTFLOW_E2E_MODEL_SANDBOX=${AGENTFLOW_E2E_MODEL_SANDBOX:-local}
+export AGENTFLOW_E2E_MODEL_SANDBOX=${AGENTFLOW_E2E_MODEL_SANDBOX:-e2e-native}
 # A fresh database has no data-rich project to tour; tour the e2e project.
 export AGENTFLOW_E2E_VIEW_PROJECT=${AGENTFLOW_E2E_VIEW_PROJECT:-e2e-auto}
 if [ "${AGENTFLOW_E2E_KEEP:-0}" = 1 ]; then

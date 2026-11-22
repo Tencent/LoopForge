@@ -91,6 +91,12 @@ jobs:
         working-directory: e2e
       - run: bash ../scripts/install-playwright-deps.sh npx playwright
         working-directory: e2e
+      # The e2e SOPs and the runner the suite starts use the native e2e sandbox,
+      # which is bwrap on Linux.
+      - name: Let bubblewrap create user namespaces
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - name: Install bubblewrap for the native sandbox
+        run: sudo apt-get update && sudo apt-get install -y bubblewrap
       - name: Start clean local installation
         run: |
           bash scripts/dev.sh > /tmp/loopforge.log 2>&1 &
@@ -176,6 +182,8 @@ jobs:
     # The path a new user takes: one-command install, then accounts created in the browser.
     # Pulls the GHCR release pinned in compose.yaml; release.yml smoke-tests each newly published image.
     # A pin bumped ahead of its tag has no image yet, so that commit is checked from source.
+    # So is a commit whose schema scripts differ from the pinned tag: the installer applies
+    # this checkout's scripts, which the released image may not be able to read.
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
@@ -191,14 +199,22 @@ jobs:
         working-directory: e2e
       - run: bash ../scripts/install-playwright-deps.sh npx playwright
         working-directory: e2e
-      - name: Install the pinned release, or build it while that release is not published yet
+      - name: Install the pinned release, or build this checkout when the release cannot run it
         run: |
           pinned=$(sed -n 's/^ *image: \${LOOPFORGE_IMAGE:-\(.*\)}$/\1/p' compose.yaml)
-          if docker manifest inspect "$pinned" > /dev/null 2>&1; then
-            ./start.sh -d
-          else
+          tag="v${pinned##*:}"
+          schema=(migrations scripts/install-schema-extensions.sh scripts/install-observability-schema.sh)
+          if ! docker manifest inspect "$pinned" > /dev/null 2>&1; then
             echo "::notice::$pinned is not published yet; building this checkout"
             ./start.sh dev
+          elif ! git fetch --quiet --depth=1 origin "refs/tags/$tag:refs/tags/$tag"; then
+            echo "::warning::could not fetch $tag to compare schema scripts; installing $pinned"
+            ./start.sh -d
+          elif ! git diff --quiet "$tag" -- "${schema[@]}"; then
+            echo "::notice::schema scripts changed since $tag; building this checkout"
+            ./start.sh dev
+          else
+            ./start.sh -d
           fi
       - name: Generate test passwords
         run: |
