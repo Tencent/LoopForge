@@ -14,6 +14,11 @@ import (
 
 const processWaitDelay = time.Second
 
+// maxProcessStderrTail bounds the stderr kept on a failed process error. The
+// tail is what explains an Agent CLI failure (quota, auth, missing binary)
+// instead of the bare "exit status 1" the node error used to show.
+const maxProcessStderrTail = 4 << 10
+
 var errProcessNotStarted = errors.New("process was not started")
 
 // runCommand streams process telemetry, coordinating the Claude login callback
@@ -38,7 +43,8 @@ func runCommand(cmd *exec.Cmd, sink EventSink, commands ...CommandSpec) (string,
 	if bridge != nil {
 		stdout.filter = bridge.filter
 	}
-	stderr := &processWriter{output: &buf, mu: &mu, sink: sink, name: "process.stderr", level: "error"}
+	stderrTail := &processStderrTail{max: maxProcessStderrTail}
+	stderr := &processWriter{output: &buf, mu: &mu, sink: sink, name: "process.stderr", level: "error", tail: stderrTail}
 	cmd.Stdout, cmd.Stderr = stdout, stderr
 	// When hooks spawn detached children that inherit stdout/stderr, bound how
 	// long os/exec waits for those inherited descriptors after the direct child
@@ -101,7 +107,61 @@ func runCommand(cmd *exec.Cmd, sink EventSink, commands ...CommandSpec) (string,
 		}
 		sink(domain.TelemetryEvent{Category: "process", Name: "process.finished", Timestamp: time.Now().UTC(), Phase: phase, Level: level, Message: commandResult(err), Attributes: attrs})
 	}
+	if err != nil {
+		if tail := stderrTail.text(); tail != "" {
+			err = &ProcessError{Err: err, StderrTail: tail}
+		}
+	}
 	return buf.String(), err
+}
+
+// ProcessError carries a bounded stderr tail next to the wrapped process error.
+// Error() intentionally keeps the original message so existing callers that
+// render it are unchanged; callers that can show failure detail (Agent nodes)
+// read StderrTail through ProcessFailureStderr.
+type ProcessError struct {
+	Err        error
+	StderrTail string
+}
+
+func (e *ProcessError) Error() string { return e.Err.Error() }
+func (e *ProcessError) Unwrap() error { return e.Err }
+
+// ProcessFailureStderr extracts the captured stderr tail from a failed process.
+func ProcessFailureStderr(err error) string {
+	var processErr *ProcessError
+	if errors.As(err, &processErr) {
+		return strings.TrimSpace(processErr.StderrTail)
+	}
+	return ""
+}
+
+// processStderrTail keeps the last max bytes of stderr lines.
+type processStderrTail struct {
+	max  int
+	data []byte
+}
+
+func (t *processStderrTail) add(line string) {
+	if t == nil || t.max <= 0 {
+		return
+	}
+	t.data = append(t.data, line...)
+	t.data = append(t.data, '\n')
+	if len(t.data) > t.max {
+		t.data = t.data[len(t.data)-t.max:]
+	}
+}
+
+func (t *processStderrTail) text() string {
+	if t == nil || len(t.data) == 0 {
+		return ""
+	}
+	value := strings.TrimSpace(string(t.data))
+	if cut := strings.IndexByte(value, 0); cut >= 0 {
+		value = value[:cut]
+	}
+	return value
 }
 
 type processWriter struct {
@@ -112,6 +172,7 @@ type processWriter struct {
 	name    string
 	level   string
 	pending bytes.Buffer
+	tail    *processStderrTail
 }
 
 func (w *processWriter) Write(p []byte) (int, error) {
@@ -152,6 +213,9 @@ func (w *processWriter) emit(line string) {
 	}
 	w.output.WriteString(line)
 	w.output.WriteByte('\n')
+	if w.tail != nil {
+		w.tail.add(line)
+	}
 	if w.sink != nil {
 		w.sink(domain.TelemetryEvent{Category: "process", Name: w.name, Phase: "progress", Level: w.level, Message: line})
 	}
