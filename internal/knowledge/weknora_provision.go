@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -54,6 +55,11 @@ func (s *Service) ProvisionWeKnora(ctx context.Context, input WeKnoraProvisionIn
 		if baseURL == "" {
 			baseURL = "http://weknora-app:8080"
 		}
+		validated, err := ValidateOutboundWeKnoraURL(baseURL)
+		if err != nil {
+			return WeKnoraProvisionResult{}, apperr.New(apperr.Invalid, err.Error())
+		}
+		baseURL = validated
 		uiURL = strings.TrimSpace(os.Getenv("LOOPFORGE_WEKNORA_UI_URL"))
 		if uiURL == "" {
 			uiURL = "http://localhost:18081"
@@ -85,10 +91,14 @@ func (s *Service) ProvisionWeKnora(ctx context.Context, input WeKnoraProvisionIn
 		msg = "已启动内置 WeKnora 实例并自动写入知识中心配置"
 
 	case "external":
-		targetURL = NormalizeWeKnoraBaseURL(input.URL)
-		if targetURL == "" {
-			return WeKnoraProvisionResult{}, apperr.New(apperr.Invalid, "请填写已有 WeKnora 服务地址")
+		validated, err := ValidateOutboundWeKnoraURL(input.URL)
+		if err != nil {
+			if errors.Is(err, ErrNotConfigured) {
+				return WeKnoraProvisionResult{}, apperr.New(apperr.Invalid, "请填写已有 WeKnora 服务地址")
+			}
+			return WeKnoraProvisionResult{}, apperr.New(apperr.Invalid, err.Error())
 		}
+		targetURL = validated
 		if tok := strings.TrimSpace(input.Token); tok != "" {
 			apiKey = stripBearer(tok)
 		} else if strings.TrimSpace(input.Email) != "" && strings.TrimSpace(input.Password) != "" {

@@ -23,6 +23,8 @@ import (
 	"agentflow/internal/repo"
 	"agentflow/internal/runtime"
 	"agentflow/internal/tracker"
+
+	"github.com/gin-gonic/gin"
 )
 
 const managementSentinel = "00000000-0000-0000-0000-000000000000"
@@ -478,4 +480,48 @@ func TestKnowledgeManagement(t *testing.T) {
 			t.Fatalf("reference options = %d %s", rec.Code, rec.Body.String())
 		}
 	})
+}
+
+func TestCORSAllowsKnowledgePatch(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.Use(cors())
+	router.PATCH("/api/knowledge/sources/:id", func(c *gin.Context) {
+		c.Status(http.StatusNoContent)
+	})
+
+	recorder := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodOptions, "/api/knowledge/sources/kb-1", nil)
+	req.Host = "console.example.com"
+	req.Header.Set("Origin", "http://console.example.com")
+	req.Header.Set("Access-Control-Request-Method", http.MethodPatch)
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusNoContent {
+		t.Fatalf("preflight status = %d", recorder.Code)
+	}
+	allowed := recorder.Header().Get("Access-Control-Allow-Methods")
+	if !strings.Contains(allowed, http.MethodPatch) {
+		t.Fatalf("Access-Control-Allow-Methods = %q, want PATCH", allowed)
+	}
+}
+
+func TestKnowledgeCapabilitiesForceRefreshRequiresAdmin(t *testing.T) {
+	t.Setenv("AGENTFLOW_AUTH_REQUIRED", "true")
+	// 路由层的全局鉴权会先把未登录请求拦成 401，这里直接驱动 handler，
+	// 单独验证 refresh 分支的管理员门禁（受保护路径本身由路由测试覆盖）。
+	h := &knowledgeHandlers{deps: &deps{}}
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/api/knowledge/connections/wk-1/capabilities?refresh=1", nil)
+
+	h.connectionCapabilities(ctx)
+
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("force refresh without admin = %d %s", recorder.Code, recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), "只有平台管理员可以强制刷新") {
+		t.Fatalf("force refresh message = %s", recorder.Body.String())
+	}
 }

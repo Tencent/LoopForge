@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -84,16 +85,47 @@ func (s KnowledgeSettings) EffectiveProvider() string {
 func (s KnowledgeSettings) Public() KnowledgeSettings {
 	s.TokenConfigured = strings.TrimSpace(s.Token) != ""
 	s.Token = ""
+	s.URL = publicKnowledgeURL(s.URL, s.EffectiveProvider())
+	// A connection without an explicit provider inherits the top-level one, so
+	// the redaction must judge it by that inherited provider too.
+	topProvider := s.EffectiveProvider()
 	if len(s.Connections) > 0 {
 		conns := make([]KnowledgeConnection, len(s.Connections))
 		for i, c := range s.Connections {
 			c.TokenConfigured = strings.TrimSpace(c.Token) != ""
 			c.Token = ""
+			provider := c.EffectiveProvider()
+			if strings.TrimSpace(c.Provider) == "" {
+				provider = topProvider
+			}
+			c.URL = publicKnowledgeURL(c.URL, provider)
 			conns[i] = c
 		}
 		s.Connections = conns
 	}
 	return s
+}
+
+// publicKnowledgeURL removes credentials that can hide in a URL query or
+// fragment before settings are echoed to a browser. Only WeKnora base URLs are
+// touched: a saved WeKnora URL never carries a query (it is rejected on
+// write), while other providers may legitimately use one.
+func publicKnowledgeURL(raw, provider string) string {
+	if provider != KnowledgeProviderWeKnora {
+		return raw
+	}
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return raw
+	}
+	if u, err := url.Parse(raw); err == nil {
+		u.RawQuery, u.ForceQuery, u.Fragment = "", false, ""
+		return u.String()
+	}
+	if cut := strings.IndexAny(raw, "?#"); cut >= 0 {
+		return raw[:cut]
+	}
+	return raw
 }
 
 // ActiveConnections returns all enabled connections with valid URL and Token.
@@ -204,13 +236,18 @@ const (
 	CapKBManage        KnowledgeCapability = "kb_manage"        // 库创建/改名/删除
 	CapDocWrite        KnowledgeCapability = "doc_write"        // 文档上传/URL/手工创建/更新/删除
 	CapChunkRead       KnowledgeCapability = "chunk_read"       // 分块列表读取
-	CapPreviewDownload KnowledgeCapability = "preview_download" // 原文流式预览与下载
+	CapPreview         KnowledgeCapability = "preview"          // 原文在线预览
+	CapDownload        KnowledgeCapability = "download"         // 原文下载
+	CapPreviewDownload KnowledgeCapability = "preview_download" // preview/download 聚合，兼容旧控制台
 	CapReparse         KnowledgeCapability = "reparse"          // 文档重解析
 )
 
-// KnowledgeCapabilities is the full probe order exposed to consoles.
+// KnowledgeCapabilities is the full probe order exposed to consoles. The
+// aggregate preview_download entry is kept for consoles written against the
+// older contract; preview and download report independently so a permission
+// difference between the two routes disables only the failing action.
 var KnowledgeCapabilities = []KnowledgeCapability{
-	CapKBManage, CapDocWrite, CapChunkRead, CapPreviewDownload, CapReparse,
+	CapKBManage, CapDocWrite, CapChunkRead, CapPreview, CapDownload, CapPreviewDownload, CapReparse,
 }
 
 // CapabilityState is the tri-state result of one capability probe. Unknown

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -47,11 +48,15 @@ func weKnoraCapabilityProbes() []capabilityProbe {
 		{domain.CapDocWrite, http.MethodPut, "/api/v1/knowledge/manual/" + id, map[string]any{}},
 		{domain.CapReparse, http.MethodPost, "/api/v1/knowledge/" + id + "/reparse", map[string]any{}},
 		{domain.CapChunkRead, http.MethodGet, "/api/v1/chunks/" + id + "?page=1&page_size=1", nil},
-		{domain.CapPreviewDownload, http.MethodGet, "/api/v1/knowledge/" + id + "/preview", nil},
+		// Preview and download are two upstream routes with independent
+		// permissions, so each gets its own probe and verdict; the aggregate
+		// preview_download entry is derived from both afterwards.
+		{domain.CapPreview, http.MethodGet, "/api/v1/knowledge/" + id + "/preview", nil},
+		{domain.CapDownload, http.MethodGet, "/api/v1/knowledge/" + id + "/download", nil},
 	}
 }
 
-// probeConnectionCapabilities discovers the five management capabilities of one
+// probeConnectionCapabilities discovers the management capabilities of one
 // connection. Probes run concurrently with an individual timeout, and a failed
 // probe only yields unknown/unavailable for that capability: it never turns the
 // connection itself into a failure.
@@ -84,7 +89,40 @@ func probeConnectionCapabilitiesWithin(ctx context.Context, conn domain.Knowledg
 		result := <-results
 		out.Capabilities[result.capability] = result.status
 	}
+	// Aggregate for consoles that only know the older single dimension.
+	out.Capabilities[domain.CapPreviewDownload] = mergeCapabilityStatuses(
+		out.Capabilities[domain.CapPreview],
+		out.Capabilities[domain.CapDownload],
+	)
 	return out
+}
+
+// mergeCapabilityStatuses folds two probe verdicts for one capability.
+// Available wins because one reachable endpoint already proves the credential
+// scope; the capability is only denied when every probed endpoint denies it.
+func mergeCapabilityStatuses(a, b domain.CapabilityStatus) domain.CapabilityStatus {
+	if a.Status == domain.CapabilityAvailable || b.Status == domain.CapabilityAvailable {
+		return availableStatus()
+	}
+	if a.Status == domain.CapabilityUnavailable && b.Status == domain.CapabilityUnavailable {
+		reasons := make([]string, 0, 2)
+		for _, reason := range []string{a.Reason, b.Reason} {
+			reason = strings.TrimSpace(reason)
+			if reason != "" && !slices.Contains(reasons, reason) {
+				reasons = append(reasons, reason)
+			}
+		}
+		return unavailableStatus(strings.Join(reasons, "；"))
+	}
+	// At least one probe was inconclusive: keep the unknown verdict so the
+	// shorter TTL retries, unless the other probe already proved availability.
+	if a.Status == domain.CapabilityUnknown && strings.TrimSpace(a.Reason) != "" {
+		return a
+	}
+	if b.Status == domain.CapabilityUnknown {
+		return b
+	}
+	return a
 }
 
 type capabilityProbeResult struct {
@@ -293,20 +331,27 @@ func (c *capabilityCache) get(ctx context.Context, conn domain.KnowledgeConnecti
 	// for everyone else. It stays bounded by the probe timeout, and the caller
 	// below still returns as soon as its own context ends.
 	go func() {
+		var caps domain.ConnectionCapabilities
+		defer func() {
+			// A probe (or its transport) must never take the process down or
+			// leave waiters blocked, so cleanup and completion live in defer.
+			if recovered := recover(); recovered != nil {
+				caps = capabilitiesWithReason(domain.CapabilityUnknown, "能力探测异常（内部错误）")
+			}
+			c.mu.Lock()
+			if c.inflight[flightKey] == flight {
+				delete(c.inflight, flightKey)
+			}
+			if c.generations[key] == flight.generation {
+				c.rememberLocked(key, fingerprint, flight.generation, caps)
+			}
+			flight.caps = cloneCapabilitySet(caps)
+			close(flight.done)
+			c.mu.Unlock()
+		}()
 		probeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), weknoraCapabilityProbeTimeout)
 		defer cancel()
-		caps := probe(probeCtx)
-
-		c.mu.Lock()
-		if c.inflight[flightKey] == flight {
-			delete(c.inflight, flightKey)
-		}
-		if c.generations[key] == flight.generation {
-			c.rememberLocked(key, fingerprint, flight.generation, caps)
-		}
-		flight.caps = cloneCapabilitySet(caps)
-		close(flight.done)
-		c.mu.Unlock()
+		caps = probe(probeCtx)
 	}()
 	return c.await(ctx, flight)
 }
@@ -380,11 +425,30 @@ func (c *capabilityCache) demote(conn domain.KnowledgeConnection, capability dom
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	entry, ok := c.items[key]
-	if !ok || entry.fingerprint != fingerprint {
+	if !ok {
+		// A concurrent refresh may have dropped the entry between the gated
+		// request and this denial. The probe it started must not write back an
+		// available verdict that predates the live denial, so invalidate the
+		// generation even though there is no entry to rewrite. The fingerprint
+		// guard below still protects other configurations of the same key.
+		c.generations[key]++
+		return false
+	}
+	if entry.fingerprint != fingerprint {
 		return false
 	}
 	caps := cloneCapabilitySet(entry.caps)
 	caps.Capabilities[capability] = status
+	// preview_download is derived from the two endpoint verdicts, so a live
+	// denial must recompute it. Without this, denying both endpoints one after
+	// the other would leave the aggregate stuck at available and keep older
+	// consoles (which only read the aggregate) permissive.
+	if capability == domain.CapPreview || capability == domain.CapDownload {
+		caps.Capabilities[domain.CapPreviewDownload] = mergeCapabilityStatuses(
+			caps.Capabilities[domain.CapPreview],
+			caps.Capabilities[domain.CapDownload],
+		)
+	}
 	// Bump the generation so a probe that started before the denial cannot
 	// overwrite the demotion when it finishes, and refresh the TTL so the
 	// demotion is not immediately treated as an expired entry.

@@ -161,7 +161,15 @@ func (h *knowledgeHandlers) check(c *gin.Context) {
 
 // 路由: g.GET("/api/knowledge/connections/:id/capabilities", h.connectionCapabilities)
 func (h *knowledgeHandlers) connectionCapabilities(c *gin.Context) {
-	caps, err := h.svc.WeKnoraCapabilities(c.Request.Context(), c.Param("id"))
+	refresh := strings.TrimSpace(c.Query("refresh"))
+	force := refresh == "1" || strings.EqualFold(refresh, "true")
+	// 强制刷新会让缓存与在途探测失效并立刻重发 6 个上游探针，只有能做接入
+	// 配置的平台管理员才允许放大这一次调用；普通登录用户仍可读缓存结果。
+	if force && !h.canManage(c.Request) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "只有平台管理员可以强制刷新知识库连接能力"})
+		return
+	}
+	caps, err := h.svc.WeKnoraCapabilities(c.Request.Context(), c.Param("id"), force)
 	render(c, caps, err)
 }
 

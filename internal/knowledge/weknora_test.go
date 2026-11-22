@@ -1302,7 +1302,7 @@ func TestWeKnora_CapabilityUnavailableBlocksWrites(t *testing.T) {
 	if hits := businessHits.Load(); hits != 0 {
 		t.Fatalf("business endpoint must not be called when the capability is unavailable, got %d", hits)
 	}
-	caps, err := svc.WeKnoraCapabilities(context.Background(), "wk-1")
+	caps, err := svc.WeKnoraCapabilities(context.Background(), "wk-1", false)
 	if err != nil || caps.Capabilities[domain.CapKBManage].Status != domain.CapabilityUnavailable {
 		t.Fatalf("capabilities = %#v, %v", caps, err)
 	}
@@ -1464,7 +1464,7 @@ func TestWeKnora_DeniedBusinessCallDemotesCachedCapability(t *testing.T) {
 	if hits := businessHits.Load(); hits != 1 {
 		t.Fatalf("expected exactly one business request, got %d", hits)
 	}
-	caps, err := svc.WeKnoraCapabilities(context.Background(), "wk-1")
+	caps, err := svc.WeKnoraCapabilities(context.Background(), "wk-1", false)
 	if err != nil || caps.Capabilities[domain.CapKBManage].Status != domain.CapabilityUnavailable {
 		t.Fatalf("cache should be demoted after a 403, got %#v, %v", caps, err)
 	}
@@ -1582,10 +1582,10 @@ func TestWeKnora_InvalidationLeavesUnchangedConnectionsCached(t *testing.T) {
 	store.settings = domain.KnowledgeSettings{Enabled: true, Connections: conns}
 	svc := NewService(store, func() string { return "id-1" })
 	ctx := context.Background()
-	if _, err := svc.WeKnoraCapabilities(ctx, "wk-1"); err != nil {
+	if _, err := svc.WeKnoraCapabilities(ctx, "wk-1", false); err != nil {
 		t.Fatalf("warm wk-1: %v", err)
 	}
-	if _, err := svc.WeKnoraCapabilities(ctx, "wk-2"); err != nil {
+	if _, err := svc.WeKnoraCapabilities(ctx, "wk-2", false); err != nil {
 		t.Fatalf("warm wk-2: %v", err)
 	}
 	before1, before2 := hits1.Load(), hits2.Load()
@@ -1597,13 +1597,13 @@ func TestWeKnora_InvalidationLeavesUnchangedConnectionsCached(t *testing.T) {
 	changed[1].Token = "tok-2-rotated"
 	svc.invalidateChangedConnectionCapabilities(conns, changed)
 
-	if _, err := svc.WeKnoraCapabilities(ctx, "wk-1"); err != nil {
+	if _, err := svc.WeKnoraCapabilities(ctx, "wk-1", false); err != nil {
 		t.Fatalf("cached wk-1: %v", err)
 	}
 	if got := hits1.Load(); got != before1 {
 		t.Fatalf("unchanged connection was re-probed: %d -> %d", before1, got)
 	}
-	if _, err := svc.WeKnoraCapabilities(ctx, "wk-2"); err != nil {
+	if _, err := svc.WeKnoraCapabilities(ctx, "wk-2", false); err != nil {
 		t.Fatalf("re-probe wk-2: %v", err)
 	}
 	if got := hits2.Load(); got <= before2 {
@@ -1648,5 +1648,113 @@ func TestWeKnora_CheckConnectionInheritsTopLevelProvider(t *testing.T) {
 	}
 	if res.Capabilities == nil || res.Capabilities.Capabilities[domain.CapDocWrite].Status != domain.CapabilityAvailable {
 		t.Fatalf("capabilities should follow the inherited WeKnora provider, got %#v", res.Capabilities)
+	}
+}
+
+func TestWeKnoraCapabilitiesRefreshBypassesCache(t *testing.T) {
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, weknoraSentinelID) {
+			hits.Add(1)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"success":false,"error":{"code":"not_found","message":"not found"}}`))
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer srv.Close()
+
+	store := newFakeStore()
+	store.settings = domain.KnowledgeSettings{
+		Enabled: true,
+		Connections: []domain.KnowledgeConnection{{
+			ID: "wk-1", Provider: domain.KnowledgeProviderWeKnora, URL: srv.URL, Token: "tok", Enabled: true,
+		}},
+	}
+	svc := NewService(store, func() string { return "id-1" })
+	ctx := context.Background()
+	if _, err := svc.WeKnoraCapabilities(ctx, "wk-1", false); err != nil {
+		t.Fatalf("warm capabilities: %v", err)
+	}
+	warm := hits.Load()
+	if warm == 0 {
+		t.Fatal("capability probes did not run")
+	}
+	if _, err := svc.WeKnoraCapabilities(ctx, "wk-1", false); err != nil {
+		t.Fatalf("cached capabilities: %v", err)
+	}
+	if got := hits.Load(); got != warm {
+		t.Fatalf("cached call re-probed: %d -> %d", warm, got)
+	}
+	if _, err := svc.WeKnoraCapabilities(ctx, "wk-1", true); err != nil {
+		t.Fatalf("refresh capabilities: %v", err)
+	}
+	if got := hits.Load(); got <= warm {
+		t.Fatalf("refresh=true kept the stale verdict: %d -> %d", warm, got)
+	}
+}
+
+func TestWeKnoraCapabilitiesLegacyDefaultConnection(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, weknoraSentinelID) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"success":false,"error":{"code":"not_found","message":"not found"}}`))
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer srv.Close()
+
+	store := newFakeStore()
+	store.settings = domain.KnowledgeSettings{
+		Enabled:  true,
+		Provider: domain.KnowledgeProviderWeKnora,
+		URL:      srv.URL,
+		Token:    "tok",
+	}
+	svc := NewService(store, func() string { return "id-1" })
+	caps, err := svc.WeKnoraCapabilities(context.Background(), "default", false)
+	if err != nil {
+		t.Fatalf("legacy default connection: %v", err)
+	}
+	if caps.Capabilities[domain.CapKBManage].Status != domain.CapabilityAvailable {
+		t.Fatalf("legacy default probe = %q", caps.Capabilities[domain.CapKBManage].Status)
+	}
+
+	// With explicit connections configured, "default" is no longer a valid id.
+	store.settings.Connections = []domain.KnowledgeConnection{{
+		ID: "wk-1", Provider: domain.KnowledgeProviderWeKnora, URL: srv.URL, Token: "tok", Enabled: true,
+	}}
+	_, err = svc.WeKnoraCapabilities(context.Background(), "default", false)
+	wantKind(t, err, apperr.NotFound)
+}
+
+func TestValidateOutboundWeKnoraURLRejectsQuery(t *testing.T) {
+	for _, raw := range []string{
+		"https://weknora.example.com/?api_key=secret",
+		"https://weknora.example.com/api/v1?token=secret",
+		"https://weknora.example.com?",
+	} {
+		if _, err := ValidateOutboundWeKnoraURL(raw); err == nil {
+			t.Fatalf("%q must be rejected", raw)
+		} else if strings.Contains(err.Error(), "secret") {
+			t.Fatalf("error leaks the query value: %v", err)
+		}
+	}
+	// A malformed URL can still contain a credential; the parse error must not
+	// travel back through settings or audit messages verbatim.
+	if _, err := ValidateOutboundWeKnoraURL("https://weknora.example.com/%zz?api_key=secret"); err == nil {
+		t.Fatal("malformed URL must be rejected")
+	} else if strings.Contains(err.Error(), "secret") || strings.Contains(err.Error(), "%zz") {
+		t.Fatalf("parse error leaked the raw URL: %v", err)
+	}
+	got, err := ValidateOutboundWeKnoraURL("https://weknora.example.com/api/v1#frag")
+	if err != nil {
+		t.Fatalf("fragment-only URL must be accepted: %v", err)
+	}
+	if got != "https://weknora.example.com" {
+		t.Fatalf("normalized URL = %q", got)
 	}
 }

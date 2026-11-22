@@ -385,21 +385,62 @@ func TestCapabilityCacheDemoteDenied(t *testing.T) {
 	}
 }
 
+func TestCapabilityCacheDemoteRecomputesPreviewDownload(t *testing.T) {
+	cache := newCapabilityCache()
+	ctx := context.Background()
+	conn := capabilityTestConn()
+	cache.get(ctx, conn, func(context.Context) domain.ConnectionCapabilities {
+		return capabilitiesWithReason(domain.CapabilityAvailable, "")
+	})
+	if _, ok := cache.demoteDenied(conn, domain.CapPreview, &UpstreamError{Status: http.StatusForbidden, Structured: true, Message: "preview denied"}); !ok {
+		t.Fatal("preview denial must demote")
+	}
+	caps := cache.get(ctx, conn, func(context.Context) domain.ConnectionCapabilities {
+		t.Fatal("demotion must not expire the cache entry")
+		return domain.ConnectionCapabilities{}
+	})
+	if got := caps.Capabilities[domain.CapPreviewDownload].Status; got != domain.CapabilityAvailable {
+		t.Fatalf("aggregate = %q after one endpoint denial, want available", got)
+	}
+	if _, ok := cache.demoteDenied(conn, domain.CapDownload, &UpstreamError{Status: http.StatusNotFound}); !ok {
+		t.Fatal("download denial must demote")
+	}
+	caps = cache.get(ctx, conn, func(context.Context) domain.ConnectionCapabilities {
+		t.Fatal("demotion must not expire the cache entry")
+		return domain.ConnectionCapabilities{}
+	})
+	aggregate := caps.Capabilities[domain.CapPreviewDownload]
+	if aggregate.Status != domain.CapabilityUnavailable {
+		t.Fatalf("aggregate = %q after both endpoint denials, want unavailable", aggregate.Status)
+	}
+	if !strings.Contains(aggregate.Reason, "缺少对应权限") || !strings.Contains(aggregate.Reason, "探测路由缺失") {
+		t.Fatalf("aggregate reason = %q, want both endpoint reasons", aggregate.Reason)
+	}
+}
+
 func TestCapabilitySentinelProbePaths(t *testing.T) {
 	id := weknoraSentinelID
-	expected := map[domain.KnowledgeCapability]struct {
+	type probePath struct {
 		method string
 		path   string
-	}{
-		domain.CapKBManage:        {http.MethodPatch, "/api/v1/knowledge-bases/" + id},
-		domain.CapDocWrite:        {http.MethodPut, "/api/v1/knowledge/manual/" + id},
-		domain.CapReparse:         {http.MethodPost, "/api/v1/knowledge/" + id + "/reparse"},
-		domain.CapChunkRead:       {http.MethodGet, "/api/v1/chunks/" + id + "?page=1&page_size=1"},
-		domain.CapPreviewDownload: {http.MethodGet, "/api/v1/knowledge/" + id + "/preview"},
+	}
+	expected := map[domain.KnowledgeCapability][]probePath{
+		domain.CapKBManage:  {{http.MethodPatch, "/api/v1/knowledge-bases/" + id}},
+		domain.CapDocWrite:  {{http.MethodPut, "/api/v1/knowledge/manual/" + id}},
+		domain.CapReparse:   {{http.MethodPost, "/api/v1/knowledge/" + id + "/reparse"}},
+		domain.CapChunkRead: {{http.MethodGet, "/api/v1/chunks/" + id + "?page=1&page_size=1"}},
+		// Preview and download are separate upstream routes with independent
+		// permissions, so each is probed on its own.
+		domain.CapPreview:  {{http.MethodGet, "/api/v1/knowledge/" + id + "/preview"}},
+		domain.CapDownload: {{http.MethodGet, "/api/v1/knowledge/" + id + "/download"}},
 	}
 	probes := weKnoraCapabilityProbes()
-	if len(probes) != len(expected) {
-		t.Fatalf("probe count = %d, want %d", len(probes), len(expected))
+	wantCount := 0
+	for _, paths := range expected {
+		wantCount += len(paths)
+	}
+	if len(probes) != wantCount {
+		t.Fatalf("probe count = %d, want %d", len(probes), wantCount)
 	}
 	for _, probe := range probes {
 		want, ok := expected[probe.capability]
@@ -407,20 +448,30 @@ func TestCapabilitySentinelProbePaths(t *testing.T) {
 			t.Errorf("unexpected capability probe %s", probe.capability)
 			continue
 		}
-		if probe.method != want.method || probe.path != want.path {
-			t.Errorf("%s probe = %s %s, want %s %s", probe.capability, probe.method, probe.path, want.method, want.path)
+		matched := -1
+		for i, candidate := range want {
+			if probe.method == candidate.method && probe.path == candidate.path {
+				matched = i
+				break
+			}
 		}
-		if want.method == http.MethodGet {
+		if matched < 0 {
+			t.Errorf("%s probe = %s %s, want one of %v", probe.capability, probe.method, probe.path, want)
+			continue
+		}
+		expected[probe.capability] = append(want[:matched], want[matched+1:]...)
+		if probe.method == http.MethodGet {
 			if probe.payload != nil {
 				t.Errorf("%s GET probe must not send a body", probe.capability)
 			}
 		} else if probe.payload == nil {
 			t.Errorf("%s write probe must send an empty JSON body", probe.capability)
 		}
-		delete(expected, probe.capability)
 	}
-	for capability := range expected {
-		t.Errorf("capability %s has no probe", capability)
+	for capability, remaining := range expected {
+		if len(remaining) > 0 {
+			t.Errorf("capability %s is missing probes %v", capability, remaining)
+		}
 	}
 }
 
@@ -616,4 +667,159 @@ func TestCapabilityCacheDemoteSurvivesInflightProbe(t *testing.T) {
 	if status := caps.Capabilities[domain.CapKBManage].Status; status != domain.CapabilityAvailable {
 		t.Fatalf("other capabilities must stay available, got %q", status)
 	}
+}
+
+func TestCapabilityCacheDemoteAfterInvalidateBlocksStaleProbe(t *testing.T) {
+	cache := newCapabilityCache()
+	conn := capabilityTestConn()
+	capabilityRefreshFixture(t, cache, conn)
+
+	var calls int32
+	started := make(chan struct{})
+	release := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		cache.get(context.Background(), conn, func(context.Context) domain.ConnectionCapabilities {
+			if atomic.AddInt32(&calls, 1) == 1 {
+				close(started)
+				<-release
+			}
+			return capabilitiesWithReason(domain.CapabilityAvailable, "")
+		})
+		close(done)
+	}()
+	<-started
+
+	// 并发 refresh 已删除缓存项并推进代际；此时业务侧收到真实拒绝，
+	// demote 没有 entry 可改写，但仍必须让这次探针的结果作废。
+	cache.invalidate(conn.ID)
+	if _, ok := cache.demoteDenied(conn, domain.CapDocWrite, &UpstreamError{Status: http.StatusForbidden}); !ok {
+		t.Fatal("403 must be recognized as a capability denial")
+	}
+	close(release)
+	<-done
+
+	caps := cache.get(context.Background(), conn, func(context.Context) domain.ConnectionCapabilities {
+		atomic.AddInt32(&calls, 1)
+		return capabilitiesWithReason(domain.CapabilityAvailable, "")
+	})
+	if got := atomic.LoadInt32(&calls); got < 2 {
+		t.Fatalf("stale probe result was reused, probe calls = %d", got)
+	}
+	if status := caps.Capabilities[domain.CapDocWrite].Status; status != domain.CapabilityAvailable {
+		t.Fatalf("fresh probe doc_write = %q, want available", status)
+	}
+}
+
+func TestCapabilityProbePreviewDownloadMergesEndpoints(t *testing.T) {
+	cases := []struct {
+		name           string
+		previewStatus  int
+		downloadStatus int
+		want           domain.CapabilityState
+	}{
+		{"both allowed", http.StatusOK, http.StatusOK, domain.CapabilityAvailable},
+		{"download only", http.StatusForbidden, http.StatusOK, domain.CapabilityAvailable},
+		{"preview only", http.StatusOK, http.StatusForbidden, domain.CapabilityAvailable},
+		{"both denied", http.StatusForbidden, http.StatusForbidden, domain.CapabilityUnavailable},
+		{"preview denied download unknown", http.StatusForbidden, http.StatusInternalServerError, domain.CapabilityUnknown},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			client := capabilityTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch {
+				case strings.HasSuffix(r.URL.Path, "/preview"):
+					writeCapabilityError(w, tc.previewStatus, "")
+				case strings.HasSuffix(r.URL.Path, "/download"):
+					writeCapabilityError(w, tc.downloadStatus, "")
+				default:
+					writeCapabilityError(w, http.StatusNotFound, `{"error":{"code":"not_found","message":"资源不存在"}}`)
+				}
+			}))
+			caps := probeConnectionCapabilitiesWithin(context.Background(), capabilityTestConn(), client, 2*time.Second)
+			status := caps.Capabilities[domain.CapPreviewDownload]
+			if status.Status != tc.want {
+				t.Fatalf("preview_download = %q (reason %q), want %q", status.Status, status.Reason, tc.want)
+			}
+			if tc.want != domain.CapabilityAvailable && strings.TrimSpace(status.Reason) == "" {
+				t.Fatalf("preview_download must carry a reason when %q", tc.want)
+			}
+			// Each endpoint keeps its own verdict so a permission difference
+			// disables only the failing action.
+			if got, want := caps.Capabilities[domain.CapPreview].Status, classifyStatus(tc.previewStatus); got != want {
+				t.Fatalf("preview = %q, want %q", got, want)
+			}
+			if got, want := caps.Capabilities[domain.CapDownload].Status, classifyStatus(tc.downloadStatus); got != want {
+				t.Fatalf("download = %q, want %q", got, want)
+			}
+		})
+	}
+}
+
+// classifyStatus is the verdict a single sentinel route probe must produce for
+// a status code, mirroring classifyCapabilityProbe's documented matrix.
+func classifyStatus(code int) domain.CapabilityState {
+	switch {
+	case code == http.StatusOK || code == http.StatusBadRequest:
+		return domain.CapabilityAvailable
+	case code == http.StatusUnauthorized || code == http.StatusForbidden,
+		code == http.StatusNotFound || code == http.StatusMethodNotAllowed || code == http.StatusNotImplemented:
+		return domain.CapabilityUnavailable
+	default:
+		return domain.CapabilityUnknown
+	}
+}
+
+// TestManagementErrorDemotesOnlyFailingEndpoint pins that a denied download
+// leaves preview usable (and vice versa), instead of collapsing the shared
+// console dimension for the rest of the cache TTL.
+func TestManagementErrorDemotesOnlyFailingEndpoint(t *testing.T) {
+	svc := &Service{capabilities: newCapabilityCache()}
+	conn := capabilityTestConn()
+	svc.capabilities.get(context.Background(), conn, func(context.Context) domain.ConnectionCapabilities {
+		return capabilitiesWithReason(domain.CapabilityAvailable, "")
+	})
+
+	err := svc.managementError(conn, domain.CapDownload, "下载文档", &UpstreamError{Status: http.StatusForbidden})
+	appErr, ok := apperr.As(err)
+	if !ok || appErr.Kind != apperr.Unavailable {
+		t.Fatalf("denial must map to an unavailable app error, got %#v", err)
+	}
+	if got := appErr.Fields["capability"]; got != string(domain.CapDownload) {
+		t.Fatalf("error capability = %v, want %q", got, domain.CapDownload)
+	}
+
+	caps := svc.capabilities.get(context.Background(), conn, func(context.Context) domain.ConnectionCapabilities {
+		t.Fatal("demotion must be served from cache")
+		return domain.ConnectionCapabilities{}
+	})
+	if got := caps.Capabilities[domain.CapDownload].Status; got != domain.CapabilityUnavailable {
+		t.Fatalf("download = %q, want unavailable", got)
+	}
+	if got := caps.Capabilities[domain.CapPreview].Status; got != domain.CapabilityAvailable {
+		t.Fatalf("preview = %q, want available", got)
+	}
+}
+
+func TestCapabilityCacheRecoversFromProbePanic(t *testing.T) {
+	cache := newCapabilityCache()
+	conn := capabilityTestConn()
+	caps := cache.get(context.Background(), conn, func(context.Context) domain.ConnectionCapabilities {
+		panic("probe exploded")
+	})
+	assertCapabilitySet(t, caps, domain.CapabilityUnknown)
+
+	cache.mu.Lock()
+	inflight := len(cache.inflight)
+	cache.mu.Unlock()
+	if inflight != 0 {
+		t.Fatalf("inflight map kept %d entries after a panic", inflight)
+	}
+
+	// The panic verdict still expires, and a later probe must be able to run.
+	cache.now = func() time.Time { return time.Now().Add(2 * weknoraCapabilityUnknownTTL) }
+	caps = cache.get(context.Background(), conn, func(context.Context) domain.ConnectionCapabilities {
+		return capabilitiesWithReason(domain.CapabilityAvailable, "")
+	})
+	assertCapabilitySet(t, caps, domain.CapabilityAvailable)
 }

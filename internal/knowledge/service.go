@@ -85,16 +85,19 @@ func (s *Service) UpdateSettings(input SettingsInput, actor string) (domain.Know
 	provider := normalizeProvider(input.Provider, current.Provider)
 	rawURL := strings.TrimSpace(input.URL)
 	if rawURL != "" {
-		u, err := url.Parse(rawURL)
-		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
-			msg := "知识库地址必须是 http(s)://host/mcp 形式"
-			if provider == domain.KnowledgeProviderWeKnora {
-				msg = "WeKnora 地址必须是 http(s)://host 形式"
-			}
-			return current, apperr.New(apperr.Invalid, msg)
-		}
 		if provider == domain.KnowledgeProviderWeKnora {
-			rawURL = NormalizeWeKnoraBaseURL(rawURL)
+			// WeKnora 的落库入口与客户端构造共用一套校验，避免带查询参数的
+			// 地址被保存后拼坏整条请求链路或在回显中泄露密钥。
+			normalized, err := ValidateOutboundWeKnoraURL(rawURL)
+			if err != nil {
+				return current, apperr.New(apperr.Invalid, err.Error())
+			}
+			rawURL = normalized
+		} else {
+			u, err := url.Parse(rawURL)
+			if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+				return current, apperr.New(apperr.Invalid, "知识库地址必须是 http(s)://host/mcp 形式")
+			}
 		}
 	}
 	next := domain.KnowledgeSettings{
@@ -227,7 +230,7 @@ func (s *Service) CheckConnection(ctx context.Context, connectionID, overridePro
 	connectionID = strings.TrimSpace(connectionID)
 	var conn domain.KnowledgeConnection
 	switch {
-	case connectionID != "":
+	case connectionID != "" && !isLegacyDefaultConnection(settings, connectionID):
 		found := false
 		for _, c := range settings.Connections {
 			if c.ID == connectionID {
@@ -285,6 +288,9 @@ func (s *Service) CheckConnection(ctx context.Context, connectionID, overridePro
 			tools = append(tools, tool.Name)
 		}
 	}
+	// A user-initiated check must observe the upstream now, not a stale cached
+	// verdict from before a permission or deployment fix.
+	s.capabilities.invalidate(conn.ID)
 	capabilities := s.connectionCapabilities(ctx, conn, settings)
 	return CheckResult{OK: true, LatencyMs: latency, Sources: sources, Tools: tools, ConnectionID: conn.ID, Capabilities: &capabilities}
 }
@@ -458,6 +464,14 @@ func (s *Service) UploadDocumentReader(ctx context.Context, projectID, connectio
 	return scopeWeKnoraDoc(settings, conn.ID, doc), nil
 }
 
+// isLegacyDefaultConnection reports whether connectionID names the implicit
+// "default" connection. Legacy single-URL deployments expose exactly that id
+// through the API, so it must behave like an omitted id there; with explicit
+// connections configured it stays an unknown id.
+func isLegacyDefaultConnection(settings domain.KnowledgeSettings, connectionID string) bool {
+	return connectionID == "default" && len(settings.Connections) == 0
+}
+
 // resolveExplicitWeKnoraConnection selects exactly the connection the caller
 // named. Multi-connection deployments have no implicit fallback: a missing id
 // is a client error so a write never lands on an arbitrary instance. A legacy
@@ -469,7 +483,7 @@ func (s *Service) resolveExplicitWeKnoraConnection(connectionID string) (domain.
 	connectionID = strings.TrimSpace(connectionID)
 	var conn domain.KnowledgeConnection
 	switch {
-	case connectionID != "":
+	case connectionID != "" && !isLegacyDefaultConnection(settings, connectionID):
 		found := false
 		for _, c := range settings.Connections {
 			if c.ID == connectionID {
@@ -542,7 +556,9 @@ func (s *Service) cachedCapabilities(ctx context.Context, conn domain.KnowledgeC
 
 // managementError maps a business request failure: a credential/route denial
 // demotes the cached verdict and reports capability_unavailable, everything
-// else stays an upstream error.
+// else stays an upstream error. preview_download is excluded because its two
+// endpoints (preview and download) have independent permissions: one denial
+// says nothing about the other, and demoting it would block the working one.
 func (s *Service) managementError(conn domain.KnowledgeConnection, capability domain.KnowledgeCapability, action string, err error) error {
 	if status, denied := s.capabilities.demoteDenied(conn, capability, err); denied {
 		return capabilityUnavailableError(conn.ID, capability, status)
@@ -910,15 +926,16 @@ func (s *Service) ListWeKnoraChunks(ctx context.Context, projectID, connectionID
 }
 
 // OpenWeKnoraPreview streams the upstream preview of one document. The caller
-// owns the returned body and must close it.
+// owns the returned body and must close it. Preview and download are gated
+// separately because upstream permissions differ per route.
 func (s *Service) OpenWeKnoraPreview(ctx context.Context, projectID, connectionID, docID string) (*StreamResponse, error) {
-	_, conn, wc, rawDocID, err := s.resolveWeKnoraDocGated(ctx, projectID, connectionID, docID, domain.CapPreviewDownload)
+	_, conn, wc, rawDocID, err := s.resolveWeKnoraDocGated(ctx, projectID, connectionID, docID, domain.CapPreview)
 	if err != nil {
 		return nil, err
 	}
 	resp, err := wc.OpenPreview(ctx, rawDocID)
 	if err != nil {
-		return nil, s.managementError(conn, domain.CapPreviewDownload, "预览文档", err)
+		return nil, s.managementError(conn, domain.CapPreview, "预览文档", err)
 	}
 	return resp, nil
 }
@@ -926,23 +943,29 @@ func (s *Service) OpenWeKnoraPreview(ctx context.Context, projectID, connectionI
 // OpenWeKnoraDownload streams the original file of one document. The caller
 // owns the returned body and must close it.
 func (s *Service) OpenWeKnoraDownload(ctx context.Context, projectID, connectionID, docID string) (*StreamResponse, error) {
-	_, conn, wc, rawDocID, err := s.resolveWeKnoraDocGated(ctx, projectID, connectionID, docID, domain.CapPreviewDownload)
+	_, conn, wc, rawDocID, err := s.resolveWeKnoraDocGated(ctx, projectID, connectionID, docID, domain.CapDownload)
 	if err != nil {
 		return nil, err
 	}
 	resp, err := wc.OpenDownload(ctx, rawDocID)
 	if err != nil {
-		return nil, s.managementError(conn, domain.CapPreviewDownload, "下载文档", err)
+		return nil, s.managementError(conn, domain.CapDownload, "下载文档", err)
 	}
 	return resp, nil
 }
 
 // WeKnoraCapabilities returns the probe verdicts for one connection, using the
-// cache unless it expired or the connection fingerprinted differently.
-func (s *Service) WeKnoraCapabilities(ctx context.Context, connectionID string) (domain.ConnectionCapabilities, error) {
+// cache unless it expired, the connection fingerprinted differently, or the
+// caller asked for a forced re-probe.
+func (s *Service) WeKnoraCapabilities(ctx context.Context, connectionID string, refresh bool) (domain.ConnectionCapabilities, error) {
 	_, conn, wc, err := s.resolveExplicitWeKnoraConnection(connectionID)
 	if err != nil {
 		return domain.ConnectionCapabilities{}, err
+	}
+	if refresh {
+		// Bump the generation first so an older in-flight probe cannot write
+		// its verdict back over the fresh one.
+		s.capabilities.invalidate(conn.ID)
 	}
 	return s.cachedCapabilities(ctx, conn, wc), nil
 }

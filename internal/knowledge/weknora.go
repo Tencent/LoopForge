@@ -86,7 +86,9 @@ func ValidateOutboundWeKnoraURL(raw string) (string, error) {
 	}
 	u, err := url.Parse(raw)
 	if err != nil {
-		return "", fmt.Errorf("WeKnora 地址无法解析：%w", err)
+		// Do not wrap the parse error: a malformed URL may itself contain a
+		// credential in its query, and this message reaches settings/audit logs.
+		return "", errors.New("WeKnora 地址无法解析，请检查格式")
 	}
 	if u.Scheme != "http" && u.Scheme != "https" {
 		return "", errors.New("WeKnora 地址必须是 http(s)://host 形式")
@@ -96,6 +98,12 @@ func ValidateOutboundWeKnoraURL(raw string) (string, error) {
 	}
 	if u.User != nil {
 		return "", errors.New("WeKnora 地址不能内嵌账号密码")
+	}
+	// A query string on a base URL is appended to every request path and is a
+	// common place to smuggle credentials into stored settings, so refuse it
+	// outright instead of silently trimming it.
+	if u.RawQuery != "" || u.ForceQuery {
+		return "", errors.New("WeKnora 地址不能包含查询参数")
 	}
 	u.Fragment = ""
 	out := NormalizeWeKnoraBaseURL(u.String())
