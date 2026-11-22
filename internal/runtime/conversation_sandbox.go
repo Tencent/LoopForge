@@ -229,12 +229,10 @@ func (s *dockerSandbox) ensureDockerCLI(ctx context.Context, provider, home stri
 		installMode = "install"
 		if provider == AgentCLICursor && goruntime.GOOS == "linux" {
 			shared, err := prepareSharedCursorCLI(ctx, false)
-			if err != nil {
-				return "", err
-			}
-			// Probe in this container as its task user. A different
-			// architecture or libc may need the sandbox installer.
-			if shared != "" && s.probeCLIVersion(ctx, provider, shared) != "" {
+			// An unavailable shared directory must not block installation
+			// in the container. Probe any shared copy as the task user,
+			// since a different architecture or libc may need the installer.
+			if err == nil && shared != "" && s.probeCLIVersion(ctx, provider, shared) != "" {
 				taskPathSetup += "PATH=$PATH:" + shellSingleQuote(filepath.Dir(shared)) + "\nexport PATH\n"
 				installMode = "reuse"
 			}
