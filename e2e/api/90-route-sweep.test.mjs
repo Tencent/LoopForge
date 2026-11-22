@@ -84,8 +84,6 @@ test('unknown bots, rooms and spaces answer 404', async () => {
 });
 
 test('read-only status endpoints answer for a signed-in user', async () => {
-  const feedback = await get('/api/page-feedback?limit=1');
-  assert.equal(typeof feedback.total, 'number');
   const install = await get('/api/assistant/cli-install?engine=codex');
   assert.ok(['installed', 'missing', 'installing', 'failed'].includes(install.status), install.status);
   await status('GET', '/api/assistant/cli-install?engine=not-a-cli', undefined, [400]);

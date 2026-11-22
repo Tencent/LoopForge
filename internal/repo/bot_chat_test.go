@@ -110,7 +110,10 @@ func testRunOrigins(t *testing.T, s *Store) {
 	}
 
 	// The first events of a run started from the chat arrive before the
-	// run itself is recorded: the requirement's recent origin covers them.
+	// run's own origin is recorded: the start origin stored with the run
+	// covers them. A run of the same requirement started on the platform
+	// names no start origin and is not sent to the chat the requirement
+	// came from.
 	issueOrigin := group
 	issueOrigin.IssueID = issue.ID
 	if err := s.RecordBotChatOrigin(issueOrigin); err != nil {
@@ -119,18 +122,29 @@ func testRunOrigins(t *testing.T, s *Store) {
 	if id, ok := s.LatestBotChatIssue("conv-g"); !ok || id != issue.ID {
 		t.Fatalf("latest issue = %q %v", id, ok)
 	}
-	if err := s.PutRun(newRun("run-early", "waiting_approval", domain.RunEvent{ID: "e5", NodeID: "define", Type: "approval.waiting", Timestamp: now})); err != nil {
+	platform := newRun("run-platform", "waiting_approval", domain.RunEvent{ID: "e5p", NodeID: "define", Type: "approval.waiting", Timestamp: now})
+	if err := s.PutRun(platform); err != nil {
+		t.Fatal(err)
+	}
+	early := newRun("run-early", "waiting_approval", domain.RunEvent{ID: "e5", NodeID: "define", Type: "approval.waiting", Timestamp: now})
+	early.ExecutionContext.BotOriginID = BotIssueOriginID("conv-g", issue.ID)
+	if err := s.PutRun(early); err != nil {
+		t.Fatal(err)
+	}
+	child := newRun("run-child", "waiting_approval", domain.RunEvent{ID: "e5c", NodeID: "define", Type: "approval.waiting", Timestamp: now})
+	child.ExecutionContext.BotOriginID, child.ExecutionContext.ParentRunID = early.ExecutionContext.BotOriginID, early.ID
+	if err := s.PutRun(child); err != nil {
 		t.Fatal(err)
 	}
 	items, _ = s.NotificationDeliveries("p-origin")
-	early := 0
+	reported := map[string]int{}
 	for _, item := range items {
-		if item.RunID == "run-early" && item.EventType == "waiting" && item.TargetID == "oc_group" && strings.Contains(item.Content, "需要人工处理") {
-			early++
+		if item.EventType == "waiting" && item.TargetID == "oc_group" && strings.Contains(item.Content, "需要人工处理") {
+			reported[item.RunID]++
 		}
 	}
-	if early != 1 {
-		t.Fatalf("early waiting event not reported: %+v", items)
+	if reported["run-early"] != 1 || reported["run-platform"] != 0 || reported["run-child"] != 0 {
+		t.Fatalf("waiting events reported = %v: %+v", reported, items)
 	}
 
 	// Without an origin nothing is sent; WeCom Bots keep their own path.

@@ -93,9 +93,11 @@ func (s *Service) accept(ctx context.Context, connected domain.NotificationBot, 
 		}
 	}
 	if bot.ChannelKind() != domain.BotChannelWeCom {
-		s.Store.NoteBotConnectionEvent(bot.LeaseKey(), ev.ChatType == "group" && !ev.Mentioned && ev.Action == "")
-		if ev.ChatType == "group" && !ev.Mentioned && ev.Action == "" {
-			// Group chats: only messages that @ the Bot.
+		unmentioned := ev.ChatType == "group" && !ev.Mentioned && ev.Action == ""
+		s.Store.NoteBotConnectionEvent(bot.LeaseKey(), unmentioned)
+		if unmentioned && !s.repliesToNodeQuestion(bot, ev) {
+			// Group chats: only messages that @ the Bot, or reply to a
+			// node question it asked in this group.
 			return s.ignore(ev, "group_not_mentioned"), nil
 		}
 		notice, gated, err := s.tenantGate(bot, ev)
@@ -131,6 +133,27 @@ func (s *Service) accept(ctx context.Context, connected domain.NotificationBot, 
 		return InboundAck{}, err
 	}
 	return InboundAck{Accepted: inserted, InteractionID: item.ID}, nil
+}
+
+// repliesToNodeQuestion reports whether a group message replies to a
+// question of a waiting node this Bot sent to the same group and the node
+// still asks.
+func (s *Service) repliesToNodeQuestion(bot domain.NotificationBot, ev InboundEvent) bool {
+	if ev.ParentID == "" {
+		return false
+	}
+	d, ok := s.Store.NotificationDeliveryByPlatformMessage(bot.ID, ev.ParentID)
+	if !ok {
+		post, found := s.Store.BotInteractionByPlatformMessage(bot.ID, ev.ParentID)
+		if !found || post.Action != "notification" || post.DeliveryID == "" {
+			return false
+		}
+		var err error
+		if d, err = s.Store.NotificationDelivery(post.DeliveryID); err != nil {
+			return false
+		}
+	}
+	return d.ProjectID == bot.ProjectID && d.TargetType == "group" && d.TargetID == ev.ChatID && s.NodeQuestion(d) != ""
 }
 
 // acceptCardAction handles a Feishu or DingTalk card click.

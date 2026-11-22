@@ -131,23 +131,16 @@ func (h *assistantHandlers) botDraftOrigin(draft domain.BotPendingDraft) (domain
 	return domain.BotChatOrigin{ConfigID: draft.ConfigID, ProjectID: draft.ProjectID, ConversationID: conv.ID, ChatType: conv.ChatType, ChatID: conv.ChatID, SenderID: draft.SenderID}, true
 }
 
-// recordBotOrigin remembers that a requirement or run came from a chat, so
-// the run's progress is sent back there. Failures only lose the messages.
-func (h *assistantHandlers) recordBotOrigin(origin domain.BotChatOrigin, ok bool, issueID, runID string) {
-	if !ok || (issueID == "" && runID == "") {
+// recordBotOrigin remembers that a requirement came from a chat, so that
+// "澄清这个需求" finds it. Runs record their own origin when they start
+// (withBotStartOrigin). Failures only lose the lookup.
+func (h *assistantHandlers) recordBotOrigin(origin domain.BotChatOrigin, ok bool, issueID string) {
+	if !ok || issueID == "" {
 		return
 	}
 	origin.IssueID, origin.RunID = issueID, ""
-	if issueID != "" {
-		if err := h.repo.RecordBotChatOrigin(origin); err != nil {
-			log.Printf("bot chat origin of issue not recorded: %v", err)
-		}
-	}
-	if runID != "" {
-		origin.RunID = runID
-		if err := h.repo.RecordBotChatOrigin(origin); err != nil {
-			log.Printf("bot chat origin of run not recorded: %v", err)
-		}
+	if err := h.repo.RecordBotChatOrigin(origin); err != nil {
+		log.Printf("bot chat origin of issue not recorded: %v", err)
 	}
 }
 
@@ -723,11 +716,8 @@ func (h *assistantHandlers) executeBotDraft(ctx context.Context, user domain.Use
 	execCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Minute)
 	defer cancel()
 	origin, hasOrigin := h.botDraftOrigin(draft)
-	for _, d := range drafts {
-		if strings.TrimSpace(d.Tool) == "issues_dispatch" {
-			// The run starts during execution: remember the chat first.
-			h.recordBotOrigin(origin, hasOrigin, assistantDraftRefID(d), "")
-		}
+	if hasOrigin {
+		execCtx = withBotStartOrigin(execCtx, origin)
 	}
 	applied := h.resolveAssistantDrafts(execCtx, user, draft.ProjectID, drafts, AssistantApprovalAuto)
 	results := make([]string, 0, len(applied))
@@ -742,21 +732,14 @@ func (h *assistantHandlers) executeBotDraft(ctx context.Context, user domain.Use
 		switch {
 		case d.Saved:
 			results = append(results, "已完成："+line)
-			created := botDraftCreatedIssue(d)
-			if strings.TrimSpace(d.Tool) == "issues_dispatch" {
-				// Starting an existing requirement: its run reports back.
-				h.recordBotOrigin(origin, hasOrigin, "", botResultRunID(d.Result))
-			} else if created != "" {
-				// Recorded before the start, so the first events of the
-				// run already find the chat.
-				h.recordBotOrigin(origin, hasOrigin, created, "")
+			if created := botDraftCreatedIssue(d); created != "" && strings.TrimSpace(d.Tool) != "issues_dispatch" {
+				h.recordBotOrigin(origin, hasOrigin, created)
 			}
 			if start[i] {
 				if runID, err := h.startBotDraftIssue(execCtx, user, draft.ProjectID, d); err != nil {
 					status = repo.BotDraftFailed
 					results = append(results, "未启动："+sop+"（"+truncateRunes(err.Error(), 200)+"）")
 				} else {
-					h.recordBotOrigin(origin, hasOrigin, "", runID)
 					results = append(results, "已启动："+sop+botRunLabel(runID))
 				}
 			}

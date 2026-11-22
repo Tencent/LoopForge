@@ -44,8 +44,14 @@ func (r *AssistantRepo) RecordBotChatOrigin(o domain.BotChatOrigin) error {
 		row.ID = hexSHA256("run\x00" + o.RunID)
 		return r.DB.Clauses(clause.OnConflict{DoNothing: true}).Create(&row).Error
 	}
-	row.ID = hexSHA256("issue\x00" + o.ConversationID + "\x00" + o.IssueID)
+	row.ID = BotIssueOriginID(o.ConversationID, o.IssueID)
 	return r.DB.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "id"}}, DoUpdates: clause.AssignmentColumns([]string{"created_at", "sender_id"})}).Create(&row).Error
+}
+
+// BotIssueOriginID is the ID of the origin row of a requirement in a
+// conversation.
+func BotIssueOriginID(conversationID, issueID string) string {
+	return hexSHA256("issue\x00" + conversationID + "\x00" + issueID)
 }
 
 // BotRunOrigin returns the chat a run was started from.
@@ -64,15 +70,17 @@ func botRunOrigin(db *gorm.DB, runID string) (domain.BotChatOrigin, bool) {
 	return row.origin(), true
 }
 
-// botRecentIssueOrigin is the chat a requirement was created or started
-// from within the last two minutes. It covers the first events of a run
-// started from a chat before the run itself is recorded.
-func botRecentIssueOrigin(db *gorm.DB, issueID string, now time.Time) (domain.BotChatOrigin, bool) {
-	if issueID == "" {
+// botStartOrigin is the chat a top-level run names as its start in its
+// execution context. It covers the first events of a run started from a
+// chat before the run's own origin is recorded; a run started anywhere
+// else names none and never goes to a chat its requirement came from.
+func botStartOrigin(db *gorm.DB, run domain.Run) (domain.BotChatOrigin, bool) {
+	exec := run.ExecutionContext
+	if exec.BotOriginID == "" || exec.ParentRunID != "" || exec.IssueID == "" {
 		return domain.BotChatOrigin{}, false
 	}
 	var row botChatOriginRow
-	if err := db.Where("issue_id = ? AND run_id = '' AND created_at >= ?", issueID, now.Add(-2*time.Minute)).Order("created_at desc").Limit(1).Find(&row).Error; err != nil || row.ID == "" {
+	if err := db.Where("id = ? AND issue_id = ?", exec.BotOriginID, exec.IssueID).Limit(1).Find(&row).Error; err != nil || row.ID == "" {
 		return domain.BotChatOrigin{}, false
 	}
 	return row.origin(), true

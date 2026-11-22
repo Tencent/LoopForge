@@ -328,10 +328,14 @@ test('records hide manual actions for text removed by the retention cleanup', as
   assert.equal(app.document.querySelector('#botsContent [data-delivery-retry="d-purged"]'), null);
 });
 
-test('new bot form lets the creator pick the answer model and go back to the default', async (t) => {
+test('new bot form picks an executor and model and submits the concrete model', async (t) => {
   const app = await loadApp();
   t.after(app.close);
-  app.router.get('/api/assistant/models', { default: 'default', models: [{ id: 'glm-test', name: 'GLM Test', family: 'glm' }, { id: 'codex:gpt-x', name: 'GPT X', family: 'gpt', engine: 'codex' }] });
+  app.router.get('/api/assistant/models', {
+    default: 'glm-test',
+    models: [{ id: 'glm-test', name: 'GLM Test', family: 'glm' }, { id: 'codex:gpt-x', name: 'GPT X', family: 'gpt', engine: 'codex' }],
+    engines: [{ id: 'codebuddy', name: 'CodeBuddy', configured: true }, { id: 'codex', name: 'Codex', configured: true }],
+  });
   app.router.post('/api/notification-bots', (call) => ({ id: 'bot-fs2', projectId: 'project-1', ownerId: 'user-1', name: call.body.name, channel: 'feishu', botId: call.body.botId, model: call.body.model, enabled: true, interactionEnabled: true, writeApproval: 'readonly', secretConfigured: true, configVersion: 1, tenantState: 'awaiting_confirmation' }));
   app.router.get('/api/notification-bots/bot-fs2/tenant', { tenantState: 'awaiting_confirmation', configVersion: 1, queried: {} });
   app.router.get('/api/notification-deliveries', []);
@@ -343,19 +347,16 @@ test('new bot form lets the creator pick the answer model and go back to the def
   form.elements.channel.value = 'feishu';
   form.elements.channel.dispatchEvent(new app.window.Event('change', { bubbles: true }));
   await settle(4);
-  assert.match(host().textContent, /回答模型/);
-  const open = () => { host().querySelector('[data-model-toggle]').click(); return [...app.document.querySelectorAll('#botModelPicker .ai-model-option')]; };
-  let options = open();
-  assert.deepEqual(options.map(o => o.dataset.id), ['default', 'glm-test'], 'default plus CodeBuddy models only');
-  options[1].click();
+  assert.match(host().textContent, /执行器与模型/);
+  const executor = () => host().querySelector('#botModelPicker [data-feature-executor]');
+  const model = () => host().querySelector('#botModelPicker [data-feature-model]');
+  assert.deepEqual([...executor().options].map(o => o.value), ['codebuddy', 'codex']);
+  assert.equal(model().value, 'codebuddy:glm-test', 'the provider default is preselected');
+  executor().value = 'codex';
+  executor().dispatchEvent(new app.window.Event('change', { bubbles: true }));
   await settle(2);
-  assert.equal(host().querySelector('[name="model"]').value, 'glm-test');
-  options = open();
-  options[0].click();
-  await settle(2);
-  assert.equal(host().querySelector('[name="model"]').value, 'default');
-  open()[1].click();
-  await settle(2);
+  assert.deepEqual([...model().options].map(o => o.value), ['codex:gpt-x']);
+  assert.equal(model().value, 'codex:gpt-x');
   form = host().querySelector('#botForm');
   form.elements.name.value = '飞书 Bot';
   form.elements.botId.value = 'cli_x';
@@ -364,5 +365,5 @@ test('new bot form lets the creator pick the answer model and go back to the def
   form.dispatchEvent(new app.window.Event('submit', { bubbles: true, cancelable: true }));
   await settle(8);
   const post = app.router.calls.find(c => c.method === 'POST' && c.path === '/api/notification-bots');
-  assert.equal(post.body.model, 'glm-test');
+  assert.equal(post.body.model, 'codex:gpt-x');
 });

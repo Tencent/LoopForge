@@ -807,8 +807,17 @@ func (h *assistantHandlers) endBotClarify(id, blocked string) bool {
 }
 
 // botClarifySave writes the conclusion into the requirement (and back to
-// its external tracker), at most once, and optionally starts its SOP.
+// its external tracker), at most once, and optionally starts its SOP. The
+// Bot's current configuration must still allow writes from chat.
 func (h *assistantHandlers) botClarifySave(ctx context.Context, bot domain.NotificationBot, sess domain.BotClarifySession, user domain.User, start bool) string {
+	current, err := h.repo.NotificationBot(bot.ID)
+	if err != nil || !current.Enabled || !current.InteractionEnabled || current.ProjectID != bot.ProjectID {
+		return "机器人已停用或关闭对话，澄清结果没有保存。"
+	}
+	if current.EffectiveWriteApproval() == domain.BotWriteReadOnly {
+		return "这个机器人是只读查询，澄清结果没有保存。请到平台的需求详情里保存澄清结果。"
+	}
+	bot = current
 	if !h.botClarifySaver(bot, sess, user) {
 		return botClarifySaverOnly + "保存澄清结果。"
 	}
@@ -860,12 +869,11 @@ func (h *assistantHandlers) botClarifySave(ctx context.Context, bot domain.Notif
 	}
 	if start {
 		origin := domain.BotChatOrigin{ConfigID: bot.ID, ProjectID: bot.ProjectID, ConversationID: sess.ConversationID, ChatType: sess.ChatType, ChatID: sess.ChatID, SenderID: sess.StarterSender}
-		h.recordBotOrigin(origin, true, saved.ID, "")
-		runID, err := h.dispatchBotIssue(ctx, user, bot.ProjectID, saved.ID)
+		h.recordBotOrigin(origin, true, saved.ID)
+		runID, err := h.dispatchBotIssue(withBotStartOrigin(ctx, origin), user, bot.ProjectID, saved.ID)
 		if err != nil {
 			lines = append(lines, "SOP 没有启动："+truncateRunes(err.Error(), 200)+"。可以在平台手动启动。")
 		} else {
-			h.recordBotOrigin(origin, true, "", runID)
 			lines = append(lines, "已启动 SOP"+botRunLabel(runID)+"，失败、等待处理和完成时会发在这里。")
 		}
 	}

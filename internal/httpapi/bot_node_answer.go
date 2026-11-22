@@ -102,32 +102,57 @@ func (h *assistantHandlers) botOpenNodeQuestions(bot domain.NotificationBot, con
 // botQuotedNodeQuestion finds the waiting-node message a chat message
 // quotes: a Feishu reply names the message (a pushed delivery, or a WeCom
 // card); a WeCom quote only carries the text, matched against the open
-// questions.
-func (h *assistantHandlers) botQuotedNodeQuestion(bot domain.NotificationBot, conv domain.BotConversation, item domain.BotInteraction) (domain.NotificationDelivery, bool) {
+// questions by the whole message, then the whole question, then its
+// beginning. A quote matching several questions at the same level is
+// ambiguous: no delivery is returned and the sender picks one by number.
+func (h *assistantHandlers) botQuotedNodeQuestion(bot domain.NotificationBot, conv domain.BotConversation, item domain.BotInteraction) (d domain.NotificationDelivery, quoted, ambiguous bool) {
 	if item.ReplyTo != "" {
 		d, ok := h.repo.NotificationDeliveryByPlatformMessage(bot.ID, item.ReplyTo)
 		if !ok {
 			post, found := h.repo.BotInteractionByPlatformMessage(bot.ID, item.ReplyTo)
 			if !found || post.Action != "notification" || post.DeliveryID == "" {
-				return d, false
+				return d, false, false
 			}
 			var err error
 			if d, err = h.repo.NotificationDelivery(post.DeliveryID); err != nil {
-				return d, false
+				return d, false, false
 			}
 		}
-		return d, d.ProjectID == bot.ProjectID && botDeliveryInChat(d, conv, item.SenderID)
+		return d, d.ProjectID == bot.ProjectID && botDeliveryInChat(d, conv, item.SenderID), false
 	}
 	quote := strings.TrimSpace(item.Quote)
 	if quote == "" {
-		return domain.NotificationDelivery{}, false
+		return d, false, false
 	}
-	for _, q := range h.botOpenNodeQuestions(bot, conv, item.SenderID) {
-		if prefix := []rune(strings.TrimSpace(q.question)); strings.Contains(quote, string(prefix[:min(len(prefix), 15)])) {
-			return q.delivery, true
+	open := h.botOpenNodeQuestions(bot, conv, item.SenderID)
+	for _, quotes := range []func(botNodeQuestion) bool{
+		func(q botNodeQuestion) bool {
+			content := strings.TrimSpace(q.delivery.Content)
+			return content != "" && strings.Contains(quote, content)
+		},
+		func(q botNodeQuestion) bool {
+			return strings.Contains(quote, strings.TrimSpace(domain.NotificationText(q.question, 1200)))
+		},
+		func(q botNodeQuestion) bool {
+			prefix := []rune(strings.TrimSpace(q.question))
+			return strings.Contains(quote, string(prefix[:min(len(prefix), 15)]))
+		},
+	} {
+		var hits []botNodeQuestion
+		for _, q := range open {
+			if quotes(q) {
+				hits = append(hits, q)
+			}
 		}
+		switch len(hits) {
+		case 0:
+			continue
+		case 1:
+			return hits[0].delivery, true, false
+		}
+		return d, false, true
 	}
-	return domain.NotificationDelivery{}, false
+	return d, false, false
 }
 
 // botNodeAnswer handles a chat message that answers a node question.
@@ -135,8 +160,8 @@ func (h *assistantHandlers) botQuotedNodeQuestion(bot domain.NotificationBot, co
 func (h *assistantHandlers) botNodeAnswer(ctx context.Context, bot domain.NotificationBot, conv domain.BotConversation, item domain.BotInteraction) (string, bool) {
 	text := botClarifyText(item.Content)
 	answer, pick, prefixed := botNodeAnswerText(text)
-	delivery, quoted := h.botQuotedNodeQuestion(bot, conv, item)
-	if !quoted && !prefixed {
+	delivery, quoted, ambiguous := h.botQuotedNodeQuestion(bot, conv, item)
+	if !quoted && !prefixed && !ambiguous {
 		return "", false
 	}
 	if quoted && !prefixed {
@@ -147,6 +172,8 @@ func (h *assistantHandlers) botNodeAnswer(ctx context.Context, bot domain.Notifi
 		switch {
 		case len(open) == 0:
 			return "这个会话没有待回答的节点问题，答案未提交。问题可能已经回答、节点已结束或运行已取消，请在平台查看运行状态。", true
+		case !prefixed:
+			return h.botNodeQuestionList(open), true
 		case pick > 0 && pick <= len(open):
 			delivery = open[pick-1].delivery
 		case pick == 0 && len(open) == 1:

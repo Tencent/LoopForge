@@ -308,6 +308,40 @@ func TestWeComQuoteAnswersNodeQuestion(t *testing.T) {
 	}
 }
 
+// A WeCom quote goes to the question it quotes in full, not the first one
+// sharing its beginning; a quote matching several questions asks for a
+// number and answers none.
+func TestWeComQuoteAnswersTheQuotedOfSimilarQuestions(t *testing.T) {
+	f := newNodeQuestionFixture(t, domain.BotChannelWeCom)
+	f.ask("run-q1", nodeQuestionText+"邮箱需要验证吗？")
+	f.question("run-q1")
+	f.ask("run-q2", nodeQuestionText+"第三方登录要不要？")
+	second := f.question("run-q2")
+	if !strings.Contains(second.Content, "第三方登录") {
+		t.Fatalf("second question content = %q", second.Content)
+	}
+	ask := func(id, quote string) string {
+		item := domain.BotInteraction{ID: id, BotID: f.bot.ID, ConversationID: f.conv.ID, SenderID: "ou-member", Content: "@Bot 都要", Quote: quote}
+		reply, err := f.h.generateBotReply(context.Background(), f.bot, f.conv, nil, item)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return reply
+	}
+	if reply := ask("msg-wecom-prefix", "问题："+nodeQuestionText); !strings.Contains(reply, "2 个待回答的节点问题") {
+		t.Fatalf("ambiguous quote reply = %q", reply)
+	}
+	if f.node("run-q1").Feedback != "" || f.node("run-q2").Feedback != "" {
+		t.Fatal("ambiguous quote answered a node")
+	}
+	if reply := ask("msg-wecom-second", second.Content); !strings.Contains(reply, "已把答案提交") {
+		t.Fatalf("reply = %q", reply)
+	}
+	if f.node("run-q1").Feedback != "" || !strings.Contains(f.node("run-q2").Feedback, "都要") {
+		t.Fatalf("first = %+v second = %+v", f.node("run-q1"), f.node("run-q2"))
+	}
+}
+
 // Ordinary messages are not answers.
 func TestPlainMessageIsNotANodeAnswer(t *testing.T) {
 	f := newNodeQuestionFixture(t, domain.BotChannelFeishu)

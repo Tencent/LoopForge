@@ -30,6 +30,7 @@ func newClarifyChatFixture(t *testing.T, channel string) *clarifyChatFixture {
 	t.Helper()
 	s, h, bot := botFixture(t)
 	bot.ID, bot.BotID, bot.Channel, bot.TenantKey, bot.TenantState = "b-clarify-"+channel, "app-clarify-"+channel, channel, "tenant", domain.BotTenantLocked
+	bot.WriteApproval = domain.BotWriteConfirm
 	if err := s.SaveNotificationBot(bot, "secret"); err != nil {
 		t.Fatal(err)
 	}
@@ -232,6 +233,31 @@ func TestChatClarificationInAGroup(t *testing.T) {
 	if reply, _ := f.say(t, "group", "oc_group", "ou_member", "保存澄清"); !strings.Contains(reply, "只有需求负责人、发起澄清的人或项目维护者可以保存") {
 		t.Fatalf("member save = %q", reply)
 	}
+	// Switched to read-only after the conclusion: neither the card nor the
+	// text command writes the requirement or starts the SOP.
+	readOnly := f.bot
+	readOnly.WriteApproval = domain.BotWriteReadOnly
+	if err := f.s.SaveNotificationBot(readOnly, "secret"); err != nil {
+		t.Fatal(err)
+	}
+	runs := len(f.s.Runs())
+	card, _ := f.h.handleBotCardAction(context.Background(), f.bot, domain.BotInteraction{SenderID: "ou_owner", Action: botinteraction.ClarifyActionSaveStart, DeliveryID: sess.ID, Quote: last.ID}, domain.BotConversation{ID: conv, ChatType: "group"})
+	text, _ := f.say(t, "group", "oc_group", "ou_owner", "保存并启动")
+	for _, got := range []string{card, text} {
+		if !strings.Contains(got, "只读查询，澄清结果没有保存") {
+			t.Fatalf("read-only save = %q", got)
+		}
+	}
+	issue, _ = f.s.Issue("iss-7")
+	if issue.Clarification.Status == domain.ClarificationReady || strings.Contains(issue.Description, "只做手机号") || len(f.s.Runs()) != runs {
+		t.Fatalf("read-only bot wrote: %+v runs=%d", issue.Clarification, len(f.s.Runs()))
+	}
+	if current, ok := f.s.ActiveBotClarifySession(conv); !ok || current.Status != domain.BotClarifyConcluded {
+		t.Fatalf("session after read-only save = %+v %v", current, ok)
+	}
+	if err := f.s.SaveNotificationBot(f.bot, "secret"); err != nil {
+		t.Fatal(err)
+	}
 	reply, err = f.h.handleBotCardAction(context.Background(), f.bot, domain.BotInteraction{SenderID: "ou_owner", Action: botinteraction.ClarifyActionSave, DeliveryID: sess.ID, Quote: last.ID}, domain.BotConversation{ID: conv, ChatType: "group"})
 	if err != nil || !strings.Contains(reply, "澄清结果已保存到需求 LOOP-7「登录优化」（bot-owner）") {
 		t.Fatalf("save = %q %v", reply, err)
@@ -384,6 +410,9 @@ func TestDraftStartedFromGroupRecordsTheChat(t *testing.T) {
 	origin, ok := s.BotRunOrigin(runID)
 	if !ok || origin.ChatType != "group" || origin.ChatID != "oc_team" || origin.SenderID != "new-wecom-user" || origin.ConfigID != bot.ID {
 		t.Fatalf("run origin = %+v %v", origin, ok)
+	}
+	if run, _ := s.RunState(runID); run.ExecutionContext.BotOriginID != repo.BotIssueOriginID(conv.ID, issueID) {
+		t.Fatalf("run start origin = %q", run.ExecutionContext.BotOriginID)
 	}
 }
 

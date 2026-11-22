@@ -522,3 +522,57 @@ func TestFeishuQuestionCardTakesTheAnswer(t *testing.T) {
 		t.Fatalf("stored = %+v %v", stored, err)
 	}
 }
+
+// In a Feishu group, a reply to a node question the Bot asked there reaches
+// the answer handling without @; other unmentioned messages, replies to
+// another group's question and replies to an answered question do not.
+func TestFeishuGroupReplyToNodeQuestionPassesWithoutMention(t *testing.T) {
+	store, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	bot := domain.NotificationBot{ID: "cfg-gq", Channel: domain.BotChannelFeishu, BotID: "cli_gq", ProjectID: "p", OwnerID: 42, Enabled: true, InteractionEnabled: true, TenantKey: "tk", TenantState: domain.BotTenantLocked}
+	if _, err := store.SaveNotificationBotChecked(bot, "secret", nil); err != nil {
+		t.Fatal(err)
+	}
+	run := domain.Run{ID: "r-gq", Status: "waiting", WorkflowID: "wf", ExecutionContext: domain.TelemetryContext{ProjectID: "p"}, WorkflowSnapshot: domain.WorkflowDefinition{ID: "wf", Name: "交付", Nodes: []domain.WorkflowNode{{ID: "n", Name: "需求定型", Type: "agent"}}},
+		Nodes: map[string]*domain.NodeRun{"n": {NodeID: "n", Status: "waiting_approval", Attempt: 1, Activity: "等待人工确认", GateResult: &domain.GateResult{Decision: "human", Reason: "缺登录方式", ActionRequired: "登录要不要支持邮箱？"}}}}
+	if err := store.PutRun(run); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	for _, d := range []domain.NotificationDelivery{
+		{ID: "d-gq", ProjectID: "p", BotID: bot.ID, RunID: run.ID, NodeID: "n", Attempt: 1, EventType: "waiting", TargetID: "oc_group", TargetType: "group", Content: "需求：登录优化", Status: "sent", PlatformMessageID: "om_question", CreatedAt: now, NextAttemptAt: now},
+		{ID: "d-other", ProjectID: "p", BotID: bot.ID, RunID: run.ID, NodeID: "n", Attempt: 1, EventType: "waiting", TargetID: "oc_other", TargetType: "group", Content: "需求：登录优化", Status: "sent", PlatformMessageID: "om_other", CreatedAt: now, NextAttemptAt: now},
+	} {
+		if err := store.CreateNotificationDelivery(d); err != nil {
+			t.Fatal(err)
+		}
+	}
+	service := New(store)
+	saved, _ := store.NotificationBot(bot.ID)
+	reply := func(id, parent string) InboundAck {
+		ack, err := service.accept(context.Background(), saved, InboundEvent{Channel: ChannelFeishu, AppID: "cli_gq", TenantKey: "tk", EventID: "e-" + id, MessageID: id, SenderID: "ou_1", ChatID: "oc_group", ChatType: "group", MsgType: "text", Text: "都要", ParentID: parent, Route: ReplyRoute{MessageID: id}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return ack
+	}
+	if ack := reply("om_plain", ""); ack.Accepted || ack.Ignored != "group_not_mentioned" {
+		t.Fatalf("plain = %+v", ack)
+	}
+	if ack := reply("om_foreign", "om_other"); ack.Accepted || ack.Ignored != "group_not_mentioned" {
+		t.Fatalf("other group's question = %+v", ack)
+	}
+	if ack := reply("om_answer", "om_question"); !ack.Accepted {
+		t.Fatalf("reply to question = %+v", ack)
+	}
+	run.Nodes["n"].Attempt = 2
+	if err := store.PutRun(run); err != nil {
+		t.Fatal(err)
+	}
+	if ack := reply("om_late", "om_question"); ack.Accepted || ack.Ignored != "group_not_mentioned" {
+		t.Fatalf("answered question = %+v", ack)
+	}
+}

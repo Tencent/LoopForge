@@ -609,7 +609,7 @@ func (r *NotificationsRepo) enqueueOriginNotification(tx *gorm.DB, run domain.Ru
 	}
 	origin, ok := botRunOrigin(tx, run.ID)
 	if !ok {
-		origin, ok = botRecentIssueOrigin(tx, run.ExecutionContext.IssueID, time.Now().UTC())
+		origin, ok = botStartOrigin(tx, run)
 	}
 	if !ok {
 		return nil
