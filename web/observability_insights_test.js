@@ -95,3 +95,14 @@ ctx.lfT = zh => zh;
 assert.equal(ctx.obsPeriodRange('2026-10').label,'2026年10月');
 assert.match(ctx.obsActivityKpis(),/输入 0 \/ 输出 0/);
 assert.match(ctx.obsUsageKpis({period:true}),/10月运行/);
+
+// Unknown conversation costs must remain partial in totals and period views.
+ctx.state.obsTrendGrain='all';
+ctx.state.analytics={summary:{costUnknownRuns:0,conversationWorkspaces:1,conversationCostUnknownWorkspaces:1,totalCostCny:0}};
+assert.equal(ctx.obsScopedView().costKnown,false);
+assert.equal(ctx.obsScopedView().conversationCostKnown,false);
+assert.match(ctx.costLabel(0,ctx.obsScopedView().costKnown),/未识别/);
+ctx.state.obsTrendGrain='day';ctx.state.obsPeriodKey='2026-10-08';
+ctx.state.analytics={runTraces:[],trend:[{date:'2026-10-08',costUnknownRuns:0,conversationWorkspaces:1,conversationCostUnknownWorkspaces:1}]};
+assert.equal(ctx.obsScopedView().costKnown,false);
+assert.equal(ctx.obsScopedView().conversationCostKnown,false);

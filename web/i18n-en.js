@@ -323,7 +323,7 @@ Object.assign(window.LF_I18N_EN, {
   "投入 · SOP + 对话改代码": "Usage · SOP and coding conversations",
   "SOP 产出与质量": "SOP output and quality",
   "缓存命中": "Cache hit rate",
-  "人民币 · Hy 上报 / 其他公价": "CNY · reported for Hy, public rates for other models",
+  "人民币 · 上报优先，缺失按公价估算": "CNY · reported first, public rates when missing",
   "选择日期": "Select date",
   "选择月份": "Select month",
   "选择周": "Select week",

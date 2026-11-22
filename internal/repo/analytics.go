@@ -555,8 +555,9 @@ func (r *AnalyticsRepo) analyticsWithRuns(filter domain.AnalyticsFilter, prefetc
 	if cacheDenominator > 0 {
 		out.Summary.CacheHitRate = float64(cacheReadTotal) * 100 / float64(cacheDenominator)
 	}
-	if out.Summary.TotalRuns > 0 {
-		out.Summary.CostCoveragePct = float64(costKnownRuns) * 100 / float64(out.Summary.TotalRuns)
+	if units := out.Summary.TotalRuns + out.Summary.ConversationWorkspaces; units > 0 {
+		known := costKnownRuns + out.Summary.ConversationWorkspaces - out.Summary.ConversationCostUnknownWorkspaces
+		out.Summary.CostCoveragePct = float64(known) * 100 / float64(units)
 	}
 	if qualityTerminal > 0 {
 		out.Summary.WaitAverageDurationMs = terminalWaitDuration / int64(qualityTerminal)
@@ -1421,10 +1422,14 @@ func executorName(values map[string]domain.ExecutorDefinition, id string) string
 // trendIssues.
 func accumulateConversationRun(summary *domain.AnalyticsSummary, issues map[string]struct{}, trends map[string]*domain.AnalyticsTrendPoint, trendIssues map[string]map[string]struct{}, users map[string]*analyticsUserAccumulator, projects map[string]*analyticsProjectAccumulator, sources map[string]*analyticsAccumulator, run domain.Run, issue domain.Issue, grain string) {
 	usage := run.Usage
+	known := conversationUsageCostKnown(usage)
 	issueID := strings.TrimSpace(run.ExecutionContext.IssueID)
 	summary.ConversationWorkspaces++
 	summary.ConversationTokens += usage.TotalTokens
 	summary.ConversationCostUSD += usage.CostUSD
+	if !known {
+		summary.ConversationCostUnknownWorkspaces++
+	}
 	summary.TotalTokens += usage.TotalTokens
 	summary.TotalCostUSD += usage.CostUSD
 	summary.CostReportedUSD += usage.CostUSD
@@ -1446,12 +1451,15 @@ func accumulateConversationRun(summary *domain.AnalyticsSummary, issues map[stri
 	point.ConversationWorkspaces++
 	point.ConversationTokens += usage.TotalTokens
 	point.ConversationCostUSD += usage.CostUSD
+	if !known {
+		point.ConversationCostUnknownWorkspaces++
+	}
 	point.InputTokens += usage.InputTokens
 	point.OutputTokens += usage.OutputTokens
 	point.CacheReadTokens += usage.CacheReadTokens
 	point.CacheWriteTokens += usage.CacheWriteTokens
 	addAnalyticsTrendIssue(trendIssues, bucket, issueID)
-	if usage.TotalTokens == 0 && usage.CostUSD == 0 && issueID == "" {
+	if known && usage.TotalTokens == 0 && usage.CostUSD == 0 && issueID == "" {
 		return
 	}
 	user := analyticsUserEntry(users, analyticsRunUserID(run, issue), at.Format("2006-01-02"))
@@ -1461,9 +1469,11 @@ func accumulateConversationRun(summary *domain.AnalyticsSummary, issues map[stri
 	user.item.CacheReadTokens += usage.CacheReadTokens
 	user.item.CacheWriteTokens += usage.CacheWriteTokens
 	user.item.CostUSD += usage.CostUSD
+	user.item.CostKnown = user.item.CostKnown && known
 	project := analyticsProjectEntry(projects, domain.RunProjectID(run, issue.ProjectID))
 	project.item.Tokens += usage.TotalTokens
 	project.item.CostUSD += usage.CostUSD
+	project.item.CostKnown = project.item.CostKnown && known
 	if issueID == "" {
 		return
 	}
@@ -1471,8 +1481,20 @@ func accumulateConversationRun(summary *domain.AnalyticsSummary, issues map[stri
 	value := analyticsSourceEntry(sources, analyticsIssueSource(issue))
 	value.item.Tokens += usage.TotalTokens
 	value.item.CostUSD += usage.CostUSD
+	if !known {
+		value.item.CostUnknownRuns++
+	}
 	value.inputTokens += usage.InputTokens
 	value.outputTokens += usage.OutputTokens
 	value.cacheReadTokens += usage.CacheReadTokens
 	value.cacheWriteTokens += usage.CacheWriteTokens
+}
+
+func conversationUsageCostKnown(u domain.TokenUsage) bool {
+	if usageCostKnown(u) {
+		return true
+	}
+	// An idle workspace has no billable invocation. A populated unknown
+	// usage record must still remain unknown in every aggregate.
+	return u.CostStatus == "" && u.InputTokens == 0 && u.OutputTokens == 0 && u.TotalTokens == 0 && u.CacheReadTokens == 0 && u.CacheWriteTokens == 0 && u.ReasoningTokens == 0 && u.CostUSD == 0
 }

@@ -65,11 +65,12 @@ type AnalyticsSummary struct {
 	ConversationIssues           int `json:"conversationIssues"`
 	// Of ConversationIssues, those with a submitted MR and those whose MR
 	// merged to the default branch. Unlike Delivery, also set in overview scope.
-	ConversationIssuesWithMR    int     `json:"conversationIssuesWithMr"`
-	ConversationIssuesDelivered int     `json:"conversationIssuesDelivered"`
-	ConversationTokens          int64   `json:"conversationTokens"`
-	ConversationCostUSD         float64 `json:"conversationCostUsd"`
-	ConversationCostCNY         float64 `json:"conversationCostCny"`
+	ConversationIssuesWithMR          int     `json:"conversationIssuesWithMr"`
+	ConversationIssuesDelivered       int     `json:"conversationIssuesDelivered"`
+	ConversationTokens                int64   `json:"conversationTokens"`
+	ConversationCostUSD               float64 `json:"conversationCostUsd"`
+	ConversationCostCNY               float64 `json:"conversationCostCny"`
+	ConversationCostUnknownWorkspaces int     `json:"conversationCostUnknownWorkspaces"`
 
 	CostCurrency       string  `json:"costCurrency"`
 	USDToCNY           float64 `json:"usdToCny"`
@@ -151,11 +152,12 @@ type AnalyticsTrendPoint struct {
 	// Conversation* is the share of Tokens/Cost* used by conversation
 	// workspaces in this bucket; they are not SOP runs, and their
 	// requirements are not part of Issues.
-	ConversationWorkspaces int     `json:"conversationWorkspaces,omitempty"`
-	ConversationIssues     int     `json:"conversationIssues,omitempty"`
-	ConversationTokens     int64   `json:"conversationTokens,omitempty"`
-	ConversationCostUSD    float64 `json:"conversationCostUsd,omitempty"`
-	ConversationCostCNY    float64 `json:"conversationCostCny,omitempty"`
+	ConversationWorkspaces            int     `json:"conversationWorkspaces,omitempty"`
+	ConversationIssues                int     `json:"conversationIssues,omitempty"`
+	ConversationTokens                int64   `json:"conversationTokens,omitempty"`
+	ConversationCostUSD               float64 `json:"conversationCostUsd,omitempty"`
+	ConversationCostCNY               float64 `json:"conversationCostCny,omitempty"`
+	ConversationCostUnknownWorkspaces int     `json:"conversationCostUnknownWorkspaces,omitempty"`
 }
 
 // AnalyticsWeekHourCell is one non-empty weekday × hour bucket in the requested time zone.

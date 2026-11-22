@@ -577,7 +577,9 @@ func (h *assistantHandlers) chat(c *gin.Context) {
 				} else if !req.sopDesigner() {
 					prompt = assistantPlatformExecutionReminder + "\n" + prompt
 				}
-				cliReq := assistantCLIRequest{Executor: req.Executor, Prompt: prompt, Model: cliModel, Effort: req.Effort, SessionID: cliSessionID, Resume: resume, UserID: u.ID, Native: true, MCPConfig: mcp, Settings: settings, SystemPrompt: system, SessionRoot: cliRoot, RunnerLogin: runnerLogin, OnUsage: turnUsage.add, Workspace: req.workspaceMode, RemoteBinary: req.workspaceMode || toolSession.ExecutionRunnerID != "", Execute: h.conversationExecutor(toolSession, cliRoot)}
+				cliReq := assistantCLIRequest{Executor: req.Executor, Prompt: prompt, Model: cliModel, Effort: req.Effort, SessionID: cliSessionID, Resume: resume, UserID: u.ID, Native: true, MCPConfig: mcp, Settings: settings, SystemPrompt: system, SessionRoot: cliRoot, RunnerLogin: runnerLogin, OnUsage: func(usage domain.TokenUsage) {
+					turnUsage.add(domain.PriceScheduleExecutionUsage(replyModel, usage))
+				}, Workspace: req.workspaceMode, RemoteBinary: req.workspaceMode || toolSession.ExecutionRunnerID != "", Execute: h.conversationExecutor(toolSession, cliRoot)}
 				cliReq.ImageInput = conversationHasImageAttachments(req)
 				// Mode handoffs resume a journal which already has the user turn.
 				if switches == 0 || !resume {
@@ -1513,8 +1515,7 @@ type assistantCLIRequest struct {
 	ReviewOnly                                     bool
 	Native                                         bool
 	MCPConfig, Settings                            string
-	// OnUsage receives the usage of this CLI invocation once its result event
-	// reports one; the result event covers only this process, not the session.
+	// OnUsage receives this invocation's usage once, excluding prior session turns.
 	OnUsage func(domain.TokenUsage)
 }
 
@@ -1630,6 +1631,9 @@ func runAssistantCLI(ctx context.Context, req assistantCLIRequest, user domain.U
 	var stderrTail []string
 	var missingSession, modelStarted, credentialRejected bool
 	var usageCollector assistantCLIUsage
+	if engine == assistantEngineCodeBuddy || engine == assistantEngineClaude {
+		usageCollector.session = newAssistantSessionUsage(root, sessionID, req.Resume, engine)
+	}
 	missingText := "No conversation found with session ID: " + inv.sessionRef
 	var handle func(string)
 	sink := func(event domain.TelemetryEvent) {
@@ -1823,14 +1827,25 @@ type assistantTurnUsage struct {
 func (t *assistantTurnUsage) add(u domain.TokenUsage) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	first := !assistantUsageReported(t.total)
+	if first {
+		t.total.CostPricingVersion = u.CostPricingVersion
+	} else if t.total.CostPricingVersion != u.CostPricingVersion {
+		t.total.CostPricingVersion = ""
+	}
 	t.total.InputTokens += u.InputTokens
 	t.total.OutputTokens += u.OutputTokens
 	t.total.CacheReadTokens += u.CacheReadTokens
 	t.total.CacheWriteTokens += u.CacheWriteTokens
 	t.total.ReasoningTokens += u.ReasoningTokens
 	t.total.CostUSD += u.CostUSD
-	if u.CostStatus != "" {
+	switch {
+	case first:
 		t.total.CostStatus = u.CostStatus
+	case t.total.CostStatus == "" || t.total.CostStatus == "unknown" || u.CostStatus == "" || u.CostStatus == "unknown":
+		t.total.CostStatus = "unknown"
+	case t.total.CostStatus == "estimated" || u.CostStatus == "estimated":
+		t.total.CostStatus = "estimated"
 	}
 	t.total.TotalTokens += u.TotalTokens
 }

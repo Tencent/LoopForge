@@ -187,7 +187,11 @@ func (e *Engine) applyObservation(r *domain.Run, nodeID string, observation doma
 				nr.ToolCalls++
 				r.ToolCalls++
 			}
-			if observation.Usage != nil {
+			// Anthropic-compatible message_delta usage belongs to one model
+			// message, while result usage is cumulative across the session.
+			// Mixing their cursors rebills prior turns at the next result.
+			messageUsage := observation.Name == "usage.update" && (observation.Source.Adapter == "anthropic-stream-v1" || observation.Source.Adapter == "codebuddy-stream-json-v1")
+			if observation.Usage != nil && !messageUsage {
 				applyUsage(r, nr, observation.SessionID, *observation.Usage)
 			}
 		}

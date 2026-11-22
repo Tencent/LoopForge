@@ -271,6 +271,11 @@ func (a *protocolAdapter) handleClaudeStream(raw map[string]any) {
 			a.emit(domain.TelemetryEvent{Category: "tool", Name: "tool.call", Phase: "finish", Level: map[bool]string{true: "error", false: "info"}[failed], Message: msg, SessionID: sessionID, ToolCallID: id, Tool: &domain.ToolObservation{Name: name, Operation: "tool.result", CallID: id, Success: &success}})
 		}
 	case "result":
+		// The root result already includes subagent consumption. A child's
+		// message-scoped result must not reset the session billing cursor.
+		if stringValue(raw["parent_tool_use_id"]) != "" {
+			return
+		}
 		result := stringValue(raw["result"])
 		failed, _ := raw["is_error"].(bool)
 		a.mu.Lock()
@@ -281,7 +286,7 @@ func (a *protocolAdapter) handleClaudeStream(raw map[string]any) {
 		usage := tokenUsage(raw["usage"])
 		usage.CostUSD = float64Value(raw["total_cost_usd"])
 		// 适配器显式上报成本时标记 reported，用于区分"真实零成本"与"成本未识别"。
-		if _, ok := raw["total_cost_usd"]; ok {
+		if _, ok := raw["total_cost_usd"]; ok && (a.ex.Kind != "codebuddy" || usage.CostUSD != 0) {
 			usage.CostStatus = "reported"
 		}
 		a.emit(domain.TelemetryEvent{Category: "usage", Name: "usage.final", Phase: "finish", Message: "final model usage", SessionID: sessionID, Usage: &usage, Attributes: map[string]any{"durationMs": raw["duration_ms"], "turns": raw["num_turns"], "isError": raw["is_error"]}})
