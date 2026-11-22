@@ -16,7 +16,7 @@ import { cliFailureSettles } from "./cli-install.jsx";
 import { useExecutionMachines } from "./useExecutionMachines.js";
 import { executionLocked } from "./execution-target.js";
 import { knownEffort, modelEffort } from "./effort.js";
-import { EXECUTORS, concreteModel, conversationEngine, engineModels, engineOfModel, personalEngineConfigured } from "./engines.js";
+import { EXECUTORS, concreteModel, conversationEngine, engineModels, engineOfModel, normalizeCustomModelId, personalEngineConfigured } from "./engines.js";
 import { readComposerPreference, useComposerOptions, writeComposerPreference } from "./composer-preferences.js";
 import {
   enqueue,
@@ -56,12 +56,13 @@ function effortPreference(executor, model) {
 }
 
 // Use the first requested preference that is available for this executor.
-function preferredModel(list, executor, ...preferences) {
+function preferredModel(list, executor, allowCustom, ...preferences) {
   const available = list.filter((model) => !model.disabled && !model.unavailable);
   for (const id of preferences) {
     if (!concreteModel({ id }, executor)) continue;
     const listed = findExecutorModel(available, executor, id);
     if (listed) return id;
+    if (allowCustom && !findExecutorModel(list, executor, id)) return id;
   }
   return available[0]?.id || "";
 }
@@ -687,17 +688,24 @@ export function useChat() {
     const executorModels = usesProviderCatalog
       ? (providerCatalog?.models || []).filter((model) => concreteModel(model, executor))
       : listed;
+    const engineOption = catalogEngines.find((item) => item.id === executor);
+    const allowCustomModel = !codeBuddy && !agyAccountKey &&
+      Boolean(providerCatalog?.customModel ?? engineOption?.customModel);
     const sponsored = codeBuddy && missingKey && !user.isGuest && !!sponsoredModel;
     const listedModel = findExecutorModel(executorModels, executor, model);
     const concrete = concreteModel({ id: model }, executor);
     const hasSelectedModel = concrete && !listedModel?.disabled && !listedModel?.unavailable &&
-      (conversation || !executorModels.length || listedModel);
+      (conversation || !executorModels.length || listedModel || allowCustomModel);
     const inheritsDefault = !!conversation && !concrete;
     const saved = (draft || inheritsDefault) && !sponsored && accountDefaults?.executor === executor ? accountDefaults : null;
     const savedModel = saved ? findExecutorModel(executorModels, executor, saved.model) : null;
+    const savedCustom = !savedModel && allowCustomModel && concreteModel({ id: saved?.model }, executor) &&
+      !findExecutorModel(executorModels, executor, saved?.model)
+      ? normalizeCustomModelId(executor, saved.model)
+      : "";
     const selectedModel = hasSelectedModel ? model : preferredModel(
-      executorModels, executor,
-      savedModel?.id,
+      executorModels, executor, allowCustomModel,
+      savedModel?.id || savedCustom,
       inheritsDefault ? (codeBuddy ? codeBuddyDefault.id : providerCatalog?.default) : null,
       draft && !saved ? readComposerPreference(`model.${executor}`) : null,
     );
@@ -718,12 +726,20 @@ export function useChat() {
     // Custom models can remain usable without a picker entry. Keep their
     // saved effort visible and let the server validate it on send.
     const historical = conversation && activeModel && !unavailableAgyVariant && availableModel === selectedModel;
-    const activeModelEntry = catalogEntry ?? (historical
+    const customEntry = allowCustomModel && concreteModel({ id: activeModel }, executor)
+      ? {
+          id: activeModel,
+          name: unprefixedModel(executor, activeModel),
+          engine: executor,
+          efforts: knownEffort(preferredEffort) ? [knownEffort(preferredEffort)] : [],
+        }
+      : undefined;
+    const activeModelEntry = catalogEntry ?? customEntry ?? (historical
       ? { id: activeModel, efforts: [knownEffort(preferredEffort)] }
       : undefined);
     const activeEffort = modelEffort(activeModelEntry, preferredEffort || legacyEffort);
     return {
-      personalMachineId, agyAccountKey, catalogToLoad, codeBuddy, executorModels,
+      personalMachineId, agyAccountKey, catalogToLoad, codeBuddy, executorModels, allowCustomModel,
       sponsored, activeModelEntry, activeModel, activeEffort, unavailableAgyVariant,
     };
   }
@@ -774,7 +790,11 @@ export function useChat() {
 
   function composerModelError(resolved) {
     if (resolved.unavailableAgyVariant) return "当前模型已不在该执行机器的账号目录，请重新选择模型。";
-    if (!resolved.activeModel) return "当前 CLI 暂无可用模型，请在个人配置中获取或添加模型。";
+    if (!resolved.activeModel) {
+      return resolved.allowCustomModel
+        ? "请先选择或输入模型 ID。"
+        : "当前 CLI 暂无可用模型，请在个人配置中获取或添加模型。";
+    }
     return "";
   }
   async function modelForRequest(selection, conversation, resolved) {
@@ -850,11 +870,23 @@ export function useChat() {
       return false;
     }
     const entry = executorModels.find((item) => item.id === id);
-    if (!entry || entry.disabled || entry.unavailable) return false;
-    const savedLevel = readComposerPreference(effortPreference(executor, id));
-    const level = id === activeModel ? activeEffort : modelEffort(entry, savedLevel ?? activeEffort);
-    setSelection({ executor, model: id, effort: level });
-    rememberModelChoice(id, level);
+    if (entry) {
+      if (entry.disabled || entry.unavailable) return false;
+      const savedLevel = readComposerPreference(effortPreference(executor, id));
+      const level = id === activeModel ? activeEffort : modelEffort(entry, savedLevel ?? activeEffort);
+      setSelection({ executor, model: id, effort: level });
+      rememberModelChoice(id, level);
+      return true;
+    }
+    if (!composerModel.allowCustomModel) return false;
+    const normalized = normalizeCustomModelId(executor, id);
+    if (!normalized) return false;
+    const listed = findExecutorModel(executorModels, executor, normalized);
+    if (listed) return chooseModel(listed.id);
+    const savedLevel = readComposerPreference(effortPreference(executor, normalized));
+    const level = normalized === activeModel ? activeEffort : modelEffort(undefined, savedLevel ?? activeEffort);
+    setSelection({ executor, model: normalized, effort: level });
+    rememberModelChoice(normalized, level);
     return true;
   }
 
@@ -1615,6 +1647,7 @@ export function useChat() {
     ...executionMachines,
     selectSandbox,
     models: executorModels,
+    allowCustomModel: composerModel.allowCustomModel,
     executor,
     executors: user ? availableExecutors : [],
     setExecutor: chooseExecutor,

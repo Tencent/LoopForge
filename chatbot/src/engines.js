@@ -47,6 +47,21 @@ export const concreteModel = (model, engine = modelEngine(model)) =>
   !!model?.id && model.id !== "default" && model.id !== `${engine}:default` &&
   (engine !== "codebuddy" || (model.id !== "default-model" && model.id !== "codebuddy:default-model"));
 
+// Mirrors assistantValidEngineModel in internal/httpapi/assistant_engines.go.
+export function validCustomModelId(id) {
+  if (!id || id.length > 128 || id.startsWith("-")) return false;
+  return !/[\u0000-\u0020\u007f"'`\\]/.test(id);
+}
+
+export function normalizeCustomModelId(executor, raw) {
+  let id = String(raw ?? "").trim();
+  if (!id || !executor) return "";
+  const prefix = `${executor}:`;
+  if (id.startsWith(prefix)) id = id.slice(prefix.length).trim();
+  if (!validCustomModelId(id) || !concreteModel({ id }, executor)) return "";
+  return executor === defaultEngine ? id : `${executor}:${id}`;
+}
+
 export const engineModels = (models, engine) =>
   (models || []).filter((m) => modelEngine(m) === engine && concreteModel(m, engine));
 

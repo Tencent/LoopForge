@@ -157,3 +157,59 @@ func TestCodeBuddyModelDiscoveryPerEnvironment(t *testing.T) {
 		t.Fatalf("international catalog: %+v", intl)
 	}
 }
+
+func TestAssistantModelCatalogIncludesCustomModelFlag(t *testing.T) {
+	h, user := workbenchFixture(t)
+	stubCLIModelDiscovery(t)
+	user.AgentCLICredentials = map[string]domain.AgentCLICredential{
+		"agy": {APIKey: "agy-key", BaseURL: "https://agy.example/v1"},
+	}
+	if err := h.repo.PutUser(user); err != nil {
+		t.Fatal(err)
+	}
+
+	c, rec := workbenchContext(user, http.MethodGet, "/api/assistant/models", bytes.NewBuffer(nil))
+	h.models(c)
+	var mainCatalog assistantModelCatalog
+	if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &mainCatalog) != nil {
+		t.Fatalf("main catalog: %d %s", rec.Code, rec.Body)
+	}
+	if mainCatalog.CustomModel {
+		t.Fatalf("main CodeBuddy catalog must not advertise customModel: %+v", mainCatalog)
+	}
+	for _, engine := range mainCatalog.Engines {
+		want := engine.ID != assistantEngineCodeBuddy
+		if engine.CustomModel != want {
+			t.Errorf("engine %q customModel = %v, want %v", engine.ID, engine.CustomModel, want)
+		}
+	}
+
+	for _, tc := range []struct {
+		query string
+		want  bool
+	}{
+		{"pi", true},
+		{"opencode", true},
+		{"kimi", true},
+		{"agy", true},
+		{"codex", true},
+		{"claude-code", true},
+		{"claude", true},
+		{"cursor", true},
+		{"dsh", true},
+		{"zcode", true},
+		{"codebuddy", false},
+	} {
+		t.Run(tc.query, func(t *testing.T) {
+			c, rec := workbenchContext(user, http.MethodGet, "/api/assistant/models?executor="+tc.query, bytes.NewBuffer(nil))
+			h.models(c)
+			var catalog assistantModelCatalog
+			if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &catalog) != nil {
+				t.Fatalf("executor=%s: %d %s", tc.query, rec.Code, rec.Body)
+			}
+			if catalog.CustomModel != tc.want {
+				t.Fatalf("executor=%s customModel = %v, want %v", tc.query, catalog.CustomModel, tc.want)
+			}
+		})
+	}
+}

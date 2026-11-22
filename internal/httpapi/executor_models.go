@@ -126,6 +126,23 @@ func effortOptions(levels []string) []executorEffortOption {
 	return options
 }
 
+func executorCatalogKey(engine string) string {
+	id := assistantExecutor(engine)
+	if id == assistantEngineClaude {
+		return "claude"
+	}
+	return id
+}
+
+func executorSupportsCustomModel(engine string) bool {
+	switch executorCatalogKey(engine) {
+	case "codex", "claude", "opencode", "cursor", "agy", "kimi", "pi", "dsh", "zcode":
+		return true
+	default:
+		return false
+	}
+}
+
 // executorModelCatalogs returns built-in options plus the caller's CodeBuddy
 // catalog.
 func executorModelCatalogs(kimiBaseURL string, codebuddy assistantModelCatalog) map[string]executorModelCatalog {
@@ -140,23 +157,19 @@ func executorModelCatalogs(kimiBaseURL string, codebuddy assistantModelCatalog) 
 			Efforts: effortOptions(domain.ExecutorEffortLevels["codebuddy"]),
 		},
 		"codex": {
-			CustomModel: true,
-			Efforts:     effortOptions(domain.ExecutorEffortLevels["codex"]),
+			Efforts: effortOptions(domain.ExecutorEffortLevels["codex"]),
 		},
 		"claude": {
-			CustomModel: true,
-			Efforts:     effortOptions(domain.ExecutorEffortLevels["claude-code"]),
+			Efforts: effortOptions(domain.ExecutorEffortLevels["claude-code"]),
 		},
 		// Official-endpoint catalogs. OpenCode and Pi have none, so their
 		// models come from the Base URL.
-		"opencode": {CustomModel: true, Efforts: effortOptions(domain.ExecutorEffortLevels["opencode"])},
+		"opencode": {Efforts: effortOptions(domain.ExecutorEffortLevels["opencode"])},
 		"cursor": {
-			CustomModel: true,
-			Models:      cursorCatalogModels(),
-			Efforts:     effortOptions(domain.ExecutorEffortLevels["cursor"]),
+			Models:  cursorCatalogModels(),
+			Efforts: effortOptions(domain.ExecutorEffortLevels["cursor"]),
 		},
 		"agy": {
-			CustomModel: true,
 			// Slugs from agy models in Gemini API mode. Account-login models
 			// are queried from the user's runner because they vary by plan.
 			Models: []executorModelInfo{
@@ -171,12 +184,13 @@ func executorModelCatalogs(kimiBaseURL string, codebuddy assistantModelCatalog) 
 			},
 			Efforts: effortOptions(domain.ExecutorEffortLevels["agy"]),
 		},
-		"kimi":  {CustomModel: true, Efforts: effortOptions(domain.ExecutorEffortLevels["kimi"])},
-		"pi":    {CustomModel: true, Efforts: effortOptions(domain.ExecutorEffortLevels["pi"])},
-		"dsh":   {CustomModel: true, Efforts: effortOptions(domain.ExecutorEffortLevels["dsh"])},
-		"zcode": {CustomModel: true, Efforts: effortOptions(domain.ExecutorEffortLevels["zcode"])},
+		"kimi":  {Efforts: effortOptions(domain.ExecutorEffortLevels["kimi"])},
+		"pi":    {Efforts: effortOptions(domain.ExecutorEffortLevels["pi"])},
+		"dsh":   {Efforts: effortOptions(domain.ExecutorEffortLevels["dsh"])},
+		"zcode": {Efforts: effortOptions(domain.ExecutorEffortLevels["zcode"])},
 	}
 	for engine, catalog := range catalogs {
+		catalog.CustomModel = executorSupportsCustomModel(engine)
 		modelEngine := engine
 		if engine == "claude" {
 			modelEngine = assistantEngineClaude
