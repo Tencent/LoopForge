@@ -3,10 +3,13 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
 const ctx = {
+  lfT: zh => zh,
+  formatTokens: x => String(x),
   state: {obsScope:'project',obsTrendGrain:'all',obsOriginFilter:'external',data:{users:[]}},
   projectQuery:()=>'?projectId=p',currentProject:()=>({id:'p',ownerId:7,members:[{userId:8,role:'maintainer'}]}),
 };
 vm.createContext(ctx);
+vm.runInContext(fs.readFileSync('app/obs-charts.js','utf8'),ctx);
 vm.runInContext(fs.readFileSync('app/observability.js','utf8'),ctx);
 assert.match(ctx.analyticsQuery({overview:true}),/origin=external/);
 assert.match(ctx.analyticsQuery({overview:true}),/projectId=p/);
@@ -62,7 +65,6 @@ ctx.state.obsTrendGrain='day';ctx.state.obsPeriodKey='';
 ctx.state.analytics={activity:{sessions:1},trend:[],activityTrend:[{date:'2026-10-08',sessions:1}]};
 assert.equal(ctx.obsPeriodKey(),'2026-10-08');
 assert.ok(ctx.obsPeriodChoices().includes('2026-10-08'));
-ctx.formatTokens=x=>String(x);
 const usage={sessionUsage:{tokens:123,reportedReplies:1,missingReplies:2},collaborativeUsage:{tokens:50,reportedReplies:1}};
 assert.equal(ctx.obsActivityUsageCard(usage,false).value,'123');
 assert.equal(ctx.obsActivityUsageCard(usage,true).value,'50');
@@ -70,3 +72,26 @@ assert.match(ctx.obsActivityUsageCard(usage,false).foot,/2 条回复未采集/);
 assert.equal(ctx.obsActivityUsageCard({sessionUsage:{missingReplies:1}},false).value,'未采集');
 assert.equal(ctx.obsActivityUsageCard({sessionUsage:{}},false).value,'0');
 assert.equal(ctx.obsActivityUsageCard(null,false).value,'—');
+
+ctx.lfT = (_zh, en) => en;
+assert.match(ctx.obsActivityKpis(), /Counts by creation time, tokens by reply time/);
+assert.equal(ctx.obsActivityUsageCard(usage,false).foot,'2 replies missing usage · reported usage only');
+ctx.state.obsTrendGrain='month';
+ctx.state.obsPeriodKey='2026-10';
+ctx.state.analytics={
+  summary:{conversationWorkspaces:1},
+  activity:{sessionUsage:{},collaborativeUsage:{}},
+  activityTrend:[{date:'2026-10',sessionUsage:{},collaborativeUsage:{}}],
+};
+assert.equal(ctx.obsPeriodRange('2026-10').label,'Oct 2026');
+assert.equal(ctx.obsActivityKpis().match(/Input 0 \/ Output 0/g).length,2);
+const monthlyUsage=ctx.obsUsageKpis({period:true});
+assert.match(monthlyUsage,/Oct 2026 runs/);
+assert.match(monthlyUsage,/Oct 2026 requirements/);
+assert.match(monthlyUsage,/Oct 2026 cost/);
+assert.match(monthlyUsage,/Oct 2026 workspaces/);
+assert.match(monthlyUsage,/0 this month/);
+ctx.lfT = zh => zh;
+assert.equal(ctx.obsPeriodRange('2026-10').label,'2026年10月');
+assert.match(ctx.obsActivityKpis(),/输入 0 \/ 输出 0/);
+assert.match(ctx.obsUsageKpis({period:true}),/10月运行/);

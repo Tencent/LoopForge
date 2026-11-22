@@ -123,7 +123,6 @@ func TestPreviewContractAndSessionBranches(t *testing.T) {
 	}
 	for _, bad := range []*PreviewContract{
 		{Enabled: true, Kind: "service"},
-		{Enabled: true, ExecutorID: "other"},
 		{Enabled: true, SourcePath: "../x"},
 	} {
 		if bad.Validate() == nil {

@@ -1,4 +1,3 @@
-document.getElementById('loginLang').onclick = () => window.lfSetLang(window.lfLang() === 'en' ? 'zh' : 'en');
 document.getElementById('loginTheme').onclick = () => {
   const next = document.documentElement.dataset.theme === 'light' ? 'dark' : 'light';
   document.documentElement.dataset.theme = next;
@@ -27,12 +26,19 @@ function render() {
 
 $('switchMode').onclick = () => { mode = mode === 'login' ? 'register' : 'login'; render(); };
 
-fetch('/api/auth/setup').then(r => r.ok ? r.json() : {}).then(state => {
-  signup = !!state.signupEnabled;
-  if (state.needsSetup) mode = 'setup';
-  else if (location.hash === '#register' && signup) mode = 'register';
-  render();
-}).catch(() => {});
+fetch('/api/auth/setup')
+  .then(response => response.ok ? response.json() : null)
+  .catch(() => null)
+  .then(state => {
+    if (!state) {
+      $('loginContact').hidden = false;
+      return;
+    }
+    signup = !!state.signupEnabled;
+    if (state.needsSetup) mode = 'setup';
+    else if (location.hash === '#register' && signup) mode = 'register';
+    render();
+  });
 
 $('loginForm').onsubmit = async event => {
   event.preventDefault();

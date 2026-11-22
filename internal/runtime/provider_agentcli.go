@@ -88,6 +88,10 @@ type AgentCLICommandOptions struct {
 	// Resume is the CLI's own session ID to continue; empty starts one.
 	Resume string
 	Prompt string
+	// ImagePaths are already staged in the conversation's attachment directory.
+	ImagePaths []string
+	// Historical images remain available through the session journal or path.
+	ImageInput bool
 	// SystemPrompt is the system prompt body; SystemPromptFile is the same
 	// text as a path the process can read.
 	SystemPrompt, SystemPromptFile string
@@ -124,6 +128,10 @@ func AgentCLICommand(kind string, o AgentCLICommandOptions) CommandSpec {
 	readOnly := o.Chat && !o.Workspace
 	options := AgentCLIOptions{Model: model, Effort: effort, ReadOnly: readOnly}
 	switch kind {
+	case AgentCLIOpenCode, AgentCLIPi, AgentCLIKimi, AgentCLIDeepSeek:
+		options.ImageInput = o.ImageInput || len(o.ImagePaths) > 0
+	}
+	switch kind {
 	case AgentCLIOpenCode:
 		argv = []string{binary, "run", "--format", "json", "--thinking"}
 		if model != "" {
@@ -136,7 +144,15 @@ func AgentCLICommand(kind string, o AgentCLICommandOptions) CommandSpec {
 			argv = append(argv, "--variant", effort)
 		}
 		options.SystemPromptFile = o.SystemPromptFile
-		argv = append(append(argv, extra...), prompt)
+		argv = append(argv, extra...)
+		if len(o.ImagePaths) > 0 {
+			for _, path := range o.ImagePaths {
+				argv = append(argv, "--file", path)
+			}
+			// --file accepts an array. Keep the prompt out of that array.
+			argv = append(argv, "--")
+		}
+		argv = append(argv, prompt)
 	case AgentCLICursor:
 		// Chat relies on the deny rules of .cursor/cli-config.json; --force
 		// still approves the MCP tools.
@@ -207,7 +223,13 @@ func AgentCLICommand(kind string, o AgentCLICommandOptions) CommandSpec {
 		if readOnly {
 			argv = append(argv, "--exclude-tools", "bash,edit,write")
 		}
-		argv = append(append(argv, extra...), prompt)
+		argv = append(argv, extra...)
+		if len(o.ImagePaths) > 0 {
+			for _, path := range o.ImagePaths {
+				argv = append(argv, "@"+path)
+			}
+		}
+		argv = append(argv, prompt)
 	case AgentCLIDeepSeek:
 		mode := "danger-full-access"
 		if readOnly {
@@ -226,6 +248,9 @@ func AgentCLICommand(kind string, o AgentCLICommandOptions) CommandSpec {
 		argv = []string{binary, "--prompt", prompt, "--output-format", "stream-json", "--mode", "yolo", "--no-color", "--disallowed-tools", disallowed}
 		if resume != "" {
 			argv = append(argv, "--resume", resume)
+		}
+		for _, path := range o.ImagePaths {
+			argv = append(argv, "--attach", path)
 		}
 		argv = append(argv, extra...)
 	}

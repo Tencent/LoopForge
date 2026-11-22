@@ -197,6 +197,7 @@ func TestGinMiddlewareAndSmallViews(t *testing.T) {
 }
 
 func TestGongfengOAuthAuthenticatedStart(t *testing.T) {
+	t.Setenv("AGENTFLOW_GONGFENG_HOST", "git.review.test")
 	f := cvBNewHTTPFixture(t)
 	t.Setenv("AGENTFLOW_GONGFENG_OAUTH_CLIENT_ID", "client")
 	t.Setenv("AGENTFLOW_GONGFENG_OAUTH_CLIENT_SECRET", "secret")

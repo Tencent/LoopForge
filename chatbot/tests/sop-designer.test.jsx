@@ -10,7 +10,7 @@ vi.mock("../src/api.js", async (original) => ({
 }));
 import SopDesigner from "../src/SopDesigner.jsx";
 import {
-  BEGIN, BEGUN, CONTEXT, DRAFT, END, NEW_CONVERSATION, PLACE, READY, REPLY, RESET,
+  BEGIN, BEGUN, CONFIGURE_ROLE, CONTEXT, DRAFT, END, NEW_CONVERSATION, PLACE, READY, REPLY, RESET,
   beginOnCanvas, designerParams, draftSummary, isDesignerSurface, latestSession, postToCanvas, replyDraft, scenarioPage,
 } from "../src/sop-designer.js";
 
@@ -40,7 +40,7 @@ describe("sop-designer helpers", () => {
 
   test("read the workflows_save draft of a reply", () => {
     const body = { name: "交付", nodes: [{ id: "a" }, { id: "b" }], edges: [{ source: "a", target: "b" }] };
-    expect(replyDraft(draftReply(body, ["节点 a 未绑定角色"]))).toEqual({ body, warnings: ["节点 a 未绑定角色"] });
+    expect(replyDraft(draftReply(body, ["节点 a 未绑定角色"]))).toEqual({ tool: "workflows_save", body, warnings: ["节点 a 未绑定角色"] });
     expect(replyDraft({ content: JSON.stringify({ message: "x", drafts: [{ tool: "workflows_save", body: JSON.stringify(body) }] }) }).body).toEqual(body);
     expect(replyDraft({ content: JSON.stringify({ message: "x", drafts: [{ tool: "issues_save", body }] }) })).toBe(null);
     expect(replyDraft({ content: "纯文本回答" })).toBe(null);
@@ -181,6 +181,55 @@ describe("SopDesigner", () => {
     stored = null;
     reply({ type: CONTEXT, projectId: "p1", workflowId: "sop-b" });
     await waitFor(() => expect(read).toHaveBeenCalledWith("/api/assistant/sessions?surface=sop-designer&workflowId=sop-b&projectId=p1"));
+  });
+
+  test("opens the role configuration from a saved assistant draft", async () => {
+    const role = { id: "reviewer", name: "改动评审", description: "检查本次改动", prompt: "总结评审结果" };
+    stored = {
+      id: "chat-role", projectId: "p1", workflowId: "sop-a",
+      messages: [{ role: "assistant", content: JSON.stringify({
+        message: "已准备角色草稿", drafts: [{ tool: "agents_save", body: role }],
+      }) }],
+    };
+    generation = { id: "g-role", status: "completed", events: [] };
+    render(<SopDesigner search="?surface=sop-designer&projectId=p1&workflowId=sop-a" canvas={canvas} />);
+    fireEvent.click(await screen.findByRole("button", { name: "配置并创建角色" }));
+    expect(posted.at(-1)).toEqual({ type: CONFIGURE_ROLE, projectId: "p1", workflowId: "sop-a", role });
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  test("a deleted conversation starts fresh and can accept another turn", async () => {
+    stored = { id: "chat-deleted", projectId: "p1", workflowId: "sop-a", messages: [{ role: "user", content: "上一轮" }] };
+    send.mockImplementation(async (_path, body) => {
+      const messages = [...(stored?.messages || []), ...body.messages, { role: "assistant", content: "已收到" }];
+      stored = { id: body.sessionId, projectId: "p1", workflowId: "sop-a", messages };
+      generation = { id: "g-" + send.mock.calls.length, status: "completed", events: [] };
+      return generation;
+    });
+    render(<SopDesigner search="?surface=sop-designer&projectId=p1&workflowId=sop-a" canvas={canvas} />);
+    await screen.findByText("上一轮");
+    const readSession = read.getMockImplementation();
+    read.mockImplementation((path) => {
+      if (path === "/api/assistant/sessions/chat-deleted") {
+        return Promise.reject(Object.assign(new Error("对话不存在"), { status: 404 }));
+      }
+      return readSession(path);
+    });
+    stored = null;
+
+    fireEvent.change(screen.getByLabelText("描述要编排的流程"), { target: { value: "恢复后的第一轮" } });
+    fireEvent.click(screen.getByLabelText("发送编排要求"));
+    await screen.findByText("已收到");
+    const newSession = send.mock.calls[0][1].sessionId;
+    expect(newSession).not.toBe("chat-deleted");
+    expect(posted.some((m) => m.type === RESET)).toBe(true);
+    expect(screen.queryByText("上一轮")).toBeNull();
+
+    fireEvent.change(screen.getByLabelText("描述要编排的流程"), { target: { value: "恢复后的第二轮" } });
+    fireEvent.click(screen.getByLabelText("发送编排要求"));
+    await waitFor(() => expect(send).toHaveBeenCalledTimes(2));
+    expect(send.mock.calls[1][1].sessionId).toBe(newSession);
+    expect(screen.queryByRole("alert")).toBeNull();
   });
 
   test("a delayed generation response stays with the project that sent it", async () => {

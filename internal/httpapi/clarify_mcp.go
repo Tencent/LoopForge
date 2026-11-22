@@ -3,8 +3,8 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
+	"net/url"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -19,27 +19,9 @@ const (
 )
 
 var (
-	tapdURLRe          = regexp.MustCompile(`(?i)https?://(?:www\.)?(?:tapd\.example\.com|tapd\.cn)[^\s<>"'）】\]]+`)
-	gongfengIssueURLRe = regexp.MustCompile(`(?i)https?://git\.example\.com/[^\s<>"'）】\]]+/issues/\d+`)
+	clarifyWebURL      = regexp.MustCompile(`(?i)https?://[^\s<>"'）】\]]+`)
+	gongfengIssueURLRe = regexp.MustCompile(`(?i)https?://[^/\s<>"'）】\]]+/[^\s<>"'）】\]]+/issues/\d+`)
 )
-
-func clarifyAllowedModel(id string) string {
-	return assistantAllowedModel(id, assistantKnownCatalog())
-}
-
-// errClarifyNeedsCodeBuddy is returned when a clarification asks for a model of
-// another CLI: clarification runs on CodeBuddy only, so a "codex:…" id must be
-// refused instead of being swapped for the CodeBuddy default.
-var errClarifyNeedsCodeBuddy = errors.New("需求澄清目前只支持 CodeBuddy 模型，请在模型列表中改选 CodeBuddy 模型")
-
-// clarifyModelEngineError reports whether id names a model of a CLI that
-// requirement clarification cannot run.
-func clarifyModelEngineError(id string) error {
-	if engine, _ := assistantModelEngine(id); engine != assistantEngineCodeBuddy {
-		return errClarifyNeedsCodeBuddy
-	}
-	return nil
-}
 
 func asStringKeyMap(v any) map[string]any {
 	m, ok := v.(map[string]any)
@@ -191,7 +173,7 @@ func extractTAPDRefs(texts ...string) []clarifyTAPDHit {
 	seen := map[string]bool{}
 	var out []clarifyTAPDHit
 	for _, text := range texts {
-		for _, match := range tapdURLRe.FindAllString(text, -1) {
+		for _, match := range clarifyWebURL.FindAllString(text, -1) {
 			raw := strings.TrimRight(match, ".,;:，。；：")
 			ref, err := tracker.ParseTAPDStoryURL(raw)
 			if err != nil || ref.StoryID == "" || seen[ref.StoryID] {
@@ -240,8 +222,12 @@ func gongfengProjectPathFromClarifyURL(raw string) string {
 		return ""
 	}
 	path := raw
-	if i := strings.Index(strings.ToLower(raw), "git.example.com/"); i >= 0 {
-		path = raw[i+len("git.example.com/"):]
+	if strings.Contains(raw, "://") {
+		u, err := url.Parse(raw)
+		if err != nil || u.User != nil || !domain.IsGongfengHost(u.Host) {
+			return ""
+		}
+		path = u.Path
 	}
 	parts := strings.FieldsFunc(path, func(r rune) bool { return r == '/' })
 	for i, part := range parts {

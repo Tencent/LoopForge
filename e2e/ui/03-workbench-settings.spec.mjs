@@ -81,6 +81,41 @@ test('AI workbench: a saved conversation is listed, opened, searched, renamed, a
   expect(errors).toEqual([]);
 });
 
+test('ZCode reports platform CLI availability before credentials are saved', async ({ page, identity }) => {
+  const me = await userById(identity.user.id);
+  test.skip(!!me?.agentCliCredentials?.zcode?.apiKeyConfigured, 'ZCode is already configured for this user');
+  await openView(page, 'settings');
+  await page.locator('#credentialPanel').getByRole('button', { name: '新增执行器', exact: true }).click();
+  const probe = page.waitForResponse(response => {
+    const url = new URL(response.url());
+    return url.pathname === '/api/assistant/cli-install' && url.searchParams.get('engine') === 'zcode';
+  });
+  await page.getByRole('listbox', { name: '新增执行器', exact: true }).getByRole('option', { name: 'ZCode', exact: true }).click();
+  const response = await probe;
+  expect(response.ok()).toBe(true);
+  const { status } = await response.json();
+  expect(['installed', 'missing']).toContain(status);
+  await expect(page.locator('#credentialWizard [data-credential-runtime]'))
+    .toContainText(status === 'installed' ? '平台服务器已检测到 ZCode CLI' : '平台服务器缺少 ZCode CLI');
+  await expect(page.locator('#credentialWizard .credential-runtime-status')).toHaveCount(0);
+});
+
+test('desktop settings navigation reopens on the current page', async ({ page }) => {
+  await openView(page, 'settings');
+  const collapse = page.locator('#settingsSidebarToggle');
+  const expand = page.getByRole('button', { name: '展开设置导航', exact: true });
+  for (const reducedMotion of ['reduce', 'no-preference']) {
+    await page.emulateMedia({ reducedMotion });
+    await collapse.click();
+    await expect(page.locator('#settingsSidebar')).toHaveAttribute('aria-hidden', 'true');
+    await expect(expand).toBeFocused();
+    await expand.press('Enter');
+    await expect(collapse).toBeVisible();
+    await expect(collapse).toBeFocused();
+    await expect(page).toHaveURL(/#\/settings$/);
+  }
+});
+
 test('personal credentials: the add wizard validates, saves write-only, and the row clears it', async ({ page, identity }) => {
   const me = identity.user;
   test.skip(!!(await userById(me.id))?.codexApiKeyConfigured, 'the token owner already has a Codex API Key; not overwriting a real credential');
@@ -88,17 +123,12 @@ test('personal credentials: the add wizard validates, saves write-only, and the 
 
   const errors = watchErrors(page);
   await openView(page, 'settings');
-  await page.locator('[data-credential-add]').click();
+  await page.locator('#credentialPanel').getByRole('button', { name: '新增执行器', exact: true }).click();
+  await page.getByRole('listbox', { name: '新增执行器', exact: true }).getByRole('option', { name: 'Codex', exact: true }).click();
   const wizard = page.locator('#credentialWizard');
   const pane = wizard.locator('.credential-pane:not(.is-leaving)');
   const next = wizard.locator('[data-wizard-next]');
-  await expect(wizard.getByRole('dialog', { name: '添加凭证' })).toBeVisible();
-  await expect(wizard.locator('[data-wizard-step]')).toHaveText('1 / 3');
-  await wizard.locator('[data-wizard-kind="codexApiKey"]').click();
-  await expect(wizard.locator('[data-wizard-kind="codexApiKey"]')).toHaveAttribute('aria-checked', 'true');
-  await next.click();
-
-  await expect(wizard.locator('[data-wizard-step]')).toHaveText('2 / 3');
+  await expect(wizard.getByRole('dialog')).toBeVisible();
   await expect(next).toBeDisabled();
   const key = `sk-e2e-${cfg.runTag}`;
   await pane.locator('input[name="secret"]').fill(key);
@@ -106,19 +136,14 @@ test('personal credentials: the add wizard validates, saves write-only, and the 
   await baseURL.fill('not-a-url');
   await expect(pane.locator('[data-credential-hint="extra"]')).toContainText('http://');
   await expect(next).toBeDisabled();
-  await baseURL.fill('https://gateway.example.com/v1');
+  await baseURL.fill('https://gateway.invalid/v1');
   await expect(next).toBeEnabled();
   await next.click();
 
-  await expect(wizard.locator('[data-wizard-step]')).toHaveText('3 / 3');
-  await expect(pane).not.toContainText(key);
-  await next.click();
-  await expect(wizard.locator('[data-wizard-done]')).toBeVisible({ timeout: 20_000 });
+  await expect(wizard).toBeHidden({ timeout: 20_000 });
   const saved = await userById(me.id);
   expect(saved.codexApiKeyConfigured).toBe(true);
   expect(JSON.stringify(saved)).not.toContain(key);
-  await wizard.locator('[data-wizard-done]').click();
-  await expect(wizard.getByRole('dialog')).toHaveCount(0);
 
   const row = page.locator('#credentialPanel [data-credential-row="codexApiKey"]');
   await expect(row).toHaveClass(/is-configured/);
@@ -126,7 +151,7 @@ test('personal credentials: the add wizard validates, saves write-only, and the 
   await expect(row).toHaveClass(/is-open/);
   await row.locator('[data-credential-act="delete"]').click();
   await row.locator('[data-credential-act="confirm-delete"]').click();
-  await expect(row).not.toHaveClass(/is-configured/, { timeout: 20_000 });
+  await expect(row).toHaveCount(0, { timeout: 20_000 });
   expect((await userById(me.id)).codexApiKeyConfigured).toBeFalsy();
   expect(errors).toEqual([]);
 });

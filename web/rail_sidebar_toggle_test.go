@@ -6,32 +6,19 @@ import (
 	"testing"
 )
 
-func TestRailSidebarToggleSitsAboveSettings(t *testing.T) {
+func TestIconRailHasNoExpandToggle(t *testing.T) {
 	htmlRaw, err := os.ReadFile("index.html")
 	if err != nil {
 		t.Fatal(err)
 	}
 	html := string(htmlRaw)
+	if strings.Contains(html, `id="railSidebarToggle"`) || strings.Contains(html, `data-tooltip="展开导航"`) || strings.Contains(html, `aria-label="展开导航"`) {
+		t.Fatal("icon rail must not offer an expand control")
+	}
 	bottom := strings.Index(html, `class="rail-bottom"`)
-	toggle := strings.Index(html, `id="railSidebarToggle"`)
 	settings := strings.Index(html, `id="railSettingsEntry"`)
-	if bottom < 0 || toggle < bottom || settings < toggle {
-		t.Fatal("sidebar toggle must sit in the rail, directly above settings")
-	}
-	button := html[strings.LastIndex(html[:toggle], "<button") : strings.Index(html[toggle:], "</button>")+toggle]
-	if strings.Contains(button, "data-view=") {
-		t.Fatal("sidebar toggle must not navigate")
-	}
-	if !strings.Contains(button, `data-icon="panel-left"`) || !strings.Contains(button, `aria-controls="platformRail"`) {
-		t.Fatal("sidebar toggle must use the panel-left icon and control the icon rail")
-	}
-	if !strings.Contains(button, `aria-expanded="false"`) || !strings.Contains(button, `data-tooltip="展开导航"`) {
-		t.Fatal("icon rail starts as icons and offers to expand")
-	}
-	for _, label := range []string{"AI 工作台", "统计", "需求列表", "待我确认", "设置"} {
-		if !strings.Contains(html, `<span class="rail-label">`+label+`</span>`) {
-			t.Fatalf("expanded rail missing label %s", label)
-		}
+	if bottom < 0 || settings < bottom {
+		t.Fatal("settings entry must stay in the icon rail")
 	}
 	for _, moved := range []string{"流程模板", "运行记录", "定时任务"} {
 		if strings.Contains(html, `<span class="rail-label">`+moved+`</span>`) {
@@ -44,30 +31,19 @@ func TestRailSidebarToggleSitsAboveSettings(t *testing.T) {
 		t.Fatal(err)
 	}
 	src := string(app)
-	start := strings.Index(src, "$('#railSidebarToggle')?.addEventListener('click'")
-	if start < 0 {
-		t.Fatal("missing rail sidebar click handler")
+	if strings.Contains(src, "railSidebarToggle") || strings.Contains(src, "setPlatformRailExpanded(") || strings.Contains(src, "platform-rail-expanded") || strings.Contains(src, "只显示图标") {
+		t.Fatal("icon rail expand toggle must be removed")
 	}
-	end := strings.Index(src[start:], "});")
-	handler := src[start : start+end]
-	if strings.Contains(handler, "switchView(") || strings.Contains(handler, "agentflow-sidebar-toggle") || strings.Contains(handler, "setSettingsSidebarExpanded(") {
-		t.Fatal("icon rail toggle must not change page, chat list, or settings navigation")
-	}
-	if !strings.Contains(handler, "setPlatformRailExpanded(") || strings.Contains(src, "setPlatformRailCollapsed(") || strings.Contains(src, "platform-rail-collapsed") {
-		t.Fatal("toggle must expand the icon rail into labels, not collapse it away")
-	}
-	if strings.Contains(src, "agentflow-sidebar-toggle") || strings.Contains(src, "syncRailSidebarToggle") {
-		t.Fatal("icon rail toggle must not drive the conversation list")
-	}
+
 	css, err := os.ReadFile("product-v4.css")
 	if err != nil {
 		t.Fatal(err)
 	}
 	sheet := string(css)
-	if !strings.Contains(sheet, "body.platform-rail-expanded") || !strings.Contains(sheet, "--rail-w: 240px") || !strings.Contains(sheet, "body.platform-rail-expanded .platform-rail .rail-label") {
-		t.Fatal("expanded icon rail must widen and show labels")
+	if strings.Contains(sheet, "platform-rail-expanded") || strings.Contains(sheet, "--rail-w: 240px") {
+		t.Fatal("icon rail must stay at the icon width")
 	}
-	if strings.Contains(sheet, "platform-rail-collapsed") || strings.Contains(sheet, "--rail-w: 0px") {
-		t.Fatal("icon rail must stay visible when labels are hidden")
+	if !strings.Contains(sheet, "--rail-w: 56px") || !strings.Contains(sheet, ".platform-rail .rail-label") {
+		t.Fatal("icon rail labels stay hidden at the default icon width")
 	}
 }

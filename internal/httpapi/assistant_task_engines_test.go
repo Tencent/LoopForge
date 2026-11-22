@@ -18,6 +18,7 @@ func TestAssistantScheduledModelKeepsCLIModels(t *testing.T) {
 	for in, want := range map[string]string{
 		"codex:gpt-6-sol":    "codex:gpt-6-sol",
 		" claude-code:opus ": "claude-code:opus",
+		"codebuddy:default":  "codebuddy:default",
 		catalog.Default:      catalog.Default,
 		"glm-5.3-ioa":        "glm-5.3-ioa",
 		" unknown-model ":    "unknown-model",
@@ -34,6 +35,8 @@ func TestAssistantScheduledModelKeepsCLIModels(t *testing.T) {
 // The CodeBuddy model list is empty after a restart: a scheduled run refreshes
 // it with the owner's key and never swaps an unavailable model for the default.
 func TestScheduledRunModelRefreshesAndNeverFallsBack(t *testing.T) {
+	t.Setenv("AGENTFLOW_ASSISTANT_MODEL", "")
+	t.Setenv("AGENTFLOW_ASSISTANT_MODELS", "")
 	old := discoverCLIModels
 	discoverCLIModels = func(_ context.Context, environment, apiKey string) []string {
 		if environment == "internal" && apiKey == "owner-key" {
@@ -56,6 +59,9 @@ func TestScheduledRunModelRefreshesAndNeverFallsBack(t *testing.T) {
 	}
 	if got, err := scheduledRunModel(context.Background(), "", owner); err != nil || got != assistantFixedCatalog().Default {
 		t.Fatalf("empty model = %q, %v", got, err)
+	}
+	if got, err := scheduledRunModel(context.Background(), assistantDefaultModel, owner); err != nil || got != assistantDefaultModel {
+		t.Fatalf("legacy CLI default = %q, %v", got, err)
 	}
 	if got, err := scheduledRunModel(context.Background(), "gone-model", owner); err == nil || !strings.Contains(err.Error(), "gone-model") {
 		t.Fatalf("unavailable model = %q, %v", got, err)
@@ -88,6 +94,10 @@ func TestScheduledTaskRunsOnTaskCLI(t *testing.T) {
 		t.Fatalf("missing claude key = %v %q", err, task.LastError)
 	}
 	task.Model = ""
+	if err := h.executeAssistantTask(context.Background(), user, &task); err != nil || !strings.HasPrefix(task.Model, "codex:") {
+		t.Fatalf("unset scheduled model did not use Codex: %v %q", err, task.Model)
+	}
+	task.Model = "codebuddy:default"
 	if err := h.executeAssistantTask(context.Background(), user, &task); err == nil || !strings.Contains(task.LastError, "CodeBuddy API Key") {
 		t.Fatalf("missing codebuddy key = %v %q", err, task.LastError)
 	}
@@ -100,8 +110,10 @@ func TestScheduleJobAssistantUserNeedsModelCLIKey(t *testing.T) {
 	_ = st.PutProject(domain.Project{ID: "owner-project", Name: "Owner", OwnerID: owner.ID})
 	h := &assistantHandlers{deps: &deps{repo: st}}
 	job := domain.ScheduleJob{ProjectID: "owner-project"}
-	if got, shared, err := h.scheduleJobAssistantUser(job, "codex:gpt-6-sol"); err != nil || got.ID != owner.ID || shared != nil {
-		t.Fatalf("codex owner = %+v %v %v", got, shared, err)
+	for _, model := range []string{"codex:gpt-6-sol", "default", ""} {
+		if got, shared, err := h.scheduleJobAssistantUser(job, model); err != nil || got.ID != owner.ID || shared != nil {
+			t.Fatalf("codex owner for %q = %+v %v %v", model, got, shared, err)
+		}
 	}
 	if _, _, err := h.scheduleJobAssistantUser(job, "glm-5.3-ioa"); err == nil || !strings.Contains(err.Error(), "CodeBuddy") {
 		t.Fatalf("codebuddy without key = %v", err)
@@ -163,14 +175,17 @@ func joinScheduledProject(t *testing.T, st *repo.Store, projectID string, userID
 func TestScheduledTaskRunsAsChatTurn(t *testing.T) {
 	st := cvAStore(t)
 	_ = st.PutProject(domain.Project{ID: "turn-project", Name: "Turn"})
+	_ = st.PutIssue(domain.Issue{ID: "turn-issue", ProjectID: "turn-project", Title: "最新需求标题", Description: "需求详情", Status: "todo"})
 	_ = st.PutUser(domain.User{LoginName: "turn-user", CodeBuddyAPIKey: "secret"})
 	user, _ := st.UserByLoginName("turn-user")
 	h := &assistantHandlers{deps: &deps{repo: st}}
-	task := assistantTask{ID: "turn-job", Name: "巡检", Prompt: "检查", ProjectID: "turn-project", IntervalSec: 60, Enabled: true}
+	task := assistantTask{ID: "turn-job", Name: "巡检", Prompt: "检查", ProjectID: "turn-project", IntervalSec: 60, Enabled: true, References: []domain.AssistantReference{{Type: "issue", ID: "turn-issue", Name: "客户端伪造名称"}}}
 
 	var during domain.AssistantGeneration
 	live := false
-	h.generate = func(context.Context, string, domain.User) (string, error) {
+	var generatedPrompt string
+	h.generate = func(_ context.Context, prompt string, _ domain.User) (string, error) {
+		generatedPrompt = prompt
 		during, _ = st.AssistantGeneration(user.ID, task.SessionID)
 		_, live = assistantLiveGenerations.Load(during.ID)
 		return "巡检完成\n\n```notification\n{\"title\":\"T\",\"summary\":\"S\",\"body\":\"B\"}\n```", nil
@@ -188,12 +203,18 @@ func TestScheduledTaskRunsAsChatTurn(t *testing.T) {
 	if task.LastStatus != "ok" || task.LastMessage != "巡检完成" || !strings.Contains(task.NotificationResult, "```notification") {
 		t.Fatalf("task result = %+v", task)
 	}
+	if !strings.Contains(generatedPrompt, "最新需求标题") || strings.Contains(generatedPrompt, "客户端伪造名称") {
+		t.Fatalf("scheduled reference context = %q", generatedPrompt)
+	}
 	session, _ := st.AssistantSession(user.ID, task.SessionID)
 	if session.Source != domain.AssistantSourceScheduled || session.TaskID != task.ID || session.Title != "定时 · 巡检" {
 		t.Fatalf("scheduled session metadata = source %q task %q title %q", session.Source, session.TaskID, session.Title)
 	}
 	if n := len(session.Messages); n != 2 || session.Messages[1].Model == "" || strings.Contains(session.Messages[1].Content, "```notification") {
 		t.Fatalf("stored transcript = %+v", session.Messages)
+	}
+	if len(session.Messages[0].References) != 1 || session.Messages[0].References[0].Name != "最新需求标题" {
+		t.Fatalf("resolved scheduled references = %+v", session.Messages[0].References)
 	}
 
 	first := task.SessionID
