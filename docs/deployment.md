@@ -191,6 +191,8 @@ For an external MySQL deployment, review that migration and check column existen
 | Required upgrade migrations | `009_bot_interactions_utf8mb4.sql`, `036_git_http_credentials.sql` | Follow each migration's timing and prerequisites. [Migrating existing GitHub credentials](#migrating-existing-github-credentials) |
 | Optional backfills and rewrites of existing rows | `016_public_optional_repositories.sql`, `021_assistant_session_sources.sql` | Run them if the installation needs the converted rows |
 
+Platform administrators can open **Platform administration → Deployment diagnostics** (or call `GET /api/platform/diagnostics`) for a read-only deployment check: database connectivity, the generated columns and artifact column capacity described above, the single-artifact size limit, the Agent browser sidecar image, and Docker availability. Each warning lists the command that fixes it; the page never runs migrations itself, matching the manual-script policy above.
+
 ## Updating existing public SOPs
 
 Repository binding is optional for all built-in generic SOPs. To update the original catalog instructions on an existing installation, explicitly apply:

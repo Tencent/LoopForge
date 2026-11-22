@@ -176,6 +176,18 @@ func browserImageName() (string, error) {
 	return "agentflow-browser-" + hex.EncodeToString(h.Sum(nil))[:16], nil
 }
 
+// BrowserSidecarImage reports the Agent browser sidecar image reference and
+// whether it already exists in the local Docker image store. The platform
+// diagnostics page uses it to tell operators whether the first browser use
+// would start with a build.
+func BrowserSidecarImage(ctx context.Context) (string, bool, error) {
+	image, err := browserImageName()
+	if err != nil {
+		return "", false, err
+	}
+	return image, dockerImageExists(ctx, image), nil
+}
+
 // EnsureBrowserImage builds the sidecar image once per content hash. It is
 // exported for ensure-chromium style pre-warming.
 func EnsureBrowserImage(ctx context.Context) (string, error) {
