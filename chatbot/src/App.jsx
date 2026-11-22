@@ -1866,6 +1866,19 @@ export default function App() {
                 </IconButton>
               </div>
             ) : null}
+            {chat.missingServerCLI && !chat.busy && !chat.error && !chat.readOnly ? (
+              <div className="runtime-cli-notice" role="status">
+                <HarnessIcon name="terminal" size={16} aria-hidden="true" />
+                <span>{chat.missingServerCLI.name} 未安装在平台服务器上。{chat.missingServerCLI.serverInstallable ? "" : "请联系管理员安装。"}</span>
+                {chat.missingServerCLI.serverInstallable ? (
+                  <CLIInstallAction
+                    key={chat.missingServerCLI.id}
+                    executor={{ engine: chat.missingServerCLI.id, label: chat.missingServerCLI.name }}
+                    onResult={() => chat.refreshCredentials()}
+                  />
+                ) : null}
+              </div>
+            ) : null}
             {needsExecutor ? (
               <div className="credential-notice" role="status">
                 <HarnessIcon name="terminal" size={16} aria-hidden="true" />
@@ -2191,6 +2204,7 @@ export default function App() {
                         disabled={
                           !chat.ready ||
                           !hasComposerExecutor ||
+                          !!chat.missingServerCLI ||
                           chat.submitting ||
                           chat.machineSaving ||
                           composerLoading ||

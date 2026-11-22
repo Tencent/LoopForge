@@ -492,7 +492,6 @@ html[data-theme="dark"] .issue-title-tag.tone-cyan{color:#67e8f9}
 .drawer{position:fixed;inset:0;z-index:2000;display:none;pointer-events:none}
 /* Dialogs opened from inside the issue drawer must paint above it.
    The drawer is 2000; ordinary modals are 120 and otherwise open behind it. */
-#artifactModal.modal{z-index:3200}
 #confirmModal.modal{z-index:4100}
 .drawer.open{display:block}
 .drawer-backdrop{position:absolute;inset:0;background:rgba(3,7,17,.6);backdrop-filter:blur(2px);pointer-events:auto}
@@ -2379,6 +2378,13 @@ html[data-theme="dark"] .credential-add-panel img.hui-select-option-brand.is-mon
 .credential-logo{display:grid;place-items:center;flex:none;width:34px;height:34px;border:1px solid color-mix(in srgb,var(--cr-line) 70%,transparent);border-radius:9px;background:var(--cr-elevated);transition:transform .4s var(--cr-spring),filter .3s,opacity .3s}
 .credential-logo img{display:block;width:20px;height:20px;object-fit:contain}
 .credential-logo.is-dim{filter:grayscale(1);opacity:.55}
+.credential-row-who .credential-runtime-status{color:var(--hui-warn)}
+.credential-row.is-configured .credential-logo.monochrome{position:relative}
+.credential-row.is-configured .credential-logo.monochrome::after{
+  position:absolute;right:-3px;bottom:-3px;width:8px;height:8px;
+  border:2px solid var(--hui-surface);border-radius:50%;background:var(--hui-success);
+  content:"";
+}
 .credential-logo.is-mini{width:18px;height:18px;border:0;background:none}
 .credential-logo.is-mini img{width:16px;height:16px}
 html[data-theme="dark"] .credential-logo.monochrome img{filter:invert(1)}
@@ -2487,6 +2493,7 @@ html[data-theme="dark"] .credential-logo.monochrome img{filter:invert(1)}
 .credential-vline{display:flex;align-items:center;gap:7px;margin:0;color:var(--cr-muted);font-size:12px}
 .credential-vline:empty{display:none}
 .credential-vline.is-err{color:var(--cr-err)}.credential-vline.is-info{color:var(--cr-info)}.credential-vline.is-warn{color:var(--cr-warn)}
+.credential-vline.is-ok{color:var(--hui-success)}
 .credential-vline>svg{flex:none}
 .credential-swap{display:grid}
 .credential-swap>*{grid-area:1/1;transition:opacity .2s,transform .3s var(--cr-fold)}

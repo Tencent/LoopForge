@@ -12,6 +12,8 @@ import (
 	"strings"
 )
 
+var studioReleaseVersion = regexp.MustCompile(`^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$`)
+
 var studioAssetRef = regexp.MustCompile(`((?:href|src)=")(/[^"]+\.(?:js|css))(\?v=[^"]*)?(")`)
 
 func stampStudioIndex(static fs.FS, raw []byte) []byte {
@@ -38,6 +40,10 @@ func stampStudioIndex(static fs.FS, raw []byte) []byte {
 	if domain != "" && strings.Contains(html, "</head>") {
 		tag := fmt.Sprintf(`<meta name="agentflow-app-domain" content="%s"></head>`, htmlpkg.EscapeString(domain))
 		html = strings.Replace(html, "</head>", tag, 1)
+	}
+	if version := strings.TrimSpace(os.Getenv("LOOPFORGE_RELEASE_VERSION")); studioReleaseVersion.MatchString(version) {
+		meta := fmt.Sprintf(`<meta name="loopforge-release-version" content="%s"></head>`, version)
+		html = strings.Replace(html, "</head>", meta, 1)
 	}
 	html = injectBuildCommit(html)
 	return []byte(html)

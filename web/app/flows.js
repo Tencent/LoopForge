@@ -401,7 +401,7 @@ function setThemePreference(preference){if(!['light','dark','system'].includes(p
 function renderThemeSegment({snap=false}={}){const preference=typeof activeThemePreference==='string'?activeThemePreference:readThemePreference();document.querySelectorAll('.upp-theme-seg').forEach(seg=>{seg.querySelectorAll('[data-theme-pref]').forEach(button=>{const on=button.dataset.themePref===preference;button.classList.toggle('active',on);if(button.getAttribute('aria-checked')!==String(on))button.setAttribute('aria-checked',String(on));button.tabIndex=on?0:-1});const tabs=window.AgentFlowSlidingTabs;if(!tabs)return;const indicator=seg.querySelector(':scope > [data-sliding-indicator]');if(snap&&indicator)indicator.style.transition='none';tabs.mount(seg,{activeSelector:'.active',auto:true,compact:true,cacheKey:'upp-theme-seg'}).refresh();if(snap&&indicator){indicator.getBoundingClientRect();requestAnimationFrame(()=>{indicator.style.transition=''})}})}
 function renderThemeToggle(){renderThemeSegment();const light=document.documentElement.dataset.theme==='light',button=$('#themeToggle');if(!button)return;window.AgentFlowHarnessIcons?.render(button.querySelector('span'),light?'moon':'sun');button.querySelector('b').textContent=light?'深色':'亮色';button.title=light?'切换到深色主题':'切换到亮色主题'}
 function toggleTheme(){const theme=document.documentElement.dataset.theme==='light'?'dark':'light';try{localStorage.setItem(THEME_KEY,theme)}catch{}applyTheme(theme)}
-function statusText(s){return ({pending:'待执行',running:'运行中',succeeded:'已完成',failed:'失败',waiting_approval:'待审批',cancelled:'已取消'}[s]||'')}
+function statusText(s){return ({pending:'待执行',running:'运行中',succeeded:'已完成',failed:'失败',waiting_approval:'待确认',cancelled:'已取消'}[s]||'')}
 function canvasPoint(e){return flowViewport.toWorld(e.clientX,e.clientY)}
 function flowReaches(from,to){
   const seen=new Set([from]),queue=[from];
@@ -630,7 +630,7 @@ function bindFlowDesigner(){
   document.addEventListener('pointerdown',e=>{if(!e.target.closest('#flowNodeMenu,[data-node-menu]'))closeNodeMenu()});
   document.addEventListener('keydown',e=>{
     if(!$('#flowView')?.classList.contains('active')||e.defaultPrevented)return;
-    const mod=e.metaKey||e.ctrlKey,key=(e.key||'').toLowerCase(),blocked=!!$('.modal.open')||$('#commandPalette')?.hidden===false;
+    const mod=e.metaKey||e.ctrlKey,key=(e.key||'').toLowerCase(),blocked=!!$('.modal.open, dialog:modal')||$('#commandPalette')?.hidden===false;
     if(mod&&key==='s'){e.preventDefault();if(!blocked&&!$('#saveWorkflow')?.disabled)saveWorkflow().catch(()=>{});return}
     if(blocked||e.target.closest?.('input,textarea,select,[contenteditable="true"],[contenteditable=""]'))return;
     if(mod&&key==='z'){e.preventDefault();if(e.shiftKey?flowHistory.redo():flowHistory.undo())flowToast(e.shiftKey?'已重做':'已撤销');return}

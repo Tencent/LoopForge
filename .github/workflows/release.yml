@@ -106,6 +106,7 @@ jobs:
           push: true
           build-args: |
             LOOPFORGE_COMMIT=${{ steps.release.outputs.commit }}
+            LOOPFORGE_RELEASE_VERSION=${{ steps.release.outputs.tag }}
           tags: ${{ steps.metadata.outputs.tags }}
           labels: ${{ steps.metadata.outputs.labels }}
           cache-from: type=gha
