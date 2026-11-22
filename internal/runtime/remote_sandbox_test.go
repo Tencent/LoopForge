@@ -74,3 +74,16 @@ func TestWithSandboxCredentialsRefreshesExplicitBindings(t *testing.T) {
 		t.Fatalf("unrequested credentials inherited: %q %v", output, err)
 	}
 }
+
+func TestCodeBuddyBaseURLIsBoundPerInvocation(t *testing.T) {
+	t.Setenv("CODEBUDDY_BASE_URL", "https://ambient.example/v1")
+	const gateway = "https://personal.example/v1"
+	command := CommandSpec{Argv: []string{"sh", "-c", `printf '%s' "$CODEBUDDY_BASE_URL"`}, Provider: "codebuddy", CredentialBindings: []CredentialBinding{BindCodeBuddy}}
+	for _, baseURL := range []string{gateway, ""} {
+		credentials := RunCredentials{CodeBuddy: CodeBuddyCredential{APIKey: "fixture-key", BaseURL: baseURL}}
+		output, err := ExecuteLocalCommand(context.Background(), t.TempDir(), command, credentials, nil)
+		if err != nil || strings.TrimSpace(output) != baseURL {
+			t.Fatalf("CodeBuddy received %q, want %q: %v", output, baseURL, err)
+		}
+	}
+}

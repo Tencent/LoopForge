@@ -226,11 +226,16 @@ func (e *Engine) dispatchRunnerTask(ctx context.Context, runnerID string, run do
 			invocation.ClaudeCodeAPIKey = sb.credentialSnapshot().ClaudeCode.APIKey
 			invocation.ClaudeCodeBaseURL = sb.credentialSnapshot().ClaudeCode.BaseURL
 		case "codebuddy":
-			if strings.TrimSpace(sb.credentialSnapshot().CodeBuddy.APIKey) == "" {
+			credential := sb.credentialSnapshot().CodeBuddy
+			if strings.TrimSpace(credential.APIKey) == "" {
 				return "", errors.New("当前责任人未配置 CodeBuddy API Key：请先在个人配置中配置")
 			}
-			invocation.CodeBuddyAPIKey = sb.credentialSnapshot().CodeBuddy.APIKey
-			invocation.CodeBuddyInternetEnvironment = sb.credentialSnapshot().CodeBuddy.InternetEnvironment
+			if credential.BaseURL != "" && !runner.SupportsCodeBuddyBaseURL() {
+				return "", fmt.Errorf("执行机器需升级至 %s 才能使用 CodeBuddy Base URL", domain.RunnerVersionCodeBuddyBaseURL)
+			}
+			invocation.CodeBuddyAPIKey = credential.APIKey
+			invocation.CodeBuddyBaseURL = credential.BaseURL
+			invocation.CodeBuddyInternetEnvironment = credential.InternetEnvironment
 		default:
 			if runtime.IsAgentCLI(ex.Kind) {
 				cred := sb.credentialSnapshot().AgentCLI[ex.Kind]
@@ -523,11 +528,14 @@ func (e *Engine) validateExecutionReconnect(run domain.Run, nodeID string) error
 		}
 		provider := "terminal"
 		if node.Type != "script" && node.Type != "command" && node.Type != "approval" {
-			agent, found := e.repo.Agent(node.AgentID)
+			agent, found := workflowAgent(e.repo, run.WorkflowSnapshot, node.AgentID)
 			if !found {
 				return fmt.Errorf("无法重连原执行环境：agent %s 不存在", node.AgentID)
 			}
-			executor, err := resolveNodeExecutor(e.repo, node, agent)
+			executor, err := workflowNodeExecutor(e.repo, run.WorkflowSnapshot, node, agent)
+			if errors.Is(err, errSOPExecutorUnconfigured) {
+				return nil
+			}
 			if err != nil {
 				return fmt.Errorf("无法重连原执行环境：%w", err)
 			}

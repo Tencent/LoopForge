@@ -94,6 +94,7 @@ test('agent catalog search, presets, validation, persistence, clone, and delete 
   const form = app.document.querySelector('#agentForm');
   form.elements.executorId.append(new app.window.Option('CodeBuddy', 'codebuddy'));
   form.elements.executorId.value = 'codebuddy';
+  form.elements.executorId.dispatchEvent(new app.window.Event('change', { bubbles: true }));
   assert.equal(form.elements.name.value, '研发工程师');
   assert.match(form.elements.id.value, /^role-/);
   app.evaluate(`setAgentCreateStep(3)`);
@@ -167,7 +168,11 @@ test('a new role saves the first model from the refreshed catalog', async (t) =>
   const catalog = id => ({ codebuddy: { models: [{ id }] }, codex: { models: [] }, claude: { models: [] } });
   app.router.get('/api/executor-models', catalog('retired-model'));
   app.router.put('/api/agents', call => ({ status: 200, body: call.body }));
-  app.evaluate(`openAgentWizard()`);
+  app.evaluate(`
+    state.data.executors=[{id:"codebuddy",name:"CodeBuddy"}];
+    state.data.assistantDefaults={executor:"codebuddy"};
+    openAgentWizard();
+  `);
   await settle();
   const model = () => app.evaluate(`agentEffectiveModel($('#agentForm'))`);
   assert.equal(model(), 'retired-model');
@@ -187,6 +192,34 @@ test('a new role saves the first model from the refreshed catalog', async (t) =>
   assert.match(app.document.querySelector('#agentCreateReview').textContent, /current-model/);
   await app.evaluate(`persistAgent($('#agentForm'))`);
   assert.equal(app.router.calls.find(call => call.path === '/api/agents' && call.method === 'PUT').body.model, 'current-model');
+});
+
+test('new roles can use the personal default or follow the responsible user', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  app.router.get('/api/executor-models', {
+    codebuddy: {models: []}, claude: {models: []},
+    codex: {models: [{id: 'preferred-role-model', name: 'Preferred role model'}]},
+  });
+  app.router.put('/api/agents', call => ({status: 200, body: call.body}));
+  app.evaluate(`
+    state.data.executors=[{id:"codex",name:"Codex"}];
+    state.data.assistantDefaults={executor:"codex",model:"preferred-role-model"};
+    openAgentWizard();
+  `);
+  await settle();
+  const form = app.document.querySelector('#agentForm');
+  assert.equal(form.elements.executorId.value, 'codex');
+  assert.equal(app.evaluate(`agentEffectiveModel($('#agentForm'))`), 'preferred-role-model');
+
+  form.elements.executorId.value = '';
+  form.elements.executorId.dispatchEvent(new app.window.Event('change', {bubbles: true}));
+  assert.equal(app.document.querySelector('#agentModelPicker [data-model-toggle]').disabled, true);
+  app.evaluate(`applyAgentPreset('developer');setAgentCreateStep(3)`);
+  await app.evaluate(`persistAgent($('#agentForm'))`);
+  const saved = app.router.calls.find(call => call.path === '/api/agents' && call.method === 'PUT');
+  assert.equal(saved.body.executorId, '');
+  assert.equal(saved.body.model, '');
 });
 
 test('role effort picker follows each model and resets an unsupported level on model changes', async (t) => {

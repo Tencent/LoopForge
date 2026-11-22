@@ -285,6 +285,96 @@ func TestRunnerWorkspaceRPCIsTransient(t *testing.T) {
 	}
 }
 
+func TestRunnerWorkspaceImageBuildUpdatesConversationWhilePreparing(t *testing.T) {
+	hub := quietRunnerHub()
+	conn := testRunnerConn("runner-a")
+	registerTestConn(hub, conn)
+	var activity assistantActivityLog
+	session := &AgentToolSession{Notify: func(kind string, value any) {
+		if kind == "thought" {
+			activity.add(value.(assistantStreamEvent))
+		}
+	}}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	ctx = withAssistantDockerBuildProgress(ctx, session)
+	completed := make(chan error, 1)
+	go func() {
+		_, err := hub.requestWorkspace(ctx, conn.runnerID, domain.RunnerWorkspaceRequest{Operation: domain.RunnerWorkspaceOperationPrepare})
+		completed <- err
+	}()
+	select {
+	case request := <-conn.send:
+		if request.Type != "workspace.request" || !request.ObserveImageBuild {
+			t.Fatalf("request = %+v", request)
+		}
+		hub.reportImageBuild(testRunnerConn("runner-b"), request.RequestID, domain.WorkspaceImageBuildProgress{ID: "foreign", Step: "unrelated"})
+		hub.reportImageBuild(conn, request.RequestID, domain.WorkspaceImageBuildProgress{ID: "a", Step: "启动构建"})
+		hub.reportImageBuild(conn, request.RequestID, domain.WorkspaceImageBuildProgress{ID: "a", Step: "导出镜像"})
+		events := activity.snapshot()
+		if len(events) != 1 || events[0].Tool != assistantDockerBuildTool || events[0].Detail != "导出镜像" {
+			t.Fatalf("live activity = %+v", events)
+		}
+		hub.reportImageBuild(conn, request.RequestID, domain.WorkspaceImageBuildProgress{ID: "a", Done: true})
+		hub.resolveWorkspace(conn, request.RequestID, domain.RunnerWorkspaceResponse{Status: 200})
+		if err := <-completed; err != nil {
+			t.Fatal(err)
+		}
+		events = activity.snapshot()
+		if len(events) != 2 || events[1].ID != events[0].ID || events[1].Kind != "toolDone" || events[1].Failed {
+			t.Fatalf("completed activity = %+v", events)
+		}
+	case <-ctx.Done():
+		t.Fatal("runner did not receive the workspace request")
+	}
+}
+
+func TestRunnerWorkspaceRelaysImageBuildProgressBeforeReturning(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	hub := quietRunnerHub()
+	conn := testRunnerConn("runner-a")
+	registerTestConn(hub, conn)
+	en := relayTestEngine(t)
+	en.ConfigureControl(engine.ControlConfig{Token: "service-secret"})
+	router := gin.New()
+	router.POST(runnerWorkspaceRelayPath, handleRunnerWorkspaceRelay(en, hub))
+	server := httptest.NewServer(router)
+	defer server.Close()
+	en.ConfigureControl(engine.ControlConfig{Token: "service-secret", APIURL: server.URL})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	updates := make(chan domain.WorkspaceImageBuildProgress, 2)
+	ctx = runtime.WithDockerBuildProgress(ctx, func(update domain.WorkspaceImageBuildProgress) { updates <- update })
+	completed := make(chan workspaceResult, 1)
+	go func() {
+		response, err := relayRunnerWorkspaceToSuccessor(en)(ctx, conn.runnerID, domain.RunnerWorkspaceRequest{Operation: domain.RunnerWorkspaceOperationPrepare})
+		completed <- workspaceResult{response, err}
+	}()
+	select {
+	case request := <-conn.send:
+		if !request.ObserveImageBuild {
+			t.Fatalf("relayed request did not subscribe: %+v", request)
+		}
+		want := domain.WorkspaceImageBuildProgress{ID: "relayed-build", Step: "读取 Dockerfile"}
+		hub.reportImageBuild(conn, request.RequestID, want)
+		select {
+		case got := <-updates:
+			if got != want {
+				t.Fatalf("relayed progress = %+v, want %+v", got, want)
+			}
+		case <-ctx.Done():
+			t.Fatal("relayed progress was not streamed during the request")
+		}
+		hub.resolveWorkspace(conn, request.RequestID, domain.RunnerWorkspaceResponse{Status: 200})
+		if got := <-completed; got.err != nil || got.response.Status != 200 {
+			t.Fatalf("relay completion = %+v", got)
+		}
+	case <-ctx.Done():
+		t.Fatal("runner did not receive the relayed request")
+	}
+}
+
 func TestRunnerWorkspaceSendsScopedPlatformSSHKnownHosts(t *testing.T) {
 	store, err := repo.OpenTest()
 	if err != nil {
@@ -429,19 +519,28 @@ func TestRunnerWorkspaceHandoverDrainIsBounded(t *testing.T) {
 	}
 }
 
-func TestRunnerCheckpointCancellationReachesExecutorOnlyForOneShotRequests(t *testing.T) {
-	for _, operation := range []string{domain.RunnerWorkspaceOperationCheckpointExport, "conversation_process"} {
+func TestRunnerWorkspaceCancellationReachesExecutorOnlyForOneShotRequests(t *testing.T) {
+	for _, operation := range []string{domain.RunnerWorkspaceOperationCheckpointExport, domain.RunnerWorkspaceOperationPrepare, domain.RunnerWorkspaceOperationConversationCLI} {
 		t.Run(operation, func(t *testing.T) {
 			hub := quietRunnerHub()
 			conn := testRunnerConn("runner-cancel")
+			defer conn.close()
+			conn.send = make(chan runnerControlMessage, 1)
 			registerTestConn(hub, conn)
 			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
 			done := make(chan error, 1)
 			go func() {
 				_, err := hub.requestWorkspace(ctx, conn.runnerID, domain.RunnerWorkspaceRequest{Operation: operation})
 				done <- err
 			}()
 			request := <-conn.send
+			wantCancel := operation != domain.RunnerWorkspaceOperationConversationCLI
+			if operation == domain.RunnerWorkspaceOperationPrepare {
+				// The API must release its waiter without losing the cancel
+				// message when the connection's write queue is full.
+				conn.send <- runnerControlMessage{Type: "busy"}
+			}
 			cancel()
 			select {
 			case err := <-done:
@@ -451,7 +550,10 @@ func TestRunnerCheckpointCancellationReachesExecutorOnlyForOneShotRequests(t *te
 			case <-time.After(time.Second):
 				t.Fatal("request cancellation blocked")
 			}
-			if operation == "conversation_process" {
+			if operation == domain.RunnerWorkspaceOperationPrepare {
+				<-conn.send
+			}
+			if !wantCancel {
 				select {
 				case unexpected := <-conn.send:
 					t.Fatalf("persistent CLI lifecycle cancelled by RPC: %+v", unexpected)
@@ -464,7 +566,7 @@ func TestRunnerCheckpointCancellationReachesExecutorOnlyForOneShotRequests(t *te
 						t.Fatalf("wrong cancellation: %+v", stop)
 					}
 				case <-time.After(time.Second):
-					t.Fatal("export cancellation not sent")
+					t.Fatal("workspace cancellation not sent")
 				}
 			}
 		})

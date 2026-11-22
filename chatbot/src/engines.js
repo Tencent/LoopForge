@@ -2,7 +2,7 @@
 // (`engines`); models without `engine` run on CodeBuddy.
 export const defaultEngine = "codebuddy";
 
-// Main Bot can run on any configured agent CLI; CodeBuddy stays the default.
+// Main Bot can run on any configured agent CLI.
 export const EXECUTORS = [
   { id: "codebuddy", icon: "sparkles", label: "CodeBuddy", detail: "使用 CodeBuddy 模型与个人 API Key。" },
   { id: "codex", icon: "terminal", label: "Codex", detail: "使用 Codex CLI 与个人 Codex API Key。" },
@@ -23,6 +23,15 @@ const brands = {
 };
 export const engineBrand = (id) => Object.hasOwn(brands, id) ? brands[id] : "";
 
+export function personalEngineConfigured(user, engine) {
+  switch (engine) {
+    case "codebuddy": return Boolean(user?.codeBuddyApiKeyConfigured);
+    case "codex": return Boolean(user?.codexApiKeyConfigured);
+    case "claude-code": return Boolean(user?.claudeCodeApiKeyConfigured);
+    default: return Boolean(user?.agentCliCredentials?.[engine]?.apiKeyConfigured);
+  }
+}
+
 export const modelEngine = (model) => model?.engine || defaultEngine;
 
 const modelEnginePrefix = (id) => /^([a-z][a-z0-9-]*):./.exec(id || "")?.[1];
@@ -35,7 +44,8 @@ export function engineOfModel(id, models = []) {
 }
 
 export const concreteModel = (model, engine = modelEngine(model)) =>
-  !!model?.id && model.id !== "default" && model.id !== `${engine}:default`;
+  !!model?.id && model.id !== "default" && model.id !== `${engine}:default` &&
+  (engine !== "codebuddy" || (model.id !== "default-model" && model.id !== "codebuddy:default-model"));
 
 export const engineModels = (models, engine) =>
   (models || []).filter((m) => modelEngine(m) === engine && concreteModel(m, engine));

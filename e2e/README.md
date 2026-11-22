@@ -34,6 +34,8 @@ AGENTFLOW_E2E_CODEBUDDY_API_KEY=ck_... ./local.sh api/40-model.test.mjs   # 带�
 | `AGENTFLOW_E2E_BASE` | 验收环境，默认 localhost:8090 |
 | `AGENTFLOW_E2E_MODEL` | 显式设为 `1` 启用付费模型测试，默认关闭 |
 | `AGENTFLOW_E2E_MODEL_ID` | 真实 Agent 节点使用的模型 ID，例如 `deepseek-v4.1-flash` |
+| `AGENTFLOW_E2E_CLI_KEY` | 本地实测时所选 CLI 的个人凭据 |
+| `AGENTFLOW_E2E_CLI_BASE_URL` | 本地实测可选的自定义模型网关 |
 | `AGENTFLOW_E2E_EXECUTOR` | 执行器，默认 `codebuddy` |
 | `AGENTFLOW_E2E_SANDBOX` | 沙箱，默认 `local`，仅对可信的验收任务使用 |
 | `AGENTFLOW_E2E_MODEL_SANDBOX` | 真实模型用例使用的沙箱，镜像里要有执行器 CLI；默认同 `AGENTFLOW_E2E_SANDBOX` |

@@ -163,6 +163,7 @@ func (h *agentToolGateway) mainBotWorkspaceLease(ctx context.Context, s *AgentTo
 	if h.engine == nil {
 		return ctx, nil, release, nil
 	}
+	ctx = withAssistantDockerBuildProgress(ctx, s)
 	if s.workspaceTurn != nil {
 		ctx, err := s.workspaceTurn.lease(ctx, runID)
 		if err != nil {

@@ -1702,9 +1702,9 @@ func adapterSQLFilter(adapter string) sqlFilter {
 	case "hooks":
 		return sqlFilter{clause: " AND adapter IN (?, ?)", args: []any{observability.AdapterHooks, observability.AdapterLegacyHooks}}
 	case "otel":
-		return sqlFilter{clause: " AND adapter=?", args: []any{observability.AdapterOTEL}}
+		return sqlFilter{clause: " AND adapter IN (?, ?)", args: []any{observability.AdapterOTEL, observability.AdapterLegacyOTEL}}
 	case "live":
-		return sqlFilter{clause: " AND adapter NOT IN (?, ?, ?)", args: []any{observability.AdapterHooks, observability.AdapterLegacyHooks, observability.AdapterOTEL}}
+		return sqlFilter{clause: " AND adapter NOT IN (?, ?, ?, ?)", args: []any{observability.AdapterHooks, observability.AdapterLegacyHooks, observability.AdapterOTEL, observability.AdapterLegacyOTEL}}
 	default:
 		return sqlFilter{clause: " AND adapter=?", args: []any{strings.TrimSpace(adapter)}}
 	}
