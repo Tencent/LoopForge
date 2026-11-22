@@ -151,11 +151,7 @@ func bindCommand(ctx context.Context, sandbox Sandbox, workspace string, command
 			if bound.environment["ANTHROPIC_API_KEY"] == "" {
 				return CommandSpec{}, fmt.Errorf("需求责任人未配置 Claude Code API Key，请在个人配置中配置")
 			}
-			baseURL := strings.TrimSpace(credentials.ClaudeCode.BaseURL)
-			if baseURL == "" {
-				baseURL = "https://api.anthropic.com"
-			}
-			bound.environment["ANTHROPIC_BASE_URL"] = baseURL
+			BindClaudeCodeEndpoint(bound.environment, credentials.ClaudeCode.BaseURL)
 		case BindAgentCLI:
 			var home AgentCLIHome
 			homeEnv := bound.environment["HOME"]

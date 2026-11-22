@@ -2485,6 +2485,9 @@ html[data-theme="dark"] .credential-logo.monochrome img{filter:invert(1)}
 .credential-note>svg{flex:none;margin-top:3px}
 .credential-note.is-warn{border-color:color-mix(in srgb,#d99a2b 25%,transparent);background:var(--cr-warn-fill);color:var(--cr-warn)}
 .credential-note b{font-weight:600}
+.credential-note.credential-runtime-note{margin-bottom:14px;color:var(--cr-text)}
+.credential-runtime-note b{display:block}
+.credential-runtime-note.is-warn>svg{color:var(--cr-warn)}
 .credential-subscription-note{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:10px;margin-top:14px;padding:10px 12px;font-size:13px}
 .credential-subscription-note>svg{align-self:start;color:var(--cr-accent)}
 .credential-subscription-note strong{display:block;color:var(--cr-text);font-weight:600}

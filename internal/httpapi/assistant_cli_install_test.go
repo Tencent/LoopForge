@@ -81,6 +81,34 @@ func TestInstallCLIRequiresLoginAndAllowlist(t *testing.T) {
 	}
 }
 
+func TestZCodeCLIStatusCanBeCheckedButNotInstalled(t *testing.T) {
+	withoutGlobalCLIs(t)
+	t.Setenv("PATH", t.TempDir())
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("AGENTFLOW_MANAGED_CLI_ROOT", "")
+	t.Setenv("AGENTFLOW_ZCODE_BIN", "")
+	h := &assistantHandlers{deps: &deps{}}
+	user := domainUserToAuth(domain.User{ID: 1, LoginName: "lab"})
+
+	rec := getCLIInstall(t, h, user, "zcode")
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"status":"missing"`) {
+		t.Fatalf("missing ZCode: %d %s", rec.Code, rec.Body.String())
+	}
+	bin := filepath.Join(t.TempDir(), "zcode")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("AGENTFLOW_ZCODE_BIN", bin)
+	rec = getCLIInstall(t, h, user, "zcode")
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"status":"installed"`) {
+		t.Fatalf("installed ZCode: %d %s", rec.Code, rec.Body.String())
+	}
+	rec = postCLIInstall(t, h, user, `{"engine":"zcode"}`)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("automatic ZCode install unexpectedly enabled: %d %s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestInstallCLIPutsOpenCodeOnTheConversationPath(t *testing.T) {
 	if hostHas("opencode") {
 		t.Skip("host opencode would hide the on-demand installation")

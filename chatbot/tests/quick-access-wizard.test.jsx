@@ -1,5 +1,5 @@
 import React from "react";
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, test, vi } from "vitest";
 
@@ -147,6 +147,9 @@ describe("QuickAccessWizard", () => {
     await userAction.click(screen.getByRole("button", { name: "完成接入" }));
 
     expect(await screen.findByText("快速接入已完成")).toBeInTheDocument();
+    const roles = screen.getByText("默认角色与流程").closest("section");
+    expect(within(roles).getAllByText("默认角色")).toHaveLength(7);
+    expect(within(roles).getByText("交付汇总")).toBeInTheDocument();
     expect(completed).toHaveBeenCalledWith("p1");
   });
 
