@@ -54,7 +54,9 @@ function renderAssetGrid(){
   const items=assetFilteredItems();
   const count=$('#assetCount');if(count)count.innerHTML=`${scope==='shared'?'共享':'本项目'}${escapeHTML(assetKindLabel())}<b>${items.length}</b>`;
   list.innerHTML=items.map(assetCardHTML).join('')||assetGridEmptyHTML();
-  list.querySelector('[data-empty-new]')?.addEventListener('click',()=>openAssetDetail('__new__'));
+  const emptyAction=list.querySelector('[data-empty-new]');
+  if($('#newAsset'))$('#newAsset').hidden=scope!=='project'||!!emptyAction;
+  emptyAction?.addEventListener('click',()=>openAssetDetail('__new__'));
   list.querySelectorAll('[data-asset-id]').forEach(card=>{
     card.onclick=()=>openAssetDetail(card.dataset.assetId);
     card.onkeydown=e=>{if(e.key==='Enter'&&e.target===card){e.preventDefault();openAssetDetail(card.dataset.assetId)}};

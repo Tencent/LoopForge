@@ -2688,7 +2688,7 @@ func TestApprovalBadgeRefreshesOutsideApprovals(t *testing.T) {
 		"app/runs.js":   "state.data.runs=list;updateApprovalBadge();renderRuns();",
 		"app/sops.js":   "state.data.runs=runs;updateApprovalBadge();renderSOPCatalog()",
 	} {
-		if !strings.Contains(read(file), want) {
+		if !strings.Contains(strings.Join(strings.Fields(read(file)), ""), want) {
 			t.Fatalf("%s must refresh the approval badge after loading runs: missing %q", file, want)
 		}
 	}

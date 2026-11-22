@@ -81,6 +81,22 @@ test('AI workbench: a saved conversation is listed, opened, searched, renamed, a
   expect(errors).toEqual([]);
 });
 
+test('desktop settings navigation reopens on the current page', async ({ page }) => {
+  await openView(page, 'settings');
+  const collapse = page.locator('#settingsSidebarToggle');
+  const expand = page.getByRole('button', { name: '展开设置导航', exact: true });
+  for (const reducedMotion of ['reduce', 'no-preference']) {
+    await page.emulateMedia({ reducedMotion });
+    await collapse.click();
+    await expect(page.locator('#settingsSidebar')).toHaveAttribute('aria-hidden', 'true');
+    await expect(expand).toBeFocused();
+    await expand.press('Enter');
+    await expect(collapse).toBeVisible();
+    await expect(collapse).toBeFocused();
+    await expect(page).toHaveURL(/#\/settings$/);
+  }
+});
+
 test('personal credentials: the add wizard validates, saves write-only, and the row clears it', async ({ page, identity }) => {
   const me = identity.user;
   test.skip(!!(await userById(me.id))?.codexApiKeyConfigured, 'the token owner already has a Codex API Key; not overwriting a real credential');

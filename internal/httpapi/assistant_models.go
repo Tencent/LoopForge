@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"os"
 	"os/exec"
 	"regexp"
@@ -256,6 +257,19 @@ func (h *assistantHandlers) models(c *gin.Context) {
 			catalog.Preferences = &user.AssistantDefaults
 		}
 		catalog.Engines = assistantEngineOptions(user, usingSharedKey)
+		cloudPool := false
+		if h.engine != nil {
+			cloudPool, _ = h.engine.CloudPoolStatus()
+		}
+		if !cloudPool {
+			for i := range catalog.Engines {
+				option := &catalog.Engines[i]
+				if _, err := resolveAssistantEngineBin(option.ID); errors.Is(err, errAssistantCLIMissing) {
+					option.ServerMissing = true
+					option.ServerInstallable = runtime.OnDemandInstallable(option.ID)
+				}
+			}
+		}
 		var runnerLogin map[string]bool
 		if c.Query("schedule") == "1" {
 			runnerLogin = make(map[string]bool)

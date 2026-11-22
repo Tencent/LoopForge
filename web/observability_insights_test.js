@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
 const ctx = {
+  lfT: zh => zh,
   state: {obsScope:'project',obsTrendGrain:'all',obsOriginFilter:'external',data:{users:[]}},
   projectQuery:()=>'?projectId=p',currentProject:()=>({id:'p',ownerId:7,members:[{userId:8,role:'maintainer'}]}),
 };
@@ -70,3 +71,6 @@ assert.match(ctx.obsActivityUsageCard(usage,false).foot,/2 条回复未采集/);
 assert.equal(ctx.obsActivityUsageCard({sessionUsage:{missingReplies:1}},false).value,'未采集');
 assert.equal(ctx.obsActivityUsageCard({sessionUsage:{}},false).value,'0');
 assert.equal(ctx.obsActivityUsageCard(null,false).value,'—');
+
+ctx.lfT = (_zh, en) => en;
+assert.match(ctx.obsActivityKpis(), /Counts by creation time, tokens by reply time/);

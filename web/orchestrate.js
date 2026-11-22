@@ -225,8 +225,14 @@ function syncAIOrchestratorFrame() {
 function setAIOrchestratorOpen(open) {
   const panel = $('#aiOrchestrator');
   if (!panel) return;
+  const changed = panel.hidden === open;
   panel.hidden = !open;
   if (typeof syncFlowDrawerLayout === 'function') syncFlowDrawerLayout();
+  if (changed && state.workflow?.nodes?.length) {
+    requestAnimationFrame(() => {
+      if (panel.hidden === !open) flowViewport.fit({ smooth: false });
+    });
+  }
   if (open) {
     syncAIOrchestratorFrame();
     aiOrchestratorFrame()?.focus();

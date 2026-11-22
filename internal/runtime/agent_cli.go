@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -574,6 +575,13 @@ func applyDeepSeekCredential(home AgentCLIHome, homeEnv, key, baseURL, protocol,
 		env[agentCLIKeyEnv] = key
 		provider := "agentflow"
 		modelConfig := map[string]any{"id": model}
+		// The official Zhipu Flash endpoint rejects the Harness default output
+		// limit for this model. Keep custom gateways on their own defaults.
+		if endpoint, err := url.Parse(baseURL); err == nil &&
+			endpoint.Scheme == "https" && strings.EqualFold(endpoint.Hostname(), "open.bigmodel.cn") &&
+			model == "glm-4-flash-250414" && protocol == AgentCLIProtocolChat {
+			modelConfig["maxTokens"] = 16384
+		}
 		if imageInput {
 			modelConfig["input"] = []string{"text", "image"}
 		}

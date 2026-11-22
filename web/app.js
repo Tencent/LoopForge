@@ -1016,6 +1016,18 @@ function bind(){
     }else switchView(btn.dataset.view);
   });
   $('#settingsSidebarToggle')?.addEventListener('click',()=>{cancelSettingsRouteTransition();setSettingsSidebarExpanded(!settingsSidebarExpanded())});
+  $('#settingsSidebarExpand')?.addEventListener('click',()=>{
+    cancelSettingsRouteTransition();
+    setSettingsSidebarExpanded(true);
+    requestAnimationFrame(()=>{
+      // Wait for the sidebar's descendants to inherit the restored visibility.
+      requestAnimationFrame(()=>{
+        if(settingsSidebarExpanded()&&document.activeElement===document.body){
+          $('#settingsSidebarToggle')?.focus({preventScroll:true});
+        }
+      });
+    });
+  });
   document.addEventListener('click',event=>{
     if(document.body.classList.contains('management-mode')&&event.target instanceof Element&&event.target.closest('.collab-rail-toggle')){
       event.preventDefault();event.stopImmediatePropagation();
@@ -1786,6 +1798,8 @@ function setSettingsSidebarExpanded(expanded){
     toggle.setAttribute('aria-label',open?'收起设置导航':'展开设置导航');
     toggle.title=open?'收起设置导航':'展开设置导航';
   }
+  const reopen=$('#settingsSidebarExpand');
+  if(reopen)reopen.hidden=!managing||open;
   const mobileToggle=$('.collab-rail-toggle');
   if(mobileToggle){
     mobileToggle.setAttribute('aria-expanded',String(open));
@@ -1793,7 +1807,8 @@ function setSettingsSidebarExpanded(expanded){
   }
   const sidebar=$('#settingsSidebar');
   if(!open&&sidebar?.contains(document.activeElement)){
-    const focusTarget=managing&&mobileToggle?.getClientRects().length?mobileToggle:settingsEntry;
+    const focusTarget=managing&&reopen?.getClientRects().length
+      ?reopen:managing&&mobileToggle?.getClientRects().length?mobileToggle:settingsEntry;
     focusTarget?.focus({preventScroll:true});
   }
   if(sidebar){

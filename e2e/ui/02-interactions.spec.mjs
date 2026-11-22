@@ -11,13 +11,14 @@ test.afterAll(cleanup);
 test('requirement composer: create, find and dispatch a requirement from its drawer', async ({ page }) => {
   const errors = watchErrors(page);
   const title = `E2E UI 需求 ${cfg.runTag}-${Date.now() % 100000}`;
+  const description = '自动化 UI 测试创建，会被关闭。'.repeat(10);
   // A requirement needs a runnable SOP; a fresh database has none in the e2e project.
   const wf = await createWorkflow('ui-requirement', [script('only', 'echo UI_REQUIREMENT')]);
   await page.goto('/#/issues');
   await expect(page.locator('#issuesView')).toBeVisible();
   await page.locator('#newIssue').click();
   await expect(page.locator('#requirementModal')).toHaveClass(/open/);
-  await page.locator('#chatInput').fill(`${title}\n\n自动化 UI 测试创建，会被关闭。`);
+  await page.locator('#chatInput').fill(`${title}\n\n${description}`);
   await expect(page.locator('#reqCreate')).toBeEnabled();
   await page.getByRole('button', { name: 'SOP 流程', exact: true }).click();
   await page.getByRole('listbox', { name: 'SOP 流程', exact: true })
@@ -65,6 +66,12 @@ test('requirement composer: create, find and dispatch a requirement from its dra
   const run = await waitRun(runId, r => r.status === 'succeeded', { label: 'requirement SOP succeeds' });
   expect(run.workflowId).toBe(wf);
   expect(run.nodes.only.status).toBe('succeeded');
+  await page.goto(`/?projectId=${encodeURIComponent(cfg.projectId)}#/runs/${encodeURIComponent(runId)}`);
+  const runHeader = page.locator('.run-header-main');
+  await expect(runHeader.getByRole('heading', { level: 2 })).toHaveText(title);
+  await expect(runHeader.locator('.run-header-copy')).toHaveText(description);
+  await runHeader.getByText('展开全文', { exact: true }).click();
+  await expect(runHeader.getByText('收起全文', { exact: true })).toBeVisible();
   expect(errors).toEqual([]);
 });
 
@@ -112,6 +119,10 @@ test('run detail: tabs render and a waiting approval is approved from the UI', a
   const approve = page.locator('[data-approve="gate"]').first();
   await page.locator('[data-run-node="gate"]').click();
   await expect(approve).toBeVisible();
+  await expect(page.locator('.graph-legend')).toContainText('待确认');
+  await page.locator('.approval-callout').getByRole('button', { name: 'result', exact: true }).click();
+  await expect(page.locator('#artifactPreview')).toContainText('UI E2E');
+  await page.keyboard.press('Escape');
 
   for (const tab of ['trace', 'logs', 'workspace', 'eval', 'overview']) {
     await page.locator(`[data-run-tab="${tab}"]`).click();
@@ -135,7 +146,9 @@ test('run detail: tabs render and a waiting approval is approved from the UI', a
 
 test('approvals queue: approve a waiting run with context from the sidebar', async ({ page }) => {
   const wf = await createWorkflow('ui-approval-queue', [
-    script('prep', 'echo QUEUE_PREP'),
+    script('prep', 'mkdir -p out && echo "# Review fixture" > out/review.md', {
+      artifactOutputs: [{ name: 'review', path: 'out/review.md', mediaType: 'text/markdown', required: true }],
+    }),
     approval('gate', 'prep'),
     script('finish', 'echo QUEUE_FINISH'),
   ]);
@@ -154,6 +167,9 @@ test('approvals queue: approve a waiting run with context from the sidebar', asy
   });
   await expect(card).toBeVisible();
   await expect(card).toContainText('E2E ui-approval-queue');
+  await card.getByRole('button', { name: 'review', exact: true }).click();
+  await expect(page.locator('#artifactPreview')).toContainText('Review fixture');
+  await page.keyboard.press('Escape');
   const context = `Queue approval ${cfg.runTag}`;
   await card.locator('[data-human-context]').fill(context);
   const [response] = await Promise.all([
