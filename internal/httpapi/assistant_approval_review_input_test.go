@@ -137,6 +137,8 @@ func TestRedactApprovalArgumentsPreservesFullArgsAndEnforcesBudget(t *testing.T)
 
 func TestRedactApprovalArgumentsStructuredSecretsAndNonMutation(t *testing.T) {
 	user := domain.User{ID: 1, ClaudeCodeAPIKey: "sk-ant-known-user-secret"}
+	ghTok := "ghp_" + strings.Repeat("a", 24)
+	awsKey := "AKIA" + strings.Repeat("1", 16)
 	nestedAuth := map[string]any{
 		"username":      "deploy-bot",
 		"password":      "unregistered-db-password",
@@ -153,8 +155,8 @@ func TestRedactApprovalArgumentsStructuredSecretsAndNonMutation(t *testing.T) {
 		"credentials": nestedAuth,
 		"headers":     headers,
 		"body":        json.RawMessage(`{"target":"prod-db","db_password":"json-raw-password","nested":{"private_key":"raw-priv-val","region":"ap-east"}}`),
-		"command":     "curl -H 'X-Token: ghp_123456789012345678901234' https://prod.example.com/deploy",
-		"tags":        []string{"AKIA1234567890ABCDEF", "release-v2"},
+		"command":     "curl -H 'X-Token: " + ghTok + "' https://prod.example.com/deploy",
+		"tags":        []string{awsKey, "release-v2"},
 	}
 
 	got := redactApprovalArguments(origArgs, user)
@@ -172,8 +174,8 @@ func TestRedactApprovalArgumentsStructuredSecretsAndNonMutation(t *testing.T) {
 		"unregistered-top-api-key",
 		"json-raw-password",
 		"raw-priv-val",
-		"ghp_123456789012345678901234",
-		"AKIA1234567890ABCDEF",
+		ghTok,
+		awsKey,
 	} {
 		if strings.Contains(encoded, secret) {
 			t.Fatalf("unregistered secret %q leaked into redacted approval args: %s", secret, encoded)
@@ -194,9 +196,9 @@ func TestRedactApprovalArgumentsStructuredSecretsAndNonMutation(t *testing.T) {
 
 	// User messages in review input must also redact unregistered token patterns.
 	input := approvalReviewInput(assistantRequest{
-		Messages: []assistantMessage{{Role: "user", AuthorID: 1, Content: "部署到生产 token ghp_123456789012345678901234"}},
+		Messages: []assistantMessage{{Role: "user", AuthorID: 1, Content: "部署到生产 token " + ghTok}},
 	}, user)
-	if strings.Contains(input.Messages[0].Content, "ghp_123456789012345678901234") || !strings.Contains(input.Messages[0].Content, "部署到生产") {
+	if strings.Contains(input.Messages[0].Content, ghTok) || !strings.Contains(input.Messages[0].Content, "部署到生产") {
 		t.Fatalf("message pattern redaction failed: %q", input.Messages[0].Content)
 	}
 }
