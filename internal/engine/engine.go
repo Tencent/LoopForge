@@ -134,6 +134,16 @@ func (e *Engine) ConfigureExecution(instanceID, workspaceHost string, ttl time.D
 	e.executeRuns = enabled
 }
 
+// WorkspaceRoot reports the local directory this engine keeps run workspaces
+// under. Read-only helpers use it to bound filesystem measurements to paths
+// the platform owns.
+func (e *Engine) WorkspaceRoot() string {
+	if e == nil || e.sandboxes == nil {
+		return ""
+	}
+	return e.sandboxes.Root()
+}
+
 // ConfigurePlatformMCP sets the base URL and optional bearer token of this
 // AgentFlow deployment's own MCP endpoint (/mcp), used to materialize the
 // reserved agentflow-platform server for roles that opt in via

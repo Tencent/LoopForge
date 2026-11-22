@@ -13,7 +13,7 @@
   <link rel="stylesheet" href="/styles.css?v=20261031v1">
   <link rel="stylesheet" href="/assets.css?v=20260823v1">
   <link rel="stylesheet" href="/platform.css?v=20261121settingsrows">
-  <link rel="stylesheet" href="/observability.css?v=20261031metrics2">
+  <link rel="stylesheet" href="/observability.css?v=20261122cleanup">
   <link rel="stylesheet" href="/artifacts.css?v=20260914r3">
   <link rel="stylesheet" href="/sops.css?v=20261030cards1">
   <link rel="stylesheet" href="/sync.css?v=20261021schedule1">
@@ -356,9 +356,11 @@
           <div id="runFilters" class="run-filters" role="tablist" aria-label="按状态筛选"><button type="button" class="active" data-run-filter="all">全部<span class="sliding-tab-count">0</span></button><button type="button" data-run-filter="active">进行中<span class="sliding-tab-count">0</span></button><button type="button" data-run-filter="queued">排队中<span class="sliding-tab-count">0</span></button><button type="button" data-run-filter="paused">已暂停<span class="sliding-tab-count">0</span></button><button type="button" data-run-filter="waiting">待确认<span class="sliding-tab-count">0</span></button><button type="button" data-run-filter="succeeded">已完成<span class="sliding-tab-count">0</span></button><button type="button" data-run-filter="failed">失败<span class="sliding-tab-count">0</span></button><button type="button" data-run-filter="cancelled">已取消<span class="sliding-tab-count">0</span></button></div>
           <div class="run-tools">
             <label class="run-search"><span data-run-icon="search" aria-hidden="true"><svg width="14" height="14"></svg></span><input id="runSearch" type="search" placeholder="搜索需求标题或 SOP" aria-label="搜索需求标题或 SOP"></label>
-            <span class="run-select"><select id="runWorkflowFilter" aria-label="按 SOP 筛选"><option value="">全部 SOP</option></select><span data-run-icon="chevron-down" aria-hidden="true"><svg width="14" height="14"></svg></span></span>
+            <button id="runCleanupOpen" class="button ghost small" type="button" data-open-cleanup title="清理超过保留期的已结束运行">清理旧运行</button><span class="run-select"><select id="runWorkflowFilter" aria-label="按 SOP 筛选"><option value="">全部 SOP</option></select><span data-run-icon="chevron-down" aria-hidden="true"><svg width="14" height="14"></svg></span></span>
           </div>
         </div>
+        <div id="runCleanupHint" class="run-cleanup-hint" hidden></div>
+        <div id="runCleanupPanel" class="run-cleanup-panel" hidden></div>
         <div id="runsListSection" class="runs-layout">
           <div id="runList" class="run-list" role="list"></div>
         </div>
@@ -1301,6 +1303,7 @@
   <script src="/app/assets.js"></script>
   <script src="/app/skillhub.js"></script>
   <script src="/app/runners.js"></script>
+  <script src="/app/run-cleanup.js"></script>
   <script src="/app/runs.js"></script>
   <script src="/app/run-activation.js"></script>
   <script src="/app/platform-ssh-hosts.js"></script>
