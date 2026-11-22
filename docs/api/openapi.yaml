@@ -4327,6 +4327,8 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/ProjectMember"
+        runEval:
+          $ref: "#/components/schemas/RunEvalPolicy"
         tapdWorkspaceId:
           type: string
         tapdIterationId:
@@ -4349,6 +4351,25 @@ components:
         role:
           type: string
           enum: [maintainer, member, viewer]
+    RunEvalPolicy:
+      type: object
+      description: Per-project SOP run quality evaluation policy. A missing or zero-valued policy falls back to the platform default (enabled, threshold 70, six weighted dimensions).
+      properties:
+        enabled: {type: boolean}
+        version: {type: integer, description: Policy schema version; currently 1}
+        threshold: {type: integer, description: 'Minimum weighted score to pass (0-100)'}
+        dimensions:
+          type: array
+          items:
+            $ref: "#/components/schemas/RunEvalDimension"
+    RunEvalDimension:
+      type: object
+      required: [id, name, question, weight]
+      properties:
+        id: {type: string}
+        name: {type: string}
+        question: {type: string}
+        weight: {type: integer}
     PlatformAccount:
       type: object
       properties:
