@@ -141,7 +141,7 @@ func (e *Engine) startWorkflowDefinition(wf domain.WorkflowDefinition, input str
 		return domain.Run{}, err
 	}
 	if executionContext.SharedScheduleID != "" {
-		if err := e.validateSharedScheduleWorkflow(wf, executionContext.ProjectID, profile, resources); err != nil {
+		if err := e.validateSharedScheduleWorkflow(wf, executionContext.ProjectID, profile); err != nil {
 			return domain.Run{}, err
 		}
 	}

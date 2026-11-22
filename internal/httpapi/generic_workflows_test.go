@@ -154,10 +154,10 @@ func TestGenericTemplateCloneUsesSelectedSandbox(t *testing.T) {
 		}
 	}
 	path := "/api/workflows/" + repo.GenericBackendDeliveryWorkflowID + "/clone"
-	for _, sandbox := range []string{"missing", "private-native", "project-native", "shared-native", "local"} {
+	for _, sandbox := range []string{"missing", "private-native", "local", "project-native", "shared-native"} {
 		id := "copy-" + sandbox
 		body := map[string]string{"id": id, "name": id, "projectId": "alpha", "sandboxProfileId": sandbox}
-		if sandbox == "missing" || sandbox == "private-native" {
+		if sandbox == "missing" || sandbox == "private-native" || sandbox == "local" {
 			requestJSON[map[string]string](t, h, http.MethodPost, path, body, http.StatusBadRequest)
 			if workflowRowExists(t, s, id) {
 				t.Fatalf("created a draft for unavailable sandbox %q", sandbox)
