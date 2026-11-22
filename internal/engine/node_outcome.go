@@ -57,8 +57,17 @@ func (e *Engine) nodeFailedAt(runID string, node domain.WorkflowNode, attempt, g
 		}
 		nr.Error = err.Error()
 		nr.FinishedAt = time.Now().UTC()
+		budget := e.nodeBudgetState(nr)
 		reworkBudget := node.RejectTo != "" && r.Nodes[node.RejectTo] != nil && r.Nodes[node.RejectTo].ReworkCount >= max(1, node.MaxReworks)
-		if shouldRetryFailedAttempt(node, nr.Attempt, err) && !gateReworkReject(allowReject, nr) {
+		if budget.Exceeded && !configurationFailure {
+			// Retrying or reworking an over-budget node keeps paying for the
+			// same expensive path. Park it on a human decision instead, keeping
+			// the current outputs and the original failure for context.
+			nr.Status = "waiting_approval"
+			nr.Activity = "节点执行预算超限，等待人工决策"
+			nr.Error = fmt.Sprintf("节点执行预算超限（%s）。为避免继续消耗，已暂停等待人工决策：批准=接受当前结果继续下游；重试或修改上游由人工决定。原始错误：%s", budget.reason(), err.Error())
+			e.event(r, node.ID, "node.budget.exceeded", "节点预算超限，转人工决策："+budget.reason())
+		} else if shouldRetryFailedAttempt(node, nr.Attempt, err) && !gateReworkReject(allowReject, nr) {
 			// The retry gets a clean workspace, so carry the concrete failure into
 			// {{feedback}} instead of making the next attempt rediscover it.
 			nr.Feedback = err.Error()
@@ -78,6 +87,9 @@ func (e *Engine) nodeFailedAt(runID string, node domain.WorkflowNode, attempt, g
 		} else {
 			nr.Status = "failed"
 			e.event(r, node.ID, "node.failed", err.Error())
+		}
+		if budget.Warn && !budget.Exceeded && nr.Status != "waiting_approval" {
+			e.event(r, node.ID, "node.budget.warning", "节点接近执行预算："+budget.reason())
 		}
 		shouldReject = !configurationFailure && allowReject && nr.Status == "failed" && node.RejectTo != "" && r.Nodes[node.RejectTo] != nil && r.Nodes[node.RejectTo].ReworkCount < max(1, node.MaxReworks)
 	})

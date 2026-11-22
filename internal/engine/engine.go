@@ -45,6 +45,10 @@ type Engine struct {
 	leaseTTL       time.Duration
 	executeRuns    bool
 	draining       bool
+	// nodeBudget stops a single node (including retries and reworks) from
+	// consuming unbounded tool calls or tokens. Loaded from AGENTFLOW_NODE_*
+	// environment variables and adjustable with SetNodeBudget.
+	nodeBudget NodeBudget
 
 	// MergeIntoBranch creates or reuses a Gongfeng MR from source→target and
 	// merges it (merge commit, source branch kept). Scheduled SOP uses this
@@ -100,7 +104,7 @@ var ErrExecutionDisabled = errors.New("run execution is disabled on this instanc
 
 func New(s *repo.Store, sm *runtime.Manager) *Engine {
 	host, _ := os.Hostname()
-	e := &Engine{repo: s, sandboxes: sm, runner: runtime.NewExecutorRunner(), running: map[string]context.CancelFunc{}, runEnvs: map[string]*runEnvironment{}, workspaceFacts: map[string]domain.RunnerWorkspaceFacts{}, subs: map[string]map[chan domain.Run]struct{}{}, runnerTaskSubs: map[string]map[chan struct{}]struct{}{}, instanceID: fmt.Sprintf("%s-%d", host, os.Getpid()), workspaceHost: host, leaseTTL: 30 * time.Second, executeRuns: true, obsKick: make(chan struct{}, 1)}
+	e := &Engine{repo: s, sandboxes: sm, runner: runtime.NewExecutorRunner(), running: map[string]context.CancelFunc{}, runEnvs: map[string]*runEnvironment{}, workspaceFacts: map[string]domain.RunnerWorkspaceFacts{}, subs: map[string]map[chan domain.Run]struct{}{}, runnerTaskSubs: map[string]map[chan struct{}]struct{}{}, instanceID: fmt.Sprintf("%s-%d", host, os.Getpid()), workspaceHost: host, leaseTTL: 30 * time.Second, executeRuns: true, nodeBudget: NodeBudgetFromEnv(), obsKick: make(chan struct{}, 1)}
 	return e
 }
 

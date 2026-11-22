@@ -1108,6 +1108,9 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 			nr.Status = "succeeded"
 			nr.FinishedAt = time.Now().UTC()
 			e.event(r, node.ID, "node.succeeded", node.Name+" 已完成")
+			if budget := e.nodeBudgetState(nr); budget.Warn || budget.Exceeded {
+				e.event(r, node.ID, "node.budget.warning", "节点执行超出预算提醒："+budget.reason())
+			}
 		}
 	})
 	for _, artifact := range artifacts {

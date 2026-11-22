@@ -44,6 +44,7 @@ Use `AGENTFLOW_MYSQL_DSN` for your own MySQL deployment. A fresh account command
 - Tracker MCP authentication uses explicit catalog headers or the deployment's `AGENTFLOW_MCP_TOKEN`. Project-scoped trackers use their own MCP authorization headers.
 - Set `AGENTFLOW_GONGFENG_HOST` to the managed Git host (hostname and optional HTTPS port) to enable its repository and merge request links and token checks. Gongfeng OAuth also needs its application credentials and callback. Existing OAuth endpoint overrides still take precedence.
 - Set `AGENTFLOW_TAPD_HOST` to a deployment-specific TAPD web host when needed. Generated TAPD work item links use `www.tapd.cn` by default.
+- A single Agent node, including its retries and upstream reworks, stops at a budget instead of consuming unbounded tokens: the engine warns at 300 tool calls or 500k tokens and parks the node in `waiting_approval` at 800 tool calls or 1M tokens, where approving accepts the current result and continues downstream, or a person retries deliberately. Override the thresholds with `AGENTFLOW_NODE_TOOL_WARN`, `AGENTFLOW_NODE_TOOL_LIMIT`, `AGENTFLOW_NODE_TOKEN_WARN` and `AGENTFLOW_NODE_TOKEN_LIMIT` (0 disables a threshold). The default Compose stack forwards these variables.
 
 ## Container installation
 
