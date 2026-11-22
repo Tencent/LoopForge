@@ -407,6 +407,11 @@ func (e *Engine) claimIdleConversationWorkspace(run domain.Run, now time.Time) (
 	if exists && meta.FollowUp && !retryDue && !released && now.Before(idleSinceBeforeLease.Add(ConversationWorkspaceIdleTTL)) {
 		return true, false, nil, nil
 	}
+	cleanupHeld := now.Before(run.WorkspaceCleanupNotBefore)
+	if cleanupHeld && !heldWorkspaceCheckpointNeedsSave(meta, idleSinceBeforeLease, now) {
+		// A cleanup hold alone is not a reason to take a lease or rearchive.
+		return true, false, nil, nil
+	}
 	token, err := e.repo.BeginWorkspaceCheckpointSave(run.ID, now)
 	if err != nil {
 		return true, false, nil, nil
@@ -444,7 +449,15 @@ func (e *Engine) claimIdleConversationWorkspace(run domain.Run, now time.Time) (
 			finish()
 		}
 	}()
-	if retryDue || released || meta.SavedAt == nil || run.UpdatedAt.After(*meta.SavedAt) || meta.Error != "" || !now.Before(idleSince.Add(ConversationWorkspaceIdleTTL)) {
+	needsSave := workspaceCheckpointNeedsSave(meta, run.UpdatedAt, now)
+	if cleanupHeld {
+		needsSave = heldWorkspaceCheckpointNeedsSave(meta, idleSince, now)
+	} else {
+		// Capture one last time before reclaiming to include edits made outside
+		// platform activity tracking.
+		needsSave = needsSave || released || !now.Before(idleSince.Add(ConversationWorkspaceIdleTTL))
+	}
+	if needsSave {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		defer cancel()
 		captureErr := e.saveConversationWorkspace(ctx, run, token)
@@ -453,7 +466,7 @@ func (e *Engine) claimIdleConversationWorkspace(run domain.Run, now time.Time) (
 			return true, false, nil, captureErr
 		}
 	}
-	if meta.FollowUp && !released && now.Before(idleSince.Add(ConversationWorkspaceIdleTTL)) {
+	if cleanupHeld || meta.FollowUp && !released && now.Before(idleSince.Add(ConversationWorkspaceIdleTTL)) {
 		return true, false, nil, nil
 	}
 	// Revision and node checks serialize the deletion claim against SOP or group dispatch.
@@ -462,6 +475,24 @@ func (e *Engine) claimIdleConversationWorkspace(run domain.Run, now time.Time) (
 		release = finish
 	}
 	return true, claimed, release, err
+}
+
+// Preserve the first checkpoint after release or idle expiry, even while
+// reclamation is held. Subsequent sweeps can reuse that checkpoint.
+func heldWorkspaceCheckpointNeedsSave(meta repo.WorkspaceCheckpoint, idleSince, now time.Time) bool {
+	if meta.Released() {
+		if meta.ReleasedAt.After(idleSince) {
+			idleSince = *meta.ReleasedAt
+		}
+	} else if deadline := idleSince.Add(ConversationWorkspaceIdleTTL); !now.Before(deadline) {
+		idleSince = deadline
+	}
+	return workspaceCheckpointNeedsSave(meta, idleSince, now)
+}
+
+func workspaceCheckpointNeedsSave(meta repo.WorkspaceCheckpoint, changedAt, now time.Time) bool {
+	return meta.SavedAt == nil || meta.SHA256 == "" || meta.Error != "" ||
+		changedAt.After(*meta.SavedAt) || meta.SaveRetryAt != nil && !now.Before(*meta.SaveRetryAt)
 }
 
 func (e *Engine) restoreCheckpointBeforeExecution(ctx context.Context, run domain.Run) error {
