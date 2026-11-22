@@ -52,6 +52,28 @@ export async function openHome(page){
   await page.waitForLoadState('networkidle');
   return composer(page);
 }
+
+// The first-run suite also tests the pinned release, which opens the
+// CodeBuddy wizard directly before the executor picker was introduced.
+export async function openExecutorSetup(page){
+  const {expect}=await import('@playwright/test');
+  const notice=chat(page).locator('.credential-notice');
+  await expect(notice).toBeVisible();
+  const add=notice.getByRole('button',{name:'新增执行器',exact:true});
+  const chooser=await add.isVisible();
+  if(chooser){
+    await expect(notice).toContainText('添加一个执行器即可开始对话');
+    await add.click();
+    await expect(page.getByRole('listbox',{name:'新增执行器',exact:true})).toBeVisible();
+  }else{
+    await expect(notice).toContainText('CodeBuddy API Key');
+    await notice.getByRole('button',{name:'去配置',exact:true}).click();
+    await expect(page.locator('#credentialWizard .credential-pane:not(.is-leaving) input[name="secret"]')).toBeFocused();
+  }
+  await expect(page).toHaveURL(/#\/settings/);
+  return chooser;
+}
+
 // A menu or dialog inside the chat frame must fit the frame's viewport.
 export const fitsFrame=locator=>locator.evaluate(el=>{
   const r=el.getBoundingClientRect();

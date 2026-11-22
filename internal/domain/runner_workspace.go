@@ -131,12 +131,27 @@ type RunnerToolResponse struct {
 	Error string          `json:"error,omitempty"`
 }
 
+// WorkspaceImageBuildProgress reports a build step without including Docker
+// output, Dockerfile arguments, or environment variables.
+type WorkspaceImageBuildProgress struct {
+	ID     string `json:"id"`
+	Step   string `json:"step,omitempty"`
+	Done   bool   `json:"done,omitempty"`
+	Failed bool   `json:"failed,omitempty"`
+}
+
 type WorkspaceCheckpointTransfer struct {
 	ID     string `json:"id,omitempty"`
 	Size   int64  `json:"size,omitempty"`
 	SHA256 string `json:"sha256,omitempty"`
 	Offset int64  `json:"offset,omitempty"`
 	Data   []byte `json:"data,omitempty"`
+}
+
+// IsCancelableRunnerWorkspaceOperation identifies synchronous requests that
+// hold a workspace fence. Conversation processes have their own stop protocol.
+func IsCancelableRunnerWorkspaceOperation(op string) bool {
+	return IsWorkspaceCheckpointTransferOperation(op) || op == RunnerWorkspaceOperationCheckpoint || op == RunnerWorkspaceOperationPrepare
 }
 
 func IsWorkspaceCheckpointTransferOperation(op string) bool {

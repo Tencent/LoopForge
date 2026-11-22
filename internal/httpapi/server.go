@@ -20,6 +20,7 @@ import (
 	apidocs "agentflow/docs/api"
 	"agentflow/internal/application"
 	"agentflow/internal/auth"
+	"agentflow/internal/config"
 	"agentflow/internal/domain"
 	"agentflow/internal/engine"
 	"agentflow/internal/knowledge"
@@ -400,6 +401,7 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.Any("/api/issues/:id/runs", api.issues.issue)
 	g.Any("/api/issues/:id/clarification", api.issues.issue)
 	g.Any("/api/issues/:id/chat-clarify", api.issues.issue)
+	g.GET("/api/issues/:id/clarify-models", api.issues.issue)
 	g.Any("/api/issues/:id/chat-clarify/cancel", api.issues.issue)
 	g.Any("/api/issues/:id/reopen", api.issues.issue)
 	g.Any("/api/issues/:id/close", api.issues.issue)
@@ -506,6 +508,7 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.POST("/api/workflows/:id/publish", api.catalog.workflow)
 	g.GET("/api/workflows/:id/agents", api.catalog.workflow)
 	g.PUT("/api/workflows/:id/agents", api.catalog.workflow)
+	g.GET("/api/workflows/:id/executor-requirements", api.catalog.workflow)
 	g.POST("/api/workflows/:id/clone", api.catalog.workflow)
 	g.GET("/api/workflow-metrics", api.runs.workflowMetrics)
 	g.POST(insightIngestPath, api.insights.ingest)
@@ -783,6 +786,13 @@ func (s *Server) bootstrap(c *gin.Context) {
 	if current, ok := s.requestUser(c.Request, true); ok {
 		currentUserID = current.ID
 	}
+	var assistantDefaults domain.AssistantDefaults
+	for _, user := range users {
+		if user.ID == currentUserID {
+			assistantDefaults = user.AssistantDefaults
+			break
+		}
+	}
 	mcpServers = domain.PublicMCPServers(withMarketIcons(visibleMCPServersForUser(mcpServers, currentUserID)))
 	sharedModels := s.repo.SharedCodeBuddyModels()
 	sponsoredModel := ""
@@ -800,8 +810,10 @@ func (s *Server) bootstrap(c *gin.Context) {
 		// Set when users without their own CodeBuddy API Key can still chat
 		// and run SOPs on the platform's shared key, limited to these models
 		// (sponsoredModel is the default).
-		"sponsoredModel":  sponsoredModel,
-		"sponsoredModels": sharedModels,
+		"sponsoredModel":    sponsoredModel,
+		"sponsoredModels":   sharedModels,
+		"assistantDefaults": assistantDefaults,
+		"gongfengHost":      config.GongfengHost(),
 	})
 }
 

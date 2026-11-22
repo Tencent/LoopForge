@@ -54,7 +54,7 @@ const api=async(path,options={})=>{
 };
 const verifyCalls=()=>calls.filter(c=>c.path.endsWith('/git-token/verify'));
 const putCalls=()=>calls.filter(c=>c.method==='PUT');
-const panel={innerHTML:'',classList:{remove(){}},querySelectorAll:()=>[]};
+const panel={innerHTML:'',classList:{remove(){}},querySelector:()=>null,querySelectorAll:()=>[]};
 const host={innerHTML:'',querySelector(selector){return {'#credentialPanel':panel}[selector]??null},querySelectorAll:()=>[]};
 const posted=[];
 const $=selector=>({'#personalSettingsContent':host,'#credentialPanel':panel,'#chatNextFrame':{contentWindow:{postMessage:m=>posted.push(m)}}}[selector]??null);

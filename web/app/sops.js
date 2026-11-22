@@ -86,18 +86,27 @@ function genericRequirementChips(w){
   if(!rows.length)return '';
   return `<div class="sop-requirements">${rows.map(r=>sopBadge(r.label,r.ok?'success':'warn',r.ok?'check':'alert',r.hint)).join('')}</div>`;
 }
-// Agent nodes run with the executor credentials of the requirement owner; a
-// bound repository only matters for templates that check out project code.
-function sopRunRequirements(w){
-  const nodes=w?.nodes||[],user=userById(state.currentUser?.id)||{};
+function sopResourceRequirements(w){
   const project=(state.data?.projects||[]).find(p=>p.id===(w?.projectId||state.projectFilter))||(state.data?.projects||[]).find(p=>p.id===state.projectFilter);
   const driver=((state.data?.sandboxes||[]).find(sb=>sb.id===w?.sandboxProfileId)||{}).driver||(/docker/i.test(w?.sandboxProfileId||'')?'docker':'');
   const usesRepo=(catalogGeneric(w)||(w?.tags||[]).some(t=>String(t).startsWith('generic-source:')))&&!!project?.defaultRepositoryId;
   const rows=[];
-  const providers=new Set();
-  for(const node of nodes.filter(n=>n.type==='agent')){
+  if(usesRepo)rows.push({key:'run-repo',label:'GitHub 仓库（已绑定）',ok:true,hint:'使用项目已绑定的仓库。访问私有仓库或推送代码时需要在个人配置中配置 GitHub Token；未绑定仓库时可在任务工作区直接运行。'});
+  if(driver==='docker')rows.push({key:'run-docker',label:'Docker',ok:state.data?.capabilities?.docker!==false,hint:state.data?.capabilities?.docker===false?'平台连不上 Docker，这个 SOP 现在跑不了。重新运行 scripts/install.sh 会自动安装并挂载 Docker。':'在隔离的 Docker 沙箱里运行，首次运行会构建镜像，需要几分钟。'});
+  return rows;
+}
+function sopRunRequirements(w){
+  const nodes=w?.nodes||[],user=userById(state.currentUser?.id)||{};
+  const resources=sopResourceRequirements(w);
+  if(catalogGeneric(w)||(w?.tags||[]).some(tag=>tag.startsWith('generic-source:')))return resources;
+  const rows=[];
+  const executorIds=nodes.filter(n=>n.type==='agent'&&!isPreviewBuildNode(n.id)).map(node=>{
     const role=(state.data?.agents||[]).find(a=>a.id===node.agentId);
-    const id=role?.executorId||node.executorId||'codebuddy';
+    return role?.executorId||node.executorId||'codebuddy';
+  });
+  if(w?.preview?.enabled)executorIds.push(workflowPreviewExecutor(w));
+  const providers=new Set();
+  for(const id of executorIds){
     const kind=(state.data?.executors||[]).find(e=>e.id===id)?.kind||id;
     if(['codebuddy','codex','claude','claude-code','opencode','cursor','agy','kimi','pi','dsh','zcode'].includes(kind))providers.add(kind==='claude'?'claude-code':kind);
   }
@@ -109,15 +118,13 @@ function sopRunRequirements(w){
       rows.push({key:'run-key-'+kind,field,fix:'settings',fixLabel:'去个人配置配置',label:label+' API Key',ok:!!user.agentCliCredentials?.[kind]?.apiKeyConfigured,hint:lfT('Agent 节点使用 '+label+'，请在个人配置里配置对应 API Key。','Agent nodes use '+label+'. Configure its API key in Settings.')});
       continue;
     }
-    rows.push({key:'run-key-'+kind,field,fix:'settings',fixLabel:'去个人配置配置',label:label+' API Key',ok:!!user[flag],hint:lfT('Agent 节点使用 '+label+'，请在个人配置里配置对应 API Key。','Agent nodes use '+label+'. Configure its API key in Settings.')});
+    rows.push({key:'run-key-'+kind,field,fix:'settings',fixLabel:'去个人配置配置',label:label+' API Key',ok:!!user[flag]||!!window.AgentFlowAssistantModels?.catalog().engines?.find(engine=>engine.id===kind&&engine.configured),hint:lfT('Agent 节点使用 '+label+'，请在个人配置里配置对应 API Key。','Agent nodes use '+label+'. Configure its API key in Settings.')});
   }
-  if(usesRepo)rows.push({key:'run-repo',fix:'',label:'GitHub 仓库（已绑定）',ok:true,hint:'使用项目已绑定的仓库。访问私有仓库或推送代码时需要在个人配置中配置 GitHub Token；未绑定仓库时可在任务工作区直接运行。'});
-  if(driver==='docker')rows.push({key:'run-docker',label:'Docker',ok:state.data?.capabilities?.docker!==false,hint:state.data?.capabilities?.docker===false?'平台连不上 Docker，这个 SOP 现在跑不了。重新运行 scripts/install.sh 会自动安装并挂载 Docker。':'在隔离的 Docker 沙箱里运行，首次运行会构建镜像，需要几分钟。'});
-  return rows;
+  return [...rows,...resources];
 }
 function sopRunRequirementChips(w){
   const rows=sopRunRequirements(w);
-  if(!rows.length)return `<div class="sop-requirements">${sopBadge('无需 Key 或仓库','success','check','只包含脚本和人工审批节点')}</div>`;
+  if(!rows.length)return '';
   return `<div class="sop-requirements" aria-label="运行条件">${rows.map(r=>sopBadge((r.ok?'':'需要 ')+r.label,r.ok?'success':'warn',r.ok?'check':'alert',r.hint)).join('')}</div>`;
 }
 // --- 流程模板卡片 -------------------------------------------------------------
@@ -396,10 +403,18 @@ function bindSOPCatalogEvents(root){
     activateSOPCard(e.target);
   });
 }
-function renderGenericRequirementRows(w){
+function renderGenericRequirementRows(w,executors,loading=false){
   const host=$('#genericTemplateRequirements');if(!host)return;
-  const rows=[...sopRunRequirements(w).map(r=>({...r,fix:r.ok?'':r.fix||''})),...genericRequirementRows(w)];
-  host.innerHTML=rows.map(r=>`<div class="req-row ${r.ok?'ok':'missing'}"><span class="req-mark">${r.ok?'✓':'!'}</span><div><b>${escapeHTML(r.label)}</b><p>${escapeHTML(r.hint)}${r.nodeId?` · 节点「${escapeHTML(workflowNodeName(w,r.nodeId))}」`:''}</p></div><span class="req-state">${r.ok?'已配置':'未配置'}</span>${r.fix?`<button type="button" class="button ghost small" data-fix-requirement="${escapeHTML(r.key)}">${escapeHTML(r.fixLabel)}</button>`:''}</div>`).join('')||'<div class="req-row ok"><span class="req-mark">✓</span><div><b>无额外依赖</b><p>复制到本项目后即可直接运行。</p></div></div>';
+  const executorRows=executors?.map(ex=>({
+    key:'run-executor',label:ex.name?`执行器 · ${ex.name}`:'执行器',ok:ex.configured,
+    hint:ex.configured?'角色节点使用任务责任人的执行器配置。':ex.name?`配置运行此 SOP 所需的 ${ex.name}。`:'在个人配置中添加当前执行环境可用的执行器，即可运行角色节点。',
+    fix:ex.configured?'':'settings',fixLabel:'配置执行器'
+  }))??[{
+    label:'执行器',status:loading?'检查中':'暂时无法检查',
+    hint:loading?'正在检查任务责任人的执行器配置。':'请关闭后重新打开，重试执行器检查。'
+  }];
+  const rows=[...executorRows,...sopResourceRequirements(w),...genericRequirementRows(w)];
+  host.innerHTML=rows.map(r=>`<div class="req-row ${r.status?'':r.ok?'ok':'missing'}"><span class="req-mark">${r.status?'…':r.ok?'✓':'!'}</span><div><b>${escapeHTML(r.label)}</b><p>${escapeHTML(r.hint)}${r.nodeId?` · 节点「${escapeHTML(workflowNodeName(w,r.nodeId))}」`:''}</p></div><span class="req-state">${r.status||(r.ok?'已配置':'未配置')}</span>${r.fix?`<button type="button" class="button ghost small" data-fix-requirement="${escapeHTML(r.key)}">${escapeHTML(r.fixLabel)}</button>`:''}</div>`).join('')||'<div class="req-row ok"><span class="req-mark">✓</span><div><b>无额外依赖</b><p>复制到本项目后即可直接运行。</p></div></div>';
   host.querySelectorAll('[data-fix-requirement]').forEach(btn=>btn.onclick=()=>openGenericRequirementTarget(btn.dataset.fixRequirement));
 }
 async function openGenericTemplateEditor(id){
@@ -411,7 +426,8 @@ async function openGenericTemplateEditor(id){
   renderWorkflowMeta();renderCanvas();renderProperties();switchView('flow');
   await refreshGenericWorkflowRoles();
 }
-function openGenericTemplateModal(id){
+let genericRequirementRequest=0;
+async function openGenericTemplateModal(id){
   const w=(state.data?.workflows||[]).find(x=>x.id===id&&catalogGeneric(x));
   if(!w)return toast('通用模板不存在或已下架');
   state.genericTemplateId=id;
@@ -419,17 +435,22 @@ function openGenericTemplateModal(id){
   $('#genericTemplateIntro').textContent=w.description||'平台提供的通用流程模板，复制后归本项目所有。';
   const nodes=w.nodes||[],agentCount=nodes.filter(n=>n.type==='agent').length,gates=nodes.filter(n=>n.type==='approval').length;
   $('#genericTemplateStructure').innerHTML=`<span>${nodes.length} 个节点</span><span>${agentCount} 个角色节点</span><span>${gates} 个人工门禁</span>${nodes.some(n=>n.id==='mr')?'<span class="highlight">含「发起 PR」节点</span>':''}<span>复制=归本项目、可自由修改、不再跟随平台更新</span><span>直接运行=始终使用平台最新版</span>`;
-  renderGenericRequirementRows(w);
-  $('#genericTemplateModal').classList.add('open');
+  const request=++genericRequirementRequest,modal=$('#genericTemplateModal');
+  const needsExecutor=agentCount>0||w.preview?.enabled;
+  renderGenericRequirementRows(w,needsExecutor?null:[],true);
+  modal.classList.add('open');
+  if(!needsExecutor)return;
+  try{
+    const executors=await api(`/api/workflows/${encodeURIComponent(id)}/executor-requirements${projectQuery()}`,{silent:true});
+    if(request===genericRequirementRequest&&modal.classList.contains('open'))renderGenericRequirementRows(w,executors);
+  }catch{
+    if(request===genericRequirementRequest&&modal.classList.contains('open'))renderGenericRequirementRows(w,null);
+  }
 }
 function openGenericRequirementTarget(key){
-  if(key==='run-key'||key.startsWith('run-key-')||key==='run-repo'){
-    const w=(state.data?.workflows||[]).find(x=>x.id===state.genericTemplateId);
-    const row=sopRunRequirements(w).find(r=>r.key===key);
+  if(key==='run-executor'){
     $('#genericTemplateModal').classList.remove('open');
-    if(row?.fix==='repository')return openRepositoryModal();
-    gotoCredential(row?.field||(key==='run-key'?'codeBuddyApiKey':'gitHttpCredentials'));
-    return;
+    return gotoCredential('executors');
   }
   const meta=GENERIC_REQUIREMENT_CHECKS[key];if(!meta)return;
   $('#genericTemplateModal').classList.remove('open');

@@ -233,7 +233,10 @@ func workflowSandboxRequirements(st *repo.Store, wf domain.WorkflowDefinition) (
 		if !ok {
 			return runtime.SandboxRequirements{}, fmt.Errorf("agent %q not found", node.AgentID)
 		}
-		executor, err := resolveNodeExecutor(st, node, agent)
+		executor, err := workflowNodeExecutor(st, wf, node, agent)
+		if errors.Is(err, errSOPExecutorUnconfigured) {
+			continue
+		}
 		if err != nil {
 			return runtime.SandboxRequirements{}, err
 		}
@@ -402,6 +405,12 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 		failNode(err, false)
 		return
 	}
+	current, err = e.resolveDeferredSOPExecutor(current, node)
+	if err != nil {
+		failNode(err, nodeRejects(node))
+		return
+	}
+	wf.ExecutorDefaults = current.WorkflowSnapshot.ExecutorDefaults
 	profile := domain.SandboxProfile{}
 	if current.WorkflowSnapshot.SandboxSnapshot != nil {
 		profile = current.WorkflowSnapshot.SandboxSnapshot.Profile
@@ -689,7 +698,7 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 			err = fmt.Errorf("agent %q not found", node.AgentID)
 			break
 		}
-		ex, errResolve := resolveNodeExecutor(e.repo, node, agent)
+		ex, errResolve := workflowNodeExecutor(e.repo, wf, node, agent)
 		if errResolve != nil {
 			err = errResolve
 			break

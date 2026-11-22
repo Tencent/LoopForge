@@ -252,9 +252,9 @@ func (h *assistantHandlers) openBotClarify(bot domain.NotificationBot, conv doma
 }
 
 // botClarifyModel is the model of the clarification analysis: the Bot's
-// answer model when it is a CodeBuddy model, else the default.
+// answer model when one is set, else the default.
 func botClarifyModel(bot domain.NotificationBot) string {
-	if bot.Model == "" || bot.Model == domain.DefaultNotificationReportModel || clarifyModelEngineError(bot.Model) != nil {
+	if bot.Model == "" || bot.Model == domain.DefaultNotificationReportModel {
 		return ""
 	}
 	return bot.Model

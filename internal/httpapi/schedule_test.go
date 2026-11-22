@@ -454,6 +454,22 @@ func TestEnsureBaselineAlignWorkflowUpgradesExistingRevision(t *testing.T) {
 			t.Fatal("confirm node must be removed")
 		}
 	}
+	if wf.Nodes[1].ExecutionScope != domain.ExecutionScopeRepositories {
+		t.Fatal("the merge verifier must run inside the repository checkout")
+	}
+
+	wf.Version = 7
+	wf.Nodes[1].ExecutionScope = ""
+	if err := st.PutWorkflow(wf); err != nil {
+		t.Fatal(err)
+	}
+	if !h.ensureBaselineAlignWorkflow(domain.ScheduleJob{ProjectID: "platform"}) {
+		t.Fatal("ensure should upgrade the previously installed v7 align SOP")
+	}
+	if upgraded, ok := st.Workflow(engine.BaselineAlignWorkflowID); !ok || upgraded.Version != baselineAlignWorkflowVersion ||
+		len(upgraded.Nodes) != 2 || upgraded.Nodes[1].ExecutionScope != domain.ExecutionScopeRepositories {
+		t.Fatalf("installed align SOP still lacks repository-scoped verification: %+v", upgraded)
+	}
 }
 
 func TestScheduleJobRunAcceptedBeforeFinish(t *testing.T) {

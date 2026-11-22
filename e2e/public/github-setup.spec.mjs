@@ -3,7 +3,7 @@ import {password,appReady} from './helpers.mjs';
 
 test.use({trace:'off',screenshot:'off'});
 
-test('GitHub authorization stays in one credential row with a separate manual path',async({page},info)=>{
+test('GitHub authorization has a separate manual token path',async({page},info)=>{
   const errors=[],failed=[];
   page.on('pageerror',error=>errors.push(error.message));
   page.on('response',response=>{if(response.status()>=500)failed.push(response.status()+' '+response.url())});
@@ -16,9 +16,18 @@ test('GitHub authorization stays in one credential row with a separate manual pa
   const capability=await page.request.get('/api/auth/github').then(response=>response.json());
   await page.goto('/#/settings');
   await expect(page.locator('#personalSettingsContent > .personal-settings-card')).toHaveCount(0);
-  await expect(page.locator('[data-credential-row="gitToken"]')).toContainText('GitHub');
+  const panel=page.locator('#credentialPanel');
+  await expect(panel).toBeVisible();
+  const add=panel.getByRole('button',{name:'新增 Git 配置',exact:true});
+  const chooser=await add.isVisible();
+  const row=panel.locator('[data-credential-row="gitToken"]');
+  if(chooser)await expect(row).toHaveCount(0);
+  else await expect(row).toContainText('GitHub');
   await page.screenshot({path:info.outputPath('github-settings.png'),fullPage:true});
-  await page.locator('[data-credential-row="gitToken"] [data-credential-act="setup"]').click();
+  if(chooser){
+    await add.click();
+    await page.getByRole('listbox',{name:'新增 Git 配置',exact:true}).getByRole('option',{name:'GitHub',exact:true}).click();
+  }else await row.locator('[data-credential-act="setup"]').click();
   const wizard=page.locator('#credentialWizard');
   if(capability.enabled){
     await expect(wizard.locator('[data-github-start]')).toBeVisible();

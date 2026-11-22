@@ -1,5 +1,5 @@
 import {test,expect} from '@playwright/test';
-import {signInUnconfigured, appReady, switchProject, chat, openHome, fitsFrame} from './helpers.mjs';
+import {signInUnconfigured, appReady, switchProject, chat, openHome, openExecutorSetup, fitsFrame} from './helpers.mjs';
 
 // Default journeys use an account with no model key, joined to the welcome
 // project. New self-registered accounts join it automatically. The real-model
@@ -78,14 +78,21 @@ test('sending without a model key is refused before any request, with a way to c
   const frame=chat(page);
   const text='No key yet: this must be refused before any model runs.';
   await input.fill(text);
-  await frame.locator('.send-button').click();
-  const configure=frame.getByRole('button',{name:'去配置 CodeBuddy API Key'});
-  await expect(configure).toBeVisible();
+  const send=frame.locator('.send-button');
+  const notice=frame.locator('.credential-notice');
+  await expect(notice).toBeVisible();
+  const chooser=await notice.getByRole('button',{name:'新增执行器',exact:true}).isVisible();
+  if(chooser)await expect(send).toBeDisabled();
+  else await send.click();
   await expect(input).toHaveValue(text);
   expect(writes).toBe(0);
-  await configure.click();
-  await expect(page).toHaveURL(/#\/settings/);
-  await expect(page.locator('#credentialWizard .credential-pane:not(.is-leaving) input[name="secret"]')).toBeFocused();
+  if(chooser){
+    await openExecutorSetup(page);
+  }else{
+    await frame.getByRole('button',{name:'去配置 CodeBuddy API Key',exact:true}).click();
+    await expect(page).toHaveURL(/#\/settings/);
+    await expect(page.locator('#credentialWizard .credential-pane:not(.is-leaving) input[name="secret"]')).toBeFocused();
+  }
   await page.keyboard.press('Escape');
 });
 

@@ -1,29 +1,8 @@
 function loadBotModels(){return window.AgentFlowAssistantModels?.load?.()||Promise.resolve()}
-function botModelPickerHTML(bot){return `<div class="schedule-model-field bot-model-field" id="botModelPicker"><input type="hidden" name="model" value="${escapeHTML(bot.model||'default')}"><button type="button" class="ai-model-toggle" data-model-toggle aria-label="AI 模型（CodeBuddy）" aria-haspopup="listbox" aria-expanded="false"><span class="ai-model-icon" data-family="glm">智</span><span data-model-label>选择模型</span><span class="ai-model-caret" aria-hidden="true"></span></button><div class="ai-model-menu" hidden role="listbox" aria-label="CodeBuddy 模型"></div></div>`}
-function closeBotModelPicker(){const picker=document.querySelector('#botModelPicker');if(!picker)return;picker.querySelector('.ai-model-menu').hidden=true;picker.querySelector('[data-model-toggle]').setAttribute('aria-expanded','false')}
-function bindBotModelPicker(host){
- const picker=host.querySelector('#botModelPicker'),models=window.AgentFlowAssistantModels;
- if(!picker||!models)return;
- const toggle=picker.querySelector('[data-model-toggle]'),menu=picker.querySelector('.ai-model-menu'),value=picker.querySelector('[name="model"]');
- models.paint(toggle,value.value);
- toggle.onclick=event=>{
-  event.stopPropagation();if(toggle.disabled||toggle.closest('fieldset')?.disabled)return;
-  const open=menu.hidden;closeBotModelPicker();if(!open)return;
-  // "默认" (the CLI default model) stays selectable after choosing another.
-  const pick=id=>{value.value=id;models.paint(toggle,id);captureBotDraft(host);closeBotModelPicker()};
-  models.renderOptions(menu,[{id:models.DEFAULT,name:'默认（平台默认模型）'},...models.codeBuddyModels()],value.value,pick);
-  const rect=toggle.getBoundingClientRect(),width=Math.min(Math.max(rect.width,320),window.innerWidth-24),height=Math.min(320,window.innerHeight-24),below=window.innerHeight-rect.bottom-12,above=rect.top-12;
-  menu.style.width=width+'px';menu.style.left=Math.max(12,Math.min(rect.left,window.innerWidth-width-12))+'px';
-  const down=below>=Math.min(height,above);const available=down?below:above;
-  menu.style.maxHeight=Math.min(height,available)+'px';menu.style.top=(down?rect.bottom+6:Math.max(12,rect.top-Math.min(height,available)-6))+'px';
-  menu.hidden=false;toggle.setAttribute('aria-expanded','true');
- };
- host.querySelector('fieldset').onscroll=closeBotModelPicker;
- if(!bindBotModelPicker.docBound){bindBotModelPicker.docBound=true;document.addEventListener('click',event=>{if(!event.target.closest('#botModelPicker'))closeBotModelPicker()});document.addEventListener('keydown',event=>{if(event.key==='Escape')closeBotModelPicker()});window.addEventListener('resize',closeBotModelPicker)}
-}
+function botModelPickerHTML(){return `<div class="feature-model-picker" id="botModelPicker">${globalThis.AgentFlowAssistantModels?.featurePickerHTML('model')||''}</div>`}
 // Project-scoped enterprise chat notifications.
 const botUI={projectId:'',items:[],deliveries:[],selected:null,sessions:[],query:'',loading:false,error:'',busy:false,busyAction:'',revision:0,tab:'list',step:1,recordsTab:'deliveries',interactionBotId:'',interaction:null,interactionLoading:false,interactionError:'',testResult:'',flashId:'',motion:null,animations:[],shownCount:null,shownError:'',watchTimer:0,watchCount:0,deletingId:''};
-const BOT_TABS=['list','edit','records'],BOT_STEPS=[[1,'填写凭据'],[2,'选择接收会话'],[3,'发送测试']],BOT_TENANT_STEPS=[[1,'填写凭据'],[2,'企业确认'],[3,'通知接收人']],BOT_DEFAULT_MODEL='glm-5.3-flash-ioa';
+const BOT_TABS=['list','edit','records'],BOT_STEPS=[[1,'填写凭据'],[2,'选择接收会话'],[3,'发送测试']],BOT_TENANT_STEPS=[[1,'填写凭据'],[2,'企业确认'],[3,'通知接收人']];
 // Channels: WeCom keeps the three-step notification setup; Feishu replaces
 // target selection with enterprise confirmation followed by a bound member
 // who passed a trial proactive send.
@@ -51,7 +30,7 @@ function canManageBot(bot){
 function botStepAllowed(bot,step){if(botChannel(bot)!=='wecom')return step===1||(step===2&&!!bot?.id)||(step===3&&!!bot?.id&&bot?.tenantState==='locked');return step===1||(step===2&&!!bot?.id)||(step===3&&!!bot?.id&&!!bot?.target&&!bot._targetChanged)}
 function botStepDone(bot,step){if(botChannel(bot)!=='wecom')return step===1?!!bot?.id:step===2?bot?.tenantState==='locked':step===3&&!!bot?.target?.verifiedAt&&!bot._targetChanged;return step===1?!!bot?.id:step===2?botStepAllowed(bot,3):false}
 function botStoredBot(bot){return bot?.id?botUI.items.find(b=>b.id===bot.id):null}
-function botCredentialsDirty(bot){const stored=botStoredBot(bot);if(!stored)return !!bot;return !!bot._secret||(bot.name||'')!==(stored.name||'')||(bot.botId||'')!==(stored.botId||'')||(bot.model||BOT_DEFAULT_MODEL)!==(stored.model||BOT_DEFAULT_MODEL)||!!bot.enabled!==!!stored.enabled||!!bot.interactionEnabled!==!!stored.interactionEnabled||botWriteApproval(bot)!==botWriteApproval(stored)||(bot._tenantKey!==undefined&&bot._tenantKey.trim()!==(stored.tenantExpected||''))||(bot._cardTemplateId!==undefined&&bot._cardTemplateId.trim()!==(stored.cardTemplateId||''))}
+function botCredentialsDirty(bot){const stored=botStoredBot(bot);if(!stored)return !!bot;const modelID=value=>(value||'').replace(/^codebuddy:/,'');return !!bot._secret||(bot.name||'')!==(stored.name||'')||(bot.botId||'')!==(stored.botId||'')||modelID(bot.model)!==modelID(stored.model)||!!bot.enabled!==!!stored.enabled||!!bot.interactionEnabled!==!!stored.interactionEnabled||botWriteApproval(bot)!==botWriteApproval(stored)||(bot._tenantKey!==undefined&&bot._tenantKey.trim()!==(stored.tenantExpected||''))||(bot._cardTemplateId!==undefined&&bot._cardTemplateId.trim()!==(stored.cardTemplateId||''))}
 // Legacy WeCom records without the field keep automatic execution.
 function botWriteApproval(bot){return bot?.writeApproval||(botChannel(bot)==='wecom'&&bot?.id?'auto':'readonly')}
 
@@ -91,7 +70,8 @@ function botTargetHTML(target){return target?`<span class="bot-target"><span cla
 function botRowHTML(bot){
  const id=escapeHTML(bot.id),name=escapeHTML(bot.name),manage=canManageBot(bot),wecom=botChannel(bot)==='wecom';
  const target=wecom||bot.target?botTargetHTML(bot.target):`<span class="bot-target">${botTenantBadge(bot.tenantState)}</span>`;
- const sub=escapeHTML((wecom?'':botChannelInfo(bot).name+' · ')+(bot.model||BOT_DEFAULT_MODEL))+(bot.interactionEnabled?({readonly:' · 已启用对话（只读）',confirm:' · 已启用对话（网页确认）'}[botWriteApproval(bot)]||' · 已启用对话'):'');
+ const model=globalThis.AgentFlowAssistantModels?.concreteModelId(bot.model)??bot.model;
+ const sub=[wecom?'':escapeHTML(botChannelInfo(bot).name),escapeHTML(model||''),bot.interactionEnabled?({readonly:'已启用对话（只读）',confirm:'已启用对话（网页确认）'}[botWriteApproval(bot)]||'已启用对话'):''].filter(Boolean).join(' · ');
  return `<tr data-bot-row="${id}"><td><div class="bot-row-main"><span class="bot-glyph">${botIcon('robot')}</span><span class="bot-row-text"><b class="bot-row-name">${name}</b><small class="bot-row-sub">${sub}</small><small class="bot-row-target">${target}</small></span></div></td><td class="bot-col-target">${target}</td><td>${botEnabledBadge(bot.enabled)}</td><td class="bot-col-sub">${botHealthBadge(bot.health)}</td><td class="bot-col-actions"><div class="bot-row-actions"><button type="button" class="hui-icon-btn" data-bot-edit="${id}" aria-label="编辑 ${name}" title="编辑">${botIcon('edit')}</button>${manage?`<button type="button" class="hui-icon-btn is-danger" data-bot-delete="${id}" aria-label="删除 ${name}" title="删除">${botIcon('trash')}</button>`:''}</div></td></tr>`;
 }
 function botListHTML(items){
@@ -126,7 +106,7 @@ function botWriteFieldHTML(bot){
 }
 function botCredentialPaneHTML(bot,manage){
  const c=botChannelInfo(bot),plaintext=bot.credentialFormat==='plaintext';
- return `<form id="botForm" novalidate><fieldset ${!manage||botUI.busy?'disabled':''}><div class="bot-fields"><label>名称<input class="input" name="name" required maxlength="80" value="${escapeHTML(bot.name)}" placeholder="例如：研发进展通知"></label>${botChannelFieldHTML(bot)}<label>${escapeHTML(c.app)}<input class="input" name="botId" required maxlength="191" value="${escapeHTML(bot.botId)}" autocomplete="off" placeholder="${escapeHTML(c.appHint)}" ${bot.id&&botChannel(bot)!=='wecom'?'readonly':''}></label><label>${escapeHTML(c.secret)}<input class="input" name="secret" type="password" value="${escapeHTML(bot._secret||'')}" maxlength="512" ${bot.id?'':'required'} autocomplete="new-password" placeholder="${bot.secretConfigured?'已配置 · 留空保留，填写则替换':'填写'+escapeHTML(c.secret)}">${plaintext?'<small class="bot-record-error">Secret 仍为旧格式存储，等待管理员执行加密迁移。</small>':''}</label>${botCorpFieldHTML(bot)}<label>回答模型（CodeBuddy）${botModelPickerHTML(bot)}<small class="muted">Bot 回答对话和生成完成汇报时使用的模型，点击可更换；对话使用发送者绑定的平台账号凭据，SOP 汇报使用本次执行者凭据。</small></label>${botWriteFieldHTML(bot)}<label class="bot-check"><input name="enabled" type="checkbox" role="switch" ${bot.enabled?'checked':''}>启用此 Bot</label><label class="bot-check"><input name="interactionEnabled" type="checkbox" role="switch" ${bot.interactionEnabled?'checked':''}>启用对话</label></div><p class="muted bot-hint">${botChannel(bot)==='wecom'?'首次对话请按 Bot 提示关联平台账号；新单聊和群聊会自动建立上下文。发送 /new 或“开启新会话”开始新的对话。':botChannel(bot)==='dingtalk'?'处理单聊和群聊中 @ Bot 的文字消息。保存时会校验凭据；首条消息的企业与 CorpId 一致时自动确认企业。':'处理单聊和群聊中 @ Bot 的文字消息。保存时会校验凭据；首次收到消息后，需在第②步确认所属企业。'}</p><div class="bot-save-row"><button type="submit" class="button primary">${botBusyLabel('save','','保存并下一步','保存中…')}</button></div></fieldset></form>`;
+ return `<form id="botForm" novalidate><fieldset ${!manage||botUI.busy?'disabled':''}><div class="bot-fields"><label>名称<input class="input" name="name" required maxlength="80" value="${escapeHTML(bot.name)}" placeholder="例如：研发进展通知"></label>${botChannelFieldHTML(bot)}<label>${escapeHTML(c.app)}<input class="input" name="botId" required maxlength="191" value="${escapeHTML(bot.botId)}" autocomplete="off" placeholder="${escapeHTML(c.appHint)}" ${bot.id&&botChannel(bot)!=='wecom'?'readonly':''}></label><label>${escapeHTML(c.secret)}<input class="input" name="secret" type="password" value="${escapeHTML(bot._secret||'')}" maxlength="512" ${bot.id?'':'required'} autocomplete="new-password" placeholder="${bot.secretConfigured?'已配置 · 留空保留，填写则替换':'填写'+escapeHTML(c.secret)}">${plaintext?'<small class="bot-record-error">Secret 仍为旧格式存储，等待管理员执行加密迁移。</small>':''}</label>${botCorpFieldHTML(bot)}<div class="bot-model-field"><span>执行器与模型</span>${botModelPickerHTML()}<small class="muted">Bot 回答对话和生成完成汇报时使用；对话使用发送者绑定的平台账号凭据，SOP 汇报使用本次执行者凭据。</small></div>${botWriteFieldHTML(bot)}<label class="bot-check"><input name="enabled" type="checkbox" role="switch" ${bot.enabled?'checked':''}>启用此 Bot</label><label class="bot-check"><input name="interactionEnabled" type="checkbox" role="switch" ${bot.interactionEnabled?'checked':''}>启用对话</label></div><p class="muted bot-hint">${botChannel(bot)==='wecom'?'首次对话请按 Bot 提示关联平台账号；新单聊和群聊会自动建立上下文。发送 /new 或“开启新会话”开始新的对话。':botChannel(bot)==='dingtalk'?'处理单聊和群聊中 @ Bot 的文字消息。保存时会校验凭据；首条消息的企业与 CorpId 一致时自动确认企业。':'处理单聊和群聊中 @ Bot 的文字消息。保存时会校验凭据；首次收到消息后，需在第②步确认所属企业。'}</p><div class="bot-save-row"><button type="submit" class="button primary">${botBusyLabel('save','','保存并下一步','保存中…')}</button></div></fieldset></form>`;
 }
 // DingTalk: the administrator enters the expected CorpId; it can be
 // corrected until the first matching message locks it.
@@ -185,7 +165,7 @@ function botRecordsHTML(){
  const deliveries=botUI.recordsTab!=='interactions';
  return `<div class="bot-subbar">${botRecordTabsHTML(botUI.recordsTab)}${deliveries?'<span class="bot-subbar-hint">保留最近 100 条</span>':''}</div><div class="bot-record-pane">${deliveries?botDeliveryHTML():botInteractionPanelHTML()}</div>`;
 }
-function botDeliveryExtraHTML(item){return `${item.reportModel?`<small class="bot-source-label">CodeBuddy · ${escapeHTML(item.reportModel)}</small>`:''}${item.reportError?`<small class="bot-record-error">${escapeHTML(item.reportError)}</small>`:''}${item.lastError?`<small class="bot-record-error">${escapeHTML(item.lastError)}</small>`:''}`}
+function botDeliveryExtraHTML(item){return `${item.reportModel?`<small class="bot-source-label">${escapeHTML(item.reportModel)}</small>`:''}${item.reportError?`<small class="bot-record-error">${escapeHTML(item.reportError)}</small>`:''}${item.lastError?`<small class="bot-record-error">${escapeHTML(item.lastError)}</small>`:''}`}
 // send_unknown: the administrator checks the chat, then confirms receipt or
 // sends again (a new generation and key).
 function botDeliveryActionHTML(item){const bot=botUI.items.find(b=>b.id===item.botId);if(!bot||!canManageBot(bot)||item.contentSource==='invalid'||item.contentSource==='purged')return '';const id=escapeHTML(item.id);if(item.status==='send_unknown')return `<button type="button" class="button small hui-btn-soft" data-delivery-confirm="${id}">${botIcon('check')}确认已收到</button><button type="button" class="button small hui-btn-soft" data-delivery-retry="${id}">${botIcon('refresh')}再次发送</button>`;return ['failed','awaiting_authorization','target_unavailable'].includes(item.status)?`<button type="button" class="button small hui-btn-soft" data-delivery-retry="${id}">${botIcon('refresh')}重试</button>`:''}
@@ -418,7 +398,7 @@ function bindBots(host){
  host.querySelectorAll('[data-interaction-push-resend]').forEach(el=>el.onclick=()=>botInteractionAction(el.dataset.interactionPushResend,'push-resend',el));
  host.querySelectorAll('[data-interaction-push-verify]').forEach(el=>el.onclick=()=>botVerifySender(el.dataset.interactionPushVerify,el));
 }
-function captureBotDraft(host){const form=host.querySelector('#botForm');if(!form||!botUI.selected)return;const bot=botUI.selected,channel=form.elements.channel?.value;if(channel&&channel!==botChannel(bot)){bot.channel=channel;bot.writeApproval='readonly';botUI.motion=null;queueMicrotask(renderBots)}bot.name=form.elements.name.value;bot.botId=form.elements.botId.value;bot.enabled=form.elements.enabled.checked;bot.model=form.elements.model.value;bot.interactionEnabled=form.elements.interactionEnabled.checked;bot._secret=form.elements.secret.value;if(form.elements.writeApproval)bot.writeApproval=form.elements.writeApproval.value;if(form.elements.tenantKey)bot._tenantKey=form.elements.tenantKey.value;if(form.elements.cardTemplateId)bot._cardTemplateId=form.elements.cardTemplateId.value}
+function captureBotDraft(host){const form=host.querySelector('#botForm');if(!form||!botUI.selected)return;const bot=botUI.selected,channel=form.elements.channel?.value;if(channel&&channel!==botChannel(bot)){bot.channel=channel;bot.writeApproval='readonly';botUI.motion=null;queueMicrotask(renderBots)}bot.name=form.elements.name.value;bot.botId=form.elements.botId.value;bot.enabled=form.elements.enabled.checked;bot.model=form.elements.model?.value||bot.model||'';bot.interactionEnabled=form.elements.interactionEnabled.checked;bot._secret=form.elements.secret.value;if(form.elements.writeApproval)bot.writeApproval=form.elements.writeApproval.value;if(form.elements.tenantKey)bot._tenantKey=form.elements.tenantKey.value;if(form.elements.cardTemplateId)bot._cardTemplateId=form.elements.cardTemplateId.value}
 function botSaveSelected(saved){const index=botUI.items.findIndex(b=>b.id===saved.id);if(index<0)botUI.items.push(saved);else botUI.items[index]=saved;botUI.selected=structuredClone(saved);botUI.error='';nodeBotCache.delete(botUI.projectId)}
 function bindBotEditor(host){
  host.querySelector('#botDelete')?.addEventListener('click',()=>botDelete(botStoredBot(botUI.selected)||botUI.selected,null));
@@ -427,14 +407,23 @@ function bindBotEditor(host){
  host.querySelector('#botTenantRefresh')?.addEventListener('click',()=>{if(botUI.selected?.id)loadBotTenant(botUI.selected.id)});
  const form=host.querySelector('#botForm');
  if(form){
-  bindBotModelPicker(host);
+  const ready=window.AgentFlowAssistantModels?.bindFeaturePicker(form.querySelector('#botModelPicker'),{
+    model:botUI.selected?.model,keepSaved:true,readOnly:form.querySelector('fieldset').disabled
+  });
   form.oninput=event=>{event.target.removeAttribute?.('aria-invalid');captureBotDraft(host)};form.onchange=()=>captureBotDraft(host);
   form.onsubmit=async event=>{
-   event.preventDefault();if(botUI.busy)return;captureBotDraft(host);
+   event.preventDefault();
+   await ready;
+   if(!form.isConnected||botUI.busy)return;
+   captureBotDraft(host);
    const bot=botUI.selected,projectId=botUI.projectId,revision=botUI.revision,creating=!bot.id;
    const dingtalk=botChannel(bot)==='dingtalk';
    const missing=['name','botId',...(creating?['secret']:[]),...(creating&&dingtalk?['tenantKey']:[])].map(name=>form.elements[name]).filter(input=>input&&!input.value.trim());
    if(missing.length){botShake(missing);const c=botChannelInfo(bot);toast(creating?`请填写名称、${c.app}、${c.secret}${dingtalk?' 和企业 CorpId':''}`:`请填写名称和 ${c.app}`,'warn');return}
+   if(bot.interactionEnabled&&!botStoredBot(bot)?.interactionEnabled&&!window.AgentFlowAssistantModels?.concreteModelId(bot.model)){
+    form.querySelector('#botModelPicker [data-feature-model]')?.focus();
+    toast('请先选择模型','warn');return;
+   }
    const stored=botStoredBot(bot);
    const payload={projectId,name:bot.name,channel:botChannel(bot),botId:bot.botId,enabled:bot.enabled,model:bot.model,interactionEnabled:bot.interactionEnabled,writeApproval:botWriteApproval(bot),secret:form.elements.secret.value};
    if(stored)payload.configVersion=stored.configVersion;

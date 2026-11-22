@@ -141,6 +141,13 @@ func (r Runner) SupportsGitHTTP() bool {
 // RunnerVersionGitSSHKnownHosts is the first runner to accept platform SSH pins.
 const RunnerVersionGitSSHKnownHosts = "0.11.1"
 
+// Older runners would ignore the custom endpoint and use the official one.
+const RunnerVersionCodeBuddyBaseURL = "0.11.2"
+
+func (r Runner) SupportsCodeBuddyBaseURL() bool {
+	return versionAtLeast(r.RunnerVersion, RunnerVersionCodeBuddyBaseURL)
+}
+
 func (r Runner) SupportsSharedPush() bool {
 	return versionAtLeast(r.RunnerVersion, RunnerVersionSharedPush)
 }
@@ -451,6 +458,7 @@ func PublicRunnerTask(task RunnerTask) RunnerTask {
 	}
 	copyInvocation := *task.Invocation
 	copyInvocation.CodeBuddyAPIKey = ""
+	copyInvocation.CodeBuddyBaseURL = ""
 	copyInvocation.CodeBuddyInternetEnvironment = ""
 	copyInvocation.CodexAPIKey = ""
 	copyInvocation.CodexBaseURL = ""
@@ -521,6 +529,7 @@ type RunnerInvocation struct {
 	HumanContext                 string   `json:"humanContext,omitempty"`
 	CredentialSource             string   `json:"credentialSource,omitempty"`
 	CodeBuddyAPIKey              string   `json:"codebuddyApiKey,omitempty"`
+	CodeBuddyBaseURL             string   `json:"codebuddyBaseUrl,omitempty"`
 	CodeBuddyInternetEnvironment string   `json:"codebuddyInternetEnvironment,omitempty"`
 	CodexAPIKey                  string   `json:"codexApiKey,omitempty"`
 	CodexBaseURL                 string   `json:"codexBaseUrl,omitempty"`

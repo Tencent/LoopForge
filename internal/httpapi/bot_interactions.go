@@ -94,18 +94,19 @@ func (h *assistantHandlers) generateBotReply(ctx context.Context, bot domain.Not
 	if err != nil {
 		return "绑定的平台账号不可用或已失去项目权限，请在平台检查配置。", nil
 	}
-	if strings.TrimSpace(user.CodeBuddyAPIKey) == "" {
-		return "你的平台账号尚未配置 CodeBuddy Key，请在平台个人配置中配置。", nil
+	model, err := resolveFeatureModel(user, bot.Model)
+	if err != nil {
+		if errors.Is(err, errFeatureModel) {
+			return err.Error(), nil
+		}
+		return "你的平台账号尚未配置对应的模型凭据。" + err.Error(), nil
 	}
 	if reply, handled := h.botClarifyMessage(ctx, bot, conv, item, user); handled {
 		// Chat clarification: start, commands and answers.
 		return reply, nil
 	}
-	model := bot.Model
-	if model == "" {
-		model = domain.DefaultNotificationReportModel
-	}
-	if assistantAllowedModel(model, loadAssistantModels(ctx, user.CodeBuddyInternetEnvironment)) != model {
+	if engine, id := assistantModelEngine(model); engine == assistantEngineCodeBuddy &&
+		!codeBuddyIsDefaultModel(id) && !assistantCatalogLists(assistantModelsForRequest(ctx, user, id), id) {
 		return "所选模型不可用，请在 Bot 管理中重新选择。", nil
 	}
 	if err = ensureAssistantSessionDirs(user.ID); err != nil {
@@ -210,7 +211,7 @@ func (h *assistantHandlers) generateBotReply(ctx context.Context, bot domain.Not
 					}
 				}
 			}
-			return redactAssistantSecrets(strings.ReplaceAll(reply.Message, user.CodeBuddyAPIKey, "[redacted]"), user), nil
+			return redactAssistantSecrets(reply.Message, user), nil
 		}
 		if ctx.Err() != nil {
 			return "", ctx.Err()

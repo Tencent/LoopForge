@@ -3,6 +3,7 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, test } from "vitest";
 import ActivityTrace, { ReplyTimeline } from "../src/ActivityTrace.jsx";
+import { mergeActivity } from "../src/activity.js";
 
 const start = "2026-01-01T00:00:00Z";
 const finish = "2026-01-01T00:01:05Z";
@@ -17,6 +18,29 @@ const tool = (id, detail, extra = {}) => ({
 });
 
 describe("Codex-style activity trace", () => {
+  test("Docker build progress updates one visible row and settles on completion", () => {
+    const build = { kind: "tool", tool: "workspace_docker_build", id: "build", at: start };
+    let detail = "读取基础镜像信息";
+    let steps = mergeActivity([], [{ data: { ...build, detail } }]);
+    const view = render(<ReplyTimeline steps={steps} startedAt={start} live />);
+    expect(screen.getByText("正在构建 Docker 镜像")).toBeVisible();
+    expect(screen.getByText(detail)).toBeVisible();
+
+    for (const stage of ["mcp__server", "agentflow__runtime"]) {
+      const nextDetail = `执行 Dockerfile 阶段 ${stage} 的第 2/2 步`;
+      steps = mergeActivity(steps, [{ data: { ...build, detail: nextDetail } }]);
+      view.rerender(<ReplyTimeline steps={steps} startedAt={start} live />);
+      expect(screen.getAllByText("正在构建 Docker 镜像")).toHaveLength(1);
+      expect(screen.getByText(nextDetail)).toBeVisible();
+      expect(screen.queryByText(detail)).toBeNull();
+      detail = nextDetail;
+    }
+
+    const done = mergeActivity(steps, [{ data: { kind: "toolDone", id: "build", at: finish } }]);
+    view.rerender(<ReplyTimeline steps={done} startedAt={start} live />);
+    expect(screen.getByText("已构建 Docker 镜像")).toBeVisible();
+  });
+
   test("the running round lists every step and folds once it finishes", async () => {
     const steps = [
       { id: "t1", kind: "text", text: "先查澄清面板的前端代码。" },
