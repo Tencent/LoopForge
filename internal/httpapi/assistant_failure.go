@@ -108,7 +108,10 @@ func classifyAssistantFailure(ctx context.Context, err error) domain.AssistantFa
 	}
 	var missing assistantCLIMissingError
 	if errors.As(err, &missing) {
-		f.Code, f.Phase, f.Message, f.Suggestion = "CLI_NOT_INSTALLED", "setup", missing.Error(), "请管理员检查执行器的安装与配置。"
+		f.Code, f.Phase, f.Message = "CLI_NOT_INSTALLED", "setup", missing.Error()
+		if runtime.OnDemandInstallable(missing.engine) {
+			f.Suggestion = "可在对话中安装此执行器，安装后重新发送。"
+		}
 		return f
 	}
 	// The process error usually carries the CLI's stderr tail. Classify the

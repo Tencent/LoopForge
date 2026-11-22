@@ -52,8 +52,8 @@ export function cliFailureSettles(text) {
 // CLIInstallAction installs the CLI named by a conversation failure.
 // The server keeps the download after a reload, so the button asks for the
 // current status instead of trusting a click that only this page remembers.
-export function CLIInstallAction({ text, onResult }) {
-  const hint = cliInstallHint(text);
+export function CLIInstallAction({ text, executor, onResult }) {
+  const hint = executor || cliInstallHint(text);
   const onResultRef = useRef(onResult);
   onResultRef.current = onResult;
   const pending = useRef(hint ? rememberedInstall(hint.engine) : false);

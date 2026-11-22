@@ -64,6 +64,8 @@ ENV PATH="/app/bin:${PATH}"
 # An explicit LOOPFORGE_COMMIT wins. Otherwise read HEAD from the build context
 # so `docker build` stamps the same corner label as the release workflow.
 ARG LOOPFORGE_COMMIT=
+ARG LOOPFORGE_RELEASE_VERSION=
+ENV LOOPFORGE_RELEASE_VERSION=${LOOPFORGE_RELEASE_VERSION}
 RUN --mount=type=bind,source=.,target=/ctx,ro \
     sh /ctx/scripts/image-commit.sh /ctx /app/loopforge-commit
 EXPOSE 8080

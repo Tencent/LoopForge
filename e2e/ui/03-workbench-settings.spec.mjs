@@ -97,6 +97,23 @@ test('ZCode reports platform CLI availability before credentials are saved', asy
   expect(['installed', 'missing']).toContain(status);
   await expect(page.locator('#credentialWizard [data-credential-runtime]'))
     .toContainText(status === 'installed' ? '平台服务器已检测到 ZCode CLI' : '平台服务器缺少 ZCode CLI');
+  await expect(page.locator('#credentialWizard .credential-runtime-status')).toHaveCount(0);
+});
+
+test('desktop settings navigation reopens on the current page', async ({ page }) => {
+  await openView(page, 'settings');
+  const collapse = page.locator('#settingsSidebarToggle');
+  const expand = page.getByRole('button', { name: '展开设置导航', exact: true });
+  for (const reducedMotion of ['reduce', 'no-preference']) {
+    await page.emulateMedia({ reducedMotion });
+    await collapse.click();
+    await expect(page.locator('#settingsSidebar')).toHaveAttribute('aria-hidden', 'true');
+    await expect(expand).toBeFocused();
+    await expand.press('Enter');
+    await expect(collapse).toBeVisible();
+    await expect(collapse).toBeFocused();
+    await expect(page).toHaveURL(/#\/settings$/);
+  }
 });
 
 test('personal credentials: the add wizard validates, saves write-only, and the row clears it', async ({ page, identity }) => {

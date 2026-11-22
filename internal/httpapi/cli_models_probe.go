@@ -25,7 +25,9 @@ type cliModelProbeResult struct {
 	Models []domain.CLIModel `json:"models"`
 	// Source identifies the configured gateway, official provider, Runner or built-in catalog.
 	Source string `json:"source,omitempty"`
-	Error  string `json:"error,omitempty"`
+	// Connected means the provider answered a live model request.
+	Connected bool   `json:"connected,omitempty"`
+	Error     string `json:"error,omitempty"`
 }
 
 const assistantAnthropicAPIBase = "https://api.anthropic.com"
@@ -166,10 +168,10 @@ func (h *usersHandlers) probeCLIModels(c *gin.Context) {
 		return
 	}
 	if len(models) == 0 {
-		c.JSON(http.StatusOK, cliModelProbeResult{Error: "服务没有返回可用模型，可以手动添加模型"})
+		c.JSON(http.StatusOK, cliModelProbeResult{Connected: true, Error: "服务没有返回可用模型，可以手动添加模型"})
 		return
 	}
-	c.JSON(http.StatusOK, cliModelProbeResult{Models: cliModelsWithEfforts(engine, cliModelsOf(models), configuredBaseURL), Source: source})
+	c.JSON(http.StatusOK, cliModelProbeResult{Models: cliModelsWithEfforts(engine, cliModelsOf(models), configuredBaseURL), Source: source, Connected: true})
 }
 
 func discoverGeminiModels(ctx context.Context, key, baseURL string) ([]assistantDiscoveredModel, error) {

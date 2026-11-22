@@ -97,10 +97,14 @@ test('executor selection has independent models, credentials and a persistent ch
       await options.filter({hasText:label}).click();
       await expect(executor).toContainText(label);
     };
-    for(const label of ['Codex','Claude Code','CodeBuddy']){
+    const {engines}=await page.request.get('/api/assistant/models').then(r=>r.json());
+    for(const [id,label] of [['codex','Codex'],['claude-code','Claude Code'],['codebuddy','CodeBuddy']]){
       await choose(label);
       await expect(input).toHaveValue(draft);
       await expect(frame.locator('.credential-notice')).toHaveCount(0);
+      const missing=engines.find(engine=>engine.id===id)?.serverMissing;
+      await expect(frame.locator('.runtime-cli-notice')).toHaveCount(missing?1:0);
+      if(missing)await expect(frame.locator('.send-button')).toBeDisabled();
     }
     await choose('Codex');
     await page.reload();

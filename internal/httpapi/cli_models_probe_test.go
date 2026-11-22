@@ -45,7 +45,7 @@ func TestProbeCLIModelsUsesOfficialEndpointWithoutBaseURL(t *testing.T) {
 			c.Params = gin.Params{{Key: "id", Value: strconv.FormatInt(owner.ID, 10)}}
 			handlers.probeCLIModels(c)
 			if !called || w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"source":"official"`) ||
-				!strings.Contains(w.Body.String(), `"id":"official-model"`) {
+				!strings.Contains(w.Body.String(), `"id":"official-model"`) || !strings.Contains(w.Body.String(), `"connected":true`) {
 				t.Fatalf("result %d %s", w.Code, w.Body.String())
 			}
 		})
