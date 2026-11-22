@@ -148,7 +148,7 @@ func approvalReviewInput(req assistantRequest, user domain.User) assistantApprov
 		input.Messages = append(input.Messages, assistantApprovalMessage{
 			Role:     "user",
 			AuthorID: message.AuthorID,
-			Content:  redactAgentToolResult(content, user),
+			Content:  redactSecretValues(redactAgentToolResult(content, user)),
 		})
 	}
 	return input
@@ -379,6 +379,17 @@ func (h *assistantHandlers) approvalReviewer(req assistantRequest, user domain.U
 				// A valid denial is final; never shop for a more permissive model.
 				break
 			}
+			// Control-plane egress/redirect policy rejections must terminate
+			// this review immediately without falling back to another candidate.
+			var policyErr errApprovalPolicyBlocked
+			if errors.As(err, &policyErr) {
+				result = assistantApprovalReview{
+					Outcome:   "unavailable",
+					Model:     candidate.Model,
+					Rationale: "自动审批被出站策略拒绝：" + policyErr.Error(),
+				}
+				break
+			}
 			// Avoid repeatedly waiting for a broken custom model in the same turn.
 			if candidate.Custom && len(candidates) > 1 {
 				stateMu.Lock()
@@ -428,6 +439,10 @@ func runAssistantApprovalReview(ctx context.Context, input assistantApprovalInpu
 	return runAssistantApprovalReviewWithEffort(ctx, input, user, model, approvalReviewEffort(user, model))
 }
 
+// approvalReviewCLIRunner wraps runAssistantCLI so tests can verify whether
+// direct HTTP review falls back to spawning a control-plane CLI subprocess.
+var approvalReviewCLIRunner = runAssistantCLI
+
 func runAssistantApprovalReviewWithEffort(ctx context.Context, input assistantApprovalInput, user domain.User, model, effort string) (assistantApprovalReview, error) {
 	model = strings.TrimSpace(model)
 	engine, _ := assistantModelEngine(model)
@@ -454,7 +469,8 @@ func runAssistantApprovalReviewWithEffort(ctx context.Context, input assistantAp
 				return review, nil
 			}
 			var fatal errApprovalHTTPFatal
-			if errors.As(httpErr, &fatal) {
+			var policyErr errApprovalPolicyBlocked
+			if errors.As(httpErr, &fatal) || errors.As(httpErr, &policyErr) {
 				return assistantApprovalReview{}, httpErr
 			}
 		}
@@ -464,7 +480,7 @@ func runAssistantApprovalReviewWithEffort(ctx context.Context, input assistantAp
 		return assistantApprovalReview{}, err
 	}
 	defer os.RemoveAll(root)
-	raw, _, err := runAssistantCLI(ctx, assistantCLIRequest{
+	raw, _, err := approvalReviewCLIRunner(ctx, assistantCLIRequest{
 		Prompt:       prompt,
 		Model:        model,
 		Effort:       effort,

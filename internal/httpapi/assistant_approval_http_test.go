@@ -259,10 +259,17 @@ func TestResolveApprovalCustomAPITargetAndFallback(t *testing.T) {
 
 	// Live mock HTTP execution of custom API mode with secret redaction.
 	t.Setenv(approvalEgressAllowCIDRsEnv, "127.0.0.1/32,::1/128")
+	var capturedBody string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
-		if strings.Contains(string(body), "sk-custom-api-secret") {
-			t.Errorf("custom api key leaked into review prompt: %s", string(body))
+		capturedBody = string(body)
+		for _, secret := range []string{"sk-custom-api-secret", "raw-db-password", "unregistered-third-party-key"} {
+			if strings.Contains(capturedBody, secret) {
+				t.Errorf("secret %q leaked into custom review API request: %s", secret, capturedBody)
+			}
+		}
+		if !strings.Contains(capturedBody, "prod-cluster") {
+			t.Errorf("side-effect target missing from review request: %s", capturedBody)
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":` + mustJSON(`{"outcome":"allow","risk_level":"low","user_authorization":"high","rationale":"自定义 API 审查通过"}`) + `}}]}`))
@@ -270,8 +277,15 @@ func TestResolveApprovalCustomAPITargetAndFallback(t *testing.T) {
 	defer srv.Close()
 
 	review, err := runAssistantApprovalCustomAPI(context.Background(), assistantApprovalInput{
-		ActorID: 7, ProjectID: "p1", Tool: "rules_save",
+		ActorID: 7, ProjectID: "p1", Tool: "mcp_deploy",
 		Messages: []assistantApprovalMessage{{Role: "user", AuthorID: 7, Content: "保存规则 key=sk-custom-api-secret"}},
+		Arguments: redactApprovalArguments(map[string]any{
+			"target": "prod-cluster",
+			"auth": map[string]any{
+				"password": "raw-db-password",
+				"api_key":  "unregistered-third-party-key",
+			},
+		}, user),
 	}, user, domain.ApprovalReviewAPIConfig{
 		Protocol: runtime.AgentCLIProtocolChat,
 		BaseURL:  srv.URL,
@@ -450,6 +464,95 @@ func TestApprovalHTTPEgressAndRedirectProtection(t *testing.T) {
 			if !strings.Contains(res.Error, "重定向") || targetHits != 0 {
 				t.Fatalf("probe %s must refuse redirect: res=%+v targetHits=%d", proto, res, targetHits)
 			}
+		}
+	})
+
+	t.Run("policy_rejection_skips_local_cli_fallback_while_ordinary_error_falls_back", func(t *testing.T) {
+		origCLI := approvalReviewCLIRunner
+		cliCalls := 0
+		approvalReviewCLIRunner = func(ctx context.Context, req assistantCLIRequest, user domain.User, onEvent func(assistantStreamEvent)) (string, string, error) {
+			cliCalls++
+			return `{"outcome":"allow","risk_level":"low","user_authorization":"high","rationale":"cli fallback"}`, "", nil
+		}
+		t.Cleanup(func() { approvalReviewCLIRunner = origCLI })
+
+		input := assistantApprovalInput{
+			ActorID: 1, ProjectID: "p1", Tool: "rules_save",
+			Messages: []assistantApprovalMessage{{Role: "user", AuthorID: 1, Content: "保存规则"}},
+		}
+
+		// 1. Egress dial block must abort without spawning local CLI.
+		t.Setenv(approvalEgressAllowCIDRsEnv, "")
+		blockedHits := 0
+		blockedSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			blockedHits++
+			w.WriteHeader(http.StatusOK)
+		}))
+		defer blockedSrv.Close()
+
+		blockedUser := domain.User{ID: 1, CodexAPIKey: "sk-codex", CodexBaseURL: blockedSrv.URL + "/v1"}
+		_, err := runAssistantApprovalReviewWithEffort(context.Background(), input, blockedUser, "codex:gpt-4.1-mini", "low")
+		var policyErr errApprovalPolicyBlocked
+		if !errors.As(err, &policyErr) || cliCalls != 0 || blockedHits != 0 {
+			t.Fatalf("egress dial block must not fall back to local CLI: err=%v cliCalls=%d hits=%d", err, cliCalls, blockedHits)
+		}
+
+		// 2. Redirect refusal must also abort without spawning local CLI.
+		t.Setenv(approvalEgressAllowCIDRsEnv, "127.0.0.1/32,::1/128")
+		targetHits := 0
+		targetSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			targetHits++
+			w.WriteHeader(http.StatusOK)
+		}))
+		defer targetSrv.Close()
+		redirectSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, targetSrv.URL+r.URL.Path, http.StatusFound)
+		}))
+		defer redirectSrv.Close()
+
+		redirectUser := domain.User{ID: 1, CodexAPIKey: "sk-codex", CodexBaseURL: redirectSrv.URL + "/v1"}
+		_, err = runAssistantApprovalReviewWithEffort(context.Background(), input, redirectUser, "codex:gpt-4.1-mini", "low")
+		if !errors.As(err, &policyErr) || cliCalls != 0 || targetHits != 0 {
+			t.Fatalf("redirect block must not fall back to local CLI: err=%v cliCalls=%d targetHits=%d", err, cliCalls, targetHits)
+		}
+
+		// 3. Approval reviewer loop must terminate immediately on egress block
+		//    rather than falling back to the session model's local CLI.
+		t.Setenv(approvalEgressAllowCIDRsEnv, "")
+		h, u := workbenchFixture(t)
+		u.CodexAPIKey = "sk-codex"
+		if _, err := h.repo.PutAssistantPreferences(u.ID, domain.AssistantPreferences{
+			ApprovalReviewMode: domain.ApprovalReviewModeAPI,
+			ApprovalReviewAPI: &domain.ApprovalReviewAPIConfig{
+				Protocol: runtime.AgentCLIProtocolChat,
+				BaseURL:  blockedSrv.URL + "/v1",
+				Model:    "gpt-4.1-mini",
+				APIKey:   "sk-custom",
+			},
+		}); err != nil {
+			t.Fatal(err)
+		}
+		reviewer := h.approvalReviewer(assistantRequest{
+			Model:     "codex:default",
+			ProjectID: "p1",
+			Messages:  []assistantMessage{{Role: "user", AuthorID: u.ID, Content: "保存规则"}},
+		}, u, nil)
+		res := reviewer(withApprovalActionSource(context.Background(), approvalSourceBuiltinPlatform), "rules_save", "保存规则", map[string]any{"body": map[string]any{"id": "r1"}})
+		if res.allows() || res.Outcome != "unavailable" || !strings.Contains(res.Rationale, "出站策略") || cliCalls != 0 {
+			t.Fatalf("egress block in custom API must abort candidate fallback: res=%+v cliCalls=%d", res, cliCalls)
+		}
+
+		// 4. Ordinary transport/server failure (HTTP 500 on allowed IP) still falls back to CLI.
+		t.Setenv(approvalEgressAllowCIDRsEnv, "127.0.0.1/32,::1/128")
+		errSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Error(w, "upstream temporary failure", http.StatusInternalServerError)
+		}))
+		defer errSrv.Close()
+
+		fallbackUser := domain.User{ID: 1, CodexAPIKey: "sk-codex", CodexBaseURL: errSrv.URL + "/v1"}
+		got, err := runAssistantApprovalReviewWithEffort(context.Background(), input, fallbackUser, "codex:gpt-4.1-mini", "low")
+		if err != nil || !got.allows() || cliCalls != 1 {
+			t.Fatalf("ordinary 500 should fall back to CLI: got=%+v err=%v cliCalls=%d", got, err, cliCalls)
 		}
 	})
 }

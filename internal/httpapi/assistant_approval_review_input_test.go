@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
@@ -131,5 +132,71 @@ func TestRedactApprovalArgumentsPreservesFullArgsAndEnforcesBudget(t *testing.T)
 	}
 	if _, ok := fitApprovalReviewBudget(oversized, assistantApprovalMaxPayloadBytes); ok {
 		t.Fatal("oversized arguments should fail closed instead of being truncated")
+	}
+}
+
+func TestRedactApprovalArgumentsStructuredSecretsAndNonMutation(t *testing.T) {
+	user := domain.User{ID: 1, ClaudeCodeAPIKey: "sk-ant-known-user-secret"}
+	nestedAuth := map[string]any{
+		"username":      "deploy-bot",
+		"password":      "unregistered-db-password",
+		"client_secret": "unregistered-client-secret",
+		"max_tokens":    512,
+	}
+	headers := map[string]string{
+		"x-api-key":     "unregistered-header-key",
+		"Authorization": "Bearer unregistered-bearer-val",
+		"X-Target-Env":  "production",
+	}
+	origArgs := map[string]any{
+		"api_key":     "unregistered-top-api-key",
+		"credentials": nestedAuth,
+		"headers":     headers,
+		"body":        json.RawMessage(`{"target":"prod-db","db_password":"json-raw-password","nested":{"private_key":"raw-priv-val","region":"ap-east"}}`),
+		"command":     "curl -H 'X-Token: ghp_123456789012345678901234' https://prod.example.com/deploy",
+		"tags":        []string{"AKIA1234567890ABCDEF", "release-v2"},
+	}
+
+	got := redactApprovalArguments(origArgs, user)
+	rawBytes, err := json.Marshal(got)
+	if err != nil {
+		t.Fatalf("marshal redacted args: %v", err)
+	}
+	encoded := string(rawBytes)
+
+	for _, secret := range []string{
+		"unregistered-db-password",
+		"unregistered-client-secret",
+		"unregistered-header-key",
+		"unregistered-bearer-val",
+		"unregistered-top-api-key",
+		"json-raw-password",
+		"raw-priv-val",
+		"ghp_123456789012345678901234",
+		"AKIA1234567890ABCDEF",
+	} {
+		if strings.Contains(encoded, secret) {
+			t.Fatalf("unregistered secret %q leaked into redacted approval args: %s", secret, encoded)
+		}
+	}
+
+	// Non-secret fields determining side effects must remain intact.
+	for _, want := range []string{"deploy-bot", "production", "prod-db", "ap-east", "https://prod.example.com/deploy", "release-v2", `"max_tokens":512`} {
+		if !strings.Contains(encoded, want) {
+			t.Fatalf("side-effect field %q lost after redaction: %s", want, encoded)
+		}
+	}
+
+	// Caller's original args must remain completely unmutated for execution.
+	if origArgs["api_key"] != "unregistered-top-api-key" || nestedAuth["password"] != "unregistered-db-password" || headers["x-api-key"] != "unregistered-header-key" {
+		t.Fatalf("redactApprovalArguments mutated caller args: orig=%+v nested=%+v headers=%+v", origArgs, nestedAuth, headers)
+	}
+
+	// User messages in review input must also redact unregistered token patterns.
+	input := approvalReviewInput(assistantRequest{
+		Messages: []assistantMessage{{Role: "user", AuthorID: 1, Content: "部署到生产 token ghp_123456789012345678901234"}},
+	}, user)
+	if strings.Contains(input.Messages[0].Content, "ghp_123456789012345678901234") || !strings.Contains(input.Messages[0].Content, "部署到生产") {
+		t.Fatalf("message pattern redaction failed: %q", input.Messages[0].Content)
 	}
 }

@@ -78,7 +78,7 @@ func approvalAllowedEgressPrefixes() []netip.Prefix {
 func checkApprovalEgressAddress(address string, allowed []netip.Prefix) error {
 	ap, err := netip.ParseAddrPort(address)
 	if err != nil {
-		return fmt.Errorf("审查接口连接地址无效 %q", address)
+		return errApprovalPolicyBlocked{msg: fmt.Sprintf("审查接口连接地址无效 %q", address)}
 	}
 	ip := ap.Addr().Unmap()
 	for _, prefix := range allowed {
@@ -87,7 +87,7 @@ func checkApprovalEgressAddress(address string, allowed []netip.Prefix) error {
 		}
 	}
 	if !approvalIsPublicIP(ip) {
-		return fmt.Errorf("审查接口不允许访问私有或本地地址 %s（如需访问内网网关，请配置 %s）", ip, approvalEgressAllowCIDRsEnv)
+		return errApprovalPolicyBlocked{msg: fmt.Sprintf("审查接口不允许访问私有或本地地址 %s（如需访问内网网关，请配置 %s）", ip, approvalEgressAllowCIDRsEnv)}
 	}
 	return nil
 }
@@ -103,6 +103,16 @@ func approvalIsPublicIP(ip netip.Addr) bool {
 	}
 	return true
 }
+
+// errApprovalPolicyBlocked marks a control-plane egress or redirect policy
+// rejection. Unlike ordinary transport failures, it aborts the review
+// immediately without falling back to spawning a local CLI with the same
+// credentials/Base URL or trying alternative candidates.
+type errApprovalPolicyBlocked struct {
+	msg string
+}
+
+func (e errApprovalPolicyBlocked) Error() string { return e.msg }
 
 // errApprovalHTTPFatal marks a definitive auth or missing-model HTTP error
 // where falling back to spawning the same CLI with the same key/model would
@@ -253,6 +263,10 @@ func runAssistantApprovalHTTP(ctx context.Context, target approvalHTTPTarget, sy
 		raw, status, err := postApprovalHTTP(ctx, target, payload)
 		if err != nil {
 			lastErr = err
+			var policyErr errApprovalPolicyBlocked
+			if errors.As(err, &policyErr) {
+				return assistantApprovalReview{}, policyErr
+			}
 			if status == http.StatusUnauthorized || status == http.StatusForbidden {
 				return assistantApprovalReview{}, errApprovalHTTPFatal{status: status, msg: err.Error()}
 			}
@@ -407,6 +421,10 @@ func postApprovalHTTP(ctx context.Context, target approvalHTTPTarget, payload ma
 		client := approvalHTTPClientFactory(25 * time.Second)
 		resp, err := client.Do(req)
 		if err != nil {
+			var policyErr errApprovalPolicyBlocked
+			if errors.As(err, &policyErr) {
+				return nil, 0, policyErr
+			}
 			return nil, 0, err
 		}
 		raw, readErr := io.ReadAll(io.LimitReader(resp.Body, 512<<10))
@@ -418,7 +436,7 @@ func postApprovalHTTP(ctx context.Context, target approvalHTTPTarget, payload ma
 			return raw, resp.StatusCode, nil
 		}
 		if resp.StatusCode >= 300 && resp.StatusCode < 400 {
-			return raw, resp.StatusCode, fmt.Errorf("审查接口返回重定向 HTTP %d，已拒绝跟随跳转", resp.StatusCode)
+			return raw, resp.StatusCode, errApprovalPolicyBlocked{msg: fmt.Sprintf("审查接口返回重定向 HTTP %d，已拒绝跟随跳转", resp.StatusCode)}
 		}
 		lastStatus = resp.StatusCode
 		lastErr = fmt.Errorf("HTTP %d: %s", resp.StatusCode, truncateRunes(strings.TrimSpace(string(raw)), 200))

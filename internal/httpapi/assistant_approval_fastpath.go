@@ -1,10 +1,12 @@
 package httpapi
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"path"
 	"strings"
 
@@ -227,52 +229,78 @@ func approvalWorkspaceWriteSafePath(raw string) bool {
 	return true
 }
 
-// redactApprovalArguments preserves every execution argument verbatim while
-// redacting user credentials so the reviewer always sees the complete action
-// that the executor will run.
+// redactApprovalArguments preserves every non-secret execution argument
+// verbatim while reusing manual approval's structured redaction (known user
+// credentials, secret-shaped field names like password/api_key/client_secret,
+// and token patterns in strings) on a deep copy so the caller's args stay
+// intact for execution.
 func redactApprovalArguments(args map[string]any, user domain.User) map[string]any {
 	if len(args) == 0 {
 		return nil
 	}
-	out := make(map[string]any, len(args))
-	for k, v := range args {
-		out[k] = redactApprovalValue(v, user)
-	}
+	normalized := normalizeApprovalForRedaction(args)
+	var hidden []string
+	redacted := redactJSONStrings(normalized, user, "", &hidden)
+	out, _ := redacted.(map[string]any)
 	return out
 }
 
-func redactApprovalValue(v any, user domain.User) any {
+func normalizeApprovalForRedaction(v any) any {
 	switch val := v.(type) {
-	case string:
-		return redactAgentToolResult(val, user)
+	case nil, string, bool, json.Number, int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, float32, float64:
+		return val
 	case json.RawMessage:
-		var decoded any
-		if len(val) > 0 && json.Unmarshal(val, &decoded) == nil {
-			return redactApprovalValue(decoded, user)
+		trimmed := bytes.TrimSpace(val)
+		if len(trimmed) == 0 {
+			return nil
 		}
-		return redactAgentToolResult(string(val), user)
+		if json.Valid(trimmed) {
+			dec := json.NewDecoder(bytes.NewReader(trimmed))
+			dec.UseNumber()
+			var decoded any
+			if dec.Decode(&decoded) == nil {
+				return decoded
+			}
+		}
+		return string(val)
 	case []byte:
-		return redactAgentToolResult(string(val), user)
+		return string(val)
 	case map[string]any:
 		out := make(map[string]any, len(val))
 		for k, item := range val {
-			out[k] = redactApprovalValue(item, user)
+			out[k] = normalizeApprovalForRedaction(item)
 		}
 		return out
 	case map[string]string:
-		out := make(map[string]string, len(val))
+		out := make(map[string]any, len(val))
 		for k, item := range val {
-			out[k] = redactAgentToolResult(item, user)
+			out[k] = item
 		}
 		return out
 	case []any:
 		out := make([]any, len(val))
 		for i, item := range val {
-			out[i] = redactApprovalValue(item, user)
+			out[i] = normalizeApprovalForRedaction(item)
+		}
+		return out
+	case []string:
+		out := make([]any, len(val))
+		for i, item := range val {
+			out[i] = item
 		}
 		return out
 	default:
-		return v
+		raw, err := json.Marshal(val)
+		if err != nil {
+			return fmt.Sprint(val)
+		}
+		dec := json.NewDecoder(bytes.NewReader(raw))
+		dec.UseNumber()
+		var decoded any
+		if dec.Decode(&decoded) == nil {
+			return decoded
+		}
+		return string(raw)
 	}
 }
 
