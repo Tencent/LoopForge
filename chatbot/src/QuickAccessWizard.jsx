@@ -1565,9 +1565,7 @@ export default function QuickAccessWizard({
                         </li>
                       </ul>
                     </section>
-                  </div>
 
-                  <div className="qa-actions-grid">
                     <button
                       type="button"
                       className="qa-action is-primary qa-success-item"
