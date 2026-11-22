@@ -354,8 +354,7 @@ func (h *catalogHandlers) agents(c *gin.Context) {
 				c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
 				return
 			}
-			if existing, ok := h.repo.Agent(v.ID); ok && existing.Shared && !v.Shared && h.sharedScheduleReferences("agent", v.ID) {
-				c.JSON(http.StatusConflict, map[string]string{"error": "该角色仍被共享任务引用，不能取消共享"})
+			if existing, ok := h.repo.Agent(v.ID); ok && existing.Shared && !v.Shared && !h.ensureNoSharedScheduleReferences(c, "agent", v.ID, "取消共享") {
 				return
 			}
 			if v.Version == 0 {
@@ -456,8 +455,7 @@ func (h *catalogHandlers) agent(c *gin.Context) {
 			c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid agent revision"})
 			return
 		}
-		if current.Shared && !restored.Shared && h.sharedScheduleReferences("agent", id) {
-			c.JSON(http.StatusConflict, map[string]string{"error": "该角色仍被共享任务引用，不能取消共享"})
+		if current.Shared && !restored.Shared && !h.ensureNoSharedScheduleReferences(c, "agent", id, "取消共享") {
 			return
 		}
 		stored, err := h.repo.RestoreAgentRevision(c.Param("rev"))
@@ -685,9 +683,14 @@ func (h *catalogHandlers) skills(c *gin.Context) {
 			if existing, ok := h.repo.Skill(v.ID); ok && existing.ProjectID != "" && existing.ProjectID != v.ProjectID {
 				c.JSON(409, map[string]string{"error": "skill id is already used by another project"})
 				return
-			} else if ok && existing.Shared && !v.Shared && (h.sharedAgentReferences("skill", v.ID) || h.sharedScheduleReferences("skill", v.ID)) {
-				c.JSON(409, map[string]string{"error": "该技能仍被共享角色或共享任务引用，不能取消共享"})
-				return
+			} else if ok && existing.Shared && !v.Shared {
+				if h.sharedAgentReferences("skill", v.ID) {
+					c.JSON(409, map[string]string{"error": "该技能仍被共享角色或共享任务引用，不能取消共享"})
+					return
+				}
+				if !h.ensureNoSharedScheduleReferences(c, "skill", v.ID, "取消共享") {
+					return
+				}
 			}
 			// The binary file manifest is owned by the skill_files table;
 			// the SKILL.md body and text Files are owned by uploaded files
@@ -725,22 +728,32 @@ func (h *catalogHandlers) sharedAgentReferences(kind, id string) bool {
 	return false
 }
 
-func (h *catalogHandlers) sharedScheduleReferences(kind, id string) bool {
-	items, err := h.repo.SharedScheduleTasks()
+func (h *catalogHandlers) ensureNoSharedScheduleReferences(c *gin.Context, kind, id, action string) bool {
+	references, err := h.repo.SharedScheduleAssetReferences(kind, id)
 	if err != nil {
+		respond(c, HTTPError{Status: http.StatusInternalServerError, Message: "检查共享任务引用失败，请稍后重试"})
+		return false
+	}
+	if len(references) == 0 {
 		return true
 	}
-	for _, latest := range items {
-		versions, err := h.repo.SharedScheduleVersions(latest.ID)
-		if err != nil {
-			return true
-		}
-		for _, item := range versions {
-			if item.HasAsset(kind, id) {
-				return true
-			}
-		}
+	labels := map[string]string{"agent": "角色", "skill": "技能", "sop": "SOP"}
+	label := labels[kind]
+	if label == "" {
+		label = "资产"
 	}
+	details := make([]string, 0, len(references))
+	for _, reference := range references {
+		name := strings.TrimSpace(reference.Name)
+		if name == "" {
+			name = reference.SharedTaskID
+		}
+		details = append(details, fmt.Sprintf("「%s」v%d", name, reference.Version))
+	}
+	c.JSON(http.StatusConflict, gin.H{
+		"error":      fmt.Sprintf("该%s仍被共享任务 %s 引用，不能%s", label, strings.Join(details, "、"), action),
+		"references": references,
+	})
 	return false
 }
 
@@ -1071,8 +1084,7 @@ func (h *catalogHandlers) workflows(c *gin.Context) {
 			if !h.requireProjectWriter(c, v.ProjectID, previousProjectID) {
 				return
 			}
-			if previous, exists := h.repo.Workflow(v.ID); exists && previous.Shared && !v.Shared && h.sharedScheduleReferences("sop", v.ID) {
-				c.JSON(http.StatusConflict, map[string]string{"error": "该 SOP 仍被共享任务引用，不能取消共享"})
+			if previous, exists := h.repo.Workflow(v.ID); exists && previous.Shared && !v.Shared && !h.ensureNoSharedScheduleReferences(c, "sop", v.ID, "取消共享") {
 				return
 			}
 
@@ -1200,6 +1212,9 @@ func (h *catalogHandlers) workflow(c *gin.Context) {
 			c.JSON(http.StatusConflict, map[string]string{"error": "通用模板不可删除，平台管理员请直接保存修改"})
 			return
 		}
+		if !h.ensureNoSharedScheduleReferences(c, "sop", id, "删除") {
+			return
+		}
 		for _, run := range h.repo.Runs() {
 			if run.WorkflowID == id && (run.Status == "running" || run.Status == "waiting") {
 				c.JSON(409, map[string]string{"error": "该 SOP 还有进行中的运行，请先终止后再删除"})
@@ -1244,8 +1259,7 @@ func (h *catalogHandlers) workflow(c *gin.Context) {
 		if workflowHasNotifications(restored) && !h.notifications.access(c, v.ProjectID, true) {
 			return
 		}
-		if v.Shared && !restored.Shared && h.sharedScheduleReferences("sop", id) {
-			c.JSON(http.StatusConflict, map[string]string{"error": "该 SOP 仍被共享任务引用，不能取消共享"})
+		if v.Shared && !restored.Shared && !h.ensureNoSharedScheduleReferences(c, "sop", id, "取消共享") {
 			return
 		}
 		stored, err := h.repo.RestoreWorkflowRevision(c.Param("rev"))

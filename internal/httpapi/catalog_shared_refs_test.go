@@ -111,7 +111,8 @@ func TestSharedScheduleReferences(t *testing.T) {
 	if err := s.PutScheduleJob(job); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.PublishSharedSchedule(job.ID, job.ProjectID, domain.SharedScheduleVersion{Name: "Shared", Prompt: "inspect"}, 0); err != nil {
+	first, err := s.PublishSharedSchedule(job.ID, job.ProjectID, domain.SharedScheduleVersion{Name: "Shared", Prompt: "inspect"}, 0)
+	if err != nil {
 		t.Fatal(err)
 	}
 	job.References = nil
@@ -121,7 +122,18 @@ func TestSharedScheduleReferences(t *testing.T) {
 	if _, err := s.PublishSharedSchedule(job.ID, job.ProjectID, domain.SharedScheduleVersion{Name: "Updated", Prompt: "inspect"}, 1); err != nil {
 		t.Fatal(err)
 	}
+	if references, err := s.SharedScheduleAssetReferences("skill", "ssr-skill"); err != nil || len(references) != 0 {
+		t.Fatalf("unsubscribed history reference = %+v, err=%v", references, err)
+	}
+	job.ID = "ssr-subscription"
+	job.SharedTaskID = first.ID
+	job.SharedTaskVersion = first.Version
+	if err := s.PutScheduleJob(job); err != nil {
+		t.Fatal(err)
+	}
 	job.ID = "ssr-agent-job"
+	job.SharedTaskID = ""
+	job.SharedTaskVersion = 0
 	job.References = []domain.AssistantReference{{Type: "agent", ID: "ssr-agent"}}
 	if err := s.PutScheduleJob(job); err != nil {
 		t.Fatal(err)
@@ -129,11 +141,20 @@ func TestSharedScheduleReferences(t *testing.T) {
 	if _, err := s.PublishSharedSchedule(job.ID, job.ProjectID, domain.SharedScheduleVersion{Name: "Agent", Prompt: "inspect"}, 0); err != nil {
 		t.Fatal(err)
 	}
-	h := &catalogHandlers{deps: &deps{repo: s}}
-	if !h.sharedScheduleReferences("skill", "ssr-skill") {
-		t.Fatal("shared schedule reference was not detected")
+	references, err := s.SharedScheduleAssetReferences("skill", "ssr-skill")
+	if err != nil {
+		t.Fatal(err)
 	}
-	if h.sharedScheduleReferences("rule", "ssr-skill") || h.sharedScheduleReferences("skill", "missing") || !h.sharedScheduleReferences("agent", "ssr-agent") {
-		t.Fatal("unrelated shared schedule reference was detected")
+	if len(references) != 1 || references[0].Version != 1 {
+		t.Fatalf("shared schedule reference = %+v, want v1 subscription", references)
+	}
+	if references, err := s.SharedScheduleAssetReferences("rule", "ssr-skill"); err != nil || len(references) != 0 {
+		t.Fatalf("unrelated rule reference = %+v, err=%v", references, err)
+	}
+	if references, err := s.SharedScheduleAssetReferences("skill", "missing"); err != nil || len(references) != 0 {
+		t.Fatalf("missing skill reference = %+v, err=%v", references, err)
+	}
+	if references, err := s.SharedScheduleAssetReferences("agent", "ssr-agent"); err != nil || len(references) != 1 || references[0].Version != 1 {
+		t.Fatalf("shared agent reference = %+v, err=%v", references, err)
 	}
 }
