@@ -17,6 +17,10 @@ services:
       interval: 2s
       timeout: 3s
       retries: 60
+    # The data volume outlives the container; without a restart policy a Docker
+    # daemon or host restart leaves MySQL down and the platform restarts into a
+    # connection loop (issue #1031).
+    restart: unless-stopped
   platform:
     profiles: [platform]
     # Published release stack: never builds. Bump the pinned tag (here and in
