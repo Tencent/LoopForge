@@ -128,6 +128,41 @@ func TestCheckpointCleanupHoldSavesDueRetry(t *testing.T) {
 	}
 }
 
+func TestConversationWorkspaceStaleCleanupKeepsReclaimedCheckpoint(t *testing.T) {
+	t.Parallel()
+	e, id := checkpointFixture(t)
+	if err := e.ReleaseConversationWorkspace(id); err != nil {
+		t.Fatal(err)
+	}
+	staleRun, _ := e.repo.RunState(id)
+	e.cleanupWorkspace(staleRun, time.Now().UTC())
+	saved, _ := e.repo.WorkspaceCheckpoint(id)
+	cleaned, _ := e.repo.RunState(id)
+	if cleaned.WorkspaceCleanedAt.IsZero() || saved.SavedAt == nil {
+		t.Fatal("first sweep did not save and reclaim the workspace")
+	}
+
+	// A second replica still holds the unreclaimed run from its sweep. The
+	// local path is gone, so capturing again could publish an empty archive.
+	e = New(e.repo, e.sandboxes)
+	e.cleanupWorkspace(staleRun, time.Now().UTC())
+	current, _ := e.repo.WorkspaceCheckpoint(id)
+	if current.SHA256 != saved.SHA256 || current.Error != "" || current.SaveRetryAt != nil {
+		t.Fatal("a stale sweep changed the reclaimed workspace checkpoint")
+	}
+	token, err := e.BeginConversationWorkspaceUse(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.EnsureConversationWorkspace(t.Context(), id, token); err != nil {
+		t.Fatal(err)
+	}
+	content, err := os.ReadFile(filepath.Join(e.RunWorkspace(id), "README.md"))
+	if err != nil || string(content) != "uncommitted" {
+		t.Fatalf("restored checkpoint did not preserve the original file: %q, %v", content, err)
+	}
+}
+
 func TestBackgroundWorkspaceSaveRecoversFromSlowRunnerAndExpiredLease(t *testing.T) {
 	t.Parallel()
 	e, id := checkpointFixture(t)

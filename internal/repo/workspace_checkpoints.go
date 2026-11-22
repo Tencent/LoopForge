@@ -123,6 +123,11 @@ func (r *RunsRepo) beginWorkspaceLease(runID string, now time.Time, touch, resto
 		if err != nil {
 			return err
 		}
+		// A maintenance sweep can still have a pre-cleanup run in memory.
+		// It must not save from a checkout that another sweep already removed.
+		if !touch && !restoring && run.WorkspaceCleaned != nil {
+			return ErrWorkspaceInUse
+		}
 		var checkpoint WorkspaceCheckpoint
 		if err := tx.Omit("archive").Where("run_id = ?", runID).Take(&checkpoint).Error; err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 			return err
