@@ -59,6 +59,9 @@ type assistantEngineOption struct {
 	Personal    bool   `json:"personal"`
 	Credential  string `json:"credential"`
 	CustomModel bool   `json:"customModel,omitempty"`
+	// Missing and installable are reported only for a cloud chat hosted by this platform.
+	ServerMissing     bool `json:"serverMissing,omitempty"`
+	ServerInstallable bool `json:"serverInstallable,omitempty"`
 }
 
 // assistantEngineCredentialField is the 个人配置 field that enables a CLI.

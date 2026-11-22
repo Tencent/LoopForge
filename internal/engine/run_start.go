@@ -59,6 +59,30 @@ func (e *Engine) startWorkflow(workflowID, input string, repositories []domain.R
 	if !ok {
 		return domain.Run{}, fmt.Errorf("workflow not found")
 	}
+	if executionContext.SharedScheduleID != "" {
+		version, err := e.repo.SharedScheduleVersion(executionContext.SharedScheduleID, executionContext.SharedScheduleVersion)
+		if err != nil {
+			return domain.Run{}, err
+		}
+		if err := e.repo.ValidateSharedScheduleAssets(version); err != nil {
+			return domain.Run{}, err
+		}
+		allowed := version.HasAsset("sop", workflowID)
+		if !allowed && executionContext.ParentRunID != "" {
+			if parent, ok := e.repo.RunState(executionContext.ParentRunID); ok && parent.ExecutionContext.SharedScheduleID == executionContext.SharedScheduleID && parent.ExecutionContext.SharedScheduleVersion == executionContext.SharedScheduleVersion &&
+				parent.ExecutionContext.ProjectID == executionContext.ProjectID && parent.ExecutionContext.ResponsibleUserID == executionContext.ResponsibleUserID {
+				for _, node := range parent.WorkflowSnapshot.Nodes {
+					if node.Type == "sop" && node.SOPWorkflowID == workflowID && node.ID == executionContext.ParentNodeID {
+						allowed = true
+						break
+					}
+				}
+			}
+		}
+		if !allowed {
+			return domain.Run{}, fmt.Errorf("SOP 不在共享任务的引用范围内")
+		}
+	}
 	return e.startWorkflowDefinition(wf, input, repositories, executionContext, workspace)
 }
 
@@ -113,6 +137,11 @@ func (e *Engine) startWorkflowDefinition(wf domain.WorkflowDefinition, input str
 	resources, err := resolveSandboxResources(e.repo, profile)
 	if err != nil {
 		return domain.Run{}, err
+	}
+	if executionContext.SharedScheduleID != "" {
+		if err := e.validateSharedScheduleWorkflow(wf, executionContext.ProjectID, profile, resources); err != nil {
+			return domain.Run{}, err
+		}
 	}
 	e.selectSOPExecutionTarget(&executionContext)
 	wf.ExecutorDefaults = nil

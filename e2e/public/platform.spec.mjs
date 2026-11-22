@@ -26,6 +26,21 @@ test('password authentication loads the upstream workspace',async({page,request,
   await expect(page).toHaveURL(/login\.html$/);
 });
 
+for (const failure of ['server error', 'network error']) {
+  test(`login shows administrator contact when setup status is unavailable (${failure})`, async ({page}) => {
+    await page.route('**/api/auth/setup', route =>
+      failure === 'server error' ? route.fulfill({status: 500}) : route.abort()
+    );
+    await page.goto('/login.html#register');
+    const contact = page.locator('#loginContact');
+    await expect(contact).toBeVisible();
+    await expect(contact).toHaveText('请联系部署管理员创建账号。');
+    await expect(page.locator('#loginSwitch')).toBeHidden();
+    await expect(page.locator('#setupNotice')).toBeHidden();
+    await expect(page.locator('#loginSubmit')).toHaveText('登录');
+  });
+}
+
 test('Chinese/English and light/dark preferences persist across reloads',async({page},info)=>{
   const errors=[];page.on('pageerror',e=>errors.push(e.message));
   await signIn(page);
