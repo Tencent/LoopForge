@@ -3,13 +3,18 @@ package httpapi
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"strings"
 	"testing"
+	"time"
 
 	"agentflow/internal/domain"
 	"agentflow/internal/runtime"
@@ -555,6 +560,142 @@ func TestApprovalHTTPEgressAndRedirectProtection(t *testing.T) {
 			t.Fatalf("ordinary 500 should fall back to CLI: got=%+v err=%v cliCalls=%d", got, err, cliCalls)
 		}
 	})
+
+	t.Run("multi_address_dial_preserves_policy_block_over_first_connect_error", func(t *testing.T) {
+		origCLI := approvalReviewCLIRunner
+		cliCalls := 0
+		approvalReviewCLIRunner = func(ctx context.Context, req assistantCLIRequest, user domain.User, onEvent func(assistantStreamEvent)) (string, string, error) {
+			cliCalls++
+			return `{"outcome":"allow","risk_level":"low","user_authorization":"high","rationale":"cli fallback"}`, "", nil
+		}
+		t.Cleanup(func() { approvalReviewCLIRunner = origCLI })
+
+		// Reserve a closed port on 127.0.0.1 so the first (allowed) IP fails
+		// immediately with ECONNREFUSED, forcing net.Dialer to try the second
+		// (blocked) IP. Without recording Control rejections per dial, Go's
+		// dialSerial/dialParallel discards the second error and returns only
+		// ECONNREFUSED, which would trigger local CLI fallback.
+		ln, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		closedPort := ln.Addr().(*net.TCPAddr).Port
+		_ = ln.Close()
+
+		cases := []struct {
+			name    string
+			addrs   []netip.Addr
+			wantIP  string
+		}{
+			{
+				name:   "serial_ipv4_refused_then_private_blocked",
+				addrs:  []netip.Addr{netip.MustParseAddr("127.0.0.1"), netip.MustParseAddr("10.255.255.1")},
+				wantIP: "10.255.255.1",
+			},
+			{
+				name:   "dual_stack_ipv4_refused_and_ula_ipv6_blocked",
+				addrs:  []netip.Addr{netip.MustParseAddr("127.0.0.1"), netip.MustParseAddr("fd00::1")},
+				wantIP: "fd00::1",
+			},
+		}
+
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				if strings.Contains(tc.wantIP, ":") {
+					if ln6, err := net.Listen("tcp6", "[::1]:0"); err != nil {
+						t.Skipf("IPv6 sockets unavailable in test environment: %v", err)
+					} else {
+						_ = ln6.Close()
+					}
+				}
+				cliCalls = 0
+				t.Setenv(approvalEgressAllowCIDRsEnv, "127.0.0.1/32")
+				resolver := mockMultiAddrDNSResolver(t, tc.addrs)
+				origFactory := approvalHTTPClientFactory
+				approvalHTTPClientFactory = func(timeout time.Duration) *http.Client {
+					return newApprovalEgressClientWithResolver(timeout, approvalAllowedEgressPrefixes(), resolver)
+				}
+				t.Cleanup(func() { approvalHTTPClientFactory = origFactory })
+
+				user := domain.User{
+					ID:           1,
+					CodexAPIKey:  "sk-codex",
+					CodexBaseURL: fmt.Sprintf("http://multi-egress.invalid:%d/v1", closedPort),
+				}
+				input := assistantApprovalInput{
+					ActorID: 1, ProjectID: "p1", Tool: "rules_save",
+					Messages: []assistantApprovalMessage{{Role: "user", AuthorID: 1, Content: "保存规则"}},
+				}
+				_, err := runAssistantApprovalReviewWithEffort(context.Background(), input, user, "codex:gpt-4.1-mini", "low")
+				var policyErr errApprovalPolicyBlocked
+				if !errors.As(err, &policyErr) || !strings.Contains(policyErr.Error(), tc.wantIP) || cliCalls != 0 {
+					t.Fatalf("multi-address dial must surface policy block for %s without CLI fallback: err=%v cliCalls=%d", tc.wantIP, err, cliCalls)
+				}
+			})
+		}
+	})
+}
+
+func mockMultiAddrDNSResolver(t *testing.T, addrs []netip.Addr) *net.Resolver {
+	t.Helper()
+	pc, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = pc.Close() })
+	go func() {
+		buf := make([]byte, 512)
+		for {
+			n, peer, err := pc.ReadFrom(buf)
+			if err != nil {
+				return
+			}
+			if n < 17 {
+				continue
+			}
+			qEnd := 12
+			for qEnd < n && buf[qEnd] != 0 {
+				qEnd += int(buf[qEnd]) + 1
+			}
+			if qEnd+5 > n {
+				continue
+			}
+			qType := binary.BigEndian.Uint16(buf[qEnd+1 : qEnd+3])
+			question := buf[12 : qEnd+5]
+
+			var answers []byte
+			var count uint16
+			for _, ip := range addrs {
+				switch {
+				case qType == 1 && ip.Is4():
+					a4 := ip.As4()
+					answers = append(answers, 0xc0, 0x0c, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00, 0x05, 0x00, 0x04)
+					answers = append(answers, a4[:]...)
+					count++
+				case qType == 28 && ip.Is6():
+					a16 := ip.As16()
+					answers = append(answers, 0xc0, 0x0c, 0x00, 0x1c, 0x00, 0x01, 0x00, 0x00, 0x00, 0x05, 0x00, 0x10)
+					answers = append(answers, a16[:]...)
+					count++
+				}
+			}
+			resp := make([]byte, 12, 12+len(question)+len(answers))
+			copy(resp[0:2], buf[0:2])
+			binary.BigEndian.PutUint16(resp[2:4], 0x8180)
+			binary.BigEndian.PutUint16(resp[4:6], 1)
+			binary.BigEndian.PutUint16(resp[6:8], count)
+			resp = append(resp, question...)
+			resp = append(resp, answers...)
+			_, _ = pc.WriteTo(resp, peer)
+		}
+	}()
+	dnsAddr := pc.LocalAddr().String()
+	return &net.Resolver{
+		PreferGo: true,
+		Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
+			return (&net.Dialer{Timeout: 2 * time.Second}).DialContext(ctx, "udp", dnsAddr)
+		},
+	}
 }
 
 func mustJSON(s string) string {

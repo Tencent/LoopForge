@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -39,19 +40,16 @@ var approvalNonPublicPrefixes = []netip.Prefix{
 var approvalHTTPClientFactory = newApprovalEgressClient
 
 func newApprovalEgressClient(timeout time.Duration) *http.Client {
+	return newApprovalEgressClientWithResolver(timeout, approvalAllowedEgressPrefixes(), nil)
+}
+
+func newApprovalEgressClientWithResolver(timeout time.Duration, allowed []netip.Prefix, resolver *net.Resolver) *http.Client {
 	if timeout <= 0 {
 		timeout = 25 * time.Second
 	}
-	allowed := approvalAllowedEgressPrefixes()
-	dialer := &net.Dialer{
-		Timeout: 10 * time.Second,
-		Control: func(_, address string, _ syscall.RawConn) error {
-			return checkApprovalEgressAddress(address, allowed)
-		},
-	}
 	transport := &http.Transport{
 		Proxy:                 nil,
-		DialContext:           dialer.DialContext,
+		DialContext:           approvalEgressDialContext(allowed, resolver),
 		TLSHandshakeTimeout:   10 * time.Second,
 		ResponseHeaderTimeout: timeout,
 		DisableKeepAlives:     true,
@@ -62,6 +60,45 @@ func newApprovalEgressClient(timeout time.Duration) *http.Client {
 		CheckRedirect: func(*http.Request, []*http.Request) error {
 			return http.ErrUseLastResponse
 		},
+	}
+}
+
+// approvalEgressDialContext enforces checkApprovalEgressAddress on every
+// resolved IP and records any policy rejection per dial attempt. When a
+// multi-address dial fails overall, Go's net.Dialer may return only the first
+// ordinary connection error and discard a subsequent address's Control error;
+// surfacing the recorded policy rejection ensures callers never treat a
+// policy-blocked host as an ordinary failure and fall back to a local CLI.
+func approvalEgressDialContext(allowed []netip.Prefix, resolver *net.Resolver) func(ctx context.Context, network, addr string) (net.Conn, error) {
+	return func(ctx context.Context, network, addr string) (net.Conn, error) {
+		var mu sync.Mutex
+		var blocked error
+		dialer := &net.Dialer{
+			Timeout:  10 * time.Second,
+			Resolver: resolver,
+			Control: func(_, address string, _ syscall.RawConn) error {
+				err := checkApprovalEgressAddress(address, allowed)
+				if err != nil {
+					mu.Lock()
+					if blocked == nil {
+						blocked = err
+					}
+					mu.Unlock()
+				}
+				return err
+			},
+		}
+		conn, err := dialer.DialContext(ctx, network, addr)
+		if err != nil {
+			mu.Lock()
+			policyErr := blocked
+			mu.Unlock()
+			if policyErr != nil {
+				return nil, policyErr
+			}
+			return nil, err
+		}
+		return conn, nil
 	}
 }
 
