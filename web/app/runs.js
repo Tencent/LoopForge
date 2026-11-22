@@ -1288,7 +1288,7 @@ function renderRunDetail(r){
   host.querySelector('[data-run-back]')?.addEventListener('click',()=>showRunList());
   bindRunDetailTabs(r,host);
   bindReviewArtifactActions(host,r);
-  host.querySelectorAll('[data-run-node]').forEach(b=>b.onclick=()=>selectRunNode(b.dataset.runNode));host.querySelectorAll('[data-tel-adapter]').forEach(b=>b.onclick=()=>{if((state.runTelemetryAdapter||'live')===b.dataset.telAdapter)return;state.runTelemetryAdapter=b.dataset.telAdapter;state.runTelemetry=null;renderRunDetail(state.activeRun||r)});host.querySelector('[data-logs-load]')?.addEventListener('click',()=>loadRunLogs(pg.runId,pg.nodeId,false));host.querySelector('[data-logs-more]')?.addEventListener('click',()=>loadRunLogs(pg.runId,pg.nodeId,true));host.querySelector('[data-tel-load]')?.addEventListener('click',()=>loadRunTelemetry(pg.runId,pg.nodeId,false));host.querySelector('[data-tel-more]')?.addEventListener('click',()=>loadRunTelemetry(pg.runId,pg.nodeId,true));host.querySelector('[data-open-issue]')?.addEventListener('click',ev=>{ev.preventDefault();ev.stopPropagation();openIssueDetail(ev.currentTarget.dataset.openIssue||issueId,'sop')});host.querySelectorAll('[data-rerun-from-here]').forEach(b=>b.onclick=()=>openRerunFromNode(state.activeRun||r,b.dataset.rerunFromHere));host.querySelector('[data-copy-run]')?.addEventListener('click',()=>copyText(r.id,'Run ID 已复制'));host.querySelector('[data-export-logs]')?.addEventListener('click',()=>downloadRunLogs(r.id));host.querySelector('[data-copy-output]')?.addEventListener('click',()=>copyText(displayNodeOutput(nr.output),'节点输出已复制'));host.querySelector('[data-open-flow]')?.addEventListener('click',()=>{state.workflow=clone(state.data.workflows.find(w=>w.id===r.workflowId)||wf);state.selectedNode=selected?.id||null;switchView('flow');renderAll()});host.querySelector('[data-cancel-run]')?.addEventListener('click',async ()=>{if(await afConfirm({title:'取消运行确认',message:r.status==='queued'?'确定取消排队？此运行将不会启动，之后可删除记录。':'确定取消这次运行？正在执行的节点会被终止。',confirmText:r.status==='queued'?'取消排队':'确认取消',isDanger:true}))runAction(r.id,'cancel',{})});host.querySelector('[data-delete-run]')?.addEventListener('click',()=>deleteRun(r.id));host.querySelectorAll('[data-resume-run]').forEach(b=>b.addEventListener('click',ev=>resumeRun(b.dataset.resumeRun||r.id,ev.currentTarget)));host.querySelectorAll('[data-pass-node]').forEach(b=>b.onclick=()=>passFailedNode(b.dataset.passNode,b.dataset.node,b));host.querySelectorAll('[data-artifact]').forEach(b=>b.onclick=()=>previewArtifact(state.activeRun||r,b.dataset.artifact));host.querySelectorAll('[data-approve]').forEach(b=>b.onclick=()=>runAction(r.id,'approve',withHumanContext({nodeId:b.dataset.approve,context:readHumanContext(b)})));host.querySelectorAll('[data-reject]').forEach(b=>b.onclick=async ()=>{const reason=await afPrompt({title:'打回返工',message:'请输入打回原因：',defaultValue:'验证未通过，请修复后重新提交'});if(reason!==null&&reason!==undefined)runAction(r.id,'reject',withHumanContext({nodeId:b.dataset.reject,targetId:b.dataset.target,reason,context:readHumanContext(b)}))});host.querySelectorAll('[data-retry-node]').forEach(b=>b.onclick=()=>retryWaitingNode(r.id,b.dataset.retryNode,b));host.querySelectorAll('[data-decline-retry]').forEach(b=>b.onclick=()=>declineRetry(r.id,b.dataset.declineRetry));host.querySelectorAll('[data-realign-run]').forEach(b=>b.onclick=()=>realignBaseline(b.dataset.realignRun));
+  host.querySelectorAll('[data-run-node]').forEach(b=>b.onclick=()=>selectRunNode(b.dataset.runNode));host.querySelectorAll('[data-tel-adapter]').forEach(b=>b.onclick=()=>{if((state.runTelemetryAdapter||'live')===b.dataset.telAdapter)return;state.runTelemetryAdapter=b.dataset.telAdapter;state.runTelemetry=null;renderRunDetail(state.activeRun||r)});host.querySelector('[data-logs-load]')?.addEventListener('click',()=>loadRunLogs(pg.runId,pg.nodeId,false));host.querySelector('[data-logs-more]')?.addEventListener('click',()=>loadRunLogs(pg.runId,pg.nodeId,true));host.querySelector('[data-tel-load]')?.addEventListener('click',()=>loadRunTelemetry(pg.runId,pg.nodeId,false));host.querySelector('[data-tel-more]')?.addEventListener('click',()=>loadRunTelemetry(pg.runId,pg.nodeId,true));host.querySelector('[data-open-issue]')?.addEventListener('click',ev=>{ev.preventDefault();ev.stopPropagation();openIssueDetail(ev.currentTarget.dataset.openIssue||issueId,'sop')});host.querySelectorAll('[data-rerun-from-here]').forEach(b=>b.onclick=()=>openRerunFromNode(state.activeRun||r,b.dataset.rerunFromHere));host.querySelector('[data-copy-run]')?.addEventListener('click',()=>copyText(r.id,'Run ID 已复制'));host.querySelector('[data-export-logs]')?.addEventListener('click',()=>downloadRunLogs(r.id));host.querySelector('[data-copy-output]')?.addEventListener('click',()=>copyText(displayNodeOutput(nr.output),'节点输出已复制'));host.querySelector('[data-open-flow]')?.addEventListener('click',()=>{state.workflow=clone(state.data.workflows.find(w=>w.id===r.workflowId)||wf);state.selectedNode=selected?.id||null;switchView('flow');renderAll()});host.querySelector('[data-cancel-run]')?.addEventListener('click',async ()=>{if(await afConfirm({title:'取消运行确认',message:r.status==='queued'?'确定取消排队？此运行将不会启动，之后可删除记录。':'确定取消这次运行？正在执行的节点会被终止。',confirmText:r.status==='queued'?'取消排队':'确认取消',isDanger:true}))runAction(r.id,'cancel',{})});host.querySelector('[data-delete-run]')?.addEventListener('click',()=>deleteRun(r.id));host.querySelectorAll('[data-resume-run]').forEach(b=>b.addEventListener('click',ev=>resumeRun(b.dataset.resumeRun||r.id,ev.currentTarget)));host.querySelectorAll('[data-pass-node]').forEach(b=>b.onclick=()=>passFailedNode(b.dataset.passNode,b.dataset.node,b));host.querySelectorAll('[data-artifact]').forEach(b=>b.onclick=()=>previewArtifact(state.activeRun||r,b.dataset.artifact,b));host.querySelectorAll('[data-approve]').forEach(b=>b.onclick=()=>runAction(r.id,'approve',withHumanContext({nodeId:b.dataset.approve,context:readHumanContext(b)})));host.querySelectorAll('[data-reject]').forEach(b=>b.onclick=async ()=>{const reason=await afPrompt({title:'打回返工',message:'请输入打回原因：',defaultValue:'验证未通过，请修复后重新提交'});if(reason!==null&&reason!==undefined)runAction(r.id,'reject',withHumanContext({nodeId:b.dataset.reject,targetId:b.dataset.target,reason,context:readHumanContext(b)}))});host.querySelectorAll('[data-retry-node]').forEach(b=>b.onclick=()=>retryWaitingNode(r.id,b.dataset.retryNode,b));host.querySelectorAll('[data-decline-retry]').forEach(b=>b.onclick=()=>declineRetry(r.id,b.dataset.declineRetry));host.querySelectorAll('[data-realign-run]').forEach(b=>b.onclick=()=>realignBaseline(b.dataset.realignRun));
   host.querySelector('[data-pause-run]')?.addEventListener('click',()=>pauseRun(r.id));bindPausedResumeActions(host);host.querySelectorAll('[data-refresh-run-sop]').forEach(b=>b.onclick=()=>refreshRunSOP(b.dataset.refreshRunSop));
   host.dataset.runId=r.id;host.dataset.nodeId=state.selectedRunNode||'';host.dataset.controlSignature=runControlSignature(r);
   host.dataset.issueTitle=ctx.issue?.title||'';
@@ -1478,37 +1478,69 @@ function openRunEvalTarget(target,id){
   const wf=(state.data.workflows||[]).find(w=>w.id===id);
   if(wf){state.workflow=clone(wf);state.selectedNode=null;switchView('flow');renderAll()}
 }
-async function previewArtifact(run,artifactId){
+let artifactPreviewRequest;
+function bindArtifactPreview(){
+  const modal=$('#artifactModal');
+  modal.querySelector('.artifact-close').onclick=()=>modal.close();
+  modal.addEventListener('close',()=>{
+    if(!modal.open)artifactPreviewRequest?.abort();
+  });
+  modal.addEventListener('pointerdown',e=>{
+    if(e.target!==modal)return;
+    const box=modal.getBoundingClientRect();
+    if(e.clientX<box.left||e.clientX>box.right||e.clientY<box.top||e.clientY>box.bottom)modal.close();
+  });
+  modal.addEventListener('keydown',e=>{
+    if(e.key!=='Tab')return;
+    const items=afDialogFocusables(modal);
+    const first=items[0],last=items.at(-1);
+    if(!first||document.activeElement!==(e.shiftKey?first:last))return;
+    e.preventDefault();
+    (e.shiftKey?last:first).focus();
+  });
+}
+function openArtifactPreview({title,icon,details,url,action,download=false,loading,opener}){
+  const modal=$('#artifactModal');
+  artifactPreviewRequest?.abort();
+  artifactPreviewRequest=new AbortController();
+  $('#artifactPreviewHeading').innerHTML=`
+    <div class="artifact-preview-head-left">
+      <span class="artifact-preview-icon" aria-hidden="true">${escapeHTML(icon)}</span>
+      <div class="artifact-preview-titles">
+        <h2 id="artifactPreviewTitle">${escapeHTML(title)}</h2>
+        <div class="artifact-preview-sub">${details.map(part=>`<span>${escapeHTML(part)}</span>`).join('<span>·</span>')}</div>
+      </div>
+    </div>
+    <div class="artifact-preview-head-actions">
+      <a class="button ghost small" href="${escapeHTML(url)}" ${download?'download':'target="_blank" rel="noopener noreferrer"'}>${escapeHTML(action)}</a>
+    </div>`;
+  $('#artifactPreview').innerHTML=`<div class="artifact-loading" role="status">${escapeHTML(loading)}</div>`;
+  if(!modal.open){
+    if(opener?.isConnected)opener.focus({preventScroll:true});
+    modal.showModal();
+  }else modal.querySelector('.artifact-close').focus();
+  return artifactPreviewRequest.signal;
+}
+async function previewArtifact(run,artifactId,opener){
   const artifact=(run.artifacts||[]).find(a=>a.id===artifactId);
   if(!artifact)return;
   const host=$('#artifactPreview');
-  host.innerHTML='<div class="artifact-loading">正在加载交付物…</div>';
-  $('#artifactModal').classList.add('open');
+  const url=`/api/runs/${encodeURIComponent(run.id)}/artifacts/${encodeURIComponent(artifactId)}`;
+  const signal=openArtifactPreview({
+    title:artifact.name,icon:isMarkdownArtifact(artifact)?'MD':'{}',details:[artifact.path,`attempt ${artifact.attempt}`],
+    url,action:'在新窗口打开 ↗',loading:'正在加载交付物…',opener,
+  });
   try{
-    const res=await fetch(`/api/runs/${encodeURIComponent(run.id)}/artifacts/${encodeURIComponent(artifactId)}`);
+    const res=await fetch(url,{signal});
     if(!res.ok)throw new Error(`HTTP ${res.status}`);
     const content=await res.text();
+    if(signal.aborted)return;
     const isMd=isMarkdownArtifact(artifact, content);
+    $('#artifactPreviewHeading .artifact-preview-icon').textContent=isMd?'MD':'{}';
     let viewMode=isMd?'preview':'source';
 
     function renderModal(){
       host.innerHTML=`
-        <div class="artifact-preview-head">
-          <div class="artifact-preview-head-left">
-            <span class="artifact-preview-icon">${isMd?'MD':'{}'}</span>
-            <div class="artifact-preview-titles">
-              <h2>${escapeHTML(artifact.name)}</h2>
-              <div class="artifact-preview-sub">
-                <span>${escapeHTML(artifact.path)}</span>
-                <span>·</span>
-                <span>attempt ${artifact.attempt}</span>
-              </div>
-            </div>
-          </div>
-          <div class="artifact-preview-head-actions">
-            <a class="button ghost small" href="/api/runs/${encodeURIComponent(run.id)}/artifacts/${encodeURIComponent(artifactId)}" target="_blank" rel="noopener noreferrer">在新窗口打开 ↗</a>
-          </div>
-        </div>
         <div class="artifact-preview-toolbar">
           <div class="artifact-toolbar-left">
             ${isMd ? `
@@ -1536,6 +1568,7 @@ async function previewArtifact(run,artifactId){
         btn.onclick=()=>{
           viewMode=btn.dataset.mode;
           renderModal();
+          host.querySelector('.artifact-mode-btn.active').focus();
         };
       });
 
@@ -1561,6 +1594,7 @@ async function previewArtifact(run,artifactId){
 
     renderModal();
   }catch(e){
+    if(signal.aborted)return;
     host.innerHTML=`<div class="empty-properties"><b>交付物加载失败</b><p>${escapeHTML(e.message)}</p></div>`;
   }
 }

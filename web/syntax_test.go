@@ -1340,6 +1340,7 @@ assert.ok(!code.includes('function obsQuality('));
 eval(code.slice(code.indexOf('function obsTrendGrain(){'), code.indexOf('function ensureObsUserFilter')));
 function formatTokens(n){return String(n)}
 function escapeHTML(s){return String(s)}
+function lfT(zh){return zh}
 assert.equal(obsWeekLabel('2026-W37'), '9/7–9/13');
 assert.equal(obsTrendLabel({date:'2026-09-16'}), '09/16');
 assert.equal(obsTrendValue({tokens:10,runs:2,issues:3,costUsd:1.5},'issues'), 3);

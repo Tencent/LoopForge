@@ -87,7 +87,7 @@ function bindReviewArtifactActions(root,run) {
       try {
         if (!current) current = await api(`/api/runs/${encodeURIComponent(reviewRun)}`,{silent:true});
         if (!current?.artifacts?.some(artifact => artifact.id === reviewArtifact)) throw new Error('待审交付物已更新，请刷新后重试');
-        await previewArtifact(current,reviewArtifact);
+        await previewArtifact(current,reviewArtifact,button);
       } catch(error) { toast(error.message,'err'); }
     };
   });

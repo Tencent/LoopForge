@@ -995,7 +995,13 @@
     </form>
   </aside>
 
-  <div id="artifactModal" class="modal"><div class="modal-card artifact-preview-modal"><button type="button" class="modal-close artifact-close">×</button><div id="artifactPreview"></div></div></div>
+  <dialog id="artifactModal" class="artifact-preview-modal" aria-labelledby="artifactPreviewTitle">
+    <div class="artifact-preview-head">
+      <div id="artifactPreviewHeading" class="artifact-preview-heading"></div>
+      <button type="button" class="button ghost small artifact-close" aria-label="关闭" autofocus>×</button>
+    </div>
+    <div id="artifactPreview"></div>
+  </dialog>
 
   <div id="syncModal" class="modal">
     <div class="modal-card sync-modal-card">

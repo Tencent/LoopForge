@@ -228,7 +228,7 @@ function afNextDialog(){
   };
 }
 function afDialogFocusables(modal){
-  return [...modal.querySelectorAll('button,input,textarea,select,[tabindex]:not([tabindex="-1"])')].filter(el=>!el.disabled&&!el.closest('[hidden]')&&el.tabIndex!==-1&&el.getClientRects().length);
+  return [...modal.querySelectorAll('a[href],button,input,textarea,select,[tabindex]:not([tabindex="-1"])')].filter(el=>!el.disabled&&!el.closest('[hidden]')&&el.tabIndex!==-1&&el.getClientRects().length);
 }
 function bindConfirmModal(modal){
   if(!modal||modal.dataset.dialogBound)return;
@@ -1148,7 +1148,7 @@ function bind(){
     if(previewBtn){
       e.preventDefault();
       if(previewBtn.disabled)return;
-      openSkillFilePreview(selectedSkill(), previewBtn.getAttribute('data-skill-file-preview'));
+      openSkillFilePreview(selectedSkill(), previewBtn.getAttribute('data-skill-file-preview'), previewBtn);
       return;
     }
     const delBtn=e.target.closest('[data-skill-file-del]');
@@ -1305,7 +1305,7 @@ function bind(){
   $$('.sync-close').forEach(b=>b.onclick=()=>$('#syncModal').classList.remove('open'));
   $$('.schedule-close').forEach(b=>b.onclick=closeScheduleJobModal);
   $('#syncAutoEnabledInline').onchange=e=>{$('#syncAutoEnabled').checked=e.target.checked;saveSyncConfig()};
-  $$('.artifact-close').forEach(b=>b.onclick=()=>$('#artifactModal').classList.remove('open'));
+  bindArtifactPreview();
   $$('.modal').forEach(modal=>modal.addEventListener('pointerdown',e=>{
     if(e.target!==modal)return;
     if(modal.id==='requirementModal')return;
@@ -1314,6 +1314,7 @@ function bind(){
     modal.classList.remove('open');
   }));
   document.addEventListener('keydown',e=>{
+    if($('#artifactModal').open)return;
     if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==='k'){e.preventDefault();openCommandPalette();return}
     if(!$('#commandPalette').hidden){
       if(e.key==='Escape'){closeCommandPalette();return}
@@ -1323,7 +1324,6 @@ function bind(){
     }
     if(e.key==='Escape'){
       if(flowDesignerEscape(e))return;
-      if($('#artifactModal')?.classList.contains('open')){$('#artifactModal').classList.remove('open');return}
       if(state.drawerOpen)return closeIssueDrawer();
       if($('#requirementModal')?.classList.contains('open')){
         if(!$('#reqRepoPopover')?.hidden){toggleReqRepoPopover(false);return}

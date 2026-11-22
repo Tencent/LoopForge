@@ -492,7 +492,6 @@ html[data-theme="dark"] .issue-title-tag.tone-cyan{color:#67e8f9}
 .drawer{position:fixed;inset:0;z-index:2000;display:none;pointer-events:none}
 /* Dialogs opened from inside the issue drawer must paint above it.
    The drawer is 2000; ordinary modals are 120 and otherwise open behind it. */
-#artifactModal.modal{z-index:3200}
 #confirmModal.modal{z-index:4100}
 .drawer.open{display:block}
 .drawer-backdrop{position:absolute;inset:0;background:rgba(3,7,17,.6);backdrop-filter:blur(2px);pointer-events:auto}

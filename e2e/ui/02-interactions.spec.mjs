@@ -117,12 +117,20 @@ test('run detail: tabs render and a waiting approval is approved from the UI', a
   const errors = watchErrors(page);
   await page.goto(`/#/runs/${encodeURIComponent(id)}`);
   const approve = page.locator('[data-approve="gate"]').first();
-  await page.locator('[data-run-node="gate"]').click();
+  const gate = page.locator('[data-run-node="gate"]');
+  await gate.click();
   await expect(approve).toBeVisible();
   await expect(page.locator('.graph-legend')).toContainText('待确认');
-  await page.locator('.approval-callout').getByRole('button', { name: 'result', exact: true }).click();
+  await expect(gate).toContainText('待确认');
+  await expect(page.locator('.node-inspector-status')).toContainText('待确认');
+  const preview = page.locator('.approval-callout').getByRole('button', { name: 'result', exact: true });
+  await preview.click();
+  const dialog = page.getByRole('dialog', { name: 'result' });
+  await expect(dialog.getByRole('button', { name: '关闭', exact: true })).toBeFocused();
   await expect(page.locator('#artifactPreview')).toContainText('UI E2E');
   await page.keyboard.press('Escape');
+  await expect(dialog).toBeHidden();
+  await expect(preview).toBeFocused();
 
   for (const tab of ['trace', 'logs', 'workspace', 'eval', 'overview']) {
     await page.locator(`[data-run-tab="${tab}"]`).click();
@@ -167,9 +175,29 @@ test('approvals queue: approve a waiting run with context from the sidebar', asy
   });
   await expect(card).toBeVisible();
   await expect(card).toContainText('E2E ui-approval-queue');
-  await card.getByRole('button', { name: 'review', exact: true }).click();
+  const preview = card.getByRole('button', { name: 'review', exact: true });
+  await preview.click();
+  const dialog = page.getByRole('dialog', { name: 'review' });
+  const close = dialog.getByRole('button', { name: '关闭', exact: true });
+  const newWindow = dialog.getByRole('link', { name: /在新窗口打开/ });
+  await expect(close).toBeFocused();
   await expect(page.locator('#artifactPreview')).toContainText('Review fixture');
+  const [linkBox, closeBox] = await Promise.all([newWindow.boundingBox(), close.boundingBox()]);
+  expect(linkBox.x + linkBox.width).toBeLessThanOrEqual(closeBox.x);
+  await newWindow.click({ trial: true });
+  await page.keyboard.press('Shift+Tab');
+  await expect(newWindow).toBeFocused();
+  await page.keyboard.press('Shift+Tab');
+  await expect(dialog.getByRole('button', { name: /下载文件/ })).toBeFocused();
+  await page.keyboard.press('Tab');
+  await expect(newWindow).toBeFocused();
   await page.keyboard.press('Escape');
+  await expect(dialog).toBeHidden();
+  await expect(preview).toBeFocused();
+  await preview.click();
+  await close.click();
+  await expect(dialog).toBeHidden();
+  await expect(preview).toBeFocused();
   const context = `Queue approval ${cfg.runTag}`;
   await card.locator('[data-human-context]').fill(context);
   const [response] = await Promise.all([
@@ -202,6 +230,41 @@ test('SOP designer: rename a node and save a new revision', async ({ page }) => 
   const after = await get(`/api/workflows/${wf}`);
   expect(after.revision).toBeGreaterThan(before.revision);
   expect(errors).toEqual([]);
+});
+
+test('SOP designer: all nodes stay in view when the AI assistant closes', async ({ page }) => {
+  const wf = await createWorkflow('ui-designer-fit', [90, 425, 780].map((x, i) =>
+    script(`step-${i+1}`, 'echo E2E', { position: { x, y: 200 } })));
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto(`/#/flow/${encodeURIComponent(wf)}`);
+  const palette = page.locator('#flowPalette');
+  const assistant = page.locator('#aiOrchestrator');
+  const nodes = page.locator('#nodes .flow-node');
+  await expect(nodes).toHaveCount(3);
+  const paletteWidth = () => palette.evaluate(el => Math.round(el.getBoundingClientRect().width));
+  const nodesFit = () => nodes.evaluateAll(items => {
+    const canvas = document.getElementById('canvas').getBoundingClientRect();
+    const drawer = document.getElementById('aiOrchestrator');
+    const right = drawer.hidden ? canvas.right : drawer.getBoundingClientRect().left;
+    return items.every(node => {
+      const rect = node.getBoundingClientRect();
+      return rect.left >= canvas.left && rect.right <= right &&
+        rect.top >= canvas.top && rect.bottom <= canvas.bottom;
+    });
+  });
+  for (const reducedMotion of ['no-preference', 'reduce']) {
+    await page.emulateMedia({ reducedMotion });
+    await expect.poll(paletteWidth).toBe(256);
+    await expect.poll(nodesFit).toBe(true);
+    await page.locator('#openAIOrchestrator').click();
+    await expect(assistant).toBeVisible();
+    await expect.poll(paletteWidth).toBe(48);
+    await expect.poll(nodesFit).toBe(true);
+    await page.locator('#closeAIOrchestrator').click();
+    await expect(assistant).toBeHidden();
+    await expect.poll(paletteWidth).toBe(256);
+    await expect.poll(nodesFit).toBe(true);
+  }
 });
 
 test('SOP designer: drag the failure outlet onto an upstream step to route rework', async ({ page }) => {
