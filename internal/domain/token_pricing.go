@@ -104,6 +104,29 @@ func IsHYModel(model string) bool {
 	return model == "hy" || strings.HasPrefix(model, "hy-") || strings.HasPrefix(model, "hy.") || hyVersionedModel.MatchString(model) || strings.HasPrefix(model, "hunyuan")
 }
 
+// PricedRecordedModelUsage prices usage stored under the model ID the caller
+// recorded. Conversation turns and schedule executions keep the routed form
+// "cli:model", and the CLI decides whether its input figure already contains
+// the caches: Codex includes them and Claude Code excludes them, even when a
+// custom endpoint names an OpenAI model. An unprefixed model keeps the GPT
+// family rule.
+func PricedRecordedModelUsage(model string, usage TokenUsage) TokenUsage {
+	engine, id := recordedModelEngine(model)
+	inclusive := engine == "codex" || engine != "claude-code" && strings.HasPrefix(pricingModel(id), "gpt-")
+	return AnalyticsPricedUsage(id, usage, inclusive)
+}
+
+// recordedModelEngine splits a recorded "cli:model" ID. Only a known CLI
+// prefix is routing; every other prefix stays part of the model ID so a bare
+// vendor ID such as "openai/gpt-5" is never read as a CLI.
+func recordedModelEngine(model string) (engine, id string) {
+	model = strings.ToLower(strings.TrimSpace(model))
+	if prefix, rest, ok := strings.Cut(model, ":"); ok && (prefix == "codebuddy" || prefix == "codex" || prefix == "claude-code" || IsAgentCLIKind(prefix)) {
+		return prefix, strings.TrimSpace(rest)
+	}
+	return "", model
+}
+
 // AnalyticsPricedUsage never mutates stored billing facts. CostUSD in the
 // projection is a USD equivalent of the CNY statistic for legacy consumers.
 // Inclusive input (Codex/external API) includes caches; Anthropic input excludes them.
