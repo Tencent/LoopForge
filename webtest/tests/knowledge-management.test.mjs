@@ -10,6 +10,12 @@ const CONN_B = 'conn-b';
 const SRC_A = `${CONN_A}::kb-1`;
 const SRC_B = `${CONN_B}::kb-2`;
 
+// 真实后端（scopeWeKnoraDoc）会给非 default 连接的文档 ID 加连接前缀；
+// 测试桩必须同形，否则多连接下的文档寻址无法被真实验证。
+const DOC = (raw) => `${CONN_A}::${raw}`;
+const DOC_PATH = (raw) => '/api/knowledge/documents/' + encodeURIComponent(DOC(raw));
+const docRoute = (raw, tail = '') => new RegExp('^' + DOC_PATH(raw) + tail);
+
 const ALL_AVAILABLE = {
   kb_manage: 'available',
   doc_write: 'available',
@@ -47,15 +53,15 @@ const SOURCES = [
 ];
 
 const DOCS = [
-  { id: 'doc-1', title: '安装指南.md', file_type: 'md', type: 'manual', parse_status: 'completed', updated_at: '2026-11-20T10:00:00Z' },
-  { id: 'doc-2', title: '接口文档.pdf', file_type: 'pdf', type: 'file', parse_status: 'failed', error_message: '字体缺失导致解析失败', updated_at: '2026-11-19T08:30:00Z' },
-  { id: 'doc-3', title: 'FAQ', type: 'manual', parse_status: 'processing' },
-  { id: 'doc-4', title: '草稿', parse_status: 'pending' },
-  { id: 'doc-5', title: '旧版说明', parse_status: 'draft' },
-  { id: 'doc-img', title: '截图.png', file_type: 'png', type: 'file', parse_status: 'completed' },
-  { id: 'doc-pdf', title: '手册.pdf', file_type: 'pdf', type: 'file', parse_status: 'completed' },
-  { id: 'doc-bin', title: '归档.zip', file_type: 'zip', type: 'file', parse_status: 'completed' },
-  { id: 'doc-405', title: '临时.md', file_type: 'md', type: 'file', parse_status: 'completed' },
+  { id: DOC('doc-1'), title: '安装指南.md', file_type: 'md', type: 'manual', parse_status: 'completed', updated_at: '2026-11-20T10:00:00Z' },
+  { id: DOC('doc-2'), title: '接口文档.pdf', file_type: 'pdf', type: 'file', parse_status: 'failed', error_message: '字体缺失导致解析失败', updated_at: '2026-11-19T08:30:00Z' },
+  { id: DOC('doc-3'), title: 'FAQ', type: 'manual', parse_status: 'processing' },
+  { id: DOC('doc-4'), title: '草稿', parse_status: 'pending' },
+  { id: DOC('doc-5'), title: '旧版说明', parse_status: 'draft' },
+  { id: DOC('doc-img'), title: '截图.png', file_type: 'png', type: 'file', parse_status: 'completed' },
+  { id: DOC('doc-pdf'), title: '手册.pdf', file_type: 'pdf', type: 'file', parse_status: 'completed' },
+  { id: DOC('doc-bin'), title: '归档.zip', file_type: 'zip', type: 'file', parse_status: 'completed' },
+  { id: DOC('doc-405'), title: '临时.md', file_type: 'md', type: 'file', parse_status: 'completed' },
 ];
 
 // 默认知识库路由：两个连接（conn-a 全能力、conn-b 能力接口 404 回退 legacy）、两个知识库。
@@ -219,22 +225,22 @@ test('文档详情抽屉：分块分页、文本预览、手工编辑与关闭�
     pageSize: 10,
   });
   const app = await openKnowledge(t, ROUTES([
-    { method: 'GET', path: /^\/api\/knowledge\/documents\/doc-1\/chunks/, body: (call) => chunkPage(Number(call.url.searchParams.get('page') || '1')) },
-    { method: 'GET', path: /^\/api\/knowledge\/documents\/doc-1\/preview/, body: { status: 200, body: '# 安装指南\n\n<b>加粗标记</b><img src=x onerror="alert(1)">', headers: { 'content-type': 'text/markdown; charset=utf-8' } } },
-    { method: 'PUT', path: /^\/api\/knowledge\/documents\/doc-1/, body: { title: '安装指南 v2', type: 'manual', content: '# 更新后的正文' } },
-    { method: 'GET', path: /^\/api\/knowledge\/documents\/doc-1\?/, body: { id: 'doc-1', title: '安装指南', type: 'manual', parse_status: 'published', content: '# 安装指南原始正文', updatedAt: '2026-11-20T10:00:00Z' } },
+    { method: 'GET', path: docRoute('doc-1', '/chunks'), body: (call) => chunkPage(Number(call.url.searchParams.get('page') || '1')) },
+    { method: 'GET', path: docRoute('doc-1', '/preview'), body: { status: 200, body: '# 安装指南\n\n<b>加粗标记</b><img src=x onerror="alert(1)">', headers: { 'content-type': 'text/markdown; charset=utf-8' } } },
+    { method: 'PUT', path: docRoute('doc-1'), body: { title: '安装指南 v2', type: 'manual', content: '# 更新后的正文' } },
+    { method: 'GET', path: docRoute('doc-1', '\\?'), body: { id: DOC('doc-1'), title: '安装指南', type: 'manual', parse_status: 'published', content: '# 安装指南原始正文', updatedAt: '2026-11-20T10:00:00Z' } },
   ]));
   const { document } = app;
   const pid = app.evaluate('state.projectFilter');
 
   // 打开抽屉：焦点进入抽屉首个可聚焦元素。
-  const btn = await openDoc(app, 'doc-1');
+  const btn = await openDoc(app, DOC('doc-1'));
   const drawer = document.querySelector('#kbDrawer');
   assert.equal(drawer.hidden, false);
   assert.equal(drawer.getAttribute('aria-hidden'), 'false');
   assert.equal(document.activeElement, drawer.querySelector('[data-kb-drawer-close]'), '打开后焦点进入抽屉');
 
-  const chunkCalls = callsTo(app, 'GET', '/documents/doc-1/chunks');
+  const chunkCalls = callsTo(app, 'GET', DOC_PATH('doc-1') + '/chunks');
   assert.equal(chunkCalls.length, 1);
   assert.equal(param(chunkCalls[0], 'page'), '1');
   assert.equal(param(chunkCalls[0], 'pageSize'), '10');
@@ -246,7 +252,7 @@ test('文档详情抽屉：分块分页、文本预览、手工编辑与关闭�
   // 分块分页。
   document.querySelector('[data-kb-chunk-page="2"]').click();
   await settle(10);
-  assert.equal(param(lastCall(app, 'GET', '/documents/doc-1/chunks'), 'page'), '2');
+  assert.equal(param(lastCall(app, 'GET', DOC_PATH('doc-1') + '/chunks'), 'page'), '2');
   assert.match(document.querySelector('#kbDocBody').textContent, /第 2 \/ 2 页/);
   assert.match(document.querySelector('#kbDocBody').textContent, /分块正文 14/);
   assert.match(document.querySelector('#kbDocBody').textContent, /字符 1040–1090/);
@@ -260,7 +266,7 @@ test('文档详情抽屉：分块分页、文本预览、手工编辑与关闭�
   assert.match(pre.textContent, /<b>加粗标记<\/b>/, '预览保留标签原文');
   assert.equal(pre.querySelector('b'), null, '标签不被解析为元素');
   assert.equal(pre.querySelector('img'), null, '危险标签同样不落地为元素');
-  assert.equal(param(lastCall(app, 'GET', '/documents/doc-1/preview'), 'connectionId'), CONN_A);
+  assert.equal(param(lastCall(app, 'GET', DOC_PATH('doc-1') + '/preview'), 'connectionId'), CONN_A);
 
   // 元信息徽标。
   const bodyText = document.querySelector('#kbDocBody').textContent;
@@ -277,7 +283,7 @@ test('文档详情抽屉：分块分页、文本预览、手工编辑与关闭�
   assert.equal(document.activeElement, btn, '焦点归还「查看」按钮');
 
   // 重新打开进入手工文档编辑：detail 内联正文直接填入，保存走 PUT 并刷新标题。
-  await openDoc(app, 'doc-1');
+  await openDoc(app, DOC('doc-1'));
   document.querySelector('[data-kb-doc-view="edit"]').click();
   await settle(6);
   const content = document.querySelector('#kbDocEditContent');
@@ -287,7 +293,7 @@ test('文档详情抽屉：分块分页、文本预览、手工编辑与关闭�
   document.querySelector('#kbDocEditPublish').checked = false;
   document.querySelector('#kbDocSaveBtn').click();
   await settle(12);
-  const put = lastCall(app, 'PUT', '/documents/doc-1');
+  const put = lastCall(app, 'PUT', DOC_PATH('doc-1'));
   assert.ok(put, '保存手工文档发出 PUT');
   assert.deepEqual(put.body, { title: '安装指南 v2', content: '# 更新后的正文', publish: false });
   assert.equal(param(put, 'connectionId'), CONN_A);
@@ -295,11 +301,11 @@ test('文档详情抽屉：分块分页、文本预览、手工编辑与关闭�
   assert.equal(document.querySelector('#kbDrawer .kb-drawer-head h3').textContent, '安装指南 v2');
 
   // 标题为空时不提交。
-  const before = callsTo(app, 'PUT', '/documents/doc-1').length;
+  const before = callsTo(app, 'PUT', DOC_PATH('doc-1')).length;
   document.querySelector('#kbDocEditTitle').value = '   ';
   document.querySelector('#kbDocSaveBtn').click();
   await settle(4);
-  assert.equal(callsTo(app, 'PUT', '/documents/doc-1').length, before);
+  assert.equal(callsTo(app, 'PUT', DOC_PATH('doc-1')).length, before);
   assert.match(lastToast(app).m, /请填写文档标题/);
 
   // 遮罩点击同样关闭。
@@ -314,25 +320,25 @@ test('文档详情降级：详情 404 静默、分块回退旧接口、图片/PD
     { method: 'GET', path: /^\/api\/knowledge\/documents\/[^/]+\/chunks/, body: { chunks: [{ chunkIndex: 0, content: '通用分块' }], total: 1, page: 1, pageSize: 10 } },
     { method: 'GET', path: /^\/api\/knowledge\/documents\//, body: { title: '文档', type: 'file', parse_status: 'completed' } },
     // doc-img：分块 404 → 回退旧版 /api/knowledge/document。
-    { method: 'GET', path: /^\/api\/knowledge\/documents\/doc-img\/chunks/, body: { error: 'not found' }, status: 404 },
+    { method: 'GET', path: docRoute('doc-img', '/chunks'), body: { error: 'not found' }, status: 404 },
     { method: 'GET', path: /^\/api\/knowledge\/document\?/, body: { lines: [{ text: '旧版第一行' }, { text: '旧版第二行' }] } },
     // 自定义 content-type 需把 status/body/headers 一起放进回复对象。
-    { method: 'GET', path: /^\/api\/knowledge\/documents\/doc-img\/preview/, body: { status: 200, body: 'PNGDATA', headers: { 'content-type': 'image/png' } } },
-    { method: 'GET', path: /^\/api\/knowledge\/documents\/doc-pdf\/preview/, body: { status: 200, body: '%PDF-1.4', headers: { 'content-type': 'application/pdf' } } },
-    { method: 'GET', path: /^\/api\/knowledge\/documents\/doc-bin\/preview/, body: { status: 200, body: 'PK', headers: { 'content-type': 'application/zip' } } },
-    { method: 'GET', path: /^\/api\/knowledge\/documents\/doc-405\/preview/, body: { error: 'method not allowed' }, status: 405 },
+    { method: 'GET', path: docRoute('doc-img', '/preview'), body: { status: 200, body: 'PNGDATA', headers: { 'content-type': 'image/png' } } },
+    { method: 'GET', path: docRoute('doc-pdf', '/preview'), body: { status: 200, body: '%PDF-1.4', headers: { 'content-type': 'application/pdf' } } },
+    { method: 'GET', path: docRoute('doc-bin', '/preview'), body: { status: 200, body: 'PK', headers: { 'content-type': 'application/zip' } } },
+    { method: 'GET', path: docRoute('doc-405', '/preview'), body: { error: 'method not allowed' }, status: 405 },
     // doc-img 详情 404：抽屉保持可用，分块阶段再回退。
-    { method: 'GET', path: /^\/api\/knowledge\/documents\/doc-img\?/, body: { error: 'not found' }, status: 404 },
+    { method: 'GET', path: docRoute('doc-img', '\\?'), body: { error: 'not found' }, status: 404 },
   ]));
   const { document } = app;
 
   // 详情 404 + 分块 404 → legacy 原文回退。
-  await openDoc(app, 'doc-img');
+  await openDoc(app, DOC('doc-img'));
   assert.match(document.querySelector('#kbDocBody').textContent, /旧版第一行/);
   assert.match(document.querySelector('#kbDocBody').textContent, /旧版原文分块/);
   const legacy = lastCall(app, 'GET', '/api/knowledge/document?');
   assert.equal(param(legacy, 'source'), SRC_A);
-  assert.equal(param(legacy, 'path'), 'doc-img');
+  assert.equal(param(legacy, 'path'), DOC('doc-img'));
 
   // 图片预览：Blob + objectURL，切换到其他视图时释放。
   document.querySelector('[data-kb-doc-view="preview"]').click();
@@ -344,17 +350,17 @@ test('文档详情降级：详情 404 静默、分块回退旧接口、图片/PD
   await settle(4);
   assert.equal(document.querySelector('#kbDocBody img'), null);
 
-  await openDoc(app, 'doc-pdf');
+  await openDoc(app, DOC('doc-pdf'));
   document.querySelector('[data-kb-doc-view="preview"]').click();
   await settle(10);
   assert.ok(document.querySelector('#kbDocBody iframe.kb-preview-frame'), 'PDF 走 iframe 预览');
 
-  await openDoc(app, 'doc-bin');
+  await openDoc(app, DOC('doc-bin'));
   document.querySelector('[data-kb-doc-view="preview"]').click();
   await settle(10);
   assert.match(document.querySelector('#kbDocBody').textContent, /不支持在线预览/);
 
-  await openDoc(app, 'doc-405');
+  await openDoc(app, DOC('doc-405'));
   document.querySelector('[data-kb-doc-view="preview"]').click();
   await settle(10);
   assert.match(document.querySelector('#kbDocBody').textContent, /原文预览接口尚未合入/);
@@ -610,20 +616,20 @@ test('文档行操作：重解析、编辑入参、分页回退与删除确认',
     } },
     { method: 'POST', path: /^\/api\/knowledge\/documents\/[^/]+\/reparse/, body: { ok: true } },
     { method: 'DELETE', path: /^\/api\/knowledge\/documents\/[^/]+\?/, body: { ok: true } },
-    { method: 'GET', path: /^\/api\/knowledge\/documents\/doc-1\/chunks/, body: { chunks: [{ chunkIndex: 0, content: '正文' }], total: 1, page: 1, pageSize: 10 } },
-    { method: 'GET', path: /^\/api\/knowledge\/documents\/doc-1\?/, body: { title: '安装指南', type: 'manual', content: '# 手册' } },
+    { method: 'GET', path: docRoute('doc-1', '/chunks'), body: { chunks: [{ chunkIndex: 0, content: '正文' }], total: 1, page: 1, pageSize: 10 } },
+    { method: 'GET', path: docRoute('doc-1', '\\?'), body: { title: '安装指南', type: 'manual', content: '# 手册' } },
   ]));
   const { document } = app;
 
   // 重解析：POST + connectionId 后刷新列表。
-  document.querySelector('[data-kb-reparse-doc="doc-2"]').click();
+  document.querySelector(`[data-kb-reparse-doc="${DOC('doc-2')}"]`).click();
   await settle(12);
-  const reparse = lastCall(app, 'POST', '/documents/doc-2/reparse');
+  const reparse = lastCall(app, 'POST', DOC_PATH('doc-2') + '/reparse');
   assert.ok(reparse);
   assert.equal(param(reparse, 'connectionId'), CONN_A);
 
   // 行内「编辑」直接进入手工文档编辑视图。
-  const editBtn = document.querySelector('[data-kb-edit-doc="doc-1"]');
+  const editBtn = document.querySelector(`[data-kb-edit-doc="${DOC('doc-1')}"]`);
   assert.ok(editBtn);
   editBtn.focus();
   editBtn.click();
@@ -637,18 +643,18 @@ test('文档行操作：重解析、编辑入参、分页回退与删除确认',
   document.querySelector('#kbDocNextBtn').click();
   await settle(10);
   assert.equal(docPage, '2');
-  document.querySelector('[data-kb-delete-doc="doc-1"]').click();
+  document.querySelector(`[data-kb-delete-doc="${DOC('doc-1')}"]`).click();
   await settle(4);
   assert.match(document.querySelector('#confirmModal').textContent, /删除文档/);
   document.querySelector('#confirmCancelBtn').click();
   await settle(6);
   assert.equal(callsTo(app, 'DELETE', '/documents/').length, 0);
 
-  document.querySelector('[data-kb-delete-doc="doc-1"]').click();
+  document.querySelector(`[data-kb-delete-doc="${DOC('doc-1')}"]`).click();
   await settle(4);
   document.querySelector('#confirmOkBtn').click();
   await settle(14);
-  const del = lastCall(app, 'DELETE', '/documents/doc-1');
+  const del = lastCall(app, 'DELETE', DOC_PATH('doc-1'));
   assert.ok(del);
   assert.equal(param(del, 'connectionId'), CONN_A);
   assert.equal(param(lastCall(app, 'GET', '/documents?'), 'page'), '1', '删除末页最后一篇后回到上一页');
@@ -985,4 +991,401 @@ test('连接寻址：单连接回落唯一连接并贯穿文档与详情请求',
   await openDoc(app, 'doc-bare');
   assert.equal(param(lastCall(app, 'GET', '/documents/doc-bare/chunks'), 'connectionId'), CONN_A, '裸文档 ID 同样回落唯一连接');
   assert.equal(param(lastCall(app, 'GET', '/documents/doc-bare?'), 'connectionId'), CONN_A);
+});
+
+test('全连接停用：管理面保留可用，Agent 检索提示未启用', async (t) => {
+  const app = await openKnowledge(t, ROUTES([
+    { method: 'GET', path: '/api/knowledge/settings', body: settingsFixture({
+      ready: false,
+      enabled: false,
+      connections: [
+        { id: CONN_A, name: '研发空间', url: 'http://weknora-app:8080', tokenConfigured: true, enabled: false },
+        { id: CONN_B, name: '测试空间', url: 'https://kb.example.com', tokenConfigured: true, enabled: false },
+      ],
+    }) },
+    // 全停用时后端列表接口返回不可用：前端不得据此清空管理入口。
+    { method: 'GET', path: /^\/api\/knowledge\/sources/, body: { status: 503, body: { error: '知识库能力不可用', code: 'capability_unavailable', capability: 'kb_manage' } } },
+  ]));
+  const { document } = app;
+
+  assert.equal(document.querySelector('[data-kb-tab="sources"]').classList.contains('active'), true, '仍停留在知识库管理页');
+  const body = document.querySelector('#kbTabBody');
+  assert.match(body.textContent, /所有已配置连接均未启用/);
+  assert.match(body.textContent, /当前没有已启用的连接/);
+  assert.match(document.querySelector('.kb-metric-val').textContent, /未启用/);
+
+  const create = document.querySelector('#kbCreateSourceBtn');
+  assert.equal(create.disabled, false, '停用连接仍允许新建知识库');
+  assert.equal(create.classList.contains('primary'), false, 'Tab 1 仅导入文档一个实心主按钮');
+
+  create.click();
+  await settle(8);
+  const drawer = document.querySelector('#kbDrawer');
+  assert.equal(drawer.hidden, false, '停用连接下可打开新建抽屉');
+  const opts = [...drawer.querySelectorAll('#kbCreateConn option')].map((o) => o.textContent);
+  assert.equal(opts.length, 2);
+  assert.match(opts[0], /已停用/);
+
+  // 检索调试仍要求先启用连接。
+  document.querySelector('#kbDrawer [data-kb-drawer-close]').click();
+  document.querySelector('[data-kb-tab="search"]').click();
+  await settle(4);
+  assert.match(document.querySelector('#kbTabBody').textContent, /检索调试需先在「接入配置与用量」启用连接/);
+});
+
+test('能力降级只认 503：其他状态与未知能力键不误禁用管理面', async (t) => {
+  const app = await openKnowledge(t, ROUTES([
+    { method: 'POST', path: /^\/api\/knowledge\/sources\/[^/]+\/upload/, status: 500, body: { error: '上游异常', message: '上游异常', code: 'capability_unavailable', capability: 'doc_write', connectionId: CONN_A, reason: '临时故障' } },
+  ]));
+  const { document } = app;
+  document.querySelector('#kbImportDocBtn').click();
+  await settle(4);
+  const drawer = document.querySelector('#kbDrawer');
+  Object.defineProperty(drawer.querySelector('#kbImportFiles'), 'files', {
+    configurable: true,
+    value: [new app.window.File(['# 内容'], 'guide.md', { type: 'text/markdown' })],
+  });
+  drawer.querySelector('#kbImportUploadBtn').click();
+  await settle(14);
+
+  const badge = () => [...document.querySelectorAll('#kbTabBody .kb-cap-bar .hui-badge')]
+    .find((el) => el.textContent === '文档写入');
+  assert.equal(badge().dataset.tone, 'success', '非 503 不降级');
+  assert.equal(document.querySelector('#kbImportDocBtn').disabled, false);
+  assert.match(drawer.querySelector('#kbImportStatus').textContent, /失败 1 个/);
+
+  // 503 但能力键不在白名单：同样不降级。
+  const second = await openKnowledge(t, ROUTES([
+    { method: 'POST', path: /^\/api\/knowledge\/sources\/[^/]+\/upload/, status: 503, body: { error: '未知能力', message: '未知能力', code: 'capability_unavailable', capability: 'not_a_capability', connectionId: CONN_A } },
+  ]));
+  const doc2 = second.document;
+  doc2.querySelector('#kbImportDocBtn').click();
+  await settle(4);
+  const drawer2 = doc2.querySelector('#kbDrawer');
+  Object.defineProperty(drawer2.querySelector('#kbImportFiles'), 'files', {
+    configurable: true,
+    value: [new second.window.File(['# 内容'], 'guide.md', { type: 'text/markdown' })],
+  });
+  drawer2.querySelector('#kbImportUploadBtn').click();
+  await settle(14);
+  assert.equal(doc2.querySelector('#kbImportDocBtn').disabled, false, '未知能力键不降级');
+});
+
+test('文档列表乱序响应：慢的旧知识库不覆盖当前选择', async (t) => {
+  let releaseSlow = () => {};
+  const slow = new Promise((resolve) => { releaseSlow = resolve; });
+  let aCalls = 0;
+  const app = await openKnowledge(t, ROUTES([
+    { method: 'GET', path: /^\/api\/knowledge\/sources\/[^/]+\/documents/, body: async (call) => {
+      if (call.url.searchParams.get('connectionId') === CONN_B) {
+        return { documents: [{ id: `${CONN_B}::doc-b`, title: 'B 库文档', type: 'file', parse_status: 'completed' }], total: 1, page: 1, pageSize: 20 };
+      }
+      aCalls += 1;
+      if (aCalls > 1) await slow;
+      return { documents: [{ id: DOC('doc-1'), title: 'A 库文档', type: 'file', parse_status: 'completed' }], total: 1, page: 1, pageSize: 20 };
+    } },
+  ]));
+  const { document } = app;
+
+  assert.match(document.querySelector('#kbTabBody').textContent, /A 库文档/);
+
+  // A 的第二次请求挂起时切到 B，B 先返回；随后释放 A，旧响应必须被丢弃。
+  document.querySelector(`[data-kb-pick="${SRC_A}"]`).click();
+  await settle(2);
+  document.querySelector(`[data-kb-pick="${SRC_B}"]`).click();
+  await settle(10);
+  assert.match(document.querySelector('#kbTabBody').textContent, /B 库文档/);
+
+  releaseSlow();
+  await settle(10);
+  assert.match(document.querySelector('#kbTabBody').textContent, /B 库文档/, '晚到的 A 响应被丢弃');
+  assert.doesNotMatch(document.querySelector('#kbTabBody').textContent, /A 库文档/);
+});
+
+test('Blob 预览生命周期：切换视图、换文档与关闭抽屉都释放 objectURL', async (t) => {
+  const app = await openKnowledge(t, ROUTES([
+    { method: 'GET', path: /^\/api\/knowledge\/documents\//, body: { title: '文档', type: 'file', parse_status: 'completed' } },
+    { method: 'GET', path: /^\/api\/knowledge\/documents\/[^/]+\/chunks/, body: { chunks: [{ chunkIndex: 0, content: '正文' }], total: 1, page: 1, pageSize: 10 } },
+    { method: 'GET', path: docRoute('doc-img', '/preview'), body: { status: 200, body: 'PNGDATA', headers: { 'content-type': 'image/png' } } },
+    { method: 'GET', path: docRoute('doc-pdf', '/preview'), body: { status: 200, body: '%PDF-1.4', headers: { 'content-type': 'application/pdf' } } },
+  ]));
+  const { document } = app;
+  app.evaluate('window.__revoked = []; window.__seq = 0; window.URL.revokeObjectURL = (u) => window.__revoked.push(u); window.URL.createObjectURL = () => "blob:test-" + (++window.__seq);');
+
+  await openDoc(app, DOC('doc-img'));
+  document.querySelector('[data-kb-doc-view="preview"]').click();
+  await settle(10);
+  assert.equal(document.querySelector('#kbDocBody img').getAttribute('src'), 'blob:test-1');
+
+  document.querySelector('[data-kb-doc-view="chunks"]').click();
+  await settle(4);
+  assert.deepEqual([...app.evaluate('window.__revoked')], ['blob:test-1'], '切换视图释放图片 URL');
+
+  document.querySelector('[data-kb-doc-view="preview"]').click();
+  await settle(10);
+  assert.equal(document.querySelector('#kbDocBody img').getAttribute('src'), 'blob:test-2', '重新进入预览重新拉取并创建 URL');
+
+  // 打开另一篇文档：先释放上一篇的 URL。
+  await openDoc(app, DOC('doc-pdf'));
+  assert.deepEqual([...app.evaluate('window.__revoked')], ['blob:test-1', 'blob:test-2']);
+
+  document.querySelector('[data-kb-doc-view="preview"]').click();
+  await settle(10);
+  assert.ok(document.querySelector('#kbDocBody iframe.kb-preview-frame'));
+
+  document.dispatchEvent(new app.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  await settle(2);
+  assert.deepEqual([...app.evaluate('window.__revoked')], ['blob:test-1', 'blob:test-2', 'blob:test-3'], '关闭抽屉释放 PDF URL');
+});
+
+test('设置加载乱序：晚到的旧 /settings 不覆盖新的连接状态', async (t) => {
+  let releaseOld = () => {};
+  const gate = new Promise((resolve) => { releaseOld = resolve; });
+  let settingsCalls = 0;
+  const app = await openKnowledge(t, ROUTES([
+    { method: 'GET', path: '/api/knowledge/settings', body: async () => {
+      settingsCalls += 1;
+      if (settingsCalls === 1) {
+        await gate;
+        return settingsFixture({ connections: [{ id: CONN_A, name: '旧连接', url: 'http://old.example', tokenConfigured: true, enabled: true }] });
+      }
+      return settingsFixture({ connections: [{ id: CONN_B, name: '新连接', url: 'http://new.example', tokenConfigured: true, enabled: true }] });
+    } },
+  ]));
+  const { document } = app;
+
+  // 首次 settings 仍挂起时点击刷新，触发第二次（新连接）并先完成。
+  document.querySelector('#kbRefreshBtn').click();
+  await settle(10);
+  releaseOld();
+  await settle(10);
+
+  document.querySelector('[data-kb-tab="settings"]').click();
+  await settle(4);
+  const text = document.querySelector('#kbTabBody').textContent;
+  assert.match(text, /新连接/, '新设置的连接生效');
+  assert.doesNotMatch(text, /旧连接/, '晚到的旧设置被丢弃');
+});
+
+test('在途预览：切出预览后晚到的 Blob 不再创建 objectURL', async (t) => {
+  let releasePreview = () => {};
+  const gate = new Promise((resolve) => { releasePreview = resolve; });
+  const app = await openKnowledge(t, ROUTES([
+    { method: 'GET', path: docRoute('doc-2', '/preview'), body: async () => {
+      await gate;
+      return { status: 200, headers: { 'content-type': 'image/png' }, body: 'PNG' };
+    } },
+    { method: 'GET', path: docRoute('doc-2'), body: { title: '架构图', type: 'file', parse_status: 'completed' } },
+  ]));
+  const { document } = app;
+  app.evaluate('window.__created = 0; window.URL.createObjectURL = () => { window.__created += 1; return "blob:test-" + window.__created; };');
+
+  await openDoc(app, DOC('doc-2'));
+  document.querySelector('[data-kb-doc-view="preview"]').click();
+  await settle(4);
+  document.querySelector('[data-kb-doc-view="chunks"]').click();
+  await settle(4);
+  releasePreview();
+  await settle(10);
+
+  assert.equal(app.evaluate('window.__created'), 0, '离开预览后不再创建 objectURL');
+  assert.equal(document.querySelector('.kb-preview-img'), null);
+});
+
+test('未知连接：不生成账号与控制台链接，也不误用其它连接', async (t) => {
+  const app = await openKnowledge(t, ROUTES([
+    { method: 'GET', path: '/api/knowledge/sources', body: [
+      { id: 'ghost::kb-x', name: '幽灵库', allowed: true, doc_count: 1 },
+      { id: SRC_A, name: '研发手册', allowed: true, doc_count: 1 },
+    ] },
+  ]));
+  const { document } = app;
+
+  document.querySelector('[data-kb-pick="ghost::kb-x"]').click();
+  await settle(10);
+  const text = document.querySelector('#kbTabBody').textContent;
+  const links = [...document.querySelectorAll('#kbTabBody a')].map((a) => a.textContent);
+  assert.equal(links.some((label) => label.includes('高级配置')), false, '未知连接不生成控制台链接');
+  assert.doesNotMatch(text, /登录邮箱/, '未知连接不展示其它连接的账号');
+});
+
+test('legacy 能力接口 404 后：预览 503 只禁用预览，不连带禁用下载与写入', async (t) => {
+  const app = await openKnowledge(t, ROUTES([
+    { method: 'GET', path: /^\/api\/knowledge\/connections\/conn-a\/capabilities$/, status: 404, body: { error: 'not found' } },
+    { method: 'GET', path: docRoute('doc-1', '/preview'), status: 503, body: { error: '无预览权限', message: '无预览权限', code: 'capability_unavailable', capability: 'preview', reason: 'API Key 不允许预览' } },
+  ]));
+  const { document } = app;
+
+  await openDoc(app, DOC('doc-1'));
+  const previewTab = () => document.querySelector('#kbDrawer [data-kb-doc-view="preview"]');
+  assert.ok(previewTab(), 'legacy 连接先乐观展示预览入口');
+
+  previewTab().click();
+  await settle(10);
+
+  assert.equal(previewTab(), null, '503 后仅预览入口被禁用');
+  const download = [...document.querySelectorAll('#kbDrawer a')].find((a) => a.textContent === '下载');
+  assert.ok(download, '下载不受端点级预览拒绝影响');
+  assert.ok(document.querySelector('#kbDrawer [data-kb-doc-view="chunks"]'), '未显式拒绝的分块读取不被连带禁用');
+});
+
+test('普通抽屉降级：错误不带 connectionId 时不记到上一个文档连接', async (t) => {
+  const app = await openKnowledge(t, ROUTES([
+    { method: 'POST', path: /^\/api\/knowledge\/sources\/[^/]+\/url/, status: 503, body: { error: '缺少写入权限', message: '缺少写入权限', code: 'capability_unavailable', capability: 'doc_write', reason: '无权限' } },
+  ]));
+  const { document } = app;
+
+  await openDoc(app, DOC('doc-1'));
+  document.querySelector('#kbDrawer [data-kb-drawer-close]').click();
+  await settle(4);
+
+  document.querySelector(`[data-kb-pick="${SRC_B}"]`).click();
+  await settle(10);
+  document.querySelector('#kbImportDocBtn').click();
+  await settle(4);
+  const drawer = document.querySelector('#kbDrawer');
+  drawer.querySelector('[data-kb-import-mode="url"]').click();
+  drawer.querySelector('#kbImportUrl').value = 'https://example.com/a';
+  drawer.querySelector('#kbImportUrlBtn').click();
+  await settle(10);
+
+  assert.equal(document.querySelector('#kbImportDocBtn').disabled, true, '降级落在当前操作的 B 连接');
+});
+
+test('端点级能力：preview 显式 unknown 时不回退聚合，只禁用预览', async (t) => {
+  const app = await openKnowledge(t, ROUTES([
+    { method: 'GET', path: /^\/api\/knowledge\/connections\/conn-a\/capabilities$/, body: capabilities({ preview: 'unknown', download: 'available', preview_download: 'available' }) },
+  ]));
+  const { document } = app;
+
+  await openDoc(app, DOC('doc-1'));
+  assert.equal(
+    document.querySelector('#kbDrawer [data-kb-doc-view="preview"]'),
+    null,
+    '端点键存在且为 unknown 时，不得被聚合 available 覆盖'
+  );
+  const download = [...document.querySelectorAll('#kbDrawer a')].find((el) => el.textContent === '下载');
+  assert.ok(download, '下载端点可用时下载入口保留');
+  assert.equal(callsTo(app, 'GET', DOC_PATH('doc-1') + '/preview').length, 0, '被禁用的预览不发起请求');
+});
+
+test('端点级能力：旧后端未返回端点键时回退聚合 preview_download', async (t) => {
+  const app = await openKnowledge(t, ROUTES([
+    {
+      method: 'GET',
+      path: /^\/api\/knowledge\/connections\/conn-a\/capabilities$/,
+      body: {
+        checkedAt: '2026-11-20T10:00:00Z',
+        capabilities: {
+          kb_manage: 'available',
+          doc_write: 'available',
+          chunk_read: 'available',
+          preview_download: 'available',
+          reparse: 'available'
+        }
+      }
+    },
+  ]));
+  const { document } = app;
+
+  await openDoc(app, DOC('doc-1'));
+  assert.ok(
+    document.querySelector('#kbDrawer [data-kb-doc-view="preview"]'),
+    '端点键缺失（旧后端）时按聚合结论放行预览'
+  );
+  const download = [...document.querySelectorAll('#kbDrawer a')].find((el) => el.textContent === '下载');
+  assert.ok(download, '端点键缺失时按聚合结论放行下载');
+});
+
+test('在途 503 无 connectionId：按请求发起连接降级，不污染随后打开的 B 连接抽屉', async (t) => {
+  let releaseDelete;
+  const deleteGate = new Promise((resolve) => { releaseDelete = resolve; });
+  const app = await openKnowledge(t, ROUTES());
+  app.router.route('DELETE', /\/api\/knowledge\/documents\/.*doc-1/, async () => {
+    await deleteGate;
+    return {
+      status: 503,
+      body: {
+        error: '文档写入不可用',
+        message: '文档写入不可用',
+        code: 'capability_unavailable',
+        capability: 'doc_write'
+      }
+    };
+  });
+  const { document } = app;
+
+  // 发起 A 连接上的删除文档请求，令其挂起。
+  document.querySelector(`[data-kb-delete-doc="${DOC('doc-1')}"]`).click();
+  await settle(4);
+  document.querySelector('#confirmOkBtn').click();
+  await settle(4);
+  assert.equal(callsTo(app, 'DELETE', '/documents/').length, 1, '删除请求已发出并挂起');
+
+  // 请求在途时切到 B 并打开 B 的导入抽屉，登记 B 为当前操作连接。
+  document.querySelector(`[data-kb-pick="${SRC_B}"]`).click();
+  await settle(10);
+  document.querySelector('#kbImportDocBtn').click();
+  await settle(6);
+  assert.ok(document.querySelector('#kbImportUploadBtn'));
+
+  // A 的 503 响应此刻才到且不带 connectionId：必须记到 A，不得禁用 B 的文档写入。
+  releaseDelete();
+  await settle(12);
+  assert.equal(document.querySelector('#kbImportUploadBtn').disabled, false, 'B 的 doc_write 不受 A 的 503 影响');
+  assert.match(lastToast(app).m, /文档写入不可用/);
+
+  // 回到 A：文档写入能力已降级，行内删除按钮被禁用。
+  document.querySelector('#kbDrawer [data-kb-drawer-close]').click();
+  await settle(2);
+  document.querySelector(`[data-kb-pick="${SRC_A}"]`).click();
+  await settle(10);
+  const deleteBtn = document.querySelector(`[data-kb-delete-doc="${DOC('doc-1')}"]`);
+  assert.equal(deleteBtn.disabled, true, '503 被记到请求发起连接 A');
+  const badge = [...document.querySelectorAll('.kb-cap-bar .hui-badge')].find((el) => el.textContent === '文档写入');
+  assert.equal(badge.getAttribute('data-tone'), 'error');
+});
+
+test('在途预览 503 无 connectionId：切走后仍按发起连接降级，不污染 B 连接', async (t) => {
+  let releasePreview;
+  const previewGate = new Promise((resolve) => { releasePreview = resolve; });
+  const app = await openKnowledge(t, ROUTES());
+  app.router.route('GET', /\/api\/knowledge\/documents\/.*doc-1\/preview/, async () => {
+    await previewGate;
+    return {
+      status: 503,
+      body: {
+        error: '预览下载不可用',
+        message: '预览下载不可用',
+        code: 'capability_unavailable',
+        capability: 'preview_download'
+      }
+    };
+  });
+  const { document } = app;
+
+  await openDoc(app, DOC('doc-1'));
+  document.querySelector('#kbDrawer [data-kb-doc-view="preview"]').click();
+  await settle(6);
+  assert.equal(callsTo(app, 'GET', '/preview').length, 1, '预览请求已发出并挂起');
+
+  // 请求在途时关闭抽屉并切到 B，随后打开 B 的导入抽屉。
+  document.querySelector('#kbDrawer [data-kb-drawer-close]').click();
+  await settle(2);
+  document.querySelector(`[data-kb-pick="${SRC_B}"]`).click();
+  await settle(10);
+  document.querySelector('#kbImportDocBtn').click();
+  await settle(6);
+
+  releasePreview();
+  await settle(12);
+  assert.equal(document.querySelector('#kbImportUploadBtn').disabled, false, 'B 的 doc_write 不受 A 预览 503 影响');
+
+  // 回到 A：预览下载能力已按发起连接降级。
+  document.querySelector('#kbDrawer [data-kb-drawer-close]').click();
+  await settle(2);
+  document.querySelector(`[data-kb-pick="${SRC_A}"]`).click();
+  await settle(10);
+  const badge = [...document.querySelectorAll('.kb-cap-bar .hui-badge')].find((el) => el.textContent === '预览下载');
+  assert.equal(badge.getAttribute('data-tone'), 'error', 'A 的 preview_download 被降级');
 });

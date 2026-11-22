@@ -415,5 +415,10 @@ Object.assign(window.LF_I18N_EN, {
   "管理团队知识库、检索调试与 SOP 知识沉淀；当前引擎：": "Manage team knowledge bases, debug retrieval, and distill SOP knowledge; current engine: ",
   "确定删除知识库": "Delete knowledge base",
   "确定删除": "Delete",
-  "确定移除": "Remove"
+  "确定移除": "Remove",
+  "未启用": "Disabled",
+  "默认连接": "Default connection",
+  "所有已配置连接均未启用，Agent 检索暂不可用；仍可在此管理知识库与文档，启用连接后即可恢复检索。": "All configured connections are disabled, so agent retrieval is unavailable. You can still manage knowledge bases and documents here; enable a connection to restore retrieval.",
+  "当前没有已启用的连接，知识库列表需启用连接后加载；下方仍可新建并管理知识库。": "No connection is enabled, so the knowledge base list cannot load until one is enabled; you can still create and manage knowledge bases below.",
+  "当前没有已启用的连接，检索调试需先在「接入配置与用量」启用连接。": "No connection is enabled; enable one under \"Access configuration & usage\" before debugging retrieval."
 });

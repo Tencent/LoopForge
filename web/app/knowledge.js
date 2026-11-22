@@ -21,7 +21,7 @@
     drawerTriggerEl: null
   };
 
-  // 连接级五项管理能力：库管理 / 文档写入 / 分块读取 / 预览下载 / 重解析。
+  // 连接级管理能力徽标：库管理 / 文档写入 / 分块读取 / 预览下载 / 重解析。
   const KB_CAPABILITIES = [
     { key: 'kb_manage', label: '库管理' },
     { key: 'doc_write', label: '文档写入' },
@@ -29,6 +29,11 @@
     { key: 'preview_download', label: '预览下载' },
     { key: 'reparse', label: '重解析' }
   ];
+  // 后端还会独立探测 preview / download 两个端点权限，徽标不展示它们，
+  // 但门禁必须记录：某一端点被拒时只禁用该动作，不影响另一个。
+  const KB_ENDPOINT_CAPABILITIES = ['preview', 'download'];
+  const KB_ALL_CAPABILITY_KEYS = KB_CAPABILITIES.map(c => c.key).concat(KB_ENDPOINT_CAPABILITIES);
+  const KB_ENDPOINT_FALLBACK = { preview: 'preview_download', download: 'preview_download' };
   // 管理类审计动作（tool 前缀 admin:）的可读名称，非管理类工具原样展示。
   const KB_ADMIN_ACTION_LABELS = {
     'admin:kb.create': '创建知识库',
@@ -56,6 +61,9 @@
   const kbCapabilityReasons = {};
   const kbCapabilityFetching = {};
   const kbCapabilityProbed = {};
+  // 后端本次探测实际返回了哪些能力键：只有键缺失（旧后端）才允许回退到
+  // 聚合 preview_download；键存在但状态为 unknown 时不得回退。
+  const kbCapabilityPresent = {};
   let kbRenderTimer = 0;
 
   // 文档详情抽屉状态：分段视图、分块分页、预览 blob 与手工文档编辑。
@@ -142,6 +150,28 @@
     return Array.isArray(conns) ? conns : [];
   }
 
+  // 已配置连接：有服务地址且凭据已配置（或连接本身启用）即可管理。
+  // enabled=false 只关闭 Agent 检索，不关闭人用管理面。
+  function kbConfiguredConnections() {
+    const conns = kbConnections();
+    if (conns.length) {
+      return conns.filter(c => c && String(c.url || '').trim() && (c.tokenConfigured || c.enabled !== false));
+    }
+    const s = kbState.settings || {};
+    if (String(s.url || '').trim() && s.tokenConfigured) {
+      return [{ id: 'default', name: '默认连接', url: s.url, tokenConfigured: true, enabled: !!s.ready }];
+    }
+    return [];
+  }
+
+  function kbHasConfiguredConnections() {
+    return kbConfiguredConnections().length > 0;
+  }
+
+  function kbDisabledNoticeHTML() {
+    return `<div class="kb-panel kb-notice" style="margin-bottom:12px"><p class="kb-muted">所有已配置连接均未启用，Agent 检索暂不可用；仍可在此管理知识库与文档，启用连接后即可恢复检索。</p></div>`;
+  }
+
   function stripScopedId(id) {
     const raw = String(id || '');
     const idx = raw.indexOf('::');
@@ -184,14 +214,34 @@
   }
 
   function kbCapabilityReason(connId, cap) {
-    return kbCapabilityReasons[connId + '|' + cap] || '';
+    const reason = kbCapabilityReasons[connId + '|' + cap];
+    if (reason) return reason;
+    const fallback = KB_ENDPOINT_FALLBACK[cap];
+    return fallback ? (kbCapabilityReasons[connId + '|' + fallback] || '') : '';
+  }
+
+  function kbCapabilityKeyPresent(connId, cap) {
+    const present = kbCapabilityPresent[connId];
+    return !!(present && present[cap]);
   }
 
   // 能力门禁：未探测或后端未提供能力接口时沿用旧行为（乐观放行），
-  // 后端明确声明不足或返回 503 后才禁用对应写操作。
+  // 后端明确声明不足或返回 503 后才禁用对应写操作。端点级能力键缺失
+  // （旧后端）时回退到聚合 preview_download；键存在但为 unknown 时
+  // 它是后端的明确结论，不能再被聚合结果覆盖。
   function kbCapabilityAllowed(connId, cap) {
     if (kbCapabilityProbed[connId] !== 'ok') return true;
-    return kbCapabilityState(connId, cap) === 'available';
+    const state = kbCapabilityState(connId, cap);
+    if (state === 'available') return true;
+    // 键存在即后端的明确结论：unknown / unavailable 都不放行。
+    if (kbCapabilityKeyPresent(connId, cap)) return false;
+    // 键缺失：能力接口 404 的旧后端，或 404 后由 503 局部降级过的连接。
+    // 端点键缺失时先看聚合键；连聚合也不存在才回退到旧的乐观放行语义。
+    const fallback = KB_ENDPOINT_FALLBACK[cap];
+    if (fallback && kbCapabilityKeyPresent(connId, fallback)) {
+      return kbCapabilityState(connId, fallback) === 'available';
+    }
+    return true;
   }
 
   function kbCapabilityTone(status) {
@@ -202,20 +252,40 @@
 
   function markCapabilityUnavailable(connId, cap, reason) {
     if (!cap) return;
-    kbCapabilityProbed[connId || ''] = 'ok';
-    kbCapabilitiesFor(connId)[cap] = 'unavailable';
-    if (reason) kbCapabilityReasons[connId + '|' + cap] = reason;
+    const cid = connId || '';
+    kbCapabilityProbed[cid] = 'ok';
+    kbCapabilitiesFor(cid)[cap] = 'unavailable';
+    kbCapabilityPresent[cid] = kbCapabilityPresent[cid] || {};
+    kbCapabilityPresent[cid][cap] = true;
+    if (reason) kbCapabilityReasons[cid + '|' + cap] = reason;
+    // 端点被实时拒绝后同步重算聚合结论：两个端点都不可用时聚合也必须
+    // 不可用，避免徽标仍显示「可用」；只缺一个时聚合保持可用，让另一个
+    // 动作继续工作。
+    if (cap === 'preview' || cap === 'download') {
+      const other = cap === 'preview' ? 'download' : 'preview';
+      if (kbCapabilityState(cid, other) === 'unavailable') {
+        kbCapabilitiesFor(cid).preview_download = 'unavailable';
+        kbCapabilityPresent[cid].preview_download = true;
+        if (reason) kbCapabilityReasons[cid + '|preview_download'] = reason;
+      }
+    }
   }
 
   function kbNormalizeCapabilities(raw, connId) {
     const out = {};
+    const cid = connId || '';
+    // 每次全量归一化先清掉旧 reason，避免后端本次未返回原因时残留上一次的失效说明。
+    KB_ALL_CAPABILITY_KEYS.forEach(key => { delete kbCapabilityReasons[cid + '|' + key]; });
     if (!raw || typeof raw !== 'object') {
-      KB_CAPABILITIES.forEach(c => { out[c.key] = 'unknown'; });
+      kbCapabilityPresent[cid] = {};
+      KB_ALL_CAPABILITY_KEYS.forEach(key => { out[key] = 'unknown'; });
       return out;
     }
     const src = raw.capabilities && typeof raw.capabilities === 'object' ? raw.capabilities : raw;
-    KB_CAPABILITIES.forEach(c => {
-      const v = src[c.key];
+    const present = {};
+    KB_ALL_CAPABILITY_KEYS.forEach(key => {
+      const v = src[key];
+      if (v !== undefined && v !== null) present[key] = true;
       let status = 'unknown';
       let reason = '';
       if (typeof v === 'string') status = v;
@@ -224,16 +294,17 @@
         reason = v.reason || v.message || '';
       }
       if (['available', 'unavailable', 'unknown'].indexOf(status) < 0) status = 'unknown';
-      out[c.key] = status;
-      if (reason) kbCapabilityReasons[connId + '|' + c.key] = reason;
+      out[key] = status;
+      if (reason) kbCapabilityReasons[cid + '|' + key] = reason;
     });
+    kbCapabilityPresent[cid] = present;
     return out;
   }
 
   function kbHasCapabilityPayload(raw) {
     if (!raw || typeof raw !== 'object') return false;
     if (raw.capabilities && typeof raw.capabilities === 'object') return true;
-    return KB_CAPABILITIES.some(c => raw[c.key] !== undefined);
+    return KB_ALL_CAPABILITY_KEYS.some(key => raw[key] !== undefined);
   }
 
   function kbMergeCapabilities(connId, raw) {
@@ -243,18 +314,33 @@
     return kbState.capabilitiesByConn[cid];
   }
 
+  // 当前抽屉操作的目标连接：普通抽屉（新建/编辑/导入）显式登记，避免降级误记到上一个文档连接。
+  let kbOperationConnId = '';
+
   // 503 capability_unavailable：把对应连接的能力就地降级为不可用，并提示原因。
-  function handleCapabilityError(err) {
-    if (!err || err.code !== 'capability_unavailable') return false;
-    markCapabilityUnavailable(err.connectionId || kbState.connectionFilter || '', err.capability, err.reason || err.message);
+  // 仅当 HTTP 503 + 错误码 + 合法能力键同时成立时才降级，避免上游普通错误误禁用管理面。
+  function handleCapabilityError(err, fallbackConnId) {
+    if (!err || err.code !== 'capability_unavailable' || err.httpStatus !== 503) return false;
+    if (!KB_ALL_CAPABILITY_KEYS.includes(err.capability)) return false;
+    const drawer = document.getElementById('kbDrawer');
+    const docDrawerOpen = !!(drawer && !drawer.hidden && kbDocView.docId);
+    // 优先使用请求发起时捕获的连接，避免在途请求跨越抽屉生命周期后误记到另一个连接。
+    const connId = err.connectionId
+      || fallbackConnId
+      || (docDrawerOpen ? kbDocView.connId : '')
+      || kbOperationConnId
+      || kbState.connectionFilter
+      || '';
+    markCapabilityUnavailable(connId, err.capability, err.reason || err.message);
     kbToast((err.message || '当前连接缺少该操作所需权限') + (err.reason ? '：' + err.reason : ''), true);
+    if (docDrawerOpen) renderKBDocBody();
     scheduleKBRender();
     return true;
   }
 
-  function kbToastError(err) {
+  function kbToastError(err, fallbackConnId) {
     if (!err) return;
-    if (handleCapabilityError(err)) return;
+    if (handleCapabilityError(err, fallbackConnId)) return;
     kbToast(err.message, true);
   }
 
@@ -284,8 +370,9 @@
       if (err.notFound) {
         // 能力探测路由尚未合入：标记为 legacy，徽标展示「未知」且不重复请求。
         kbState.capabilitiesByConn[connId] = {};
+        kbCapabilityPresent[connId] = {};
         kbCapabilityProbed[connId] = 'legacy';
-      } else if (!handleCapabilityError(err)) {
+      } else if (!handleCapabilityError(err, connId)) {
         kbCapabilityProbed[connId] = 'unknown';
       }
     } finally {
@@ -325,7 +412,7 @@
       kbToast(ok ? '连接探测完成' : (res.error || '连接不可用'), !ok);
       scheduleKBRender();
     } catch (err) {
-      kbToastError(err);
+      kbToastError(err, connId);
       scheduleKBRender();
     } finally {
       if (button) button.disabled = false;
@@ -342,9 +429,10 @@
     const idx = String(sourceId || '').indexOf('::');
     if (idx > 0) {
       const cid = sourceId.slice(0, idx);
-      return conns.find(c => c.id === cid) || conns[0];
+      // 未知连接前缀必须安全失败，绝不回退到第一个连接（避免跨实例误操作）。
+      return conns.find(c => c.id === cid) || null;
     }
-    return conns[0];
+    return conns.length === 1 ? conns[0] : null;
   }
 
   function resolveWeKnoraConsoleURL(s, conn) {
@@ -374,7 +462,10 @@
     const scrim = document.getElementById('kbDrawerScrim');
     if (!drawer) return;
     kbReleasePreviewURL();
+    kbCancelDocPreview();
     kbDocView.docId = '';
+    kbDocView.connId = '';
+    kbOperationConnId = '';
     kbDocView.detail = null;
     kbDocView.chunks = null;
     kbDocView.preview = null;
@@ -425,15 +516,24 @@
     if (first && typeof first.focus === 'function') first.focus();
   }
 
+  // 整页加载与文档列表各自维护单调序号：晚到的旧响应直接丢弃，避免 A 库内容覆盖 B 库。
+  let kbViewEpoch = 0;
+  let kbDocsEpoch = 0;
+
   async function loadKnowledgeView() {
     const root = document.getElementById('knowledgeRoot');
     if (!root) return;
+    const epoch = ++kbViewEpoch;
     kbState.loading = true;
     renderKnowledgeShell();
     try {
       const pid = encodeURIComponent(kbProjectId());
-      kbState.settings = await kbAPI('/api/knowledge/settings');
-      if (kbState.settings.ready) {
+      const settings = await kbAPI('/api/knowledge/settings');
+      if (epoch !== kbViewEpoch) return;
+      kbState.settings = settings;
+      // Agent 检索开关（ready）不等于人用管理面开关：只要存在已配置连接就保留管理入口。
+      const canBrowse = !!kbState.settings.ready || kbHasConfiguredConnections();
+      if (canBrowse) {
         const sourcesPath = '/api/knowledge/sources?projectId=' + pid
           + (kbState.connectionFilter ? '&connectionId=' + encodeURIComponent(kbState.connectionFilter) : '');
         const [sources, usage, candidates, submissions] = await Promise.all([
@@ -442,6 +542,7 @@
           kbAPI('/api/knowledge/candidates?projectId=' + pid).catch(() => []),
           kbAPI('/api/knowledge/submissions?projectId=' + pid).catch(() => [])
         ]);
+        if (epoch !== kbViewEpoch) return;
         kbState.sources = Array.isArray(sources) ? sources : [];
         kbState.usage = usage;
         kbState.candidates = Array.isArray(candidates) ? candidates : [];
@@ -461,29 +562,40 @@
         }
       }
     } catch (err) {
+      if (epoch !== kbViewEpoch) return;
       kbToast(err.message, true);
     } finally {
-      kbState.loading = false;
-      renderKnowledgeShell();
+      if (epoch === kbViewEpoch) {
+        kbState.loading = false;
+        renderKnowledgeShell();
+      }
     }
   }
 
   async function loadSelectedDocuments() {
-    if (!kbState.selectedSourceId || !isWeKnora()) {
+    const epoch = ++kbDocsEpoch;
+    const sourceId = String(kbState.selectedSourceId || '');
+    if (!sourceId || !isWeKnora()) {
       kbState.docs = null;
       return;
     }
+    // 捕获请求发起时的筛选条件，晚到的旧响应不得覆盖新知识库的列表。
+    const keyword = kbState.docKeyword;
+    const page = kbState.docPage;
     const q = new URLSearchParams({
       projectId: kbProjectId(),
-      keyword: kbState.docKeyword,
-      page: String(kbState.docPage),
+      keyword: keyword,
+      page: String(page),
       pageSize: '20'
     });
-    const connId = resolveExplicitConnectionId(kbState.selectedSourceId);
+    const connId = resolveExplicitConnectionId(sourceId);
     if (connId) q.set('connectionId', connId);
     try {
-      kbState.docs = await kbAPI(`/api/knowledge/sources/${encodeURIComponent(kbState.selectedSourceId)}/documents?${q.toString()}`);
+      const res = await kbAPI(`/api/knowledge/sources/${encodeURIComponent(sourceId)}/documents?${q.toString()}`);
+      if (epoch !== kbDocsEpoch) return;
+      kbState.docs = res;
     } catch (err) {
+      if (epoch !== kbDocsEpoch) return;
       kbState.docs = { error: err.message, documents: [], total: 0 };
     }
   }
@@ -528,7 +640,7 @@
       <div id="kbStatusBar" class="kb-muted" role="status" style="margin-bottom:10px"></div>
 
       <div class="kb-metrics">
-        <div class="kb-metric"><span class="kb-metric-label">接入状态</span><span class="kb-metric-val">${s.ready ? '已连接' : '待配置'}</span></div>
+        <div class="kb-metric"><span class="kb-metric-label">接入状态</span><span class="kb-metric-val">${s.ready ? '已连接' : (kbHasConfiguredConnections() ? '未启用' : '待配置')}</span></div>
         <div class="kb-metric"><span class="kb-metric-label">项目可用知识库（已授权 / 总数）</span><span class="kb-metric-val">${allowedCount} / ${kbState.sources.length}</span></div>
         <div class="kb-metric"><span class="kb-metric-label">待审核沉淀</span><span class="kb-metric-val">${pendingSubs}</span></div>
         <div class="kb-metric"><span class="kb-metric-label">已启用角色</span><span class="kb-metric-val">${kbState.usage?.agents?.length || 0}</span></div>
@@ -648,6 +760,7 @@
       return;
     }
     const connId = kbActiveConnId() || conns[0].id || '';
+    kbOperationConnId = connId;
     const options = conns.map(c => (
       `<option value="${kbEsc(c.id)}" ${c.id === connId ? 'selected' : ''}>${kbEsc(kbConnLabel(c))}</option>`
     )).join('');
@@ -697,7 +810,10 @@
         note.textContent = `已加载模型：Embedding ${embCount} 个 · KnowledgeQA ${sumCount} 个，可留空使用上游默认。`;
       }
     };
-    connSelect?.addEventListener('change', syncModels);
+    connSelect?.addEventListener('change', () => {
+      kbOperationConnId = String(connSelect.value || '');
+      syncModels();
+    });
     syncModels();
 
     const submit = drawer.querySelector('#kbCreateSubmit');
@@ -729,7 +845,7 @@
         kbToast('知识库已创建');
         await loadKnowledgeView();
       } catch (err) {
-        kbToastError(err);
+        kbToastError(err, cid);
       } finally {
         submit.disabled = false;
       }
@@ -738,12 +854,13 @@
 
   async function openKBEditDrawer(src) {
     const connId = resolveExplicitConnectionId(src.id);
+    kbOperationConnId = connId;
     let detail = null;
     try {
       detail = await kbAPI('/api/knowledge/sources/' + encodeURIComponent(src.id) + '?' + kbConnQuery(connId));
     } catch (err) {
       // 后端详情路由尚未合入时退回列表数据，保存阶段再对 404/405 回退 PUT。
-      if (!err.notFound) { kbToastError(err); return; }
+      if (!err.notFound) { kbToastError(err, connId); return; }
     }
     const name = String((detail && (detail.name || detail.title)) || cleanSourceName(src.name || src.id));
     const description = String((detail && detail.description) || '');
@@ -782,7 +899,7 @@
         kbToast('知识库已更新');
         await loadKnowledgeView();
       } catch (err) {
-        kbToastError(err);
+        kbToastError(err, connId);
       } finally {
         submit.disabled = false;
       }
@@ -812,7 +929,7 @@
       kbToast('知识库已删除');
       await loadKnowledgeView();
     } catch (err) {
-      kbToastError(err);
+      kbToastError(err, connId);
     }
   }
 
@@ -838,7 +955,7 @@
       await loadSelectedDocuments();
       renderKnowledgeShell();
     } catch (err) {
-      kbToastError(err);
+      kbToastError(err, connId);
     }
   }
 
@@ -854,12 +971,13 @@
       await loadSelectedDocuments();
       renderKnowledgeShell();
     } catch (err) {
-      kbToastError(err);
+      kbToastError(err, connId);
     }
   }
 
   function openKBImportDrawer(src) {
     const connId = resolveExplicitConnectionId(src.id);
+    kbOperationConnId = connId;
     if (!kbCapabilityAllowed(connId, 'doc_write')) {
       kbToast(kbCapabilityReason(connId, 'doc_write') || '当前连接缺少文档写入能力', true);
       return;
@@ -945,7 +1063,7 @@
         } catch (err) {
           failed.push(file.name);
           if (err.code === 'capability_unavailable') {
-            handleCapabilityError(err);
+            handleCapabilityError(err, connId);
             break;
           }
         }
@@ -982,7 +1100,7 @@
         await loadSelectedDocuments();
         renderKnowledgeShell();
       } catch (err) {
-        kbToastError(err);
+        kbToastError(err, connId);
         setStatus(err.message, true);
       } finally {
         urlBtn.disabled = false;
@@ -1011,7 +1129,7 @@
         await loadSelectedDocuments();
         renderKnowledgeShell();
       } catch (err) {
-        kbToastError(err);
+        kbToastError(err, connId);
         setStatus(err.message, true);
       } finally {
         manualBtn.disabled = false;
@@ -1037,9 +1155,19 @@
   }
 
   function kbReleasePreviewURL() {
-    if (!kbDocView.objectUrl) return;
-    try { URL.revokeObjectURL(kbDocView.objectUrl); } catch {}
-    kbDocView.objectUrl = '';
+    if (kbDocView.objectUrl) {
+      try { URL.revokeObjectURL(kbDocView.objectUrl); } catch {}
+      kbDocView.objectUrl = '';
+    }
+    // URL 释放后同步丢弃引用该 blob 的预览态，避免切回预览时渲染已失效地址。
+    if (kbDocView.preview && kbDocView.preview.url) kbDocView.preview = null;
+  }
+
+  // 预览请求代际：切出预览、重开文档、关闭抽屉都会使在途响应失效，避免越生命周期回写 blob。
+  let kbPreviewEpoch = 0;
+  function kbCancelDocPreview() {
+    kbPreviewEpoch += 1;
+    kbDocView.previewLoading = false;
   }
 
   function kbPreviewKind(contentType) {
@@ -1060,6 +1188,8 @@
     if (!id) return;
     const connId = resolveExplicitConnectionId(id) || kbActiveConnId();
     kbReleasePreviewURL();
+    kbCancelDocPreview();
+    kbOperationConnId = '';
     Object.assign(kbDocView, {
       docId: id,
       connId: connId,
@@ -1090,7 +1220,7 @@
       kbDocView.view = 'edit';
     } else if (kbCapabilityAllowed(connId, 'chunk_read')) {
       kbDocView.view = 'chunks';
-    } else if (kbCapabilityAllowed(connId, 'preview_download')) {
+    } else if (kbCapabilityAllowed(connId, 'preview')) {
       kbDocView.view = 'preview';
     } else {
       kbDocView.view = canEdit ? 'edit' : 'chunks';
@@ -1103,16 +1233,20 @@
   async function kbLoadDocDetail() {
     const id = kbDocView.docId;
     if (!id) return;
+    // 捕获请求发起时的连接：响应到达时抽屉可能已切到别的文档/连接。
+    const connId = kbDocView.connId;
     try {
-      const detail = await kbAPI('/api/knowledge/documents/' + encodeURIComponent(id) + '?' + kbConnQuery(kbDocView.connId));
+      const detail = await kbAPI('/api/knowledge/documents/' + encodeURIComponent(id) + '?' + kbConnQuery(connId));
       if (kbDocView.docId !== id) return;
       kbDocView.detail = detail && typeof detail === 'object' && !Array.isArray(detail) ? detail : null;
       const nextTitle = kbDocField(detail, 'title');
       if (nextTitle) kbDocView.title = nextTitle;
     } catch (err) {
+      // 先按请求发起连接完成能力降级，再判断响应是否已过期。
+      const handled = handleCapabilityError(err, connId);
       if (kbDocView.docId !== id) return;
       // 详情路由尚未合入时保持抽屉可用，分块阶段再回退旧版接口。
-      if (!handleCapabilityError(err) && !err.notFound) kbToastError(err);
+      if (!handled && !err.notFound) kbToastError(err, connId);
       kbDocView.detailMissing = true;
     }
   }
@@ -1121,7 +1255,7 @@
     if (!kbDocView.docId || kbDocView.docLoading) return;
     const connId = kbDocView.connId;
     if (kbDocView.view === 'preview') {
-      if (kbCapabilityAllowed(connId, 'preview_download') && !kbDocView.preview && !kbDocView.previewLoading && !kbDocView.previewError) {
+      if (kbCapabilityAllowed(connId, 'preview') && !kbDocView.preview && !kbDocView.previewLoading && !kbDocView.previewError) {
         kbLoadDocPreview();
       }
       return;
@@ -1138,13 +1272,14 @@
   async function kbLoadDocChunks(page) {
     const id = kbDocView.docId;
     if (!id) return;
+    const connId = kbDocView.connId;
     kbDocView.chunkPage = Math.max(1, Number(page) || 1);
     kbDocView.chunkLoading = true;
     kbDocView.chunkError = '';
     kbDocView.chunkLegacy = false;
     renderKBDocBody();
     try {
-      const q = kbConnQuery(kbDocView.connId, { page: kbDocView.chunkPage, pageSize: kbDocView.chunkPageSize });
+      const q = kbConnQuery(connId, { page: kbDocView.chunkPage, pageSize: kbDocView.chunkPageSize });
       const res = await kbAPI('/api/knowledge/documents/' + encodeURIComponent(id) + '/chunks?' + q);
       if (kbDocView.docId !== id) return;
       const chunks = Array.isArray(res) ? res : (Array.isArray(res && res.chunks) ? res.chunks : []);
@@ -1156,12 +1291,14 @@
         paginated: !Array.isArray(res)
       };
     } catch (err) {
-      if (kbDocView.docId !== id) return;
       if (err.notFound) {
+        if (kbDocView.docId !== id) return;
         await kbLoadLegacyDocChunks(id);
       } else {
+        // 先按请求发起连接降级，再丢弃过期响应对当前抽屉的写入。
+        handleCapabilityError(err, connId);
+        if (kbDocView.docId !== id) return;
         kbDocView.chunkError = err.message;
-        handleCapabilityError(err);
       }
     } finally {
       if (kbDocView.docId === id) {
@@ -1198,13 +1335,17 @@
   async function kbLoadDocPreview() {
     const id = kbDocView.docId;
     if (!id || kbDocView.previewLoading) return;
+    // 捕获请求发起时的连接：预览在途时抽屉可能已切到另一文档/连接。
+    const connId = kbDocView.connId;
+    const epoch = kbPreviewEpoch;
+    const stale = () => epoch !== kbPreviewEpoch || kbDocView.docId !== id || kbDocView.view !== 'preview';
     kbDocView.previewLoading = true;
     kbDocView.previewError = '';
     kbReleasePreviewURL();
     renderKBDocBody();
     try {
-      const res = await fetch('/api/knowledge/documents/' + encodeURIComponent(id) + '/preview?' + kbConnQuery(kbDocView.connId));
-      if (kbDocView.docId !== id) return;
+      const res = await fetch('/api/knowledge/documents/' + encodeURIComponent(id) + '/preview?' + kbConnQuery(connId));
+      // 不在最前面丢弃过期响应：错误分支仍需按请求发起连接完成能力降级。
       if (!res.ok) {
         const text = await res.text().catch(() => '');
         let data = null;
@@ -1221,26 +1362,30 @@
       const contentType = res.headers.get('content-type') || '';
       const kind = kbPreviewKind(contentType);
       if (kind === 'text') {
-        kbDocView.preview = { kind: kind, text: await res.text() };
+        const text = await res.text();
+        if (stale()) return;
+        kbDocView.preview = { kind: kind, text: text };
       } else if (kind === 'image' || kind === 'pdf') {
         const blob = await res.blob();
-        if (kbDocView.docId !== id) return;
+        if (stale()) return;
         kbReleasePreviewURL();
         kbDocView.objectUrl = URL.createObjectURL(blob);
         kbDocView.preview = { kind: kind, url: kbDocView.objectUrl };
       } else {
+        if (stale()) return;
         kbDocView.preview = { kind: 'binary', contentType: contentType };
       }
     } catch (err) {
-      if (kbDocView.docId !== id) return;
+      // 先按请求发起连接完成能力降级，再判断响应是否对当前抽屉过期。
+      const handled = handleCapabilityError(err, connId);
+      if (stale()) return;
       if (err.notFound || err.httpStatus === 405) {
         kbDocView.previewError = '原文预览接口尚未合入，可先下载原文件查看。';
-      } else {
+      } else if (!handled) {
         kbDocView.previewError = err.message;
-        handleCapabilityError(err);
       }
     } finally {
-      if (kbDocView.docId === id) {
+      if (kbDocView.docId === id && epoch === kbPreviewEpoch) {
         kbDocView.previewLoading = false;
         renderKBDocBody();
       }
@@ -1279,7 +1424,10 @@
   function kbSwitchDocView(view) {
     if (!view || kbDocView.view === view) return;
     kbDocView.view = view;
-    if (view !== 'preview') kbReleasePreviewURL();
+    if (view !== 'preview') {
+      kbCancelDocPreview();
+      kbReleasePreviewURL();
+    }
     renderKBDocBody();
     kbLoadDocView();
   }
@@ -1363,17 +1511,17 @@
     const manual = kbDocIsManual(detail);
     const segs = [];
     if (kbCapabilityAllowed(connId, 'chunk_read')) segs.push({ key: 'chunks', label: '分块' });
-    if (kbCapabilityAllowed(connId, 'preview_download')) segs.push({ key: 'preview', label: '原文预览' });
+    if (kbCapabilityAllowed(connId, 'preview')) segs.push({ key: 'preview', label: '原文预览' });
     if (manual && kbCapabilityAllowed(connId, 'doc_write')) segs.push({ key: 'edit', label: '编辑文档' });
     if (segs.length && !segs.some(s => s.key === kbDocView.view)) {
       kbDocView.view = segs[0].key;
       kbReleasePreviewURL();
     }
 
-    const gate = kbGate(connId, 'preview_download', '预览下载');
+    const downloadGate = kbGate(connId, 'download', '下载');
     const href = '/api/knowledge/documents/' + encodeURIComponent(kbDocView.docId) + '/download?' + kbConnQuery(connId);
-    const downloadHTML = gate.disabled
-      ? `<span class="kb-btn xs" aria-disabled="true" title="${kbEsc(gate.reason)}" style="opacity:.55;cursor:not-allowed">下载</span>`
+    const downloadHTML = downloadGate.disabled
+      ? `<span class="kb-btn xs" aria-disabled="true" title="${kbEsc(downloadGate.reason)}" style="opacity:.55;cursor:not-allowed">下载</span>`
       : `<a class="kb-btn xs" href="${kbEsc(href)}" target="_blank" rel="noopener" download>下载</a>`;
 
     const typeText = kbDocTypeText(detail);
@@ -1457,17 +1605,18 @@
       await loadSelectedDocuments();
       renderKnowledgeShell();
     } catch (err) {
-      kbToastError(err);
+      kbToastError(err, connId);
       if (btn && document.contains(btn)) btn.disabled = false;
     }
   }
 
   function renderSourcesTab(container) {
-    if (!kbState.settings?.ready) {
+    if (!kbHasConfiguredConnections()) {
       container.innerHTML = `<div class="kb-panel"><p class="kb-muted">尚未完成知识库接入配置。请前往「接入配置与用量」填写服务地址与 API Key / Token。</p></div>`;
       return;
     }
     kbEnsureConnectionCapabilities();
+    const notReadyNote = kbState.settings?.ready ? '' : kbDisabledNoticeHTML();
     const activeConnId = kbActiveConnId();
     const activeConn = kbConnections().find(c => c.id === activeConnId) || null;
     const capsHTML = activeConnId
@@ -1488,17 +1637,17 @@
         return `
         <button type="button" class="kb-source-item ${isActive ? 'active' : ''}" data-kb-pick="${kbEsc(src.id)}" aria-current="${isActive ? 'true' : 'false'}">
           <div class="kb-source-top">
-            <span class="kb-source-name">${isActive ? '<span aria-hidden="true">✓</span>' : ''}${kbEsc(displayName)}</span>
+            <span class="kb-source-name">${isActive ? '<span aria-hidden="true">✓</span>' : ''}<span data-i18n-data>${kbEsc(displayName)}</span></span>
             <span class="hui-badge" data-tone="${src.allowed ? 'success' : 'muted'}">${src.allowed ? '已授权' : '未授权'}</span>
           </div>
           <div class="kb-source-meta">
             <span>${src.doc_count || 0} 篇文档</span>
-            ${accountText ? `<span>${kbEsc(accountText)}</span>` : ''}
+            ${accountText ? `<span data-i18n-data>${kbEsc(accountText)}</span>` : ''}
           </div>
         </button>
       `;
       }).join('')
-      : '<p class="kb-muted">暂无上游知识库。</p>';
+      : `<p class="kb-muted">${kbState.settings?.ready ? '暂无上游知识库。' : '当前没有已启用的连接，知识库列表需启用连接后加载；下方仍可新建并管理知识库。'}</p>`;
 
     const selected = kbState.sources.find(s => s.id === kbState.selectedSourceId);
     let rightHTML = '<p class="kb-muted">请从左侧选择一个知识库。</p>';
@@ -1514,7 +1663,7 @@
       const docGate = kbGate(connId, 'doc_write', '文档写入');
       const manageGate = kbGate(connId, 'kb_manage', '库管理');
       const reparseGate = kbGate(connId, 'reparse', '重解析');
-      const downloadGate = kbGate(connId, 'preview_download', '预览下载');
+      const downloadGate = kbGate(connId, 'download', '下载');
       const rows = docs.length ? docs.map(d => {
         const docTitle = d.title || d.file_name || d.id;
         const manualDoc = String(d.type || '').toLowerCase() === 'manual';
@@ -1527,7 +1676,7 @@
           : `<a class="kb-btn xs" href="${kbEsc(downloadHref)}" target="_blank" rel="noopener" download>下载</a>`;
         return `
         <tr>
-          <td>${kbEsc(docTitle)}</td>
+          <td data-i18n-data>${kbEsc(docTitle)}</td>
           <td>${kbEsc(d.file_type || d.type || '-')}</td>
           <td>${parseStatusBadge(d.parse_status, d.error_message)}</td>
           <td class="kb-muted">${kbEsc((d.updated_at || d.created_at || '').slice(0, 19).replace('T', ' '))}</td>
@@ -1544,15 +1693,18 @@
       `;
       }).join('') : `<tr><td colspan="5" class="kb-muted">${kbState.docs?.error ? kbEsc(kbState.docs.error) : '暂无文档'}</td></tr>`;
 
-      const consoleHref = resolveWeKnoraConsoleURL(kbState.settings, resolveConnectionForSource(selected.id));
-      const connAccount = resolveConnectionForSource(selected.id)?.account
-        ? ` · 登录邮箱：${resolveConnectionForSource(selected.id).account}` : '';
+      // 连接列表存在但当前知识库无法解析连接时，不展示可能指向其他实例的控制台入口。
+      const selectedConn = resolveConnectionForSource(selected.id);
+      const consoleHref = (selectedConn || !kbConnections().length)
+        ? resolveWeKnoraConsoleURL(kbState.settings, selectedConn)
+        : '';
+      const connAccount = selectedConn?.account || '';
       const selectedTitle = cleanSourceName(selected.name || selected.id);
       rightHTML = `
         <div class="kb-panel-head">
           <div>
-            <h2>${kbEsc(selectedTitle)}</h2>
-            <span class="kb-muted">共 ${total} 篇文档${kbEsc(connAccount)}</span>
+            <h2 data-i18n-data>${kbEsc(selectedTitle)}</h2>
+            <span class="kb-muted">共 ${total} 篇文档${connAccount ? ` · 登录邮箱：<span data-i18n-data>${kbEsc(connAccount)}</span>` : ''}</span>
           </div>
           <div class="kb-toolbar">
             <button type="button" class="kb-btn primary" id="kbImportDocBtn"${kbGateAttrs(docGate)}>导入文档</button>
@@ -1579,6 +1731,7 @@
     }
 
     container.innerHTML = `
+      ${notReadyNote}
       <div class="kb-grid-2">
         <div class="kb-panel">
           <div class="kb-panel-head">
@@ -1587,7 +1740,7 @@
           ${kbConnFilterHTML()}
           ${capsHTML}
           <div class="kb-toolbar" style="margin-bottom:12px">
-            <button type="button" class="kb-btn primary" id="kbCreateSourceBtn" ${createDenied ? `disabled title="${kbEsc(createReason)}"` : ''}>新建知识库</button>
+            <button type="button" class="kb-btn" id="kbCreateSourceBtn" ${createDenied ? `disabled title="${kbEsc(createReason)}"` : ''}>新建知识库</button>
           </div>
           <div class="kb-source-list">${sourcesHTML}</div>
         </div>
@@ -1643,7 +1796,7 @@
 
     container.querySelectorAll('[data-kb-err-msg]').forEach(btn => {
       btn.addEventListener('click', () => {
-        openKBDrawer('文档解析失败原因', `<pre class="kb-doc-pre">${kbEsc(btn.dataset.kbErrMsg)}</pre>`);
+        openKBDrawer('文档解析失败原因', `<pre class="kb-doc-pre" data-i18n-data>${kbEsc(btn.dataset.kbErrMsg)}</pre>`);
       });
     });
 
@@ -1663,14 +1816,17 @@
 
   function renderSearchTab(container) {
     if (!kbState.settings?.ready) {
-      container.innerHTML = `<div class="kb-panel"><p class="kb-muted">请先完成知识库接入配置。</p></div>`;
+      const hint = kbHasConfiguredConnections()
+        ? '当前没有已启用的连接，检索调试需先在「接入配置与用量」启用连接。'
+        : '请先完成知识库接入配置。';
+      container.innerHTML = `<div class="kb-panel"><p class="kb-muted">${hint}</p></div>`;
       return;
     }
     const allowedSources = kbState.sources.filter(s => s.allowed);
     const checks = allowedSources.map(s => `
       <label class="kb-check-chip">
         <input type="checkbox" name="kbSearchSource" value="${kbEsc(s.id)}" ${kbState.searchSources.includes(s.id) ? 'checked' : ''}>
-        <span>${kbEsc(s.name || s.id)}</span>
+        <span data-i18n-data>${kbEsc(s.name || s.id)}</span>
       </label>
     `).join('');
 
@@ -1681,10 +1837,10 @@
         ${hits.map(h => `
           <div class="kb-hit">
             <div class="kb-hit-head">
-              <span>${kbEsc(h.title || h.path)}</span>
-              <span class="hui-badge" data-tone="muted">${kbEsc(h.source)} · score ${Number(h.score || 0).toFixed(3)}</span>
+              <span data-i18n-data>${kbEsc(h.title || h.path)}</span>
+              <span class="hui-badge" data-tone="muted" data-i18n-data>${kbEsc(h.source)} · score ${Number(h.score || 0).toFixed(3)}</span>
             </div>
-            <p class="kb-hit-snippet">${kbEsc(h.snippet)}</p>
+            <p class="kb-hit-snippet" data-i18n-data>${kbEsc(h.snippet)}</p>
             <div><button type="button" class="kb-btn" data-kb-open-hit-src="${kbEsc(h.source)}" data-kb-open-hit-path="${kbEsc(h.path)}" data-kb-open-hit-title="${kbEsc(h.title || h.path)}">查看原文分块</button></div>
           </div>
         `).join('')}
@@ -1823,7 +1979,7 @@
             <div class="kb-field"><label>写入目标知识库</label><select id="kbSubSource" class="kb-input" ${readonly ? 'disabled' : ''}><option value="">请选择知识库</option>${options}</select></div>
             ${!isWeKnora() ? `<div class="kb-field"><label>相对路径（.md）</label><input id="kbSubPath" class="kb-input" value="${kbEsc(item.path || '')}" ${readonly ? 'readonly' : ''}></div>` : ''}
             <div class="kb-field"><label>Markdown 正文</label><textarea id="kbSubContent" class="kb-input" rows="12" ${readonly ? 'readonly' : ''}>${kbEsc(item.content || '')}</textarea></div>
-            ${item.error ? `<p class="kb-muted" style="color:#dc2626">${kbEsc(item.error)}</p>` : ''}
+            ${item.error ? `<p class="kb-muted" style="color:var(--hui-error)">${kbEsc(item.error)}</p>` : ''}
           `;
           const footHTML = readonly ? '' : `
             <button type="button" class="kb-btn" id="kbSubRejectBtn">驳回</button>
@@ -1876,7 +2032,7 @@
     const sourceChecks = kbState.sources.map(src => `
       <label class="kb-check-chip">
         <input type="checkbox" name="kbProjectScope" value="${kbEsc(src.id)}" ${projectAllowed.includes(src.id) ? 'checked' : ''} ${!s.canManage ? 'disabled' : ''}>
-        <span>${kbEsc(src.name || src.id)}</span>
+        <span data-i18n-data>${kbEsc(src.name || src.id)}</span>
       </label>
     `).join('');
 
@@ -2094,10 +2250,11 @@
         try {
           await kbAPI('/api/knowledge/connections/' + encodeURIComponent(connId), { method: 'DELETE' });
           delete kbState.capabilitiesByConn[connId];
+          delete kbCapabilityPresent[connId];
           delete kbCapabilityProbed[connId];
           kbToast('已移除连接');
           await loadKnowledgeView();
-        } catch (err) { kbToastError(err); }
+        } catch (err) { kbToastError(err, connId); }
       });
     });
 

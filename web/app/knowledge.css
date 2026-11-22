@@ -538,7 +538,7 @@
   width: 100%;
   height: 60vh;
   border: 0;
-  background: #fff;
+  background: var(--hui-surface);
 }
 
 #kbDrawer .kb-pagination {
