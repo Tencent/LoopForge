@@ -1019,14 +1019,16 @@ function bind(){
   $('#settingsSidebarExpand')?.addEventListener('click',()=>{
     cancelSettingsRouteTransition();
     setSettingsSidebarExpanded(true);
-    requestAnimationFrame(()=>{
-      // Wait for the sidebar's descendants to inherit the restored visibility.
-      requestAnimationFrame(()=>{
-        if(settingsSidebarExpanded()&&document.activeElement===document.body){
-          $('#settingsSidebarToggle')?.focus({preventScroll:true});
-        }
-      });
+    // Wait for the sidebar's descendants to inherit the restored visibility; reduced
+    // motion still runs a near-zero visibility transition, so retry for a few frames.
+    let frames=0;
+    const focusToggle=()=>requestAnimationFrame(()=>{
+      if(!settingsSidebarExpanded()||document.activeElement!==document.body)return;
+      const toggle=$('#settingsSidebarToggle');
+      toggle?.focus({preventScroll:true});
+      if(toggle&&document.activeElement!==toggle&&++frames<30)focusToggle();
     });
+    requestAnimationFrame(focusToggle);
   });
   document.addEventListener('click',event=>{
     if(document.body.classList.contains('management-mode')&&event.target instanceof Element&&event.target.closest('.collab-rail-toggle')){
