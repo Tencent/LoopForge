@@ -157,8 +157,14 @@ func CodexRunGitArgv(argv []string, gitEnv map[string]string) []string {
 			}
 		}
 	}
+	// SSH appends one URL rewrite per remote after the HTTPS helper entries.
+	count, _ := strconv.Atoi(gitEnv["GIT_CONFIG_COUNT"])
+	for i := range count {
+		suffix := strconv.Itoa(i)
+		allowed = append(allowed, "GIT_CONFIG_KEY_"+suffix, "GIT_CONFIG_VALUE_"+suffix)
+	}
 	for _, key := range []string{SessionGatewayEnv, GitHostsEnv, "GIT_TERMINAL_PROMPT",
-		"GIT_CONFIG_COUNT", "GIT_CONFIG_KEY_0", "GIT_CONFIG_VALUE_0", "GIT_CONFIG_KEY_1", "GIT_CONFIG_VALUE_1",
+		"GIT_CONFIG_COUNT", "GIT_SSH_COMMAND", "GIT_SSH_VARIANT", "GIT_ALLOW_PROTOCOL",
 		"GIT_CONFIG_SYSTEM", "GIT_CONFIG_NOSYSTEM", "GH_CONFIG_DIR", "GLAB_CONFIG_DIR"} {
 		if _, bound := gitEnv[key]; bound {
 			allowed = append(allowed, key)

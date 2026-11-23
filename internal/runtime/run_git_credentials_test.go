@@ -79,16 +79,30 @@ func TestCodexSOPGitBindingKeepsHelperInToolShell(t *testing.T) {
 	workspace := t.TempDir()
 	sandbox := &localSandbox{workspace: workspace}
 	const token = "fixture-sop-token"
-	credentials := RunCredentials{GitHTTPCredentials: testHTTPSCredentials(token)}
+	credentials := RunCredentials{GitHTTPCredentials: testHTTPSCredentials(token), GitSSHKeys: terminalSSHTestKeys(t)}
+	credentials.GitSSHKeys["git@git.example.org:team/other.git"] = ""
 	command := CommandSpec{
 		Provider: "codex", Argv: withCodexIsolationEnv([]string{"codex", "exec", "prompt"}, map[string]string{
 			"ZDOTDIR": "/fixture/zdot", SessionGatewayEnv: "stale-profile-gateway", GitHostsEnv: "stale-profile-hosts",
 		}),
 		CredentialBindings: []CredentialBinding{BindGit},
 	}
-	withoutGit, err := bindCommand(t.Context(), sandbox, workspace, command, RunCredentials{})
-	if err != nil || !slices.Equal(withoutGit.Argv, command.Argv) {
-		t.Fatalf("Codex policy changed without HTTPS credentials: %v", err)
+	bind := func(cmd CommandSpec, creds RunCredentials) CommandSpec {
+		t.Helper()
+		bound, err := bindCommand(t.Context(), sandbox, workspace, cmd, creds)
+		if err != nil {
+			t.Fatal(err)
+		}
+		stop, err := bindCommandGitTransport(t.Context(), sandbox, workspace, &bound, creds)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(stop)
+		return bound
+	}
+	sshOnly := bind(command, RunCredentials{GitSSHKeys: credentials.GitSSHKeys})
+	if !slices.Equal(sshOnly.Argv, command.Argv) {
+		t.Fatal("Codex policy changed without HTTPS credentials")
 	}
 	prepared, closeRelay, err := prepareRunGitBinding(t.Context(), sandbox, command, credentials)
 	if err != nil {
@@ -96,15 +110,12 @@ func TestCodexSOPGitBindingKeepsHelperInToolShell(t *testing.T) {
 	}
 	defer closeRelay()
 	credentials.GitHTTPHosts = runGitHosts(credentials)
-	bound, err := bindCommand(t.Context(), sandbox, workspace, prepared, credentials)
-	if err != nil {
-		t.Fatal(err)
-	}
+	bound := bind(prepared, credentials)
 	conversation := prepared
 	conversation.CredentialBindings = []CredentialBinding{BindGitWorkspace}
-	workspaceCommand, err := bindCommand(t.Context(), sandbox, workspace, conversation, credentials)
-	if err != nil || !slices.Equal(workspaceCommand.Argv, command.Argv) {
-		t.Fatalf("conversation Git binding changed Codex arguments: %v", err)
+	workspaceCommand := bind(conversation, credentials)
+	if !slices.Equal(workspaceCommand.Argv, command.Argv) {
+		t.Fatal("conversation Git binding changed Codex arguments")
 	}
 	var names []string
 	for _, arg := range bound.Argv {
@@ -137,10 +148,22 @@ func TestCodexSOPGitBindingKeepsHelperInToolShell(t *testing.T) {
 			}
 		}
 		cmd.Stdin = strings.NewReader(input)
-		return cmd.Output()
+		return cmd.CombinedOutput()
 	}
-	if _, err := git("", "init", "-q"); err != nil {
-		t.Fatal(err)
+	if out, err := git("", "init", "-q"); err != nil {
+		t.Fatalf("git init: %v: %s", err, out)
+	}
+	if out, err := git("", "status", "--short"); err != nil {
+		t.Fatalf("git status: %v: %s", err, out)
+	}
+	url, err := git("", "ls-remote", "--get-url", "git@git.example.org:team/app.git")
+	if err != nil || !strings.HasPrefix(string(url), "git@lf-") {
+		t.Fatalf("missing SSH remote rewrite: %q, %v", url, err)
+	}
+	for _, key := range []string{"GIT_SSH_COMMAND", "GIT_SSH_VARIANT", "GIT_ALLOW_PROTOCOL"} {
+		if !slices.Contains(names, key) {
+			t.Fatalf("missing SSH binding %s", key)
+		}
 	}
 	if _, err := git("", "config", "credential.helper", "!echo username=stale; echo password=stale"); err != nil {
 		t.Fatal(err)

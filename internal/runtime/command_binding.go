@@ -119,9 +119,6 @@ func bindCommand(ctx context.Context, sandbox Sandbox, workspace string, command
 			if err := bindWorkspaceGitEnvironment(ctx, sandbox, workspace, bound.environment, credentials); err != nil {
 				return CommandSpec{}, err
 			}
-			if command.Provider == "codex" {
-				bound.Argv = CodexRunGitArgv(bound.Argv, bound.environment)
-			}
 		case BindGitWorkspace:
 			if err := bindWorkspaceGitEnvironment(ctx, sandbox, workspace, bound.environment, credentials); err != nil {
 				return CommandSpec{}, err

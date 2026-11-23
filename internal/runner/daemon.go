@@ -964,14 +964,14 @@ func (d *Daemon) executeInvocation(ctx context.Context, task domain.RunnerTask) 
 			return execResult{status: domain.RunnerTaskFailed, errMsg: fmt.Sprintf("prepare git credentials: %v", gitErr)}, nil
 		}
 		defer closeGit()
-		if prepared.Command.Provider == "codex" {
-			argv = runtime.CodexRunGitArgv(argv, gitEnv)
-		}
 		cleanup, gitErr := runtime.BindGitSSH(ctx, sandbox, workspace, gitEnv, inv.GitSSHKeys)
 		if gitErr != nil {
 			return execResult{status: domain.RunnerTaskFailed, errMsg: fmt.Sprintf("prepare git credentials: %v", gitErr)}, nil
 		}
 		defer cleanup()
+		if prepared.Command.Provider == "codex" {
+			argv = runtime.CodexRunGitArgv(argv, gitEnv)
+		}
 		for key, value := range gitEnv {
 			commandEnv[key] = value
 		}
