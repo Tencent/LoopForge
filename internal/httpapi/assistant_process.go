@@ -193,10 +193,14 @@ func (h *assistantHandlers) conversationExecutor(s *AgentToolSession, root strin
 				return runtime.ConversationProcessResult{}, fmt.Errorf("%w: %w", errAssistantExecutionUnavailable, err)
 			}
 			if response.Error != "" {
-				if req.Operation == "start" {
-					return runtime.ConversationProcessResult{}, fmt.Errorf("%w: %s", runtime.ErrConversationNotStarted, response.Error)
+				responseErr := errors.New(response.Error)
+				if response.Code == domain.WorkspaceErrorConversationState {
+					responseErr = &runtime.ConversationStateError{Message: response.Error}
 				}
-				return runtime.ConversationProcessResult{}, fmt.Errorf("%s", response.Error)
+				if req.Operation == "start" {
+					return runtime.ConversationProcessResult{}, fmt.Errorf("%w: %w", runtime.ErrConversationNotStarted, responseErr)
+				}
+				return runtime.ConversationProcessResult{}, responseErr
 			}
 			var result runtime.ConversationProcessResult
 			err = json.Unmarshal(response.Payload, &result)
@@ -213,6 +217,7 @@ func (h *assistantHandlers) conversationExecutor(s *AgentToolSession, root strin
 		if err != nil {
 			return "", err
 		}
+		reportRemovedConversationSkillLinks(ctx, s.User, prepared.RemovedSkillLinks, s.Notify)
 		if input, ok := command.Stdin.(*assistantLimitedImageInput); ok {
 			command, err = input.fit(command, root, prepared.Root)
 			if err != nil {
@@ -397,6 +402,26 @@ func assistantEngineBinary(kind string) string {
 		return "claude"
 	default:
 		return runtime.AgentCLIBinary(kind)
+	}
+}
+
+func reportRemovedConversationSkillLinks(ctx context.Context, user domain.User, paths []string, notify func(string, any)) {
+	if len(paths) == 0 {
+		return
+	}
+	const maxDisplayedPaths = 5
+	names := make([]string, 0, min(len(paths), maxDisplayedPaths))
+	for _, path := range paths[:min(len(paths), maxDisplayedPaths)] {
+		names = append(names, fmt.Sprintf("%q", truncateRunes(path, 250)))
+	}
+	summary := strings.Join(names, "、")
+	if len(paths) > maxDisplayedPaths {
+		summary += fmt.Sprintf(" 等 %d 项", len(paths))
+	}
+	message := fmt.Sprintf("技能目录不支持符号链接。已移除链接并继续执行（%s）。", summary)
+	assistantDiagnosticsFrom(ctx).platform("conversation.skill_links_removed", message, user)
+	if notify != nil {
+		notify("thought", assistantStreamEvent{Kind: "status", Text: sanitizeAssistantDiagnostic(message, user, 2048)})
 	}
 }
 
