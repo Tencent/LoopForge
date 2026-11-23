@@ -99,7 +99,7 @@ func (s *Service) gitHostGet(ctx context.Context, lookup gitegress.HTTPSHostLook
 	}
 	res, err := client.Do(req)
 	if err != nil {
-		return fmt.Errorf("%s request failed", cred.Host)
+		return fmt.Errorf("%s request failed: %w", cred.Host, err)
 	}
 	defer res.Body.Close()
 	if res.StatusCode < 200 || res.StatusCode >= 300 {

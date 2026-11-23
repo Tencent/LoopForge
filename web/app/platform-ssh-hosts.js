@@ -27,7 +27,7 @@ function platformSSHHostTrustHTML(){
           <button type="button" class="button ghost" data-ssh-host-cancel>${lfT('取消','Cancel')}</button>
           <button type="submit" class="button primary" data-ssh-host-probe>${lfT('读取公钥并核对指纹','Read key and review fingerprint')}</button>
         </div>
-        <details class="platform-ssh-host-manual">
+        <details class="platform-host-manual">
           <summary>${lfT('手动录入公钥','Enter public keys manually')}</summary>
           <label class="platform-field">
             <span>${lfT('服务器主机公钥','Server host public keys')}</span>

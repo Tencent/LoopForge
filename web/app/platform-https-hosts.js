@@ -26,6 +26,15 @@ function platformHTTPSHostTrustHTML() {
           <button type="button" class="button ghost" data-https-host-cancel>${lfT('取消', 'Cancel')}</button>
           <button type="submit" class="button primary">${lfT('解析并核对地址', 'Resolve and review addresses')}</button>
         </div>
+        <details class="platform-host-manual">
+          <summary>${lfT('手动编辑地址', 'Edit addresses manually')}</summary>
+          <label class="platform-field">
+            <span>${lfT('允许连接的 IP 地址', 'Approved IP addresses')}</span>
+            <textarea name="addresses" rows="4" maxlength="8192" spellcheck="false"></textarea>
+            <small class="platform-field-hint">${lfT('每行填写一个 IPv4 或 IPv6 地址。', 'Enter one IPv4 or IPv6 address per line.')}</small>
+          </label>
+          <button type="submit" class="button ghost" data-https-host-manual>${lfT('核对已填地址', 'Review entered addresses')}</button>
+        </details>
       </form>
       <div class="platform-admin-list" data-https-host-list aria-live="polite"></div>
     </section>`;
@@ -39,7 +48,9 @@ async function loadPlatformHTTPSHosts(host) {
   const list = card.querySelector('[data-https-host-list]');
   const hostField = form.elements.namedItem('host');
   const platformField = form.elements.namedItem('platform');
-  const submit = form.querySelector('button[type="submit"]');
+  const addressesField = form.elements.namedItem('addresses');
+  const manualDetails = form.querySelector('details');
+  const submitButtons = [...form.querySelectorAll('button[type="submit"]')];
   let entries = [];
   let editing = null;
   let busy = false;
@@ -49,9 +60,11 @@ async function loadPlatformHTTPSHosts(host) {
     hostField.value = entry?.host || '';
     hostField.readOnly = !!entry;
     platformField.value = entry?.platform || 'gitlab';
+    addressesField.value = entry?.addresses.join('\n') || '';
+    manualDetails.open = !!entry;
     form.hidden = false;
     add.hidden = true;
-    (entry ? submit : hostField).focus();
+    (entry ? addressesField : hostField).focus();
   }
 
   function hideForm() {
@@ -84,7 +97,7 @@ async function loadPlatformHTTPSHosts(host) {
 
   async function change(action) {
     busy = true;
-    submit.disabled = true;
+    submitButtons.forEach(button => { button.disabled = true; });
     try {
       await action();
     } catch (error) {
@@ -98,7 +111,7 @@ async function loadPlatformHTTPSHosts(host) {
         }
       }
     } finally {
-      submit.disabled = false;
+      submitButtons.forEach(button => { button.disabled = false; });
       busy = false;
     }
   }
@@ -110,12 +123,23 @@ async function loadPlatformHTTPSHosts(host) {
     if (busy) return;
     const previous = editing;
     const input = { host:hostField.value.trim(), platform:platformField.value };
+    if (event.submitter?.hasAttribute('data-https-host-manual')) {
+      input.addresses = addressesField.value.split(/\s+/).filter(Boolean);
+    }
     return change(async () => {
       const preview = await api(`${platformHTTPSHostsEndpoint}/preview`, {method:'POST', body:JSON.stringify(input)});
       if (!card.isConnected) return;
+      const review = [preview.host, preview.addresses.join('\n')];
+      if (previous) {
+        const added = preview.addresses.filter(address => !previous.addresses.includes(address));
+        const removed = previous.addresses.filter(address => !preview.addresses.includes(address));
+        if (added.length) review.push([lfT('新增地址', 'Added addresses'), ...added].join('\n'));
+        if (removed.length) review.push([lfT('移除地址', 'Removed addresses'), ...removed].join('\n'));
+      }
+      review.push(lfT('核对以上地址属于该 Git 实例。平台仅连接已确认的地址。', 'Verify that these addresses belong to the Git instance. The platform will connect only to approved addresses.'));
       const confirmed = await afConfirm({
         title:lfT('确认 Git HTTPS 主机授权', 'Confirm Git HTTPS host authorization'),
-        message:[preview.host, preview.addresses.join('\n'), lfT('核对以上地址属于该 Git 实例。平台仅连接已确认的地址。', 'Verify that these addresses belong to the Git instance. The platform will connect only to approved addresses.')].join('\n\n'),
+        message:review.join('\n\n'),
         confirmText:lfT('确认授权', 'Authorize host'),
       });
       if (!confirmed || !card.isConnected) return;

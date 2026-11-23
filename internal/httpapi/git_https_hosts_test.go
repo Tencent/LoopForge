@@ -68,14 +68,29 @@ func TestPlatformGitHTTPSHostAuthorization(t *testing.T) {
 		preview.Host != host || !slices.Equal(preview.Addresses, []netip.Addr{firstIP, secondIP}) {
 		t.Fatalf("preview: HTTP %d %s", previewResponse.Code, previewResponse.Body)
 	}
+	manual := input
+	manual.Addresses = []netip.Addr{secondIP, netip.MustParseAddr("::ffff:10.2.3.4"), firstIP}
+	manualResponse := cvBRequest(t, admin, http.MethodPost, path+"/preview", manual, true)
+	var manualPreview repo.PlatformGitHTTPSHost
+	if manualResponse.Code != http.StatusOK || json.Unmarshal(manualResponse.Body.Bytes(), &manualPreview) != nil ||
+		manualPreview.Host != host || !slices.Equal(manualPreview.Addresses, preview.Addresses) {
+		t.Fatalf("manual preview: HTTP %d %s", manualResponse.Code, manualResponse.Body)
+	}
 	if resp := cvBRequest(t, member, http.MethodGet, choicesPath, nil, true); resp.Code != http.StatusOK || resp.Body.String() != "[]" {
 		t.Fatalf("preview must leave choices empty: HTTP %d %s", resp.Code, resp.Body)
 	}
 
-	for _, address := range []string{"127.0.0.1", "169.254.1.1", "ff02::1"} {
-		input.Addresses = []netip.Addr{netip.MustParseAddr(address)}
-		if resp := cvBRequest(t, admin, http.MethodPost, path, input, true); resp.Code != http.StatusBadRequest {
-			t.Fatalf("non-routable address %s: HTTP %d", address, resp.Code)
+	for _, addresses := range [][]netip.Addr{
+		{},
+		{netip.MustParseAddr("127.0.0.1")},
+		{netip.MustParseAddr("169.254.1.1")},
+		{netip.MustParseAddr("ff02::1")},
+	} {
+		input.Addresses = addresses
+		for _, endpoint := range []string{path, path + "/preview"} {
+			if resp := cvBRequest(t, admin, http.MethodPost, endpoint, input, true); resp.Code != http.StatusBadRequest {
+				t.Fatalf("invalid addresses %v for %s: HTTP %d", addresses, endpoint, resp.Code)
+			}
 		}
 	}
 	resp := cvBRequest(t, admin, http.MethodPost, path, preview, true)

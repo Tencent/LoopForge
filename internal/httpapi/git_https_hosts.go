@@ -97,15 +97,24 @@ func (h *httpsHostTrustHandlers) preview(c *gin.Context) {
 	if !ok {
 		return
 	}
-	hostname, _, _ := strings.Cut(entry.Host, ":")
-	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
-	defer cancel()
-	addresses, err := h.lookupIP(ctx, "ip", hostname)
+	status := http.StatusBadRequest
+	var err error
+	if entry.Addresses == nil {
+		status = http.StatusBadGateway
+		hostname, _, _ := strings.Cut(entry.Host, ":")
+		ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
+		defer cancel()
+		entry.Addresses, err = h.lookupIP(ctx, "ip", hostname)
+	}
 	if err == nil {
-		entry.Addresses, err = approvedGitHTTPSAddresses(addresses)
+		entry.Addresses, err = approvedGitHTTPSAddresses(entry.Addresses)
 	}
 	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "平台无法解析可授权的 Git 主机地址，请检查服务端 DNS"})
+		message := err.Error()
+		if status == http.StatusBadGateway {
+			message = "平台无法解析可授权的 Git 主机地址，请检查服务端 DNS"
+		}
+		c.JSON(status, gin.H{"error": message})
 		return
 	}
 	c.Header("Cache-Control", "no-store")

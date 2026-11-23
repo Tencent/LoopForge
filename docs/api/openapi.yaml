@@ -1087,19 +1087,28 @@ paths:
     post:
       tags: [Repositories]
       operationId: previewPlatformGitHTTPSHost
-      summary: Resolve the addresses of an HTTPS Git instance for review
+      summary: Review assigned or resolved IP addresses for a Git HTTPS host
       requestBody:
         required: true
         content:
           application/json:
-            schema: {$ref: "#/components/schemas/GitHTTPSHostChoice"}
+            schema:
+              allOf:
+                - $ref: "#/components/schemas/GitHTTPSHostChoice"
+                - type: object
+                  properties:
+                    addresses:
+                      type: array
+                      minItems: 1
+                      items: {type: string}
+                      description: IP addresses to validate for review. Omit to resolve the hostname with DNS.
       responses:
         "200":
-          description: Normalized host, provider, and resolved IP addresses
+          description: Normalized host, provider, and IP addresses
           content:
             application/json:
               schema: {$ref: "#/components/schemas/PlatformGitHTTPSHost"}
-        "400": {description: Invalid host or provider}
+        "400": {description: Invalid host, provider, or supplied addresses}
         "403": {$ref: "#/components/responses/Forbidden"}
         "502": {description: No valid addresses could be resolved}
   /api/platform/git-https-hosts/{host}:

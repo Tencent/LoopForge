@@ -1559,14 +1559,14 @@ textarea.pa-input{height:auto;min-height:76px;padding:9px 11px;resize:vertical;l
 .platform-field>span,.platform-field-head>span{font-weight:650;color:var(--text)}
 .platform-field-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px}
 .platform-ssh-host-form[hidden],.platform-https-host-form[hidden]{display:none}
-.platform-ssh-host-form textarea{resize:vertical;font-family:monospace}
-.platform-ssh-host-manual summary{cursor:pointer;color:var(--text);font-size:13px}
-.platform-ssh-host-manual .platform-field,.platform-ssh-host-manual button{margin-top:12px}
+.platform-host-manual textarea{resize:vertical;font-family:monospace}
+.platform-host-manual summary{cursor:pointer;color:var(--text);font-size:13px}
+.platform-host-manual .platform-field,.platform-host-manual button{margin-top:12px}
 .platform-ssh-host-info code{overflow-wrap:anywhere}
 .platform-field-head small{color:var(--muted-2);font-size:12px}
 .platform-field-hint{color:var(--muted-2);font-size:12px;line-height:1.5}
-.platform-field input,.platform-field select,.platform-ssh-host-form textarea{width:100%;box-sizing:border-box;padding:9px 12px;border:1px solid var(--line-strong);border-radius:10px;background:var(--panel);color:var(--text);font-size:13px}
-.platform-field input:focus,.platform-field select:focus,.platform-ssh-host-form textarea:focus{outline:none;border-color:var(--blue);box-shadow:0 0 0 3px color-mix(in srgb,var(--blue) 18%,transparent)}
+.platform-field input,.platform-field select,.platform-host-manual textarea{width:100%;box-sizing:border-box;padding:9px 12px;border:1px solid var(--line-strong);border-radius:10px;background:var(--panel);color:var(--text);font-size:13px}
+.platform-field input:focus,.platform-field select:focus,.platform-host-manual textarea:focus{outline:none;border-color:var(--blue);box-shadow:0 0 0 3px color-mix(in srgb,var(--blue) 18%,transparent)}
 .platform-shared-key-link{align-self:flex-start;font-size:12px;color:var(--blue);text-decoration:none}
 .platform-shared-key-link:hover{text-decoration:underline}
 .platform-model-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:2px 12px;max-height:288px;overflow:auto;padding:8px;border:1px solid var(--line);border-radius:10px;background:var(--bg-soft)}

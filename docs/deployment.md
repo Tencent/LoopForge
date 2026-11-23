@@ -126,9 +126,11 @@ A clone that is stopped this way is not retried, since a retry would wait on the
 
 ### Self-hosted Git repositories over HTTPS
 
-In **Platform administration → Git Host Trust**, add an HTTPS host, including its port if it differs from 443. Review and confirm the resolved IP addresses for that Git instance. A user can then select that instance in **Personal settings → Git access tokens** and enter a personal access token.
+In **Platform administration → Git Host Trust**, add an HTTPS host, including its port if it differs from 443. Resolve the hostname or enter approved IP addresses manually, then review and confirm the list. Signed-in users see the host and Git provider in **Personal settings → Git access tokens** and can select the instance and enter their own token. The approved IP addresses appear in platform administration.
 
-The platform checks the approved addresses before dialing for token verification, pull or merge request discovery, and status synchronization. HTTPS connections use the platform's normal TLS trust chain. If the instance's addresses change, review and update its authorization in the same page. Deployments that still use `AGENTFLOW_GIT_EGRESS_ALLOW_CIDRS` can continue to do so for hosts without an HTTPS authorization.
+The platform checks the approved addresses before dialing for token verification, pull or merge request discovery, and status synchronization. HTTPS connections use the platform's normal TLS trust chain. For each registered hostname and port, the platform dials only the addresses in that authorization. `AGENTFLOW_GIT_EGRESS_ALLOW_CIDRS` applies only to hosts without an HTTPS authorization.
+
+When migrating a host from deployment CIDRs, include every IP the platform should be able to reach in the authorization. To rotate an address, edit the saved list and review the added and removed addresses before confirming.
 
 ### Git repositories over SSH
 
