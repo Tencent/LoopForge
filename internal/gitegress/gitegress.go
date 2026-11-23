@@ -1,10 +1,11 @@
-// Package gitegress is the control plane's HTTP egress to user-configured Git
-// hosts: token verification, PR discovery and delivery polling. A user can
+// Package gitegress bounds the control plane's connections to Git hosts,
+// including token verification, PR discovery and host key discovery. A user can
 // name any host, so a request only connects to public addresses unless an
 // operator allows a private network. Workspace traffic never passes here.
 package gitegress
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"net/http"
@@ -37,16 +38,9 @@ var nonPublic = []netip.Prefix{
 // used because a proxy would connect on the client's behalf. Clients do not
 // keep connections, so each call follows the current allow list.
 func Client() *http.Client {
-	allowed := allowedPrefixes()
-	dialer := &net.Dialer{
-		Timeout: 10 * time.Second,
-		Control: func(_, address string, _ syscall.RawConn) error {
-			return checkAddress(address, allowed)
-		},
-	}
 	transport := &http.Transport{
 		Proxy:                 nil,
-		DialContext:           dialer.DialContext,
+		DialContext:           newDialer().DialContext,
 		TLSHandshakeTimeout:   10 * time.Second,
 		ResponseHeaderTimeout: 20 * time.Second,
 		DisableKeepAlives:     true,
@@ -56,6 +50,21 @@ func Client() *http.Client {
 		Transport: transport,
 		CheckRedirect: func(*http.Request, []*http.Request) error {
 			return http.ErrUseLastResponse
+		},
+	}
+}
+
+// DialContext applies the Git egress policy to the address selected by DNS.
+func DialContext(ctx context.Context, network, address string) (net.Conn, error) {
+	return newDialer().DialContext(ctx, network, address)
+}
+
+func newDialer() *net.Dialer {
+	allowed := allowedPrefixes()
+	return &net.Dialer{
+		Timeout: 10 * time.Second,
+		Control: func(_, address string, _ syscall.RawConn) error {
+			return checkAddress(address, allowed)
 		},
 	}
 }

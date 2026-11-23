@@ -26,8 +26,8 @@ func TestSharedCodeBuddyEffortsIgnoreAnOldPersonalOverride(t *testing.T) {
 	h := &assistantHandlers{
 		deps: &deps{repo: st},
 		generate: func(_ context.Context, _ string, user domain.User) (string, error) {
-			if len(user.CodeBuddyModels) != 0 || user.ID != member.ID {
-				t.Error("shared-key turn must use its own catalog and keep the caller's identity")
+			if len(user.CodeBuddyModels) != 0 || user.CodeBuddyBaseURL != "" || user.ID != member.ID {
+				t.Error("shared-key turn must use its own endpoint and catalog while keeping the caller's identity")
 			}
 			return `{"message":"ok","drafts":[]}`, nil
 		},
@@ -49,6 +49,14 @@ func TestSharedCodeBuddyEffortsIgnoreAnOldPersonalOverride(t *testing.T) {
 	afterClear, err := st.UpdateUserCredentials(member.ID, repo.UserCredentialUpdate{CodeBuddyAPIKeyClear: true})
 	if err != nil || len(afterClear.CodeBuddyModels) != 1 {
 		t.Fatalf("expected the personal model catalog to remain saved after clearing its key: %v", err)
+	}
+	baseURL := "https://personal.example/v1"
+	member, err = st.UpdateUserCredentials(member.ID, repo.UserCredentialUpdate{CodeBuddyBaseURL: &baseURL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if scheduled, _, ok := scheduleCredentialUser(st, member, assistantEngineCodeBuddy); !ok || scheduled.CodeBuddyBaseURL != "" {
+		t.Fatal("a scheduled run on the shared key must not use the caller's personal endpoint")
 	}
 	c, rec := workbenchContext(afterClear, http.MethodGet, "/api/assistant/models", &bytes.Buffer{})
 	h.models(c)
@@ -405,11 +413,10 @@ func TestTurnCatalogRefreshesBeforeFallingBackToTheDefault(t *testing.T) {
 func TestChatCatalogsListTheDefaultFirst(t *testing.T) {
 	t.Setenv("AGENTFLOW_ASSISTANT_MODEL", "glm-5.3-flash-ioa")
 	t.Setenv("AGENTFLOW_ASSISTANT_MODELS", "claude-opus-5.5,glm-5.3-flash-ioa")
-	ctx := context.Background()
 	shared := []string{"deepseek-v4.1-flash", "glm-5.3-flash-ioa"}
 	for name, catalog := range map[string]assistantModelCatalog{
-		"own key":    assistantChatCatalog(ctx, "", nil),
-		"shared key": restrictAssistantCatalog(assistantChatCatalog(ctx, "", shared), shared),
+		"own key":    loadAssistantModels("", "user-key"),
+		"shared key": restrictAssistantCatalog(assistantChatCatalog("", "shared-key", shared), shared),
 	} {
 		if len(catalog.Models) == 0 || catalog.Models[0].ID != catalog.Default {
 			t.Fatalf("%s: default %q is not listed first in %+v", name, catalog.Default, catalog.Models)

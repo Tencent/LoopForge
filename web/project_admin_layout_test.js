@@ -68,6 +68,9 @@ const ctx = {
 };
 ctx.document={activeElement:null,contains:()=>false};
 vm.createContext(ctx);
+const gitParsers = fs.readFileSync(require("node:path").join(__dirname, "app", "git-ssh.js"), "utf8");
+vm.runInContext(gitParsers.slice(gitParsers.indexOf("globalThis.LoopForgeGongfengRepository")), ctx);
+
 for (const name of ["parseGongfengRepoURL","repoDisplayPath","repoProviderLabel"]) vm.runInContext(extract(fs.readFileSync(issuesPath,"utf8"),name),ctx);
 vm.runInContext(fs.readFileSync(projectsPath,"utf8"),ctx);
 vm.runInContext(fs.readFileSync(drawerPath,"utf8"),ctx);

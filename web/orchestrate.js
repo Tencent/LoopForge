@@ -1,155 +1,24 @@
+// SOP designer's AI orchestrator. The conversation runs in the chatbot's
+// sop-designer surface (/chatbot/?surface=sop-designer), embedded in the
+// canvas side panel; this file owns the canvas: it hands the chat the graph
+// to edit and replays the streamed draft as nodes and wires on the canvas.
 let aiBuildToken = 0;
 let aiBuild = null;
-let aiAbort = null;
-const aiHistory = {};
 
-function aiOrchestratorEngine(model) {
-  const listed = window.AgentFlowAssistantModels?.catalog().models.find(item => item.id === model);
-  return listed?.engine || (String(model || '').includes(':') ? model.split(':')[0] : 'codebuddy');
-}
-
-function selectedAIOrchestratorModel() {
-  const api = window.AgentFlowAssistantModels;
-  const remembered = localStorage.getItem('agentflow.orchestratorModel') || localStorage.getItem('agentflow.assistantModel');
-  if (remembered && remembered !== api?.DEFAULT) return remembered;
-  return api?.codeBuddyModels()[0]?.id || api?.catalog().default || remembered || '';
-}
-
-function aiOrchestratorModels(engine = aiOrchestratorEngine(selectedAIOrchestratorModel())) {
-  return (window.AgentFlowAssistantModels?.catalog().models || []).filter(model => aiOrchestratorEngine(model.id) === engine);
-}
-
-function aiOrchestratorEngines() {
-  const catalog = window.AgentFlowAssistantModels?.catalog() || {};
-  if (catalog.engines?.length) return catalog.engines;
-  return [...new Set((catalog.models || []).map(model => aiOrchestratorEngine(model.id)))].map(id => ({id, name: id === 'codebuddy' ? 'CodeBuddy' : id, configured: true}));
-}
-
-function selectAIOrchestratorModel(id) {
-  const previous = selectedAIOrchestratorModel();
-  const engine = aiOrchestratorEngine(id);
-  localStorage.setItem('agentflow.orchestratorModel.' + aiOrchestratorEngine(previous), previous);
-  if (engine !== aiOrchestratorEngine(previous)) resetAIOrchestrator();
-  localStorage.setItem('agentflow.orchestratorModel', id);
-  localStorage.setItem('agentflow.orchestratorModel.' + engine, id);
-}
-
-function bindAIOrchestratorModelPicker() {
-  const api = window.AgentFlowAssistantModels;
-  const runtime = $('#aiOrchestratorRuntime');
-  if (!runtime || !api || runtime.dataset.bound) return;
-  runtime.dataset.bound = '1';
-  const painters = [];
-  const paintAll = () => painters.forEach(paint => paint());
-  const paintCLIIcon = (icon, engine) => {
-    const src = api.cliIcon(engine);
-    icon.dataset.cli = engine;
-    if (src) icon.innerHTML = `<img src="${src}" alt="">`;
-    else icon.textContent = engine.slice(0, 1).toUpperCase();
-  };
-
-  function bindPicker(host, cli) {
-    const toggle = host.querySelector('[data-model-toggle]');
-    const menu = host.querySelector('.ai-model-menu');
-    const search = host.querySelector('[data-model-search]');
-    const list = host.querySelector('[role="listbox"]');
-    const selected = () => cli ? aiOrchestratorEngine(selectedAIOrchestratorModel()) : selectedAIOrchestratorModel();
-    const items = () => cli ? aiOrchestratorEngines().map(engine => ({
-      ...engine,
-      icon: false,
-      disabled: engine.configured === false || (engine.id !== 'codebuddy' && !aiOrchestratorModels(engine.id).length),
-    })) : aiOrchestratorModels();
-    const paint = () => {
-      const id = selected();
-      const item = items().find(item => item.id === id) || {id, name: !cli && id === api.DEFAULT ? '默认' : id};
-      api.paintItem(toggle, item);
-      if (cli) paintCLIIcon(toggle.querySelector('.ai-model-icon'), id);
-    };
-    painters.push(paint);
-    const close = (focus = false) => {
-      menu.hidden = true;
-      toggle.setAttribute('aria-expanded', 'false');
-      window.HuiPopover?.release(close);
-      if (focus) toggle.focus();
-    };
-    const render = () => {
-      const focused = list.contains(document.activeElement) ? document.activeElement.dataset.id : '';
-      const query = search.value.trim().toLowerCase();
-      const choices = items().filter(item => `${item.id} ${item.name} ${item.family || ''}`.toLowerCase().includes(query));
-      host.querySelector('[data-model-empty]').hidden = choices.length > 0;
-      list.hidden = false;
-      api.renderOptions(list, choices, selected(), id => {
-        if (toggle.disabled || choices.find(item => item.id === id)?.disabled) return;
-        let model = id;
-        if (cli) {
-          const models = aiOrchestratorModels(id);
-          const remembered = localStorage.getItem('agentflow.orchestratorModel.' + id);
-          const preference = id === selected() ? selectedAIOrchestratorModel() : remembered;
-          const fallback = models[0]?.id || (id === 'codebuddy' ? api.catalog().default || api.DEFAULT : '');
-          model = models.find(item => item.id === preference)?.id || fallback;
-        }
-        if (!model) return;
-        selectAIOrchestratorModel(model);
-        paintAll();
-        close(true);
-      });
-      list.querySelectorAll('[role="option"]').forEach(option => {
-        const item = choices.find(item => item.id === option.dataset.id);
-        option.disabled = !!item.disabled;
-        option.setAttribute('aria-selected', String(item.id === selected()));
-        if (cli) {
-          const icon = document.createElement('span');
-          icon.className = 'ai-model-icon';
-          paintCLIIcon(icon, item.id);
-          option.insertBefore(icon, option.firstChild);
-          option.querySelector('.ai-model-credits').textContent = item.configured === false ? '未配置' : item.disabled ? '暂无模型' : '';
-        }
-        const check = document.createElement('span');
-        check.className = 'ai-orchestrator-option-check';
-        check.textContent = item.id === selected() ? '✓' : '';
-        check.setAttribute('aria-hidden', 'true');
-        option.append(check);
-      });
-      window.HuiPopover?.place(toggle, menu, {width: 280, maxHeight: 380});
-      menu.style.maxHeight = Math.min(380, parseFloat(menu.style.maxHeight) || 380) + 'px';
-      if (focused) [...list.querySelectorAll('[role="option"]')].find(option => option.dataset.id === focused)?.focus();
-    };
-    toggle.onclick = () => {
-      if (!menu.hidden) return close();
-      menu.hidden = false;
-      toggle.setAttribute('aria-expanded', 'true');
-      search.value = '';
-      window.HuiPopover?.claim(close, target => host.contains(target));
-      render();
-      search.focus();
-      api.load().then(() => { paintAll(); if (!menu.hidden) render(); });
-    };
-    search.oninput = render;
-    host.addEventListener('keydown', event => {
-      if (menu.hidden || event.isComposing) return;
-      if (event.key === 'Escape' || event.key === 'Tab') {
-        if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); }
-        close(true);
-      } else if (event.key === 'Enter' && event.target === search) {
-        event.preventDefault();
-        [...list.querySelectorAll('[role="option"]')].find(option => !option.disabled)?.click();
-      } else if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key) && !(event.target === search && ['Home', 'End'].includes(event.key))) {
-        event.preventDefault();
-        const options = [...list.querySelectorAll('[role="option"]')].filter(option => !option.disabled);
-        const at = options.indexOf(document.activeElement);
-        const next = event.key === 'Home' ? 0 : event.key === 'End' ? options.length - 1 : at < 0 ? (event.key === 'ArrowDown' ? 0 : options.length - 1) : (at + (event.key === 'ArrowDown' ? 1 : options.length - 1)) % options.length;
-        options[next]?.focus();
-        options[next]?.scrollIntoView({block: 'nearest'});
-      }
-    });
-    document.addEventListener('click', event => { if (!host.contains(event.target)) close(); });
-    window.visualViewport?.addEventListener('resize', () => { if (!menu.hidden) render(); });
-  }
-  bindPicker($('#aiOrchestratorCLIPicker'), true);
-  bindPicker($('#aiOrchestratorModelPicker'), false);
-  paintAll();
-  api.load().then(paintAll);
-}
+const AI_FRAME_PATH = '/chatbot/';
+const AI_MESSAGES = {
+  context: 'agentflow-sop-designer-context',
+  begun: 'agentflow-sop-designer-begun',
+  newConversation: 'agentflow-sop-designer-new',
+  ready: 'agentflow-sop-designer-ready',
+  begin: 'agentflow-sop-designer-begin',
+  draft: 'agentflow-sop-designer-draft',
+  reply: 'agentflow-sop-designer-reply',
+  end: 'agentflow-sop-designer-end',
+  place: 'agentflow-sop-designer-place',
+  role: 'agentflow-sop-designer-role',
+  reset: 'agentflow-sop-designer-reset'
+};
 
 function layoutAIGraph(nodes, edges) {
   const ids = nodes.map(node => node.id);
@@ -278,35 +147,18 @@ function parseStreamingWorkflow(buffer) {
   return {name: aiExtractName(text), nodes: aiExtractArray(text, 'nodes').items, edges: aiExtractArray(text, 'edges').items};
 }
 
-// ---- 场景推荐与面板 ----
-
-const AI_ORCHESTRATE_SCENARIOS = [
-  ['需求交付 · 澄清到放行', '搭一条需求交付流程：需求澄清、方案设计、编码实现、代码评审、人工放行，按顺序连起来'],
-  ['缺陷修复 · 定位到确认', '搭一条缺陷修复流程：定位问题、修改代码、跑单测和 lint、人工确认'],
-  ['发布前检查 · 变更清单', '搭一条发布前检查：整理变更说明、回归检查、人工批准发布'],
-  ['PR 评审 · 自动预审', '搭一条 PR 评审流程：读取变更、AI 预审给出问题清单、人工复核'],
-  ['前后端并行开发', '搭一条流程：需求拆解后，前端实现和后端实现并行，再汇合做联调测试和人工验收'],
-  ['技术方案评审', '搭一条技术方案流程：调研现状、输出方案文档、架构评审、人工拍板'],
-  ['线上问题复盘', '搭一条复盘流程：收集日志与时间线、根因分析、改进项整理、人工确认'],
-  ['文档与测试补齐', '搭一条流程：阅读代码、补充单元测试、补充接口文档、评审']
-];
-let aiScenarioPage = 0;
-
-function renderAIScenarios() {
-  const host = $('#aiOrchestratorSuggest');
-  if (!host) return;
-  const size = 4;
-  const pages = Math.ceil(AI_ORCHESTRATE_SCENARIOS.length / size);
-  const start = (aiScenarioPage % pages) * size;
-  host.innerHTML = AI_ORCHESTRATE_SCENARIOS.slice(start, start + size).map(([label, prompt]) => `<button type="button" data-ai-prompt="${escapeHTML(prompt)}">${escapeHTML(label)}</button>`).join('');
-  host.querySelectorAll('[data-ai-prompt]').forEach(button => {
-    button.onclick = () => {
-      const input = $('#aiOrchestratorInput');
-      input.value = button.dataset.aiPrompt;
-      input.focus();
-    };
-  });
+// An edit streams operations ({"op":"add_node",…}); place each added node and
+// wire as soon as its operation is complete.
+function parseStreamingOperations(buffer) {
+  const ops = aiExtractArray(aiDraftBodyText(buffer), 'operations').items;
+  return {
+    name: '',
+    nodes: ops.filter(op => op?.op === 'add_node' && op.node?.id).map(op => op.node),
+    edges: ops.filter(op => op?.op === 'add_edge' && op.source && op.target).map(op => ({source: op.source, target: op.target, when: op.when || 'success'}))
+  };
 }
+
+// ---- 面板：嵌入对话，转发画布上下文 ----
 
 function shellForAIWorkflow(raw) {
   const existing = (state.data?.workflows || []).find(item => item.id && item.id === raw.id);
@@ -340,37 +192,67 @@ function setAIBuildStatus(text) {
   status.textContent = text || '';
 }
 
+function aiOrchestratorFrame() {
+  return $('#aiOrchestratorFrame');
+}
+
+function aiOrchestratorContext() {
+  return {projectId: state.projectFilter || state.workflow?.projectId || '', workflowId: state.workflow?.id || ''};
+}
+
+function postToAIOrchestrator(type, payload = {}) {
+  const target = aiOrchestratorFrame()?.contentWindow;
+  if (target) target.postMessage({type, ...payload}, location.origin);
+}
+
+// Load the chat on first open; afterwards only tell it which SOP is shown.
+function syncAIOrchestratorFrame() {
+  const frame = aiOrchestratorFrame();
+  if (!frame || $('#aiOrchestrator')?.hidden !== false) return;
+  const context = aiOrchestratorContext();
+  if (!frame.dataset.loaded) {
+    frame.dataset.loaded = '1';
+    frame.src = AI_FRAME_PATH + '?surface=sop-designer&projectId=' + encodeURIComponent(context.projectId) + '&workflowId=' + encodeURIComponent(context.workflowId);
+    frame.dataset.context = context.projectId + '/' + context.workflowId;
+    return;
+  }
+  const key = context.projectId + '/' + context.workflowId;
+  if (frame.dataset.context === key) return;
+  frame.dataset.context = key;
+  postToAIOrchestrator(AI_MESSAGES.context, context);
+}
+
 function setAIOrchestratorOpen(open) {
   const panel = $('#aiOrchestrator');
   if (!panel) return;
+  const changed = panel.hidden === open;
   panel.hidden = !open;
   if (typeof syncFlowDrawerLayout === 'function') syncFlowDrawerLayout();
-  const input = $('#aiOrchestratorInput');
-  if (input && !input.value) {
-    input.placeholder = (state.workflow?.nodes || []).length
-      ? '直接说要改哪里，例如：补上构建静态站点，其它步骤保持不变'
-      : '告诉我你的目标，我来搞定…';
-  }
-  if (open) input?.focus();
-  else window.HuiPopover?.closeAll();
+  if (changed && state.workflow?.nodes?.length) flowViewport.fitAfterDrawerChange();
+  if (open) {
+    syncAIOrchestratorFrame();
+    aiOrchestratorFrame()?.focus();
+  } else window.HuiPopover?.closeAll();
 }
 
 function openAIOrchestrator() {
   setAIOrchestratorOpen(true);
 }
 
-function resetAIOrchestrator() {
+function abortAIBuild() {
+  const build = aiBuild;
+  const restore = isCurrentAIBuild(build);
   aiBuildToken++;
-  aiAbort?.abort();
+  aiBuild = null;
+  if (restore) restoreAIBuildFailure(build);
   finishAIBuildVisuals();
-  if (state.projectFilter) delete aiHistory[state.projectFilter];
-  const log = $('#aiOrchestratorLog');
-  const intro = $('#aiOrchestratorIntro');
-  if (log) {
-    [...log.children].forEach(item => { if (item !== intro) item.remove(); });
-    if (intro) intro.hidden = false;
-  }
+  syncCanvasAIEntry();
   setAIBuildStatus('');
+}
+
+function resetAIOrchestrator() {
+  abortAIBuild();
+  postToAIOrchestrator(AI_MESSAGES.newConversation);
 }
 
 function syncCanvasAIEntry() {
@@ -379,94 +261,89 @@ function syncCanvasAIEntry() {
   entry.hidden = !!aiBuild || !state.workflow || (state.workflow.nodes || []).length > 0;
 }
 
+// The chat asks before every turn: the canvas prepares the build and hands
+// over the graph it shows, so the server edits exactly what the user sees.
+async function beginAIOrchestratorTurn(requestId) {
+  const reply = (payload) => postToAIOrchestrator(AI_MESSAGES.begun, {requestId, ...payload});
+  if (!state.projectFilter) return reply({ok: false, error: '先在顶栏选择项目'});
+  if (aiBuild) return reply({ok: false, error: '画布还在生成上一轮的流程，请稍候'});
+  const context = aiOrchestratorContext();
+  await refreshWorkflowAgents().catch(() => {});
+  const current = aiOrchestratorContext();
+  if (aiBuild || context.projectId !== current.projectId || context.workflowId !== current.workflowId) {
+    return reply({ok: false, error: '画布已切换，请重试'});
+  }
+  const canvas = state.workflow ? aiClone(state.workflow) : null;
+  const build = await beginAIOrchestration();
+  if (!build) return reply({ok: false, error: '画布暂时不能编排'});
+  reply({ok: true, projectId: state.projectFilter, workflowId: canvas?.id || state.workflow?.id || '', canvas});
+}
+
+function ingestAIDraftBuffer(buffer) {
+  const build = aiBuild;
+  if (!build || typeof buffer !== 'string') return;
+  build.buffer = buffer;
+  ingestStreamingWorkflow(build.mode === 'edit' ? parseStreamingOperations(buffer) : parseStreamingWorkflow(buffer));
+}
+
+async function handleAIOrchestratorMessage(event) {
+  const frame = aiOrchestratorFrame();
+  if (!frame || event.source !== frame.contentWindow || event.origin !== location.origin) return;
+  const data = event.data || {};
+  switch (data.type) {
+    case AI_MESSAGES.ready:
+      frame.dataset.context = '';
+      syncAIOrchestratorFrame();
+      return;
+    case AI_MESSAGES.begin:
+      return beginAIOrchestratorTurn(data.requestId);
+    case AI_MESSAGES.draft:
+      return ingestAIDraftBuffer(data.buffer);
+    case AI_MESSAGES.reply:
+      if (data.draft?.tool === 'agents_save') {
+        abortAIBuild();
+        return;
+      }
+      return finishAIOrchestration(data.draft?.body || null);
+    case AI_MESSAGES.role:
+      if (!aiBuild && data.projectId === state.projectFilter && data.workflowId === state.workflow?.id) {
+        configureAIRoleDraft(data.role);
+      }
+      return;
+    case AI_MESSAGES.end:
+      abortAIBuild();
+      if (data.error) setAIBuildStatus(data.error);
+      return;
+    case AI_MESSAGES.place:
+      if (!aiBuild && data.draft) await playAIDraft(data.draft);
+      return;
+    case AI_MESSAGES.reset:
+      if (aiBuild) abortAIBuild();
+      return;
+  }
+}
+
 function bindOrchestrator() {
   const open = $('#openAIOrchestrator');
-  const form = $('#aiOrchestratorForm');
   if (!open || open.dataset.bound) return;
   open.dataset.bound = '1';
-  bindAIOrchestratorModelPicker();
   open.onclick = () => setAIOrchestratorOpen($('#aiOrchestrator')?.hidden !== false);
   $('#closeAIOrchestrator').onclick = () => setAIOrchestratorOpen(false);
   $('#aiOrchestratorReset').onclick = resetAIOrchestrator;
-  $('#aiSuggestMore').onclick = () => { aiScenarioPage++; renderAIScenarios(); };
-  renderAIScenarios();
   $('#canvasAIEntry').onclick = openAIOrchestrator;
+  window.addEventListener('message', event => { void handleAIOrchestratorMessage(event); });
   if (typeof renderCanvas === 'function' && !renderCanvas.aiWrapped) {
     const base = renderCanvas;
     renderCanvas = function () {
       const out = base.apply(this, arguments);
       syncCanvasAIEntry();
       placeAIGhost();
+      syncAIOrchestratorFrame();
       return out;
     };
     renderCanvas.aiWrapped = true;
   }
   syncCanvasAIEntry();
-  const input = $('#aiOrchestratorInput');
-  input.addEventListener('keydown', event => {
-    if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
-      event.preventDefault();
-      runAIOrchestrator();
-    }
-  });
-  form.onsubmit = event => {
-    event.preventDefault();
-    runAIOrchestrator();
-  };
-}
-
-function appendOrchestratorNote(text, kind) {
-  const log = $('#aiOrchestratorLog');
-  if (!log) return null;
-  const intro = $('#aiOrchestratorIntro');
-  if (intro) intro.hidden = true;
-  const item = document.createElement('p');
-  item.className = kind || '';
-  item.textContent = text;
-  log.append(item);
-  log.scrollTop = log.scrollHeight;
-  return item;
-}
-
-function aiLiveThought() {
-  const log = $('#aiOrchestratorLog');
-  if (!log) return null;
-  let box = log.querySelector('.ai-live-thought.live');
-  if (!box) {
-    box = document.createElement('div');
-    box.className = 'ai-live-thought live';
-    box.innerHTML = '<b><i></i>AI 正在思考</b><span></span>';
-    log.append(box);
-  }
-  return box;
-}
-
-function pushAIThought(ev) {
-  if (!aiBuild) return;
-  switch (ev.kind) {
-    case 'thinking':
-    case 'answer': {
-      const box = aiLiveThought();
-      if (!box) return;
-      aiBuild.thought = (aiBuild.thought + (ev.text || '')).slice(-600);
-      box.querySelector('span').textContent = aiBuild.thought.slice(-220);
-      $('#aiOrchestratorLog').scrollTop = 1e9;
-      return;
-    }
-    case 'tool':
-      appendOrchestratorNote('查询 ' + (ev.detail ? ev.tool + ' · ' + ev.detail : ev.tool), 'step tool');
-      return;
-    case 'status':
-      if (ev.text) setAIBuildStatus(ev.text);
-      return;
-    case 'draftStart':
-      setAIBuildStatus('AI 开始落笔，节点会一个个出现…');
-      setAIGhostText('AI 正在写第一个节点…');
-      return;
-    case 'draftDelta':
-      aiBuild.buffer += ev.detail || '';
-      ingestStreamingWorkflow(parseStreamingWorkflow(aiBuild.buffer));
-  }
 }
 
 // ---- 画布构建：队列逐个放节点、画连线，镜头跟随 ----
@@ -503,6 +380,11 @@ function placeAIGhost() {
   host.append(ghost);
 }
 
+function isCurrentAIBuild(build) {
+  return !!build && aiBuild === build && build.token === aiBuildToken
+    && state.projectFilter === build.projectId && state.workflow?.id === build.workflowId;
+}
+
 async function startAIBuild(raw, opts = {}) {
   const occupied = !!state.workflow && ((state.workflow.nodes || []).length > 0 || state.workflowDirty);
   if (occupied && !opts.confirmed) {
@@ -517,8 +399,14 @@ async function startAIBuild(raw, opts = {}) {
   const token = ++aiBuildToken;
   finishAIBuildVisuals();
   const previous = state.workflow ? aiClone(state.workflow) : null;
-  aiBuild = {token, buffer: '', thought: '', placed: new Map(), wired: new Set(), pendingEdges: [], queue: [], draining: null, ghostText: opts.ghost || 'AI 正在理解你的需求…', ghostHidden: false, freePositions: true, mode: 'create', previous, spawned: 0, goal: opts.goal || '', referenced: opts.referenced || []};
+  const selectedNode = state.selectedNode;
   state.workflow = shellForAIWorkflow(raw || {});
+  aiBuild = {
+    token, projectId: state.projectFilter, workflowId: state.workflow.id, selectedNode,
+    buffer: '', thought: '', placed: new Map(), wired: new Set(), pendingEdges: [], queue: [], draining: null,
+    ghostText: opts.ghost || 'AI 正在理解你的需求…', ghostHidden: false, freePositions: true,
+    mode: 'create', previous
+  };
   state.selectedNode = null;
   if ((state.currentView || activeViewName()) !== 'flow') switchView('flow');
   renderWorkflowMeta();
@@ -532,14 +420,13 @@ async function startAIBuild(raw, opts = {}) {
 
 function ingestStreamingWorkflow(graph) {
   const build = aiBuild;
-  if (!build) return;
+  if (!isCurrentAIBuild(build)) return;
   if (graph.name && state.workflow && state.workflow.name !== graph.name) {
     state.workflow.name = graph.name;
     renderWorkflowMeta();
   }
   graph.nodes.forEach((node, index) => {
-    const id = aiResolveNodeId(node, build);
-    if (id && id !== node.id) node = {...node, id};
+    const id = node?.id || '';
     if (!id || build.placed.has(id) || build.queue.some(item => item.kind === 'node' && item.data.id === id)) return;
     if (node.position && Number.isFinite(node.position.x)) build.freePositions = false;
     build.queue.push({kind: 'node', data: normalizeAINode(node, index)});
@@ -560,7 +447,7 @@ function drainAIBuild() {
     // Yield first so the assignment above lands before the loop can finish and clear it.
     await Promise.resolve();
     try {
-      while (aiBuild === build && build.token === aiBuildToken) {
+      while (isCurrentAIBuild(build)) {
         const ready = build.pendingEdges.findIndex(item => build.placed.has(item.data.source) && build.placed.has(item.data.target));
         if (ready >= 0) {
           const [item] = build.pendingEdges.splice(ready, 1);
@@ -582,14 +469,11 @@ async function aiPlaceNode(build, node) {
   if (!node.position) node.position = aiProvisionalPosition(build.placed.size);
   state.workflow.nodes.push(node);
   build.placed.set(node.id, node);
-  build.spawned = (build.spawned || 0) + 1;
-  state.selectedNode = node.id;
+  if ($('#aiOrchestrator')?.hidden === false) state.selectedNode = node.id;
   renderCanvas();
   const el = document.querySelector('.flow-node[data-id="' + (CSS.escape ? CSS.escape(node.id) : node.id) + '"]');
   el?.classList.add('ai-just-built');
   aiCanvasFollow(node.position.x, node.position.y);
-  const agent = node.agentId ? (state.data?.agents || []).find(a => a.id === node.agentId) : null;
-  appendOrchestratorNote('创建节点「' + node.name + '」' + (agent ? ' · ' + agent.name : ''), 'step');
   setAIBuildStatus('已建 ' + build.placed.size + ' 个节点：' + node.name);
   setAIGhostText('AI 正在写下一个节点…');
   await aiSleep(420);
@@ -615,7 +499,7 @@ async function aiWireEdge(build, edge, key) {
   aiDrawEdge(edge.id);
   const from = build.placed.get(edge.source);
   const to = build.placed.get(edge.target);
-  appendOrchestratorNote('连线 ' + (from?.name || edge.source) + ' → ' + (to?.name || edge.target), 'step');
+  setAIBuildStatus('连线 ' + (from?.name || edge.source) + ' → ' + (to?.name || edge.target));
   await aiSleep(280);
 }
 
@@ -655,19 +539,20 @@ function finishAIBuildVisuals() {
 async function completeAIBuild(build, finalRaw) {
   if (build.mode === 'edit') return completeAIEdit(build, finalRaw);
   if (finalRaw && Array.isArray(finalRaw.nodes)) {
-    finalRaw = ensurePreviewCarried(finalRaw, build.referenced || [], build.goal);
-  }
-  if (finalRaw && Array.isArray(finalRaw.nodes)) {
     ingestStreamingWorkflow({name: finalRaw.name || '', nodes: finalRaw.nodes, edges: finalRaw.edges || []});
+  }
+  await drainAIBuild();
+  if (!isCurrentAIBuild(build)) return false;
+  if (finalRaw && Array.isArray(finalRaw.nodes)) {
     const finalById = new Map(finalRaw.nodes.filter(n => n.id).map(n => [n.id, n]));
     state.workflow.nodes.forEach(node => {
       const fin = finalById.get(node.id);
       if (fin) Object.assign(node, {...fin, position: node.position});
     });
     if (finalRaw.description) state.workflow.description = finalRaw.description;
+    if (finalRaw.preview) state.workflow.preview = aiClone(finalRaw.preview);
   }
-  await drainAIBuild();
-  if (aiBuild !== build || build.token !== aiBuildToken) return false;
+  if (!await validateAIBuildRoles(build)) return false;
   build.ghostHidden = true;
   placeAIGhost();
   if (!state.workflow.nodes.length) {
@@ -678,6 +563,7 @@ async function completeAIBuild(build, finalRaw) {
   }
   setAIBuildStatus('整理布局…');
   await aiRelayout(build);
+  if (!isCurrentAIBuild(build)) return false;
   const canvas = $('#canvas');
   finishAIBuildVisuals();
   canvas?.classList.add('ai-done');
@@ -688,178 +574,88 @@ async function completeAIBuild(build, finalRaw) {
   renderCanvas();
   renderProperties();
   aiOverview();
-  const agentIds = new Set((state.data?.agents || []).map(a => a.id));
-  const unbound = state.workflow.nodes.filter(n => n.type === 'agent' && (!n.agentId || !agentIds.has(n.agentId)));
-  if (unbound.length) appendOrchestratorNote(unbound.length + ' 个 Agent 节点还没绑定有效角色：' + unbound.map(n => n.name).join('、') + '，保存前在右侧属性里选一下', 'warn');
   setAIBuildStatus(state.workflow.edges.length ? '节点和连线都已放好，确认后点保存' : '节点已放好，确认后点保存');
   return true;
 }
 
-function aiRolesHint() {
-  const agents = catalogAgents().slice(0, 40);
-  if (!agents.length) return '当前项目还没有角色，请只用 approval（人工确认）和 script 节点。';
-  return '当前项目可用角色（agentId：名称）：\n' + agents.map(a => '- ' + a.id + '：' + a.name + (a.description ? '（' + String(a.description).slice(0, 40) + '）' : '')).join('\n');
+async function validateAIBuildRoles(build) {
+  const unavailable = () => state.workflow.nodes.filter(node => node.type === 'agent'
+    && !(isPreviewBuildNode(node.id) && node.agentId === PREVIEW_BUILD_AGENT_ID)
+    && !workflowAgent(node.agentId));
+  if (!isCurrentAIBuild(build)) return false;
+  if (!unavailable().length) return true;
+  // A role may have been created or shared while the assistant was working.
+  await refreshWorkflowAgents().catch(() => {});
+  if (!isCurrentAIBuild(build)) return false;
+  const missing = unavailable();
+  if (!missing.length) return true;
+  const names = missing.map(node => node.name + '（' + (node.agentId || '未绑定') + '）');
+  abortAIBuild();
+  setAIBuildStatus('草稿引用了当前流程不可用的角色：' + names.join('、') + '。请先创建角色，或选择已有角色。');
+  return false;
+}
+
+function configureAIRoleDraft(role) {
+  if (!role?.name || catalogGeneric(state.workflow)) return;
+  const {id, name, description, prompt, executorId, model} = role;
+  if (id && agentIdTaken(id)) return toast('这个角色标识已存在，请使用已保存的角色继续编排');
+  openAgentWizard({id: '', name, description, prompt, executorId, model, projectId: state.projectFilter});
+  if (id) {
+    state.agentIdAuto = false;
+    $('#agentForm').elements.id.value = id;
+    syncAgentSlug();
+  }
+  setAgentCreateStep(2);
 }
 
 function aiClone(value) {
   return value == null ? value : JSON.parse(JSON.stringify(value));
 }
 
-function aiWantsFreshWorkflow(goal) {
-  return /重新(搭建|生成|编排|做一条)|从头(开始|搭)|新建一(条|个)(?!节点)|清空(画布|当前|这个)/.test(String(goal || ''));
-}
-
-function aiWantsPreviewRemoved(goal) {
-  const text = String(goal || '');
-  const drop = '去掉|移除|删除|取消|不用|不要';
-  const node = '静态站点|前端预览|预览节点|af-preview-build';
-  return new RegExp('(?:' + drop + ')[^，。]{0,12}(?:' + node + ')|(?:' + node + ')[^，。]{0,8}(?:' + drop + ')').test(text);
-}
-
-function compactWorkflowForAI(wf) {
-  if (!wf) return null;
-  return {
-    id: wf.id,
-    name: wf.name,
-    description: wf.description || '',
-    sandboxProfileId: wf.sandboxProfileId || '',
-    preview: wf.preview || undefined,
-    nodes: (wf.nodes || []).map(node => {
-      const copy = {...node};
-      delete copy.position;
-      if (typeof copy.script === 'string' && copy.script.length > 400) copy.script = '';
-      return copy;
-    }),
-    edges: (wf.edges || []).map(edge => ({id: edge.id, source: edge.source, target: edge.target, when: edge.when || 'success'}))
-  };
-}
-
-function aiReferencedWorkflows(goal) {
-  const folded = String(goal || '').replace(/\s+/g, '').toLowerCase();
-  if (!folded) return [];
-  return (state.data?.workflows || []).filter(wf => {
-    const name = String(wf.name || '').replace(/\s+/g, '').toLowerCase();
-    const core = name.replace(/^通用/, '');
-    return (name.length >= 2 && folded.includes(name)) || (core.length >= 3 && folded.includes(core));
-  }).slice(0, 2);
-}
-
-function aiResolveNodeId(node, build) {
-  if (!node) return '';
-  if (node.id && build.placed.has(node.id)) return node.id;
-  if (build.mode === 'edit' && node.name) {
-    for (const [id, prev] of build.placed) {
-      if (prev.name === node.name) return id;
-    }
-  }
-  return node.id || '';
-}
-
-function ensurePreviewCarried(next, sources, goal) {
-  next = next || {};
-  next.nodes = Array.isArray(next.nodes) ? next.nodes.slice() : [];
-  next.edges = Array.isArray(next.edges) ? next.edges.slice() : [];
-  if (aiWantsPreviewRemoved(goal)) return next;
-  const donors = (sources || []).filter(Boolean);
-  if (next.nodes.some(node => node.id === 'af-preview-build')) {
-    if (!next.preview) {
-      const donor = donors.find(item => item.preview);
-      if (donor) next.preview = aiClone(donor.preview);
-    }
-    if (!next.edges.some(edge => edge.target === 'af-preview-build')) {
-      const donor = donors.find(item => (item.edges || []).some(edge => edge.target === 'af-preview-build'));
-      (donor?.edges || []).filter(edge => edge.target === 'af-preview-build' && next.nodes.some(node => node.id === edge.source)).forEach(edge => next.edges.push(aiClone(edge)));
-    }
-    return next;
-  }
-  const donor = donors.find(item => (item.nodes || []).some(node => node.id === 'af-preview-build') || item.preview?.enabled);
-  if (!donor) return next;
-  const preview = (donor.nodes || []).find(node => node.id === 'af-preview-build') || {
-    id: 'af-preview-build', name: '构建静态站点', type: 'agent', agentId: 'af-preview-builder'
-  };
-  next.nodes.push(aiClone(preview));
-  if (donor.preview) next.preview = aiClone(donor.preview);
-  const carried = (donor.edges || []).filter(edge => edge.target === 'af-preview-build' && next.nodes.some(node => node.id === edge.source));
-  if (carried.length) {
-    carried.forEach(edge => next.edges.push(aiClone(edge)));
-    return next;
-  }
-  next.nodes.filter(node => node.id !== 'af-preview-build' && !next.edges.some(edge => edge.source === node.id && edge.when !== 'failure')).forEach((node, index) => {
-    next.edges.push({id: 'af-preview-build-edge-' + (index + 1), source: node.id, target: 'af-preview-build', when: 'success'});
-  });
-  return next;
-}
-
-function mergeAIEdit(base, incoming, goal, referenced) {
+// The server applies edit operations to the canvas it was given, so ids are
+// stable: match by id and keep layout and scripts the model left out.
+function mergeAIEdit(base, incoming) {
   const prevNodes = base?.nodes || [];
-  const idMap = new Map();
-  const used = new Set();
   const nodes = (Array.isArray(incoming?.nodes) ? incoming.nodes : []).map((raw, index) => {
     const normalized = normalizeAINode(raw, index);
-    let prev = prevNodes.find(node => node.id === normalized.id && !used.has(node.id));
-    if (!prev && normalized.name) prev = prevNodes.find(node => node.name === normalized.name && !used.has(node.id));
+    const prev = prevNodes.find(node => node.id === normalized.id);
     if (!prev) return normalized;
-    used.add(prev.id);
-    if (normalized.id && normalized.id !== prev.id) idMap.set(normalized.id, prev.id);
-    const merged = {...prev, ...normalized, id: prev.id};
-    if (!raw.script) merged.script = prev.script;
+    const merged = {...prev, ...normalized};
+    if (!raw.script && prev.script) merged.script = prev.script;
     if (!raw.position || !Number.isFinite(raw.position.x)) merged.position = prev.position;
     return merged;
   });
   const known = new Set(nodes.map(node => node.id));
-  const edges = (Array.isArray(incoming?.edges) ? incoming.edges : []).map(edge => {
-    const normalized = normalizeAIEdge(edge);
-    normalized.source = idMap.get(normalized.source) || normalized.source;
-    normalized.target = idMap.get(normalized.target) || normalized.target;
-    return normalized;
-  }).filter(edge => known.has(edge.source) && known.has(edge.target) && edge.source !== edge.target);
-  const shell = {...(base || {}), nodes, edges};
-  shell.name = incoming?.name || shell.name;
-  shell.description = incoming?.description ?? shell.description;
-  if (incoming?.preview) shell.preview = incoming.preview;
-  return ensurePreviewCarried(shell, [base, ...(referenced || [])], goal);
+  const edges = (Array.isArray(incoming?.edges) ? incoming.edges : []).map(normalizeAIEdge)
+    .filter(edge => known.has(edge.source) && known.has(edge.target) && edge.source !== edge.target);
+  const shell = {...(base || {}), ...(incoming || {}), nodes, edges};
+  shell.name = incoming?.name || base?.name;
+  return shell;
 }
 
-function aiOrchestratePrompt(goal, canvas, referenced) {
-  const editing = !!(canvas && (canvas.nodes || []).length);
-  const lines = [
-    editing
-      ? '在当前画布上的这份 SOP 上按要求修改，重新提交完整的 workflows_save 草稿。这是增量修改：用户没点名的节点、连线、id 和脚本都保持原样，不要另起一条流程。'
-      : '请在当前项目搭建一条新的 SOP。',
-    '只提交一个 workflows_save 草稿，不要发布，也不要调用其它写入工具。',
-    'drafts[0].body 必须是 JSON 对象（不要序列化成字符串），字段按 name、description、nodes、edges 的顺序输出；已有节点沿用原来的 id，只有新增节点才用新 id。',
-    'agent 节点的 agentId 只能从下面的已有角色里选；没有合适角色时改用 approval（人工确认）或 script 节点。',
-    '平台节点「构建静态站点」不在角色列表里：id 固定为 af-preview-build，agentId 为 af-preview-builder。复制或修改已有 SOP 时必须保留它、它的连线和 preview 字段，除非用户明确要求去掉前端预览。',
-    'edges 用 {"source","target","when":"success"} 按成功路径连线，可以并行分支再汇合。',
-    aiRolesHint()
-  ];
-  if (editing) lines.push('当前画布上的 SOP：\n' + JSON.stringify(compactWorkflowForAI(canvas)));
-  (referenced || []).forEach(wf => lines.push('用户点名要参考的已有 SOP「' + wf.name + '」：\n' + JSON.stringify(compactWorkflowForAI(wf))));
-  lines.push('目标：' + goal);
-  return lines.join('\n');
-}
-
-async function beginAIOrchestration(goal) {
+// A canvas with steps is edited in place; an empty one gets a new graph.
+async function beginAIOrchestration() {
   const hasGraph = !!state.workflow && (state.workflow.nodes || []).length > 0;
-  const fresh = aiWantsFreshWorkflow(goal);
-  if (hasGraph && !fresh) {
+  if (hasGraph) {
     const token = ++aiBuildToken;
     finishAIBuildVisuals();
     aiBuild = {
-      token, buffer: '', thought: '',
+      token, projectId: state.projectFilter, workflowId: state.workflow.id, selectedNode: state.selectedNode,
+      buffer: '', thought: '',
       placed: new Map(state.workflow.nodes.map(node => [node.id, node])),
       wired: new Set((state.workflow.edges || []).map(edge => edge.source + '→' + edge.target)),
       pendingEdges: [], queue: [], draining: null,
       ghostText: '', ghostHidden: true, freePositions: false,
-      mode: 'edit', base: aiClone(state.workflow), spawned: 0, goal, referenced: []
+      mode: 'edit', base: aiClone(state.workflow)
     };
     if ((state.currentView || activeViewName()) !== 'flow') switchView('flow');
     openAIOrchestrator();
     $('#canvas')?.classList.add('ai-building');
+    setAIBuildStatus('正在按当前流程修改，画布先保持原样');
     return aiBuild;
   }
   const current = state.workflow;
-  return startAIBuild({
+  const build = await startAIBuild({
     id: current?.id,
     name: current?.name || 'AI 编排中…',
     projectId: current?.projectId,
@@ -870,24 +666,26 @@ async function beginAIOrchestration(goal) {
     tags: current?.tags,
     description: current?.description,
     preview: current?.preview
-  }, {confirmed: !fresh, goal, ghost: 'AI 正在理解你的需求…'});
+  }, {confirmed: true, ghost: 'AI 正在理解你的需求…'});
+  setAIBuildStatus('正在连接 AI…');
+  placeAIGhost();
+  return build;
 }
 
 async function completeAIEdit(build, finalRaw) {
+  if (!isCurrentAIBuild(build)) return false;
   if (!finalRaw || !Array.isArray(finalRaw.nodes) || !finalRaw.nodes.length) {
-    state.workflow = build.base;
-    finishAIBuildVisuals();
-    aiBuild = null;
-    syncCanvasAIEntry();
-    renderWorkflowMeta();
-    renderCanvas();
-    renderProperties();
+    abortAIBuild();
     return false;
   }
-  const merged = mergeAIEdit(build.base, finalRaw, build.goal, build.referenced);
+  const merged = mergeAIEdit(build.base, finalRaw);
   const oldIds = new Set((build.base.nodes || []).map(node => node.id));
-  const onCanvas = new Set((state.workflow.nodes || []).map(node => node.id));
-  const kept = merged.nodes.filter(node => oldIds.has(node.id) || onCanvas.has(node.id));
+  const streamed = new Map((state.workflow.nodes || []).map(node => [node.id, node]));
+  // Nodes already placed while the edit streamed keep where they landed.
+  merged.nodes.forEach(node => {
+    if (!node.position && streamed.get(node.id)?.position) node.position = streamed.get(node.id).position;
+  });
+  const kept = merged.nodes.filter(node => oldIds.has(node.id) || streamed.has(node.id));
   const keptIds = new Set(kept.map(node => node.id));
   const newcomers = merged.nodes.filter(node => !keptIds.has(node.id));
   const immediateEdges = merged.edges.filter(edge => keptIds.has(edge.source) && keptIds.has(edge.target));
@@ -895,6 +693,8 @@ async function completeAIEdit(build, finalRaw) {
   state.workflow = {...merged, nodes: kept.slice(), edges: immediateEdges.slice()};
   build.placed = new Map(kept.map(node => [node.id, node]));
   build.wired = new Set(immediateEdges.map(edge => edge.source + '→' + edge.target));
+  build.queue = [];
+  build.pendingEdges = [];
   renderWorkflowMeta();
   renderCanvas();
   renderProperties();
@@ -903,7 +703,7 @@ async function completeAIEdit(build, finalRaw) {
     ingestStreamingWorkflow({name: merged.name, nodes: newcomers, edges: laterEdges});
     await drainAIBuild();
   }
-  if (aiBuild !== build || build.token !== aiBuildToken) return false;
+  if (!await validateAIBuildRoles(build)) return false;
   build.ghostHidden = true;
   placeAIGhost();
   finishAIBuildVisuals();
@@ -918,110 +718,49 @@ async function completeAIEdit(build, finalRaw) {
 
 function restoreAIBuildFailure(build) {
   if (!build) return;
-  const previous = build.mode === 'edit' ? build.base : (build.spawned ? null : build.previous);
-  if (!previous) return;
-  state.workflow = previous;
+  state.workflow = build.mode === 'edit' ? build.base : build.previous;
+  state.selectedNode = build.selectedNode;
   renderWorkflowMeta();
   renderCanvas();
   renderProperties();
 }
 
-async function readAssistantSSE(res, onEvent) {
-  const reader = res.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '', result = null, error = null;
-  for (;;) {
-    const {value, done} = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, {stream: true});
-    let idx;
-    while ((idx = buffer.indexOf('\n\n')) >= 0) {
-      const chunk = buffer.slice(0, idx);
-      buffer = buffer.slice(idx + 2);
-      let event = 'message', data = '';
-      chunk.split('\n').forEach(line => {
-        if (line.startsWith('event:')) event = line.slice(6).trim();
-        else if (line.startsWith('data:')) data += (data ? '\n' : '') + line.slice(5).trimStart();
-      });
-      let payload = {};
-      try { payload = JSON.parse(data); } catch { continue; }
-      if (event === 'thought') onEvent(payload);
-      else if (event === 'result') result = payload;
-      else if (event === 'error') error = payload.error || '生成失败';
-    }
-  }
-  if (error) throw new Error(error);
-  if (!result) throw new Error('AI 没有返回结果，请重试');
-  return result;
+function aiDraftObject(raw) {
+  if (typeof raw !== 'string') return raw && typeof raw === 'object' ? raw : null;
+  try { return JSON.parse(raw); } catch { return null; }
 }
 
-async function runAIOrchestrator() {
-  const input = $('#aiOrchestratorInput');
-  const goal = input?.value.trim();
-  if (!goal) return toast('先描述要编排的流程');
-  if (!state.projectFilter) return toast('先在顶栏选择项目');
-  const button = $('#aiOrchestratorForm')?.querySelector('button[type="submit"]');
-  if (button?.disabled) return;
-  const project = state.projectFilter;
-  const editing = !!state.workflow && (state.workflow.nodes || []).length > 0 && !aiWantsFreshWorkflow(goal);
-  const canvas = editing ? aiClone(state.workflow) : null;
-  const referenced = aiReferencedWorkflows(goal).filter(wf => !canvas || wf.id !== canvas.id);
-  const build = await beginAIOrchestration(goal);
-  if (!build) return;
-  const model = selectedAIOrchestratorModel();
-  const previous = aiHistory[project];
-  const history = previous && aiOrchestratorEngine(previous.model) === aiOrchestratorEngine(model) ? previous : {sessionId: '', messages: []};
-  build.goal = goal;
-  build.referenced = referenced;
-  if (button) button.disabled = true;
-  const modelToggles = [...document.querySelectorAll('#aiOrchestratorRuntime [data-model-toggle]')];
-  modelToggles.forEach(toggle => { toggle.disabled = true; });
-  window.HuiPopover?.closeAll();
-  input.value = '';
-  appendOrchestratorNote(goal, 'mine');
-  setAIBuildStatus(editing ? '正在按当前流程修改，画布先保持原样' : '正在连接 AI…');
-  if (!editing) placeAIGhost();
-  const messages = history.messages.concat([{role: 'user', content: aiOrchestratePrompt(goal, canvas, referenced)}]);
-  aiAbort = new AbortController();
-  try {
-    const res = await fetch('/api/assistant/chat', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json', 'Accept': 'text/event-stream'},
-      signal: aiAbort.signal,
-      body: JSON.stringify({projectId: project, sessionId: history.sessionId, model, approvalMode: 'confirm', messages})
-    });
-    if (!res.ok) {
-      let msg = 'HTTP ' + res.status;
-      try { msg = (await res.json()).error || msg; } catch {}
-      throw new Error(msg);
-    }
-    const reply = (res.headers.get('Content-Type') || '').includes('text/event-stream') ? await readAssistantSSE(res, pushAIThought) : await res.json();
-    if (build.token !== aiBuildToken) return;
-    aiHistory[project] = {sessionId: reply.sessionId || history.sessionId, model, messages: messages.concat([{role: 'assistant', model, content: reply.message || '已提交草稿'}]).slice(-8)};
-    document.querySelectorAll('.ai-live-thought.live').forEach(box => box.classList.remove('live'));
-    if (reply.message) appendOrchestratorNote(reply.message, '');
-    const draft = (reply.drafts || []).find(item => item.tool === 'workflows_save' && item.body);
-    (draft?.warnings || []).forEach(w => appendOrchestratorNote(w, 'warn'));
-    let body = draft?.body;
-    if (typeof body === 'string') { try { body = JSON.parse(body); } catch { body = null; } }
-    const ok = await completeAIBuild(build, body);
-    if (!ok && build.token === aiBuildToken) setAIBuildStatus(build.mode === 'edit' ? '这轮没有改动画布，当前流程还在' : '这轮没有生成可放置的 SOP，可以换个说法再试');
-  } catch (error) {
-    if (build.token !== aiBuildToken) return;
-    restoreAIBuildFailure(build);
-    finishAIBuildVisuals();
-    aiBuild = null;
-    syncCanvasAIEntry();
-    setAIBuildStatus('');
-    if (error.name !== 'AbortError') {
-      appendOrchestratorNote(error.message, 'error');
-      toast(error.message);
-    }
-  } finally {
-    if (button) button.disabled = false;
-    modelToggles.forEach(toggle => { toggle.disabled = false; });
-    aiAbort = null;
+// The turn's reply arrived. An edit keeps the SOP's id; a body with another
+// id is a new SOP and replaces the canvas only after the user agrees.
+async function finishAIOrchestration(raw) {
+  const build = aiBuild;
+  if (!isCurrentAIBuild(build)) {
+    if (build) abortAIBuild();
+    return false;
   }
+  const body = aiDraftObject(raw);
+  if (!body) {
+    abortAIBuild();
+    return false;
+  }
+  if (build.mode === 'edit' && body?.id && build.base?.id && body.id !== build.base.id && Array.isArray(body.nodes)) {
+    abortAIBuild();
+    return playWorkflowOnCanvas(body, {confirmed: false});
+  }
+  const ok = await completeAIBuild(build, body);
+  if (!ok && build.token === aiBuildToken) setAIBuildStatus(build.mode === 'edit' ? '这轮没有改动画布，当前流程还在' : '这轮没有生成可放置的 SOP，可以换个说法再试');
+  return ok;
+}
+
+// "重新放到画布" on an earlier reply.
+async function playAIDraft(raw) {
+  const body = aiDraftObject(raw);
+  if (!body) return false;
+  if (state.workflow && body.id && body.id === state.workflow.id && (state.workflow.nodes || []).length) {
+    const build = await beginAIOrchestration();
+    return build ? completeAIEdit(build, body) : false;
+  }
+  return playWorkflowOnCanvas(body, {confirmed: false});
 }
 
 // Replays a finished draft (e.g. from the side assistant) with the same builder.

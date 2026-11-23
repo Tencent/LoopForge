@@ -1,15 +1,16 @@
--- Run after 036_git_http_credentials.sql. Personal HTTPS Git credentials
--- now live only in user_git_http_credentials; execution never falls back to
--- user_configs.git_token. Keep the deployment adapter's refreshing OAuth
--- grant, which is exposed through the managed host credential resolver.
+-- Run after 036_git_http_credentials.sql, after verifying the backfill and
+-- allowing time for rollback. Clear only verified copies of legacy tokens.
 UPDATE user_configs c
-JOIN user_git_http_credentials h ON h.user_id = c.user_id AND h.host = 'github.com'
+JOIN user_git_http_credentials h ON h.user_id = c.user_id
+  AND h.id = SHA2('github.com', 256)
+  AND CAST(h.host AS BINARY) = 'github.com'
 SET c.git_token = NULL
 WHERE COALESCE(TRIM(c.git_token), '') <> ''
   AND COALESCE(TRIM(c.gongfeng_refresh_token), '') = ''
   AND LOWER(TRIM(c.git_token)) NOT LIKE 'oauth2:%'
-  AND LOWER(TRIM(c.git_token)) NOT LIKE 'private:%';
-
+  AND LOWER(TRIM(c.git_token)) NOT LIKE 'private:%'
+  -- Tokens are case-sensitive even when the database collation is not.
+  AND CAST(h.token AS BINARY) = CAST(TRIM(c.git_token) AS BINARY);
 
 -- All configured credentials are available to the owner's workspace; remove
 -- the former exposure toggle from deployments that already ran version 036.

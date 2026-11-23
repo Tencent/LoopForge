@@ -183,4 +183,24 @@ test('drawer actions write back clarification and resync TAPD with API payloads'
   assert.equal(calls.find(c => c.path.endsWith('/clarification')).body.retry, true);
   assert.equal(calls.find(c => c.path.endsWith('/resync-tapd')).path, '/api/issues/issue-1/resync-tapd');
   assert.equal(calls.find(c => c.path.endsWith('/chat-clarify')).body.message, 'Safari is required');
+  assert.equal(calls.find(c => c.path.endsWith('/chat-clarify')).body.model, undefined);
+});
+
+test('another clarification round waits for the responsible account catalog and sends its selected model', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  const catalog = Promise.withResolvers();
+  app.router.get('/api/issues/issue-1/clarify-models', () => catalog.promise);
+  app.router.post('/api/issues/issue-1/chat-clarify', { ready: true });
+  app.evaluate(`
+    state.issueDetailData={issue:state.data.issues[0],comments:[],run:null,task:null,requirement:null};
+    state.drawerOpen=true;
+    openIssueClarification(false,true);
+  `);
+  const posted = () => app.router.calls.find(call => call.method==='POST' && call.path.endsWith('/chat-clarify'));
+  await settle(2);
+  assert.equal(posted(), undefined);
+  catalog.resolve({engines:[{id:'codex',name:'Codex',personal:true}],models:[{id:'codex:fixture-model',engine:'codex'}]});
+  await settle(6);
+  assert.equal(posted()?.body.model, 'codex:fixture-model');
 });

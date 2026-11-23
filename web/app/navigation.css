@@ -95,6 +95,16 @@ body.management-mode .platform-sidebar > .settings-navigation-header {
   color: var(--text);
 }
 
+.settings-navigation-reopen[hidden] {
+  display: none;
+}
+
+@media (max-width: 1000px) {
+  .settings-navigation-reopen {
+    display: none;
+  }
+}
+
 .platform-sidebar nav {
   /* Cancel the card's right padding so the thumb sits on the panel edge. */
   margin-right: -14px;
@@ -327,4 +337,13 @@ body.management-mode:is(.settings-sidebar-hidden, .settings-sidebar-entering) .p
     justify-content: flex-start !important;
     gap: 10px !important;
   }
+}
+
+.upp-build {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 12px;
+  color: var(--hui-secondary);
+  font-size: 12px;
 }

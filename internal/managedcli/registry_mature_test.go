@@ -1,10 +1,37 @@
 package managedcli
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
 	"time"
 )
+
+func TestManagedDSHReleaseCandidates(t *testing.T) {
+	f := newUpdaterFixture(t)
+	f.versions["dsh"] = "0.2.2-rc.9"
+	_, err := f.manager.UpdateProvider(context.Background(), "dsh")
+	must(t, err)
+	f.versions["dsh"] = "0.2.2-rc.10"
+	_, err = f.manager.UpdateProvider(context.Background(), "dsh")
+	must(t, err)
+	current := f.state(t).Current
+	if current["dsh"].Version != "0.2.2-rc.10" {
+		t.Fatalf("DSH release ordering lost the new RC: %+v", current)
+	}
+	if validProviderVersion("pi", "1.5.2-rc.1") || validProviderVersion("dsh", "0.2.2-alpha.1") {
+		t.Fatal("unsupported release channel was accepted")
+	}
+	published, err := json.Marshal(f.published)
+	must(t, err)
+	metadata := packageMetadata{
+		Versions: map[string]release{"0.2.1": {}, "0.2.2-rc.10": {}, "0.2.2": {}},
+		Times:    map[string]json.RawMessage{"0.2.1": published, "0.2.2-rc.10": published},
+	}
+	if got := matureVersion("dsh", metadata, "0.2.2", f.manager.Now()); got != "0.2.1" {
+		t.Fatalf("stable channel selected %q", got)
+	}
+}
 
 func TestMatureVersionSelectsNewestEligibleRelease(t *testing.T) {
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
@@ -37,7 +64,7 @@ func TestMatureVersionSelectsNewestEligibleRelease(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := matureVersion(tc.metadata, tc.upper, cutoff); got != tc.want {
+			if got := matureVersion("codex", tc.metadata, tc.upper, cutoff); got != tc.want {
 				t.Fatalf("matureVersion = %q, want %q", got, tc.want)
 			}
 		})
@@ -50,7 +77,7 @@ func TestMatureVersionIgnoresMissingOrInvalidPublishTime(t *testing.T) {
 		Versions: map[string]release{"1.0.0": {Version: "1.0.0"}, "1.1.0": {Version: "1.1.0"}, "1.2.0": {Version: "1.2.0"}},
 		Times:    map[string]json.RawMessage{"1.1.0": json.RawMessage(`"not-a-time"`), "1.2.0": json.RawMessage(`"0001-01-01T00:00:00Z"`)},
 	}
-	if got := matureVersion(metadata, "1.2.0", cutoff); got != "" {
+	if got := matureVersion("codex", metadata, "1.2.0", cutoff); got != "" {
 		t.Fatalf("matureVersion = %q, want empty", got)
 	}
 }

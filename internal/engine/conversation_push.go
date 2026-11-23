@@ -57,7 +57,7 @@ func (e *Engine) PushConversationWorkspace(ctx context.Context, runID string, re
 	ctx, cancel := context.WithTimeout(ctx, conversationPushTimeout)
 	defer cancel()
 	ctx = withGitIdentity(withRunGitCredentials(ctx, runtime.RunCredentials{GitHTTPCredentials: e.repo.GitHTTPCredentialSecrets(ctx, requesterID)}), gitUserName, gitUserEmail)
-	ctx = gitwork.WithSSHKeys(ctx, sshKeys)
+	ctx = gitwork.WithSSHKeys(e.withSSHKnownHosts(ctx), sshKeys)
 	if runnerID := e.defaultExecutionRunner(run); runnerID != "" {
 		return e.pushConversationOnRunner(ctx, runnerID, run, repositories, requesterID, gitUserName, gitUserEmail, message, sharedTarget)
 	}

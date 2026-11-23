@@ -12,6 +12,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"agentflow/internal/config"
 )
 
 // TokenEnv is the host-level fallback token, only used for output redaction.
@@ -78,16 +80,13 @@ func TokenFrom(ctx context.Context) string {
 // gongfengInsteadOfPrefixes are rewritten to HTTPS + private:token. Same list
 // for command-line -c and GIT_CONFIG_COUNT so clone/fetch/push and an Agent
 // CLI's own git all see one rewrite.
-var gongfengInsteadOfPrefixes = []string{
-	"git@git.example.com:",
-	"ssh://git@git.example.com/",
-	"https://git.example.com/",
-	"http://git.example.com/",
+func gongfengInsteadOfPrefixes(host string) []string {
+	return []string{"git@" + host + ":", "ssh://git@" + host + "/", "https://" + host + "/", "http://" + host + "/"}
 }
 
-func authedBase(token string) string {
+func authedBase(token, host string) string {
 	user, secret := SplitToken(token)
-	return "https://" + user + ":" + secret + "@git.example.com/"
+	return (&url.URL{Scheme: "https", User: url.UserPassword(user, secret), Host: host, Path: "/"}).String()
 }
 
 // SandboxEnv is the git environment for a child process: no interactive
@@ -96,16 +95,18 @@ func authedBase(token string) string {
 func SandboxEnv(token string) map[string]string {
 	extra := map[string]string{"GIT_TERMINAL_PROMPT": "0", "GIT_ALLOW_PROTOCOL": AllowedProtocols}
 	user, secret := SplitToken(token)
-	if secret == "" {
+	host := config.GongfengHost()
+	if secret == "" || host == "" {
 		return extra
 	}
 	// The credential helper reads these. The token stays out of the helper
 	// text, which git runs through a shell.
 	extra[gitHTTPUserEnv] = user
 	extra[gitHTTPPassEnv] = secret
-	authed := authedBase(token)
-	extra["GIT_CONFIG_COUNT"] = fmt.Sprintf("%d", len(gongfengInsteadOfPrefixes))
-	for i, prefix := range gongfengInsteadOfPrefixes {
+	authed := authedBase(token, host)
+	prefixes := gongfengInsteadOfPrefixes(host)
+	extra["GIT_CONFIG_COUNT"] = fmt.Sprintf("%d", len(prefixes))
+	for i, prefix := range prefixes {
 		extra[fmt.Sprintf("GIT_CONFIG_KEY_%d", i)] = "url." + authed + ".insteadof"
 		extra[fmt.Sprintf("GIT_CONFIG_VALUE_%d", i)] = prefix
 	}
@@ -193,12 +194,14 @@ func credentialHelper() string {
 // token without writing it to any git config file.
 func AuthConfigArgs(token string) []string {
 	_, secret := SplitToken(token)
-	if secret == "" {
+	host := config.GongfengHost()
+	if secret == "" || host == "" {
 		return nil
 	}
-	args := []string{"-c", "credential.helper=", "-c", "credential.helper=" + credentialHelper()}
-	authed := authedBase(token)
-	for _, prefix := range gongfengInsteadOfPrefixes {
+	helperKey := "credential.https://" + host + ".helper="
+	args := []string{"-c", helperKey, "-c", helperKey + credentialHelper()}
+	authed := authedBase(token, host)
+	for _, prefix := range gongfengInsteadOfPrefixes(host) {
 		args = append(args, "-c", "url."+authed+".insteadof="+prefix)
 	}
 	return args

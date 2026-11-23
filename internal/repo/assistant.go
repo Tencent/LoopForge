@@ -298,7 +298,7 @@ func (r *AssistantRepo) SetAssistantSessionGeneratedTitle(userID int64, id, titl
 	})
 }
 
-func (r *AssistantRepo) putAssistantSession(userID int64, v domain.AssistantSession) error {
+func (r *AssistantRepo) putAssistantSession(userID int64, v domain.AssistantSession, acceptedRequest ...string) error {
 	if userID <= 0 {
 		return errors.New("assistant session user is required")
 	}
@@ -377,6 +377,9 @@ func (r *AssistantRepo) putAssistantSession(userID int64, v domain.AssistantSess
 		if v.TaskID == "" {
 			v.TaskID = old.TaskID
 		}
+		if v.WorkflowID == "" {
+			v.WorkflowID = old.WorkflowID
+		}
 		if old.Shared {
 			v.RunID = old.RunID
 			v.ProjectID = old.ProjectID
@@ -401,6 +404,16 @@ func (r *AssistantRepo) putAssistantSession(userID int64, v domain.AssistantSess
 		} else {
 			v.Source = domain.AssistantSourceChat
 		}
+	}
+	// Admission receipts are server-owned and survive later transcript writes.
+	v.RecentClientRequestIDs = old.RecentClientRequestIDs
+	if len(acceptedRequest) > 0 && acceptedRequest[0] != "" {
+		const maxReceipts = 32
+		receipts := v.RecentClientRequestIDs
+		if len(receipts) >= maxReceipts {
+			receipts = receipts[len(receipts)-maxReceipts+1:]
+		}
+		v.RecentClientRequestIDs = append(receipts, acceptedRequest[0])
 	}
 	v.UserID = userID
 	// The latest reply and its read state are projections for the history

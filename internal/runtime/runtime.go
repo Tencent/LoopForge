@@ -40,12 +40,20 @@ const (
 
 type CodeBuddyCredential struct {
 	APIKey              string
+	BaseURL             string `json:",omitempty"`
 	InternetEnvironment string
 	// Sponsored is set when the responsible user has no key of their own and
 	// the platform's shared key is used; such runs are limited to
 	// SponsoredModels (the default first).
 	Sponsored       bool
 	SponsoredModels []string
+}
+
+func CodeBuddyUserCredential(user domain.User) CodeBuddyCredential {
+	return CodeBuddyCredential{
+		APIKey: user.CodeBuddyAPIKey, BaseURL: user.CodeBuddyBaseURL,
+		InternetEnvironment: user.CodeBuddyInternetEnvironment,
+	}
 }
 
 // RunCredentials lives only on the in-memory run sandbox handle. It is never
@@ -131,6 +139,8 @@ type CommandSpec struct {
 	// privateBinds are host directories bwrap binds into this one process
 	// only (for example a terminal's own SSH agent).
 	privateBinds []string
+	// Only the selected managed installation is exposed beneath bwrap's /tmp.
+	managedCLIInstall string
 	// Conversation preparation binds credentials before acknowledging start.
 	bindingsPrepared bool
 	// Runner-owned authentication state never enters serialized invocations.

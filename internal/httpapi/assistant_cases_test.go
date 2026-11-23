@@ -193,7 +193,7 @@ func TestAssistantTaskHandlersAndExecution(t *testing.T) {
 	}
 	noKey := user
 	noKey.CodeBuddyAPIKey = ""
-	if err := h.executeAssistantTask(context.Background(), noKey, &task); err == nil || !strings.Contains(task.LastError, "API Key") {
+	if err := h.executeAssistantTask(context.Background(), noKey, &task); err == nil || task.LastError != errFeatureCredentials.Error() {
 		t.Fatalf("missing key = %v %+v", err, task)
 	}
 }

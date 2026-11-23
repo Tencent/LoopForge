@@ -32,6 +32,57 @@ type ScheduleJobExecution struct {
 	StartedAt  time.Time                 `json:"startedAt"`
 	FinishedAt *time.Time                `json:"finishedAt,omitempty"`
 	DurationMs int64                     `json:"durationMs,omitempty"`
+	// Model and Usage cover this execution's generation, including retries
+	// and usage reported before failure, but not prior turns in a fixed session.
+	// Usage.CostUSD/CostStatus are the analytics estimate; CostCNY is set only
+	// when that estimate is known. Unreported executions and SOP triggers have
+	// no usage.
+	Model   string      `json:"model,omitempty"`
+	Usage   *TokenUsage `json:"usage,omitempty"`
+	CostCNY *float64    `json:"costCny,omitempty"`
+}
+
+// RecordUsage stores the prompt's model and usage on the execution, priced
+// like conversation turns in analytics. Empty usage is not recorded.
+func (e *ScheduleJobExecution) RecordUsage(model string, usage *TokenUsage) {
+	if usage == nil || usageTotalTokens(*usage) == 0 && usage.InputTokens == 0 && usage.OutputTokens == 0 && usage.CacheReadTokens == 0 && usage.CacheWriteTokens == 0 && usage.ReasoningTokens == 0 && usage.CostUSD == 0 {
+		return
+	}
+	priced := PriceScheduleExecutionUsage(model, *usage)
+	e.Model, e.Usage, e.CostCNY = strings.TrimSpace(model), &priced, nil
+	if priced.CostStatus == "estimated" {
+		cny := priced.CostUSD * AnalyticsUSDToCNY
+		e.CostCNY = &cny
+	}
+}
+
+// PriceScheduleExecutionUsage resolves CLI routing before looking up a tariff.
+// Codex input includes caches; Claude Code input excludes them, even when a
+// custom endpoint names an OpenAI model. Unprefixed GPT usage stays inclusive.
+func PriceScheduleExecutionUsage(model string, usage TokenUsage) TokenUsage {
+	model = strings.ToLower(strings.TrimSpace(model))
+	engine := ""
+	if prefix, rest, ok := strings.Cut(model, ":"); ok && (prefix == "codex" || prefix == "claude-code" || prefix == "codebuddy" || IsAgentCLIKind(prefix)) {
+		engine, model = prefix, strings.TrimSpace(rest)
+	}
+	inclusive := engine == "codex" || engine != "claude-code" && strings.HasPrefix(pricingModel(model), "gpt-")
+	return AnalyticsPricedUsage(model, usage, inclusive)
+}
+
+// usageTotalTokens is the billed total, falling back to input + output.
+func usageTotalTokens(u TokenUsage) int64 {
+	if u.TotalTokens > 0 {
+		return u.TotalTokens
+	}
+	return u.InputTokens + u.OutputTokens
+}
+
+// ExecutionTotalTokens is the billed total of an execution's usage.
+func (e ScheduleJobExecution) ExecutionTotalTokens() int64 {
+	if e.Usage == nil {
+		return 0
+	}
+	return usageTotalTokens(*e.Usage)
 }
 
 // ScheduleJobExecutionRun links an execution to the SOP run it started.
@@ -80,6 +131,49 @@ type ScheduleExecutionWindow struct {
 	Failed   int   `json:"failed"`
 	Running  int   `json:"running"`
 	AvgMs    int64 `json:"avgMs"`
+	// Metered counts the finished executions that recorded token usage;
+	// AvgTokens averages Tokens.Total over them, so runs that failed before
+	// reaching a model do not pull the average down. Priced counts those
+	// whose cost could be estimated; CostCNY sums their estimates.
+	Metered   int                     `json:"metered"`
+	Tokens    ScheduleExecutionTokens `json:"tokens"`
+	AvgTokens int64                   `json:"avgTokens"`
+	Priced    int                     `json:"priced"`
+	CostCNY   float64                 `json:"costCny"`
+}
+
+// ScheduleExecutionTokens sums token usage. Total is the billed total; the
+// four parts follow the providers' own split and need not add up to it.
+type ScheduleExecutionTokens struct {
+	Total      int64 `json:"total"`
+	Input      int64 `json:"input"`
+	Output     int64 `json:"output"`
+	CacheRead  int64 `json:"cacheRead"`
+	CacheWrite int64 `json:"cacheWrite"`
+}
+
+const (
+	DefaultScheduleTimeoutMinutes = 30
+	MaxScheduleTimeoutMinutes     = 240
+)
+
+// NormalizeScheduleTimeoutMinutes validates an AI job's execution limit.
+func NormalizeScheduleTimeoutMinutes(minutes int) (int, error) {
+	if minutes == 0 {
+		return DefaultScheduleTimeoutMinutes, nil
+	}
+	if minutes < 1 || minutes > MaxScheduleTimeoutMinutes {
+		return 0, fmt.Errorf("执行超时必须为 1–%d 分钟", MaxScheduleTimeoutMinutes)
+	}
+	return minutes, nil
+}
+
+func (j ScheduleJob) ExecutionTimeout() time.Duration {
+	minutes, err := NormalizeScheduleTimeoutMinutes(j.TimeoutMinutes)
+	if err != nil {
+		minutes = DefaultScheduleTimeoutMinutes
+	}
+	return time.Duration(minutes) * time.Minute
 }
 
 // ScheduleSessionFixed is ScheduleJob.SessionMode for an AI job that keeps

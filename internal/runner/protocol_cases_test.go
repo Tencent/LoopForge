@@ -2,8 +2,11 @@ package runner
 
 import (
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
 	"encoding/json"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -16,6 +19,7 @@ import (
 	flowruntime "agentflow/internal/runtime"
 
 	"github.com/gorilla/websocket"
+	"golang.org/x/crypto/ssh"
 )
 
 func TestClaimSSHKnownHostsFitsAfterLegacyPayload(t *testing.T) {
@@ -112,6 +116,10 @@ func TestClientOpenControlWebSocketBranches(t *testing.T) {
 				http.Error(w, "unauthorized", http.StatusUnauthorized)
 				return
 			}
+			if r.Header.Get(domain.RunnerSSHHostKeyProbeHeader) != "1" {
+				http.Error(w, "missing SSH host key probe support", http.StatusBadRequest)
+				return
+			}
 			conn, err := upgrader.Upgrade(w, r, nil)
 			if err == nil {
 				_ = conn.Close()
@@ -136,6 +144,57 @@ func TestClientOpenControlWebSocketBranches(t *testing.T) {
 	}
 	if _, err := NewClient("://bad").OpenControl(context.Background()); err == nil {
 		t.Fatal("invalid URL accepted")
+	}
+}
+
+func TestRunnerProbesSSHHostBeforeAuthentication(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	_, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signer, err := ssh.NewSignerFromKey(privateKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	authenticated := false
+	config := &ssh.ServerConfig{
+		NoClientAuth: true,
+		NoClientAuthCallback: func(ssh.ConnMetadata) (*ssh.Permissions, error) {
+			authenticated = true
+			return nil, nil
+		},
+	}
+	config.AddHostKey(signer)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		raw, err := listener.Accept()
+		if err != nil {
+			return
+		}
+		defer raw.Close()
+		_ = raw.SetDeadline(time.Now().Add(5 * time.Second))
+		if conn, _, _, err := ssh.NewServerConn(raw, config); err == nil {
+			_ = conn.Close()
+		}
+	}()
+	d := &Daemon{}
+	response := d.readRunnerWorkspace(t.Context(), domain.RunnerWorkspaceRequest{
+		Operation: domain.RunnerWorkspaceOperationSSHHostKeyProbe, SSHHostKeyAddress: listener.Addr().String(),
+	})
+	var observed string
+	if response.Status != http.StatusOK || json.Unmarshal(response.Payload, &observed) != nil ||
+		observed != strings.TrimSpace(string(ssh.MarshalAuthorizedKey(signer.PublicKey()))) {
+		t.Fatalf("SSH host key probe = %+v", response)
+	}
+	<-done
+	if authenticated {
+		t.Fatal("SSH host key probe attempted to log in")
 	}
 }
 

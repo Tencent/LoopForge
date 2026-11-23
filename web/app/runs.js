@@ -133,7 +133,43 @@ function syncQueuedRunRefresh(){
 }
 document.addEventListener('visibilitychange',()=>{syncQueuedRunRefresh();if(queuedRunRefreshNeeded())refreshRuns(true,true)});
 let refreshRunsPending=null;
-async function refreshRuns(background=false,runsView=false){if(refreshRunsPending)return refreshRunsPending;refreshRunsPending=(async()=>{try{const opt=background?{silent:true}:{};const runs=await api('/api/runs',opt);const list=sortRunsDescending(runs);state.data.runs=list;updateApprovalBadge();renderRuns();if(runsView){const [tasks,issues]=await Promise.all([api('/api/tasks',{silent:true}),api('/api/issues',{silent:true})]);state.data.tasks=tasks;state.data.issues=issues;if(activeViewName()==='runs')renderRuns()}else if(!background){const [tasks,issues]=await Promise.all([api('/api/tasks',opt),api('/api/issues',opt)]);state.data.tasks=tasks;state.data.issues=issues;renderRuns()}if(!state.selectedRun)return;const summary=list.find(x=>x.id===state.selectedRun);if(!summary){if($('#runsDetailSection')?.hidden===false)return;state.selectedRun=null;state.activeRun=null;renderRunDetail(null);return}if(background)return;if($('#runsDetailSection')?.hidden===false)return;selectRun(state.selectedRun,true)}catch(e){if(!background)toast(e.message)}finally{refreshRunsPending=null}})();return refreshRunsPending}
+async function refreshRuns(background=false,runsView=false){
+  if(refreshRunsPending)return refreshRunsPending;
+  refreshRunsPending=(async()=>{
+    try{
+      const opt=background?{silent:true}:{};
+      const list=sortRunsDescending(await api('/api/runs',opt));
+      state.data.runs=list;
+      updateApprovalBadge();
+      renderRuns();
+      if(runsView||!background){
+        const contextOpt=runsView?{silent:true}:opt;
+        const [tasks,issues]=await Promise.all([api('/api/tasks',contextOpt),api('/api/issues',contextOpt)]);
+        state.data.tasks=tasks;
+        state.data.issues=issues;
+        const showingRuns=activeViewName()==='runs';
+        if(!runsView||showingRuns)renderRuns();
+        // A direct run link can finish loading before its requirement metadata.
+        const current=state.activeRun,detail=$('#runDetail');
+        if(showingRuns&&current?.id&&current.id===state.selectedRun&&detail?.dataset.runId===current.id&&
+          detail.dataset.issueTitle!==(runContext(current).issue?.title||'')){
+          renderRunDetail(current);
+        }
+      }
+      if(!state.selectedRun)return;
+      const summary=list.find(x=>x.id===state.selectedRun);
+      if(!summary){
+        if($('#runsDetailSection')?.hidden===false)return;
+        state.selectedRun=null;state.activeRun=null;renderRunDetail(null);
+        return;
+      }
+      if(background||$('#runsDetailSection')?.hidden===false)return;
+      selectRun(state.selectedRun,true);
+    }catch(e){if(!background)toast(e.message)}
+    finally{refreshRunsPending=null}
+  })();
+  return refreshRunsPending;
+}
 function runProgress(r){const nodes=Object.values(r.nodes||{}).filter(Boolean),done=nodes.filter(n=>['succeeded','failed','cancelled'].includes(n.status)).length,total=Math.max(nodes.length,done);return {done:Math.min(done,total),total,pct:total?Math.round(Math.min(done,total)*100/total):0}}
 function workflowStages(workflow){const nodes=workflow?.nodes||[],edges=workflow?.edges||[],byId=new Map(nodes.map(n=>[n.id,n])),indegree=new Map(nodes.map(n=>[n.id,0]));for(const edge of edges)if(indegree.has(edge.target)&&byId.has(edge.source))indegree.set(edge.target,indegree.get(edge.target)+1);let ready=nodes.filter(n=>indegree.get(n.id)===0).map(n=>n.id),seen=new Set(),stages=[];while(ready.length){const ids=ready,stage=ids.map(id=>byId.get(id)).filter(Boolean);stages.push(stage);ready=[];for(const id of ids){seen.add(id);for(const edge of edges.filter(e=>e.source===id)){if(!indegree.has(edge.target))continue;indegree.set(edge.target,indegree.get(edge.target)-1);if(indegree.get(edge.target)===0)ready.push(edge.target)}}}const remaining=nodes.filter(n=>!seen.has(n.id));if(remaining.length)stages.push(remaining);return stages}
 function runFinishedAt(r){
@@ -314,6 +350,18 @@ function selectRun(id,keepPages=false){
     if(['queued','running','waiting'].includes(r.status))startLiveRun(r.id);else stopLiveRun();
   }).catch(e=>toast(e.message,'err'));
 }
+function runHeaderDescription(input, title, expanded) {
+  let text = String(input || '').trim();
+  // Issue dispatch prefixes the description with the same title as the header.
+  const lines = text.split(/\r?\n/);
+  while (lines.length && (!lines[0].trim() || lines[0].trim() === title)) lines.shift();
+  text = lines.join('\n').trim();
+  if (!text) return '';
+  if (text.length <= 100 && !text.includes('\n')) return `<p class="run-header-copy">${escapeHTML(text)}</p>`;
+  return `<details class="run-header-description"${expanded?' open':''}>
+    <summary><span class="run-header-copy">${escapeHTML(text)}</span><span class="run-description-more">展开全文</span><span class="run-description-less">收起全文</span></summary>
+  </details>`;
+}
 function runStatus(s){return ({queued:'排队中',running:'运行中',waiting:'待确认',paused:'已暂停',succeeded:'已完成',failed:'失败',cancelled:'已取消'}[s]||s)}
 function runControlSignature(r){return `${r?.status||''}:${Boolean(r?.pauseRequested)}:${Boolean(r?.cancelRequested)}:${r?.admissionState||''}`}
 function runControlToast(run,message){return run?.status==='queued'?'已进入项目排队，获得名额后自动启动':run?.status==='running'?message:`当前状态：${runDisplayStatus(run)}`}
@@ -371,9 +419,10 @@ function logLineHTML(l){
   const repository=l.attributes?.repositoryName||l.attributes?.repositoryDir||l.attributes?.repositoryId||'';
   return `<div class="worker-log-line ${escapeHTML(l.level||'info')}"><time>${new Date(l.timestamp).toLocaleTimeString()}</time><span>${escapeHTML(l.stream||'worker')}</span><b>${escapeHTML(l.context?.nodeId||'run')}${repository?` · ${escapeHTML(repository)}`:''}</b><pre>${escapeHTML(body)}</pre></div>`;
 }
+function isOTLPAdapter(adapter){return adapter==='otlp-v1'||adapter==='codebuddy-otel-v1'}
 function isHookAdapter(adapter){return adapter==='agent-hooks-v1'||adapter==='codebuddy-hooks-v1'}
 function hookTraceDetails(e){const a=e.attributes||{},facts=[["ID",a.hookId],["事件",a.hook],["仓库",a.repositoryName||a.repositoryDir||a.repositoryId],["阶段",a.executionPhase],["语言",a.language],["Matcher",a.matcher],["耗时",a.durationMs!=null?`${a.durationMs} ms`:""],["退出码",a.exitCode!=null?String(a.exitCode):""]].filter(x=>x[1]!==''&&x[1]!=null);return `${facts.length?`<dl class="hook-trace-facts">${facts.map(([k,v])=>`<div><dt>${k}</dt><dd>${escapeHTML(v)}</dd></div>`).join('')}</dl>`:''}${a.stdout?`<details class="hook-trace-output"><summary>stdout</summary><pre>${escapeHTML(a.stdout)}</pre></details>`:''}${a.stderr?`<details class="hook-trace-output error"><summary>stderr</summary><pre>${escapeHTML(a.stderr)}</pre></details>`:''}`}
-function telemetryItemHTML(e){const hook=isHookAdapter(e.source?.adapter),tag=hook?'Hook':e.source?.adapter==='codebuddy-otel-v1'?'OTEL':'',title=hook?(e.attributes?.hookName||e.attributes?.hookId||e.name):e.name,repository=e.attributes?.repositoryName||e.attributes?.repositoryDir||e.attributes?.repositoryId||'';return `<article class="telemetry-event ${e.category}"><time>${new Date(e.timestamp).toLocaleTimeString()}</time><span class="telemetry-category">${telemetryLabel(e)}${tag?`<em class="adapter-tag">${tag}</em>`:''}</span><div><b>${escapeHTML(title)}</b><p>${escapeHTML(e.message||'')}</p>${hook?hookTraceDetails(e):''}<small>${escapeHTML(e.nodeId||'run')}${repository?` · ${escapeHTML(repository)}`:''}${hook&&e.source?.provider?` · ${escapeHTML(e.source.provider)}`:''}${e.model?` · ${escapeHTML(e.model)}`:''}${e.toolCallId?` · ${escapeHTML(e.toolCallId)}`:''}</small></div></article>`}
+function telemetryItemHTML(e){const hook=isHookAdapter(e.source?.adapter),tag=hook?'Hook':isOTLPAdapter(e.source?.adapter)?'OTEL':'',title=hook?(e.attributes?.hookName||e.attributes?.hookId||e.name):e.name,repository=e.attributes?.repositoryName||e.attributes?.repositoryDir||e.attributes?.repositoryId||'';return `<article class="telemetry-event ${e.category}"><time>${new Date(e.timestamp).toLocaleTimeString()}</time><span class="telemetry-category">${telemetryLabel(e)}${tag?`<em class="adapter-tag">${tag}</em>`:''}</span><div><b>${escapeHTML(title)}</b><p>${escapeHTML(e.message||'')}</p>${hook?hookTraceDetails(e):''}<small>${escapeHTML(e.nodeId||'run')}${repository?` · ${escapeHTML(repository)}`:''}${hook&&e.source?.provider?` · ${escapeHTML(e.source.provider)}`:''}${e.model?` · ${escapeHTML(e.model)}`:''}${e.toolCallId?` · ${escapeHTML(e.toolCallId)}`:''}</small></div></article>`}
 async function loadRunLogs(runId,nodeId,more=false){
   if(!more&&state.runLogs?.runId===runId&&state.runLogs?.nodeId===nodeId&&state.runLogs.loading)return;
   const params=new URLSearchParams({limit:'100'});
@@ -419,12 +468,12 @@ function matchTelemetryAdapter(e,view){
   const a=e?.source?.adapter||'';
   if(!view||view==='all')return true;
   if(view==='hooks')return isHookAdapter(a);
-  if(view==='otel')return a==='codebuddy-otel-v1';
-  if(view==='live')return !isHookAdapter(a)&&a!=='codebuddy-otel-v1';
+  if(view==='otel')return isOTLPAdapter(a);
+  if(view==='live')return !isHookAdapter(a)&&!isOTLPAdapter(a);
   return a===view;
 }
 function telemetrySectionTitle(adapter){return ({live:'节点实时轨迹',hooks:'Hook 轨迹',otel:'OTEL 轨迹'})[adapter]||'节点轨迹'}
-function telemetryEmptyHint(adapter){return ({live:'该节点没有实时轨迹',hooks:'还没有 Hook 事件。角色级 Hook 在 Claude Code、Codex 或 CodeBuddy 触发后会写到这里。',otel:'还没有 OTEL span。需要 CodeBuddy 打开原生 OTLP 导出。'})[adapter]||'该节点没有轨迹'}
+function telemetryEmptyHint(adapter){return ({live:'该节点没有实时轨迹',hooks:'还没有 Hook 事件。角色级 Hook 在 Claude Code、Codex 或 CodeBuddy 触发后会写到这里。',otel:'还没有 OTEL span。请检查所用 CLI 的 OTLP 导出配置。'})[adapter]||'该节点没有轨迹'}
 function telemetrySourceTabs(adapter,attr){
   return `<div class="trace-source-tabs">${[['live','实时'],['hooks','Hook'],['otel','OTEL']].map(([id,label])=>`<button type="button" class="${adapter===id?'active':''}" ${attr}="${id}">${label}</button>`).join('')}</div>`;
 }
@@ -1201,7 +1250,11 @@ function renderRunDetail(r){
   const runTabs=['overview:概览','trace:实时轨迹','logs:Worker日志','workspace:工作区'];
   if(previewEnabled)runTabs.push('preview:前端预览');
   runTabs.push('eval:智能评测');
-  host.innerHTML=`<div class="run-detail-main"><header class="run-detail-header"><div class="run-detail-topbar"><button class="button ghost small run-back-inline" data-run-back>← 返回运行列表</button><div class="run-breadcrumb"><span>${issueRef}</span><i>›</i><span>${escapeHTML(wf.name)}</span></div>${r.executionContext?.parentRunId?`<button class="button ghost small" data-open-parent-run="${escapeHTML(r.executionContext.parentRunId)}">↑ 返回父 SOP 运行</button>`:''}<div class="run-header-actions">${issueId?`<button class="button primary small" data-open-issue="${escapeHTML(issueId)}">打开需求</button>`:''}${!r.pauseRequested?refreshRunSOPButtonHTML(r):''}<button class="button ghost small" data-open-flow>查看流程定义</button>${['queued','running','waiting'].includes(r.status)?'<button class="button danger-outline small" data-cancel-run>取消运行</button>':'<button class="button danger-outline small" data-delete-run>删除记录</button>'}</div></div><div class="run-header-main"><div><h2>${escapeHTML(ctx.issue?.title||wf.name)}</h2><p>${escapeHTML(r.input||'无运行输入')}</p></div><div class="run-status-wrap">${workspaceRestoreButtonHTML()}<span class="status ${runDisplayStatusClass(r)}">${runDisplayStatus(r)}</span>${r.status==='failed'&&!gongfengIssueClosed(ctx.issue)?'<button class="button primary small" data-resume-run>↻ 重试运行</button>':''}${canManuallyPassFailedNode(r)&&!gongfengIssueClosed(ctx.issue)?`<button class="button ghost small" data-pass-node="${escapeHTML(r.id)}" data-node="${escapeHTML(failedNodeId(r))}">手动通过</button>`:''}</div></div><div class="run-header-meta"><span class="run-meta-chip run-id-chip" title="${escapeHTML(r.id)}">Run <code>${escapeHTML(r.id.slice(-12))}</code><button type="button" class="run-id-copy" data-copy-run title="复制完整 Run ID" aria-label="复制 Run ID"><svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/><path d="M10.5 5.5V3.5A1.5 1.5 0 0 0 9 2H3.5A1.5 1.5 0 0 0 2 3.5V9A1.5 1.5 0 0 0 3.5 10.5H5.5"/></svg></button></span>${runModeChipHTML(r,wf)}${runExecutionChipHTML(r)}<span class="run-meta-chip"><svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-1px;margin-right:4px;"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>启动于 ${new Date(r.createdAt).toLocaleString()}</span><span class="run-meta-chip" title="${escapeHTML(runTimingTitle(r))}"><svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-1px;margin-right:4px;"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>执行 ${runElapsed(r)}${runWallNote(r)}</span></div></header><div class="run-section-label"><b>执行详情</b><div class="run-section-label-actions"><button class="button ghost small" data-export-logs title="下载本次运行全部节点的 Worker 日志">导出全部日志</button><div class="run-tabs" role="tablist">${runTabs.map(t=>{const[k,label]=t.split(':');return `<button class="run-tab ${runDetailTab===k?'active':''}" data-run-tab="${k}">${label}</button>`}).join('')}</div></div></div><div class="run-pane" data-run-pane="overview" ${runDetailTab==='overview'?'':'hidden'}><section class="run-context-grid">${runProgressCellHTML(r,wf,progress,graphNodes)}<div data-run-usage>${liveUsageHTML(r)}</div><div><span>交付物</span><b>${(r.artifacts||[]).length} 个不可变快照</b><small>按节点和尝试次数保留版本</small></div></section></section>${alignPanelHTML}${runIsGroupMode(r)?`<details class="run-sop-snapshot"><summary><div><b>已冷冻 SOP 快照</b><span>历史协作 · ${graphNodes.length} 个节点可展开审计</span></div></summary>`:''}<section class="run-graph-section"><div class="section-heading"><div><h3>节点执行拓扑</h3><span>点击节点查看该节点的输出、产物和执行事件</span></div><div class="graph-legend"><span><i class="succeeded"></i>完成</span><span><i class="running"></i>运行中</span><span><i class="waiting_approval"></i>待审批</span><span><i></i>未开始</span></div></div><div class="run-graph">${graphNodes.map((n,index)=>{const gv=graphNodeView(r,n.id),meta=nodeMeta(n),arts=(r.artifacts||[]).filter(a=>a.nodeId===n.id).length;return `${index?'<span class="graph-arrow">→</span>':''}<button class="graph-node ${gv.cls} ${state.selectedRunNode===n.id?'selected':''}" data-run-node="${escapeHTML(n.id)}"><span class="node-icon ${meta.kind}">${runNodeIcon(meta.kind)}</span><div><b>${escapeHTML(n.name)}</b><small>${escapeHTML(gv.text)}</small></div>${arts?`<em>${arts} 产物</em>`:''}</button>`}).join('')}</div></section><div class="node-drilldown"><section class="node-inspector"><div class="section-heading"><div class="node-inspector-title"><h3>${escapeHTML(selected?.name||'节点详情')}</h3><span class="node-activity-inline${inspectorRunning?' is-running':''}" ${nr.activity?'':'hidden'}>当前活动：<b>${escapeHTML(nr.activity||'')}</b></span><span class="node-inspector-model">${escapeHTML(nr.provider||'未分配')}${nr.model?` · ${escapeHTML(nr.model)}`:''}</span></div><span class="status node-inspector-status ${nr.status||'pending'}${inspectorRunning?' is-running':''}">${statusText(nr.status)||'待执行'}</span></div><div class="node-facts"><div><span>执行次数</span><b>${nr.attempt||0}</b></div><div><span>返工</span><b>${nr.reworkCount||0}</b></div><div><span>Token</span><b>${formatTokens(nr.usage?.totalTokens)}</b></div><div><span>工具调用</span><b>${nr.toolCalls||0}</b></div></div>${childSOPPanelHTML(r,selected?.id)}${gateResultCardHTML(nr)}${canRerunFromHere(r,selected?.id)?`<div class="node-rerun-row"><button type="button" class="button ghost small" data-rerun-from-here="${escapeHTML(selected.id)}">从这里重跑</button><small>保留上游结果，从本节点及下游重跑</small></div>`:''}${nr.output?`<div class="node-output"><div><b>节点输出</b><button data-copy-output>复制</button></div><pre>${escapeHTML(displayNodeOutput(nr.output))}</pre></div>`:'<div class="node-output empty"><b>节点输出</b><p>节点完成后，结构化输出会显示在这里。</p></div>'}<div class="runtime-details"><span>Sandbox <code>${escapeHTML(nr.sandboxId||'—')}</code></span><span>Session <code>${escapeHTML(nr.sessionId||'—')}</code></span></div></section><section class="node-artifacts"><div class="section-heading"><div><h3>节点交付物</h3><span>${nodeArtifacts.length} 个版本</span></div></div><div class="node-artifact-list">${nodeArtifacts.map(a=>`<button class="node-artifact-card" data-artifact="${escapeHTML(a.id)}"><span class="artifact-file-icon">${a.mediaType==='application/json'?'{}':'MD'}</span><div><b>${escapeHTML(a.name)}</b><span>${escapeHTML(a.path)}</span><small>attempt ${a.attempt} · ${Math.max(1,Math.ceil((a.size||0)/1024))} KB · ${(a.sha256||'').slice(0,10)}</small></div><i>预览 ›</i></button>`).join('')||'<div class="empty-inline"><span>◇</span><p>此节点还没有登记交付物</p></div>'}</div></section></div>${runIsGroupMode(r)?'</details>':''}</div><div class="run-pane" data-run-pane="trace" ${runDetailTab==='trace'?'':'hidden'}><section class="trace-section"><div class="section-heading"><div><h3>${telemetrySectionTitle(telAdapter)}</h3><span>${telPage?`${telemetry.length} 条已加载`:'加载最近 100 条'}</span></div><div class="trace-heading-actions">${telemetrySourceTabs(telAdapter,'data-tel-adapter')}${telPage?.hasMore?`<button class="button ghost small" data-tel-more>加载更早的 100 条</button>`:''}</div></div><div class="telemetry-feed">${telPage?([...telemetry].reverse().map(telemetryItemHTML).join('')||`<div class="empty-inline"><p>${telemetryEmptyHint(telAdapter)}</p></div>`):'<div class="empty-inline"><p>正在加载轨迹…</p></div>'}</div></section></div><div class="run-pane" data-run-pane="logs" ${runDetailTab==='logs'?'':'hidden'}><section class="worker-log-section"><div class="section-heading"><div><h3>Worker 日志</h3><span>${logPage?`${visibleWorkerLogs(logPage.items).length} 条调用`:(logBusy?'正在接收…':'实时加载最近调用')}</span></div><div class="worker-log-heading-actions">${logPage?.hasMore?`<button class="button ghost small" data-logs-more>加载更早的 100 条</button>`:''}</div></div><div class="worker-log-feed">${logPage?(visibleWorkerLogs(logPage.items).map(logLineHTML).join('')||'<div class="empty-inline"><p>该节点没有日志</p></div>'):'<div class="empty-inline"><p>正在加载 Worker 实时日志…</p></div>'}</div></section></div></div>`;  host.querySelector('.run-detail-main')?.insertAdjacentHTML('beforeend',`<div class="run-pane" data-run-pane="workspace" ${runDetailTab==='workspace'?'':'hidden'}>${workspacePaneHTML(r)}</div>${previewEnabled?`<div class="run-pane" data-run-pane="preview" ${runDetailTab==='preview'?'':'hidden'}>${previewPaneHTML(r)}</div>`:''}<div class="run-pane" data-run-pane="eval" ${runDetailTab==='eval'?'':'hidden'}>${runEvalPaneHTML(r)}</div>`);
+  const runTitle = ctx.issue?.title || wf.name || '';
+  const runDescription = ctx.issue?.description || r.input;
+  const descriptionExpanded = host.dataset.runId === r.id &&
+    host.querySelector('.run-header-description')?.open;
+  host.innerHTML=`<div class="run-detail-main"><header class="run-detail-header"><div class="run-detail-topbar"><button class="button ghost small run-back-inline" data-run-back>← 返回运行列表</button><div class="run-breadcrumb"><span>${issueRef}</span><i>›</i><span>${escapeHTML(wf.name)}</span></div>${r.executionContext?.parentRunId?`<button class="button ghost small" data-open-parent-run="${escapeHTML(r.executionContext.parentRunId)}">↑ 返回父 SOP 运行</button>`:''}<div class="run-header-actions">${issueId?`<button class="button primary small" data-open-issue="${escapeHTML(issueId)}">打开需求</button>`:''}${!r.pauseRequested?refreshRunSOPButtonHTML(r):''}<button class="button ghost small" data-open-flow>查看流程定义</button>${['queued','running','waiting'].includes(r.status)?'<button class="button danger-outline small" data-cancel-run>取消运行</button>':'<button class="button danger-outline small" data-delete-run>删除记录</button>'}</div></div><div class="run-header-main"><div><h2>${escapeHTML(runTitle)}</h2>${runHeaderDescription(runDescription,ctx.issue?.title,descriptionExpanded)}</div><div class="run-status-wrap">${workspaceRestoreButtonHTML()}<span class="status ${runDisplayStatusClass(r)}">${runDisplayStatus(r)}</span>${r.status==='failed'&&!gongfengIssueClosed(ctx.issue)?'<button class="button primary small" data-resume-run>↻ 重试运行</button>':''}${canManuallyPassFailedNode(r)&&!gongfengIssueClosed(ctx.issue)?`<button class="button ghost small" data-pass-node="${escapeHTML(r.id)}" data-node="${escapeHTML(failedNodeId(r))}">手动通过</button>`:''}</div></div><div class="run-header-meta"><span class="run-meta-chip run-id-chip" title="${escapeHTML(r.id)}">Run <code>${escapeHTML(r.id.slice(-12))}</code><button type="button" class="run-id-copy" data-copy-run title="复制完整 Run ID" aria-label="复制 Run ID"><svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/><path d="M10.5 5.5V3.5A1.5 1.5 0 0 0 9 2H3.5A1.5 1.5 0 0 0 2 3.5V9A1.5 1.5 0 0 0 3.5 10.5H5.5"/></svg></button></span>${runModeChipHTML(r,wf)}${runExecutionChipHTML(r)}<span class="run-meta-chip"><svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-1px;margin-right:4px;"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>启动于 ${new Date(r.createdAt).toLocaleString()}</span><span class="run-meta-chip" title="${escapeHTML(runTimingTitle(r))}"><svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-1px;margin-right:4px;"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>执行 ${runElapsed(r)}${runWallNote(r)}</span></div></header><div class="run-section-label"><b>执行详情</b><div class="run-section-label-actions"><button class="button ghost small" data-export-logs title="下载本次运行全部节点的 Worker 日志">导出全部日志</button><div class="run-tabs" role="tablist">${runTabs.map(t=>{const[k,label]=t.split(':');return `<button class="run-tab ${runDetailTab===k?'active':''}" data-run-tab="${k}">${label}</button>`}).join('')}</div></div></div><div class="run-pane" data-run-pane="overview" ${runDetailTab==='overview'?'':'hidden'}><section class="run-context-grid">${runProgressCellHTML(r,wf,progress,graphNodes)}<div data-run-usage>${liveUsageHTML(r)}</div><div><span>交付物</span><b>${(r.artifacts||[]).length} 个不可变快照</b><small>按节点和尝试次数保留版本</small></div></section></section>${alignPanelHTML}${runIsGroupMode(r)?`<details class="run-sop-snapshot"><summary><div><b>已冷冻 SOP 快照</b><span>历史协作 · ${graphNodes.length} 个节点可展开审计</span></div></summary>`:''}<section class="run-graph-section"><div class="section-heading"><div><h3>节点执行拓扑</h3><span>点击节点查看该节点的输出、产物和执行事件</span></div><div class="graph-legend"><span><i class="succeeded"></i>完成</span><span><i class="running"></i>运行中</span><span><i class="waiting_approval"></i>待确认</span><span><i></i>未开始</span></div></div><div class="run-graph">${graphNodes.map((n,index)=>{const gv=graphNodeView(r,n.id),meta=nodeMeta(n),arts=(r.artifacts||[]).filter(a=>a.nodeId===n.id).length;return `${index?'<span class="graph-arrow">→</span>':''}<button class="graph-node ${gv.cls} ${state.selectedRunNode===n.id?'selected':''}" data-run-node="${escapeHTML(n.id)}"><span class="node-icon ${meta.kind}">${runNodeIcon(meta.kind)}</span><div><b>${escapeHTML(n.name)}</b><small>${escapeHTML(gv.text)}</small></div>${arts?`<em>${arts} 产物</em>`:''}</button>`}).join('')}</div></section><div class="node-drilldown"><section class="node-inspector"><div class="section-heading"><div class="node-inspector-title"><h3>${escapeHTML(selected?.name||'节点详情')}</h3><span class="node-activity-inline${inspectorRunning?' is-running':''}" ${nr.activity?'':'hidden'}>当前活动：<b>${escapeHTML(nr.activity||'')}</b></span><span class="node-inspector-model">${escapeHTML(nr.provider||'未分配')}${nr.model?` · ${escapeHTML(nr.model)}`:''}</span></div><span class="status node-inspector-status ${nr.status||'pending'}${inspectorRunning?' is-running':''}">${statusText(nr.status)||'待执行'}</span></div><div class="node-facts"><div><span>执行次数</span><b>${nr.attempt||0}</b></div><div><span>返工</span><b>${nr.reworkCount||0}</b></div><div><span>Token</span><b>${formatTokens(nr.usage?.totalTokens)}</b></div><div><span>工具调用</span><b>${nr.toolCalls||0}</b></div></div>${childSOPPanelHTML(r,selected?.id)}${gateResultCardHTML(nr)}${canRerunFromHere(r,selected?.id)?`<div class="node-rerun-row"><button type="button" class="button ghost small" data-rerun-from-here="${escapeHTML(selected.id)}">从这里重跑</button><small>保留上游结果，从本节点及下游重跑</small></div>`:''}${nr.output?`<div class="node-output"><div><b>节点输出</b><button data-copy-output>复制</button></div><pre>${escapeHTML(displayNodeOutput(nr.output))}</pre></div>`:'<div class="node-output empty"><b>节点输出</b><p>节点完成后，结构化输出会显示在这里。</p></div>'}<div class="runtime-details"><span>Sandbox <code>${escapeHTML(nr.sandboxId||'—')}</code></span><span>Session <code>${escapeHTML(nr.sessionId||'—')}</code></span></div></section><section class="node-artifacts"><div class="section-heading"><div><h3>节点交付物</h3><span>${nodeArtifacts.length} 个版本</span></div></div><div class="node-artifact-list">${nodeArtifacts.map(a=>`<button class="node-artifact-card" data-artifact="${escapeHTML(a.id)}"><span class="artifact-file-icon">${a.mediaType==='application/json'?'{}':'MD'}</span><div class="node-artifact-info"><b>${escapeHTML(a.name)}</b><span>${escapeHTML(a.path)}</span><small>attempt ${a.attempt} · ${Math.max(1,Math.ceil((a.size||0)/1024))} KB · ${(a.sha256||'').slice(0,10)}</small></div><i>预览 ›</i></button>`).join('')||'<div class="empty-inline"><span>◇</span><p>此节点还没有登记交付物</p></div>'}</div></section></div>${runIsGroupMode(r)?'</details>':''}</div><div class="run-pane" data-run-pane="trace" ${runDetailTab==='trace'?'':'hidden'}><section class="trace-section"><div class="section-heading"><div><h3>${telemetrySectionTitle(telAdapter)}</h3><span>${telPage?`${telemetry.length} 条已加载`:'加载最近 100 条'}</span></div><div class="trace-heading-actions">${telemetrySourceTabs(telAdapter,'data-tel-adapter')}${telPage?.hasMore?`<button class="button ghost small" data-tel-more>加载更早的 100 条</button>`:''}</div></div><div class="telemetry-feed">${telPage?([...telemetry].reverse().map(telemetryItemHTML).join('')||`<div class="empty-inline"><p>${telemetryEmptyHint(telAdapter)}</p></div>`):'<div class="empty-inline"><p>正在加载轨迹…</p></div>'}</div></section></div><div class="run-pane" data-run-pane="logs" ${runDetailTab==='logs'?'':'hidden'}><section class="worker-log-section"><div class="section-heading"><div><h3>Worker 日志</h3><span>${logPage?`${visibleWorkerLogs(logPage.items).length} 条调用`:(logBusy?'正在接收…':'实时加载最近调用')}</span></div><div class="worker-log-heading-actions">${logPage?.hasMore?`<button class="button ghost small" data-logs-more>加载更早的 100 条</button>`:''}</div></div><div class="worker-log-feed">${logPage?(visibleWorkerLogs(logPage.items).map(logLineHTML).join('')||'<div class="empty-inline"><p>该节点没有日志</p></div>'):'<div class="empty-inline"><p>正在加载 Worker 实时日志…</p></div>'}</div></section></div></div>`;  host.querySelector('.run-detail-main')?.insertAdjacentHTML('beforeend',`<div class="run-pane" data-run-pane="workspace" ${runDetailTab==='workspace'?'':'hidden'}>${workspacePaneHTML(r)}</div>${previewEnabled?`<div class="run-pane" data-run-pane="preview" ${runDetailTab==='preview'?'':'hidden'}>${previewPaneHTML(r)}</div>`:''}<div class="run-pane" data-run-pane="eval" ${runDetailTab==='eval'?'':'hidden'}>${runEvalPaneHTML(r)}</div>`);
   if(keepFrame){const fresh=host.querySelector('iframe[data-vscode-frame]');if(fresh)fresh.replaceWith(existingFrame);}
   if(keepPreview){const fresh=host.querySelector('iframe[data-preview-frame]');if(fresh)fresh.replaceWith(existingPreviewFrame);}
   const headerActions=host.querySelector('.run-header-actions');if(r.status==='running'&&headerActions)headerActions.querySelector('[data-cancel-run]')?.insertAdjacentHTML('beforebegin','<button class="button ghost small" data-pause-run>暂停运行</button>');
@@ -1223,7 +1276,7 @@ function renderRunDetail(r){
     const status=host.querySelector('.run-header-main .status');if(status){status.textContent='已暂停';status.className='status paused'}
   }else if(!nonSOP&&focusNode&&focusNr&&(focusNr.status==='waiting_approval'||(r.status==='failed'&&focusNr.status==='failed'&&focusNode.type!=='sop'))){
     const header=host.querySelector('.run-detail-header');
-    const callout=focusNr.status==='waiting_approval'?approvalCalloutHTML(focusNode,focusNr,nodes):failedNodeRecoveryCalloutHTML(r.id,focusNode,focusNr);
+    const callout=focusNr.status==='waiting_approval'?approvalCalloutHTML(focusNode,focusNr,nodes,r):failedNodeRecoveryCalloutHTML(r.id,focusNode,focusNr);
     header?.insertAdjacentHTML('afterend',callout);
     host.querySelector('.node-inspector .approval-callout')?.remove();
   }
@@ -1234,9 +1287,11 @@ function renderRunDetail(r){
   const graph=host.querySelector('.run-graph');if(graph){graph.querySelectorAll('.graph-arrow').forEach(arrow=>arrow.remove());const stages=workflowStages(runIsGroupMode(r)?{...wf,nodes:graphNodes}:wf);graph.classList.add('is-staged');stages.forEach((stage,index)=>{const column=document.createElement('div');column.className='graph-stage'+(stage.length>1?' is-parallel':'');const caption=document.createElement('span');caption.className='graph-stage-label';const captionName=document.createElement('span');captionName.className='graph-stage-name';captionName.textContent=`阶段 ${index+1}${stage.length>1?` · 并行 ${stage.length}`:''}`;caption.append(captionName);const stageTime=stageTimeLabel(r,stage);if(stageTime){const stageTimeEl=document.createElement('em');stageTimeEl.className='graph-stage-time';stageTimeEl.textContent=stageTime;caption.append(stageTimeEl)}column.append(caption);for(const node of stage){const button=graph.querySelector(`[data-run-node="${CSS.escape(node.id)}"]`),parents=(wf.edges||[]).filter(edge=>edge.target===node.id).map(edge=>nodes.find(item=>item.id===edge.source)?.name).filter(Boolean);if(!button)continue;if(parents.length)button.querySelector('small').append(` · 上游 ${parents.join('、')}`);column.append(button)}if(column.children.length>1)graph.append(column)})}
   host.querySelector('[data-run-back]')?.addEventListener('click',()=>showRunList());
   bindRunDetailTabs(r,host);
-  host.querySelectorAll('[data-run-node]').forEach(b=>b.onclick=()=>selectRunNode(b.dataset.runNode));host.querySelectorAll('[data-tel-adapter]').forEach(b=>b.onclick=()=>{if((state.runTelemetryAdapter||'live')===b.dataset.telAdapter)return;state.runTelemetryAdapter=b.dataset.telAdapter;state.runTelemetry=null;renderRunDetail(state.activeRun||r)});host.querySelector('[data-logs-load]')?.addEventListener('click',()=>loadRunLogs(pg.runId,pg.nodeId,false));host.querySelector('[data-logs-more]')?.addEventListener('click',()=>loadRunLogs(pg.runId,pg.nodeId,true));host.querySelector('[data-tel-load]')?.addEventListener('click',()=>loadRunTelemetry(pg.runId,pg.nodeId,false));host.querySelector('[data-tel-more]')?.addEventListener('click',()=>loadRunTelemetry(pg.runId,pg.nodeId,true));host.querySelector('[data-open-issue]')?.addEventListener('click',ev=>{ev.preventDefault();ev.stopPropagation();openIssueDetail(ev.currentTarget.dataset.openIssue||issueId,'sop')});host.querySelectorAll('[data-rerun-from-here]').forEach(b=>b.onclick=()=>openRerunFromNode(state.activeRun||r,b.dataset.rerunFromHere));host.querySelector('[data-copy-run]')?.addEventListener('click',()=>copyText(r.id,'Run ID 已复制'));host.querySelector('[data-export-logs]')?.addEventListener('click',()=>downloadRunLogs(r.id));host.querySelector('[data-copy-output]')?.addEventListener('click',()=>copyText(displayNodeOutput(nr.output),'节点输出已复制'));host.querySelector('[data-open-flow]')?.addEventListener('click',()=>{state.workflow=clone(state.data.workflows.find(w=>w.id===r.workflowId)||wf);state.selectedNode=selected?.id||null;switchView('flow');renderAll()});host.querySelector('[data-cancel-run]')?.addEventListener('click',async ()=>{if(await afConfirm({title:'取消运行确认',message:r.status==='queued'?'确定取消排队？此运行将不会启动，之后可删除记录。':'确定取消这次运行？正在执行的节点会被终止。',confirmText:r.status==='queued'?'取消排队':'确认取消',isDanger:true}))runAction(r.id,'cancel',{})});host.querySelector('[data-delete-run]')?.addEventListener('click',()=>deleteRun(r.id));host.querySelectorAll('[data-resume-run]').forEach(b=>b.addEventListener('click',ev=>resumeRun(b.dataset.resumeRun||r.id,ev.currentTarget)));host.querySelectorAll('[data-pass-node]').forEach(b=>b.onclick=()=>passFailedNode(b.dataset.passNode,b.dataset.node,b));host.querySelectorAll('[data-artifact]').forEach(b=>b.onclick=()=>previewArtifact(state.activeRun||r,b.dataset.artifact));host.querySelectorAll('[data-approve]').forEach(b=>b.onclick=()=>runAction(r.id,'approve',withHumanContext({nodeId:b.dataset.approve,context:readHumanContext(b)})));host.querySelectorAll('[data-reject]').forEach(b=>b.onclick=async ()=>{const reason=await afPrompt({title:'打回返工',message:'请输入打回原因：',defaultValue:'验证未通过，请修复后重新提交'});if(reason!==null&&reason!==undefined)runAction(r.id,'reject',withHumanContext({nodeId:b.dataset.reject,targetId:b.dataset.target,reason,context:readHumanContext(b)}))});host.querySelectorAll('[data-retry-node]').forEach(b=>b.onclick=()=>retryWaitingNode(r.id,b.dataset.retryNode,b));host.querySelectorAll('[data-decline-retry]').forEach(b=>b.onclick=()=>declineRetry(r.id,b.dataset.declineRetry));host.querySelectorAll('[data-realign-run]').forEach(b=>b.onclick=()=>realignBaseline(b.dataset.realignRun));
+  bindReviewArtifactActions(host,r);
+  host.querySelectorAll('[data-run-node]').forEach(b=>b.onclick=()=>selectRunNode(b.dataset.runNode));host.querySelectorAll('[data-tel-adapter]').forEach(b=>b.onclick=()=>{if((state.runTelemetryAdapter||'live')===b.dataset.telAdapter)return;state.runTelemetryAdapter=b.dataset.telAdapter;state.runTelemetry=null;renderRunDetail(state.activeRun||r)});host.querySelector('[data-logs-load]')?.addEventListener('click',()=>loadRunLogs(pg.runId,pg.nodeId,false));host.querySelector('[data-logs-more]')?.addEventListener('click',()=>loadRunLogs(pg.runId,pg.nodeId,true));host.querySelector('[data-tel-load]')?.addEventListener('click',()=>loadRunTelemetry(pg.runId,pg.nodeId,false));host.querySelector('[data-tel-more]')?.addEventListener('click',()=>loadRunTelemetry(pg.runId,pg.nodeId,true));host.querySelector('[data-open-issue]')?.addEventListener('click',ev=>{ev.preventDefault();ev.stopPropagation();openIssueDetail(ev.currentTarget.dataset.openIssue||issueId,'sop')});host.querySelectorAll('[data-rerun-from-here]').forEach(b=>b.onclick=()=>openRerunFromNode(state.activeRun||r,b.dataset.rerunFromHere));host.querySelector('[data-copy-run]')?.addEventListener('click',()=>copyText(r.id,'Run ID 已复制'));host.querySelector('[data-export-logs]')?.addEventListener('click',()=>downloadRunLogs(r.id));host.querySelector('[data-copy-output]')?.addEventListener('click',()=>copyText(displayNodeOutput(nr.output),'节点输出已复制'));host.querySelector('[data-open-flow]')?.addEventListener('click',()=>{state.workflow=clone(state.data.workflows.find(w=>w.id===r.workflowId)||wf);state.selectedNode=selected?.id||null;switchView('flow');renderAll()});host.querySelector('[data-cancel-run]')?.addEventListener('click',async ()=>{if(await afConfirm({title:'取消运行确认',message:r.status==='queued'?'确定取消排队？此运行将不会启动，之后可删除记录。':'确定取消这次运行？正在执行的节点会被终止。',confirmText:r.status==='queued'?'取消排队':'确认取消',isDanger:true}))runAction(r.id,'cancel',{})});host.querySelector('[data-delete-run]')?.addEventListener('click',()=>deleteRun(r.id));host.querySelectorAll('[data-resume-run]').forEach(b=>b.addEventListener('click',ev=>resumeRun(b.dataset.resumeRun||r.id,ev.currentTarget)));host.querySelectorAll('[data-pass-node]').forEach(b=>b.onclick=()=>passFailedNode(b.dataset.passNode,b.dataset.node,b));host.querySelectorAll('[data-artifact]').forEach(b=>b.onclick=()=>previewArtifact(state.activeRun||r,b.dataset.artifact,b));host.querySelectorAll('[data-approve]').forEach(b=>b.onclick=()=>runAction(r.id,'approve',withHumanContext({nodeId:b.dataset.approve,context:readHumanContext(b)})));host.querySelectorAll('[data-reject]').forEach(b=>b.onclick=async ()=>{const reason=await afPrompt({title:'打回返工',message:'请输入打回原因：',defaultValue:'验证未通过，请修复后重新提交'});if(reason!==null&&reason!==undefined)runAction(r.id,'reject',withHumanContext({nodeId:b.dataset.reject,targetId:b.dataset.target,reason,context:readHumanContext(b)}))});host.querySelectorAll('[data-retry-node]').forEach(b=>b.onclick=()=>retryWaitingNode(r.id,b.dataset.retryNode,b));host.querySelectorAll('[data-decline-retry]').forEach(b=>b.onclick=()=>declineRetry(r.id,b.dataset.declineRetry));host.querySelectorAll('[data-realign-run]').forEach(b=>b.onclick=()=>realignBaseline(b.dataset.realignRun));
   host.querySelector('[data-pause-run]')?.addEventListener('click',()=>pauseRun(r.id));bindPausedResumeActions(host);host.querySelectorAll('[data-refresh-run-sop]').forEach(b=>b.onclick=()=>refreshRunSOP(b.dataset.refreshRunSop));
   host.dataset.runId=r.id;host.dataset.nodeId=state.selectedRunNode||'';host.dataset.controlSignature=runControlSignature(r);
+  host.dataset.issueTitle=ctx.issue?.title||'';
   paintRunActivationProgress(r.id);
   bindWorkspacePane(r,host.querySelector('[data-run-pane="workspace"]'));
   if(runDetailTab==='workspace'||runWorkspaceWasCleaned(r))loadRunWorkspace(r.id);
@@ -1251,7 +1306,25 @@ function renderRunDetail(r){
   bindRunEvalPane(r,host);
   if(runDetailTab==='eval')loadRunEval(r.id);
 }
-function fallbackCopyText(value){const ta=document.createElement('textarea');ta.value=value;ta.setAttribute('readonly','');ta.style.cssText='position:fixed;top:-9999px;left:-9999px';document.body.appendChild(ta);ta.select();let ok=false;try{ok=document.execCommand('copy')}catch(e){ok=false}document.body.removeChild(ta);return ok}
+function fallbackCopyText(value){
+  const input=document.createElement('textarea');
+  input.value=value;
+  input.readOnly=true;
+  input.style.cssText='position:fixed;top:-9999px;left:-9999px';
+  const modal=$('#artifactModal[open]');
+  const previousFocus=document.activeElement;
+  const container=modal||document.body;
+  container.appendChild(input);
+  try{
+    input.select();
+    return document.execCommand('copy');
+  }catch{
+    return false;
+  }finally{
+    input.remove();
+    if(modal?.contains(previousFocus))previousFocus.focus({preventScroll:true});
+  }
+}
 async function copyText(value,message){if(navigator.clipboard&&window.isSecureContext){try{await navigator.clipboard.writeText(value);toast(message);return}catch(e){}}toast(fallbackCopyText(value)?message:'复制失败，请手动复制')}
 async function downloadRunLogs(runId){
   try{
@@ -1277,10 +1350,6 @@ function defaultRunEval(){return{enabled:true,version:1,threshold:70,dimensions:
   {id:'recovery',name:'错误恢复',question:'相同错误是否反复出现？',weight:10},
   {id:'delivery',name:'交付完整',question:'终态、产物和验证信号是否齐全？',weight:10}
 ]}}
-// Run evals run on CodeBuddy only; a saved "codex:…" id falls back.
-function runEvalModel(){const api=window.AgentFlowAssistantModels,stored=state.runEvalModel||localStorage.getItem('agentflow.runEvalModel')||'';if(api?.codeBuddyModel)return api.codeBuddyModel(stored);return stored||(api&&api.DEFAULT)||'default'}
-function setRunEvalModel(id){state.runEvalModel=id;localStorage.setItem('agentflow.runEvalModel',id)}
-function runEvalHasKey(){return !!(userById(state.currentUser?.id)||state.currentUser||{}).codeBuddyApiKeyConfigured}
 function runEvalApplyable(rec){if(!rec||rec.status==='applied')return false;const action=((rec.target||'')+'.'+(rec.action||'')).replace(/^\./,'').toLowerCase();const full=rec.action&&rec.action.includes('.')?rec.action.toLowerCase():action;return ['workflow.update_node','agent.upsert_gate','agent.remove_gate','agent.append_instructions','agent.append_task_prompt'].includes(full)}
 function runEvalPaneHTML(run){
   const rec=state.runEval?.runId===run.id?state.runEval:null,busy=!!state.runEvalBusy,thoughts=state.runEvalThoughts||[];
@@ -1299,16 +1368,10 @@ function runEvalPaneHTML(run){
       </div>
     </div>
     <div class="run-eval-hero-action-card">
-      <div class="eval-control-label">评测大模型</div>
+      <div class="eval-control-label">评测执行器与模型</div>
       <div class="run-eval-toolbar-row">
-        <div class="schedule-model-field run-eval-model" id="runEvalModelPicker">
-          <input type="hidden" name="runEvalModel" value="${escapeHTML(runEvalModel())}">
-          <button type="button" class="ai-model-toggle" data-model-toggle aria-haspopup="listbox" aria-expanded="false">
-            <span class="ai-model-icon" data-family="glm">智</span>
-            <span data-model-label>选择模型</span>
-            <span class="ai-model-caret" aria-hidden="true"></span>
-          </button>
-          <div class="ai-model-menu" hidden role="listbox"></div>
+        <div class="feature-model-picker run-eval-picker" id="runEvalModelPicker">
+          ${window.AgentFlowAssistantModels?.featurePickerHTML()||''}
         </div>
         <button type="button" class="button primary run-eval-launch-btn" data-start-run-eval ${isTerminal?'':'disabled'}>
           <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 2l2.4 7.2L21.6 12l-7.2 2.4L12 21.6l-2.4-7.2L2.4 12l7.2-2.4L12 2z"/></svg>
@@ -1328,7 +1391,7 @@ function runEvalPaneHTML(run){
   }
 
   if(rec?.status==='failed'){
-    return `<section class="run-eval-section">${heroCard}<div class="run-eval-error-card"><div class="error-head"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg><b>评测执行失败</b></div><pre>${escapeHTML(rec.error||'模型未返回结果')}</pre><p class="error-tip">请检查个人配置中的 CodeBuddy API Key 配置或网络状态后重新评测。</p></div></section>`;
+    return `<section class="run-eval-section">${heroCard}<div class="run-eval-error-card"><div class="error-head"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg><b>评测执行失败</b></div><pre>${escapeHTML(rec.error||'模型未返回结果')}</pre><p class="error-tip">请检查所选 CLI 的凭据、安装状态或网络后重新评测。</p></div></section>`;
   }
 
   if(!rec||!rec.status){
@@ -1353,7 +1416,7 @@ function runEvalRecHTML(item){
   return `<article class="run-eval-rec ${applied?'is-applied':''}"><div><b>${escapeHTML(item.title||item.action||'建议')}</b><p>${escapeHTML(item.rationale||'')}</p><small>${escapeHTML(item.target||'')} ${escapeHTML(item.action||'')} ${item.nodeId?('· '+escapeHTML(item.nodeId)):''}</small>${patch?`<details><summary>预览补丁</summary><pre>${escapeHTML(JSON.stringify(patch,null,2))}</pre></details>`:''}${item.applyError?`<small class="danger">${escapeHTML(item.applyError)}</small>`:''}</div>${applied?`<button type="button" class="button ghost small" data-open-eval-target="${escapeHTML(item.target||'')}" data-open-eval-id="${escapeHTML(item.appliedTargetId||item.targetId||'')}">打开</button>`:(can?`<button type="button" class="button primary small" data-apply-eval="${escapeHTML(item.id)}">应用此修改</button>`:'<small>仅建议</small>')}</article>`;
 }
 function bindRunEvalPane(run,host){
-  bindRunEvalModelPicker(host.querySelector('#runEvalModelPicker'));
+  bindRunEvalModelPicker(host.querySelector('#runEvalModelPicker'),run.id);
   host.querySelectorAll('[data-run-eval]').forEach(b=>b.onclick=()=>{
     state.runDetailTab='eval';
     host.querySelectorAll('[data-run-tab]').forEach(x=>x.classList.toggle('active',x.dataset.runTab==='eval'));
@@ -1364,30 +1427,19 @@ function bindRunEvalPane(run,host){
   host.querySelectorAll('[data-apply-eval]').forEach(b=>b.onclick=()=>applyRunEvalRec(run,b.dataset.applyEval));
   host.querySelectorAll('[data-open-eval-target]').forEach(b=>b.onclick=()=>openRunEvalTarget(b.dataset.openEvalTarget,b.dataset.openEvalId));
 }
-function bindRunEvalModelPicker(host){
-  if(!host)return;
-  const api=window.AgentFlowAssistantModels,toggle=host.querySelector('[data-model-toggle]'),menu=host.querySelector('.ai-model-menu');
-  if(!api||!toggle||!menu)return;
-  const paint=()=>{const keep=runEvalModel();const inp=host.querySelector('[name=runEvalModel]');if(inp)inp.value=keep;api.paint(toggle,keep)};
-  paint();
-  api.load?.().then(paint).catch(paint);
-  if(host.dataset.bound)return;
-  host.dataset.bound='1';
-  toggle.onclick=e=>{
-    e.stopPropagation();
-    const open=menu.hidden;
-    menu.hidden=!open;
-    toggle.setAttribute('aria-expanded',open?'true':'false');
-    if(open)api.renderCodeBuddyList(menu,runEvalModel(),id=>{setRunEvalModel(id);paint();menu.hidden=true;toggle.setAttribute('aria-expanded','false')});
-  };
-  document.addEventListener('click',e=>{if(host.contains(e.target))return;menu.hidden=true;toggle.setAttribute('aria-expanded','false')});
+let runEvalModelChoice;
+function bindRunEvalModelPicker(host,runId){
+  window.AgentFlowAssistantModels?.bindFeaturePicker(host,{
+    model:runEvalModelChoice?.runId===runId?runEvalModelChoice.model:'',
+    legacyModel:localStorage.getItem('agentflow.runEvalModel'),
+    onChange:model=>{runEvalModelChoice={runId,model}}
+  });
 }
 async function loadRunEval(runId,background){
   try{
     const rec=await api(`/api/runs/${encodeURIComponent(runId)}/eval`,{silent:true});
     if((state.activeRun?.id||state.selectedRun)!==runId&&state.activeRun?.id!==runId)return;
     state.runEval={...rec,runId};
-    if(rec?.model)setRunEvalModel(rec.model);
     if(rec?.status==='running'&&!state.runEvalStream)attachRunEvalStream(runId);
     if(!background){
       const host=$('#runDetail');
@@ -1398,12 +1450,21 @@ async function loadRunEval(runId,background){
 }
 async function startRunEval(run){
   if(!['succeeded','failed','cancelled'].includes(run.status))return toast('请等 SOP 跑完后再评测');
-  if(!runEvalHasKey()){toast('请先在个人配置中配置自己的 CodeBuddy API Key','err');switchView('settings');return}
+  let picker=$('#runEvalModelPicker');
+  await picker?.modelPickerReady;
+  if(picker&&!picker.isConnected&&state.activeRun?.id===run.id){
+    // Loading the last evaluation can replace the picker while its catalog is loading.
+    picker=$('#runEvalModelPicker');
+    await picker?.modelPickerReady;
+  }
+  if(!picker?.isConnected||state.runEvalBusy)return;
+  const model=picker.querySelector('[data-feature-model]')?.value;
+  if(!model)return toast('暂无可选模型，请检查个人配置中的执行器');
   state.runEvalBusy=true;state.runEvalThoughts=['正在提交评测…'];
   const host=$('#runDetail'),pane=host?.querySelector('[data-run-pane="eval"]');
   if(pane){pane.innerHTML=runEvalPaneHTML(run);bindRunEvalPane(run,host)}
   try{
-    const rec=await api(`/api/runs/${encodeURIComponent(run.id)}/eval`,{method:'POST',body:JSON.stringify({model:runEvalModel()})});
+    const rec=await api(`/api/runs/${encodeURIComponent(run.id)}/eval`,{method:'POST',body:JSON.stringify({model})});
     state.runEval={...rec,runId:run.id};
     attachRunEvalStream(run.id);
   }catch(e){state.runEvalBusy=false;toast(e.message,'err');if(pane){pane.innerHTML=runEvalPaneHTML(run);bindRunEvalPane(run,host)}}
@@ -1435,37 +1496,71 @@ function openRunEvalTarget(target,id){
   const wf=(state.data.workflows||[]).find(w=>w.id===id);
   if(wf){state.workflow=clone(wf);state.selectedNode=null;switchView('flow');renderAll()}
 }
-async function previewArtifact(run,artifactId){
+let artifactPreviewRequest;
+function bindArtifactPreview(){
+  const modal=$('#artifactModal');
+  modal.querySelector('.artifact-close').onclick=()=>modal.close();
+  modal.addEventListener('close',()=>{
+    if(modal.open)return;
+    artifactPreviewRequest?.abort();
+    $('#artifactToastContainer').replaceChildren();
+  });
+  modal.addEventListener('pointerdown',e=>{
+    if(e.target!==modal)return;
+    const box=modal.getBoundingClientRect();
+    if(e.clientX<box.left||e.clientX>box.right||e.clientY<box.top||e.clientY>box.bottom)modal.close();
+  });
+  modal.addEventListener('keydown',e=>{
+    if(e.key!=='Tab')return;
+    const items=afDialogFocusables(modal);
+    const first=items[0],last=items.at(-1);
+    if(!first||document.activeElement!==(e.shiftKey?first:last))return;
+    e.preventDefault();
+    (e.shiftKey?last:first).focus();
+  });
+}
+function openArtifactPreview({title,icon,details,url,action,download=false,loading,opener}){
+  const modal=$('#artifactModal');
+  artifactPreviewRequest?.abort();
+  artifactPreviewRequest=new AbortController();
+  $('#artifactPreviewHeading').innerHTML=`
+    <div class="artifact-preview-head-left">
+      <span class="artifact-preview-icon" aria-hidden="true">${escapeHTML(icon)}</span>
+      <div class="artifact-preview-titles">
+        <h2 id="artifactPreviewTitle">${escapeHTML(title)}</h2>
+        <div class="artifact-preview-sub">${details.map(part=>`<span>${escapeHTML(part)}</span>`).join('<span>·</span>')}</div>
+      </div>
+    </div>
+    <div class="artifact-preview-head-actions">
+      <a class="button ghost small" href="${escapeHTML(url)}" ${download?'download':'target="_blank" rel="noopener noreferrer"'}>${escapeHTML(action)}</a>
+    </div>`;
+  $('#artifactPreview').innerHTML=`<div class="artifact-loading" role="status">${escapeHTML(loading)}</div>`;
+  if(!modal.open){
+    if(opener?.isConnected)opener.focus({preventScroll:true});
+    modal.showModal();
+  }else modal.querySelector('.artifact-close').focus();
+  return artifactPreviewRequest.signal;
+}
+async function previewArtifact(run,artifactId,opener){
   const artifact=(run.artifacts||[]).find(a=>a.id===artifactId);
   if(!artifact)return;
   const host=$('#artifactPreview');
-  host.innerHTML='<div class="artifact-loading">正在加载交付物…</div>';
-  $('#artifactModal').classList.add('open');
+  const url=`/api/runs/${encodeURIComponent(run.id)}/artifacts/${encodeURIComponent(artifactId)}`;
+  const signal=openArtifactPreview({
+    title:artifact.name,icon:isMarkdownArtifact(artifact)?'MD':'{}',details:[artifact.path,`attempt ${artifact.attempt}`],
+    url,action:'在新窗口打开 ↗',loading:'正在加载交付物…',opener,
+  });
   try{
-    const res=await fetch(`/api/runs/${encodeURIComponent(run.id)}/artifacts/${encodeURIComponent(artifactId)}`);
+    const res=await fetch(url,{signal});
     if(!res.ok)throw new Error(`HTTP ${res.status}`);
     const content=await res.text();
+    if(signal.aborted)return;
     const isMd=isMarkdownArtifact(artifact, content);
+    $('#artifactPreviewHeading .artifact-preview-icon').textContent=isMd?'MD':'{}';
     let viewMode=isMd?'preview':'source';
 
     function renderModal(){
       host.innerHTML=`
-        <div class="artifact-preview-head">
-          <div class="artifact-preview-head-left">
-            <span class="artifact-preview-icon">${isMd?'MD':'{}'}</span>
-            <div class="artifact-preview-titles">
-              <h2>${escapeHTML(artifact.name)}</h2>
-              <div class="artifact-preview-sub">
-                <span>${escapeHTML(artifact.path)}</span>
-                <span>·</span>
-                <span>attempt ${artifact.attempt}</span>
-              </div>
-            </div>
-          </div>
-          <div class="artifact-preview-head-actions">
-            <a class="button ghost small" href="/api/runs/${encodeURIComponent(run.id)}/artifacts/${encodeURIComponent(artifactId)}" target="_blank" rel="noopener noreferrer">在新窗口打开 ↗</a>
-          </div>
-        </div>
         <div class="artifact-preview-toolbar">
           <div class="artifact-toolbar-left">
             ${isMd ? `
@@ -1493,6 +1588,7 @@ async function previewArtifact(run,artifactId){
         btn.onclick=()=>{
           viewMode=btn.dataset.mode;
           renderModal();
+          host.querySelector('.artifact-mode-btn.active').focus();
         };
       });
 
@@ -1518,6 +1614,7 @@ async function previewArtifact(run,artifactId){
 
     renderModal();
   }catch(e){
+    if(signal.aborted)return;
     host.innerHTML=`<div class="empty-properties"><b>交付物加载失败</b><p>${escapeHTML(e.message)}</p></div>`;
   }
 }

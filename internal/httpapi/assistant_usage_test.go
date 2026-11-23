@@ -94,6 +94,10 @@ func generateWithFakeCLI(t *testing.T, script string) (assistantMessage, []byte)
 func TestAssistantReplySumsUsageAcrossRetries(t *testing.T) {
 	counter := filepath.Join(t.TempDir(), "calls")
 	script := `#!/bin/sh
+if [ "$1" = "--version" ]; then
+echo 2.185.0
+exit 0
+fi
 if [ -f "` + counter + `" ]; then
 cat <<'JSON'
 {"type":"result","result":"检查结果正常，没有问题。","usage":{"input_tokens":20,"output_tokens":30,"cache_read_input_tokens":400,"cache_creation_input_tokens":5}}

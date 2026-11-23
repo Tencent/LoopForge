@@ -70,7 +70,7 @@ func TestRunnerCLITestUsesOwnerLoginAndCleansUp(t *testing.T) {
 				t.Fatalf("unexpected runner operation %q", req.Operation)
 			}
 			raw, _ := json.Marshal(result)
-			h.runnerControls.resolveWorkspace(msg.RequestID, domain.RunnerWorkspaceResponse{Status: 200, Payload: raw})
+			h.runnerControls.resolveWorkspace(conn, msg.RequestID, domain.RunnerWorkspaceResponse{Status: 200, Payload: raw})
 		case <-done:
 			t.Fatalf("test ended before runner cleanup: %d %s", rec.Code, rec.Body)
 		case <-time.After(5 * time.Second):

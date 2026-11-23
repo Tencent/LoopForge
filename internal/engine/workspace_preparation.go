@@ -98,7 +98,7 @@ func (e *Engine) prepareLocalEnvironment(ctx context.Context, run domain.Run, en
 			return runtime.WorkspacePreparationStatus{Status: "failed", Error: err.Error(), Steps: []runtime.WorkspacePreparationStep{}}, err
 		}
 	}
-	return runtime.EnsureWorkspacePreparation(ctx, env.sandbox, workspacePreparationPlan(run), run.RepositoryContexts(), e.preparationSink(run.ID))
+	return runtime.EnsureWorkspacePreparation(e.withSSHKnownHosts(ctx), env.sandbox, workspacePreparationPlan(run), run.RepositoryContexts(), e.preparationSink(run.ID))
 }
 
 func (e *Engine) preparedWorkspaceRequest(run domain.Run, request domain.RunnerWorkspaceRequest) (domain.RunnerWorkspaceRequest, error) {
@@ -396,7 +396,7 @@ func (e *Engine) HandlePreparedWorkspaceTerminal(ctx context.Context, run domain
 	if !trivial && (err != nil || state.Status != "ready" || state.Environment != epoch) {
 		return runtime.TerminalResult{}, fmt.Errorf("工作区执行环境已变化，请重新准备后打开终端")
 	}
-	return pool.HandleSandboxWithGit(ctx, env.sandbox, scope, req, nil, credentials)
+	return pool.HandleSandboxWithGit(e.withSSHKnownHosts(ctx), env.sandbox, scope, req, nil, credentials)
 }
 
 // TrustedWorkspaceRequest attaches frozen execution configuration to an
@@ -431,7 +431,7 @@ func workspaceConversationRequirements(st *repo.Store, wf domain.WorkflowDefinit
 		if !ok {
 			continue
 		}
-		executor, err := resolveNodeExecutor(st, node, agent)
+		executor, err := workflowNodeExecutor(st, wf, node, agent)
 		if err != nil {
 			continue
 		}

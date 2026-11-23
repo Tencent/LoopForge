@@ -86,3 +86,19 @@ func TestProviderCredentialBindingIsolation(t *testing.T) {
 		t.Fatal("process telemetry leaked provider credentials")
 	}
 }
+
+func TestClaudeCodeEndpointOnlyDisablesToolSearchForDeepSeek(t *testing.T) {
+	for _, tt := range []struct {
+		baseURL, wantURL, wantToolSearch, wantDisableBetas string
+	}{
+		{" https://api.deepseek.com/anthropic ", "https://api.deepseek.com/anthropic", "false", "1"},
+		{"", "https://api.anthropic.com", "auto", ""},
+		{"https://api.deepseek.com.example.org/anthropic", "https://api.deepseek.com.example.org/anthropic", "auto", ""},
+	} {
+		env := map[string]string{"ENABLE_TOOL_SEARCH": "auto"}
+		BindClaudeCodeEndpoint(env, tt.baseURL)
+		if env["ANTHROPIC_BASE_URL"] != tt.wantURL || env["ENABLE_TOOL_SEARCH"] != tt.wantToolSearch || env["CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS"] != tt.wantDisableBetas {
+			t.Errorf("base URL %q configured incorrectly: %v", tt.baseURL, env)
+		}
+	}
+}

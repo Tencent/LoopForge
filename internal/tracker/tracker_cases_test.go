@@ -280,28 +280,27 @@ func TestTAPDParsingAndMessages(t *testing.T) {
 	}
 }
 
-func TestCodeBuddyAuthLoading(t *testing.T) {
+func TestTrackerDoesNotUseHostCodeBuddyCredentials(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	dir := filepath.Join(home, ".codebuddy")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	path := filepath.Join(dir, "mcp.json")
-	if err := os.WriteFile(path, []byte(`{"mcpServers":{"gongfeng":{"headers":{"Authorization":"Bearer token"}}}}`), 0o600); err != nil {
+	data := []byte(`{"mcpServers":{"gongfeng":{"headers":{"Authorization":"Bearer fixture-gf"}},"tapd":{"headers":{"Authorization":"Bearer fixture-tapd"}}}}`)
+	if err := os.WriteFile(filepath.Join(dir, "mcp.json"), data, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if got := LoadAuthFromCodeBuddy("gongfeng"); got != "Bearer token" {
-		t.Fatalf("auth = %q", got)
+	svc := NewService()
+	cfg := domain.SyncConfig{GongfengMCPURL: "https://mcp.example.test/gongfeng", TAPDMCPURL: "https://mcp.example.test/tapd"}
+	svc.Configure(cfg)
+	if svc.gongfeng == nil || svc.tapd == nil || svc.gfSource != "none" || svc.tapdSource != "none" {
+		t.Fatal("the configured endpoints should not inherit host credentials")
 	}
-	if got := LoadAuthFromCodeBuddy("missing"); got != "" {
-		t.Fatalf("missing auth = %q", got)
-	}
-	if err := os.WriteFile(path, []byte(`{`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if got := LoadAuthFromCodeBuddy("gongfeng"); got != "" {
-		t.Fatalf("malformed auth = %q", got)
+	svc.SetAuthToken("explicit-fixture-token")
+	svc.Configure(cfg)
+	if svc.gfSource != "env:AGENTFLOW_MCP_TOKEN" || svc.tapdSource != "env:AGENTFLOW_MCP_TOKEN" {
+		t.Fatalf("explicit token source = %q / %q", svc.gfSource, svc.tapdSource)
 	}
 }
 
@@ -442,7 +441,7 @@ func TestCatalogBindingHelpers(t *testing.T) {
 		{ID: "gongfeng", Transport: "http", URL: "https://mcp.example/gf"},
 		{ID: "ignored", Transport: "stdio", URL: "https://ignored"},
 	}
-	binding := bindTrackerMCP("tapd", domain.SyncConfig{}, servers, "token", "")
+	binding := bindTrackerMCP("tapd", domain.SyncConfig{}, servers, "token")
 	if binding.URL == "" || !headerHas(binding.Headers, "authorization") {
 		t.Fatalf("binding = %#v", binding)
 	}
