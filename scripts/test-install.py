@@ -45,6 +45,7 @@ if [[ "$1" == info ]]; then
   [[ "${MOCK_USER:-0}" == 0 || "${MOCK_PRIVILEGED:-0}" == 1 || "${MOCK_DIRECT:-0}" == 1 ]]
   exit
 fi
+if [[ "$1" == context && "$2" == inspect ]]; then printf '%s\\n' "${MOCK_CONTEXT_HOST:-}"; exit; fi
 if [[ "$1" == image && "$2" == inspect && "${MOCK_IMAGE_PRESENT:-0}" != 1 ]]; then exit 1; fi
 if [[ "$1" == pull && "${MOCK_PULL_FAIL:-0}" == 1 ]]; then exit 42; fi
 if [[ "$1" == tag && "${MOCK_TAG_FAIL:-0}" == 1 ]]; then exit 1; fi
@@ -67,7 +68,7 @@ export MOCK_PRIVILEGED=1
 exec "$@"
 ''')
         self.environ = dict(os.environ, PATH=str(self.root / 'mock') + ':' + os.environ['PATH'], MOCK_LOG=str(self.root / 'docker.log'), MOCK_SQL_LOG=str(self.root / 'mysql.log'), AGENTFLOW_HTTP_PORT='18765', LOOPFORGE_PUBLIC_URL='https://team.example.test', LOOPFORGE_BIND='0.0.0.0')
-        for name in ('LOOPFORGE_DOCKER_USE_SUDO', 'LOOPFORGE_DATA_DIR', 'LOOPFORGE_IMAGE', 'COMPOSE_FILE', 'LOOPFORGE_BUILD_FROM_SOURCE', 'LOOPFORGE_PULL_POLICY', 'MIRROR', 'MOCK_USER', 'MOCK_DIRECT', 'MOCK_SUDO_DENIED', 'MOCK_IMAGE_PRESENT', 'MOCK_PULL_FAIL', 'MOCK_TAG_FAIL', 'MOCK_MIRROR_GHCR', 'MOCK_MIRROR_NJU', 'MOCK_CURL_LOG'):
+        for name in ('LOOPFORGE_DOCKER_USE_SUDO', 'LOOPFORGE_DATA_DIR', 'LOOPFORGE_IMAGE', 'COMPOSE_FILE', 'LOOPFORGE_BUILD_FROM_SOURCE', 'LOOPFORGE_PULL_POLICY', 'MIRROR', 'MOCK_USER', 'MOCK_DIRECT', 'MOCK_SUDO_DENIED', 'MOCK_IMAGE_PRESENT', 'MOCK_PULL_FAIL', 'MOCK_TAG_FAIL', 'MOCK_MIRROR_GHCR', 'MOCK_MIRROR_NJU', 'MOCK_CURL_LOG', 'MOCK_CONTEXT_HOST', 'DOCKER_HOST', 'LOOPFORGE_DOCKER_SOCKET'):
             self.environ.pop(name, None)
         self.environ.pop('MOCK_COLUMN_COUNT', None)
 
@@ -123,6 +124,52 @@ exec "$@"
     def test_non_root_with_direct_access_never_uses_sudo(self):
         self.assert_success(self.install(MOCK_USER='1000', MOCK_DIRECT='1', MOCK_SUDO_DENIED='1'))
         self.assertNotIn('1 compose', (self.root / 'docker.log').read_text())
+
+    def docker_socket_setting(self):
+        lines = [line for line in (self.root / '.env').read_text().splitlines() if line.startswith('LOOPFORGE_DOCKER_SOCKET=')]
+        self.assertEqual(len(lines), 1, lines)
+        return lines[0].split('=', 1)[1]
+
+    def use_macos(self):
+        self.executable('uname', '#!/usr/bin/env bash\nif [[ "$1" == -s ]]; then echo Darwin; else echo arm64; fi\n')
+
+    def set_docker_socket(self, value):
+        text = (self.root / '.env').read_text().replace('LOOPFORGE_DOCKER_SOCKET=' + self.docker_socket_setting(), 'LOOPFORGE_DOCKER_SOCKET=' + value)
+        (self.root / '.env').write_text(text)
+
+    def test_linux_context_socket_is_the_mount_source(self):
+        self.assert_success(self.install(MOCK_CONTEXT_HOST='unix:///run/user/1000/docker.sock'))
+        self.assertEqual(self.docker_socket_setting(), '/run/user/1000/docker.sock')
+
+    def test_macos_vm_engines_mount_the_socket_inside_the_vm(self):
+        self.use_macos()
+        for context in ('unix:///Users/dev/.colima/default/docker.sock', 'unix:///Users/dev/.docker/run/docker.sock', 'unix:///Users/dev/.orbstack/run/docker.sock', 'unix:///var/run/docker.sock'):
+            with self.subTest(context=context):
+                (self.root / '.env').unlink(missing_ok=True)
+                self.assert_success(self.install(MOCK_CONTEXT_HOST=context))
+                self.assertEqual(self.docker_socket_setting(), '/var/run/docker.sock')
+
+    def test_macos_rerun_replaces_the_mac_side_socket_an_earlier_install_saved(self):
+        self.use_macos()
+        context = 'unix:///Users/dev/.colima/default/docker.sock'
+        self.assert_success(self.install(MOCK_CONTEXT_HOST=context))
+        self.set_docker_socket('/Users/dev/.colima/default/docker.sock')
+        before = (self.root / '.env').read_text()
+        result = self.install(MOCK_CONTEXT_HOST=context)
+        self.assert_success(result)
+        self.assertIn('Using /var/run/docker.sock inside the Docker VM', result.stdout)
+        self.assertEqual(self.docker_socket_setting(), '/var/run/docker.sock')
+        self.assertEqual((self.root / '.env').read_text(), before.replace('/Users/dev/.colima/default/docker.sock', '/var/run/docker.sock'))
+        self.assertEqual((self.root / '.env').stat().st_mode & 0o777, 0o600)
+
+    def test_macos_rerun_keeps_a_socket_the_operator_chose(self):
+        self.use_macos()
+        self.assert_success(self.install(MOCK_CONTEXT_HOST='unix:///Users/dev/.colima/default/docker.sock'))
+        self.set_docker_socket('/var/run/custom-docker.sock')
+        result = self.install(MOCK_CONTEXT_HOST='unix:///Users/dev/.colima/default/docker.sock')
+        self.assert_success(result)
+        self.assertNotIn('inside the Docker VM', result.stdout)
+        self.assertEqual(self.docker_socket_setting(), '/var/run/custom-docker.sock')
 
     def test_noninteractive_without_sudo_fails_immediately(self):
         result = self.install(MOCK_USER='1000', MOCK_SUDO_DENIED='1')
