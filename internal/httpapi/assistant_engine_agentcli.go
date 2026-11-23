@@ -37,8 +37,10 @@ func prepareAssistantAgentCLIInvocation(kind string, o assistantEngineInvocation
 		return assistantCLIInvocation{}, err
 	}
 	resume := ""
+	cursorACP := false
 	if o.Resume {
-		if resume = readAgentCLISession(o.Root, kind, o.SessionID); !agentCLISessionValid(resume) {
+		resume, cursorACP = readAgentCLISession(o.Root, kind, o.SessionID)
+		if !agentCLISessionValid(resume) {
 			return assistantCLIInvocation{resumeMissing: true}, nil
 		}
 	}
@@ -58,7 +60,7 @@ func prepareAssistantAgentCLIInvocation(kind string, o assistantEngineInvocation
 	command, input, err := runtime.StageAgentCLIConversationCommand(o.Root, kind, runtime.AgentCLICommandOptions{
 		Binary: o.Bin, Model: o.Model, Effort: o.Effort, Resume: resume, Prompt: o.Prompt,
 		SystemPrompt: o.SystemPrompt, SystemPromptFile: systemFile, Chat: true, Workspace: o.Workspace, AgentFile: agentFile,
-		RunnerLogin: o.RunnerLogin, ImagePaths: o.ImagePaths, ImageInput: o.ImageInput,
+		RunnerLogin: o.RunnerLogin, ImagePaths: o.ImagePaths, ImageInput: o.ImageInput, CursorACP: cursorACP,
 	})
 	if err != nil {
 		return assistantCLIInvocation{}, err
@@ -66,8 +68,9 @@ func prepareAssistantAgentCLIInvocation(kind string, o assistantEngineInvocation
 	command.CredentialBindings = []runtime.CredentialBinding{runtime.BindAgentCLI}
 	translate := runtime.NewAgentCLITranslator(kind)
 	var interactive *assistantInteractiveInput
-	if input.ACPPrompt != "" {
-		acp, err := newAssistantACP(filepath.Join(o.Root, "ws"), input.ACPPrompt, resume)
+	cursorACP = input.ACPPrompt != nil
+	if cursorACP {
+		acp, err := newAssistantACP(filepath.Join(o.Root, "ws"), *input.ACPPrompt, resume)
 		if err != nil {
 			input.Close()
 			return assistantCLIInvocation{}, err
@@ -103,7 +106,7 @@ func prepareAssistantAgentCLIInvocation(kind string, o assistantEngineInvocation
 					interactive.closeWriter()
 				}
 				if !o.ReviewOnly && agentCLISessionValid(native) {
-					_ = writeAgentCLISession(o.Root, kind, o.SessionID, native)
+					_ = writeAgentCLISession(o.Root, kind, o.SessionID, native, cursorACP)
 				}
 			}
 			return out
@@ -114,7 +117,7 @@ func prepareAssistantAgentCLIInvocation(kind string, o assistantEngineInvocation
 				defer interactive.close()
 			}
 			if !o.ReviewOnly && agentCLISessionValid(native) {
-				_ = writeAgentCLISession(o.Root, kind, o.SessionID, native)
+				_ = writeAgentCLISession(o.Root, kind, o.SessionID, native, cursorACP)
 			}
 		},
 	}, nil
@@ -148,8 +151,10 @@ func assistantAgentCLILine(kind, line string, native *string) (string, bool) {
 }
 
 // agent-cli-sessions.json maps "<kind>:<chat session>" onto the CLI's own
-// session ID, which each CLI assigns itself.
+// session ID. A matching Cursor ACP entry pins that native session's transport.
 var agentCLISessionsMu sync.Mutex
+
+const cursorACPSessionPrefix = "cursor-acp:"
 
 // agentCLISessionValid guards the native ID before it reaches an argument.
 func agentCLISessionValid(id string) bool {
@@ -160,17 +165,18 @@ func agentCLISessionsPath(root string) string {
 	return filepath.Join(root, "agent-cli-sessions.json")
 }
 
-func readAgentCLISession(root, kind, sessionID string) string {
+func readAgentCLISession(root, kind, sessionID string) (string, bool) {
 	agentCLISessionsMu.Lock()
 	defer agentCLISessionsMu.Unlock()
 	sessions := map[string]string{}
 	if data, err := os.ReadFile(agentCLISessionsPath(root)); err == nil {
 		_ = json.Unmarshal(data, &sessions)
 	}
-	return sessions[kind+":"+sessionID]
+	native := sessions[kind+":"+sessionID]
+	return native, kind == runtime.AgentCLICursor && native != "" && sessions[cursorACPSessionPrefix+sessionID] == native
 }
 
-func writeAgentCLISession(root, kind, sessionID, native string) error {
+func writeAgentCLISession(root, kind, sessionID, native string, cursorACP bool) error {
 	agentCLISessionsMu.Lock()
 	defer agentCLISessionsMu.Unlock()
 	sessions := map[string]string{}
@@ -178,6 +184,13 @@ func writeAgentCLISession(root, kind, sessionID, native string) error {
 		_ = json.Unmarshal(data, &sessions)
 	}
 	sessions[kind+":"+sessionID] = native
+	if kind == runtime.AgentCLICursor {
+		if cursorACP {
+			sessions[cursorACPSessionPrefix+sessionID] = native
+		} else {
+			delete(sessions, cursorACPSessionPrefix+sessionID)
+		}
+	}
 	data, err := json.Marshal(sessions)
 	if err != nil {
 		return err

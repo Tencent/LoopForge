@@ -4,9 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
+
+	"agentflow/internal/runtime"
 )
 
 func TestAssistantACPConversationInput(t *testing.T) {
@@ -128,5 +133,36 @@ func TestAssistantACPRespectsUserCancellation(t *testing.T) {
 	})
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("user cancellation was lost: %v", err)
+	}
+}
+
+func TestAssistantCursorShortResumeKeepsItsTransport(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		acp  bool
+	}{{"print", false}, {"acp", true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			config := filepath.Join(root, "mcp.json")
+			if err := os.WriteFile(config, []byte(`{"mcpServers":{}}`), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := writeAgentCLISession(root, runtime.AgentCLICursor, "chat", "native-cursor", tc.acp); err != nil {
+				t.Fatal(err)
+			}
+			inv, err := prepareAssistantAgentCLIInvocation(runtime.AgentCLICursor, assistantEngineInvocationOpts{
+				Root: root, Config: config, SessionID: "chat", Resume: true, Prompt: "short follow-up",
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer inv.finish(false)
+			if inv.sessionRef != "native-cursor" || slices.Contains(inv.command.Argv, "acp") != tc.acp {
+				t.Fatalf("resume changed the native session or its transport: %v", inv.command.Argv)
+			}
+			if acp, ok := inv.command.Stdin.(*assistantACP); ok && acp.prompt != "short follow-up" {
+				t.Fatalf("unexpected ACP prompt: %q", acp.prompt)
+			}
+		})
 	}
 }

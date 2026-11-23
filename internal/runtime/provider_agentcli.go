@@ -108,6 +108,8 @@ type AgentCLICommandOptions struct {
 	RunnerLogin bool
 	// AgentFile is Kimi Code's chat agent definition (WriteKimiChatAgent).
 	AgentFile string
+	// CursorACP keeps a resumed Cursor session on its original transport.
+	CursorACP bool
 }
 
 // AgentCLICommand builds the command for an agent CLI turn; the caller adds
@@ -120,7 +122,7 @@ func AgentCLICommand(kind string, o AgentCLICommandOptions) CommandSpec {
 // AgentCLIConversationInput holds prompt data handled by the caller or staged
 // as a native attachment for the duration of one conversation turn.
 type AgentCLIConversationInput struct {
-	ACPPrompt  string
+	ACPPrompt  *string
 	root       string
 	dir        string
 	paths      []string
@@ -182,13 +184,13 @@ func agentCLICommand(kind string, o AgentCLICommandOptions, input *AgentCLIConve
 	if inline && !(o.Chat && resume != "") {
 		prompt = AgentCLITaskPrompt(o.SystemPrompt, o.SystemPromptFile, prompt)
 	}
-	promptArgs, stdin, err := agentCLIPromptInput(kind, prompt, input)
+	promptArgs, stdin, err := agentCLIPromptInput(kind, prompt, input, o.CursorACP)
 	if err != nil {
 		return CommandSpec{}, err
 	}
 	extra := append([]string{}, o.Extra...)
 	var argv []string
-	acp := input != nil && input.ACPPrompt != ""
+	acp := input != nil && input.ACPPrompt != nil
 	readOnly := o.Chat && !o.Workspace
 	options := AgentCLIOptions{Model: model, Effort: effort, ReadOnly: readOnly}
 	if input != nil {
@@ -328,8 +330,13 @@ func agentCLICommand(kind string, o AgentCLICommandOptions, input *AgentCLIConve
 	return CommandSpec{Argv: argv, Stdin: stdin, Provider: kind, AgentCLI: options}, nil
 }
 
-func agentCLIPromptInput(kind, prompt string, input *AgentCLIConversationInput) ([]string, io.Reader, error) {
-	if !PromptFitsArgv(len(prompt)) {
+func agentCLIPromptInput(kind, prompt string, input *AgentCLIConversationInput, cursorACP bool) ([]string, io.Reader, error) {
+	long := !PromptFitsArgv(len(prompt))
+	if kind == AgentCLICursor && input != nil && (long || cursorACP) {
+		input.ACPPrompt = &prompt
+		return []string{"acp"}, nil, nil
+	}
+	if long {
 		switch kind {
 		case AgentCLIOpenCode, AgentCLIPi, AgentCLIDeepSeek:
 			return nil, strings.NewReader(prompt), nil
@@ -359,11 +366,6 @@ func agentCLIPromptInput(kind, prompt string, input *AgentCLIConversationInput) 
 				}
 				input.promptFile = input.paths[0]
 				return []string{"-p", "The <user_request> block contains the original user request. Respond to it."}, nil, nil
-			}
-		case AgentCLICursor:
-			if input != nil {
-				input.ACPPrompt = prompt
-				return []string{"acp"}, nil, nil
 			}
 		}
 	}

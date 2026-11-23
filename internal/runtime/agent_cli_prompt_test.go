@@ -30,7 +30,7 @@ func TestAgentCLIConversationLongPrompt(t *testing.T) {
 			}
 			switch kind {
 			case AgentCLICursor:
-				if command.Argv[len(command.Argv)-1] != "acp" || input.ACPPrompt != prompt || command.Stdin != nil {
+				if command.Argv[len(command.Argv)-1] != "acp" || input.ACPPrompt == nil || *input.ACPPrompt != prompt || command.Stdin != nil {
 					t.Fatal("ACP must receive the complete task from the conversation transport")
 				}
 			case AgentCLIKimi:
@@ -122,7 +122,7 @@ func TestAgentCLIConversationShortPromptUsesArgv(t *testing.T) {
 			t.Fatal(err)
 		}
 		input.Close()
-		if !slices.Contains(command.Argv, prompt) || command.Stdin != nil || input.ACPPrompt != "" || len(input.paths) != 0 {
+		if !slices.Contains(command.Argv, prompt) || command.Stdin != nil || input.ACPPrompt != nil || len(input.paths) != 0 {
 			t.Errorf("%s: prompt at the threshold should remain on argv", kind)
 		}
 	}
