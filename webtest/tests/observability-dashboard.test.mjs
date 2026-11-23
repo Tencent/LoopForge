@@ -5,6 +5,7 @@ import { chooseOption, loadApp, settle } from '../lib/load-app.mjs';
 function snapshot(user='') {
   const count=user==='7'?1:user==='8'?2:3;
   return {
+    tokenUsage:(user?[{date:'2026-11-22',userId:user,model:'model-'+user,tokens:count*1000}]:[{date:'2026-11-22',userId:'7',model:'model-7',tokens:1000},{date:'2026-11-23',userId:'8',model:'model-8',tokens:2000}]),
     dashboard:{sopRuns:count,succeededRuns:count,failedRuns:0,humanRuns:1,deliveredIssues:count,
       trend:[{date:'2026-11',sopRuns:count,succeededRuns:count,humanRuns:1,sopDelivered:count}],humanNodes:[{key:'flow/review',name:'Review'},{key:'flow/test',name:'Test'}],
       humanTrend:[{date:'2026-11',node:'flow/review',approvals:count,rejections:0,retries:1},{date:'2026-11',node:'flow/test',approvals:1,rejections:1,retries:0}]},
@@ -43,10 +44,13 @@ test('grouped design keeps personal/project and owner filters, with all metrics 
   assert.equal(app.document.querySelectorAll('#obsBody .obs-kpi').length,9);
   assert.equal(app.document.querySelectorAll('#obsBody .obs-kpi-foot, #obsBody .obs-info, #obsBody .obs-card-heading p').length,0);
   assert.equal(stat(app,'delivered'),'1');assert.equal(stat(app,'sop-success'),'100%');
+  assert.equal(app.evaluate(`obsTokenRows('members').length`),1);
   const project=app.document.querySelector('[data-obs-scope="project"]');project.click();await settle(8);
   assert.equal(app.evaluate('state.analytics.summary.totalCostCny'),21);
   assert.equal(app.evaluate('state.analytics.activity.sessions'),3);
   assert.equal(stat(app,'delivered'),'3');assert.equal(stat(app,'human-rate'),'33%');
+  assert.equal(app.evaluate(`obsTokenRows('members').length`),2);
+  assert.equal(app.evaluate(`obsTokenRows('models').reduce((n,r)=>n+r.tokens,0)`),3000);
   assert.equal(app.document.querySelector('#obsUserFilter'),null);
   assert.ok(app.document.querySelector('[data-obs-scope="project"].active'));
   assert.match(app.document.querySelector('.obs-scopeline').textContent,/全部成员/);
@@ -59,6 +63,8 @@ test('grouped design keeps personal/project and owner filters, with all metrics 
   assert.equal(app.evaluate('state.analytics.summary.totalCostCny'),14);
   assert.equal(app.evaluate('state.analytics.activity.sessions'),2);
   assert.equal(stat(app,'sessions'),'2');assert.equal(stat(app,'cost'),'¥14.00');
+  assert.equal(app.evaluate(`obsTokenRows('members')[0].userId`),'8');
+  assert.equal(app.evaluate(`obsTokenRows('models')[0].model`),'model-8');
   call=app.router.calls.filter(c=>c.path==='/api/analytics'&&c.url.searchParams.has('projectId')).at(-1);
   assert.equal(call.url.searchParams.get('userId'),'8');
   assert.match(app.document.querySelector('.obs-scopeline').textContent,/bob/);
@@ -130,8 +136,50 @@ test('partial query failures are surfaced instead of showing zero metrics, and r
   app.router.get(/^\/api\/analytics\?/,empty);await app.evaluate('refreshObs()');
   assert.equal(app.document.querySelector('#obsBody [role="alert"]'),null);
   assert.equal(stat(app,'sessions'),'0');assert.equal(stat(app,'sop-success'),'—');assert.equal(stat(app,'human-rate'),'—');
-  assert.equal(app.document.querySelectorAll('#obsBody [data-obs-chart][data-empty="1"]').length,3);
+  assert.equal(app.document.querySelectorAll('#obsBody [data-obs-chart][data-empty="1"]').length,4);
   assert.doesNotMatch(app.document.querySelector('#obsBody').textContent,/NaN|Infinity|输入 0 \/ 输出 0/);
+});
+
+test('member daily and model token views share the selected time range without adding duplicate KPIs', async t => {
+  const app=await loadApp();t.after(app.close);prepare(app);
+  const data=snapshot('7');data.summary.totalTokens=1000;
+  data.tokenUsage=[
+    {date:'2026-10-31',userId:'7',model:'gpt',tokens:100},
+    {date:'2026-11-01',userId:'7',model:'gpt',tokens:200},
+    {date:'2026-11-01',userId:'8',model:'claude',tokens:300},
+    {date:'2026-11-02',userId:'7',model:'',tokens:400},
+  ];
+  app.evaluate(`state.analytics=${JSON.stringify(data)};state.obsScope='project';state.obsTokenView='members';renderObservability()`);
+  assert.equal(app.document.querySelectorAll('#obsBody .obs-kpi').length,9);
+  const card=app.document.querySelector('[data-obs-card="cost"]');
+  card.querySelector('[data-obs-token-view="models"]').click();
+  assert.equal(app.document.querySelector('[data-obs-card="cost"]'),card);
+  assert.equal(app.evaluate(`obsTokenRows('models').reduce((n,r)=>n+r.tokens,0)`),1000);
+  assert.match(app.evaluate(`obsTokenRows('models')[0].name`),/未识别模型/);
+  app.evaluate(`state.obsTrendGrain='month';state.obsPeriodKey='2026-11';renderObservability()`);
+  assert.equal(app.evaluate(`obsTokenRows('members').reduce((n,r)=>n+r.tokens,0)`),900);
+  const options=app.evaluate(`(()=>{const rows=obsTokenRows('models'),option=obsTokenOption('models',rows,{theme:OBS_THEME_PRESETS.light,reduced:true});return {total:option.series[0].data.reduce((n,r)=>n+r.value,0),tooltip:option.tooltip.formatter({dataIndex:0}),animation:option.animation}})()`);
+  assert.equal(options.total,900);assert.match(options.tooltip,/44\.4%|400/);assert.equal(options.animation,false);
+  app.evaluate(`state.obsTrendGrain='week';state.obsPeriodKey='2026-W44';renderObservability()`);
+  assert.equal(app.evaluate(`obsTokenRows('models').reduce((n,r)=>n+r.tokens,0)`),600);
+  app.evaluate(`state.obsTrendGrain='day';state.obsPeriodKey='2026-11-02';renderObservability()`);
+  assert.equal(app.evaluate(`obsTokenRows('members').length`),1);
+  assert.equal(app.evaluate(`obsTokenRows('models')[0].tokens`),400);
+  app.evaluate(`state.obsTrendGrain='month';state.obsPeriodKey='2026-12';renderObservability()`);
+  assert.ok(app.document.querySelector('[data-obs-chart="dashboard-tokens"][data-empty="1"]'));
+});
+
+test('token chart keeps all members, dates and models available when there are many rows', async t => {
+  const app=await loadApp();t.after(app.close);prepare(app);
+  const result=app.evaluate(`(()=>{
+    const facts=Array.from({length:20},(_,i)=>({date:'2026-11-'+String(i+1).padStart(2,'0'),userId:String(i%8+1),model:'model-'+(i%8),tokens:100+i}));
+    state.analytics={summary:{totalTokens:facts.reduce((n,r)=>n+r.tokens,0)},tokenUsage:facts};
+    const memberRows=obsTokenRows('members'),modelRows=obsTokenRows('models');
+    const members=obsTokenOption('members',memberRows,{theme:OBS_THEME_PRESETS.light}),models=obsTokenOption('models',modelRows,{theme:OBS_THEME_PRESETS.light});
+    return {days:members.xAxis.data.length,memberCount:members.series.length,legend:members.legend.type,memberZoom:members.dataZoom.length,models:models.series[0].data.length,modelZoom:models.dataZoom.length,total:modelRows.reduce((n,r)=>n+r.tokens,0),expected:state.analytics.summary.totalTokens};
+  })()`);
+  assert.equal(result.days,20);assert.equal(result.memberCount,8);assert.equal(result.legend,'scroll');assert.equal(result.memberZoom,2);
+  assert.equal(result.models,8);assert.equal(result.modelZoom,1);assert.equal(result.total,result.expected);
 });
 
 test('opening delivery while a scope change loads requests the full data for the new scope', async t => {

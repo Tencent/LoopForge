@@ -38,10 +38,14 @@ function obsVibeCard(){
 }
 function obsSummaryCostCard(){
   const view=obsScopedView();
-  return `<section class="obs-card2 obs-summary-cost" data-obs-card="cost"><h3>${lfT('用量与费用','Usage & cost')}</h3>${obsSummaryValues([
+  const values=obsSummaryValues([
     ['tokens',lfT('Token 用量','Tokens'),formatTokens(view.tokens)],
     ['cost',lfT('费用（人民币）','Cost (CNY)'),view.costKnown?'¥'+Number(view.cost||0).toFixed(2):lfT('未识别','Unknown')],
-  ])}</section>`;
+  ]);
+  const tabs=obsSeg('data-obs-token-view',[
+    ['members',lfT('成员每日','Members by day')],['models',lfT('各模型','By model')],
+  ],obsTokenView(),true);
+  return obsCard('cost',lfT('用量与费用','Usage & cost'),'',values,`<div class="obs-token-tabs">${tabs}</div>${obsChartSlot('dashboard-tokens',obsTokenSpec(),240)}`,{klass:'obs-summary-cost',expand:true});
 }
 function obsDashboardSeries(kind,points,metric){
   const defs=kind==='delivery'?[[lfT('SOP 交付','SOP deliveries'),'sopDelivered'],[lfT('Vibe Coding 交付','Vibe Coding deliveries'),'vibeDelivered']]:kind==='vibe'?[[lfT('会话','Sessions'),'sessions'],[lfT('协作会话','Collaborative sessions'),'collaborativeSessions']]:[[lfT('审批 / 放行','Approved / passed'),'approvals'],[lfT('驳回','Rejected'),'rejections'],[lfT('重试 / 拒绝续跑','Retry / declined'),'retries']];
@@ -132,5 +136,90 @@ function obsBindHumanTrendActions(root){
       b.setAttribute('aria-pressed',String(b.dataset.obsHumanMetric===(state.obsDashboardMetric||'normalized')));
       b.onclick=()=>{state.obsDashboardMetric=b.dataset.obsHumanMetric;obsUpdateHumanTrend(card)};
     });
+  });
+}
+
+function obsTokenView(){return state.obsTokenView==='models'?'models':'members'}
+function obsTokenInPeriod(date){
+  if(obsTrendGrain()==='all')return true;
+  const range=obsPeriodRange(obsPeriodKey(),obsTrendGrain()),at=new Date(date+'T00:00:00Z');
+  return !!range&&at>=range.from&&at<range.to;
+}
+function obsTokenRows(view=obsTokenView()){
+  const snapshot=state.analytics||{},facts=snapshot.tokenUsage;
+  const source=Array.isArray(facts)?facts.filter(r=>obsTokenInPeriod(r.date)):view==='members'
+    ?(snapshot.userUsage||[]).filter(r=>obsTokenInPeriod(r.date))
+    :obsTrendGrain()==='all'?(snapshot.models||[]).map(r=>({model:r.key||r.name||'',tokens:r.tokens})):[];
+  if(!Array.isArray(facts)&&view==='models'&&obsTrendGrain()==='all'){
+    const total=Number(snapshot.summary?.totalTokens||0),known=source.reduce((sum,r)=>sum+Number(r.tokens||0),0);
+    if(known>total){source.splice(0,source.length,{model:'',tokens:total})}
+    else if(total>known)source.push({model:'',tokens:total-known});
+  }
+  const rows=new Map();
+  for(const r of source){
+    const tokens=Number(r.tokens||0);if(tokens<=0)continue;
+    const userId=String(r.userId||'unassigned'),model=String(r.model||'');
+    const key=view==='members'?JSON.stringify([r.date,userId]):model;
+    if(!rows.has(key))rows.set(key,view==='members'?{date:r.date,userId,tokens:0}:{model,name:model||lfT('未识别模型','Unattributed model'),tokens:0});
+    rows.get(key).tokens+=tokens;
+  }
+  return [...rows.values()].sort((a,b)=>view==='members'?a.date.localeCompare(b.date)||a.userId.localeCompare(b.userId):b.tokens-a.tokens||a.name.localeCompare(b.name));
+}
+function obsTokenOption(view,rows,opts={}){
+  const o=obsChartOpts(opts),t=o.theme,members=view==='members';
+  if(!members){
+    const total=rows.reduce((sum,r)=>sum+r.tokens,0),zoom=rows.length>6;
+    return obsChartBase(o,{
+      grid:{left:8,right:zoom?70:50,top:24,bottom:8,containLabel:true},
+      xAxis:obsValueAxis(t,formatTokens,{min:0,name:'Token',nameTextStyle:{color:t.muted}}),
+      yAxis:{type:'category',inverse:true,data:rows.map(r=>r.name),axisTick:{show:false},axisLine:{show:false},axisLabel:{color:t.muted,fontSize:11,width:150,overflow:'truncate'}},
+      media:[{query:{maxWidth:480},option:{grid:{right:zoom?58:40},yAxis:{axisLabel:{width:80}}}},{query:{maxWidth:280},option:{yAxis:{axisLabel:{width:48}}}}],
+      dataZoom:zoom?[{type:'slider',yAxisIndex:0,right:0,width:12,startValue:0,endValue:5,showDetail:false,brushSelect:false}]:[],
+      tooltip:{...obsTooltipBase(t),trigger:'item',formatter:p=>obsTooltipRows(rows[p.dataIndex]?.name||'',[[lfT('Token 用量','Tokens'),formatTokens(rows[p.dataIndex]?.tokens||0)],[lfT('占比','Share'),(total?(rows[p.dataIndex]?.tokens||0)*100/total:0).toFixed(1)+'%']])},
+      series:[{id:'token-models',name:'Token',type:'bar',barMaxWidth:18,data:rows.map(r=>({value:r.tokens,itemStyle:{color:r.model?t.c1:t.muted2}})),label:{show:true,position:'right',color:t.text,fontSize:11,formatter:p=>formatTokens(p.value)},animationDurationUpdate:o.reduced?0:350}],
+    });
+  }
+  const dates=[...new Set(rows.map(r=>r.date))].sort(),totals=new Map();
+  for(const r of rows)totals.set(r.userId,(totals.get(r.userId)||0)+r.tokens);
+  const users=[...totals.keys()].sort((a,b)=>totals.get(b)-totals.get(a)||a.localeCompare(b));
+  const cells=new Map(rows.map(r=>[JSON.stringify([r.date,r.userId]),r.tokens]));
+  const palette=[t.c1,t.c2,t.amber,t.green,t.c3,t.c4],zoom=dates.length>14;
+  const names=users.map(id=>obsUserName(id)),unique=names.map((name,i)=>names.indexOf(name)===i&&names.lastIndexOf(name)===i?name:`${name} (${users[i]})`);
+  return obsChartBase(o,{
+    color:palette,grid:{left:8,right:12,top:24,bottom:zoom?70:38,containLabel:true},
+    xAxis:obsCategoryAxis(t,dates,{axisLabel:{color:t.muted,fontSize:11,hideOverlap:true,formatter:date=>date.slice(5).replace('-','/')}}),
+    yAxis:obsValueAxis(t,formatTokens,{min:0,name:'Token',nameTextStyle:{color:t.muted}}),
+    legend:{type:'scroll',bottom:0,itemWidth:8,itemHeight:8,textStyle:{color:t.muted,fontSize:11}},
+    dataZoom:zoom?[{type:'slider',xAxisIndex:0,bottom:28,height:14,startValue:dates.length-14,endValue:dates.length-1,showDetail:false,brushSelect:false},{type:'inside',xAxisIndex:0}]:[],
+    tooltip:{...obsTooltipBase(t),trigger:'axis',axisPointer:{type:'shadow'},formatter:params=>{
+      const parts=(params||[]).filter(p=>Number(p.value)>0),total=parts.reduce((sum,p)=>sum+Number(p.value),0);
+      return obsTooltipRows(dates[params?.[0]?.dataIndex]||'', [...parts.map(p=>[p.seriesName,formatTokens(p.value)]),[lfT('合计','Total'),formatTokens(total)]]);
+    }},
+    series:users.map((id,i)=>({id:'token-member-'+id,name:unique[i],type:'bar',stack:'tokens',barMaxWidth:30,data:dates.map(date=>cells.get(JSON.stringify([date,id]))||0),emphasis:{focus:'series'},animationDurationUpdate:o.reduced?0:350})),
+  });
+}
+function obsTokenFallback(view,rows){
+  const members=view==='members',headers=members?[lfT('日期','Date'),lfT('成员','Member'),'Token']:[lfT('模型','Model'),'Token'];
+  return `<div class="obs-token-table"><table class="obs-table"><thead><tr>${headers.map(h=>`<th>${escapeHTML(h)}</th>`).join('')}</tr></thead><tbody>${rows.map(r=>`<tr>${(members?[r.date,obsUserName(r.userId),formatTokens(r.tokens)]:[r.name,formatTokens(r.tokens)]).map(v=>`<td>${escapeHTML(v)}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
+}
+function obsTokenSpec(){
+  const view=obsTokenView(),rows=obsTokenRows(view);
+  return {empty:!rows.length,emptyText:lfT('暂无 Token 用量','No token usage'),option:(theme,reduced)=>obsTokenOption(view,rows,{theme:obsDashboardPalette(theme),reduced}),fallback:()=>obsTokenFallback(view,rows)};
+}
+function obsBindTokenActions(root){
+  root.querySelectorAll('[data-obs-token-view]').forEach(button=>{
+    button.setAttribute('aria-pressed',String(button.dataset.obsTokenView===obsTokenView()));
+    button.onclick=()=>{
+      state.obsTokenView=button.dataset.obsTokenView;
+      const card=button.closest('[data-obs-card="cost"]'),spec=obsTokenSpec(),key='dashboard-tokens';obsChartSpecs[key]=spec;
+      card.querySelectorAll('[data-obs-token-view]').forEach(b=>{const active=b.dataset.obsTokenView===obsTokenView();b.classList.toggle('active',active);b.setAttribute('aria-pressed',String(active))});
+      const el=card.querySelector('[data-obs-chart="dashboard-tokens"]'),entry=obsChartEntry(key);
+      if(entry&&entry.el===el&&!spec.empty){entry.spec=spec;entry.chart.setOption(spec.option(obsEChartsTheme(),obsReducedMotion()),{notMerge:true})}
+      else {
+        obsDisposeCharts(el);
+        const template=document.createElement('template');template.innerHTML=obsChartSlot(key,spec,240);el.replaceWith(template.content.firstElementChild);
+        obsMountCharts(card);
+      }
+    };
   });
 }

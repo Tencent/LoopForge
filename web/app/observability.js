@@ -592,6 +592,7 @@ function renderObservability(){
 // obsBindActions 绑定卡片内的交互；卡片局部重渲染后会对新节点重新调用。
 function obsBindActions(root){
   if(typeof obsBindHumanTrendActions==='function')obsBindHumanTrendActions(root);
+  if(typeof obsBindTokenActions==='function')obsBindTokenActions(root);
   root.querySelectorAll('[data-obs-metric]').forEach(b=>b.onclick=()=>setObsTrendMetric(b.dataset.obsMetric));
   root.querySelectorAll('[data-obs-period]').forEach(el=>el.onclick=e=>{e.stopPropagation();const key=el.dataset.obsPeriod;if(key)obsSelectTrendPeriod(key)});
   root.querySelectorAll('[data-open-run]').forEach(b=>b.onclick=e=>{if(e.target.closest&&e.target.closest('a'))return;obsCollapse();openRunFromId(b.dataset.openRun)});
@@ -1036,7 +1037,7 @@ function obsSourceLabel(s){return s==='gongfeng'?'工蜂':s==='tapd'?'TAPD':s===
 function obsCategoryLabel(k){return ({requirement:'需求开发',bugfix:'Bug 修复',refactor:'技术优化',other:'其他'}[k])||k||'未分类'}
 function obsTraceLabel(t){return [t.origin==='external'?'外部 · '+t.workflowName:obsSourceLabel(t.issueSource||'local'),t.externalId||t.issueId||t.runId].filter(Boolean).join(' ')}
 function obsOverview(){
-  obsCardBuilders={summary:obsSummaryCard,vibe:obsVibeCard,human:obsHumanTrendCard};
+  obsCardBuilders={summary:obsSummaryCard,vibe:obsVibeCard,human:obsHumanTrendCard,cost:obsSummaryCostCard};
   return `<div class="obs-summary-layout">${obsSummaryCard()}<div class="obs-summary-pair">${obsVibeCard()}${obsHumanTrendCard()}</div>${obsSummaryCostCard()}</div>`;
 }
 function obsActivityView(){

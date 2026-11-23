@@ -84,6 +84,10 @@ func (r *AnalyticsRepo) analyticsWithRuns(filter domain.AnalyticsFilter, prefetc
 	workflows, agents, executors, models, nodes, categories, sources := map[string]*analyticsAccumulator{}, map[string]*analyticsAccumulator{}, map[string]*analyticsAccumulator{}, map[string]*analyticsAccumulator{}, map[string]*analyticsAccumulator{}, map[string]*analyticsAccumulator{}, map[string]*analyticsAccumulator{}
 	versions := map[string]*analyticsVersionAccumulator{}
 	users := map[string]*analyticsUserAccumulator{}
+	var tokenUsage map[analyticsTokenUsageKey]int64
+	if filter.IncludeDashboard && filter.Scope != "dashboard" {
+		tokenUsage = map[analyticsTokenUsageKey]int64{}
+	}
 	projects := map[string]*analyticsProjectAccumulator{}
 	failures := map[string]*domain.AnalyticsFailure{}
 	var terminalDurations, terminalExecDurations []int64
@@ -216,6 +220,7 @@ func (r *AnalyticsRepo) analyticsWithRuns(filter domain.AnalyticsFilter, prefetc
 		}
 		if !isExternal && run.IsWorkspace() {
 			accumulateConversationRun(&out.Summary, conversationIssues, trends, conversationTrendIssues, users, projects, sources, run, issuesByID[issueID], filter.Grain)
+			accumulateAnalyticsTokenUsage(tokenUsage, run, analyticsRunUserID(run, issuesByID[issueID]), run.CreatedAt.UTC().Format("2006-01-02"), nil)
 			continue
 		}
 		if !isExternal {
@@ -426,6 +431,7 @@ func (r *AnalyticsRepo) analyticsWithRuns(filter domain.AnalyticsFilter, prefetc
 		cell.CostUSD += run.Usage.CostUSD
 		addAnalyticsTrendIssue(trendIssues, bucket, issueID)
 		accumulateUserUsage(users, analyticsRunUserID(run, issuesByID[issueID]), day, run, duration, complete, execDuration)
+		accumulateAnalyticsTokenUsage(tokenUsage, run, analyticsRunUserID(run, issuesByID[issueID]), day, external.execution.Usage)
 		accumulateProjectUsage(projects, domain.RunProjectID(run, issuesByID[issueID].ProjectID), issueID, run)
 		if isExternal {
 			accumulateInsightModels(models, external.execution)
@@ -592,6 +598,7 @@ func (r *AnalyticsRepo) analyticsWithRuns(filter domain.AnalyticsFilter, prefetc
 	out.WorkflowVersions = finalizeWorkflowVersions(versions)
 	out.IssueSources = finalizeBreakdowns(sources)
 	out.UserUsage = finalizeUserUsage(users)
+	out.TokenUsage = finalizeAnalyticsTokenUsage(tokenUsage)
 	out.ProjectUsage = finalizeProjectUsage(projects)
 	out.Models = finalizeBreakdowns(models)
 	out.Nodes = finalizeBreakdowns(nodes)

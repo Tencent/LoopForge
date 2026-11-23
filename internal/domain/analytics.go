@@ -17,8 +17,8 @@ type AnalyticsFilter struct {
 	// Scope "overview" skips delivery scans and detailed breakdowns. "dashboard"
 	// also includes compact delivery and intervention cohorts without write paths.
 	Scope string
-	// IncludeDashboard adds intervention aggregates to the existing detailed
-	// overview/full response, preserving its legacy time buckets and indexes.
+	// IncludeDashboard adds compact panel aggregates and dated token attribution
+	// to overview/full responses, preserving their legacy time buckets and indexes.
 	IncludeDashboard bool
 	// UserID keeps runs whose responsible executor or linked issue assignee matches.
 	UserID string
@@ -503,6 +503,15 @@ type AnalyticsActivityPoint struct {
 	AnalyticsActivity
 }
 
+// AnalyticsTokenUsagePoint reconciles execution tokens by UTC day, responsible
+// member and observed model. An empty model denotes tokens without attribution.
+type AnalyticsTokenUsagePoint struct {
+	Date   string `json:"date"`
+	UserID string `json:"userId"`
+	Model  string `json:"model"`
+	Tokens int64  `json:"tokens"`
+}
+
 type AnalyticsSnapshot struct {
 	Dashboard     *AnalyticsDashboard      `json:"dashboard,omitempty"`
 	Activity      AnalyticsActivity        `json:"activity"`
@@ -521,6 +530,8 @@ type AnalyticsSnapshot struct {
 	Deliveries    []AnalyticsDelivery      `json:"deliveries,omitempty"`
 	Delivery      AnalyticsDeliverySummary `json:"delivery"`
 	MRMerges      []AnalyticsMRMerge       `json:"mrMerges"`
+
+	TokenUsage []AnalyticsTokenUsagePoint `json:"tokenUsage,omitempty"`
 
 	// IssueSources 为需求类型分布（local/gongfeng/tapd）。
 	IssueSources []AnalyticsBreakdown `json:"issueSources,omitempty"`
