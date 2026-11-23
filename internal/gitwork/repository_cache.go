@@ -47,7 +47,7 @@ func RepositoryCachePath(root, repositoryID string) string {
 // CloneFromRepositoryCache authenticates to the remote and makes an
 // independent checkout of branch using the refreshed cache as the transport.
 // The destination must be empty. The cache is never needed at runtime.
-func CloneFromRepositoryCache(ctx context.Context, root, repositoryID, remote, branch, workspace string, singleBranch bool, watch procwatch.Options) (err error) {
+func CloneFromRepositoryCache(ctx context.Context, root, repositoryID, remote, branch, workspace string, singleBranch bool, watch procwatch.Options) error {
 	dir := RepositoryCachePath(root, repositoryID)
 	if dir == "" {
 		return fmt.Errorf("仓库 %q 不能用作缓存目录名", repositoryID)
@@ -62,33 +62,42 @@ func CloneFromRepositoryCache(ctx context.Context, root, repositoryID, remote, b
 	if err := requireEmptyCloneDirectory(workspace); err != nil {
 		return err
 	}
-	unlock, err := lockRepositoryCache(ctx, dir)
-	if err != nil {
-		return err
-	}
-	defer unlock()
-	if err := refreshLockedCache(ctx, dir, remote, watch); err != nil {
-		return err
-	}
-	if err := requireEmptyCloneDirectory(workspace); err != nil {
-		return err
-	}
-	defer func() {
+	return procwatch.WithinTimeout(ctx, watch, func(ctx context.Context) (err error) {
+		unlock, err := lockRepositoryCache(ctx, dir)
 		if err != nil {
-			_ = emptyDirectory(workspace)
+			return err
 		}
-	}()
+		defer unlock()
+		if err := refreshLockedCache(ctx, dir, remote, watch); err != nil {
+			return err
+		}
+		if err := requireEmptyCloneDirectory(workspace); err != nil {
+			return err
+		}
+		defer func() {
+			if err != nil {
+				_ = emptyDirectory(workspace)
+			}
+		}()
 
-	// Use Git's transport so the worktree gets its own objects and only
-	// reaches the refs advertised in the authenticated fetch.
-	args := []string{"clone", "--quiet", "--no-local", "--branch", branch}
-	if singleBranch {
-		args = append(args, "--single-branch")
-	}
-	if err := localGit(ctx, "-C", workspace, append(args, "--", dir, ".")...); err != nil {
-		return err
-	}
-	return localGit(ctx, "-C", workspace, "remote", "set-url", "origin", remote)
+		// Use Git's transport so the worktree gets its own objects and only
+		// reaches the refs advertised in the authenticated fetch.
+		args := []string{"clone", "--progress", "--no-local", "--branch", branch}
+		if singleBranch {
+			args = append(args, "--single-branch")
+		}
+		args = append(args, "--", dir, ".")
+		watch.Redact = func(line string) string {
+			return redactContextGitSecrets(ctx, Redact(line, TokenFrom(ctx)))
+		}
+		tail, err := procwatch.Run(ctx, func(ctx context.Context) *exec.Cmd {
+			return localGitCommand(ctx, "-C", workspace, args...)
+		}, watch)
+		if err != nil {
+			return fmt.Errorf("git clone from repository cache: %w (%s)", err, tail)
+		}
+		return localGit(ctx, "-C", workspace, "remote", "set-url", "origin", remote)
+	})
 }
 
 func refreshLockedCache(ctx context.Context, dir, remote string, watch procwatch.Options) error {
@@ -162,12 +171,16 @@ func localGit(ctx context.Context, dirOption, dir string, args ...string) error 
 	return err
 }
 
-func localGitOutput(ctx context.Context, dirOption, dir string, args ...string) (string, error) {
+func localGitCommand(ctx context.Context, dirOption, dir string, args ...string) *exec.Cmd {
 	cmd := exec.CommandContext(ctx, "git", append([]string{dirOption, dir}, args...)...)
 	cmd.Env = WithEnvValue(Env(""), "GIT_CONFIG_NOSYSTEM", "1")
 	cmd.Env = WithEnvValue(cmd.Env, "GIT_CONFIG_GLOBAL", os.DevNull)
 	cmd.Env = WithEnvValue(cmd.Env, "GIT_CONFIG_PARAMETERS", "")
-	out, err := cmd.CombinedOutput()
+	return cmd
+}
+
+func localGitOutput(ctx context.Context, dirOption, dir string, args ...string) (string, error) {
+	out, err := localGitCommand(ctx, dirOption, dir, args...).CombinedOutput()
 	text := strings.TrimSpace(string(out))
 	if err != nil {
 		return "", fmt.Errorf("git %s: %w (%s)", args[0], err, text)

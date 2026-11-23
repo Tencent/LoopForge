@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"agentflow/internal/procwatch"
 )
@@ -144,4 +145,58 @@ func TestCloneFromRepositoryCacheReplacesABrokenCache(t *testing.T) {
 	if content, err := os.ReadFile(file); err != nil || string(content) != "keep" {
 		t.Fatalf("existing workspace file was changed: %q %v", content, err)
 	}
+}
+
+func TestRepositoryCacheCheckoutUsesOneTimeout(t *testing.T) {
+	ctx := context.Background()
+	root, origin := t.TempDir(), t.TempDir()
+	cacheTestGit(t, origin, "init", "-q", "-b", "main")
+	cacheTestCommit(t, origin, "a.txt")
+	remote := "file://" + origin
+	if err := CloneFromRepositoryCache(ctx, root, "service", remote, "main", t.TempDir(), false, procwatch.Options{}); err != nil {
+		t.Fatal(err)
+	}
+	t.Run("waiting for lock", func(t *testing.T) {
+		unlock, err := lockRepositoryCache(ctx, RepositoryCachePath(root, "service"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer unlock()
+		timed, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+		err = CloneFromRepositoryCache(timed, root, "service", remote, "main", t.TempDir(), false, procwatch.Options{
+			Timeout: 200 * time.Millisecond, TimeoutEnv: CloneTimeoutEnv,
+		})
+		if !procwatch.Stopped(err) || !strings.Contains(err.Error(), CloneTimeoutEnv) {
+			t.Fatalf("cache lock exceeded the clone budget: %v", err)
+		}
+	})
+	t.Run("copying from cache", func(t *testing.T) {
+		git, err := exec.LookPath("git")
+		if err != nil {
+			t.Fatal(err)
+		}
+		bin, marker := t.TempDir(), filepath.Join(t.TempDir(), "local-clone")
+		script := `#!/bin/sh
+case "$*" in
+  *"clone --progress --no-local --branch"*) touch "$LOOPFORGE_TEST_CACHE_CLONE"; exec sleep 8 ;;
+esac
+exec "$LOOPFORGE_TEST_REAL_GIT" "$@"
+`
+		if err := os.WriteFile(filepath.Join(bin, "git"), []byte(script), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("LOOPFORGE_TEST_CACHE_CLONE", marker)
+		t.Setenv("LOOPFORGE_TEST_REAL_GIT", git)
+		t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+		err = CloneFromRepositoryCache(ctx, root, "service", remote, "main", t.TempDir(), false, procwatch.Options{
+			Timeout: 2 * time.Second, TimeoutEnv: CloneTimeoutEnv,
+		})
+		if !procwatch.Stopped(err) || !strings.Contains(err.Error(), CloneTimeoutEnv) {
+			t.Fatalf("local clone exceeded the clone budget: %v", err)
+		}
+		if _, err := os.Stat(marker); err != nil {
+			t.Fatalf("local clone did not start: %v", err)
+		}
+	})
 }

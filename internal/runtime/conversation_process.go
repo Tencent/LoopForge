@@ -164,7 +164,8 @@ type conversationProcess struct {
 	versionSource string
 	// workspace replaces <root>/ws in stdin under seatbelt, which has no mount
 	// namespace to map that path onto the run workspace.
-	workspace string
+	workspace     string
+	stdinProvider string
 	// gitScrubbed is set with done, under mu.
 	gitScrubbed []string
 }
@@ -301,10 +302,7 @@ func (p *ConversationProcessPool) Handle(ctx context.Context, root, workspace st
 				err = nil
 			}
 		} else {
-			data := conversationRemap(req.Data, req.SourceRoot, root)
-			if workspace != "" {
-				data = strings.ReplaceAll(data, filepath.Join(root, "ws"), workspace)
-			}
+			data := remapConversationStdin(req.Data, req.SourceRoot, root, workspace, proc.stdinProvider)
 			_, err = io.WriteString(input, data)
 		}
 		return ConversationProcessResult{}, err
@@ -455,7 +453,7 @@ func (p *ConversationProcessPool) start(ctx context.Context, root, workspace str
 		return ConversationProcessResult{}, err
 	}
 	procCtx, cancel := context.WithCancel(ctx)
-	proc := &conversationProcess{cancel: cancel, wake: make(chan struct{}, 1), finished: make(chan struct{}), root: root, lastPoll: time.Now()}
+	proc := &conversationProcess{cancel: cancel, wake: make(chan struct{}, 1), finished: make(chan struct{}), root: root, lastPoll: time.Now(), stdinProvider: req.Command.Provider}
 	p.mu.Lock()
 	// Expiry and reservation share the same lock as stop's expired-ID reply.
 	// A start paused across its deadline must not register after stop said Done.
@@ -977,4 +975,23 @@ func conversationRemap(value, source, target string) string {
 		return value
 	}
 	return strings.ReplaceAll(value, source, target)
+}
+
+// ConversationStdinPath returns the bytes a path occupies inside the CLI's
+// stdin stream. Codex app-server frames use JSON strings, so paths must be
+// remapped in their encoded form even when a frame spans multiple writes.
+func ConversationStdinPath(path, provider string) string {
+	if provider != "codex" {
+		return path
+	}
+	raw, _ := json.Marshal(path)
+	return string(raw[1 : len(raw)-1])
+}
+
+func remapConversationStdin(data, source, root, workspace, provider string) string {
+	data = conversationRemap(data, ConversationStdinPath(source, provider), ConversationStdinPath(root, provider))
+	if workspace != "" {
+		data = conversationRemap(data, ConversationStdinPath(filepath.Join(root, "ws"), provider), ConversationStdinPath(workspace, provider))
+	}
+	return data
 }

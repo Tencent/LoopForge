@@ -519,22 +519,23 @@ type definitionRevisionRow struct {
 func (definitionRevisionRow) TableName() string { return "definition_revisions" }
 
 type runnerRow struct {
-	ID               string     `gorm:"column:id;primaryKey;size:64"`
-	Name             string     `gorm:"column:name;size:255"`
-	Status           string     `gorm:"column:status;index:idx_runners_status;size:32"`
-	OS               string     `gorm:"column:os;size:32"`
-	Arch             string     `gorm:"column:arch;size:32"`
-	RunnerVersion    string     `gorm:"column:runner_version;size:64"`
-	Labels           []byte     `gorm:"column:labels;type:json"`
-	MaxConcurrency   int        `gorm:"column:max_concurrency"`
-	RunLimit         *int       `gorm:"column:run_limit"`
-	OwnerUserID      *int64     `gorm:"column:owner_user_id;index:idx_runners_owner"`
-	SessionTokenHash string     `gorm:"column:session_token_hash;index:idx_runners_session;size:64"`
-	SessionExpiresAt *time.Time `gorm:"column:session_expires_at"`
-	Runtimes         []byte     `gorm:"column:runtimes;type:json"`
-	LastSeenAt       *time.Time `gorm:"column:last_seen_at"`
-	Created          *time.Time `gorm:"column:created_at"`
-	Updated          *time.Time `gorm:"column:updated_at"`
+	ID                     string     `gorm:"column:id;primaryKey;size:64"`
+	Name                   string     `gorm:"column:name;size:255"`
+	Status                 string     `gorm:"column:status;index:idx_runners_status;size:32"`
+	OS                     string     `gorm:"column:os;size:32"`
+	Arch                   string     `gorm:"column:arch;size:32"`
+	RunnerVersion          string     `gorm:"column:runner_version;size:64"`
+	NativeSandboxAvailable bool       `gorm:"column:native_sandbox_available"`
+	Labels                 []byte     `gorm:"column:labels;type:json"`
+	MaxConcurrency         int        `gorm:"column:max_concurrency"`
+	RunLimit               *int       `gorm:"column:run_limit"`
+	OwnerUserID            *int64     `gorm:"column:owner_user_id;index:idx_runners_owner"`
+	SessionTokenHash       string     `gorm:"column:session_token_hash;index:idx_runners_session;size:64"`
+	SessionExpiresAt       *time.Time `gorm:"column:session_expires_at"`
+	Runtimes               []byte     `gorm:"column:runtimes;type:json"`
+	LastSeenAt             *time.Time `gorm:"column:last_seen_at"`
+	Created                *time.Time `gorm:"column:created_at"`
+	Updated                *time.Time `gorm:"column:updated_at"`
 }
 
 func (runnerRow) TableName() string { return "runners" }

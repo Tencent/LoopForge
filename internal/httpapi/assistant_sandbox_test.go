@@ -117,7 +117,7 @@ func TestConversationSandboxPreferenceGuidesTheAgent(t *testing.T) {
 		t.Fatalf("save preference: %d", code)
 	}
 	s.ExecutionRunnerID = "sandbox-preference-runner"
-	if err := h.repo.PutRunner(domain.Runner{ID: s.ExecutionRunnerID, OS: "darwin", RunnerVersion: domain.RunnerVersionConversationWorkspace}); err != nil {
+	if err := h.repo.PutRunner(domain.Runner{ID: s.ExecutionRunnerID, OS: "darwin", RunnerVersion: domain.RunnerVersionConversationWorkspace, NativeSandboxAvailable: true}); err != nil {
 		t.Fatal(err)
 	}
 	target := &domain.AssistantExecutionTarget{Pool: domain.ExecutionModeRunner, RunnerID: s.ExecutionRunnerID}
@@ -144,6 +144,12 @@ func TestConversationSandboxPreferenceGuidesTheAgent(t *testing.T) {
 	}
 	if code := prefer("local"); code != 400 {
 		t.Fatalf("the removed local kind accepted as a preference: %d", code)
+	}
+	if err := h.repo.PutRunner(domain.Runner{ID: s.ExecutionRunnerID, OS: "linux", RunnerVersion: domain.RunnerVersionConversationWorkspace}); err != nil {
+		t.Fatal(err)
+	}
+	if _, preferred := gateway.conversationSandboxChoices(s); preferred != "" {
+		t.Fatalf("native preference selected %q on a runner without bwrap", preferred)
 	}
 	t.Setenv("PATH", t.TempDir()) // A Compose installation lacks a native sandbox binary.
 	s.ExecutionRunnerID = ""

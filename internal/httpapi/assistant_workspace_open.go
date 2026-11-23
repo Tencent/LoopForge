@@ -87,8 +87,8 @@ func (h *agentToolGateway) conversationSandboxChoices(s *AgentToolSession) ([]do
 		runner, _ := h.repo.Runner(s.ExecutionRunnerID)
 		targetOS := strings.ToLower(strings.TrimSpace(runner.OS))
 		nativeAvailable = func(driver string) bool {
-			if targetOS == "" {
-				return true // Older runners may omit their OS.
+			if !runner.NativeSandboxAvailable {
+				return false
 			}
 			driver, err := domain.ResolveSandboxDriver(driver, targetOS)
 			return err == nil && (driver == domain.SandboxDriverSeatbelt && targetOS == "darwin" ||
@@ -124,9 +124,9 @@ func workspaceSandboxGuide(choices []domain.SandboxProfile, preferred string) st
 			continue
 		}
 		if conversationSandboxKind(profile) == domain.SandboxDriverNative {
-			return fmt.Sprintf("用户在 AI 助手设置里倾向 native 沙箱（执行机器上的系统轻量隔离，使用执行机器已装的工具链）：没有特殊要求时用 %s，任务需要的语言或工具链只有其他环境具备时再换", preferred)
+			return fmt.Sprintf("用户在 AI 助手设置里倾向 native 沙箱（执行机器上的系统轻量隔离，使用执行机器已装的工具链）：新开工作区且没有特殊要求时用 %s，任务需要的语言或工具链只有其他环境具备时再换", preferred)
 		}
-		return fmt.Sprintf("用户在 AI 助手设置里倾向 Docker 沙箱：没有特殊要求时用 %s，任务需要的语言或工具链只有其他环境具备时再换", preferred)
+		return fmt.Sprintf("用户在 AI 助手设置里倾向 Docker 沙箱：新开工作区且没有特殊要求时用 %s，任务需要的语言或工具链只有其他环境具备时再换", preferred)
 	}
 	return "按要做的事需要的语言、工具链选择，拿不准用 generic-docker"
 }

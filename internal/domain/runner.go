@@ -175,6 +175,9 @@ type Runner struct {
 	RunnerVersion  string   `json:"runnerVersion"`
 	Labels         []string `json:"labels,omitempty"`
 	MaxConcurrency int      `json:"maxConcurrency"`
+	// NativeSandboxAvailable is reported by the daemon. Older Runners leave it
+	// false so the platform does not choose native automatically for them.
+	NativeSandboxAvailable bool `json:"nativeSandboxAvailable"`
 	// RunLimit caps concurrently admitted top-level SOP runs on a personal
 	// machine, counted like the project limit. 0 means unlimited.
 	RunLimit   int             `json:"runLimit"`

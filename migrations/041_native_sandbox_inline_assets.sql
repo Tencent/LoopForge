@@ -167,27 +167,38 @@ UPDATE sandboxes
 SET payload = JSON_REMOVE(payload, '$.environmentId')
 WHERE JSON_CONTAINS_PATH(payload, 'one', '$.environmentId');
 
--- 5. Move the old default in current SOPs and in their restorable revisions.
--- Stage both shapes together so the same checks apply to nested legacy nodes.
+-- 5. Move the old default in SOPs, generic templates, and restorable revisions.
+-- Stage the workflow definitions together to apply the same checks and updates.
 DROP TEMPORARY TABLE IF EXISTS workflow_sandbox_upgrade;
 CREATE TEMPORARY TABLE workflow_sandbox_upgrade (
-  workflow_id VARCHAR(64) COLLATE utf8mb4_unicode_ci NOT NULL,
-  revision_id VARCHAR(128) COLLATE utf8mb4_unicode_ci NULL,
+  source ENUM('workflow', 'revision', 'template') NOT NULL,
+  row_id VARCHAR(128) COLLATE utf8mb4_unicode_ci NOT NULL,
   definition JSON NOT NULL,
-  KEY (workflow_id),
-  KEY (revision_id)
+  PRIMARY KEY (source, row_id)
 ) DEFAULT CHARSET=utf8mb4;
 
-INSERT INTO workflow_sandbox_upgrade (workflow_id, definition)
-SELECT id, payload FROM workflows
+INSERT INTO workflow_sandbox_upgrade (source, row_id, definition)
+SELECT 'workflow', id, payload FROM workflows
 WHERE @replace_stock_local_default AND JSON_TYPE(payload) = 'OBJECT';
+
+SET @generic_templates_exists = EXISTS (
+  SELECT 1 FROM information_schema.tables
+  WHERE table_schema = DATABASE() AND table_name = 'generic_templates');
+SET @stage_generic_templates_sql = IF(@generic_templates_exists AND @replace_stock_local_default,
+  'INSERT INTO workflow_sandbox_upgrade (source, row_id, definition)
+   SELECT ''template'', id, JSON_EXTRACT(payload, ''$.Workflow'') FROM generic_templates
+   WHERE JSON_TYPE(JSON_EXTRACT(payload, ''$.Workflow'')) = ''OBJECT''',
+  'DO 0');
+PREPARE stage_generic_templates_stmt FROM @stage_generic_templates_sql;
+EXECUTE stage_generic_templates_stmt;
+DEALLOCATE PREPARE stage_generic_templates_stmt;
 
 SET @definition_revisions_exists = EXISTS (
   SELECT 1 FROM information_schema.tables
   WHERE table_schema = DATABASE() AND table_name = 'definition_revisions');
 SET @stage_workflow_revisions_sql = IF(@definition_revisions_exists AND @replace_stock_local_default,
-  'INSERT INTO workflow_sandbox_upgrade (workflow_id, revision_id, definition)
-   SELECT entity_id, id, JSON_EXTRACT(payload, ''$.payload'') FROM definition_revisions
+  'INSERT INTO workflow_sandbox_upgrade (source, row_id, definition)
+   SELECT ''revision'', id, JSON_EXTRACT(payload, ''$.payload'') FROM definition_revisions
    WHERE kind = ''workflow'' AND JSON_TYPE(JSON_EXTRACT(payload, ''$.payload'')) = ''OBJECT''',
   'DO 0');
 PREPARE stage_workflow_revisions_stmt FROM @stage_workflow_revisions_sql;
@@ -216,11 +227,21 @@ SET m.definition = JSON_SET(
   '$.sandboxProfileId', 'generic-docker');
 
 UPDATE workflows w JOIN workflow_sandbox_upgrade m
-  ON m.revision_id IS NULL AND m.workflow_id = w.id COLLATE utf8mb4_unicode_ci
+  ON m.source = 'workflow' AND m.row_id = w.id COLLATE utf8mb4_unicode_ci
 SET w.payload = m.definition;
 
+SET @update_generic_templates_sql = IF(@generic_templates_exists AND @replace_stock_local_default,
+  'UPDATE generic_templates t JOIN workflow_sandbox_upgrade m
+     ON m.source = ''template'' AND m.row_id = t.id COLLATE utf8mb4_unicode_ci
+   SET t.payload = JSON_SET(t.payload, ''$.Workflow'', m.definition)',
+  'DO 0');
+PREPARE update_generic_templates_stmt FROM @update_generic_templates_sql;
+EXECUTE update_generic_templates_stmt;
+DEALLOCATE PREPARE update_generic_templates_stmt;
+
 SET @update_workflow_revisions_sql = IF(@definition_revisions_exists AND @replace_stock_local_default,
-  'UPDATE definition_revisions r JOIN workflow_sandbox_upgrade m ON m.revision_id = r.id COLLATE utf8mb4_unicode_ci
+  'UPDATE definition_revisions r JOIN workflow_sandbox_upgrade m
+     ON m.source = ''revision'' AND m.row_id = r.id COLLATE utf8mb4_unicode_ci
    SET r.payload = JSON_SET(r.payload, ''$.payload'', m.definition)',
   'DO 0');
 PREPARE update_workflow_revisions_stmt FROM @update_workflow_revisions_sql;

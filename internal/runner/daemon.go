@@ -304,14 +304,15 @@ func (d *Daemon) registerLocked(ctx context.Context, runnerID string) error {
 		name = "runner"
 	}
 	resp, err := d.client.Register(ctx, d.cfg.BootstrapToken, RegisterRequest{
-		RunnerID:       runnerID,
-		Name:           name,
-		OS:             goruntime.GOOS,
-		Arch:           goruntime.GOARCH,
-		Version:        runnerVersion,
-		Labels:         d.cfg.Labels,
-		MaxConcurrency: d.cfg.MaxConcurrency,
-		Runtimes:       d.currentRuntimes(),
+		RunnerID:               runnerID,
+		Name:                   name,
+		OS:                     goruntime.GOOS,
+		Arch:                   goruntime.GOARCH,
+		Version:                runnerVersion,
+		Labels:                 d.cfg.Labels,
+		MaxConcurrency:         d.cfg.MaxConcurrency,
+		Runtimes:               d.currentRuntimes(),
+		NativeSandboxAvailable: runtime.NativeSandboxAvailable(domain.SandboxDriverNative),
 	})
 	if err != nil {
 		return fmt.Errorf("register: %w", err)
@@ -413,10 +414,11 @@ func (d *Daemon) heartbeatLoop(ctx context.Context) {
 	// heartbeat interval while the worker resumes its runs.
 	for ctx.Err() == nil {
 		req := HeartbeatRequest{
-			Status:       "idle",
-			RunningTasks: int(atomic.LoadInt32(&d.running)),
-			Version:      runnerVersion,
-			Runtimes:     d.currentRuntimes(),
+			Status:                 "idle",
+			RunningTasks:           int(atomic.LoadInt32(&d.running)),
+			Version:                runnerVersion,
+			Runtimes:               d.currentRuntimes(),
+			NativeSandboxAvailable: runtime.NativeSandboxAvailable(domain.SandboxDriverNative),
 		}
 		if req.RunningTasks > 0 {
 			req.Status = "busy"

@@ -299,9 +299,10 @@ func TestRunnerTaskEndToEnd(t *testing.T) {
 
 	// Heartbeat keeps the runner online.
 	rec := requestWithHeaders(t, h, http.MethodPost, "/api/runners/heartbeat", map[string]any{
-		"status":       "idle",
-		"runningTasks": 0,
-		"runtimes":     []domain.RunnerRuntime{{Provider: "mock", BinaryPath: "(builtin)", Status: "online"}},
+		"status":                 "idle",
+		"runningTasks":           0,
+		"nativeSandboxAvailable": true,
+		"runtimes":               []domain.RunnerRuntime{{Provider: "mock", BinaryPath: "(builtin)", Status: "online"}},
 	}, auth)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("heartbeat: %d %s", rec.Code, rec.Body.String())
@@ -309,7 +310,7 @@ func TestRunnerTaskEndToEnd(t *testing.T) {
 
 	// The runner appears in the management list without session material.
 	list := requestEmptyJSON[[]domain.Runner](t, h, http.MethodGet, "/api/runners", http.StatusOK)
-	if len(list) != 1 || list[0].ID != runnerID {
+	if len(list) != 1 || list[0].ID != runnerID || !list[0].NativeSandboxAvailable {
 		t.Fatalf("unexpected runner list: %+v", list)
 	}
 	if list[0].SessionTokenHash != "" || list[0].SessionExpiresAt != nil {
