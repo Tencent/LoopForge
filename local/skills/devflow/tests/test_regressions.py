@@ -502,6 +502,7 @@ class LifecycleTests(unittest.TestCase):
             self.assertIn("KNOWLEDGE", state["route"])
             self.assertEqual("skipped", state["stages"]["KNOWLEDGE"]["status"])
             self.assertEqual("skip", state["stages"]["KNOWLEDGE"]["decision"])
+            run_script("validate_artifacts.py", state_path.parent)
             self.assertEqual("main-1", state["stages"]["SUMMARY"]["executor_id"])
             self.assertEqual("coordinator", state["stages"]["SUMMARY"]["executor_type"])
 
