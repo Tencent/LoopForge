@@ -43,9 +43,9 @@ export function useNativeApprovals(chat) {
   // answer must not bring a decided card back. Later answers are still trusted,
   // so a card the server still reports simply reappears.
   const decidedAt = useRef(new Map());
-  // Switching conversations drops the previous one's cards and notices. A card
-  // outliving its turn still disappears, but its "approval expired" line stays
-  // long enough to be read.
+  // Switching conversations drops the previous one's cards and notices. An
+  // "approval expired" line is only true of the turn it was raised in, so the
+  // turn ending, another conversation or a fresh pending write all clear it.
   const openSession = useRef(id);
   useEffect(() => {
     if (openSession.current === id) return;
@@ -65,6 +65,7 @@ export function useNativeApprovals(chat) {
       setSaving("");
       setLoadError("");
       setDecideError("");
+      setExpired("");
       return undefined;
     }
     let closed = false;
@@ -77,6 +78,7 @@ export function useNativeApprovals(chat) {
           .filter((item) => item.actorId === userId)
           .filter((item) => !(decidedAt.current.get(item.id) >= startedAt))
           .sort(byCreatedAt);
+        if (mine.length) setExpired("");
         setItems((old) => (isSame(old, mine) ? old : mine));
         setLoadError("");
       } catch (e) {

@@ -143,6 +143,51 @@ test("an approval that expired with its turn is removed and reported", async () 
   expect(cardCount()).toBe(0);
 });
 
+test("the expired notice ends with its turn and never shows beside a new card", async () => {
+  apiMock.mockResolvedValue([item]);
+  writeMock.mockRejectedValueOnce(
+    Object.assign(new Error("本轮已结束，审批已失效"), { status: 409 }),
+  );
+  const view = render(<Probe chat={chat} />);
+  await settle();
+  await advance(1000);
+  fireEvent.click(screen.getByRole("button", { name: "批准本次操作" }));
+  await settle();
+  expect(screen.getByRole("status")).toHaveTextContent("本轮已结束，审批已失效");
+
+  // 本轮结束后提示必须一起清掉，否则下一轮的新卡片会和上一轮的失效提示同屏。
+  view.rerender(<Probe chat={{ ...chat, busy: false }} />);
+  await settle();
+  expect(screen.queryByRole("status")).toBeNull();
+
+  const next = { ...item, id: "a2", input: { command: "gh pr create" } };
+  apiMock.mockResolvedValue([next]);
+  view.rerender(<Probe chat={chat} />);
+  await settle();
+  await advance(1000);
+  expect(screen.getByText("gh pr create")).toBeInTheDocument();
+  expect(screen.queryByText("本轮已结束，审批已失效")).toBeNull();
+});
+
+test("a new pending write clears the stale expired notice within the same turn", async () => {
+  apiMock.mockResolvedValue([item]);
+  writeMock.mockRejectedValueOnce(
+    Object.assign(new Error("本轮已结束，审批已失效"), { status: 409 }),
+  );
+  render(<Probe chat={chat} />);
+  await settle();
+  await advance(1000);
+  fireEvent.click(screen.getByRole("button", { name: "批准本次操作" }));
+  await settle();
+  expect(screen.getByRole("status")).toHaveTextContent("本轮已结束，审批已失效");
+
+  // 服务端已经把这一轮算作结束，但界面仍在 busy：新卡片出现时旧提示不能留着。
+  apiMock.mockResolvedValue([{ ...item, id: "a2", input: { command: "gh pr create" } }]);
+  await advance(1000);
+  expect(screen.getByText("gh pr create")).toBeInTheDocument();
+  expect(screen.queryByText("本轮已结束，审批已失效")).toBeNull();
+});
+
 test("cards follow the order the writes were raised in", async () => {
   const later = { ...item, id: "a2", input: { command: "git push origin main" }, createdAt: new Date(Date.now() - 1000).toISOString() };
   apiMock.mockResolvedValue([later, item]);
