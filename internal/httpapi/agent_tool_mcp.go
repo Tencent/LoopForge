@@ -341,6 +341,9 @@ func (h *agentToolGateway) callTerminal(session *AgentToolSession, name string, 
 		}
 		return mcpToolTextResult("提交成功，本轮结束。", false), nil
 	case name == submitAssistantReplyTool && session.Mode == AgentToolAssistant:
+		if session.ExecMode.ReviewWrites && !session.sopDesigner() {
+			return mcpToolTextResult("当前为「帮我批准」模式，不需要人工审批草稿。请直接调用对应的平台写入工具（由 AI 独立审查并直接决定放行或拒绝），或用自然语言直接回复用户说明执行结果或被拒原因。", true), nil
+		}
 		if session.sopDesigner() {
 			expanded, err := expandSOPDesignerReply(raw, session.DesignerCanvas)
 			if err != nil {
@@ -494,7 +497,7 @@ func (h *agentToolGateway) dispatch(ctx context.Context, session *AgentToolSessi
 				return "", errMCPApprovalExpired
 			}
 		} else if session.ExecMode.ReviewWrites {
-			review := reviewAssistantAction(ctx, name, mcpServerName(h, session, call.Server)+" MCP 写入外部系统", map[string]any{"server": call.Server, "tool": call.Tool, "arguments": call.Arguments})
+			review := reviewAssistantAction(withApprovalActionSource(ctx, approvalSourceExternalMCP), name, mcpServerName(h, session, call.Server)+" MCP 写入外部系统", map[string]any{"server": call.Server, "tool": call.Tool, "arguments": call.Arguments})
 			if !review.allows() {
 				return "", assistantReviewRefusal(name, review)
 			}

@@ -594,12 +594,15 @@ func (userRunnerPrefRow) TableName() string { return "user_runner_prefs" }
 
 // assistantPreferenceRow: a missing row means switches are off and messages queue.
 type assistantPreferenceRow struct {
-	UserID         int64      `gorm:"column:user_id;primaryKey;autoIncrement:false"`
-	ProactiveRoles bool       `gorm:"column:proactive_roles;not null;default:false"`
-	ProactiveSOPs  bool       `gorm:"column:proactive_sops;not null;default:false"`
-	SteerOnSend    bool       `gorm:"column:steer_on_send;not null;default:false"`
-	Instructions   string     `gorm:"column:instructions;type:text"`
-	UpdatedAt      *time.Time `gorm:"column:updated_at"`
+	UserID              int64      `gorm:"column:user_id;primaryKey;autoIncrement:false"`
+	ProactiveRoles      bool       `gorm:"column:proactive_roles;not null;default:false"`
+	ProactiveSOPs       bool       `gorm:"column:proactive_sops;not null;default:false"`
+	SteerOnSend         bool       `gorm:"column:steer_on_send;not null;default:false"`
+	Instructions        string     `gorm:"column:instructions;type:text"`
+	ApprovalReviewMode  string     `gorm:"column:approval_review_mode;size:32;not null;default:''"`
+	ApprovalReviewModel string     `gorm:"column:approval_review_model;size:160;not null;default:''"`
+	ApprovalReviewAPI   *string    `gorm:"column:approval_review_api_json;type:text"`
+	UpdatedAt           *time.Time `gorm:"column:updated_at"`
 }
 
 func (assistantPreferenceRow) TableName() string { return "assistant_preferences" }
