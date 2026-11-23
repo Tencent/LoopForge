@@ -256,6 +256,9 @@ func (h *assistantHandlers) models(c *gin.Context) {
 		if user.AssistantDefaults != (domain.AssistantDefaults{}) {
 			catalog.Preferences = &user.AssistantDefaults
 		}
+		if strings.TrimSpace(c.Query("refresh")) == "1" {
+			invalidateAssistantEngineDiscoveryCache(user)
+		}
 		catalog.Engines = assistantEngineOptions(user, usingSharedKey)
 		cloudPool := false
 		if h.engine != nil {

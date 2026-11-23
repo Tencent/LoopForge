@@ -175,19 +175,31 @@ func (h *usersHandlers) probeCLIModels(c *gin.Context) {
 }
 
 func discoverGeminiModels(ctx context.Context, key, baseURL string) ([]assistantDiscoveredModel, error) {
+	client := *http.DefaultClient
+	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	return discoverGeminiModelsWithClient(ctx, &client, key, baseURL)
+}
+
+func discoverGeminiModelsWithClient(ctx context.Context, client *http.Client, key, baseURL string) ([]assistantDiscoveredModel, error) {
+	if client == nil {
+		c := *http.DefaultClient
+		c.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+		client = &c
+	}
 	baseURL = strings.TrimSuffix(strings.TrimRight(baseURL, "/"), "/v1beta")
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/v1beta/models?pageSize=1000", nil)
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("x-goog-api-key", key)
-	client := *http.DefaultClient
-	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode >= 300 && resp.StatusCode < 400 {
+		return nil, fmt.Errorf("Gemini 模型接口返回重定向 HTTP %d，已拒绝跟随跳转", resp.StatusCode)
+	}
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("Gemini 模型接口返回 HTTP %d", resp.StatusCode)
 	}

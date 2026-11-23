@@ -185,9 +185,13 @@ var rolePromptPlaceholder = regexp.MustCompile(`\{\{[^{}]+\}\}`)
 // SKILL.md unless it is also the project's own, bound or mentioned. A turn
 // with no project, no shared skills and no mentioned roles gets empty
 // directories.
-func (h *assistantHandlers) writeConversationAssets(root string, req assistantRequest) error {
-	if err := runtime.ValidateConversationRoot(root); err != nil {
+func (h *assistantHandlers) writeConversationAssets(root string, req assistantRequest, reportSkillLinks func([]string)) error {
+	removed, err := runtime.RemoveConversationSkillLinks(root)
+	if err != nil {
 		return err
+	}
+	if len(removed) > 0 && reportSkillLinks != nil {
+		reportSkillLinks(removed)
 	}
 	if err := writeConversationAttachments(root, req); err != nil {
 		return err
