@@ -151,6 +151,16 @@ func (s *Service) sendWeComOrigin(ctx context.Context, bot domain.NotificationBo
 	if !bot.Enabled || !bot.InteractionEnabled || s.Interactions == nil {
 		return &ProviderError{Code: 404, Message: "企业微信 Bot 未开启对话，无法发回发起的会话"}
 	}
+	if item.TargetType != "group" {
+		// A private chat is addressed by the sender's userid.
+		binding, err := s.Store.BotUserBinding(bot.IdentityScope(), item.TargetID)
+		if err != nil || binding.UserID == 0 {
+			return &ProviderError{Code: 404, Message: "发起成员已解除平台账号绑定，未发回私聊"}
+		}
+		if !s.projectVisible(bot.ProjectID, binding.UserID) {
+			return &ProviderError{Code: 404, Message: "发起成员的平台账号已没有该项目的权限，未发回私聊"}
+		}
+	}
 	if beforeSend != nil {
 		if err := beforeSend(); err != nil {
 			return err
@@ -159,12 +169,12 @@ func (s *Service) sendWeComOrigin(ctx context.Context, bot domain.NotificationBo
 	ctx, cancel := context.WithTimeout(ctx, 90*time.Second)
 	defer cancel()
 	if question := s.Interactions.NodeQuestion(item); question != "" {
-		return s.Interactions.QueueChatPost(bot, item.TargetType, item.TargetID, item.ID, botinteraction.WithNodeQuestion(content, question, item.TargetType))
+		return s.Interactions.SendChatPost(ctx, bot, item, botinteraction.WithNodeQuestion(content, question, item.TargetType))
 	}
 	if item.NodeID != "" && (item.EventType == "waiting" || item.EventType == "failed") {
 		return s.Interactions.QueueNotificationCard(ctx, bot, item, content, s.runURL(item.RunID))
 	}
-	return s.Interactions.QueueChatPost(bot, item.TargetType, item.TargetID, item.ID, content)
+	return s.Interactions.SendChatPost(ctx, bot, item, content)
 }
 
 // BotWorkersEnabled reads AGENTFLOW_BOT_WORKERS_ENABLED (default true). The

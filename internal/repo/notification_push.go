@@ -148,11 +148,18 @@ func (r *NotificationsRepo) ConfirmNotificationReceived(projectID, id string, ac
 // target switch.
 var notificationPendingStatuses = []string{"pending", "awaiting_authorization"}
 
+// queuedForOtherTargets selects the queued deliveries of bot to its
+// configured target, other than target. Messages back to the conversation a
+// run was started from keep their conversation; older rows have no origin.
+func (r *NotificationsRepo) queuedForOtherTargets(botID, target string) *gorm.DB {
+	return r.DB.Model(&domain.NotificationDelivery{}).Where("bot_id = ? AND status IN ? AND target_id <> ? AND (origin IS NULL OR origin <> ?)", botID, notificationPendingStatuses, target, domain.NotificationOriginChat)
+}
+
 // PendingNotificationsForOtherTargets counts queued deliveries of bot whose
 // frozen target differs from target.
 func (r *NotificationsRepo) PendingNotificationsForOtherTargets(botID, target string) (int64, error) {
 	var n int64
-	err := r.DB.Model(&domain.NotificationDelivery{}).Where("bot_id = ? AND status IN ? AND target_id <> ?", botID, notificationPendingStatuses, target).Count(&n).Error
+	err := r.queuedForOtherTargets(botID, target).Count(&n).Error
 	return n, err
 }
 
@@ -161,7 +168,7 @@ func (r *NotificationsRepo) PendingNotificationsForOtherTargets(botID, target st
 // re-targets them (a new generation and key, nothing was sent to the new
 // target yet). Rows being sent right now are left alone.
 func (r *NotificationsRepo) SwitchNotificationTarget(botID string, target domain.BotChat, action string) (int64, error) {
-	q := r.DB.Model(&domain.NotificationDelivery{}).Where("bot_id = ? AND status IN ? AND target_id <> ?", botID, notificationPendingStatuses, target.ID)
+	q := r.queuedForOtherTargets(botID, target.ID)
 	var result *gorm.DB
 	switch action {
 	case "cancel":

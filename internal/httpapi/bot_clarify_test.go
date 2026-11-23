@@ -585,3 +585,49 @@ func TestChatClarificationOnWeCom(t *testing.T) {
 		t.Fatalf("yes = %q", reply)
 	}
 }
+
+// A chat clarification runs as the bound account of the member who started
+// it, not the requirement's responsible person, and stops once that member
+// lost the project's execution permission. The platform clarification keeps
+// the responsible person.
+func TestChatClarificationRunsAsTheStarter(t *testing.T) {
+	f := newClarifyChatFixture(t, domain.BotChannelDingTalk)
+	f.rounds = []map[string]any{clarifyQuestionsRound}
+	reply, start := f.say(t, "single", "cid-starter", "ou_member", "澄清 #7")
+	if !strings.Contains(reply, "已开始澄清 LOOP-7") {
+		t.Fatalf("start = %q", reply)
+	}
+	sess := f.waitStatus(t, start.ConversationID, domain.BotClarifyAsking)
+	f.mu.Lock()
+	actor := f.inputs[0].ActorUserID
+	f.mu.Unlock()
+	if actor != 43 {
+		t.Fatalf("round ran as %d, want the starter 43", actor)
+	}
+	issue, _ := f.s.Issue("iss-7")
+	if user, err := f.h.clarify.clarifyUser(issue, chatClarifyRequest{ActorUserID: 43}); err != nil || user.ID != 43 {
+		t.Fatalf("chat clarification user = %+v %v", user, err)
+	}
+	responsible, _ := f.s.ResponsibleUser(issue)
+	if user, err := f.h.clarify.clarifyUser(issue, chatClarifyRequest{}); err != nil || user.ID != responsible.ID {
+		t.Fatalf("platform clarification user = %+v %v", user, err)
+	}
+
+	project, _ := f.s.Project("p")
+	members := project.Members[:0]
+	for _, m := range project.Members {
+		if m.UserID != 43 {
+			members = append(members, m)
+		}
+	}
+	project.Members = members
+	f.s.PutProject(project)
+	if err := f.h.runBotClarifyRound(f.bot, sess, "补充：要短信"); err == nil || !strings.Contains(err.Error(), "发起澄清的成员不能继续") {
+		t.Fatalf("round after removal = %v", err)
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.inputs) != 1 {
+		t.Fatalf("analysis ran after the starter was removed: %d rounds", len(f.inputs))
+	}
+}

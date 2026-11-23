@@ -260,7 +260,10 @@ func botClarifyModel(bot domain.NotificationBot) string {
 	return bot.Model
 }
 
-// runBotClarifyRound starts the analysis of a round in the background.
+// runBotClarifyRound starts the analysis of a round in the background, as
+// the platform account of the member who started the clarification: every
+// round, including the timer's, re-checks that the member is still bound
+// to it and may execute in the project.
 func (h *assistantHandlers) runBotClarifyRound(bot domain.NotificationBot, sess domain.BotClarifySession, message string) error {
 	if h.clarify == nil || h.clarify.jobs == nil {
 		return errors.New("澄清服务未就绪")
@@ -269,9 +272,16 @@ func (h *assistantHandlers) runBotClarifyRound(bot domain.NotificationBot, sess 
 	if !ok {
 		return errors.New("需求不存在")
 	}
-	request := chatClarifyRequest{ProjectID: issue.ProjectID, Message: message, Model: botClarifyModel(bot), History: historyToClarify(issue.Clarification.History)}
+	starter, err := h.botExecutionUser(bot, sess.StarterSender)
+	if err != nil {
+		return errors.New("发起澄清的成员不能继续：" + err.Error())
+	}
+	if starter.ID != sess.StarterUserID {
+		return errors.New("发起澄清的成员已改绑其他平台账号")
+	}
+	request := chatClarifyRequest{ProjectID: issue.ProjectID, Message: message, Model: botClarifyModel(bot), History: historyToClarify(issue.Clarification.History), ActorUserID: starter.ID}
 	id := sess.ID
-	_, err := h.clarify.startClarifyJob(issue, request, clarifyJobOptions{HoldReady: true, OnDone: func(model clarifyModelResult, err error) {
+	_, err = h.clarify.startClarifyJob(issue, request, clarifyJobOptions{HoldReady: true, OnDone: func(model clarifyModelResult, err error) {
 		h.finishBotClarifyRound(id, model, err)
 	}})
 	return err

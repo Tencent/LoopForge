@@ -86,9 +86,13 @@ func retentionCase(t *testing.T, s *Store, suffix string) {
 	native("n-pending-old", "completed", "", 200*day)
 
 	policy := BotRetentionPolicy{Body: 90 * day, Record: 180 * day, Batch: 2, Batches: 5}
-	res, err := s.PurgeBotRetention(context.Background(), now, policy)
-	if err != nil {
-		t.Fatal(err)
+	var res BotRetentionResult
+	for _, purge := range []func(context.Context, time.Time, BotRetentionPolicy) (BotRetentionResult, error){s.PurgeBotInteractions, s.PurgeBotNotifications, s.PurgeBotChatRecords} {
+		part, err := purge(context.Background(), now, policy)
+		if err != nil {
+			t.Fatal(err)
+		}
+		res.Add(part)
 	}
 	if res.InteractionBodies < 2 || res.Interactions < 1 || res.DeliveryBodies < 1 || res.Deliveries < 1 || res.DraftsExpired < 1 || res.DraftBodies < 1 || res.Drafts < 1 || res.NativeMappings < 1 {
 		t.Fatalf("result = %+v", res)

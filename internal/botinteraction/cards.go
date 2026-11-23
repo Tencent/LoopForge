@@ -15,7 +15,7 @@ var ErrCardExpired = errors.New("该节点已不再等待本次操作")
 
 // ErrCardDeliveryUnknown: the card may have reached the chat but the platform
 // did not confirm it; the notification needs manual review, not a resend.
-var ErrCardDeliveryUnknown = errors.New("企业微信卡片送达结果待核对")
+var ErrCardDeliveryUnknown = errors.New("企业微信消息送达结果待核对")
 
 func ActionsForDelivery(store *repo.Store, item domain.NotificationDelivery) []map[string]any {
 	run, ok := store.RunState(item.RunID)
@@ -128,30 +128,35 @@ func (s *Service) QueueNotificationCard(ctx context.Context, bot domain.Notifica
 	if err = s.Store.RequeueBotCard(id); err != nil {
 		return err
 	}
+	record, err := s.waitSent(ctx, id, "卡片")
+	if err == nil && record.LastError != "" {
+		return ErrCardExpired
+	}
+	return err
+}
+
+// waitSent waits for the send result of a queued platform message.
+func (s *Service) waitSent(ctx context.Context, id, what string) (domain.BotInteraction, error) {
 	ticker := time.NewTicker(300 * time.Millisecond)
 	defer ticker.Stop()
 	for {
 		record, err := s.Store.BotInteraction(id)
 		if err != nil {
-			return err
+			return record, err
 		}
 		switch record.Status {
 		case domain.BotReplyFailed:
-			return errors.New("企业微信卡片发送失败，请检查会话和 Bot 授权")
+			return record, errors.New("企业微信" + what + "发送失败，请检查会话和 Bot 授权")
 		case domain.BotReplyUnknown:
-			return ErrCardDeliveryUnknown
+			return record, ErrCardDeliveryUnknown
 		case domain.BotCancelled:
-			return errors.New("机器人已停用或删除，卡片未发送")
-		}
-		if record.Status == "replied" {
-			if record.LastError != "" {
-				return ErrCardExpired
-			}
-			return nil
+			return record, errors.New("机器人已停用或删除，" + what + "未发送")
+		case "replied":
+			return record, nil
 		}
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return record, ctx.Err()
 		case <-ticker.C:
 		}
 	}

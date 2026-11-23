@@ -56,9 +56,16 @@ func RetentionPolicyFromEnv() repo.BotRetentionPolicy {
 // logs whose body horizon passed. It returns the database counts and the
 // number of mappings whose logs were handled.
 func (s *Service) RunRetention(ctx context.Context, now time.Time, policy repo.BotRetentionPolicy) (repo.BotRetentionResult, int, error) {
-	res, err := s.Store.PurgeBotRetention(ctx, now, policy)
-	if err != nil || policy.Body <= 0 || s.NativeLogs == nil {
-		return res, 0, err
+	var res repo.BotRetentionResult
+	for _, purge := range []func(context.Context, time.Time, repo.BotRetentionPolicy) (repo.BotRetentionResult, error){s.Store.PurgeBotInteractions, s.Store.PurgeBotNotifications, s.Store.PurgeBotChatRecords} {
+		part, err := purge(ctx, now, policy)
+		res.Add(part)
+		if err != nil {
+			return res, 0, err
+		}
+	}
+	if policy.Body <= 0 || s.NativeLogs == nil {
+		return res, 0, nil
 	}
 	batch := policy.Batch
 	if batch <= 0 {

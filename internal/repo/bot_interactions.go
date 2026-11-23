@@ -3,6 +3,7 @@ package repo
 import (
 	"agentflow/internal/credcrypt"
 	"agentflow/internal/domain"
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
@@ -533,9 +534,10 @@ func (r *BotInteractionsRepo) FailBotReply(id string, lease BotLease, detail str
 	})
 }
 
-// RequeueBotCard re-sends a failed notification card as a new generation.
+// RequeueBotCard re-sends a failed notification card or chat post as a new
+// generation.
 func (r *BotInteractionsRepo) RequeueBotCard(id string) error {
-	return r.DB.Model(&domain.BotInteraction{}).Where("id = ? AND action = ? AND status = ?", id, "notification", domain.BotReplyFailed).Updates(map[string]any{"status": domain.BotReady, "last_error": "", "terminal_reason": "", "send_key": randomHex(16), "delivery_generation": gorm.Expr("delivery_generation + 1"), "send_started_at_us": 0, "send_attempts": 0, "undelivered_retries": 0, "next_send_at_us": 0, "updated_at": time.Now().UTC()}).Error
+	return r.DB.Model(&domain.BotInteraction{}).Where("id = ? AND action IN ? AND status = ?", id, []string{"notification", "chat_post"}, domain.BotReplyFailed).Updates(map[string]any{"status": domain.BotReady, "last_error": "", "terminal_reason": "", "send_key": randomHex(16), "delivery_generation": gorm.Expr("delivery_generation + 1"), "send_started_at_us": 0, "send_attempts": 0, "undelivered_retries": 0, "next_send_at_us": 0, "updated_at": time.Now().UTC()}).Error
 }
 
 // Serializes registering the same external Bot across project configs. The
@@ -743,4 +745,36 @@ func (r *BotInteractionsRepo) PushResendBotInteraction(id string, actor, expecte
 		return nil
 	})
 	return item, err
+}
+
+var botInteractionTerminal = []string{domain.BotReplied, domain.BotReplyFailed, domain.BotCancelled}
+
+// PurgeBotInteractions applies the retention policy once to finished interactions.
+func (r *BotInteractionsRepo) PurgeBotInteractions(ctx context.Context, now time.Time, policy BotRetentionPolicy) (BotRetentionResult, error) {
+	run := newRetentionRun(ctx, policy)
+	p, db := run.p, r.DB.WithContext(ctx)
+	var out BotRetentionResult
+	if p.Body > 0 {
+		cut := now.Add(-p.Body)
+		run.step(&out.InteractionBodies, func(limit int) ([]string, error) {
+			var ids []string
+			return ids, db.Model(&domain.BotInteraction{}).Where("status IN ? AND updated_at < ? AND body_purged_at IS NULL", botInteractionTerminal, cut).Order("updated_at").Limit(limit).Pluck("id", &ids).Error
+		}, func(ids []string) (int64, error) {
+			// UpdateColumns keeps updated_at: the record horizon still
+			// counts from completion.
+			res := db.Model(&domain.BotInteraction{}).Where("id IN ? AND status IN ? AND updated_at < ? AND body_purged_at IS NULL", ids, botInteractionTerminal, cut).UpdateColumns(map[string]any{"content": "", "quote": "", "reply": "", "reply_route": "", "body_purged_at": now})
+			return res.RowsAffected, res.Error
+		})
+	}
+	if p.Record > 0 {
+		cut := now.Add(-p.Record)
+		run.step(&out.Interactions, func(limit int) ([]string, error) {
+			var ids []string
+			return ids, db.Model(&domain.BotInteraction{}).Where("status IN ? AND updated_at < ?", botInteractionTerminal, cut).Order("updated_at").Limit(limit).Pluck("id", &ids).Error
+		}, func(ids []string) (int64, error) {
+			res := db.Where("id IN ? AND status IN ? AND updated_at < ?", ids, botInteractionTerminal, cut).Delete(&domain.BotInteraction{})
+			return res.RowsAffected, res.Error
+		})
+	}
+	return out, run.err
 }

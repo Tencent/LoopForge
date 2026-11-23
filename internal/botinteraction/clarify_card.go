@@ -3,6 +3,7 @@ package botinteraction
 import (
 	"agentflow/internal/domain"
 	"agentflow/internal/repo"
+	"context"
 	"strings"
 )
 
@@ -217,11 +218,18 @@ func (s *Service) clarifySaver(bot domain.NotificationBot, sess domain.BotClarif
 	return domain.ClarifySaveAllowed(project, issue, sess, user.ID)
 }
 
-// QueueChatPost queues a prepared message into a conversation of a Bot with
-// a live connection (WeCom). key makes it idempotent.
-func (s *Service) QueueChatPost(bot domain.NotificationBot, kind, chat, key, text string) error {
+// SendChatPost sends a notification as a prepared message into its
+// conversation over the Bot's live connection (WeCom) and waits for the send
+// result. A retry of the delivery re-sends a failed message.
+func (s *Service) SendChatPost(ctx context.Context, bot domain.NotificationBot, delivery domain.NotificationDelivery, text string) error {
 	text = domain.NotificationText(text, 16000)
-	item := domain.BotInteraction{ID: repo.BotMessageID(bot.ID, "chat-post:"+key), BotID: bot.ID, ProjectID: bot.ProjectID, SenderID: chat, Action: ActionChatPost, Content: text, ContentLength: len([]rune(text)), MsgType: "text", SendRoute: repo.BotSendRoutePushChat}
-	_, err := s.Store.EnqueueBotInteraction(item, kind, chat)
+	item := domain.BotInteraction{ID: repo.BotMessageID(bot.ID, "chat-post:"+delivery.ID), BotID: bot.ID, ProjectID: bot.ProjectID, SenderID: delivery.TargetID, Action: ActionChatPost, DeliveryID: delivery.ID, Content: text, ContentLength: len([]rune(text)), MsgType: "text", SendRoute: repo.BotSendRoutePushChat}
+	if _, err := s.Store.EnqueueBotInteraction(item, delivery.TargetType, delivery.TargetID); err != nil {
+		return err
+	}
+	if err := s.Store.RequeueBotCard(item.ID); err != nil {
+		return err
+	}
+	_, err := s.waitSent(ctx, item.ID, "消息")
 	return err
 }

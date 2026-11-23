@@ -2,6 +2,7 @@ package repo
 
 import (
 	"agentflow/internal/domain"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -911,3 +912,40 @@ func (r *NotificationsRepo) NotificationDeliveryByPlatformMessage(botID, platfor
 }
 
 var ErrInteractiveBotAlreadyExists = fmt.Errorf("同一企业微信 Bot 只能有一个启用的对话配置")
+
+var notificationTerminal = []string{"sent", "failed", "cancelled", "expired", "target_unavailable"}
+
+// PurgeBotNotifications applies the retention policy once to finished deliveries.
+func (r *NotificationsRepo) PurgeBotNotifications(ctx context.Context, now time.Time, policy BotRetentionPolicy) (BotRetentionResult, error) {
+	run := newRetentionRun(ctx, policy)
+	p, db := run.p, r.DB.WithContext(ctx)
+	var out BotRetentionResult
+	if p.Body > 0 {
+		cut := now.Add(-p.Body)
+		run.step(&out.DeliveryBodies, func(limit int) ([]string, error) {
+			var ids []string
+			return ids, notificationsFinishedBefore(db, cut).Where("(content_source IS NULL OR content_source <> 'purged')").Order("created_at").Limit(limit).Pluck("id", &ids).Error
+		}, func(ids []string) (int64, error) {
+			res := notificationsFinishedBefore(db, cut).Where("id IN ? AND (content_source IS NULL OR content_source <> 'purged')", ids).UpdateColumns(map[string]any{"content": "", "report_request": "", "content_source": "purged"})
+			return res.RowsAffected, res.Error
+		})
+	}
+	if p.Record > 0 {
+		cut := now.Add(-p.Record)
+		run.step(&out.Deliveries, func(limit int) ([]string, error) {
+			var ids []string
+			return ids, notificationsFinishedBefore(db, cut).Order("created_at").Limit(limit).Pluck("id", &ids).Error
+		}, func(ids []string) (int64, error) {
+			res := notificationsFinishedBefore(db, cut).Where("id IN ?", ids).Delete(&domain.NotificationDelivery{})
+			return res.RowsAffected, res.Error
+		})
+	}
+	return out, run.err
+}
+
+// notificationsFinishedBefore selects terminal deliveries whose creation,
+// last attempt and send time are all before cut. Deliveries have no
+// completion column; the last attempt time is written when they finish.
+func notificationsFinishedBefore(db *gorm.DB, cut time.Time) *gorm.DB {
+	return db.Model(&domain.NotificationDelivery{}).Where("status IN ? AND created_at < ? AND next_attempt_at < ? AND (sent_at IS NULL OR sent_at < ?)", notificationTerminal, cut, cut, cut)
+}

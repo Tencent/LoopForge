@@ -227,6 +227,30 @@ func TestPushOutcomesFollowChannelIdempotency(t *testing.T) {
 			t.Fatalf("retry = %+v keys %v", item, sent)
 		}
 	})
+	t.Run("feishu keeps the first unknown send through a failed retry", func(t *testing.T) {
+		svc, fake, bot := pushFixture(t, domain.BotChannelFeishu)
+		bot = verifyTarget(t, svc, bot)
+		putPushRun(t, svc, bot, "run.succeeded")
+		trials := fake.count()
+		fake.results = []botinteraction.SendResult{{Outcome: botinteraction.Unknown, SafeDetail: "响应丢失"}, {Outcome: botinteraction.NotDelivered, Retryable: true, SafeDetail: "连接失败"}}
+		drain(t, svc)
+		first := deliveries(t, svc)["succeeded"]
+		forceDue(t, svc, first.ID)
+		drain(t, svc)
+		item := deliveries(t, svc)["succeeded"]
+		if item.Status != "pending" || item.SendStartedAtUS != first.SendStartedAtUS {
+			t.Fatalf("after a failed retry = %+v, first send at %d", item, first.SendStartedAtUS)
+		}
+		// Past the de-duplication window a retry could send it twice.
+		if err := svc.Store.DB.Model(&domain.NotificationDelivery{}).Where("id = ?", item.ID).Update("send_started_at_us", item.SendStartedAtUS-int64(pushIdempotencyWindow/time.Microsecond)-1).Error; err != nil {
+			t.Fatal(err)
+		}
+		forceDue(t, svc, item.ID)
+		drain(t, svc)
+		if item = deliveries(t, svc)["succeeded"]; item.Status != "send_unknown" || fake.count()-trials != 2 {
+			t.Fatalf("past the window = %+v pushes %d", item, fake.count()-trials)
+		}
+	})
 	t.Run("dingtalk unknown stops for review and can be confirmed", func(t *testing.T) {
 		svc, fake, bot := pushFixture(t, domain.BotChannelDingTalk)
 		bot = verifyTarget(t, svc, bot)
@@ -367,6 +391,15 @@ func TestSwitchNotificationTarget(t *testing.T) {
 	svc, _, bot := pushFixture(t, domain.BotChannelDingTalk)
 	bot = verifyTarget(t, svc, bot)
 	putPushRun(t, svc, bot, "run.succeeded", "node.failed")
+	// Rows from before run origins existed have no origin at all.
+	if err := svc.Store.DB.Model(&domain.NotificationDelivery{}).Where("bot_id = ?", bot.ID).Update("origin", nil).Error; err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	fromChat := domain.NotificationDelivery{ID: "from-chat", ProjectID: bot.ProjectID, BotID: bot.ID, EventType: "succeeded", SourceType: "run", SourceID: "r", Origin: domain.NotificationOriginChat, TargetID: "origin-group", TargetType: "group", Content: "### SOP 已完成", Status: "pending", CreatedAt: now, NextAttemptAt: now}
+	if err := svc.Store.CreateNotificationDelivery(fromChat); err != nil {
+		t.Fatal(err)
+	}
 	if n, _ := svc.Store.PendingNotificationsForOtherTargets(bot.ID, "new-target"); n != 2 {
 		t.Fatalf("pending = %d", n)
 	}
@@ -374,7 +407,7 @@ func TestSwitchNotificationTarget(t *testing.T) {
 		t.Fatal(n, err)
 	}
 	for _, item := range deliveries(t, svc) {
-		if item.TargetID != "new-target" || item.DeliveryGeneration != 1 || !strings.Contains(item.LastError, "改发") {
+		if item.ID != fromChat.ID && (item.TargetID != "new-target" || item.DeliveryGeneration != 1 || !strings.Contains(item.LastError, "改发")) {
 			t.Fatalf("migrated = %+v", item)
 		}
 	}
@@ -382,9 +415,12 @@ func TestSwitchNotificationTarget(t *testing.T) {
 		t.Fatalf("cancelled = %d", n)
 	}
 	for _, item := range deliveries(t, svc) {
-		if item.Status != "cancelled" {
+		if item.ID != fromChat.ID && item.Status != "cancelled" {
 			t.Fatalf("cancel = %+v", item)
 		}
+	}
+	if got, _ := svc.Store.NotificationDelivery(fromChat.ID); got.Status != "pending" || got.TargetID != "origin-group" || got.DeliveryGeneration != 0 {
+		t.Fatalf("message back to the chat = %+v", got)
 	}
 }
 

@@ -186,10 +186,15 @@ func (s *Service) processPush(ctx context.Context, item *domain.NotificationDeli
 	case botinteraction.Delivered:
 		return done(repo.NotificationPushResult{Status: "sent", PlatformMessageID: res.PlatformMessageID})
 	case botinteraction.NotDelivered:
+		// Nothing was sent this time, but an earlier attempt of this
+		// generation (resumed) may have been: keep its start time.
 		if item.Attempts >= 5 {
+			if resumed {
+				return done(repo.NotificationPushResult{Status: "send_unknown", Detail: "首次发送结果未知，后续重试未成功，请核对后确认收到或再次发送"})
+			}
 			return done(repo.NotificationPushResult{Status: "failed", Detail: "多次发送未成功：" + res.SafeDetail})
 		}
-		return done(repo.NotificationPushResult{Status: "pending", Detail: res.SafeDetail, Next: retryAt})
+		return done(repo.NotificationPushResult{Status: "pending", Detail: res.SafeDetail, Next: retryAt, KeepStarted: resumed})
 	case botinteraction.Rejected:
 		status := "failed"
 		if res.Code == "invalid_staff" || res.Code == "target_missing" {

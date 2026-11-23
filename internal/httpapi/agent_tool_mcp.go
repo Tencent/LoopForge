@@ -417,6 +417,11 @@ func (h *agentToolGateway) dispatch(ctx context.Context, session *AgentToolSessi
 		if scope := scheduledAssetsFrom(session.ctx); scope.Version.ID != "" {
 			ctx = context.WithValue(ctx, scheduledAssetsKey{}, scope)
 		}
+		if session.ctx != nil {
+			if origin, ok := botStartOriginFrom(session.ctx); ok {
+				ctx = withBotStartOrigin(ctx, origin)
+			}
+		}
 		call := assistantMCPCall{Server: "agentflow", Tool: tool.UpstreamName, Arguments: args}
 		if session.canOpenConversationWorkspace() {
 			ctx = withConversationSession(ctx, session.ChatSessionID)

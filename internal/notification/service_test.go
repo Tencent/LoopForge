@@ -360,7 +360,9 @@ func TestWeComOriginDeliveryUsesTheLiveConnection(t *testing.T) {
 	if err := svc.Store.RetryNotification("p", item.ID); err != nil {
 		t.Fatal(err)
 	}
+	stop := sendChatPosts(t, svc, domain.BotReplied)
 	drain()
+	stop()
 	if got, _ = svc.Store.NotificationDelivery(item.ID); got.Status != "sent" || provider.sent != 0 {
 		t.Fatalf("with chat = %+v sent=%d", got, provider.sent)
 	}
@@ -369,8 +371,122 @@ func TestWeComOriginDeliveryUsesTheLiveConnection(t *testing.T) {
 		t.Fatal(err)
 	}
 	conv, _ := svc.Store.BotConversation(post.ConversationID)
-	if post.Action != botinteraction.ActionChatPost || post.SendRoute != repo.BotSendRoutePushChat || conv.ChatType != "group" || conv.ChatID != "wr_group" || !strings.Contains(post.Content, "SOP 已完成") {
+	if post.Action != botinteraction.ActionChatPost || post.DeliveryID != item.ID || post.SendRoute != repo.BotSendRoutePushChat || conv.ChatType != "group" || conv.ChatID != "wr_group" || !strings.Contains(post.Content, "SOP 已完成") {
 		t.Fatalf("queued = %+v in %+v", post, conv)
+	}
+}
+
+// settlePending takes the fixture's own notifications out of the queue.
+func settlePending(t *testing.T, svc *Service) {
+	t.Helper()
+	if err := svc.Store.DB.Model(&domain.NotificationDelivery{}).Where("status = ?", "pending").Update("status", "cancelled").Error; err != nil {
+		t.Fatal(err)
+	}
+}
+
+// sendChatPosts plays the live connection: queued chat posts end in status.
+func sendChatPosts(t *testing.T, svc *Service, status string) func() {
+	t.Helper()
+	done := make(chan struct{})
+	stopped := make(chan struct{})
+	go func() {
+		defer close(stopped)
+		for {
+			svc.Store.DB.Model(&domain.BotInteraction{}).Where("action = ? AND status NOT IN ?", botinteraction.ActionChatPost, []string{domain.BotReplied, domain.BotReplyFailed, domain.BotReplyUnknown}).Update("status", status)
+			select {
+			case <-done:
+				return
+			case <-time.After(50 * time.Millisecond):
+			}
+		}
+	}()
+	return func() { close(done); <-stopped }
+}
+
+// A WeCom chat post is "sent" only once the live connection sent it: a
+// failure retries (re-sending the message), an unconfirmed send is kept for
+// checking.
+func TestWeComOriginDeliveryFollowsTheSendResult(t *testing.T) {
+	svc, _, bot, run := serviceFixture(t)
+	bot.InteractionEnabled = true
+	if err := svc.Store.SaveNotificationBot(bot, ""); err != nil {
+		t.Fatal(err)
+	}
+	settlePending(t, svc)
+	now := time.Now().UTC()
+	item := domain.NotificationDelivery{ID: "origin-done", ProjectID: "p", BotID: bot.ID, RunID: run.ID, EventType: "succeeded", SourceType: "run", SourceID: run.ID, Origin: domain.NotificationOriginChat, TargetID: "wr_group", TargetType: "group", Content: "### SOP 已完成", Status: "pending", CreatedAt: now, NextAttemptAt: now}
+	if err := svc.Store.CreateNotificationDelivery(item); err != nil {
+		t.Fatal(err)
+	}
+	process := func(status string) domain.NotificationDelivery {
+		t.Helper()
+		stop := sendChatPosts(t, svc, status)
+		defer stop()
+		if ok, err := svc.ProcessOne(context.Background()); err != nil || !ok {
+			t.Fatalf("process %v %v", ok, err)
+		}
+		got, _ := svc.Store.NotificationDelivery(item.ID)
+		return got
+	}
+	if got := process(domain.BotReplyFailed); got.Status != "pending" || !strings.Contains(got.LastError, "发送失败") {
+		t.Fatalf("failed send = %+v", got)
+	}
+	if err := svc.Store.DB.Model(&domain.NotificationDelivery{}).Where("id = ?", item.ID).Update("next_attempt_at", time.Now().UTC().Add(-time.Second)).Error; err != nil {
+		t.Fatal(err)
+	}
+	if got := process(domain.BotReplyUnknown); got.Status != "send_unknown" {
+		t.Fatalf("unconfirmed send = %+v", got)
+	}
+}
+
+// A run started from a private WeCom chat reports back there only while
+// the sender is still bound to an account with access to the project.
+func TestWeComPrivateOriginRechecksTheSender(t *testing.T) {
+	svc, _, bot, run := serviceFixture(t)
+	bot.InteractionEnabled = true
+	if err := svc.Store.SaveNotificationBot(bot, ""); err != nil {
+		t.Fatal(err)
+	}
+	settlePending(t, svc)
+	svc.Store.PutUser(domain.User{ID: 1, LoginName: "owner"})
+	svc.Store.PutUser(domain.User{ID: 7, LoginName: "dev"})
+	svc.Store.PutProject(domain.Project{ID: "p", OwnerID: 1, Members: []domain.ProjectMember{{UserID: 7, Role: "member"}}})
+	now := time.Now().UTC()
+	token, err := svc.Store.NewBotBindingChallenge(bot, "zhangsan", now, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	code, err := svc.Store.ClaimBotBindingChallenge(token, 7, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = svc.Store.ConfirmBotUserBinding(bot, "zhangsan", code, now); err != nil {
+		t.Fatal(err)
+	}
+	deliver := func(id string) domain.NotificationDelivery {
+		t.Helper()
+		item := domain.NotificationDelivery{ID: id, ProjectID: "p", BotID: bot.ID, RunID: run.ID, EventType: "succeeded", SourceType: "run", SourceID: run.ID, Origin: domain.NotificationOriginChat, TargetID: "zhangsan", TargetType: "single", Content: "### SOP 已完成", Status: "pending", CreatedAt: now, NextAttemptAt: now}
+		if err := svc.Store.CreateNotificationDelivery(item); err != nil {
+			t.Fatal(err)
+		}
+		stop := sendChatPosts(t, svc, domain.BotReplied)
+		defer stop()
+		if ok, err := svc.ProcessOne(context.Background()); err != nil || !ok {
+			t.Fatalf("process %v %v", ok, err)
+		}
+		got, _ := svc.Store.NotificationDelivery(id)
+		return got
+	}
+	if got := deliver("member"); got.Status != "sent" {
+		t.Fatalf("member = %+v", got)
+	}
+	svc.Store.PutProject(domain.Project{ID: "p", OwnerID: 1, Members: []domain.ProjectMember{}})
+	got := deliver("removed")
+	if got.Status != "target_unavailable" || !strings.Contains(got.LastError, "没有该项目的权限") {
+		t.Fatalf("removed member = %+v", got)
+	}
+	if _, err := svc.Store.BotInteraction(repo.BotMessageID(bot.ID, "chat-post:removed")); err == nil {
+		t.Fatal("a message was queued for a member without access")
 	}
 }
 
@@ -403,6 +519,7 @@ func TestWeComNodeQuestionIsSentAsText(t *testing.T) {
 	if err := svc.Store.CreateNotificationDelivery(origin); err != nil {
 		t.Fatal(err)
 	}
+	defer sendChatPosts(t, svc, domain.BotReplied)()
 	if ok, err := svc.ProcessOne(context.Background()); err != nil || !ok {
 		t.Fatalf("origin %v %v", ok, err)
 	}
