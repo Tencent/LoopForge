@@ -80,6 +80,16 @@
 .schedule-tabs button{height:32px;border:0;border-radius:8px;padding:0 10px;background:transparent;color:var(--muted);font-size:12px;font-weight:620;cursor:pointer}
 .schedule-tabs button.is-active{background:var(--panel);color:var(--text);box-shadow:0 1px 2px color-mix(in srgb,var(--text) 10%,transparent)}
 .schedule-field-hint{margin:6px 0 0;font-size:11px;line-height:1.5;color:var(--muted-2)}
+.schedule-reference-list{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 8px;min-height:4px}
+.schedule-reference-chip{display:inline-flex;align-items:center;gap:6px;padding:5px 8px;border:1px solid var(--line-strong);border-radius:8px;background:var(--bg-soft);font-size:11px;color:var(--text)}
+.schedule-reference-chip button{padding:0;border:0;background:none;color:var(--muted);cursor:pointer;font-size:14px;line-height:1}
+.schedule-reference-picker{margin-top:9px;padding:9px;border:1px solid var(--line-strong);border-radius:9px;background:var(--bg-soft)}
+.schedule-reference-toolbar{display:grid;grid-template-columns:minmax(110px,.4fr) minmax(0,1fr);gap:7px;margin-bottom:8px}
+.schedule-reference-option{display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;padding:7px 8px;border:0;border-radius:7px;background:transparent;color:var(--text);text-align:left;cursor:pointer}
+.schedule-reference-option:hover{background:var(--hover)}
+.schedule-reference-option:focus-visible{outline:2px solid var(--blue);outline-offset:-2px}
+.schedule-reference-option small{color:var(--muted-2)}
+.schedule-references .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
 .schedule-check{display:flex;align-items:flex-start;gap:8px;margin:0;font-size:12px;line-height:1.45;color:var(--text);font-weight:600;cursor:pointer}
 .schedule-check input{margin-top:2px}
 .schedule-check-follow{margin-top:10px}
@@ -129,6 +139,10 @@
 .align-resolve-out pre{margin:6px 0 0;max-height:260px;overflow:auto;font-size:10px;background:rgba(127,127,127,.07);border-radius:6px;padding:8px;white-space:pre-wrap;word-break:break-all}
 @media(max-width:900px){.align-conflict-sides{grid-template-columns:1fr}}
 @media(max-width:700px){.schedule-job-row{align-items:flex-start;flex-wrap:wrap}.schedule-job-main{flex-basis:100%}}
+
+/* AI 定时任务：提示词与项目资产共用主页的编辑器。 */
+[data-schedule-reference-editor] { grid-column:1 / -1; min-width:0; }
+#schedulePromptEditor { min-width:0; }
 
 /* AI 定时任务：业务导航页与触发配置共用编辑器。 */
 #aiSchedulesView { color:var(--hui-text); }

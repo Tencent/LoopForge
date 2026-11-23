@@ -36,6 +36,10 @@ func testScheduleJobUsesSaversDefaultRunnerLogin(t *testing.T, cliEngine string)
 	}
 	saver, _ := st.UserByLoginName("schedule-runner-saver")
 	joinScheduledProject(t, st, "workbench", saver.ID)
+	issue := domain.Issue{ID: "runner-schedule-reference", ProjectID: "workbench", Title: "Current scheduled asset", Description: "Inspect this asset"}
+	if err := st.PutIssue(issue); err != nil {
+		t.Fatal(err)
+	}
 	machine := domain.Runner{ID: "saver-machine", OwnerUserID: saver.ID, Status: domain.RunnerStatusOnline,
 		RunnerVersion: domain.RunnerVersionCLISettings, Runtimes: []domain.RunnerRuntime{
 			{Provider: cliEngine, Status: domain.RuntimeStatusOnline, AuthMode: domain.RuntimeAuthLocal},
@@ -58,6 +62,7 @@ func testScheduleJobUsesSaversDefaultRunnerLogin(t *testing.T, cliEngine string)
 	body := domain.ScheduleJob{
 		ID: "runner-login-job", ProjectID: "workbench", Name: "巡检", SkipDispatch: true, AssistantPrompt: "检查",
 		AssistantModel: cliEngine + ":default", RunAsUserID: owner.ID, IntervalSec: 3600, Enabled: true,
+		References: []domain.AssistantReference{{Type: "issue", ID: issue.ID, Name: "Forged asset title"}},
 	}
 	setDefault(foreign.ID)
 	if code := scheduleAuthzStatus(t, server, saver, http.MethodPut, "/api/schedule-jobs", body); code != http.StatusBadRequest {
@@ -117,6 +122,10 @@ func testScheduleJobUsesSaversDefaultRunnerLogin(t *testing.T, cliEngine string)
 				if req.Command == nil || !req.Command.RunnerLogin || req.Command.Credentials.ClaudeCode.APIKey != "" || req.Command.Credentials.AgentCLI[cliEngine].APIKey != "" {
 					t.Fatal("scheduled turn did not request CLI account login")
 				}
+				prompt := strings.Join(req.Command.Argv, " ")
+				if !strings.Contains(prompt, issue.Title) || strings.Contains(prompt, "Forged asset title") {
+					t.Fatal("runner prompt did not resolve the scheduled asset")
+				}
 				launched = true
 			case "poll":
 				result.Events = []domain.TelemetryEvent{{Name: "process.stdout", Message: `{"type":"result","result":"巡检完成"}`}}
@@ -146,6 +155,18 @@ func testScheduleJobUsesSaversDefaultRunnerLogin(t *testing.T, cliEngine string)
 	if len(sessions) != 1 || sessions[0].UserID != saver.ID || sessions[0].Execution().RunnerID != machine.ID || !sessions[0].ExecutionLocked() {
 		t.Fatal("scheduled session did not retain the saver and their machine")
 	}
+	conversation, ok := st.AssistantSession(saver.ID, sessions[0].ID)
+	if !ok || len(conversation.Messages) != 2 {
+		t.Fatal("scheduled runner conversation was not saved")
+	}
+	refs := conversation.Messages[0].References
+	if len(refs) != 1 || refs[0].ID != issue.ID || refs[0].Name != issue.Title {
+		t.Fatalf("runner session references = %+v", refs)
+	}
+	issue.Title = "Updated scheduled asset"
+	if err := st.PutIssue(issue); err != nil {
+		t.Fatal(err)
+	}
 	machine.Status = domain.RunnerStatusOffline
 	if err := st.PutRunner(machine); err != nil {
 		t.Fatal(err)
@@ -153,8 +174,11 @@ func testScheduleJobUsesSaversDefaultRunnerLogin(t *testing.T, cliEngine string)
 	const saverKey = "saver-test-key"
 	keyAttempts := 0
 	var keyError error
-	h.generate = func(_ context.Context, _ string, actor domain.User) (string, error) {
+	h.generate = func(_ context.Context, prompt string, actor domain.User) (string, error) {
 		keyAttempts++
+		if !strings.Contains(prompt, issue.Title) || strings.Contains(prompt, "Forged asset title") {
+			t.Fatal("API Key fallback did not resolve the latest scheduled asset")
+		}
 		key := actor.ClaudeCodeAPIKey
 		if cliEngine == runtime.AgentCLIAntigravity {
 			key = actor.AgentCLICredentials[cliEngine].APIKey

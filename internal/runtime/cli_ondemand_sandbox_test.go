@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	goruntime "runtime"
 	"strings"
 	"testing"
 	"time"
@@ -53,6 +54,58 @@ esac
 	}
 	if got, err := os.ReadFile(probes); err != nil || string(got) != "probe\nprobe\n" {
 		t.Fatalf("expected probes only for standard CLI invocations, got %q: %v", got, err)
+	}
+}
+
+func TestDockerCursorInstallsWhenSharedPackageCannotBePrepared(t *testing.T) {
+	if goruntime.GOOS != "linux" {
+		t.Skip("sharing a host Cursor package only applies on Linux")
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	launcher := filepath.Join(home, ".local", "bin", cursorCLIBinary)
+	packageDir := filepath.Join(home, ".local", "share", cursorCLIBinary, "versions", "fixture")
+	for _, dir := range []string{filepath.Dir(launcher), packageDir} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	binary := filepath.Join(packageDir, cursorCLIBinary)
+	if err := os.WriteFile(binary, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(binary, launcher); err != nil {
+		t.Fatal(err)
+	}
+
+	sharedDir := t.TempDir()
+	t.Setenv("AGENTFLOW_RUNTIME_CLI_DIR", sharedDir)
+	// A file occupies the publication path even when this test runs as root.
+	if err := os.WriteFile(filepath.Join(sharedDir, "cursor"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	installMarker := filepath.Join(t.TempDir(), "installed")
+	t.Setenv("LOOPFORGE_TEST_CURSOR_INSTALL", installMarker)
+	useFakeCommands(t, map[string]string{"docker": `#!/bin/sh
+set -eu
+case "$*" in
+  *"id -u; id -g"*) printf '1000\n1000\n' ;;
+  *loopforge-cli-available*) exit 127 ;;
+  *loopforge-cli-setup*)
+    for mode do :; done
+    test "$mode" = install
+    touch "$LOOPFORGE_TEST_CURSOR_INSTALL" ;;
+  *loopforge-cli-verify*)
+    test -f "$LOOPFORGE_TEST_CURSOR_INSTALL"
+    printf '/opt/loopforge/conversation-cli/.local/bin/cursor-agent\n' ;;
+  *) exit 1 ;;
+esac
+`})
+	sandbox := &dockerSandbox{name: "workspace", started: true}
+	path, err := ensureConversationCLI(t.Context(), sandbox, AgentCLICursor, "/workspace/home")
+	if want := "/opt/loopforge/conversation-cli/.local/bin/cursor-agent"; err != nil || path != want {
+		t.Fatalf("container installation returned %q, want %q: %v", path, want, err)
 	}
 }
 

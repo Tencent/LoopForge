@@ -108,7 +108,7 @@ async function api(path, options={}) {
 }
 const toastActions=new Map();
 function toast(message, type='info', duration=2600){
-  const container=$('#toastContainer');
+  const container=$('#artifactModal[open] #artifactToastContainer')||$('#toastContainer');
   const legacy=$('#toast');
   if(!container&&legacy){
     const kind=type==='ok'||type==='err'?type:'info';
@@ -228,7 +228,7 @@ function afNextDialog(){
   };
 }
 function afDialogFocusables(modal){
-  return [...modal.querySelectorAll('button,input,textarea,select,[tabindex]:not([tabindex="-1"])')].filter(el=>!el.disabled&&!el.closest('[hidden]')&&el.tabIndex!==-1&&el.getClientRects().length);
+  return [...modal.querySelectorAll('a[href],button,input,textarea,select,[tabindex]:not([tabindex="-1"])')].filter(el=>!el.disabled&&!el.closest('[hidden]')&&el.tabIndex!==-1&&el.getClientRects().length);
 }
 function bindConfirmModal(modal){
   if(!modal||modal.dataset.dialogBound)return;
@@ -922,8 +922,7 @@ async function boot(){
   if(isGuest&&state.authRequired){location.replace('/login.html');return}
   renderUserBadge();
 
-  const view=restoredView();
-  const shell = await api('/api/bootstrap', {silent: view==='runs'});
+  const shell = await api('/api/bootstrap', {silent: restoredView()==='runs'});
   state.data = Object.assign(state.data, shell);
   const savedProject=urlParams.get('projectId')||localStorage.getItem('agentflow.activeProject');
   state.projectFilter=(state.data.projects||[]).some(p=>p.id===savedProject)?savedProject:defaultProjectId(state.data.projects,state.currentUser?.id);
@@ -941,6 +940,7 @@ async function boot(){
       history.pushState({assetFrom:assetViewHash(state.assetType)},'',assetDetailHash);
       return;
     }
+    if(name==='settings'&&routePart(1)==='executors'){gotoCredential('executors');return}
     if(activeViewName()!==name){
       if(name==='flow')await applyFlowRoute();
       if(name==='projects')syncProjectAdminRouteState();
@@ -962,9 +962,11 @@ async function boot(){
       if(id){const url=new URL(location.href);url.searchParams.set('chatSession',id);history.replaceState({},'',url);const frame=$('#chatNextFrame');if(frame){frame.dataset.src='';mountNativeChat()}}
     }
   });
+  const view=restoredView();
   if(view==='projects')syncProjectAdminRouteState();
   renderAll();
-  switchView(view);
+  if(view==='settings'&&routePart(1)==='executors')gotoCredential('executors');
+  else switchView(view);
   settleBootLoader();
   if(!['approvals','issues','runs','sops'].includes(state.currentView))preloadApprovalBadge();
   restoreRequirementComposer();
@@ -1002,6 +1004,7 @@ window.addEventListener('storage',event=>{if(!event.key||event.key===THEME_KEY)a
 
 function bind(){
 	prepareMCPFormHints();
+  $('#returnToQuickAccess')?.addEventListener('click',returnToQuickAccess);
   $$('.nav[data-view]').forEach(btn=>btn.onclick=async()=>{
     if(!(await confirmAssetLeave()))return;
     if(btn.dataset.view==='projects'&&state.projectAdminDetailId){
@@ -1013,6 +1016,18 @@ function bind(){
     }else switchView(btn.dataset.view);
   });
   $('#settingsSidebarToggle')?.addEventListener('click',()=>{cancelSettingsRouteTransition();setSettingsSidebarExpanded(!settingsSidebarExpanded())});
+  $('#settingsSidebarExpand')?.addEventListener('click',()=>{
+    cancelSettingsRouteTransition();
+    setSettingsSidebarExpanded(true);
+    requestAnimationFrame(()=>{
+      // Wait for the sidebar's descendants to inherit the restored visibility.
+      requestAnimationFrame(()=>{
+        if(settingsSidebarExpanded()&&document.activeElement===document.body){
+          $('#settingsSidebarToggle')?.focus({preventScroll:true});
+        }
+      });
+    });
+  });
   document.addEventListener('click',event=>{
     if(document.body.classList.contains('management-mode')&&event.target instanceof Element&&event.target.closest('.collab-rail-toggle')){
       event.preventDefault();event.stopImmediatePropagation();
@@ -1133,7 +1148,7 @@ function bind(){
     if(previewBtn){
       e.preventDefault();
       if(previewBtn.disabled)return;
-      openSkillFilePreview(selectedSkill(), previewBtn.getAttribute('data-skill-file-preview'));
+      openSkillFilePreview(selectedSkill(), previewBtn.getAttribute('data-skill-file-preview'), previewBtn);
       return;
     }
     const delBtn=e.target.closest('[data-skill-file-del]');
@@ -1290,7 +1305,7 @@ function bind(){
   $$('.sync-close').forEach(b=>b.onclick=()=>$('#syncModal').classList.remove('open'));
   $$('.schedule-close').forEach(b=>b.onclick=closeScheduleJobModal);
   $('#syncAutoEnabledInline').onchange=e=>{$('#syncAutoEnabled').checked=e.target.checked;saveSyncConfig()};
-  $$('.artifact-close').forEach(b=>b.onclick=()=>$('#artifactModal').classList.remove('open'));
+  bindArtifactPreview();
   $$('.modal').forEach(modal=>modal.addEventListener('pointerdown',e=>{
     if(e.target!==modal)return;
     if(modal.id==='requirementModal')return;
@@ -1299,6 +1314,7 @@ function bind(){
     modal.classList.remove('open');
   }));
   document.addEventListener('keydown',e=>{
+    if($('#artifactModal').open)return;
     if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==='k'){e.preventDefault();openCommandPalette();return}
     if(!$('#commandPalette').hidden){
       if(e.key==='Escape'){closeCommandPalette();return}
@@ -1308,7 +1324,6 @@ function bind(){
     }
     if(e.key==='Escape'){
       if(flowDesignerEscape(e))return;
-      if($('#artifactModal')?.classList.contains('open')){$('#artifactModal').classList.remove('open');return}
       if(state.drawerOpen)return closeIssueDrawer();
       if($('#requirementModal')?.classList.contains('open')){
         if(!$('#reqRepoPopover')?.hidden){toggleReqRepoPopover(false);return}
@@ -1492,6 +1507,25 @@ function postNativeChatProject(frame){
 // requirement already @-mentioned. It waits here until the chat frame can
 // take it: in the frame URL on first mount, otherwise once the chat is ready.
 let pendingChatIssueMention=null;
+let pendingQuickAccessReturn=false;
+const QUICK_ACCESS_EXECUTOR_SETTINGS='#/settings/executors/quick-access';
+let quickAccessExecutorSettingsActive=false;
+function postQuickAccessReturn(frame){
+  if(!pendingQuickAccessReturn||!nativeChatReady||!frame?.contentWindow)return;
+  pendingQuickAccessReturn=false;
+  frame.contentWindow.postMessage({type:'agentflow-chat-resume-quick-access'},location.origin);
+}
+function returnToQuickAccess(){
+  if(location.hash!==QUICK_ACCESS_EXECUTOR_SETTINGS)return;
+  if(history.state?.quickAccessExecutorReturn){history.back();return}
+  const chat=new URL('/chatbot/',location.origin),params=new URLSearchParams(location.search);
+  chat.searchParams.set('quickAccess','1');
+  const projectId=params.get('projectId');
+  const session=params.get('chatSession');
+  if(projectId)chat.searchParams.set('projectId',projectId);
+  if(session)chat.searchParams.set('session',session);
+  location.replace(chat);
+}
 function postPendingChatIssueMention(frame){
   if(!pendingChatIssueMention||!nativeChatReady||frame?.dataset.src!=='native')return;
   frame.contentWindow?.postMessage({type:'agentflow-chat-mention-issue',...pendingChatIssueMention},location.origin);
@@ -1527,6 +1561,7 @@ function mountNativeChat(){
         nativeChatReady=true;
         postPendingChatIssueMention(frame);
         postNativeChatProject(frame);
+        postQuickAccessReturn(frame);
         finishBootLoader();
       }
       if(message.type==='agentflow-chat-session'){
@@ -1535,7 +1570,7 @@ function mountNativeChat(){
         const url=new URL(location.href);
         if(id)url.searchParams.set('chatSession',id);else url.searchParams.delete('chatSession');
         url.searchParams.delete('chatIssue');
-        if(activeViewName()==='collaboration')url.hash=id?'#/collaboration/'+encodeURIComponent(id):'#/collaboration';
+        if(activeViewName()==='collaboration'&&restoredView()==='collaboration')url.hash=id?'#/collaboration/'+encodeURIComponent(id):'#/collaboration';
         history.replaceState({},'',url);
       }
       if(message.type==='agentflow-chat-project'){
@@ -1554,6 +1589,14 @@ function mountNativeChat(){
         else reloadShellProjects().then(follow).catch(()=>{});
       }
       if(message.type==='agentflow-projects-changed')reloadShellProjects().catch(()=>{});
+      if(message.type==='agentflow-credentials-changed'){
+        const userId=state.currentUser?.id;
+        api('/api/users',{silent:true}).then(users=>{
+          if(state.currentUser?.id!==userId)return;
+          const saved=users.find(user=>Number(user.id)===Number(userId));
+          if(saved)storeCredentialUser(saved);
+        }).catch(()=>{});
+      }
       if(message.type==='agentflow-quick-access-completed'){
         api('/api/bootstrap',{silent:true}).then(shell=>{
           Object.assign(state.data,shell);
@@ -1566,7 +1609,12 @@ function mountNativeChat(){
         }).catch(()=>{});
       }
       if(message.type==='agentflow-chat-open-view'&&['settings','runners','sops','projects','runs','agents','environments','dockerfiles','sandboxes','flow','mcp'].includes(message.view)){
-        if(message.view==='settings'&&CREDENTIAL_FIELDS[message.credential])gotoCredential(message.credential,message.sshRemote);
+        if(message.view==='settings'&&message.credential){
+          if(message.credential==='executors'&&message.returnToQuickAccess===true&&activeViewName()==='collaboration'&&location.hash!==QUICK_ACCESS_EXECUTOR_SETTINGS){
+            history.pushState({quickAccessExecutorReturn:true},'',QUICK_ACCESS_EXECUTOR_SETTINGS);
+          }
+          gotoCredential(message.credential,message.sshRemote);
+        }
         else if(message.view==='sandboxes'&&message.action==='create')createConversationSandbox(message.projectId).catch(error=>toast(error.message));
         else if(message.view==='runs'&&/^run-[\w-]+$/.test(message.runId||''))location.hash='#/runs/'+encodeURIComponent(message.runId);
         else switchView(message.view);
@@ -1575,6 +1623,7 @@ function mountNativeChat(){
   }
   if(frame.dataset.src!=='native'){
     frame.dataset.src='native';
+    nativeChatReady=false;
     const topParams=new URL(location.href).searchParams;
     const projectId=nativeChatProjectId();
     const sessionId=topParams.get('chatSession')||'';
@@ -1749,6 +1798,8 @@ function setSettingsSidebarExpanded(expanded){
     toggle.setAttribute('aria-label',open?'收起设置导航':'展开设置导航');
     toggle.title=open?'收起设置导航':'展开设置导航';
   }
+  const reopen=$('#settingsSidebarExpand');
+  if(reopen)reopen.hidden=!managing||open;
   const mobileToggle=$('.collab-rail-toggle');
   if(mobileToggle){
     mobileToggle.setAttribute('aria-expanded',String(open));
@@ -1756,7 +1807,8 @@ function setSettingsSidebarExpanded(expanded){
   }
   const sidebar=$('#settingsSidebar');
   if(!open&&sidebar?.contains(document.activeElement)){
-    const focusTarget=managing&&mobileToggle?.getClientRects().length?mobileToggle:settingsEntry;
+    const focusTarget=managing&&reopen?.getClientRects().length
+      ?reopen:managing&&mobileToggle?.getClientRects().length?mobileToggle:settingsEntry;
     focusTarget?.focus({preventScroll:true});
   }
   if(sidebar){
@@ -1889,6 +1941,7 @@ function syncRunHash(id){
 function persistView(name,push=false){
   localStorage.setItem('agentflow.activeView',name);
   let next=`#/${name}`;
+  if(name==='settings'&&location.hash===QUICK_ACCESS_EXECUTOR_SETTINGS)next=QUICK_ACCESS_EXECUTOR_SETTINGS;
   if(name==='runs'){
     const linked=runRouteId();
     if(linked)next=runViewHash(linked);
@@ -1924,6 +1977,14 @@ function switchView(name){
   // 手敲 #/platform 或者从别的账号留下的 localStorage 恢复进来，都要挡住。
   if(name==='platform'&&!isPlatformAdmin())name='collaboration';
   const previous=activeViewName();
+  if(name!=='settings')cancelCredentialFocus();
+  if(previous==='settings'&&name!=='settings'){
+    window.HuiPopover?.closeAll?.();
+    window.HuiTooltip?.hide?.();
+    closeCredentialWizard(true);
+    $('#gitHTTPCredentialDialog')?.close();
+    $('#gitSSHKeyDialog')?.close();
+  }
   if(previous==='agents'&&name!=='agents')$('#agentModal')?.classList.remove('open');
   if(!settingsRouteApplying){
     const crossingSettings=previous!==name&&((previous==='collaboration'&&isSettingsManagementView(name))||(isSettingsManagementView(previous)&&name==='collaboration'));
@@ -1963,6 +2024,15 @@ function switchView(name){
   //（staying）不压；hashchange 后退触发的调用 prevView 非空且 hash 已是目标值，
   // persistView 内部会短路，不会重复压栈。
   persistView(name,!staying&&!!prevView);
+  const resumeQuickAccess=name==='collaboration'&&quickAccessExecutorSettingsActive;
+  quickAccessExecutorSettingsActive=name==='settings'&&location.hash===QUICK_ACCESS_EXECUTOR_SETTINGS;
+  const quickAccessReturnButton=$('#returnToQuickAccess');
+  if(quickAccessReturnButton)quickAccessReturnButton.hidden=!quickAccessExecutorSettingsActive;
+  if(name!=='collaboration')pendingQuickAccessReturn=false;
+  if(resumeQuickAccess){
+    pendingQuickAccessReturn=true;
+    postQuickAccessReturn($('#chatNextFrame'));
+  }
   const nav=$('.platform-sidebar nav');
   if(nav){
     if(['dashboard','issues','approvals'].includes(name)){

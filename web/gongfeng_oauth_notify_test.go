@@ -8,8 +8,8 @@ import (
 )
 
 // The OAuth tab and the settings page must agree on the channel and message,
-// and the settings listener must be registered once. The quick-access wizard
-// asks for a GitHub token and still refreshes the user when focus returns.
+// and the settings page must register its listener once. The wizard refreshes
+// credentials when settings reports a save and when focus returns.
 func TestGongfengOAuthCompletionChannelIsShared(t *testing.T) {
 	read := func(name string) string {
 		data, err := os.ReadFile(name)
@@ -21,7 +21,7 @@ func TestGongfengOAuthCompletionChannelIsShared(t *testing.T) {
 	for name, wants := range map[string][]string{
 		"gongfeng-oauth-done.js":               {"'agentflow-gongfeng-oauth'", "type:'gongfeng-oauth-completed'"},
 		"app/workbench.js":                     {"'agentflow-gongfeng-oauth'", "'gongfeng-oauth-completed'", "function listenForGongfengOAuth()"},
-		"../chatbot/src/QuickAccessWizard.jsx": {`window.addEventListener("focus", refreshUser)`},
+		"../chatbot/src/QuickAccessWizard.jsx": {`window.addEventListener("focus", refresh)`, `"agentflow-credentials-changed"`},
 	} {
 		code := read(name)
 		for _, want := range wants {
@@ -30,11 +30,8 @@ func TestGongfengOAuthCompletionChannelIsShared(t *testing.T) {
 			}
 		}
 	}
-	if wizard := read("../chatbot/src/QuickAccessWizard.jsx"); strings.Contains(wizard, "agentflow-gongfeng-oauth") || strings.Contains(wizard, "BroadcastChannel") {
-		t.Error("the quick-access wizard must not offer the legacy OAuth flow")
-	}
 	if n := strings.Count(read("app.js"), "listenForGongfengOAuth()"); n != 1 {
-		t.Fatalf("settings listener must be registered exactly once at startup, found %d calls", n)
+		t.Fatalf("settings must register the shared listener once, found %d calls", n)
 	}
 }
 
@@ -55,11 +52,12 @@ const calls=[];
 const api=async(path)=>{calls.push(path);if(path==='/api/users')return [{id:1,gitHubCredentialConfigured:true,gitTokenOAuth:true}];if(path.endsWith('/git-token/verify'))return {valid:true,scopes:['read_repository','write_repository']};return {}};
 const channels=[];
 class BroadcastChannel{constructor(name){this.name=name;channels.push(this)}close(){}}
-let panelRenders=0,replacedRow='',progress='',filter='';
+let panelRenders=0,replacedRow='';
 const unsaved={value:'typed-but-unsaved'};
 const main={replaceWith(){}};
 const row={classList:{contains:name=>name==='is-configured'&&!!replacedRow},replaceWith(next){replacedRow=next.html},querySelector(s){return s==='.credential-row-main'?main:null}};
-const panel={set innerHTML(v){panelRenders++},querySelector(s){return {'[data-credential-row="gitToken"]':row,'.credential-progress':{set innerHTML(v){progress=v}},'.credential-filter':{set innerHTML(v){filter=v}}}[s]??null},querySelectorAll:()=>[]};
+const group={replaceWith(next){replacedRow=next.html}};
+const panel={set innerHTML(v){panelRenders++},querySelector(s){return {'[data-credential-row="gitToken"]':replacedRow?row:null,'[data-credential-group="platform"]':group}[s]??null},querySelectorAll:()=>[]};
 const $=s=>({'#credentialPanel':panel,'[data-credential-row="gitToken"]':row,'#credentialPanel [data-credential-row="gitToken"]':row}[s]??null);
 const document={createElement(){const holder={set innerHTML(v){holder.firstElementChild={html:v}}};return holder},querySelectorAll:()=>[]};
 const window={};
@@ -79,8 +77,7 @@ eval(code.slice(code.indexOf('const CREDENTIAL_GROUPS='),code.indexOf('// 谁能
  assert.equal(unsaved.value,'typed-but-unsaved');
  assert.equal(view,'settings');
  assert.ok(replacedRow.includes('is-configured')&&replacedRow.includes('工蜂授权'),'the Gongfeng row switches to the configured grant');
- assert.ok(progress.includes('<b>1</b>'));
- assert.ok(filter.includes('已配置<span>1</span>'));
+ assert.ok(replacedRow.includes('新增 Git 配置'));
  assert.equal(state.data.users[0].gitTokenOAuth,true);
  assert.equal(state.gitTokenVerify.result.valid,true);
  assert.ok(toasts.some(t=>t.message.includes('工蜂授权已保存')));

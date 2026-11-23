@@ -45,6 +45,8 @@ type TelemetryContext struct {
 	IssueNumber           int    `json:"issueNumber,omitempty"`
 	TaskID                string `json:"taskId,omitempty"`
 	ScheduleJobID         string `json:"scheduleJobId,omitempty"`
+	SharedScheduleID      string `json:"sharedScheduleId,omitempty"`
+	SharedScheduleVersion int    `json:"sharedScheduleVersion,omitempty"`
 	RunID                 string `json:"runId"`
 	ParentRunID           string `json:"parentRunId,omitempty"`
 	ParentNodeID          string `json:"parentNodeId,omitempty"`

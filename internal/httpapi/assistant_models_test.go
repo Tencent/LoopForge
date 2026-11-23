@@ -27,7 +27,7 @@ func TestAssistantModelPickerOmitsCodeBuddyCLIDefault(t *testing.T) {
 		assistantCatalogLists(catalog, assistantDefaultModel) || assistantCatalogLists(catalog, "default-model") || !assistantCatalogLists(catalog, "model-b") {
 		t.Fatalf("model picker shows the wrong choices: %+v", catalog)
 	}
-	if got := assistantAllowedModel("", h.chatCatalog(user)); got != assistantDefaultModel {
+	if got := assistantAllowedModel("", h.chatCatalog(context.Background(), user)); got != assistantDefaultModel {
 		t.Fatalf("an omitted request model should still use the CLI fallback, got %q", got)
 	}
 	t.Setenv("AGENTFLOW_ASSISTANT_MODELS", "")

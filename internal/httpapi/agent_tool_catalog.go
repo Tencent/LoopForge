@@ -315,9 +315,13 @@ func (h *agentToolGateway) buildCatalog(ctx context.Context, session *AgentToolS
 		session.mu.Unlock()
 		return out
 	}
+	clarifyRepos := len(session.clarifyRepos) > 0
 	session.mu.Unlock()
 
 	out := make([]agentToolDescriptor, 0, 16)
+	if session.Mode == AgentToolClarify && clarifyRepos {
+		out = append(out, clarifySourceTools...)
+	}
 	seen := map[string]bool{}
 	for _, server := range session.MCPServers {
 		kind := classifyClarifyMCP(server)

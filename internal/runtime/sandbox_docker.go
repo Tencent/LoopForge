@@ -287,7 +287,7 @@ func (s *dockerSandbox) onDemandCLIPath(ctx context.Context, command CommandSpec
 		return "", nil
 	}
 	spec, ok := onDemandCLICatalog()[command.Provider]
-	if !ok || spec.Bundled || spec.Script != "" || command.Argv[0] != spec.Binary {
+	if !ok || spec.Bundled || spec.InstallerURL != "" || command.Argv[0] != spec.Binary {
 		return "", nil
 	}
 	if spec.Engine == "claude-code" {
@@ -628,7 +628,7 @@ func DockerImageCached(ctx context.Context, dockerfile domain.DockerfileDefiniti
 	if image := isolatedRuntimeImage(dockerfile); image != "" {
 		return dockerImageExists(ctx, image)
 	}
-	return dockerImageExists(ctx, cachedDockerImageName(dockerfile))
+	return dockerImageExists(ctx, cachedDockerImageName(effectiveIsolatedDockerfile(dockerfile)))
 }
 
 func reclaimCachedDockerImages(ctx context.Context, keep map[string]struct{}) (int, error) {
@@ -906,6 +906,7 @@ func ensureDockerImage(ctx context.Context, workspace string, dockerfile domain.
 		}
 		return image, nil
 	}
+	dockerfile = effectiveIsolatedDockerfile(dockerfile)
 	image := cachedDockerImageName(dockerfile)
 	if dockerImageExists(ctx, image) {
 		return image, nil
@@ -972,15 +973,28 @@ func dockerBuildWatch(dockerfile domain.DockerfileDefinition) procwatch.Options 
 }
 
 func isolatedRuntimeImage(dockerfile domain.DockerfileDefinition) string {
-	if dockerfile.Content != IsolatedDockerfile || len(dockerfile.Files) != 0 {
+	if !isBuiltInIsolatedDockerfile(dockerfile) {
 		return ""
 	}
 	return strings.TrimSpace(os.Getenv("AGENTFLOW_ISOLATED_IMAGE"))
 }
 
-// IsolatedDockerfile matches the public "generic-backend" environment so both
-// share one cached image.
-const IsolatedDockerfile = "FROM node:22-bookworm\nRUN apt-get update && apt-get install -y --no-install-recommends git openssh-client python3 ripgrep ca-certificates curl && rm -rf /var/lib/apt/lists/*\nRUN npm install -g @openai/codex @anthropic-ai/claude-code @tencent-ai/codebuddy-code\nWORKDIR /workspace\n"
+const isolatedDockerfileBase = "FROM node:22-bookworm\nRUN apt-get update && apt-get install -y --no-install-recommends git openssh-client python3 ripgrep ca-certificates curl && rm -rf /var/lib/apt/lists/*\n"
+const legacyIsolatedDockerfile = isolatedDockerfileBase + "RUN npm install -g @openai/codex @anthropic-ai/claude-code @tencent-ai/codebuddy-code\nWORKDIR /workspace\n"
+
+// IsolatedDockerfile is the fallback for profiles without a custom image.
+const IsolatedDockerfile = isolatedDockerfileBase + "RUN npm install -g @openai/codex @anthropic-ai/claude-code\nARG CODEBUDDY_PACKAGE=@tencent-ai/codebuddy-code\nRUN if [ -n \"$CODEBUDDY_PACKAGE\" ]; then npm install -g \"$CODEBUDDY_PACKAGE\"; fi\nWORKDIR /workspace\n"
+
+func isBuiltInIsolatedDockerfile(dockerfile domain.DockerfileDefinition) bool {
+	return len(dockerfile.Files) == 0 && (dockerfile.Content == IsolatedDockerfile || dockerfile.Content == legacyIsolatedDockerfile)
+}
+
+func effectiveIsolatedDockerfile(dockerfile domain.DockerfileDefinition) domain.DockerfileDefinition {
+	if os.Getenv("AGENTFLOW_SKIP_CODEBUDDY_INSTALL") == "1" && isBuiltInIsolatedDockerfile(dockerfile) {
+		dockerfile.Content = strings.Replace(IsolatedDockerfile, "ARG CODEBUDDY_PACKAGE=@tencent-ai/codebuddy-code", "ARG CODEBUDDY_PACKAGE=", 1)
+	}
+	return dockerfile
+}
 
 // PrebuildIsolatedImage warms the shared sandbox image in the background so
 // the first SOP on a fresh container install does not wait for the build.

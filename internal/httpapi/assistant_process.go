@@ -74,7 +74,6 @@ func (h *assistantHandlers) conversationExecutor(s *AgentToolSession, root strin
 		request := domain.RunnerWorkspaceRequest{Operation: domain.RunnerWorkspaceOperationConversationCLI}
 		workspace := ""
 		if s.RuntimeMode == domain.AssistantModeWorkspace {
-			ctx = withAssistantDockerBuildProgress(ctx, s)
 			runID := s.workspaceRun()
 			run, ok := h.repo.RunState(runID)
 			if !ok {
@@ -165,6 +164,10 @@ func (h *assistantHandlers) conversationExecutor(s *AgentToolSession, root strin
 			}
 			if (s.runnerLogin || s.transient) && !runner.SupportsCLISettings() {
 				return preDispatchError(fmt.Errorf("执行机器需升级至 %s 才能使用对话本机登录和 CLI 测试", domain.RunnerVersionCLISettings))
+			}
+			if req.Command != nil && req.Command.Provider == assistantEngineCodeBuddy &&
+				req.Command.Credentials.CodeBuddy.BaseURL != "" && !runner.SupportsCodeBuddyBaseURL() {
+				return preDispatchError(fmt.Errorf("执行机器需升级至 %s 才能使用 CodeBuddy Base URL", domain.RunnerVersionCodeBuddyBaseURL))
 			}
 			raw, err := json.Marshal(req)
 			if err != nil {
@@ -535,7 +538,10 @@ func (h *assistantHandlers) testRunnerCLI(ctx context.Context, runnerID, provide
 	defer os.RemoveAll(root)
 	model := provider + ":default"
 	if provider == assistantEngineCodeBuddy {
-		model = assistantFixedCatalog().Default
+		model = loadAssistantModels(user.CodeBuddyInternetEnvironment, user.CodeBuddyAPIKey).Default
+		if user.CodeBuddyBaseURL != "" {
+			model = personalCodeBuddyCatalog(ctx, user).Default
+		}
 	} else if !runnerLogin {
 		models, _ := assistantDiscoveredModelsFor(ctx, user, provider)
 		if len(models) == 0 {

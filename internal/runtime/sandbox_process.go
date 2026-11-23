@@ -53,7 +53,7 @@ func appendEnvironment(base []string, overlays ...map[string]string) []string {
 
 func controlledBaseEnvironment(base []string) []string {
 	blocked := []string{
-		"CODEBUDDY_API_KEY=",
+		"CODEBUDDY_API_KEY=", "CODEBUDDY_BASE_URL=",
 		"OPENAI_API_KEY=", "CODEX_API_KEY=", "OPENAI_BASE_URL=",
 		"ANTHROPIC_API_KEY=", "ANTHROPIC_AUTH_TOKEN=", "ANTHROPIC_BASE_URL=",
 		"CLAUDE_CODE_OAUTH_TOKEN=", "CODEX_HOME=", "CLAUDE_CONFIG_DIR=",

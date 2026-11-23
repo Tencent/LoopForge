@@ -202,7 +202,7 @@ func (s *Service) discoverPromoteMRs(store MRDeliveryStore) {
 				if mr.IID <= 0 {
 					continue
 				}
-				url := "https://git.example.com/" + project + "/merge_requests/" + strconv.Itoa(mr.IID)
+				url := domain.GongfengMRURL(project, mr.IID)
 				if err := store.EnsureMRDeliveryState(project, mr.IID, url, domain.BaselinePromoteIssueID); err != nil {
 					log.Printf("mr-delivery ensure promote %s!%d: %v", project, mr.IID, err)
 					continue

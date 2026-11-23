@@ -44,6 +44,7 @@ type assistantEngineInvocationOpts struct {
 	// ReviewOnly is a one-shot call without MCP servers or session history,
 	// such as a title summary.
 	ReviewOnly bool
+	ReportOnly bool
 	User       runtime.ProviderCredential
 }
 
@@ -122,6 +123,9 @@ func (e assistantCLIMissingError) Error() string {
 	label := assistantEngineLabel(e.engine)
 	if runtime.OnDemandInstallable(e.engine) {
 		return fmt.Sprintf("%s（%s）没有安装在当前服务器上。安装后即可在对话里使用。", label, e.engine)
+	}
+	if e.engine == runtime.AgentCLIZCode {
+		return "当前平台服务器未检测到 ZCode CLI。请管理员安装官方 ZCode CLI 并将 zcode 加入 PATH；使用 Docker 工作区时，也需在工作区镜像中预装。"
 	}
 	return fmt.Sprintf("服务器没有安装 %s（%s）。请联系管理员安装后再使用。", label, e.binary)
 }
@@ -220,7 +224,7 @@ func prepareAssistantClaudeInvocation(o assistantEngineInvocationOpts) (assistan
 	if effort := strings.TrimSpace(o.Effort); effort != "" {
 		argv = append(argv, "--effort", effort)
 	}
-	if o.ReviewOnly {
+	if o.ReviewOnly || o.ReportOnly {
 		argv = append(argv, "--tools", "", "--no-session-persistence")
 	}
 	if o.Resume {
@@ -392,4 +396,4 @@ func writeCodexThread(root, sessionID, threadID string) error {
 	return os.WriteFile(codexThreadsPath(root), data, 0o600)
 }
 
-var errAssistantEngineUnsupported = errors.New("该调用只支持 CodeBuddy 模型")
+var errAssistantEngineUnsupported = errors.New("此调用未启用 CLI 会话或单次模型调用模式")

@@ -142,7 +142,12 @@ export default function SopDesigner({ search = location.search, canvas = window.
   // Fall back to the catalog default once it loads.
   useEffect(() => {
     if (!catalog.models?.length || catalog.models.some((m) => m.id === model)) return;
-    setModel(catalog.default || catalog.models[0]?.id || "");
+    const preferredEngine = catalog.preferences?.executor;
+    const preferredModel = catalog.preferences?.model;
+    const preferred = modelsFor(catalog, preferredEngine).find((m) =>
+      m.id === preferredModel || m.id === preferredEngine + ":" + preferredModel);
+    const configured = new Set(enginesOf(catalog).filter((item) => item.configured !== false).map((item) => item.id));
+    setModel(preferred?.id || catalog.models.find((m) => configured.has(m.engine || defaultEngine))?.id || catalog.models[0].id);
   }, [catalog, model]);
 
   useEffect(() => {
@@ -323,6 +328,7 @@ export default function SopDesigner({ search = location.search, canvas = window.
         sessionId: id,
         model,
         approvalMode: "confirm",
+        requireExactModel: !!model,
         workflowId: begun.workflowId ?? context.workflowId,
         canvas: begun.canvas ?? null,
         messages: [message],
@@ -360,7 +366,7 @@ export default function SopDesigner({ search = location.search, canvas = window.
         {!messages.length && !running ? (
           <div className="sop-designer-intro">
             <h3>您好，我是 <em>AI 编排助手</em></h3>
-            <p>画布是空的，就描述要搭的流程。画布上已经有流程时，直接说改哪一步，我只改你说的地方。</p>
+            <p>描述要创建的流程，或指出现有流程中需要调整的步骤。</p>
             <div className="sop-designer-suggest-head">
               <span>可以试试这些场景：</span>
               <button type="button" onClick={() => setPage((n) => n + 1)}>换一批</button>

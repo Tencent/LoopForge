@@ -1,9 +1,4 @@
-// Regression: the clarification model picker (and every other classic-SPA
-// picker) needs window.AgentFlowAssistantModels. A refactor once deleted the
-// only definition, bindClarifyModelPicker() returned early at
-// `if(!api||!toggle||!menu)return;`, and the 澄清 tab's 「选择模型」 button
-// silently stopped opening. This test boots the shared module plus the real
-// picker helpers from the bundle and clicks through a selection.
+// Shared catalog rendering and the linked executor/model selectors.
 'use strict';
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -42,46 +37,47 @@ function createElement(tag) {
   return node;
 }
 
-// host > button.ai-model-toggle([data-model-toggle], .ai-model-icon, [data-model-label])
-//        + input[data-clarify-model-value] + .ai-model-menu
-const host = createElement('div');
 const toggle = createElement('button');
-toggle.className = 'ai-model-toggle';
-toggle.setAttribute('data-model-toggle', '');
 const icon = createElement('span'); icon.className = 'ai-model-icon';
-const label = createElement('span'); label.setAttribute('data-model-label', ''); label.textContent = '选择模型';
-const caret = createElement('span'); caret.className = 'ai-model-caret';
-toggle.append(icon, label, caret);
-const input = createElement('input'); input.setAttribute('data-clarify-model-value', '');
-const menu = createElement('div'); menu.className = 'ai-model-menu'; menu.hidden = true;
-host.append(toggle, input, menu);
+const label = createElement('span'); label.setAttribute('data-model-label', '');
+toggle.append(icon, label);
 
-const store = new Map([['agentflow.clarifyModel', 'model-a']]);
+function pickerFixture() {
+  const field = () => ({
+    options: [], value: '', disabled: true,
+    replaceChildren(...options) { this.options = options; },
+    append(option) { this.options.push(option); },
+    prepend(option) { this.options.unshift(option); },
+  });
+  const executor = field(), model = field();
+  const host = {
+    isConnected: true,
+    querySelector(selector) { return selector === '[data-feature-executor]' ? executor : model; },
+  };
+  return {host, executor, model};
+}
+
 const ctx = {
   console, setTimeout, clearTimeout, Promise,
   document: { addEventListener() {}, querySelectorAll: () => [], createElement },
-  localStorage: {
-    getItem: key => (store.has(key) ? store.get(key) : null),
-    setItem: (key, value) => store.set(key, String(value)),
-    removeItem: key => store.delete(key),
-  },
+  Option: class Option { constructor(text, value) { this.text = text; this.value = value; } },
   fetch: async () => ({
     ok: true,
     json: async () => ({
       default: 'model-b',
       models: [
         { id: 'default', name: 'CLI 默认模型', family: 'other' },
+        { id: 'default-model', name: '旧版默认', family: 'other' },
+        { id: 'codex:default', name: 'Codex 默认', engine: 'codex' },
         { id: 'model-a', name: 'Model A', family: 'claude', credits: 'x1.00' },
         { id: 'model-b', name: 'Model B', family: 'glm', credits: 'x0.06' },
         { id: 'codex:gpt-5.5', name: 'GPT-5.5', family: 'gpt', engine: 'codex' },
       ],
-      engines: [{ id: 'codebuddy', name: 'CodeBuddy' }, { id: 'codex', name: 'Codex' }],
+      engines: [{ id: 'codebuddy', name: 'CodeBuddy', configured: true, personal: true }, { id: 'codex', name: 'Codex', configured: true, personal: true }],
     }),
   }),
 };
 ctx.window = ctx;
-// bindClarifyModelPicker uses $$ for the outside-click closer and setClarifyModel.
-ctx.$$ = selector => (selector === '[data-clarify-model]' ? [host] : [input]);
 vm.createContext(ctx);
 vm.runInContext(moduleSource, ctx);
 
@@ -123,49 +119,50 @@ vm.runInContext(moduleSource, ctx);
     assert.equal(icon.dataset.family, family);
     assert.ok(icon.innerHTML.includes(`/images/credentials/${family}.svg`));
   }
-  // Pickers keep painting before the catalog lands, so the built-in fallback
-  // must already render a usable label.
-  assert.equal(api.codeBuddyModel('codex:gpt-5.5'), 'default', 'codex ids fall back before the catalog loads');
-  api.paint(toggle, api.DEFAULT);
-  assert.equal(label.textContent, '默认');
-  assert.equal(icon.dataset.family, 'other');
-  assert.equal(api.codeBuddyModels().length, 0, 'the placeholder is not selectable before loading');
-
+  assert.equal(api.engineOf('codex:gpt-5.5'), 'codex');
+  assert.equal(api.concreteModelId('codebuddy:default-model'), '');
   await api.load();
   assert.equal(api.catalog().default, 'model-b');
-  assert.equal(api.catalog().models.length, 3, 'catalog adopts /api/assistant/models');
-  // Issue #228: clarification runs on CodeBuddy only, so CodeBuddy-only
-  // pickers hide other CLIs and a saved "codex:…" id falls back.
-  assert.deepEqual(api.codeBuddyModels().map(m => m.id), ['model-a', 'model-b']);
-  assert.equal(api.codeBuddyModel('codex:gpt-5.5'), 'default');
-  assert.equal(api.codeBuddyModel(''), 'default');
-  assert.equal(api.codeBuddyModel('model-a'), 'model-a');
+  assert.equal(api.catalog().models.length, 3, 'catalog adopts concrete models');
+  assert.match(bundle, /bindClarifyModelPicker/);
 
-  // Pull the real picker helpers out of the bundle and bind them to the stub host.
-  for (const name of ['selectedClarifyModel', 'setClarifyModel', 'bindClarifyModelPicker']) {
-    const start = bundle.search(new RegExp('^function ' + name + '\\(', 'm'));
-    assert.ok(start >= 0, `${name} is missing from the app bundle`);
-    const rest = bundle.slice(start);
-    const next = /\n(?:async )?function \w+\(/.exec(rest);
-    vm.runInContext(next ? rest.slice(0, next.index) : rest, ctx);
-  }
-  ctx.bindClarifyModelPicker(host);
-  assert.equal(host.dataset.bound, '1', 'clarify picker must bind once the model API exists');
+  const pair = pickerFixture();
+  const changes = [];
+  await api.bindFeaturePicker(pair.host, {model: 'default', onChange: id => changes.push(id)});
+  assert.equal(pair.executor.value, 'codebuddy');
+  assert.equal(pair.model.value, 'codebuddy:model-b');
+  assert.deepEqual(pair.model.options.map(option => option.value), ['codebuddy:model-a', 'codebuddy:model-b']);
+  pair.model.value = 'codebuddy:model-a';
+  pair.model.onchange();
+  pair.executor.value = 'codex';
+  pair.executor.onchange();
+  assert.equal(pair.model.value, 'codex:gpt-5.5');
+  assert.deepEqual(pair.model.options.map(option => option.text), ['GPT-5.5']);
+  pair.executor.value = 'codebuddy';
+  pair.executor.onchange();
+  assert.equal(pair.model.value, 'codebuddy:model-a');
+  assert.deepEqual(changes, ['codebuddy:model-a', 'codex:gpt-5.5', 'codebuddy:model-a']);
 
-  toggle.onclick({ stopPropagation() {} });
-  assert.equal(menu.hidden, false, 'clicking 选择模型 must open the menu');
-  assert.equal(menu.children.length, 2, 'menu lists only CodeBuddy models');
-  assert.ok(!menu.children.some(opt => opt.dataset.id.startsWith('codex:')), 'clarify menu hides Codex models');
-  assert.ok(menu.children[0].className.includes('is-active'), 'stored model is marked active');
+  const codexOnly = pickerFixture();
+  await api.bindFeaturePicker(codexOnly.host, {
+    model: 'model-b',
+    loadCatalog: async () => ({
+      ...api.catalog(),
+      engines: [
+        {id: 'codebuddy', name: 'CodeBuddy', configured: true, personal: false},
+        {id: 'codex', name: 'Codex', configured: true, personal: true},
+      ],
+    }),
+  });
+  assert.equal(codexOnly.executor.value, 'codex');
+  assert.deepEqual(codexOnly.executor.options.map(item => item.value), ['codex']);
+  assert.equal(codexOnly.model.value, 'codex:gpt-5.5');
 
-  menu.children[1].onclick();
-  assert.equal(store.get('agentflow.clarifyModel'), 'model-b');
-  assert.equal(input.value, 'model-b');
-  assert.equal(menu.hidden, true);
-  assert.equal(label.textContent, 'Model B');
-
-  // A Codex id saved before this fix must not reach chat-clarify.
-  store.set('agentflow.clarifyModel', 'codex:gpt-5.5');
-  assert.equal(ctx.selectedClarifyModel(), 'default');
+  const saved = pickerFixture();
+  await api.bindFeaturePicker(saved.host, {model: 'claude-code:old-model', keepSaved: true, loadCatalog: async () => ({
+    engines: [{id: 'claude-code', name: 'Claude Code', configured: false}], models: [],
+  })});
+  assert.equal(saved.executor.value, 'claude-code');
+  assert.equal(saved.model.value, 'claude-code:old-model');
   console.log('assistant models ok');
 })().catch(err => { console.error(err); process.exit(1); });

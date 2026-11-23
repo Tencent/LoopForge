@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"agentflow/internal/config"
 	"agentflow/internal/domain"
 	"agentflow/internal/gitwork"
 	"agentflow/internal/gongfeng"
@@ -36,6 +37,10 @@ func (row gitHTTPCredentialRow) secret() domain.GitHTTPCredentialSecret {
 
 // managedGitHost is the HTTPS host of the internal adapter's Git server.
 func managedGitHost() string {
+	if host := config.GongfengHost(); host != "" {
+		normalized, _ := gitwork.HTTPSHostScope(host)
+		return normalized
+	}
 	host, _ := gitwork.HTTPSRemoteHost(gongfeng.ConfigFromEnv().APIBase)
 	return host
 }

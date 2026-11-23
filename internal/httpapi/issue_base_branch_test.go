@@ -278,7 +278,7 @@ func TestImportTAPDRejectsInvalidLinksBeforeMCP(t *testing.T) {
 	h := New(st, engine.New(st, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "")
 	for _, tc := range []struct{ text, errorPart string }{
 		{"只有标题，没有链接", "无法识别"},
-		{"https://example.test/tapd_fe/10000000/story/detail/1010000000100001332", "tapd.example.com"},
+		{"https://example.test/tapd_fe/10000000/story/detail/1010000000100001332", "www.tapd.cn"},
 		{"【两个工作项】\nhttps://tapd.example.com/tapd_fe/10000000/story/detail/1010000000100001332\nhttps://tapd.example.com/tapd_fe/10000000/task/detail/1010000000100001443", "多个不同"},
 	} {
 		response := requestJSON[map[string]string](t, h, http.MethodPost, "/api/issues/import-tapd", map[string]any{
