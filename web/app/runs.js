@@ -1752,7 +1752,14 @@ function attachRunEvalStream(runId,evalId){
       loadRunEval(runId);
       return;
     }
-    finish(rec.status==='running'?{...rec,status:'failed',error:'评测已中断，请重新评测。'}:rec);
+    if(rec.status==='running'){
+      // Another API instance can return the persisted record without owning
+      // the evaluation job. EventSource will reconnect for progress.
+      stream.reconnecting=true;
+      paintRunEvalProgress(stream);
+      return;
+    }
+    finish(rec);
   });
   source.addEventListener('error',event=>{
     if(!current())return;

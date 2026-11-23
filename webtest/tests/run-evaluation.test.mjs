@@ -81,6 +81,23 @@ test('evaluation updates are scoped to the selected run', async (t) => {
   assert.equal(otherPane.querySelector('[data-start-run-eval]').disabled, false);
 });
 
+test('a stream snapshot from a replica without the job keeps the evaluation running', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  const running = { id: 'eval-1', runId: run.id, status: 'running' };
+  app.router.get('/api/runs/run-eval/eval', running);
+  const pane = mount(app);
+  await app.evaluate(`loadRunEval('${run.id}')`);
+  const source = app.window.EventSource.instances.at(-1);
+
+  source.emit(running, 'done');
+  assert.equal(pane.querySelector('.run-eval-failed'), null);
+  assert.equal(pane.querySelector('[data-start-run-eval]').disabled, true);
+  assert.notEqual(source.readyState, app.window.EventSource.CLOSED);
+  source.emit({ ...running, status: 'succeeded', score: 84, result: { summary: '评测已完成。' } }, 'done');
+  assert.match(pane.querySelector('.run-eval-verdict').textContent, /评测已完成/);
+});
+
 test('recommendations preview the actual change and show the server writeback outcome', async (t) => {
   const app = await loadApp();
   t.after(app.close);

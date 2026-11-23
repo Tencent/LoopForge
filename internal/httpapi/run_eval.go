@@ -173,6 +173,12 @@ func (h *runsHandlers) streamRunEval(c *gin.Context) {
 	hub.mu.Unlock()
 	if job == nil {
 		if rec, ok := h.repo.LatestRunEval(id); ok {
+			// The job may live in another API process. A recent running
+			// record is still active even when this process has no progress.
+			if rec.Status == domain.RunEvalRunning && time.Since(rec.CreatedAt) >= runEvalTimeout {
+				rec.Status = domain.RunEvalFailed
+				rec.Error = "评测已中断，请重新评测。"
+			}
 			c.Header("Content-Type", "text/event-stream; charset=utf-8")
 			c.Status(http.StatusOK)
 			writeSSE(c, "done", rec)

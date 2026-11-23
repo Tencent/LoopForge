@@ -112,6 +112,38 @@ func TestRunEvalJobAndLiveStreamBranches(t *testing.T) {
 	}
 }
 
+func TestRunEvalStreamWithoutLocalJobPreservesRecentRunningRecord(t *testing.T) {
+	f := cvBNewHTTPFixture(t)
+	h := &runsHandlers{deps: &deps{repo: f.s}, evalJobs: newRunEvalHub()}
+	router := gin.New()
+	router.GET("/api/runs/:id/eval/stream", h.streamRunEval)
+	now := time.Now().UTC()
+	for _, tc := range []struct {
+		name string
+		age  time.Duration
+		want string
+	}{
+		{name: "another replica", age: time.Minute, want: domain.RunEvalRunning},
+		{name: "timed out", age: runEvalTimeout + time.Minute, want: domain.RunEvalFailed},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			id := "stream-without-local-job-" + tc.want
+			if err := f.s.PutRun(domain.Run{ID: id, Status: "succeeded"}); err != nil {
+				t.Fatal(err)
+			}
+			rec := domain.RunEvalRecord{ID: id + "-eval", RunID: id, Status: domain.RunEvalRunning, CreatedAt: now.Add(-tc.age)}
+			if err := f.s.PutRunEval(rec); err != nil {
+				t.Fatal(err)
+			}
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, httptest.NewRequest("GET", "/api/runs/"+id+"/eval/stream", nil))
+			if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"status":"`+tc.want+`"`) {
+				t.Fatalf("stream status=%d body=%s", response.Code, response.Body.String())
+			}
+		})
+	}
+}
+
 func TestRunEvalExecutorSuccessAndFailureBranches(t *testing.T) {
 	f := cvBNewHTTPFixture(t)
 	h := &runsHandlers{deps: &deps{repo: f.s}, evalJobs: newRunEvalHub()}
