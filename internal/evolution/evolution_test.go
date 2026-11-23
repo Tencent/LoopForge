@@ -99,6 +99,21 @@ func TestDiagnoseEvalAndFeedbackSignals(t *testing.T) {
 	}
 }
 
+func TestDiagnoseKeepsOneExplicitFeedbackOnSuccessfulRun(t *testing.T) {
+	run := testRun("feedback-once", "succeeded", map[string]*domain.NodeRun{"code": {Status: "succeeded"}})
+	in := testInput([]domain.Run{run})
+	in.Feedback = []domain.EvoSignal{{ID: "human", RunID: run.ID, NodeID: "code", Kind: SignalUserFeedback, Detail: "预期定位第 4 行，实际选择第 1 行"}}
+	found := Diagnose(in)
+	if len(found) != 1 || found[0].AssetID != "coder" || len(found[0].Signals) != 1 || found[0].Signals[0].ID != "human" {
+		t.Fatalf("one explicit feedback must form a visible finding: %+v", found)
+	}
+	run.Nodes["code"].ReworkCount = 1
+	in = testInput([]domain.Run{run})
+	if found := Diagnose(in); len(found) != 0 {
+		t.Fatalf("one automatic rework signal still needs more evidence: %+v", found)
+	}
+}
+
 func TestDiagnoseSkipsReplaysAndDisabledAssets(t *testing.T) {
 	replay := testRun("r-replay", "failed", map[string]*domain.NodeRun{"code": {Status: "failed"}})
 	replay.ExecutionContext.Purpose = domain.RunPurposeEvolutionReplay

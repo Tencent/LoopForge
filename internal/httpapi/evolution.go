@@ -19,9 +19,11 @@ import (
 // autonomy policies, run feedback and pinned regression samples.
 type evolutionHandlers struct {
 	*deps
-	jobs    chan struct{}
-	healthM sync.Mutex
-	health  map[string]evoHealthCache
+	jobs chan struct{}
+	// Serialize feedback materialization and explicit diagnosis reconciliation.
+	findingsM sync.Mutex
+	healthM   sync.Mutex
+	health    map[string]evoHealthCache
 	// trial / watch sweep throttle and per-run score cache
 	trialM      sync.Mutex
 	trialAt     time.Time
@@ -328,6 +330,8 @@ func (h *evolutionHandlers) diagnose(c *gin.Context) {
 	if !h.requireProjectReader(c, req.ProjectID) || !h.requireProjectWriter(c, req.ProjectID) {
 		return
 	}
+	h.findingsM.Lock()
+	defer h.findingsM.Unlock()
 	days := evoWindowDays(strconv.Itoa(req.Days))
 	runs := h.loadWindowRuns(req.ProjectID, days, evoMaxDiagnoseRuns)
 	found := evolution.Diagnose(h.diagnoseInput(req.ProjectID, days, runs, h.repo.EvoLevel))
@@ -336,29 +340,8 @@ func (h *evolutionHandlers) diagnose(c *gin.Context) {
 	activeFindings := h.repo.EvoFindings(req.ProjectID, domain.EvoFindingOpen, domain.EvoFindingProposed)
 	queuedFindings := h.repo.EvoQueue(req.ProjectID)
 	for _, f := range found {
-		matched := false
-		for _, existing := range activeFindings {
-			if existing.AssetKind != f.AssetKind || existing.AssetID != f.AssetID {
-				continue
-			}
-			if existing.Status == domain.EvoFindingProposed || existing.ProposalID != "" || evoFindingQueued(queuedFindings, existing.ID) {
-				if !sameEvoFindingIntent(f, existing) {
-					continue
-				}
-				f = existing
-			} else {
-				f = mergeEvoFinding(f, existing)
-			}
-			matched = true
-			break
-		}
-		if !matched {
-			f.ID = "evf-" + randomID()
-		}
-		if p, open := h.repo.OpenEvoProposalForAsset(f.AssetKind, f.AssetID); open && p.ProjectID == req.ProjectID && p.FindingID == f.ID {
-			f.ProposalID = p.ID
-		}
-		if err := h.repo.PutEvoFinding(f); err != nil {
+		f, err := h.saveDiagnosedFinding(f, activeFindings, queuedFindings)
+		if err != nil {
 			respond(c, err)
 			return
 		}
@@ -984,7 +967,7 @@ func (h *evolutionHandlers) runFeedback(c *gin.Context) {
 		respond(c, err)
 		return
 	}
-	c.JSON(http.StatusCreated, sig)
+	c.JSON(http.StatusCreated, h.feedbackFinding(run, sig))
 }
 
 func (h *evolutionHandlers) pinSample(c *gin.Context) {

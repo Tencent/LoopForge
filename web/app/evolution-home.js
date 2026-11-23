@@ -10,11 +10,10 @@ function evoHomeSyncChecking(){
 }
 function evoHomeEmptyHTML(){
   const check=evoHomeCheck(),hasRuns=check?check.runs>0:!!evo.overview?.health?.some(h=>h.runs>0);
-  const title=check?check.findings?'检查已完成':hasRuns?'本次检查未发现问题':'当前项目没有可分析的运行':'暂无改进记录';
-  const note=check?check.findings?`本次发现 ${check.findings} 个问题，刷新列表查看处理进度。`:hasRuns?`已检查 ${check.runs} 次运行。结果有误时，可在运行详情中反馈问题。`:'先完成一条使用角色或规则的任务，再回来检查。':hasRuns?'检查最近运行，找到问题后生成修改并验证。':'从一条真实运行开始，查看问题如何被修正。';
-  const checkButton=check?.findings?evoHomeButton('刷新列表','data-evo-reload',true):evoHomeButton(`${evoReviewIcon('search')}<span data-evo-check-label>${evo.diagnosing?'检查中…':'检查最近运行'}</span>`,`data-evo-home-check${evo.diagnosing?' disabled':''}`,hasRuns);
-  const runsButton=evoHomeButton(`${evoReviewIcon('play')}查看运行`,'data-evo-home-runs',!hasRuns);
-  return `<section class="evo-home-empty" aria-labelledby="evoHomeEmptyTitle"><div class="evo-home-empty-mark">${evoReviewIcon(check&&hasRuns?'check':'workflow')}</div><h2 id="evoHomeEmptyTitle">${title}</h2><p>${escapeHTML(note)}</p><div class="evo-home-empty-actions">${hasRuns?checkButton+runsButton:runsButton+checkButton}</div><ol class="evo-home-path" aria-label="验证路径"><li>${evoReviewIcon('workflow')}运行任务</li><li>${evoReviewIcon('edit')}生成修改</li><li>${evoReviewIcon('flask')}对比验证</li></ol><button type="button" class="evo-home-guide-link" data-evo-home-guide>用一个例子验证 ${evoReviewIcon('arrow-right')}</button></section>`;
+  const title=check?check.findings?'检查已完成':hasRuns?'暂无待处理问题':'当前项目没有可分析的运行':'暂无改进记录';
+  const note=check?check.findings?'刷新列表查看处理进度。':hasRuns?'产物不符合预期时，在运行详情反馈具体问题。':'先完成一条使用角色或规则的任务，再回来检查。':hasRuns?'点击右上角检查最近运行，或在运行详情反馈问题。':'先完成一条任务，再从运行结果开始改进。';
+  const action=check?.findings?evoHomeButton('刷新列表','data-evo-reload'):evoHomeButton(`${evoReviewIcon('play')}查看运行`,'data-evo-home-runs');
+  return `<section class="evo-home-empty" aria-labelledby="evoHomeEmptyTitle"><div class="evo-home-empty-mark">${evoReviewIcon(check&&hasRuns?'check':'workflow')}</div><h2 id="evoHomeEmptyTitle">${title}</h2><p>${escapeHTML(note)}</p><div class="evo-home-empty-actions">${action}</div></section>`;
 }
 function evoHomeNext(row){
   const p=row.p;
@@ -50,7 +49,7 @@ function evoHomeRowHTML(row){
 }
 function evoHomeHTML(){
   const all=evoUnifiedRows(),check=evoHomeCheck();
-  const checkNote=check?`<p class="evo-home-check-note" role="status">${evoReviewIcon('check')}本次检查 ${check.runs} 次运行 · ${check.findings} 个问题<span>${escapeHTML(relativeTime(check.at))}</span></p>`:'';
+  const checkNote=check?`<p class="evo-home-check-note" role="status">${evoReviewIcon('check')}上次检查 ${check.runs} 次运行 · ${check.findings} 个问题<span>${escapeHTML(relativeTime(check.at))}</span></p>`:'';
   const error=evo.checkError?`<div class="evo-home-check-error" role="alert">检查失败：${escapeHTML(evo.checkError)}${evoHomeButton('重试','data-evo-home-check')}</div>`:'';
   if(!all.length)return `<div class="evo-home">${error}${checkNote}${evoHomeEmptyHTML()}</div>`;
   if(!['active','all'].includes(evo.list.status))evo.list={status:'active',page:0};

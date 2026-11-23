@@ -1,18 +1,14 @@
 /* 首页沿用 Harness UI（MIT）令牌；状态仅表达真实进度和结果。 */
 #evolutionView .evo-home{min-width:0}
-#evolutionView .evo-home-empty{padding:38px 24px 22px;border:1px solid var(--hui-border);border-radius:14px;background:var(--hui-surface);text-align:center}
+#evolutionView .evo-home-empty{padding:24px;border:1px solid var(--hui-border);border-radius:14px;background:var(--hui-surface);text-align:center}
 .evo-home-empty-mark{display:flex;align-items:center;justify-content:center;width:46px;height:46px;margin:0 auto 16px;border:1px solid var(--hui-border);border-radius:12px;background:var(--hui-soft);color:var(--hui-muted)}
 .evo-home-empty-mark .evo-review-icon{width:23px;height:23px}
 .evo-home-empty h2{font-size:17px;font-weight:500;margin:0 0 8px}
 .evo-home-empty p{font-size:13px;line-height:1.7;color:var(--hui-muted);margin:0 auto;max-width:520px}
-.evo-home-empty-actions{display:flex;gap:10px;justify-content:center;flex-wrap:wrap;margin:22px 0 28px}
+.evo-home-empty-actions{display:flex;gap:10px;justify-content:center;flex-wrap:wrap;margin:18px 0 0}
 .evo-home-empty-actions .kb-btn{display:inline-flex;align-items:center;gap:6px}
-.evo-home-path{list-style:none;display:flex;align-items:center;justify-content:center;gap:28px;flex-wrap:wrap;padding:18px 0 0;margin:0;border-top:1px solid var(--hui-border-soft);font-size:12px;color:var(--hui-muted)}
-.evo-home-path li{display:flex;align-items:center;gap:6px}
-.evo-home-path li+li:before{content:'→';margin-right:15px;color:var(--hui-muted)}
 #evolutionView .evo-home-guide-link{display:inline-flex;align-items:center;gap:6px;padding:4px 0;border:0;background:none;color:var(--hui-muted);font:12px var(--hui-sans);cursor:pointer}
 #evolutionView .evo-home-guide-link:hover{color:var(--hui-accent)}
-.evo-home-empty>.evo-home-guide-link{margin-top:18px}
 .evo-home-toolbar{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:14px}
 .evo-home-scope{color:var(--hui-muted);font-size:11px}
 .evo-home-tabs{display:flex;gap:20px;align-items:center}
@@ -67,4 +63,7 @@
 .evo-home-guide>details p{margin-top:10px}
 @media(max-width:1100px){.evo-home-columns,.evo-home-row{gap:16px;grid-template-columns:minmax(0,1fr) minmax(0,1.1fr) 150px 145px}.evo-home-change-pair{display:none}}
 @media(max-width:800px){.evo-home-columns{display:none}#evolutionView .evo-home-row{grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:14px}.evo-home-problem{grid-column:1/-1}.evo-home-change{grid-column:1/-1;padding-top:12px;border-top:1px solid var(--hui-border-soft)}.evo-home-change-pair{display:grid}.evo-home-validation{grid-column:1}.evo-home-next{grid-column:2;align-items:flex-end}.evo-home-next .hui-badge{white-space:normal;text-align:right}.evo-home-empty{padding-inline:16px!important}}
-@media(max-width:450px){.evo-home-path{gap:12px;font-size:11px}.evo-home-path li+li:before{margin-right:3px}#evolutionView .evo-home-row{padding:16px}.evo-home-outcomes{gap:8px}.evo-home-next>span:last-child{font-size:11px}.evo-home-empty h2{font-size:16px}.evo-home-toolbar{gap:8px}}
+@media(max-width:450px){#evolutionView .evo-home-row{padding:16px}.evo-home-outcomes{gap:8px}.evo-home-next>span:last-child{font-size:11px}.evo-home-empty h2{font-size:16px}.evo-home-toolbar{gap:8px}}
+.evo-feedback-result{display:flex;align-items:center;gap:12px;justify-content:space-between;padding:10px 14px;margin:0 0 14px;border:1px solid var(--hui-border);border-radius:8px;background:var(--hui-surface);color:var(--hui-text);font:12px/1.7 var(--hui-sans);overflow-wrap:anywhere}
+.evo-feedback-result button{flex-shrink:0;border:0;background:none;color:var(--hui-accent);font:inherit;cursor:pointer}
+.evo-feedback-result button:focus-visible{outline:2px solid var(--hui-accent);outline-offset:3px}

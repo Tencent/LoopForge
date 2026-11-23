@@ -25,8 +25,14 @@ function evoOpenAssetGroup(key){
 function evoGroupFacts(group){
   const current=group.issues.filter(r=>!group.p||r.f.id===group.p.findingId||r.f.proposalId===group.p.id),runs=new Set();
   for(const r of current){for(const x of r.c.occurrences||[])if(x.runId)runs.add(x.runId);for(const x of r.f.sampleRunIds||[])runs.add(x)}
-  const queued=group.queue.length;
+  const queued=evoFollowupCount(group);
   return `${runs.size?`${runs.size} 条问题运行`:current.length?`${current.length} 条问题线索`:'未关联问题样本'}${queued?` · 后续建议 ${queued}`:''}${group.proposals.length>1?` · 历史尝试 ${group.proposals.length-1}`:''}`;
+}
+function evoFollowupCount(group){
+  if(!group)return 0;
+  const current=group.p?.findingId||group.r?.f.id;
+  const pending=new Set((group.issues||[]).filter(r=>r.f.id!==current&&r.f.status==='open'&&!r.f.proposalId&&!group.queue.some(q=>q.findingId===r.f.id)).map(r=>r.f.id));
+  return group.queue.length+pending.size;
 }
 function evoOpenQueue(kind,id){
   const group=evoGroupForAsset({assetKind:kind,assetId:id}),items=evoAssetQueue(kind,id),busy=group?.proposals.some(evoOccupiesAsset),level=evoLevelOf(kind,id),key=evoAssetKey(kind,id);

@@ -264,8 +264,10 @@ function evoListState({r,p,queue}){
   }
   if(queue?.length&&!evoOccupiesAsset(p))return {label:'等待开始下一项',tone:'warn'};
   const f=r?.f;if(!f)return {label:'等待处理',tone:''};
+  if(evoIssueState(f)!=='done'&&!evoSnoozed(f)&&evoHasUserFeedback(f))return {label:'待处理反馈',tone:'warn'};
   return {label:evoIssueState(f)==='done'?'已归档':evoSnoozed(f)?'已暂缓':!f.triage?'待重新检查':evoVerdict(f)==='fix'?'待开始修改':'观察中',tone:evoVerdict(f)==='fix'?'warn':''};
 }
+function evoHasUserFeedback(f){return [...(f?.signals||[]),...(f?.clusters||[])].some(s=>s.kind==='user_feedback')}
 function evoFiveSteps(p){
   if(!p)return [{t:'发现问题',state:'active'},...['改写正文','历史验证','小范围试用','已发布'].map(t=>({t,state:'todo'}))];
   const {steps}=evoStages(p),last=steps[4],watch=steps[5];
@@ -296,7 +298,7 @@ function evoListProgress(row){
     note=v?.regressed>0?`历史验证有 ${v.regressed} 条退化 · 先检查样本`:v?.passed&&v.finished>0?`历史验证 ${v.finished} 条 · ${v.changed>0?`${v.changed} 条结论改变，待核对`:v.fixed>0?`已修复 ${v.fixed} 条`:'未见退化，不代表已修复'}`:'等待有效验证结果';
   }else if(!p&&r){
     const f=r.f;
-    note=evoIssueState(f)==='done'?'历史问题记录，不代表已验证修复':evoSnoozed(f)?'已暂缓处理':!f.triage?'需重新检查运行':evoVerdict(f)==='fix'?'查看证据后生成修改':evoVerdict(f)==='noise'?'可能偶发，暂不建议修改':'证据不足，需更多新运行';
+    note=evoIssueState(f)==='done'?'历史问题记录，不代表已验证修复':evoSnoozed(f)?'已暂缓处理':evoHasUserFeedback(f)?'人工反馈，核对预期与实际产物':!f.triage?'需重新检查运行':evoVerdict(f)==='fix'?'查看证据后生成修改':evoVerdict(f)==='noise'?'可能偶发，暂不建议修改':'证据不足，需更多新运行';
   }
   return {label,note,tone:s.tone};
 }
@@ -1264,12 +1266,21 @@ function evoDecorateRunDetail(host,r){
   const actions=host.querySelector('.run-header-actions');if(!actions)return;
   actions.insertAdjacentHTML('afterbegin',`<button class="button ghost small" data-evo-feedback="${escapeHTML(r.id)}" title="把问题反馈给进化中心，参与角色与规则的诊断">反馈问题</button><button class="button ghost small" data-evo-pin="${escapeHTML(r.id)}" title="每次进化提案都会回放这次运行">钉为回归样本</button>`);
   actions.querySelector('[data-evo-feedback]')?.addEventListener('click',async ev=>{
-    const btn=ev.currentTarget;
-    const detail=await afPrompt({title:'反馈问题',message:'描述这次运行哪里不好（会作为用户反馈信号参与诊断）：',defaultValue:'',multiline:true});
+    const btn=ev.currentTarget,nodeId=state.selectedRunNode||'';
+    const detail=await afPrompt({title:'反馈问题',message:'请写清预期结果、实际结果和需要改进的地方。提交后会整理为关联角色的问题。',defaultValue:'',multiline:true});
     if(!detail||!String(detail).trim())return;
     btn.disabled=true;
-    try{await api(`/api/runs/${encodeURIComponent(r.id)}/feedback`,{method:'POST',body:JSON.stringify({detail:String(detail).trim(),nodeId:state.selectedRunNode||''})});toast('反馈已记录','ok')}
-    catch(err){toast(err.message,'err')}
+    try{
+      const result=await api(`/api/runs/${encodeURIComponent(r.id)}/feedback`,{method:'POST',body:JSON.stringify({detail:String(detail).trim(),nodeId})});
+      if(result.findingId&&evo.projectId===result.projectId)evo.lastCheck=null;
+      if(btn.isConnected){
+        host.querySelector('.evo-feedback-result')?.remove();
+        const notice=document.createElement('div');notice.className='evo-feedback-result';notice.setAttribute('role','status');
+        notice.innerHTML=`<span>${escapeHTML(result.message||'反馈已保存，请在进化中心检查最近运行后查看。')}</span>${result.findingId?'<button type="button">查看问题 ↗</button>':''}`;
+        notice.querySelector('button')?.addEventListener('click',()=>evoOpenFeedbackFinding(result));host.prepend(notice);
+      }
+      toast(result.findingId?'反馈已加入进化中心':'反馈已保存，详见提示','ok');
+    }catch(err){toast(err.message,'err')}
     finally{btn.disabled=false}
   });
   actions.querySelector('[data-evo-pin]')?.addEventListener('click',async ev=>{
@@ -1281,6 +1292,18 @@ function evoDecorateRunDetail(host,r){
     catch(err){toast(err.message,'err')}
     finally{btn.disabled=false}
   });
+}
+
+async function evoOpenFeedbackFinding(result){
+  const pid=result.projectId;
+  if(state.projectFilter!==pid){
+    const picker=$('#projectSwitcher');
+    if(!picker?.onchange||![...picker.options].some(o=>o.value===pid))return toast('请先选择该运行所属项目，再打开进化中心','warn');
+    await picker.onchange({target:{value:pid}});
+    if(state.projectFilter!==pid)return;
+  }
+  switchView('evolution');await renderEvolutionView();
+  if(evoActive()&&evoProjectId()===pid&&!evo.error)evoOpenFinding(result.findingId,result.clusterId||'');
 }
 
 // ---------- 全局交互 ----------

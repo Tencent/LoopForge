@@ -55,6 +55,7 @@ type assetBucket struct {
 	workflows map[string]bool
 	failures  int
 	reworks   int
+	feedbacks int
 	// triage tallies
 	exposed  map[string]time.Time // runs on the current version -> run time
 	problems map[string]float64   // run ID -> problem weight (max over signals)
@@ -165,6 +166,8 @@ func Diagnose(in DiagnoseInput) []domain.EvoFinding {
 			b.failures++
 		case SignalRework:
 			b.reworks++
+		case SignalUserFeedback:
+			b.feedbacks++
 		}
 	}
 	exposeAgent := func(agent domain.AgentDefinition, run domain.Run) *assetBucket {
@@ -234,10 +237,7 @@ func Diagnose(in DiagnoseInput) []domain.EvoFinding {
 			continue
 		}
 		wf := run.WorkflowSnapshot
-		node, found := nodeByID(wf, fb.NodeID)
-		if !found || !agentNode(node) {
-			node, found = lastAgentNode(run)
-		}
+		node, found := FeedbackNode(run, fb.NodeID)
 		if !found {
 			continue
 		}
@@ -259,7 +259,9 @@ func Diagnose(in DiagnoseInput) []domain.EvoFinding {
 	out := make([]domain.EvoFinding, 0, len(buckets))
 	for _, key := range order {
 		b := buckets[key]
-		if b.failures == 0 && len(b.signals) < 2 {
+		// Explicit human feedback is actionable evidence even when the run
+		// succeeded. Keep the repetition threshold for automatic signals only.
+		if b.failures == 0 && b.feedbacks == 0 && len(b.signals) < 2 {
 			continue
 		}
 		out = append(out, b.finding(in, baseline))
@@ -401,6 +403,17 @@ func nodeByID(wf domain.WorkflowDefinition, id string) (domain.WorkflowNode, boo
 		}
 	}
 	return domain.WorkflowNode{}, false
+}
+
+// FeedbackNode attributes feedback to an executed role node, falling back to
+// the last completed role when the selected node is a gate or is unavailable.
+func FeedbackNode(run domain.Run, id string) (domain.WorkflowNode, bool) {
+	if node, found := nodeByID(run.WorkflowSnapshot, id); found && agentNode(node) {
+		if nr := run.Nodes[node.ID]; nr != nil && nr.Status != "pending" {
+			return node, true
+		}
+	}
+	return lastAgentNode(run)
 }
 
 // lastAgentNode is the agent node that finished last: the one whose output

@@ -122,6 +122,8 @@ test('empty home explains explicit diagnosis results and opens a read-only verif
   assert.match($('#evolutionBody').textContent,/暂无改进记录/);
   assert.equal($('.evo-home-columns'),null);
   assert.equal($('.evo-home-tabs'),null);
+  assert.equal(app.document.querySelectorAll('[data-evo-home-guide]').length,1);
+  assert.equal($('.evo-home-empty [data-evo-home-check]'),null);
   $('[data-evo-home-guide]').click(); await settle(2);
   assert.match($('#kbDrawerBody').textContent,/evidence.line = 4/);
   assert.match($('#kbDrawerBody').textContent,/不是当前项目的运行结果/);
@@ -132,16 +134,32 @@ test('empty home explains explicit diagnosis results and opens a read-only verif
   assert.equal(copied.caseId,'combined');
   assert.equal(copied.lines.length,4);
   $('#kbDrawerClose').click();
-  $('[data-evo-home-check]').click(); await settle(6);
+  $('#evoDiagnose').click(); await settle(6);
   assert.match($('#evolutionBody').textContent,/当前项目没有可分析的运行/);
   assert.match($('.evo-home-check-note').textContent,/0 次运行/);
   app.router.post('/api/evolution/diagnose',{runs:4,findings:[]});
-  $('[data-evo-home-check]').click(); await settle(6);
-  assert.match($('#evolutionBody').textContent,/本次检查未发现问题/);
+  $('#evoDiagnose').click(); await settle(6);
+  assert.match($('#evolutionBody').textContent,/暂无待处理问题/);
   assert.match($('.evo-home-check-note').textContent,/4 次运行/);
   $('#evoRefresh').click(); await settle(4);
   assert.equal(app.router.calls.filter(c=>c.method==='POST'&&c.path.endsWith('/diagnose')).length,2,'refresh must not diagnose');
   $('[data-evo-home-runs]').click();await settle(3);
   assert.ok($('#runsView').classList.contains('active'));
   assert.equal(app.evaluate('state.projectFilter'),'project-1');
+});
+
+
+test('new unqueued feedback is counted as a follow-up without changing the current proposal',async t=>{
+  const current={id:'active-p',findingId:'original',projectId:'project-1',assetKind:'agent',assetId:'a',assetName:'Reviewer',status:'pending',title:'当前修改',summary:{total:1,finished:1,passed:true}};
+  const old={...finding,id:'original',status:'proposed',proposalId:current.id};
+  const feedback={...finding,id:'new-feedback',clusters:[{id:'new-human',kind:'user_feedback',label:'产物缺少 reason 字段',runs:1}],sampleRunIds:['feedback-run']};
+  const app=await loadApp({routes:[
+    {method:'GET',path:'/api/evolution/overview?projectId=project-1',body:{pending:[current],health:[],queue:[]}},
+    {method:'GET',path:'/api/evolution/findings?projectId=project-1',body:[old,feedback]},
+  ]});t.after(app.close);
+  await open(app);
+  assert.match(app.document.querySelector('.evo-home-row').textContent,/后续建议 1/);
+  app.evaluate(`evoOpenQueue('agent','a')`);await settle(2);
+  assert.match(app.document.querySelector('#kbDrawerBody').textContent,/产物缺少 reason 字段/);
+  assert.equal(app.router.calls.some(c=>c.method!=='GET'),false);
 });
