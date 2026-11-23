@@ -2,6 +2,7 @@ import json
 import os
 import re
 import shutil
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -726,7 +727,7 @@ class LifecycleTests(unittest.TestCase):
             self.assertTrue(sibling.exists())
 
     def test_requirement_confirmation_is_mandatory_in_auto_mode(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with tempfile.TemporaryDirectory(prefix='workflow with spaces ') as directory:
             root = Path(directory)
             state_path = Path(
                 run_script(
@@ -770,7 +771,9 @@ class LifecycleTests(unittest.TestCase):
             resume = json.loads(run_script("workflow_state.py", "resume", "--state", state_path).stdout)
             self.assertEqual("approve", resume["action"])
             self.assertTrue(resume["requires_user_confirmation"])
-            self.assertTrue(resume["artifact"].endswith("01-requirement/requirement-report.md"))
+            self.assertEqual(Path(resume["artifact"]), state_path.parent / "01-requirement/requirement-report.md")
+            command = shlex.split(resume["command"])
+            self.assertEqual(str(state_path), command[command.index("--state") + 1])
             self.assertIn("--user-confirmed", resume["command"])
 
             run_script(
