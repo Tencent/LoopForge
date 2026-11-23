@@ -226,3 +226,16 @@ func TestLocalInvokerForwardsIncomingAuth(t *testing.T) {
 		t.Fatalf("Authorization = %q, want forwarded bearer", gotAuth)
 	}
 }
+
+func TestMCPPreservesLargeNumericIDs(t *testing.T) {
+	var out bytes.Buffer
+	err := New(nil).ServeStdio(context.Background(), strings.NewReader(`{"jsonrpc":"2.0","method":"ping","id":9007199254740993}`), &out)
+	if err != nil || !strings.Contains(out.String(), `"id":9007199254740993`) {
+		t.Fatalf("stdio id changed: %s (%v)", out.String(), err)
+	}
+	result := resultAsTool(InvokeResult{Status: 200, Body: []byte(`{"externalId":9007199254740993}`)})
+	encoded, err := json.Marshal(result["structuredContent"])
+	if err != nil || !bytes.Contains(encoded, []byte(`"externalId":9007199254740993`)) {
+		t.Fatalf("structured id changed: %s (%v)", encoded, err)
+	}
+}

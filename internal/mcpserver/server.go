@@ -249,7 +249,7 @@ func ServeRemoteStdio(ctx context.Context) error {
 
 type rpcRequest struct {
 	JSONRPC string          `json:"jsonrpc"`
-	ID      any             `json:"id,omitempty"`
+	ID      json.RawMessage `json:"id,omitempty"`
 	Method  string          `json:"method"`
 	Params  json.RawMessage `json:"params,omitempty"`
 }
@@ -392,9 +392,8 @@ func resultAsTool(result InvokeResult) map[string]any {
 		"content": []map[string]any{{"type": "text", "text": text}},
 		"isError": result.Status < 200 || result.Status >= 300,
 	}
-	var structured any
-	if json.Unmarshal(result.Body, &structured) == nil {
-		output["structuredContent"] = map[string]any{"status": result.Status, "data": structured}
+	if json.Valid(result.Body) {
+		output["structuredContent"] = map[string]any{"status": result.Status, "data": json.RawMessage(result.Body)}
 	}
 	return output
 }
