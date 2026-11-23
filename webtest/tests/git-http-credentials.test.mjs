@@ -87,3 +87,36 @@ test('Git HTTPS credentials are managed per host with write-only tokens and veri
   assert.equal(app.document.querySelector('#gitHTTPCredentialDialog'), null);
   assert.equal(app.evaluate('state.currentUser.gitHttpCredentialsConfigured'), true);
 });
+
+test('an authorized HTTPS instance needs only a personal token', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  const endpoint = '/api/users/1/git-http-credentials';
+  const instance = { host: 'gitlab.corp.example:8443', platform: 'gitlab' };
+  app.router.get('/api/git-https-hosts', [instance]);
+  app.router.get(endpoint, []);
+  app.router.put(endpoint, [{ ...instance, id: 'instance-token', name: instance.host }]);
+  app.evaluate(`
+    state.currentUser={...state.data.users[0],id:1,isGuest:false};
+    openGitHTTPCredentials({add:true});
+  `);
+  await settle(6);
+
+  const dialog = app.document.querySelector('#gitHTTPCredentialDialog');
+  const form = dialog.querySelector('form');
+  const submit = form.querySelector('button[type="submit"]');
+  assert.equal(submit.disabled, true);
+  form.elements.instance.value = instance.host;
+  form.elements.instance.dispatchEvent(new app.window.Event('change', { bubbles: true }));
+  for (const key of ['host', 'platform', 'name', 'username']) {
+    assert.equal(form.elements[key].closest('.credential-field').hidden, true);
+  }
+  assert.equal(submit.disabled, false);
+  form.elements.token.value = 'test-only-token';
+  form.dispatchEvent(new app.window.Event('submit', { bubbles: true, cancelable: true }));
+  await settle(6);
+  const save = app.router.calls.find(call => call.method === 'PUT' && call.path === endpoint);
+  assert.deepEqual(save.body, { ...instance, name: instance.host, token: 'test-only-token' });
+  assert.equal(form.hidden, true);
+  assert.equal(form.elements.token.value, '');
+});

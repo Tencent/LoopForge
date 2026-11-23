@@ -91,9 +91,8 @@ async function loadPlatformSSHHosts(host){
     for(const button of list.querySelectorAll('button'))button.disabled=value;
   };
   const render=()=>{
-    setPlatformTabCount(host,'sshTrust',entries.length);
     list.innerHTML=entries.length?entries.map((entry,index)=>`
-      <div class="platform-admin-row">
+      <div class="platform-admin-row" data-git-host-entry>
         <div class="platform-admin-info platform-ssh-host-info" data-i18n-skip>
           <strong>${escapeHTML(entry.host||lfT('空主机名','Empty hostname'))}</strong>
           ${entry.invalid
@@ -105,6 +104,7 @@ async function loadPlatformSSHHosts(host){
           <button type="button" class="button ghost small danger" data-ssh-host-remove="${index}">${lfT('移除','Remove')}</button>
         </div>
       </div>`).join(''):`<p class="prop-hint">${lfT('尚未登记 Git SSH 主机。','No Git SSH hosts registered.')}</p>`;
+    setPlatformTabCount(host,'sshTrust',host.querySelectorAll('[data-git-host-entry]').length);
   };
 
   const refresh=async()=>{

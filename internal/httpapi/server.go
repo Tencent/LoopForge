@@ -73,6 +73,7 @@ type Server struct {
 	github          *githubHandlers
 	users           *usersHandlers // users.go
 	sshHostTrust    *sshHostTrustHandlers
+	httpsHostTrust  *httpsHostTrustHandlers
 	projects        *projectsHandlers
 	insights        *insightsHandlers
 	businessDomains *businessDomainsHandlers
@@ -157,6 +158,7 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 		github:          newGitHubHandlers(d),
 		users:           &usersHandlers{deps: d},
 		sshHostTrust:    &sshHostTrustHandlers{deps: d, hosts: s.SSHHostTrustRepo, runnerControls: runnerControls},
+		httpsHostTrust:  &httpsHostTrustHandlers{deps: d, hosts: s.HTTPSHostTrustRepo, lookupIP: net.DefaultResolver.LookupNetIP},
 		catalog:         &catalogHandlers{deps: d},
 		businessDomains: &businessDomainsHandlers{deps: d},
 		insights:        &insightsHandlers{deps: d},
@@ -275,6 +277,12 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.POST("/api/platform/git-ssh-hosts/preview", api.sshHostTrust.preview)
 	g.PUT("/api/platform/git-ssh-hosts/:host", api.sshHostTrust.save)
 	g.DELETE("/api/platform/git-ssh-hosts/:host", api.sshHostTrust.remove)
+	g.GET("/api/platform/git-https-hosts", api.httpsHostTrust.list)
+	g.POST("/api/platform/git-https-hosts/preview", api.httpsHostTrust.preview)
+	g.POST("/api/platform/git-https-hosts", api.httpsHostTrust.save)
+	g.PUT("/api/platform/git-https-hosts/:host", api.httpsHostTrust.save)
+	g.DELETE("/api/platform/git-https-hosts/:host", api.httpsHostTrust.remove)
+	g.GET("/api/git-https-hosts", api.httpsHostTrust.choices)
 	// master(net/http) 的 /api/users/ 子树只接受 PUT /api/users/<id>/credentials
 	// 一种形态，其余任何方法/子路径都走 method(w) → 405 JSON。
 	g.Any("/api/users/:id/credentials", func(c *gin.Context) {

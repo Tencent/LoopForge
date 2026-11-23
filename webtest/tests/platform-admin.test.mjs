@@ -299,3 +299,46 @@ test('platform admins share a CodeBuddy key limited to the models they pick', as
   assert.match(card.querySelector('[data-shared-key-badge]').textContent, /使用旧配置/);
   assert.equal(app.evaluate(`state.data.sponsoredModel`), 'deepseek-v4.1-flash');
 });
+
+test('platform admins authorize HTTPS addresses in the Git host trust tab', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  const endpoint = '/api/platform/git-https-hosts';
+  const proposed = { host: 'gitlab.corp.example:8443', platform: 'gitlab', addresses: ['10.20.30.40', 'fd00::2'] };
+  app.router.get(endpoint, []);
+  app.router.post(`${endpoint}/preview`, proposed);
+  app.router.post(endpoint, { ...proposed, revision: 'first' }, 201);
+  const path = `${endpoint}/${encodeURIComponent(proposed.host)}`;
+  app.router.delete(path, null, 204);
+  app.evaluate(`state.currentUser={...state.data.users[0],isGuest:false,isPlatformAdmin:true}; renderPlatformAdminPanel()`);
+  app.document.querySelector('[data-platform-tab="sshTrust"]').click();
+  await settle(6);
+
+  const panel = app.document.querySelector('#platformPanel-sshTrust');
+  assert.ok(panel.querySelector('#platformSSHHostTrustCard'));
+  const card = panel.querySelector('#platformHTTPSHostTrustCard');
+  card.querySelector('[data-https-host-add]').click();
+  const form = card.querySelector('form');
+  form.elements.host.value = proposed.host;
+  const resolve = form.querySelector('button[type="submit"]');
+  resolve.click();
+  await settle();
+  assert.match(app.document.querySelector('#confirmMessage').textContent, /10\.20\.30\.40/);
+  app.document.querySelector('#confirmCancelBtn').click();
+  await settle();
+  assert.equal(app.router.calls.some(call => call.method === 'POST' && call.path === endpoint), false);
+
+  resolve.click();
+  await settle();
+  app.document.querySelector('#confirmOkBtn').click();
+  await settle();
+  assert.deepEqual(app.router.calls.find(call => call.method === 'POST' && call.path === endpoint).body, proposed);
+  assert.match(card.querySelector('[data-https-host-list]').textContent, /gitlab\.corp\.example:8443/);
+
+  card.querySelector('[data-https-host-remove]').click();
+  app.document.querySelector('#confirmOkBtn').click();
+  await settle();
+  const revoke = app.router.calls.find(call => call.method === 'DELETE' && call.path === path);
+  assert.equal(new Headers(revoke.options.headers).get('If-Match'), '"first"');
+  assert.equal(card.querySelector('[data-https-host-remove]'), null);
+});

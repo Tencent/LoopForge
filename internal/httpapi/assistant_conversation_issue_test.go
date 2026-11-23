@@ -14,6 +14,7 @@ import (
 
 	"agentflow/internal/domain"
 	"agentflow/internal/engine"
+	"agentflow/internal/gitegress"
 	"agentflow/internal/repo"
 	"agentflow/internal/runtime"
 )
@@ -306,7 +307,7 @@ func TestTurnEndRegistersWorkspacePullRequests(t *testing.T) {
 	}))
 	defer srv.Close()
 	base, client := githubAPIBase, gitHostClient
-	githubAPIBase, gitHostClient = srv.URL, func() *http.Client { return srv.Client() }
+	githubAPIBase, gitHostClient = srv.URL, func(gitegress.HTTPSHostLookup) *http.Client { return srv.Client() }
 	t.Cleanup(func() { githubAPIBase, gitHostClient = base, client })
 	if err := st.SaveGitHTTPCredential(s.UserID, "", domain.GitHTTPCredentialSecret{
 		GitHTTPCredential: domain.GitHTTPCredential{Name: "GitHub", Platform: domain.GitPlatformGitHub, Host: "github.com"},
@@ -392,7 +393,7 @@ func TestTurnEndRegistersMergeRequestsOnOtherHosts(t *testing.T) {
 		}
 		return srv.URL + "/ghe"
 	}
-	gitHostClient = func() *http.Client { return srv.Client() }
+	gitHostClient = func(gitegress.HTTPSHostLookup) *http.Client { return srv.Client() }
 	t.Cleanup(func() { gitHostAPIBase, gitHostClient = base, client })
 	for _, c := range []struct{ host, platform, token string }{
 		{"gitlab.example.org", domain.GitPlatformGitLab, "gl-token"},
