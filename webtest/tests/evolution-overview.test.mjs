@@ -153,3 +153,50 @@ test('new unqueued feedback is counted as a follow-up without changing the curre
   assert.match(app.document.querySelector('#kbDrawerBody').textContent,/产物缺少 reason 字段/);
   assert.equal(app.router.calls.some(c=>c.method!=='GET'),false);
 });
+
+test('clicking any history cell compares that sample and preserves the selected button', async t => {
+  const replays = [
+    { id: 'problem', sourceRunId: 'original-a', runId: 'replay-a', group: 'diagnosis', sourceScore: 0, score: 2, outcome: 'fixed', finishedAt: now },
+    { id: 'regression', sourceRunId: 'original-b', runId: 'replay-b', group: 'regression', sourceScore: 2, score: 2, outcome: 'unchanged', finishedAt: now },
+  ];
+  const proposal = {
+    id: 'p-linked', projectId: 'project-1', assetKind: 'agent', assetId: 'a', assetName: '日志定位',
+    status: 'pending', baseVersion: 1, baseContent: '共用指令\n保留首条错误\n输出定位结果',
+    candidateContent: '共用指令\n跳过已恢复的错误\n优先定位真实失败\n输出定位结果',
+    summary: { total: 2, finished: 2, fixed: 1, unchanged: 1, passed: true }, replays,
+  };
+  const replayRoutes = replays.flatMap((replay, index) => {
+    const lines = [`ERROR summary ${index}`, `--- FAIL: Test${index}`];
+    const run = (id, position) => ({
+      id, executionContext: { projectId: 'project-1' }, input: JSON.stringify({ lines }),
+      nodes: { check: { output: JSON.stringify({ evidence: { line: position, text: lines[position - 1] } }) } },
+    });
+    return [
+      { method: 'GET', path: `/api/evolution/proposals/${proposal.id}/replays/${replay.id}/compare`,
+        body: { sourceRunId: replay.sourceRunId, runId: replay.runId, nodes: [{ id: 'check', shaped: true }] } },
+      { method: 'GET', path: `/api/runs/${replay.sourceRunId}`, body: run(replay.sourceRunId, index + 1) },
+      { method: 'GET', path: `/api/runs/${replay.runId}`, body: run(replay.runId, 2) },
+    ];
+  });
+  const app = await loadApp({ routes: [...routes, ...replayRoutes,
+    { method: 'GET', path: '/api/evolution/overview?projectId=project-1', body: { pending: [proposal] } },
+    { method: 'GET', path: `/api/evolution/proposals/${proposal.id}`, body: proposal },
+  ] });
+  t.after(app.close);
+  const $ = selector => app.document.querySelector(selector);
+  await open(app);
+  $('[data-evo-asset-group="asset:agent:a"]').click();
+  await settle(7);
+  const cells = [...$('#evoFullChange .evo-diff-numbered .ctx:last-child').querySelectorAll('.evo-diff-number')];
+  assert.deepEqual(cells.map(el => el.textContent), ['3', '4']);
+  assert.match($('#evoStoryBehavior').textContent, /Test0/);
+  $('[data-evo-story-row="regression"] td:last-child').click();
+  await settle(5);
+  assert.match($('#evoStoryBehavior').textContent, /Test1/);
+  assert.doesNotMatch($('#evoStoryBehavior').textContent, /Test0/);
+  assert.match($('#evoStorySelectedSample').textContent, /回归样本/);
+  assert.equal($('[data-evo-story-replay="regression"]').getAttribute('aria-pressed'), 'true');
+  assert.equal(app.document.activeElement.dataset.evoStoryReplay, 'regression');
+  assert.equal(app.document.querySelectorAll('[data-evo-story-row]').length, 2);
+  assert.equal(app.router.calls.some(call => call.method !== 'GET'), false);
+});

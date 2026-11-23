@@ -63,7 +63,7 @@ function evoSpark(trend,big=false){
 
 // ---------- 行级 diff：LCS，超大正文退化为集合差 ----------
 function evoLineDiff(oldText,newText){
-  const a=String(oldText||'').split('\n'),b=String(newText||'').split('\n');
+  const a=oldText?String(oldText).split('\n'):[],b=newText?String(newText).split('\n'):[];
   if(a.length*b.length>2500000){
     const as=new Set(a),bs=new Set(b);
     return [...a.filter(l=>!bs.has(l)).map(l=>['del',l]),...b.filter(l=>!as.has(l)).map(l=>['add',l])];
@@ -105,9 +105,14 @@ function evoDiffStats(oldText,newText){
   const lines=evoLineDiff(oldText,newText);
   return {add:lines.filter(([k,l])=>k==='add'&&l.trim()).length,del:lines.filter(([k,l])=>k==='del'&&l.trim()).length};
 }
-function evoDiffHTML(oldText,newText,fullContext=false,compact=false,changesOnly=false){
+function evoDiffHTML(oldText,newText,fullContext=false,compact=false,changesOnly=false,lineLabels=null){
   const lines=evoLineDiff(oldText,newText);
-  if(!lines.some(([k])=>k!=='ctx'))return '<div class="kb-line-note">与当前正文没有差异</div>';
+  if(!lines.some(([k])=>k!=='ctx')){
+    const message=String(oldText||'')===String(newText||'')?'与当前正文没有差异':'仅行顺序或重复次数有变化，可切换并排对比查看完整正文';
+    return `<div class="kb-line-note">${message}</div>`;
+  }
+  const approximate=lineLabels&&String(oldText||'').split('\n').length*String(newText||'').split('\n').length>2500000;
+  const numbered=lineLabels&&!approximate;
   const html=lines.map(([,l])=>escapeHTML(l)),inline=new Set();
   for(let i=0;i<lines.length;){
     if(lines[i][0]!=='del'){i++;continue}
@@ -121,18 +126,23 @@ function evoDiffHTML(oldText,newText,fullContext=false,compact=false,changesOnly
   }
   const keep=new Set();
   lines.forEach(([k],i)=>{if(k!=='ctx')for(let d=-2;d<=2;d++)keep.add(i+d)});
-  const out=[];let skipped=0,hiddenChanges=0,blockKind='',blockCount=0;
+  const out=[];let skipped=0,hiddenChanges=0,blockKind='',blockCount=0,oldLine=0,newLine=0;
   const flush=()=>{if(skipped){if(!changesOnly)out.push(`<div class="evo-diff-skip">… ${skipped} 行未改动</div>`);skipped=0}};
   const flushChanges=()=>{if(hiddenChanges){out.push(`<div class="evo-diff-skip">… ${hiddenChanges} 行改动</div>`);hiddenChanges=0}};
   lines.forEach(([k],i)=>{
+    const before=k==='add'?'':++oldLine,after=k==='del'?'':++newLine;
     if(k!==blockKind){flushChanges();blockKind=k;blockCount=0}
     if(compact&&k!=='ctx'&&++blockCount>3){hiddenChanges++;return}
     if(!fullContext&&k==='ctx'&&(changesOnly||!keep.has(i))){skipped++;return}
     flush();
-    out.push(`<div class="evo-diff-line ${k}${inline.has(i)?' w':''}"><span aria-hidden="true">${k==='add'?'+':k==='del'?'-':' '}</span><code>${html[i]||' '}</code></div>`);
+    const numbers=numbered?`<span class="evo-diff-number">${before}</span><span class="evo-diff-number">${after}</span>`:'';
+    const sign=k==='add'?'+':k==='del'?'−':' ';
+    out.push(`<div class="evo-diff-line ${k}${inline.has(i)?' w':''}">${numbers}<span class="evo-diff-sign" aria-hidden="true">${sign}</span><code>${html[i]||' '}</code></div>`);
   });
   flushChanges();flush();
-  return `<div class="evo-diff" role="table" aria-label="正文差异">${out.join('')}</div>`;
+  const header=numbered?`<div class="evo-diff-line evo-diff-heading"><span class="evo-diff-number">${escapeHTML(lineLabels[0])}</span><span class="evo-diff-number">${escapeHTML(lineLabels[1])}</span><span class="evo-diff-heading-label">正文</span></div>`:'';
+  const note=lineLabels&&approximate?'<p class="kb-line-note">正文较长，仅显示两版独有的行，可切换并排对比查看全文。</p>':'';
+  return `${note}<div class="evo-diff${numbered?' evo-diff-numbered':''}" role="group" aria-label="正文差异">${header}${out.join('')}</div>`;
 }
 
 // ---------- 入口与数据 ----------
@@ -526,7 +536,8 @@ function evoDetailTrackHTML(p){
 function evoDetailLayout(m,p=null){
   const r=m.row,asset=p||r?.f;
   m.viewOpen=[...document.querySelectorAll('#evoDetailPage details[open][id]')].map(d=>d.id);
-  if(asset)$('#evoFindingTitle').textContent=asset.assetName||asset.assetId;
+  const problem=p&&(p.review?.problem||r?.title||p.title);
+  if(asset)$('#evoFindingTitle').textContent=evoStoryBrief(problem,72)||asset.assetName||asset.assetId;
   $('#evoDetailGlyph').innerHTML=evoReviewIcon(asset?.assetKind==='rule'?'doc':'robot');
   $('#evoDetailObject').innerHTML=evoReviewVersionHTML(asset,p);
   $('#evoDetailBody').innerHTML=evoReviewDetailHTML(m,p);
@@ -543,7 +554,6 @@ function evoSetDetailTab(key,remember=true){
   const m=evo.modal;if(!m||!['validation','change','records'].includes(key))return;
   m.detailTab=key;
   if($('#evoReviewWorkbench')?.classList.contains('evo-story-workbench')){
-    if(remember&&key==='change'){const full=$('#evoFullChange');if(full)full.open=true;}
     return;
   }
   $$('[data-evo-detail-tab]').forEach(tab=>{const active=tab.dataset.evoDetailTab===key;tab.setAttribute('aria-selected',String(active));tab.tabIndex=active?0:-1});
@@ -690,7 +700,6 @@ async function evoLoadDetailProposal(m){
     if(!m.row)m.row=evoIssueRows().find(r=>r.f.id===p.findingId||r.f.proposalId===p.id)||null;
     evoDetailLayout(m,p);
     if(trafficState&&$('#evoTrafficPercent')&&trafficState.applied===p.canary?.percent){$('#evoTrafficPercent').value=trafficState.percent;if(trafficState.focus)$('#evoTrafficPercent').focus({preventScroll:true})}
-    $('#evoFindingTitle').textContent=p.assetName||p.assetId;
     $('#evoTrialHost').innerHTML=p.status==='pending'&&p.summary?.passed&&p.candidateContent?`<dialog id="evoDetailCanary" class="evo-review-trial-dialog" aria-labelledby="evoTrialTitle"><header><h2 id="evoTrialTitle">${evoReviewIcon('flask')}试用</h2><button type="button" class="kb-btn quiet small" data-evo-trial-close aria-label="关闭试用设置">${evoReviewIcon('close')}</button></header>${evoCanaryFormHTML(p.id)}</dialog>`:'';
     if(formState&&$('#evoDetailCanary')){$('#evoCanaryPercent').value=formState.percent;$('#evoCanaryMinRuns').value=formState.min;$('#evoDetailCanary').showModal();if(formState.focus)document.getElementById(formState.focus)?.focus({preventScroll:true})}
     m.viewOpen.forEach(id=>{const d=document.getElementById(id);if(d)d.open=true});
@@ -771,8 +780,11 @@ function evoRenderFindingRuns(){
 function evoRenderComparisonList(m){
   const host=$('#evoComparisonList');if(!host||!m.proposal)return;
   if($('#evoReviewWorkbench')?.classList.contains('evo-story-workbench')){
+    const focused=document.activeElement;
+    const replay=host.contains(focused)?focused.dataset.evoStoryReplay:'';
     host.innerHTML=evoStoryReplayTable(m);evoStoryUpdateSelection(m);
     window.AgentFlowHarnessIcons?.hydrate($('#evoReviewWorkbench'));
+    if(replay)host.querySelector(`[data-evo-story-replay="${CSS.escape(replay)}"]`)?.focus({preventScroll:true});
     return;
   }
   if($('#evoReviewWorkbench')){

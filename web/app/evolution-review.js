@@ -5,14 +5,18 @@ function evoReviewVersionHTML(asset,p){
   if(!asset)return '';
   const version=p?.baseVersion?`v${p.baseVersion}`:'修改前',after=p?.releasedVersion?`v${p.releasedVersion}`:'修改稿';
   const labels={drafting:'生成中',validating:'验证中',pending:'待试用',canary:'试用中',released:'已发布',rejected:'未采用',failed:'未通过',rolled_back:'已回滚'};
-  return `<span>${escapeHTML(evoKindLabel(asset.assetKind))}</span>${p?`<span>${version}</span>${evoReviewIcon('arrow-right')}<span>${after}</span>${kbBadge(labels[p.status]||p.status,evoChangeState(p).tone)}`:''}`;
+  const object=p?asset.assetName||asset.assetId:evoKindLabel(asset.assetKind);
+  return `<span>${escapeHTML(object)}</span>${p?`<span>${version}</span>${evoReviewIcon('arrow-right')}<span>${after}</span>${kbBadge(labels[p.status]||p.status,evoChangeState(p).tone)}`:''}`;
 }
 function evoReviewChangeHTML(m,p){
   const stats=p?.candidateContent?evoDiffStats(p.baseContent,p.candidateContent):{add:0,del:0};
   const lines=p?.candidateContent?evoLineDiff(p.baseContent,p.candidateContent):[];
   const long=lines.some(([,line])=>line.length>60)||lines.length>6;
-  const body=!p?.candidateContent?`<div class="evo-review-empty">${p?.status==='drafting'?'正在生成修改…':'暂无正文修改'}</div>`:m.diffSplit?evoBeforeAfterHTML(p,!!m.diffContext,!m.diffContext):evoDiffHTML(p.baseContent,p.candidateContent,!!m.diffContext,long&&!m.diffExpanded,!m.diffContext);
-  return `<header class="evo-review-filebar"><span>${evoReviewIcon('doc')}${p?.assetKind==='rule'?'规则正文':'角色指令'}</span><div><span class="evo-good">+${stats.add}</span><span class="evo-bad">−${stats.del}</span><button type="button" class="kb-btn quiet small evo-review-icon-button" data-evo-diff-split aria-label="${m.diffSplit?'合并对比':'并排对比'}" aria-pressed="${!!m.diffSplit}" data-tooltip="${m.diffSplit?'合并对比':'并排对比'}">${evoReviewIcon('panel-left')}</button></div></header>
+  const titles=[p?.baseVersion?`v${p.baseVersion}`:'原版',p?.releasedVersion?`v${p.releasedVersion}`:'修改稿'];
+  const body=!p?.candidateContent?`<div class="evo-review-empty">${p?.status==='drafting'?'正在生成修改…':'暂无正文修改'}</div>`:m.diffSplit?evoBeforeAfterHTML(p,!!m.diffContext,!m.diffContext):evoDiffHTML(p.baseContent||'',p.candidateContent,!!m.diffContext,long&&!m.diffExpanded,false,titles);
+  const reason=p?.review?.reason||p?.review?.changes?.[0]?.reason||p?.rationale||'';
+  return `<header class="evo-review-filebar"><h2>${evoReviewIcon('edit')}指令差异</h2>${p?.candidateContent?`<div><span class="evo-good">+${stats.add} 行新增</span><span class="evo-bad">−${stats.del} 行删除</span><button type="button" class="kb-btn quiet small evo-review-icon-button" data-evo-diff-split aria-label="${m.diffSplit?'合并对比':'并排对比'}" aria-pressed="${!!m.diffSplit}" data-tooltip="${m.diffSplit?'合并对比':'并排对比'}">${evoReviewIcon('panel-left')}</button></div>`:''}</header>
+    ${reason?`<p class="evo-story-change-reason" data-tooltip="${escapeHTML(reason)}">${escapeHTML(evoStoryBrief(reason,120))}</p>`:''}
     ${p?.candidateContent?`<button type="button" class="evo-review-context" data-evo-diff-context aria-pressed="${!!m.diffContext}">${evoReviewIcon('eye')}${m.diffContext?'收起未修改内容':'未修改内容'}</button>`:''}
     <div class="evo-review-diff${m.diffExpanded?' is-expanded':''}${m.diffSplit?' is-split':''}" id="evoReviewDiff">${body}</div>
     ${long?`<button type="button" class="evo-review-expand" data-evo-diff-expand aria-expanded="${!!m.diffExpanded}" aria-controls="evoReviewDiff">${evoReviewIcon('expand')}${m.diffExpanded?'收起修改':'展开修改'}</button>`:''}
