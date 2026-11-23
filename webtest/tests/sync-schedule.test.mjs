@@ -31,6 +31,45 @@ test('schedule helpers and job list describe timing, status, blockers, and proje
   assert.match(app.evaluate(`alignConflictPanelHTML(state.data.runs[0])`), /resolved package\.json|让 Agent 重新对齐/);
 });
 
+test('AI jobs with the same name fold into a collapsed group that keeps its expanded state', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  app.evaluate(`
+    state.projectFilter='project-1';
+    state.data.schedulerEnabled=true;
+    state.data.scheduleJobs=[
+      {id:'a1',projectId:'project-1',name:'巡检',skipDispatch:true,assistantPrompt:'x',enabled:true,intervalSec:3600,lastStatus:'running',lastRunAt:'2026-11-20T08:00:00Z'},
+      {id:'solo',projectId:'project-1',name:'日报',skipDispatch:true,assistantPrompt:'y',enabled:true,cron:'0 9 * * *'},
+      {id:'a2',projectId:'project-1',name:' 巡检 ',skipDispatch:true,assistantPrompt:'x',enabled:false,cron:'0 8 * * *',lastStatus:'failed',lastRunAt:'2026-11-21T08:00:00Z'},
+      {id:'a3',projectId:'project-1',name:'巡检',skipDispatch:true,assistantPrompt:'x',enabled:true,intervalSec:3600}
+    ];
+    renderScheduleJobs();
+  `);
+  const list = app.document.querySelector('#aiScheduleJobList');
+  const groups = list.querySelectorAll('.schedule-job-group');
+  assert.equal(groups.length, 1);
+  assert.equal(list.children[0], groups[0]);
+  assert.ok(list.children[1].querySelector('[data-edit-schedule="solo"]'));
+  let head = groups[0].querySelector('[data-schedule-group]');
+  assert.equal(head.getAttribute('aria-expanded'), 'false');
+  assert.match(head.textContent, /巡检.*3 个/s);
+  assert.match(head.textContent, /每小时、0 8 \* \* \* · 已启用 2\/3 · 1 个运行中 · 1 个失败/);
+  assert.ok(groups[0].classList.contains('is-running'));
+  assert.equal(groups[0].querySelector('.schedule-job-group-body').hidden, true);
+
+  head.focus();
+  head.click();
+  head = list.querySelector('[data-schedule-group]');
+  assert.equal(head.getAttribute('aria-expanded'), 'true');
+  assert.equal(app.document.activeElement, head);
+  assert.deepEqual([...list.querySelectorAll('.schedule-job-group-body .schedule-job-main')].map(b => b.dataset.editSchedule), ['a1', 'a2', 'a3']);
+
+  app.evaluate('renderScheduleJobs()');
+  assert.equal(list.querySelector('[data-schedule-group]').getAttribute('aria-expanded'), 'true');
+  list.querySelector('[data-schedule-group]').click();
+  assert.equal(list.querySelector('.schedule-job-group-body').hidden, true);
+});
+
 test('schedule form switches job kind and timing and sends validated assistant and dispatch payloads', async (t) => {
   const app = await loadApp();
   t.after(app.close);
