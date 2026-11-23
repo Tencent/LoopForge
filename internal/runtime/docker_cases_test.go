@@ -131,8 +131,8 @@ func TestDockerSandboxUsesRelayNetworkOnlyWhenRequested(t *testing.T) {
 				t.Fatalf("docker create used the wrong network: %s", args)
 			}
 			usesGateway := strings.Contains(args, "\n--add-host\nhost.docker.internal:host-gateway\n")
-			if usesGateway != (tc.conversation || tc.runnerLoginRelay) {
-				t.Fatalf("docker create host gateway = %v for %s", usesGateway, tc.name)
+			if !usesGateway {
+				t.Fatalf("docker create missing host gateway mapping for %s: %s", tc.name, args)
 			}
 		})
 	}
