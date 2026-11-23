@@ -458,7 +458,7 @@ if [[ "$UNINSTALL" == "1" ]]; then
   if command -v docker >/dev/null 2>&1; then
     while IFS= read -r container; do
       [[ -n "$container" ]] || continue
-      docker rm -f "$container" >/dev/null 2>&1 || true
+      docker rm -f -v "$container" >/dev/null 2>&1 || true
     done < <(docker ps -aq --filter 'name=^/agentflow-rt-' 2>/dev/null || true)
     while IFS= read -r image; do
       [[ -n "$image" ]] || continue

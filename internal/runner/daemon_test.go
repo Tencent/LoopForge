@@ -1068,7 +1068,7 @@ inspect)
   *) echo "unexpected $last" >&2; exit 1 ;;
   esac
   ;;
-rm) printf '%s\n' "$last" >> "$AF_TEST_RM_LOG" ;;
+rm) printf '%s\n' "$*" >> "$AF_TEST_RM_LOG" ;;
 *) echo "unexpected $1" >&2; exit 1 ;;
 esac
 `)
@@ -1081,8 +1081,8 @@ esac
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.TrimSpace(string(removed)) != "keep" {
-		t.Fatalf("removed = %q, want keep", removed)
+	if strings.TrimSpace(string(removed)) != "rm -f -v keep" {
+		t.Fatalf("Docker removal = %q, want only the in-run container and its anonymous volumes", removed)
 	}
 }
 

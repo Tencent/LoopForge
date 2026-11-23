@@ -94,7 +94,9 @@ func removeDockerWorkspaceContainers(ctx context.Context, container string) erro
 }
 
 func removeDockerContainer(ctx context.Context, name string) error {
-	out, err := exec.CommandContext(ctx, "docker", "rm", "-f", name).CombinedOutput()
+	// Docker allocates anonymous volumes for Dockerfile VOLUME declarations.
+	// Remove those with their container so old sandboxes do not leave them behind.
+	out, err := exec.CommandContext(ctx, "docker", "rm", "-f", "-v", name).CombinedOutput()
 	if err != nil && !dockerObjectGone(string(out), err) {
 		return fmt.Errorf("remove Docker container %s: %w: %s", name, err, strings.TrimSpace(string(out)))
 	}
@@ -821,13 +823,13 @@ func (s *dockerSandbox) start(ctx context.Context, recreate bool) error {
 		return fmt.Errorf("docker create: %w: %s", err, out)
 	}
 	if out, err := exec.CommandContext(ctx, "docker", "start", name).CombinedOutput(); err != nil {
-		_ = exec.CommandContext(ctx, "docker", "rm", "-f", name).Run()
+		_ = removeDockerContainer(ctx, name)
 		dropEphemeralDockerImage(s.builtImage)
 		s.builtImage = ""
 		return fmt.Errorf("docker start: %w: %s", err, out)
 	}
 	if err := waitDockerWorkspaceReady(ctx, name); err != nil {
-		_ = exec.Command("docker", "rm", "-f", name).Run()
+		_ = removeDockerContainer(context.Background(), name)
 		s.started = false
 		return err
 	}
