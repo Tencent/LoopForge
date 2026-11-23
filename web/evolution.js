@@ -530,8 +530,38 @@ function evoMountDetail(title,openerKey,row=null){
   $('#evoFindingTitle').focus({preventScroll:true});
   return m;
 }
-function evoDetailTrackHTML(p){
-  return `<ol class="evo-detail-track" aria-label="进化进度">${evoFiveSteps(p).map((x,i)=>`<li class="is-${x.state}" title="${escapeHTML(x.note||EVO_STEP_STATE[x.state])}"><span>${EVO_STEP_ICON[x.state]||i+1}</span><b>${x.t}</b></li>`).join('')}</ol>`;
+function evoDetailTrackHTML(p,finding){
+  const steps=evoFiveSteps(p);
+  const [problem,draft,replay,trial,release]=steps;
+  draft.t='修改指令';
+  release.t='发布与观察';
+  if(!p){
+    problem.note='待开始修改';
+    if(finding&&evoSnoozed(finding)){problem.state='stop';problem.note='已暂缓'}
+    else if(finding&&evoIssueState(finding)==='done'){problem.state='stop';problem.note='已归档'}
+  }else if(p.status==='pending'&&!p.summary?.passed){
+    replay.state='wait';replay.note='待确认结果';
+    trial.state='todo';trial.note='';
+  }else if(p.status==='pending'){
+    trial.note='待确认试用';
+  }else if(p.status==='canary'&&p.canary?.status==='passed'){
+    trial.state='done';trial.note='通过';
+    release.state='wait';release.note='待确认发布';
+  }else if(p.status==='released'&&p.watch?.status==='watching'){
+    release.note='观察中'+(p.watch.minRuns?` · ${p.watch.current?.runs||0}/${p.watch.minRuns} 次`:'');
+  }else if(p.status==='rolled_back'){
+    release.state='stop';release.note='已回滚';
+  }
+  const current=steps.findIndex(step=>['active','wait','fail','stop'].includes(step.state));
+  return `<ol class="evo-detail-track" aria-label="进化进度">${steps.map((step,i)=>{
+    const active=i===current;
+    const note=step.note||EVO_STEP_STATE[step.state];
+    return `<li class="is-${step.state}"${active?' aria-current="step"':''}>
+      <span aria-hidden="true">${EVO_STEP_ICON[step.state]||i+1}</span>
+      <b>${escapeHTML(step.t)}</b>
+      ${active||step.state==='skip'?`<small>${escapeHTML(note)}</small>`:`<small class="evo-review-sr">${escapeHTML(EVO_STEP_STATE[step.state])}</small>`}
+    </li>`;
+  }).join('')}</ol>`;
 }
 function evoDetailLayout(m,p=null){
   const r=m.row,asset=p||r?.f;

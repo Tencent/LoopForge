@@ -187,6 +187,8 @@ test('clicking any history cell compares that sample and preserves the selected 
   await open(app);
   $('[data-evo-asset-group="asset:agent:a"]').click();
   await settle(7);
+  assert.equal(app.document.querySelectorAll('.evo-detail-track li').length, 5);
+  assert.match($('.evo-detail-track [aria-current="step"]').textContent, /小范围试用[\s\S]+待确认试用/);
   const cells = [...$('#evoFullChange .evo-diff-numbered .ctx:last-child').querySelectorAll('.evo-diff-number')];
   assert.deepEqual(cells.map(el => el.textContent), ['3', '4']);
   assert.match($('#evoStoryBehavior').textContent, /Test0/);
@@ -195,6 +197,7 @@ test('clicking any history cell compares that sample and preserves the selected 
   assert.match($('#evoStoryBehavior').textContent, /Test1/);
   assert.doesNotMatch($('#evoStoryBehavior').textContent, /Test0/);
   assert.match($('#evoStorySelectedSample').textContent, /回归样本/);
+  assert.match($('.evo-detail-track [aria-current="step"]').textContent, /待确认试用/);
   assert.equal($('[data-evo-story-replay="regression"]').getAttribute('aria-pressed'), 'true');
   assert.equal(app.document.activeElement.dataset.evoStoryReplay, 'regression');
   assert.equal(app.document.querySelectorAll('[data-evo-story-row]').length, 2);

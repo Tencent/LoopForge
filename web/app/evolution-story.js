@@ -63,6 +63,7 @@ function evoStoryDetailHTML(m,p){
   return `
     <div id="evoReviewWorkbench" class="evo-review-workbench evo-story-workbench">
       <div id="evoProblemBox" class="evo-review-status" role="status">${p?.error?escapeHTML(p.error):''}</div>
+      ${p||!m.proposalId?evoDetailTrackHTML(p,m.row?.f):''}
       ${problems}
       <section id="evoFullChange" class="evo-story-section"><div id="evoLinkedChange">${evoReviewChangeHTML(m,p)}</div></section>
       <div class="evo-story-evidence-grid">

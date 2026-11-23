@@ -1,5 +1,14 @@
 /* 进化中心：同页审查问题、修改和证据；沿用 Harness UI（MIT）令牌。 */
 #evoDetailPage .evo-story-workbench{border:0;border-radius:0;overflow:visible;background:transparent}
+.evo-story-workbench .evo-detail-track{margin:0 0 14px;padding:12px 8px}
+.evo-story-workbench .evo-detail-track li{min-width:0;gap:5px;padding-inline:3px}
+.evo-story-workbench .evo-detail-track li>span{width:24px;height:24px}
+.evo-story-workbench .evo-detail-track li:not(:last-child)::after{top:11px;left:calc(50% + 17px);right:calc(-50% + 17px)}
+.evo-story-workbench .evo-detail-track .is-done>span{background:color-mix(in srgb,var(--hui-success) 12%,var(--hui-surface));color:var(--hui-success)}
+.evo-story-workbench .evo-detail-track li[aria-current=step]>b{color:var(--hui-text);font-weight:600}
+.evo-story-workbench .evo-detail-track li>small{font-size:11px;line-height:1.45;overflow-wrap:anywhere}
+.evo-story-workbench .evo-detail-track li[aria-current=step]:is(.is-active,.is-wait)>small{color:var(--hui-accent)}
+.evo-story-workbench .evo-detail-track li.is-fail>small{color:var(--hui-error)}
 .evo-story-section{border:1px solid var(--hui-border);border-radius:12px;background:var(--hui-surface);margin:14px 0 0;overflow:clip;min-width:0}
 .evo-story-section-head{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;min-height:46px;padding:10px 16px;border-bottom:1px solid var(--hui-border-soft);font-size:12px}
 .evo-story-section-head h2{display:flex;align-items:center;gap:7px;margin:0;font-size:14px;font-weight:500}
@@ -120,6 +129,8 @@
   .evo-story-evidence-grid{grid-template-columns:minmax(0,1fr)}
 }
 @container(max-width:500px){
+  .evo-story-workbench .evo-detail-track{padding-inline:2px}
+  .evo-story-workbench .evo-detail-track li{font-size:11px;line-height:1.35}
   .evo-story-section-head{padding:10px 12px}
   .evo-story-results th,.evo-story-results td{padding:10px 7px}
   .evo-story-results td>button>.evo-review-icon{display:none}
